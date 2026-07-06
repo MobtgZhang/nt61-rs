@@ -1,0 +1,697 @@
+//! Architecture-neutral boot helpers.
+//!
+//! `kernel_main` historically hand-coded per-arch sequences for
+//! framebuffer setup, PIC masking, display-mode switching, Windows
+//! logo blitting, and the very-early serial writes that run *before*
+//! `mm::init()`. That broke two rules:
+//!
+//!   * `kernel_main.rs` should read like the Windows 7 boot order,
+//!     not like an ISA-specific bring-up checklist;
+//!   * the same bootstrap code paths must work on every supported
+//!     architecture (x86_64, aarch64, riscv64, loongarch64).
+//!
+//! This module folds those per-arch bring-up primitives behind a
+//! single API. Each call is a no-op on architectures that don't
+//! have the underlying hardware (e.g. `mask_legacy_pic_irqs` is a
+//! no-op on aarch64/riscv64/loongarch64 where there is no legacy
+//! 8259 pair), so `kernel_main` can call every helper unconditionally.
+
+#[allow(unused_imports)]
+use crate::{boot_print, boot_println};
+use crate::boot_types::BootInfo;
+
+/// Re-export of the kernel's `BootMode` so callers don't need to
+/// import the canonical definition from two places.
+pub use crate::boot_types::BootMode;
+
+/// Write one byte to the platform's debug serial sink.
+///
+/// Safe to call from any context — including before
+/// `mm::init()`/`hal::init()`. On LoongArch64 the trampoline also
+/// makes the UART MMIO region reachable by clearing CRMD.PG, see
+/// `arch_early_ensure_serial_ready`.
+#[inline]
+pub unsafe fn early_write_byte(c: u8) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        let _ = crate::hal::x86_64::serial::write_char(c);
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        let _ = crate::hal::aarch64::serial::write_char(c);
+    }
+    #[cfg(target_arch = "riscv64")]
+    {
+        let _ = crate::hal::riscv64::serial::write_char(c);
+    }
+    #[cfg(target_arch = "loongarch64")]
+    {
+        let _ = crate::hal::loongarch64::serial::write_char(c);
+    }
+    #[cfg(not(any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "riscv64",
+        target_arch = "loongarch64"
+    )))]
+    {
+        let _ = c;
+    }
+}
+
+/// Write a byte slice to the early serial console. On LoongArch64
+/// this disables paging so the first MMIO access doesn't trap;
+/// on every other architecture it is a plain wrapper around
+/// `early_write_byte`.
+pub fn early_write_str(s: &[u8]) {
+    arch_early_ensure_serial_ready();
+    // LoongArch64-specific dependency pin: keep the call site
+    // alive so the trampoline above is never DCE'd.
+    #[cfg(target_arch = "loongarch64")]
+    {
+        let _ = ARCH_EARLY_LAST_CRMD.load(core::sync::atomic::Ordering::Relaxed);
+    }
+    for &c in s {
+        unsafe { early_write_byte(c) };
+    }
+}
+
+/// Per-arch early serial sink readiness trampoline.
+///
+/// On LoongArch64 the firmware leaves the UART MMIO region
+/// unreachable while paging is on, so we briefly clear CRMD.PG.
+/// On every other architecture the firmware already provides an
+/// identity-mapped UART window, so this is a no-op. The
+/// `#[inline(never)]` + `static mut` dependencies ensure the LTO
+/// pass cannot eliminate the call.
+#[inline(never)]
+pub fn arch_early_ensure_serial_ready() {
+    #[cfg(target_arch = "loongarch64")]
+    unsafe {
+        let prev = arch_early_ensure_serial_ready_loongarch();
+        ARCH_EARLY_LAST_CRMD.store(prev, core::sync::atomic::Ordering::Relaxed);
+    }
+    // x86_64 / aarch64 / riscv64: nothing to do.
+}
+
+#[cfg(target_arch = "loongarch64")]
+#[inline(never)]
+fn arch_early_ensure_serial_ready_loongarch() -> u64 {
+    static mut GUARD: u64 = 0;
+    unsafe {
+        let mut crmd: u64;
+        core::arch::asm!("csrrd {}, 0x0", out(reg) crmd, options(nostack));
+        let prev = crmd;
+        crmd &= !(1u64 << 4); // clear PG (direct-mapped mode)
+        GUARD = GUARD.wrapping_add(1);
+        core::arch::asm!("csrwr {}, 0x0", in(reg) crmd, options(nostack));
+        GUARD = GUARD.wrapping_add(crmd ^ prev);
+        prev
+    }
+}
+
+#[cfg(target_arch = "loongarch64")]
+static ARCH_EARLY_LAST_CRMD: core::sync::atomic::AtomicU64 =
+    core::sync::atomic::AtomicU64::new(0);
+
+/// Adopt the GOP / firmware-provided framebuffer that `winload`
+/// published in `BootInfo`. On x86_64 this initialises the LFB
+/// and the `bootvid` driver; on architectures that have no LFB
+/// (aarch64 / riscv64 / loongarch64) this is a no-op and returns
+/// `false`. Returns `true` if a framebuffer was brought up
+/// successfully, so the caller can log a status line without
+/// reaching into `FramebufferInfo` itself.
+#[cfg(target_arch = "x86_64")]
+pub fn adopt_bootinfo_framebuffer(boot: &BootInfo) -> bool {
+    if boot.framebuffer_base == 0 || boot.framebuffer_width == 0 {
+        return false;
+    }
+    let info = crate::hal::x86_64::framebuffer::init_from_bootinfo(
+        boot.framebuffer_base,
+        boot.framebuffer_width,
+        boot.framebuffer_height,
+        boot.framebuffer_stride,
+        boot.framebuffer_format,
+    );
+    crate::drivers::bootvid::init_from_framebuffer(
+        info.address,
+        info.width,
+        info.height,
+        info.pitch,
+    );
+    crate::drivers::bootvid::init();
+    true
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+pub fn adopt_bootinfo_framebuffer(_boot: &BootInfo) -> bool {
+    false
+}
+
+/// Bring up the platform's text console (VGA mirror on x86_64,
+/// log-ring on the other architectures). Idempotent across
+/// re-entry.
+pub fn init_text_console() {
+    #[cfg(target_arch = "x86_64")]
+    {
+        // gui_log is the VGA mirror; it's only defined on x86_64.
+        crate::hal::x86_64::text_console::init();
+    }
+    // The unified log-ring lives in hal::common; harmless to call
+    // on every arch.
+    crate::hal::common::text_console::init();
+}
+
+/// Initialise the platform serial port. Idempotent.
+pub fn init_serial() {
+    crate::hal::serial::init();
+}
+
+/// Mask every legacy 8259 IRQ line. On x86_64 this writes the
+/// OCW1 mask to the master/slave pair; on every other
+/// architecture the legacy PIC is absent and the per-arch
+/// interrupt controller is handled inside `arch::init_hardware()`,
+/// so this is a no-op.
+pub fn mask_legacy_pic_irqs() {
+    #[cfg(target_arch = "x86_64")]
+    crate::hal::x86_64::pic::init_and_mask_all();
+}
+
+/// Belt-and-braces mask used by the Safe-Mode polling shell:
+/// every maskable IRQ is dropped at the controller so the
+/// PIT/IRQ keyboard cannot fire while the shell owns the CPU.
+///
+/// On x86_64 we mask the legacy 8259 with the OCW1 mask
+/// `0xFF/0xFF` (all 16 lines). The other architectures mask at
+/// the platform controller inside `arch::init_hardware()` already;
+/// we still call into the per-arch helper to leave room for
+/// future per-arch masks.
+pub fn mask_all_irqs_for_polled_io() {
+    #[cfg(target_arch = "x86_64")]
+    {
+        crate::hal::x86_64::pic::write_mask(0xFFFF);
+    }
+    // The other architectures have already masked their
+    // respective controllers in `arch::init_hardware()`, so no
+    // additional action is needed here.
+}
+
+/// Configure the boot-time display mode (logo, SOS, ...).
+///
+/// `Normal`           -> standard Windows logo.
+/// `SafeModeCmd`      -> plain text mode.
+/// `SafeModeDebug`    -> SOS mode (driver-load verbose) + ntbtlog.
+pub fn configure_boot_display(mode: BootMode) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        use crate::drivers::bootvid::{set_boot_mode, display_windows_logo, BootDisplayMode};
+        match mode {
+            BootMode::Normal => {
+                set_boot_mode(BootDisplayMode::Normal);
+                display_windows_logo();
+            }
+            BootMode::SafeModeCmd => {
+                set_boot_mode(BootDisplayMode::Normal);
+            }
+            BootMode::SafeModeDebug => {
+                set_boot_mode(BootDisplayMode::Sos);
+                crate::rtl::ntbtlog::enable_boot_log();
+                crate::rtl::ntbtlog::begin_boot_sequence();
+                crate::rtl::ntbtlog::log_ntoskrnl();
+            }
+        }
+    }
+    // The non-x86_64 targets have no GOP/bootvid; the visible
+    // boot progress comes from the serial UART instead. Nothing
+    // to do here.
+}
+
+/// Initialise the platform's kernel debugger transport. On x86_64
+/// we drive the legacy 8250 COM1 kdcom stub; on the other
+/// architectures the kernel-side `kd>` shell in `servers::cmd`
+/// is the equivalent debug surface. Returns `true` if a debugger
+/// is actually attached on COM1 (x86_64 only).
+pub fn init_kernel_debugger() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        crate::drivers::kdcom::KdInitSystem();
+        let connected = crate::drivers::kdcom::KdIsConnected();
+        if !connected {
+            crate::boot_println!("No debugger connected, enabling SAC...");
+            crate::rtl::sac::enable();
+            crate::rtl::sac::start_sac_loop();
+        } else {
+            crate::boot_println!("Kernel debugger connected on COM1");
+            crate::boot_println!("Type 'g' in WinDbg to continue boot...");
+        }
+        #[cfg(target_arch = "x86_64")]
+        {
+            crate::rtl::ntbtlog::end_boot_sequence();
+        }
+        connected
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        crate::boot_println!("No kdcom transport on this arch, using kernel-side kd> shell");
+        // SAC is not wired up on the non-x86_64 arches yet; the
+        // shell in servers::cmd is the equivalent debug surface.
+        false
+    }
+}
+
+/// True if the platform has a legacy COM1 8250 port that can be
+/// used as a kdcom transport. The kernel debugger stack is only
+/// built on x86_64 today.
+pub const fn has_kdcom_transport() -> bool {
+    cfg!(target_arch = "x86_64")
+}
+
+/// True if the platform supports a user-mode `cmd.exe` style
+/// handover (Ring 0 → Ring 3 + `iretq`-style). Only x86_64 has a
+/// working user-mode ring transition today; the other arches
+/// fall back to the kernel-side CMD shell.
+pub const fn has_user_mode_hand_off() -> bool {
+    cfg!(target_arch = "x86_64")
+}
+
+/// Human-readable architecture / QEMU machine name printed in
+/// the Safe-Mode shell title pane.
+///
+/// Lives in `arch::boot` because every architecture has the same
+/// representation (the same string the operator types into QEMU's
+/// `-machine` flag), and the kernel-side shell wants to display
+/// it without an architecture-specific `cfg` block.
+pub const fn arch_name_line() -> &'static str {
+    #[cfg(target_arch = "x86_64")]
+    { "  x86_64  (QEMU: -machine pc)" }
+    #[cfg(target_arch = "aarch64")]
+    { "  aarch64  (QEMU: -machine virt)" }
+    #[cfg(target_arch = "riscv64")]
+    { "  riscv64  (QEMU: -machine virt)" }
+    #[cfg(target_arch = "loongarch64")]
+    { "  loongarch64 (QEMU: -machine virt)" }
+    #[cfg(not(any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "riscv64",
+        target_arch = "loongarch64",
+    )))]
+    { "  unknown architecture" }
+}
+
+/// True if the platform exposes a real text-mode framebuffer
+/// (VGA / bootvid on x86_64) that already shows every boot line.
+/// The Safe-Mode shell uses this to decide whether to render the
+/// scroll-back log pane.
+pub const fn has_vga_text_console() -> bool {
+    cfg!(target_arch = "x86_64")
+}
+
+/// Build the Safe-Mode `C:\Windows\System32\cmd.exe` image and
+/// transfer control to its entry point in Ring 3.
+///
+/// On every architecture where the user-mode hand-off is not
+/// implemented this returns `false` so the kernel-side CMD shell
+/// (or Safe-Mode debug) can take over.
+pub fn try_launch_cmd_exe() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        try_launch_cmd_exe_arch()
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        false
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn try_launch_cmd_exe_arch() -> bool {
+    use crate::ps::process::Eprocess;
+    boot_println!("[SAFE-CMD] try_launch_cmd_exe: A");
+    let machine: u16 = 0x8664;
+    boot_println!("[SAFE-CMD] try_launch_cmd_exe: A1 (loading cmd.exe from disk)");
+    let cmd_image: alloc::vec::Vec<u8> = match load_cmd_exe_from_disk() {
+        Ok(img) => img,
+        Err(e) => {
+            boot_println!("[SAFE-CMD] could not load cmd.exe from disk: {}", e);
+            return false;
+        }
+    };
+    boot_println!("[SAFE-CMD] try_launch_cmd_exe: A2 (loaded, len={})", cmd_image.len());
+    boot_println!("[SAFE-CMD] Loaded cmd.exe from disk: {} bytes (machine=0x{:x})",
+                  cmd_image.len(), machine);
+    if cmd_image.len() >= 0x84 && cmd_image[0] == b'M' && cmd_image[1] == b'Z' {
+        boot_println!("[SAFE-CMD] cmd.exe MZ={} PE=0x{:x}",
+                      cmd_image[0],
+                      u32::from_le_bytes([cmd_image[0x80], cmd_image[0x81],
+                                          cmd_image[0x82], cmd_image[0x83]]));
+    } else {
+        boot_println!("[SAFE-CMD] cmd.exe is not a valid PE (len={} MZ={},{})",
+                      cmd_image.len(),
+                      cmd_image.first().copied().unwrap_or(0),
+                      cmd_image.get(1).copied().unwrap_or(0));
+    }
+    boot_println!("[SAFE-CMD] try_launch_cmd_exe: B (cmd.exe image ready)");
+    let pid: u64 = 0x1F10;
+    boot_println!("[SAFE-CMD] try_launch_cmd_exe: C (calling create_user_process_with_pe)");
+    let process = match create_user_process_with_pe(&cmd_image, pid) {
+        Some(p) => p,
+        None => {
+            boot_println!("[SAFE-CMD] create_user_process_with_pe failed for cmd.exe");
+            return false;
+        }
+    };
+    boot_println!("[SAFE-CMD] try_launch_cmd_exe: D (process created)");
+    let pml4_phys = unsafe { (*process).pml4_phys };
+    let user_rip = unsafe { (*process).user_rip };
+    let user_rsp = unsafe { (*process).user_rsp };
+    let main_thread = unsafe { (*process).main_thread };
+    boot_println!("[SAFE-CMD] cmd.exe process: PML4=0x{:x} RIP=0x{:x} RSP=0x{:x}",
+                  pml4_phys, user_rip, user_rsp);
+    if !main_thread.is_null() {
+        crate::ke::scheduler::setup_bsp(main_thread);
+    } else {
+        boot_println!("[SAFE-CMD] cmd.exe process has no main_thread");
+        return false;
+    }
+    boot_println!("[SAFE-CMD] Dispatching cmd.exe into Ring 3...");
+    crate::arch::x86_64::user_entry::enter_first_user_thread(pml4_phys, user_rip, user_rsp);
+}
+
+/// Canonical Windows-7 on-disk path for the user-mode command host:
+/// `C:\Windows\System32\cmd.exe`.
+const CMD_EXE_DISK_PATH: &str = "C:\\Windows\\System32\\cmd.exe";
+
+/// Load the Safe-Mode `cmd.exe` user-mode image directly from the
+/// mounted system partition. The correct filesystem driver is selected
+/// at runtime by probing the system partition's boot sector (not by
+/// guessing from the build variant), matching how `mount_system_partition`
+/// works during `fs::init`.
+///
+/// Returns the raw file bytes wrapped in a `Vec<u8>`. The image must
+/// be a valid PE32+ — the loader will reject it otherwise.
+fn load_cmd_exe_from_disk() -> Result<alloc::vec::Vec<u8>, &'static str> {
+    boot_println!("[SAFE-CMD] load_cmd_exe_from_disk: target = {}", CMD_EXE_DISK_PATH);
+
+    // Probe the system partition to pick the right FS driver.
+    // This handles all three build variants correctly:
+    //   FAT32 build → C: is FAT32
+    //   NTFS  build → C: is NTFS
+    //   EXT4  build → C: is ext2/ext4
+    match crate::fs::detect_system_partition_type() {
+        crate::fs::FsType::Fat32 => {
+            if !crate::fs::fat32::is_mounted() {
+                boot_println!("[SAFE-CMD] System partition is FAT32 but no FAT32 fs is mounted");
+                return Err("system FAT32 not mounted");
+            }
+            let fs = match crate::fs::fat32::get_mounted_fs() {
+                Some(f) => f,
+                None => return Err("system FAT32 get_mounted_fs returned None"),
+            };
+            boot_println!("[SAFE-CMD] system partition = FAT32, trying find_file_at_path");
+            match crate::fs::fat32::find_file_at_path(fs, CMD_EXE_DISK_PATH) {
+                Some(entry) => {
+                    let cluster = entry.first_cluster();
+                    let size = entry.file_size() as usize;
+                    if size == 0 {
+                        boot_println!("[SAFE-CMD] FAT32 cmd.exe entry is zero-length");
+                        return Err("zero-length cmd.exe entry");
+                    }
+                    boot_println!("[SAFE-CMD] FAT32 cmd.exe entry: cluster={} size={}", cluster, size);
+                    let mut buf = alloc::vec![0u8; size];
+                    match crate::fs::fat32::read_file(fs, cluster, size as u32, &mut buf) {
+                        Ok(n) if n >= 2 && buf[0] == b'M' && buf[1] == b'Z' => {
+                            boot_println!("[SAFE-CMD] FAT32 cmd.exe read OK ({} bytes)", n);
+                            buf.truncate(n);
+                            return Ok(buf);
+                        }
+                        Ok(n) => {
+                            boot_println!("[SAFE-CMD] FAT32 cmd.exe {} bytes but MZ mismatch", n);
+                            return Err("FAT32 cmd.exe MZ mismatch");
+                        }
+                        Err(_) => {
+                            boot_println!("[SAFE-CMD] FAT32 read_file returned Err");
+                            return Err("FAT32 read_file failed");
+                        }
+                    }
+                }
+                None => {
+                    boot_println!("[SAFE-CMD] FAT32 find_file_at_path returned None for cmd.exe");
+                    return Err("cmd.exe not found on FAT32 system");
+                }
+            }
+        }
+        crate::fs::FsType::Ntfs => {
+            if !crate::fs::ntfs::is_mounted() {
+                boot_println!("[SAFE-CMD] System partition is NTFS but not mounted");
+                return Err("system NTFS not mounted");
+            }
+            boot_println!("[SAFE-CMD] system partition = NTFS");
+            return try_load_cmd_exe_from_ntfs();
+        }
+        crate::fs::FsType::Ext2 | crate::fs::FsType::Ext3 | crate::fs::FsType::Ext4 => {
+            if !crate::fs::ext2::is_mounted() {
+                boot_println!("[SAFE-CMD] System partition is {:?} but not mounted",
+                    crate::fs::detect_system_partition_type());
+                return Err("system ext2 not mounted");
+            }
+            let fs = match crate::fs::ext2::get_mounted_fs() {
+                Some(f) => f,
+                None => return Err("system ext2 get_mounted_fs returned None"),
+            };
+            boot_println!("[SAFE-CMD] system partition = ext2/ext3/ext4, trying read_whole_file");
+            match crate::fs::ext2::read_whole_file(fs, CMD_EXE_DISK_PATH) {
+                Ok(buf) if buf.len() >= 2 && buf[0] == b'M' && buf[1] == b'Z' => {
+                    boot_println!("[SAFE-CMD] ext2 cmd.exe read OK ({} bytes)", buf.len());
+                    return Ok(buf);
+                }
+                Ok(buf) => {
+                    boot_println!("[SAFE-CMD] ext2 cmd.exe {} bytes but MZ mismatch", buf.len());
+                    return Err("ext2 cmd.exe MZ mismatch");
+                }
+                Err(e) => {
+                    boot_println!("[SAFE-CMD] ext2 read_whole_file failed: {}", e);
+                    return Err("ext2 cmd.exe read failed");
+                }
+            }
+        }
+        crate::fs::FsType::Unknown => {
+            boot_println!("[SAFE-CMD] system partition type is unknown");
+            Err("system partition type unknown")
+        }
+    }
+}
+
+/// Helper: try to load cmd.exe from the NTFS system partition.
+fn try_load_cmd_exe_from_ntfs() -> Result<alloc::vec::Vec<u8>, &'static str> {
+    if !crate::fs::ntfs::is_mounted() {
+        boot_println!("[SAFE-CMD] NTFS not mounted; cannot load cmd.exe");
+        return Err("no mounted filesystem contains cmd.exe");
+    }
+    boot_println!("[SAFE-CMD] load_cmd_exe_from_disk: NTFS mounted, opening cmd.exe");
+    let fs = match crate::fs::ntfs::get_mounted_fs() {
+        Some(fs) => fs,
+        None => {
+            boot_println!("[SAFE-CMD] NTFS.is_mounted is true but get_mounted_fs returned None");
+            return Err("NTFS handle unavailable");
+        }
+    };
+    // NTFS expects UTF-16 path components; convert "C:\Windows\System32\cmd.exe".
+    let path_utf16: alloc::vec::Vec<u16> = CMD_EXE_DISK_PATH
+        .encode_utf16()
+        .chain(core::iter::once(0))
+        .collect();
+    let mut handle = match crate::fs::ntfs::open_file(fs, &path_utf16, None) {
+        Some(h) => h,
+        None => {
+            boot_println!("[SAFE-CMD] NTFS open_file returned None for cmd.exe");
+            return Err("NTFS open_file failed");
+        }
+    };
+    // Read in up to 64 KiB chunks until EOF. The cmd.exe stub we
+    // ship is well under this size; if a real cmd.exe is added
+    // later the loop will simply take more iterations.
+    let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        match crate::fs::ntfs::read_file(fs, &mut handle, &mut chunk) {
+            Ok(0) => break,
+            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+            Err(_) => {
+                boot_println!("[SAFE-CMD] NTFS read_file for cmd.exe returned Err");
+                return Err("NTFS read_file failed");
+            }
+        }
+    }
+    if buf.len() < 2 || buf[0] != b'M' || buf[1] != b'Z' {
+        boot_println!(
+            "[SAFE-CMD] NTFS cmd.exe read {} bytes but MZ mismatch",
+            buf.len()
+        );
+        return Err("NTFS cmd.exe is not a valid PE image");
+    }
+    boot_println!("[SAFE-CMD] NTFS cmd.exe read OK ({} bytes)", buf.len());
+    Ok(buf)
+}
+
+/// Create a user-mode process and load a PE image into its per-process
+/// PML4 in one step.
+///
+/// On x86_64 the implementation actually drives the full PE-loader path
+/// (`loader::load_into_user_address_space`). On the other
+/// architectures PE loading is not implemented yet, so this returns
+/// `None` — which is the contract `try_launch_cmd_exe` already
+/// expects.
+#[allow(dead_code)]
+pub fn create_user_process_with_pe(
+    image: &[u8],
+    pid: u64,
+) -> Option<*mut crate::ps::process::Eprocess> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        create_user_process_with_pe_x86_64(image, pid)
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = (image, pid);
+        None
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn create_user_process_with_pe_x86_64(
+    image: &[u8],
+    pid: u64,
+) -> Option<*mut crate::ps::process::Eprocess> {
+    boot_println!("[SAFE-CMD] create_user_process_with_pe: A (calling create_user_process)");
+    let process = match crate::ps::process::create_user_process(image, pid, None) {
+        Some(p) => p as *mut crate::ps::process::Eprocess,
+        None => {
+            boot_println!("[SAFE-CMD] create_user_process returned None");
+            return None;
+        }
+    };
+    boot_println!("[SAFE-CMD] create_user_process_with_pe: B (process created)");
+    let pml4_phys = unsafe { (*process).pml4_phys };
+    if pml4_phys == 0 {
+        boot_println!("[SAFE-CMD] create_user_process_with_pe: pml4_phys=0");
+        return None;
+    }
+    boot_println!("[SAFE-CMD] create_user_process_with_pe: C (pml4=0x{:x}, calling load_into_user_address_space)", pml4_phys);
+    let mapping = match crate::loader::load_into_user_address_space(pml4_phys, image) {
+        Some(m) => m,
+        None => {
+            boot_println!("[SAFE-CMD] load_into_user_address_space returned None");
+            return None;
+        }
+    };
+    boot_println!("[SAFE-CMD] create_user_process_with_pe: D (PE loaded, entry=0x{:x})", mapping.entry_point);
+    unsafe {
+        (*process).user_rip = mapping.entry_point;
+        (*process).user_image_base = mapping.image_base;
+        (*process).user_image_size = mapping.image_size;
+    }
+    boot_println!("[SAFE-CMD] PE loaded: image_base=0x{:x} entry=0x{:x} size=0x{:x}",
+                  mapping.image_base, mapping.entry_point, mapping.image_size);
+    Some(process)
+}
+
+/// First user thread bring-up.
+///
+/// Two bring-up modes (selected at compile time by the constants
+/// below):
+///   * `RING3_PE_MODE` — load the system_image-generated `smss.exe`
+///     (Milestone B) and execute it. This is the more realistic
+///     path because it goes through the PE loader.
+///   * `RING3_STUB_MODE` — load the hand-assembled minimal ring3
+///     stub at `USER_ENTRY_RIP` (Milestone A). This is the
+///     absolute minimum validation that the ring-transition path
+///     works.
+///
+/// On non-x86_64 architectures the function never returns; it
+/// prints a message and parks the CPU because the user-mode ring
+/// transition has not been implemented for those targets yet.
+pub fn enter_first_user_thread() -> ! {
+    #[cfg(target_arch = "x86_64")]
+    {
+        enter_first_user_thread_x86_64()
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        boot_println!("[enter_first_user_thread] not implemented for this architecture");
+        loop { crate::arch::halt(); }
+    }
+}
+
+/// Set to `true` to use the Milestone B path (real PE loading).
+/// Set to `false` to use the Milestone A path (hand-assembled stub).
+const RING3_PE_MODE: bool = false;
+/// Set to `true` to fall back to the Milestone A stub if PE
+/// loading fails for any reason (this is the safe default).
+const RING3_STUB_FALLBACK: bool = true;
+
+#[cfg(target_arch = "x86_64")]
+fn enter_first_user_thread_x86_64() -> ! {
+    use crate::ps::process::Eprocess;
+    boot_println!("");
+    boot_println!("========================================");
+    boot_println!("FIRST USER THREAD BRING-UP");
+    boot_println!("========================================");
+
+    let mut process: *mut Eprocess = core::ptr::null_mut();
+    if RING3_PE_MODE {
+        let machine: u16 = 0x8664;
+        let smss_image: alloc::vec::Vec<u8> =
+            crate::system_image::build_smss_for_machine(machine);
+        boot_println!("Built smss.exe: {} bytes (machine=0x{:x})",
+                      smss_image.len(), machine);
+        process = create_user_process_with_pe(&smss_image, 0x1F01)
+            .unwrap_or(core::ptr::null_mut());
+        let _second = create_user_process_with_pe(&smss_image, 0x1F02)
+            .unwrap_or(core::ptr::null_mut());
+        boot_println!("Created {} ring3 process(es)",
+                      if _second.is_null() { 1 } else { 2 });
+    }
+    if process.is_null() && RING3_STUB_FALLBACK {
+        boot_println!("Creating ring3 stub process");
+        let pid: u64 = 0x1F00;
+        let image: &[u8] = b"\\SystemRoot\\System32\\ring3_stub.exe";
+        let p = crate::ps::process::create_user_process(
+            image,
+            pid,
+            Some(crate::userspace::minimal_stub::USER_ENTRY_RIP),
+        )
+        .unwrap_or_else(|| {
+            boot_println!("FATAL: create_user_process (stub) returned None");
+            loop { crate::arch::halt(); }
+        });
+        process = p as *mut Eprocess;
+        if !crate::userspace::minimal_stub::install_into_pml4(unsafe { (*process).pml4_phys }) {
+            boot_println!("FATAL: install_into_pml4 failed");
+            loop { crate::arch::halt(); }
+        }
+    }
+    if process.is_null() {
+        boot_println!("FATAL: no user process was created");
+        loop { crate::arch::halt(); }
+    }
+
+    let pml4_phys = unsafe { (*process).pml4_phys };
+    let user_rip = unsafe { (*process).user_rip };
+    let user_rsp = unsafe { (*process).user_rsp };
+    let main_thread = unsafe { (*process).main_thread };
+    boot_println!("User process: PML4=0x{:x} RIP=0x{:x} RSP=0x{:x}",
+                  pml4_phys, user_rip, user_rsp);
+
+    if !main_thread.is_null() {
+        crate::ke::scheduler::setup_bsp(main_thread);
+        let cur = crate::ps::thread::KeGetCurrentEthread();
+        boot_println!("setup_bsp done; KeGetCurrentEthread=0x{:x}", cur as u64);
+    } else {
+        boot_println!("WARNING: process has no main_thread");
+    }
+
+    boot_println!("Dispatching into Ring 3...");
+    crate::arch::x86_64::user_entry::enter_first_user_thread(pml4_phys, user_rip, user_rsp);
+}
+

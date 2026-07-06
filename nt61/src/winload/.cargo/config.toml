@@ -1,0 +1,73 @@
+# NT6.1.7601 Winload (`winload.efi`) — cross-linker configuration.
+#
+# The boot manager (`nt61-boot`) and the OS loader (`nt61-winload`)
+# share the same architecture-target build path: both target
+# `riscv64gc-unknown-none-elf` (and `loongarch64-unknown-none`),
+# neither of which has an upstream `*-unknown-uefi` Rust target,
+# so we cross-link with the GCC binutils toolchain.
+#
+# `boot/.cargo/config.toml` already configures this for
+# `nt61-boot`. This file mirrors the same configuration for
+# `nt61-winload` because Cargo only honours `.cargo/config.toml`
+# from the *package directory* (and its parent) — not from a
+# sibling package's directory.
+#
+# The `linker-rv64.ld` / `linker-la64.ld` scripts are shared with
+# `nt61-boot`; their `.text.efi_main` / `.text` / `.data` section
+# layout and the `--entry=efi_main` directive are identical for
+# the bootloader and the OS loader.
+
+[target.x86_64-unknown-uefi]
+linker = "rust-lld"
+rustflags = [
+    "-C", "link-arg=--script=/home/mobtgzhang/github2/NT6.1.7601/nt61/src/boot/linker.ld",
+    "-C", "link-arg=--entry=efi_main",
+    "-C", "panic=abort",
+]
+
+[target.aarch64-unknown-uefi]
+linker = "rust-lld"
+rustflags = [
+    "-C", "link-arg=--entry=efi_main",
+    "-C", "panic=abort",
+]
+
+[target.loongarch64-unknown-none]
+linker = "loongarch64-linux-gnu-ld"
+rustflags = [
+    # Use the per-package linker script (BASE_ADDRESS=0x90000000) so the
+    # loader can satisfy the image at its preferred base without
+    # applying relocations — see `linker-la64.ld` for the rationale.
+    "-C", "link-arg=-T/home/mobtgzhang/github2/NT6.1.7601/nt61/src/winload/linker-la64.ld",
+    "-C", "link-arg=--entry=efi_main",
+    "-C", "link-arg=-no-gc-sections",
+    "-C", "link-arg=-nostdlib",
+    "-C", "link-arg=-L/home/mobtgzhang/github2/NT6.1.7601/nt61/tools/loongarch64/lib",
+    "-C", "panic=abort",
+]  
+
+# RISC-V64 — same upstream-target gap as LoongArch64.
+# Cross-link with `riscv64-linux-gnu-ld` + `linker-rv64.ld`. The
+# post-link wrapper (`riscv64-linux-gnu-objcopy -O pei-riscv64-little`)
+# lives in `tools/src/fs/build.rs`.
+#
+# `-nostdlib` keeps the linker from looking for `-lgcc` (the
+# GCC-compiled CRT files), which is not installed for our
+# `riscv64gc-unknown-none-elf` Rust target on Debian/Ubuntu.
+# Rust's `compiler-builtins` rlib already provides the CPU
+# helpers (memcpy, memset, …), so the resulting EFI image is
+# self-contained.
+[target.riscv64gc-unknown-none-elf]
+linker = "riscv64-linux-gnu-ld"
+rustflags = [
+    "-C", "link-arg=-T/home/mobtgzhang/github2/NT6.1.7601/nt61/src/boot/linker-rv64.ld",
+    "-C", "link-arg=--entry=efi_main",
+    "-C", "link-arg=-no-gc-sections",
+    # Add the cross GCC's library directory so the linker can
+    # locate `libgcc.a` (referenced as `-lgcc` by rustc when
+    # resolving compiler-builtins on riscv64). Without this,
+    # `ld` complains `cannot find -lgcc`.
+    "-C", "link-arg=-L/usr/lib/gcc-cross/riscv64-linux-gnu/13",
+    "-C", "link-arg=-L/usr/riscv64-linux-gnu/lib",
+    "-C", "panic=abort",
+]  

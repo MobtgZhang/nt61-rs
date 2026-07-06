@@ -1,0 +1,19 @@
+[package]
+name = "nt61-boot"
+version = "0.1.0"
+edition = "2021"
+description = "NT6.1.7601 UEFI Boot Manager"
+authors = ["NT6.1.7601 Team"]
+
+[dependencies]
+uefi = { version = "0.37.0", features = ["alloc", "logger", "global_allocator", "panic_handler"] }
+bitflags = "2.13.0"
+heapless = "0.9.3"
+linked_list_allocator = "0.10.6"
+ttf-parser = { version = "0.25", default-features = false, features = ["no-std-float"] }
+
+[[bin]]
+name = "nt61-boot"
+path = "src/main.rs"
+
+# Profile settings are inherited from the workspace root.

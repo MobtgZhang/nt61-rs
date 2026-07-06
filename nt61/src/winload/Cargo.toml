@@ -1,0 +1,36 @@
+[package]
+name = "nt61-winload"
+version = "0.1.0"
+edition = "2021"
+description = "NT6.1.7601 UEFI OS Loader — winload.efi"
+authors = ["NT6.1.7601 Team"]
+publish = false
+
+[dependencies]
+uefi = { version = "0.37.0", features = ["alloc", "logger", "global_allocator", "panic_handler"] }
+uefi-raw = "0.14.0"
+
+# The OS Loader (`winload.efi`) needs the same architecture
+# features as `kernel_main` because the kernel-jump trampolines
+# in `winload/src/arch/` call into the kernel's `kernel_main`
+# symbol. We therefore enable the matching `nt61` feature per
+# target triple. The `alloc` feature is required because
+# `kernel_main` uses `Vec` / `String` for the registry hive /
+# boot-driver descriptors it consumes from `BootInfo`.
+[target.'cfg(target_arch = "x86_64")'.dependencies]
+nt61 = { path = "../..", default-features = false, features = ["x86_64"] }
+
+[target.'cfg(target_arch = "aarch64")'.dependencies]
+nt61 = { path = "../..", default-features = false, features = ["aarch64"] }
+
+[target.'cfg(target_arch = "riscv64")'.dependencies]
+nt61 = { path = "../..", default-features = false, features = ["riscv64"] }
+
+[target.'cfg(target_arch = "loongarch64")'.dependencies]
+nt61 = { path = "../..", default-features = false, features = ["loongarch64"] }
+
+[[bin]]
+name = "nt61-winload"
+path = "src/main.rs"
+
+# Profile settings are inherited from the workspace root.

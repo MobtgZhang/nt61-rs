@@ -1,0 +1,128 @@
+[workspace]
+members = [
+    "src/boot",
+    "src/winload",
+    "tools",
+]
+
+resolver = "2"
+
+[package]
+name = "nt61"
+version = "0.1.0"
+edition = "2021"
+authors = ["NT6.1.7601 Team"]
+description = "Windows NT 6.1 (Windows 7) compatible operating system kernel written in Rust"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "nt61"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nt61-kernel"
+path = "src/main.rs"
+required-features = ["x86_64"]
+
+[features]
+default = ["x86_64", "alloc"]
+std = []
+uefi_boot = []
+bios_boot = []
+# When building the multiboot/ELF `nt61-kernel` binary, enable this
+# feature so the library crate's `#[panic_handler]` is gated off
+# (the binary's own `#[panic_handler]` in `src/main.rs` takes over).
+binary_panic = []
+x86_64 = ["dep:x86_64", "dep:pic8259"]
+aarch64 = []
+loongarch64 = []
+riscv64 = []
+smp = []
+acpi = ["dep:acpi"]
+debug = []
+alloc = ["dep:linked_list_allocator", "dep:hashbrown"]
+# Binary Translation Layer (BTL) — non-default while the framework
+# stabilises; flipping this on enables the heavy modules under
+# `arch::aarch64::btl::decoder`, `ir`, `codegen`, `state` and
+# `syscall_bridge`.
+btl = []
+# Gate for the LoongArch64 Loongson GPU driver (`drivers::video::loongson`).
+# Disabled by default while the LSDC type mismatches are being sorted
+# out; enable via `--features loongson_gpu` on a loongarch64 build.
+loongson_gpu = []
+# Per-architecture helper gates (used by `cfgs` in arch-specific
+# code rather than being Cargo features themselves).
+
+# Logging verbosity — mutually exclusive; pick one.
+# In dev builds: log_level_debug (verbose). In release: log_level_warn (quiet).
+# Usage: cargo build --features log_level_debug
+log_level_error = []    # Only ERROR-level messages
+log_level_warn  = ["log_level_error"]   # WARN and ERROR
+log_level_info  = ["log_level_warn"]    # INFO, WARN, ERROR (default in dev)
+log_level_debug = ["log_level_info"]    # DEBUG, INFO, WARN, ERROR
+
+# Profile settings centralised at the workspace level so that
+# nt61-boot / nt61-winload do not produce "profiles for the non
+# root package will be ignored" warnings.
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.dev]
+opt-level = 0
+debug = false
+# Disable unwinding in dev too: the kernel binary has no `std`, so
+# unwinding is impossible without `-Zbuild-std`. With
+# `panic = "abort"` our `#[panic_handler]` in `main.rs` is still
+# installed and called; `panic = "abort"` only changes the *strategy*
+# the compiler emits at each `panic!()` site (it emits a direct
+# abort call rather than unwinding).
+panic = "abort"
+
+# UEFI boot build uses a separate profile so that the
+# `panic = "abort"` requirement of the UEFI toolchain (no unwinding
+# without `std`) does not affect the kernel build.
+[profile.uefi-dev]
+inherits = "dev"
+opt-level = 0
+debug = false
+panic = "abort"
+
+# -----------------------------------------------------------------------------
+# Per-target rustflags for cross-compilation. These blocks are only
+# honoured when the matching target triple is actually built (via
+# `cargo build --target=...`); on a host build they are reported as
+# "unused manifest key" warnings because cargo cannot resolve them
+# against the host triple. Commented out by default — uncomment when
+# performing the corresponding cross-build.
+# -----------------------------------------------------------------------------
+
+# [target.aarch64-unknown-none]
+# rustflags = ["-C", "target-cpu=generic"]
+
+# [target.riscv64gc-unknown-none-elf]
+# rustflags = ["-C", "target-cpu=generic"]
+
+# [target.loongarch64-unknown-none]
+# rustflags = ["-C", "target-cpu=generic"]
+
+
+[dependencies]
+uefi = { version = "0.27", optional = true }
+linked_list_allocator = { version = "0.10", optional = true }
+spin = "0.9"
+bitflags = "2.3"
+x86_64 = { version = "0.15", optional = true, default-features = false }
+acpi = { version = "6.0", optional = true, default-features = false }
+pic8259 = { version = "0.10", optional = true }
+uart_16550 = "0.2"
+hashbrown = { version = "0.14", optional = true }
+talc = { version = "3.0", optional = true }
+
+[dev-dependencies]
+tempfile = "3.8"
+quickcheck = "1.0"
+proptest = "1.2"

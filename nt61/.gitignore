@@ -1,0 +1,13 @@
+target/
+build/
+*.lock
+*.rlib
+*.exe
+*.iso
+*.img
+isodir/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

@@ -1,0 +1,35 @@
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Local scripts (do not upload)
+push.sh
+*.local
+
+# Build artifacts
+target/
+build/
+*.iso
+*.img
+*.efi
+isodir/
+*.o
+*.a
+*.so
+*.d
+*.profraw
+
+# Rust
+Cargo.lock
+*.rs.bk
+*.pdb
+
+# Mutants testing
+**/mutants.out*/
