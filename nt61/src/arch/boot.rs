@@ -327,33 +327,51 @@ pub fn try_launch_cmd_exe() -> bool {
 #[cfg(target_arch = "x86_64")]
 fn try_launch_cmd_exe_arch() -> bool {
     use crate::ps::process::Eprocess;
-    boot_println!("[SAFE-CMD] try_launch_cmd_exe: A");
-    let machine: u16 = 0x8664;
-    boot_println!("[SAFE-CMD] try_launch_cmd_exe: A1 (loading cmd.exe from disk)");
-    let cmd_image: alloc::vec::Vec<u8> = match load_cmd_exe_from_disk() {
+    
+    boot_println!("[SAFE-CMD] ============================================");
+    boot_println!("[SAFE-CMD] Windows 7 Boot Sequence (No Desktop Mode)");
+    boot_println!("[SAFE-CMD] ============================================");
+    
+    // Phase 1: Initialize Session Manager
+    boot_println!("[SAFE-CMD] Phase 1: Initializing Session Manager...");
+    crate::servers::smss::init();
+    
+    // Phase 2: Create sessions
+    boot_println!("[SAFE-CMD] Phase 2: Creating Sessions...");
+    crate::servers::smss::create_session_0();
+    crate::servers::smss::create_session_1();
+    
+    // Phase 3: Start subsystems (CSRSS for Session 0 and Session 1)
+    boot_println!("[SAFE-CMD] Phase 3: Starting Subsystems...");
+    if let Err(e) = launch_csrss_session_0() {
+        boot_println!("[SAFE-CMD] Warning: Failed to launch CSRSS Session 0: {:?}", e);
+    }
+    if let Err(e) = launch_csrss_session_1() {
+        boot_println!("[SAFE-CMD] Warning: Failed to launch CSRSS Session 1: {:?}", e);
+    }
+    
+    // Phase 4: Start WinInit (which starts Services and LSASS)
+    boot_println!("[SAFE-CMD] Phase 4: Starting WinInit...");
+    if let Err(e) = launch_wininit_exe() {
+        boot_println!("[SAFE-CMD] Warning: Failed to launch wininit.exe: {:?}", e);
+    }
+    
+    boot_println!("[SAFE-CMD] ============================================");
+    boot_println!("[SAFE-CMD] Boot sequence complete, launching CMD...");
+    boot_println!("[SAFE-CMD] ============================================");
+    
+    // Now load and launch cmd.exe
+    boot_println!("[SAFE-CMD] Loading cmd.exe from disk...");
+    let cmd_image: core::mem::ManuallyDrop<alloc::vec::Vec<u8>> = match load_cmd_exe_from_disk() {
         Ok(img) => img,
         Err(e) => {
             boot_println!("[SAFE-CMD] could not load cmd.exe from disk: {}", e);
             return false;
         }
     };
-    boot_println!("[SAFE-CMD] try_launch_cmd_exe: A2 (loaded, len={})", cmd_image.len());
-    boot_println!("[SAFE-CMD] Loaded cmd.exe from disk: {} bytes (machine=0x{:x})",
-                  cmd_image.len(), machine);
-    if cmd_image.len() >= 0x84 && cmd_image[0] == b'M' && cmd_image[1] == b'Z' {
-        boot_println!("[SAFE-CMD] cmd.exe MZ={} PE=0x{:x}",
-                      cmd_image[0],
-                      u32::from_le_bytes([cmd_image[0x80], cmd_image[0x81],
-                                          cmd_image[0x82], cmd_image[0x83]]));
-    } else {
-        boot_println!("[SAFE-CMD] cmd.exe is not a valid PE (len={} MZ={},{})",
-                      cmd_image.len(),
-                      cmd_image.first().copied().unwrap_or(0),
-                      cmd_image.get(1).copied().unwrap_or(0));
-    }
-    boot_println!("[SAFE-CMD] try_launch_cmd_exe: B (cmd.exe image ready)");
+    boot_println!("[SAFE-CMD] Loaded cmd.exe: {} bytes", cmd_image.len());
+    
     let pid: u64 = 0x1F10;
-    boot_println!("[SAFE-CMD] try_launch_cmd_exe: C (calling create_user_process_with_pe)");
     let process = match create_user_process_with_pe(&cmd_image, pid) {
         Some(p) => p,
         None => {
@@ -361,21 +379,80 @@ fn try_launch_cmd_exe_arch() -> bool {
             return false;
         }
     };
-    boot_println!("[SAFE-CMD] try_launch_cmd_exe: D (process created)");
+    
     let pml4_phys = unsafe { (*process).pml4_phys };
     let user_rip = unsafe { (*process).user_rip };
     let user_rsp = unsafe { (*process).user_rsp };
     let main_thread = unsafe { (*process).main_thread };
+    
     boot_println!("[SAFE-CMD] cmd.exe process: PML4=0x{:x} RIP=0x{:x} RSP=0x{:x}",
                   pml4_phys, user_rip, user_rsp);
+                  
     if !main_thread.is_null() {
         crate::ke::scheduler::setup_bsp(main_thread);
     } else {
         boot_println!("[SAFE-CMD] cmd.exe process has no main_thread");
         return false;
     }
+    
     boot_println!("[SAFE-CMD] Dispatching cmd.exe into Ring 3...");
     crate::arch::x86_64::user_entry::enter_first_user_thread(pml4_phys, user_rip, user_rsp);
+}
+
+/// Launch CSRSS for Session 0
+#[cfg(target_arch = "x86_64")]
+fn launch_csrss_session_0() -> Result<crate::servers::smss::SystemExeLoadResult, crate::servers::smss::ExeLoadError> {
+    boot_println!("[SAFE-CMD] Launching CSRSS for Session 0...");
+    crate::servers::smss::load_and_create_process(
+        "C:\\Windows\\System32\\csrss.exe",
+        "csrss.exe",
+        0,
+        0x200,
+    )
+}
+
+/// Launch CSRSS for Session 1
+#[cfg(target_arch = "x86_64")]
+fn launch_csrss_session_1() -> Result<crate::servers::smss::SystemExeLoadResult, crate::servers::smss::ExeLoadError> {
+    boot_println!("[SAFE-CMD] Launching CSRSS for Session 1...");
+    crate::servers::smss::load_and_create_process(
+        "C:\\Windows\\System32\\csrss.exe",
+        "csrss.exe",
+        1,
+        0x300,
+    )
+}
+
+/// Launch wininit.exe
+#[cfg(target_arch = "x86_64")]
+fn launch_wininit_exe() -> Result<crate::servers::smss::SystemExeLoadResult, crate::servers::smss::ExeLoadError> {
+    boot_println!("[SAFE-CMD] Launching wininit.exe...");
+    let result = crate::servers::smss::load_and_create_process(
+        "C:\\Windows\\System32\\wininit.exe",
+        "wininit.exe",
+        0,
+        0x400,
+    )?;
+    
+    // wininit.exe should start services.exe and lsass.exe
+    // We start them directly from here to ensure they're launched
+    boot_println!("[SAFE-CMD] Launching services.exe...");
+    let _ = crate::servers::smss::load_and_create_process(
+        "C:\\Windows\\System32\\services.exe",
+        "services.exe",
+        0,
+        0x500,
+    );
+    
+    boot_println!("[SAFE-CMD] Launching lsass.exe...");
+    let _ = crate::servers::smss::load_and_create_process(
+        "C:\\Windows\\System32\\lsass.exe",
+        "lsass.exe",
+        0,
+        0x600,
+    );
+    
+    Ok(result)
 }
 
 /// Canonical Windows-7 on-disk path for the user-mode command host:
@@ -390,7 +467,7 @@ const CMD_EXE_DISK_PATH: &str = "C:\\Windows\\System32\\cmd.exe";
 ///
 /// Returns the raw file bytes wrapped in a `Vec<u8>`. The image must
 /// be a valid PE32+ — the loader will reject it otherwise.
-fn load_cmd_exe_from_disk() -> Result<alloc::vec::Vec<u8>, &'static str> {
+fn load_cmd_exe_from_disk() -> Result<core::mem::ManuallyDrop<alloc::vec::Vec<u8>>, &'static str> {
     boot_println!("[SAFE-CMD] load_cmd_exe_from_disk: target = {}", CMD_EXE_DISK_PATH);
 
     // Probe the system partition to pick the right FS driver.
@@ -408,38 +485,66 @@ fn load_cmd_exe_from_disk() -> Result<alloc::vec::Vec<u8>, &'static str> {
                 Some(f) => f,
                 None => return Err("system FAT32 get_mounted_fs returned None"),
             };
+            // CRITICAL: make sure FAT32 sector reads target the system
+            // partition mirror. Without this, FAT32 read_sector would
+            // fall back to the ESP mirror (or to nothing) and the
+            // directory walk would silently miss cmd.exe.
+            let prev_active = crate::fs::active_partition_ramdisk();
+            if let Some(sys_base) = crate::fs::sys_mirror_address() {
+                crate::fs::set_active_partition_ramdisk(Some(sys_base));
+            }
             boot_println!("[SAFE-CMD] system partition = FAT32, trying find_file_at_path");
-            match crate::fs::fat32::find_file_at_path(fs, CMD_EXE_DISK_PATH) {
+            let cmd_result = match crate::fs::fat32::find_file_at_path(fs, CMD_EXE_DISK_PATH) {
                 Some(entry) => {
                     let cluster = entry.first_cluster();
                     let size = entry.file_size() as usize;
                     if size == 0 {
                         boot_println!("[SAFE-CMD] FAT32 cmd.exe entry is zero-length");
-                        return Err("zero-length cmd.exe entry");
-                    }
-                    boot_println!("[SAFE-CMD] FAT32 cmd.exe entry: cluster={} size={}", cluster, size);
-                    let mut buf = alloc::vec![0u8; size];
-                    match crate::fs::fat32::read_file(fs, cluster, size as u32, &mut buf) {
-                        Ok(n) if n >= 2 && buf[0] == b'M' && buf[1] == b'Z' => {
-                            boot_println!("[SAFE-CMD] FAT32 cmd.exe read OK ({} bytes)", n);
-                            buf.truncate(n);
-                            return Ok(buf);
+                        Err("zero-length cmd.exe entry")
+                    } else {
+                        boot_println!("[SAFE-CMD] FAT32 cmd.exe entry: cluster={} size={}", cluster, size);
+                        // Allocate via the kernel pool instead of KernelHeap so
+                        // we side-step the same SIMD-alignment / Stack-Fault
+                        // class of issues we hit with the system exes. We
+                        // reuse the trick from `read_pe_from_fat32_impl`:
+                        // grab a pool buffer, hand it to the FAT32 read
+                        // routine, and return it wrapped in `ManuallyDrop`
+                        // so the kernel heap never sees a free() for it.
+                        let ptr = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, size);
+                        if ptr.is_null() {
+                            boot_println!("[SAFE-CMD] pool alloc failed for cmd.exe ({} bytes)", size);
+                            return Err("pool alloc failed");
                         }
-                        Ok(n) => {
-                            boot_println!("[SAFE-CMD] FAT32 cmd.exe {} bytes but MZ mismatch", n);
-                            return Err("FAT32 cmd.exe MZ mismatch");
-                        }
-                        Err(_) => {
-                            boot_println!("[SAFE-CMD] FAT32 read_file returned Err");
-                            return Err("FAT32 read_file failed");
+                        let mut buf_slice = unsafe { core::slice::from_raw_parts_mut(ptr, size) };
+                        match crate::fs::fat32::read_file(fs, cluster, size as u32, &mut buf_slice) {
+                            Ok(n) if n >= 2 && buf_slice[0] == b'M' && buf_slice[1] == b'Z' => {
+                                boot_println!("[SAFE-CMD] FAT32 cmd.exe read OK ({} bytes)", n);
+                                let mut v = unsafe {
+                                    alloc::vec::Vec::from_raw_parts(ptr, n, size)
+                                };
+                                v.truncate(n);
+                                return Ok(core::mem::ManuallyDrop::new(v));
+                            }
+                            Ok(n) => {
+                                boot_println!("[SAFE-CMD] FAT32 cmd.exe {} bytes but MZ mismatch", n);
+                                return Err("FAT32 cmd.exe MZ mismatch");
+                            }
+                            Err(_) => {
+                                boot_println!("[SAFE-CMD] FAT32 read_file returned Err");
+                                return Err("FAT32 read_file failed");
+                            }
                         }
                     }
                 }
                 None => {
                     boot_println!("[SAFE-CMD] FAT32 find_file_at_path returned None for cmd.exe");
-                    return Err("cmd.exe not found on FAT32 system");
+                    Err("cmd.exe not found on FAT32 system")
                 }
-            }
+            };
+            // Restore the previous active partition so subsequent
+            // callers don't accidentally keep using the system mirror.
+            crate::fs::set_active_partition_ramdisk(prev_active);
+            return cmd_result;
         }
         crate::fs::FsType::Ntfs => {
             if !crate::fs::ntfs::is_mounted() {
@@ -463,7 +568,7 @@ fn load_cmd_exe_from_disk() -> Result<alloc::vec::Vec<u8>, &'static str> {
             match crate::fs::ext2::read_whole_file(fs, CMD_EXE_DISK_PATH) {
                 Ok(buf) if buf.len() >= 2 && buf[0] == b'M' && buf[1] == b'Z' => {
                     boot_println!("[SAFE-CMD] ext2 cmd.exe read OK ({} bytes)", buf.len());
-                    return Ok(buf);
+                    return Ok(core::mem::ManuallyDrop::new(buf));
                 }
                 Ok(buf) => {
                     boot_println!("[SAFE-CMD] ext2 cmd.exe {} bytes but MZ mismatch", buf.len());
@@ -483,7 +588,7 @@ fn load_cmd_exe_from_disk() -> Result<alloc::vec::Vec<u8>, &'static str> {
 }
 
 /// Helper: try to load cmd.exe from the NTFS system partition.
-fn try_load_cmd_exe_from_ntfs() -> Result<alloc::vec::Vec<u8>, &'static str> {
+fn try_load_cmd_exe_from_ntfs() -> Result<core::mem::ManuallyDrop<alloc::vec::Vec<u8>>, &'static str> {
     if !crate::fs::ntfs::is_mounted() {
         boot_println!("[SAFE-CMD] NTFS not mounted; cannot load cmd.exe");
         return Err("no mounted filesystem contains cmd.exe");
@@ -531,7 +636,7 @@ fn try_load_cmd_exe_from_ntfs() -> Result<alloc::vec::Vec<u8>, &'static str> {
         return Err("NTFS cmd.exe is not a valid PE image");
     }
     boot_println!("[SAFE-CMD] NTFS cmd.exe read OK ({} bytes)", buf.len());
-    Ok(buf)
+    Ok(core::mem::ManuallyDrop::new(buf))
 }
 
 /// Create a user-mode process and load a PE image into its per-process

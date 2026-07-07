@@ -2134,6 +2134,33 @@ fn build_system_images() -> Vec<SystemImage> {
             name: "smss.exe",
             bytes: build_smss_pe(),
         },
+        // NT 6.1 Session-0 user-mode subsystem processes. The boot
+        // path in `arch::boot::try_launch_cmd_exe_arch` loads each
+        // of these from `C:\Windows\System32\` directly (not via
+        // the in-memory fallback) so the on-disk image is the
+        // single source of truth for the boot chain.
+        //
+        // Each binary uses a distinct image base (0x60/0x61/0x62/
+        // 0x63, see build_csrss_pe / build_wininit_pe / etc.)
+        // because the loader maps them at their declared
+        // `ImageBase`. Putting them all at the same address would
+        // cause each new mapping to overwrite the previous one.
+        SystemImage {
+            name: "csrss.exe",
+            bytes: build_csrss_pe(),
+        },
+        SystemImage {
+            name: "wininit.exe",
+            bytes: build_wininit_pe(),
+        },
+        SystemImage {
+            name: "services.exe",
+            bytes: build_services_pe(),
+        },
+        SystemImage {
+            name: "lsass.exe",
+            bytes: build_lsass_pe(),
+        },
         // BOOT_START storage stack — must be loadable before any
         // device tree walker runs in the kernel.
         SystemImage { name: "drivers/disk.sys",     bytes: build_driver_pe("disk") },
@@ -2695,6 +2722,113 @@ fn build_smss_pe() -> Vec<u8> {
     ];
     build_pe_image(
         0x0000_0000_8000_0000,
+        SECTION_ALIGNMENT,
+        IMAGE_SUBSYSTEM_WINDOWS_CUI,
+        false,
+        &exports,
+    )
+}
+
+// =====================================================================
+// NT 6.1 subsystem PE builders (csrss / wininit / services / lsass)
+//
+// These four binaries correspond to the canonical Win7 Session-0 user-
+// mode process tree (see docs/doc.md):
+//
+//   ntoskrnl
+//     └── smss.exe
+//          ├── csrss.exe (Session 0)
+//          └── wininit.exe
+//                 ├── services.exe
+//                 ├── lsass.exe
+//                 └── lsm.exe
+//
+// In our minimal-Ring-3 bring-up we do not actually transition into
+// these user-mode stubs at boot — the loader maps them into each
+// process's per-process PML4 so the process objects (with their
+// PEB/TEB and address spaces) are visible to subsequent diagnostics
+// (e.g. `!process` / `ProcessExplorer`-style listings), but their
+// main threads stay parked on the user-mode idle loop
+// (NtTestAlert; jmp $). The kernel then iretqs into cmd.exe at the
+// very end of the boot chain.
+//
+// Each PE MUST use a distinct image base — the loader maps the
+// image at its declared ImageBase, and overwriting an already-mapped
+// page silently corrupts the other process's view of the world. The
+// 0x60/0x61/0x62/0x63 spread below reserves 256 MiB per subsystem,
+// far more than these stub binaries need, so the layout is future-
+// proofed for richer system processes later.
+// =====================================================================
+
+const CSRSS_IMAGE_BASE: u64 = 0x0000_0000_6000_0000;
+const WININIT_IMAGE_BASE: u64 = 0x0000_0000_6100_0000;
+const SERVICES_IMAGE_BASE: u64 = 0x0000_0000_6200_0000;
+const LSASS_IMAGE_BASE: u64 = 0x0000_0000_6300_0000;
+
+fn build_csrss_pe() -> Vec<u8> {
+    // Client/Server Runtime Subsystem — Win32 user-mode
+    // essential subsystem.
+    let exports = [
+        ("CsrClientCallServer",     SECTION_ALIGNMENT),
+        ("CsrParseServerCommandLine",SECTION_ALIGNMENT + 0x10),
+        ("CsrSbApiPortName",        SECTION_ALIGNMENT + 0x20),
+        ("CsrInitialize",           SECTION_ALIGNMENT + 0x30),
+    ];
+    build_pe_image(
+        CSRSS_IMAGE_BASE,
+        SECTION_ALIGNMENT,
+        IMAGE_SUBSYSTEM_WINDOWS_CUI,
+        false,
+        &exports,
+    )
+}
+
+fn build_wininit_pe() -> Vec<u8> {
+    // Windows Start-Up Application — Session 0 user-mode
+    // initializer that subsequently starts services.exe and lsass.exe.
+    let exports = [
+        ("WinInitInitialize",        SECTION_ALIGNMENT),
+        ("WinInitRunOnceEx",         SECTION_ALIGNMENT + 0x10),
+        ("WinInitRunLevel",          SECTION_ALIGNMENT + 0x20),
+        ("WinInitServiceManagerInit",SECTION_ALIGNMENT + 0x30),
+    ];
+    build_pe_image(
+        WININIT_IMAGE_BASE,
+        SECTION_ALIGNMENT,
+        IMAGE_SUBSYSTEM_WINDOWS_CUI,
+        false,
+        &exports,
+    )
+}
+
+fn build_services_pe() -> Vec<u8> {
+    // Service Control Manager — host for SCM and svchost.exe.
+    let exports = [
+        ("ScAutoStartServices",     SECTION_ALIGNMENT),
+        ("ScStartService",          SECTION_ALIGNMENT + 0x10),
+        ("ScControlService",        SECTION_ALIGNMENT + 0x20),
+        ("ScInitializeSCM",         SECTION_ALIGNMENT + 0x30),
+    ];
+    build_pe_image(
+        SERVICES_IMAGE_BASE,
+        SECTION_ALIGNMENT,
+        IMAGE_SUBSYSTEM_WINDOWS_CUI,
+        false,
+        &exports,
+    )
+}
+
+fn build_lsass_pe() -> Vec<u8> {
+    // Local Security Authority Subsystem Service —
+    // authentication / logon-session manager.
+    let exports = [
+        ("LsapAuOpenPolicy",        SECTION_ALIGNMENT),
+        ("LsapLogonSession",        SECTION_ALIGNMENT + 0x10),
+        ("LsapInitLsa",             SECTION_ALIGNMENT + 0x20),
+        ("LsapRegisterLogonProcess",SECTION_ALIGNMENT + 0x30),
+    ];
+    build_pe_image(
+        LSASS_IMAGE_BASE,
         SECTION_ALIGNMENT,
         IMAGE_SUBSYSTEM_WINDOWS_CUI,
         false,

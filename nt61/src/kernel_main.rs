@@ -1026,11 +1026,20 @@ fn start_session_manager() {
             boot_println!("    Initializing Win32 subsystem...");
             servers::smss::init_win32_subsystem();
 
-            // 5. Create subsystem processes
+            // 5. Create subsystem processes (Csrss, Winlogon)
             boot_println!("    Creating subsystem processes (Csrss, Winlogon)...");
-            servers::smss::create_subsystem_processes();
+            // servers::smss::create_subsystem_processes();
+            boot_println!("    SKIP create_subsystem_processes (debug)");
 
-            boot_println!("  Phase 12: Session Manager started successfully");
+            // 6. Start the complete Windows 7 boot sequence
+            // This launches: csrss.exe (Session 0) -> wininit.exe -> services.exe/lsass.exe
+            boot_println!("    Starting Windows 7 system processes...");
+            // servers::smss::start_wininit();
+            // servers::smss::start_services();
+            // servers::smss::start_lsass();
+            boot_println!("    SKIP start_wininit/services/lsass (debug)");
+
+            boot_println!("  Phase 12: Session Manager started successfully (with skips)");
         } else {
             boot_println!("  Phase 12: Failed to create SMSS process");
         }

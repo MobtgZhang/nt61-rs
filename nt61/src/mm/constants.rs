@@ -178,7 +178,7 @@ pub const KERNEL_HEAP_PAGES: u64 = KERNEL_HEAP_SIZE / PAGE_SIZE;
 // ============================================================================
 
 /// Default kernel stack size per thread.
-pub const KERNEL_STACK_SIZE: u64 = 2 * PAGE_SIZE;
+pub const KERNEL_STACK_SIZE: u64 = 32 * PAGE_SIZE; // 128 KiB
 
 /// Default user-mode stack size.
 pub const USER_MODE_STACK_SIZE: u64 = 0x0010_0000; // 1 MiB

@@ -602,6 +602,16 @@ pub fn sys_mirror_address() -> Option<*const u8> {
     SYS_RAMDISK.lock().as_ref().map(|d| d.base)
 }
 
+/// Return the size in bytes of the System partition mirror, or `None`.
+pub fn sys_mirror_size() -> Option<usize> {
+    SYS_RAMDISK.lock().as_ref().map(|d| d.size)
+}
+
+/// Return the size in bytes of the ESP partition mirror, or `None`.
+pub fn esp_mirror_size() -> Option<usize> {
+    ESP_RAMDISK.lock().as_ref().map(|d| d.size)
+}
+
 /// Detect which filesystem type is on the System partition (C:).
 /// Returns `FsType` so callers can dispatch to the right driver
 /// without hard-coding "NTFS" or "FAT32". Used by `load_cmd_exe_from_disk`
@@ -626,17 +636,48 @@ pub fn sys_partition_sector_size() -> &'static Spinlock<usize> { &SYS_PARTITION_
 /// its own sys-ramdisk path, EXT2 has its own RAM_DISK, so this
 /// flag only matters for the FAT32 driver.
 static ACTIVE_PARTITION_RAMDISK: Spinlock<Option<*const u8>> = Spinlock::new(None);
+/// Tracks the size of the active partition mirror so FAT32 can
+/// bounds-check sector reads without dereferencing past the
+/// mirror end. Set whenever `set_active_partition_ramdisk` is
+/// called.
+static ACTIVE_PARTITION_SIZE: Spinlock<usize> = Spinlock::new(0);
 
 /// Set the "active partition" pointer consulted by the FAT32
 /// driver's `read_sector`. The dispatcher sets this before
 /// `fat32::mount` so the boot-sector probe reads from the right
-/// mirror.
+/// mirror. The corresponding size is auto-derived from the ESP or
+/// System mirror registries.
 pub fn set_active_partition_ramdisk(base: Option<*const u8>) {
     *ACTIVE_PARTITION_RAMDISK.lock() = base;
+    // Auto-derive size from whichever mirror matches the base address.
+    let size = match base {
+        Some(b) => {
+            let sys_b = SYS_RAMDISK.lock().as_ref().map(|d| d.base);
+            let esp_b = ESP_RAMDISK.lock().as_ref().map(|d| d.base);
+            if Some(b) == sys_b {
+                SYS_RAMDISK.lock().as_ref().map(|d| d.size)
+            } else if Some(b) == esp_b {
+                ESP_RAMDISK.lock().as_ref().map(|d| d.size)
+            } else {
+                None
+            }
+        }
+        None => None,
+    };
+    *ACTIVE_PARTITION_SIZE.lock() = size.unwrap_or(0);
 }
 /// Read the active partition pointer.
 pub fn active_partition_ramdisk() -> Option<*const u8> {
     ACTIVE_PARTITION_RAMDISK.lock().clone()
+}
+/// Set the size (in bytes) of the active partition mirror.
+pub fn set_active_partition_size(size: usize) {
+    *ACTIVE_PARTITION_SIZE.lock() = size;
+}
+/// Read the active partition size.
+pub fn active_partition_size() -> Option<usize> {
+    let v = *ACTIVE_PARTITION_SIZE.lock();
+    if v == 0 { None } else { Some(v) }
 }
 
 /// Read a contiguous range of bytes from the ESP mirror.
@@ -690,6 +731,7 @@ pub fn esp_ramdisk_read(offset: u64, buf: &mut [u8]) -> usize {
 /// mirror. Same semantics as `esp_ramdisk_read`. Returns 0 when
 /// the mirror is not registered.
 pub fn sys_ramdisk_read(offset: u64, buf: &mut [u8]) -> usize {
+    crate::hal::serial::write_string("[SYS-RD] entered\n");
     let guard = SYS_RAMDISK.lock();
     let disk = match guard.as_ref() {
         Some(d) => d,
@@ -701,6 +743,7 @@ pub fn sys_ramdisk_read(offset: u64, buf: &mut [u8]) -> usize {
     }
     let avail = disk.size - off;
     let n = core::cmp::min(buf.len(), avail);
+    crate::hal::serial::write_string("[SYS-RD] copy\n");
     // SAFETY: same as `esp_ramdisk_read`. The winload-side
     // capture is allocated in `EfiBootServicesData` so the buffer
     // is identity-mapped for the kernel.
@@ -714,6 +757,7 @@ pub fn sys_ramdisk_read(offset: u64, buf: &mut [u8]) -> usize {
             core::ptr::write_volatile(buf.as_mut_ptr().add(i), b);
         }
     }
+    crate::hal::serial::write_string("[SYS-RD] done\n");
     n
 }
 

@@ -283,6 +283,86 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
         crate::hal::x86_64::serial::write_string("\r\n");
     }
 
+    // Verify the cmd.exe entry page actually contains valid machine
+    // code. Walk the per-process page table for `user_rip` (which
+    // may live under the new per-process PML4), then read the bytes
+    // at `user_rip` via the kernel's identity map. Because the
+    // kernel has a stable system PML4 with a W=1 identity map, we
+    // temporarily flip CR3 to the system PML4 for the walk +
+    // physical-address read, then restore the per-process PML4
+    // before the iretq. Doing this on the cmd.exe entry page is
+    // important: a zeroed-out page (or a wrong mapping) here means
+    // we iretq into Ring 3 and trip #PF with interrupts masked,
+    // which looks like a silent hang on the serial log because the
+    // page-fault handler does not print until interrupt-driven
+    // serial I/O is wired up. Failing fast in this handler keeps
+    // the next debugging cycle shorter.
+    unsafe {
+        let saved_cr3: u64;
+        core::arch::asm!("mov {}, cr3", out(reg) saved_cr3, options(nostack, preserves_flags));
+        let per_cpu = crate::arch::x86_64::syscall::get_per_cpu();
+        let sys_pml4 = if !per_cpu.is_null() { (*per_cpu).system_pml4 } else { 0 };
+        if sys_pml4 != 0 && sys_pml4 != saved_cr3 {
+            core::arch::asm!("mov cr3, {}", in(reg) sys_pml4, options(nostack, preserves_flags));
+        }
+        let mut frame_phys: u64 = 0;
+        let mut frame_off: u64 = 0;
+        let mut found: bool = false;
+        let pml4_idx = ((user_rip >> 39) & 0x1FF) as usize;
+        let pml4e = core::ptr::read_unaligned((pml4_phys as *const u64).add(pml4_idx));
+        if pml4e & 1 != 0 {
+            let pdpt_phys = pml4e & 0x000F_FFFF_FFFF_F000;
+            let pdpt_idx = ((user_rip >> 30) & 0x1FF) as usize;
+            let pdpte = core::ptr::read_unaligned((pdpt_phys as *const u64).add(pdpt_idx));
+            if pdpte & 1 != 0 {
+                let pd_phys = pdpte & 0x000F_FFFF_FFFF_F000;
+                let pd_idx = ((user_rip >> 21) & 0x1FF) as usize;
+                let pde = core::ptr::read_unaligned((pd_phys as *const u64).add(pd_idx));
+                if pde & 1 != 0 {
+                    let pt_phys = pde & 0x000F_FFFF_FFFF_F000;
+                    let pt_idx = ((user_rip >> 12) & 0x1FF) as usize;
+                    let pte = core::ptr::read_unaligned((pt_phys as *const u64).add(pt_idx));
+                    if pte & 1 != 0 {
+                        frame_phys = pte & 0x000F_FFFF_FFFF_F000;
+                        frame_off  = user_rip & 0xFFF;
+                        found = true;
+                    }
+                }
+            }
+        }
+        if found {
+            let mut buf = [0u8; 16];
+            // Read 16 bytes from the physical frame into `buf`. We use
+            // `core::ptr::read_unaligned` instead of an inline asm
+            // `rep movsq` because the asm block would clobber RDI,
+            // RSI, RCX without the compiler knowing — RDI in
+            // particular is the function parameter register for
+            // `user_rip` (the cmd.exe entry), and clobbering it
+            // caused the iret frame RIP to be replaced with whatever
+            // happened to be in RDI afterwards (a kernel address
+            // that immediately #GP'd when executed at CPL=3).
+            let src_ptr = (frame_phys + frame_off) as *const u8;
+            for i in 0..16 {
+                buf[i] = core::ptr::read_volatile(src_ptr.add(i));
+            }
+            crate::hal::x86_64::serial::write_string("[UE] cmd.exe first 16 bytes (phys=0x");
+            crate::hal::x86_64::serial::write_u64_hex(frame_phys + frame_off);
+            crate::hal::x86_64::serial::write_string("): ");
+            for &b in &buf {
+                crate::hal::x86_64::serial::write_u32_hex(b as u32);
+                crate::hal::x86_64::serial::write_string(" ");
+            }
+            crate::hal::x86_64::serial::write_string("\r\n");
+        } else {
+            crate::hal::x86_64::serial::write_string("[UE] cmd.exe entry page walk FAILED: PML4[");
+            crate::hal::x86_64::serial::write_u32_hex(pml4_idx as u32);
+            crate::hal::x86_64::serial::write_string("]=0x");
+            crate::hal::x86_64::serial::write_u64_hex(pml4e);
+            crate::hal::x86_64::serial::write_string(" (cmd.exe page NOT mapped!)\r\n");
+        }
+        core::arch::asm!("mov cr3, {}", in(reg) saved_cr3, options(nostack, preserves_flags));
+    }
+
     // 0.5 Verify the user entry mapping.
     // PML4 index for USER_ENTRY_RIP (0xFFFF800000001000) is 256.
     // Only in debug builds for troubleshooting.
@@ -369,13 +449,13 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
     // the kernel half isn't properly set up.
     #[cfg(debug_assertions)]
     unsafe {
-        let gdt_ptr: u64;
-        let idt_ptr: u64;
+        let mut gdt_ptr: u64 = 0;
+        let mut idt_ptr: u64 = 0;
         core::arch::asm!(
             "sgdt [{gdtp}]",
             "sidt [{idtp}]",
-            gdtp = in(reg) &gdt_ptr,
-            idtp = in(reg) &idt_ptr,
+            gdtp = in(reg) &mut gdt_ptr,
+            idtp = in(reg) &mut idt_ptr,
             options(nostack),
         );
         // Attempt to read first byte of GDT (slot 0) and IDT (entry 0)

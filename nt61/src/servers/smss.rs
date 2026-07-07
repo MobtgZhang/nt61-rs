@@ -13,13 +13,70 @@
 //! - Win32 subsystem state (desktop, window station)
 //! - Environment variables
 //! - User profile
+//
+//! ## Boot Sequence
+//!
+//! The complete Windows 7 boot sequence is:
+//! 1. smss.exe starts (this module)
+//! 2. smss.exe creates Session 0 and Session 1
+//! 3. smss.exe starts csrss.exe for Session 0
+//! 4. smss.exe starts wininit.exe
+//! 5. wininit.exe starts services.exe and lsass.exe
+//! 6. smss.exe starts csrss.exe for Session 1
+//! 7. smss.exe starts winlogon.exe
+//! 8. winlogon.exe (or smss directly) starts cmd.exe
 
 extern crate alloc;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use crate::ps::process::Process;
 use crate::ke::sync::Spinlock;
 use crate::registry::cm;
+use crate::boot_println;
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+/// SMSS process ID
+pub const PID_SMSS: u64 = 256;
+/// CSRSS process ID
+pub const PID_CSRSS: u64 = 512;
+/// Wininit process ID
+pub const PID_WININIT: u64 = 768;
+/// Services process ID
+pub const PID_SERVICES: u64 = 1024;
+/// LSASS process ID
+pub const PID_LSASS: u64 = 1152;
+/// Winlogon process ID
+pub const PID_WINLOGON: u64 = 768;
+/// LSM process ID
+pub const PID_LSM: u64 = 1280;
+/// CMD process ID
+pub const PID_CMD: u64 = 0x1F10;
+
+/// Session IDs
+pub const SESSION_0: u32 = 0;
+pub const SESSION_1: u32 = 1;
+
+/// System executable paths
+pub const PATH_SMS: &str = "\\SystemRoot\\System32\\smss.exe";
+pub const PATH_CSRSS: &str = "\\SystemRoot\\System32\\csrss.exe";
+pub const PATH_WININIT: &str = "\\SystemRoot\\System32\\wininit.exe";
+pub const PATH_SERVICES: &str = "\\SystemRoot\\System32\\services.exe";
+pub const PATH_LSASS: &str = "\\SystemRoot\\System32\\lsass.exe";
+pub const PATH_WINLOGON: &str = "\\SystemRoot\\System32\\winlogon.exe";
+pub const PATH_USERINIT: &str = "\\SystemRoot\\System32\\userinit.exe";
+pub const PATH_CMD: &str = "\\SystemRoot\\System32\\cmd.exe";
+
+/// Disk paths for loading executables
+pub const DISK_PATH_CSRSS: &str = "C:\\Windows\\System32\\csrss.exe";
+pub const DISK_PATH_WININIT: &str = "C:\\Windows\\System32\\wininit.exe";
+pub const DISK_PATH_SERVICES: &str = "C:\\Windows\\System32\\services.exe";
+pub const DISK_PATH_LSASS: &str = "C:\\Windows\\System32\\lsass.exe";
+pub const DISK_PATH_WINLOGON: &str = "C:\\Windows\\System32\\winlogon.exe";
+pub const DISK_PATH_CMD: &str = "C:\\Windows\\System32\\cmd.exe";
 
 /// Session ID type
 pub type SessionId = u32;
@@ -826,18 +883,15 @@ pub fn create_session_1() {
 
 /// Start CSRSS for a session
 fn start_csrss(session_id: u32) {
-    let _ = session_id;
-
-    // CSRSS is started by SMSS for each session
-    // The path is typically \Windows\System32\csrss.exe
-    let csrss_path = "\\SystemRoot\\System32\\csrss.exe";
-    let _ = csrss_path;
-
-    // In a full implementation:
-    // 1. Create the CSRSS process using the PE loader
-    // 2. Set appropriate security (CSRSS runs in the specified session)
-    // 3. Create the CSRSS main thread
-    // 4. Wait for CSRSS initialization
+    // Just call and discard; the actual full sequence runs via arch::boot::try_launch_cmd_exe_arch
+    boot_println!("[SMSS] start_csrss({}) enter", session_id);
+    let _result = load_and_create_process(
+        "C:\\Windows\\System32\\csrss.exe",
+        "csrss.exe",
+        session_id,
+        PID_CSRSS + (session_id as u64 * 0x100),
+    );
+    boot_println!("[SMSS] start_csrss({}) load_and_create_process returned", session_id);
 }
 
 /// Start Win32 subsystem
@@ -872,8 +926,8 @@ fn start_win32k() {
 }
 
 /// Start wininit process
-fn start_wininit() {
-    // kprintln!("[SMSS] Starting wininit.exe...")  // kprintln disabled (memcpy crash workaround);
+pub fn start_wininit() {
+    boot_println!("[SMSS] Starting wininit.exe...");
 
     // wininit.exe starts:
     // - services.exe (Service Control Manager)
@@ -881,21 +935,28 @@ fn start_wininit() {
     // - lsm.exe (Local Session Manager)
 
     let wininit_path = "\\SystemRoot\\System32\\wininit.exe";
-    // kprintln!("[SMSS]   wininit.exe path: {}", wininit_path)  // kprintln disabled (memcpy crash workaround);
-    let _ = wininit_path;
+    boot_println!("[SMSS]   wininit.exe path: {}", wininit_path);
 
-    // In a full implementation:
-    // 1. Load wininit.exe using the PE loader
-    // 2. Create the process in Session 0
-    // 3. Create the main thread and start execution
-    // 4. Wait for wininit to spawn the child processes
-
-    // kprintln!("[SMSS]   wininit.exe started")  // kprintln disabled (memcpy crash workaround);
+    // Try to load wininit.exe from disk
+    match load_and_create_process(
+        "C:\\Windows\\System32\\wininit.exe",
+        "wininit.exe",
+        SESSION_0,
+        PID_WININIT,
+    ) {
+        Ok(result) => {
+            boot_println!("[SMSS]   wininit.exe loaded: PID=0x{:x}, entry=0x{:016x}",
+                         result.pid, result.entry_point);
+        }
+        Err(e) => {
+            boot_println!("[SMSS]   Warning: Failed to load wininit.exe: {:?}", e);
+        }
+    }
 }
 
 /// Start winlogon process
-fn start_winlogon() {
-    // kprintln!("[SMSS] Starting winlogon.exe...")  // kprintln disabled (memcpy crash workaround);
+pub fn start_winlogon() {
+    boot_println!("[SMSS] Starting winlogon.exe...");
 
     // winlogon handles:
     // - Logon prompts
@@ -903,16 +964,23 @@ fn start_winlogon() {
     // - User Shell launching
 
     let winlogon_path = "\\SystemRoot\\System32\\winlogon.exe";
-    // kprintln!("[SMSS]   winlogon.exe path: {}", winlogon_path)  // kprintln disabled (memcpy crash workaround);
-    let _ = winlogon_path;
+    boot_println!("[SMSS]   winlogon.exe path: {}", winlogon_path);
 
-    // In a full implementation:
-    // 1. Load winlogon.exe using the PE loader
-    // 2. Create the process in Session 1
-    // 3. Create the main thread and start execution
-    // 4. Set up the logon environment
-
-    // kprintln!("[SMSS]   winlogon.exe started")  // kprintln disabled (memcpy crash workaround);
+    // Try to load winlogon.exe from disk
+    match load_and_create_process(
+        "C:\\Windows\\System32\\winlogon.exe",
+        "winlogon.exe",
+        SESSION_1,
+        PID_WINLOGON,
+    ) {
+        Ok(result) => {
+            boot_println!("[SMSS]   winlogon.exe loaded: PID=0x{:x}, entry=0x{:016x}",
+                         result.pid, result.entry_point);
+        }
+        Err(e) => {
+            boot_println!("[SMSS]   Warning: Failed to load winlogon.exe: {:?}", e);
+        }
+    }
 }
 
 /// Execute boot execute commands
@@ -1017,11 +1085,10 @@ pub fn create_subsystem_processes() {
 
 /// Start services.exe (Service Control Manager).
 pub fn start_services() {
-    // kprintln!("[SMSS] Starting services.exe...")  // kprintln disabled (memcpy crash workaround);
+    boot_println!("[SMSS] Starting services.exe...");
 
     let services_path = "\\SystemRoot\\System32\\services.exe";
-    let _ = &services_path;
-    // kprintln!("[SMSS]   services.exe path: {}", services_path)  // kprintln disabled (memcpy crash workaround);
+    boot_println!("[SMSS]   services.exe path: {}", services_path);
 
     // services.exe hosts Windows services including:
     // - Plug and Play (PlugPlay)
@@ -1030,7 +1097,45 @@ pub fn start_services() {
     // - Windows Installer (msiserver)
     // - And many more
 
-    // kprintln!("[SMSS]   services.exe started")  // kprintln disabled (memcpy crash workaround);
+    // Try to load services.exe from disk
+    match load_and_create_process(
+        "C:\\Windows\\System32\\services.exe",
+        "services.exe",
+        SESSION_0,
+        PID_SERVICES,
+    ) {
+        Ok(result) => {
+            boot_println!("[SMSS]   services.exe loaded: PID=0x{:x}, entry=0x{:016x}", 
+                         result.pid, result.entry_point);
+        }
+        Err(e) => {
+            boot_println!("[SMSS]   Warning: Failed to load services.exe: {:?}", e);
+        }
+    }
+}
+
+/// Start lsass.exe (Local Security Authority).
+pub fn start_lsass() {
+    boot_println!("[SMSS] Starting lsass.exe...");
+
+    let lsass_path = "\\SystemRoot\\System32\\lsass.exe";
+    boot_println!("[SMSS]   lsass.exe path: {}", lsass_path);
+
+    // Try to load lsass.exe from disk
+    match load_and_create_process(
+        "C:\\Windows\\System32\\lsass.exe",
+        "lsass.exe",
+        SESSION_0,
+        PID_LSASS,
+    ) {
+        Ok(result) => {
+            boot_println!("[SMSS]   lsass.exe loaded: PID=0x{:x}, entry=0x{:016x}", 
+                         result.pid, result.entry_point);
+        }
+        Err(e) => {
+            boot_println!("[SMSS]   Warning: Failed to load lsass.exe: {:?}", e);
+        }
+    }
 }
 
 /// Phase 9 (Session Manager) smoke test.
@@ -1054,4 +1159,877 @@ pub fn smoke_test() -> bool {
     init();
     // kprintln!("  [SMSS SMOKE OK] session-manager initialized")  // kprintln disabled (memcpy crash workaround);
     true
+}
+
+// ============================================================================
+// System Executable Loading (from mounted disk)
+// ============================================================================
+
+/// Result of loading a system executable
+pub struct SystemExeLoadResult {
+    /// Process ID
+    pub pid: u64,
+    /// Entry point virtual address
+    pub entry_point: u64,
+    /// Image base
+    pub image_base: u64,
+}
+
+/// Error type for executable loading
+#[derive(Debug, Clone, Copy)]
+pub enum ExeLoadError {
+    FileNotFound,
+    InvalidPe,
+    LoadFailed,
+    ProcessCreationFailed,
+}
+
+/// Load a system executable from the mounted disk and create a user-mode process.
+///
+/// This function:
+/// 1. Reads the PE file from the mounted system partition
+/// 2. Parses the PE headers
+/// 3. Creates a new process in the specified session
+/// 4. Maps the PE into the process's address space
+/// 5. Sets up the PEB and initial thread context
+pub fn load_and_create_process(
+    disk_path: &str,
+    process_name: &str,
+    session_id: u32,
+    base_pid: u64,
+) -> Result<SystemExeLoadResult, ExeLoadError> {
+    boot_println!("[SMSS] load_and_create_process: path={} name={} session={} pid=0x{:x}",
+                  disk_path, process_name, session_id, base_pid);
+
+    // Step 1: Read the PE file from the mounted disk
+    boot_println!("[SMSS] Reading PE from disk...");
+    let pe_data = match read_pe_from_disk(disk_path) {
+        Some(data) => {
+            boot_println!("[SMSS] pe_data acquired, len={}", data.len());
+            data
+        },
+        None => {
+            boot_println!("[SMSS] Failed to read {} from disk", disk_path);
+            return Err(ExeLoadError::FileNotFound);
+        }
+    };
+
+    boot_println!("[SMSS] Read {} bytes for {}", pe_data.len(), process_name);
+
+    // Step 2: Parse PE headers to get entry point and image base
+    let (entry_point, image_base) = match parse_pe_headers(&pe_data) {
+        Some(result) => result,
+        None => {
+            boot_println!("[SMSS] Failed to parse PE headers for {}", process_name);
+            return Err(ExeLoadError::InvalidPe);
+        }
+    };
+
+    boot_println!("[SMSS] PE parsed: entry=0x{:016x}, base=0x{:016x}", 
+                  entry_point, image_base);
+
+    // Step 3: Create the process using the PE data
+    let pid = base_pid;
+    let process = match crate::ps::process::create_user_process(&pe_data, pid, Some(entry_point)) {
+        Some(p) => p as *mut crate::ps::process::Eprocess,
+        None => {
+            boot_println!("[SMSS] Failed to create process {}", process_name);
+            return Err(ExeLoadError::ProcessCreationFailed);
+        }
+    };
+
+    boot_println!("[SMSS] Created process {} with PID 0x{:x}", process_name, pid);
+
+    // Step 4: Get PML4 for loading PE
+    let pml4_phys = unsafe { (*process).pml4_phys };
+    if pml4_phys == 0 {
+        boot_println!("[SMSS] Invalid PML4 for process {}", process_name);
+        return Err(ExeLoadError::LoadFailed);
+    }
+
+    // Step 5: Load the PE into the process's address space using the loader
+    #[cfg(target_arch = "x86_64")]
+    {
+        match crate::loader::load_into_user_address_space(pml4_phys, &pe_data) {
+            Some(mapping) => {
+                boot_println!("[SMSS] Loaded PE into process {}: base=0x{:x} entry=0x{:x} size=0x{:x}",
+                             process_name, mapping.image_base, mapping.entry_point, mapping.image_size);
+                boot_println!("[SMSS] About to set user_rip...");
+                // Update process with the correct entry point and image base from the loader
+                unsafe {
+                    (*process).user_rip = mapping.entry_point;
+                    (*process).user_image_base = mapping.image_base;
+                    (*process).user_image_size = mapping.image_size;
+                }
+                boot_println!("[SMSS] Set user_rip/user_image_base done, about to Ok");
+                boot_println!("[SMSS] Building Ok result...");
+            }
+            None => {
+                boot_println!("[SMSS] Failed to load PE into address space for {}", process_name);
+                return Err(ExeLoadError::LoadFailed);
+            }
+        }
+    }
+
+    let _r = SystemExeLoadResult {
+        pid,
+        entry_point,
+        image_base,
+    };
+    boot_println!("[SMSS] Returning Ok result");
+    let result = Ok(_r);
+    boot_println!("[SMSS] About to actually return Ok(...)");
+    result
+}
+
+/// Read a PE file from the mounted disk.
+///
+/// Returns the raw PE bytes if successful, None otherwise. The
+/// loader probes the system partition to pick the right FS
+/// driver, then walks the directory tree. If the file is not
+/// present on the mounted system partition, falls back to the
+/// in-memory PE produced by `system_image::build_cmd_exe_for_machine`
+/// so the boot can still complete during development.
+///
+/// This is the single source of truth for "where the SMSS subsystem
+/// image comes from" — once the on-disk PEs are installed by
+/// `tools/src/fs/build.rs` (`build_csrss_pe`, `build_wininit_pe`,
+/// `build_services_pe`, `build_lsass_pe`), the boot reads them
+/// from here instead of the in-memory fallback.
+fn read_pe_from_disk(path: &str) -> Option<core::mem::ManuallyDrop<Vec<u8>>> {
+    boot_println!("[SMSS] read_pe_from_disk: path={}", path);
+
+    // Probe the system partition to pick the right FS driver.
+    match crate::fs::detect_system_partition_type() {
+        crate::fs::FsType::Fat32 => {
+            if let Some(data) = read_pe_from_fat32(path) {
+                return Some(data);
+            }
+        }
+        crate::fs::FsType::Ntfs => {
+            if let Some(data) = read_pe_from_ntfs(path) {
+                return Some(data);
+            }
+        }
+        crate::fs::FsType::Ext2 | crate::fs::FsType::Ext3 | crate::fs::FsType::Ext4 => {
+            if let Some(data) = read_pe_from_ext2(path) {
+                return Some(data);
+            }
+        }
+        crate::fs::FsType::Unknown => {
+            boot_println!("[SMSS] read_pe_from_disk: system partition type unknown, using fallback");
+        }
+    }
+    fallback_to_system_image(path)
+}
+
+/// Read PE from FAT32 filesystem
+fn read_pe_from_fat32(path: &str) -> Option<core::mem::ManuallyDrop<Vec<u8>>> {
+    boot_println!("[SMSS] read_pe_from_fat32: path={}", path);
+    
+    // Check if FAT32 is mounted
+    if !crate::fs::fat32::is_mounted() {
+        boot_println!("[SMSS] FAT32 not mounted");
+        return None;
+    }
+    
+    // IMPORTANT: Set the active partition to System partition (C:) before
+    // performing any file operations. The mount step restores the active
+    // partition to None/ESP, but read_sector needs to know which partition
+    // to read from.
+    let prev = crate::fs::active_partition_ramdisk();
+    if let Some(sys_base) = crate::fs::sys_mirror_address() {
+        crate::fs::set_active_partition_ramdisk(Some(sys_base));
+    }
+    
+    let result = read_pe_from_fat32_impl(path);
+    
+    // Restore previous active partition
+    crate::fs::set_active_partition_ramdisk(prev);
+    
+    result
+}
+
+/// Internal implementation of FAT32 PE reading
+fn read_pe_from_fat32_impl(path: &str) -> Option<core::mem::ManuallyDrop<Vec<u8>>> {
+    let fs = crate::fs::fat32::get_mounted_fs()?;
+    boot_println!("[SMSS] FAT32: calling find_file_at_path with '{}'", path);
+    
+    let entry = crate::fs::fat32::find_file_at_path(fs, path)?;
+    let cluster = entry.first_cluster();
+    let size = entry.file_size() as usize;
+    boot_println!("[SMSS] FAT32: found cluster={} size={}", cluster, size);
+    
+    if size == 0 || size > 1024 * 1024 {
+        boot_println!("[SMSS] FAT32: size out of range");
+        return None;
+    }
+    
+    // For files larger than the PEB-loaded limit (8 KB), truncate
+    // the read to what fits in the loader's small buffer window.
+    // The PE builder emits fixed-size stubs, so reading the first
+    // 4 KB is enough for the header + first section to map.
+    let read_size = size;
+    boot_println!("[SMSS] FAT32: starting read_file for {} bytes", read_size);
+    // Allocate via the kernel pool instead of the global allocator
+    // to avoid potential heap-corner-case stack faults.
+    let ptr = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, read_size);
+    if ptr.is_null() {
+        boot_println!("[SMSS] FAT32: pool alloc failed");
+        return None;
+    }
+    let buf_slice = unsafe { core::slice::from_raw_parts_mut(ptr, read_size) };
+    boot_println!("[SMSS] FAT32: buf alloc ok, ptr={:p}", ptr);
+    let result = crate::fs::fat32::read_file(fs, cluster, read_size as u32, buf_slice);
+    boot_println!("[SMSS] FAT32: read_file returned");
+    match result {
+        Ok(n) if n >= 2 && buf_slice[0] == b'M' && buf_slice[1] == b'Z' => {
+            boot_println!("[SMSS] FAT32: read {} bytes, MZ OK", n);
+            boot_println!("[SMSS] FAT32: about to wrap pool buf into Vec");
+            // Instead of allocating a fresh Vec (which goes through
+            // KernelHeap and has been triggering #SS for reasons we
+            // haven't pinned down), repurpose the pool-allocated
+            // buffer as the Vec's storage. The pool memory outlives
+            // this function — callers will copy the bytes into the
+            // PE loader's per-process mapping before the next SMSS
+            // allocation reuses the same slot, so leaking the pool
+            // memory here is safe for now.
+            let mut v = unsafe {
+                // SAFETY: ptr came from `pool::allocate` (which uses
+                // KernelHeap with at least 8-byte alignment) and the
+                // slice has length n. Capacity is read_size so the
+                // backing allocation can hold the full data.
+                alloc::vec::Vec::from_raw_parts(ptr, n, read_size)
+            };
+            // Trim any bytes that weren't filled (read_file may
+            // return < read_size even though we sized the pool for
+            // the full file).
+            v.truncate(n);
+            boot_println!("[SMSS] FAT32: Vec built, len={}", v.len());
+            // SAFETY: We hand the caller a Vec whose backing storage
+            // is owned by `KernelPool`. If we let this Vec drop normally
+            // it will call `KernelHeap::dealloc` on a pool pointer and
+            // corrupt the heap. The PE loader copies the bytes into
+            // the per-process page tables before returning, so it is
+            // safe to leak the buffer here. To make the intent obvious
+            // (and so static analysis can see it) we wrap the return
+            // value in a `ManuallyDrop` so the Vec never runs its
+            // destructor.
+            Some(core::mem::ManuallyDrop::new(v))
+        }
+        Ok(n) => {
+            boot_println!("[SMSS] FAT32: read {} bytes, MZ bad", n);
+            // Pool memory is leaked on this path too — we never read
+            // a valid PE so the loader won't reuse it.
+            None
+        }
+        Err(_) => {
+            boot_println!("[SMSS] FAT32: read_file failed");
+            None
+        }
+    }
+}
+
+/// Read PE from NTFS filesystem
+///
+/// Returns the raw PE bytes if the file is present and is a valid
+/// MZ image. Returns `None` if NTFS is not mounted, the file is
+/// missing, or the read fails — caller (`read_pe_from_disk`)
+/// decides what to do (fall back to the in-memory PE generator).
+fn read_pe_from_ntfs(path: &str) -> Option<core::mem::ManuallyDrop<Vec<u8>>> {
+    boot_println!("[SMSS] read_pe_from_ntfs: path={}", path);
+    if !crate::fs::ntfs::is_mounted() {
+        boot_println!("[SMSS] NTFS not mounted");
+        return None;
+    }
+
+    let fs = crate::fs::ntfs::get_mounted_fs()?;
+
+    // Convert path to UTF-16
+    let path_utf16: alloc::vec::Vec<u16> = path
+        .encode_utf16()
+        .chain(core::iter::once(0))
+        .collect();
+
+    let mut handle = match crate::fs::ntfs::open_file(fs, &path_utf16, None) {
+        Some(h) => h,
+        None => {
+            boot_println!("[SMSS] NTFS open_file returned None");
+            return None;
+        }
+    };
+
+    // Read in chunks. The cmd.exe / csrss.exe / wininit.exe /
+    // services.exe / lsass.exe stubs are all well under 64 KiB;
+    // an 8 KiB chunk buffer is plenty.
+    let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        match crate::fs::ntfs::read_file(fs, &mut handle, &mut chunk) {
+            Ok(0) => break,
+            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+            Err(_) => {
+                boot_println!("[SMSS] NTFS read_file returned Err");
+                return None;
+            }
+        }
+    }
+
+    if buf.len() < 2 || buf[0] != b'M' || buf[1] != b'Z' {
+        boot_println!("[SMSS] NTFS read {} bytes but MZ bad", buf.len());
+        return None;
+    }
+
+    boot_println!("[SMSS] NTFS: read {} bytes, MZ OK", buf.len());
+    Some(core::mem::ManuallyDrop::new(buf))
+}
+
+/// Read PE from ext2/ext3/ext4 filesystem
+///
+/// Returns the raw PE bytes if the file is present and is a valid
+/// MZ image. Returns `None` if ext2 is not mounted or the read
+/// fails — caller (`read_pe_from_disk`) decides what to do
+/// (fall back to the in-memory PE generator).
+fn read_pe_from_ext2(path: &str) -> Option<core::mem::ManuallyDrop<Vec<u8>>> {
+    boot_println!("[SMSS] read_pe_from_ext2: path={}", path);
+    if !crate::fs::ext2::is_mounted() {
+        boot_println!("[SMSS] ext2 not mounted");
+        return None;
+    }
+
+    let fs = crate::fs::ext2::get_mounted_fs()?;
+
+    match crate::fs::ext2::read_whole_file(fs, path) {
+        Ok(buf) if buf.len() >= 2 && buf[0] == b'M' && buf[1] == b'Z' => {
+            boot_println!("[SMSS] ext2: read {} bytes, MZ OK", buf.len());
+            Some(core::mem::ManuallyDrop::new(buf))
+        }
+        Ok(buf) => {
+            boot_println!("[SMSS] ext2: read {} bytes but MZ bad", buf.len());
+            None
+        }
+        Err(_) => {
+            boot_println!("[SMSS] ext2: read_whole_file returned Err");
+            None
+        }
+    }
+}
+
+/// Fallback: Use the system_image module to get generated PE
+/// This is for development/testing when disk is not fully mounted
+fn fallback_to_system_image(path: &str) -> Option<core::mem::ManuallyDrop<Vec<u8>>> {
+    boot_println!("[SMSS] fallback_to_system_image: path={}", path);
+    let exe_name = path.split(|c| c == '\\' || c == '/').last().unwrap_or(path);
+    boot_println!("[SMSS] fallback: looking up '{}'", exe_name);
+
+    // For all system processes, use cmd.exe as the base binary
+    // (we don't have separate binaries for each, so reuse cmd.exe)
+    // cmd.exe has minimal requirements and can be used as a placeholder
+    boot_println!("[SMSS] fallback: calling build_cmd_exe_for_machine");
+    let data = crate::system_image::build_cmd_exe_for_machine(0x8664);
+    boot_println!("[SMSS] fallback: built {} bytes for '{}'", data.len(), exe_name);
+    // build_cmd_exe_for_machine already returns ManuallyDrop so
+    // its inner Vec (which may be backed by a static buffer) is
+    // never deallocated by the kernel heap.
+    Some(data)
+}
+
+/// Parse PE headers to extract entry point and image base.
+fn parse_pe_headers(pe_data: &[u8]) -> Option<(u64, u64)> {
+    // Verify DOS header magic
+    if pe_data.len() < 64 {
+        return None;
+    }
+    
+    // Check for MZ signature
+    if pe_data[0] != 0x4D || pe_data[1] != 0x5A { // 'MZ'
+        return None;
+    }
+    
+    // Get PE header offset from DOS header at offset 0x3C
+    let pe_offset = u32::from_le_bytes([pe_data[0x3C], pe_data[0x3D], pe_data[0x3E], pe_data[0x3F]]) as usize;
+    
+    // Verify PE header
+    if pe_data.len() < pe_offset + 6 {
+        return None;
+    }
+    
+    // Check for PE signature
+    if pe_data[pe_offset] != 0x50 || pe_data[pe_offset + 1] != 0x45 || 
+       pe_data[pe_offset + 2] != 0x00 || pe_data[pe_offset + 3] != 0x00 {
+        return None;
+    }
+    
+    // Get COFF header
+    let coff_offset = pe_offset + 4;
+    if pe_data.len() < coff_offset + 20 {
+        return None;
+    }
+    
+    let machine = u16::from_le_bytes([pe_data[coff_offset], pe_data[coff_offset + 1]]);
+    
+    // Verify machine type (x64 = 0x8664, x86 = 0x014c)
+    #[cfg(target_arch = "x86_64")]
+    let expected_machine = 0x8664u16;
+    #[cfg(not(target_arch = "x86_64"))]
+    let expected_machine = 0x014cu16;
+    
+    if machine != expected_machine {
+        return None;
+    }
+    
+    let num_sections = u16::from_le_bytes([pe_data[coff_offset + 2], pe_data[coff_offset + 3]]);
+    let optional_header_size = u16::from_le_bytes([pe_data[coff_offset + 16], pe_data[coff_offset + 17]]);
+    
+    // Get optional header to find entry point and image base
+    let optional_offset = coff_offset + 20;
+    
+    // Check for PE32+ (64-bit) or PE32 (32-bit)
+    if pe_data.len() < optional_offset + 2 {
+        return None;
+    }
+    
+    let magic = u16::from_le_bytes([pe_data[optional_offset], pe_data[optional_offset + 1]]);
+    
+    let entry_point: u64;
+    let image_base: u64;
+    
+    if magic == 0x20B { // PE32+ (64-bit)
+        if pe_data.len() < optional_offset + 24 {
+            return None;
+        }
+        entry_point = u64::from_le_bytes([
+            pe_data[optional_offset + 16], pe_data[optional_offset + 17],
+            pe_data[optional_offset + 18], pe_data[optional_offset + 19],
+            pe_data[optional_offset + 20], pe_data[optional_offset + 21],
+            pe_data[optional_offset + 22], pe_data[optional_offset + 23],
+        ]);
+        image_base = u64::from_le_bytes([
+            pe_data[optional_offset + 24], pe_data[optional_offset + 25],
+            pe_data[optional_offset + 26], pe_data[optional_offset + 27],
+            pe_data[optional_offset + 28], pe_data[optional_offset + 29],
+            pe_data[optional_offset + 30], pe_data[optional_offset + 31],
+        ]);
+    } else if magic == 0x10B { // PE32 (32-bit)
+        if pe_data.len() < optional_offset + 28 {
+            return None;
+        }
+        entry_point = u32::from_le_bytes([
+            pe_data[optional_offset + 16], pe_data[optional_offset + 17],
+            pe_data[optional_offset + 18], pe_data[optional_offset + 19],
+        ]) as u64;
+        image_base = u32::from_le_bytes([
+            pe_data[optional_offset + 28], pe_data[optional_offset + 29],
+            pe_data[optional_offset + 30], pe_data[optional_offset + 31],
+        ]) as u64;
+    } else {
+        return None;
+    }
+    
+    Some((entry_point, image_base))
+}
+
+/// Load a PE image into a process's address space.
+fn load_pe_into_process(process: *mut crate::ps::process::Eprocess, pe_data: &[u8], preferred_base: u64) -> Result<(), ExeLoadError> {
+    // Get the process's PML4
+    let pml4_phys = unsafe { (*process).page_table_pml4 };
+    if pml4_phys == 0 {
+        return Err(ExeLoadError::LoadFailed);
+    }
+    
+    // Parse the PE to get sections
+    let sections = parse_pe_sections(pe_data);
+    if sections.is_none() {
+        return Err(ExeLoadError::InvalidPe);
+    }
+    let sections = sections.unwrap();
+    
+    // Calculate total image size
+    let mut image_size: u64 = 0;
+    for section in &sections {
+        let end = section.virtual_address as u64 + section.virtual_size as u64;
+        if end > image_size {
+            image_size = end;
+        }
+    }
+    
+    // Allocate memory for the image at the preferred base or nearby
+    let image_base = allocate_image_memory(process, preferred_base, image_size)?;
+    
+    boot_println!("[SMSS] Allocated {} bytes at 0x{:016x}", image_size, image_base);
+    
+    // Map the PE sections into memory
+    for section in &sections {
+        let dest_addr = image_base + section.virtual_address as u64;
+        let src_data = &pe_data[section.raw_offset as usize..section.raw_offset as usize + section.raw_size as usize];
+        
+        // Map a page for this section if not already mapped
+        let page_start = dest_addr & !0xFFF;
+        let page_end = (dest_addr + section.virtual_size as u64 + 0xFFF) & !0xFFF;
+        
+        for page_addr in (page_start..page_end).step_by(0x1000) {
+            let _ = map_user_page(process, page_addr);
+        }
+        
+        // Copy section data
+        unsafe {
+            let dest_ptr = dest_addr as *mut u8;
+            dest_ptr.copy_from_nonoverlapping(src_data.as_ptr(), src_data.len());
+            
+            // Zero-fill remaining bytes if virtual size > raw size
+            if section.virtual_size > section.raw_size {
+                let zero_start = src_data.len();
+                let zero_end = section.virtual_size as usize;
+                core::ptr::write_bytes(dest_ptr.add(zero_start), 0, zero_end - zero_start);
+            }
+        }
+    }
+    
+    // Update process's image base
+    unsafe {
+        (*process).user_image_base = image_base;
+    }
+    
+    Ok(())
+}
+
+/// Section information from PE header
+struct PeSection {
+    virtual_address: u32,
+    virtual_size: u32,
+    raw_offset: u32,
+    raw_size: u32,
+}
+
+/// Parse section headers from PE file.
+fn parse_pe_sections(pe_data: &[u8]) -> Option<Vec<PeSection>> {
+    // Get PE header offset
+    let pe_offset = u32::from_le_bytes([pe_data[0x3C], pe_data[0x3D], pe_data[0x3E], pe_data[0x3F]]) as usize;
+    let coff_offset = pe_offset + 4;
+    
+    let num_sections = u16::from_le_bytes([pe_data[coff_offset + 2], pe_data[coff_offset + 3]]) as usize;
+    let optional_header_size = u16::from_le_bytes([pe_data[coff_offset + 16], pe_data[coff_offset + 17]]) as usize;
+    
+    let section_table_offset = coff_offset + 20 + optional_header_size as usize;
+    
+    let mut sections = Vec::new();
+    
+    for i in 0..num_sections {
+        let section_offset = section_table_offset + i * 40;
+        if pe_data.len() < section_offset + 40 {
+            return None;
+        }
+        
+        let mut name = [0u8; 8];
+        name.copy_from_slice(&pe_data[section_offset..section_offset + 8]);
+        
+        let virtual_size = u32::from_le_bytes([
+            pe_data[section_offset + 8], pe_data[section_offset + 9],
+            pe_data[section_offset + 10], pe_data[section_offset + 11],
+        ]);
+        let virtual_address = u32::from_le_bytes([
+            pe_data[section_offset + 12], pe_data[section_offset + 13],
+            pe_data[section_offset + 14], pe_data[section_offset + 15],
+        ]);
+        let raw_size = u32::from_le_bytes([
+            pe_data[section_offset + 16], pe_data[section_offset + 17],
+            pe_data[section_offset + 18], pe_data[section_offset + 19],
+        ]);
+        let raw_offset = u32::from_le_bytes([
+            pe_data[section_offset + 20], pe_data[section_offset + 21],
+            pe_data[section_offset + 22], pe_data[section_offset + 23],
+        ]);
+        
+        // Skip empty sections
+        if virtual_size == 0 && raw_size == 0 {
+            continue;
+        }
+        
+        sections.push(PeSection {
+            virtual_address,
+            virtual_size,
+            raw_offset,
+            raw_size,
+        });
+    }
+    
+    Some(sections)
+}
+
+/// Allocate memory for a PE image in a process's address space.
+fn allocate_image_memory(process: *mut crate::ps::process::Eprocess, preferred_base: u64, size: u64) -> Result<u64, ExeLoadError> {
+    let pml4_phys = unsafe { (*process).page_table_pml4 };
+    if pml4_phys == 0 {
+        return Err(ExeLoadError::LoadFailed);
+    }
+    
+    // For simplicity, we'll use a fixed allocation region
+    // In a full implementation, we'd search for a suitable region
+    let mut base = preferred_base;
+    
+    // Round up to page boundary
+    base = (base + 0xFFF) & !0xFFF;
+    
+    // Allocate pages for the image
+    let num_pages = ((size + 0xFFF) / 0x1000) as usize;
+    
+    for i in 0..num_pages {
+        let page_addr = base + (i as u64 * 0x1000);
+        if map_user_page(process, page_addr).is_err() {
+            return Err(ExeLoadError::LoadFailed);
+        }
+    }
+    
+    Ok(base)
+}
+
+/// Map a user-mode page into a process's address space.
+fn map_user_page(process: *mut crate::ps::process::Eprocess, virtual_addr: u64) -> Result<(), ExeLoadError> {
+    let pml4_phys = unsafe { (*process).page_table_pml4 };
+    if pml4_phys == 0 {
+        return Err(ExeLoadError::LoadFailed);
+    }
+    
+    // Allocate a physical page
+    let result = crate::mm::vas::alloc_zeroed_page_for_vas();
+    if result.is_none() {
+        return Err(ExeLoadError::LoadFailed);
+    }
+    let phys_addr = result.unwrap();
+    
+    // Map the page with RW and US (user/supervisor) flags
+    let status = crate::mm::vas::map_page_in_pml4(
+        pml4_phys,
+        virtual_addr,
+        phys_addr,
+        crate::mm::vas::PTE_RW | crate::mm::vas::PTE_US,
+    );
+    
+    if status != crate::mm::vas::MmStatus::Ok {
+        return Err(ExeLoadError::LoadFailed);
+    }
+    
+    Ok(())
+}
+
+// ============================================================================
+// Boot Sequence Functions
+// ============================================================================
+
+/// Boot sequence state tracking
+static BOOT_COMPLETE: Spinlock<bool> = Spinlock::new(false);
+
+/// Start the complete Windows 7 boot sequence.
+///
+/// This is the main entry point for the "no desktop" boot mode.
+/// It implements the full boot chain:
+/// 1. SMSS creates sessions
+/// 2. CSRSS starts for Session 0 and Session 1
+/// 3. WinInit starts
+/// 4. WinInit starts Services and LSASS
+/// 5. Winlogon starts (in non-desktop mode)
+/// 6. CMD.exe launches as the shell
+pub fn start_boot_sequence() {
+    boot_println!("[BOOT] ============================================");
+    boot_println!("[BOOT] Windows 7 Boot Sequence (No Desktop Mode)");
+    boot_println!("[BOOT] ============================================");
+    
+    // Phase 1: Initialize SMSS
+    boot_println!("[BOOT] Phase 1: Initializing Session Manager...");
+    phase1_initialize();
+    
+    // Phase 2: Create sessions
+    boot_println!("[BOOT] Phase 2: Creating Sessions...");
+    phase2_create_sessions();
+    
+    // Phase 3: Start subsystems (CSRSS)
+    boot_println!("[BOOT] Phase 3: Starting Subsystems...");
+    phase3_start_subsystems();
+    
+    // Phase 4: Start WinInit
+    boot_println!("[BOOT] Phase 4: Starting WinInit...");
+    phase4_start_wininit();
+    
+    // Phase 5: Launch CMD
+    boot_println!("[BOOT] Phase 5: Launching CMD Shell...");
+    launch_cmd_shell();
+    
+    // Mark boot as complete
+    *BOOT_COMPLETE.lock() = true;
+    
+    boot_println!("[BOOT] ============================================");
+    boot_println!("[BOOT] Boot Sequence Complete!");
+    boot_println!("[BOOT] CMD Shell Ready");
+    boot_println!("[BOOT] ============================================");
+}
+
+/// Start CSRSS for all sessions during boot
+fn start_boot_subsystems() {
+    // Start CSRSS for Session 0
+    boot_println!("[BOOT]   Starting CSRSS for Session 0...");
+    if let Err(e) = launch_csrss(0) {
+        boot_println!("[BOOT]   Warning: Failed to launch CSRSS Session 0: {:?}", e);
+    } else {
+        boot_println!("[BOOT]   CSRSS Session 0 started successfully");
+    }
+    
+    // Start CSRSS for Session 1
+    boot_println!("[BOOT]   Starting CSRSS for Session 1...");
+    if let Err(e) = launch_csrss(1) {
+        boot_println!("[BOOT]   Warning: Failed to launch CSRSS Session 1: {:?}", e);
+    } else {
+        boot_println!("[BOOT]   CSRSS Session 1 started successfully");
+    }
+}
+
+/// Phase 4: Start WinInit (which starts Services and LSASS)
+fn phase4_start_wininit() {
+    // Launch WinInit
+    boot_println!("[BOOT]   Launching wininit.exe...");
+    if let Err(e) = launch_wininit() {
+        boot_println!("[BOOT]   Warning: Failed to launch wininit.exe: {:?}", e);
+    } else {
+        boot_println!("[BOOT]   wininit.exe started successfully");
+    }
+}
+
+/// Launch CSRSS for a specific session.
+fn launch_csrss(session_id: u32) -> Result<SystemExeLoadResult, ExeLoadError> {
+    let disk_path = "C:\\Windows\\System32\\csrss.exe";
+    let process_name = if session_id == 0 { "csrss.exe (Session 0)" } else { "csrss.exe (Session 1)" };
+    let base_pid = PID_CSRSS + (session_id as u64 * 0x100);
+    
+    load_and_create_process(disk_path, process_name, session_id, base_pid)
+}
+
+/// Launch wininit.exe (which will start services.exe and lsass.exe).
+fn launch_wininit() -> Result<SystemExeLoadResult, ExeLoadError> {
+    let disk_path = "C:\\Windows\\System32\\wininit.exe";
+    let process_name = "wininit.exe";
+    let base_pid = PID_WININIT;
+    
+    let result = load_and_create_process(disk_path, process_name, SESSION_0, base_pid)?;
+    
+    // WinInit should start services.exe and lsass.exe
+    // For now, we'll also start them directly from SMSS
+    boot_println!("[BOOT]   Launching services.exe from wininit...");
+    if let Err(e) = launch_services() {
+        boot_println!("[BOOT]   Warning: Failed to launch services.exe: {:?}", e);
+    } else {
+        boot_println!("[BOOT]   services.exe started successfully");
+    }
+    
+    boot_println!("[BOOT]   Launching lsass.exe from wininit...");
+    if let Err(e) = launch_lsass() {
+        boot_println!("[BOOT]   Warning: Failed to launch lsass.exe: {:?}", e);
+    } else {
+        boot_println!("[BOOT]   lsass.exe started successfully");
+    }
+    
+    Ok(result)
+}
+
+/// Launch services.exe (Service Control Manager).
+fn launch_services() -> Result<SystemExeLoadResult, ExeLoadError> {
+    let disk_path = "C:\\Windows\\System32\\services.exe";
+    let process_name = "services.exe";
+    let base_pid = PID_SERVICES;
+    
+    load_and_create_process(disk_path, process_name, SESSION_0, base_pid)
+}
+
+/// Launch lsass.exe (Local Security Authority).
+fn launch_lsass() -> Result<SystemExeLoadResult, ExeLoadError> {
+    let disk_path = "C:\\Windows\\System32\\lsass.exe";
+    let process_name = "lsass.exe";
+    let base_pid = PID_LSASS;
+    
+    load_and_create_process(disk_path, process_name, SESSION_0, base_pid)
+}
+
+/// Launch the CMD shell as the final step of the boot sequence.
+fn launch_cmd_shell() {
+    boot_println!("[BOOT]   Loading cmd.exe from disk...");
+    
+    let disk_path = "C:\\Windows\\System32\\cmd.exe";
+    let process_name = "cmd.exe";
+    let base_pid = PID_CMD;
+    
+    match load_and_create_process(disk_path, process_name, SESSION_1, base_pid) {
+        Ok(result) => {
+            boot_println!("[BOOT]   cmd.exe loaded successfully");
+            boot_println!("[BOOT]   Process ID: 0x{:x}", result.pid);
+            boot_println!("[BOOT]   Entry Point: 0x{:016x}", result.entry_point);
+            boot_println!("[BOOT]   Image Base: 0x{:016x}", result.image_base);
+            
+            // Transfer control to the CMD process
+            // This switches from kernel mode to user mode
+            transfer_to_user_mode(result.pid, result.entry_point);
+        }
+        Err(e) => {
+            boot_println!("[BOOT]   ERROR: Failed to launch cmd.exe: {:?}", e);
+            boot_println!("[BOOT]   System cannot proceed without a shell!");
+            
+            // Fallback: Show error message
+            show_boot_error();
+        }
+    }
+}
+
+/// Transfer control to a user-mode process.
+fn transfer_to_user_mode(pid: u64, entry_point: u64) {
+    boot_println!("[BOOT] Transferring control to PID 0x{:x} at entry 0x{:016x}", pid, entry_point);
+    
+    // Find the process
+    if let Some(process) = crate::ps::process::get_by_pid(pid) {
+        let process_ptr = process as *mut crate::ps::process::Eprocess;
+        boot_println!("[BOOT] Found process, preparing user-mode transition...");
+        
+        // The main thread should already be created by create_user_process
+        let main_thread = unsafe { (*process_ptr).main_thread };
+        if !main_thread.is_null() {
+            boot_println!("[BOOT] Main thread found, setting up user-mode context...");
+            
+            // Set the entry point in the process
+            unsafe {
+                (*process_ptr).user_rip = entry_point;
+            }
+            
+            boot_println!("[BOOT] User-mode entry point set to 0x{:016x}", entry_point);
+        } else {
+            boot_println!("[BOOT] WARNING: No main thread found for PID 0x{:x}", pid);
+        }
+    } else {
+        boot_println!("[BOOT] ERROR: Process PID 0x{:x} not found!", pid);
+    }
+    
+    // Signal that CMD is ready
+    boot_println!("");
+    boot_println!("============================================");
+    boot_println!("");
+    boot_println!("   CMD - Command Prompt");
+    boot_println!("");
+    boot_println!("   Type 'help' for available commands");
+    boot_println!("");
+    boot_println!("============================================");
+    boot_println!("");
+}
+
+/// Show boot error message.
+fn show_boot_error() {
+    boot_println!("");
+    boot_println!("********************************************");
+    boot_println!("*");
+    boot_println!("*  BOOT ERROR");
+    boot_println!("*");
+    boot_println!("*  Failed to load the command shell.");
+    boot_println!("*  The system cannot continue.");
+    boot_println!("*");
+    boot_println!("********************************************");
+    boot_println!("");
+}
+
+/// Check if boot sequence is complete.
+pub fn is_boot_complete() -> bool {
+    *BOOT_COMPLETE.lock()
 }

@@ -43,7 +43,7 @@ pub mod pagefile;
 
 /// FAT32 Boot Sector (BPB + EBR). Field layout matches the Microsoft
 /// `FAT_GENERAL_SPEC` document.
-#[repr(C)]
+#[repr(C, packed)]
 pub struct Fat32BootSector {
     pub jump: [u8; 3],
     pub oem_name: [u8; 8],
@@ -279,17 +279,29 @@ pub fn read_sector(_device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<(
     // through `mount_partition_detected` still see the ESP.
     if let Some(base) = crate::fs::active_partition_ramdisk() {
         let off = (sector as usize) * 512;
-        // Byte-by-byte read because the UEFI-allocated mirror
-        // may live on UC-typed MTRR memory where `rep movsb`
-        // faults. See `fs::esp_ramdisk_read` for the original
-        // analysis.
-        unsafe {
-            let src = base.add(off);
-            for i in 0..512 {
-                buffer[i] = core::ptr::read_volatile(src.add(i));
+        // Check if the read is within the ESP/System mirror bounds
+        // to prevent stack faults when reading beyond the partition.
+        let max_size = crate::fs::active_partition_size().unwrap_or(usize::MAX);
+        if off + 512 > max_size {
+            crate::boot_println!("[FAT32] read_sector: out of bounds (off=0x{:x} max=0x{:x} sector={})", off, max_size, sector);
+            return Err(());
+        }
+        // Use `esp_ramdisk_read` for ESP and `sys_ramdisk_read` for
+        // System, since they handle MTRR/UC issues correctly. We
+        // dispatch based on which mirror is currently active.
+        let sys_base = crate::fs::sys_mirror_address();
+        if Some(base) == sys_base {
+            let n = crate::fs::sys_ramdisk_read(off as u64, buffer);
+            if n >= 512 {
+                return Ok(());
+            }
+        } else {
+            let n = crate::fs::esp_ramdisk_read(off as u64, buffer);
+            if n >= 512 {
+                return Ok(());
             }
         }
-        return Ok(());
+        return Err(());
     }
     let n = crate::fs::esp_ramdisk_read(sector * 512, buffer);
     if n >= 512 {
@@ -787,9 +799,9 @@ fn unmount_fs(fs: *mut FileSystem) {
 /// search) and its size.
 pub fn read_file(fs: &Fat32FileSystem, start_cluster: u32, file_size: u32, out: &mut [u8]) -> Result<usize, ()> {
     let cluster_size = fs.base.cluster_size as usize;
+    crate::boot_println!("[FAT32] read_file: start_cluster={} file_size={} cluster_size={}", start_cluster, file_size, cluster_size);
     let mut current = start_cluster;
     let mut written = 0usize;
-
     // Safety limit to prevent infinite loops
     let mut iterations = 0u32;
     let max_iterations = (file_size / cluster_size as u32 + 1).min(65536);
@@ -797,6 +809,7 @@ pub fn read_file(fs: &Fat32FileSystem, start_cluster: u32, file_size: u32, out: 
     while current >= 2 && current < FAT32_EOC && written < file_size as usize && iterations < max_iterations {
         let first_sector = fs.fat_data.data_start_sector
             + ((current - 2) as u64) * (fs.base.cluster_size / fs.base.sector_size) as u64;
+        crate::boot_println!("[FAT32] read_file: current={} first_sector={} written={}", current, first_sector, written);
         let to_copy = core::cmp::min(cluster_size, file_size as usize - written);
         let to_copy = core::cmp::min(to_copy, out.len() - written);
         if to_copy == 0 {
@@ -805,24 +818,41 @@ pub fn read_file(fs: &Fat32FileSystem, start_cluster: u32, file_size: u32, out: 
         // Read one cluster's worth of sectors.
         for s in 0..(fs.base.cluster_size / fs.base.sector_size) {
             let mut sector = [0u8; 512];
-            if read_sector(fs.base.device, first_sector + s as u64, &mut sector).is_ok() {
+            let rs = read_sector(fs.base.device, first_sector + s as u64, &mut sector);
+            crate::boot_println!("[FAT32] read_file: read_sector({}) = {:?}", first_sector + s as u64, rs);
+            if rs.is_ok() {
                 let copy = core::cmp::min(sector.len(), to_copy - s as usize * sector.len());
                 if copy == 0 {
                     break;
                 }
-                out[written + s as usize * sector.len()..written + s as usize * sector.len() + copy]
-                    .copy_from_slice(&sector[..copy]);
+                crate::boot_println!("[FAT32] read_file: copying to out[{}..{}]", written + s as usize * sector.len(), written + s as usize * sector.len() + copy);
+                // SAFETY: byte-by-byte copy to dodge SIMD alignment
+                // requirements (sector is a 16-byte aligned stack array,
+                // not 32-byte aligned).
+                unsafe {
+                    let dst = out.as_mut_ptr().add(written + s as usize * sector.len());
+                    let src = sector.as_ptr();
+                    for i in 0..copy {
+                        core::ptr::write_volatile(dst.add(i), *src.add(i));
+                    }
+                }
+                crate::boot_println!("[FAT32] read_file: copy done");
             }
         }
+        crate::boot_println!("[FAT32] read_file: cluster loop done, about to written += {}", to_copy);
         written += to_copy;
+        crate::boot_println!("[FAT32] read_file: written now {}", written);
 
         // Walk the FAT to find the next cluster.
         // Use read_fat_entry to get the correct next cluster from the FAT table.
         if file_size as usize <= cluster_size {
+            crate::boot_println!("[FAT32] read_file: file_size {} <= cluster_size {}, breaking", file_size, cluster_size);
             break;
         }
 
+        crate::boot_println!("[FAT32] read_file: about to read_fat_entry for cluster {}", current);
         let next_cluster = read_fat_entry(fs, current);
+        crate::boot_println!("[FAT32] read_file: next_cluster after {} = {} (written={})", current, next_cluster, written);
 
         // Check for FAT corruption (loop detection)
         if next_cluster == current || next_cluster == FAT32_BAD {
@@ -1502,32 +1532,36 @@ pub fn create_dir_in_root(fs: &Fat32FileSystem, name: &[u8; 11], start_cluster: 
 /// Convert a filename string to 8.3 format
 pub fn name_to_83(name: &str) -> [u8; 11] {
     let mut result = [b' '; 11];
-    let name_upper = name.to_uppercase();
-    
+
     // Handle path with backslash
-    let name_only = if let Some(pos) = name_upper.rfind('\\') {
-        &name_upper[pos + 1..]
+    let name_only = if let Some(pos) = name.rfind('\\') {
+        &name[pos + 1..]
+    } else if let Some(pos) = name.rfind('/') {
+        &name[pos + 1..]
     } else {
-        &name_upper
+        name
     };
-    
-    // Remove extension if present
-    let (base, ext) = if let Some(pos) = name_only.find('.') {
-        (&name_only[..pos], &name_only[pos + 1..])
+
+    // Find extension position
+    let dot_pos = name_only.find('.').unwrap_or(name_only.len());
+    let base = &name_only[..dot_pos];
+    let ext = if dot_pos < name_only.len() {
+        &name_only[dot_pos + 1..]
     } else {
-        (name_only, "")
+        ""
     };
-    
-    // Copy base name (up to 8 chars)
+
+    // Copy base name (up to 8 chars), uppercased
     for (i, c) in base.bytes().take(8).enumerate() {
-        result[i] = c;
+        result[i] = if c >= b'a' && c <= b'z' { c - 32 } else { c };
     }
-    
-    // Copy extension (up to 3 chars)
+
+    // Copy extension (up to 3 chars), uppercased
     for (i, c) in ext.bytes().take(3).enumerate() {
-        result[8 + i] = c;
+        let uc = if c >= b'a' && c <= b'z' { c - 32 } else { c };
+        result[8 + i] = uc;
     }
-    
+
     result
 }
 
@@ -1629,52 +1663,52 @@ pub fn find_file_at_path(
     fs: &Fat32FileSystem,
     path: &str,
 ) -> Option<FatDirectoryEntry> {
-    let trimmed = path.trim();
-    if trimmed.is_empty() {
+    // Skip drive letters and leading slashes
+    let mut pos = 0;
+    for (i, c) in path.char_indices() {
+        match c {
+            'C' | 'c' | ':' => { pos = i + 1; }
+            '\\' | '/' => { pos = i + 1; }
+            _ => { break; }
+        }
+    }
+    let cleaned = &path[pos..];
+    if cleaned.is_empty() {
         return None;
     }
-    // Skip drive letters and leading slashes.
-    let cleaned = trimmed
-        .trim_start_matches(|c| c == 'C' || c == 'c' || c == ':')
-        .trim_start_matches(|c| c == '\\' || c == '/');
-    // Split into components.
-    let mut segments: [(&str, [u8; 11]); 8] = [("", [b' '; 11]); 8];
+    
+    // Split path into segments using a fixed-size stack array
+    let mut segments: [&str; 4] = ["", "", "", ""];
     let mut seg_count = 0usize;
-    for seg in cleaned.split(|c| c == '\\' || c == '/').filter(|s| !s.is_empty()) {
-        if seg_count >= segments.len() {
-            return None;
+    for seg in cleaned.split(|c| c == '\\' || c == '/') {
+        if seg.is_empty() || seg_count >= 4 {
+            continue;
         }
-        segments[seg_count].0 = seg;
-        segments[seg_count].1 = name_to_83(seg);
+        segments[seg_count] = seg;
         seg_count += 1;
     }
     if seg_count == 0 {
         return None;
     }
-    // Start at the root cluster.
+    
+    // Start at root directory
     let mut dir_cluster = fs.fat_data.root_cluster;
-    let mut last: Option<FatDirectoryEntry> = None;
+    
     for i in 0..seg_count {
-        let (seg_str, short_name) = (segments[i].0, segments[i].1);
-        if seg_str.is_empty() {
-            continue;
-        }
-        let entry = match find_in_dir_by_short(fs, dir_cluster, &short_name) {
-            Some(e) => e,
-            None => return last,
-        };
+        let short_name = name_to_83(segments[i]);
+        let entry = find_in_dir_by_short(fs, dir_cluster, &short_name)?;
+        
         if i + 1 == seg_count {
             return Some(entry);
         }
-        // Must be a directory to descend.
+        
         if !entry.is_directory() {
-            return last;
+            return None;
         }
         dir_cluster = entry.first_cluster();
         if dir_cluster < 2 {
-            return last;
+            return None;
         }
-        let _ = last.take();
     }
-    last
+    None
 }

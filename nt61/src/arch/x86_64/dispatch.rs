@@ -586,8 +586,150 @@ fn handle_general_protection(_error_code: u64, tf: &TrapFrame) {
 /// Handle #SS (Stack Segment Fault)
 /// Usually caused by stack limit violation or bad stack selector
 fn handle_stack_fault(error_code: u64, tf: &TrapFrame) {
-    let _selector_id = error_code & 0xFFFF;
-    let _ext = (error_code >> 16) & 1 != 0;
+    let selector_id = error_code & 0xFFFF;
+    let ext = (error_code >> 16) & 1 != 0;
+    let cr3: u64;
+    unsafe { core::arch::asm!("mov {}, cr3", out(reg) cr3, options(nostack, preserves_flags)); }
+    crate::boot_println!("[FAULT] #SS id={} ext={} sel=0x{:04x} rip=0x{:016x} rsp=0x{:016x} cs=0x{:x} ss=0x{:x} cr3=0x{:x}",
+        selector_id, ext, selector_id, tf.rip, tf.rsp, tf.cs, tf.ss, cr3);
+    // Print a few bytes of code around RIP to identify the failing
+    // instruction (the address itself isn't enough — it lives in the
+    // relocated kernel image and we don't have symbols at runtime).
+    unsafe {
+        let p = tf.rip as *const u8;
+        for off in (-16i64..16i64).step_by(1) {
+            let addr = tf.rip.wrapping_add(off as u64);
+            let byte: u8 = core::ptr::read_volatile(p.offset(off as isize));
+            if off == 0 {
+                crate::boot_println!("  code[{:+}] @ 0x{:016x} = 0x{:02x}  <-- RIP", off, addr, byte);
+            } else {
+                crate::boot_println!("  code[{:+}] @ 0x{:016x} = 0x{:02x}", off, addr, byte);
+            }
+        }
+    }
+    // Dump our saved GP registers so we can see what the
+    // crashed frame was working with.
+    crate::boot_println!("[FAULT-REGS] rax=0x{:016x} rcx=0x{:016x} rdx=0x{:016x}",
+        tf.rax, tf.rcx, tf.rdx);
+    crate::boot_println!("[FAULT-REGS] rbx=0x{:016x} rbp=0x{:016x} rsi=0x{:016x} rdi=0x{:016x}",
+        tf.rbx, tf.rbp, tf.rsi, tf.rdi);
+    crate::boot_println!("[FAULT-REGS] r8 =0x{:016x} r9 =0x{:016x} r10=0x{:016x} r11=0x{:016x}",
+        tf.r8, tf.r9, tf.r10, tf.r11);
+    crate::boot_println!("[FAULT-REGS] r12=0x{:016x} r13=0x{:016x} r14=0x{:016x} r15=0x{:016x}",
+        tf.r12, tf.r13, tf.r14, tf.r15);
+    // Print addresses of known kernel symbols so we can
+    // locate the image base at runtime.
+    crate::boot_println!("[FAULT-SYMS] handle_stack_fault=0x{:x}",
+        handle_stack_fault as *const () as usize);
+    crate::boot_println!("[FAULT-SYMS] kernel_main=0x{:x}",
+        crate::kernel_main::kernel_main as *const () as usize);
+    crate::boot_println!("[FAULT-SYMS] early_write_str=0x{:x}",
+        crate::arch::boot::early_write_str as *const () as usize);
+    crate::boot_println!("[FAULT-SYMS] write_early=0x{:x}",
+        crate::rtl::klog::write_early as *const () as usize);
+    // Dump 256 bytes around RIP to identify what we crashed into.
+    let rip_p = tf.rip as *const u8;
+    unsafe {
+        for row in (-256i64..=0i64).step_by(16) {
+            let mut bytes = [0u8; 16];
+            for i in 0..16i64 {
+                bytes[i as usize] = core::ptr::read_volatile(rip_p.offset((row + i) as isize));
+            }
+            let mut hex_buf = [0u8; 64];
+            let mut idx = 0;
+            for (i, b) in bytes.iter().enumerate() {
+                let hi = (b >> 4) & 0xf;
+                let lo = b & 0xf;
+                let h = if hi < 10 { b'0' + hi } else { b'a' + hi - 10 };
+                let l = if lo < 10 { b'0' + lo } else { b'a' + lo - 10 };
+                if idx + 2 < hex_buf.len() {
+                    hex_buf[idx] = h;
+                    hex_buf[idx + 1] = l;
+                    if i < 15 && idx + 2 < hex_buf.len() - 1 {
+                        hex_buf[idx + 2] = b' ';
+                    }
+                    idx += 3;
+                }
+            }
+            let hex_str = core::str::from_utf8(&hex_buf[..idx.min(hex_buf.len()-1)]).unwrap_or("?");
+            let addr = tf.rip.wrapping_add(row as u64);
+            crate::boot_println!("[FAULT-MEM] +{:04x} @ 0x{:016x} = {}", row, addr, hex_str);
+        }
+        // Also dump 256 bytes BEFORE RIP-256 to identify the start of the image.
+        let p256_before = tf.rip.wrapping_sub(0x200);
+        let p_p = p256_before as *const u8;
+        for row in (0i64..=0x1000i64).step_by(16) {
+            let mut bytes = [0u8; 16];
+            let mut valid = true;
+            for i in 0..16i64 {
+                bytes[i as usize] = core::ptr::read_volatile(p_p.offset((row + i) as isize));
+            }
+            let mut hex_buf = [0u8; 64];
+            let mut idx = 0;
+            for (i, b) in bytes.iter().enumerate() {
+                let hi = (b >> 4) & 0xf;
+                let lo = b & 0xf;
+                let h = if hi < 10 { b'0' + hi } else { b'a' + hi - 10 };
+                let l = if lo < 10 { b'0' + lo } else { b'a' + lo - 10 };
+                if idx + 2 < hex_buf.len() {
+                    hex_buf[idx] = h;
+                    hex_buf[idx + 1] = l;
+                    if i < 15 && idx + 2 < hex_buf.len() - 1 {
+                        hex_buf[idx + 2] = b' ';
+                    }
+                    idx += 3;
+                }
+            }
+            let hex_str = core::str::from_utf8(&hex_buf[..idx.min(hex_buf.len()-1)]).unwrap_or("?");
+            let addr = p256_before.wrapping_add(row as u64);
+            crate::boot_println!("[FAULT-MEM] -{:#x}+{:04x} @ 0x{:016x} = {}",
+                0x200u64, row, addr, hex_str);
+        }
+    }
+    // Walk the RBP chain. With optimizations enabled RBP isn't
+    // always a frame pointer, so we verify each candidate by
+    // checking that the saved RBP looks like a stack address
+    // (between rsp and our idea of the stack base).
+    let stack_hi = tf.rsp.wrapping_add(0x40000);  // generous upper bound
+    crate::boot_println!("[FAULT-RBP] walking rbp chain starting at rbp=0x{:016x} rsp=0x{:016x}", tf.rbp, tf.rsp);
+    // Just dump raw stack bytes (no RBP walk which can fault on bogus memory)
+    unsafe {
+        let stack_top = tf.rsp;
+        for offset in (0i64..=0x200i64).step_by(16) {
+            let addr = stack_top.wrapping_add(offset as u64);
+            let p = addr as *const u8;
+            let mut bytes = [0u8; 16];
+            let mut valid = true;
+            for i in 0..16i64 {
+                let pp = p.offset(i as isize);
+                if pp < tf.rsp as *const u8 || pp > stack_hi as *const u8 {
+                    valid = false;
+                    break;
+                }
+                bytes[i as usize] = core::ptr::read_volatile(pp);
+            }
+            if !valid { break; }
+            let mut hex_buf = [0u8; 80];
+            let mut idx = 0;
+            for (i, b) in bytes.iter().enumerate() {
+                let hi = (b >> 4) & 0xf;
+                let lo = b & 0xf;
+                let h = if hi < 10 { b'0' + hi } else { b'a' + hi - 10 };
+                let l = if lo < 10 { b'0' + lo } else { b'a' + lo - 10 };
+                if idx + 2 < hex_buf.len() {
+                    hex_buf[idx] = h;
+                    hex_buf[idx + 1] = l;
+                    if i < 15 && idx + 2 < hex_buf.len() - 1 {
+                        hex_buf[idx + 2] = b' ';
+                    }
+                    idx += 3;
+                }
+            }
+            let hex_str = core::str::from_utf8(&hex_buf[..idx.min(hex_buf.len()-1)]).unwrap_or("?");
+            crate::boot_println!("[FAULT-STK] +{:04x} @ 0x{:016x} = {}",
+                offset, addr, hex_str);
+        }
+    }
     
     // // crate::kprintln!("[FAULT] #SS (Stack Fault)")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
     // // crate::kprintln!("  Error code: ID={} EXT={} Selector=0x{:04x}", selector_id, ext, selector_id)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
@@ -621,9 +763,31 @@ fn handle_segment_not_present(_error_code: u64, _tf: &TrapFrame) {
 /// Handle #UD (Invalid Opcode)
 /// Caused by executing invalid instructions or CS.limit exceeded
 fn handle_invalid_opcode(tf: &TrapFrame) {
-    // // crate::kprintln!("[FAULT] #UD (Invalid Opcode)")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // crate::kprintln!("  RIP=0x{:016x}", tf.rip)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    
+    crate::hal::x86_64::serial::write_string("[FAULT] #UD (Invalid Opcode)\r\n");
+    crate::hal::x86_64::serial::write_string("[FAULT]   RIP=0x");
+    crate::hal::x86_64::serial::write_u64_hex(tf.rip);
+    crate::hal::x86_64::serial::write_string(" CS=0x");
+    crate::hal::x86_64::serial::write_u64_hex(tf.cs);
+    crate::hal::x86_64::serial::write_string("\r\n");
+    // Read first 8 bytes at tf.rip
+    unsafe {
+        let mut buf = [0u8; 8];
+        core::arch::asm!(
+            "mov rsi, {src}\n\
+             mov rdi, {dst}\n\
+             mov rcx, 1\n\
+             rep movsq",
+            src = in(reg) tf.rip,
+            dst = in(reg) buf.as_mut_ptr() as u64,
+            options(nostack, preserves_flags),
+        );
+        crate::hal::x86_64::serial::write_string("[FAULT]   bytes at RIP: ");
+        for &b in &buf {
+            crate::hal::x86_64::serial::write_u32_hex(b as u32);
+            crate::hal::x86_64::serial::write_string(" ");
+        }
+        crate::hal::x86_64::serial::write_string("\r\n");
+    }
     // Check for CPUID instruction
     let code = unsafe {
         let ptr = tf.rip as *const u8;
