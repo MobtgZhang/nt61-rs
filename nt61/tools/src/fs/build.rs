@@ -2860,25 +2860,31 @@ const CMD_EXE_RDATA_RVA: u32 = SECTION_ALIGNMENT * 2;
 // `tools/src/bin/mkcmd.rs` byte-for-byte.
 //
 // Layout (offsets into `.text`):
-//   0x000  cmd_main:  4c 8d 15 19 00 00 00   lea r10, [rip+0x19]  ; arg0 = path
-//              0x007  b8 00 02 00 00         mov eax, 0x0200      ; SYS_RUN_AUTOEXEC
-//              0x00c  0f 05                  syscall              ; run batch
-//              0x00e  b8 01 02 00 00         mov eax, 0x0201      ; SYS_EXIT_PROCESS
-//              0x013  31 ff                  xor edi, edi         ; exit code 0
-//              0x015  0f 05                  syscall              ; terminate
-//              0x017  eb fe                  jmp $                ; safety
-//              0x019  90 * 7                 padding (path starts at 0x20)
+//   0x000  cmd_main:  b0 5a                  mov al, 'Z'
+//              0x002  ba f8 03               mov dx, 0x3F8
+//              0x005  ee                     out dx, al        ; trace: cmd.exe running
+//              0x006  4c 8d 15 13 00 00 00   lea r10, [rip+0x13]  ; arg0 = path (0x020)
+//              0x00d  b8 00 02 00 00         mov eax, 0x0200      ; SYS_RUN_AUTOEXEC
+//              0x012  0f 05                  syscall              ; run batch
+//              0x014  b8 01 02 00 00         mov eax, 0x0201      ; SYS_EXIT_PROCESS
+//              0x019  31 ff                  xor edi, edi         ; exit code 0
+//              0x01b  0f 05                  syscall              ; terminate
+//              0x01d  eb fe                  jmp $                ; safety
+//              0x01f  90                     padding (path starts at 0x20)
 //   0x020  autoexec_path:
 //              "C:\system\tests\autoexec.bat\0" (29 chars + NUL)
 const CMD_EXE_TEXT_STUB: [u8; 84] = [
-    0x4c, 0x8d, 0x15, 0x19, 0x00, 0x00, 0x00, // lea r10, [rip+0x19]
+    0xb0, 0x5a,                               // mov al, 'Z'
+    0xba, 0xf8, 0x03,                         // mov dx, 0x3F8
+    0xee,                                     // out dx, al
+    0x4c, 0x8d, 0x15, 0x13, 0x00, 0x00, 0x00, // lea r10, [rip+0x13] (target=0x006+7+0x13=0x020)
     0xb8, 0x00, 0x02, 0x00, 0x00,             // mov eax, 0x200
     0x0f, 0x05,                               // syscall
     0xb8, 0x01, 0x02, 0x00, 0x00,             // mov eax, 0x201
     0x31, 0xff,                               // xor edi, edi
     0x0f, 0x05,                               // syscall
     0xeb, 0xfe,                               // jmp $
-    0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, // padding to 0x20
+    0x90,                                     // padding to 0x20
     // 0x020: autoexec_path (NUL-terminated, 29 bytes)
     b'C', b':', b'\\', b's', b'y', b's', b't', b'e', b'm',
     b'\\', b't', b'e', b's', b't', b's', b'\\',

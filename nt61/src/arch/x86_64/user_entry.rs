@@ -353,6 +353,41 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
                 crate::hal::x86_64::serial::write_string(" ");
             }
             crate::hal::x86_64::serial::write_string("\r\n");
+            // DEBUG: print the PTE bits so we can verify that the
+            // cmd.exe page is mapped with US=1 and not NX. Without
+            // US=1, user-mode code can't execute from the page; with
+            // NX=1 the page is non-executable. Either of those would
+            // silently abort cmd.exe on its very first instruction.
+            let pml4_idx_dbg = ((user_rip >> 39) & 0x1FF) as usize;
+            let pdpt_idx_dbg = ((user_rip >> 30) & 0x1FF) as usize;
+            let pd_idx_dbg = ((user_rip >> 21) & 0x1FF) as usize;
+            let pt_idx_dbg = ((user_rip >> 12) & 0x1FF) as usize;
+            let pml4e_dbg = core::ptr::read_unaligned((pml4_phys as *const u64).add(pml4_idx_dbg));
+            let pdpt_phys_dbg = pml4e_dbg & 0x000F_FFFF_FFFF_F000;
+            let pdpte_dbg = core::ptr::read_unaligned((pdpt_phys_dbg as *const u64).add(pdpt_idx_dbg));
+            let pd_phys_dbg = pdpte_dbg & 0x000F_FFFF_FFFF_F000;
+            let pde_dbg = core::ptr::read_unaligned((pd_phys_dbg as *const u64).add(pd_idx_dbg));
+            let pt_phys_dbg = pde_dbg & 0x000F_FFFF_FFFF_F000;
+            let pte_dbg = core::ptr::read_unaligned((pt_phys_dbg as *const u64).add(pt_idx_dbg));
+            crate::hal::x86_64::serial::write_string("[UE] cmd.exe PTE walk: PML4[");
+            crate::hal::x86_64::serial::write_u32_hex(pml4_idx_dbg as u32);
+            crate::hal::x86_64::serial::write_string("]=0x");
+            crate::hal::x86_64::serial::write_u64_hex(pml4e_dbg);
+            crate::hal::x86_64::serial::write_string(" PDPT[");
+            crate::hal::x86_64::serial::write_u32_hex(pdpt_idx_dbg as u32);
+            crate::hal::x86_64::serial::write_string("]=0x");
+            crate::hal::x86_64::serial::write_u64_hex(pdpte_dbg);
+            crate::hal::x86_64::serial::write_string(" PD[");
+            crate::hal::x86_64::serial::write_u32_hex(pd_idx_dbg as u32);
+            crate::hal::x86_64::serial::write_string("]=0x");
+            crate::hal::x86_64::serial::write_u64_hex(pde_dbg);
+            crate::hal::x86_64::serial::write_string(" PT[");
+            crate::hal::x86_64::serial::write_u32_hex(pt_idx_dbg as u32);
+            crate::hal::x86_64::serial::write_string("]=0x");
+            crate::hal::x86_64::serial::write_u64_hex(pte_dbg);
+            crate::hal::x86_64::serial::write_string("\r\n");
+            let _ = (pml4_idx_dbg, pdpt_idx_dbg, pd_idx_dbg, pt_idx_dbg,
+                     pml4e_dbg, pdpte_dbg, pde_dbg, pte_dbg);
         } else {
             crate::hal::x86_64::serial::write_string("[UE] cmd.exe entry page walk FAILED: PML4[");
             crate::hal::x86_64::serial::write_u32_hex(pml4_idx as u32);

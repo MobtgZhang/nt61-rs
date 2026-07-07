@@ -139,12 +139,15 @@ build:
 build-ntfs:
 	$(BUILD_TOOL) --build all --build-dir $(BLD) --format-flag ntfs --size-mb 64 --arch $(ARCH)
 
+build-fat32: FORMAT=fat32
 build-fat32:
 	$(BUILD_TOOL) --build all --build-dir $(BLD) --format-flag fat32 --size-mb 64 --arch $(ARCH)
 
+build-ext4: FORMAT=ext4
 build-ext4:
 	$(BUILD_TOOL) --build all --build-dir $(BLD) --format-flag ext4 --size-mb 64 --arch $(ARCH)
 
+build-iso: FORMAT=iso
 build-iso:
 	$(BUILD_TOOL) --build iso --build-dir $(BLD) --format-flag iso --size-mb 64 --arch $(ARCH)
 
