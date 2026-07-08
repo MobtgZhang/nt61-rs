@@ -183,16 +183,20 @@ pub fn init() {
 /// This reads from the global BootInfo structure that winload populates.
 /// Returns (address, width, height, stride, bpp).
 ///
-/// Note: The framebuffer is initialized in kernel_main.rs via
-/// hal::x86_64::framebuffer::init_from_bootinfo() before video::init()
-/// is called. This function exists as a fallback mechanism and returns
-/// zeros, allowing the driver to fall back to VGA mode.
+/// The framebuffer is initialized by `hal::x86_64::framebuffer::init_from_bootinfo`
+/// called from `kernel_main` → `arch::boot::adopt_bootinfo_framebuffer`
+/// before `video::init()` reaches this driver. The HAL layer keeps the
+/// canonical copy in its per-CPU atomics (`framebuffer::info()`), so this
+/// function simply reads from there rather than from the raw BootInfo
+/// again. Falling back to the HAL keeps the boot-time and runtime
+/// paths identical: winload → BootInfo → HAL atomics → efifb.
 fn get_bootinfo_framebuffer() -> (u64, u32, u32, u32, u32) {
-    // Framebuffer info is initialized in kernel_main.rs before this module
-    // is called. Return zeros to indicate no GOP info is available,
-    // which causes the driver to fall back to VGA mode.
-    // The actual framebuffer state is managed through the HAL layer.
-    (0, 0, 0, 0, 0)
+    let info = framebuffer::info();
+    if info.address == 0 || info.width == 0 || info.height == 0 {
+        // No GOP framebuffer — let the driver fall back to VGA.
+        return (0, 0, 0, 0, 0);
+    }
+    (info.address, info.width, info.height, info.pitch, info.bpp)
 }
 
 /// Run a smoke test on the EFI framebuffer.

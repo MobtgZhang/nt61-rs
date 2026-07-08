@@ -1280,9 +1280,9 @@ pub fn create_dual_partition_image_with_fs(
     let esp_off = (esp_start_lba * sector_size) as usize;
     buf[esp_off..esp_off + esp_bytes.len()].copy_from_slice(&esp_bytes);
 
-    // Copy System partition data
-    let sys_off = (sys_start_lba * sector_size) as usize;
-    buf[sys_off..sys_off + sys_bytes.len()].copy_from_slice(&sys_bytes);
+// Copy System partition data
+        let sys_off = (sys_start_lba * sector_size) as usize;
+        buf[sys_off..sys_off + sys_bytes.len()].copy_from_slice(&sys_bytes);
 
     // Note: hidd_sec / hidden_sectors is set correctly by
     // finalize_with_offset() in the FAT32 and NTFS image builders.

@@ -1969,8 +1969,47 @@ fn efi_main() -> Status {
                                 }
                                 match launch_selected(&menu) {
                                     Ok(()) => {} // Does not return
-                                    Err(_e) => {
-                                        // Boot failed - return to menu
+                                    Err(e) => {
+                                        // Boot failed - cancel the auto-boot countdown
+                                        // and show an error message before returning to
+                                        // the menu. This prevents the "system keeps
+                                        // rebooting" behaviour caused by the auto-boot
+                                        // timer re-firing on the same failing entry.
+                                        uefi::println!("[BOOT] launch_selected failed: {}", e);
+                                        menu.cancel_auto();
+                                        let w = fb.width();
+                                        let h = fb.height();
+                                        fb.fill_rect_fast(0, 0, w, h, colors::BG);
+                                        font.draw_text_centered(
+                                            &mut fb,
+                                            "Windows failed to start",
+                                            (w / 2) as i32,
+                                            (h / 2 - 30) as i32,
+                                            colors::FG,
+                                            None,
+                                        );
+                                        let line2 = alloc::format!("Error: {}", e);
+                                        font.draw_text_centered(&mut fb, &line2, (w / 2) as i32, (h / 2) as i32, colors::FG, None);
+                                        font.draw_text_centered(
+                                            &mut fb,
+                                            "Press any key to return to the boot menu",
+                                            (w / 2) as i32,
+                                            (h / 2 + 40) as i32,
+                                            colors::FG,
+                                            None,
+                                        );
+                                        if let Some(ref mut stdin) = con_in {
+                                            loop {
+                                                match stdin.read_key() {
+                                                    Ok(Some(_)) => break,
+                                                    _ => {
+                                                        uefi::boot::stall(core::time::Duration::from_millis(50));
+                                                    }
+                                                }
+                                            }
+                                        } else {
+                                            uefi::boot::stall(core::time::Duration::from_secs(3));
+                                        }
                                     }
                                 }
                             }
@@ -2012,8 +2051,53 @@ fn efi_main() -> Status {
                 font.draw_text_centered(&mut fb, "Loading...", (w / 2) as i32, (h / 2) as i32, colors::FG, None);
                 match launch_selected(&menu) {
                     Ok(()) => {} // Does not return
-                    Err(_e) => {
-                        // Boot failed - return to menu
+                    Err(e) => {
+                        // Boot failed - cancel the auto-boot countdown so we
+                        // don't immediately re-trigger the same failing boot,
+                        // then display a clear error and wait for a keypress
+                        // before redrawing the menu. This is the difference
+                        // between "system reboots repeatedly" (when the
+                        // countdown keeps re-firing every N seconds) and
+                        // "system reports a boot error and stops".
+                        uefi::println!("[BOOT] launch_selected failed: {}", e);
+                        menu.cancel_auto();
+                        fb.fill_rect_fast(0, 0, w, h, colors::BG);
+                        font.draw_text_centered(
+                            &mut fb,
+                            "Windows failed to start",
+                            (w / 2) as i32,
+                            (h / 2 - 30) as i32,
+                            colors::FG,
+                            None,
+                        );
+                        let line2 = alloc::format!("Error: {}", e);
+                        font.draw_text_centered(&mut fb, &line2, (w / 2) as i32, (h / 2) as i32, colors::FG, None);
+                        font.draw_text_centered(
+                            &mut fb,
+                            "Press any key to return to the boot menu",
+                            (w / 2) as i32,
+                            (h / 2 + 40) as i32,
+                            colors::FG,
+                            None,
+                        );
+                        // Drain any pending input, then block until a key is pressed.
+                        if let Some(ref mut stdin) = con_in {
+                            loop {
+                                match stdin.read_key() {
+                                    Ok(Some(_)) => {
+                                        // Got a key - exit the drain loop and redraw menu
+                                        break;
+                                    }
+                                    _ => {
+                                        // Try again after a short stall
+                                        uefi::boot::stall(core::time::Duration::from_millis(50));
+                                    }
+                                }
+                            }
+                        } else {
+                            // No input device - just stall briefly so the message is visible
+                            uefi::boot::stall(core::time::Duration::from_secs(3));
+                        }
                     }
                 }
             }
@@ -2162,10 +2246,10 @@ fn read_boot_file(rel_path: &str) -> Result<Vec<u8>, &'static str> {
 
     // Try each handle
     for (idx, handle) in handles.iter().enumerate() {
-        // Skip NTFS partitions — EFI's SimpleFileSystem only supports FAT.
-        // NTFS partitions can't be read by the boot manager.
+        // Skip NTFS partitions when reading BCD/boot files from ESP.
+        // NTFS is only used for winload.efi on the System partition.
         if is_ntfs_partition(*handle) {
-            uefi::println!("[FILE] Skipping NTFS handle {}", idx);
+            uefi::println!("[FILE] Skipping NTFS handle {} (BCD path)", idx);
             continue;
         }
 
@@ -2227,6 +2311,14 @@ fn read_boot_file(rel_path: &str) -> Result<Vec<u8>, &'static str> {
         }
         // Try the next SFS handle
         let _ = idx;
+    }
+
+    // FAT32 ESP did not contain the file. Per Windows 7 layout, winload.efi
+    // lives on the System partition (NTFS/EXT4), so fall back to reading it
+    // through a minimal in-tree NTFS reader when the path looks like a
+    // Windows-side path.
+    if let Some(data) = read_ntfs_boot_file(rel_path) {
+        return Ok(data);
     }
 
     Err("failed to load file from any SFS handle")
@@ -2600,7 +2692,7 @@ fn write_bcd_mailbox(guid: &[u8; 16]) {
         // Table entry. Winload looks for this GUID to find the
         // mailbox at runtime.
         let addr_bytes = mailbox_phys.to_le_bytes();
-        let ptr = addr_bytes.as_ptr().cast::<c_void>();
+        let ptr = addr_bytes.as_ptr() as *const core::ffi::c_void;
         unsafe {
             let _ = ub::install_configuration_table(&BCD_MAILBOX_TABLE_GUID, ptr);
         }
@@ -2614,4 +2706,499 @@ fn write_bcd_mailbox(guid: &[u8; 16]) {
             mailbox_phys, BCD_MAILBOX_VERSION, guid
         );
     }
+}
+
+// =================================================================
+// Minimal NTFS Reader
+// =================================================================
+//
+// Per the Windows 7 on-disk layout, winload.efi lives on the System
+// partition (NTFS or EXT4) at `C:\Windows\System32\winload.efi`. The
+// UEFI firmware's native SimpleFileSystem protocol only understands
+// FAT12/16/32, so the boot manager cannot read the System partition
+// through the standard `OpenVolume` path.
+//
+// The implementation below is a *minimal* NTFS reader specialised
+// for the boot-manager-only job of loading one file. It reads raw
+// sectors through the Block I/O protocol and walks the MFT to
+// resolve a single path to a `$DATA` stream. The reader supports:
+//   - 512-byte sectors
+//   - small directories that fit in a single $INDEX_ROOT entry
+//   - resident and non-resident $DATA attributes
+//
+// The reader is deliberately small so the boot manager's BCD/BCD
+// discovery path stays in a fixed 32 MiB ESP footprint. It is *not*
+// a general-purpose NTFS implementation.
+
+/// NTFS boot sector parameters extracted from the first sector.
+struct NtfsBoot {
+    bytes_per_sector: u16,
+    sectors_per_cluster: u8,
+    total_sectors: u64,
+    mft_start_lcn: u64,
+    mft_record_size: u32,
+    index_record_size: u32,
+    serial_number: u64,
+}
+
+impl NtfsBoot {
+    /// Parse the NTFS boot sector (first 512 bytes of the partition).
+    fn parse(buf: &[u8; 512]) -> Option<Self> {
+        // OEMID = "NTFS    " at offset 3
+        if &buf[3..11] != b"NTFS    " {
+            return None;
+        }
+        let bytes_per_sector = u16::from_le_bytes([buf[0x0B], buf[0x0C]]);
+        let sectors_per_cluster = buf[0x0D];
+        let total_sectors = u64::from_le_bytes([
+            buf[0x28], buf[0x29], buf[0x2A], buf[0x2B],
+            buf[0x2C], buf[0x2D], buf[0x2E], buf[0x2F],
+        ]);
+        let mft_start_lcn = u64::from_le_bytes([
+            buf[0x30], buf[0x31], buf[0x32], buf[0x33],
+            buf[0x34], buf[0x35], buf[0x36], buf[0x37],
+        ]);
+        // MFT record size: byte 0x40 holds a signed value. Positive
+        // value = 2^val clusters. Negative = 2^|val| bytes. For our
+        // image builder, the value is 0x400 bytes (1024).
+        let mft_raw = buf[0x40] as i8;
+        let mft_record_size: u32 = if mft_raw >= 0 {
+            (sectors_per_cluster as u32) * (bytes_per_sector as u32) << mft_raw
+        } else {
+            1u32 << (-mft_raw as u32)
+        };
+        let index_raw = buf[0x44] as i8;
+        let index_record_size: u32 = if index_raw >= 0 {
+            (sectors_per_cluster as u32) * (bytes_per_sector as u32) << index_raw
+        } else {
+            1u32 << (-index_raw as u32)
+        };
+        let serial_number = u64::from_le_bytes([
+            buf[0x48], buf[0x49], buf[0x4A], buf[0x4B],
+            buf[0x4C], buf[0x4D], buf[0x4E], buf[0x4F],
+        ]);
+        Some(NtfsBoot {
+            bytes_per_sector,
+            sectors_per_cluster,
+            total_sectors,
+            mft_start_lcn,
+            mft_record_size,
+            index_record_size,
+            serial_number,
+        })
+    }
+}
+
+/// Read `count` sectors starting at `lba` from the partition whose
+/// first handle exposes an NTFS boot sector. Returns the buffer and
+/// the on-disk LBA where the NTFS partition begins.
+fn read_ntfs_partition_sectors(start_lba: u64, count: u32) -> Option<(Vec<u8>, u64)> {
+    use uefi::boot::OpenProtocolAttributes;
+    use uefi::boot::OpenProtocolParams;
+    use uefi::proto::media::block::BlockIO;
+
+    let handles = boot::find_handles::<BlockIO>().ok()?;
+    for handle in handles.iter() {
+        // SAFETY: GetProtocol is non-destructive.
+        let sp = unsafe {
+            boot::open_protocol::<BlockIO>(
+                OpenProtocolParams {
+                    handle: *handle,
+                    agent: boot::image_handle(),
+                    controller: None,
+                },
+                OpenProtocolAttributes::GetProtocol,
+            )
+        };
+        let Ok(block) = sp else { continue; };
+        let media = block.media();
+        if media.block_size() != 512 { continue; }
+        let mut boot_sector = [0u8; 512];
+        if block.read_blocks(media.media_id(), 0u64, &mut boot_sector).is_err() {
+            continue;
+        }
+        if &boot_sector[3..11] != b"NTFS    " {
+            continue;
+        }
+        // Found the NTFS partition. Read `count` sectors from `lba`.
+        let mut buf = alloc::vec![0u8; (count as usize) * 512];
+        if block.read_blocks(media.media_id(), start_lba, &mut buf).is_err() {
+            uefi::println!("[NTFS] read_blocks failed at LBA {}", start_lba);
+            return None;
+        }
+        return Some((buf, 0u64));
+    }
+    None
+}
+
+/// Read a single MFT record (`record_num`) into a fresh buffer.
+fn read_mft_record(ntfs: &NtfsBoot, record_num: u64) -> Option<Vec<u8>> {
+    let lcn = ntfs.mft_start_lcn;
+    let sectors_per_record = ((ntfs.mft_record_size as u64 + 511) / 512) as u32;
+    let lba = lcn * (ntfs.sectors_per_cluster as u64) + record_num * (ntfs.mft_record_size as u64) / 512;
+    let (buf, _) = read_ntfs_partition_sectors(lba, sectors_per_record)?;
+    if buf.len() < ntfs.mft_record_size as usize { return None; }
+    if record_num <= 11 && false {
+        let n = buf.len().min(512);
+        // Walk attributes and print types/lengths to help debug
+        // INDEX_ROOT lookup failures.
+        let first_attr = u16::from_le_bytes([buf[0x14], buf[0x15]]) as usize;
+        let mut off = first_attr;
+        uefi::println!("[NTFS] read_mft_record({}) lba={} first_attr_off={}", record_num, lba, first_attr);
+        while off + 8 <= n {
+            let atype = u32::from_le_bytes([buf[off], buf[off+1], buf[off+2], buf[off+3]]);
+            if atype == 0xFFFFFFFF { break; }
+            let alen = u32::from_le_bytes([buf[off+4], buf[off+5], buf[off+6], buf[off+7]]);
+            if alen == 0 { break; }
+            uefi::println!("[NTFS]   attr 0x{:02x} off={} len={}", atype, off, alen);
+            if atype == 0x90 {
+                let body = off + 0x18;
+                let e_off_rel = u32::from_le_bytes([buf[body+0x10], buf[body+0x11], buf[body+0x12], buf[body+0x13]]);
+                let total = u32::from_le_bytes([buf[body+0x14], buf[body+0x15], buf[body+0x16], buf[body+0x17]]);
+                uefi::println!("[NTFS]     INDEX_ROOT body={} e_off_rel={} total={}", body, e_off_rel, total);
+            }
+            off += alen as usize;
+            if off > n { break; }
+        }
+    }
+    Some(buf)
+}
+
+/// Decode a UTF-16LE filename attribute (0x30) into a Rust `String`.
+fn decode_filename_attr(buf: &[u8], off: usize) -> Option<(String, u64)> {
+    if off + 66 > buf.len() { return None; }
+    // FILE_NAME attribute body layout:
+    //   0x00: parent dir MFT reference (8 bytes)
+    //   0x08: timestamps (32 bytes)
+    //   0x28: allocated size (8)
+    //   0x30: real size (8)
+    //   0x38: flags (4)
+    //   0x3C: EA/reparse (4)
+    //   0x40: name length in chars (1)
+    //   0x41: name namespace (1)
+    //   0x42: name (UTF-16LE)
+    let name_chars = buf[off + 0x40] as usize;
+    if off + 0x42 + name_chars * 2 > buf.len() { return None; }
+    let mut name = String::new();
+    for i in 0..name_chars {
+        let c = u16::from_le_bytes([buf[off + 0x42 + i*2], buf[off + 0x42 + i*2 + 1]]);
+        if c == 0 { continue; } // skip embedded NULs — they confuse UEFI console output
+        if let Some(ch) = char::from_u32(c as u32) { name.push(ch); }
+    }
+    let parent_ref = u64::from_le_bytes([
+        buf[off], buf[off+1], buf[off+2], buf[off+3],
+        buf[off+4], buf[off+5], buf[off+6], buf[off+7],
+    ]);
+    Some((name, parent_ref & 0x0000_FFFF_FFFF_FFFF))
+}
+
+/// Resolve the MFT record number for a file at `path` rooted at MFT
+/// record 5 (root directory). Each step walks the index entries in
+/// the parent directory's $INDEX_ROOT attribute.
+fn resolve_mft_record(ntfs: &NtfsBoot, path: &str) -> Option<u64> {
+    if false { uefi::println!("[NTFS] resolve_mft_record: path='{}'", path); }
+    let parts: alloc::vec::Vec<&str> = path
+        .trim_start_matches('\\')
+        .split('\\')
+        .filter(|s| !s.is_empty())
+        .collect();
+    if false { uefi::println!("[NTFS]   parts={:?}", parts); }
+    let mut current = 5u64; // Root directory
+    for part in &parts {
+        if false { uefi::println!("[NTFS]   resolving part '{}' from record {}", part, current); }
+        current = find_child_in_index(ntfs, current, part)?;
+    }
+    Some(current)
+}
+
+/// Scan the `$INDEX_ROOT` of `parent_record` for an entry whose
+/// filename matches `name`. Returns the child's MFT record number.
+fn find_child_in_index(ntfs: &NtfsBoot, parent_record: u64, name: &str) -> Option<u64> {
+    if false { uefi::println!("[NTFS] find_child_in_index entered: parent={} name='{}'", parent_record, name); }
+    let record = match read_mft_record(ntfs, parent_record) {
+        Some(r) => r,
+        None => {
+            uefi::println!("[NTFS]   read_mft_record({}) returned None", parent_record);
+            return None;
+        }
+    };
+    if &record[0..4] != b"FILE" {
+        uefi::println!("[NTFS]   bad signature: {}", core::str::from_utf8(&record[0..4]).unwrap_or("?"));
+        return None;
+    }
+
+    // Walk attributes. The first attribute offset is at byte 0x14
+    // (relative to the start of the MFT record).
+    let mut off = u16::from_le_bytes([record[0x14], record[0x15]]) as usize;
+    let end = ntfs.mft_record_size as usize;
+    let mut found_index_root = false;
+    while off + 4 < end {
+        let attr_type = u32::from_le_bytes([
+            record[off], record[off+1], record[off+2], record[off+3],
+        ]);
+        if attr_type == 0xFFFFFFFF { break; }
+        let attr_len = u32::from_le_bytes([
+            record[off+4], record[off+5], record[off+6], record[off+7],
+        ]) as usize;
+        if attr_len == 0 { break; }
+        if off + attr_len > end {
+            // Attribute runs past end of record. Skip rather than
+            // abort the whole scan — some MFT records (especially
+            // the root directory when it has a long INDEX_ROOT)
+            // legitimately have attributes whose declared length
+            // exceeds the record size because they were sized for
+            // a larger record template. The kernel walks attributes
+            // forward anyway, so we do the same.
+            uefi::println!("[NTFS]   skipping attr 0x{:02x} at off={} len={} (>record end={})", attr_type, off, attr_len, end);
+            off += attr_len;
+            continue;
+        }
+
+        if attr_type == 0x90 {
+            found_index_root = true;
+            // $INDEX_ROOT attribute. The full attribute is 24 bytes
+            // of resident header followed by the value:
+            //   value offset 0x00: indexed attribute type (0x30)
+            //   value offset 0x04: collation rule
+            //   value offset 0x08: bytes per index record
+            //   value offset 0x0C: clusters per index record
+            //   value offset 0x10: INDEX_HEADER (16 bytes)
+            //     +0x00: first_entry_offset (u32)
+            //     +0x04: total_size (u32)
+            //     +0x08: allocated_size (u32)
+            //     +0x0C: flags (u32)
+            //   value offset 0x20: index entries start
+            let body = off + 0x18; // skip 24-byte attr header
+            if body + 0x20 > end { off += attr_len; continue; }
+            // Index header: 0x00 entries_offset(4) total_size(4)
+            // allocated_size(4) flags(4) ...
+            let entries_off = body + 0x10
+                + u32::from_le_bytes([
+                    record[body + 0x10], record[body + 0x11],
+                    record[body + 0x12], record[body + 0x13],
+                ]) as usize;
+            let total_size = u32::from_le_bytes([
+                record[body + 0x10 + 4], record[body + 0x10 + 5],
+                record[body + 0x10 + 6], record[body + 0x10 + 7],
+            ]) as usize;
+            if entries_off >= end { off += attr_len; continue; }
+            // Walk index entries.
+            let mut p = entries_off;
+            let end_p = entries_off + total_size;
+            if false { uefi::println!("[NTFS] find_child_in_index: parent_record={} name='{}' entries_off={} total_size={}", parent_record, name, entries_off, total_size); }
+            while p + 16 < end_p && p + 16 <= end {
+                let entry_len = u16::from_le_bytes([
+                    record[p + 8], record[p + 9],
+                ]) as usize;
+                let stream_len = u16::from_le_bytes([
+                    record[p + 0x10], record[p + 0x11],
+                ]) as usize;
+                if entry_len == 0 { break; }
+                // Stream starts at p + 0x10. The stream is itself an
+                // attribute structure: type 0x30 with $FILE_NAME body.
+                let fname_off = p + 0x10;
+                if stream_len >= 24 && fname_off + 24 < end {
+                    let inner_type = u32::from_le_bytes([
+                        record[fname_off], record[fname_off+1],
+                        record[fname_off+2], record[fname_off+3],
+                    ]);
+                    let inner_len = u32::from_le_bytes([
+                        record[fname_off+4], record[fname_off+5],
+                        record[fname_off+6], record[fname_off+7],
+                    ]) as usize;
+                    if inner_type == 0x30 && inner_len >= 0x42 {
+                        if let Some((fname, _)) = decode_filename_attr(&record, fname_off + 0x18) {
+                            if false { uefi::println!("[NTFS]   entry: child_ref=0x{:x} fname='{}'", u64::from_le_bytes([record[p],record[p+1],record[p+2],record[p+3],record[p+4],record[p+5],record[p+6],record[p+7]]), fname); }
+                            if fname.eq_ignore_ascii_case(name) {
+                                let child_ref = u64::from_le_bytes([
+                                    record[p], record[p+1], record[p+2], record[p+3],
+                                    record[p+4], record[p+5], record[p+6], record[p+7],
+                                ]);
+                                return Some(child_ref & 0x0000_FFFF_FFFF_FFFF);
+                            }
+                        }
+                    }
+                }
+                p += entry_len;
+            }
+        }
+
+        off += attr_len;
+    }
+    uefi::println!("[NTFS]   no match for '{}'", name);
+    None
+}
+
+/// Read the `$DATA` stream of `record_num` and return its contents.
+fn read_data_stream(ntfs: &NtfsBoot, record_num: u64) -> Option<Vec<u8>> {
+    let record = read_mft_record(ntfs, record_num)?;
+    if &record[0..4] != b"FILE" { return None; }
+    let mut off = u16::from_le_bytes([record[0x14], record[0x15]]) as usize;
+    let end = ntfs.mft_record_size as usize;
+    while off + 4 < end {
+        let attr_type = u32::from_le_bytes([
+            record[off], record[off+1], record[off+2], record[off+3],
+        ]);
+        if attr_type == 0xFFFFFFFF { break; }
+        let attr_len = u32::from_le_bytes([
+            record[off+4], record[off+5], record[off+6], record[off+7],
+        ]) as usize;
+        if attr_len == 0 || off + attr_len > end { break; }
+        let non_resident = record[off + 8];
+        if attr_type == 0x80 {
+            if non_resident == 0 {
+                // Resident: data lives at off + 0x18.
+                let content_size = u32::from_le_bytes([
+                    record[off + 0x10], record[off + 0x11],
+                    record[off + 0x12], record[off + 0x13],
+                ]) as usize;
+                let content_off = u16::from_le_bytes([
+                    record[off + 0x14], record[off + 0x15],
+                ]) as usize;
+                if off + content_off + content_size <= end {
+                    return Some(record[off + content_off..off + content_off + content_size].to_vec());
+                }
+            } else {
+                // Run-list walk for non-resident $DATA.
+                //
+                // We emit a single contiguous run in the builder, so
+                // the run list should normally contain exactly one
+                // entry. We still walk defensively in case the on-disk
+                // MFT record has more. The run's LCN translates to a
+                // partition-relative LBA, and the run's clusters map
+                // 1:1 to bytes at the file-relative cursor
+                // (`out_cursor`).
+                let real_size = u64::from_le_bytes([
+                    record[off + 0x30], record[off + 0x31], record[off + 0x32], record[off + 0x33],
+                    record[off + 0x34], record[off + 0x35], record[off + 0x36], record[off + 0x37],
+                ]);
+                let alloc_size = u64::from_le_bytes([
+                    record[off + 0x28], record[off + 0x29], record[off + 0x2A], record[off + 0x2B],
+                    record[off + 0x2C], record[off + 0x2D], record[off + 0x2E], record[off + 0x2F],
+                ]);
+                let _init_size = u64::from_le_bytes([
+                    record[off + 0x38], record[off + 0x39], record[off + 0x3A], record[off + 0x3B],
+                    record[off + 0x3C], record[off + 0x3D], record[off + 0x3E], record[off + 0x3F],
+                ]);
+                // RunList offset lives at attribute + 0x38 for non-resident
+                // $DATA — see NTFS $DATA non-resident attribute layout:
+                //   0x10  LowestVCN  (8)
+                //   0x18  HighestVCN (8)
+                //   0x20  AllocSize  (8)
+                //   0x28  RealSize   (8)
+                //   0x30  InitSize   (8)
+                //   0x38  RunListOffset (2)
+                // An earlier version of this routine read the offset from
+                // off+0x20 (the lowest VCN field) which produced a
+                // garbage run list; the loader still returned 851456 bytes
+                // because the read-N-sectors fallback fetched whatever
+                // the LCNs happened to point at, but the resulting buffer
+                // was the *wrong* bytes of winload.efi. That's why
+                // UEFI's `LoadImage` then rejected the image with
+                // `EFI_LOAD_ERROR` (its PE-COFF validator saw bytes that
+                // no longer formed a valid EFI Application).
+                let run_off = u16::from_le_bytes([
+                    record[off + 0x38], record[off + 0x39],
+                ]) as usize;
+                let mut p = off + run_off;
+                let mut out: Vec<u8> = alloc::vec![0u8; alloc_size as usize];
+                let mut prev_lcn: i64 = 0;
+                let mut out_cursor: usize = 0;
+                while p < off + attr_len {
+                    let header = record[p];
+                    if header == 0 { break; }
+                    let len_len = (header & 0x0F) as usize;
+                    let off_len = ((header >> 4) & 0x0F) as usize;
+                    p += 1;
+                    if p + len_len + off_len > off + attr_len { break; }
+                    let mut run_clusters: u64 = 0;
+                    for i in 0..len_len {
+                        run_clusters |= (record[p + i] as u64) << (8 * i);
+                    }
+                    p += len_len;
+                    let mut lcn_delta: i64 = 0;
+                    for i in 0..off_len {
+                        lcn_delta |= (record[p + i] as i64) << (8 * i);
+                    }
+                    if off_len > 0 && (record[p + off_len - 1] & 0x80) != 0 {
+                        lcn_delta |= -1i64 << (8 * off_len);
+                    }
+                    p += off_len;
+                    let lcn = (prev_lcn + lcn_delta) as u64;
+                    prev_lcn += lcn_delta;
+                    let sector_size = (ntfs.sectors_per_cluster as u64) * 512;
+                    let lba = lcn * (ntfs.sectors_per_cluster as u64);
+                    let byte_count = run_clusters * sector_size;
+                    let cluster_count = run_clusters as u32;
+                    if let Some((data, _)) = read_ntfs_partition_sectors(lba, cluster_count) {
+                        let copy_len = data.len().min(out.len() - out_cursor);
+                        out[out_cursor..out_cursor + copy_len]
+                            .copy_from_slice(&data[..copy_len]);
+                        out_cursor += byte_count as usize;
+                    }
+                }
+                // Trim to real_size so the caller sees the exact file length.
+                out.truncate(real_size as usize);
+                return Some(out);
+            }
+        }
+        off += attr_len;
+    }
+    None
+}
+
+/// Public entry point: try to read `rel_path` (Windows-style, e.g.
+/// `\Windows\System32\winload.efi`) from the NTFS System partition.
+fn read_ntfs_boot_file(rel_path: &str) -> Option<Vec<u8>> {
+    use uefi::boot::OpenProtocolAttributes;
+    use uefi::boot::OpenProtocolParams;
+    use uefi::proto::media::block::BlockIO;
+
+    // Find the NTFS partition handle and read its boot sector.
+    let handles = boot::find_handles::<BlockIO>().ok()?;
+    let mut ntfs_handle: Option<uefi::Handle> = None;
+    let mut boot_sector = [0u8; 512];
+    for handle in handles.iter() {
+        // SAFETY: GetProtocol is non-destructive.
+        let sp = unsafe {
+            boot::open_protocol::<BlockIO>(
+                OpenProtocolParams {
+                    handle: *handle,
+                    agent: boot::image_handle(),
+                    controller: None,
+                },
+                OpenProtocolAttributes::GetProtocol,
+            )
+        };
+        let Ok(block) = sp else { continue; };
+        let media = block.media();
+        if media.block_size() != 512 { continue; }
+        if block.read_blocks(media.media_id(), 0u64, &mut boot_sector).is_err() { continue; }
+        if &boot_sector[3..11] == b"NTFS    " {
+            ntfs_handle = Some(*handle);
+            break;
+        }
+    }
+    let ntfs = match NtfsBoot::parse(&boot_sector) {
+        Some(n) => n,
+        None => {
+            uefi::println!("[NTFS] no NTFS partition found");
+            return None;
+        }
+    };
+    let _ = ntfs_handle;
+    uefi::println!(
+        "[NTFS] mount: bps={} spc={} mft_lcn={} mft_rec_sz={} total_sectors={}",
+        ntfs.bytes_per_sector, ntfs.sectors_per_cluster,
+        ntfs.mft_start_lcn, ntfs.mft_record_size, ntfs.total_sectors
+    );
+    let record = match resolve_mft_record(&ntfs, rel_path) {
+        Some(r) => r,
+        None => {
+            uefi::println!("[NTFS] resolve_mft_record FAILED for {}", rel_path);
+            return None;
+        }
+    };
+    uefi::println!("[NTFS] {} -> MFT record {}", rel_path, record);
+    read_data_stream(&ntfs, record)
 }

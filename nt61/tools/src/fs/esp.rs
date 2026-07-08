@@ -98,21 +98,32 @@ impl EspBuilder {
         self
     }
 
-    /// Provide the winload.efi binary. Per Windows 7 conventions, the
-    /// primary copy lives on the *System* partition at
-    /// `C:\Windows\System32\winload.efi`. We also drop a copy on the
-    /// ESP at `EFI\Microsoft\Boot\winload.efi` so the boot manager can
-    /// fall back to it via the same `BCD application` path if the
-    /// System partition's filesystem (NTFS/EXT4) is unreadable by the
-    /// boot-time EFI environment — exactly what real NT6.1 UEFI
-    /// installs do.
-    pub fn with_winload<P: AsRef<Path>>(mut self, path: Option<P>) -> Self {
-        if let Some(p) = path {
-            self.esp_files.push((
-                "EFI/Microsoft/Boot/winload.efi".to_string(),
-                p.as_ref().to_path_buf(),
-            ));
-        }
+    /// Provide the winload.efi binary. 
+    /// 
+    /// **IMPORTANT**: In Windows 7, winload.efi is stored ONLY on the System 
+    /// partition at `C:\Windows\System32\winload.efi`, NOT on the ESP.
+    /// 
+    /// ESP Layout (correct Windows 7):
+    ///   \EFI\Boot\BOOTX64.EFI     <- removable media fallback (firmware searches this)
+    ///   \EFI\Microsoft\Boot\bootmgfw.efi  <- Windows Boot Manager
+    ///   \EFI\Microsoft\Boot\BCD    <- Boot Configuration Data
+    ///   \EFI\Microsoft\Boot\Fonts\ <- boot screen fonts
+    /// 
+    /// System partition Layout (correct Windows 7):
+    ///   \Windows\System32\winload.efi  <- OS Loader (THIS IS THE ONLY LOCATION!)
+    ///   \Windows\System32\ntoskrnl.exe  <- kernel
+    ///   \Windows\System32\hal.dll      <- hardware abstraction layer
+    ///   \Windows\System32\config\       <- registry hives
+    /// 
+    /// The BCD's ApplicationPath (12000002 element) must point to the System
+    /// partition path: `\Windows\System32\winload.efi`
+    /// 
+    /// NOTE: This method is deprecated and does NOT add winload.efi to ESP.
+    /// Winload.efi should ONLY exist on the System partition.
+    pub fn with_winload<P: AsRef<Path>>(self, _path: Option<P>) -> Self {
+        // winload.efi does NOT go on ESP per Windows 7 layout specification.
+        // It belongs exclusively on the System partition at \Windows\System32\winload.efi
+        // The BCD's device path points to System partition (partition 2).
         self
     }
 

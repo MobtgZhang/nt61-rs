@@ -228,18 +228,14 @@ pub fn build_bcd() -> Vec<u8> {
             }
             {
                 let mut ee = node("Elements");
+                // Device = System partition (partition 2)
                 ee.subkeys.push(element_subkey_binary("11000001", &create_device_path()));
-                // winload.efi is loaded from the canonical Windows 7 ESP
-                // path `\EFI\Microsoft\Boot\winload.efi`. Real NT 6.1 UEFI
-                // installs do exactly this: BCD's `application` element
-                // points to the OS loader at this canonical EFI\Microsoft
-                // path. We follow the same convention so the on-disk layout
-                // matches a stock Windows 7 install, and so we don't need
-                // an NTFS/EXT4 EFI driver at boot time (the loader is on
-                // the FAT32 ESP, which every UEFI firmware understands).
-                ee.subkeys.push(element_subkey_string("12000002", r"\EFI\Microsoft\Boot\winload.efi"));
+                // ApplicationPath points to winload.efi on the System partition
+                // Windows 7 correct layout: winload.efi is at C:\Windows\System32\winload.efi
+                ee.subkeys.push(element_subkey_string("12000002", r"\Windows\System32\winload.efi"));
                 ee.subkeys.push(element_subkey_string("12000004", "Windows 7"));
                 ee.subkeys.push(element_subkey_string("12000005", "en-US"));
+                // OsDevice = System partition (partition 2)
                 ee.subkeys.push(element_subkey_binary("21000001", &create_device_path()));
                 ee.subkeys.push(element_subkey_string("22000002", r"\Windows"));
                 e.subkeys.push(ee);
@@ -257,10 +253,13 @@ pub fn build_bcd() -> Vec<u8> {
             }
             {
                 let mut ee = node("Elements");
+                // Device = System partition (partition 2)
                 ee.subkeys.push(element_subkey_binary("11000001", &create_device_path()));
-                ee.subkeys.push(element_subkey_string("12000002", r"\EFI\Microsoft\Boot\winload.efi"));
+                // ApplicationPath points to winload.efi on the System partition
+                ee.subkeys.push(element_subkey_string("12000002", r"\Windows\System32\winload.efi"));
                 ee.subkeys.push(element_subkey_string("12000004", "Windows 7 (Safe Mode - CMD)"));
                 ee.subkeys.push(element_subkey_string("12000005", "en-US"));
+                // OsDevice = System partition (partition 2)
                 ee.subkeys.push(element_subkey_binary("21000001", &create_device_path()));
                 ee.subkeys.push(element_subkey_string("22000002", r"\Windows"));
                 ee.subkeys.push(element_subkey_string("22000001", "/safeboot:minimal /safeboot:shell"));
@@ -279,10 +278,13 @@ pub fn build_bcd() -> Vec<u8> {
             }
             {
                 let mut ee = node("Elements");
+                // Device = System partition (partition 2)
                 ee.subkeys.push(element_subkey_binary("11000001", &create_device_path()));
-                ee.subkeys.push(element_subkey_string("12000002", r"\EFI\Microsoft\Boot\winload.efi"));
+                // ApplicationPath points to winload.efi on the System partition
+                ee.subkeys.push(element_subkey_string("12000002", r"\Windows\System32\winload.efi"));
                 ee.subkeys.push(element_subkey_string("12000004", "Windows 7 (Safe Mode - Debug)"));
                 ee.subkeys.push(element_subkey_string("12000005", "en-US"));
+                // OsDevice = System partition (partition 2)
                 ee.subkeys.push(element_subkey_binary("21000001", &create_device_path()));
                 ee.subkeys.push(element_subkey_string("22000002", r"\Windows"));
                 ee.subkeys.push(element_subkey_string("22000001", "/debug /debugport=COM1 /baudrate=115200"));
@@ -316,6 +318,14 @@ pub fn build_bcd() -> Vec<u8> {
 }
 
 // GPT partition device path (MEDIA_DEVICE_PATH, subtype Hard Drive).
+// For dual-partition setup:
+//   Partition 1: ESP (FAT32) - boot files
+//   Partition 2: System (NTFS) - Windows files (winload.efi lives here!)
+// 
+// Windows 7 correct layout:
+//   - Boot manager (bootmgfw.efi) on ESP reads BCD
+//   - BCD's OsDevice points to the System partition
+//   - BCD's ApplicationPath is \Windows\System32\winload.efi (on System partition)
 fn create_device_path() -> Vec<u8> {
     let mut p = Vec::with_capacity(40);
     // Type=4 (Media), SubType=1 (Hard Drive), Length=0x28 (40 bytes)
@@ -329,9 +339,9 @@ fn create_device_path() -> Vec<u8> {
         0xBEu8, 0x7Cu8, 0x80u8, 0x6Eu8,
         0x6Fu8, 0x6Eu8, 0x69u8, 0x63u8,
     ]);
-    // Partition number
-    p.extend_from_slice(&1u32.to_le_bytes());
-    // Start LBA
+    // Partition number = 2 (System partition, where winload.efi lives)
+    p.extend_from_slice(&2u32.to_le_bytes());
+    // Start LBA (System partition starts after ESP)
     p.extend_from_slice(&0x800000u64.to_le_bytes());
     // Size in sectors
     p.extend_from_slice(&0x40000000u64.to_le_bytes());

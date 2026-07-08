@@ -101,7 +101,19 @@ pub fn init() {
         crate::hal::x86_64::serial::write_string("V:vga_start\r\n");
         vga::init();
         crate::hal::x86_64::serial::write_string("V:vga_done\r\n");
-        crate::hal::x86_64::serial::write_string("V:efifb_skip\r\n");
+
+        // efifb takes ownership of the framebuffer when winload
+        // populated the BootInfo with valid GOP data. The previous
+        // code unconditionally emitted "V:efifb_skip" without ever
+        // calling `efifb::init()`, which left the kernel phase
+        // without a graphical console and explained the diagnostic
+        // log "No framebuffer from winload". We now actually
+        // invoke the driver and let it pick VGA fallback internally
+        // if the GOP mailbox was empty.
+        crate::hal::x86_64::serial::write_string("V:efifb_start\r\n");
+        efifb::init();
+        crate::hal::x86_64::serial::write_string("V:efifb_done\r\n");
+
         crate::hal::x86_64::serial::write_string("V:bochs_start\r\n");
         bochs_vbe::init();
         crate::hal::x86_64::serial::write_string("V:bochs_done\r\n");

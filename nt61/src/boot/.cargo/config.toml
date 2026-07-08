@@ -1,8 +1,18 @@
 [target.x86_64-unknown-uefi]
 linker = "rust-lld"
 rustflags = [
-    "-C", "link-arg=--script=/home/mobtgzhang/github2/NT6.1.7601/nt61/src/boot/linker.ld",
+    "-C", "link-arg=--script=/home/mobtgzhang/github2/nt61-rs/nt61/src/boot/linker.ld",
     "-C", "link-arg=--entry=efi_main",
+    "-C", "panic=abort",
+]
+
+# x86_64 standalone kernel (for multiboot/grub)
+[target.x86_64-unknown-none]
+linker = "x86_64-linux-gnu-gcc"
+rustflags = [
+    "-C", "link-arg=-T/home/mobtgzhang/github2/nt61-rs/nt61/src/boot/linker.ld",
+    "-C", "link-arg=-no-pie",
+    "-C", "link-arg=-nostdinc",
     "-C", "panic=abort",
 ]
 
@@ -14,7 +24,7 @@ rustflags = [
 [target.loongarch64-unknown-none]
 linker = "loongarch64-linux-gnu-ld"
 rustflags = [
-    "-C", "link-arg=-T/home/mobtgzhang/github2/NT6.1.7601/nt61/src/boot/linker-la64.ld",
+    "-C", "link-arg=-T/home/mobtgzhang/github2/nt61-rs/nt61/src/boot/linker-la64.ld",
     "-C", "link-arg=--entry=efi_main",
     "-C", "link-arg=-no-gc-sections",
     # `--emit-relocs` instructs the linker to keep relocation information
@@ -43,7 +53,7 @@ rustflags = [
     # CPU helpers, the libgcc stub is never actually pulled in;
     # only the search succeeds.
     "-C", "link-arg=-nostdlib",
-    "-C", "link-arg=-L/home/mobtgzhang/github2/NT6.1.7601/nt61/tools/loongarch64/lib",
+    "-C", "link-arg=-L/home/mobtgzhang/github2/nt61-rs/nt61/tools/loongarch64/lib",
     "-C", "panic=abort",
 ]  
 
@@ -54,7 +64,7 @@ rustflags = [
 [target.riscv64gc-unknown-none-elf]
 linker = "riscv64-linux-gnu-ld"
 rustflags = [
-    "-C", "link-arg=-T/home/mobtgzhang/github2/NT6.1.7601/nt61/src/boot/linker-rv64.ld",
+    "-C", "link-arg=-T/home/mobtgzhang/github2/nt61-rs/nt61/src/boot/linker-rv64.ld",
     "-C", "link-arg=--entry=efi_main",
     "-C", "link-arg=-no-gc-sections",
     "-C", "link-arg=-L/usr/lib/gcc-cross/riscv64-linux-gnu/13",

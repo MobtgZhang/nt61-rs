@@ -3190,27 +3190,34 @@ fn os_loader_run() -> ! {
     // Read the framebuffer mailbox so the GUI side of the boot
     // (bootvid splash + CmdShell panel) has something to draw onto.
     // Falls back to text-mode boot when the mailbox is absent.
-    if let Some(fb) = read_fb_mailbox() {
-        unsafe {
-            let bi = &mut *core::ptr::addr_of_mut!(KERNEL_BOOT_INFO);
-            bi.framebuffer_base = fb.base;
-            bi.framebuffer_size = fb.size;
-            bi.framebuffer_width = fb.width;
-            bi.framebuffer_height = fb.height;
-            bi.framebuffer_stride = fb.stride;
-            bi.framebuffer_format = fb.format;
-        }
+    //
+    // The mailbox data is *not* written into `KERNEL_BOOT_INFO` here
+    // because `build_boot_info` immediately below builds a fresh
+    // BootInfo from scratch and the subsequent `*bi = bi_value`
+    // assignment would clobber any fields we set early. Instead, the
+    // framebuffer is captured into a local `Option<FramebufferInfo>`
+    // and re-applied *after* `build_boot_info` so the kernel receives
+    // a fully populated BootInfo (esp/sys/ramdisk + framebuffer).
+    let fb_capture: Option<FramebufferInfo> = if let Some(fb) = read_fb_mailbox() {
         uefi::println!(
             "[LOADER] framebuffer mailbox: {}x{} stride={} @ 0x{:x} ({} KiB)",
             fb.width, fb.height, fb.stride, fb.base, fb.size / 1024
         );
-    }
+        Some(fb)
+    } else {
+        None
+    };
 
     // Build the BootInfo that the kernel will read. `build_boot_info`
     // copies the captured ESP/SYS/RAMDISK addresses from `PERSISTENT`
     // into the canonical `BootInfo` struct that the kernel and the
     // EFI stub both define. boot_mode is overwritten afterwards so
     // Safe-Mode / Normal selection still works.
+    //
+    // NOTE: `build_boot_info` zero-initialises the framebuffer fields
+    // because they live in the kernel-maintained struct rather than
+    // `PERSISTENT`. We restore them right after the assignment so the
+    // GPU mailbox survives the copy.
     let bi_value = build_boot_info(0, 0);
     unsafe {
         let bi = &mut *core::ptr::addr_of_mut!(KERNEL_BOOT_INFO);
@@ -3220,6 +3227,18 @@ fn os_loader_run() -> ! {
         // but we deliberately pin the mode to SafeModeCmd for the
         // bring-up so the kernel reaches the cmd.exe hand-off path.
         bi.boot_mode = nt61::boot_types::BootMode::SafeModeCmd as u32;
+
+        // Re-apply the framebuffer mailbox captured above. This must
+        // come *after* `*bi = bi_value` or those fields would have
+        // been wiped to zero by `build_boot_info`.
+        if let Some(fb) = fb_capture {
+            bi.framebuffer_base = fb.base;
+            bi.framebuffer_size = fb.size;
+            bi.framebuffer_width = fb.width;
+            bi.framebuffer_height = fb.height;
+            bi.framebuffer_stride = fb.stride;
+            bi.framebuffer_format = fb.format;
+        }
     }
 
     // Allocate a kernel stack.
@@ -3248,17 +3267,21 @@ fn os_loader_run() -> ! {
     );
 
     // One last sanity check: log whether the ESP / SYS / ISO RAM-disk
-    // mirrors are populated. The kernel's fs::init() will refuse to
-    // mount either filesystem if these are zero, so a missing capture
-    // should be visible immediately in the boot log instead of
-    // surfacing as a "FAT32 not mounted" panic much later.
+    // mirrors and the framebuffer mailbox are populated. The kernel's
+    // fs::init() will refuse to mount either filesystem if these are
+    // zero, so a missing capture should be visible immediately in the
+    // boot log instead of surfacing as a "FAT32 not mounted" panic
+    // much later. Likewise, a missing framebuffer shows up as
+    // "No framebuffer from winload" inside the kernel, so we surface
+    // the field state here for early diagnosis.
     unsafe {
         let bi = &*core::ptr::addr_of!(KERNEL_BOOT_INFO);
         uefi::println!(
-            "[LOADER] BootInfo: esp=0x{:x}/{} sys=0x{:x}/{} ramdisk=0x{:x}/{}",
+            "[LOADER] BootInfo: esp=0x{:x}/{} sys=0x{:x}/{} ramdisk=0x{:x}/{} fb=0x{:x}/{}x{}",
             bi.esp_image_base, bi.esp_image_size,
             bi.sys_image_base, bi.sys_image_size,
-            bi.ramdisk_image_base, bi.ramdisk_image_size
+            bi.ramdisk_image_base, bi.ramdisk_image_size,
+            bi.framebuffer_base, bi.framebuffer_width, bi.framebuffer_height
         );
     }
 
