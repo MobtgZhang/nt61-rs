@@ -119,6 +119,43 @@ pub fn init() {
     crate::hal::serial::write_string("D:video_start\r\n");
     video::init();
     crate::hal::serial::write_string("D:video_done\r\n");
+    // `video::init()` brings up the BOCHS VBE driver, which exposes
+    // a 1024×768×32 linear framebuffer at the well-known aperture
+    // 0xE0_0000_0000 (see `drivers/video/bochs_vbe.rs`). Bootvid's
+    // own `init_from_framebuffer` was never called for that LFB
+    // because `adopt_bootinfo_framebuffer()` (in `kernel_main`) only
+    // consumes the BootInfo mailbox that winload fills in, and the
+    // current winload chain leaves `framebuffer_base` zero.
+    //
+    // We bridge the gap here: bind bootvid to the BOCHS LFB so any
+    // later `gui_log::show_safe_mode_console()` paint can route to
+    // the panel QEMU `-display gtk` actually scans out. The pitch is
+    // `width * 4` because we are in 32-bpp BGRA mode (Bochs uses
+    // BGRA on this aperture). `init_from_framebuffer` is a no-op
+    // when the LFB is already wired in, so calling it here and again
+    // from `kernel_main::adopt_bootinfo_framebuffer` is harmless.
+    #[cfg(target_arch = "x86_64")]
+    {
+        const BOCHS_LFB_BASE: u64 = 0xE000_0000;
+        const BOCHS_LFB_WIDTH: u32 = 1024;
+        const BOCHS_LFB_HEIGHT: u32 = 768;
+        const BOCHS_LFB_PITCH: u32 = BOCHS_LFB_WIDTH * 4; // 32 bpp
+        // Bind bootvid to the BOCHS LFB so any later
+        // `gui_log::show_safe_mode_console()` paint can route to
+        // the panel QEMU `-display gtk` actually scans out.
+        // `init_from_framebuffer` sets `MODE_LFB=true`, which is
+        // what `bootvid::lfb_active()` reads; it is a no-op if the
+        // base/width/height/pitch are already non-zero, so this is
+        // safe to call alongside the `adopt_bootinfo_framebuffer`
+        // path in `arch::boot`.
+        bootvid::init_from_framebuffer(
+            BOCHS_LFB_BASE,
+            BOCHS_LFB_WIDTH,
+            BOCHS_LFB_HEIGHT,
+            BOCHS_LFB_PITCH,
+        );
+        crate::hal::serial::write_string("D:bootvid_lfb_bound\r\n");
+    }
     crate::hal::serial::write_string("D:timer_start\r\n");
     timer::init();
     crate::hal::serial::write_string("D:timer_done\r\n");

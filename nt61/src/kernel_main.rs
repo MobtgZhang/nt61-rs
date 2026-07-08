@@ -281,6 +281,20 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     // exposed as a public API so SMP bring-up can re-install
     // IST stacks on a per-CPU basis if needed.
     boot_println!("OK");
+
+    // CRITICAL-013: install the early-boot kernel stack as RSP0.
+    // The IRQ gates are now wired with `IST=0` (see idt.rs) so the
+    // CPU pushes the IRQ iret frame on `TSS.rsp0` directly. If
+    // RSP0 is 0 and a stray IRQ fires during early boot, the
+    // push would target virtual address 0 and trip a #PF / #SS
+    // (the `#SS vector=12 sel=0x0000` we used to see after
+    // `[SYS-RD] done` was exactly this — IST1 was set up correctly
+    // for vectors 32..255 but the cli/sti window around the
+    // post-NTFS-read path was racing with a pending PIT tick).
+    // Snapshotting the live kernel RSP into `TSS.rsp0` before any
+    // potentially-sti-able code path runs eliminates the crash.
+    crate::arch::x86_64::tss::set_rsp0_during_init();
+    boot_println!("[BOOT] TSS.rsp0 = 0x{:x}", crate::arch::x86_64::tss::rsp0());
     boot_print!("Initializing HAL... ");
     hal::init();
     boot_println!("OK");
@@ -471,26 +485,46 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
             // they do through `hal::text_console::put_byte`.
             crate::hal::text_console::init();
 
-            // Try the user-mode cmd.exe path on x86_64 only.
-            // On every non-x86_64 target we go directly to
-            // the kernel-side shell. On x86_64 the fallback
-            // covers "image build failed" / "smoke test
-            // failed" / "user-mode disabled in this build".
-            boot_println!("[SAFE-CMD] has_user_mode_hand_off = {}",
-                          crate::arch::boot::has_user_mode_hand_off());
-            if crate::arch::boot::has_user_mode_hand_off() {
-                boot_println!("[SAFE-CMD] entering try_launch_cmd_exe()");
-                if crate::arch::boot::try_launch_cmd_exe() {
-                    // try_launch_cmd_exe() iretqs into Ring 3
-                    // and never returns on success.
-                    unsafe { core::hint::unreachable_unchecked(); }
-                }
-                boot_println!("[SAFE-CMD] cmd.exe unavailable, dropping to kernel-side shell");
-            } else {
-                boot_println!("[SAFE-CMD] no user-mode hand-off, kernel-side shell");
+            // Paint the Safe-Mode (with Command Prompt) console
+            // layout onto the VGA text buffer via `gui_log`.
+            //
+            // Without this explicit `show_safe_mode_console`
+            // call the operator would land on the stale UEFI /
+            // winload "Starting Windows" GOP framebuffer instead
+            // of the kernel's Log + CMD layout — the kernel's
+            // own `boot_println!` lines never overwrite the
+            // pixels that `winload.efi` painted, because the
+            // VGA text buffer at 0xB8000 is *separate* memory
+            // from the GOP LFB that QEMU actually scans out
+            // under `-display gtk`. Painting the title bar
+            // here forces the layout onto the LFB through the
+            // bootvid mirror so the operator immediately sees
+            // the Log pane and the CMD prompt.
+            #[cfg(target_arch = "x86_64")]
+            {
+                crate::hal::x86_64::text_console::show_safe_mode_console();
             }
 
-            // Drop into the unified kernel-side CMD shell.
+            // Previous behaviour: launch a user-mode `cmd.exe`
+            // stub through the Ring 0 → Ring 3 transition and
+            // let it run `autoexec.bat`. The stub then calls
+            // `SYS_EXIT_PROCESS`, which `process_exit()` parks
+            // on `arch::halt()` — the screen freezes on whatever
+            // the user-mode stub painted (often nothing,
+            // because the stub has no VGA-side text path of its
+            // own) and the operator is left looking at the
+            // "Starting Windows" panel the firmware left behind.
+            //
+            // We intentionally do NOT drop directly into the
+            // kernel-side shell here any more. `run_safe_mode_shell`
+            // now owns the dispatch: it paints the visible Log + CMD
+            // pane and *then* tries to take the user-mode subsystem
+            // chain (csrss.exe → wininit.exe → services.exe →
+            // lsass.exe → cmd.exe) up to Ring 3. If that fails it
+            // falls through to the kernel-side shell for backwards
+            // compatibility. The actual print below is a single
+            // status line that ends up on the operator's screen.
+            boot_println!("[SAFE-CMD] SafeModeCmd: entering visible Log + CMD pane (user-mode priority)");
             run_safe_mode_shell(servers::cmd::ShellMode::SafeModeCmd);
         }
         BootMode::SafeModeDebug => {
@@ -560,6 +594,14 @@ fn mask_all_irqs_for_safe_mode() {
 /// drops into the unified kernel-side CMD/IDLE shell from
 /// `servers::cmd`. It works on every architecture the kernel
 /// supports: x86_64, aarch64, riscv64, loongarch64.
+///
+/// On x86_64 we *first* try the user-mode subsystem chain
+/// (csrss → wininit → services → lsass → cmd.exe), loaded
+/// directly from the mounted system partition (FAT32, NTFS or
+/// EXT4). Only if that fails (or on non-x86_64 architectures
+/// where the user-mode transition is not yet wired up) do we
+/// drop into the kernel-side shell so the operator always
+/// sees a usable `C:\>` prompt.
 fn run_safe_mode_shell(mode: servers::cmd::ShellMode) -> ! {
     use crate::hal::text_console::{
         COLS, ROWS, ATTR_TITLE, ATTR_DEFAULT, ATTR_HR,
@@ -639,6 +681,47 @@ fn run_safe_mode_shell(mode: servers::cmd::ShellMode) -> ! {
     // to populate, so the lower rows stay free for shell use.
 
     write_hr((ROWS - 1) as u8, ATTR_HR);
+
+    // ------------------------------------------------------------------
+    // Park the cursor at row 24, column 0 so the kernel-side
+    // shell banner prints *below* the log pane divider. The
+    // banner uses 4-5 rows; the prompt will land on whichever
+    // row follows those, which on a 25-row screen is still in
+    // the lower half and does not collide with the boot log
+    // divider painted above.
+    // ------------------------------------------------------------------
+    set_cursor(0, (ROWS - 1) as u8);
+    set_attr(ATTR_DEFAULT);
+
+    // ------------------------------------------------------------------
+    // Try the user-mode subsystem chain *first*. On x86_64 this
+    // launches csrss.exe → wininit.exe → services.exe →
+    // lsass.exe → cmd.exe in order, loading every binary from
+    // the mounted system partition (FAT32/NTFS/EXT4) via the
+    // layered fallback in `arch::boot::try_launch_cmd_exe_arch`.
+    //
+    // Behaviour:
+    //   * On the success path, `try_launch_cmd_exe` reaches
+    //     `enter_first_user_thread(...)` which is `-> !`. It
+    //     therefore never returns on success; control has been
+    //     transferred to Ring 3 (csrss / cmd.exe).
+    //   * On the failure path (any subsystem load failed, the PE
+    //     loader faulted, etc.), `try_launch_cmd_exe` returns
+    //     `false` and the kernel-side CMD shell below takes over.
+    //
+    // We deliberately gate this on `BootMode::SafeModeCmd` so
+    // the kernel-debug `kd>` surface keeps using its own
+    // kernel-side loop instead of trying to launch a user-mode
+    // cmd.exe.
+    // ------------------------------------------------------------------
+    if matches!(mode, servers::cmd::ShellMode::SafeModeCmd) {
+        boot_println!("[SAFE-CMD] attempting user-mode subsystem chain from disk...");
+        // If this returns we know the user-mode chain failed.
+        // (On success it never returns — control is in Ring 3.)
+        let ok = try_launch_cmd_exe();
+        let _ = ok;
+        boot_println!("[SAFE-CMD] user-mode launch failed, dropping to kernel-side shell");
+    }
 
     // ------------------------------------------------------------------
     // Drop into the kernel-side CMD/IDLE shell. The shell takes

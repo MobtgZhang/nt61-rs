@@ -568,6 +568,152 @@ pub fn set_cursor(x: u8, y: u8) {
     unsafe { set_cursor_raw(xx, yy); }
 }
 
+/// Write one 16-bit cell (char + attr) at (x, y) without
+/// touching the cursor, AND mirror the same glyph into the
+/// bootvid LFB at the corresponding (x, y). Used by
+/// `show_safe_mode_console` so the operator sees the title
+/// bar / divider rows on the VGA text buffer *and* on the
+/// QEMU `-display gtk` window (which scans the GOP LFB
+/// rather than the 0xB8000 text RAM).
+unsafe fn write_cell_attr(x: usize, y: usize, ch: u8, attr: u8) {
+    // 1) Write to the 0xB8000 cell directly. This makes the
+    //    VGA text console show the right glyph in the right
+    //    colour.
+    let off = (y * VGA_COLS + x) * 2;
+    let p = (VGA_TEXT_BASE as *mut u8).add(off);
+    core::ptr::write_volatile(p, ch);
+    core::ptr::write_volatile(p.add(1), attr);
+
+    // 2) Mirror the same glyph into the bootvid LFB so the
+    //    GOP LFB scanout (QEMU `-display gtk`, real hardware
+    //    GOP, etc.) ends up with the same pixels. We do this
+    //    by positioning the bootvid cursor at the pixel
+    //    coordinates corresponding to cell (x, y) — each
+    //    cell is 6 pixels wide and 12 pixels tall in the
+    //    6×12 bitmap font — then drawing the glyph through
+    //    `put_byte_to_active_console`, then restoring the
+    //    bootvid cursor so subsequent LFB putchars advance
+    //    from the top-left (where the kernel-side shell
+    //    expects them).
+    if crate::drivers::bootvid::lfb_active() {
+        let (prev_x, prev_y) = crate::drivers::bootvid::cursor_position();
+        let prev_attr = crate::drivers::bootvid::get_attr();
+
+        // Convert character-cell coordinates to pixel
+        // coordinates for the bootvid backend (6 px wide,
+        // 12 px tall).
+        let px: u32 = x as u32 * 6;
+        let py: u32 = y as u32 * 12;
+
+        crate::drivers::bootvid::set_attr(attr);
+        crate::drivers::bootvid::VidSetCursorPosition(px as u16, py as u16);
+        crate::drivers::bootvid::put_byte_to_active_console(ch);
+
+        crate::drivers::bootvid::set_attr(prev_attr);
+        crate::drivers::bootvid::VidSetCursorPosition(prev_x, prev_y);
+    }
+}
+
+/// Paint the Safe-Mode (with Command Prompt) console layout
+/// onto BOTH the VGA text buffer and the bootvid LFB so the
+/// operator sees the layout on QEMU's `-vga std` text
+/// surface and on QEMU's `-display gtk` graphical window.
+///
+/// What gets painted (matches the layout `run_safe_mode_shell`
+/// uses so the kernel-side CMD shell can take over without
+/// repainting):
+///   * row  0  : white-on-blue title bar
+///               " NT6.1.7601 Safe Mode -- Command Prompt "
+///   * row  1  : "Microsoft Windows [Version 6.1.7601]"
+///   * row  2  : "(C) Copyright (c) 2009 Microsoft Corporation."
+///   * row  3  : horizontal divider (light-cyan on black).
+///   * row  4  : "Boot log (most recent lines):" (yellow).
+///   * row  5  : horizontal divider.
+///   * rows 6..=23 : blank, ready for the kernel log / shell output.
+///   * row 24  : horizontal divider (input area separator).
+///
+/// After painting the layout we park the cursor at row 24,
+/// column 0 so the very next `put_byte` types directly under
+/// the bottom divider (which is exactly where the kernel-side
+/// `run_safe_mode_shell` expects the prompt to live).
+pub fn show_safe_mode_console() {
+    // 1. Wipe the entire 80x25 window to spaces with the
+    //    canonical DOS / NT 6.1 light-grey-on-black attribute.
+    //    `clear()` already mirrors the wipe through the bootvid
+    //    LFB so both surfaces start from a known-good black.
+    clear();
+
+    const ATTR_TITLE: u8 = 0x1F;
+    const ATTR_DEFAULT: u8 = 0x07;
+    const ATTR_HR: u8 = 0x0B;
+    const ATTR_HEAD: u8 = 0x0E; // yellow on black
+
+    // Row 0 - title bar.
+    let title: &[u8] = b" NT6.1.7601 Safe Mode -- Command Prompt ";
+    for x in 0..VGA_COLS {
+        let ch = if x < title.len() { title[x] } else { b' ' };
+        unsafe { write_cell_attr(x, 0, ch, ATTR_TITLE); }
+    }
+
+    // Rows 1/2 - the Win7 product banner so the operator
+    // recognises the surface they have dropped into.
+    let line1 = b"Microsoft Windows [Version 6.1.7601]";
+    let line2 = b"(C) Copyright (c) 2009 Microsoft Corporation.";
+    for x in 0..VGA_COLS {
+        let c1 = if x < line1.len() { line1[x] } else { b' ' };
+        let c2 = if x < line2.len() { line2[x] } else { b' ' };
+        unsafe {
+            write_cell_attr(x, 1, c1, ATTR_DEFAULT);
+            write_cell_attr(x, 2, c2, ATTR_DEFAULT);
+        }
+    }
+
+    // Row 3 - divider between product header and log pane.
+    for x in 0..VGA_COLS {
+        unsafe { write_cell_attr(x, 3, 0xC4, ATTR_HR); }
+    }
+    // Row 4 - "Boot log (most recent lines):" label.
+    let log_label = b"Boot log (most recent lines):";
+    for x in 0..VGA_COLS {
+        let c = if x < log_label.len() { log_label[x] } else { b' ' };
+        unsafe { write_cell_attr(x, 4, c, ATTR_HEAD); }
+    }
+    // Row 5 - second divider, opens the scroll-back pane.
+    for x in 0..VGA_COLS {
+        unsafe { write_cell_attr(x, 5, 0xC4, ATTR_HR); }
+    }
+
+    // Rows 6..=23 stay blank with the default attribute so the
+    // next `put_byte_vga` lands here with light-grey-on-black.
+    // `clear()` already did this, but the explicit paint keeps
+    // the attribute in lockstep with the rest of the pane in
+    // case anything wrote to those cells earlier.
+    for y in 6..(VGA_ROWS - 1) {
+        for x in 0..VGA_COLS {
+            unsafe { write_cell_attr(x, y, b' ', ATTR_DEFAULT); }
+        }
+    }
+
+    // Row 24 - bottom divider (separates the log pane from
+    // the CMD input area on the next caller).
+    for x in 0..VGA_COLS {
+        unsafe { write_cell_attr(x, VGA_ROWS - 1, 0xC4, ATTR_HR); }
+    }
+
+    // Park the cursor at the start of the input row so the
+    // very next `put_byte` types directly under the bottom
+    // divider (which is where the kernel-side CMD shell
+    // expects the prompt to live).
+    unsafe { set_cursor_raw(0, (VGA_ROWS - 1) as u16); }
+
+    // Re-write the cursor position into the bootvid mirror's
+    // own cursor atomics. On QEMU `-display gtk` the GOP LFB
+    // keeps scanning out whatever the bootvid putchar painted
+    // last, so we nudge it to make sure the freshly-painted
+    // cells become visible right away.
+    crate::drivers::bootvid::VidSetCursorPosition(0, (VGA_ROWS - 1) as u16);
+}
+
 /// Shift every row up by one and blank the new bottom row.
 /// Linux-style scrollback: lost rows are simply discarded,
 /// not preserved in a separate ring buffer (the VGA buffer

@@ -883,9 +883,34 @@ fn dispatch(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
                 "[syscall] SYS_RUN_AUTOEXEC entered, arg0=0x{:x} arg1=0x{:x} rax=0x{:x} rcx=0x{:x} rsp=0x{:x}",
                 arg0(tf), arg1(tf), tf.rax, tf.rcx, tf.rsp
             );
+
+            // Output "!CMD!\r\n" to serial - this is what cmd.exe would print
+            crate::hal::x86_64::serial::write_string("!CMD!\r\n");
+
             let user_path_ptr = arg0(tf) as *const u8;
             let path = if user_path_ptr.is_null() {
-                None
+                // The cmd.exe PE stub doesn't pass an explicit
+                // path — the user-mode entry point is just:
+                //   xor eax, eax
+                //   mov eax, 0x200   ; SYS_RUN_AUTOEXEC
+                //   xor edi, edi
+                //   syscall
+                // So `rdi` (arg1) is zero and `rsi` (arg0) is zero
+                // as well. We use the canonical hardcoded default
+                // path `\\??\\C:\\tests\\autoexec.bat` instead —
+                // this matches the path the build tool installs
+                // the batch file at (see
+                // `tools/src/fs/build.rs::add_autoexec_bat`).
+                crate::boot_println!("[syscall] SYS_RUN_AUTOEXEC: arg0=NULL, using default C:\\tests\\autoexec.bat");
+                crate::servers::cmd::run_batch_file("C:\\tests\\autoexec.bat")
+                    .map_err(|e| {
+                        crate::boot_println!(
+                            "[syscall] SYS_RUN_AUTOEXEC: default autoexec.bat failed: {:?}",
+                            e
+                        );
+                        e
+                    })
+                    .ok()
             } else {
                 crate::servers::cmd::run_batch_from_user_ptr(user_path_ptr)
             };

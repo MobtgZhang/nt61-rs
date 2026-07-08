@@ -1352,9 +1352,15 @@ fn read_pe_from_fat32(path: &str) -> Option<core::mem::ManuallyDrop<Vec<u8>>> {
 
 /// Internal implementation of FAT32 PE reading
 fn read_pe_from_fat32_impl(path: &str) -> Option<core::mem::ManuallyDrop<Vec<u8>>> {
+    boot_println!("[SMSS] FAT32: is_mounted={}", crate::fs::fat32::is_mounted());
+    boot_println!("[SMSS] FAT32: active_ramdisk={:?}", crate::fs::active_partition_ramdisk().is_some());
+    boot_println!("[SMSS] FAT32: active_size={:?}", crate::fs::active_partition_size());
     let fs = crate::fs::fat32::get_mounted_fs()?;
+    boot_println!("[SMSS] FAT32: fs={:?}", fs as *const _);
+    boot_println!("[SMSS] FAT32: root_cluster={}", fs.fat_data.root_cluster);
+    boot_println!("[SMSS] FAT32: data_start={}", fs.fat_data.data_start_sector);
     boot_println!("[SMSS] FAT32: calling find_file_at_path with '{}'", path);
-    
+
     let entry = crate::fs::fat32::find_file_at_path(fs, path)?;
     let cluster = entry.first_cluster();
     let size = entry.file_size() as usize;
@@ -1438,36 +1444,130 @@ fn read_pe_from_fat32_impl(path: &str) -> Option<core::mem::ManuallyDrop<Vec<u8>
 /// decides what to do (fall back to the in-memory PE generator).
 fn read_pe_from_ntfs(path: &str) -> Option<core::mem::ManuallyDrop<Vec<u8>>> {
     boot_println!("[SMSS] read_pe_from_ntfs: path={}", path);
+
     if !crate::fs::ntfs::is_mounted() {
         boot_println!("[SMSS] NTFS not mounted");
         return None;
     }
 
-    let fs = crate::fs::ntfs::get_mounted_fs()?;
+    // The NTFS disk-read path is the *preferred* source of csrss.exe /
+    // wininit.exe / services.exe / lsass.exe: those binaries are
+    // baked into the system partition by `tools/src/fs/build.rs`
+    // (see `build_csrss_pe` etc.). The in-memory `system_image`
+    // fallback is only consulted when the on-disk read fails (e.g.
+    // the directory walk faulted on a malformed MFT record). This
+    // is the exact opposite of the previous "pre-flight guard"
+    // behaviour, which forced every subsystem through the
+    // fallback and left the on-disk PEs unread.
 
-    // Convert path to UTF-16
-    let path_utf16: alloc::vec::Vec<u16> = path
-        .encode_utf16()
-        .chain(core::iter::once(0))
-        .collect();
+    // CRITICAL: Set active partition to system mirror so NTFS read_sector
+    // reads from the correct location. The save/restore discipline must
+    // surround the *entire* I/O path (open + read), not just the mount,
+    // because the mount itself consumes the bias.
+    let prev_active = crate::fs::active_partition_ramdisk();
+    if let Some(sys_base) = crate::fs::sys_mirror_address() {
+        crate::fs::set_active_partition_ramdisk(Some(sys_base));
+    }
 
-    let mut handle = match crate::fs::ntfs::open_file(fs, &path_utf16, None) {
+    let fs = match crate::fs::ntfs::get_mounted_fs() {
+        Some(f) => f,
+        None => {
+            boot_println!("[SMSS] NTFS get_mounted_fs returned None");
+            crate::fs::set_active_partition_ramdisk(prev_active);
+            return None;
+        }
+    };
+
+    // Internal helper does the open + read_file loop. Captures the
+    // pool-backed buffer through the closure so a None-on-error
+    // path doesn't leak storage.
+    let result = read_pe_from_ntfs_impl(fs, path);
+    // Restore active partition BEFORE we look at the result, so
+    // the post-call kernel does not accidentally continue to read
+    // sectors from the C: mirror.
+    crate::fs::set_active_partition_ramdisk(prev_active);
+    if result.is_some() {
+        boot_println!("[SMSS] NTFS: read_pe_from_ntfs OK");
+    } else {
+        boot_println!("[SMSS] NTFS: read_pe_from_ntfs failed");
+    }
+    result
+}
+
+/// Internal NTFS read helper. Must be called with
+/// `active_partition_ramdisk` set to the system mirror.
+fn read_pe_from_ntfs_impl(
+    fs: &crate::fs::ntfs::NtfsFileSystem,
+    path: &str,
+) -> Option<core::mem::ManuallyDrop<Vec<u8>>> {
+    // Convert path to UTF-16 (simple ASCII conversion)
+    let path_bytes = path.as_bytes();
+    let path_len = core::cmp::min(path_bytes.len(), 255);
+    let mut path_utf16 = [0u16; 256];
+    for i in 0..path_len {
+        path_utf16[i] = path_bytes[i] as u16;
+    }
+    let path_len_utf16 = path_len + 1;
+    path_utf16[path_len] = 0;
+
+    // Call open_file
+    let result = crate::fs::ntfs::open_file(fs, &path_utf16[..path_len_utf16], None);
+
+    let mut handle = match result {
         Some(h) => h,
         None => {
             boot_println!("[SMSS] NTFS open_file returned None");
             return None;
         }
     };
+    boot_println!("[SMSS] NTFS: open_file succeeded");
 
-    // Read in chunks. The cmd.exe / csrss.exe / wininit.exe /
-    // services.exe / lsass.exe stubs are all well under 64 KiB;
-    // an 8 KiB chunk buffer is plenty.
-    let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
-    let mut chunk = [0u8; 8192];
+    // The cmd.exe / csrss.exe / wininit.exe / services.exe /
+    // lsass.exe stubs are all well under 64 KiB; an 8 KiB chunk
+    // buffer is plenty for the read loop. We allocate the
+    // backing storage via the kernel pool (not KernelHeap) for
+    // the same reason `read_pe_from_fat32_impl` does — the
+    // heap has been known to corrupt stack state during early
+    // boot when the global allocator returns UC-backed pages.
+    let total_size: usize = (handle.file_size as usize).min(64 * 1024);
+    if total_size < 2 {
+        boot_println!("[SMSS] NTFS: file too small ({} bytes)", total_size);
+        return None;
+    }
+    let ptr = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, total_size);
+    if ptr.is_null() {
+        boot_println!("[SMSS] NTFS: pool alloc failed for {} bytes", total_size);
+        return None;
+    }
+    let mut read_total = 0usize;
+    let mut read_count = 0usize;
     loop {
-        match crate::fs::ntfs::read_file(fs, &mut handle, &mut chunk) {
-            Ok(0) => break,
-            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+        if read_total >= total_size {
+            break;
+        }
+        let remaining = total_size - read_total;
+        let chunk_cap = remaining.min(8192);
+        let buf_slice = unsafe {
+            core::slice::from_raw_parts_mut(ptr.add(read_total), chunk_cap)
+        };
+        boot_println!(
+            "[SMSS] NTFS: read_file iter {} offset=0x{:x} cap={}",
+            read_count, read_total, chunk_cap
+        );
+        match crate::fs::ntfs::read_file(fs, &mut handle, buf_slice) {
+            Ok(0) => {
+                boot_println!("[SMSS] NTFS: read_file returned 0 (EOF)");
+                break;
+            }
+            Ok(n) => {
+                boot_println!("[SMSS] NTFS: read_file returned {} bytes", n);
+                read_total += n;
+                read_count += 1;
+                if read_count >= 16 {
+                    boot_println!("[SMSS] NTFS: read loop cap reached");
+                    break;
+                }
+            }
             Err(_) => {
                 boot_println!("[SMSS] NTFS read_file returned Err");
                 return None;
@@ -1475,13 +1575,29 @@ fn read_pe_from_ntfs(path: &str) -> Option<core::mem::ManuallyDrop<Vec<u8>>> {
         }
     }
 
-    if buf.len() < 2 || buf[0] != b'M' || buf[1] != b'Z' {
-        boot_println!("[SMSS] NTFS read {} bytes but MZ bad", buf.len());
+    if read_total < 2
+        || unsafe { core::ptr::read_volatile(ptr) } != b'M'
+        || unsafe { core::ptr::read_volatile(ptr.add(1)) } != b'Z'
+    {
+        boot_println!("[SMSS] NTFS read {} bytes but MZ bad", read_total);
+        // Pool memory is leaked on this path too — we never read a
+        // valid PE so the loader won't reuse it.
         return None;
     }
 
-    boot_println!("[SMSS] NTFS: read {} bytes, MZ OK", buf.len());
-    Some(core::mem::ManuallyDrop::new(buf))
+    boot_println!("[SMSS] NTFS: read {} bytes, MZ OK", read_total);
+    // Hand the caller a Vec whose backing storage is owned by the
+    // kernel pool. As with the FAT32 path we wrap it in
+    // `ManuallyDrop` so the Vec destructor never runs `KernelHeap::dealloc`
+    // on a pool pointer.
+    let mut v = unsafe {
+        // SAFETY: ptr came from `pool::allocate`, the slice has length
+        // read_total, and the capacity is `total_size` so the backing
+        // allocation can hold the full read.
+        alloc::vec::Vec::from_raw_parts(ptr, read_total, total_size)
+    };
+    v.truncate(read_total);
+    Some(core::mem::ManuallyDrop::new(v))
 }
 
 /// Read PE from ext2/ext3/ext4 filesystem
@@ -1492,27 +1608,33 @@ fn read_pe_from_ntfs(path: &str) -> Option<core::mem::ManuallyDrop<Vec<u8>>> {
 /// (fall back to the in-memory PE generator).
 fn read_pe_from_ext2(path: &str) -> Option<core::mem::ManuallyDrop<Vec<u8>>> {
     boot_println!("[SMSS] read_pe_from_ext2: path={}", path);
+
     if !crate::fs::ext2::is_mounted() {
-        boot_println!("[SMSS] ext2 not mounted");
+        boot_println!("[SMSS] ext2/3/4 not mounted");
         return None;
     }
 
-    let fs = crate::fs::ext2::get_mounted_fs()?;
+    let fs = match crate::fs::ext2::get_mounted_fs() {
+        Some(f) => f,
+        None => {
+            boot_println!("[SMSS] ext2/3/4 get_mounted_fs returned None");
+            return None;
+        }
+    };
 
-    match crate::fs::ext2::read_whole_file(fs, path) {
-        Ok(buf) if buf.len() >= 2 && buf[0] == b'M' && buf[1] == b'Z' => {
-            boot_println!("[SMSS] ext2: read {} bytes, MZ OK", buf.len());
-            Some(core::mem::ManuallyDrop::new(buf))
+    let data = match crate::fs::ext2::read_whole_file(fs, path) {
+        Ok(v) => v,
+        Err(e) => {
+            boot_println!("[SMSS] ext2/3/4 read_whole_file({}) failed: {}", path, e);
+            return None;
         }
-        Ok(buf) => {
-            boot_println!("[SMSS] ext2: read {} bytes but MZ bad", buf.len());
-            None
-        }
-        Err(_) => {
-            boot_println!("[SMSS] ext2: read_whole_file returned Err");
-            None
-        }
+    };
+    if data.len() < 2 || data[0] != b'M' || data[1] != b'Z' {
+        boot_println!("[SMSS] ext2/3/4 read {} bytes, MZ bad", data.len());
+        return None;
     }
+    boot_println!("[SMSS] ext2/3/4: read {} bytes, MZ OK", data.len());
+    Some(core::mem::ManuallyDrop::new(data))
 }
 
 /// Fallback: Use the system_image module to get generated PE

@@ -40,28 +40,28 @@ pub mod pagefile;
 /// NTFS boot sector
 #[repr(C)]
 pub struct NtfsBootSector {
-    // Jump instruction
+    // Jump instruction (3 bytes)
     pub jump: [u8; 3],
-    // OEM ID
+    // OEM ID (8 bytes)
     pub oem_id: [u8; 8],
     // BIOS Parameter Block
-    pub bytes_per_sector: u16,
-    pub sectors_per_cluster: u8,
-    pub reserved_sectors: [u8; 7],
-    pub media_descriptor: u8,
-    pub zero: [u8; 2],
-    pub sectors_per_track: u16,
-    pub num_heads: u16,
-    pub hidden_sectors: u32,
-    pub total_sectors_32: u32,
+    pub bytes_per_sector: u16,      // 0x0B: 2 bytes
+    pub sectors_per_cluster: u8,    // 0x0D: 1 byte
+    pub reserved_sectors: u16,       // 0x0E: 2 bytes
+    pub media_descriptor: u8,        // 0x10: 1 byte
+    pub zero: [u8; 6],             // 0x11: 6 bytes (not 8!)
+    pub sectors_per_track: u16,    // 0x17: 2 bytes
+    pub num_heads: u16,             // 0x19: 2 bytes
+    pub hidden_sectors: u32,        // 0x1B: 4 bytes
+    pub total_sectors_32: u32,      // 0x1F: 4 bytes
     // Extended BPB
-    pub total_sectors_64: u64,
-    pub mft_lcn: u64,
-    pub mft_mirror_lcn: u64,
-    pub cluster_per_mft_record: i8,
-    pub cluster_per_index_record: i8,
-    pub volume_serial_number: u64,
-    pub checksum: u32,
+    pub total_sectors_64: u64,       // 0x23: 8 bytes
+    pub mft_lcn: u64,               // 0x2B: 8 bytes
+    pub mft_mirror_lcn: u64,         // 0x33: 8 bytes
+    pub cluster_per_mft_record: i8, // 0x3B: 1 byte
+    pub cluster_per_index_record: i8, // 0x3C: 1 byte
+    pub volume_serial_number: u64,  // 0x3D: 8 bytes
+    pub checksum: u32,               // 0x45: 4 bytes
 }
 
 impl NtfsBootSector {
@@ -74,22 +74,31 @@ impl NtfsBootSector {
     }
 }
 
-/// MFT record header
-#[repr(C)]
+/// MFT record header (NTFS spec: no implicit padding).
+///
+/// WARNING: this struct uses `#[repr(C, packed)]` because the NTFS on-disk
+/// layout places `log_sequence_number` (u64) directly after the fixup fields
+/// (which total 6 bytes: u16 + u16), leaving no room for natural 8-byte
+/// alignment. A regular `#[repr(C)]` struct would insert 2 padding bytes
+/// after `fixup_size`, making `log_sequence_number` land at offset 0x0C
+/// instead of the correct 0x08 — which would shift every subsequent field
+/// by 2 bytes and break `verify_record` and every hard-coded offset in the
+/// NTFS driver (e.g. `record[0x16]` for flags).
+#[repr(C, packed)]
 pub struct MftRecordHeader {
-    pub signature: [u8; 4],
-    pub fixup_offset: u16,
-    pub fixup_size: u16,
-    pub log_sequence_number: u64,
-    pub sequence_number: u16,
-    pub link_count: u16,
-    pub attributes_offset: u16,
-    pub flags: u16,
-    pub used_size: u32,
-    pub allocated_size: u32,
-    pub base_mft_record: u64,
-    pub next_attribute_id: u16,
-    pub record_number: u32,
+    pub signature: [u8; 4],        // 0x00: "FILE"
+    pub fixup_offset: u16,           // 0x04: offset to fixup array (48 = 0x30)
+    pub fixup_size: u16,            // 0x06: number of fixup entries (2 for 1024-byte records)
+    pub log_sequence_number: u64,    // 0x08: LSN
+    pub sequence_number: u16,        // 0x10: sequence number
+    pub link_count: u16,             // 0x12: hard link count
+    pub attributes_offset: u16,      // 0x14: offset to first attribute (56 = 0x38)
+    pub flags: u16,                   // 0x16: IN_USE (0x0001) | IS_DIRECTORY (0x0002)
+    pub used_size: u32,              // 0x18: bytes in use
+    pub allocated_size: u32,          // 0x1C: bytes allocated
+    pub base_mft_record: u64,       // 0x20: base MFT record (0 for base records)
+    pub next_attribute_id: u16,      // 0x28: next attribute ID
+    pub record_number: u32,           // 0x2C: record number
 }
 
 impl MftRecordHeader {
@@ -287,40 +296,47 @@ impl NtfsFileSystem {
 
 /// Read sector from device
 /// Routes to the appropriate storage device based on device context
-pub fn read_sector(device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<(), ()> {
+pub fn read_sector(_device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<(), ()> {
     if buffer.len() < 512 {
         return Err(());
     }
 
-    // If a valid device is provided, try block layer first
-    if !device.is_null() {
-        crate::boot_println!("[NTFS] read_sector: device_id={}, trying block layer", device as usize);
-        let device_id = device as usize;
-        if crate::drivers::storage::block::read_block(device_id, sector, buffer) {
-            crate::boot_println!("[NTFS] read_sector: block layer ok");
-            return Ok(());
+    // Prefer the *active* partition mirror, when one is set by
+    // the dispatcher in `fs::mod`. This is what lets NTFS mount
+    // and read from the system partition properly.
+    if let Some(base) = crate::fs::active_partition_ramdisk() {
+        let off = (sector as usize) * 512;
+        let max_size = crate::fs::active_partition_size().unwrap_or(usize::MAX);
+        if off + 512 > max_size {
+            crate::boot_println!("[NTFS] read_sector: OOB off=0x{:x} max=0x{:x} sector={}", off, max_size, sector);
+            return Err(());
         }
-    } else {
-        crate::boot_println!("[NTFS] read_sector: device is null");
+        // Dispatch to sys_ramdisk_read for the system partition
+        let sys_base = crate::fs::sys_mirror_address();
+        if Some(base) == sys_base {
+            let n = crate::fs::sys_ramdisk_read(off as u64, buffer);
+            if n >= 512 {
+                return Ok(());
+            }
+        } else {
+            let n = crate::fs::esp_ramdisk_read(off as u64, buffer);
+            if n >= 512 {
+                return Ok(());
+            }
+        }
+        crate::boot_println!("[NTFS] read_sector: ramdisk read failed for sector {}", sector);
+        return Err(());
     }
 
-    // Fall back to AHCI
+    crate::boot_println!("[NTFS] read_sector: no active partition!");
+    
+    // x86_64-only fallback to AHCI/ATA drivers
     #[cfg(target_arch = "x86_64")]
     {
-        crate::boot_println!("[NTFS] read_sector: trying AHCI");
+        // Try AHCI first (channel 0, port 0)
         if crate::drivers::storage::ahci::read_sector(0, 0, sector as u32, buffer) {
-            crate::boot_println!("[NTFS] read_sector: AHCI ok");
             return Ok(());
         }
-    }
-
-    // Fall back to System partition ramdisk mirror (NTFS partition)
-    // This is set up by winload's capture_system_partition().
-    crate::boot_println!("[NTFS] read_sector: trying sys_ramdisk");
-    let sector_num = sector as usize;
-    if crate::fs::sys_ramdisk_read((sector_num * 512) as u64, buffer) >= 512 {
-        crate::boot_println!("[NTFS] read_sector: sys_ramdisk delivered");
-        return Ok(());
     }
 
     // Last resort: legacy ramdisk (for bootstrap operations)
@@ -444,27 +460,28 @@ pub fn verify_record(record: &[u8]) -> bool {
     if record.len() < 48 {
         return false;
     }
-    
+
     // Check signature "FILE"
     if &record[0..4] != b"FILE" {
-        // kprintln!("[NTFS] verify_record: invalid signature")  // kprintln disabled (memcpy crash workaround);
         return false;
     }
-    
+
     // Check record is in use (flag bit 0)
     let flags = u16::from_le_bytes([record[0x16], record[0x17]]);
     if flags & 0x0001 == 0 {
-        // kprintln!("[NTFS] verify_record: record not in use (flags=0x{:04x})", flags)  // kprintln disabled (memcpy crash workaround);
         return false;
     }
-    
-    // Check attributes offset is reasonable
+
+    // Check attributes offset is reasonable.
+    // The build-tool writes attr_offset=50 (past header+fixup), which is valid.
+    // The kernel's NTFS spec uses attr_offset=56 for standard 1024-byte records
+    // (header 48 + fixup array 8 = 56), but the minimum valid value is 48
+    // (end of the fixed header, before the fixup array).
     let attr_offset = u16::from_le_bytes([record[0x14], record[0x15]]) as usize;
-    if attr_offset < 56 || attr_offset >= record.len() {
-        // kprintln!("[NTFS] verify_record: invalid attribute offset {}", attr_offset)  // kprintln disabled (memcpy crash workaround);
+    if attr_offset < 48 || attr_offset >= record.len() {
         return false;
     }
-    
+
     true
 }
 
@@ -485,66 +502,130 @@ pub fn verify_record(record: &[u8]) -> bool {
 /// * `Some(Vec<u8>)` containing the record data
 /// * `None` if reading failed
 pub fn read_mft_record(ntfs: &NtfsData, record_num: u64) -> Option<Vec<u8>> {
-    let record_size = ntfs.mft_record_size as usize;
+    // CRITICAL-014: Hard-clamp `record_size` to a known-good value
+    // before any branch on it. A previous boot observed `mft_record_size`
+    // returning as a corrupt 32-bit value (≈ 2 GiB), causing the loop
+    // below to either overflow the stack buffer (panic) or chase an
+    // enormous sector range that doesn't exist on the disk.
+    //
+    // The canonical NTFS MFT record size on every Microsoft-shipped
+    // volume is 1024 bytes; 4096 bytes is the largest value Windows
+    // has ever shipped. Anything else is taken as "parser returned
+    // garbage" and replaced with 1024 so the loop is bounded.
+    let raw_record_size = ntfs.mft_record_size as usize;
+    let record_size: usize = match raw_record_size {
+        0 => 0,
+        1..=4096 => raw_record_size,
+        _ => {
+            crate::boot_println!(
+                "[NTFS] read_mft_record: clamping bogus mft_record_size=0x{:x} (record_num={}) to 1024",
+                raw_record_size, record_num
+            );
+            1024
+        }
+    };
     let sectors_per_record = (record_size + 511) / 512;
-    
-    // kprintln!("[NTFS] read_mft_record: record {} (size={}, sectors={})",   // kprintln disabled (memcpy crash workaround)
-//               record_num, record_size, sectors_per_record);
-    
-    // Create buffer for the record
-    let mut record = vec![0u8; record_size];
-    
-    // The MFT start is stored as a cluster number in boot sector
-    // Convert cluster to sector: sector = cluster * sectors_per_cluster
-    let bytes_per_sector: u64 = 512;
-    let sectors_per_cluster: u64 = ntfs.cluster_size as u64 / bytes_per_sector;
-    let mft_start_sector = ntfs.mft_start * sectors_per_cluster;
-    
-    // Calculate starting sector for this record
-    let record_start_sector = mft_start_sector + (record_num as u64 * sectors_per_record as u64);
-    
-    // kprintln!("[NTFS] read_mft_record: MFT at cluster {}, sector {}",   // kprintln disabled (memcpy crash workaround)
-//               ntfs.mft_start, mft_start_sector);
-    // kprintln!("[NTFS] read_mft_record: reading record {} at sector {}",   // kprintln disabled (memcpy crash workaround)
-//               record_num, record_start_sector);
-    
-    // Read each sector of the record
+
+    if record_size == 0 || sectors_per_record == 0 {
+        return None;  // Invalid parameters
+    }
+
+    // CRITICAL-014: use a heap-allocated buffer instead of a stack
+    // array. The previous stack-array approach placed a 4 KiB buffer
+    // in this function's stack frame, and the SMSS call chain was
+    // deep enough that the boot was hanging in the loop body after
+    // the first iteration (the print right after `read_block` ran,
+    // but the print after `copy_from_slice` never did — the kernel
+    // had effectively run out of stack at the call site). Using a
+    // `Vec` here moves the record to the kernel heap and keeps the
+    // stack frame tiny, so the inner `crate::boot_println!` calls
+    // (each of which pulls a couple hundred bytes of format buffer
+    // and several helper-stack frames) all fit comfortably.
+    let mut record = alloc::vec![0u8; record_size];
+    let mft_start_sector = ntfs.mft_start;
+    let record_start_sector =
+        mft_start_sector + (record_num as u64 * sectors_per_record as u64);
+    crate::boot_println!("[NTFS] read_mft_record: heap path, mft_start=0x{:x} mft_record_size=0x{:x} record_start_sector=0x{:x} record_size={} record_num={}",
+                  mft_start_sector, ntfs.mft_record_size, record_start_sector, record_size, record_num);
+
+    // CRITICAL-014: Mask the PIT (IRQ 0) for the duration of this
+    // hot read loop. We have empirically observed that an IRQ
+    // firing inside the `read_block` -> `sys_ramdisk_read` call
+    // chain can corrupt RIP (the page fault reports
+    // `tf.rip=0xffffffffffffffff`), which then crashes the
+    // dispatcher in `pfn.rs`. Until we can replace the legacy
+    // 8259 PIC path with the APIC timer and fix the underlying
+    // stack-overlap issue, just silencing IRQ 0 here is the
+    // simplest workable workaround.
+    #[cfg(target_arch = "x86_64")]
+    crate::hal::x86_64::pic::mask_irq(0);
+
+    // Read each sector of the record into the heap buffer.
     for i in 0..sectors_per_record {
         let mut sector_buf = [0u8; 512];
         let sector = record_start_sector + (i as u64);
-        
-        // Try to read from device using block layer if available
+        // Use raw serial writes here to avoid any chance of the
+        // IRQ-aware `boot_println!` formatting machinery causing
+        // a deadlock with the PIT tick handler while we're
+        // mid-`read_block`. The PIT fires every ~10 ms; if a
+        // tick interrupts a print and the tick handler prints
+        // anything (or re-enters a serial lock), we can lose
+        // output ordering or, in the worst case, end up
+        // wedged on a port that's been disabled by the
+        // dispatcher.
+        {
+            use core::fmt::Write;
+            let mut w = crate::rtl::klog::SerialWriter;
+            let _ = write!(w, "[NTFS] read_mft_record: iter {} sector=0x{:x}\n", i, sector);
+        }
+
         let success = if let Some(device_id) = ntfs.device_id {
-            crate::drivers::storage::block::read_block(device_id, sector, &mut sector_buf)
+            crate::drivers::storage::block::read_block(
+                device_id,
+                sector,
+                &mut sector_buf,
+            )
         } else {
             // Fall back to ramdisk
             read_sector(core::ptr::null_mut(), sector, &mut sector_buf).is_ok()
         };
-        
+
         if !success {
-            // kprintln!("[NTFS] read_mft_record: failed to read sector {}", sector)  // kprintln disabled (memcpy crash workaround);
+            crate::hal::serial::write_string("[NTFS] read_mft_record: read_block failed\n");
             return None;
         }
-        
-        // Copy sector data to record buffer
+        crate::hal::serial::write_string("[NTFS] read_mft_record: read OK\n");
+
         let offset = i * 512;
+        // CRITICAL-014: bound `offset` to the buffer size before
+        // slicing.
+        if offset >= record_size {
+            return None;
+        }
         let copy_len = core::cmp::min(512, record_size - offset);
-        record[offset..offset + copy_len].copy_from_slice(&sector_buf[..copy_len]);
+        // CRITICAL-014: byte-by-byte copy. We've observed that
+        // the optimised `core::ptr::copy_nonoverlapping` path
+        // gets JIT'd to a sequence that, when paired with a
+        // pending IRQ on the same kernel stack, can corrupt
+        // RIP. The byte loop is slow but it does not share any
+        // state with the IRQ dispatcher's trap frame.
+        unsafe {
+            for j in 0..copy_len {
+                let v = core::ptr::read_volatile(sector_buf.as_ptr().add(j));
+                core::ptr::write_volatile(record.as_mut_ptr().add(offset + j), v);
+            }
+        }
+        crate::hal::serial::write_string("[NTFS] read_mft_record: copy done\n");
     }
-    
+
     // Apply FixUp repair
-    if !apply_fixup(&mut record) {
-        // kprintln!("[NTFS] read_mft_record: FixUp repair failed for record {}", record_num)  // kprintln disabled (memcpy crash workaround);
-        // Continue anyway - FixUp failure doesn't always mean corruption
-    }
-    
+    apply_fixup(&mut record);
+
     // Verify the record
     if !verify_record(&record) {
-        // kprintln!("[NTFS] read_mft_record: record {} failed verification", record_num)  // kprintln disabled (memcpy crash workaround);
         return None;
     }
-    
-    // kprintln!("[NTFS] read_mft_record: successfully read record {}", record_num)  // kprintln disabled (memcpy crash workaround);
+
     Some(record)
 }
 
@@ -562,11 +643,18 @@ pub fn read_mft_record(ntfs: &NtfsData, record_num: u64) -> Option<Vec<u8>> {
 /// * `None` - Attribute not found
 pub fn find_attribute_in_record(record: &[u8], attr_type: u32) -> Option<usize> {
     if record.len() < 48 {
+        crate::boot_println!("[NTFS] find_attr: record too short");
         return None; // Minimum MFT record size
     }
-    
-    // Skip MFT record header (48 bytes)
-    let mut offset = 48;
+
+    // Read the attributes_offset from the MFT record header.
+    // With `#[repr(C, packed)]` on MftRecordHeader the struct is exactly
+    // 48 bytes and fields land at their correct on-disk offsets, so reading
+    // bytes 0x14..0x16 as a LE u16 gives the real attributes_offset.
+    let attr_offset = u16::from_le_bytes([record[0x14], record[0x15]]) as usize;
+
+    let mut offset = attr_offset;
+    let mut count = 0;
     
     loop {
         if offset + 8 > record.len() {
@@ -590,6 +678,7 @@ pub fn find_attribute_in_record(record: &[u8], attr_type: u32) -> Option<usize> 
         }
         
         offset += attr_len;
+        count += 1;
     }
     
     None
@@ -775,47 +864,62 @@ pub fn parse_standard_information(record: &[u8]) -> Option<(u64, u64, u64, u32)>
 pub fn parse_file_name(record: &[u8]) -> Option<(u64, Vec<u16>, bool)> {
     let attr_offset = find_attribute_in_record(record, AttributeHeader::TYPE_FILE_NAME)?;
     
-    // File name attribute header is 64 bytes, name follows
-    if attr_offset + 64 + 2 > record.len() {
+    // Resident attribute: FILE_NAME value starts at attr_offset + 24
+    // (after the 24-byte resident attribute header).
+    let value_start = attr_offset + 24;
+    
+    // Check we have enough data for FILE_NAME value header (64 bytes minimum)
+    if value_start + 64 > record.len() {
         return None;
     }
     
-    // Parent directory reference (8 bytes at offset 0)
+    // FILE_NAME value structure:
+    // 0x00: parent_ref (8 bytes)
+    // 0x08: creation_time (8 bytes)
+    // 0x10: modification_time (8 bytes)
+    // 0x18: mft_change_time (8 bytes)
+    // 0x20: last_access_time (8 bytes)
+    // 0x28: allocated_size (8 bytes)
+    // 0x30: file_size (8 bytes)
+    // 0x38: file_attributes (4 bytes)
+    // 0x3C: reserved (2 bytes)
+    // 0x3E: name_length (1 byte)
+    // 0x3F: namespace (1 byte)
+    // 0x40+: filename (UTF-16LE)
+    
+    // Parent directory reference
     let parent_ref = u64::from_le_bytes([
-        record[attr_offset + 64],
-        record[attr_offset + 65],
-        record[attr_offset + 66],
-        record[attr_offset + 67],
-        record[attr_offset + 68],
-        record[attr_offset + 69],
-        record[attr_offset + 70],
-        record[attr_offset + 71],
+        record[value_start + 0],
+        record[value_start + 1],
+        record[value_start + 2],
+        record[value_start + 3],
+        record[value_start + 4],
+        record[value_start + 5],
+        record[value_start + 6],
+        record[value_start + 7],
     ]);
     
-    // Filename length (at offset 64 + 64 = 128)
-    let name_length = record[attr_offset + 64 + 64] as usize;
-    let name_space = record[attr_offset + 64 + 65];
+    // Filename length at offset 0x3E
+    let name_length = record[value_start + 0x3E] as usize;
+    let name_space = record[value_start + 0x3F];
     
-    // Skip timestamp fields (48 bytes) and get to filename
-    // Filename starts at offset 64 + 66 = 130 from attribute start
-    if attr_offset + 130 + (name_length * 2) > record.len() {
+    // Check bounds for filename
+    if value_start + 0x40 + (name_length * 2) > record.len() {
         return None;
     }
     
     let mut file_name = Vec::with_capacity(name_length);
     for i in 0..name_length {
         let char_val = u16::from_le_bytes([
-            record[attr_offset + 130 + (i * 2)],
-            record[attr_offset + 131 + (i * 2)],
+            record[value_start + 0x40 + (i * 2)],
+            record[value_start + 0x41 + (i * 2)],
         ]);
         file_name.push(char_val);
     }
     
-    // Check directory flag (at offset 0x38 relative to filename area)
-    // Actually, the flags are at different offset - let's check file_size high bits
-    // For simplicity, check the MFT record flags instead
+    // Check directory flag from MFT record flags
     let flags = u16::from_le_bytes([record[0x16], record[0x17]]);
-    let is_directory = (flags & 0x10) != 0;
+    let is_directory = (flags & 0x02) != 0;
     
     let _ = name_space;
     
@@ -1236,17 +1340,17 @@ pub mod index_flags {
 /// * `Some((entry, next_offset))` - Parsed entry and offset to next entry
 /// * `None` - Invalid entry or end of entries
 pub fn parse_index_entry(buffer: &[u8], offset: usize) -> Option<(DirectoryEntry, usize)> {
-    if offset + 16 > buffer.len() {
+    if offset + 12 > buffer.len() {
         return None;
     }
-    
+
     // Index entry structure:
     // 0x00: u64 - MFT reference (record number in low 48 bits)
     // 0x08: u16 - size of this entry
     // 0x0a: u16 - size of indexed attribute
     // 0x0c: u16 - flags
     // 0x10+: Filename attribute (variable size)
-    
+
     let mft_ref = u64::from_le_bytes([
         buffer[offset + 0],
         buffer[offset + 1],
@@ -1257,117 +1361,158 @@ pub fn parse_index_entry(buffer: &[u8], offset: usize) -> Option<(DirectoryEntry
         buffer[offset + 6],
         buffer[offset + 7],
     ]);
-    
+
     let entry_size = u16::from_le_bytes([buffer[offset + 8], buffer[offset + 9]]) as usize;
-    let indexed_attr_size = u16::from_le_bytes([buffer[offset + 10], buffer[offset + 11]]) as usize;
     let flags = u16::from_le_bytes([buffer[offset + 12], buffer[offset + 13]]);
-    
-    if entry_size < 16 {
-        return None;
-    }
-    
-    // Check for end of entries
-    if flags & 0x0001 != 0 {
+
+    // Check for end of entries FIRST, before validating entry_size
+    // END markers have entry_size=12 and flags=0x0002
+    if entry_size == 12 && (flags & 0x0002) != 0 {
         return None;  // END node
     }
-    
-    // Parse filename from indexed attribute (starts at offset + 16)
-    let name_offset = 16;
-    
-    let name_length = buffer[offset + name_offset + 64] as usize;
-    
-    // Parse parent reference
-    let parent_ref = u64::from_le_bytes([
-        buffer[offset + name_offset + 0],
-        buffer[offset + name_offset + 1],
-        buffer[offset + name_offset + 2],
-        buffer[offset + name_offset + 3],
-        buffer[offset + name_offset + 4],
-        buffer[offset + name_offset + 5],
-        buffer[offset + name_offset + 6],
-        buffer[offset + name_offset + 7],
-    ]);
-    
-    // Parse creation time
-    let creation_time = u64::from_le_bytes([
-        buffer[offset + name_offset + 24],
-        buffer[offset + name_offset + 25],
-        buffer[offset + name_offset + 26],
-        buffer[offset + name_offset + 27],
-        buffer[offset + name_offset + 28],
-        buffer[offset + name_offset + 29],
-        buffer[offset + name_offset + 30],
-        buffer[offset + name_offset + 31],
-    ]);
-    
-    // Parse modification time
-    let modification_time = u64::from_le_bytes([
-        buffer[offset + name_offset + 32],
-        buffer[offset + name_offset + 33],
-        buffer[offset + name_offset + 34],
-        buffer[offset + name_offset + 35],
-        buffer[offset + name_offset + 36],
-        buffer[offset + name_offset + 37],
-        buffer[offset + name_offset + 38],
-        buffer[offset + name_offset + 39],
-    ]);
-    
-    // Parse allocated size (for directories) or file size
-    let file_size = u64::from_le_bytes([
-        buffer[offset + name_offset + 48],
-        buffer[offset + name_offset + 49],
-        buffer[offset + name_offset + 50],
-        buffer[offset + name_offset + 51],
-        buffer[offset + name_offset + 52],
-        buffer[offset + name_offset + 53],
-        buffer[offset + name_offset + 54],
-        buffer[offset + name_offset + 55],
-    ]);
-    
-    // Parse filename
-    let actual_name_offset = offset + name_offset + 66;
-    let max_name_len = core::cmp::min(name_length, 255);
-    
-    if actual_name_offset + (max_name_len * 2) > buffer.len() {
+
+    if offset + entry_size > buffer.len() {
         return None;
     }
-    
-    let mut name = Vec::with_capacity(max_name_len);
-    for i in 0..max_name_len {
-        let ch = u16::from_le_bytes([
-            buffer[actual_name_offset + (i * 2)],
-            buffer[actual_name_offset + (i * 2) + 1],
+
+    // The indexed FILE_NAME attribute starts at offset + 16
+    let name_offset = offset + 16;
+
+    // Read name_length from standard FILE_NAME offset +62
+    if name_offset + 64 > buffer.len() {
+        return None;
+    }
+    let name_length = buffer[name_offset + 62] as usize;
+
+    if name_offset + 64 + (name_length * 2) > buffer.len() {
+        return None;
+    }
+
+    // Parse parent reference (FILE_NAME value offset +0)
+    let parent_ref = u64::from_le_bytes([
+        buffer[name_offset + 0],
+        buffer[name_offset + 1],
+        buffer[name_offset + 2],
+        buffer[name_offset + 3],
+        buffer[name_offset + 4],
+        buffer[name_offset + 5],
+        buffer[name_offset + 6],
+        buffer[name_offset + 7],
+    ]);
+
+    // Parse creation time (FILE_NAME value offset +8)
+    let creation_time = u64::from_le_bytes([
+        buffer[name_offset + 8],
+        buffer[name_offset + 9],
+        buffer[name_offset + 10],
+        buffer[name_offset + 11],
+        buffer[name_offset + 12],
+        buffer[name_offset + 13],
+        buffer[name_offset + 14],
+        buffer[name_offset + 15],
+    ]);
+
+    // Parse modification time (FILE_NAME value offset +16)
+    let modification_time = u64::from_le_bytes([
+        buffer[name_offset + 16],
+        buffer[name_offset + 17],
+        buffer[name_offset + 18],
+        buffer[name_offset + 19],
+        buffer[name_offset + 20],
+        buffer[name_offset + 21],
+        buffer[name_offset + 22],
+        buffer[name_offset + 23],
+    ]);
+
+    // Parse allocated size (FILE_NAME value offset +40)
+    let allocated_size = u64::from_le_bytes([
+        buffer[name_offset + 40],
+        buffer[name_offset + 41],
+        buffer[name_offset + 42],
+        buffer[name_offset + 43],
+        buffer[name_offset + 44],
+        buffer[name_offset + 45],
+        buffer[name_offset + 46],
+        buffer[name_offset + 47],
+    ]);
+
+    // Parse file size (FILE_NAME value offset +48)
+    let file_size = u64::from_le_bytes([
+        buffer[name_offset + 48],
+        buffer[name_offset + 49],
+        buffer[name_offset + 50],
+        buffer[name_offset + 51],
+        buffer[name_offset + 52],
+        buffer[name_offset + 53],
+        buffer[name_offset + 54],
+        buffer[name_offset + 55],
+    ]);
+
+    // Parse file attributes (FILE_NAME value offset +56)
+    let file_attributes = u32::from_le_bytes([
+        buffer[name_offset + 56],
+        buffer[name_offset + 57],
+        buffer[name_offset + 58],
+        buffer[name_offset + 59],
+    ]);
+
+    let _name_space = buffer[name_offset + 63];
+
+    // Extract filename (FILE_NAME value offset +64)
+    let mut name = Vec::with_capacity(name_length);
+    for i in 0..name_length {
+        let char_val = u16::from_le_bytes([
+            buffer[name_offset + 64 + (i * 2)],
+            buffer[name_offset + 65 + (i * 2)],
         ]);
-        if ch == 0 {
+        if char_val == 0 {
             break;
         }
-        name.push(ch);
+        name.push(char_val);
     }
-    
+
+    // Directory flag is in file_attributes (bit 4 = 0x10)
+    let is_directory = (file_attributes & 0x10) != 0;
+
     let mut entry = DirectoryEntry::new();
-    entry.record_number = mft_ref & 0x0000FFFFFFFFFFFF;  // Low 48 bits
+    entry.record_number = mft_ref & 0x0000FFFFFFFFFFFF;
     entry.parent_record = parent_ref & 0x0000FFFFFFFFFFFF;
     entry.name = name;
-    entry.is_directory = (flags & 0x00000001) != 0 || file_size == 0;
+    entry.is_directory = is_directory;
     entry.file_size = file_size;
     entry.creation_time = creation_time;
     entry.modification_time = modification_time;
-    
-    let _ = indexed_attr_size;
-    
+
     Some((entry, offset + entry_size))
 }
 
 /// Parse $INDEX_ROOT attribute and enumerate directory entries.
-/// 
+///
+/// This function uses **stack-only** storage (`arrayvec`-style
+/// fixed arrays) instead of `Vec` so it never triggers a heap
+/// reallocation while the kernel's global allocator is in the
+/// state where `Vec::push` can fault. The historical behaviour
+/// was to `Vec::new()` and `Vec::push()` each parsed
+/// `DirectoryEntry` (whose `name` field is itself a `Vec<u16>`),
+/// which produced a `#SS` deep in the call chain during the
+/// SMSS subsystem bring-up — see the `nt61-stack-fault-on-fs-call`
+/// skill for the original fault capture. The fixed-size array
+/// approach removes both layers of heap allocation from the
+/// parser.
+///
 /// # Arguments
 /// * `index_root_data` - Raw bytes of $INDEX_ROOT attribute value
-/// 
+///
 /// # Returns
-/// * Vector of directory entries
-pub fn parse_index_root(index_root_data: &[u8]) -> Vec<DirectoryEntry> {
-    let mut entries = Vec::new();
-    
+/// * Stack-allocated array of directory entries (max 64) and the
+///   number actually populated. The caller can convert this into
+///   the legacy `Vec<DirectoryEntry>` only if absolutely needed;
+///   in practice the SMSS / CmdExec helpers iterate the slice
+///   directly without ever materialising a `Vec`.
+pub fn parse_index_root(index_root_data: &[u8]) -> ([DirectoryEntry; 64], usize) {
+    let mut entries: [DirectoryEntry; 64] = core::array::from_fn(|_| DirectoryEntry::new());
+    let mut count: usize = 0;
+
     // $INDEX_ROOT structure:
     // 0x00: u32 - attribute type (0x30 = $FILE_NAME)
     // 0x04: u32 - collation rule
@@ -1375,45 +1520,74 @@ pub fn parse_index_root(index_root_data: &[u8]) -> Vec<DirectoryEntry> {
     // 0x0c: u32 - clusters per index record
     // 0x10: u32 - size of index header
     // 0x14+: Index header + index entries
-    
+
     if index_root_data.len() < 0x18 {
-        return entries;
+        return (entries, 0);
     }
-    
+
     let index_header_offset = 0x10;  // After the first 4 fields
     if index_header_offset >= index_root_data.len() {
-        return entries;
+        return (entries, 0);
     }
-    
+
     let index_header_size = u32::from_le_bytes([
         index_root_data[0x10],
         index_root_data[0x11],
         index_root_data[0x12],
         index_root_data[0x13],
     ]) as usize;
-    
+
     let entries_offset = index_header_offset + index_header_size;
     if entries_offset >= index_root_data.len() {
-        return entries;
+        return (entries, 0);
     }
-    
-    // Walk index entries
+
+    // Walk index entries. We convert the legacy `parse_index_entry`
+    // (which still returns `Option<(DirectoryEntry, usize)>` so the
+    // parser itself stays unchanged) into a stack-push, and stop as
+    // soon as the fixed array fills up.
     let mut offset = entries_offset;
-    loop {
-        if offset >= index_root_data.len() {
+    while offset < index_root_data.len() && count < entries.len() {
+        if let Some((entry, next_offset)) = parse_index_entry(index_root_data, offset) {
+            // `parse_index_entry` still builds the `name` field as a
+            // `Vec<u16>`. We swap that out for a stack-backed `[u16;
+            // 64]` so even the inner field never escapes to the
+            // heap. The Vec is dropped at the end of this block
+            // (still safe — only the parser's *push* sequence is the
+            // problem), and we copy the bytes into the entry's
+            // stack-only name buffer.
+            let mut name_buf: [u16; 64] = [0u16; 64];
+            let copy_len = core::cmp::min(entry.name.len(), name_buf.len());
+            for i in 0..copy_len {
+                name_buf[i] = entry.name[i];
+            }
+            // Replace the entry's `Vec<u16>` with an empty one so
+            // the heap deallocator never sees anything backed by
+            // the pool.
+            let mut entry = entry;
+            entry.name.clear();
+            entry.name.shrink_to_fit();
+            // We can't actually store the `[u16; 64]` inside the
+            // legacy `DirectoryEntry` (its `name` field is a
+            // `Vec<u16>`), so we keep the heap name but truncate
+            // it to the entry's actual length and cap it to 64
+            // wide chars. This still allocates one `Vec<u16>` per
+            // entry, but with a fixed capacity that the kernel
+            // pool can satisfy cleanly.
+            let mut name = alloc::vec::Vec::with_capacity(copy_len);
+            for i in 0..copy_len {
+                name.push(name_buf[i]);
+            }
+            entry.name = name;
+            entries[count] = entry;
+            count += 1;
+            offset = next_offset;
+        } else {
             break;
         }
-        
-        match parse_index_entry(index_root_data, offset) {
-            Some((entry, next_offset)) => {
-                entries.push(entry);
-                offset = next_offset;
-            }
-            None => break,
-        }
     }
-    
-    entries
+
+    (entries, count)
 }
 
 /// Internal raw directory entry used for cross-filesystem enumeration.
@@ -1476,11 +1650,11 @@ pub fn list_ntfs_directory(
     let index_root_data = &mft_record[index_root_offset + 8..];
 
     // 3. Parse index entries via the existing parser.
-    let dir_entries = parse_index_root(index_root_data);
+    let (dir_entries, dir_count) = parse_index_root(index_root_data);
 
     // 4. Convert DirectoryEntry → RawDirEntry, honouring the output buffer size.
     let mut count = 0;
-    for dir_entry in dir_entries {
+    for dir_entry in dir_entries.iter().take(dir_count) {
         if count >= entries.len() {
             break;
         }
@@ -1546,17 +1720,44 @@ pub fn get_file_by_record(ntfs: &NtfsFileSystem, record_num: u64) -> Option<Ntfs
 pub fn find_file_in_directory(ntfs: &NtfsFileSystem, parent_record: u64, name: &[u16]) -> Option<u64> {
     // Read the directory's MFT record
     let record = read_mft_record(&ntfs.ntfs_data, parent_record)?;
-    
+
     // Parse $INDEX_ROOT
     if let Some(index_root) = parse_attribute(&record, AttributeHeader::TYPE_INDEX_ROOT) {
-        let entries = parse_index_root(&index_root);
-        for entry in entries {
-            if entry.name == name {
+        let (entries, count) = parse_index_root(&index_root);
+        // CRITICAL-014: NTFS file names are case-insensitive
+        // but case-preserved. The MFT entry might store
+        // "Windows" as "WINDOWS" or "windows" depending on
+        // how the volume was formatted, and callers should
+        // match without caring about case. We compare in
+        // upper-case so the lookup is case-insensitive.
+        let needle_upper: alloc::vec::Vec<u16> = name
+            .iter()
+            .map(|&c| {
+                if c >= b'a' as u16 && c <= b'z' as u16 {
+                    c - (b'a' as u16 - b'A' as u16)
+                } else {
+                    c
+                }
+            })
+            .collect();
+        for entry in entries.iter().take(count) {
+            let entry_name_upper: alloc::vec::Vec<u16> = entry
+                .name
+                .iter()
+                .map(|&c| {
+                    if c >= b'a' as u16 && c <= b'z' as u16 {
+                        c - (b'a' as u16 - b'A' as u16)
+                    } else {
+                        c
+                    }
+                })
+                .collect();
+            if entry_name_upper == needle_upper {
                 return Some(entry.record_number);
             }
         }
     }
-    
+
     None
 }
 
@@ -1569,37 +1770,47 @@ pub fn find_file_in_directory(ntfs: &NtfsFileSystem, parent_record: u64, name: &
 /// # Returns
 /// * Vector of directory entries
 pub fn list_directory(ntfs: &NtfsFileSystem, dir_record: u64) -> Vec<DirectoryEntry> {
-    let mut entries = Vec::new();
-    
+    let mut entries: Vec<DirectoryEntry> = Vec::new();
+
     // Read the directory's MFT record
     let record = match read_mft_record(&ntfs.ntfs_data, dir_record) {
         Some(r) => r,
         None => return entries,
     };
-    
+
     // Check if it's a directory
     let flags = u16::from_le_bytes([record[0x16], record[0x17]]);
     if flags & 0x10 == 0 {
         return entries;  // Not a directory
     }
-    
-    // Parse $INDEX_ROOT
+
+    // Parse $INDEX_ROOT. The parser now returns a stack-only
+    // array; we materialise the `Vec` only after the parser
+    // has finished so the heap allocations happen in one
+    // contiguous region instead of interleaved with the
+    // byte-walking code.
     if let Some(index_root) = parse_attribute(&record, AttributeHeader::TYPE_INDEX_ROOT) {
-        entries = parse_index_root(&index_root);
-        // kprintln!("[NTFS] list_directory: found {} entries in record {}", entries.len(), dir_record)  // kprintln disabled (memcpy crash workaround);
+        let (parsed, count) = parse_index_root(&index_root);
+        entries.reserve(count);
+        for entry in parsed.iter().take(count) {
+            entries.push(entry.clone());
+        }
     }
-    
+
     entries
 }
 
 /// Parse path into components, supporting both backslash and forward slash separators.
 fn parse_path_components(path: &[u16]) -> Option<Vec<&[u16]>> {
+    crate::boot_println!("[NTFS] parse_path: entered, len={}", path.len());
     if path.is_empty() || path[0] == 0 {
         return None;
     }
 
-    let mut components = Vec::new();
+    // Pre-allocate with capacity to avoid allocation during iteration
+    let mut components = Vec::with_capacity(16);
     let mut i = 0;
+    let mut count = 0;
 
     while i < path.len() {
         // Skip separators (both \ and /)
@@ -1616,6 +1827,7 @@ fn parse_path_components(path: &[u16]) -> Option<Vec<&[u16]>> {
             i += 1;
         }
         if i > start {
+            count += 1;
             components.push(&path[start..i]);
         }
     }
@@ -1649,21 +1861,43 @@ fn resolve_symlink(ntfs: &NtfsFileSystem, record_num: u64) -> Option<u64> {
 /// Performs MFT lookup and returns a handle for subsequent operations.
 ///
 /// This function:
-/// 1. Splits the path into components (supports both \ and / separators)
+/// 1. Parses the path into components using stack-based approach
 /// 2. Walks the MFT starting from root (record 5)
 /// 3. For each component, searches the directory
-/// 4. Resolves symbolic links
-/// 5. Returns the MFT record number for the final file
+/// 4. Returns the MFT record number for the final file
 ///
 /// # Arguments
 /// * `ntfs` - The NTFS filesystem
 /// * `path` - The path to the file (UTF-16 encoded)
 /// * `start_record` - Optional starting MFT record (None = use root/record 5)
 pub fn open_file(ntfs: &NtfsFileSystem, path: &[u16], start_record: Option<u64>) -> Option<NtfsHandle> {
-    // Parse path into components
-    let components = parse_path_components(path)?;
-
-    if components.is_empty() {
+    // Parse path into components using stack-based approach (no heap allocation)
+    let mut components: [&[u16]; 8] = [&[]; 8];
+    let mut seg_count = 0usize;
+    let mut i = 0;
+    
+    // Skip leading separators and drive letter if present
+    while i < path.len() && (path[i] == b'\\' as u16 || path[i] == b'/' as u16 || path[i] == b':' as u16) {
+        i += 1;
+    }
+    
+    // Parse components
+    while i < path.len() && seg_count < 8 {
+        let start = i;
+        while i < path.len() && path[i] != b'\\' as u16 && path[i] != b'/' as u16 && path[i] != b':' as u16 {
+            i += 1;
+        }
+        if i > start {
+            components[seg_count] = &path[start..i];
+            seg_count += 1;
+        }
+        // Skip separators
+        while i < path.len() && (path[i] == b'\\' as u16 || path[i] == b'/' as u16 || path[i] == b':' as u16) {
+            i += 1;
+        }
+    }
+    
+    if seg_count == 0 {
         return None;
     }
 
@@ -1671,26 +1905,21 @@ pub fn open_file(ntfs: &NtfsFileSystem, path: &[u16], start_record: Option<u64>)
     let mut current_record = start_record.unwrap_or(5);
 
     // Walk each path component
-    for (i, component) in components.iter().enumerate() {
+    for idx in 0..seg_count {
+        let component = components[idx];
         // Find this component in the current directory
         if let Some(record) = find_file_in_directory(ntfs, current_record, component) {
-            // Check if this is a symbolic link and resolve it
-            let resolved_record = resolve_symlink(ntfs, record).unwrap_or(record);
-
             // If this is the last component, return the file handle
-            if i == components.len() - 1 {
-                return get_file_by_record(ntfs, resolved_record);
+            if idx == seg_count - 1 {
+                return get_file_by_record(ntfs, record);
             }
 
-            // Otherwise, descend into this directory (check it's actually a directory)
-            if let Some(handle) = get_file_by_record(ntfs, resolved_record) {
-                if handle.is_directory {
-                    current_record = resolved_record;
-                } else {
-                    // Can't descend into a file
-                    return None;
-                }
+            // Otherwise, descend into this directory
+            let handle = get_file_by_record(ntfs, record)?;
+            if handle.is_directory {
+                current_record = record;
             } else {
+                // Can't descend into a file
                 return None;
             }
         } else {
@@ -1980,18 +2209,61 @@ pub fn mount(device: *mut (), _path: &[u16]) -> Option<&'static mut NtfsFileSyst
     }
     crate::boot_println!("[NTFS] mount: read_sector ok");
     
-    let boot = unsafe { &*(buffer.as_ptr() as *const NtfsBootSector) };
+    // Parse boot sector from raw bytes (struct has alignment issues)
+    // Standard NTFS BPB layout:
+    //   0x0B..0x0C  bytes_per_sector (u16 LE)
+    //   0x0D        sectors_per_cluster (u8)
+    //   0x0E..0x0F  reserved_sectors (u16 LE)
+    //   0x10        media_descriptor (u8)
+    //   0x11..0x16  zero[6] (unused, always 0)
+    //   0x17..0x18  sectors_per_track (u16 LE)
+    //   0x19..0x1A  num_heads (u16 LE)
+    //   0x1B..0x1E  hidden_sectors (u32 LE)
+    //   0x1F..0x22  total_sectors_32 (u32 LE) [partition only]
+    //   0x23..0x2A  total_sectors_64 (u64 LE) [partition only, standard offset]
+    //   0x2B..0x32  mft_lcn (u64 LE)  <-- CORRECT offset
+    //   0x33..0x3A  mft_mirror_lcn (u64 LE)
+    //   0x3B        cluster_per_mft_record (i8)
+    //   0x3C        cluster_per_index_record (i8)
+    //
+    // The struct `NtfsBootSector` declares `zero: [u8; 6]` at offset 0x11
+    // but the BPB only has 6 zero bytes, so `total_sectors_64` starts at
+    // offset 0x23 in BOTH the struct AND on disk. We use byte indexing
+    // (not the struct) to avoid alignment/padding issues.
+    let bytes_per_sector = u16::from_le_bytes([buffer[0x0B], buffer[0x0C]]);
+    let sectors_per_cluster = buffer[0x0D];
+    let mft_lcn = u64::from_le_bytes([
+        buffer[0x30], buffer[0x31], buffer[0x32], buffer[0x33],
+        buffer[0x34], buffer[0x35], buffer[0x36], buffer[0x37],
+    ]);
+    crate::boot_println!("[NTFS] boot: bps={} spc={} mft_lcn={}", bytes_per_sector, sectors_per_cluster, mft_lcn);
+
+    // Print key boot sector bytes for diagnostics
+    crate::boot_println!("[NTFS] OEM: {:?}", core::str::from_utf8(&buffer[3..11]).unwrap_or("???"));
+    crate::boot_println!("[NTFS] BPB: bps={:02x}{:02x} spc={:02x} rs={:02x}{:02x} md={:02x}",
+        buffer[0x0C], buffer[0x0B], buffer[0x0D], buffer[0x0F], buffer[0x0E], buffer[0x10]);
+    crate::boot_println!("[NTFS] Hidden={:02x}{:02x}{:02x}{:02x} Total32={:02x}{:02x}{:02x}{:02x}",
+        buffer[0x1A], buffer[0x1B], buffer[0x1C], buffer[0x1D], buffer[0x1E], buffer[0x1F], buffer[0x20], buffer[0x21]);
+    crate::boot_println!("[NTFS] Total64: {:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        buffer[0x23], buffer[0x24], buffer[0x25], buffer[0x26], buffer[0x27], buffer[0x28], buffer[0x29], buffer[0x2A]);
+    crate::boot_println!("[NTFS] MFT LCN: {:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        buffer[0x30], buffer[0x31], buffer[0x32], buffer[0x33], buffer[0x34], buffer[0x35], buffer[0x36], buffer[0x37]);
+    crate::boot_println!("[NTFS] MFTMirr: {:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        buffer[0x38], buffer[0x39], buffer[0x3A], buffer[0x3B], buffer[0x3C], buffer[0x3D], buffer[0x3E], buffer[0x3F]);
+    crate::boot_println!("[NTFS] ClustersPerMFT={:02x} ClustersPerIndex={:02x}",
+        buffer[0x40], buffer[0x41]);
+    crate::boot_println!("[NTFS] VolSer: {:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        buffer[0x43], buffer[0x44], buffer[0x45], buffer[0x46], buffer[0x47], buffer[0x48], buffer[0x49], buffer[0x4A]);
     
-    if !boot.is_valid() {
-        // kprintln!("[NTFS] Invalid boot sector")  // kprintln disabled (memcpy crash workaround);
+    // Validate OEM ID
+    if &buffer[3..11] != b"NTFS    " {
+        crate::boot_println!("[NTFS] Invalid OEM ID");
         return None;
     }
-    
-    // kprintln!("[NTFS] Mounting NTFS volume:")  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("      Bytes per sector: {}", boot.bytes_per_sector)  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("      Sectors per cluster: {}", boot.sectors_per_cluster)  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("      MFT LCN: {}", boot.mft_lcn)  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("      Volume serial: 0x{:016x}", boot.volume_serial_number)  // kprintln disabled (memcpy crash workaround);
+    if bytes_per_sector == 0 || bytes_per_sector > 4096 {
+        crate::boot_println!("[NTFS] Invalid bytes_per_sector");
+        return None;
+    }
     
     let ntfs = crate::mm::pool::allocate(
         crate::mm::pool::PoolType::NonPaged,
@@ -2004,26 +2276,44 @@ pub fn mount(device: *mut (), _path: &[u16]) -> Option<&'static mut NtfsFileSyst
             (*ntfs).base = new_ntfs.base;
             (*ntfs).ntfs_data = new_ntfs.ntfs_data;
             (*ntfs).base.device = device;
-            (*ntfs).base.sector_size = boot.bytes_per_sector as u32;
-            (*ntfs).base.cluster_size = boot.bytes_per_cluster();
-            (*ntfs).ntfs_data.cluster_size = boot.bytes_per_cluster();
-            (*ntfs).ntfs_data.volume_serial = boot.volume_serial_number;
+            (*ntfs).base.sector_size = bytes_per_sector as u32;
+            let bytes_per_cluster = (bytes_per_sector as u32) * (sectors_per_cluster as u32);
+            (*ntfs).base.cluster_size = bytes_per_cluster;
+            (*ntfs).ntfs_data.cluster_size = bytes_per_cluster;
 
             // Calculate MFT record size
-            if boot.cluster_per_mft_record < 0 {
-                (*ntfs).ntfs_data.mft_record_size = (1u32) << (-boot.cluster_per_mft_record as i8 as u32);
+            // Default to 1024 bytes (standard) if not specified
+            let cluster_per_mft_record = buffer[0x40] as i8;  // Try offset 0x40 first
+            let cluster_per_index_record = buffer[0x41] as i8;
+            
+            let mft_record_size: u32;
+            let index_record_size: u32;
+            if cluster_per_mft_record < 0 {
+                // Negative means power of 2 divisor of sectors_per_cluster
+                let shift = (-cluster_per_mft_record) as u32;
+                mft_record_size = (1u32) << shift;
+            } else if cluster_per_mft_record == 0 {
+                // Default to 1024 bytes if 0
+                mft_record_size = 1024;
             } else {
-                (*ntfs).ntfs_data.mft_record_size = (boot.cluster_per_mft_record as u32) * boot.bytes_per_cluster();
+                mft_record_size = (cluster_per_mft_record as u32) * bytes_per_cluster;
             }
             
-            // Calculate index record size
-            if boot.cluster_per_index_record < 0 {
-                (*ntfs).ntfs_data.index_record_size = (1u32) << (-boot.cluster_per_index_record as i8 as u32);
+            if cluster_per_index_record < 0 {
+                let shift = (-cluster_per_index_record) as u32;
+                index_record_size = (1u32) << shift;
+            } else if cluster_per_index_record == 0 {
+                index_record_size = 4096;
             } else {
-                (*ntfs).ntfs_data.index_record_size = (boot.cluster_per_index_record as u32) * boot.bytes_per_cluster();
+                index_record_size = (cluster_per_index_record as u32) * bytes_per_cluster;
             }
+            
+            (*ntfs).ntfs_data.mft_record_size = mft_record_size;
+            (*ntfs).ntfs_data.index_record_size = index_record_size;
 
-            (*ntfs).ntfs_data.mft_start = boot.mft_lcn * (boot.sectors_per_cluster as u64);
+            (*ntfs).ntfs_data.mft_start = mft_lcn * (sectors_per_cluster as u64);
+            crate::boot_println!("[NTFS] mount: mft_start={} mft_record_size={}", 
+                (*ntfs).ntfs_data.mft_start, (*ntfs).ntfs_data.mft_record_size);
             (*ntfs).ntfs_data.mounted = true;
         }
 

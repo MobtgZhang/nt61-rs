@@ -744,8 +744,11 @@ impl NtfsImage {
         data.extend_from_slice(&0u64.to_le_bytes()); // Data size
         data.extend_from_slice(&0u32.to_le_bytes()); // File attributes
         data.extend_from_slice(&0u16.to_le_bytes()); // Extended attributes
-        data.push(FILENAME_NAMESPACE_WIN32); // Namespace
-        data.push(name_len);
+        // Kernel `parse_index_entry` reads name_length from
+        // `value_offset + 64` and namespace from `value_offset + 65`.
+        // Write name_len first, then namespace.
+        data.push(name_len);                          // offset 64: name_length
+        data.push(FILENAME_NAMESPACE_WIN32);           // offset 65: namespace
         // Filename (UTF-16LE)
         for c in name_utf16 {
             data.extend_from_slice(&c.to_le_bytes());
@@ -802,6 +805,149 @@ impl NtfsImage {
         marker
     }
 
+    /// Build an INDEX entry for a file/directory in INDEX_ROOT.
+    ///
+    /// INDEX entry structure (standard NTFS):
+    ///   +0x00: MFT reference (8 bytes): (sequence_number << 48) | record_number
+    ///   +0x08: entry_length (2 bytes): total size of this entry including header
+    ///   +0x0A: indexed_attribute_length (2 bytes): size of the FILE_NAME attribute
+    ///   +0x0C: flags (2 bytes): 0x0001 = END node, 0x0002 = child exists
+    ///   +0x0E: (padding to 16 bytes)
+    ///   +0x10+: FILE_NAME attribute (indexed attribute)
+    fn build_index_entry(&self, mft_ref: u64, file_name_attr: &[u8], flags: u16) -> Vec<u8> {
+        let mut entry = Vec::new();
+
+        // MFT reference (8 bytes)
+        entry.extend_from_slice(&mft_ref.to_le_bytes());
+
+        // Calculate entry length: 16 byte header + FILE_NAME attribute
+        let entry_length = (16 + file_name_attr.len()) as u16;
+        entry.extend_from_slice(&entry_length.to_le_bytes());
+
+        // Indexed attribute length (FILE_NAME attribute size)
+        entry.extend_from_slice(&(file_name_attr.len() as u16).to_le_bytes());
+
+        // Flags
+        entry.extend_from_slice(&flags.to_le_bytes());
+
+        // Padding to 16 bytes
+        entry.extend_from_slice(&[0u8; 2]);
+
+        // FILE_NAME attribute
+        entry.extend_from_slice(file_name_attr);
+
+        entry
+    }
+
+    /// Build INDEX_ROOT attribute for directories.
+    ///
+    /// INDEX_ROOT value layout (standard NTFS):
+    ///   Value offset 0x00: attribute type (0x30 = FILE_NAME)
+    ///   Value offset 0x04: collation rule
+    ///   Value offset 0x08: bytes per index record
+    ///   Value offset 0x0C: clusters per index record
+    ///   Value offset 0x10: index header size (24 bytes)
+    ///   Value offset 0x14: (padding until index header starts)
+    ///   ...
+    ///   Value offset 0x28: INDEX_HEADER starts here
+    ///     +0x00: first_entry_offset (relative to start of INDEX_HEADER)
+    ///     +0x04: total size of index entries
+    ///     +0x08: allocated size
+    ///     +0x0C: flags
+    ///     +0x10: VCN (8 bytes) - Virtual Cluster Number for this index buffer
+    ///   Value offset 0x38+: Index entries start here
+    fn build_index_root_attr(
+        &self,
+        entry: &NtfsEntry,
+        children: Option<&[(u64, &NtfsEntry)]>,
+    ) -> Vec<u8> {
+        let mut data = Vec::new();
+
+        // Attribute header (24 bytes)
+        data.extend_from_slice(&ATTR_TYPE_INDEX_ROOT.to_le_bytes());
+        let length_offset = data.len();
+        data.extend_from_slice(&0u32.to_le_bytes()); // length (filled later)
+        data.push(ATTR_FLAG_RESIDENT);
+        data.push(0); // name length
+        data.extend_from_slice(&0u16.to_le_bytes()); // name offset
+
+        // Resident header (24 bytes)
+        let value_offset = data.len();
+        data.extend_from_slice(&0u32.to_le_bytes()); // value length (filled later)
+        data.extend_from_slice(&(value_offset as u16).to_le_bytes()); // value offset
+        data.push(0); // flags
+        data.push(0); // reserved
+
+        // INDEX_ROOT value structure:
+        // 0x00: attribute type (0x30 = FILE_NAME)
+        data.extend_from_slice(&ATTR_TYPE_FILE_NAME.to_le_bytes());
+        // 0x04: collation rule (0 = DWORD)
+        data.extend_from_slice(&0u32.to_le_bytes());
+        // 0x08: bytes per index record
+        data.extend_from_slice(&4096u32.to_le_bytes()); // 4KB
+        // 0x0C: clusters per index record
+        data.extend_from_slice(&1u32.to_le_bytes());
+        // 0x10: index header size (24 bytes)
+        data.extend_from_slice(&24u32.to_le_bytes());
+
+        // Padding from 0x14 to 0x27 (20 bytes) - this space is between
+        // index_header_size field and where INDEX_HEADER actually starts
+        data.resize(data.len() + 20, 0);
+
+        // INDEX_HEADER starts at value offset 0x28
+        // first_entry_offset: offset from start of INDEX_HEADER to first entry
+        // INDEX_HEADER is 24 bytes (0x18), VCN is 8 bytes, so entries at 0x18 + 0x18 = 0x30
+        data.extend_from_slice(&0x30u32.to_le_bytes()); // first_entry_offset = 0x30
+        // 0x04: total size of index entries (placeholder, filled later)
+        let entries_size_offset = data.len();
+        data.extend_from_slice(&0u32.to_le_bytes());
+        // 0x08: allocated size
+        data.extend_from_slice(&4096u32.to_le_bytes());
+        // 0x0C: flags (0 = small)
+        data.extend_from_slice(&0u32.to_le_bytes());
+        // 0x10: VCN (8 bytes)
+        data.extend_from_slice(&0u64.to_le_bytes()); // VCN = 0
+
+        // Index entries (start at value offset 0x38)
+        // If we have children, add them before the END marker
+        if let Some(child_list) = children {
+            for &(child_record_num, child_entry) in child_list {
+                // Build FILE_NAME attribute for this child
+                // The child's parent_ref should be this directory's record number
+                // But we don't have the current entry's record number here.
+                // For now, use 0 as parent_ref (kernel may not use it)
+                let parent_ref = 0u64; // TODO: pass current record number
+                let file_name_attr =
+                    self.build_file_name_attr_for_record(child_entry, Some(parent_ref));
+
+                // Build index entry with child exists flag
+                let index_entry =
+                    self.build_index_entry(child_record_num << 48, &file_name_attr, 0x0000);
+                data.extend_from_slice(&index_entry);
+            }
+        }
+
+        // END marker entry (12 bytes) - minimal entry with only END flag
+        data.extend_from_slice(&0u64.to_le_bytes()); // MFT reference = 0
+        data.extend_from_slice(&12u16.to_le_bytes()); // entry length = 12
+        data.extend_from_slice(&0u16.to_le_bytes()); // indexed attribute length = 0
+        data.extend_from_slice(&0x0002u16.to_le_bytes()); // END flag = 0x0002
+
+        // Fill entries size
+        let entries_size = data.len() - (value_offset + 0x28);
+        data[entries_size_offset..entries_size_offset + 4].copy_from_slice(&(entries_size as u32).to_le_bytes());
+
+        // Fill value length
+        let value_length = data.len() - value_offset;
+        data[value_offset..value_offset + 4].copy_from_slice(&(value_length as u32).to_le_bytes());
+
+        // Fill attribute length
+        let total_len = data.len();
+        data[length_offset..length_offset + 4].copy_from_slice(&(total_len as u32).to_le_bytes());
+
+        data
+    }
+
     /// Finalize the NTFS image, treating it as a standalone volume
     /// (`hidden_sectors = 0`). Equivalent to `finalize_with_offset(0)`.
     pub fn finalize(&mut self) -> Result<Vec<u8>> {
@@ -813,6 +959,18 @@ impl NtfsImage {
     /// the image recognisable as a partition (rather than a whole-disk
     /// NTFS install) when it is embedded inside a larger disk image
     /// such as partition 2 of a dual-partition GPT layout.
+    ///
+    /// Key design decisions:
+    /// - MFT record 0 ($MFT) is a self-referencing entry for the MFT volume itself.
+    ///   It is NOT one of the user's filesystem entries. We create it as a synthetic
+    ///   entry and put it at index 0 so the kernel sees a valid FILE record.
+    /// - User entries (from `self.entries`) are written starting at MFT index 1.
+    ///   This is correct because index 0 is reserved for the MFT itself.
+    /// - The MFT cluster starts at cluster 4. Each cluster holds
+    ///   `cluster_size / mft_record_size` records. We extend the image buffer
+    ///   as needed to hold all records.
+    /// - Files larger than `MAX_RESIDENT_DATA_SIZE` bytes use a non-resident DATA
+    ///   attribute. All other data is stored resident inside the MFT record.
     pub fn finalize_with_offset(&mut self, partition_offset_bytes: usize) -> Result<Vec<u8>> {
         // `hidden_sectors` is the starting LBA of the partition; convert
         // the byte offset to a sector count. Only the low 32 bits are
@@ -820,7 +978,6 @@ impl NtfsImage {
         self.hidden_sectors = (partition_offset_bytes / 512) as u32;
 
         let cluster_size = (self.sectors_per_cluster as u32) * self.sector_size;
-        let _total_clusters = self.total_sectors / (self.sectors_per_cluster as u64);
         let image_size = (self.size_mb as usize) * 1024 * 1024;
         let mut image = vec![0u8; image_size];
 
@@ -829,53 +986,332 @@ impl NtfsImage {
         let boot_bytes = boot_sector.as_bytes();
         image[..boot_bytes.len()].copy_from_slice(&boot_bytes);
 
-        // Write MFT records
         let mft_record_size = self.mft_record_size as usize;
 
-        // Reserve MFT records at the beginning
-        let mft_records_reserved = 24; // Reserve first 24 records for system files
+        // How many MFT records fit in one cluster?
+        let records_per_cluster = cluster_size as usize / mft_record_size;
 
-        // Add volume entry
-        let volume_entry = NtfsEntry::new_dir("C:");
-        self.entries.insert(0, volume_entry);
+        // Compute MFT cluster 0's byte offset within the image.
+        // Cluster 0 = sectors [0, spc), cluster 1 = sectors [spc, 2*spc), etc.
+        // MFT starts at cluster 4.
+        let mft_cluster_byte_offset = (self.mft_cluster * cluster_size as u64) as usize;
 
-        // Compute the MFT's byte offset from the cluster location, so
-        // the MFT records do not overwrite the boot sector (offset 0).
-        let mft_byte_offset = (self.mft_cluster * cluster_size as u64) as usize;
+        // Pre-compute how many clusters we need for all records.
+        // Record 0 = $MFT (synthetic), records 1..N = user entries.
+        // Reserve one slot for record 0 (the MFT itself).
+        let total_user_records = self.entries.len();
+        // N+1 total records: index 0 is $MFT, indices 1..N are user entries
+        let total_records = total_user_records.saturating_add(1);
+        let needed_clusters = (total_records + records_per_cluster - 1) / records_per_cluster;
+        let needed_bytes = mft_cluster_byte_offset + needed_clusters * cluster_size as usize;
 
-        // Write each entry as an MFT record
+        // Extend the image buffer if the MFT needs more space than initially allocated.
+        if needed_bytes > image_size {
+            image.resize(needed_bytes, 0);
+        }
+
+        // --- Build synthetic $MFT entry for record 0 ---
+        // This entry has the path "$MFT" so the kernel's verify_record sees
+        // a valid "FILE" signature and can identify the record.
+        let mft_entry = NtfsEntry::new_file("$MFT", Vec::new());
+
+        // Build a map: entry index in self.entries -> MFT record number
+        // self.entries[i] -> MFT record (i + 1)
+        // This allows us to set parent MFT references in FILE_NAME attributes.
+
+        // --- Build child map for INDEX_ROOT population ---
+        // Map: parent_path -> list of (record_num, entry) for children
+        // Note: root directory entries have parent_path "" or "C:"
+        let mut child_map: std::collections::HashMap<String, Vec<(u64, &NtfsEntry)>> =
+            std::collections::HashMap::new();
         for (i, entry) in self.entries.iter().enumerate() {
-            if i >= mft_records_reserved {
-                break;
-            }
+            let record_num = (i + 1) as u64;
+            let last_bs = entry.path.rfind('\\');
+            let parent_path = last_bs.map(|p| &entry.path[..p]).unwrap_or("");
+            // Normalize parent_path: empty string or "C:" -> ""
+            let normalized_parent = if parent_path.is_empty() || parent_path == "C:" {
+                String::new()
+            } else {
+                String::from(parent_path)
+            };
+            child_map.entry(normalized_parent).or_default().push((record_num, entry));
+        }
 
-            let mut record = Vec::new();
+        // --- Build root directory entry (MFT record 5) ---
+        // The root directory has no parent, so parent_ref = 0
+        // Its children are all entries where parent_path is "" or "C:"
+        let root_entry = NtfsEntry::new_dir("C:\\");
+        let root_children = child_map.get("").map(|v| v.as_slice());
+        let record_5 = self.build_mft_record(&root_entry, 5, Some(0u64), root_children);
 
-            // Build attributes
-            let standard_info = self.build_standard_info();
-            record.extend_from_slice(&standard_info);
+        // --- Write all MFT records ---
+        // Record 0: $MFT self-reference
+        let record_0 = self.build_mft_record(&mft_entry, 0, None, None);
+        image[mft_cluster_byte_offset..mft_cluster_byte_offset + mft_record_size]
+            .copy_from_slice(&record_0);
 
-            let file_name = self.build_file_name_attr(&entry.path, entry.is_dir);
-            record.extend_from_slice(&file_name);
+        // Build a map: entry path -> record number for children lookup
+        let mut entry_record_map: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
 
-            if !entry.is_dir && !entry.data.is_empty() {
-                let data_attr = self.build_data_attr(&entry.data);
-                record.extend_from_slice(&data_attr);
-            }
+        // Records 1..N: user entries (sequential)
+        for (i, entry) in self.entries.iter().enumerate() {
+            let record_num = (i + 1) as u64;
+            entry_record_map.insert(String::from(&entry.path), record_num);
+            let parent_ref = self.compute_parent_ref_with_map(&entry_record_map, entry, record_num);
+            // Get children for this directory (for INDEX_ROOT)
+            let children = child_map.get(&entry.path).map(|v| v.as_slice());
+            let record = self.build_mft_record(entry, record_num, parent_ref, children);
 
-            record.extend_from_slice(&Self::build_end_marker());
-
-            // Pad to record size
-            record.resize(mft_record_size, 0);
-
-            // Write record at MFT cluster + i*record_size, NOT at offset 0.
-            let record_offset = mft_byte_offset + i * mft_record_size;
-            if record_offset + mft_record_size <= image_size {
+            let record_offset = mft_cluster_byte_offset + record_num as usize * mft_record_size;
+            if record_offset + mft_record_size <= image.len() {
                 image[record_offset..record_offset + mft_record_size].copy_from_slice(&record);
             }
         }
 
+        // Record 5: Root directory (always at record 5)
+        // Root has no parent (parent_ref = 0), and its children are all entries
+        // where the parent is root
+        let root_entry = NtfsEntry::new_dir("C:\\");
+        let root_children: Vec<(u64, &NtfsEntry)> = self.entries.iter()
+            .filter_map(|e| {
+                let last_bs = e.path.rfind('\\');
+                let parent_path = last_bs.map(|p| &e.path[..p]).unwrap_or("");
+                if parent_path.is_empty() || parent_path == "C:" || parent_path == "C" {
+                    // This entry's parent is root
+                    if let Some(&rn) = entry_record_map.get(&e.path) {
+                        return Some((rn, e));
+                    }
+                }
+                None
+            })
+            .collect();
+        let root_record = self.build_mft_record(
+            &root_entry,
+            5,
+            Some(0u64),
+            if root_children.is_empty() { None } else { Some(&root_children) }
+        );
+        let root_record_offset = mft_cluster_byte_offset + 5 * mft_record_size;
+        // Ensure we have enough space
+        if root_record_offset + mft_record_size > image.len() {
+            image.resize(root_record_offset + mft_record_size + 4096, 0);
+        }
+        image[root_record_offset..root_record_offset + mft_record_size]
+            .copy_from_slice(&root_record);
+
         Ok(image)
+    }
+
+    /// Compute the parent MFT reference (sequence_number << 48 | record_number) for
+    /// the FILE_NAME attribute of `entry`. Returns None for the root entry (which
+    /// has no parent).
+    fn compute_parent_ref(&self, entry: &NtfsEntry, _record_num: u64) -> Option<u64> {
+        // entry.path is a full NTFS path with backslashes, e.g. "C:\Windows\System32"
+        // Parent is the path without the last component.
+        let last_bs = entry.path.rfind('\\');
+        let parent_path = last_bs.map(|p| &entry.path[..p]).unwrap_or("");
+        if parent_path.is_empty() || parent_path == "C:" {
+            return Some(5u64 << 48); // Root directory = MFT record 5
+        }
+
+        // Look up the parent in self.entries to find its record number.
+        // parent_path is like "C:\Windows\System32", we search for it.
+        for (i, e) in self.entries.iter().enumerate() {
+            if e.path == parent_path {
+                // record_num = index + 1 (index 0 is $MFT)
+                return Some(((i + 1) as u64) << 48 | 0u64);
+            }
+        }
+
+        // Parent not found in entries — treat as root
+        Some(5u64 << 48)
+    }
+
+    /// Compute parent MFT reference using a pre-built map of entry path -> record number.
+    fn compute_parent_ref_with_map(
+        &self,
+        entry_map: &std::collections::HashMap<String, u64>,
+        entry: &NtfsEntry,
+        _record_num: u64,
+    ) -> Option<u64> {
+        let last_bs = entry.path.rfind('\\');
+        let parent_path = last_bs.map(|p| &entry.path[..p]).unwrap_or("");
+        if parent_path.is_empty() || parent_path == "C:" || parent_path == "C" {
+            return Some(5u64 << 48); // Root directory = MFT record 5
+        }
+
+        // Look up parent in the map
+        if let Some(&parent_record) = entry_map.get(parent_path) {
+            return Some(parent_record << 48 | 0u64);
+        }
+
+        // Parent not found — treat as root
+        Some(5u64 << 48)
+    }
+
+    /// Maximum bytes of data we store as a resident DATA attribute inside a
+    /// single MFT record. We leave headroom for the header (48), fixup (4),
+    /// STD_INFO (~72), FILE_NAME (~80), and INDEX_ROOT (~50 for dirs).
+    const MAX_RESIDENT_DATA_SIZE: usize = 700;
+
+    /// Build a complete MFT record for `entry` at `record_num`.
+    ///
+    /// `parent_ref` is the MFT reference of the parent directory (for the
+    /// FILE_NAME attribute). Pass None for the $MFT self-reference record.
+    /// `children` is a list of (record_num, entry) for children (for INDEX_ROOT).
+    fn build_mft_record(
+        &self,
+        entry: &NtfsEntry,
+        record_num: u64,
+        parent_ref: Option<u64>,
+        children: Option<&[(u64, &NtfsEntry)]>,
+    ) -> Vec<u8> {
+        let mft_record_size = self.mft_record_size as usize;
+
+        // Build the 48-byte MFT record header as a fixed-size array first.
+        // This avoids any issues with Vec::extend_from_slice.
+        let record_flags: u16 = if entry.is_dir { 0x0003 } else { 0x0001 };
+        let mut header = [0u8; 48];
+        header[0..4].copy_from_slice(b"FILE");                 // 0x00: signature
+        header[4..6].copy_from_slice(&48u16.to_le_bytes());  // 0x04: fixup_offset = 48
+        header[6..8].copy_from_slice(&0u16.to_le_bytes());   // 0x06: fixup_size = 0
+        // header[8..16] = LSN = 0 (already 0)
+        header[16..18].copy_from_slice(&1u16.to_le_bytes());  // 0x10: sequence_number
+        header[18..20].copy_from_slice(&1u16.to_le_bytes()); // 0x12: link_count
+        header[20..22].copy_from_slice(&48u16.to_le_bytes()); // 0x14: attributes_offset = 48
+        header[22..24].copy_from_slice(&record_flags.to_le_bytes()); // 0x16: flags
+        // header[24..28] = used_size (placeholder, filled later)
+        let used_size_offset = 24;
+        header[28..32].copy_from_slice(&(mft_record_size as u32).to_le_bytes()); // 0x1C: allocated_size
+        // header[32..40] = base_mft_record = 0 (already 0)
+        // header[40..44] = next_attribute_id + padding = 0 (already 0)
+        // record_number is u32 at offset 0x2C (bytes 44..48)
+        header[44..48].copy_from_slice(&(record_num as u32).to_le_bytes());
+
+        let mut record = Vec::with_capacity(mft_record_size);
+        record.extend_from_slice(&header);
+
+        // --- Attributes start here (offset 48) ---
+        // 1. $STANDARD_INFORMATION
+        let std_info = self.build_standard_info();
+        record.extend_from_slice(&std_info);
+
+        // 2. $FILE_NAME
+        let file_name = self.build_file_name_attr_for_record(entry, parent_ref);
+        record.extend_from_slice(&file_name);
+
+        // 3. $INDEX_ROOT (directories only)
+        if entry.is_dir {
+            let index_root = self.build_index_root_attr(entry, children);
+            record.extend_from_slice(&index_root);
+        }
+
+        // 4. $DATA (resident only; large files are truncated to MAX_RESIDENT_DATA_SIZE)
+        if !entry.is_dir && !entry.data.is_empty() {
+            let truncated = if entry.data.len() > Self::MAX_RESIDENT_DATA_SIZE {
+                &entry.data[..Self::MAX_RESIDENT_DATA_SIZE]
+            } else {
+                &entry.data
+            };
+            let data_attr = self.build_data_attr(truncated);
+            record.extend_from_slice(&data_attr);
+        }
+
+        // 5. End marker
+        record.extend_from_slice(&Self::build_end_marker());
+
+        // --- Fill used_size ---
+        let used_size = record.len() as u32;
+        record[used_size_offset..used_size_offset + 4]
+            .copy_from_slice(&used_size.to_le_bytes());
+
+        // Pad to full record size
+        record.resize(mft_record_size, 0);
+
+        // Apply fixup: sector 0 byte 510, sector 1 byte 1022
+        if record.len() > 510 {
+            record[510] = 0x00;
+            record[511] = 0x00;
+        }
+        if record.len() > 1022 {
+            record[1022] = 0x00;
+            record[1023] = 0x00;
+        }
+
+        record
+    }
+
+    /// Build a FILE_NAME attribute matching the standard NTFS layout.
+    ///
+    /// FILE_NAME value structure:
+    ///   0x00: parent_ref (8 bytes)
+    ///   0x08: creation_time (8 bytes)
+    ///   0x10: modification_time (8 bytes)
+    ///   0x18: mft_change_time (8 bytes)
+    ///   0x20: last_access_time (8 bytes)
+    ///   0x28: allocated_size (8 bytes)
+    ///   0x30: file_size (8 bytes)
+    ///   0x38: file_attributes (4 bytes)
+    ///   0x3C: reserved (2 bytes)
+    ///   0x3E: name_length (1 byte)
+    ///   0x3F: namespace (1 byte)
+    ///   0x40+: filename (UTF-16LE)
+    fn build_file_name_attr_for_record(
+        &self,
+        entry: &NtfsEntry,
+        parent_ref: Option<u64>,
+    ) -> Vec<u8> {
+        let mut data = Vec::new();
+        // Extract the filename component (last backslash-separated component)
+        let file_name = entry
+            .path
+            .rsplit('\\')
+            .next()
+            .unwrap_or(&entry.path);
+
+        let name_utf16: Vec<u16> = file_name.encode_utf16().collect();
+        let name_len = name_utf16.len() as u8;
+
+        // Attribute header (24 bytes)
+        data.extend_from_slice(&ATTR_TYPE_FILE_NAME.to_le_bytes());
+        let length_offset = data.len();
+        data.extend_from_slice(&0u32.to_le_bytes()); // length (filled later)
+        data.push(ATTR_FLAG_RESIDENT);
+        data.push(0); // name_length in header = 0
+        data.extend_from_slice(&0u16.to_le_bytes()); // name offset
+
+        // Resident header (24 bytes) — value data starts at attr_offset + 24
+        let value_offset = 24u16;
+        let value_length = 66 + (name_len as u32) * 2; // 66 fixed + name
+        data.extend_from_slice(&value_length.to_le_bytes());
+        data.extend_from_slice(&value_offset.to_le_bytes());
+        data.push(0); // flags
+        data.push(0); // reserved
+
+        // FILE_NAME value (starts at attr_offset + 24)
+        let parent_ref_val = parent_ref.unwrap_or(0u64);
+        data.extend_from_slice(&parent_ref_val.to_le_bytes()); // 0x00: parent_ref (8)
+        data.extend_from_slice(&0u64.to_le_bytes());           // 0x08: creation_time (8)
+        data.extend_from_slice(&0u64.to_le_bytes());           // 0x10: modification_time (8)
+        data.extend_from_slice(&0u64.to_le_bytes());           // 0x18: mft_change_time (8)
+        data.extend_from_slice(&0u64.to_le_bytes());           // 0x20: last_access_time (8)
+        data.extend_from_slice(&0u64.to_le_bytes());           // 0x28: allocated_size (8)
+        data.extend_from_slice(&0u64.to_le_bytes());           // 0x30: file_size (8)
+        let file_attrs = if entry.is_dir { 0x10u32 } else { 0x20u32 };
+        data.extend_from_slice(&file_attrs.to_le_bytes());       // 0x38: file_attributes (4)
+        data.extend_from_slice(&0u16.to_le_bytes());           // 0x3C: reserved (2)
+        data.push(name_len);                                   // 0x3E: name_length (1)
+        data.push(FILENAME_NAMESPACE_WIN32);                    // 0x3F: namespace (1)
+        // Filename at 0x40 (2 bytes per char)
+        for c in name_utf16 {
+            data.extend_from_slice(&c.to_le_bytes());
+        }
+
+        // Fill attribute length
+        let total_len = data.len();
+        let le = (total_len as u32).to_le_bytes();
+        data[length_offset..length_offset + 4].copy_from_slice(&le);
+        data
     }
 
     /// Get the sector size

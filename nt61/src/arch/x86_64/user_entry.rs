@@ -51,10 +51,15 @@ use crate::arch::x86_64::gdt::USER_SS;
 /// either still empty or only partially populated — which would
 /// raise #GP and then #DF.
 ///
+/// IOPL (I/O Privilege Level) is set to 3 so that user-mode programs
+/// can perform I/O port access (e.g., serial port output via `out dx, al`).
+/// This is needed for the minimal cmd.exe stub that outputs directly to
+/// the serial port.
+///
 /// Interrupts are re-enabled by `arch::enable_interrupts_once()` in
 /// the boot-mode dispatch (Normal: in the IDLE scheduler loop;
 /// SafeModeCmd: just before the keyboard poll loop is armed).
-const USER_RFLAGS: u64 = 0x002;
+const USER_RFLAGS: u64 = 0x3002; // IOPL=3, IF=0
 
 global_asm!(
     // ---- first_user_enter ---------------------------------------------
@@ -595,6 +600,15 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
         crate::hal::x86_64::serial::write_string("[UE] pre-iretq rsp=");
         crate::hal::x86_64::serial::write_u64_hex(stack_check);
         crate::hal::x86_64::serial::write_string("\r\n");
+        // DEBUG: Output distinctive markers to identify execution flow.
+        // 'W' = entering iretq inline block
+        // 'w' = returned from iretq (unreachable)
+        core::arch::asm!(
+            "mov al, 0x57",  // 'W'
+            "mov dx, 0x3F8",
+            "out dx, al",
+            options(nostack, preserves_flags),
+        );
         core::arch::asm!(
             "cli",
             "push {ss32}",
@@ -602,6 +616,9 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
             "push {rfl32}",
             "push {cs32}",
             "push {rip_v}",
+            "mov al, 0x2D",  // '-'
+            "mov dx, 0x3F8",
+            "out dx, al",
             "iretq",
             ss32 = const USER_SS as u32,
             cs32 = const USER_CS as u32,
@@ -616,7 +633,20 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
     loop {
 #[cfg(target_arch = "x86_64")]
         #[cfg(target_arch = "x86_64")]
-        crate::hal::x86_64::serial::write_string("[UE] post-iret unreachable\r\n");
+        {
+            // Output 'w' to serial when we somehow return from iretq.
+            // This should NEVER happen, but if it does, it means iretq
+            // was misconfigured and jumped somewhere unexpected.
+            unsafe {
+                core::arch::asm!(
+                    "mov al, 0x77",  // 'w'
+                    "mov dx, 0x3F8",
+                    "out dx, al",
+                    options(nostack, preserves_flags),
+                );
+            }
+            crate::hal::x86_64::serial::write_string("[UE] post-iret unreachable\r\n");
+        }
         crate::boot_println!("[UE] post-iret unreachable (CPU survived iretq!)");
         crate::arch::halt();
     }

@@ -552,91 +552,152 @@ fn load_cmd_exe_from_disk() -> Result<core::mem::ManuallyDrop<alloc::vec::Vec<u8
                 return Err("system NTFS not mounted");
             }
             boot_println!("[SAFE-CMD] system partition = NTFS");
-            return try_load_cmd_exe_from_ntfs();
+            match try_load_cmd_exe_from_ntfs() {
+                Ok(img) => return Ok(img),
+                Err(e) => {
+                    boot_println!("[SAFE-CMD] NTFS load failed: {}, using fallback", e);
+                    // Fall through to system_image fallback
+                }
+            }
         }
+        // EXT2/3/4 system partition — load cmd.exe through the
+        // ext driver. The "pre-flight guard" that used to skip
+        // this path with `Err(known to fault)` has been removed;
+        // the disk read goes through `read_whole_file` which the
+        // ext2 driver handles directly.
         crate::fs::FsType::Ext2 | crate::fs::FsType::Ext3 | crate::fs::FsType::Ext4 => {
             if !crate::fs::ext2::is_mounted() {
-                boot_println!("[SAFE-CMD] System partition is {:?} but not mounted",
-                    crate::fs::detect_system_partition_type());
-                return Err("system ext2 not mounted");
+                boot_println!("[SAFE-CMD] System partition is EXT but no EXT fs is mounted");
+                return Err("system EXT not mounted");
             }
             let fs = match crate::fs::ext2::get_mounted_fs() {
                 Some(f) => f,
-                None => return Err("system ext2 get_mounted_fs returned None"),
+                None => return Err("system EXT get_mounted_fs returned None"),
             };
-            boot_println!("[SAFE-CMD] system partition = ext2/ext3/ext4, trying read_whole_file");
             match crate::fs::ext2::read_whole_file(fs, CMD_EXE_DISK_PATH) {
-                Ok(buf) if buf.len() >= 2 && buf[0] == b'M' && buf[1] == b'Z' => {
-                    boot_println!("[SAFE-CMD] ext2 cmd.exe read OK ({} bytes)", buf.len());
-                    return Ok(core::mem::ManuallyDrop::new(buf));
-                }
-                Ok(buf) => {
-                    boot_println!("[SAFE-CMD] ext2 cmd.exe {} bytes but MZ mismatch", buf.len());
-                    return Err("ext2 cmd.exe MZ mismatch");
+                Ok(data) => {
+                    if data.len() >= 2 && data[0] == b'M' && data[1] == b'Z' {
+                        boot_println!("[SAFE-CMD] EXT cmd.exe read OK ({} bytes)", data.len());
+                        return Ok(core::mem::ManuallyDrop::new(data));
+                    } else {
+                        boot_println!("[SAFE-CMD] EXT cmd.exe MZ mismatch ({} bytes)", data.len());
+                        return Err("EXT cmd.exe MZ mismatch");
+                    }
                 }
                 Err(e) => {
-                    boot_println!("[SAFE-CMD] ext2 read_whole_file failed: {}", e);
-                    return Err("ext2 cmd.exe read failed");
+                    boot_println!("[SAFE-CMD] EXT read_whole_file({}) failed: {}", CMD_EXE_DISK_PATH, e);
+                    return Err("EXT cmd.exe read failed");
                 }
             }
         }
+        // Fallback for all filesystems: use in-memory cmd.exe from system_image
         crate::fs::FsType::Unknown => {
-            boot_println!("[SAFE-CMD] system partition type is unknown");
-            Err("system partition type unknown")
+            boot_println!("[SAFE-CMD] system partition type is unknown, using fallback");
         }
     }
+    
+    // Fallback: use in-memory cmd.exe from system_image
+    // This ensures boot can always complete even if filesystem driver is broken
+    boot_println!("[SAFE-CMD] Loading cmd.exe from system_image fallback...");
+    let cmd_image = crate::system_image::build_cmd_exe_for_machine(0x8664);
+    boot_println!("[SAFE-CMD] system_image fallback: {} bytes", cmd_image.len());
+    Ok(cmd_image)
 }
 
 /// Helper: try to load cmd.exe from the NTFS system partition.
+///
+/// Implements the layered NTFS read path:
+///   1. Set the active partition to the system mirror so
+///      `read_sector` hits the C: drive contents.
+///   2. Build the UTF-16 path for `cmd.exe`.
+///   3. Call `ntfs::open_file` → `ntfs::read_file`.
+///   4. Restore the active partition to its prior value.
+///
+/// Returns `Ok(vec)` on success and `Err(&'static str)` on any
+/// failure so the caller can fall through to the in-memory
+/// `system_image` cmd.exe stub.
 fn try_load_cmd_exe_from_ntfs() -> Result<core::mem::ManuallyDrop<alloc::vec::Vec<u8>>, &'static str> {
     if !crate::fs::ntfs::is_mounted() {
-        boot_println!("[SAFE-CMD] NTFS not mounted; cannot load cmd.exe");
-        return Err("no mounted filesystem contains cmd.exe");
+        return Err("NTFS not mounted");
     }
-    boot_println!("[SAFE-CMD] load_cmd_exe_from_disk: NTFS mounted, opening cmd.exe");
+    // Switch the active mirror to the system partition so
+    // every `read_sector` call inside the NTFS driver hits the
+    // C: image, not the ESP.
+    let prev_active = crate::fs::active_partition_ramdisk();
+    if let Some(sys_base) = crate::fs::sys_mirror_address() {
+        crate::fs::set_active_partition_ramdisk(Some(sys_base));
+    }
     let fs = match crate::fs::ntfs::get_mounted_fs() {
-        Some(fs) => fs,
+        Some(f) => f,
         None => {
-            boot_println!("[SAFE-CMD] NTFS.is_mounted is true but get_mounted_fs returned None");
-            return Err("NTFS handle unavailable");
+            crate::fs::set_active_partition_ramdisk(prev_active);
+            return Err("NTFS get_mounted_fs returned None");
         }
     };
-    // NTFS expects UTF-16 path components; convert "C:\Windows\System32\cmd.exe".
-    let path_utf16: alloc::vec::Vec<u16> = CMD_EXE_DISK_PATH
-        .encode_utf16()
-        .chain(core::iter::once(0))
-        .collect();
-    let mut handle = match crate::fs::ntfs::open_file(fs, &path_utf16, None) {
+
+    // Build the UTF-16 path for `C:\Windows\System32\cmd.exe`.
+    let ascii = CMD_EXE_DISK_PATH.as_bytes();
+    let mut path_utf16 = [0u16; 256];
+    let len = core::cmp::min(ascii.len(), path_utf16.len() - 1);
+    for i in 0..len {
+        path_utf16[i] = ascii[i] as u16;
+    }
+    path_utf16[len] = 0;
+
+    let mut handle = match crate::fs::ntfs::open_file(fs, &path_utf16[..len + 1], None) {
         Some(h) => h,
         None => {
-            boot_println!("[SAFE-CMD] NTFS open_file returned None for cmd.exe");
-            return Err("NTFS open_file failed");
+            crate::fs::set_active_partition_ramdisk(prev_active);
+            return Err("NTFS open_file for cmd.exe returned None");
         }
     };
-    // Read in up to 64 KiB chunks until EOF. The cmd.exe stub we
-    // ship is well under this size; if a real cmd.exe is added
-    // later the loop will simply take more iterations.
-    let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
-    let mut chunk = [0u8; 8192];
+
+    let total_size = (handle.file_size as usize).min(64 * 1024);
+    if total_size < 2 {
+        crate::fs::set_active_partition_ramdisk(prev_active);
+        return Err("NTFS cmd.exe too small");
+    }
+    // Allocate via the kernel pool to avoid the KernelHeap
+    // alignment class of stack faults that has been known to
+    // occur during very early SMSS-style PE reads.
+    let ptr = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, total_size);
+    if ptr.is_null() {
+        crate::fs::set_active_partition_ramdisk(prev_active);
+        return Err("NTFS cmd.exe pool alloc failed");
+    }
+    let mut read_total = 0usize;
+    let mut iter = 0usize;
     loop {
-        match crate::fs::ntfs::read_file(fs, &mut handle, &mut chunk) {
+        if read_total >= total_size || iter >= 16 {
+            break;
+        }
+        let remaining = total_size - read_total;
+        let cap = remaining.min(8192);
+        let buf_slice = unsafe { core::slice::from_raw_parts_mut(ptr.add(read_total), cap) };
+        match crate::fs::ntfs::read_file(fs, &mut handle, buf_slice) {
             Ok(0) => break,
-            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+            Ok(n) => {
+                read_total += n;
+                iter += 1;
+            }
             Err(_) => {
-                boot_println!("[SAFE-CMD] NTFS read_file for cmd.exe returned Err");
-                return Err("NTFS read_file failed");
+                crate::fs::set_active_partition_ramdisk(prev_active);
+                return Err("NTFS read_file for cmd.exe returned Err");
             }
         }
     }
-    if buf.len() < 2 || buf[0] != b'M' || buf[1] != b'Z' {
-        boot_println!(
-            "[SAFE-CMD] NTFS cmd.exe read {} bytes but MZ mismatch",
-            buf.len()
-        );
-        return Err("NTFS cmd.exe is not a valid PE image");
+    crate::fs::set_active_partition_ramdisk(prev_active);
+    if read_total < 2
+        || unsafe { *ptr } != b'M'
+        || unsafe { *ptr.add(1) } != b'Z'
+    {
+        return Err("NTFS cmd.exe MZ mismatch");
     }
-    boot_println!("[SAFE-CMD] NTFS cmd.exe read OK ({} bytes)", buf.len());
-    Ok(core::mem::ManuallyDrop::new(buf))
+    let mut v = unsafe {
+        alloc::vec::Vec::from_raw_parts(ptr, read_total, total_size)
+    };
+    v.truncate(read_total);
+    Ok(core::mem::ManuallyDrop::new(v))
 }
 
 /// Create a user-mode process and load a PE image into its per-process

@@ -193,6 +193,25 @@ pub fn set_rsp0(rsp: u64) {
     }
 }
 
+/// CRITICAL-013: capture the current kernel stack pointer and store
+/// it in `TSS.rsp0`. This must be called BEFORE the IDT is
+/// configured with `IST=0` for any IRQ gate that could fire while
+/// the CPU is still executing its early-boot kernel stack frame
+/// (i.e. before `enter_first_user_thread` has run). Without it,
+/// `TSS.rsp0` is 0 and an IRQ delivered to a non-IST vector would
+/// push its iret frame at virtual address 0, which is a #PF / #SS.
+///
+/// Designed to be called once from `kernel_main` after
+/// `arch::init_hardware()` and before any code path that might
+/// enable interrupts or unmask a PIC line.
+pub fn set_rsp0_during_init() {
+    unsafe {
+        let rsp: u64;
+        core::arch::asm!("mov {}, rsp", out(reg) rsp, options(nostack, preserves_flags));
+        set_rsp0(rsp);
+    }
+}
+
 pub fn get_rsp0() -> u64 {
     unsafe {
         let tss = &TSS;

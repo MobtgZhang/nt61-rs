@@ -208,9 +208,13 @@ pub fn run_shell(mode: ShellMode) -> ! {
 
     // Main command loop
     loop {
-        // Update prompt with current directory
-        let current_prompt = cwd.as_cstr();
-        serial_print(current_prompt);
+        // Print the canonical NT 6.1 Safe-Mode-CMD prompt
+        // (`C:\>`). The cwd prefix shown by real cmd.exe is
+        // already baked into `prompt_bytes` (it is `b"C:\\>"`),
+        // so we deliberately do **not** prepend `cwd.as_cstr()`
+        // — printing both used to produce the duplicated
+        // `C:\C:\>` prompt that confused operators when the
+        // serial log was captured.
         serial_print(prompt_bytes);
         serial_print(b" ");
 
@@ -2261,22 +2265,13 @@ impl CmdBatchExecutor {
         cwd.path[cwd.len] = 0;
         Self { cwd, error_level: 0 }
     }
-}
 
-impl BatchExecutor for CmdBatchExecutor {
-    fn read_file(&self, filename: &str) -> Result<String, BatError> {
-        // Resolution order:
-        //   1. Try the literal path (Windows-style with drive
-        //      letter and `\` separators). This is the canonical
-        //      location for NT 6.1 batch files —
-        //      `C:\system\tests\autoexec.bat`. The FAT32 helper
-        //      `find_file_at_path` walks subdirectories using the
-        //      8.3 short-name directory chain.
-        //   2. Fall back to the FAT32 root for callers that pass
-        //      a bare filename like `autoexec.bat`. The legacy
-        //      /tests/autoexec.bat and /autoexec.bat locations
-        //      registered by `tools/src/fs/build.rs` are still
-        //      visible here.
+    /// Read `filename` through the FAT32 driver. This is the
+    /// canonical path used when the system partition is FAT32
+    /// (also used as the legacy fallback for the ESP). The
+    /// directory walk uses the 8.3 short-name directory chain
+    /// produced by `tools/src/fs/build.rs::build_disk`.
+    fn read_file_fat32(&self, filename: &str) -> Result<String, BatError> {
         if !fat32::is_mounted() {
             return Err(BatError::IoError);
         }
@@ -2293,20 +2288,161 @@ impl BatchExecutor for CmdBatchExecutor {
         if size == 0 {
             return Ok(alloc::string::String::new());
         }
-        // Batch files are small. Allocate a buffer that fits and let
-        // the FAT32 driver copy into it.
         let mut buf = alloc::vec![0u8; size];
         let n = fat32::read_file(fs, cluster, size as u32, &mut buf).unwrap_or(0);
-        // Strip trailing \r that DOS-inserted into every line and
-        // normalise line endings so the parser can split on \n.
-        let mut s = alloc::string::String::with_capacity(n);
-        for &b in &buf[..n] {
-            if b == b'\r' {
-                continue;
-            }
-            s.push(b as char);
+        Ok(normalise_batch_text(&buf[..n]))
+    }
+
+    /// Read `filename` through the NTFS driver. The Windows
+    /// path is converted to UTF-16 on the way down because NTFS
+    /// stores file names as UTF-16LE and the
+    /// `ntfs::open_file` walker expects a UTF-16 slice.
+    fn read_file_ntfs(&self, filename: &str) -> Result<String, BatError> {
+        if !crate::fs::ntfs::is_mounted() {
+            return Err(BatError::IoError);
         }
-        Ok(s)
+        // Switch the active mirror to the system partition so
+        // every `read_sector` call inside the NTFS driver hits
+        // the C: image, not the ESP.
+        let prev_active = crate::fs::active_partition_ramdisk();
+        if let Some(sys_base) = crate::fs::sys_mirror_address() {
+            crate::fs::set_active_partition_ramdisk(Some(sys_base));
+        }
+
+        let fs = match crate::fs::ntfs::get_mounted_fs() {
+            Some(f) => f,
+            None => {
+                crate::fs::set_active_partition_ramdisk(prev_active);
+                return Err(BatError::IoError);
+            }
+        };
+
+        // ASCII -> UTF-16LE conversion. The autoexec.bat path
+        // uses ASCII characters only (it lives on a build-system
+        // host that writes UTF-8); UTF-8 -> UTF-16 would be the
+        // next step if we ever embed non-ASCII content in the
+        // batch file.
+        let mut path_utf16 = [0u16; 256];
+        let bytes = filename.as_bytes();
+        let len = core::cmp::min(bytes.len(), path_utf16.len() - 1);
+        for i in 0..len {
+            path_utf16[i] = bytes[i] as u16;
+        }
+        path_utf16[len] = 0;
+
+        let mut handle = match crate::fs::ntfs::open_file(fs, &path_utf16[..len + 1], None) {
+            Some(h) => h,
+            None => {
+                crate::fs::set_active_partition_ramdisk(prev_active);
+                return Err(BatError::FileNotFound(alloc::string::String::from(filename)));
+            }
+        };
+
+        let total = (handle.file_size as usize).min(64 * 1024);
+        if total == 0 {
+            crate::fs::set_active_partition_ramdisk(prev_active);
+            return Ok(alloc::string::String::new());
+        }
+        let mut buf = alloc::vec![0u8; total];
+        let mut read_total = 0usize;
+        let mut iter = 0usize;
+        while read_total < total && iter < 16 {
+            let n = match crate::fs::ntfs::read_file(fs, &mut handle, &mut buf[read_total..]) {
+                Ok(n) => n,
+                Err(_) => break,
+            };
+            if n == 0 {
+                break;
+            }
+            read_total += n;
+            iter += 1;
+        }
+        crate::fs::set_active_partition_ramdisk(prev_active);
+        if read_total == 0 {
+            return Err(BatError::IoError);
+        }
+        Ok(normalise_batch_text(&buf[..read_total]))
+    }
+
+    /// Read `filename` through the ext2/3/4 driver. The
+    /// Windows-style path is converted to the POSIX-style
+    /// path that `ext2::read_whole_file` expects.
+    fn read_file_ext2(&self, filename: &str) -> Result<String, BatError> {
+        if !crate::fs::ext2::is_mounted() {
+            return Err(BatError::IoError);
+        }
+        let fs = match crate::fs::ext2::get_mounted_fs() {
+            Some(f) => f,
+            None => return Err(BatError::IoError),
+        };
+        let data = match crate::fs::ext2::read_whole_file(fs, filename) {
+            Ok(v) => v,
+            Err(_) => {
+                return Err(BatError::FileNotFound(alloc::string::String::from(filename)));
+            }
+        };
+        Ok(normalise_batch_text(&data))
+    }
+}
+
+/// Normalise a buffer full of batch-file text into a Rust
+/// `String` so the BAT parser can iterate it line by line.
+/// Strips the trailing `\r` that DOS-inserted into every line
+/// so the parser can split on `\n` without seeing CRLF.
+fn normalise_batch_text(buf: &[u8]) -> alloc::string::String {
+    let mut s = alloc::string::String::with_capacity(buf.len());
+    for &b in buf {
+        if b == b'\r' {
+            continue;
+        }
+        s.push(b as char);
+    }
+    s
+}
+
+impl BatchExecutor for CmdBatchExecutor {
+    fn read_file(&self, filename: &str) -> Result<String, BatError> {
+        // Resolution order:
+        //   1. Try the literal path (Windows-style with drive
+        //      letter and `\` separators). This is the canonical
+        //      location for NT 6.1 batch files —
+        //      `C:\system\tests\autoexec.bat`. The FAT32 helper
+        //      `find_file_at_path` walks subdirectories using the
+        //      8.3 short-name directory chain.
+        //   2. Fall back to the FAT32 root for callers that pass
+        //      a bare filename like `autoexec.bat`. The legacy
+        //      /tests/autoexec.bat and /autoexec.bat locations
+        //      registered by `tools/src/fs/build.rs` are still
+        //      visible here.
+        //   3. If the system partition is NTFS or EXT2/3/4
+        //      instead of FAT32, route the read to the matching
+        //      driver. The path is converted from the Windows
+        //      form ("C:\Windows\System32\foo.bat") to the FS's
+        //      preferred encoding (UTF-16 for NTFS, POSIX-style
+        //      for ext) on the way down, so the kernel-side
+        //      `cmd.exe` host can run the same `autoexec.bat`
+        //      regardless of which FS the boot image used.
+        //
+        // The FAT32 read path (`CmdBatchExecutor::read_file`)
+        // detects the active filesystem at call time and only
+        // touches the driver that owns the system partition.
+
+        // Detect the system-partition FS once so the resolution
+        // matches the boot — without this, an NTFS boot image
+        // would still try to read through the FAT32 driver.
+        let fs_type = crate::fs::detect_system_partition_type();
+        match fs_type {
+            crate::fs::FsType::Fat32 => self.read_file_fat32(filename),
+            crate::fs::FsType::Ntfs => self.read_file_ntfs(filename),
+            crate::fs::FsType::Ext2
+            | crate::fs::FsType::Ext3
+            | crate::fs::FsType::Ext4 => self.read_file_ext2(filename),
+            crate::fs::FsType::Unknown => {
+                // Last-ditch attempt: try FAT32 anyway since the
+                // ESP still uses it on every supported boot.
+                self.read_file_fat32(filename)
+            }
+        }
     }
 
     fn execute_command(&mut self, command: &str) -> Result<u32, BatError> {

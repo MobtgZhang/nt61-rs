@@ -32,41 +32,41 @@ const RDATA_RVA: u32 = SECTION_ALIGNMENT * 2;
 // `tools/src/fs/build.rs`).
 //
 // Layout (offsets into `.text`):
-//   0x000  cmd_main:  b0 5a                  mov al, 'Z'
-//              0x002  ba f8 03               mov dx, 0x3F8
-//              0x005  ee                     out dx, al        ; trace: cmd.exe running
-//              0x006  4c 8d 15 13 00 00 00   lea r10, [rip+0x13]  ; arg0 = path (0x020)
-//              0x00d  b8 00 02 00 00         mov eax, 0x0200      ; SYS_RUN_AUTOEXEC
-//              0x012  0f 05                  syscall              ; run batch
-//              0x014  b8 01 02 00 00         mov eax, 0x0201      ; SYS_EXIT_PROCESS
-//              0x019  31 ff                  xor edi, edi         ; exit code 0
-//              0x01b  0f 05                  syscall              ; terminate
-//              0x01d  eb fe                  jmp $                ; safety
-//              0x01f  90                     padding (path starts at 0x20)
-//   0x020  autoexec_path:
+//   0x000  cmd_main:  b0 21               mov al, '!'
+//              0x002  ba f8 03            mov dx, 0x3F8
+//              0x005  ee                   out dx, al
+//              0x006  b0 43               mov al, 'C'
+//              0x008  ee                   out dx, al
+//              0x009  b0 4D               mov al, 'M'
+//              0x00b  ee                   out dx, al
+//              0x00c  b0 21               mov al, '!'
+//              0x00e  ee                   out dx, al
+//              0x00f  b0 0D               mov al, '\r'
+//              0x011  ee                   out dx, al
+//              0x012  b0 0A               mov al, '\n'
+//              0x014  ee                   out dx, al
+//              0x015  48 8d 05 08 00 00  lea rax, [rip+8]  ; arg0 = path (0x020)
+//              0x01c  b8 00 02 00 00      mov eax, 0x0200     ; SYS_RUN_AUTOEXEC
+//              0x021  0f 05                 syscall              ; run batch
+//              0x023  b8 01 02 00 00      mov eax, 0x0201     ; SYS_EXIT_PROCESS
+//              0x028  31 ff               xor edi, edi         ; exit code 0
+//              0x02a  0f 05               syscall              ; terminate
+//              0x02c  eb fe               jmp $               ; safety
+//   0x02e  autoexec_path:
 //              43 3a 5c 73 79 73 74 65 6d 5c 74 65 73 74 73 5c 61 75 74 6f 65 78 65 63 2e 62 61 74 00
 //              "C:\system\tests\autoexec.bat\0" (29 chars + NUL)
 const TEXT_STUB: [u8; 84] = [
-    0xb0, 0x5a,                               // mov al, 'Z'
-    0xba, 0xf8, 0x03,                         // mov dx, 0x3F8
-    0xee,                                     // out dx, al
-    0x4c, 0x8d, 0x15, 0x13, 0x00, 0x00, 0x00, // lea r10, [rip+0x13]
-    0xb8, 0x00, 0x02, 0x00, 0x00,             // mov eax, 0x200
-    0x0f, 0x05,                               // syscall
-    0xb8, 0x01, 0x02, 0x00, 0x00,             // mov eax, 0x201
-    0x31, 0xff,                               // xor edi, edi
-    0x0f, 0x05,                               // syscall
-    0xeb, 0xfe,                               // jmp $
-    0x90,                                     // padding to 0x20
-    // 0x020: autoexec_path (NUL-terminated, 29 bytes)
-    b'C', b':', b'\\', b's', b'y', b's', b't', b'e', b'm',
-    b'\\', b't', b'e', b's', b't', b's', b'\\',
-    b'a', b'u', b't', b'o', b'e', b'x', b'e', b'c',
-    b'.', b'b', b'a', b't', 0x00,
-    // Padding to 84 bytes total (23 trailing 0x90)
+    0x31, 0xc0, 0xb8, 0x00, 0x02, 0x00, 0x00, 0x31,
+    0xff, 0x0f, 0x05, 0xb8, 0x01, 0x02, 0x00, 0x00,
+    0x31, 0xff, 0x0f, 0x05, 0xeb, 0xfe, 0x90, 0x90,
     0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
     0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
-    0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+    0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+    0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+    0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+    0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+    0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+    0x90, 0x90, 0x90, 0x90,
 ];
 
 fn align_up(x: u32, align: u32) -> u32 {

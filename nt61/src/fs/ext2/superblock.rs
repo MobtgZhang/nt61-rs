@@ -661,7 +661,32 @@ pub fn read_sector(_device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<(
         return Err(());
     }
     
-    // Route to RAM disk for bootstrap filesystem operations
+    // Prefer the *active* partition mirror, when one is set by
+    // the dispatcher in `fs::mod`. This is what lets EXT2 mount
+    // and read from the system partition properly.
+    if let Some(base) = crate::fs::active_partition_ramdisk() {
+        let off = (sector as usize) * 512;
+        let max_size = crate::fs::active_partition_size().unwrap_or(usize::MAX);
+        if off + 512 > max_size {
+            return Err(());
+        }
+        // Dispatch to sys_ramdisk_read for the system partition
+        let sys_base = crate::fs::sys_mirror_address();
+        if Some(base) == sys_base {
+            let n = crate::fs::sys_ramdisk_read(off as u64, buffer);
+            if n >= 512 {
+                return Ok(());
+            }
+        } else {
+            let n = crate::fs::esp_ramdisk_read(off as u64, buffer);
+            if n >= 512 {
+                return Ok(());
+            }
+        }
+        return Err(());
+    }
+    
+    // Fallback: route to RAM disk for bootstrap filesystem operations
     let sector_num = sector as usize;
     if crate::drivers::storage::ramdisk::read(sector_num, buffer) {
         Ok(())

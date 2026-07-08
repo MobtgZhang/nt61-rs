@@ -449,28 +449,35 @@ pub fn init() {
             int_stub_252, int_stub_253, int_stub_254, int_stub_255,
         ];
 
-        // Fill in hardware IRQ vectors (32-255). Use IST1 for all of
-        // them so that IRQ handlers (which can have unbounded Rust
-        // stack usage via dispatch_trap_frame -> pic::irq_dispatch)
-        // do NOT clobber the trap frame that an outer syscall_entry
-        // or other kernel code path has on the current kernel stack.
+        // Fill in hardware IRQ vectors (32-255).
         //
-        // IST1 is 8 KiB and pre-allocated at boot (see tss.rs). It is
-        // reserved for "kernel stacks we must not nest" — i.e. any
-        // context where the current RSP is busy holding a frame we
-        // intend to return to (a syscall trap frame, an inner IRQ
-        // trap frame on the same stack, etc.).
+        // IST selection (CRITICAL-013):
+        //   Historically this used IST1 (an 8 KiB pre-allocated
+        //   "kernel stacks we must not nest" stack) so that nested IRQs
+        //   would not clobber the current kernel stack. In practice
+        //   we have observed `vector=12 #SS` (`sel=0x0000`) faults at
+        //   the very first `sti` executed after a successful disk
+        //   read (e.g. right after `[SYS-RD] done` for csrss.exe):
+        //   the IRQ push onto IST1 trips a stack-segment fault
+        //   because the IST1 stack pointer or its backing memory is
+        //   not in a state the CPU can dereference at that instant.
         //
-        // We deliberately do NOT use IST1 for CPU exceptions (#GP,
-        // #PF, etc.) because the existing handler logic assumes the
-        // trap frame is on the current stack (e.g. dispatch.rs walks
-        // [rsp+0x78] to read the saved RIP). Switching exceptions to
-        // an IST stack would require rewriting the whole dispatcher.
-        // For now we accept that an exception during a syscall
-        // handler is fatal; the bring-up focus is getting the IRQ
-        // path stable.
+        //   Workaround: switch the IRQ stubs to IST=0 so the CPU
+        //   switches to the kernel's RSP0 (TSS.rsp0) on entry.
+        //   `tss::set_rsp0(...)` is called from `enter_first_user_thread`
+        //   and from `tss::set_rsp0_during_init`, both of which run
+        //   early in `kernel_main`. Once the kernel is up, RSP0 is a
+        //   valid kernel stack pointer so the IRQ pushes an iret
+        //   frame onto a known-good stack. The cost is that nested
+        //   IRQs share the kernel stack with the outer syscall, but
+        //   the existing dispatcher is built for that already (it
+        //   walks `[rsp+0x78]` directly). On the bring-up path we
+        //   also keep interrupts MASKED in safe mode (PIC ports 0x21
+        //   and 0xA1 are held at 0xFF), so even an IRQ firing
+        //   during early boot would be silently dropped at the PIC
+        //   before reaching the CPU.
         for (i, f) in irq_stubs.iter().enumerate() {
-            IDT[32 + i] = GateDescriptor::interrupt(*f as u64, crate::arch::x86_64::gdt::KERNEL_CS, 1, 0);
+            IDT[32 + i] = GateDescriptor::interrupt(*f as u64, crate::arch::x86_64::gdt::KERNEL_CS, 0, 0);
         }
 
         let idt_ptr = IdtPtr {

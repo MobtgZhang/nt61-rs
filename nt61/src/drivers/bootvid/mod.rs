@@ -676,6 +676,37 @@ pub fn VidSetCursorPosition(x: u16, y: u16) {
     CURSOR_Y.store(y as u32, Ordering::Release);
 }
 
+/// Read the current bootvid cursor coordinates. Used by
+/// callers that want to position a glyph without disturbing
+/// the natural cursor flow (e.g. the Safe-Mode console
+/// layout paint routine in `hal::x86_64::text_console`).
+pub fn cursor_position() -> (u16, u16) {
+    (
+        CURSOR_X.load(Ordering::Acquire) as u16,
+        CURSOR_Y.load(Ordering::Acquire) as u16,
+    )
+}
+
+/// Snapshot of the wired-in linear framebuffer (base, width,
+/// height, pitch). Useful for diagnostics — `show_safe_mode_console`
+/// logs these so an operator can confirm the LFB is alive when
+/// the Safe-Mode console is painted.
+pub fn lfb_info() -> (u64, u32, u32, u32) {
+    (
+        FB_BASE.load(Ordering::Acquire),
+        FB_WIDTH.load(Ordering::Acquire),
+        FB_HEIGHT.load(Ordering::Acquire),
+        FB_PITCH.load(Ordering::Acquire),
+    )
+}
+
+#[inline]
+pub fn fb_base() -> u64 { FB_BASE.load(Ordering::Acquire) }
+#[inline]
+pub fn fb_width() -> u32 { FB_WIDTH.load(Ordering::Acquire) }
+#[inline]
+pub fn fb_height() -> u32 { FB_HEIGHT.load(Ordering::Acquire) }
+
 /// Pick the text attribute used by the next characters. Standard
 /// 16-colour VGA palette (see `colour_for_attr`).
 pub fn set_attr(attr: u8) {

@@ -1095,7 +1095,14 @@ fn mount_partition_detected(drive_letter: u16, base_ptr: *const u8, ramdisk: Par
         }
         FsType::Ntfs => {
             let path = [drive_letter, 0];
-            match crate::fs::ntfs::mount(core::ptr::null_mut(), &path) {
+            // NTFS::read_sector consults `ACTIVE_PARTITION_RAMDISK`,
+            // so we set it here to the partition we're about to mount.
+            // Restored to previous value on the way out.
+            let prev = active_partition_ramdisk();
+            set_active_partition_ramdisk(Some(base_ptr));
+            let res = crate::fs::ntfs::mount(core::ptr::null_mut(), &path);
+            set_active_partition_ramdisk(prev);
+            match res {
                 Some(_fs) => {
                     crate::boot_println!("[MOUNT] drive={}: NTFS mounted", drive_letter as u8 as char);
                     true

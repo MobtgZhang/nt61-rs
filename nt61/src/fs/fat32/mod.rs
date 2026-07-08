@@ -31,6 +31,7 @@ use alloc::vec::Vec;
 use crate::fs::{FileSystem, FileSystemDriver, FileSystemType};
 use crate::kprintln_info;
 use crate::kprintln_warn;
+use crate::boot_println; // re-exported from rtl/klog.rs
 #[cfg(target_arch = "x86_64")]
 use crate::drivers::storage::ahci;
 #[cfg(target_arch = "x86_64")]
@@ -1613,6 +1614,7 @@ fn find_in_dir_by_short(
     let mut current_cluster = dir_cluster;
     // Walk the FAT chain so multi-cluster directories are supported.
     let mut visited: u32 = 0;
+    let mut iter_count: u32 = 0;
     while current_cluster >= 2
         && current_cluster < FAT32_EOC
         && visited < 0x0FFF_FFFF
@@ -1625,16 +1627,35 @@ fn find_in_dir_by_short(
                 continue;
             }
             for e in 0..sector_size / core::mem::size_of::<FatDirectoryEntry>() {
+                iter_count += 1;
+                if iter_count <= 4 {
+                    boot_println!("[FAT32] find_in_dir_by_short: checking entry {} (cluster={} sector={} entry_idx={})",
+                        iter_count, current_cluster, first_sector + s as u64, e);
+                }
                 let entry: FatDirectoryEntry = unsafe {
                     core::ptr::read_unaligned(
                         sector.as_ptr().add(e * core::mem::size_of::<FatDirectoryEntry>())
                             as *const FatDirectoryEntry,
                     )
                 };
-                if !entry.is_valid() || entry.is_long_name() || entry.is_volume_id() {
+                if !entry.is_valid() {
+                    if iter_count <= 4 {
+                        boot_println!("[FAT32] find_in_dir_by_short:   entry {} invalid", iter_count);
+                    }
                     continue;
                 }
+                if entry.is_long_name() || entry.is_volume_id() {
+                    if iter_count <= 4 {
+                        boot_println!("[FAT32] find_in_dir_by_short:   entry {} is LFN/vol, skipped", iter_count);
+                    }
+                    continue;
+                }
+                if iter_count <= 8 {
+                    boot_println!("[FAT32] find_in_dir_by_short:   entry {} name={:?} == target={:?}? {}",
+                        iter_count, entry.name, short_name, &entry.name == short_name);
+                }
                 if &entry.name == short_name {
+                    boot_println!("[FAT32] find_in_dir_by_short:   FOUND entry!");
                     return Some(entry);
                 }
             }
@@ -1646,6 +1667,7 @@ fn find_in_dir_by_short(
         current_cluster = next;
         visited += 1;
     }
+    boot_println!("[FAT32] find_in_dir_by_short: not found after {} entries", iter_count);
     None
 }
 
@@ -1693,9 +1715,11 @@ pub fn find_file_at_path(
     
     // Start at root directory
     let mut dir_cluster = fs.fat_data.root_cluster;
+    boot_println!("[FAT32] find_file_at_path: root_cluster={} seg_count={}", dir_cluster, seg_count);
     
     for i in 0..seg_count {
         let short_name = name_to_83(segments[i]);
+        boot_println!("[FAT32] find_file_at_path: seg[{}]='{}' short={:?} dir_cluster={}", i, segments[i], short_name, dir_cluster);
         let entry = find_in_dir_by_short(fs, dir_cluster, &short_name)?;
         
         if i + 1 == seg_count {

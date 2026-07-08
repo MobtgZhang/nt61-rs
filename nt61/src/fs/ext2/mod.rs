@@ -162,22 +162,55 @@ pub fn read_sector(_device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<(
     if buffer.len() < 512 {
         return Err(());
     }
-    
-    // Try RAM disk first
-    let sector_num = sector as usize;
-    if crate::drivers::storage::ramdisk::read(sector_num, buffer) {
-        return Ok(());
-    }
-    
-    // Try AHCI
-    #[cfg(target_arch = "x86_64")]
-    {
-        if crate::drivers::storage::ahci::read_sector(0, 0, sector as u32, buffer) {
-            return Ok(());
-        }
-    }
 
-    Err(())
+    // CRITICAL: Mask IRQ0 (PIT timer) during disk reads to prevent IRQ interference.
+    // NTFS driver does this and never unmask - we follow the same pattern.
+    #[cfg(target_arch = "x86_64")]
+    crate::hal::x86_64::pic::mask_irq(0);
+
+    // Prefer the *active* partition mirror, when one is set by
+    // the dispatcher in `fs::mod`. This is what lets EXT2 mount
+    // and read from the system partition properly.
+    let result = if let Some(base) = crate::fs::active_partition_ramdisk() {
+        let off = (sector as usize) * 512;
+        let max_size = crate::fs::active_partition_size().unwrap_or(usize::MAX);
+        if off + 512 > max_size {
+            Err(())
+        } else {
+            // Dispatch to sys_ramdisk_read for the system partition
+            let sys_base = crate::fs::sys_mirror_address();
+            if Some(base) == sys_base {
+                // Use sys_ramdisk_read which has its own serial prints
+                let n = crate::fs::sys_ramdisk_read(off as u64, buffer);
+                if n >= 512 { Ok(()) } else { Err(()) }
+            } else {
+                let n = crate::fs::esp_ramdisk_read(off as u64, buffer);
+                if n >= 512 { Ok(()) } else { Err(()) }
+            }
+        }
+    } else {
+        // Fallback: try ramdisk first
+        let sector_num = sector as usize;
+        if crate::drivers::storage::ramdisk::read(sector_num, buffer) {
+            Ok(())
+        } else {
+            // Try AHCI
+            #[cfg(target_arch = "x86_64")]
+            {
+                if crate::drivers::storage::ahci::read_sector(0, 0, sector as u32, buffer) {
+                    Ok(())
+                } else {
+                    Err(())
+                }
+            }
+            #[cfg(not(target_arch = "x86_64"))]
+            {
+                Err(())
+            }
+        }
+    };
+
+    result
 }
 
 /// Write a sector to the device
@@ -186,10 +219,19 @@ pub fn write_sector(_device: *mut (), sector: u64, buffer: &[u8]) -> Result<(), 
         return Err(());
     }
 
+    // Try RAM disk first
+    let sector_num = sector as usize;
+    if crate::drivers::storage::ramdisk::write(sector_num, buffer) {
+        return Ok(());
+    }
+
     // Try AHCI
     #[cfg(target_arch = "x86_64")]
     {
-        if crate::drivers::storage::ahci::write_sector(0, 0, sector as u32, buffer) {
+        // AHCI write needs mutable buffer - create a copy
+        let mut buf = [0u8; 512];
+        buf.copy_from_slice(&buffer[..512]);
+        if crate::drivers::storage::ahci::write_sector(0, 0, sector as u32, &mut buf) {
             return Ok(());
         }
     }
@@ -392,19 +434,26 @@ pub fn get_entry(fs: &Ext2FileSystem, path: &[u8]) -> Option<dir::Ext2DirEntryIn
 /// The `path` is converted internally from Windows-style ("C:\Windows\file")
 /// to ext2-style ("/Windows/file").
 pub fn read_whole_file(fs: &Ext2FileSystem, path: &str) -> Result<alloc::vec::Vec<u8>, &'static str> {
+    // Convert Windows path to ext2 path
     let ext2_path = win_path_to_ext2(path);
+    
+    // Lookup inode number
     let inode_num = match dir::path_lookup(fs.base.device, &fs.superblock, ext2_path.as_bytes()) {
         Some(n) => n,
         None => return Err("ext2: path_lookup failed"),
     };
+    
+    // Read inode
     let inode = match inode::read_inode(fs.base.device, &fs.superblock, inode_num) {
         Some(i) => i,
         None => return Err("ext2: read_inode failed"),
     };
+    
     let file_size = inode.get_size(&fs.superblock) as usize;
     if file_size == 0 {
         return Ok(Vec::new());
     }
+    
     let mut buf: Vec<u8> = alloc::vec![0u8; file_size];
     let n = inode::read_file_data(
         fs.base.device,
