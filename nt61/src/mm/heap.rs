@@ -484,14 +484,32 @@ pub fn init() {
     const HEAP_PAGES_SMALL: u64 = (8 * 1024 * 1024) / 4096;
 
     let (phys, pages) = match frame::allocate_pages(HEAP_PAGES_LARGE) {
-        Some(p) => (p, HEAP_PAGES_LARGE),
+        Some(p) => {
+            crate::hal::serial::write_string("[heap] allocated 32MB at phys=");
+            crate::hal::serial::write_hex_u64(p as u64);
+            crate::hal::serial::write_string("\r\n");
+            (p, HEAP_PAGES_LARGE)
+        }
         None => {
+            crate::hal::serial::write_string("[heap] 32MB FAILED, trying 16MB\r\n");
             match frame::allocate_pages(HEAP_PAGES_MEDIUM) {
-                Some(p) => (p, HEAP_PAGES_MEDIUM),
+                Some(p) => {
+                    crate::hal::serial::write_string("[heap] allocated 16MB at phys=");
+                    crate::hal::serial::write_hex_u64(p as u64);
+                    crate::hal::serial::write_string("\r\n");
+                    (p, HEAP_PAGES_MEDIUM)
+                }
                 None => {
+                    crate::hal::serial::write_string("[heap] 16MB FAILED, trying 8MB\r\n");
                     match frame::allocate_pages(HEAP_PAGES_SMALL) {
-                        Some(p) => (p, HEAP_PAGES_SMALL),
+                        Some(p) => {
+                            crate::hal::serial::write_string("[heap] allocated 8MB at phys=");
+                            crate::hal::serial::write_hex_u64(p as u64);
+                            crate::hal::serial::write_string("\r\n");
+                            (p, HEAP_PAGES_SMALL)
+                        }
                         None => {
+                            crate::hal::serial::write_string("[heap] FATAL: 8MB allocation failed\r\n");
                             return;
                         }
                     }
@@ -502,8 +520,18 @@ pub fn init() {
 
     let base = phys as *mut u8;
     let size = (pages * 4096) as usize;
-    
+    crate::hal::serial::write_string("[heap] about to configure base=");
+    crate::hal::serial::write_hex_u64(base as u64);
+    crate::hal::serial::write_string(" size=");
+    crate::hal::serial::write_hex_u64(size as u64);
+    crate::hal::serial::write_string("\r\n");
     KERNEL_HEAP.configure(base, size);
+    crate::hal::serial::write_string("[heap] configure done, checking...\r\n");
+    if crate::mm::heap::KERNEL_HEAP.configured_region().is_some() {
+        crate::hal::serial::write_string("[heap] configure VERIFIED OK\r\n");
+    } else {
+        crate::hal::serial::write_string("[heap] configure FAILED TO VERIFY\r\n");
+    }
 }
 
 /// Maximum heap size, used when the buddy allocator cannot

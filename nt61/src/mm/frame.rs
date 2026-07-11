@@ -207,34 +207,47 @@ impl BuddyAllocator {
         // kprintln bypassed: skip verbose log
         for k in 0..(MAX_BUDDY_ORDER - 1) {
             let mut merged_total: u32 = 0;
+            // At most num_frames / 2^(k+1) pairs can possibly merge at this order.
+            let max_merges_at_order: u32 = (self.num_frames as u32) >> (k + 1);
+            // Safety net: cap attempts so a buggy walk cannot spin forever.
+            let max_attempts: u32 = max_merges_at_order.saturating_mul(2).max(64);
+            let mut attempts: u32 = 0;
             loop {
-                // Try to find one pair to merge at order k.
+                attempts += 1;
+                if attempts > max_attempts { break; }
                 let result: Option<u32> = {
                     let mut lock = self.free_lists[k].lock();
-                    // Walk the order-k list looking for a frame
-                    // whose buddy is also on the list.
-                    let head = lock.head;
-                    if head == FREE_LIST_END { break; }
-                    let buddy = head ^ (1u32 << k);
-                    if buddy >= self.num_frames as u32 { break; }
-                    // Verify buddy is on the list.
-                    let mut found = false;
-                    let mut cur = head;
-                    unsafe {
-                        for _ in 0..lock.count {
-                            if cur == buddy { found = true; break; }
-                            let next = (*self.buddy_nodes.add(cur as usize)).next;
-                            if next == FREE_LIST_END { break; }
-                            cur = next;
+                    let num = self.num_frames as u32;
+                    let mut cur = lock.head;
+                    let mut merged_base_opt: Option<u32> = None;
+                    while cur != FREE_LIST_END {
+                        let buddy = cur ^ (1u32 << k);
+                        if buddy < num {
+                            // Walk the list and see if `buddy` is on it.
+                            let mut found = false;
+                            let mut probe = lock.head;
+                            for _ in 0..lock.count {
+                                if probe == buddy { found = true; break; }
+                                let next = unsafe {
+                                    (*self.buddy_nodes.add(probe as usize)).next
+                                };
+                                if next == FREE_LIST_END { break; }
+                                probe = next;
+                            }
+                            if found {
+                                remove_node(&mut lock, cur, self.buddy_nodes);
+                                remove_node(&mut lock, buddy, self.buddy_nodes);
+                                merged_base_opt = Some(cur & !(1u32 << k));
+                            }
                         }
+                        if merged_base_opt.is_some() { break; }
+                        let next = unsafe {
+                            (*self.buddy_nodes.add(cur as usize)).next
+                        };
+                        if next == FREE_LIST_END { break; }
+                        cur = next;
                     }
-                    if !found { break; }
-                    // Remove both from the list.
-                    remove_node(&mut lock, head, self.buddy_nodes);
-                    remove_node(&mut lock, buddy, self.buddy_nodes);
-                    // Compute the merged block's base index.
-                    let merged_base = head & !(1u32 << k);
-                    Some(merged_base)
+                    merged_base_opt
                 };
                 let merged_base = match result { Some(b) => b, None => break };
                 {
@@ -242,19 +255,30 @@ impl BuddyAllocator {
                     push_head(&mut lock, merged_base, self.buddy_nodes);
                 }
                 merged_total += 1;
-                if merged_total >= (1u32 << (MAX_BUDDY_ORDER - 1 - k)) {
-                    // We've built the largest possible block at
-                    // the next order; no more merging is possible
-                    // at this level.
+                if merged_total >= max_merges_at_order {
                     break;
                 }
             }
-            // kprintln bypassed: skip per-order log
         }
 
         self.free_frames.store(self.num_frames, Ordering::SeqCst);
         self.initialised = true;
         crate::hal::serial::write_string("AI1_INIT_DONE\r\n");
+        // Dump free list counts per order for debugging
+        crate::hal::serial::write_string("[frame] free-list dump:\r\n");
+        for k in 0..MAX_BUDDY_ORDER {
+            let count = {
+                let lock = self.free_lists[k].lock();
+                lock.count
+            };
+            if count > 0 {
+                crate::hal::serial::write_string("  order=0x");
+                crate::hal::serial::write_hex_u64(k as u64);
+                crate::hal::serial::write_string(" count=0x");
+                crate::hal::serial::write_hex_u64(count as u64);
+                crate::hal::serial::write_string("\r\n");
+            }
+        }
     }
 
     /// Allocate `count` contiguous frames (rounded up to a power of

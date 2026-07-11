@@ -665,33 +665,45 @@ pub fn ensure_low_identity_map(_pa_base: u64, _size: u64) {}
 #[cfg(target_arch = "x86_64")]
 fn install_self_map_with_identity_map(pml4_pfn: PfnNumber) -> Result<(), SelfMapError> {
     let pml4_phys = pfn_to_phys(pml4_pfn);
+    crate::hal::serial::write_string("[VAS] install_self_map: pml4_pfn=0x");
+    crate::hal::serial::write_hex_u64(pml4_phys);
+    crate::hal::serial::write_string("\r\n");
     const SELF_RW: u64 = 0x1 | 0x2 | 0x4 | 0x20 | 0x40;
 
     // Allocate the self-map page table chain.
     let pdpt_pfn = match pfn::allocate_pfn() {
         Some(p) => p,
         None => {
-    // [DISABLED-KPRINTLN]             // // kprintln!("[VAS] ERROR: install_self_map_with_identity_map - cannot allocate PDPT")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            crate::hal::serial::write_string("[VAS] install_self_map: ERROR: cannot allocate PDPT\r\n");
             return Err(SelfMapError::OutOfMemory);
         }
     };
+    crate::hal::serial::write_string("[VAS] install_self_map: pdpt_pfn=0x");
+    crate::hal::serial::write_hex_u64(pfn_to_phys(pdpt_pfn));
+    crate::hal::serial::write_string("\r\n");
     let pd_pfn = match pfn::allocate_pfn() {
         Some(p) => p,
         None => {
-    // [DISABLED-KPRINTLN]             // // kprintln!("[VAS] ERROR: install_self_map_with_identity_map - cannot allocate PD")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            crate::hal::serial::write_string("[VAS] install_self_map: ERROR: cannot allocate PD\r\n");
             pfn::free_pfn(pdpt_pfn);
             return Err(SelfMapError::OutOfMemory);
         }
     };
+    crate::hal::serial::write_string("[VAS] install_self_map: pd_pfn=0x");
+    crate::hal::serial::write_hex_u64(pfn_to_phys(pd_pfn));
+    crate::hal::serial::write_string("\r\n");
     let pt_pfn = match pfn::allocate_pfn() {
         Some(p) => p,
         None => {
-    // [DISABLED-KPRINTLN]             // // kprintln!("[VAS] ERROR: install_self_map_with_identity_map - cannot allocate PT")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            crate::hal::serial::write_string("[VAS] install_self_map: ERROR: cannot allocate PT\r\n");
             pfn::free_pfn(pdpt_pfn);
             pfn::free_pfn(pd_pfn);
             return Err(SelfMapError::OutOfMemory);
         }
     };
+    crate::hal::serial::write_string("[VAS] install_self_map: pt_pfn=0x");
+    crate::hal::serial::write_hex_u64(pfn_to_phys(pt_pfn));
+    crate::hal::serial::write_string("\r\n");
 
     let pdpt_phys = pfn_to_phys(pdpt_pfn);
     let pd_phys = pfn_to_phys(pd_pfn);
@@ -816,6 +828,7 @@ fn install_self_map_with_identity_map(pml4_pfn: PfnNumber) -> Result<(), SelfMap
     }
 
     // [DISABLED-KPRINTLN]     // // kprintln!("[VAS] install_self_map_with_identity_map: done, PML4[0x1ED] set")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    crate::hal::serial::write_string("[VAS] install_self_map: OK, returning\r\n");
     Ok(())
 }
 
@@ -917,6 +930,7 @@ pub fn create_user_address_space() -> Option<u64> {
     crate::boot_println!("[VAS] create_user_address_space: C: self-map installed", );
     // Force W=1 on every identity-map (low-half) entry in the new
     // PML4 so the kernel can write to page-table pages while running
+    // with this user PML4 as CR3. Without this, a write to a PT/PD
     // with this user PML4 as CR3. Without this, a write to a PT/PD
     // page would trigger a kernel-mode protection-violation (#PF
     // with err=0x3) and a reboot. Boot-loader mappings are

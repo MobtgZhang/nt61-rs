@@ -241,6 +241,19 @@ fn alloc_raw(total_size: usize, pool_type: PoolType, tag: u32) -> *mut u8 {
     // allocator is single-threaded for the pool's purposes (the
     // pool is protected by a spinlock at the descriptor level,
     // not at the per-allocation level).
+    let heap_configured = crate::mm::heap::KERNEL_HEAP.configured_region();
+    match heap_configured {
+        Some((base, size)) => {
+            crate::hal::serial::write_string("[pool] heap-configured yes base=");
+            crate::hal::serial::write_hex_u64(base as u64);
+            crate::hal::serial::write_string(" size=");
+            crate::hal::serial::write_hex_u64(size as u64);
+            crate::hal::serial::write_string("\r\n");
+        }
+        None => {
+            crate::hal::serial::write_string("[pool] heap-configured NONE\r\n");
+        }
+    }
     let ptr = unsafe {
         <crate::mm::heap::KernelHeap as GlobalAlloc>::alloc(
             &crate::mm::heap::KERNEL_HEAP,
