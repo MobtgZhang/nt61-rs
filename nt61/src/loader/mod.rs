@@ -1681,26 +1681,36 @@ pub fn load_into_user_address_space(
     // 3. Map each 4 KiB page at `image_base + i*0x1000` with
     //    appropriate permissions based on which section the page
     //    belongs to.
+    //
+    // CRITICAL: initial mapping uses RW+NX (writable, non-executable)
+    // so that the I-cache for this VA cannot possibly contain a
+    // stale translation of bytes that lived here before this PML4 was
+    // created. After we have written the section bytes we remap the
+    // code pages to R+X (executable, read-only). The transition from
+    // NX -> X forces QEMU's TCG translation cache (and real-CPU
+    // I-cache lines) to be invalidated for the new bytes.
     for i in 0..phys_pages_used {
         let p = phys_pages[i];
         let page_va = image_base + (i as u64) * 0x1000;
 
-        // Determine the correct protection for this page
-        let mut flags = crate::mm::vas::PTE_RW | crate::mm::vas::PTE_US; // Default: R+W+U
-
+        // Determine the correct FINAL protection for this page
+        let mut final_flags = crate::mm::vas::PTE_RW | crate::mm::vas::PTE_US; // Default: R+W+U
         for j in 0..section_count {
             let s = section_info[j];
             if page_va >= s.va_start && page_va < s.va_end {
-                flags = determine_section_protection(s.chars);
+                final_flags = determine_section_protection(s.chars);
                 break;
             }
         }
+        // For the initial mapping, force RW+NX so we can write into
+        // the page and so the page is NOT yet executable.
+        let initial_flags = final_flags | crate::mm::vas::PTE_RW | crate::mm::vas::PTE_NX;
 
         let r = crate::mm::vas::map_page_in_pml4(
             pml4_phys,
             page_va,
             p,
-            flags,
+            initial_flags,
         );
         if r != crate::mm::vas::MmStatus::Ok {
             for j in 0..phys_pages_used {
@@ -1712,7 +1722,10 @@ pub fn load_into_user_address_space(
 
     // 4. Copy section bytes from the source PE into the user
     //    pages. Section table starts right after the optional
-    //    header.
+    //    header. We do this BEFORE the final NX->X remap so that
+    //    the remap transition (which is what should force QEMU's TB
+    //    cache invalidation) happens *after* the bytes are in place
+    //    and right before user-mode execution begins.
     crate::boot_println!("[loader] load_into_user_address_space: G (copying sections, count={})", file_hdr.number_of_sections);
     // CRITICAL: temporarily switch CR3 to the system PML4 before doing
     // physical-address writes. The current CR3 is the per-process user
@@ -1793,22 +1806,29 @@ crate::boot_println!("[loader] copy sect: source ptr=0x{:x} dst ptr=0x{:x} chunk
                 // write_volatile on a u64 stride to avoid memcpy hangs.
                 unsafe {
                     let dst = dst_phys as *mut u8;
-                    // Zero page
                     for off8 in (0..chunk).step_by(8) {
                         let rem = chunk - off8;
-                        let mut buf = [0u8; 8];
-                        // Read up to 8 bytes from source (clamped).
+                        let mut raw: u64 = 0;
                         let src_p = image.as_ptr().add(sh.pointer_to_raw_data as usize + off + off8);
                         if rem >= 8 {
-                            core::ptr::copy_nonoverlapping(src_p, buf.as_mut_ptr(), 8);
+                            raw = core::ptr::read_unaligned(src_p as *const u64);
                         } else {
+                            let mut tmp = [0u8; 8];
                             for j in 0..rem {
-                                buf[j] = *src_p.add(j);
+                                tmp[j] = *src_p.add(j);
                             }
+                            raw = u64::from_le_bytes(tmp);
                         }
-                        // Write 8 bytes to destination.
-                        let dst8 = dst.add(off8) as *mut [u8; 8];
-                        core::ptr::write_volatile(dst8, buf);
+                        // Write 8 bytes (one u64) to destination.
+                        core::ptr::write_volatile(dst.add(off8) as *mut u64, raw);
+                    }
+                    // VERIFY: read back the first 16 bytes of the page
+                    if i == 0 && off == 0 {
+                        let mut verify = [0u8; 16];
+                        for j in 0..16 {
+                            verify[j] = core::ptr::read_volatile(dst.add(j));
+                        }
+                        crate::boot_println!("[loader] copy sect: VERIFY after write, first 16 bytes: {:02x?}", &verify[..]);
                     }
                 }
             crate::boot_println!("[loader] copy sect: POST-COPY DONE");
@@ -1817,6 +1837,62 @@ crate::boot_println!("[loader] copy sect: source ptr=0x{:x} dst ptr=0x{:x} chunk
         crate::boot_println!("[loader] section i={} copy done", i);
     }
     crate::boot_println!("[loader] ALL sections copied");
+
+    // After all section bytes have been written, transition each
+    // code page from RW+NX to its final R+X (or R-only) protection.
+    // This NX->X transition is what invalidates QEMU's TB cache for
+    // the VA, so the user-mode CPU executes the bytes we just wrote
+    // rather than any stale translation it may have cached.
+    //
+    // CRITICAL: the page-table walker inside the CPU may still have
+    // the OLD PTE cached in its TLB (the NX-bit change is a *flag*
+    // change, not a structural change, so the TLB entry remains
+    // valid). We must explicitly invlpg each code page to force
+    // the walker to refetch the new PTE so that the NX bit is
+    // cleared in the TLB. Without this, a real-CPU NX=1→NX=0
+    // transition is NOT observed by the instruction-fetch unit,
+    // and the user-mode #PF handler reports a fetch fault at the
+    // cmd.exe entry RIP.
+    for i in 0..phys_pages_used {
+        let p = phys_pages[i];
+        let page_va = image_base + (i as u64) * 0x1000;
+        let mut final_flags = crate::mm::vas::PTE_RW | crate::mm::vas::PTE_US;
+        for j in 0..section_count {
+            let s = section_info[j];
+            if page_va >= s.va_start && page_va < s.va_end {
+                final_flags = determine_section_protection(s.chars);
+                break;
+            }
+        }
+        let r = crate::mm::vas::map_page_in_pml4(
+            pml4_phys,
+            page_va,
+            p,
+            final_flags,
+        );
+        if r != crate::mm::vas::MmStatus::Ok {
+            for j in 0..phys_pages_used {
+                crate::mm::pfn::free_pfn(phys_pages[j] >> 12);
+            }
+            return None;
+        }
+        // Force TLB flush so the NX→X transition is visible to
+        // the next instruction fetch on this VA.
+        crate::mm::vas::invalidate_tlb(page_va);
+    }
+    crate::boot_println!("[loader] final NX->X remap complete (with invlpg)");
+
+    // Belt-and-braces: also flush the entire TLB by reloading CR3.
+    // This guarantees that no stale translation (from any VA we
+    // touched during the load) lingers when user-mode execution
+    // starts. The cost is one extra CR3 write, which is negligible
+    // for a one-shot boot path.
+    unsafe {
+        let cur: u64;
+        core::arch::asm!("mov {x}, cr3", x = out(reg) cur, options(nostack));
+        core::arch::asm!("mov cr3, {x}", x = in(reg) cur, options(nostack));
+    }
+    crate::boot_println!("[loader] CR3 reloaded to flush all stale TLB entries");
 
     // Restore CR3 to the user PML4 we were using before the copy.
     #[cfg(target_arch = "x86_64")]

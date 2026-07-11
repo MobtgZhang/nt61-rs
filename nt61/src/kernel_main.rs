@@ -294,7 +294,31 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     // Snapshotting the live kernel RSP into `TSS.rsp0` before any
     // potentially-sti-able code path runs eliminates the crash.
     crate::arch::x86_64::tss::set_rsp0_during_init();
-    boot_println!("[BOOT] TSS.rsp0 = 0x{:x}", crate::arch::x86_64::tss::rsp0());
+    // Print TSS.rsp0 with a tiny custom raw-serial hex printer
+    // rather than `boot_println!("0x{:x}", ...)`. The kernel's
+    // format-args path was triggering a triple-fault at this
+    // exact site before the `-C relocation-model=static` fix
+    // landed; the raw path is a belt-and-suspenders measure.
+    let rsp0_val: u64 = crate::arch::x86_64::tss::rsp0();
+    {
+        let prefix: &[u8] = b"[BOOT] TSS.rsp0 = 0x";
+        for &b in prefix {
+            crate::hal::serial::write_char(b);
+        }
+        const HEX: &[u8; 16] = b"0123456789ABCDEF";
+        let mut v = rsp0_val;
+        let mut started = false;
+        for i in (0..16u32).rev() {
+            let nibble = ((v >> (i * 4)) & 0xF) as u8;
+            if nibble != 0 || started || i == 0 {
+                crate::hal::serial::write_char(HEX[nibble as usize]);
+                started = true;
+            }
+        }
+        for &b in b"\r\n" {
+            crate::hal::serial::write_char(b);
+        }
+    }
     boot_print!("Initializing HAL... ");
     hal::init();
     boot_println!("OK");
@@ -343,7 +367,13 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     // ExitBootServices) to the FS layer so the FAT32 driver
     // has a backing store to read from. This must run before
     // `fs::init()` so the mount step sees the RAM disk.
-    crate::boot_println!("[PHASE5] calling mount_esp_from_bootinfo (esp_base=0x{:x})", boot_info.esp_image_base);
+    crate::boot_println!("[PHASE5] A: before format-args print");
+    let test_val: u64 = 0xDEAD_BEEF_CAFE_BABE;
+    crate::boot_println!("[PHASE5] B: hardcoded value = 0x{:x}", test_val);
+    let bi_base = boot_info.esp_image_base;
+    crate::boot_println!("[PHASE5] C: read boot_info.esp_image_base, no fmt");
+    crate::boot_println!("[PHASE5] D: calling mount_esp_from_bootinfo (esp_base=0x{:x})", bi_base);
+    crate::boot_println!("[PHASE5] E: after format-args print");
     fs::mount_esp_from_bootinfo(boot_info);
     crate::boot_println!("[PHASE5] mount_esp_from_bootinfo returned");
     // Also register the System partition mirror (the NTFS
