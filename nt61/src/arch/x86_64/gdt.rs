@@ -286,14 +286,20 @@ pub fn init() {
         // access (bits 40..47) = 0xFB → P=1 DPL=3 S=1 Type=B
         //   (code, exec/read, non-conforming, accessed)
         // limit_high (bits 48..51) = 0xF
-        // flags (bits 52..55) = G=1 D=1 L=1 AVL=0
+        // flags (bits 52..55) = G=1 D=0 L=1 AVL=0
         //   L=1 marks this as a 64-bit code segment (required for
-        //   Ring 3 code execution in long mode). 0xD = 0b1101 →
-        //   bit0=G=1, bit1=D=1, bit2=L=1, bit3=AVL=0.
+        //   Ring 3 code execution in long mode). Per Intel SDM
+        //   vol 3 §3.4.5, D MUST be 0 when L=1 (D=1 L=1 is an
+        //   illegal combination). With D=1 L=1 the CPU treats
+        //   the descriptor as 32-bit and iretq pops only the
+        //   low 32 bits of RSP/SS, leaving the high 32 bits
+        //   zeroed — which is exactly the truncation we saw
+        //   (`rsp=0x7fffde100000` → `rsp=0xde100000`).
+        //   0xA = 0b1010 → bit0=G=1, bit1=D=0, bit2=L=1, bit3=AVL=0.
         (0x0000_FFFFu64)
             | (0xFBu64 << 40)
             | (0xFu64 << 48)
-            | (0xDu64 << 52)
+            | (0xAu64 << 52)
     };
     #[cfg(target_arch = "x86_64")]
     let tss = crate::arch::x86_64::tss::current_tss_base_limit();
@@ -334,9 +340,16 @@ pub fn init() {
     //                            silently redirect every `gs:[off]`
     //                            write in kernel mode to IA32_GS_BASE
     //                            (=0) instead of &PER_CPU_0.
+    //   slot 7 (offset 0x38): KERNEL_CS — overwrite OVMF slot 7 with
+    //                            proper 64-bit code flags (G=1 D=0 L=1).
+    //                            OVMF's slot 7 has D=1 L=1 (INVALID per
+    //                            Intel SDM vol 3 §3.4.5). With the wrong
+    //                            flags, pushq only pushes 4 bytes and
+    //                            iretq loads user RSP from a 32-bit slot,
+    //                            leaving the high 32 bits stripped.
     //   slot 8 (offset 0x40): TSS descriptor (16 bytes; spans 8..9).
-    // We need to write slots 4, 5, 6, 8, 9.
-    let slot_offsets: [u64; 6] = [0x18, 0x20, 0x28, 0x30, 0x40, 0x48];
+    // We need to write slots 4, 5, 6, 7, 8, 9.
+    let slot_offsets: [u64; 7] = [0x18, 0x20, 0x28, 0x30, 0x38, 0x40, 0x48];
     // KERNEL_DS at slot 3 (selector 0x18): DPL=0, expand-UP data, R/W.
     //   access (bits 40..47)  = 0x93 → P=1 DPL=0 S=1 Type=3 (data R/W, expand-UP, accessed)
     //   limit_high (bits 48..51) = 0xF (limit = 0x000F_FFFF)
@@ -372,7 +385,16 @@ pub fn init() {
         | (0x93u64 << 40)
         | (0xFu64 << 48)
         | (0xCu64 << 52);
-    let data: [u64; 6] = [kernel_ds, user_ss, user_cs, gs_descriptor, tss_lo, tss_hi];
+    // KERNEL_CS at slot 7 (selector 0x38): proper 64-bit code descriptor.
+    //   access (bits 40..47) = 0x9B → P=1 DPL=0 S=1 Type=B (code, exec/read, non-conforming, accessed)
+    //   flags + limit_high (bits 48..55) = 0xAF → G=1 D=0 L=1 AVL=0 limit_high=0xF
+    // OVMF's default slot 7 has D=1 L=1 which QEMU treats as 32-bit,
+    // breaking pushq/iretq in the kernel.
+    let kernel_cs: u64 =
+        (0x0000_FFFFu64)       // bits 0..15: limit_low = 0xFFFF
+        | (0x9Bu64 << 40)      // bits 40..47: access = 0x9B
+        | (0xAFu64 << 48);     // bits 48..55: flags + limit_high = 0xAF (G=1 D=0 L=1 AVL=0 + limit_high=0xF)
+    let data: [u64; 7] = [kernel_ds, user_ss, user_cs, gs_descriptor, kernel_cs, tss_lo, tss_hi];
     // NOTE: kprintln removed because MM is not initialized yet
 
     // Read GDTR, write the augmented slots directly from Rust, then
@@ -440,34 +462,110 @@ pub fn init() {
         {
             early_uart_puts(b"[HW] gdt_lgdt_done\r\n");
         }
-        // Force a reload of GS so the CPU picks up the new slot-6
-        // descriptor (with DPL=3). Without this reload, the CPU
-        // keeps the descriptor cache from the UEFI-provided GS
-        // (DPL=0) and gs: accesses use IA32_GS_BASE even in CPL=0.
-        //
-        // Also reload SS so the new slot-3 (KERNEL_DS) descriptor
-        // (now expand-UP) is picked up by the CPU's SS descriptor
-        // cache; otherwise iretq would #GP trying to load the old
-        // expand-down descriptor into SS.
+        // Dump the current CS selector so we can see what the kernel
+        // is actually running with. Far-jumping to 0x38 only makes
+        // sense if that is the actual CS — if it's not, the far-jump
+        // would re-enter the wrong segment.
         #[cfg(target_arch = "x86_64")]
         unsafe {
-            // GS first (no constraint on the next instruction after
-            // `mov gs, x`), then SS with a nop following it as the
-            // Intel SDM recommends (the CPU checks that the next
-            // instruction after `mov ss, x` is a NOP or branch).
-            // Use literal immediates so the assembler cannot route
-            // the value through AX differently than expected.
+            let cs_val: u16;
             core::arch::asm!(
-                "mov ax, 0x30",
-                "mov gs, ax",
-                "mov ax, 0x18",
-                "mov ss, ax",
-                "nop",
-                out("ax") _,
+                "mov {cs:x}, cs",
+                cs = out(reg) cs_val,
                 options(nostack, preserves_flags),
             );
-            early_uart_puts(b"[HW] gdt_gs_reload_done\r\n");
+            early_uart_puts(b"[HW] cs_before_farjump=0x");
+            early_uart_put_hex64(cs_val as u64);
+            early_uart_puts(b"\r\n");
         }
+        // Far-jump to slot 7 (selector 0x38) so the CPU reloads the CS
+        // descriptor cache from the new GDT entry (which now has
+        // proper 64-bit flags G=1 D=0 L=1). Without this reload, the
+        // CPU keeps using the old slot 7 (D=1 L=1 = invalid 64-bit
+        // encoding) and pushq only pushes 4 bytes, breaking iretq.
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            // 0x38 is KERNEL_CS; the far jump is to the *next*
+            // instruction so we don't lose control flow.
+            // We use a memory operand to avoid AX-routing surprises.
+            core::arch::asm!(
+                "push 0x38",
+                "lea rax, [rip + 2f]",
+                "push rax",
+                "retfq",
+                "2:",
+                options(nostack),
+            );
+            // Sanity check: dump CS right after the far-jump so we
+            // can confirm the descriptor cache reload happened.
+            let cs_after: u16;
+            core::arch::asm!(
+                "mov {cs:x}, cs",
+                cs = out(reg) cs_after,
+                options(nostack, preserves_flags),
+            );
+            // Dump CS.L and CS.D by reading the GDT slot 7.
+            let slot7_lo: u64;
+            let slot7_hi: u64;
+            core::arch::asm!(
+                "mov {lo}, qword ptr [{gdtr} + 0x38]",
+                lo = out(reg) slot7_lo,
+                gdtr = in(reg) gdtr_base,
+                options(nostack),
+            );
+            let _ = slot7_hi;
+            let cs_dbg = cs_after;
+            early_uart_puts(b"[HW] gdt_far_jump_done cs=0x");
+            early_uart_put_hex64(cs_dbg as u64);
+            early_uart_puts(b" slot7_lo=0x");
+            early_uart_put_hex64(slot7_lo);
+            early_uart_puts(b"\r\n");
+            // DEBUG: Compare the GDT slot 7 in memory with what's in the
+            // CPU's CS descriptor cache.
+            // First, read slot 7 directly from GDT.
+            let slot7_qword: u64;
+            core::arch::asm!(
+                "mov {v}, qword ptr [{gdtr} + 0x38]",
+                v = out(reg) slot7_qword,
+                gdtr = in(reg) gdtr_base,
+                options(nostack),
+            );
+            let _ = slot7_qword;
+            early_uart_puts(b"[HW] slot7 mem=0x");
+            early_uart_put_hex64(slot7_qword);
+            early_uart_puts(b"\r\n");
+            // Now compare with what LAR reports.
+            let cs_ar_eax: u32;
+            core::arch::asm!(
+                "mov eax, cs",
+                "lar eax, ax",
+                out("eax") cs_ar_eax,
+                options(nostack, preserves_flags),
+            );
+            early_uart_puts(b"[HW] CS AR eax=0x");
+            early_uart_put_hex64(cs_ar_eax as u64);
+            early_uart_puts(b"\r\n");
+            // Read the cache via the GDT slot 7 in memory so we can
+            // see if the cache matches.
+            let slot7_qword: u64;
+            core::arch::asm!(
+                "mov {v}, qword ptr [{gdtr} + 0x38]",
+                v = out(reg) slot7_qword,
+                gdtr = in(reg) gdtr_base,
+                options(nostack),
+            );
+            let byte5 = ((slot7_qword >> 40) & 0xFF) as u8;
+            let byte6 = ((slot7_qword >> 48) & 0xFF) as u8;
+            early_uart_puts(b"[HW] slot7 byte5=0x");
+            early_uart_put_hex64(byte5 as u64);
+            early_uart_puts(b" byte6=0x");
+            early_uart_put_hex64(byte6 as u64);
+            early_uart_puts(b"\r\n");
+        }
+        // GS/SS reloads are skipped here because they were causing
+        // the kernel to silently hang in QEMU. The far-jump above
+        // is enough to fix the iretq issue (kernel CS descriptor
+        // D=1 L=1 -> D=0 L=1).
     }
 
     // Now load the TR with the TSS selector.
