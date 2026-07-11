@@ -22,6 +22,11 @@ linker = "rust-lld"
 rustflags = [
     "-C", "link-arg=--script=/home/mobtgzhang/github2/nt61-rs/nt61/src/boot/linker.ld",
     "-C", "link-arg=--entry=efi_main",
+    # Set the PE ImageBase to 0x140000000 so the boot manager's
+    # AnyPages allocation at ~0x5A00000 has a positive delta for
+    # relocations, making IMAGE_HANDLE land in a valid low-memory
+    # address (0x5A5D8000 + 0xFA5D8000 = 0x154B7000, valid RAM).
+    "-C", "link-arg=/base:0x140000000",
     "-C", "panic=abort",
 ]
 

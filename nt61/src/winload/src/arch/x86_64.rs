@@ -37,16 +37,26 @@ pub unsafe extern "C" fn call_kernel_main(stack_top: u64, bi_ptr: u64) -> ! {
     // a DIFFERENT pointer (the real BootInfo).
     let sp = core::hint::black_box(stack_top);
     let bi = core::hint::black_box(bi_ptr);
-    let km = core::hint::black_box(kernel_main as usize);
     core::arch::asm!(
         // Microsoft x64 ABI: caller passes (rcx=stack_top, rdx=bi_ptr).
         // kernel_main uses Microsoft x64 ABI for first arg (rcx).
-        "mov rax, {km_p}",       // kernel_main runtime address -> rax
+        //
+        // RIP-relative load of kernel_main's address into RAX. Using
+        // a `sym` operand lets the assembler emit `lea rax, [rip +
+        // kernel_main@plt]` (or equivalent), which is relocation-
+        // model agnostic — the PE loader applies the DIR64
+        // relocation to patch in the actual runtime address. This
+        // works whether the `nt61` lib was compiled with
+        // `relocation-model=static` (in which case the symbol
+        // resolves to its absolute preferred-base address and the
+        // loader patches the delta) or `pic` (in which case the
+        // assembler emits the RIP-relative form directly).
+        "lea rax, [rip + {km}]",
         "mov rcx, rdx",          // bi_ptr (in rdx) -> rcx (Microsoft x64 1st arg)
         "mov rsp, rdi",          // install kernel stack
         "xor rbp, rbp",
         "call rax",              // call kernel_main (never returns)
-        km_p = in(reg) km,
+        km = sym kernel_main,
         in("rdi") sp,
         in("rdx") bi,
         options(noreturn),
