@@ -32,6 +32,8 @@ mod boot_ui;
 mod loading;
 mod memdiag_ui;
 mod nvram;
+mod loader;
+mod ext4_boot;
 
 use bcd::BcdStore;
 use menu::BootMenu;
@@ -42,11 +44,65 @@ use uefi::proto::media::fs::SimpleFileSystem;
 use uefi::proto::media::file::{Directory, File, FileAttribute, FileInfo, FileMode, RegularFile};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use alloc::boxed::Box;
 use uefi::CString16;
 
 use crate::graphics::FramebufferInfo;
 use crate::renderer::Framebuffer;
 use crate::font::BitmapFont;
+
+// =====================================================================
+// Partition-type probe (used by the file dispatchers below)
+// =====================================================================
+
+/// Filesystem type detected by [`probe_partition_type`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum PartitionType {
+    /// NTFS — VBR OEM ID or a GPT entry with the Windows basic-data
+    /// GUID. `partition_start_lba` is the disk-relative LBA of the NTFS
+    /// partition's first sector (0 for a partition-level handle, the
+    /// GPT-supplied start LBA for a disk-level handle).
+    Ntfs { partition_start_lba: u64 },
+    /// EXT4 — superblock magic `0xEF53` or a GPT entry with the Linux
+    /// filesystem GUID. `partition_start_lba` has the same semantics as
+    /// the NTFS case.
+    Ext4 { partition_start_lba: u64 },
+    /// FAT12/16/32 — the firmware exposes a working `SimpleFileSystem`
+    /// protocol on this handle. The boot manager reads it via the
+    /// standard EFI file API.
+    Fat,
+    /// Anything else. The dispatcher skips these handles.
+    Unknown,
+}
+
+/// EXT4 superblock magic at offset 56 within the superblock (= byte 1080
+/// from the start of the partition, since the superblock itself sits at
+/// partition byte 1024).
+const EXT4_MAGIC: u16 = 0xEF53;
+
+/// Try to open a `SimpleFileSystem` protocol on `handle`. Used by
+/// [`probe_partition_type`] to decide whether a handle is FAT (i.e. the
+/// firmware understands it natively).
+///
+/// Returns `true` if the firmware exposes a working SFS protocol on
+/// this handle, `false` otherwise. We never return the protocol itself
+/// — UEFI protocol wrappers are not `Clone`, and the probe only needs
+/// a yes/no answer.
+fn has_sfs_protocol(handle: uefi::Handle) -> bool {
+    use uefi::boot::OpenProtocolAttributes;
+    use uefi::boot::OpenProtocolParams;
+    let r = unsafe {
+        boot::open_protocol::<uefi::proto::media::fs::SimpleFileSystem>(
+            OpenProtocolParams {
+                handle,
+                agent: boot::image_handle(),
+                controller: None,
+            },
+            OpenProtocolAttributes::GetProtocol,
+        )
+    };
+    matches!(r, Ok(_))
+}
 
 // =====================================================================
 // BCD Mailbox Constants
@@ -1668,13 +1724,62 @@ fn draw_gop_advanced_screen(
 // Entry point - GOP Graphics Mode
 // =====================================================================
 
+/// Firmware-supplied UEFI image handle, captured at `efi_main` entry so
+/// we can re-establish the UEFI calling convention when chaining to
+/// `winload.efi`. Storing this in a `static mut` is safe because:
+///   1. It is written exactly once at the start of `efi_main`, before
+///      any other code path runs.
+///   2. It is only read at the very end of the boot flow, just before
+///      transferring control to winload, and the read is atomic for our
+///      purposes (a torn 64-bit value would still give a usable but
+///      stale handle — see comments around the jump site).
+///
+/// We store the raw `*mut c_void` so we can hand it back to winload
+/// unmodified in `%rcx`. The `Handle` wrapper around this pointer has
+/// no public accessor for its inner value, so we keep both the raw
+/// pointer (for the chain-load) and the `Handle` (for any other code
+/// that needs the typed value).
+pub static mut BOOT_IMAGE_HANDLE_PTR: *mut core::ffi::c_void = core::ptr::null_mut();
+
+/// Firmware-supplied UEFI system-table pointer. Same rationale as
+/// `BOOT_IMAGE_HANDLE_PTR`. The pointer is opaque to us — we just
+/// hand it back to winload unmodified so winload can dereference the
+/// firmware services it needs.
+pub static mut BOOT_SYSTEM_TABLE: u64 = 0;
+
+/// UEFI entry point. The `#[entry]` attribute from the `uefi` crate
+/// auto-injects two parameters (`internal_image_handle: Handle` and
+/// `internal_system_table: *const c_void`) and captures them into
+/// the global system-table pointer so `uefi::boot::*` works for the
+/// rest of the boot flow. We additionally stash the firmware-supplied
+/// values in the `BOOT_IMAGE_HANDLE_PTR` / `BOOT_SYSTEM_TABLE` statics
+    /// so we can re-establish the UEFI calling convention when chaining
+    /// to `winload.efi` at the very end of the boot flow.
 #[entry]
 fn efi_main() -> Status {
+    // The macro inserts `internal_image_handle: Handle` and
+    // `internal_system_table: *const c_void` into our parameter list.
+    // We need the raw `EFI_HANDLE` pointer (a `*mut c_void`) so we
+    // can hand it back to winload in `%rcx`. The `Handle` wrapper is
+    // a transparent `NonNull<c_void>` newtype, so `transmute_copy`
+    // gives us the inner pointer without any layout assumption.
+    unsafe {
+        BOOT_IMAGE_HANDLE_PTR =
+            core::mem::transmute_copy::<uefi::Handle, *mut core::ffi::c_void>(&internal_image_handle);
+        BOOT_SYSTEM_TABLE = internal_system_table as u64;
+    }
+    efi_main_inner()
+}
+
+fn efi_main_inner() -> Status {
     // UEFI Boot Manager entry point - unique signature
     uefi::println!("===========================================");
     uefi::println!("NT6.1.7601 BOOT MANAGER v1.0 DEBUG");
     uefi::println!("===========================================");
     uefi::println!("[MAIN] efi_main entered successfully!");
+    let ih = unsafe { BOOT_IMAGE_HANDLE_PTR } as u64;
+    let st = unsafe { BOOT_SYSTEM_TABLE };
+    uefi::println!("[MAIN] ImageHandle=0x{:x} SystemTable=0x{:x}", ih, st);
     
     if let Err(e) = uefi::helpers::init() {
         uefi::println!("Warning: helpers init failed: {:?}", e);
@@ -2141,20 +2246,43 @@ fn ucs2_to_string(buf: &[u16]) -> String {
 /// half-broken PE image that crashes during relocation. We instead
 /// read in fixed-size chunks until the file returns 0 bytes (EOF).
 ///
-    /// ## NTFS Skip
+    /// ## Partition-type probe
     ///
-    /// The disk has two partitions: a FAT32 ESP and an NTFS system partition.
-    /// EFI's SimpleFileSystem protocol only natively supports FAT12/16/32.
-    /// When the boot manager encounters an NTFS partition, it cannot read it.
-    /// We detect NTFS by reading the boot sector and checking for the "NTFS    "
-    /// signature at byte offset 3. If found, we skip that handle and move on.
-    fn is_ntfs_partition(handle: uefi::Handle) -> bool {
+    /// The disk has up to two partitions: a FAT32 ESP and a System partition
+    /// (NTFS or EXT4). EFI's `BlockIO` protocol may expose any combination
+    /// of:
+    ///
+    ///   * **disk-level** handles — one per physical/virtual disk; LBA 0
+    ///     is the protective MBR and LBA 1 is the GPT header
+    ///   * **partition-level** handles — one per GPT entry; LBA 0 is the
+    ///     partition start (i.e. its VBR / superblock)
+    ///   * **SFS-attached** handles — the FAT32 ESP carries a working
+    ///     `SimpleFileSystem` protocol in addition to `BlockIO`
+    ///
+    /// To pick the right reader, classify the handle into one of:
+    ///
+    ///   * `Ntfs`  — either partition-level handle whose VBR carries the
+    ///               `NTFS    ` OEM ID, **or** a disk-level handle whose
+    ///               GPT lists an NTFS partition entry as the *first*
+    ///               data partition
+    ///   * `Ext4`  — same shape but for the EXT4 superblock magic
+    ///               (`0xEF53` at offset 56 within the superblock, which
+    ///               lives 1024 bytes into the partition = LBA 2 of a
+    ///               partition-scoped handle)
+    ///   * `Fat`   — partition-level handle with a working SFS protocol
+    ///   * `Unknown` — the handle is openable but does not match any of
+    ///               the above; the dispatcher skips it
+    ///
+    /// The disk-level handle is *the* entry point on QEMU/OVMF where
+    /// no partition-level handle is exposed for the non-FAT System
+    /// partition — which is why the probe has to descend into GPT
+    /// when it sees a whole-disk BlockIO.
+    fn probe_partition_type(handle: uefi::Handle) -> PartitionType {
         use uefi::boot::OpenProtocolAttributes;
         use uefi::boot::OpenProtocolParams;
         use uefi::proto::media::block::BlockIO;
+        use core::mem::ManuallyDrop;
 
-        // Try to open BlockIO on this handle to read the partition boot sector.
-        // SAFETY: we use GetProtocol (not AffectedBootPath) so the lifetime is fine.
         let sp = unsafe {
             boot::open_protocol::<BlockIO>(
                 OpenProtocolParams {
@@ -2165,25 +2293,129 @@ fn ucs2_to_string(buf: &[u16]) -> String {
                 OpenProtocolAttributes::GetProtocol,
             )
         };
+        let Ok(block) = sp else { return PartitionType::Unknown; };
+        let block = ManuallyDrop::new(block);
+        let block_ref = block.get().expect("BlockIO protocol");
+        let media = block_ref.media();
 
-        let block = match sp {
-            Ok(s) => s,
-            Err(_) => return false,
-        };
-
-        // Read the first sector (boot sector).
-        let mut buf = [0u8; 512];
-        let media = block.media();
         if media.block_size() != 512 {
-            return false; // Only handle 512-byte sectors for now.
+            return PartitionType::Unknown;
         }
-        let lba_offset = 0u64;
-        if block.read_blocks(media.media_id(), lba_offset, &mut buf).is_err() {
-            return false;
+        let is_partition = media.is_logical_partition();
+        let media_id = media.media_id();
+
+        if is_partition {
+            // ----- Partition-level handle -----
+            //
+            // Probe the VBR / superblock directly.
+            let mut sb = [0u8; 64];
+            if block_ref.read_blocks(media_id, 2u64, &mut sb).is_ok() {
+                let magic = u16::from_le_bytes([sb[56], sb[57]]);
+                if magic == EXT4_MAGIC {
+                    return PartitionType::Ext4 { partition_start_lba: 0 };
+                }
+            }
+            let mut first = [0u8; 512];
+            if block_ref.read_blocks(media_id, 0u64, &mut first).is_ok() {
+                if &first[3..11] == b"NTFS    " {
+                    return PartitionType::Ntfs { partition_start_lba: 0 };
+                }
+            }
+            if has_sfs_protocol(handle) {
+                return PartitionType::Fat;
+            }
+            return PartitionType::Unknown;
         }
 
-        // NTFS boot sector signature at bytes 3-10.
-        buf[3] == b'N' && buf[4] == b'T' && buf[5] == b'F' && buf[6] == b'S'
+        // ----- Disk-level handle -----
+        //
+        // OVMF exposes the raw disk here. Read the GPT header at LBA 1
+        // and walk the partition entries to find the first filesystem
+        // we recognise. We do not synthesise separate partition-type
+        // results per partition entry; the dispatcher's caller only
+        // needs to know "this disk has an NTFS or EXT4 system volume",
+        // and the partition-type-specific reader then re-walks GPT to
+        // locate the right LBA range when it is actually invoked.
+        let mut gpt_header = [0u8; 512];
+        if block_ref.read_blocks(media_id, 1u64, &mut gpt_header).is_err() {
+            return PartitionType::Unknown;
+        }
+        if &gpt_header[0..8] != b"EFI PART" {
+            return PartitionType::Unknown;
+        }
+        let partition_entry_count = u32::from_le_bytes([
+            gpt_header[80], gpt_header[81], gpt_header[82], gpt_header[83],
+        ]) as usize;
+        let partition_entry_size = u32::from_le_bytes([
+            gpt_header[84], gpt_header[85], gpt_header[86], gpt_header[87],
+        ]) as usize;
+        let partition_entries_lba = u64::from_le_bytes([
+            gpt_header[72], gpt_header[73], gpt_header[74], gpt_header[75],
+            gpt_header[76], gpt_header[77], gpt_header[78], gpt_header[79],
+        ]);
+        let mut entries_buf = alloc::vec![0u8; partition_entry_size * partition_entry_count.min(128)];
+        if block_ref
+            .read_blocks(media_id, partition_entries_lba, &mut entries_buf)
+            .is_err()
+        {
+            return PartitionType::Unknown;
+        }
+
+        // The disk image we build puts the System partition (NTFS or
+        // EXT4) as the second GPT entry, after the FAT ESP. Walk the
+        // entries and prefer the *non*-FAT system partition — that
+        // way the dispatcher invokes the matching reader directly,
+        // without spending time on the FAT entry (which the SFS
+        // loop already failed on).
+        let fat_guid = [
+            0x28, 0x73, 0x2A, 0xC1, 0x1F, 0xF8, 0xD2, 0x11,
+            0x4B, 0xBA, 0x00, 0xA0, 0xC9, 0x3E, 0xC9, 0x3B,
+        ];
+        let ntfs_guid = [
+            0xA0, 0x88, 0x2D, 0x83, 0xEB, 0xD1, 0xCD, 0x41,
+            0xB7, 0x96, 0x21, 0xE3, 0x66, 0x65, 0xFF, 0xCC,
+        ];
+        let ext4_guid = [
+            0xAF, 0x3D, 0xC6, 0x0F, 0x83, 0x84, 0x72, 0x47,
+            0x8E, 0x79, 0x3D, 0x69, 0xD8, 0x47, 0x7D, 0xE4,
+        ];
+        let mut prefer_ext4: Option<u64> = None;
+        let mut prefer_ntfs: Option<u64> = None;
+        for i in 0..partition_entry_count.min(128) {
+            let entry_off = i * partition_entry_size;
+            if entry_off + 48 > entries_buf.len() {
+                break;
+            }
+            let g = &entries_buf[entry_off..entry_off + 16];
+            let start_lba = u64::from_le_bytes([
+                entries_buf[entry_off + 32], entries_buf[entry_off + 33],
+                entries_buf[entry_off + 34], entries_buf[entry_off + 35],
+                entries_buf[entry_off + 36], entries_buf[entry_off + 37],
+                entries_buf[entry_off + 38], entries_buf[entry_off + 39],
+            ]);
+            if g == fat_guid {
+                continue;
+            }
+            if g == ntfs_guid && prefer_ntfs.is_none() {
+                prefer_ntfs = Some(start_lba);
+                uefi::println!("[PT]   disk GPT: NTFS partition at LBA {}", start_lba);
+            }
+            if g == ext4_guid && prefer_ext4.is_none() {
+                prefer_ext4 = Some(start_lba);
+                uefi::println!("[PT]   disk GPT: EXT4 partition at LBA {}", start_lba);
+            }
+        }
+        if prefer_ext4.is_some() {
+            return PartitionType::Ext4 {
+                partition_start_lba: prefer_ext4.unwrap(),
+            };
+        }
+        if prefer_ntfs.is_some() {
+            return PartitionType::Ntfs {
+                partition_start_lba: prefer_ntfs.unwrap(),
+            };
+        }
+        PartitionType::Unknown
     }
 
     /// Dump the root directory of a SimpleFileSystem volume for debugging.
@@ -2228,6 +2460,7 @@ fn ucs2_to_string(buf: &[u16]) -> String {
 /// To work around this, when `open()` fails with NOT_FOUND, we enumerate
 /// the directory entries and find the canonical (LFN) name, then re-open with it.
 fn read_boot_file(rel_path: &str) -> Result<Vec<u8>, &'static str> {
+    use core::mem::ManuallyDrop;
     let handles = boot::find_handles::<SimpleFileSystem>().map_err(|_| "no SFS handles")?;
     if handles.is_empty() {
         return Err("no SimpleFileSystem on this platform");
@@ -2246,16 +2479,24 @@ fn read_boot_file(rel_path: &str) -> Result<Vec<u8>, &'static str> {
 
     // Try each handle
     for (idx, handle) in handles.iter().enumerate() {
-        // Skip NTFS partitions when reading BCD/boot files from ESP.
-        // NTFS is only used for winload.efi on the System partition.
-        if is_ntfs_partition(*handle) {
-            uefi::println!("[FILE] Skipping NTFS handle {} (BCD path)", idx);
+        // Skip non-FAT partitions when reading BCD/boot files from ESP.
+        // NTFS and EXT4 are only used for winload.efi on the System
+        // partition; the dispatcher below (after the FAT loop) reads
+        // those. If we tried to open_volume on them, the firmware
+        // would return UNSUPPORTED because EFI's SFS protocol is
+        // FAT-only.
+        let pt = probe_partition_type(*handle);
+        if pt != PartitionType::Fat {
+            uefi::println!(
+                "[FILE] Skipping non-FAT handle {} (type={:?}, BCD path)",
+                idx, pt
+            );
             continue;
         }
 
         uefi::println!("[FILE] Trying FAT handle {}...", idx);
         let mut sfs = match boot::open_protocol_exclusive::<SimpleFileSystem>(*handle) {
-            Ok(s) => s,
+            Ok(s) => ManuallyDrop::new(s),
             Err(_) => continue,
         };
 
@@ -2314,14 +2555,112 @@ fn read_boot_file(rel_path: &str) -> Result<Vec<u8>, &'static str> {
     }
 
     // FAT32 ESP did not contain the file. Per Windows 7 layout, winload.efi
-    // lives on the System partition (NTFS/EXT4), so fall back to reading it
-    // through a minimal in-tree NTFS reader when the path looks like a
-    // Windows-side path.
-    if let Some(data) = read_ntfs_boot_file(rel_path) {
+    // lives on the System partition (NTFS or EXT4). Dispatch by
+    // partition type instead of blindly trying NTFS on every handle.
+    uefi::println!(
+        "[FILE] FAT read failed for '{}', dispatching by partition type",
+        rel_path
+    );
+    if let Some(data) = read_system_partition_file(rel_path) {
+        uefi::println!("[FILE] System-partition read succeeded: {} bytes", data.len());
+        uefi::println!("[FILE] >>> Returning from read_boot_file via System partition - SUCCESS <<<");
         return Ok(data);
     }
 
+    uefi::println!("[FILE] All methods failed for '{}'", rel_path);
     Err("failed to load file from any SFS handle")
+}
+
+/// Dispatch to the correct in-tree filesystem reader for the System
+/// partition. Walks every `BlockIO` handle exactly once, classifies it
+/// via [`probe_partition_type`], and:
+///   * on `Ntfs` -> [`read_ntfs_boot_file_for`]
+///   * on `Ext4` -> `ext4_boot::read_ext4_system_file`
+///   * on `Fat`  / `Unknown` -> skip
+///
+/// Returns the first successful read. The probe-then-dispatch shape
+/// avoids the previous bug where every handle ran a full NTFS GPT
+/// parse and a path that was actually EXT4 was misclassified as
+/// "no NTFS partition found".
+fn read_system_partition_file(rel_path: &str) -> Option<Vec<u8>> {
+    use uefi::boot::OpenProtocolAttributes;
+    use uefi::boot::OpenProtocolParams;
+    use uefi::proto::media::block::BlockIO;
+    use core::mem::ManuallyDrop;
+
+    let handles = boot::find_handles::<BlockIO>().ok()?;
+    uefi::println!("[PT] probing {} BlockIO handle(s)", handles.len());
+
+    for (idx, handle) in handles.iter().enumerate() {
+        let pt = probe_partition_type(*handle);
+        uefi::println!("[PT] handle {}: type={:?}", idx, pt);
+
+        match pt {
+            PartitionType::Ntfs { partition_start_lba } => {
+                let sp = unsafe {
+                    boot::open_protocol::<BlockIO>(
+                        OpenProtocolParams {
+                            handle: *handle,
+                            agent: boot::image_handle(),
+                            controller: None,
+                        },
+                        OpenProtocolAttributes::GetProtocol,
+                    )
+                };
+                let Ok(block) = sp else { continue };
+                let block = ManuallyDrop::new(block);
+                let Some(block_ref) = block.get() else {
+                    core::mem::forget(block);
+                    continue;
+                };
+                let media = block_ref.media();
+                if media.block_size() != 512 {
+                    core::mem::forget(block);
+                    continue;
+                }
+                let r = read_ntfs_boot_file_for(rel_path, block_ref, partition_start_lba);
+                core::mem::forget(block);
+                if r.is_some() {
+                    return r;
+                }
+            }
+            PartitionType::Ext4 { partition_start_lba } => {
+                let sp = unsafe {
+                    boot::open_protocol::<BlockIO>(
+                        OpenProtocolParams {
+                            handle: *handle,
+                            agent: boot::image_handle(),
+                            controller: None,
+                        },
+                        OpenProtocolAttributes::GetProtocol,
+                    )
+                };
+                let Ok(block) = sp else { continue };
+                let block = ManuallyDrop::new(block);
+                let Some(block_ref) = block.get() else {
+                    core::mem::forget(block);
+                    continue;
+                };
+                let media = block_ref.media();
+                if media.block_size() != 512 {
+                    core::mem::forget(block);
+                    continue;
+                }
+                let r = ext4_boot::read_ext4_with_block(
+                    rel_path,
+                    block_ref,
+                    media.media_id(),
+                    partition_start_lba,
+                );
+                core::mem::forget(block);
+                if r.is_some() {
+                    return r;
+                }
+            }
+            PartitionType::Fat | PartitionType::Unknown => continue,
+        }
+    }
+    None
 }
 
 /// Open a directory component by name.
@@ -2353,7 +2692,7 @@ fn open_dir_component(current_dir: &mut Directory, part: &str) -> Option<Directo
                 return Some(dir);
             }
         }
-        // Then try SFN candidates (MICROS~1, MICROS~2, ...)
+        // Then try SFN candidates
         for sfn in &lookup.sfn_candidates {
             if let Ok(entry) = current_dir.open(sfn.as_ref(), FileMode::Read, FileAttribute::empty()) {
                 if let Some(dir) = entry.into_directory() {
@@ -2415,14 +2754,14 @@ fn load_bcd_from_esp() -> core::result::Result<BcdStore, &'static str> {
     // by UEFI and may set the current directory to the volume root or
     // to the directory containing the boot manager (EFI/Boot/).
     //
-    // With our build layout:
-    //   ESP/EFI/Boot/BCD        <- BCD (next to boot manager)
-    //   ESP/BCD                <- BCD at volume root (fallback)
-    //   ESP/EFI/Microsoft/Boot/BCD <- standard Windows path (fallback)
+    // With our build layout (BCD is in \EFI\Microsoft\Boot\BCD):
+    //   ESP/EFI/Microsoft/Boot/BCD <- standard Windows path (PRIORITY!)
+    //   ESP/BCD                   <- BCD at volume root (fallback)
+    //   ESP/EFI/Boot/BCD          <- BCD next to boot manager (fallback)
     const BCD_PATHS: [&str; 3] = [
-        "EFI/Boot/BCD",
-        "BCD",
         "EFI/Microsoft/Boot/BCD",
+        "BCD",
+        "EFI/Boot/BCD",
     ];
     
     for bcd_path in BCD_PATHS {
@@ -2450,8 +2789,13 @@ fn load_bcd_from_esp() -> core::result::Result<BcdStore, &'static str> {
 /// Load a file from the ESP filesystem
 /// Load and start the UEFI image referenced by the currently-selected
 /// BCD entry. On success this function does not return — control is
-/// handed to the new image via `StartImage`.
+/// handed to the new image via direct jump.
+///
+/// ## PE Loading Strategy
+///
+/// UEFI's LoadImage cannot load from NTFS partitions (no SimpleFileSystem).
 fn launch_selected(menu: &BootMenu) -> core::result::Result<(), &'static str> {
+    uefi::println!("[LAUNCH] launch_selected() - using manual PE loader");
     let entry = menu.select().ok_or("no entry selected")?;
     let path = ucs2_to_string(entry.application.as_slice());
     uefi::println!("[LAUNCH] Selected entry: {}", path);
@@ -2466,42 +2810,468 @@ fn launch_selected(menu: &BootMenu) -> core::result::Result<(), &'static str> {
             return Err(e);
         }
     };
-    uefi::println!("[LAUNCH] Read {} bytes", bytes.len());
+    uefi::println!("[LAUNCH] Read {} bytes from {}", bytes.len(), path);
 
-    // ----------------------------------------------------------------
-    // Write the BCD mailbox at physical address 0x10_100.
-    // This is the standard Windows 7 boot manager -> winload handoff.
-    //
-    // Mailbox format:
-    //   Offset 0x00: Signature "BCDE" (4 bytes)
-    //   Offset 0x04: Version 0x00000003 (4 bytes)
-    //   Offset 0x08: Length (4 bytes)
-    //   Offset 0x0C: Entry GUID (16 bytes)
-    //   Offset 0x1C: Boot options (variable, up to 224 bytes)
-    //
-    // Using a fixed physical address is the simplest handoff across
-    // `StartImage` — UEFI does not pass arguments from bootmgr to a
-    // chain-loaded image, so anything we want winload to know has to
-    // be visible at a known PA.
-    // ----------------------------------------------------------------
+    uefi::println!("[LAUNCH] Writing BCD mailbox...");
+    // Write BCD mailbox first
     write_bcd_mailbox(&entry.guid.0);
-    uefi::println!("  boot entry GUID -> 0x{:x}: {:02x?}", BCD_MAILBOX_PHYS, &entry.guid.0);
+    uefi::println!("[LAUNCH] BCD mailbox written");
 
-    let parent = boot::image_handle();
-    let source = boot::LoadImageSource::FromBuffer {
-        buffer: &bytes,
-        file_path: None,
+    // Now use manual PE loader
+    use loader::{PeHeaderInfo, read_section_headers, SECTION_ALIGNMENT};
+
+    uefi::println!("[LAUNCH] Parsing PE headers...");
+    let opt = match PeHeaderInfo::parse(&bytes) {
+        Some(o) => o,
+        None => {
+            uefi::println!("[LAUNCH] ERROR: Invalid PE image - PeHeaderInfo::parse returned None");
+            return Err("invalid PE image");
+        }
     };
-    let image = boot::load_image(parent, source).map_err(|e| {
-        uefi::println!("  load_image failed: {:?}", e);
-        "load_image failed"
-    })?;
-    // From here on, StartImage does not return on success — the
-    // firmware tears down boot services and jumps to the entry point.
-    boot::start_image(image).map_err(|e| {
-        uefi::println!("  start_image failed: {:?}", e);
-        "start_image failed"
-    })
+
+    uefi::println!("[LAUNCH] PE32+ image: base=0x{:016x} entry=0x{:08x} sections={}",
+        opt.image_base, opt.entry_point_rva, opt.number_of_sections);
+
+    // Read section headers
+    let sections = read_section_headers(&bytes, &opt);
+    uefi::println!("[LAUNCH] Got {} sections", sections.len());
+    for (i, sec) in sections.iter().enumerate() {
+        let name = sec.name_str();
+        uefi::println!("[LAUNCH]   Section {}: {} VAddr=0x{:08x} VSize=0x{:08x} RPtr=0x{:08x} RSize=0x{:08x}",
+            i, name, sec.virtual_address, sec.virtual_size, sec.pointer_to_raw_data, sec.size_of_raw_data);
+    }
+
+    // Calculate total image size
+    let mut total_size = opt.size_of_headers;
+    for sec in &sections {
+        let end = sec.virtual_address + sec.virtual_size;
+        if end > total_size {
+            total_size = end;
+        }
+    }
+    let aligned_size = (total_size + SECTION_ALIGNMENT - 1) & !(SECTION_ALIGNMENT - 1);
+    uefi::println!("[LAUNCH] Total image size: 0x{:08x} bytes", aligned_size);
+
+    // Use the PE header's preferred image_base so all RIP-relative
+    // references resolve correctly. If the firmware cannot honor it,
+    // apply the relocations table.
+    let load_base: u64 = opt.image_base;
+    let image_size = aligned_size as usize;
+
+    uefi::println!("[LAUNCH] Loading image to 0x{:016x} ({} bytes)", load_base, image_size);
+
+    // CRITICAL: the PE's preferred ImageBase (0x180000000 for our
+    // winload.efi) is in the high half of the address space and is
+    // *never* allocated by the firmware by default. We must call
+    // allocate_pages to create a writable mapping there BEFORE we
+    // try to copy headers/sections into it — otherwise every write
+    // silently goes to a non-existent page, the entry point stays
+    // all-zeros (0x00 0x00 = ADD [RAX], AL on most encodings or HLT
+    // on the rare alignment), and winload's "WINL>" banner never
+    // appears in the serial log.
+    //
+    // The catch: the OVMF firmware has a hard cap on how many pages
+    // it will hand back in a single allocate_pages call (around
+    // 256 KiB / 64 pages in our testing — anything beyond that
+    // returns "success" but only maps the first N pages and the
+    // remaining pages stay not-present). We therefore allocate in
+    // small chunks and re-verify after each one.
+    use uefi::boot as ub;
+    use uefi::boot::{AllocateType, MemoryType};
+    const EFI_PAGE_SIZE: usize = 4096;
+    const CHUNK_PAGES: usize = 16; // 64 KiB per chunk — safely under OVMF's cap.
+    let total_pages = (image_size + EFI_PAGE_SIZE - 1) / EFI_PAGE_SIZE;
+    let mut allocated_base_holder: Option<u64> = None;
+    // Use BOOT_SERVICES_DATA: the firmware reserves this memory for our
+    // exclusive use until ExitBootServices.  We deliberately do NOT use
+    // LOADER_DATA because the firmware is allowed to reclaim LOADER_DATA
+    // pages and reuse them for other boot-services allocations — and in
+    // practice OVMF DOES reclaim them, stomping the bytes we just wrote
+    // into the winload image (we observed `fb ff ff 0f` overwriting our
+    // carefully-written `66 ba f8 03` bytes).
+    //
+    // We try AllocateType::Address first so the winload image lands at
+    // its preferred ImageBase (0x180000000); if the firmware rejects
+    // that, we fall back to AnyPages and apply relocations later.
+    let mem_type = MemoryType::BOOT_SERVICES_DATA;
+    uefi::println!("[LAUNCH] Allocating {} pages ({} bytes) at 0x{:016x}, in chunks of {}",
+        total_pages, total_pages * EFI_PAGE_SIZE, load_base, CHUNK_PAGES);
+    let mut chunk_base = load_base;
+    let mut remaining = total_pages;
+    let mut address_alloc_ok = true;
+    while remaining > 0 {
+        let this_chunk = core::cmp::min(remaining, CHUNK_PAGES);
+        match ub::allocate_pages(
+            AllocateType::Address(chunk_base),
+            mem_type,
+            this_chunk,
+        ) {
+            Ok(p) => {
+                let allocated = p.as_ptr() as u64;
+                if allocated != chunk_base {
+                    uefi::println!("[LAUNCH] WARN: Address allocate returned 0x{:016x} (asked 0x{:016x})",
+                        allocated, chunk_base);
+                    address_alloc_ok = false;
+                    break;
+                }
+                // Verify the *last* page of the chunk is actually writable
+                // — the firmware may say OK but only map the first page.
+                let verify_addr = allocated + (this_chunk as u64 - 1) * EFI_PAGE_SIZE as u64;
+                let mut probe: u8 = 0;
+                unsafe {
+                    core::arch::asm!(
+                        "mov byte ptr [{p}], 0xAA",
+                        "mov al, byte ptr [{p}]",
+                        p = in(reg) verify_addr,
+                        out("al") probe,
+                        options(nostack, preserves_flags),
+                    );
+                }
+                uefi::println!("[LAUNCH]   chunk at 0x{:016x}..0x{:016x} last-page probe = 0x{:02x}",
+                    chunk_base, chunk_base + (this_chunk as u64) * EFI_PAGE_SIZE as u64, probe);
+                if probe != 0xAA {
+                    uefi::println!("[LAUNCH] FATAL: chunk last-page write/readback failed (got 0x{:02x})", probe);
+                    return Err("allocate_pages phantom chunk");
+                }
+                chunk_base += this_chunk as u64 * EFI_PAGE_SIZE as u64;
+                remaining -= this_chunk;
+            }
+            Err(e) => {
+                uefi::println!("[LAUNCH] Address allocation at 0x{:016x} rejected: {:?}",
+                    chunk_base, e);
+                address_alloc_ok = false;
+                break;
+            }
+        }
+    }
+    if !address_alloc_ok {
+        // Fall back to AnyPages allocation. We'll need to apply relocations.
+        uefi::println!("[LAUNCH] Falling back to AnyPages allocation for winload image");
+        // Allocate the entire image as ONE big chunk. Some firmwares return
+        // non-contiguous chunks when we ask for many small ones, but a single
+        // big allocate_pages call is honoured.
+        let new_base = match ub::allocate_pages(
+            AllocateType::AnyPages,
+            mem_type,
+            total_pages,
+        ) {
+            Ok(p) => p.as_ptr() as u64,
+            Err(e) => {
+                uefi::println!("[LAUNCH] FATAL: AnyPages allocate failed: {:?}", e);
+                return Err("AnyPages allocate failed");
+            }
+        };
+        let verify_addr = new_base + (total_pages as u64 - 1) * EFI_PAGE_SIZE as u64;
+        let mut probe: u8 = 0;
+        unsafe {
+            core::arch::asm!(
+                "mov byte ptr [{p}], 0xAA",
+                "mov al, byte ptr [{p}]",
+                p = in(reg) verify_addr,
+                out("al") probe,
+                options(nostack, preserves_flags),
+            );
+        }
+        uefi::println!("[LAUNCH]   AnyPages chunk at 0x{:016x}..0x{:016x} probe = 0x{:02x}",
+            new_base, new_base + (total_pages as u64) * EFI_PAGE_SIZE as u64, probe);
+        if probe != 0xAA {
+            uefi::println!("[LAUNCH] FATAL: AnyPages chunk last-page write/readback failed (got 0x{:02x})", probe);
+            return Err("AnyPages phantom chunk");
+        }
+        allocated_base_holder = Some(new_base);
+        uefi::println!("[LAUNCH] AnyPages allocation succeeded at 0x{:016x}", new_base);
+    }
+    let load_base = allocated_base_holder.unwrap_or(load_base);
+    let relocation_delta = (load_base as i128) - (opt.image_base as i128);
+    let needs_relocation = load_base != opt.image_base;
+    uefi::println!("[LAUNCH] load_base = 0x{:016x}, delta = {}, relocations = {}",
+        load_base, relocation_delta, if needs_relocation { "REQUIRED" } else { "NOT REQUIRED" });
+
+    // Copy the PE headers to the base of the image (these contain the
+    // section table the loader itself consults in its own prologue,
+    // plus the import-directory pointer).
+    let header_size = (opt.size_of_headers as usize).min(bytes.len());
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            bytes.as_ptr(),
+            load_base as *mut u8,
+            header_size,
+        );
+    }
+    uefi::println!("[LAUNCH] Copied headers ({} bytes)", header_size);
+
+    // Probe the source bytes at offset 0x466a0 (where efi_main body lives)
+    // to verify the read data is correct.
+    uefi::println!("[LAUNCH] Source bytes at offset 0x466a0: {:02x} {:02x} {:02x} {:02x} (expected 66 ba f8 03)",
+        bytes[0x466a0], bytes[0x466a1], bytes[0x466a2], bytes[0x466a3]);
+
+    // Copy sections. Two things to remember:
+    //   1. raw data lives in `bytes[pointer_to_raw_data ..
+    //      pointer_to_raw_data + size_of_raw_data]`
+    //      and should be copied to `load_base + virtual_address`
+    //   2. the area between the end of the raw data and the end
+    //      of `virtual_size` is *uninitialised* — i.e. it is
+    //      **BSS** and MUST be zero-filled before any code in the
+    //      new image is allowed to run. Without the BSS zero-fill,
+    //      any `static mut X: u32 = 0` in winload.efi reads random
+    //      garbage from the freshly allocated LOADER_DATA pages,
+    //      and any early function that touches one of those statics
+    //      faulted the very first call after `efi_main` returned.
+    for sec in &sections {
+        let src_off = sec.pointer_to_raw_data as usize;
+        let rsize = sec.size_of_raw_data as usize;
+        let vsize = sec.virtual_size as usize;
+        let dst_off = sec.virtual_address as usize;
+
+        if src_off + rsize > bytes.len() || dst_off + vsize > image_size {
+            uefi::println!("[LAUNCH]   skip section '{}': rsize/range out of bounds",
+                sec.name_str());
+            continue;
+        }
+
+        // 1. Copy the on-disk raw data (may be zero-length for BSS-only
+        //    sections — skip the rep movsb).
+        let dst_raw_ptr = unsafe { (load_base as *mut u8).add(dst_off) };
+        if rsize > 0 {
+            let src_ptr = unsafe { bytes.as_ptr().add(src_off) };
+            unsafe {
+                core::arch::asm!(
+                    "cld",
+                    "rep movsb",
+                    inout("rdi") dst_raw_ptr => _,
+                    inout("rsi") src_ptr => _,
+                    inout("rcx") rsize => _,
+                    options(preserves_flags),
+                );
+            }
+            uefi::println!("[LAUNCH]   section '{}': copied {} bytes of raw data to 0x{:016x}",
+                sec.name_str(), rsize, dst_raw_ptr as u64);
+        }
+
+        // 2. Zero-fill BSS: the area from raw size to virtual size.
+        //    PE convention is to zero up to the next file-aligned boundary
+        //    of the *next* section, but in practice zeroing exactly
+        //    `vsize - rsize` bytes is sufficient and self-contained.
+        if vsize > rsize {
+            let bss_size = vsize - rsize;
+            let bss_dst = unsafe { (load_base as *mut u8).add(dst_off + rsize) };
+            unsafe {
+                core::arch::asm!(
+                    "cld",
+                    "rep stosb",
+                    inout("rdi") bss_dst => _,
+                    in("al") 0u8,
+                    inout("rcx") bss_size => _,
+                    options(preserves_flags),
+                );
+            }
+            uefi::println!("[LAUNCH]   section '{}': zero-filled {} bytes of BSS at 0x{:016x}",
+                sec.name_str(), bss_size, bss_dst as u64);
+        }
+    }
+
+    // Apply base relocations if the image was loaded somewhere other
+    // than its preferred base. Without this step, every absolute
+    // address inside winload still points at `image_base + offset`,
+    // which is unmapped memory when we allocated via AnyPages, and
+    // the very first `movabs $imm64, %reg` or `mov %rsp, %rbx`
+    // reads back a garbage pointer and faults.
+    if needs_relocation {
+        uefi::println!("[LAUNCH] Applying base relocations: rva=0x{:x} size=0x{:x} delta=0x{:x}",
+            opt.base_reloc_rva, opt.base_reloc_size, relocation_delta);
+        match loader::apply_relocations_in_place(
+            &bytes, &sections, &opt, load_base as *mut u8,
+            opt.image_base, load_base,
+        ) {
+            Ok(n) => uefi::println!("[LAUNCH] Applied {} DIR64 relocations", n),
+            Err(e) => {
+                uefi::println!("[LAUNCH] FATAL: relocation apply failed: {}", e);
+                return Err("relocation apply failed");
+            }
+        }
+    }
+
+    // Calculate entry point
+    let entry_point = load_base + opt.entry_point_rva as u64;
+    uefi::println!("[LAUNCH] Entry point: 0x{:016x}", entry_point);
+
+    // The PE's `AddressOfEntryPoint` already points straight at the body
+    // of `efi_main` (the linker script groups .text.efi_main and uses
+    // ENTRY(efi_main)). So we don't need a hardcoded VMA constant that
+    // breaks every time the surrounding code shifts the `WINL>` prologue
+    // — we read it straight out of the parsed PE entry-point RVA.
+    let efi_main_vma: u64 = entry_point;
+
+    // Verify the entry point really has the expected opcode (0x53 = push %rbx).
+    // If it is still zero, the allocate_pages / copy failed silently.
+    unsafe {
+        let p = entry_point as *const u8;
+        let b0 = core::ptr::read_volatile(p);
+        let b1 = core::ptr::read_volatile(p.add(1));
+        let b2 = core::ptr::read_volatile(p.add(2));
+        let b3 = core::ptr::read_volatile(p.add(3));
+        uefi::println!("[LAUNCH] Entry-point probe bytes: {:02x} {:02x} {:02x} {:02x}",
+            b0, b1, b2, b3);
+    }
+    // Also probe the efi_main body VMA that we're actually going to jmp to.
+    unsafe {
+        let p = efi_main_vma as *const u8;
+        let b0 = core::ptr::read_volatile(p);
+        let b1 = core::ptr::read_volatile(p.add(1));
+        let b2 = core::ptr::read_volatile(p.add(2));
+        let b3 = core::ptr::read_volatile(p.add(3));
+        uefi::println!("[LAUNCH] efi_main-body probe bytes: {:02x} {:02x} {:02x} {:02x}",
+            b0, b1, b2, b3);
+    }
+    let probe_byte = unsafe { *(entry_point as *const u8) };
+    uefi::println!("[LAUNCH] Entry-point probe byte = 0x{:02x} (expected 0x53)", probe_byte);
+    if probe_byte == 0x00 {
+        uefi::println!("[LAUNCH] FATAL: entry point is still zero — memory not mapped");
+        return Err("entry point not mapped");
+    }
+
+    // Probe RIGHT BEFORE the jmp: read 4 bytes at efi_main body.
+    unsafe {
+        let p = efi_main_vma as *const u8;
+        let b0 = core::ptr::read_volatile(p);
+        let b1 = core::ptr::read_volatile(p.add(1));
+        let b2 = core::ptr::read_volatile(p.add(2));
+        let b3 = core::ptr::read_volatile(p.add(3));
+        uefi::println!("[LAUNCH] PRE-JMP probe at 0x{:x}: {:02x} {:02x} {:02x} {:02x}",
+            efi_main_vma, b0, b1, b2, b3);
+    }
+
+    // For UEFI PE32+, the entry point is called with:
+    //   RCX = ImageHandle
+    //   RDX = SystemTable*
+    // Both registers are passed by the firmware when the boot manager
+    // was launched. We re-use those values by reading them with inline
+    // asm and then jumping to winload.efi's entry point directly.
+    uefi::println!("[LAUNCH] Jumping to winload.efi entry point...");
+    uefi::println!("[LAUNCH] =========================================");
+    uefi::println!("[LAUNCH] Winload should now take over boot!");
+    uefi::println!("[LAUNCH] =========================================");
+
+    // Jump to the entry point. The UEFI calling convention for an
+    // EFI image's entry point is:
+    //     RCX = EFI_HANDLE ImageHandle
+    //     RDX = EFI_SYSTEM_TABLE *SystemTable
+    // winload.efi expects these to be the *firmware-supplied* values,
+    // not the values left over from boot's own bookkeeping — otherwise
+    // it dereferences random pointers and crashes before printing its
+    // banner. We captured the firmware values in
+    // `BOOT_IMAGE_HANDLE_PTR` / `BOOT_SYSTEM_TABLE` at the start of
+    // `efi_main`; restore them here and then tail-call the entry
+    // point.
+    let image_handle: u64;
+    let system_table: u64;
+    unsafe {
+        image_handle = BOOT_IMAGE_HANDLE_PTR as u64;
+        system_table = BOOT_SYSTEM_TABLE;
+    }
+    uefi::println!("[LAUNCH] Restoring UEFI calling convention:");
+    uefi::println!("[LAUNCH]   ImageHandle  = 0x{:016x}", image_handle);
+    uefi::println!("[LAUNCH]   SystemTable = 0x{:016x}", system_table);
+
+    // Write a marker to COM1 to confirm we reached this code.
+    unsafe {
+        core::arch::asm!(
+            "mov dx, 0x3f8",
+            "mov al, 0x4B",  // 'K'
+            "out dx, al",
+            "mov al, 0x4C",  // 'L'
+            "out dx, al",
+            options(nostack),
+        );
+    }
+
+    // The PE entry point at 0x180001000 is a UEFI startup stub:
+    //     mov [%rdi], %rsp   ; save old RSP → [ImageHandle]
+    //     mov %rsi, %rsp     ; new RSP = RSI value (firmware tricks)
+    //     <pop 6 regs>
+    //     ret
+    // The stub expects RSI to be the SystemTable pointer AND a freshly
+    // allocated stack with the right return layout. When we manually
+    // jump into the loaded image, the stub's RSI-as-stack assumption
+    // is what panics the second `uefi::println!` — there is no valid
+    // stack frame for the image's efi_main to inherit.
+    //
+    // SOLUTION: skip the entry stub entirely and jump straight into
+    // the body of `efi_main` at VMA 0x1800472a0 (the second `mov
+    // $0x3f8,%dx; mov $0x57,%al; out %dx` pattern — see the file
+    // offset 0x466a4 the disassembly confirms). This body uses the
+    // System V AMD64 ABI (rdi / rsi) and only touches serial I/O
+    // before any TLS / panic-personality access, so a bare jump is
+    // safe as long as we hand it a proper stack.
+    //
+    // The body itself reads image_handle/SystemTable from the
+    // caller-saved registers (rdi/rsi in System V) so we just need
+    // to provide a private stack with a halt-address on top — and
+    // because efi_main is `-> !` it never returns.
+    use uefi::boot as ub2;
+
+    // The PE's `AddressOfEntryPoint` already points straight at the body
+    // of `efi_main` (the linker script groups .text.efi_main and uses
+    // ENTRY(efi_main)). So we don't need a hardcoded VMA constant that
+    // breaks every time the surrounding code shifts the `WINL>` prologue
+    // — `efi_main_vma` was already computed above from the parsed PE.
+
+    // Allocate 64 KiB of stack space for winload.efi.
+    let stack_base = ub2::allocate_pages(
+        ub2::AllocateType::AnyPages,
+        ub2::MemoryType::BOOT_SERVICES_DATA,
+        16, // 64 KiB
+    ).map_err(|e| -> &'static str { "allocate winload stack" })?;
+    let stack_top = stack_base.as_ptr() as u64 + 64 * 1024;
+
+    // Write a tiny halt stub at (stack_top - 16). If efi_main ever
+    // returns (it shouldn't, since it's `-> !`), control goes here
+    // and the machine simply halts.
+    //
+    // Encoding: `hlt; jmp $-2` = `0xF4 0xEB 0xFE`.
+    let halt_addr = stack_top - 8;
+    unsafe {
+        core::ptr::write_volatile((halt_addr + 0) as *mut u8, 0xF4);
+        core::ptr::write_volatile((halt_addr + 1) as *mut u8, 0xEB);
+        core::ptr::write_volatile((halt_addr + 2) as *mut u8, 0xFE);
+        // Fake return address at stack_top - 16 — efi_main is `-> !`,
+        // so this is dead code, but it makes the contract explicit.
+        core::ptr::write_volatile((stack_top - 16) as *mut u64, halt_addr);
+    }
+
+    uefi::println!("[LAUNCH] Winload stack base=0x{:x} top=0x{:x} halt=0x{:x}",
+        stack_base.as_ptr() as u64, stack_top, halt_addr);
+    uefi::println!("[LAUNCH] efi_main body VMA = 0x{:x}", efi_main_vma);
+    uefi::println!("[LAUNCH] =========================================");
+    uefi::println!("[LAUNCH] Winload should now take over boot!");
+    uefi::println!("[LAUNCH] =========================================");
+
+    // Jump to efi_main. The body itself uses the Microsoft x64 ABI:
+    // RCX = ImageHandle, RDX = SystemTable (per UEFI calling convention
+    // for EFI image entry points). R8, R9 are free to clobber.
+    //
+    // Jump to efi_main. The body itself uses the Microsoft x64 ABI:
+    // RCX = ImageHandle, RDX = SystemTable (per UEFI calling convention
+    // for EFI image entry points). R8, R9 are free to clobber.
+    unsafe {
+        core::arch::asm!(
+            // rdi = image_handle, rsi = system_table
+            "mov rcx, {ih}",          // EFI: RCX = ImageHandle
+            "mov rdx, {st}",          // EFI: RDX = SystemTable
+            // zero out the other arg registers
+            "xor r8d, r8d",
+            "xor r9d, r9d",
+            // rsp = top of winload's private stack
+            "mov rsp, {sp}",
+            // jump straight into the body of efi_main
+            "jmp {entry}",
+            ih = in(reg) image_handle,
+            st = in(reg) system_table,
+            sp = in(reg) stack_top,
+            entry = in(reg) efi_main_vma,
+            options(noreturn),
+        );
+    }
 }
 
 /// Text-mode boot menu used when no GOP handle is available
@@ -2735,15 +3505,25 @@ struct NtfsBoot {
     bytes_per_sector: u16,
     sectors_per_cluster: u8,
     total_sectors: u64,
+    /// MFT start LCN — the raw value from the BPB at offset 0x30.
+    /// This is a partition-relative LCN (cluster index from the start of
+    /// the NTFS volume). To convert to a disk LBA, add `hidden_sectors`
+    /// (the starting LBA of the partition) and multiply by `sectors_per_cluster`.
     mft_start_lcn: u64,
     mft_record_size: u32,
     index_record_size: u32,
     serial_number: u64,
+    /// Starting LBA of the NTFS partition on the disk. Read from the GPT
+    /// partition table or the hidden_sectors field in the BPB.
+    partition_start_lba: u64,
+    /// Raw pointer to the BlockIO protocol for reading from this partition.
+    /// This ensures we use the same protocol instance for all reads.
+    block_io_ptr: usize,
 }
 
 impl NtfsBoot {
     /// Parse the NTFS boot sector (first 512 bytes of the partition).
-    fn parse(buf: &[u8; 512]) -> Option<Self> {
+    fn parse(buf: &[u8; 512], partition_start_lba: u64, block_io: *const uefi::proto::media::block::BlockIO) -> Option<Self> {
         // OEMID = "NTFS    " at offset 3
         if &buf[3..11] != b"NTFS    " {
             return None;
@@ -2760,7 +3540,8 @@ impl NtfsBoot {
         ]);
         // MFT record size: byte 0x40 holds a signed value. Positive
         // value = 2^val clusters. Negative = 2^|val| bytes. For our
-        // image builder, the value is 0x400 bytes (1024).
+        // image builder, the value is 0xF6 = -10, which means
+        // 2^10 = 1024 bytes per MFT record.
         let mft_raw = buf[0x40] as i8;
         let mft_record_size: u32 = if mft_raw >= 0 {
             (sectors_per_cluster as u32) * (bytes_per_sector as u32) << mft_raw
@@ -2785,20 +3566,24 @@ impl NtfsBoot {
             mft_record_size,
             index_record_size,
             serial_number,
+            partition_start_lba,
+            block_io_ptr: block_io as usize,
         })
     }
 }
 
-/// Read `count` sectors starting at `lba` from the partition whose
-/// first handle exposes an NTFS boot sector. Returns the buffer and
-/// the on-disk LBA where the NTFS partition begins.
-fn read_ntfs_partition_sectors(start_lba: u64, count: u32) -> Option<(Vec<u8>, u64)> {
+/// Read `count` sectors starting at `disk_lba` (absolute disk LBA).
+/// If `verify_ntfs_boot` is true, verifies the sector contains NTFS boot sector.
+/// Returns the buffer.
+fn read_disk_sectors(disk_lba: u64, count: u32, verify_ntfs_boot: bool) -> Option<Vec<u8>> {
     use uefi::boot::OpenProtocolAttributes;
     use uefi::boot::OpenProtocolParams;
     use uefi::proto::media::block::BlockIO;
+    use core::mem::ManuallyDrop;
 
     let handles = boot::find_handles::<BlockIO>().ok()?;
-    for handle in handles.iter() {
+
+    for (i, handle) in handles.iter().enumerate() {
         // SAFETY: GetProtocol is non-destructive.
         let sp = unsafe {
             boot::open_protocol::<BlockIO>(
@@ -2811,78 +3596,122 @@ fn read_ntfs_partition_sectors(start_lba: u64, count: u32) -> Option<(Vec<u8>, u
             )
         };
         let Ok(block) = sp else { continue; };
+        let block = ManuallyDrop::new(block);
         let media = block.media();
+
         if media.block_size() != 512 { continue; }
-        let mut boot_sector = [0u8; 512];
-        if block.read_blocks(media.media_id(), 0u64, &mut boot_sector).is_err() {
-            continue;
-        }
-        if &boot_sector[3..11] != b"NTFS    " {
-            continue;
-        }
-        // Found the NTFS partition. Read `count` sectors from `lba`.
+
+        // Read the requested sectors
         let mut buf = alloc::vec![0u8; (count as usize) * 512];
-        if block.read_blocks(media.media_id(), start_lba, &mut buf).is_err() {
-            uefi::println!("[NTFS] read_blocks failed at LBA {}", start_lba);
-            return None;
+        match block.read_blocks(media.media_id(), disk_lba, &mut buf) {
+            Ok(_) => {
+                // If verifying NTFS boot sector, check signature
+                if verify_ntfs_boot {
+                    if &buf[3..11] != b"NTFS    " {
+                        continue;
+                    }
+                }
+                return Some(buf);
+            }
+            Err(e) => {
+                uefi::println!("[NTFS] read_disk_sectors: handle {} failed at LBA {}: {:?}", i, disk_lba, e);
+                continue;
+            }
         }
-        return Some((buf, 0u64));
     }
     None
 }
 
 /// Read a single MFT record (`record_num`) into a fresh buffer.
 fn read_mft_record(ntfs: &NtfsBoot, record_num: u64) -> Option<Vec<u8>> {
-    let lcn = ntfs.mft_start_lcn;
+    use uefi::proto::media::block::BlockIO;
+
+    // SAFETY: ntfs.block_io_ptr is a valid pointer to a BlockIO protocol
+    // that was opened with Exclusive access and won't be closed until
+    // read_ntfs_boot_file explicitly drops it.
+    let block = unsafe { &*(ntfs.block_io_ptr as *const BlockIO) };
+    let media = block.media();
+
+    // The MFT LCN (cluster number) in the boot sector is partition-relative.
+    // To compute the on-disk LBA of the MFT record:
+    //   1. MFT partition-relative LBA = mft_start_lcn * sectors_per_cluster
+    //   2. MFT disk LBA = partition_start_lba + MFT partition-relative LBA
+    //   3. Record disk LBA = MFT disk LBA + record_num * records_per_sector
+    let mft_partition_lba = ntfs.mft_start_lcn * (ntfs.sectors_per_cluster as u64);
+    let mft_disk_lba = ntfs.partition_start_lba + mft_partition_lba;
     let sectors_per_record = ((ntfs.mft_record_size as u64 + 511) / 512) as u32;
-    let lba = lcn * (ntfs.sectors_per_cluster as u64) + record_num * (ntfs.mft_record_size as u64) / 512;
-    let (buf, _) = read_ntfs_partition_sectors(lba, sectors_per_record)?;
-    if buf.len() < ntfs.mft_record_size as usize { return None; }
-    if record_num <= 11 && false {
-        let n = buf.len().min(512);
-        // Walk attributes and print types/lengths to help debug
-        // INDEX_ROOT lookup failures.
-        let first_attr = u16::from_le_bytes([buf[0x14], buf[0x15]]) as usize;
-        let mut off = first_attr;
-        uefi::println!("[NTFS] read_mft_record({}) lba={} first_attr_off={}", record_num, lba, first_attr);
-        while off + 8 <= n {
-            let atype = u32::from_le_bytes([buf[off], buf[off+1], buf[off+2], buf[off+3]]);
-            if atype == 0xFFFFFFFF { break; }
-            let alen = u32::from_le_bytes([buf[off+4], buf[off+5], buf[off+6], buf[off+7]]);
-            if alen == 0 { break; }
-            uefi::println!("[NTFS]   attr 0x{:02x} off={} len={}", atype, off, alen);
-            if atype == 0x90 {
-                let body = off + 0x18;
-                let e_off_rel = u32::from_le_bytes([buf[body+0x10], buf[body+0x11], buf[body+0x12], buf[body+0x13]]);
-                let total = u32::from_le_bytes([buf[body+0x14], buf[body+0x15], buf[body+0x16], buf[body+0x17]]);
-                uefi::println!("[NTFS]     INDEX_ROOT body={} e_off_rel={} total={}", body, e_off_rel, total);
-            }
-            off += alen as usize;
-            if off > n { break; }
-        }
+    let record_rel_lba = record_num * (ntfs.mft_record_size as u64) / 512;
+    let disk_lba = mft_disk_lba + record_rel_lba;
+
+    let mut buf = alloc::vec![0u8; (sectors_per_record as usize) * 512];
+    if block.read_blocks(media.media_id(), disk_lba, &mut buf).is_err() {
+        uefi::println!("[NTFS] read_mft_record: failed to read LBA {}", disk_lba);
+        return None;
     }
+
+    if buf.len() < ntfs.mft_record_size as usize { return None; }
+
+    // Print first 16 bytes of MFT record for debugging
+    let sig = &buf[0..4];
+    uefi::println!("[NTFS] read_mft_record({}) disk_lba={} sig={:?} buf_len={}",
+        record_num, disk_lba, sig, buf.len());
+
+    // Walk attributes and print types/lengths to help debug INDEX_ROOT lookup failures.
+    let first_attr = u16::from_le_bytes([buf[0x14], buf[0x15]]) as usize;
+    let mut off = first_attr;
+    uefi::println!("[NTFS]   first_attr_off={}", first_attr);
+    let n = buf.len().min(512);
+    while off + 8 <= n {
+        let atype = u32::from_le_bytes([buf[off], buf[off+1], buf[off+2], buf[off+3]]);
+        if atype == 0xFFFFFFFF { break; }
+        let alen = u32::from_le_bytes([buf[off+4], buf[off+5], buf[off+6], buf[off+7]]);
+        if alen == 0 { break; }
+        uefi::println!("[NTFS]   attr 0x{:02x} off={} len={}", atype, off, alen);
+        if atype == 0x90 {
+            let body = off + 0x18;
+            let ih_base = body + 0x0C;
+            let e_off_rel = u32::from_le_bytes([buf[ih_base + 0x00], buf[ih_base + 0x01], buf[ih_base + 0x02], buf[ih_base + 0x03]]);
+            let total = u32::from_le_bytes([buf[ih_base + 0x04], buf[ih_base + 0x05], buf[ih_base + 0x06], buf[ih_base + 0x07]]);
+            let ih_flags = u32::from_le_bytes([buf[ih_base + 0x0C], buf[ih_base + 0x0D], buf[ih_base + 0x0E], buf[ih_base + 0x0F]]);
+            uefi::println!("[NTFS]     INDEX_ROOT body={} ih_base={} e_off_rel={} total={} ih_flags=0x{:x}", body, ih_base, e_off_rel, total, ih_flags);
+        }
+        off += alen as usize;
+        if off > n { break; }
+    }
+
     Some(buf)
 }
 
 /// Decode a UTF-16LE filename attribute (0x30) into a Rust `String`.
+/// `off` is the byte offset of the FILE_NAME attribute's VALUE (not its
+/// header) within the MFT record. The value layout is:
+///   0x00: parent_ref (8)
+///   0x08: creation_time (8)
+///   0x10: last_data_change_time (8)
+///   0x18: last_mft_change_time (8)
+///   0x20: last_access_time (8)
+///   0x28: allocated_size (8)
+///   0x30: data_size (8)
+///   0x38: file_attributes (4)
+///   0x3C: packed_ea_size (2)  ← FIXED: was 4 bytes, now 2 bytes
+///   0x3E: name_length (1)
+///   0x3F: file_name_type (1)
+///   0x40+: filename (UTF-16LE)
 fn decode_filename_attr(buf: &[u8], off: usize) -> Option<(String, u64)> {
+    // The bounds check uses the caller's record length, not the value
+    // length. The first index entry starts at record offset ~242 (root
+    // INDEX_ROOT), and `off` is the value offset (~136 bytes into the
+    // record). `buf.len()` is the full record (1024 bytes), so
+    // `off + 66 <= 1024` is the right guard.
     if off + 66 > buf.len() { return None; }
-    // FILE_NAME attribute body layout:
-    //   0x00: parent dir MFT reference (8 bytes)
-    //   0x08: timestamps (32 bytes)
-    //   0x28: allocated size (8)
-    //   0x30: real size (8)
-    //   0x38: flags (4)
-    //   0x3C: EA/reparse (4)
-    //   0x40: name length in chars (1)
-    //   0x41: name namespace (1)
-    //   0x42: name (UTF-16LE)
-    let name_chars = buf[off + 0x40] as usize;
-    if off + 0x42 + name_chars * 2 > buf.len() { return None; }
+    // FIXED: name_length is at offset +0x3E (was +0x40 before the packed_ea_size fix).
+    let name_chars = buf[off + 0x3E] as usize;
+    if name_chars == 0 || name_chars > 255 { return None; }
+    if off + 0x40 + name_chars * 2 > buf.len() { return None; }
     let mut name = String::new();
     for i in 0..name_chars {
-        let c = u16::from_le_bytes([buf[off + 0x42 + i*2], buf[off + 0x42 + i*2 + 1]]);
-        if c == 0 { continue; } // skip embedded NULs — they confuse UEFI console output
+        let c = u16::from_le_bytes([buf[off + 0x40 + i*2], buf[off + 0x40 + i*2 + 1]]);
+        if c == 0 { continue; }
         if let Some(ch) = char::from_u32(c as u32) { name.push(ch); }
     }
     let parent_ref = u64::from_le_bytes([
@@ -2892,20 +3721,23 @@ fn decode_filename_attr(buf: &[u8], off: usize) -> Option<(String, u64)> {
     Some((name, parent_ref & 0x0000_FFFF_FFFF_FFFF))
 }
 
+// Enable this to see detailed NTFS MFT traversal logs during boot.
+const DEBUG_NTFS: bool = true;
+
 /// Resolve the MFT record number for a file at `path` rooted at MFT
 /// record 5 (root directory). Each step walks the index entries in
 /// the parent directory's $INDEX_ROOT attribute.
 fn resolve_mft_record(ntfs: &NtfsBoot, path: &str) -> Option<u64> {
-    if false { uefi::println!("[NTFS] resolve_mft_record: path='{}'", path); }
+    if DEBUG_NTFS { uefi::println!("[NTFS] resolve_mft_record: path='{}'", path); }
     let parts: alloc::vec::Vec<&str> = path
         .trim_start_matches('\\')
         .split('\\')
         .filter(|s| !s.is_empty())
         .collect();
-    if false { uefi::println!("[NTFS]   parts={:?}", parts); }
+    if DEBUG_NTFS { uefi::println!("[NTFS]   parts={:?}", parts); }
     let mut current = 5u64; // Root directory
     for part in &parts {
-        if false { uefi::println!("[NTFS]   resolving part '{}' from record {}", part, current); }
+        if DEBUG_NTFS { uefi::println!("[NTFS]   resolving part '{}' from record {}", part, current); }
         current = find_child_in_index(ntfs, current, part)?;
     }
     Some(current)
@@ -2914,7 +3746,7 @@ fn resolve_mft_record(ntfs: &NtfsBoot, path: &str) -> Option<u64> {
 /// Scan the `$INDEX_ROOT` of `parent_record` for an entry whose
 /// filename matches `name`. Returns the child's MFT record number.
 fn find_child_in_index(ntfs: &NtfsBoot, parent_record: u64, name: &str) -> Option<u64> {
-    if false { uefi::println!("[NTFS] find_child_in_index entered: parent={} name='{}'", parent_record, name); }
+    if DEBUG_NTFS { uefi::println!("[NTFS] find_child_in_index entered: parent={} name='{}'", parent_record, name); }
     let record = match read_mft_record(ntfs, parent_record) {
         Some(r) => r,
         None => {
@@ -2932,7 +3764,7 @@ fn find_child_in_index(ntfs: &NtfsBoot, parent_record: u64, name: &str) -> Optio
     let mut off = u16::from_le_bytes([record[0x14], record[0x15]]) as usize;
     let end = ntfs.mft_record_size as usize;
     let mut found_index_root = false;
-    while off + 4 < end {
+    while off + 8 <= end {
         let attr_type = u32::from_le_bytes([
             record[off], record[off+1], record[off+2], record[off+3],
         ]);
@@ -2956,69 +3788,175 @@ fn find_child_in_index(ntfs: &NtfsBoot, parent_record: u64, name: &str) -> Optio
 
         if attr_type == 0x90 {
             found_index_root = true;
-            // $INDEX_ROOT attribute. The full attribute is 24 bytes
-            // of resident header followed by the value:
-            //   value offset 0x00: indexed attribute type (0x30)
-            //   value offset 0x04: collation rule
+            // $INDEX_ROOT attribute. The attribute header is 24 bytes, so the
+            // value starts at off + 24 = off + 0x18 = `body`.
+            // The INDEX_ROOT value layout is:
+            //   value offset 0x00: indexed attribute type (0x30 = FILE_NAME)
+            //   value offset 0x04: collation rule (0 = FILE_NAME collation)
             //   value offset 0x08: bytes per index record
             //   value offset 0x0C: clusters per index record
-            //   value offset 0x10: INDEX_HEADER (16 bytes)
-            //     +0x00: first_entry_offset (u32)
-            //     +0x04: total_size (u32)
-            //     +0x08: allocated_size (u32)
-            //     +0x0C: flags (u32)
-            //   value offset 0x20: index entries start
+            //   value offset 0x10+: INDEX_HEADER (16 bytes):
+            //     +0x00: first_entry_offset (relative to INDEX_HEADER start)
+            //     +0x04: total_size
+            //     +0x08: allocated_size
+            //     +0x0C: flags
+            //   value offset 0x20+: first index entry
             let body = off + 0x18; // skip 24-byte attr header
             if body + 0x20 > end { off += attr_len; continue; }
-            // Index header: 0x00 entries_offset(4) total_size(4)
-            // allocated_size(4) flags(4) ...
-            let entries_off = body + 0x10
-                + u32::from_le_bytes([
-                    record[body + 0x10], record[body + 0x11],
-                    record[body + 0x12], record[body + 0x13],
-                ]) as usize;
-            let total_size = u32::from_le_bytes([
-                record[body + 0x10 + 4], record[body + 0x10 + 5],
-                record[body + 0x10 + 6], record[body + 0x10 + 7],
+            // The NTFS-3G `index.c` / `layout.h` defines INDEX_HEADER fields
+            // at relative offsets 0x00, 0x04, 0x08, 0x0C from the INDEX_HEADER start.
+            // The NTFS spec places INDEX_HEADER at value offset 0x10, but the
+            // builder actually places it at value offset 0x10 (the bytes_per_index_record
+            // and clusters_per_index_record are between the indexed attr type and
+            // INDEX_HEADER, not part of it). The boot code therefore reads
+            // first_entry_offset from body + 0x10 + 0x00 = body + 0x10.
+            let ih_base = body + 0x10;
+            let first_entry_offset = u32::from_le_bytes([
+                record[ih_base + 0x00], record[ih_base + 0x01],
+                record[ih_base + 0x02], record[ih_base + 0x03],
             ]) as usize;
+            let total_size = u32::from_le_bytes([
+                record[ih_base + 0x04], record[ih_base + 0x05],
+                record[ih_base + 0x06], record[ih_base + 0x07],
+            ]) as usize;
+            let allocated_size = u32::from_le_bytes([
+                record[ih_base + 0x08], record[ih_base + 0x09],
+                record[ih_base + 0x0A], record[ih_base + 0x0B],
+            ]) as usize;
+            let ih_flags = u32::from_le_bytes([
+                record[ih_base + 0x0C], record[ih_base + 0x0D],
+                record[ih_base + 0x0E], record[ih_base + 0x0F],
+            ]) as u32;
+            // Index entries start at ih_base + first_entry_offset.
+            let entries_off = ih_base + first_entry_offset;
             if entries_off >= end { off += attr_len; continue; }
             // Walk index entries.
             let mut p = entries_off;
             let end_p = entries_off + total_size;
-            if false { uefi::println!("[NTFS] find_child_in_index: parent_record={} name='{}' entries_off={} total_size={}", parent_record, name, entries_off, total_size); }
-            while p + 16 < end_p && p + 16 <= end {
+            // The outer `end` is the MFT record boundary (e.g. 1024 bytes).
+            // `total_size` can be larger than the actual data due to padding,
+            // so we must guard reads against the record boundary `end`.
+            if DEBUG_NTFS { uefi::println!("[NTFS] find_child_in_index: parent_record={} name='{}' entries_off={} total_size={} record_end={}", parent_record, name, entries_off, total_size, end); }
+            // Loop condition: must have room for INDEX_ENTRY header (16 bytes)
+            // AND stay within both the index-block boundary (end_p) and the
+            // record boundary (end).
+            while p + 16 <= end_p && p + 16 <= end {
+                // ALWAYS print loop top so we can see whether the loop runs.
+                uefi::println!("[NTFS] LOOP: p=0x{:x} p+16=0x{:x} end_p=0x{:x} end=0x{:x}", p, p+16, end_p, end);
+                // Read entry_len at offset +0x08 (u16 LE).
+                if p + 10 > end { break; }
                 let entry_len = u16::from_le_bytes([
                     record[p + 8], record[p + 9],
                 ]) as usize;
-                let stream_len = u16::from_le_bytes([
-                    record[p + 0x10], record[p + 0x11],
-                ]) as usize;
+                uefi::println!("[NTFS]   entry_len raw at p+8: 0x{:02x}{:02x}", record[p+9], record[p+8]);
                 if entry_len == 0 { break; }
-                // Stream starts at p + 0x10. The stream is itself an
-                // attribute structure: type 0x30 with $FILE_NAME body.
+                if entry_len < 16 { break; }
+
+                // Guard the full entry against the RECORD boundary `end`.
+                if p + entry_len > end { break; }
+
+                // flags at offset +0x0C (2 bytes)
+                if p + 14 > end { break; }
+                let entry_flags = u16::from_le_bytes([
+                    record[p + 12], record[p + 13],
+                ]);
+
+                // INDEX_ENTRY_END (0x0002): no key data follows — stop.
+                if (entry_flags & 0x0002) != 0 {
+                    if DEBUG_NTFS { uefi::println!("[NTFS]   STOP: END marker at p=0x{:x} flags=0x{:x}", p, entry_flags); }
+                    break;
+                }
+
+                // key_length is at offset +0x0A of the INDEX_ENTRY.
+                let key_len = u16::from_le_bytes([
+                    record[p + 10], record[p + 11],
+                ]) as usize;
+                if DEBUG_NTFS { uefi::println!("[NTFS]   entry at p=0x{:x} len={} key_len={} flags=0x{:x}", p, entry_len, key_len, entry_flags); }
+                if key_len < 66 {
+                    if DEBUG_NTFS { uefi::println!("[NTFS]   SKIP: key_len {} < 66", key_len); }
+                    p += entry_len;
+                    continue;
+                }
+
+                // FILE_NAME_ATTR begins at p + 0x10 with a 24-byte attribute header.
+                // The FILE_NAME value starts at fname_off + 24.
+                // The FILE_NAME value layout:
+                //   +0x00: parent_ref (8 bytes)
+                //   +0x08: creation_time (8 bytes)
+                //   +0x10: last_data_change_time (8 bytes)
+                //   +0x18: last_mft_change_time (8 bytes)
+                //   +0x20: last_access_time (8 bytes)
+                //   +0x28: allocated_size (8 bytes)
+                //   +0x30: data_size (8 bytes)
+                //   +0x38: file_attributes (4 bytes)
+                //   +0x3C: packed_ea_size (2 bytes)
+                //   +0x3E: name_length (1 byte)
+                //   +0x3F: file_name_type (1 byte)
+                //   +0x40+: filename (UTF-16LE)
                 let fname_off = p + 0x10;
-                if stream_len >= 24 && fname_off + 24 < end {
-                    let inner_type = u32::from_le_bytes([
-                        record[fname_off], record[fname_off+1],
-                        record[fname_off+2], record[fname_off+3],
+                let fname_value_off = fname_off + 24; // Skip FILE_NAME_ATTR header
+
+                // name_length is at FILE_NAME value offset +0x3E.
+                let name_len_offset = fname_value_off + 0x3E;
+                let name_len_chars = record[name_len_offset] as usize;
+                if DEBUG_NTFS { uefi::println!("[NTFS]   fname_off=0x{:x} fname_value_off=0x{:x} name_len_chars={}", fname_off, fname_value_off, name_len_chars); }
+                if name_len_chars == 0 || name_len_chars > 255 {
+                    // Step to next entry
+                    p += entry_len;
+                    continue;
+                }
+
+                // name starts at FILE_NAME value offset +0x40.
+                let name_start = fname_value_off + 0x40;
+                // Show first few bytes of filename area for debugging
+                if DEBUG_NTFS { uefi::println!("[NTFS]   name_start=0x{:x}", name_start); }
+                // Ensure name fits within the record boundary `end`.
+                if name_start + name_len_chars * 2 > end {
+                    uefi::println!("[NTFS]   SKIP: name_start + name_len*2 > end");
+                    p += entry_len;
+                    continue;
+                }
+
+                // Decode the UTF-16LE filename.
+                // `buf` is the full record (1024 bytes), `fname_off` is a record offset,
+                // so `buf.len()` is the record length.
+                let mut decoded_name = alloc::string::String::new();
+                for i in 0..name_len_chars {
+                    let c = u16::from_le_bytes([
+                        record[name_start + i * 2],
+                        record[name_start + i * 2 + 1],
                     ]);
-                    let inner_len = u32::from_le_bytes([
-                        record[fname_off+4], record[fname_off+5],
-                        record[fname_off+6], record[fname_off+7],
-                    ]) as usize;
-                    if inner_type == 0x30 && inner_len >= 0x42 {
-                        if let Some((fname, _)) = decode_filename_attr(&record, fname_off + 0x18) {
-                            if false { uefi::println!("[NTFS]   entry: child_ref=0x{:x} fname='{}'", u64::from_le_bytes([record[p],record[p+1],record[p+2],record[p+3],record[p+4],record[p+5],record[p+6],record[p+7]]), fname); }
-                            if fname.eq_ignore_ascii_case(name) {
-                                let child_ref = u64::from_le_bytes([
-                                    record[p], record[p+1], record[p+2], record[p+3],
-                                    record[p+4], record[p+5], record[p+6], record[p+7],
-                                ]);
-                                return Some(child_ref & 0x0000_FFFF_FFFF_FFFF);
-                            }
-                        }
+                    if c == 0 { continue; }
+                    if let Some(ch) = char::from_u32(c as u32) {
+                        decoded_name.push(ch);
                     }
                 }
+                uefi::println!("[NTFS]   decoded name='{}'", decoded_name);
+
+                if DEBUG_NTFS {
+                    let child_ref = u64::from_le_bytes([
+                        record[p], record[p+1], record[p+2], record[p+3],
+                        record[p+4], record[p+5], record[p+6], record[p+7],
+                    ]);
+                    uefi::println!("[NTFS]   entry: ref=0x{:x} fname='{}' key_len={}", child_ref, decoded_name, key_len);
+                }
+
+                // Case-insensitive compare: convert both to lowercase ASCII for comparison.
+                let decoded_lower: alloc::string::String = decoded_name.chars().map(|c| {
+                    if c >= 'A' && c <= 'Z' { (c as u8 + 0x20) as char } else { c }
+                }).collect();
+                let name_lower: alloc::string::String = name.chars().map(|c| {
+                    if c >= 'A' && c <= 'Z' { (c as u8 + 0x20) as char } else { c }
+                }).collect();
+                if DEBUG_NTFS { uefi::println!("[NTFS]     comparing '{}' vs '{}'", decoded_lower, name_lower); }
+                if decoded_lower == name_lower {
+                    let child_ref = u64::from_le_bytes([
+                        record[p], record[p+1], record[p+2], record[p+3],
+                        record[p+4], record[p+5], record[p+6], record[p+7],
+                    ]);
+                    return Some(child_ref & 0x0000_FFFF_FFFF_FFFF);
+                }
+
                 p += entry_len;
             }
         }
@@ -3127,15 +4065,61 @@ fn read_data_stream(ntfs: &NtfsBoot, record_num: u64) -> Option<Vec<u8>> {
                     let lcn = (prev_lcn + lcn_delta) as u64;
                     prev_lcn += lcn_delta;
                     let sector_size = (ntfs.sectors_per_cluster as u64) * 512;
-                    let lba = lcn * (ntfs.sectors_per_cluster as u64);
+                    // Run-list LCNs are partition-relative. Convert to absolute disk LBA.
+                    let partition_rel_lba = lcn * (ntfs.sectors_per_cluster as u64);
+                    let disk_lba = ntfs.partition_start_lba + partition_rel_lba;
                     let byte_count = run_clusters * sector_size;
                     let cluster_count = run_clusters as u32;
-                    if let Some((data, _)) = read_ntfs_partition_sectors(lba, cluster_count) {
-                        let copy_len = data.len().min(out.len() - out_cursor);
+                    uefi::println!("[NTFS-RUN] run_clusters={} lcn_delta={} lcn={} disk_lba={} byte_count={} cluster_count={}",
+                        run_clusters, lcn_delta, lcn, disk_lba, byte_count, cluster_count);
+                    // Use the persistent BlockIO protocol from ntfs.block_io_ptr
+                    // instead of opening a new one each time. This avoids
+                    // close_protocol panics.
+                    use uefi::proto::media::block::BlockIO;
+                    let block = unsafe { &*(ntfs.block_io_ptr as *const BlockIO) };
+                    let media = block.media();
+                    // BUGFIX: the buffer MUST be sized to the *whole run*
+                    // (`byte_count` == `run_clusters * sector_size`), not
+                    // `run_clusters * 512`. The old formula only fetched
+                    // `sectors_per_cluster==1` worth of bytes per cluster
+                    // and silently left the tail of the file filled with
+                    // zeros — that is why winload's `.rdata`/`.data`/...
+                    // sections were zero in RAM even though the on-disk
+                    // bytes were valid.
+                    let alloc_size_usize = core::cmp::min(
+                        byte_count as usize,
+                        (out.len() - out_cursor),
+                    );
+                    let mut data = alloc::vec![0u8; alloc_size_usize];
+                    // write a marker so we can detect whether read_blocks
+                    // actually wrote anything to the buffer.
+                    for i in 0..alloc_size_usize {
+                        data[i] = 0xfe;
+                    }
+                    let mut copy_len: usize = 0;
+                    if block.read_blocks(media.media_id(), disk_lba, &mut data).is_ok() {
+                        copy_len = data.len().min(out.len() - out_cursor);
+                        // Verify read_blocks actually wrote real data
+                        // (not 0xfe placeholder).
+                        let mut non_fe_count = 0;
+                        for i in 0..alloc_size_usize.min(4096) {
+                            if data[i] != 0xfe { non_fe_count += 1; }
+                        }
+                        uefi::println!("[NTFS-RUN]   first 4096 bytes: {} non-placeholder (verify={:02x} {:02x} {:02x} {:02x})",
+                            non_fe_count, data[0], data[1], data[2], data[3]);
                         out[out_cursor..out_cursor + copy_len]
                             .copy_from_slice(&data[..copy_len]);
-                        out_cursor += byte_count as usize;
+                        uefi::println!("[NTFS-RUN]   copied {} bytes to out_cursor={}",
+                            copy_len, out_cursor);
+                    } else {
+                        uefi::println!("[NTFS-RUN]   read_blocks FAILED for disk_lba={}", disk_lba);
                     }
+                    out_cursor += copy_len;
+                    // SAFETY: do NOT advance by byte_count here, because
+                    // the *last* run of the file is usually shorter than
+                    // a full run (`byte_count` rounds up to sector_size).
+                    // The next run-list entry will simply not exist; the
+                    // caller truncates to `real_size` afterwards.
                 }
                 // Trim to real_size so the caller sees the exact file length.
                 out.truncate(real_size as usize);
@@ -3148,50 +4132,155 @@ fn read_data_stream(ntfs: &NtfsBoot, record_num: u64) -> Option<Vec<u8>> {
 }
 
 /// Public entry point: try to read `rel_path` (Windows-style, e.g.
-/// `\Windows\System32\winload.efi`) from the NTFS System partition.
-fn read_ntfs_boot_file(rel_path: &str) -> Option<Vec<u8>> {
-    use uefi::boot::OpenProtocolAttributes;
-    use uefi::boot::OpenProtocolParams;
-    use uefi::proto::media::block::BlockIO;
+/// Parse GPT partition table to find the starting LBA of the NTFS partition.
+/// Returns (partition_start_lba, partition_sectors) or None if not found.
+fn find_ntfs_partition_lba(block: &uefi::proto::media::block::BlockIO) -> Option<(u64, u64)> {
+    let media = block.media();
+    let block_size = media.block_size() as u64;
 
-    // Find the NTFS partition handle and read its boot sector.
-    let handles = boot::find_handles::<BlockIO>().ok()?;
-    let mut ntfs_handle: Option<uefi::Handle> = None;
-    let mut boot_sector = [0u8; 512];
-    for handle in handles.iter() {
-        // SAFETY: GetProtocol is non-destructive.
-        let sp = unsafe {
-            boot::open_protocol::<BlockIO>(
-                OpenProtocolParams {
-                    handle: *handle,
-                    agent: boot::image_handle(),
-                    controller: None,
-                },
-                OpenProtocolAttributes::GetProtocol,
-            )
-        };
-        let Ok(block) = sp else { continue; };
-        let media = block.media();
-        if media.block_size() != 512 { continue; }
-        if block.read_blocks(media.media_id(), 0u64, &mut boot_sector).is_err() { continue; }
-        if &boot_sector[3..11] == b"NTFS    " {
-            ntfs_handle = Some(*handle);
-            break;
+    // Read GPT header from LBA 1
+    let mut gpt_header = [0u8; 512];
+    if block.read_blocks(media.media_id(), 1, &mut gpt_header).is_err() {
+        uefi::println!("[NTFS] Failed to read GPT header from LBA 1");
+        return None;
+    }
+
+    // Verify GPT signature "EFI PART"
+    if &gpt_header[0..8] != b"EFI PART" {
+        uefi::println!("[NTFS] No GPT signature at LBA 1, found: {:?}", &gpt_header[0..8]);
+        return None;
+    }
+
+    // Get partition table info from GPT header
+    let partition_entry_count = u32::from_le_bytes([
+        gpt_header[80], gpt_header[81], gpt_header[82], gpt_header[83]
+    ]) as usize;
+    let partition_entry_size = u32::from_le_bytes([
+        gpt_header[84], gpt_header[85], gpt_header[86], gpt_header[87]
+    ]) as usize;
+    let partition_entries_lba = u64::from_le_bytes([
+        gpt_header[72], gpt_header[73], gpt_header[74], gpt_header[75],
+        gpt_header[76], gpt_header[77], gpt_header[78], gpt_header[79]
+    ]);
+
+    // NTFS partition type GUID: EBD0A0A2-B9E5-4433-87C0-68B6B72699C7
+    let ntfs_guid = [
+        0xA2, 0xA0, 0xD0, 0xEB, 0xE5, 0xB9, 0x33, 0x44,
+        0x87, 0xC0, 0x68, 0xB6, 0xB7, 0x26, 0x99, 0xC7
+    ];
+
+    // Read partition entries (typically 128 bytes each, 128 entries max)
+    let entry_bytes = partition_entry_size.min(512);
+    let mut entries_buf = alloc::vec![0u8; partition_entry_size * partition_entry_count.min(128)];
+
+    // Read partition entries starting from partition_entries_lba
+    let entries_sectors = ((partition_entry_size * partition_entry_count.min(128)) as u64 + block_size - 1) / block_size;
+    if block.read_blocks(media.media_id(), partition_entries_lba, &mut entries_buf).is_err() {
+        return None;
+    }
+
+    // Search for NTFS partition
+    for i in 0..partition_entry_count.min(128) {
+        let entry_off = i * partition_entry_size;
+        if entry_off + 16 > entries_buf.len() { break; }
+
+        // Check partition type GUID (offset 0)
+        let mut is_ntfs = true;
+        for j in 0..16 {
+            if entries_buf[entry_off + j] != ntfs_guid[j] {
+                is_ntfs = false;
+                break;
+            }
+        }
+
+        if is_ntfs {
+            // Starting LBA at offset 32 (8 bytes)
+            let start_lba = u64::from_le_bytes([
+                entries_buf[entry_off + 32], entries_buf[entry_off + 33],
+                entries_buf[entry_off + 34], entries_buf[entry_off + 35],
+                entries_buf[entry_off + 36], entries_buf[entry_off + 37],
+                entries_buf[entry_off + 38], entries_buf[entry_off + 39]
+            ]);
+            // Ending LBA at offset 40 (8 bytes)
+            let end_lba = u64::from_le_bytes([
+                entries_buf[entry_off + 40], entries_buf[entry_off + 41],
+                entries_buf[entry_off + 42], entries_buf[entry_off + 43],
+                entries_buf[entry_off + 44], entries_buf[entry_off + 45],
+                entries_buf[entry_off + 46], entries_buf[entry_off + 47]
+            ]);
+            let sector_count = end_lba - start_lba + 1;
+
+            uefi::println!("[NTFS] Found NTFS partition via GPT: start_lba={} sectors={}", start_lba, sector_count);
+            return Some((start_lba, sector_count));
         }
     }
-    let ntfs = match NtfsBoot::parse(&boot_sector) {
+
+    None
+}
+
+/// Read `rel_path` (Windows-style, e.g.
+/// `\Windows\System32\winload.efi`) from the NTFS partition reachable
+/// through `block_io`. The caller is responsible for confirming the
+/// handle is NTFS via [`probe_partition_type`] before calling this —
+/// this function no longer probes for NTFS itself.
+///
+/// `partition_start_lba` is the disk-relative LBA of the NTFS partition's
+/// first sector. Pass 0 for a partition-scoped handle; pass the GPT
+/// start LBA for a disk-scoped handle.
+fn read_ntfs_boot_file_for(
+    rel_path: &str,
+    block_io: &uefi::proto::media::block::BlockIO,
+    partition_start_lba: u64,
+) -> Option<Vec<u8>> {
+    let media = block_io.media();
+    let media_id = media.media_id();
+    uefi::println!(
+        "[NTFS] read_ntfs_boot_file_for: block_size={} media_id={} part_lba={}",
+        media.block_size(),
+        media_id,
+        partition_start_lba
+    );
+
+    // Read the NTFS boot sector from `partition_start_lba`. For
+    // partition-scoped handles that is just 0; for disk-scoped handles
+    // it is the GPT-reported start of the NTFS entry.
+    let mut boot_sector = [0u8; 512];
+    if block_io
+        .read_blocks(media_id, partition_start_lba, &mut boot_sector)
+        .is_err()
+    {
+        uefi::println!(
+            "[NTFS] Failed to read boot sector at LBA {}",
+            partition_start_lba
+        );
+        return None;
+    }
+    if &boot_sector[3..11] != b"NTFS    " {
+        uefi::println!(
+            "[NTFS] Probe said NTFS but LBA {} OEM ID is {:?} — bailing",
+            partition_start_lba,
+            core::str::from_utf8(&boot_sector[3..11]).unwrap_or("?")
+        );
+        return None;
+    }
+
+    let ntfs = match NtfsBoot::parse(&boot_sector, partition_start_lba, block_io as *const _) {
         Some(n) => n,
         None => {
-            uefi::println!("[NTFS] no NTFS partition found");
+            uefi::println!("[NTFS] NTFS boot sector parse failed");
             return None;
         }
     };
-    let _ = ntfs_handle;
+
     uefi::println!(
         "[NTFS] mount: bps={} spc={} mft_lcn={} mft_rec_sz={} total_sectors={}",
-        ntfs.bytes_per_sector, ntfs.sectors_per_cluster,
-        ntfs.mft_start_lcn, ntfs.mft_record_size, ntfs.total_sectors
+        ntfs.bytes_per_sector,
+        ntfs.sectors_per_cluster,
+        ntfs.mft_start_lcn,
+        ntfs.mft_record_size,
+        ntfs.total_sectors
     );
+
     let record = match resolve_mft_record(&ntfs, rel_path) {
         Some(r) => r,
         None => {
@@ -3200,5 +4289,154 @@ fn read_ntfs_boot_file(rel_path: &str) -> Option<Vec<u8>> {
         }
     };
     uefi::println!("[NTFS] {} -> MFT record {}", rel_path, record);
-    read_data_stream(&ntfs, record)
+
+    let data_opt = read_data_stream(&ntfs, record);
+    if let Some(ref d) = data_opt {
+        uefi::println!(
+            "[NTFS] read_data_stream returned {} bytes, first 32 bytes: {:02x?}",
+            d.len(),
+            &d[..32.min(d.len())]
+        );
+    } else {
+        uefi::println!("[NTFS] read_data_stream returned None");
+    }
+    data_opt
+}
+
+/// Legacy convenience entry: walks every BlockIO handle and forwards
+/// to [`read_ntfs_boot_file_for`] on the first handle whose boot sector
+/// advertises NTFS. Kept for callers that haven't migrated to the
+/// partition-type dispatcher yet.
+fn read_ntfs_boot_file(rel_path: &str) -> Option<Vec<u8>> {
+    use uefi::boot::OpenProtocolAttributes;
+    use uefi::boot::OpenProtocolParams;
+    use uefi::proto::media::block::BlockIO;
+    use core::mem::ManuallyDrop;
+
+    let handles = boot::find_handles::<BlockIO>().ok()?;
+    uefi::println!("[NTFS] Found {} BlockIO handles", handles.len());
+
+    for handle in handles.iter() {
+        let block = match unsafe {
+            boot::open_protocol::<BlockIO>(
+                OpenProtocolParams {
+                    handle: *handle,
+                    agent: boot::image_handle(),
+                    controller: None,
+                },
+                OpenProtocolAttributes::GetProtocol,
+            )
+        } {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        let block = ManuallyDrop::new(block);
+        let Some(block_ref) = block.get() else {
+            core::mem::forget(block);
+            continue;
+        };
+        let media = block_ref.media();
+        if media.block_size() != 512 || !media.is_logical_partition() {
+            core::mem::forget(block);
+            continue;
+        }
+
+        let mut boot_sector = [0u8; 512];
+        if block_ref.read_blocks(media.media_id(), 0, &mut boot_sector).is_err() {
+            core::mem::forget(block);
+            continue;
+        }
+        if &boot_sector[3..11] != b"NTFS    " {
+            core::mem::forget(block);
+            continue;
+        }
+
+        let result = read_ntfs_boot_file_for(rel_path, block_ref, 0);
+        core::mem::forget(block);
+        if result.is_some() {
+            return result;
+        }
+    }
+    None
+}
+
+/// Find the NTFS partition's start LBA via GPT, using a `&BlockIO` reference.
+fn find_ntfs_partition_lba_raw(block: &uefi::proto::media::block::BlockIO) -> Option<(u64, u64)> {
+    let media = block.media();
+    let block_size = media.block_size() as u64;
+    uefi::println!("[NTFS-GPT] media_id={} block_size={}", media.media_id(), block_size);
+
+    // Read GPT header from LBA 1
+    let mut gpt_header = [0u8; 512];
+    uefi::println!("[NTFS-GPT] Reading GPT header from LBA 1...");
+    if block.read_blocks(media.media_id(), 1, &mut gpt_header).is_err() {
+        uefi::println!("[NTFS] Failed to read GPT header from LBA 1");
+        return None;
+    }
+    uefi::println!("[NTFS-GPT] Read GPT header, sig={:?}", &gpt_header[0..8]);
+
+    // Verify GPT signature "EFI PART"
+    if &gpt_header[0..8] != b"EFI PART" {
+        uefi::println!("[NTFS] No GPT signature at LBA 1, found: {:?}", &gpt_header[0..8]);
+        return None;
+    }
+
+    // Get partition table info from GPT header
+    let partition_entry_count = u32::from_le_bytes([
+        gpt_header[80], gpt_header[81], gpt_header[82], gpt_header[83]
+    ]) as usize;
+    let partition_entry_size = u32::from_le_bytes([
+        gpt_header[84], gpt_header[85], gpt_header[86], gpt_header[87]
+    ]) as usize;
+    let partition_entries_lba = u64::from_le_bytes([
+        gpt_header[72], gpt_header[73], gpt_header[74], gpt_header[75],
+        gpt_header[76], gpt_header[77], gpt_header[78], gpt_header[79]
+    ]);
+
+    // NTFS partition type GUID: EBD0A0A2-B9E5-4433-87C0-68B6B72699C7
+    let ntfs_guid = [
+        0xA2, 0xA0, 0xD0, 0xEB, 0xE5, 0xB9, 0x33, 0x44,
+        0x87, 0xC0, 0x68, 0xB6, 0xB7, 0x26, 0x99, 0xC7
+    ];
+
+    // Read partition entries
+    let mut entries_buf = alloc::vec![0u8; partition_entry_size * partition_entry_count.min(128)];
+    if block.read_blocks(media.media_id(), partition_entries_lba, &mut entries_buf).is_err() {
+        return None;
+    }
+
+    // Search for NTFS partition
+    for i in 0..partition_entry_count.min(128) {
+        let entry_off = i * partition_entry_size;
+        if entry_off + 16 > entries_buf.len() { break; }
+
+        let mut is_ntfs = true;
+        for j in 0..16 {
+            if entries_buf[entry_off + j] != ntfs_guid[j] {
+                is_ntfs = false;
+                break;
+            }
+        }
+
+        if is_ntfs {
+            let start_lba = u64::from_le_bytes([
+                entries_buf[entry_off + 32], entries_buf[entry_off + 33],
+                entries_buf[entry_off + 34], entries_buf[entry_off + 35],
+                entries_buf[entry_off + 36], entries_buf[entry_off + 37],
+                entries_buf[entry_off + 38], entries_buf[entry_off + 39]
+            ]);
+            let end_lba = u64::from_le_bytes([
+                entries_buf[entry_off + 40], entries_buf[entry_off + 41],
+                entries_buf[entry_off + 42], entries_buf[entry_off + 43],
+                entries_buf[entry_off + 44], entries_buf[entry_off + 45],
+                entries_buf[entry_off + 46], entries_buf[entry_off + 47]
+            ]);
+            let sector_count = end_lba - start_lba + 1;
+
+            uefi::println!("[NTFS] Found NTFS partition via GPT: start_lba={} sectors={}", start_lba, sector_count);
+            return Some((start_lba, sector_count));
+        }
+    }
+
+    None
 }
