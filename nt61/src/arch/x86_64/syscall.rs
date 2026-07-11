@@ -87,6 +87,11 @@ pub const PER_CPU_KERNEL_RSP_OFFSET: usize = 0x8;
 /// (`KeGetCurrentEthread`, `get_current_ethread`, ...) MUST
 /// use this offset.
 pub const PER_CPU_CURRENT_THREAD_OFFSET: usize = 0x10;
+/// Offset of the `syscall_snap_addr` slot. The `syscall_entry`
+/// asm reads `gs:[0x58]` to load `&SYSCALL_ENTRY_SNAP` into RAX
+/// without needing a 64-bit LEA or a memory LOAD. The slot is
+/// populated by `init_syscall_msrs()` in `syscall.rs`.
+pub const PER_CPU_SYSCALL_SNAP_ADDR_OFFSET: usize = 0x58;
 /// Offset of the `current_process` slot.
 pub const PER_CPU_CURRENT_PROCESS_OFFSET: usize = 0x18;
 
@@ -176,6 +181,55 @@ pub struct TrapFrame {
     pub rflags: u64,
     pub rsp: u64,
     pub ss: u64,
+}
+
+/// Snapshot of RAX (= user-mode syscall number) taken at the very
+/// first instruction of `syscall_entry` (in `idt_stubs.rs`). This
+/// captures the value BEFORE the Rust compiler can clobber RAX
+/// in the dispatcher's prologue. Useful for verifying that the
+/// user-mode stub actually set RAX to the expected syscall
+/// number before executing `syscall`.
+///
+/// Layout (24 bytes):
+///   [0..8]   = RAX at syscall_entry (user-mode syscall number)
+///   [8..16]  = RCX at syscall_entry (user-mode RIP)
+///   [16..24] = 8 bytes from user RIP (bytes the CPU would
+///              execute next)
+#[repr(C)]
+pub struct SyscallEntrySnap {
+    pub rax: u64,
+    pub rip: u64,
+    pub rip_bytes: [u8; 8],
+}
+
+#[no_mangle]
+pub static mut SYSCALL_ENTRY_SNAP: SyscallEntrySnap = SyscallEntrySnap {
+    rax: 0xDEAD_BEEF_DEAD_BEEF,
+    rip: 0xDEAD_BEEF_DEAD_BEEF,
+    rip_bytes: [0xCC; 8],
+};
+
+// (The previous per-field address-symbol helpers
+//  SYSCALL_ENTRY_SNAP_ADDR_* and init_snap_addrs() have been
+//  removed: the assembly now uses `sym SYSCALL_ENTRY_SNAP` once
+//  for the base and offsets from the assembly side, which works
+//  without any runtime address patching.)
+
+// Back-compat aliases for the existing print sites.
+#[allow(non_snake_case)]
+#[inline(always)]
+pub unsafe fn SYSCALL_ENTRY_RAX_SNAP() -> u64 {
+    core::ptr::read_volatile(&raw const SYSCALL_ENTRY_SNAP.rax)
+}
+#[allow(non_snake_case)]
+#[inline(always)]
+pub unsafe fn SYSCALL_ENTRY_RIP_SNAP() -> u64 {
+    core::ptr::read_volatile(&raw const SYSCALL_ENTRY_SNAP.rip)
+}
+#[allow(non_snake_case)]
+#[inline(always)]
+pub unsafe fn SYSCALL_ENTRY_RIP_BYTE_SNAP() -> [u8; 8] {
+    core::ptr::read_volatile(&raw const SYSCALL_ENTRY_SNAP.rip_bytes)
 }
 
 extern "C" {
@@ -930,6 +984,30 @@ fn dispatch(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
             crate::ps::process::process_exit(arg0(tf) as u32)
         }
 
+        // SYS_PUTCHAR: print a single character from Ring 3 via
+        // the kernel serial port. arg0 (rdi per Linux x64, r10 per
+        // Windows x64) holds the ASCII byte. This exists
+        // specifically because the user-mode cmd.exe stub cannot
+        // execute `out dx, al` at CPL=3 with IOPL=0 — the syscall
+        // bypasses the privilege check. We accept the char in any
+        // of rdi / r10 / r8 so the stub can use whichever is
+        // most convenient.
+        nums::SYS_PUTCHAR => {
+            let ch = (arg0(tf) & 0xFF) as u8;
+            // Map CR (0x0D) -> "\r\n" so terminals move to a new
+            // line; LF alone is dropped to avoid doubled CRLFs.
+            if ch == b'\n' {
+                crate::hal::x86_64::serial::write_char(b'\r');
+                crate::hal::x86_64::serial::write_char(b'\n');
+            } else if ch == b'\r' {
+                crate::hal::x86_64::serial::write_char(b'\r');
+                crate::hal::x86_64::serial::write_char(b'\n');
+            } else {
+                crate::hal::x86_64::serial::write_char(ch);
+            }
+            0
+        }
+
         // ---- Fallback ----
         _ => not_implemented(),
     }
@@ -953,29 +1031,54 @@ fn dispatch(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
 
 #[no_mangle]
 pub extern "C" fn syscall_dispatch(syscall_num: u64, tf: *mut TrapFrame) -> u64 {
-    // Increment the per-CPU syscall counter
+    // IMMEDIATE snap.rip print — before anything else runs, to see
+    // what value the asm-level writes actually left in memory.
+    let _early_v: u64 = unsafe { core::ptr::read_volatile(&raw const SYSCALL_ENTRY_SNAP.rip) };
+    crate::boot_println!("[PHASE 0] VERY-EARLY snap.rip=0x{:x}", _early_v);
+
+    // CRITICAL: snapshot RAX/RCX/RDX/etc. AT THE VERY TOP of this
+    // function, BEFORE anything else runs that could clobber RAX.
+    //
+    // In particular, *do not* call `fetch_add` (which lowers to
+    // `lock xadd`, and that macro overwrites RAX) before the asm
+    // block. The previous version of this code did exactly that and
+    // the captured RAX was the fetch_add return value, not the
+    // user-mode syscall number. We use raw loads/stores to the
+    // counter (still atomic on x86) so the asm block can run with
+    // the *original* RAX/RCX/RDX undisturbed by any implicit
+    // `lock xadd` that a fetch_add would generate.
+    //
+    // ABI note: `extern "C"` on x86_64-unknown-uefi uses the
+    // Windows x64 ABI, so the first argument arrives in RCX
+    // (syscall_num) and the second in RDX (&TrapFrame). The asm
+    // stub populates RCX/RDX accordingly.
+    static DEBUG_FIRED: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+    let capture_n = DEBUG_FIRED.fetch_add(1, Ordering::Relaxed);
+    if capture_n < 5 {
+        crate::boot_println!("[PHASE 0] syscall_dispatch: fn-param-syscall_num={:#x} fn-param-tf={:#x}",
+            syscall_num, tf as u64);
+        // The asm stub wrote:
+        //   SYSCALL_ENTRY_SNAP.rax = user RAX (syscall num)
+        //   SYSCALL_ENTRY_SNAP.rip = user RCX (return RIP)
+        //   SYSCALL_ENTRY_SNAP.rip_bytes = 8 bytes from user RIP
+        // Dump all three so we can compare to fn-param-syscall_num
+        // and to the user-mode code bytes.
+        unsafe {
+            let snap_rax: u64 = core::ptr::read_volatile(&raw const SYSCALL_ENTRY_SNAP.rax);
+            let snap_rip: u64 = core::ptr::read_volatile(&raw const SYSCALL_ENTRY_SNAP.rip);
+            let snap_bytes: [u8; 8] = core::ptr::read_volatile(&raw const SYSCALL_ENTRY_SNAP.rip_bytes);
+            crate::boot_println!("[PHASE 0] syscall_dispatch: SNAP.rax={:#x} SNAP.rip={:#x} SNAP.rip_bytes=[{:02x},{:02x},{:02x},{:02x},{:02x},{:02x},{:02x},{:02x}]",
+                snap_rax, snap_rip,
+                snap_bytes[0], snap_bytes[1], snap_bytes[2], snap_bytes[3],
+                snap_bytes[4], snap_bytes[5], snap_bytes[6], snap_bytes[7]);
+        }
+    }
+    // Increment the per-CPU syscall counter.
     let ptr = get_current() as *mut PerCpuArea;
     unsafe { (*ptr).syscall_count += 1; }
-    // Phase 0 ring-transition instrumentation: every Ring 3 →
-    // Ring 0 transition that successfully reaches the dispatcher
-    // is counted. The first call prints a marker so the bring-up
-    // is observable even if subsequent syscalls stall.
-    let n = crate::userspace::minimal_stub::USER_SYSCALL_COUNT
-        .fetch_add(1, core::sync::atomic::Ordering::Relaxed) + 1;
-    if n == 1 || n == 2 || n == 3 || n == 4 || n == 5 {
-        crate::boot_println!("[PHASE 0] user ring3 syscall #{} num=0x{:x}", n, syscall_num);
-    }
     unsafe {
         let tf_ref: &TrapFrame = &*tf;
         let result = dispatch(syscall_num as u32, tf_ref);
-        // Periodic progress marker so the bring-up is observable
-        // on a serial console. Once Milestone C is in place the
-        // timer-driven scheduler will take over and this marker
-        // can be removed.
-        if n % 1024 == 0 {
-//             // // // crate::kprintln!("[PHASE 0] user ring3 still alive, total_syscalls={} (syscall_num=0x{:x})",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// // //                       n, syscall_num);
-        }
         result as u64
     }
 }
@@ -1060,6 +1163,19 @@ pub fn init_syscall_msrs() {
     set_user_gs_base(0);
     init_storage();  // Initialize the per-CPU pages storage
     let cpu_base = init(0);  // Init BSP's per-CPU area
+
+    // 5b. Publish the absolute virtual address of SYSCALL_ENTRY_SNAP
+    //     into the per-CPU area at gs:[0x58]. The syscall_entry asm
+    //     reads this slot to get a 64-bit `&snap` value in a register
+    //     without using a 64-bit LEA or a memory LOAD — both of which
+    //     produce the wrong address for the link-time VMA 0x140069c18
+    //     (which does not fit in a sign-extended 32-bit LEA immediate,
+    //     and which a `mov rax, snap` form would instead dereference).
+    unsafe {
+        let area = get_per_cpu();
+        (*area).syscall_snap_addr =
+            &SYSCALL_ENTRY_SNAP as *const SyscallEntrySnap as u64;
+    }
 
     // 6. Initialize SSDT
     crate::ke::ssdt::init();

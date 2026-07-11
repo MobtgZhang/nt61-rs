@@ -28,6 +28,56 @@ use crate::arch::x86_64::gdt::USER_CS;
 #[cfg(target_arch = "x86_64")]
 use crate::arch::x86_64::gdt::USER_SS;
 
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+global_asm!(
+    "  .weak rust_eh_personality",
+    "rust_eh_personality:",
+    "  ud2",
+    "  .weak memset",
+    "memset:",
+    "  mov r8, rdi",
+    "  mov rcx, rdx",
+    "  movzx eax, sil",
+    "  test rcx, rcx",
+    "  jz 2f",
+    "1:  mov [rdi], al",
+    "  inc rdi",
+    "  dec rcx",
+    "  jnz 1b",
+    "2:  mov rax, r8",
+    "  ret",
+    "  .weak memcpy",
+    "memcpy:",
+    "  mov r9, rdi",
+    "  mov rcx, rdx",
+    "  test rcx, rcx",
+    "  jz 2f",
+    "1:  mov al, [rsi]",
+    "  mov [rdi], al",
+    "  inc rsi",
+    "  inc rdi",
+    "  dec rcx",
+    "  jnz 1b",
+    "2:  mov rax, r9",
+    "  ret",
+    "  .weak bcmp",
+    "bcmp:",
+    "  mov r8, rdi",
+    "  mov rcx, rdx",
+    "  xor rax, rax",
+    "  test rcx, rcx",
+    "  jz 2f",
+    "1:  movzx r9, byte ptr [rsi]",
+    "  movzx r10, byte ptr [rdi]",
+    "  sub r9, r10",
+    "  or rax, r9",
+    "  inc rsi",
+    "  inc rdi",
+    "  dec rcx",
+    "  jnz 1b",
+    "2:  ret",
+);
+
 global_asm!(
 
     // ---- raw-bytes helper --------------------------------------------
@@ -265,39 +315,75 @@ global_asm!(
     // -------------------------------------------------------------------
     "  .global syscall_entry",
     "syscall_entry:",
-    // DEBUG: write 'S' to serial port 0x3F8 to mark syscall_entry reached.
-    "  mov al, 0x53",  // 'S'
-    "  mov dx, 0x3F8",
-    "  out dx, al",
+    // === Snapshot RAX, user RIP, and 8 bytes from user RIP into SYSCALL_ENTRY_SNAP ===
+    //
+    // Layout of SYSCALL_ENTRY_SNAP:
+    //   [ 0..8 ]  rax      : user syscall number (snapshot at entry)
+    //   [ 8..16]  rip      : user-mode RIP (= RCX at entry)
+    //   [16..24]  rip_bytes: 8 bytes from user-mode RIP (for diagnostics)
+    //
+    // On entry to syscall_entry:
+    //   RAX = syscall number (clobbered by syscall)
+    //   RCX = user-mode RIP  (clobbered by syscall)
+    //   R11 = user-mode RFLAGS (clobbered by syscall)
+    //
+    // The {snap_base} operand references the SYSCALL_ENTRY_SNAP symbol.
+    // In .intel_syntax noprefix under global_asm!:
+    //   - `movabs {snap_base}, rax` encodes `48 a3 imm64` (mem STORE rax -> [imm64])
+    //   - `mov rax, qword ptr gs:[0x58]` loads a 64-bit absolute address
+    //     from a per-CPU slot populated by `init_syscall_msrs`. We use
+    //     this instead of `lea rax, [{snap_base}]` because the LEA form
+    //     truncates the high 32 bits of the absolute VMA 0x140069c18.
+    "  mov r8, r14",                       // r8 = real user R14 (preserved)
+    "  mov r14, rcx",                       // r14 = user RIP (preserve across writes)
+    "  movabs {snap_base}, rax",            // snap.rax = RAX (syscall num) — first!
+    "  mov rax, qword ptr gs:[0x58]",       // rax = &snap (loaded from per-CPU area)
+    "  mov r12, rax",                       // r12 = &snap (callee-preserved)
+    "  mov [rax + 8], r14",                 // snap.rip = user RIP
+    // Copy 8 bytes from user RIP into snap.rip_bytes via movs. RSI =
+    // user RIP (R-X page, kernel-readable from the user PML4). RDI =
+    // &snap.rip_bytes (R+W kernel page). DS:[RSI] -> ES:[RDI].
+    "  mov rsi, r14",                       // rsi = user RIP (source)
+    "  lea rdi, [rax + 16]",                // rdi = &snap.rip_bytes (dest)
+    "  mov rcx, 8",                         // count = 8 bytes
+    "  rep movsb",                          // copy 8 bytes from [user RIP] -> snap.rip_bytes
+    // Reload &snap into RAX (rep movsb advanced RDI and clobbered AL).
+    "  mov rax, r12",                       // rax = &snap
+    "  mov rdi, [rax]",                     // rdi = snap.rax = user syscall number
+    "  mov r13, rdi",                       // r13 = syscall number (preserved)
+    // Windows x64 ABI: extern "C" takes arg1=RCX, arg2=RDX. Move the
+    // syscall number into RCX for syscall_dispatch(syscall_num, tf).
+    "  mov rcx, r13",                       // rcx = syscall number (arg1)
     "  swapgs",
-    "  mov gs:[0x0], rsp",               // save user rsp
-    "  mov rsp, gs:[0x8]",               // load kernel rsp
-    // DEBUG: write 'K' to serial port to mark kernel RSP loaded.
-    "  mov al, 0x4B",  // 'K'
-    "  mov dx, 0x3F8",
-    "  out dx, al",
-    // Save user rsp into a scratch register BEFORE any push so we
-    // can store it in the rsp slot of the frame.
-    "  mov r15, gs:[0x0]",               // r15 = user rsp
-    // We do NOT switch CR3 here: the user PML4 already has the
-    // kernel half copied from the system PML4 (see
-    // `mm::vas::create_user_address_space`), so both kernel stack
-    // and user pages are reachable through it. Switching CR3 to
-    // the bare system PML4 would lose the user-half mappings, and
-    // any syscall handler that reads user pointers (e.g. the
-    // SYS_RUN_AUTOEXEC path) would page-fault. Keeping CR3 on the
-    // user PML4 means the syscall handler can read both kernel
-    // and user memory through the same PTE tree.
-    // Push in reverse field order.
+    "  mov gs:[0x0], rsp",                  // save user rsp
+    "  mov rsp, gs:[0x8]",                  // load kernel rsp
+    "  mov r15, gs:[0x0]",                  // r15 = user rsp (saved for trap frame)
+    // Push in reverse field order. Use R14 (= preserved user RIP)
+    // for slot 17, not RCX — RCX has been clobbered to 0 by the
+    // `rep movsb` above. The trap frame's `rip` slot must hold the
+    // real user-mode RIP so sysretq can return to it.
     "  push {user_ss}",                 // 21: ss = USER_SS (Ring 3 data, DPL=3)
     "  push r15",                        // 20: rsp = user rsp
     "  push r11",                        // 19: rflags (r11 = user RFLAGS)
     "  push {user_cs}",                 // 18: cs = USER_CS (Ring 3 code, DPL=3)
-    "  push rcx",                        // 17: rip (rcx = user RIP)
+    "  push r14",                        // 17: rip = user RIP (preserved in r14)
     "  push 0",                          // 16: error_code
     "  push 0x100",                      // 15: vector (sentinel for syscall)
     "  push r15",                        // 14: r15
-    "  push r14",                        // 13: r14
+    // Restore the real user-mode R14 from R9 (we clobbered R14
+    // with user RIP earlier). The push then stores the genuine
+    // user R14 into slot 13, which `pop r14` will restore for
+    // sysretq.
+    //
+    // IMPORTANT: R14 must be set to *real user R14* before the
+    // `push r14` for slot 13 AND must still contain the user-mode
+    // RIP by the time we restore it for slot 1 (push rcx). The
+    // approach below uses two callee-preserved registers: we save
+    // the user RIP into R15 IMMEDIATELY after the entry (before
+    // any diagnostic that might clobber R14), then move it back
+    // into R14 just before the slot 1 push.
+    "  mov r14, r8",                     // r14 = real user R14 (from preserved r8)
+    "  push r14",                        // 13: r14 = real user R14
     "  push r13",                        // 12: r13
     "  push r12",                        // 11: r12
     "  push r11",                        // 10: r11
@@ -309,13 +395,32 @@ global_asm!(
     "  push rbp",                        //  4: rbp
     "  push rbx",                        //  3: rbx
     "  push rdx",                        //  2: rdx
-    "  push rcx",                        //  1: rcx
-    "  push rax",                        //  0: rax (syscall # on entry, ret val on exit)
-    // Windows x64 ABI: arg1 in RCX, arg2 in RDX. syscall number is
-    // in rax; copy it to rcx so that syscall_dispatch (compiled for
-    // `x86_64-unknown-uefi`) sees it as the first parameter.
-    "  mov rcx, rax",                    // syscall number (Windows arg1)
-    "  mov rdx, rsp",                    // &TrapFrame = rsp (Windows arg2)
+    // Restore RCX = user RIP from the snap static (we wrote it there
+    // immediately after syscall_entry). Slot 1 must hold the
+    // user-mode return RIP for sysretq to return to the right
+    // instruction. We use snap.rip instead of R14 because R14 gets
+    // restored to the real user R14 (saved in R9) just above for
+    // slot 13, and we want both the real user R14 in slot 13 AND
+    // the user RIP in slot 1.
+    // The first LEA at the top of syscall_entry stored &snap in R12
+    // (using `movabs rax, {snap_base}` because the absolute address
+    // doesn't fit in a 32-bit sign-extended LEA immediate). Reload
+    // RAX from R12 here so [rax + 8] targets the real SYSCALL_ENTRY_SNAP.
+    "  mov rax, r12",                     // rax = &snap (from R12)
+    "  mov rcx, [rax + 8]",               // rcx = snap.rip = user RIP
+    "  push rcx",                        //  1: rcx = user RIP
+    "  push rax",                        //  0: rax = &snap (placeholder; real syscall num
+                                         //      lives in snap.rax + r13)
+    // RDX is set to &TrapFrame (the stack pointer right after the
+    // pushes), overriding the pre-push RDX we set earlier.
+    "  mov rdx, rsp",                    // &TrapFrame = rsp (Windows ABI arg2)
+    // CRITICAL: Windows x64 ABI arg1 = RCX. We overwrote RCX above
+    // with user RIP for the trap frame slot 1 push. Restore RCX to
+    // R13 (= preserved syscall_num) before the call so syscall_num
+    // arrives correctly in Rust, even at the cost of also pushing
+    // that same value into slot 1 (sysretq uses slot 1 as user RIP;
+    // we'll fix that with `mov rcx, [r12+8]` after the call).
+    "  mov rcx, r13",                    // rcx = syscall_num (Windows ABI arg1)
     "  call syscall_dispatch",
     // DEBUG: write 'D' to serial port to mark syscall_dispatch returned.
     "  mov al, 0x44",  // 'D'
@@ -356,88 +461,31 @@ global_asm!(
     "  mov dx, 0x3F8",
     "  out dx, al",
     // Load user rsp and swap back to user GS base.
-    "  mov rsp, gs:[0x0]",               // user rsp
-    "  swapgs",
+            "  mov rsp, gs:[0x0]",               // user rsp
+            "  swapgs",
     // DEBUG: write 'R' right before sysretq
     "  mov al, 0x52",  // 'R'
     "  mov dx, 0x3F8",
     "  out dx, al",
     "  sysretq",
 
-    // ---- rust_eh_personality -----------------------------------------
-    // Stub for the rust unwinding personality function. We use
-    // panic = "abort" so we never actually unwind, but the rust
-    // runtime still references this symbol via DWARF unwind tables.
-    //
-    // The symbol is declared `.weak` so that binaries which link
-    // against `libstd` (which provides its own `rust_eh_personality`)
-    // can override this definition with the real one. The kernel,
-    // which has no `libstd`, sees this as the only definition.
-    // -------------------------------------------------------------------
-    "  .weak rust_eh_personality",
-    "rust_eh_personality:",
-    "  ud2",
-
-    // ---- memset / memcpy ---------------------------------------------
-    // On `x86_64-unknown-linux-gnu` (host build) rustc routes some
-    // references through the host runtime. Provide local copies so
-    // the linker does not reach for libc / libgcc and re-introduce
-    // the Scrt1.o `_start` conflict. The targets that don't need
-    // them simply GC the unused section.
-    //
-    // Like the personality, these are declared `.weak` so a host
-    // binary that brings in libc / libgcc will still pick up the
-    // optimised versions from there.
-    // -------------------------------------------------------------------
-    "  .weak memset",
-    "memset:",
-    "  mov r8, rdi",
-    "  mov rcx, rdx",
-    "  movzx eax, sil",
-    "  test rcx, rcx",
-    "  jz 2f",
-    "1:  mov [rdi], al",
-    "  inc rdi",
-    "  dec rcx",
-    "  jnz 1b",
-    "2:  mov rax, r8",
-    "  ret",
-
-    "  .weak memcpy",
-    "memcpy:",
-    "  mov r9, rdi",
-    "  mov rcx, rdx",
-    "  test rcx, rcx",
-    "  jz 2f",
-    "1:  mov al, [rsi]",
-    "  mov [rdi], al",
-    "  inc rsi",
-    "  inc rdi",
-    "  dec rcx",
-    "  jnz 1b",
-    "2:  mov rax, r9",
-    "  ret",
-
-    // ---- bcmp -----------------------------------------------------------
-    // Byte-wise memory comparison. Returns 0 if equal, non-zero otherwise.
-    // This is needed by core's slice comparison functions.
-    "  .weak bcmp",
-    "bcmp:",
-    "  mov r8, rdi",
-    "  mov rcx, rdx",
-    "  xor rax, rax",
-    "  test rcx, rcx",
-    "  jz 2f",
-    "1:  movzx r9, byte ptr [rsi]",
-    "  movzx r10, byte ptr [rdi]",
-    "  sub r9, r10",
-    "  or rax, r9",
-    "  inc rsi",
-    "  inc rdi",
-    "  dec rcx",
-    "  jnz 1b",
-    "2:  ret",
-
     user_cs = const USER_CS as u64,
     user_ss = const USER_SS as u64,
+    // rax_snap: static cell in the kernel's .data that holds the
+    // RAX value at syscall_entry. We use it for debug to see what
+    // user-mode RAX was at the moment the CPU took us here, BEFORE
+    // any subsequent Rust code can clobber RAX.
+    // All three slots point at offsets inside SYSCALL_ENTRY_SNAP:
+    //   rax_snap      = &snap.rax    (offset 0)
+    //   rip_snap      = &snap.rip    (offset 8)
+    //   rip_byte_snap = &snap.rip_bytes (offset 16)
+    // Using one struct keeps all three addresses contiguous and
+    // avoids the rustc symbol-swap bug that previously made the
+    // assembly write to the wrong slot.
+    // Operand map. All three `sym` references point to
+    // SYSCALL_ENTRY_SNAP (a #[no_mangle] static), which has a
+    // proper relocation entry so the linker's runtime VA is
+    // baked into each `movabs` immediate. We then use offsets
+    // (0, 8, 16) inside the assembly to reach each field.
+    snap_base = sym crate::arch::x86_64::syscall::SYSCALL_ENTRY_SNAP,
 );

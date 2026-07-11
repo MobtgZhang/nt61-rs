@@ -556,29 +556,27 @@ fn handle_general_protection(_error_code: u64, tf: &TrapFrame) {
     let _ext = (_error_code >> 16) & 1 != 0;
     crate::boot_println!("[GP] err=0x{:x} cs=0x{:x} rip=0x{:x} rsp=0x{:x} ss=0x{:x} rax=0x{:x} rbx=0x{:x} rcx=0x{:x} rdx=0x{:x} rdi=0x{:x} rsi=0x{:x} r8=0x{:x} r9=0x{:x} r10=0x{:x} r11=0x{:x}", _error_code, tf.cs, tf.rip, tf.rsp, tf.ss, tf.rax, tf.rbx, tf.rcx, tf.rdx, tf.rdi, tf.rsi, tf.r8, tf.r9, tf.r10, tf.r11);
 
-    // Check if this is from user mode (shouldn't happen if selectors are correct)
+    // Check if this is from user mode (CPL != 0 in the saved CS).
     let user_mode = tf.cs & 3 != 0;
 
-    // // crate::kprintln!("[FAULT] #GP (General Protection Fault)")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // crate::kprintln!("  Error code: ID={} EXT={} Selector=0x{:04x}", _selector_id, _ext, _selector_id)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // crate::kprintln!("  RIP=0x{:016x} RSP=0x{:016x}", tf.rip, tf.rsp)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // crate::kprintln!("  CS=0x{:x} SS=0x{:x} RFLAGS=0x{:016x}", tf.cs, tf.ss, tf.rflags)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    
     if user_mode {
-        // For user-mode #GP, return an exception code to user space
-        // In Windows, this would typically result in access violation
-        // // crate::kprintln!("[FAULT] #GP from user mode at 0x{:016x}", tf.rip)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    } else {
-        // Kernel mode #GP is more serious
-        // // crate::kprintln!("[FAULT] #GP from kernel mode - system error!")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // User-mode #GP: print a one-line marker so the serial log
+        // explains why the Ring-3 process died, and terminate it via
+        // process_exit() (which parks the CPU in this kernel because
+        // cmd.exe is the sole user-mode process). Without this arm
+        // the IDT handler would iretq back to the failing
+        // instruction and we would loop forever printing `[[[`.
+        crate::hal::x86_64::serial::write_string(
+            "[FAULT] user-mode #GP, terminating current process\r\n",
+        );
+        crate::ps::process::process_exit(0xC0000005u32); // STATUS_ACCESS_VIOLATION
     }
-    
-    // For now, halt if kernel mode GP
-    if !user_mode {
-        loop {
-            unsafe {
-                core::arch::asm!("hlt", options(nostack));
-            }
+
+    // Kernel-mode #GP is fatal: halt forever so we don't return
+    // through a broken kernel state.
+    loop {
+        unsafe {
+            core::arch::asm!("hlt", options(nostack));
         }
     }
 }

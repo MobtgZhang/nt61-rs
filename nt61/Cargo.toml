@@ -68,7 +68,7 @@ log_level_debug = ["log_level_info"]    # DEBUG, INFO, WARN, ERROR
 opt-level = "z"
 lto = true
 codegen-units = 1
-strip = true
+strip = "none"
 panic = "abort"
 
 [profile.dev]

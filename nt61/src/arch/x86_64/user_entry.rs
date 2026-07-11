@@ -32,6 +32,9 @@
 //! `syscall`/`sysret` path (see `arch::x86_64::syscall`).
 
 use core::arch::global_asm;
+extern "C" {
+    fn syscall_entry();
+}
 
 // Import selector constants from the authoritative source (gdt.rs).
 // These must match the slots that gdt::init() writes into the OVMF GDT:
@@ -93,7 +96,65 @@ global_asm!(
     "  push {user_rflags_32}",            // RFLAGS (zero-extended)
     "  push {user_cs_32}",                // CS (zero-extended)
     "  push r15",                         // RIP
+    // DEBUG: dump the 5 iret frame values (each 8 bytes) and the
+    // current CS descriptor D/L bits before iretq.
+    "  push rax",                         // save scratch regs
+    "  push rbx",
+    "  push rcx",
+    "  push rdx",
+    // Print "IF>" marker so we know the dump ran.
+    "  mov al, 'I'", "mov dx, 0x3F8", "out dx, al",
+    "  mov al, 'F'", "out dx, al",
+    "  mov al, '>'", "out dx, al",
+    // Print the value at [rsp+0] which is RIP (8 bytes little-endian).
+    "  mov rax, [rsp + 0x28]",            // RIP
+    "  call 1f",
+    // Print SS
+    "  mov rax, [rsp + 0x20]",
+    "  call 1f",
+    // Print RSP
+    "  mov rax, [rsp + 0x18]",
+    "  call 1f",
+    // Print RFLAGS
+    "  mov rax, [rsp + 0x10]",
+    "  call 1f",
+    // Print CS
+    "  mov rax, [rsp + 0x08]",
+    "  call 1f",
+    // Newline
+    "  mov al, 0x0D", "out dx, al",
+    "  mov al, 0x0A", "out dx, al",
+    "  pop rdx",
+    "  pop rcx",
+    "  pop rbx",
+    "  pop rax",
     "  iretq",
+    // Local subroutine: print rax as 16 hex digits then a space.
+    "1:",
+    "  push rcx",
+    "  push rdx",
+    "  mov ecx, 16",
+    "2:",
+    "  rol rax, 4",
+    "  mov dl, al",
+    "  and dl, 0x0F",
+    "  cmp dl, 10",
+    "  jb 3f",
+    "  add dl, 'A' - 10",
+    "  jmp 4f",
+    "3:",
+    "  add dl, '0'",
+    "4:",
+    "  mov al, dl",
+    "  mov dx, 0x3F8",
+    "  out dx, al",
+    "  dec ecx",
+    "  jnz 2b",
+    "  mov al, ' '",
+    "  out dx, al",
+    "  pop rdx",
+    "  pop rcx",
+    "  ret",
     user_ss_32     = const USER_SS as u32,
     user_cs_32     = const USER_CS as u32,
     user_rflags_32 = const USER_RFLAGS as u32,
@@ -358,6 +419,20 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
                 crate::hal::x86_64::serial::write_string(" ");
             }
             crate::hal::x86_64::serial::write_string("\r\n");
+            // Dump 32 bytes starting at offset 14 (the B8 byte) so we
+            // can see the full imm32 that `mov eax, imm32` reads.
+            crate::hal::x86_64::serial::write_string("[UE] cmd.exe bytes 14..46 (phys=0x");
+            crate::hal::x86_64::serial::write_u64_hex(frame_phys + frame_off + 14);
+            crate::hal::x86_64::serial::write_string("): ");
+            for i in 14..46 {
+                let b: u8 = core::ptr::read_volatile(src_ptr.add(i));
+                crate::hal::x86_64::serial::write_string("[");
+                crate::hal::x86_64::serial::write_u32_hex(i as u32);
+                crate::hal::x86_64::serial::write_string("]=");
+                crate::hal::x86_64::serial::write_u32_hex(b as u32);
+                crate::hal::x86_64::serial::write_string(" ");
+            }
+            crate::hal::x86_64::serial::write_string("\r\n");
             // DEBUG: print the PTE bits so we can verify that the
             // cmd.exe page is mapped with US=1 and not NX. Without
             // US=1, user-mode code can't execute from the page; with
@@ -600,17 +675,51 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
         crate::hal::x86_64::serial::write_string("[UE] pre-iretq rsp=");
         crate::hal::x86_64::serial::write_u64_hex(stack_check);
         crate::hal::x86_64::serial::write_string("\r\n");
+        // DEBUG: print LSTAR and EFER to verify syscall is reachable
+        let lstar: u64;
+        let efer: u64;
+        unsafe {
+            core::arch::asm!(
+                "mov ecx, 0xc0000082",
+                "rdmsr",
+                "shl rdx, 32",
+                "or rax, rdx",
+                lateout("rax") lstar,
+                out("rcx") _,
+                out("rdx") _,
+                options(nostack),
+            );
+            core::arch::asm!(
+                "mov ecx, 0xc0000080",
+                "rdmsr",
+                "shl rdx, 32",
+                "or rax, rdx",
+                lateout("rax") efer,
+                out("rcx") _,
+                out("rdx") _,
+                options(nostack),
+            );
+        }
+        crate::hal::x86_64::serial::write_string("[UE] LSTAR=");
+        crate::hal::x86_64::serial::write_u64_hex(lstar);
+        crate::hal::x86_64::serial::write_string(" EFER=");
+        crate::hal::x86_64::serial::write_u64_hex(efer);
+        crate::hal::x86_64::serial::write_string(" syscall_entry_addr=");
+        crate::hal::x86_64::serial::write_u64_hex(syscall_entry as *const () as u64);
+        crate::hal::x86_64::serial::write_string("\r\n");
         // DEBUG: Output distinctive markers to identify execution flow.
         // 'W' = entering iretq inline block
         // 'w' = returned from iretq (unreachable)
+        // Force the user-mode RIP/RSP into callee-preserved registers
+        // that survive across the diagnostic above. Without this, the
+        // compiler is free to allocate the operands to registers that
+        // get clobbered by intermediate code (we observed the
+        // compiler emitting `movq %rax, %rbp` to save IA32_STAR,
+        // overwriting the location where user_rsp had been
+        // stashed). We move them into %r15 / %rbp *immediately*
+        // before the iretq block so they're guaranteed to hold the
+        // right values at push time.
         core::arch::asm!(
-            "mov al, 0x57",  // 'W'
-            "mov dx, 0x3F8",
-            "out dx, al",
-            options(nostack, preserves_flags),
-        );
-        core::arch::asm!(
-            "cli",
             "push {ss32}",
             "push {rsp_v}",
             "push {rfl32}",

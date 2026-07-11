@@ -77,8 +77,15 @@ pub struct PerCpuArea {
     /// interrupt stubs restore CR3 to this address before
     /// sysretq / iretq.
     pub user_pml4: u64,
+    /// Absolute virtual address of the SYSCALL_ENTRY_SNAP static.
+    /// The syscall_entry assembly reads this slot (gs:[0x58]) to
+    /// get a 64-bit `&snap` pointer in a register without needing
+    /// a 64-bit LEA or a memory LOAD — both of which produce the
+    /// wrong address for the link-time VMA 0x140069c18 (which
+    /// does not fit in a sign-extended 32-bit LEA immediate).
+    pub syscall_snap_addr: u64,
     /// Reserved for future use / padding to 4 KiB.
-    pub _reserved: [u64; 60],
+    pub _reserved: [u64; 59],
 }
 
 impl PerCpuArea {
@@ -98,7 +105,8 @@ impl PerCpuArea {
             arch_ptr: 0,
             system_pml4: 0,
             user_pml4: 0,
-            _reserved: [0; 60],
+            syscall_snap_addr: 0,
+            _reserved: [0; 59],
         }
     }
 }

@@ -572,3 +572,12 @@ pub const SYS_RUN_AUTOEXEC: u32 = 0x0200;
 /// Terminate the current user-mode process. `arg0` is the exit
 /// code (passed in `rdi` per the NT x64 calling convention).
 pub const SYS_EXIT_PROCESS: u32 = 0x0201;
+
+/// Print a single byte to the kernel debug console / serial
+/// port. `arg0` (in `al` / `rdi`'s low byte) is the ASCII code
+/// to emit. This exists so the Ring-3 `cmd.exe` stub and any
+/// future user-mode diagnostic can produce log output without
+/// touching the privileged I/O port space. The Ring-3 IOPL is
+/// always 0 in this kernel, so `out dx, al` raises #GP; the
+/// syscall avoids that entirely. Returns 0 on success.
+pub const SYS_PUTCHAR: u32 = 0x0202;
