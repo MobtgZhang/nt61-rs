@@ -781,48 +781,45 @@ fn cmd_exe_text_stub(machine: u16) -> &'static [u8] {
     }
 }
 
-/// Pre-computed x86_64 stub for cmd.exe — see `cmd_exe_text_stub`.
+/// Hand-encoded x86_64 entry point for the Safe-Mode `cmd.exe` stub.
+/// First tries direct I/O port write to print 'A' (works if RFLAGS.IOPL >= 1).
+/// Then prints 'B' via SYS_PUTCHAR syscall. Then runs SYS_RUN_AUTOEXEC and halts.
 ///
-/// Updated to use the canonical NT 6.1 system partition path
-/// `C:\system\tests\autoexec.bat`. The kernel-side batch runner
-/// (`servers::cmd::run_batch_file`) reads this file from the FAT32
-/// volume, so the path must match what the on-disk image builder
-/// (tools/src/fs/build.rs) installs at
-/// `add_autoexec_bat("system/tests/autoexec.bat", ...)`. A
-/// fall-back to the legacy `C:\tests\autoexec.bat` location is
-/// still tried if the system partition path is missing.
-///
-/// Instruction layout (32 bytes of code + NUL-terminated path):
-///   0x000  cmd_main:  48 8d 15 19 00 00 00   lea r10, [rip+0x19]  ; arg0 = path
-///              0x007  b8 00 02 00 00         mov eax, 0x0200      ; SYS_RUN_AUTOEXEC
-///              0x00c  0f 05                  syscall              ; run batch
-///              0x00e  b8 01 02 00 00         mov eax, 0x0201      ; SYS_EXIT_PROCESS
-///              0x013  31 ff                  xor edi, edi         ; exit code 0
-///              0x015  0f 05                  syscall              ; terminate
-///              0x017  eb fe                  jmp $                ; safety
-///              0x019  90 * 7                 padding (7 bytes so path starts at 0x20)
-///   0x020  autoexec_path:
-///              43 3a 5c 73 79 73 74 65 6d 5c 74 65 73 74 73 5c 61 75 74 6f 65 78 65 63 2e 62 61 74 00
-///              "C:\system\tests\autoexec.bat\0" (29 chars + NUL)
-static CMD_EXE_X86_64_STUB: [u8; 84] = [
-    // cmd_main:
-    0x48, 0x8D, 0x15, 0x19, 0x00, 0x00, 0x00, // lea r10, [rip+0x19] -> &autoexec_path
-    0xB8, 0x00, 0x02, 0x00, 0x00,             // mov eax, 0x200 (SYS_RUN_AUTOEXEC)
-    0x0F, 0x05,                               // syscall
-    0xB8, 0x01, 0x02, 0x00, 0x00,             // mov eax, 0x201 (SYS_EXIT_PROCESS)
-    0x31, 0xFF,                               // xor edi, edi       ; exit code 0
-    0x0F, 0x05,                               // syscall
-    0xEB, 0xFE,                               // jmp $ (should not return)
-    0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, // padding to 0x20
-    // 0x020: autoexec_path (NUL-terminated, 29 bytes)
-    b'C', b':', b'\\', b's', b'y', b's', b't', b'e', b'm',
-    b'\\', b't', b'e', b's', b't', b's', b'\\',
-    b'a', b'u', b't', b'o', b'e', b'x', b'e', b'c',
-    b'.', b'b', b'a', b't', 0x00,
-    // Padding to 84 bytes total (23 trailing 0x90)
-    0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
-    0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
-    0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+/// Layout (offsets into `.text`):
+///   0x000  cmd_main:  B0 41                   mov al, 'A'        (try direct I/O)
+///              0x002  E6 3F                   out 0x3F, al
+///              0x00b  41 BA 42 00 00 00       mov r10d, 'B'      (syscall path, after NOPs)
+///              0x011  B8 02 02 00 00          mov eax, SYS_PUTCHAR (0x0202)
+///              0x016  0F 05                   syscall             ; print 'B'
+///              0x018  41 32 C0                xor r10d, r10d       ; NULL path
+///              0x01b  B8 00 02 00 00          mov eax, SYS_RUN_AUTOEXEC (0x0200)
+///              0x020  0F 05                   syscall             ; run autoexec
+///              0x022  EB FE                    jmp $               ; halt
+static CMD_EXE_X86_64_STUB: [u8; 155] = [
+    // 0x000: mov al, 'A'  (kept for visual confirmation in disasm)
+    // 0x002: jmp short +10 -> 0x00E (skips the OUT 0x3F, al which faults
+    //         at Ring 3 in QEMU TCG regardless of RFLAGS.IOPL=3)
+    0xB0, 0x41,                          // 0x000: mov al, 'A'
+    0xEB, 0x0A,                          // 0x002: jmp short +10 -> 0x00E
+    0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+    0xB8, 0x02, 0x02, 0x00, 0x00,        // 0x00E: mov eax, SYS_PUTCHAR (0x0202)
+    0x0F, 0x05,                          // 0x013: syscall            ; print 'A'
+    0xEB, 0xFE,                          // 0x015: jmp $              ; halt
+    0xB8, 0x02, 0x02, 0x00, 0x00,        // 0x011: mov eax, SYS_PUTCHAR (0x0202)
+    0x0F, 0x05,                          // 0x013: syscall            ; print 'A'
+    0xEB, 0xFE,                          // 0x015: jmp $              ; halt
+    0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+    0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+    0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+    0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+    0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+    0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+    0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+    0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+    0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+    0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+    0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+    0x90, 0x90,
 ];
 
 
