@@ -218,6 +218,36 @@ pub struct BootInfo {
     pub memtest_signature: u32,
     /// Memory test status (0=not run, 1=running, 2=passed, 3=failed)
     pub memtest_status: u32,
+
+    // =====================================================================
+    // NTFS-loaded kernel images (added 2026-07-09)
+    // =====================================================================
+    // The real Windows 7 boot sequence has winload.efi read ntoskrnl.exe
+    // and hal.dll from the NTFS System partition, then jump to the
+    // kernel's entry point. Our boot flow used to bake these binaries
+    // directly into the kernel as "in-binary" stubs (see
+    // `system_image::build_all`). This field carries the on-disk ntoskrnl
+    // bytes across ExitBootServices so the kernel can map them itself
+    // instead of relying on a baked-in copy.
+    /// Physical address of `ntoskrnl.exe` bytes read from the NTFS
+    /// system partition by winload. The buffer is allocated as
+    /// `EfiRuntimeServicesData` so it survives `ExitBootServices`.
+    /// Zero means "no on-disk ntoskrnl; the kernel should fall back to
+    /// the embedded image" (only valid for the bring-up build).
+    pub ntoskrnl_image_base: u64,
+    /// Size of the ntoskrnl.exe image in bytes.
+    pub ntoskrnl_image_size: u64,
+    /// Physical address of `hal.dll` bytes read from NTFS. Same
+    /// semantics as `ntoskrnl_image_base`.
+    pub hal_image_base: u64,
+    /// Size of the hal.dll image in bytes.
+    pub hal_image_size: u64,
+    /// Physical address of `bootvid.dll` bytes (loaded by winload as a
+    /// BOOT_START_IMAGE before ExitBootServices so the kernel can call
+    /// into its Inbv* exports during Phase 0/1 video bring-up).
+    pub bootvid_image_base: u64,
+    /// Size of the bootvid.dll image in bytes.
+    pub bootvid_image_size: u64,
 }
 
 impl BootInfo {
@@ -225,7 +255,7 @@ impl BootInfo {
     pub const MAGIC: u64 = 0x4E543631_424F4F54;
     /// Current contract version. Bumped whenever a field is added
     /// or removed. Match this against the loader's build constant.
-    pub const VERSION: u64 = 5;
+    pub const VERSION: u64 = 6;
 
     pub fn is_valid(&self) -> bool {
         self.magic == Self::MAGIC
@@ -279,6 +309,12 @@ impl BootInfo {
             memtest_size: 0,
             memtest_signature: 0,
             memtest_status: 0,
+            ntoskrnl_image_base: 0,
+            ntoskrnl_image_size: 0,
+            hal_image_base: 0,
+            hal_image_size: 0,
+            bootvid_image_base: 0,
+            bootvid_image_size: 0,
         }
     }
 
@@ -329,6 +365,12 @@ impl BootInfo {
             memtest_size: 0,
             memtest_signature: 0,
             memtest_status: 0,
+            ntoskrnl_image_base: 0,
+            ntoskrnl_image_size: 0,
+            hal_image_base: 0,
+            hal_image_size: 0,
+            bootvid_image_base: 0,
+            bootvid_image_size: 0,
         }
     }
 }

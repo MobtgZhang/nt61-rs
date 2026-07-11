@@ -509,6 +509,13 @@ static mut KERNEL_BOOT_INFO: BootInfo = BootInfo {
     memtest_size: 0,
     memtest_signature: 0,
     memtest_status: 0,
+    // NTFS-loaded kernel images
+    ntoskrnl_image_base: 0,
+    ntoskrnl_image_size: 0,
+    hal_image_base: 0,
+    hal_image_size: 0,
+    bootvid_image_base: 0,
+    bootvid_image_size: 0,
 };
 
 // =====================================================================
@@ -2189,9 +2196,8 @@ fn capture_esp_partition() {
 
 /// Same per-chunk chunking policy as the ESP capture. The system
 /// partition is 256 MiB on our reference disk, but we cap the
-/// mirror at 32 MiB so the early-boot memory footprint matches
-/// the ESP capture.
-const SYS_MIRROR_BYTES: usize = 32 * 1024 * 1024;
+/// mirror at 8 MiB for the early-boot memory footprint.
+const SYS_MIRROR_BYTES: usize = 8 * 1024 * 1024;
 
 /// Snapshot the system partition into a contiguous physical
 /// buffer. Same lifecycle as `capture_esp_partition`: the buffer
@@ -2809,6 +2815,13 @@ fn build_boot_info(kernel_pa: u64, kernel_size: u64) -> BootInfo {
         memtest_size: 0,
         memtest_signature: 0,
         memtest_status: 0,
+        // NTFS-loaded kernel images
+        ntoskrnl_image_base: 0,
+        ntoskrnl_image_size: 0,
+        hal_image_base: 0,
+        hal_image_size: 0,
+        bootvid_image_base: 0,
+        bootvid_image_size: 0,
     }
 }
 
@@ -3308,26 +3321,40 @@ extern "efiapi" fn efi_main(
     _image: uefi::Handle,
     _st: *const core::ffi::c_void,
 ) -> uefi::Status {
-    // SAFETY: called once at boot with valid firmware-provided handles.
+    // Set up UEFI globals — this MUST be done before calling any uefi crate functions.
+    // SAFETY: image_handle and system_table are valid per UEFI calling convention.
     unsafe {
         uefi::boot::set_image_handle(_image);
         uefi::table::set_system_table(_st.cast());
     }
 
-    if let Err(e) = uefi::helpers::init() {
-        uefi::println!("Warning: helpers init failed: {:?}", e);
+    // DIAG: output WINL> to serial port so we can confirm
+    // efi_main is actually being entered by the boot manager.
+    unsafe {
+        core::arch::asm!(
+            "mov dx, 0x3f8",
+            "mov al, 0x57", // 'W'
+            "out dx, al",
+            "mov al, 0x49", // 'I'
+            "out dx, al",
+            "mov al, 0x4e", // 'N'
+            "out dx, al",
+            "mov al, 0x4c", // 'L'
+            "out dx, al",
+            "mov al, 0x3e", // '>'
+            "out dx, al",
+            "mov al, 0x0a", // '\n'
+            "out dx, al",
+            options(nostack, preserves_flags),
+        );
     }
 
-    uefi::println!("[WINLOAD] efi_main entered; image_handle=0x{:x}", _image.as_ptr() as u64);
+    if let Err(_e) = uefi::helpers::init() {
+        // ignored
+    }
 
     // Cache the ESP / System SimpleFileSystem handles BEFORE any other
-    // boot-services activity. `capture_iso_ramdisk()` reads through
-    // `CACHED_SFS_PTR`, and several other capture helpers either open
-    // files via the cached handle or re-walk the SFS handle table —
-    // doing the walk now, while the firmware handle table is still
-    // pristine, avoids the OVMF crash-on-second-open that we saw
-    // during Phase-0 bring-up. Mirrors the Windows 7 winload sequence
-    // (OslMain → Phase 0 → BlOpenBootPartitionTexts).
+    // boot-services activity.
     cache_esp_sfs_handle();
     cache_system_sfs_handle();
 
