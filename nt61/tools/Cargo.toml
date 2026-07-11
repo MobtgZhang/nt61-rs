@@ -9,28 +9,15 @@ publish = false
 name = "build-tool"
 path = "src/main.rs"
 
-# build-esp 需要 nt61
-[[bin]]
-name = "build-esp"
-path = "src/build_esp.rs"
-required-features = ["with-nt61"]
+# build-esp 已删除：不再生成 in-memory 系统 PE 镜像。
+# 真实的 ntoskrnl.exe / hal.dll / drivers 来自 Windows 7 ISO 解压后写入 disk.img。
 
-# pe-test 需要 nt61
-[[bin]]
-name = "pe-test"
-path = "src/pe_test.rs"
-required-features = ["with-nt61"]
+# pe-test 已删除（依赖 nt61::system_image::build_all）。
 
 # hive-gen 需要 nt61
 [[bin]]
 name = "hive-gen"
 path = "src/hive_gen_bin.rs"
-required-features = ["with-nt61"]
-
-# dump-cmd 需要 nt61
-[[bin]]
-name = "dump-cmd"
-path = "src/bin/dump_cmd.rs"
 required-features = ["with-nt61"]
 
 [lib]
