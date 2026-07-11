@@ -296,9 +296,11 @@ fn allocate_clusters(
     // 4. Return the first cluster
     
     // For now, use a placeholder cluster
+    // mft_start is stored as sector number (LCN * SPC), so divide to get cluster.
     let cluster_size = ntfs_data.cluster_size as u64;
-    let mft_lcn = ntfs_data.mft_start / (cluster_size / 512);
-    
+    let spc = if cluster_size >= 512 { cluster_size / 512 } else { 1 };
+    let mft_lcn = ntfs_data.mft_start / spc;
+
     // Return a cluster after the MFT area
     Some(mft_lcn + 1024)
 }

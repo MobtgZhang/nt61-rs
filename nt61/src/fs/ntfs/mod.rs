@@ -231,6 +231,9 @@ pub struct NtfsData {
     pub mounted: bool,
     /// Device ID for block device layer (if available)
     pub device_id: Option<usize>,
+    /// Hidden sectors (partition start LBA). Used as the base for
+    /// non-MFT data reads (file content, $INDEX_ALLOCATION).
+    pub hidden_sectors: u64,
 }
 
 impl NtfsData {
@@ -245,6 +248,7 @@ impl NtfsData {
             volume_serial: 0,
             mounted: false,
             device_id: None,
+            hidden_sectors: 0,
         }
     }
 }
@@ -1422,135 +1426,120 @@ pub mod index_flags {
 /// * `Some((entry, next_offset))` - Parsed entry and offset to next entry
 /// * `None` - Invalid entry or end of entries
 pub fn parse_index_entry(buffer: &[u8], offset: usize) -> Option<(DirectoryEntry, usize)> {
+    // NTFS-3G `layout.h` / `index.c` defines INDEX_ENTRY as:
+    //   +0x00: u64  MFT reference
+    //   +0x08: u16  entry_length (total byte size, always multiple of 8)
+    //   +0x0A: u16  key_length (byte size of FILE_NAME_ATTR, NOT multiple of 8)
+    //   +0x0C: u16  ie_flags (INDEX_ENTRY_NODE=0x0001, INDEX_ENTRY_END=0x0002)
+    //   +0x0E: u16  reserved
+    //   +0x10+: FILE_NAME_ATTR key (embedded inline — NO attribute header)
+    //
+    // FILE_NAME_ATTR (per NTFS-3G `attrib.c` / `layout.h`):
+    //   +0x00: u64  parent_directory MFT ref
+    //   +0x08: s64  creation_time
+    //   +0x10: s64  last_data_change_time
+    //   +0x18: s64  last_mft_change_time
+    //   +0x20: s64  last_access_time
+    //   +0x28: s64  allocated_size
+    //   +0x30: s64  data_size
+    //   +0x38: u32  file_attributes
+    //   +0x3C: u16  packed_ea_size / reparse_tag
+    //   +0x40: u8   file_name_length (characters)
+    //   +0x41: u8   file_name_type
+    //   +0x42+: ntfschar[file_name_length] (UTF-16LE)
+    //
+    // CRITICAL: The INDEX_ENTRY's key IS the FILE_NAME_ATTR directly — there is
+    // NO separate 24-byte attribute header. The earlier code added +24 assuming an
+    // attribute header existed, reading garbage fields for every entry.
     if offset + 16 > buffer.len() {
         return None;
     }
 
-    // Index entry structure (NTFS spec):
-    //   +0x00: u64  - MFT reference (record number in low 48 bits, sequence in high)
-    //   +0x08: u16  - size of this entry (entry header + indexed attribute)
-    //   +0x0A: u16  - size of indexed attribute (the FILE_NAME attribute)
-    //   +0x0C: u16  - flags
-    //   +0x0E: u16  - padding (alignment for the FILE_NAME attribute)
-    //   +0x10+: the indexed FILE_NAME attribute, *complete* (header + value)
-
-    let mft_ref = u64::from_le_bytes([
-        buffer[offset + 0],
-        buffer[offset + 1],
-        buffer[offset + 2],
-        buffer[offset + 3],
-        buffer[offset + 4],
-        buffer[offset + 5],
-        buffer[offset + 6],
-        buffer[offset + 7],
-    ]);
-
     let entry_size = u16::from_le_bytes([buffer[offset + 8], buffer[offset + 9]]) as usize;
-    let flags = u16::from_le_bytes([buffer[offset + 12], buffer[offset + 13]]);
+    let entry_flags = u16::from_le_bytes([buffer[offset + 12], buffer[offset + 13]]);
 
-    // END markers have entry_size=12 and flags=0x0002 — check this BEFORE
-    // validating entry_size against buffer bounds, otherwise a trailing
-    // bogus entry would never be recognised.
-    if entry_size == 12 && (flags & 0x0002) != 0 {
+    // END markers: entry_len == 12, INDEX_ENTRY_END flag set
+    if entry_size == 12 && (entry_flags & 0x0002) != 0 {
         return None; // END node
     }
 
+    // Validate entry fits in buffer
     if entry_size < 16 || offset + entry_size > buffer.len() {
         return None;
     }
 
-    // The indexed FILE_NAME attribute begins at `offset + 16`. The
-    // attribute layout is the 24-byte attribute header followed by the
-    // resident value. The fields the directory walk cares about
-    // (parent_ref, timestamps, name_length, namespace, name) live in
-    // the *value* portion, which starts at `offset + 16 + 24 =
-    // offset + 40`. The earlier parser forgot to skip the 24-byte
-    // attribute header and consequently read garbage for every field —
-    // see the nt61-uefi-fault-tracing skill for the original symptom.
-    let name_offset = offset + 16 + 24; // entry header + FILE_NAME attr header
+    // MFT reference at offset +0
+    let mft_ref = u64::from_le_bytes([
+        buffer[offset + 0], buffer[offset + 1], buffer[offset + 2], buffer[offset + 3],
+        buffer[offset + 4], buffer[offset + 5], buffer[offset + 6], buffer[offset + 7],
+    ]);
 
-    // file_attributes is at FILE_NAME value offset +0x38 (56)
-    if name_offset + 64 > buffer.len() {
-        return None;
-    }
-    let name_length = buffer[name_offset + 62] as usize;
-    let _name_space = buffer[name_offset + 63];
+    // FILE_NAME_ATTR starts at offset + 16 (no attribute header)
+    let fn_off = offset + 16;
 
-    if name_length > 255 || name_offset + 64 + (name_length * 2) > buffer.len() {
+    // Need at least 66 bytes for FILE_NAME_ATTR header (minimum for 0-char name)
+    if fn_off + 66 > buffer.len() {
         return None;
     }
 
-    // Parent reference (FILE_NAME value offset +0)
-    let parent_ref = u64::from_le_bytes([
-        buffer[name_offset + 0],
-        buffer[name_offset + 1],
-        buffer[name_offset + 2],
-        buffer[name_offset + 3],
-        buffer[name_offset + 4],
-        buffer[name_offset + 5],
-        buffer[name_offset + 6],
-        buffer[name_offset + 7],
-    ]);
+    // key_length at offset +0x0A: verify it is >= 66 (minimum FILE_NAME_ATTR size)
+    let key_len = u16::from_le_bytes([buffer[offset + 10], buffer[offset + 11]]) as usize;
+    if key_len < 66 {
+        return None;
+    }
 
-    // Creation/modification times (FILE_NAME value offset +8 and +16).
-    // Other timestamp fields are at +24/+32 but the directory walk only
-    // needs the two timestamps it surfaces to callers.
-    let creation_time = u64::from_le_bytes([
-        buffer[name_offset + 8],
-        buffer[name_offset + 9],
-        buffer[name_offset + 10],
-        buffer[name_offset + 11],
-        buffer[name_offset + 12],
-        buffer[name_offset + 13],
-        buffer[name_offset + 14],
-        buffer[name_offset + 15],
-    ]);
+    // file_name_length at FILE_NAME_ATTR offset +0x40
+    let name_length = buffer[fn_off + 0x40] as usize;
+    if name_length == 0 || name_length > 255 {
+        return None;
+    }
 
-    let modification_time = u64::from_le_bytes([
-        buffer[name_offset + 16],
-        buffer[name_offset + 17],
-        buffer[name_offset + 18],
-        buffer[name_offset + 19],
-        buffer[name_offset + 20],
-        buffer[name_offset + 21],
-        buffer[name_offset + 22],
-        buffer[name_offset + 23],
-    ]);
+    // FIXED: packed_ea_size is 2 bytes, so name_length is at fn_off + 0x3E
+    // and filename starts at fn_off + 0x40.
+    // Bounds: name starts at fn_off + 0x40
+    let name_start = fn_off + 0x40;
+    if name_start + name_length * 2 > buffer.len() {
+        return None;
+    }
 
-    // File size (FILE_NAME value offset +0x30 = 48)
-    let file_size = u64::from_le_bytes([
-        buffer[name_offset + 48],
-        buffer[name_offset + 49],
-        buffer[name_offset + 50],
-        buffer[name_offset + 51],
-        buffer[name_offset + 52],
-        buffer[name_offset + 53],
-        buffer[name_offset + 54],
-        buffer[name_offset + 55],
-    ]);
-
-    // File attributes (FILE_NAME value offset +0x38 = 56)
-    let file_attributes = u32::from_le_bytes([
-        buffer[name_offset + 56],
-        buffer[name_offset + 57],
-        buffer[name_offset + 58],
-        buffer[name_offset + 59],
-    ]);
-
-    // Extract filename (FILE_NAME value offset +0x40 = 64)
+    // Decode UTF-16LE filename into Vec<u16>
     let mut name = Vec::with_capacity(name_length);
     for i in 0..name_length {
-        let char_val = u16::from_le_bytes([
-            buffer[name_offset + 64 + (i * 2)],
-            buffer[name_offset + 65 + (i * 2)],
+        let c = u16::from_le_bytes([
+            buffer[name_start + i * 2],
+            buffer[name_start + i * 2 + 1],
         ]);
-        if char_val == 0 {
-            break;
-        }
-        name.push(char_val);
+        if c == 0 { break; }
+        name.push(c);
     }
 
-    // Directory flag is bit 4 (0x10) of the file attributes.
+    // parent_ref at FILE_NAME_ATTR offset +0x00
+    let parent_ref = u64::from_le_bytes([
+        buffer[fn_off + 0], buffer[fn_off + 1], buffer[fn_off + 2], buffer[fn_off + 3],
+        buffer[fn_off + 4], buffer[fn_off + 5], buffer[fn_off + 6], buffer[fn_off + 7],
+    ]);
+
+    // Timestamps at FILE_NAME_ATTR offsets +0x08 and +0x10
+    let creation_time = u64::from_le_bytes([
+        buffer[fn_off + 8], buffer[fn_off + 9], buffer[fn_off + 10], buffer[fn_off + 11],
+        buffer[fn_off + 12], buffer[fn_off + 13], buffer[fn_off + 14], buffer[fn_off + 15],
+    ]);
+    let modification_time = u64::from_le_bytes([
+        buffer[fn_off + 16], buffer[fn_off + 17], buffer[fn_off + 18], buffer[fn_off + 19],
+        buffer[fn_off + 20], buffer[fn_off + 21], buffer[fn_off + 22], buffer[fn_off + 23],
+    ]);
+
+    // file_size at FILE_NAME_ATTR offset +0x30
+    let file_size = u64::from_le_bytes([
+        buffer[fn_off + 48], buffer[fn_off + 49], buffer[fn_off + 50], buffer[fn_off + 51],
+        buffer[fn_off + 52], buffer[fn_off + 53], buffer[fn_off + 54], buffer[fn_off + 55],
+    ]);
+
+    // file_attributes at FILE_NAME_ATTR offset +0x38
+    let file_attributes = u32::from_le_bytes([
+        buffer[fn_off + 56], buffer[fn_off + 57], buffer[fn_off + 58], buffer[fn_off + 59],
+    ]);
+
     let is_directory = (file_attributes & 0x10) != 0;
 
     let mut entry = DirectoryEntry::new();
@@ -2010,7 +1999,7 @@ fn find_in_index_allocation(ntfs: &NtfsFileSystem, index_alloc_data: &[u8], need
     let mut runs_acc: u64 = 0;
     for run_idx in 0..num_runs {
         let (run_start_cluster, run_length) = run_output[run_idx];
-        let run_start_sector = ntfs.ntfs_data.mft_start + (run_start_cluster * (cluster_size / 512) as u64);
+        let run_start_sector = ntfs.ntfs_data.hidden_sectors + (run_start_cluster * (cluster_size / 512) as u64);
         let sectors_in_run = run_length * (cluster_size / 512) as u64;
 
         crate::boot_println!("[NTFS] find_in_idx_alloc: run lcn={} start_sector=0x{:x} sectors={}",
@@ -2129,44 +2118,55 @@ fn find_in_index_allocation(ntfs: &NtfsFileSystem, index_alloc_data: &[u8], need
                 }
 
                 // Parse the FILE_NAME attribute from the entry
-                // FILE_NAME starts at offset + 16 within the INDEX_ENTRY
-                let filename_offset = offset + 16;
-                if filename_offset + 64 <= record_end {
-                    // FILE_NAME attribute format:
-                    // +0x00: u64 parent directory reference
-                    // +0x08: u64 creation time
-                    // +0x10: u64 modification time
-                    // +0x18: u64 MFT modification time
-                    // +0x20: u64 access time
-                    // +0x28: u64 allocated_size (on disk)
-                    // +0x30: u64 real_size (file size)
-                    // +0x38: u32 file attributes
-                    // +0x3C: u16 filename_length (in characters)
-                    // +0x3E: u16 filename_namespace
-                    // +0x40+: filename (UTF-16LE, filename_length * 2 bytes)
-                    let filename_length = u16::from_le_bytes([index_record[filename_offset + 0x3C], index_record[filename_offset + 0x3D]]) as usize;
-                    if filename_length > 0 && filename_length <= 255 {
-                        let name_start = filename_offset + 0x40;
-                        let name_end = name_start + (filename_length * 2);
-                        if name_end <= record_end {
-                            // Compare filename (case-insensitive)
-                            let mut match_found = true;
-                            if filename_length == needle_upper.len() {
-                                for i in 0..filename_length {
-                                    let c = u16::from_le_bytes([index_record[name_start + i * 2], index_record[name_start + i * 2 + 1]]);
-                                    let c_upper = if c >= b'a' as u16 && c <= b'z' as u16 {
-                                        c - (b'a' as u16 - b'A' as u16)
-                                    } else {
-                                        c
-                                    };
-                                    if c_upper != needle_upper[i] {
-                                        match_found = false;
-                                        break;
-                                    }
-                                }
-                            } else {
-                                match_found = false;
-                            }
+                // FILE_NAME starts at offset + 16 within the INDEX_ENTRY.
+                // Per NTFS-3G layout.h / attrib.c, the FILE_NAME value layout is:
+                //   +0x00: u64 parent_directory MFT ref
+                //   +0x08: s64 creation_time
+                //   +0x10: s64 last_data_change_time
+                //   +0x18: s64 last_mft_change_time
+                //   +0x20: s64 last_access_time
+                //   +0x28: s64 allocated_size
+                //   +0x30: s64 data_size
+                //   +0x38: u32 file_attributes
+                //   +0x3C: u16 packed_ea_size (2 bytes)
+                //   +0x3E: u8  file_name_length (characters)
+                //   +0x3F: u8  file_name_type
+                //   +0x40+: ntfschar[file_name_length] (UTF-16LE)
+                let fn_off = offset + 16;
+                // Need at least 66 bytes for the FILE_NAME header.
+                if fn_off + 66 > record_end {
+                    offset += entry_length;
+                    continue;
+                }
+                let filename_length = index_record[fn_off + 0x3E] as usize;
+                if filename_length == 0 || filename_length > 255 {
+                    offset += entry_length;
+                    continue;
+                }
+                let name_start = fn_off + 0x40;
+                let name_end = name_start + (filename_length * 2);
+                if name_end > record_end {
+                    offset += entry_length;
+                    continue;
+                }
+                // Case-insensitive compare
+                let mut match_found = true;
+                if filename_length == needle_upper.len() {
+                    for i in 0..filename_length {
+                        let c = u16::from_le_bytes([index_record[name_start + i * 2], index_record[name_start + i * 2 + 1]]);
+                        let c_upper = if c >= b'a' as u16 && c <= b'z' as u16 {
+                            c - (b'a' as u16 - b'A' as u16)
+                        } else {
+                            c
+                        };
+                        if c_upper != needle_upper[i] {
+                            match_found = false;
+                            break;
+                        }
+                    }
+                } else {
+                    match_found = false;
+                }
 
                             if match_found {
                                 // Found it! Extract MFT reference
@@ -2180,9 +2180,6 @@ fn find_in_index_allocation(ntfs: &NtfsFileSystem, index_alloc_data: &[u8], need
                                 crate::boot_println!("[NTFS] find_in_idx_alloc: FOUND rec={} in index record", record_number);
                                 return Some(record_number);
                             }
-                        }
-                    }
-                }
 
                 offset += entry_length;
             }
@@ -2528,7 +2525,7 @@ fn read_file_via_runlist(
 
                 if read_start < read_end && buf_offset < buffer.len() {
                     // Read the cluster
-                    let cluster_sector = ntfs.ntfs_data.mft_start + (cluster_lcn * (cluster_size / 512) as u64);
+                    let cluster_sector = ntfs.ntfs_data.hidden_sectors + (cluster_lcn * (cluster_size / 512) as u64);
                     let mut cluster_buf = vec![0u8; cluster_size];
 
                     let sectors_read = (cluster_size + 511) / 512;
@@ -2579,7 +2576,7 @@ fn read_file_via_runlist(
 
                 if read_start < read_end && buf_offset < buffer.len() {
                     // Read the cluster
-                    let cluster_sector = ntfs.ntfs_data.mft_start + (cluster_lcn * (cluster_size / 512) as u64);
+                    let cluster_sector = ntfs.ntfs_data.hidden_sectors + (cluster_lcn * (cluster_size / 512) as u64);
                     let mut cluster_buf = vec![0u8; cluster_size];
 
                     let sectors_read = (cluster_size + 511) / 512;
@@ -2753,9 +2750,11 @@ pub fn allocate_cluster_ntfs(ntfs: &NtfsFileSystem) -> Option<u64> {
     // 3. Mark it as used
     // 4. Write the bitmap back
 
-    // For bootstrap, return a placeholder cluster after the MFT
-    let cluster_size = ntfs.ntfs_data.cluster_size as u64;
-    let mft_lcn = ntfs.ntfs_data.mft_start / (cluster_size / 512);
+    // For bootstrap, return a placeholder cluster after the MFT.
+    // mft_start is stored as sector number (LCN * SPC).
+    let mft_start_sector = ntfs.ntfs_data.mft_start;
+    let spc = ntfs.ntfs_data.cluster_size as u64 / 512;
+    let mft_lcn = if spc > 0 { mft_start_sector / spc } else { 0 };
 
     // Return a cluster after the MFT area
     Some(mft_lcn + 1024)
@@ -2795,51 +2794,60 @@ pub fn mount(device: *mut (), _path: &[u16]) -> Option<&'static mut NtfsFileSyst
     }
     crate::boot_println!("[NTFS] mount: read_sector ok");
     
-    // Parse boot sector from raw bytes (struct has alignment issues)
-    // Standard NTFS BPB layout:
-    //   0x0B..0x0C  bytes_per_sector (u16 LE)
-    //   0x0D        sectors_per_cluster (u8)
-    //   0x0E..0x0F  reserved_sectors (u16 LE)
-    //   0x10        media_descriptor (u8)
-    //   0x11..0x16  zero[6] (unused, always 0)
-    //   0x17..0x18  sectors_per_track (u16 LE)
-    //   0x19..0x1A  num_heads (u16 LE)
-    //   0x1B..0x1E  hidden_sectors (u32 LE)
-    //   0x1F..0x22  total_sectors_32 (u32 LE) [partition only]
-    //   0x23..0x2A  total_sectors_64 (u64 LE) [partition only, standard offset]
-    //   0x2B..0x32  mft_lcn (u64 LE)  <-- CORRECT offset
-    //   0x33..0x3A  mft_mirror_lcn (u64 LE)
-    //   0x3B        cluster_per_mft_record (i8)
-    //   0x3C        cluster_per_index_record (i8)
+    // Parse boot sector from raw bytes (struct has alignment issues).
+    // The NTFS BPB layout (per Microsoft NTFS 3.1 spec):
+    //   0x0B..0x0C   bytes_per_sector (u16 LE)
+    //   0x0D         sectors_per_cluster (u8)
+    //   0x0E..0x0F   reserved_sectors (u16 LE)
+    //   0x10         media_descriptor (u8)
+    //   0x11..0x16   zero[6] (unused, always 0)
+    //   0x17..0x18   sectors_per_track (u16 LE)
+    //   0x19..0x1A   num_heads (u16 LE)
+    //   0x1C..0x1F   hidden_sectors (u32 LE)    partition start LBA
+    //   0x20..0x23   total_sectors_32 (u32 LE) [rarely used; zero on modern NTFS]
+    //   0x28..0x2F   total_sectors_64 (u64 LE)
+    //   0x30..0x37   mft_lcn (u64 LE)          cluster number, NOT a sector number
+    //   0x38..0x3F   mft_mirror_lcn (u64 LE)
+    //   0x40         clusters_per_mft_record (i8)
+    //                  < 0  ->  2^|n| bytes (typical: -10 means 1024)
+    //                  = 0  ->  undefined; assume 1024
+    //                  > 0  ->  n * cluster_size bytes
+    //   0x41         clusters_per_index_record (i8)  (same encoding)
+    //   0x48..0x4F   volume_serial_number (u64 LE)
     //
-    // The struct `NtfsBootSector` declares `zero: [u8; 6]` at offset 0x11
-    // but the BPB only has 6 zero bytes, so `total_sectors_64` starts at
-    // offset 0x23 in BOTH the struct AND on disk. We use byte indexing
-    // (not the struct) to avoid alignment/padding issues.
+    // We read these by hand from the raw buffer instead of casting
+    // through `NtfsBootSector` because that struct has been wrong in
+    // the past (offsets `0x2B..0x33` for `mft_lcn` instead of the
+    // correct `0x30..0x38` — see `nt61-ntfs-boot-sector-parsing`
+    // skill: a wrong struct gave `mft_lcn=0x40000000000` which then
+    // cascaded into every `read_mft_record` returning OOB).
     let bytes_per_sector = u16::from_le_bytes([buffer[0x0B], buffer[0x0C]]);
     let sectors_per_cluster = buffer[0x0D];
     let mft_lcn = u64::from_le_bytes([
         buffer[0x30], buffer[0x31], buffer[0x32], buffer[0x33],
         buffer[0x34], buffer[0x35], buffer[0x36], buffer[0x37],
     ]);
-    crate::boot_println!("[NTFS] boot: bps={} spc={} mft_lcn={}", bytes_per_sector, sectors_per_cluster, mft_lcn);
-
-    // Print key boot sector bytes for diagnostics
-    crate::boot_println!("[NTFS] OEM: {:?}", core::str::from_utf8(&buffer[3..11]).unwrap_or("???"));
-    crate::boot_println!("[NTFS] BPB: bps={:02x}{:02x} spc={:02x} rs={:02x}{:02x} md={:02x}",
-        buffer[0x0C], buffer[0x0B], buffer[0x0D], buffer[0x0F], buffer[0x0E], buffer[0x10]);
-    crate::boot_println!("[NTFS] Hidden={:02x}{:02x}{:02x}{:02x} Total32={:02x}{:02x}{:02x}{:02x}",
-        buffer[0x1A], buffer[0x1B], buffer[0x1C], buffer[0x1D], buffer[0x1E], buffer[0x1F], buffer[0x20], buffer[0x21]);
-    crate::boot_println!("[NTFS] Total64: {:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        buffer[0x23], buffer[0x24], buffer[0x25], buffer[0x26], buffer[0x27], buffer[0x28], buffer[0x29], buffer[0x2A]);
-    crate::boot_println!("[NTFS] MFT LCN: {:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        buffer[0x30], buffer[0x31], buffer[0x32], buffer[0x33], buffer[0x34], buffer[0x35], buffer[0x36], buffer[0x37]);
-    crate::boot_println!("[NTFS] MFTMirr: {:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        buffer[0x38], buffer[0x39], buffer[0x3A], buffer[0x3B], buffer[0x3C], buffer[0x3D], buffer[0x3E], buffer[0x3F]);
-    crate::boot_println!("[NTFS] ClustersPerMFT={:02x} ClustersPerIndex={:02x}",
-        buffer[0x40], buffer[0x41]);
-    crate::boot_println!("[NTFS] VolSer: {:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        buffer[0x43], buffer[0x44], buffer[0x45], buffer[0x46], buffer[0x47], buffer[0x48], buffer[0x49], buffer[0x4A]);
+    let mft_mirror_lcn = u64::from_le_bytes([
+        buffer[0x38], buffer[0x39], buffer[0x3A], buffer[0x3B],
+        buffer[0x3C], buffer[0x3D], buffer[0x3E], buffer[0x3F],
+    ]);
+    // total_sectors_64 lives at 0x28..0x30 (NOT 0x23, which is the
+    // BPB-12/16/32 "BPB" total_sectors that NTFS does not honour).
+    let total_sectors_64 = u64::from_le_bytes([
+        buffer[0x28], buffer[0x29], buffer[0x2A], buffer[0x2B],
+        buffer[0x2C], buffer[0x2D], buffer[0x2E], buffer[0x2F],
+    ]);
+    // Hidden sectors (partition start LBA) is at 0x1C..0x1F. NTFS
+    // inherits the FAT BPB layout, which puts this u32 at 0x1C.
+    let hidden_sectors: u64 = u32::from_le_bytes([
+        buffer[0x1C], buffer[0x1D], buffer[0x1E], buffer[0x1F],
+    ]) as u64;
+    let volume_serial = u64::from_le_bytes([
+        buffer[0x48], buffer[0x49], buffer[0x4A], buffer[0x4B],
+        buffer[0x4C], buffer[0x4D], buffer[0x4E], buffer[0x4F],
+    ]);
+    crate::boot_println!("[NTFS] boot: bps={} spc={} mft_lcn={} mft_mirror_lcn={} hidden_sectors={} total_sectors_64={} vol_serial=0x{:x}",
+        bytes_per_sector, sectors_per_cluster, mft_lcn, mft_mirror_lcn, hidden_sectors, total_sectors_64, volume_serial);
     
     // Validate OEM ID
     if &buffer[3..11] != b"NTFS    " {
@@ -2898,8 +2906,17 @@ pub fn mount(device: *mut (), _path: &[u16]) -> Option<&'static mut NtfsFileSyst
             (*ntfs).ntfs_data.index_record_size = index_record_size;
 
             (*ntfs).ntfs_data.mft_start = mft_lcn * (sectors_per_cluster as u64);
-            crate::boot_println!("[NTFS] mount: mft_start={} mft_record_size={}", 
-                (*ntfs).ntfs_data.mft_start, (*ntfs).ntfs_data.mft_record_size);
+            (*ntfs).ntfs_data.hidden_sectors = hidden_sectors;
+            (*ntfs).ntfs_data.volume_serial = volume_serial;
+            // mft_mirror_lcn / total_sectors_64 are useful for
+            // future recovery paths but not consumed by the current
+            // reader — stash them next to mft_start so a follow-up
+            // commit can pick them up without re-parsing the boot
+            // sector.
+            (*ntfs).ntfs_data.mft_size = mft_mirror_lcn * (sectors_per_cluster as u64);
+            crate::boot_println!("[NTFS] mount: mft_start={} (mft_lcn={}*spc={}) mft_record_size={} index_record_size={} hidden_sectors={} vol_serial=0x{:x}",
+                (*ntfs).ntfs_data.mft_start, mft_lcn, sectors_per_cluster, (*ntfs).ntfs_data.mft_record_size,
+                (*ntfs).ntfs_data.index_record_size, hidden_sectors, volume_serial);
             (*ntfs).ntfs_data.mounted = true;
         }
 
