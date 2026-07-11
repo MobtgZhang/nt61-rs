@@ -1706,7 +1706,9 @@ const MAX_CHILDREN_PER_DIR: usize = 5;
         // attr+0x10, which the kernel decodes as part of the value
         // data — every read of a FILE_NAME attribute returned
         // garbage.
-        let value_length = 0x42u32 + (name_len as u32) * 2;
+        // Correct FILE_NAME value layout: packed_ea_size is u16 (2 bytes) at 0x3C.
+        // Total fixed fields = 0x40 bytes, then filename of name_len*2 bytes.
+        let value_length = 0x40u32 + (name_len as u32) * 2;
         data.extend_from_slice(&build_attr_header(ATTR_TYPE_FILE_NAME, value_length));
 
         // FILE_NAME value (starts at attr_offset + 24)
@@ -1720,18 +1722,17 @@ const MAX_CHILDREN_PER_DIR: usize = 5;
         data.extend_from_slice(&0u64.to_le_bytes());           // 0x30: file_size (8)
         let file_attrs = if entry.is_dir { 0x10u32 } else { 0x20u32 };
         data.extend_from_slice(&file_attrs.to_le_bytes());       // 0x38: file_attributes (4)
-        // 0x3C: ea / reparse (4 bytes) — must be 4 bytes per NTFS spec,
-        // not 2. Earlier versions wrote 0u16 here then pushed name_len
-        // and namespace at 0x3E/0x3F, shifting the filename one byte
-        // left. With "tests" the leading 't' (0x74) was then
-        // reinterpreted as the name_length (116 chars), and the
-        // remaining "ests" was decoded as the filename. Reading
-        // 116 chars from the buffer pulled in adjacent index-entry
-        // data and crashed the boot manager's index-entry walker.
-        data.extend_from_slice(&0u32.to_le_bytes());           // 0x3C: ea / reparse (4)
-        data.push(name_len);                                   // 0x40: name_length (1)
-        data.push(FILENAME_NAMESPACE_WIN32);                    // 0x41: namespace (1)
-        // Filename at 0x42 (2 bytes per char)
+        // NTFS spec: packed_ea_size is a u16 (2 bytes) at value offset 0x3C.
+        // The earlier version wrote 0u32 here (4 bytes), pushing name_length
+        // from 0x3E to 0x40 and the filename from 0x40 to 0x42.
+        // When the boot manager's index parser read name_length from offset
+        // 0x40, it got the first byte of the filename instead (0x57 = 'W'
+        // for "Windows") giving a "name length" of 87 chars and reading
+        // garbage for the filename.
+        data.extend_from_slice(&0u16.to_le_bytes());           // 0x3C: packed_ea_size (2)
+        data.push(name_len);                                   // 0x3E: name_length (1)
+        data.push(FILENAME_NAMESPACE_WIN32);                   // 0x3F: namespace (1)
+        // Filename at 0x40 (2 bytes per char)
         for c in name_utf16 {
             data.extend_from_slice(&c.to_le_bytes());
         }

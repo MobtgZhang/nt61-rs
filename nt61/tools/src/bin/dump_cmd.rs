@@ -1,6 +1,7 @@
 //! Dump the cmd.exe image bytes for the kernel to `include_bytes!`.
 use std::fs;
 use std::path::PathBuf;
+use std::mem::ManuallyDrop;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -14,12 +15,14 @@ fn main() {
     } else {
         PathBuf::from("src/resources/pe/cmd_x86_64.exe")
     };
-    let bytes = nt61::system_image::build_cmd_exe_for_machine(machine);
+    let bytes_raw = nt61::system_image::build_cmd_exe_for_machine(machine);
+    // build_cmd_exe_for_machine returns ManuallyDrop<Vec<u8>>, dereference it
+    let bytes: &[u8] = &*bytes_raw;
     eprintln!("dump_cmd: produced {} bytes", bytes.len());
     eprintln!("dump_cmd: first 32 bytes = {:02x?}", &bytes[..32.min(bytes.len())]);
     if let Some(parent) = out_path.parent() {
         fs::create_dir_all(parent).expect("mkdir parent");
     }
-    fs::write(&out_path, &bytes).expect("write cmd.exe");
+    fs::write(&out_path, bytes).expect("write cmd.exe");
     println!("Wrote {} bytes to {}", bytes.len(), out_path.display());
 }

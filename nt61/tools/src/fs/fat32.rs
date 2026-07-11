@@ -1477,7 +1477,7 @@ mod tests {
     fn test_lfn_checksum() {
         let sfn = b"BOOTX64 EFI";
         let cs = checksum_83(sfn);
-        assert_eq!(cs, 0x5F); // Expected checksum
+        assert_eq!(cs, 0x1D); // Expected checksum for "BOOTX64 EFI"
     }
 
     #[test]

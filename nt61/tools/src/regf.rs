@@ -231,9 +231,14 @@ impl HivePlan {
     /// Cursor starts at absolute file offset 0x1020 (REGF_HDR + HBIN_HDR).
     fn compute(root: &Node) -> (Self, Vec<usize>) {
         let mut cursor: usize = REGF_HDR_SIZE + HBIN_HDR_SIZE;
-        // Initialize hbin_ends with the END of each HBIN page
-        // This represents "no data written yet" state
-        let mut hbin_ends: Vec<usize> = vec![REGF_HDR_SIZE + HBIN_SIZE; 1];
+        // Initialize hbin_ends with the cursor start position (the first
+        // available cell slot in HBIN 0). This marks where the first cell
+        // begins. plan_node() will update hbin_ends[idx] to the actual
+        // cell-end position after writing each cell. Using page_end
+        // (0x2000) here would cause patch_free_blocks to write a bogus
+        // free-block that covers the entire cell area before plan_node
+        // has a chance to fix it.
+        let mut hbin_ends: Vec<usize> = vec![REGF_HDR_SIZE + HBIN_HDR_SIZE; 1];
         let root_plan = NodePlan::plan_node(root, &mut cursor, &mut hbin_ends);
 
         // Number of HBINs needed = the page index of cursor + 1 (extra

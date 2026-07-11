@@ -1092,6 +1092,13 @@ const SYSTEM_TYPE_GUID: [u8; 16] = [
     0x87, 0xC0, 0x68, 0xB6, 0xB7, 0x26, 0x99, 0xC7,
 ];
 
+/// GUID for Linux filesystem data partition
+/// Standard: 0FC63DAF-8483-4772-8E79-3D69D8477DE4
+const LINUX_FS_TYPE_GUID: [u8; 16] = [
+    0xAF, 0x3D, 0xC6, 0x0F, 0x83, 0x84, 0x72, 0x47,
+    0x8E, 0x79, 0x3D, 0x69, 0xD8, 0x47, 0x7D, 0xE4,
+];
+
 /// Filesystem choice for the dual-partition image's partitions.
 ///
 /// The ESP must be FAT32 (UEFI spec requirement), but the System
@@ -1287,7 +1294,13 @@ pub fn create_dual_partition_image_with_fs(
     // Note: hidd_sec / hidden_sectors is set correctly by
     // finalize_with_offset() in the FAT32 and NTFS image builders.
 
-    // Write dual-partition GPT
+    // Write dual-partition GPT. Pick the system partition's GPT type
+    // GUID based on the filesystem format: NTFS uses Microsoft basic
+    // data, EXT4 uses Linux filesystem.
+    let sys_type_guid = match fs_choice {
+        DualPartitionFs::Fat32EspExt4System => &LINUX_FS_TYPE_GUID,
+        _ => &SYSTEM_TYPE_GUID,
+    };
     write_dual_gpt(
         &mut buf,
         total_sectors,
@@ -1295,6 +1308,7 @@ pub fn create_dual_partition_image_with_fs(
         esp_last_lba,
         sys_start_lba,
         sys_last_lba,
+        sys_type_guid,
     );
 
     // Write to file
@@ -1307,7 +1321,12 @@ pub fn create_dual_partition_image_with_fs(
     Ok(())
 }
 
-/// Write GPT with two partitions (ESP + System)
+/// Write GPT with two partitions (ESP + System).
+///
+/// `sys_type_guid` selects the GPT partition-type GUID for the system
+/// partition: `SYSTEM_TYPE_GUID` (Microsoft basic data) for FAT32/NTFS
+/// layouts, `LINUX_FS_TYPE_GUID` (Linux filesystem) when the system
+/// partition is formatted as EXT4.
 fn write_dual_gpt(
     buf: &mut [u8],
     total_sectors: u64,
@@ -1315,6 +1334,7 @@ fn write_dual_gpt(
     esp_end: u64,
     sys_start: u64,
     sys_end: u64,
+    sys_type_guid: &[u8; 16],
 ) {
     // Protective MBR at LBA 0
     buf[510] = 0x55;
@@ -1359,7 +1379,7 @@ fn write_dual_gpt(
 
     // GPT Partition Entry 2: System (second partition entry, at offset 128 from LBA 2)
     let pent2 = 2 * 512 + 128; // Second partition entry (128 bytes after first entry)
-    buf[pent2..pent2 + 16].copy_from_slice(&SYSTEM_TYPE_GUID); // Type GUID
+    buf[pent2..pent2 + 16].copy_from_slice(sys_type_guid); // Type GUID
     let sys_guid = uuid::Uuid::new_v4();
     buf[pent2 + 16..pent2 + 32].copy_from_slice(sys_guid.as_bytes()); // Partition GUID
     buf[pent2 + 32..pent2 + 40].copy_from_slice(&sys_start.to_le_bytes()); // First LBA

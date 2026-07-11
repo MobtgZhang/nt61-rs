@@ -27,6 +27,12 @@ name = "hive-gen"
 path = "src/hive_gen_bin.rs"
 required-features = ["with-nt61"]
 
+# dump-cmd 需要 nt61
+[[bin]]
+name = "dump-cmd"
+path = "src/bin/dump_cmd.rs"
+required-features = ["with-nt61"]
+
 [lib]
 name = "nt61_tools"
 path = "src/lib.rs"

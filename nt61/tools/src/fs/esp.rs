@@ -98,35 +98,6 @@ impl EspBuilder {
         self
     }
 
-    /// Provide the winload.efi binary. 
-    /// 
-    /// **IMPORTANT**: In Windows 7, winload.efi is stored ONLY on the System 
-    /// partition at `C:\Windows\System32\winload.efi`, NOT on the ESP.
-    /// 
-    /// ESP Layout (correct Windows 7):
-    ///   \EFI\Boot\BOOTX64.EFI     <- removable media fallback (firmware searches this)
-    ///   \EFI\Microsoft\Boot\bootmgfw.efi  <- Windows Boot Manager
-    ///   \EFI\Microsoft\Boot\BCD    <- Boot Configuration Data
-    ///   \EFI\Microsoft\Boot\Fonts\ <- boot screen fonts
-    /// 
-    /// System partition Layout (correct Windows 7):
-    ///   \Windows\System32\winload.efi  <- OS Loader (THIS IS THE ONLY LOCATION!)
-    ///   \Windows\System32\ntoskrnl.exe  <- kernel
-    ///   \Windows\System32\hal.dll      <- hardware abstraction layer
-    ///   \Windows\System32\config\       <- registry hives
-    /// 
-    /// The BCD's ApplicationPath (12000002 element) must point to the System
-    /// partition path: `\Windows\System32\winload.efi`
-    /// 
-    /// NOTE: This method is deprecated and does NOT add winload.efi to ESP.
-    /// Winload.efi should ONLY exist on the System partition.
-    pub fn with_winload<P: AsRef<Path>>(self, _path: Option<P>) -> Self {
-        // winload.efi does NOT go on ESP per Windows 7 layout specification.
-        // It belongs exclusively on the System partition at \Windows\System32\winload.efi
-        // The BCD's device path points to System partition (partition 2).
-        self
-    }
-
     /// Register an extra file to copy into the ESP.
     pub fn add_esp_file<P: AsRef<Path>>(
         mut self,
@@ -197,27 +168,23 @@ impl EspBuilder {
     }
 
     /// Write the BCD file at `EFI\Microsoft\Boot\BCD` — the canonical
-    /// Windows 7 location.
+    /// Windows 7 location (and the only place a real Windows 7 install
+    /// puts it; copying a duplicate to `EFI\BOOT\BCD` violates the
+    /// Windows 7 layout and clutters the firmware fallback dir with
+    /// files the firmware was never supposed to see).
     ///
     /// `bcd_bytes` should be the output of `hive_gen::build_bcd()`.
-    /// We also write a copy at `EFI\Boot\BCD` as a fallback for
-    /// firmware / boot managers that look for it there.
     pub fn write_bcd_file(output_dir: &Path, bcd_bytes: &[u8]) -> Result<()> {
-        for bcd_path_str in &[
-            "EFI/Microsoft/Boot/BCD",
-            "EFI/BOOT/BCD",
-        ] {
-            let bcd_path = output_dir.join(bcd_path_str);
-            if let Some(parent) = bcd_path.parent() {
-                crate::fs::dir::create_dir_all(parent)?;
-            }
-            std::fs::write(&bcd_path, bcd_bytes)?;
-            log::info(&format!(
-                "BCD written: {} ({} bytes)",
-                bcd_path.display(),
-                bcd_bytes.len()
-            ));
+        let bcd_path = output_dir.join("EFI/Microsoft/Boot/BCD");
+        if let Some(parent) = bcd_path.parent() {
+            crate::fs::dir::create_dir_all(parent)?;
         }
+        std::fs::write(&bcd_path, bcd_bytes)?;
+        log::info(&format!(
+            "BCD written: {} ({} bytes)",
+            bcd_path.display(),
+            bcd_bytes.len()
+        ));
         Ok(())
     }
 
@@ -235,9 +202,14 @@ impl EspBuilder {
     }
 
     /// Install the boot-screen font at
-    /// `EFI\BOOT\Fonts\wgl4_boot.ttf`.
+    /// `EFI\Microsoft\Boot\Fonts\wgl4_boot.ttf` — the canonical
+    /// Windows 7 location. (The legacy `EFI\BOOT\Fonts\` path would
+    /// live next to the firmware-removable dir's `BOOT<arch>.EFI`
+    /// and is *not* produced by any real install — leaving it
+    /// empty keeps `EFI\BOOT\` strictly minimal, which makes OVMF
+    /// easier to reason about during bring-up.)
     pub fn copy_fonts(&self) -> Result<()> {
-        let fonts_dir = self.output_dir.join("EFI/BOOT/Fonts");
+        let fonts_dir = self.output_dir.join("EFI/Microsoft/Boot/Fonts");
         crate::fs::dir::create_dir_all(&fonts_dir)?;
 
         if let Some(ref src) = self.font {
@@ -283,27 +255,22 @@ impl EspBuilder {
     }
 
     /// Generate and write the BCD file at the canonical Windows 7
-    /// path `EFI\Microsoft\Boot\BCD` and the firmware-fallback
-    /// `EFI\Boot\BCD`. Uses `hive_gen::build_bcd()` to produce a
-    /// valid REGF hive.
+    /// path `EFI\Microsoft\Boot\BCD` only — the firmware fallback
+    /// dir `EFI\BOOT\` is left empty except for `BOOT<arch>.EFI` so
+    /// it matches what a real install produces.
     pub fn write_bcd(&self) -> Result<()> {
         log::info("Generating BCD store...");
         let bcd_bytes = hive_gen::build_bcd();
-        for path in &[
-            "EFI/Microsoft/Boot/BCD",
-            "EFI/BOOT/BCD",
-        ] {
-            let bcd_path = self.output_dir.join(path);
-            if let Some(parent) = bcd_path.parent() {
-                crate::fs::dir::create_dir_all(parent)?;
-            }
-            std::fs::write(&bcd_path, &bcd_bytes)?;
-            log::info(&format!(
-                "BCD written: {} ({} bytes)",
-                bcd_path.display(),
-                bcd_bytes.len()
-            ));
+        let bcd_path = self.output_dir.join("EFI/Microsoft/Boot/BCD");
+        if let Some(parent) = bcd_path.parent() {
+            crate::fs::dir::create_dir_all(parent)?;
         }
+        std::fs::write(&bcd_path, &bcd_bytes)?;
+        log::info(&format!(
+            "BCD written: {} ({} bytes)",
+            bcd_path.display(),
+            bcd_bytes.len()
+        ));
         Ok(())
     }
 }

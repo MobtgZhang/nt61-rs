@@ -1095,52 +1095,319 @@ impl Ext4Image {
         inode
     }
 
-    /// Finalize the image and return raw bytes
+    /// Finalize the image and return raw bytes.
+    ///
+    /// Builds a minimal EXT4 image that the existing in-tree EXT4 reader
+    /// (see `from_bytes`) can mount. Layout:
+    ///
+    ///   block 0: 1024 bytes boot sector (zeros) + 1024 bytes superblock
+    ///            (the superblock occupies offset 1024..2048 of the image)
+    ///   block 1: BGDT (first 32 bytes used; rest zero)
+    ///   block 2: block bitmap
+    ///   block 3: inode bitmap
+    ///   block 4+: inode table (256-byte inodes)
+    ///   after inode table: data blocks (one or more per file/dir)
+    ///
+    /// Inode numbering:
+    ///   * inode 1 = reserved (zero)
+    ///   * inode 2 = root
+    ///   * inode 3..N = parsed_root entries in DFS order
+    ///
+    /// All files use extent trees (depth 0, single extent). Directories use
+    /// linear directory entries with `dir_entry` records. Each directory's
+    /// first block contains `.`, `..`, and one record per child; child
+    /// inode numbers are patched in once all inodes are assigned.
     pub fn finalize(&mut self) -> Result<Vec<u8>> {
-        let total_size = (self.size_mb as usize) * 1024 * 1024;
-        let mut image = vec![0u8; total_size];
+        // Sync any flat-list files/dirs into parsed_root so the encoder
+        // sees them. write_file_path/mkdir_path already update parsed_root.
+        if self.parsed_root.is_empty() && (!self.files.is_empty() || !self.dirs.is_empty()) {
+            let mut sorted_paths: Vec<(String, Vec<u8>)> = self.files.clone();
+            sorted_paths.sort_by(|a, b| a.0.cmp(&b.0));
+            for (path, data) in sorted_paths {
+                let _ = Ext4Image::write_file_path(self, &path, &data);
+            }
+            let mut sorted_dirs: Vec<String> = self.dirs.clone();
+            sorted_dirs.sort();
+            sorted_dirs.dedup();
+            for d in sorted_dirs {
+                let _ = Ext4Image::mkdir_path(self, &d);
+            }
+        }
 
-        // Calculate block group count
-        let bg_count = calc_bg_count(self.total_blocks, self.blocks_per_group);
-        
-        // Build and write superblock
+        let total_size = (self.size_mb as usize) * 1024 * 1024;
+        let bs = self.block_size as usize;
+        let inodes_per_group = self.inodes_per_group as usize;
+
+        let bgdt_block: u32 = 1;
+        let block_bitmap_block: u32 = 2;
+        let inode_bitmap_block: u32 = 3;
+
+        // Pass 1: DFS through parsed_root assigning inodes.
+        let mut allocs: Vec<Ext4Alloc> = Vec::new();
+        // Build root (inode 2) dir_block up front so we have patches for it.
+        let root_children_refs: Vec<&FileEntry> = self.parsed_root.iter().collect();
+        let (root_dir_block, root_patches) = build_dir_block(&root_children_refs, 2, 2);
+        allocs.push(Ext4Alloc {
+            ino: 2,
+            is_dir: true,
+            name: String::new(),
+            data: Vec::new(),
+            children: Vec::new(),
+            dir_block: root_dir_block,
+            patches: root_patches,
+            first_block: 0,
+            blocks_in_file: 0,
+        });
+        let mut next_ino: u32 = 3;
+        let mut stack: Vec<(usize, &FileEntry)> = Vec::new();
+        for child in self.parsed_root.iter().rev() {
+            stack.push((0, child));
+        }
+        while let Some((parent_idx, entry)) = stack.pop() {
+            let ino = next_ino;
+            next_ino += 1;
+            let my_idx = allocs.len();
+            let mut alloc = Ext4Alloc {
+                ino,
+                is_dir: entry.is_dir,
+                name: entry.name.clone(),
+                data: if entry.is_dir { Vec::new() } else { entry.data.clone() },
+                children: Vec::new(),
+                dir_block: Vec::new(),
+                patches: Vec::new(),
+                first_block: 0,
+                blocks_in_file: 0,
+            };
+            if entry.is_dir {
+                let children_refs: Vec<&FileEntry> = entry.children.iter().collect();
+                let (buf, patches) = build_dir_block(&children_refs, ino, allocs[parent_idx].ino);
+                alloc.dir_block = buf;
+                alloc.patches = patches;
+            }
+            allocs.push(alloc);
+            allocs[parent_idx].children.push(my_idx);
+            for c in entry.children.iter().rev() {
+                stack.push((my_idx, c));
+            }
+        }
+
+        // Pass 2: assign data blocks. Inode table comes first.
+        let total_inodes = (next_ino as usize + 32).max(inodes_per_group);
+        let inode_table_blocks = ((total_inodes * 256) + bs - 1) / bs;
+        let inode_table_start: u32 = 4;
+        let mut data_block: u32 = inode_table_start + inode_table_blocks as u32;
+        for alloc in allocs.iter_mut() {
+            let data = if alloc.is_dir { &alloc.dir_block } else { &alloc.data };
+            if data.is_empty() {
+                alloc.first_block = 0;
+                alloc.blocks_in_file = 0;
+                continue;
+            }
+            alloc.first_block = data_block;
+            let blocks = ((data.len() + bs - 1) / bs) as u32;
+            alloc.blocks_in_file = blocks;
+            data_block += blocks;
+        }
+        let total_used = data_block;
+
+        // Pass 3: patch child inode numbers into parent dir blocks.
+        for alloc_idx in 0..allocs.len() {
+            let children = allocs[alloc_idx].children.clone();
+            for (slot, &child_idx) in children.iter().enumerate() {
+                let child_ino = allocs[child_idx].ino;
+                let (off, _) = allocs[alloc_idx].patches[slot];
+                allocs[alloc_idx].dir_block[off..off + 4]
+                    .copy_from_slice(&child_ino.to_le_bytes());
+                allocs[alloc_idx].patches[slot] = (off, child_ino);
+            }
+        }
+
+        // Build superblock.
         let mut superblock = self.build_superblock();
-        
-        // Calculate free blocks and inodes
-        let used_blocks = self.calculate_used_blocks();
-        let free_blocks = (self.total_blocks as u32).saturating_sub(used_blocks);
-        let free_inodes = (self.inodes_per_group * bg_count).saturating_sub(self.files.len() as u32 + self.dirs.len() as u32 + 1);
-        
+        let free_blocks = (self.total_blocks as u32).saturating_sub(total_used);
+        let free_inodes = (inodes_per_group as u32).saturating_sub(next_ino);
         superblock.s_free_blocks_count_lo = free_blocks;
         superblock.s_free_inodes_count = free_inodes;
+        superblock.s_first_data_block = 0;
+        superblock.s_blocks_count_lo = self.total_blocks as u32;
 
-        // Write superblock at offset 1024
+        // Build bitmaps.
+        let mut block_bitmap = vec![0u8; bs];
+        for b in 0..total_used {
+            set_bit(&mut block_bitmap, b);
+        }
+        let mut inode_bitmap = vec![0u8; bs];
+        set_bit(&mut inode_bitmap, 1);
+        for alloc in &allocs {
+            set_bit(&mut inode_bitmap, alloc.ino);
+        }
+
+        // Build BGDT (32-byte entry).
+        let mut bgdt = vec![0u8; 32];
+        bgdt[0..4].copy_from_slice(&block_bitmap_block.to_le_bytes());
+        bgdt[4..8].copy_from_slice(&inode_bitmap_block.to_le_bytes());
+        bgdt[8..12].copy_from_slice(&inode_table_start.to_le_bytes());
+
+        // Build inode table.
+        let mut inode_table = vec![0u8; inode_table_blocks * bs];
+        for alloc in &allocs {
+            let local = (alloc.ino - 1) as usize;
+            let off = local * 256;
+            if off + 256 > inode_table.len() { continue; }
+            let content = if alloc.is_dir {
+                build_inode_bytes_dir(0o755, alloc.dir_block.len() as u32,
+                    alloc.first_block, alloc.blocks_in_file)
+            } else {
+                build_inode_bytes_file(0o644, alloc.data.len() as u32,
+                    alloc.first_block, alloc.blocks_in_file)
+            };
+            inode_table[off..off + content.len().min(256)]
+                .copy_from_slice(&content[..content.len().min(256)]);
+        }
+
+        // Assemble the image.
+        let mut image = vec![0u8; total_size];
         let sb_bytes = superblock.as_bytes();
         image[SUPERBLOCK_OFFSET as usize..SUPERBLOCK_OFFSET as usize + sb_bytes.len()]
             .copy_from_slice(&sb_bytes);
-
-        // Copy file data (simplified - real implementation would use proper block allocation)
-        let mut data_offset = (SUPERBLOCK_OFFSET + 1024) as usize;
-        for (_path, data) in &self.files {
-            if data.len() > 0 && data_offset + data.len() < total_size {
-                image[data_offset..data_offset + data.len()].copy_from_slice(data);
-                data_offset += data.len();
-            }
+        let bgdt_off = (bgdt_block as usize) * bs;
+        image[bgdt_off..bgdt_off + bgdt.len()].copy_from_slice(&bgdt);
+        let bb_off = (block_bitmap_block as usize) * bs;
+        image[bb_off..bb_off + block_bitmap.len()].copy_from_slice(&block_bitmap);
+        let ib_off = (inode_bitmap_block as usize) * bs;
+        image[ib_off..ib_off + inode_bitmap.len()].copy_from_slice(&inode_bitmap);
+        let it_off = (inode_table_start as usize) * bs;
+        image[it_off..it_off + inode_table.len()].copy_from_slice(&inode_table);
+        for alloc in &allocs {
+            let data = if alloc.is_dir { &alloc.dir_block } else { &alloc.data };
+            if data.is_empty() { continue; }
+            let off = (alloc.first_block as usize) * bs;
+            image[off..off + data.len()].copy_from_slice(data);
         }
 
         Ok(image)
     }
+}
 
-    /// Calculate the number of blocks used by files
-    fn calculate_used_blocks(&self) -> u32 {
-        let mut blocks = 0;
-        for (_, data) in &self.files {
-            blocks += (data.len() as u32 + self.block_size - 1) / self.block_size;
-        }
-        // Add superblock, block group descriptors, bitmaps, inode table
-        blocks += 10; // Estimated overhead
-        blocks
+// =====================================================================
+// Helpers used by finalize (replaces the old build_dir_entries_*
+// stack that had no inode-aware patching).
+// =====================================================================
+
+/// Produce the bytes for a directory entry. The entry's total length is
+/// `rec_len` (rounded up to 4). Pass `inode=0` to leave a placeholder
+/// for later patching.
+fn dir_entry_bytes(inode: u32, file_type: u8, rec_len: u16, name: &str, name_len: usize) -> Vec<u8> {
+    let mut e = Vec::with_capacity(rec_len as usize);
+    e.extend_from_slice(&inode.to_le_bytes());
+    e.extend_from_slice(&rec_len.to_le_bytes());
+    e.push(name_len as u8);
+    e.push(file_type);
+    e.extend_from_slice(name.as_bytes());
+    while e.len() < rec_len as usize {
+        e.push(0);
     }
+    e
+}
+
+/// Build a directory inode (256 bytes).
+fn build_inode_bytes_dir(mode: u16, size: u32, first_block: u32, blocks_in_file: u32) -> Vec<u8> {
+    let mut b = vec![0u8; 256];
+    b[0..2].copy_from_slice(&mode.to_le_bytes());
+    b[2..4].copy_from_slice(&0u16.to_le_bytes());
+    b[4..8].copy_from_slice(&size.to_le_bytes());
+    b[8..12].copy_from_slice(&0u32.to_le_bytes());
+    b[12..16].copy_from_slice(&0u32.to_le_bytes());
+    b[16..20].copy_from_slice(&0u32.to_le_bytes());
+    b[20..24].copy_from_slice(&0u32.to_le_bytes());
+    b[24..26].copy_from_slice(&0u16.to_le_bytes());
+    b[26..28].copy_from_slice(&2u16.to_le_bytes());
+    b[28..32].copy_from_slice(&((blocks_in_file * 8u32) as u32).to_le_bytes());
+    b[32..36].copy_from_slice(&0u32.to_le_bytes());
+    let entries: u16 = if blocks_in_file > 0 { 1 } else { 0 };
+    b[40..44].copy_from_slice(&((0xF30A) | ((entries as u32) << 16)).to_le_bytes());
+    b[44..48].copy_from_slice(&0u32.to_le_bytes());
+    b[48..52].copy_from_slice(&0u32.to_le_bytes());
+    b[52..56].copy_from_slice(&0u32.to_le_bytes());
+    b[56..60].copy_from_slice(&blocks_in_file.to_le_bytes());
+    b[60..64].copy_from_slice(&first_block.to_le_bytes());
+    b
+}
+
+/// Build a file inode (256 bytes).
+fn build_inode_bytes_file(mode: u16, size: u32, first_block: u32, blocks_in_file: u32) -> Vec<u8> {
+    let mut b = vec![0u8; 256];
+    b[0..2].copy_from_slice(&mode.to_le_bytes());
+    b[2..4].copy_from_slice(&0u16.to_le_bytes());
+    b[4..8].copy_from_slice(&size.to_le_bytes());
+    b[8..12].copy_from_slice(&0u32.to_le_bytes());
+    b[12..16].copy_from_slice(&0u32.to_le_bytes());
+    b[16..20].copy_from_slice(&0u32.to_le_bytes());
+    b[20..24].copy_from_slice(&0u32.to_le_bytes());
+    b[24..26].copy_from_slice(&0u16.to_le_bytes());
+    b[26..28].copy_from_slice(&1u16.to_le_bytes());
+    b[28..32].copy_from_slice(&((blocks_in_file * 8u32) as u32).to_le_bytes());
+    b[32..36].copy_from_slice(&0u32.to_le_bytes());
+    let entries: u16 = if blocks_in_file > 0 { 1 } else { 0 };
+    b[40..44].copy_from_slice(&((0xF30A) | ((entries as u32) << 16)).to_le_bytes());
+    b[44..48].copy_from_slice(&0u32.to_le_bytes());
+    b[48..52].copy_from_slice(&0u32.to_le_bytes());
+    b[52..56].copy_from_slice(&0u32.to_le_bytes());
+    b[56..60].copy_from_slice(&blocks_in_file.to_le_bytes());
+    b[60..64].copy_from_slice(&first_block.to_le_bytes());
+    b
+}
+
+fn set_bit(bitmap: &mut [u8], idx: u32) {
+    let byte = (idx / 8) as usize;
+    let bit = (idx % 8) as u32;
+    if byte < bitmap.len() {
+        bitmap[byte] |= 1 << bit;
+    }
+}
+
+/// Allocation record for a single file or directory.
+struct Ext4Alloc {
+    ino: u32,
+    is_dir: bool,
+    name: String,
+    data: Vec<u8>,
+    children: Vec<usize>,
+    /// Bytes of the directory entry block, with placeholders for child
+    /// inode numbers. `patches` records the byte offset of each child
+    /// entry's inode field so we can patch them in once all inodes are
+    /// known.
+    dir_block: Vec<u8>,
+    patches: Vec<(usize, u32)>,
+    first_block: u32,
+    blocks_in_file: u32,
+}
+
+/// Build the directory entry block for a directory that owns `children`.
+/// `self_ino` is the inode of this directory; `parent_ino` is the inode
+/// of its parent (..). Each child entry has inode=0 placeholder and the
+/// patch list records where to write the real inode later.
+fn build_dir_block(
+    children: &[&FileEntry],
+    self_ino: u32,
+    parent_ino: u32,
+) -> (Vec<u8>, Vec<(usize, u32)>) {
+    let mut buf = Vec::new();
+    let mut patches = Vec::new();
+    buf.extend_from_slice(&dir_entry_bytes(self_ino, EXT4_FT_DIR, 12, ".", 1));
+    buf.extend_from_slice(&dir_entry_bytes(parent_ino, EXT4_FT_DIR, 12, "..", 2));
+    for c in children {
+        let ft = if c.is_dir { EXT4_FT_DIR } else { EXT4_FT_REG_FILE };
+        let name = c.name.clone();
+        let actual_rec_len = 8 + name.len();
+        let rec_len = ((actual_rec_len + 3) / 4) * 4;
+        let entry_off = buf.len();
+        buf.extend_from_slice(&dir_entry_bytes(0, ft, rec_len as u16, &name, name.len()));
+        patches.push((entry_off, 0));
+    }
+    let pad_to = ((buf.len() + 3) / 4) * 4;
+    if pad_to > buf.len() { buf.resize(pad_to, 0); }
+    (buf, patches)
 }
 
 // =====================================================================
