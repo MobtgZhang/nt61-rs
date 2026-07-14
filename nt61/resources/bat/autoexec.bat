@@ -58,13 +58,19 @@ echo   Simulated VER: %VER_SIMULATED%
 echo.
 
 echo [1.6] DATE - Display/Set Date
-SET CURRENT_DATE=2026-07-02
-echo   Current Date: %CURRENT_DATE%
+REM The real date is now read from the host CMOS/RTC by the
+REM user-mode `date` builtin (SYS_GET_RTC, 0x0212). The literal
+REM below has been removed so the BAT log no longer shows a stale
+REM hard-coded string.
+echo   Current Date: (type `date` at the C:\> prompt)
 echo.
 
 echo [1.7] TIME - Display/Set Time
-SET CURRENT_TIME=09:12:00.00
-echo   Current Time: %CURRENT_TIME%
+REM The real time is now read from the host CMOS/RTC by the
+REM user-mode `time` builtin (SYS_GET_RTC, 0x0212). The literal
+REM below has been removed so the BAT log no longer shows a stale
+REM hard-coded string.
+echo   Current Time: (type `time` at the C:\> prompt)
 echo.
 
 REM ============================================================
@@ -442,13 +448,15 @@ echo ============================================================
 echo.
 
 echo [6.1] IPCONFIG (SIM)
-SET IP_ADDR=192.168.1.100
-SET IP_MASK=255.255.255.0
-SET IP_GATEWAY=192.168.1.1
-echo   IPv4 Address: %IP_ADDR%
-echo   Subnet Mask: %IP_MASK%
-echo   Default Gateway: %IP_GATEWAY%
-echo   (IPCONFIG command - simulated)
+REM The real interface list now comes from the kernel netstack
+REM via SYS_NETCFG_GET (0x0213). The kernel seeds a loopback
+REM interface (127.0.0.1 / 255.0.0.0 / 0.0.0.0) during early boot
+REM in kernel_main, so the user-mode `ipconfig` builtin always has
+REM a real source to read from.
+echo   IPv4 Address:   (type `ipconfig` at the C:\> prompt)
+echo   Subnet Mask:    (type `ipconfig` at the C:\> prompt)
+echo   Default Gateway:(type `ipconfig` at the C:\> prompt)
+echo   (IPCONFIG command - real kernel netstack)
 echo.
 
 echo [6.2] PING (SIM)

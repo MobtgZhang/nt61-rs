@@ -3,6 +3,7 @@ members = [
     "src/boot",
     "src/winload",
     "tools",
+    "tools/cmd-stub-gen",
 ]
 
 resolver = "2"

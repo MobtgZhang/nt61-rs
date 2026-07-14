@@ -12,12 +12,6 @@ isodir/
 *.swo
 *~
 
-# Generated cmd.exe PE stubs (produced by `cargo run --bin dump_cmd` /
-# `cargo run --bin mkcmd`). The kernel embeds them via
-# `include_bytes!("../resources/pe/cmd_x86_64.exe")` at compile time,
-# but the bytes themselves are rebuildable and must not be committed.
-src/resources/pe/
-
 # Stale backup files left in the workspace during bring-up
 *.bak
 *.rs.new

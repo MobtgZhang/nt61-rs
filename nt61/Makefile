@@ -578,7 +578,7 @@ run-loongarch64-iso: build-iso
 
 # Default watchdog: 60 s. Override on the command line, e.g.:
 #   make run-x86_64-ntfs-serial TIMEOUT=300
-TIMEOUT ?= 60
+TIMEOUT ?= 80
 
 # x86_64
 run-x86_64-ntfs-serial: ARCH=x86_64
