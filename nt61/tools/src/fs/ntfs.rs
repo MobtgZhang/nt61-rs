@@ -595,9 +595,21 @@ impl NtfsImage {
         // of cluster size so the BPB hint and the record layout
         // agree on the same value. Without this fix the build tool
         // writes 4096-byte records to disk but the kernel reads
-        // 1024-byte records, leaving every odd-indexed record
-        // unaligned and unreadable.
-        let mft_record_size = 1024i32;
+        // Real Windows uses 1024 or 4096 byte MFT records. With the
+        // full Win7 boot chain we now populate System32 (record 15)
+        // with ~12 system image files plus the `drivers` and `config`
+        // sub-directories, and `drivers` (record ~17) with ~13 boot
+        // driver .sys files. Each INDEX_ENTRY is ~120 bytes once the
+        // $FILE_NAME attribute and key length are accounted for, so
+        // 1024-byte records run out of room in INDEX_ROOT (~6
+        // entries) and trigger the boot-time
+        //   [NTFS]   skipping attr 0x90 at off=200 len=... (>record end=1024)
+        //   [NTFS]   no match for 'XXX'
+        // fallback that silently drops every directory entry past
+        // the cap. Bump to 4096 bytes, which matches the standard
+        // NTFS configuration triggered by lots of files per
+        // directory.
+        let mft_record_size = 4096i32;
 
         // MFT starts at cluster 4, leaving clusters 0..3 for the boot
         // sector and backup boot sectors. Setting it to 0 would cause
@@ -1071,15 +1083,24 @@ impl NtfsImage {
 // range entries — even though System32 was still physically
 // present at the start of the INDEX_ROOT.
 //
-// The fix is to keep this at 5 and rely on the priority sort in
-// `build_index_root_attr` to put the boot-critical directories
-// (`System32`, `drivers`, `config`) into the first 5 slots. Non-
-// critical children (e.g. `security`, `WinSxS`) silently fall
-// off the end, which is fine for boot: the boot manager only
-// walks the indices it needs (Windows → System32 → winload.efi),
-// and any other accesses happen after the kernel has its full NTFS
-// driver online.
-const MAX_CHILDREN_PER_DIR: usize = 5;
+// The fix is to keep this at a value large enough to include every
+// file that the boot flow actually reads through winload.efi /
+// ntoskrnl.exe / smss.exe / csrss.exe / wininit.exe / services.exe /
+// lsass.exe / lsm.exe / winlogon.exe / userinit.exe / cmd.exe, plus
+// the `drivers` and `config` subdirectories and their boot-critical
+// files. The non-critical children (e.g. `security`, `WinSxS`,
+// `Servicing`) silently fall off the end, which is fine for boot:
+// the boot manager only walks the indices it needs
+// (Windows → System32 → winload.efi → smss → … → cmd.exe), and any
+// other accesses happen after the kernel has its full NTFS driver
+// online.
+//
+// On real Windows, an INDEX_ROOT is allowed up to ~16KB resident
+// (we stay well under that here — about 30 entries × ~120 bytes
+// = ~3.6KB total). Anything that does not fit moves to the
+// allocation bitmap and INDEX_ALLOCATION sub-tree, but our
+// minimal boot flow never allocates those extents.
+const MAX_CHILDREN_PER_DIR: usize = 64;
 
         let mut data = build_attr_header(ATTR_TYPE_INDEX_ROOT, 0); // value_len filled below
 

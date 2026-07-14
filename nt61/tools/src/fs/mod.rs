@@ -22,6 +22,7 @@ pub mod system;
 pub mod build;
 pub mod partition;
 pub mod backend;
+pub mod stubs;
 
 // Re-exports for convenience
 pub use dir::{create_dir_all, remove_dir_all, dir_exists};

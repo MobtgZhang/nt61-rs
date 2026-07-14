@@ -33,6 +33,11 @@ name = "dump-cmd"
 path = "src/bin/dump_cmd.rs"
 required-features = ["with-nt61"]
 
+# mkcmd 不需要 nt61——直接拼接小 PE
+[[bin]]
+name = "mkcmd"
+path = "src/bin/mkcmd.rs"
+
 [lib]
 name = "nt61_tools"
 path = "src/lib.rs"
