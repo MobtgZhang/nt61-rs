@@ -80,9 +80,9 @@ pub mod lpc;
 pub mod rtl;
 pub mod fs;
 pub mod loader;
-pub mod pegen;
+// pub mod pegen;          // removed: PE images are now produced by tools/src/fs/build.rs
+// pub mod system_image;   // removed: synthetic in-binary PE pipeline gone
 pub mod servers;
-pub mod system_image;
 pub mod desktop;
 pub mod registry;
 pub mod kernel_main;

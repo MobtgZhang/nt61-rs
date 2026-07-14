@@ -28,6 +28,7 @@ pub mod syscall;
 pub mod syscall_numbers;
 pub mod tss;
 pub mod user_entry;
+pub mod ntoskrnl_handoff;
 
 // Re-export commonly used types
 pub use context::{CpuContext, ThreadContext};

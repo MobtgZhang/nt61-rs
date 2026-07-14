@@ -412,25 +412,53 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     ps::init();
 
     // ============================================================================
-    // PHASE 10: Load system files (ntoskrnl, hal, ntdll, kernel32, smss)
+    // PHASE 9: Reserved — disk ntoskrnl.exe manages subsystem PEs
     // ============================================================================
-    phase_header!(9, "System Image Loader");
+    // The host kernel no longer synthesises subsystem EXEs; the
+    // real `ntoskrnl.exe`, `hal.dll`, BOOT_START drivers, and
+    // `smss/csrss/wininit/services/lsass/cmd.exe` are loaded from
+    // the on-disk NTFS system image by `winload.efi` *before*
+    // `ExitBootServices`. The on-disk ntoskrnl then takes over
+    // and itself creates the user-mode process tree, so there is
+    // nothing for the host `load_system_files` step to do other
+    // than initialise the (now mostly-empty) image database.
+    phase_header!(9, "System Image Loader (reserved - disk ntoskrnl manages this)");
     load_system_files();
 
     // ============================================================================
-    // PHASE 11: Create system processes (System process, Idle thread)
+    // PHASE 10: Create system processes (System process, Idle thread)
     // ============================================================================
     phase_header!(10, "System Processes");
     create_system_processes();
 
     // ============================================================================
-    // PHASE 12: Session Manager (smss)
+    // PHASE 11: Session Manager (smss.exe)
     // ============================================================================
-    phase_header!(11, "Session Manager");
+    // The Session Manager process is spawned by the on-disk
+    // `ntoskrnl.exe` once `KiSystemStartup` reaches the
+    // `dispatch_to_smss` phase (Phase K06 in the loader / handoff
+    // naming scheme). The host kernel still keeps the
+    // `start_session_manager` scaffolding so that the debug
+    // Safe-Mode shell can be exercised when `winload.efi` is
+    // absent (e.g. when booting from the bare-metal stub).
+    phase_header!(11, "Session Manager (smss.exe)");
+
+    // Register the canonical IPv4 loopback interface (127.0.0.1/8)
+    // so the user-mode `cmd.exe` stub's `ipconfig` builtin has a
+    // real kernel-side source to print, instead of falling back
+    // to the static 127.0.0.1 literal in the SYS_NETCFG_GET handler.
+    #[cfg(target_arch = "x86_64")]
+    {
+        match crate::netstack::ipif::seed_loopback() {
+            Some(idx) => boot_println!("    loopback interface registered (if_index={})", idx),
+            None => boot_println!("    loopback interface registration skipped (table full)"),
+        }
+    }
+
     start_session_manager();
 
     // ============================================================================
-    // PHASE 13: Run smoke tests
+    // PHASE 12: Run smoke tests
     // ============================================================================
     phase_header!(12, "Smoke Tests");
     run_smoke_test();
@@ -807,21 +835,18 @@ fn load_system_files() {
     }
     boot_ok!("Image database initialized");
 
-    // TEMP WORKAROUND: Skip PE image building to reach IDLE.
-    // The system_image::build_all() calls into pegen which uses Vec<u8>
-    // internally, and Vec::with_capacity triggers uefi's global allocator
-    // which is invalid after ExitBootServices. For now, skip Phase 9
-    // image building so we can reach IDLE and validate the rest of
-    // the kernel init path.
-    boot_milestone!("KERNEL", "Skipping PE image build (TEMP WORKAROUND) as workaround");
+    boot_milestone!("KERNEL", "Skipping host-side PE synthesis (disk ntoskrnl manages this)");
 
     // Phase 9 image base addresses. These are intentionally
-    // named with the `_` prefix because Phase 9 PE building is
-    // currently skipped (TEMP WORKAROUND above). The values
-    // are kept here so the layout can be restored verbatim
-    // when the workaround is removed: the table below shows
-    // exactly where each NT 6.1 system image is meant to be
-    // mapped into the kernel address space.
+    // named with the `_` prefix because Phase 9 host-side PE
+    // synthesis is intentionally skipped now — the real
+    // `ntoskrnl.exe` lives in the on-disk NTFS system image
+    // and is loaded by `winload.efi` before `ExitBootServices`.
+    // The values are kept here so the layout can be restored
+    // verbatim if a host-side debug build ever needs them
+    // again: the table below shows exactly where each NT 6.1
+    // system image is meant to be mapped into the kernel
+    // address space.
     let _image_bases: [(&str, u64); 5] = [
         ("hal.dll",     kernel_layout::HAL_BASE),
         ("ntoskrnl.exe", kernel_layout::NTOSKRNL_BASE),

@@ -2461,10 +2461,77 @@ fn ucs2_to_string(buf: &[u16]) -> String {
 /// the directory entries and find the canonical (LFN) name, then re-open with it.
 fn read_boot_file(rel_path: &str) -> Result<Vec<u8>, &'static str> {
     use core::mem::ManuallyDrop;
-    let handles = boot::find_handles::<SimpleFileSystem>().map_err(|_| "no SFS handles")?;
-    if handles.is_empty() {
+
+    // Path-classified dispatch. Windows 7 boot paths fall into two
+    // disjoint buckets:
+    //   * ESP paths start with `\EFI\...` or are bare names like `BCD`.
+    //     UEFI's SimpleFileSystem protocol is FAT-only, so these must
+    //     be read through the SFS loop below.
+    //   * System partition paths start with `\Windows\...`. UEFI cannot
+    //     open these via SFS (NTFS has no SFS binding), so we must go
+    //     through the in-tree NTFS/EXT4 reader. Skipping the FAT loop
+    //     here avoids the noisy "Trying FAT handle 0 / Failed to open
+    //     directory: Windows / dispatching by partition type" sequence
+    //     that the previous always-try-FAT-first code emitted for every
+    //     winload.efi read.
+    let normalized = rel_path.replace('\\', "/");
+    let is_esp_path = {
+        let lower = normalized.to_ascii_lowercase();
+        lower == "bcd"
+            || lower.starts_with("efi/")
+            || lower.starts_with("/efi/")
+            || lower.starts_with("efi\\")
+    };
+
+    if !is_esp_path {
+        // Probe the BlockIO handles *before* claiming success in the
+        // log. If the platform truly has no NTFS/EXT4 partition we
+        // want the operator to see "no System partition found",
+        // not "dispatching directly to NTFS/EXT4" followed by a
+        // silent fallthrough to `None`.
+        let system_partition_present = probe_system_partition_present();
+        if system_partition_present {
+            uefi::println!(
+                "[FILE] System-partition path '{}' - dispatching directly to NTFS/EXT4",
+                rel_path
+            );
+        } else {
+            uefi::println!(
+                "[FILE] System-partition path '{}' - no NTFS/EXT4 partition present; \
+                 cannot dispatch",
+                rel_path
+            );
+            uefi::println!("[FILE] All methods failed for '{}'", rel_path);
+            return Err("no System partition (NTFS/EXT4) on this platform");
+        }
+
+        // Strip a leading '/' or '\' before handing the path to the
+        // System-partition reader: BCD paths use the form
+        // `\Windows\System32\winload.efi` (with a backslash and a
+        // leading root-separator), but the NTFS reader's
+        // `resolve_mft_record` treats the input as a path relative to
+        // the volume root and would otherwise try to match an entry
+        // literally named `/Windows/...` and never find it.
+        let stripped = normalized
+            .trim_start_matches(|c| c == '/' || c == '\\')
+            .to_string();
+        if let Some(data) = read_system_partition_file(&stripped) {
+            uefi::println!(
+                "[FILE] System-partition read succeeded: {} bytes",
+                data.len()
+            );
+            return Ok(data);
+        }
+        uefi::println!("[FILE] All methods failed for '{}'", rel_path);
+        return Err("failed to load file from System partition");
+    }
+
+    let sfs_handles = boot::find_handles::<SimpleFileSystem>().map_err(|_| "no SFS handles")?;
+    if sfs_handles.is_empty() {
         return Err("no SimpleFileSystem on this platform");
     }
+    // Shadow the previous name to keep the FAT loop below unchanged.
+    let handles = sfs_handles;
 
     // Split path into parts
     let normalized = rel_path.replace('\\', "/");
@@ -2582,6 +2649,27 @@ fn read_boot_file(rel_path: &str) -> Result<Vec<u8>, &'static str> {
 /// avoids the previous bug where every handle ran a full NTFS GPT
 /// parse and a path that was actually EXT4 was misclassified as
 /// "no NTFS partition found".
+/// Walk the BlockIO handles once and report whether the platform has
+/// any partition that the System-partition reader can consume (NTFS
+/// or EXT4). Used by `read_boot_file` to keep its log honest: it
+/// must not claim "dispatching directly to NTFS/EXT4" if no such
+/// partition exists.
+fn probe_system_partition_present() -> bool {
+    use uefi::proto::media::block::BlockIO;
+    let Ok(handles) = boot::find_handles::<BlockIO>() else {
+        return false;
+    };
+    for handle in handles.iter() {
+        if matches!(
+            probe_partition_type(*handle),
+            PartitionType::Ntfs { .. } | PartitionType::Ext4 { .. }
+        ) {
+            return true;
+        }
+    }
+    false
+}
+
 fn read_system_partition_file(rel_path: &str) -> Option<Vec<u8>> {
     use uefi::boot::OpenProtocolAttributes;
     use uefi::boot::OpenProtocolParams;
@@ -3729,9 +3817,16 @@ const DEBUG_NTFS: bool = true;
 /// the parent directory's $INDEX_ROOT attribute.
 fn resolve_mft_record(ntfs: &NtfsBoot, path: &str) -> Option<u64> {
     if DEBUG_NTFS { uefi::println!("[NTFS] resolve_mft_record: path='{}'", path); }
+    // Windows paths use backslash (e.g. `\Windows\System32\winload.efi`)
+    // but the `read_boot_file` dispatcher normalises incoming
+    // `\` to `/` before calling us, so a path can arrive as
+    // `Windows/System32/winload.efi`. Split on either separator
+    // so the BCD's `\Windows\...` form AND the FAT-normalised
+    // `Windows/...` form both recurse correctly through
+    // Windows -> System32 -> winload.efi.
     let parts: alloc::vec::Vec<&str> = path
-        .trim_start_matches('\\')
-        .split('\\')
+        .trim_start_matches(|c| c == '\\' || c == '/')
+        .split(|c| c == '\\' || c == '/')
         .filter(|s| !s.is_empty())
         .collect();
     if DEBUG_NTFS { uefi::println!("[NTFS]   parts={:?}", parts); }

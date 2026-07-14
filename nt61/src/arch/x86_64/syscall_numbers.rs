@@ -581,3 +581,89 @@ pub const SYS_EXIT_PROCESS: u32 = 0x0201;
 /// always 0 in this kernel, so `out dx, al` raises #GP; the
 /// syscall avoids that entirely. Returns 0 on success.
 pub const SYS_PUTCHAR: u32 = 0x0202;
+
+/// Poll the PS/2 controller for a pressed key. Returns 0 (no
+/// key available) or a non-zero value whose low byte holds the
+/// PS/2 scancode. The cmd.exe stub polls this in a tight loop
+/// to feed its character-by-character read routine. The kernel
+/// also drains the serial UART's RX FIFO and converts CRLF to
+/// `\n`, so the same syscall also surfaces any bytes the QEMU
+/// monitor typed at the guest.
+pub const SYS_POLL_KEY: u32 = 0x0203;
+
+/// Block-wait for a single keypress, returning the PS/2
+/// scancode (or a serial RX byte) in `arg0`. Used by the cmd
+/// read-line routine when the user has disabled the busy-poll
+/// loop.
+pub const SYS_GET_KEY: u32 = 0x0204;
+
+/// Read a line of input from the serial UART into the user buffer.
+/// `arg0` is a pointer to a user-mode buffer, `arg1` is the buffer
+/// length in bytes. The kernel drains the COM1 RX FIFO (same
+/// source the QEMU `-serial mon:stdio` write feeds) until it sees
+/// `\r`, `\n`, or the buffer fills. Returns the number of bytes
+/// copied (not counting the terminator) or a negative NTSTATUS on
+/// copy fault.
+pub const SYS_READ_LINE: u32 = 0x0211;
+
+/// Clear the visible console on the bootvid linear framebuffer
+/// AND home the cursor at (0, 0). The `cls` cmd.exe built-in
+/// invokes this so the user sees a fresh blank screen instead of
+/// the boot-time log being half-painted over the Win7 banner.
+/// Returns 0 on success. `arg0`/`arg1`/`arg2` are unused.
+pub const SYS_CLEARSCREEN: u32 = 0x0205;
+
+/// Spawn the named subsystem EXE from disk. `arg0` is a pointer
+/// to a UTF-8 (or UTF-16, depending on the path convention) NUL-
+/// terminated path string in the caller's address space (Ring-3
+/// user pointer). The kernel copies the bytes safely into a
+/// 256-byte scratch buffer, asks the mounted file-system driver
+/// (NTFS, FAT32, or EXT4) for the file bytes, parses the PE, and
+/// creates a new Ring-3 process. The new process's PID is
+/// returned in `rax`. Used by `winlogon.exe` to spawn the
+/// Session-1 csrss.exe and `userinit.exe`, and by `userinit.exe`
+/// to spawn `cmd.exe`.
+pub const SYS_SPAWN_SUBSYSTEM_PROCESS: u32 = 0x0210;
+
+/// Read the CMOS real-time clock and copy a 16-byte
+/// `cmos::TimeFields`-shaped struct into the user buffer at
+/// `arg0`. The layout (little endian) is:
+///
+/// ```text
+///   [0..2]  year      (u16, full year e.g. 2026)
+///   [2]     month     (u8, 1..12)
+///   [3]     day       (u8, 1..31)
+///   [4]     hour      (u8, 0..23)
+///   [5]     minute    (u8, 0..59)
+///   [6]     second    (u8, 0..59)
+///   [7]     weekday   (u8, 0..6, Sunday = 0)
+///   [8..16] reserved  (zero)
+/// ```
+///
+/// Returns the number of bytes written (16) on success, or 0 if
+/// the CMOS update flag was stuck or `arg0` is NULL. The data is
+/// read directly from CMOS registers via `hal::x86_64::cmos`,
+/// which already handles BCD decode and 12/24-hour mode. Used by
+/// the user-mode `cmd.exe` stub's `time` and `date` builtins so
+/// the value printed matches the host's wall clock instead of a
+/// hard-coded literal in `autoexec.bat`.
+pub const SYS_GET_RTC: u32 = 0x0212;
+
+/// Copy the active IPv4 configuration into the user buffer at
+/// `arg0`. The 16-byte layout (network byte order) is:
+///
+/// ```text
+///   [0..4]   IPv4 address    (4 bytes, big endian)
+///   [4..8]   subnet mask     (4 bytes, big endian)
+///   [8..12]  default gateway (4 bytes, big endian)
+///   [12]     interface count (u8)
+///   [13..16] reserved        (zero)
+/// ```
+///
+/// Returns the number of bytes written (16) on success, or 0 if
+/// `arg0` is NULL. If no IP interface has been registered yet,
+/// the kernel falls back to a sane default (127.0.0.1 / 255.0.0.0
+/// / 0.0.0.0, count = 1) so the user-mode `ipconfig` always
+/// prints a valid answer even on a network-less QEMU harness.
+/// Used by the user-mode `cmd.exe` stub's `ipconfig` builtin.
+pub const SYS_NETCFG_GET: u32 = 0x0213;

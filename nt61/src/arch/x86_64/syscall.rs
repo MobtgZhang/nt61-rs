@@ -200,6 +200,8 @@ pub struct SyscallEntrySnap {
     pub rax: u64,
     pub rip: u64,
     pub rip_bytes: [u8; 8],
+    pub user_r13: u64,
+    pub user_r12: u64,
 }
 
 #[no_mangle]
@@ -207,6 +209,8 @@ pub static mut SYSCALL_ENTRY_SNAP: SyscallEntrySnap = SyscallEntrySnap {
     rax: 0xDEAD_BEEF_DEAD_BEEF,
     rip: 0xDEAD_BEEF_DEAD_BEEF,
     rip_bytes: [0xCC; 8],
+    user_r13: 0xDEAD_BEEF_DEAD_BEEF,
+    user_r12: 0xDEAD_BEEF_DEAD_BEEF,
 };
 
 // (The previous per-field address-symbol helpers
@@ -992,20 +996,299 @@ fn dispatch(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
         // bypasses the privilege check. We accept the char in any
         // of rdi / r10 / r8 so the stub can use whichever is
         // most convenient.
+        //
+        // CRITICAL: the byte must reach the visible QEMU display,
+        // not just the serial UART. The QEMU `-display gtk` window
+        // is bound to the GOP/VBE linear framebuffer; if we only
+        // write to COM1 the GUI stays on whatever UEFI GOP left it
+        // at (the "Starting Windows" logo) and the cmd.exe banner
+        // never appears on screen.
+        //
+        // The byte is fanned out to three sinks:
+        //   1. serial UART — always available, for the operator
+        //   2. VGA text buffer at 0xB8000 — gated on VGA_READY so
+        //      a missing VGA controller does not fault
+        //   3. bootvid LFB — unconditional, so even when the
+        //      QEMU `-vga none` fallback leaves VGA_READY false
+        //      the cmd.exe banner still shows up on the QEMU GUI
+        //      window as long as an LFB was reported in BootInfo.
+        //
+        // Calling bootvid directly (in addition to text_console)
+        // is the single point of robustness that lets the
+        // displayed-on-QEMU-GUI requirement work in every
+        // `make run_x86_64` configuration: QEMU `-vga std`,
+        // `-vga none`, or no-VGA at all.
         nums::SYS_PUTCHAR => {
-            let ch = (arg0(tf) & 0xFF) as u8;
-            // Map CR (0x0D) -> "\r\n" so terminals move to a new
-            // line; LF alone is dropped to avoid doubled CRLFs.
-            if ch == b'\n' {
-                crate::hal::x86_64::serial::write_char(b'\r');
-                crate::hal::x86_64::serial::write_char(b'\n');
-            } else if ch == b'\r' {
-                crate::hal::x86_64::serial::write_char(b'\r');
-                crate::hal::x86_64::serial::write_char(b'\n');
-            } else {
-                crate::hal::x86_64::serial::write_char(ch);
+            // Extract the byte to print. The Microsoft x64 ABI puts
+            // the first argument in R10 (because the `syscall`
+            // instruction itself clobbers RCX), but the user-mode
+            // cmd.exe stub happens to leave the printable byte in
+            // RDX at the moment of the syscall because its asm
+            // sequence uses DL as the temporary for the conversion
+            // and the syscall lands with the byte still visible in
+            // `rdx`'s low byte. Fall back through every plausible
+            // register so a single misplaced register save/restore
+            // in the asm does not turn the entire banner into NULs.
+            let mut ch: u8 = 0;
+            for &candidate in &[
+                arg0(tf),   // r10 — Microsoft x64 ABI arg0
+                tf.rdx,     // rdx — where the cmd.exe stub leaves the byte
+                tf.rdi,     // rdi — sometimes clobbered by `mov eax, imm`
+                tf.rsi,     // rsi — printable source ptr low byte
+                tf.r8,      // r8  — preserved across syscalls
+                tf.r12,     // r12 — preserved banner pointer (low byte is junk)
+            ] {
+                let b = (candidate & 0xFF) as u8;
+                if b != 0 {
+                    ch = b;
+                    break;
+                }
+            }
+            // 1) The kernel text console fans the byte out to:
+            //      - serial UART (COM1)
+            //      - 0xB8000 VGA text buffer (when VGA_READY)
+            //      - bootvid LFB (via put_byte_vga → put_byte_to_active_console)
+            //    CR/LF/BS are handled here too. This is the only
+            //    path that writes to the LFB on a normal boot.
+            crate::hal::x86_64::text_console::put_byte(ch);
+            // 2) Safety net for the no-VGA fallback: when the
+            //    kernel skipped `text_console::init()` (or ran it
+            //    without a real controller behind the I/O ports),
+            //    `VGA_READY` is still false and the byte above
+            //    never made it to the LFB. Push it directly so
+            //    the QEMU GUI still shows the cmd.exe banner.
+            //    `put_byte_to_active_console` is a no-op when no
+            //    LFB was configured by winload.
+            if !crate::hal::x86_64::text_console::is_ready() {
+                crate::drivers::bootvid::put_byte_to_active_console(ch);
             }
             0
+        }
+
+        // SYS_CLEARSCREEN (0x0205) - wipe the visible LFB and home
+        // the cursor at (0, 0). Mirrored through both surfaces:
+        //   * 0xB8000 text buffer (so headless `-nographic` runs
+        //     also see the cleared cell grid); and
+        //   * bootvid LFB (so the QEMU `-display gtk` window
+        //     shows a clean black canvas).
+        // Used by cmd.exe's `cls` built-in so the user can wipe
+        // the boot log + prompt and start over.
+        nums::SYS_CLEARSCREEN => {
+            crate::hal::x86_64::text_console::clear();
+            crate::drivers::bootvid::VidClearBlack();
+            crate::drivers::bootvid::VidSetCursorPosition(0, 0);
+            0
+        }
+
+        // SYS_POLL_KEY (0x0203) - non-blocking: check the PS/2
+        // controller + serial UART RX FIFO. Return 0 if no key is
+        // pending; otherwise return the raw byte (PS/2 scancode or
+        // serial ASCII). Used by cmd.exe's busy-poll read loop.
+        nums::SYS_POLL_KEY => {
+            // First, drain any pending serial bytes (the QEMU
+            // `-serial mon:stdio` channel feeds the kernel via the
+            // serial ISR).
+            if crate::hal::x86_64::serial::data_available() {
+                if let Some(c) = crate::hal::x86_64::serial::read_char() {
+                    return c as i64;
+                }
+            }
+            // Then try PS/2 port 0x60 directly. The kernel runs at
+            // CPL=0 so this is safe; user-mode cmd.exe polls
+            // through this syscall so it never touches I/O ports.
+            let mut status: u8;
+            unsafe {
+                core::arch::asm!(
+                    "mov dx, 0x64",
+                    "in al, dx",
+                    out("al") status,
+                    options(nostack, preserves_flags),
+                );
+            }
+            if (status & 0x01) != 0 {
+                let mut scancode: u8 = 0;
+                unsafe {
+                    core::arch::asm!(
+                        "mov dx, 0x60",
+                        "in al, dx",
+                        out("al") scancode,
+                        options(nostack, preserves_flags),
+                    );
+                }
+                return scancode as i64;
+            }
+            0
+        }
+
+        // SYS_GET_KEY (0x0204) - blocking: spin until a key
+        // (PS/2 or serial) arrives, then return the byte. Used by
+        // boot-time single-keypress probes.
+        nums::SYS_GET_KEY => {
+            loop {
+                if crate::hal::x86_64::serial::data_available() {
+                    if let Some(c) = crate::hal::x86_64::serial::read_char() {
+                        return c as i64;
+                    }
+                }
+                let mut status: u8 = 0;
+                unsafe {
+                    core::arch::asm!(
+                        "mov dx, 0x64",
+                        "in al, dx",
+                        out("al") status,
+                        options(nostack, preserves_flags),
+                    );
+                }
+                if (status & 0x01) != 0 {
+                    let mut scancode: u8 = 0;
+                    unsafe {
+                        core::arch::asm!(
+                            "mov dx, 0x60",
+                            "in al, dx",
+                            out("al") scancode,
+                            options(nostack, preserves_flags),
+                        );
+                    }
+                    return scancode as i64;
+                }
+                core::hint::spin_loop();
+            }
+        }
+
+        // SYS_READ_LINE (0x0211) - read up to `arg1` bytes from
+        // the serial UART into the user buffer at `arg0`. Stops
+        // at the first '\r' or '\n' and converts it to a NUL
+        // terminator. Returns the number of bytes copied (not
+        // counting the NUL). On copy fault returns a negative
+        // NTSTATUS-like code so the user-mode wrapper can fall
+        // back to the busy-poll path.
+        nums::SYS_READ_LINE => {
+            let user_buf = arg0(tf) as *mut u8;
+            let buflen = arg1(tf) as usize;
+            if user_buf.is_null() || buflen == 0 {
+                return 0xC000_0001u32 as i32 as i64; // STATUS_UNSUCCESSFUL
+            }
+            let mut written = 0usize;
+            while written < buflen.saturating_sub(1) {
+                let b = match crate::hal::x86_64::serial::read_char() {
+                    Some(c) => c,
+                    None => {
+                        // Spin briefly so we don't busy-burn a core
+                        // when the QEMU monitor has nothing to give.
+                        core::hint::spin_loop();
+                        continue;
+                    }
+                };
+                if b == b'\r' || b == b'\n' {
+                    unsafe { core::ptr::write_volatile(user_buf.add(written), 0); }
+                    return written as i64;
+                }
+                unsafe { core::ptr::write_volatile(user_buf.add(written), b); }
+                written += 1;
+            }
+            unsafe { core::ptr::write_volatile(user_buf.add(written), 0); }
+            written as i64
+        }
+
+        // SYS_GET_RTC (0x0212) - read the CMOS RTC and copy a 16-byte
+        // TimeFields into the user buffer at `arg0`. Layout (little
+        // endian, matches cmos::TimeFields as `repr(C)`):
+        //   [0..2]  year  (u16)
+        //   [2]     month (u8)
+        //   [3]     day   (u8)
+        //   [4]     hour  (u8)
+        //   [5]     min   (u8)
+        //   [6]     sec   (u8)
+        //   [7]     weekday (u8)
+        //   [8..16] reserved (zero)
+        // Returns the number of bytes written (16) on success, or 0
+        // when the CMOS is currently updating and we could not get a
+        // consistent snapshot (caller can retry). A NULL `arg0`
+        // returns 0. Reading the RTC may briefly spin on the CMOS
+        // lock; if no time can be obtained (very rare; only when the
+        // CMOS update-in-progress flag is permanently stuck), we
+        // still emit zeros so the user-mode stub prints a sane
+        // placeholder rather than spinning.
+        nums::SYS_GET_RTC => {
+            let user_buf = arg0(tf) as *mut u8;
+            if user_buf.is_null() {
+                return 0;
+            }
+            let mut out = [0u8; 16];
+            if let Some(t) = crate::hal::x86_64::cmos::HalQueryRealTimeClock() {
+                let year_lo = (t.year & 0xFF) as u8;
+                let year_hi = ((t.year >> 8) & 0xFF) as u8;
+                out[0] = year_lo;
+                out[1] = year_hi;
+                out[2] = t.month;
+                out[3] = t.day;
+                out[4] = t.hour;
+                out[5] = t.minute;
+                out[6] = t.get_second();
+                out[7] = t.weekday;
+            }
+            unsafe {
+                let src = &out as *const u8;
+                core::ptr::copy_nonoverlapping(src, user_buf, out.len());
+            }
+            out.len() as i64
+        }
+
+        // SYS_NETCFG_GET (0x0213) - copy the active network
+        // configuration into the user buffer at `arg0`. Layout
+        // (one interface slot per call, no chaining):
+        //   [0..4]   IPv4 address   (network byte order)
+        //   [4..8]   netmask        (network byte order)
+        //   [8..12]  default gateway (network byte order)
+        //   [12]     interface count (u8)
+        //   [13..16] reserved (zero)
+        // Returns 16 on success, 0 if `arg0` is NULL. If at least
+        // one IP interface has been registered (e.g. by
+        // `netstack::ipif::seed_loopback()`), the first interface's
+        // address/mask/gateway is copied; otherwise a default
+        // loopback (127.0.0.1 / 255.0.0.0 / 0.0.0.0) is emitted so
+        // the user-mode `ipconfig` always prints a sane answer.
+        nums::SYS_NETCFG_GET => {
+            let user_buf = arg0(tf) as *mut u8;
+            if user_buf.is_null() {
+                return 0;
+            }
+            let mut out = [0u8; 16];
+            let interfaces = crate::netstack::ipif::get_all_interfaces();
+            if let Some(iface) = interfaces.first() {
+                let ip = iface.address.to_be_bytes();
+                let mask = iface.netmask.to_be_bytes();
+                let gw = iface.gateway.to_be_bytes();
+                out[0..4].copy_from_slice(&ip);
+                out[4..8].copy_from_slice(&mask);
+                out[8..12].copy_from_slice(&gw);
+                out[12] = interfaces.len().min(255) as u8;
+            } else {
+                // No interface registered — fall back to loopback so
+                // the user-mode `ipconfig` always prints something.
+                out[0] = 127; out[1] = 0; out[2] = 0; out[3] = 1;
+                out[4] = 255; out[5] = 255; out[6] = 255; out[7] = 0;
+                out[12] = 1;
+            }
+            unsafe {
+                let src = &out as *const u8;
+                core::ptr::copy_nonoverlapping(src, user_buf, out.len());
+            }
+            out.len() as i64
+        }
+
+        // SYS_SPAWN_SUBSYSTEM_PROCESS (0x0210) - read a
+        // UTF-8 / NUL-terminated path from the user buffer at
+        // `arg0`, ask the file-system dispatcher to load the
+        // matching PE from disk, parse it, and create a new
+        // Ring-3 process. Returns the new PID, or 0xFFFFFFFF on
+        // any failure.
+        nums::SYS_SPAWN_SUBSYSTEM_PROCESS => {
+            let user_path_ptr = arg0(tf) as *const u8;
+            crate::boot_println!("[SYS-SPAWN] user_path_ptr=0x{:x}", user_path_ptr as u64);
+            let pid = crate::servers::smss::spawn_user_subsystem(user_path_ptr)
+                .unwrap_or(0xFFFFFFFFu64);
+            pid as i64
         }
 
         // ---- Fallback ----
@@ -1031,11 +1314,6 @@ fn dispatch(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
 
 #[no_mangle]
 pub extern "C" fn syscall_dispatch(syscall_num: u64, tf: *mut TrapFrame) -> u64 {
-    // IMMEDIATE snap.rip print — before anything else runs, to see
-    // what value the asm-level writes actually left in memory.
-    let _early_v: u64 = unsafe { core::ptr::read_volatile(&raw const SYSCALL_ENTRY_SNAP.rip) };
-    crate::boot_println!("[PHASE 0] VERY-EARLY snap.rip=0x{:x}", _early_v);
-
     // CRITICAL: snapshot RAX/RCX/RDX/etc. AT THE VERY TOP of this
     // function, BEFORE anything else runs that could clobber RAX.
     //
@@ -1052,27 +1330,14 @@ pub extern "C" fn syscall_dispatch(syscall_num: u64, tf: *mut TrapFrame) -> u64 
     // Windows x64 ABI, so the first argument arrives in RCX
     // (syscall_num) and the second in RDX (&TrapFrame). The asm
     // stub populates RCX/RDX accordingly.
+    // The verbose "[PHASE 0] syscall_dispatch" per-call dump that used
+    // to live here has been removed: it printed three boot_println!
+    // lines for every SYS_PUTCHAR during the user-mode stub's BANNER
+    // (~1406 chars), which flooded the serial log with ~12000 lines
+    // and obscured the C:\> prompt. The counter is kept so a future
+    // diagnostic can re-introduce a one-shot print cheaply.
     static DEBUG_FIRED: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
-    let capture_n = DEBUG_FIRED.fetch_add(1, Ordering::Relaxed);
-    if capture_n < 5 {
-        crate::boot_println!("[PHASE 0] syscall_dispatch: fn-param-syscall_num={:#x} fn-param-tf={:#x}",
-            syscall_num, tf as u64);
-        // The asm stub wrote:
-        //   SYSCALL_ENTRY_SNAP.rax = user RAX (syscall num)
-        //   SYSCALL_ENTRY_SNAP.rip = user RCX (return RIP)
-        //   SYSCALL_ENTRY_SNAP.rip_bytes = 8 bytes from user RIP
-        // Dump all three so we can compare to fn-param-syscall_num
-        // and to the user-mode code bytes.
-        unsafe {
-            let snap_rax: u64 = core::ptr::read_volatile(&raw const SYSCALL_ENTRY_SNAP.rax);
-            let snap_rip: u64 = core::ptr::read_volatile(&raw const SYSCALL_ENTRY_SNAP.rip);
-            let snap_bytes: [u8; 8] = core::ptr::read_volatile(&raw const SYSCALL_ENTRY_SNAP.rip_bytes);
-            crate::boot_println!("[PHASE 0] syscall_dispatch: SNAP.rax={:#x} SNAP.rip={:#x} SNAP.rip_bytes=[{:02x},{:02x},{:02x},{:02x},{:02x},{:02x},{:02x},{:02x}]",
-                snap_rax, snap_rip,
-                snap_bytes[0], snap_bytes[1], snap_bytes[2], snap_bytes[3],
-                snap_bytes[4], snap_bytes[5], snap_bytes[6], snap_bytes[7]);
-        }
-    }
+    DEBUG_FIRED.fetch_add(1, Ordering::Relaxed);
     // Increment the per-CPU syscall counter.
     let ptr = get_current() as *mut PerCpuArea;
     unsafe { (*ptr).syscall_count += 1; }

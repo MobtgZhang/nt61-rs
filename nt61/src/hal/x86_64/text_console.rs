@@ -96,29 +96,48 @@ static ATTR: AtomicU8 = AtomicU8::new(0x07);
 /// INT 10h handler either, so the only way to get a text
 /// console back is to program the controller directly.
 pub fn init() {
-    // 1. Switch the legacy VGA controller into 80×25
-    //    16-colour text mode 03h. This makes QEMU's
-    //    `-vga std` scan out the 0xB8000 text buffer on
-    //    VNC / SDL displays that follow the VGA controller.
-    unsafe { program_vga_mode3(); }
-    // 2. Clear the VGA text buffer to spaces (attr 0x07) and
-    //    park the CRTC cursor at (0,0). Both happen inside
-    //    `clear()`; no separate home step is required.
+    // The Plan requires bootvid.dll / vga.sys / vgapnp.sys to drive
+    // the display post-GOP. On QEMU with `-vga std` the controller
+    // scanout is determined by the current register state:
+    //   - while OVMF leaves the controller in graphical mode
+    //     (mode 12h/13h, 0xA0000 + LFB at the GOP address), the
+    //     `-display gtk` window scans the GOP linear framebuffer;
+    //   - once we issue the mode-3 programming sequence, the
+    //     controller switches to text mode and `-display gtk`
+    //     immediately starts scanning the 0xB8000 text buffer.
+    //
+    // We want the GUI window to keep showing the GOP LFB so
+    // bootvid's pixel-level writes become visible. We therefore
+    // SKIP the `program_vga_mode3()` step and let bootvid own the
+    // LFB exclusively. The legacy 0xB8000 buffer is still written
+    // to as a mirror (helpful for headless `-nographic` runs and
+    // for panic-state crash dumps) but the active scanout remains
+    // the LFB.
+    //
+    // If we ever run on a machine with no GOP LFB (a legacy
+    // machine with `-vga none` and no Bochs/VBE), bootvid's LFB
+    // backend is unconfigured and the operator sees nothing on the
+    // VGA scanout — that matches the real Win7 behaviour on
+    // headless servers, where the Windows boot screen is also
+    // absent.
+
+    // 1. Clear the legacy text buffer at 0xB8000 anyway so a panic
+    //    dump into the VGA buffer (still used by some log paths)
+    //    does not show the UEFI GOP "Loading..." panel pixels.
     clear();
 
-    // 4. ALSO paint the linear framebuffer that QEMU's
-    //    `-display gtk` keeps scanning out. Without this
-    //    the GUI window would continue to display the OVMF
-    //    "Loading..." panel even though the kernel has
-    //    switched to text mode. We force bootvid onto the
-    //    LFB backend, paint the whole framebuffer solid
-    //    black to overwrite the stale GOP pixels, reset
-    //    the cursor to (0,0), and let the putchar mirror
-    //    in `put_byte_vga` keep both surfaces in sync.
+    // 2. Force bootvid onto the LFB backend, paint the whole
+    //    framebuffer solid black to overwrite the stale GOP
+    //    pixels, reset the cursor to (0,0), and let the putchar
+    //    mirror in `put_byte_vga` keep both surfaces in sync.
     bootvid::force_lfb_console();
     bootvid::VidClearBlack();
     bootvid::VidSetCursorPosition(0, 0);
 
+    // 3. Mark the text console ready. `text_console::put_byte`
+    //    will now route through `put_byte_vga`, which mirrors to
+    //    0xB8000 (no-op for visible output) AND to the bootvid LFB
+    //    (the visible surface).
     VGA_READY.store(true, Ordering::Release);
 }
 

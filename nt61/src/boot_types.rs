@@ -248,6 +248,15 @@ pub struct BootInfo {
     pub bootvid_image_base: u64,
     /// Size of the bootvid.dll image in bytes.
     pub bootvid_image_size: u64,
+    /// Address of the host `ntoskrnl_kisystemstartup_thunk` (a
+    /// `extern "C" fn(*const BootInfo) -> !`). The on-disk
+    /// `ntoskrnl.exe!KiSystemStartup` stub reads this via
+    /// `boot_info->ntoskrnl_handoff_callback` and `call`s it
+    /// directly — no fixed slot indirection needed. This field is
+    /// populated by winload *before* the jump to the disk stub;
+    /// the value is the runtime address of the trampoline computed
+    /// via RIP-relative LEA in `install_handoff_pointer`.
+    pub ntoskrnl_handoff_callback: u64,
 }
 
 impl BootInfo {
@@ -315,6 +324,7 @@ impl BootInfo {
             hal_image_size: 0,
             bootvid_image_base: 0,
             bootvid_image_size: 0,
+            ntoskrnl_handoff_callback: 0,
         }
     }
 
@@ -371,6 +381,7 @@ impl BootInfo {
             hal_image_size: 0,
             bootvid_image_base: 0,
             bootvid_image_size: 0,
+            ntoskrnl_handoff_callback: 0,
         }
     }
 }

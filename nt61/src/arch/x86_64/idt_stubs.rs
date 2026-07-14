@@ -336,10 +336,13 @@ global_asm!(
     //     truncates the high 32 bits of the absolute VMA 0x140069c18.
     "  mov r8, r14",                       // r8 = real user R14 (preserved)
     "  mov r14, rcx",                       // r14 = user RIP (preserve across writes)
+    "  mov r9, r15",                        // r9 = real user R15 (preserve; clobbered below for rsp)
     "  movabs {snap_base}, rax",            // snap.rax = RAX (syscall num) — first!
     "  mov rax, qword ptr gs:[0x58]",       // rax = &snap (loaded from per-CPU area)
+    "  mov [rax + 32], r12",                // snap.user_r12 = user R12 (preserve; r12 clobbered below)
     "  mov r12, rax",                       // r12 = &snap (callee-preserved)
     "  mov [rax + 8], r14",                 // snap.rip = user RIP
+    "  mov [rax + 24], r13",                // snap.user_r13 = user R13 (preserved before clobber)
     // Copy 8 bytes from user RIP into snap.rip_bytes via movs. RSI =
     // user RIP (R-X page, kernel-readable from the user PML4). RDI =
     // &snap.rip_bytes (R+W kernel page). DS:[RSI] -> ES:[RDI].
@@ -369,7 +372,11 @@ global_asm!(
     "  push r14",                        // 17: rip = user RIP (preserved in r14)
     "  push 0",                          // 16: error_code
     "  push 0x100",                      // 15: vector (sentinel for syscall)
-    "  push r15",                        // 14: r15
+    // Slot 14 (user r15) must hold the genuine user-mode r15, not
+    // user rsp. r15 currently holds user rsp (loaded above), so we
+    // use r9 — where we stashed the real user r15 right after
+    // syscall_entry — to push the correct value.
+    "  push r9",                         // 14: r15 = real user r15 (stashed in r9)
     // Restore the real user-mode R14 from R9 (we clobbered R14
     // with user RIP earlier). The push then stores the genuine
     // user R14 into slot 13, which `pop r14` will restore for
@@ -384,8 +391,10 @@ global_asm!(
     // into R14 just before the slot 1 push.
     "  mov r14, r8",                     // r14 = real user R14 (from preserved r8)
     "  push r14",                        // 13: r14 = real user R14
-    "  push r13",                        // 12: r13
-    "  push r12",                        // 11: r12
+    "  mov r13, [r12 + 24]",             // r13 = snap.user_r13 (real user R13)
+    "  push r13",                        // 12: r13 = real user R13
+    "  mov r13, [r12 + 32]",             // r13 = snap.user_r12 (real user R12)
+    "  push r13",                        // 11: r12 = real user R12
     "  push r11",                        // 10: r11
     "  push r10",                        //  9: r10
     "  push r9",                         //  8: r9
@@ -406,11 +415,11 @@ global_asm!(
     // (using `movabs rax, {snap_base}` because the absolute address
     // doesn't fit in a 32-bit sign-extended LEA immediate). Reload
     // RAX from R12 here so [rax + 8] targets the real SYSCALL_ENTRY_SNAP.
-    "  mov rax, r12",                     // rax = &snap (from R12)
+"  mov rax, r12",                     // rax = &snap (from R12)
     "  mov rcx, [rax + 8]",               // rcx = snap.rip = user RIP
     "  push rcx",                        //  1: rcx = user RIP
     "  push rax",                        //  0: rax = &snap (placeholder; real syscall num
-                                         //      lives in snap.rax + r13)
+                                        //      lives in snap.rax + r13)
     // RDX is set to &TrapFrame (the stack pointer right after the
     // pushes), overriding the pre-push RDX we set earlier.
     "  mov rdx, rsp",                    // &TrapFrame = rsp (Windows ABI arg2)
@@ -420,12 +429,9 @@ global_asm!(
     // arrives correctly in Rust, even at the cost of also pushing
     // that same value into slot 1 (sysretq uses slot 1 as user RIP;
     // we'll fix that with `mov rcx, [r12+8]` after the call).
-    "  mov rcx, r13",                    // rcx = syscall_num (Windows ABI arg1)
+    "  mov rax, r12",                     // rax = &snap (from R12)
+    "  mov rcx, [rax]",                   // rcx = snap.rax = syscall_num (Windows ABI arg1)
     "  call syscall_dispatch",
-    // DEBUG: write 'D' to serial port to mark syscall_dispatch returned.
-    "  mov al, 0x44",  // 'D'
-    "  mov dx, 0x3F8",
-    "  out dx, al",
     // CR3 stays on the user PML4 throughout; see the syscall entry
     // comment above for why we don't toggle it for syscall dispatch.
     // After return, rax holds the syscall return value (NTSTATUS).
@@ -456,17 +462,9 @@ global_asm!(
     // RFLAGS from R11 (just restored), and user RSP from
     // gs:[0x0] (the user RSP we saved at entry).
     "  add rsp, 0x30",                   // skip 6 slots (48 bytes)
-    // DEBUG: write 'P' before sysretq frame setup (after skips)
-    "  mov al, 0x50",  // 'P'
-    "  mov dx, 0x3F8",
-    "  out dx, al",
     // Load user rsp and swap back to user GS base.
             "  mov rsp, gs:[0x0]",               // user rsp
             "  swapgs",
-    // DEBUG: write 'R' right before sysretq
-    "  mov al, 0x52",  // 'R'
-    "  mov dx, 0x3F8",
-    "  out dx, al",
     "  sysretq",
 
     user_cs = const USER_CS as u64,

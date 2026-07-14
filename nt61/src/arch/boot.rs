@@ -326,77 +326,24 @@ pub fn try_launch_cmd_exe() -> bool {
 
 #[cfg(target_arch = "x86_64")]
 fn try_launch_cmd_exe_arch() -> bool {
-    use crate::ps::process::Eprocess;
-    
     boot_println!("[SAFE-CMD] ============================================");
     boot_println!("[SAFE-CMD] Windows 7 Boot Sequence (No Desktop Mode)");
     boot_println!("[SAFE-CMD] ============================================");
-    
-    // Phase 1: Initialize Session Manager
-    boot_println!("[SAFE-CMD] Phase 1: Initializing Session Manager...");
-    crate::servers::smss::init();
-    
-    // Phase 2: Create sessions
-    boot_println!("[SAFE-CMD] Phase 2: Creating Sessions...");
-    crate::servers::smss::create_session_0();
-    crate::servers::smss::create_session_1();
-    
-    // Phase 3: Start subsystems (CSRSS for Session 0 and Session 1)
-    boot_println!("[SAFE-CMD] Phase 3: Starting Subsystems...");
-    if let Err(e) = launch_csrss_session_0() {
-        boot_println!("[SAFE-CMD] Warning: Failed to launch CSRSS Session 0: {:?}", e);
-    }
-    if let Err(e) = launch_csrss_session_1() {
-        boot_println!("[SAFE-CMD] Warning: Failed to launch CSRSS Session 1: {:?}", e);
-    }
-    
-    // Phase 4: Start WinInit (which starts Services and LSASS)
-    boot_println!("[SAFE-CMD] Phase 4: Starting WinInit...");
-    if let Err(e) = launch_wininit_exe() {
-        boot_println!("[SAFE-CMD] Warning: Failed to launch wininit.exe: {:?}", e);
-    }
-    
-    boot_println!("[SAFE-CMD] ============================================");
-    boot_println!("[SAFE-CMD] Boot sequence complete, launching CMD...");
-    boot_println!("[SAFE-CMD] ============================================");
-    
-    // Now load and launch cmd.exe
-    boot_println!("[SAFE-CMD] Loading cmd.exe from disk...");
-    let cmd_image: core::mem::ManuallyDrop<alloc::vec::Vec<u8>> = match load_cmd_exe_from_disk() {
-        Ok(img) => img,
-        Err(e) => {
-            boot_println!("[SAFE-CMD] could not load cmd.exe from disk: {}", e);
-            return false;
-        }
-    };
-    boot_println!("[SAFE-CMD] Loaded cmd.exe: {} bytes", cmd_image.len());
-    
-    let pid: u64 = 0x1F10;
-    let process = match create_user_process_with_pe(&cmd_image, pid) {
-        Some(p) => p,
-        None => {
-            boot_println!("[SAFE-CMD] create_user_process_with_pe failed for cmd.exe");
-            return false;
-        }
-    };
-    
-    let pml4_phys = unsafe { (*process).pml4_phys };
-    let user_rip = unsafe { (*process).user_rip };
-    let user_rsp = unsafe { (*process).user_rsp };
-    let main_thread = unsafe { (*process).main_thread };
-    
-    boot_println!("[SAFE-CMD] cmd.exe process: PML4=0x{:x} RIP=0x{:x} RSP=0x{:x}",
-                  pml4_phys, user_rip, user_rsp);
-                  
-    if !main_thread.is_null() {
-        crate::ke::scheduler::setup_bsp(main_thread);
-    } else {
-        boot_println!("[SAFE-CMD] cmd.exe process has no main_thread");
-        return false;
-    }
-    
-    boot_println!("[SAFE-CMD] Dispatching cmd.exe into Ring 3...");
-    crate::arch::x86_64::user_entry::enter_first_user_thread(pml4_phys, user_rip, user_rsp);
+
+    // Phase E: hand the entire chain off to `smss::run()`. The
+    // function below does every phase from SMSS init through the
+    // final cmd.exe Ring-3 entry. The older per-phase helpers
+    // (launch_csrss_session_0/1, launch_wininit_exe,
+    // load_cmd_exe_from_disk) are kept for backwards compatibility
+    // with the QEMU smoke tests but no longer run by default.
+    crate::servers::smss::run();
+
+    // `smss::run()` either successfully enters Ring 3 (in which
+    // case we never reach this line) or it printed an error and
+    // returned. Report failure so the caller can fall back to the
+    // legacy kernel-side CMD shell.
+    boot_println!("[SAFE-CMD] smss::run() returned without entering Ring 3");
+    false
 }
 
 /// Launch CSRSS for Session 0
@@ -555,8 +502,8 @@ fn load_cmd_exe_from_disk() -> Result<core::mem::ManuallyDrop<alloc::vec::Vec<u8
             match try_load_cmd_exe_from_ntfs() {
                 Ok(img) => return Ok(img),
                 Err(e) => {
-                    boot_println!("[SAFE-CMD] NTFS load failed: {}, using fallback", e);
-                    // Fall through to system_image fallback
+                    boot_println!("[SAFE-CMD] NTFS load failed: {} (no fallback — cmd.exe must live on disk)", e);
+                    return Err(e);
                 }
             }
         }
@@ -590,18 +537,15 @@ fn load_cmd_exe_from_disk() -> Result<core::mem::ManuallyDrop<alloc::vec::Vec<u8
                 }
             }
         }
-        // Fallback for all filesystems: use in-memory cmd.exe from system_image
+        // Fallback for all filesystems: cmd.exe must be on disk.
+        // No in-binary / system_image fallback path remains.
         crate::fs::FsType::Unknown => {
-            boot_println!("[SAFE-CMD] system partition type is unknown, using fallback");
+            boot_println!("[SAFE-CMD] system partition type is unknown, refusing fallback");
         }
     }
-    
-    // Fallback: use in-memory cmd.exe from system_image
-    // This ensures boot can always complete even if filesystem driver is broken
-    boot_println!("[SAFE-CMD] Loading cmd.exe from system_image fallback...");
-    let cmd_image = crate::system_image::build_cmd_exe_for_machine(0x8664);
-    boot_println!("[SAFE-CMD] system_image fallback: {} bytes", cmd_image.len());
-    Ok(cmd_image)
+
+    boot_println!("[SAFE-CMD] FATAL: no cmd.exe loaded from disk; refusing fallback");
+    Err("cmd.exe not loaded from any filesystem")
 }
 
 /// Helper: try to load cmd.exe from the NTFS system partition.
@@ -614,8 +558,8 @@ fn load_cmd_exe_from_disk() -> Result<core::mem::ManuallyDrop<alloc::vec::Vec<u8
 ///   4. Restore the active partition to its prior value.
 ///
 /// Returns `Ok(vec)` on success and `Err(&'static str)` on any
-/// failure so the caller can fall through to the in-memory
-/// `system_image` cmd.exe stub.
+/// failure. cmd.exe MUST come from the on-disk NTFS partition —
+/// there is no longer an in-memory fallback path.
 fn try_load_cmd_exe_from_ntfs() -> Result<core::mem::ManuallyDrop<alloc::vec::Vec<u8>>, &'static str> {
     if !crate::fs::ntfs::is_mounted() {
         return Err("NTFS not mounted");
@@ -790,7 +734,9 @@ pub fn enter_first_user_thread() -> ! {
 }
 
 /// Set to `true` to use the Milestone B path (real PE loading).
-/// Set to `false` to use the Milestone A path (hand-assembled stub).
+/// Currently forced to `false`: this kernel does not synthesize
+/// subsystem EXEs in memory any longer. Boot must come from the
+/// disk image via winload.efi.
 const RING3_PE_MODE: bool = false;
 /// Set to `true` to fall back to the Milestone A stub if PE
 /// loading fails for any reason (this is the safe default).
@@ -805,19 +751,12 @@ fn enter_first_user_thread_x86_64() -> ! {
     boot_println!("========================================");
 
     let mut process: *mut Eprocess = core::ptr::null_mut();
-    if RING3_PE_MODE {
-        let machine: u16 = 0x8664;
-        let smss_image: alloc::vec::Vec<u8> =
-            crate::system_image::build_smss_for_machine(machine);
-        boot_println!("Built smss.exe: {} bytes (machine=0x{:x})",
-                      smss_image.len(), machine);
-        process = create_user_process_with_pe(&smss_image, 0x1F01)
-            .unwrap_or(core::ptr::null_mut());
-        let _second = create_user_process_with_pe(&smss_image, 0x1F02)
-            .unwrap_or(core::ptr::null_mut());
-        boot_println!("Created {} ring3 process(es)",
-                      if _second.is_null() { 1 } else { 2 });
-    }
+    // RING3_PE_MODE is permanently false now that we no longer
+    // synthesize subsystem EXEs from `system_image`. The handoff
+    // path runs entirely inside `ntoskrnl_kisystemstartup_thunk`,
+    // so the user process is created there, not here.
+    let _ = RING3_PE_MODE;
+
     if process.is_null() && RING3_STUB_FALLBACK {
         boot_println!("Creating ring3 stub process");
         let pid: u64 = 0x1F00;

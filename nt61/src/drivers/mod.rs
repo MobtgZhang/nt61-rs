@@ -71,6 +71,9 @@ pub mod pe;
 pub mod smoke;
 
 #[cfg(target_arch = "x86_64")]
+pub mod loader;
+
+#[cfg(target_arch = "x86_64")]
 pub mod kdcom;
 pub mod bootvid;
 pub mod ci;

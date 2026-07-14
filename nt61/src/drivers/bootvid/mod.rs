@@ -230,22 +230,35 @@ const fn build_font() -> [[u8; 12]; 96] {
 pub fn init() {
     if INITIALISED.load(Ordering::Acquire) { return; }
     if MODE_LFB.load(Ordering::Acquire) {
-        // Paint the loader blue across the whole framebuffer and
-        // home the cursor at row 0 col 0.
         let base = FB_BASE.load(Ordering::Acquire);
         let width = FB_WIDTH.load(Ordering::Acquire);
         let height = FB_HEIGHT.load(Ordering::Acquire);
         let pitch = FB_PITCH.load(Ordering::Acquire);
         if base != 0 && width != 0 && height != 0 && pitch != 0 {
-            // Loader blue (BGRA 0xD8 0x98 0x70) is already on
-            // screen from the winload phase; the kernel
-            // keeps the same colour but narrows the top status
-            // area to a thin blue strip and leaves the bottom
-            // for kernel logging.
-            // No-op for now: cursor home only.
+            // Paint the WHOLE framebuffer solid black so the OVMF
+            // "Loading..." pixels / boot-manager UI that the
+            // firmware left on the LFB are wiped. Without this
+            // step the kernel's text overlays on top of the stale
+            // OVMF splash which makes the boot log unreadable.
+            // Then park the cursor at (0, 0) with the standard
+            // light-grey-on-black attribute (0x07) so subsequent
+            // `boot_println!` writes paint readable text.
+            unsafe {
+                let bg = colour_for_attr(0); // black BGRA
+                let bytes_per_row = pitch as usize;
+                let total_bytes = (height as usize) * bytes_per_row;
+                let dst = base as *mut u8;
+                for off in (0..total_bytes).step_by(4) {
+                    let p = dst.add(off);
+                    core::ptr::write_volatile(p,     bg[0]); // B
+                    core::ptr::write_volatile(p.add(1), bg[1]); // G
+                    core::ptr::write_volatile(p.add(2), bg[2]); // R
+                    // Alpha stays at 0xFF.
+                }
+            }
             CURSOR_X.store(0, Ordering::Release);
             CURSOR_Y.store(0, Ordering::Release);
-            ATTR.store(0x1F, Ordering::Release);
+            ATTR.store(0x07, Ordering::Release); // light grey on black
             INITIALISED.store(true, Ordering::Release);
             return;
         }
@@ -302,13 +315,75 @@ fn scroll_up_vga() {
     }
 }
 
+/// Scroll the linear framebuffer up by one line of glyphs (12 px).
+/// The framebuffer is treated as 32-bit BGRA, pitch bytes per scan
+/// line. We `memmove` the bytes that contain rows [12 .. height)
+/// up to [0 .. height - 12) and then blank the newly exposed band
+/// at the bottom with the current background colour.
+///
+/// This is the LFB counterpart of `scroll_up_vga`. Without it, once
+/// the cursor walks off the bottom of the framebuffer the kernel
+/// logs that were emitted earlier (boot phases, driver load lines,
+/// SMSS subsystem bring-up, cmd.exe banner) sit at the bottom of
+/// the screen forever and any new writes just stomp on top of them.
+///
+/// Scrolling moves every row up by exactly one glyph row. The glyph
+/// row height used by `newline()` is 14 px (12 px glyph + 2 px gap)
+/// and `scroll_up_lfb` must match that — earlier versions used 12 px
+/// and left a 2-px black band at the top of every line plus left
+/// stale characters in the bottom gap area.
+fn scroll_up_lfb() {
+    let base   = FB_BASE.load(Ordering::Acquire);
+    let pitch  = FB_PITCH.load(Ordering::Acquire);
+    let height = FB_HEIGHT.load(Ordering::Acquire);
+    if base == 0 || pitch == 0 || height <= 14 { return; }
+    let bytes_per_row = pitch as usize;
+    let glyph_row_bytes = 14 * bytes_per_row;
+    let move_bytes    = (height as usize - 14) * bytes_per_row;
+    unsafe {
+        let dst = base as *mut u8;
+        let src = dst.add(glyph_row_bytes);
+        // memmove(dst, src, move_bytes) — regions overlap.
+        core::ptr::copy(src, dst, move_bytes);
+        // Blank the bottom band with the current background colour.
+        let bg = colour_for_attr(ATTR.load(Ordering::Acquire) >> 4);
+        let band_start = (height as usize - 14) * bytes_per_row;
+        let band_bytes = 14 * bytes_per_row;
+        for off in (band_start..band_start + band_bytes).step_by(4) {
+            let p = dst.add(off);
+            core::ptr::write_volatile(p,     bg[0]);
+            core::ptr::write_volatile(p.add(1), bg[1]);
+            core::ptr::write_volatile(p.add(2), bg[2]);
+            // Alpha stays at 0xFF — the LFB is fully opaque.
+        }
+        // Also blank the previous top 14 rows so we don't leave
+        // a stale smear at the very top of the screen after the
+        // scroll completes.
+        for off in (0..glyph_row_bytes).step_by(4) {
+            let p = dst.add(off);
+            core::ptr::write_volatile(p,     bg[0]);
+            core::ptr::write_volatile(p.add(1), bg[1]);
+            core::ptr::write_volatile(p.add(2), bg[2]);
+        }
+    }
+}
+
 fn newline() {
     CURSOR_X.store(0, Ordering::Release);
     if MODE_LFB.load(Ordering::Acquire) {
         let y = CURSOR_Y.load(Ordering::Acquire) + 14;
         let h = FB_HEIGHT.load(Ordering::Acquire);
-        if y + 14 > h { CURSOR_Y.store(h.saturating_sub(14), Ordering::Release); }
-        else { CURSOR_Y.store(y, Ordering::Release); }
+        if y + 14 > h {
+            // Walked off the bottom of the framebuffer — push
+            // everything up by one glyph row and reuse the
+            // bottom band for the next line. This is the LFB
+            // analogue of `scroll_up_vga` and is what keeps
+            // the boot log scrolling on the QEMU GUI window.
+            scroll_up_lfb();
+            CURSOR_Y.store(h.saturating_sub(14), Ordering::Release);
+        } else {
+            CURSOR_Y.store(y, Ordering::Release);
+        }
         return;
     }
     // Legacy VGA path.
@@ -674,6 +749,19 @@ pub fn VidClearBlack() {
 pub fn VidSetCursorPosition(x: u16, y: u16) {
     CURSOR_X.store(x as u32, Ordering::Release);
     CURSOR_Y.store(y as u32, Ordering::Release);
+}
+
+/// `VidScrollUp` — push the framebuffer up by one glyph row and
+/// reuse the bottom band for fresh text. Public counterpart of
+/// `scroll_up_lfb`, exposed so user-mode code (cmd.exe, the bugcheck
+/// screen painter) can request an explicit scroll when it has
+/// decided the current row should be retired.
+pub fn VidScrollUp() {
+    if MODE_LFB.load(Ordering::Acquire) {
+        scroll_up_lfb();
+    } else {
+        scroll_up_vga();
+    }
 }
 
 /// Read the current bootvid cursor coordinates. Used by
