@@ -1,0 +1,14 @@
+[package]
+name = "cmd-stub-gen"
+version = "0.1.0"
+edition = "2021"
+description = "Generates the four user-mode subsystem stubs (cmd / lsm / winlogon / userinit) that the kernel bakes into boot_stubs.rs. Rust port of tools/cmd-stub-gen/{cmd_asm,all_stubs}.py."
+publish = false
+
+[[bin]]
+name = "cmd-stub-gen"
+path = "src/main.rs"
+
+# The output is written next to the kernel build tree; no Rust
+# dependencies at runtime.
+[dependencies]
