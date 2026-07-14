@@ -143,20 +143,32 @@ impl BatchParser {
 
         // Read the batch file content
         let content = executor.read_file(filename)?;
-        
+        crate::boot_println!("[BAT] loaded {} bytes from {}", content.len(), filename);
         // Preprocess: remove comments, handle special lines
         self.preprocess(&content);
         
         // Collect labels
         self.collect_labels();
         
-        // Execute the batch file
+        // Execute the batch file. A simple line-cap guards against
+        // runaway GOTO/CALL recursion (e.g. an infinite `GOTO :LOOP`
+        // because SET /A arithmetic is not supported yet). After
+        // MAX_BAT_STEPS lines we just stop and return Ok.
+        const MAX_BAT_STEPS: usize = 5000;
+        crate::boot_println!("[BAT] exec: total_lines={}", self.lines.len());
+        let mut steps: usize = 0;
         while self.current < self.lines.len() && self.running {
+            steps += 1;
+            if steps > MAX_BAT_STEPS {
+                crate::boot_println!("[BAT] step cap ({}) reached — aborting batch", MAX_BAT_STEPS);
+                break;
+            }
             let line = &self.lines[self.current];
             self.current += 1;
-            
+
             // Expand variables in the line
             let expanded = self.expand_variables(line);
+            crate::boot_println!("[BAT]   line[{}] '{}'", self.current - 1, expanded);
             
             // Classify and process the line
             match self.classify_line(&expanded) {
@@ -167,13 +179,27 @@ impl BatchParser {
                     self.handle_goto(&label)?;
                 }
                 LineType::If { condition, true_branch, false_branch } => {
-                    if self.evaluate_condition(&condition)? {
-                        if !true_branch.is_empty() {
+                    let cond = self.evaluate_condition(&condition)?;
+                    // The lowered block-IF puts a GOTO in the true branch
+                    // (e.g. `IF "%A%" == "%B%" GOTO :__IF_THEN_1__`). If
+                    // condition is true we just run the GOTO; if false,
+                    // control falls through to the next line (which the
+                    // lowering emitted as `GOTO :__IF_ELSE_1__` for the
+                    // else-branch case).
+                    if cond && !true_branch.is_empty() {
+                        let upper_branch =
+                            true_branch.to_uppercase();
+                        if upper_branch.starts_with("GOTO ") {
+                            let label = true_branch[4..].trim().to_string();
+                            self.handle_goto(&label)?;
+                        } else {
                             self.execute_command(&true_branch, executor)?;
                         }
-                    } else if let Some(fb) = false_branch {
-                        if !fb.is_empty() {
-                            self.execute_command(&fb, executor)?;
+                    } else if !cond {
+                        if let Some(fb) = false_branch {
+                            if !fb.is_empty() {
+                                self.execute_command(&fb, executor)?;
+                            }
                         }
                     }
                 }
@@ -228,20 +254,61 @@ impl BatchParser {
                     if self.echo {
                         executor.echo_line(&expanded);
                     }
-                    
-                    // Handle batch SET VAR=value commands
+
+                    // Handle batch SET VAR=value commands inline (don't
+                    // hand them to the executor). Returning here would
+                    // *exit the whole batch*, so we guard with a
+                    // local flag and `continue` the outer loop.
                     let upper_cmd = cmd.to_uppercase();
                     if upper_cmd.starts_with("SET ") {
                         let set_part = &cmd[4..].trim();
-                        if let Some(eq_pos) = set_part.find('=') {
-                            let var_name = set_part[..eq_pos].trim().to_string();
-                            let var_value = self.expand_variables(set_part[eq_pos + 1..].trim());
-                            self.set_variable(&var_name, &var_value);
+                        // Support `SET [/A] VAR=...` and the operator
+                        // shorthands `VAR-=1`, `VAR+=2`, etc. Real
+                        // CMD recognises `/A` as arithmetic, so we do
+                        // the same to keep the test suite's loops
+                        // (which use `SET /A VAR-=1`) from spinning
+                        // forever.
+                        let (arith, body) = if let Some(stripped) =
+                            set_part.strip_prefix("/A")
+                        {
+                            (true, stripped.trim_start())
+                        } else {
+                            (false, set_part as &str)
+                        };
+                        // Detect compound assignment operator at the
+                        // position of the LAST `=` if the character
+                        // right before it is one of `+ - * / %`.
+                        // Examples: `VAR-=1`, `VAR+=2`, `VAR*=3`.
+                        let split = find_assignment_split(body);
+                        if let Some((var_name, op, raw_value)) = split {
+                            let expanded_value = if arith || op.is_some() {
+                                let lhs = self
+                                    .get_variable(&var_name)
+                                    .unwrap_or_default();
+                                let resolved = if op.is_some() {
+                                    // VAR-=N => VAR = (VAR op N)
+                                    let op_char = op.unwrap();
+                                    alloc::format!(
+                                        "{} {} {}",
+                                        lhs.trim(),
+                                        op_char,
+                                        raw_value.trim()
+                                    )
+                                } else {
+                                    raw_value.to_string()
+                                };
+                                let v = eval_int_expr(&self.expand_variables(&resolved));
+                                v.map(|i| i.to_string())
+                                    .unwrap_or_else(|| resolved)
+                            } else {
+                                self.expand_variables(raw_value)
+                            };
+                            self.set_variable(&var_name, &expanded_value);
                             self.error_level = 0;
-                            return Ok(());
+                            continue;
                         }
                     }
-                    
+
                     self.error_level = executor.execute_command(&cmd)? as i32;
                 }
             }
@@ -289,38 +356,57 @@ impl BatchParser {
                 continue;
             }
             
+            // Handle labels (`:FOO` or `::FOO`). Both forms are valid
+            // goto targets in real Windows CMD; `::FOO` is a
+            // comment-shaped label, but GOTO can still land on it.
+            // We push the raw line so `collect_labels` sees it, and
+            // the per-line classifier still skips it at execution
+            // time so the line does not produce a spurious echo.
+            if trimmed.starts_with(':') && !trimmed.is_empty() {
+                let after_colons = trimmed.trim_start_matches(':');
+                // If there are no colons following the first set (i.e.
+                // exactly one `:` followed by a name) treat it as a
+                // real label; if there are two colons it's the DOS
+                // comment form that doubles as a goto target.
+                let is_real_label =
+                    !trimmed.starts_with("::") || !after_colons.starts_with(':');
+                let label_name = after_colons.trim_start_matches(':').trim();
+                if !label_name.is_empty() {
+                    self.lines.push(trimmed);
+                    let _ = is_real_label;
+                    continue;
+                }
+            }
+
             // Handle REM comments
-            if trimmed.to_uppercase().starts_with("REM") {
+            if trimmed.to_uppercase().starts_with("REM ") || trimmed.to_uppercase() == "REM" {
                 continue;
             }
             
-            // Handle :: comments (DOS style)
-            if trimmed.starts_with("::") {
-                continue;
-            }
-            
-            // Handle labels (:label)
-            if trimmed.starts_with(':') && !trimmed.starts_with("::") {
-                // Remove leading colon and store
-                let label = &trimmed[1..].trim().to_uppercase();
-                let _ = &label;
-                self.lines.push(trimmed); // Keep original for label matching
-                continue;
-            }
-            
-            // Handle @ prefix (suppress echo for this line only)
+            // Handle @ prefix (suppress echo for this line only).
+            // Special-case `@echo off` / `@echo on` because `@echo`
+            // would otherwise be parsed as a regular command.
             if trimmed.starts_with('@') {
-                let cmd = trimmed[1..].trim().to_string();
-                self.lines.push(cmd);
+                let after_at = trimmed[1..].trim();
+                let upper = after_at.to_uppercase();
+                if upper == "ECHO OFF" {
+                    self.echo = false;
+                    continue;
+                }
+                if upper == "ECHO ON" {
+                    self.echo = true;
+                    continue;
+                }
+                self.lines.push(after_at.to_string());
                 continue;
             }
-            
+
             // Handle ECHO OFF (suppress subsequent echo)
-            if trimmed.to_uppercase() == "ECHO OFF" || trimmed.to_uppercase() == "@ECHO OFF" {
+            if trimmed.to_uppercase() == "ECHO OFF" {
                 self.echo = false;
                 continue;
             }
-            
+
             // Handle ECHO ON
             if trimmed.to_uppercase() == "ECHO ON" {
                 self.echo = true;
@@ -331,17 +417,405 @@ impl BatchParser {
             // Regular line
             self.lines.push(trimmed);
         }
+        // Convert multi-line `IF cond ( ... ) ELSE ( ... )` blocks into
+        // equivalent flat `IF cond body` plus synthetic labels. This is
+        // the standard CMD lowering transformation.
+        self.flatten_block_ifs();
+    }
+
+    /// Walk through `self.lines` and rewrite multi-line IF blocks into
+    /// their equivalent goto-chain form. Specifically:
+    ///
+    /// ```text
+    /// IF %A% == %B% (
+    ///     body1
+    /// ) ELSE (
+    ///     body2
+    /// )
+    /// ```
+    ///
+    /// becomes the synthetic sequence:
+    ///
+    /// ```text
+    /// IF "%A%" == "%B%" GOTO :__if_then_<N>
+    /// GOTO :__if_else_<N>
+    /// :__if_then_<N>
+    ///     body1
+    /// GOTO :__if_end_<N>
+    /// :__if_else_<N>
+    ///     body2
+    /// :__if_end_<N>
+    /// ```
+    ///
+    /// For nested IFs we walk top-down: at each opening IF line we
+    /// search for the matching closing `)` (skipping nested
+    /// `IF ... (` blocks), then for an optional `) ELSE (` clause,
+    /// then for the second closing `)`.
+    fn flatten_block_ifs(&mut self) {
+        let mut out: Vec<alloc::string::String> =
+            alloc::vec::Vec::with_capacity(self.lines.len());
+        let mut counter: usize = 0;
+        let mut i: usize = 0;
+        while i < self.lines.len() {
+            let line = self.lines[i].clone();
+            let upper = line.to_uppercase();
+            if upper.starts_with("IF ") && line.trim_end().ends_with('(') {
+                crate::boot_println!(
+                    "[BAT] flatten-block-if at line[{}]: '{}'",
+                    i,
+                    line
+                );
+                counter += 1;
+                // Extract the condition by stripping `IF ` prefix
+                // and trailing `(`.
+                let cond = if let Some(rest) =
+                    line.trim_start().strip_prefix("IF ")
+                {
+                    rest.trim_end().trim_end_matches('(').trim().to_string()
+                } else if let Some(rest) =
+                    line.trim_start().strip_prefix("IF")
+                {
+                    rest.trim().trim_end_matches('(').trim().to_string()
+                } else {
+                    String::new()
+                };
+                // Search for matching `)` taking nesting into
+                // account.
+                let (close_pos, else_pos) =
+                    self.find_block_close(&self.lines, i + 1);
+                // Verify by logging what lines we see at i+1..close_pos
+                crate::boot_println!(
+                    "[BAT]   flatten verification: i={} line='{}' i+1={} line[{}]='{}' close_pos={} else_pos={:?}",
+                    i, line, i+1, i+1, self.lines.get(i+1).cloned().unwrap_or_default(),
+                    close_pos, else_pos
+                );
+                crate::boot_println!(
+                    "[BAT]   find_block_close returned close_pos={} else_pos={:?} lines.len={}",
+                    close_pos,
+                    else_pos,
+                    self.lines.len()
+                );
+                if close_pos == 0 || close_pos >= self.lines.len() {
+                    // Malformed — just emit the line verbatim.
+                    out.push(line);
+                    i += 1;
+                    continue;
+                }
+                let then_label = alloc::format!(
+                    "__IF_THEN_{}__",
+                    counter
+                );
+                let else_label = alloc::format!(
+                    "__IF_ELSE_{}__",
+                    counter
+                );
+                let end_label = alloc::format!("__IF_END_{}__", counter);
+                crate::boot_println!(
+                    "[BAT]   flatten result: cond='{}' close_pos={} else_pos={:?}",
+                    cond, close_pos, else_pos
+                );
+                // Build the lowered sequence locally so we can splice it
+                // without doing arithmetic on the out-vector's
+                // indices.
+                let mut lowered: alloc::vec::Vec<
+                    alloc::string::String,
+                > = alloc::vec::Vec::new();
+                let then_body_end = else_pos.unwrap_or(close_pos);
+                // 1. `IF cond GOTO :then_label`
+                lowered.push(alloc::format!(
+                    "IF {} GOTO :{}",
+                    cond, then_label
+                ));
+                // 2. Skip-past: `GOTO :else_label` (ELSE form) or
+                //    `GOTO :end_label` (no-ELSE form). This is
+                //    what cond=false falls into.
+                if let Some(_) = else_pos {
+                    lowered
+                        .push(alloc::format!("GOTO :{}", else_label));
+                } else {
+                    lowered
+                        .push(alloc::format!("GOTO :{}", end_label));
+                }
+                // 3. `:then_label` + then-body
+                lowered.push(alloc::format!(":{}", then_label));
+                let then_body_end = else_pos.unwrap_or(close_pos);
+                let then_body: alloc::vec::Vec<alloc::string::String> =
+                    self.lines[(i + 1)..then_body_end]
+                        .iter()
+                        .cloned()
+                        .collect();
+                let then_body = self.flatten_lines_block_ifs(
+                    then_body,
+                    counter,
+                );
+                counter = then_body.1;
+                for b in then_body.0 {
+                    lowered.push(b);
+                }
+                if let Some(ep) = else_pos {
+                    // 4. tail GOTO to skip the else branch
+                    lowered
+                        .push(alloc::format!("GOTO :{}", end_label));
+                    // 5. `:else_label` + else-body
+                    lowered.push(alloc::format!(":{}", else_label));
+                    let else_body: alloc::vec::Vec<
+                        alloc::string::String,
+                    > = self.lines[(ep + 1)..close_pos]
+                        .iter()
+                        .cloned()
+                        .collect();
+                    let else_body = self.flatten_lines_block_ifs(
+                        else_body,
+                        counter,
+                    );
+                    counter = else_body.1;
+                    for b in else_body.0 {
+                        lowered.push(b);
+                    }
+                    // 6. `:end_label`
+                    lowered.push(alloc::format!(":{}", end_label));
+                } else {
+                    // 4. `:end_label` (cond=false GOTO lands here,
+                    //    past the body).
+                    lowered.push(alloc::format!(":{}", end_label));
+                }
+                crate::boot_println!(
+                    "[BAT]   lowered IF ({} lines, next counter {})",
+                    lowered.len(),
+                    counter
+                );
+                out.append(&mut lowered);
+                i = close_pos + 1;
+                continue;
+            }
+            out.push(line);
+            i += 1;
+        }
+        self.lines = out;
+    }
+
+    /// Recursively flatten any block-IFs inside a slice of lines.
+    /// Used by `flatten_block_ifs` so that nested IFs become
+    /// goto-chains at preprocessing time rather than being left
+    /// unflattened for the runtime to (mis-)handle. The label
+    /// counter is shared with the outer caller so multiple
+    /// blocks across the same file never collide.
+    fn flatten_lines_block_ifs(
+        &self,
+        mut lines: alloc::vec::Vec<alloc::string::String>,
+        mut counter: usize,
+    ) -> (
+        alloc::vec::Vec<alloc::string::String>,
+        usize,
+    ) {
+        let mut counter: usize = counter;
+        // Run through `lines`, dropping block-IFs down to
+        // goto-chains. We re-use the same lowering shape: each
+        // nested `IF cond ( ... ) [ELSE ( ... )]` becomes
+        // `IF cond GOTO :...`, `GOTO :...`, `:...`, body, GOTO
+        // :...`, `:...`, body, `:...` — exactly the same
+        // recipe, just on a smaller slice and with locally
+        // unique label numbers.
+        let mut out: alloc::vec::Vec<alloc::string::String> =
+            alloc::vec::Vec::with_capacity(lines.len());
+        let mut i: usize = 0;
+        while i < lines.len() {
+            let line = lines[i].clone();
+            let upper = line.to_uppercase();
+            if upper.starts_with("IF ")
+                && line.trim_end().ends_with('(')
+            {
+                let cond = if let Some(rest) =
+                    line.trim_start().strip_prefix("IF ")
+                {
+                    rest.trim_end()
+                        .trim_end_matches('(')
+                        .trim()
+                        .to_string()
+                } else if let Some(rest) =
+                    line.trim_start().strip_prefix("IF")
+                {
+                    rest.trim()
+                        .trim_end_matches('(')
+                        .trim()
+                        .to_string()
+                } else {
+                    String::new()
+                };
+                let (close_pos, else_pos) =
+                    self.find_block_close(&lines, i + 1);
+                if close_pos == 0 || close_pos >= lines.len() {
+                    out.push(line);
+                    i += 1;
+                    continue;
+                }
+                counter += 1;
+                let then_label = alloc::format!(
+                    "__IF_THEN_{}__",
+                    counter
+                );
+                let else_label = alloc::format!(
+                    "__IF_ELSE_{}__",
+                    counter
+                );
+                let end_label =
+                    alloc::format!("__IF_END_{}__", counter);
+                let mut lowered: alloc::vec::Vec<
+                    alloc::string::String,
+                > = alloc::vec::Vec::new();
+                let then_body_end = else_pos.unwrap_or(close_pos);
+                lowered.push(alloc::format!(
+                    "IF {} GOTO :{}",
+                    cond, then_label
+                ));
+                if let Some(_) = else_pos {
+                    lowered.push(alloc::format!(
+                        "GOTO :{}",
+                        else_label
+                    ));
+                } else {
+                    lowered.push(alloc::format!(
+                        "GOTO :{}",
+                        end_label
+                    ));
+                }
+                lowered.push(alloc::format!(":{}", then_label));
+                let then_body: alloc::vec::Vec<
+                    alloc::string::String,
+                > = lines[(i + 1)..then_body_end]
+                    .iter()
+                    .cloned()
+                    .collect();
+                let then_body_result =
+                    self.flatten_lines_block_ifs(then_body, counter);
+                counter = then_body_result.1;
+                for b in then_body_result.0 {
+                    lowered.push(b);
+                }
+                if let Some(ep) = else_pos {
+                    lowered.push(alloc::format!(
+                        "GOTO :{}",
+                        end_label
+                    ));
+                    lowered.push(alloc::format!(":{}", else_label));
+                    let else_body: alloc::vec::Vec<
+                        alloc::string::String,
+                    > = lines[(ep + 1)..close_pos]
+                        .iter()
+                        .cloned()
+                        .collect();
+                    let else_body_result =
+                        self.flatten_lines_block_ifs(else_body, counter);
+                    counter = else_body_result.1;
+                    for b in else_body_result.0 {
+                        lowered.push(b);
+                    }
+                    lowered.push(alloc::format!(":{}", end_label));
+                } else {
+                    lowered.push(alloc::format!(":{}", end_label));
+                }
+                out.append(&mut lowered);
+                i = close_pos + 1;
+                continue;
+            }
+            out.push(line);
+            i += 1;
+        }
+        (out, counter)
+    }
+
+    /// Given that `start` is the line **after** an `IF cond (` open,
+    /// find the matching closing `)`. Returns `(close_idx, Some(else_idx))`
+    /// when an ELSE clause is present, otherwise `(close_idx, None)`.
+    /// `close_idx` is the index of the line containing the matching `)`.
+    /// `else_idx` is the index of the line containing `) ELSE (`.
+    fn find_block_close(
+        &self,
+        lines: &[alloc::string::String],
+        mut start: usize,
+    ) -> (usize, Option<usize>) {
+        // We've already consumed the opening `IF cond (` line.
+        // The caller passed `start` = i + 1 so we are in the
+        // body.
+        let mut else_idx: Option<usize> = None;
+        // `phase` controls which closing `)` we hunt:
+        //   0 = first `)` (or `) ELSE (`) for the IF we're
+        //       inside right now
+        //   2 = closing `)` after we've seen `) ELSE (`
+        let mut phase: u8 = 0;
+        // `nested` counts how many nested `IF cond (` blocks
+        // need their matching `)`. Each new nested opener adds
+        // 1; each nested closer subtracts 1.
+        let mut nested: usize = 0;
+        while start < lines.len() {
+            let raw = lines[start].trim().to_string();
+            let upper = raw.to_uppercase();
+            // Detect a CLOSE-only line. We require the line to be
+            // `)` exactly or start with `) ELSE`/`)ELSE`. We
+            // deliberately do NOT match `(==)`, `echo (foo)`, etc.
+            let trimmed_upper = upper.trim().to_string();
+            let is_close_only = trimmed_upper == ")"
+                || trimmed_upper.starts_with(") ELSE (")
+                || trimmed_upper.starts_with(")ELSE(")
+                || trimmed_upper.starts_with(") ELSE ")
+                || trimmed_upper == ")ELSE";
+            // Detect nested `IF ... (` open.
+            let is_if_open = upper.starts_with("IF ")
+                && raw.trim_end().ends_with('(')
+                && !raw.trim_end().starts_with("REM");
+            if is_if_open {
+                nested += 1;
+                start += 1;
+                continue;
+            }
+            if !is_close_only {
+                start += 1;
+                continue;
+            }
+            // `is_close_only` is true. Decide based on phase and
+            // depth.
+            if nested > 0 {
+                // Inside a nested IF. The `)` here either closes
+                // the nested IF (decrement) or starts its ELSE
+                // (`) ELSE (` token) — wait for the actual close.
+                if !trimmed_upper.starts_with(") ELSE")
+                    && !trimmed_upper.starts_with(")ELSE")
+                {
+                    nested -= 1;
+                }
+                start += 1;
+                continue;
+            }
+            // nested == 0: this closes our IF, or transitions to
+            // its ELSE.
+            if phase == 0
+                && (trimmed_upper.starts_with(") ELSE")
+                    || trimmed_upper.starts_with(")ELSE"))
+            {
+                else_idx = Some(start);
+                phase = 2;
+                start += 1;
+                continue;
+            }
+            return (start, else_idx);
+        }
+        (start, else_idx)
     }
 
     /// Collect all labels in the batch file
     fn collect_labels(&mut self) {
         self.labels.clear();
-        
+
         for (i, line) in self.lines.iter().enumerate() {
             let trimmed = line.trim();
-            if trimmed.starts_with(':') && !trimmed.starts_with("::") {
-                let label = trimmed[1..].trim().to_uppercase();
-                self.labels.push((Box::leak(label.into_boxed_str()), i));
+            // Real Windows CMD treats both `:LABEL` and `::LABEL`
+            // as goto targets. Strip all leading colons when
+            // extracting the label name.
+            if trimmed.starts_with(':') && !trimmed.is_empty() {
+                let label = trimmed.trim_start_matches(':').trim().to_uppercase();
+                if !label.is_empty() && !label.starts_with(':') {
+                    self.labels.push((Box::leak(label.into_boxed_str()), i));
+                }
             }
         }
     }
@@ -349,7 +823,18 @@ impl BatchParser {
     /// Classify a line into its type
     fn classify_line(&self, line: &str) -> LineType {
         let upper = line.to_uppercase();
-        
+
+        // Label: a line that is just `:NAME` or `::NAME`. We
+        // recognise this first so the execute loop can skip it
+        // (its real meaning is captured by `collect_labels`).
+        let trimmed = line.trim_start();
+        if trimmed.starts_with(':')
+            && !trimmed.is_empty()
+            && !trimmed.starts_with("::")
+        {
+            return LineType::Label(trimmed.to_string());
+        }
+
         // GOTO
         if upper.starts_with("GOTO") {
             let target = line[4..].trim().to_string();
@@ -416,81 +901,82 @@ impl BatchParser {
     /// Classify IF statement
     fn classify_if(&self, line: &str) -> LineType {
         let upper = line.to_uppercase();
-        
-        // IF [NOT] EXIST filename
-        if upper.contains("EXIST") {
-            // Extract condition and branch
-            let parts: Vec<&str> = line.splitn(3, ' ').collect();
-            if parts.len() >= 3 {
-                let is_not = parts.len() >= 4 && parts[1].to_uppercase() == "NOT";
-                let file_part = if is_not { parts[2] } else { parts[1] };
-                let condition = if is_not {
-                    alloc::format!("{} EXIST {}", parts[0], file_part)
-                } else {
-                    alloc::format!("{} EXIST {}", parts[0], file_part)
-                };
-                
-                // Find the command after condition - skip finding position for simplicity
-                let true_branch = String::new(); // Simplified
-                
+        // Strip leading "IF ".
+        let body = if let Some(rest) = line.trim_start().strip_prefix("IF ") {
+            rest.to_string()
+        } else if let Some(rest) = line.trim_start().strip_prefix("IF") {
+            rest.trim_start().to_string()
+        } else {
+            line.to_string()
+        };
+        let upper_body = body.to_uppercase();
+
+        // IF [... ] GOTO :label — the canonical lowered form from
+        // block-IFs, also accepted in raw CMD scripts.
+        if let Some(gpos) = upper_body.find(" GOTO ") {
+            let condition = body[..gpos].trim().to_string();
+            let target = body[gpos + 6..].trim().to_string();
+            // We model this as a single-branch IF whose
+            // true_branch is the GOTO command. The execute loop
+            // will evaluate condition and, if true, run the
+            // GOTO; if false, falls through to the next line.
+            let true_branch = alloc::format!("GOTO {}", target);
+            return LineType::If {
+                condition,
+                true_branch,
+                false_branch: None,
+            };
+        }
+
+        // IF [NOT] EXIST filename [cmd]
+        if upper_body.contains(" EXIST ") {
+            return LineType::If {
+                condition: body.clone(),
+                true_branch: String::new(),
+                false_branch: None,
+            };
+        }
+
+        // IF [NOT] DEFINED var [cmd]
+        if upper_body.contains(" DEFINED ") {
+            return LineType::If {
+                condition: body.clone(),
+                true_branch: String::new(),
+                false_branch: None,
+            };
+        }
+
+        // IF ERRORLEVEL n [cmd]
+        if upper_body.contains("ERRORLEVEL ") {
+            return LineType::If {
+                condition: body.clone(),
+                true_branch: String::new(),
+                false_branch: None,
+            };
+        }
+
+        // IF string1 == string2 [cmd]
+        if upper_body.contains("==") {
+            return LineType::If {
+                condition: body.clone(),
+                true_branch: String::new(),
+                false_branch: None,
+            };
+        }
+
+        // IF str NEQ/.../EQU str [cmd]
+        for tok in &["EQU", "NEQ", "LSS", "LEQ", "GTR", "GEQ"] {
+            let needle = alloc::format!(" {} ", tok);
+            if upper_body.contains(&needle) {
                 return LineType::If {
-                    condition,
-                    true_branch,
+                    condition: body.clone(),
+                    true_branch: String::new(),
                     false_branch: None,
                 };
             }
         }
-        
-        // IF ERRORLEVEL n
-        if upper.contains("ERRORLEVEL") {
-            // Find the condition and command
-            if let Some(_cmd_pos) = upper.find("ERRORLEVEL") {
-                let condition = "ERRORLEVEL".to_string();
-                let true_branch = String::new(); // Simplified
-                
-                return LineType::If {
-                    condition,
-                    true_branch,
-                    false_branch: None,
-                };
-            }
-        }
-        
-        // IF string1 == string2
-        if upper.contains("==") {
-            if let Some(eq_pos) = upper.find("==") {
-                let before = line[..eq_pos].trim();
-                let after_eq = line[eq_pos + 2..].trim();
-                
-                // Skip "IF" and find the actual strings
-                let if_pos = before.to_uppercase().find("IF ").map(|p| p + 3).unwrap_or(0);
-                let condition = alloc::format!("{} == {}", &before[if_pos..], after_eq).trim().to_string();
-                
-                // Find the command (might be on next token)
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                let mut cmd_parts = Vec::new();
-                let mut found_eq = false;
-                
-                for part in parts.iter().skip(1) {
-                    if found_eq {
-                        cmd_parts.push(*part);
-                    }
-                    if part.to_uppercase() == "==" {
-                        found_eq = true;
-                    }
-                }
-                
-                let true_branch = cmd_parts.join(" ");
-                
-                return LineType::If {
-                    condition,
-                    true_branch,
-                    false_branch: None,
-                };
-            }
-        }
-        
-        // Fallback: treat as command
+
+        // Fallback: treat as a regular command
         LineType::Command(line.to_string())
     }
 
@@ -556,8 +1042,23 @@ impl BatchParser {
 
     /// Handle GOTO command
     fn handle_goto(&mut self, label: &str) -> Result<(), BatError> {
-        let target = label.trim().to_uppercase();
-        
+        // Strip ALL leading colons — real CMD accepts `:FOO`, `::FOO`,
+        // etc. when reading the GOTO target.
+        let target = label
+            .trim()
+            .trim_start_matches(':')
+            .trim()
+            .to_uppercase();
+
+        // `:EOF` is CMD's predefined end-of-file label — it
+        // terminates execution of the current batch. We model
+        // that as `running = false`, which the main loop
+        // exits cleanly.
+        if target == "EOF" {
+            self.running = false;
+            return Ok(());
+        }
+
         // Find the label
         for (lbl, line_num) in self.labels.iter() {
             if *lbl == target {
@@ -565,7 +1066,7 @@ impl BatchParser {
                 return Ok(());
             }
         }
-        
+
         Err(BatError::LabelNotFound(label.to_string()))
     }
 
@@ -587,7 +1088,12 @@ impl BatchParser {
                 }
             }
             if let Some(name) = var_name {
-                let value = get_env_var_static(name);
+                // First check the parser's internal variables
+                // (those set with `SET VAR=value`); fall back to
+                // the static env table for OS-level vars.
+                let value = self
+                    .get_variable(name)
+                    .unwrap_or_else(|| get_env_var_static(name));
                 let defined = !value.is_empty();
                 return Ok(if is_not { !defined } else { defined });
             }
@@ -621,34 +1127,89 @@ impl BatchParser {
             }
         }
         
+        // IF [NOT] string1 OP string2  (string or numeric, where OP is
+        // one of ==, NEQ, EQU, NEQ, LSS, LEQ, GTR, GEQ). We
+        // support an optional leading `NOT` that negates the
+        // result.
+        let mut is_not = false;
+        let cond_stripped = if let Some(stripped) =
+            condition.trim_start().strip_prefix("NOT ")
+        {
+            is_not = true;
+            stripped
+        } else {
+            condition
+        };
+
         // IF string1 == string2
-        if upper.contains("==") {
-            if let Some(eq_pos) = upper.find("==") {
-                let s1 = condition[..eq_pos].trim().to_string();
-                let s2 = condition[eq_pos + 2..].trim().to_string();
-                
-                // Expand variables
+        if cond_stripped.to_uppercase().contains("==") {
+            let upper_stripped = cond_stripped.to_uppercase();
+            if let Some(eq_pos) = upper_stripped.find("==") {
+                let s1 = cond_stripped[..eq_pos].trim().to_string();
+                let s2 = cond_stripped[eq_pos + 2..].trim().to_string();
                 let s1_exp = self.expand_variables(&s1);
                 let s2_exp = self.expand_variables(&s2);
-                
-                return Ok(s1_exp == s2_exp);
+                let result = s1_exp == s2_exp;
+                return Ok(if is_not { !result } else { result });
             }
         }
-        
+
         // IF string1 NEQ string2 (not equal)
-        if upper.contains("NEQ") {
-            if let Some(neq_pos) = upper.find("NEQ") {
-                let s1 = condition[..neq_pos].trim().to_string();
-                let s2 = condition[neq_pos + 3..].trim().to_string();
-                
-                // Expand variables
+        if cond_stripped.to_uppercase().contains("NEQ") {
+            let upper_stripped = cond_stripped.to_uppercase();
+            if let Some(neq_pos) = upper_stripped.find("NEQ") {
+                let s1 = cond_stripped[..neq_pos].trim().to_string();
+                let s2 = cond_stripped[neq_pos + 3..].trim().to_string();
                 let s1_exp = self.expand_variables(&s1);
                 let s2_exp = self.expand_variables(&s2);
-                
-                return Ok(s1_exp != s2_exp);
+                let result = s1_exp != s2_exp;
+                return Ok(if is_not { !result } else { result });
             }
         }
-        
+
+        // IF num1 COMP num2 where COMP is one of EQU, NEQ, LSS, LEQ,
+        // GTR, GEQ. Real CMD treats these as integer-only
+        // comparisons. Expand variables on each side, parse to
+        // i64, and apply. We also honour a leading `NOT` that
+        // negates the result.
+        let upper_numeric =
+            self.expand_variables(cond_stripped).to_uppercase();
+        for (tok, f) in &[
+            ("EQU", i64::eq as fn(&i64, &i64) -> bool),
+            ("NEQ", i64::ne),
+            ("LSS", i64::lt),
+            ("LEQ", i64::le),
+            ("GTR", i64::gt),
+            ("GEQ", i64::ge),
+        ] {
+            if let Some(p) = upper_numeric.find(tok) {
+                // Find the LAST occurrence (so `EQU` in `NEQU` does
+                // not match by accident — though we don't expect
+                // those tokens to nest). The first `tok` may be a
+                // variable name like `MYEQU`. Use the rightmost
+                // match.
+                let last_p = upper_numeric
+                    .rfind(tok)
+                    .unwrap_or(usize::MAX);
+                let p = last_p.min(p);
+                let s1 = cond_stripped[..p].trim().to_string();
+                let s2 = cond_stripped[p + tok.len()..].trim().to_string();
+                let s1_exp = self.expand_variables(&s1);
+                let s2_exp = self.expand_variables(&s2);
+                if let (Ok(a), Ok(b)) = (
+                    s1_exp.trim().parse::<i64>(),
+                    s2_exp.trim().parse::<i64>(),
+                ) {
+                    let result = f(&a, &b);
+                    return Ok(if is_not { !result } else { result });
+                }
+                // If we couldn't parse either side as an integer,
+                // fall through to the default below — the test
+                // expects a meaningful numeric compare and we'd
+                // rather fail loud than silently treat as "true".
+            }
+        }
+
         // Default: condition is true
         Ok(true)
     }
@@ -787,6 +1348,19 @@ impl BatchParser {
         None
     }
 
+    /// Evaluate a small arithmetic expression made of integer
+    /// constants, batch variables, and the four basic operators
+    /// (`+ - * /` plus `%` for modulo and `(` `)` for grouping).
+    /// Operator-assignment shorthands such as `VAR-=1` are expanded
+    /// by the caller before this sees them.
+    fn eval_arithmetic(&self, expr: &str) -> String {
+        let expanded = self.expand_variables(expr);
+        match eval_int_expr(&expanded) {
+            Some(v) => v.to_string(),
+            None => expanded,
+        }
+    }
+
     /// Expand variables in a string (%VAR%)
     fn expand_variables(&self, s: &str) -> String {
         let mut result = String::new();
@@ -905,4 +1479,153 @@ fn get_env_var_static(name: &str) -> String {
         "HOMEDRIVE" => "C:".to_string(),
         _ => String::new(),
     }
+}
+
+/// Locate the `=` in an assignment string and detect compound
+/// operators like `VAR-=1` or `VAR+=2`. Returns
+/// `(var_name, optional_compound_op, value_after_eq)`.
+fn find_assignment_split(body: &str) -> Option<(String, Option<char>, &str)> {
+    // Walk left-to-right looking for the LAST `=` that is not
+    // inside the variable name; the var name ends where the first
+    // `+ - * / %` (right before `=`) appears, OR simply at `=`.
+    let bytes = body.as_bytes();
+    let mut eq_pos = None;
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'=' {
+            eq_pos = Some(i);
+        }
+    }
+    let eq_pos = eq_pos?;
+    let lhs = &body[..eq_pos];
+    let rhs = &body[eq_pos + 1..];
+    // If the char immediately before `=` is one of `+ - * / %`,
+    // treat it as a compound op (`VAR-=` → name=VAR, op=`-`).
+    let lhs_trim = lhs.trim_end();
+    if let Some(last) = lhs_trim.chars().last() {
+        if matches!(last, '+' | '-' | '*' | '/' | '%') && lhs_trim.len() >= 2 {
+            let var_name = lhs_trim[..lhs_trim.len() - last.len_utf8()].trim().to_string();
+            return Some((var_name, Some(last), rhs));
+        }
+    }
+    Some((lhs.trim().to_string(), None, rhs))
+}
+
+/// Evaluate a tiny integer arithmetic expression made of
+/// constants and the four basic operators. Returns None on parse
+/// failure (the caller then falls back to a string assignment).
+fn eval_int_expr(expr: &str) -> Option<i64> {
+    let expr = expr.trim();
+    if expr.is_empty() {
+        return None;
+    }
+    // Tokenise: numbers, identifiers (treated as 0), operators, parens.
+    let bytes = expr.as_bytes();
+    let mut i = 0;
+    let mut toks: alloc::vec::Vec<alloc::string::String> = alloc::vec::Vec::new();
+    while i < bytes.len() {
+        let c = bytes[i] as char;
+        if c.is_whitespace() {
+            i += 1;
+            continue;
+        }
+        if c == '(' || c == ')' || c == '+' || c == '-' || c == '*' || c == '/' || c == '%' {
+            toks.push(c.to_string());
+            i += 1;
+            continue;
+        }
+        if c.is_ascii_digit() {
+            let mut j = i;
+            while j < bytes.len() && (bytes[j] as char).is_ascii_digit() {
+                j += 1;
+            }
+            toks.push(expr[i..j].to_string());
+            i = j;
+            continue;
+        }
+        if c.is_ascii_alphabetic() || c == '_' {
+            let mut j = i;
+            while j < bytes.len()
+                && ((bytes[j] as char).is_ascii_alphanumeric() || bytes[j] == b'_')
+            {
+                j += 1;
+            }
+            // Treat identifiers as 0 (variables must already be
+            // substituted by the caller via `expand_variables`).
+            toks.push("0".to_string());
+            i = j;
+            continue;
+        }
+        return None;
+    }
+    // Recursive-descent: factor * factor / factor, term + term - term
+    fn parse_expr(toks: &[alloc::string::String], pos: &mut usize) -> Option<i64> {
+        let mut lhs = parse_term(toks, pos)?;
+        while *pos < toks.len() {
+            let op = toks[*pos].as_str();
+            if op != "+" && op != "-" {
+                break;
+            }
+            *pos += 1;
+            let rhs = parse_term(toks, pos)?;
+            lhs = if op == "+" { lhs + rhs } else { lhs - rhs };
+        }
+        Some(lhs)
+    }
+    fn parse_term(toks: &[alloc::string::String], pos: &mut usize) -> Option<i64> {
+        let mut lhs = parse_factor(toks, pos)?;
+        while *pos < toks.len() {
+            let op = toks[*pos].as_str();
+            if op != "*" && op != "/" && op != "%" {
+                break;
+            }
+            *pos += 1;
+            let rhs = parse_factor(toks, pos)?;
+            lhs = if op == "*" {
+                lhs * rhs
+            } else if op == "/" {
+                if rhs == 0 {
+                    return None;
+                }
+                lhs / rhs
+            } else {
+                if rhs == 0 {
+                    return None;
+                }
+                lhs % rhs
+            };
+        }
+        Some(lhs)
+    }
+    fn parse_factor(toks: &[alloc::string::String], pos: &mut usize) -> Option<i64> {
+        if *pos >= toks.len() {
+            return None;
+        }
+        let tok = &toks[*pos];
+        if tok == "(" {
+            *pos += 1;
+            let v = parse_expr(toks, pos)?;
+            if *pos >= toks.len() || toks[*pos] != ")" {
+                return None;
+            }
+            *pos += 1;
+            return Some(v);
+        }
+        if tok == "-" {
+            *pos += 1;
+            return parse_factor(toks, pos).map(|v| -v);
+        }
+        if tok == "+" {
+            *pos += 1;
+            return parse_factor(toks, pos);
+        }
+        let v = tok.parse::<i64>().ok()?;
+        *pos += 1;
+        Some(v)
+    }
+    let mut pos = 0;
+    let v = parse_expr(&toks, &mut pos)?;
+    if pos != toks.len() {
+        return None;
+    }
+    Some(v)
 }

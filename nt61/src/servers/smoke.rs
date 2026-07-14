@@ -235,8 +235,8 @@ fn step6_well_known_pids() -> bool {
         // kprintln!("    [SERV SMOKE FAIL] PID_CSRSS != 512")  // kprintln disabled (memcpy crash workaround);
         return false;
     }
-    if PID_WINLOGON != 768 {
-        // kprintln!("    [SERV SMOKE FAIL] PID_WINLOGON != 768")  // kprintln disabled (memcpy crash workaround);
+    if PID_WINLOGON != 0x900 {
+        // kprintln!("    [SERV SMOKE FAIL] PID_WINLOGON != 0x900")  // kprintln disabled (memcpy crash workaround);
         return false;
     }
     if PID_SERVICES != 1024 {

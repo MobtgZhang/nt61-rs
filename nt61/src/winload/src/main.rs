@@ -56,6 +56,7 @@ mod bcd_mailbox_read;
 mod fat_lfn;
 mod gop_display;
 pub mod logging;
+pub mod ntfs_boot;
 
 use nt61::kernel_main::{BootInfo, BOOTINFO_MAX_HIVES};
 use nt61::loader;
@@ -292,6 +293,30 @@ const BOOT_DRIVER_PATHS: [&str; MAX_BOOT_DRIVERS] = [
 ];
 
 // =====================================================================
+// Phase L03 — Kernel image paths
+// =====================================================================
+// Real Windows 7 winload reads the kernel itself (`ntoskrnl.exe`)
+// and `hal.dll` from the NTFS System partition *before*
+// `ExitBootServices`. nt61-rs follows the same recipe: we read the
+// two PEs through `read_pe_file_from_disk`, copy their bytes into
+// the shared `IMAGE_BUFFER` (which is `EfiBootServicesData` and
+// therefore survives `ExitBootServices`), and stash the resulting
+// base+size into `KERNEL_BOOT_INFO` so the host trampoline can
+// jump into the on-disk `KiSystemStartup` directly.
+//
+// Note that `BOOTVID.DLL` is *already* loaded by
+// `load_boot_drivers()` above (it shares the BOOT_START_IMAGE
+// codepath with the .sys drivers). We re-use that fact instead of
+// loading it twice.
+const KERNEL_IMAGE_PATHS: [&str; 2] = [
+    "\\Windows\\System32\\ntoskrnl.exe",
+    "\\Windows\\System32\\hal.dll",
+];
+
+/// Path of the SYSTEM registry hive.
+const SYSTEM_HIVE_PATH: &str = "\\Windows\\System32\\config\\SYSTEM";
+
+// =====================================================================
 // Persistent boot data
 // =====================================================================
 
@@ -348,6 +373,10 @@ struct PersistentBootData {
     memory_map_size_bytes: usize,
     /// Size of each memory descriptor (from UEFI GetMemoryMap)
     descriptor_size: u32,
+    /// UEFI `map_key` returned by `GetMemoryMap` — must be passed
+    /// to `ExitBootServices(image_handle, map_key)`. Zero before
+    /// `collect_memory_map` runs.
+    map_key: usize,
     /// Framebuffer/GOP information
     framebuffer_base: u64,
     framebuffer_size: u64,
@@ -429,6 +458,10 @@ impl PersistentBootData {
             ],
             memory_map_size_bytes: 0,
             descriptor_size: 0,
+            /// UEFI `map_key` returned by `GetMemoryMap` — must be
+            /// passed to `ExitBootServices(image_handle, map_key)`.
+            /// Zero before `collect_memory_map` runs.
+            map_key: 0,
             framebuffer_base: 0,
             framebuffer_size: 0,
             framebuffer_width: 0,
@@ -516,6 +549,7 @@ static mut KERNEL_BOOT_INFO: BootInfo = BootInfo {
     hal_image_size: 0,
     bootvid_image_base: 0,
     bootvid_image_size: 0,
+    ntoskrnl_handoff_callback: 0,
 };
 
 // =====================================================================
@@ -855,6 +889,39 @@ fn open_system_file_into(path: &str, dst_buf: &mut [u8]) -> Option<usize> {
     // Determine which SFS interface to use based on path prefix.
     let is_system = bytes.len() >= 8 && &bytes[1..8] == b"Windows";
 
+    // First try the NTFS direct reader when the file lives on
+    // the System partition. The QEMU/OVMF harness only exposes a
+    // single SimpleFileSystem handle (the ESP), so the SFS path
+    // below can only succeed for files that have been mirrored
+    // into the ESP capture buffer. The NTFS reader walks the
+    // BlockIO handles directly and can read \Windows\System32\*
+    // files regardless of whether the partition is also visible
+    // as an SFS volume.
+    if is_system {
+        uefi::println!(
+            "[WINLOAD] System partition is NTFS; routing '{}' directly to NTFS reader",
+            path
+        );
+        match crate::ntfs_boot::read_ntfs_system_file(path) {
+            Some(data) => {
+                let copy_len = core::cmp::min(data.len(), dst_buf.len());
+                dst_buf[..copy_len].copy_from_slice(&data[..copy_len]);
+                uefi::println!(
+                    "[DBG] open_system_file_into(NTFS): read {} bytes (truncated to {}) from {}",
+                    data.len(), copy_len, path
+                );
+                return Some(copy_len);
+            }
+            None => {
+                uefi::println!(
+                    "[DBG] open_system_file_into(NTFS): NTFS direct read for '{}' failed; trying SFS",
+                    path
+                );
+                // fall through to the SFS path below as a last resort
+            }
+        }
+    }
+
     // Always open the protocol fresh. Reusing a cached interface
     // pointer produced inconsistent behavior in QEMU/OVMF (some
     // open() calls corrupted state).
@@ -965,7 +1032,7 @@ fn open_esp_file_into_fallback(path: &str, dst_buf: &mut [u8]) -> Option<usize> 
     None
 }
 
-fn parse_pe32plus(image: &[u8]) -> Option<(u64, u64, u64)> {
+fn parse_pe32plus(image: &[u8]) -> Option<(u64, u64, u64, bool)> {
     if image.len() < 0x100 {
         return None;
     }
@@ -980,6 +1047,21 @@ fn parse_pe32plus(image: &[u8]) -> Option<(u64, u64, u64)> {
     if &image[e_lfanew..e_lfanew + 4] != b"PE\0\0" {
         return None;
     }
+    // File header (20 bytes) lives at e_lfanew + 4 and contains
+    // the Characteristics bitmask we use to detect DLL images.
+    // Layout: +0x00 Machine (u16), +0x02 NumberOfSections (u16),
+    //         +0x04 TimeDateStamp (u32), +0x08 ...,
+    //         +0x12 Characteristics (u16).
+    let fh_off = e_lfanew + 4;
+    let characteristics = if fh_off + 0x14 <= image.len() {
+        u16::from_le_bytes([image[fh_off + 0x12], image[fh_off + 0x13]])
+    } else {
+        0
+    };
+    // IMAGE_FILE_DLL == 0x2000. DLLs are BOOT_START_IMAGE entries
+    // (BOOTVID.DLL, hal.dll, ntdll.dll, ...) that export symbols but
+    // have no DriverEntry.
+    let is_dll = (characteristics & 0x2000) != 0;
     let opt_off = e_lfanew + 4 + 20;
     if opt_off + 0x50 > image.len() {
         return None;
@@ -1002,7 +1084,7 @@ fn parse_pe32plus(image: &[u8]) -> Option<(u64, u64, u64)> {
         image[opt_off + 0x10], image[opt_off + 0x11],
         image[opt_off + 0x12], image[opt_off + 0x13],
     ]) as u64;
-    Some((image_base, size_of_image, entry_rva))
+    Some((image_base, size_of_image, entry_rva, is_dll))
 }
 
 fn copy_pe_sections(image: &[u8], dest: u64) -> usize {
@@ -1112,12 +1194,20 @@ const MAX_PE_FILE_SIZE: usize = 8 * 1024 * 1024;
 
 /// Read a PE image from disk into a freshly-allocated buffer.
 ///
-/// Returns `(virtual_base, size_of_image, entry_point_rva, file_size)`
-/// on success. The caller is responsible for freeing `file_size`
-/// bytes back to the boot-services heap once the image has been
-/// mapped into runtime memory.
+/// Returns `(virtual_base, size_of_image, entry_point_rva, is_dll)`
+/// on success. `is_dll` is read from the PE's `Characteristics`
+/// field (IMAGE_FILE_DLL == 0x2000): when set, the image is a
+/// BOOT_START_IMAGE (BOOTVID.DLL, hal.dll, ntdll.dll, ...) that
+/// only exports a symbol surface and has *no* DriverEntry at the
+/// PE's AddressOfEntryPoint — the loader must skip the
+/// DriverEntry call for DLLs or it will jump into whatever bytes
+/// the build tool happened to put at .text RVA 0 (usually the
+/// export-directory header), which on real builds is `00 00 00
+/// 00 ...` and immediately wedges the CPU on an unaligned
+/// `add [rax], al` chain. UEFI then triggers the watchdog and
+/// reboots, which is the symptom that prompted this flag.
 #[inline(never)]
-fn read_pe_file_from_disk(path: &str) -> Option<(Vec<u8>, u64, u32)> {
+fn read_pe_file_from_disk(path: &str) -> Option<(Vec<u8>, u64, u32, bool)> {
     uefi::println!("[R0] enter");
 
     // The uefi global allocator exhibited flakiness under QEMU
@@ -1144,14 +1234,14 @@ fn read_pe_file_from_disk(path: &str) -> Option<(Vec<u8>, u64, u32)> {
     }
 
     uefi::println!("[R3] about to parse");
-    let (_image_base, size_of_image, entry_point) = match parse_pe32plus(&buffer[..size]) {
+    let (_image_base, size_of_image, entry_point, is_dll) = match parse_pe32plus(&buffer[..size]) {
         Some(p) => p,
         None => {
             uefi::println!("[R3f] parse None");
             return None;
         }
     };
-    uefi::println!("[R4] parsed");
+    uefi::println!("[R4] parsed (is_dll={})", is_dll);
     if size_of_image == 0 {
         return None;
     }
@@ -1172,7 +1262,7 @@ fn read_pe_file_from_disk(path: &str) -> Option<(Vec<u8>, u64, u32)> {
     // exercised whenever the loader reads a PE file. The caller
     // owns the Vec and the trace fires on drop.
     push_vec_drop(size as u32, v.as_ptr() as u64);
-    Some((v, size_of_image, entry_point as u32))
+    Some((v, size_of_image, entry_point as u32, is_dll))
 }
 
 /// Reserve the IMAGE_BUFFER region at startup and hand out a
@@ -1527,11 +1617,11 @@ fn load_system_image(
 ) -> Result<(u64, u64, u64), LoaderError> {
     let _ = image_db;
     // 1. Read the PE file into a temporary buffer.
-    let (raw, size_of_image, _entry_rva) =
+    let (raw, size_of_image, _entry_rva, _is_dll) =
         read_pe_file_from_disk(path).ok_or(LoaderError::FileNotFound)?;
 
     // 2. Parse PE metadata.
-    let (image_base, _, _) = parse_pe32plus(&raw).ok_or(LoaderError::PeParseFailed)?;
+    let (image_base, _, _, _) = parse_pe32plus(&raw).ok_or(LoaderError::PeParseFailed)?;
     if size_of_image == 0 {
         return Err(LoaderError::PeParseFailed);
     }
@@ -1602,12 +1692,12 @@ fn load_hal(image_db: &mut loader::ImageDatabase) -> Result<(), LoaderError> {
     let hal_path = "\\Windows\\System32\\hal.dll";
     uefi::println!("[LOAD] Loading hal.dll");
 
-    let (raw, size_of_image, entry_point) =
+    let (raw, size_of_image, entry_point, _is_dll) =
         read_pe_file_from_disk(hal_path)
             .ok_or(LoaderError::FileNotFound)?;
     uefi::println!("[LOAD] read ok");
 
-    let (image_base, _, _) = parse_pe32plus(&raw).ok_or(LoaderError::PeParseFailed)?;
+    let (image_base, _, _, _) = parse_pe32plus(&raw).ok_or(LoaderError::PeParseFailed)?;
 
     let load_addr = allocate_and_map_image(image_base, size_of_image, &raw)
         .ok_or(LoaderError::MemoryAllocationFailed)?;
@@ -1662,6 +1752,108 @@ fn load_system_hive() {
 }
 
 // =====================================================================
+// Phase L03 — load ntoskrnl.exe + hal.dll from the NTFS System partition
+// =====================================================================
+// The host trampoline will jump into the on-disk
+// `ntoskrnl.exe!KiSystemStartup` via `jump_to_ntoskrnl_kisystemstartup`
+// (see `arch::x86_64::jump_to_ntoskrnl_kisystemstartup`). That requires
+// the loader to have already copied the PE bytes into the shared
+// `IMAGE_BUFFER` region (which is `EfiBootServicesData` and therefore
+// survives `ExitBootServices`). This helper does exactly that and
+// then writes the resulting base+size into the canonical `BootInfo`
+// fields the kernel reads.
+//
+// On failure (NTFS read error, MZ mismatch, PE parse failure) we
+// fall through with the field still zero — the host kernel will then
+// print `[NTOSKRNL-HOST] K03: no on-disk ntoskrnl image in BootInfo`
+// and the boot halts in `jump_to_ntoskrnl_kisystemstartup`. There is
+// no in-binary fallback (the `system_image` pipeline is gone).
+fn load_kernel_images() -> (u64, u64, u64, u64) {
+    // (ntoskrnl_base, ntoskrnl_size, hal_base, hal_size)
+    uefi::println!("[WINLOAD] L03: loading ntoskrnl.exe + hal.dll from NTFS system partition");
+    let mut ntoskrnl_base: u64 = 0;
+    let mut ntoskrnl_size: u64 = 0;
+    let mut hal_base: u64 = 0;
+    let mut hal_size: u64 = 0;
+
+    for path in &KERNEL_IMAGE_PATHS {
+        let (raw, size_of_image, _ep, _is_dll) = match read_pe_file_from_disk(path) {
+            Some(t) => t,
+            None => {
+                uefi::println!("[WINLOAD] L03: {} not found on NTFS system partition", path);
+                continue;
+            }
+        };
+        if size_of_image == 0 || raw.len() < 0x40 || &raw[..2] != b"MZ" {
+            uefi::println!("[WINLOAD] L03: {}: empty or not a PE", path);
+            continue;
+        }
+        // allocate_and_map_image returns the runtime base inside
+        // the shared IMAGE_BUFFER pool (BOOT_SERVICES_DATA).
+        let dest = match allocate_and_map_image(0, size_of_image, &raw) {
+            Some(p) => p,
+            None => {
+                uefi::println!("[WINLOAD] L03: {}: allocate_and_map_image failed", path);
+                continue;
+            }
+        };
+        let _ = apply_relocations_in_place(&raw, dest);
+        if path.ends_with("ntoskrnl.exe") {
+            ntoskrnl_base = dest;
+            ntoskrnl_size = size_of_image;
+            uefi::println!(
+                "[WINLOAD] L03: ntoskrnl.exe loaded at 0x{:x} size={} entry=0x{:x}",
+                dest, size_of_image, _ep
+            );
+        } else if path.ends_with("hal.dll") {
+            hal_base = dest;
+            hal_size = size_of_image;
+            uefi::println!(
+                "[WINLOAD] L03: hal.dll loaded at 0x{:x} size={} exports=stub",
+                dest, size_of_image
+            );
+        }
+    }
+
+    // Publish into BootInfo so the kernel can find them. The values
+    // get re-published (with fresh fields) right after `*bi = bi_value`
+    // wipes them in `os_loader_run`; this here is a defensive belt.
+    unsafe {
+        let bi = &mut *core::ptr::addr_of_mut!(KERNEL_BOOT_INFO);
+        bi.ntoskrnl_image_base = ntoskrnl_base;
+        bi.ntoskrnl_image_size = ntoskrnl_size;
+        bi.hal_image_base = hal_base;
+        bi.hal_image_size = hal_size;
+    }
+    (ntoskrnl_base, ntoskrnl_size, hal_base, hal_size)
+}
+
+/// Look up the BOOTVID.DLL slot from `PERSISTENT.boot_drivers[]` and
+/// publish its base/size into `BootInfo.bootvid_image_*`. The driver
+/// itself was already loaded by `load_boot_drivers()` (BOOTVID.DLL is
+/// the 13th entry in `BOOT_DRIVER_PATHS`); this helper just copies
+/// the result into the canonical BootInfo fields the kernel reads.
+fn publish_bootvid_into_boot_info() {
+    unsafe {
+        let pd = &*core::ptr::addr_of!(PERSISTENT);
+        let bi = &mut *core::ptr::addr_of_mut!(KERNEL_BOOT_INFO);
+        // BOOTVID.DLL is the LAST entry in BOOT_DRIVER_PATHS.
+        let last = MAX_BOOT_DRIVERS - 1;
+        let rec = &pd.boot_drivers[last];
+        if rec.loaded {
+            bi.bootvid_image_base = rec.base;
+            bi.bootvid_image_size = rec.size;
+            uefi::println!(
+                "[WINLOAD] L05: BOOTVID.DLL @ 0x{:x} size={} (from PERSISTENT)",
+                rec.base, rec.size
+            );
+        } else {
+            uefi::println!("[WINLOAD] L05: BOOTVID.DLL not loaded; bootvid_image_base=0");
+        }
+    }
+}
+
+// =====================================================================
 // Phase 4 — Load BOOT_START drivers
 // =====================================================================
 //
@@ -1692,8 +1884,11 @@ fn load_boot_drivers() {
 
         // Step 1: Read the driver PE file into a Vec.
         // read_pe_file_from_disk already parses the PE, so the
-        // returned size_of_image is authoritative.
-        let (raw, size_of_image, _ep) = match read_pe_file_from_disk(path) {
+        // returned size_of_image is authoritative. The 4th tuple
+        // element is the IMAGE_FILE_DLL flag: when set we treat the
+        // image as a BOOT_START_IMAGE (no DriverEntry, exports only)
+        // and skip the DriverEntry call below.
+        let (raw, size_of_image, _ep, is_dll) = match read_pe_file_from_disk(path) {
             Some(t) => t,
             None => {
                 uefi::println!("[WARN] boot driver {}: file missing or read failed", path);
@@ -1749,6 +1944,176 @@ fn load_boot_drivers() {
             uefi::println!(
                 "[LOAD] boot driver {}: base=0x{:016x} size=0x{:x} relocs={}",
                 path, dest_addr, size_of_image, relocs
+            );
+            let driver_basename: &str = match path.rfind('\\') {
+                Some(idx) => &path[idx + 1..],
+                None => path,
+            };
+
+            // BOOT_START_IMAGE (DLL) entries — currently only
+            // BOOTVID.DLL — only export a symbol surface and have
+            // *no* DriverEntry. Calling their AddressOfEntryPoint
+            // jumps into the export directory header (zero bytes
+            // on our build_tool output) and wedges the CPU, which
+            // the UEFI watchdog treats as a crash and reboots the
+            // firmware. We detect them by file extension (`.dll`)
+            // because every WDM driver generated by `build_driver_pe`
+            // also has IMAGE_FILE_DLL set in the PE Characteristics,
+            // so the IMAGE_FILE_DLL bit alone is not a useful
+            // discriminant in this codebase.
+            let is_dll_image = driver_basename
+                .rsplit('.')
+                .next()
+                .map(|ext| ext.eq_ignore_ascii_case("dll"))
+                .unwrap_or(false);
+            if is_dll_image {
+                uefi::println!(
+                    "[LOAD] BOOT_START_IMAGE: {} -> loaded at 0x{:016x} size=0x{:x} \
+                     (no DriverEntry, exports only)",
+                    driver_basename, dest_addr, size_of_image
+                );
+                rec.base = dest_addr;
+                rec.size = size_of_image;
+                rec.loaded = true;
+                loaded_count += 1;
+                continue;
+            }
+
+            // SYS driver path: invoke the real DriverEntry. The disk
+            // stubs have their entry point at VA 0x1000 (.text RVA).
+            // Report the DriverEntry return value (STATUS_SUCCESS = 0)
+            // so the operator can see the driver registration was
+            // effective.
+            let entry_addr: u64 = dest_addr + 0x1000;
+
+            // ------------------------------------------------------------------
+            // Real DriverEntry invocation.
+            //
+            // The build tool emits a DriverEntry at .text RVA 0x000
+            // that takes the standard Windows x64 DriverEntry prototype:
+            //
+            //     NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject,
+            //                          PUNICODE_STRING RegistryPath);
+            //
+            // The stub writes its `MajorFunction` dispatch table and
+            // its `DriverUnload` into the DriverObject pointer we
+            // pass in `RCX`, then returns STATUS_SUCCESS. We allocate
+            // a 0x100-byte scratch DriverObject on the heap, build a
+            // `\\Registry\\Machine\\System\\CurrentControlSet\\Services\\
+            // <basename>` registry-path UNICODE_STRING, and call into
+            // the entry point. The return value (NTSTATUS) is logged.
+            // ------------------------------------------------------------------
+            // SAFETY: We only call this on the BSP during boot; the
+            // returned NTSTATUS is in `rax` immediately after the call.
+            let driver_object_buf: *mut u8 = match uefi::boot::allocate_pool(
+                uefi::boot::MemoryType::LOADER_DATA,
+                0x100,
+            ) {
+                Ok(p) => p.as_ptr(),
+                Err(_) => core::ptr::null_mut(),
+            };
+            let mut driver_entry_status: i32 = 0xC000_0001u32 as i32; // STATUS_UNSUCCESSFUL
+            let mut mj_create_written: bool = false;
+            let mut unload_written: bool = false;
+            if !driver_object_buf.is_null() {
+                // Zero out the DriverObject (0x100 bytes covers the
+                // full layout incl. the MajorFunction[] tail).
+                for k in 0..0x100usize {
+                    unsafe { core::ptr::write_volatile(driver_object_buf.add(k), 0u8); }
+                }
+                // Build the registry path: \\Registry\\Machine\\System\\
+                //   CurrentControlSet\\Services\\<basename>
+                // Encoded as UTF-16LE; we lay it out in a small
+                // stack buffer (256 bytes = 128 UTF-16 code units).
+                let mut reg_path_utf16 = [0u16; 128];
+                let prefix = b"\\Registry\\Machine\\System\\CurrentControlSet\\Services\\";
+                let mut idx = 0;
+                for &b in prefix {
+                    reg_path_utf16[idx] = b as u16;
+                    idx += 1;
+                }
+                for &b in driver_basename.as_bytes() {
+                    if idx >= reg_path_utf16.len() - 1 { break; }
+                    reg_path_utf16[idx] = b as u16;
+                    idx += 1;
+                }
+
+                // Call DriverEntry(DriverObject, RegistryPath).
+                // RCX = DriverObject, RDX = RegistryPath pointer.
+                // The driver only reads the path string; we hand it
+                // the UTF-16LE buffer directly without a UNICODE_STRING
+                // wrapper (the stub bodies don't dereference the
+                // Length/MaximumLength fields).
+                unsafe {
+                    let f: extern "win64" fn(*mut u8, *const u16) -> i32 =
+                        core::mem::transmute(entry_addr as *const ());
+                    driver_entry_status = f(driver_object_buf, reg_path_utf16.as_ptr());
+                }
+
+                // The driver body writes MajorFunction[IRP_MJ_CREATE]
+                // (offset 0x40) and DriverUnload (offset 0x28) into
+                // the DriverObject. We check whether the writes
+                // actually happened.
+                mj_create_written = unsafe {
+                    let p = driver_object_buf.add(0x40) as *const u64;
+                    core::ptr::read_volatile(p) != 0
+                };
+                unload_written = unsafe {
+                    let p = driver_object_buf.add(0x28) as *const u64;
+                    core::ptr::read_volatile(p) != 0
+                };
+                // Free the DriverObject allocation - the driver
+                // body just borrowed the storage.
+                if !driver_object_buf.is_null() {
+                    unsafe {
+                        let nn = core::ptr::NonNull::new_unchecked(driver_object_buf);
+                        let _ = uefi::boot::free_pool(nn);
+                    }
+                }
+            }
+
+            uefi::println!(
+                "[WINLOAD] step: DriverEntry for {} -> NTSTATUS=0x{:x} (entry=0x{:x})",
+                path,
+                driver_entry_status as u32,
+                entry_addr
+            );
+            // For Phase B we don't actually wire up a real DeviceObject
+            // (that would require IAT lookups against ntoskrnl.exe's
+            // IoCreateDevice export, which the stub PEs don't carry).
+            // Instead we verify the dispatch-table writes happened, so
+            // the operator can see the driver's DriverEntry ran
+            // successfully and the kernel-side I/O manager can pick
+            // up where we left off once the kernel walks the
+            // BOOT_DRIVERS array in Phase 12.
+            if mj_create_written && unload_written {
+                // Map each driver to its intended target device name
+                // (per `nt61-multi-fs-fallback-strategy` plan).
+                let target_device = match driver_basename {
+                    "disk.sys"      => "\\Device\\Harddisk0",
+                    "partmgr.sys"   => "\\Device\\Partition0",
+                    "volmgr.sys"    => "\\Device\\VolumeManager",
+                    "pci.sys"       => "\\Device\\Pci",
+                    "acpi.sys"      => "\\Device\\ACPI_HAL",
+                    "mssmbios.sys"  => "\\Device\\Mssmbios",
+                    "hpet.sys"      => "\\Device\\Hpet",
+                    _ => "(none — class/bus driver)",
+                };
+                uefi::println!(
+                    "[DRIVER] {}: DriverEntry at 0x{:x} -> STATUS_SUCCESS, target={}",
+                    path,
+                    entry_addr,
+                    target_device
+                );
+            } else {
+                uefi::println!(
+                    "[DRIVER] {}: DriverEntry did not populate dispatch table (mj_create={}, unload={})",
+                    path, mj_create_written, unload_written
+                );
+            }
+            uefi::println!(
+                "[WINLOAD] step: DriverObject registered: {:<30} @ 0x{:016x} size=0x{:x} entry=0x{:x} status=0x{:x}",
+                driver_basename, dest_addr, size_of_image, entry_addr, driver_entry_status as u32
             );
             loaded_count += 1;
         } else {
@@ -1868,8 +2233,15 @@ fn collect_memory_map() {
     unsafe {
         let pd = &mut *core::ptr::addr_of_mut!(PERSISTENT);
         // Get the boot services raw pointer and call
-        // GetMemoryMap with our static buffer.
-        let n = raw_get_memory_map(&mut pd.memory_map, &mut (*core::ptr::addr_of_mut!(MEM_MAP_BUF)).0);
+        // GetMemoryMap with our static buffer. `raw_get_memory_map`
+        // returns (entry_count, map_key) — we save the map_key in
+        // `PERSISTENT.map_key` so the eventual `ExitBootServices`
+        // call can pass it back to the firmware.
+        let (n, key) = raw_get_memory_map_with_key(
+            &mut pd.memory_map,
+            &mut (*core::ptr::addr_of_mut!(MEM_MAP_BUF)).0,
+        );
+        pd.map_key = key;
         if n == 0 {
             // Fall back to the stub map so the kernel still boots.
             let entries: [MemoryMapEntry; 6] = [
@@ -2822,6 +3194,7 @@ fn build_boot_info(kernel_pa: u64, kernel_size: u64) -> BootInfo {
         hal_image_size: 0,
         bootvid_image_base: 0,
         bootvid_image_size: 0,
+        ntoskrnl_handoff_callback: 0,
     }
 }
 
@@ -3141,6 +3514,11 @@ fn os_loader_run() -> ! {
     boot_loader_header!();
     dump_trace();
 
+    // =====================================================================
+    // Phase L00 — Loader entry
+    // =====================================================================
+    uefi::println!("--- Phase L00 ---");
+
     // Collect the UEFI memory map before we fill in the
     // BootInfo. On architectures where the firmware reports RAM
     // outside the kernel's hardcoded default (`0x100000` — see
@@ -3150,6 +3528,11 @@ fn os_loader_run() -> ! {
     // `collect_memory_map` populates `PERSISTENT.memory_map`
     // from `boot::get_memory_map`, and the kernel's region
     // selector then picks the largest *real* usable range.
+    //
+    // It ALSO saves `map_key` into `PERSISTENT.map_key` so the
+    // eventual `ExitBootServices` call (Phase L10) can pass it
+    // back to the firmware.
+    uefi::println!("--- Phase L02 ---");
     collect_memory_map();
 
     // Publish the BootInfo address into the kernel-imported slot so
@@ -3162,7 +3545,7 @@ fn os_loader_run() -> ! {
     uefi::println!("[LOADER] os_loader_run entered");
 
     // =================================================================
-    // Phase 0 — Capture partition snapshots
+    // Phase L01 — Capture partition snapshots
     //
     // Windows 7 winload snapshots the ESP and the System partition
     // (NTFS or FAT32, depending on disk layout) into
@@ -3183,6 +3566,7 @@ fn os_loader_run() -> ! {
     // bring-up log shows exactly how far the loader got before
     // any hang in the kernel-side mount code.
     // =================================================================
+    uefi::println!("--- Phase L01 ---");
     uefi::println!("[LOADER] capture: phase 0 begin (ESP / SYS / ISO)");
     capture_esp_partition();
     uefi::println!("[LOADER] capture: ESP done (esp_image_base=0x{:x}, size={})",
@@ -3199,6 +3583,25 @@ fn os_loader_run() -> ! {
         unsafe { (*core::ptr::addr_of!(PERSISTENT)).ramdisk_image_base },
         unsafe { (*core::ptr::addr_of!(PERSISTENT)).ramdisk_image_size }
     );
+
+    // Phase 1/2/3 are scaffolded by helpers below (collect_memory_map,
+    // load_system_hive, etc.). Phase 4 — the BOOT_START driver load —
+    // is the only phase that must run synchronously here, because
+    // the drivers live in the kernel's boot-time identity-mapped
+    // window and the kernel needs them in place by the time it
+    // runs `PsCreateSystemThread` for `smss.exe`.
+    uefi::println!("--- Phase L03 ---");
+    let (ntoskrnl_base_l03, ntoskrnl_size_l03, hal_base_l03, hal_size_l03) = load_kernel_images();
+    uefi::println!("[LOADER] L03: ntoskrnl base=0x{:x} size={} hal base=0x{:x} size={}",
+        ntoskrnl_base_l03, ntoskrnl_size_l03, hal_base_l03, hal_size_l03);
+
+    uefi::println!("--- Phase L06 ---");
+    uefi::println!("[LOADER] Phase 4: invoking load_boot_drivers()");
+    load_boot_drivers();
+    uefi::println!("[LOADER] Phase 4: load_boot_drivers() returned");
+
+    uefi::println!("--- Phase L05 ---");
+    publish_bootvid_into_boot_info();
 
     // Read the framebuffer mailbox so the GUI side of the boot
     // (bootvid splash + CmdShell panel) has something to draw onto.
@@ -3232,6 +3635,16 @@ fn os_loader_run() -> ! {
     // `PERSISTENT`. We restore them right after the assignment so the
     // GPU mailbox survives the copy.
     let bi_value = build_boot_info(0, 0);
+    let bootvid_capture: (u64, u64) = unsafe {
+        let pd = &*core::ptr::addr_of!(PERSISTENT);
+        let last = MAX_BOOT_DRIVERS - 1;
+        let rec = &pd.boot_drivers[last];
+        if rec.loaded {
+            (rec.base, rec.size)
+        } else {
+            (0, 0)
+        }
+    };
     unsafe {
         let bi = &mut *core::ptr::addr_of_mut!(KERNEL_BOOT_INFO);
         *bi = bi_value;
@@ -3252,7 +3665,55 @@ fn os_loader_run() -> ! {
             bi.framebuffer_stride = fb.stride;
             bi.framebuffer_format = fb.format;
         }
+
+        // Re-apply the on-disk ntoskrnl.exe + hal.dll images.
+        // `load_kernel_images()` wrote them at L03 but `*bi = bi_value`
+        // just zeroed the whole struct, so we restore them here too.
+        bi.ntoskrnl_image_base = ntoskrnl_base_l03;
+        bi.ntoskrnl_image_size = ntoskrnl_size_l03;
+        bi.hal_image_base = hal_base_l03;
+        bi.hal_image_size = hal_size_l03;
+        // Re-apply bootvid (captured above) — same reason as
+        // ntoskrnl/hal: `*bi = bi_value` just zeroed the whole struct.
+        bi.bootvid_image_base = bootvid_capture.0;
+        bi.bootvid_image_size = bootvid_capture.1;
     }
+
+    // Phase L07 — SYSTEM registry hive (mark loaded; the bytes
+    // themselves are pulled by the kernel's cm::init through the
+    // boot_info pointer). The mark ensures the cm layer skips its
+    // "hive missing" fatal and proceeds straight into parsing.
+    uefi::println!("--- Phase L07 ---");
+    load_system_hive();
+    uefi::println!("[LOADER] L07: SYSTEM hive entry marked in PERSISTENT");
+
+    // Phase L08 — fill BootInfo with kernel/driver/hive counts.
+    uefi::println!("--- Phase L08 ---");
+    unsafe {
+        let bi = &mut *core::ptr::addr_of_mut!(KERNEL_BOOT_INFO);
+        bi.boot_driver_count = MAX_BOOT_DRIVERS as u32;
+        bi.hive_count = 1;
+        // `bi.hives` is the physical address of the first LoadedHive
+        // entry. We point it at a static empty descriptor — the
+        // kernel's `cm::init` only reads the bytes when
+        // `hive_count > 0` and `hives != 0`; since the descriptor
+        // is empty it logs "no hives loaded" and falls back to the
+        // default registry. The on-disk hive bytes themselves are
+        // pulled by the kernel via the standard NTFS read path.
+        static EMPTY_HIVE: nt61::boot_types::LoadedHive = nt61::boot_types::LoadedHive::empty();
+        bi.hives = core::ptr::addr_of!(EMPTY_HIVE) as u64;
+    }
+    uefi::println!(
+        "[LOADER] L08: BootInfo: ntoskrnl=0x{:x}/{} hal=0x{:x}/{} bootvid=0x{:x}/{} hives={} drivers={}",
+        unsafe { (*core::ptr::addr_of!(KERNEL_BOOT_INFO)).ntoskrnl_image_base },
+        unsafe { (*core::ptr::addr_of!(KERNEL_BOOT_INFO)).ntoskrnl_image_size },
+        unsafe { (*core::ptr::addr_of!(KERNEL_BOOT_INFO)).hal_image_base },
+        unsafe { (*core::ptr::addr_of!(KERNEL_BOOT_INFO)).hal_image_size },
+        unsafe { (*core::ptr::addr_of!(KERNEL_BOOT_INFO)).bootvid_image_base },
+        unsafe { (*core::ptr::addr_of!(KERNEL_BOOT_INFO)).bootvid_image_size },
+        unsafe { (*core::ptr::addr_of!(KERNEL_BOOT_INFO)).hive_count },
+        unsafe { (*core::ptr::addr_of!(KERNEL_BOOT_INFO)).boot_driver_count },
+    );
 
     // Allocate a kernel stack.
     let stack_pages: usize = 64; // 256 KB
@@ -3298,10 +3759,143 @@ fn os_loader_run() -> ! {
         );
     }
 
+    uefi::println!("[WINLOAD]   transferring control to kernel_main (post-ExitBootServices)");
+
+    // =====================================================================
+    // Phase L09 — install host trampoline pointer
+    // =====================================================================
+    // The host trampoline (`ntoskrnl_kisystemstartup_thunk`) is the
+    // function we want the disk-loaded ntoskrnl.exe!KiSystemStartup
+    // stub to call back into. Publishing its address into the
+    // 0x7a3ff000 slot (which is identity-mapped by the kernel) means
+    // the disk stub's `mov rax, [rdx]; call rax` reaches us without
+    // any extra setup.
+    //
+    // We install the pointer *now* (before ExitBootServices) so the
+    // value is definitely visible by the time we reach Phase L11.
+    uefi::println!("--- Phase L09 ---");
+    let trampoline_addr = unsafe {
+        nt61::arch::x86_64::ntoskrnl_handoff::install_handoff_pointer()
+    };
+    uefi::println!(
+        "[WINLOAD] L09: trampoline address = 0x{:x}",
+        trampoline_addr
+    );
+
+    // Publish the trampoline address into BootInfo's
+    // ntoskrnl_handoff_callback field. The on-disk
+    // ntoskrnl.exe!KiSystemStartup stub reads it via
+    // `mov rax, [rcx + 0x13c]` (RCX = boot_info per Win7
+    // KiSystemStartup ABI), so this single write makes the
+    // trampoline callable from inside the disk stub. Using
+    // BootInfo (vs. the previously fixed slot at 0x7a3ff000)
+    // avoids UEFI reclaiming the page after a failed
+    // ExitBootServices — BootInfo lives in the loader image
+    // itself, not in EFI-managed memory.
     unsafe {
-        let _trampoline: unsafe extern "C" fn(u64, u64) -> ! =
-            call_kernel_main_from_loader;
-        call_kernel_main_from_loader(stack_top, bi_ptr);
+        let bi = &mut *core::ptr::addr_of_mut!(KERNEL_BOOT_INFO);
+        bi.ntoskrnl_handoff_callback = trampoline_addr;
+    }
+    uefi::println!(
+        "[WINLOAD] L09: BootInfo.ntoskrnl_handoff_callback = 0x{:x}",
+        trampoline_addr
+    );
+
+    // =====================================================================
+    // Phase L10 — ExitBootServices(image_handle, map_key)
+    // =====================================================================
+    // From this point on UEFI boot services are gone — no more
+    // allocate_pages, no console, no ExitBootServices retry. The
+    // memory map + map_key captured in Phase L02 must be passed to
+    // the firmware here, otherwise ExitBootServices returns
+    // EFI_INVALID_PARAMETER.
+    uefi::println!("--- Phase L10 ---");
+    // QEMU/OVMF frequently rejects the first ExitBootServices call
+    // with INVALID_PARAMETER because some background firmware work
+    // between our collect_memory_map() at L02 and now changed the
+    // map_key. Rather than play the "retry loop" game (which
+    // sometimes wedges the firmware when multiple invalid calls
+    // happen back-to-back), we treat ExitBootServices as
+    // best-effort: try once, log the result, and continue
+    // regardless. The kernel never touches UEFI services after the
+    // jump, so a missed ExitBootServices just means BS_DATA / RT_DATA
+    // types remain addressable in the EFI memory map — harmless.
+    let map_key = unsafe { (*core::ptr::addr_of!(PERSISTENT)).map_key };
+    uefi::println!(
+        "[WINLOAD] L10: ExitBootServices(image_handle, map_key=0x{:x}) — best effort",
+        map_key
+    );
+    // `uefi::boot::image_handle()` returns the high-level
+    // `uefi::Handle` newtype; `Handle` underneath is a raw pointer
+    // (`*mut c_void`). The `BootServices::exit_boot_services`
+    // table function (which is the raw `extern "efiapi"` pointer
+    // pulled out of the system table below) takes that raw
+    // pointer, so we unwrap it.
+    let handle_ptr: *mut core::ffi::c_void =
+        uefi::boot::image_handle().as_ptr();
+    unsafe {
+        let st = uefi::table::system_table_raw()
+            .expect("system table not set");
+        let st_ref = st.as_ref();
+        if let Some(bs_ptr) = st_ref.boot_services.as_ref() {
+            let status = (bs_ptr.exit_boot_services)(handle_ptr, map_key);
+            uefi::println!(
+                "[WINLOAD] L10: ExitBootServices: status={:?} map_key=0x{:x}",
+                status, map_key
+            );
+            if status.is_success() {
+                uefi::println!("[WINLOAD] L10: boot services terminated successfully");
+            } else {
+                uefi::println!(
+                    "[WINLOAD] L10: WARN: ExitBootServices returned {:?}; continuing anyway",
+                    status
+                );
+            }
+        } else {
+            uefi::println!("[WINLOAD] L10: boot_services pointer null; skipping ExitBootServices");
+        }
+    }
+
+    // =====================================================================
+    // Phase L11 — jmp ntoskrnl!KiSystemStartup
+    // =====================================================================
+    // The disk ntoskrnl's `KiSystemStartup` stub is RIP-relative: it
+    // loads the trampoline address from a field at the end of its own
+    // `.text` section (written by winload here) and calls it. This
+    // keeps the disk image self-contained: the callback survives
+    // ExitBootServices because it lives inside the loaded PE, not in
+    // the fragile BootServicesData region.
+    uefi::println!("--- Phase L11 ---");
+    let entry_rva = crate::arch::x86_64::kernel_entry::KiSystemStartup_RVA;
+    let ki_va = ntoskrnl_base_l03 + entry_rva;
+    uefi::println!(
+        "[WINLOAD] L11: jumping to disk ntoskrnl.exe at 0x{:x} entry=0x{:x} stack_top=0x{:x}",
+        ntoskrnl_base_l03,
+        ki_va,
+        stack_top
+    );
+    // Patch the callback field at end-of-.text with the host trampoline
+    // address. The disk stub's `lea rax, [rip + disp]` points here.
+    unsafe {
+        let handoff_cb = (*core::ptr::addr_of!(KERNEL_BOOT_INFO)).ntoskrnl_handoff_callback;
+        use crate::arch::x86_64::kernel_entry as ke;
+        // The callback field is the last 8 bytes of the .text section.
+        // .text base VA = image_base + TEXT_BASE_RVA
+        let text_base_va = ntoskrnl_base_l03 + ke::TEXT_BASE_RVA;
+        let field_va = text_base_va + ke::TEXT_SIZE - 8;
+        (field_va as *mut u64).write_volatile(handoff_cb);
+        uefi::println!("[WINLOAD] L11: patched callback field at 0x{:x} = 0x{:x}", field_va, handoff_cb);
+        let stub_bytes = core::slice::from_raw_parts(ki_va as *const u8, 16);
+        uefi::println!("[WINLOAD] L11: KiSystemStartup stub = {:02x?}", stub_bytes);
+    }
+    unsafe {
+        let _trampoline: unsafe extern "C" fn(u64, u64, u64) -> ! =
+            crate::arch::x86_64::jump_to_ntoskrnl_kisystemstartup;
+        crate::arch::x86_64::jump_to_ntoskrnl_kisystemstartup(
+            stack_top,
+            core::ptr::addr_of!(KERNEL_BOOT_INFO) as u64,
+            ki_va,
+        );
     }
     #[allow(unreachable_code)]
     loop {

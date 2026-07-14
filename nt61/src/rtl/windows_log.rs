@@ -249,17 +249,28 @@ pub fn write_sos_loading(file_path: &str) {
     
     buf[pos] = b'\r'; pos += 1;
     buf[pos] = b'\n'; pos += 1;
-    
+
     let s = unsafe { core::str::from_utf8_unchecked(&buf[..pos]) };
     write_serial(s);
 }
 
-/// Write kernel phase initialization header
-/// Format: `--- Phase N Initialization ---`
-pub fn write_phase_header(phase: u32) {
+/// Write a phase header for the winload (loader) side of the boot chain.
+///
+/// Format: `--- Phase LNN ---` where `NN` is the two-digit zero-padded
+/// phase number. This complements [`write_phase_header`] (which uses
+/// a pure `NNN` numeric phase) so the serial log can clearly tell
+/// whether a phase boundary belongs to the loader, the kernel, or
+/// a user-mode subsystem.
+///
+/// Use cases:
+///   * `write_loader_phase_header(0)` — `os_loader_run` entered
+///   * `write_loader_phase_header(10)` — `ExitBootServices`
+///   * `write_loader_phase_header(11)` — `jmp ntoskrnl!KiSystemStartup`
+pub fn write_loader_phase_header(phase: u32) {
     let mut buf = [0u8; 64];
     let mut pos = 0;
-    
+
+    // "--- Phase L"
     buf[pos] = b'-'; pos += 1;
     buf[pos] = b'-'; pos += 1;
     buf[pos] = b'-'; pos += 1;
@@ -270,7 +281,85 @@ pub fn write_phase_header(phase: u32) {
     buf[pos] = b's'; pos += 1;
     buf[pos] = b'e'; pos += 1;
     buf[pos] = b' '; pos += 1;
-    
+    buf[pos] = b'L'; pos += 1;
+
+    // Two-digit zero-padded number.
+    let p = phase.min(99);
+    buf[pos] = b'0' + ((p / 10) as u8); pos += 1;
+    buf[pos] = b'0' + ((p % 10) as u8); pos += 1;
+
+    // " ---\r\n"
+    buf[pos] = b' '; pos += 1;
+    buf[pos] = b'-'; pos += 1;
+    buf[pos] = b'-'; pos += 1;
+    buf[pos] = b'-'; pos += 1;
+    buf[pos] = b'\r'; pos += 1;
+    buf[pos] = b'\n'; pos += 1;
+
+    let s = unsafe { core::str::from_utf8_unchecked(&buf[..pos]) };
+    write_serial(s);
+}
+
+/// Write a phase header for the disk `ntoskrnl.exe!KiSystemStartup`
+/// handoff path (the host trampoline that runs after winload jumps
+/// into the on-disk kernel stub).
+///
+/// Format: `--- Phase KNN ---`.
+///
+/// Use cases:
+///   * `write_kernel_phase_header(0)` — entry into host trampoline
+///   * `write_kernel_phase_header(6)` — `dispatch_to_smss()`
+pub fn write_kernel_phase_header(phase: u32) {
+    let mut buf = [0u8; 64];
+    let mut pos = 0;
+
+    // "--- Phase K"
+    buf[pos] = b'-'; pos += 1;
+    buf[pos] = b'-'; pos += 1;
+    buf[pos] = b'-'; pos += 1;
+    buf[pos] = b' '; pos += 1;
+    buf[pos] = b'P'; pos += 1;
+    buf[pos] = b'h'; pos += 1;
+    buf[pos] = b'a'; pos += 1;
+    buf[pos] = b's'; pos += 1;
+    buf[pos] = b'e'; pos += 1;
+    buf[pos] = b' '; pos += 1;
+    buf[pos] = b'K'; pos += 1;
+
+    // Two-digit zero-padded number.
+    let p = phase.min(99);
+    buf[pos] = b'0' + ((p / 10) as u8); pos += 1;
+    buf[pos] = b'0' + ((p % 10) as u8); pos += 1;
+
+    // " ---\r\n"
+    buf[pos] = b' '; pos += 1;
+    buf[pos] = b'-'; pos += 1;
+    buf[pos] = b'-'; pos += 1;
+    buf[pos] = b'-'; pos += 1;
+    buf[pos] = b'\r'; pos += 1;
+    buf[pos] = b'\n'; pos += 1;
+
+    let s = unsafe { core::str::from_utf8_unchecked(&buf[..pos]) };
+    write_serial(s);
+}
+
+/// Write kernel phase initialization header
+/// Format: `--- Phase N Initialization ---`
+pub fn write_phase_header(phase: u32) {
+    let mut buf = [0u8; 64];
+    let mut pos = 0;
+
+    buf[pos] = b'-'; pos += 1;
+    buf[pos] = b'-'; pos += 1;
+    buf[pos] = b'-'; pos += 1;
+    buf[pos] = b' '; pos += 1;
+    buf[pos] = b'P'; pos += 1;
+    buf[pos] = b'h'; pos += 1;
+    buf[pos] = b'a'; pos += 1;
+    buf[pos] = b's'; pos += 1;
+    buf[pos] = b'e'; pos += 1;
+    buf[pos] = b' '; pos += 1;
+
     // Phase number
     if phase < 10 {
         buf[pos] = b'0'; pos += 1;
@@ -281,11 +370,10 @@ pub fn write_phase_header(phase: u32) {
         buf[pos] = b'0' + ((phase / 10) as u8); pos += 1;
         buf[pos] = b'0' + ((phase % 10) as u8); pos += 1;
     }
-    
+
     buf[pos] = b' '; pos += 1;
     buf[pos] = b'I'; pos += 1;
     buf[pos] = b'n'; pos += 1;
-    buf[pos] = b'i'; pos += 1;
     buf[pos] = b't'; pos += 1;
     buf[pos] = b'i'; pos += 1;
     buf[pos] = b'a'; pos += 1;
@@ -303,7 +391,7 @@ pub fn write_phase_header(phase: u32) {
     buf[pos] = b'-'; pos += 1;
     buf[pos] = b'\r'; pos += 1;
     buf[pos] = b'\n'; pos += 1;
-    
+
     let s = unsafe { core::str::from_utf8_unchecked(&buf[..pos]) };
     write_serial(s);
 }

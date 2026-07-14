@@ -220,6 +220,27 @@ pub fn configure_static_ip(eth_if_index: u32, address: u32, netmask: u32, gatewa
     add_interface(address, netmask, gateway, eth_if_index)
 }
 
+/// Register the canonical IPv4 loopback interface (127.0.0.1 / 8)
+/// as interface index 0. This is idempotent: subsequent calls are
+/// no-ops because the interface table is small (max 8 entries).
+///
+/// The user-mode `cmd.exe` stub's `ipconfig` builtin reads its
+/// answer through `SYS_NETCFG_GET`, which falls back to a static
+/// 127.0.0.1 / 255.0.0.0 when no interface is registered. Calling
+/// `seed_loopback()` once during early boot makes the fallback
+/// unnecessary and gives `ipconfig` a real, kernel-side source
+/// rather than a hard-coded literal in the BAT file.
+///
+/// `127.0.0.1` is encoded in host byte order via `u32::from_be`
+/// because `IpInterface::address` is documented as "network byte
+/// order" and `ip_to_string` decomposes in big-endian order.
+pub fn seed_loopback() -> Option<u32> {
+    let addr = u32::from_be_bytes([127, 0, 0, 1]);
+    let mask = u32::from_be_bytes([255, 0, 0, 0]);
+    let gw   = u32::from_be_bytes([0, 0, 0, 0]);
+    add_interface(addr, mask, gw, u32::MAX)
+}
+
 /// Convert IPv4 address to string
 pub fn ip_to_string(ip: u32) -> alloc::string::String {
     let b0 = (ip >> 0) as u8;

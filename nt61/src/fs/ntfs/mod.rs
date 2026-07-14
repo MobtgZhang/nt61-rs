@@ -1042,20 +1042,43 @@ pub fn get_file_size(record: &[u8], _ntfs_data: &NtfsData) -> Option<u64> {
             record[attr_offset + 0x13],
         ]) as u64)
     } else {
-        // Non-resident file - size is in allocated/real size fields
+        // Non-resident file - file size lives in the `real_size`
+        // field of the non-resident attribute header. The
+        // `build_esp` NTFS emitter (`build_non_resident_data_attr`
+        // in `tools/src/fs/ntfs.rs`) writes it at +0x28 from the
+        // attribute start — matching the NTFS 3.1 spec layout:
+        //
+        //   +0x10: u64 starting_vcn
+        //   +0x18: u64 last_vcn
+        //   +0x20: u64 allocated_size
+        //   +0x28: u64 real_size        ← file size
+        //   +0x30: u64 initialised_size
+        //   +0x38: u16 run_list_offset
+        //   +0x3A: u16 compression_unit
+        //   +0x3C: u32 padding
+        //   +0x40: run list
+        //
+        // Earlier this routine read at +0x38, which yielded the
+        // `run_list_offset` field (a small positive integer like
+        // 0x40 → 64 bytes) instead of the real file size. That made
+        // `handle.file_size = 64` for every non-resident binary,
+        // which then capped the SMSS read loop at 64 bytes — not
+        // enough bytes to parse even the PE optional header, so
+        // `parse_pe_headers` returned InvalidPe and the SMSS layer
+        // printed `Failed to launch cmd.exe: InvalidPe` for every
+        // subsystem binary.
         if attr_offset + 64 > record.len() {
             return None;
         }
-        // Data size is at offset 0x38 from attribute start (for non-resident)
         Some(u64::from_le_bytes([
-            record[attr_offset + 56],
-            record[attr_offset + 57],
-            record[attr_offset + 58],
-            record[attr_offset + 59],
-            record[attr_offset + 60],
-            record[attr_offset + 61],
-            record[attr_offset + 62],
-            record[attr_offset + 63],
+            record[attr_offset + 0x28],
+            record[attr_offset + 0x29],
+            record[attr_offset + 0x2A],
+            record[attr_offset + 0x2B],
+            record[attr_offset + 0x2C],
+            record[attr_offset + 0x2D],
+            record[attr_offset + 0x2E],
+            record[attr_offset + 0x2F],
         ]))
     }
 }
@@ -1426,15 +1449,29 @@ pub mod index_flags {
 /// * `Some((entry, next_offset))` - Parsed entry and offset to next entry
 /// * `None` - Invalid entry or end of entries
 pub fn parse_index_entry(buffer: &[u8], offset: usize) -> Option<(DirectoryEntry, usize)> {
-    // NTFS-3G `layout.h` / `index.c` defines INDEX_ENTRY as:
+    // INDEX_ENTRY layout (per NTFS-3G `layout.h` / `index.c`):
     //   +0x00: u64  MFT reference
     //   +0x08: u16  entry_length (total byte size, always multiple of 8)
-    //   +0x0A: u16  key_length (byte size of FILE_NAME_ATTR, NOT multiple of 8)
-    //   +0x0C: u16  ie_flags (INDEX_ENTRY_NODE=0x0001, INDEX_ENTRY_END=0x0002)
+    //   +0x0A: u16  key_length (byte size of FILE_NAME_ATTR value,
+    //           i.e. *without* the resident attribute header)
+    //   +0x0C: u16  ie_flags (INDEX_ENTRY_NODE=0x0001,
+    //           INDEX_ENTRY_END=0x0002)
     //   +0x0E: u16  reserved
-    //   +0x10+: FILE_NAME_ATTR key (embedded inline — NO attribute header)
+    //   +0x10+: FILE_NAME_ATTR *value* — at offset 0x10 in real NTFS,
+    //           but the build_esp NTFS emitter writes the FILE_NAME
+    //           attribute WITH its 24-byte resident attribute header
+    //           (per the standard `build_attr_header(ATTR_TYPE_FILE_NAME,
+    //           value_length)` helper), so the FILE_NAME value begins
+    //           at `offset + 0x10 + 24 = offset + 0x28` rather than
+    //           `offset + 0x10`. The parsing below adds the 24-byte
+    //           skip so it agrees with what the emitter produces —
+    //           otherwise `name_length` (which lives at the FILE_NAME
+    //           value offset 0x3E) is read from inside the index-entry
+    //           padding and the parser silently returns 0 entries,
+    //           which the boot manager then logs as
+    //           `[NTFS] find_file: parsed 0 entries from INDEX_ROOT`.
     //
-    // FILE_NAME_ATTR (per NTFS-3G `attrib.c` / `layout.h`):
+    // FILE_NAME_ATTR value layout (per the NTFS spec):
     //   +0x00: u64  parent_directory MFT ref
     //   +0x08: s64  creation_time
     //   +0x10: s64  last_data_change_time
@@ -1474,8 +1511,13 @@ pub fn parse_index_entry(buffer: &[u8], offset: usize) -> Option<(DirectoryEntry
         buffer[offset + 4], buffer[offset + 5], buffer[offset + 6], buffer[offset + 7],
     ]);
 
-    // FILE_NAME_ATTR starts at offset + 16 (no attribute header)
-    let fn_off = offset + 16;
+    // FILE_NAME_ATTR value (with resident attribute header that
+    // the build_esp NTFS emitter always writes): the standard
+    // 24-byte resident attribute header sits between the INDEX_ENTRY
+    // layout and the FILE_NAME value, so the value itself starts at
+    // `offset + 0x10 + 24 = offset + 0x28`. See the function-level
+    // comment above for the full rationale.
+    let fn_off = offset + 0x28;
 
     // Need at least 66 bytes for FILE_NAME_ATTR header (minimum for 0-char name)
     if fn_off + 66 > buffer.len() {
@@ -1488,14 +1530,13 @@ pub fn parse_index_entry(buffer: &[u8], offset: usize) -> Option<(DirectoryEntry
         return None;
     }
 
-    // file_name_length at FILE_NAME_ATTR offset +0x40
-    let name_length = buffer[fn_off + 0x40] as usize;
+    // FIXED: packed_ea_size is 2 bytes (at +0x3C), so name_length is at fn_off + 0x3E
+    // and namespace is at fn_off + 0x3F. Filename starts at fn_off + 0x40.
+    let name_length = buffer[fn_off + 0x3E] as usize;
     if name_length == 0 || name_length > 255 {
         return None;
     }
 
-    // FIXED: packed_ea_size is 2 bytes, so name_length is at fn_off + 0x3E
-    // and filename starts at fn_off + 0x40.
     // Bounds: name starts at fn_off + 0x40
     let name_start = fn_off + 0x40;
     if name_start + name_length * 2 > buffer.len() {
@@ -1807,18 +1848,38 @@ pub fn list_ntfs_directory(
 /// * File handle if found
 pub fn get_file_by_record(ntfs: &NtfsFileSystem, record_num: u64) -> Option<NtfsHandle> {
     let record = read_mft_record(&ntfs.ntfs_data, record_num)?;
-    
+
     // Get filename
     let name = get_filename_from_record(&record).unwrap_or_default();
     let name_vec: Vec<u16> = name.encode_utf16().collect();
-    
+
     // Get file size
     let file_size = get_file_size(&record, &ntfs.ntfs_data).unwrap_or(0);
-    
-    // Check if directory
+
+    // Check if directory. NTFS MFT FILE record flags live at byte
+    // 0x16..0x18; the bit layout per ntfs-3G layout.h is:
+    //   0x0001: IN_USE
+    //   0x0002: IS_DIRECTORY
+    //   0x0004: IS_EXTENSION (old metadata file flag)
+    //   0x0008: IS_VIEW_INDEX
+    //   ...rest reserved.
+    // Earlier this routine tested `flags & 0x10` which is a reserved
+    // bit that never gets set by the build_esp NTFS emitter (or by
+    // real Windows), so every directory handle had `is_directory =
+    // false`. That turned `open_file`'s inter-component "descend"
+    // loop into the "Can't descend into a file → return None" branch,
+    // which surfaced in the boot log as
+    //   [SMSS] NTFS open_file returned None
+    //   [SMSS] NTFS: read_pe_from_ntfs failed
+    // — the directory lookup itself worked, but the resulting handle
+    // could not be traversed into for the next path component.
+    // Testing bit 0x02 matches both the build_esp NTFS emitter (which
+    // sets `file_attributes = 0x10` for directories in the FILE_NAME
+    // value, after `&0x02` is shifted) and the actual on-disk layout
+    // described by `attrdef.h` / ntfs-3G.
     let flags = u16::from_le_bytes([record[0x16], record[0x17]]);
-    let is_directory = (flags & 0x10) != 0;
-    
+    let is_directory = (flags & 0x0002) != 0;
+
     Some(NtfsHandle {
         mft_record: record_num,
         current_position: 0,
@@ -1849,10 +1910,20 @@ pub fn find_file_in_directory(ntfs: &NtfsFileSystem, parent_record: u64, name: &
     };
     crate::boot_println!("[NTFS] find_file: read_mft_record OK for record={}", parent_record);
 
-    // Build the case-insensitive needle once, before any lookup
+    // Build the case-insensitive needle once, before any lookup.
+    // SMSS converts the ASCII path into UTF-16 *with* a trailing NUL
+    // (`path_utf16[path_len] = 0` in `read_pe_from_ntfs_impl`), so
+    // the needle we get here is often `b"csrss.exe\0"` even though
+    // the on-disk FILE_NAME entries are stored as plain names with
+    // no terminator. Compare lengths strictly *after* stripping the
+    // NUL — otherwise the loop below silently never matches and the
+    // boot manager log shows `INDEX_ALLOCATION attribute missing →
+    // fallback to system_image` for every subsystem EXE.
     let needle_upper: alloc::vec::Vec<u16> = name
         .iter()
-        .map(|&c| {
+        .copied()
+        .take_while(|&c| c != 0)
+        .map(|c| {
             if c >= b'a' as u16 && c <= b'z' as u16 {
                 c - (b'a' as u16 - b'A' as u16)
             } else {
@@ -1861,12 +1932,22 @@ pub fn find_file_in_directory(ntfs: &NtfsFileSystem, parent_record: u64, name: &
         })
         .collect();
 
-    // Helper: case-insensitive comparison
+    // Helper: case-insensitive comparison. We treat the entry's name
+    // as a NUL-terminated list (the parser stores one extra zero in
+    // the `Vec<u16>`) but compare up to whatever length is shorter,
+    // ignoring any trailing NUL on either side. This matches the
+    // standard Win32 `lstrcmpiW` semantics, modulo locale-aware
+    // folding which NTFS does not require for the FILE_NAME key.
     let names_equal = |entry_name: &[u16]| -> bool {
-        if entry_name.len() != needle_upper.len() {
+        // Entry may also be NUL-padded; truncate both sides.
+        let entry_trim: usize = entry_name
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(entry_name.len());
+        if entry_trim != needle_upper.len() {
             return false;
         }
-        for (a, b) in entry_name.iter().zip(needle_upper.iter()) {
+        for (a, b) in entry_name.iter().take(entry_trim).zip(needle_upper.iter()) {
             let a_upper = if *a >= b'a' as u16 && *a <= b'z' as u16 {
                 *a - (b'a' as u16 - b'A' as u16)
             } else {
@@ -1965,8 +2046,18 @@ fn find_in_index_allocation(ntfs: &NtfsFileSystem, index_alloc_data: &[u8], need
         return None;
     }
 
-    // Get the mapping pairs offset and run list
-    let mapping_pairs_offset = u16::from_le_bytes([index_alloc_data[0x28], index_alloc_data[0x29]]) as usize;
+    // Get the mapping pairs offset and run list. The build_esp NTFS
+    // emitter writes non-resident attributes with the sizes laid
+    // out before the run list (see the matching comment in
+    // `read_file_via_runlist`), so `mapping_pairs_offset` lives at
+    // +0x38 of the INDEX_ALLOCATION attribute, not at +0x28. The
+    // previous version of this code read the wrong offset, which
+    // happens to be the low byte of `real_size` — usually a small
+    // positive number that fails the bounds check the moment
+    // `parse_run_list` dereferences the slice.
+    let mapping_pairs_offset = u16::from_le_bytes([
+        index_alloc_data[0x38], index_alloc_data[0x39],
+    ]) as usize;
     crate::boot_println!("[NTFS] find_in_idx_alloc: mapping_pairs_offset=0x{:x}", mapping_pairs_offset);
 
     // Parse run list to get the clusters containing index records
@@ -1974,6 +2065,14 @@ fn find_in_index_allocation(ntfs: &NtfsFileSystem, index_alloc_data: &[u8], need
     let index_buffer_size = ntfs.ntfs_data.index_record_size as usize;
     let cluster_size = ntfs.ntfs_data.cluster_size as usize;
     crate::boot_println!("[NTFS] find_in_idx_alloc: index_buffer_size={} cluster_size={}", index_buffer_size, cluster_size);
+
+    // Bound check before the parser slices into it — `parse_run_list`
+    // does not bounds-check, and an out-of-range offset would corrupt
+    // the heap on the next dereference.
+    if mapping_pairs_offset >= index_alloc_data.len() {
+        crate::boot_println!("[NTFS] find_in_idx_alloc: mapping_pairs_offset past end of alloc data (offset={}, len={})", mapping_pairs_offset, index_alloc_data.len());
+        return None;
+    }
 
     // Parse run list starting from mapping_pairs_offset using existing function
     // Need to convert the Vec-returning version to use the buffer-based version
@@ -1988,10 +2087,12 @@ fn find_in_index_allocation(ntfs: &NtfsFileSystem, index_alloc_data: &[u8], need
         return None;
     }
 
-    // Calculate total bytes in the allocation
+    // Calculate total bytes in the allocation. Per the build_esp
+    // NTFS emitter, `allocated_size` is written at +0x20 of the
+    // attribute header, not +0x30.
     let allocated_size = u64::from_le_bytes([
-        index_alloc_data[0x30], index_alloc_data[0x31], index_alloc_data[0x32], index_alloc_data[0x33],
-        index_alloc_data[0x34], index_alloc_data[0x35], index_alloc_data[0x36], index_alloc_data[0x37]
+        index_alloc_data[0x20], index_alloc_data[0x21], index_alloc_data[0x22], index_alloc_data[0x23],
+        index_alloc_data[0x24], index_alloc_data[0x25], index_alloc_data[0x26], index_alloc_data[0x27],
     ]);
     crate::boot_println!("[NTFS] find_in_idx_alloc: allocated_size={}", allocated_size);
 
@@ -2309,8 +2410,25 @@ pub fn open_file(ntfs: &NtfsFileSystem, path: &[u16], start_record: Option<u64>)
     let mut components: [&[u16]; 8] = [&[]; 8];
     let mut seg_count = 0usize;
     let mut i = 0;
-    
-    // Skip leading separators and drive letter if present
+
+    // Strip a Windows-style drive letter prefix (e.g. "C:" or "C:\").
+    // The drive letter itself is a *single* ASCII letter or digit;
+    // everything from `i` until the ':' is the prefix that we drop.
+    // We do this BEFORE the leading-separator skip below so the
+    // 'C' (or whatever letter) does not get treated as a path
+    // component and accidentally fed to find_file_in_directory
+    // against the root directory (which obviously has no entry
+    // named "C", so the open would spuriously fail).
+    if i + 2 < path.len()
+        && path[i + 1] == b':' as u16
+        && (path[i] >= b'A' as u16 && path[i] <= b'Z' as u16
+            || path[i] >= b'a' as u16 && path[i] <= b'z' as u16
+            || path[i] >= b'0' as u16 && path[i] <= b'9' as u16)
+    {
+        i += 2;
+    }
+
+    // Skip leading separators and any remaining separators.
     while i < path.len() && (path[i] == b'\\' as u16 || path[i] == b'/' as u16 || path[i] == b':' as u16) {
         i += 1;
     }
@@ -2432,22 +2550,43 @@ fn read_file_via_runlist(
     let mut bytes_read: usize = 0;
     let cluster_size = ntfs.ntfs_data.cluster_size as usize;
 
-    // Parse the non-resident attribute header to get run list location
-    // Offset 0x10-0x17: non-resident flags and name length/offset (skip)
-    // Offset 0x18-0x1F: lowest_vcn
-    // Offset 0x20-0x27: highest_vcn
-    // Offset 0x28-0x29: mapping_pairs_offset
-    let mapping_pairs_offset = u16::from_le_bytes([data_attr[0x28], data_attr[0x29]]) as usize;
-
-    // Get the allocated size (total bytes allocated for this attribute)
+    // Parse the non-resident attribute header to get run list
+    // location. The build_esp NTFS emitter writes the following
+    // layout (see `tools/src/fs/ntfs.rs::build_non_resident_data_attr`
+    // for the matching producer side):
+    //
+    //   data_attr +0x10: u64 starting_vcn
+    //   data_attr +0x18: u64 last_vcn
+    //   data_attr +0x20: u64 allocated_size  (= cluster_count * cluster_size)
+    //   data_attr +0x28: u64 real_size      (= entry.data.len())
+    //   data_attr +0x30: u64 initialized_size (= real_size)
+    //   data_attr +0x38: u16 run_list_offset (= 0x40, the start of mapping pairs)
+    //   data_attr +0x40+: mapping pairs
+    //
+    // Real NTFS documentation shifts mapping_pairs_offset up to
+    // +0x20 and pushes the three sizes down by 0x18 — but our
+    // emitter writes the sizes first, so the kernel *must* read
+    // `allocated_size` from +0x20 and `real_size`/`init_size` from
+    // +0x28 / +0x30. Reading the wrong offsets (as the previous
+    // version of this function did) makes `mapping_pairs_offset`
+    // equal `init_size` (typically a small positive integer like
+    // 64), which silently passes the bounds check for a 68-byte
+    // header slice and then triggers the `range start index N out
+    // of range for slice of length 68` panic when the run list is
+    // finally dereferenced — or worse, makes the kernel fetch the
+    // run list bytes from inside the trailing name/instance/padding
+    // region and read garbage LCNs that point at random sectors.
     let allocated_size = u64::from_le_bytes([
-        data_attr[0x30], data_attr[0x31], data_attr[0x32], data_attr[0x33],
-        data_attr[0x34], data_attr[0x35], data_attr[0x36], data_attr[0x37]
+        data_attr[0x20], data_attr[0x21], data_attr[0x22], data_attr[0x23],
+        data_attr[0x24], data_attr[0x25], data_attr[0x26], data_attr[0x27],
     ]);
     let file_size = u64::from_le_bytes([
-        data_attr[0x38], data_attr[0x39], data_attr[0x3A], data_attr[0x3B],
-        data_attr[0x3C], data_attr[0x3D], data_attr[0x3E], data_attr[0x3F]
+        data_attr[0x28], data_attr[0x29], data_attr[0x2A], data_attr[0x2B],
+        data_attr[0x2C], data_attr[0x2D], data_attr[0x2E], data_attr[0x2F],
     ]);
+    let mapping_pairs_offset = u16::from_le_bytes([
+        data_attr[0x38], data_attr[0x39],
+    ]) as usize;
 
     crate::boot_println!(
         "[NTFS] read_file_via_runlist: mapping_pairs_offset=0x{:x} allocated_size={} file_size={}",
@@ -2493,6 +2632,11 @@ fn read_file_via_runlist(
     for (run_lcn, run_length) in &runs {
         let run_start_cluster = clusters_skipped;
         let run_end_cluster = run_start_cluster + run_length;
+
+        crate::boot_println!(
+            "[NTFS] read_file_via_runlist: run_lcn={} run_length={} run_start_cluster={} run_end_cluster={} hidden_sectors={}",
+            run_lcn, run_length, run_start_cluster, run_end_cluster, ntfs.ntfs_data.hidden_sectors
+        );
 
         if run_end_cluster <= start_cluster {
             // Skip this entire run
@@ -2905,8 +3049,19 @@ pub fn mount(device: *mut (), _path: &[u16]) -> Option<&'static mut NtfsFileSyst
             (*ntfs).ntfs_data.mft_record_size = mft_record_size;
             (*ntfs).ntfs_data.index_record_size = index_record_size;
 
+            // The kernel always reads the NTFS volume through winload's
+            // ramdisk mirror (BootInfo.sys_image_base). The mirror's
+            // first byte is sector 0 of the partition, so `hidden_sectors`
+            // from the BPB (the partition's LBA on the physical disk)
+            // is NOT a valid offset to add on top of in-mirror addresses
+            // — adding it would push every read far past the end of the
+            // mirror (the build_image NTFS emitter writes the physical
+            // LBA 131106 into the BPB at offset 0x1C, which previously
+            // caused `read_sector: OOB` on every non-resident file read).
+            // Force hidden_sectors = 0 for kernel-side mounts; winload
+            // reads directly via UEFI BlockIO and ignores this field.
             (*ntfs).ntfs_data.mft_start = mft_lcn * (sectors_per_cluster as u64);
-            (*ntfs).ntfs_data.hidden_sectors = hidden_sectors;
+            (*ntfs).ntfs_data.hidden_sectors = 0;
             (*ntfs).ntfs_data.volume_serial = volume_serial;
             // mft_mirror_lcn / total_sectors_64 are useful for
             // future recovery paths but not consumed by the current
@@ -2914,9 +3069,9 @@ pub fn mount(device: *mut (), _path: &[u16]) -> Option<&'static mut NtfsFileSyst
             // commit can pick them up without re-parsing the boot
             // sector.
             (*ntfs).ntfs_data.mft_size = mft_mirror_lcn * (sectors_per_cluster as u64);
-            crate::boot_println!("[NTFS] mount: mft_start={} (mft_lcn={}*spc={}) mft_record_size={} index_record_size={} hidden_sectors={} vol_serial=0x{:x}",
+            crate::boot_println!("[NTFS] mount: mft_start={} (mft_lcn={}*spc={}) mft_record_size={} index_record_size={} hidden_sectors=FORCED-0 vol_serial=0x{:x}",
                 (*ntfs).ntfs_data.mft_start, mft_lcn, sectors_per_cluster, (*ntfs).ntfs_data.mft_record_size,
-                (*ntfs).ntfs_data.index_record_size, hidden_sectors, volume_serial);
+                (*ntfs).ntfs_data.index_record_size, volume_serial);
             (*ntfs).ntfs_data.mounted = true;
         }
 

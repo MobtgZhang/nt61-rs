@@ -1822,13 +1822,23 @@ crate::boot_println!("[loader] copy sect: source ptr=0x{:x} dst ptr=0x{:x} chunk
                         // Write 8 bytes (one u64) to destination.
                         core::ptr::write_volatile(dst.add(off8) as *mut u64, raw);
                     }
-                    // VERIFY: read back the first 16 bytes of the page
+                    // VERIFY: read back the first 16 bytes of the page AND bytes at
+                    // BANNER offset 0x900 to catch any post-copy overwrite of the
+                    // string table (which is what was happening — the loader
+                    // verified the entry bytes were correct but the BANNER was
+                    // later overwritten by another code path).
                     if i == 0 && off == 0 {
                         let mut verify = [0u8; 16];
                         for j in 0..16 {
                             verify[j] = core::ptr::read_volatile(dst.add(j));
                         }
+                        let mut banner_check = [0u8; 32];
+                        for j in 0..32 {
+                            banner_check[j] = core::ptr::read_volatile(dst.add(0x900 + j));
+                        }
                         crate::boot_println!("[loader] copy sect: VERIFY after write, first 16 bytes: {:02x?}", &verify[..]);
+                        crate::boot_println!("[loader] copy sect: VERIFY BANNER @ +0x900 (32 bytes): {:02x?} ascii={:?}",
+                            &banner_check[..], core::str::from_utf8(&banner_check[..]).unwrap_or("<invalid>"));
                     }
                 }
             crate::boot_println!("[loader] copy sect: POST-COPY DONE");

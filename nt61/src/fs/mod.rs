@@ -548,6 +548,16 @@ pub fn init() {
     crate::boot_println!("[FS-INIT] calling mount_system_partition");
     mount_system_partition();
     crate::boot_println!("[FS-INIT] mount_system_partition returned");
+
+    // Populate the BOOT_PARTITION_REGISTRY so callers (cmd.exe loader,
+    // SMSS subsystem, etc.) can ask "what FS type is C:?" without
+    // having to re-probe the boot sector every time.
+    let sys_ptype = match sys_mirror_address() {
+        Some(base) => detect_fs_type(base),
+        None => FsType::Unknown,
+    };
+    crate::boot_println!("[FS-INIT] BOOT_PARTITION_REGISTRY: system={:?}", sys_ptype);
+    set_boot_partition_registry(sys_ptype);
 }
 
 /// FAT32 device backed by an in-memory snapshot of the ESP.
@@ -616,11 +626,51 @@ pub fn esp_mirror_size() -> Option<usize> {
 /// Returns `FsType` so callers can dispatch to the right driver
 /// without hard-coding "NTFS" or "FAT32". Used by `load_cmd_exe_from_disk`
 /// in the boot path to pick the right FS driver for reading cmd.exe.
+///
+/// The function consults `BOOT_PARTITION_REGISTRY` first (filled in by
+/// `fs::init()` once the system partition mirror is in place) and
+/// only falls back to a fresh boot-sector probe if the registry has
+/// not been initialised. This avoids the "[SAFE-CMD] FATAL: system
+/// partition type is unknown" race that occurs when callers run
+/// before `fs::init()` has populated the registry (e.g. inside the
+/// ntoskrnl trampoline before `mm::init` has run).
 pub fn detect_system_partition_type() -> FsType {
+    let reg = BOOT_PARTITION_REGISTRY.lock();
+    if let Some(t) = *reg {
+        return t;
+    }
+    drop(reg);
+    // Fallback: probe the live mirror.
     match sys_mirror_address() {
         Some(base) => detect_fs_type(base),
         None => FsType::Unknown,
     }
+}
+
+/// BOOT_PARTITION_REGISTRY caches the filesystem type of the boot
+/// partition (the C: drive). It is populated by `fs::init()` once
+/// `mount_system_partition()` returns the mirror base. Callers that
+/// run later in the boot sequence (cmd.exe loader, SMSS subsystem,
+/// boot drivers) consult it via `detect_system_partition_type()`
+/// instead of having to re-probe the boot sector every time.
+///
+/// The Spinlock is needed because the registry is consulted from
+/// multiple execution contexts during the UEFI fast-handoff path:
+/// the host trampoline, the cmd.exe loader, and the per-CPU idle
+/// loop all touch it via `detect_system_partition_type()`.
+static BOOT_PARTITION_REGISTRY: Spinlock<Option<FsType>> = Spinlock::new(None);
+
+/// Setter: record the detected partition type. Called by `fs::init()`
+/// after `mount_system_partition()` returns. Idempotent — calling it
+/// again with the same value is a no-op.
+pub fn set_boot_partition_registry(t: FsType) {
+    *BOOT_PARTITION_REGISTRY.lock() = Some(t);
+}
+
+/// Clear the registry (used during the early UEFI trampoline
+/// primer, before `fs::init()` runs again on the host side).
+pub fn clear_boot_partition_registry() {
+    *BOOT_PARTITION_REGISTRY.lock() = None;
 }
 
 /// Accessor for the System partition size (filled by

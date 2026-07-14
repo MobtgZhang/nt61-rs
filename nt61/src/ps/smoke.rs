@@ -66,7 +66,7 @@ fn step1_pid_constants() -> bool {
     if PID_CSRSS != 512 {
         return false;
     }
-    if PID_WINLOGON != 768 {
+    if PID_WINLOGON != 0x900 {
         return false;
     }
     if PID_SERVICES != 1024 {

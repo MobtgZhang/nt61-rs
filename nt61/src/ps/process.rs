@@ -19,7 +19,7 @@ pub const PID_IDLE: u64 = 0;
 pub const PID_SYSTEM: u64 = 4;
 pub const PID_SMSS: u64 = 256;
 pub const PID_CSRSS: u64 = 512;
-pub const PID_WINLOGON: u64 = 768;
+pub const PID_WINLOGON: u64 = 0x900;
 pub const PID_SERVICES: u64 = 1024;
 pub const PID_LSASS: u64 = 1152;
 

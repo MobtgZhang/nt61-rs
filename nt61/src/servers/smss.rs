@@ -49,8 +49,10 @@ pub const PID_WININIT: u64 = 768;
 pub const PID_SERVICES: u64 = 1024;
 /// LSASS process ID
 pub const PID_LSASS: u64 = 1152;
-/// Winlogon process ID
-pub const PID_WINLOGON: u64 = 768;
+/// Winlogon process ID (Session 1)
+pub const PID_WINLOGON: u64 = 0x900;
+/// Userinit process ID (Session 1)
+pub const PID_USERINIT: u64 = 0xA00;
 /// LSM process ID
 pub const PID_LSM: u64 = 1280;
 /// CMD process ID
@@ -1282,21 +1284,102 @@ pub fn load_and_create_process(
     result
 }
 
+/// Spawn a user-mode subsystem process from a NUL-terminated UTF-8 path
+/// supplied by user-mode code (typically `cmd.exe`'s
+/// `SYS_SPAWN_SUBSYSTEM_PROCESS` syscall).
+///
+/// Reads `user_path_ptr`, copies the path out of user space, prefixes
+/// it with the system partition's `\Windows\System32\` directory if it
+/// is a bare name (e.g. `lsass.exe`), then runs
+/// `load_and_create_process` with a freshly allocated PID in the
+/// `0x9000_0000` range so it cannot collide with the static SMSS PIDs
+/// (256/512/768/1024/1280).
+///
+/// Returns the new PID on success or `None` on any failure (path
+/// unreadable, PE not found, headers invalid, etc.).
+pub fn spawn_user_subsystem(user_path_ptr: *const u8) -> Option<u64> {
+    if user_path_ptr.is_null() {
+        return None;
+    }
+    // Bounded copy out of user memory.
+    let mut bytes: Vec<u8> = Vec::new();
+    let mut i = 0usize;
+    loop {
+        if i >= 1024 {
+            // Path too long.
+            return None;
+        }
+        let b = unsafe { core::ptr::read_volatile(user_path_ptr.add(i)) };
+        if b == 0 {
+            break;
+        }
+        bytes.push(b);
+        i += 1;
+    }
+    let path = match core::str::from_utf8(&bytes) {
+        Ok(s) => s,
+        Err(_) => return None,
+    };
+    boot_println!("[SMSS] spawn_user_subsystem: path={}", path);
+
+    // Build the absolute system-root-relative path.
+    let disk_path: String = if path.contains(':') || path.starts_with('\\') {
+        path.to_string()
+    } else {
+        // Bare name → assume \Windows\System32\<name>.
+        let mut p = String::from("\\Windows\\System32\\");
+        p.push_str(path);
+        p
+    };
+
+    // Extract a process name for logging (just the leaf).
+    let leaf: String = match disk_path.rfind('\\') {
+        Some(idx) => disk_path[idx + 1..].to_string(),
+        None => disk_path.clone(),
+    };
+
+    // Allocate a PID in the user-subsystem range, skipping the static
+    // SMSS subsystem PIDs already in use.
+    static NEXT_USER_PID: Spinlock<u64> = Spinlock::new(0x9000_0001);
+    let pid = {
+        let mut g = NEXT_USER_PID.lock();
+        let candidate = *g;
+        *g = candidate.wrapping_add(1);
+        // Skip past the static subsystem range.
+        if (0x9000_0001..0x9000_0100).contains(&candidate) {
+            candidate
+        } else {
+            0x9000_0001
+        }
+    };
+
+    match load_and_create_process(&disk_path, &leaf, /*session_id*/ 1, pid) {
+        Ok(r) => {
+            boot_println!("[SMSS] spawn_user_subsystem: launched {} pid=0x{:x} entry=0x{:x}",
+                          leaf, r.pid, r.entry_point);
+            Some(r.pid)
+        }
+        Err(e) => {
+            boot_println!("[SMSS] spawn_user_subsystem: failed to load {}: {:?}", leaf, e);
+            None
+        }
+    }
+}
+
 /// Read a PE file from the mounted disk.
 ///
 /// Returns the raw PE bytes if successful, None otherwise. The
 /// loader probes the system partition to pick the right FS
 /// driver, then walks the directory tree. If the file is not
-/// present on the mounted system partition, falls back to the
-/// in-memory PE produced by `system_image::build_cmd_exe_for_machine`
-/// so the boot can still complete during development.
+/// present on the mounted system partition, this function returns
+/// `None`; the caller is expected to halt the boot — there is
+/// no longer any in-memory `system_image` fallback path.
 ///
 /// This is the single source of truth for "where the SMSS subsystem
-/// image comes from" — once the on-disk PEs are installed by
+/// image comes from" — the on-disk PEs are installed by
 /// `tools/src/fs/build.rs` (`build_csrss_pe`, `build_wininit_pe`,
-/// `build_services_pe`, `build_lsass_pe`), the boot reads them
-/// from here instead of the in-memory fallback.
-fn read_pe_from_disk(path: &str) -> Option<core::mem::ManuallyDrop<Vec<u8>>> {
+/// `build_services_pe`, `build_lsass_pe`).
+pub fn read_pe_from_disk(path: &str) -> Option<core::mem::ManuallyDrop<Vec<u8>>> {
     boot_println!("[SMSS] read_pe_from_disk: path={}", path);
 
     // Probe the system partition to pick the right FS driver.
@@ -1317,10 +1400,12 @@ fn read_pe_from_disk(path: &str) -> Option<core::mem::ManuallyDrop<Vec<u8>>> {
             }
         }
         crate::fs::FsType::Unknown => {
-            boot_println!("[SMSS] read_pe_from_disk: system partition type unknown, using fallback");
+            boot_println!("[SMSS] read_pe_from_disk: system partition type unknown — refusing fallback (no system_image)");
         }
     }
-    fallback_to_system_image(path)
+    // No in-binary fallback path remains. Subsystem EXEs must live
+    // on the on-disk system partition.
+    None
 }
 
 /// Read PE from FAT32 filesystem
@@ -1450,15 +1535,11 @@ fn read_pe_from_ntfs(path: &str) -> Option<core::mem::ManuallyDrop<Vec<u8>>> {
         return None;
     }
 
-    // The NTFS disk-read path is the *preferred* source of csrss.exe /
+    // The NTFS disk-read path is the *only* source of csrss.exe /
     // wininit.exe / services.exe / lsass.exe: those binaries are
     // baked into the system partition by `tools/src/fs/build.rs`
-    // (see `build_csrss_pe` etc.). The in-memory `system_image`
-    // fallback is only consulted when the on-disk read fails (e.g.
-    // the directory walk faulted on a malformed MFT record). This
-    // is the exact opposite of the previous "pre-flight guard"
-    // behaviour, which forced every subsystem through the
-    // fallback and left the on-disk PEs unread.
+    // (see `build_csrss_pe` etc.). There is no in-memory fallback
+    // any more — `system_image` is gone.
 
     // CRITICAL: Set active partition to system mirror so NTFS read_sector
     // reads from the correct location. The save/restore discipline must
@@ -1635,25 +1716,6 @@ fn read_pe_from_ext2(path: &str) -> Option<core::mem::ManuallyDrop<Vec<u8>>> {
     }
     boot_println!("[SMSS] ext2/3/4: read {} bytes, MZ OK", data.len());
     Some(core::mem::ManuallyDrop::new(data))
-}
-
-/// Fallback: Use the system_image module to get generated PE
-/// This is for development/testing when disk is not fully mounted
-fn fallback_to_system_image(path: &str) -> Option<core::mem::ManuallyDrop<Vec<u8>>> {
-    boot_println!("[SMSS] fallback_to_system_image: path={}", path);
-    let exe_name = path.split(|c| c == '\\' || c == '/').last().unwrap_or(path);
-    boot_println!("[SMSS] fallback: looking up '{}'", exe_name);
-
-    // For all system processes, use cmd.exe as the base binary
-    // (we don't have separate binaries for each, so reuse cmd.exe)
-    // cmd.exe has minimal requirements and can be used as a placeholder
-    boot_println!("[SMSS] fallback: calling build_cmd_exe_for_machine");
-    let data = crate::system_image::build_cmd_exe_for_machine(0x8664);
-    boot_println!("[SMSS] fallback: built {} bytes for '{}'", data.len(), exe_name);
-    // build_cmd_exe_for_machine already returns ManuallyDrop so
-    // its inner Vec (which may be backed by a static buffer) is
-    // never deallocated by the kernel heap.
-    Some(data)
 }
 
 /// Parse PE headers to extract entry point and image base.
@@ -1964,25 +2026,72 @@ pub fn start_boot_sequence() {
     boot_println!("[BOOT] Phase 2: Creating Sessions...");
     phase2_create_sessions();
     
-    // Phase 3: Start subsystems (CSRSS)
+// Phase 3: Start subsystems (CSRSS)
     boot_println!("[BOOT] Phase 3: Starting Subsystems...");
     phase3_start_subsystems();
-    
+
+    // =========================================================================
+    // Phase 012: csrss / wininit / services / lsass subsystem spin-up
+    // =========================================================================
+    // Win-7 brings up the user-mode subsystems in two waves: csrss.exe
+    // (one per session) at SMSS time, then wininit.exe hands off to
+    // services.exe / lsass.exe inside Session 0. From this point on,
+    // every process that gets created is loaded from the on-disk NTFS
+    // system image by `smss::read_pe_from_disk` (no host-side
+    // synthesis). Print a Phase 012 marker before phase 4 / phase 5.
+    crate::rtl::windows_log::write_phase_header(12);
+    boot_println!("    SUBSYSTEMS: csrss / wininit / services / lsass");
+
     // Phase 4: Start WinInit
     boot_println!("[BOOT] Phase 4: Starting WinInit...");
     phase4_start_wininit();
-    
-    // Phase 5: Launch CMD
-    boot_println!("[BOOT] Phase 5: Launching CMD Shell...");
+
+    // Phase 5: Launch WinLogon + UserInit (Session 1 logon chain).
+    boot_println!("[BOOT] Phase 5: Starting Session 1 Logon...");
+    phase5_start_logon();
+
+    // =========================================================================
+    // Phase 013: cmd.exe (Ring-3 syscall loop)
+    // =========================================================================
+    // cmd.exe is the first user-mode process whose entry point we
+    // actually execute in Ring 3 (the rest stay in their DriverEntry
+    // stubs). The Phase 013 marker is the final boundary in the
+    // kernel-side phase table — after this point everything is
+    // driven by user-mode syscalls (`SYS_PUTCHAR`, `SYS_GETCHAR`,
+    // `SYS_EXIT`, ...).
+    crate::rtl::windows_log::write_phase_header(13);
+    boot_println!("    CMD: cmd.exe Ring-3 entry");
+
+    // Phase 6: Launch CMD
+    boot_println!("[BOOT] Phase 6: Launching CMD Shell...");
     launch_cmd_shell();
-    
+
     // Mark boot as complete
     *BOOT_COMPLETE.lock() = true;
-    
+
     boot_println!("[BOOT] ============================================");
     boot_println!("[BOOT] Boot Sequence Complete!");
     boot_println!("[BOOT] CMD Shell Ready");
     boot_println!("[BOOT] ============================================");
+}
+
+/// Canonical Windows-7 boot orchestrator entry point.
+///
+/// Drives every phase of the user-mode boot chain end-to-end:
+///   Phase 1  SMSS init
+///   Phase 2  Session 0 + Session 1
+///   Phase 3  CSRSS (both sessions)
+///   Phase 4  WinInit + Services + LSASS + LSM
+///   Phase 5  WinLogon + UserInit (Session 1)
+///   Phase 6  cmd.exe (via userinit)
+///
+/// This is the function `arch::boot::try_launch_cmd_exe_arch` calls
+/// after initialising its own session tables — `smss::run()` is the
+/// single source of truth for the Win-7 boot ordering.
+pub fn run() {
+    crate::rtl::windows_log::write_phase_header(11);
+    boot_println!("[SMSS::run] Windows 7 boot chain starting");
+    start_boot_sequence();
 }
 
 /// Start CSRSS for all sessions during boot
@@ -2012,6 +2121,38 @@ fn phase4_start_wininit() {
         boot_println!("[BOOT]   Warning: Failed to launch wininit.exe: {:?}", e);
     } else {
         boot_println!("[BOOT]   wininit.exe started successfully");
+    }
+
+    // Real WinInit starts services.exe, lsass.exe, AND lsm.exe.
+    // We launch lsm.exe eagerly so the session-management stub is
+    // available for winlogon to talk to later in Phase 5.
+    boot_println!("[BOOT]   Launching lsm.exe...");
+    if let Err(e) = launch_lsm() {
+        boot_println!("[BOOT]   Warning: Failed to launch lsm.exe: {:?}", e);
+    } else {
+        boot_println!("[BOOT]   lsm.exe started successfully");
+    }
+}
+
+/// Phase 5: Start WinLogon and UserInit (Session 1 logon chain).
+///
+/// In real Windows 7 this would happen after a user successfully
+/// authenticates at the logon UI. In the no-desktop boot mode we
+/// skip authentication entirely — winlogon is launched, which
+/// then chains to userinit, which then launches cmd.exe.
+fn phase5_start_logon() {
+    boot_println!("[BOOT]   Launching winlogon.exe (Session 1)...");
+    if let Err(e) = launch_winlogon() {
+        boot_println!("[BOOT]   Warning: Failed to launch winlogon.exe: {:?}", e);
+    } else {
+        boot_println!("[BOOT]   winlogon.exe started successfully");
+    }
+
+    boot_println!("[BOOT]   Launching userinit.exe (Session 1)...");
+    if let Err(e) = launch_userinit() {
+        boot_println!("[BOOT]   Warning: Failed to launch userinit.exe: {:?}", e);
+    } else {
+        boot_println!("[BOOT]   userinit.exe started successfully");
     }
 }
 
@@ -2056,7 +2197,7 @@ fn launch_services() -> Result<SystemExeLoadResult, ExeLoadError> {
     let disk_path = "C:\\Windows\\System32\\services.exe";
     let process_name = "services.exe";
     let base_pid = PID_SERVICES;
-    
+
     load_and_create_process(disk_path, process_name, SESSION_0, base_pid)
 }
 
@@ -2065,28 +2206,98 @@ fn launch_lsass() -> Result<SystemExeLoadResult, ExeLoadError> {
     let disk_path = "C:\\Windows\\System32\\lsass.exe";
     let process_name = "lsass.exe";
     let base_pid = PID_LSASS;
-    
+
     load_and_create_process(disk_path, process_name, SESSION_0, base_pid)
 }
 
+/// Launch lsm.exe (Local Session Manager). Real Windows 7 starts
+/// lsm from wininit.exe alongside services/lsass; the SMSS boot
+/// orchestrator launches it eagerly here so the user-mode chain
+/// (lsm → winlogon → userinit → cmd) is fully populated.
+pub fn launch_lsm() -> Result<SystemExeLoadResult, ExeLoadError> {
+    let disk_path = "C:\\Windows\\System32\\lsm.exe";
+    let process_name = "lsm.exe";
+    let base_pid = PID_LSM;
+
+    load_and_create_process(disk_path, process_name, SESSION_0, base_pid)
+}
+
+/// Launch winlogon.exe (Windows Logon Application) for Session 1.
+/// winlogon reads its config from HKLM and starts userinit.exe
+/// once the user "logs on". In the no-desktop boot mode we
+/// skip authentication and ask winlogon to start userinit
+/// immediately.
+pub fn launch_winlogon() -> Result<SystemExeLoadResult, ExeLoadError> {
+    let disk_path = "C:\\Windows\\System32\\winlogon.exe";
+    let process_name = "winlogon.exe";
+    let base_pid = PID_WINLOGON;
+
+    load_and_create_process(disk_path, process_name, SESSION_1, base_pid)
+}
+
+/// Launch userinit.exe (per-user logon initializer). userinit
+/// runs the user's logon scripts and then chains to the user's
+/// shell, which we have configured to be `cmd.exe` for the
+/// no-desktop boot.
+pub fn launch_userinit() -> Result<SystemExeLoadResult, ExeLoadError> {
+    let disk_path = "C:\\Windows\\System32\\userinit.exe";
+    let process_name = "userinit.exe";
+    let base_pid = PID_USERINIT;
+
+    load_and_create_process(disk_path, process_name, SESSION_1, base_pid)
+}
+
 /// Launch the CMD shell as the final step of the boot sequence.
+///
+/// On x86_64 this function returns control to Ring-3 by jumping into
+/// the cmd.exe entry point via
+/// `arch::x86_64::user_entry::enter_first_user_thread`. On other
+/// architectures it falls back to the legacy "show prompt" stub.
 fn launch_cmd_shell() {
     boot_println!("[BOOT]   Loading cmd.exe from disk...");
-    
+
     let disk_path = "C:\\Windows\\System32\\cmd.exe";
     let process_name = "cmd.exe";
     let base_pid = PID_CMD;
-    
+
     match load_and_create_process(disk_path, process_name, SESSION_1, base_pid) {
         Ok(result) => {
             boot_println!("[BOOT]   cmd.exe loaded successfully");
             boot_println!("[BOOT]   Process ID: 0x{:x}", result.pid);
             boot_println!("[BOOT]   Entry Point: 0x{:016x}", result.entry_point);
             boot_println!("[BOOT]   Image Base: 0x{:016x}", result.image_base);
-            
-            // Transfer control to the CMD process
-            // This switches from kernel mode to user mode
-            transfer_to_user_mode(result.pid, result.entry_point);
+
+            // On x86_64 we hand off to Ring 3 here and never come
+            // back. The bootloader entry into SMSS was via
+            // `arch::boot::try_launch_cmd_exe_arch`, which now
+            // delegates to `smss::run()` — see Phase E.
+            #[cfg(target_arch = "x86_64")]
+            {
+                if let Some(proc) = crate::ps::process::get_by_pid(result.pid) {
+                    let proc_ptr = proc as *mut crate::ps::process::Eprocess;
+                    let main_thread = unsafe { (*proc_ptr).main_thread };
+                    if !main_thread.is_null() {
+                        crate::ke::scheduler::setup_bsp(main_thread);
+                        let pml4_phys = unsafe { (*proc_ptr).pml4_phys };
+                        let user_rip = unsafe { (*proc_ptr).user_rip };
+                        let user_rsp = unsafe { (*proc_ptr).user_rsp };
+                        boot_println!("[BOOT]   Dispatching cmd.exe into Ring 3 (PML4=0x{:x} RIP=0x{:x} RSP=0x{:x})",
+                                      pml4_phys, user_rip, user_rsp);
+                        crate::arch::x86_64::user_entry::enter_first_user_thread(pml4_phys, user_rip, user_rsp);
+                    } else {
+                        boot_println!("[BOOT]   ERROR: cmd.exe main_thread is NULL");
+                    }
+                } else {
+                    boot_println!("[BOOT]   ERROR: cmd.exe process not found in PID table");
+                }
+            }
+
+            // Fallback for non-x86_64 (we just print the prompt and
+            // return).
+            #[cfg(not(target_arch = "x86_64"))]
+            {
+                transfer_to_user_mode(result.pid, result.entry_point);
+            }
         }
         Err(e) => {
             boot_println!("[BOOT]   ERROR: Failed to launch cmd.exe: {:?}", e);
