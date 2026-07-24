@@ -1,34 +1,9 @@
 //! Architecture-agnostic framebuffer support.
-//
-//! On x86_64 this module re-exports the VGA/Framebuffer implementation.
-//! On other platforms we provide no-op stubs.
+//!
+//! The actual pixel writer is the cross-arch `framebuffer_impl`
+//! module. On x86_64 we keep the historic name (`init_from_bootinfo`
+//! returning the info) for backwards-compat with the existing call
+//! sites; on the other architectures the same shared implementation
+//! is exposed through the same public API.
 
-#[cfg(target_arch = "x86_64")]
-pub use crate::hal::x86_64::framebuffer::*;
-
-#[cfg(not(target_arch = "x86_64"))]
-mod stub {
-    /// Framebuffer information stub.
-    #[derive(Default)]
-    pub struct FramebufferInfo {
-        pub address: u64,
-        pub width: u32,
-        pub height: u32,
-        pub bytes_per_line: u32,
-        pub bpp: u32,
-    }
-
-    /// Get framebuffer info.
-    pub fn info() -> FramebufferInfo {
-        FramebufferInfo::default()
-    }
-
-    /// Initialize framebuffer. Returns false.
-    #[allow(dead_code)]
-    pub fn init(_bootinfo_fb: Option<u64>) -> bool {
-        false
-    }
-}
-
-#[cfg(not(target_arch = "x86_64"))]
-pub use stub::*;
+pub use crate::hal::common::framebuffer_impl::*;

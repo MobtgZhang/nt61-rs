@@ -30,7 +30,13 @@ pub enum ImageFormat {
 }
 
 impl ImageFormat {
-    pub fn from_str(s: &str) -> Option<Self> {
+    /// Parse a user-provided format string into an `ImageFormat`. The
+    /// names here deliberately avoid the canonical Rust `FromStr::from_str`
+    /// signature (`fn(&str) -> Result<Self, Self::Err>`) so we don't
+    /// accidentally commit to a fallible contract that maps onto
+    /// `BuildError` — the option-returning form keeps call sites free to
+    /// produce their own error context.
+    pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "fat32" | "fat" | "vfat" => Some(ImageFormat::Fat32),
             "ext4" | "ext" | "ext2" | "ext3" => Some(ImageFormat::Ext4),
@@ -84,12 +90,11 @@ pub fn create_image(
     format: &str,
     size_mb: u32,
     source: Option<&Path>,
-    _verbose: bool,
 ) -> Result<()> {
     log::info(&format!("Creating {} image ({} MB)...", format, size_mb));
     log::info(&format!("Output: {}", output.display()));
 
-    let fmt = ImageFormat::from_str(format)
+    let fmt = ImageFormat::parse(format)
         .ok_or_else(|| BuildError::InvalidFormat(format!("Unknown format: {}", format)))?;
 
     match fmt {
@@ -126,7 +131,7 @@ pub fn create_image(
             write_image(output, &data)?;
         }
         ImageFormat::Qcow2 => {
-            let size_gb = (size_mb + 1023) / 1024;
+            let size_gb = size_mb.div_ceil(1024);
             let mut img = Qcow2Image::create(size_gb.max(1))?;
             if let Some(src) = source {
                 populate_qcow2(&mut img, src)?;
@@ -141,8 +146,8 @@ pub fn create_image(
 }
 
 /// Format an empty disk image
-pub fn format_image(output: &Path, fs: &str, size_mb: u32, verbose: bool) -> Result<()> {
-    create_image(output, fs, size_mb, None, verbose)
+pub fn format_image(output: &Path, fs: &str, size_mb: u32) -> Result<()> {
+    create_image(output, fs, size_mb, None)
 }
 
 /// Style of partition table to write around a raw filesystem image.
@@ -169,15 +174,14 @@ pub fn create_image_with_pt(
     fs: &str,
     size_mb: u32,
     source: Option<&Path>,
-    verbose: bool,
     partition_table: PartitionTable,
 ) -> Result<()> {
     if partition_table == PartitionTable::None {
-        return create_image(output, fs, size_mb, source, verbose);
+        return create_image(output, fs, size_mb, source);
     }
 
     // Partition table wrapping is only valid on raw block-device images.
-    let fmt = ImageFormat::from_str(fs)
+    let fmt = ImageFormat::parse(fs)
         .ok_or_else(|| BuildError::InvalidFormat(format!("Unknown fs: {}", fs)))?;
     match fmt {
         ImageFormat::Fat32 | ImageFormat::Ntfs | ImageFormat::Ext4 => {}
@@ -562,7 +566,7 @@ fn open_qcow2_for_modify(
     let part_byte_start = chosen.byte_offset as u64;
     let part_byte_end = part_byte_start + chosen.byte_size;
     let part_sector_start = (part_byte_start / 512) as u32;
-    let part_sector_count = ((part_byte_end - part_byte_start + 511) / 512) as u32;
+    let part_sector_count = (part_byte_end - part_byte_start).div_ceil(512) as u32;
     let mut part_bytes = vec![0u8; (part_sector_count as usize) * 512];
     for i in 0..part_sector_count {
         qcow.read_sector_into(
@@ -735,7 +739,7 @@ impl OpenedImage {
             let mut buf = [0u8; 512];
             buf[..chunk.len()].copy_from_slice(chunk);
             // Try to write; if the cluster is not pre-allocated, skip this sector.
-            if let Err(_) = qcow.write_sector((sector_start + i as u32) as u64, &buf) {
+            if qcow.write_sector((sector_start + i as u32) as u64, &buf).is_err() {
                 // Allocation failed (cluster beyond virtual size) — skip this sector.
                 // This is acceptable for sparse images where not all sectors are written.
             }
@@ -943,28 +947,28 @@ trait ImageWrite {
 
 impl ImageWrite for Fat32Image {
     fn create_dir(&mut self, path: &str) -> Result<()> {
-        self.create_dir(path).map(|_| ()).map_err(|e| e)
+        self.create_dir(path).map(|_| ())
     }
     fn write_file(&mut self, path: &str, data: &[u8]) -> Result<()> {
-        self.write_file(path, data).map(|_| ()).map_err(|e| e)
+        self.write_file(path, data).map(|_| ())
     }
 }
 
 impl ImageWrite for Ext4Image {
     fn create_dir(&mut self, path: &str) -> Result<()> {
-        self.create_dir(path).map(|_| ()).map_err(|e| e)
+        self.create_dir(path).map(|_| ())
     }
     fn write_file(&mut self, path: &str, data: &[u8]) -> Result<()> {
-        self.write_file(path, data).map(|_| ()).map_err(|e| e)
+        self.write_file(path, data).map(|_| ())
     }
 }
 
 impl ImageWrite for NtfsImage {
     fn create_dir(&mut self, path: &str) -> Result<()> {
-        self.create_dir(path).map(|_| ()).map_err(|e| e)
+        self.create_dir(path).map(|_| ())
     }
     fn write_file(&mut self, path: &str, data: &[u8]) -> Result<()> {
-        self.write_file(path, data).map(|_| ()).map_err(|e| e)
+        self.write_file(path, data).map(|_| ())
     }
 }
 
@@ -1062,10 +1066,10 @@ fn write_image(path: &Path, data: &[u8]) -> Result<()> {
     }
 
     let mut file = File::create(path)
-        .map_err(|e| BuildError::Io(e))?;
+        .map_err(BuildError::Io)?;
 
     file.write_all(data)
-        .map_err(|e| BuildError::Io(e))?;
+        .map_err(BuildError::Io)?;
 
     Ok(())
 }
@@ -1107,26 +1111,26 @@ const LINUX_FS_TYPE_GUID: [u8; 16] = [
 /// volume, and the kernel's `cmd.exe` path becomes a real PE on a real
 /// NTFS volume) or EXT4 (Linux-native system partition).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum DualPartitionFs {
     /// Both ESP and System partitions are FAT32 (legacy layout).
     Fat32All,
     /// ESP is FAT32 (mandatory), System partition is NTFS (new default).
+    #[default]
     Fat32EspNtfsSystem,
     /// ESP is FAT32 (mandatory), System partition is EXT4 (Linux-native).
     Fat32EspExt4System,
 }
 
-impl Default for DualPartitionFs {
-    fn default() -> Self {
-        DualPartitionFs::Fat32EspNtfsSystem
-    }
-}
 
 impl DualPartitionFs {
     /// Parse a filesystem choice string (e.g. "fat32", "ntfs", "ext4")
     /// to a `DualPartitionFs` value. Returns `None` if the input is not
-    /// a recognized dual-partition filesystem choice.
-    pub fn from_str(s: &str) -> Option<Self> {
+    /// a recognized dual-partition filesystem choice. The function is
+    /// named `parse` rather than `from_str` to avoid being mistaken for
+    /// the standard `std::str::FromStr` trait method (which has a
+    /// different `Result` signature).
+    pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "fat32" | "fat32all" => Some(DualPartitionFs::Fat32All),
             "ntfs" => Some(DualPartitionFs::Fat32EspNtfsSystem),
@@ -1157,7 +1161,6 @@ pub fn create_dual_partition_image(
     system_size_mb: u32,
     esp_source: &Path,
     system_source: &Path,
-    verbose: bool,
 ) -> Result<()> {
     create_dual_partition_image_with_fs(
         output,
@@ -1166,7 +1169,6 @@ pub fn create_dual_partition_image(
         esp_source,
         system_source,
         DualPartitionFs::default(),
-        verbose,
     )
 }
 
@@ -1181,21 +1183,10 @@ pub fn create_dual_partition_image_with_fs(
     esp_source: &Path,
     system_source: &Path,
     fs_choice: DualPartitionFs,
-    verbose: bool,
 ) -> Result<()> {
     let sector_size = 512u64;
 
-    let (esp_fs_label, sys_fs_label) = match fs_choice {
-        DualPartitionFs::Fat32All => ("FAT32", "FAT32"),
-        DualPartitionFs::Fat32EspNtfsSystem => ("FAT32", "NTFS"),
-        DualPartitionFs::Fat32EspExt4System => ("FAT32", "EXT4"),
-    };
-
-    if verbose {
-        println!("Creating dual-partition image:");
-        println!("  ESP partition:    {} MB ({}) from {:?}", esp_size_mb, esp_fs_label, esp_source);
-        println!("  System partition: {} MB ({}) from {:?}", system_size_mb, sys_fs_label, system_source);
-    }
+    // First, calculate partition sizes to determine LBA layout
 
     // First, calculate partition sizes to determine LBA layout
     // ESP is at fixed offset (34 sectors after GPT header + entries)
@@ -1210,28 +1201,14 @@ pub fn create_dual_partition_image_with_fs(
 
     let total_sectors = sys_last_lba + 1;
 
-    if verbose {
-        println!("  LBA layout:");
-        println!("    ESP: {} - {} ({} sectors)", esp_start_lba, esp_last_lba, esp_sectors);
-        println!("    System: {} - {} ({} sectors)", sys_start_lba, sys_last_lba, sys_sectors);
-        println!("    Total: {} sectors", total_sectors);
-    }
-
     // Create ESP partition image with partition offset. The ESP is
     // always FAT32 (UEFI requirement).
     let mut esp_img = Fat32Image::new(esp_size_mb);
     if esp_source.exists() {
-        if verbose {
-            println!("  Populating ESP from {:?}", esp_source);
-        }
         populate_image(&mut esp_img, esp_source)?;
     }
     // Generate with partition offset so that hidd_sec=esp_start_lba is set correctly
     let esp_bytes = esp_img.finalize_with_offset((esp_start_lba * sector_size) as usize)?;
-
-    if verbose {
-        println!("  ESP image: {} bytes", esp_bytes.len());
-    }
 
     // Create System partition image. The choice between FAT32, NTFS
     // and EXT4 is governed by `fs_choice`; NTFS is the new default so
@@ -1241,9 +1218,6 @@ pub fn create_dual_partition_image_with_fs(
         DualPartitionFs::Fat32All => {
             let mut sys_img = Fat32Image::new(system_size_mb);
             if system_source.exists() {
-                if verbose {
-                    println!("  Populating System from {:?}", system_source);
-                }
                 populate_image(&mut sys_img, system_source)?;
             }
             sys_img.finalize_with_offset((sys_start_lba * sector_size) as usize)?
@@ -1251,9 +1225,6 @@ pub fn create_dual_partition_image_with_fs(
         DualPartitionFs::Fat32EspNtfsSystem => {
             let mut sys_img = NtfsImage::new(system_size_mb, 4096)?;
             if system_source.exists() {
-                if verbose {
-                    println!("  Populating System from {:?}", system_source);
-                }
                 populate_image(&mut sys_img, system_source)?;
             }
             sys_img.finalize_with_offset((sys_start_lba * sector_size) as usize)?
@@ -1266,18 +1237,11 @@ pub fn create_dual_partition_image_with_fs(
             // the system RAM-disk mirror populated by winload.
             let mut sys_img = Ext4Image::new(system_size_mb, 4096)?;
             if system_source.exists() {
-                if verbose {
-                    println!("  Populating System from {:?}", system_source);
-                }
                 populate_image(&mut sys_img, system_source)?;
             }
             sys_img.finalize()?
         }
     };
-
-    if verbose {
-        println!("  System image: {} bytes ({})", sys_bytes.len(), sys_fs_label);
-    }
 
     // Allocate buffer and copy partition data
     let total_bytes = (total_sectors * sector_size) as usize;
@@ -1313,10 +1277,6 @@ pub fn create_dual_partition_image_with_fs(
 
     // Write to file
     write_image(output, &buf)?;
-
-    if verbose {
-        println!("  Written: {} bytes to {:?}", total_bytes, output);
-    }
 
     Ok(())
 }
@@ -1428,11 +1388,11 @@ mod tests {
 
     #[test]
     fn test_format_parsing() {
-        assert_eq!(ImageFormat::from_str("fat32"), Some(ImageFormat::Fat32));
-        assert_eq!(ImageFormat::from_str("ext4"), Some(ImageFormat::Ext4));
-        assert_eq!(ImageFormat::from_str("ntfs"), Some(ImageFormat::Ntfs));
-        assert_eq!(ImageFormat::from_str("iso"), Some(ImageFormat::Iso));
-        assert_eq!(ImageFormat::from_str("qcow2"), Some(ImageFormat::Qcow2));
-        assert_eq!(ImageFormat::from_str("unknown"), None);
+        assert_eq!(ImageFormat::parse("fat32"), Some(ImageFormat::Fat32));
+        assert_eq!(ImageFormat::parse("ext4"), Some(ImageFormat::Ext4));
+        assert_eq!(ImageFormat::parse("ntfs"), Some(ImageFormat::Ntfs));
+        assert_eq!(ImageFormat::parse("iso"), Some(ImageFormat::Iso));
+        assert_eq!(ImageFormat::parse("qcow2"), Some(ImageFormat::Qcow2));
+        assert_eq!(ImageFormat::parse("unknown"), None);
     }
 }

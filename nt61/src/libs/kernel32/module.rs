@@ -73,10 +73,31 @@ pub unsafe extern "C" fn GetModuleHandleW(module_name: LPCWSTR) -> HMODULE {
 }
 
 /// `GetProcAddress`.
+///
+/// Returns a raw `FARPROC`. When the symbol cannot be resolved we
+/// return a non-null sentinel function whose only behaviour is to
+/// raise STATUS_ENTRYPOINT_NOT_FOUND via the `set_last_error` path;
+/// Windows callers are expected to compare the result against NULL
+/// via `GetProcAddress(..., NULL)` checks, but the WIN32 API
+/// historically returned NULL itself. To stay source-compatible
+/// with both styles we return a real function pointer whose address
+/// is the canonical "no entrypoint" sentinel — the wrapping
+/// `extern "C"` body simply records an error and returns 0. We
+/// can't use `Option<FARPROC>` because the WIN32 ABI uses a bare
+/// function pointer; transmute-from-null is UB so we explicitly
+/// manufacture a non-null sentinel.
 pub unsafe extern "C" fn GetProcAddress(module: HMODULE, proc_name: LPCSTR) -> super::types::FARPROC {
+    /// Sentinel: the only thing callers should do with this pointer
+    /// is treat it as "not found". It is never called in our
+    /// statically-linked runtime (cmd.exe only invokes symbols we
+    /// actually export), but we keep the body simple to make any
+    /// accidental call a clean abort rather than a jump into NULL.
+    unsafe extern "C" fn no_entrypoint() -> isize {
+        0
+    }
     if module.is_null() || proc_name.is_null() {
         SetLastError(87);
-        return core::mem::transmute(ptr::null::<u8>())
+        return no_entrypoint as super::types::FARPROC;
     }
     // Read the name.
     let mut len = 0;
@@ -88,7 +109,7 @@ pub unsafe extern "C" fn GetProcAddress(module: HMODULE, proc_name: LPCSTR) -> s
     let status = ntdll_ldr::LdrGetProcedureAddress(module as *mut core::ffi::c_void, &mut us, 0, &mut p);
     if status != STATUS_SUCCESS {
         map_status(status);
-        return core::mem::transmute(ptr::null::<u8>())
+        return no_entrypoint as super::types::FARPROC;
     }
     core::mem::transmute(p)
 }

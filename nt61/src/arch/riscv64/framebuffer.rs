@@ -1,18 +1,39 @@
-//! Framebuffer driver stub for RISC-V 64
-//
-//! RISC-V platforms may use platform-specific display drivers.
-//! Real implementation: integrate with device tree for framebuffer
-//! detection.
+//! Framebuffer driver for RISC-V 64.
+//!
+//! On the QEMU `virt` machine the UEFI firmware hands the kernel a
+//! GOP framebuffer through `BootInfo.framebuffer_*`. The actual
+//! pixel writer is the cross-arch `hal::common::framebuffer`
+//! module; this file is just a thin shim that adapts the per-arch
+//! `init()` / `put_char` / `clear` / `blit` API to the cross-arch
+//! backend.
+//!
+//! QEMU `-machine virt` for riscv64 supports `-device ramfb` to
+//! expose a GOP framebuffer; that is the canonical bring-up.
 
-use crate::kprintln;
+#![allow(dead_code)]
 
-/// Framebuffer info structure.
+use crate::hal::common::framebuffer as lfb;
+
+/// Framebuffer information.
+#[derive(Debug, Clone, Copy)]
 pub struct FramebufferInfo {
     pub address: u64,
     pub width: u32,
     pub height: u32,
     pub pitch: u32,
     pub bpp: u32,
+}
+
+impl From<lfb::FramebufferInfo> for FramebufferInfo {
+    fn from(c: lfb::FramebufferInfo) -> Self {
+        Self {
+            address: c.address,
+            width: c.width,
+            height: c.height,
+            pitch: c.pitch,
+            bpp: c.bpp,
+        }
+    }
 }
 
 impl FramebufferInfo {
@@ -27,17 +48,43 @@ impl FramebufferInfo {
     }
 }
 
-/// Initialize framebuffer (stub).
+/// Initialise the framebuffer from the GOP mailbox in `BootInfo`.
+/// Returns the `FramebufferInfo` if winload actually published a
+/// framebuffer, or `None` if the firmware didn't expose one.
 pub fn init() -> Option<FramebufferInfo> {
-    // crate::kprintln!("[TODO] riscv64: framebuffer driver not yet implemented (arch/riscv64/framebuffer.rs)")  // kprintln disabled (memcpy crash workaround);
-    None
+    let info = lfb::info();
+    if info.address != 0 && info.width != 0 && info.height != 0 {
+        Some(info.into())
+    } else {
+        None
+    }
 }
 
-/// Put a character at the given position.
-pub fn put_char(_x: u32, _y: u32, _c: u8, _fg: u32, _bg: u32) {}
+/// Put a character at the given position using the supplied
+/// foreground / background colours.
+pub fn put_char(x: u32, y: u32, c: u8, fg: u32, bg: u32) {
+    lfb::draw_char(x, y, c, fg, bg);
+}
 
-/// Clear the screen.
-pub fn clear(_color: u32) {}
+/// Clear the screen with the supplied colour.
+pub fn clear(color: u32) {
+    lfb::clear(color);
+}
 
-/// Copy a pixel pattern to the framebuffer.
-pub fn blit(_data: &[u8], _x: u32, _y: u32, _w: u32, _h: u32) {}
+/// Copy a pixel pattern to the framebuffer. The data is interpreted
+/// as 32-bit BGRA pixels.
+pub fn blit(data: &[u8], x: u32, y: u32, w: u32, h: u32) {
+    let info = lfb::info();
+    if info.address == 0 { return; }
+    let bytes_per_pixel = (info.bpp / 8) as usize;
+    for row in 0..h {
+        for col in 0..w {
+            let idx = ((row * w + col) as usize) * bytes_per_pixel;
+            if idx + 3 >= data.len() { return; }
+            let r = data[idx + 2];
+            let g = data[idx + 1];
+            let b = data[idx + 0];
+            lfb::set_pixel(x + col, y + row, lfb::color32(r, g, b));
+        }
+    }
+}

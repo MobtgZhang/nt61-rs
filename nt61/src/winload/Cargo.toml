@@ -20,17 +20,19 @@ uefi-raw = "0.14.0"
 [target.'cfg(target_arch = "x86_64")'.dependencies]
 nt61 = { path = "../..", default-features = false, features = ["x86_64"] }
 
-[target.'cfg(target_arch = "aarch64")'.dependencies]
-nt61 = { path = "../..", default-features = false, features = ["aarch64"] }
-
-[target.'cfg(target_arch = "riscv64")'.dependencies]
-nt61 = { path = "../..", default-features = false, features = ["riscv64"] }
-
-[target.'cfg(target_arch = "loongarch64")'.dependencies]
-nt61 = { path = "../..", default-features = false, features = ["loongarch64"] }
-
 [[bin]]
 name = "nt61-winload"
 path = "src/main.rs"
+required-features = ["x86_64"]
+
+[features]
+# winload.efi is currently an x86_64-only UEFI binary. Other
+# architectures are stubbed at the `arch` module level but the
+# `os_loader_run` body still references x86_64-only symbols
+# (extern "win64" trampolines, the kernel-jump dispatcher, the
+# ntoskrnl handoff trampoline). Once the other-architecture
+# `kernel_entry` / `jump_to_ntoskrnl_kisystemstartup` shims land
+# the `required-features` above can be removed.
+x86_64 = []
 
 # Profile settings are inherited from the workspace root.

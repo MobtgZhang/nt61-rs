@@ -12,8 +12,10 @@ pub mod pit;
 pub mod serial;
 pub mod io_port;
 pub mod framebuffer;
+pub mod framebuffer_impl;
 pub mod text_console;
 pub mod keyboard_input;
+pub mod serial_disable;
 
 /// Initialize all hardware (common part)
 pub fn init() {

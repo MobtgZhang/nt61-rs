@@ -467,13 +467,15 @@ pub fn init() {
         // sense if that is the actual CS — if it's not, the far-jump
         // would re-enter the wrong segment.
         #[cfg(target_arch = "x86_64")]
-        unsafe {
-            let cs_val: u16;
-            core::arch::asm!(
-                "mov {cs:x}, cs",
-                cs = out(reg) cs_val,
-                options(nostack, preserves_flags),
-            );
+        let cs_val: u16;
+        #[cfg(target_arch = "x86_64")]
+        core::arch::asm!(
+            "mov {cs:x}, cs",
+            cs = out(reg) cs_val,
+            options(nostack, preserves_flags),
+        );
+        #[cfg(target_arch = "x86_64")]
+        {
             early_uart_puts(b"[HW] cs_before_farjump=0x");
             early_uart_put_hex64(cs_val as u64);
             early_uart_puts(b"\r\n");
@@ -484,36 +486,39 @@ pub fn init() {
         // CPU keeps using the old slot 7 (D=1 L=1 = invalid 64-bit
         // encoding) and pushq only pushes 4 bytes, breaking iretq.
         #[cfg(target_arch = "x86_64")]
-        unsafe {
-            // 0x38 is KERNEL_CS; the far jump is to the *next*
-            // instruction so we don't lose control flow.
-            // We use a memory operand to avoid AX-routing surprises.
-            core::arch::asm!(
-                "push 0x38",
-                "lea rax, [rip + 2f]",
-                "push rax",
-                "retfq",
-                "2:",
-                options(nostack),
-            );
-            // Sanity check: dump CS right after the far-jump so we
-            // can confirm the descriptor cache reload happened.
-            let cs_after: u16;
-            core::arch::asm!(
-                "mov {cs:x}, cs",
-                cs = out(reg) cs_after,
-                options(nostack, preserves_flags),
-            );
-            // Dump CS.L and CS.D by reading the GDT slot 7.
-            let slot7_lo: u64;
-            let slot7_hi: u64;
-            core::arch::asm!(
-                "mov {lo}, qword ptr [{gdtr} + 0x38]",
-                lo = out(reg) slot7_lo,
-                gdtr = in(reg) gdtr_base,
-                options(nostack),
-            );
-            let _ = slot7_hi;
+        // 0x38 is KERNEL_CS; the far jump is to the *next*
+        // instruction so we don't lose control flow.
+        // We use a memory operand to avoid AX-routing surprises.
+        core::arch::asm!(
+            "push 0x38",
+            "lea rax, [rip + 2f]",
+            "push rax",
+            "retfq",
+            "2:",
+            options(nostack),
+        );
+        // Sanity check: dump CS right after the far-jump so we
+        // can confirm the descriptor cache reload happened.
+        #[cfg(target_arch = "x86_64")]
+        let cs_after: u16;
+        #[cfg(target_arch = "x86_64")]
+        core::arch::asm!(
+            "mov {cs:x}, cs",
+            cs = out(reg) cs_after,
+            options(nostack, preserves_flags),
+        );
+        // Dump CS.L and CS.D by reading the GDT slot 7.
+        #[cfg(target_arch = "x86_64")]
+        let slot7_lo: u64;
+        #[cfg(target_arch = "x86_64")]
+        core::arch::asm!(
+            "mov {lo}, qword ptr [{gdtr} + 0x38]",
+            lo = out(reg) slot7_lo,
+            gdtr = in(reg) gdtr_base,
+            options(nostack),
+        );
+        #[cfg(target_arch = "x86_64")]
+        {
             let cs_dbg = cs_after;
             early_uart_puts(b"[HW] gdt_far_jump_done cs=0x");
             early_uart_put_hex64(cs_dbg as u64);
@@ -530,7 +535,6 @@ pub fn init() {
                 gdtr = in(reg) gdtr_base,
                 options(nostack),
             );
-            let _ = slot7_qword;
             early_uart_puts(b"[HW] slot7 mem=0x");
             early_uart_put_hex64(slot7_qword);
             early_uart_puts(b"\r\n");
@@ -547,15 +551,15 @@ pub fn init() {
             early_uart_puts(b"\r\n");
             // Read the cache via the GDT slot 7 in memory so we can
             // see if the cache matches.
-            let slot7_qword: u64;
+            let slot7_qword_2: u64;
             core::arch::asm!(
                 "mov {v}, qword ptr [{gdtr} + 0x38]",
-                v = out(reg) slot7_qword,
+                v = out(reg) slot7_qword_2,
                 gdtr = in(reg) gdtr_base,
                 options(nostack),
             );
-            let byte5 = ((slot7_qword >> 40) & 0xFF) as u8;
-            let byte6 = ((slot7_qword >> 48) & 0xFF) as u8;
+            let byte5 = ((slot7_qword_2 >> 40) & 0xFF) as u8;
+            let byte6 = ((slot7_qword_2 >> 48) & 0xFF) as u8;
             early_uart_puts(b"[HW] slot7 byte5=0x");
             early_uart_put_hex64(byte5 as u64);
             early_uart_puts(b" byte6=0x");

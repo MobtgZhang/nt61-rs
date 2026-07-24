@@ -1394,10 +1394,18 @@ pub fn read_pe_from_disk(path: &str) -> Option<core::mem::ManuallyDrop<Vec<u8>>>
                 return Some(data);
             }
         }
+        #[cfg(target_arch = "x86_64")]
         crate::fs::FsType::Ext2 | crate::fs::FsType::Ext3 | crate::fs::FsType::Ext4 => {
             if let Some(data) = read_pe_from_ext2(path) {
                 return Some(data);
             }
+        }
+        // Companion to the cfg-gated arm above: on non-x86_64 the
+        // ext* variants are absent from the source so the match
+        // would be non-exhaustive without this wildcard.
+        #[cfg(not(target_arch = "x86_64"))]
+        crate::fs::FsType::Ext2 | crate::fs::FsType::Ext3 | crate::fs::FsType::Ext4 => {
+            boot_println!("[SMSS] read_pe_from_disk: ext2 driver not built on this arch, skipping");
         }
         crate::fs::FsType::Unknown => {
             boot_println!("[SMSS] read_pe_from_disk: system partition type unknown — refusing fallback (no system_image)");
@@ -1687,6 +1695,7 @@ fn read_pe_from_ntfs_impl(
 /// MZ image. Returns `None` if ext2 is not mounted or the read
 /// fails — caller (`read_pe_from_disk`) decides what to do
 /// (fall back to the in-memory PE generator).
+#[cfg(target_arch = "x86_64")]
 fn read_pe_from_ext2(path: &str) -> Option<core::mem::ManuallyDrop<Vec<u8>>> {
     boot_println!("[SMSS] read_pe_from_ext2: path={}", path);
 

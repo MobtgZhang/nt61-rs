@@ -1,15 +1,19 @@
 //! Linear Framebuffer (LFB) Support
 //
-//! On the PC there are two relevant framebuffer modes:
+//! On the PC there are three relevant framebuffer modes:
 //
 //! 1. The UEFI / Multiboot graphics framebuffer, which the
 //!    bootloader already mapped for us. The base address, pitch,
 //!    width, height, and bpp are passed in via `BootInfo`.
 //! 2. The legacy VGA text-mode buffer at physical 0xB8000
 //!    (80x25, 16 colours, 2 bytes per cell).
+//! 3. The OVMF BOCHS VBE aperture at 0xE0_0000_0000 (1024x768x32).
 //
 //! `init()` prefers the LFB and falls back to the VGA text
-//! buffer if no framebuffer info is supplied.
+//! buffer if no framebuffer info is supplied. The cross-arch
+//! LFB writer lives in `hal::common::framebuffer_impl`; this
+//! file mirrors its public API and adds the x86_64-only helpers
+//! (VGA text-mode and BOCHS aperture detection) on top.
 
 #![cfg(target_arch = "x86_64")]
 
@@ -96,6 +100,12 @@ pub fn init(info: Option<FramebufferInfo>) -> FramebufferInfo {
 /// fields into the per-CPU atomics used by the LFB backend. The
 /// caller is responsible for ensuring the LFB base is mapped into
 /// the kernel page tables before any pixels are written to it.
+///
+/// On x86_64 this also wires the cross-arch common LFB backend so
+/// that the bootvid subsystem sees the same address through
+/// `crate::hal::common::framebuffer::info()`. This is what lets
+/// `crate::hal::framebuffer::*` resolve to the cross-arch impl on
+/// non-x86_64 builds while x86_64 keeps its VGA fallback here.
 pub fn init_from_bootinfo(
     base: u64,
     width: u32,
@@ -103,6 +113,23 @@ pub fn init_from_bootinfo(
     stride: u32,
     _format: u32,
 ) -> FramebufferInfo {
+    // Mirror into the cross-arch LFB writer so any caller that
+    // touches `crate::hal::common::framebuffer::*` (notably the
+    // bootvid subsystem) sees the new base/width/height.
+    if let Some(common_info) =
+        crate::hal::common::framebuffer::init_from_bootinfo(base, width, height, stride, _format)
+    {
+        // Set default attribute to 0x07 (light grey on black) so
+        // bootvid's cursor paint uses the standard colour.
+        crate::hal::common::framebuffer::set_attr(0x07);
+        return FramebufferInfo {
+            address: common_info.address,
+            width: common_info.width,
+            height: common_info.height,
+            bpp: common_info.bpp,
+            pitch: common_info.pitch,
+        };
+    }
     // Only adopt the GOP-provided framebuffer if winload actually
     // published one. A zero `base` means winload failed to find
     // a GOP and we should fall back to the VGA text-mode buffer.

@@ -219,7 +219,6 @@ fn find_child_in_index(
     let mut off = u16::from_le_bytes([record[0x14], record[0x15]]) as usize;
     let end = ntfs.mft_record_size as usize;
 
-    let mut found_index_alloc = false;
     uefi::println!(
         "[NTFS] find_child_in_index: parent_record={} name='{}' first_attr_off={} record_end={}",
         parent_record, name,

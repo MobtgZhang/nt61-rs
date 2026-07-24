@@ -602,8 +602,8 @@ impl BatchParser {
     /// blocks across the same file never collide.
     fn flatten_lines_block_ifs(
         &self,
-        mut lines: alloc::vec::Vec<alloc::string::String>,
-        mut counter: usize,
+        lines: alloc::vec::Vec<alloc::string::String>,
+        counter: usize,
     ) -> (
         alloc::vec::Vec<alloc::string::String>,
         usize,

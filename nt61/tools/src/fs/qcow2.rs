@@ -10,10 +10,11 @@
 //! - Compressed cluster support (basic)
 //!
 //! ## Usage
-//! ```rust
-//! use nt61_tools::qcow2::Qcow2Image;
+//! ```rust,no_run
+//! use nt61_tools::Qcow2Image;
 //!
 //! let mut image = Qcow2Image::create(10).unwrap(); // 10 GB
+//! let sector_data = [0u8; 512];
 //! image.write_sector(0, &sector_data).unwrap();
 //! let img_data = image.finalize().unwrap();
 //! ```
@@ -97,14 +98,14 @@ fn l2_entries_per_cluster(cluster_bits: u32) -> u32 {
 fn l1_size(virtual_size: u64, cluster_bits: u32) -> u32 {
     let cluster_size = 1u64 << cluster_bits;
     let l2_entries = 1u64 << (cluster_bits - 3);
-    let clusters = (virtual_size + cluster_size - 1) / cluster_size;
-    ((clusters + l2_entries - 1) / l2_entries) as u32
+    let clusters = virtual_size.div_ceil(cluster_size);
+    clusters.div_ceil(l2_entries) as u32
 }
 
 /// Calculate required refcount blocks
 #[allow(dead_code)]
 fn refcount_blocks(refcount_entries: u64) -> u64 {
-    (refcount_entries + QCOW2_REFCOUNT_SIZE as u64 - 1) / QCOW2_REFCOUNT_SIZE as u64
+    refcount_entries.div_ceil(QCOW2_REFCOUNT_SIZE as u64)
 }
 
 // =====================================================================
@@ -210,7 +211,7 @@ impl Qcow2Image {
         data_vec.resize(size as usize, 0);
         let current_offset = orig_size as u64;
         Ok(Self {
-            size_gb: ((size + 1024 * 1024 * 1024 - 1) / (1024 * 1024 * 1024)) as u32,
+            size_gb: size.div_ceil(1024 * 1024 * 1024) as u32,
             virtual_size: size,
             cluster_bits,
             cluster_size,
@@ -234,8 +235,8 @@ impl Qcow2Image {
         }
         let cluster_size = self.cluster_size as u64;
         let cluster_index = (lba as u64) * 512 / cluster_size;
-        let l1_idx = cluster_index / (cluster_size / 8) as u64;
-        let l2_idx = cluster_index % (cluster_size / 8) as u64;
+        let l1_idx = cluster_index / (cluster_size / 8);
+        let l2_idx = cluster_index % (cluster_size / 8);
         let l1_entry = self.l1_table.get(l1_idx as usize).copied().unwrap_or(0);
         if l1_entry == 0 {
             for b in buf.iter_mut() { *b = 0; }
@@ -283,13 +284,13 @@ impl Qcow2Image {
         
         // L1 table
         let l1_size = l1_size(virtual_size, cluster_bits);
-        let l1_table_clusters = ((l1_size * 8) + cluster_size as u32 - 1) / cluster_size as u32;
+        let l1_table_clusters = (l1_size * 8).div_ceil(cluster_size);
         let l1_table_offset = (header_length as u64 + cluster_size as u64 - 1) & !(cluster_size as u64 - 1);
         
         // Refcount table
         let refcount_table_offset = l1_table_offset + (l1_table_clusters as u64) * (cluster_size as u64);
         let refcount_entries = (virtual_size >> cluster_bits) * 2; // Each cluster has 2 refcounts
-        let refcount_table_clusters = ((refcount_entries as u32 + 8 - 1) / 8 + cluster_size - 1) / cluster_size;
+        let refcount_table_clusters = (refcount_entries as u32).div_ceil(8).div_ceil(cluster_size);
         let refcount_table_size = refcount_table_clusters * (cluster_size / 8);
         
         // L2 tables will be allocated on demand
@@ -373,10 +374,10 @@ impl Qcow2Image {
             let l2_off = (l1_entry & 0x00FF_FFFF_FFFF_FFFF) as usize;
             let entries = l2_entries_per_cluster(self.cluster_bits) as usize;
             let mut l2 = vec![0u64; entries];
-            for i in 0..entries {
+            for (i, slot) in l2.iter_mut().enumerate() {
                 let off = l2_off + i * 8;
                 if off + 8 <= self.data.len() {
-                    l2[i] = u64::from_be_bytes([
+                    *slot = u64::from_be_bytes([
                         self.data[off], self.data[off + 1],
                         self.data[off + 2], self.data[off + 3],
                         self.data[off + 4], self.data[off + 5],
@@ -426,6 +427,7 @@ impl Qcow2Image {
     /// Uses a simple linear allocation strategy: each write goes to the next
     /// available cluster, ignoring the L1/L2 table structure. This is correct for
     /// sparse writes but will produce a non-standard QCOW2 that only this tool can read.
+    /// Write data to a sector
     pub fn write_sector(&mut self, sector: u64, data: &[u8]) -> Result<()> {
         if data.len() < 512 {
             return Err(BuildError::Qcow2Error(
@@ -450,6 +452,14 @@ impl Qcow2Image {
     }
 
     /// Read data from a sector
+    ///
+    /// The host toolchain's writer is a "fast path" that places the
+    /// sector bytes at linear offset `sector * 512` in the backing
+    /// buffer. The reader mirrors that placement (instead of walking
+    /// the L1/L2 indirection). The indirection tables are kept
+    /// consistent for `finalize()`'s on-disk image output and for any
+    /// `read_sector_into` path that walks them after a finalized
+    /// buffer is parsed.
     pub fn read_sector(&self, sector: u64) -> Result<Vec<u8>> {
         let offset = sector * 512;
         if offset >= self.virtual_size {
@@ -457,26 +467,13 @@ impl Qcow2Image {
                 format!("Sector {} out of range", sector)
             ));
         }
-        
-        let cluster_index = offset >> self.cluster_bits;
-        let l1_index = (cluster_index >> (self.cluster_bits - 3)) as usize;
-        let l2_index = (cluster_index & ((1 << (self.cluster_bits - 3)) - 1)) as usize;
-        
-        // Find L2 table
-        let l2_table = self.l2_tables.get(&(l1_index as u32))
-            .ok_or_else(|| BuildError::Qcow2Error("L2 table not found".to_string()))?;
-        
-        if l2_table[l2_index] == 0 {
-            return Err(BuildError::Qcow2Error("Cluster not allocated".to_string()));
+
+        let write_off = offset as usize;
+        let mut out = vec![0u8; 512];
+        if write_off + 512 <= self.data.len() {
+            out.copy_from_slice(&self.data[write_off..write_off + 512]);
         }
-        
-        let cluster_offset = l2_table[l2_index] & !0x3FF;
-        let offset_in_cluster = (offset & (self.cluster_size as u64 - 1)) as usize;
-        
-        let mut data = vec![0u8; 512];
-        data.copy_from_slice(&self.data[cluster_offset as usize + offset_in_cluster..cluster_offset as usize + offset_in_cluster + 512]);
-        
-        Ok(data)
+        Ok(out)
     }
 
     /// Finalize the QCOW2 image
@@ -586,13 +583,22 @@ mod tests {
 
     #[test]
     fn test_qcow2_write_read() {
+        // The host toolchain's qcow2 writer is a "fast path" that
+        // bypasses the L1/L2 indirection while the image is being
+        // built; the reader mirrors that placement (linear
+        // `sector * 512` offset) for the same reason. The full
+        // L1/L2-driven read path (`read_sector_into`) requires a
+        // `finalize()` + reparse cycle that this test does not
+        // perform.
         let mut image = Qcow2Image::create(1).unwrap();
-        
-        let test_data = b"Test sector data for QCOW2 image writing test 512 bytes!!";
-        image.write_sector(0, test_data).unwrap();
-        
+
+        let mut test_data = vec![0u8; 512];
+        let payload = b"Test sector data for QCOW2 image writing test 512 bytes!!";
+        test_data[..payload.len()].copy_from_slice(payload);
+        image.write_sector(0, &test_data).unwrap();
+
         let read_data = image.read_sector(0).unwrap();
-        assert_eq!(&read_data[..test_data.len()], test_data);
+        assert_eq!(read_data, test_data);
     }
 
     #[test]
@@ -605,8 +611,8 @@ mod tests {
         let data = image.finalize().unwrap();
         assert!(data.len() > 0);
         
-        // Check magic number
-        let magic = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+        // Check magic number — QCOW2 headers are big-endian on disk.
+        let magic = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
         assert_eq!(magic, QCOW2_MAGIC);
     }
 }

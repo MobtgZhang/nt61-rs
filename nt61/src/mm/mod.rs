@@ -316,6 +316,44 @@ pub fn init(boot_info: &BootInfo) {
         chosen_size = BOOTSTRAP_RAM;
     }
 
+    // Widen the PFN DB so it covers the live CR3 PML4. OVMF
+    // often places its reserved page-table pages just past the
+    // largest `EfiConventionalMemory` region (e.g. q35 `-m 8G`
+    // lands the PML4 at `0x7f801000`), outside the 64 MiB
+    // bootstrap window. `frame::init` will clamp `num_frames`
+    // to FRAME_TABLE_ENTRIES (128 MiB) and emit `AI0_CLAMP`;
+    // PFN DB storage is allocated out of the buddy separately.
+    #[cfg(target_arch = "x86_64")]
+    {
+        let cr3_phys: u64 = {
+            let v: u64;
+            unsafe {
+                core::arch::asm!(
+                    "mov {}, cr3",
+                    out(reg) v,
+                    options(nostack, preserves_flags)
+                );
+            }
+            v & !0xFFFu64
+        };
+        let cr3_pfn_end = (cr3_phys >> 12) + 1;
+        let chosen_end_pfn = (chosen_base / 4096) + (chosen_size / 4096);
+        if cr3_pfn_end > chosen_end_pfn {
+            const MAX_PFN_DB_COVERAGE: u64 = 512 * 1024 * 1024;
+            let base_pfn = chosen_base / 4096;
+            let new_size = (cr3_pfn_end - base_pfn) * 4096;
+            let aligned = (new_size + 0xFFF) & !0xFFF;
+            chosen_size = if aligned > MAX_PFN_DB_COVERAGE {
+                MAX_PFN_DB_COVERAGE
+            } else {
+                aligned
+            };
+            crate::hal::serial::write_string(
+                "[mm] extended PFN DB to cover CR3 PML4\r\n",
+            );
+        }
+    }
+
     {
         // Print the chosen region. The hex formatting and decimal
         // MB count stay local; the serial output goes through the

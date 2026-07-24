@@ -10,10 +10,12 @@
 //! - Bootable ISO generation
 //!
 //! ## Usage
-//! ```rust
-//! use nt61_tools::iso9660::IsoImage;
+//! ```rust,no_run
+//! use nt61_tools::IsoImage;
 //!
-//! let mut image = IsoImage::new().unwrap();
+//! let mut image = IsoImage::new();
+//! let boot_data = [0u8; 512];
+//! let boot_catalog = [0u8; 2048];
 //! image.add_file("/EFI/BOOT/BOOTX64.EFI", &boot_data).unwrap();
 //! image.add_boot_catalog(&boot_catalog).unwrap();
 //! let img_data = image.finalize().unwrap();
@@ -325,7 +327,7 @@ impl IsoImage {
                         let flags = dir[sp + 3];
                         if flags & 0x01 == 0 {
                             // current name (not "..")
-                            let nlen = (len - 5) as usize;
+                            let nlen = len - 5;
                             let name_bytes = &dir[sp + 4..sp + 4 + nlen];
                             if let Ok(s) = std::str::from_utf8(name_bytes) {
                                 rr_name = Some(s.to_string());
@@ -419,7 +421,7 @@ impl IsoImage {
                 let is_dir = self.files.iter().any(|f| {
                     let p = format!("{}/{}", prefix, rel);
                     f.path == p || f.path.starts_with(&format!("{}/", p))
-                }) || rel == "";
+                }) || rel.is_empty();
                 if is_dir && !rel.is_empty() {
                     out.push(DirEntry::dir(rel));
                 } else {
@@ -487,7 +489,7 @@ impl IsoImage {
         // Data files begin at data_start_lba (19).
         let mut lba = self.data_start_lba;
         for entry in &self.files {
-            let sectors = ((entry.data.len() + ISO_SECTOR_SIZE - 1) / ISO_SECTOR_SIZE) as u32;
+            let sectors = entry.data.len().div_ceil(ISO_SECTOR_SIZE) as u32;
             lba += sectors;
         }
         lba
@@ -508,7 +510,7 @@ impl IsoImage {
         // Must cover the entire bootx64.efi file.
         let sector_count = self.files.iter()
             .find(|e| e.path == "/EFI/BOOT/BOOTX64.EFI")
-            .map(|e| ((e.data.len() + 511) / 512) as u16)
+            .map(|e| e.data.len().div_ceil(512) as u16)
             .unwrap_or(1);
 
         eprintln!("[DEBUG ISO] add_boot_catalog: boot_image_lba={} (0x{:X}), files count={}",
@@ -860,7 +862,7 @@ impl IsoImage {
         // sector is included in the on-disk image.
         let mut file_sectors: u32 = 0;
         for entry in &self.files {
-            file_sectors += ((entry.data.len() + ISO_SECTOR_SIZE - 1) / ISO_SECTOR_SIZE) as u32;
+            file_sectors += entry.data.len().div_ceil(ISO_SECTOR_SIZE) as u32;
         }
 
         // Count unique first-level AND second-level directories.
@@ -929,7 +931,7 @@ impl IsoImage {
         let root_dir_lba = {
             let mut lba = self.data_start_lba;
             for entry in &self.files {
-                let sectors = ((entry.data.len() + ISO_SECTOR_SIZE - 1) / ISO_SECTOR_SIZE) as u32;
+                let sectors = entry.data.len().div_ceil(ISO_SECTOR_SIZE) as u32;
                 lba += sectors;
             }
             lba
@@ -1010,7 +1012,7 @@ impl IsoImage {
         // Write files
         for entry in &self.files {
             let offset = (entry.lba as usize) * ISO_SECTOR_SIZE;
-            let padded_len = ((entry.data.len() + ISO_SECTOR_SIZE - 1) / ISO_SECTOR_SIZE) * ISO_SECTOR_SIZE;
+            let padded_len = entry.data.len().div_ceil(ISO_SECTOR_SIZE) * ISO_SECTOR_SIZE;
             image[offset..offset + entry.data.len()].copy_from_slice(&entry.data);
             image[offset + entry.data.len()..offset + padded_len].fill(0);
         }
@@ -1219,7 +1221,7 @@ impl IsoImage {
         let name_bytes = name.as_bytes();
         let name_len = name_bytes.len().min(255);
         // Record length: 33 + name_len, padded to even
-        let record_len: u8 = if (33 + name_len) % 2 == 0 {
+        let record_len: u8 = if (33 + name_len).is_multiple_of(2) {
             (33 + name_len) as u8
         } else {
             (34 + name_len) as u8

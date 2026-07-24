@@ -678,28 +678,26 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
         // DEBUG: print LSTAR and EFER to verify syscall is reachable
         let lstar: u64;
         let efer: u64;
-        unsafe {
-            core::arch::asm!(
-                "mov ecx, 0xc0000082",
-                "rdmsr",
-                "shl rdx, 32",
-                "or rax, rdx",
-                lateout("rax") lstar,
-                out("rcx") _,
-                out("rdx") _,
-                options(nostack),
-            );
-            core::arch::asm!(
-                "mov ecx, 0xc0000080",
-                "rdmsr",
-                "shl rdx, 32",
-                "or rax, rdx",
-                lateout("rax") efer,
-                out("rcx") _,
-                out("rdx") _,
-                options(nostack),
-            );
-        }
+        core::arch::asm!(
+            "mov ecx, 0xc0000082",
+            "rdmsr",
+            "shl rdx, 32",
+            "or rax, rdx",
+            lateout("rax") lstar,
+            out("rcx") _,
+            out("rdx") _,
+            options(nostack),
+        );
+        core::arch::asm!(
+            "mov ecx, 0xc0000080",
+            "rdmsr",
+            "shl rdx, 32",
+            "or rax, rdx",
+            lateout("rax") efer,
+            out("rcx") _,
+            out("rdx") _,
+            options(nostack),
+        );
         crate::hal::x86_64::serial::write_string("[UE] LSTAR=");
         crate::hal::x86_64::serial::write_u64_hex(lstar);
         crate::hal::x86_64::serial::write_string(" EFER=");

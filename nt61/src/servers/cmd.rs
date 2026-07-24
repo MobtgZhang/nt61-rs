@@ -1396,6 +1396,26 @@ fn print_four_digits(n: u16) {
     write_char(b'0' + (n % 10) as u8);
 }
 
+/// Print a 32-bit value as eight ASCII hex digits (cross-architecture
+/// equivalent of the legacy x86_64 `hal::x86_64::serial::write_u32_hex`
+/// helper used by `run_batch_from_user_ptr`).
+fn write_hex_byte(n: u32) {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut started = false;
+    for i in (0..8u32).rev() {
+        let nibble = ((n >> (i * 4)) & 0xF) as u8;
+        if nibble != 0 || started || i == 0 {
+            write_char(HEX[nibble as usize]);
+            started = true;
+        }
+    }
+    // Always end with at least one '0' so the caller sees a stable
+    // width (matches the legacy serial hex printer for n=0).
+    if !started {
+        write_char(b'0');
+    }
+}
+
 fn cmd_help() {
     serial_print(b"\r\nCD or CHDIR     Change directory\r\n");
     serial_print(b"CLS             Clear screen\r\n");
@@ -2367,6 +2387,7 @@ impl CmdBatchExecutor {
     /// Read `filename` through the ext2/3/4 driver. The
     /// Windows-style path is converted to the POSIX-style
     /// path that `ext2::read_whole_file` expects.
+    #[cfg(target_arch = "x86_64")]
     fn read_file_ext2(&self, filename: &str) -> Result<String, BatError> {
         if !crate::fs::ext2::is_mounted() {
             return Err(BatError::IoError);
@@ -2382,6 +2403,18 @@ impl CmdBatchExecutor {
             }
         };
         Ok(normalise_batch_text(&data))
+    }
+
+    /// Stub for non-x86_64 builds — the ext2 driver ships only
+    /// on x86_64 right now (see `fs::ext2` module declaration).
+    /// Returning `FileNotFound` keeps the BAT executor from
+    /// looping on a missing driver while staying consistent with
+    /// the other read-file backends.
+    #[cfg(not(target_arch = "x86_64"))]
+    fn read_file_ext2(&self, _filename: &str) -> Result<String, BatError> {
+        Err(BatError::FileNotFound(alloc::string::String::from(
+            "ext2 filesystem driver not available on this architecture",
+        )))
     }
 }
 
@@ -2598,11 +2631,11 @@ pub fn run_batch_from_user_ptr(user_ptr: *const u8) -> Option<()> {
     unsafe {
         while len < buf.len() {
             let b = core::ptr::read_volatile(user_ptr.add(len));
-            crate::hal::x86_64::serial::write_string("[CMD-A] byte[");
-            crate::hal::x86_64::serial::write_u32_hex(len as u32);
-            crate::hal::x86_64::serial::write_string("]=0x");
-            crate::hal::x86_64::serial::write_u32_hex(b as u32);
-            crate::hal::x86_64::serial::write_string("\r\n");
+            serial_print(b"[CMD-A] byte[");
+            write_hex_byte(len as u32);
+            serial_print(b"]=0x");
+            write_hex_byte(b as u32);
+            serial_print(b"\r\n");
             if b == 0 {
                 break;
             }
@@ -2610,9 +2643,9 @@ pub fn run_batch_from_user_ptr(user_ptr: *const u8) -> Option<()> {
             len += 1;
         }
     }
-    crate::hal::x86_64::serial::write_string("[CMD-A] copied len=");
-    crate::hal::x86_64::serial::write_u32_hex(len as u32);
-    crate::hal::x86_64::serial::write_string("\r\n");
+    serial_print(b"[CMD-A] copied len=");
+    write_hex_byte(len as u32);
+    serial_print(b"\r\n");
     if len == 0 {
         serial_print(b"[CMD-A] len=0, returning None\r\n");
         return None;
@@ -2625,13 +2658,13 @@ pub fn run_batch_from_user_ptr(user_ptr: *const u8) -> Option<()> {
             s
         }
         Err(e) => {
-            crate::hal::x86_64::serial::write_string("[CMD-A] path utf8 err=");
-            crate::hal::x86_64::serial::write_u32_hex(e.valid_up_to() as u32);
-            crate::hal::x86_64::serial::write_string("\r\n");
+            serial_print(b"[CMD-A] path utf8 err=");
+            write_hex_byte(e.valid_up_to() as u32);
+            serial_print(b"\r\n");
             return None;
         }
     };
-    crate::hal::x86_64::serial::write_string("[CMD-A] calling run_batch_file('");
+    serial_print(b"[CMD-A] calling run_batch_file('");
     serial_print(path.as_bytes());
     serial_print(b"')\r\n");
     match run_batch_file(path) {

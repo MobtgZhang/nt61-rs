@@ -113,24 +113,10 @@ pub fn init(hz: u32) -> bool {
     // We return `false` here so callers (which usually ignore the
     // boolean anyway) know the timer is not actually ticking. The
     // proper fix is to size the IST stack for deep nesting and
-    // verify the IRQ handlers are re-entrant; once that lands we
-    // can re-enable this code path.
-    return false;
-
-    let cmd = mode::SEL_CHAN0
-            | mode::ACCESS_LOHI
-            | mode::MODE_2
-            | mode::BINARY;
-    unsafe {
-        asm!("out dx, al", in("dx") PIT_COMMAND, in("al") cmd,
-             options(nomem, nostack));
-    }
-    WRITE_PORT_UCHAR(PIT_CHANNEL0, (divisor & 0xFF) as u8);
-    io_wait();
-    WRITE_PORT_UCHAR(PIT_CHANNEL0, ((divisor >> 8) & 0xFF) as u8);
-    io_wait();
-    PIT_HZ.store(hz, Ordering::Release);
-    true
+    // verify the IRQ handlers are re-entrant; once that lands the
+    // PIT programming block that lived below this comment can be
+    // reinstated verbatim.
+    false
 }
 
 /// Read the current programmed frequency in Hz.

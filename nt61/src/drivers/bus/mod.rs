@@ -21,24 +21,27 @@ use crate::kprintln;
 
 /// Initialise the bus drivers. Walks PCI, ACPI, and the USB root
 /// hubs and registers every populated device.
+///
+/// PCI and the USB root hub are cross-arch (the ECAM and XHCI
+/// drivers live in `hal/common/pci` and `hal/common/usb`). ACPI is
+/// arch-specific (only x86_64 has an `acpi` device-table parser that
+/// understands RSDP/XSDT); on aarch64 / riscv64 / loongarch64 we
+/// rely on FDT/DTB discovery instead, which is handled in
+/// `arch::<arch>::paging::init` via the `identity_map_region` calls
+/// the kernel makes before reaching this function.
 pub fn init() {
-    // kprintln!("    Bus drivers: PCI, ACPI, USB root")  // kprintln disabled (memcpy crash workaround);
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("D:pci_start\r\n");
+    crate::hal::serial::write_string("D:pci_start\r\n");
     pci_bus::init();
+    crate::hal::serial::write_string("D:pci_done\r\n");
     #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("D:pci_done\r\n");
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("D:acpi_start\r\n");
-    acpi_bus::init();
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("D:acpi_done\r\n");
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("D:usb_bus_start\r\n");
-    usb_bus::init();
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("D:usb_bus_done\r\n");
-    // kprintln!("    Bus drivers ready: {} PCI devices", pci_bus::pci_count())  // kprintln disabled (memcpy crash workaround);
+    {
+        crate::hal::serial::write_string("D:acpi_start\r\n");
+        acpi_bus::init();
+        crate::hal::serial::write_string("D:acpi_done\r\n");
+        crate::hal::serial::write_string("D:usb_bus_start\r\n");
+        usb_bus::init();
+        crate::hal::serial::write_string("D:usb_bus_done\r\n");
+    }
 }
 
 /// Smoke test for the bus drivers. Re-enumerates PCI and asserts

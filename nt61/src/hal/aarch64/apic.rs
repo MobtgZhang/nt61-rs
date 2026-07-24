@@ -150,11 +150,9 @@ fn init_gicv3() {
     // kernel's bootstrap path doesn't need functional IRQs to
     // reach `cmd.exe` — the SMP bring-up path will rewire GICv3
     // once we have a working EL2 stub.
-    unsafe {
-        crate::hal::serial::write_string("hal_apic:gicv3_enter\r\n");
-        crate::hal::serial::write_string("hal_apic:gicv3_pmr_done\r\n");
-        crate::hal::serial::write_string("hal_apic:gicv3_waker_done\r\n");
-    }
+    crate::hal::serial::write_string("hal_apic:gicv3_enter\r\n");
+    crate::hal::serial::write_string("hal_apic:gicv3_pmr_done\r\n");
+    crate::hal::serial::write_string("hal_apic:gicv3_waker_done\r\n");
 }
 
 /// Acknowledge and end-of-interrupt the highest-priority pending
@@ -202,7 +200,11 @@ pub fn dispatch_irq(irq: u64) {
 /// Acknowledge-elapsed IRQ count (for smoke tests).
 pub fn irq_count() -> u32 { IRQ_COUNT.load(Ordering::Relaxed) }
 
-/// Smoke test: verify the GIC has been initialised.
+/// Smoke test: verify the GIC has been initialised. With the
+/// current stub implementation the GIC is considered ready as
+/// soon as `init()` has been called; the IRQ counter is an
+/// `AtomicU64` so any non-zero value means we have ticked at
+/// least once.
 pub fn smoke_test() -> bool {
-    IRQ_COUNT.load(Ordering::Relaxed) >= 0
+    IRQ_COUNT.load(Ordering::Relaxed) > 0
 }

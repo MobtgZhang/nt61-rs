@@ -8,8 +8,6 @@
 pub const SYS_PUTCHAR: u32 = 0x0202;
 /// Non-blocking PS/2 / serial poll, returns scancode or 0.
 pub const SYS_POLL_KEY: u32 = 0x0203;
-/// Frame-buffer putchar (used for direct LFB writes).
-pub const SYS_PUTCHAR_FB: u32 = 0x0204;
 /// Wipe screen + reset cursor.
 pub const SYS_CLEAR: u32 = 0x0205;
 /// Exit the calling Ring-3 process.

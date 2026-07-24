@@ -141,16 +141,20 @@ unsafe impl Sync for TraceRing {}
 // helpers (`atomic_add_u32`, `atomic_store_u64`) below give us
 // the same semantics without depending on the unstable API.
 #[used]
+#[cfg(target_arch = "x86_64")]
 static mut TRACE_BUF: [u64; TRACE_RING * 4] = [0u64; TRACE_RING * 4];
 #[used]
+#[cfg(target_arch = "x86_64")]
 static mut TRACE_HEAD: u32 = 0;
 #[used]
+#[cfg(target_arch = "x86_64")]
 static mut TRACE_SEQ: u32 = 0;
 
 /// Atomic fetch-add on a `u32` slot, implemented inline so we don't
 /// need `core::sync::atomic::AtomicU32` (whose `const fn new(0)`
 /// wrapper was being elided by LTO on `x86_64-unknown-uefi`).
 #[inline]
+#[cfg(target_arch = "x86_64")]
 unsafe fn atomic_add_u32(slot: *mut u32, delta: u32) -> u32 {
     let prev: u32;
     // SAFETY: caller guarantees the slot is uniquely accessible.
@@ -171,6 +175,7 @@ unsafe fn atomic_add_u32(slot: *mut u32, delta: u32) -> u32 {
 /// Atomic store of a `u64` with `Release` semantics, implemented
 /// inline via `xchg` so we don't need an `AtomicU64::store`.
 #[inline]
+#[cfg(target_arch = "x86_64")]
 unsafe fn atomic_store_u64(slot: *mut u64, val: u64) {
     // SAFETY: caller guarantees exclusive access to `slot`.
     unsafe {
@@ -187,6 +192,7 @@ unsafe fn atomic_store_u64(slot: *mut u64, val: u64) {
 /// compiler barrier + ordinary load because `dump_trace` is the only
 /// reader and runs after we're done writing.
 #[inline]
+#[cfg(target_arch = "x86_64")]
 unsafe fn atomic_load_u32(slot: *const u32) -> u32 {
     let val: u32;
     // SAFETY: caller guarantees the slot is accessible.
@@ -202,6 +208,7 @@ unsafe fn atomic_load_u32(slot: *const u32) -> u32 {
 }
 
 #[inline]
+#[cfg(target_arch = "x86_64")]
 fn push(kind: u32, a: u64, b: u64, c: u64, d: u64) {
     // SAFETY: TRACE_BUF / TRACE_HEAD / TRACE_SEQ are written only
     // here and only read by `dump_trace`. The loader is single-threaded
@@ -212,14 +219,15 @@ fn push(kind: u32, a: u64, b: u64, c: u64, d: u64) {
         let head = atomic_add_u32(core::ptr::addr_of_mut!(TRACE_HEAD), 1);
         let idx = (head as usize) % TRACE_RING;
         let base = idx * 4;
+        let buf_ptr = core::ptr::addr_of_mut!(TRACE_BUF) as *mut u64;
         atomic_store_u64(
-            TRACE_BUF.as_mut_ptr().add(base + 0),
+            buf_ptr.add(base + 0),
             (((kind as u64) & 0xFFFF_FFFF) << 32) | (seq as u64),
         );
-        atomic_store_u64(TRACE_BUF.as_mut_ptr().add(base + 1), a);
-        atomic_store_u64(TRACE_BUF.as_mut_ptr().add(base + 2), b);
+        atomic_store_u64(buf_ptr.add(base + 1), a);
+        atomic_store_u64(buf_ptr.add(base + 2), b);
         atomic_store_u64(
-            TRACE_BUF.as_mut_ptr().add(base + 3),
+            buf_ptr.add(base + 3),
             (((c as u64) & 0xFFFF_FFFF) << 32) | (d as u64),
         );
     }
@@ -458,9 +466,9 @@ impl PersistentBootData {
             ],
             memory_map_size_bytes: 0,
             descriptor_size: 0,
-            /// UEFI `map_key` returned by `GetMemoryMap` — must be
-            /// passed to `ExitBootServices(image_handle, map_key)`.
-            /// Zero before `collect_memory_map` runs.
+            // UEFI `map_key` returned by `GetMemoryMap` — must be
+            // passed to `ExitBootServices(image_handle, map_key)`.
+            // Zero before `collect_memory_map` runs.
             map_key: 0,
             framebuffer_base: 0,
             framebuffer_size: 0,
@@ -3774,9 +3782,7 @@ fn os_loader_run() -> ! {
     // We install the pointer *now* (before ExitBootServices) so the
     // value is definitely visible by the time we reach Phase L11.
     uefi::println!("--- Phase L09 ---");
-    let trampoline_addr = unsafe {
-        nt61::arch::x86_64::ntoskrnl_handoff::install_handoff_pointer()
-    };
+    let trampoline_addr = nt61::arch::x86_64::ntoskrnl_handoff::install_handoff_pointer();
     uefi::println!(
         "[WINLOAD] L09: trampoline address = 0x{:x}",
         trampoline_addr
@@ -3866,7 +3872,7 @@ fn os_loader_run() -> ! {
     // ExitBootServices because it lives inside the loaded PE, not in
     // the fragile BootServicesData region.
     uefi::println!("--- Phase L11 ---");
-    let entry_rva = crate::arch::x86_64::kernel_entry::KiSystemStartup_RVA;
+    let entry_rva = crate::arch::x86_64::kernel_entry::KI_SYSTEM_STARTUP_RVA;
     let ki_va = ntoskrnl_base_l03 + entry_rva;
     uefi::println!(
         "[WINLOAD] L11: jumping to disk ntoskrnl.exe at 0x{:x} entry=0x{:x} stack_top=0x{:x}",

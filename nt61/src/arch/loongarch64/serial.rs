@@ -41,8 +41,12 @@ fn base() -> u64 {
     if b == 0 { 0x1FE0_0000 } else { b }
 }
 
-/// Write a single character to the UART.
+/// Write a single character to the UART. Honours the global
+/// `hal::common::serial_disable` gate.
 pub fn write_char(c: u8) {
+    if crate::hal::common::serial_disable::is_disabled() {
+        return;
+    }
     let b = base();
     unsafe {
         while ptr::read_volatile((b + UART_LSR) as *const u8) & 0x20 == 0 {}
@@ -50,8 +54,11 @@ pub fn write_char(c: u8) {
     }
 }
 
-/// Write a string to the UART.
+/// Write a string to the UART. Honours the gate.
 pub fn write_string(s: &str) {
+    if crate::hal::common::serial_disable::is_disabled() {
+        return;
+    }
     for c in s.bytes() { write_char(c); }
 }
 

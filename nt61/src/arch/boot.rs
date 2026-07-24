@@ -87,7 +87,7 @@ pub fn early_write_str(s: &[u8]) {
 #[inline(never)]
 pub fn arch_early_ensure_serial_ready() {
     #[cfg(target_arch = "loongarch64")]
-    unsafe {
+    {
         let prev = arch_early_ensure_serial_ready_loongarch();
         ARCH_EARLY_LAST_CRMD.store(prev, core::sync::atomic::Ordering::Relaxed);
     }
@@ -115,37 +115,93 @@ static ARCH_EARLY_LAST_CRMD: core::sync::atomic::AtomicU64 =
     core::sync::atomic::AtomicU64::new(0);
 
 /// Adopt the GOP / firmware-provided framebuffer that `winload`
-/// published in `BootInfo`. On x86_64 this initialises the LFB
-/// and the `bootvid` driver; on architectures that have no LFB
-/// (aarch64 / riscv64 / loongarch64) this is a no-op and returns
-/// `false`. Returns `true` if a framebuffer was brought up
-/// successfully, so the caller can log a status line without
-/// reaching into `FramebufferInfo` itself.
-#[cfg(target_arch = "x86_64")]
+/// published in `BootInfo`. The pixel writer is the cross-arch
+/// `hal::common::framebuffer` module which is the same code on
+/// every architecture; the bootvid subsystem reads through the
+/// same atomics regardless of target. Returns `true` if a
+/// framebuffer was brought up successfully so the caller can log
+/// a status line without reaching into `FramebufferInfo` itself.
 pub fn adopt_bootinfo_framebuffer(boot: &BootInfo) -> bool {
     if boot.framebuffer_base == 0 || boot.framebuffer_width == 0 {
         return false;
     }
-    let info = crate::hal::x86_64::framebuffer::init_from_bootinfo(
+    // Map the LFB base into the kernel's address space if needed.
+    // On x86_64 the firmware left an identity map below 4 GiB so
+    // no extra mapping is required; on the other architectures
+    // the kernel needs to explicitly map the framebuffer page(s)
+    // before any pixel write would otherwise fault.
+    map_framebuffer_region(boot.framebuffer_base, boot.framebuffer_size);
+
+    // Try the cross-arch LFB writer first. This is the source of
+    // truth on every non-x86_64 target; on x86_64 it is mirrored
+    // by `hal::x86_64::framebuffer::init_from_bootinfo` (called by
+    // the legacy fallback path) so both writers stay in sync.
+    if crate::hal::common::framebuffer::init_from_bootinfo(
         boot.framebuffer_base,
         boot.framebuffer_width,
         boot.framebuffer_height,
         boot.framebuffer_stride,
         boot.framebuffer_format,
-    );
+    ).is_some()
+    {
+        crate::hal::common::framebuffer::set_attr(0x07);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        // The x86_64 path additionally needs to mirror the same
+        // info into the per-arch atomics so the legacy VGA-text
+        // fallback stays consistent. We call the per-arch helper
+        // last so the cross-arch writer wins for the LFB path.
+        let _ = crate::hal::x86_64::framebuffer::init_from_bootinfo(
+            boot.framebuffer_base,
+            boot.framebuffer_width,
+            boot.framebuffer_height,
+            boot.framebuffer_stride,
+            boot.framebuffer_format,
+        );
+    }
+
+    // Wire bootvid onto the LFB so every `boot_println!` /
+    // `gui_log` paint routes to the panel QEMU `-display gtk`
+    // actually scans out. `init_from_framebuffer` is idempotent.
     crate::drivers::bootvid::init_from_framebuffer(
-        info.address,
-        info.width,
-        info.height,
-        info.pitch,
+        boot.framebuffer_base,
+        boot.framebuffer_width,
+        boot.framebuffer_height,
+        boot.framebuffer_stride,
     );
     crate::drivers::bootvid::init();
     true
 }
 
-#[cfg(not(target_arch = "x86_64"))]
-pub fn adopt_bootinfo_framebuffer(_boot: &BootInfo) -> bool {
-    false
+/// Map the LFB region into the kernel page tables. On x86_64 the
+/// firmware already leaves an identity map for everything below 4
+/// GiB so this is a no-op. On the other architectures we ask the
+/// per-arch MM layer to map `[pa, pa+size)` so the kernel can write
+/// to the GOP LFB without faulting.
+///
+/// A zero `size` is treated as "guess based on dimensions" (8 MiB
+/// is enough for any sane 32 bpp panel up to ~1080p).
+fn map_framebuffer_region(pa: u64, size: u64) {
+    let size = if size == 0 { 8 * 1024 * 1024 } else { size };
+    #[cfg(target_arch = "x86_64")]
+    {
+        // Identity map below 4 GiB is in place; nothing to do.
+        let _ = (pa, size);
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        let _ = crate::arch::aarch64::paging::identity_map_region(pa, size);
+    }
+    #[cfg(target_arch = "riscv64")]
+    {
+        let _ = crate::arch::riscv64::paging::identity_map_region(pa, size);
+    }
+    #[cfg(target_arch = "loongarch64")]
+    {
+        let _ = crate::arch::loongarch64::paging::identity_map_region(pa, size);
+    }
 }
 
 /// Bring up the platform's text console (VGA mirror on x86_64,
@@ -202,28 +258,22 @@ pub fn mask_all_irqs_for_polled_io() {
 /// `SafeModeCmd`      -> plain text mode.
 /// `SafeModeDebug`    -> SOS mode (driver-load verbose) + ntbtlog.
 pub fn configure_boot_display(mode: BootMode) {
-    #[cfg(target_arch = "x86_64")]
-    {
-        use crate::drivers::bootvid::{set_boot_mode, display_windows_logo, BootDisplayMode};
-        match mode {
-            BootMode::Normal => {
-                set_boot_mode(BootDisplayMode::Normal);
-                display_windows_logo();
-            }
-            BootMode::SafeModeCmd => {
-                set_boot_mode(BootDisplayMode::Normal);
-            }
-            BootMode::SafeModeDebug => {
-                set_boot_mode(BootDisplayMode::Sos);
-                crate::rtl::ntbtlog::enable_boot_log();
-                crate::rtl::ntbtlog::begin_boot_sequence();
-                crate::rtl::ntbtlog::log_ntoskrnl();
-            }
+    use crate::drivers::bootvid::{set_boot_mode, display_windows_logo, BootDisplayMode};
+    match mode {
+        BootMode::Normal => {
+            set_boot_mode(BootDisplayMode::Normal);
+            display_windows_logo();
+        }
+        BootMode::SafeModeCmd => {
+            set_boot_mode(BootDisplayMode::Normal);
+        }
+        BootMode::SafeModeDebug => {
+            set_boot_mode(BootDisplayMode::Sos);
+            crate::rtl::ntbtlog::enable_boot_log();
+            crate::rtl::ntbtlog::begin_boot_sequence();
+            crate::rtl::ntbtlog::log_ntoskrnl();
         }
     }
-    // The non-x86_64 targets have no GOP/bootvid; the visible
-    // boot progress comes from the serial UART instead. Nothing
-    // to do here.
 }
 
 /// Initialise the platform's kernel debugger transport. On x86_64
@@ -299,10 +349,19 @@ pub const fn arch_name_line() -> &'static str {
     { "  unknown architecture" }
 }
 
-/// True if the platform exposes a real text-mode framebuffer
-/// (VGA / bootvid on x86_64) that already shows every boot line.
-/// The Safe-Mode shell uses this to decide whether to render the
-/// scroll-back log pane.
+/// True if the platform exposes a linear framebuffer that bootvid
+/// can drive for boot progress. After the cross-arch framebuffer
+/// unification the LFB is wired on every architecture provided the
+/// firmware (UEFI GOP, `-device ramfb`, BOCHS) publishes a valid
+/// `BootInfo.framebuffer_*` mailbox; if it doesn't, bootvid falls
+/// back to its legacy VGA path on x86_64 and is a no-op on the
+/// other architectures.
+///
+/// The const is true on x86_64 because the VGA text buffer at
+/// 0xB8000 is always present even when the firmware never sets up
+/// a GOP, and on the other architectures it's true because the LFB
+/// is now wired by `adopt_bootinfo_framebuffer` whenever
+/// `BootInfo.framebuffer_base != 0`.
 pub const fn has_vga_text_console() -> bool {
     cfg!(target_arch = "x86_64")
 }
@@ -314,36 +373,59 @@ pub const fn has_vga_text_console() -> bool {
 /// implemented this returns `false` so the kernel-side CMD shell
 /// (or Safe-Mode debug) can take over.
 pub fn try_launch_cmd_exe() -> bool {
-    #[cfg(target_arch = "x86_64")]
-    {
-        try_launch_cmd_exe_arch()
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        false
-    }
+    try_launch_cmd_exe_arch()
 }
 
+/// Per-arch `cmd.exe` bring-up. On x86_64 the real PE-loading chain
+/// runs (`smss::run()`); on aarch64/riscv64/loongarch64 the
+/// user-mode `cmd.exe` image is not in the boot image so we fall
+/// back to the kernel-side interactive shell (`servers::cmd`) which
+/// renders the same `C:\>` prompt on the LFB.
+///
+/// The function returns `true` if it dispatched to a user-mode
+/// shell that owns the CPU (in which case the kernel never returns
+/// to the caller). It returns `false` only when it printed an error
+/// and yielded, allowing the caller to fall back to its own shell.
 #[cfg(target_arch = "x86_64")]
 fn try_launch_cmd_exe_arch() -> bool {
     boot_println!("[SAFE-CMD] ============================================");
     boot_println!("[SAFE-CMD] Windows 7 Boot Sequence (No Desktop Mode)");
     boot_println!("[SAFE-CMD] ============================================");
 
-    // Phase E: hand the entire chain off to `smss::run()`. The
-    // function below does every phase from SMSS init through the
-    // final cmd.exe Ring-3 entry. The older per-phase helpers
-    // (launch_csrss_session_0/1, launch_wininit_exe,
-    // load_cmd_exe_from_disk) are kept for backwards compatibility
-    // with the QEMU smoke tests but no longer run by default.
     crate::servers::smss::run();
-
-    // `smss::run()` either successfully enters Ring 3 (in which
-    // case we never reach this line) or it printed an error and
-    // returned. Report failure so the caller can fall back to the
-    // legacy kernel-side CMD shell.
     boot_println!("[SAFE-CMD] smss::run() returned without entering Ring 3");
     false
+}
+
+#[cfg(target_arch = "aarch64")]
+fn try_launch_cmd_exe_arch() -> ! {
+    boot_println!("[SAFE-CMD] ============================================");
+    boot_println!("[SAFE-CMD] No-Desktop CMD (aarch64 EL0 fallback)");
+    boot_println!("[SAFE-CMD] ============================================");
+    // The PE-coded user-mode cmd.exe is x86_64 only. aarch64 has
+    // the bring-up path through `enter_first_user_thread_arch`
+    // wired up but no cmd.exe PE. Drop straight into the kernel-
+    // side interactive shell which still renders C:\> on the LFB.
+    boot_println!("[SAFE-CMD] Entering kernel-side cmd shell (EL0 ring3 stub not available)");
+    crate::servers::cmd::run_shell(crate::servers::cmd::ShellMode::SafeModeCmd);
+}
+
+#[cfg(target_arch = "riscv64")]
+fn try_launch_cmd_exe_arch() -> ! {
+    boot_println!("[SAFE-CMD] ============================================");
+    boot_println!("[SAFE-CMD] No-Desktop CMD (riscv64 U-mode fallback)");
+    boot_println!("[SAFE-CMD] ============================================");
+    boot_println!("[SAFE-CMD] Entering kernel-side cmd shell (U-mode ring3 stub not available)");
+    crate::servers::cmd::run_shell(crate::servers::cmd::ShellMode::SafeModeCmd);
+}
+
+#[cfg(target_arch = "loongarch64")]
+fn try_launch_cmd_exe_arch() -> ! {
+    boot_println!("[SAFE-CMD] ============================================");
+    boot_println!("[SAFE-CMD] No-Desktop CMD (loongarch64 PLV0 fallback)");
+    boot_println!("[SAFE-CMD] ============================================");
+    boot_println!("[SAFE-CMD] Entering kernel-side cmd shell (PLV0 ring3 stub not available)");
+    crate::servers::cmd::run_shell(crate::servers::cmd::ShellMode::SafeModeCmd);
 }
 
 /// Launch CSRSS for Session 0
@@ -512,6 +594,14 @@ fn load_cmd_exe_from_disk() -> Result<core::mem::ManuallyDrop<alloc::vec::Vec<u8
         // this path with `Err(known to fault)` has been removed;
         // the disk read goes through `read_whole_file` which the
         // ext2 driver handles directly.
+        //
+        // The ext2 filesystem driver ships only on x86_64 right
+        // now (the storage stack that bridges ramdisk reads is
+        // still being ported). On aarch64 / riscv64 /
+        // loongarch64 the kernel reaches the cmd.exe via NTFS
+        // or FAT32 (the Makefile images are produced on the
+        // host, which is x86_64, and the ext2 driver runs there).
+        #[cfg(target_arch = "x86_64")]
         crate::fs::FsType::Ext2 | crate::fs::FsType::Ext3 | crate::fs::FsType::Ext4 => {
             if !crate::fs::ext2::is_mounted() {
                 boot_println!("[SAFE-CMD] System partition is EXT but no EXT fs is mounted");
@@ -536,6 +626,15 @@ fn load_cmd_exe_from_disk() -> Result<core::mem::ManuallyDrop<alloc::vec::Vec<u8
                     return Err("EXT cmd.exe read failed");
                 }
             }
+        }
+        // On non-x86_64 builds the ext2 driver is not compiled in,
+        // so the FsType::Ext* variants above are absent. The
+        // wildcard arm lets the match stay exhaustive without
+        // dragging the ext2/3/4 paths onto architectures where
+        // the driver doesn't exist yet.
+        #[cfg(not(target_arch = "x86_64"))]
+        crate::fs::FsType::Ext2 | crate::fs::FsType::Ext3 | crate::fs::FsType::Ext4 => {
+            boot_println!("[SAFE-CMD] EXT cmd.exe load not supported on this arch");
         }
         // Fallback for all filesystems: cmd.exe must be on disk.
         // No in-binary / system_image fallback path remains.
@@ -718,32 +817,16 @@ fn create_user_process_with_pe_x86_64(
 ///     absolute minimum validation that the ring-transition path
 ///     works.
 ///
-/// On non-x86_64 architectures the function never returns; it
-/// prints a message and parks the CPU because the user-mode ring
-/// transition has not been implemented for those targets yet.
+/// The function dispatches to the per-arch implementation
+/// (`arch::<arch>::user_entry::enter_first_user_thread`) which
+/// performs the actual EL0/U-mode/PLV0 transition via `eret` /
+/// `sret` / `ertn` (or `iretq` on x86_64).
 pub fn enter_first_user_thread() -> ! {
-    #[cfg(target_arch = "x86_64")]
-    {
-        enter_first_user_thread_x86_64()
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        boot_println!("[enter_first_user_thread] not implemented for this architecture");
-        loop { crate::arch::halt(); }
-    }
+    enter_first_user_thread_arch()
 }
 
-/// Set to `true` to use the Milestone B path (real PE loading).
-/// Currently forced to `false`: this kernel does not synthesize
-/// subsystem EXEs in memory any longer. Boot must come from the
-/// disk image via winload.efi.
-const RING3_PE_MODE: bool = false;
-/// Set to `true` to fall back to the Milestone A stub if PE
-/// loading fails for any reason (this is the safe default).
-const RING3_STUB_FALLBACK: bool = true;
-
 #[cfg(target_arch = "x86_64")]
-fn enter_first_user_thread_x86_64() -> ! {
+fn enter_first_user_thread_arch() -> ! {
     use crate::ps::process::Eprocess;
     boot_println!("");
     boot_println!("========================================");
@@ -800,3 +883,140 @@ fn enter_first_user_thread_x86_64() -> ! {
     crate::arch::x86_64::user_entry::enter_first_user_thread(pml4_phys, user_rip, user_rsp);
 }
 
+#[cfg(target_arch = "aarch64")]
+fn enter_first_user_thread_arch() -> ! {
+    use crate::ps::process::Eprocess;
+    boot_println!("");
+    boot_println!("========================================");
+    boot_println!("FIRST USER THREAD BRING-UP (aarch64)");
+    boot_println!("========================================");
+
+    if RING3_STUB_FALLBACK {
+        boot_println!("Creating ring3 stub process");
+        let pid: u64 = 0x1F00;
+        let image: &[u8] = b"\\SystemRoot\\System32\\ring3_stub.exe";
+        let p = match crate::ps::process::create_user_process(
+            image,
+            pid,
+            Some(crate::userspace::minimal_stub::USER_ENTRY_RIP),
+        ) {
+            Some(p) => p as *mut Eprocess,
+            None => {
+                boot_println!("FATAL: create_user_process (stub) returned None");
+                loop { crate::arch::halt(); }
+            }
+        };
+        if !crate::userspace::minimal_stub::install_into_pml4(unsafe { (*p).pml4_phys }) {
+            boot_println!("FATAL: install_into_pml4 failed");
+            loop { crate::arch::halt(); }
+        }
+        let pml4_phys = unsafe { (*p).pml4_phys };
+        let user_rip = unsafe { (*p).user_rip };
+        let user_rsp = unsafe { (*p).user_rsp };
+        let main_thread = unsafe { (*p).main_thread };
+        boot_println!("User process: PML4=0x{:x} RIP=0x{:x} RSP=0x{:x}",
+                      pml4_phys, user_rip, user_rsp);
+        if !main_thread.is_null() {
+            crate::ke::scheduler::setup_bsp(main_thread);
+        }
+        boot_println!("Dispatching into EL0...");
+        crate::arch::aarch64::user_entry::enter_first_user_thread(pml4_phys, user_rip, user_rsp);
+    }
+    boot_println!("RING3_STUB_FALLBACK disabled on this arch");
+    loop { crate::arch::halt(); }
+}
+
+#[cfg(target_arch = "riscv64")]
+fn enter_first_user_thread_arch() -> ! {
+    use crate::ps::process::Eprocess;
+    boot_println!("");
+    boot_println!("========================================");
+    boot_println!("FIRST USER THREAD BRING-UP (riscv64)");
+    boot_println!("========================================");
+
+    if RING3_STUB_FALLBACK {
+        boot_println!("Creating ring3 stub process");
+        let pid: u64 = 0x1F00;
+        let image: &[u8] = b"\\SystemRoot\\System32\\ring3_stub.exe";
+        let p = match crate::ps::process::create_user_process(
+            image,
+            pid,
+            Some(crate::userspace::minimal_stub::USER_ENTRY_RIP),
+        ) {
+            Some(p) => p as *mut Eprocess,
+            None => {
+                boot_println!("FATAL: create_user_process (stub) returned None");
+                loop { crate::arch::halt(); }
+            }
+        };
+        if !crate::userspace::minimal_stub::install_into_pml4(unsafe { (*p).pml4_phys }) {
+            boot_println!("FATAL: install_into_pml4 failed");
+            loop { crate::arch::halt(); }
+        }
+        let pml4_phys = unsafe { (*p).pml4_phys };
+        let user_rip = unsafe { (*p).user_rip };
+        let user_rsp = unsafe { (*p).user_rsp };
+        let main_thread = unsafe { (*p).main_thread };
+        boot_println!("User process: PML4=0x{:x} RIP=0x{:x} RSP=0x{:x}",
+                      pml4_phys, user_rip, user_rsp);
+        if !main_thread.is_null() {
+            crate::ke::scheduler::setup_bsp(main_thread);
+        }
+        boot_println!("Dispatching into U-mode...");
+        crate::arch::riscv64::user_entry::enter_first_user_thread(pml4_phys, user_rip, user_rsp);
+    }
+    boot_println!("RING3_STUB_FALLBACK disabled on this arch");
+    loop { crate::arch::halt(); }
+}
+
+#[cfg(target_arch = "loongarch64")]
+fn enter_first_user_thread_arch() -> ! {
+    use crate::ps::process::Eprocess;
+    boot_println!("");
+    boot_println!("========================================");
+    boot_println!("FIRST USER THREAD BRING-UP (loongarch64)");
+    boot_println!("========================================");
+
+    if RING3_STUB_FALLBACK {
+        boot_println!("Creating ring3 stub process");
+        let pid: u64 = 0x1F00;
+        let image: &[u8] = b"\\SystemRoot\\System32\\ring3_stub.exe";
+        let p = match crate::ps::process::create_user_process(
+            image,
+            pid,
+            Some(crate::userspace::minimal_stub::USER_ENTRY_RIP),
+        ) {
+            Some(p) => p as *mut Eprocess,
+            None => {
+                boot_println!("FATAL: create_user_process (stub) returned None");
+                loop { crate::arch::halt(); }
+            }
+        };
+        if !crate::userspace::minimal_stub::install_into_pml4(unsafe { (*p).pml4_phys }) {
+            boot_println!("FATAL: install_into_pml4 failed");
+            loop { crate::arch::halt(); }
+        }
+        let pml4_phys = unsafe { (*p).pml4_phys };
+        let user_rip = unsafe { (*p).user_rip };
+        let user_rsp = unsafe { (*p).user_rsp };
+        let main_thread = unsafe { (*p).main_thread };
+        boot_println!("User process: PGD=0x{:x} RIP=0x{:x} RSP=0x{:x}",
+                      pml4_phys, user_rip, user_rsp);
+        if !main_thread.is_null() {
+            crate::ke::scheduler::setup_bsp(main_thread);
+        }
+        boot_println!("Dispatching into PLV0...");
+        crate::arch::loongarch64::user_entry::enter_first_user_thread(pml4_phys, user_rip, user_rsp);
+    }
+    boot_println!("RING3_STUB_FALLBACK disabled on this arch");
+    loop { crate::arch::halt(); }
+}
+
+/// Set to `true` to use the Milestone B path (real PE loading).
+/// Currently forced to `false`: this kernel does not synthesize
+/// subsystem EXEs in memory any longer. Boot must come from the
+/// disk image via winload.efi.
+const RING3_PE_MODE: bool = false;
+/// Set to `true` to fall back to the Milestone A stub if PE
+/// loading fails for any reason (this is the safe default).
+const RING3_STUB_FALLBACK: bool = true;

@@ -179,7 +179,7 @@ fn align8(n: usize) -> usize {
 #[inline]
 fn fit_in_hbin(off: usize, size: usize) -> usize {
     // If exactly at a HBIN boundary (not cell area start), move to cell area of next HBIN
-    if off % HBIN_SIZE == 0 {
+    if off.is_multiple_of(HBIN_SIZE) {
         return off + HBIN_HDR_SIZE;
     }
     let page_end = ((off / HBIN_SIZE) + 1) * HBIN_SIZE;
@@ -746,9 +746,9 @@ fn write_regf_header(out: &mut [u8], name: &str, total_hbins: usize) {
     out[0x1FC..0x200].copy_from_slice(&0u32.to_le_bytes());
 
     // padding/extra bytes to REGF_HDR_SIZE (0x1000)
-    // Fill everything from 0xD0 to end of header with zeros
-    for i in 0xD0..REGF_HDR_SIZE {
-        out[i] = 0;
+    // Fill everything from 0xD0 to end of header with zeros.
+    for slot in out.iter_mut().take(REGF_HDR_SIZE).skip(0xD0) {
+        *slot = 0;
     }
 }
 

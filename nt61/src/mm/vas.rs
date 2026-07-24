@@ -927,17 +927,23 @@ pub fn create_user_address_space() -> Option<u64> {
         pfn::free_pfn(pfn);
         return None;
     }
-    crate::boot_println!("[VAS] create_user_address_space: C: self-map installed", );
+    crate::boot_println!("[VAS] create_user_address_space: D: self-map installed");
     // Force W=1 on every identity-map (low-half) entry in the new
     // PML4 so the kernel can write to page-table pages while running
-    // with this user PML4 as CR3. Without this, a write to a PT/PD
     // with this user PML4 as CR3. Without this, a write to a PT/PD
     // page would trigger a kernel-mode protection-violation (#PF
     // with err=0x3) and a reboot. Boot-loader mappings are
     // intentionally R/O for some regions (e.g., MMIO for the EFI
     // framebuffer), so we must lift W=0 here.
-    crate::boot_println!("[VAS] create_user_address_space: calling force_writable_identity_map(pfn=0x{:x})", pfn);
-    unsafe { force_writable_identity_map(pfn); }
+    //
+    // x86_64 only — on aarch64 / riscv64 / loongarch64 the PTEs are
+    // constructed with the AP / W / K fields already set to permit
+    // kernel writes, so no CR0.WP lift is required.
+    #[cfg(target_arch = "x86_64")]
+    {
+        crate::boot_println!("[VAS] create_user_address_space: calling force_writable_identity_map(pfn=0x{:x})", pfn);
+        unsafe { force_writable_identity_map(pfn); }
+    }
     Some(pfn << 12)
 }
 
@@ -945,6 +951,7 @@ pub fn create_user_address_space() -> Option<u64> {
 /// every PTE/PDT/PML4 entry we find. This makes the entire identity-
 /// mapped region writable when the kernel runs with this PML4 active
 /// (i.e., during syscall/interrupt handling for a user process).
+#[cfg(target_arch = "x86_64")]
 unsafe fn force_writable_identity_map(pfn: PfnNumber) {
     let pml4_phys = pfn << 12;
     let pml4 = pml4_phys as *mut MMPTE;
@@ -1045,6 +1052,12 @@ unsafe fn force_writable_identity_map(pfn: PfnNumber) {
 /// we find. This makes the entire low-half identity-mapped region
 /// user-accessible. Used when the user PML4 is created by copying
 /// the (kernel-only) system PML4.
+///
+/// x86_64 only — on aarch64 / riscv64 / loongarch64 user accessibility
+/// is encoded in the PTEs directly via AP[1] / SUM / PLV fields
+/// rather than toggled through CR0.WP, so the equivalent flush isn't
+/// needed.
+#[cfg(target_arch = "x86_64")]
 unsafe fn force_user_accessible(pfn: PfnNumber) {
     let pml4_phys = pfn << 12;
     let pml4 = pml4_phys as *mut MMPTE;
@@ -1123,7 +1136,7 @@ pub fn attach_process(pml4_phys: u64) -> u64 {
     // publishing the user PML4 there.
     #[cfg(target_arch = "x86_64")]
     {
-        let per_cpu = unsafe { crate::arch::x86_64::syscall::get_per_cpu() };
+        let per_cpu = crate::arch::x86_64::syscall::get_per_cpu();
         if !per_cpu.is_null() {
             unsafe {
                 (*per_cpu).user_pml4 = pml4_phys;
@@ -1144,7 +1157,7 @@ pub fn detach_process(prev: u64) {
     set_current_root(prev);
     #[cfg(target_arch = "x86_64")]
     {
-        let per_cpu = unsafe { crate::arch::x86_64::syscall::get_per_cpu() };
+        let per_cpu = crate::arch::x86_64::syscall::get_per_cpu();
         if !per_cpu.is_null() {
             unsafe {
                 (*per_cpu).user_pml4 = 0;

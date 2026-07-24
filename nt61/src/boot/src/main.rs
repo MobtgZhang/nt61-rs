@@ -44,7 +44,6 @@ use uefi::proto::media::fs::SimpleFileSystem;
 use uefi::proto::media::file::{Directory, File, FileAttribute, FileInfo, FileMode, RegularFile};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use alloc::boxed::Box;
 use uefi::CString16;
 
 use crate::graphics::FramebufferInfo;
@@ -3309,7 +3308,7 @@ fn launch_selected(menu: &BootMenu) -> core::result::Result<(), &'static str> {
         ub2::AllocateType::AnyPages,
         ub2::MemoryType::BOOT_SERVICES_DATA,
         16, // 64 KiB
-    ).map_err(|e| -> &'static str { "allocate winload stack" })?;
+    ).map_err(|_e| -> &'static str { "allocate winload stack" })?;
     let stack_top = stack_base.as_ptr() as u64 + 64 * 1024;
 
     // Write a tiny halt stub at (stack_top - 16). If efi_main ever
@@ -3498,7 +3497,6 @@ fn text_mode_auto_boot(bcd_store: &BcdStore, entries: &[String]) -> Status {
 /// Configuration Table so winload can discover it.
 fn write_bcd_mailbox(guid: &[u8; 16]) {
     use uefi::boot as ub;
-    use core::ffi::c_void;
 
     // Decide whether to use the fixed low address or a freshly
     // allocated page. We probe by trying to map the fixed address;
@@ -3858,7 +3856,6 @@ fn find_child_in_index(ntfs: &NtfsBoot, parent_record: u64, name: &str) -> Optio
     // (relative to the start of the MFT record).
     let mut off = u16::from_le_bytes([record[0x14], record[0x15]]) as usize;
     let end = ntfs.mft_record_size as usize;
-    let mut found_index_root = false;
     while off + 8 <= end {
         let attr_type = u32::from_le_bytes([
             record[off], record[off+1], record[off+2], record[off+3],
@@ -3882,7 +3879,6 @@ fn find_child_in_index(ntfs: &NtfsBoot, parent_record: u64, name: &str) -> Optio
         }
 
         if attr_type == 0x90 {
-            found_index_root = true;
             // $INDEX_ROOT attribute. The attribute header is 24 bytes, so the
             // value starts at off + 24 = off + 0x18 = `body`.
             // The INDEX_ROOT value layout is:
@@ -3914,14 +3910,6 @@ fn find_child_in_index(ntfs: &NtfsBoot, parent_record: u64, name: &str) -> Optio
                 record[ih_base + 0x04], record[ih_base + 0x05],
                 record[ih_base + 0x06], record[ih_base + 0x07],
             ]) as usize;
-            let allocated_size = u32::from_le_bytes([
-                record[ih_base + 0x08], record[ih_base + 0x09],
-                record[ih_base + 0x0A], record[ih_base + 0x0B],
-            ]) as usize;
-            let ih_flags = u32::from_le_bytes([
-                record[ih_base + 0x0C], record[ih_base + 0x0D],
-                record[ih_base + 0x0E], record[ih_base + 0x0F],
-            ]) as u32;
             // Index entries start at ih_base + first_entry_offset.
             let entries_off = ih_base + first_entry_offset;
             if entries_off >= end { off += attr_len; continue; }
@@ -4183,7 +4171,7 @@ fn read_data_stream(ntfs: &NtfsBoot, record_num: u64) -> Option<Vec<u8>> {
                     // bytes were valid.
                     let alloc_size_usize = core::cmp::min(
                         byte_count as usize,
-                        (out.len() - out_cursor),
+                        out.len() - out_cursor,
                     );
                     let mut data = alloc::vec![0u8; alloc_size_usize];
                     // write a marker so we can detect whether read_blocks
@@ -4231,7 +4219,6 @@ fn read_data_stream(ntfs: &NtfsBoot, record_num: u64) -> Option<Vec<u8>> {
 /// Returns (partition_start_lba, partition_sectors) or None if not found.
 fn find_ntfs_partition_lba(block: &uefi::proto::media::block::BlockIO) -> Option<(u64, u64)> {
     let media = block.media();
-    let block_size = media.block_size() as u64;
 
     // Read GPT header from LBA 1
     let mut gpt_header = [0u8; 512];
@@ -4265,11 +4252,9 @@ fn find_ntfs_partition_lba(block: &uefi::proto::media::block::BlockIO) -> Option
     ];
 
     // Read partition entries (typically 128 bytes each, 128 entries max)
-    let entry_bytes = partition_entry_size.min(512);
     let mut entries_buf = alloc::vec![0u8; partition_entry_size * partition_entry_count.min(128)];
 
     // Read partition entries starting from partition_entries_lba
-    let entries_sectors = ((partition_entry_size * partition_entry_count.min(128)) as u64 + block_size - 1) / block_size;
     if block.read_blocks(media.media_id(), partition_entries_lba, &mut entries_buf).is_err() {
         return None;
     }

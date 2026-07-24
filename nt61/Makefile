@@ -106,6 +106,11 @@ DISK_IMG = $(IMAGES_DIR)/disk.img
 ISO_IMG = $(IMAGES_DIR)/nt61.iso
 SERIAL_LOG = $(IMAGES_DIR)/serial_$(ARCH)_$(FORMAT).log
 
+# verify-strict working directory: keep verify outputs isolated from
+# the developer-facing `build/` tree so a regression run does not
+# touch a previously-successful build artifact.
+VERIFY_DIR ?= build/verify-strict
+
 # ============================================================
 # PHONY
 # ============================================================
@@ -123,6 +128,8 @@ SERIAL_LOG = $(IMAGES_DIR)/serial_$(ARCH)_$(FORMAT).log
         run-aarch64-ntfs-serial run-aarch64-fat32-serial run-aarch64-ext4-serial \
         run-riscv64-ntfs-serial run-riscv64-fat32-serial run-riscv64-ext4-serial \
         run-loongarch64-ntfs-serial run-loongarch64-fat32-serial run-loongarch64-ext4-serial \
+        run-x86_64-gtk run-aarch64-gtk run-riscv64-gtk run-loongarch64-gtk \
+        verify-strict \
         download-firmware check-firmware clean clean-all help
 
 # ============================================================
@@ -759,6 +766,82 @@ run-loongarch64-ext4-serial: build-ext4
 	$(_run_loongarch64_serial)
 
 # ============================================================
+# Per-arch GUI-only runs (no serial output at all)
+# ============================================================
+#
+# These targets launch QEMU with `-display gtk` and `-serial null`
+# so the operator sees ONLY the GUI panel. They are the canonical
+# "we hit C:\>" verification targets for the cross-arch plan —
+# after Milestone A, the panel should show boot progress painted
+# by the LFB backend; after Milestone B, the serial sink is fully
+# gated so even panics from `boot_println!` don't bleed to COM1.
+#
+# Override `TIMEOUT=<seconds>` to set the QEMU watchdog; default
+# is 60 s.
+
+run-x86_64-gtk: ARCH=x86_64
+run-x86_64-gtk: FORMAT=ntfs
+run-x86_64-gtk: SERIAL_LOG=$(IMAGES_DIR)/serial_x86_64_ntfs_gtk.log
+run-x86_64-gtk: build-ntfs
+	@mkdir -p $(IMAGES_DIR)
+	$(call _setup_firmware_x86_64)
+	@echo "Launching QEMU (x86_64/ntfs) GUI-only..."
+	@timeout $(TIMEOUT)s $(QEMU_X86) -machine q35 -m 8G -smp 2 \
+		-drive if=pflash,format=raw,unit=0,readonly=on,file=$(QEMU_FW_CODE) \
+		-drive if=pflash,format=raw,unit=1,file=$(EDK2_OVMF_VARS) \
+		-drive format=raw,file=$(DISK_IMG) \
+		-boot c -net none \
+		-serial null -display gtk || true
+
+run-aarch64-gtk: ARCH=aarch64
+run-aarch64-gtk: FORMAT=ntfs
+run-aarch64-gtk: SERIAL_LOG=$(IMAGES_DIR)/serial_aarch64_ntfs_gtk.log
+run-aarch64-gtk: build-ntfs
+	@mkdir -p $(IMAGES_DIR)
+	$(call _setup_firmware_aarch64)
+	@echo "Launching QEMU (aarch64/ntfs) GUI-only..."
+	@timeout $(TIMEOUT)s $(QEMU_AARCH64) -machine virt -m 8G -smp 2 $(QEMU_CPU_aarch64) \
+		-drive if=pflash,format=raw,unit=0,readonly=on,file=$(EDK2_AARCH64_EFI_PADDED) \
+		-drive if=pflash,format=raw,unit=1,file=$(EDK2_AARCH64_VARS) \
+		-drive if=none,file=$(DISK_IMG),format=raw,id=hd0 \
+		-device $(DISK_DEV_PCI),drive=hd0 \
+		-device ramfb \
+		-boot order=c -net none \
+		-serial null -display gtk || true
+
+run-riscv64-gtk: ARCH=riscv64
+run-riscv64-gtk: FORMAT=ntfs
+run-riscv64-gtk: SERIAL_LOG=$(IMAGES_DIR)/serial_riscv64_ntfs_gtk.log
+run-riscv64-gtk: build-ntfs
+	@mkdir -p $(IMAGES_DIR)
+	$(call _setup_firmware_riscv64)
+	@echo "Launching QEMU (riscv64/ntfs) GUI-only..."
+	@timeout $(TIMEOUT)s $(QEMU_RISCV64) -machine virt -m 8G -smp 2 $(QEMU_CPU_riscv64) \
+		-drive if=pflash,format=raw,unit=0,readonly=on,file=$(EDK2_RISCV64_VIRT_PADDED) \
+		-drive if=pflash,format=raw,unit=1,file=$(EDK2_OVMF_VARS) \
+		-drive if=none,file=$(DISK_IMG),format=raw,id=hd0 \
+		-device $(DISK_DEV_PCI),drive=hd0 \
+		-device ramfb \
+		-boot order=c -net none \
+		-serial null -display gtk || true
+
+run-loongarch64-gtk: ARCH=loongarch64
+run-loongarch64-gtk: FORMAT=ntfs
+run-loongarch64-gtk: SERIAL_LOG=$(IMAGES_DIR)/serial_loongarch64_ntfs_gtk.log
+run-loongarch64-gtk: build-ntfs
+	@mkdir -p $(IMAGES_DIR)
+	$(call _setup_firmware_loongarch64)
+	@echo "Launching QEMU (loongarch64/ntfs) GUI-only..."
+	@timeout $(TIMEOUT)s $(QEMU_LOONGARCH64) -machine virt -m 8G -smp 2 $(QEMU_CPU_loongarch64) \
+		-pflash $(EDK2_LOONGARCH64_EFI) \
+		-pflash $(EDK2_LOONGARCH64_VARS) \
+		-drive if=none,file=$(DISK_IMG),format=raw,id=hd0 \
+		-device $(DISK_DEV_PCI),drive=hd0 \
+		-device ramfb \
+		-boot order=c -net none \
+		-serial null -display gtk || true
+
+# ============================================================
 # Short-form aliases for the per-arch serial smoke tests.
 #
 #   make-fat32-serial   = same as run-${ARCH}-fat32-serial (defaults to x86_64)
@@ -889,7 +972,7 @@ test-all-qemu:
 	@echo "--- iso (x86_64 only — see notes) ---"
 	@mkdir -p $(IMAGES_DIR)
 	@echo "  Building ISO image..."
-	@$(BUILD_TOOL) --build iso --build-dir $(BLD) --format-flag iso --size-mb 64 --arch x86_64 >/dev/null 2>&1 || true
+	@$(BUILD_TOOL) --build iso --build-dir $(BLD) --format-flag iso --size-mb 64 --arch x86_64
 	@logfile=$(QEMU_HARNESS_LOGDIR)/x86_64-iso.log; \
 	  echo "  x86_64 / iso :"; \
 	  timeout_cmd=""; \
@@ -914,6 +997,72 @@ clean:
 # Remove ALL build outputs (every ARCH × FORMAT combo).
 clean-all:
 	rm -rf $(BUILD_DIR)
+
+# ============================================================
+# Strict validation: zero-warning, zero-error build matrix
+# ============================================================
+#
+# `make verify-strict` rejects any rust/cargo diagnostic that is not
+# part of the supported-target matrix. This is the entry point used by
+# CI and local regression sweeps to confirm the workspace compiles
+# clean under -D warnings for every architecture and every image
+# format the project supports.
+#
+# The matrix below mirrors the workspace members in Cargo.toml:
+#   * kernel library: x86_64-unknown-none, aarch64-unknown-none,
+#     riscv64gc-unknown-none-elf, loongarch64-unknown-none
+#     (each with the corresponding arch feature enabled)
+#   * UEFI bootloader: nt61-boot for x86_64-unknown-uefi
+#   * UEFI OS loader: nt61-winload for x86_64-unknown-uefi
+#   * build-tool (host): one full cargo check + cargo test
+#   * cmd-stub-gen (host): one full cargo check
+#   * image matrix: a `--build all` smoke run for fat32 / ntfs / ext4
+#     (the same matrix the QEMU harness exercises).
+#
+# Notes:
+#   * nt61-boot and nt61-winload are documented x86_64-only (see
+#     Cargo.toml in src/boot and src/winload); the build-tool matrix
+#     still runs the other arches at the kernel-library level.
+#   * The host workspace check is intentionally limited to the host
+#     targets (nt61-tools, cmd-stub-gen) because the kernel crate uses
+#     `uefi`'s no_std panic handler and conflicts with `std` on the
+#     host triple.
+verify-strict:
+	@echo "=== host: nt61-tools (build-tool) ==="
+	RUSTFLAGS="-D warnings" cargo check -p nt61-tools --all-targets
+	RUSTFLAGS="-D warnings" cargo test -p nt61-tools --no-run
+	cargo test -p nt61-tools
+	@echo "=== host: cmd-stub-gen ==="
+	RUSTFLAGS="-D warnings" cargo check -p cmd-stub-gen --all-targets
+	@echo "=== x86_64 kernel ==="
+	RUSTFLAGS="-D warnings" cargo check -p nt61 --target x86_64-unknown-none \
+		--features "x86_64,binary_panic,alloc"
+	@echo "=== aarch64 kernel ==="
+	RUSTFLAGS="-D warnings" cargo check -p nt61 --target aarch64-unknown-none \
+		--no-default-features --features "aarch64,alloc"
+	@echo "=== riscv64 kernel ==="
+	RUSTFLAGS="-D warnings" cargo check -p nt61 --target riscv64gc-unknown-none-elf \
+		--no-default-features --features "riscv64,alloc"
+	@echo "=== loongarch64 kernel ==="
+	RUSTFLAGS="-D warnings" cargo check -p nt61 --target loongarch64-unknown-none \
+		--no-default-features --features "loongarch64,alloc"
+	@echo "=== nt61-boot (UEFI, x86_64) ==="
+	RUSTFLAGS="-D warnings" cargo check -p nt61-boot --target x86_64-unknown-uefi \
+		--features x86_64
+	@echo "=== nt61-winload (UEFI, x86_64) ==="
+	RUSTFLAGS="-D warnings" cargo check -p nt61-winload --target x86_64-unknown-uefi \
+		--features x86_64
+	@echo "=== image matrix smoke: fat32 / ntfs / ext4 / iso ==="
+	cargo build -p nt61-tools --bin build-tool
+	./target/debug/build-tool --build all --build-dir $(VERIFY_DIR)-fat32 \
+		--format-flag fat32 --size-mb 64 --arch x86_64
+	./target/debug/build-tool --build all --build-dir $(VERIFY_DIR)-ntfs \
+		--format-flag ntfs --size-mb 64 --arch x86_64
+	./target/debug/build-tool --build all --build-dir $(VERIFY_DIR)-ext4 \
+		--format-flag ext4 --size-mb 64 --arch x86_64
+	./target/debug/build-tool --build iso --build-dir $(VERIFY_DIR)-iso \
+		--format-flag iso --size-mb 64 --arch x86_64
+	@echo "=== verify-strict: all green ==="
 
 # ============================================================
 # Firmware management
@@ -959,6 +1108,14 @@ help:
 	@echo "  make build-fat32           - ESP=FAT32, System=FAT32"
 	@echo "  make build-ext4            - ESP=FAT32, System=EXT4"
 	@echo "  make build-iso             - ISO-9660 CD image (flat layout)"
+	@echo ""
+	@echo "Verification:"
+	@echo "  make verify-strict        - Run the full -D warnings matrix:"
+	@echo "      * host tools (build-tool, cmd-stub-gen)"
+	@echo "      * nt61-kernel for x86_64 / aarch64 / riscv64 / loongarch64"
+	@echo "      * nt61-boot + nt61-winload for x86_64 UEFI"
+	@echo "      * 4 image formats (fat32 / ntfs / ext4 / iso)"
+	@echo "    Returns non-zero exit on the first warning/error."
 	@echo ""
 	@echo "Run targets (all 16 arch x format combos):"
 	@echo "  make run-x86_64-ntfs     - x86_64  + NTFS (GUI)"

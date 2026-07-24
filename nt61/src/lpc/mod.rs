@@ -342,22 +342,21 @@ struct RegGuard {
 }
 
 fn lock_registry() -> Option<RegGuard> {
-    loop {
-        let guard = REGISTRY.lock();
-        let ptr = *guard;
-        if ptr.is_null() {
-            // Drop the guard and try again. This is unlikely in
-            // practice (init() runs early and is one-shot), but
-            // gives a uniform interface.
-            drop(guard);
-            return None;
-        }
-        // SAFETY: the pointer is set once during init() and is
-        // never freed (the pool owns the memory for the rest of
-        // the kernel's lifetime).
-        let reg = unsafe { &mut *ptr };
-        return Some(RegGuard { _reg_guard: guard, reg });
+    // The pool-backed `LpcRegistry` is allocated once during `init()` and
+    // lives for the rest of the kernel's lifetime. The `loop` used to be
+    // a retry-on-race placeholder but, since init() runs single-threaded
+    // before SMP is up, the slot is always populated on the first
+    // observation; rewrite as a single attempt so clippy's
+    // `never_loop` lint stops flagging it.
+    let guard = REGISTRY.lock();
+    let ptr = *guard;
+    if ptr.is_null() {
+        return None;
     }
+    // SAFETY: the pointer is set once during init() and is never freed
+    // (the pool owns the memory for the rest of the kernel's lifetime).
+    let reg = unsafe { &mut *ptr };
+    Some(RegGuard { _reg_guard: guard, reg })
 }
 
 /// Create a server-side connection port. The port is registered

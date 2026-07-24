@@ -233,38 +233,42 @@ impl EventLog {
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
-static SYSTEM_LOG: [u8; core::mem::size_of::<EventLog>()] = [0; core::mem::size_of::<EventLog>()];
-static APPLICATION_LOG: [u8; core::mem::size_of::<EventLog>()] = [0; core::mem::size_of::<EventLog>()];
-static SECURITY_LOG: [u8; core::mem::size_of::<EventLog>()] = [0; core::mem::size_of::<EventLog>()];
-static SETUP_LOG: [u8; core::mem::size_of::<EventLog>()] = [0; core::mem::size_of::<EventLog>()];
+static mut SYSTEM_LOG: [u8; core::mem::size_of::<EventLog>()] = [0; core::mem::size_of::<EventLog>()];
+static mut APPLICATION_LOG: [u8; core::mem::size_of::<EventLog>()] = [0; core::mem::size_of::<EventLog>()];
+static mut SECURITY_LOG: [u8; core::mem::size_of::<EventLog>()] = [0; core::mem::size_of::<EventLog>()];
+static mut SETUP_LOG: [u8; core::mem::size_of::<EventLog>()] = [0; core::mem::size_of::<EventLog>()];
 
 static SYSTEM_LOG_INIT: AtomicBool = AtomicBool::new(false);
 static APPLICATION_LOG_INIT: AtomicBool = AtomicBool::new(false);
 static SECURITY_LOG_INIT: AtomicBool = AtomicBool::new(false);
 static SETUP_LOG_INIT: AtomicBool = AtomicBool::new(false);
 
-fn cast_log_init<'a>(storage: &'a [u8], init_flag: &AtomicBool) -> Option<&'a mut EventLog> {
+fn cast_log_init<'a>(storage: &'a mut [u8], init_flag: &AtomicBool) -> Option<&'a mut EventLog> {
     if !init_flag.load(Ordering::Acquire) {
         return None;
     }
-    let ptr = storage.as_ptr() as *mut EventLog;
+    let ptr = storage.as_mut_ptr() as *mut EventLog;
     unsafe { Some(&mut *ptr) }
 }
 
 fn system_log_mut() -> Option<&'static mut EventLog> {
-    cast_log_init(&SYSTEM_LOG, &SYSTEM_LOG_INIT)
+    // SAFETY: SYSTEM_LOG is a `static mut` of zero-initialised storage
+    // that `init()` re-writes with a valid `EventLog` value before the
+    // `SYSTEM_LOG_INIT` flag is published; reading through `cast_log_init`
+    // only happens after the flag has been set, so the cast is sound.
+    unsafe { cast_log_init(&mut SYSTEM_LOG, &SYSTEM_LOG_INIT) }
 }
 
 fn application_log_mut() -> Option<&'static mut EventLog> {
-    cast_log_init(&APPLICATION_LOG, &APPLICATION_LOG_INIT)
+    unsafe { cast_log_init(&mut APPLICATION_LOG, &APPLICATION_LOG_INIT) }
 }
 
 fn security_log_mut() -> Option<&'static mut EventLog> {
-    cast_log_init(&SECURITY_LOG, &SECURITY_LOG_INIT)
+    unsafe { cast_log_init(&mut SECURITY_LOG, &SECURITY_LOG_INIT) }
 }
 
 fn setup_log_mut() -> Option<&'static mut EventLog> {
-    cast_log_init(&SETUP_LOG, &SETUP_LOG_INIT)
+    unsafe { cast_log_init(&mut SETUP_LOG, &SETUP_LOG_INIT) }
 }
 
 /// Initialize all event logs

@@ -13,12 +13,13 @@
 //! - Sparse superblock support
 //!
 //! ## Usage
-//! ```rust
-//! use nt61_tools::ext4::Ext4Image;
+//! ```rust,no_run
+//! use nt61_tools::Ext4Image;
 //!
 //! let mut image = Ext4Image::new(128, 4096).unwrap(); // 128 MB, 4KB blocks
 //! image.create_dir("/EFI").unwrap();
 //! image.create_dir("/EFI/Boot").unwrap();
+//! let boot_data = [0u8; 512];
 //! image.write_file("/EFI/Boot/BOOTX64.EFI", &boot_data).unwrap();
 //! let img_data = image.finalize().unwrap();
 //! ```
@@ -226,7 +227,7 @@ pub struct Ext4DirEntry {
 
 /// Calculate the number of block groups needed
 fn calc_bg_count(total_blocks: u64, blocks_per_group: u32) -> u32 {
-    ((total_blocks as u32 + blocks_per_group - 1) / blocks_per_group) as u32
+    (total_blocks as u32).div_ceil(blocks_per_group)
 }
 
 // =====================================================================
@@ -410,10 +411,10 @@ impl Ext4Image {
             let i_flags = u32::from_le_bytes([b[32], b[33], b[34], b[35]]);
             let i_block: [u32; 15] = {
                 let mut arr = [0u32; 15];
-                for i in 0..15 {
+                for (i, slot) in arr.iter_mut().enumerate() {
                     let off = 40 + i * 4;
                     if off + 4 <= b.len() {
-                        arr[i] = u32::from_le_bytes([b[off], b[off + 1], b[off + 2], b[off + 3]]);
+                        *slot = u32::from_le_bytes([b[off], b[off + 1], b[off + 2], b[off + 3]]);
                     }
                 }
                 arr
@@ -436,79 +437,6 @@ impl Ext4Image {
             })
         };
 
-        // Helper: walk extents starting at i_block[0..]. Returns flat list of
-        // (logical_block_offset, physical_block, length_in_blocks).
-        fn walk_extents(
-            data: &[u8],
-            bs: u32,
-            i_block: &[u32; 15],
-        ) -> Vec<(u32, u32, u16)> {
-            // Extent header is the first 12 bytes of i_block (3 u32).
-            // i_block[0]: eh_magic (low 16 bits) | eh_entries (high 16 bits)
-            // i_block[1]: eh_max (low 16 bits) | eh_depth (high 16 bits)
-            // i_block[2]: eh_generation
-            let eh_magic = (i_block[0] & 0xFFFF) as u16;
-            if eh_magic != 0xF30A {
-                // Old-style direct/indirect block pointers. We don't try to
-                // follow them; return empty.
-                return Vec::new();
-            }
-            let eh_entries = (i_block[0] >> 16) as u16;
-            let eh_depth = (i_block[1] >> 16) as u16;
-            let mut out = Vec::new();
-            if eh_depth == 0 {
-                for i in 0..eh_entries as usize {
-                    // Each extent entry is 12 bytes (3 u32 in our i_block array).
-                    // Layout (little-endian):
-                    //   word 0: ee_block (4 bytes logical block offset)
-                    //   word 1: ee_len (lo 16 bits) | ee_start_hi (hi 16 bits)
-                    //   word 2: ee_start_lo (4 bytes physical block)
-                    let entry_start = 3 + i * 3;
-                    if entry_start + 3 > 15 { break; }
-                    let ee_block = i_block[entry_start];
-                    let w1 = i_block[entry_start + 1];
-                    let w2 = i_block[entry_start + 2];
-                    let ee_len = (w1 & 0xFFFF) as u16;
-                    let ee_start_hi = ((w1 >> 16) & 0xFFFF) as u64;
-                    let ee_start = ((ee_start_hi << 32) | (w2 as u64)) as u32;
-                    if ee_len == 0 { break; }
-                    out.push((ee_block, ee_start, ee_len));
-                }
-            } else if eh_depth == 1 {
-                // Each entry is an Ext4ExtentIdx pointing to an L2 block.
-                for i in 0..eh_entries as usize {
-                    let idx = 3 + i;
-                    if idx + 2 >= 15 { break; }
-                    let word = i_block[idx];
-                    let ei_block = (word & 0xFFFF) as u32;
-                    let ei_leaf_lo = word >> 16;
-                    let ei_leaf_hi = i_block[idx + 1];
-                    let leaf_block = (ei_leaf_hi << 16) | ei_leaf_lo;
-                    let leaf_off = (leaf_block as usize) * (bs as usize);
-                    if leaf_off + 12 > data.len() { continue; }
-                    // Parse leaf extent header at leaf_off.
-                    let leaf_hdr = &data[leaf_off..leaf_off + 12];
-                    let lh_magic = u16::from_le_bytes([leaf_hdr[0], leaf_hdr[1]]);
-                    if lh_magic != 0xF30A { continue; }
-                    let lh_entries = u16::from_le_bytes([leaf_hdr[2], leaf_hdr[3]]);
-                    for j in 0..lh_entries as usize {
-                        let e_off = leaf_off + 12 + j * 12;
-                        if e_off + 12 > data.len() { break; }
-                        let e_word1 = u32::from_le_bytes([data[e_off], data[e_off + 1], data[e_off + 2], data[e_off + 3]]);
-                        let e_word2 = u32::from_le_bytes([data[e_off + 4], data[e_off + 5], data[e_off + 6], data[e_off + 7]]);
-                        let ee_block = e_word1 & 0xFFFF;
-                        let ee_len = ((e_word1 >> 16) & 0xFFFF) as u16;
-                        let ee_start = ((e_word2 & 0xFFFF) << 16) | (e_word2 >> 16);
-                        let logical = ei_block + ee_block;
-                        if ee_len == 0 { break; }
-                        out.push((logical, ee_start, ee_len));
-                    }
-                }
-            }
-            // Depth > 1 not handled.
-            out
-        }
-
         // Helper: read up to `size` bytes of file data following extents.
         let read_data = |extents: &[(u32, u32, u16)], size: u32| -> Vec<u8> {
             let mut out = Vec::with_capacity(size as usize);
@@ -530,117 +458,20 @@ impl Ext4Image {
         };
 
         // Parse an inode and return (children if dir, content if file).
-        let mut visited: std::collections::HashSet<u32> = std::collections::HashSet::new();
-        visited.insert(0);
-        fn parse_inode(
-            data: &[u8],
-            bs: u32,
-            ino: u32,
-            depth: u32,
-            read_inode: &dyn Fn(u32) -> Option<Ext4Inode>,
-            read_data: &dyn Fn(&[(u32, u32, u16)], u32) -> Vec<u8>,
-            visited: &mut std::collections::HashSet<u32>,
-        ) -> Result<FileEntry> {
-            if depth > 16 {
-                return Err(BuildError::Ext4Error("inode tree too deep".into()));
-            }
-            if !visited.insert(ino) {
-                return Err(BuildError::Ext4Error(format!("cycle at inode {}", ino)));
-            }
-            let inode = read_inode(ino).ok_or_else(|| BuildError::Ext4Error(format!("inode {} not found", ino)))?;
-            let is_dir = (inode.i_mode & 0xF000) == 0x4000;
-            let is_symlink = (inode.i_mode & 0xF000) == 0xA000;
-            let is_reg = (inode.i_mode & 0xF000) == 0x8000;
-            let size = inode.i_size_lo as u64 | ((inode.i_size_high as u64) << 32);
-
-            // Inline data: file < 60 bytes living in i_block.
-            if (inode.i_flags & 0x1000_0000) != 0 && size <= 60 {
-                // Inline data path
-                let iblock: [u32; 15] = inode.i_block;
-                let mut inline = Vec::with_capacity(size as usize);
-                for w in &iblock[..15] {
-                    inline.extend_from_slice(&w.to_le_bytes());
-                }
-                inline.truncate(size as usize);
-                visited.remove(&ino);
-                if is_dir {
-                    return Ok(FileEntry::new_dir("", Vec::new()));
-                }
-                return Ok(FileEntry::new_file("", inline));
-            }
-
-            // Symlink fast path: target in i_block if size <= 60.
-            if is_symlink && size <= 60 {
-                let iblock: [u32; 15] = inode.i_block;
-                let mut target = Vec::with_capacity(size as usize);
-                for w in &iblock[..15] {
-                    target.extend_from_slice(&w.to_le_bytes());
-                }
-                target.truncate(size as usize);
-                visited.remove(&ino);
-                return Ok(FileEntry::new_file("", target));
-            }
-
-            // File data via extents.
-            let iblock_for_extents: [u32; 15] = inode.i_block;
-            let extents = walk_extents(data, bs, &iblock_for_extents);
-            let file_data = if is_reg {
-                read_data(&extents, size as u32)
-            } else {
-                Vec::new()
-            };
-
-            if is_dir {
-                let mut children = Vec::new();
-                let mut off = 0usize;
-                // Each dir block has its own extents walk for the inode's data.
-                let dir_data = read_data(&extents, size as u32);
-                while off + 8 <= dir_data.len() {
-                    let d = &dir_data[off..];
-                    let inode_num = u32::from_le_bytes([d[0], d[1], d[2], d[3]]);
-                    let rec_len = u16::from_le_bytes([d[4], d[5]]) as usize;
-                    if rec_len == 0 || rec_len > dir_data.len() - off { break; }
-                    let name_len = d[6] as usize;
-                    let _file_type = d[7];
-                    if inode_num != 0 && name_len > 0 && name_len + 8 <= rec_len {
-                        let name = std::str::from_utf8(&d[8..8 + name_len])
-                            .map_err(|_| BuildError::Ext4Error("non-utf8 dirent".into()))?
-                            .to_string();
-                        if name != "." && name != ".." {
-                            // Recurse.
-                            match parse_inode(
-                                data, bs, inode_num, depth + 1,
-                                read_inode, read_data, visited,
-                            ) {
-                                Ok(mut child) => {
-                                    child.name = name;
-                                    children.push(child);
-                                }
-                                Err(_) => {
-                                    // Skip unparseable children silently.
-                                }
-                            }
-                        }
-                    }
-                    off += rec_len;
-                }
-                visited.remove(&ino);
-                Ok(FileEntry::new_dir("", children))
-            } else {
-                visited.remove(&ino);
-                Ok(FileEntry::new_file("", file_data))
-            }
-        }
-
+        //
+        // The recursive walker is implemented as a free function below
+        // (`parse_inode_recursive`) rather than a nested `fn` so its
+        // signature can use module-level type aliases instead of a
+        // giant `&dyn Fn(&[(u32, u32, u16)], u32) -> Vec<u8>` literal
+        // — clippy's `type_complexity` lint flagged the literal form.
         let mut visited = std::collections::HashSet::new();
         visited.insert(0);
-        let mut root = parse_inode(
+        let mut root = parse_inode_recursive(
             data, block_size, 2, 0,
             &read_inode, &read_data, &mut visited,
         )?;
         root.name = String::new();
         let parsed_root = root.children;
-
         // Build superblock for finalize reuse.
         let sb = Ext4SuperBlock {
             s_inodes_count: inodes_count,
@@ -748,11 +579,7 @@ impl Ext4Image {
 
     /// Create a directory in the image
     pub fn create_dir(&mut self, path: &str) -> Result<&mut Self> {
-        let clean_path = if path.starts_with('/') {
-            &path[1..]
-        } else {
-            path
-        };
+        let clean_path = path.strip_prefix('/').unwrap_or(path);
 
         if !self.dirs.contains(&clean_path.to_string()) {
             self.dirs.push(clean_path.to_string());
@@ -786,7 +613,7 @@ impl Ext4Image {
     fn find_parsed_mut<'a>(&'a mut self, parts: &[&str]) -> Option<&'a mut FileEntry> {
         // We can't return a mutable reference to a sub-tree through &mut self
         // and a slice of the sub-tree. Workaround: walk recursively.
-        fn walk<'b>(level: &'b mut Vec<FileEntry>, parts: &[&str]) -> Option<&'b mut FileEntry> {
+        fn walk<'b>(level: &'b mut [FileEntry], parts: &[&str]) -> Option<&'b mut FileEntry> {
             if parts.is_empty() {
                 return None;
             }
@@ -918,12 +745,7 @@ impl Ext4Image {
 
     /// Write a file to the image
     pub fn write_file(&mut self, path: &str, data: &[u8]) -> Result<&mut Self> {
-        let clean_path = if path.starts_with('/') {
-            &path[1..]
-        } else {
-            path
-        };
-        
+        let clean_path = path.strip_prefix('/').unwrap_or(path);
         self.files.push((clean_path.to_string(), data.to_vec()));
         Ok(self)
     }
@@ -939,8 +761,8 @@ impl Ext4Image {
             s_free_blocks_count_lo: 0, // Will be calculated later
             s_free_inodes_count: 0,
             s_first_data_block: if self.block_size == 4096 { 0 } else { 1 },
-            s_log_block_size: (self.block_size.ilog2() - 10) as u32,
-            s_log_cluster_size: (self.block_size.ilog2() - 10) as u32,
+            s_log_block_size: (self.block_size.ilog2() - 10),
+            s_log_cluster_size: (self.block_size.ilog2() - 10),
             s_blocks_per_group: self.blocks_per_group,
             s_clusters_per_group: self.blocks_per_group,
             s_inodes_per_group: self.inodes_per_group,
@@ -1034,7 +856,7 @@ impl Ext4Image {
             i_dtime: 0,
             i_gid: 0,
             i_links_count: if is_dir { 2 } else { 1 },
-            i_blocks_lo: ((data.len() as u32 + 511) / 512),
+            i_blocks_lo: (data.len() as u32).div_ceil(512),
             i_flags: 0,
             osd1: 0,
             i_block: [0; 15],
@@ -1078,7 +900,7 @@ impl Ext4Image {
             // Copy extent bytes to i_block
             let extent = Ext4Extent {
                 ee_block: 0,
-                ee_len: ((data.len() + self.block_size as usize - 1) / self.block_size as usize) as u16,
+                ee_len: data.len().div_ceil(self.block_size as usize) as u16,
                 ee_start_hi: 0,
                 ee_start_lo: 12, // Data starts at block 12
             };
@@ -1150,7 +972,6 @@ impl Ext4Image {
         allocs.push(Ext4Alloc {
             ino: 2,
             is_dir: true,
-            name: String::new(),
             data: Vec::new(),
             children: Vec::new(),
             dir_block: root_dir_block,
@@ -1170,7 +991,6 @@ impl Ext4Image {
             let mut alloc = Ext4Alloc {
                 ino,
                 is_dir: entry.is_dir,
-                name: entry.name.clone(),
                 data: if entry.is_dir { Vec::new() } else { entry.data.clone() },
                 children: Vec::new(),
                 dir_block: Vec::new(),
@@ -1193,7 +1013,7 @@ impl Ext4Image {
 
         // Pass 2: assign data blocks. Inode table comes first.
         let total_inodes = (next_ino as usize + 32).max(inodes_per_group);
-        let inode_table_blocks = ((total_inodes * 256) + bs - 1) / bs;
+        let inode_table_blocks = (total_inodes * 256).div_ceil(bs);
         let inode_table_start: u32 = 4;
         let mut data_block: u32 = inode_table_start + inode_table_blocks as u32;
         for alloc in allocs.iter_mut() {
@@ -1204,7 +1024,7 @@ impl Ext4Image {
                 continue;
             }
             alloc.first_block = data_block;
-            let blocks = ((data.len() + bs - 1) / bs) as u32;
+            let blocks = data.len().div_ceil(bs) as u32;
             alloc.blocks_in_file = blocks;
             data_block += blocks;
         }
@@ -1290,6 +1110,192 @@ impl Ext4Image {
 }
 
 // =====================================================================
+// Free function: recursive inode walker
+// =====================================================================
+//
+// Lifted out of `Ext4Image::finalize` so the recursive descent uses a
+// module-level closure type alias (`ReadDataFn`) instead of an inline
+// `dyn Fn(&[(u32, u32, u16)], u32) -> Vec<u8>` literal. That alias is
+// the canonical fix for clippy::type_complexity on recursive inner
+// `fn` items: keeping the signature as an alias lets the recursive
+// call re-use the same alias without losing the closure lifetime
+// inference that nesting forced.
+
+/// Callback for reading the file content covered by an inode's extent
+/// triples. The first argument is the flattened extent list
+/// `(logical_block, physical_block, length_in_blocks)` and the second
+/// is the file size in bytes.
+type ReadDataFn<'a> = dyn Fn(&[(u32, u32, u16)], u32) -> Vec<u8> + 'a;
+
+/// Recursive inode walker. Returns the `FileEntry` for `ino`, recursing
+/// into directory children. `read_inode` materialises arbitrary inodes
+/// on demand; `read_data` walks the extent tree of a given inode and
+/// returns its raw bytes.
+fn parse_inode_recursive(
+    data: &[u8],
+    bs: u32,
+    ino: u32,
+    depth: u32,
+    read_inode: &dyn Fn(u32) -> Option<Ext4Inode>,
+    read_data: &ReadDataFn<'_>,
+    visited: &mut std::collections::HashSet<u32>,
+) -> Result<FileEntry> {
+    if depth > 16 {
+        return Err(BuildError::Ext4Error("inode tree too deep".into()));
+    }
+    if !visited.insert(ino) {
+        return Err(BuildError::Ext4Error(format!("cycle at inode {}", ino)));
+    }
+    let inode = read_inode(ino).ok_or_else(|| BuildError::Ext4Error(format!("inode {} not found", ino)))?;
+    let is_dir = (inode.i_mode & 0xF000) == 0x4000;
+    let is_symlink = (inode.i_mode & 0xF000) == 0xA000;
+    let is_reg = (inode.i_mode & 0xF000) == 0x8000;
+    let size = inode.i_size_lo as u64 | ((inode.i_size_high as u64) << 32);
+
+    // Inline data: file < 60 bytes living in i_block.
+    if (inode.i_flags & 0x1000_0000) != 0 && size <= 60 {
+        let iblock: [u32; 15] = inode.i_block;
+        let mut inline = Vec::with_capacity(size as usize);
+        for w in &iblock[..15] {
+            inline.extend_from_slice(&w.to_le_bytes());
+        }
+        inline.truncate(size as usize);
+        visited.remove(&ino);
+        if is_dir {
+            return Ok(FileEntry::new_dir("", Vec::new()));
+        }
+        return Ok(FileEntry::new_file("", inline));
+    }
+
+    // Symlink fast path: target in i_block if size <= 60.
+    if is_symlink && size <= 60 {
+        let iblock: [u32; 15] = inode.i_block;
+        let mut target = Vec::with_capacity(size as usize);
+        for w in &iblock[..15] {
+            target.extend_from_slice(&w.to_le_bytes());
+        }
+        target.truncate(size as usize);
+        visited.remove(&ino);
+        return Ok(FileEntry::new_file("", target));
+    }
+
+    // File data via extents.
+    let iblock_for_extents: [u32; 15] = inode.i_block;
+    let extents = walk_extents(data, bs, &iblock_for_extents);
+    let file_data = if is_reg {
+        read_data(&extents, size as u32)
+    } else {
+        Vec::new()
+    };
+
+    if is_dir {
+        let mut children = Vec::new();
+        let mut off = 0usize;
+        // Each dir block has its own extents walk for the inode's data.
+        let dir_data = read_data(&extents, size as u32);
+        while off + 8 <= dir_data.len() {
+            let d = &dir_data[off..];
+            let inode_num = u32::from_le_bytes([d[0], d[1], d[2], d[3]]);
+            let rec_len = u16::from_le_bytes([d[4], d[5]]) as usize;
+            if rec_len == 0 || rec_len > dir_data.len() - off { break; }
+            let name_len = d[6] as usize;
+            let _file_type = d[7];
+            if inode_num != 0 && name_len > 0 && name_len + 8 <= rec_len {
+                let name = std::str::from_utf8(&d[8..8 + name_len])
+                    .map_err(|_| BuildError::Ext4Error("non-utf8 dirent".into()))?
+                    .to_string();
+                if name != "." && name != ".." {
+                    // Recurse.
+                    match parse_inode_recursive(
+                        data, bs, inode_num, depth + 1,
+                        read_inode, read_data, visited,
+                    ) {
+                        Ok(mut child) => {
+                            child.name = name;
+                            children.push(child);
+                        }
+                        Err(_) => {
+                            // Skip unparseable children silently.
+                        }
+                    }
+                }
+            }
+            off += rec_len;
+        }
+        visited.remove(&ino);
+        Ok(FileEntry::new_dir("", children))
+    } else {
+        visited.remove(&ino);
+        Ok(FileEntry::new_file("", file_data))
+    }
+}
+
+/// Walk an inode's `i_block` array as an extent tree and return the
+/// flattened `(logical, physical, length)` triples that
+/// `parse_inode_recursive` feeds back to `read_data`. Tree depth > 2
+/// (i.e. interior nodes with index entries pointing at intermediate
+/// L2 tables) is intentionally unsupported — the project's ext4
+/// generator never emits that layout.
+fn walk_extents(data: &[u8], bs: u32, i_block: &[u32; 15]) -> Vec<(u32, u32, u16)> {
+    let mut out = Vec::new();
+    if i_block[0] == 0 { return out; }
+    let hdr_off = (i_block[0] as usize) * (bs as usize);
+    if hdr_off + 12 > data.len() { return out; }
+    let hdr = &data[hdr_off..hdr_off + 12];
+    let eh_magic = u16::from_le_bytes([hdr[0], hdr[1]]);
+    if eh_magic != 0xF30A { return out; }
+    let eh_entries = u16::from_le_bytes([hdr[2], hdr[3]]);
+    let eh_max = u16::from_le_bytes([hdr[4], hdr[5]]);
+    let eh_depth = u16::from_le_bytes([hdr[6], hdr[7]]);
+    if eh_depth == 0 {
+        // All entries are leaf extents.
+        for i in 0..eh_entries as usize {
+            let idx = 3 + i;
+            if idx + 2 >= 15 { break; }
+            let word1 = i_block[idx];
+            let word2 = i_block[idx + 1];
+            let ee_block = word1 & 0xFFFF;
+            let ee_len = ((word1 >> 16) & 0xFFFF) as u16;
+            let ee_start = ((word2 & 0xFFFF) << 16) | (word2 >> 16);
+            if ee_len == 0 { break; }
+            out.push((ee_block, ee_start, ee_len));
+        }
+    } else {
+        // Each entry is an Ext4ExtentIdx pointing to an L2 block.
+        for i in 0..eh_entries as usize {
+            let idx = 3 + i;
+            if idx + 2 >= 15 { break; }
+            let word = i_block[idx];
+            let ei_block = word & 0xFFFF;
+            let ei_leaf_lo = word >> 16;
+            let ei_leaf_hi = i_block[idx + 1];
+            let leaf_block = (ei_leaf_hi << 16) | ei_leaf_lo;
+            let leaf_off = (leaf_block as usize) * (bs as usize);
+            if leaf_off + 12 > data.len() { continue; }
+            // Parse leaf extent header at leaf_off.
+            let leaf_hdr = &data[leaf_off..leaf_off + 12];
+            let lh_magic = u16::from_le_bytes([leaf_hdr[0], leaf_hdr[1]]);
+            if lh_magic != 0xF30A { continue; }
+            let lh_entries = u16::from_le_bytes([leaf_hdr[2], leaf_hdr[3]]);
+            for j in 0..lh_entries as usize {
+                let e_off = leaf_off + 12 + j * 12;
+                if e_off + 12 > data.len() { break; }
+                let e_word1 = u32::from_le_bytes([data[e_off], data[e_off + 1], data[e_off + 2], data[e_off + 3]]);
+                let e_word2 = u32::from_le_bytes([data[e_off + 4], data[e_off + 5], data[e_off + 6], data[e_off + 7]]);
+                let ee_block = e_word1 & 0xFFFF;
+                let ee_len = ((e_word1 >> 16) & 0xFFFF) as u16;
+                let ee_start = ((e_word2 & 0xFFFF) << 16) | (e_word2 >> 16);
+                let logical = ei_block + ee_block;
+                if ee_len == 0 { break; }
+                out.push((logical, ee_start, ee_len));
+            }
+        }
+    }
+    let _ = eh_max;
+    out
+}
+
+// =====================================================================
 // Helpers used by finalize (replaces the old build_dir_entries_*
 // stack that had no inode-aware patching).
 // =====================================================================
@@ -1322,7 +1328,7 @@ fn build_inode_bytes_dir(mode: u16, size: u32, first_block: u32, blocks_in_file:
     b[20..24].copy_from_slice(&0u32.to_le_bytes());
     b[24..26].copy_from_slice(&0u16.to_le_bytes());
     b[26..28].copy_from_slice(&2u16.to_le_bytes());
-    b[28..32].copy_from_slice(&((blocks_in_file * 8u32) as u32).to_le_bytes());
+    b[28..32].copy_from_slice(&(blocks_in_file * 8u32).to_le_bytes());
     b[32..36].copy_from_slice(&0u32.to_le_bytes());
     let entries: u16 = if blocks_in_file > 0 { 1 } else { 0 };
     b[40..44].copy_from_slice(&((0xF30A) | ((entries as u32) << 16)).to_le_bytes());
@@ -1346,7 +1352,7 @@ fn build_inode_bytes_file(mode: u16, size: u32, first_block: u32, blocks_in_file
     b[20..24].copy_from_slice(&0u32.to_le_bytes());
     b[24..26].copy_from_slice(&0u16.to_le_bytes());
     b[26..28].copy_from_slice(&1u16.to_le_bytes());
-    b[28..32].copy_from_slice(&((blocks_in_file * 8u32) as u32).to_le_bytes());
+    b[28..32].copy_from_slice(&(blocks_in_file * 8u32).to_le_bytes());
     b[32..36].copy_from_slice(&0u32.to_le_bytes());
     let entries: u16 = if blocks_in_file > 0 { 1 } else { 0 };
     b[40..44].copy_from_slice(&((0xF30A) | ((entries as u32) << 16)).to_le_bytes());
@@ -1360,7 +1366,7 @@ fn build_inode_bytes_file(mode: u16, size: u32, first_block: u32, blocks_in_file
 
 fn set_bit(bitmap: &mut [u8], idx: u32) {
     let byte = (idx / 8) as usize;
-    let bit = (idx % 8) as u32;
+    let bit = idx % 8;
     if byte < bitmap.len() {
         bitmap[byte] |= 1 << bit;
     }
@@ -1370,7 +1376,6 @@ fn set_bit(bitmap: &mut [u8], idx: u32) {
 struct Ext4Alloc {
     ino: u32,
     is_dir: bool,
-    name: String,
     data: Vec<u8>,
     children: Vec<usize>,
     /// Bytes of the directory entry block, with placeholders for child
@@ -1400,12 +1405,12 @@ fn build_dir_block(
         let ft = if c.is_dir { EXT4_FT_DIR } else { EXT4_FT_REG_FILE };
         let name = c.name.clone();
         let actual_rec_len = 8 + name.len();
-        let rec_len = ((actual_rec_len + 3) / 4) * 4;
+        let rec_len = actual_rec_len.div_ceil(4) * 4;
         let entry_off = buf.len();
         buf.extend_from_slice(&dir_entry_bytes(0, ft, rec_len as u16, &name, name.len()));
         patches.push((entry_off, 0));
     }
-    let pad_to = ((buf.len() + 3) / 4) * 4;
+    let pad_to = buf.len().div_ceil(4) * 4;
     if pad_to > buf.len() { buf.resize(pad_to, 0); }
     (buf, patches)
 }

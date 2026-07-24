@@ -39,7 +39,6 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use uefi::proto::media::block::BlockIO;
 
 // =====================================================================
 // Constants

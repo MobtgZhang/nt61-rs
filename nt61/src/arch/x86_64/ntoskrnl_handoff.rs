@@ -466,14 +466,7 @@ pub extern "C" fn ntoskrnl_kisystemstartup_thunk(boot_info: *const crate::boot_t
 /// so other host-side code (e.g. diagnostics) can double-check
 /// it later.
 #[inline(never)]
-// =====================================================================
-// rax_diag() — temporary diagnostic: dump 16 bytes starting at RDI as
-// hex on COM1. Used to read back the host handoff slot from inside
-// the disk blob's #UD handler so we can prove whether the host's
-// volatile write reached the right physical address.
-// =====================================================================
 #[no_mangle]
-#[inline(never)]
 pub unsafe extern "C" fn rax_diag() {
     // Try reading [0x7a3ff000] directly and dump the 8-byte value
     // via COM1. This will run in the host's IDT handler context,

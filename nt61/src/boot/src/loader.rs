@@ -84,7 +84,6 @@ impl PeHeaderInfo {
         }
 
         let number_of_sections = u16::from_le_bytes([data[coff_offset + 2], data[coff_offset + 3]]);
-        let optional_header_size = u16::from_le_bytes([data[coff_offset + 16], data[coff_offset + 17]]);
 
         // Optional header
         let opt_offset = coff_offset + 20;
@@ -365,38 +364,6 @@ pub fn apply_relocations(
                 if target_file_off + 8 > image_bytes.len() {
                     return Err("DIR64 target OOB");
                 }
-                let cur = u64::from_le_bytes([
-                    image_bytes[target_file_off],
-                    image_bytes[target_file_off + 1],
-                    image_bytes[target_file_off + 2],
-                    image_bytes[target_file_off + 3],
-                    image_bytes[target_file_off + 4],
-                    image_bytes[target_file_off + 5],
-                    image_bytes[target_file_off + 6],
-                    image_bytes[target_file_off + 7],
-                ]);
-                let new = cur.wrapping_add(delta);
-                let nb = new.to_le_bytes();
-                // SAFETY: target_file_off is inside image_bytes (the
-                // .reloc table was just bounds-checked); the bytes
-                // are the in-memory representation of the image
-                // that we are about to copy into load_base. We
-                // patch the source bytes here; the section copy
-                // that runs later sees the patched values. To
-                // avoid that copy order dependency, the caller's
-                // code path applies relocations AFTER the section
-                // copy and works on the destination buffer via a
-                // second rva_to_va translation.
-                //
-                // The convention adopted here: caller writes the
-                // relocation table *as parsed* into a mutable copy
-                // of the image bytes before calling this function
-                // and reads back the patched image. The actual
-                // RAM write happens during section copy.
-                //
-                // For now, this function only validates the table
-                // and returns the count; the heavy lifting is
-                // performed by apply_relocations_in_place below.
                 count += 1;
             }
             entry_off += 2;
@@ -510,7 +477,7 @@ fn rva_to_file_offset(image_bytes: &[u8], rva: u32) -> Option<usize> {
 }
 
 fn rva_to_file_offset_from_sections(
-    image_bytes: &[u8],
+    _image_bytes: &[u8],
     sections: &[SectionHeader],
     rva: u32,
 ) -> Option<usize> {

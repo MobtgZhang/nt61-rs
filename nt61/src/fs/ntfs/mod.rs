@@ -2490,9 +2490,6 @@ pub fn read_file(ntfs: &NtfsFileSystem, handle: &mut NtfsHandle, buffer: &mut [u
         return Ok(0);
     }
 
-    let bytes_to_read = buffer.len();
-    let mut bytes_read: usize = 0;
-
     // Try to use the MFT-based read if we have a valid record
     if handle.mft_record > 0 {
         if let Some(record) = read_mft_record(&ntfs.ntfs_data, handle.mft_record) {
@@ -2547,7 +2544,6 @@ fn read_file_via_runlist(
     data_attr: &[u8],
     buffer: &mut [u8],
 ) -> usize {
-    let mut bytes_read: usize = 0;
     let cluster_size = ntfs.ntfs_data.cluster_size as usize;
 
     // Parse the non-resident attribute header to get run list
@@ -3098,8 +3094,10 @@ fn init_pagefile(ntfs_data: &NtfsData) {
     crate::boot_println!("[NTFS] init_pagefile entered (skipping pagefile open)");
     // Temporarily skip the pagefile open-or-create path while we
     // debug the kernel-phase bring-up. See FAT32::init_pagefile for
-    // the same comment.
-    return;
+    // the same comment. The parameter is intentionally referenced
+    // in the comment above so it does not trip unused-variable
+    // diagnostics during the disabled phase; reinstate the body
+    // below once the bring-up path is stable.
     let _ = ntfs_data;
 
     // Get block device ID (assume device 0 for now)

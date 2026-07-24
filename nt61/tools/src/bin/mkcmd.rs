@@ -109,9 +109,9 @@ fn build_cmd_exe() -> Vec<u8> {
     write_u32(&mut rdata, 0x24, RDATA_RVA + 0x040);       // AddressOfNameOrdinals RVA
 
     // AddressOfFunctions[3] at rdata+0x028
-    write_u32(&mut rdata, 0x028, TEXT_RVA + 0x000);       // cmd_main
+    write_u32(&mut rdata, 0x028, TEXT_RVA);       // cmd_main
     write_u32(&mut rdata, 0x02C, TEXT_RVA + 0x010);       // ExitProcess
-    write_u32(&mut rdata, 0x030, TEXT_RVA + 0x000);       // ConsoleMain
+    write_u32(&mut rdata, 0x030, TEXT_RVA);       // ConsoleMain
 
     // AddressOfNames[3] at rdata+0x034 (RVAs of name strings)
     let s_cmd_main = b"cmd_main\x00";
@@ -175,7 +175,7 @@ fn build_cmd_exe() -> Vec<u8> {
 
     // COFF File Header (20 bytes) at pe_off + 4
     let coff_off = pe_off + 4;
-    write_u16(&mut out, coff_off + 0x00, 0x8664);          // Machine
+    write_u16(&mut out, coff_off, 0x8664);          // Machine
     write_u16(&mut out, coff_off + 0x02, 2);               // NumberOfSections
     write_u32(&mut out, coff_off + 0x04, 0);               // TimeDateStamp
     write_u32(&mut out, coff_off + 0x08, 0);               // PointerToSymbolTable
@@ -185,7 +185,7 @@ fn build_cmd_exe() -> Vec<u8> {
 
     // Optional Header (PE32+ = 240 bytes) at coff_off + 0x14
     let opt_off = coff_off + 0x14;
-    write_u16(&mut out, opt_off + 0x00, 0x020B);           // Magic: PE32+
+    write_u16(&mut out, opt_off, 0x020B);           // Magic: PE32+
     write_u16(&mut out, opt_off + 0x02, 14);              // MajorLinkerVersion
     write_u16(&mut out, opt_off + 0x04, 0);               // MinorLinkerVersion
     write_u32(&mut out, opt_off + 0x06, text_raw_size);    // SizeOfCode
@@ -221,7 +221,7 @@ fn build_cmd_exe() -> Vec<u8> {
     // Only the export directory is non-zero.
     let dd_off = opt_off + 0x70;
     // [0] Export: VirtualAddress=RDATA_RVA, Size=size_of_rdata
-    write_u32(&mut out, dd_off + 0x00, RDATA_RVA);
+    write_u32(&mut out, dd_off, RDATA_RVA);
     write_u32(&mut out, dd_off + 0x04, rdata.len() as u32);
     // [1..16] = zero (already)
 

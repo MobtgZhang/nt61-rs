@@ -33,24 +33,24 @@ pub fn copy_file(src: &Path, dst: &Path) -> Result<u64> {
     }
 
     let mut src_file = fs::File::open(src)
-        .map_err(|e| BuildError::Io(e))?;
+        .map_err(BuildError::Io)?;
     
     let mut dst_file = fs::File::create(dst)
-        .map_err(|e| BuildError::Io(e))?;
+        .map_err(BuildError::Io)?;
 
     let mut buffer = [0u8; 8192];
     let mut total: u64 = 0;
 
     loop {
         let bytes_read = src_file.read(&mut buffer)
-            .map_err(|e| BuildError::Io(e))?;
+            .map_err(BuildError::Io)?;
         
         if bytes_read == 0 {
             break;
         }
 
         dst_file.write_all(&buffer[..bytes_read])
-            .map_err(|e| BuildError::Io(e))?;
+            .map_err(BuildError::Io)?;
         
         total += bytes_read as u64;
     }
@@ -91,8 +91,8 @@ pub fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     super::dir::create_dir_all(dst)?;
 
     // Read source directory entries
-    for entry in fs::read_dir(src).map_err(|e| BuildError::Io(e))? {
-        let entry = entry.map_err(|e| BuildError::Io(e))?;
+    for entry in fs::read_dir(src).map_err(BuildError::Io)? {
+        let entry = entry.map_err(BuildError::Io)?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
 
@@ -123,8 +123,8 @@ pub fn copy_files_from_dir(src: &Path, dst: &Path) -> Result<usize> {
     super::dir::create_dir_all(dst)?;
 
     let mut count = 0;
-    for entry in fs::read_dir(src).map_err(|e| BuildError::Io(e))? {
-        let entry = entry.map_err(|e| BuildError::Io(e))?;
+    for entry in fs::read_dir(src).map_err(BuildError::Io)? {
+        let entry = entry.map_err(BuildError::Io)?;
         let src_path = entry.path();
 
         if src_path.is_file() {
@@ -140,7 +140,7 @@ pub fn copy_files_from_dir(src: &Path, dst: &Path) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::{TempDir, TempPath};
+    use tempfile::TempDir;
 
     #[test]
     fn test_copy_file() {

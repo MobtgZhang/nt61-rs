@@ -69,26 +69,39 @@ pub fn init_port(port: u16) {
     outb(port + UART_REG_MCR, 0x0F);
 }
 
-/// Write character to serial port
+/// Write character to serial port. Honours the global
+/// `hal::common::serial_disable` gate; once `set_disabled(true)`
+/// has been called by `kernel_main` the byte is silently dropped
+/// so the GUI is the only operator-visible sink.
 #[inline(never)]
 pub fn write_char(c: u8) {
+    if crate::hal::common::serial_disable::is_disabled() {
+        return;
+    }
     write_char_port(COM1_PORT, c);
 }
 
-/// Write character to specific port
+/// Write character to specific port. Bypasses the global gate
+/// because the caller has already chosen a specific port (often
+/// COM2 for SAC, where suppression would defeat the purpose).
 pub fn write_char_port(port: u16, c: u8) {
     // Wait for transmit buffer to be empty
     while (inb(port + UART_REG_LSR) & LSR_TRANSMIT_EMPTY) == 0 {}
-    
+
     // Send character
     outb(port + UART_REG_DATA, c);
 }
 
-/// Write string to serial port
+/// Write string to serial port. Honours the gate; the macro-level
+/// `boot_println!` family uses `with_serial_unmasked` to escape
+/// suppression for panic paths.
 #[inline(never)]
 pub fn write_string(s: &str) {
+    if crate::hal::common::serial_disable::is_disabled() {
+        return;
+    }
     for c in s.bytes() {
-        write_char(c);
+        write_char_port(COM1_PORT, c);
     }
 }
 

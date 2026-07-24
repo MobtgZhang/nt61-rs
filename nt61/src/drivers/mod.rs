@@ -122,35 +122,31 @@ pub fn init() {
     crate::hal::serial::write_string("D:video_start\r\n");
     video::init();
     crate::hal::serial::write_string("D:video_done\r\n");
-    // `video::init()` brings up the BOCHS VBE driver, which exposes
-    // a 1024×768×32 linear framebuffer at the well-known aperture
-    // 0xE0_0000_0000 (see `drivers/video/bochs_vbe.rs`). Bootvid's
-    // own `init_from_framebuffer` was never called for that LFB
-    // because `adopt_bootinfo_framebuffer()` (in `kernel_main`) only
-    // consumes the BootInfo mailbox that winload fills in, and the
-    // current winload chain leaves `framebuffer_base` zero.
-    //
-    // We bridge the gap here: bind bootvid to the BOCHS LFB so any
-    // later `gui_log::show_safe_mode_console()` paint can route to
-    // the panel QEMU `-display gtk` actually scans out. The pitch is
-    // `width * 4` because we are in 32-bpp BGRA mode (Bochs uses
-    // BGRA on this aperture). `init_from_framebuffer` is a no-op
-    // when the LFB is already wired in, so calling it here and again
-    // from `kernel_main::adopt_bootinfo_framebuffer` is harmless.
+    // `video::init()` brings up the BOCHS VBE driver (x86_64)
+    // which exposes a 1024×768×32 linear framebuffer at the
+    // well-known aperture 0xE0_0000_0000. On every architecture
+    // bootvid is wired to the GOP LFB by
+    // `adopt_bootinfo_framebuffer()` in `arch::boot`. If GOP is
+    // missing we fall back to the BOCHS aperture on x86_64 by
+    // calling `bootvid::init_from_framebuffer` here so the Safe-Mode
+    // shell still has a panel to paint on. `init_from_framebuffer`
+    // is a no-op if the LFB is already wired, so it is harmless
+    // when `adopt_bootinfo_framebuffer` already ran.
+    if crate::hal::common::framebuffer::is_active() {
+        let info = crate::hal::common::framebuffer::info();
+        bootvid::init_from_framebuffer(
+            info.address,
+            info.width,
+            info.height,
+            info.pitch,
+        );
+    }
     #[cfg(target_arch = "x86_64")]
     {
         const BOCHS_LFB_BASE: u64 = 0xE000_0000;
         const BOCHS_LFB_WIDTH: u32 = 1024;
         const BOCHS_LFB_HEIGHT: u32 = 768;
         const BOCHS_LFB_PITCH: u32 = BOCHS_LFB_WIDTH * 4; // 32 bpp
-        // Bind bootvid to the BOCHS LFB so any later
-        // `gui_log::show_safe_mode_console()` paint can route to
-        // the panel QEMU `-display gtk` actually scans out.
-        // `init_from_framebuffer` sets `MODE_LFB=true`, which is
-        // what `bootvid::lfb_active()` reads; it is a no-op if the
-        // base/width/height/pitch are already non-zero, so this is
-        // safe to call alongside the `adopt_bootinfo_framebuffer`
-        // path in `arch::boot`.
         bootvid::init_from_framebuffer(
             BOCHS_LFB_BASE,
             BOCHS_LFB_WIDTH,
@@ -159,6 +155,11 @@ pub fn init() {
         );
         crate::hal::serial::write_string("D:bootvid_lfb_bound\r\n");
     }
+
+    // Force the bootvid LFB path on for non-x86_64 builds so the
+    // bootvid console paints into the LFB instead of falling
+    // through to the no-op (or worse, the legacy VGA buffer).
+    bootvid::force_lfb_console();
     crate::hal::serial::write_string("D:timer_start\r\n");
     timer::init();
     crate::hal::serial::write_string("D:timer_done\r\n");
@@ -173,13 +174,12 @@ pub fn init() {
     kdcom::init();
     crate::hal::serial::write_string("D:post_kdcom\r\n");
     crate::hal::serial::write_string("D:pre_bootvid\r\n");
-    // bootvid has a VGA-text-buffer fallback at 0xB8000 that
-    // faults on aarch64 / riscv64 / loongarch64 (the address is
-    // not identity-mapped by the UEFI stub on those platforms).
-    // On non-x86_64 we drive boot output through the GOP framebuffer
-    // (via the bootvid LFB mode), so the legacy VGA path is dead
-    // code and we skip the call entirely.
-    #[cfg(target_arch = "x86_64")]
+    // bootvid now has a cross-arch LFB backend driven by the
+    // shared `hal::common::framebuffer` writer; the legacy VGA
+    // text buffer at 0xB8000 is still wired on x86_64 as a
+    // fallback for boards that don't expose a GOP framebuffer.
+    // On the other architectures `bootvid::init()` activates the
+    // LFB path or stays disabled if no framebuffer was published.
     bootvid::init();
     crate::hal::serial::write_string("D:post_bootvid\r\n");
     crate::hal::serial::write_string("D:pre_ci\r\n");

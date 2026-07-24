@@ -28,10 +28,6 @@ impl Buf {
         self.data.push(b);
     }
 
-    pub fn u16(&mut self, w: u16) {
-        self.data.extend_from_slice(&w.to_le_bytes());
-    }
-
     pub fn u32(&mut self, dw: u32) {
         self.data.extend_from_slice(&dw.to_le_bytes());
     }
@@ -71,14 +67,6 @@ impl Buf {
         }
         out
     }
-
-    /// Debug helper: list every queued fixup with its captured name.
-    /// Useful when a label name is misspelled and `finalize` panics.
-    pub fn dump_fixups(&self) {
-        for (name, off) in &self.fixups {
-            eprintln!("fixup: {} @ {}", name, off);
-        }
-    }
 }
 
 // ===== Misc single-byte mnemonics =================================
@@ -88,9 +76,6 @@ pub fn cli(b: &mut Buf) {
 }
 pub fn cld(b: &mut Buf) {
     b.u8(0xfc);
-}
-pub fn nop(b: &mut Buf) {
-    b.u8(0x90);
 }
 pub fn ret(b: &mut Buf) {
     b.u8(0xc3);
@@ -102,9 +87,6 @@ pub fn syscall(b: &mut Buf) {
 
 // ===== Stack ops ===================================================
 
-pub fn push_rax(b: &mut Buf) {
-    b.u8(0x50);
-}
 pub fn push_rbx(b: &mut Buf) {
     b.u8(0x53);
 }
@@ -151,18 +133,9 @@ pub fn mov_rax_imm32(b: &mut Buf, imm: u32) {
     b.u8(0xb8);
     b.u32(imm);
 }
-pub fn mov_rdi_imm32(b: &mut Buf, imm: u32) {
-    b.u8(0xbf);
-    b.u32(imm);
-}
 pub fn mov_rsi_imm32(b: &mut Buf, imm: u32) {
     b.u8(0xbe);
     b.u32(imm);
-}
-pub fn mov_rdx_imm64(b: &mut Buf, imm: u64) {
-    b.u8(0x48);
-    b.u8(0xba);
-    b.data.extend_from_slice(&imm.to_le_bytes());
 }
 pub fn mov_r10d_imm32(b: &mut Buf, imm: u32) {
     b.u8(0x41);
@@ -421,30 +394,13 @@ pub fn test_r13_r13(b: &mut Buf) {
 
 // ===== RIP-relative LEA ============================================
 
-pub fn lea_rdi_rip(b: &mut Buf, target_off: usize) {
-    // 48 8D 3D disp32
-    let disp = (target_off.wrapping_sub(b.pos() + 7) & 0xFFFFFFFF) as u32;
-    b.u8(0x48);
-    b.u8(0x8d);
-    b.u8(0x3d);
-    b.u32(disp);
-}
-pub fn lea_rsi_rip(b: &mut Buf, target_off: usize) {
-    // 48 8D 35 disp32
-    let disp = (target_off.wrapping_sub(b.pos() + 7) & 0xFFFFFFFF) as u32;
-    b.u8(0x48);
-    b.u8(0x8d);
-    b.u8(0x35);
-    b.u32(disp);
-}
-pub fn lea_rdx_rip(b: &mut Buf, target_off: usize) {
-    // 48 8D 15 disp32
-    let disp = (target_off.wrapping_sub(b.pos() + 7) & 0xFFFFFFFF) as u32;
-    b.u8(0x48);
-    b.u8(0x8d);
-    b.u8(0x15);
-    b.u32(disp);
-}
+// ===== RIP-relative LEA ============================================
+//
+// All three LEA emitters were retained when the stubs were first
+// ported from `cmd_asm.py`. Once the live stubs only emit one of
+// them (or none) the unused variants will return in this file;
+// keeping the unused helpers around makes the warnings reappear
+// every time the stub layout changes.
 
 // ===== Calls / jumps (return the position of the disp32 so the
 // =====  caller can backpatch it via `j32_backpatch`). ==============
@@ -461,21 +417,10 @@ pub fn jmp_rel(b: &mut Buf) -> usize {
     b.u32(0);
     off
 }
-pub fn jmp_short(b: &mut Buf, disp: i8) {
-    b.u8(0xeb);
-    b.u8(disp as u8);
-}
 
 pub fn je32(b: &mut Buf) -> usize {
     b.u8(0x0f);
     b.u8(0x84);
-    let off = b.pos();
-    b.u32(0);
-    off
-}
-pub fn jae32(b: &mut Buf) -> usize {
-    b.u8(0x0f);
-    b.u8(0x83);
     let off = b.pos();
     b.u32(0);
     off
@@ -510,10 +455,6 @@ pub fn cmp_rax_0(b: &mut Buf) {
     b.u8(0x83);
     b.u8(0xf8);
     b.u8(0x00);
-}
-pub fn cmp_al_imm8(b: &mut Buf, imm: u8) {
-    b.u8(0x3c);
-    b.u8(imm);
 }
 pub fn cmp_dl_imm8(b: &mut Buf, imm: u8) {
     // 80 FA imm8

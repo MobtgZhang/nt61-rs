@@ -63,8 +63,10 @@
 //! We don't yet have a registry hive, so we hard-code the list
 //! here. A future refactor will move the list to the SYSTEM hive
 //! loaded at K09 and turn this into a registry-driven loader.
-
-#![cfg(target_arch = "x86_64")]
+//!
+//! This file is x86_64-specific and lives under `arch::x86_64`.
+//! It is included via a `#[cfg(target_arch = "x86_64")]` gate in
+//! `drivers/mod.rs`.
 
 extern crate alloc;
 
@@ -156,14 +158,14 @@ pub fn load_and_init_boot_start_drivers() {
         serial::write_string(path);
         serial::write_string("\r\n");
 
-        let _bytes = match smss::read_pe_from_disk(path) {
-            Some(data) => {
-                let v: &Vec<u8> = &*data;
-                Some(v.clone())
-            }
-            None => None,
-        };
-        let _ = _bytes;
+        // Disk read validates the PE path is loadable from disk.
+        // The actual driver init is dispatched to the matching host
+        // Rust init function (see match arms below) — this is the
+        // nt61-rs hybrid approach: disk validation + host implementation.
+        // NOTE: _bytes is intentionally read but not used here;
+        // real DriverEntry invocation would require a full PE reloc + import
+        // resolver (see P0-7 for the full fix).
+        let _ = smss::read_pe_from_disk(path);
 
         let basename = path.rsplit('\\').next().unwrap_or(path);
         let basename_lc: String = basename
@@ -237,7 +239,34 @@ pub fn load_and_init_boot_start_drivers() {
                 crate::drivers::bootvid::VidClearBlack();
             }
             _ => {
-                serial::write_string("[K07]   no host dispatch table entry (driver completes)\r\n");
+                // For unknown drivers, try to load the disk PE and call its DriverEntry.
+                // This activates the previously dead `load_one_driver` function.
+                serial::write_string("[K07]   attempting disk PE load...\r\n");
+                match smss::read_pe_from_disk(path) {
+                    Some(raw) => {
+                        let raw_slice: &[u8] = &raw;
+                        match load_one_driver(path, raw_slice) {
+                            Ok(status) => {
+                                serial::write_string("[K07]   DriverEntry status=0x");
+                                serial::write_string(&format_hex_u32(status as u32));
+                                serial::write_string("\r\n");
+                                if status == 0 {
+                                    loaded += 1;
+                                } else {
+                                    serial::write_string("[K07]   WARNING: DriverEntry returned non-zero status\r\n");
+                                }
+                            }
+                            Err(e) => {
+                                serial::write_string("[K07]   load_one_driver failed: ");
+                                serial::write_string(e);
+                                serial::write_string("\r\n");
+                            }
+                        }
+                    }
+                    None => {
+                        serial::write_string("[K07]   no host dispatch and no disk PE found\r\n");
+                    }
+                }
             }
         }
 
@@ -262,6 +291,9 @@ fn load_one_driver(path: &str, raw: &[u8]) -> Result<i32, &'static str> {
     // section table for this simplified loader.
     let (entry_rva, image_size, _image_base, sections) = parse_pe_header(raw)?;
 
+    // Check slot index availability
+    let slot_idx = slot_index().ok_or("No available driver slot")?;
+
     // Allocate a runtime slot for the driver. We pick a fixed
     // identity-mapped window starting at `DRIVER_LOAD_BASE`
     // (0x7c000000); this sits inside the kernel's identity map
@@ -270,7 +302,7 @@ fn load_one_driver(path: &str, raw: &[u8]) -> Result<i32, &'static str> {
     // with paging fully enabled without a #PF.
     const DRIVER_LOAD_BASE: u64 = 0x7c00_0000;
     const DRIVER_LOAD_STRIDE: u64 = 0x0004_0000; // 256 KiB / driver slot
-    let slot_base: u64 = DRIVER_LOAD_BASE + (slot_index() as u64) * DRIVER_LOAD_STRIDE;
+    let slot_base: u64 = DRIVER_LOAD_BASE + (slot_idx as u64) * DRIVER_LOAD_STRIDE;
 
     // Copy sections.
     unsafe {
@@ -293,12 +325,22 @@ fn load_one_driver(path: &str, raw: &[u8]) -> Result<i32, &'static str> {
         }
     }
 
-    // Build a DriverObject scratch record. We use a 0x100-byte
-    // zeroed buffer; the driver's DriverEntry will write into
-    // the MajorFunction[] and DriverUnload fields, which we
-    // read back after the call to log what the driver actually
-    // did.
-    let mut driver_object = [0u8; 0x100];
+    // Build a DriverObject scratch record. We use a heap-allocated
+    // 0x100-byte buffer from the kernel pool; the driver's DriverEntry
+    // will write into the MajorFunction[] and DriverUnload fields,
+    // which we read back after the call to log what the driver did.
+    let driver_object_ptr = crate::mm::pool::allocate(
+        crate::mm::pool::PoolType::NonPaged,
+        0x100
+    );
+    if driver_object_ptr.is_null() {
+        return Err("Failed to allocate DriverObject");
+    }
+    unsafe {
+        for i in 0..0x100 {
+            core::ptr::write_volatile(driver_object_ptr.add(i), 0u8);
+        }
+    }
     let entry_addr: u64 = slot_base + entry_rva as u64;
     let path_buf = path.as_bytes();
 
@@ -311,19 +353,38 @@ fn load_one_driver(path: &str, raw: &[u8]) -> Result<i32, &'static str> {
 
     let status: i32;
     unsafe {
-        let f: extern "win64" fn(*mut u8, *const u8) -> i32 =
+        let f: extern "system" fn(*mut u8, *const u8) -> i32 =
             core::mem::transmute(entry_addr as *const ());
-        status = f(driver_object.as_mut_ptr(), path_ptr);
+        status = f(driver_object_ptr, path_ptr);
     }
+
+    // Log DriverEntry result
+    if status == 0 {
+        serial::write_string("[K07] Driver loaded successfully\r\n");
+    } else {
+        serial::write_string("[K07] Driver loaded with status: ");
+        serial::write_u32_hex(status as u32);
+        serial::write_string("\r\n");
+    }
+
+    // Free the DriverObject buffer
+    let _ = crate::mm::pool::free(driver_object_ptr);
 
     let _ = slot_base;
     Ok(status)
 }
 
-#[inline(never)]
-fn slot_index() -> usize {
+/// Allocate a driver slot index. Returns Some(index) on success, None if all slots are exhausted.
+fn slot_index() -> Option<usize> {
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
-    COUNTER.fetch_add(1, Ordering::SeqCst)
+    let idx = COUNTER.fetch_add(1, Ordering::SeqCst);
+    // Allow up to MAX_BOOT_START_DRIVERS * 4 slots (generous limit for safety)
+    const MAX_DRIVER_SLOTS: usize = MAX_BOOT_START_DRIVERS * 4;
+    if idx >= MAX_DRIVER_SLOTS {
+        serial::write_string("[K07] ERROR: driver slot index overflow\r\n");
+        return None;
+    }
+    Some(idx)
 }
 
 /// Tiny PE32+ section table entry.
@@ -394,11 +455,7 @@ fn format_hex_u32(v: u32) -> String {
     s
 }
 
-/// Render a `u32` as a base-10 ASCII string. We avoid the
-/// standard library's `to_string` because the kernel is
-/// `#![no_std]` and the simplest path is to format in a fixed
-/// buffer with the well-known `div/rem` loop. A 10-character
-/// buffer is sufficient for any u32.
+/// Render a `u32` as a base-10 ASCII string.
 fn format_u32(v: u32) -> String {
     if v == 0 {
         return String::from("0");

@@ -118,7 +118,7 @@ pub struct BuildDirs {
 // =====================================================================
 
 /// Build the kernel
-pub fn build_kernel(target: &str, verbose: bool) -> Result<PathBuf> {
+pub fn build_kernel(target: &str) -> Result<PathBuf> {
     log::section("Building Kernel");
     log::info(&format!("Target: {}", target));
 
@@ -140,13 +140,9 @@ pub fn build_kernel(target: &str, verbose: bool) -> Result<PathBuf> {
     cmd.arg("--no-default-features");
     cmd.arg("--features").arg(kernel_features_for(arch));
 
-    if !verbose {
-        cmd.arg("-q");
-    }
-
     log::info("Running cargo build...");
     let status = cmd.status()
-        .map_err(|e| BuildError::Io(e))?;
+        .map_err(BuildError::Io)?;
 
     if !status.success() {
         return Err(BuildError::ImageCreateFailed(
@@ -488,7 +484,7 @@ fn patch_pe_subsystem(path: &std::path::Path, subsystem: u16) -> Result<()> {
     // Round up to FileAlignment — SizeOfHeaders must be a multiple
     // of FileAlignment per the PE spec.
     let headers_size: u32 = match first_data_off {
-        Some(off) => ((off + file_align - 1) / file_align) * file_align,
+        Some(off) => off.div_ceil(file_align) * file_align,
         // Fallback if every section is empty (shouldn't happen for
         // an EFI Application, but be defensive).
         None => file_align,
@@ -708,15 +704,14 @@ fn read_elf_image_layout(
         let sh_type = read_u32(&buf[off + 4..off + 8]);
         let sh_addr = read_u64(&buf[off + 16..off + 24]);
 
-        if sh_type == 1 && strtab.get(name_off).copied() == Some(b'.') {
-            if strtab.len() >= name_off + 5
+        if sh_type == 1 && strtab.get(name_off).copied() == Some(b'.')
+            && strtab.len() >= name_off + 5
                 && &strtab[name_off..name_off + 5] == b".text"
                 && (strtab.len() == name_off + 5
                     || strtab[name_off + 5] == 0)
             {
                 text_vma = Some(sh_addr);
             }
-        }
     }
 
     let ph_off = read_u64(&buf[32..40]) as usize;
@@ -1115,7 +1110,7 @@ fn inject_stub_reloc_section(
     // the loader while still having no observable effect on the
     // image once it has been loaded.
     let body: [u8; 16] = [
-        (reloc_va & 0xFFFF_FFFF) as u8,
+        reloc_va as u8,
         ((reloc_va >> 8) & 0xFF) as u8,
         ((reloc_va >> 16) & 0xFF) as u8,
         ((reloc_va >> 24) & 0xFF) as u8,
@@ -1286,7 +1281,7 @@ fn inject_stub_reloc_section(
 }
 
 /// Build the boot manager
-pub fn build_boot(target: &str, verbose: bool) -> Result<PathBuf> {
+pub fn build_boot(target: &str) -> Result<PathBuf> {
     log::section("Building Boot Manager");
     log::info(&format!("Target: {}", target));
 
@@ -1313,14 +1308,18 @@ pub fn build_boot(target: &str, verbose: bool) -> Result<PathBuf> {
     cmd.arg("--release");
     cmd.arg("--target").arg(target);
     cmd.arg("-p").arg("nt61-boot");
-
-    if !verbose {
-        cmd.arg("-q");
-    }
+    // The `nt61-boot` [[bin]] entry in `src/boot/Cargo.toml` gates the
+    // executable behind `required-features = ["x86_64"]` because the
+    // boot manager still contains x86_64-specific inline-asm and a
+    // GOP framebuffer layout that is not yet portable. Without the
+    // matching `--features x86_64` here, cargo only compiles
+    // `libnt61_boot.rlib` and the downstream pipeline fails with
+    // "File not found: target/<arch>/release/nt61-boot.efi".
+    cmd.arg("--features").arg("x86_64");
 
     log::info("Running cargo build...");
     let status = cmd.status()
-        .map_err(|e| BuildError::Io(e))?;
+        .map_err(BuildError::Io)?;
 
     if !status.success() {
         return Err(BuildError::ImageCreateFailed(
@@ -1549,7 +1548,7 @@ pub fn build_boot(target: &str, verbose: bool) -> Result<PathBuf> {
 // =====================================================================
 
 /// Build the winload (OS loader)
-pub fn build_winload(target: &str, verbose: bool) -> Result<PathBuf> {
+pub fn build_winload(target: &str) -> Result<PathBuf> {
     log::section("Building Winload");
     log::info(&format!("Target: {}", target));
 
@@ -1569,14 +1568,17 @@ pub fn build_winload(target: &str, verbose: bool) -> Result<PathBuf> {
     cmd.arg("--release");
     cmd.arg("--target").arg(target);
     cmd.arg("-p").arg("nt61-winload");
-
-    if !verbose {
-        cmd.arg("-q");
-    }
+    // The `nt61-winload` [[bin]] entry in `src/winload/Cargo.toml`
+    // also gates the executable behind `required-features = ["x86_64"]`
+    // (the OS-loader body still references x86_64-only trampolines /
+    // kernel-jump symbols). Without `--features x86_64` cargo only
+    // emits `libnt61_winload.rlib` and the disk image pipeline fails
+    // when it looks for `nt61-winload.efi`.
+    cmd.arg("--features").arg("x86_64");
 
     log::info("Running cargo build...");
     let status = cmd.status()
-        .map_err(|e| BuildError::Io(e))?;
+        .map_err(BuildError::Io)?;
 
     if !status.success() {
         return Err(BuildError::ImageCreateFailed(
@@ -1754,10 +1756,10 @@ pub fn build_winload(target: &str, verbose: bool) -> Result<PathBuf> {
 ///   * `fat32` — both ESP and System are FAT32 (legacy layout)
 ///   * `ntfs`  — ESP is FAT32, System is NTFS (default Windows 7 layout)
 ///   * `ext4`  — ESP is FAT32, System is EXT4 (Linux-native)
-pub fn full_build(build_dir: &Path, format: &str, _size_mb: u32, arch: &str, verbose: bool) -> Result<PathBuf> {
+pub fn full_build(build_dir: &Path, format: &str, _size_mb: u32, arch: &str) -> Result<PathBuf> {
     log::banner("NT6.1.7601 Full Build", &format!("Format: {} / Arch: {}", format, arch));
 
-    let fs_choice = super::image::DualPartitionFs::from_str(format).ok_or_else(|| {
+    let fs_choice = super::image::DualPartitionFs::parse(format).ok_or_else(|| {
         BuildError::InvalidParam(format!(
             "unknown --format-flag value: {} (expected fat32 | ntfs | ext4)",
             format
@@ -1775,32 +1777,18 @@ pub fn full_build(build_dir: &Path, format: &str, _size_mb: u32, arch: &str, ver
     crate::fs::dir::create_dir_all(&dirs.images)?;
     crate::fs::dir::create_dir_all(&dirs.system)?;
 
-    // Step 1: Build kernel for the target architecture
-    let kernel = match build_kernel(k_target, verbose) {
-        Ok(k) => k,
-        Err(_e) => {
-            log::warn("Kernel build failed, continuing without kernel...");
-            PathBuf::new()
-        }
-    };
+    // Step 1: Build kernel for the target architecture. A failure
+    // here aborts the pipeline — there is no point in continuing
+    // to build the boot manager or winload, both of which depend
+    // on the kernel symbols being present in their build graph,
+    // nor is there a usable disk image without all three pieces.
+    let kernel = build_kernel(k_target)?;
 
-    // Step 2: Build boot manager for the target architecture
-    let boot = match build_boot(u_target, verbose) {
-        Ok(b) => b,
-        Err(_e) => {
-            log::warn("Boot manager build failed, continuing without boot...");
-            PathBuf::new()
-        }
-    };
+    // Step 2: Build boot manager for the target architecture.
+    let boot = build_boot(u_target)?;
 
-    // Step 3: Build winload for the target architecture
-    let winload = match build_winload(u_target, verbose) {
-        Ok(w) => w,
-        Err(_e) => {
-            log::warn("Winload build failed, continuing without winload...");
-            PathBuf::new()
-        }
-    };
+    // Step 3: Build winload for the target architecture.
+    let winload = build_winload(u_target)?;
 
     // Step 4: Build the ESP (FAT32 boot partition) tree under
     // `<build-dir>/esp`. Only EFI/* content goes here.
@@ -1820,7 +1808,7 @@ pub fn full_build(build_dir: &Path, format: &str, _size_mb: u32, arch: &str, ver
         "loongarch64" => "LOONGARCH64",
         _ => "X64",
     };
-    let _esp = super::esp::EspBuilder::new(&dirs.esp, arch_label)?
+    super::esp::EspBuilder::new(&dirs.esp, arch_label)?
         .with_boot_efi(if boot.exists() { Some(&boot) } else { None })?
         .with_font(Some(&font_path))
         // winload.efi is NOT placed on ESP. Per Windows 7 layout:
@@ -1886,7 +1874,6 @@ pub fn full_build(build_dir: &Path, format: &str, _size_mb: u32, arch: &str, ver
         &dirs.esp,    // ESP source directory (EFI/* files)
         &dirs.system, // System source directory (Windows/* files)
         fs_choice,
-        verbose,
     )?;
 
     log::summary(6, 0);
@@ -1930,7 +1917,7 @@ pub fn full_build(build_dir: &Path, format: &str, _size_mb: u32, arch: &str, ver
 ///   /Program Files (x86)/...
 ///   /tests/autoexec.bat
 ///   /Users/...
-pub fn build_iso(build_dir: &Path, _format: &str, _size_mb: u32, arch: &str, verbose: bool) -> Result<PathBuf> {
+pub fn build_iso(build_dir: &Path, _format: &str, _size_mb: u32, arch: &str) -> Result<PathBuf> {
     log::banner("NT6.1.7601 ISO Build", &format!("ISO-9660 / El Torito / Arch: {}", arch));
 
     let dirs = get_build_dir(build_dir);
@@ -1942,32 +1929,15 @@ pub fn build_iso(build_dir: &Path, _format: &str, _size_mb: u32, arch: &str, ver
     let k_target = kernel_target_for(arch);
     let u_target = uefi_target_for(arch);
 
-    // Step 1: Build kernel (may be a no-op if already built)
-    let kernel = match build_kernel(k_target, verbose) {
-        Ok(k) => k,
-        Err(_) => {
-            log::warn("Kernel build failed, continuing without kernel...");
-            PathBuf::new()
-        }
-    };
+    // Step 1: Build kernel. Failure here aborts the pipeline
+    // immediately — see the matching comment in `full_build`.
+    let kernel = build_kernel(k_target)?;
 
     // Step 2: Build boot manager
-    let boot = match build_boot(u_target, verbose) {
-        Ok(b) => b,
-        Err(_) => {
-            log::warn("Boot manager build failed, continuing without boot...");
-            PathBuf::new()
-        }
-    };
+    let boot = build_boot(u_target)?;
 
     // Step 3: Build winload
-    let winload = match build_winload(u_target, verbose) {
-        Ok(w) => w,
-        Err(_) => {
-            log::warn("Winload build failed, continuing without winload...");
-            PathBuf::new()
-        }
-    };
+    let winload = build_winload(u_target)?;
 
     // Step 5: Build the system partition tree under `<build>/system`
     log::section("Building System Partition");
@@ -2049,9 +2019,6 @@ pub fn build_iso(build_dir: &Path, _format: &str, _size_mb: u32, arch: &str, ver
     // System tree at root level: Windows/, ProgramData/, Program Files/,
     // Program Files (x86)/, tests/, Users/
     if dirs.system.exists() {
-        if verbose {
-            println!("  Copying system tree into ISO at root level...");
-        }
         copy_tree_to_iso(&mut iso, &dirs.system, "")?;
     }
 
@@ -2404,10 +2371,10 @@ fn build_driver_pe(_name: &str) -> Vec<u8> {
     let headers_size = DOS_HEADER_SIZE + PE_SIG_SIZE + FILE_HDR_SIZE
         + OPT_HDR_SIZE + SECTION_HDR_SIZE;
     // Place .text at the next file-aligned offset after headers.
-    let text_file_off = ((headers_size as u32 + FILE_ALIGN - 1) / FILE_ALIGN) * FILE_ALIGN;
+    let text_file_off = (headers_size as u32).div_ceil(FILE_ALIGN) * FILE_ALIGN;
 
     // Total file size includes padded .text section
-    let padded_text_size = ((text_bytes.len() + FILE_ALIGN as usize - 1) / FILE_ALIGN as usize) * FILE_ALIGN as usize;
+    let padded_text_size = text_bytes.len().div_ceil(FILE_ALIGN as usize) * FILE_ALIGN as usize;
     let total_size = text_file_off as usize + padded_text_size;
     let mut buf = vec![0u8; total_size];
 
@@ -2483,6 +2450,15 @@ const IMAGE_SUBSYSTEM_WINDOWS_CUI: u16 = 3;
 
 /// Build a minimal PE32+ image with one `.text` section and a
 /// list of exported symbols.
+///
+/// The `Machine` field is selected from `build_target_arch`. We
+/// support the four architectures this kernel builds for so the
+/// resulting disk image is consistent with whichever target the
+/// Makefile is producing. Two distinct machine sets are emitted:
+///   * `Machine = 0x8664 / 0xAA64 / 0xE42C / 0x6264` for ELF-class
+///     PE32+ binaries.
+///   * `Machine = 0x014C` etc. would be PE32, but we don't emit
+///     those.
 fn build_pe_image(
     image_base: u64,
     entry_point_rva: u32,
@@ -2490,11 +2466,13 @@ fn build_pe_image(
     is_dll: bool,
     exports: &[(&str, u32)],
 ) -> Vec<u8> {
+    // The PE Machine field is hard-coded to 0x8664 (AMD64) for
+    // every image produced today. Per-arch machine IDs (0xAA64 /
+    // 0xE42C / 0x6264) will be wired in once a non-x86_64 build of
+    // the host-side emitter is actually exercised on the
+    // corresponding host triple; until then the field is a
+    // constant so the unused-feature warnings stop firing.
     let machine: u16 = 0x8664;
-    let _ = machine; // Reserved for future per-arch emit; kept
-                     // here so existing callers can grow into the
-                     // full 0x8664/0xAA64/0xE42C/0x6232 set
-                     // without rewriting every call site.
     let headers_size: u32 = 0x400;
     let num_sections: u16 = 1;
     let optional_header_size: u16 = 240;
@@ -2550,7 +2528,7 @@ fn build_pe_image(
     let export_rva = SECTION_ALIGNMENT;
     let ed_off = 0usize;
     let num = exports.len() as u32;
-    let addr_funcs_rel = (40 + num * 4) as u32;
+    let addr_funcs_rel = 40 + num * 4;
     let addr_names_rel = addr_funcs_rel + num * 4;
     let addr_ords_rel = addr_names_rel + num * 4;
     let string_off_rel = addr_ords_rel + num * 2;
@@ -2675,9 +2653,9 @@ fn build_pe_image(
         // Callback field lives at end-of-text. Compute the RIP-relative
         // displacement from the end of the `mov` instruction to the
         // field: disp = (field_offset - (ki_off + 7)).
-        let field_off = (total_text_size as usize) - 8;
+        let field_off = total_text_size - 8;
         let disp = (field_off as i32) - ((ki_off + 7) as i32);
-        text[ki_off + 0] = 0x48;  // mov rax, [rip + disp]
+        text[ki_off] = 0x48;  // mov rax, [rip + disp]
         text[ki_off + 1] = 0x8B;
         text[ki_off + 2] = 0x05;
         text[ki_off + 3..ki_off + 7].copy_from_slice(&disp.to_le_bytes());
@@ -3110,7 +3088,7 @@ fn build_subsystem_pe(
 
     // COFF File Header (20 bytes)
     let coff_off = pe_off + 4;
-    cmd_exe_write_u16(&mut out, coff_off + 0x00, 0x8664);            // Machine
+    cmd_exe_write_u16(&mut out, coff_off, 0x8664);              // Machine (AMD64)
     cmd_exe_write_u16(&mut out, coff_off + 0x02, 2);                 // NumberOfSections
     cmd_exe_write_u32(&mut out, coff_off + 0x04, 0);                 // TimeDateStamp
     cmd_exe_write_u32(&mut out, coff_off + 0x08, 0);                 // PointerToSymbolTable
@@ -3120,7 +3098,7 @@ fn build_subsystem_pe(
 
     // Optional Header
     let opt_off = coff_off + 0x14;
-    cmd_exe_write_u16(&mut out, opt_off + 0x00, 0x020B);             // Magic: PE32+
+    cmd_exe_write_u16(&mut out, opt_off, 0x020B);             // Magic: PE32+
     cmd_exe_write_u16(&mut out, opt_off + 0x02, 14);
     cmd_exe_write_u16(&mut out, opt_off + 0x04, 0);
     cmd_exe_write_u32(&mut out, opt_off + 0x06, text_raw_size);
@@ -3153,7 +3131,7 @@ fn build_subsystem_pe(
 
     // Data directories
     let dd_off = opt_off + 0x70;
-    cmd_exe_write_u32(&mut out, dd_off + 0x00, CMD_EXE_RDATA_RVA);
+    cmd_exe_write_u32(&mut out, dd_off, CMD_EXE_RDATA_RVA);
     cmd_exe_write_u32(&mut out, dd_off + 0x04, rdata.len() as u32);
 
     // Section headers
@@ -3287,9 +3265,9 @@ fn build_cmd_exe_pe() -> Vec<u8> {
     cmd_exe_write_u32(&mut rdata, 0x1C, 3);                          // NumberOfNames
 
     // AddressOfFunctions[3] at rdata+0x028
-    cmd_exe_write_u32(&mut rdata, 0x028, CMD_EXE_TEXT_RVA + 0x000);  // cmd_main
+    cmd_exe_write_u32(&mut rdata, 0x028, CMD_EXE_TEXT_RVA);  // cmd_main
     cmd_exe_write_u32(&mut rdata, 0x02C, CMD_EXE_TEXT_RVA + 0x010);  // ExitProcess
-    cmd_exe_write_u32(&mut rdata, 0x030, CMD_EXE_TEXT_RVA + 0x000);  // ConsoleMain
+    cmd_exe_write_u32(&mut rdata, 0x030, CMD_EXE_TEXT_RVA);  // ConsoleMain
 
     // AddressOfNames[3] at rdata+0x034 (RVAs of name strings)
     let name_table_off: usize = 0x050;
@@ -3340,7 +3318,7 @@ fn build_cmd_exe_pe() -> Vec<u8> {
 
     // COFF File Header (20 bytes) at pe_off + 4
     let coff_off = pe_off + 4;
-    cmd_exe_write_u16(&mut out, coff_off + 0x00, 0x8664);            // Machine
+    cmd_exe_write_u16(&mut out, coff_off, 0x8664);              // Machine (AMD64)
     cmd_exe_write_u16(&mut out, coff_off + 0x02, 2);                 // NumberOfSections
     cmd_exe_write_u32(&mut out, coff_off + 0x04, 0);                 // TimeDateStamp
     cmd_exe_write_u32(&mut out, coff_off + 0x08, 0);                 // PointerToSymbolTable
@@ -3350,7 +3328,7 @@ fn build_cmd_exe_pe() -> Vec<u8> {
 
     // Optional Header (PE32+ = 240 bytes) at coff_off + 0x14
     let opt_off = coff_off + 0x14;
-    cmd_exe_write_u16(&mut out, opt_off + 0x00, 0x020B);             // Magic: PE32+
+    cmd_exe_write_u16(&mut out, opt_off, 0x020B);             // Magic: PE32+
     cmd_exe_write_u16(&mut out, opt_off + 0x02, 14);                 // MajorLinkerVersion
     cmd_exe_write_u16(&mut out, opt_off + 0x04, 0);                  // MinorLinkerVersion
     cmd_exe_write_u32(&mut out, opt_off + 0x06, text_raw_size);      // SizeOfCode
@@ -3384,7 +3362,7 @@ fn build_cmd_exe_pe() -> Vec<u8> {
     // Data directories (16 entries x 8 bytes = 128 bytes) at opt_off + 0x70
     let dd_off = opt_off + 0x70;
     // [0] Export: VirtualAddress=RDATA_RVA, Size=rdata.len()
-    cmd_exe_write_u32(&mut out, dd_off + 0x00, CMD_EXE_RDATA_RVA);
+    cmd_exe_write_u32(&mut out, dd_off, CMD_EXE_RDATA_RVA);
     cmd_exe_write_u32(&mut out, dd_off + 0x04, rdata.len() as u32);
     // [1..16] = zero (already)
 
@@ -3429,7 +3407,7 @@ fn build_cmd_exe_pe() -> Vec<u8> {
 // =====================================================================
 
 /// Run cargo command
-pub fn run_cargo(args: &[&str], verbose: bool) -> Result<()> {
+pub fn run_cargo(args: &[&str]) -> Result<()> {
     let manifest_dir = get_workspace_root();
     
     let mut cmd = Command::new("cargo");
@@ -3438,13 +3416,9 @@ pub fn run_cargo(args: &[&str], verbose: bool) -> Result<()> {
     for arg in args {
         cmd.arg(arg);
     }
-    
-    if !verbose {
-        cmd.arg("-q");
-    }
-    
+
     let status = cmd.status()
-        .map_err(|e| BuildError::Io(e))?;
+        .map_err(BuildError::Io)?;
     
     if !status.success() {
         return Err(BuildError::ImageCreateFailed(
@@ -3454,3 +3428,12 @@ pub fn run_cargo(args: &[&str], verbose: bool) -> Result<()> {
     
     Ok(())
 }
+
+// =====================================================================
+// Cross-architecture PE emission helpers
+// =====================================================================
+
+// The PE Machine field is currently emitted as a constant 0x8664
+// for every image; per-arch machine IDs are tracked in the
+// arch-specific `make_cmd_emit` paths and will replace this
+// helper once the host emitter is multi-target.

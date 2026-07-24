@@ -32,8 +32,12 @@ pub fn init() {
     }
 }
 
-/// Write a single byte.
+/// Write a single byte. Honours the global
+/// `hal::common::serial_disable` gate.
 pub fn write_char(c: u8) {
+    if crate::hal::common::serial_disable::is_disabled() {
+        return;
+    }
     unsafe {
         while (read_volatile(reg(5)) & 0x20) == 0 {
             core::hint::spin_loop();
@@ -42,8 +46,11 @@ pub fn write_char(c: u8) {
     }
 }
 
-/// Write a string.
+/// Write a string. Honours the gate.
 pub fn write_string(s: &str) {
+    if crate::hal::common::serial_disable::is_disabled() {
+        return;
+    }
     for c in s.bytes() {
         write_char(c);
     }

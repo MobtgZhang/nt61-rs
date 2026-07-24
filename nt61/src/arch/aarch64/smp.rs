@@ -114,10 +114,10 @@ pub unsafe extern "Rust" fn __smp_boot_secondary(pml4_pfn: u64) {
     for cpu in 1..secondary_count {
         match get_method() {
             SmpMethod::PSCI => {
-                let _ = unsafe { psci_cpu_on(cpu as u64, crate::arch::aarch64::smp::secondary_entry as u64, pml4_pfn) };
+                let _ = unsafe { psci_cpu_on(cpu as u64, crate::arch::aarch64::smp::secondary_entry as *const () as u64, pml4_pfn) };
             }
             SmpMethod::SpinTable => {
-                unsafe { spin_table_release(cpu as usize, crate::arch::aarch64::smp::secondary_entry as u64, pml4_pfn); }
+                unsafe { spin_table_release(cpu as usize, crate::arch::aarch64::smp::secondary_entry as *const () as u64, pml4_pfn); }
             }
             SmpMethod::FirmwareManaged => {
                 // No-op: firmware has already released secondary cores.

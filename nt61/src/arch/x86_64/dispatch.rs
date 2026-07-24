@@ -658,7 +658,6 @@ fn handle_stack_fault(error_code: u64, tf: &TrapFrame) {
         let p_p = p256_before as *const u8;
         for row in (0i64..=0x1000i64).step_by(16) {
             let mut bytes = [0u8; 16];
-            let mut valid = true;
             for i in 0..16i64 {
                 bytes[i as usize] = core::ptr::read_volatile(p_p.offset((row + i) as isize));
             }

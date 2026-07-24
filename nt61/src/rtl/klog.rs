@@ -71,17 +71,36 @@ impl core::fmt::Write for SerialWriter {
 }
 
 /// Per-arch serial output.
+///
+/// The boot trace is mirrored to three sinks, in order:
+/// 1. The platform's serial UART (COM1 / PL011 / NS16550A / 8250).
+///    This sink is gated by `hal::serial::set_disabled`; once
+///    `kernel_main` flips it on, all subsequent writes are
+///    silently dropped. The panic-path macros use
+///    `with_serial_unmasked` to bypass the gate so the operator
+///    can still read the panic trace on a host terminal.
+/// 2. The cross-arch linear framebuffer (via the bootvid LFB
+///    path). This is the only operator-visible sink after
+///    `set_disabled(true)`; the boot trace stays visible on the
+///    GUI panel even when COM1 is silenced.
+/// 3. The per-arch text-console backend (VGA mirror on x86_64,
+///    in-RAM log ring on the other architectures). The SafeBootMode
+///    CMD shell's log display pane reads from this ring so it has
+///    content to paint on shell entry.
 pub fn write_serial(s: &str) {
-    // On architectures without a real text framebuffer
-    // (aarch64, riscv64, loongarch64) every byte also has to be
-    // mirrored into the in-RAM log ring so the SafeBootMode CMD
-    // shell's log display pane has content when it is painted
-    // on shell entry. Routing through `text_console::put_string`
-    // does this in one place: the per-arch backend's `put_byte`
-    // already takes care of writing to the UART and to the ring,
-    // so calling `hal::serial::write_string` directly here would
-    // produce duplicate serial output (once from `write_serial`,
-    // once from the backend's `put_byte`).
+    // 1. Mirror to the cross-arch LFB (bootvid subsystem).
+    //    This is the GUI-visible sink after the serial gate is
+    //    flipped on. The bootvid LFB path is no-op until the
+    //    framebuffer has been wired (BootInfo.framebuffer_base != 0),
+    //    so the early boot lines go through without any artefacts.
+    write_to_lfb(s);
+
+    // 2. Mirror to the platform text console. The per-arch
+    //    backend's `put_byte` already takes care of writing to
+    //    the UART and to the ring buffer, so calling
+    //    `hal::serial::write_string` directly here would produce
+    //    duplicate serial output on non-x86_64. Routing through
+    //    `text_console::put_string` does this in one place.
     #[cfg(not(target_arch = "x86_64"))]
     {
         use crate::hal::text_console;
@@ -93,14 +112,38 @@ pub fn write_serial(s: &str) {
         return;
     }
 
-    // x86_64 path: write to serial first, then mirror to VGA
-    // text buffer (so the operator sees the boot trace in both
-    // the tail-f serial log and the on-screen VGA framebuffer).
-    let _ = crate::hal::serial::write_string(s);
-
+    // x86_64 path: write to serial first (gated by
+    // `set_disabled`), then mirror to VGA text buffer so the
+    // operator sees the boot trace in both the tail-f serial log
+    // and the on-screen VGA framebuffer. We also mirror into the
+    // cross-arch LFB writer so the GUI panel picks up the boot
+    // trace once `bootvid::init_from_framebuffer` has run.
     #[cfg(target_arch = "x86_64")]
-    if crate::hal::text_console::is_ready() {
-        crate::hal::text_console::put_byte_vga_only_str(s);
+    {
+        let _ = crate::hal::serial::write_string(s);
+
+        if crate::hal::text_console::is_ready() {
+            crate::hal::text_console::put_byte_vga_only_str(s);
+        }
+    }
+}
+
+/// Mirror `s` into the bootvid LFB path. This is the
+/// post-Milestone-B sink that the operator sees on the GUI panel.
+/// The function is a no-op until the LFB has been wired by
+/// `arch::boot::adopt_bootinfo_framebuffer`.
+fn write_to_lfb(s: &str) {
+    if !crate::hal::common::framebuffer::is_active() {
+        return;
+    }
+    for b in s.bytes() {
+        // Translate `\n` to `\r\n` so the LFB cursor returns to
+        // column 0 after each line — the standard DOS / Windows
+        // convention that the SafeBootMode CMD shell assumes.
+        if b == b'\n' {
+            crate::drivers::bootvid::put_byte_to_active_console(b'\r');
+        }
+        crate::drivers::bootvid::put_byte_to_active_console(b);
     }
 }
 
@@ -178,11 +221,11 @@ macro_rules! kprint {
                 }
             }
             let mut buf = [0u8; 256];
-            let mut w = FmtWriter { buf: &mut buf, pos: 0 };
-            let _ = w.write_fmt(core::format_args!($($arg)*));
-            let pos = w.pos;
-            // Drop `w` so we no longer borrow `buf` mutably.
-            drop(w);
+            let pos = {
+                let mut w = FmtWriter { buf: &mut buf, pos: 0 };
+                let _ = w.write_fmt(core::format_args!($($arg)*));
+                w.pos
+            };
             let s = core::str::from_utf8(&buf[..pos]).unwrap_or("");
             $crate::rtl::klog::write_early(s);
         }

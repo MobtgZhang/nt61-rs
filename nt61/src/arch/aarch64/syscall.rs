@@ -50,15 +50,13 @@ pub unsafe extern "C" fn syscall_dispatch_with_tf(syscall_num: u64, tf: *mut Tra
         }
         0x18 => {
             // Stub: write a byte to serial (debug only).
-            unsafe {
-                let c = (tf_ref.x0 & 0xFF) as u8;
-                crate::hal::aarch64::serial::put_char(c);
-            }
+            let c = (tf_ref.x0 & 0xFF) as u8;
+            crate::hal::aarch64::serial::put_char(c);
             0
         }
         0x19 => {
             // Stub: read a byte from serial (debug only).
-            let c = unsafe { crate::hal::aarch64::serial::try_get_char() };
+            let c = crate::hal::aarch64::serial::try_get_char();
             tf_ref.x0 = match c {
                 Some(b) => b as u64,
                 None => u64::MAX,

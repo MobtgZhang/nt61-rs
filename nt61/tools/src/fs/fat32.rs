@@ -11,12 +11,13 @@
 //! - File writing
 //!
 //! ## Usage
-//! ```rust
-//! use nt61_tools::fat32::Fat32Image;
+//! ```rust,no_run
+//! use nt61_tools::Fat32Image;
 //!
 //! let mut image = Fat32Image::new(64); // 64 MB
 //! image.create_dir("EFI").unwrap();
 //! image.create_dir("EFI/Boot").unwrap();
+//! let boot_data = [0u8; 512];
 //! image.write_file("EFI/Boot/BOOTX64.EFI", &boot_data).unwrap();
 //! let img_data = image.finalize().unwrap();
 //! ```
@@ -44,6 +45,17 @@ pub const SECTS_PER_CLUSTER: u8 = 1;
 pub const NUM_FATS: u8 = 2;
 /// Reserved sectors
 pub const RESERVED_SECTORS: u32 = 32;
+/// BPB_NumHeads — heads per cylinder reported in the FAT32 boot sector.
+///
+/// 255 is the BIOS default for LBA-assist translation; using 16 instead is the
+/// value Windows 7 inserts when laying out a 64 MiB FAT32 ESP, so this
+/// matches what `bootmgr.exe` and the kernel's BPB parser expect.
+pub const BPB_NUM_HEADS: u16 = 16;
+/// Mirror of BPB_NumHeads stored at offset 26..28 for byte-layout
+/// compatibility with a real Windows-authored boot sector. Older FAT drivers
+/// re-read this field even though only BPB_NumHeads is consulted; we keep
+/// the value identical to satisfy the de-facto layout contract.
+pub const BPB_NUM_HEADS2: u16 = 16;
 /// FAT size in sectors (for FAT32, this is 32-bit).
 ///
 /// Sized to cover the worst-case image we generate (currently 64 MiB =
@@ -499,12 +511,7 @@ pub struct ClusterAlloc {
 impl ClusterAlloc {
     /// Create a new cluster allocator
     pub fn new() -> Self {
-        let fat_bytes = (FAT_SIZE_SECTORS * SECTOR_SIZE) as usize;
-        let mut fat = vec![0u8; fat_bytes];
-        fat[0..4].copy_from_slice(&0x0FFFFFF8u32.to_le_bytes());
-        fat[4..8].copy_from_slice(&0x0FFFFFFFu32.to_le_bytes());
-        let max_clusters = (fat_bytes / 4).min(0x0FFF_FFF0);
-        Self { fat, max_clusters, next_free: 2 }
+        Self::default()
     }
 
     /// Allocate a new cluster
@@ -528,6 +535,17 @@ impl ClusterAlloc {
     /// Get a mutable reference to the FAT table
     pub fn get_fat_mut(&mut self) -> &mut [u8] {
         &mut self.fat
+    }
+}
+
+impl Default for ClusterAlloc {
+    fn default() -> Self {
+        let fat_bytes = (FAT_SIZE_SECTORS * SECTOR_SIZE) as usize;
+        let mut fat = vec![0u8; fat_bytes];
+        fat[0..4].copy_from_slice(&0x0FFFFFF8u32.to_le_bytes());
+        fat[4..8].copy_from_slice(&0x0FFFFFFFu32.to_le_bytes());
+        let max_clusters = (fat_bytes / 4).min(0x0FFF_FFF0);
+        Self { fat, max_clusters, next_free: 2 }
     }
 }
 
@@ -583,7 +601,7 @@ impl Fat32ImageBuilder {
     /// For a standalone FAT32 image, this is 0. For a GPT-embedded partition, this should
     /// be the partition's starting LBA * 512.
     pub fn new(size_mb: u32, partition_offset: usize) -> Self {
-        let size_sectors = size_mb * 1024 * 1024 / SECTOR_SIZE as u32;
+        let size_sectors = size_mb * 1024 * 1024 / SECTOR_SIZE;
         Self {
             alloc: ClusterAlloc::new(),
             img: vec![0u8; (size_sectors * SECTOR_SIZE) as usize],
@@ -618,7 +636,7 @@ impl Fat32ImageBuilder {
         let cluster_size = SECTOR_SIZE * SECTS_PER_CLUSTER as u32;
         // Round up to the number of whole clusters required.
         let num_clusters =
-            ((data.len() as u32) + cluster_size - 1) / cluster_size;
+            (data.len() as u32).div_ceil(cluster_size);
         let first = match self.alloc.alloc() {
             Some(c) => c,
             None => panic!("out of clusters"),
@@ -757,7 +775,7 @@ impl Fat32ImageBuilder {
             let sfn = self.make_sfn(name);
             let cs = checksum_83(&sfn);
             let utf16: Vec<u16> = name.encode_utf16().collect();
-            let lfn_count = ((utf16.len() + 12) / 13) as u8;
+            let lfn_count = utf16.len().div_ceil(13) as u8;
             // LFN entries are written in DESCENDING sequence-number order:
             // the entry with the highest seq (LAST piece, bit 0x40 set) goes
             // FIRST in the directory, and the entry with seq=1 (FIRST 13
@@ -957,8 +975,19 @@ impl Fat32ImageBuilder {
         // RootEntCnt (17..19) and TotSec16 (19..21) are 0 for FAT32 — already zero.
         sector[21] = 0xF8;
         // FATSz16 (22..24) is 0 for FAT32 — already zero.
-        sector[24] = 63 & 0xFF; sector[25] = ((63 >> 8) & 0xFF) as u8;
-        sector[26] = 16 & 0xFF; sector[27] = ((16 >> 8) & 0xFF) as u8;
+        // BPB_NumHeads (24..26) — heads per cylinder. 255 is the BIOS-translated
+        // value; some FAT32 implementors store 16 here for older CHS layouts.
+        // Both fields are stored little-endian; the high byte is 0 because the
+        // value fits in one byte. Cast through u16 to keep the byte layout
+        // obvious and silence clippy's `always_zero` lint without changing
+        // the on-disk bytes.
+        sector[24] = (BPB_NUM_HEADS & 0xFF) as u8;
+        sector[25] = ((BPB_NUM_HEADS >> 8) & 0xFF) as u8;
+        // BPB_NumHeads2 — older FAT32 BS stores 16 here too, even though only
+        // BPB_NumHeads is consulted by real FAT drivers. Kept for byte-for-byte
+        // layout compatibility with a real Windows-authored boot sector.
+        sector[26] = (BPB_NUM_HEADS2 & 0xFF) as u8;
+        sector[27] = ((BPB_NUM_HEADS2 >> 8) & 0xFF) as u8;
         // Hidden sectors (28..32): partition offset / 512 = starting LBA of partition
         // For standalone FAT32 (partition_offset=0), this is 0
         // For GPT-embedded FAT32, this is the partition's starting LBA
@@ -1011,8 +1040,8 @@ impl Fat32ImageBuilder {
         // Copy FAT1 to FAT2 (required for FAT32)
         self.img[fat_off + fat_size..fat_off + 2 * fat_size].copy_from_slice(self.alloc.get_fat());
         // Boot sector signature (at offset 0 within partition)
-        self.img[0 + 510] = 0x55;
-        self.img[0 + 511] = 0xAA;
+        self.img[510] = 0x55;
+        self.img[511] = 0xAA;
 
         // Write FSInfo sector (sector 1) - required for FAT32
         self.write_fsinfo();
@@ -1032,7 +1061,7 @@ impl Fat32ImageBuilder {
     ///   0x1F4: 12 bytes - reserved (0)
     ///   0x200: 4 bytes - "rrAA" signature (trailer)
     fn write_fsinfo(&mut self) {
-        let fsinfo_off = (1 * SECTOR_SIZE) as usize;  // Sector 1
+        let fsinfo_off = SECTOR_SIZE as usize;  // Sector 1
         let sector = &mut self.img[fsinfo_off..fsinfo_off + SECTOR_SIZE as usize];
         sector.fill(0);
         
@@ -1249,14 +1278,16 @@ impl Fat32Image {
                 Self::create_dir_recursive(sub_children, parts, depth + 1);
             }
         } else {
-            // Directory doesn't exist - create all remaining directories
+            // Directory doesn't exist - create all remaining directories.
+            // Every nested FsNode is a leaf placeholder with an empty
+            // children vector; the inner `if` previously produced identical
+            // Vec::new() on both branches, so collapse to a single value.
             for i in depth..parts.len() {
                 let mut new_children = Vec::new();
-                // Create all remaining parts nested
-                for j in (i + 1)..parts.len() {
+                for name in parts.iter().skip(i + 1) {
                     new_children.push(FsNode::Dir {
-                        name: parts[j].to_string(),
-                        children: if j == parts.len() - 1 { Vec::new() } else { Vec::new() },
+                        name: name.to_string(),
+                        children: Vec::new(),
                     });
                 }
                 children.push(FsNode::Dir {
@@ -1302,14 +1333,17 @@ impl Fat32Image {
                     }
                 }
                 None => {
-                    // Create directory and all remaining
+                    // Create directory and all remaining. Nested
+                    // placeholder dirs always have an empty children list;
+                    // both branches of the previous `if` produced Vec::new()
+                    // so collapse to a single literal.
                     let last_idx = dir_parts.len() - 1;
                     for i in 0..last_idx {
                         let mut nested = Vec::new();
-                        for j in (i + 1)..dir_parts.len() {
+                        for name in dir_parts.iter().skip(i + 1) {
                             nested.push(FsNode::Dir {
-                                name: dir_parts[j].to_string(),
-                                children: if j == dir_parts.len() - 1 { Vec::new() } else { Vec::new() },
+                                name: name.to_string(),
+                                children: Vec::new(),
                             });
                         }
                         children.push(FsNode::Dir {

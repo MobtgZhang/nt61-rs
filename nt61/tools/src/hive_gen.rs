@@ -149,7 +149,8 @@ fn element_subkey_string_list(type_id: &str, values: &[&str]) -> Node {
 /// `regf` hive parseable by `hivexsh`/`hivexget`/`hivexml`.
 ///
 /// BCD object hierarchy (standard Windows layout):
-/// ```
+///
+/// ```text
 /// NewStoreRoot\
 ///   Description\            (KeyName=BCD00000000, System=1, TreatAsSystem=1)
 ///   Objects\

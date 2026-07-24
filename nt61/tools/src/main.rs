@@ -306,14 +306,16 @@ fn run_build(sub: &str, m: &ArgMatches) -> error::Result<()> {
         "esp" => build_esp(&build_dir, &arch, m).map(|_| ()),
         "boot" => build_boot_only(&build_dir, &arch).map(|_| ()),
         "kernel" => build_kernel_only(&build_dir, &arch).map(|_| ()),
-        "all" => fs::build::full_build(&build_dir, &fmt, size_mb, &arch, m.get_flag("verbose"))
-            .map(|p| {
-                logger::success(&format!("Image built: {}", p.display()));
-            }),
-        "iso" => fs::build::build_iso(&build_dir, &fmt, size_mb, &arch, m.get_flag("verbose"))
-            .map(|p| {
-                logger::success(&format!("ISO built: {}", p.display()));
-            }),
+        "all" => {
+            let p = fs::build::full_build(&build_dir, &fmt, size_mb, &arch)?;
+            logger::success(&format!("Image built: {}", p.display()));
+            Ok(())
+        }
+        "iso" => {
+            let p = fs::build::build_iso(&build_dir, &fmt, size_mb, &arch)?;
+            logger::success(&format!("ISO built: {}", p.display()));
+            Ok(())
+        }
         other => Err(error::BuildError::InvalidParam(format!(
             "unknown --build sub-target: {}",
             other
@@ -361,7 +363,7 @@ fn build_esp(build_dir: &Path, arch: &str, m: &ArgMatches) -> error::Result<()> 
 
 fn build_boot_only(build_dir: &Path, arch: &str) -> error::Result<()> {
     let target = fs::build::uefi_target_for(arch);
-    let _ = fs::build::build_boot(target, true)?;
+    fs::build::build_boot(target)?;
     let _ = build_dir;
     Ok(())
 }
@@ -372,8 +374,8 @@ fn build_kernel_only(build_dir: &Path, arch: &str) -> error::Result<()> {
     // the winload for completeness.
     let k_target = fs::build::kernel_target_for(arch);
     let u_target = fs::build::uefi_target_for(arch);
-    let _ = fs::build::build_kernel(k_target, true)?;
-    let _ = fs::build::build_winload(u_target, true)?;
+    fs::build::build_kernel(k_target)?;
+    fs::build::build_winload(u_target)?;
     let _ = build_dir;
     Ok(())
 }
@@ -401,7 +403,7 @@ fn run_format(m: &ArgMatches) -> error::Result<()> {
         .parse()
         .map_err(|_| error::BuildError::InvalidParam("--size-mb must be a number".into()))?;
     let path = PathBuf::from(&img);
-    fs::image::format_image(&path, &fs_name, size_mb, m.get_flag("verbose"))?;
+    fs::image::format_image(&path, &fs_name, size_mb)?;
     logger::success(&format!("Formatted {} ({}, {} MB)", path.display(), fs_name, size_mb));
     Ok(())
 }
@@ -467,7 +469,7 @@ fn run_create(fmt: &str, m: &ArgMatches) -> error::Result<()> {
         }
     };
 
-    fs::image::create_image_with_pt(&path, inner_fs, size_mb, None, m.get_flag("verbose"), pt)?;
+    fs::image::create_image_with_pt(&path, inner_fs, size_mb, None, pt)?;
     logger::success(&format!(
         "Created {} image ({} MB, fs={}, partition-table={})",
         path.display(),

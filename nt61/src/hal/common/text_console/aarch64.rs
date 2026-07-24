@@ -82,13 +82,28 @@ pub fn set_attr(attr: u8) {
 /// Append a byte to the half-built line. On `\n` / `\r` / ring
 /// overflow we commit the line to the ring and start a new one.
 pub fn put_byte(b: u8) {
-    // 1. Mirror to the serial port so headless debug
-    //    installations (the canonical aarch64 deployment on
-    //    QEMU virt) actually see the byte.
-    crate::hal::aarch64::serial::put_char(b);
+    // 1. Mirror to the cross-arch LFB if it is active. This is
+    //    the GUI-visible sink after the serial-suppress gate is
+    //    flipped on by `kernel_main`. On QEMU `virt` without a
+    //    framebuffer (the canonical aarch64 bring-up before the
+    //    LFB driver is wired) this is a no-op.
+    if crate::hal::common::framebuffer::is_active() {
+        crate::drivers::bootvid::put_byte_to_active_console(b);
+    }
 
-    // 2. Accumulate into the half-built line and commit on
-    //    newline / line overflow.
+    // 2. Mirror to the serial port so headless debug
+    //    installations (the canonical aarch64 deployment on
+    //    QEMU virt) actually see the byte. The serial gate
+    //    is honoured here — once `kernel_main` flips it on, the
+    //    byte is silently dropped.
+    if !crate::hal::common::serial_disable::is_disabled() {
+        crate::hal::aarch64::serial::put_char(b);
+    }
+
+    // 3. Accumulate into the half-built line and commit on
+    //    newline / line overflow. This is what the SafeBootMode
+    //    CMD shell's log display pane reads from when it paints
+    //    its scrollback window on shell entry.
     unsafe {
         match b {
             b'\n' | b'\r' => {

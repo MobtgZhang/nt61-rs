@@ -15,5 +15,15 @@ ttf-parser = { version = "0.25", default-features = false, features = ["no-std-f
 [[bin]]
 name = "nt61-boot"
 path = "src/main.rs"
+required-features = ["x86_64"]
+
+[features]
+# nt61-boot.efi is currently an x86_64-only UEFI binary. The
+# boot manager contains inline-asm that targets the AMD64
+# register set (al, rdi) and a graphics module that hard-codes
+# the GOP linear framebuffer layout. The Makefile and QEMU
+# harness also only exercise x86_64. Other architectures should
+# be gated here until the boot manager is properly ported.
+x86_64 = []
 
 # Profile settings are inherited from the workspace root.

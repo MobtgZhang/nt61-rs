@@ -174,6 +174,13 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
         boot_println!("No framebuffer from winload");
     }
 
+    // Now that the LFB is wired (or we know it isn't) we can suppress
+    // the COM1 sink. The early-boot writes have already shown the
+    // banner; from here on the operator only sees the GUI panel.
+    // `boot_println!` keeps working through the LFB path; panic
+    // paths use `with_serial_unmasked` to bypass this gate.
+    crate::hal::serial::set_disabled(true);
+
     // Initialise the platform text console (VGA mirror on x86_64,
     // log-ring on the other architectures). `init_text_console` is
     // idempotent so calling it here and again from the Safe-Mode
@@ -293,20 +300,28 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     // post-NTFS-read path was racing with a pending PIT tick).
     // Snapshotting the live kernel RSP into `TSS.rsp0` before any
     // potentially-sti-able code path runs eliminates the crash.
+    //
+    // The TSS is an x86_64-only concept (riscv64 / aarch64 /
+    // loongarch64 use EL0/PLV0 transition registers directly via
+    // `arch::<arch>::user_entry::enter` and the per-CPU area); on
+    // those targets the BSP kernel stack is already wired by
+    // `arch::init_hardware()`.
+    #[cfg(target_arch = "x86_64")]
     crate::arch::x86_64::tss::set_rsp0_during_init();
     // Print TSS.rsp0 with a tiny custom raw-serial hex printer
     // rather than `boot_println!("0x{:x}", ...)`. The kernel's
     // format-args path was triggering a triple-fault at this
     // exact site before the `-C relocation-model=static` fix
     // landed; the raw path is a belt-and-suspenders measure.
-    let rsp0_val: u64 = crate::arch::x86_64::tss::rsp0();
+    #[cfg(target_arch = "x86_64")]
     {
+        let rsp0_val: u64 = crate::arch::x86_64::tss::rsp0();
         let prefix: &[u8] = b"[BOOT] TSS.rsp0 = 0x";
         for &b in prefix {
             crate::hal::serial::write_char(b);
         }
         const HEX: &[u8; 16] = b"0123456789ABCDEF";
-        let mut v = rsp0_val;
+        let v = rsp0_val;
         let mut started = false;
         for i in (0..16u32).rev() {
             let nibble = ((v >> (i * 4)) & 0xF) as u8;

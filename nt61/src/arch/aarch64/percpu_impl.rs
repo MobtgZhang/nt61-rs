@@ -171,7 +171,7 @@ pub fn __percpu_set_user_rsp(sp: u64) {
         return;
     }
     unsafe {
-        let ptr = (base as *mut u64); // offset 0x00
+        let ptr = base as *mut u64; // offset 0x00
         ptr.write(sp);
     }
 }

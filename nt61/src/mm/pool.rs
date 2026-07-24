@@ -525,7 +525,7 @@ pub fn get_stats(pool_type: PoolType) -> PoolStats {
 /// `(total_bytes, total_pages, coalesce_count)` for the
 /// non-paged pool so existing call sites still compile.
 #[deprecated(
-    since = "Step 4 of 5-issue fix plan",
+    since = "0.1.0",
     note = "Use get_stats(pool_type) -> PoolStats instead"
 )]
 pub fn get_pool_stats() -> (u64, u64, u64) {

@@ -226,7 +226,9 @@ const fn build_font() -> [[u8; 12]; 96] {
 
 /// Initialise bootvid. If `init_from_framebuffer` was called
 /// prior to this (the winload path) we render to the LFB.
-/// Otherwise we fall back to the VGA text buffer.
+/// Otherwise we fall back to the VGA text buffer on x86_64 or
+/// become a no-op on the architectures that don't have a legacy
+/// VGA text buffer (aarch64 / riscv64 / loongarch64).
 pub fn init() {
     if INITIALISED.load(Ordering::Acquire) { return; }
     if MODE_LFB.load(Ordering::Acquire) {
@@ -263,8 +265,19 @@ pub fn init() {
             return;
         }
     }
-    // Legacy VGA path.
+    // Legacy VGA path. Only x86_64 actually maps 0xB8000; the
+    // other architectures have no legacy text buffer and bootvid
+    // becomes a no-op (boot output goes to the serial port or,
+    // when the LFB is wired later, the `force_lfb_console()`
+    // helper switches `MODE_LFB` on).
+    #[cfg(target_arch = "x86_64")]
     VidInitialize();
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        // Mark initialised so the cursor / putchar paths stop
+        // scrolling the (uninitialised) VGA fallback state.
+        INITIALISED.store(true, Ordering::Release);
+    }
 }
 
 /// Wire bootvid onto the winload-provided LFB. Call this from

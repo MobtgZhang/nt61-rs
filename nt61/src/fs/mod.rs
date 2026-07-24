@@ -1163,6 +1163,7 @@ fn mount_partition_detected(drive_letter: u16, base_ptr: *const u8, ramdisk: Par
                 }
             }
         }
+        #[cfg(target_arch = "x86_64")]
         FsType::Ext2 | FsType::Ext3 | FsType::Ext4 => {
             // EXT2/3/4 driver reads via `drivers::storage::ramdisk::read`,
             // which expects the system partition mirror to be installed
@@ -1206,6 +1207,16 @@ fn mount_partition_detected(drive_letter: u16, base_ptr: *const u8, ramdisk: Par
                     false
                 }
             }
+        }
+        // On non-x86_64 builds the ext2 driver is not part of the
+        // kernel image. The Match above is `#[cfg(target_arch)]`-gated
+        // so the FsType::Ext* variants aren't even compiled; this
+        // wildcard arm keeps the match exhaustive when they are absent.
+        #[cfg(not(target_arch = "x86_64"))]
+        FsType::Ext2 | FsType::Ext3 | FsType::Ext4 => {
+            crate::boot_println!("[MOUNT] drive={}: EXT filesystem driver not built on this arch",
+                drive_letter as u8 as char);
+            false
         }
         FsType::Unknown => {
             crate::boot_println!("[MOUNT] drive={}: unknown filesystem type, NOT mounted",

@@ -44,8 +44,26 @@ pub fn set_attr(attr: u8) {
 }
 
 pub fn put_byte(b: u8) {
-    crate::hal::riscv64::serial::put_char(b);
+    // 1. Mirror to the cross-arch LFB if it is active. This is
+    //    the GUI-visible sink after the serial-suppress gate is
+    //    flipped on by `kernel_main`.
+    if crate::hal::common::framebuffer::is_active() {
+        crate::drivers::bootvid::put_byte_to_active_console(b);
+    }
 
+    // 2. Mirror to the serial port so headless debug
+    //    installations (the canonical riscv64 deployment on
+    //    QEMU virt) actually see the byte. The serial gate
+    //    is honoured here — once `kernel_main` flips it on, the
+    //    byte is silently dropped.
+    if !crate::hal::common::serial_disable::is_disabled() {
+        crate::hal::riscv64::serial::put_char(b);
+    }
+
+    // 3. Accumulate into the half-built line and commit on
+    //    newline / line overflow. This is what the SafeBootMode
+    //    CMD shell's log display pane reads from when it paints
+    //    its scrollback window on shell entry.
     unsafe {
         match b {
             b'\n' | b'\r' => {

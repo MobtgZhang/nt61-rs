@@ -473,8 +473,12 @@ pub unsafe extern "C" fn NtGetContextThread(
         ctx.rsp = (*thread).kthread.context.user_rsp;
         ctx.rbp = (*thread).kthread.context.rbp;
     }
-    
-    ctx.context_flags = ctx.context_flags;
+
+    // Note: previous versions of this stub issued a self-assignment of
+    // `ctx.context_flags` here — a no-op that clippy flags. The flag is
+    // already populated above by the `InitializeContext` prologue and
+    // is required to remain set for the kernel's context-restore path,
+    // so leaving it untouched is the right behaviour.
 
     STATUS_SUCCESS
 }

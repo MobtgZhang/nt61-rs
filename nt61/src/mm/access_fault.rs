@@ -281,18 +281,38 @@ fn resolve_hardware(pte: MMPTE, va: u64, pte_ptr: *mut MMPTE, access: AccessFlag
     // cached parent table entries (e.g. a stale 2MB PDE in PD[296]
     // that the loader replaced with a 4KB PDE). A full CR3 reload
     // flushes everything.
-    let cur_cr3: u64;
-    unsafe { core::arch::asm!("mov {x}, cr3", x = out(reg) cur_cr3, options(nostack, preserves_flags)); }
-    unsafe { core::arch::asm!("mov cr3, {}", in(reg) cur_cr3, options(nostack, preserves_flags)); }
+    //
+    // x86_64 only — on aarch64 / riscv64 / loongarch64 TLB flush
+    // is handled by each arch's `tlb_flush_all` helper.
+    #[cfg(target_arch = "x86_64")]
+    {
+        let cur_cr3: u64;
+        unsafe { core::arch::asm!("mov {x}, cr3", x = out(reg) cur_cr3, options(nostack, preserves_flags)); }
+        unsafe { core::arch::asm!("mov cr3, {}", in(reg) cur_cr3, options(nostack, preserves_flags)); }
+    }
     // MFENCE to ensure the CR3 write commits before the invlpg.
+    // x86_64-only mnemonic: aarch64 uses `dmb ish`, riscv64 uses
+    // `fence` and loongarch64 uses `dbar 0`. Each arch's TLB flush
+    // helper performs the right barrier before its reload.
+    #[cfg(target_arch = "x86_64")]
     unsafe { core::arch::asm!("mfence", options(nostack, preserves_flags)); }
+    let cur_cr3_for_log: u64 = {
+        #[cfg(target_arch = "x86_64")]
+        {
+            let v: u64;
+            unsafe { core::arch::asm!("mov {x}, cr3", x = out(reg) v, options(nostack, preserves_flags)); }
+            v
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        { 0u64 }
+    };
     crate::boot_println!(
         "[PF] resolve_hardware: PTE=0x{:x} A={} D={} access.r={} access.w={} access.x={} -> Handled (CR3=0x{:x}, current_root=0x{:x})",
         pte.raw(),
         (pte.u_long >> 5) & 1,
         (pte.u_long >> 6) & 1,
         access.read, access.write, access.execute,
-        cur_cr3, crate::mm::vas::current_root()
+        cur_cr3_for_log, crate::mm::vas::current_root()
     );
     // Flush the TLB entry for this VA. Without this, the CPU can keep
     // using a stale cached translation (e.g. "page not present" from

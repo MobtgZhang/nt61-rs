@@ -34,7 +34,7 @@ pub fn create_dir_all(path: &Path) -> Result<()> {
         }
     }
 
-    fs::create_dir_all(path).map_err(|e| crate::error::BuildError::Io(e))?;
+    fs::create_dir_all(path).map_err(crate::error::BuildError::Io)?;
     Ok(())
 }
 
@@ -54,7 +54,7 @@ pub fn remove_dir_all(path: &Path) -> Result<()> {
         )));
     }
 
-    fs::remove_dir_all(path).map_err(|e| crate::error::BuildError::Io(e))?;
+    fs::remove_dir_all(path).map_err(crate::error::BuildError::Io)?;
     Ok(())
 }
 

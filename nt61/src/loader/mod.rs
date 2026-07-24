@@ -1740,7 +1740,7 @@ pub fn load_into_user_address_space(
     let saved_cr3: u64;
     #[cfg(target_arch = "x86_64")]
     {
-        let per_cpu = unsafe { crate::arch::x86_64::syscall::get_per_cpu() };
+        let per_cpu = crate::arch::x86_64::syscall::get_per_cpu();
         let system_pml4 = if !per_cpu.is_null() {
             unsafe { (*per_cpu).system_pml4 }
         } else {
@@ -1897,6 +1897,7 @@ crate::boot_println!("[loader] copy sect: source ptr=0x{:x} dst ptr=0x{:x} chunk
     // touched during the load) lingers when user-mode execution
     // starts. The cost is one extra CR3 write, which is negligible
     // for a one-shot boot path.
+    #[cfg(target_arch = "x86_64")]
     unsafe {
         let cur: u64;
         core::arch::asm!("mov {x}, cr3", x = out(reg) cur, options(nostack));

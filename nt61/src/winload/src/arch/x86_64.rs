@@ -31,7 +31,7 @@ pub mod kernel_entry {
     /// value as the `entry_point_rva` when it calls into the disk
     /// ntoskrnl, and it is also the `KiSystemStartup` export RVA in
     /// `build_ntoskrnl_pe`.
-    pub const KiSystemStartup_RVA: u64 = 0x1040;
+    pub const KI_SYSTEM_STARTUP_RVA: u64 = 0x1040;
 
     /// Size of the `.text` section in the disk ntoskrnl PE, in bytes.
     /// The callback field lives at the last 8 bytes of this section.
@@ -39,7 +39,7 @@ pub mod kernel_entry {
 
     /// RVA of the `.text` section base inside the disk ntoskrnl PE.
     /// This equals `SECTION_ALIGNMENT` and is used to convert between
-    /// an export RVA like `KiSystemStartup_RVA` and the `.text` base VA.
+    /// an export RVA like `KI_SYSTEM_STARTUP_RVA` and the `.text` base VA.
     pub const TEXT_BASE_RVA: u64 = SECTION_ALIGNMENT;
 }
 

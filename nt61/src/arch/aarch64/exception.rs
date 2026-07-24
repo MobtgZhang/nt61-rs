@@ -272,7 +272,7 @@ extern "C" {
 /// Install the exception vector table at EL1.
 pub fn init() {
     unsafe {
-        let v: u64 = exception_vector as u64;
+        let v: u64 = exception_vector as *const () as u64;
         core::arch::asm!("msr VBAR_EL1, {}", in(reg) v, options(nostack));
         core::arch::asm!("isb", options(nostack));
     }

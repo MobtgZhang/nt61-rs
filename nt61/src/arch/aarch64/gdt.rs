@@ -11,7 +11,7 @@ pub struct CpuContext {
 
 pub fn init() {
     unsafe {
-        let mut spsr: u64 = 0;
+        let spsr: u64 = 0;
         asm!("msr SPSR_EL1, {}", in(reg) spsr, options(nostack));
         asm!("msr ELR_EL1, {}", in(reg) 0u64, options(nostack));
         asm!("msr SP_EL0, {}", in(reg) 0u64, options(nostack));

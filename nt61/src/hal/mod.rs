@@ -51,6 +51,11 @@ pub mod serial {
     // the unified `crate::hal::serial` facade.
     #[cfg(target_arch = "loongarch64")]
     pub use crate::arch::loongarch64::serial::*;
+
+    /// Re-export the runtime serial-disable gate at the unified
+    /// `hal::serial` facade so call sites don't need to know about
+    /// `hal::common::serial_disable`.
+    pub use crate::hal::common::serial_disable::{is_disabled, set_disabled, with_serial_unmasked};
 }
 
 pub mod io_port {

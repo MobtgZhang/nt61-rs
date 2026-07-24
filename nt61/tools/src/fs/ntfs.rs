@@ -13,12 +13,13 @@
 //! - Data attribute (resident/non-resident)
 //!
 //! ## Usage
-//! ```rust
-//! use nt61_tools::ntfs::NtfsImage;
+//! ```rust,no_run
+//! use nt61_tools::NtfsImage;
 //!
 //! let mut image = NtfsImage::new(2048, 4096).unwrap(); // 2GB, 4KB clusters
 //! image.create_dir("Windows").unwrap();
 //! image.create_dir("Windows/System32").unwrap();
+//! let kernel_data = [0u8; 512];
 //! image.write_file("Windows/System32/ntoskrnl.exe", &kernel_data).unwrap();
 //! let img_data = image.finalize().unwrap();
 //! ```
@@ -445,11 +446,10 @@ impl NtfsImage {
                                         }
                                     }
                                     // Prefer Win32/DOS or POSIX name; reject DOS-only.
-                                    if name_ns != 0x02 || file_name.is_none() {
-                                        if file_name.is_none() || name_ns == 0x03 || name_ns == 0x01 {
+                                    if (name_ns != 0x02 || file_name.is_none())
+                                        && (file_name.is_none() || name_ns == 0x03 || name_ns == 0x01) {
                                             file_name = Some(name);
                                         }
-                                    }
                                 }
                             }
                         }
@@ -817,34 +817,6 @@ impl NtfsImage {
         data
     }
 
-/// Build file name attribute
-    fn build_file_name_attr(&self, path: &str, _is_dir: bool) -> Vec<u8> {
-        let name_utf16: Vec<u16> = path.encode_utf16().collect();
-        let name_len = name_utf16.len() as u8;
-        // $FILE_NAME value = 64 bytes of fixed fields + name_len * 2 bytes UTF-16.
-        let value_len = 64u32 + (name_len as u32) * 2;
-        let mut data = build_attr_header(ATTR_TYPE_FILE_NAME, value_len);
-
-        // File name value (parent_ref is filled by callers)
-        data.extend_from_slice(&0u64.to_le_bytes()); // Parent directory reference
-        data.extend_from_slice(&0u64.to_le_bytes()); // Creation time
-        data.extend_from_slice(&0u64.to_le_bytes()); // Modification time
-        data.extend_from_slice(&0u64.to_le_bytes()); // MFT change time
-        data.extend_from_slice(&0u64.to_le_bytes()); // Last access time
-        data.extend_from_slice(&0u64.to_le_bytes()); // Allocated size
-        data.extend_from_slice(&0u64.to_le_bytes()); // Data size
-        data.extend_from_slice(&0u32.to_le_bytes()); // File attributes
-        data.extend_from_slice(&0u16.to_le_bytes()); // Extended attributes
-        data.push(name_len);                           // name_length
-        data.push(FILENAME_NAMESPACE_WIN32);            // namespace
-        for c in name_utf16 {
-            data.extend_from_slice(&c.to_le_bytes());
-        }
-
-        fill_attr_length(&mut data);
-        data
-    }
-
     /// Build data attribute
     fn build_data_attr(&self, data: &[u8]) -> Vec<u8> {
         let mut attr = build_attr_header(ATTR_TYPE_DATA, data.len() as u32);
@@ -863,7 +835,7 @@ impl NtfsImage {
     /// the build tool's static layout.
     fn allocate_data_clusters(&mut self, byte_count: usize) -> (u64, u64) {
         let cluster_size = self.sectors_per_cluster as u64 * self.sector_size as u64;
-        let clusters_needed = ((byte_count as u64) + cluster_size - 1) / cluster_size;
+        let clusters_needed = (byte_count as u64).div_ceil(cluster_size);
         let start = self.data_cluster_cursor;
         self.data_cluster_cursor += clusters_needed;
         let max_clusters = self.total_sectors / self.sectors_per_cluster as u64;
@@ -1015,7 +987,7 @@ impl NtfsImage {
     /// VCN is only present in $INDEX_ALLOCATION.
     fn build_index_root_attr(
         &self,
-        entry: &NtfsEntry,
+        _entry: &NtfsEntry,
         children: Option<&[(u64, &NtfsEntry)]>,
     ) -> Vec<u8> {
         // The $INDEX_ROOT value layout (NTFS spec) is:
@@ -1176,8 +1148,7 @@ const MAX_CHILDREN_PER_DIR: usize = 64;
             let mut sorted: Vec<&(u64, &NtfsEntry)> = child_list.iter().collect();
             sorted.sort_by_key(|(rn, e)| (priority(e), *rn));
             let max = core::cmp::min(sorted.len(), MAX_CHILDREN_PER_DIR);
-            for i in 0..max {
-                let (child_record_num, child_entry) = sorted[i];
+            for (child_record_num, child_entry) in sorted.iter().take(max).copied() {
                 // The child's parent_ref should be this directory's
                 // record number, but `build_index_root_attr` does not
                 // know the parent's record number (it is set by the
@@ -1284,7 +1255,7 @@ const MAX_CHILDREN_PER_DIR: usize = 64;
         let total_user_records = self.entries.len();
         // N+1 total records: index 0 is $MFT, indices 1..N are user entries
         let total_records = total_user_records.saturating_add(1);
-        let needed_clusters = (total_records + records_per_cluster - 1) / records_per_cluster;
+        let needed_clusters = total_records.div_ceil(records_per_cluster);
         let needed_bytes = mft_cluster_byte_offset + needed_clusters * cluster_size as usize;
 
         // Extend the image buffer if the MFT needs more space than initially allocated.
@@ -1355,11 +1326,10 @@ const MAX_CHILDREN_PER_DIR: usize = 64;
 
         // --- Build root directory entry (MFT record 5) ---
         // The root directory has no parent, so parent_ref = 0
-        // Its children are all entries where parent_path is "" or "C:"
-        let root_entry = NtfsEntry::new_dir("C:\\");
-        // Skip the early `record_5` build that used to live here;
-        // the canonical root record is built later (after sorting
-        // and the entry-record map is fully populated).
+        // Its children are all entries where parent_path is "" or "C:".
+        // We don't keep the value around — the canonical root record
+        // is built later from the entry-record map populated above.
+        let _root_entry = NtfsEntry::new_dir("C:\\");
 
         // --- Write all MFT records ---
         // Record 0: $MFT self-reference
@@ -1500,30 +1470,6 @@ const MAX_CHILDREN_PER_DIR: usize = 64;
         }
 
         Ok(image)
-    }
-
-    /// Compute the parent MFT reference (sequence_number << 48 | record_number) for
-    /// the FILE_NAME attribute of `entry`. Returns None for the root entry (which
-    /// has no parent).
-    fn compute_parent_ref(&self, entry: &NtfsEntry, _record_num: u64) -> Option<u64> {
-        // entry.path is a backslash-separated NTFS-style path, e.g.
-        // "Windows\System32". Parent is the path without the last component.
-        let last_bs = entry.path.rfind('\\');
-        let parent_path = last_bs.map(|p| &entry.path[..p]).unwrap_or("");
-        if parent_path.is_empty() {
-            return Some(5u64); // Root directory = MFT record 5
-        }
-
-        // Look up the parent in self.entries to find its record number.
-        for (i, e) in self.entries.iter().enumerate() {
-            if e.path == parent_path {
-                // record_num = index + 1 (index 0 is $MFT)
-                return Some(((i + 1) as u64) << 48 | 0u64);
-            }
-        }
-
-        // Parent not found in entries — treat as root
-        Some(5u64 << 48)
     }
 
     /// Compute parent MFT reference using a pre-built map of entry path -> record number.

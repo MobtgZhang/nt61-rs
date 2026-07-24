@@ -22,7 +22,7 @@ pub fn remove_file(path: &Path) -> Result<()> {
         )));
     }
 
-    fs::remove_file(path).map_err(|e| BuildError::Io(e))?;
+    fs::remove_file(path).map_err(BuildError::Io)?;
     Ok(())
 }
 
@@ -42,7 +42,7 @@ pub fn remove_dir(path: &Path) -> Result<()> {
         )));
     }
 
-    fs::remove_dir(path).map_err(|e| BuildError::Io(e))?;
+    fs::remove_dir(path).map_err(BuildError::Io)?;
     Ok(())
 }
 
@@ -56,9 +56,9 @@ pub fn remove_path(path: &Path) -> Result<()> {
     }
 
     if path.is_dir() {
-        fs::remove_dir_all(path).map_err(|e| BuildError::Io(e))?;
+        fs::remove_dir_all(path).map_err(BuildError::Io)?;
     } else {
-        fs::remove_file(path).map_err(|e| BuildError::Io(e))?;
+        fs::remove_file(path).map_err(BuildError::Io)?;
     }
 
     Ok(())
@@ -78,14 +78,14 @@ pub fn remove_matching(dir: &Path, extension: &str) -> Result<usize> {
     }
 
     let mut count = 0;
-    for entry in fs::read_dir(dir).map_err(|e| BuildError::Io(e))? {
-        let entry = entry.map_err(|e| BuildError::Io(e))?;
+    for entry in fs::read_dir(dir).map_err(BuildError::Io)? {
+        let entry = entry.map_err(BuildError::Io)?;
         let path = entry.path();
 
         if path.is_file() {
             if let Some(ext) = path.extension() {
                 if ext == extension {
-                    fs::remove_file(&path).map_err(|e| BuildError::Io(e))?;
+                    fs::remove_file(&path).map_err(BuildError::Io)?;
                     count += 1;
                 }
             }
