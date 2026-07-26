@@ -20,6 +20,7 @@ pub mod image;
 pub mod esp;
 pub mod system;
 pub mod build;
+pub mod inject_raw;
 pub mod partition;
 pub mod backend;
 pub mod stubs;

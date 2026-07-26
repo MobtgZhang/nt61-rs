@@ -39,6 +39,9 @@ pub enum BuildError {
     InvalidParam(String),
     /// Out of space
     OutOfSpace { requested: u64, available: u64 },
+    /// Payload too large for the requested encoding (e.g. resident
+    /// $DATA in a single MFT record).
+    TooLarge { requested: usize, available: usize },
     /// Feature not implemented
     NotImplemented(String),
     /// ReFS read-modify-write not supported (per user request)
@@ -66,6 +69,9 @@ impl fmt::Display for BuildError {
             BuildError::InvalidParam(msg) => write!(f, "Invalid parameter: {}", msg),
             BuildError::OutOfSpace { requested, available } => {
                 write!(f, "Out of space: requested {} bytes, {} available", requested, available)
+            }
+            BuildError::TooLarge { requested, available } => {
+                write!(f, "Payload too large: {} bytes requested, only {} available", requested, available)
             }
             BuildError::NotImplemented(feature) => {
                 write!(f, "Feature not implemented: {}", feature)

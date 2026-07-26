@@ -88,6 +88,9 @@ fn run() -> error::Result<()> {
     if matches.get_flag("rm") {
         return run_rm(&matches);
     }
+    if matches.get_flag("inject-raw") {
+        return run_inject_raw(&matches);
+    }
     if matches.get_flag("directory") {
         return run_directory(&matches);
     }
@@ -271,6 +274,32 @@ fn build_cli() -> Command {
                 .long("recursive")
                 .action(ArgAction::SetTrue)
                 .help("Recursive copy (for --cp)"),
+        )
+        // ---- inject-raw (surgical NTFS file injection) -----------------
+        .arg(
+            Arg::new("inject-raw")
+                .long("inject-raw")
+                .action(ArgAction::SetTrue)
+                .help("Surgically inject small (≤700 byte) files into an existing NTFS \
+                       partition without round-tripping the rest of the filesystem. \
+                       Use with --parent-dir and one or more --inject-file entries."),
+        )
+        .arg(
+            Arg::new("parent-dir")
+                .long("parent-dir")
+                .value_name("DIR")
+                .help("Existing directory inside the target NTFS partition under which \
+                       --inject-file entries will be placed."),
+        )
+        .arg(
+            Arg::new("inject-file")
+                .long("inject-file")
+                .value_name("NAME=PATH")
+                .action(ArgAction::Append)
+                .help("Add a single file to the parent directory. NAME is the file name \
+                       visible inside the partition; PATH is the host-side source file. \
+                       The contents must be ≤700 bytes (resident $DATA limit). Repeat to \
+                       inject multiple files in a single call."),
         )
         .disable_help_flag(false)
 }
@@ -641,15 +670,28 @@ fn read_image_bytes(fs_tree: &dyn fs::backend::FsBackend, inner: &str) -> error:
 
 fn run_mkdir(m: &ArgMatches) -> error::Result<()> {
     let dir = require_string(m, "dir", "-d / --dir")?;
+    let part_arg = m.get_one::<String>("partition").map(|s| s.as_str());
+    let partition = parse_partition(part_arg);
+
+    // If --image is given, --dir is always an inner image path.
+    if let Some(img) = m.get_one::<String>("image") {
+        let inner = dir.trim_matches('/').trim_matches('\\');
+        let mut opened = fs::image::open_for_modify(Path::new(img), partition)?;
+        opened.backend().mkdir(inner)?;
+        opened.write_back(Path::new(img))?;
+        logger::success(&format!("mkdir: {}:{}", img, inner));
+        return Ok(());
+    }
+
+    // Otherwise fall back to colon syntax.
     let spec = PathSpec::parse(&dir);
-    let partition = m.get_one::<String>("partition").map(|s| s.as_str());
     match spec {
         PathSpec::Host(p) => {
             fs::dir::create_dir_all(&p)?;
             logger::success(&format!("mkdir: {}", p.display()));
         }
         PathSpec::Image(img, inner) => {
-            let mut opened = fs::image::open_for_modify(Path::new(&img), parse_partition(partition))?;
+            let mut opened = fs::image::open_for_modify(Path::new(&img), partition)?;
             opened.backend().mkdir(&inner)?;
             opened.write_back(Path::new(&img))?;
             logger::success(&format!("mkdir: {}:{}", img, inner));
@@ -659,8 +701,170 @@ fn run_mkdir(m: &ArgMatches) -> error::Result<()> {
 }
 
 // =====================================================================
-// --rm
+// --inject-raw
 // =====================================================================
+//
+// Surgically inject small (≤700 byte) files into an existing NTFS
+// partition WITHOUT round-tripping the rest of the filesystem. This
+// preserves the on-disk bytes of every non-resident `$DATA` cluster
+// the build-tool's regular `--cp` path would otherwise destroy.
+//
+// Usage:
+//   build-tool --image disk.img --partition 2 \
+//             --inject-raw --parent-dir "Program Files\\OpenSSH" \
+//             --inject-file sshd_config=./sshd_config \
+//             --inject-file ssh_host_ed25519_key=./host_key
+//
+// The --parent-dir must already exist in the partition. Each
+// --inject-file NAME=PATH entry adds NAME inside the partition with
+// PATH's contents as resident `$DATA`. Files >700 bytes are rejected
+// at submit time with a clear error.
+
+fn run_inject_raw(m: &ArgMatches) -> error::Result<()> {
+    let image = require_string(m, "image", "--image")?;
+    let partition_arg = m.get_one::<String>("partition").map(|s| s.as_str());
+    let parent = require_string(m, "parent-dir", "--parent-dir")?;
+    let entries = m.get_many::<String>("inject-file");
+    let entries = match entries {
+        Some(e) => e,
+        None => {
+            return Err(error::BuildError::InvalidParam(
+                "--inject-raw requires at least one --inject-file NAME=PATH".into(),
+            ));
+        }
+    };
+
+    // Parse every NAME=PATH pair and load the file contents.
+    let mut files = Vec::new();
+    for raw in entries {
+        let (name, path) = match raw.split_once('=') {
+            Some((n, p)) => (n, p),
+            None => {
+                return Err(error::BuildError::InvalidParam(format!(
+                    "--inject-file {:?} is missing '=' between NAME and PATH",
+                    raw
+                )));
+            }
+        };
+        if name.is_empty() || name.contains('\\') || name.contains('/') {
+            return Err(error::BuildError::InvalidParam(format!(
+                "--inject-file NAME {:?} must be a single component (no \\ or /)",
+                name
+            )));
+        }
+        let data = std::fs::read(path).map_err(|e| {
+            error::BuildError::Io(std::io::Error::new(
+                e.kind(),
+                format!("reading {}: {}", path, e),
+            ))
+        })?;
+        if data.len() > fs::inject_raw::MAX_RESIDENT_DATA_SIZE {
+            return Err(error::BuildError::TooLarge {
+                requested: data.len(),
+                available: fs::inject_raw::MAX_RESIDENT_DATA_SIZE,
+            });
+        }
+        files.push(fs::inject_raw::InjectFile {
+            name: name.to_string(),
+            data,
+        });
+    }
+
+    // Open the image. We need access to the raw partition bytes for
+    // the surgical edit, so we can't go through OpenedImage (which
+    // does a full round-trip on write_back). Instead we read the
+    // whole file, locate the NTFS partition, splice, write back.
+    let image_path = std::path::PathBuf::from(&image);
+    eprintln!("[DEBUG inject-raw] image={:?}", image_path);
+    let mut raw = std::fs::read(&image_path).map_err(|e| {
+        error::BuildError::Io(std::io::Error::new(
+            e.kind(),
+            format!("reading {:?}: {}", image_path, e),
+        ))
+    })?;
+    eprintln!("[DEBUG inject-raw] raw len={}", raw.len());
+    let partition_offset = locate_ntfs_partition_offset(&raw, partition_arg)?;
+    eprintln!("[DEBUG inject-raw] partition_offset={}", partition_offset);
+    let part_end = raw.len();
+    let mut part: Vec<u8> = raw[partition_offset..part_end].to_vec();
+
+    let plan = fs::inject_raw::InjectPlan {
+        parent_dir: parent.to_string(),
+        files,
+    };
+
+    let report = fs::inject_raw::inject_raw(&mut part, partition_offset, &plan)?;
+
+    // Splice patched partition bytes back into the raw image.
+    let new_end = partition_offset + part.len();
+    if new_end > raw.len() {
+        raw.resize(new_end, 0);
+    }
+    raw[partition_offset..new_end].copy_from_slice(&part);
+    std::fs::write(&image_path, &raw)?;
+
+    logger::success(&format!(
+        "inject-raw: {} file(s) added under {}: new records {:?}",
+        report.new_records.len(),
+        parent,
+        report.new_records
+    ));
+    Ok(())
+}
+
+/// Locate the byte offset of the NTFS partition inside a raw image.
+/// Honours an optional 1-indexed `--partition N` argument that
+/// selects among GPT/MBR partition entries; if no partition is
+/// given, scans for the first NTFS boot sector by its OEM id.
+fn locate_ntfs_partition_offset(raw: &[u8], partition_arg: Option<&str>) -> error::Result<usize> {
+    let mut offset: Option<u64> = None;
+    if let Some(part) = partition_arg {
+        let n: u32 = part.parse().map_err(|_| {
+            error::BuildError::InvalidParam(format!("--partition {} is not a number", part))
+        })?;
+        let list = fs::partition::list_partitions(raw)?;
+        let pi = list.into_iter().find(|p| p.index == n).ok_or_else(|| {
+            error::BuildError::InvalidParam(format!(
+                "no partition with index {} in image",
+                n
+            ))
+        })?;
+        offset = Some(pi.byte_offset);
+    }
+    // Use the partition's start LBA if the user named one; otherwise
+    // scan from byte 0 for the first sector whose signature is
+    // 0xEB + NOP + 0x90 + "NTFS    ".
+    if let Some(off) = offset {
+        let step = 512usize;
+        let mut cur = off as usize;
+        while cur + 512 <= raw.len() {
+            let s = &raw[cur..cur + 512];
+            if s[0] == 0xEB && s[2] == 0x90 && &s[3..11] == b"NTFS    " {
+                return Ok(cur);
+            }
+            cur += step;
+        }
+        return Err(error::BuildError::NtfsError(format!(
+            "no NTFS boot sector in partition at LBA {}",
+            off / 512
+        )));
+    }
+    let step = 512usize;
+    let mut cur = 0usize;
+    while cur + 512 <= raw.len() {
+        let s = &raw[cur..cur + 512];
+        if s[0] == 0xEB && s[2] == 0x90 && &s[3..11] == b"NTFS    " {
+            return Ok(cur);
+        }
+        cur += step;
+    }
+    Err(error::BuildError::NtfsError(
+        "no NTFS boot sector found in image".into(),
+    ))
+}
+
+// =====================================================================
+
 
 fn run_rm(m: &ArgMatches) -> error::Result<()> {
     let src = require_string(m, "src", "--src")?;
@@ -696,8 +900,41 @@ fn run_directory(m: &ArgMatches) -> error::Result<()> {
         .map(|s| s.parse().unwrap_or(1))
         .unwrap_or(1)
         .max(1);
+    let part_arg = m.get_one::<String>("partition").map(|s| s.as_str());
+    let partition = parse_partition(part_arg);
+    eprintln!("[DEBUG run_directory] dir={:?}, partition={:?}", dir, partition);
+
+    // If --image is given, --dir is always an inner image path.
+    if m.contains_id("image") {
+        let img = m.get_one::<String>("image").unwrap();
+        let dir_str = dir.trim_matches('/').trim_matches('\\');
+
+        // Check if --dir uses colon syntax (IMG:inner/path).
+        let inner_path = if let Some(colon_pos) = dir_str.find(':') {
+            // Colon syntax: use the path after the colon.
+            // If it's "image.img:/path", extract "/path".
+            // If it's just "/path", use it directly.
+            let after_colon = &dir_str[colon_pos + 1..];
+            if after_colon.is_empty() {
+                dir_str.trim_matches(':')
+            } else {
+                after_colon
+            }
+        } else {
+            dir_str
+        };
+
+        eprintln!("[DEBUG run_directory] using --image={}", img);
+        eprintln!("[DEBUG run_directory] calling open_for_modify with partition={:?}", partition);
+        let mut opened = fs::image::open_for_modify(std::path::Path::new(img), partition)?;
+        eprintln!("[DEBUG run_directory] open succeeded, listing {}", inner_path);
+        let backend = opened.backend();
+        list_recurse(backend, inner_path, 0, depth);
+        return Ok(());
+    }
+
+    // Otherwise fall back to colon syntax.
     let spec = PathSpec::parse(&dir);
-    let partition = m.get_one::<String>("partition").map(|s| s.as_str());
     match spec {
         PathSpec::Host(_p) => {
             return Err(error::BuildError::InvalidParam(
@@ -705,7 +942,7 @@ fn run_directory(m: &ArgMatches) -> error::Result<()> {
             ));
         }
         PathSpec::Image(img, inner) => {
-            let mut opened = fs::image::open_for_modify(Path::new(&img), parse_partition(partition))?;
+            let mut opened = fs::image::open_for_modify(Path::new(&img), partition)?;
             list_recurse(opened.backend(), &inner, 0, depth);
         }
     }

@@ -219,7 +219,12 @@ pub fn create_image_with_pt(
                 ], // Linux filesystem
                 _ => unreachable!(),
             };
-            (34, ty)
+            // Use 50 as first usable LBA. UEFI spec reserves LBA 2-33 for GPT
+            // partition entries (16 sectors × 128 bytes each), but the canonical
+            // layout places entries at LBA 34. We write entries at LBA 34, so
+            // FAT32/NTFS data must start after the entries array. LBA 50 gives
+            // us 16 sectors (8192 bytes) of breathing room after the GPT entries.
+            (50, ty)
         }
         PartitionTable::None => unreachable!(),
     };
@@ -347,13 +352,17 @@ fn write_gpt(
     buf[hdr + 48..hdr + 56].copy_from_slice(&last_lba.to_le_bytes());
     let guid = uuid::Uuid::new_v4();
     buf[hdr + 56..hdr + 72].copy_from_slice(guid.as_bytes());
-    // Partition entries start at LBA 2.
-    buf[hdr + 72..hdr + 80].copy_from_slice(&2u64.to_le_bytes());
+    // Partition entries start at LBA 34 (canonical UEFI location).
+    // Using LBA 2 (which is inside the GPT header sector) causes partition
+    // entry parsing to confuse the GPT header with partition entries when the
+    // GPT header's first 16 bytes happen to match the partition entry type
+    // GUID (e.g. both start with 28 73 2A C1 for the EFI System Partition).
+    buf[hdr + 72..hdr + 80].copy_from_slice(&34u64.to_le_bytes());
     buf[hdr + 80..hdr + 84].copy_from_slice(&128u32.to_le_bytes());
     buf[hdr + 84..hdr + 88].copy_from_slice(&128u32.to_le_bytes());
 
-    // Single partition entry at LBA 2.
-    let pent = 2usize * 512;
+    // Single partition entry at LBA 34.
+    let pent = 34usize * 512;
     buf[pent..pent + 16].copy_from_slice(&type_guid);
     let pguid = uuid::Uuid::new_v4();
     buf[pent + 16..pent + 32].copy_from_slice(pguid.as_bytes());
@@ -455,6 +464,7 @@ pub fn open_for_modify_with(
     format: Option<&str>,
 ) -> Result<OpenedImage> {
     let raw = std::fs::read(image_path).map_err(BuildError::Io)?;
+    eprintln!("[DEBUG open_for_modify] image={}, partition={:?}, format={:?}, raw.len()={}", image_path.display(), partition, format, raw.len());
 
     // QCOW2 container — open it, read the partition table out of LBA 0+1,
     // then recurse with the selected partition's bytes.
@@ -475,6 +485,10 @@ fn open_bytes_for_modify(
 ) -> Result<OpenedImage> {
     if let Some(idx) = partition {
         let parts = crate::fs::partition::list_partitions(raw)?;
+        eprintln!("[DEBUG open_bytes] partition={:?}, parts.len()={}", idx, parts.len());
+        for p in &parts {
+            eprintln!("[DEBUG open_bytes]   part {}: offset={}, size={}", p.index, p.byte_offset, p.byte_size);
+        }
         let p = parts
             .into_iter()
             .find(|p| p.index == idx)
@@ -591,18 +605,25 @@ fn open_qcow2_for_modify(
 /// Returns the first that succeeds. All four auto-detectors do at most a few
 /// byte comparisons, so this is O(1).
 fn detect_and_open_fs(bytes: &[u8], what: &str) -> Result<Box<dyn FsBackend>> {
+    eprintln!("[DEBUG detect_and_open_fs] bytes.len()={}, what={}", bytes.len(), what);
+    eprintln!("[DEBUG detect_and_open_fs] first 11 bytes: {:?}", &bytes[..11.min(bytes.len())]);
     if let Ok(img) = Fat32Image::from_bytes(bytes) {
+        eprintln!("[DEBUG detect_and_open_fs] matched FAT32");
         return Ok(Box::new(img));
     }
     if let Ok(img) = NtfsImage::from_bytes(bytes) {
+        eprintln!("[DEBUG detect_and_open_fs] matched NTFS");
         return Ok(Box::new(img));
     }
     if let Ok(img) = Ext4Image::from_bytes(bytes) {
+        eprintln!("[DEBUG detect_and_open_fs] matched EXT4");
         return Ok(Box::new(img));
     }
     if let Ok(img) = IsoImage::from_bytes(bytes) {
+        eprintln!("[DEBUG detect_and_open_fs] matched ISO");
         return Ok(Box::new(img));
     }
+    eprintln!("[DEBUG detect_and_open_fs] no match");
     Err(BuildError::InvalidFormat(format!(
         "{} is not a recognised filesystem (tried FAT32/NTFS/EXT4/ISO9660)",
         what
@@ -1188,14 +1209,20 @@ pub fn create_dual_partition_image_with_fs(
 
     // First, calculate partition sizes to determine LBA layout
 
-    // First, calculate partition sizes to determine LBA layout
-    // ESP is at fixed offset (34 sectors after GPT header + entries)
-    let esp_start_lba = 34u64;
+    // ESP starts at LBA 50. The GPT partition entry array is written at LBA 34
+    // by write_dual_gpt (partition_entry_lba=34 in the GPT header). We must
+    // not place partition data at LBA 34 or it will overwrite the GPT entries.
+    // UEFI spec allows partition entries at any LBA, but we follow Microsoft's
+    // convention of LBA 34. LBA 50 gives us 16 sectors (8KB) after the 16-sector
+    // GPT entry array (LBA 34-49) and before the next aligned boundary.
+    let esp_start_lba = 50u64;
     let esp_sectors = ((esp_size_mb as u64) * 1024 * 1024) / sector_size;
     let esp_last_lba = esp_start_lba + esp_sectors - 1;
 
     // System partition starts after ESP
     let sys_start_lba = esp_last_lba + 1;
+    eprintln!("[DEBUG create_dual] esp_start_lba={}, esp_sectors={}, esp_last_lba={}, sys_start_lba={}",
+        esp_start_lba, esp_sectors, esp_last_lba, sys_start_lba);
     let sys_sectors = ((system_size_mb as u64) * 1024 * 1024) / sector_size;
     let sys_last_lba = sys_start_lba + sys_sectors - 1;
 
@@ -1245,15 +1272,17 @@ pub fn create_dual_partition_image_with_fs(
 
     // Allocate buffer and copy partition data
     let total_bytes = (total_sectors * sector_size) as usize;
+    let sys_off = (sys_start_lba * sector_size) as usize;
+    eprintln!("[DEBUG create_dual] total_bytes={}, sys_off={}, sys_bytes.len()={}", total_bytes, sys_off, sys_bytes.len());
+    eprintln!("[DEBUG create_dual] sys copy range: {} to {} (within {}?)", sys_off, sys_off + sys_bytes.len(), total_bytes);
     let mut buf = vec![0u8; total_bytes];
 
     // Copy ESP partition data
     let esp_off = (esp_start_lba * sector_size) as usize;
     buf[esp_off..esp_off + esp_bytes.len()].copy_from_slice(&esp_bytes);
 
-// Copy System partition data
-        let sys_off = (sys_start_lba * sector_size) as usize;
-        buf[sys_off..sys_off + sys_bytes.len()].copy_from_slice(&sys_bytes);
+    // Copy System partition data
+    buf[sys_off..sys_off + sys_bytes.len()].copy_from_slice(&sys_bytes);
 
     // Note: hidd_sec / hidden_sectors is set correctly by
     // finalize_with_offset() in the FAT32 and NTFS image builders.
@@ -1265,6 +1294,8 @@ pub fn create_dual_partition_image_with_fs(
         DualPartitionFs::Fat32EspExt4System => &LINUX_FS_TYPE_GUID,
         _ => &SYSTEM_TYPE_GUID,
     };
+    eprintln!("[DEBUG create_dual] writing GPT: total_sectors={}, esp_start={}, esp_last={}, sys_start={}, sys_last={}",
+        total_sectors, esp_start_lba, esp_last_lba, sys_start_lba, sys_last_lba);
     write_dual_gpt(
         &mut buf,
         total_sectors,
@@ -1273,6 +1304,7 @@ pub fn create_dual_partition_image_with_fs(
         sys_start_lba,
         sys_last_lba,
         sys_type_guid,
+        34u64, // GPT partition entries at LBA 34 (UEFI canonical)
     );
 
     // Write to file
@@ -1287,6 +1319,9 @@ pub fn create_dual_partition_image_with_fs(
 /// partition: `SYSTEM_TYPE_GUID` (Microsoft basic data) for FAT32/NTFS
 /// layouts, `LINUX_FS_TYPE_GUID` (Linux filesystem) when the system
 /// partition is formatted as EXT4.
+///
+/// `partition_entry_lba` is the LBA where GPT partition entries are written.
+/// The GPT header's `partition_entry_lba` field must match this value.
 fn write_dual_gpt(
     buf: &mut [u8],
     total_sectors: u64,
@@ -1295,6 +1330,7 @@ fn write_dual_gpt(
     sys_start: u64,
     sys_end: u64,
     sys_type_guid: &[u8; 16],
+    partition_entry_lba: u64,
 ) {
     // Protective MBR at LBA 0
     buf[510] = 0x55;
@@ -1318,12 +1354,12 @@ fn write_dual_gpt(
     buf[hdr + 48..hdr + 56].copy_from_slice(&sys_end.to_le_bytes()); // Last usable LBA
     let guid = uuid::Uuid::new_v4();
     buf[hdr + 56..hdr + 72].copy_from_slice(guid.as_bytes()); // Disk GUID
-    buf[hdr + 72..hdr + 80].copy_from_slice(&2u64.to_le_bytes()); // Partition entries LBA
+    buf[hdr + 72..hdr + 80].copy_from_slice(&partition_entry_lba.to_le_bytes()); // Partition entries LBA
     buf[hdr + 80..hdr + 84].copy_from_slice(&128u32.to_le_bytes()); // Number of entries
     buf[hdr + 84..hdr + 88].copy_from_slice(&128u32.to_le_bytes()); // Size of entry
 
-    // GPT Partition Entry 1: ESP (at LBA 2)
-    let pent1 = 2usize * 512;
+    // GPT Partition Entry 1: ESP
+    let pent1 = (partition_entry_lba as usize) * 512;
     buf[pent1..pent1 + 16].copy_from_slice(&ESP_TYPE_GUID); // Type GUID
     let esp_guid = uuid::Uuid::new_v4();
     buf[pent1 + 16..pent1 + 32].copy_from_slice(esp_guid.as_bytes()); // Partition GUID
@@ -1337,8 +1373,10 @@ fn write_dual_gpt(
         buf[off..off + 2].copy_from_slice(&c.to_le_bytes());
     }
 
-    // GPT Partition Entry 2: System (second partition entry, at offset 128 from LBA 2)
-    let pent2 = 2 * 512 + 128; // Second partition entry (128 bytes after first entry)
+    eprintln!("[DEBUG write_dual_gpt] esp_start={}, esp_end={}, sys_start={}, sys_end={}, partition_entry_lba={}",
+        esp_start, esp_end, sys_start, sys_end, partition_entry_lba);
+    // GPT Partition Entry 2: System (second partition entry, at offset 128 from first entry)
+    let pent2 = pent1 + 128; // Second partition entry (128 bytes after first entry)
     buf[pent2..pent2 + 16].copy_from_slice(sys_type_guid); // Type GUID
     let sys_guid = uuid::Uuid::new_v4();
     buf[pent2 + 16..pent2 + 32].copy_from_slice(sys_guid.as_bytes()); // Partition GUID
