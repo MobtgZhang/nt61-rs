@@ -13,14 +13,12 @@
 use std::fs;
 use std::path::PathBuf;
 
-mod codegen;
 mod cmd;
+mod codegen;
 mod strings;
 mod stubs;
 
-use strings::{
-    CMD_STUB_SIZE, LSM_STUB_SIZE, USERINIT_STUB_SIZE, WINLOGON_STUB_SIZE,
-};
+use strings::{CMD_STUB_SIZE, LSM_STUB_SIZE, USERINIT_STUB_SIZE, WINLOGON_STUB_SIZE};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

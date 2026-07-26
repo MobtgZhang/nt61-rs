@@ -60,8 +60,10 @@ Built-in commands: exit ver help autoexec echo <text> cls halt reboot time date 
 [SMSS] Phase 013: dispatch to cmd.exe at Ring 3 entry point.\r\n\
 [BOOT-LOG-REPLAY-END]\r\n\r\n";
 
-pub const HELP: &[u8] = b"Built-ins: exit ver help autoexec echo <text> cls halt reboot time date ipconfig\r\n";
-pub const UNKNOWN: &[u8] = b"C:\\> Unknown command.\r\n";
+pub const HELP: &[u8] =
+    b"Built-ins: exit ver help autoexec echo <text> cls halt reboot time date ipconfig\r\n";
+pub const UNKNOWN: &[u8] = b"Unknown command.\r\n";
+pub const VER_TXT: &[u8] = b"Microsoft Windows [Version 6.1.7601]\r\n";
 pub const HALTTXT: &[u8] = b"nt61 v0.1 (cmd.exe interactive)\r\nHalting.\r\n";
 pub const PROMPT: &[u8] = b"C:\\> ";
 pub const EXIT_TXT: &[u8] = b"Bye.\r\n";
@@ -75,48 +77,31 @@ pub const DATETXT: &[u8] = b"  Current Date: ";
 /// `ipconfig` multi-line template. The fixed prefix and suffix
 /// wrap three calls to SYS_NETCFG_GET (one per line: address,
 /// mask, gateway) interleaved with the bytes the kernel returned.
-pub const IPCFGTXT: &[u8] =
-    b"\r\nWindows IP Configuration\r\n\r\n\
+pub const IPCFGTXT: &[u8] = b"\r\nWindows IP Configuration\r\n\r\n\
       IPv4 Address. . . . . . : \
       Subnet Mask . . . . . . : \
       Default Gateway . . . . : \r\n";
 
 // ===== PS/2 scancode set-1 -> ASCII =================================
 
-/// Indexed by scancode, value is ASCII (0 = no mapping).
+/// Indexed by PS/2 Set-1 make code, value is ASCII (0 = no mapping).
 pub const SCAN_TO_ASCII: [u8; 128] = [
-    // 0x00-0x07
-    0,    0,    0,    0,    0,    0,    0,    0,
-    // 0x08-0x0F
-    0,    0,    0,    0,    0,    0,    0,    0,
-    // 0x10-0x17
-    0,    0,    0,    0,    0,    b'q', b'1', 0,
-    // 0x18-0x1F
-    0,    0,    b'z', b's', b'a', b'w', b'2', 0,
-    // 0x20-0x27
-    0,    b'c', b'x', b'd', b'e', b'4', b'3', 0,
-    // 0x28-0x2F
-    0,    b' ', b'v', b'f', b't', b'r', b'5', 0,
-    // 0x30-0x37
-    0,    b'n', b'b', b'h', b'g', b'y', b'6', 0,
-    // 0x38-0x3F
-    0,    0,    b'm', b'j', b'u', b'7', b'8', 0,
-    // 0x40-0x47
-    0,    b',', b'k', b'i', b'o', b'0', b'9', 0,
-    // 0x48-0x4F
-    0,    b'.', b'/', b'l', b';', b'p', b'-', 0,
-    // 0x50-0x57
-    0,    0,    b'\'', 0,    b'[', b'=', 0,    0,
-    // 0x58-0x5F
-    0,    0,    b'\n', b']', 0,    b'\\', 0,    0,
-    // 0x60-0x67
-    0,    0,    0,    0,    0,    0,    0x08, 0,
-    // 0x68-0x6F
-    0,    0,    0,    0,    0,    0,    0,    0,
-    // 0x70-0x77
-    0,    0,    0,    0,    0,    0,    0,    0,
-    // 0x78-0x7F
-    0,    0,    0,    0,    0,    0,    0,    0,
+    0, 0x1b, b'1', b'2', b'3', b'4', b'5', b'6', // 0x00-0x07
+    b'7', b'8', b'9', b'0', b'-', b'=', 0x08, 0x09, // 0x08-0x0F
+    b'q', b'w', b'e', b'r', b't', b'y', b'u', b'i', // 0x10-0x17
+    b'o', b'p', b'[', b']', b'\n', 0, b'a', b's', // 0x18-0x1F
+    b'd', b'f', b'g', b'h', b'j', b'k', b'l', b';', // 0x20-0x27
+    b'\'', b'`', 0, b'\\', b'z', b'x', b'c', b'v', // 0x28-0x2F
+    b'b', b'n', b'm', b',', b'.', b'/', 0, b'*', // 0x30-0x37
+    0, b' ', 0, 0, 0, 0, 0, 0, // 0x38-0x3F
+    0, 0, 0, 0, 0, 0, 0, 0, // 0x40-0x47
+    0, 0, 0, b'-', 0, 0, 0, b'+', // 0x48-0x4F
+    0, 0, 0, 0, 0, 0, 0, 0, // 0x50-0x57
+    0, 0, 0, 0, 0, 0, 0, 0, // 0x58-0x5F
+    0, 0, 0, 0, 0, 0, 0, 0, // 0x60-0x67
+    0, 0, 0, 0, 0, 0, 0, 0, // 0x68-0x6F
+    0, 0, 0, 0, 0, 0, 0, 0, // 0x70-0x77
+    0, 0, 0, 0, 0, 0, 0, 0, // 0x78-0x7F
 ];
 
 // ===== Sizes of the four stub images (matches the constants in

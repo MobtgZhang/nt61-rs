@@ -19,9 +19,9 @@
 
 use crate::codegen::*;
 use crate::strings::{
-    BANNER, CMD_STUB_SIZE, DATETXT, EXIT_TXT, HALTTXT, HELP, IPCFGTXT, PROMPT,
-    SCAN_TO_ASCII, SYS_CLEAR, SYS_EXIT, SYS_GET_RTC, SYS_NETCFG_GET, SYS_POLL_KEY,
-    SYS_PUTCHAR, SYS_RUN_AUTOEXEC, TIMETXT, UNKNOWN,
+    BANNER, CMD_STUB_SIZE, DATETXT, EXIT_TXT, HALTTXT, HELP, IPCFGTXT, PROMPT, SCAN_TO_ASCII,
+    SYS_CLEAR, SYS_EXIT, SYS_GET_RTC, SYS_NETCFG_GET, SYS_POLL_KEY, SYS_PUTCHAR, SYS_RUN_AUTOEXEC,
+    TIMETXT, UNKNOWN, VER_TXT,
 };
 
 pub fn build() -> Vec<u8> {
@@ -61,13 +61,6 @@ pub fn build() -> Vec<u8> {
     s.j32_backpatch("print_str", call_help);
     s.j32_backpatch("HELP", le_help);
 
-    // call print_str(UNKNOWN)
-    let le_unk = lea_rdi_rip_placeholder(&mut s);
-    mov_rsi_imm32(&mut s, UNKNOWN.len() as u32);
-    let call_unk = call_rel(&mut s);
-    s.j32_backpatch("print_str", call_unk);
-    s.j32_backpatch("UNKNOWN", le_unk);
-
     // call print_str(PROMPT)
     let le_prompt = lea_rdi_rip_placeholder(&mut s);
     mov_rsi_imm32(&mut s, PROMPT.len() as u32);
@@ -87,11 +80,14 @@ pub fn build() -> Vec<u8> {
     let jle_rl = jle32(&mut s);
     s.j32_backpatch("read_line", jle_rl);
 
-    // Read the scancode byte out of the scancode -> ASCII table.
-    // (The previous version had a `cmp_al_imm8(0x40); jae_np` filter
-    // here that dropped every scancode >= 0x40 — i.e. all the
-    // printable letters. That filter has been removed so the user
-    // can actually type a command.)
+    // Ignore PS/2 break codes before indexing the 128-byte Set-1 table.
+    // QEMU sends both make and break bytes for every `sendkey`; without
+    // this guard values >= 0x80 read past the end of the table.
+    test_al_imm8(&mut s, 0x80);
+    let jnz_break = jne32(&mut s);
+    s.j32_backpatch("read_line", jnz_break);
+
+    // Read the make-code byte out of the scancode -> ASCII table.
     movzx_edx_al(&mut s);
     // lea rsi, [rip + scancode_table]
     s.u8(0x48);
@@ -137,6 +133,8 @@ pub fn build() -> Vec<u8> {
     // r15 = line-buffer base, r13 = current length. Hand the buffer
     // to dispatch_command, then loop back to read_line.
     s.here("submit_line");
+    let call_crlf = call_rel(&mut s);
+    s.j32_backpatch("print_crlf", call_crlf);
     mov_rdi_r15(&mut s);
     mov_rsi_r13(&mut s);
     xor_r13_r13(&mut s);
@@ -224,7 +222,7 @@ pub fn build() -> Vec<u8> {
     syscall(&mut s);
     ret(&mut s);
 
-    // ============== 0x400 dispatch_command (r14 = ptr, r15 = len) ==============
+    // ============== 0x400 dispatch_command (rdi = ptr, rsi = len) ==============
     s.align_to(0x400, "dispatch_command");
     push_rbx(&mut s);
     push_r12(&mut s);
@@ -234,28 +232,42 @@ pub fn build() -> Vec<u8> {
     mov_r14_rdi(&mut s);
     mov_r15_rsi(&mut s);
 
-    emit_exit_branch(&mut s);
-    emit_ver_branch(&mut s);
-    emit_help_branch(&mut s);
-    emit_cls_branch(&mut s);
-    emit_halt_branch(&mut s);
-    emit_autoexec_branch(&mut s);
-    emit_echo_branch(&mut s);
-    emit_time_branch(&mut s);
-    emit_date_branch(&mut s);
-    emit_ipconfig_branch(&mut s);
+    // An empty line is not an unknown command. Return directly to the
+    // prompt without inspecting the zero-filled input buffer.
+    cmp_r15_imm32(&mut s, 0);
+    let je_empty = je32(&mut s);
+    s.j32_backpatch("dispatch_done", je_empty);
 
-    // Epilogue label — every successful command branch lands here.
-    s.here("dispatch_epilogue");
+    emit_exit_branch(&mut s, "try_ver");
+    s.here("try_ver");
+    emit_ver_branch(&mut s, "try_help");
+    s.here("try_help");
+    emit_help_branch(&mut s, "try_cls");
+    s.here("try_cls");
+    emit_cls_branch(&mut s, "try_halt");
+    s.here("try_halt");
+    emit_halt_branch(&mut s, "try_autoexec");
+    s.here("try_autoexec");
+    emit_autoexec_branch(&mut s, "try_echo");
+    s.here("try_echo");
+    emit_echo_branch(&mut s, "try_time");
+    s.here("try_time");
+    emit_time_branch(&mut s, "try_date");
+    s.here("try_date");
+    emit_date_branch(&mut s, "try_ipconfig");
+    s.here("try_ipconfig");
+    emit_ipconfig_branch(&mut s, "dispatch_unknown");
 
-    // call print_str(UNKNOWN) (epilogue unknown path)
+    // Only a non-empty line that failed every built-in matcher reaches
+    // this block. Successful commands jump directly to dispatch_done.
+    s.here("dispatch_unknown");
     let le_unk2 = lea_rdi_rip_placeholder(&mut s);
     mov_rsi_imm32(&mut s, UNKNOWN.len() as u32);
     let call_unk2 = call_rel(&mut s);
     s.j32_backpatch("print_str", call_unk2);
     s.j32_backpatch("UNKNOWN", le_unk2);
 
-    // Epilogue (re-prompt + restore registers + ret)
+    s.here("dispatch_done");
     let le_prompt_rep = lea_rdi_rip_placeholder(&mut s);
     mov_rsi_imm32(&mut s, PROMPT.len() as u32);
     let call_prompt_rep = call_rel(&mut s);
@@ -290,6 +302,8 @@ pub fn build() -> Vec<u8> {
     s.data.extend_from_slice(HELP);
     s.here("UNKNOWN");
     s.data.extend_from_slice(UNKNOWN);
+    s.here("VER_TXT");
+    s.data.extend_from_slice(VER_TXT);
     s.here("PROMPT");
     s.data.extend_from_slice(PROMPT);
     s.here("HALT");
@@ -343,144 +357,156 @@ fn lea_rdi_rip_placeholder(s: &mut Buf) -> usize {
 // These are split out purely to keep `build()` readable; together they
 // reproduce the byte stream of `cmd_asm.py` lines ~298..476 verbatim.
 
-fn emit_exit_branch(s: &mut Buf) {
-    cmp_byte_r14_0_imm8(s, b'e' as u8);
-    let _jne1 = jne32(s);
-    cmp_byte_r14_1_imm8(s, b'x' as u8);
-    let _jne1b = jne32(s);
-    cmp_byte_r14_n_imm8(s, 2, b'i' as u8);
-    let _jne1c = jne32(s);
-    cmp_byte_r14_n_imm8(s, 3, b't' as u8);
-    let _jne1d = jne32(s);
+fn emit_exit_branch(s: &mut Buf, next: &str) {
+    cmp_byte_r14_0_imm8(s, b'e');
+    let jne = jne32(s);
+    s.j32_backpatch(next, jne);
+    cmp_byte_r14_1_imm8(s, b'x');
+    let jne = jne32(s);
+    s.j32_backpatch(next, jne);
+    cmp_byte_r14_n_imm8(s, 2, b'i');
+    let jne = jne32(s);
+    s.j32_backpatch(next, jne);
+    cmp_byte_r14_n_imm8(s, 3, b't');
+    let jne = jne32(s);
+    s.j32_backpatch(next, jne);
     cmp_r15_imm32(s, 4);
-    let _jne1e = jne32(s);
+    let jne = jne32(s);
+    s.j32_backpatch(next, jne);
     let jmp_exit = jmp_rel(s);
     s.j32_backpatch("do_exit", jmp_exit);
 }
 
-fn emit_ver_branch(s: &mut Buf) {
-    cmp_byte_r14_0_imm8(s, b'v' as u8);
-    let _jne2 = jne32(s);
-    cmp_byte_r14_1_imm8(s, b'e' as u8);
-    let _jne2b = jne32(s);
-    cmp_byte_r14_n_imm8(s, 2, b'r' as u8);
-    let _jne2c = jne32(s);
+fn emit_ver_branch(s: &mut Buf, next: &str) {
+    cmp_byte_r14_0_imm8(s, b'v');
+    let jne = jne32(s);
+    s.j32_backpatch(next, jne);
+    cmp_byte_r14_1_imm8(s, b'e');
+    let jne = jne32(s);
+    s.j32_backpatch(next, jne);
+    cmp_byte_r14_n_imm8(s, 2, b'r');
+    let jne = jne32(s);
+    s.j32_backpatch(next, jne);
     cmp_r15_imm32(s, 3);
-    let _jne2d = jne32(s);
-    let le_halt = lea_rdi_rip_placeholder(s);
-    mov_rsi_imm32(s, HALTTXT.len() as u32);
+    let jne = jne32(s);
+    s.j32_backpatch(next, jne);
+    let le_ver = lea_rdi_rip_placeholder(s);
+    mov_rsi_imm32(s, VER_TXT.len() as u32);
     let call_ver = call_rel(s);
     s.j32_backpatch("print_str", call_ver);
-    s.j32_backpatch("HALT", le_halt);
-    let jmp_halt = jmp_rel(s);
-    s.j32_backpatch("do_exit", jmp_halt);
+    s.j32_backpatch("VER_TXT", le_ver);
+    let jmp_done = jmp_rel(s);
+    s.j32_backpatch("dispatch_done", jmp_done);
 }
 
-fn emit_help_branch(s: &mut Buf) {
-    cmp_byte_r14_0_imm8(s, b'h' as u8);
-    let _jne3 = jne32(s);
-    cmp_byte_r14_1_imm8(s, b'e' as u8);
-    let _jne3b = jne32(s);
-    cmp_byte_r14_n_imm8(s, 2, b'l' as u8);
-    let _jne3c = jne32(s);
-    cmp_byte_r14_n_imm8(s, 3, b'p' as u8);
-    let _jne3d = jne32(s);
+fn emit_help_branch(s: &mut Buf, next: &str) {
+    cmp_byte_r14_0_imm8(s, b'h');
+    let jne = jne32(s);
+    s.j32_backpatch(next, jne);
+    cmp_byte_r14_1_imm8(s, b'e');
+    let jne = jne32(s);
+    s.j32_backpatch(next, jne);
+    cmp_byte_r14_n_imm8(s, 2, b'l');
+    let jne = jne32(s);
+    s.j32_backpatch(next, jne);
+    cmp_byte_r14_n_imm8(s, 3, b'p');
+    let jne = jne32(s);
+    s.j32_backpatch(next, jne);
     cmp_r15_imm32(s, 4);
-    let _jne3e = jne32(s);
+    let jne = jne32(s);
+    s.j32_backpatch(next, jne);
     let le_help = lea_rdi_rip_placeholder(s);
     mov_rsi_imm32(s, HELP.len() as u32);
     let call_help = call_rel(s);
     s.j32_backpatch("print_str", call_help);
     s.j32_backpatch("HELP", le_help);
-    let jmp_ret = jmp_rel(s);
-    s.j32_backpatch("dispatch_epilogue", jmp_ret);
+    let jmp_done = jmp_rel(s);
+    s.j32_backpatch("dispatch_done", jmp_done);
 }
 
-fn emit_cls_branch(s: &mut Buf) {
-    cmp_byte_r14_0_imm8(s, b'c' as u8);
-    let _jne4 = jne32(s);
-    cmp_byte_r14_1_imm8(s, b'l' as u8);
-    let _jne4b = jne32(s);
-    cmp_byte_r14_n_imm8(s, 2, b's' as u8);
-    let _jne4c = jne32(s);
+fn emit_cls_branch(s: &mut Buf, next: &str) {
+    cmp_byte_r14_0_imm8(s, b'c');
+    let jne = jne32(s);
+    s.j32_backpatch(next, jne);
+    cmp_byte_r14_1_imm8(s, b'l');
+    let jne = jne32(s);
+    s.j32_backpatch(next, jne);
+    cmp_byte_r14_n_imm8(s, 2, b's');
+    let jne = jne32(s);
+    s.j32_backpatch(next, jne);
     cmp_r15_imm32(s, 3);
-    let _jne4d = jne32(s);
+    let jne = jne32(s);
+    s.j32_backpatch(next, jne);
     mov_rax_imm32(s, SYS_CLEAR);
     xor_r10d_r10d(s);
     syscall(s);
-    let jmp_ret_cls = jmp_rel(s);
-    s.j32_backpatch("dispatch_epilogue", jmp_ret_cls);
+    let jmp_done = jmp_rel(s);
+    s.j32_backpatch("dispatch_done", jmp_done);
 }
 
-fn emit_halt_branch(s: &mut Buf) {
-    cmp_byte_r14_0_imm8(s, b'h' as u8);
-    let _jne5 = jne32(s);
-    cmp_byte_r14_1_imm8(s, b'a' as u8);
-    let _jne5b = jne32(s);
-    cmp_byte_r14_n_imm8(s, 2, b'l' as u8);
-    let _jne5c = jne32(s);
-    cmp_byte_r14_n_imm8(s, 3, b't' as u8);
-    let _jne5d = jne32(s);
+fn emit_halt_branch(s: &mut Buf, next: &str) {
+    cmp_byte_r14_0_imm8(s, b'h');
+    let jne = jne32(s);
+    s.j32_backpatch(next, jne);
+    cmp_byte_r14_1_imm8(s, b'a');
+    let jne = jne32(s);
+    s.j32_backpatch(next, jne);
+    cmp_byte_r14_n_imm8(s, 2, b'l');
+    let jne = jne32(s);
+    s.j32_backpatch(next, jne);
+    cmp_byte_r14_n_imm8(s, 3, b't');
+    let jne = jne32(s);
+    s.j32_backpatch(next, jne);
     cmp_r15_imm32(s, 4);
-    let _jne5e = jne32(s);
+    let jne = jne32(s);
+    s.j32_backpatch(next, jne);
     let le_halt = lea_rdi_rip_placeholder(s);
     mov_rsi_imm32(s, HALTTXT.len() as u32);
     let call_halt = call_rel(s);
     s.j32_backpatch("print_str", call_halt);
     s.j32_backpatch("HALT", le_halt);
-    let jmp_halt2 = jmp_rel(s);
-    s.j32_backpatch("do_exit", jmp_halt2);
+    let jmp_exit = jmp_rel(s);
+    s.j32_backpatch("do_exit", jmp_exit);
 }
 
-fn emit_autoexec_branch(s: &mut Buf) {
-    cmp_byte_r14_0_imm8(s, b'a' as u8);
-    let _jne6 = jne32(s);
-    cmp_byte_r14_1_imm8(s, b'u' as u8);
-    let _jne6b = jne32(s);
-    cmp_byte_r14_n_imm8(s, 2, b't' as u8);
-    let _jne6c = jne32(s);
-    cmp_byte_r14_n_imm8(s, 3, b'o' as u8);
-    let _jne6d = jne32(s);
-    cmp_byte_r14_n_imm8(s, 4, b'e' as u8);
-    let _jne6e = jne32(s);
-    cmp_byte_r14_n_imm8(s, 5, b'x' as u8);
-    let _jne6f = jne32(s);
-    cmp_byte_r14_n_imm8(s, 6, b'e' as u8);
-    let _jne6g = jne32(s);
-    cmp_byte_r14_n_imm8(s, 7, b'c' as u8);
-    let _jne6h = jne32(s);
+fn emit_autoexec_branch(s: &mut Buf, next: &str) {
+    for (index, byte) in b"autoexec".iter().copied().enumerate() {
+        cmp_byte_r14_n_imm8(s, index as u8, byte);
+        let jne = jne32(s);
+        s.j32_backpatch(next, jne);
+    }
     cmp_r15_imm32(s, 8);
-    let _jne6i = jne32(s);
-    // SYS_RUN_AUTOEXEC (placeholder; real number is wired in by the
-    // kernel dispatcher). Number matches the Python stub.
-    mov_rax_imm32(s, 0x0200);
+    let jne = jne32(s);
+    s.j32_backpatch(next, jne);
+    mov_rax_imm32(s, SYS_RUN_AUTOEXEC);
     xor_r10d_r10d(s);
     syscall(s);
-    let jmp_ret2 = jmp_rel(s);
-    s.j32_backpatch("dispatch_epilogue", jmp_ret2);
+    let jmp_done = jmp_rel(s);
+    s.j32_backpatch("dispatch_done", jmp_done);
 }
 
-fn emit_echo_branch(s: &mut Buf) {
-    cmp_byte_r14_0_imm8(s, b'e' as u8);
-    let _jne7 = jne32(s);
-    cmp_byte_r14_1_imm8(s, b'c' as u8);
-    let _jne7b = jne32(s);
-    cmp_byte_r14_n_imm8(s, 2, b'h' as u8);
-    let _jne7c = jne32(s);
-    cmp_byte_r14_n_imm8(s, 3, b'o' as u8);
-    let _jne7d = jne32(s);
+fn emit_echo_branch(s: &mut Buf, next: &str) {
+    for (index, byte) in b"echo".iter().copied().enumerate() {
+        cmp_byte_r14_n_imm8(s, index as u8, byte);
+        let jne = jne32(s);
+        s.j32_backpatch(next, jne);
+    }
     cmp_r15_imm32(s, 5);
-    let _jl_echo = jl32(s);
-    cmp_byte_r14_n_imm8(s, 4, b' ' as u8);
-    let _jne7e = jne32(s);
+    let jl = jl32(s);
+    s.j32_backpatch(next, jl);
+    cmp_byte_r14_n_imm8(s, 4, b' ');
+    let jne = jne32(s);
+    s.j32_backpatch(next, jne);
     mov_rdi_r14(s);
     add_rdi_imm8(s, 5);
     mov_rsi_r15(s);
     sub_rsi_imm8(s, 5);
     let call_echo = call_rel(s);
     s.j32_backpatch("print_str", call_echo);
-    let jmp_ret3 = jmp_rel(s);
-    s.j32_backpatch("dispatch_epilogue", jmp_ret3);
+    let call_crlf = call_rel(s);
+    s.j32_backpatch("print_crlf", call_crlf);
+    let jmp_done = jmp_rel(s);
+    s.j32_backpatch("dispatch_done", jmp_done);
 }
 
 /// Inline helper: print a single decimal digit pair (byte in
@@ -540,17 +566,15 @@ fn mov_eax_edx(s: &mut Buf) {
 /// `time` builtin — call SYS_GET_RTC, then print the 16-byte
 /// buffer as `HH:MM:SS`. Bytes 4..7 of the kernel-side TimeFields
 /// hold hour, minute, second (host byte order).
-fn emit_time_branch(s: &mut Buf) {
-    cmp_byte_r14_0_imm8(s, b't' as u8);
-    let _jne = jne32(s);
-    cmp_byte_r14_1_imm8(s, b'i' as u8);
-    let _jne2 = jne32(s);
-    cmp_byte_r14_n_imm8(s, 2, b'm' as u8);
-    let _jne3 = jne32(s);
-    cmp_byte_r14_n_imm8(s, 3, b'e' as u8);
-    let _jne4 = jne32(s);
+fn emit_time_branch(s: &mut Buf, next: &str) {
+    for (index, byte) in b"time".iter().copied().enumerate() {
+        cmp_byte_r14_n_imm8(s, index as u8, byte);
+        let jne = jne32(s);
+        s.j32_backpatch(next, jne);
+    }
     cmp_r15_imm32(s, 4);
-    let _jne5 = jne32(s);
+    let jne = jne32(s);
+    s.j32_backpatch(next, jne);
 
     // Print the "  Current Time: " label.
     let le_lbl = lea_rdi_rip_placeholder(s);
@@ -589,23 +613,21 @@ fn emit_time_branch(s: &mut Buf) {
     syscall(s);
     add_rsp_imm32(s, 32);
     let jmp_t = jmp_rel(s);
-    s.j32_backpatch("dispatch_epilogue", jmp_t);
+    s.j32_backpatch("dispatch_done", jmp_t);
 }
 
 /// `date` builtin — print `YYYY-MM-DD` from the SYS_GET_RTC
 /// buffer. Year is little-endian u16 in bytes 0..2, month in 2,
 /// day in 3.
-fn emit_date_branch(s: &mut Buf) {
-    cmp_byte_r14_0_imm8(s, b'd' as u8);
-    let _jne = jne32(s);
-    cmp_byte_r14_1_imm8(s, b'a' as u8);
-    let _jne2 = jne32(s);
-    cmp_byte_r14_n_imm8(s, 2, b't' as u8);
-    let _jne3 = jne32(s);
-    cmp_byte_r14_n_imm8(s, 3, b'e' as u8);
-    let _jne4 = jne32(s);
+fn emit_date_branch(s: &mut Buf, next: &str) {
+    for (index, byte) in b"date".iter().copied().enumerate() {
+        cmp_byte_r14_n_imm8(s, index as u8, byte);
+        let jne = jne32(s);
+        s.j32_backpatch(next, jne);
+    }
     cmp_r15_imm32(s, 4);
-    let _jne5 = jne32(s);
+    let jne = jne32(s);
+    s.j32_backpatch(next, jne);
 
     // Print the "  Current Date: " label.
     let le_lbl = lea_rdi_rip_placeholder(s);
@@ -643,7 +665,7 @@ fn emit_date_branch(s: &mut Buf) {
     syscall(s);
     add_rsp_imm32(s, 32);
     let jmp_d = jmp_rel(s);
-    s.j32_backpatch("dispatch_epilogue", jmp_d);
+    s.j32_backpatch("dispatch_done", jmp_d);
 }
 
 /// `ipconfig` builtin — call SYS_NETCFG_GET once into a 16-byte
@@ -651,25 +673,15 @@ fn emit_date_branch(s: &mut Buf) {
 /// returns the IPv4 fields in network byte order (big endian), so
 /// the user-mode stub prints each byte as a 3-digit decimal
 /// (zero-padded) separated by `.` — works for any byte 0..255.
-fn emit_ipconfig_branch(s: &mut Buf) {
-    cmp_byte_r14_0_imm8(s, b'i' as u8);
-    let _jne = jne32(s);
-    cmp_byte_r14_1_imm8(s, b'p' as u8);
-    let _jne2 = jne32(s);
-    cmp_byte_r14_n_imm8(s, 2, b'c' as u8);
-    let _jne3 = jne32(s);
-    cmp_byte_r14_n_imm8(s, 3, b'o' as u8);
-    let _jne4 = jne32(s);
-    cmp_byte_r14_n_imm8(s, 4, b'n' as u8);
-    let _jne5 = jne32(s);
-    cmp_byte_r14_n_imm8(s, 5, b'f' as u8);
-    let _jne6 = jne32(s);
-    cmp_byte_r14_n_imm8(s, 6, b'i' as u8);
-    let _jne7 = jne32(s);
-    cmp_byte_r14_n_imm8(s, 7, b'g' as u8);
-    let _jne8 = jne32(s);
+fn emit_ipconfig_branch(s: &mut Buf, next: &str) {
+    for (index, byte) in b"ipconfig".iter().copied().enumerate() {
+        cmp_byte_r14_n_imm8(s, index as u8, byte);
+        let jne = jne32(s);
+        s.j32_backpatch(next, jne);
+    }
     cmp_r15_imm32(s, 8);
-    let _jne9 = jne32(s);
+    let jne = jne32(s);
+    s.j32_backpatch(next, jne);
 
     // Print the multi-line "Windows IP Configuration" template.
     let le_lbl = lea_rdi_rip_placeholder(s);
@@ -700,7 +712,7 @@ fn emit_ipconfig_branch(s: &mut Buf) {
 
     add_rsp_imm32(s, 32);
     let jmp_ip = jmp_rel(s);
-    s.j32_backpatch("dispatch_epilogue", jmp_ip);
+    s.j32_backpatch("dispatch_done", jmp_ip);
 }
 
 /// Inline helper: print a single byte (0..255) as a 3-digit

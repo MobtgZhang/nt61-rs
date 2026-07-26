@@ -494,11 +494,15 @@ pub fn cmp_byte_r14_n_imm8(b: &mut Buf, n: u8, imm: u8) {
 }
 
 pub fn cmp_r15_imm32(b: &mut Buf, imm: u32) {
-    // 49 83 FF imm32 (rex.W=0x49 with B=1 for r15, opcode=0x83 /7 cmp, ModRM=0xFF)
+    // 49 83 FF ib : cmp r15, sign-extended imm8. Command lengths are
+    // all below 128, so the compact form is sufficient. The old emitter
+    // incorrectly wrote a four-byte immediate after opcode 0x83, causing
+    // the extra three bytes to be decoded as instructions.
+    assert!(imm <= i8::MAX as u32, "cmp r15 immediate out of range");
     b.u8(0x49);
     b.u8(0x83);
     b.u8(0xff);
-    b.u32(imm);
+    b.u8(imm as u8);
 }
 
 pub fn cmp_r14_r13(b: &mut Buf) {
@@ -512,6 +516,14 @@ pub fn test_dl_dl(b: &mut Buf) {
     // 84 D2
     b.u8(0x84);
     b.u8(0xd2);
+}
+
+/// `test al, imm8` — used to discard PS/2 break codes, whose high bit
+/// is set, before indexing the 128-byte make-code translation table.
+pub fn test_al_imm8(b: &mut Buf, imm: u8) {
+    // A8 ib
+    b.u8(0xa8);
+    b.u8(imm);
 }
 
 // ===== movzx =======================================================
