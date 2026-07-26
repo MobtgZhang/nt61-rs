@@ -361,9 +361,62 @@ pub extern "C" fn ntoskrnl_kisystemstartup_thunk(boot_info: *const crate::boot_t
     // where the boot-start drivers get their AddDevice callbacks
     // fired; we have already done that inside `load_and_init_boot_start_drivers`
     // so K08 is effectively a marker here.
+    //
+    // SSH/OpenSSH test bring-up requires the network miniport to be
+    // initialised between K06 (PCI bus enumeration) and K09 (CM re-init).
+    // The NT6.1 I/O manager dispatches NDIS miniport DriverEntry during
+    // PnP device-tree matching, so we drive the same sequence here:
+    //   * K08a: register the class driver stubs (e1000 / rtl8139 / virtio-net)
+    //   * K08b: walk the PCI cache via virtio_net::init so the paravirt NIC
+    //           appears with its MAC + RX/TX queues ready before SMSS spawns
+    //           sshd.exe.
+    //   * K08c: bring the protocol stack up (ipif / tcp / udp / arp /
+    //           icmp / socket) so user-mode Winsock calls can hit the kernel.
+    //   * K08d: seed the loopback interface (already done in K12 below,
+    //           but doing it earlier makes `ipconfig` from cmd shell work
+    //           immediately after the first 127.0.0.1 reply is needed).
     crate::rtl::windows_log::write_kernel_phase_header(8);
     crate::hal::serial::write_string(
         "[NTOSKRNL-HOST] K08: PnP manager device-tree enumeration done by K07\r\n",
+    );
+
+    // K08a/b: drivers::net::init -> walks PCI for every supported NIC
+    // (e1000 / rtl8139 / virtio-net). This is what makes a QEMU
+    // `-device virtio-net-pci` reachable; without this call the
+    // guest kernel never binds to the paravirt NIC and `sshd.exe`
+    // cannot `bind()` a socket.
+    crate::hal::serial::write_string(
+        "[NTOSKRNL-HOST] K08a: drivers::net::init (e1000 / rtl8139 / virtio-net miniport)\r\n",
+    );
+    crate::drivers::net::init();
+    crate::hal::serial::write_string(
+        "[NTOSKRNL-HOST] K08a: drivers::net::init returned\r\n",
+    );
+
+    // K08c: protocol stack bring-up. The same call order
+    // `mod.rs::init` already uses internally, but we call it
+    // explicitly so an OpenSSH regression is observable in the
+    // serial log (rather than silently absent).
+    crate::hal::serial::write_string(
+        "[NTOSKRNL-HOST] K08c: netstack::init (arp/ipif/tcp/udp/socket)\r\n",
+    );
+    crate::netstack::init();
+    crate::hal::serial::write_string(
+        "[NTOSKRNL-HOST] K08c: netstack::init returned\r\n",
+    );
+
+    // Drive `pnp::start_all_pending()` so any PCI device that was
+    // registered by K06 and not yet bound (e.g. a second virtio-blk
+    // exposed as `-hdb`) gets its DriverEntry fired. The Win7 I/O
+    // manager does this during the PnP manager pass; we mirror that
+    // here so the OpenSSH payload disk actually shows up before SMSS
+    // tries to `read_pe_from_disk` sshd.exe.
+    crate::hal::serial::write_string(
+        "[NTOSKRNL-HOST] K08d: pnp::start_all_pending (start unbound PCI devices)\r\n",
+    );
+    let _started = crate::drivers::bus::pnp::start_all_pending();
+    crate::hal::serial::write_string(
+        "[NTOSKRNL-HOST] K08d: pnp::start_all_pending returned\r\n",
     );
 
     // =======================================================================

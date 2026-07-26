@@ -3779,10 +3779,10 @@ fn read_mft_record(ntfs: &NtfsBoot, record_num: u64) -> Option<Vec<u8>> {
 ///   0x28: allocated_size (8)
 ///   0x30: data_size (8)
 ///   0x38: file_attributes (4)
-///   0x3C: packed_ea_size (2)  ← FIXED: was 4 bytes, now 2 bytes
-///   0x3E: name_length (1)
-///   0x3F: file_name_type (1)
-///   0x40+: filename (UTF-16LE)
+///   0x3C: reparse/ea (4) per [MS-FSCC] §2.6
+///   0x40: name_length (1)
+///   0x41: name_namespace (1)
+///   0x42+: filename (UTF-16LE)
 fn decode_filename_attr(buf: &[u8], off: usize) -> Option<(String, u64)> {
     // The bounds check uses the caller's record length, not the value
     // length. The first index entry starts at record offset ~242 (root
@@ -3790,13 +3790,16 @@ fn decode_filename_attr(buf: &[u8], off: usize) -> Option<(String, u64)> {
     // record). `buf.len()` is the full record (1024 bytes), so
     // `off + 66 <= 1024` is the right guard.
     if off + 66 > buf.len() { return None; }
-    // FIXED: name_length is at offset +0x3E (was +0x40 before the packed_ea_size fix).
-    let name_chars = buf[off + 0x3E] as usize;
+    // name_length is at offset +0x40 (per [MS-FSCC] §2.6 and the
+    // build-tool's FILE_NAME writer). Previous revisions placed it at
+    // +0x3E, which was a "packed_ea_size = 2 bytes" hypothesis that
+    // does not match the build-tool's actual byte layout.
+    let name_chars = buf[off + 0x40] as usize;
     if name_chars == 0 || name_chars > 255 { return None; }
-    if off + 0x40 + name_chars * 2 > buf.len() { return None; }
+    if off + 0x42 + name_chars * 2 > buf.len() { return None; }
     let mut name = String::new();
     for i in 0..name_chars {
-        let c = u16::from_le_bytes([buf[off + 0x40 + i*2], buf[off + 0x40 + i*2 + 1]]);
+        let c = u16::from_le_bytes([buf[off + 0x42 + i*2], buf[off + 0x42 + i*2 + 1]]);
         if c == 0 { continue; }
         if let Some(ch) = char::from_u32(c as u32) { name.push(ch); }
     }
@@ -3972,15 +3975,26 @@ fn find_child_in_index(ntfs: &NtfsBoot, parent_record: u64, name: &str) -> Optio
                 //   +0x28: allocated_size (8 bytes)
                 //   +0x30: data_size (8 bytes)
                 //   +0x38: file_attributes (4 bytes)
-                //   +0x3C: packed_ea_size (2 bytes)
-                //   +0x3E: name_length (1 byte)
-                //   +0x3F: file_name_type (1 byte)
-                //   +0x40+: filename (UTF-16LE)
+                //   +0x3C: reparse/ea (4 bytes) per [MS-FSCC] §2.6
+                //   +0x40: name_length (1 byte)
+                //   +0x41: name_namespace (1 byte)
+                //   +0x42+: filename (UTF-16LE)
+                //
+                // The previous layout in this function treated the
+                // 0x3C..0x40 range as `packed_ea_size (2) + reserved (2)`
+                // and put `name_length` at value+0x3E. That matches the
+                // layout the kernel emits in MFT records only when the
+                // build-tool's FILE_NAME attribute writer uses 0x3E,
+                // which it does not — it writes `name_length` at +0x40,
+                // so the kernel sees the byte at +0x3E as a padding
+                // zero. Fixing both offsets here aligns this code
+                // path with what winload.efi's `walk_index_entries`
+                // already does after the same bug was repaired there.
                 let fname_off = p + 0x10;
                 let fname_value_off = fname_off + 24; // Skip FILE_NAME_ATTR header
 
-                // name_length is at FILE_NAME value offset +0x3E.
-                let name_len_offset = fname_value_off + 0x3E;
+                // name_length is at FILE_NAME value offset +0x40.
+                let name_len_offset = fname_value_off + 0x40;
                 let name_len_chars = record[name_len_offset] as usize;
                 if DEBUG_NTFS { uefi::println!("[NTFS]   fname_off=0x{:x} fname_value_off=0x{:x} name_len_chars={}", fname_off, fname_value_off, name_len_chars); }
                 if name_len_chars == 0 || name_len_chars > 255 {
@@ -3989,8 +4003,8 @@ fn find_child_in_index(ntfs: &NtfsBoot, parent_record: u64, name: &str) -> Optio
                     continue;
                 }
 
-                // name starts at FILE_NAME value offset +0x40.
-                let name_start = fname_value_off + 0x40;
+                // name starts at FILE_NAME value offset +0x42.
+                let name_start = fname_value_off + 0x42;
                 // Show first few bytes of filename area for debugging
                 if DEBUG_NTFS { uefi::println!("[NTFS]   name_start=0x{:x}", name_start); }
                 // Ensure name fits within the record boundary `end`.

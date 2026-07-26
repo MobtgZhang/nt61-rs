@@ -516,6 +516,25 @@ fn dispatch(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
                 arg0(tf) as *mut ObjectAttributes,
             ) as i64 }
         }
+        nums::NtDeviceIoControlFile => {
+            // (HANDLE FileHandle, HANDLE Event, PVOID ApcRoutine,
+            //  PVOID ApcContext, PIO_STATUS_BLOCK IoStatusBlock,
+            //  ULONG IoControlCode, PVOID InputBuffer,
+            //  ULONG InputBufferLength, PVOID OutputBuffer,
+            //  ULONG OutputBufferLength)
+            unsafe { crate::libs::ntdll::ioctl::NtDeviceIoControlFile(
+                arg0(tf) as HANDLE,
+                arg1(tf) as HANDLE,
+                arg2(tf) as PVOID,
+                arg3(tf) as PVOID,
+                arg4(tf) as *mut IoStatusBlock,
+                arg5(tf) as u32,
+                stack_arg(tf, 0) as PVOID,
+                stack_arg(tf, 1) as u32,
+                stack_arg(tf, 2) as PVOID,
+                stack_arg(tf, 3) as u32,
+            ) as i64 }
+        }
 
         // ---- Sections ----
         nums::NtCreateSection => {

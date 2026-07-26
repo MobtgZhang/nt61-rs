@@ -984,20 +984,23 @@ pub fn parse_file_name(record: &[u8]) -> Option<(u64, Vec<u16>, bool)> {
         record[value_start + 7],
     ]);
     
-    // Filename length at offset 0x3E
-    let name_length = record[value_start + 0x3E] as usize;
-    let name_space = record[value_start + 0x3F];
-    
+    // Filename length at offset 0x40 (per [MS-FSCC] §2.6 the
+    // bytes at +0x3C..+0x40 are reserved / reparse / packed_ea_size
+    // and name_length follows). Namespace is at +0x41 and the
+    // UTF-16LE name starts at +0x42.
+    let name_length = record[value_start + 0x40] as usize;
+    let name_space = record[value_start + 0x41];
+
     // Check bounds for filename
-    if value_start + 0x40 + (name_length * 2) > record.len() {
+    if value_start + 0x42 + (name_length * 2) > record.len() {
         return None;
     }
-    
+
     let mut file_name = Vec::with_capacity(name_length);
     for i in 0..name_length {
         let char_val = u16::from_le_bytes([
-            record[value_start + 0x40 + (i * 2)],
-            record[value_start + 0x41 + (i * 2)],
+            record[value_start + 0x42 + (i * 2)],
+            record[value_start + 0x42 + (i * 2) + 1],
         ]);
         file_name.push(char_val);
     }
@@ -1530,15 +1533,21 @@ pub fn parse_index_entry(buffer: &[u8], offset: usize) -> Option<(DirectoryEntry
         return None;
     }
 
-    // FIXED: packed_ea_size is 2 bytes (at +0x3C), so name_length is at fn_off + 0x3E
-    // and namespace is at fn_off + 0x3F. Filename starts at fn_off + 0x40.
-    let name_length = buffer[fn_off + 0x3E] as usize;
+    // FIXED: the build-tool writes `name_length` at FILE_NAME value
+    // offset +0x40 (per [MS-FSCC] §2.6 — packed_ea_size is 2 bytes,
+    // reserved is 2 bytes, so name_length sits at +0x40, not +0x3E).
+    // The previous +0x3E read landed on a reserved-zero byte inside
+    // every INDEX_ENTRY, which made `parse_index_root` return 0
+    // valid entries — that was the silent cause of
+    // `[NTFS] find_file: parsed 0 entries from INDEX_ROOT` in the
+    // SMSS boot path. Filename UTF-16LE starts at fn_off + 0x42.
+    let name_length = buffer[fn_off + 0x40] as usize;
     if name_length == 0 || name_length > 255 {
         return None;
     }
 
-    // Bounds: name starts at fn_off + 0x40
-    let name_start = fn_off + 0x40;
+    // Bounds: name starts at fn_off + 0x42
+    let name_start = fn_off + 0x42;
     if name_start + name_length * 2 > buffer.len() {
         return None;
     }
@@ -1976,11 +1985,16 @@ pub fn find_file_in_directory(ntfs: &NtfsFileSystem, parent_record: u64, name: &
         }
 
         // Check if we need to look in $INDEX_ALLOCATION
-        // The $INDEX_ROOT header has a "small index" flag at offset 0x0C
-        // 0 = small index (all entries in INDEX_ROOT)
-        // 1 = large index (entries also in INDEX_ALLOCATION)
+        // The INDEX_HEADER.flags field is at value+0x1C (i.e. 4 bytes
+        // into the 16-byte INDEX_HEADER that itself starts at
+        // value+0x10). The previous implementation read it from
+        // value+0x0C, which is the "clusters per index record" field
+        // — and the build-tool writes `1` there as the index record
+        // size hint, so every directory was being treated as a
+        // "large index" and the kernel kept looking for a
+        // $INDEX_ALLOCATION attribute that this image does not emit.
         let index_flags = u32::from_le_bytes([
-            index_root[0x0C], index_root[0x0D], index_root[0x0E], index_root[0x0F]
+            index_root[0x1C], index_root[0x1D], index_root[0x1E], index_root[0x1F]
         ]);
         let has_allocation = (index_flags & 0x01) != 0;
         crate::boot_println!("[NTFS] find_file: INDEX_ROOT flags=0x{:x}, has_allocation={}", index_flags, has_allocation);
@@ -2220,7 +2234,7 @@ fn find_in_index_allocation(ntfs: &NtfsFileSystem, index_alloc_data: &[u8], need
 
                 // Parse the FILE_NAME attribute from the entry
                 // FILE_NAME starts at offset + 16 within the INDEX_ENTRY.
-                // Per NTFS-3G layout.h / attrib.c, the FILE_NAME value layout is:
+                // Per [MS-FSCC] §2.6, the FILE_NAME value layout is:
                 //   +0x00: u64 parent_directory MFT ref
                 //   +0x08: s64 creation_time
                 //   +0x10: s64 last_data_change_time
@@ -2229,22 +2243,22 @@ fn find_in_index_allocation(ntfs: &NtfsFileSystem, index_alloc_data: &[u8], need
                 //   +0x28: s64 allocated_size
                 //   +0x30: s64 data_size
                 //   +0x38: u32 file_attributes
-                //   +0x3C: u16 packed_ea_size (2 bytes)
-                //   +0x3E: u8  file_name_length (characters)
-                //   +0x3F: u8  file_name_type
-                //   +0x40+: ntfschar[file_name_length] (UTF-16LE)
+                //   +0x3C: u32 reparse_tag (or packed_ea_size, 4 bytes)
+                //   +0x40: u8  file_name_length (characters)
+                //   +0x41: u8  file_name_type
+                //   +0x42+: ntfschar[file_name_length] (UTF-16LE)
                 let fn_off = offset + 16;
-                // Need at least 66 bytes for the FILE_NAME header.
-                if fn_off + 66 > record_end {
+                // Need at least 70 bytes for the FILE_NAME header.
+                if fn_off + 70 > record_end {
                     offset += entry_length;
                     continue;
                 }
-                let filename_length = index_record[fn_off + 0x3E] as usize;
+                let filename_length = index_record[fn_off + 0x40] as usize;
                 if filename_length == 0 || filename_length > 255 {
                     offset += entry_length;
                     continue;
                 }
-                let name_start = fn_off + 0x40;
+                let name_start = fn_off + 0x42;
                 let name_end = name_start + (filename_length * 2);
                 if name_end > record_end {
                     offset += entry_length;

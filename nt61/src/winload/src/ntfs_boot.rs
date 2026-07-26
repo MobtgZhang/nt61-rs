@@ -264,11 +264,18 @@ fn find_child_in_index(
                 record[ih_off + 0x04], record[ih_off + 0x05],
                 record[ih_off + 0x06], record[ih_off + 0x07],
             ]) as usize;
-            // INDEX_ROOT flags are at value+0x0C; bit 0 == LARGE_INDEX
-            // (entries also live in $INDEX_ALLOCATION).
+            // INDEX_HEADER flags are at value+0x1C (= ih_off + 0x0C);
+            // bit 0 == LARGE_INDEX (entries also live in
+            // $INDEX_ALLOCATION). The 4 bytes at value+0x0C..0x0F are
+            // "clusters per index record" (which our build-tool
+            // happens to write as 1), not the LARGE_INDEX flag — the
+            // previous implementation read it from the wrong offset
+            // and always treated the root as a large index, which
+            // caused it to look for an INDEX_ALLOCATION attribute that
+            // the build-tool does not emit on this image.
             let index_root_flags = u32::from_le_bytes([
-                record[body + 0x0C], record[body + 0x0D],
-                record[body + 0x0E], record[body + 0x0F],
+                record[ih_off + 0x0C], record[ih_off + 0x0D],
+                record[ih_off + 0x0E], record[ih_off + 0x0F],
             ]);
             let has_allocation = (index_root_flags & 0x01) != 0;
 
@@ -423,21 +430,25 @@ fn walk_index_entries(
         //   +0x0C: flags (2)
         //   +0x10: FILE_NAME attribute header (24 bytes) starts here
         //   The FILE_NAME value then begins 24 bytes later and has
-        //   the standard 0x40 layout:
-        //     +0x3E: name_length
-        //     +0x40+: filename (UTF-16LE)
+        //   the standard layout:
+        //     +0x00: parent_ref (8)
+        //     +0x08..+0x27: times (32 bytes)
+        //     +0x28: allocated_length (8)
+        //     +0x30: file_size (8)
+        //     +0x38: file_attributes (4)
+        //     +0x3C: reparse/ea (4 — see [MS-FSCC] §2.6)
+        //     +0x40: name_length
+        //     +0x41: name_namespace
+        //     +0x42+: filename (UTF-16LE)
         //
-        // CRITICAL: the FILE_NAME attribute (0x30) has a 24-byte
-        // resident attribute header (type/length/non_res/name_idx/
-        // flags/instance/value_length/value_offset/padding) that must
-        // be skipped before the value is reached. Skipping this
-        // header is what makes the lookup align with the same
-        // builder output that boot/src/main.rs uses successfully —
-        // the previous implementation that just added +0x10 (no
-        // +24) read garbage and silently returned "not found".
+        // The previous implementation read name_length from
+        // value+0x3E (the wrong offset), which made every decoded
+        // filename look empty even though the build-tool wrote a
+        // valid FILE_NAME. The build-tool's `build_file_name_attr_for_record`
+        // emits at value+0x40/0x41/0x42 — same layout as NTFS itself.
         let fname_attr_off = p + 0x10;
         let fname_value_off = fname_attr_off + 24;
-        let name_len_offset = fname_value_off + 0x3E;
+        let name_len_offset = fname_value_off + 0x40;
         if name_len_offset >= end {
             break;
         }
@@ -446,7 +457,7 @@ fn walk_index_entries(
             p += entry_len;
             continue;
         }
-        let name_start = fname_value_off + 0x40;
+        let name_start = fname_value_off + 0x42;
         if name_start + name_len_chars * 2 > end {
             p += entry_len;
             continue;
