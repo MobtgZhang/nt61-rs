@@ -599,3 +599,172 @@ pub fn dispatch_control(control: u32) -> u32 {
 }
 
 // (spinlock now centralised in ke::sync)
+
+// ============================================================================
+// Service main-thread API (used by sshd in SCM mode)
+// ============================================================================
+
+/// Maximum length of a service name in UTF-16 cells.
+pub const SERVICE_NAME_MAX: usize = 256;
+
+/// Maximum length of a service display name in UTF-16 cells.
+pub const SERVICE_DISPLAY_NAME_MAX: usize = 256;
+
+/// Maximum length of an image path in UTF-16 cells.
+pub const SERVICE_IMAGE_PATH_MAX: usize = 260;
+
+/// Per-service registered control handler entry. The handler is
+/// invoked by `dispatch_service_control(name, code)` whenever the
+/// SCM sends a control code to a running service.
+#[derive(Clone, Copy)]
+pub struct ServiceControlHandlerEntry {
+    pub name: [u16; SERVICE_NAME_MAX],
+    pub name_len: usize,
+    pub handler: ServiceControlHandler,
+    pub current_status: ServiceStatus,
+    /// Last reported checkpoint (for hung-service detection).
+    pub last_checkpoint_time_ms: u64,
+}
+
+impl ServiceControlHandlerEntry {
+    pub const fn empty() -> Self {
+        Self {
+            name: [0u16; SERVICE_NAME_MAX],
+            name_len: 0,
+            handler: empty_handler,
+            current_status: ServiceStatus::new(),
+            last_checkpoint_time_ms: 0,
+        }
+    }
+}
+
+fn empty_handler(_control: u32) -> u32 { 0 }
+
+const MAX_HANDLER_ENTRIES: usize = 32;
+static HANDLER_TABLE: Spinlock<[Option<ServiceControlHandlerEntry>; MAX_HANDLER_ENTRIES]> =
+    Spinlock::new([const { None }; MAX_HANDLER_ENTRIES]);
+
+/// `RegisterServiceCtrlHandlerExW`-equivalent. Registers a service
+/// control handler for the running service. Returns the entry's
+/// index, or `None` if the table is full or the name collides.
+///
+/// `service_name` is a UTF-16 slice (null-terminated not required).
+pub fn register_service_ctrl_handler(
+    service_name: &[u16],
+    handler: ServiceControlHandler,
+) -> Option<usize> {
+    if service_name.is_empty() || service_name.len() > SERVICE_NAME_MAX {
+        return None;
+    }
+    let mut table = HANDLER_TABLE.lock();
+    for slot in table.iter_mut() {
+        if let Some(entry) = slot.as_ref() {
+            if entry.name_len == service_name.len()
+                && entry.name[..entry.name_len] == *service_name
+            {
+                return None;
+            }
+        }
+    }
+    for (idx, slot) in table.iter_mut().enumerate() {
+        if slot.is_none() {
+            let mut entry = ServiceControlHandlerEntry::empty();
+            entry.name_len = service_name.len();
+            for (i, c) in service_name.iter().enumerate() {
+                entry.name[i] = *c;
+            }
+            entry.handler = handler;
+            entry.current_status = ServiceStatus::new();
+            entry.current_status.current_state = ServiceState::StartPending;
+            *slot = Some(entry);
+            return Some(idx);
+        }
+    }
+    None
+}
+
+/// `SetServiceStatus`-equivalent. Updates the cached status for a
+/// service that previously registered a control handler.
+pub fn set_service_status(idx: usize, status: ServiceStatus) -> bool {
+    let mut table = HANDLER_TABLE.lock();
+    if idx >= MAX_HANDLER_ENTRIES {
+        return false;
+    }
+    if let Some(slot) = table[idx].as_mut() {
+        slot.current_status = status;
+        true
+    } else {
+        false
+    }
+}
+
+/// Get the most recent status reported by `set_service_status`.
+pub fn query_service_status_ex(idx: usize) -> Option<ServiceStatus> {
+    let table = HANDLER_TABLE.lock();
+    table.get(idx).and_then(|s| s.as_ref().map(|e| e.current_status))
+}
+
+/// Dispatch a control code to a registered handler by name.
+/// Returns the handler's return value, or `0` (ERROR_PROC_NOT_FOUND)
+/// if no such service is registered.
+pub fn dispatch_service_control(service_name: &[u16], control: u32) -> u32 {
+    let table = HANDLER_TABLE.lock();
+    for slot in table.iter() {
+        if let Some(entry) = slot.as_ref() {
+            if entry.name_len == service_name.len()
+                && entry.name[..entry.name_len] == *service_name
+            {
+                let h = entry.handler;
+                drop(table);
+                return h(control);
+            }
+        }
+    }
+    0
+}
+
+/// Convert a control code (raw u32) to a `ServiceControl` value.
+pub fn control_from_code(code: u32) -> Option<ServiceControl> {
+    match code {
+        0x01 => Some(ServiceControl::Stop),
+        0x02 => Some(ServiceControl::Pause),
+        0x03 => Some(ServiceControl::Continue),
+        0x04 => Some(ServiceControl::Interrogate),
+        0x05 => Some(ServiceControl::Shutdown),
+        0x06 => Some(ServiceControl::ParamChange),
+        0x07 => Some(ServiceControl::NetBindAdd),
+        0x08 => Some(ServiceControl::NetBindRemove),
+        0x09 => Some(ServiceControl::NetBindEnable),
+        0x0A => Some(ServiceControl::NetBindDisable),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn control_code_round_trip() {
+        assert_eq!(control_from_code(0x01), Some(ServiceControl::Stop));
+        assert_eq!(control_from_code(0x05), Some(ServiceControl::Shutdown));
+        assert_eq!(control_from_code(0xFF), None);
+    }
+
+    #[test]
+    fn set_service_status_updates_state() {
+        let name: [u16; 4] = ['t' as u16, 'e' as u16, 's' as u16, 't' as u16];
+        let idx = register_service_ctrl_handler(&name, empty_handler).unwrap();
+        let mut st = ServiceStatus::new();
+        st.current_state = ServiceState::Running;
+        assert!(set_service_status(idx, st));
+        let got = query_service_status_ex(idx).unwrap();
+        assert_eq!(got.current_state, ServiceState::Running);
+    }
+
+    #[test]
+    fn dispatch_unknown_service_returns_zero() {
+        let bogus: [u16; 3] = ['x' as u16, 'y' as u16, 'z' as u16];
+        assert_eq!(dispatch_service_control(&bogus, 0x01), 0);
+    }
+}

@@ -10,6 +10,7 @@ pub mod winlogon;
 pub mod pid1;
 pub mod pid2;
 pub mod smoke;
+pub mod sshd;
 // The CMD shell (`kd>` debug prompt + kernel-side `C:\>`
 // alternate-shell prompt) is **architecture-independent**. It is
 // the SafeBootMode fallback used on every architecture: on

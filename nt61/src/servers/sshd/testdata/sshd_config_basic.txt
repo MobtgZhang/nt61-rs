@@ -1,0 +1,11 @@
+# Minimal sshd_config for testing the parser
+Port 2222
+ListenAddress 0.0.0.0
+HostKey C:\Program Files\OpenSSH\ssh_host_ed25519_key
+PermitRootLogin prohibit-password
+PubkeyAuthentication yes
+PasswordAuthentication no
+ChallengeResponseAuthentication no
+AuthorizedKeysFile .ssh\authorized_keys
+Subsystem sftp sftp-server.exe
+UseDNS no
