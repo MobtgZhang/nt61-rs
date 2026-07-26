@@ -122,6 +122,7 @@ pub mod lpc;
 pub mod rtl;
 pub mod fs;
 pub mod loader;
+pub mod crypto;
 // pub mod pegen;          // removed: PE images are now produced by tools/src/fs/build.rs
 // pub mod system_image;   // removed: synthetic in-binary PE pipeline gone
 pub mod servers;

@@ -20,15 +20,18 @@ pub mod sid;
 pub mod acl;
 pub mod token;
 pub mod seaccess;
+pub mod users;
+pub mod logon;
 
 use crate::kprintln;
 
 /// Initialize the Security Reference Monitor.
 pub fn init() {
-    // crate::kprintln!("    Security Reference Monitor: initializing...")  // kprintln disabled (memcpy crash workaround);
     sid::init();
     acl::init();
     token::init();
     seaccess::init();
+    users::init();
+    logon::init();
     // crate::kprintln!("    Security Reference Monitor: initialized")  // kprintln disabled (memcpy crash workaround);
 }

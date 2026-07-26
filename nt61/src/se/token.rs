@@ -517,3 +517,21 @@ pub fn create_user_token(user_sid: Sid) -> *mut Token {
     }
     token
 }
+
+/// Copy a fully-configured Token (with privileges, groups, default
+/// DACL) into a fresh pool allocation. Used by logon paths that
+/// build the token in stack memory first.
+pub fn persist_token(template: &Token) -> *mut Token {
+    let token = crate::mm::pool::allocate(
+        crate::mm::pool::PoolType::NonPaged,
+        core::mem::size_of::<Token>(),
+    ) as *mut Token;
+
+    if !token.is_null() {
+        unsafe {
+            let src = template as *const Token as *const u8;
+            core::ptr::copy_nonoverlapping(src, token as *mut u8, core::mem::size_of::<Token>());
+        }
+    }
+    token
+}

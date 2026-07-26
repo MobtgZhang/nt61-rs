@@ -86,6 +86,7 @@ pub mod vad;
 pub mod mdl;
 pub mod logging;
 pub mod perf;
+pub mod user_copy;
 
 use core::sync::atomic::{AtomicBool, Ordering};
 

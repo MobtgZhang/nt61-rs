@@ -54,6 +54,8 @@ pub mod rtl_path;
 pub mod registry;
 pub mod smoke;
 pub mod ob_integration;
+pub mod ioctl;
+pub mod rtl_genrandom;
 
 /// Initialise the ntdll stub. Walks every submodule's
 /// `init()` (where one is defined) and prints a status line.

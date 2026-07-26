@@ -5,6 +5,7 @@
 pub mod process;
 pub mod thread;
 pub mod smoke;
+pub mod cmdline;
 #[cfg(target_arch = "x86_64")]
 pub mod wow64_process;
 #[cfg(target_arch = "x86_64")]

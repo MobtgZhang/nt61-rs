@@ -39,6 +39,7 @@ pub mod msvcrt;
 pub mod rpcrt4;
 pub mod user32;
 pub mod gdi32;
+pub mod ws2_32;
 #[cfg(target_arch = "x86_64")]
 pub mod win32k;
 #[cfg(target_arch = "x86_64")]

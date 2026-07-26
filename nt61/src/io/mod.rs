@@ -25,6 +25,8 @@ use crate::kprintln;
 use crate::mm::pool;
 
 pub mod smoke;
+pub mod pipe;
+pub mod named_pipe;
 
 // ---------------------------------------------------------------------------
 // I/O system constants

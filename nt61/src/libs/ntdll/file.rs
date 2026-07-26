@@ -17,7 +17,7 @@
 //! `wdm.h` for the relevant information structures.
 
 use super::status::{
-    STATUS_ACCESS_DENIED, STATUS_BUFFER_TOO_SMALL, STATUS_INVALID_HANDLE,
+    STATUS_ACCESS_DENIED, STATUS_ACCESS_VIOLATION, STATUS_BUFFER_TOO_SMALL, STATUS_INVALID_HANDLE,
     STATUS_INVALID_INFO_CLASS, STATUS_INVALID_PARAMETER, STATUS_NOT_A_DIRECTORY,
     STATUS_NOT_IMPLEMENTED, STATUS_OBJECT_NAME_INVALID,
     STATUS_OBJECT_PATH_NOT_FOUND, STATUS_SUCCESS, STATUS_END_OF_FILE,
@@ -59,6 +59,15 @@ pub(crate) enum HandleKind {
     Semaphore,
     Timer,
     Key,
+    /// Pipe end (read or write). The `target` is the pipe slot
+    /// index (low 32 bits) plus the direction flag (bit 32: 0 =
+    /// read, 1 = write). See `pipe_slot_for`/`pipe_is_write` in
+    /// this module.
+    Pipe,
+    /// AFD endpoint. The `target` is the AFD handle id (cast
+    /// u64 → u32). `nt_device_io_control` routes through
+    /// `netstack::afd::dispatch`.
+    Afd,
 }
 
 static HANDLE_TABLE: Spinlock<HandleTable> = Spinlock::new(HandleTable::new());
@@ -460,6 +469,19 @@ pub unsafe extern "C" fn NtReadFile(
     if buffer.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
+    if crate::mm::user_copy::probe_user_write(io_status_block as u64,
+        core::mem::size_of::<IoStatusBlock>()).is_err() {
+        return STATUS_ACCESS_VIOLATION;
+    }
+    if !byte_offset.is_null() {
+        if crate::mm::user_copy::probe_user_write(byte_offset as u64,
+            core::mem::size_of::<i64>()).is_err() {
+            return STATUS_ACCESS_VIOLATION;
+        }
+    }
+    if crate::mm::user_copy::probe_user_write(buffer as u64, length as usize).is_err() {
+        return STATUS_ACCESS_VIOLATION;
+    }
 
     // Route read through I/O manager
     let entry = lookup_handle(file_handle);
@@ -482,6 +504,27 @@ pub unsafe extern "C" fn NtReadFile(
                     *byte_offset += result.bytes_read as i64;
                 }
                 return result.status as i32;
+            }
+            HandleKind::Pipe => {
+                if pipe_is_write(e.target) {
+                    // Cannot read from a write end.
+                    (*io_status_block).status = STATUS_INVALID_HANDLE;
+                    (*io_status_block).information = 0;
+                    return STATUS_INVALID_HANDLE;
+                }
+                let slot = pipe_slot_for(e.target);
+                let buf = core::slice::from_raw_parts_mut(
+                    buffer as *mut u8, length as usize,
+                );
+                let n = crate::io::pipe::read(slot, buf);
+                (*io_status_block).status = if n == 0 {
+                    // EOF on a closed pipe.
+                    STATUS_END_OF_FILE
+                } else {
+                    STATUS_SUCCESS
+                } as i32;
+                (*io_status_block).information = n;
+                return (*io_status_block).status as i32;
             }
             _ => {}
         }
@@ -512,6 +555,19 @@ pub unsafe extern "C" fn NtWriteFile(
     if buffer.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
+    if crate::mm::user_copy::probe_user_write(io_status_block as u64,
+        core::mem::size_of::<IoStatusBlock>()).is_err() {
+        return STATUS_ACCESS_VIOLATION;
+    }
+    if !byte_offset.is_null() {
+        if crate::mm::user_copy::probe_user_write(byte_offset as u64,
+            core::mem::size_of::<i64>()).is_err() {
+            return STATUS_ACCESS_VIOLATION;
+        }
+    }
+    if crate::mm::user_copy::probe_user_read(buffer as u64, length as usize).is_err() {
+        return STATUS_ACCESS_VIOLATION;
+    }
 
     // Route write through I/O manager
     let entry = lookup_handle(file_handle);
@@ -531,6 +587,22 @@ pub unsafe extern "C" fn NtWriteFile(
                     *byte_offset += result.bytes_written as i64;
                 }
                 return result.status as i32;
+            }
+            HandleKind::Pipe => {
+                if !pipe_is_write(e.target) {
+                    // Cannot write to a read end.
+                    (*io_status_block).status = STATUS_INVALID_HANDLE;
+                    (*io_status_block).information = 0;
+                    return STATUS_INVALID_HANDLE;
+                }
+                let slot = pipe_slot_for(e.target);
+                let buf = core::slice::from_raw_parts(
+                    buffer as *const u8, length as usize,
+                );
+                let n = crate::io::pipe::write(slot, buf);
+                (*io_status_block).status = STATUS_SUCCESS as i32;
+                (*io_status_block).information = n;
+                return STATUS_SUCCESS;
             }
             _ => {}
         }
@@ -983,6 +1055,30 @@ pub unsafe extern "C" fn NtQueryDirectoryFile(
 
 pub fn handle_count() -> usize {
     HANDLE_TABLE.lock().entries.iter().filter(|e| e.is_some()).count()
+}
+
+/// Register a pipe end with the handle table. `pipe_id` is the
+/// host-side identifier returned by `io::pipe::create_anonymous`;
+/// `is_write` distinguishes the read end from the write end so
+/// NtReadFile/NtWriteFile can route correctly.
+pub fn alloc_pipe_handle(pipe_id: u64) -> HANDLE {
+    // Resolve the pipe slot for this id and decide read/write.
+    let (slot, is_write) = match crate::io::pipe::slot_for_id(pipe_id) {
+        Some(s) => s,
+        None => return core::ptr::null_mut(),
+    };
+    let target = (slot as u64) | ((is_write as u64) << 32);
+    alloc_handle(HandleKind::Pipe, target)
+}
+
+/// Extract the pipe slot index from a Pipe handle's target.
+pub(crate) fn pipe_slot_for(target: u64) -> usize {
+    (target & 0xFFFFFFFF) as usize
+}
+
+/// Extract the write-direction flag from a Pipe handle's target.
+pub(crate) fn pipe_is_write(target: u64) -> bool {
+    ((target >> 32) & 0x1) != 0
 }
 
 pub(crate) fn wide_to_string(s: &UnicodeString) -> Option<String> {
