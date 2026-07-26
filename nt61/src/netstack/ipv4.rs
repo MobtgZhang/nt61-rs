@@ -287,6 +287,22 @@ pub fn send_ipv4(
     protocol: u8,
     payload: &[u8],
 ) -> bool {
+    // Loopback shortcut: 127.0.0.0/8 must NEVER hit the wire.
+    // Re-inject the packet locally through ipv4_input with the
+    // primary NIC type, which dispatches to TCP/UDP/ICMP just
+    // like a packet from the network would.
+    if (dst_ip & 0xFF000000) == 0x7F000000 {
+        // Loopback interface owns if_index 0 (registered via
+        // ipif::seed_loopback at boot). The NIC index is
+        // unimportant for ipv4_input's dispatch, so we pass 0.
+        let packet = build_ipv4_packet(src_ip, dst_ip, protocol, 64, payload);
+        if let Some((header, ip_payload)) = parse_ipv4_header(&packet) {
+            ipv4_input(&header, ip_payload, crate::drivers::net::NicType::VirtioNet, 0);
+            return true;
+        }
+        return false;
+    }
+
     // Build the packet
     let packet = build_ipv4_packet(src_ip, dst_ip, protocol, 64, payload);
 

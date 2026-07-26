@@ -205,19 +205,41 @@ pub fn bind(socket_id: u32, addr: &SockAddr) -> Result<(), SocketError> {
 }
 
 pub fn listen(socket_id: u32, backlog: u32) -> Result<(), SocketError> {
-    let mut sockets = SOCKETS.lock();
+    // Compute everything we need before taking the SOCKETS lock
+    // so we don't deadlock when calling tcp::listen below (which
+    // takes its own TCP_CONNECTIONS lock).
+    let (local_ip, local_port) = {
+        let sockets = SOCKETS.lock();
+        let socket = sockets
+            .iter()
+            .find(|s| s.id == socket_id)
+            .ok_or(SocketError::InvalidSocket)?;
+        if socket.socket_type != SocketType::Stream {
+            return Err(SocketError::InvalidArgument);
+        }
+        if socket.state != SocketState::Bound {
+            return Err(SocketError::NotConnected);
+        }
+        let port = socket.bind_port;
+        let ip = socket
+            .local_addr
+            .map(|a| a.ip())
+            .unwrap_or_else(|| ipif::get_our_ip_addresses().first().copied().unwrap_or(0));
+        (ip, port)
+    };
 
-    let socket = sockets.iter_mut()
+    // Create the underlying TCP listen TCB so incoming SYNs are
+    // matched and child TCBs carry our socket id through
+    // listen_socket_id.
+    if tcp::listen(local_ip, local_port).is_none() {
+        return Err(SocketError::AddressInUse);
+    }
+
+    let mut sockets = SOCKETS.lock();
+    let socket = sockets
+        .iter_mut()
         .find(|s| s.id == socket_id)
         .ok_or(SocketError::InvalidSocket)?;
-
-    if socket.socket_type != SocketType::Stream {
-        return Err(SocketError::InvalidArgument);
-    }
-
-    if socket.state != SocketState::Bound {
-        return Err(SocketError::NotConnected);
-    }
 
     // Reserve capacity for the accept queue up front so the 3-way
     // handshake path can push without reallocating.
@@ -383,23 +405,45 @@ pub fn recv(socket_id: u32, buffer: &mut [u8]) -> Result<usize, SocketError> {
 }
 
 pub fn close(socket_id: u32) -> Result<(), SocketError> {
-    let mut sockets = SOCKETS.lock();
+    // Compute bind info up front so we can release the TCP listen
+    // TCB outside of the SOCKETS critical section (tcp::close_listen
+    // acquires its own TCP_CONNECTIONS lock).
+    let (was_listening, local_ip, local_port) = {
+        let sockets = SOCKETS.lock();
+        let Some(socket) = sockets.iter().find(|s| s.id == socket_id) else {
+            return Err(SocketError::InvalidSocket);
+        };
+        (
+            matches!(socket.state, SocketState::Listening),
+            socket.local_addr.map(|a| a.ip()).unwrap_or(0),
+            socket.bind_port,
+        )
+    };
 
-    let socket = sockets.iter_mut()
-        .find(|s| s.id == socket_id)
-        .ok_or(SocketError::InvalidSocket)?;
+    {
+        let mut sockets = SOCKETS.lock();
+        let socket = sockets
+            .iter_mut()
+            .find(|s| s.id == socket_id)
+            .ok_or(SocketError::InvalidSocket)?;
 
-    if let Some(tcp_id) = socket.tcp_socket_id.take() {
-        tcp::close(tcp_id);
+        if let Some(tcp_id) = socket.tcp_socket_id.take() {
+            tcp::close(tcp_id);
+        }
+        if let Some(udp_idx) = socket.udp_socket_idx.take() {
+            udp::close_socket(udp_idx);
+        }
+
+        socket.state = SocketState::Closed;
+        socket.bind_port = 0;
+        socket.rx_buf.clear();
+        socket.tx_buf.clear();
+        socket.accept_queue.clear();
     }
-    if let Some(udp_idx) = socket.udp_socket_idx.take() {
-        udp::close_socket(udp_idx);
-    }
 
-    socket.state = SocketState::Closed;
-    socket.bind_port = 0;
-    socket.rx_buf.clear();
-    socket.tx_buf.clear();
+    if was_listening && local_port != 0 {
+        tcp::close_listen(local_ip, local_port);
+    }
 
     Ok(())
 }
@@ -407,6 +451,19 @@ pub fn close(socket_id: u32) -> Result<(), SocketError> {
 pub fn get_state(socket_id: u32) -> Option<SocketState> {
     let sockets = SOCKETS.lock();
     sockets.iter().find(|s| s.id == socket_id).map(|s| s.state)
+}
+
+/// Copy the local address of a socket (or None if not bound).
+pub fn get_local_addr(socket_id: u32) -> Option<SockAddr> {
+    let sockets = SOCKETS.lock();
+    sockets.iter().find(|s| s.id == socket_id).and_then(|s| s.local_addr)
+}
+
+/// Copy the remote address of a socket (or None if not
+/// connected).
+pub fn get_remote_addr(socket_id: u32) -> Option<SockAddr> {
+    let sockets = SOCKETS.lock();
+    sockets.iter().find(|s| s.id == socket_id).and_then(|s| s.remote_addr)
 }
 
 pub fn socket_count() -> usize {

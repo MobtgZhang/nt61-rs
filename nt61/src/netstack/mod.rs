@@ -16,6 +16,8 @@ pub mod tcp;
 pub mod udp;
 pub mod socket;
 pub mod dhcp;
+pub mod dns;
+pub mod afd;
 
 
 /// Global network stack state
@@ -33,6 +35,7 @@ pub fn init() {
     tcp::init();
     udp::init();
     socket::init();
+    dns::flush_cache();
 
     unsafe {
         NETWORK_STACK_INITIALIZED = true;

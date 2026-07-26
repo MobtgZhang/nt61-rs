@@ -696,10 +696,33 @@ impl DhcpClient {
                     
                     if let Some(dns) = options.dns_servers {
                         self.lease.set_dns(dns);
+                        // Propagate the first DNS server to the
+                        // resolver so getaddrinfo can immediately
+                        // use it.
+                        if dns[0] != 0 {
+                            crate::netstack::dns::set_dns_server(dns[0]);
+                            // Use the primary non-loopback
+                            // interface for the route if any,
+                            // otherwise default to if_index 1
+                            // (the first interface registered by
+                            // DHCP itself).
+                            let if_idx = crate::netstack::ipif::get_all_interfaces()
+                                .iter()
+                                .find(|i| i.eth_if != u32::MAX)
+                                .map(|i| i.if_index)
+                                .unwrap_or(1);
+                            crate::netstack::ipif::add_route(
+                                dns[0],
+                                0xFFFFFFFFu32,
+                                self.lease.gateway,
+                                if_idx,
+                                1,
+                            );
+                        }
                     }
-                    
+
                     self.lease.set_lease_start(crate::hal::common::pit::get_system_time_ms() as u64);
-                    
+
                     self.state = DhcpState::Bound;
                     true
                 } else {

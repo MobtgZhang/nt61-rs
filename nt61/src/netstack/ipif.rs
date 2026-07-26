@@ -62,9 +62,11 @@ impl IpInterface {
         (self.address & self.netmask) == (ip & self.netmask)
     }
 
-    /// Get the CIDR prefix length
+    /// Get the CIDR prefix length (count of leading 1-bits in
+    /// the mask). Returns 0 for the default route (netmask=0) and
+    /// 32 for a host route (netmask=0xFFFFFFFF).
     pub fn prefix_len(&self) -> u8 {
-        (!self.netmask).count_ones() as u8
+        self.netmask.count_ones() as u8
     }
 }
 
@@ -100,9 +102,10 @@ impl RouteEntry {
         (dest & self.netmask) == (self.dest & self.netmask)
     }
 
-    /// Get the prefix length
+    /// Get the prefix length (count of leading 1-bits in the
+    /// mask). 0 for the default route, 32 for a host route.
     pub fn prefix_len(&self) -> u8 {
-        (!self.netmask).count_ones() as u8
+        self.netmask.count_ones() as u8
     }
 }
 

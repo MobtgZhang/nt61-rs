@@ -172,6 +172,12 @@ pub struct TcpControlBlock {
     pub retransmit_count: u8,
     pub last_send_time: u64,
     pub in_retransmit: bool,
+    /// Owning listening socket id. Set when this TCB is created as
+    /// a child of `socket::listen`; once the 3-way handshake
+    /// completes, the child is enqueued onto the parent's accept
+    /// queue via `socket::enqueue_accept`. Stays 0 for
+    /// independently-connected sockets.
+    pub listen_socket_id: u32,
 }
 
 impl TcpControlBlock {
@@ -203,6 +209,7 @@ impl TcpControlBlock {
             retransmit_count: 0,
             last_send_time: pit::get_system_time_ms() as u64,
             in_retransmit: false,
+            listen_socket_id: 0,
         }
     }
     
@@ -533,9 +540,27 @@ pub fn tcp_input(src_ip: u32, dst_ip: u32, data: &[u8]) {
 
     match conn_idx {
         Some(idx) => {
-            let mut connections = TCP_CONNECTIONS.lock();
-            let tcb = &mut connections[idx];
-            handle_tcp_segment(tcb, header, flags, payload);
+            // Capture bookkeeping fields before acquiring the
+            // mutable borrow so we can enqueue onto the parent
+            // listen socket's accept queue after the handshake
+            // completes (without holding TCP_CONNECTIONS).
+            let listen_socket_id;
+            let new_tcb_id;
+            let established_now = {
+                let mut connections = TCP_CONNECTIONS.lock();
+                let tcb = &mut connections[idx];
+                listen_socket_id = tcb.listen_socket_id;
+                new_tcb_id = tcb.socket_id;
+                handle_tcp_segment(tcb, header, flags, payload)
+            };
+            if established_now && listen_socket_id != 0 {
+                // Push onto the parent listening socket's accept
+                // queue. If the queue is full, the child TCB is
+                // dropped per RFC 793 §3.7 backlog semantics — but
+                // we leave it in TCP_CONNECTIONS so the kernel can
+                // still send RST/FIN cleanup via the standard path.
+                let _ = crate::netstack::socket::enqueue_accept(listen_socket_id, new_tcb_id);
+            }
         }
         None => {
             // No matching connection
@@ -544,13 +569,18 @@ pub fn tcp_input(src_ip: u32, dst_ip: u32, data: &[u8]) {
                 if let Some(idx) = find_listener(dst_ip, header.dst_port) {
                     // Create new connection for listening socket
                     let mut connections = TCP_CONNECTIONS.lock();
-                    let _listener = &connections[idx]; // Verify listener exists
+                    // Capture the listening socket id while we still
+                    // hold a borrow on the listener TCB so the new
+                    // child can be enqueued onto the parent's accept
+                    // queue after the 3-way handshake completes.
+                    let listen_socket_id = connections[idx].socket_id;
                     let mut new_tcb = TcpControlBlock::new();
                     new_tcb.local_ip = dst_ip;
                     new_tcb.local_port = header.dst_port;
                     new_tcb.remote_ip = src_ip;
                     new_tcb.remote_port = header.src_port;
                     new_tcb.state = TcpState::SynReceived;
+                    new_tcb.listen_socket_id = listen_socket_id;
                     new_tcb.snd_iss = generate_isn();
                     new_tcb.rcv_irs = header.seq;
                     new_tcb.rcv_nxt = header.seq + 1;
@@ -577,10 +607,15 @@ pub fn tcp_input(src_ip: u32, dst_ip: u32, data: &[u8]) {
     }
 }
 
-/// Handle TCP segment based on state
-fn handle_tcp_segment(tcb: &mut TcpControlBlock, header: TcpHeader, flags: u8, payload: &[u8]) {
+/// Handle TCP segment based on state. Returns true iff this segment
+/// caused the TCB to transition into the Established state from
+/// SynReceived (i.e. completed the passive 3-way handshake). The
+/// caller is responsible for enqueuing the TCB onto the listening
+/// socket's accept queue in that case.
+fn handle_tcp_segment(tcb: &mut TcpControlBlock, header: TcpHeader, flags: u8, payload: &[u8]) -> bool {
     let payload_len = payload.len();
-    
+    let mut established_now = false;
+
     match tcb.state {
         TcpState::Closed => {
             // Ignore
@@ -609,6 +644,7 @@ fn handle_tcp_segment(tcb: &mut TcpControlBlock, header: TcpHeader, flags: u8, p
             if flags & tcp_flags::ACK != 0 && header.ack == tcb.snd_nxt {
                 tcb.snd_una = header.ack;
                 tcb.state = TcpState::Established;
+                established_now = true;
             }
         }
         TcpState::Established => {
@@ -676,6 +712,8 @@ fn handle_tcp_segment(tcb: &mut TcpControlBlock, header: TcpHeader, flags: u8, p
             // Wait for 2MSL before closing
         }
     }
+
+    established_now
 }
 
 /// Generate Initial Sequence Number
@@ -683,6 +721,49 @@ fn generate_isn() -> u32 {
     // Simple ISN generation - use PIT ticks for seeding
     let now = pit::get_system_time_ms() as u32;
     now
+}
+
+/// Create a TCP listening endpoint. The returned socket_id is
+/// referenced by incoming child TCBs through their
+/// `listen_socket_id` field; `socket::listen` callers use the same
+/// id when invoking `socket::enqueue_accept`.
+pub fn listen(local_ip: u32, local_port: Port) -> Option<u32> {
+    let mut connections = TCP_CONNECTIONS.lock();
+
+    // Reject duplicate listen on the same (local_ip, local_port)
+    // so the kernel does not double-arm accept queues.
+    if connections.iter().any(|tcb| {
+        tcb.local_ip == local_ip
+            && tcb.local_port == local_port
+            && tcb.state == TcpState::Listen
+    }) {
+        return None;
+    }
+
+    let mut tcb = TcpControlBlock::new();
+    tcb.local_ip = local_ip;
+    tcb.local_port = local_port;
+    tcb.state = TcpState::Listen;
+
+    let socket_id = NEXT_SOCKET_ID.fetch_add(1, Ordering::Relaxed);
+    tcb.socket_id = socket_id;
+
+    connections.push(tcb);
+    Some(socket_id)
+}
+
+/// Tear down a TCP listen endpoint (state == Listen). Returns true
+/// if a TCB was removed. Used by `socket::close` to release the
+/// bind port so a subsequent `listen()` can re-arm it.
+pub fn close_listen(local_ip: u32, local_port: Port) -> bool {
+    let mut connections = TCP_CONNECTIONS.lock();
+    let before = connections.len();
+    connections.retain(|tcb| {
+        !(tcb.local_ip == local_ip
+            && tcb.local_port == local_port
+            && tcb.state == TcpState::Listen)
+    });
+    connections.len() != before
 }
 
 /// Begin TCP connection
