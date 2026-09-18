@@ -1,0 +1,46 @@
+NT6.1 源码审计（代码/构建）
+
+[P0] `cargo check --all-targets` 失败：`src/fs/ntfs/logfile.rs:366-383` 测试使用 `vec!`，但 no_std 测试模块未导入 `alloc::vec`；同一构建还报 `src/servers/test_csrss_services.rs:88` 缺 `Vec`/`String` 导入，`243-247` 直接引用未导入的 `csrss`、`services`。因此 `cargo test --lib --no-run` 无法编译。
+
+[P0] `cargo check --all-targets` 构建 `nt61-kernel` 时出现 duplicate lang item `panic_impl`：`src/main.rs:28` 定义 panic handler，而依赖 `std`（once_cell）已提供一个。裸机内核目标与宿主测试/依赖未隔离，默认 all-targets 无法完成。
+
+[P1] `src/mm/mod.rs:93`, `src/ob/mod.rs:38`, `src/io/mod.rs:33`, `src/fs/mod.rs:21`, `src/netstack/mod.rs:25` 使用不存在的 feature `test-mm/test-ob/test-io/test-fs/test-net`；Cargo check 每次给 unexpected cfg 警告，测试门控实际上失效。
+
+[P1] AArch64 BTL 明确为 stub：`src/arch/aarch64/btl/{codegen.rs,decoder.rs,ir.rs,state.rs,syscall_bridge.rs}` 顶部文档称 currently a stub；`ir.rs:38` 仅返回空 IR，`translation_manager.rs:108` 仅发出 abort trap。开启 `btl` 不能执行来宾代码。
+
+[P1] LoongArch BTL 翻译器函数全部空实现：`src/arch/loongarch64/btl/translate/ctrl.rs:29-33`, `gen.rs:32-39`, `mem.rs:19-21`, `system.rs:31-34` 均忽略参数并返回 `Ok(())`，会产生空机器码。
+
+[P1] 非 x86_64 页面系统调用为 stub：`src/mm/syspte_stub.rs:12-30` reserve/map 返回 `None`、release/unmap/init 无操作；AArch64/RISC-V/LoongArch 无法实现 Windows Mm system-PTE/I/O 映射。
+
+[P1] 启动链仍依赖 ring3 stub：`src/arch/boot.rs:751` 说明 PE loading 未实现；`843-995` 创建 `ring3_stub.exe` 并调用 `minimal_stub::install_into_pml4`; `RING3_STUB_FALLBACK` 在 `1022` 固定为 `true`。这不是 NT 6.1 的真实用户态 PE 启动。
+
+[P1] Winload 明确快启动 stub：`src/winload/src/main.rs:32` 注释 fast boot bypasses per-phase helpers；`10-11` 标注 SYSTEM hive/BOOT_START drivers 为 stub；`1820` 日志中 hal.dll exports=stub。驱动依赖、注册表 hive 与真实 KiSystemStartup 仍未完成。
+
+[P1] NTFS 扩展 API 几乎全是 TODO：`src/fs/ntfs/extended_api.rs:8-207` 包含 boot/MFT/security 校验、目录/读写/重命名/删除、mount/unmount 等待实现；`src/fs/ntfs/logfile.rs:307-319` $LogFile 仍是 stub；`src/fs/ntfs/mod.rs:3194` TODO 更新 MFT 文件大小。NTFS 不能作为可恢复系统卷。
+
+[P1] Cache Manager 未接磁盘：`src/fs/cache.rs:393,436,619,623,655` 与 `src/fs/cache_manager.rs:381,386,418,457,524` 都标记实际读写/异步 I/O TODO，可能返回成功但不持久化数据。
+
+[P1] 分区管理全是假成功：`src/fs/diskpart.rs:459-602` 的创建/删除/格式化、盘符、active、clean、扩容/缩容、属性命令全部 TODO；对 Win7 安装/磁盘管理不安全。
+
+[P1] IOCP/线程等待未实现：`src/io/iocp.rs:132,149,169` TODO 唤醒等待线程、等待可用线程和超时；重叠 I/O 完成端口语义不符合 NT。
+
+[P1] 服务控制管理未实现进程生命周期：`src/servers/services.rs:391,416` TODO 创建/启动服务进程与停止控制；服务枚举可以返回但无法真正运行。
+
+[P1] 进程创建缺 PE 映像加载和 Job 绑定：`src/ps/create_process.rs:197,269` TODO；结合 `arch/boot.rs` ring3 fallback，CreateProcess 不能运行标准 Win32 PE。
+
+[P1] 网络命令关键操作空缺：`src/servers/commands/network.rs:39,44,594,599,659,664` DHCP release/renew、路由增删、ARP 增删均 TODO；TCP/IP 栈仅能做基本路径。
+
+[P1] 安全审计加密/HMAC 空缺：`src/se/audit_log.rs:373-389` 说明 encryption support stub，三个函数 TODO；审计日志不可验证防篡改。
+
+[P2] BCD store 未完成：`src/bcd/object.rs:39`, `src/bcd/store.rs:56,100,108` GUID 解析、导入/导出 TODO；启动配置不能完整兼容 Windows BCD。
+
+[P2] 启动 NVRAM 读写未实现：`src/boot/src/nvram.rs:27,37` 直接打印 “not implemented during boot services” 并返回；UEFI 启动项/持久变量缺失。
+
+[P2] x86 IPI function-call 机制 TODO：`src/arch/x86_64/ipi.rs:210`；SMP 下跨 CPU DPC/函数调用不可靠。
+
+[P2] `src/arch/loongarch64/keyboard.rs:1` 与 `src/arch/riscv64/keyboard.rs:1` 明确 no-op stub（USB HID 未实现）；非 x86 不能提供键盘输入。
+
+可能应清理/隔离的冗余文件（先确认引用后再删）：
+`src/kernel_main_safe.rs`, `src/mm/syspte_stub.rs`（仅保留作非 x86 兼容层）, `src/crypto/{cipher_new.rs,hash_new.rs,mod_new.rs}`（与旧实现并存）, `src/libs/**/**/*_old_backup.rs`, `src/libs/msvcrt/*_old.rs`, `src/libs/msvcrt/*_safe.rs`, `src/fs/cache_complete.rs`, `src/mm/vad_complete.rs`, `src/mm/frame_safe.rs`, `src/mm/pfn_safe.rs`, `src/arch/x86_64/boot_anim.rs`, `src/arch/x86_64/idt_header.rs`, `src/arch/x86_64/syscall_handlers_validated.rs`, `src/arch/x86_64/syscall_nums.rs`, `src/fs/{locking.rs,notify.rs,vss.rs}`, `src/netstack/{fragmentation.rs,ipsec.rs,nat.rs,tcp_congestion.rs,wfp.rs}`, `src/se/{audit_demo.rs,audit_test.rs,audit_verify.rs,audit_complete.rs}`, `src/drivers/video/hdcp.rs`。这些文件在静态模块/符号扫描中未发现被父模块引用，或名称带 backup/old/safe/complete，建议移入 archive/并从 Cargo 构建验证。
+
+证据：`cargo check`（库）通过；`cargo test --lib --no-run` 和 `cargo check --all-targets` 失败，错误见上。
