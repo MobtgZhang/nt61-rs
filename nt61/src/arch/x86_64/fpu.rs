@@ -299,17 +299,17 @@ pub fn init() {
             );
         }
         
-        // // kprintln!("    [FPU] XSAVE supported, AVX: {}", avx_supported)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("    [FPU] XSAVE supported, AVX: {}", avx_supported);
     } else {
         // Fall back to legacy FXRSTOR/FXSAVE
-        // // kprintln!("    [FPU] Using legacy FXSAVE/FXRSTOR")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("    [FPU] Using legacy FXSAVE/FXRSTOR");
     }
     
     // Initialize FPU with default state
     init_fpu_state();
     
     FPU_INITIALIZED.store(true, core::sync::atomic::Ordering::SeqCst);
-    // // kprintln!("    [FPU] Initialized (state size: {} bytes)", FPU_STATE_SIZE)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("    [FPU] Initialized (state size: {} bytes)", FPU_STATE_SIZE);
 }
 
 /// Check for XSAVE/XRSTOR support
@@ -466,10 +466,10 @@ pub fn is_avx_supported() -> bool {
 
 /// Smoke test for FPU context switching
 pub fn smoke_test() -> bool {
-    // // kprintln!("    [FPU SMOKE] Testing XSAVE/XRSTOR...")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("    [FPU SMOKE] Testing XSAVE/XRSTOR...");
 
     if !check_xsave_support() {
-        // // kprintln!("    [FPU SMOKE] XSAVE not supported, skipping")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("    [FPU SMOKE] XSAVE not supported, skipping");
         return true; // Not a failure, just not supported
     }
 
@@ -497,8 +497,8 @@ pub fn smoke_test() -> bool {
     fpu_restore(&state1, features);
 
     // Verify state was restored (XSAVE should produce same result)
-    // // kprintln!("    [FPU SMOKE] XSAVE/XRSTOR round-trip: OK")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("    [FPU SMOKE] FPU features: 0x{:x}", features)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("    [FPU SMOKE] XSAVE/XRSTOR round-trip: OK");
+    // // kprintln!("    [FPU SMOKE] FPU features: 0x{:x}", features);
 
     true
 }

@@ -1,0 +1,402 @@
+//! String and Memory Operations
+//!
+//! Implements string manipulation and memory operations (strcpy, strcmp, memcpy, etc.)
+
+use super::types::*;
+use core::ptr;
+
+// Memory operations
+// Note: memcpy, memmove, memset are not exported with #[no_mangle] to avoid
+// conflicts with compiler_builtins. They are available as regular Rust functions
+// for internal use.
+
+pub unsafe extern "C" fn memcpy(dest: *mut c_void, src: *const c_void, n: size_t) -> *mut c_void {
+    if dest.is_null() || src.is_null() || n == 0 {
+        return dest;
+    }
+    ptr::copy_nonoverlapping(src as *const u8, dest as *mut u8, n);
+    dest
+}
+
+pub unsafe extern "C" fn memmove(dest: *mut c_void, src: *const c_void, n: size_t) -> *mut c_void {
+    if dest.is_null() || src.is_null() || n == 0 {
+        return dest;
+    }
+    ptr::copy(src as *const u8, dest as *mut u8, n);
+    dest
+}
+
+pub unsafe extern "C" fn memset(s: *mut c_void, c: c_int, n: size_t) -> *mut c_void {
+    if s.is_null() || n == 0 {
+        return s;
+    }
+    ptr::write_bytes(s as *mut u8, c as u8, n);
+    s
+}
+
+#[no_mangle]
+#[linkage = "weak"]
+pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: size_t) -> c_int {
+    if s1.is_null() || s2.is_null() {
+        return 0;
+    }
+
+    let p1 = s1 as *const u8;
+    let p2 = s2 as *const u8;
+
+    for i in 0..n {
+        let a = *p1.add(i);
+        let b = *p2.add(i);
+        if a != b {
+            return (a as c_int) - (b as c_int);
+        }
+    }
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: size_t) -> *mut c_void {
+    if s.is_null() {
+        return ptr::null_mut();
+    }
+
+    let p = s as *const u8;
+    let target = c as u8;
+
+    for i in 0..n {
+        if *p.add(i) == target {
+            return p.add(i) as *mut c_void;
+        }
+    }
+    ptr::null_mut()
+}
+
+// String operations
+
+#[no_mangle]
+pub unsafe extern "C" fn strlen(s: *const c_char) -> size_t {
+    if s.is_null() {
+        return 0;
+    }
+
+    let mut len = 0;
+    while *s.add(len) != 0 {
+        len += 1;
+    }
+    len
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn strcpy(dest: *mut c_char, src: *const c_char) -> *mut c_char {
+    if dest.is_null() || src.is_null() {
+        return dest;
+    }
+
+    let mut i = 0;
+    loop {
+        let c = *src.add(i);
+        *dest.add(i) = c;
+        if c == 0 {
+            break;
+        }
+        i += 1;
+    }
+    dest
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn strncpy(dest: *mut c_char, src: *const c_char, n: size_t) -> *mut c_char {
+    if dest.is_null() || src.is_null() || n == 0 {
+        return dest;
+    }
+
+    let mut i = 0;
+    while i < n {
+        let c = *src.add(i);
+        *dest.add(i) = c;
+        if c == 0 {
+            break;
+        }
+        i += 1;
+    }
+
+    // Pad with zeros if necessary
+    while i < n {
+        *dest.add(i) = 0;
+        i += 1;
+    }
+    dest
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn strcat(dest: *mut c_char, src: *const c_char) -> *mut c_char {
+    if dest.is_null() || src.is_null() {
+        return dest;
+    }
+
+    let dest_len = strlen(dest);
+    strcpy(dest.add(dest_len), src);
+    dest
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn strncat(dest: *mut c_char, src: *const c_char, n: size_t) -> *mut c_char {
+    if dest.is_null() || src.is_null() || n == 0 {
+        return dest;
+    }
+
+    let dest_len = strlen(dest);
+    let dest_end = dest.add(dest_len);
+
+    let mut i = 0;
+    while i < n && *src.add(i) != 0 {
+        *dest_end.add(i) = *src.add(i);
+        i += 1;
+    }
+    *dest_end.add(i) = 0;
+    dest
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int {
+    if s1.is_null() || s2.is_null() {
+        return 0;
+    }
+
+    let mut i = 0;
+    loop {
+        let c1 = *s1.add(i) as u8;
+        let c2 = *s2.add(i) as u8;
+
+        if c1 != c2 {
+            return (c1 as c_int) - (c2 as c_int);
+        }
+
+        if c1 == 0 {
+            return 0;
+        }
+        i += 1;
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn strncmp(s1: *const c_char, s2: *const c_char, n: size_t) -> c_int {
+    if s1.is_null() || s2.is_null() || n == 0 {
+        return 0;
+    }
+
+    for i in 0..n {
+        let c1 = *s1.add(i) as u8;
+        let c2 = *s2.add(i) as u8;
+
+        if c1 != c2 {
+            return (c1 as c_int) - (c2 as c_int);
+        }
+
+        if c1 == 0 {
+            return 0;
+        }
+    }
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn strchr(s: *const c_char, c: c_int) -> *mut c_char {
+    if s.is_null() {
+        return ptr::null_mut();
+    }
+
+    let target = c as c_char;
+    let mut i = 0;
+
+    loop {
+        let ch = *s.add(i);
+        if ch == target {
+            return s.add(i) as *mut c_char;
+        }
+        if ch == 0 {
+            break;
+        }
+        i += 1;
+    }
+    ptr::null_mut()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn strrchr(s: *const c_char, c: c_int) -> *mut c_char {
+    if s.is_null() {
+        return ptr::null_mut();
+    }
+
+    let target = c as c_char;
+    let len = strlen(s);
+
+    for i in (0..=len).rev() {
+        if *s.add(i) == target {
+            return s.add(i) as *mut c_char;
+        }
+    }
+    ptr::null_mut()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn strstr(haystack: *const c_char, needle: *const c_char) -> *mut c_char {
+    if haystack.is_null() || needle.is_null() {
+        return ptr::null_mut();
+    }
+
+    let needle_len = strlen(needle);
+    if needle_len == 0 {
+        return haystack as *mut c_char;
+    }
+
+    let haystack_len = strlen(haystack);
+    if needle_len > haystack_len {
+        return ptr::null_mut();
+    }
+
+    for i in 0..=(haystack_len - needle_len) {
+        if strncmp(haystack.add(i), needle, needle_len) == 0 {
+            return haystack.add(i) as *mut c_char;
+        }
+    }
+    ptr::null_mut()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn strdup(s: *const c_char) -> *mut c_char {
+    if s.is_null() {
+        return ptr::null_mut();
+    }
+
+    let len = strlen(s);
+    let new_str = crate::libs::msvcrt::memory::malloc(len + 1) as *mut c_char;
+    if !new_str.is_null() {
+        strcpy(new_str, s);
+    }
+    new_str
+}
+
+// Case-insensitive comparison
+#[no_mangle]
+pub unsafe extern "C" fn _stricmp(s1: *const c_char, s2: *const c_char) -> c_int {
+    if s1.is_null() || s2.is_null() {
+        return 0;
+    }
+
+    let mut i = 0;
+    loop {
+        let c1 = (*s1.add(i) as u8).to_ascii_lowercase();
+        let c2 = (*s2.add(i) as u8).to_ascii_lowercase();
+
+        if c1 != c2 {
+            return (c1 as c_int) - (c2 as c_int);
+        }
+
+        if c1 == 0 {
+            return 0;
+        }
+        i += 1;
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn _strnicmp(s1: *const c_char, s2: *const c_char, n: size_t) -> c_int {
+    if s1.is_null() || s2.is_null() || n == 0 {
+        return 0;
+    }
+
+    for i in 0..n {
+        let c1 = (*s1.add(i) as u8).to_ascii_lowercase();
+        let c2 = (*s2.add(i) as u8).to_ascii_lowercase();
+
+        if c1 != c2 {
+            return (c1 as c_int) - (c2 as c_int);
+        }
+
+        if c1 == 0 {
+            return 0;
+        }
+    }
+    0
+}
+
+// String tokenization
+static mut STRTOK_NEXT: *mut c_char = ptr::null_mut();
+
+#[no_mangle]
+pub unsafe extern "C" fn strtok(s: *mut c_char, delim: *const c_char) -> *mut c_char {
+    let str = if s.is_null() { STRTOK_NEXT } else { s };
+
+    if str.is_null() || delim.is_null() {
+        return ptr::null_mut();
+    }
+
+    // Skip leading delimiters
+    let mut start = str;
+    while *start != 0 && !strchr(delim, *start as c_int).is_null() {
+        start = start.add(1);
+    }
+
+    if *start == 0 {
+        STRTOK_NEXT = ptr::null_mut();
+        return ptr::null_mut();
+    }
+
+    // Find end of token
+    let mut end = start;
+    while *end != 0 && strchr(delim, *end as c_int).is_null() {
+        end = end.add(1);
+    }
+
+    if *end == 0 {
+        STRTOK_NEXT = ptr::null_mut();
+    } else {
+        *end = 0;
+        STRTOK_NEXT = end.add(1);
+    }
+
+    start
+}
+
+// Secure string functions
+#[no_mangle]
+pub unsafe extern "C" fn strcpy_s(
+    dest: *mut c_char,
+    dest_size: size_t,
+    src: *const c_char,
+) -> errno_t {
+    if dest.is_null() || src.is_null() || dest_size == 0 {
+        return EINVAL;
+    }
+
+    let src_len = strlen(src);
+    if src_len >= dest_size {
+        *dest = 0;
+        return ERANGE;
+    }
+
+    strcpy(dest, src);
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn strcat_s(
+    dest: *mut c_char,
+    dest_size: size_t,
+    src: *const c_char,
+) -> errno_t {
+    if dest.is_null() || src.is_null() || dest_size == 0 {
+        return EINVAL;
+    }
+
+    let dest_len = strlen(dest);
+    let src_len = strlen(src);
+
+    if dest_len + src_len >= dest_size {
+        return ERANGE;
+    }
+
+    strcat(dest, src);
+    0
+}

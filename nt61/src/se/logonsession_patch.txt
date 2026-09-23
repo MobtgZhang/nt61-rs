@@ -1,0 +1,9 @@
+use once_cell::sync::Lazy;
+use spin::Mutex;
+
+static LOGON_SESSIONS: Lazy<Mutex<[LogonSession; MAX_LOGON_SESSIONS]>> = Lazy::new(|| {
+    const INIT: LogonSession = LogonSession::new();
+    Mutex::new([INIT; MAX_LOGON_SESSIONS])
+});
+
+static NEXT_LOGON_ID: AtomicU64 = AtomicU64::new(1000);

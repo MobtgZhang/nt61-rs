@@ -1,0 +1,291 @@
+//! Thread-Local Storage for errno
+//!
+//! Provides thread-safe errno handling
+
+use super::types::*;
+use core::ptr;
+
+// POSIX errno constants
+pub const EPERM: i32 = 1;
+pub const ENOENT: i32 = 2;
+pub const ESRCH: i32 = 3;
+pub const EINTR: i32 = 4;
+pub const EIO: i32 = 5;
+pub const ENXIO: i32 = 6;
+pub const E2BIG: i32 = 7;
+pub const ENOEXEC: i32 = 8;
+pub const EBADF: i32 = 9;
+pub const ECHILD: i32 = 10;
+pub const EAGAIN: i32 = 11;
+pub const ENOMEM: i32 = 12;
+pub const EACCES: i32 = 13;
+pub const EFAULT: i32 = 14;
+pub const EBUSY: i32 = 16;
+pub const EEXIST: i32 = 17;
+pub const EXDEV: i32 = 18;
+pub const ENODEV: i32 = 19;
+pub const ENOTDIR: i32 = 20;
+pub const EISDIR: i32 = 21;
+pub const EINVAL: i32 = 22;
+pub const ENFILE: i32 = 23;
+pub const EMFILE: i32 = 24;
+pub const ENOTTY: i32 = 25;
+pub const EFBIG: i32 = 27;
+pub const ENOSPC: i32 = 28;
+pub const ESPIPE: i32 = 29;
+pub const EROFS: i32 = 30;
+pub const EMLINK: i32 = 31;
+pub const EPIPE: i32 = 32;
+pub const EDOM: i32 = 33;
+pub const ERANGE: i32 = 34;
+pub const EDEADLK: i32 = 36;
+pub const ENAMETOOLONG: i32 = 38;
+pub const ENOLCK: i32 = 39;
+pub const ENOSYS: i32 = 40;
+pub const ENOTEMPTY: i32 = 41;
+pub const EILSEQ: i32 = 42;
+pub const STRUNCATE: i32 = 80;
+
+
+/// Thread-local errno storage
+/// In a full implementation, this would use actual TLS (Thread-Local Storage)
+/// For now, we use a simple per-thread table
+
+const MAX_THREADS: usize = 64;
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct ThreadErrno {
+    thread_id: usize,
+    errno_value: c_int,
+    in_use: bool,
+}
+
+static mut THREAD_ERRNO_TABLE: [ThreadErrno; MAX_THREADS] = [ThreadErrno {
+    thread_id: 0,
+    errno_value: 0,
+    in_use: false,
+}; MAX_THREADS];
+
+static mut TLS_INITIALIZED: bool = false;
+
+/// Initialize TLS system
+unsafe fn init_tls() {
+    if !TLS_INITIALIZED {
+        for i in 0..MAX_THREADS {
+            THREAD_ERRNO_TABLE[i].thread_id = 0;
+            THREAD_ERRNO_TABLE[i].errno_value = 0;
+            THREAD_ERRNO_TABLE[i].in_use = false;
+        }
+        TLS_INITIALIZED = true;
+    }
+}
+
+/// Get current thread ID
+/// This is a stub - in real implementation would call kernel
+unsafe fn get_current_thread_id() -> usize {
+    // Call kernel stub to get thread ID
+    super::ps_stubs::get_current_tid()
+}
+
+/// Get errno pointer for current thread
+#[no_mangle]
+pub unsafe extern "C" fn __errno_location() -> *mut c_int {
+    init_tls();
+
+    let tid = get_current_thread_id();
+
+    // Find or allocate slot for this thread
+    for i in 0..MAX_THREADS {
+        if THREAD_ERRNO_TABLE[i].in_use && THREAD_ERRNO_TABLE[i].thread_id == tid {
+            return &mut THREAD_ERRNO_TABLE[i].errno_value as *mut c_int;
+        }
+    }
+
+    // Allocate new slot
+    for i in 0..MAX_THREADS {
+        if !THREAD_ERRNO_TABLE[i].in_use {
+            THREAD_ERRNO_TABLE[i].thread_id = tid;
+            THREAD_ERRNO_TABLE[i].errno_value = 0;
+            THREAD_ERRNO_TABLE[i].in_use = true;
+            return &mut THREAD_ERRNO_TABLE[i].errno_value as *mut c_int;
+        }
+    }
+
+    // Fallback: return first slot if table is full
+    &mut THREAD_ERRNO_TABLE[0].errno_value as *mut c_int
+}
+
+/// Get errno value
+#[no_mangle]
+pub unsafe extern "C" fn _errno() -> *mut c_int {
+    __errno_location()
+}
+
+/// Get errno value (Windows-style)
+#[no_mangle]
+pub unsafe extern "C" fn _get_errno(value: *mut c_int) -> errno_t {
+    if value.is_null() {
+        return EINVAL;
+    }
+
+    let errno_ptr = __errno_location();
+    *value = *errno_ptr;
+    0
+}
+
+/// Set errno value (Windows-style)
+#[no_mangle]
+pub unsafe extern "C" fn _set_errno(value: c_int) -> errno_t {
+    let errno_ptr = __errno_location();
+    *errno_ptr = value;
+    0
+}
+
+/// Get DOS error (Windows compatibility)
+static mut DOS_ERRNO_TABLE: [c_ulong; MAX_THREADS] = [0; MAX_THREADS];
+
+#[no_mangle]
+pub unsafe extern "C" fn _doserrno() -> *mut c_ulong {
+    init_tls();
+
+    let tid = get_current_thread_id();
+
+    // Simple mapping: use thread ID modulo table size
+    let index = tid % MAX_THREADS;
+    &mut DOS_ERRNO_TABLE[index] as *mut c_ulong
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn _get_doserrno(value: *mut c_ulong) -> errno_t {
+    if value.is_null() {
+        return EINVAL;
+    }
+
+    let doserrno_ptr = _doserrno();
+    *value = *doserrno_ptr;
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn _set_doserrno(value: c_ulong) -> errno_t {
+    let doserrno_ptr = _doserrno();
+    *doserrno_ptr = value;
+    0
+}
+
+/// Thread cleanup - should be called when a thread exits
+#[no_mangle]
+pub unsafe extern "C" fn __tls_cleanup_thread(thread_id: usize) {
+    for i in 0..MAX_THREADS {
+        if THREAD_ERRNO_TABLE[i].in_use && THREAD_ERRNO_TABLE[i].thread_id == thread_id {
+            THREAD_ERRNO_TABLE[i].in_use = false;
+            THREAD_ERRNO_TABLE[i].errno_value = 0;
+            break;
+        }
+    }
+}
+
+/// Get error message for errno
+#[no_mangle]
+pub unsafe extern "C" fn strerror(errnum: c_int) -> *mut c_char {
+    static mut BUFFER: [c_char; 64] = [0; 64];
+
+    let msg: &[u8] = match errnum {
+        0 => b"Success\0",
+        EPERM => b"Operation not permitted\0",
+        ENOENT => b"No such file or directory\0",
+        ESRCH => b"No such process\0",
+        EINTR => b"Interrupted system call\0",
+        EIO => b"Input/output error\0",
+        ENXIO => b"No such device or address\0",
+        E2BIG => b"Argument list too long\0",
+        ENOEXEC => b"Exec format error\0",
+        EBADF => b"Bad file descriptor\0",
+        ECHILD => b"No child processes\0",
+        EAGAIN => b"Resource temporarily unavailable\0",
+        ENOMEM => b"Cannot allocate memory\0",
+        EACCES => b"Permission denied\0",
+        EFAULT => b"Bad address\0",
+        EBUSY => b"Device or resource busy\0",
+        EEXIST => b"File exists\0",
+        EXDEV => b"Invalid cross-device link\0",
+        ENODEV => b"No such device\0",
+        ENOTDIR => b"Not a directory\0",
+        EISDIR => b"Is a directory\0",
+        EINVAL => b"Invalid argument\0",
+        ENFILE => b"Too many open files in system\0",
+        EMFILE => b"Too many open files\0",
+        ENOTTY => b"Inappropriate ioctl for device\0",
+        EFBIG => b"File too large\0",
+        ENOSPC => b"No space left on device\0",
+        ESPIPE => b"Illegal seek\0",
+        EROFS => b"Read-only file system\0",
+        EMLINK => b"Too many links\0",
+        EPIPE => b"Broken pipe\0",
+        EDOM => b"Numerical argument out of domain\0",
+        ERANGE => b"Numerical result out of range\0",
+        EDEADLK => b"Resource deadlock avoided\0",
+        ENAMETOOLONG => b"File name too long\0",
+        ENOLCK => b"No locks available\0",
+        ENOSYS => b"Function not implemented\0",
+        ENOTEMPTY => b"Directory not empty\0",
+        EILSEQ => b"Invalid or incomplete multibyte or wide character\0",
+        STRUNCATE => b"String was truncated\0",
+        _ => b"Unknown error\0",
+    };
+
+    // Copy to buffer
+    let len = msg.len().min(63);
+    for i in 0..len {
+        BUFFER[i] = msg[i] as c_char;
+    }
+    BUFFER[len] = 0;
+
+    BUFFER.as_mut_ptr()
+}
+
+/// Get error message (safe version)
+#[no_mangle]
+pub unsafe extern "C" fn strerror_s(
+    buffer: *mut c_char,
+    sizeInBytes: size_t,
+    errnum: c_int,
+) -> errno_t {
+    if buffer.is_null() || sizeInBytes == 0 {
+        return EINVAL;
+    }
+
+    let msg = strerror(errnum);
+    let mut i = 0;
+
+    while i < sizeInBytes - 1 && *msg.add(i) != 0 {
+        *buffer.add(i) = *msg.add(i);
+        i += 1;
+    }
+    *buffer.add(i) = 0;
+
+    0
+}
+
+/// Print error message to stderr
+#[no_mangle]
+pub unsafe extern "C" fn perror(s: *const c_char) {
+    let errno_ptr = __errno_location();
+    let errnum = *errno_ptr;
+
+    if !s.is_null() && *s != 0 {
+        // Print prefix
+        let mut i = 0;
+        while *s.add(i) != 0 {
+            super::stdio::fputc(*s.add(i) as c_int, super::stdio::stderr);
+            i += 1;
+        }
+        super::stdio::fputs(b": \0".as_ptr() as *const c_char, super::stdio::stderr);
+    }
+
+    // Print error message
+    let msg = strerror(errnum);
+    super::stdio::fputs(msg, super::stdio::stderr);
+    super::stdio::fputc(b'\n' as c_int, super::stdio::stderr);
+}

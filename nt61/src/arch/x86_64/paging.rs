@@ -76,13 +76,13 @@ unsafe fn install_intermediate(parent_pte: *mut u64, level: u32) -> bool {
         None => return false,
     };
     let new_pa = pfn_to_phys(new_pfn);
-    // // kprintln!("[MAP] install_intermediate: pfn={} pa=0x{:x} parent=0x{:x} level={}",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
+    // // kprintln!("[MAP] install_intermediate: pfn={} pa=0x{:x} parent=0x{:x} level={}",
 // //               new_pfn, new_pa, parent_pte as u64, level);
     // Try the direct identity-mapped write first. If the
     // UEFI-loaded page tables identity-map this PFN, this is
     // the fastest path.
     ptr::write_bytes(new_pa as *mut u8, 0, 4096);
-    // // kprintln!("[MAP] install_intermediate: direct zero OK, writing parent PTE")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[MAP] install_intermediate: direct zero OK, writing parent PTE");
     // Write the parent PTE: physical address of the new
     // table, P=1, R/W=1, U=1, A=1, D=1.
     let pte_val = (new_pa & 0x000F_FFFF_FFFF_F000) | 0x1 | 0x2 | 0x4 | 0x20 | 0x40;
@@ -106,14 +106,14 @@ unsafe fn install_intermediate(parent_pte: *mut u64, level: u32) -> bool {
         in(reg) saved_cr0,
         options(nostack, preserves_flags),
     );
-    // // kprintln!("[MAP] install_intermediate: parent PTE written")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[MAP] install_intermediate: parent PTE written");
     let _ = level;
     true
 }
 
 /// Map a 4-KiB page. Returns true on success.
 pub fn map_page(va: u64, pa: u64, flags: u64) -> bool {
-    // // kprintln!("[MAP] map_page: enter va=0x{:x} pa=0x{:x} flags=0x{:x}", va, pa, flags)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[MAP] map_page: enter va=0x{:x} pa=0x{:x} flags=0x{:x}", va, pa, flags);
     // We walk the page table directly using the system PML4
     // address rather than the recursive self-map windows. The
     // self-map is a 4-page structure (PML4 -> PDPT -> PD -> PT)
@@ -123,54 +123,54 @@ pub fn map_page(va: u64, pa: u64, flags: u64) -> bool {
     // rest. The direct walk is straightforward and works for
     // any VA the kernel might be asked to map.
     let pml4_pa = crate::mm::vas::current_root();
-    // // kprintln!("[MAP] map_page: pml4_pa=0x{:x}", pml4_pa)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[MAP] map_page: pml4_pa=0x{:x}", pml4_pa);
     let pml4_va = pml4_pa; // identity-mapped in low memory under UEFI.
     if pml4_va == 0 { return false; }
 
     let pml4_idx = ((va >> 39) & 0x1FF) as usize;
     let pml4e = (pml4_va as *mut u64).wrapping_add(pml4_idx);
-    // // kprintln!("[MAP] map_page: pml4e=0x{:x} idx={}", pml4e as u64, pml4_idx)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[MAP] map_page: pml4e=0x{:x} idx={}", pml4e as u64, pml4_idx);
     unsafe {
         let pml4e_val = *pml4e;
-        // // kprintln!("[MAP] map_page: pml4e_val=0x{:x}", pml4e_val)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[MAP] map_page: pml4e_val=0x{:x}", pml4e_val);
         if (pml4e_val & 1) == 0 {
-            // // kprintln!("[MAP] map_page: installing PDPT")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[MAP] map_page: installing PDPT");
             if !install_intermediate(pml4e, 1) { return false; }
         }
         let pdpt_va = *pml4e & 0x000F_FFFF_FFFF_F000;
-        // // kprintln!("[MAP] map_page: pdpt_va=0x{:x}", pdpt_va)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[MAP] map_page: pdpt_va=0x{:x}", pdpt_va);
         let pdpt_idx = ((va >> 30) & 0x1FF) as usize;
         let pdpte = (pdpt_va as *mut u64).wrapping_add(pdpt_idx);
-        // // kprintln!("[MAP] map_page: pdpte=0x{:x} idx={}", pdpte as u64, pdpt_idx)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[MAP] map_page: pdpte=0x{:x} idx={}", pdpte as u64, pdpt_idx);
         let pdpte_val = *pdpte;
-        // // kprintln!("[MAP] map_page: pdpte_val=0x{:x}", pdpte_val)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[MAP] map_page: pdpte_val=0x{:x}", pdpte_val);
         if (pdpte_val & 1) == 0 {
-            // // kprintln!("[MAP] map_page: installing PD")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[MAP] map_page: installing PD");
             if !install_intermediate(pdpte, 2) { return false; }
         }
         let pd_va = *pdpte & 0x000F_FFFF_FFFF_F000;
-        // // kprintln!("[MAP] map_page: pd_va=0x{:x}", pd_va)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[MAP] map_page: pd_va=0x{:x}", pd_va);
         let pd_idx = ((va >> 21) & 0x1FF) as usize;
         let pde = (pd_va as *mut u64).wrapping_add(pd_idx);
-        // // kprintln!("[MAP] map_page: pde=0x{:x} idx={}", pde as u64, pd_idx)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[MAP] map_page: pde=0x{:x} idx={}", pde as u64, pd_idx);
         let pde_val = *pde;
-        // // kprintln!("[MAP] map_page: pde_val=0x{:x}", pde_val)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[MAP] map_page: pde_val=0x{:x}", pde_val);
         if (pde_val & 1) == 0 {
-            // // kprintln!("[MAP] map_page: installing PT")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[MAP] map_page: installing PT");
             if !install_intermediate(pde, 3) { return false; }
         }
         let pt_va = *pde & 0x000F_FFFF_FFFF_F000;
-        // // kprintln!("[MAP] map_page: pt_va=0x{:x}", pt_va)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[MAP] map_page: pt_va=0x{:x}", pt_va);
         let pt_idx = ((va >> 12) & 0x1FF) as usize;
         let pte = (pt_va as *mut u64).wrapping_add(pt_idx);
-        // // kprintln!("[MAP] map_page: pte=0x{:x} idx={}", pte as u64, pt_idx)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[MAP] map_page: pte=0x{:x} idx={}", pte as u64, pt_idx);
         // Write the leaf PTE as a hardware entry.
         let pte_val = (pa & 0x000F_FFFF_FFFF_F000) | (flags & 0xFFF) | 1;
         *pte = pte_val;
-        // // kprintln!("[MAP] map_page: pte written")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[MAP] map_page: pte written");
     }
     invalidate_tlb(va);
-    // // kprintln!("[MAP] map_page: tlb invalidated, returning true")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[MAP] map_page: tlb invalidated, returning true");
     true
 }
 

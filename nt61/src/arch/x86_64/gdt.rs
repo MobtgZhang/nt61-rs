@@ -648,7 +648,7 @@ pub fn dump_gdt_for_debug() {
             buf[2], buf[3], buf[4], buf[5], buf[6], buf[7], buf[8], buf[9],
         ]);
     }
-//     // // // crate::kprintln!("[GDT-DBG] GDTR: limit=0x{:x} base=0x{:x}", limit, base)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+//     // // // crate::kprintln!("[GDT-DBG] GDTR: limit=0x{:x} base=0x{:x}", limit, base);
     // Walk the GDT entries. Each entry is 8 bytes (16 if it's a
     // TSS descriptor; we report every 8-byte slot as a single
     // entry for simplicity).
@@ -663,7 +663,7 @@ pub fn dump_gdt_for_debug() {
         let dpl = (access >> 5) & 0x3;
         let is_code_or_data = present && (access & 0x10) != 0;
         if present && is_code_or_data {
-            // kprintln disabled (memcpy crash workaround)
+          
             let _ = (i, access, flags, dpl, hi);
         }
     }

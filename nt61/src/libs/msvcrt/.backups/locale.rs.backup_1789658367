@@ -1,0 +1,361 @@
+//! Locale Support
+//!
+//! Implementation of locale-specific formatting and character handling
+
+use super::types::*;
+use core::ptr;
+
+/// Locale categories
+pub const LC_ALL: c_int = 0;
+pub const LC_COLLATE: c_int = 1;
+pub const LC_CTYPE: c_int = 2;
+pub const LC_MONETARY: c_int = 3;
+pub const LC_NUMERIC: c_int = 4;
+pub const LC_TIME: c_int = 5;
+
+/// Locale structure
+#[repr(C)]
+pub struct lconv {
+    pub decimal_point: *mut c_char,
+    pub thousands_sep: *mut c_char,
+    pub grouping: *mut c_char,
+    pub int_curr_symbol: *mut c_char,
+    pub currency_symbol: *mut c_char,
+    pub mon_decimal_point: *mut c_char,
+    pub mon_thousands_sep: *mut c_char,
+    pub mon_grouping: *mut c_char,
+    pub positive_sign: *mut c_char,
+    pub negative_sign: *mut c_char,
+    pub int_frac_digits: c_char,
+    pub frac_digits: c_char,
+    pub p_cs_precedes: c_char,
+    pub p_sep_by_space: c_char,
+    pub n_cs_precedes: c_char,
+    pub n_sep_by_space: c_char,
+    pub p_sign_posn: c_char,
+    pub n_sign_posn: c_char,
+}
+
+/// Global locale data
+static mut CURRENT_LOCALE: [c_char; 32] = [0; 32];
+static mut LOCALE_CONV: lconv = lconv {
+    decimal_point: ptr::null_mut(),
+    thousands_sep: ptr::null_mut(),
+    grouping: ptr::null_mut(),
+    int_curr_symbol: ptr::null_mut(),
+    currency_symbol: ptr::null_mut(),
+    mon_decimal_point: ptr::null_mut(),
+    mon_thousands_sep: ptr::null_mut(),
+    mon_grouping: ptr::null_mut(),
+    positive_sign: ptr::null_mut(),
+    negative_sign: ptr::null_mut(),
+    int_frac_digits: 127,
+    frac_digits: 127,
+    p_cs_precedes: 127,
+    p_sep_by_space: 127,
+    n_cs_precedes: 127,
+    n_sep_by_space: 127,
+    p_sign_posn: 127,
+    n_sign_posn: 127,
+};
+
+// Static strings for locale data
+static mut DECIMAL_POINT_STR: [c_char; 2] = [b'.' as c_char, 0];
+static mut THOUSANDS_SEP_STR: [c_char; 2] = [b',' as c_char, 0];
+static mut EMPTY_STR: [c_char; 1] = [0];
+static mut CURRENCY_STR: [c_char; 2] = [b'$' as c_char, 0];
+static mut PLUS_STR: [c_char; 2] = [b'+' as c_char, 0];
+static mut MINUS_STR: [c_char; 2] = [b'-' as c_char, 0];
+
+/// Initialize default locale (C locale)
+unsafe fn init_c_locale() {
+    // C locale name
+    let c_locale = b"C\0";
+    for i in 0..c_locale.len() {
+        CURRENT_LOCALE[i] = c_locale[i] as c_char;
+    }
+
+    // Initialize lconv structure
+    LOCALE_CONV.decimal_point = DECIMAL_POINT_STR.as_mut_ptr();
+    LOCALE_CONV.thousands_sep = EMPTY_STR.as_mut_ptr();
+    LOCALE_CONV.grouping = EMPTY_STR.as_mut_ptr();
+    LOCALE_CONV.int_curr_symbol = EMPTY_STR.as_mut_ptr();
+    LOCALE_CONV.currency_symbol = EMPTY_STR.as_mut_ptr();
+    LOCALE_CONV.mon_decimal_point = EMPTY_STR.as_mut_ptr();
+    LOCALE_CONV.mon_thousands_sep = EMPTY_STR.as_mut_ptr();
+    LOCALE_CONV.mon_grouping = EMPTY_STR.as_mut_ptr();
+    LOCALE_CONV.positive_sign = EMPTY_STR.as_mut_ptr();
+    LOCALE_CONV.negative_sign = EMPTY_STR.as_mut_ptr();
+    LOCALE_CONV.int_frac_digits = 127;
+    LOCALE_CONV.frac_digits = 127;
+    LOCALE_CONV.p_cs_precedes = 127;
+    LOCALE_CONV.p_sep_by_space = 127;
+    LOCALE_CONV.n_cs_precedes = 127;
+    LOCALE_CONV.n_sep_by_space = 127;
+    LOCALE_CONV.p_sign_posn = 127;
+    LOCALE_CONV.n_sign_posn = 127;
+}
+
+/// Initialize US English locale
+unsafe fn init_en_us_locale() {
+    let locale_name = b"en_US.UTF-8\0";
+    for i in 0..locale_name.len().min(31) {
+        CURRENT_LOCALE[i] = locale_name[i] as c_char;
+    }
+
+    LOCALE_CONV.decimal_point = DECIMAL_POINT_STR.as_mut_ptr();
+    LOCALE_CONV.thousands_sep = THOUSANDS_SEP_STR.as_mut_ptr();
+    LOCALE_CONV.grouping = EMPTY_STR.as_mut_ptr();
+    LOCALE_CONV.int_curr_symbol = b"USD \0".as_ptr() as *mut c_char;
+    LOCALE_CONV.currency_symbol = CURRENCY_STR.as_mut_ptr();
+    LOCALE_CONV.mon_decimal_point = DECIMAL_POINT_STR.as_mut_ptr();
+    LOCALE_CONV.mon_thousands_sep = THOUSANDS_SEP_STR.as_mut_ptr();
+    LOCALE_CONV.mon_grouping = EMPTY_STR.as_mut_ptr();
+    LOCALE_CONV.positive_sign = PLUS_STR.as_mut_ptr();
+    LOCALE_CONV.negative_sign = MINUS_STR.as_mut_ptr();
+    LOCALE_CONV.int_frac_digits = 2;
+    LOCALE_CONV.frac_digits = 2;
+    LOCALE_CONV.p_cs_precedes = 1;
+    LOCALE_CONV.p_sep_by_space = 0;
+    LOCALE_CONV.n_cs_precedes = 1;
+    LOCALE_CONV.n_sep_by_space = 0;
+    LOCALE_CONV.p_sign_posn = 1;
+    LOCALE_CONV.n_sign_posn = 1;
+}
+
+/// Set program locale
+#[no_mangle]
+pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *mut c_char {
+    // Initialize if first call
+    static mut INITIALIZED: bool = false;
+    if !INITIALIZED {
+        init_c_locale();
+        INITIALIZED = true;
+    }
+
+    // Query current locale
+    if locale.is_null() {
+        return CURRENT_LOCALE.as_mut_ptr();
+    }
+
+    // Validate category
+    if category < LC_ALL || category > LC_TIME {
+        return ptr::null_mut();
+    }
+
+    // Parse locale string
+    let mut i = 0;
+    let mut locale_len = 0;
+    while *locale.add(i) != 0 && i < 31 {
+        locale_len += 1;
+        i += 1;
+    }
+
+    // Check for "C" or "POSIX" locale
+    if locale_len == 1 && *locale == b'C' as c_char {
+        init_c_locale();
+        return CURRENT_LOCALE.as_mut_ptr();
+    }
+
+    // Check for empty string (use environment)
+    if locale_len == 0 {
+        init_c_locale();
+        return CURRENT_LOCALE.as_mut_ptr();
+    }
+
+    // Check for en_US variants
+    if locale_len >= 5 {
+        let mut is_en_us = true;
+        let en_us = b"en_US";
+        for i in 0..5 {
+            if *locale.add(i) != en_us[i] as c_char {
+                is_en_us = false;
+                break;
+            }
+        }
+
+        if is_en_us {
+            init_en_us_locale();
+            return CURRENT_LOCALE.as_mut_ptr();
+        }
+    }
+
+    // Default to C locale for unknown locales
+    init_c_locale();
+    CURRENT_LOCALE.as_mut_ptr()
+}
+
+/// Get locale-specific information
+#[no_mangle]
+pub unsafe extern "C" fn localeconv() -> *mut lconv {
+    // Initialize if needed
+    static mut INITIALIZED: bool = false;
+    if !INITIALIZED {
+        init_c_locale();
+        INITIALIZED = true;
+    }
+
+    &mut LOCALE_CONV as *mut lconv
+}
+
+/// Wide character locale support
+#[no_mangle]
+pub unsafe extern "C" fn _wsetlocale(category: c_int, locale: *const wchar_t) -> *mut wchar_t {
+    // Simplified: convert to narrow and call setlocale
+    if locale.is_null() {
+        // Return current locale as wide string
+        static mut WIDE_LOCALE: [wchar_t; 32] = [0; 32];
+        for i in 0..32 {
+            if CURRENT_LOCALE[i] == 0 {
+                WIDE_LOCALE[i] = 0;
+                break;
+            }
+            WIDE_LOCALE[i] = CURRENT_LOCALE[i] as wchar_t;
+        }
+        return WIDE_LOCALE.as_mut_ptr();
+    }
+
+    // Convert wide to narrow
+    let mut narrow_locale = [0 as c_char; 32];
+    let mut i = 0;
+    while *locale.add(i) != 0 && i < 31 {
+        narrow_locale[i] = *locale.add(i) as c_char;
+        i += 1;
+    }
+
+    let result = setlocale(category, narrow_locale.as_ptr());
+    if result.is_null() {
+        return ptr::null_mut();
+    }
+
+    // Convert result back to wide
+    static mut WIDE_RESULT: [wchar_t; 32] = [0; 32];
+    i = 0;
+    while *result.add(i) != 0 && i < 31 {
+        WIDE_RESULT[i] = *result.add(i) as wchar_t;
+        i += 1;
+    }
+    WIDE_RESULT[i] = 0;
+
+    WIDE_RESULT.as_mut_ptr()
+}
+
+/// Collation order for strings
+#[no_mangle]
+pub unsafe extern "C" fn strcoll(s1: *const c_char, s2: *const c_char) -> c_int {
+    // In C locale, strcoll is equivalent to strcmp
+    super::string::strcmp(s1, s2)
+}
+
+/// Transform string for collation
+#[no_mangle]
+pub unsafe extern "C" fn strxfrm(dest: *mut c_char, src: *const c_char, n: size_t) -> size_t {
+    // In C locale, strxfrm just copies the string
+    if dest.is_null() || n == 0 {
+        return super::string::strlen(src);
+    }
+
+    let mut i = 0;
+    while i < n - 1 && *src.add(i) != 0 {
+        *dest.add(i) = *src.add(i);
+        i += 1;
+    }
+    *dest.add(i) = 0;
+
+    super::string::strlen(src)
+}
+
+/// Wide string collation
+#[no_mangle]
+pub unsafe extern "C" fn wcscoll(s1: *const wchar_t, s2: *const wchar_t) -> c_int {
+    // In C locale, wcscoll is equivalent to wcscmp
+    super::wchar::wcscmp(s1, s2)
+}
+
+/// Wide string transformation
+#[no_mangle]
+pub unsafe extern "C" fn wcsxfrm(dest: *mut wchar_t, src: *const wchar_t, n: size_t) -> size_t {
+    // In C locale, wcsxfrm just copies the string
+    if dest.is_null() || n == 0 {
+        return super::wchar::wcslen(src);
+    }
+
+    let mut i = 0;
+    while i < n - 1 && *src.add(i) != 0 {
+        *dest.add(i) = *src.add(i);
+        i += 1;
+    }
+    *dest.add(i) = 0;
+
+    super::wchar::wcslen(src)
+}
+
+/// Locale-aware character classification (uses current locale)
+#[no_mangle]
+pub unsafe extern "C" fn _isctype(c: c_int, mask: c_int) -> c_int {
+    // Simplified: delegate to basic ctype functions
+    let ch = c as u8;
+
+    const _UPPER: c_int = 0x01;
+    const _LOWER: c_int = 0x02;
+    const _DIGIT: c_int = 0x04;
+    const _SPACE: c_int = 0x08;
+    const _PUNCT: c_int = 0x10;
+    const _CONTROL: c_int = 0x20;
+    const _BLANK: c_int = 0x40;
+    const _HEX: c_int = 0x80;
+    const _ALPHA: c_int = _UPPER | _LOWER;
+
+    let mut result = 0;
+
+    if ch >= b'A' && ch <= b'Z' {
+        result |= _UPPER | _ALPHA;
+    }
+    if ch >= b'a' && ch <= b'z' {
+        result |= _LOWER | _ALPHA;
+    }
+    if ch >= b'0' && ch <= b'9' {
+        result |= _DIGIT;
+    }
+    if ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r' {
+        result |= _SPACE;
+    }
+    if ch == b' ' || ch == b'\t' {
+        result |= _BLANK;
+    }
+    if ch < 32 || ch == 127 {
+        result |= _CONTROL;
+    }
+    if (ch >= b'0' && ch <= b'9') || (ch >= b'a' && ch <= b'f') || (ch >= b'A' && ch <= b'F') {
+        result |= _HEX;
+    }
+    if !((ch >= b'0' && ch <= b'9') || (ch >= b'a' && ch <= b'z') || (ch >= b'A' && ch <= b'Z') || ch < 32 || ch == 127 || ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r') {
+        result |= _PUNCT;
+    }
+
+    if (result & mask) != 0 { 1 } else { 0 }
+}
+
+/// Get current code page
+#[no_mangle]
+pub unsafe extern "C" fn ___lc_codepage_func() -> c_uint {
+    // Return UTF-8 code page (65001)
+    65001
+}
+
+/// Get current locale
+#[no_mangle]
+pub unsafe extern "C" fn ___lc_locale_name_func() -> *mut *mut wchar_t {
+    static mut LOCALE_NAME_PTR: *mut wchar_t = ptr::null_mut();
+    static mut LOCALE_NAME: [wchar_t; 32] = [0; 32];
+
+    if LOCALE_NAME_PTR.is_null() {
+        let locale = b"C\0";
+        for i in 0..locale.len() {
+            LOCALE_NAME[i] = locale[i] as wchar_t;
+        }
+        LOCALE_NAME_PTR = LOCALE_NAME.as_mut_ptr();
+    }
+
+    &mut LOCALE_NAME_PTR as *mut *mut wchar_t
+}

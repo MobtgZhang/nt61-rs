@@ -46,7 +46,7 @@ pub use x86_64::*;
 /// registers and the exception vector.
 ///
 /// NOTE: This function is called BEFORE MM is fully initialized, so
-/// it must NOT use // kprintln! (which requires the MM page fault handler)  // kprintln disabled (memcpy crash workaround).
+/// it must NOT use // kprintln! (which requires the MM page fault handler).
 /// Use UART directly for debug output.
 pub fn init_hardware() {
     // Make sure interrupts are off before we touch the IDT. UEFI

@@ -359,14 +359,14 @@ pub fn init_thread_fpu_state() -> Option<&'static mut ThreadStateBuffer> {
     ) as *mut ThreadStateBuffer;
     
     if buffer.is_null() {
-        // // kprintln!("[CONTEXT] FATAL: Cannot allocate FPU state buffer")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[CONTEXT] FATAL: Cannot allocate FPU state buffer");
         return None;
     }
     
     // Verify 64-byte alignment (XSAVE requires 64-byte alignment)
     // Non-paged pool allocations are typically page-aligned, but we verify at runtime
     if (buffer as u64) % 64 != 0 {
-        // // kprintln!("[CONTEXT] WARNING: FPU buffer 0x{:016x} not 64-byte aligned!", buffer as u64)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[CONTEXT] WARNING: FPU buffer 0x{:016x} not 64-byte aligned!", buffer as u64);
         // ThreadStateBuffer itself is #[repr(align(64))], so if the allocator
         // gives us a misaligned pointer, we need to handle it.
         // For now, continue - the pool allocator should return aligned memory.

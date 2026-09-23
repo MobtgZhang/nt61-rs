@@ -1,0 +1,190 @@
+//! sechost.dll — Windows 7 Security Types
+//
+//! Types specific to sechost.dll security operations, service control,
+//! and event logging introduced in Windows 7 (NT 6.1).
+//
+//! References:
+//!   * Microsoft Windows 7 SDK winsvc.h, winbase.h
+//!   * Windows Internals 6th Edition
+//!   * ReactOS 0.3.x winsvc.h
+
+#![allow(non_snake_case, non_upper_case_globals, dead_code)]
+
+use crate::libs::kernel32::types::{DWORD, BOOL, HANDLE, LPWSTR, LPCWSTR, LPDWORD, LPVOID};
+use crate::libs::ntdll::types::{PVOID, NTSTATUS, BYTE, WORD};
+
+// Re-export types for public use
+pub use crate::libs::kernel32::types::INVALID_HANDLE_VALUE;
+pub use crate::libs::kernel32::types::LPVOID as LPVOID_RE;
+
+pub type SC_ENUM_TYPE = DWORD;
+pub const SC_ENUM_PROCESS_INFO: SC_ENUM_TYPE = 0;
+
+pub const SC_MANAGER_ALL_ACCESS: DWORD = 0xF003F;
+pub const SC_MANAGER_CONNECT: DWORD = 0x0001;
+pub const SC_MANAGER_CREATE_SERVICE: DWORD = 0x0002;
+pub const SC_MANAGER_ENUMERATE_SERVICE: DWORD = 0x0004;
+
+pub const SERVICE_ALL_ACCESS: DWORD = 0xF01FF;
+pub const SERVICE_QUERY_CONFIG: DWORD = 0x0001;
+pub const SERVICE_CHANGE_CONFIG: DWORD = 0x0002;
+pub const SERVICE_QUERY_STATUS: DWORD = 0x0004;
+pub const SERVICE_ENUMERATE_DEPENDENTS: DWORD = 0x0008;
+pub const SERVICE_START: DWORD = 0x0010;
+pub const SERVICE_STOP: DWORD = 0x0020;
+pub const SERVICE_PAUSE_CONTINUE: DWORD = 0x0040;
+pub const SERVICE_INTERROGATE: DWORD = 0x0080;
+pub const SERVICE_USER_DEFINED_CONTROL: DWORD = 0x0100;
+
+pub const SERVICE_CONFIG_DESCRIPTION: DWORD = 1;
+pub const SERVICE_CONFIG_FAILURE_ACTIONS: DWORD = 2;
+pub const SERVICE_CONFIG_DELAYED_AUTO_START_INFO: DWORD = 3;
+pub const SERVICE_CONFIG_FAILURE_ACTIONS_FLAG: DWORD = 4;
+pub const SERVICE_CONFIG_SERVICE_SID_INFO: DWORD = 5;
+pub const SERVICE_CONFIG_REQUIRED_PRIVILEGES_INFO: DWORD = 6;
+pub const SERVICE_CONFIG_PRESHUTDOWN_INFO: DWORD = 7;
+pub const SERVICE_CONFIG_TRIGGER_INFO: DWORD = 8;
+pub const SERVICE_CONFIG_PREFERRED_NODE: DWORD = 9;
+
+pub const SERVICE_CONTROL_STOP: DWORD = 0x00000001;
+pub const SERVICE_CONTROL_PAUSE: DWORD = 0x00000002;
+pub const SERVICE_CONTROL_CONTINUE: DWORD = 0x00000003;
+pub const SERVICE_CONTROL_INTERROGATE: DWORD = 0x00000004;
+pub const SERVICE_CONTROL_SHUTDOWN: DWORD = 0x00000005;
+pub const SERVICE_CONTROL_PARAMCHANGE: DWORD = 0x00000006;
+pub const SERVICE_CONTROL_NETBINDADD: DWORD = 0x00000007;
+pub const SERVICE_CONTROL_NETBINDREMOVE: DWORD = 0x00000008;
+pub const SERVICE_CONTROL_NETBINDENABLE: DWORD = 0x00000009;
+pub const SERVICE_CONTROL_NETBINDDISABLE: DWORD = 0x0000000A;
+
+pub const SERVICE_CONTROL_PAUSE_CONTINUE: DWORD = 0x00000002;
+
+pub const SERVICE_STOPPED: DWORD = 0x00000001;
+pub const SERVICE_START_PENDING: DWORD = 0x00000002;
+pub const SERVICE_STOP_PENDING: DWORD = 0x00000003;
+pub const SERVICE_RUNNING: DWORD = 0x00000004;
+pub const SERVICE_CONTINUE_PENDING: DWORD = 0x00000005;
+pub const SERVICE_PAUSE_PENDING: DWORD = 0x00000006;
+pub const SERVICE_PAUSED: DWORD = 0x00000007;
+
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct SERVICE_STATUS_PROCESS {
+    pub dwServiceType: DWORD,
+    pub dwCurrentState: DWORD,
+    pub dwControlsAccepted: DWORD,
+    pub dwWin32ExitCode: DWORD,
+    pub dwServiceSpecificExitCode: DWORD,
+    pub dwCheckPoint: DWORD,
+    pub dwWaitHint: DWORD,
+    pub dwProcessId: DWORD,
+    pub dwServiceFlags: DWORD,
+}
+
+#[repr(C)]
+pub struct SERVICE_DESCRIPTIONW {
+    pub lpDescription: LPWSTR,
+}
+
+#[repr(C)]
+pub struct SERVICE_DELAYED_AUTO_START_INFO {
+    pub fDelayedAutostart: BOOL,
+}
+
+pub type SE_OBJECT_TYPE = DWORD;
+pub const SE_UNKNOWN_OBJECT_TYPE: SE_OBJECT_TYPE = 0;
+pub const SE_FILE_OBJECT: SE_OBJECT_TYPE = 1;
+pub const SE_SERVICE: SE_OBJECT_TYPE = 2;
+pub const SE_PRINTER: SE_OBJECT_TYPE = 3;
+pub const SE_REGISTRY_KEY: SE_OBJECT_TYPE = 4;
+pub const SE_LMSHARE: SE_OBJECT_TYPE = 5;
+pub const SE_KERNEL_OBJECT: SE_OBJECT_TYPE = 6;
+pub const SE_WINDOW_OBJECT: SE_OBJECT_TYPE = 7;
+pub const SE_DS_OBJECT: SE_OBJECT_TYPE = 8;
+pub const SE_DS_OBJECT_ALL: SE_OBJECT_TYPE = 9;
+pub const SE_PROVIDER_DEFINED_OBJECT: SE_OBJECT_TYPE = 10;
+pub const SE_WMIGUID_OBJECT: SE_OBJECT_TYPE = 11;
+pub const SE_REGISTRY_WOW64_32KEY: SE_OBJECT_TYPE = 12;
+
+pub type SECURITY_INFORMATION = DWORD;
+pub const OWNER_SECURITY_INFORMATION: SECURITY_INFORMATION = 0x00000001;
+pub const GROUP_SECURITY_INFORMATION: SECURITY_INFORMATION = 0x00000002;
+pub const DACL_SECURITY_INFORMATION: SECURITY_INFORMATION = 0x00000004;
+pub const SACL_SECURITY_INFORMATION: SECURITY_INFORMATION = 0x00000008;
+pub const LABEL_SECURITY_INFORMATION: SECURITY_INFORMATION = 0x00000010;
+pub const PROTECTED_DACL_SECURITY_INFORMATION: SECURITY_INFORMATION = 0x80000000;
+pub const PROTECTED_SACL_SECURITY_INFORMATION: SECURITY_INFORMATION = 0x40000000;
+pub const UNPROTECTED_DACL_SECURITY_INFORMATION: SECURITY_INFORMATION = 0x20000000;
+pub const UNPROTECTED_SACL_SECURITY_INFORMATION: SECURITY_INFORMATION = 0x10000000;
+
+#[repr(C)]
+pub struct TRUSTEE_W {
+    pub pMultipleTrustee: *mut TRUSTEE_W,
+    pub MultipleTrusteeOperation: DWORD,
+    pub TrusteeForm: DWORD,
+    pub TrusteeType: DWORD,
+    pub ptstrName: LPWSTR,
+}
+
+pub const TRUSTEE_IS_SID: DWORD = 0;
+pub const TRUSTEE_IS_NAME: DWORD = 1;
+pub const TRUSTEE_BAD_FORM: DWORD = 2;
+pub const TRUSTEE_IS_OBJECTS_AND_SID: DWORD = 3;
+pub const TRUSTEE_IS_OBJECTS_AND_NAME: DWORD = 4;
+
+pub const TRUSTEE_IS_UNKNOWN: DWORD = 0;
+pub const TRUSTEE_IS_USER: DWORD = 1;
+pub const TRUSTEE_IS_GROUP: DWORD = 2;
+pub const TRUSTEE_IS_DOMAIN: DWORD = 3;
+pub const TRUSTEE_IS_ALIAS: DWORD = 4;
+pub const TRUSTEE_IS_WELL_KNOWN_GROUP: DWORD = 5;
+pub const TRUSTEE_IS_DELETED: DWORD = 6;
+pub const TRUSTEE_IS_INVALID: DWORD = 7;
+pub const TRUSTEE_IS_COMPUTER: DWORD = 8;
+
+#[repr(C)]
+pub struct EXPLICIT_ACCESS_W {
+    pub grfAccessPermissions: DWORD,
+    pub grfAccessMode: DWORD,
+    pub grfInheritance: DWORD,
+    pub Trustee: TRUSTEE_W,
+}
+
+pub const NOT_USED_ACCESS: DWORD = 0;
+pub const GRANT_ACCESS: DWORD = 1;
+pub const SET_ACCESS: DWORD = 2;
+pub const DENY_ACCESS: DWORD = 3;
+pub const REVOKE_ACCESS: DWORD = 4;
+pub const SET_AUDIT_SUCCESS: DWORD = 5;
+pub const SET_AUDIT_FAILURE: DWORD = 6;
+
+pub type PACL = *mut ACL;
+
+#[repr(C)]
+pub struct ACL {
+    pub AclRevision: BYTE,
+    pub Sbz1: BYTE,
+    pub AclSize: WORD,
+    pub AceCount: WORD,
+    pub Sbz2: WORD,
+}
+
+pub type PSID = PVOID;
+
+pub const EVENTLOG_SUCCESS: WORD = 0x0000;
+pub const EVENTLOG_ERROR_TYPE: WORD = 0x0001;
+pub const EVENTLOG_WARNING_TYPE: WORD = 0x0002;
+pub const EVENTLOG_INFORMATION_TYPE: WORD = 0x0004;
+pub const EVENTLOG_AUDIT_SUCCESS: WORD = 0x0008;
+pub const EVENTLOG_AUDIT_FAILURE: WORD = 0x0010;
+
+pub type EVENT_SOURCE_HANDLE = HANDLE;
+
+pub const ERROR_SUCCESS: DWORD = 0;
+pub const ERROR_INVALID_HANDLE: DWORD = 6;
+pub const ERROR_NOT_ENOUGH_MEMORY: DWORD = 8;
+pub const ERROR_INVALID_PARAMETER: DWORD = 87;
+pub const ERROR_INSUFFICIENT_BUFFER: DWORD = 122;
+pub const ERROR_SERVICE_DOES_NOT_EXIST: DWORD = 1060;
+pub const ERROR_SERVICE_CANNOT_ACCEPT_CTRL: DWORD = 1061;
+pub const ERROR_INVALID_SERVICE_CONTROL: DWORD = 1052;

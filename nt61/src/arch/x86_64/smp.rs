@@ -63,28 +63,28 @@ pub fn cpu_count() -> u32 {
 pub unsafe fn smp_boot_aps(pml4_pfn: u64) {
     // Parse the MADT and discover how many LAPICs exist.
     if !parse_madt() {
-        // // kprintln!("[smp] MADT not found, running as single-CPU")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[smp] MADT not found, running as single-CPU");
         CPU_COUNT.store(1, Ordering::SeqCst);
         return;
     }
     let info = madt_info();
-    // // kprintln!("[smp] MADT parsed:")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("  - LAPIC base: 0x{:x}", info.local_apic_address)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("  - LAPIC flags: 0x{:x}", info.flags)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("  - CPU count: {}", info.lapic_count)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[smp] MADT parsed:");
+    // // kprintln!("  - LAPIC base: 0x{:x}", info.local_apic_address);
+    // // kprintln!("  - LAPIC flags: 0x{:x}", info.flags);
+    // // kprintln!("  - CPU count: {}", info.lapic_count);
     if info.has_io_apic {
-        // // kprintln!("  - I/O APIC: id={} addr=0x{:x} gsi_base={}",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
+        // // kprintln!("  - I/O APIC: id={} addr=0x{:x} gsi_base={}",
 // //                   info.io_apic_id, info.io_apic_address, info.io_apic_gsi_base);
     }
-    // // kprintln!("  - Interrupt overrides: {}", info.int_override_count)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("  - NMI sources: {}", info.nmi_source_count)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("  - Interrupt overrides: {}", info.int_override_count);
+    // // kprintln!("  - NMI sources: {}", info.nmi_source_count);
 
     if info.lapic_count <= 1 {
-        // // kprintln!("[smp] only BSP detected, running single-CPU")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[smp] only BSP detected, running single-CPU");
         CPU_COUNT.store(1, Ordering::SeqCst);
         return;
     }
-    // // kprintln!("[smp] {} LAPICs found, starting APs", info.lapic_count)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[smp] {} LAPICs found, starting APs", info.lapic_count);
     // Allocate a 4 KiB page for the trampoline and copy the
     // trampoline code there. The page must be in low memory
     // (≤ 1 MiB) so the SIPI vector reaches it. We borrow a
@@ -101,14 +101,14 @@ pub unsafe fn smp_boot_aps(pml4_pfn: u64) {
             .saturating_sub(_trampoline_start as *const u8 as usize)
     };
     if tramp_len == 0 || tramp_len > 4096 {
-        // // kprintln!("[smp] no AP trampoline linked, BSP-only")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[smp] no AP trampoline linked, BSP-only");
         CPU_COUNT.store(1, Ordering::SeqCst);
         return;
     }
     let trampoline_phys = match frame::allocate_pages(1) {
         Some(p) => p,
         None => {
-            // // kprintln!("[smp] OOM allocating trampoline, single-CPU mode")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[smp] OOM allocating trampoline, single-CPU mode");
             CPU_COUNT.store(1, Ordering::SeqCst);
             return;
         }
@@ -123,7 +123,7 @@ pub unsafe fn smp_boot_aps(pml4_pfn: u64) {
     // So we only need the page to be addressable by those bits,
     // i.e., phys_addr >= 0x1000 (above the first 4KB).
     if trampoline_phys < 0x1000 {
-        // // kprintln!("[smp] trampoline phys 0x{:x} too low for SIPI (need >= 0x1000)", trampoline_phys)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[smp] trampoline phys 0x{:x} too low for SIPI (need >= 0x1000)", trampoline_phys);
         CPU_COUNT.store(1, Ordering::SeqCst);
         return;
     }
@@ -132,7 +132,7 @@ pub unsafe fn smp_boot_aps(pml4_pfn: u64) {
     // out of it).
     // FIX 2.6: Check for mapping failure
     if syspte::map_io_space(trampoline_phys, 1).is_none() {
-        // // kprintln!("[smp] failed to identity-map trampoline page, single-CPU mode")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[smp] failed to identity-map trampoline page, single-CPU mode");
         CPU_COUNT.store(1, Ordering::SeqCst);
         return;
     }
@@ -154,7 +154,7 @@ pub unsafe fn smp_boot_aps(pml4_pfn: u64) {
     let ap_stack_phys = match frame::allocate_pages(1) {
         Some(p) => p,
         None => {
-            // // kprintln!("[smp] OOM allocating per-AP stack, single-CPU mode")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[smp] OOM allocating per-AP stack, single-CPU mode");
             CPU_COUNT.store(1, Ordering::SeqCst);
             return;
         }
@@ -165,14 +165,14 @@ pub unsafe fn smp_boot_aps(pml4_pfn: u64) {
     // Identity-map the AP stack in the kernel page table.
     // FIX 2.6: Check for mapping failure
     if syspte::map_io_space(ap_stack_phys, 1).is_none() {
-        // // kprintln!("[smp] failed to identity-map AP stack page, single-CPU mode")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[smp] failed to identity-map AP stack page, single-CPU mode");
         CPU_COUNT.store(1, Ordering::SeqCst);
         return;
     }
     // FIX 2.6: Validate SIPI vector is valid
     let sipi_vector = ((trampoline_phys >> 12) & 0xFF) as u8;
     if sipi_vector == 0 {
-        // // kprintln!("[smp] trampoline_phys too low for SIPI vector")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[smp] trampoline_phys too low for SIPI vector");
         CPU_COUNT.store(1, Ordering::SeqCst);
         return;
     }
@@ -222,7 +222,7 @@ pub unsafe fn smp_boot_aps(pml4_pfn: u64) {
             core::ptr::write_volatile((p.add(index_off)) as *mut u64, i as u64);
         }
         if !start_ap(apic_id, trampoline_phys) {
-            // // kprintln!("[smp] AP lapic_id={} failed to start", apic_id)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[smp] AP lapic_id={} failed to start", apic_id);
             continue;
         }
         // FIX 2.7: Add acknowledgment delay and verification
@@ -231,7 +231,7 @@ pub unsafe fn smp_boot_aps(pml4_pfn: u64) {
         brought_up += 1;
     }
     CPU_COUNT.store(brought_up, Ordering::SeqCst);
-    // // kprintln!("[smp] {} CPU(s) up", brought_up)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[smp] {} CPU(s) up", brought_up);
 }
 
 /// Send INIT + SIPI + SIPI to bring up one AP. Returns true on
@@ -402,7 +402,7 @@ pub unsafe extern "C" fn ap_entry() -> ! {
 pub unsafe extern "C" fn ap_entry_long(ap_index: u64) -> ! {
     let ap_idx = ap_index as usize;
     if ap_idx >= tss::MAX_APS {
-        // // crate::kprintln!("[smp] ap_index {} out of range, parking", ap_index)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // crate::kprintln!("[smp] ap_index {} out of range, parking", ap_index);
         loop { asm!("hlt"); }
     }
 
@@ -415,7 +415,7 @@ pub unsafe extern "C" fn ap_entry_long(ap_index: u64) -> ! {
         AP_STACK_SIZE,
     ) as u64;
     if stack_base == 0 {
-        // // crate::kprintln!("[smp] AP {} stack OOM, parking", ap_index)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // crate::kprintln!("[smp] AP {} stack OOM, parking", ap_index);
         loop { asm!("hlt"); }
     }
     let rsp0 = stack_base + AP_STACK_SIZE as u64 - 16;
@@ -429,7 +429,7 @@ pub unsafe extern "C" fn ap_entry_long(ap_index: u64) -> ! {
     let (tss_ptr, tss_limit) = match tss::init_ap_tss(ap_idx, rsp0) {
         Some(v) => v,
         None => {
-            // // crate::kprintln!("[smp] AP {} TSS init failed, parking", ap_index)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // crate::kprintln!("[smp] AP {} TSS init failed, parking", ap_index);
             loop { asm!("hlt"); }
         }
     };
@@ -451,7 +451,7 @@ pub unsafe extern "C" fn ap_entry_long(ap_index: u64) -> ! {
     #[cfg(target_arch = "x86_64")]
     let per_cpu_page = crate::arch::x86_64::syscall::allocate_per_cpu_area(ap_index as u32);
     if per_cpu_page == 0 {
-        // // crate::kprintln!("[smp] AP {} per-CPU area OOM, parking", ap_index)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // crate::kprintln!("[smp] AP {} per-CPU area OOM, parking", ap_index);
         loop { asm!("hlt"); }
     }
 
@@ -460,7 +460,7 @@ pub unsafe extern "C" fn ap_entry_long(ap_index: u64) -> ! {
 #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     crate::arch::x86_64::syscall::set_kernel_gs_base(per_cpu_page);
-    // // crate::kprintln!("[smp] AP {} GS_BASE set to 0x{:016x}", ap_index, per_cpu_page)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // crate::kprintln!("[smp] AP {} GS_BASE set to 0x{:016x}", ap_index, per_cpu_page);
 
     // 5. Hand control to the scheduler. `init_smp_this_cpu`
     //    allocates a Prcb, creates the idle thread, and sets up
@@ -488,15 +488,15 @@ fn _use_ap() {
 pub fn smoke_test() -> bool {
     use core::sync::atomic::Ordering;
 
-    // // kprintln!("  [SMP SMOKE] running SMP smoke test...")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("  [SMP SMOKE] running SMP smoke test...");
 
     let mut ok = true;
 
     // Step 1: cpu_count returns a value
     let count = cpu_count();
-    // // kprintln!("    [SMP SMOKE] cpu_count() = {}", count)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("    [SMP SMOKE] cpu_count() = {}", count);
     if count < 1 {
-        // // kprintln!("    [SMP SMOKE FAIL] cpu_count() < 1")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("    [SMP SMOKE FAIL] cpu_count() < 1");
         ok = false;
     }
 
@@ -506,17 +506,17 @@ pub fn smoke_test() -> bool {
     // Step 3: Try to parse MADT (will return false if ACPI not available)
     let _madt_ok = parse_madt();
     // _madt_ok is intentionally unused - reserved for future logging
-    // // kprintln!("    [SMP SMOKE] parse_madt() = {}", _madt_ok)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("    [SMP SMOKE] parse_madt() = {}", _madt_ok);
 
     // Step 4: After MADT parse, check if more CPUs are available
     let _count_after = cpu_count();
     // _count_after is intentionally unused - reserved for future logging
-    // // kprintln!("    [SMP SMOKE] cpu_count() after MADT parse = {}", _count_after)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("    [SMP SMOKE] cpu_count() after MADT parse = {}", _count_after);
 
     if ok {
-        // // kprintln!("  [SMP SMOKE] all SMP checks passed")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("  [SMP SMOKE] all SMP checks passed");
     } else {
-        // // kprintln!("  [SMP SMOKE FAIL] one or more SMP checks failed")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("  [SMP SMOKE FAIL] one or more SMP checks failed");
     }
     ok
 }

@@ -424,47 +424,47 @@ pub fn calculate_page_table_requirements(memory_bytes: u64) -> (u64, u64) {
 /// 4. Page table requirement calculations work
 pub fn smoke_test() -> bool {
 
-    // // kprintln!("  [DYNAMIC PAGING SMOKE] running dynamic paging smoke test...")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("  [DYNAMIC PAGING SMOKE] running dynamic paging smoke test...");
     let mut ok = true;
 
     // Test 1: PML4 index calculation
-    // // kprintln!("  [DYNAMIC PAGING SMOKE] test 1: PML4 index calculation")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("  [DYNAMIC PAGING SMOKE] test 1: PML4 index calculation");
     let test_va: u64 = 0xFFFF_8000_0000_0000; // Kernel base
     let idx = pml4_index(test_va);
     let _ = &idx;
     let _ = &idx;
     if idx != 256 {
-        // // kprintln!("  [DYNAMIC PAGING SMOKE FAIL] PML4 index for kernel base should be 256, got {}", idx)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("  [DYNAMIC PAGING SMOKE FAIL] PML4 index for kernel base should be 256, got {}", idx);
         ok = false;
     }
 
     // Test 2: Address validity checks
-    // // kprintln!("  [DYNAMIC PAGING SMOKE] test 2: address validity checks")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("  [DYNAMIC PAGING SMOKE] test 2: address validity checks");
     let kernel_addr: u64 = 0xFFFF_8000_0000_0000;
     let user_addr: u64 = 0x0000_0000_1000;
 
     if !is_kernel_address(kernel_addr) {
-        // // kprintln!("  [DYNAMIC PAGING SMOKE FAIL] kernel address not detected as kernel")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("  [DYNAMIC PAGING SMOKE FAIL] kernel address not detected as kernel");
         ok = false;
     }
     if is_kernel_address(user_addr) {
-        // // kprintln!("  [DYNAMIC PAGING SMOKE FAIL] user address detected as kernel")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("  [DYNAMIC PAGING SMOKE FAIL] user address detected as kernel");
         ok = false;
     }
 
     // Test 3: Canonical address check
-    // // kprintln!("  [DYNAMIC PAGING SMOKE] test 3: canonical address check")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("  [DYNAMIC PAGING SMOKE] test 3: canonical address check");
     if !is_canonical(kernel_addr) {
-        // // kprintln!("  [DYNAMIC PAGING SMOKE FAIL] kernel base not canonical")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("  [DYNAMIC PAGING SMOKE FAIL] kernel base not canonical");
         ok = false;
     }
     if !is_canonical(user_addr) {
-        // // kprintln!("  [DYNAMIC PAGING SMOKE FAIL] user address not canonical")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("  [DYNAMIC PAGING SMOKE FAIL] user address not canonical");
         ok = false;
     }
 
     // Test 4: Memory region calculations
-    // // kprintln!("  [DYNAMIC PAGING SMOKE] test 4: memory region calculations")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("  [DYNAMIC PAGING SMOKE] test 4: memory region calculations");
     let region = MemoryRegion::new(0x1000_0000, 8 * 1024 * 1024, true);
     let _ = &region; // 8MB region
     let _ = &region;
@@ -472,39 +472,39 @@ pub fn smoke_test() -> bool {
     let _ = &pages;
     let _ = &pages;
     if pages != 4 {
-        // // kprintln!("  [DYNAMIC PAGING SMOKE FAIL] 8MB should be 4 2MB pages, got {}", pages)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("  [DYNAMIC PAGING SMOKE FAIL] 8MB should be 4 2MB pages, got {}", pages);
         ok = false;
     }
 
     // Test 5: Page table requirements for large memory
-    // // kprintln!("  [DYNAMIC PAGING SMOKE] test 5: page table requirements")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("  [DYNAMIC PAGING SMOKE] test 5: page table requirements");
     // Reserved for future use: page table calculation for large memory regions
     let (_pml4_needed, _page_tables) = calculate_page_table_requirements(16 * 1024 * 1024 * 1024); // 16GB
-    // // kprintln!("  [DYNAMIC PAGING SMOKE]   16GB needs {} PML4 entries, ~{} page tables",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
+    // // kprintln!("  [DYNAMIC PAGING SMOKE]   16GB needs {} PML4 entries, ~{} page tables",
     //         pml4_needed, page_tables);
 
     // Test 6: Memory stats
-    // // kprintln!("  [DYNAMIC PAGING SMOKE] test 6: memory stats")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("  [DYNAMIC PAGING SMOKE] test 6: memory stats");
     let mut stats = MemoryStats::new();
     stats.total_bytes = 16 * 1024 * 1024 * 1024;
     stats.usable_bytes = 15 * 1024 * 1024 * 1024;
     stats.highest_phys_addr = 16 * 1024 * 1024 * 1024 - 1;
 
     if !stats.is_large_memory() {
-        // // kprintln!("  [DYNAMIC PAGING SMOKE FAIL] 16GB should be detected as large memory")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("  [DYNAMIC PAGING SMOKE FAIL] 16GB should be detected as large memory");
         ok = false;
     }
     if stats.is_very_large_memory() {
-        // // kprintln!("  [DYNAMIC PAGING SMOKE FAIL] 16GB should not be very large (>64GB)")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("  [DYNAMIC PAGING SMOKE FAIL] 16GB should not be very large (>64GB)");
         ok = false;
     }
-    // // kprintln!("  [DYNAMIC PAGING SMOKE]   total: {:.2} GB, usable: {:.2} GB",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
+    // // kprintln!("  [DYNAMIC PAGING SMOKE]   total: {:.2} GB, usable: {:.2} GB",
     //         stats.total_gb(), stats.usable_gb());
 
     if ok {
-        // // kprintln!("  [DYNAMIC PAGING SMOKE] all dynamic paging checks passed")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("  [DYNAMIC PAGING SMOKE] all dynamic paging checks passed");
     } else {
-        // // kprintln!("  [DYNAMIC PAGING SMOKE FAIL] one or more checks failed")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("  [DYNAMIC PAGING SMOKE FAIL] one or more checks failed");
     }
 
     ok

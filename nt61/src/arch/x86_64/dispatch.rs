@@ -256,7 +256,7 @@ pub extern "C" fn dispatch_trap_frame(vector: u64, tf: *mut TrapFrame) {
             13 => { /* #GP - General Protection Fault - CRITICAL */ handle_general_protection(error_code, &*tf); return; }
             14 => { /* #PF - Page Fault */ handle_page_fault(error_code, &*tf); }
             15 => { /* Reserved - Intel defined as 'Unknown' */ 
-                // // crate::kprintln!("[FAULT] Vector 15 (Intel reserved)")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                // // crate::kprintln!("[FAULT] Vector 15 (Intel reserved)");
             }
             16 => { /* #MF - x87 Floating Point Error */ }
             17 => { /* #AC - Alignment Check */ handle_alignment_check(error_code, &*tf); return; }
@@ -264,7 +264,7 @@ pub extern "C" fn dispatch_trap_frame(vector: u64, tf: *mut TrapFrame) {
             19 => { /* #XM - SIMD Floating Point Error */ }
             20 => { /* #VE - Virtualization Exception */ }
             21..=31 => {
-                // // crate::kprintln!("[FAULT] Reserved exception vector {}", vector)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                // // crate::kprintln!("[FAULT] Reserved exception vector {}", vector);
             }
             
             // === PIT / HPET / keyboard / APIC timer vectors ===
@@ -323,7 +323,7 @@ pub extern "C" fn dispatch_trap_frame(vector: u64, tf: *mut TrapFrame) {
             // === Unknown vectors ===
             _v => {
                 // _v is intentionally unused - unknown vectors are logged/ignored
-                // // crate::kprintln!("[FAULT] unhandled interrupt/exception vector {} (raw=0x{:x})", _v, _v)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                // // crate::kprintln!("[FAULT] unhandled interrupt/exception vector {} (raw=0x{:x})", _v, _v);
             }
         }
     }
@@ -507,16 +507,16 @@ fn handle_page_fault(error_code: u64, tf: &TrapFrame) {
             // Fault resolved — iretq will retry the faulting instruction.
         }
         access_fault::FaultStatus::CheckVad => {
-            // // crate::kprintln!("[PF] va=0x{:016x} CheckVad (VAD lookup needed)", cr2)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // crate::kprintln!("[PF] va=0x{:016x} CheckVad (VAD lookup needed)", cr2);
             // Kernel-mode VAD faults are typically fatal — halt.
             loop { unsafe { core::arch::asm!("hlt", options(nostack)); } }
         }
         access_fault::FaultStatus::AccessViolation => {
-            // // crate::kprintln!("[PF] FATAL: AccessViolation at va=0x{:016x}", cr2)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // crate::kprintln!("[PF] FATAL: AccessViolation at va=0x{:016x}", cr2);
             loop { unsafe { core::arch::asm!("hlt", options(nostack)); } }
         }
         access_fault::FaultStatus::OutOfMemory => {
-            // // crate::kprintln!("[PF] FATAL: OutOfMemory at va=0x{:016x}", cr2)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // crate::kprintln!("[PF] FATAL: OutOfMemory at va=0x{:016x}", cr2);
             loop { unsafe { core::arch::asm!("hlt", options(nostack)); } }
         }
     }
@@ -537,9 +537,9 @@ unsafe fn early_pf_halt() {
 /// #DF is fatal in most cases, but we log for debugging
 fn handle_double_fault(_error_code: u64, _tf: &TrapFrame) {
     // _error_code and _tf are intentionally unused - reserved for future logging
-    // // crate::kprintln!("[FAULT] #DF (Double Fault) - fatal error")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // crate::kprintln!("  RIP=0x{:016x} RSP=0x{:016x}", _tf.rip, _tf.rsp)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // crate::kprintln!("  RFLAGS=0x{:016x} CS=0x{:x}", _tf.rflags, _tf.cs)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // crate::kprintln!("[FAULT] #DF (Double Fault) - fatal error");
+    // // crate::kprintln!("  RIP=0x{:016x} RSP=0x{:016x}", _tf.rip, _tf.rsp);
+    // // crate::kprintln!("  RFLAGS=0x{:016x} CS=0x{:x}", _tf.rflags, _tf.cs);
     // In a real kernel, this would trigger BugCheck or triple fault
     // For now, halt the system
     loop {
@@ -728,14 +728,14 @@ fn handle_stack_fault(error_code: u64, tf: &TrapFrame) {
         }
     }
     
-    // // crate::kprintln!("[FAULT] #SS (Stack Fault)")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // crate::kprintln!("  Error code: ID={} EXT={} Selector=0x{:04x}", selector_id, ext, selector_id)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // crate::kprintln!("  RIP=0x{:016x} RSP=0x{:016x}", tf.rip, tf.rsp)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // crate::kprintln!("[FAULT] #SS (Stack Fault)");
+    // // crate::kprintln!("  Error code: ID={} EXT={} Selector=0x{:04x}", selector_id, ext, selector_id);
+    // // crate::kprintln!("  RIP=0x{:016x} RSP=0x{:016x}", tf.rip, tf.rsp);
     
     // Check if user mode
     let user_mode = tf.cs & 3 != 0;
     if !user_mode {
-        // // crate::kprintln!("[FAULT] #SS from kernel mode - system error!")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // crate::kprintln!("[FAULT] #SS from kernel mode - system error!");
         loop {
             unsafe {
                 core::arch::asm!("hlt", options(nostack));
@@ -752,9 +752,9 @@ fn handle_segment_not_present(_error_code: u64, _tf: &TrapFrame) {
     let _ti = (_error_code >> 14) & 1 != 0; // TI bit: LDT vs GDT
     // _selector_id, _ext, _ti, and _tf are intentionally unused - reserved for future logging
 
-    // // crate::kprintln!("[FAULT] #NP (Segment Not Present)")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // crate::kprintln!("  Error code: ID={} EXT={} TI={} Selector=0x{:04x}", _selector_id, _ext, _ti, _selector_id)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // crate::kprintln!("  RIP=0x{:016x}", _tf.rip)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // crate::kprintln!("[FAULT] #NP (Segment Not Present)");
+    // // crate::kprintln!("  Error code: ID={} EXT={} TI={} Selector=0x{:04x}", _selector_id, _ext, _ti, _selector_id);
+    // // crate::kprintln!("  RIP=0x{:016x}", _tf.rip);
 }
 
 /// Handle #UD (Invalid Opcode)
@@ -797,7 +797,7 @@ fn handle_invalid_opcode(tf: &TrapFrame) {
             core::ptr::read(ptr)
         };
         if code2 == 0xA2 {
-            // // crate::kprintln!("[FAULT] CPUID instruction at 0x{:016x}", tf.rip)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // crate::kprintln!("[FAULT] CPUID instruction at 0x{:016x}", tf.rip);
         }
     }
 }
@@ -806,8 +806,8 @@ fn handle_invalid_opcode(tf: &TrapFrame) {
 /// Caused by executing x87/FPU instruction when CR0.TS=1
 fn handle_device_not_available(_tf: &TrapFrame) {
     // _tf is intentionally unused - reserved for future logging
-    // // crate::kprintln!("[FAULT] #NM (Device Not Available)")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // crate::kprintln!("  RIP=0x{:016x}", _tf.rip)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // crate::kprintln!("[FAULT] #NM (Device Not Available)");
+    // // crate::kprintln!("  RIP=0x{:016x}", _tf.rip);
 
     // Clear the TS bit and restore FPU state
     unsafe {
@@ -815,7 +815,7 @@ fn handle_device_not_available(_tf: &TrapFrame) {
         core::arch::asm!("mov {}, cr0", out(reg) cr0, options(nostack));
         core::arch::asm!("mov cr0, {}", in(reg) cr0 & !0x8, options(nostack));
         // In a real kernel, would restore FPU state here
-        // // crate::kprintln!("[FAULT] #NM: cleared CR0.TS, FPU state would be restored")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // crate::kprintln!("[FAULT] #NM: cleared CR0.TS, FPU state would be restored");
     }
 }
 
@@ -823,8 +823,8 @@ fn handle_device_not_available(_tf: &TrapFrame) {
 /// Non-maskable hardware error
 fn handle_machine_check(_tf: &TrapFrame) {
     // _tf is intentionally unused - reserved for future logging
-    // // crate::kprintln!("[FAULT] #MC (Machine Check)")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // crate::kprintln!("  RIP=0x{:016x}", _tf.rip)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // crate::kprintln!("[FAULT] #MC (Machine Check)");
+    // // crate::kprintln!("  RIP=0x{:016x}", _tf.rip);
 
     // Machine check is typically fatal
     loop {
@@ -838,13 +838,13 @@ fn handle_machine_check(_tf: &TrapFrame) {
 /// Memory access at misaligned address when CR0.AM=1 and EFLAGS.AC=1
 fn handle_alignment_check(_error_code: u64, tf: &TrapFrame) {
     // _error_code is intentionally unused - reserved for future logging
-    // // crate::kprintln!("[FAULT] #AC (Alignment Check)")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // crate::kprintln!("  Error code: 0x{:016x}", _error_code)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // crate::kprintln!("  RIP=0x{:016x}", tf.rip)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // crate::kprintln!("[FAULT] #AC (Alignment Check)");
+    // // crate::kprintln!("  Error code: 0x{:016x}", _error_code);
+    // // crate::kprintln!("  RIP=0x{:016x}", tf.rip);
 
     let user_mode = tf.cs & 3 != 0;
     if !user_mode {
-        // // crate::kprintln!("[FAULT] #AC from kernel mode - system error!")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // crate::kprintln!("[FAULT] #AC from kernel mode - system error!");
         loop {
             unsafe {
                 core::arch::asm!("hlt", options(nostack));

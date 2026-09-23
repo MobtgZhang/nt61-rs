@@ -114,5 +114,5 @@ pub fn init() {
 pub extern "C" fn handle_trap(_frame: u64) {
     let cause: u64;
     unsafe { asm!("csrrd {}, 0x9", out(reg) cause, options(nostack)); }
-    // crate::kprintln!("[loongarch] exception cause=0x{:x}", cause)  // kprintln disabled (memcpy crash workaround);
+    // crate::kprintln!("[loongarch] exception cause=0x{:x}", cause);
 }

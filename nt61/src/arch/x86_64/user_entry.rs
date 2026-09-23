@@ -485,29 +485,29 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
     unsafe {
         let pml4 = pml4_phys as *const u64;
         let idx = ((user_rip >> 39) & 0x1FF) as usize;
-        // // crate::kprintln!("[USER] enter_first_user_thread: PML4 idx for 0x{:x} = {}", user_rip, idx)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // crate::kprintln!("[USER] enter_first_user_thread: PML4 idx for 0x{:x} = {}", user_rip, idx);
         let e = core::ptr::read_unaligned(pml4.add(idx));
-        // // crate::kprintln!("[USER] enter_first_user_thread: usr PML4[{}] = 0x{:x}", idx, e)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // crate::kprintln!("[USER] enter_first_user_thread: usr PML4[{}] = 0x{:x}", idx, e);
         if e & 1 != 0 {
             let pdpt_phys = e & 0x000F_FFFF_FFFF_F000;
             let pdpt = pdpt_phys as *const u64;
             let pdpt_idx = ((user_rip >> 30) & 0x1FF) as usize;
             let pdpte = core::ptr::read_unaligned(pdpt.add(pdpt_idx));
-            // // crate::kprintln!("[USER]   PDPT[{}] @ 0x{:x} = 0x{:x}", pdpt_idx, pdpt_phys, pdpte)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // crate::kprintln!("[USER]   PDPT[{}] @ 0x{:x} = 0x{:x}", pdpt_idx, pdpt_phys, pdpte);
             if pdpte & 1 != 0 {
                 let pd_phys = pdpte & 0x000F_FFFF_FFFF_F000;
                 let pd = pd_phys as *const u64;
                 let pd_idx = ((user_rip >> 21) & 0x1FF) as usize;
                 let pde = core::ptr::read_unaligned(pd.add(pd_idx));
                 let _p = pde;
-                // // crate::kprintln!("[USER]   PD[{}] @ 0x{:x} = 0x{:x}", pd_idx, pd_phys, pde)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                // // crate::kprintln!("[USER]   PD[{}] @ 0x{:x} = 0x{:x}", pd_idx, pd_phys, pde);
             }
         }
     }
 
     // 1. Switch CR3 to the per-process PML4.
     crate::mm::vas::attach_process(pml4_phys);
-    // // crate::kprintln!("[USER] CR3 switched to 0x{:x}", pml4_phys)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // crate::kprintln!("[USER] CR3 switched to 0x{:x}", pml4_phys);
 
     // Verify the kernel stack is still accessible (debug only).
     #[cfg(debug_assertions)]
@@ -515,7 +515,7 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
         let rsp: u64;
         core::arch::asm!("mov {}, rsp", out(reg) rsp, options(nostack, preserves_flags));
         let _v = core::ptr::read_volatile(rsp as *const u64);
-        // // crate::kprintln!("[USER] kernel stack @ 0x{:x} = 0x{:x}", rsp, _v)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // crate::kprintln!("[USER] kernel stack @ 0x{:x} = 0x{:x}", rsp, _v);
     }
 
     // Read GDTR to verify GDT is accessible (debug only).
@@ -541,7 +541,7 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
         core::arch::asm!("in al, dx", out("al") pic2_mask, in("dx") 0xa1u16, options(nostack));
         let _p1 = pic1_mask;
         let _p2 = pic2_mask;
-        // // crate::kprintln!("[USER] PIC1 mask=0x{:02x} PIC2 mask=0x{:02x}", pic1_mask, pic2_mask)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // crate::kprintln!("[USER] PIC1 mask=0x{:02x} PIC2 mask=0x{:02x}", pic1_mask, pic2_mask);
     }
 
     // Read TR to verify TSS is loaded (debug only).
@@ -550,7 +550,7 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
         let tr: u16;
         core::arch::asm!("str {tr:x}", tr = out(reg) tr, options(nostack, preserves_flags));
         let _t = tr;
-        // // crate::kprintln!("[USER] TR = 0x{:x}", tr)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // crate::kprintln!("[USER] TR = 0x{:x}", tr);
     }
 
     // Verify the user entry is readable from the new CR3 (debug only).
@@ -585,7 +585,7 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
         let rsp: u64;
         core::arch::asm!("mov {}, rsp", out(reg) rsp, options(nostack, preserves_flags));
         let _r = rsp;
-        // // crate::kprintln!("[USER] kernel RSP before iret: 0x{:x}", rsp)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // crate::kprintln!("[USER] kernel RSP before iret: 0x{:x}", rsp);
     }
 
     // 2. iretq into Ring 3. The caller has already:
@@ -611,7 +611,7 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
             core::arch::asm!("in al, dx", out("al") m1, in("dx") 0x21u16, options(nostack));
             core::arch::asm!("in al, dx", out("al") m2, in("dx") 0xa1u16, options(nostack));
             let _ = (m1, m2);
-            // // crate::kprintln!("[USER] PIC after mask: PIC1=0x{:02x} PIC2=0x{:02x}", m1, m2)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // crate::kprintln!("[USER] PIC after mask: PIC1=0x{:02x} PIC2=0x{:02x}", m1, m2);
         }
     }
 
@@ -623,8 +623,8 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
         let _ = user_rip;
     }
 
-    // crate::kprintln!("[USER] about to call first_user_enter")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("[USER]   will iretq with RIP=0x{:x} RSP=0x{:x} CS=0x{:x} SS=0x{:x} RFLAGS=0x{:x}",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
+    // crate::kprintln!("[USER] about to call first_user_enter");
+    // crate::kprintln!("[USER]   will iretq with RIP=0x{:x} RSP=0x{:x} CS=0x{:x} SS=0x{:x} RFLAGS=0x{:x}",
 // //         user_rip, user_rsp, USER_CS as u64, USER_SS as u64, USER_RFLAGS);
     // We disable interrupts and transfer to Ring 3 via an inline
     // iretq. We pass `user_rip` and `user_rsp` through Rust

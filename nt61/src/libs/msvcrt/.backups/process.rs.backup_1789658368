@@ -1,0 +1,491 @@
+//! Process Control Functions
+//!
+//! Implements process control operations (exit, abort, atexit, getenv, system, signals)
+
+use core::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, AtomicBool, AtomicPtr, Ordering};
+use super::types::*;
+use super::string::*;
+use core::ptr;
+
+extern crate alloc;
+use alloc::vec::Vec;
+use alloc::string::String;
+
+// Maximum number of atexit handlers
+const ATEXIT_MAX: usize = 32;
+
+// Static storage for atexit handlers
+static mut ATEXIT_HANDLERS: [Option<extern "C" fn()>; ATEXIT_MAX] = [None; ATEXIT_MAX];
+static ATEXIT_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+// Quick exit handlers
+static mut AT_QUICK_EXIT_HANDLERS: [Option<extern "C" fn()>; ATEXIT_MAX] = [None; ATEXIT_MAX];
+static AT_QUICK_EXIT_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+// Exit codes
+pub const EXIT_SUCCESS: c_int = 0;
+pub const EXIT_FAILURE: c_int = 1;
+
+// Signal numbers
+pub const SIGINT: c_int = 2;   // Interrupt
+pub const SIGILL: c_int = 4;   // Illegal instruction
+pub const SIGFPE: c_int = 8;   // Floating point exception
+pub const SIGSEGV: c_int = 11; // Segmentation fault
+pub const SIGTERM: c_int = 15; // Termination request
+pub const SIGABRT: c_int = 22; // Abort
+
+// Signal handlers
+pub type SignalHandler = extern "C" fn(c_int);
+
+pub static SIG_DFL: SignalHandler = default_signal_handler;
+pub static SIG_IGN: SignalHandler = ignore_signal_handler;
+
+static mut SIGNAL_HANDLERS: [SignalHandler; 32] = [default_signal_handler; 32];
+
+extern "C" fn default_signal_handler(sig: c_int) {
+    unsafe {
+        abort();
+    }
+}
+
+extern "C" fn ignore_signal_handler(_sig: c_int) {
+    // Do nothing
+}
+
+/// Register a function to be called at program exit
+#[no_mangle]
+pub unsafe extern "C" fn atexit(func: extern "C" fn()) -> c_int {
+    if ATEXIT_COUNT >= ATEXIT_MAX {
+        return -1; // Too many handlers
+    }
+
+    ATEXIT_HANDLERS[ATEXIT_COUNT] = Some(func);
+    ATEXIT_COUNT += 1;
+    0
+}
+
+/// Register a function for quick_exit
+#[no_mangle]
+pub unsafe extern "C" fn at_quick_exit(func: extern "C" fn()) -> c_int {
+    if AT_QUICK_EXIT_COUNT >= ATEXIT_MAX {
+        return -1;
+    }
+
+    AT_QUICK_EXIT_HANDLERS[AT_QUICK_EXIT_COUNT] = Some(func);
+    AT_QUICK_EXIT_COUNT += 1;
+    0
+}
+
+/// Call all registered atexit handlers
+unsafe fn call_atexit_handlers() {
+    // Call handlers in reverse order of registration
+    for i in (0..ATEXIT_COUNT).rev() {
+        if let Some(handler) = ATEXIT_HANDLERS[i] {
+            handler();
+        }
+    }
+}
+
+/// Call all registered at_quick_exit handlers
+unsafe fn call_quick_exit_handlers() {
+    for i in (0..AT_QUICK_EXIT_COUNT).rev() {
+        if let Some(handler) = AT_QUICK_EXIT_HANDLERS[i] {
+            handler();
+        }
+    }
+}
+
+/// Normal program termination
+#[no_mangle]
+pub unsafe extern "C" fn exit(status: c_int) -> ! {
+    // Call atexit handlers
+    call_atexit_handlers();
+
+    // Flush all open streams
+    super::stdio::fflush(ptr::null_mut());
+
+    // Close all open files (done by kernel on process termination)
+
+    // Terminate the process through kernel
+    super::ps_stubs::exit_process(status);
+}
+
+/// Quick exit without full cleanup
+#[no_mangle]
+pub unsafe extern "C" fn quick_exit(status: c_int) -> ! {
+    // Call at_quick_exit handlers
+    call_quick_exit_handlers();
+
+    // Terminate immediately
+    super::ps_stubs::exit_process(status);
+}
+
+/// Exit without calling handlers
+#[no_mangle]
+pub unsafe extern "C" fn _exit(status: c_int) -> ! {
+    // Terminate immediately without any cleanup
+    super::ps_stubs::exit_process(status);
+}
+
+/// Abnormal program termination
+#[no_mangle]
+pub unsafe extern "C" fn abort() -> ! {
+    // Raise SIGABRT
+    raise(SIGABRT);
+
+    // If the signal handler returned, force termination
+    super::ps_stubs::terminate_process(3); // STATUS_ABORTED
+}
+
+/// Raise a signal
+#[no_mangle]
+pub unsafe extern "C" fn raise(sig: c_int) -> c_int {
+    if sig < 0 || sig >= 32 {
+        return -1;
+    }
+
+    let handler = SIGNAL_HANDLERS[sig as usize];
+    handler(sig);
+
+    0
+}
+
+/// Set signal handler
+#[no_mangle]
+pub unsafe extern "C" fn signal(sig: c_int, handler: SignalHandler) -> SignalHandler {
+    if sig < 0 || sig >= 32 {
+        return SIG_DFL;
+    }
+
+    let old_handler = SIGNAL_HANDLERS[sig as usize];
+    SIGNAL_HANDLERS[sig as usize] = handler;
+    old_handler
+}
+
+/// Get environment variable
+#[no_mangle]
+pub unsafe extern "C" fn getenv(name: *const c_char) -> *mut c_char {
+    if name.is_null() {
+        return ptr::null_mut();
+    }
+
+    // Query kernel for environment variable
+    match super::ps_stubs::get_environment_variable(name) {
+        Some(value) => value.as_ptr() as *mut c_char,
+        None => ptr::null_mut(),
+    }
+}
+
+/// Get environment variable (secure version)
+#[no_mangle]
+pub unsafe extern "C" fn getenv_s(
+    len: *mut size_t,
+    value: *mut c_char,
+    maxsize: size_t,
+    name: *const c_char,
+) -> errno_t {
+    if name.is_null() {
+        return EINVAL;
+    }
+
+    match super::ps_stubs::get_environment_variable(name) {
+        Some(val) => {
+            let val_len = strlen(val.as_ptr() as *const c_char);
+
+            if !len.is_null() {
+                *len = val_len + 1;
+            }
+
+            if !value.is_null() && maxsize > 0 {
+                if val_len >= maxsize {
+                    *value = 0;
+                    return ERANGE;
+                }
+                strcpy(value, val.as_ptr() as *const c_char);
+            }
+
+            0
+        }
+        None => {
+            if !len.is_null() {
+                *len = 0;
+            }
+            if !value.is_null() && maxsize > 0 {
+                *value = 0;
+            }
+            0
+        }
+    }
+}
+
+/// Set environment variable
+#[no_mangle]
+pub unsafe extern "C" fn putenv(string: *mut c_char) -> c_int {
+    if string.is_null() {
+        return -1;
+    }
+
+    // Find the '=' separator
+    let mut i = 0;
+    while *string.add(i) != 0 && *string.add(i) != b'=' as c_char {
+        i += 1;
+    }
+
+    if *string.add(i) != b'=' as c_char {
+        return -1; // No '=' found
+    }
+
+    // Split into name and value
+    let name_end = i;
+    let value_start = i + 1;
+
+    // Temporarily null-terminate the name
+    let separator = *string.add(name_end);
+    *string.add(name_end) = 0;
+
+    let name = string;
+    let value = string.add(value_start);
+
+    // Set the environment variable through kernel
+    let result = super::ps_stubs::set_environment_variable(name, value);
+
+    // Restore the separator
+    *string.add(name_end) = separator;
+
+    if result { 0 } else { -1 }
+}
+
+/// Execute a command
+#[no_mangle]
+pub unsafe extern "C" fn system(command: *const c_char) -> c_int {
+    if command.is_null() {
+        // Check if command processor is available
+        return 1;
+    }
+
+    // Execute command through kernel
+    match super::ps_stubs::execute_command(command) {
+        Ok(exit_code) => exit_code,
+        Err(_) => -1,
+    }
+}
+
+/// Get program name
+#[no_mangle]
+pub unsafe extern "C" fn _get_pgmptr(value: *mut *mut c_char) -> errno_t {
+    use alloc::boxed::Box;
+
+    if value.is_null() {
+        return EINVAL;
+    }
+
+    static mut PROGRAM_NAME_STORAGE: Option<Box<alloc::string::String>> = None;
+    static mut PROGRAM_NAME: *mut c_char = ptr::null_mut();
+
+    if PROGRAM_NAME.is_null() {
+        // Store the String in a Box to keep it alive
+        let name_string = Box::new(super::ps_stubs::get_program_name());
+        PROGRAM_NAME = name_string.as_ptr() as *mut c_char;
+        PROGRAM_NAME_STORAGE = Some(name_string);
+    }
+
+    *value = PROGRAM_NAME;
+    0
+}
+
+/// Get process ID
+#[no_mangle]
+pub unsafe extern "C" fn _getpid() -> c_int {
+    super::ps_stubs::get_current_pid() as c_int
+}
+
+/// Get current working directory
+#[no_mangle]
+pub unsafe extern "C" fn _getcwd(buffer: *mut c_char, maxlen: c_int) -> *mut c_char {
+    if buffer.is_null() || maxlen <= 0 {
+        return ptr::null_mut();
+    }
+
+    match super::ps_stubs::get_current_directory() {
+        Some(cwd) => {
+            let cwd_len = cwd.len();
+            if cwd_len >= maxlen as usize {
+                return ptr::null_mut();
+            }
+
+            for i in 0..cwd_len {
+                *buffer.add(i) = cwd.as_bytes()[i] as c_char;
+            }
+            *buffer.add(cwd_len) = 0;
+
+            buffer
+        }
+        None => ptr::null_mut(),
+    }
+}
+
+/// Change directory
+#[no_mangle]
+pub unsafe extern "C" fn _chdir(path: *const c_char) -> c_int {
+    if path.is_null() {
+        return -1;
+    }
+
+    match super::ps_stubs::change_directory(path) {
+        Ok(_) => 0,
+        Err(_) => -1,
+    }
+}
+
+/// Assert failure handler
+#[no_mangle]
+pub unsafe extern "C" fn _wassert(
+    message: *const wchar_t,
+    file: *const wchar_t,
+    line: c_uint,
+) -> ! {
+    // Convert wide strings to narrow for printing
+    crate::kprintln!("\nAssertion failed!");
+    crate::kprintln!("  File: (wide string)");
+    crate::kprintln!("  Line: {}", line);
+
+    abort()
+}
+
+/// Assert failure handler (narrow strings)
+#[no_mangle]
+pub unsafe extern "C" fn _assert(
+    message: *const c_char,
+    file: *const c_char,
+    line: c_uint,
+) -> ! {
+    if !message.is_null() {
+        crate::kprint!("\nAssertion failed: ");
+        let mut i = 0;
+        while *message.add(i) != 0 {
+            crate::kprint!("{}", *message.add(i) as u8 as char);
+            i += 1;
+        }
+        crate::kprintln!();
+    }
+
+    if !file.is_null() {
+        crate::kprint!("  File: ");
+        let mut i = 0;
+        while *file.add(i) != 0 {
+            crate::kprint!("{}", *file.add(i) as u8 as char);
+            i += 1;
+        }
+        crate::kprintln!();
+    }
+
+    crate::kprintln!("  Line: {}", line);
+
+    abort()
+}
+
+/// Set error mode
+#[no_mangle]
+pub unsafe extern "C" fn _set_error_mode(mode: c_int) -> c_int {
+    // Error mode setting (stub)
+    // 0 = system default, 1 = message box, 2 = no message
+    mode
+}
+
+/// Get command line
+#[no_mangle]
+pub unsafe extern "C" fn _get_cmdline() -> *mut c_char {
+    use alloc::boxed::Box;
+
+    static mut CMDLINE_STORAGE: Option<Box<alloc::string::String>> = None;
+    static mut CMDLINE: *mut c_char = ptr::null_mut();
+
+    if CMDLINE.is_null() {
+        // Store the String in a Box to keep it alive
+        let cmdline_string = Box::new(super::ps_stubs::get_command_line());
+        CMDLINE = cmdline_string.as_ptr() as *mut c_char;
+        CMDLINE_STORAGE = Some(cmdline_string);
+    }
+
+    CMDLINE
+}
+
+/// C++ compatibility: terminate handler
+#[no_mangle]
+pub unsafe extern "C" fn terminate() -> ! {
+    abort();
+}
+
+/// C++ compatibility: unexpected handler
+#[no_mangle]
+pub unsafe extern "C" fn unexpected() -> ! {
+    abort();
+}
+
+/// Set terminate handler
+#[no_mangle]
+pub unsafe extern "C" fn set_terminate(_handler: extern "C" fn() -> !) -> extern "C" fn() -> ! {
+    // Return dummy handler
+    extern "C" fn dummy_terminate() -> ! {
+        unsafe { abort(); }
+    }
+    dummy_terminate
+}
+
+/// Set unexpected handler
+#[no_mangle]
+pub unsafe extern "C" fn set_unexpected(_handler: extern "C" fn() -> !) -> extern "C" fn() -> ! {
+    // Return dummy handler
+    extern "C" fn dummy_unexpected() -> ! {
+        unsafe { abort(); }
+    }
+    dummy_unexpected
+}
+
+/// Sleep for milliseconds (Windows-style)
+#[no_mangle]
+pub unsafe extern "C" fn Sleep(dwMilliseconds: c_ulong) {
+    super::hal_stubs::sleep(dwMilliseconds as u64);
+}
+
+/// C11 timespec sleep
+#[repr(C)]
+pub struct timespec {
+    pub tv_sec: time_t,
+    pub tv_nsec: c_long,
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn nanosleep(req: *const timespec, rem: *mut timespec) -> c_int {
+    if req.is_null() {
+        return -1;
+    }
+
+    let request = &*req;
+    let total_ms = (request.tv_sec * 1000) + (request.tv_nsec as i64 / 1_000_000);
+
+    super::hal_stubs::sleep(total_ms as u64);
+
+    // We don't support interrupt/resume, so remainder is always 0
+    if !rem.is_null() {
+        (*rem).tv_sec = 0;
+        (*rem).tv_nsec = 0;
+    }
+
+    0
+}
+
+/// Deprecated BSD sleep (seconds)
+#[no_mangle]
+pub unsafe extern "C" fn sleep(seconds: c_uint) -> c_uint {
+    super::hal_stubs::sleep((seconds as u64) * 1000);
+    0
+}
+
+/// Microsecond sleep (not accurate, rounds to milliseconds)
+#[no_mangle]
+pub unsafe extern "C" fn usleep(usec: c_uint) -> c_int {
+    let ms = (usec + 999) / 1000; // Round up
+    super::hal_stubs::sleep(ms as u64);
+    0
+}

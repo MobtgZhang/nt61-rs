@@ -39,7 +39,7 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-// use crate::kprintln;  // kprintln disabled (memcpy crash workaround)
+// use crate::kprintln;
 
 #[cfg(target_arch = "x86_64")]
 #[cfg(target_arch = "x86_64")]
@@ -1466,9 +1466,9 @@ pub fn init_syscall_msrs() {
 
     // NOTE: kprintln removed because MM is not initialized yet
     // Original code was:
-//     // // // // kprintln!("[SYSCALL] init: EFER.SCE=1, STAR=0x{:016x}, FMASK=0x200, GS_BASE=0x{:016x}",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
+//     // // // // kprintln!("[SYSCALL] init: EFER.SCE=1, STAR=0x{:016x}, FMASK=0x200, GS_BASE=0x{:016x}",
 // // //     //           star, cpu_base);
-//     // // // // kprintln!("[SYSCALL] USER_CS=0x{:x} USER_SS=0x{:x} KERNEL_CS=0x{:x} KERNEL_DS=0x{:x}",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
+//     // // // // kprintln!("[SYSCALL] USER_CS=0x{:x} USER_SS=0x{:x} KERNEL_CS=0x{:x} KERNEL_DS=0x{:x}",
 // // //     //           USER_CS, USER_SS, KERNEL_CS, KERNEL_DS);
     let _ = star;  // Suppress unused variable warning
     let _ = cpu_base;
@@ -1479,43 +1479,43 @@ pub fn init_syscall_msrs() {
 /// syscalls from user mode; this only verifies the dispatch
 /// table is reachable and consistent.
 pub fn smoke_test() -> bool {
-//     // // // kprintln!("  [SYSCALL SMOKE] testing SYSCALL/SYSRET dispatch...")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+//     // // // kprintln!("  [SYSCALL SMOKE] testing SYSCALL/SYSRET dispatch...");
 
     // 1. Initialisation must have run.
     if !is_initialised() {
-//         // // // kprintln!("  [SYSCALL SMOKE FAIL] SYSCALL not initialised")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+//         // // // kprintln!("  [SYSCALL SMOKE FAIL] SYSCALL not initialised");
         return false;
     }
 
     // 2. EFER.SCE must be set.
     let efer = rdmsr(IA32_EFER);
     if (efer & 0x1) == 0 {
-//         // // // kprintln!("  [SYSCALL SMOKE FAIL] EFER.SCE=0")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+//         // // // kprintln!("  [SYSCALL SMOKE FAIL] EFER.SCE=0");
         return false;
     }
 
     // 3. IA32_LSTAR must point to syscall_entry.
     let lstar = rdmsr(IA32_LSTAR);
     if lstar != (syscall_entry as *const () as u64) {
-//         // // // kprintln!("  [SYSCALL SMOKE FAIL] LSTAR=0x{:016x}", lstar)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+//         // // // kprintln!("  [SYSCALL SMOKE FAIL] LSTAR=0x{:016x}", lstar);
         return false;
     }
 
     // 4. Per-CPU area must be installed. Check IA32_KERNEL_GS_BASE.
     let gs = per_cpu_ptr_mut() as *const _ as u64;
     if gs == 0 {
-//         // // // kprintln!("  [SYSCALL SMOKE FAIL] GS_BASE=0 (not initialized)")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+//         // // // kprintln!("  [SYSCALL SMOKE FAIL] GS_BASE=0 (not initialized)");
         return false;
     }
-//     // // // kprintln!("    [SYSCALL] CPU 0 GS_BASE=0x{:016x}", gs)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+//     // // // kprintln!("    [SYSCALL] CPU 0 GS_BASE=0x{:016x}", gs);
 
     // 4b. Verify get_current_cpu_id_from_gs() returns correct CPU ID
     let cpu_id = get_current_cpu_id_from_gs();
     if cpu_id != 0 {
-//         // // // kprintln!("  [SYSCALL SMOKE FAIL] get_current_cpu_id_from_gs()={}, expected 0", cpu_id)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+//         // // // kprintln!("  [SYSCALL SMOKE FAIL] get_current_cpu_id_from_gs()={}, expected 0", cpu_id);
         return false;
     }
-//     // // // kprintln!("    [SYSCALL] get_current_cpu_id_from_gs()=0 (BSP) OK")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+//     // // // kprintln!("    [SYSCALL] get_current_cpu_id_from_gs()=0 (BSP) OK");
 
     // 5. The dispatch table must be reachable. We synthesise a
     //    minimal TrapFrame and call dispatch_one for a few
@@ -1530,13 +1530,13 @@ pub fn smoke_test() -> bool {
     tf.rdx = 0;
     tf.rcx = 0;
     let r1 = dispatch(nums::NtClose, &tf);
-//     // // // kprintln!("    [SYSCALL] NtClose(null) => 0x{:x}", r1 as u32)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+//     // // // kprintln!("    [SYSCALL] NtClose(null) => 0x{:x}", r1 as u32);
 
     let r2 = dispatch(nums::NtTestAlert, &tf);
-//     // // // kprintln!("    [SYSCALL] NtTestAlert     => 0x{:x}", r2 as u32)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+//     // // // kprintln!("    [SYSCALL] NtTestAlert     => 0x{:x}", r2 as u32);
 
     let r3 = dispatch(nums::NtQuerySystemInformation, &tf);
-//     // // // kprintln!("    [SYSCALL] NtQuerySystemInformation(null) => 0x{:x}", r3 as u32)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+//     // // // kprintln!("    [SYSCALL] NtQuerySystemInformation(null) => 0x{:x}", r3 as u32);
 
     // 5a. Verify the three dispatch results are valid NTSTATUS values
     //     (high 16 bits of an i32 must fit in 0x8000_0000..=0xFFFF_FFFF
@@ -1571,7 +1571,7 @@ pub fn smoke_test() -> bool {
     // 7. Run Shadow SSDT smoke test
     crate::ke::shadow_ssdt::smoke_test();
 
-//     // // // kprintln!("  [SYSCALL SMOKE OK] syscalls_total={} interrupts_total={}",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
+//     // // // kprintln!("  [SYSCALL SMOKE OK] syscalls_total={} interrupts_total={}",
 // // //               total_syscalls(), total_interrupts());
     true
 }

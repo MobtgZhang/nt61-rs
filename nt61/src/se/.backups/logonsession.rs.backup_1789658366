@@ -1,0 +1,206 @@
+//! Logon Session Management
+//!
+//! Manages logon sessions (authentication IDs) for users. Each logon creates
+//! a new authentication ID (LUID) that tracks:
+//!   - User SID
+//!   - Logon type (Interactive, Network, Batch, Service, etc.)
+//!   - Logon time
+//!   - Session statistics
+//!
+//! All tokens created for the same logon share the same authentication ID.
+//!
+//! References: Windows Internals, WRK LSA
+
+use alloc::vec::Vec;
+
+use super::token::Luid;
+use super::sid::Sid;
+
+/// Logon types (from winnt.h)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum LogonType {
+    Interactive = 2,           // Interactive logon
+    Network = 3,               // Network logon (e.g., SMB)
+    Batch = 4,                 // Batch logon
+    Service = 5,               // Service logon
+    Proxy = 6,                 // Proxy logon
+    Unlock = 7,                // Unlock workstation
+    NetworkCleartext = 8,      // Network logon with cleartext credentials
+    NewCredentials = 9,        // RunAs with alternate credentials
+    RemoteInteractive = 10,    // RDP/Terminal Services
+    CachedInteractive = 11,    // Cached domain credentials
+    CachedRemoteInteractive = 12, // Cached RDP
+    CachedUnlock = 13,         // Unlock with cached credentials
+}
+
+/// Logon session entry
+#[derive(Clone, Copy)]
+pub struct LogonSession {
+    pub authentication_id: Luid,
+    pub user_sid: Sid,
+    pub logon_type: LogonType,
+    pub logon_time: u64,
+    pub logon_server: [u8; 32],
+    pub logon_domain: [u8; 64],
+    pub session_id: u32,
+    pub active: bool,
+}
+
+impl LogonSession {
+    pub const fn new() -> Self {
+        Self {
+            authentication_id: Luid::new(),
+            user_sid: Sid::new(),
+            logon_type: LogonType::Interactive,
+            logon_time: 0,
+            logon_server: [0; 32],
+            logon_domain: [0; 64],
+            session_id: 0,
+            active: false,
+        }
+    }
+}
+
+/// Maximum number of concurrent logon sessions
+const MAX_LOGON_SESSIONS: usize = 64;
+
+/// Global logon session table
+static mut LOGON_SESSIONS: [LogonSession; MAX_LOGON_SESSIONS] = [LogonSession::new(); MAX_LOGON_SESSIONS];
+static mut NEXT_LOGON_ID: u64 = 1000;
+
+/// SeCreateLogonSession — create a new logon session
+pub fn se_create_logon_session(
+    logon_id: *mut Luid,
+    user_sid: &Sid,
+    logon_type: LogonType,
+    session_id: u32,
+) -> bool {
+    if logon_id.is_null() {
+        return false;
+    }
+
+    unsafe {
+        // Find free slot
+        let mut slot_index = None;
+        for i in 0..MAX_LOGON_SESSIONS {
+            if !LOGON_SESSIONS[i].active {
+                slot_index = Some(i);
+                break;
+            }
+        }
+
+        let index = match slot_index {
+            Some(i) => i,
+            None => return false, // No free slots
+        };
+
+        // Allocate new authentication ID
+        let auth_id = Luid::from_u64(NEXT_LOGON_ID);
+        NEXT_LOGON_ID += 1;
+
+        // Initialize logon session
+        LOGON_SESSIONS[index].authentication_id = auth_id;
+        LOGON_SESSIONS[index].user_sid = *user_sid;
+        LOGON_SESSIONS[index].logon_type = logon_type;
+        LOGON_SESSIONS[index].logon_time = get_system_time();
+        LOGON_SESSIONS[index].session_id = session_id;
+        LOGON_SESSIONS[index].active = true;
+
+        // Return the authentication ID
+        *logon_id = auth_id;
+
+        true
+    }
+}
+
+/// SeDeleteLogonSession — delete a logon session
+pub fn se_delete_logon_session(logon_id: &Luid) -> bool {
+    unsafe {
+        for i in 0..MAX_LOGON_SESSIONS {
+            if LOGON_SESSIONS[i].active && LOGON_SESSIONS[i].authentication_id.equals(logon_id) {
+                LOGON_SESSIONS[i].active = false;
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// SeLookupLogonSession — find a logon session by authentication ID
+pub fn se_lookup_logon_session(logon_id: &Luid) -> Option<LogonSession> {
+    unsafe {
+        for i in 0..MAX_LOGON_SESSIONS {
+            if LOGON_SESSIONS[i].active && LOGON_SESSIONS[i].authentication_id.equals(logon_id) {
+                return Some(LOGON_SESSIONS[i]);
+            }
+        }
+    }
+    None
+}
+
+/// SeMarkLogonSessionForTerminationNotification — mark a session for cleanup
+pub fn se_mark_logon_session_for_termination(logon_id: &Luid) -> bool {
+    // In a full implementation, this would register the session for cleanup
+    // when the last token using it is closed
+    se_lookup_logon_session(logon_id).is_some()
+}
+
+/// SeUnregisterLogonSessionTerminatedRoutine — unregister termination callback
+pub fn se_unregister_logon_session_terminated_routine() -> bool {
+    // Placeholder for callback unregistration
+    true
+}
+
+/// Query logon session information
+pub fn se_query_logon_session_info(
+    logon_id: &Luid,
+) -> Option<(Sid, LogonType, u64, u32)> {
+    let session = se_lookup_logon_session(logon_id)?;
+    Some((
+        session.user_sid,
+        session.logon_type,
+        session.logon_time,
+        session.session_id,
+    ))
+}
+
+/// Enumerate all active logon sessions
+pub fn se_enumerate_logon_sessions() -> Vec<Luid> {
+    let mut sessions = Vec::new();
+    unsafe {
+        for i in 0..MAX_LOGON_SESSIONS {
+            if LOGON_SESSIONS[i].active {
+                sessions.push(LOGON_SESSIONS[i].authentication_id);
+            }
+        }
+    }
+    sessions
+}
+
+/// Helper: Get current system time (simplified)
+fn get_system_time() -> u64 {
+    // In a full implementation, this would query the system timer
+    // For now, return a placeholder
+    0
+}
+
+/// Initialize a logon session for System
+pub fn init_system_logon_session() -> Luid {
+    let system_sid = super::sid::Sid::well_known(super::sid::WellKnownSid::LocalSystem);
+    let mut logon_id = Luid::new();
+
+    se_create_logon_session(
+        &mut logon_id,
+        &system_sid,
+        LogonType::Service,
+        0,
+    );
+
+    logon_id
+}
+
+pub fn init() {
+    // Initialize System logon session
+    init_system_logon_session();
+}
