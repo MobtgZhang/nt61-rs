@@ -4,10 +4,10 @@
 //! modern cryptographic primitives through algorithm providers.
 
 extern crate alloc;
-use core::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, AtomicBool, AtomicPtr, Ordering};
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::ptr;
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 #[repr(transparent)]
 pub struct BcryptAlgHandle(pub usize);
@@ -102,9 +102,16 @@ pub unsafe extern "C" fn BCryptOpenAlgorithmProvider(
     };
 
     match alg_str.as_str() {
-        algorithm::AES | algorithm::DES | algorithm::DES3 | algorithm::RC4 |
-        algorithm::RSA | algorithm::SHA1 | algorithm::SHA256 | algorithm::SHA384 |
-        algorithm::SHA512 | algorithm::MD5 => {}
+        algorithm::AES
+        | algorithm::DES
+        | algorithm::DES3
+        | algorithm::RC4
+        | algorithm::RSA
+        | algorithm::SHA1
+        | algorithm::SHA256
+        | algorithm::SHA384
+        | algorithm::SHA512
+        | algorithm::MD5 => {}
         _ => return STATUS_NOT_SUPPORTED,
     }
 
@@ -121,10 +128,7 @@ pub unsafe extern "C" fn BCryptOpenAlgorithmProvider(
     STATUS_SUCCESS
 }
 
-pub unsafe extern "C" fn BCryptCloseAlgorithmProvider(
-    alg_handle: usize,
-    flags: u32,
-) -> i32 {
+pub unsafe extern "C" fn BCryptCloseAlgorithmProvider(alg_handle: usize, flags: u32) -> i32 {
     if alg_handle == 0 {
         return STATUS_INVALID_HANDLE;
     }
@@ -169,11 +173,7 @@ pub unsafe extern "C" fn BCryptGetProperty(
         return STATUS_BUFFER_TOO_SMALL;
     }
 
-    ptr::copy_nonoverlapping(
-        &value as *const u32 as *const u8,
-        output,
-        4,
-    );
+    ptr::copy_nonoverlapping(&value as *const u32 as *const u8, output, 4);
 
     STATUS_SUCCESS
 }
@@ -248,7 +248,6 @@ pub unsafe extern "C" fn BCryptHashData(
 
     let data = core::slice::from_raw_parts(input, input_len as usize);
 
-
     STATUS_SUCCESS
 }
 
@@ -262,7 +261,6 @@ pub unsafe extern "C" fn BCryptFinishHash(
         return STATUS_INVALID_PARAMETER;
     }
 
-
     STATUS_SUCCESS
 }
 
@@ -270,7 +268,6 @@ pub unsafe extern "C" fn BCryptDestroyHash(hash_handle: usize) -> i32 {
     if hash_handle == 0 {
         return STATUS_INVALID_HANDLE;
     }
-
 
     STATUS_SUCCESS
 }
@@ -297,8 +294,7 @@ pub unsafe extern "C" fn BCryptGenerateSymmetricKey(
         chaining_mode: String::from(chaining_mode::CBC),
     };
 
-    KEY_COUNTER += 1;
-    let handle = KEY_COUNTER;
+    let handle = KEY_COUNTER.fetch_add(1, Ordering::SeqCst);
 
     *key_handle = handle;
 
@@ -370,7 +366,6 @@ pub unsafe extern "C" fn BCryptDestroyKey(key_handle: usize) -> i32 {
         return STATUS_INVALID_HANDLE;
     }
 
-
     STATUS_SUCCESS
 }
 
@@ -390,8 +385,7 @@ pub unsafe extern "C" fn BCryptGenerateKeyPair(
         algorithm::RSA => {
             let _key = crate::crypto::rsa::RsaPrivateKey::generate(key_length as usize);
 
-            KEY_COUNTER += 1;
-            *key_handle = KEY_COUNTER;
+            *key_handle = KEY_COUNTER.fetch_add(1, Ordering::SeqCst);
 
             STATUS_SUCCESS
         }
@@ -399,10 +393,7 @@ pub unsafe extern "C" fn BCryptGenerateKeyPair(
     }
 }
 
-pub unsafe extern "C" fn BCryptFinalizeKeyPair(
-    key_handle: usize,
-    flags: u32,
-) -> i32 {
+pub unsafe extern "C" fn BCryptFinalizeKeyPair(key_handle: usize, flags: u32) -> i32 {
     if key_handle == 0 {
         return STATUS_INVALID_HANDLE;
     }
@@ -451,8 +442,7 @@ pub unsafe extern "C" fn BCryptImportKey(
         return STATUS_INVALID_PARAMETER;
     }
 
-    KEY_COUNTER += 1;
-    *key_handle = KEY_COUNTER;
+    *key_handle = KEY_COUNTER.fetch_add(1, Ordering::SeqCst);
 
     STATUS_SUCCESS
 }
@@ -520,7 +510,6 @@ pub unsafe extern "C" fn BCryptGenRandom(
         STATUS_INVALID_PARAMETER
     }
 }
-
 
 fn get_algorithm_for_handle(handle: usize) -> String {
     String::from(algorithm::SHA256)

@@ -103,18 +103,42 @@ impl Aes128 {
 
     fn shift_rows(state: &mut [u8; 16]) {
         let tmp = *state;
-        state[0] = tmp[0]; state[1] = tmp[5]; state[2] = tmp[10]; state[3] = tmp[15];
-        state[4] = tmp[4]; state[5] = tmp[9]; state[6] = tmp[14]; state[7] = tmp[3];
-        state[8] = tmp[8]; state[9] = tmp[13]; state[10] = tmp[2]; state[11] = tmp[7];
-        state[12] = tmp[12]; state[13] = tmp[1]; state[14] = tmp[6]; state[15] = tmp[11];
+        state[0] = tmp[0];
+        state[1] = tmp[5];
+        state[2] = tmp[10];
+        state[3] = tmp[15];
+        state[4] = tmp[4];
+        state[5] = tmp[9];
+        state[6] = tmp[14];
+        state[7] = tmp[3];
+        state[8] = tmp[8];
+        state[9] = tmp[13];
+        state[10] = tmp[2];
+        state[11] = tmp[7];
+        state[12] = tmp[12];
+        state[13] = tmp[1];
+        state[14] = tmp[6];
+        state[15] = tmp[11];
     }
 
     fn inv_shift_rows(state: &mut [u8; 16]) {
         let tmp = *state;
-        state[0] = tmp[0]; state[1] = tmp[13]; state[2] = tmp[10]; state[3] = tmp[7];
-        state[4] = tmp[4]; state[5] = tmp[1]; state[6] = tmp[14]; state[7] = tmp[11];
-        state[8] = tmp[8]; state[9] = tmp[5]; state[10] = tmp[2]; state[11] = tmp[15];
-        state[12] = tmp[12]; state[13] = tmp[9]; state[14] = tmp[6]; state[15] = tmp[3];
+        state[0] = tmp[0];
+        state[1] = tmp[13];
+        state[2] = tmp[10];
+        state[3] = tmp[7];
+        state[4] = tmp[4];
+        state[5] = tmp[1];
+        state[6] = tmp[14];
+        state[7] = tmp[11];
+        state[8] = tmp[8];
+        state[9] = tmp[5];
+        state[10] = tmp[2];
+        state[11] = tmp[15];
+        state[12] = tmp[12];
+        state[13] = tmp[9];
+        state[14] = tmp[6];
+        state[15] = tmp[3];
     }
 
     fn mix_columns(state: &mut [u8; 16]) {
@@ -263,7 +287,8 @@ impl Rc4 {
             self.i = self.i.wrapping_add(1);
             self.j = self.j.wrapping_add(self.s[self.i as usize]);
             self.s.swap(self.i as usize, self.j as usize);
-            let k = self.s[(self.s[self.i as usize].wrapping_add(self.s[self.j as usize])) as usize];
+            let k =
+                self.s[(self.s[self.i as usize].wrapping_add(self.s[self.j as usize])) as usize];
             *byte ^= k;
         }
     }

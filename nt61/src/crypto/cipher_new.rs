@@ -6,18 +6,18 @@
 //! timing attacks.
 
 extern crate alloc;
-use alloc::vec::Vec;
+use aes::cipher::{generic_array::GenericArray, BlockDecrypt, BlockEncrypt, KeyInit};
 use aes::Aes256;
-use aes::cipher::{
-    BlockEncrypt, BlockDecrypt, KeyInit,
-    generic_array::GenericArray,
-};
+use alloc::vec::Vec;
 
 pub const AES_BLOCK_SIZE: usize = 16;
 
 pub const AES_KEY_SIZE: usize = 32;
 
-pub fn aes_encrypt_block(key: &[u8; AES_KEY_SIZE], block: &[u8; AES_BLOCK_SIZE]) -> [u8; AES_BLOCK_SIZE] {
+pub fn aes_encrypt_block(
+    key: &[u8; AES_KEY_SIZE],
+    block: &[u8; AES_BLOCK_SIZE],
+) -> [u8; AES_BLOCK_SIZE] {
     let cipher = Aes256::new(GenericArray::from_slice(key));
     let mut data = *GenericArray::from_slice(block);
     cipher.encrypt_block(&mut data);
@@ -26,7 +26,10 @@ pub fn aes_encrypt_block(key: &[u8; AES_KEY_SIZE], block: &[u8; AES_BLOCK_SIZE])
     output
 }
 
-pub fn aes_decrypt_block(key: &[u8; AES_KEY_SIZE], block: &[u8; AES_BLOCK_SIZE]) -> [u8; AES_BLOCK_SIZE] {
+pub fn aes_decrypt_block(
+    key: &[u8; AES_KEY_SIZE],
+    block: &[u8; AES_BLOCK_SIZE],
+) -> [u8; AES_BLOCK_SIZE] {
     let cipher = Aes256::new(GenericArray::from_slice(key));
     let mut data = *GenericArray::from_slice(block);
     cipher.decrypt_block(&mut data);

@@ -8,10 +8,52 @@
 
 extern crate alloc;
 use alloc::vec::Vec;
-use rsa::{RsaPrivateKey, RsaPublicKey, Pkcs1v15Encrypt, Pkcs1v15Sign};
-use rsa::signature::{SignatureEncoding, Signer, Verifier};
+use core::num::NonZeroU32;
+use rand_core::{CryptoRng, Error, RngCore};
 use rsa::sha2::Sha256;
-use rand_core::OsRng;
+use rsa::signature::{SignatureEncoding, Signer, Verifier};
+use rsa::{Pkcs1v15Encrypt, Pkcs1v15Sign, RsaPrivateKey, RsaPublicKey};
+
+/// Custom error code reported when the kernel CSPRNG cannot fill a buffer.
+/// Codes at or above `Error::CUSTOM_START` are reserved for user-defined
+/// errors, so this is safe in both `std` and `no_std` builds.
+const CSPRNG_FAILURE_CODE: u32 = rand_core::Error::CUSTOM_START + 1;
+
+/// Kernel entropy adapter for the `rsa` crate.
+///
+/// `rand_core::OsRng` depends on `getrandom`, which does not exist in a
+/// bare-metal kernel. The kernel CSPRNG (`crypto::csprng`, seeded from
+/// RDSEED/RDRAND) is the only entropy source available here, so it is
+/// wrapped as a `RngCore` instead.
+struct KernelRng;
+
+impl RngCore for KernelRng {
+    fn next_u32(&mut self) -> u32 {
+        let mut buf = [0u8; 4];
+        crate::crypto::csprng::fill(&mut buf);
+        u32::from_le_bytes(buf)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        let mut buf = [0u8; 8];
+        crate::crypto::csprng::fill(&mut buf);
+        u64::from_le_bytes(buf)
+    }
+
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        crate::crypto::csprng::fill(dest);
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Error> {
+        if crate::crypto::csprng::fill(dest) {
+            Ok(())
+        } else {
+            Err(NonZeroU32::new(CSPRNG_FAILURE_CODE).unwrap().into())
+        }
+    }
+}
+
+impl CryptoRng for KernelRng {}
 
 pub const RSA_KEY_SIZE: usize = 2048;
 
@@ -19,17 +61,19 @@ pub fn generate_keypair() -> Result<(Vec<u8>, Vec<u8>), &'static str> {
     use rsa::pkcs1::EncodeRsaPrivateKey;
     use rsa::pkcs1::EncodeRsaPublicKey;
 
-    let mut rng = OsRng;
-    let private_key = RsaPrivateKey::new(&mut rng, RSA_KEY_SIZE)
-        .map_err(|_| "Failed to generate RSA key")?;
+    let mut rng = KernelRng;
+    let private_key =
+        RsaPrivateKey::new(&mut rng, RSA_KEY_SIZE).map_err(|_| "Failed to generate RSA key")?;
     let public_key = RsaPublicKey::from(&private_key);
 
-    let private_der = private_key.to_pkcs1_der()
+    let private_der = private_key
+        .to_pkcs1_der()
         .map_err(|_| "Failed to encode private key")?
         .to_bytes()
         .to_vec();
 
-    let public_der = public_key.to_pkcs1_der()
+    let public_der = public_key
+        .to_pkcs1_der()
         .map_err(|_| "Failed to encode public key")?
         .to_vec();
 
@@ -39,8 +83,8 @@ pub fn generate_keypair() -> Result<(Vec<u8>, Vec<u8>), &'static str> {
 pub fn sign_data(private_key_der: &[u8], data: &[u8]) -> Result<Vec<u8>, &'static str> {
     use rsa::pkcs1::DecodeRsaPrivateKey;
 
-    let private_key = RsaPrivateKey::from_pkcs1_der(private_key_der)
-        .map_err(|_| "Invalid private key")?;
+    let private_key =
+        RsaPrivateKey::from_pkcs1_der(private_key_der).map_err(|_| "Invalid private key")?;
 
     let signing_key = rsa::pkcs1v15::SigningKey::<Sha256>::new(private_key);
     let signature = signing_key.sign(data);
@@ -54,39 +98,43 @@ pub fn verify_signature(
     signature: &[u8],
 ) -> Result<(), &'static str> {
     use rsa::pkcs1::DecodeRsaPublicKey;
-    use rsa::signature::Signature;
 
-    let public_key = RsaPublicKey::from_pkcs1_der(public_key_der)
-        .map_err(|_| "Invalid public key")?;
+    let public_key =
+        RsaPublicKey::from_pkcs1_der(public_key_der).map_err(|_| "Invalid public key")?;
 
     let verifying_key = rsa::pkcs1v15::VerifyingKey::<Sha256>::new(public_key);
 
-    let sig = rsa::pkcs1v15::Signature::try_from(signature)
-        .map_err(|_| "Invalid signature format")?;
+    let sig =
+        rsa::pkcs1v15::Signature::try_from(signature).map_err(|_| "Invalid signature format")?;
 
-    verifying_key.verify(data, &sig)
+    verifying_key
+        .verify(data, &sig)
         .map_err(|_| "Signature verification failed")
 }
 
 /// For large data, use hybrid encryption (RSA for key, AES for data)
 pub fn encrypt(public_key_der: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, &'static str> {
+    use rsa::pkcs1::DecodeRsaPublicKey;
 
-    let public_key = RsaPublicKey::from_pkcs1_der(public_key_der)
-        .map_err(|_| "Invalid public key")?;
+    let public_key =
+        RsaPublicKey::from_pkcs1_der(public_key_der).map_err(|_| "Invalid public key")?;
 
-    let mut rng = OsRng;
-    let ciphertext = public_key.encrypt(&mut rng, Pkcs1v15Encrypt, plaintext)
+    let mut rng = KernelRng;
+    let ciphertext = public_key
+        .encrypt(&mut rng, Pkcs1v15Encrypt, plaintext)
         .map_err(|_| "Encryption failed")?;
 
     Ok(ciphertext)
 }
 
 pub fn decrypt(private_key_der: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, &'static str> {
+    use rsa::pkcs1::DecodeRsaPrivateKey;
 
-    let private_key = RsaPrivateKey::from_pkcs1_der(private_key_der)
-        .map_err(|_| "Invalid private key")?;
+    let private_key =
+        RsaPrivateKey::from_pkcs1_der(private_key_der).map_err(|_| "Invalid private key")?;
 
-    let plaintext = private_key.decrypt(Pkcs1v15Encrypt, ciphertext)
+    let plaintext = private_key
+        .decrypt(Pkcs1v15Encrypt, ciphertext)
         .map_err(|_| "Decryption failed")?;
 
     Ok(plaintext)

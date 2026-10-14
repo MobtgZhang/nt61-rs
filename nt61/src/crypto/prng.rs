@@ -69,8 +69,7 @@ impl Prng {
             PrngAlgorithm::Lcg => {
                 let seed_val = if seed.len() >= 8 {
                     u64::from_le_bytes([
-                        seed[0], seed[1], seed[2], seed[3],
-                        seed[4], seed[5], seed[6], seed[7],
+                        seed[0], seed[1], seed[2], seed[3], seed[4], seed[5], seed[6], seed[7],
                     ])
                 } else {
                     0x123456789abcdef0
@@ -131,8 +130,8 @@ impl Prng {
             PrngState::Lcg(state) => {
                 if entropy.len() >= 8 {
                     let seed = u64::from_le_bytes([
-                        entropy[0], entropy[1], entropy[2], entropy[3],
-                        entropy[4], entropy[5], entropy[6], entropy[7],
+                        entropy[0], entropy[1], entropy[2], entropy[3], entropy[4], entropy[5],
+                        entropy[6], entropy[7],
                     ]);
                     state.seed = seed;
                 }
@@ -157,12 +156,8 @@ impl ChaCha20State {
         state[3] = 0x6b206574;
 
         for i in 0..8 {
-            state[4 + i] = u32::from_le_bytes([
-                key[i * 4],
-                key[i * 4 + 1],
-                key[i * 4 + 2],
-                key[i * 4 + 3],
-            ]);
+            state[4 + i] =
+                u32::from_le_bytes([key[i * 4], key[i * 4 + 1], key[i * 4 + 2], key[i * 4 + 3]]);
         }
 
         state[12] = 0;
@@ -448,8 +443,16 @@ pub mod hwrng {
 
 #[cfg(not(target_arch = "x86_64"))]
 pub mod hwrng {
-    pub fn has_rdrand() -> bool { false }
-    pub fn has_rdseed() -> bool { false }
-    pub fn rdrand_fill(_buf: &mut [u8]) -> bool { false }
-    pub fn rdseed_fill(_buf: &mut [u8]) -> bool { false }
+    pub fn has_rdrand() -> bool {
+        false
+    }
+    pub fn has_rdseed() -> bool {
+        false
+    }
+    pub fn rdrand_fill(_buf: &mut [u8]) -> bool {
+        false
+    }
+    pub fn rdseed_fill(_buf: &mut [u8]) -> bool {
+        false
+    }
 }

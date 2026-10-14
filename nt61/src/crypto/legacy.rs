@@ -5,11 +5,11 @@
 //! applications.
 
 extern crate alloc;
-use core::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, AtomicBool, AtomicPtr, Ordering};
 use alloc::string::String;
-use alloc::vec::Vec;
 use alloc::vec;
+use alloc::vec::Vec;
 use core::ptr;
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 #[repr(transparent)]
 pub struct HCryptProv(pub usize);
@@ -121,8 +121,7 @@ pub unsafe extern "C" fn CryptAcquireContextA(
         container: container_name,
     };
 
-    PROV_COUNTER += 1;
-    *prov = PROV_COUNTER;
+    *prov = PROV_COUNTER.fetch_add(1, Ordering::SeqCst);
 
     1 // TRUE
 }
@@ -150,16 +149,12 @@ pub unsafe extern "C" fn CryptAcquireContextW(
         container: container_name,
     };
 
-    PROV_COUNTER += 1;
-    *prov = PROV_COUNTER;
+    *prov = PROV_COUNTER.fetch_add(1, Ordering::SeqCst);
 
     1 // TRUE
 }
 
-pub unsafe extern "C" fn CryptReleaseContext(
-    prov: usize,
-    flags: u32,
-) -> i32 {
+pub unsafe extern "C" fn CryptReleaseContext(prov: usize, flags: u32) -> i32 {
     if prov == 0 {
         return 0;
     }
@@ -189,8 +184,7 @@ pub unsafe extern "C" fn CryptCreateHash(
 
     let context = HashContext { alg_id, state };
 
-    HASH_COUNTER += 1;
-    *hash = HASH_COUNTER;
+    *hash = HASH_COUNTER.fetch_add(1, Ordering::SeqCst);
 
     1 // TRUE
 }
@@ -206,7 +200,6 @@ pub unsafe extern "C" fn CryptHashData(
     }
 
     let input = core::slice::from_raw_parts(data, data_len as usize);
-
 
     1 // TRUE
 }
@@ -228,11 +221,7 @@ pub unsafe extern "C" fn CryptGetHashParam(
             *data_len = 4;
 
             if !data.is_null() {
-                ptr::copy_nonoverlapping(
-                    &size as *const u32 as *const u8,
-                    data,
-                    4,
-                );
+                ptr::copy_nonoverlapping(&size as *const u32 as *const u8, data, 4);
             }
 
             1 // TRUE
@@ -261,12 +250,7 @@ pub unsafe extern "C" fn CryptDestroyHash(hash: usize) -> i32 {
     1 // TRUE
 }
 
-pub unsafe extern "C" fn CryptGenKey(
-    prov: usize,
-    alg_id: u32,
-    flags: u32,
-    key: *mut usize,
-) -> i32 {
+pub unsafe extern "C" fn CryptGenKey(prov: usize, alg_id: u32, flags: u32, key: *mut usize) -> i32 {
     if prov == 0 || key.is_null() {
         return 0;
     }
@@ -291,8 +275,7 @@ pub unsafe extern "C" fn CryptGenKey(
         mode: cipher_mode::CRYPT_MODE_CBC,
     };
 
-    KEY_COUNTER += 1;
-    *key = KEY_COUNTER;
+    *key = KEY_COUNTER.fetch_add(1, Ordering::SeqCst);
 
     1 // TRUE
 }
@@ -311,8 +294,7 @@ pub unsafe extern "C" fn CryptImportKey(
 
     let blob = core::slice::from_raw_parts(data, data_len as usize);
 
-    KEY_COUNTER += 1;
-    *key = KEY_COUNTER;
+    *key = KEY_COUNTER.fetch_add(1, Ordering::SeqCst);
 
     1 // TRUE
 }
@@ -356,11 +338,7 @@ pub unsafe extern "C" fn CryptGetKeyParam(
             *data_len = 4;
             if !data.is_null() {
                 let mode = cipher_mode::CRYPT_MODE_CBC;
-                ptr::copy_nonoverlapping(
-                    &mode as *const u32 as *const u8,
-                    data,
-                    4,
-                );
+                ptr::copy_nonoverlapping(&mode as *const u32 as *const u8, data, 4);
             }
             1 // TRUE
         }
@@ -409,7 +387,6 @@ pub unsafe extern "C" fn CryptEncrypt(
         return 0;
     }
 
-
     1 // TRUE
 }
 
@@ -425,7 +402,6 @@ pub unsafe extern "C" fn CryptDecrypt(
         return 0;
     }
 
-
     1 // TRUE
 }
 
@@ -437,11 +413,7 @@ pub unsafe extern "C" fn CryptDestroyKey(key: usize) -> i32 {
     1 // TRUE
 }
 
-pub unsafe extern "C" fn CryptGenRandom(
-    prov: usize,
-    len: u32,
-    buffer: *mut u8,
-) -> i32 {
+pub unsafe extern "C" fn CryptGenRandom(prov: usize, len: u32, buffer: *mut u8) -> i32 {
     if prov == 0 || buffer.is_null() {
         return 0;
     }
@@ -503,8 +475,7 @@ pub unsafe extern "C" fn CryptDuplicateHash(
         return 0;
     }
 
-    HASH_COUNTER += 1;
-    *new_hash = HASH_COUNTER;
+    *new_hash = HASH_COUNTER.fetch_add(1, Ordering::SeqCst);
 
     1 // TRUE
 }
@@ -519,12 +490,10 @@ pub unsafe extern "C" fn CryptDuplicateKey(
         return 0;
     }
 
-    KEY_COUNTER += 1;
-    *new_key = KEY_COUNTER;
+    *new_key = KEY_COUNTER.fetch_add(1, Ordering::SeqCst);
 
     1 // TRUE
 }
-
 
 fn get_hash_size_for_handle(handle: usize) -> u32 {
     32

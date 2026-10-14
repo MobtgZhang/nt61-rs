@@ -4,24 +4,24 @@
 //! operations (PKCS#1 v1.5 and PSS) for CNG providers.
 
 extern crate alloc;
-use alloc::vec::Vec;
 use alloc::vec;
+use alloc::vec::Vec;
 
 #[derive(Clone)]
 pub struct RsaPublicKey {
-    pub n: BigUint,  // Modulus
-    pub e: BigUint,  // Public exponent
+    pub n: BigUint, // Modulus
+    pub e: BigUint, // Public exponent
 }
 
 pub struct RsaPrivateKey {
-    pub n: BigUint,   // Modulus
-    pub e: BigUint,   // Public exponent
-    pub d: BigUint,   // Private exponent
-    pub p: BigUint,   // First prime
-    pub q: BigUint,   // Second prime
-    pub dp: BigUint,  // d mod (p-1)
-    pub dq: BigUint,  // d mod (q-1)
-    pub qi: BigUint,  // q^-1 mod p
+    pub n: BigUint,  // Modulus
+    pub e: BigUint,  // Public exponent
+    pub d: BigUint,  // Private exponent
+    pub p: BigUint,  // First prime
+    pub q: BigUint,  // Second prime
+    pub dp: BigUint, // d mod (p-1)
+    pub dq: BigUint, // d mod (q-1)
+    pub qi: BigUint, // q^-1 mod p
 }
 
 impl RsaPrivateKey {
@@ -44,7 +44,16 @@ impl RsaPrivateKey {
         let dq = d.mod_op(&q_minus_1);
         let qi = q.mod_inverse(&p);
 
-        Self { n, e, d, p, q, dp, dq, qi }
+        Self {
+            n,
+            e,
+            d,
+            p,
+            q,
+            dp,
+            dq,
+            qi,
+        }
     }
 
     pub fn public_key(&self) -> RsaPublicKey {
@@ -56,7 +65,6 @@ impl RsaPrivateKey {
 
     pub fn decrypt(&self, ciphertext: &[u8]) -> Vec<u8> {
         let c = BigUint::from_bytes(ciphertext);
-
 
         let m1 = c.mod_exp(&self.dp, &self.p);
         let m2 = c.mod_exp(&self.dq, &self.q);
@@ -249,7 +257,11 @@ impl BigUint {
             return 1;
         }
         let top_limb = self.limbs[self.limbs.len() - 1];
-        let limb_bytes = if top_limb == 0 { 1 } else { (64 - top_limb.leading_zeros() + 7) / 8 };
+        let limb_bytes = if top_limb == 0 {
+            1
+        } else {
+            (64 - top_limb.leading_zeros() + 7) / 8
+        };
         (self.limbs.len() - 1) * 8 + limb_bytes as usize
     }
 
@@ -259,8 +271,16 @@ impl BigUint {
         let mut carry = 0u64;
 
         for i in 0..max_len {
-            let a = if i < self.limbs.len() { self.limbs[i] } else { 0 };
-            let b = if i < other.limbs.len() { other.limbs[i] } else { 0 };
+            let a = if i < self.limbs.len() {
+                self.limbs[i]
+            } else {
+                0
+            };
+            let b = if i < other.limbs.len() {
+                other.limbs[i]
+            } else {
+                0
+            };
             let (sum, c1) = a.overflowing_add(b);
             let (sum, c2) = sum.overflowing_add(carry);
             result[i] = sum;
@@ -284,7 +304,11 @@ impl BigUint {
 
         for i in 0..self.limbs.len() {
             let a = self.limbs[i] as i64;
-            let b = if i < other.limbs.len() { other.limbs[i] as i64 } else { 0 };
+            let b = if i < other.limbs.len() {
+                other.limbs[i] as i64
+            } else {
+                0
+            };
             let diff = a - b - borrow;
             if diff < 0 {
                 result[i] = (diff + (1i64 << 32) + (1i64 << 32)) as u64;
@@ -415,7 +439,11 @@ impl BigUint {
 
     pub fn cmp(&self, other: &Self) -> i32 {
         if self.limbs.len() != other.limbs.len() {
-            return if self.limbs.len() > other.limbs.len() { 1 } else { -1 };
+            return if self.limbs.len() > other.limbs.len() {
+                1
+            } else {
+                -1
+            };
         }
 
         for i in (0..self.limbs.len()).rev() {
