@@ -16,6 +16,31 @@ use core::sync::atomic::{AtomicBool, Ordering};
 /// the high-throughput `BufferWriter`/`windows_log` path is used.
 pub static LOG_EARLY_READY: AtomicBool = AtomicBool::new(false);
 
+/// Set while the CPU is inside a trap handler.
+///
+/// A `#PF` handler must not touch the linear framebuffer or the VGA
+/// text buffer: those pages are only reachable through the low-half
+/// identity map, and the mapping that is actually loaded when the
+/// handler runs is the *faulting process's* page table. If that table
+/// marks the framebuffer read-only (or does not map it at all), the
+/// logging call re-faults inside the handler. Intel SDM Vol. 3A: a
+/// exception that cannot be delivered because its handler faults
+/// escalates to `#DF`, and a faulting `#DF` handler causes a triple
+/// fault and a platform reset. Windows 7 `MmAccessFault` and ReactOS
+/// `ntoskrnl/ex/exception.c` therefore keep the fault-dispatch path
+/// free of anything that can re-fault, so while this flag is set the
+/// UART is the only sink.
+static FAULT_CONTEXT: AtomicBool = AtomicBool::new(false);
+
+pub fn set_fault_context(active: bool) {
+    FAULT_CONTEXT.store(active, Ordering::Release);
+}
+
+#[inline]
+pub fn in_fault_context() -> bool {
+    FAULT_CONTEXT.load(Ordering::Acquire)
+}
+
 /// Called from `mm::init()` once the page-fault handler and PFN
 /// database are live. From this point on, the buffered logging path
 /// is safe to use.
@@ -26,6 +51,10 @@ pub fn mark_post_mm() {
 #[inline(never)]
 pub fn write_early(s: &str) {
     let _ = crate::hal::serial::write_string(s);
+
+    if in_fault_context() {
+        return;
+    }
 
     // Mirror every early log line to the VGA text console as
     // well. Before `mm::init()` runs, the LFB is still mapped
@@ -88,6 +117,17 @@ impl core::fmt::Write for SerialWriter {
 ///    CMD shell's log display pane reads from this ring so it has
 ///    content to paint on shell entry.
 pub fn write_serial(s: &str) {
+    // While a trap handler is running, the framebuffer and VGA text
+    // buffer are not safe to touch (see `FAULT_CONTEXT` above), so the
+    // UART is the only sink. Emit unmasked so the trace still reaches
+    // the host even after `set_disabled(true)` has gated normal logging.
+    if in_fault_context() {
+        crate::hal::common::serial_disable::with_serial_unmasked(|| {
+            let _ = crate::hal::serial::write_string(s);
+        });
+        return;
+    }
+
     // 1. Mirror to the cross-arch LFB (bootvid subsystem).
     //    This is the GUI-visible sink after the serial gate is
     //    flipped on. The bootvid LFB path is no-op until the
@@ -240,6 +280,14 @@ macro_rules! kprint {
 macro_rules! kprintln {
     // Level + subsystem + message
     (level: $lvl:expr, subsystem: $sub:expr, $($arg:tt)*) => {{
+        // The `level:` argument used to be accepted and then thrown away,
+        // so a `Debug` call still printed when the effective level was
+        // `Info`. Filter before formatting: skipping the format is also
+        // what makes a muted hot path cheap.
+        if $crate::rtl::logging::should_log_severity(
+            $lvl.to_severity(),
+            $crate::rtl::logging::subsystem_to_bits($sub),
+        ) {
         if $crate::rtl::klog::LOG_EARLY_READY.load(core::sync::atomic::Ordering::Acquire) {
             #[allow(unused_imports)]
             use ::core::fmt::Write;
@@ -256,6 +304,7 @@ macro_rules! kprintln {
             $crate::rtl::klog::write_early(concat!("[", $sub, "] "));
             $crate::kprint!($($arg)*);
             $crate::rtl::klog::write_early("\r\n");
+        }
         }
     }};
     // Level only + message
@@ -404,10 +453,18 @@ macro_rules! boot_err {
 #[macro_export]
 macro_rules! boot_print {
     ($($arg:tt)*) => {{
-        #[allow(unused_imports)]
-        use core::fmt::Write;
-        let mut writer = $crate::rtl::klog::SerialWriter;
-        let _ = writer.write_fmt(core::format_args!($($arg)*));
+        // Under user-mode libtest, serial-port I/O via `out` instructions
+        // faults (SIGSEGV). The boot trace is only meaningful during the
+        // kernel boot sequence anyway. Tests that need to inspect boot
+        // trace output should compile with `--cfg kernel_boot_smoke` and
+        // run on the kernel itself, not under cargo test.
+        #[cfg(not(test))]
+        {
+            #[allow(unused_imports)]
+            use core::fmt::Write;
+            let mut writer = $crate::rtl::klog::SerialWriter;
+            let _ = writer.write_fmt(core::format_args!($($arg)*));
+        }
     }};
 }
 

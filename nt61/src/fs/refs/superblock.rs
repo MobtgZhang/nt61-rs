@@ -126,7 +126,7 @@ impl RefsSuperBlock {
     /// Get the sector size in bytes
     pub fn get_sector_size(&self) -> u32 {
         if self.sector_size == 0 {
-            512  // Default sector size
+            512 // Default sector size
         } else {
             self.sector_size
         }
@@ -138,7 +138,7 @@ impl RefsSuperBlock {
         let sector_size = self.get_sector_size();
         // Default cluster size is 65536 bytes (64KB) for ReFS
         // This is configurable but we use a reasonable default
-        sector_size * 128  // 128 sectors = 64KB for 512-byte sectors
+        sector_size * 128 // 128 sectors = 64KB for 512-byte sectors
     }
 
     /// Get sector size shift
@@ -301,33 +301,33 @@ impl RefsSuperBlock {
 
     /// Print volume information for debugging
     pub fn debug_print(&self) {
-        // kprintln!("[REFS] Superblock Information:")  // kprintln disabled (memcpy crash workaround);
-        // kprintln!("  Signature:       0x{:08x} ({})",   // kprintln disabled (memcpy crash workaround)
-//             self.signature, 
-//             if self.is_valid() { "VALID" } else { "INVALID" });
-        // kprintln!("  Checksum:        0x{:08x}", self.checksum)  // kprintln disabled (memcpy crash workaround);
-        // kprintln!("  Version:         {}.{} - {}.{}",   // kprintln disabled (memcpy crash workaround)
-//             (self.version_lower >> 16) & 0xFFFF,
-//             self.version_lower & 0xFFFF,
-//             (self.version_upper >> 16) & 0xFFFF,
-//             self.version_upper & 0xFFFF);
-        // kprintln!("  Flags:           0x{:08x}", self.flags)  // kprintln disabled (memcpy crash workaround);
-        // kprintln!("  Sector size:     {} bytes", self.get_sector_size())  // kprintln disabled (memcpy crash workaround);
-        // kprintln!("  Cluster size:    {} bytes", self.get_cluster_size())  // kprintln disabled (memcpy crash workaround);
-        // kprintln!("  Total clusters:  {}", self.total_clusters)  // kprintln disabled (memcpy crash workaround);
-        // kprintln!("  Total size:      {} GB", self.get_total_size() / (1024 * 1024 * 1024))  // kprintln disabled (memcpy crash workaround);
-        // kprintln!("  Volume serial:   0x{:016x}", self.volume_serial)  // kprintln disabled (memcpy crash workaround);
-        // kprintln!("  Transaction ID:  {}", self.transaction_id)  // kprintln disabled (memcpy crash workaround);
-        // kprintln!("  Changes:        {}", self.changes_since_last_view)  // kprintln disabled (memcpy crash workaround);
-        
+        // kprintln!("[REFS] Superblock Information:");
+        // kprintln!("  Signature:       0x{:08x} ({})",
+        //             self.signature,
+        //             if self.is_valid() { "VALID" } else { "INVALID" });
+        // kprintln!("  Checksum:        0x{:08x}", self.checksum);
+        // kprintln!("  Version:         {}.{} - {}.{}",
+        //             (self.version_lower >> 16) & 0xFFFF,
+        //             self.version_lower & 0xFFFF,
+        //             (self.version_upper >> 16) & 0xFFFF,
+        //             self.version_upper & 0xFFFF);
+        // kprintln!("  Flags:           0x{:08x}", self.flags);
+        // kprintln!("  Sector size:     {} bytes", self.get_sector_size());
+        // kprintln!("  Cluster size:    {} bytes", self.get_cluster_size());
+        // kprintln!("  Total clusters:  {}", self.total_clusters);
+        // kprintln!("  Total size:      {} GB", self.get_total_size() / (1024 * 1024 * 1024));
+        // kprintln!("  Volume serial:   0x{:016x}", self.volume_serial);
+        // kprintln!("  Transaction ID:  {}", self.transaction_id);
+        // kprintln!("  Changes:        {}", self.changes_since_last_view);
+
         if self.is_read_only() {
-            // kprintln!("  Status:          READ-ONLY")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("  Status:          READ-ONLY");
         }
         if self.needs_check() {
-            // kprintln!("  Status:          NEEDS CHECK")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("  Status:          NEEDS CHECK");
         }
         if self.needs_cleanup() {
-            // kprintln!("  Status:          NEEDS CLEANUP")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("  Status:          NEEDS CLEANUP");
         }
     }
 }
@@ -339,56 +339,54 @@ impl RefsSuperBlock {
 /// Read the superblock from a device
 pub fn read_superblock(device: *mut ()) -> Option<RefsSuperBlock> {
     let mut buffer = vec![0u8; SUPERBLOCK_SIZE];
-    
+
     if read_sectors(device, SUPERBLOCK_OFFSET, 8, &mut buffer).is_err() {
-        // kprintln!("[REFS] Failed to read superblock")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[REFS] Failed to read superblock");
         return None;
     }
-    
-    let sb = unsafe { 
-        core::ptr::read_unaligned(buffer.as_ptr() as *const RefsSuperBlock) 
-    };
-    
+
+    let sb = unsafe { core::ptr::read_unaligned(buffer.as_ptr() as *const RefsSuperBlock) };
+
     if !sb.is_valid() {
-        // kprintln!("[REFS] Invalid superblock signature: 0x{:08x}", sb.signature)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[REFS] Invalid superblock signature: 0x{:08x}", sb.signature);
         return None;
     }
-    
+
     Some(sb)
 }
 
 /// Validate a superblock
 pub fn validate_superblock(sb: &RefsSuperBlock) -> FsResult<()> {
     if !sb.is_valid() {
-        // kprintln!("[REFS] Invalid signature")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[REFS] Invalid signature");
         return Err(FsError::DiskCorrupt);
     }
-    
+
     // Check for reasonable values
     if sb.get_sector_size() != 512 && sb.get_sector_size() != 4096 {
-        // kprintln!("[REFS] Unsupported sector size: {}", sb.get_sector_size())  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[REFS] Unsupported sector size: {}", sb.get_sector_size());
         return Err(FsError::DiskCorrupt);
     }
-    
+
     if sb.total_clusters == 0 {
-        // kprintln!("[REFS] Zero clusters reported")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[REFS] Zero clusters reported");
         return Err(FsError::DiskCorrupt);
     }
-    
+
     // Check version
     if sb.version_lower > REFS_MAX_VERSION || sb.version_upper < REFS_MIN_VERSION {
-        // kprintln!("[REFS] Version mismatch: {}-{} vs {}-{}",   // kprintln disabled (memcpy crash workaround)
-//             sb.version_lower, sb.version_upper, 
-//             REFS_MIN_VERSION, REFS_MAX_VERSION);
+        // kprintln!("[REFS] Version mismatch: {}-{} vs {}-{}",
+        //             sb.version_lower, sb.version_upper,
+        //             REFS_MIN_VERSION, REFS_MAX_VERSION);
         return Err(FsError::FileSystemLimit);
     }
-    
+
     // Verify checksum if supported
     if !verify_superblock_checksum(sb) {
-        // kprintln!("[REFS] Checksum mismatch - superblock may be corrupted")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[REFS] Checksum mismatch - superblock may be corrupted");
         // Note: This might be acceptable if the volume was not cleanly unmounted
     }
-    
+
     Ok(())
 }
 
@@ -397,17 +395,14 @@ pub fn verify_superblock_checksum(sb: &RefsSuperBlock) -> bool {
     // ReFS uses a simple additive checksum
     // The checksum field itself is not included in the calculation
     // This is a simplified check - real ReFS uses a more complex algorithm
-    
+
     let sb_bytes = unsafe {
-        core::slice::from_raw_parts(
-            sb as *const RefsSuperBlock as *const u8,
-            SUPERBLOCK_SIZE,
-        )
+        core::slice::from_raw_parts(sb as *const RefsSuperBlock as *const u8, SUPERBLOCK_SIZE)
     };
-    
+
     // Skip checksum field (bytes 8-11) in the sum
     let mut sum: u64 = 0;
-    
+
     for (i, &byte) in sb_bytes.iter().enumerate() {
         if i >= 8 && i < 12 {
             // Skip checksum bytes
@@ -415,10 +410,10 @@ pub fn verify_superblock_checksum(sb: &RefsSuperBlock) -> bool {
         }
         sum = sum.wrapping_add(byte as u64);
     }
-    
+
     // Simple modulo check (real implementation is more complex)
     let computed = (sum & 0xFFFFFFFF) as u32;
-    computed != sb.checksum  // If they match, we have a valid checksum
+    computed != sb.checksum // If they match, we have a valid checksum
 }
 
 // ============================================================================
@@ -429,27 +424,35 @@ pub fn verify_superblock_checksum(sb: &RefsSuperBlock) -> bool {
 fn read_sectors(_device: *mut (), offset: u64, count: u32, buffer: &mut [u8]) -> Result<(), ()> {
     let sector_size = 512usize;
     let needed = (count as usize) * sector_size;
-    
+
     if buffer.len() < needed {
         return Err(());
     }
-    
+
     for i in 0..count as usize {
         let sector_offset = offset + (i as u64) * (sector_size as u64);
         let sector_num = sector_offset / (sector_size as u64);
-        
-        if crate::drivers::storage::ramdisk::read(sector_num as usize, &mut buffer[i * sector_size..(i + 1) * sector_size]) {
+
+        if crate::drivers::storage::ramdisk::read(
+            sector_num as usize,
+            &mut buffer[i * sector_size..(i + 1) * sector_size],
+        ) {
             continue;
         }
-        
+
         // Try AHCI
-        if crate::drivers::storage::ahci::read_sector(0, 0, sector_num as u32, &mut buffer[i * sector_size..(i + 1) * sector_size]) {
+        if crate::drivers::storage::ahci::read_sector(
+            0,
+            0,
+            sector_num as u32,
+            &mut buffer[i * sector_size..(i + 1) * sector_size],
+        ) {
             continue;
         }
-        
+
         return Err(());
     }
-    
+
     Ok(())
 }
 

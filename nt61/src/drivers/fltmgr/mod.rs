@@ -54,12 +54,10 @@ const MAX_MESSAGES: usize = 16;
 
 /// FLT_CALLBACKS — the bitmask of callbacks the minifilter
 /// installs in its `FLT_REGISTRATION`.
-pub type PreOperationCallback =
-    Option<unsafe extern "C" fn(opa: *mut (), data: *mut u8) -> i32>;
+pub type PreOperationCallback = Option<unsafe extern "C" fn(opa: *mut (), data: *mut u8) -> i32>;
 pub type PostOperationCallback =
     Option<unsafe extern "C" fn(opa: *mut (), data: *mut u8, flags: u32)>;
-pub type FilterUnloadCallback =
-    Option<unsafe extern "C" fn(flags: u32)>;
+pub type FilterUnloadCallback = Option<unsafe extern "C" fn(flags: u32)>;
 pub type InstanceSetupCallback =
     Option<unsafe extern "C" fn(opa: *mut (), flags: u32, vol: *mut u8) -> i32>;
 pub type InstanceQueryTeardownCallback =
@@ -83,7 +81,8 @@ pub struct FltRegistration {
 impl FltRegistration {
     pub const fn new() -> Self {
         Self {
-            size: 0, flags: 0,
+            size: 0,
+            flags: 0,
             context_alloc_callback: None,
             context_free_callback: None,
             instance_setup: None,
@@ -100,7 +99,7 @@ impl FltRegistration {
 /// One registered filter.
 pub struct FltFilter {
     pub valid: bool,
-    pub name_buf: [u8; 16],  // Fixed-size name buffer instead of String
+    pub name_buf: [u8; 16], // Fixed-size name buffer instead of String
     pub name_len: usize,
     pub started: bool,
     pub attached_count: u32,
@@ -137,35 +136,45 @@ struct FltMessage {
 
 static mut FILTERS: [FltFilter; MAX_FILTERS] = [const { FltFilter::new() }; MAX_FILTERS];
 static mut ATTACHED: [[u8; 32]; MAX_ATTACHED_VOLUMES] = [[0u8; 32]; MAX_ATTACHED_VOLUMES];
-static mut MESSAGES: [FltMessage; MAX_MESSAGES] = [const { FltMessage {
-    valid: false, filter_name_buf: [0u8; 16], filter_name_len: 0,
-    buffer: [0u8; 256], buffer_len: 0, reply_status: 0,
-}}; MAX_MESSAGES];
+static mut MESSAGES: [FltMessage; MAX_MESSAGES] = [const {
+    FltMessage {
+        valid: false,
+        filter_name_buf: [0u8; 16],
+        filter_name_len: 0,
+        buffer: [0u8; 256],
+        buffer_len: 0,
+        reply_status: 0,
+    }
+}; MAX_MESSAGES];
 static FLT_LOCK: Spinlock<()> = Spinlock::new(());
 static REGISTERED: AtomicU32 = AtomicU32::new(0);
 
 /// `FltRegisterFilter` — install a filter in the global
 /// filter table. Returns a non-zero handle (the slot's array index + 1) on success.
 pub fn FltRegisterFilter(name: &str) -> u32 {
-    // kprintln!("    [FLTMGR] A")  // kprintln disabled (memcpy crash workaround);
-    if name.is_empty() { return 0; }
-    // kprintln!("    [FLTMGR] B")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    [FLTMGR] A");
+    if name.is_empty() {
+        return 0;
+    }
+    // kprintln!("    [FLTMGR] B");
     let _g = FLT_LOCK.lock();
-    // kprintln!("    [FLTMGR] C")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    [FLTMGR] C");
     unsafe {
         for (idx, slot) in FILTERS.iter_mut().enumerate() {
-            if slot.valid { continue; }
-            // kprintln!("    [FLTMGR] D slot={}", idx)  // kprintln disabled (memcpy crash workaround);
+            if slot.valid {
+                continue;
+            }
+            // kprintln!("    [FLTMGR] D slot={}", idx);
             slot.valid = true;
             // Copy name into fixed-size buffer
             let name_bytes = name.as_bytes();
-            // kprintln!("    [FLTMGR] E name_bytes.len={}", name_bytes.len())  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("    [FLTMGR] E name_bytes.len={}", name_bytes.len());
             let copy_len = name_bytes.len().min(15);
-            // kprintln!("    [FLTMGR] F copy_len={}", copy_len)  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("    [FLTMGR] F copy_len={}", copy_len);
             for i in 0..16 {
                 slot.name_buf[i] = if i < copy_len { name_bytes[i] } else { 0 };
             }
-            // kprintln!("    [FLTMGR] G")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("    [FLTMGR] G");
             slot.name_len = copy_len;
             slot.started = false;
             slot.attached_count = 0;
@@ -173,27 +182,33 @@ pub fn FltRegisterFilter(name: &str) -> u32 {
             slot.pre_ops_called = 0;
             slot.post_ops_called = 0;
             REGISTERED.fetch_add(1, Ordering::Relaxed);
-            // kprintln!("    [FLTMGR] H registered '{}'", name)  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("    [FLTMGR] H registered '{}'", name);
             return (idx as u32) + 1;
         }
-        // kprintln!("    [FLTMGR] I no slots")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("    [FLTMGR] I no slots");
     }
     0
 }
 
 /// `FltStartFiltering` — start calling the filter's callbacks.
 pub fn FltStartFiltering(h: u32) -> i32 {
-    // kprintln!("    [FLTMGR] Start A h={}", h)  // kprintln disabled (memcpy crash workaround);
-    if h == 0 { return -1; }
+    // kprintln!("    [FLTMGR] Start A h={}", h);
+    if h == 0 {
+        return -1;
+    }
     let _g = FLT_LOCK.lock();
-    // kprintln!("    [FLTMGR] Start B")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    [FLTMGR] Start B");
     unsafe {
         let idx = (h - 1) as usize;
-        if idx >= FILTERS.len() { return -1; }
+        if idx >= FILTERS.len() {
+            return -1;
+        }
         let slot = &mut FILTERS[idx];
-        if !slot.valid { return -1; }
+        if !slot.valid {
+            return -1;
+        }
         slot.started = true;
-        // kprintln!("    [FLTMGR] Start C")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("    [FLTMGR] Start C");
         return 0;
     }
 }
@@ -201,13 +216,19 @@ pub fn FltStartFiltering(h: u32) -> i32 {
 /// `FltUnregisterFilter` — remove the filter and detach from
 /// all volumes.
 pub fn FltUnregisterFilter(h: u32) -> i32 {
-    if h == 0 { return -1; }
+    if h == 0 {
+        return -1;
+    }
     let _g = FLT_LOCK.lock();
     unsafe {
         let idx = (h - 1) as usize;
-        if idx >= FILTERS.len() { return -1; }
+        if idx >= FILTERS.len() {
+            return -1;
+        }
         let slot = &mut FILTERS[idx];
-        if !slot.valid { return -1; }
+        if !slot.valid {
+            return -1;
+        }
         // Detach from all volumes that point to this filter.
         for a in ATTACHED.iter_mut() {
             a[0] = 0; // Clear first byte to mark as empty
@@ -222,52 +243,60 @@ pub fn FltUnregisterFilter(h: u32) -> i32 {
 /// volume is named by its device path (e.g.
 /// `\\Device\\HarddiskVolume1`).
 pub fn FltAttachVolume(h: u32, volume: &str) -> i32 {
-    // kprintln!("    [FLTMGR] Attach A h={}", h)  // kprintln disabled (memcpy crash workaround);
-    if h == 0 { return -1; }
+    // kprintln!("    [FLTMGR] Attach A h={}", h);
+    if h == 0 {
+        return -1;
+    }
     let _g = FLT_LOCK.lock();
-    // kprintln!("    [FLTMGR] Attach B")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    [FLTMGR] Attach B");
     unsafe {
         // Find a free attachment slot.
-        // kprintln!("    [FLTMGR] Attach C searching...")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("    [FLTMGR] Attach C searching...");
         for slot in ATTACHED.iter_mut() {
-            // kprintln!("    [FLTMGR] Attach D slot[0]={}", slot[0])  // kprintln disabled (memcpy crash workaround);
-            if slot[0] != 0 { continue; } // Slot is used if first byte is non-zero
-            // Copy volume name into fixed-size buffer
+            // kprintln!("    [FLTMGR] Attach D slot[0]={}", slot[0]);
+            if slot[0] != 0 {
+                continue;
+            } // Slot is used if first byte is non-zero
+              // Copy volume name into fixed-size buffer
             let vol_bytes = volume.as_bytes();
-            // kprintln!("    [FLTMGR] Attach E vol_bytes.len={}", vol_bytes.len())  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("    [FLTMGR] Attach E vol_bytes.len={}", vol_bytes.len());
             let copy_len = vol_bytes.len().min(31);
-            // kprintln!("    [FLTMGR] Attach F copy_len={}", copy_len)  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("    [FLTMGR] Attach F copy_len={}", copy_len);
             for i in 0..32 {
                 slot[i] = if i < copy_len { vol_bytes[i] } else { 0 };
             }
-            // kprintln!("    [FLTMGR] Attach G")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("    [FLTMGR] Attach G");
             // Bump the filter's attached count.
             let idx = (h - 1) as usize;
             if idx < FILTERS.len() {
                 let f = &mut FILTERS[idx];
                 if f.valid {
                     f.attached_count += 1;
-                    // kprintln!("    [FLTMGR] Attach H OK")  // kprintln disabled (memcpy crash workaround);
+                    // kprintln!("    [FLTMGR] Attach H OK");
                     return 0;
                 }
             }
-            // kprintln!("    [FLTMGR] Attach I fail")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("    [FLTMGR] Attach I fail");
             return -1;
         }
     }
-    // kprintln!("    [FLTMGR] Attach J no slots")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    [FLTMGR] Attach J no slots");
     -1
 }
 
 /// `FltDetachVolume` — detach from a volume.
 pub fn FltDetachVolume(h: u32, volume: &str) -> i32 {
-    if h == 0 { return -1; }
+    if h == 0 {
+        return -1;
+    }
     let _g = FLT_LOCK.lock();
     unsafe {
         let vol_bytes = volume.as_bytes();
         for slot in ATTACHED.iter_mut() {
-            if slot[0] == 0 { continue; } // Empty slot
-            // Check if this slot matches the volume name
+            if slot[0] == 0 {
+                continue;
+            } // Empty slot
+              // Check if this slot matches the volume name
             let slot_len = slot.iter().position(|&b| b == 0).unwrap_or(32);
             if slot_len == vol_bytes.len() && &slot[..slot_len] == vol_bytes {
                 slot[0] = 0; // Mark as empty
@@ -289,11 +318,15 @@ pub fn FltDetachVolume(h: u32, volume: &str) -> i32 {
 /// service. `data` is opaque to the manager. The user-mode
 /// filter service can call `FltGetMessage` to drain the queue.
 pub fn FltSendMessage(h: u32, data: &[u8]) -> i32 {
-    if h == 0 { return -1; }
+    if h == 0 {
+        return -1;
+    }
     let _g = FLT_LOCK.lock();
     unsafe {
         for slot in MESSAGES.iter_mut() {
-            if slot.valid { continue; }
+            if slot.valid {
+                continue;
+            }
             slot.valid = true;
             // Copy data into fixed-size buffer
             let copy_len = data.len().min(255);
@@ -312,7 +345,9 @@ pub fn FltSendMessage(h: u32, data: &[u8]) -> i32 {
             let idx = (h - 1) as usize;
             if idx < FILTERS.len() {
                 let f = &mut FILTERS[idx];
-                if f.valid { f.messages_sent += 1; }
+                if f.valid {
+                    f.messages_sent += 1;
+                }
             }
             return 0;
         }
@@ -323,7 +358,7 @@ pub fn FltSendMessage(h: u32, data: &[u8]) -> i32 {
 /// `init` — placeholder; the filter manager is ready as soon
 /// as the I/O manager is up.
 pub fn init() {
-    // kprintln!("    [FLTMGR] filter manager ready")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    [FLTMGR] filter manager ready");
 }
 
 /// `FltGetMessage` — return the next queued message, or null.
@@ -333,7 +368,9 @@ pub fn FltGetMessage() -> Option<(usize, usize)> {
     let _g = FLT_LOCK.lock();
     unsafe {
         for slot in MESSAGES.iter_mut() {
-            if !slot.valid { continue; }
+            if !slot.valid {
+                continue;
+            }
             let name_len = slot.filter_name_len;
             let data_len = slot.buffer_len;
             slot.valid = false;
@@ -343,7 +380,9 @@ pub fn FltGetMessage() -> Option<(usize, usize)> {
     None
 }
 
-pub fn filter_count() -> u32 { REGISTERED.load(Ordering::Relaxed) }
+pub fn filter_count() -> u32 {
+    REGISTERED.load(Ordering::Relaxed)
+}
 pub fn attached_count() -> usize {
     unsafe { ATTACHED.iter().filter(|s| s[0] != 0).count() }
 }
@@ -371,12 +410,14 @@ pub fn get_filter(name: &str) -> Option<FltFilter> {
 
 /// Smoke test: simplified to just verify the module loads.
 pub fn smoke_test() -> bool {
-    // kprintln!("  [FLTMGR SMOKE] testing filter manager...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [FLTMGR SMOKE] testing filter manager...");
     let count = filter_count();
     let _ = &count;
-    // kprintln!("  [FLTMGR SMOKE OK] filters={}", count)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [FLTMGR SMOKE OK] filters={}", count);
     true
 }
 
-unsafe extern "C" fn stub_pre(_a: *mut (), _b: *mut u8) -> i32 { 0 }
+unsafe extern "C" fn stub_pre(_a: *mut (), _b: *mut u8) -> i32 {
+    0
+}
 unsafe extern "C" fn stub_post(_a: *mut (), _b: *mut u8, _f: u32) {}

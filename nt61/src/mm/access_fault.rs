@@ -24,14 +24,14 @@
 
 #![allow(non_snake_case)]
 
+use crate::ke::scheduler;
 use crate::mm::cow;
+use crate::mm::pagefile;
 use crate::mm::pfn;
 use crate::mm::pte::{pfn_to_phys, MMPTE};
+use crate::mm::vad::VadEntry;
 use crate::mm::vas::USER_BASE;
 use crate::mm::zeropage;
-use crate::mm::pagefile;
-use crate::mm::vad::{VadEntry};
-use crate::ke::scheduler;
 use crate::ps::thread::Ethread;
 
 /// Page-fault access flags — packed from the architecture's error code.
@@ -47,7 +47,14 @@ pub struct AccessFlags {
 
 impl AccessFlags {
     pub const fn default() -> Self {
-        Self { read: true, write: false, execute: false, user: false, reserved_bit: false, instruction_fetch: false }
+        Self {
+            read: true,
+            write: false,
+            execute: false,
+            user: false,
+            reserved_bit: false,
+            instruction_fetch: false,
+        }
     }
 }
 
@@ -115,7 +122,9 @@ fn walk_user_page_table(va: u64) -> Option<*mut MMPTE> {
     use crate::mm::vas::current_root;
 
     let pml4_phys = current_root();
-    if pml4_phys == 0 { return None; }
+    if pml4_phys == 0 {
+        return None;
+    }
 
     // PML4 index
     let pml4_idx = ((va >> 39) & 0x1FF) as usize;
@@ -240,19 +249,41 @@ fn resolve_hardware(pte: MMPTE, va: u64, pte_ptr: *mut MMPTE, access: AccessFlag
         let pt_idx = ((va_u >> 12) & 0x1FF) as usize;
         unsafe {
             let pml4e = core::ptr::read_volatile((root as *const u64).add(pml4_idx));
-            crate::boot_println!("[PF-DIAG] PML4[{}]=0x{:x} NX={}", pml4_idx, pml4e, (pml4e >> 63) & 1);
+            crate::boot_println!(
+                "[PF-DIAG] PML4[{}]=0x{:x} NX={}",
+                pml4_idx,
+                pml4e,
+                (pml4e >> 63) & 1
+            );
             if pml4e & 1 != 0 {
                 let pdpt_phys = pml4e & 0x000F_FFFF_FFFF_F000;
                 let pdpte = core::ptr::read_volatile((pdpt_phys as *const u64).add(pdpt_idx));
-                crate::boot_println!("[PF-DIAG] PDPT[{}]=0x{:x} NX={} PS={}", pdpt_idx, pdpte, (pdpte >> 63) & 1, (pdpte >> 7) & 1);
+                crate::boot_println!(
+                    "[PF-DIAG] PDPT[{}]=0x{:x} NX={} PS={}",
+                    pdpt_idx,
+                    pdpte,
+                    (pdpte >> 63) & 1,
+                    (pdpte >> 7) & 1
+                );
                 if pdpte & 1 != 0 && pdpte & 0x80 == 0 {
                     let pd_phys = pdpte & 0x000F_FFFF_FFFF_F000;
                     let pde = core::ptr::read_volatile((pd_phys as *const u64).add(pd_idx));
-                    crate::boot_println!("[PF-DIAG] PD[{}]=0x{:x} NX={} PS={}", pd_idx, pde, (pde >> 63) & 1, (pde >> 7) & 1);
+                    crate::boot_println!(
+                        "[PF-DIAG] PD[{}]=0x{:x} NX={} PS={}",
+                        pd_idx,
+                        pde,
+                        (pde >> 63) & 1,
+                        (pde >> 7) & 1
+                    );
                     if pde & 1 != 0 && pde & 0x80 == 0 {
                         let pt_phys = pde & 0x000F_FFFF_FFFF_F000;
                         let pte_v = core::ptr::read_volatile((pt_phys as *const u64).add(pt_idx));
-                        crate::boot_println!("[PF-DIAG] PT[{}]=0x{:x} NX={}", pt_idx, pte_v, (pte_v >> 63) & 1);
+                        crate::boot_println!(
+                            "[PF-DIAG] PT[{}]=0x{:x} NX={}",
+                            pt_idx,
+                            pte_v,
+                            (pte_v >> 63) & 1
+                        );
                     }
                 }
             }
@@ -273,7 +304,11 @@ fn resolve_hardware(pte: MMPTE, va: u64, pte_ptr: *mut MMPTE, access: AccessFlag
         let val = (*pte_ptr).u_long;
         if val & (1u64 << 63) != 0 {
             (*pte_ptr).u_long = val & !(1u64 << 63);
-            crate::boot_println!("[PF] FORCED NX=0 for PTE=0x{:x} -> 0x{:x}", val, val & !(1u64 << 63));
+            crate::boot_println!(
+                "[PF] FORCED NX=0 for PTE=0x{:x} -> 0x{:x}",
+                val,
+                val & !(1u64 << 63)
+            );
         }
     }
     // CRITICAL: Flush ALL TLB entries by writing CR3 back to itself.
@@ -287,24 +322,34 @@ fn resolve_hardware(pte: MMPTE, va: u64, pte_ptr: *mut MMPTE, access: AccessFlag
     #[cfg(target_arch = "x86_64")]
     {
         let cur_cr3: u64;
-        unsafe { core::arch::asm!("mov {x}, cr3", x = out(reg) cur_cr3, options(nostack, preserves_flags)); }
-        unsafe { core::arch::asm!("mov cr3, {}", in(reg) cur_cr3, options(nostack, preserves_flags)); }
+        unsafe {
+            core::arch::asm!("mov {x}, cr3", x = out(reg) cur_cr3, options(nostack, preserves_flags));
+        }
+        unsafe {
+            core::arch::asm!("mov cr3, {}", in(reg) cur_cr3, options(nostack, preserves_flags));
+        }
     }
     // MFENCE to ensure the CR3 write commits before the invlpg.
     // x86_64-only mnemonic: aarch64 uses `dmb ish`, riscv64 uses
     // `fence` and loongarch64 uses `dbar 0`. Each arch's TLB flush
     // helper performs the right barrier before its reload.
     #[cfg(target_arch = "x86_64")]
-    unsafe { core::arch::asm!("mfence", options(nostack, preserves_flags)); }
+    unsafe {
+        core::arch::asm!("mfence", options(nostack, preserves_flags));
+    }
     let cur_cr3_for_log: u64 = {
         #[cfg(target_arch = "x86_64")]
         {
             let v: u64;
-            unsafe { core::arch::asm!("mov {x}, cr3", x = out(reg) v, options(nostack, preserves_flags)); }
+            unsafe {
+                core::arch::asm!("mov {x}, cr3", x = out(reg) v, options(nostack, preserves_flags));
+            }
             v
         }
         #[cfg(not(target_arch = "x86_64"))]
-        { 0u64 }
+        {
+            0u64
+        }
     };
     crate::boot_println!(
         "[PF] resolve_hardware: PTE=0x{:x} A={} D={} access.r={} access.w={} access.x={} -> Handled (CR3=0x{:x}, current_root=0x{:x})",
@@ -334,7 +379,9 @@ fn resolve_transition(pte: MMPTE, _va: u64, pte_ptr: *mut MMPTE) -> FaultStatus 
     // (standby/modified), promote the PTE.
     let mut db = pfn::PFN_DB.lock();
     if let Some(entry) = db.entry(pfn_no) {
-        unsafe { db.unlink_entry(entry, pfn_no); }
+        unsafe {
+            db.unlink_entry(entry, pfn_no);
+        }
     }
     drop(db);
     let pa = pfn_to_phys(pfn_no);
@@ -376,21 +423,30 @@ fn resolve_prototype(pte: MMPTE, va: u64, pte_ptr: *mut MMPTE, access: AccessFla
 }
 
 fn resolve_demand_zero(va: u64, pte_ptr: *mut MMPTE, access: AccessFlags) -> FaultStatus {
-//     // // // kprintln!("[DEMAND_ZERO] va=0x{:x} USER_BASE=0x{:x}", va, USER_BASE)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
-    let vad = if va >= USER_BASE { vad_for_user_va(va) } else { None };
-//     // // // kprintln!("[DEMAND_ZERO] vad.is_some()={}", vad.is_some())  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+    //     // // // kprintln!("[DEMAND_ZERO] va=0x{:x} USER_BASE=0x{:x}", va, USER_BASE);
+    let vad = if va >= USER_BASE {
+        vad_for_user_va(va)
+    } else {
+        None
+    };
+    //     // // // kprintln!("[DEMAND_ZERO] vad.is_some()={}", vad.is_some());
     resolve_demand_zero_inner(va, pte_ptr, access, vad)
 }
 
-fn resolve_demand_zero_inner(va: u64, pte_ptr: *mut MMPTE, access: AccessFlags, vad: Option<*mut VadEntry>) -> FaultStatus {
-//     // // // kprintln!("[DEMAND_ZERO_INNER] va=0x{:x} vad.is_some()={}", va, vad.is_some())  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+fn resolve_demand_zero_inner(
+    va: u64,
+    pte_ptr: *mut MMPTE,
+    access: AccessFlags,
+    vad: Option<*mut VadEntry>,
+) -> FaultStatus {
+    //     // // // kprintln!("[DEMAND_ZERO_INNER] va=0x{:x} vad.is_some()={}", va, vad.is_some());
     if !access.read && !access.write && !access.execute {
-//         // // // kprintln!("[DEMAND_ZERO_INNER] no access flags")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+        //         // // // kprintln!("[DEMAND_ZERO_INNER] no access flags");
         return FaultStatus::AccessViolation;
     }
     if va >= USER_BASE && vad.is_none() {
         // User VA, no VAD cover: not committable.
-//         // // // kprintln!("[DEMAND_ZERO_INNER] user VA without VAD")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+        //         // // // kprintln!("[DEMAND_ZERO_INNER] user VA without VAD");
         return FaultStatus::AccessViolation;
     }
     // If the VAD is a guard page, the access is supposed to
@@ -400,43 +456,49 @@ fn resolve_demand_zero_inner(va: u64, pte_ptr: *mut MMPTE, access: AccessFlags, 
     if let Some(v) = vad {
         unsafe {
             if (*v).flags.is_guard() {
-//                 // // // kprintln!("[DEMAND_ZERO_INNER] guard page at VA=0x{:016x}", va)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+                //                 // // // kprintln!("[DEMAND_ZERO_INNER] guard page at VA=0x{:016x}", va);
                 return FaultStatus::CheckVad;
             }
         }
     }
-//     // // // kprintln!("[DEMAND_ZERO_INNER] about to call zeropage::get_zeroed_page")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+    //     // // // kprintln!("[DEMAND_ZERO_INNER] about to call zeropage::get_zeroed_page");
     let pfn_no = match zeropage::get_zeroed_page() {
         Some(p) => p,
         None => {
-//             // // // kprintln!("[DEMAND_ZERO_INNER] get_zeroed_page returned None")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+            //             // // // kprintln!("[DEMAND_ZERO_INNER] get_zeroed_page returned None");
             return FaultStatus::OutOfMemory;
         }
     };
-//     // // // kprintln!("[DEMAND_ZERO_INNER] got pfn={}", pfn_no)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+    //     // // // kprintln!("[DEMAND_ZERO_INNER] got pfn={}", pfn_no);
     let pa = pfn_to_phys(pfn_no);
-//     // // // kprintln!("[DEMAND_ZERO_INNER] pte_ptr=0x{:x} pa=0x{:x}", pte_ptr as u64, pa)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+    //     // // // kprintln!("[DEMAND_ZERO_INNER] pte_ptr=0x{:x} pa=0x{:x}", pte_ptr as u64, pa);
     let mut pte_bits: u64 = 1; // P=1
-    if access.write { pte_bits |= 0x2; }
-    if access.user { pte_bits |= 0x4; }
+    if access.write {
+        pte_bits |= 0x2;
+    }
+    if access.user {
+        pte_bits |= 0x4;
+    }
     pte_bits |= 0x20; // A
     pte_bits |= 0x40; // D
-    if !access.execute { pte_bits |= 1u64 << 63; } // NX
-//     // // // kprintln!("[DEMAND_ZERO_INNER] pte_bits=0x{:x}", pte_bits)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
-    // Read current PTE value before write
+    if !access.execute {
+        pte_bits |= 1u64 << 63;
+    } // NX
+      //     // // // kprintln!("[DEMAND_ZERO_INNER] pte_bits=0x{:x}", pte_bits);
+      // Read current PTE value before write
     let _pte_before = unsafe { (*pte_ptr).raw() };
-//     // // // kprintln!("[DEMAND_ZERO_INNER] pte_before=0x{:016x}", _pte_before)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+    //     // // // kprintln!("[DEMAND_ZERO_INNER] pte_before=0x{:016x}", _pte_before);
     unsafe {
         (*pte_ptr).set_hardware(pa, pte_bits);
     }
     // Read PTE value after write
     let pte_after = unsafe { (*pte_ptr).raw() };
-//     // // // kprintln!("[DEMAND_ZERO_INNER] pte_after=0x{:016x}", pte_after)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+    //     // // // kprintln!("[DEMAND_ZERO_INNER] pte_after=0x{:016x}", pte_after);
     let _ = va;
     if (pte_after & 1) == 0 {
-//         // // // kprintln!("[DEMAND_ZERO_INNER] FAIL: PTE not present after write!")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+        //         // // // kprintln!("[DEMAND_ZERO_INNER] FAIL: PTE not present after write!");
     }
-//     // // // kprintln!("[DEMAND_ZERO_INNER] success")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+    //     // // // kprintln!("[DEMAND_ZERO_INNER] success");
     FaultStatus::Handled
 }
 
@@ -444,22 +506,22 @@ fn resolve_demand_zero_inner(va: u64, pte_ptr: *mut MMPTE, access: AccessFlags, 
 /// VAD tree set up. Returns `None` for kernel VAs and for user
 /// VAs outside any VAD.
 fn vad_for_user_va(va: u64) -> Option<*mut VadEntry> {
-//     // // // kprintln!("[VAD_LOOKUP] va=0x{:x}", va)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+    //     // // // kprintln!("[VAD_LOOKUP] va=0x{:x}", va);
     // The current thread's ETHREAD points at the current EPROCESS,
     // which carries the process's VAD tree.
     let ethread = scheduler::get_current_thread()?;
-//     // // // kprintln!("[VAD_LOOKUP] got ethread")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+    //     // // // kprintln!("[VAD_LOOKUP] got ethread");
     let ethread_ptr: *mut Ethread = ethread;
     unsafe {
         let eprocess = (*ethread_ptr).kthread.process;
-//         // // // kprintln!("[VAD_LOOKUP] eprocess=0x{:x}", eprocess as u64)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+        //         // // // kprintln!("[VAD_LOOKUP] eprocess=0x{:x}", eprocess as u64);
         if eprocess.is_null() {
-//             // // // kprintln!("[VAD_LOOKUP] eprocess is null")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+            //             // // // kprintln!("[VAD_LOOKUP] eprocess is null");
             return None;
         }
-//         // // // kprintln!("[VAD_LOOKUP] pid={}", (*eprocess).unique_process_id)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+        //         // // // kprintln!("[VAD_LOOKUP] pid={}", (*eprocess).unique_process_id);
         let result = (*eprocess).vad_root.find(va);
-//         // // // kprintln!("[VAD_LOOKUP] find result={:?}", result.is_some())  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+        //         // // // kprintln!("[VAD_LOOKUP] find result={:?}", result.is_some());
         result
     }
 }
@@ -475,7 +537,9 @@ fn resolve_page_file(va: u64, pte_ptr: *mut MMPTE, access: AccessFlags) -> Fault
     };
     let pa = pfn_to_phys(pfn_no);
     let mut pte_bits: u64 = 1;
-    if access.write || prot & 0x4 != 0 { pte_bits |= 0x2; }
+    if access.write || prot & 0x4 != 0 {
+        pte_bits |= 0x2;
+    }
     pte_bits |= 0x4; // user
     pte_bits |= 0x20 | 0x40;
     pte_bits |= 1u64 << 63; // NX (we don't track exec bit in the 5-bit prot yet)

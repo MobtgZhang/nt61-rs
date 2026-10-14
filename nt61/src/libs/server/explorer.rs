@@ -18,13 +18,15 @@ pub fn init() {
     SHELL_STARTED.store(true, Ordering::SeqCst);
     *ROOT_WINDOW.lock() = 0x0000_FACE_0000_0001;
     *TASKBAR.lock() = 0x0000_FACE_0000_0002;
-    // kprintln!("      [explorer] shell started, root=0x{:x}", *ROOT_WINDOW.lock())  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("      [explorer] taskbar=0x{:x}", *TASKBAR.lock())  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("      [explorer] shell started, root=0x{:x}", *ROOT_WINDOW.lock());
+    // kprintln!("      [explorer] taskbar=0x{:x}", *TASKBAR.lock());
 }
 
 pub fn main() -> ! {
     init();
-    loop { core::hint::spin_loop(); }
+    loop {
+        core::hint::spin_loop();
+    }
 }
 
 pub fn smoke_test() -> bool {
@@ -32,7 +34,7 @@ pub fn smoke_test() -> bool {
     let r = *ROOT_WINDOW.lock();
     let t = *TASKBAR.lock();
     let ok = s && r != 0 && t != 0 && r != t;
-    // kprintln!("        [explorer] started={} root=0x{:x} bar=0x{:x} -> {}",  // kprintln disabled (memcpy crash workaround)
-//               s, r, t, if ok { "OK" } else { "FAIL" });
+    // kprintln!("        [explorer] started={} root=0x{:x} bar=0x{:x} -> {}",
+    //               s, r, t, if ok { "OK" } else { "FAIL" });
     ok
 }

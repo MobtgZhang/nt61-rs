@@ -297,7 +297,7 @@ pub fn device_name(vendor_id: u16, device_id: u16) -> &'static str {
 pub mod memmap {
     /// StarFive JH7110 display controller base address
     pub const STARFIVE_JH7110_DC_BASE: u64 = 0x118E_0000;
-    
+
     /// StarFive JH7110 display controller size
     pub const STARFIVE_JH7110_DC_SIZE: u64 = 0x10000;
 
@@ -332,7 +332,7 @@ pub mod virtio {
 
     /// virtio-gpu configuration register: device ID
     pub const VIRTIO_GPU_CONFIG_DEVICE_ID: u32 = 0x00;
-    
+
     /// virtio-gpu configuration register: display info
     pub const VIRTIO_GPU_CONFIG_DISPLAY: u32 = 0x10;
 

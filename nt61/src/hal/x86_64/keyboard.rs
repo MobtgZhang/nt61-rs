@@ -113,7 +113,9 @@ fn push_byte(b: u8) {
     let head = HEAD.load(Ordering::Relaxed);
     let next = (head + 1) % BUF_SIZE;
     let tail = TAIL.load(Ordering::Relaxed);
-    if next == tail { return; } // full
+    if next == tail {
+        return;
+    } // full
     BUF[head].store(b, Ordering::Relaxed);
     HEAD.store(next, Ordering::Relaxed);
 }
@@ -123,7 +125,9 @@ fn push_byte(b: u8) {
 pub fn getc() -> i16 {
     let tail = TAIL.load(Ordering::Relaxed);
     let head = HEAD.load(Ordering::Relaxed);
-    if tail == head { return -1; }
+    if tail == head {
+        return -1;
+    }
     let b = BUF[tail].load(Ordering::Relaxed);
     TAIL.store((tail + 1) % BUF_SIZE, Ordering::Relaxed);
     b as i16
@@ -140,7 +144,9 @@ pub fn enqueue_char(c: u8) {
 /// if no scancode is pending. The low 7 bits are the make code;
 /// bit 7 indicates a release.
 pub fn read_scancode() -> i16 {
-    if status() & STATUS_OUTPUT_FULL == 0 { return -1; }
+    if status() & STATUS_OUTPUT_FULL == 0 {
+        return -1;
+    }
     READ_PORT_UCHAR(KBD_DATA_PORT) as i16
 }
 
@@ -149,27 +155,69 @@ pub fn read_scancode() -> i16 {
 /// (e.g. modifier alone, function key, navigation key).
 pub fn scancode_to_ascii(sc: u8, shift: bool, caps: bool) -> Option<u8> {
     let mut ascii: u8 = match sc {
-        0x02 => b'1', 0x03 => b'2', 0x04 => b'3', 0x05 => b'4',
-        0x06 => b'5', 0x07 => b'6', 0x08 => b'7', 0x09 => b'8',
-        0x0A => b'9', 0x0B => b'0', 0x0C => b'-', 0x0D => b'=',
+        0x02 => b'1',
+        0x03 => b'2',
+        0x04 => b'3',
+        0x05 => b'4',
+        0x06 => b'5',
+        0x07 => b'6',
+        0x08 => b'7',
+        0x09 => b'8',
+        0x0A => b'9',
+        0x0B => b'0',
+        0x0C => b'-',
+        0x0D => b'=',
         0x0E => b'\x08', // backspace
         0x0F => b'\t',
-        0x10 => b'q', 0x11 => b'w', 0x12 => b'e', 0x13 => b'r',
-        0x14 => b't', 0x15 => b'y', 0x16 => b'u', 0x17 => b'i',
-        0x18 => b'o', 0x19 => b'p', 0x1A => b'[', 0x1B => b']',
+        0x10 => b'q',
+        0x11 => b'w',
+        0x12 => b'e',
+        0x13 => b'r',
+        0x14 => b't',
+        0x15 => b'y',
+        0x16 => b'u',
+        0x17 => b'i',
+        0x18 => b'o',
+        0x19 => b'p',
+        0x1A => b'[',
+        0x1B => b']',
         0x1C => b'\n',
-        0x1E => b'a', 0x1F => b's', 0x20 => b'd', 0x21 => b'f',
-        0x22 => b'g', 0x23 => b'h', 0x24 => b'j', 0x25 => b'k',
-        0x26 => b'l', 0x27 => b';', 0x28 => b'\'', 0x29 => b'`',
+        0x1E => b'a',
+        0x1F => b's',
+        0x20 => b'd',
+        0x21 => b'f',
+        0x22 => b'g',
+        0x23 => b'h',
+        0x24 => b'j',
+        0x25 => b'k',
+        0x26 => b'l',
+        0x27 => b';',
+        0x28 => b'\'',
+        0x29 => b'`',
         0x2B => b'\\',
-        0x2C => b'z', 0x2D => b'x', 0x2E => b'c', 0x2F => b'v',
-        0x30 => b'b', 0x31 => b'n', 0x32 => b'm', 0x33 => b',',
-        0x34 => b'.', 0x35 => b'/', 0x39 => b' ',
+        0x2C => b'z',
+        0x2D => b'x',
+        0x2E => b'c',
+        0x2F => b'v',
+        0x30 => b'b',
+        0x31 => b'n',
+        0x32 => b'm',
+        0x33 => b',',
+        0x34 => b'.',
+        0x35 => b'/',
+        0x39 => b' ',
         // Numpad cluster (NumLock off → navigation; on → digits).
-        0x47 => b'7', 0x48 => b'8', 0x49 => b'9',
-        0x4B => b'4', 0x4C => b'5', 0x4D => b'6',
-        0x4F => b'1', 0x50 => b'2', 0x51 => b'3',
-        0x52 => b'0', 0x53 => b'.',
+        0x47 => b'7',
+        0x48 => b'8',
+        0x49 => b'9',
+        0x4B => b'4',
+        0x4C => b'5',
+        0x4D => b'6',
+        0x4F => b'1',
+        0x50 => b'2',
+        0x51 => b'3',
+        0x52 => b'0',
+        0x53 => b'.',
         _ => return None,
     };
 
@@ -182,11 +230,26 @@ pub fn scancode_to_ascii(sc: u8, shift: bool, caps: bool) -> Option<u8> {
     } else if shift {
         // Punctuation shift map.
         ascii = match sc {
-            0x02 => b'!', 0x03 => b'@', 0x04 => b'#', 0x05 => b'$',
-            0x06 => b'%', 0x07 => b'^', 0x08 => b'&', 0x09 => b'*',
-            0x0A => b'(', 0x0B => b')', 0x0C => b'_', 0x0D => b'+',
-            0x1A => b'{', 0x1B => b'}', 0x27 => b':', 0x28 => b'"',
-            0x29 => b'~', 0x2B => b'|', 0x33 => b'<', 0x34 => b'>',
+            0x02 => b'!',
+            0x03 => b'@',
+            0x04 => b'#',
+            0x05 => b'$',
+            0x06 => b'%',
+            0x07 => b'^',
+            0x08 => b'&',
+            0x09 => b'*',
+            0x0A => b'(',
+            0x0B => b')',
+            0x0C => b'_',
+            0x0D => b'+',
+            0x1A => b'{',
+            0x1B => b'}',
+            0x27 => b':',
+            0x28 => b'"',
+            0x29 => b'~',
+            0x2B => b'|',
+            0x33 => b'<',
+            0x34 => b'>',
             0x35 => b'?',
             _ => ascii,
         };
@@ -200,7 +263,9 @@ pub fn scancode_to_ascii(sc: u8, shift: bool, caps: bool) -> Option<u8> {
 pub extern "C" fn irq_handler() {
     loop {
         let sc = read_scancode();
-        if sc < 0 { break; }
+        if sc < 0 {
+            break;
+        }
         let release = (sc & 0x80) != 0;
         let code = (sc & 0x7F) as u8;
         match code {
@@ -260,7 +325,9 @@ pub fn full_reset_for_poll() {
 
     // Step 2: Flush output buffer (drain any stale bytes)
     for _ in 0..64 {
-        if status() & STATUS_OUTPUT_FULL == 0 { break; }
+        if status() & STATUS_OUTPUT_FULL == 0 {
+            break;
+        }
         let _ = READ_PORT_UCHAR(KBD_DATA_PORT);
     }
 
@@ -323,7 +390,9 @@ pub fn full_reset_for_poll() {
 
     // Final buffer flush
     for _ in 0..64 {
-        if status() & STATUS_OUTPUT_FULL == 0 { break; }
+        if status() & STATUS_OUTPUT_FULL == 0 {
+            break;
+        }
         let _ = READ_PORT_UCHAR(KBD_DATA_PORT);
     }
 }
@@ -353,7 +422,9 @@ pub fn safe_init_for_poll() {
 
     // Flush the output buffer - drain any stale bytes.
     for _ in 0..32 {
-        if status() & STATUS_OUTPUT_FULL == 0 { break; }
+        if status() & STATUS_OUTPUT_FULL == 0 {
+            break;
+        }
         let _ = READ_PORT_UCHAR(KBD_DATA_PORT);
     }
 
@@ -374,7 +445,9 @@ pub fn safe_init_for_poll() {
 
     // Final flush of any bytes that appeared during configuration.
     for _ in 0..32 {
-        if status() & STATUS_OUTPUT_FULL == 0 { break; }
+        if status() & STATUS_OUTPUT_FULL == 0 {
+            break;
+        }
         let _ = READ_PORT_UCHAR(KBD_DATA_PORT);
     }
 }
@@ -397,7 +470,9 @@ pub fn init() {
 
     // Flush the output buffer.
     for _ in 0..16 {
-        if status() & STATUS_OUTPUT_FULL == 0 { break; }
+        if status() & STATUS_OUTPUT_FULL == 0 {
+            break;
+        }
         let _ = READ_PORT_UCHAR(KBD_DATA_PORT);
     }
 
@@ -507,7 +582,9 @@ pub fn HalDisplayString(s: &str) {
 /// on real hardware, so this is a debug-only stub). Returns the
 /// number of bytes copied.
 pub fn HalQueryDisplayString(buf: &mut [u8]) -> usize {
-    if buf.is_empty() { return 0; }
+    if buf.is_empty() {
+        return 0;
+    }
     buf[0] = 0;
     0
 }

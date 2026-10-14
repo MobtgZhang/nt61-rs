@@ -1,9 +1,9 @@
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, AtomicPtr, Ordering};
-
-use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, AtomicUsize, AtomicI32, AtomicI64, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicI64, AtomicU8};
 
 use super::types::*;
+use spin::{Lazy, Mutex};
 
 const MAX_FIND_HANDLES: usize = 16;
 
@@ -25,6 +25,10 @@ impl FindHandle {
         }
     }
 }
+
+// See `file_ext.rs`: the handle is only reachable through the mutex, so the
+// raw pointer is never observed concurrently.
+unsafe impl Send for FindHandle {}
 
 struct FindHandleTable {
     handles: [FindHandle; MAX_FIND_HANDLES],
@@ -64,9 +68,8 @@ impl FindHandleTable {
     }
 }
 
-static FIND_HANDLES: Lazy<Mutex<FindHandleTable>> = Lazy::new(|| {
-    Mutex::new(FindHandleTable::new())
-});
+static FIND_HANDLES: Lazy<Mutex<FindHandleTable>> =
+    Lazy::new(|| Mutex::new(FindHandleTable::new()));
 
 pub fn alloc_find_handle() -> Option<usize> {
     FIND_HANDLES.lock().allocate()

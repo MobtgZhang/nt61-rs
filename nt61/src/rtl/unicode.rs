@@ -26,15 +26,15 @@ pub fn utf8_to_utf16(input: &str, output: &mut [u16]) -> usize {
 pub fn wcscmp(a: &[u16], b: &[u16]) -> i32 {
     let len_a = a.iter().position(|&x| x == 0).unwrap_or(a.len());
     let len_b = b.iter().position(|&x| x == 0).unwrap_or(b.len());
-    
+
     let len = len_a.min(len_b);
-    
+
     for i in 0..len {
         if a[i] != b[i] {
             return a[i] as i32 - b[i] as i32;
         }
     }
-    
+
     if len_a < len_b {
         -1
     } else if len_a > len_b {

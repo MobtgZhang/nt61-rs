@@ -34,21 +34,21 @@
 //! `winload` and the bare-metal stub can both call it.
 
 pub mod apic;
-pub mod pic;
-pub mod pit;
-pub mod hpet;
-pub mod keyboard;
-pub mod keyboard_unified;
-pub mod framebuffer;
-pub mod text_console;
-pub mod serial;
-pub mod io_port;
 pub mod cmos;
 pub mod dma;
+pub mod framebuffer;
 pub mod halt;
+pub mod hpet;
+pub mod io_port;
+pub mod keyboard;
+pub mod keyboard_unified;
+pub mod pic;
+pub mod pit;
+pub mod serial;
+pub mod text_console;
 
 pub mod console {
-// //! Simple console output
+    // //! Simple console output
 
     /// VGA text mode console
     pub const VGA_WIDTH: usize = 80;

@@ -9,7 +9,7 @@
 
 use super::status::{STATUS_INVALID_PARAMETER, STATUS_SUCCESS};
 use super::sync::{NtCreateEvent, NtSetEvent, NtWaitForSingleObject};
-use super::types::{HANDLE, NTSTATUS, ObjectAttributes, RtlCriticalSection};
+use super::types::{ObjectAttributes, RtlCriticalSection, HANDLE, NTSTATUS};
 use core::ptr;
 use core::sync::atomic::{AtomicI32, Ordering};
 
@@ -96,7 +96,10 @@ pub unsafe extern "C" fn RtlTryEnterCriticalSection(
     }
 
     let lock_ptr = &cs.lock_count as *const i32 as *mut AtomicI32;
-    if (*lock_ptr).compare_exchange(-1, 0, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+    if (*lock_ptr)
+        .compare_exchange(-1, 0, Ordering::Acquire, Ordering::Relaxed)
+        .is_ok()
+    {
         cs.owning_thread = current_thread;
         cs.recursion_count = 1;
         1

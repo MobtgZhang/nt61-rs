@@ -3,8 +3,12 @@
 //! Comprehensive tests for the enhanced file system cache
 
 use super::cache::*;
-use super::cache_manager::*;
-use crate::mm::page_cache::*;
+// `cache`, `cache_manager` and `mm::page_cache` each define their own
+// `EvictionPolicy`/`cc_read`/`cc_write`, so glob-importing all three makes
+// every name ambiguous. The file cache is the subject of these tests; the
+// cache manager and page cache are reached through explicit paths.
+use crate::fs::cache_manager::WriteMode;
+use crate::mm::page_cache::{page_cache_insert, page_cache_lookup, page_cache_statistics, PageKey};
 
 /// Test basic cache operations
 pub fn test_basic_cache() -> bool {
@@ -18,7 +22,11 @@ pub fn test_basic_cache() -> bool {
     match cc_write(1, 0, &test_data) {
         Ok(n) => {
             if n != test_data.len() {
-                crate::boot_println!("[CACHE-TEST] FAIL: write returned {} bytes, expected {}", n, test_data.len());
+                crate::boot_println!(
+                    "[CACHE-TEST] FAIL: write returned {} bytes, expected {}",
+                    n,
+                    test_data.len()
+                );
                 return false;
             }
         }
@@ -33,7 +41,11 @@ pub fn test_basic_cache() -> bool {
     match cc_read(1, 0, &mut read_buf) {
         Ok(n) => {
             if n < test_data.len() {
-                crate::boot_println!("[CACHE-TEST] FAIL: read returned {} bytes, expected at least {}", n, test_data.len());
+                crate::boot_println!(
+                    "[CACHE-TEST] FAIL: read returned {} bytes, expected at least {}",
+                    n,
+                    test_data.len()
+                );
                 return false;
             }
         }
@@ -74,8 +86,11 @@ pub fn test_cache_statistics() -> bool {
     let final_writes = stats2.writes.load(core::sync::atomic::Ordering::Relaxed);
 
     if final_writes <= initial_writes {
-        crate::boot_println!("[CACHE-TEST] WARN: write count did not increase (initial={}, final={})",
-            initial_writes, final_writes);
+        crate::boot_println!(
+            "[CACHE-TEST] WARN: write count did not increase (initial={}, final={})",
+            initial_writes,
+            final_writes
+        );
     }
 
     // Calculate hit rate
@@ -129,7 +144,9 @@ pub fn test_writeback_flush() -> bool {
 
     // Check dirty blocks
     let stats_before = cc_statistics().unwrap();
-    let dirty_before = stats_before.dirty_blocks.load(core::sync::atomic::Ordering::Relaxed);
+    let dirty_before = stats_before
+        .dirty_blocks
+        .load(core::sync::atomic::Ordering::Relaxed);
     crate::boot_println!("[CACHE-TEST] Dirty blocks before flush: {}", dirty_before);
 
     // Trigger flush
@@ -137,8 +154,12 @@ pub fn test_writeback_flush() -> bool {
 
     // Check dirty blocks cleared
     let stats_after = cc_statistics().unwrap();
-    let dirty_after = stats_after.dirty_blocks.load(core::sync::atomic::Ordering::Relaxed);
-    let writebacks = stats_after.writebacks.load(core::sync::atomic::Ordering::Relaxed);
+    let dirty_after = stats_after
+        .dirty_blocks
+        .load(core::sync::atomic::Ordering::Relaxed);
+    let writebacks = stats_after
+        .writebacks
+        .load(core::sync::atomic::Ordering::Relaxed);
 
     crate::boot_println!("[CACHE-TEST] Dirty blocks after flush: {}", dirty_after);
     crate::boot_println!("[CACHE-TEST] Total writebacks: {}", writebacks);
@@ -179,7 +200,7 @@ pub fn test_page_cache() -> bool {
     crate::boot_println!("[CACHE-TEST] Testing page cache...");
 
     // Initialize page cache
-    crate::mm::page_cache::init(EvictionPolicy::LRU);
+    crate::mm::page_cache::init(crate::mm::page_cache::EvictionPolicy::LRU);
 
     // Insert some pages
     for i in 0..10 {
@@ -211,9 +232,15 @@ pub fn test_page_cache() -> bool {
     if let Some(stats) = page_cache_statistics() {
         let hits = stats.hits.load(core::sync::atomic::Ordering::Relaxed);
         let misses = stats.misses.load(core::sync::atomic::Ordering::Relaxed);
-        let total = stats.total_pages.load(core::sync::atomic::Ordering::Relaxed);
-        crate::boot_println!("[CACHE-TEST] Page cache: {} pages, {} hits, {} misses",
-            total, hits, misses);
+        let total = stats
+            .total_pages
+            .load(core::sync::atomic::Ordering::Relaxed);
+        crate::boot_println!(
+            "[CACHE-TEST] Page cache: {} pages, {} hits, {} misses",
+            total,
+            hits,
+            misses
+        );
     }
 
     crate::boot_println!("[CACHE-TEST] PASS: page cache");
@@ -252,8 +279,11 @@ pub fn test_cache_manager() -> bool {
     // Get statistics
     match crate::fs::cache_manager::cc_statistics() {
         Ok(stats) => {
-            crate::boot_println!("[CACHE-TEST] Cache manager: hit rate={:.2}%, dirty={:.2}%",
-                stats.hit_rate(), stats.dirty_percentage());
+            crate::boot_println!(
+                "[CACHE-TEST] Cache manager: hit rate={:.2}%, dirty={:.2}%",
+                stats.hit_rate(),
+                stats.dirty_percentage()
+            );
         }
         Err(e) => {
             crate::boot_println!("[CACHE-TEST] Could not get cache manager stats: {}", e);

@@ -48,7 +48,12 @@
 //! instead of being silenced at the crate root.
 //
 // Permitted under MIT. See repository LICENSE.
-#![allow(non_snake_case, non_upper_case_globals, non_camel_case_types, static_mut_refs)]
+#![allow(
+    non_snake_case,
+    non_upper_case_globals,
+    non_camel_case_types,
+    static_mut_refs
+)]
 #![allow(dead_code)]
 #![allow(unused_imports)]
 #![allow(unused_variables)]
@@ -74,7 +79,6 @@
 // that is genuinely free of pointer invariants should still avoid
 // raw pointers altogether and prefer `&mut` / `&` / `NonNull`.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
-
 // `clippy::missing_safety_doc` requires every `unsafe fn` to carry a
 // `# Safety` section. The kernel has hundreds of `unsafe` entry points
 // whose caller contract is documented in plain-English comments above
@@ -84,7 +88,6 @@
 // crate-wide so the higher-value diagnostics stay visible. New
 // `unsafe fn` items SHOULD add a `# Safety` section once written.
 #![allow(clippy::missing_safety_doc)]
-
 // `clippy::doc_lazy_continuation` / `clippy::doc_list_item_without_indent`
 // flag legitimate crate-level docs where `//!` paragraphs are
 // indented under a list continuation. The Rust convention for
@@ -94,7 +97,6 @@
 // silence the lint crate-wide. We do the latter — the docs are
 // intentionally formatted as prose under `//!` headers.
 #![allow(clippy::doc_lazy_continuation)]
-
 // `clippy::result_unit_err` suggests replacing `Result<T, ()>` with
 // `Option<T>`. The NT kernel uses `Result<T, ()>` extensively to
 // match Windows-API convention (NTSTATUS packed into `()` to keep
@@ -103,7 +105,6 @@
 // that convention stable; new code that genuinely has no useful
 // payload should still prefer `Option<T>`.
 #![allow(clippy::result_unit_err)]
-
 #![no_std]
 
 extern crate alloc;
@@ -111,29 +112,29 @@ extern crate core;
 
 // Re-export core modules - always compiled
 pub mod arch;
+pub mod crypto;
+pub mod fs;
 pub mod hal;
+pub mod io;
 pub mod ke;
+pub mod loader;
+pub mod lpc;
 pub mod mm;
 pub mod ob;
 pub mod ps;
-pub mod se;
-pub mod io;
-pub mod lpc;
 pub mod rtl;
-pub mod fs;
-pub mod loader;
-pub mod crypto;
+pub mod se;
 // pub mod pegen;          // removed: PE images are now produced by tools/src/fs/build.rs
 // pub mod system_image;   // removed: synthetic in-binary PE pipeline gone
-pub mod servers;
-pub mod desktop;
-pub mod registry;
-pub mod kernel_main;
-pub mod userspace;
-pub mod drivers;
-pub mod netstack;
-pub mod libs;
 pub mod boot_types;
+pub mod desktop;
+pub mod drivers;
+pub mod kernel_main;
+pub mod libs;
+pub mod netstack;
+pub mod registry;
+pub mod servers;
+pub mod userspace;
 
 // Constants
 pub const KERNEL_VERSION: &str = "6.1.7601";
@@ -144,3 +145,6 @@ pub const KERNEL_BUILD: &str = "7601.win7_gdr";
 
 // Kernel global allocator lives in main.rs (the binary crate) so
 // that both the library crate and the binary crate can use it.
+pub mod kernel_main_safe;
+pub mod lib_atomic_helpers;
+pub mod sync_helpers;

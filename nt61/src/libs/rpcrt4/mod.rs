@@ -19,8 +19,14 @@ pub const RPC_S_WRONG_KIND_OF_BINDING: u32 = 0x6A7;
 
 /// Initialize the RPC runtime stub.
 pub fn init() {
-    // crate::kprintln!("    RPCRT4: init")  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("      runtime:  ready (RpcServerUseAllProtseqs etc.)")  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("      ncalrpc:  ready (local RPC)")  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("      ncacn_np: ready (named pipe RPC)")  // kprintln disabled (memcpy crash workaround);
+    // crate::kprintln!("    RPCRT4: init");
+    // crate::kprintln!("      runtime:  ready (RpcServerUseAllProtseqs etc.)");
+    // crate::kprintln!("      ncalrpc:  ready (local RPC)");
+    // crate::kprintln!("      ncacn_np: ready (named pipe RPC)");
 }
+
+pub mod binding;
+pub mod client;
+pub mod server;
+pub mod types;
+pub mod uuid;

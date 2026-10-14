@@ -50,8 +50,12 @@ pub unsafe extern "C" fn Wow64AllocateVirtualMemory32(
     crate::wow64_klog!(
         "Wow64AllocateVirtualMemory32 handle=0x{:08x} base_ptr=0x{:08x} \
          size=0x{:08x} type=0x{:08x} prot=0x{:02x} zb={:#x}",
-        process_handle, base_address, region_size,
-        allocation_type, protect, zero_bits
+        process_handle,
+        base_address,
+        region_size,
+        allocation_type,
+        protect,
+        zero_bits
     );
     let _ = zero_bits;
 
@@ -85,7 +89,8 @@ pub unsafe extern "C" fn Wow64AllocateVirtualMemory32(
         Some((allocated_base, allocated_size)) => {
             crate::wow64_klog!(
                 "Allocated base=0x{:08x} size=0x{:08x}",
-                allocated_base, allocated_size
+                allocated_base,
+                allocated_size
             );
 
             // Write results back
@@ -93,9 +98,7 @@ pub unsafe extern "C" fn Wow64AllocateVirtualMemory32(
             let _ = (allocated_base, allocated_size);
             STATUS_SUCCESS
         }
-        None => {
-            STATUS_NO_MEMORY
-        }
+        None => STATUS_NO_MEMORY,
     }
 }
 
@@ -122,7 +125,10 @@ pub unsafe extern "C" fn Wow64FreeVirtualMemory32(
     crate::wow64_klog!(
         "Wow64FreeVirtualMemory32 handle=0x{:08x} addr=0x{:08x} \
          size_ptr=0x{:08x} type=0x{:08x}",
-        process_handle, base_address, region_size, free_type
+        process_handle,
+        base_address,
+        region_size,
+        free_type
     );
 
     // Validate free type
@@ -173,7 +179,11 @@ pub unsafe extern "C" fn Wow64ProtectVirtualMemory32(
     crate::wow64_klog!(
         "Wow64ProtectVirtualMemory32 handle=0x{:08x} base_ptr=0x{:08x} \
          size_ptr=0x{:08x} prot=0x{:02x} old_ptr=0x{:08x}",
-        process_handle, base_address, region_size, new_protect, old_protect
+        process_handle,
+        base_address,
+        region_size,
+        new_protect,
+        old_protect
     );
 
     // Get base address and size
@@ -230,14 +240,16 @@ pub unsafe extern "C" fn Wow64QueryVirtualMemory32(
     crate::wow64_klog!(
         "Wow64QueryVirtualMemory32 handle=0x{:08x} addr=0x{:08x} \
          class={} buf=0x{:08x} sz={} retlen_ptr=0x{:08x}",
-        process_handle, base_address, memory_info_class,
-        buffer, buffer_size, return_length
+        process_handle,
+        base_address,
+        memory_info_class,
+        buffer,
+        buffer_size,
+        return_length
     );
 
     // Validate buffer
-    if buffer == 0
-        || buffer_size < core::mem::size_of::<Wow64MemoryBasicInformation32>() as u32
-    {
+    if buffer == 0 || buffer_size < core::mem::size_of::<Wow64MemoryBasicInformation32>() as u32 {
         if return_length != 0 {
             // Would write required size
         }
@@ -257,7 +269,9 @@ pub unsafe extern "C" fn Wow64QueryVirtualMemory32(
                 crate::wow64_klog!(
                     "MemoryBasicInformation base=0x{:08x} \
                      size=0x{:08x} state=0x{:08x}",
-                    info.base_address, info.region_size, info.state
+                    info.base_address,
+                    info.region_size,
+                    info.state
                 );
                 // In real implementation: copy info to buffer
                 STATUS_SUCCESS
@@ -297,7 +311,11 @@ pub unsafe extern "C" fn Wow64ReadVirtualMemory32(
     crate::wow64_klog!(
         "Wow64ReadVirtualMemory32 handle=0x{:08x} from=0x{:08x} \
          to=0x{:08x} size=0x{:08x} bytes_read_ptr=0x{:08x}",
-        process_handle, base_address, buffer, size, number_of_bytes_read
+        process_handle,
+        base_address,
+        buffer,
+        size,
+        number_of_bytes_read
     );
 
     // Validate ranges
@@ -346,7 +364,11 @@ pub unsafe extern "C" fn Wow64WriteVirtualMemory32(
     crate::wow64_klog!(
         "Wow64WriteVirtualMemory32 handle=0x{:08x} to=0x{:08x} \
          from=0x{:08x} size=0x{:08x} bytes_written_ptr=0x{:08x}",
-        process_handle, base_address, buffer, size, number_of_bytes_written
+        process_handle,
+        base_address,
+        buffer,
+        size,
+        number_of_bytes_written
     );
 
     // Validate ranges
@@ -427,7 +449,7 @@ pub unsafe extern "C" fn wow64_allocate_virtual_memory(
         zero_bits,
         region_size,
         allocation_type,
-        protect
+        protect,
     )
 }
 
@@ -440,15 +462,13 @@ pub unsafe extern "C" fn wow64_free_virtual_memory(
 ) -> u32 {
     crate::wow64_klog!(
         "wow64_free_virtual_memory proc={:#x} base={:#x} size={:#x} type={:#x}",
-        process_handle, base_address, region_size, free_type
-    );
-    // Forward to the actual implementation
-    Wow64FreeVirtualMemory32(
         process_handle,
         base_address,
         region_size,
         free_type
-    )
+    );
+    // Forward to the actual implementation
+    Wow64FreeVirtualMemory32(process_handle, base_address, region_size, free_type)
 }
 
 /// `wow64_read_virtual_memory` — wrapper for Wow64ReadVirtualMemory32.
@@ -460,7 +480,10 @@ pub unsafe extern "C" fn wow64_read_virtual_memory(
 ) -> u32 {
     crate::wow64_klog!(
         "wow64_read_virtual_memory proc={:#x} src={:#x} dst={:#x} size={}",
-        process_handle, base_address, buffer, size
+        process_handle,
+        base_address,
+        buffer,
+        size
     );
     // Forward to the actual implementation
     Wow64ReadVirtualMemory32(
@@ -468,7 +491,7 @@ pub unsafe extern "C" fn wow64_read_virtual_memory(
         base_address,
         buffer,
         size,
-        0 // number_of_bytes_read_ptr
+        0, // number_of_bytes_read_ptr
     )
 }
 
@@ -481,7 +504,10 @@ pub unsafe extern "C" fn wow64_write_virtual_memory(
 ) -> u32 {
     crate::wow64_klog!(
         "wow64_write_virtual_memory proc={:#x} dst={:#x} src={:#x} size={}",
-        process_handle, base_address, buffer, size
+        process_handle,
+        base_address,
+        buffer,
+        size
     );
     // Forward to the actual implementation
     Wow64WriteVirtualMemory32(
@@ -489,6 +515,6 @@ pub unsafe extern "C" fn wow64_write_virtual_memory(
         base_address,
         buffer,
         size,
-        0 // number_of_bytes_written_ptr
+        0, // number_of_bytes_written_ptr
     )
 }

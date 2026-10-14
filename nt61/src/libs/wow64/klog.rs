@@ -5,8 +5,7 @@
 //! `false` for some startup paths, and pulling in the buffered
 //! `BufferWriter` along with `memcpy` would crash the Wow64 path
 //! before the per-process PEB32 is reachable. To keep the wow64
-//! modules warning-free and free of `// kprintln disabled` stub
-//! comments we route every wow64 log statement through a thin
+//! modules warning-free we route every wow64 log statement through a thin
 //! wrapper that talks to the kernel's per-arch serial port
 //! directly. The wrapper never touches `core::fmt::Write` over
 //! a stack buffer (which would pull in `copy_from_slice`), only

@@ -90,10 +90,7 @@ impl ZxEDevice {
             return;
         }
         unsafe {
-            core::ptr::write_volatile(
-                (self.mmio_base + offset as u64) as *mut u32,
-                value,
-            );
+            core::ptr::write_volatile((self.mmio_base + offset as u64) as *mut u32, value);
         }
     }
 
@@ -113,10 +110,7 @@ impl ZxEDevice {
             return;
         }
         unsafe {
-            core::ptr::write_volatile(
-                (self.mmio_base + offset as u64) as *mut u64,
-                value,
-            );
+            core::ptr::write_volatile((self.mmio_base + offset as u64) as *mut u64, value);
         }
     }
 
@@ -252,9 +246,11 @@ impl GpuDriver for ZxEDevice {
         })
     }
 
-    fn set_mode(&mut self, mode: &crate::drivers::video::core::gpu_common::DisplayMode) -> Result<(), GpuError> {
-        self.init_framebuffer(Some(*mode))
-            .map(|_| ())
+    fn set_mode(
+        &mut self,
+        mode: &crate::drivers::video::core::gpu_common::DisplayMode,
+    ) -> Result<(), GpuError> {
+        self.init_framebuffer(Some(*mode)).map(|_| ())
     }
 
     fn get_mode(&self) -> Option<crate::drivers::video::core::gpu_common::DisplayMode> {
@@ -309,10 +305,7 @@ impl GpuDriver for ZxEDevice {
         let pixels = ((self.pitch as usize) * (self.height as usize)) / 4;
         for i in 0..pixels {
             unsafe {
-                core::ptr::write_volatile(
-                    (self.fb_virt + (i as u64 * 4)) as *mut u32,
-                    color,
-                );
+                core::ptr::write_volatile((self.fb_virt + (i as u64 * 4)) as *mut u32, color);
             }
         }
     }
@@ -324,10 +317,7 @@ impl GpuDriver for ZxEDevice {
 
         let offset = ((y * self.pitch) + (x * 4)) as u64;
         unsafe {
-            core::ptr::write_volatile(
-                (self.fb_virt + offset) as *mut u32,
-                color,
-            );
+            core::ptr::write_volatile((self.fb_virt + offset) as *mut u32, color);
         }
     }
 
@@ -410,14 +400,8 @@ impl ZxEDevice {
         self.write_reg(ZX_E_PLANE_PRIMARY_ADDR, self.fb_phys as u32);
         self.write_reg(ZX_E_PLANE_PRIMARY_ADDR_HIGH, (self.fb_phys >> 32) as u32);
         self.write_reg(ZX_E_PLANE_PRIMARY_STRIDE, self.pitch);
-        self.write_reg(
-            ZX_E_PLANE_PRIMARY_SIZE,
-            (self.height << 16) | self.width,
-        );
-        self.write_reg(
-            ZX_E_PLANE_PRIMARY_FORMAT,
-            self.get_format_value(),
-        );
+        self.write_reg(ZX_E_PLANE_PRIMARY_SIZE, (self.height << 16) | self.width);
+        self.write_reg(ZX_E_PLANE_PRIMARY_FORMAT, self.get_format_value());
 
         // Configure CRT controller A
         self.configure_crtc_a(&timing)?;
@@ -515,11 +499,7 @@ impl ZxEDevice {
 
     /// Enable video processor
     pub fn enable_video_processor(&mut self, enable: bool) {
-        let ctrl = if enable {
-            ZX_E_VP_CTRL_ENABLE
-        } else {
-            0
-        };
+        let ctrl = if enable { ZX_E_VP_CTRL_ENABLE } else { 0 };
         self.write_reg(ZX_E_VP_CTRL, ctrl);
     }
 
@@ -536,8 +516,8 @@ impl ZxEDevice {
 /// Probe for ZX-E display controller
 #[cfg(target_arch = "x86_64")]
 pub fn probe() -> bool {
-    use crate::hal::common::pci;
     use super::pci_ids::ZHAOXIN_VENDOR_ID;
+    use crate::hal::common::pci;
 
     let devices = pci::enumerate();
     for dev in devices {
@@ -555,8 +535,8 @@ pub fn probe() -> bool {
 /// Initialize ZX-E display controller
 #[cfg(target_arch = "x86_64")]
 pub fn init() -> Option<ZxEDevice> {
-    use crate::hal::common::pci;
     use super::pci_ids::{variant_from_device_id, ZHAOXIN_VENDOR_ID};
+    use crate::hal::common::pci;
 
     let devices = pci::enumerate();
     for dev in devices {

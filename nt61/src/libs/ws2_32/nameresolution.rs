@@ -5,12 +5,12 @@
 
 #![allow(non_snake_case)]
 
-use super::types::*;
 use super::error::*;
+use super::types::*;
 use crate::netstack::dns;
-use alloc::vec::Vec;
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 pub fn getaddrinfo(
     nodename: *const u8,
@@ -96,7 +96,9 @@ pub fn getaddrinfo(
     });
 
     result.ai_addr = Box::into_raw(addr) as *mut sockaddr;
-    unsafe { *res = Box::into_raw(result); }
+    unsafe {
+        *res = Box::into_raw(result);
+    }
 
     set_last_error(0);
     0

@@ -12,12 +12,12 @@
 
 extern crate alloc;
 
-use super::types::{BOOL, DWORD, FALSE, HANDLE, TRUE};
 use super::error::SetLastError;
+use super::types::{BOOL, DWORD, FALSE, HANDLE, TRUE};
 use alloc::string::String;
+use alloc::string::ToString;
 use alloc::vec::Vec;
 use core::ptr;
-
 
 #[repr(C)]
 pub struct STARTUPINFOW {
@@ -58,7 +58,6 @@ pub const STARTF_RUNFULLSCREEN: DWORD = 0x00000020;
 pub const STARTF_FORCEONFEEDBACK: DWORD = 0x00000040;
 pub const STARTF_FORCEOFFFEEDBACK: DWORD = 0x00000080;
 pub const STARTF_USESTDHANDLES: DWORD = 0x00000100;
-
 
 fn parse_command_line(cmd_line: &str) -> Vec<String> {
     let mut args = Vec::new();
@@ -138,7 +137,6 @@ fn build_environment_block(env: &[(String, String)]) -> Vec<u16> {
 
     block
 }
-
 
 pub unsafe extern "C" fn CreateProcessW(
     application_name: *const u16,
@@ -225,7 +223,12 @@ pub unsafe extern "C" fn CreateProcessW(
     let si = &*startup_info;
     let use_std_handles = (si.dw_flags & STARTF_USESTDHANDLES) != 0;
 
-    let _ = (process_attributes, thread_attributes, inherit_handles, creation_flags);
+    let _ = (
+        process_attributes,
+        thread_attributes,
+        inherit_handles,
+        creation_flags,
+    );
 
     let mut proc_handle: HANDLE = ptr::null_mut();
     let mut thread_handle: HANDLE = ptr::null_mut();
@@ -240,10 +243,10 @@ pub unsafe extern "C" fn CreateProcessW(
         idx += 1;
     }
 
-    let mut us = crate::libs::ntdll::types::UnicodeString {
-        length: (idx * 2) as u16,
-        maximum_length: 520,
-        buffer: image_name_buf.as_mut_ptr(),
+    let us = crate::libs::ntdll::types::UnicodeString {
+        Length: (idx * 2) as u16,
+        MaximumLength: 520,
+        Buffer: image_name_buf.as_mut_ptr(),
     };
 
     let status = crate::libs::ntdll::process::NtCreateProcess(
@@ -269,32 +272,42 @@ pub unsafe extern "C" fn CreateProcessW(
         proc_handle,
         ptr::null_mut(),
         ptr::null_mut(),
-        0,
-        0,
-        0,
-        0,
-        ptr::null_mut(),
+        ptr::null_mut(), // start_routine
+        0,               // stack_committed
+        0,               // stack_size
     );
 
     if status != crate::libs::ntdll::status::STATUS_SUCCESS {
-        crate::libs::ntdll::handle::NtClose(proc_handle);
+        crate::libs::ntdll::file::NtClose(proc_handle);
         SetLastError(5);
         return FALSE;
     }
 
     if use_std_handles {
-    let _ = (si.h_std_input, si.h_std_output, si.h_std_error);
-}
+        let _ = (si.h_std_input, si.h_std_output, si.h_std_error);
+    }
 
     let pi = &mut *process_information;
     pi.h_process = proc_handle;
     pi.h_thread = thread_handle;
-    pi.dw_process_id = 1; // Placeholder
-    pi.dw_thread_id = 1; // Placeholder
+    // The handle table records the object each handle refers to, so the real
+    // client ids are available here; returning fixed values made every
+    // CreateProcessW caller see the same process/thread.
+    pi.dw_process_id = match crate::libs::ntdll::file::lookup_handle(proc_handle) {
+        Some(entry) if entry.kind == crate::libs::ntdll::file::HandleKind::Process => {
+            entry.target as DWORD
+        }
+        _ => 0,
+    };
+    pi.dw_thread_id = match crate::libs::ntdll::file::lookup_handle(thread_handle) {
+        Some(entry) if entry.kind == crate::libs::ntdll::file::HandleKind::Thread => {
+            entry.target as DWORD
+        }
+        _ => 0,
+    };
 
     TRUE
 }
-
 
 pub unsafe extern "C" fn GetStartupInfoW(startup_info: *mut STARTUPINFOW) {
     if startup_info.is_null() {
@@ -323,7 +336,6 @@ pub unsafe extern "C" fn GetStartupInfoW(startup_info: *mut STARTUPINFOW) {
     si.h_std_error = super::console::GetStdHandle(super::console::STD_ERROR_HANDLE);
 }
 
-
 pub unsafe extern "C" fn GetProcessTimes(
     process: HANDLE,
     creation_time: *mut super::thread::FileTime,
@@ -351,7 +363,6 @@ pub unsafe extern "C" fn GetProcessTimes(
 
     TRUE
 }
-
 
 pub unsafe extern "C" fn CommandLineToArgvW(
     cmd_line: *const u16,

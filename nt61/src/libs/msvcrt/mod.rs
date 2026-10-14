@@ -15,10 +15,31 @@ use crate::kprintln;
 
 /// Initialize the CRT stub.
 pub fn init() {
-    // crate::kprintln!("    MSVCRT: init")  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("      memory:  ready (malloc, free, realloc)")  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("      string:  ready (strcpy, strcmp, strlen)")  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("      file:    ready (fopen, fread, fwrite)")  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("      time:    ready (time, localtime)")  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("      stdio:   ready (printf, scanf)")  // kprintln disabled (memcpy crash workaround);
+    // crate::kprintln!("    MSVCRT: init");
+    // crate::kprintln!("      memory:  ready (malloc, free, realloc)");
+    // crate::kprintln!("      string:  ready (strcpy, strcmp, strlen)");
+    // crate::kprintln!("      file:    ready (fopen, fread, fwrite)");
+    // crate::kprintln!("      time:    ready (time, localtime)");
+    // crate::kprintln!("      stdio:   ready (printf, scanf)");
 }
+
+pub mod buffered_io;
+pub mod convert;
+pub mod crt_stats_safe;
+pub mod hal_stubs;
+pub mod io_stubs;
+pub mod locale_safe;
+pub mod math;
+pub mod memory;
+pub mod printf_parser;
+pub mod process_safe;
+pub mod ps_stubs;
+pub mod scanf_parser;
+pub mod stdio;
+pub mod stdio_safe;
+pub mod string;
+pub mod string_safe;
+pub mod time_safe;
+pub mod tls_errno_safe;
+pub mod types;
+pub mod wchar;

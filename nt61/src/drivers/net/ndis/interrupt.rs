@@ -53,12 +53,12 @@ static NETWORK_DPC_WORK: Spinlock<Vec<NetworkDpcWork>> = Spinlock::new(Vec::new(
 
 /// Initialize network DPC subsystem
 pub fn init() {
-    // kprintln!("    Network DPC: initializing...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    Network DPC: initializing...");
     
     // Clear any pending work
     NETWORK_DPC_WORK.lock().clear();
     
-    // kprintln!("    Network DPC: ready")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    Network DPC: ready");
 }
 
 /// Queue DPC work for processing
@@ -70,7 +70,7 @@ pub fn queue_dpc_work(work: NetworkDpcWork) {
         w.nic_index == work.nic_index && w.work_type == work.work_type
     ) {
         work_queue.push(work);
-        // kprintln!("  [NET DPC] Queued {:?} for NIC {}", work.work_type, work.nic_index)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [NET DPC] Queued {:?} for NIC {}", work.work_type, work.nic_index);
     }
 }
 
@@ -83,7 +83,7 @@ pub fn process_dpc_work() {
         return;
     }
     
-    // kprintln!("  [NET DPC] Processing {} work items", work_queue.len())  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [NET DPC] Processing {} work items", work_queue.len());
     
     // Process each work item
     for work in work_queue.iter() {
@@ -136,7 +136,7 @@ fn process_received_packets(nic_index: usize) {
     }
     
     if count > 0 {
-        // kprintln!("  [NET DPC] Processed {} packets from NIC {}", count, nic_index)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [NET DPC] Processed {} packets from NIC {}", count, nic_index);
     }
 }
 
@@ -148,7 +148,7 @@ fn process_tx_completion(nic_index: usize) {
     if let Some(ref nic) = net::get_nic(nic_index) {
         // In a real implementation, this would call the NIC's TX completion handler
         let tx_count = net::get_tx_count(nic_index);
-        // kprintln!("  [NET DPC] TX packets sent: {}", tx_count)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [NET DPC] TX packets sent: {}", tx_count);
     }
 }
 
@@ -158,14 +158,14 @@ fn handle_link_change(nic_index: usize) {
     
     if let Some(ref nic) = net::get_nic(nic_index) {
         let link_up = net::is_link_up(nic_index);
-        // kprintln!("  [NET DPC] NIC {} link status: {}", nic_index, if link_up { "UP" } else { "DOWN" })  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [NET DPC] NIC {} link status: {}", nic_index, if link_up { "UP" } else { "DOWN" });
         
         // Update network stack with new link status
         if link_up {
             // Trigger DHCP or address configuration
-            // kprintln!("  [NET DPC] Link up - ready for network operations")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("  [NET DPC] Link up - ready for network operations");
         } else {
-            // kprintln!("  [NET DPC] Link down - network unavailable")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("  [NET DPC] Link down - network unavailable");
         }
     }
 }
@@ -175,12 +175,12 @@ fn handle_config_change(nic_index: usize) {
     use crate::drivers::net;
     
     if let Some(ref nic) = net::get_nic(nic_index) {
-        // kprintln!("  [NET DPC] NIC {} configuration changed", nic_index)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [NET DPC] NIC {} configuration changed", nic_index);
         
         // Re-read configuration
         let mac = net::get_mac(nic_index);
         if let Some(mac) = mac {
-            // kprintln!("  [NET DPC]   MAC: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",  // kprintln disabled (memcpy crash workaround)
+            // kprintln!("  [NET DPC]   MAC: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
 //                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
         }
     }
@@ -190,20 +190,20 @@ fn handle_config_change(nic_index: usize) {
 fn handle_nic_error(nic_index: usize) {
     use crate::drivers::net;
     
-    // kprintln!("  [NET DPC] NIC {} error detected", nic_index)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [NET DPC] NIC {} error detected", nic_index);
     
     // Log error details
     // In a real implementation, would read error counters from NIC
     
     // Check TX queue state
     let free_count = net::get_tx_free_count(nic_index);
-    // kprintln!("  [NET DPC]   TX queue free: {}/256", free_count)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [NET DPC]   TX queue free: {}/256", free_count);
 }
 
 /// Register a NIC's interrupt handler
 /// This is called during NIC initialization
 pub fn register_nic_interrupt(nic_index: usize, vector: u8) {
-    // kprintln!("  [NET DPC] Registered NIC {} on vector {}", nic_index, vector)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [NET DPC] Registered NIC {} on vector {}", nic_index, vector);
     
     // In a real implementation, would:
     // 1. Install ISR in IDT for this vector

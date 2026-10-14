@@ -77,11 +77,31 @@ pub struct TimeFields {
 }
 
 impl TimeFields {
-    pub const fn new(year: u16, month: u8, day: u8, hour: u8, minute: u8, second: u8, weekday: u8) -> Self {
-        Self { year, month, day, hour, minute, second, weekday }
+    pub const fn new(
+        year: u16,
+        month: u8,
+        day: u8,
+        hour: u8,
+        minute: u8,
+        second: u8,
+        weekday: u8,
+    ) -> Self {
+        Self {
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            weekday,
+        }
     }
-    pub fn second(&self) -> u8 { self.second }
-    pub fn get_second(&self) -> u8 { self.second }
+    pub fn second(&self) -> u8 {
+        self.second
+    }
+    pub fn get_second(&self) -> u8 {
+        self.second
+    }
 }
 
 /// A latch that prevents re-entering the CMOS access paths while a
@@ -143,7 +163,9 @@ fn bin_to_bcd(b: u8) -> u8 {
 
 /// Read a CMOS register with the spinlock held. `reg` must be 0..0x7F.
 pub fn read_register(reg: u8) -> u8 {
-    if !try_lock() { return 0xFF; }
+    if !try_lock() {
+        return 0xFF;
+    }
     let v = read_register_raw(reg);
     unlock();
     v
@@ -151,7 +173,9 @@ pub fn read_register(reg: u8) -> u8 {
 
 /// Write a CMOS register with the spinlock held.
 pub fn write_register(reg: u8, value: u8) {
-    if !try_lock() { return; }
+    if !try_lock() {
+        return;
+    }
     write_register_raw(reg, value);
     unlock();
 }
@@ -159,7 +183,9 @@ pub fn write_register(reg: u8, value: u8) {
 /// Read the current wall-clock time. Returns `None` if the CMOS is
 /// inaccessible (boot-time probe failure).
 pub fn HalQueryRealTimeClock() -> Option<TimeFields> {
-    if !try_lock() { return None; }
+    if !try_lock() {
+        return None;
+    }
 
     // Wait for any in-progress update to complete so we read a
     // consistent snapshot.
@@ -232,7 +258,9 @@ pub fn HalQueryRealTimeClock() -> Option<TimeFields> {
 /// the new fields, and re-enables updates. It also performs a
 /// pre-write read of Status B to keep the other bits intact.
 pub fn HalSetRealTimeClock(time: &TimeFields) -> bool {
-    if !try_lock() { return false; }
+    if !try_lock() {
+        return false;
+    }
 
     // Pause the RTC update cycle.
     let prev_status_b = read_register_raw(reg::STATUS_B);
@@ -260,12 +288,16 @@ pub fn HalSetRealTimeClock(time: &TimeFields) -> bool {
         } else {
             // 12-hour wrap.
             let mut h12 = hour % 12;
-            if hour >= 12 { h12 |= 0x80; }
+            if hour >= 12 {
+                h12 |= 0x80;
+            }
             h12
         });
     } else if !hour_24 {
         let mut h12 = hour % 12;
-        if hour >= 12 { h12 |= 0x80; }
+        if hour >= 12 {
+            h12 |= 0x80;
+        }
         hour = h12;
     }
 
@@ -319,9 +351,7 @@ pub fn days_from_1601(time: &TimeFields) -> u64 {
 /// `SYSTEMTIME` / `FILETIME` compatible).
 pub fn time_fields_to_100ns(time: &TimeFields) -> u64 {
     let days = days_from_1601(time);
-    let secs = (time.hour as u64) * 3600
-             + (time.minute as u64) * 60
-             + (time.second as u64);
+    let secs = (time.hour as u64) * 3600 + (time.minute as u64) * 60 + (time.second as u64);
     // 1 second = 10_000_000 100-ns intervals.
     days * 86_400 * 10_000_000 + secs * 10_000_000
 }

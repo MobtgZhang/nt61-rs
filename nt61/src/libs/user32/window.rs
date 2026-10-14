@@ -7,8 +7,8 @@
 
 extern crate alloc;
 
-use super::{alloc_window_handle, has_window_handle};
 use super::types::{BOOL, DWORD, FALSE, HANDLE, HWND, LPARAM, LPCWSTR, TRUE, WPARAM};
+use super::{alloc_window_handle, has_window_handle};
 use core::ptr;
 
 /// Window creation flags (subset).
@@ -98,24 +98,35 @@ pub unsafe extern "C" fn CreateWindowExW(
     instance: HANDLE,
     param: *mut (),
 ) -> HWND {
-    let _ = (class_name, window_name, style, x, y, width, height, parent, menu, instance, param);
+    let _ = (
+        class_name,
+        window_name,
+        style,
+        x,
+        y,
+        width,
+        height,
+        parent,
+        menu,
+        instance,
+        param,
+    );
     alloc_window_handle() as HWND
 }
 
 /// `DefWindowProcW` — default message handler. Returns 0.
-pub unsafe extern "C" fn DefWindowProcW(
-    hwnd: HWND,
-    msg: u32,
-    w: WPARAM,
-    l: LPARAM,
-) -> isize {
+pub unsafe extern "C" fn DefWindowProcW(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> isize {
     let _ = (hwnd, msg, w, l);
     0
 }
 
 /// `DestroyWindow` — release the placeholder window.
 pub unsafe extern "C" fn DestroyWindow(hwnd: HWND) -> BOOL {
-    if has_window_handle(hwnd as u64) { TRUE } else { FALSE }
+    if has_window_handle(hwnd as u64) {
+        TRUE
+    } else {
+        FALSE
+    }
 }
 
 /// `ShowWindow` — placeholder.
@@ -125,17 +136,14 @@ pub unsafe extern "C" fn ShowWindow(_hwnd: HWND, cmd: i32) -> BOOL {
 }
 
 /// `UpdateWindow` — placeholder.
-pub unsafe extern "C" fn UpdateWindow(_hwnd: HWND) -> BOOL { TRUE }
+pub unsafe extern "C" fn UpdateWindow(_hwnd: HWND) -> BOOL {
+    TRUE
+}
 
 /// `GetMessageW` — read the next message from the thread queue.
 /// The bootstrap always returns `-1` (no message) and a
 /// `WM_QUIT` flag set to `false`.
-pub unsafe extern "C" fn GetMessageW(
-    msg: *mut Msg,
-    hwnd: HWND,
-    min: u32,
-    max: u32,
-) -> i32 {
+pub unsafe extern "C" fn GetMessageW(msg: *mut Msg, hwnd: HWND, min: u32, max: u32) -> i32 {
     let _ = (hwnd, min, max);
     if !msg.is_null() {
         ptr::write_bytes(msg, 0, 1);
@@ -159,10 +167,14 @@ pub unsafe extern "C" fn PeekMessageW(
 }
 
 /// `TranslateMessage` — placeholder, returns the original value.
-pub unsafe extern "C" fn TranslateMessage(_msg: *const Msg) -> BOOL { TRUE }
+pub unsafe extern "C" fn TranslateMessage(_msg: *const Msg) -> BOOL {
+    TRUE
+}
 
 /// `DispatchMessageW` — placeholder, returns 0.
-pub unsafe extern "C" fn DispatchMessageW(_msg: *const Msg) -> isize { 0 }
+pub unsafe extern "C" fn DispatchMessageW(_msg: *const Msg) -> isize {
+    0
+}
 
 /// `PostQuitMessage` — placeholder.
 pub unsafe extern "C" fn PostQuitMessage(code: i32) {
@@ -175,4 +187,6 @@ pub unsafe extern "C" fn GetForegroundWindow() -> HWND {
 }
 
 /// `SetForegroundWindow` — placeholder.
-pub unsafe extern "C" fn SetForegroundWindow(_hwnd: HWND) -> BOOL { TRUE }
+pub unsafe extern "C" fn SetForegroundWindow(_hwnd: HWND) -> BOOL {
+    TRUE
+}

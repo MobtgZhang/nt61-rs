@@ -3,7 +3,8 @@
 //! This module provides a 32-bit virtual address space manager that
 //! operates within the Wow64 process address space constraints:
 //!   - User space: 0x00010000 to 0x7FFEFFFF
-//!   - System DLLs: 0x7FFE0000 to 0x7FFFFFFF
+//!   - System DLLs: 0x7C000000 to 0x7D000000
+//!   - KUSER_SHARED_DATA: 0x7FFE0000 (reserved page, never allocated)
 //
 //! The Wow64 VAS allocator manages memory allocation in the lower 4GB
 //! of the address space, mapping 32-bit allocations to actual physical
@@ -34,7 +35,8 @@ pub const WOW64_DEFAULT_STACK_SIZE: u32 = 0x100000; // 1MB
 /// Heap virtual alloc base for 32-bit processes.
 pub const WOW64_HEAP_VIRTUAL_ALLOC_BASE: u32 = 0x00030000;
 
-/// Heap virtual alloc max (up to Wow64 user space limit).
+/// Heap virtual alloc max. Allocations stop before the KUSER_SHARED_DATA
+/// page at 0x7FFE0000, which the kernel maps read-only in every process.
 pub const WOW64_HEAP_VIRTUAL_ALLOC_MAX: u32 = 0x7FFE0000;
 
 // =============================================================================
@@ -128,8 +130,13 @@ pub fn is_valid_user_address(addr: u32) -> bool {
 /// Check if a range is valid for Wow64 user mode.
 #[inline]
 pub fn is_valid_user_range(addr: u32, size: u32) -> bool {
-    if size == 0 {
+    if !is_valid_user_address(addr) {
         return false;
+    }
+    if size == 0 {
+        // Zero-length range is valid iff the base is valid —
+        // it's a no-op probe.
+        return true;
     }
     // Check for overflow
     match addr.checked_add(size) {
@@ -141,7 +148,7 @@ pub fn is_valid_user_range(addr: u32, size: u32) -> bool {
 /// Check if address is in the system DLL region.
 #[inline]
 pub fn is_in_system_dll_region(addr: u32) -> bool {
-    addr >= WOW64_SYSTEM_DLL_BASE
+    addr >= WOW64_SYSTEM_DLL_BASE && addr < WOW64_SYSTEM_DLL_BASE + WOW64_SYSTEM_DLL_SIZE
 }
 
 /// Align address up to page boundary.
@@ -226,7 +233,9 @@ pub fn allocate(
 
     crate::wow64_klog!(
         "allocate: base=0x{:08x} size=0x{:08x} type=0x{:x}",
-        base, aligned_size, allocation_type
+        base,
+        aligned_size,
+        allocation_type
     );
 
     Some((base, aligned_size))
@@ -245,15 +254,13 @@ pub fn free(base: u32, size: u32) -> bool {
     if !is_valid_user_range(base, size) {
         crate::wow64_klog!(
             "free: invalid range base=0x{:08x} size=0x{:08x}",
-            base, size
+            base,
+            size
         );
         return false;
     }
 
-    crate::wow64_klog!(
-        "free: base=0x{:08x} size=0x{:08x}",
-        base, size
-    );
+    crate::wow64_klog!("free: base=0x{:08x} size=0x{:08x}", base, size);
 
     true
 }
@@ -347,7 +354,9 @@ pub fn read_memory(
 
     crate::wow64_klog!(
         "read_memory: from=0x{:08x} to=0x{:08x} size=0x{:08x}",
-        base_address, buffer, size
+        base_address,
+        buffer,
+        size
     );
 
     Ok(size)
@@ -371,7 +380,9 @@ pub fn write_memory(
 
     crate::wow64_klog!(
         "write_memory: to=0x{:08x} from=0x{:08x} size=0x{:08x}",
-        base_address, buffer, size
+        base_address,
+        buffer,
+        size
     );
 
     Ok(size)
@@ -441,7 +452,13 @@ mod tests {
     fn test_allocation() {
         init_process();
 
-        let result = allocate(0x1000, 0x1000, 0, memory_allocation_type::MEM_COMMIT, memory_protect::PAGE_READWRITE);
+        let result = allocate(
+            0x1000,
+            0x1000,
+            0,
+            memory_allocation_type::MEM_COMMIT,
+            memory_protect::PAGE_READWRITE,
+        );
         assert!(result.is_some());
 
         let (base, size) = result.unwrap();

@@ -6,10 +6,10 @@
 
 #![allow(non_snake_case)]
 
-use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
-use alloc::vec::Vec;
-use alloc::collections::VecDeque;
 use crate::kprintln;
+use alloc::collections::VecDeque;
+use alloc::vec::Vec;
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 
 /// Maximum messages in a queue.
 const MAX_QUEUE_MESSAGES: usize = 256;
@@ -58,15 +58,15 @@ impl MessageQueue {
     /// Post a message to the queue.
     pub fn post_message(&mut self, msg: Msg) -> bool {
         if self.messages.len() >= MAX_QUEUE_MESSAGES {
-            // kprintln!("[msgq] PostMessage: queue full")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[msgq] PostMessage: queue full");
             return false;
         }
         self.messages.push_back(msg);
         self.msg_count.fetch_add(1, Ordering::SeqCst);
         // Signal that a message is available
         self.has_messages.store(true, Ordering::SeqCst);
-        // kprintln!("[msgq] PostMessage: msg={:#x}, hwnd={:#x}, count={}",  // kprintln disabled (memcpy crash workaround)
-//             msg.message, msg.hwnd, self.messages.len());
+        // kprintln!("[msgq] PostMessage: msg={:#x}, hwnd={:#x}, count={}",
+        //             msg.message, msg.hwnd, self.messages.len());
         true
     }
 
@@ -126,8 +126,13 @@ impl MessageQueue {
 
     /// Get next message (blocking with event synchronization).
     /// Returns None when no messages are available (non-blocking) or on timeout.
-    pub fn get_message(&mut self, hwnd_filter: u64, msg_filter_min: u32, 
-                       msg_filter_max: u32, timeout_ms: u32) -> Option<Msg> {
+    pub fn get_message(
+        &mut self,
+        hwnd_filter: u64,
+        msg_filter_min: u32,
+        msg_filter_max: u32,
+        timeout_ms: u32,
+    ) -> Option<Msg> {
         loop {
             // Check for quit first
             if self.quit_flag.load(Ordering::SeqCst) {
@@ -148,7 +153,7 @@ impl MessageQueue {
                     if Self::matches_filter(&msg, hwnd_filter, msg_filter_min, msg_filter_max) {
                         self.messages.remove(i);
                         self.current_msg = Some(msg);
-                        
+
                         // Clear flag if no more messages
                         if self.messages.is_empty() && !self.quit_flag.load(Ordering::SeqCst) {
                             self.has_messages.store(false, Ordering::SeqCst);
@@ -168,7 +173,7 @@ impl MessageQueue {
             // Since we don't have full scheduler integration yet,
             // we'll yield to other threads with a spin hint
             if !self.has_messages.load(Ordering::SeqCst) {
-                // kprintln!("[msgq] GetMessage: waiting for message...")  // kprintln disabled (memcpy crash workaround);
+                // kprintln!("[msgq] GetMessage: waiting for message...");
                 // In a full implementation, this would block on the event
                 // For now, use spin loop hint (would integrate with scheduler)
                 for _ in 0..1000 {
@@ -178,7 +183,7 @@ impl MessageQueue {
                     }
                 }
             }
-            
+
             // If still no message and timeout not infinite, return
             if timeout_ms != 0xFFFFFFFF && !self.has_messages.load(Ordering::SeqCst) {
                 return None;
@@ -187,7 +192,13 @@ impl MessageQueue {
     }
 
     /// Peek at a message without blocking.
-    pub fn peek_message(&mut self, hwnd_filter: u64, msg_filter_min: u32, msg_filter_max: u32, remove: bool) -> Option<Msg> {
+    pub fn peek_message(
+        &mut self,
+        hwnd_filter: u64,
+        msg_filter_min: u32,
+        msg_filter_max: u32,
+        remove: bool,
+    ) -> Option<Msg> {
         // Find a matching message
         for i in 0..self.messages.len() {
             if let Some(msg) = self.messages.get(i).copied() {
@@ -214,7 +225,7 @@ impl MessageQueue {
     /// In real implementation, this calls the window procedure directly.
     pub fn send_message(&self, msg: &Msg) -> i64 {
         let _ = msg;
-        // kprintln!("[msgq] SendMessage: msg={:#x}", msg.message)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[msgq] SendMessage: msg={:#x}", msg.message);
         // In a full implementation, call the window's WndProc
         0
     }
@@ -224,19 +235,20 @@ impl MessageQueue {
     /// Handles extended keys, shift state, and special characters.
     pub fn translate_message(msg: &Msg) -> Option<Msg> {
         match msg.message {
-            0x0100 => { // WM_KEYDOWN
+            0x0100 => {
+                // WM_KEYDOWN
                 let vk = msg.wparam as u32;
                 let _ = &vk;
                 let _ = &vk;
                 let lparam = msg.lparam;
                 let _ = &lparam;
                 let _ = &lparam;
-                
+
                 // Check for extended key (bit 24)
                 let extended = (lparam & 0x01000000) != 0;
                 let _ = &extended;
                 let _ = &extended;
-                
+
                 // Check for key repeat (bits 0-15 of lparam)
                 let repeat_count = (lparam & 0xFFFF) as u32;
                 let _ = &repeat_count;
@@ -268,54 +280,123 @@ impl MessageQueue {
                         0x39 => '(' as u16,
                         _ => 0,
                     },
-                    
+
                     // Letters A-Z (uppercase without shift, lowercase with shift)
                     0x41..=0x5A if !shift_pressed => (vk + 0x20) as u16, // lowercase
-                    0x41..=0x5A if shift_pressed => vk as u16, // uppercase
-                    
+                    0x41..=0x5A if shift_pressed => vk as u16,           // uppercase
+
                     // Space
                     0x20 => 0x20,
-                    
+
                     // punctuation and special characters
-                    0xBA => if shift_pressed { ':' as u16 } else { ';' as u16 }, // ;:
-                    0xBB => if shift_pressed { '+' as u16 } else { '=' as u16 }, // =+
-                    0xBC => if shift_pressed { '<' as u16 } else { ',' as u16 }, // ,<
-                    0xBD => if shift_pressed { '_' as u16 } else { '-' as u16 }, // -_
-                    0xBE => if shift_pressed { '>' as u16 } else { '.' as u16 }, // .>
-                    0xBF => if shift_pressed { '?' as u16 } else { '/' as u16 }, // /?
-                    0xC0 => if shift_pressed { '~' as u16 } else { '`' as u16 }, // `~
-                    0xDB => if shift_pressed { '{' as u16 } else { '[' as u16 }, // [{
-                    0xDC => if shift_pressed { '|' as u16 } else { '\\' as u16 }, // \|
-                    0xDD => if shift_pressed { '}' as u16 } else { ']' as u16 }, // ]}
-                    0xDE => if shift_pressed { '"' as u16 } else { '\'' as u16 }, // '"
-                    
+                    0xBA => {
+                        if shift_pressed {
+                            ':' as u16
+                        } else {
+                            ';' as u16
+                        }
+                    } // ;:
+                    0xBB => {
+                        if shift_pressed {
+                            '+' as u16
+                        } else {
+                            '=' as u16
+                        }
+                    } // =+
+                    0xBC => {
+                        if shift_pressed {
+                            '<' as u16
+                        } else {
+                            ',' as u16
+                        }
+                    } // ,<
+                    0xBD => {
+                        if shift_pressed {
+                            '_' as u16
+                        } else {
+                            '-' as u16
+                        }
+                    } // -_
+                    0xBE => {
+                        if shift_pressed {
+                            '>' as u16
+                        } else {
+                            '.' as u16
+                        }
+                    } // .>
+                    0xBF => {
+                        if shift_pressed {
+                            '?' as u16
+                        } else {
+                            '/' as u16
+                        }
+                    } // /?
+                    0xC0 => {
+                        if shift_pressed {
+                            '~' as u16
+                        } else {
+                            '`' as u16
+                        }
+                    } // `~
+                    0xDB => {
+                        if shift_pressed {
+                            '{' as u16
+                        } else {
+                            '[' as u16
+                        }
+                    } // [{
+                    0xDC => {
+                        if shift_pressed {
+                            '|' as u16
+                        } else {
+                            '\\' as u16
+                        }
+                    } // \|
+                    0xDD => {
+                        if shift_pressed {
+                            '}' as u16
+                        } else {
+                            ']' as u16
+                        }
+                    } // ]}
+                    0xDE => {
+                        if shift_pressed {
+                            '"' as u16
+                        } else {
+                            '\'' as u16
+                        }
+                    } // '"
+
                     // Extended keys - these typically don't translate to characters
                     // but we log them for debugging
                     _ if extended => {
                         match vk {
-                            0x21..=0x29 => { // Page Up/Down, Home, End, Arrow keys
-                                // kprintln!("[msgq] translate: extended vk=0x{:02x}", vk)  // kprintln disabled (memcpy crash workaround);
+                            0x21..=0x29 => {
+                                // Page Up/Down, Home, End, Arrow keys
+                                // kprintln!("[msgq] translate: extended vk=0x{:02x}", vk);
                                 return None;
                             }
-                            0x2D..=0x2F => { // Insert, Delete, Help
-                                // kprintln!("[msgq] translate: extended vk=0x{:02x}", vk)  // kprintln disabled (memcpy crash workaround);
+                            0x2D..=0x2F => {
+                                // Insert, Delete, Help
+                                // kprintln!("[msgq] translate: extended vk=0x{:02x}", vk);
                                 return None;
                             }
-                            0x5B..=0x5C => { // Windows keys
+                            0x5B..=0x5C => {
+                                // Windows keys
                                 return None;
                             }
                             _ => return None,
                         }
                     }
-                    
+
                     // Function keys don't translate
                     0x70..=0x87 => return None, // F1-F24
-                    
+
                     // Navigation and control keys don't translate
                     0x01..=0x2F => return None, // Mouse, shift, ctrl, alt, etc.
-                    
+
                     _ => {
-                        // kprintln!("[msgq] translate: unhandled vk=0x{:02x}", vk)  // kprintln disabled (memcpy crash workaround);
+                        // kprintln!("[msgq] translate: unhandled vk=0x{:02x}", vk);
                         return None;
                     }
                 };
@@ -333,9 +414,10 @@ impl MessageQueue {
                 }
             }
             0x0101 => { // WM_KEYUP
-                // WM_CHAR is not generated on key up in Windows
+                 // WM_CHAR is not generated on key up in Windows
             }
-            0x0104 => { // WM_SYSKEYDOWN (Alt key combinations)
+            0x0104 => {
+                // WM_SYSKEYDOWN (Alt key combinations)
                 // Handle system key combinations
                 let vk = msg.wparam as u32;
                 let _ = &vk;
@@ -354,8 +436,8 @@ impl MessageQueue {
             return 0;
         }
 
-        // kprintln!("[msgq] DispatchMessage: hwnd={:#x}, msg={:#x}",  // kprintln disabled (memcpy crash workaround)
-//             msg.hwnd, msg.message);
+        // kprintln!("[msgq] DispatchMessage: hwnd={:#x}, msg={:#x}",
+        //             msg.hwnd, msg.message);
 
         // In a full implementation, look up the window's WndProc
         // and call it: result = WndProc(hwnd, msg, wparam, lparam)
@@ -408,7 +490,9 @@ pub fn get_current_queue() -> &'static mut MessageQueue {
     let inner = guard.as_mut().unwrap() as *mut MessageQueue;
     let _ = &inner;
     let _ = &inner;
-    unsafe { CURRENT_QUEUE_PTR = inner; }
+    unsafe {
+        CURRENT_QUEUE_PTR = inner;
+    }
     unsafe { &mut *inner }
 }
 
@@ -453,79 +537,91 @@ pub fn default_wndproc(hwnd: u64, msg: u32, wparam: u64, lparam: i64) -> i64 {
     let _ = (hwnd, wparam, lparam);
 
     match msg {
-        0x0001 => { // WM_CREATE
-            // kprintln!("[wndproc] WM_CREATE hwnd={:#x}", hwnd)  // kprintln disabled (memcpy crash workaround);
+        0x0001 => {
+            // WM_CREATE
+            // kprintln!("[wndproc] WM_CREATE hwnd={:#x}", hwnd);
             0 // Continue creation
         }
-        0x0002 => { // WM_DESTROY
-            // kprintln!("[wndproc] WM_DESTROY hwnd={:#x}", hwnd)  // kprintln disabled (memcpy crash workaround);
+        0x0002 => {
+            // WM_DESTROY
+            // kprintln!("[wndproc] WM_DESTROY hwnd={:#x}", hwnd);
             post_quit_message(0);
             0
         }
-        0x000F => { // WM_PAINT
-            // kprintln!("[wndproc] WM_PAINT hwnd={:#x}", hwnd)  // kprintln disabled (memcpy crash workaround);
+        0x000F => {
+            // WM_PAINT
+            // kprintln!("[wndproc] WM_PAINT hwnd={:#x}", hwnd);
             // InvalidateRect was already called, so just validate
             0
         }
-        0x0014 => { // WM_ERASEBKGND
+        0x0014 => {
+            // WM_ERASEBKGND
             // Return 1 to indicate background will be erased
             1
         }
-        0x0005 => { // WM_SIZE
+        0x0005 => {
+            // WM_SIZE
             let width = lparam as u32;
             let _ = &width;
             let _ = &width;
             let height = (lparam >> 32) as u32;
             let _ = &height;
             let _ = &height;
-            // kprintln!("[wndproc] WM_SIZE hwnd={:#x} {}x{}", hwnd, width, height)  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[wndproc] WM_SIZE hwnd={:#x} {}x{}", hwnd, width, height);
             0
         }
-        0x0003 => { // WM_MOVE
+        0x0003 => {
+            // WM_MOVE
             let x = lparam as u32;
             let _ = &x;
             let _ = &x;
             let y = (lparam >> 32) as u32;
             let _ = &y;
             let _ = &y;
-            // kprintln!("[wndproc] WM_MOVE hwnd={:#x} ({},{})", hwnd, x, y)  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[wndproc] WM_MOVE hwnd={:#x} ({},{})", hwnd, x, y);
             0
         }
-        0x0010 => { // WM_CLOSE
-            // kprintln!("[wndproc] WM_CLOSE hwnd={:#x}", hwnd)  // kprintln disabled (memcpy crash workaround);
+        0x0010 => {
+            // WM_CLOSE
+            // kprintln!("[wndproc] WM_CLOSE hwnd={:#x}", hwnd);
             // Default: destroy the window
             crate::libs::win32k::window::destroy_window_internal(hwnd);
             0
         }
-        0x0100 => { // WM_KEYDOWN
-            // kprintln!("[wndproc] WM_KEYDOWN hwnd={:#x} vk={:#x}", hwnd, wparam)  // kprintln disabled (memcpy crash workaround);
+        0x0100 => {
+            // WM_KEYDOWN
+            // kprintln!("[wndproc] WM_KEYDOWN hwnd={:#x} vk={:#x}", hwnd, wparam);
             0
         }
-        0x0101 => { // WM_KEYUP
-            // kprintln!("[wndproc] WM_KEYUP hwnd={:#x} vk={:#x}", hwnd, wparam)  // kprintln disabled (memcpy crash workaround);
+        0x0101 => {
+            // WM_KEYUP
+            // kprintln!("[wndproc] WM_KEYUP hwnd={:#x} vk={:#x}", hwnd, wparam);
             0
         }
-        0x0200 => { // WM_MOUSEMOVE
+        0x0200 => {
+            // WM_MOUSEMOVE
             let x = (lparam as i32) & 0xFFFF;
             let _ = &x;
             let _ = &x;
             let y = ((lparam >> 16) as i32) & 0xFFFF;
             let _ = &y;
             let _ = &y;
-            // kprintln!("[wndproc] WM_MOUSEMOVE hwnd={:#x} ({},{})", hwnd, x, y)  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[wndproc] WM_MOUSEMOVE hwnd={:#x} ({},{})", hwnd, x, y);
             0
         }
-        0x0201 => { // WM_LBUTTONDOWN
-            // kprintln!("[wndproc] WM_LBUTTONDOWN hwnd={:#x}", hwnd)  // kprintln disabled (memcpy crash workaround);
+        0x0201 => {
+            // WM_LBUTTONDOWN
+            // kprintln!("[wndproc] WM_LBUTTONDOWN hwnd={:#x}", hwnd);
             0
         }
-        0x0202 => { // WM_LBUTTONUP
-            // kprintln!("[wndproc] WM_LBUTTONUP hwnd={:#x}", hwnd)  // kprintln disabled (memcpy crash workaround);
+        0x0202 => {
+            // WM_LBUTTONUP
+            // kprintln!("[wndproc] WM_LBUTTONUP hwnd={:#x}", hwnd);
             0
         }
         _ => {
             // Return 0 for unhandled messages (DefWindowProc behavior)
-            // kprintln!("[wndproc] unhandled msg={:#x} hwnd={:#x}", msg, hwnd)  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[wndproc] unhandled msg={:#x} hwnd={:#x}", msg, hwnd);
             0
         }
     }

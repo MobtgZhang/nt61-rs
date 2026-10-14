@@ -61,24 +61,24 @@ pub fn perform_cow(va: u64) -> Result<(), u64> {
     let pte_ptr = match get_pte_ptr(va) {
         Some(p) => p,
         None => {
-            // // kprintln!("[COW] get_pte_ptr returned None for va=0x{:x}", va)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[COW] get_pte_ptr returned None for va=0x{:x}", va);
             return Err(0xC0000005);
         }
     };
-    // // kprintln!("[COW] pte_ptr=0x{:x}", pte_ptr as u64)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[COW] pte_ptr=0x{:x}", pte_ptr as u64);
     let original = unsafe { *pte_ptr };
-    // // kprintln!("[COW] original PTE=0x{:016x} is_hw={} is_cow={}",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //               original.raw(), original.is_hardware(), original.is_copy_on_write());
+    // // kprintln!("[COW] original PTE=0x{:016x} is_hw={} is_cow={}",
+    // //               original.raw(), original.is_hardware(), original.is_copy_on_write());
     if !original.is_hardware() {
-        // // kprintln!("[COW] not hardware PTE")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[COW] not hardware PTE");
         return Err(0xC0000005);
     }
     if !original.is_copy_on_write() {
-        // // kprintln!("[COW] not COW PTE")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[COW] not COW PTE");
         return Err(0xC0000005);
     }
     let old_pa = original.hardware_page_frame();
-    // // kprintln!("[COW] old_pa=0x{:x}", old_pa)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[COW] old_pa=0x{:x}", old_pa);
 
     // Allocate a new PFN.
     let new_pfn = match pfn::allocate_pfn() {
@@ -86,7 +86,7 @@ pub fn perform_cow(va: u64) -> Result<(), u64> {
         None => return Err(0xC0000017), /* STATUS_NO_MEMORY */
     };
     let new_pa = pfn::pfn_to_phys_va(new_pfn);
-    // // kprintln!("[COW] new_pa=0x{:x} (new_pfn={})", new_pa, new_pfn)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[COW] new_pa=0x{:x} (new_pfn={})", new_pa, new_pfn);
 
     // Perform the actual page copy using identity mapping.
     // In UEFI boot environment, kernel page tables are typically identity-mapped,
@@ -103,11 +103,11 @@ pub fn perform_cow(va: u64) -> Result<(), u64> {
     unsafe {
         core::ptr::copy_nonoverlapping(src_ptr, dst_ptr, PAGE_SIZE);
     }
-    // // kprintln!("[COW] copied {} bytes from 0x{:x} to 0x{:x}", PAGE_SIZE, old_pa, new_pa)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[COW] copied {} bytes from 0x{:x} to 0x{:x}", PAGE_SIZE, old_pa, new_pa);
 
     // Re-write the PTE to point at the new page with R/W=1 and no COW flag.
     let new_pte_bits = original.hardware_flags() | 0x2 /* R/W */;
-    // // kprintln!("[COW] writing new PTE: pa=0x{:x} bits=0x{:x}", new_pa, new_pte_bits & !0x200)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[COW] writing new PTE: pa=0x{:x} bits=0x{:x}", new_pa, new_pte_bits & !0x200);
     unsafe {
         (*pte_ptr).set_hardware(new_pa, new_pte_bits & !0x200);
         (*pte_ptr).clear_copy_on_write();
@@ -115,7 +115,7 @@ pub fn perform_cow(va: u64) -> Result<(), u64> {
     }
     let _pte_after = unsafe { (*pte_ptr).raw() };
     // _pte_after is intentionally unused - reserved for future debugging
-    // // kprintln!("[COW] PTE after write=0x{:016x}", _pte_after)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[COW] PTE after write=0x{:016x}", _pte_after);
 
     // TLB shootdown - invalidate the TLB entry for this virtual address
     crate::mm::vas::invalidate_tlb(va);
@@ -132,11 +132,11 @@ pub fn perform_cow(va: u64) -> Result<(), u64> {
                 (*entry).share_count = 0;
                 (*entry).reference_count = 0;
                 db.add_to_free(old_pfn);
-                // // kprintln!("[COW] old page PFN {} freed (was only reference)", old_pfn)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                // // kprintln!("[COW] old page PFN {} freed (was only reference)", old_pfn);
             } else {
                 (*entry).share_count -= 1;
                 (*entry).reference_count = (*entry).reference_count.saturating_sub(1);
-                // // kprintln!("[COW] old page PFN {} share_count now {}", old_pfn, (*entry).share_count)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                // // kprintln!("[COW] old page PFN {} share_count now {}", old_pfn, (*entry).share_count);
             }
         }
     }
@@ -146,7 +146,7 @@ pub fn perform_cow(va: u64) -> Result<(), u64> {
         unsafe {
             (*new_entry).share_count = 1;
             (*new_entry).reference_count = 1;
-            // // kprintln!("[COW] new page PFN {} initialized with share_count=1", new_pfn)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[COW] new page PFN {} initialized with share_count=1", new_pfn);
         }
     }
 

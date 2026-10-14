@@ -34,9 +34,15 @@ pub struct MMPTE {
 }
 
 impl MMPTE {
-    pub const fn empty() -> Self { Self { u_long: 0 } }
-    pub const fn from_raw(v: u64) -> Self { Self { u_long: v } }
-    pub const fn raw(&self) -> u64 { self.u_long }
+    pub const fn empty() -> Self {
+        Self { u_long: 0 }
+    }
+    pub const fn from_raw(v: u64) -> Self {
+        Self { u_long: v }
+    }
+    pub const fn raw(&self) -> u64 {
+        self.u_long
+    }
 
     // -----------------------------------------------------------------
     // Hardware interpretation
@@ -85,25 +91,53 @@ impl MMPTE {
     }
 
     pub fn set_writable(&mut self, v: bool) {
-        if v { self.u_long |= 2; } else { self.u_long &= !2; }
+        if v {
+            self.u_long |= 2;
+        } else {
+            self.u_long &= !2;
+        }
     }
     pub fn set_user(&mut self, v: bool) {
-        if v { self.u_long |= 4; } else { self.u_long &= !4; }
+        if v {
+            self.u_long |= 4;
+        } else {
+            self.u_long &= !4;
+        }
     }
     pub fn set_accessed(&mut self, v: bool) {
-        if v { self.u_long |= 0x20; } else { self.u_long &= !0x20; }
+        if v {
+            self.u_long |= 0x20;
+        } else {
+            self.u_long &= !0x20;
+        }
     }
     pub fn set_dirty(&mut self, v: bool) {
-        if v { self.u_long |= 0x40; } else { self.u_long &= !0x40; }
+        if v {
+            self.u_long |= 0x40;
+        } else {
+            self.u_long &= !0x40;
+        }
     }
     pub fn set_large(&mut self, v: bool) {
-        if v { self.u_long |= 0x80; } else { self.u_long &= !0x80; }
+        if v {
+            self.u_long |= 0x80;
+        } else {
+            self.u_long &= !0x80;
+        }
     }
     pub fn set_global(&mut self, v: bool) {
-        if v { self.u_long |= 0x100; } else { self.u_long &= !0x100; }
+        if v {
+            self.u_long |= 0x100;
+        } else {
+            self.u_long &= !0x100;
+        }
     }
     pub fn set_no_execute(&mut self, v: bool) {
-        if v { self.u_long |= 1u64 << 63; } else { self.u_long &= !(1u64 << 63); }
+        if v {
+            self.u_long |= 1u64 << 63;
+        } else {
+            self.u_long &= !(1u64 << 63);
+        }
     }
     pub fn clear(&mut self) {
         self.u_long = 0;
@@ -270,8 +304,9 @@ pub fn mm_protect_to_pte_bits(code: u32, user: bool) -> u64 {
     let rwx = code & 0xFF;
     // R/W
     let rw = match rwx {
-        PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE
-        | PAGE_EXECUTE_WRITECOPY => 1u64 << 1,
+        PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY => {
+            1u64 << 1
+        }
         _ => 0,
     };
     // U/S
@@ -282,8 +317,16 @@ pub fn mm_protect_to_pte_bits(code: u32, user: bool) -> u64 {
         _ => 0,
     };
     // PCD / PWT / PAT
-    let pwt = if code & PAGE_NOCACHE != 0 { 1u64 << 3 } else { 0 };
-    let pcd = if code & PAGE_NOCACHE != 0 { 1u64 << 4 } else { 0 };
+    let pwt = if code & PAGE_NOCACHE != 0 {
+        1u64 << 3
+    } else {
+        0
+    };
+    let pcd = if code & PAGE_NOCACHE != 0 {
+        1u64 << 4
+    } else {
+        0
+    };
     1 | rw | us | pwt | pcd | xd
 }
 
@@ -295,10 +338,14 @@ pub type PfnNumber = u64;
 
 /// Convert a physical address to a PFN.
 #[inline]
-pub fn pfn_from_phys(pa: u64) -> PfnNumber { pa >> 12 }
+pub fn pfn_from_phys(pa: u64) -> PfnNumber {
+    pa >> 12
+}
 /// Convert a PFN to a physical address.
 #[inline]
-pub fn pfn_to_phys(pfn: PfnNumber) -> u64 { pfn << 12 }
+pub fn pfn_to_phys(pfn: PfnNumber) -> u64 {
+    pfn << 12
+}
 
 // ---------------------------------------------------------------------------
 // List head for a PTE/PFN linked list — minimal flat intrusive list with
@@ -315,7 +362,13 @@ pub struct PTE_LIST {
 }
 
 impl PTE_LIST {
-    pub fn empty() -> Self { Self { next: ptr::null_mut(), _padding: 0, _entry_type: 0 } }
+    pub fn empty() -> Self {
+        Self {
+            next: ptr::null_mut(),
+            _padding: 0,
+            _entry_type: 0,
+        }
+    }
 }
 
 #[cfg(test)]

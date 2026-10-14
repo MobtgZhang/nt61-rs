@@ -5,11 +5,11 @@
 //!
 //! References: Windows Event Log API, Security.evtx format
 
+use crate::ke::sync::Spinlock;
+use crate::rtl::eventlog::{write_security_event, EventChannel, EventLevel, EventRecord};
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
-use crate::ke::sync::Spinlock;
-use crate::rtl::eventlog::{EventRecord, EventLevel, EventChannel, write_security_event};
 
 /// Maximum number of audit records stored in memory before rotation
 pub const MAX_AUDIT_RECORDS: usize = 1024;
@@ -169,11 +169,16 @@ impl AuditLog {
         );
     }
 
-    /// Rotate the log (remove oldest entries)
+    /// Rotate the log (drop oldest entries to make room for a new record).
+    ///
+    /// Matches the Windows event-log "Overwrite events as needed" behaviour:
+    /// once the log reaches its maximum size the oldest record is discarded
+    /// for each incoming record, so the log stays capped at
+    /// `MAX_AUDIT_RECORDS` instead of shrinking below it.
     fn rotate(&mut self) {
-        // Remove oldest 25% of records
-        let remove_count = MAX_AUDIT_RECORDS / 4;
-        self.records.drain(0..remove_count);
+        while self.records.len() >= MAX_AUDIT_RECORDS {
+            self.records.drain(..1);
+        }
         self.rotation_count += 1;
     }
 
@@ -223,11 +228,7 @@ impl AuditLog {
     }
 
     /// Query by user SID
-    pub fn query_by_user(
-        &self,
-        user_sid: &super::sid::Sid,
-        limit: usize,
-    ) -> Vec<AuditRecord> {
+    pub fn query_by_user(&self, user_sid: &super::sid::Sid, limit: usize) -> Vec<AuditRecord> {
         self.records
             .iter()
             .filter(|r| r.user_sid.equals(user_sid))
@@ -237,11 +238,7 @@ impl AuditLog {
     }
 
     /// Query by object name
-    pub fn query_by_object(
-        &self,
-        object_name: &str,
-        limit: usize,
-    ) -> Vec<AuditRecord> {
+    pub fn query_by_object(&self, object_name: &str, limit: usize) -> Vec<AuditRecord> {
         self.records
             .iter()
             .filter(|r| r.object_name.contains(object_name))
@@ -263,6 +260,11 @@ impl AuditLog {
     /// Clear all records (administrative operation)
     pub fn clear(&mut self) {
         self.records.clear();
+        // Clearing the log also resets its statistics: the record counters
+        // describe the contents of the current log, not its history. Record
+        // numbering is preserved so IDs stay unique across clears.
+        self.total_records_written = 0;
+        self.rotation_count = 0;
         // Don't reset next_record_id to maintain unique IDs
     }
 
@@ -396,8 +398,39 @@ pub mod encryption {
 mod tests {
     use super::*;
 
+    // The audit log is process-global, so the tests below cannot run
+    // concurrently against it. libtest runs tests on separate threads,
+    // which makes a shared log (and `clear_log()`) a race.
+    static TEST_MUTEX: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+    struct TestGuard;
+
+    impl TestGuard {
+        fn new() -> Self {
+            while TEST_MUTEX
+                .compare_exchange_weak(
+                    false,
+                    true,
+                    core::sync::atomic::Ordering::Acquire,
+                    core::sync::atomic::Ordering::Relaxed,
+                )
+                .is_err()
+            {
+                core::hint::spin_loop();
+            }
+            TestGuard
+        }
+    }
+
+    impl Drop for TestGuard {
+        fn drop(&mut self) {
+            TEST_MUTEX.store(false, core::sync::atomic::Ordering::Release);
+        }
+    }
+
     #[test]
     fn test_audit_log_write() {
+        let _guard = TestGuard::new();
         init();
 
         let sid = super::super::sid::Sid::well_known(super::super::sid::WellKnownSid::World);
@@ -417,6 +450,7 @@ mod tests {
 
     #[test]
     fn test_audit_log_query() {
+        let _guard = TestGuard::new();
         init();
         clear_log();
 
@@ -445,6 +479,7 @@ mod tests {
 
     #[test]
     fn test_rotation() {
+        let _guard = TestGuard::new();
         init();
         clear_log();
 

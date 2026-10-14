@@ -168,7 +168,9 @@ pub fn handle_irq() {
                 // in `ke::idt` once IDT integration is complete; for
                 // now we just clear it.
                 dispatch_irq(irq as u64);
-                unsafe { write_volatile((GICV2_CPU_BASE + gicc::EOIR as u64) as *mut u32, iar); }
+                unsafe {
+                    write_volatile((GICV2_CPU_BASE + gicc::EOIR as u64) as *mut u32, iar);
+                }
             }
         }
         soc::InterruptController::GICv3 | soc::InterruptController::GICv4 => {
@@ -178,7 +180,9 @@ pub fn handle_irq() {
             }
             let irq = iar & 0xFFFFFF;
             dispatch_irq(irq);
-            unsafe { asm!("msr ICC_EOIR1_EL1, {}", in(reg) iar, options(nostack)); };
+            unsafe {
+                asm!("msr ICC_EOIR1_EL1, {}", in(reg) iar, options(nostack));
+            };
         }
         soc::InterruptController::None => {}
     }
@@ -198,7 +202,9 @@ pub fn dispatch_irq(irq: u64) {
 }
 
 /// Acknowledge-elapsed IRQ count (for smoke tests).
-pub fn irq_count() -> u32 { IRQ_COUNT.load(Ordering::Relaxed) }
+pub fn irq_count() -> u32 {
+    IRQ_COUNT.load(Ordering::Relaxed)
+}
 
 /// Smoke test: verify the GIC has been initialised. With the
 /// current stub implementation the GIC is considered ready as

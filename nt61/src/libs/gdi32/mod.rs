@@ -52,12 +52,12 @@ pub fn has_gdi_handle(h: u64) -> bool {
 
 /// Initialise the gdi32 stub.
 pub fn init() {
-    // kprintln!("    [gdi32] init")  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("      dc        : GetDC/ReleaseDC/CreateCompatibleDC/DeleteDC")  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("      paint     : PatBlt/FillRect/InvalidateRect")  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("      text      : TextOutW/DrawTextW/GetTextExtentPoint32W")  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("      pen_brush : CreatePen/CreateSolidBrush/SelectObject/DeleteObject")  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("    [gdi32] ready")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    [gdi32] init");
+    // kprintln!("      dc        : GetDC/ReleaseDC/CreateCompatibleDC/DeleteDC");
+    // kprintln!("      paint     : PatBlt/FillRect/InvalidateRect");
+    // kprintln!("      text      : TextOutW/DrawTextW/GetTextExtentPoint32W");
+    // kprintln!("      pen_brush : CreatePen/CreateSolidBrush/SelectObject/DeleteObject");
+    // kprintln!("    [gdi32] ready");
 }
 
 #[cfg(target_arch = "x86_64")]

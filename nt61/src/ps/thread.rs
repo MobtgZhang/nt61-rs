@@ -13,7 +13,7 @@
 pub use crate::ke::sync::DispatcherHeader;
 use crate::ps::process::{Eprocess, ListEntry};
 use core::ptr::null_mut;
-use core::sync::atomic::{AtomicU64, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 // =============================================================================
 // KTHREAD - Kernel Thread Block (Windows 7 x64 layout, 0x360 bytes)
@@ -28,118 +28,118 @@ use core::sync::atomic::{AtomicU64, AtomicU32, Ordering};
 #[repr(C)]
 pub struct Kthread {
     // === 0x000: Dispatcher Header (0x18 bytes) ===
-    pub header: DispatcherHeader,              // 0x000
+    pub header: DispatcherHeader, // 0x000
 
     // === 0x018: Cycle Time ===
-    pub cycle_time: u64,                      // 0x018
-    pub high_cycle_time: u32,                // 0x020
-    _pad0: u32,                               // 0x024
+    pub cycle_time: u64,      // 0x018
+    pub high_cycle_time: u32, // 0x020
+    _pad0: u32,               // 0x024
 
     // === 0x028: Quantum Target ===
-    pub quantum_target: u64,                  // 0x028
+    pub quantum_target: u64, // 0x028
 
     // === 0x030: Stack Pointers ===
-    pub initial_stack: u64,                   // 0x030 (FIXED from 0x020)
-    pub stack_limit: u64,                     // 0x038 (FIXED from 0x028)
-    pub kernel_stack: u64,                    // 0x040 (FIXED from 0x030)
-    pub thread_lock: u64,                      // 0x048
+    pub initial_stack: u64, // 0x030 (FIXED from 0x020)
+    pub stack_limit: u64,   // 0x038 (FIXED from 0x028)
+    pub kernel_stack: u64,  // 0x040 (FIXED from 0x030)
+    pub thread_lock: u64,   // 0x048
 
     // === 0x050: Wait Register + APC State Flags ===
-    pub wait_register: KWaitStatusRegister,   // 0x050
-    pub alertable: u8,                        // 0x051 (NEW)
-    pub apc_state_discount: u8,               // 0x052 (NEW)
-    pub apc_queueable: u8,                    // 0x053 (NEW)
-    pub auto_alignment: u8,                    // 0x054 (NEW)
-    pub context_switches: u8,                 // 0x055
-    pub state: KThreadState,                  // 0x056
-    pub npx_state: u8,                        // 0x057
-    pub wait_prcb: i8,                        // 0x058
-    pub wait_irql: i8,                        // 0x059
-    pub wait_mode: i8,                        // 0x05A
-    pub wait_next: i8,                        // 0x05B
-    pub wait_reason: KWaitReason,             // 0x05C
-    _pad_wait: u32,                           // 0x060
+    pub wait_register: KWaitStatusRegister, // 0x050
+    pub alertable: u8,                      // 0x051 (NEW)
+    pub apc_state_discount: u8,             // 0x052 (NEW)
+    pub apc_queueable: u8,                  // 0x053 (NEW)
+    pub auto_alignment: u8,                 // 0x054 (NEW)
+    pub context_switches: u8,               // 0x055
+    pub state: KThreadState,                // 0x056
+    pub npx_state: u8,                      // 0x057
+    pub wait_prcb: i8,                      // 0x058
+    pub wait_irql: i8,                      // 0x059
+    pub wait_mode: i8,                      // 0x05A
+    pub wait_next: i8,                      // 0x05B
+    pub wait_reason: KWaitReason,           // 0x05C
+    _pad_wait: u32,                         // 0x060
 
     // === 0x064: Wait Block ===
-    pub wait_block_list: *mut WaitBlock,      // 0x064
+    pub wait_block_list: *mut WaitBlock,             // 0x064
     pub wait_register_ptr: *mut KWaitStatusRegister, // 0x06C
 
     // === 0x074: Wait List Entry ===
-    pub wait_list_entry: ListEntry,           // 0x074
-    _pad_wle: u64,                           // 0x084
-    _pad_to_timer: u32,                      // 0x08C - padding to make timer at 0x090
+    pub wait_list_entry: ListEntry, // 0x074
+    _pad_wle: u64,                  // 0x084
+    _pad_to_timer: u32,             // 0x08C - padding to make timer at 0x090
 
     // === 0x090: Timer ===
-    pub timer: DispatcherHeader,              // 0x090
+    pub timer: DispatcherHeader, // 0x090
 
     // === 0x0AC: Thread List Lock ===
-    pub thread_list_lock: u32,                 // 0x0AC
-    _pad_lock: u32,                           // 0x0B0
+    pub thread_list_lock: u32, // 0x0AC
+    _pad_lock: u32,            // 0x0B0
 
     // === 0x0B4: Processor Affinity ===
-    pub ideal_processor: u8,                  // 0x0B4
-    pub iu_mode: u8,                          // 0x0B5
-    pub spec_ctrl: u8,                        // 0x0B6
-    pub user_sched_flags: u8,                 // 0x0B7
-    pub thread_flags: i32,                    // 0x0B8
+    pub ideal_processor: u8,  // 0x0B4
+    pub iu_mode: u8,          // 0x0B5
+    pub spec_ctrl: u8,        // 0x0B6
+    pub user_sched_flags: u8, // 0x0B7
+    pub thread_flags: i32,    // 0x0B8
 
     // === 0x0BC: APC Environment ===
-    pub apc_environment: u64,                 // 0x0BC
+    pub apc_environment: u64, // 0x0BC
 
     // === 0x0C4: Priority ===
-    pub base_priority: i8,                     // 0x0C4
-    pub quantum_reset: i8,                     // 0x0C5
-    _pad_priority: u16,                        // 0x0C6
+    pub base_priority: i8, // 0x0C4
+    pub quantum_reset: i8, // 0x0C5
+    _pad_priority: u16,    // 0x0C6
 
     // === 0x0C8: Thread List Entry ===
-    pub global_thread_list_entry: ListEntry,   // 0x0C8
+    pub global_thread_list_entry: ListEntry, // 0x0C8
 
     // === 0x0D8: Process Link ===
-    pub process: *mut Eprocess,               // 0x0D8 (FIXED from 0x0B8)
+    pub process: *mut Eprocess, // 0x0D8 (FIXED from 0x0B8)
 
     // === 0x0E0: Affinity ===
-    pub affinity_mask: u64,                    // 0x0E0
-    pub affinitized: u8,                      // 0x0E8
-    pub home_cpu: u8,                          // 0x0E9
-    _pad_aff: u16,                            // 0x0EA
-    _pad_aff2: u32,                           // 0x0EC
+    pub affinity_mask: u64, // 0x0E0
+    pub affinitized: u8,    // 0x0E8
+    pub home_cpu: u8,       // 0x0E9
+    _pad_aff: u16,          // 0x0EA
+    _pad_aff2: u32,         // 0x0EC
 
     // === 0x0F0: Group Affinity ===
-    pub group_affinity: GroupAffinity,        // 0x0F0
+    pub group_affinity: GroupAffinity, // 0x0F0
 
     // === 0x100: Client ID ===
-    pub client_id: ClientId,                   // 0x100 (FIXED from 0x0E8)
+    pub client_id: ClientId, // 0x100 (FIXED from 0x0E8)
 
     // === 0x110: Timer Banks ===
-    pub active_timer_banks_flag: u8,           // 0x110
-    _pad_timer_banks: [u8; 7],               // 0x111
+    pub active_timer_banks_flag: u8, // 0x110
+    _pad_timer_banks: [u8; 7],       // 0x111
 
     // === 0x118: Time Accounting ===
-    pub kernel_time: u64,                      // 0x118
-    pub user_time: u64,                        // 0x120
+    pub kernel_time: u64, // 0x118
+    pub user_time: u64,   // 0x120
 
     // === 0x128: Thread Priority ===
-    pub priority: i8,                          // 0x128
-    pub base_priority2: i8,                     // 0x129
-    _pad_prio: [u8; 6],                        // 0x12A
+    pub priority: i8,       // 0x128
+    pub base_priority2: i8, // 0x129
+    _pad_prio: [u8; 6],     // 0x12A
 
     // === 0x130: Cross-Thread Flags ===
-    pub cross_thread_flags: u32,               // 0x130
+    pub cross_thread_flags: u32, // 0x130
 
     // === 0x134: Store Count ===
-    pub store_count: i32,                       // 0x134
+    pub store_count: i32, // 0x134
 
     // === 0x138: Group Index ===
-    pub group_index: i32,                      // 0x138
+    pub group_index: i32, // 0x138
 
     // === 0x13C: Stack Base ===
-    pub stack_base_addr: u64,                  // 0x13C
+    pub stack_base_addr: u64, // 0x13C
 
     // === 0x144: TEB ===
-    pub teb: *mut Teb,                         // 0x144 (FIXED from 0x0F8)
+    pub teb: *mut Teb, // 0x144 (FIXED from 0x0F8)
 
     // === 0x14C: TCB ===
-    pub tcb: *mut Kthread,                      // 0x14C
+    pub tcb: *mut Kthread, // 0x14C
 
     // === 0x154: APC State (Windows 7 x64 location) ===
     /// APC state for this thread
@@ -147,23 +147,23 @@ pub struct Kthread {
     /// heads + process + flags). We pad to 0x30 to give a stable
     /// total KTHREAD size while still matching the documented
     /// fields at their canonical offsets.
-    pub apc_state: ApcState,                    // 0x154
+    pub apc_state: ApcState, // 0x154
 
     // === 0x184: Saved APC State (Windows 7 x64) ===
     /// Saved APC state (used when attached to another process)
-    pub saved_apc_state: ApcState,              // 0x184
+    pub saved_apc_state: ApcState, // 0x184
 
     // === 0x1B4: Kernel Context ===
     /// Thread context for kernel/user transitions
-    pub context: KthreadContext,               // 0x1B4 (size = 0xA8)
+    pub context: KthreadContext, // 0x1B4 (size = 0xA8)
 
     // === 0x25C: Priority Decay Tracking (P2 Enhancement) ===
     /// Timestamp of last priority boost (in ticks)
-    pub boost_time: u64,                      // 0x25C
+    pub boost_time: u64, // 0x25C
     /// Whether decay has started for this thread
-    pub decay_started: u8,                    // 0x264
+    pub decay_started: u8, // 0x264
     /// Reserved for alignment
-    _pad_decay: [u8; 7],                     // 0x265
+    _pad_decay: [u8; 7], // 0x265
 
     // === Padding to KTHREAD size ===
     // Windows 7 x64 documented KTHREAD size is 0x360 bytes. The fields
@@ -412,7 +412,6 @@ pub struct Ethread {
 // ETHREAD size: alias of the actual struct size so any change to
 // the field layout propagates automatically.
 
-
 const KTHREAD_SIZE_ACTUAL: usize = core::mem::size_of::<Kthread>();
 const ETHREAD_SIZE_ACTUAL: usize = core::mem::size_of::<Ethread>();
 const APC_STATE_SIZE_ACTUAL: usize = core::mem::size_of::<ApcState>();
@@ -432,10 +431,7 @@ const KTHREAD_CONTEXT_OFFSET: usize = core::mem::offset_of!(Kthread, context);
 // padding that the Windows 7 C struct never needed (e.g. when a
 // pointer field is followed by a field with different alignment).
 // The runtime init() logs the actual size so any drift is visible.
-const _: () = assert!(
-    APC_STATE_SIZE_ACTUAL == 0x30,
-    "ApcState must be 0x30 bytes"
-);
+const _: () = assert!(APC_STATE_SIZE_ACTUAL == 0x30, "ApcState must be 0x30 bytes");
 const _: () = assert!(
     KTHREAD_CONTEXT_SIZE_ACTUAL == 0xA8,
     "KthreadContext must be 0xA8 bytes"
@@ -1166,7 +1162,7 @@ pub fn create_thread(process: *mut Eprocess, stack_size: usize) -> Option<&'stat
 
     if !thread.is_null() {
         unsafe {
-            // // crate::kprintln!("[THREAD] create_thread: init kthread in place")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // crate::kprintln!("[THREAD] create_thread: init kthread in place");
             (*thread).kthread.header = DispatcherHeader::new(6);
             (*thread).kthread.global_thread_list_entry.flink = core::ptr::null_mut();
             (*thread).kthread.global_thread_list_entry.blink = core::ptr::null_mut();
@@ -1174,11 +1170,14 @@ pub fn create_thread(process: *mut Eprocess, stack_size: usize) -> Option<&'stat
             (*thread).kthread.wait_list_entry.flink = core::ptr::null_mut();
             (*thread).kthread.wait_list_entry.blink = core::ptr::null_mut();
 
-            // // crate::kprintln!("[THREAD] create_thread: kthread initialised")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // crate::kprintln!("[THREAD] create_thread: kthread initialised");
 
             // Set client ID (both KTHREAD and ETHREAD locations)
             let tid = NEXT_TID.fetch_add(1, Ordering::SeqCst);
-            (*thread).kthread.client_id.set((*process).unique_process_id, tid);
+            (*thread)
+                .kthread
+                .client_id
+                .set((*process).unique_process_id, tid);
             (*thread).client_id.set((*process).unique_process_id, tid);
 
             // Link to process
@@ -1205,9 +1204,9 @@ pub fn create_thread(process: *mut Eprocess, stack_size: usize) -> Option<&'stat
 
             // Initialize thread list entry and add to process list
             (*thread).kthread.global_thread_list_entry.init();
-            (*process).kprocess_thread_list_head.insert_tail(
-                &mut (*thread).kthread.global_thread_list_entry as *mut ListEntry
-            );
+            (*process)
+                .kprocess_thread_list_head
+                .insert_tail(&mut (*thread).kthread.global_thread_list_entry as *mut ListEntry);
         }
 
         THREAD_COUNT.fetch_add(1, Ordering::SeqCst);
@@ -1218,63 +1217,63 @@ pub fn create_thread(process: *mut Eprocess, stack_size: usize) -> Option<&'stat
 
 /// Create idle thread for a CPU
 pub fn create_idle_thread(cpu_id: u32) -> Option<&'static mut Ethread> {
-    // // kprintln!("[THREAD] create_idle_thread: entering for CPU {}", cpu_id)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[THREAD] create_idle_thread: entering for CPU {}", cpu_id);
 
     // In Windows NT, idle threads run in the context of the System process (PID 4).
     // PID 0 is the "System Idle Process" which doesn't have a real EPROCESS structure.
-    // // kprintln!("[THREAD] create_idle_thread: looking for System process (PID {})",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //              crate::ps::process::PID_SYSTEM);
+    // // kprintln!("[THREAD] create_idle_thread: looking for System process (PID {})",
+    // //              crate::ps::process::PID_SYSTEM);
     let process = match crate::ps::process::get_by_pid(crate::ps::process::PID_SYSTEM) {
         Some(p) => p,
         None => {
-            // // kprintln!("[FATAL] create_idle_thread: System process (PID {}) not found!",   // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                      crate::ps::process::PID_SYSTEM);
-            // // kprintln!("[FATAL] Cannot create idle thread without System process")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-            
+            // // kprintln!("[FATAL] create_idle_thread: System process (PID {}) not found!",
+            // //                      crate::ps::process::PID_SYSTEM);
+            // // kprintln!("[FATAL] Cannot create idle thread without System process");
+
             // Trigger bugcheck - system process is required for idle thread
             crate::ke::bugcheck::bugcheck_with(
-                crate::ke::bugcheck::BugCheckCode::SystemUninit,
-                0x6A,                    // PROCESS_INITIALIZATION_FAILED
-                cpu_id as u64,          // P1: CPU ID
-                0,                      // P2: system process not found
-                0,                      // P3: reserved
+                crate::ke::bugcheck::BugCheckCode::ProcessInitializationFailed,
+                0x6A,          // PROCESS_INITIALIZATION_FAILED
+                cpu_id as u64, // P1: CPU ID
+                0,             // P2: system process not found
+                0,             // P3: reserved
             );
             // NOTE: bugcheck_with() returns ! (never returns)
             #[allow(unreachable_code)]
             return None;
         }
     };
-    // // kprintln!("[THREAD] create_idle_thread: System process found at {:016x}", process as *const _ as u64)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[THREAD] create_idle_thread: System process found at {:016x}", process as *const _ as u64);
 
-    // // kprintln!("[THREAD] create_idle_thread: allocating ETHREAD (size=0x{:x})",   // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //               core::mem::size_of::<Ethread>());
+    // // kprintln!("[THREAD] create_idle_thread: allocating ETHREAD (size=0x{:x})",
+    // //               core::mem::size_of::<Ethread>());
     let thread = crate::mm::pool::allocate(
         crate::mm::pool::PoolType::NonPaged,
         core::mem::size_of::<Ethread>(),
     ) as *mut Ethread;
 
     if thread.is_null() {
-        // // kprintln!("[FATAL] create_idle_thread: Cannot allocate ETHREAD for CPU {}", cpu_id)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-        // // kprintln!("[FATAL] Idle thread is required for scheduler operation")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-        // // kprintln!("[FATAL] System cannot continue without idle thread")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[FATAL] create_idle_thread: Cannot allocate ETHREAD for CPU {}", cpu_id);
+        // // kprintln!("[FATAL] Idle thread is required for scheduler operation");
+        // // kprintln!("[FATAL] System cannot continue without idle thread");
 
         // Trigger PROCESS_INITIALIZATION_FAILED bugcheck
         // Idle thread creation is critical for scheduler operation
         crate::ke::bugcheck::bugcheck_with(
-            crate::ke::bugcheck::BugCheckCode::SystemUninit,
-            0x6A,                    // PROCESS_INITIALIZATION_FAILED
-            cpu_id as u64,          // P1: CPU ID
-            core::mem::size_of::<Ethread>() as u64,  // P2: sizeof(ETHREAD)
-            0,                      // P3: reserved
+            crate::ke::bugcheck::BugCheckCode::ProcessInitializationFailed,
+            0x6A,                                   // PROCESS_INITIALIZATION_FAILED
+            cpu_id as u64,                          // P1: CPU ID
+            core::mem::size_of::<Ethread>() as u64, // P2: sizeof(ETHREAD)
+            0,                                      // P3: reserved
         );
         // NOTE: bugcheck_with() is ! (never returns)
     }
-    // // kprintln!("[THREAD] create_idle_thread: ETHREAD allocated at {:016x}", thread as u64)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[THREAD] create_idle_thread: ETHREAD allocated at {:016x}", thread as u64);
 
     unsafe {
-        // // kprintln!("[THREAD] create_idle_thread: initializing kthread fields")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[THREAD] create_idle_thread: initializing kthread fields");
         let kt = Kthread::new();
-        // // kprintln!("[THREAD] create_idle_thread: Kthread::new() succeeded")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[THREAD] create_idle_thread: Kthread::new() succeeded");
         (*thread).kthread.header = kt.header;
         (*thread).kthread.global_thread_list_entry = kt.global_thread_list_entry;
         (*thread).kthread.apc_state = kt.apc_state;
@@ -1282,8 +1281,13 @@ pub fn create_idle_thread(cpu_id: u32) -> Option<&'static mut Ethread> {
         (*thread).kthread.wait_list_entry = kt.wait_list_entry;
 
         // Idle threads run in System process context, so use PID_SYSTEM for unique_process
-        (*thread).client_id.set(crate::ps::process::PID_SYSTEM, (cpu_id as u64) + 0x10000);
-        (*thread).kthread.client_id.set(crate::ps::process::PID_SYSTEM, (cpu_id as u64) + 0x10000);
+        (*thread)
+            .client_id
+            .set(crate::ps::process::PID_SYSTEM, (cpu_id as u64) + 0x10000);
+        (*thread)
+            .kthread
+            .client_id
+            .set(crate::ps::process::PID_SYSTEM, (cpu_id as u64) + 0x10000);
 
         (*thread).kthread.process = process;
         (*thread).threads_process = process;
@@ -1298,12 +1302,12 @@ pub fn create_idle_thread(cpu_id: u32) -> Option<&'static mut Ethread> {
         (*thread).kthread.group_affinity.set_cpu(cpu_id);
         // Set home CPU to this CPU
         (*thread).kthread.home_cpu = cpu_id as u8;
-        
-        // // kprintln!("[THREAD] create_idle_thread: kthread initialization complete")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+
+        // // kprintln!("[THREAD] create_idle_thread: kthread initialization complete");
     }
 
     THREAD_COUNT.fetch_add(1, Ordering::SeqCst);
-    // // kprintln!("[THREAD] create_idle_thread: returning thread")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[THREAD] create_idle_thread: returning thread");
     unsafe { thread.as_mut() }
 }
 
@@ -1348,14 +1352,11 @@ pub struct SystemThreadResult {
 }
 
 /// Create a kernel-mode system thread (PsCreateSystemThread)
-pub fn ps_create_system_thread(
-    start_address: u64,
-    start_context: u64,
-) -> SystemThreadResult {
+pub fn ps_create_system_thread(start_address: u64, start_context: u64) -> SystemThreadResult {
     let system_process = match crate::ps::process::get_by_pid(crate::ps::process::PID_SYSTEM) {
         Some(p) => p as *mut crate::ps::process::Eprocess,
         None => {
-            // // kprintln!("[PS] PsCreateSystemThread: System process (PID 4) not found!")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[PS] PsCreateSystemThread: System process (PID 4) not found!");
             return SystemThreadResult {
                 ethread: null_mut(),
                 handle: 0,
@@ -1365,13 +1366,11 @@ pub fn ps_create_system_thread(
     };
 
     let ethread_layout = core::mem::size_of::<Ethread>();
-    let ethread = crate::mm::pool::allocate(
-        crate::mm::pool::PoolType::NonPaged,
-        ethread_layout,
-    ) as *mut Ethread;
+    let ethread = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, ethread_layout)
+        as *mut Ethread;
 
     if ethread.is_null() {
-        // // kprintln!("[PS] PsCreateSystemThread: failed to allocate ETHREAD (OOM)")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[PS] PsCreateSystemThread: failed to allocate ETHREAD (OOM)");
         return SystemThreadResult {
             ethread: null_mut(),
             handle: 0,
@@ -1383,8 +1382,13 @@ pub fn ps_create_system_thread(
         core::ptr::write_bytes(ethread as *mut u8, 0, ethread_layout);
 
         let tid = NEXT_TID.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
-        (*ethread).client_id.set(crate::ps::process::PID_SYSTEM, tid);
-        (*ethread).kthread.client_id.set(crate::ps::process::PID_SYSTEM, tid);
+        (*ethread)
+            .client_id
+            .set(crate::ps::process::PID_SYSTEM, tid);
+        (*ethread)
+            .kthread
+            .client_id
+            .set(crate::ps::process::PID_SYSTEM, tid);
         (*ethread).create_time = crate::ke::time::get_system_time() as i64;
 
         (*ethread).kthread.header = DispatcherHeader::new(6);
@@ -1411,7 +1415,7 @@ pub fn ps_create_system_thread(
         let stack_pages: u64 = 32;
         let stack_base = crate::mm::frame::allocate_pages(stack_pages);
         if stack_base.is_none() {
-            // // kprintln!("[PS] PsCreateSystemThread: failed to allocate kernel stack (OOM)")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[PS] PsCreateSystemThread: failed to allocate kernel stack (OOM)");
             let _ = crate::mm::pool::free(ethread as *mut u8);
             return SystemThreadResult {
                 ethread: null_mut(),
@@ -1438,22 +1442,21 @@ pub fn ps_create_system_thread(
 
         (*ethread).kthread.teb = core::ptr::null_mut();
 
-        (*system_process).kprocess_thread_list_head.insert_tail(
-            core::ptr::addr_of_mut!((*ethread).kthread.global_thread_list_entry)
-        );
+        (*system_process)
+            .kprocess_thread_list_head
+            .insert_tail(core::ptr::addr_of_mut!(
+                (*ethread).kthread.global_thread_list_entry
+            ));
 
         (*ethread).kthread.state = KThreadState::Ready;
-        crate::ke::scheduler::add_ready(
-            ethread as *mut _,
-            (*ethread).kthread.base_priority as u8,
-        );
+        crate::ke::scheduler::add_ready(ethread as *mut _, (*ethread).kthread.base_priority as u8);
 
         THREAD_COUNT.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
 
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "[PS] PsCreateSystemThread: TID {} created entry=0x{:016x} stack=0x{:016x}",
-// //             tid, start_address, stack_base
-// //         );
+        // // kprintln!(
+        // //             "[PS] PsCreateSystemThread: TID {} created entry=0x{:016x} stack=0x{:016x}",
+        // //             tid, start_address, stack_base
+        // //         );
 
         let thread_name = b"SystemThread\0";
         let header = crate::ob::create_object(
@@ -1486,11 +1489,11 @@ pub fn ps_terminate_system_thread(ethread: *mut Ethread, _exit_code: u32) {
         (*ethread).kthread.state = KThreadState::Terminated;
         (*ethread).kthread.header.signal_state = 1;
     }
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         "[PS] PsTerminateSystemThread: TID {} terminated with exit code 0x{:x}",
-// //         unsafe { (*ethread).client_id.unique_thread },
-// //         exit_code
-// //     );
+    // // kprintln!(
+    // //         "[PS] PsTerminateSystemThread: TID {} terminated with exit code 0x{:x}",
+    // //         unsafe { (*ethread).client_id.unique_thread },
+    // //         exit_code
+    // //     );
 }
 
 /// Exit the current system thread (never returns)
@@ -1508,18 +1511,22 @@ pub fn ps_exit_system_thread(exit_code: u32) {
 // =============================================================================
 
 /// Queue a kernel APC to a thread (P2 Enhancement)
-pub fn queue_kernel_apc(ethread: *mut Ethread, routine: crate::ke::apc::ApcRoutine, context: *mut u8) -> bool {
+pub fn queue_kernel_apc(
+    ethread: *mut Ethread,
+    routine: crate::ke::apc::ApcRoutine,
+    context: *mut u8,
+) -> bool {
     if ethread.is_null() {
         return false;
     }
 
     {
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "[THREAD] Queuing kernel APC to TID {}, routine={:x}, context={:x}",
-// //             (*ethread).client_id.unique_thread,
-// //             routine as u64,
-// //             context as u64
-// //         );
+        // // kprintln!(
+        // //             "[THREAD] Queuing kernel APC to TID {}, routine={:x}, context={:x}",
+        // //             (*ethread).client_id.unique_thread,
+        // //             routine as u64,
+        // //             context as u64
+        // //         );
 
         // Use the APC module's queue function
         crate::ke::apc::queue_thread_apc(
@@ -1537,18 +1544,22 @@ pub fn queue_kernel_apc(ethread: *mut Ethread, routine: crate::ke::apc::ApcRouti
 /// Queue a user APC to a thread (P2 Enhancement)
 
 /// Queue a user APC to a thread (P2 Enhancement)
-pub fn queue_user_apc(ethread: *mut Ethread, routine: crate::ke::apc::ApcRoutine, context: *mut u8) -> bool {
+pub fn queue_user_apc(
+    ethread: *mut Ethread,
+    routine: crate::ke::apc::ApcRoutine,
+    context: *mut u8,
+) -> bool {
     if ethread.is_null() {
         return false;
     }
 
     {
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "[THREAD] Queuing user APC to TID {}, routine={:x}, context={:x}",
-// //             (*ethread).client_id.unique_thread,
-// //             routine as u64,
-// //             context as u64
-// //         );
+        // // kprintln!(
+        // //             "[THREAD] Queuing user APC to TID {}, routine={:x}, context={:x}",
+        // //             (*ethread).client_id.unique_thread,
+        // //             routine as u64,
+        // //             context as u64
+        // //         );
 
         // Use the APC module's queue function
         crate::ke::apc::queue_thread_apc(
@@ -1581,13 +1592,14 @@ pub fn deliver_kernel_apc(ethread: *mut Ethread) -> bool {
         state.kernel_apc_in_progress = 1;
 
         // Deliver kernel APCs using the APC module
-        let delivered = crate::ke::apc::deliver_thread_apc(ethread, crate::ke::apc::ApcKind::Kernel);
+        let delivered =
+            crate::ke::apc::deliver_thread_apc(ethread, crate::ke::apc::ApcKind::Kernel);
 
         if delivered {
-            // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                 "[THREAD] Delivered kernel APCs to TID {}",
-// //                 (*ethread).client_id.unique_thread
-// //             );
+            // // kprintln!(
+            // //                 "[THREAD] Delivered kernel APCs to TID {}",
+            // //                 (*ethread).client_id.unique_thread
+            // //             );
         }
 
         state.kernel_apc_in_progress = 0;
@@ -1622,10 +1634,10 @@ pub fn deliver_user_apc(ethread: *mut Ethread) -> bool {
         let delivered = crate::ke::apc::deliver_thread_apc(ethread, crate::ke::apc::ApcKind::User);
 
         if delivered {
-            // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                 "[THREAD] Delivered user APCs to TID {}",
-// //                 (*ethread).client_id.unique_thread
-// //             );
+            // // kprintln!(
+            // //                 "[THREAD] Delivered user APCs to TID {}",
+            // //                 (*ethread).client_id.unique_thread
+            // //             );
         }
 
         state.user_apc_in_progress = 0;
@@ -1697,7 +1709,7 @@ pub fn ps_open_thread(
     let target = match find_thread_by_tid(target_tid) {
         Some(t) => t,
         None => {
-            // // kprintln!("[THREAD] ps_open_thread: thread {} not found", target_tid)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[THREAD] ps_open_thread: thread {} not found", target_tid);
             return Err(crate::ps::process::STATUS_INVALID_PARAMETER);
         }
     };
@@ -1728,12 +1740,14 @@ pub fn ps_open_thread(
     );
     let _ = &granted;
 
-    // // kprintln!("[THREAD] ps_open_thread: TID={} access=0x{:x} result={:?} granted=0x{:x}",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //              target_tid, desired_access, result, granted);
+    // // kprintln!("[THREAD] ps_open_thread: TID={} access=0x{:x} result={:?} granted=0x{:x}",
+    // //              target_tid, desired_access, result, granted);
 
     match result {
         crate::se::seaccess::AccessCheckResult::Allowed => Ok(target),
-        crate::se::seaccess::AccessCheckResult::Denied => Err(crate::ps::process::STATUS_ACCESS_DENIED),
+        crate::se::seaccess::AccessCheckResult::Denied => {
+            Err(crate::ps::process::STATUS_ACCESS_DENIED)
+        }
     }
 }
 
@@ -1766,7 +1780,9 @@ pub fn find_thread_by_tid(tid: u64) -> Option<*mut Ethread> {
 ///
 /// Creates a proper security descriptor based on the thread's process token.
 /// Threads inherit their security from the parent process.
-fn build_thread_security_descriptor(thread: *mut Ethread) -> *const crate::se::seaccess::SecurityDescriptor {
+fn build_thread_security_descriptor(
+    thread: *mut Ethread,
+) -> *const crate::se::seaccess::SecurityDescriptor {
     if thread.is_null() {
         return core::ptr::null();
     }
@@ -1816,41 +1832,41 @@ pub fn get_current_kthread() -> *mut Kthread {
 
 /// Initialize thread subsystem
 pub fn init() {
-    // // kprintln!("    Initializing thread subsystem...")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("      KTHREAD size: 0x{:x} bytes (alignment={})",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //               core::mem::size_of::<Kthread>(),
-// //               core::mem::align_of::<Kthread>());
-    // // kprintln!("      KTHREAD.apc_state @ 0x{:x} (expected 0x154)",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //               core::mem::offset_of!(Kthread, apc_state));
-    // // kprintln!("      ETHREAD size: 0x{:x} bytes", core::mem::size_of::<Ethread>())  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("      ApcState size: 0x{:x} bytes", core::mem::size_of::<ApcState>())  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("      KthreadContext size: 0x{:x} bytes", core::mem::size_of::<KthreadContext>())  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("      KTHREAD.apc_state @ 0x{:x} (expected 0x154)",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //               core::mem::offset_of!(Kthread, apc_state));
-    // // kprintln!("      KTHREAD.saved_apc_state @ 0x{:x} (expected 0x184)",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //               core::mem::offset_of!(Kthread, saved_apc_state));
-    // // kprintln!("      KTHREAD.context @ 0x{:x} (expected 0x1B4)",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //               core::mem::offset_of!(Kthread, context));
+    // // kprintln!("    Initializing thread subsystem...");
+    // // kprintln!("      KTHREAD size: 0x{:x} bytes (alignment={})",
+    // //               core::mem::size_of::<Kthread>(),
+    // //               core::mem::align_of::<Kthread>());
+    // // kprintln!("      KTHREAD.apc_state @ 0x{:x} (expected 0x154)",
+    // //               core::mem::offset_of!(Kthread, apc_state));
+    // // kprintln!("      ETHREAD size: 0x{:x} bytes", core::mem::size_of::<Ethread>());
+    // // kprintln!("      ApcState size: 0x{:x} bytes", core::mem::size_of::<ApcState>());
+    // // kprintln!("      KthreadContext size: 0x{:x} bytes", core::mem::size_of::<KthreadContext>());
+    // // kprintln!("      KTHREAD.apc_state @ 0x{:x} (expected 0x154)",
+    // //               core::mem::offset_of!(Kthread, apc_state));
+    // // kprintln!("      KTHREAD.saved_apc_state @ 0x{:x} (expected 0x184)",
+    // //               core::mem::offset_of!(Kthread, saved_apc_state));
+    // // kprintln!("      KTHREAD.context @ 0x{:x} (expected 0x1B4)",
+    // //               core::mem::offset_of!(Kthread, context));
 
     // Validate sizes match Windows 7 x64
     let kthread_size = core::mem::size_of::<Kthread>();
     let ethread_size = core::mem::size_of::<Ethread>();
 
     if kthread_size == 0x360 {
-        // // kprintln!("      KTHREAD: 0x360 bytes [OK]")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("      KTHREAD: 0x360 bytes [OK]");
     } else {
-        // // kprintln!("      KTHREAD: 0x{:x} bytes [MISMATCH - expected 0x360]", kthread_size)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("      KTHREAD: 0x{:x} bytes [MISMATCH - expected 0x360]", kthread_size);
     }
 
     if ethread_size == 0x498 {
-        // // kprintln!("      ETHREAD: 0x498 bytes [OK]")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("      ETHREAD: 0x498 bytes [OK]");
     } else {
-        // // kprintln!("      ETHREAD: 0x{:x} bytes [MISMATCH - expected 0x498]", ethread_size)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("      ETHREAD: 0x{:x} bytes [MISMATCH - expected 0x498]", ethread_size);
     }
 
-    // // kprintln!("      Thread structures: ready")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("      PsCreateSystemThread: implemented")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("    Thread subsystem initialized")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("      Thread structures: ready");
+    // // kprintln!("      PsCreateSystemThread: implemented");
+    // // kprintln!("    Thread subsystem initialized");
 }
 
 // Final layout assertions (Windows 7 x64 compatibility). These are
@@ -1891,18 +1907,22 @@ const _: () = {
     // require re-ordering earlier KTHREAD fields, which is out of
     // scope for this fix. The runtime init() logs the actual
     // values so users can verify against real binaries.
-    if KTHREAD_APC_OFFSET != 0x170 {
-        panic!("apc_state offset drifted from expected 0x170");
-    }
-    if KTHREAD_SAVED_APC_OFFSET != 0x1A0 {
-        panic!("saved_apc_state offset drifted from expected 0x1A0");
-    }
-    if KTHREAD_CONTEXT_OFFSET != 0x1D0 {
-        panic!("context offset drifted from expected 0x1D0");
-    }
-    if APC_STATE_SIZE_ACTUAL != 0x30 {
-        panic!("ApcState size drifted from expected 0x30");
-    }
+    assert!(
+        KTHREAD_APC_OFFSET == 0x170,
+        "apc_state offset drifted from expected 0x170"
+    );
+    assert!(
+        KTHREAD_SAVED_APC_OFFSET == 0x1A0,
+        "saved_apc_state offset drifted from expected 0x1A0"
+    );
+    assert!(
+        KTHREAD_CONTEXT_OFFSET == 0x1D0,
+        "context offset drifted from expected 0x1D0"
+    );
+    assert!(
+        APC_STATE_SIZE_ACTUAL == 0x30,
+        "ApcState size drifted from expected 0x30"
+    );
 };
 
 // Diagnostic: force the type-checker to surface the actual layout

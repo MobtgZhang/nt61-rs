@@ -15,9 +15,9 @@
 #![cfg(target_arch = "x86_64")]
 #![allow(dead_code)]
 
-use crate::ps::process::{Eprocess, create_user_process};
 use crate::libs::wow64::types::*;
 use crate::libs::wow64::wow64vas::WOW64_HEAP_VIRTUAL_ALLOC_BASE;
+use crate::ps::process::{create_user_process, Eprocess};
 use alloc::boxed::Box;
 
 // =============================================================================
@@ -203,7 +203,6 @@ unsafe fn init_peb32(peb: *mut Peb32, process: &Eprocess) {
     (*peb).os_major_version = 6;
     (*peb).os_minor_version = 1; // Windows 7
     (*peb).os_build_number = 7600;
-
 }
 
 /// Load 32-bit system DLLs into the Wow64 process.
@@ -215,10 +214,11 @@ unsafe fn init_peb32(peb: *mut Peb32, process: &Eprocess) {
 ///   * gdi32.dll - Win32 GDI API
 fn load_wow64_system_dlls(_process: &Eprocess) -> Result<(), u32> {
     // In a real implementation:
-    // 1. Load ntdll.dll at 0x7FFE0000 (standard 32-bit ntdll base)
-    // 2. Load kernel32.dll at 0x7FFE1000
-    // 3. Load user32.dll at 0x7FFE2000
-    // 4. Load gdi32.dll at 0x7FFE3000
+    // 1. Load ntdll.dll at 0x7C000000 (classic 32-bit ntdll base)
+    // 2. Load kernel32.dll at 0x7C800000
+    // 3. Load user32.dll at 0x7D000000
+    // 4. Load gdi32.dll at 0x7D100000
+    //    (0x7FFE0000 is KUSER_SHARED_DATA and must stay reserved.)
     // 5. Initialize the PEB loader data with these DLLs
 
     // For the stub, just log
@@ -290,9 +290,7 @@ pub fn query_wow64_information(
         Wow64ProcessInformationClass::XeKeys => {
             0 // XeKeys not used
         }
-        Wow64ProcessInformationClass::SessionInformation => {
-            process.session_id as u32
-        }
+        Wow64ProcessInformationClass::SessionInformation => process.session_id as u32,
     }
 }
 

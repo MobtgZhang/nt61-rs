@@ -39,12 +39,12 @@ impl LogLevel {
     /// Get the ANSI color code for this log level (for terminal output)
     pub fn color(&self) -> &'static str {
         match self {
-            LogLevel::Fatal => "\x1b[1;31m",   // Bold red
-            LogLevel::Error => "\x1b[31m",     // Red
-            LogLevel::Warn => "\x1b[33m",      // Yellow
-            LogLevel::Info => "\x1b[32m",      // Green
-            LogLevel::Debug => "\x1b[36m",     // Cyan
-            LogLevel::Trace => "\x1b[90m",     // Bright black/gray
+            LogLevel::Fatal => "\x1b[1;31m", // Bold red
+            LogLevel::Error => "\x1b[31m",   // Red
+            LogLevel::Warn => "\x1b[33m",    // Yellow
+            LogLevel::Info => "\x1b[32m",    // Green
+            LogLevel::Debug => "\x1b[36m",   // Cyan
+            LogLevel::Trace => "\x1b[90m",   // Bright black/gray
         }
     }
 
@@ -86,9 +86,9 @@ pub fn should_log(level: LogLevel) -> bool {
 #[macro_export]
 macro_rules! kprintln_mm {
     ($level:expr, $($arg:tt)*) => {
-        if $level as u8 <= crate::mm::logging::MM_LOG_LEVEL.load(core::sync::atomic::Ordering::Relaxed) {
-            // kprintln disabled (memcpy crash workaround)
-        }
+        if $level as u8
+            <= crate::mm::logging::MM_LOG_LEVEL.load(core::sync::atomic::Ordering::Relaxed)
+        {}
     };
 }
 
@@ -97,9 +97,9 @@ macro_rules! kprintln_mm {
 #[macro_export]
 macro_rules! kprintln_mm_color {
     ($level:expr, $($arg:tt)*) => {
-        if $level as u8 <= crate::mm::logging::MM_LOG_LEVEL.load(core::sync::atomic::Ordering::Relaxed) {
-            // kprintln disabled (memcpy crash workaround)
-        }
+        if $level as u8
+            <= crate::mm::logging::MM_LOG_LEVEL.load(core::sync::atomic::Ordering::Relaxed)
+        {}
     };
 }
 
@@ -108,8 +108,10 @@ macro_rules! kprintln_mm_color {
 #[macro_export]
 macro_rules! mm_log {
     ($level:expr, $subsystem:expr, $($arg:tt)*) => {
-        if $level as u8 <= crate::mm::logging::MM_LOG_LEVEL.load(core::sync::atomic::Ordering::Relaxed) {
-            // // crate::kprintln!(concat!("[", $subsystem, "] ", $($arg)*))  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        if $level as u8
+            <= crate::mm::logging::MM_LOG_LEVEL.load(core::sync::atomic::Ordering::Relaxed)
+        {
+            // // crate::kprintln!(concat!("[", $subsystem, "] ", $($arg)*));
         }
     };
 }
@@ -123,17 +125,17 @@ pub fn init_log_level() {
 /// Initialize the logging system
 pub fn init() {
     init_log_level();
-    // // kprintln!("[MM LOG] Memory manager logging initialized at {} level", get_log_level().name())  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[MM LOG] Memory manager logging initialized at {} level", get_log_level().name());
 }
 
 /// Print current log level settings
 pub fn print_settings() {
     let _level = get_log_level();
     // _level is intentionally unused - reserved for future logging
-    // // kprintln!("=== Memory Manager Log Settings ===")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("  Current level: {} ({})", _level.name(), _level as u8)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("  Level values: Fatal=0, Error=1, Warn=2, Info=3, Debug=4, Trace=5")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("================================")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("=== Memory Manager Log Settings ===");
+    // // kprintln!("  Current level: {} ({})", _level.name(), _level as u8);
+    // // kprintln!("  Level values: Fatal=0, Error=1, Warn=2, Info=3, Debug=4, Trace=5");
+    // // kprintln!("================================");
 }
 
 // =============================================================================
@@ -144,7 +146,7 @@ pub fn print_settings() {
 pub fn log_pfn_alloc(_pfn: u64, _from_list: &str) {
     // _pfn and _from_list are intentionally unused - reserved for future logging
     if should_log(LogLevel::Debug) {
-        // // kprintln!("[PFN] Allocate: pfn={} from={}", _pfn, _from_list)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[PFN] Allocate: pfn={} from={}", _pfn, _from_list);
     }
 }
 
@@ -152,7 +154,7 @@ pub fn log_pfn_alloc(_pfn: u64, _from_list: &str) {
 pub fn log_pfn_free(_pfn: u64) {
     // _pfn is intentionally unused - reserved for future logging
     if should_log(LogLevel::Debug) {
-        // // kprintln!("[PFN] Free: pfn={}", _pfn)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[PFN] Free: pfn={}", _pfn);
     }
 }
 
@@ -160,7 +162,7 @@ pub fn log_pfn_free(_pfn: u64) {
 pub fn log_page_fault(_addr: u64, _fault_type: &str) {
     // _addr and _fault_type are intentionally unused - reserved for future logging
     if should_log(LogLevel::Trace) {
-        // // kprintln!("[PF] Fault @ 0x{:016x}: {}", _addr, _fault_type)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[PF] Fault @ 0x{:016x}: {}", _addr, _fault_type);
     }
 }
 
@@ -168,7 +170,7 @@ pub fn log_page_fault(_addr: u64, _fault_type: &str) {
 pub fn log_vas_operation(_op: &str, _va: u64) {
     // _op and _va are intentionally unused - reserved for future logging
     if should_log(LogLevel::Debug) {
-        // // kprintln!("[VAS] {}: va=0x{:016x}", _op, _va)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[VAS] {}: va=0x{:016x}", _op, _va);
     }
 }
 
@@ -176,7 +178,7 @@ pub fn log_vas_operation(_op: &str, _va: u64) {
 pub fn log_selfmap(_status: &str, _detail: u64) {
     // _status and _detail are intentionally unused - reserved for future logging
     if should_log(LogLevel::Debug) {
-        // // kprintln!("[SELF-MAP] {}: 0x{:016x}", _status, _detail)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[SELF-MAP] {}: 0x{:016x}", _status, _detail);
     }
 }
 
@@ -184,7 +186,7 @@ pub fn log_selfmap(_status: &str, _detail: u64) {
 pub fn log_memory_pressure(_pressure: f32, _action: &str) {
     // _pressure and _action are intentionally unused - reserved for future logging
     if should_log(LogLevel::Info) {
-        // // kprintln!("[MEM] Pressure {:.2}%: {}", _pressure, _action)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[MEM] Pressure {:.2}%: {}", _pressure, _action);
     }
 }
 
@@ -225,6 +227,12 @@ mod tests {
         // Set to Debug level
         set_log_level(LogLevel::Debug);
         assert!(should_log(LogLevel::Debug));
+        // Trace is "more verbose" than Debug; at the Debug level
+        // we do NOT enable Trace.
+        assert!(!should_log(LogLevel::Trace));
+
+        // Set to Trace level
+        set_log_level(LogLevel::Trace);
         assert!(should_log(LogLevel::Trace));
     }
 }

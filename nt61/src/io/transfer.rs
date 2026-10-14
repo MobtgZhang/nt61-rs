@@ -14,11 +14,11 @@
 //!    the original virtual addresses. Fast but dangerous (page faults,
 //!    security issues). Only for trusted drivers.
 
-use core::ptr::null_mut;
 use alloc::vec::Vec;
+use core::ptr::null_mut;
 
-use crate::mm::pool;
 use crate::libs::ntdll::status::*;
+use crate::mm::pool;
 
 pub const DO_BUFFERED_IO: u32 = 0x00000004;
 pub const DO_DIRECT_IO: u32 = 0x00000010;
@@ -103,15 +103,8 @@ pub fn build_mdl_for_non_paged_pool(mdl: *mut Mdl) {
     }
 }
 
-pub fn probe_and_lock_pages(
-    mdl: *mut Mdl,
-    access_mode: u8,
-    operation: u32,
-) -> u32 {
-    let _ = (
-        
-        
-        access_mode, operation);
+pub fn probe_and_lock_pages(mdl: *mut Mdl, access_mode: u8, operation: u32) -> u32 {
+    let _ = (access_mode, operation);
 
     if mdl.is_null() {
         return STATUS_INVALID_PARAMETER as u32;
@@ -119,7 +112,6 @@ pub fn probe_and_lock_pages(
 
     unsafe {
         (*mdl).mdl_flags |= MDL_PAGES_LOCKED;
-
     }
 
     STATUS_SUCCESS as u32

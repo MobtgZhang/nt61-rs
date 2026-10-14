@@ -9,8 +9,8 @@
 //! 3.0. No code is copied from any Microsoft or ReactOS source
 //! file.
 
-use core::ptr;
 use crate::drivers::video::log;
+use core::ptr;
 
 /// VGA text-mode framebuffer physical base address.
 pub const VGA_TEXT_PHYS: u64 = 0xB8000;

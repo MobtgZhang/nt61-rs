@@ -43,12 +43,24 @@ pub fn nv50_fb_init(dev: &mut NouveauDevice) -> Result<(), GpuError> {
     let v_sync_end = dev.height + 12;
 
     // Set horizontal timing via named register offsets.
-    dev.write_reg(crtc_off + nv50_reg::NV_CRTC_H_TOTAL, (h_total << 16) | dev.width);
-    dev.write_reg(crtc_off + nv50_reg::NV_CRTC_H_SYNC, (h_sync_end << 16) | h_sync_start);
+    dev.write_reg(
+        crtc_off + nv50_reg::NV_CRTC_H_TOTAL,
+        (h_total << 16) | dev.width,
+    );
+    dev.write_reg(
+        crtc_off + nv50_reg::NV_CRTC_H_SYNC,
+        (h_sync_end << 16) | h_sync_start,
+    );
 
     // Set vertical timing via named register offsets.
-    dev.write_reg(crtc_off + nv50_reg::NV_CRTC_V_TOTAL, (v_total << 16) | dev.height);
-    dev.write_reg(crtc_off + nv50_reg::NV_CRTC_V_SYNC, (v_sync_end << 16) | v_sync_start);
+    dev.write_reg(
+        crtc_off + nv50_reg::NV_CRTC_V_TOTAL,
+        (v_total << 16) | dev.height,
+    );
+    dev.write_reg(
+        crtc_off + nv50_reg::NV_CRTC_V_SYNC,
+        (v_sync_end << 16) | v_sync_start,
+    );
 
     // Enable CRTC
     dev.write_reg(crtc_off, 1);
@@ -59,15 +71,12 @@ pub fn nv50_fb_init(dev: &mut NouveauDevice) -> Result<(), GpuError> {
 pub mod nv50_reg {
     /// PV Baptized register offset
 
-
     /// PFB register offset
-
 
     /// PFB pitch register (NV_FB_PITCH)
     pub const NV_FB_PITCH: u32 = 0x00100C;
 
     /// PCRTC register offset
-
 
     /// PCRTC horizontal total register
     pub const NV_CRTC_H_TOTAL: u32 = 0x006008;

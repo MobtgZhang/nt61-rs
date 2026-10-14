@@ -46,10 +46,10 @@ pub const LOG_RING_LINES: usize = 64;
 
 /// Standard colour attributes used by the SafeBootMode shell.
 pub const ATTR_DEFAULT: u8 = 0x07; // light-grey on black
-pub const ATTR_TITLE: u8 = 0x1F;   // white on blue
-pub const ATTR_PROMPT: u8 = 0x0F;  // white on black
-pub const ATTR_HR: u8 = 0x0B;      // light-cyan on black
-pub const ATTR_LOG: u8 = 0x0A;     // light-green on black
+pub const ATTR_TITLE: u8 = 0x1F; // white on blue
+pub const ATTR_PROMPT: u8 = 0x0F; // white on black
+pub const ATTR_HR: u8 = 0x0B; // light-cyan on black
+pub const ATTR_LOG: u8 = 0x0A; // light-green on black
 
 /// Initialise the architecture-specific text console backend.
 ///
@@ -186,28 +186,36 @@ pub fn set_cursor(x: u8, y: u8) {
 
 #[cfg(target_arch = "x86_64")]
 pub use crate::hal::x86_64::text_console::{
-    put_byte_vga_only, put_byte_vga_only_str, put_rstr, is_ready,
+    is_ready, put_byte_vga_only, put_byte_vga_only_str, put_rstr,
 };
 
 #[cfg(not(target_arch = "x86_64"))]
 #[inline(always)]
-pub fn put_byte_vga_only(b: u8) { put_byte(b); }
+pub fn put_byte_vga_only(b: u8) {
+    put_byte(b);
+}
 
 #[cfg(not(target_arch = "x86_64"))]
 #[inline(always)]
 pub fn put_byte_vga_only_str(s: &str) {
-    for b in s.bytes() { put_byte(b); }
+    for b in s.bytes() {
+        put_byte(b);
+    }
 }
 
 #[cfg(not(target_arch = "x86_64"))]
 #[inline(always)]
 pub fn put_rstr(s: &str) {
-    for b in s.bytes() { put_byte(b); }
+    for b in s.bytes() {
+        put_byte(b);
+    }
 }
 
 #[cfg(not(target_arch = "x86_64"))]
 #[inline(always)]
-pub fn is_ready() -> bool { READY.load(Ordering::Acquire) }
+pub fn is_ready() -> bool {
+    READY.load(Ordering::Acquire)
+}
 
 /// Move the cursor to the start of the given row, column 0.
 pub fn goto_row(row: u8) {
@@ -253,12 +261,24 @@ mod loong64;
 #[cfg(target_arch = "loongarch64")]
 use self::loong64 as b;
 
-fn backend_init() { b::init(); }
-fn backend_set_attr(attr: u8) { b::set_attr(attr); }
-fn backend_put_byte(b: u8) { b::put_byte(b); }
-fn backend_clear() { b::clear(); }
-fn backend_set_cursor(x: u8, y: u8) { b::set_cursor(x, y); }
-fn backend_log_line_count() -> usize { b::log_line_count() }
+fn backend_init() {
+    b::init();
+}
+fn backend_set_attr(attr: u8) {
+    b::set_attr(attr);
+}
+fn backend_put_byte(b: u8) {
+    b::put_byte(b);
+}
+fn backend_clear() {
+    b::clear();
+}
+fn backend_set_cursor(x: u8, y: u8) {
+    b::set_cursor(x, y);
+}
+fn backend_log_line_count() -> usize {
+    b::log_line_count()
+}
 fn backend_read_log_lines(buf: &mut [[u8; COLS + 2]]) -> usize {
     b::read_log_lines(buf)
 }

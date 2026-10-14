@@ -12,9 +12,9 @@
 #![cfg(target_arch = "x86_64")]
 
 use crate::hal::common::pci;
+use crate::ke::sync::Spinlock;
 use crate::kprintln;
 use crate::mm::pool::{self, PoolType};
-use crate::ke::sync::Spinlock;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 /// RTL8139 PCI vendor / device ID.
@@ -22,52 +22,47 @@ const RTL8139_VID: u16 = 0x10EC;
 const RTL8139_DID: u16 = 0x8139;
 
 /// Register offsets (BAR0 I/O port).
-const REG_IDR0: u8 = 0x00;     // MAC address (6 bytes)
+const REG_IDR0: u8 = 0x00; // MAC address (6 bytes)
 
 const REG_CMD: u8 = 0x37;
-const REG_RBSTART: u16 = 0x30;  // RX Buffer Start
-const REG_RCR: u8 = 0x44;      // Receive Configuration Register
-const REG_TCR: u8 = 0x40;      // Transmit Configuration Register
+const REG_RBSTART: u16 = 0x30; // RX Buffer Start
+const REG_RCR: u8 = 0x44; // Receive Configuration Register
+const REG_TCR: u8 = 0x40; // Transmit Configuration Register
 
-const REG_TSD0: u8 = 0x10;     // TX Status (4 registers for 4 TX buffers)
-const REG_TSAD0: u16 = 0x20;   // TX Start Address 0
-const REG_IMR: u16 = 0x3C;     // Interrupt Mask Register
-const REG_ISR: u16 = 0x3E;      // Interrupt Status Register
+const REG_TSD0: u8 = 0x10; // TX Status (4 registers for 4 TX buffers)
+const REG_TSAD0: u16 = 0x20; // TX Start Address 0
+const REG_IMR: u16 = 0x3C; // Interrupt Mask Register
+const REG_ISR: u16 = 0x3E; // Interrupt Status Register
 
 /// CMD bits.
 const CMD_RST: u8 = 1 << 4;
-const CMD_RE: u8 = 1 << 3;     // Receiver Enable
-const CMD_TE: u8 = 1 << 2;     // Transmitter Enable
+const CMD_RE: u8 = 1 << 3; // Receiver Enable
+const CMD_TE: u8 = 1 << 2; // Transmitter Enable
 
 /// RCR bits.
-const RCR_EN: u32 = 1 << 0;     // Receiver Enable
+const RCR_EN: u32 = 1 << 0; // Receiver Enable
 
-const RCR_APM: u32 = 1 << 2;   // Accept Physical Match
-const RCR_AB: u32 = 1 << 3;    // Accept Broadcast
-const RCR_AM: u32 = 1 << 4;    // Accept Multicast
-const RCR_WRAP: u32 = 1 << 7;  // Wrap
+const RCR_APM: u32 = 1 << 2; // Accept Physical Match
+const RCR_AB: u32 = 1 << 3; // Accept Broadcast
+const RCR_AM: u32 = 1 << 4; // Accept Multicast
+const RCR_WRAP: u32 = 1 << 7; // Wrap
 
 /// TCR bits.
-const TCR_EN: u32 = 1 << 2;     // Transmitter Enable
+const TCR_EN: u32 = 1 << 2; // Transmitter Enable
 
 /// TX Status bits.
-const TSD_OWN: u32 = 1 << 31;  // Ownership bit
-
+const TSD_OWN: u32 = 1 << 31; // Ownership bit
 
 /// ISR bits.
-const ISR_ROK: u16 = 1 << 0;    // Receive OK
-const ISR_RER: u16 = 1 << 1;    // Receive Error
-const ISR_TOK: u16 = 1 << 2;    // Transmit OK
-const ISR_TER: u16 = 1 << 3;    // Transmit Error
-
-
-
+const ISR_ROK: u16 = 1 << 0; // Receive OK
+const ISR_RER: u16 = 1 << 1; // Receive Error
+const ISR_TOK: u16 = 1 << 2; // Transmit OK
+const ISR_TER: u16 = 1 << 3; // Transmit Error
 
 /// Pool tags
 mod tags {
     use crate::mm::pool::make_tag;
     pub const NETBUF: u32 = make_tag(b'N', b'B', b'u', b'f');
-
 }
 
 /// One RTL8139 NIC.
@@ -118,18 +113,25 @@ fn push_nic(n: Nic) {
     }
 }
 
-pub fn count() -> usize { unsafe { NIC_COUNT } }
+pub fn count() -> usize {
+    unsafe { NIC_COUNT }
+}
 
 pub fn init() {
-#[cfg(target_arch = "x86_64")]
+    #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     crate::hal::x86_64::serial::write_string("NET:rtl8139_start\r\n");
     let mut found = 0u32;
     for dev in pci::enumerate() {
         if dev.vendor_id == RTL8139_VID && dev.device_id == RTL8139_DID {
-            if let Some(info) = crate::drivers::bus::pci_bus::find_pci(dev.bus, dev.device, dev.function) {
+            if let Some(info) =
+                crate::drivers::bus::pci_bus::find_pci(dev.bus, dev.device, dev.function)
+            {
                 if let Some(bar0) = first_io_bar(&info) {
-                    let mut n = Nic { bar0_io: bar0 as u16, ..Default::default() };
+                    let mut n = Nic {
+                        bar0_io: bar0 as u16,
+                        ..Default::default()
+                    };
                     if init_nic(&mut n) {
                         found += 1;
                         push_nic(n);
@@ -139,44 +141,52 @@ pub fn init() {
             }
         }
     }
-#[cfg(target_arch = "x86_64")]
+    #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     crate::hal::x86_64::serial::write_string("NET:rtl8139_done\r\n");
-    // kprintln!("      RTL8139: {} NIC(s) initialised", found)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("      RTL8139: {} NIC(s) initialised", found);
 }
 
 fn first_io_bar(info: &crate::drivers::bus::pci_bus::PciDeviceInfo) -> Option<u64> {
     for bar in info.bars.iter() {
-        if bar.is_io && bar.phys != 0 { return Some(bar.phys); }
+        if bar.is_io && bar.phys != 0 {
+            return Some(bar.phys);
+        }
     }
     None
 }
 
 fn init_nic(n: &mut Nic) -> bool {
-    if n.bar0_io == 0 { return false; }
-#[cfg(target_arch = "x86_64")]
+    if n.bar0_io == 0 {
+        return false;
+    }
     #[cfg(target_arch = "x86_64")]
-    use crate::hal::x86_64::io_port::{READ_PORT_UCHAR, WRITE_PORT_UCHAR, READ_PORT_ULONG, WRITE_PORT_ULONG};
+    #[cfg(target_arch = "x86_64")]
+    use crate::hal::x86_64::io_port::{
+        READ_PORT_UCHAR, READ_PORT_ULONG, WRITE_PORT_UCHAR, WRITE_PORT_ULONG,
+    };
 
     // Software reset.
     WRITE_PORT_UCHAR(n.bar0_io + REG_CMD as u16, CMD_RST);
     for _ in 0..100 {
         let s = READ_PORT_UCHAR(n.bar0_io + REG_CMD as u16);
-        if (s & CMD_RST) == 0 { break; }
+        if (s & CMD_RST) == 0 {
+            break;
+        }
     }
 
     // Read MAC.
     for i in 0..6 {
         n.mac[i] = READ_PORT_UCHAR(n.bar0_io + (REG_IDR0 as u16) + (i as u16));
     }
-    // kprintln!("  [rtl8139] MAC: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",  // kprintln disabled (memcpy crash workaround)
-//               n.mac[0], n.mac[1], n.mac[2], n.mac[3], n.mac[4], n.mac[5]);
+    // kprintln!("  [rtl8139] MAC: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+    //               n.mac[0], n.mac[1], n.mac[2], n.mac[3], n.mac[4], n.mac[5]);
 
     // Allocate RX buffer (16KB + 16 bytes for alignment)
     let rx_size = 16384 + 16;
     n.rx_buffer = pool::allocate_tagged(PoolType::NonPaged, rx_size, tags::NETBUF);
     if n.rx_buffer.is_null() {
-        // kprintln!("  [rtl8139] Failed to allocate RX buffer")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [rtl8139] Failed to allocate RX buffer");
         return false;
     }
     // Align to 16-byte boundary
@@ -198,7 +208,7 @@ fn init_nic(n: &mut Nic) -> bool {
     for i in 0..4 {
         n.tx_buffers[i] = pool::allocate_tagged(PoolType::NonPaged, 8192, tags::NETBUF);
         if n.tx_buffers[i].is_null() {
-            // kprintln!("  [rtl8139] Failed to allocate TX buffer {}", i)  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("  [rtl8139] Failed to allocate TX buffer {}", i);
         }
     }
 
@@ -219,8 +229,8 @@ fn virt_to_phys(virt: u64) -> Option<u64> {
 }
 
 pub fn smoke_test() -> bool {
-    // kprintln!("  [RTL8139 SMOKE] RTL8139 NICs: {}", count())  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("  [RTL8139 SMOKE OK] RTL8139 stack healthy")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [RTL8139 SMOKE] RTL8139 NICs: {}", count());
+    // kprintln!("  [RTL8139 SMOKE OK] RTL8139 stack healthy");
     true
 }
 
@@ -241,9 +251,9 @@ pub fn send(nic_idx: usize, data: &[u8]) -> bool {
     }
 
     let _guard = n.lock.lock();
-#[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
-    use crate::hal::x86_64::io_port::{READ_PORT_ULONG, WRITE_PORT_ULONG, WRITE_PORT_UCHAR};
+    #[cfg(target_arch = "x86_64")]
+    use crate::hal::x86_64::io_port::{READ_PORT_ULONG, WRITE_PORT_UCHAR, WRITE_PORT_ULONG};
 
     unsafe {
         // Get next TX buffer
@@ -294,7 +304,7 @@ pub fn receive(nic_idx: usize, buffer: &mut [u8]) -> Option<usize> {
     }
 
     let _guard = n.lock.lock();
-#[cfg(target_arch = "x86_64")]
+    #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     use crate::hal::x86_64::io_port::{READ_PORT_USHORT, WRITE_PORT_USHORT};
 
@@ -345,17 +355,26 @@ pub fn get_mac(nic_idx: usize) -> Option<[u8; 6]> {
 /// Get link status for a NIC (RTL8139 always reports link up if initialized)
 pub fn is_link_up(nic_idx: usize) -> bool {
     let nics = get_nics();
-    nics[nic_idx].as_ref().map(|n| n.initialised).unwrap_or(false)
+    nics[nic_idx]
+        .as_ref()
+        .map(|n| n.initialised)
+        .unwrap_or(false)
 }
 
 /// Get TX packet count
 pub fn get_tx_count(nic_idx: usize) -> u32 {
     let nics = get_nics();
-    nics[nic_idx].as_ref().map(|n| n.tx_count.load(Ordering::Relaxed)).unwrap_or(0)
+    nics[nic_idx]
+        .as_ref()
+        .map(|n| n.tx_count.load(Ordering::Relaxed))
+        .unwrap_or(0)
 }
 
 /// Get RX packet count
 pub fn get_rx_count(nic_idx: usize) -> u32 {
     let nics = get_nics();
-    nics[nic_idx].as_ref().map(|n| n.rx_count.load(Ordering::Relaxed)).unwrap_or(0)
+    nics[nic_idx]
+        .as_ref()
+        .map(|n| n.rx_count.load(Ordering::Relaxed))
+        .unwrap_or(0)
 }

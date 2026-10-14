@@ -5,8 +5,8 @@
 //
 //! Clean-room implementation based on WDF architecture documentation.
 
+use crate::ke::sync::Spinlock;
 use crate::kprintln;
-use crate::ke::spinlock::Spinlock;
 use core::sync::atomic::{AtomicU8, Ordering};
 
 /// Maximum number of devices a WDF driver can manage.
@@ -60,12 +60,16 @@ impl WdfDeviceList {
 
     /// Iterate over devices.
     pub fn iter(&self) -> impl Iterator<Item = &WdfDevice> {
-        self.devices[..self.count].iter().map(|opt| opt.as_ref().unwrap())
+        self.devices[..self.count]
+            .iter()
+            .map(|opt| opt.as_ref().unwrap())
     }
 
     /// Iterate mutably over devices.
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut WdfDevice> {
-        self.devices[..self.count].iter_mut().map(|opt| opt.as_mut().unwrap())
+        self.devices[..self.count]
+            .iter_mut()
+            .map(|opt| opt.as_mut().unwrap())
     }
 
     /// Get the number of devices in the list.
@@ -124,7 +128,8 @@ pub struct WdfDriverAttributes {
     /// Size of driver attributes structure
     pub size: u16,
     /// EvtDriverDeviceAdd callback
-    pub evt_device_add: Option<extern "C" fn(*mut WdfDevice, *mut WdfDeviceInit) -> WdfDeviceStatus>,
+    pub evt_device_add:
+        Option<extern "C" fn(*mut WdfDevice, *mut WdfDeviceInit) -> WdfDeviceStatus>,
     /// EvtDriverUnload callback
     pub evt_driver_unload: Option<extern "C" fn()>,
     /// Driver object security descriptor
@@ -201,12 +206,13 @@ pub enum WdfDeviceState {
 
 /// WDF power states
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum WdfPowerState {
-    D0,      // Working state
-    D1,      // Low power, fast wake
-    D2,      // Low power, slow wake
-    D3Hot,   // Lowest power,保留上下文
-    D3Cold,  // No power
+    D0,     // Working state
+    D1,     // Low power, fast wake
+    D2,     // Low power, slow wake
+    D3Hot,  // Lowest power,保留上下文
+    D3Cold, // No power
 }
 
 /// Device extension (driver-specific context)
@@ -233,7 +239,7 @@ pub struct WdfIoQueue {
     /// Power managed
     pub power_managed: bool,
     /// Queue lock
-    pub lock: Spinlock,
+    pub lock: Spinlock<()>,
 }
 
 /// Queue states
@@ -342,14 +348,11 @@ impl WdfGlobalDriver {
     fn lock(&self) -> WdfDriverGuard<'_> {
         // Spin until we successfully acquire the lock
         loop {
-            let old = self.lock.compare_exchange(
-                0,
-                1,
-                Ordering::Acquire,
-                Ordering::Relaxed,
-            );
+            let old = self
+                .lock
+                .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed);
             match old {
-                Ok(_) => break,  // Lock acquired successfully
+                Ok(_) => break, // Lock acquired successfully
                 Err(_) => {
                     // Lock is held, spin wait
                     core::hint::spin_loop();
@@ -410,13 +413,13 @@ impl Drop for WdfDriverGuard<'_> {
 
 /// Initialize WDF subsystem
 pub fn init() {
-    // kprintln!("    WDF: initializing...")  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("    WDF: version {}", WDF_VERSION)  // kprintln disabled (memcpy crash workaround);
-    
+    // kprintln!("    WDF: initializing...");
+    // kprintln!("    WDF: version {}", WDF_VERSION);
+
     // Clear global state
     *WDF_DRIVER.lock() = None;
-    
-    // kprintln!("    WDF: ready")  // kprintln disabled (memcpy crash workaround);
+
+    // kprintln!("    WDF: ready");
 }
 
 /// Create the WDF driver object
@@ -431,15 +434,15 @@ pub fn driver_create(
         attributes,
         initialized: true,
     };
-    
+
     let mut guard = WDF_DRIVER.lock();
     if guard.is_some() {
         return Err("Driver already created");
     }
-    
+
     *guard = Some(driver);
-    // kprintln!("  [WDF] Driver '{}' created", driver_name)  // kprintln disabled (memcpy crash workaround);
-    
+    // kprintln!("  [WDF] Driver '{}' created", driver_name);
+
     Ok(())
 }
 
@@ -458,7 +461,7 @@ pub fn get_driver() -> Option<&'static WdfDriver> {
 
 /// Run WDF smoke test
 pub fn smoke_test() -> bool {
-    // kprintln!("  [WDF] Running smoke test...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [WDF] Running smoke test...");
     // Basic test - create and verify driver infrastructure
     //
     // Touch `as_ref` and `as_mut` through the global driver lock so the
@@ -479,27 +482,27 @@ impl WdfDeviceInit {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     /// Set device type
     pub fn set_device_type(&mut self, device_type: u32) {
         self.device_type = device_type;
     }
-    
+
     /// Set device characteristics
     pub fn set_characteristics(&mut self, characteristics: u32) {
         self.characteristics = characteristics;
     }
-    
+
     /// Set exclusive access
     pub fn set_exclusive(&mut self, exclusive: bool) {
         self.exclusive = exclusive;
     }
-    
+
     /// Set device name
     pub fn set_device_name(&mut self, name: &'static str) {
         self.device_name = Some(name);
     }
-    
+
     /// Set symbolic link
     pub fn set_symbolic_link(&mut self, link: &'static str) {
         self.symbolic_link = Some(link);
@@ -521,7 +524,7 @@ impl WdfIoQueue {
             requests: [const { None }; 16],
             request_count: 0,
             power_managed: true,
-            lock: Spinlock::new(),
+            lock: Spinlock::<()>::new(()),
         }
     }
 
@@ -567,7 +570,7 @@ impl WdfRequest {
             completion_context: 0,
         }
     }
-    
+
     /// Set completion routine
     pub fn set_completion(
         &mut self,
@@ -577,7 +580,7 @@ impl WdfRequest {
         self.completion = Some(completion);
         self.completion_context = context;
     }
-    
+
     /// Complete the request
     pub fn complete(&mut self, status: WdfRequestStatus) {
         self.status = status;
@@ -586,7 +589,7 @@ impl WdfRequest {
             // _completion(self as *mut WdfRequest as *mut _, self.completion_context, status);
         }
     }
-    
+
     /// Cancel the request
     pub fn cancel(&mut self) {
         self.status = WdfRequestStatus::Canceled;
@@ -598,16 +601,13 @@ impl WdfRequest {
 
 /// WDF object allocation
 pub fn object_allocate(context_size: usize) -> Result<u64, &'static str> {
-    let mem = crate::mm::pool::allocate_aligned(
-        crate::mm::pool::PoolType::NonPaged,
-        context_size,
-        8,
-    );
-    
+    let mem =
+        crate::mm::pool::allocate_aligned(crate::mm::pool::PoolType::NonPaged, context_size, 8);
+
     if mem.is_null() {
         return Err("Insufficient memory");
     }
-    
+
     Ok(mem as u64)
 }
 
@@ -636,21 +636,17 @@ impl WdfLookaside {
             pool_type: crate::mm::pool::PoolType::NonPaged,
         }
     }
-    
+
     /// Allocate from lookaside
     pub fn allocate(&self) -> Option<u64> {
-        let mem = crate::mm::pool::allocate_aligned(
-            self.pool_type,
-            self.size,
-            8,
-        );
+        let mem = crate::mm::pool::allocate_aligned(self.pool_type, self.size, 8);
         if mem.is_null() {
             None
         } else {
             Some(mem as u64)
         }
     }
-    
+
     /// Free to lookaside
     pub fn free(&self, _ptr: u64) {
         // Would need pool free function
@@ -679,17 +675,17 @@ impl WdfTimer {
             context,
         }
     }
-    
+
     /// Start the timer
     pub fn start(&mut self, due_time: i64, period: u32) {
         self.due_time = due_time;
         self.period = period;
-        // kprintln!("  [WDF] Timer started: due={}, period={}", due_time, period)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [WDF] Timer started: due={}, period={}", due_time, period);
     }
-    
+
     /// Stop the timer
     pub fn stop(&self) {
-        // kprintln!("  [WDF] Timer stopped")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [WDF] Timer stopped");
     }
 }
 
@@ -712,15 +708,15 @@ impl WdfDpc {
             queued: false,
         }
     }
-    
+
     /// Queue the DPC
     pub fn queue(&mut self) {
         if !self.queued {
             self.queued = true;
-            // kprintln!("  [WDF] DPC queued")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("  [WDF] DPC queued");
         }
     }
-    
+
     /// Execute the DPC
     pub fn execute(&mut self) {
         (self.routine)(self, self.context);
@@ -731,7 +727,7 @@ impl WdfDpc {
 /// WDF spinlock
 pub struct WdfSpinlock {
     /// Internal lock
-    lock: Spinlock,
+    lock: Spinlock<()>,
     /// Previous IRQL
     irql: u8,
 }
@@ -740,20 +736,20 @@ impl WdfSpinlock {
     /// Create a new spinlock
     pub fn new() -> Self {
         Self {
-            lock: Spinlock::new(),
+            lock: Spinlock::<()>::new(()),
             irql: 0,
         }
     }
-    
+
     /// Acquire the spinlock
     pub fn acquire(&mut self) {
         self.irql = 0;
-        self.lock.lock();
+        self.lock.acquire();
     }
-    
+
     /// Release the spinlock
     pub fn release(&mut self) {
-        self.lock.unlock();
+        self.lock.release();
     }
 }
 
@@ -766,25 +762,25 @@ impl Default for WdfSpinlock {
 /// WDF wait lock (can be acquired at passive IRQL)
 pub struct WdfWaitlock {
     /// Internal lock
-    lock: Spinlock,
+    lock: Spinlock<()>,
 }
 
 impl WdfWaitlock {
     /// Create a new wait lock
     pub fn new() -> Self {
         Self {
-            lock: Spinlock::new(),
+            lock: Spinlock::<()>::new(()),
         }
     }
-    
+
     /// Acquire the wait lock
     pub fn acquire(&mut self) {
-        self.lock.lock();
+        self.lock.acquire();
     }
-    
+
     /// Release the wait lock
     pub fn release(&mut self) {
-        self.lock.unlock();
+        self.lock.release();
     }
 }
 
@@ -867,27 +863,24 @@ pub type WdfRegistryHandle = u64;
 /// WDF registry operations
 pub mod registry {
     use super::*;
-    
+
     /// Open a registry key
-    pub fn open_key(
-        _path: &str,
-        _access: u32,
-    ) -> Result<WdfRegistryHandle, &'static str> {
+    pub fn open_key(_path: &str, _access: u32) -> Result<WdfRegistryHandle, &'static str> {
         // In a real implementation, would open the registry
-        // kprintln!("  [WDF] Opening registry key: {}", path)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [WDF] Opening registry key: {}", path);
         Ok(0) // Return dummy handle
     }
-    
+
     /// Read a value from registry
     pub fn read_value(
         _key: WdfRegistryHandle,
         _name: &str,
         _value_type: u32,
     ) -> Result<u64, &'static str> {
-        // kprintln!("  [WDF] Reading registry value: {}", name)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [WDF] Reading registry value: {}", name);
         Ok(0)
     }
-    
+
     /// Write a value to registry
     pub fn write_value(
         _key: WdfRegistryHandle,
@@ -895,7 +888,7 @@ pub mod registry {
         _value_type: u32,
         _data: &[u8],
     ) -> Result<(), &'static str> {
-        // kprintln!("  [WDF] Writing registry value: {}", name)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [WDF] Writing registry value: {}", name);
         Ok(())
     }
 }
@@ -918,3 +911,6 @@ pub mod companion {
         pub interface_class: &'static str,
     }
 }
+
+pub mod device;
+pub mod kmdf;

@@ -10,7 +10,7 @@ extern crate alloc;
 use super::error::SetLastError;
 use super::types::{BOOL, DWORD, FALSE, HANDLE, HANDLE_CURRENT_PROCESS, LPSTR, TRUE};
 use crate::libs::ntdll::process as ntdll_process;
-use crate::libs::ntdll::status::{STATUS_SUCCESS};
+use crate::libs::ntdll::status::STATUS_SUCCESS;
 use crate::libs::ntdll::sync as ntdll_sync;
 use crate::libs::ntdll::types::{ClientId, ObjectAttributes};
 use alloc::string::String;
@@ -74,13 +74,19 @@ pub struct ProcessInformation {
 }
 
 unsafe fn wide_to_string(p: *const u16) -> Option<String> {
-    if p.is_null() { return None; }
+    if p.is_null() {
+        return None;
+    }
     let mut len = 0;
-    while *p.add(len) != 0 { len += 1; }
+    while *p.add(len) != 0 {
+        len += 1;
+    }
     let slice = core::slice::from_raw_parts(p, len);
     let mut out = String::new();
     for &c in slice {
-        if let Some(ch) = char::from_u32(c as u32) { out.push(ch); }
+        if let Some(ch) = char::from_u32(c as u32) {
+            out.push(ch);
+        }
     }
     Some(out)
 }
@@ -98,18 +104,34 @@ pub unsafe extern "C" fn CreateProcessW(
     startup_info: *const StartupInfoW,
     process_info: *mut ProcessInformation,
 ) -> BOOL {
-    let name_ptr = if application_name.is_null() { command_line } else { application_name };
-    if name_ptr.is_null() { SetLastError(87); return FALSE; }
+    let name_ptr = if application_name.is_null() {
+        command_line
+    } else {
+        application_name
+    };
+    if name_ptr.is_null() {
+        SetLastError(87);
+        return FALSE;
+    }
     let _name = match wide_to_string(name_ptr) {
         Some(s) => s,
-        None => { SetLastError(123); return FALSE; },
+        None => {
+            SetLastError(123);
+            return FALSE;
+        }
     };
     let _ = (inherit_handles, creation_flags, startup_info);
     let mut h: HANDLE = ptr::null_mut();
     let mut oa = ObjectAttributes::new();
     let status = ntdll_process::NtCreateProcess(
-        &mut h, 0, &mut oa, ptr::null_mut(), 0,
-        ptr::null_mut(), ptr::null_mut(), ptr::null_mut(),
+        &mut h,
+        0,
+        &mut oa,
+        ptr::null_mut(),
+        0,
+        ptr::null_mut(),
+        ptr::null_mut(),
+        ptr::null_mut(),
     );
     if status != STATUS_SUCCESS {
         SetLastError(50);
@@ -128,27 +150,41 @@ pub unsafe extern "C" fn CreateProcessW(
 /// supplied exit code.
 pub unsafe extern "C" fn ExitProcess(exit_code: u32) -> ! {
     ntdll_process::NtTerminateProcess(HANDLE_CURRENT_PROCESS, exit_code as i32);
-    loop { core::hint::spin_loop(); }
+    loop {
+        core::hint::spin_loop();
+    }
 }
 
 /// `TerminateProcess`.
 pub unsafe extern "C" fn TerminateProcess(process: HANDLE, exit_code: u32) -> BOOL {
     if ntdll_process::NtTerminateProcess(process, exit_code as i32) == STATUS_SUCCESS {
         TRUE
-    } else { SetLastError(6); FALSE }
+    } else {
+        SetLastError(6);
+        FALSE
+    }
 }
 
 /// `GetCurrentProcess` / `GetCurrentProcessId`.
-pub extern "C" fn GetCurrentProcess() -> HANDLE { HANDLE_CURRENT_PROCESS }
-pub extern "C" fn GetCurrentProcessId() -> DWORD { crate::ps::process::PID_SYSTEM as u32 }
+pub extern "C" fn GetCurrentProcess() -> HANDLE {
+    HANDLE_CURRENT_PROCESS
+}
+pub extern "C" fn GetCurrentProcessId() -> DWORD {
+    crate::ps::process::PID_SYSTEM as u32
+}
 pub extern "C" fn GetProcessId(process: HANDLE) -> DWORD {
-    if process.is_null() { return 0; }
+    if process.is_null() {
+        return 0;
+    }
     crate::ps::process::PID_SYSTEM as u32
 }
 
 /// `GetExitCodeProcess` — we always report `STILL_ACTIVE`.
 pub unsafe extern "C" fn GetExitCodeProcess(_process: HANDLE, exit_code: *mut DWORD) -> BOOL {
-    if exit_code.is_null() { SetLastError(87); return FALSE; }
+    if exit_code.is_null() {
+        SetLastError(87);
+        return FALSE;
+    }
     *exit_code = 259; // STILL_ACTIVE
     TRUE
 }
@@ -159,7 +195,10 @@ pub unsafe extern "C" fn OpenProcess(
     _inherit_handle: BOOL,
     process_id: DWORD,
 ) -> HANDLE {
-    if process_id == 0 { SetLastError(87); return ptr::null_mut(); }
+    if process_id == 0 {
+        SetLastError(87);
+        return ptr::null_mut();
+    }
     let mut h: HANDLE = ptr::null_mut();
     let mut oa = ObjectAttributes::new();
     let mut cid = ClientId::new();
@@ -178,8 +217,18 @@ pub unsafe extern "C" fn OpenProcess(
 /// (it just round-trips to `NtWaitForSingleObject`). The
 /// parameter is left in the signature for ABI compatibility;
 /// the next phase will plumb it into the kernel scheduler.
-pub unsafe extern "C" fn WaitForSingleObject(handle: HANDLE, #[allow(unused_variables)] ms: DWORD) -> DWORD {
-    if handle.is_null() { SetLastError(6); return 0xFFFF_FFFF; }
+pub unsafe extern "C" fn WaitForSingleObject(
+    handle: HANDLE,
+    #[allow(unused_variables)] ms: DWORD,
+) -> DWORD {
+    if handle.is_null() {
+        SetLastError(6);
+        return 0xFFFF_FFFF;
+    }
     let status = ntdll_sync::NtWaitForSingleObject(handle, 0, ptr::null_mut());
-    if status == STATUS_SUCCESS { 0 } else { 0xFFFF_FFFF }
+    if status == STATUS_SUCCESS {
+        0
+    } else {
+        0xFFFF_FFFF
+    }
 }

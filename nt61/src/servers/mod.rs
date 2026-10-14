@@ -2,15 +2,15 @@
 //
 //! Implements core Windows system processes: smss, csrss, services, etc.
 
-pub mod smss;
 pub mod csrss;
-pub mod services;
-pub mod wininit;
-pub mod winlogon;
 pub mod pid1;
 pub mod pid2;
+pub mod services;
 pub mod smoke;
+pub mod smss;
 pub mod sshd;
+pub mod wininit;
+pub mod winlogon;
 // The CMD shell (`kd>` debug prompt + kernel-side `C:\>`
 // alternate-shell prompt) is **architecture-independent**. It is
 // the SafeBootMode fallback used on every architecture: on
@@ -24,31 +24,33 @@ pub mod sshd;
 // `LOG_RING_LINES`-backed `LOGS` pane works on every target.
 pub mod cmd;
 
-
 /// Initialize all system servers
 pub fn init() {
-    // kprintln!("  Initializing system servers...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  Initializing system servers...");
 
     // Initialize CSRSS (Client Server Runtime Subsystem)
-    // kprintln!("    Initializing CSRSS...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    Initializing CSRSS...");
     csrss::init();
 
     // Initialize WinInit (Session 0 init process)
-    // kprintln!("    Initializing WinInit...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    Initializing WinInit...");
     wininit::init();
 
     // Initialize WinLogon (interactive logon)
-    // kprintln!("    Initializing WinLogon...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    Initializing WinLogon...");
     winlogon::init();
 
     // User-mode process stubs (kept for backwards compatibility)
     pid1::init();
     pid2::init();
 
-    // kprintln!("  System servers initialized")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  System servers initialized");
 }
 
 /// Re-export of the system-servers smoke test. The full
 /// implementation lives in the `smoke` submodule; this re-export
 /// keeps the call site readable as `servers::smoke_test()`.
-pub fn smoke_test() -> bool { smoke::smoke_test() }
+pub fn smoke_test() -> bool {
+    smoke::smoke_test()
+}
+pub mod test_csrss_services;

@@ -392,7 +392,9 @@ pub const MTL_U_GT1: u16 = 0x7D55;
 // =====================================================================
 
 /// Get generation from device ID
-pub fn generation_from_device_id(device_id: u16) -> crate::drivers::video::core::gpu_common::IntelGeneration {
+pub fn generation_from_device_id(
+    device_id: u16,
+) -> crate::drivers::video::core::gpu_common::IntelGeneration {
     // Ironlake
     if matches!(device_id, ILK_DESKTOP | ILK_MOBILE) {
         return crate::drivers::video::core::gpu_common::IntelGeneration::Ironlake;
@@ -401,8 +403,12 @@ pub fn generation_from_device_id(device_id: u16) -> crate::drivers::video::core:
     // Sandy Bridge
     if matches!(
         device_id,
-        SNB_DESKTOP_GT1 | SNB_DESKTOP_GT2 | SNB_DESKTOP_GT2_PLUS
-            | SNB_MOBILE_GT1 | SNB_MOBILE_GT2 | SNB_MOBILE_GT2_PLUS
+        SNB_DESKTOP_GT1
+            | SNB_DESKTOP_GT2
+            | SNB_DESKTOP_GT2_PLUS
+            | SNB_MOBILE_GT1
+            | SNB_MOBILE_GT2
+            | SNB_MOBILE_GT2_PLUS
     ) {
         return crate::drivers::video::core::gpu_common::IntelGeneration::SandyBridge;
     }
@@ -484,7 +490,9 @@ pub fn generation_from_device_id(device_id: u16) -> crate::drivers::video::core:
 }
 
 /// Get generation name
-pub fn generation_name(gen: crate::drivers::video::core::gpu_common::IntelGeneration) -> &'static str {
+pub fn generation_name(
+    gen: crate::drivers::video::core::gpu_common::IntelGeneration,
+) -> &'static str {
     match gen {
         crate::drivers::video::core::gpu_common::IntelGeneration::Ironlake => "Ironlake",
         crate::drivers::video::core::gpu_common::IntelGeneration::SandyBridge => "Sandy Bridge",

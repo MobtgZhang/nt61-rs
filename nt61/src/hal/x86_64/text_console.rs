@@ -47,8 +47,8 @@
 
 #![cfg(target_arch = "x86_64")]
 
-use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use crate::drivers::bootvid;
+use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 /// Has the VGA text console been initialised yet? Used to
 /// gate `gui_print!` so it doesn't try to write to 0xB8000
@@ -192,29 +192,29 @@ unsafe fn program_vga_mode3() {
 
     // ----- CRTC registers (port 0x3D4 index, 0x3D5 data) -----
     // Standard 80x25 9x16 text-mode values.
-    const CRTC_H_TOTAL: u8 = 0x00;       // 0x5F (95)   = total horizontal chars
+    const CRTC_H_TOTAL: u8 = 0x00; // 0x5F (95)   = total horizontal chars
     const CRTC_H_DISPLAY_END: u8 = 0x01; // 0x4F (79)   = displayed columns
     const CRTC_H_BLANK_START: u8 = 0x02; // 0x50 (80)   = start of blanking
-    const CRTC_H_BLANK_END: u8 = 0x03;   // 0x82       = end-of-blank + skew
+    const CRTC_H_BLANK_END: u8 = 0x03; // 0x82       = end-of-blank + skew
     const CRTC_H_RETRACE_START: u8 = 0x04; // 0x55     = start of H retrace
-    const CRTC_H_RETRACE_END: u8 = 0x05;   // 0x81     = end of H retrace
-    const CRTC_V_TOTAL: u8 = 0x06;       // 0xBF (191)  = total scan lines
-    const CRTC_OVERFLOW: u8 = 0x07;      // 0x1F       = overflow bits
+    const CRTC_H_RETRACE_END: u8 = 0x05; // 0x81     = end of H retrace
+    const CRTC_V_TOTAL: u8 = 0x06; // 0xBF (191)  = total scan lines
+    const CRTC_OVERFLOW: u8 = 0x07; // 0x1F       = overflow bits
     const CRTC_PRESET_ROW_SCAN: u8 = 0x08; // 0x00
     const CRTC_MAX_SCAN_LINE: u8 = 0x09; // 0x0F (15)   = char height in scan lines
-    const CRTC_CURSOR_START: u8 = 0x0A;  // 0x0E       = cursor scan-line start
-    const CRTC_CURSOR_END: u8 = 0x0B;    // 0x0F       = cursor scan-line end
-    const CRTC_START_ADDR_HI: u8 = 0x0C;// 0x00
-    const CRTC_START_ADDR_LO: u8 = 0x0D;// 0x00
-    const CRTC_CURSOR_LOC_HI: u8 = 0x0E;// 0x00
-    const CRTC_CURSOR_LOC_LO: u8 = 0x0F;// 0x00
+    const CRTC_CURSOR_START: u8 = 0x0A; // 0x0E       = cursor scan-line start
+    const CRTC_CURSOR_END: u8 = 0x0B; // 0x0F       = cursor scan-line end
+    const CRTC_START_ADDR_HI: u8 = 0x0C; // 0x00
+    const CRTC_START_ADDR_LO: u8 = 0x0D; // 0x00
+    const CRTC_CURSOR_LOC_HI: u8 = 0x0E; // 0x00
+    const CRTC_CURSOR_LOC_LO: u8 = 0x0F; // 0x00
     const CRTC_V_RETRACE_START: u8 = 0x10; // 0x9C
-    const CRTC_V_RETRACE_END: u8 = 0x11;   // 0x8E
-    const CRTC_V_DISPLAY_END: u8 = 0x12;   // 0x8F (143)
-    const CRTC_OFFSET: u8 = 0x13;       // 0x28 (40)   = logical row width (bytes)
-    const CRTC_UNDERLINE_LOC: u8 = 0x14;// 0x1F (31)
-    const CRTC_V_BLANK_START: u8 = 0x15;// 0x96
-    const CRTC_V_BLANK_END: u8 = 0x16;  // 0xB9
+    const CRTC_V_RETRACE_END: u8 = 0x11; // 0x8E
+    const CRTC_V_DISPLAY_END: u8 = 0x12; // 0x8F (143)
+    const CRTC_OFFSET: u8 = 0x13; // 0x28 (40)   = logical row width (bytes)
+    const CRTC_UNDERLINE_LOC: u8 = 0x14; // 0x1F (31)
+    const CRTC_V_BLANK_START: u8 = 0x15; // 0x96
+    const CRTC_V_BLANK_END: u8 = 0x16; // 0xB9
     const CRTC_MODE_CONTROL: u8 = 0x17; // 0xA3
     const CRTC_LINE_COMPARE: u8 = 0x18; // 0xFF
 
@@ -261,31 +261,31 @@ unsafe fn program_vga_mode3() {
     WRITE_PORT_UCHAR(0x3D4, 0x11);
     WRITE_PORT_UCHAR(0x3D5, 0x0E); // unlock, end retrace at 0x8E
     const CRTC_REGS: [(u8, u8); 25] = [
-        (CRTC_H_TOTAL,         0x5F),
-        (CRTC_H_DISPLAY_END,   0x4F),
-        (CRTC_H_BLANK_START,   0x50),
-        (CRTC_H_BLANK_END,     0x82),
+        (CRTC_H_TOTAL, 0x5F),
+        (CRTC_H_DISPLAY_END, 0x4F),
+        (CRTC_H_BLANK_START, 0x50),
+        (CRTC_H_BLANK_END, 0x82),
         (CRTC_H_RETRACE_START, 0x55),
-        (CRTC_H_RETRACE_END,   0x81),
-        (CRTC_V_TOTAL,         0xBF),
-        (CRTC_OVERFLOW,        0x1F),
+        (CRTC_H_RETRACE_END, 0x81),
+        (CRTC_V_TOTAL, 0xBF),
+        (CRTC_OVERFLOW, 0x1F),
         (CRTC_PRESET_ROW_SCAN, 0x00),
-        (CRTC_MAX_SCAN_LINE,   0x0F),
-        (CRTC_CURSOR_START,    0x0E),
-        (CRTC_CURSOR_END,      0x0F),
-        (CRTC_START_ADDR_HI,   0x00),
-        (CRTC_START_ADDR_LO,   0x00),
-        (CRTC_CURSOR_LOC_HI,   0x00),
-        (CRTC_CURSOR_LOC_LO,   0x00),
+        (CRTC_MAX_SCAN_LINE, 0x0F),
+        (CRTC_CURSOR_START, 0x0E),
+        (CRTC_CURSOR_END, 0x0F),
+        (CRTC_START_ADDR_HI, 0x00),
+        (CRTC_START_ADDR_LO, 0x00),
+        (CRTC_CURSOR_LOC_HI, 0x00),
+        (CRTC_CURSOR_LOC_LO, 0x00),
         (CRTC_V_RETRACE_START, 0x9C),
-        (CRTC_V_RETRACE_END,   0x8E),
-        (CRTC_V_DISPLAY_END,   0x8F),
-        (CRTC_OFFSET,          0x28),
-        (CRTC_UNDERLINE_LOC,   0x1F),
-        (CRTC_V_BLANK_START,   0x96),
-        (CRTC_V_BLANK_END,     0xB9),
-        (CRTC_MODE_CONTROL,    0xA3),
-        (CRTC_LINE_COMPARE,    0xFF),
+        (CRTC_V_RETRACE_END, 0x8E),
+        (CRTC_V_DISPLAY_END, 0x8F),
+        (CRTC_OFFSET, 0x28),
+        (CRTC_UNDERLINE_LOC, 0x1F),
+        (CRTC_V_BLANK_START, 0x96),
+        (CRTC_V_BLANK_END, 0xB9),
+        (CRTC_MODE_CONTROL, 0xA3),
+        (CRTC_LINE_COMPARE, 0xFF),
     ];
     for &(idx, val) in CRTC_REGS.iter() {
         WRITE_PORT_UCHAR(0x3D4, idx);
@@ -305,8 +305,8 @@ unsafe fn program_vga_mode3() {
 
     // 16 attribute palette entries, IBM default 16-colour set
     const ATTR_PALETTE: [u8; 16] = [
-        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x14, 0x07,
-        0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F,
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x14, 0x07, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E,
+        0x3F,
     ];
     for i in 0..16u8 {
         WRITE_PORT_UCHAR(0x3C0, i);
@@ -336,15 +336,15 @@ unsafe fn program_vga_mode3() {
     // write mode 0, read mode 0, no rotation, host
     // addressing = sequential.
     const GFX_REGS: [(u8, u8); 9] = [
-        (GFX_SET_RESET,        0x00),
+        (GFX_SET_RESET, 0x00),
         (GFX_ENABLE_SET_RESET, 0x00),
-        (GFX_COLOR_COMPARE,    0x00),
-        (GFX_DATA_ROTATE,      0x00),
-        (GFX_READ_MAP_SELECT,  0x00),
-        (GFX_MODE,             0x10), // read mode 0, write mode 0
-        (GFX_MISC,             0x0E), // A0..A7 = host address, chain odd/even
-        (GFX_COLOR_DONT_CARE,  0x00),
-        (GFX_BIT_MASK,         0xFF),
+        (GFX_COLOR_COMPARE, 0x00),
+        (GFX_DATA_ROTATE, 0x00),
+        (GFX_READ_MAP_SELECT, 0x00),
+        (GFX_MODE, 0x10), // read mode 0, write mode 0
+        (GFX_MISC, 0x0E), // A0..A7 = host address, chain odd/even
+        (GFX_COLOR_DONT_CARE, 0x00),
+        (GFX_BIT_MASK, 0xFF),
     ];
     for &(idx, val) in GFX_REGS.iter() {
         WRITE_PORT_UCHAR(0x3CE, idx);
@@ -404,7 +404,9 @@ pub fn put_byte(b: u8) {
 /// written the byte to the serial port itself. Routes only to
 /// the VGA text console, no-op if it isn't initialised yet.
 pub fn put_byte_vga_only(b: u8) {
-    if !VGA_READY.load(Ordering::Acquire) { return; }
+    if !VGA_READY.load(Ordering::Acquire) {
+        return;
+    }
     put_byte_vga(b);
 }
 
@@ -417,27 +419,45 @@ fn put_byte_vga(b: u8) {
     // Read the current cursor position via a single IN
     // instruction pair against the CRT controller registers.
     let (mut x, mut y) = unsafe { read_cursor() };
+    // TEMP DIAGNOSTIC (remove before delivery).
+    if b == b'\n' {
+        crate::hal::x86_64::serial::write_char('V' as u8);
+    }
 
     match b {
         b'\n' => {
             // LF — move down one row, scroll if needed
             y += 1;
-            if y >= VGA_ROWS as u16 { scroll_up(); y = (VGA_ROWS - 1) as u16; }
-            unsafe { set_cursor_raw(0, y); }
+            if y >= VGA_ROWS as u16 {
+                scroll_up();
+                y = (VGA_ROWS - 1) as u16;
+            }
+            unsafe {
+                set_cursor_raw(0, y);
+            }
         }
         b'\r' => {
             // CR — return to column 0 of the current row
-            unsafe { set_cursor_raw(0, y); }
+            unsafe {
+                set_cursor_raw(0, y);
+            }
         }
         b'\t' => {
             // Tab — round up to next multiple of 8
             let nx = ((x / 8) + 1) * 8;
             if nx >= VGA_COLS as u16 {
                 y += 1;
-                if y >= VGA_ROWS as u16 { scroll_up(); y = (VGA_ROWS - 1) as u16; }
-                unsafe { set_cursor_raw(0, y); }
+                if y >= VGA_ROWS as u16 {
+                    scroll_up();
+                    y = (VGA_ROWS - 1) as u16;
+                }
+                unsafe {
+                    set_cursor_raw(0, y);
+                }
             } else {
-                unsafe { set_cursor_raw(nx, y); }
+                unsafe {
+                    set_cursor_raw(nx, y);
+                }
             }
         }
         0x08 => {
@@ -445,20 +465,30 @@ fn put_byte_vga(b: u8) {
             // the old cell.
             if x > 0 {
                 x -= 1;
-                unsafe { write_cell(x as usize, y as usize, b' '); set_cursor_raw(x, y); }
+                unsafe {
+                    write_cell(x as usize, y as usize, b' ');
+                    set_cursor_raw(x, y);
+                }
             }
         }
         _ => {
             // Printable / control — write into the cell at
             // (x, y), advance x. Wrap to next row on overflow.
-            unsafe { write_cell(x as usize, y as usize, b); }
+            unsafe {
+                write_cell(x as usize, y as usize, b);
+            }
             x += 1;
             if x >= VGA_COLS as u16 {
                 x = 0;
                 y += 1;
-                if y >= VGA_ROWS as u16 { scroll_up(); y = (VGA_ROWS - 1) as u16; }
+                if y >= VGA_ROWS as u16 {
+                    scroll_up();
+                    y = (VGA_ROWS - 1) as u16;
+                }
             }
-            unsafe { set_cursor_raw(x, y); }
+            unsafe {
+                set_cursor_raw(x, y);
+            }
         }
     }
 
@@ -490,7 +520,9 @@ pub fn put_rstr(s: &str) {
 /// the bytes back through the serial port. No-op until
 /// `init()` has flipped `VGA_READY` to true.
 pub fn put_byte_vga_only_str(s: &str) {
-    if !VGA_READY.load(Ordering::Acquire) { return; }
+    if !VGA_READY.load(Ordering::Acquire) {
+        return;
+    }
     for &b in s.as_bytes() {
         put_byte_vga(b);
     }
@@ -584,7 +616,9 @@ unsafe fn set_cursor_raw(x: u16, y: u16) {
 pub fn set_cursor(x: u8, y: u8) {
     let xx = (x as u16).min(VGA_COLS as u16 - 1);
     let yy = (y as u16).min(VGA_ROWS as u16 - 1);
-    unsafe { set_cursor_raw(xx, yy); }
+    unsafe {
+        set_cursor_raw(xx, yy);
+    }
 }
 
 /// Write one 16-bit cell (char + attr) at (x, y) without
@@ -671,7 +705,9 @@ pub fn show_safe_mode_console() {
     let title: &[u8] = b" NT6.1.7601 Safe Mode -- Command Prompt ";
     for x in 0..VGA_COLS {
         let ch = if x < title.len() { title[x] } else { b' ' };
-        unsafe { write_cell_attr(x, 0, ch, ATTR_TITLE); }
+        unsafe {
+            write_cell_attr(x, 0, ch, ATTR_TITLE);
+        }
     }
 
     // Rows 1/2 - the Win7 product banner so the operator
@@ -689,17 +725,27 @@ pub fn show_safe_mode_console() {
 
     // Row 3 - divider between product header and log pane.
     for x in 0..VGA_COLS {
-        unsafe { write_cell_attr(x, 3, 0xC4, ATTR_HR); }
+        unsafe {
+            write_cell_attr(x, 3, 0xC4, ATTR_HR);
+        }
     }
     // Row 4 - "Boot log (most recent lines):" label.
     let log_label = b"Boot log (most recent lines):";
     for x in 0..VGA_COLS {
-        let c = if x < log_label.len() { log_label[x] } else { b' ' };
-        unsafe { write_cell_attr(x, 4, c, ATTR_HEAD); }
+        let c = if x < log_label.len() {
+            log_label[x]
+        } else {
+            b' '
+        };
+        unsafe {
+            write_cell_attr(x, 4, c, ATTR_HEAD);
+        }
     }
     // Row 5 - second divider, opens the scroll-back pane.
     for x in 0..VGA_COLS {
-        unsafe { write_cell_attr(x, 5, 0xC4, ATTR_HR); }
+        unsafe {
+            write_cell_attr(x, 5, 0xC4, ATTR_HR);
+        }
     }
 
     // Rows 6..=23 stay blank with the default attribute so the
@@ -709,21 +755,27 @@ pub fn show_safe_mode_console() {
     // case anything wrote to those cells earlier.
     for y in 6..(VGA_ROWS - 1) {
         for x in 0..VGA_COLS {
-            unsafe { write_cell_attr(x, y, b' ', ATTR_DEFAULT); }
+            unsafe {
+                write_cell_attr(x, y, b' ', ATTR_DEFAULT);
+            }
         }
     }
 
     // Row 24 - bottom divider (separates the log pane from
     // the CMD input area on the next caller).
     for x in 0..VGA_COLS {
-        unsafe { write_cell_attr(x, VGA_ROWS - 1, 0xC4, ATTR_HR); }
+        unsafe {
+            write_cell_attr(x, VGA_ROWS - 1, 0xC4, ATTR_HR);
+        }
     }
 
     // Park the cursor at the start of the input row so the
     // very next `put_byte` types directly under the bottom
     // divider (which is where the kernel-side CMD shell
     // expects the prompt to live).
-    unsafe { set_cursor_raw(0, (VGA_ROWS - 1) as u16); }
+    unsafe {
+        set_cursor_raw(0, (VGA_ROWS - 1) as u16);
+    }
 
     // Re-write the cursor position into the bootvid mirror's
     // own cursor atomics. On QEMU `-display gtk` the GOP LFB
@@ -739,19 +791,17 @@ pub fn show_safe_mode_console() {
 /// is the ring).
 fn scroll_up() {
     let attr = ATTR.load(Ordering::Relaxed);
+    // TEMP DIAGNOSTIC (remove before delivery).
+    crate::hal::x86_64::serial::write_char('S' as u8);
     unsafe {
         let p = VGA_TEXT_BASE as *mut u8;
         // Copy rows 1..25 → rows 0..24
         let bytes_per_row = VGA_COLS * 2;
-        core::ptr::copy(
-            p.add(bytes_per_row),
-            p,
-            bytes_per_row * (VGA_ROWS - 1),
-        );
+        core::ptr::copy(p.add(bytes_per_row), p, bytes_per_row * (VGA_ROWS - 1));
         // Blank the new bottom row
         for i in 0..VGA_COLS {
             let off = ((VGA_ROWS - 1) * VGA_COLS + i) * 2;
-            core::ptr::write_volatile(p.add(off),     b' ');
+            core::ptr::write_volatile(p.add(off), b' ');
             core::ptr::write_volatile(p.add(off + 1), attr);
         }
     }
@@ -777,8 +827,12 @@ pub struct CursorWriter<'a> {
 }
 
 impl<'a> CursorWriter<'a> {
-    pub fn new(buf: &'a mut [u8]) -> Self { Self { buf, pos: 0 } }
-    pub fn pos(&self) -> usize { self.pos }
+    pub fn new(buf: &'a mut [u8]) -> Self {
+        Self { buf, pos: 0 }
+    }
+    pub fn pos(&self) -> usize {
+        self.pos
+    }
 }
 
 impl<'a> core::fmt::Write for CursorWriter<'a> {

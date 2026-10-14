@@ -9,11 +9,10 @@
 //! References:
 //!   * MSDN Library "Windows 7" — Console Functions
 
-use super::types::{BOOL, DWORD, FALSE, HANDLE, TRUE};
 use super::error::SetLastError;
+use super::types::{BOOL, DWORD, FALSE, HANDLE, TRUE};
 use crate::ke::sync::Spinlock;
 use core::ptr;
-
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -40,7 +39,6 @@ pub struct CONSOLE_SCREEN_BUFFER_INFO {
     pub dw_maximum_window_size: COORD,
 }
 
-
 struct ConsoleState {
     cursor_x: i16,
     cursor_y: i16,
@@ -58,15 +56,14 @@ impl ConsoleState {
             cursor_y: 0,
             width: 80,
             height: 25,
-            attributes: 0x07, // White on black
-            input_mode: 0x0001 | 0x0002, // ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT
+            attributes: 0x07,             // White on black
+            input_mode: 0x0001 | 0x0002,  // ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT
             output_mode: 0x0001 | 0x0002, // ENABLE_PROCESSED_OUTPUT | ENABLE_WRAP_AT_EOL_OUTPUT
         }
     }
 }
 
 static CONSOLE_STATE: Spinlock<ConsoleState> = Spinlock::new(ConsoleState::new());
-
 
 pub const ENABLE_PROCESSED_INPUT: DWORD = 0x0001;
 pub const ENABLE_LINE_INPUT: DWORD = 0x0002;
@@ -79,7 +76,6 @@ pub const ENABLE_EXTENDED_FLAGS: DWORD = 0x0080;
 
 pub const ENABLE_PROCESSED_OUTPUT: DWORD = 0x0001;
 pub const ENABLE_WRAP_AT_EOL_OUTPUT: DWORD = 0x0002;
-
 
 const CONSOLE_INPUT_BUFFER_SIZE: usize = 256;
 static CONSOLE_INPUT_BUFFER: Spinlock<[u16; CONSOLE_INPUT_BUFFER_SIZE]> =
@@ -99,7 +95,6 @@ pub unsafe extern "C" fn ReadConsoleW(
     }
 
     let _ = input_control;
-
 
     let input_buf = CONSOLE_INPUT_BUFFER.lock();
     let input_len = *CONSOLE_INPUT_LENGTH.lock();
@@ -137,7 +132,6 @@ pub unsafe fn _simulate_console_input(text: &str) {
     }
 }
 
-
 pub unsafe extern "C" fn GetConsoleScreenBufferInfo(
     console_output: HANDLE,
     console_screen_buffer_info: *mut CONSOLE_SCREEN_BUFFER_INFO,
@@ -173,7 +167,6 @@ pub unsafe extern "C" fn GetConsoleScreenBufferInfo(
     TRUE
 }
 
-
 pub unsafe extern "C" fn SetConsoleCursorPosition(
     console_output: HANDLE,
     cursor_position: COORD,
@@ -185,8 +178,10 @@ pub unsafe extern "C" fn SetConsoleCursorPosition(
 
     let mut state = CONSOLE_STATE.lock();
 
-    if cursor_position.x < 0 || cursor_position.x >= state.width
-        || cursor_position.y < 0 || cursor_position.y >= state.height
+    if cursor_position.x < 0
+        || cursor_position.x >= state.width
+        || cursor_position.y < 0
+        || cursor_position.y >= state.height
     {
         SetLastError(87); // ERROR_INVALID_PARAMETER
         return FALSE;
@@ -197,7 +192,6 @@ pub unsafe extern "C" fn SetConsoleCursorPosition(
 
     TRUE
 }
-
 
 pub unsafe extern "C" fn GetConsoleMode(console_handle: HANDLE, mode: *mut DWORD) -> BOOL {
     if console_handle.is_null() || mode.is_null() {
@@ -224,7 +218,6 @@ pub unsafe extern "C" fn SetConsoleMode(console_handle: HANDLE, mode: DWORD) -> 
 
     TRUE
 }
-
 
 #[repr(C)]
 pub struct CONSOLE_CURSOR_INFO {
@@ -262,11 +255,7 @@ pub unsafe extern "C" fn SetConsoleCursorInfo(
     TRUE
 }
 
-
-pub unsafe extern "C" fn SetConsoleTextAttribute(
-    console_output: HANDLE,
-    attributes: u16,
-) -> BOOL {
+pub unsafe extern "C" fn SetConsoleTextAttribute(console_output: HANDLE, attributes: u16) -> BOOL {
     if console_output.is_null() {
         SetLastError(6);
         return FALSE;

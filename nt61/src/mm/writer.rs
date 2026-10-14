@@ -40,7 +40,9 @@ pub fn tick() -> u64 {
     for _ in 0..PAGES_PER_TICK {
         let pfn_no = {
             let mut db = pfn::PFN_DB.lock();
-            if db.lists_is_empty() { break; }
+            if db.lists_is_empty() {
+                break;
+            }
             match db.pop_modified() {
                 Some(p) => p,
                 None => break,
@@ -68,7 +70,7 @@ pub fn tick() -> u64 {
 /// writes dirty pages to the page file. It runs at low priority
 /// and sleeps between scans to avoid consuming CPU.
 pub extern "C" fn mi_modified_page_writer_entry(context: u64) {
-    // [DISABLED] crate:: // // kprintln!("[MM] MiModifiedPageWriter started")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // [DISABLED] crate:: // // kprintln!("[MM] MiModifiedPageWriter started");
     let _ = context;
     while MPW_RUNNING.load(Ordering::Relaxed) {
         let written = tick();
@@ -80,11 +82,11 @@ pub extern "C" fn mi_modified_page_writer_entry(context: u64) {
             crate::ke::scheduler::yield_();
             crate::ke::scheduler::yield_();
         } else {
-            // [DISABLED] crate:: // // kprintln!("[MM] MiModifiedPageWriter: wrote {} modified pages", written)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // [DISABLED] crate:: // // kprintln!("[MM] MiModifiedPageWriter: wrote {} modified pages", written);
             crate::ke::scheduler::yield_();
         }
     }
-    // [DISABLED] crate:: // // kprintln!("[MM] MiModifiedPageWriter exiting")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // [DISABLED] crate:: // // kprintln!("[MM] MiModifiedPageWriter exiting");
     crate::ps::thread::ps_exit_system_thread(0);
 }
 
@@ -93,16 +95,13 @@ pub fn start_modified_page_writer() {
     let entry_addr = mi_modified_page_writer_entry as *const () as u64;
     let _ = &entry_addr;
     let _ = &entry_addr;
-    let result = crate::ps::thread::ps_create_system_thread(
-        entry_addr,
-        0,
-    );
+    let result = crate::ps::thread::ps_create_system_thread(entry_addr, 0);
     let _ = &result;
     if result.success {
-        // [DISABLED] crate:: // // kprintln!("[MM] MiModifiedPageWriter created (entry=0x{:016x})",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// // // [DISABLED]             entry_addr);
+        // [DISABLED] crate:: // // kprintln!("[MM] MiModifiedPageWriter created (entry=0x{:016x})",
+        // // // [DISABLED]             entry_addr);
     } else {
-        // [DISABLED] crate:: // // kprintln!("[MM] WARNING: MiModifiedPageWriter creation failed")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // [DISABLED] crate:: // // kprintln!("[MM] WARNING: MiModifiedPageWriter creation failed");
     }
 }
 
@@ -188,7 +187,7 @@ impl MiMappedPageWriter {
                 // 2. Determine the file offset
                 // 3. Call IoWriteFile to write the page
                 // For now, just log the operation
-                // [DISABLED] // // kprintln!("[MM] MiMappedPageWriter: would write PFN {} to file", pfn_no)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                // [DISABLED] // // kprintln!("[MM] MiMappedPageWriter: would write PFN {} to file", pfn_no);
 
                 // Put the page back to modified list (not yet implemented)
                 // In real implementation, after writing to file, move to standby
@@ -213,7 +212,7 @@ impl MiMappedPageWriter {
 
     /// MiMappedPageWriter entry point - system thread.
     pub extern "C" fn mi_mapped_page_writer_entry(&self, context: u64) {
-        // [DISABLED] // // kprintln!("[MM] MiMappedPageWriter started")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // [DISABLED] // // kprintln!("[MM] MiMappedPageWriter started");
         let _ = context;
         let mut writer = MiMappedPageWriter::new();
         while MPW_MAPPED_RUNNING.load(Ordering::Relaxed) {
@@ -226,11 +225,11 @@ impl MiMappedPageWriter {
                 crate::ke::scheduler::yield_();
                 crate::ke::scheduler::yield_();
             } else {
-                // [DISABLED] // // kprintln!("[MM] MiMappedPageWriter: wrote {} pages", written)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                // [DISABLED] // // kprintln!("[MM] MiMappedPageWriter: wrote {} pages", written);
                 crate::ke::scheduler::yield_();
             }
         }
-        // [DISABLED] // // kprintln!("[MM] MiMappedPageWriter exiting")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // [DISABLED] // // kprintln!("[MM] MiMappedPageWriter exiting");
         crate::ps::thread::ps_exit_system_thread(0);
     }
 
@@ -239,15 +238,12 @@ impl MiMappedPageWriter {
         let entry_addr = Self::mi_mapped_page_writer_entry as *const () as u64;
         let _ = &entry_addr;
         let _ = &entry_addr;
-        let result = crate::ps::thread::ps_create_system_thread(
-            entry_addr,
-            0,
-        );
+        let result = crate::ps::thread::ps_create_system_thread(entry_addr, 0);
         let _ = &result;
         if result.success {
-            // [DISABLED] // // kprintln!("[MM] MiMappedPageWriter thread created")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // [DISABLED] // // kprintln!("[MM] MiMappedPageWriter thread created");
         } else {
-            // [DISABLED] // // kprintln!("[MM] WARNING: MiMappedPageWriter creation failed")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // [DISABLED] // // kprintln!("[MM] WARNING: MiMappedPageWriter creation failed");
         }
     }
 

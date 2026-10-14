@@ -18,7 +18,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 #[cfg(target_arch = "x86_64")]
 use crate::hal::x86_64::framebuffer;
 #[cfg(target_arch = "x86_64")]
-use crate::hal::x86_64::io_port::WRITE_PORT_UCHAR;
+use crate::hal::x86_64::io_port::{WRITE_PORT_UCHAR, WRITE_PORT_USHORT};
 
 /// Firmware action codes. The values match those defined in the
 /// WDK `FIRMWARE_REENTRY` enumeration.
@@ -33,6 +33,7 @@ pub mod firmware_action {
 const KBD_RESET_CPU: u8 = 0xFE;
 const KBD_STATUS_PORT: u16 = 0x64;
 const ACPI_PM1A_CNT: u16 = 0x604; // fallback if no FADT
+const ACPI_PM1A_CNT_LEGACY: u16 = 0xB004; // legacy QEMU / Bochs PM port
 const ACPI_SLP_TYP_S5: u16 = 5 << 10;
 const ACPI_SLP_EN: u16 = 1 << 13;
 #[allow(dead_code)]
@@ -51,14 +52,15 @@ pub fn set_pm1a_cnt(phys: u64) {
     PM1A_CNT.store(phys, Ordering::Release);
 }
 
-/// Write a 16-bit value to a 16-bit register mapped at
-/// `phys`. The port is a memory-mapped ACPI register; we go
-/// through `mm::syspte::map_io_space`.
+/// Write a 16-bit value to the ACPI PM1a control register. On
+/// x86 the fixed PM1a_CNT (0x604) is an I/O port, not a
+/// memory-mapped register, so the write must use `out dx, ax`.
 fn pm1a_write(value: u16) {
     let phys = PM1A_CNT.load(Ordering::Acquire);
-    if phys == 0 { return; }
-    let va = crate::mm::syspte::map_io_space(phys, 1).unwrap_or(phys);
-    unsafe { ptr::write_volatile(va as *mut u16, value); }
+    if phys == 0 {
+        return;
+    }
+    WRITE_PORT_USHORT(phys as u16, value);
 }
 
 /// Reboot the system via the keyboard controller.
@@ -79,23 +81,35 @@ pub fn reboot_via_pci() -> ! {
         asm!("lidt [{}]", in(reg) &idt_ptr, options(nostack));
         asm!("int 3", options(nostack));
     }
-    loop { unsafe { asm!("hlt"); } }
+    loop {
+        unsafe {
+            asm!("hlt");
+        }
+    }
 }
 
-/// Shutdown via ACPI S5 (soft-off). Falls back to a 0x64
-/// "pulse" if no FADT was registered.
+/// Shutdown via ACPI S5 (soft-off). The spec-correct write uses
+/// the \_S5 SLP_TYP value, but some firmware stacks (including
+/// common QEMU machine models) only power off when the register
+/// is written with SLP_EN and SLP_TYP = 0, or via the legacy
+/// 0xB004 port. Each write either powers the machine off (and
+/// never returns) or is ignored, so the attempts can be chained.
 pub fn shutdown_via_acpi() -> ! {
     pm1a_write(ACPI_SLP_TYP_S5 | ACPI_SLP_EN);
+    pm1a_write(ACPI_SLP_EN);
+    WRITE_PORT_USHORT(ACPI_PM1A_CNT_LEGACY, ACPI_SLP_EN);
     // On real hardware the system powers off here. If the
-    // firmware does not honour the request we still want to
-    // halt the kernel without taking the system down further.
+    // firmware does not honour any of the requests we still want
+    // to halt the kernel without taking the system down further.
     halt()
 }
 
 /// Halt the processor. Matches the `HAL_HALT` action.
 pub fn halt() -> ! {
     loop {
-        unsafe { asm!("cli; hlt", options(nostack, preserves_flags)); }
+        unsafe {
+            asm!("cli; hlt", options(nostack, preserves_flags));
+        }
     }
 }
 

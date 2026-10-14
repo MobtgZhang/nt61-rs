@@ -31,8 +31,6 @@ pub const BUTTON_BUTTON_5: u8 = 1 << 4;
 
 /// Maximum X/Y delta per report (boot protocol is 8-bit signed).
 
-
-
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -62,11 +60,21 @@ impl MouseButtons {
     /// Convert to button byte.
     pub fn to_u8(&self) -> u8 {
         let mut byte = 0u8;
-        if self.left { byte |= BUTTON_LEFT; }
-        if self.right { byte |= BUTTON_RIGHT; }
-        if self.middle { byte |= BUTTON_MIDDLE; }
-        if self.button_4 { byte |= BUTTON_BUTTON_4; }
-        if self.button_5 { byte |= BUTTON_BUTTON_5; }
+        if self.left {
+            byte |= BUTTON_LEFT;
+        }
+        if self.right {
+            byte |= BUTTON_RIGHT;
+        }
+        if self.middle {
+            byte |= BUTTON_MIDDLE;
+        }
+        if self.button_4 {
+            byte |= BUTTON_BUTTON_4;
+        }
+        if self.button_5 {
+            byte |= BUTTON_BUTTON_5;
+        }
         byte
     }
 
@@ -206,7 +214,7 @@ pub fn is_initialised() -> bool {
 pub fn init() {
     MOUSE_INITIALIZED.store(true, Ordering::SeqCst);
     MOUSE_BOOT_PROTOCOL.store(true, Ordering::SeqCst);
-    // kprintln!("      USB HID mouse: ready (boot protocol)")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("      USB HID mouse: ready (boot protocol)");
 }
 
 /// Initialise with parameters.
@@ -275,9 +283,11 @@ fn process_report_internal(report: BootMouseReport) -> MouseEvent {
         let old_x = CURSOR_X.load(Ordering::SeqCst);
         let old_y = CURSOR_Y.load(Ordering::SeqCst);
 
-        let new_x = old_x.saturating_add(dx)
+        let new_x = old_x
+            .saturating_add(dx)
             .clamp(0, SCREEN_WIDTH.load(Ordering::Relaxed));
-        let new_y = old_y.saturating_add(dy)
+        let new_y = old_y
+            .saturating_add(dy)
             .clamp(0, SCREEN_HEIGHT.load(Ordering::SeqCst));
 
         CURSOR_X.store(new_x, Ordering::SeqCst);
@@ -347,31 +357,31 @@ pub fn get_stats() -> (i16, i16, u8) {
 
 /// Run the mouse smoke test.
 pub fn smoke_test() -> bool {
-    // kprintln!("  [HID-MOUSE SMOKE] testing USB HID mouse...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [HID-MOUSE SMOKE] testing USB HID mouse...");
 
     // Test basic report parsing (3 bytes)
     let test_report_3 = [0x01, 0x05, 0xFB]; // Left button, dx=5, dy=-5
     match BootMouseReport::from_bytes(&test_report_3) {
         Some(r) => {
             if !r.buttons.left {
-                // kprintln!("  [HID-MOUSE SMOKE FAIL] left button not detected")  // kprintln disabled (memcpy crash workaround);
+                // kprintln!("  [HID-MOUSE SMOKE FAIL] left button not detected");
                 return false;
             }
             if r.dx != 5 {
-                // kprintln!("  [HID-MOUSE SMOKE FAIL] dx != 5")  // kprintln disabled (memcpy crash workaround);
+                // kprintln!("  [HID-MOUSE SMOKE FAIL] dx != 5");
                 return false;
             }
             if r.dy != -5 {
-                // kprintln!("  [HID-MOUSE SMOKE FAIL] dy != -5")  // kprintln disabled (memcpy crash workaround);
+                // kprintln!("  [HID-MOUSE SMOKE FAIL] dy != -5");
                 return false;
             }
             if r.wheel.is_some() {
-                // kprintln!("  [HID-MOUSE SMOKE FAIL] unexpected wheel")  // kprintln disabled (memcpy crash workaround);
+                // kprintln!("  [HID-MOUSE SMOKE FAIL] unexpected wheel");
                 return false;
             }
         }
         None => {
-            // kprintln!("  [HID-MOUSE SMOKE FAIL] from_bytes failed")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("  [HID-MOUSE SMOKE FAIL] from_bytes failed");
             return false;
         }
     }
@@ -381,12 +391,12 @@ pub fn smoke_test() -> bool {
     match BootMouseReport::from_bytes_wheel(&test_report_4) {
         Some(r) => {
             if r.wheel != Some(1) {
-                // kprintln!("  [HID-MOUSE SMOKE FAIL] wheel != 1")  // kprintln disabled (memcpy crash workaround);
+                // kprintln!("  [HID-MOUSE SMOKE FAIL] wheel != 1");
                 return false;
             }
         }
         None => {
-            // kprintln!("  [HID-MOUSE SMOKE FAIL] from_bytes_wheel failed")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("  [HID-MOUSE SMOKE FAIL] from_bytes_wheel failed");
             return false;
         }
     }
@@ -394,7 +404,7 @@ pub fn smoke_test() -> bool {
     // Test MouseButtons
     let buttons = MouseButtons::from_u8(BUTTON_LEFT | BUTTON_RIGHT);
     if !buttons.left || !buttons.right || buttons.middle {
-        // kprintln!("  [HID-MOUSE SMOKE FAIL] MouseButtons parsing failed")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [HID-MOUSE SMOKE FAIL] MouseButtons parsing failed");
         return false;
     }
 
@@ -405,15 +415,15 @@ pub fn smoke_test() -> bool {
         Some(MouseClickType::LeftDown) => {}
         other => {
             let _ = other;
-            // kprintln!("  [HID-MOUSE SMOKE FAIL] detect_click returned {:?}, expected LeftDown", other)  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("  [HID-MOUSE SMOKE FAIL] detect_click returned {:?}, expected LeftDown", other);
             return false;
         }
     }
 
-    // kprintln!("  [HID-MOUSE SMOKE OK] USB HID mouse healthy")  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("    - Basic report parsing: OK")  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("    - Wheel report parsing: OK")  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("    - Button parsing: OK")  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("    - Click detection: OK")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [HID-MOUSE SMOKE OK] USB HID mouse healthy");
+    // kprintln!("    - Basic report parsing: OK");
+    // kprintln!("    - Wheel report parsing: OK");
+    // kprintln!("    - Button parsing: OK");
+    // kprintln!("    - Click detection: OK");
     true
 }

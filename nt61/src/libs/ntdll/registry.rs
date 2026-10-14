@@ -3,10 +3,10 @@
 //! Implements Windows NT registry functions for in-memory registry storage.
 
 use crate::kprintln;
-use crate::libs::ntdll::types::{HANDLE, NTSTATUS, ObjectAttributes, UnicodeString, PVOID};
 use crate::libs::ntdll::status::{
     STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER, STATUS_OBJECT_NAME_NOT_FOUND, STATUS_SUCCESS,
 };
+use crate::libs::ntdll::types::{ObjectAttributes, UnicodeString, HANDLE, NTSTATUS, PVOID};
 use core::ptr::null_mut;
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -198,7 +198,16 @@ mod spin {
 
     impl<T> Spinlock<T> {
         pub fn lock(&self) -> SpinlockGuard<'_, T> {
-            while self.flag.compare_exchange(0, 1, core::sync::atomic::Ordering::SeqCst, core::sync::atomic::Ordering::SeqCst).is_err() {
+            while self
+                .flag
+                .compare_exchange(
+                    0,
+                    1,
+                    core::sync::atomic::Ordering::SeqCst,
+                    core::sync::atomic::Ordering::SeqCst,
+                )
+                .is_err()
+            {
                 core::hint::spin_loop();
             }
             SpinlockGuard { lock: self }
@@ -224,7 +233,9 @@ mod spin {
 
     impl<'a, T> Drop for SpinlockGuard<'a, T> {
         fn drop(&mut self) {
-            self.lock.flag.store(0, core::sync::atomic::Ordering::SeqCst);
+            self.lock
+                .flag
+                .store(0, core::sync::atomic::Ordering::SeqCst);
         }
     }
 }
@@ -278,7 +289,7 @@ pub fn init() {
                 for i in 0..size {
                     core::ptr::write(ptr.add(i), 0);
                 }
-                
+
                 // Set name characters individually
                 (*root_key).name[0] = b'\\' as u16;
                 (*root_key).name[1] = b'R' as u16;
@@ -757,7 +768,9 @@ pub unsafe extern "C" fn NtQueryValueKey(
         );
 
         if !result_length.is_null() {
-            unsafe { *result_length = 8; }
+            unsafe {
+                *result_length = 8;
+            }
         }
 
         STATUS_SUCCESS
@@ -955,9 +968,9 @@ pub unsafe extern "C" fn NtQueryKey(
     length: u32,
     result_length: *mut u32,
 ) -> NTSTATUS {
-    use crate::libs::ntdll::status::STATUS_INVALID_HANDLE;
     use crate::libs::ntdll::status::STATUS_BUFFER_OVERFLOW;
     use crate::libs::ntdll::status::STATUS_BUFFER_TOO_SMALL;
+    use crate::libs::ntdll::status::STATUS_INVALID_HANDLE;
 
     let handle_idx = (key_handle as usize).saturating_sub(1);
     if handle_idx >= MAX_KEY_HANDLES {
@@ -981,7 +994,9 @@ pub unsafe extern "C" fn NtQueryKey(
             // KeyBasicInformation
             let required = KEY_BASIC_INFORMATION_SIZE + key_name_bytes;
             if !result_length.is_null() {
-                unsafe { *result_length = required as u32; }
+                unsafe {
+                    *result_length = required as u32;
+                }
             }
             if (length as usize) < required {
                 return STATUS_BUFFER_OVERFLOW;
@@ -1000,7 +1015,7 @@ pub unsafe extern "C" fn NtQueryKey(
             core::ptr::copy_nonoverlapping(
                 (*key).name.as_ptr() as *const u8,
                 name_ptr,
-                key_name_bytes
+                key_name_bytes,
             );
 
             kprintln!(subsystem: "REG", "    [REG] NtQueryKey: KeyBasicInformation (name_len={})", key_name_bytes);
@@ -1010,7 +1025,9 @@ pub unsafe extern "C" fn NtQueryKey(
             // KeyNodeInformation
             let required = KEY_NODE_INFORMATION_SIZE + key_name_bytes;
             if !result_length.is_null() {
-                unsafe { *result_length = required as u32; }
+                unsafe {
+                    *result_length = required as u32;
+                }
             }
             if (length as usize) < required {
                 return STATUS_BUFFER_OVERFLOW;
@@ -1032,7 +1049,7 @@ pub unsafe extern "C" fn NtQueryKey(
             core::ptr::copy_nonoverlapping(
                 (*key).name.as_ptr() as *const u8,
                 name_ptr,
-                key_name_bytes
+                key_name_bytes,
             );
 
             kprintln!(subsystem: "REG", "    [REG] NtQueryKey: KeyNodeInformation (name_len={})", key_name_bytes);
@@ -1051,10 +1068,10 @@ pub unsafe extern "C" fn NtEnumerateKey(
     length: u32,
     result_length: *mut u32,
 ) -> NTSTATUS {
-    use crate::libs::ntdll::status::STATUS_INVALID_HANDLE;
-    use crate::libs::ntdll::status::STATUS_NO_MORE_ENTRIES;
     use crate::libs::ntdll::status::STATUS_BUFFER_OVERFLOW;
     use crate::libs::ntdll::status::STATUS_BUFFER_TOO_SMALL;
+    use crate::libs::ntdll::status::STATUS_INVALID_HANDLE;
+    use crate::libs::ntdll::status::STATUS_NO_MORE_ENTRIES;
 
     let handle_idx = (key_handle as usize).saturating_sub(1);
     if handle_idx >= MAX_KEY_HANDLES {
@@ -1093,7 +1110,9 @@ pub unsafe extern "C" fn NtEnumerateKey(
             // KeyBasicInformation
             let required = KEY_BASIC_INFORMATION_SIZE + child_name_bytes;
             if !result_length.is_null() {
-                unsafe { *result_length = required as u32; }
+                unsafe {
+                    *result_length = required as u32;
+                }
             }
             if (length as usize) < required {
                 return STATUS_BUFFER_OVERFLOW;
@@ -1112,7 +1131,7 @@ pub unsafe extern "C" fn NtEnumerateKey(
             core::ptr::copy_nonoverlapping(
                 (*child).name.as_ptr() as *const u8,
                 name_ptr,
-                child_name_bytes
+                child_name_bytes,
             );
 
             kprintln!(subsystem: "REG", "    [REG] NtEnumerateKey: index={}, KeyBasicInformation", index);
@@ -1122,7 +1141,9 @@ pub unsafe extern "C" fn NtEnumerateKey(
             // KeyNodeInformation
             let required = KEY_NODE_INFORMATION_SIZE + child_name_bytes;
             if !result_length.is_null() {
-                unsafe { *result_length = required as u32; }
+                unsafe {
+                    *result_length = required as u32;
+                }
             }
             if (length as usize) < required {
                 return STATUS_BUFFER_OVERFLOW;
@@ -1144,7 +1165,7 @@ pub unsafe extern "C" fn NtEnumerateKey(
             core::ptr::copy_nonoverlapping(
                 (*child).name.as_ptr() as *const u8,
                 name_ptr,
-                child_name_bytes
+                child_name_bytes,
             );
 
             kprintln!(subsystem: "REG", "    [REG] NtEnumerateKey: index={}, KeyNodeInformation", index);
@@ -1163,10 +1184,10 @@ pub unsafe extern "C" fn NtEnumerateValueKey(
     length: u32,
     result_length: *mut u32,
 ) -> NTSTATUS {
-    use crate::libs::ntdll::status::STATUS_INVALID_HANDLE;
-    use crate::libs::ntdll::status::STATUS_NO_MORE_ENTRIES;
     use crate::libs::ntdll::status::STATUS_BUFFER_OVERFLOW;
     use crate::libs::ntdll::status::STATUS_BUFFER_TOO_SMALL;
+    use crate::libs::ntdll::status::STATUS_INVALID_HANDLE;
+    use crate::libs::ntdll::status::STATUS_NO_MORE_ENTRIES;
 
     let handle_idx = (key_handle as usize).saturating_sub(1);
     if handle_idx >= MAX_KEY_HANDLES {
@@ -1204,7 +1225,9 @@ pub unsafe extern "C" fn NtEnumerateValueKey(
             // KeyValueBasicInformation
             let required = KEY_VALUE_BASIC_INFORMATION_SIZE + value_name_bytes;
             if !result_length.is_null() {
-                unsafe { *result_length = required as u32; }
+                unsafe {
+                    *result_length = required as u32;
+                }
             }
             if (length as usize) < required {
                 return STATUS_BUFFER_OVERFLOW;
@@ -1224,7 +1247,7 @@ pub unsafe extern "C" fn NtEnumerateValueKey(
             core::ptr::copy_nonoverlapping(
                 value.name.as_ptr() as *const u8,
                 name_ptr,
-                value_name_bytes
+                value_name_bytes,
             );
 
             kprintln!(subsystem: "REG", "    [REG] NtEnumerateValueKey: index={}, KeyValueBasicInformation", index);
@@ -1235,7 +1258,9 @@ pub unsafe extern "C" fn NtEnumerateValueKey(
             let data_size = value.data_size as usize;
             let required = KEY_VALUE_FULL_INFORMATION_SIZE + value_name_bytes + data_size;
             if !result_length.is_null() {
-                unsafe { *result_length = required as u32; }
+                unsafe {
+                    *result_length = required as u32;
+                }
             }
             if (length as usize) < required {
                 return STATUS_BUFFER_OVERFLOW;
@@ -1258,16 +1283,12 @@ pub unsafe extern "C" fn NtEnumerateValueKey(
             core::ptr::copy_nonoverlapping(
                 value.name.as_ptr() as *const u8,
                 name_ptr,
-                value_name_bytes
+                value_name_bytes,
             );
 
             // Copy value data
             let data_ptr = (key_value_information as *mut u8).add(info.data_offset as usize);
-            core::ptr::copy_nonoverlapping(
-                value.data.as_ptr(),
-                data_ptr,
-                data_size
-            );
+            core::ptr::copy_nonoverlapping(value.data.as_ptr(), data_ptr, data_size);
 
             kprintln!(subsystem: "REG", "    [REG] NtEnumerateValueKey: index={}, KeyValueFullInformation", index);
             STATUS_SUCCESS
@@ -1278,7 +1299,9 @@ pub unsafe extern "C" fn NtEnumerateValueKey(
             // KeyValuePartialInformation: 0x18 bytes fixed + data
             let required = 0x18 + data_size;
             if !result_length.is_null() {
-                unsafe { *result_length = required as u32; }
+                unsafe {
+                    *result_length = required as u32;
+                }
             }
             if (length as usize) < required {
                 return STATUS_BUFFER_OVERFLOW;
@@ -1295,11 +1318,7 @@ pub unsafe extern "C" fn NtEnumerateValueKey(
             core::ptr::write_unaligned((info_ptr as *mut u64).add(1), 0); // Data (aligned)
 
             // Copy value data
-            core::ptr::copy_nonoverlapping(
-                value.data.as_ptr(),
-                info_ptr.add(0x18),
-                data_size
-            );
+            core::ptr::copy_nonoverlapping(value.data.as_ptr(), info_ptr.add(0x18), data_size);
 
             kprintln!(subsystem: "REG", "    [REG] NtEnumerateValueKey: index={}, KeyValuePartialInformation", index);
             STATUS_SUCCESS
@@ -1337,20 +1356,39 @@ pub fn init_default_keys() {
     let root = REGISTRY_ROOT.lock();
     if let Some(root_key) = *root {
         // Create SYSTEM hive key.
-        let sys_path = [b'S' as u16, b'Y' as u16, b'S' as u16, b'T' as u16, b'E' as u16, b'M' as u16];
+        let sys_path = [
+            b'S' as u16,
+            b'Y' as u16,
+            b'S' as u16,
+            b'T' as u16,
+            b'E' as u16,
+            b'M' as u16,
+        ];
         let _ = create_subkey(root_key, &sys_path);
 
         // Create SOFTWARE hive key with a version value.
         let soft_path = [
-            b'S' as u16, b'O' as u16, b'F' as u16, b'T' as u16,
-            b'W' as u16, b'A' as u16, b'R' as u16, b'E' as u16,
+            b'S' as u16,
+            b'O' as u16,
+            b'F' as u16,
+            b'T' as u16,
+            b'W' as u16,
+            b'A' as u16,
+            b'R' as u16,
+            b'E' as u16,
         ];
         let _ = create_subkey(root_key, &soft_path);
 
         // Create HARDWARE hive key.
         let hw_path = [
-            b'H' as u16, b'A' as u16, b'R' as u16, b'D' as u16,
-            b'W' as u16, b'A' as u16, b'R' as u16, b'E' as u16,
+            b'H' as u16,
+            b'A' as u16,
+            b'R' as u16,
+            b'D' as u16,
+            b'W' as u16,
+            b'A' as u16,
+            b'R' as u16,
+            b'E' as u16,
         ];
         let _ = create_subkey(root_key, &hw_path);
 
@@ -1360,8 +1398,14 @@ pub fn init_default_keys() {
 
         // Create SECURITY hive key.
         let sec_path = [
-            b'S' as u16, b'E' as u16, b'C' as u16, b'U' as u16,
-            b'R' as u16, b'I' as u16, b'T' as u16, b'Y' as u16,
+            b'S' as u16,
+            b'E' as u16,
+            b'C' as u16,
+            b'U' as u16,
+            b'R' as u16,
+            b'I' as u16,
+            b'T' as u16,
+            b'Y' as u16,
         ];
         let _ = create_subkey(root_key, &sec_path);
     }

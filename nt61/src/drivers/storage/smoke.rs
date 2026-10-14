@@ -11,7 +11,7 @@ use crate::kprintln;
 /// Run every storage miniport's self-check and return `true`
 /// iff every one passed.
 pub fn smoke_test() -> bool {
-    // kprintln!("  [STORAGE SMOKE] running storage stack smoke tests...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [STORAGE SMOKE] running storage stack smoke tests...");
     let mut ok = true;
     ok &= super::ata::smoke_test();
     ok &= super::atapi::smoke_test();
@@ -19,9 +19,9 @@ pub fn smoke_test() -> bool {
     ok &= super::nvme::smoke_test();
     ok &= super::scsi::smoke_test();
     if ok {
-        // kprintln!("  [STORAGE SMOKE] all storage checks passed")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [STORAGE SMOKE] all storage checks passed");
     } else {
-        // kprintln!("  [STORAGE SMOKE FAIL] one or more checks failed")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [STORAGE SMOKE FAIL] one or more checks failed");
     }
     ok
 }

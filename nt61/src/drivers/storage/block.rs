@@ -11,8 +11,8 @@
 //! - Block-aligned I/O operations
 //! - Error handling and status reporting
 
-use crate::kprintln;
 use crate::ke::sync::Spinlock;
+use crate::kprintln;
 
 /// Block device identifier
 pub type BlockDeviceId = usize;
@@ -150,18 +150,24 @@ pub struct BlockIoResult {
 
 impl BlockIoResult {
     pub const fn success(bytes: usize) -> Self {
-        Self { status: 0, bytes_transferred: bytes }
+        Self {
+            status: 0,
+            bytes_transferred: bytes,
+        }
     }
-    
+
     pub const fn error(status: u32) -> Self {
-        Self { status, bytes_transferred: 0 }
+        Self {
+            status,
+            bytes_transferred: 0,
+        }
     }
-    
+
     pub const fn from_bool(ok: bool) -> Self {
         if ok {
             Self::success(BLOCK_SIZE)
         } else {
-            Self::error(0xC000000D)  // STATUS_DATA_ERROR
+            Self::error(0xC000000D) // STATUS_DATA_ERROR
         }
     }
 }
@@ -170,20 +176,20 @@ impl BlockIoResult {
 /// Returns the device ID on success, or None if no slots available.
 pub fn register_device(device: BlockDevice) -> Option<BlockDeviceId> {
     let mut table = BLOCK_DEVICES.lock();
-    
+
     // Find an empty slot
     for i in 0..MAX_BLOCK_DEVICES {
         if table.devices[i].is_none() {
             table.devices[i] = Some(device);
             table.count += 1;
-            // kprintln!("[BLOCK] Registered device {}: {} ({} blocks)",   // kprintln disabled (memcpy crash workaround)
-//                 i, table.devices[i].as_ref().unwrap().name, 
-//                 table.devices[i].as_ref().unwrap().total_blocks);
+            // kprintln!("[BLOCK] Registered device {}: {} ({} blocks)",
+            //                 i, table.devices[i].as_ref().unwrap().name,
+            //                 table.devices[i].as_ref().unwrap().total_blocks);
             return Some(i);
         }
     }
-    
-    // kprintln!("[BLOCK] Failed to register device - no slots available")  // kprintln disabled (memcpy crash workaround);
+
+    // kprintln!("[BLOCK] Failed to register device - no slots available");
     None
 }
 
@@ -212,7 +218,7 @@ pub fn device_count() -> usize {
 }
 
 /// Read a block from a device.
-/// 
+///
 /// # Arguments
 /// * `device_id` - The device to read from
 /// * `lba` - The logical block address to read
@@ -239,7 +245,7 @@ pub fn read_block(device_id: BlockDeviceId, lba: u64, buffer: &mut [u8]) -> bool
 }
 
 /// Write a block to a device.
-/// 
+///
 /// # Arguments
 /// * `device_id` - The device to write to
 /// * `lba` - The logical block address to write
@@ -266,20 +272,25 @@ pub fn write_block(device_id: BlockDeviceId, lba: u64, buffer: &[u8]) -> bool {
 }
 
 /// Read multiple consecutive blocks.
-/// 
+///
 /// Returns the number of blocks successfully read.
-pub fn read_blocks(device_id: BlockDeviceId, start_lba: u64, count: usize, buffer: &mut [u8]) -> usize {
+pub fn read_blocks(
+    device_id: BlockDeviceId,
+    start_lba: u64,
+    count: usize,
+    buffer: &mut [u8],
+) -> usize {
     let mut read = 0;
     let block_size = BLOCK_SIZE;
-    
+
     for i in 0..count {
         let lba = start_lba + (i as u64);
         let offset = i * block_size;
-        
+
         if offset + block_size > buffer.len() {
             break;
         }
-        
+
         let block_buf = &mut buffer[offset..offset + block_size];
         if read_block(device_id, lba, block_buf) {
             read += 1;
@@ -287,25 +298,30 @@ pub fn read_blocks(device_id: BlockDeviceId, start_lba: u64, count: usize, buffe
             break;
         }
     }
-    
+
     read
 }
 
 /// Write multiple consecutive blocks.
-/// 
+///
 /// Returns the number of blocks successfully written.
-pub fn write_blocks(device_id: BlockDeviceId, start_lba: u64, count: usize, buffer: &[u8]) -> usize {
+pub fn write_blocks(
+    device_id: BlockDeviceId,
+    start_lba: u64,
+    count: usize,
+    buffer: &[u8],
+) -> usize {
     let mut written = 0;
     let block_size = BLOCK_SIZE;
-    
+
     for i in 0..count {
         let lba = start_lba + (i as u64);
         let offset = i * block_size;
-        
+
         if offset + block_size > buffer.len() {
             break;
         }
-        
+
         let block_buf = &buffer[offset..offset + block_size];
         if write_block(device_id, lba, block_buf) {
             written += 1;
@@ -313,7 +329,7 @@ pub fn write_blocks(device_id: BlockDeviceId, start_lba: u64, count: usize, buff
             break;
         }
     }
-    
+
     written
 }
 
@@ -328,15 +344,16 @@ pub fn print_devices() {
         .iter()
         .filter_map(|d| d.as_ref())
         .map(|dev| {
-            let status = if dev.initialized { "initialized" } else { "not initialized" };
+            let status = if dev.initialized {
+                "initialized"
+            } else {
+                "not initialized"
+            };
             let ro = if dev.read_only { "RO" } else { "RW" };
             // Pack the description into a u128 so we can store it in
             // an AtomicU128 (constant-size, lock-free access).
             let encoded: u128 = {
-                let packed = alloc::format!(
-                    "{}|{}|{}|{}",
-                    dev.name, dev.total_blocks, status, ro
-                );
+                let packed = alloc::format!("{}|{}|{}|{}", dev.name, dev.total_blocks, status, ro);
                 let bytes = packed.as_bytes();
                 let mut buf = [0u8; 16];
                 for (j, b) in bytes.iter().take(16).enumerate() {
@@ -347,14 +364,19 @@ pub fn print_devices() {
             encoded
         })
         .count();
-    LAST_DEVICE_PRINT_SNAPSHOT_LEN.store(snapshot_len as u32, core::sync::atomic::Ordering::Relaxed);
+    LAST_DEVICE_PRINT_SNAPSHOT_LEN
+        .store(snapshot_len as u32, core::sync::atomic::Ordering::Relaxed);
 
-    // kprintln!("[BLOCK] Registered devices:")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[BLOCK] Registered devices:");
     for (i, device) in table.devices.iter().enumerate() {
         if let Some(dev) = device {
-            let status = if dev.initialized { "initialized" } else { "not initialized" };
+            let status = if dev.initialized {
+                "initialized"
+            } else {
+                "not initialized"
+            };
             let ro = if dev.read_only { "RO" } else { "RW" };
-            // kprintln!("  {}: {} ({} blocks, {}, {})",   // kprintln disabled (memcpy crash workaround)
+            // kprintln!("  {}: {} ({} blocks, {}, {})",
             //     i, dev.name, dev.total_blocks, status, ro);
             let _ = (i, status, ro, dev.name);
         }
@@ -390,8 +412,7 @@ pub fn init() {
 }
 
 /// Last observed count returned by `storage::device_count()`.
-static LAST_STORAGE_COUNT: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0);
+static LAST_STORAGE_COUNT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 /// Number of storage devices observed at the most recent `init()` call.
 pub fn storage_count() -> u32 {

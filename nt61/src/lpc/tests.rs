@@ -10,6 +10,35 @@
 //! - Direct buffers
 //! - Message attributes
 
+use super::async_ops::{async_send, AsyncQueue};
+use super::attributes::{
+    validate_attributes, AlpcMessageAttributes, ALPC_ATTR_CONTEXT, ALPC_ATTR_SECURITY,
+};
+use super::callback::{
+    invoke_callbacks, register_callback, unregister_callback, CallbackContext, CallbackEvent,
+    CallbackRegistry,
+};
+use super::connection::{
+    get_next_connection_request, reject_connection_request, send_connection_request,
+    ConnectionQueue,
+};
+use super::direct::{
+    allocate_direct_buffer, direct_receive, direct_send, free_direct_buffer, DirectBufferRegistry,
+};
+use super::port::{
+    close_port, create_port_ex, get_port_state, PortAttributes, PortState,
+    PORT_FLAG_ALLOW_IMPERSONATION, PORT_FLAG_WAITABLE,
+};
+use super::queue::{allocate_message_id, create_queued_message, MessageFilter, PRIORITY_NORMAL};
+use super::section::{
+    close_section, create_section, map_section_view, SectionRegistry, SECTION_FLAG_SECURE,
+};
+use super::security::{
+    check_port_access, impersonate_client, PortSecurity, SecurityQos, PORT_ACCESS_ALL,
+};
+use super::waitqueue::{
+    is_thread_waiting, wait_on_port, wake_port_waiters, wake_thread, WaitQueue, WaitReason,
+};
 use super::*;
 
 pub fn test_port_attributes() -> bool {
@@ -22,9 +51,35 @@ pub fn test_port_attributes() -> bool {
     };
 
     let name: [u16; 10] = [
-        b'\\' as u16, b'T' as u16, b'e' as u16, b's' as u16, b't' as u16,
-        b'A' as u16, b't' as u16, b't' as u16, b'r' as u16, b's' as u16,
+        b'\\' as u16,
+        b'T' as u16,
+        b'e' as u16,
+        b's' as u16,
+        b't' as u16,
+        b'A' as u16,
+        b't' as u16,
+        b't' as u16,
+        b'r' as u16,
+        b's' as u16,
     ];
+
+    let mut reg = LpcRegistry::new();
+    let port_index = match create_port_ex(&name, 0, &attrs, &mut reg) {
+        Some(i) => i,
+        None => return false,
+    };
+    if reg.count != 1 {
+        return false;
+    }
+    if get_port_state(port_index, &reg) != PortState::Initializing {
+        return false;
+    }
+    if !close_port(port_index, &mut reg) {
+        return false;
+    }
+    if get_port_state(port_index, &reg) != PortState::Closed {
+        return false;
+    }
 
     true
 }
@@ -32,7 +87,10 @@ pub fn test_port_attributes() -> bool {
 pub fn test_callbacks() -> bool {
     let mut registry = CallbackRegistry::new();
 
+    static INVOKED: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
     fn test_callback(ctx: &CallbackContext) {
+        INVOKED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     }
 
     let cb_id = match register_callback(0, test_callback, 0x1234, &mut registry) {
@@ -44,11 +102,21 @@ pub fn test_callbacks() -> bool {
         return false;
     }
 
+    invoke_callbacks(0, CallbackEvent::MessageReceived, None, 0, &registry);
+    if INVOKED.load(core::sync::atomic::Ordering::Relaxed) != 1 {
+        return false;
+    }
+
     if !unregister_callback(cb_id, &mut registry) {
         return false;
     }
 
     if registry.count != 0 {
+        return false;
+    }
+
+    invoke_callbacks(0, CallbackEvent::MessageReceived, None, 0, &registry);
+    if INVOKED.load(core::sync::atomic::Ordering::Relaxed) != 1 {
         return false;
     }
 
@@ -58,7 +126,8 @@ pub fn test_callbacks() -> bool {
 pub fn test_sections() -> bool {
     let mut registry = SectionRegistry::new();
 
-    let section_handle = match create_section(4096, section::SECTION_FLAG_SECURE, 0, &mut registry) {
+    let section_handle = match create_section(4096, section::SECTION_FLAG_SECURE, 0, &mut registry)
+    {
         Some(h) => h,
         None => return false,
     };
@@ -205,12 +274,8 @@ pub fn test_message_queue() -> bool {
         return false;
     }
 
-    let mut msg = queue::create_queued_message(
-        LpcMessage::empty(),
-        queue::PRIORITY_NORMAL,
-        false,
-        0,
-    );
+    let mut msg =
+        queue::create_queued_message(LpcMessage::empty(), queue::PRIORITY_NORMAL, false, 0);
     msg.message.header.sender_pid = 100;
     msg.message.header.message_type = LpcMessageType::Data as u32;
 
@@ -367,4 +432,128 @@ pub fn run_extended_tests() -> bool {
     all_passed &= test_direct_buffers();
 
     all_passed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The global registry is pool-backed, so under libtest it stays null unless
+    // a heap region is configured; without one `lock_registry()` returns `None`
+    // and every assertion below would trivially pass.
+    fn ensure_test_heap() {
+        if crate::mm::heap::KERNEL_HEAP.configured_region().is_some() {
+            return;
+        }
+        static mut TEST_HEAP: [u8; 256 * 1024] = [0u8; 256 * 1024];
+        unsafe {
+            let base = core::ptr::addr_of_mut!(TEST_HEAP) as *mut u8;
+            crate::mm::heap::KERNEL_HEAP.configure(base, TEST_HEAP.len());
+        }
+    }
+
+    #[test]
+    fn create_port_ex_records_attributes() {
+        ensure_test_heap();
+        crate::lpc::init();
+
+        let attrs = PortAttributes {
+            max_message_length: 512,
+            max_pool_usage: 128 * 1024,
+            memory_reserve: 4096,
+            flags: port::PORT_FLAG_WAITABLE | port::PORT_FLAG_ALLOW_IMPERSONATION,
+            security_qos: 2,
+        };
+        let name: [u16; 12] = [
+            b'\\' as u16,
+            b'T' as u16,
+            b'e' as u16,
+            b's' as u16,
+            b't' as u16,
+            b'A' as u16,
+            b't' as u16,
+            b't' as u16,
+            b'r' as u16,
+            b's' as u16,
+            b'2' as u16,
+            0,
+        ];
+
+        let g = lock_registry().expect("LPC registry not initialised");
+        let reg = &mut *g.reg;
+        let idx = create_port_ex(&name, 0, &attrs, reg).expect("create_port_ex failed");
+        assert_eq!(reg.ports[idx as usize].attributes.max_message_length, 512);
+        assert_eq!(
+            reg.ports[idx as usize].attributes.max_pool_usage,
+            128 * 1024
+        );
+        assert_eq!(
+            reg.ports[idx as usize].attributes.flags,
+            port::PORT_FLAG_WAITABLE | port::PORT_FLAG_ALLOW_IMPERSONATION
+        );
+    }
+
+    #[test]
+    fn oversized_message_is_rejected_instead_of_truncated() {
+        ensure_test_heap();
+        crate::lpc::init();
+
+        let attrs = PortAttributes {
+            max_message_length: 64,
+            max_pool_usage: 64 * 1024,
+            memory_reserve: 0,
+            flags: 0,
+            security_qos: 0,
+        };
+        let name: [u16; 12] = [
+            b'\\' as u16,
+            b'T' as u16,
+            b'e' as u16,
+            b's' as u16,
+            b't' as u16,
+            b'O' as u16,
+            b'v' as u16,
+            b'e' as u16,
+            b'r' as u16,
+            0,
+            0,
+            0,
+        ];
+
+        // `lock_registry()` is a non-reentrant spinlock, so the guard has to be
+        // released before any call that takes it again (`connect_port`, `send`).
+        let server;
+        {
+            let g = lock_registry().expect("LPC registry not initialised");
+            let reg = &mut *g.reg;
+            server = create_port_ex(&name, 1, &attrs, reg).expect("create_port_ex failed");
+            assert_eq!(reg.ports[server as usize].attributes.max_message_length, 64);
+        }
+
+        let mut server_comm = 0;
+        let client = connect_port(server, 2, &mut server_comm).expect("connect_port failed");
+        {
+            let g = lock_registry().expect("LPC registry not initialised");
+            let reg = &mut *g.reg;
+            assert!(reg.ports[client as usize].connected);
+            assert_eq!(reg.ports[client as usize].peer_index, server_comm);
+            reg.ports[client as usize].attributes = attrs;
+        }
+
+        let mut msg = LpcMessage {
+            header: LpcMessageHeader::new(LpcMessageType::Data, 65, 2, 0),
+            data: [0u8; 256],
+            data_len: 65,
+        };
+        assert_eq!(
+            send(client, &msg),
+            None,
+            "message over the port limit must be rejected"
+        );
+
+        msg.header.data_length = 64;
+        msg.header.total_length = 64;
+        msg.data_len = 64;
+        assert_eq!(send(client, &msg), Some(64));
+    }
 }

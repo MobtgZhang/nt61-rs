@@ -50,7 +50,10 @@ pub fn init() {
 /// when no D3D adapter is available (the dwm.exe itself starts and falls
 /// back to GDI direct draw).
 pub fn compose_frame() -> bool {
-    if !desktop().composition_enabled.load(core::sync::atomic::Ordering::Acquire) {
+    if !desktop()
+        .composition_enabled
+        .load(core::sync::atomic::Ordering::Acquire)
+    {
         return false;
     }
     // The actual pixel-blit happens via the graphics::display::present()

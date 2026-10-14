@@ -62,7 +62,7 @@ impl BootLogEntry {
         for (i, &b) in path.iter().take(255).enumerate() {
             path_buf[i] = b;
         }
-        
+
         Self {
             entry_type,
             path: path_buf,
@@ -75,54 +75,54 @@ impl BootLogEntry {
             millisecond: 0,
         }
     }
-    
+
     /// Format the entry as a line for ntbtlog.txt
     pub fn format_line(&self) -> [u8; 512] {
         let mut line = [b' '; 512];
         let mut pos = 0;
-        
+
         // YYYY
-        line[pos..pos+4].copy_from_slice(&itoa4(self.year));
+        line[pos..pos + 4].copy_from_slice(&itoa4(self.year));
         pos += 4;
         line[pos] = b' ';
         pos += 1;
-        
+
         // MM
-        line[pos..pos+2].copy_from_slice(&itoa2(self.month));
+        line[pos..pos + 2].copy_from_slice(&itoa2(self.month));
         pos += 2;
         line[pos] = b' ';
         pos += 1;
-        
+
         // DD
-        line[pos..pos+2].copy_from_slice(&itoa2(self.day));
+        line[pos..pos + 2].copy_from_slice(&itoa2(self.day));
         pos += 2;
         line[pos] = b' ';
         pos += 1;
-        
+
         // HH:MM:SS.mmm
-        line[pos..pos+2].copy_from_slice(&itoa2(self.hour));
+        line[pos..pos + 2].copy_from_slice(&itoa2(self.hour));
         pos += 2;
         line[pos] = b':';
         pos += 1;
-        line[pos..pos+2].copy_from_slice(&itoa2(self.minute));
+        line[pos..pos + 2].copy_from_slice(&itoa2(self.minute));
         pos += 2;
         line[pos] = b':';
         pos += 1;
-        line[pos..pos+2].copy_from_slice(&itoa2(self.second));
+        line[pos..pos + 2].copy_from_slice(&itoa2(self.second));
         pos += 2;
         line[pos] = b'.';
         pos += 1;
-        line[pos..pos+3].copy_from_slice(&itoa3(self.millisecond));
+        line[pos..pos + 3].copy_from_slice(&itoa3(self.millisecond));
         pos += 3;
         line[pos] = b' ';
         pos += 1;
-        
+
         // BOOTLOG_LOADED or BOOTLOG_NOT_LOADED
-        line[pos..pos+17].copy_from_slice(self.entry_type.as_str());
+        line[pos..pos + 17].copy_from_slice(self.entry_type.as_str());
         pos += 17;
         line[pos] = b' ';
         pos += 1;
-        
+
         // Path
         for &b in &self.path {
             if b == 0 {
@@ -131,11 +131,11 @@ impl BootLogEntry {
             line[pos] = b;
             pos += 1;
         }
-        
+
         // CRLF
         line[pos] = b'\r';
-        line[pos+1] = b'\n';
-        
+        line[pos + 1] = b'\n';
+
         line
     }
 }
@@ -152,10 +152,7 @@ fn itoa4(n: u16) -> [u8; 4] {
 
 /// Convert u8 to 2-digit ASCII
 fn itoa2(n: u8) -> [u8; 2] {
-    [
-        b'0' + (n / 10) % 10,
-        b'0' + n % 10,
-    ]
+    [b'0' + (n / 10) % 10, b'0' + n % 10]
 }
 
 /// Convert u16 to 3-digit ASCII
@@ -186,7 +183,7 @@ pub fn is_enabled() -> bool {
 /// Mark the beginning of the boot sequence
 pub fn begin_boot_sequence() {
     IN_BOOT_SEQUENCE.store(true, Ordering::Release);
-    
+
     // Log header
     writer::write_line(b"\r\n");
     writer::write_line(b"Microsoft (R) Windows (R) Boot Log\r\n");
@@ -199,7 +196,7 @@ pub fn begin_boot_sequence() {
 /// Mark the end of the boot sequence
 pub fn end_boot_sequence() {
     IN_BOOT_SEQUENCE.store(false, Ordering::Release);
-    
+
     writer::write_line(b"\r\n");
     writer::write_line(b"End of Boot Log\r\n");
 }
@@ -209,7 +206,7 @@ pub fn log_driver_load(path: &[u8]) {
     if !is_enabled() {
         return;
     }
-    
+
     let entry = BootLogEntry::new(BootEntryType::Loaded, path);
     let line = entry.format_line();
     writer::write_line(&line);
@@ -220,7 +217,7 @@ pub fn log_driver_not_load(path: &[u8]) {
     if !is_enabled() {
         return;
     }
-    
+
     let entry = BootLogEntry::new(BootEntryType::NotLoaded, path);
     let line = entry.format_line();
     writer::write_line(&line);

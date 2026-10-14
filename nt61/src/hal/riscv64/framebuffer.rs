@@ -239,11 +239,7 @@ pub fn scroll_up(lines: u32) {
             addr as *mut u8,
             total_bytes - shift,
         );
-        ptr::write_bytes(
-            (addr + total_bytes - shift) as *mut u8,
-            0,
-            shift,
-        );
+        ptr::write_bytes((addr + total_bytes - shift) as *mut u8, 0, shift);
     }
 }
 
@@ -434,15 +430,15 @@ pub fn framebuffer_size() -> u64 {
 
 /// Compatible function names for cross-platform code.
 pub mod compat {
+    pub use super::bugcheck_screen;
+    pub use super::clear;
+    pub use super::color32;
+    pub use super::draw_char;
     pub use super::info;
     pub use super::init;
-    pub use super::set_pixel;
-    pub use super::clear;
-    pub use super::scroll_up;
-    pub use super::draw_char;
     pub use super::put_char;
     pub use super::put_string;
-    pub use super::bugcheck_screen;
-    pub use super::color32;
+    pub use super::scroll_up;
+    pub use super::set_pixel;
     pub use super::FramebufferInfo;
 }

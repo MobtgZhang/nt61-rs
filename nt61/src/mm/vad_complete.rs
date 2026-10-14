@@ -18,6 +18,7 @@ pub struct VadEntry {
 }
 
 bitflags::bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct VadFlags: u32 {
         const COMMITTED = 0x0001;
         const PRIVATE = 0x0002;
@@ -72,7 +73,10 @@ impl VadTree {
     }
 
     pub fn insert(&mut self, entry: VadEntry) -> Result<(), &'static str> {
-        if self.find_overlapping(entry.start_address, entry.end_address).is_some() {
+        if self
+            .find_overlapping(entry.start_address, entry.end_address)
+            .is_some()
+        {
             return Err("Address range overlaps with existing VAD");
         }
 

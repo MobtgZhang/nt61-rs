@@ -11,16 +11,14 @@
 //! - ChangeServiceConfigW — Modify service configuration
 //! - EnumServicesStatusW — Enumerate services
 
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 #[allow(non_snake_case, non_upper_case_globals, dead_code)]
-
 use super::types::*;
-use crate::libs::ntdll::types::{HANDLE, PVOID, DWORD, PWSTR, PCWSTR};
-use core::ptr::{null_mut, null};
-use alloc::vec::Vec;
+use crate::libs::ntdll::types::{DWORD, HANDLE, PCWSTR, PVOID, PWSTR};
 use alloc::string::String;
-
+use alloc::vec::Vec;
+use core::ptr::{null, null_mut};
 
 const MAX_SERVICES: usize = 128;
 
@@ -135,7 +133,10 @@ unsafe fn find_service(name: PCWSTR) -> Option<usize> {
             p = p.offset(1);
         }
 
-        if match_found && (j >= service.name.len() || service.name[j] == 0) && (p.is_null() || *p == 0) {
+        if match_found
+            && (j >= service.name.len() || service.name[j] == 0)
+            && (p.is_null() || *p == 0)
+        {
             return Some(i);
         }
     }
@@ -168,7 +169,6 @@ unsafe fn copy_to_buffer(dest: &mut [u16], src: PCWSTR) {
     }
     dest[i] = 0;
 }
-
 
 #[no_mangle]
 pub unsafe extern "C" fn OpenSCManagerW(
@@ -226,7 +226,14 @@ pub unsafe extern "C" fn CreateServiceW(
 
     let service = &mut SERVICE_TABLE[service_index];
     copy_to_buffer(&mut service.name, lpServiceName);
-    copy_to_buffer(&mut service.display_name, if lpDisplayName.is_null() { lpServiceName } else { lpDisplayName });
+    copy_to_buffer(
+        &mut service.display_name,
+        if lpDisplayName.is_null() {
+            lpServiceName
+        } else {
+            lpDisplayName
+        },
+    );
     copy_to_buffer(&mut service.binary_path, lpBinaryPathName);
     service.service_type = dwServiceType;
     service.start_type = dwStartType;
@@ -286,7 +293,8 @@ pub unsafe extern "C" fn StartServiceW(
     service.wait_hint = 2000;
 
     service.current_state = SERVICE_RUNNING;
-    service.controls_accepted = SERVICE_CONTROL_STOP | SERVICE_CONTROL_PAUSE | SERVICE_CONTROL_CONTINUE;
+    service.controls_accepted =
+        SERVICE_CONTROL_STOP | SERVICE_CONTROL_PAUSE | SERVICE_CONTROL_CONTINUE;
 
     1 // TRUE
 }
@@ -328,8 +336,7 @@ pub unsafe extern "C" fn ControlService(
                 service.current_state = SERVICE_RUNNING;
             }
         }
-        SERVICE_CONTROL_INTERROGATE => {
-        }
+        SERVICE_CONTROL_INTERROGATE => {}
         _ => {}
     }
 
@@ -470,8 +477,16 @@ pub unsafe extern "C" fn EnumServicesStatusW(
         }
 
         match dwServiceState {
-            1 => if service.current_state != SERVICE_STOPPED { continue; },
-            2 => if service.current_state == SERVICE_STOPPED { continue; },
+            1 => {
+                if service.current_state != SERVICE_STOPPED {
+                    continue;
+                }
+            }
+            2 => {
+                if service.current_state == SERVICE_STOPPED {
+                    continue;
+                }
+            }
             _ => {}
         }
 
@@ -514,9 +529,7 @@ pub unsafe extern "C" fn QueryServiceConfigW(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn StartServiceCtrlDispatcherW(
-    lpServiceStartTable: PVOID,
-) -> LONG {
+pub unsafe extern "C" fn StartServiceCtrlDispatcherW(lpServiceStartTable: PVOID) -> LONG {
     1 // TRUE
 }
 

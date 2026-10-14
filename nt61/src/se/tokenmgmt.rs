@@ -10,14 +10,14 @@
 //!
 //! References: Windows SDK, WRK
 
-use core::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, AtomicBool, AtomicPtr, Ordering};
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
-use super::token::{
-    Token, TokenTypeEnum, TokenGroup, TokenPrivilege, ImpersonationLevel,
-    Luid, SE_GROUP_ENABLED, SE_PRIVILEGE_ENABLED, TOKEN_MAX_GROUPS, TOKEN_MAX_PRIVILEGES,
-};
 use super::sid::Sid;
+use super::token::{
+    ImpersonationLevel, Luid, Token, TokenGroup, TokenPrivilege, TokenTypeEnum, SE_GROUP_ENABLED,
+    SE_PRIVILEGE_ENABLED, TOKEN_MAX_GROUPS, TOKEN_MAX_PRIVILEGES,
+};
 
 pub const DUPLICATE_SAME_ACCESS: u32 = 0x00000002;
 pub const DUPLICATE_SAME_ATTRIBUTES: u32 = 0x00000004;
@@ -72,12 +72,10 @@ pub fn se_create_token(
         token.primary_group = super::sid::SID_USERS;
 
         static NEXT_TOKEN_ID: AtomicU64 = AtomicU64::new(1000);
-        token.token_id = Luid::from_u64(NEXT_TOKEN_ID);
-        NEXT_TOKEN_ID += 1;
+        token.token_id = Luid::from_u64(NEXT_TOKEN_ID.fetch_add(1, Ordering::Relaxed));
 
         static NEXT_AUTH_ID: AtomicU64 = AtomicU64::new(2000);
-        token.authentication_id = Luid::from_u64(NEXT_AUTH_ID);
-        NEXT_AUTH_ID += 1;
+        token.authentication_id = Luid::from_u64(NEXT_AUTH_ID.fetch_add(1, Ordering::Relaxed));
     }
 
     token_ptr
@@ -111,13 +109,11 @@ pub fn se_duplicate_token(
         dst.impersonation_level = impersonation_level;
 
         static NEXT_TOKEN_ID: AtomicU64 = AtomicU64::new(1000);
-        dst.token_id = Luid::from_u64(NEXT_TOKEN_ID);
-        NEXT_TOKEN_ID += 1;
+        dst.token_id = Luid::from_u64(NEXT_TOKEN_ID.fetch_add(1, Ordering::Relaxed));
 
         dst.authentication_id = src.authentication_id;
 
         dst.refcount = 1;
-
     }
 
     new_token_ptr
@@ -184,9 +180,7 @@ pub fn se_token_is_restricted(token: *const Token) -> bool {
     if token.is_null() {
         return false;
     }
-    unsafe {
-        ((*token).flags & super::token::TOKEN_WRITE_RESTRICTED) != 0
-    }
+    unsafe { ((*token).flags & super::token::TOKEN_WRITE_RESTRICTED) != 0 }
 }
 
 pub fn se_adjust_privileges_token(
@@ -424,5 +418,4 @@ pub fn se_token_impersonation_level(token: *const Token) -> ImpersonationLevel {
     unsafe { (*token).impersonation_level }
 }
 
-pub fn init() {
-}
+pub fn init() {}

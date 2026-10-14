@@ -1,8 +1,7 @@
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
-use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, AtomicUsize, AtomicI32, AtomicI64, AtomicPtr, Ordering};
-
-use core::sync::atomic::{AtomicU64, AtomicUsize, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicI64, AtomicU8};
+use spin::{Lazy, Mutex};
 
 const PFN_BOOTSTRAP_SIZE: usize = 2 * 1024 * 1024;
 
@@ -58,9 +57,7 @@ impl PfnStorage {
     }
 }
 
-static PFN_STORAGE: Lazy<Mutex<PfnStorage>> = Lazy::new(|| {
-    Mutex::new(PfnStorage::new())
-});
+static PFN_STORAGE: Lazy<Mutex<PfnStorage>> = Lazy::new(|| Mutex::new(PfnStorage::new()));
 
 static PFN_COUNT: AtomicU64 = AtomicU64::new(0);
 static PFN_BASE: AtomicU64 = AtomicU64::new(0);

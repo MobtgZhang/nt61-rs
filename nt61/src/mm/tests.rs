@@ -84,8 +84,12 @@ fn test_pfn_allocation() -> bool {
     // Free the PFN
     pfn::free_pfn(pfn);
 
-    crate::boot_println!("    PFN allocation: allocated={}, free_before={}, free_after={}",
-                         pfn, free_before, free_after);
+    crate::boot_println!(
+        "    PFN allocation: allocated={}, free_before={}, free_after={}",
+        pfn,
+        free_before,
+        free_after
+    );
     true
 }
 
@@ -106,8 +110,11 @@ fn test_pfn_free() -> bool {
 
     // Verify count restored
     if free_after != free_before {
-        crate::boot_println!("    PFN free count mismatch: before={}, after={}",
-                           free_before, free_after);
+        crate::boot_println!(
+            "    PFN free count mismatch: before={}, after={}",
+            free_before,
+            free_after
+        );
         return false;
     }
 
@@ -115,32 +122,41 @@ fn test_pfn_free() -> bool {
 }
 
 fn test_pfn_state_transitions() -> bool {
-    use crate::mm::pfn::{self, PfnState};
+    use crate::mm::pfn::{self, MMPFNSTATE};
 
     let pfn = match pfn::allocate_pfn() {
         Some(p) => p,
         None => return false,
     };
 
-    // Check initial state
-    let state = pfn::get_pfn_state(pfn);
-    if state != PfnState::Active {
-        pfn::free_pfn(pfn);
-        return false;
-    }
+    let entry = match pfn::get_entry(pfn) {
+        Some(e) if !e.is_null() => e,
+        _ => {
+            pfn::free_pfn(pfn);
+            return false;
+        }
+    };
 
-    // Transition to Modified
-    pfn::set_pfn_state(pfn, PfnState::Modified);
-    if pfn::get_pfn_state(pfn) != PfnState::Modified {
-        pfn::free_pfn(pfn);
-        return false;
-    }
+    unsafe {
+        // `ExAllocatePfn` leaves the page Active.
+        if (*entry).state() != MMPFNSTATE::Active {
+            pfn::free_pfn(pfn);
+            return false;
+        }
 
-    // Transition to Standby
-    pfn::set_pfn_state(pfn, PfnState::Standby);
-    if pfn::get_pfn_state(pfn) != PfnState::Standby {
-        pfn::free_pfn(pfn);
-        return false;
+        // Transition to Modified
+        (*entry).set_state(MMPFNSTATE::Modified);
+        if (*entry).state() != MMPFNSTATE::Modified {
+            pfn::free_pfn(pfn);
+            return false;
+        }
+
+        // Transition to Standby (priority 0 bucket)
+        (*entry).set_state(MMPFNSTATE::Standby0);
+        if (*entry).state() != MMPFNSTATE::Standby0 {
+            pfn::free_pfn(pfn);
+            return false;
+        }
     }
 
     pfn::free_pfn(pfn);
@@ -155,8 +171,11 @@ fn test_pfn_database_integrity() -> bool {
 
     // Verify counts are reasonable
     if total == 0 || free == 0 || free > total {
-        crate::boot_println!("    PFN database integrity failed: total={}, free={}",
-                           total, free);
+        crate::boot_println!(
+            "    PFN database integrity failed: total={}, free={}",
+            total,
+            free
+        );
         return false;
     }
 
@@ -169,30 +188,28 @@ fn test_pfn_database_integrity() -> bool {
 // =============================================================================
 
 fn test_pte_operations() -> bool {
-    use crate::mm::pte::{Pte, PteFlags};
+    use crate::mm::pte::MMPTE;
 
-    let mut pte = Pte::empty();
+    let mut pte = MMPTE::empty();
 
-    // Test flag setting
-    pte.set_present(true);
-    if !pte.is_present() {
-        return false;
-    }
-
-    pte.set_writable(true);
-    if !pte.is_writable() {
-        return false;
-    }
-
-    pte.set_user(true);
-    if !pte.is_user() {
-        return false;
-    }
-
-    // Test PFN setting
+    // Present | RW | U/S on x86-64: bits 0, 1, 2.
+    const PAGE_PRESENT: u64 = 0x1;
+    const PAGE_WRITABLE: u64 = 0x2;
+    const PAGE_USER: u64 = 0x4;
     let test_pfn = 0x1234u64;
-    pte.set_pfn(test_pfn);
-    if pte.get_pfn() != test_pfn {
+    let pa = test_pfn << 12;
+    pte.set_hardware(pa, PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER);
+
+    if !pte.is_hardware() {
+        return false;
+    }
+    if !pte.writable() {
+        return false;
+    }
+    if !pte.user() {
+        return false;
+    }
+    if pte.hardware_page_frame() != pa {
         return false;
     }
 
@@ -202,11 +219,15 @@ fn test_pte_operations() -> bool {
 fn test_self_map_verification() -> bool {
     #[cfg(target_arch = "x86_64")]
     {
-        use crate::mm::vas;
+        use crate::mm::constants;
 
-        // Verify self-map is accessible
-        let self_map_addr = vas::SELF_MAP_BASE;
+        // The NT 6.1 self-map window must decode back to the documented
+        // PML4 slot (PML4[0x1ED] -> PDPT[0x1ED] -> PD[0x1ED] -> PT[0x1ED]).
+        let self_map_addr = constants::PXE_BASE;
         if self_map_addr == 0 {
+            return false;
+        }
+        if ((self_map_addr >> 39) & 0x1FF) as usize != constants::MI_SELF_MAP_INDEX {
             return false;
         }
 
@@ -235,36 +256,43 @@ fn test_page_table_walk() -> bool {
 // =============================================================================
 
 fn test_vad_insert() -> bool {
-    use crate::mm::vad::{Vad, VadType};
+    use crate::mm::vad::{VadEntry, VadType};
 
-    let mut vad = Vad::new(0x1000_0000, 0x1000_0000 + 0x10000, VadType::Private);
+    let mut vad = VadEntry::new();
+    vad.vad_type = VadType::VadImage;
+    vad.set_range(0x1000_0000, 0x1000_0000 + 0x10000);
 
     // Verify initial state
-    if vad.start_vpn != 0x1000_0000 / 4096 {
+    if vad.starting_vpn != 0x1000_0000 / 4096 {
         return false;
     }
 
-    if vad.end_vpn != (0x1000_0000 + 0x10000) / 4096 {
+    if vad.ending_vpn != (0x1000_0000 + 0x10000) / 4096 {
         return false;
     }
 
-    crate::boot_println!("    VAD: start_vpn=0x{:x}, end_vpn=0x{:x}",
-                        vad.start_vpn, vad.end_vpn);
+    crate::boot_println!(
+        "    VAD: start_vpn=0x{:x}, end_vpn=0x{:x}",
+        vad.starting_vpn,
+        vad.ending_vpn
+    );
     true
 }
 
 fn test_vad_lookup() -> bool {
     // VAD tree lookup would require a full process context
     // For unit testing, verify VAD structure fields
-    use crate::mm::vad::{Vad, VadType};
+    use crate::mm::vad::{VadEntry, VadType};
 
-    let vad = Vad::new(0x1000_0000, 0x1000_0000 + 0x10000, VadType::ImageMap);
+    let mut vad = VadEntry::new();
+    vad.vad_type = VadType::VadDevice;
+    vad.set_range(0x1000_0000, 0x1000_0000 + 0x10000);
 
     // Verify VPN calculations
     let start_vpn = 0x1000_0000 / 4096;
     let end_vpn = (0x1000_0000 + 0x10000) / 4096;
 
-    if vad.start_vpn != start_vpn || vad.end_vpn != end_vpn {
+    if vad.starting_vpn != start_vpn || vad.ending_vpn != end_vpn {
         return false;
     }
 
@@ -277,13 +305,18 @@ fn test_vad_remove() -> bool {
 }
 
 fn test_vad_merge() -> bool {
-    use crate::mm::vad::{Vad, VadType};
+    use crate::mm::vad::{VadEntry, VadType};
 
-    let vad1 = Vad::new(0x1000_0000, 0x1000_0000 + 0x10000, VadType::Private);
-    let vad2 = Vad::new(0x1000_0000 + 0x10000, 0x1000_0000 + 0x20000, VadType::Private);
+    let mut vad1 = VadEntry::new();
+    vad1.vad_type = VadType::VadImage;
+    vad1.set_range(0x1000_0000, 0x1000_0000 + 0x10000);
+
+    let mut vad2 = VadEntry::new();
+    vad2.vad_type = VadType::VadImage;
+    vad2.set_range(0x1000_0000 + 0x10000, 0x1000_0000 + 0x20000);
 
     // Verify they are adjacent
-    if vad1.end_vpn == vad2.start_vpn {
+    if vad1.ending_vpn == vad2.starting_vpn {
         crate::boot_println!("    VADs are adjacent and can be merged");
         return true;
     }
@@ -301,8 +334,8 @@ fn test_vad_split() -> bool {
 // =============================================================================
 
 fn test_heap_small_alloc() -> bool {
-    use core::alloc::{GlobalAlloc, Layout};
     use crate::mm::heap::KERNEL_HEAP;
+    use core::alloc::{GlobalAlloc, Layout};
 
     let layout = Layout::from_size_align(64, 8).unwrap();
     let ptr = unsafe { KERNEL_HEAP.alloc(layout) };
@@ -326,8 +359,8 @@ fn test_heap_small_alloc() -> bool {
 }
 
 fn test_heap_large_alloc() -> bool {
-    use core::alloc::{GlobalAlloc, Layout};
     use crate::mm::heap::KERNEL_HEAP;
+    use core::alloc::{GlobalAlloc, Layout};
 
     let layout = Layout::from_size_align(8192, 16).unwrap();
     let ptr = unsafe { KERNEL_HEAP.alloc(layout) };
@@ -345,8 +378,8 @@ fn test_heap_large_alloc() -> bool {
 }
 
 fn test_heap_alignment() -> bool {
-    use core::alloc::{GlobalAlloc, Layout};
     use crate::mm::heap::KERNEL_HEAP;
+    use core::alloc::{GlobalAlloc, Layout};
 
     // Test various alignments
     let alignments = [8, 16, 32, 64, 128];
@@ -361,19 +394,23 @@ fn test_heap_alignment() -> bool {
 
         // Check alignment
         if (ptr as usize) % align != 0 {
-            unsafe { KERNEL_HEAP.dealloc(ptr, layout); }
+            unsafe {
+                KERNEL_HEAP.dealloc(ptr, layout);
+            }
             return false;
         }
 
-        unsafe { KERNEL_HEAP.dealloc(ptr, layout); }
+        unsafe {
+            KERNEL_HEAP.dealloc(ptr, layout);
+        }
     }
 
     true
 }
 
 fn test_heap_fragmentation() -> bool {
-    use core::alloc::{GlobalAlloc, Layout};
     use crate::mm::heap::KERNEL_HEAP;
+    use core::alloc::{GlobalAlloc, Layout};
 
     let mut ptrs = [core::ptr::null_mut::<u8>(); 10];
     let layout = Layout::from_size_align(128, 8).unwrap();
@@ -384,7 +421,9 @@ fn test_heap_fragmentation() -> bool {
         if ptrs[i].is_null() {
             // Clean up
             for j in 0..i {
-                unsafe { KERNEL_HEAP.dealloc(ptrs[j], layout); }
+                unsafe {
+                    KERNEL_HEAP.dealloc(ptrs[j], layout);
+                }
             }
             return false;
         }
@@ -392,12 +431,16 @@ fn test_heap_fragmentation() -> bool {
 
     // Free odd blocks
     for i in (1..10).step_by(2) {
-        unsafe { KERNEL_HEAP.dealloc(ptrs[i], layout); }
+        unsafe {
+            KERNEL_HEAP.dealloc(ptrs[i], layout);
+        }
     }
 
     // Free even blocks
     for i in (0..10).step_by(2) {
-        unsafe { KERNEL_HEAP.dealloc(ptrs[i], layout); }
+        unsafe {
+            KERNEL_HEAP.dealloc(ptrs[i], layout);
+        }
     }
 
     true
@@ -452,7 +495,7 @@ fn test_pool_tag_tracking() -> bool {
         return false;
     }
 
-    unsafe { pool::free(ptr); }
+    pool::free(ptr);
     true
 }
 
@@ -476,16 +519,34 @@ fn test_working_set_trim() -> bool {
 // =============================================================================
 
 fn test_mdl_allocation() -> bool {
-    use crate::mm::mdl;
+    use crate::io::transfer;
 
-    let page_count = 4;
-    let mdl_ptr = mdl::allocate_mdl(page_count);
+    let buffer = [0u8; 4096];
+    let base = buffer.as_ptr() as *mut u8;
+    let mdl_ptr = transfer::allocate_mdl(base, 4096, false, false, core::ptr::null_mut());
 
     if mdl_ptr.is_null() {
         return false;
     }
 
-    unsafe { mdl::free_mdl(mdl_ptr); }
+    unsafe {
+        if (*mdl_ptr).byte_count != 4096 {
+            transfer::free_mdl(mdl_ptr);
+            return false;
+        }
+        // MDL_SIZE covers the header only; the page array follows it.
+        if (*mdl_ptr).size != core::mem::size_of::<transfer::Mdl>() as u16 {
+            transfer::free_mdl(mdl_ptr);
+            return false;
+        }
+        // Byte offset is the alignment of the buffer inside its page.
+        if (*mdl_ptr).byte_offset != (base as usize & 0xFFF) as u32 {
+            transfer::free_mdl(mdl_ptr);
+            return false;
+        }
+        transfer::free_mdl(mdl_ptr);
+    }
+
     true
 }
 
@@ -503,7 +564,10 @@ fn test_perf_counters() -> bool {
 
     let stats = perf::get_pfn_stats();
 
-    crate::boot_println!("    Perf: allocs={}, frees={}",
-                        stats.allocations, stats.frees);
+    crate::boot_println!(
+        "    Perf: allocs={}, frees={}",
+        stats.alloc_count,
+        stats.free_count
+    );
     true
 }

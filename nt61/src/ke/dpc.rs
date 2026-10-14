@@ -30,8 +30,8 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use crate::ke::sync::Spinlock;
 use crate::ke::irql::{self, Irql};
+use crate::ke::sync::Spinlock;
 use crate::mm::pool;
 
 pub type DpcRoutine = fn(*mut u8);
@@ -53,9 +53,9 @@ const DPC_SIZE: usize = core::mem::size_of::<Dpc>();
 #[repr(C)]
 pub struct Dpc {
     pub header: DispatcherHeader,
-    pub type_: u16,           // DpcContext (0x0010)
-    pub importance: u8,       // DpcImportance
-    pub number: u32,         // CPU number (0 for current)
+    pub type_: u16,     // DpcContext (0x0010)
+    pub importance: u8, // DpcImportance
+    pub number: u32,    // CPU number (0 for current)
     pub routine: Option<DpcRoutine>,
     pub context: *mut u8,
     pub inserted: AtomicBool,
@@ -167,10 +167,7 @@ pub const DPC_VECTOR: u8 = 0xDF; // 223
 fn dpc_array() -> &'static mut [Dpc; MAX_DPCS] {
     let mut g = DPC_STORAGE.lock();
     if g.is_null() {
-        let bytes = pool::allocate(
-            pool::PoolType::NonPaged,
-            MAX_DPCS * DPC_SIZE,
-        ) as *mut Dpc;
+        let bytes = pool::allocate(pool::PoolType::NonPaged, MAX_DPCS * DPC_SIZE) as *mut Dpc;
         if bytes.is_null() {
             static mut FALLBACK: [Dpc; MAX_DPCS] = [const { Dpc::new() }; MAX_DPCS];
             return unsafe { &mut *(&raw mut FALLBACK) };
@@ -198,8 +195,8 @@ pub fn init() {
     INSERT_COUNT.store(0, Ordering::SeqCst);
     FIRE_COUNT.store(0, Ordering::SeqCst);
     DPC_NEEDED.store(false, Ordering::SeqCst);
-    // // kprintln!("    DPC: max={} (per-CPU list, heap-backed)", MAX_DPCS)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("      DPC vector: 0x{:02x} (software interrupt)", DPC_VECTOR)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("    DPC: max={} (per-CPU list, heap-backed)", MAX_DPCS);
+    // // kprintln!("      DPC vector: 0x{:02x} (software interrupt)", DPC_VECTOR);
 }
 
 /// Initialize a DPC object. This is `KeInitializeDpc` in Windows.
@@ -356,27 +353,27 @@ pub fn smoke_test() -> bool {
     let idx1 = insert(smoke_dpc_routine, core::ptr::null_mut(), "dpc1");
     let idx2 = insert(smoke_dpc_routine, core::ptr::null_mut(), "dpc2");
     if idx0.is_none() || idx1.is_none() || idx2.is_none() {
-        // // kprintln!("    [DPC SMOKE FAIL] could not enqueue three DPCs")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("    [DPC SMOKE FAIL] could not enqueue three DPCs");
         return false;
     }
     let fired = drain();
     if fired != 3 {
-        // // kprintln!("    [DPC SMOKE FAIL] drain fired={} (expected 3)", fired)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("    [DPC SMOKE FAIL] drain fired={} (expected 3)", fired);
         return false;
     }
     let i_after = insert_count();
     let f_after = fire_count();
     if i_after != i_before + 3 || f_after != f_before + 3 {
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "    [DPC SMOKE FAIL] insert: {}->{} fire: {}->{}",
-// //             i_before, i_after, f_before, f_after
-// //         );
+        // // kprintln!(
+        // //             "    [DPC SMOKE FAIL] insert: {}->{} fire: {}->{}",
+        // //             i_before, i_after, f_before, f_after
+        // //         );
         return false;
     }
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         "    [DPC SMOKE OK] drain fired={} insert={} fire={}",
-// //         fired, i_after, f_after
-// //     );
+    // // kprintln!(
+    // //         "    [DPC SMOKE OK] drain fired={} insert={} fire={}",
+    // //         fired, i_after, f_after
+    // //     );
 
     // Test KeInitializeDpc and KeInsertQueueDpc
     let mut test_dpc = Dpc::new();
@@ -384,16 +381,16 @@ pub fn smoke_test() -> bool {
         KeInitializeDpc(&mut test_dpc, smoke_dpc_routine, core::ptr::null_mut());
         let result = KeInsertQueueDpc(&mut test_dpc, core::ptr::null_mut(), core::ptr::null_mut());
         if !result {
-            // // kprintln!("    [DPC SMOKE FAIL] KeInsertQueueDpc returned false")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("    [DPC SMOKE FAIL] KeInsertQueueDpc returned false");
             return false;
         }
     }
     let fired2 = drain();
     if fired2 != 1 {
-        // // kprintln!("    [DPC SMOKE FAIL] KeInsertQueueDpc drain fired={} (expected 1)", fired2)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("    [DPC SMOKE FAIL] KeInsertQueueDpc drain fired={} (expected 1)", fired2);
         return false;
     }
-    // // kprintln!("    [DPC SMOKE OK] KeInitializeDpc/KeInsertQueueDpc work")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("    [DPC SMOKE OK] KeInitializeDpc/KeInsertQueueDpc work");
 
     true
 }
@@ -421,7 +418,7 @@ pub fn request_dpc_interrupt_extended() {
     //
     // For now, just set the flag - the DPC will be processed
     // when the system reaches DISPATCH_LEVEL
-    // // kprintln!("[DPC] DPC interrupt requested (extended)")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[DPC] DPC interrupt requested (extended)");
 }
 
 /// Clear the DPC interrupt request flag
@@ -456,7 +453,7 @@ pub fn ki_retire_dpc_list() {
         let fired = drain();
 
         if fired > 0 {
-            // // kprintln!("[DPC] KiRetireDpcList: processed {} DPCs", fired)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[DPC] KiRetireDpcList: processed {} DPCs", fired);
         }
 
         // Clear routine active flag
@@ -478,12 +475,12 @@ pub fn ki_retire_dpc_list() {
 /// DPC_VECTOR (0xDF) is triggered. It calls KiRetireDpcList
 /// to process pending DPCs.
 pub fn dpc_interrupt_handler() {
-    // // kprintln!("[DPC] DPC interrupt handler entered")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[DPC] DPC interrupt handler entered");
 
     // Process all pending DPCs
     ki_retire_dpc_list();
 
-    // // kprintln!("[DPC] DPC interrupt handler exiting")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[DPC] DPC interrupt handler exiting");
 }
 
 /// Check if DPC routine is currently executing
@@ -495,7 +492,12 @@ pub fn is_dpc_routine_active() -> bool {
 ///
 /// In a full SMP implementation, this would queue the DPC to the
 /// target CPU's DPC queue and trigger an IPI.
-pub fn queue_dpc_to_cpu(dpc: *mut Dpc, cpu_number: u32, system_argument1: *mut u8, system_argument2: *mut u8) -> bool {
+pub fn queue_dpc_to_cpu(
+    dpc: *mut Dpc,
+    cpu_number: u32,
+    system_argument1: *mut u8,
+    system_argument2: *mut u8,
+) -> bool {
     if dpc.is_null() {
         return false;
     }
@@ -509,7 +511,7 @@ pub fn queue_dpc_to_cpu(dpc: *mut Dpc, cpu_number: u32, system_argument1: *mut u
     let result = unsafe { KeInsertQueueDpc(dpc, system_argument1, system_argument2) };
 
     if result {
-        // // kprintln!("[DPC] Queued DPC to CPU {}", cpu_number)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[DPC] Queued DPC to CPU {}", cpu_number);
 
         // If target CPU is not current CPU, an Inter-Processor
         // Interrupt would be issued here. Port to the unified
@@ -518,7 +520,7 @@ pub fn queue_dpc_to_cpu(dpc: *mut Dpc, cpu_number: u32, system_argument1: *mut u
         #[cfg(target_arch = "x86_64")]
         if cpu_number != get_current_cpu_number() {
             // Request IPI to target CPU via APIC's IPI mechanism.
-            // // kprintln!("[DPC] Would send IPI to CPU {}", cpu_number)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[DPC] Would send IPI to CPU {}", cpu_number);
         }
     }
 
@@ -555,7 +557,7 @@ pub fn remove_dpc(dpc: *mut Dpc) -> bool {
                 slot.routine = None;
                 slot.context = core::ptr::null_mut();
 
-                // // kprintln!("[DPC] Removed DPC from queue")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                // // kprintln!("[DPC] Removed DPC from queue");
                 return true;
             }
         }

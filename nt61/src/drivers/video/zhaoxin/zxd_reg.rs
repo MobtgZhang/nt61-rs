@@ -36,22 +36,22 @@ pub const ZX_DC_VERSION: u32 = 0x0010;
 pub const ZX_DC_REVISION: u32 = 0x0014;
 
 /// Control register flags
-pub const ZX_DC_CTRL_ENABLE: u32 = 1 << 0;      // DC enable
-pub const ZX_DC_CTRL_RUN: u32 = 1 << 1;        // DC running
-pub const ZX_DC_CTRL_RESET: u32 = 1 << 2;     // DC reset
+pub const ZX_DC_CTRL_ENABLE: u32 = 1 << 0; // DC enable
+pub const ZX_DC_CTRL_RUN: u32 = 1 << 1; // DC running
+pub const ZX_DC_CTRL_RESET: u32 = 1 << 2; // DC reset
 pub const ZX_DC_CTRL_VBLANK_INT: u32 = 1 << 3; // V-blank interrupt enable
 
 /// Status register flags
-pub const ZX_DC_STATUS_ENABLE: u32 = 1 << 0;  // DC enabled
-pub const ZX_DC_STATUS_RUN: u32 = 1 << 1;     // DC running
-pub const ZX_DC_STATUS_VBLANK: u32 = 1 << 2;  // V-blank active
-pub const ZX_DC_STATUS_ERROR: u32 = 1 << 3;   // Error occurred
+pub const ZX_DC_STATUS_ENABLE: u32 = 1 << 0; // DC enabled
+pub const ZX_DC_STATUS_RUN: u32 = 1 << 1; // DC running
+pub const ZX_DC_STATUS_VBLANK: u32 = 1 << 2; // V-blank active
+pub const ZX_DC_STATUS_ERROR: u32 = 1 << 3; // Error occurred
 
 /// Interrupt flags
-pub const ZX_DC_INT_VBLANK_A: u32 = 1 << 0;   // Pipeline A v-blank
-pub const ZX_DC_INT_VBLANK_B: u32 = 1 << 1;   // Pipeline B v-blank
-pub const ZX_DC_INT_FIFO_UNDERFLOW: u32 = 1 << 8;  // FIFO underflow
-pub const ZX_DC_INT_REG_UPDATE: u32 = 1 << 16;    // Register update
+pub const ZX_DC_INT_VBLANK_A: u32 = 1 << 0; // Pipeline A v-blank
+pub const ZX_DC_INT_VBLANK_B: u32 = 1 << 1; // Pipeline B v-blank
+pub const ZX_DC_INT_FIFO_UNDERFLOW: u32 = 1 << 8; // FIFO underflow
+pub const ZX_DC_INT_REG_UPDATE: u32 = 1 << 16; // Register update
 
 // =====================================================================
 // Framebuffer Configuration (0x0100 - 0x01FF)
@@ -71,12 +71,12 @@ pub const ZX_FB_COLOR_KEY: u32 = 0x0110;
 pub const ZX_FB_COLOR_KEY_MASK: u32 = 0x0114;
 
 /// Framebuffer format flags
-pub const ZX_FB_FORMAT_BGRA8888: u32 = 0x00;   // BGRA 8888
-pub const ZX_FB_FORMAT_RGBA8888: u32 = 0x01;   // RGBA 8888
-pub const ZX_FB_FORMAT_RGB565: u32 = 0x02;     // RGB 565
-pub const ZX_FB_FORMAT_RGB888: u32 = 0x03;     // RGB 888
-pub const ZX_FB_FORMAT_ARGB1555: u32 = 0x04;   // ARGB 1555
-pub const ZX_FB_FORMAT_ARGB4444: u32 = 0x05;   // ARGB 4444
+pub const ZX_FB_FORMAT_BGRA8888: u32 = 0x00; // BGRA 8888
+pub const ZX_FB_FORMAT_RGBA8888: u32 = 0x01; // RGBA 8888
+pub const ZX_FB_FORMAT_RGB565: u32 = 0x02; // RGB 565
+pub const ZX_FB_FORMAT_RGB888: u32 = 0x03; // RGB 888
+pub const ZX_FB_FORMAT_ARGB1555: u32 = 0x04; // ARGB 1555
+pub const ZX_FB_FORMAT_ARGB4444: u32 = 0x05; // ARGB 4444
 
 // =====================================================================
 // CRT Controller A Registers (0x0200 - 0x02FF)
@@ -106,14 +106,14 @@ pub const ZX_CRTC_A_ADDR: u32 = 0x0230;
 pub const ZX_CRTC_A_ADDR_OFFSET: u32 = 0x0234;
 
 /// CRT Controller A control flags
-pub const ZX_CRTC_A_CTRL_ENABLE: u32 = 1 << 0;      // CRT enable
-pub const ZX_CRTC_A_CTRL_8BPP: u32 = 0 << 2;        // 8 bits per pixel
-pub const ZX_CRTC_A_CTRL_16BPP: u32 = 1 << 2;       // 16 bits per pixel
-pub const ZX_CRTC_A_CTRL_24BPP: u32 = 2 << 2;        // 24 bits per pixel
-pub const ZX_CRTC_A_CTRL_32BPP: u32 = 3 << 2;        // 32 bits per pixel
-pub const ZX_CRTC_A_CTRL_HSYNC_POS: u32 = 1 << 6;    // H-sync positive
-pub const ZX_CRTC_A_CTRL_VSYNC_POS: u32 = 1 << 7;   // V-sync positive
-pub const ZX_CRTC_A_CTRL_INTERLACE: u32 = 1 << 8;    // Interlaced mode
+pub const ZX_CRTC_A_CTRL_ENABLE: u32 = 1 << 0; // CRT enable
+pub const ZX_CRTC_A_CTRL_8BPP: u32 = 0 << 2; // 8 bits per pixel
+pub const ZX_CRTC_A_CTRL_16BPP: u32 = 1 << 2; // 16 bits per pixel
+pub const ZX_CRTC_A_CTRL_24BPP: u32 = 2 << 2; // 24 bits per pixel
+pub const ZX_CRTC_A_CTRL_32BPP: u32 = 3 << 2; // 32 bits per pixel
+pub const ZX_CRTC_A_CTRL_HSYNC_POS: u32 = 1 << 6; // H-sync positive
+pub const ZX_CRTC_A_CTRL_VSYNC_POS: u32 = 1 << 7; // V-sync positive
+pub const ZX_CRTC_A_CTRL_INTERLACE: u32 = 1 << 8; // Interlaced mode
 
 // =====================================================================
 // CRT Controller B Registers (0x0300 - 0x03FF)
@@ -169,10 +169,10 @@ pub const ZX_PLANE_PRIMARY_POS: u32 = 0x0410;
 pub const ZX_PLANE_PRIMARY_FORMAT: u32 = 0x0414;
 
 /// Primary plane control flags
-pub const ZX_PLANE_CTRL_ENABLE: u32 = 1 << 0;       // Plane enable
-pub const ZX_PLANE_CTRL_KEY_EN: u32 = 1 << 1;        // Color key enable
-pub const ZX_PLANE_CTRL_ALPHA_EN: u32 = 1 << 2;      // Alpha blend enable
-pub const ZX_PLANE_CTRL_FORMAT_SHIFT: u32 = 4;        // Format field shift
+pub const ZX_PLANE_CTRL_ENABLE: u32 = 1 << 0; // Plane enable
+pub const ZX_PLANE_CTRL_KEY_EN: u32 = 1 << 1; // Color key enable
+pub const ZX_PLANE_CTRL_ALPHA_EN: u32 = 1 << 2; // Alpha blend enable
+pub const ZX_PLANE_CTRL_FORMAT_SHIFT: u32 = 4; // Format field shift
 
 // =====================================================================
 // Overlay Plane Registers (0x0500 - 0x05FF)
@@ -215,13 +215,13 @@ pub const ZX_CURSOR_BG_COLOR: u32 = 0x0610;
 pub const ZX_CURSOR_FG_COLOR: u32 = 0x0614;
 
 /// Cursor control flags
-pub const ZX_CURSOR_CTRL_ENABLE: u32 = 1 << 0;      // Cursor enable
-pub const ZX_CURSOR_CTRL_64X64: u32 = 0 << 2;        // 64x64 cursor
-pub const ZX_CURSOR_CTRL_32X32: u32 = 1 << 2;        // 32x32 cursor
-pub const ZX_CURSOR_CTRL_16X16: u32 = 2 << 2;        // 16x16 cursor
-pub const ZX_CURSOR_CTRL_256_COLOR: u32 = 0 << 4;     // 256-color cursor
-pub const ZX_CURSOR_CTRL_XOR: u32 = 1 << 4;          // XOR cursor
-pub const ZX_CURSOR_CTRL_32BPP: u32 = 2 << 4;        // 32-bit cursor
+pub const ZX_CURSOR_CTRL_ENABLE: u32 = 1 << 0; // Cursor enable
+pub const ZX_CURSOR_CTRL_64X64: u32 = 0 << 2; // 64x64 cursor
+pub const ZX_CURSOR_CTRL_32X32: u32 = 1 << 2; // 32x32 cursor
+pub const ZX_CURSOR_CTRL_16X16: u32 = 2 << 2; // 16x16 cursor
+pub const ZX_CURSOR_CTRL_256_COLOR: u32 = 0 << 4; // 256-color cursor
+pub const ZX_CURSOR_CTRL_XOR: u32 = 1 << 4; // XOR cursor
+pub const ZX_CURSOR_CTRL_32BPP: u32 = 2 << 4; // 32-bit cursor
 
 // =====================================================================
 // DirectX 11.1 Capability Registers (0x1000 - 0x10FF)
@@ -260,15 +260,15 @@ pub const ZX_PM_STATUS: u32 = 0x1104;
 pub const ZX_PM_TARGET: u32 = 0x1108;
 
 /// Power states
-pub const ZX_PM_STATE_D0: u32 = 0x00;  // Fully on
-pub const ZX_PM_STATE_D1: u32 = 0x01;  // Low power
-pub const ZX_PM_STATE_D2: u32 = 0x02;  // Standby
-pub const ZX_PM_STATE_D3: u32 = 0x03;  // Hot standby
+pub const ZX_PM_STATE_D0: u32 = 0x00; // Fully on
+pub const ZX_PM_STATE_D1: u32 = 0x01; // Low power
+pub const ZX_PM_STATE_D2: u32 = 0x02; // Standby
+pub const ZX_PM_STATE_D3: u32 = 0x03; // Hot standby
 
 /// Power control flags
-pub const ZX_PM_CTRL_AUTO: u32 = 1 << 0;   // Auto power management
-pub const ZX_PM_CTRL_CLOCK_GATE: u32 = 1 << 1;  // Clock gating
-pub const ZX_PM_CTRL_POWER_OFF: u32 = 1 << 2;   // Power off clock domains
+pub const ZX_PM_CTRL_AUTO: u32 = 1 << 0; // Auto power management
+pub const ZX_PM_CTRL_CLOCK_GATE: u32 = 1 << 1; // Clock gating
+pub const ZX_PM_CTRL_POWER_OFF: u32 = 1 << 2; // Power off clock domains
 
 // =====================================================================
 // GPIO and Clock Registers (0x1200 - 0x12FF)

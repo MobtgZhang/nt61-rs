@@ -12,9 +12,9 @@
 
 extern crate alloc;
 
-pub mod pnp;
-pub mod pci_bus;
 pub mod acpi_bus;
+pub mod pci_bus;
+pub mod pnp;
 pub mod usb_bus;
 
 use crate::kprintln;
@@ -47,30 +47,30 @@ pub fn init() {
 /// Smoke test for the bus drivers. Re-enumerates PCI and asserts
 /// the host bridge ID is stable across two reads.
 pub fn smoke_test() -> bool {
-    // kprintln!("  [BUS SMOKE] running bus driver smoke test...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [BUS SMOKE] running bus driver smoke test...");
 
     let devs = crate::hal::common::pci::enumerate();
     if devs.is_empty() {
-        // kprintln!("  [BUS SMOKE FAIL] PCI enumeration returned zero devices")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [BUS SMOKE FAIL] PCI enumeration returned zero devices");
         return false;
     }
-    // kprintln!("  [BUS SMOKE] PCI: {} devices", devs.len())  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [BUS SMOKE] PCI: {} devices", devs.len());
 
     let id0 = crate::hal::common::pci::read_config_dword(0, 0, 0, 0);
     let id1 = crate::hal::common::pci::read_config_dword(0, 0, 0, 0);
     if id0 != id1 {
-        // kprintln!("  [BUS SMOKE FAIL] host bridge ID is not stable across reads")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [BUS SMOKE FAIL] host bridge ID is not stable across reads");
         return false;
     }
-    // kprintln!("  [BUS SMOKE] host bridge stable ID 0x{:08x}", id0)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [BUS SMOKE] host bridge stable ID 0x{:08x}", id0);
 
     if devs.len() > 1 {
         if pci_bus::find_pci(devs[1].bus, devs[1].device, devs[1].function).is_none() {
-            // kprintln!("  [BUS SMOKE FAIL] cached PCI info missing for 0:1:0")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("  [BUS SMOKE FAIL] cached PCI info missing for 0:1:0");
             return false;
         }
     }
 
-    // kprintln!("  [BUS SMOKE OK] bus drivers healthy")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [BUS SMOKE OK] bus drivers healthy");
     true
 }

@@ -2,10 +2,11 @@
 //!
 //! LRU-based file system cache with dirty page tracking
 
-use alloc::vec::Vec;
-use alloc::collections::VecDeque;
-use hashbrown::HashMap;
 use crate::ke::sync::Spinlock;
+use alloc::collections::VecDeque;
+use alloc::vec;
+use alloc::vec::Vec;
+use hashbrown::HashMap;
 
 pub struct FileCache {
     entries: HashMap<FileCacheKey, CacheEntry>,
@@ -103,13 +104,27 @@ impl FileCache {
     pub fn flush_dirty_pages(&mut self) -> Result<usize, &'static str> {
         let mut flushed = 0;
 
-        for (key, entry) in &mut self.entries {
-            if entry.dirty {
-                self.write_to_disk(key, &entry.data)?;
+        let dirty_keys: Vec<FileCacheKey> = self
+            .entries
+            .iter()
+            .filter(|(_, entry)| entry.dirty)
+            .map(|(key, _)| key.clone())
+            .collect();
+
+        for key in dirty_keys {
+            let data = self
+                .entries
+                .get(&key)
+                .map(|entry| entry.data.clone())
+                .ok_or("cache entry missing")?;
+
+            self.write_to_disk(&key, &data)?;
+
+            if let Some(entry) = self.entries.get_mut(&key) {
                 entry.dirty = false;
-                flushed += 1;
-                self.stats.writebacks += 1;
             }
+            flushed += 1;
+            self.stats.writebacks += 1;
         }
 
         Ok(flushed)

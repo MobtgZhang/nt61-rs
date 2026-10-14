@@ -6,10 +6,10 @@
 //
 //! Clean-room implementation based on industry standards.
 
-use alloc::vec::Vec;
-use alloc::boxed::Box;
 use crate::drivers::video::core::gpu_common::{GpuError, GpuInterrupt};
 use crate::ke::sync::Spinlock;
+use alloc::boxed::Box;
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 // =====================================================================
@@ -239,7 +239,9 @@ pub struct VBlankWaitQueue {
 impl VBlankWaitQueue {
     /// Create a new wait queue
     pub fn new() -> Self {
-        Self { waiters: Vec::new() }
+        Self {
+            waiters: Vec::new(),
+        }
     }
 
     /// Add a waiter
@@ -455,8 +457,8 @@ impl GpuSoftirqController {
         Self {
             pending: AtomicU64::new(0),
             handlers: [
-                None, None, None, None, None, None, None, None, None, None, None, None, None,
-                None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
         }
     }

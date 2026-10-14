@@ -5,7 +5,7 @@
 
 #[cfg(target_arch = "x86_64")]
 #[cfg(target_arch = "x86_64")]
-pub use crate::hal::x86_64::dma::{HalAllocateCommonBuffer, HalFreeCommonBuffer, AdapterInfo};
+pub use crate::hal::x86_64::dma::{AdapterInfo, HalAllocateCommonBuffer, HalFreeCommonBuffer};
 
 #[cfg(not(target_arch = "x86_64"))]
 pub struct AdapterInfo;

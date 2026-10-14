@@ -55,15 +55,15 @@
 
 extern crate alloc;
 
-pub mod bus;
-pub mod storage;
-pub mod usb;
-pub mod net;
 pub mod audio;
+pub mod bus;
 pub mod input;
-pub mod video;
-pub mod timer;
 pub mod ndis;
+pub mod net;
+pub mod storage;
+pub mod timer;
+pub mod usb;
+pub mod video;
 pub mod wdf;
 
 pub mod pe;
@@ -73,24 +73,24 @@ pub mod smoke;
 #[cfg(target_arch = "x86_64")]
 pub mod loader;
 
-#[cfg(target_arch = "x86_64")]
-pub mod kdcom;
 pub mod bootvid;
 pub mod ci;
-#[cfg(target_arch = "x86_64")]
-pub mod pshed;  // Machine-Check Architecture — x86 only
-pub mod ksec;
 pub mod clfs;
+pub mod fileinfo;
+pub mod fltmgr;
+#[cfg(target_arch = "x86_64")]
+pub mod kdcom;
+pub mod ksec;
 #[cfg(target_arch = "x86_64")]
 pub mod partmgr;
+pub mod pcw;
+#[cfg(target_arch = "x86_64")]
+pub mod pshed; // Machine-Check Architecture — x86 only
+pub mod spldr;
 #[cfg(target_arch = "x86_64")]
 pub mod volmgr;
 #[cfg(target_arch = "x86_64")]
 pub mod volsnap;
-pub mod fltmgr;
-pub mod fileinfo;
-pub mod pcw;
-pub mod spldr;
 
 use crate::kprintln;
 
@@ -99,7 +99,7 @@ use crate::kprintln;
 /// every inner `init()` is a no-op if it has already run.
 pub fn init() {
     crate::hal::serial::write_string("D:init-enter\r\n");
-    // // kprintln!("  Initialising driver subsystem...")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("  Initialising driver subsystem...");
     #[cfg(target_arch = "x86_64")]
     crate::hal::x86_64::serial::write_string("D:bus_start\r\n");
     bus::init();
@@ -134,12 +134,7 @@ pub fn init() {
     // when `adopt_bootinfo_framebuffer` already ran.
     if crate::hal::common::framebuffer::is_active() {
         let info = crate::hal::common::framebuffer::info();
-        bootvid::init_from_framebuffer(
-            info.address,
-            info.width,
-            info.height,
-            info.pitch,
-        );
+        bootvid::init_from_framebuffer(info.address, info.width, info.height, info.pitch);
     }
     #[cfg(target_arch = "x86_64")]
     {
@@ -187,7 +182,7 @@ pub fn init() {
     crate::hal::serial::write_string("D:post_ci\r\n");
     crate::hal::serial::write_string("D:pre_pshed\r\n");
     #[cfg(target_arch = "x86_64")]
-    pshed::init();  // PSHED enable (DR-1): init() is implemented and idempotent
+    pshed::init(); // PSHED enable (DR-1): init() is implemented and idempotent
     crate::hal::serial::write_string("D:post_pshed\r\n");
     crate::hal::serial::write_string("D:pre_ksec\r\n");
     // ksec::init();  // DISABLED: kernel security subsystem — depends on full seaccess init
@@ -225,7 +220,15 @@ pub fn init() {
 /// iff every one passes.
 pub fn smoke_test() -> bool {
     #[cfg(target_arch = "x86_64")]
-    { smoke::smoke_test() }
+    {
+        smoke::smoke_test()
+    }
     #[cfg(not(target_arch = "x86_64"))]
-    { true }
+    {
+        true
+    }
 }
+
+pub mod common;
+pub mod mouse;
+pub mod tcpip;

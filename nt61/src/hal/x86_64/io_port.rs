@@ -12,7 +12,6 @@
 // HAL port-I/O helpers follow the WDK naming convention
 // (`READ_PORT_UCHAR`, `WRITE_PORT_ULONG`, ...).
 #![allow(non_snake_case, non_upper_case_globals, dead_code)]
-
 #![cfg(target_arch = "x86_64")]
 
 use core::arch::asm;
@@ -94,7 +93,9 @@ pub fn WRITE_PORT_ULONG(port: u16, value: u32) {
 /// Equivalent of NT 6.1's `READ_PORT_BUFFER_UCHAR` macro.
 #[inline(never)]
 pub fn READ_PORT_BUFFER_UCHAR(port: u16, buffer: &mut [u8]) {
-    if buffer.is_empty() { return; }
+    if buffer.is_empty() {
+        return;
+    }
     unsafe {
         asm!("rep insb",
              in("dx") port,
@@ -109,7 +110,9 @@ pub fn READ_PORT_BUFFER_UCHAR(port: u16, buffer: &mut [u8]) {
 /// Equivalent of NT 6.1's `WRITE_PORT_BUFFER_UCHAR` macro.
 #[inline(never)]
 pub fn WRITE_PORT_BUFFER_UCHAR(port: u16, buffer: &[u8]) {
-    if buffer.is_empty() { return; }
+    if buffer.is_empty() {
+        return;
+    }
     unsafe {
         asm!("rep outsb",
              in("dx") port,
@@ -123,19 +126,17 @@ pub fn WRITE_PORT_BUFFER_UCHAR(port: u16, buffer: &[u8]) {
 mod tests {
     use super::*;
 
-    // The host build (x86_64-unknown-linux-gnu) can actually execute
-    // these against the platform.  We deliberately pick a port
-    // address (0x80) that is a diagnostic port and never raises an
-    // error on a real PC; if the port is missing, the CPU still
-    // completes the cycle on modern hardware.
+    // The host build (x86_64-unknown-linux-gnu) cannot execute
+    // `in`/`out` instructions in user mode (would cause SIGSEGV).
+    // We keep this test as a compile-only smoke test; the real
+    // port-IO validation runs during kernel boot via the smoke
+    // harness.
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn port_io_round_trip() {
-        let port: u16 = 0x80;
-        WRITE_PORT_UCHAR(port, 0xA5);
-        let read_back = READ_PORT_UCHAR(port);
-        // 0x80 is a write-only diagnostic port in PC hardware; we
-        // do not assert any value, only that the CPU did not
-        // fault. The test exists to ensure the inlines compile.
-        let _ = read_back;
+        // Compile-only smoke. The actual round-trip is verified
+        // during kernel boot by the `ke::smoke` test harness.
+        let _port: u16 = 0x80;
+        let _v: u8 = 0xA5;
     }
 }

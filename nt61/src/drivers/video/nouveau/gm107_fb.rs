@@ -60,5 +60,4 @@ pub fn gm107_fb_init(dev: &mut NouveauDevice) -> Result<(), GpuError> {
     Ok(())
 }
 
-pub mod gm107_reg {
-}
+pub mod gm107_reg {}

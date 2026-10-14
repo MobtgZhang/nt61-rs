@@ -79,7 +79,8 @@ pub mod paths {
     pub const APPLICATION_EVTX: &str = "C:\\Windows\\System32\\winevt\\Logs\\Application.evtx";
     pub const SECURITY_EVTX: &str = "C:\\Windows\\System32\\winevt\\Logs\\Security.evtx";
     pub const SETUP_EVTX: &str = "C:\\Windows\\System32\\winevt\\Logs\\Setup.evtx";
-    pub const FORWARDED_EVENTS_EVTX: &str = "C:\\Windows\\System32\\winevt\\Logs\\ForwardedEvents.evtx";
+    pub const FORWARDED_EVENTS_EVTX: &str =
+        "C:\\Windows\\System32\\winevt\\Logs\\ForwardedEvents.evtx";
 }
 
 /// Channel access rights

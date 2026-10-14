@@ -84,10 +84,7 @@ impl AllwinnerD1Device {
             return;
         }
         unsafe {
-            core::ptr::write_volatile(
-                (self.debe_base + offset as u64) as *mut u32,
-                value,
-            );
+            core::ptr::write_volatile((self.debe_base + offset as u64) as *mut u32, value);
         }
     }
 
@@ -107,10 +104,7 @@ impl AllwinnerD1Device {
             return;
         }
         unsafe {
-            core::ptr::write_volatile(
-                (self.tcon_base + offset as u64) as *mut u32,
-                value,
-            );
+            core::ptr::write_volatile((self.tcon_base + offset as u64) as *mut u32, value);
         }
     }
 
@@ -130,10 +124,7 @@ impl AllwinnerD1Device {
             return;
         }
         unsafe {
-            core::ptr::write_volatile(
-                (self.g2d_base + offset as u64) as *mut u32,
-                value,
-            );
+            core::ptr::write_volatile((self.g2d_base + offset as u64) as *mut u32, value);
         }
     }
 }
@@ -168,7 +159,7 @@ impl GpuDriver for AllwinnerD1Device {
     fn init(&mut self) -> Result<(), GpuError> {
         // Verify DEBE is accessible
         let version = self.read_debe(DEBE_REG_VERSION);
-        
+
         if version == 0 && self.debe_base != 0 {
             // Try reading anyway in case register is at different offset
         }
@@ -211,7 +202,10 @@ impl GpuDriver for AllwinnerD1Device {
         })
     }
 
-    fn set_mode(&mut self, mode: &crate::drivers::video::core::gpu_common::DisplayMode) -> Result<(), GpuError> {
+    fn set_mode(
+        &mut self,
+        mode: &crate::drivers::video::core::gpu_common::DisplayMode,
+    ) -> Result<(), GpuError> {
         self.init_framebuffer(Some(*mode)).map(|_| ())
     }
 
@@ -250,10 +244,7 @@ impl GpuDriver for AllwinnerD1Device {
         let pixels = ((self.pitch as usize) * (self.height as usize)) / 4;
         for i in 0..pixels {
             unsafe {
-                core::ptr::write_volatile(
-                    (self.fb_virt + (i as u64 * 4)) as *mut u32,
-                    color,
-                );
+                core::ptr::write_volatile((self.fb_virt + (i as u64 * 4)) as *mut u32, color);
             }
         }
     }
@@ -265,10 +256,7 @@ impl GpuDriver for AllwinnerD1Device {
 
         let offset = ((y * self.pitch) + (x * 4)) as u64;
         unsafe {
-            core::ptr::write_volatile(
-                (self.fb_virt + offset) as *mut u32,
-                color,
-            );
+            core::ptr::write_volatile((self.fb_virt + offset) as *mut u32, color);
         }
     }
 
@@ -351,8 +339,10 @@ impl AllwinnerD1Device {
         self.write_debe(DEBE_REG_LAYER0_CTRL, ctrl);
         self.write_debe(DEBE_REG_LAYER0_ADDR, self.fb_phys as u32);
         self.write_debe(DEBE_REG_LAYER0_STRIDE, self.pitch);
-        self.write_debe(DEBE_REG_LAYER0_SIZE, 
-            ((self.height as u32) << 16) | self.width);
+        self.write_debe(
+            DEBE_REG_LAYER0_SIZE,
+            ((self.height as u32) << 16) | self.width,
+        );
         self.write_debe(DEBE_REG_LAYER0_FORMAT, format_val);
 
         Ok(())
@@ -369,8 +359,7 @@ impl AllwinnerD1Device {
 
         self.write_debe(DEBE_REG_FB0_ADDR, self.fb_phys as u32);
         self.write_debe(DEBE_REG_FB0_STRIDE, self.pitch);
-        self.write_debe(DEBE_REG_FB0_SIZE, 
-            ((self.height as u32) << 16) | self.width);
+        self.write_debe(DEBE_REG_FB0_SIZE, ((self.height as u32) << 16) | self.width);
         self.write_debe(DEBE_REG_FB0_FORMAT, format_val);
 
         Ok(())
@@ -414,7 +403,7 @@ impl AllwinnerD1Device {
     pub fn init_g2d(&mut self) -> Result<(), GpuError> {
         // Soft reset G2D
         self.write_g2d(G2D_REG_CTRL, G2D_CTRL_RESET);
-        
+
         // Wait for reset complete
         let status = self.read_g2d(G2D_REG_STATUS);
         if status & G2D_STATUS_BUSY != 0 {
@@ -613,7 +602,7 @@ pub const G2D_STATUS_BUSY: u32 = 1 << 0;
 pub fn probe() -> bool {
     // Check if we're running on Allwinner D1 or F133 hardware
     // This would typically check device tree compatible string
-    
+
     // For now, return false to let other drivers try
     // Real implementation would check device tree
     false
@@ -634,7 +623,7 @@ pub fn init() -> Option<AllwinnerD1Device> {
     };
 
     let mut device = AllwinnerD1Device::new(soc);
-    
+
     if device.init().is_ok() {
         Some(device)
     } else {

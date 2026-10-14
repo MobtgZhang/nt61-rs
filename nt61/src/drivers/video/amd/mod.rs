@@ -13,19 +13,19 @@
 //! - Navi / RDNA
 
 pub mod pci_ids;
-pub mod radeon_reg;
-pub mod radeon_fb;
 pub mod radeon_cursor;
+pub mod radeon_fb;
 pub mod radeon_irq;
 pub mod radeon_pm;
+pub mod radeon_reg;
 
 // R600/R700 early GPU support
 pub mod r600_reg;
 pub mod r700_reg;
 
 use crate::drivers::video::core::gpu_common::{
-    self, GpuDeviceInfo, GpuDriver, GpuFeatures, GpuFramebufferInfo,
-    AmdFamily, DisplayMode, PixelFormat,
+    self, AmdFamily, DisplayMode, GpuDeviceInfo, GpuDriver, GpuFeatures, GpuFramebufferInfo,
+    PixelFormat,
 };
 use crate::drivers::video::core::mmio_guard::{MmioGuard, MAX_MMIO_SIZE};
 use crate::drivers::video::log;
@@ -225,10 +225,7 @@ impl GpuDriver for RadeonDevice {
         let pixels = ((self.pitch as usize) * (self.height as usize)) / 4;
         for i in 0..pixels {
             unsafe {
-                core::ptr::write_volatile(
-                    (self.fb_virt + (i as u64 * 4)) as *mut u32,
-                    color,
-                );
+                core::ptr::write_volatile((self.fb_virt + (i as u64 * 4)) as *mut u32, color);
             }
         }
     }
@@ -240,10 +237,7 @@ impl GpuDriver for RadeonDevice {
 
         let offset = ((y * self.pitch) + (x * 4)) as u64;
         unsafe {
-            core::ptr::write_volatile(
-                (self.fb_virt + offset) as *mut u32,
-                color,
-            );
+            core::ptr::write_volatile((self.fb_virt + offset) as *mut u32, color);
         }
     }
 

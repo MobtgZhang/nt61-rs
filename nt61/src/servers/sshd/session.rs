@@ -53,7 +53,11 @@ impl SessionState {
     }
 
     pub fn transition(self, next: SessionState) -> Option<SessionState> {
-        if self.can_transition_to(next) { Some(next) } else { None }
+        if self.can_transition_to(next) {
+            Some(next)
+        } else {
+            None
+        }
     }
 
     pub fn is_terminal(self) -> bool {

@@ -74,10 +74,7 @@ impl DebeDevice {
             return;
         }
         unsafe {
-            core::ptr::write_volatile(
-                (self.debe_base + offset as u64) as *mut u32,
-                value,
-            );
+            core::ptr::write_volatile((self.debe_base + offset as u64) as *mut u32, value);
         }
     }
 
@@ -97,10 +94,7 @@ impl DebeDevice {
             return;
         }
         unsafe {
-            core::ptr::write_volatile(
-                (self.tcon_base + offset as u64) as *mut u32,
-                value,
-            );
+            core::ptr::write_volatile((self.tcon_base + offset as u64) as *mut u32, value);
         }
     }
 }
@@ -177,7 +171,10 @@ impl GpuDriver for DebeDevice {
         })
     }
 
-    fn set_mode(&mut self, mode: &crate::drivers::video::core::gpu_common::DisplayMode) -> Result<(), GpuError> {
+    fn set_mode(
+        &mut self,
+        mode: &crate::drivers::video::core::gpu_common::DisplayMode,
+    ) -> Result<(), GpuError> {
         self.init_framebuffer(Some(*mode)).map(|_| ())
     }
 
@@ -216,10 +213,7 @@ impl GpuDriver for DebeDevice {
         let pixels = ((self.pitch as usize) * (self.height as usize)) / 4;
         for i in 0..pixels {
             unsafe {
-                core::ptr::write_volatile(
-                    (self.fb_virt + (i as u64 * 4)) as *mut u32,
-                    color,
-                );
+                core::ptr::write_volatile((self.fb_virt + (i as u64 * 4)) as *mut u32, color);
             }
         }
     }
@@ -231,10 +225,7 @@ impl GpuDriver for DebeDevice {
 
         let offset = ((y * self.pitch) + (x * 4)) as u64;
         unsafe {
-            core::ptr::write_volatile(
-                (self.fb_virt + offset) as *mut u32,
-                color,
-            );
+            core::ptr::write_volatile((self.fb_virt + offset) as *mut u32, color);
         }
     }
 

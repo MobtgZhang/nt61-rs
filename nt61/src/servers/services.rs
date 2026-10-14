@@ -8,6 +8,7 @@
 #![allow(non_snake_case, non_upper_case_globals, dead_code)]
 
 use crate::ke::sync::Spinlock;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 extern crate alloc;
 use alloc::format;
@@ -119,6 +120,8 @@ pub struct ServiceEntry {
     pub dependency_count: usize,
     pub service_start_name: [u16; 256],
     pub status: ServiceStatus,
+    /// Hosting process id (0 while the service has not been started).
+    pub process_id: u32,
 }
 
 impl ServiceEntry {
@@ -136,6 +139,7 @@ impl ServiceEntry {
             dependency_count: 0,
             service_start_name: [0; 256],
             status: ServiceStatus::new(),
+            process_id: 0,
         }
     }
 }
@@ -179,12 +183,12 @@ pub fn init() {
     // Register the default services (RpcSs, EventSystem, Themes)
     register_default_services();
 
-    // kprintln!("    Service Control Manager initialized")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    Service Control Manager initialized");
 }
 
 /// Start SCM
 pub fn start() {
-    // kprintln!("[SCM] Starting Service Control Manager...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SCM] Starting Service Control Manager...");
 
     // Phase 1: Initialize
     phase1_init();
@@ -195,17 +199,17 @@ pub fn start() {
     // Phase 3: Start auto-start services
     phase3_start_services();
 
-    // kprintln!("[SCM] Service Control Manager started")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SCM] Service Control Manager started");
 }
 
 /// Phase 1: Initialize SCM
 fn phase1_init() {
-    // kprintln!("[SCM] Phase 1: Initializing...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SCM] Phase 1: Initializing...");
 }
 
 /// Phase 2: Load service definitions from registry
 fn phase2_load_services() {
-    // kprintln!("[SCM] Phase 2: Loading service definitions...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SCM] Phase 2: Loading service definitions...");
 
     // Load services from:
     // HKLM\SYSTEM\CurrentControlSet\Services
@@ -217,7 +221,7 @@ fn phase2_load_services() {
     add_default_services();
 
     let _state = SCM_STATE.lock();
-    // kprintln!("[SCM] Loaded service definitions")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SCM] Loaded service definitions");
 }
 
 /// Load service definitions from the registry
@@ -225,24 +229,23 @@ fn load_services_from_registry() {
     use crate::registry::cm::{enumerate_subkeys, query_dword, query_string};
 
     // Query the list of services from the registry
-    let service_keys = match enumerate_subkeys(
-        "\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Services"
-    ) {
-        Some(keys) => keys,
-        None => {
-            // kprintln!("[SCM] No services found in registry (CM not available)")  // kprintln disabled (memcpy crash workaround);
-            return;
-        }
-    };
+    let service_keys =
+        match enumerate_subkeys("\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Services") {
+            Some(keys) => keys,
+            None => {
+                // kprintln!("[SCM] No services found in registry (CM not available)");
+                return;
+            }
+        };
 
-    // kprintln!("[SCM] Found {} service definitions in registry", service_keys.len())  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SCM] Found {} service definitions in registry", service_keys.len());
 
     // For each service, read its configuration
     let _boot_start_count = 0usize;
     for service_name in &service_keys {
         // Limit to first 10 services for brevity
         if _boot_start_count >= 10 {
-            // kprintln!("[SCM] ... and {} more services", service_keys.len() - _boot_start_count)  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[SCM] ... and {} more services", service_keys.len() - _boot_start_count);
             break;
         }
 
@@ -252,26 +255,22 @@ fn load_services_from_registry() {
         );
 
         // Read Type
-        let start_type = query_dword(&service_path, "Start")
-            .unwrap_or(3); // Default to DemandStart (3)
+        let start_type = query_dword(&service_path, "Start").unwrap_or(3); // Default to DemandStart (3)
         let _ = &start_type;
 
         // Read ErrorControl
-        let _error_control = query_dword(&service_path, "ErrorControl")
-            .unwrap_or(1); // Default to Normal (1)
+        let _error_control = query_dword(&service_path, "ErrorControl").unwrap_or(1); // Default to Normal (1)
 
         // Read ImagePath (optional)
         let _image_path = query_string(&service_path, "ImagePath");
 
-        // kprintln!("[SCM]   {}: Start={}", service_name, start_type)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[SCM]   {}: Start={}", service_name, start_type);
     }
 }
 
-
-
 /// Phase 3: Start auto-start services
 fn phase3_start_services() {
-    // kprintln!("[SCM] Phase 3: Starting auto-start services...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SCM] Phase 3: Starting auto-start services...");
 
     let state = SCM_STATE.lock();
 
@@ -282,8 +281,8 @@ fn phase3_start_services() {
             || svc.start_type == ServiceStartType::SystemStart
             || svc.start_type == ServiceStartType::BootStart
         {
-            // kprintln!("[SCM]   Starting service: {}",  // kprintln disabled (memcpy crash workaround)
-//                 String::from_utf16_lossy(&svc.name).trim_end_matches('\0'));
+            // kprintln!("[SCM]   Starting service: {}",
+            //                 String::from_utf16_lossy(&svc.name).trim_end_matches('\0'));
             // In a real implementation, this would:
             // 1. Create a process for the service
             // 2. Call StartService() to begin execution
@@ -316,21 +315,111 @@ fn register_default_services() {
 
     // Core system services
     let default_services: &[(&str, &str, &str, ServiceType, ServiceStartType)] = &[
-        ("RpcSs", "Remote Procedure Call (RPC)", "%SystemRoot%\\System32\\svchost.exe -k rpcss", ServiceType::ShareProcess, ServiceStartType::AutoStart),
-        ("EventSystem", "COM+ Event System", "%SystemRoot%\\System32\\svchost.exe -k LocalService", ServiceType::ShareProcess, ServiceStartType::AutoStart),
-        ("Themes", "Themes Service", "%SystemRoot%\\System32\\svchost.exe -k netsvcs", ServiceType::ShareProcess, ServiceStartType::AutoStart),
-        ("WinDefend", "Windows Defender Service", "%SystemRoot%\\System32\\svchost.exe -k netsvcs", ServiceType::ShareProcess, ServiceStartType::DemandStart),
-        ("W3SVC", "World Wide Web Publishing Service", "%SystemRoot%\\System32\\svchost.exe -k iissvcs", ServiceType::ShareProcess, ServiceStartType::DemandStart),
-        ("TapiSrv", "Telephony Service", "%SystemRoot%\\System32\\svchost.exe -k netsvcs", ServiceType::ShareProcess, ServiceStartType::DemandStart),
-        ("BITS", "Background Intelligent Transfer Service", "%SystemRoot%\\System32\\svchost.exe -k netsvcs", ServiceType::ShareProcess, ServiceStartType::DemandStart),
-        ("CryptSvc", "Cryptographic Services", "%SystemRoot%\\System32\\svchost.exe -k netsvcs", ServiceType::ShareProcess, ServiceStartType::AutoStart),
-        ("DPS", "Diagnostic Policy Service", "%SystemRoot%\\System32\\svchost.exe -k LocalService", ServiceType::ShareProcess, ServiceStartType::AutoStart),
-        ("Dhcp", "DHCP Client", "%SystemRoot%\\System32\\svchost.exe -k NetworkService", ServiceType::ShareProcess, ServiceStartType::AutoStart),
-        ("Dnscache", "DNS Client", "%SystemRoot%\\System32\\svchost.exe -k NetworkService", ServiceType::ShareProcess, ServiceStartType::AutoStart),
-        ("LanmanServer", "Server", "%SystemRoot%\\System32\\svchost.exe -k netsvcs", ServiceType::ShareProcess, ServiceStartType::AutoStart),
-        ("LanmanWorkstation", "Workstation", "%SystemRoot%\\System32\\svchost.exe -k netsvcs", ServiceType::ShareProcess, ServiceStartType::AutoStart),
-        ("W32Time", "Windows Time", "%SystemRoot%\\System32\\svchost.exe -k LocalService", ServiceType::ShareProcess, ServiceStartType::DemandStart),
-        ("WSearch", "Windows Search", "%SystemRoot%\\System32\\SearchIndexer.exe /Slow", ServiceType::ShareProcess, ServiceStartType::DemandStart),
+        (
+            "RpcSs",
+            "Remote Procedure Call (RPC)",
+            "%SystemRoot%\\System32\\svchost.exe -k rpcss",
+            ServiceType::ShareProcess,
+            ServiceStartType::AutoStart,
+        ),
+        (
+            "EventSystem",
+            "COM+ Event System",
+            "%SystemRoot%\\System32\\svchost.exe -k LocalService",
+            ServiceType::ShareProcess,
+            ServiceStartType::AutoStart,
+        ),
+        (
+            "Themes",
+            "Themes Service",
+            "%SystemRoot%\\System32\\svchost.exe -k netsvcs",
+            ServiceType::ShareProcess,
+            ServiceStartType::AutoStart,
+        ),
+        (
+            "WinDefend",
+            "Windows Defender Service",
+            "%SystemRoot%\\System32\\svchost.exe -k netsvcs",
+            ServiceType::ShareProcess,
+            ServiceStartType::DemandStart,
+        ),
+        (
+            "W3SVC",
+            "World Wide Web Publishing Service",
+            "%SystemRoot%\\System32\\svchost.exe -k iissvcs",
+            ServiceType::ShareProcess,
+            ServiceStartType::DemandStart,
+        ),
+        (
+            "TapiSrv",
+            "Telephony Service",
+            "%SystemRoot%\\System32\\svchost.exe -k netsvcs",
+            ServiceType::ShareProcess,
+            ServiceStartType::DemandStart,
+        ),
+        (
+            "BITS",
+            "Background Intelligent Transfer Service",
+            "%SystemRoot%\\System32\\svchost.exe -k netsvcs",
+            ServiceType::ShareProcess,
+            ServiceStartType::DemandStart,
+        ),
+        (
+            "CryptSvc",
+            "Cryptographic Services",
+            "%SystemRoot%\\System32\\svchost.exe -k netsvcs",
+            ServiceType::ShareProcess,
+            ServiceStartType::AutoStart,
+        ),
+        (
+            "DPS",
+            "Diagnostic Policy Service",
+            "%SystemRoot%\\System32\\svchost.exe -k LocalService",
+            ServiceType::ShareProcess,
+            ServiceStartType::AutoStart,
+        ),
+        (
+            "Dhcp",
+            "DHCP Client",
+            "%SystemRoot%\\System32\\svchost.exe -k NetworkService",
+            ServiceType::ShareProcess,
+            ServiceStartType::AutoStart,
+        ),
+        (
+            "Dnscache",
+            "DNS Client",
+            "%SystemRoot%\\System32\\svchost.exe -k NetworkService",
+            ServiceType::ShareProcess,
+            ServiceStartType::AutoStart,
+        ),
+        (
+            "LanmanServer",
+            "Server",
+            "%SystemRoot%\\System32\\svchost.exe -k netsvcs",
+            ServiceType::ShareProcess,
+            ServiceStartType::AutoStart,
+        ),
+        (
+            "LanmanWorkstation",
+            "Workstation",
+            "%SystemRoot%\\System32\\svchost.exe -k netsvcs",
+            ServiceType::ShareProcess,
+            ServiceStartType::AutoStart,
+        ),
+        (
+            "W32Time",
+            "Windows Time",
+            "%SystemRoot%\\System32\\svchost.exe -k LocalService",
+            ServiceType::ShareProcess,
+            ServiceStartType::DemandStart,
+        ),
+        (
+            "WSearch",
+            "Windows Search",
+            "%SystemRoot%\\System32\\SearchIndexer.exe /Slow",
+            ServiceType::ShareProcess,
+            ServiceStartType::DemandStart,
+        ),
     ];
 
     for (name, display_name, image_path, svc_type, start_type) in default_services {
@@ -349,7 +438,7 @@ fn register_default_services() {
         state.service_count = idx + 1;
     }
 
-    // kprintln!("[SCM] Registered {} default services", state.service_count)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SCM] Registered {} default services", state.service_count);
 }
 
 /// Start a specific service by name
@@ -363,7 +452,7 @@ pub fn start_service(service_name: &str) -> bool {
         if name == service_name {
             let svc = &mut state.services[i];
             if svc.status.current_state == ServiceState::Stopped {
-                // kprintln!("[SCM] Starting service: {}", service_name)  // kprintln disabled (memcpy crash workaround);
+                // kprintln!("[SCM] Starting service: {}", service_name);
                 svc.status.current_state = ServiceState::StartPending;
                 // TODO: Create process and start service
                 svc.status.current_state = ServiceState::Running;
@@ -388,7 +477,7 @@ pub fn stop_service(service_name: &str) -> bool {
         if name == service_name {
             let svc = &mut state.services[i];
             if svc.status.current_state == ServiceState::Running {
-                // kprintln!("[SCM] Stopping service: {}", service_name)  // kprintln disabled (memcpy crash workaround);
+                // kprintln!("[SCM] Stopping service: {}", service_name);
                 svc.status.current_state = ServiceState::StopPending;
                 // TODO: Send control code to stop service
                 svc.status.current_state = ServiceState::Stopped;
@@ -423,7 +512,8 @@ pub fn list_services() -> Vec<(String, ServiceState)> {
 
     for i in 0..state.service_count {
         let name = String::from_utf16_lossy(&state.services[i].name)
-            .trim_end_matches('\0').into();
+            .trim_end_matches('\0')
+            .into();
         result.push((name, state.services[i].status.current_state));
     }
     result
@@ -436,7 +526,7 @@ pub fn list_services() -> Vec<(String, ServiceState)> {
 /// Open a service handle (returns service entry index or -1)
 pub fn open_service(service_name: &str) -> Option<usize> {
     let state = SCM_STATE.lock();
-    
+
     for i in 0..state.service_count {
         let name_str = String::from_utf16_lossy(&state.services[i].name);
         let name = name_str.trim_end_matches('\0');
@@ -450,19 +540,19 @@ pub fn open_service(service_name: &str) -> Option<usize> {
 /// Control a service (start, stop, pause, continue)
 pub fn control_service(idx: usize, control: ServiceControl) -> bool {
     let mut state = SCM_STATE.lock();
-    
+
     if idx >= state.service_count {
         return false;
     }
-    
+
     let svc = &mut state.services[idx];
     let current_state = svc.status.current_state;
-    
+
     match control {
         ServiceControl::Stop => {
             if current_state == ServiceState::Running {
-                // kprintln!("[SCM] Stopping service: {}",   // kprintln disabled (memcpy crash workaround)
-//                     String::from_utf16_lossy(&svc.name).trim_end_matches('\0'));
+                // kprintln!("[SCM] Stopping service: {}",
+                //                     String::from_utf16_lossy(&svc.name).trim_end_matches('\0'));
                 svc.status.current_state = ServiceState::StopPending;
                 svc.status.current_state = ServiceState::Stopped;
                 return true;
@@ -470,8 +560,8 @@ pub fn control_service(idx: usize, control: ServiceControl) -> bool {
         }
         ServiceControl::Pause => {
             if current_state == ServiceState::Running {
-                // kprintln!("[SCM] Pausing service: {}",   // kprintln disabled (memcpy crash workaround)
-//                     String::from_utf16_lossy(&svc.name).trim_end_matches('\0'));
+                // kprintln!("[SCM] Pausing service: {}",
+                //                     String::from_utf16_lossy(&svc.name).trim_end_matches('\0'));
                 svc.status.current_state = ServiceState::PausePending;
                 svc.status.current_state = ServiceState::Paused;
                 return true;
@@ -479,8 +569,8 @@ pub fn control_service(idx: usize, control: ServiceControl) -> bool {
         }
         ServiceControl::Continue => {
             if current_state == ServiceState::Paused {
-                // kprintln!("[SCM] Continuing service: {}",   // kprintln disabled (memcpy crash workaround)
-//                     String::from_utf16_lossy(&svc.name).trim_end_matches('\0'));
+                // kprintln!("[SCM] Continuing service: {}",
+                //                     String::from_utf16_lossy(&svc.name).trim_end_matches('\0'));
                 svc.status.current_state = ServiceState::ContinuePending;
                 svc.status.current_state = ServiceState::Running;
                 return true;
@@ -492,27 +582,29 @@ pub fn control_service(idx: usize, control: ServiceControl) -> bool {
         }
         ServiceControl::Shutdown => {
             if current_state == ServiceState::Running {
-                // kprintln!("[SCM] Shutting down service: {}",   // kprintln disabled (memcpy crash workaround)
-//                     String::from_utf16_lossy(&svc.name).trim_end_matches('\0'));
+                // kprintln!("[SCM] Shutting down service: {}",
+                //                     String::from_utf16_lossy(&svc.name).trim_end_matches('\0'));
                 svc.status.current_state = ServiceState::Stopped;
                 return true;
             }
         }
         _ => {
-            // kprintln!("[SCM] Unknown control code: {:?}", control)  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[SCM] Unknown control code: {:?}", control);
         }
     }
     false
 }
 
 /// Get service configuration
-pub fn query_service_config(idx: usize) -> Option<(ServiceType, ServiceStartType, ServiceErrorControl)> {
+pub fn query_service_config(
+    idx: usize,
+) -> Option<(ServiceType, ServiceStartType, ServiceErrorControl)> {
     let state = SCM_STATE.lock();
-    
+
     if idx >= state.service_count {
         return None;
     }
-    
+
     let svc = &state.services[idx];
     Some((svc.service_type, svc.start_type, svc.error_control))
 }
@@ -525,11 +617,12 @@ pub fn query_service_config(idx: usize) -> Option<(ServiceType, ServiceStartType
 pub fn enumerate_services(svc_type: ServiceType) -> Vec<String> {
     let state = SCM_STATE.lock();
     let mut result = Vec::new();
-    
+
     for i in 0..state.service_count {
         if state.services[i].service_type == svc_type {
             let name = String::from_utf16_lossy(&state.services[i].name)
-                .trim_end_matches('\0').into();
+                .trim_end_matches('\0')
+                .into();
             result.push(name);
         }
     }
@@ -540,11 +633,12 @@ pub fn enumerate_services(svc_type: ServiceType) -> Vec<String> {
 pub fn enumerate_services_by_state(state_filter: ServiceState) -> Vec<String> {
     let state = SCM_STATE.lock();
     let mut result = Vec::new();
-    
+
     for i in 0..state.service_count {
         if state.services[i].status.current_state == state_filter {
             let name = String::from_utf16_lossy(&state.services[i].name)
-                .trim_end_matches('\0').into();
+                .trim_end_matches('\0')
+                .into();
             result.push(name);
         }
     }
@@ -561,13 +655,13 @@ pub fn lock_service_database() -> bool {
     if !state.running {
         return false;
     }
-    // kprintln!("[SCM] Service database locked")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SCM] Service database locked");
     true
 }
 
 /// Unlock the service database
 pub fn unlock_service_database() {
-    // kprintln!("[SCM] Service database unlocked")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SCM] Service database unlocked");
     drop(SCM_STATE.lock());
 }
 
@@ -585,7 +679,7 @@ static SERVICE_CONTROL_HANDLER: Spinlock<Option<ServiceControlHandler>> = Spinlo
 pub fn register_control_handler(handler: ServiceControlHandler) {
     let mut h = SERVICE_CONTROL_HANDLER.lock();
     *h = Some(handler);
-    // kprintln!("[SCM] Service control handler registered")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SCM] Service control handler registered");
 }
 
 /// Dispatch control code to the registered handler
@@ -638,7 +732,9 @@ impl ServiceControlHandlerEntry {
     }
 }
 
-fn empty_handler(_control: u32) -> u32 { 0 }
+fn empty_handler(_control: u32) -> u32 {
+    0
+}
 
 const MAX_HANDLER_ENTRIES: usize = 32;
 static HANDLER_TABLE: Spinlock<[Option<ServiceControlHandlerEntry>; MAX_HANDLER_ENTRIES]> =
@@ -659,8 +755,7 @@ pub fn register_service_ctrl_handler(
     let mut table = HANDLER_TABLE.lock();
     for slot in table.iter_mut() {
         if let Some(entry) = slot.as_ref() {
-            if entry.name_len == service_name.len()
-                && entry.name[..entry.name_len] == *service_name
+            if entry.name_len == service_name.len() && entry.name[..entry.name_len] == *service_name
             {
                 return None;
             }
@@ -701,7 +796,9 @@ pub fn set_service_status(idx: usize, status: ServiceStatus) -> bool {
 /// Get the most recent status reported by `set_service_status`.
 pub fn query_service_status_ex(idx: usize) -> Option<ServiceStatus> {
     let table = HANDLER_TABLE.lock();
-    table.get(idx).and_then(|s| s.as_ref().map(|e| e.current_status))
+    table
+        .get(idx)
+        .and_then(|s| s.as_ref().map(|e| e.current_status))
 }
 
 /// Dispatch a control code to a registered handler by name.
@@ -711,8 +808,7 @@ pub fn dispatch_service_control(service_name: &[u16], control: u32) -> u32 {
     let table = HANDLER_TABLE.lock();
     for slot in table.iter() {
         if let Some(entry) = slot.as_ref() {
-            if entry.name_len == service_name.len()
-                && entry.name[..entry.name_len] == *service_name
+            if entry.name_len == service_name.len() && entry.name[..entry.name_len] == *service_name
             {
                 let h = entry.handler;
                 drop(table);
@@ -738,6 +834,131 @@ pub fn control_from_code(code: u32) -> Option<ServiceControl> {
         0x0A => Some(ServiceControl::NetBindDisable),
         _ => None,
     }
+}
+
+// ============================================================================
+// Service information, dependency and control pipe API
+// ============================================================================
+
+/// Snapshot of one service database entry.
+#[derive(Clone)]
+pub struct ServiceInfo {
+    pub name: String,
+    pub display_name: String,
+    pub service_type: ServiceType,
+    pub start_type: ServiceStartType,
+    pub error_control: ServiceErrorControl,
+    pub image_path: String,
+    pub load_order_group: String,
+    pub state: ServiceState,
+    pub process_id: u32,
+    pub dependencies: Vec<String>,
+}
+
+fn utf16_to_string(value: &[u16]) -> String {
+    String::from_utf16_lossy(value)
+        .trim_end_matches('\0')
+        .into()
+}
+
+fn find_service(state: &ScmState, service_name: &str) -> Option<usize> {
+    for i in 0..state.service_count {
+        if utf16_to_string(&state.services[i].name).eq_ignore_ascii_case(service_name) {
+            return Some(i);
+        }
+    }
+    None
+}
+
+/// Query the full service record (`QueryServiceEx` / `QueryServiceLockStatus`).
+pub fn query_service_info(service_name: &str) -> Option<ServiceInfo> {
+    let state = SCM_STATE.lock();
+    let idx = find_service(&state, service_name)?;
+    let svc = &state.services[idx];
+
+    let mut dependencies = Vec::new();
+    for dep in svc.dependencies.iter().take(svc.dependency_count) {
+        let name = utf16_to_string(dep);
+        if !name.is_empty() {
+            dependencies.push(name);
+        }
+    }
+
+    Some(ServiceInfo {
+        name: utf16_to_string(&svc.name),
+        display_name: utf16_to_string(&svc.display_name),
+        service_type: svc.service_type,
+        start_type: svc.start_type,
+        error_control: svc.error_control,
+        image_path: utf16_to_string(&svc.image_path),
+        load_order_group: utf16_to_string(&svc.load_order_group),
+        state: svc.status.current_state,
+        process_id: svc.process_id,
+        dependencies,
+    })
+}
+
+/// Query every service: `(name, state, hosting process id)`.
+pub fn query_all_services() -> Vec<(String, ServiceState, u32)> {
+    let state = SCM_STATE.lock();
+    let mut result = Vec::new();
+    for i in 0..state.service_count {
+        result.push((
+            utf16_to_string(&state.services[i].name),
+            state.services[i].status.current_state,
+            state.services[i].process_id,
+        ));
+    }
+    result
+}
+
+/// Check whether a service may start: every dependency must already be
+/// running, or be a boot/system-start driver that the SCM starts earlier
+/// (SCM dependency rules, see MSDN `StartService` and ReactOS
+/// `services.exe` dependency handling).
+pub fn check_dependencies(service_name: &str) -> bool {
+    let state = SCM_STATE.lock();
+    let idx = match find_service(&state, service_name) {
+        Some(idx) => idx,
+        None => return false,
+    };
+    let svc = &state.services[idx];
+
+    if svc.dependency_count == 0 {
+        return true;
+    }
+
+    for dep in svc.dependencies.iter().take(svc.dependency_count) {
+        let dep_name = utf16_to_string(dep);
+        if dep_name.is_empty() {
+            continue;
+        }
+        let dep_idx = match find_service(&state, &dep_name) {
+            Some(idx) => idx,
+            None => return false,
+        };
+        let dep_svc = &state.services[dep_idx];
+        let satisfied = dep_svc.status.current_state == ServiceState::Running
+            || dep_svc.start_type == ServiceStartType::BootStart
+            || dep_svc.start_type == ServiceStartType::SystemStart;
+        if !satisfied {
+            return false;
+        }
+    }
+    true
+}
+
+static CONTROL_PIPE_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+/// Create the SCM control pipe for a service (`CreateServicePipe`).
+/// Returns the pipe handle, or `None` when the service is unknown.
+pub fn create_service_pipe(service_name: &str) -> Option<usize> {
+    let state = SCM_STATE.lock();
+    if find_service(&state, service_name).is_none() {
+        return None;
+    }
+    // Handles start at 1 so that 0 keeps meaning "no pipe".
+    Some(CONTROL_PIPE_COUNT.fetch_add(1, Ordering::Relaxed) + 1)
 }
 
 #[cfg(test)]

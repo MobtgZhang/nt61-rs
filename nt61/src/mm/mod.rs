@@ -55,38 +55,38 @@ pub(crate) fn write_decimal_u64(mut x: u64) {
     }
 }
 
+pub mod access_fault;
 pub mod constants;
-pub mod pte;
+pub mod cow;
+#[cfg(target_arch = "x86_64")]
+pub mod dynamic_paging;
+pub mod hiber; // Hibernate support - S3/S4 power states
+pub mod hyperspace;
+pub mod memtest;
+pub mod pagefile;
+pub mod pager; // Pager subsystem - memory pressure detection and pageout
 pub mod pfn;
-pub mod vas;
+pub mod pte;
+pub mod smoke;
 #[cfg(target_arch = "x86_64")]
 pub mod syspte;
 #[cfg(not(target_arch = "x86_64"))]
 #[path = "syspte_stub.rs"]
 pub mod syspte;
-pub mod hyperspace;
-pub mod access_fault;
-pub mod cow;
+pub mod vas;
 pub mod working_set;
-pub mod zeropage;
 pub mod writer;
-pub mod pagefile;
-pub mod smoke;
-#[cfg(target_arch = "x86_64")]
-pub mod dynamic_paging;
-pub mod pager;     // Pager subsystem - memory pressure detection and pageout
-pub mod hiber;    // Hibernate support - S3/S4 power states
-pub mod memtest;  // Memory test engine for Windows Memory Diagnostic
+pub mod zeropage; // Memory test engine for Windows Memory Diagnostic
 
 pub mod frame;
 pub mod heap;
-pub mod pool;
-pub mod vm;
-pub mod vad;
-pub mod mdl;
 pub mod logging;
+pub mod mdl;
 pub mod perf;
+pub mod pool;
 pub mod user_copy;
+pub mod vad;
+pub mod vm;
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -124,10 +124,19 @@ pub struct FrameDatabase {
 
 impl FrameDatabase {
     pub const fn new() -> Self {
-        Self { total_frames: 0, free_frames: 0, reserved_frames: 0, highest_frame: 0 }
+        Self {
+            total_frames: 0,
+            free_frames: 0,
+            reserved_frames: 0,
+            highest_frame: 0,
+        }
     }
-    pub fn free_count(&self) -> u64 { self.free_frames }
-    pub fn total_count(&self) -> u64 { self.total_frames }
+    pub fn free_count(&self) -> u64 {
+        self.free_frames
+    }
+    pub fn total_count(&self) -> u64 {
+        self.total_frames
+    }
 }
 
 /// Default boot RAM base. The kernel image is loaded at 1 MiB by
@@ -173,7 +182,6 @@ pub const MAX_RAM_FRAMES: u64 = MAX_RAM_BYTES / 4096;
 /// 4. System PTE pool, hyperspace window, working-set,
 ///    zero-page, writer, page file.
 pub fn init(boot_info: &BootInfo) {
-
     // ============================================================
     // FULL MM INITIALIZATION
     // ============================================================
@@ -254,10 +262,11 @@ pub fn init(boot_info: &BootInfo) {
                 let p = base_ptr.add(i * desc_size) as *const MemoryDescriptor;
                 let entry = core::ptr::read_unaligned(p);
                 let ty = entry.memory_type;
-                let usable = matches!(ty,
+                let usable = matches!(
+                    ty,
                     1 | // EfiConventionalMemory
                     7 | // EfiPersistentMemory
-                    9   // EfiConventionalMemory (alias)
+                    9 // EfiConventionalMemory (alias)
                 );
                 if !usable {
                     continue;
@@ -349,9 +358,7 @@ pub fn init(boot_info: &BootInfo) {
             } else {
                 aligned
             };
-            crate::hal::serial::write_string(
-                "[mm] extended PFN DB to cover CR3 PML4\r\n",
-            );
+            crate::hal::serial::write_string("[mm] extended PFN DB to cover CR3 PML4\r\n");
         }
     }
 
@@ -523,63 +530,49 @@ pub fn fatal_alloc<T>(tag: &'static str) -> *mut T {
     crate::arch::halt_loop();
 }
 
-pub fn get_total_physical() -> u64 { frame::get_total_physical() }
-pub fn get_free_physical() -> u64 { frame::get_free_physical() }
-pub fn virt_to_phys(virt: u64) -> Option<u64> { vm::virt_to_phys(virt) }
-pub fn allocate_pages(count: u64) -> Option<u64> { frame::allocate_pages(count) }
-pub fn free_pages(phys: u64, count: u64) { frame::free_pages(phys, count) }
+pub fn get_total_physical() -> u64 {
+    frame::get_total_physical()
+}
+pub fn get_free_physical() -> u64 {
+    frame::get_free_physical()
+}
+pub fn virt_to_phys(virt: u64) -> Option<u64> {
+    vm::virt_to_phys(virt)
+}
+pub fn allocate_pages(count: u64) -> Option<u64> {
+    frame::allocate_pages(count)
+}
+pub fn free_pages(phys: u64, count: u64) {
+    frame::free_pages(phys, count)
+}
 
 /// End-to-end smoke test for the memory manager. The full
 /// implementation lives in the `smoke` submodule; this is a
 /// re-export so callers can write `mm::smoke_test()`.
-pub fn smoke_test() -> bool { smoke::smoke_test() }
+pub fn smoke_test() -> bool {
+    smoke::smoke_test()
+}
 
 /// Re-export pager subsystem functions for external access
 pub use pager::{
-    MemoryPressure,
-    PagerStats,
-    get_memory_pressure,
-    get_stats as get_pager_stats,
-    check_and_pageout,
-    emergency_pageout,
-    print_status as print_pager_status,
+    check_and_pageout, emergency_pageout, get_memory_pressure, get_stats as get_pager_stats,
+    print_status as print_pager_status, MemoryPressure, PagerStats,
 };
 
 /// Re-export hibernate subsystem functions for external access
 pub use hiber::{
-    PowerState,
-    HibernateStats,
-    HibernateType,
-    check_hiberfil,
-    enter_power_state,
-    get_stats as get_hibernate_stats,
-    print_status as print_hibernate_status,
+    check_hiberfil, enter_power_state, get_stats as get_hibernate_stats,
+    print_status as print_hibernate_status, HibernateStats, HibernateType, PowerState,
 };
 
 /// Re-export logging subsystem functions for external access
-pub use logging::{
-    LogLevel,
-    get_log_level,
-    set_log_level,
-    should_log,
-};
+pub use logging::{get_log_level, set_log_level, should_log, LogLevel};
 
 /// Re-export performance counter functions for external access
 pub use perf::{
-    PerfCounters,
-    PERF,
-    record_pfn_alloc,
-    record_pfn_free,
-    record_page_fault,
-    record_tlb_invalidate,
-    record_cr3_switch,
-    record_vad_insert,
-    record_vad_remove,
-    record_syspte_alloc,
-    record_syspte_free,
-    print_stats as print_perf_stats,
-    get_pfn_stats,
-    get_page_fault_stats,
+    get_page_fault_stats, get_pfn_stats, print_stats as print_perf_stats, record_cr3_switch,
+    record_page_fault, record_pfn_alloc, record_pfn_free, record_syspte_alloc, record_syspte_free,
+    record_tlb_invalidate, record_vad_insert, record_vad_remove, PerfCounters, PERF,
 };
 
 /// Walk the firmware memory map and pick the largest usable RAM
@@ -620,10 +613,18 @@ pub fn discover_ram(boot_info: &BootInfo) -> (u64, u64) {
             }
         }
         if best_size > MAX_RAM_BYTES {
-            // // kprintln!("  [mm] clamping discovered RAM 0x{:x} to MAX_RAM_BYTES 0x{:x}",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                       best_size, MAX_RAM_BYTES);
+            // // kprintln!("  [mm] clamping discovered RAM 0x{:x} to MAX_RAM_BYTES 0x{:x}",
+            // //                       best_size, MAX_RAM_BYTES);
             best_size = MAX_RAM_BYTES;
         }
         (best_base, best_size)
     }
 }
+
+pub mod frame_safe;
+pub mod init_state;
+pub mod page_cache;
+pub mod pfn_safe;
+pub mod syspte_stub;
+pub mod tests;
+pub mod vad_complete;

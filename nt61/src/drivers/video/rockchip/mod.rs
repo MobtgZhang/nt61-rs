@@ -5,14 +5,14 @@
 //! Clean-room implementation based on public specifications.
 
 pub mod pci_ids;
-pub mod vop_reg;
-pub mod vop_fb;
-pub mod vop_crtc;
-pub mod rk_mipi_dsi;
-pub mod rk_hdmi;
 pub mod rk_gpu;
+pub mod rk_hdmi;
+pub mod rk_mipi_dsi;
+pub mod vop_crtc;
+pub mod vop_fb;
+pub mod vop_reg;
 
-pub use pci_ids::{ROCKCHIP_VENDOR_ID, RockchipSoc};
+pub use pci_ids::{RockchipSoc, ROCKCHIP_VENDOR_ID};
 pub use vop_fb::VopDevice;
 
 // =====================================================================

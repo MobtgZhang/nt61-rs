@@ -136,7 +136,10 @@ mod tests {
 
     #[test]
     fn exec_request_round_trip() {
-        let r = ChildRequest::exec("cmd.exe /c ver", alloc::vec!["cmd.exe".into(), "/c".into(), "ver".into()]);
+        let r = ChildRequest::exec(
+            "cmd.exe /c ver",
+            alloc::vec!["cmd.exe".into(), "/c".into(), "ver".into()],
+        );
         assert_eq!(r.kind, ChildRequestKind::Exec);
         assert_eq!(r.command, "cmd.exe /c ver");
         assert_eq!(r.argv.len(), 3);

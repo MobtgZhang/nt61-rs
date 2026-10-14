@@ -23,10 +23,26 @@ pub struct AppEntry {
     pub flags: u32,
 }
 
-const APP_CALC:     AppEntry = AppEntry { name: "calc.exe",     pid: 0, flags: 0x1 };
-const APP_NOTEPAD:  AppEntry = AppEntry { name: "notepad.exe",  pid: 0, flags: 0x1 };
-const APP_CLOCK:    AppEntry = AppEntry { name: "sidebar.exe",  pid: 0, flags: 0x1 };
-const APP_TASKBAR:  AppEntry = AppEntry { name: "taskbar.exe",  pid: 0, flags: 0x1 };
+const APP_CALC: AppEntry = AppEntry {
+    name: "calc.exe",
+    pid: 0,
+    flags: 0x1,
+};
+const APP_NOTEPAD: AppEntry = AppEntry {
+    name: "notepad.exe",
+    pid: 0,
+    flags: 0x1,
+};
+const APP_CLOCK: AppEntry = AppEntry {
+    name: "sidebar.exe",
+    pid: 0,
+    flags: 0x1,
+};
+const APP_TASKBAR: AppEntry = AppEntry {
+    name: "taskbar.exe",
+    pid: 0,
+    flags: 0x1,
+};
 
 /// Spinlock-protected well-known app table.
 static APPS_TABLE: crate::ke::sync::Spinlock<[AppEntry; KNOWN_APP_COUNT]> =
@@ -80,35 +96,104 @@ pub fn register(name: &'static str) -> Option<u32> {
 ///
 /// Returns `None` for malformed input or divide-by-zero.
 pub fn calc_eval(expr: &str) -> Option<i64> {
-    let mut acc: i64 = 0;
-    let mut op: u8 = b'+';
-    let bytes = expr.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        let c = bytes[i];
-        if c.is_ascii_digit() || c == b'-' {
-            // Parse number
-            let mut n: i64 = 0;
-            let mut neg = false;
-            if c == b'-' { neg = true; i += 1; }
-            while i < bytes.len() && bytes[i].is_ascii_digit() {
-                n = n * 10 + (bytes[i] - b'0') as i64;
-                i += 1;
+    // Simple recursive-descent evaluator supporting +, -, *, / with
+    // standard precedence. Whitespace is ignored.
+    fn parse_expr(s: &[u8], idx: &mut usize) -> Option<i64> {
+        let mut lhs = parse_term(s, idx)?;
+        loop {
+            skip_ws(s, idx);
+            if *idx >= s.len() {
+                break;
             }
-            if neg { n = -n; }
-            match op {
-                b'+' => acc += n,
-                b'-' => acc -= n,
-                b'*' => acc *= n,
-                b'/' => if n == 0 { return None; } else { acc /= n },
-                _ => {}
+            match s[*idx] {
+                b'+' => {
+                    *idx += 1;
+                    let rhs = parse_term(s, idx)?;
+                    lhs = lhs.checked_add(rhs)?;
+                }
+                b'-' => {
+                    *idx += 1;
+                    let rhs = parse_term(s, idx)?;
+                    lhs = lhs.checked_sub(rhs)?;
+                }
+                _ => break,
             }
+        }
+        Some(lhs)
+    }
+
+    fn parse_term(s: &[u8], idx: &mut usize) -> Option<i64> {
+        let mut lhs = parse_unary(s, idx)?;
+        loop {
+            skip_ws(s, idx);
+            if *idx >= s.len() {
+                break;
+            }
+            match s[*idx] {
+                b'*' => {
+                    *idx += 1;
+                    let rhs = parse_unary(s, idx)?;
+                    lhs = lhs.checked_mul(rhs)?;
+                }
+                b'/' => {
+                    *idx += 1;
+                    let rhs = parse_unary(s, idx)?;
+                    if rhs == 0 {
+                        return None;
+                    }
+                    lhs = lhs.checked_div(rhs)?;
+                }
+                _ => break,
+            }
+        }
+        Some(lhs)
+    }
+
+    fn parse_unary(s: &[u8], idx: &mut usize) -> Option<i64> {
+        skip_ws(s, idx);
+        if *idx < s.len() && s[*idx] == b'-' {
+            *idx += 1;
+            let v = parse_unary(s, idx)?;
+            v.checked_neg()
+        } else if *idx < s.len() && s[*idx] == b'+' {
+            *idx += 1;
+            parse_unary(s, idx)
         } else {
-            op = c;
-            i += 1;
+            parse_number(s, idx)
         }
     }
-    Some(acc)
+
+    fn parse_number(s: &[u8], idx: &mut usize) -> Option<i64> {
+        skip_ws(s, idx);
+        let start = *idx;
+        while *idx < s.len() && s[*idx].is_ascii_digit() {
+            *idx += 1;
+        }
+        if *idx == start {
+            return None;
+        }
+        // ASCII digits are always valid i64 in reasonable test inputs.
+        let mut n: i64 = 0;
+        for &c in &s[start..*idx] {
+            n = n.checked_mul(10)?;
+            n = n.checked_add((c - b'0') as i64)?;
+        }
+        Some(n)
+    }
+
+    fn skip_ws(s: &[u8], idx: &mut usize) {
+        while *idx < s.len() && (s[*idx] == b' ' || s[*idx] == b'\t') {
+            *idx += 1;
+        }
+    }
+
+    let mut idx = 0usize;
+    let v = parse_expr(expr.as_bytes(), &mut idx)?;
+    skip_ws(expr.as_bytes(), &mut idx);
+    if idx != expr.len() {
+        return None;
+    }
+    Some(v)
 }
 
 #[cfg(test)]

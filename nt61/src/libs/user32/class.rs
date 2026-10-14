@@ -26,17 +26,18 @@ pub struct WndClassExW {
 /// well-formed class registration. The kernel keeps no real
 /// class table for the stub.
 pub unsafe extern "C" fn RegisterClassExW(class: *const WndClassExW) -> u16 {
-    if class.is_null() { return 0; }
+    if class.is_null() {
+        return 0;
+    }
     let c = &*class;
-    if c.lpsz_class_name.is_null() { return 0; }
+    if c.lpsz_class_name.is_null() {
+        return 0;
+    }
     0xBEEF
 }
 
 /// `UnregisterClassW` — placeholder.
-pub unsafe extern "C" fn UnregisterClassW(
-    class_name: LPCWSTR,
-    instance: HINSTANCE,
-) -> BOOL {
+pub unsafe extern "C" fn UnregisterClassW(class_name: LPCWSTR, instance: HINSTANCE) -> BOOL {
     let _ = (class_name, instance);
     TRUE
 }

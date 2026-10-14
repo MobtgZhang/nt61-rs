@@ -154,13 +154,19 @@ impl ClfsFcb {
     /// Check if this handle allows reading.
     #[inline]
     pub fn can_read(&self) -> bool {
-        matches!(self.open_mode, ClfsOpenMode::Readonly | ClfsOpenMode::ReadWrite)
+        matches!(
+            self.open_mode,
+            ClfsOpenMode::Readonly | ClfsOpenMode::ReadWrite
+        )
     }
 
     /// Check if this handle allows writing.
     #[inline]
     pub fn can_write(&self) -> bool {
-        matches!(self.open_mode, ClfsOpenMode::Writeonly | ClfsOpenMode::ReadWrite | ClfsOpenMode::Append)
+        matches!(
+            self.open_mode,
+            ClfsOpenMode::Writeonly | ClfsOpenMode::ReadWrite | ClfsOpenMode::Append
+        )
     }
 
     /// Get the handle sequence number.

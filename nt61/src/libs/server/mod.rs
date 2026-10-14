@@ -25,14 +25,14 @@ extern crate alloc;
 
 use crate::kprintln;
 
-pub mod smss;
+pub mod cmd;
 pub mod csrss;
+pub mod explorer;
+pub mod lsass;
+pub mod services;
+pub mod smss;
 pub mod wininit;
 pub mod winlogon;
-pub mod services;
-pub mod lsass;
-pub mod explorer;
-pub mod cmd;
 
 /// Initialise all server stubs. Each prints a banner and
 /// initialises its internal state. The real NT system
@@ -40,18 +40,18 @@ pub mod cmd;
 /// just calls `init()` and then verifies state via
 /// `smoke_test()`.
 pub fn init() {
-    // kprintln!("    [server] init (stubbed: Vec/heap-using code disabled)")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    [server] init (stubbed: Vec/heap-using code disabled)");
     // The full server stubs use Vec::push and String which
     // hit heap allocs that currently fail (or corrupt the
     // user-mode-library region). For now we just print
     // "ready" and continue to the boot-completion path.
-    // kprintln!("    [server] all servers initialised (stubbed)")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    [server] all servers initialised (stubbed)");
 }
 
 /// Module-level smoke: walk every server's smoke test and
 /// return the conjunction.
 pub fn smoke_test() -> bool {
-    // kprintln!("    [server] running smoke tests")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    [server] running smoke tests");
     let mut ok = true;
     ok &= smss::smoke_test();
     ok &= csrss::smoke_test();
@@ -61,6 +61,6 @@ pub fn smoke_test() -> bool {
     ok &= lsass::smoke_test();
     ok &= explorer::smoke_test();
     ok &= cmd::smoke_test();
-    // kprintln!("    [server] {}", if ok { "all PASS" } else { "FAIL" })  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    [server] {}", if ok { "all PASS" } else { "FAIL" });
     ok
 }

@@ -117,8 +117,14 @@ pub unsafe extern "C" fn RpcServerUseProtseqEpW(
         let state = SERVER_STATE.lock();
 
         let ncalrpc = [
-            b'n' as u16, b'c' as u16, b'a' as u16, b'l' as u16,
-            b'r' as u16, b'p' as u16, b'c' as u16, 0,
+            b'n' as u16,
+            b'c' as u16,
+            b'a' as u16,
+            b'l' as u16,
+            b'r' as u16,
+            b'p' as u16,
+            b'c' as u16,
+            0,
         ];
 
         if compare_wstr(&ncalrpc, protseq) {
@@ -126,9 +132,18 @@ pub unsafe extern "C" fn RpcServerUseProtseqEpW(
             let mut pos = 0;
 
             let prefix = [
-                b'\\' as u16, b'R' as u16, b'P' as u16, b'C' as u16,
-                b' ' as u16, b'C' as u16, b'o' as u16, b'n' as u16,
-                b't' as u16, b'r' as u16, b'o' as u16, b'l' as u16,
+                b'\\' as u16,
+                b'R' as u16,
+                b'P' as u16,
+                b'C' as u16,
+                b' ' as u16,
+                b'C' as u16,
+                b'o' as u16,
+                b'n' as u16,
+                b't' as u16,
+                b'r' as u16,
+                b'o' as u16,
+                b'l' as u16,
                 b'\\' as u16,
             ];
 
@@ -167,12 +182,25 @@ pub unsafe extern "C" fn RpcServerUseAllProtseqs(
     security_descriptor: *mut core::ffi::c_void,
 ) -> RPC_STATUS {
     let ncalrpc = [
-        b'n' as u16, b'c' as u16, b'a' as u16, b'l' as u16,
-        b'r' as u16, b'p' as u16, b'c' as u16, 0,
+        b'n' as u16,
+        b'c' as u16,
+        b'a' as u16,
+        b'l' as u16,
+        b'r' as u16,
+        b'p' as u16,
+        b'c' as u16,
+        0,
     ];
     let ncacn_np = [
-        b'n' as u16, b'c' as u16, b'a' as u16, b'c' as u16,
-        b'n' as u16, b'_' as u16, b'n' as u16, b'p' as u16, 0,
+        b'n' as u16,
+        b'c' as u16,
+        b'a' as u16,
+        b'c' as u16,
+        b'n' as u16,
+        b'_' as u16,
+        b'n' as u16,
+        b'p' as u16,
+        0,
     ];
 
     let mut status = RpcServerUseProtseqW(ncalrpc.as_ptr(), max_calls, security_descriptor);
@@ -323,8 +351,7 @@ pub unsafe extern "C" fn RpcServerUnregisterIf(
         return RPC_S_INTERFACE_NOT_FOUND;
     }
 
-    if wait_for_calls_to_complete != 0 {
-    }
+    if wait_for_calls_to_complete != 0 {}
 
     RPC_S_OK
 }
@@ -355,7 +382,6 @@ pub unsafe extern "C" fn RpcServerListen(
 
     state.is_listening = true;
 
-
     let _ = min_call_threads;
     let _ = dont_wait;
 
@@ -363,9 +389,7 @@ pub unsafe extern "C" fn RpcServerListen(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn RpcMgmtStopServerListening(
-    binding: RPC_BINDING_HANDLE,
-) -> RPC_STATUS {
+pub unsafe extern "C" fn RpcMgmtStopServerListening(binding: RPC_BINDING_HANDLE) -> RPC_STATUS {
     let _ = binding; // Binding not used for local server
 
     let mut state = SERVER_STATE.lock();
@@ -391,9 +415,7 @@ pub unsafe extern "C" fn RpcMgmtWaitServerListen() -> RPC_STATUS {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn RpcMgmtIsServerListening(
-    binding: RPC_BINDING_HANDLE,
-) -> RPC_STATUS {
+pub unsafe extern "C" fn RpcMgmtIsServerListening(binding: RPC_BINDING_HANDLE) -> RPC_STATUS {
     let _ = binding; // Binding not used for local server
 
     let state = SERVER_STATE.lock();
@@ -422,10 +444,8 @@ pub unsafe extern "C" fn RpcServerInqBindings(
     let size = core::mem::size_of::<RPC_BINDING_VECTOR>()
         + (state.protseq_count - 1) * core::mem::size_of::<RPC_BINDING_HANDLE>();
 
-    let vector = crate::mm::pool::allocate(
-        crate::mm::pool::PoolType::NonPaged,
-        size,
-    ) as *mut RPC_BINDING_VECTOR;
+    let vector = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, size)
+        as *mut RPC_BINDING_VECTOR;
 
     if vector.is_null() {
         return RPC_S_OUT_OF_MEMORY;

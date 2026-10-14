@@ -7,15 +7,15 @@
 //! - Driver database management
 //! - Driver unload support
 
-use alloc::vec::Vec;
 use alloc::string::String;
+use alloc::vec::Vec;
 use core::ptr::null_mut;
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use super::{DeviceObject, DriverObject, UnicodeString};
 use crate::ke::sync::Spinlock;
-use crate::mm::pool;
-use super::{DriverObject, DeviceObject, UnicodeString};
 use crate::libs::ntdll::status::*;
+use crate::mm::pool;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
@@ -80,8 +80,7 @@ impl DriverRegistryEntry {
 
 const MAX_LOADED_DRIVERS: usize = 64;
 
-static DRIVER_REGISTRY: Spinlock<Vec<Option<DriverRegistryEntry>>> =
-    Spinlock::new(Vec::new());
+static DRIVER_REGISTRY: Spinlock<Vec<Option<DriverRegistryEntry>>> = Spinlock::new(Vec::new());
 
 pub fn init() {
     let mut registry = DRIVER_REGISTRY.lock();
@@ -124,18 +123,20 @@ pub fn load_driver(
 
     if init_status != STATUS_SUCCESS as u32 {
         entry.load_state = DriverLoadState::Failed;
-        if let Some(slot) = registry.iter_mut().find(|e| {
-            e.as_ref().map_or(false, |e| e.driver_object == driver)
-        }) {
+        if let Some(slot) = registry
+            .iter_mut()
+            .find(|e| e.as_ref().map_or(false, |e| e.driver_object == driver))
+        {
             *slot = Some(entry);
         }
         return null_mut();
     }
 
     entry.load_state = DriverLoadState::Loaded;
-    if let Some(slot) = registry.iter_mut().find(|e| {
-        e.as_ref().map_or(false, |e| e.driver_object == driver)
-    }) {
+    if let Some(slot) = registry
+        .iter_mut()
+        .find(|e| e.as_ref().map_or(false, |e| e.driver_object == driver))
+    {
         *slot = Some(entry);
     }
 
@@ -149,9 +150,9 @@ pub fn unload_driver(driver: *mut DriverObject) -> bool {
 
     let mut registry = DRIVER_REGISTRY.lock();
 
-    let entry_idx = registry.iter().position(|e| {
-        e.as_ref().map_or(false, |e| e.driver_object == driver)
-    });
+    let entry_idx = registry
+        .iter()
+        .position(|e| e.as_ref().map_or(false, |e| e.driver_object == driver));
 
     let entry_idx = match entry_idx {
         Some(idx) => idx,

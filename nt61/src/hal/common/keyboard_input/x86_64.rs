@@ -27,7 +27,11 @@ pub fn init() {
 /// Try to read one byte (non-blocking).
 pub fn try_read_byte() -> Option<u8> {
     let raw = crate::hal::x86_64::keyboard::getc();
-    if raw < 0 { None } else { Some(raw as u8) }
+    if raw < 0 {
+        None
+    } else {
+        Some(raw as u8)
+    }
 }
 
 /// Coarse "is anything pending?" poll. The PS/2 driver

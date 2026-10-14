@@ -1,10 +1,10 @@
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use spin::{Lazy, Mutex};
 
-use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, AtomicUsize, AtomicI32, AtomicI64, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicI64, AtomicU8};
 
 use super::types::*;
 use core::ptr;
-use core::sync::atomic::{AtomicI32, AtomicI64, Ordering};
 
 struct TimeBuffers {
     tm_buffer: tm,
@@ -22,9 +22,7 @@ impl TimeBuffers {
     }
 }
 
-static TIME_BUFFERS: Lazy<Mutex<TimeBuffers>> = Lazy::new(|| {
-    Mutex::new(TimeBuffers::new())
-});
+static TIME_BUFFERS: Lazy<Mutex<TimeBuffers>> = Lazy::new(|| Mutex::new(TimeBuffers::new()));
 
 static TIMEZONE_OFFSET: AtomicI32 = AtomicI32::new(0);
 static DAYLIGHT: AtomicI32 = AtomicI32::new(0);
@@ -36,41 +34,41 @@ static CLOCK_TICKS: AtomicI64 = AtomicI64::new(0);
 const TZNAME_STD: &[u8] = b"UTC\0";
 const TZNAME_DST: &[u8] = b"UTC\0";
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub static mut tzname: [*const c_char; 2] = [
     TZNAME_STD.as_ptr() as *const c_char,
     TZNAME_DST.as_ptr() as *const c_char,
 ];
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _get_timezone(tz: *mut c_long) -> errno_t {
     if tz.is_null() {
-        return super::EINVAL;
+        return EINVAL;
     }
     *tz = TIMEZONE_GLOBAL.load(Ordering::Relaxed) as c_long;
     0
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _get_daylight(dl: *mut c_int) -> errno_t {
     if dl.is_null() {
-        return super::EINVAL;
+        return EINVAL;
     }
     *dl = DAYLIGHT_GLOBAL.load(Ordering::Relaxed);
     0
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _set_timezone(tz: c_long) {
     TIMEZONE_GLOBAL.store(tz as i64, Ordering::Relaxed);
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _set_daylight(dl: c_int) {
     DAYLIGHT_GLOBAL.store(dl, Ordering::Relaxed);
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn clock() -> clock_t {
     CLOCK_TICKS.fetch_add(1, Ordering::Relaxed) as clock_t
 }
@@ -90,7 +88,7 @@ unsafe fn get_asctime_buffer() -> *mut c_char {
     buffers.asctime_buffer.as_mut_ptr()
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn localtime(timer: *const time_t) -> *mut tm {
     if timer.is_null() {
         return ptr::null_mut();
@@ -98,7 +96,7 @@ pub unsafe extern "C" fn localtime(timer: *const time_t) -> *mut tm {
     localtime_r(timer, get_tm_buffer())
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn gmtime(timer: *const time_t) -> *mut tm {
     if timer.is_null() {
         return ptr::null_mut();
@@ -106,7 +104,7 @@ pub unsafe extern "C" fn gmtime(timer: *const time_t) -> *mut tm {
     gmtime_r(timer, get_tm_buffer())
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn localtime_r(timer: *const time_t, result: *mut tm) -> *mut tm {
     if timer.is_null() || result.is_null() {
         return ptr::null_mut();
@@ -120,7 +118,7 @@ pub unsafe extern "C" fn localtime_r(timer: *const time_t, result: *mut tm) -> *
     result
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn gmtime_r(timer: *const time_t, result: *mut tm) -> *mut tm {
     if timer.is_null() || result.is_null() {
         return ptr::null_mut();
@@ -182,7 +180,7 @@ fn is_leap_year(year: i32) -> bool {
     (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn asctime(timeptr: *const tm) -> *mut c_char {
     if timeptr.is_null() {
         return ptr::null_mut();
@@ -190,15 +188,16 @@ pub unsafe extern "C" fn asctime(timeptr: *const tm) -> *mut c_char {
     asctime_r(timeptr, get_asctime_buffer())
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn asctime_r(timeptr: *const tm, buf: *mut c_char) -> *mut c_char {
     if timeptr.is_null() || buf.is_null() {
         return ptr::null_mut();
     }
 
     const DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                                 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
 
     let tm = &*timeptr;
     let day = DAYS[tm.tm_wday as usize % 7];
@@ -206,7 +205,13 @@ pub unsafe extern "C" fn asctime_r(timeptr: *const tm, buf: *mut c_char) -> *mut
 
     let formatted = alloc::format!(
         "{} {} {:2} {:02}:{:02}:{:02} {}\n",
-        day, month, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, tm.tm_year + 1900
+        day,
+        month,
+        tm.tm_mday,
+        tm.tm_hour,
+        tm.tm_min,
+        tm.tm_sec,
+        tm.tm_year + 1900
     );
 
     for (i, &byte) in formatted.as_bytes().iter().enumerate() {
@@ -220,7 +225,7 @@ pub unsafe extern "C" fn asctime_r(timeptr: *const tm, buf: *mut c_char) -> *mut
     buf
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn time(timer: *mut time_t) -> time_t {
     let current_time = 0i64; // TODO: implement real time source
 

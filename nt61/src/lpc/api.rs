@@ -6,6 +6,13 @@
 use crate::ke::sync::Spinlock;
 use core::ptr::null_mut;
 
+use super::async_ops::AsyncQueue;
+use super::callback::CallbackRegistry;
+use super::connection::ConnectionQueue;
+use super::direct::DirectBufferRegistry;
+use super::port::PortAttributes;
+use super::section::{AlpcSectionView, SectionRegistry};
+use super::waitqueue::WaitQueue;
 use super::*;
 
 pub struct AlpcSubsystem {
@@ -86,10 +93,7 @@ pub fn nt_alpc_connect_port(
     Ok((server_idx, req_id))
 }
 
-pub fn nt_alpc_accept_connect_port(
-    request_id: u32,
-    server_data: &[u8],
-) -> Result<(u32, u32), u32> {
+pub fn nt_alpc_accept_connect_port(request_id: u32, server_data: &[u8]) -> Result<(u32, u32), u32> {
     let mut subsys = ALPC_SUBSYSTEM.lock();
     let reg_guard = super::lock_registry();
     if reg_guard.is_none() {
@@ -151,11 +155,7 @@ pub fn nt_alpc_disconnect_port(port_index: u32) -> Result<(), u32> {
     }
 }
 
-pub fn nt_alpc_create_section(
-    size: u64,
-    flags: u32,
-    owner_pid: u64,
-) -> Result<u64, u32> {
+pub fn nt_alpc_create_section(size: u64, flags: u32, owner_pid: u64) -> Result<u64, u32> {
     let mut subsys = ALPC_SUBSYSTEM.lock();
     match section::create_section(size, flags, owner_pid, &mut subsys.sections) {
         Some(handle) => Ok(handle),

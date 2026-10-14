@@ -9,11 +9,7 @@
 use super::types::PVOID;
 use core::ptr;
 
-pub unsafe extern "C" fn RtlCompareMemory(
-    source1: PVOID,
-    source2: PVOID,
-    length: usize,
-) -> usize {
+pub unsafe extern "C" fn RtlCompareMemory(source1: PVOID, source2: PVOID, length: usize) -> usize {
     if source1.is_null() || source2.is_null() || length == 0 {
         return 0;
     }
@@ -27,11 +23,7 @@ pub unsafe extern "C" fn RtlCompareMemory(
     length
 }
 
-pub unsafe extern "C" fn RtlEqualMemory(
-    source1: PVOID,
-    source2: PVOID,
-    length: usize,
-) -> u8 {
+pub unsafe extern "C" fn RtlEqualMemory(source1: PVOID, source2: PVOID, length: usize) -> u8 {
     if RtlCompareMemory(source1, source2, length) == length {
         1
     } else {
@@ -39,11 +31,7 @@ pub unsafe extern "C" fn RtlEqualMemory(
     }
 }
 
-pub unsafe extern "C" fn RtlFillMemory(
-    destination: PVOID,
-    length: usize,
-    fill: u8,
-) {
+pub unsafe extern "C" fn RtlFillMemory(destination: PVOID, length: usize, fill: u8) {
     if destination.is_null() || length == 0 {
         return;
     }
@@ -64,41 +52,25 @@ pub unsafe extern "C" fn RtlSecureZeroMemory(ptr: PVOID, cnt: usize) {
     }
 }
 
-pub unsafe extern "C" fn RtlMoveMemory(
-    destination: PVOID,
-    source: PVOID,
-    length: usize,
-) {
+pub unsafe extern "C" fn RtlMoveMemory(destination: PVOID, source: PVOID, length: usize) {
     if destination.is_null() || source.is_null() || length == 0 {
         return;
     }
     ptr::copy(source as *const u8, destination as *mut u8, length);
 }
 
-pub unsafe extern "C" fn RtlCopyMemory(
-    destination: PVOID,
-    source: PVOID,
-    length: usize,
-) {
+pub unsafe extern "C" fn RtlCopyMemory(destination: PVOID, source: PVOID, length: usize) {
     if destination.is_null() || source.is_null() || length == 0 {
         return;
     }
     ptr::copy_nonoverlapping(source as *const u8, destination as *mut u8, length);
 }
 
-pub unsafe extern "C" fn RtlCopyBytes(
-    destination: PVOID,
-    source: PVOID,
-    length: usize,
-) {
+pub unsafe extern "C" fn RtlCopyBytes(destination: PVOID, source: PVOID, length: usize) {
     RtlCopyMemory(destination, source, length);
 }
 
-pub unsafe extern "C" fn RtlFillBytes(
-    destination: PVOID,
-    length: usize,
-    fill: u8,
-) {
+pub unsafe extern "C" fn RtlFillBytes(destination: PVOID, length: usize, fill: u8) {
     RtlFillMemory(destination, length, fill);
 }
 

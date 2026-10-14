@@ -3,8 +3,10 @@
 //! Extended system call wrappers: NtQueryObject, NtSetInformationObject,
 //! NtQueryDirectoryFile, NtQueryVolumeInformationFile, NtDeviceIoControlFile.
 
-use super::status::{STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER, STATUS_NOT_IMPLEMENTED, STATUS_SUCCESS};
-use super::types::{HANDLE, NTSTATUS, PVOID, IoStatusBlock, ObjectAttributes, UnicodeString};
+use super::status::{
+    STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER, STATUS_NOT_IMPLEMENTED, STATUS_SUCCESS,
+};
+use super::types::{IoStatusBlock, ObjectAttributes, UnicodeString, HANDLE, NTSTATUS, PVOID};
 use core::ptr;
 
 #[repr(u32)]
@@ -28,7 +30,11 @@ pub unsafe extern "C" fn NtQueryObject(
         return STATUS_INVALID_HANDLE;
     }
 
-    let _ = (object_information_class, object_information, object_information_length);
+    let _ = (
+        object_information_class,
+        object_information,
+        object_information_length,
+    );
 
     if !return_length.is_null() {
         *return_length = 0;
@@ -47,7 +53,11 @@ pub unsafe extern "C" fn NtSetInformationObject(
         return STATUS_INVALID_HANDLE;
     }
 
-    let _ = (object_information_class, object_information, object_information_length);
+    let _ = (
+        object_information_class,
+        object_information,
+        object_information_length,
+    );
     STATUS_SUCCESS
 }
 
@@ -69,7 +79,12 @@ pub unsafe extern "C" fn NtQueryDirectoryFile(
     }
 
     let _ = (event, apc_routine, apc_context, file_information, length);
-    let _ = (file_information_class, return_single_entry, file_name, restart_scan);
+    let _ = (
+        file_information_class,
+        return_single_entry,
+        file_name,
+        restart_scan,
+    );
 
     (*io_status_block).status = STATUS_SUCCESS;
     (*io_status_block).information = 0;
@@ -147,7 +162,12 @@ pub unsafe extern "C" fn NtDeviceIoControlFile(
     }
 
     let _ = (event, apc_routine, apc_context, io_control_code);
-    let _ = (input_buffer, input_buffer_length, output_buffer, output_buffer_length);
+    let _ = (
+        input_buffer,
+        input_buffer_length,
+        output_buffer,
+        output_buffer_length,
+    );
 
     (*io_status_block).status = STATUS_SUCCESS;
     (*io_status_block).information = 0;
@@ -172,7 +192,12 @@ pub unsafe extern "C" fn NtFsControlFile(
     }
 
     let _ = (event, apc_routine, apc_context, fs_control_code);
-    let _ = (input_buffer, input_buffer_length, output_buffer, output_buffer_length);
+    let _ = (
+        input_buffer,
+        input_buffer_length,
+        output_buffer,
+        output_buffer_length,
+    );
 
     (*io_status_block).status = STATUS_SUCCESS;
     (*io_status_block).information = 0;

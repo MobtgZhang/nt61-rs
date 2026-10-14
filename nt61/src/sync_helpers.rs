@@ -1,14 +1,12 @@
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, AtomicPtr, Ordering};
-
-
-use core::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, AtomicBool, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use spin::Mutex;
 
 pub struct SyncArray<T, const N: usize> {
     data: Mutex<[T; N]>,
 }
 
 impl<T: Copy + Default, const N: usize> SyncArray<T, N> {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             data: Mutex::new([T::default(); N]),
         }

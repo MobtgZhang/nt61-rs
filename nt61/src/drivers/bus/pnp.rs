@@ -100,12 +100,12 @@ pub mod pnp_state {
             (START_PENDING, STARTED) => true,
             (STARTED, QUERY_STOP) => true,
             (QUERY_STOP, STOP_PENDING) => true,
-            (QUERY_STOP, STARTED) => true,  // Query cancelled
+            (QUERY_STOP, STARTED) => true, // Query cancelled
             (STOP_PENDING, STOPPED) => true,
-            (STOPPED, START_PENDING) => true,  // Can restart
+            (STOPPED, START_PENDING) => true, // Can restart
             (STARTED, QUERY_REMOVE) => true,
             (QUERY_REMOVE, REMOVED) => true,
-            (QUERY_REMOVE, STARTED) => true,  // Query cancelled
+            (QUERY_REMOVE, STARTED) => true, // Query cancelled
             (STARTED, SURPRISE_REMOVAL) => true,
             (SURPRISE_REMOVAL, REMOVED) => true,
             // Can go directly to removed from most states
@@ -190,13 +190,15 @@ static ENUMERATE_DURATION_TICKS: AtomicU32 = AtomicU32::new(0);
 /// Install the PnP manager. Idempotent.
 pub fn init() {
     unsafe {
-        if PNP_INITIALISED { return; }
+        if PNP_INITIALISED {
+            return;
+        }
         PNP_INITIALISED = true;
         for n in DEVICE_NODES.iter_mut() {
             n.valid = false;
         }
     }
-    // kprintln!("    PnP manager: initialised")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    PnP manager: initialised");
 }
 
 /// Register a driver with the PnP manager.
@@ -249,8 +251,13 @@ pub fn register_pci_device(pci: &PciDevice) -> Option<usize> {
     let mut compatible = [0u8; MAX_DEVICE_ID_LEN];
     format_pci_hw_id(pci, &mut hw_id);
     format_pci_class(pci, &mut compatible);
-    let slot = add_node(bus_type::PCI, pci.device as u32, pci.function as u32,
-                        &hw_id, &compatible)?;
+    let slot = add_node(
+        bus_type::PCI,
+        pci.device as u32,
+        pci.function as u32,
+        &hw_id,
+        &compatible,
+    )?;
     REGISTERED_DEVICES.fetch_add(1, Ordering::Relaxed);
     Some(slot)
 }
@@ -279,12 +286,18 @@ pub fn register_usb_device(vid: u16, pid: u16, address: u32) -> Option<usize> {
     Some(slot)
 }
 
-fn add_node(bus: u32, address: u32, function: u32,
-            hw_id: &[u8; MAX_DEVICE_ID_LEN],
-            compatible_id: &[u8; MAX_DEVICE_ID_LEN]) -> Option<usize> {
+fn add_node(
+    bus: u32,
+    address: u32,
+    function: u32,
+    hw_id: &[u8; MAX_DEVICE_ID_LEN],
+    compatible_id: &[u8; MAX_DEVICE_ID_LEN],
+) -> Option<usize> {
     unsafe {
         for (i, n) in DEVICE_NODES.iter_mut().enumerate() {
-            if n.valid { continue; }
+            if n.valid {
+                continue;
+            }
             n.valid = true;
             n.bus = bus;
             n.address = address;
@@ -307,8 +320,12 @@ pub fn start_all_pending() -> u32 {
     let start = crate::ke::time::get_tick_count();
     unsafe {
         for n in DEVICE_NODES.iter_mut() {
-            if !n.valid { continue; }
-            if n.state == pnp_state::STARTED { continue; }
+            if !n.valid {
+                continue;
+            }
+            if n.state == pnp_state::STARTED {
+                continue;
+            }
             let drv = match find_driver(n) {
                 Some(d) => d,
                 None => continue,
@@ -331,9 +348,13 @@ pub fn start_all_pending() -> u32 {
 /// Send a STOP IRP to a single device node.
 pub fn stop_device(idx: usize) -> bool {
     unsafe {
-        if idx >= MAX_DEVICE_NODES { return false; }
+        if idx >= MAX_DEVICE_NODES {
+            return false;
+        }
         let n = &mut DEVICE_NODES[idx];
-        if !n.valid { return false; }
+        if !n.valid {
+            return false;
+        }
 
         // Validate state transition
         if !pnp_state::can_transition(n.state, pnp_state::STOP_PENDING) {
@@ -349,9 +370,13 @@ pub fn stop_device(idx: usize) -> bool {
 /// Send a REMOVE IRP to a single device node.
 pub fn remove_device(idx: usize) -> bool {
     unsafe {
-        if idx >= MAX_DEVICE_NODES { return false; }
+        if idx >= MAX_DEVICE_NODES {
+            return false;
+        }
         let n = &mut DEVICE_NODES[idx];
-        if !n.valid { return false; }
+        if !n.valid {
+            return false;
+        }
 
         // Validate state transition
         if !pnp_state::can_transition(n.state, pnp_state::REMOVED) {
@@ -367,9 +392,13 @@ pub fn remove_device(idx: usize) -> bool {
 /// Handle query remove for a device
 pub fn query_remove_device(idx: usize) -> bool {
     unsafe {
-        if idx >= MAX_DEVICE_NODES { return false; }
+        if idx >= MAX_DEVICE_NODES {
+            return false;
+        }
         let n = &mut DEVICE_NODES[idx];
-        if !n.valid { return false; }
+        if !n.valid {
+            return false;
+        }
 
         // Can only query remove from Started state
         if n.state != pnp_state::STARTED {
@@ -384,9 +413,13 @@ pub fn query_remove_device(idx: usize) -> bool {
 /// Cancel query remove and return to Started state
 pub fn cancel_remove_device(idx: usize) -> bool {
     unsafe {
-        if idx >= MAX_DEVICE_NODES { return false; }
+        if idx >= MAX_DEVICE_NODES {
+            return false;
+        }
         let n = &mut DEVICE_NODES[idx];
-        if !n.valid { return false; }
+        if !n.valid {
+            return false;
+        }
 
         // Can only cancel from QueryRemove state
         if n.state != pnp_state::QUERY_REMOVE {
@@ -401,9 +434,13 @@ pub fn cancel_remove_device(idx: usize) -> bool {
 /// Handle surprise removal for a device
 pub fn surprise_remove_device(idx: usize) -> bool {
     unsafe {
-        if idx >= MAX_DEVICE_NODES { return false; }
+        if idx >= MAX_DEVICE_NODES {
+            return false;
+        }
         let n = &mut DEVICE_NODES[idx];
-        if !n.valid { return false; }
+        if !n.valid {
+            return false;
+        }
 
         // Validate state transition
         if !pnp_state::can_transition(n.state, pnp_state::SURPRISE_REMOVAL) {
@@ -418,9 +455,13 @@ pub fn surprise_remove_device(idx: usize) -> bool {
 /// Query stop for a device
 pub fn query_stop_device(idx: usize) -> bool {
     unsafe {
-        if idx >= MAX_DEVICE_NODES { return false; }
+        if idx >= MAX_DEVICE_NODES {
+            return false;
+        }
         let n = &mut DEVICE_NODES[idx];
-        if !n.valid { return false; }
+        if !n.valid {
+            return false;
+        }
 
         // Can only query stop from Started state
         if n.state != pnp_state::STARTED {
@@ -435,9 +476,13 @@ pub fn query_stop_device(idx: usize) -> bool {
 /// Cancel query stop and return to Started state
 pub fn cancel_stop_device(idx: usize) -> bool {
     unsafe {
-        if idx >= MAX_DEVICE_NODES { return false; }
+        if idx >= MAX_DEVICE_NODES {
+            return false;
+        }
         let n = &mut DEVICE_NODES[idx];
-        if !n.valid { return false; }
+        if !n.valid {
+            return false;
+        }
 
         // Can only cancel from QueryStop state
         if n.state != pnp_state::QUERY_STOP {
@@ -450,13 +495,19 @@ pub fn cancel_stop_device(idx: usize) -> bool {
 }
 
 /// Number of nodes currently registered.
-pub fn device_count() -> u32 { REGISTERED_DEVICES.load(Ordering::Relaxed) }
+pub fn device_count() -> u32 {
+    REGISTERED_DEVICES.load(Ordering::Relaxed)
+}
 /// Number of nodes that have successfully reached the `STARTED`
 /// state.
-pub fn started_count() -> u32 { STARTED_DEVICES.load(Ordering::Relaxed) }
+pub fn started_count() -> u32 {
+    STARTED_DEVICES.load(Ordering::Relaxed)
+}
 /// Wall-clock duration of the last `start_all_pending` call, in
 /// kernel ticks.
-pub fn last_enumeration_ticks() -> u32 { ENUMERATE_DURATION_TICKS.load(Ordering::Relaxed) }
+pub fn last_enumeration_ticks() -> u32 {
+    ENUMERATE_DURATION_TICKS.load(Ordering::Relaxed)
+}
 
 /// Iterator over valid PnP device nodes.
 /// This avoids heap allocation by using a lazy iterator instead of collecting into a Vec.
@@ -499,9 +550,13 @@ fn name_eq(s: &str, raw: &[u8]) -> bool {
 }
 
 fn name_starts_with(raw: &[u8], prefix: &[u8]) -> bool {
-    if prefix.is_empty() { return false; }
+    if prefix.is_empty() {
+        return false;
+    }
     let raw_len = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
-    if raw_len < prefix.len() { return false; }
+    if raw_len < prefix.len() {
+        return false;
+    }
     &raw[..prefix.len()] == prefix
 }
 
@@ -524,53 +579,86 @@ fn copy_string_into(dst: &mut [u8], src: &[u8]) -> usize {
 /// Writes at most 22 bytes, fills the rest with null.
 fn format_pci_hw_id(pci: &PciDevice, out: &mut [u8]) {
     // "PCI\\VEN_" = 8 bytes
-    out[0] = b'P'; out[1] = b'C'; out[2] = b'I';
-    out[3] = b'\\'; out[4] = b'V'; out[5] = b'E';
-    out[6] = b'N'; out[7] = b'_';
+    out[0] = b'P';
+    out[1] = b'C';
+    out[2] = b'I';
+    out[3] = b'\\';
+    out[4] = b'V';
+    out[5] = b'E';
+    out[6] = b'N';
+    out[7] = b'_';
     // vendor_id: 4 hex digits
     write_hex4(pci.vendor_id as u32, &mut out[8..12]);
     out[12] = b'&';
-    out[13] = b'D'; out[14] = b'E'; out[15] = b'V'; out[16] = b'_';
+    out[13] = b'D';
+    out[14] = b'E';
+    out[15] = b'V';
+    out[16] = b'_';
     // device_id: 4 hex digits
     write_hex4(pci.device_id as u32, &mut out[17..21]);
     // Null-terminate
-    if out.len() > 21 { out[21] = 0; }
+    if out.len() > 21 {
+        out[21] = 0;
+    }
     // Fill rest with null
-    for i in 22..out.len() { out[i] = 0; }
+    for i in 22..out.len() {
+        out[i] = 0;
+    }
 }
 
 /// Format a PCI class ID into a fixed-size byte array.
 /// Format: "PCI\\CC_XX_XX_XX" (14 chars + null)
 /// Writes at most 16 bytes, fills the rest with null.
 fn format_pci_class(pci: &PciDevice, out: &mut [u8]) {
-    out[0] = b'P'; out[1] = b'C'; out[2] = b'I';
-    out[3] = b'\\'; out[4] = b'C'; out[5] = b'C'; out[6] = b'_';
+    out[0] = b'P';
+    out[1] = b'C';
+    out[2] = b'I';
+    out[3] = b'\\';
+    out[4] = b'C';
+    out[5] = b'C';
+    out[6] = b'_';
     write_hex2(pci.class_code as u32, &mut out[7..9]);
     out[9] = b'_';
     write_hex2(pci.subclass as u32, &mut out[10..12]);
     out[12] = b'_';
     write_hex2(pci.prog_if as u32, &mut out[13..15]);
     // Null-terminate
-    if out.len() > 15 { out[15] = 0; }
+    if out.len() > 15 {
+        out[15] = 0;
+    }
     // Fill rest with null
-    for i in 16..out.len() { out[i] = 0; }
+    for i in 16..out.len() {
+        out[i] = 0;
+    }
 }
 
 /// Format a USB device ID into a fixed-size byte array.
 /// Format: "USB\\VID_XXXX&PID_XXXX" (19 chars + null)
 /// Writes at most 22 bytes, fills the rest with null.
 fn format_usb_id(vid: u16, pid: u16, out: &mut [u8]) {
-    out[0] = b'U'; out[1] = b'S'; out[2] = b'B';
-    out[3] = b'\\'; out[4] = b'V'; out[5] = b'I';
-    out[6] = b'D'; out[7] = b'_';
+    out[0] = b'U';
+    out[1] = b'S';
+    out[2] = b'B';
+    out[3] = b'\\';
+    out[4] = b'V';
+    out[5] = b'I';
+    out[6] = b'D';
+    out[7] = b'_';
     write_hex4(vid as u32, &mut out[8..12]);
     out[12] = b'&';
-    out[13] = b'P'; out[14] = b'I'; out[15] = b'D'; out[16] = b'_';
+    out[13] = b'P';
+    out[14] = b'I';
+    out[15] = b'D';
+    out[16] = b'_';
     write_hex4(pid as u32, &mut out[17..21]);
     // Null-terminate
-    if out.len() > 21 { out[21] = 0; }
+    if out.len() > 21 {
+        out[21] = 0;
+    }
     // Fill rest with null
-    for i in 22..out.len() { out[i] = 0; }
+    for i in 22..out.len() {
+        out[i] = 0;
+    }
 }
 
 fn write_hex4(v: u32, out: &mut [u8]) {
@@ -591,10 +679,13 @@ fn write_hex2(v: u32, out: &mut [u8]) {
 /// individual drivers to attach their `IoCreateDevice`-equivalent.
 pub fn allocate_device_object(driver: *mut DriverObject, dtype: DeviceType) -> *mut DeviceObject {
     unsafe {
-        let raw = pool::allocate(pool::PoolType::NonPaged,
-                                  core::mem::size_of::<DeviceObject>())
-            as *mut DeviceObject;
-        if raw.is_null() { return null_mut(); }
+        let raw = pool::allocate(
+            pool::PoolType::NonPaged,
+            core::mem::size_of::<DeviceObject>(),
+        ) as *mut DeviceObject;
+        if raw.is_null() {
+            return null_mut();
+        }
         core::ptr::write_bytes(raw as *mut u8, 0, core::mem::size_of::<DeviceObject>());
         (*raw).device_type = dtype;
         (*raw).driver_object = driver;

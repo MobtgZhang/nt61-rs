@@ -138,10 +138,8 @@ pub unsafe extern "C" fn RpcStringBindingComposeW(
     }
     total_len += 1; // null terminator
 
-    let buffer = crate::mm::pool::allocate(
-        crate::mm::pool::PoolType::NonPaged,
-        total_len * 2,
-    ) as *mut u16;
+    let buffer =
+        crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, total_len * 2) as *mut u16;
 
     if buffer.is_null() {
         return RPC_S_OUT_OF_MEMORY;

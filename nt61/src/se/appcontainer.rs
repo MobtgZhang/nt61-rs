@@ -43,21 +43,13 @@ pub mod capabilities {
 
 pub fn create_capability_sid(capability_rid: u32) -> Sid {
     let ia = [0, 0, 0, 0, 0, 15];
-    Sid::with_authority_and_subs_arr(
-        ia,
-        2,
-        3, capability_rid, 0, 0, 0, 0, 0, 0,
-    )
+    Sid::with_authority_and_subs_arr(ia, 2, 3, capability_rid, 0, 0, 0, 0, 0, 0)
 }
 
 pub fn create_app_container_sid(package_name: &str) -> Sid {
     let ia = [0, 0, 0, 0, 0, 15];
     let hash = simple_string_hash(package_name);
-    Sid::with_authority_and_subs_arr(
-        ia,
-        2,
-        2, hash, 0, 0, 0, 0, 0, 0,
-    )
+    Sid::with_authority_and_subs_arr(ia, 2, 2, hash, 0, 0, 0, 0, 0, 0)
 }
 
 fn simple_string_hash(s: &str) -> u32 {
@@ -72,9 +64,7 @@ pub fn se_token_is_app_container(token: *const Token) -> bool {
     if token.is_null() {
         return false;
     }
-    unsafe {
-        ((*token).flags & TOKEN_IS_APP_CONTAINER) != 0
-    }
+    unsafe { ((*token).flags & TOKEN_IS_APP_CONTAINER) != 0 }
 }
 
 pub fn se_create_app_container_token(
@@ -120,9 +110,7 @@ pub fn se_create_app_container_token(
     new_token
 }
 
-pub fn se_query_app_container_info(
-    token: *const Token,
-) -> Option<(Sid, Vec<Sid>)> {
+pub fn se_query_app_container_info(token: *const Token) -> Option<(Sid, Vec<Sid>)> {
     if !se_token_is_app_container(token) {
         return None;
     }
@@ -134,9 +122,10 @@ pub fn se_query_app_container_info(
         let mut capabilities = Vec::new();
         for i in 0..tok.group_count {
             let sid = &tok.groups[i].sid;
-            if sid.identifier_authority() == 15 &&
-               sid.sub_authority_count >= 1 &&
-               sid.sub_authority[0] == 3 {
+            if sid.identifier_authority() == 15
+                && sid.sub_authority_count >= 1
+                && sid.sub_authority[0] == 3
+            {
                 capabilities.push(*sid);
             }
         }
@@ -155,8 +144,9 @@ pub fn se_token_has_capability(token: *const Token, capability_rid: u32) -> bool
     unsafe {
         let tok = &*token;
         for i in 0..tok.group_count {
-            if tok.groups[i].sid.equals(&cap_sid) &&
-               (tok.groups[i].attributes & SE_GROUP_ENABLED) != 0 {
+            if tok.groups[i].sid.equals(&cap_sid)
+                && (tok.groups[i].attributes & SE_GROUP_ENABLED) != 0
+            {
                 return true;
             }
         }
@@ -177,13 +167,17 @@ pub fn se_app_container_access_check(
 
     let required_capability = match resource_type {
         AppContainerResourceType::Network => capabilities::CAPABILITY_INTERNET_CLIENT,
-        AppContainerResourceType::PrivateNetwork => capabilities::CAPABILITY_PRIVATE_NETWORK_CLIENT_SERVER,
+        AppContainerResourceType::PrivateNetwork => {
+            capabilities::CAPABILITY_PRIVATE_NETWORK_CLIENT_SERVER
+        }
         AppContainerResourceType::PicturesLibrary => capabilities::CAPABILITY_PICTURES_LIBRARY,
         AppContainerResourceType::VideosLibrary => capabilities::CAPABILITY_VIDEOS_LIBRARY,
         AppContainerResourceType::MusicLibrary => capabilities::CAPABILITY_MUSIC_LIBRARY,
         AppContainerResourceType::DocumentsLibrary => capabilities::CAPABILITY_DOCUMENTS_LIBRARY,
         AppContainerResourceType::RemovableStorage => capabilities::CAPABILITY_REMOVABLE_STORAGE,
-        AppContainerResourceType::EnterpriseAuth => capabilities::CAPABILITY_ENTERPRISE_AUTHENTICATION,
+        AppContainerResourceType::EnterpriseAuth => {
+            capabilities::CAPABILITY_ENTERPRISE_AUTHENTICATION
+        }
     };
 
     se_token_has_capability(token, required_capability)
@@ -201,9 +195,7 @@ pub enum AppContainerResourceType {
     EnterpriseAuth,
 }
 
-pub fn se_derive_app_container_sid_from_name(
-    package_name: &str,
-) -> *mut Sid {
+pub fn se_derive_app_container_sid_from_name(package_name: &str) -> *mut Sid {
     let sid = create_app_container_sid(package_name);
     let sid_ptr = crate::mm::pool::allocate(
         crate::mm::pool::PoolType::NonPaged,
@@ -245,5 +237,4 @@ impl SecurityAttributes {
     }
 }
 
-pub fn init() {
-}
+pub fn init() {}

@@ -289,21 +289,21 @@ impl ObType {
         let idx = self.as_type_index();
         match self {
             // Reserved slots have no named Windows counterpart.
-            ObType::Reserved12  |
-            ObType::Reserved13  |
-            ObType::Reserved15  |
-            ObType::Reserved16  |
-            ObType::Reserved17  |
-            ObType::Reserved18  |
-            ObType::Reserved19  |
-            ObType::Reserved20  |
-            ObType::Reserved21  |
-            ObType::Reserved22  |
-            ObType::Reserved23  |
-            ObType::Reserved24  |
-            ObType::Reserved25  |
-            ObType::Reserved26  |
-            ObType::Reserved27  => None,
+            ObType::Reserved12
+            | ObType::Reserved13
+            | ObType::Reserved15
+            | ObType::Reserved16
+            | ObType::Reserved17
+            | ObType::Reserved18
+            | ObType::Reserved19
+            | ObType::Reserved20
+            | ObType::Reserved21
+            | ObType::Reserved22
+            | ObType::Reserved23
+            | ObType::Reserved24
+            | ObType::Reserved25
+            | ObType::Reserved26
+            | ObType::Reserved27 => None,
             // All other slots map 1:1.
             _ => Some(idx),
         }
@@ -398,7 +398,10 @@ impl ObType {
 
     /// Check if this is an event object type
     pub fn is_event(&self) -> bool {
-        matches!(self, ObType::EventNotification | ObType::EventSynchronization)
+        matches!(
+            self,
+            ObType::EventNotification | ObType::EventSynchronization
+        )
     }
 }
 
@@ -433,44 +436,44 @@ impl ObType {
 /// 36 = PowerRequest
 /// 37 = W32Object
 static OB_TYPE_INDEX_TABLE: [&str; 38] = [
-    "Type",           // 0
-    "Process",        // 1
-    "Thread",         // 2
-    "Directory",      // 3
-    "SymbolicLink",   // 4
-    "Token",          // 5
-    "Job",            // 6
-    "Event",          // 7 (Notification)
-    "Event",          // 8 (Synchronization)
-    "Section",        // 9
-    "Mutant",         // 10
-    "Semaphore",      // 11
-    "Reserved",       // 12
-    "Reserved",       // 13
-    "Key",            // 14
-    "Reserved15",     // 15
-    "Reserved16",     // 16
-    "Reserved17",     // 17
-    "Reserved18",     // 18
-    "Reserved19",     // 19
-    "Reserved20",     // 20
-    "Reserved21",     // 21
-    "Reserved22",     // 22
-    "Reserved23",     // 23
-    "Reserved24",     // 24
-    "Reserved25",     // 25
-    "Reserved26",     // 26
-    "Reserved27",     // 27
-    "Adapter",        // 28
-    "Controller",     // 29
-    "Device",         // 30
-    "Driver",         // 31
-    "IoCompletion",   // 32
-    "Timer",          // 33
-    "Profile",        // 34
-    "WmiGuid",        // 35
-    "PowerRequest",   // 36
-    "W32Object",      // 37
+    "Type",         // 0
+    "Process",      // 1
+    "Thread",       // 2
+    "Directory",    // 3
+    "SymbolicLink", // 4
+    "Token",        // 5
+    "Job",          // 6
+    "Event",        // 7 (Notification)
+    "Event",        // 8 (Synchronization)
+    "Section",      // 9
+    "Mutant",       // 10
+    "Semaphore",    // 11
+    "Reserved",     // 12
+    "Reserved",     // 13
+    "Key",          // 14
+    "Reserved15",   // 15
+    "Reserved16",   // 16
+    "Reserved17",   // 17
+    "Reserved18",   // 18
+    "Reserved19",   // 19
+    "Reserved20",   // 20
+    "Reserved21",   // 21
+    "Reserved22",   // 22
+    "Reserved23",   // 23
+    "Reserved24",   // 24
+    "Reserved25",   // 25
+    "Reserved26",   // 26
+    "Reserved27",   // 27
+    "Adapter",      // 28
+    "Controller",   // 29
+    "Device",       // 30
+    "Driver",       // 31
+    "IoCompletion", // 32
+    "Timer",        // 33
+    "Profile",      // 34
+    "WmiGuid",      // 35
+    "PowerRequest", // 36
+    "W32Object",    // 37
 ];
 
 /// Get the type name for a given type index.
@@ -645,10 +648,8 @@ impl Directory {
 }
 
 /// Pool tag we use for the object manager's allocations.
-const OB_POOL_TAG: u32 = (b'O' as u32) << 24
-    | (b'b' as u32) << 16
-    | (b'j' as u32) << 8
-    | (b'0' as u32);
+const OB_POOL_TAG: u32 =
+    (b'O' as u32) << 24 | (b'b' as u32) << 16 | (b'j' as u32) << 8 | (b'0' as u32);
 
 /// Global namespace state.
 struct Namespace {
@@ -740,7 +741,9 @@ fn allocate_handle_in_table(table: *mut ProcessHandleTable, header: *mut ObjectH
         let start = (*table).next_slot;
         let mut idx = start;
         for _ in 0..max {
-            if idx >= max { idx = 1; }
+            if idx >= max {
+                idx = 1;
+            }
             if (*table).valid[idx] == 0 {
                 (*table).slots[idx] = header as *mut _;
                 (*table).valid[idx] = 1;
@@ -751,7 +754,9 @@ fn allocate_handle_in_table(table: *mut ProcessHandleTable, header: *mut ObjectH
                 return (idx + 1) as u64; // 1-based
             }
             idx = (idx + 1) % max;
-            if idx == start { break; }
+            if idx == start {
+                break;
+            }
         }
     }
     0
@@ -787,11 +792,16 @@ fn allocate_handle_in_global_table(header: *mut ObjectHeader) -> u64 {
             let prev_water = HANDLE_TABLE_HIGH_WATER.load(Ordering::Relaxed);
             if cur_water > prev_water {
                 let _ = HANDLE_TABLE_HIGH_WATER.compare_exchange(
-                    prev_water, cur_water, Ordering::Relaxed, Ordering::Relaxed,
+                    prev_water,
+                    cur_water,
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
                 );
             }
             HANDLE_TABLE_LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
-            unsafe { (*header).handle_count.fetch_add(1, Ordering::AcqRel); }
+            unsafe {
+                (*header).handle_count.fetch_add(1, Ordering::AcqRel);
+            }
             return (idx + 1) as u64; // 1-based
         }
         // Wrap-around: if we hit the original start we are done with this pass.
@@ -938,8 +948,8 @@ pub fn validate_object_name(name: &[u8]) -> ObStatus {
     }
     // Allow well-known single-letter drive names like "C:", "D:" …
     // but reject longer names containing ':'.
-    let drive_letter_prefix = name.len() == 2 && name[1] == b':'
-        && (name[0] as char).is_ascii_alphabetic();
+    let drive_letter_prefix =
+        name.len() == 2 && name[1] == b':' && (name[0] as char).is_ascii_alphabetic();
 
     if name.len() >= MAX_NAME_LEN {
         return STATUS_NAME_TOO_LONG;
@@ -1081,7 +1091,9 @@ fn lookup_directory(path: &[u8]) -> *mut Directory {
             // Search the current directory for `component`.
             let mut next: *mut Directory = null_mut();
             for i in 0..(*current).num_entries as usize {
-                if i >= MAX_DIR_ENTRIES { break; }
+                if i >= MAX_DIR_ENTRIES {
+                    break;
+                }
                 if (*current).valid[i] != 0 {
                     let h = (*current).entries[i];
                     if (*h).get_type() == Some(ObType::Directory) {
@@ -1123,7 +1135,9 @@ pub fn lookup_object(path: &[u8]) -> *mut ObjectHeader {
     }
     unsafe {
         for i in 0..(*d).num_entries as usize {
-            if i >= MAX_DIR_ENTRIES { break; }
+            if i >= MAX_DIR_ENTRIES {
+                break;
+            }
             if (*d).valid[i] != 0 {
                 let h = (*d).entries[i];
                 let ns = name_slice(&(*h).name);
@@ -1207,7 +1221,11 @@ pub fn create_directory(path: &[u8]) -> *mut Directory {
 fn lookup_directory_non_locking(path: &[u8]) -> Option<*mut Directory> {
     let path = trim_trailing_sep(path);
     let p = lookup_directory(path);
-    if p.is_null() { None } else { Some(p) }
+    if p.is_null() {
+        None
+    } else {
+        Some(p)
+    }
 }
 
 /// Create a new object header of `ob_type` named `name`. The parent
@@ -1228,7 +1246,6 @@ pub fn create_object(
     // Validate name BEFORE doing any allocation work — Issue 3.2 fix.
     let status = validate_object_name(name);
     if status != STATUS_SUCCESS {
-        // kprintln disabled (memcpy crash workaround)
         let _ = status;
         return null_mut();
     }
@@ -1239,7 +1256,9 @@ pub fn create_object(
     unsafe {
         // Reject duplicates.
         for i in 0..(*parent).num_entries as usize {
-            if i >= MAX_DIR_ENTRIES { break; }
+            if i >= MAX_DIR_ENTRIES {
+                break;
+            }
             if (*parent).valid[i] != 0 {
                 let h = (*parent).entries[i];
                 let ns = name_slice(&(*h).name);
@@ -1304,7 +1323,9 @@ pub fn insert_object(parent_path: &[u8], header: *mut ObjectHeader) -> u64 {
 /// Reference an object. Returns the new reference count.
 pub fn reference_object(header: *mut ObjectHeader) -> u32 {
     REFERENCE_COUNT.fetch_add(1, Ordering::Relaxed);
-    if header.is_null() { return 0; }
+    if header.is_null() {
+        return 0;
+    }
     unsafe { (*header).ref_count.fetch_add(1, Ordering::AcqRel) + 1 }
 }
 
@@ -1343,10 +1364,7 @@ pub fn lookup_handle_in_process(
 /// The slot is marked invalid under the *implicit* lock (single
 /// writer thread holds the process handle table in the bootstrap
 /// environment); double-close is rejected via `valid[idx] == 0`.
-pub fn close_handle_in_process(
-    process: *mut crate::ps::process::Eprocess,
-    handle: u64,
-) -> bool {
+pub fn close_handle_in_process(process: *mut crate::ps::process::Eprocess, handle: u64) -> bool {
     if handle == 0 {
         return false;
     }
@@ -1371,7 +1389,9 @@ pub fn close_handle_in_process(
         table.valid[idx] = 0;
         table.slots[idx] = core::ptr::null_mut();
         // Atomic decrement (W-B fix).
-        table.handle_count.fetch_sub(1, core::sync::atomic::Ordering::AcqRel);
+        table
+            .handle_count
+            .fetch_sub(1, core::sync::atomic::Ordering::AcqRel);
 
         // Decrement handle count and possibly trigger deletion
         decrement_handle_count(header);
@@ -1427,7 +1447,9 @@ unsafe fn try_delete_object_locked(header: *mut ObjectHeader) -> bool {
         let parent = (*header).directory;
         let mut removed = false;
         for i in 0..(*parent).num_entries as usize {
-            if i >= MAX_DIR_ENTRIES { break; }
+            if i >= MAX_DIR_ENTRIES {
+                break;
+            }
             if (*parent).valid[i] != 0 {
                 let h = (*parent).entries[i];
                 if core::ptr::eq(h, header) {
@@ -1492,11 +1514,15 @@ unsafe fn try_delete_object_locked(header: *mut ObjectHeader) -> bool {
 /// to `try_delete_object_locked`. This is the only entry point for object
 /// deletion; callers must NOT hold `OB_DELETE_LOCK` already.
 fn delete_object(header: *mut ObjectHeader) {
-    if header.is_null() { return; }
+    if header.is_null() {
+        return;
+    }
     let _guard = OB_DELETE_LOCK.lock();
     // SAFETY: OB_DELETE_LOCK is now held; try_delete_object_locked
     //         will atomically check/set DELETING flag.
-    unsafe { try_delete_object_locked(header); }
+    unsafe {
+        try_delete_object_locked(header);
+    }
 }
 
 /// Dereference an object.
@@ -1512,7 +1538,9 @@ fn delete_object(header: *mut ObjectHeader) {
 /// With the lock held, both checks are serialised.
 pub fn dereference_object(header: *mut ObjectHeader) -> u32 {
     DEREFERENCE_COUNT.fetch_add(1, Ordering::Relaxed);
-    if header.is_null() { return 0; }
+    if header.is_null() {
+        return 0;
+    }
 
     let guard = OB_DELETE_LOCK.lock();
     let final_ref = unsafe {
@@ -1537,7 +1565,9 @@ pub fn dereference_object(header: *mut ObjectHeader) -> u32 {
 /// handle-count decrement and ref_count check to prevent races with
 /// concurrent `dereference_object` calls.
 pub fn decrement_handle_count(header: *mut ObjectHeader) {
-    if header.is_null() { return; }
+    if header.is_null() {
+        return;
+    }
 
     let guard = OB_DELETE_LOCK.lock();
     let new_handle_count = unsafe {
@@ -1562,7 +1592,9 @@ pub fn decrement_handle_count(header: *mut ObjectHeader) {
 /// `null_mut()` on failure. Increments the lookup counter.
 pub fn open_object_by_name(path: &[u8]) -> *mut ObjectHeader {
     let h = lookup_object(path);
-    if h.is_null() { return null_mut(); }
+    if h.is_null() {
+        return null_mut();
+    }
     reference_object(h);
     h
 }
@@ -1570,9 +1602,13 @@ pub fn open_object_by_name(path: &[u8]) -> *mut ObjectHeader {
 /// Look up a handle in the global handle table and return a
 /// referenced pointer.
 pub fn reference_object_by_handle(handle: u64) -> *mut ObjectHeader {
-    if handle == 0 { return null_mut(); }
+    if handle == 0 {
+        return null_mut();
+    }
     let slot = (handle - 1) as usize;
-    if slot >= MAX_HANDLES { return null_mut(); }
+    if slot >= MAX_HANDLES {
+        return null_mut();
+    }
     let t = HANDLE_TABLE.lock();
     if t.valid[slot] != 0 {
         let h = t.slots[slot];
@@ -1592,8 +1628,10 @@ pub fn reference_object_by_handle_in_process(
     handle: u64,
     process: *mut crate::ps::process::Eprocess,
 ) -> *mut ObjectHeader {
-    if handle == 0 { return null_mut(); }
-    
+    if handle == 0 {
+        return null_mut();
+    }
+
     // Try per-process table first if process is specified
     if !process.is_null() {
         if let Some(h) = lookup_handle_in_process(process, handle) {
@@ -1602,9 +1640,53 @@ pub fn reference_object_by_handle_in_process(
         }
         // Fall through to global table
     }
-    
+
     // Fall back to global kernel handle table
     reference_object_by_handle(handle)
+}
+
+/// Resolve a handle and validate `desired_access` against the object's
+/// security descriptor.
+//
+/// A handle is not a capability. On Windows 7 a handle only grants
+/// access after `SeAccessCheck` runs against the object's security
+/// descriptor using the caller's token; without this step the whole
+/// `se` ACL layer is bypassed on the handle path, because any process
+/// holding a valid handle can operate on any object.
+//
+/// Kernel-mode callers (`process` null) skip the check: this mirrors
+/// `ObReferenceObjectByHandle` with `AccessMode == KernelMode`. For a
+/// user-mode caller the DACL check is mandatory, and a denial releases
+/// the reference taken by the lookup before returning null.
+pub fn reference_object_by_handle_with_access(
+    handle: u64,
+    desired_access: u32,
+    process: *mut crate::ps::process::Eprocess,
+) -> *mut ObjectHeader {
+    let header = reference_object_by_handle_in_process(handle, process);
+    if header.is_null() {
+        return null_mut();
+    }
+    if process.is_null() {
+        return header;
+    }
+    let token = unsafe { (*process).get_token() };
+    if token.is_null() {
+        dereference_object(header);
+        return null_mut();
+    }
+    let header_ref = unsafe { &*header };
+    let (result, _granted) = crate::se::seaccess::se_access_check(
+        crate::se::seaccess::ObTypeIndex::from_u8(header_ref.type_index),
+        header_ref.security_descriptor as *const crate::se::seaccess::SecurityDescriptor,
+        desired_access,
+        token as *const crate::se::token::Token,
+    );
+    if result != crate::se::seaccess::AccessCheckResult::Allowed {
+        dereference_object(header);
+        return null_mut();
+    }
+    header
 }
 
 /// Close a handle in the global kernel handle table.
@@ -1618,9 +1700,13 @@ pub fn reference_object_by_handle_in_process(
 /// lock, and the closure logic only runs after the second `close_handle`
 /// finds `valid[slot] == 0` and returns `false`.
 pub fn close_handle_global(handle: u64) -> bool {
-    if handle == 0 { return false; }
+    if handle == 0 {
+        return false;
+    }
     let slot = (handle - 1) as usize;
-    if slot >= MAX_HANDLES { return false; }
+    if slot >= MAX_HANDLES {
+        return false;
+    }
 
     let header: *mut ObjectHeader;
     {
@@ -1662,15 +1748,29 @@ pub fn insert_object_ex(parent_path: &[u8], header: *mut ObjectHeader) -> u64 {
 }
 
 /// Counters (for the smoke test).
-pub fn create_count() -> u64 { CREATE_COUNT.load(Ordering::Relaxed) }
-pub fn insert_count() -> u64 { INSERT_COUNT.load(Ordering::Relaxed) }
-pub fn reference_count() -> u64 { REFERENCE_COUNT.load(Ordering::Relaxed) }
-pub fn dereference_count() -> u64 { DEREFERENCE_COUNT.load(Ordering::Relaxed) }
-pub fn lookup_count() -> u64 { LOOKUP_COUNT.load(Ordering::Relaxed) }
+pub fn create_count() -> u64 {
+    CREATE_COUNT.load(Ordering::Relaxed)
+}
+pub fn insert_count() -> u64 {
+    INSERT_COUNT.load(Ordering::Relaxed)
+}
+pub fn reference_count() -> u64 {
+    REFERENCE_COUNT.load(Ordering::Relaxed)
+}
+pub fn dereference_count() -> u64 {
+    DEREFERENCE_COUNT.load(Ordering::Relaxed)
+}
+pub fn lookup_count() -> u64 {
+    LOOKUP_COUNT.load(Ordering::Relaxed)
+}
 /// Number of directories in the namespace.
-pub fn dir_count() -> u32 { NAMESPACE.lock().dir_count }
+pub fn dir_count() -> u32 {
+    NAMESPACE.lock().dir_count
+}
 /// Number of objects in the namespace (including directories).
-pub fn obj_count() -> u32 { NAMESPACE.lock().obj_count }
+pub fn obj_count() -> u32 {
+    NAMESPACE.lock().obj_count
+}
 /// Number of live handles currently allocated in the global kernel handle table.
 pub fn handle_table_live_count() -> u32 {
     HANDLE_TABLE_LIVE_COUNT.load(Ordering::Relaxed)
@@ -1688,7 +1788,9 @@ pub fn handle_table_high_water() -> u32 {
 /// re-export keeps the call site readable as `ob::smoke_test()`
 /// (matching the `mm::smoke_test()` / `ke::smoke_test()` /
 /// `io::smoke_test()` convention used by `kernel_main`).
-pub fn smoke_test() -> bool { smoke::smoke_test() }
+pub fn smoke_test() -> bool {
+    smoke::smoke_test()
+}
 
 // =============================================================================
 // Security Integration
@@ -1717,7 +1819,7 @@ pub fn open_object_with_access(
     // 1. Look up the object
     let header = lookup_object(path);
     if header.is_null() {
-        // // kprintln!("[OB] open_object_with_access: object not found: {:?}", path)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[OB] open_object_with_access: object not found: {:?}", path);
         // 0xC0000034 = STATUS_OBJECT_NAME_NOT_FOUND
         return Err(0xC0000034_u32);
     }
@@ -1764,8 +1866,8 @@ pub fn open_object_with_access(
     );
     let _ = &granted;
 
-    // // kprintln!("[OB] open_object_with_access: {:?} access=0x{:x} result={:?}",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //              path, desired_access, result);
+    // // kprintln!("[OB] open_object_with_access: {:?} access=0x{:x} result={:?}",
+    // //              path, desired_access, result);
 
     match result {
         crate::se::seaccess::AccessCheckResult::Allowed => Ok(header),
@@ -1845,7 +1947,9 @@ fn ob_default_security_descriptor() -> *const crate::se::seaccess::SecurityDescr
 ///    → return the static default NULL-DACL SD.
 /// 3. Otherwise → return null (access denied by default in production;
 ///    currently in bootstrap mode the caller treats null as allowed).
-fn get_object_security_descriptor(header: *mut ObjectHeader) -> *const crate::se::seaccess::SecurityDescriptor {
+fn get_object_security_descriptor(
+    header: *mut ObjectHeader,
+) -> *const crate::se::seaccess::SecurityDescriptor {
     if header.is_null() {
         return core::ptr::null();
     }
@@ -1900,10 +2004,8 @@ pub fn ob_set_security_descriptor(
 
         // Allocate new security descriptor.
         let sd_size = core::mem::size_of::<crate::se::seaccess::SecurityDescriptor>();
-        let new_sd = crate::mm::pool::allocate(
-            crate::mm::pool::PoolType::NonPaged,
-            sd_size,
-        ) as *mut crate::se::seaccess::SecurityDescriptor;
+        let new_sd = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, sd_size)
+            as *mut crate::se::seaccess::SecurityDescriptor;
 
         if new_sd.is_null() {
             // Allocation failed.  Do NOT free the old SD — the object still owns it.
@@ -1933,7 +2035,7 @@ pub fn ob_query_security_descriptor(
     if header.is_null() {
         return core::ptr::null();
     }
-    
+
     unsafe { (*header).security_descriptor as *const crate::se::seaccess::SecurityDescriptor }
 }
 
@@ -1957,7 +2059,7 @@ impl SymbolicLinkBody {
             target_length: 0,
         }
     }
-    
+
     /// Set the target path
     pub fn set_target(&mut self, path: &[u8]) {
         let len = path.len().min(255);
@@ -1965,10 +2067,14 @@ impl SymbolicLinkBody {
         self.target[len] = 0;
         self.target_length = len as u32;
     }
-    
+
     /// Get the target path as a slice
     pub fn get_target(&self) -> &[u8] {
-        let end = self.target.iter().position(|&b| b == 0).unwrap_or(self.target.len());
+        let end = self
+            .target
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(self.target.len());
         &self.target[..end.min(self.target_length as usize)]
     }
 }
@@ -2061,15 +2167,11 @@ unsafe fn resolve_symbolic_link_safe(start: *mut ObjectHeader) -> *mut ObjectHea
 }
 
 /// Create a symbolic link object
-pub fn create_symbolic_link(
-    parent_path: &[u8],
-    name: &[u8],
-    target: &[u8],
-) -> *mut ObjectHeader {
+pub fn create_symbolic_link(parent_path: &[u8], name: &[u8], target: &[u8]) -> *mut ObjectHeader {
     // Create the symbolic link body
     let mut body = SymbolicLinkBody::new();
     body.set_target(target);
-    
+
     // Create object header
     let header = create_object(
         parent_path,
@@ -2077,39 +2179,39 @@ pub fn create_symbolic_link(
         ObType::SymbolicLink,
         core::mem::size_of::<SymbolicLinkBody>(),
     );
-    
+
     if !header.is_null() {
         unsafe {
             let body_ptr = (*header).body as *mut SymbolicLinkBody;
             core::ptr::write(body_ptr, body);
-            
+
             // Create a default security descriptor
             let sd = crate::se::seaccess::create_null_dacl_sd();
             if !sd.is_null() {
                 (*header).security_descriptor = sd as *mut crate::se::seaccess::SecurityDescriptor;
             }
         }
-        
-        // // kprintln!("[OB] Created symbolic link {:?} -> {:?}", name, target)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+
+        // // kprintln!("[OB] Created symbolic link {:?} -> {:?}", name, target);
     }
-    
+
     header
 }
 
 /// Initialize symbolic links in the \?? directory
 pub fn init_symbolic_links() {
-    // // kprintln!("[OB] Initializing symbolic links...")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    
+    // // kprintln!("[OB] Initializing symbolic links...");
+
     // \??\C: -> \Device\Harddisk0\Partition1 (typical first hard disk)
     let header = create_symbolic_link(b"\\??", b"C:", b"\\Device\\Harddisk0\\Partition1");
     if !header.is_null() {
         let _ = insert_object(b"\\??", header);
     }
-    
+
     // Other common drive letters
     let _ = create_symbolic_link(b"\\??", b"D:", b"\\Device\\CdRom0");
-    
-    // // kprintln!("[OB] Symbolic links initialized")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+
+    // // kprintln!("[OB] Symbolic links initialized");
 }
 
 // =============================================================================
@@ -2127,14 +2229,14 @@ pub const OBJ_RESERVED: u32 = 0x00000040;
 /// Look up an object with optional symbolic link resolution
 pub fn lookup_object_with_flags(path: &[u8], flags: u32) -> *mut ObjectHeader {
     let header = lookup_object(path);
-    
+
     if header.is_null() {
         return null_mut();
     }
-    
+
     // Check if we should resolve symbolic links
     let resolve_symlinks = (flags & OBJ_RESERVED) == 0; // Default: resolve
-    
+
     if resolve_symlinks {
         unsafe {
             if (*header).get_type() == Some(ObType::SymbolicLink) {
@@ -2146,6 +2248,7 @@ pub fn lookup_object_with_flags(path: &[u8], flags: u32) -> *mut ObjectHeader {
             }
         }
     }
-    
+
     header
 }
+pub mod tests;

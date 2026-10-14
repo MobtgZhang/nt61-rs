@@ -58,26 +58,47 @@ pub mod nt_paths {
         if bytes.len() >= 2 && bytes[1] == b':' {
             let nt_prefix = b"\\??\\";
             for &b in nt_prefix {
-                if pos < out.len() { out[pos] = b; pos += 1; }
+                if pos < out.len() {
+                    out[pos] = b;
+                    pos += 1;
+                }
             }
-            if pos < out.len() { out[pos] = bytes[0]; pos += 1; }
-            if pos < out.len() { out[pos] = b':'; pos += 1; }
+            if pos < out.len() {
+                out[pos] = bytes[0];
+                pos += 1;
+            }
+            if pos < out.len() {
+                out[pos] = b':';
+                pos += 1;
+            }
             for &b in &bytes[2..] {
                 let b = if b == b'/' { b'\\' } else { b };
-                if pos < out.len() { out[pos] = b; pos += 1; }
+                if pos < out.len() {
+                    out[pos] = b;
+                    pos += 1;
+                }
             }
             return pos;
         }
 
         // Absolute path not under \??\: prefix with \SystemRoot\
-        if bytes.starts_with(b"\\") && !bytes.starts_with(b"\\??\\") && !bytes.starts_with(b"\\Device\\") {
+        if bytes.starts_with(b"\\")
+            && !bytes.starts_with(b"\\??\\")
+            && !bytes.starts_with(b"\\Device\\")
+        {
             let nt_prefix = b"\\SystemRoot\\";
             for &b in nt_prefix {
-                if pos < out.len() { out[pos] = b; pos += 1; }
+                if pos < out.len() {
+                    out[pos] = b;
+                    pos += 1;
+                }
             }
             for &b in &bytes[1..] {
                 let b = if b == b'/' { b'\\' } else { b };
-                if pos < out.len() { out[pos] = b; pos += 1; }
+                if pos < out.len() {
+                    out[pos] = b;
+                    pos += 1;
+                }
             }
             return pos;
         }
@@ -85,7 +106,10 @@ pub mod nt_paths {
         // Default: copy as-is with slash normalization
         for &b in bytes {
             let b = if b == b'/' { b'\\' } else { b };
-            if pos < out.len() { out[pos] = b; pos += 1; }
+            if pos < out.len() {
+                out[pos] = b;
+                pos += 1;
+            }
         }
         pos
     }
@@ -96,16 +120,25 @@ pub mod nt_paths {
         let mut pos = 0;
         let prefix = b"\\Device\\HarddiskVolume";
         for &b in prefix {
-            if pos < out.len() { out[pos] = b; pos += 1; }
+            if pos < out.len() {
+                out[pos] = b;
+                pos += 1;
+            }
         }
         if pos < out.len() {
             out[pos] = b'0' + (volume % 10);
             pos += 1;
         }
-        if pos < out.len() { out[pos] = b'\\'; pos += 1; }
+        if pos < out.len() {
+            out[pos] = b'\\';
+            pos += 1;
+        }
         for &b in bytes {
             let b = if b == b'/' { b'\\' } else { b };
-            if pos < out.len() { out[pos] = b; pos += 1; }
+            if pos < out.len() {
+                out[pos] = b;
+                pos += 1;
+            }
         }
         pos
     }
@@ -155,19 +188,27 @@ pub mod env {
             if bytes[i] == b'%' {
                 // Find the closing %
                 let mut j = i + 1;
-                while j < bytes.len() && bytes[j] != b'%' { j += 1; }
+                while j < bytes.len() && bytes[j] != b'%' {
+                    j += 1;
+                }
                 if j < bytes.len() {
                     // Variable name is bytes[i+1..j]
                     let name_bytes = &bytes[i + 1..j];
                     let name_str = core::str::from_utf8(name_bytes).unwrap_or("");
                     if let Some(val) = get_var(name_str) {
                         for &b in val.as_bytes() {
-                            if pos < out.len() { out[pos] = b; pos += 1; }
+                            if pos < out.len() {
+                                out[pos] = b;
+                                pos += 1;
+                            }
                         }
                     } else {
                         // Keep original
                         for &b in &bytes[i..=j] {
-                            if pos < out.len() { out[pos] = b; pos += 1; }
+                            if pos < out.len() {
+                                out[pos] = b;
+                                pos += 1;
+                            }
                         }
                     }
                     i = j + 1;
@@ -238,14 +279,30 @@ impl FileAttributes {
 
     pub fn to_u32(&self) -> u32 {
         let mut attr = 0u32;
-        if self.readonly { attr |= Self::READONLY; }
-        if self.hidden { attr |= Self::HIDDEN; }
-        if self.system { attr |= Self::SYSTEM; }
-        if self.directory { attr |= Self::DIRECTORY; }
-        if self.archive { attr |= Self::ARCHIVE; }
-        if self.device { attr |= Self::DEVICE; }
-        if self.normal { attr |= Self::NORMAL; }
-        if self.temporary { attr |= Self::TEMPORARY; }
+        if self.readonly {
+            attr |= Self::READONLY;
+        }
+        if self.hidden {
+            attr |= Self::HIDDEN;
+        }
+        if self.system {
+            attr |= Self::SYSTEM;
+        }
+        if self.directory {
+            attr |= Self::DIRECTORY;
+        }
+        if self.archive {
+            attr |= Self::ARCHIVE;
+        }
+        if self.device {
+            attr |= Self::DEVICE;
+        }
+        if self.normal {
+            attr |= Self::NORMAL;
+        }
+        if self.temporary {
+            attr |= Self::TEMPORARY;
+        }
         attr
     }
 }
@@ -276,7 +333,11 @@ impl DirEntry {
         Self {
             name: name_buf,
             name_len: n as u8,
-            attributes: if is_dir { FileAttributes::DIRECTORY } else { FileAttributes::NORMAL },
+            attributes: if is_dir {
+                FileAttributes::DIRECTORY
+            } else {
+                FileAttributes::NORMAL
+            },
             size,
         }
     }

@@ -46,7 +46,9 @@ pub fn chip_name(device_id: u16) -> &'static str {
 }
 
 /// Get chip type from device ID
-pub fn chip_from_device_id(device_id: u16) -> crate::drivers::video::core::gpu_common::LoongsonChip {
+pub fn chip_from_device_id(
+    device_id: u16,
+) -> crate::drivers::video::core::gpu_common::LoongsonChip {
     match device_id {
         LS7A_DC_DEVICE_ID => crate::drivers::video::core::gpu_common::LoongsonChip::Ls7A,
         LS3A5000_DC_DEVICE_ID => crate::drivers::video::core::gpu_common::LoongsonChip::Ls3A5000,

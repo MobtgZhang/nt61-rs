@@ -21,9 +21,9 @@
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
+use crate::kprintln_error;
 use crate::kprintln_info;
 use crate::kprintln_warn;
-use crate::kprintln_error;
 use crate::mm::pagefile;
 use crate::mm::pfn;
 
@@ -131,7 +131,7 @@ impl AtomicPagerStats {
             stats: core::sync::atomic::AtomicU64::new(0),
         }
     }
-    
+
     fn load(&self) -> PagerStats {
         let bits = self.stats.load(Ordering::Relaxed);
         let _ = &bits;
@@ -145,7 +145,7 @@ impl AtomicPagerStats {
             last_pageout_time: 0,
         }
     }
-    
+
     fn store(&self, stats: &PagerStats) {
         let bits = stats.total_pageouts
             | (stats.pages_paged_out << 16)
@@ -177,9 +177,12 @@ pub fn init() {
     let _ = &pressure;
     update_pressure(pressure);
 
-    kprintln_info!("MEMORY",
+    kprintln_info!(
+        "MEMORY",
         "Initial memory pressure: {:?} ({})",
-        pressure, pressure.description());
+        pressure,
+        pressure.description()
+    );
     kprintln_info!("MEMORY", "Pager subsystem initialized");
 }
 
@@ -197,7 +200,7 @@ pub fn is_enabled() -> bool {
 pub fn detect_memory_pressure() -> MemoryPressure {
     // Get PFN database statistics
     let (total_pfns, free_pfns, standby_pfns) = get_pfn_stats();
-    
+
     // Calculate available memory (free + standby)
     let available = free_pfns.saturating_add(standby_pfns);
     let _ = &available;
@@ -208,7 +211,7 @@ pub fn detect_memory_pressure() -> MemoryPressure {
         100.0
     };
     let _ = &available_pct;
-    
+
     // Also check pagefile availability
     let pagefile_free = pagefile::get_total_free_pagefile_pages();
     let _ = &pagefile_free;
@@ -216,7 +219,7 @@ pub fn detect_memory_pressure() -> MemoryPressure {
     let pagefile_critical = pagefile_free < 256;
     let _ = &pagefile_critical; // Less than 256 pages
     let _ = &pagefile_critical;
-    
+
     let pressure = if available_pct >= THRESHOLD_LOW {
         MemoryPressure::Low
     } else if available_pct >= THRESHOLD_MEDIUM {
@@ -226,9 +229,9 @@ pub fn detect_memory_pressure() -> MemoryPressure {
     } else {
         MemoryPressure::Critical
     };
-    
+
     let _ = &pressure;
-    
+
     pressure
 }
 
@@ -289,12 +292,12 @@ pub fn get_standby_pfns() -> u64 {
 fn get_standby_pages(max_count: usize) -> alloc::vec::Vec<u64> {
     let mut result = alloc::vec::Vec::new();
     let mut count = 0;
-    
+
     let db = pfn::PFN_DB.lock();
-    
+
     let _ = &db;
     let _ = &db;
-    
+
     // Iterate through standby list to collect candidates
     // In a real implementation, we'd have direct access to the list
     for i in 0..1024u64 {
@@ -312,7 +315,7 @@ fn get_standby_pages(max_count: usize) -> alloc::vec::Vec<u64> {
             }
         }
     }
-    
+
     result
 }
 
@@ -334,30 +337,33 @@ pub fn check_and_pageout() {
     if !is_enabled() {
         return;
     }
-    
+
     let pressure = detect_memory_pressure();
-    
+
     let _ = &pressure;
     let _ = &pressure;
-    
+
     // Only page out on high or critical pressure
     if pressure != MemoryPressure::High && pressure != MemoryPressure::Critical {
         return;
     }
-    
+
     let target = calculate_pageout_target(pressure);
-    
+
     let _ = &target;
     let _ = &target;
-    
+
     if target == 0 {
         return;
     }
-    
-    kprintln_info!("MEMORY",
+
+    kprintln_info!(
+        "MEMORY",
         "Memory pressure {:?}, targeting {} pages for pageout",
-        pressure, target);
-    
+        pressure,
+        target
+    );
+
     perform_pageout(target);
 }
 
@@ -373,7 +379,7 @@ fn calculate_pageout_target(pressure: MemoryPressure) -> u64 {
 /// Perform pageout of the specified number of pages.
 fn perform_pageout(target: u64) -> u64 {
     let mut pageouted = 0u64;
-    
+
     while pageouted < target {
         // Get next pageout candidate
         if let Some(candidate) = select_pageout_candidate() {
@@ -385,23 +391,21 @@ fn perform_pageout(target: u64) -> u64 {
             }
         } else {
             // No more candidates available
-            kprintln_warn!("MEMORY",
-                "No more pageout candidates available");
+            kprintln_warn!("MEMORY", "No more pageout candidates available");
             break;
         }
     }
-    
+
     if pageouted > 0 {
         let mut stats = PAGER_STATS.load();
         stats.total_pageouts += 1;
         stats.pages_paged_out += pageouted;
         stats.last_pageout_time = get_tick_count();
         PAGER_STATS.store(&stats);
-        
-        kprintln_info!("MEMORY",
-            "Paged out {} pages", pageouted);
+
+        kprintln_info!("MEMORY", "Paged out {} pages", pageouted);
     }
-    
+
     pageouted
 }
 
@@ -435,7 +439,7 @@ fn select_pageout_candidate() -> Option<PageoutCandidate> {
             });
         }
     }
-    
+
     best
 }
 
@@ -505,8 +509,7 @@ fn pageout_single(candidate: &PageoutCandidate) -> bool {
     let (pagefile_no, offset) = match pagefile::reserve_slot() {
         Some(slot) => slot,
         None => {
-            kprintln_warn!("MEMORY",
-                "Failed to reserve pagefile slot");
+            kprintln_warn!("MEMORY", "Failed to reserve pagefile slot");
             return false;
         }
     };
@@ -522,8 +525,7 @@ fn pageout_single(candidate: &PageoutCandidate) -> bool {
     } else {
         // Release the slot on failure
         pagefile::release_slot(pagefile_no, offset);
-        kprintln_warn!("MEMORY",
-            "Failed to write page {} to pagefile", pfn);
+        kprintln_warn!("MEMORY", "Failed to write page {} to pagefile", pfn);
         false
     }
 }
@@ -534,12 +536,11 @@ pub fn pagein(pfn: u64, pagefile_no: u32, offset: u32) -> bool {
     let new_pfn = match pagefile::read_page_from_disk(pagefile_no, offset) {
         Some(p) => p,
         None => {
-            kprintln_error!("MEMORY",
-                "Failed to read page from pagefile");
+            kprintln_error!("MEMORY", "Failed to read page from pagefile");
             return false;
         }
     };
-    
+
     if new_pfn != pfn {
         // The pagefile read allocated a new PFN
         // Copy the data to the target PFN
@@ -549,7 +550,7 @@ pub fn pagein(pfn: u64, pagefile_no: u32, offset: u32) -> bool {
         let dst_pa = crate::mm::pte::pfn_to_phys(pfn);
         let _ = &dst_pa;
         let _ = &dst_pa;
-        
+
         // Copy 4KB
         for i in 0..512usize {
             let v = unsafe { core::ptr::read_volatile((src_pa as *const u64).add(i)) };
@@ -557,20 +558,20 @@ pub fn pagein(pfn: u64, pagefile_no: u32, offset: u32) -> bool {
             let _ = &v;
             unsafe { core::ptr::write_volatile((dst_pa as *mut u64).add(i), v) };
         }
-        
+
         // Free the temporary PFN
         pfn::free_pfn(new_pfn);
     }
-    
+
     // Release the pagefile slot
     pagefile::release_slot(pagefile_no, offset);
-    
+
     // Update statistics
     let mut stats = PAGER_STATS.load();
     stats.total_pageins += 1;
     stats.pages_paged_in += 1;
     PAGER_STATS.store(&stats);
-    
+
     true
 }
 
@@ -579,19 +580,22 @@ pub fn emergency_pageout(required_pages: u64) -> u64 {
     if !is_enabled() {
         return 0;
     }
-    
-    kprintln_warn!("MEMORY",
-        "Emergency pageout requested: {} pages", required_pages);
-    
+
+    kprintln_warn!(
+        "MEMORY",
+        "Emergency pageout requested: {} pages",
+        required_pages
+    );
+
     let mut pageouted = 0u64;
     let mut attempts = 0;
     let max_attempts = required_pages * 4;
     let _ = &max_attempts;
     let _ = &max_attempts;
-    
+
     while pageouted < required_pages && attempts < max_attempts {
         attempts += 1;
-        
+
         if let Some(candidate) = select_pageout_candidate() {
             if pageout_single(&candidate) {
                 pageouted += 1;
@@ -600,13 +604,16 @@ pub fn emergency_pageout(required_pages: u64) -> u64 {
             break;
         }
     }
-    
+
     if pageouted < required_pages {
-        kprintln_error!("MEMORY",
+        kprintln_error!(
+            "MEMORY",
             "Emergency pageout: only {} of {} pages paged out",
-            pageouted, required_pages);
+            pageouted,
+            required_pages
+        );
     }
-    
+
     pageouted
 }
 
@@ -621,7 +628,7 @@ pub fn get_stats() -> PagerStats {
 pub fn get_working_set_info() -> WorkingSetInfo {
     // Simplified: return basic working set info
     WorkingSetInfo {
-        minimum_size: 1024,  // 4MB minimum
+        minimum_size: 1024,        // 4MB minimum
         maximum_size: 1024 * 1024, // 4GB maximum
         current_size: pfn::get_standby_pfns(),
         transitioning_pages: 0,
@@ -645,17 +652,17 @@ pub fn print_status() {
     let _pressure = detect_memory_pressure();
     let _ = &_pressure;
     let _ = &_pressure;
-    
-    // [DISABLED] // // kprintln!("[PAGER] Status:")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  Memory Pressure: {:?}", pressure)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  Total Pageouts: {}", stats.total_pageouts)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  Pages Paged Out: {}", stats.pages_paged_out)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  Total Pageins: {}", stats.total_pageins)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  Pages Paged In: {}", stats.pages_paged_in)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    
+
+    // [DISABLED] // // kprintln!("[PAGER] Status:");
+    // [DISABLED] // // kprintln!("  Memory Pressure: {:?}", pressure);
+    // [DISABLED] // // kprintln!("  Total Pageouts: {}", stats.total_pageouts);
+    // [DISABLED] // // kprintln!("  Pages Paged Out: {}", stats.pages_paged_out);
+    // [DISABLED] // // kprintln!("  Total Pageins: {}", stats.total_pageins);
+    // [DISABLED] // // kprintln!("  Pages Paged In: {}", stats.pages_paged_in);
+
     // Reserved for future use: working set information
     let _ws = get_working_set_info();
     let _ = &_ws;
     let _ = &_ws;
-    // [DISABLED] // // kprintln!("  Working Set: {} pages", ws.current_size)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // [DISABLED] // // kprintln!("  Working Set: {} pages", ws.current_size);
 }

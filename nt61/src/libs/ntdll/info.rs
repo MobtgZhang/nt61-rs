@@ -14,9 +14,7 @@
 //! References: MSDN Library "Windows 7" —
 //! `ntdll.dll` system information APIs.
 
-use super::status::{
-    STATUS_INVALID_INFO_CLASS, STATUS_INVALID_PARAMETER, STATUS_SUCCESS,
-};
+use super::status::{STATUS_INVALID_INFO_CLASS, STATUS_INVALID_PARAMETER, STATUS_SUCCESS};
 use super::types::{NTSTATUS, PVOID, SIZE_T};
 use core::ptr;
 
@@ -100,7 +98,8 @@ pub unsafe extern "C" fn NtQuerySystemInformation(
         }
         1 => {
             // SystemProcessorInformation
-            if system_information_length < core::mem::size_of::<SystemProcessorInformation>() as u32 {
+            if system_information_length < core::mem::size_of::<SystemProcessorInformation>() as u32
+            {
                 return super::status::STATUS_BUFFER_TOO_SMALL;
             }
             let s = &mut *(system_information as *mut SystemProcessorInformation);
@@ -116,7 +115,8 @@ pub unsafe extern "C" fn NtQuerySystemInformation(
         }
         3 => {
             // SystemTimeOfDayInformation
-            if system_information_length < core::mem::size_of::<SystemTimeOfDayInformation>() as u32 {
+            if system_information_length < core::mem::size_of::<SystemTimeOfDayInformation>() as u32
+            {
                 return super::status::STATUS_BUFFER_TOO_SMALL;
             }
             let s = &mut *(system_information as *mut SystemTimeOfDayInformation);
@@ -132,7 +132,9 @@ pub unsafe extern "C" fn NtQuerySystemInformation(
             STATUS_SUCCESS
         }
         _ => {
-            if !return_length.is_null() { *return_length = 0; }
+            if !return_length.is_null() {
+                *return_length = 0;
+            }
             STATUS_INVALID_INFO_CLASS
         }
     }

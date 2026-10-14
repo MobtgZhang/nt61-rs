@@ -6,14 +6,14 @@
 //! path. The actual KEX/auth/child orchestration lives in
 //! `servers::sshd::session` (added in later stages).
 
-pub mod config;
-pub mod session;
 pub mod child;
+pub mod config;
 pub mod launcher;
+pub mod session;
 
 use crate::ke::sync::Spinlock;
 use alloc::string::String;
-use config::{SshdConfig, PermitRoot};
+use config::{PermitRoot, SshdConfig};
 
 /// Live sshd state, used by debug prints and by the session layer.
 pub struct SshdState {

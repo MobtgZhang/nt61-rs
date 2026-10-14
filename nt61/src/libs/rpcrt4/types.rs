@@ -105,17 +105,40 @@ pub struct UUID {
 }
 
 pub const PROTSEQ_NCALRPC: &[u16] = &[
-    b'n' as u16, b'c' as u16, b'a' as u16, b'l' as u16,
-    b'r' as u16, b'p' as u16, b'c' as u16, 0,
+    b'n' as u16,
+    b'c' as u16,
+    b'a' as u16,
+    b'l' as u16,
+    b'r' as u16,
+    b'p' as u16,
+    b'c' as u16,
+    0,
 ];
 pub const PROTSEQ_NCACN_NP: &[u16] = &[
-    b'n' as u16, b'c' as u16, b'a' as u16, b'c' as u16,
-    b'n' as u16, b'_' as u16, b'n' as u16, b'p' as u16, 0,
+    b'n' as u16,
+    b'c' as u16,
+    b'a' as u16,
+    b'c' as u16,
+    b'n' as u16,
+    b'_' as u16,
+    b'n' as u16,
+    b'p' as u16,
+    0,
 ];
 pub const PROTSEQ_NCACN_IP_TCP: &[u16] = &[
-    b'n' as u16, b'c' as u16, b'a' as u16, b'c' as u16,
-    b'n' as u16, b'_' as u16, b'i' as u16, b'p' as u16,
-    b'_' as u16, b't' as u16, b'c' as u16, b'p' as u16, 0,
+    b'n' as u16,
+    b'c' as u16,
+    b'a' as u16,
+    b'c' as u16,
+    b'n' as u16,
+    b'_' as u16,
+    b'i' as u16,
+    b'p' as u16,
+    b'_' as u16,
+    b't' as u16,
+    b'c' as u16,
+    b'p' as u16,
+    0,
 ];
 
 #[repr(C)]

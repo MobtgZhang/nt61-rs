@@ -13,22 +13,19 @@
 //!
 //! References: Windows Internals, WRK
 
-use core::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, AtomicBool, AtomicPtr, Ordering};
-use super::token::{Token, TokenTypeEnum, ImpersonationLevel, Luid};
-use super::sid::Sid;
 use super::acl::Acl;
-use super::seaccess::{SecurityDescriptor, AccessCheckResult, GenericMapping};
+use super::seaccess::{AccessCheckResult, GenericMapping, SecurityDescriptor};
+use super::sid::Sid;
+use super::token::{ImpersonationLevel, Luid, Token, TokenTypeEnum};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 static SRM_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 pub fn init_phase0() {
-    unsafe {
-        SRM_INITIALIZED = true;
-    }
+    SRM_INITIALIZED.store(true, Ordering::SeqCst);
 }
 
-pub fn init_phase1() {
-}
+pub fn init_phase1() {}
 
 #[repr(C)]
 pub struct SecuritySubjectContext {
@@ -98,13 +95,8 @@ pub fn se_access_check_with_context(
 
     let sd = unsafe { &*security_descriptor };
 
-    let result = super::seaccess::check_access(
-        access,
-        token_ref,
-        unsafe { &*sd.owner },
-        sd.dacl,
-        Some(generic_mapping),
-    );
+    let result =
+        super::seaccess::check_access(access, token_ref, &sd.owner, sd.dacl, Some(generic_mapping));
 
     let granted = match result {
         AccessCheckResult::Allowed => access,
@@ -122,9 +114,7 @@ pub fn se_valid_security_descriptor(
         return false;
     }
 
-    unsafe {
-        (*security_descriptor).is_valid()
-    }
+    unsafe { (*security_descriptor).is_valid() }
 }
 
 pub fn se_assign_security(
@@ -147,33 +137,19 @@ pub fn se_assign_security(
         (*new_sd).sbz1 = 0;
         (*new_sd).control = 0;
 
-        if !explicit_descriptor.is_null() && !(*explicit_descriptor).owner.is_null() {
+        if !explicit_descriptor.is_null() {
             (*new_sd).owner = (*explicit_descriptor).owner;
         } else if !token.is_null() {
             // Owner comes from token's user SID
             let token_ref = &*token;
-            let owner_ptr = crate::mm::pool::allocate(
-                crate::mm::pool::PoolType::NonPaged,
-                core::mem::size_of::<Sid>(),
-            ) as *mut Sid;
-            if !owner_ptr.is_null() {
-                *owner_ptr = token_ref.user;
-                (*new_sd).owner = owner_ptr;
-            }
+            (*new_sd).owner = token_ref.user;
         }
 
-        if !explicit_descriptor.is_null() && !(*explicit_descriptor).group.is_null() {
+        if !explicit_descriptor.is_null() {
             (*new_sd).group = (*explicit_descriptor).group;
         } else if !token.is_null() {
             let token_ref = &*token;
-            let group_ptr = crate::mm::pool::allocate(
-                crate::mm::pool::PoolType::NonPaged,
-                core::mem::size_of::<Sid>(),
-            ) as *mut Sid;
-            if !group_ptr.is_null() {
-                *group_ptr = token_ref.primary_group;
-                (*new_sd).group = group_ptr;
-            }
+            (*new_sd).group = token_ref.primary_group;
         }
 
         if !explicit_descriptor.is_null() {
@@ -200,13 +176,6 @@ pub fn se_deassign_security(security_descriptor: *mut *mut SecurityDescriptor) {
     unsafe {
         let sd = *security_descriptor;
         if !sd.is_null() {
-            if !(*sd).owner.is_null() {
-                crate::mm::pool::free((*sd).owner as *mut u8);
-            }
-            if !(*sd).group.is_null() {
-                crate::mm::pool::free((*sd).group as *mut u8);
-            }
-
             crate::mm::pool::free(sd as *mut u8);
             *security_descriptor = core::ptr::null_mut();
         }
@@ -233,11 +202,11 @@ pub fn se_query_security_descriptor_info(
     unsafe {
         let sd = &*security_descriptor;
 
-        if (security_information & OWNER_SECURITY_INFORMATION) != 0 && !sd.owner.is_null() {
-            required_length += (*sd.owner).size() as u32;
+        if (security_information & OWNER_SECURITY_INFORMATION) != 0 {
+            required_length += sd.owner.size() as u32;
         }
-        if (security_information & GROUP_SECURITY_INFORMATION) != 0 && !sd.group.is_null() {
-            required_length += (*sd.group).size() as u32;
+        if (security_information & GROUP_SECURITY_INFORMATION) != 0 {
+            required_length += sd.group.size() as u32;
         }
         if (security_information & DACL_SECURITY_INFORMATION) != 0 && !sd.dacl.is_null() {
             required_length += (*sd.dacl).size() as u32;

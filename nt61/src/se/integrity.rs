@@ -118,20 +118,25 @@ pub fn se_get_object_integrity_level(
 
         if !sd.sacl.is_null() {
             let sacl = &*sd.sacl;
+            let Some(limit) = sacl.used_size() else {
+                return SECURITY_MANDATORY_MEDIUM_RID;
+            };
 
             let mut offset = 8usize;
             for _ in 0..sacl.ace_count {
-                if offset + 4 > sacl.acl_size as usize {
+                if offset + 4 > limit {
                     break;
                 }
 
                 let ace_type = sacl.data[offset];
                 let ace_size = (sacl.data[offset + 2] as usize) | ((sacl.data[offset + 3] as usize) << 8);
+                if ace_size < 16 || offset + ace_size > limit {
+                    break;
+                }
 
-                if ace_type == 0x11 && ace_size >= 8 {
+                if ace_type == 0x11 {
                     let sid_offset = offset + 8;
-                    if sid_offset + 8 <= sacl.data.len() {
-                        let sid = read_sid_from_acl_data(&sacl.data, sid_offset);
+                    if let Some(sid) = read_sid_from_acl_data(&sacl.data[sid_offset..offset + ace_size]) {
                         if sid.identifier_authority() == 16 && sid.sub_authority_count >= 1 {
                             return sid.sub_authority[0];
                         }
@@ -146,40 +151,8 @@ pub fn se_get_object_integrity_level(
     SECURITY_MANDATORY_MEDIUM_RID
 }
 
-fn read_sid_from_acl_data(data: &[u8], offset: usize) -> Sid {
-    if offset + 8 > data.len() {
-        return Sid::new();
-    }
-
-    let _revision = data[offset];
-    let subauth_count = data[offset + 1];
-    let mut ia = [0u8; 6];
-    for i in 0..6 {
-        if offset + 2 + i < data.len() {
-            ia[i] = data[offset + 2 + i];
-        }
-    }
-
-    let count = (subauth_count as usize).min(8);
-    let mut subs = [0u32; 8];
-    for i in 0..count {
-        let off = offset + 8 + i * 4;
-        if off + 4 <= data.len() {
-            subs[i] = u32::from_le_bytes([
-                data[off],
-                data[off + 1],
-                data[off + 2],
-                data[off + 3],
-            ]);
-        }
-    }
-
-    Sid::with_authority_and_subs_arr(
-        ia,
-        count as u8,
-        subs[0], subs[1], subs[2], subs[3],
-        subs[4], subs[5], subs[6], subs[7],
-    )
+fn read_sid_from_acl_data(data: &[u8]) -> Option<Sid> {
+    Sid::from_bytes(data)
 }
 
 pub fn se_set_object_integrity_level(

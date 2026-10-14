@@ -10,15 +10,15 @@
 
 use super::file::{alloc_handle, free_handle, lookup_handle, HandleKind};
 use super::status::{
-    STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER, STATUS_NOT_IMPLEMENTED,
-    STATUS_SUCCESS, STATUS_TIMEOUT,
+    STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER, STATUS_NOT_IMPLEMENTED, STATUS_SUCCESS,
+    STATUS_TIMEOUT,
 };
 use super::types::{HANDLE, NTSTATUS, PVOID};
 use core::ptr;
 
 /// Event state tracking for proper kernel event integration.
 pub(crate) struct EventState {
-    pub event_type: u32,      // 0 = Notification, 1 = Synchronization
+    pub event_type: u32, // 0 = Notification, 1 = Synchronization
     pub signaled: bool,
     pub manual_reset: bool,
 }
@@ -64,7 +64,9 @@ pub unsafe extern "C" fn NtCreateEvent(
 ) -> NTSTATUS {
     use super::status::STATUS_INVALID_PARAMETER;
 
-    if event_handle.is_null() { return STATUS_INVALID_PARAMETER; }
+    if event_handle.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
     let _ = (desired_access, object_attributes);
 
     // Determine event type and initial state
@@ -73,7 +75,9 @@ pub unsafe extern "C" fn NtCreateEvent(
 
     let target = encode_event_state(event_type, signaled, manual_reset);
     let h = alloc_handle(HandleKind::Event, target);
-    if h.is_null() { return STATUS_INVALID_HANDLE; }
+    if h.is_null() {
+        return STATUS_INVALID_HANDLE;
+    }
     *event_handle = h;
     STATUS_SUCCESS
 }
@@ -85,7 +89,9 @@ pub unsafe extern "C" fn NtCreateEvent(
 pub unsafe extern "C" fn NtSetEvent(event_handle: HANDLE, previous_state: *mut u32) -> NTSTATUS {
     use super::status::STATUS_INVALID_HANDLE;
 
-    if event_handle.is_null() { return STATUS_INVALID_HANDLE; }
+    if event_handle.is_null() {
+        return STATUS_INVALID_HANDLE;
+    }
 
     // Look up the event handle
     if let Some(entry) = lookup_handle(event_handle) {
@@ -111,7 +117,9 @@ pub unsafe extern "C" fn NtSetEvent(event_handle: HANDLE, previous_state: *mut u
 pub unsafe extern "C" fn NtResetEvent(event_handle: HANDLE, previous_state: *mut u32) -> NTSTATUS {
     use super::status::STATUS_INVALID_HANDLE;
 
-    if event_handle.is_null() { return STATUS_INVALID_HANDLE; }
+    if event_handle.is_null() {
+        return STATUS_INVALID_HANDLE;
+    }
 
     if let Some(entry) = lookup_handle(event_handle) {
         if entry.kind == HandleKind::Event {
@@ -133,7 +141,9 @@ pub unsafe extern "C" fn NtResetEvent(event_handle: HANDLE, previous_state: *mut
 pub unsafe extern "C" fn NtClearEvent(event_handle: HANDLE) -> NTSTATUS {
     use super::status::STATUS_INVALID_HANDLE;
 
-    if event_handle.is_null() { return STATUS_INVALID_HANDLE; }
+    if event_handle.is_null() {
+        return STATUS_INVALID_HANDLE;
+    }
 
     if let Some(entry) = lookup_handle(event_handle) {
         if entry.kind == HandleKind::Event {
@@ -148,7 +158,9 @@ pub unsafe extern "C" fn NtClearEvent(event_handle: HANDLE) -> NTSTATUS {
 pub unsafe extern "C" fn NtPulseEvent(event_handle: HANDLE, previous_state: *mut u32) -> NTSTATUS {
     use super::status::STATUS_INVALID_HANDLE;
 
-    if event_handle.is_null() { return STATUS_INVALID_HANDLE; }
+    if event_handle.is_null() {
+        return STATUS_INVALID_HANDLE;
+    }
 
     if let Some(entry) = lookup_handle(event_handle) {
         if entry.kind == HandleKind::Event {
@@ -177,7 +189,9 @@ pub unsafe extern "C" fn NtCreateMutant(
 ) -> NTSTATUS {
     use super::status::STATUS_INVALID_PARAMETER;
 
-    if mutant_handle.is_null() { return STATUS_INVALID_PARAMETER; }
+    if mutant_handle.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
     let _ = (desired_access, object_attributes);
 
     // Encode mutex state: initial_owner flag in low bit
@@ -188,14 +202,16 @@ pub unsafe extern "C" fn NtCreateMutant(
             0x00u64
         } else {
             let tid = unsafe { (*current_ethread).client_id.unique_thread };
-            (tid << 8) | 0x01  // owned flag | tid
+            (tid << 8) | 0x01 // owned flag | tid
         }
     } else {
-        0x00  // not owned
+        0x00 // not owned
     };
 
     let h = alloc_handle(HandleKind::Mutant, target);
-    if h.is_null() { return STATUS_INVALID_HANDLE; }
+    if h.is_null() {
+        return STATUS_INVALID_HANDLE;
+    }
     *mutant_handle = h;
     STATUS_SUCCESS
 }
@@ -203,10 +219,15 @@ pub unsafe extern "C" fn NtCreateMutant(
 /// `NtReleaseMutant`.
 /// Releases ownership of the mutex. If the thread doesn't own the mutex,
 /// returns an error.
-pub unsafe extern "C" fn NtReleaseMutant(mutant_handle: HANDLE, previous_count: *mut u32) -> NTSTATUS {
+pub unsafe extern "C" fn NtReleaseMutant(
+    mutant_handle: HANDLE,
+    previous_count: *mut u32,
+) -> NTSTATUS {
     use super::status::{STATUS_INVALID_HANDLE, STATUS_MUTEX_NOT_OWNED, STATUS_SUCCESS};
 
-    if mutant_handle.is_null() { return STATUS_INVALID_HANDLE; }
+    if mutant_handle.is_null() {
+        return STATUS_INVALID_HANDLE;
+    }
 
     if let Some(entry) = lookup_handle(mutant_handle) {
         if entry.kind == HandleKind::Mutant {
@@ -247,11 +268,17 @@ pub unsafe extern "C" fn NtCreateSemaphore(
     initial_count: u32,
     maximum_count: u32,
 ) -> NTSTATUS {
-    if semaphore_handle.is_null() { return STATUS_INVALID_PARAMETER; }
+    if semaphore_handle.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
     let _ = (desired_access, object_attributes);
-    let h = alloc_handle(HandleKind::Semaphore,
-                         ((maximum_count as u64) << 32) | (initial_count as u64));
-    if h.is_null() { return STATUS_INVALID_HANDLE; }
+    let h = alloc_handle(
+        HandleKind::Semaphore,
+        ((maximum_count as u64) << 32) | (initial_count as u64),
+    );
+    if h.is_null() {
+        return STATUS_INVALID_HANDLE;
+    }
     *semaphore_handle = h;
     STATUS_SUCCESS
 }
@@ -262,8 +289,12 @@ pub unsafe extern "C" fn NtReleaseSemaphore(
     release_count: u32,
     previous_count: *mut u32,
 ) -> NTSTATUS {
-    if semaphore_handle.is_null() { return STATUS_INVALID_HANDLE; }
-    if !previous_count.is_null() { *previous_count = release_count; }
+    if semaphore_handle.is_null() {
+        return STATUS_INVALID_HANDLE;
+    }
+    if !previous_count.is_null() {
+        *previous_count = release_count;
+    }
     STATUS_SUCCESS
 }
 
@@ -274,10 +305,14 @@ pub unsafe extern "C" fn NtCreateTimer(
     object_attributes: *mut super::types::ObjectAttributes,
     timer_type: u32,
 ) -> NTSTATUS {
-    if timer_handle.is_null() { return STATUS_INVALID_PARAMETER; }
+    if timer_handle.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
     let _ = (desired_access, object_attributes);
     let h = alloc_handle(HandleKind::Timer, timer_type as u64);
-    if h.is_null() { return STATUS_INVALID_HANDLE; }
+    if h.is_null() {
+        return STATUS_INVALID_HANDLE;
+    }
     *timer_handle = h;
     STATUS_SUCCESS
 }
@@ -305,15 +340,19 @@ pub unsafe extern "C" fn NtSetTimer(
     _resume: u8,
     _handle: *mut HANDLE,
 ) -> NTSTATUS {
-    if timer_handle.is_null() { return STATUS_INVALID_HANDLE; }
-    if due_time.is_null() { return STATUS_INVALID_PARAMETER; }
-    
+    if timer_handle.is_null() {
+        return STATUS_INVALID_HANDLE;
+    }
+    if due_time.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
+
     // In a full implementation, this would:
     // 1. Insert the timer into the kernel timer queue
     // 2. Set up the DPC callback
     // 3. Configure the hardware timer interrupt
     // For now, we return success
-    
+
     STATUS_SUCCESS
 }
 
@@ -322,17 +361,16 @@ pub unsafe extern "C" fn NtSetTimer(
 /// # Arguments
 /// * `timer_handle` - Handle to the timer object
 /// * `set_handle` - If provided, receives the previous state
-pub unsafe extern "C" fn NtCancelTimer(
-    timer_handle: HANDLE,
-    _set_handle: *mut HANDLE,
-) -> NTSTATUS {
-    if timer_handle.is_null() { return STATUS_INVALID_HANDLE; }
-    
+pub unsafe extern "C" fn NtCancelTimer(timer_handle: HANDLE, _set_handle: *mut HANDLE) -> NTSTATUS {
+    if timer_handle.is_null() {
+        return STATUS_INVALID_HANDLE;
+    }
+
     // In a full implementation, this would:
     // 1. Remove the timer from the kernel timer queue
     // 2. Cancel any pending DPC
     // For now, we return success
-    
+
     STATUS_SUCCESS
 }
 
@@ -349,7 +387,9 @@ pub unsafe extern "C" fn NtWaitForSingleObject(
 ) -> NTSTATUS {
     use super::status::STATUS_TIMEOUT;
 
-    if handle.is_null() { return STATUS_INVALID_HANDLE; }
+    if handle.is_null() {
+        return STATUS_INVALID_HANDLE;
+    }
 
     // Parse timeout
     let timeout_ms = if timeout.is_null() {
@@ -444,7 +484,9 @@ pub unsafe extern "C" fn NtWaitForMultipleObjects(
 pub extern "C" fn NtDelayExecution(_alertable: u8, interval: *mut i64) -> NTSTATUS {
     use super::status::STATUS_INVALID_PARAMETER;
 
-    if interval.is_null() { return STATUS_INVALID_PARAMETER; }
+    if interval.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
 
     let raw = unsafe { *interval };
 
@@ -472,5 +514,9 @@ pub extern "C" fn NtDelayExecution(_alertable: u8, interval: *mut i64) -> NTSTAT
 
 /// `NtClose` re-export for kernel32.
 pub unsafe extern "C" fn NtCloseSync(h: HANDLE) -> NTSTATUS {
-    if free_handle(h) { STATUS_SUCCESS } else { STATUS_INVALID_HANDLE }
+    if free_handle(h) {
+        STATUS_SUCCESS
+    } else {
+        STATUS_INVALID_HANDLE
+    }
 }

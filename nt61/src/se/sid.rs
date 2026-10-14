@@ -76,8 +76,14 @@ impl Sid {
     /// Create a Sid from an identifier authority and subauthorities.
     pub const fn with_subs(
         authority: [u8; 6],
-        sub0: u32, sub1: u32, sub2: u32, sub3: u32,
-        sub4: u32, sub5: u32, sub6: u32, sub7: u32,
+        sub0: u32,
+        sub1: u32,
+        sub2: u32,
+        sub3: u32,
+        sub4: u32,
+        sub5: u32,
+        sub6: u32,
+        sub7: u32,
     ) -> Self {
         Self {
             revision: SID_REVISION,
@@ -88,10 +94,7 @@ impl Sid {
     }
 
     /// Create a Sid from an identifier authority and 2 subauthorities.
-    pub const fn with_2subs(
-        authority: [u8; 6],
-        sub0: u32, sub1: u32,
-    ) -> Self {
+    pub const fn with_2subs(authority: [u8; 6], sub0: u32, sub1: u32) -> Self {
         Self {
             revision: SID_REVISION,
             sub_authority_count: 2,
@@ -104,12 +107,22 @@ impl Sid {
     pub const fn with_authority_and_subs_arr(
         authority: [u8; 6],
         count: u8,
-        sub0: u32, sub1: u32, sub2: u32, sub3: u32,
-        sub4: u32, sub5: u32, sub6: u32, sub7: u32,
+        sub0: u32,
+        sub1: u32,
+        sub2: u32,
+        sub3: u32,
+        sub4: u32,
+        sub5: u32,
+        sub6: u32,
+        sub7: u32,
     ) -> Self {
         Self {
             revision: SID_REVISION,
-            sub_authority_count: count,
+            sub_authority_count: if count as usize > SID_MAX_SUB_AUTHORITIES {
+                SID_MAX_SUB_AUTHORITIES as u8
+            } else {
+                count
+            },
             identifier_authority: authority,
             sub_authority: [sub0, sub1, sub2, sub3, sub4, sub5, sub6, sub7],
         }
@@ -120,166 +133,244 @@ impl Sid {
         match name {
             WellKnownSid::Null => {
                 // S-1-0-0
-                Self { revision: SID_REVISION, sub_authority_count: 1,
-                    identifier_authority: [0,0,0,0,0,0],
-                    sub_authority: [0, 0,0,0,0,0,0,0] }
+                Self {
+                    revision: SID_REVISION,
+                    sub_authority_count: 1,
+                    identifier_authority: [0, 0, 0, 0, 0, 0],
+                    sub_authority: [0, 0, 0, 0, 0, 0, 0, 0],
+                }
             }
             WellKnownSid::World => {
                 // S-1-1-0
-                Self { revision: SID_REVISION, sub_authority_count: 1,
-                    identifier_authority: [0,0,0,0,0,1],
-                    sub_authority: [0, 0,0,0,0,0,0,0] }
+                Self {
+                    revision: SID_REVISION,
+                    sub_authority_count: 1,
+                    identifier_authority: [0, 0, 0, 0, 0, 1],
+                    sub_authority: [0, 0, 0, 0, 0, 0, 0, 0],
+                }
             }
             WellKnownSid::Local => {
                 // S-1-2-0
-                Self { revision: SID_REVISION, sub_authority_count: 1,
-                    identifier_authority: [0,0,0,0,0,2],
-                    sub_authority: [0, 0,0,0,0,0,0,0] }
+                Self {
+                    revision: SID_REVISION,
+                    sub_authority_count: 1,
+                    identifier_authority: [0, 0, 0, 0, 0, 2],
+                    sub_authority: [0, 0, 0, 0, 0, 0, 0, 0],
+                }
             }
             WellKnownSid::CreatorOwner => {
                 // S-1-3-0
-                Self { revision: SID_REVISION, sub_authority_count: 1,
-                    identifier_authority: [0,0,0,0,0,3],
-                    sub_authority: [0, 0,0,0,0,0,0,0] }
+                Self {
+                    revision: SID_REVISION,
+                    sub_authority_count: 1,
+                    identifier_authority: [0, 0, 0, 0, 0, 3],
+                    sub_authority: [0, 0, 0, 0, 0, 0, 0, 0],
+                }
             }
             WellKnownSid::CreatorGroup => {
                 // S-1-3-1
-                Self { revision: SID_REVISION, sub_authority_count: 1,
-                    identifier_authority: [0,0,0,0,0,3],
-                    sub_authority: [1, 0,0,0,0,0,0,0] }
+                Self {
+                    revision: SID_REVISION,
+                    sub_authority_count: 1,
+                    identifier_authority: [0, 0, 0, 0, 0, 3],
+                    sub_authority: [1, 0, 0, 0, 0, 0, 0, 0],
+                }
             }
             WellKnownSid::Dialup => {
                 // S-1-5-1
-                Self { revision: SID_REVISION, sub_authority_count: 1,
-                    identifier_authority: [0,0,0,0,0,5],
-                    sub_authority: [1, 0,0,0,0,0,0,0] }
+                Self {
+                    revision: SID_REVISION,
+                    sub_authority_count: 1,
+                    identifier_authority: [0, 0, 0, 0, 0, 5],
+                    sub_authority: [1, 0, 0, 0, 0, 0, 0, 0],
+                }
             }
             WellKnownSid::Network => {
                 // S-1-5-2
-                Self { revision: SID_REVISION, sub_authority_count: 1,
-                    identifier_authority: [0,0,0,0,0,5],
-                    sub_authority: [2, 0,0,0,0,0,0,0] }
+                Self {
+                    revision: SID_REVISION,
+                    sub_authority_count: 1,
+                    identifier_authority: [0, 0, 0, 0, 0, 5],
+                    sub_authority: [2, 0, 0, 0, 0, 0, 0, 0],
+                }
             }
             WellKnownSid::Batch => {
                 // S-1-5-3
-                Self { revision: SID_REVISION, sub_authority_count: 1,
-                    identifier_authority: [0,0,0,0,0,5],
-                    sub_authority: [3, 0,0,0,0,0,0,0] }
+                Self {
+                    revision: SID_REVISION,
+                    sub_authority_count: 1,
+                    identifier_authority: [0, 0, 0, 0, 0, 5],
+                    sub_authority: [3, 0, 0, 0, 0, 0, 0, 0],
+                }
             }
             WellKnownSid::Interactive => {
                 // S-1-5-4
-                Self { revision: SID_REVISION, sub_authority_count: 1,
-                    identifier_authority: [0,0,0,0,0,5],
-                    sub_authority: [4, 0,0,0,0,0,0,0] }
+                Self {
+                    revision: SID_REVISION,
+                    sub_authority_count: 1,
+                    identifier_authority: [0, 0, 0, 0, 0, 5],
+                    sub_authority: [4, 0, 0, 0, 0, 0, 0, 0],
+                }
             }
             WellKnownSid::Service => {
                 // S-1-5-6
-                Self { revision: SID_REVISION, sub_authority_count: 1,
-                    identifier_authority: [0,0,0,0,0,5],
-                    sub_authority: [6, 0,0,0,0,0,0,0] }
+                Self {
+                    revision: SID_REVISION,
+                    sub_authority_count: 1,
+                    identifier_authority: [0, 0, 0, 0, 0, 5],
+                    sub_authority: [6, 0, 0, 0, 0, 0, 0, 0],
+                }
             }
             WellKnownSid::AnonymousLogon => {
                 // S-1-5-7
-                Self { revision: SID_REVISION, sub_authority_count: 1,
-                    identifier_authority: [0,0,0,0,0,5],
-                    sub_authority: [7, 0,0,0,0,0,0,0] }
+                Self {
+                    revision: SID_REVISION,
+                    sub_authority_count: 1,
+                    identifier_authority: [0, 0, 0, 0, 0, 5],
+                    sub_authority: [7, 0, 0, 0, 0, 0, 0, 0],
+                }
             }
             WellKnownSid::AuthenticatedUser => {
                 // S-1-5-11
-                Self { revision: SID_REVISION, sub_authority_count: 1,
-                    identifier_authority: [0,0,0,0,0,5],
-                    sub_authority: [11, 0,0,0,0,0,0,0] }
+                Self {
+                    revision: SID_REVISION,
+                    sub_authority_count: 1,
+                    identifier_authority: [0, 0, 0, 0, 0, 5],
+                    sub_authority: [11, 0, 0, 0, 0, 0, 0, 0],
+                }
             }
             WellKnownSid::LocalSystem => {
                 // S-1-5-18
-                Self { revision: SID_REVISION, sub_authority_count: 1,
-                    identifier_authority: [0,0,0,0,0,5],
-                    sub_authority: [18, 0,0,0,0,0,0,0] }
+                Self {
+                    revision: SID_REVISION,
+                    sub_authority_count: 1,
+                    identifier_authority: [0, 0, 0, 0, 0, 5],
+                    sub_authority: [18, 0, 0, 0, 0, 0, 0, 0],
+                }
             }
             WellKnownSid::LocalService => {
                 // S-1-5-19
-                Self { revision: SID_REVISION, sub_authority_count: 1,
-                    identifier_authority: [0,0,0,0,0,5],
-                    sub_authority: [19, 0,0,0,0,0,0,0] }
+                Self {
+                    revision: SID_REVISION,
+                    sub_authority_count: 1,
+                    identifier_authority: [0, 0, 0, 0, 0, 5],
+                    sub_authority: [19, 0, 0, 0, 0, 0, 0, 0],
+                }
             }
             WellKnownSid::NetworkService => {
                 // S-1-5-20
-                Self { revision: SID_REVISION, sub_authority_count: 1,
-                    identifier_authority: [0,0,0,0,0,5],
-                    sub_authority: [20, 0,0,0,0,0,0,0] }
+                Self {
+                    revision: SID_REVISION,
+                    sub_authority_count: 1,
+                    identifier_authority: [0, 0, 0, 0, 0, 5],
+                    sub_authority: [20, 0, 0, 0, 0, 0, 0, 0],
+                }
             }
             WellKnownSid::Administrators => {
                 // S-1-5-32-544
-                Self { revision: SID_REVISION, sub_authority_count: 2,
-                    identifier_authority: [0,0,0,0,0,5],
-                    sub_authority: [32, 544, 0,0,0,0,0,0] }
+                Self {
+                    revision: SID_REVISION,
+                    sub_authority_count: 2,
+                    identifier_authority: [0, 0, 0, 0, 0, 5],
+                    sub_authority: [32, 544, 0, 0, 0, 0, 0, 0],
+                }
             }
             WellKnownSid::Users => {
                 // S-1-5-32-545
-                Self { revision: SID_REVISION, sub_authority_count: 2,
-                    identifier_authority: [0,0,0,0,0,5],
-                    sub_authority: [32, 545, 0,0,0,0,0,0] }
+                Self {
+                    revision: SID_REVISION,
+                    sub_authority_count: 2,
+                    identifier_authority: [0, 0, 0, 0, 0, 5],
+                    sub_authority: [32, 545, 0, 0, 0, 0, 0, 0],
+                }
             }
             WellKnownSid::Guests => {
                 // S-1-5-32-546
-                Self { revision: SID_REVISION, sub_authority_count: 2,
-                    identifier_authority: [0,0,0,0,0,5],
-                    sub_authority: [32, 546, 0,0,0,0,0,0] }
+                Self {
+                    revision: SID_REVISION,
+                    sub_authority_count: 2,
+                    identifier_authority: [0, 0, 0, 0, 0, 5],
+                    sub_authority: [32, 546, 0, 0, 0, 0, 0, 0],
+                }
             }
             WellKnownSid::PowerUsers => {
                 // S-1-5-32-547
-                Self { revision: SID_REVISION, sub_authority_count: 2,
-                    identifier_authority: [0,0,0,0,0,5],
-                    sub_authority: [32, 547, 0,0,0,0,0,0] }
+                Self {
+                    revision: SID_REVISION,
+                    sub_authority_count: 2,
+                    identifier_authority: [0, 0, 0, 0, 0, 5],
+                    sub_authority: [32, 547, 0, 0, 0, 0, 0, 0],
+                }
             }
             WellKnownSid::AccountOperators => {
                 // S-1-5-32-548
-                Self { revision: SID_REVISION, sub_authority_count: 2,
-                    identifier_authority: [0,0,0,0,0,5],
-                    sub_authority: [32, 548, 0,0,0,0,0,0] }
+                Self {
+                    revision: SID_REVISION,
+                    sub_authority_count: 2,
+                    identifier_authority: [0, 0, 0, 0, 0, 5],
+                    sub_authority: [32, 548, 0, 0, 0, 0, 0, 0],
+                }
             }
             WellKnownSid::ServerOperators => {
                 // S-1-5-32-549
-                Self { revision: SID_REVISION, sub_authority_count: 2,
-                    identifier_authority: [0,0,0,0,0,5],
-                    sub_authority: [32, 549, 0,0,0,0,0,0] }
+                Self {
+                    revision: SID_REVISION,
+                    sub_authority_count: 2,
+                    identifier_authority: [0, 0, 0, 0, 0, 5],
+                    sub_authority: [32, 549, 0, 0, 0, 0, 0, 0],
+                }
             }
             WellKnownSid::PrintOperators => {
                 // S-1-5-32-550
-                Self { revision: SID_REVISION, sub_authority_count: 2,
-                    identifier_authority: [0,0,0,0,0,5],
-                    sub_authority: [32, 550, 0,0,0,0,0,0] }
+                Self {
+                    revision: SID_REVISION,
+                    sub_authority_count: 2,
+                    identifier_authority: [0, 0, 0, 0, 0, 5],
+                    sub_authority: [32, 550, 0, 0, 0, 0, 0, 0],
+                }
             }
             WellKnownSid::BackupOperators => {
                 // S-1-5-32-551
-                Self { revision: SID_REVISION, sub_authority_count: 2,
-                    identifier_authority: [0,0,0,0,0,5],
-                    sub_authority: [32, 551, 0,0,0,0,0,0] }
+                Self {
+                    revision: SID_REVISION,
+                    sub_authority_count: 2,
+                    identifier_authority: [0, 0, 0, 0, 0, 5],
+                    sub_authority: [32, 551, 0, 0, 0, 0, 0, 0],
+                }
             }
             WellKnownSid::Replicator => {
                 // S-1-5-32-552
-                Self { revision: SID_REVISION, sub_authority_count: 2,
-                    identifier_authority: [0,0,0,0,0,5],
-                    sub_authority: [32, 552, 0,0,0,0,0,0] }
+                Self {
+                    revision: SID_REVISION,
+                    sub_authority_count: 2,
+                    identifier_authority: [0, 0, 0, 0, 0, 5],
+                    sub_authority: [32, 552, 0, 0, 0, 0, 0, 0],
+                }
             }
             WellKnownSid::NtVersion => {
                 // S-1-5-32-554
-                Self { revision: SID_REVISION, sub_authority_count: 2,
-                    identifier_authority: [0,0,0,0,0,5],
-                    sub_authority: [32, 554, 0,0,0,0,0,0] }
+                Self {
+                    revision: SID_REVISION,
+                    sub_authority_count: 2,
+                    identifier_authority: [0, 0, 0, 0, 0, 5],
+                    sub_authority: [32, 554, 0, 0, 0, 0, 0, 0],
+                }
             }
             WellKnownSid::RestrictedCode => {
                 // S-1-5-12
-                Self { revision: SID_REVISION, sub_authority_count: 1,
-                    identifier_authority: [0,0,0,0,0,5],
-                    sub_authority: [12, 0,0,0,0,0,0,0] }
+                Self {
+                    revision: SID_REVISION,
+                    sub_authority_count: 1,
+                    identifier_authority: [0, 0, 0, 0, 0, 5],
+                    sub_authority: [12, 0, 0, 0, 0, 0, 0, 0],
+                }
             }
         }
     }
 
     /// Return the subauthority count.
     pub fn subauthority_count(&self) -> usize {
-        self.sub_authority_count as usize
+        (self.sub_authority_count as usize).min(SID_MAX_SUB_AUTHORITIES)
     }
 
     /// Return the subauthority at index i.
@@ -304,13 +395,16 @@ impl Sid {
 
     /// Compare two SIDs for equality.
     pub fn equals(&self, other: &Sid) -> bool {
+        if self.revision != other.revision {
+            return false;
+        }
         if self.sub_authority_count != other.sub_authority_count {
             return false;
         }
         if self.identifier_authority() != other.identifier_authority() {
             return false;
         }
-        for i in 0..self.sub_authority_count as usize {
+        for i in 0..self.subauthority_count() {
             if self.sub_authority[i] != other.sub_authority[i] {
                 return false;
             }
@@ -324,21 +418,39 @@ impl Sid {
         let mut pos = 0;
 
         // "S-"
-        if pos < SID_STRING_MAX { buf[pos] = 'S' as u16; pos += 1; }
-        if pos < SID_STRING_MAX { buf[pos] = '-' as u16; pos += 1; }
+        if pos < SID_STRING_MAX {
+            buf[pos] = 'S' as u16;
+            pos += 1;
+        }
+        if pos < SID_STRING_MAX {
+            buf[pos] = '-' as u16;
+            pos += 1;
+        }
 
         // Revision
-        pos += write_u64(&mut buf[pos..], self.revision as u64);
+        if pos < SID_STRING_MAX {
+            pos += write_u64(&mut buf[pos..], self.revision as u64);
+        }
 
         // Identifier authority (6 bytes as big-endian u48)
         let ia = self.identifier_authority();
-        if pos < SID_STRING_MAX { buf[pos] = '-' as u16; pos += 1; }
-        pos += write_u64(&mut buf[pos..], ia);
+        if pos < SID_STRING_MAX {
+            buf[pos] = '-' as u16;
+            pos += 1;
+        }
+        if pos < SID_STRING_MAX {
+            pos += write_u64(&mut buf[pos..], ia);
+        }
 
         // Subauthorities
-        for i in 0..self.sub_authority_count as usize {
-            if pos < SID_STRING_MAX { buf[pos] = '-' as u16; pos += 1; }
-            pos += write_u64(&mut buf[pos..], self.sub_authority[i] as u64);
+        for i in 0..self.subauthority_count() {
+            if pos < SID_STRING_MAX {
+                buf[pos] = '-' as u16;
+                pos += 1;
+            }
+            if pos < SID_STRING_MAX {
+                pos += write_u64(&mut buf[pos..], self.sub_authority[i] as u64);
+            }
         }
 
         buf
@@ -346,13 +458,56 @@ impl Sid {
 
     /// Return the byte size of this SID (8 header + 4 * subauthority_count).
     pub fn size(&self) -> usize {
-        8 + (self.sub_authority_count as usize) * 4
+        8 + self.subauthority_count() * 4
+    }
+
+    pub fn is_valid(&self) -> bool {
+        self.revision == SID_REVISION
+            && (self.sub_authority_count as usize) <= SID_MAX_SUB_AUTHORITIES
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() < 8 || bytes[0] != SID_REVISION {
+            return None;
+        }
+
+        let count = bytes[1] as usize;
+        if count > SID_MAX_SUB_AUTHORITIES {
+            return None;
+        }
+
+        let required = 8usize.checked_add(count.checked_mul(4)?)?;
+        if bytes.len() < required {
+            return None;
+        }
+
+        let mut authority = [0u8; 6];
+        authority.copy_from_slice(&bytes[2..8]);
+        let mut sub_authority = [0u32; SID_MAX_SUB_AUTHORITIES];
+        for (index, value) in sub_authority.iter_mut().enumerate().take(count) {
+            let offset = 8 + index * 4;
+            *value = u32::from_le_bytes([
+                bytes[offset],
+                bytes[offset + 1],
+                bytes[offset + 2],
+                bytes[offset + 3],
+            ]);
+        }
+
+        Some(Self {
+            revision: SID_REVISION,
+            sub_authority_count: count as u8,
+            identifier_authority: authority,
+            sub_authority,
+        })
     }
 }
 
 fn write_u64(buf: &mut [u16], mut val: u64) -> usize {
     if val == 0 {
-        if !buf.is_empty() { buf[0] = '0' as u16; }
+        if !buf.is_empty() {
+            buf[0] = '0' as u16;
+        }
         return 1;
     }
     let mut digits = [0u16; 20];
@@ -362,10 +517,11 @@ fn write_u64(buf: &mut [u16], mut val: u64) -> usize {
         val /= 10;
         n += 1;
     }
-    for i in 0..n {
+    let written = n.min(buf.len());
+    for i in 0..written {
         buf[i] = digits[n - 1 - i];
     }
-    n
+    written
 }
 
 impl fmt::Debug for Sid {
@@ -421,5 +577,5 @@ pub static SID_USERS: Sid = Sid::well_known(WellKnownSid::Users);
 pub static SID_INTERACTIVE: Sid = Sid::well_known(WellKnownSid::Interactive);
 
 pub fn init() {
-    // crate::kprintln!("    SE/SID: initialized (well-known SIDs loaded)")  // kprintln disabled (memcpy crash workaround);
+    // crate::kprintln!("    SE/SID: initialized (well-known SIDs loaded)");
 }

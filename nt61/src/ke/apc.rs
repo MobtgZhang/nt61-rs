@@ -14,10 +14,10 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use crate::ke::sync::{DispatcherHeader, Spinlock};
 use crate::ke::irql::{self, Irql};
-use crate::ps::thread::Ethread;
+use crate::ke::sync::{DispatcherHeader, Spinlock};
 use crate::ps::process::ListEntry;
+use crate::ps::thread::Ethread;
 
 /// Maximum APCs we can track per thread.
 const MAX_APCS_PER_THREAD: usize = 16;
@@ -119,7 +119,8 @@ impl ThreadApcState {
     }
 }
 
-static APC_TABLE: Spinlock<[Option<Apc>; MAX_GLOBAL_APCS]> = Spinlock::new([const { None }; MAX_GLOBAL_APCS]);
+static APC_TABLE: Spinlock<[Option<Apc>; MAX_GLOBAL_APCS]> =
+    Spinlock::new([const { None }; MAX_GLOBAL_APCS]);
 static ENQUEUE_COUNT: AtomicU32 = AtomicU32::new(0);
 static DEQUEUE_COUNT: AtomicU32 = AtomicU32::new(0);
 
@@ -131,9 +132,9 @@ pub fn init() {
     crate::hal::serial::write_string("[ke.apc] enter\r\n");
     ENQUEUE_COUNT.store(0, Ordering::SeqCst);
     DEQUEUE_COUNT.store(0, Ordering::SeqCst);
-    // // kprintln!("    APC: queues=2 (kernel/user) max_global={}", MAX_GLOBAL_APCS)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("    APC: per_thread max={}", MAX_APCS_PER_THREAD)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("    APC: KeInitializeApc/KeInsertQueueApc/KiDeliverApc available")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("    APC: queues=2 (kernel/user) max_global={}", MAX_GLOBAL_APCS);
+    // // kprintln!("    APC: per_thread max={}", MAX_APCS_PER_THREAD);
+    // // kprintln!("    APC: KeInitializeApc/KeInsertQueueApc/KiDeliverApc available");
 }
 
 /// Initialize APC state for a thread.
@@ -200,13 +201,13 @@ pub unsafe fn KeInsertQueueApc(
     // Check IRQL: must be at APC_LEVEL or lower
     let current_irql = irql::get_current_irql();
     if current_irql > APC_LEVEL {
-        // // kprintln!("[APC] KeInsertQueueApc failed: IRQL too high")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[APC] KeInsertQueueApc failed: IRQL too high");
         return false;
     }
 
     // Check if already inserted
     if (*apc).inserted.load(Ordering::Relaxed) {
-        // // kprintln!("[APC] KeInsertQueueApc failed: already inserted")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[APC] KeInsertQueueApc failed: already inserted");
         return false;
     }
 
@@ -217,7 +218,7 @@ pub unsafe fn KeInsertQueueApc(
     // Get the thread
     let thread = (*apc).thread;
     if thread.is_null() {
-        // // kprintln!("[APC] KeInsertQueueApc failed: no thread")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[APC] KeInsertQueueApc failed: no thread");
         return false;
     }
 
@@ -240,9 +241,9 @@ pub unsafe fn KeInsertQueueApc(
         apc_state.user_apc_in_progress = 0;
     }
 
-    // // kprintln!("[APC] Queued {} APC to thread {:016x}",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         if (*apc).kind == ApcKind::Kernel { "kernel" } else { "user" },
-// //         thread as u64);
+    // // kprintln!("[APC] Queued {} APC to thread {:016x}",
+    // //         if (*apc).kind == ApcKind::Kernel { "kernel" } else { "user" },
+    // //         thread as u64);
 
     true
 }
@@ -296,7 +297,7 @@ pub unsafe fn KiDeliverApc(current_thread: *mut Ethread, delivery_mode: ApcMode)
             }
 
             if delivered > 0 {
-                // // kprintln!("[APC] Delivered {} kernel APCs", delivered)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                // // kprintln!("[APC] Delivered {} kernel APCs", delivered);
             }
             apc_state.kernel_apc_in_progress = 0;
         }
@@ -317,13 +318,13 @@ pub unsafe fn KiDeliverApc(current_thread: *mut Ethread, delivery_mode: ApcMode)
                 let routine_addr = (*apc_ptr).routine.map(|r| r as u64).unwrap_or(0);
                 (*apc_ptr).inserted.store(false, Ordering::Release);
                 if routine_addr != 0 {
-                    // // kprintln!("[APC] Would deliver user APC routine at {:016x}", routine_addr)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                    // // kprintln!("[APC] Would deliver user APC routine at {:016x}", routine_addr);
                     delivered += 1;
                 }
             }
 
             if delivered > 0 {
-                // // kprintln!("[APC] Delivered {} user APCs", delivered)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                // // kprintln!("[APC] Delivered {} user APCs", delivered);
             }
             apc_state.user_apc_in_progress = 0;
         }
@@ -392,9 +393,9 @@ pub fn dequeue_apc(kind: ApcKind) -> Option<usize> {
 /// Peek at the routine / context of a queued APC.
 pub fn inspect_apc(idx: usize) -> Option<(ApcKind, ApcRoutine, *mut u8)> {
     let g = APC_TABLE.lock();
-    g[idx].as_ref().and_then(|apc| {
-        apc.routine.map(|r| (apc.kind, r, apc.context))
-    })
+    g[idx]
+        .as_ref()
+        .and_then(|apc| apc.routine.map(|r| (apc.kind, r, apc.context)))
 }
 /// Number of APCs ever enqueued.
 pub fn enqueue_count() -> u32 {
@@ -420,7 +421,7 @@ pub fn allocate_apc() -> *mut Apc {
         crate::mm::pool::PoolType::NonPaged,
         core::mem::size_of::<Apc>(),
     ) as *mut Apc;
-    
+
     if !ptr.is_null() {
         unsafe {
             (*ptr) = Apc::new();
@@ -460,7 +461,7 @@ pub fn queue_thread_apc(
         // on the fly so the existing call sites keep working.
         let apc_ptr = allocate_apc();
         if apc_ptr.is_null() {
-            // // kprintln!("[APC] queue_thread_apc: out of memory")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[APC] queue_thread_apc: out of memory");
             return false;
         }
         let mode = match kind {
@@ -520,7 +521,7 @@ pub fn deliver_thread_apc(thread: *mut Ethread, kind: ApcKind) -> bool {
 
         if let Some(routine_fn) = (*apc_ptr).routine {
             let ctx = (*apc_ptr).context;
-            // // kprintln!("[APC] Delivering APC routine at {:p}", routine_fn as *const ())  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[APC] Delivering APC routine at {:p}", routine_fn as *const ());
             routine_fn(ctx);
             return true;
         }
@@ -582,7 +583,7 @@ pub unsafe extern "C" fn NtQueueApcThread(
         return crate::libs::ntdll::status::STATUS_UNSUCCESSFUL;
     }
 
-    // // kprintln!("[APC] NtQueueApcThread: queued user APC to thread {:016x}", thread_ptr as u64)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[APC] NtQueueApcThread: queued user APC to thread {:016x}", thread_ptr as u64);
     STATUS_SUCCESS
 }
 
@@ -606,49 +607,49 @@ pub fn smoke_test() -> bool {
     let d_before = dequeue_count();
     let kidx = enqueue_apc(ApcKind::Kernel, smoke_apc_routine, core::ptr::null_mut());
     if kidx.is_none() {
-        // // kprintln!("    [APC SMOKE FAIL] kernel enqueue returned None")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("    [APC SMOKE FAIL] kernel enqueue returned None");
         return false;
     }
     let uidx = enqueue_apc(ApcKind::User, smoke_apc_routine, core::ptr::null_mut());
     if uidx.is_none() {
-        // // kprintln!("    [APC SMOKE FAIL] user enqueue returned None")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("    [APC SMOKE FAIL] user enqueue returned None");
         return false;
     }
     let got = dequeue_apc(ApcKind::Kernel);
     if got != kidx {
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "    [APC SMOKE FAIL] expected kernel APC idx={:?}, got {:?}",
-// //             kidx, got
-// //         );
+        // // kprintln!(
+        // //             "    [APC SMOKE FAIL] expected kernel APC idx={:?}, got {:?}",
+        // //             kidx, got
+        // //         );
         return false;
     }
     let got = dequeue_apc(ApcKind::User);
     if got != uidx {
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "    [APC SMOKE FAIL] expected user APC idx={:?}, got {:?}",
-// //             uidx, got
-// //         );
+        // // kprintln!(
+        // //             "    [APC SMOKE FAIL] expected user APC idx={:?}, got {:?}",
+        // //             uidx, got
+        // //         );
         return false;
     }
     let e_after = enqueue_count();
     let d_after = dequeue_count();
     if e_after != e_before + 2 {
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "    [APC SMOKE FAIL] enqueue count: {} -> {}",
-// //             e_before, e_after
-// //         );
+        // // kprintln!(
+        // //             "    [APC SMOKE FAIL] enqueue count: {} -> {}",
+        // //             e_before, e_after
+        // //         );
         return false;
     }
     if d_after != d_before + 2 {
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "    [APC SMOKE FAIL] dequeue count: {} -> {}",
-// //             d_before, d_after
-// //         );
+        // // kprintln!(
+        // //             "    [APC SMOKE FAIL] dequeue count: {} -> {}",
+        // //             d_before, d_after
+        // //         );
         return false;
     }
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         "    [APC SMOKE OK] enqueue={} dequeue={} (kernel+user round-trip)",
-// //         e_after, d_after
-// //     );
+    // // kprintln!(
+    // //         "    [APC SMOKE OK] enqueue={} dequeue={} (kernel+user round-trip)",
+    // //         e_after, d_after
+    // //     );
     true
 }

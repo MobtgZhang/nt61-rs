@@ -79,17 +79,34 @@ pub fn init() {
     let _g = LOCK.lock();
     let mut i = 0u32;
     for p in partmgr::list_all() {
-        if i as usize >= MAX_VOLUMES { break; }
+        if i as usize >= MAX_VOLUMES {
+            break;
+        }
         // Probe the first sector to identify the file system.
         let mut sec = [0u8; 512];
-        let n = crate::drivers::storage::disk::DiskRead(p.disk_index,
-            p.starting_offset * 512, 512, &mut sec);
-        let (sig, name) = if n == 512 { detect_fs(&sec) } else { (0, String::from("RAW")) };
+        let n = crate::drivers::storage::disk::DiskRead(
+            p.disk_index,
+            p.starting_offset * 512,
+            512,
+            &mut sec,
+        );
+        let (sig, name) = if n == 512 {
+            detect_fs(&sec)
+        } else {
+            (0, String::from("RAW"))
+        };
         let vol_name = format_volume_name(i + 1);
-        add_volume(vol_name, p.disk_index, p.starting_offset, p.sector_count, sig, name);
+        add_volume(
+            vol_name,
+            p.disk_index,
+            p.starting_offset,
+            p.sector_count,
+            sig,
+            name,
+        );
         i += 1;
     }
-    // kprintln!("    [VOLMGR] {} volume(s) created", i)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    [VOLMGR] {} volume(s) created", i);
 }
 
 fn format_volume_name(idx: u32) -> String {
@@ -100,19 +117,30 @@ fn format_volume_name(idx: u32) -> String {
 }
 
 fn itoa(mut v: u32) -> String {
-    if v == 0 { return String::from("0"); }
+    if v == 0 {
+        return String::from("0");
+    }
     let mut buf = [0u8; 12];
     let mut j = 0;
-    while v > 0 { buf[j] = b'0' + (v % 10) as u8; v /= 10; j += 1; }
+    while v > 0 {
+        buf[j] = b'0' + (v % 10) as u8;
+        v /= 10;
+        j += 1;
+    }
     let mut s = String::new();
-    while j > 0 { j -= 1; s.push(buf[j] as char); }
+    while j > 0 {
+        j -= 1;
+        s.push(buf[j] as char);
+    }
     s
 }
 
 fn add_volume(name: String, disk: usize, lba: u64, sc: u64, sig: u32, fs: String) {
     unsafe {
         for slot in VOLUMES.iter_mut() {
-            if slot.valid { continue; }
+            if slot.valid {
+                continue;
+            }
             slot.valid = true;
             slot.name = name.clone();
             slot.disk_index = disk;
@@ -122,8 +150,8 @@ fn add_volume(name: String, disk: usize, lba: u64, sc: u64, sig: u32, fs: String
             slot.fs_name = fs;
             slot.mounted = false;
             VOLUME_COUNT.fetch_add(1, Ordering::Relaxed);
-            // kprintln!("    [VOLMGR]   {} ({} sectors, fs={})",  // kprintln disabled (memcpy crash workaround)
-//                 name, sc, slot.fs_name);
+            // kprintln!("    [VOLMGR]   {} ({} sectors, fs={})",
+            //                 name, sc, slot.fs_name);
             return;
         }
     }
@@ -136,12 +164,24 @@ fn add_volume(name: String, disk: usize, lba: u64, sc: u64, sig: u32, fs: String
 /// * exFAT: offset 3..8 == "EXFAT   "
 /// * GPT protective: MBR type 0xEE (handled by partmgr).
 fn detect_fs(sec: &[u8]) -> (u32, String) {
-    if sec.len() < 512 { return (0, String::from("RAW")); }
-    if &sec[3..7] == b"NTFS" { return (0xAA55, String::from("NTFS")); }
-    if sec.len() >= 90 && &sec[82..90] == b"FAT32   " { return (0, String::from("FAT32")); }
-    if sec.len() >= 62 && &sec[54..62] == b"FAT16   " { return (0, String::from("FAT16")); }
-    if sec.len() >= 62 && &sec[54..62] == b"FAT12   " { return (0, String::from("FAT12")); }
-    if sec.len() >= 11 && &sec[3..11] == b"EXFAT   " { return (0, String::from("EXFAT")); }
+    if sec.len() < 512 {
+        return (0, String::from("RAW"));
+    }
+    if &sec[3..7] == b"NTFS" {
+        return (0xAA55, String::from("NTFS"));
+    }
+    if sec.len() >= 90 && &sec[82..90] == b"FAT32   " {
+        return (0, String::from("FAT32"));
+    }
+    if sec.len() >= 62 && &sec[54..62] == b"FAT16   " {
+        return (0, String::from("FAT16"));
+    }
+    if sec.len() >= 62 && &sec[54..62] == b"FAT12   " {
+        return (0, String::from("FAT12"));
+    }
+    if sec.len() >= 11 && &sec[3..11] == b"EXFAT   " {
+        return (0, String::from("EXFAT"));
+    }
     (0, String::from("UNKNOWN"))
 }
 
@@ -150,7 +190,9 @@ fn detect_fs(sec: &[u8]) -> (u32, String) {
 pub fn first_volume() -> Option<Volume> {
     unsafe {
         for slot in VOLUMES.iter() {
-            if !slot.valid { continue; }
+            if !slot.valid {
+                continue;
+            }
             return Some(Volume {
                 valid: true,
                 name: slot.name.clone(),
@@ -173,17 +215,19 @@ pub fn list_all() -> Vec<Volume> {
     Vec::new()
 }
 
-pub fn count() -> u32 { VOLUME_COUNT.load(Ordering::Relaxed) }
+pub fn count() -> u32 {
+    VOLUME_COUNT.load(Ordering::Relaxed)
+}
 
 /// Smoke test: enumerate volumes, read first sector, print.
 pub fn smoke_test() -> bool {
-    // kprintln!("  [VOLMGR SMOKE] testing volume manager...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [VOLMGR SMOKE] testing volume manager...");
     let vols = list_all();
     for v in &vols {
         let _ = v;
-        // kprintln!("  [VOLMGR SMOKE]   {} disk={} LBA={} sectors={} fs={}",  // kprintln disabled (memcpy crash workaround)
-//             v.name, v.disk_index, v.starting_lba, v.sector_count, v.fs_name);
+        // kprintln!("  [VOLMGR SMOKE]   {} disk={} LBA={} sectors={} fs={}",
+        //             v.name, v.disk_index, v.starting_lba, v.sector_count, v.fs_name);
     }
-    // kprintln!("  [VOLMGR SMOKE OK] volumes={}", vols.len())  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [VOLMGR SMOKE OK] volumes={}", vols.len());
     true
 }

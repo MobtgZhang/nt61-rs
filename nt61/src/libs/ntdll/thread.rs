@@ -12,7 +12,7 @@
 use super::file::{alloc_handle, lookup_handle, HandleKind};
 use super::status::{
     STATUS_INVALID_HANDLE, STATUS_INVALID_INFO_CLASS, STATUS_INVALID_PARAMETER,
-    STATUS_NO_MEMORY, STATUS_NOT_IMPLEMENTED, STATUS_SUCCESS,
+    STATUS_NOT_IMPLEMENTED, STATUS_NO_MEMORY, STATUS_SUCCESS,
 };
 use super::types::{ClientId, HANDLE, NTSTATUS, PVOID};
 use crate::ps::thread as pst;
@@ -58,7 +58,7 @@ pub struct Context {
     pub dr6: u64,
     pub dr7: u64,
     /// Floating point
-    pub float_save: [u64; 8],  // Simplified
+    pub float_save: [u64; 8], // Simplified
     /// XMM registers
     pub xmm0: [u64; 2],
     pub xmm1: [u64; 2],
@@ -100,7 +100,9 @@ pub unsafe extern "C" fn NtCreateThread(
     stack_committed: usize,
     stack_size: usize,
 ) -> NTSTATUS {
-    use super::status::{STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER, STATUS_NO_MEMORY, STATUS_SUCCESS};
+    use super::status::{
+        STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER, STATUS_NO_MEMORY, STATUS_SUCCESS,
+    };
 
     if thread_handle.is_null() || start_routine.is_null() {
         return STATUS_INVALID_PARAMETER;
@@ -149,7 +151,11 @@ pub unsafe extern "C" fn NtCreateThread(
     // Set thread stack pointer (RSP) to top of user stack
     // The kernel's create_thread allocates a stack; we set RSP to the top
     // Default stack size is 2MB (0x200000), stack grows downward
-    let actual_stack_size: u64 = if stack_size > 0 { stack_size as u64 } else { 0x200000 };
+    let actual_stack_size: u64 = if stack_size > 0 {
+        stack_size as u64
+    } else {
+        0x200000
+    };
     let user_stack_top: u64 = 0x7FFF_FFFE_0000u64; // Default user stack base (2GB boundary)
     let aligned_stack = user_stack_top - actual_stack_size & !0xF; // 16-byte aligned
 
@@ -227,10 +233,7 @@ pub unsafe extern "C" fn NtOpenThread(
 
 /// `NtTerminateThread` — terminate the specified thread.
 /// If ThreadHandle is NULL, terminates the current thread.
-pub unsafe extern "C" fn NtTerminateThread(
-    thread_handle: HANDLE,
-    exit_status: u32,
-) -> NTSTATUS {
+pub unsafe extern "C" fn NtTerminateThread(thread_handle: HANDLE, exit_status: u32) -> NTSTATUS {
     use super::status::{STATUS_INVALID_HANDLE, STATUS_SUCCESS};
     use core::ptr;
 
@@ -271,8 +274,12 @@ pub unsafe extern "C" fn NtSuspendThread(
     thread_handle: HANDLE,
     previous_suspend_count: *mut u32,
 ) -> NTSTATUS {
-    if thread_handle.is_null() { return STATUS_INVALID_HANDLE; }
-    if !previous_suspend_count.is_null() { *previous_suspend_count = 1; }
+    if thread_handle.is_null() {
+        return STATUS_INVALID_HANDLE;
+    }
+    if !previous_suspend_count.is_null() {
+        *previous_suspend_count = 1;
+    }
     STATUS_SUCCESS
 }
 
@@ -280,8 +287,12 @@ pub unsafe extern "C" fn NtResumeThread(
     thread_handle: HANDLE,
     previous_suspend_count: *mut u32,
 ) -> NTSTATUS {
-    if thread_handle.is_null() { return STATUS_INVALID_HANDLE; }
-    if !previous_suspend_count.is_null() { *previous_suspend_count = 1; }
+    if thread_handle.is_null() {
+        return STATUS_INVALID_HANDLE;
+    }
+    if !previous_suspend_count.is_null() {
+        *previous_suspend_count = 1;
+    }
     STATUS_SUCCESS
 }
 
@@ -300,20 +311,30 @@ pub unsafe extern "C" fn NtQueryInformationThread(
     match thread_information_class {
         0 => {
             // ThreadBasicInformation: ExitStatus, TebAddress, ClientId, ...
-            if thread_information_length < 28 { return super::status::STATUS_BUFFER_TOO_SMALL; }
+            if thread_information_length < 28 {
+                return super::status::STATUS_BUFFER_TOO_SMALL;
+            }
             core::ptr::write_bytes(thread_information, 0, 28);
-            if !return_length.is_null() { *return_length = 28; }
+            if !return_length.is_null() {
+                *return_length = 28;
+            }
             STATUS_SUCCESS
         }
         4 => {
             // ThreadTimes — 32 bytes
-            if thread_information_length < 32 { return super::status::STATUS_BUFFER_TOO_SMALL; }
+            if thread_information_length < 32 {
+                return super::status::STATUS_BUFFER_TOO_SMALL;
+            }
             core::ptr::write_bytes(thread_information, 0, 32);
-            if !return_length.is_null() { *return_length = 32; }
+            if !return_length.is_null() {
+                *return_length = 32;
+            }
             STATUS_SUCCESS
         }
         _ => {
-            if !return_length.is_null() { *return_length = 0; }
+            if !return_length.is_null() {
+                *return_length = 0;
+            }
             STATUS_INVALID_INFO_CLASS
         }
     }
@@ -370,7 +391,12 @@ pub unsafe extern "C" fn NtCreateThreadEx(
     if thread_handle.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
-    let _ = (object_attributes, zero_bits, maximum_stack_size, attribute_list);
+    let _ = (
+        object_attributes,
+        zero_bits,
+        maximum_stack_size,
+        attribute_list,
+    );
 
     // Debug flag: CREATE_SUSPENDED (0x1)
     let _is_suspended = create_flags & 0x1 != 0;
@@ -454,10 +480,10 @@ pub unsafe extern "C" fn NtGetContextThread(
 
     // Fill in the context structure
     let ctx = &mut *context;
-    
+
     // Check what context flags are requested
     let flags = ctx.context_flags;
-    
+
     if flags & CONTEXT_INTEGER != 0 || flags == 0 {
         ctx.rax = (*thread).kthread.context.rax;
         ctx.rcx = (*thread).kthread.context.rcx;
@@ -467,7 +493,7 @@ pub unsafe extern "C" fn NtGetContextThread(
         ctx.rsi = (*thread).kthread.context.rsi;
         ctx.rdi = (*thread).kthread.context.rdi;
     }
-    
+
     if flags & CONTEXT_CONTROL != 0 || flags == 0 {
         ctx.rip = (*thread).kthread.context.user_rip;
         ctx.rsp = (*thread).kthread.context.user_rsp;
@@ -513,7 +539,7 @@ pub unsafe extern "C" fn NtSetContextThread(
 
     // Check what context flags are being set
     let flags = ctx.context_flags;
-    
+
     if flags & CONTEXT_INTEGER != 0 || flags == 0 {
         (*thread).kthread.context.rax = ctx.rax;
         (*thread).kthread.context.rcx = ctx.rcx;
@@ -523,7 +549,7 @@ pub unsafe extern "C" fn NtSetContextThread(
         (*thread).kthread.context.rsi = ctx.rsi;
         (*thread).kthread.context.rdi = ctx.rdi;
     }
-    
+
     if flags & CONTEXT_CONTROL != 0 || flags == 0 {
         (*thread).kthread.context.user_rip = ctx.rip;
         (*thread).kthread.context.user_rsp = ctx.rsp;
@@ -545,9 +571,9 @@ pub unsafe extern "C" fn NtQueueApcThread(
     if thread_handle.is_null() || apc_routine.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
-    
+
     let _ = (apc_argument1, apc_argument2, apc_argument3);
-    
+
     // Get the thread from handle
     let _tid = if let Some(entry) = lookup_handle(thread_handle) {
         if entry.kind == HandleKind::Thread {
@@ -564,8 +590,8 @@ pub unsafe extern "C" fn NtQueueApcThread(
     // 2. Add it to the thread's APC queue
     // 3. Signal the thread if it's waiting
     // For now, just validate and return success
-    // crate::kprintln!("[APC] NtQueueApcThread queued to routine @ 0x{:016x}", apc_routine as u64)  // kprintln disabled (memcpy crash workaround);
-    
+    // crate::kprintln!("[APC] NtQueueApcThread queued to routine @ 0x{:016x}", apc_routine as u64);
+
     STATUS_SUCCESS
 }
 
@@ -579,9 +605,9 @@ pub unsafe extern "C" fn NtSetInformationThread(
     if thread_handle.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
-    
+
     let _ = thread_information_length;
-    
+
     match thread_information_class {
         0 => {
             // ThreadBasicInformation - read only, return error
@@ -598,8 +624,6 @@ pub unsafe extern "C" fn NtSetInformationThread(
             // ThreadPriority - set thread priority
             STATUS_SUCCESS
         }
-        _ => {
-            STATUS_INVALID_INFO_CLASS
-        }
+        _ => STATUS_INVALID_INFO_CLASS,
     }
 }

@@ -16,13 +16,13 @@ use super::WOW64_SERVICES;
 pub fn register_services() {
     let mut t = WOW64_SERVICES.lock();
     t.push(("Wow64PrepareForException", 0x0000_DEAD_BEEF_0001));
-    t.push(("Wow64ApcRoutine",          0x0000_DEAD_BEEF_0002));
-    t.push(("Wow64LdrpInitialize",      0x0000_DEAD_BEEF_0003));
-    t.push(("Wow64SystemServiceEx",    0x0000_DEAD_BEEF_0004));
+    t.push(("Wow64ApcRoutine", 0x0000_DEAD_BEEF_0002));
+    t.push(("Wow64LdrpInitialize", 0x0000_DEAD_BEEF_0003));
+    t.push(("Wow64SystemServiceEx", 0x0000_DEAD_BEEF_0004));
     t.push(("Wow64AllocateVirtualMemory32", 0x0000_DEAD_BEEF_0005));
-    t.push(("Wow64FreeVirtualMemory32",   0x0000_DEAD_BEEF_0006));
-    t.push(("Wow64ReadVirtualMemory32",   0x0000_DEAD_BEEF_0007));
-    t.push(("Wow64WriteVirtualMemory32",  0x0000_DEAD_BEEF_0008));
+    t.push(("Wow64FreeVirtualMemory32", 0x0000_DEAD_BEEF_0006));
+    t.push(("Wow64ReadVirtualMemory32", 0x0000_DEAD_BEEF_0007));
+    t.push(("Wow64WriteVirtualMemory32", 0x0000_DEAD_BEEF_0008));
     t.push(("Wow64QueryInformationProcess", 0x0000_DEAD_BEEF_0009));
     t.push(("Wow64SetInformationThread", 0x0000_DEAD_BEEF_000A));
     crate::wow64_klog!("Registered {} WoW64 services", t.len());
@@ -36,7 +36,8 @@ pub unsafe extern "C" fn Wow64PrepareForException(
 ) -> i32 {
     crate::wow64_klog!(
         "Wow64PrepareForException er={:p} ctx={:p}",
-        exception_record, context
+        exception_record,
+        context
     );
     // Forward to the APC/exception thunk layer
     super::apc_exc_thunk::wow64_prepare_for_exception(exception_record, context)
@@ -44,9 +45,7 @@ pub unsafe extern "C" fn Wow64PrepareForException(
 
 /// `Wow64ApcRoutine` — APC delivery thunk for 32-bit threads.
 /// This is called when a kernel APC needs to be delivered to a 32-bit thread.
-pub unsafe extern "C" fn Wow64ApcRoutine(
-    apc: *mut core::ffi::c_void,
-) {
+pub unsafe extern "C" fn Wow64ApcRoutine(apc: *mut core::ffi::c_void) {
     crate::wow64_klog!("Wow64ApcRoutine apc={:p}", apc);
     // Forward to the APC thunk layer
     super::apc_exc_thunk::wow64_apc_routine(apc);
@@ -61,7 +60,9 @@ pub unsafe extern "C" fn Wow64LdrpInitialize(
 ) -> i32 {
     crate::wow64_klog!(
         "Wow64LdrpInitialize ctx={:p} entry={:p} param={:p}",
-        context, entry, param
+        context,
+        entry,
+        param
     );
     // Forward to the APC/exception thunk layer for loader initialization
     super::apc_exc_thunk::wow64_ldrp_initialize(context, entry, param)
@@ -76,7 +77,9 @@ pub unsafe extern "C" fn Wow64SystemServiceEx(
 ) -> u32 {
     crate::wow64_klog!(
         "Wow64SystemServiceEx tbl={:#x} svc={:#x} args={:p}",
-        service_table, service_number, args
+        service_table,
+        service_number,
+        args
     );
     // Forward to the central SSD dispatcher
     super::ssd::dispatch_service(service_number, args)
@@ -99,8 +102,12 @@ pub unsafe extern "C" fn Wow64AllocateVirtualMemory32(
     );
     // Forward to the memory thunk layer
     super::mem_thunk::wow64_allocate_virtual_memory(
-        process_handle, base_address, zero_bits, region_size,
-        allocation_type, protect
+        process_handle,
+        base_address,
+        zero_bits,
+        region_size,
+        allocation_type,
+        protect,
     )
 }
 
@@ -113,11 +120,17 @@ pub unsafe extern "C" fn Wow64FreeVirtualMemory32(
 ) -> u32 {
     crate::wow64_klog!(
         "Wow64FreeVirtualMemory32 proc={:#x} base={:#x} size={:#x} type={:#x}",
-        process_handle, base_address, region_size, free_type
+        process_handle,
+        base_address,
+        region_size,
+        free_type
     );
     // Forward to the memory thunk layer
     super::mem_thunk::wow64_free_virtual_memory(
-        process_handle, base_address, region_size, free_type
+        process_handle,
+        base_address,
+        region_size,
+        free_type,
     )
 }
 
@@ -130,12 +143,13 @@ pub unsafe extern "C" fn Wow64ReadVirtualMemory32(
 ) -> u32 {
     crate::wow64_klog!(
         "Wow64ReadVirtualMemory32 proc={:#x} src={:#x} dst={:#x} size={}",
-        process_handle, base_address, buffer, size
+        process_handle,
+        base_address,
+        buffer,
+        size
     );
     // Forward to the memory thunk layer
-    super::mem_thunk::wow64_read_virtual_memory(
-        process_handle, base_address, buffer, size
-    )
+    super::mem_thunk::wow64_read_virtual_memory(process_handle, base_address, buffer, size)
 }
 
 /// `Wow64WriteVirtualMemory32` — Write memory to a 32-bit process.
@@ -147,12 +161,13 @@ pub unsafe extern "C" fn Wow64WriteVirtualMemory32(
 ) -> u32 {
     crate::wow64_klog!(
         "Wow64WriteVirtualMemory32 proc={:#x} dst={:#x} src={:#x} size={}",
-        process_handle, base_address, buffer, size
+        process_handle,
+        base_address,
+        buffer,
+        size
     );
     // Forward to the memory thunk layer
-    super::mem_thunk::wow64_write_virtual_memory(
-        process_handle, base_address, buffer, size
-    )
+    super::mem_thunk::wow64_write_virtual_memory(process_handle, base_address, buffer, size)
 }
 
 /// `Wow64QueryInformationProcess` — Query process information for WoW64 process.
@@ -164,11 +179,17 @@ pub unsafe extern "C" fn Wow64QueryInformationProcess(
 ) -> u32 {
     crate::wow64_klog!(
         "Wow64QueryInformationProcess proc={:#x} class={:#x} buf={:#x} sz={}",
-        process_handle, information_class, buffer, buffer_size
+        process_handle,
+        information_class,
+        buffer,
+        buffer_size
     );
     // Forward to the process/thread thunk layer
     super::ps_thunk::wow64_query_information_process(
-        process_handle, information_class, buffer, buffer_size
+        process_handle,
+        information_class,
+        buffer,
+        buffer_size,
     )
 }
 
@@ -181,10 +202,16 @@ pub unsafe extern "C" fn Wow64SetInformationThread(
 ) -> u32 {
     crate::wow64_klog!(
         "Wow64SetInformationThread thr={:#x} class={:#x} buf={:#x} sz={}",
-        thread_handle, information_class, buffer, buffer_size
+        thread_handle,
+        information_class,
+        buffer,
+        buffer_size
     );
     // Forward to the process/thread thunk layer
     super::ps_thunk::wow64_set_information_thread(
-        thread_handle, information_class, buffer, buffer_size
+        thread_handle,
+        information_class,
+        buffer,
+        buffer_size,
     )
 }

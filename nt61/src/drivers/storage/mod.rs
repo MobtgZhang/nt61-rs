@@ -31,11 +31,11 @@
 extern crate alloc;
 
 #[cfg(target_arch = "x86_64")]
+pub mod ahci;
+#[cfg(target_arch = "x86_64")]
 pub mod ata;
 #[cfg(target_arch = "x86_64")]
 pub mod atapi;
-#[cfg(target_arch = "x86_64")]
-pub mod ahci;
 #[cfg(target_arch = "x86_64")]
 pub mod nvme;
 #[cfg(target_arch = "x86_64")]
@@ -43,18 +43,18 @@ pub mod scsi;
 
 #[cfg(target_arch = "x86_64")]
 pub mod ataport;
-pub mod storport;
 #[cfg(target_arch = "x86_64")]
 pub mod disk;
+pub mod storport;
 
-pub mod ramdisk;
 pub mod block;
+pub mod ramdisk;
 
 #[cfg(target_arch = "x86_64")]
 pub mod smoke;
 
-use crate::kprintln;
 use crate::ke::sync::Spinlock;
+use crate::kprintln;
 
 /// Maximum number of storage devices we can track.
 pub const MAX_STORAGE_DEVICES: usize = 8;
@@ -149,11 +149,11 @@ pub fn register_device(device: StorageDevice) -> Option<usize> {
     for i in 0..devices.len() {
         if devices[i].is_none() {
             devices[i] = Some(device);
-            // kprintln!("[STORAGE] Registered device {} (type={:?})", i, devices[i].as_ref().unwrap().device_type)  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[STORAGE] Registered device {} (type={:?})", i, devices[i].as_ref().unwrap().device_type);
             return Some(i);
         }
     }
-    // kprintln!("[STORAGE] Failed to register device - no slots available")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[STORAGE] Failed to register device - no slots available");
     None
 }
 
@@ -177,7 +177,10 @@ pub fn get_device(device_id: usize) -> Option<StorageDevice> {
 /// Check if a device is present.
 pub fn is_device_present(device_id: usize) -> bool {
     let devices = STORAGE_DEVICES.lock();
-    devices.get(device_id).and_then(|d| d.as_ref().map(|dev| dev.present)).unwrap_or(false)
+    devices
+        .get(device_id)
+        .and_then(|d| d.as_ref().map(|dev| dev.present))
+        .unwrap_or(false)
 }
 
 /// Get the total number of registered devices.
@@ -196,17 +199,19 @@ pub fn read_device_sector(device_id: usize, lba: u32, buffer: &mut [u8]) -> bool
             let controller = device.controller;
             let port = device.port;
             drop(devices);
-            
+
             match device_type {
                 StorageDeviceType::AhciDisk => {
                     #[cfg(target_arch = "x86_64")]
-                    { ahci::read_sector(controller, port, lba, buffer) }
+                    {
+                        ahci::read_sector(controller, port, lba, buffer)
+                    }
                     #[cfg(not(target_arch = "x86_64"))]
-                    { false }
+                    {
+                        false
+                    }
                 }
-                StorageDeviceType::RamDisk => {
-                    ramdisk::read(lba as usize, buffer)
-                }
+                StorageDeviceType::RamDisk => ramdisk::read(lba as usize, buffer),
                 _ => false,
             }
         }
@@ -227,14 +232,16 @@ pub fn write_device_sector(device_id: usize, lba: u32, buffer: &[u8]) -> bool {
             drop(devices);
 
             match device_type {
-                StorageDeviceType::RamDisk => {
-                    ramdisk::write(lba as usize, buffer)
-                }
+                StorageDeviceType::RamDisk => ramdisk::write(lba as usize, buffer),
                 StorageDeviceType::AhciDisk => {
                     #[cfg(target_arch = "x86_64")]
-                    { ahci::write_sector(controller, port, lba, buffer) }
+                    {
+                        ahci::write_sector(controller, port, lba, buffer)
+                    }
                     #[cfg(not(target_arch = "x86_64"))]
-                    { false }
+                    {
+                        false
+                    }
                 }
                 _ => false,
             }
@@ -247,22 +254,23 @@ pub fn write_device_sector(device_id: usize, lba: u32, buffer: &[u8]) -> bool {
 /// Print storage device information.
 pub fn print_devices() {
     let devices = STORAGE_DEVICES.lock();
-    // kprintln!("[STORAGE] Registered devices:")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[STORAGE] Registered devices:");
     for (slot_idx, device) in devices.iter().enumerate() {
         if let Some(dev) = device {
-            // kprintln!("  Device {}: type={:?}, sectors={}, sector_size={}",  // kprintln disabled (memcpy crash workaround)
-//                 i, dev.device_type, dev.total_sectors, dev.sector_size);
+            // kprintln!("  Device {}: type={:?}, sectors={}, sector_size={}",
+            //                 i, dev.device_type, dev.total_sectors, dev.sector_size);
             // Publish the last slot index observed so the iteration counter
             // is observable via diagnostics instead of being discarded.
             LAST_PRINT_SLOT.store(slot_idx as u32, core::sync::atomic::Ordering::Relaxed);
             if dev.present {
                 let model_str = core::str::from_utf8(&dev.model[..])
-                    .unwrap_or("<invalid>").trim();
+                    .unwrap_or("<invalid>")
+                    .trim();
                 if !model_str.is_empty() {
-                    // kprintln!("    Model: {}", model_str)  // kprintln disabled (memcpy crash workaround);
+                    // kprintln!("    Model: {}", model_str);
                 }
             } else {
-                // kprintln!("    (not present)")  // kprintln disabled (memcpy crash workaround);
+                // kprintln!("    (not present)");
             }
         }
     }
@@ -271,7 +279,7 @@ pub fn print_devices() {
 /// Initialise the storage stack. Walks PCI for storage class
 /// devices and starts the appropriate miniport.
 pub fn init() {
-    // kprintln!("    Storage drivers: ATA, AHCI, NVMe, SCSI, disk, ataport, storport")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    Storage drivers: ATA, AHCI, NVMe, SCSI, disk, ataport, storport");
     #[cfg(target_arch = "x86_64")]
     crate::hal::x86_64::serial::write_string("S:ata_start\r\n");
     #[cfg(target_arch = "x86_64")]
@@ -329,7 +337,7 @@ pub fn init() {
         let mut ramdisk_dev = StorageDevice::new_ramdisk(sectors);
         ramdisk_dev.sector_size = sector_size as u32;
         if let Some(id) = register_device(ramdisk_dev) {
-            // kprintln!("    RAM disk registered as device {}", id)  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("    RAM disk registered as device {}", id);
             // Track the most recent RAM-disk registration id so the
             // `id` binding is consumed (avoids `unused_variable` warning).
             LAST_RAMDISK_ID.store(id as u32, core::sync::atomic::Ordering::Relaxed);
@@ -337,7 +345,7 @@ pub fn init() {
     }
     // Register AHCI disks
     register_ahci_disks();
-    // kprintln!("    Storage stack ready")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    Storage stack ready");
     #[cfg(target_arch = "x86_64")]
     crate::hal::x86_64::serial::write_string("S:print_start\r\n");
     print_devices();
@@ -351,7 +359,7 @@ fn register_ahci_disks() {
     {
         let controller_count = ahci::count();
         if controller_count > 0 {
-            // kprintln!("[STORAGE] Registering AHCI disks...")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[STORAGE] Registering AHCI disks...");
             // Note: The actual disk registration would happen during AHCI init
             // For now, we rely on the AHCI module to register disks
         }
@@ -361,8 +369,12 @@ fn register_ahci_disks() {
 /// Smoke test for the storage stack. Re-runs every miniport's
 /// self-test and aggregates the result.
 #[cfg(target_arch = "x86_64")]
-pub fn smoke_test() -> bool { smoke::smoke_test() }
+pub fn smoke_test() -> bool {
+    smoke::smoke_test()
+}
 
 /// Stub for non-x86_64 architectures. Always passes.
 #[cfg(not(target_arch = "x86_64"))]
-pub fn smoke_test() -> bool { true }
+pub fn smoke_test() -> bool {
+    true
+}

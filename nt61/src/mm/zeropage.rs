@@ -14,9 +14,9 @@
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use crate::ke::sync::{DispatcherHeader, Event, EventType, Spinlock};
 use crate::mm::pfn;
 use crate::mm::pte::pfn_to_phys;
-use crate::ke::sync::{Event, EventType, DispatcherHeader, Spinlock};
 
 /// Number of pages to zero per batch.
 const ZEROS_PER_BATCH: u64 = 16;
@@ -127,7 +127,9 @@ pub fn get_zeroed_page() -> Option<u64> {
     }
     if let Some(p) = db.pop_free() {
         let va = pfn_to_phys(p) as *mut u8;
-        unsafe { ptr::write_bytes(va, 0, 4096); }
+        unsafe {
+            ptr::write_bytes(va, 0, 4096);
+        }
         db.allocate_pfn(p);
         return Some(p);
     }
@@ -141,10 +143,14 @@ pub fn tick() -> u64 {
     let mut db = pfn::PFN_DB.lock();
     let mut count = ZEROED_LEVEL.load(Ordering::Relaxed);
     for _ in 0..ZEROS_PER_BATCH {
-        if count >= ZEROED_TARGET { break; }
+        if count >= ZEROED_TARGET {
+            break;
+        }
         if let Some(p) = db.pop_free() {
             let va = pfn_to_phys(p) as *mut u8;
-            unsafe { ptr::write_bytes(va, 0, 4096); }
+            unsafe {
+                ptr::write_bytes(va, 0, 4096);
+            }
             db.insert_zeroed(p);
             zeroed += 1;
             count += 1;
@@ -171,7 +177,7 @@ pub fn tick() -> u64 {
 /// The thread exits when `stop_zero_thread()` is called (during
 /// system shutdown).
 pub extern "C" fn mi_zero_page_thread_entry(_context: u64) {
-    // [DISABLED] crate:: // // kprintln!("[MM] MiZeroPageThread started (event-based synchronization)")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // [DISABLED] crate:: // // kprintln!("[MM] MiZeroPageThread started (event-based synchronization)");
 
     // Get the event to wait on
     let event = get_zero_event_ptr();
@@ -220,14 +226,14 @@ pub extern "C" fn mi_zero_page_thread_entry(_context: u64) {
             let _ = crate::ke::sync::wait_single(event, 5000);
         }
     }
-    // [DISABLED] crate:: // // kprintln!("[MM] MiZeroPageThread exiting")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] crate:: // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// // // [DISABLED]         "[MM] Zero page stats: requests={}, success={}, fail={}, pages={}",
-// // // [DISABLED]         ZERO_REQUEST_COUNT.load(Ordering::Relaxed),
-// // // [DISABLED]         ZERO_SUCCESS_COUNT.load(Ordering::Relaxed),
-// // // [DISABLED]         ZERO_FAIL_COUNT.load(Ordering::Relaxed),
-// // // [DISABLED]         ZERO_PAGES_TOTAL.load(Ordering::Relaxed)
-// // // [DISABLED]     );
+    // [DISABLED] crate:: // // kprintln!("[MM] MiZeroPageThread exiting");
+    // [DISABLED] crate:: // // kprintln!(
+    // // // [DISABLED]         "[MM] Zero page stats: requests={}, success={}, fail={}, pages={}",
+    // // // [DISABLED]         ZERO_REQUEST_COUNT.load(Ordering::Relaxed),
+    // // // [DISABLED]         ZERO_SUCCESS_COUNT.load(Ordering::Relaxed),
+    // // // [DISABLED]         ZERO_FAIL_COUNT.load(Ordering::Relaxed),
+    // // // [DISABLED]         ZERO_PAGES_TOTAL.load(Ordering::Relaxed)
+    // // // [DISABLED]     );
     crate::ps::thread::ps_exit_system_thread(0);
 }
 
@@ -239,7 +245,7 @@ pub fn init_events() {
         *guard = Some(Event::new(EventType::Notification));
     }
     drop(guard);
-    // [DISABLED] // // kprintln!("[MM] Zero page thread synchronization initialized")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // [DISABLED] // // kprintln!("[MM] Zero page thread synchronization initialized");
 }
 
 /// Start the zero page thread as a system thread.
@@ -249,14 +255,13 @@ pub fn start_zero_page_thread() {
 
     let entry_addr = mi_zero_page_thread_entry as *const () as u64;
     let result = crate::ps::thread::ps_create_system_thread(
-        entry_addr,
-        0, // no context
+        entry_addr, 0, // no context
     );
     if result.success {
-        // [DISABLED] crate:: // // kprintln!("[MM] MiZeroPageThread created (entry=0x{:016x}, event-based)",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// // // [DISABLED]             entry_addr);
+        // [DISABLED] crate:: // // kprintln!("[MM] MiZeroPageThread created (entry=0x{:016x}, event-based)",
+        // // // [DISABLED]             entry_addr);
     } else {
-        // [DISABLED] crate:: // // kprintln!("[MM] WARNING: MiZeroPageThread creation failed")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // [DISABLED] crate:: // // kprintln!("[MM] WARNING: MiZeroPageThread creation failed");
     }
 }
 

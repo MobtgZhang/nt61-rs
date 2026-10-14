@@ -34,7 +34,7 @@
 
 #![allow(non_snake_case)]
 
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicI32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 /// Boot display mode (Windows 7 behavior)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,8 +60,8 @@ const VGA_CELLS: usize = (VGA_COLS * VGA_ROWS) as usize;
 
 /// Default text attributes used by the legacy VGA text buffer.
 pub const ATTR_DEFAULT: u8 = 0x07; // light grey on black
-pub const ATTR_HEADER:  u8 = 0x1F; // white on blue
-pub const ATTR_BSOD:    u8 = 0x1F; // white on blue (Windows BSOD)
+pub const ATTR_HEADER: u8 = 0x1F; // white on blue
+pub const ATTR_BSOD: u8 = 0x1F; // white on blue (Windows BSOD)
 
 /// Cached description of the active framebuffer. Once
 /// `init_from_framebuffer()` has been called we never go back
@@ -101,99 +101,183 @@ const fn build_font() -> [[u8; 12]; 96] {
     // as a blank. We include every letter, digit, and most
     // common punctuation so the progress bar / banner /
     // bugcheck strings all render correctly.
-    const BLANK: [u8; 12] = [0,0,0,0,0,0,0,0,0,0,0,0];
+    const BLANK: [u8; 12] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let mut f = [BLANK; 96];
     // Space
     f[b' ' as usize - 0x20] = BLANK;
     // !
-    f[b'!' as usize - 0x20] = [0x04,0x04,0x04,0x04,0x04,0,0,0,0x04,0,0,0];
+    f[b'!' as usize - 0x20] = [0x04, 0x04, 0x04, 0x04, 0x04, 0, 0, 0, 0x04, 0, 0, 0];
     // "
-    f[b'"' as usize - 0x20] = [0x0A,0x0A,0x0A,0,0,0,0,0,0,0,0,0];
+    f[b'"' as usize - 0x20] = [0x0A, 0x0A, 0x0A, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     // '
-    f[b'\'' as usize - 0x20] = [0x04,0x04,0x08,0,0,0,0,0,0,0,0,0];
+    f[b'\'' as usize - 0x20] = [0x04, 0x04, 0x08, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     // (
-    f[b'(' as usize - 0x20] = [0x08,0x04,0x02,0x02,0x02,0x02,0x02,0x02,0x04,0x08,0,0];
+    f[b'(' as usize - 0x20] = [
+        0x08, 0x04, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x04, 0x08, 0, 0,
+    ];
     // )
-    f[b')' as usize - 0x20] = [0x02,0x04,0x08,0x08,0x08,0x08,0x08,0x08,0x04,0x02,0,0];
+    f[b')' as usize - 0x20] = [
+        0x02, 0x04, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x04, 0x02, 0, 0,
+    ];
     // *
-    f[b'*' as usize - 0x20] = [0,0x0A,0x04,0x1F,0x04,0x0A,0,0,0,0,0,0];
+    f[b'*' as usize - 0x20] = [0, 0x0A, 0x04, 0x1F, 0x04, 0x0A, 0, 0, 0, 0, 0, 0];
     // +
-    f[b'+' as usize - 0x20] = [0,0x04,0x04,0x1F,0x04,0x04,0,0,0,0,0,0];
+    f[b'+' as usize - 0x20] = [0, 0x04, 0x04, 0x1F, 0x04, 0x04, 0, 0, 0, 0, 0, 0];
     // ,
-    f[b',' as usize - 0x20] = [0,0,0,0,0,0,0,0,0x04,0x04,0x08,0];
+    f[b',' as usize - 0x20] = [0, 0, 0, 0, 0, 0, 0, 0, 0x04, 0x04, 0x08, 0];
     // -
-    f[b'-' as usize - 0x20] = [0,0,0,0,0x1F,0,0,0,0,0,0,0];
+    f[b'-' as usize - 0x20] = [0, 0, 0, 0, 0x1F, 0, 0, 0, 0, 0, 0, 0];
     // .
-    f[b'.' as usize - 0x20] = [0,0,0,0,0,0,0,0,0x04,0x04,0,0];
+    f[b'.' as usize - 0x20] = [0, 0, 0, 0, 0, 0, 0, 0, 0x04, 0x04, 0, 0];
     // /
-    f[b'/' as usize - 0x20] = [0x08,0x08,0x04,0x04,0x02,0x02,0x01,0x01,0,0,0,0];
+    f[b'/' as usize - 0x20] = [0x08, 0x08, 0x04, 0x04, 0x02, 0x02, 0x01, 0x01, 0, 0, 0, 0];
     // 0
-    f[b'0' as usize - 0x20] = [0x0E,0x11,0x11,0x11,0x11,0x11,0x11,0x11,0x11,0x0E,0,0];
+    f[b'0' as usize - 0x20] = [
+        0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E, 0, 0,
+    ];
     // 1
-    f[b'1' as usize - 0x20] = [0x04,0x06,0x05,0x04,0x04,0x04,0x04,0x04,0x04,0x0E,0,0];
+    f[b'1' as usize - 0x20] = [
+        0x04, 0x06, 0x05, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E, 0, 0,
+    ];
     // 2
-    f[b'2' as usize - 0x20] = [0x0E,0x11,0x10,0x10,0x08,0x04,0x02,0x01,0x01,0x1F,0,0];
+    f[b'2' as usize - 0x20] = [
+        0x0E, 0x11, 0x10, 0x10, 0x08, 0x04, 0x02, 0x01, 0x01, 0x1F, 0, 0,
+    ];
     // 3
-    f[b'3' as usize - 0x20] = [0x0E,0x11,0x10,0x10,0x0C,0x10,0x10,0x11,0x11,0x0E,0,0];
+    f[b'3' as usize - 0x20] = [
+        0x0E, 0x11, 0x10, 0x10, 0x0C, 0x10, 0x10, 0x11, 0x11, 0x0E, 0, 0,
+    ];
     // 4
-    f[b'4' as usize - 0x20] = [0x08,0x08,0x0C,0x0A,0x0A,0x09,0x1F,0x08,0x08,0x1C,0,0];
+    f[b'4' as usize - 0x20] = [
+        0x08, 0x08, 0x0C, 0x0A, 0x0A, 0x09, 0x1F, 0x08, 0x08, 0x1C, 0, 0,
+    ];
     // 5
-    f[b'5' as usize - 0x20] = [0x1F,0x01,0x01,0x0F,0x10,0x10,0x10,0x11,0x11,0x0E,0,0];
+    f[b'5' as usize - 0x20] = [
+        0x1F, 0x01, 0x01, 0x0F, 0x10, 0x10, 0x10, 0x11, 0x11, 0x0E, 0, 0,
+    ];
     // 6
-    f[b'6' as usize - 0x20] = [0x0E,0x11,0x01,0x01,0x0F,0x11,0x11,0x11,0x11,0x0E,0,0];
+    f[b'6' as usize - 0x20] = [
+        0x0E, 0x11, 0x01, 0x01, 0x0F, 0x11, 0x11, 0x11, 0x11, 0x0E, 0, 0,
+    ];
     // 7
-    f[b'7' as usize - 0x20] = [0x1F,0x10,0x08,0x08,0x04,0x04,0x02,0x02,0x02,0x02,0,0];
+    f[b'7' as usize - 0x20] = [
+        0x1F, 0x10, 0x08, 0x08, 0x04, 0x04, 0x02, 0x02, 0x02, 0x02, 0, 0,
+    ];
     // 8
-    f[b'8' as usize - 0x20] = [0x0E,0x11,0x11,0x11,0x0E,0x11,0x11,0x11,0x11,0x0E,0,0];
+    f[b'8' as usize - 0x20] = [
+        0x0E, 0x11, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x11, 0x11, 0x0E, 0, 0,
+    ];
     // 9
-    f[b'9' as usize - 0x20] = [0x0E,0x11,0x11,0x11,0x11,0x1E,0x10,0x10,0x11,0x0E,0,0];
+    f[b'9' as usize - 0x20] = [
+        0x0E, 0x11, 0x11, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x11, 0x0E, 0, 0,
+    ];
     // :
-    f[b':' as usize - 0x20] = [0,0,0x04,0x04,0,0,0,0x04,0x04,0,0,0];
+    f[b':' as usize - 0x20] = [0, 0, 0x04, 0x04, 0, 0, 0, 0x04, 0x04, 0, 0, 0];
     // <
-    f[b'<' as usize - 0x20] = [0x08,0x04,0x02,0x01,0x01,0x02,0x04,0x08,0,0,0,0];
+    f[b'<' as usize - 0x20] = [0x08, 0x04, 0x02, 0x01, 0x01, 0x02, 0x04, 0x08, 0, 0, 0, 0];
     // =
-    f[b'=' as usize - 0x20] = [0,0,0,0x1F,0,0x1F,0,0,0,0,0,0];
+    f[b'=' as usize - 0x20] = [0, 0, 0, 0x1F, 0, 0x1F, 0, 0, 0, 0, 0, 0];
     // >
-    f[b'>' as usize - 0x20] = [0x02,0x04,0x08,0x10,0x10,0x08,0x04,0x02,0,0,0,0];
+    f[b'>' as usize - 0x20] = [0x02, 0x04, 0x08, 0x10, 0x10, 0x08, 0x04, 0x02, 0, 0, 0, 0];
     // ?
-    f[b'?' as usize - 0x20] = [0x0E,0x11,0x10,0x10,0x08,0x04,0x04,0,0x04,0,0,0];
+    f[b'?' as usize - 0x20] = [0x0E, 0x11, 0x10, 0x10, 0x08, 0x04, 0x04, 0, 0x04, 0, 0, 0];
     // @
-    f[b'@' as usize - 0x20] = [0x0E,0x11,0x10,0x16,0x15,0x15,0x16,0x10,0x11,0x0E,0,0];
+    f[b'@' as usize - 0x20] = [
+        0x0E, 0x11, 0x10, 0x16, 0x15, 0x15, 0x16, 0x10, 0x11, 0x0E, 0, 0,
+    ];
     // A-Z
-    f[b'A' as usize - 0x20] = [0x0E,0x11,0x11,0x11,0x11,0x1F,0x11,0x11,0x11,0x11,0,0];
-    f[b'B' as usize - 0x20] = [0x0F,0x11,0x11,0x11,0x0F,0x11,0x11,0x11,0x11,0x0F,0,0];
-    f[b'C' as usize - 0x20] = [0x0E,0x11,0x11,0x01,0x01,0x01,0x01,0x11,0x11,0x0E,0,0];
-    f[b'D' as usize - 0x20] = [0x07,0x09,0x11,0x11,0x11,0x11,0x11,0x11,0x09,0x07,0,0];
-    f[b'E' as usize - 0x20] = [0x1F,0x01,0x01,0x01,0x0F,0x01,0x01,0x01,0x01,0x1F,0,0];
-    f[b'F' as usize - 0x20] = [0x1F,0x01,0x01,0x01,0x0F,0x01,0x01,0x01,0x01,0x01,0,0];
-    f[b'G' as usize - 0x20] = [0x0E,0x11,0x11,0x01,0x1D,0x11,0x11,0x11,0x11,0x0E,0,0];
-    f[b'H' as usize - 0x20] = [0x11,0x11,0x11,0x11,0x1F,0x11,0x11,0x11,0x11,0x11,0,0];
-    f[b'I' as usize - 0x20] = [0x0E,0x04,0x04,0x04,0x04,0x04,0x04,0x04,0x04,0x0E,0,0];
-    f[b'J' as usize - 0x20] = [0x1E,0x08,0x08,0x08,0x08,0x08,0x08,0x08,0x09,0x06,0,0];
-    f[b'K' as usize - 0x20] = [0x11,0x11,0x09,0x05,0x03,0x05,0x09,0x11,0x11,0x11,0,0];
-    f[b'L' as usize - 0x20] = [0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x1F,0,0];
-    f[b'M' as usize - 0x20] = [0x11,0x1B,0x15,0x15,0x15,0x11,0x11,0x11,0x11,0x11,0,0];
-    f[b'N' as usize - 0x20] = [0x11,0x11,0x13,0x15,0x15,0x19,0x19,0x11,0x11,0x11,0,0];
-    f[b'O' as usize - 0x20] = [0x0E,0x11,0x11,0x11,0x11,0x11,0x11,0x11,0x11,0x0E,0,0];
-    f[b'P' as usize - 0x20] = [0x0F,0x11,0x11,0x11,0x0F,0x01,0x01,0x01,0x01,0x01,0,0];
-    f[b'Q' as usize - 0x20] = [0x0E,0x11,0x11,0x11,0x11,0x11,0x15,0x09,0x0E,0x10,0,0];
-    f[b'R' as usize - 0x20] = [0x0F,0x11,0x11,0x11,0x0F,0x05,0x09,0x11,0x11,0x11,0,0];
-    f[b'S' as usize - 0x20] = [0x0E,0x11,0x01,0x01,0x0E,0x10,0x10,0x11,0x11,0x0E,0,0];
-    f[b'T' as usize - 0x20] = [0x1F,0x04,0x04,0x04,0x04,0x04,0x04,0x04,0x04,0x04,0,0];
-    f[b'U' as usize - 0x20] = [0x11,0x11,0x11,0x11,0x11,0x11,0x11,0x11,0x11,0x0E,0,0];
-    f[b'V' as usize - 0x20] = [0x11,0x11,0x11,0x11,0x11,0x11,0x11,0x0A,0x0A,0x04,0,0];
-    f[b'W' as usize - 0x20] = [0x11,0x11,0x11,0x11,0x15,0x15,0x15,0x15,0x15,0x0A,0,0];
-    f[b'X' as usize - 0x20] = [0x11,0x11,0x11,0x0A,0x04,0x0A,0x11,0x11,0x11,0x11,0,0];
-    f[b'Y' as usize - 0x20] = [0x11,0x11,0x11,0x11,0x0A,0x04,0x04,0x04,0x04,0x04,0,0];
-    f[b'Z' as usize - 0x20] = [0x1F,0x10,0x10,0x08,0x04,0x02,0x01,0x01,0x01,0x1F,0,0];
+    f[b'A' as usize - 0x20] = [
+        0x0E, 0x11, 0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11, 0x11, 0, 0,
+    ];
+    f[b'B' as usize - 0x20] = [
+        0x0F, 0x11, 0x11, 0x11, 0x0F, 0x11, 0x11, 0x11, 0x11, 0x0F, 0, 0,
+    ];
+    f[b'C' as usize - 0x20] = [
+        0x0E, 0x11, 0x11, 0x01, 0x01, 0x01, 0x01, 0x11, 0x11, 0x0E, 0, 0,
+    ];
+    f[b'D' as usize - 0x20] = [
+        0x07, 0x09, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x09, 0x07, 0, 0,
+    ];
+    f[b'E' as usize - 0x20] = [
+        0x1F, 0x01, 0x01, 0x01, 0x0F, 0x01, 0x01, 0x01, 0x01, 0x1F, 0, 0,
+    ];
+    f[b'F' as usize - 0x20] = [
+        0x1F, 0x01, 0x01, 0x01, 0x0F, 0x01, 0x01, 0x01, 0x01, 0x01, 0, 0,
+    ];
+    f[b'G' as usize - 0x20] = [
+        0x0E, 0x11, 0x11, 0x01, 0x1D, 0x11, 0x11, 0x11, 0x11, 0x0E, 0, 0,
+    ];
+    f[b'H' as usize - 0x20] = [
+        0x11, 0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11, 0x11, 0x11, 0, 0,
+    ];
+    f[b'I' as usize - 0x20] = [
+        0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E, 0, 0,
+    ];
+    f[b'J' as usize - 0x20] = [
+        0x1E, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x09, 0x06, 0, 0,
+    ];
+    f[b'K' as usize - 0x20] = [
+        0x11, 0x11, 0x09, 0x05, 0x03, 0x05, 0x09, 0x11, 0x11, 0x11, 0, 0,
+    ];
+    f[b'L' as usize - 0x20] = [
+        0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x1F, 0, 0,
+    ];
+    f[b'M' as usize - 0x20] = [
+        0x11, 0x1B, 0x15, 0x15, 0x15, 0x11, 0x11, 0x11, 0x11, 0x11, 0, 0,
+    ];
+    f[b'N' as usize - 0x20] = [
+        0x11, 0x11, 0x13, 0x15, 0x15, 0x19, 0x19, 0x11, 0x11, 0x11, 0, 0,
+    ];
+    f[b'O' as usize - 0x20] = [
+        0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E, 0, 0,
+    ];
+    f[b'P' as usize - 0x20] = [
+        0x0F, 0x11, 0x11, 0x11, 0x0F, 0x01, 0x01, 0x01, 0x01, 0x01, 0, 0,
+    ];
+    f[b'Q' as usize - 0x20] = [
+        0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x15, 0x09, 0x0E, 0x10, 0, 0,
+    ];
+    f[b'R' as usize - 0x20] = [
+        0x0F, 0x11, 0x11, 0x11, 0x0F, 0x05, 0x09, 0x11, 0x11, 0x11, 0, 0,
+    ];
+    f[b'S' as usize - 0x20] = [
+        0x0E, 0x11, 0x01, 0x01, 0x0E, 0x10, 0x10, 0x11, 0x11, 0x0E, 0, 0,
+    ];
+    f[b'T' as usize - 0x20] = [
+        0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0, 0,
+    ];
+    f[b'U' as usize - 0x20] = [
+        0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E, 0, 0,
+    ];
+    f[b'V' as usize - 0x20] = [
+        0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x0A, 0x04, 0, 0,
+    ];
+    f[b'W' as usize - 0x20] = [
+        0x11, 0x11, 0x11, 0x11, 0x15, 0x15, 0x15, 0x15, 0x15, 0x0A, 0, 0,
+    ];
+    f[b'X' as usize - 0x20] = [
+        0x11, 0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11, 0x11, 0x11, 0, 0,
+    ];
+    f[b'Y' as usize - 0x20] = [
+        0x11, 0x11, 0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04, 0x04, 0, 0,
+    ];
+    f[b'Z' as usize - 0x20] = [
+        0x1F, 0x10, 0x10, 0x08, 0x04, 0x02, 0x01, 0x01, 0x01, 0x1F, 0, 0,
+    ];
     // [
-    f[b'[' as usize - 0x20] = [0x0E,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x0E,0,0];
+    f[b'[' as usize - 0x20] = [
+        0x0E, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x0E, 0, 0,
+    ];
     // \
-    f[b'\\' as usize - 0x20] = [0x01,0x01,0x02,0x02,0x04,0x04,0x08,0x08,0x10,0x10,0,0];
+    f[b'\\' as usize - 0x20] = [
+        0x01, 0x01, 0x02, 0x02, 0x04, 0x04, 0x08, 0x08, 0x10, 0x10, 0, 0,
+    ];
     // ]
-    f[b']' as usize - 0x20] = [0x0E,0x08,0x08,0x08,0x08,0x08,0x08,0x08,0x08,0x0E,0,0];
+    f[b']' as usize - 0x20] = [
+        0x0E, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x0E, 0, 0,
+    ];
     // _
-    f[b'_' as usize - 0x20] = [0,0,0,0,0,0,0,0,0,0x1F,0,0];
+    f[b'_' as usize - 0x20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0x1F, 0, 0];
     // a-z (same shape as A-Z)
     f[b'a' as usize - 0x20] = f[b'A' as usize - 0x20];
     f[b'b' as usize - 0x20] = f[b'B' as usize - 0x20];
@@ -230,7 +314,9 @@ const fn build_font() -> [[u8; 12]; 96] {
 /// become a no-op on the architectures that don't have a legacy
 /// VGA text buffer (aarch64 / riscv64 / loongarch64).
 pub fn init() {
-    if INITIALISED.load(Ordering::Acquire) { return; }
+    if INITIALISED.load(Ordering::Acquire) {
+        return;
+    }
     if MODE_LFB.load(Ordering::Acquire) {
         let base = FB_BASE.load(Ordering::Acquire);
         let width = FB_WIDTH.load(Ordering::Acquire);
@@ -252,10 +338,10 @@ pub fn init() {
                 let dst = base as *mut u8;
                 for off in (0..total_bytes).step_by(4) {
                     let p = dst.add(off);
-                    core::ptr::write_volatile(p,     bg[0]); // B
+                    core::ptr::write_volatile(p, bg[0]); // B
                     core::ptr::write_volatile(p.add(1), bg[1]); // G
                     core::ptr::write_volatile(p.add(2), bg[2]); // R
-                    // Alpha stays at 0xFF.
+                                                                // Alpha stays at 0xFF.
                 }
             }
             CURSOR_X.store(0, Ordering::Release);
@@ -285,7 +371,9 @@ pub fn init() {
 /// active display, but before any `InbvDisplayString` /
 /// `paint_progress_bar` / `bugcheck_screen` calls.
 pub fn init_from_framebuffer(base: u64, width: u32, height: u32, pitch: u32) {
-    if base == 0 || width == 0 || height == 0 || pitch == 0 { return; }
+    if base == 0 || width == 0 || height == 0 || pitch == 0 {
+        return;
+    }
     FB_BASE.store(base, Ordering::Release);
     FB_WIDTH.store(width, Ordering::Release);
     FB_HEIGHT.store(height, Ordering::Release);
@@ -313,7 +401,12 @@ fn write_cell_vga(idx: usize, ch: u8, attr: u8) {
 
 fn read_cell_vga(idx: usize) -> TextCell {
     let ptr = (VGA_TEXT_BASE as *const u8).wrapping_add(idx * 2);
-    unsafe { TextCell { char: core::ptr::read_volatile(ptr), attr: core::ptr::read_volatile(ptr.add(1)) } }
+    unsafe {
+        TextCell {
+            char: core::ptr::read_volatile(ptr),
+            attr: core::ptr::read_volatile(ptr.add(1)),
+        }
+    }
 }
 
 fn scroll_up_vga() {
@@ -324,7 +417,11 @@ fn scroll_up_vga() {
         }
     }
     for c in 0..VGA_COLS as usize {
-        write_cell_vga((VGA_ROWS as usize - 1) * VGA_COLS as usize + c, b' ', ATTR_DEFAULT);
+        write_cell_vga(
+            (VGA_ROWS as usize - 1) * VGA_COLS as usize + c,
+            b' ',
+            ATTR_DEFAULT,
+        );
     }
 }
 
@@ -346,13 +443,15 @@ fn scroll_up_vga() {
 /// and left a 2-px black band at the top of every line plus left
 /// stale characters in the bottom gap area.
 fn scroll_up_lfb() {
-    let base   = FB_BASE.load(Ordering::Acquire);
-    let pitch  = FB_PITCH.load(Ordering::Acquire);
+    let base = FB_BASE.load(Ordering::Acquire);
+    let pitch = FB_PITCH.load(Ordering::Acquire);
     let height = FB_HEIGHT.load(Ordering::Acquire);
-    if base == 0 || pitch == 0 || height <= 14 { return; }
+    if base == 0 || pitch == 0 || height <= 14 {
+        return;
+    }
     let bytes_per_row = pitch as usize;
     let glyph_row_bytes = 14 * bytes_per_row;
-    let move_bytes    = (height as usize - 14) * bytes_per_row;
+    let move_bytes = (height as usize - 14) * bytes_per_row;
     unsafe {
         let dst = base as *mut u8;
         let src = dst.add(glyph_row_bytes);
@@ -364,7 +463,7 @@ fn scroll_up_lfb() {
         let band_bytes = 14 * bytes_per_row;
         for off in (band_start..band_start + band_bytes).step_by(4) {
             let p = dst.add(off);
-            core::ptr::write_volatile(p,     bg[0]);
+            core::ptr::write_volatile(p, bg[0]);
             core::ptr::write_volatile(p.add(1), bg[1]);
             core::ptr::write_volatile(p.add(2), bg[2]);
             // Alpha stays at 0xFF — the LFB is fully opaque.
@@ -374,7 +473,7 @@ fn scroll_up_lfb() {
         // scroll completes.
         for off in (0..glyph_row_bytes).step_by(4) {
             let p = dst.add(off);
-            core::ptr::write_volatile(p,     bg[0]);
+            core::ptr::write_volatile(p, bg[0]);
             core::ptr::write_volatile(p.add(1), bg[1]);
             core::ptr::write_volatile(p.add(2), bg[2]);
         }
@@ -462,26 +561,42 @@ pub fn lfb_active() -> bool {
 /// `FB_BASE` / `FB_PITCH` stay zero.
 pub fn force_lfb_console() {
     let base = FB_BASE.load(Ordering::Acquire);
-    if base == 0 { return; }
+    if base == 0 {
+        return;
+    }
     MODE_LFB.store(true, Ordering::Release);
 }
 
 fn putchar_vga(ch: u8) {
     match ch {
-        b'\n' => { newline(); return; }
-        b'\r' => { CURSOR_X.store(0, Ordering::Release); return; }
+        b'\n' => {
+            newline();
+            return;
+        }
+        b'\r' => {
+            CURSOR_X.store(0, Ordering::Release);
+            return;
+        }
         b'\t' => {
             let x = CURSOR_X.load(Ordering::Acquire);
             let next = (x / 8 + 1) * 8;
             CURSOR_X.store(next, Ordering::Release);
-            if CURSOR_X.load(Ordering::Acquire) >= VGA_COLS { newline(); }
+            if CURSOR_X.load(Ordering::Acquire) >= VGA_COLS {
+                newline();
+            }
             return;
         }
         0x08 => {
             let x = CURSOR_X.load(Ordering::Acquire);
-            if x > 0 { CURSOR_X.store(x - 1, Ordering::Release); }
+            if x > 0 {
+                CURSOR_X.store(x - 1, Ordering::Release);
+            }
             let y = CURSOR_Y.load(Ordering::Acquire);
-            write_cell_vga(y as usize * VGA_COLS as usize + CURSOR_X.load(Ordering::Acquire) as usize, b' ', ATTR_DEFAULT);
+            write_cell_vga(
+                y as usize * VGA_COLS as usize + CURSOR_X.load(Ordering::Acquire) as usize,
+                b' ',
+                ATTR_DEFAULT,
+            );
             return;
         }
         _ => {}
@@ -491,15 +606,25 @@ fn putchar_vga(ch: u8) {
     let attr = ATTR.load(Ordering::Acquire);
     write_cell_vga(y as usize * VGA_COLS as usize + x as usize, ch, attr);
     let nx = x + 1;
-    if nx >= VGA_COLS { newline(); } else { CURSOR_X.store(nx, Ordering::Release); }
+    if nx >= VGA_COLS {
+        newline();
+    } else {
+        CURSOR_X.store(nx, Ordering::Release);
+    }
 }
 
 /// Draw the ascii glyph for `ch` at the current cursor position
 /// on the LFB backend. We use 6×12 pixel glyphs from `FONT`.
 fn putchar_lfb(ch: u8) {
     match ch {
-        b'\n' => { newline(); return; }
-        b'\r' => { CURSOR_X.store(0, Ordering::Release); return; }
+        b'\n' => {
+            newline();
+            return;
+        }
+        b'\r' => {
+            CURSOR_X.store(0, Ordering::Release);
+            return;
+        }
         b'\t' => {
             let x = CURSOR_X.load(Ordering::Acquire);
             let next = x + 8 * 6;
@@ -508,7 +633,9 @@ fn putchar_lfb(ch: u8) {
         }
         0x08 => {
             let x = CURSOR_X.load(Ordering::Acquire);
-            if x > 0 { CURSOR_X.store(x - 6, Ordering::Release); }
+            if x > 0 {
+                CURSOR_X.store(x - 6, Ordering::Release);
+            }
             return;
         }
         _ => {}
@@ -516,7 +643,7 @@ fn putchar_lfb(ch: u8) {
     let glyph_idx = if ch >= 0x20 && ch < 0x80 {
         (ch - 0x20) as usize
     } else {
-        0  // map to space
+        0 // map to space
     };
     let base = FB_BASE.load(Ordering::Acquire);
     let pitch = FB_PITCH.load(Ordering::Acquire);
@@ -524,7 +651,9 @@ fn putchar_lfb(ch: u8) {
     let width = FB_WIDTH.load(Ordering::Acquire);
     let mut px = CURSOR_X.load(Ordering::Acquire);
     let py = CURSOR_Y.load(Ordering::Acquire);
-    if base == 0 || pitch == 0 { return; }
+    if base == 0 || pitch == 0 {
+        return;
+    }
     let attr = ATTR.load(Ordering::Acquire);
     let fg = colour_for_attr(attr);
     let bg = colour_for_attr(attr >> 4);
@@ -536,12 +665,14 @@ fn putchar_lfb(ch: u8) {
             let on = (bits >> col) & 1 != 0;
             let x = px + col;
             let y = py + row;
-            if x >= width || y >= height { continue; }
+            if x >= width || y >= height {
+                continue;
+            }
             let off = (y * pitch + x * 4) as usize;
             unsafe {
                 let p = (base as *mut u8).add(off);
                 let pix = if on { fg } else { bg };
-                core::ptr::write_volatile(p, pix[0]);      // B
+                core::ptr::write_volatile(p, pix[0]); // B
                 core::ptr::write_volatile(p.add(1), pix[1]); // G
                 core::ptr::write_volatile(p.add(2), pix[2]); // R
                 core::ptr::write_volatile(p.add(3), pix[3]); // A
@@ -549,8 +680,11 @@ fn putchar_lfb(ch: u8) {
         }
     }
     px = px + 6;
-    if px + 6 > width { newline(); }
-    else { CURSOR_X.store(px, Ordering::Release); }
+    if px + 6 > width {
+        newline();
+    } else {
+        CURSOR_X.store(px, Ordering::Release);
+    }
     let _ = attr; // silence unused
 }
 
@@ -565,22 +699,22 @@ fn putchar_lfb(ch: u8) {
 ///   * index 4 (dark red)   → R=0xAA, G=0x00, B=0x00 — a TRUE dark red.
 fn colour_for_attr(idx: u8) -> [u8; 4] {
     match idx & 0x0F {
-        0 => [0x00, 0x00, 0x00, 0xFF], // black
-        1 => [0xAA, 0x00, 0x00, 0xFF], // dark blue   (B=0xAA, R=0x00)
-        2 => [0x00, 0xAA, 0x00, 0xFF], // dark green  (G=0xAA)
-        3 => [0xAA, 0xAA, 0x00, 0xFF], // dark cyan   (B=0xAA, G=0xAA)
-        4 => [0x00, 0x00, 0xAA, 0xFF], // dark red    (R=0xAA)
-        5 => [0xAA, 0x00, 0xAA, 0xFF], // dark magenta
-        6 => [0x00, 0x55, 0xAA, 0xFF], // dark yellow / brown
-        7 => [0xAA, 0xAA, 0xAA, 0xFF], // light grey
-        8 => [0x55, 0x55, 0x55, 0xFF], // dark grey
-        9 => [0xFF, 0x55, 0x55, 0xFF], // light blue
-       10 => [0x55, 0xFF, 0x55, 0xFF], // light green
-       11 => [0xFF, 0xFF, 0x55, 0xFF], // light cyan
-       12 => [0x55, 0x55, 0xFF, 0xFF], // light red
-       13 => [0xFF, 0x55, 0xFF, 0xFF], // light magenta
-       14 => [0x55, 0xFF, 0xFF, 0xFF], // yellow
-       15 => [0xFF, 0xFF, 0xFF, 0xFF], // white
+        0 => [0x00, 0x00, 0x00, 0xFF],  // black
+        1 => [0xAA, 0x00, 0x00, 0xFF],  // dark blue   (B=0xAA, R=0x00)
+        2 => [0x00, 0xAA, 0x00, 0xFF],  // dark green  (G=0xAA)
+        3 => [0xAA, 0xAA, 0x00, 0xFF],  // dark cyan   (B=0xAA, G=0xAA)
+        4 => [0x00, 0x00, 0xAA, 0xFF],  // dark red    (R=0xAA)
+        5 => [0xAA, 0x00, 0xAA, 0xFF],  // dark magenta
+        6 => [0x00, 0x55, 0xAA, 0xFF],  // dark yellow / brown
+        7 => [0xAA, 0xAA, 0xAA, 0xFF],  // light grey
+        8 => [0x55, 0x55, 0x55, 0xFF],  // dark grey
+        9 => [0xFF, 0x55, 0x55, 0xFF],  // light blue
+        10 => [0x55, 0xFF, 0x55, 0xFF], // light green
+        11 => [0xFF, 0xFF, 0x55, 0xFF], // light cyan
+        12 => [0x55, 0x55, 0xFF, 0xFF], // light red
+        13 => [0xFF, 0x55, 0xFF, 0xFF], // light magenta
+        14 => [0x55, 0xFF, 0xFF, 0xFF], // yellow
+        15 => [0xFF, 0xFF, 0xFF, 0xFF], // white
         _ => [0xFF, 0xFF, 0xFF, 0xFF],
     }
 }
@@ -588,7 +722,9 @@ fn colour_for_attr(idx: u8) -> [u8; 4] {
 /// `InbvDisplayString` — write a NUL-terminated ASCII string.
 pub fn InbvDisplayString(s: &[u8]) {
     for &b in s {
-        if b == 0 { break; }
+        if b == 0 {
+            break;
+        }
         putchar(b);
     }
 }
@@ -596,8 +732,13 @@ pub fn InbvDisplayString(s: &[u8]) {
 /// NUL-terminated display, attribute can be supplied by the caller.
 pub fn VidDisplayString(s: &[u8], attr: u8) {
     for &b in s {
-        if b == 0 { break; }
-        if b == b'\n' { newline(); continue; }
+        if b == 0 {
+            break;
+        }
+        if b == b'\n' {
+            newline();
+            continue;
+        }
         ATTR.store(attr, Ordering::Release);
         putchar(b);
     }
@@ -613,7 +754,9 @@ pub fn InbvDisplayStringBlocking(s: &[u8]) {
 
 /// `InbvSetProgressBarSubset` — display `count` filled blocks.
 pub fn InbvSetProgressBarSubset(count: u32) {
-    if !INITIALISED.load(Ordering::Acquire) { return; }
+    if !INITIALISED.load(Ordering::Acquire) {
+        return;
+    }
     if MODE_LFB.load(Ordering::Acquire) {
         // On the LFB we paint a 24-pixel-tall horizontal bar near
         // the bottom of the framebuffer. Colours are BGRA byte
@@ -631,7 +774,7 @@ pub fn InbvSetProgressBarSubset(count: u32) {
                 let off = ((bar_y0 + row) * pitch + col * 4) as usize;
                 unsafe {
                     let p = (base as *mut u8).add(off);
-                    core::ptr::write_volatile(p,     0x40); // B
+                    core::ptr::write_volatile(p, 0x40); // B
                     core::ptr::write_volatile(p.add(1), 0x40); // G
                     core::ptr::write_volatile(p.add(2), 0x40); // R
                     core::ptr::write_volatile(p.add(3), 0xFF);
@@ -645,7 +788,7 @@ pub fn InbvSetProgressBarSubset(count: u32) {
                 let off = ((bar_y0 + row) * pitch + col * 4) as usize;
                 unsafe {
                     let p = (base as *mut u8).add(off);
-                    core::ptr::write_volatile(p,     0x00); // B
+                    core::ptr::write_volatile(p, 0x00); // B
                     core::ptr::write_volatile(p.add(1), 0xFF); // G
                     core::ptr::write_volatile(p.add(2), 0xFF); // R
                     core::ptr::write_volatile(p.add(3), 0xFF);
@@ -662,7 +805,11 @@ pub fn InbvSetProgressBarSubset(count: u32) {
     let blocks = (count as u32).min(VGA_COLS);
     for c in 0..VGA_COLS as usize {
         let ch = if (c as u32) < blocks { 0xDB } else { 0xB0 };
-        write_cell_vga((VGA_ROWS as usize - 1) * VGA_COLS as usize + c, ch, ATTR_HEADER);
+        write_cell_vga(
+            (VGA_ROWS as usize - 1) * VGA_COLS as usize + c,
+            ch,
+            ATTR_HEADER,
+        );
     }
     CURSOR_X.store(SAVED_X.load(Ordering::Acquire), Ordering::Release);
     CURSOR_Y.store(SAVED_Y.load(Ordering::Acquire), Ordering::Release);
@@ -670,7 +817,9 @@ pub fn InbvSetProgressBarSubset(count: u32) {
 
 /// `InbvRotateWaitingSpinner` — show the four-frame spinner.
 pub fn InbvRotateWaitingSpinner() {
-    if !INITIALISED.load(Ordering::Acquire) { return; }
+    if !INITIALISED.load(Ordering::Acquire) {
+        return;
+    }
     let tick = SPINNER_TICK.fetch_add(1, Ordering::Relaxed);
     let frame = SPINNER[(tick as usize) & 3];
     putchar(frame);
@@ -701,7 +850,7 @@ pub fn VidResetDisplay(bios: bool) {
                 let p = base as *mut u8;
                 let mut off = 0usize;
                 while off + 4 <= total_bytes {
-                    core::ptr::write_volatile(p.add(off),     0x00);
+                    core::ptr::write_volatile(p.add(off), 0x00);
                     core::ptr::write_volatile(p.add(off + 1), 0x00);
                     core::ptr::write_volatile(p.add(off + 2), 0x00);
                     core::ptr::write_volatile(p.add(off + 3), 0xFF);
@@ -722,7 +871,9 @@ pub fn VidResetDisplay(bios: bool) {
 
 /// `VidCleanUp` — disable the cursor and leave the screen alone.
 pub fn VidCleanUp() {
-    if !INITIALISED.load(Ordering::Acquire) { return; }
+    if !INITIALISED.load(Ordering::Acquire) {
+        return;
+    }
     // No-op for the LFB path. On the VGA path this would disable
     // the cursor via the CRTC index port, which is unsafe in
     // long mode.
@@ -736,18 +887,22 @@ pub fn VidCleanUp() {
 /// the window, so we have to overwrite the stale pixels
 /// before we start drawing text on top of them.
 pub fn VidClearBlack() {
-    if !MODE_LFB.load(Ordering::Acquire) { return; }
-    let base   = FB_BASE.load(Ordering::Acquire);
-    let pitch  = FB_PITCH.load(Ordering::Acquire);
-    let width  = FB_WIDTH.load(Ordering::Acquire);
+    if !MODE_LFB.load(Ordering::Acquire) {
+        return;
+    }
+    let base = FB_BASE.load(Ordering::Acquire);
+    let pitch = FB_PITCH.load(Ordering::Acquire);
+    let width = FB_WIDTH.load(Ordering::Acquire);
     let height = FB_HEIGHT.load(Ordering::Acquire);
-    if base == 0 || pitch == 0 || width == 0 || height == 0 { return; }
+    if base == 0 || pitch == 0 || width == 0 || height == 0 {
+        return;
+    }
     let total_bytes = (pitch as usize) * (height as usize);
     unsafe {
         let p = base as *mut u8;
         let mut off = 0usize;
         while off + 4 <= total_bytes {
-            core::ptr::write_volatile(p.add(off),     0x00);
+            core::ptr::write_volatile(p.add(off), 0x00);
             core::ptr::write_volatile(p.add(off + 1), 0x00);
             core::ptr::write_volatile(p.add(off + 2), 0x00);
             core::ptr::write_volatile(p.add(off + 3), 0xFF);
@@ -802,11 +957,17 @@ pub fn lfb_info() -> (u64, u32, u32, u32) {
 }
 
 #[inline]
-pub fn fb_base() -> u64 { FB_BASE.load(Ordering::Acquire) }
+pub fn fb_base() -> u64 {
+    FB_BASE.load(Ordering::Acquire)
+}
 #[inline]
-pub fn fb_width() -> u32 { FB_WIDTH.load(Ordering::Acquire) }
+pub fn fb_width() -> u32 {
+    FB_WIDTH.load(Ordering::Acquire)
+}
 #[inline]
-pub fn fb_height() -> u32 { FB_HEIGHT.load(Ordering::Acquire) }
+pub fn fb_height() -> u32 {
+    FB_HEIGHT.load(Ordering::Acquire)
+}
 
 /// Pick the text attribute used by the next characters. Standard
 /// 16-colour VGA palette (see `colour_for_attr`).
@@ -814,11 +975,15 @@ pub fn set_attr(attr: u8) {
     ATTR.store(attr, Ordering::Release);
 }
 
-pub fn get_attr() -> u8 { ATTR.load(Ordering::Acquire) }
+pub fn get_attr() -> u8 {
+    ATTR.load(Ordering::Acquire)
+}
 
 /// `VidInitialize` — clear the screen, home the cursor. VGA path only.
 pub fn VidInitialize() {
-    if INITIALISED.load(Ordering::Acquire) { return; }
+    if INITIALISED.load(Ordering::Acquire) {
+        return;
+    }
     // Skip VGA clear — 0xB8000 may be RO after ExitBootServices
     // (UEFI page tables don't identity-map it).
     CURSOR_X.store(0, Ordering::Release);
@@ -840,22 +1005,32 @@ pub fn VidInitialize() {
 /// "Windows 7" centred in the top quarter of a black screen, which
 /// is what the kernel user sees during the normal boot sequence.
 pub fn paint_phase_banner(title: &str) {
-    if !MODE_LFB.load(Ordering::Acquire) { return; }
+    if !MODE_LFB.load(Ordering::Acquire) {
+        return;
+    }
     VidResetDisplay(true);
     let base = FB_BASE.load(Ordering::Acquire);
     let pitch = FB_PITCH.load(Ordering::Acquire);
     let width = FB_WIDTH.load(Ordering::Acquire);
     let height = FB_HEIGHT.load(Ordering::Acquire);
-    if base == 0 || pitch == 0 { return; }
-    let _ = base; let _ = pitch; let _ = height; // silence unused
-    // Title text in WHITE on BLACK. We use the same 6×12 font. The
-    // default attribute `ATTR_DEFAULT` (0x07 = light grey on black)
-    // was previously swapped to 0x1F (white on blue) so the title
-    // would be visible on the loader-blue top stripe; with the
-    // stripe gone we want white text on the existing black BGRA
-    // pixels and ATTR 0x0F (white on black) is the right value.
+    if base == 0 || pitch == 0 {
+        return;
+    }
+    let _ = base;
+    let _ = pitch;
+    let _ = height; // silence unused
+                    // Title text in WHITE on BLACK. We use the same 6×12 font. The
+                    // default attribute `ATTR_DEFAULT` (0x07 = light grey on black)
+                    // was previously swapped to 0x1F (white on blue) so the title
+                    // would be visible on the loader-blue top stripe; with the
+                    // stripe gone we want white text on the existing black BGRA
+                    // pixels and ATTR 0x0F (white on black) is the right value.
     let title_w_px = (title.len() as u32) * 6;
-    let x0 = if width > title_w_px { (width - title_w_px) / 2 } else { 0 };
+    let x0 = if width > title_w_px {
+        (width - title_w_px) / 2
+    } else {
+        0
+    };
     let y0 = (height / 4).saturating_sub(6);
     CURSOR_X.store(x0, Ordering::Release);
     CURSOR_Y.store(y0, Ordering::Release);
@@ -885,7 +1060,9 @@ pub fn bugcheck_screen(code: u32, secondary: &str) {
         let pitch = FB_PITCH.load(Ordering::Acquire);
         let width = FB_WIDTH.load(Ordering::Acquire);
         let height = FB_HEIGHT.load(Ordering::Acquire);
-        if base == 0 || pitch == 0 { return; }
+        if base == 0 || pitch == 0 {
+            return;
+        }
         for y in 0..height {
             for x in 0..width {
                 let off = (y * pitch + x * 4) as usize;
@@ -952,7 +1129,7 @@ impl BootDisplayMode {
             _ => BootDisplayMode::Normal,
         }
     }
-    
+
     /// Set boot display mode
     pub fn set(mode: BootDisplayMode) {
         match mode {
@@ -984,7 +1161,7 @@ fn should_display_scrolling() -> bool {
 /// - SOS: Show driver loading messages
 pub fn display_boot_message(msg: &[u8]) {
     let mode = BootDisplayMode::from_atomic();
-    
+
     match mode {
         BootDisplayMode::Normal => {
             // Normal mode: Don't display scrolling text, only update progress bar
@@ -1006,7 +1183,7 @@ pub fn display_sos_loading(driver_path: &[u8]) {
     if !should_display_scrolling() {
         return;
     }
-    
+
     // Format: "Loading \SystemRoot\..."
     let prefix = b"Loading ";
     for &b in prefix {
@@ -1020,7 +1197,7 @@ pub fn display_windows_logo() {
     // In normal boot mode, display the Windows 7 loading screen
     // The logo is displayed during boot, not scrolling text
     paint_phase_banner("Windows 7");
-    
+
     // Set up progress bar area
     paint_progress_bar(0);
 }
@@ -1035,7 +1212,9 @@ pub fn smoke_test() -> bool {
     init();
     InbvDisplayString(b"BootVid Smoke Test:\n");
     InbvDisplayString(b"  Hello, kernel!\n");
-    for _ in 0..4 { InbvRotateWaitingSpinner(); }
+    for _ in 0..4 {
+        InbvRotateWaitingSpinner();
+    }
     InbvSetProgressBarSubset(40);
     InbvDisplayString(b"\n");
     VidCleanUp();
@@ -1052,7 +1231,7 @@ mod tests {
         assert!(FONT[b'0' as usize - 0x20][0] != 0);
         assert_eq!(FONT[b' ' as usize - 0x20][0], 0);
     }
-    
+
     #[test]
     fn boot_display_mode_default() {
         assert_eq!(get_boot_mode(), BootDisplayMode::Normal);

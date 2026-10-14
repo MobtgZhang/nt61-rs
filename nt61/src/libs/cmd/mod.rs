@@ -7,4 +7,4 @@ pub mod bat_parser;
 #[cfg(target_arch = "x86_64")]
 pub mod batch_runner;
 #[cfg(target_arch = "x86_64")]
-pub use batch_runner::{BatchExecutor, run_batch_file};
+pub use batch_runner::{run_batch_file, BatchExecutor};

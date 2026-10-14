@@ -143,7 +143,13 @@ impl BuddyAllocator {
     /// For the bootstrap we accept a single region - the QEMU virt
     /// machine reports a single contiguous block of usable memory so
     /// this is sufficient.
-    pub fn init(&mut self, region_base: u64, region_size: u64, frame_table: *mut u8, frame_table_size: usize) {
+    pub fn init(
+        &mut self,
+        region_base: u64,
+        region_size: u64,
+        frame_table: *mut u8,
+        frame_table_size: usize,
+    ) {
         self.base_address = region_base;
         self.num_frames = region_size / 4096;
         // The bookkeeping buffer is split as follows:
@@ -164,7 +170,7 @@ impl BuddyAllocator {
                 / (core::mem::size_of::<FrameInfo>() + core::mem::size_of::<BuddyNode>());
             self.num_frames = max_frames as u64;
             // kprintln bypassed — use the unified serial facade.
-        crate::hal::serial::write_string("AI0_CLAMP\r\n");
+            crate::hal::serial::write_string("AI0_CLAMP\r\n");
         }
         self.frame_infos = frame_table as *mut FrameInfo;
         self.buddy_nodes = unsafe { frame_table.add(fi_size) as *mut BuddyNode };
@@ -187,7 +193,11 @@ impl BuddyAllocator {
                 for i in 0..total {
                     let node = self.buddy_nodes.add(i as usize);
                     (*node).next = i.wrapping_add(1);
-                    (*node).prev = if i == 0 { FREE_LIST_END } else { i.wrapping_sub(1) };
+                    (*node).prev = if i == 0 {
+                        FREE_LIST_END
+                    } else {
+                        i.wrapping_sub(1)
+                    };
                     (*node).on_list = 1;
                 }
                 let last = total.wrapping_sub(1);
@@ -214,7 +224,9 @@ impl BuddyAllocator {
             let mut attempts: u32 = 0;
             loop {
                 attempts += 1;
-                if attempts > max_attempts { break; }
+                if attempts > max_attempts {
+                    break;
+                }
                 let result: Option<u32> = {
                     let mut lock = self.free_lists[k].lock();
                     let num = self.num_frames as u32;
@@ -227,11 +239,14 @@ impl BuddyAllocator {
                             let mut found = false;
                             let mut probe = lock.head;
                             for _ in 0..lock.count {
-                                if probe == buddy { found = true; break; }
-                                let next = unsafe {
-                                    (*self.buddy_nodes.add(probe as usize)).next
-                                };
-                                if next == FREE_LIST_END { break; }
+                                if probe == buddy {
+                                    found = true;
+                                    break;
+                                }
+                                let next = unsafe { (*self.buddy_nodes.add(probe as usize)).next };
+                                if next == FREE_LIST_END {
+                                    break;
+                                }
                                 probe = next;
                             }
                             if found {
@@ -240,16 +255,21 @@ impl BuddyAllocator {
                                 merged_base_opt = Some(cur & !(1u32 << k));
                             }
                         }
-                        if merged_base_opt.is_some() { break; }
-                        let next = unsafe {
-                            (*self.buddy_nodes.add(cur as usize)).next
-                        };
-                        if next == FREE_LIST_END { break; }
+                        if merged_base_opt.is_some() {
+                            break;
+                        }
+                        let next = unsafe { (*self.buddy_nodes.add(cur as usize)).next };
+                        if next == FREE_LIST_END {
+                            break;
+                        }
                         cur = next;
                     }
                     merged_base_opt
                 };
-                let merged_base = match result { Some(b) => b, None => break };
+                let merged_base = match result {
+                    Some(b) => b,
+                    None => break,
+                };
                 {
                     let mut lock = self.free_lists[k + 1].lock();
                     push_head(&mut lock, merged_base, self.buddy_nodes);
@@ -317,8 +337,7 @@ impl BuddyAllocator {
                     }
                 }
             }
-            self.free_frames
-                .fetch_sub(1u64 << order, Ordering::SeqCst);
+            self.free_frames.fetch_sub(1u64 << order, Ordering::SeqCst);
             return Some(self.base_address + (cur_frame as u64) * 4096);
         }
         None
@@ -366,8 +385,7 @@ impl BuddyAllocator {
         push_head(&mut lock, cur_frame, self.buddy_nodes);
         drop(lock);
 
-        self.free_frames
-            .fetch_add(1u64 << order, Ordering::SeqCst);
+        self.free_frames.fetch_add(1u64 << order, Ordering::SeqCst);
     }
 
     /// Number of free frames.
@@ -453,8 +471,8 @@ static FREE_PAGES: AtomicU64 = AtomicU64::new(0);
 /// bytes.  At 32768 frames and 8 + 12 = 20 bytes per frame, that's
 /// ~2.4 MiB of BSS — still well within winload.efi's 5 MiB BSS region.
 const FRAME_TABLE_ENTRIES: usize = 32768; // 128 MiB of RAM
-const FRAME_TABLE_BYTES: usize = FRAME_TABLE_ENTRIES
-    * (core::mem::size_of::<FrameInfo>() + core::mem::size_of::<BuddyNode>());
+const FRAME_TABLE_BYTES: usize =
+    FRAME_TABLE_ENTRIES * (core::mem::size_of::<FrameInfo>() + core::mem::size_of::<BuddyNode>());
 
 // Static bookkeeping buffer.  Kept as `static mut` (rather than
 // `static` + interior mutability) because every accessor already
@@ -537,18 +555,19 @@ fn legacy_init(region_base: u64, region_size: u64) {
         // of MM can allocate) we copy the live entries into the
         // dynamic tables so the next phase (a future, larger
         // re-init) can use them without re-allocating.
-        let region_frames = ((region_size / 4096) as usize).min(FRAME_TABLE.len() / core::mem::size_of::<FrameInfo>());
-        DYN_BASE_PHYS  = region_base;
-        DYN_LEN        = region_frames;
+        let region_frames = ((region_size / 4096) as usize)
+            .min(FRAME_TABLE.len() / core::mem::size_of::<FrameInfo>());
+        DYN_BASE_PHYS = region_base;
+        DYN_LEN = region_frames;
         // The static FRAME_TABLE is laid out as bytes; the dynamic
         // tables are typed. We point them at the static buffer so
         // the page database and other subsystems can still walk
         // them by the typed pointer.
-        DYN_FRAME_INFOS      = FRAME_TABLE.as_mut_ptr() as *mut FrameInfo;
+        DYN_FRAME_INFOS = FRAME_TABLE.as_mut_ptr() as *mut FrameInfo;
         DYN_FRAME_INFOS_PHYS = region_base; // virt == phys for kernel BSS
-        DYN_BUDDY_NODES      = (FRAME_TABLE.as_mut_ptr() as *mut BuddyNode)
-            .wrapping_add(region_frames);
-        DYN_BUDDY_NODES_PHYS = region_base + (region_frames as u64) * core::mem::size_of::<FrameInfo>() as u64;
+        DYN_BUDDY_NODES = (FRAME_TABLE.as_mut_ptr() as *mut BuddyNode).wrapping_add(region_frames);
+        DYN_BUDDY_NODES_PHYS =
+            region_base + (region_frames as u64) * core::mem::size_of::<FrameInfo>() as u64;
         let table_ptr = FRAME_TABLE.as_mut_ptr() as *mut u8;
         let _ = table_ptr; // keep tbl ptr alive for the legacy fallback
         let _ = DYN_BUDDY_NODES_PHYS;

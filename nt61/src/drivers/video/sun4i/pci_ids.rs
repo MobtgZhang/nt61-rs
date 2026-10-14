@@ -21,18 +21,18 @@ pub const ALLWINNER_VENDOR_ID: u16 = 0x1D3D;
 
 /// SoC name strings
 pub const SOC_NAMES: &[&str] = &[
-    "sun4i-a10",    // A10
-    "sun5i-a13",    // A13
-    "sun7i-a20",     // A20
-    "sun8i-a33",     // A33
-    "sun8i-h3",      // H3
-    "sun50i-h5",     // H5
-    "sun50i-h6",     // H6
-    "sun50i-h616",   // H616
-    "sun50i-a64",    // A64
-    "sunxi-d1",      // D1 (RISC-V)
-    "sun50i-f133",   // F133 (RISC-V)
-    "sun20i-d1",     // D1 (alternative)
+    "sun4i-a10",   // A10
+    "sun5i-a13",   // A13
+    "sun7i-a20",   // A20
+    "sun8i-a33",   // A33
+    "sun8i-h3",    // H3
+    "sun50i-h5",   // H5
+    "sun50i-h6",   // H6
+    "sun50i-h616", // H616
+    "sun50i-a64",  // A64
+    "sunxi-d1",    // D1 (RISC-V)
+    "sun50i-f133", // F133 (RISC-V)
+    "sun20i-d1",   // D1 (alternative)
 ];
 
 // =====================================================================

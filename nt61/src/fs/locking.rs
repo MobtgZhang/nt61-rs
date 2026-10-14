@@ -19,9 +19,9 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
-use alloc::collections::BTreeMap;
 use crate::ke::sync::Spinlock;
+use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,28 +104,20 @@ impl OpportunisticLock {
         }
 
         match self.level {
-            OplockLevel::Level1 | OplockLevel::Batch | OplockLevel::ReadWrite
-            | OplockLevel::ReadWriteHandle => {
-                true
-            }
-            OplockLevel::Level2 | OplockLevel::Read | OplockLevel::ReadHandle => {
-                for_write
-            }
+            OplockLevel::Level1
+            | OplockLevel::Batch
+            | OplockLevel::ReadWrite
+            | OplockLevel::ReadWriteHandle => true,
+            OplockLevel::Level2 | OplockLevel::Read | OplockLevel::ReadHandle => for_write,
             OplockLevel::Filter | OplockLevel::None => false,
         }
     }
 
     pub fn needs_break(&self, for_write: bool) -> bool {
         match self.level {
-            OplockLevel::Level1 | OplockLevel::Batch => {
-                true
-            }
-            OplockLevel::ReadWrite | OplockLevel::ReadWriteHandle => {
-                true
-            }
-            OplockLevel::Level2 | OplockLevel::Read | OplockLevel::ReadHandle => {
-                for_write
-            }
+            OplockLevel::Level1 | OplockLevel::Batch => true,
+            OplockLevel::ReadWrite | OplockLevel::ReadWriteHandle => true,
+            OplockLevel::Level2 | OplockLevel::Read | OplockLevel::ReadHandle => for_write,
             _ => false,
         }
     }
@@ -297,7 +289,8 @@ impl LockManager {
     }
 
     pub fn release_oplock(&mut self, key: u64) -> Result<(), ()> {
-        let file_id = self.oplocks
+        let file_id = self
+            .oplocks
             .iter()
             .find(|(_, oplock)| oplock.key == key)
             .map(|(fid, _)| *fid);
@@ -313,7 +306,8 @@ impl LockManager {
     pub fn release_process_locks(&mut self, process_id: u32) {
         self.locks.retain(|lock| lock.process_id != process_id);
 
-        let to_remove: Vec<u64> = self.oplocks
+        let to_remove: Vec<u64> = self
+            .oplocks
             .iter()
             .filter(|(_, oplock)| oplock.process_id == process_id)
             .map(|(fid, _)| *fid)
@@ -404,11 +398,7 @@ pub fn check_lock(
     }
 }
 
-pub fn request_oplock(
-    file_id: u64,
-    process_id: u32,
-    level: OplockLevel,
-) -> Result<u64, ()> {
+pub fn request_oplock(file_id: u64, process_id: u32, level: OplockLevel) -> Result<u64, ()> {
     let mut mgr = LOCK_MANAGER.lock();
     let mgr = mgr.as_mut().ok_or(())?;
     mgr.request_oplock(file_id, process_id, level)

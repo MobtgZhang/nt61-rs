@@ -120,7 +120,7 @@ impl GdiHandleEntry {
 }
 
 /// Handle type prefixes (high 16 bits)
-const HANDLE_TYPE_DC: u32 = 0x4001;      // 0x0001 with high bit
+const HANDLE_TYPE_DC: u32 = 0x4001; // 0x0001 with high bit
 const HANDLE_TYPE_BITMAP: u32 = 0x4002;
 const HANDLE_TYPE_PALETTE: u32 = 0x4003;
 const HANDLE_TYPE_FONT: u32 = 0x4004;
@@ -200,8 +200,8 @@ impl GdiHandleTable {
             if actual_prefix == expected_prefix {
                 Some(entry)
             } else {
-                // kprintln!("[win32k] Handle type mismatch: expected=0x{:04x}, got=0x{:04x}",  // kprintln disabled (memcpy crash workaround)
-//                     expected_prefix, actual_prefix);
+                // kprintln!("[win32k] Handle type mismatch: expected=0x{:04x}, got=0x{:04x}",
+                //                     expected_prefix, actual_prefix);
                 None
             }
         } else {
@@ -224,8 +224,8 @@ impl GdiHandleTable {
             if actual_prefix == expected_prefix {
                 self.entries[index].as_mut()
             } else {
-                // kprintln!("[win32k] Handle type mismatch: expected=0x{:04x}, got=0x{:04x}",  // kprintln disabled (memcpy crash workaround)
-//                     expected_prefix, actual_prefix);
+                // kprintln!("[win32k] Handle type mismatch: expected=0x{:04x}, got=0x{:04x}",
+                //                     expected_prefix, actual_prefix);
                 None
             }
         } else {
@@ -286,7 +286,9 @@ fn get_handle_table() -> &'static mut GdiHandleTable {
     }
     let inner = guard.as_mut().unwrap() as *mut GdiHandleTable;
     let _ = &inner;
-    unsafe { GDI_TABLE_PTR = inner; }
+    unsafe {
+        GDI_TABLE_PTR = inner;
+    }
     unsafe { &mut *inner }
 }
 
@@ -513,7 +515,7 @@ impl GdiBitmap {
         let _ = &width_bytes;
         let size = (width_bytes * height.abs()) as u64;
         let _ = &size;
-        
+
         let bits = if size > 0 {
             crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, size as usize)
         } else {
@@ -570,32 +572,42 @@ pub struct GdiPalette {
 
 impl GdiPalette {
     pub fn new() -> Self {
-        let mut entries = [PaletteEntry { red: 0, green: 0, blue: 0, flags: 0 }; 256];
-        
+        let mut entries = [PaletteEntry {
+            red: 0,
+            green: 0,
+            blue: 0,
+            flags: 0,
+        }; 256];
+
         // Initialize with standard system palette colors
         for i in 0..16 {
             let (r, g, b) = match i {
-                0 => (0, 0, 0),           // Black
-                1 => (128, 0, 0),         // Dark Red
-                2 => (0, 128, 0),         // Dark Green
-                3 => (128, 128, 0),       // Dark Yellow
-                4 => (0, 0, 128),         // Dark Blue
-                5 => (128, 0, 128),       // Dark Magenta
-                6 => (0, 128, 128),       // Dark Cyan
-                7 => (192, 192, 192),     // Light Gray
-                8 => (128, 128, 128),     // Dark Gray
-                9 => (255, 0, 0),          // Red
-                10 => (0, 255, 0),         // Green
-                11 => (255, 255, 0),      // Yellow
-                12 => (0, 0, 255),         // Blue
-                13 => (255, 0, 255),      // Magenta
-                14 => (0, 255, 255),      // Cyan
-                15 => (255, 255, 255),   // White
+                0 => (0, 0, 0),        // Black
+                1 => (128, 0, 0),      // Dark Red
+                2 => (0, 128, 0),      // Dark Green
+                3 => (128, 128, 0),    // Dark Yellow
+                4 => (0, 0, 128),      // Dark Blue
+                5 => (128, 0, 128),    // Dark Magenta
+                6 => (0, 128, 128),    // Dark Cyan
+                7 => (192, 192, 192),  // Light Gray
+                8 => (128, 128, 128),  // Dark Gray
+                9 => (255, 0, 0),      // Red
+                10 => (0, 255, 0),     // Green
+                11 => (255, 255, 0),   // Yellow
+                12 => (0, 0, 255),     // Blue
+                13 => (255, 0, 255),   // Magenta
+                14 => (0, 255, 255),   // Cyan
+                15 => (255, 255, 255), // White
                 _ => (0, 0, 0),
             };
-            entries[i] = PaletteEntry { red: r, green: g, blue: b, flags: 0 };
+            entries[i] = PaletteEntry {
+                red: r,
+                green: g,
+                blue: b,
+                flags: 0,
+            };
         }
-        
+
         Self {
             type_: GdiObjectType::Palette as u8,
             uses: 0,
@@ -620,7 +632,12 @@ pub struct Rect {
 
 impl Rect {
     pub fn new(left: i32, top: i32, right: i32, bottom: i32) -> Self {
-        Self { left, top, right, bottom }
+        Self {
+            left,
+            top,
+            right,
+            bottom,
+        }
     }
 
     pub fn width(&self) -> i32 {
@@ -648,7 +665,12 @@ impl Rect {
         let _ = &bottom;
 
         if right > left && bottom > top {
-            Some(Rect { left, top, right, bottom })
+            Some(Rect {
+                left,
+                top,
+                right,
+                bottom,
+            })
         } else {
             None
         }
@@ -724,7 +746,7 @@ pub fn GdiCreatePen(style: PenStyle, width: i32, color: u32) -> u64 {
     );
 
     if pen.is_null() {
-        // kprintln!("[win32k] GdiCreatePen: failed to allocate memory")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[win32k] GdiCreatePen: failed to allocate memory");
         return 0;
     }
 
@@ -739,8 +761,8 @@ pub fn GdiCreatePen(style: PenStyle, width: i32, color: u32) -> u64 {
     let handle = handle_table.allocate(GdiObjectType::Pen, pen as u64, 0);
     let _ = &handle;
 
-    // kprintln!("[win32k] GdiCreatePen: style=0x{:x}, width={}, color=0x{:08x} -> handle=0x{:016x}",  // kprintln disabled (memcpy crash workaround)
-//               style as u32, width, color, handle);
+    // kprintln!("[win32k] GdiCreatePen: style=0x{:x}, width={}, color=0x{:08x} -> handle=0x{:016x}",
+    //               style as u32, width, color, handle);
 
     handle
 }
@@ -753,7 +775,7 @@ pub fn GdiCreateSolidBrush(color: u32) -> u64 {
     );
 
     if brush.is_null() {
-        // kprintln!("[win32k] GdiCreateSolidBrush: failed to allocate memory")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[win32k] GdiCreateSolidBrush: failed to allocate memory");
         return 0;
     }
 
@@ -768,7 +790,7 @@ pub fn GdiCreateSolidBrush(color: u32) -> u64 {
     let handle = handle_table.allocate(GdiObjectType::Brush, brush as u64, 0);
     let _ = &handle;
 
-    // kprintln!("[win32k] GdiCreateSolidBrush: color=0x{:08x} -> handle=0x{:016x}", color, handle)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[win32k] GdiCreateSolidBrush: color=0x{:08x} -> handle=0x{:016x}", color, handle);
 
     handle
 }
@@ -781,7 +803,7 @@ pub fn GdiCreateHatchBrush(style: HatchStyle, color: u32) -> u64 {
     );
 
     if brush.is_null() {
-        // kprintln!("[win32k] GdiCreateHatchBrush: failed to allocate memory")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[win32k] GdiCreateHatchBrush: failed to allocate memory");
         return 0;
     }
 
@@ -796,27 +818,21 @@ pub fn GdiCreateHatchBrush(style: HatchStyle, color: u32) -> u64 {
     let handle = handle_table.allocate(GdiObjectType::Brush, brush as u64, 0);
     let _ = &handle;
 
-    // kprintln!("[win32k] GdiCreateHatchBrush: style={:?}, color=0x{:08x} -> handle=0x{:016x}",  // kprintln disabled (memcpy crash workaround)
-//               style, color, handle);
+    // kprintln!("[win32k] GdiCreateHatchBrush: style={:?}, color=0x{:08x} -> handle=0x{:016x}",
+    //               style, color, handle);
 
     handle
 }
 
 /// Create a font
-pub fn GdiCreateFont(
-    height: i32,
-    width: i32,
-    weight: i32,
-    italic: bool,
-    face_name: &[u16],
-) -> u64 {
+pub fn GdiCreateFont(height: i32, width: i32, weight: i32, italic: bool, face_name: &[u16]) -> u64 {
     let font = crate::mm::pool::allocate(
         crate::mm::pool::PoolType::NonPaged,
         core::mem::size_of::<GdiFont>(),
     );
 
     if font.is_null() {
-        // kprintln!("[win32k] GdiCreateFont: failed to allocate memory")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[win32k] GdiCreateFont: failed to allocate memory");
         return 0;
     }
 
@@ -836,8 +852,8 @@ pub fn GdiCreateFont(
     let handle = handle_table.allocate(GdiObjectType::Font, font as u64, 0);
     let _ = &handle;
 
-    // kprintln!("[win32k] GdiCreateFont: height={}, weight={} -> handle=0x{:016x}",  // kprintln disabled (memcpy crash workaround)
-//               height, weight, handle);
+    // kprintln!("[win32k] GdiCreateFont: height={}, weight={} -> handle=0x{:016x}",
+    //               height, weight, handle);
 
     handle
 }
@@ -847,7 +863,7 @@ pub fn GdiCreateBitmap(width: i32, height: i32, bit_count: u16) -> u64 {
     let bitmap = match GdiBitmap::new(width, height, bit_count) {
         Some(b) => b,
         None => {
-            // kprintln!("[win32k] GdiCreateBitmap: failed to create bitmap")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[win32k] GdiCreateBitmap: failed to create bitmap");
             return 0;
         }
     };
@@ -858,7 +874,7 @@ pub fn GdiCreateBitmap(width: i32, height: i32, bit_count: u16) -> u64 {
     );
 
     if bitmap_mem.is_null() {
-        // kprintln!("[win32k] GdiCreateBitmap: failed to allocate memory")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[win32k] GdiCreateBitmap: failed to allocate memory");
         return 0;
     }
 
@@ -873,8 +889,8 @@ pub fn GdiCreateBitmap(width: i32, height: i32, bit_count: u16) -> u64 {
     let handle = handle_table.allocate(GdiObjectType::Bitmap, bitmap_mem as u64, 0);
     let _ = &handle;
 
-    // kprintln!("[win32k] GdiCreateBitmap: {}x{}x{} -> handle=0x{:016x}",  // kprintln disabled (memcpy crash workaround)
-//               width, height, bit_count, handle);
+    // kprintln!("[win32k] GdiCreateBitmap: {}x{}x{} -> handle=0x{:016x}",
+    //               width, height, bit_count, handle);
 
     handle
 }
@@ -887,7 +903,7 @@ pub fn GdiCreateRectRgn(left: i32, top: i32, right: i32, bottom: i32) -> u64 {
     );
 
     if region.is_null() {
-        // kprintln!("[win32k] GdiCreateRectRgn: failed to allocate memory")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[win32k] GdiCreateRectRgn: failed to allocate memory");
         return 0;
     }
 
@@ -902,8 +918,8 @@ pub fn GdiCreateRectRgn(left: i32, top: i32, right: i32, bottom: i32) -> u64 {
     let handle = handle_table.allocate(GdiObjectType::Region, region as u64, 0);
     let _ = &handle;
 
-    // kprintln!("[win32k] GdiCreateRectRgn: ({},{})-({},{}) -> handle=0x{:016x}",  // kprintln disabled (memcpy crash workaround)
-//               left, top, right, bottom, handle);
+    // kprintln!("[win32k] GdiCreateRectRgn: ({},{})-({},{}) -> handle=0x{:016x}",
+    //               left, top, right, bottom, handle);
 
     handle
 }
@@ -916,7 +932,7 @@ pub fn GdiCreatePalette() -> u64 {
     );
 
     if palette.is_null() {
-        // kprintln!("[win32k] GdiCreatePalette: failed to allocate memory")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[win32k] GdiCreatePalette: failed to allocate memory");
         return 0;
     }
 
@@ -931,7 +947,7 @@ pub fn GdiCreatePalette() -> u64 {
     let handle = handle_table.allocate(GdiObjectType::Palette, palette as u64, 0);
     let _ = &handle;
 
-    // kprintln!("[win32k] GdiCreatePalette: -> handle=0x{:016x}", handle)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[win32k] GdiCreatePalette: -> handle=0x{:016x}", handle);
 
     handle
 }
@@ -951,7 +967,7 @@ pub fn GdiDeleteObject(handle: u64) -> bool {
     let entry = match handle_table.get(handle) {
         Some(e) => e,
         None => {
-            // kprintln!("[win32k] GdiDeleteObject: invalid handle 0x{:016x}", handle)  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[win32k] GdiDeleteObject: invalid handle 0x{:016x}", handle);
             return false;
         }
     };
@@ -997,7 +1013,7 @@ pub fn GdiDeleteObject(handle: u64) -> bool {
     // Remove from handle table
     handle_table.free(handle);
 
-    // kprintln!("[win32k] GdiDeleteObject: handle=0x{:016x}, type={:?} deleted", handle, obj_type)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[win32k] GdiDeleteObject: handle=0x{:016x}, type={:?} deleted", handle, obj_type);
 
     true
 }
@@ -1021,17 +1037,17 @@ pub fn GdiGetObjectPtr(handle: u64) -> Option<u64> {
 pub fn GdiValidateHandle(handle: u64) -> Option<u64> {
     let handle_table = get_handle_table();
     let _ = &handle_table;
-    
+
     // First check basic validity through the table
     if let Some(entry) = handle_table.get(handle) {
         if entry.obj_ptr != 0 {
             Some(entry.obj_ptr)
         } else {
-            // kprintln!("[win32k] GdiValidateHandle: handle=0x{:016x} has null obj_ptr", handle)  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[win32k] GdiValidateHandle: handle=0x{:016x} has null obj_ptr", handle);
             None
         }
     } else {
-        // kprintln!("[win32k] GdiValidateHandle: handle=0x{:016x} not found or type mismatch", handle)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[win32k] GdiValidateHandle: handle=0x{:016x} not found or type mismatch", handle);
         None
     }
 }
@@ -1042,7 +1058,7 @@ pub fn GdiValidateHandle(handle: u64) -> Option<u64> {
 pub fn GdiValidateHandleForProcess(handle: u64, process_id: u32) -> Option<u64> {
     let handle_table = get_handle_table();
     let _ = &handle_table;
-    
+
     if let Some(entry) = handle_table.get(handle) {
         // Check process ownership (0 means kernel/system handle, valid for all)
         if entry.process_id == process_id || entry.process_id == 0 {
@@ -1050,8 +1066,8 @@ pub fn GdiValidateHandleForProcess(handle: u64, process_id: u32) -> Option<u64> 
                 return Some(entry.obj_ptr);
             }
         }
-        // kprintln!("[win32k] GdiValidateHandleForProcess: handle=0x{:016x}, pid={}, owner={}",  // kprintln disabled (memcpy crash workaround)
-//             handle, process_id, entry.process_id);
+        // kprintln!("[win32k] GdiValidateHandleForProcess: handle=0x{:016x}, pid={}, owner={}",
+        //             handle, process_id, entry.process_id);
         None
     } else {
         None
@@ -1136,8 +1152,8 @@ pub const STOCK_OBJECT_SYSTEM_FONT: u64 = 0x4000000A;
 
 /// Initialize stock objects
 pub fn init_stock_objects() {
-    // kprintln!("[win32k] Initializing stock GDI objects...")  // kprintln disabled (memcpy crash workaround);
-    
+    // kprintln!("[win32k] Initializing stock GDI objects...");
+
     // Pre-allocate common stock objects
     // These are created once and never deleted
     // The actual handles will be set after handle table is initialized
@@ -1146,11 +1162,11 @@ pub fn init_stock_objects() {
 /// Get a stock object
 pub fn GdiGetStockObject(object_type: i32) -> u64 {
     match object_type {
-        0 => STOCK_OBJECT_BLACK_BRUSH,      // BLACK_BRUSH
-        1 => STOCK_OBJECT_WHITE_BRUSH,      // WHITE_BRUSH
-        4 => STOCK_OBJECT_BLACK_PEN,        // BLACK_PEN
-        5 => STOCK_OBJECT_WHITE_PEN,        // WHITE_PEN
-        6 => STOCK_OBJECT_NULL_PEN,         // NULL_PEN
+        0 => STOCK_OBJECT_BLACK_BRUSH, // BLACK_BRUSH
+        1 => STOCK_OBJECT_WHITE_BRUSH, // WHITE_BRUSH
+        4 => STOCK_OBJECT_BLACK_PEN,   // BLACK_PEN
+        5 => STOCK_OBJECT_WHITE_PEN,   // WHITE_PEN
+        6 => STOCK_OBJECT_NULL_PEN,    // NULL_PEN
         _ => 0,
     }
 }
@@ -1185,6 +1201,6 @@ pub fn dump_handle_stats() {
     let _ = &total;
     let used = handle_table.entries.iter().filter(|e| e.is_some()).count();
     let _ = &used;
-    
-    // kprintln!("[win32k] Handle table: {}/{} slots used", used, total)  // kprintln disabled (memcpy crash workaround);
+
+    // kprintln!("[win32k] Handle table: {}/{} slots used", used, total);
 }

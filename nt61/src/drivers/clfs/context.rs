@@ -3,21 +3,21 @@
 //! Defines the runtime state structures used to manage CLFS clients and
 //! containers in memory.
 
-use super::record::ClfsLsn;
 use super::metadata::ClfsLogState;
+use super::record::ClfsLsn;
 
 // ============================================================================
 // CLFS Node ID
 // ============================================================================
 
 /// CLFS node type identifiers (NTC values).
-pub const CLFS_NODE_TYPE_FCB:                      u32 = 0xC1FDF001;
-pub const CLFS_NODE_TYPE_VCB:                      u32 = 0xC1FDF002;
-pub const CLFS_NODE_TYPE_CCB:                      u32 = 0xC1FDF003;
-pub const CLFS_NODE_TYPE_SYMBOL:                   u32 = 0xC1FDF006;
-pub const CLFS_NODE_TYPE_CLIENT_CONTEXT:           u32 = 0xC1FDF007;
-pub const CLFS_NODE_TYPE_CONTAINER_CONTEXT:        u32 = 0xC1FDF008;
-pub const CLFS_NODE_TYPE_SHARED_SECURITY_CONTEXT:   u32 = 0xC1FDF00D;
+pub const CLFS_NODE_TYPE_FCB: u32 = 0xC1FDF001;
+pub const CLFS_NODE_TYPE_VCB: u32 = 0xC1FDF002;
+pub const CLFS_NODE_TYPE_CCB: u32 = 0xC1FDF003;
+pub const CLFS_NODE_TYPE_SYMBOL: u32 = 0xC1FDF006;
+pub const CLFS_NODE_TYPE_CLIENT_CONTEXT: u32 = 0xC1FDF007;
+pub const CLFS_NODE_TYPE_CONTAINER_CONTEXT: u32 = 0xC1FDF008;
+pub const CLFS_NODE_TYPE_SHARED_SECURITY_CONTEXT: u32 = 0xC1FDF00D;
 
 /// CLFS_NODE_ID — identifies the type and size of a CLFS node.
 #[derive(Debug, Clone, Copy)]
@@ -36,12 +36,18 @@ impl ClfsNodeId {
 
     /// Node ID for a client context.
     pub fn client_context() -> Self {
-        Self { c_type: CLFS_NODE_TYPE_CLIENT_CONTEXT, cb_node: 0 }
+        Self {
+            c_type: CLFS_NODE_TYPE_CLIENT_CONTEXT,
+            cb_node: 0,
+        }
     }
 
     /// Node ID for a container context.
     pub fn container_context() -> Self {
-        Self { c_type: CLFS_NODE_TYPE_CONTAINER_CONTEXT, cb_node: 0 }
+        Self {
+            c_type: CLFS_NODE_TYPE_CONTAINER_CONTEXT,
+            cb_node: 0,
+        }
     }
 }
 
@@ -53,11 +59,11 @@ impl ClfsNodeId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ClfsContainerState {
-    Initializing           = 0x01,
-    Inactive              = 0x02,
-    Active                = 0x04,
-    ActivePendingDelete   = 0x08,
-    PendingArchive        = 0x10,
+    Initializing = 0x01,
+    Inactive = 0x02,
+    Active = 0x04,
+    ActivePendingDelete = 0x08,
+    PendingArchive = 0x10,
     PendingArchiveAndDelete = 0x20,
 }
 

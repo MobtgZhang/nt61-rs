@@ -11,7 +11,6 @@
 //! `wininit_main` loop and owns the SCM, the LSA, and the start menu
 //! for Session 0.
 
-
 /// WinInit per-session state.
 pub struct WinInitState {
     pub started: bool,
@@ -31,12 +30,12 @@ impl WinInitState {
 
 /// Initialize the WinInit subsystem.
 pub fn init() {
-    // kprintln!("    WinInit: initialized")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    WinInit: initialized");
 }
 
 /// WinInit main loop.
 pub fn wininit_main() -> ! {
-    // kprintln!("[WinInit] Session 0 initialization started")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[WinInit] Session 0 initialization started");
     // In a real implementation, WinInit would:
     //   1. Start the SCM (services.exe)
     //   2. Start LSASS (lsass.exe)

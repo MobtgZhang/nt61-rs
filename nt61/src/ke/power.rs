@@ -6,9 +6,9 @@
 //! - Power policy management
 //! - Sleep/Hibernate transitions
 
+use crate::io::{PowerActionType, SystemPowerState};
 use crate::kprintln;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use crate::io::{SystemPowerState, PowerActionType};
 
 /// CPU C-states (power states)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,7 +34,6 @@ pub struct CpuPState {
     /// Power consumption in mW
     pub power: u32,
     /// Transition latency in microseconds
-
     pub latency: u32,
 }
 
@@ -58,7 +57,6 @@ pub struct CpuPowerInfo {
     /// Current C-state
     pub current_c_state: CpuCState,
     /// Current P-state index
-
     pub current_p_state: u8,
     /// Available P-states
     pub p_states: [CpuPState; MAX_P_STATES],
@@ -69,7 +67,6 @@ pub struct CpuPowerInfo {
     /// C2 support
     pub c2_supported: bool,
     /// C3 support
-
     pub c3_supported: bool,
 }
 
@@ -217,8 +214,13 @@ fn init_cpu_power_management() {
         // Query CPU capabilities
         CPU_POWER_INFO = query_cpu_power_capabilities();
 
-        kprintln!("[KE-POWER] CPU power: {} P-states, C1={} C2={} C3={}", CPU_POWER_INFO.p_state_count, CPU_POWER_INFO.c1_supported, CPU_POWER_INFO.c2_supported, CPU_POWER_INFO.c3_supported);
-
+        kprintln!(
+            "[KE-POWER] CPU power: {} P-states, C1={} C2={} C3={}",
+            CPU_POWER_INFO.p_state_count,
+            CPU_POWER_INFO.c1_supported,
+            CPU_POWER_INFO.c2_supported,
+            CPU_POWER_INFO.c3_supported
+        );
     }
 }
 
@@ -233,25 +235,23 @@ fn query_cpu_power_capabilities() -> CpuPowerInfo {
 fn query_acpi_power_capabilities() {
     // Query FADT for power management support
     if let Some(fadt) = crate::hal::common::acpi::parse_fadt() {
-        kprintln!("[KE-POWER] ACPI FADT found");
+        kprintln!("[KE-POWER] ACPI FADT found (revision {})", fadt.revision);
 
-        // Copy values from packed struct to avoid unaligned references
-        let pm1a_evt = fadt.pm1a_evt_blk;
-        let pm1a_cnt = fadt.pm1a_cnt_blk;
-        let pm_tmr = fadt.pm_tmr_blk;
-        let flags = fadt.flags;
+        kprintln!("  PM1a Event Block: 0x{:x}", fadt.pm1a_evt_blk);
+        kprintln!("  PM1a Control Block: 0x{:x}", fadt.pm1a_cnt_blk);
+        kprintln!("  PM Timer Block: 0x{:x}", fadt.pm_tmr_blk);
+        kprintln!("  Flags: 0x{:x}", fadt.flags);
 
-        kprintln!("  PM1a Event Block: 0x{:x}", pm1a_evt);
-        kprintln!("  PM1a Control Block: 0x{:x}", pm1a_cnt);
-        kprintln!("  PM Timer Block: 0x{:x}", pm_tmr);
-        kprintln!("  Flags: 0x{:x}", flags);
-
-        unsafe {
-            // Update policy based on ACPI capabilities
-            if flags & crate::hal::common::acpi::fadt_flags::CPU_SW_SLP != 0 {
-                SYSTEM_POWER_POLICY.max_sleep_state = SystemPowerState::S3;
-            }
+        if fadt.hardware_reduced() {
+            kprintln!("  Hardware-reduced platform (ACPI 5.0): PM registers must not be used");
+            return;
         }
+
+        // The FADT does not encode which sleep states exist. OSPM determines
+        // supported sleep states by evaluating the DSDT sleep-state objects
+        // (_SST/_PTS/_WAK); without an AML interpreter S3 cannot be
+        // advertised, so the default policy is kept.
+        kprintln!("  Sleep states: undetermined (no AML interpreter); keeping default policy");
     } else {
         kprintln!("[KE-POWER] ACPI FADT not found, using defaults");
     }
@@ -278,8 +278,12 @@ pub fn request_power_state_transition(
 ) -> bool {
     let current_state = get_system_power_state();
 
-    kprintln!("[KE-POWER] Requesting power transition: {:?} -> {:?} (action={:?})", current_state, target_state, action);
-
+    kprintln!(
+        "[KE-POWER] Requesting power transition: {:?} -> {:?} (action={:?})",
+        current_state,
+        target_state,
+        action
+    );
 
     // Validate transition
     if !is_valid_power_transition(current_state, target_state) {
@@ -300,10 +304,7 @@ pub fn request_power_state_transition(
 }
 
 /// Check if a power transition is valid
-fn is_valid_power_transition(
-    current: SystemPowerState,
-    target: SystemPowerState,
-) -> bool {
+fn is_valid_power_transition(current: SystemPowerState, target: SystemPowerState) -> bool {
     use SystemPowerState::*;
 
     match (current, target) {
@@ -322,10 +323,7 @@ fn perform_power_transition(context: PowerTransitionContext) -> bool {
 
     // Execute ACPI _PTS method (Prepare To Sleep)
     if target != SystemPowerState::S0 {
-        let _ = crate::hal::common::acpi::execute_acpi_method(
-            "_PTS",
-            &[target as u64],
-        );
+        let _ = crate::hal::common::acpi::execute_acpi_method("_PTS", &[target as u64]);
     }
 
     // Perform state-specific actions
@@ -513,8 +511,12 @@ pub fn set_cpu_p_state(p_state_index: u8) -> bool {
 
         let p_state = CPU_POWER_INFO.p_states[p_state_index as usize];
 
-        kprintln!("[KE-POWER] Setting CPU P-state {}: {} MHz, {} mV", p_state_index, p_state.frequency, p_state.voltage);
-
+        kprintln!(
+            "[KE-POWER] Setting CPU P-state {}: {} MHz, {} mV",
+            p_state_index,
+            p_state.frequency,
+            p_state.voltage
+        );
 
         // Real implementation would:
         // 1. Write to MSRs (x86) or ACPI registers

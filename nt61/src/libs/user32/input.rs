@@ -159,31 +159,49 @@ pub extern "C" fn GetSystemMetrics(index: i32) -> i32 {
 
 /// `GetAsyncKeyState` — return 0 (key not pressed) for
 /// every key.
-pub extern "C" fn GetAsyncKeyState(_vk: i32) -> i16 { 0 }
+pub extern "C" fn GetAsyncKeyState(_vk: i32) -> i16 {
+    0
+}
 /// `GetKeyState` — return 0.
-pub extern "C" fn GetKeyState(_vk: i32) -> i16 { 0 }
+pub extern "C" fn GetKeyState(_vk: i32) -> i16 {
+    0
+}
 /// `GetKeyboardState` — fill the buffer with zeros and
 /// return non-zero.
 pub unsafe extern "C" fn GetKeyboardState(buf: *mut u8) -> BOOL {
-    if buf.is_null() { return FALSE; }
-    for i in 0..256 { *buf.add(i) = 0; }
+    if buf.is_null() {
+        return FALSE;
+    }
+    for i in 0..256 {
+        *buf.add(i) = 0;
+    }
     TRUE
 }
 /// `GetCursorPos` — return 0,0.
 pub unsafe extern "C" fn GetCursorPos(p: *mut i32) -> BOOL {
-    if p.is_null() { return FALSE; }
+    if p.is_null() {
+        return FALSE;
+    }
     *p = 0;
     *p.add(1) = 0;
     TRUE
 }
 /// `SetCursorPos` — placeholder.
-pub extern "C" fn SetCursorPos(_x: i32, _y: i32) -> BOOL { TRUE }
+pub extern "C" fn SetCursorPos(_x: i32, _y: i32) -> BOOL {
+    TRUE
+}
 /// `GetDoubleClickTime` — return 500 ms.
-pub extern "C" fn GetDoubleClickTime() -> u32 { 500 }
+pub extern "C" fn GetDoubleClickTime() -> u32 {
+    500
+}
 /// `GetMessageExtraInfo` — return 0.
-pub extern "C" fn GetMessageExtraInfo() -> usize { 0 }
+pub extern "C" fn GetMessageExtraInfo() -> usize {
+    0
+}
 /// `MapVirtualKeyW` — return 0 (no mapping).
-pub extern "C" fn MapVirtualKeyW(_code: u32, _map: u32) -> u32 { 0 }
+pub extern "C" fn MapVirtualKeyW(_code: u32, _map: u32) -> u32 {
+    0
+}
 /// `GetKeyboardLayout` — return 0x0409 (English US).
 pub extern "C" fn GetKeyboardLayout(_id: u32) -> *mut core::ffi::c_void {
     0x0409 as *mut core::ffi::c_void

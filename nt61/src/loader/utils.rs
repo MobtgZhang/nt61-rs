@@ -4,8 +4,8 @@
 //! Windows NT loader behavior.
 
 use alloc::string::String;
-use alloc::vec::Vec;
 use alloc::vec;
+use alloc::vec::Vec;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
@@ -97,12 +97,7 @@ pub fn validate_checksum(data: &[u8]) -> bool {
             continue;
         }
 
-        let dword = u32::from_le_bytes([
-            data[i],
-            data[i + 1],
-            data[i + 2],
-            data[i + 3],
-        ]) as u64;
+        let dword = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]) as u64;
 
         checksum = checksum.wrapping_add(dword);
         checksum = (checksum & 0xFFFFFFFF) + (checksum >> 32);
@@ -153,10 +148,7 @@ pub fn is_valid_address_range(base: u64, size: u64) -> bool {
     true
 }
 
-pub fn rva_to_file_offset(
-    rva: u32,
-    sections: &[crate::loader::SectionHeader],
-) -> Option<u32> {
+pub fn rva_to_file_offset(rva: u32, sections: &[crate::loader::SectionHeader]) -> Option<u32> {
     for section in sections {
         if rva >= section.virtual_address
             && rva < section.virtual_address + section.virtual_size.max(section.size_of_raw_data)
@@ -239,9 +231,7 @@ pub struct DependencyNode {
 }
 
 /// This is used to determine the correct load order for DLLs,
-pub fn build_dependency_tree(
-    imports: &[(String, Vec<String>)],
-) -> Vec<DependencyNode> {
+pub fn build_dependency_tree(imports: &[(String, Vec<String>)]) -> Vec<DependencyNode> {
     let mut nodes = Vec::new();
 
     for (dll_name, imports) in imports {
@@ -259,12 +249,7 @@ pub fn topological_sort_dlls(nodes: &mut [DependencyNode]) -> Vec<String> {
     let mut result = Vec::new();
     let mut visited = vec![false; nodes.len()];
 
-    fn visit(
-        idx: usize,
-        nodes: &[DependencyNode],
-        visited: &mut [bool],
-        result: &mut Vec<String>,
-    ) {
+    fn visit(idx: usize, nodes: &[DependencyNode], visited: &mut [bool], result: &mut Vec<String>) {
         if visited[idx] {
             return;
         }

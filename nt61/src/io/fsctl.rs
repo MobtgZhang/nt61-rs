@@ -12,9 +12,9 @@
 //! - FSCTL_GET_REPARSE_POINT
 //! - FSCTL_SET_REPARSE_POINT
 
-use core::ptr::null_mut;
+use super::{DeviceObject, IoStackLocation, Irp};
 use crate::libs::ntdll::status::*;
-use super::{Irp, DeviceObject, IoStackLocation};
+use core::ptr::null_mut;
 
 pub mod fsctl {
     pub const FSCTL_LOCK_VOLUME: u32 = 0x00090018;
@@ -90,30 +90,10 @@ pub fn get_fsctl_code(stack: *const IoStackLocation) -> u32 {
         return 0;
     }
 
-    unsafe {
-        ((*stack).parameters.as_u64 & 0xFFFFFFFF) as u32
-    }
+    unsafe { ((*stack).parameters.as_u64 & 0xFFFFFFFF) as u32 }
 }
 
-pub unsafe fn handle_lock_volume(
-    _device: *mut DeviceObject,
-    irp: *mut Irp,
-) -> i32 {
-    if irp.is_null() {
-        return STATUS_INVALID_PARAMETER as i32;
-    }
-
-
-    (*irp).io_status.status = STATUS_SUCCESS as u32;
-    (*irp).io_status.information = 0;
-    super::IoCompleteRequest(irp, 0);
-    STATUS_SUCCESS as i32
-}
-
-pub unsafe fn handle_unlock_volume(
-    _device: *mut DeviceObject,
-    irp: *mut Irp,
-) -> i32 {
+pub unsafe fn handle_lock_volume(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if irp.is_null() {
         return STATUS_INVALID_PARAMETER as i32;
     }
@@ -124,25 +104,7 @@ pub unsafe fn handle_unlock_volume(
     STATUS_SUCCESS as i32
 }
 
-pub unsafe fn handle_dismount_volume(
-    _device: *mut DeviceObject,
-    irp: *mut Irp,
-) -> i32 {
-    if irp.is_null() {
-        return STATUS_INVALID_PARAMETER as i32;
-    }
-
-
-    (*irp).io_status.status = STATUS_SUCCESS as u32;
-    (*irp).io_status.information = 0;
-    super::IoCompleteRequest(irp, 0);
-    STATUS_SUCCESS as i32
-}
-
-pub unsafe fn handle_is_volume_mounted(
-    _device: *mut DeviceObject,
-    irp: *mut Irp,
-) -> i32 {
+pub unsafe fn handle_unlock_volume(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if irp.is_null() {
         return STATUS_INVALID_PARAMETER as i32;
     }
@@ -153,11 +115,29 @@ pub unsafe fn handle_is_volume_mounted(
     STATUS_SUCCESS as i32
 }
 
-pub unsafe fn dispatch_fsctl(
-    device: *mut DeviceObject,
-    irp: *mut Irp,
-    fsctl_code: u32,
-) -> i32 {
+pub unsafe fn handle_dismount_volume(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
+    if irp.is_null() {
+        return STATUS_INVALID_PARAMETER as i32;
+    }
+
+    (*irp).io_status.status = STATUS_SUCCESS as u32;
+    (*irp).io_status.information = 0;
+    super::IoCompleteRequest(irp, 0);
+    STATUS_SUCCESS as i32
+}
+
+pub unsafe fn handle_is_volume_mounted(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
+    if irp.is_null() {
+        return STATUS_INVALID_PARAMETER as i32;
+    }
+
+    (*irp).io_status.status = STATUS_SUCCESS as u32;
+    (*irp).io_status.information = 0;
+    super::IoCompleteRequest(irp, 0);
+    STATUS_SUCCESS as i32
+}
+
+pub unsafe fn dispatch_fsctl(device: *mut DeviceObject, irp: *mut Irp, fsctl_code: u32) -> i32 {
     match fsctl_code {
         fsctl::FSCTL_LOCK_VOLUME => handle_lock_volume(device, irp),
         fsctl::FSCTL_UNLOCK_VOLUME => handle_unlock_volume(device, irp),

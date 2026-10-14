@@ -71,9 +71,9 @@ impl RamDisk {
         // Try progressively larger sizes: 128KB -> 256KB -> 512KB
         // Start very small to conserve pool memory for system_image::build_all()
         let sizes = [
-            256,        // 128 KB - minimum
-            512,        // 256 KB
-            1 * 1024,   // 512 KB - maximum
+            256,      // 128 KB - minimum
+            512,      // 256 KB
+            1 * 1024, // 512 KB - maximum
         ];
 
         for &sectors in &sizes {
@@ -209,10 +209,7 @@ impl Drop for RamDisk {
             let total_size = self.sector_count * self.sector_size;
             // Track how many bytes the ramdisk owned at drop time so
             // that diagnostics can verify the lifetime of allocations.
-            LAST_RAMDISK_DROP_BYTES.store(
-                total_size as u32,
-                core::sync::atomic::Ordering::Relaxed,
-            );
+            LAST_RAMDISK_DROP_BYTES.store(total_size as u32, core::sync::atomic::Ordering::Relaxed);
             {
                 let _ = pool::free(self.data);
             }
@@ -230,13 +227,12 @@ pub fn last_ramdisk_drop_bytes() -> u32 {
 }
 
 /// Global RAM disk instance
-static RAM_DISK: crate::ke::sync::Spinlock<Option<RamDisk>> =
-    crate::ke::sync::Spinlock::new(None);
+static RAM_DISK: crate::ke::sync::Spinlock<Option<RamDisk>> = crate::ke::sync::Spinlock::new(None);
 
 /// Initialize the RAM disk.
 /// RAM disk is OPTIONAL - skip if pool memory is tight to avoid crashes.
 pub fn init() {
-    // kprintln!("  Initializing RAM disk...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  Initializing RAM disk...");
     // Skip RAM disk initialization to conserve pool memory for critical subsystems.
     // The AHCI driver already provides disk access in this environment.
     // RAM disk can be re-enabled once pool fragmentation is resolved.
@@ -280,7 +276,12 @@ pub fn info() -> (usize, usize) {
 /// want to copy it into the pool allocator (wasteful, and the source
 /// memory may be UC-typed where `rep movsb` faults), we just want the
 /// block-device layer to point at it directly.
-pub fn install_from_external(base: *mut u8, total_bytes: usize, sector_size: usize, read_only: bool) -> bool {
+pub fn install_from_external(
+    base: *mut u8,
+    total_bytes: usize,
+    sector_size: usize,
+    read_only: bool,
+) -> bool {
     if base.is_null() || total_bytes == 0 || sector_size == 0 {
         return false;
     }

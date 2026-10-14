@@ -8,9 +8,9 @@
 //
 //! Clean-room implementation based on public specifications.
 
+pub mod allwinner_d1;
 pub mod pci_ids;
 pub mod starfive_jh71x0;
-pub mod allwinner_d1;
 pub mod virt_gpu;
 
 // Re-exports for convenience. The StarfiveSoc / VirtioGpuDeviceId
@@ -18,8 +18,8 @@ pub mod virt_gpu;
 // shared "core" module); we re-export them from there so legacy
 // callers can still reach them via the riscv GPU module.
 pub use crate::drivers::video::core::gpu_common::{StarfiveSoc, VirtioGpuDeviceId};
-pub use starfive_jh71x0::StarfiveDevice;
 pub use allwinner_d1::AllwinnerD1Device;
+pub use starfive_jh71x0::StarfiveDevice;
 pub use virt_gpu::VirtioGpuDevice;
 
 // =====================================================================

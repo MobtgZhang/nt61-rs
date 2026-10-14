@@ -5,6 +5,7 @@
 //
 //! References: MSDN Library "Windows 7" — RTL utilities.
 
+use super::status::{STATUS_BUFFER_TOO_SMALL, STATUS_INVALID_PARAMETER, STATUS_SUCCESS};
 use super::string::BOOLEAN;
 use super::types::{UnicodeString, ULONG};
 use core::ptr;
@@ -30,7 +31,7 @@ pub unsafe extern "C" fn RtlHashUnicodeString(
     let len = s.char_len();
     let mut hash: u32 = match hash_algorithm {
         0 => 0x811C9DC5, // FNV-1a offset basis
-        1 => 0,           // Simple additive
+        1 => 0,          // Simple additive
         _ => 0x811C9DC5,
     };
 
@@ -115,7 +116,6 @@ pub unsafe extern "C" fn RtlUnicodeStringToInteger(
     base: u32,
     value: *mut u32,
 ) -> i32 {
-
     if string.is_null() || value.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
@@ -188,7 +188,6 @@ pub unsafe extern "C" fn RtlInt64ToUnicodeString(
     base: u32,
     string: *mut UnicodeString,
 ) -> i32 {
-
     if string.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
@@ -237,7 +236,6 @@ pub unsafe extern "C" fn RtlTimeToSecondsSince1970(
     time: *const i64,
     elapsed_seconds: *mut u32,
 ) -> i32 {
-
     if time.is_null() || elapsed_seconds.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
@@ -254,11 +252,7 @@ pub unsafe extern "C" fn RtlTimeToSecondsSince1970(
     STATUS_SUCCESS
 }
 
-pub unsafe extern "C" fn RtlSecondsSince1970ToTime(
-    elapsed_seconds: u32,
-    time: *mut i64,
-) -> i32 {
-
+pub unsafe extern "C" fn RtlSecondsSince1970ToTime(elapsed_seconds: u32, time: *mut i64) -> i32 {
     if time.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
@@ -280,26 +274,21 @@ pub struct OsVersionInfoW {
 }
 
 pub unsafe extern "C" fn RtlGetVersion(version_info: *mut OsVersionInfoW) -> i32 {
-
     if version_info.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
 
     let info = &mut *version_info;
-    info.major_version = 6;  // Windows 7
+    info.major_version = 6; // Windows 7
     info.minor_version = 1;
     info.build_number = 7601;
-    info.platform_id = 2;    // VER_PLATFORM_WIN32_NT
+    info.platform_id = 2; // VER_PLATFORM_WIN32_NT
     info.service_pack[0] = 0;
 
     STATUS_SUCCESS
 }
 
-pub unsafe extern "C" fn RtlGetNtVersionNumbers(
-    major: *mut u32,
-    minor: *mut u32,
-    build: *mut u32,
-) {
+pub unsafe extern "C" fn RtlGetNtVersionNumbers(major: *mut u32, minor: *mut u32, build: *mut u32) {
     if !major.is_null() {
         *major = 6;
     }

@@ -13,12 +13,11 @@
 //!   * Windows Internals 7th Ed. - Chapter 8
 //!   * MSDN Library "Windows 7" — Asynchronous Procedure Calls
 
-use super::types::{HANDLE, NTSTATUS, PVOID};
-use super::status::{STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER, STATUS_SUCCESS};
 use super::file::{lookup_handle, HandleKind};
+use super::status::{STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER, STATUS_SUCCESS};
+use super::types::{HANDLE, NTSTATUS, PVOID};
 use crate::ke::sync::Spinlock;
 use core::ptr;
-
 
 pub type ApcRoutine = unsafe extern "C" fn(apc_context: PVOID);
 
@@ -79,7 +78,6 @@ const MAX_THREADS: usize = 256;
 static APC_QUEUES: Spinlock<[ThreadApcQueue; MAX_THREADS]> =
     Spinlock::new([ThreadApcQueue::new(); MAX_THREADS]);
 
-
 pub unsafe extern "C" fn NtQueueApcThread(
     thread_handle: HANDLE,
     apc_routine: ApcRoutine,
@@ -117,7 +115,6 @@ pub unsafe extern "C" fn NtQueueApcThread(
     STATUS_SUCCESS
 }
 
-
 /// - System is about to return to user mode
 pub fn deliver_pending_apcs() {
     unsafe {
@@ -141,7 +138,6 @@ pub fn has_pending_apcs() -> bool {
     queues[queue_idx].count > 0
 }
 
-
 pub unsafe extern "C" fn NtTestAlert() -> NTSTATUS {
     if has_pending_apcs() {
         deliver_pending_apcs();
@@ -150,7 +146,6 @@ pub unsafe extern "C" fn NtTestAlert() -> NTSTATUS {
         STATUS_SUCCESS
     }
 }
-
 
 pub unsafe extern "C" fn NtAlertThread(thread_handle: HANDLE) -> NTSTATUS {
     if thread_handle.is_null() {
@@ -163,7 +158,6 @@ pub unsafe extern "C" fn NtAlertThread(thread_handle: HANDLE) -> NTSTATUS {
     };
 
     let _thread_id = entry.target;
-
 
     STATUS_SUCCESS
 }
@@ -182,7 +176,6 @@ pub unsafe extern "C" fn NtAlertResumeThread(
     };
 
     let _thread_id = entry.target;
-
 
     if !previous_suspend_count.is_null() {
         *previous_suspend_count = 0;

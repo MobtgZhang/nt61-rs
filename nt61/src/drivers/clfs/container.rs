@@ -11,7 +11,9 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::rtl::logging::subsystem::CLFS;
 
-use super::context::{ClfsContainerContext, ClfsContainerInformation, ClfsContainerState, ClfsLogScanContext};
+use super::context::{
+    ClfsContainerContext, ClfsContainerInformation, ClfsContainerState, ClfsLogScanContext,
+};
 use super::format::{CLFS_DEFAULT_CONTAINER_SIZE, CLFS_MAX_CONTAINERS};
 use super::io::{ClfsError, ContainerBuffer};
 use super::vcb::ClfsVcb;
@@ -27,11 +29,7 @@ use super::vcb::ClfsVcb;
 /// 2. Initializes it with a container header
 /// 3. Adds it to the VCB's container table
 /// 4. Returns the new container ID
-pub fn add_container(
-    vcb: &mut ClfsVcb,
-    size: usize,
-    name: &[u8],
-) -> Result<u32, ClfsError> {
+pub fn add_container(vcb: &mut ClfsVcb, size: usize, name: &[u8]) -> Result<u32, ClfsError> {
     // Validate parameters
     if size == 0 {
         return Err(ClfsError::InvalidParameter);
@@ -42,12 +40,10 @@ pub fn add_container(
     let actual_size = if size < min_size { min_size } else { size };
 
     // Allocate a container ID
-    let cid = vcb.alloc_container_id()
-        .ok_or(ClfsError::LogFileFull)?;
+    let cid = vcb.alloc_container_id().ok_or(ClfsError::LogFileFull)?;
 
     // Create the container buffer
-    let container = ContainerBuffer::new(cid, actual_size)
-        .ok_or(ClfsError::OutOfMemory)?;
+    let container = ContainerBuffer::new(cid, actual_size).ok_or(ClfsError::OutOfMemory)?;
 
     // Initialize the container header (sector 0)
     // The container header is a simple sector with metadata
@@ -67,16 +63,20 @@ pub fn add_container(
     let mut mutable_container = container;
     mutable_container.write_sector(0, &mut header)?;
 
-    crate::kprintln_info!("CLFS", "  [CLFS] container {} added (size={} bytes, name={:?})",
-        cid, actual_size, name);
+    crate::kprintln_info!(
+        "CLFS",
+        "  [CLFS] container {} added (size={} bytes, name={:?})",
+        cid,
+        actual_size,
+        name
+    );
 
     // Create the container context
     let mut ctx = ClfsContainerContext::new(cid, actual_size as u64);
     ctx.cb_container = actual_size as u64;
 
     // Register the container in the VCB
-    vcb.register_container(ctx)
-        .ok_or(ClfsError::LogFileFull)?;
+    vcb.register_container(ctx).ok_or(ClfsError::LogFileFull)?;
 
     // Update the base record's container table
     // In the real implementation, this would update the actual base record
@@ -87,19 +87,14 @@ pub fn add_container(
 /// Remove a container from a log.
 ///
 /// If `delete_file` is true, the container's backing file will be deleted.
-pub fn remove_container(
-    vcb: &mut ClfsVcb,
-    cid: u32,
-    delete_file: bool,
-) -> Result<(), ClfsError> {
+pub fn remove_container(vcb: &mut ClfsVcb, cid: u32, delete_file: bool) -> Result<(), ClfsError> {
     // Validate container ID
     if cid == 0 || cid >= 1023 {
         return Err(ClfsError::InvalidParameter);
     }
 
     // Get the container context
-    let ctx = vcb.get_container(cid)
-        .ok_or(ClfsError::ContainerNotFound)?;
+    let ctx = vcb.get_container(cid).ok_or(ClfsError::ContainerNotFound)?;
 
     if !ctx.is_active() {
         return Err(ClfsError::InvalidLogState);
@@ -111,7 +106,11 @@ pub fn remove_container(
     if delete_file {
         crate::kprintln_info!("CLFS", "  [CLFS] container {} deleted from disk", cid);
     } else {
-        crate::kprintln_info!("CLFS", "  [CLFS] container {} deactivated (not deleted)", cid);
+        crate::kprintln_info!(
+            "CLFS",
+            "  [CLFS] container {} deactivated (not deleted)",
+            cid
+        );
     }
 
     Ok(())
@@ -153,10 +152,8 @@ pub fn scan_containers(
     Ok((scanned, context))
 }
 
-static SCAN_LAST_TOTAL: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0);
-static SCAN_LAST_COUNT: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0);
+static SCAN_LAST_TOTAL: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+static SCAN_LAST_COUNT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 /// Return `(last_scan_total, last_scan_count)` for diagnostics.
 pub fn scan_diag() -> (u32, u32) {
@@ -167,12 +164,8 @@ pub fn scan_diag() -> (u32, u32) {
 }
 
 /// Get information about a container.
-pub fn get_container_info(
-    vcb: &ClfsVcb,
-    cid: u32,
-) -> Result<ClfsContainerInformation, ClfsError> {
-    let ctx = vcb.get_container(cid)
-        .ok_or(ClfsError::ContainerNotFound)?;
+pub fn get_container_info(vcb: &ClfsVcb, cid: u32) -> Result<ClfsContainerInformation, ClfsError> {
+    let ctx = vcb.get_container(cid).ok_or(ClfsError::ContainerNotFound)?;
 
     let mut info = ClfsContainerInformation::default();
     info.cid_container = cid;
@@ -198,7 +191,11 @@ pub fn validate_containers(vcb: &ClfsVcb) -> Result<usize, ClfsError> {
         }
     }
 
-    crate::kprintln_info!("CLFS", "  [CLFS] container validation: {} active containers", valid_count);
+    crate::kprintln_info!(
+        "CLFS",
+        "  [CLFS] container validation: {} active containers",
+        valid_count
+    );
     Ok(valid_count)
 }
 

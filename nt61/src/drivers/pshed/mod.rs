@@ -47,22 +47,20 @@ const IA32_MC0_ADDR: u32 = 0xC000_0102;
 /// IA32_MCi_MISC — per-bank misc info.
 const IA32_MC0_MISC: u32 = 0xC000_0103;
 
-
-
 /// MCA error status values.
 pub const MCG_STATUS_RIPV: u64 = 0x00000001; // restart IP valid
 pub const MCG_STATUS_EIPV: u64 = 0x00000002; // error IP valid
 pub const MCG_STATUS_MCIP: u64 = 0x00000004; // machine check in progress
-pub const MCG_STATUS_EI: u64 = 0x00000080;   // error overflow
+pub const MCG_STATUS_EI: u64 = 0x00000080; // error overflow
 
 /// MCA error status — valid bit.
 pub const MCi_STATUS_VAL: u64 = 0x80000000_00000000;
 
 /// MCA error types.
-pub const MC_ERROR_TYPE_UC: u64 = 0;  // Uncorrected
-pub const MC_ERROR_TYPE_UE: u64 = 1;  // Uncorrected Error
-pub const MC_ERROR_TYPE_PCC: u64 = 2;  // Processor Context Corrupt
-pub const MC_ERROR_TYPE_S: u64 = 3;    // Semantically Uncorrected
+pub const MC_ERROR_TYPE_UC: u64 = 0; // Uncorrected
+pub const MC_ERROR_TYPE_UE: u64 = 1; // Uncorrected Error
+pub const MC_ERROR_TYPE_PCC: u64 = 2; // Processor Context Corrupt
+pub const MC_ERROR_TYPE_S: u64 = 3; // Semantically Uncorrected
 
 /// Error source types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,7 +114,9 @@ fn mca_num_banks() -> u32 {
 fn rdmsr(msr: u32) -> u64 {
     let lo: u32;
     let hi: u32;
-    unsafe { core::arch::asm!("rdmsr", in("ecx") msr, out("eax") lo, out("edx") hi, options(nostack)); }
+    unsafe {
+        core::arch::asm!("rdmsr", in("ecx") msr, out("eax") lo, out("edx") hi, options(nostack));
+    }
     ((hi as u64) << 32) | (lo as u64)
 }
 
@@ -124,7 +124,9 @@ fn rdmsr(msr: u32) -> u64 {
 fn wrmsr(msr: u32, val: u64) {
     let lo = val as u32;
     let hi = (val >> 32) as u32;
-    unsafe { core::arch::asm!("wrmsr", in("ecx") msr, in("eax") lo, in("edx") hi, options(nostack)); }
+    unsafe {
+        core::arch::asm!("wrmsr", in("ecx") msr, in("eax") lo, in("edx") hi, options(nostack));
+    }
 }
 
 /// Check if the MCA hardware is present.
@@ -136,7 +138,7 @@ fn mca_is_present() -> bool {
 /// Initialise the MCA hardware.
 fn mca_init() {
     if !mca_is_present() {
-        // crate::kprintln!("    [PSHED] MCA hardware not present")  // kprintln disabled (memcpy crash workaround);
+        // crate::kprintln!("    [PSHED] MCA hardware not present");
         return;
     }
 
@@ -148,7 +150,7 @@ fn mca_init() {
         let status_msr = IA32_MC0_STATUS + bank * 4;
         let status = rdmsr(status_msr);
         if (status & MCi_STATUS_VAL) != 0 {
-            // crate::kprintln!("    [PSHED] bank {}: clearing pending error 0x{:016x}", bank, status)  // kprintln disabled (memcpy crash workaround);
+            // crate::kprintln!("    [PSHED] bank {}: clearing pending error 0x{:016x}", bank, status);
             // Write 0 to clear
             wrmsr(status_msr, 0);
         }
@@ -161,7 +163,7 @@ fn mca_init() {
     }
 
     MCA_ENABLED.store(true, Ordering::Release);
-    // crate::kprintln!("    [PSHED] MCA initialised, {} banks", num_banks)  // kprintln disabled (memcpy crash workaround);
+    // crate::kprintln!("    [PSHED] MCA initialised, {} banks", num_banks);
 }
 
 /// Query one MCA bank and return the status as a formatted string.
@@ -174,18 +176,22 @@ pub fn query_mca_bank(bank: u32) -> (u64, u64, u64) {
 
 /// Initialise the PSHED.
 pub fn init() {
-    if INITIALIZED.load(Ordering::Acquire) { return; }
+    if INITIALIZED.load(Ordering::Acquire) {
+        return;
+    }
     INITIALIZED.store(true, Ordering::Release);
     MCA_ENABLED.store(false, Ordering::Release);
 
     mca_init();
-    // crate::kprintln!("    PSHED: initialized")  // kprintln disabled (memcpy crash workaround);
+    // crate::kprintln!("    PSHED: initialized");
 }
 
 /// `PshedAcquireBugCheckData` — claim the bugcheck data structure
 /// so the PSHED can fill in hardware error information during crash.
 pub fn pshed_acquire_bugcheck_data() -> bool {
-    BUGCHECK_DATA_CLAIMED.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok()
+    BUGCHECK_DATA_CLAIMED
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_ok()
 }
 
 /// `PshedReleaseBugCheckData` — release the bugcheck data back to the system.
@@ -222,12 +228,12 @@ pub fn pshed_add_error_source(source_type: ErrorSource) -> bool {
     }
     ERROR_SOURCES.store(new, Ordering::Release);
     let vec = match source_type {
-        ErrorSource::MCE => 18,  // #MC exception vector
-        ErrorSource::CMC => 0,   // CMCI uses APIC
+        ErrorSource::MCE => 18, // #MC exception vector
+        ErrorSource::CMC => 0,  // CMCI uses APIC
         _ => 0,
     };
     let _ = &vec;
-    // crate::kprintln!("    [PSHED] registered {:?} (vector={})", source_type, vec)  // kprintln disabled (memcpy crash workaround);
+    // crate::kprintln!("    [PSHED] registered {:?} (vector={})", source_type, vec);
     true
 }
 
@@ -242,12 +248,13 @@ pub fn pshed_remove_error_source(source_type: ErrorSource) {
 
 /// `PshedEnableErrorSource` — enable an error source.
 pub fn pshed_enable_error_source(source_type: ErrorSource) {
-    // crate::kprintln!("    [PSHED] enabling error source: {:?}", source_type)  // kprintln disabled (memcpy crash workaround);
+    // crate::kprintln!("    [PSHED] enabling error source: {:?}", source_type);
     match source_type {
         ErrorSource::MCE => {
             // Set the MCG_CTL enable bit if present
             let mcg_cap = rdmsr(IA32_MCG_CAP);
-            if (mcg_cap & 0x100) != 0 { // MCG_CTL present
+            if (mcg_cap & 0x100) != 0 {
+                // MCG_CTL present
                 wrmsr(IA32_MCG_CTL, 0xFFFFFFFFFFFFFFFF);
             }
         }
@@ -264,7 +271,7 @@ pub fn pshed_enable_error_source(source_type: ErrorSource) {
 
 /// `PshedDisableErrorSource` — disable an error source.
 pub fn pshed_disable_error_source(source_type: ErrorSource) {
-    // crate::kprintln!("    [PSHED] disabling error source: {:?}", source_type)  // kprintln disabled (memcpy crash workaround);
+    // crate::kprintln!("    [PSHED] disabling error source: {:?}", source_type);
     match source_type {
         ErrorSource::MCE => {
             let mcg_cap = rdmsr(IA32_MCG_CAP);
@@ -293,28 +300,28 @@ fn decode_mci_status(status: u64) -> (u64, bool, bool) {
 
 /// Smoke test for the PSHED.
 pub fn smoke_test() -> bool {
-    // crate::kprintln!("  [PSHED SMOKE] testing platform hardware error subsystem...")  // kprintln disabled (memcpy crash workaround);
+    // crate::kprintln!("  [PSHED SMOKE] testing platform hardware error subsystem...");
 
     let mcg_cap = rdmsr(IA32_MCG_CAP);
     let mcg_status = rdmsr(IA32_MCG_STATUS);
 
-    // crate::kprintln!("    [PSHED] IA32_MCG_CAP=0x{:016x}", mcg_cap)  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("    [PSHED] IA32_MCG_STATUS=0x{:016x}", mcg_status)  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("    [PSHED] num_mca_banks={}", mcg_cap & 0xFF)  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("    [PSHED] mcg_ctl_present={}", (mcg_cap >> 8) & 1)  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("    [PSHED] mcg_cmci_present={}", (mcg_cap >> 10) & 1)  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("    [PSHED] mcg_misc_prompt={}", (mcg_cap >> 11) & 1)  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("    [PSHED] mcg_tlb_errors={}", (mcg_cap >> 12) & 1)  // kprintln disabled (memcpy crash workaround);
+    // crate::kprintln!("    [PSHED] IA32_MCG_CAP=0x{:016x}", mcg_cap);
+    // crate::kprintln!("    [PSHED] IA32_MCG_STATUS=0x{:016x}", mcg_status);
+    // crate::kprintln!("    [PSHED] num_mca_banks={}", mcg_cap & 0xFF);
+    // crate::kprintln!("    [PSHED] mcg_ctl_present={}", (mcg_cap >> 8) & 1);
+    // crate::kprintln!("    [PSHED] mcg_cmci_present={}", (mcg_cap >> 10) & 1);
+    // crate::kprintln!("    [PSHED] mcg_misc_prompt={}", (mcg_cap >> 11) & 1);
+    // crate::kprintln!("    [PSHED] mcg_tlb_errors={}", (mcg_cap >> 12) & 1);
 
     // Check MCG_STATUS flags
     if (mcg_status & MCG_STATUS_RIPV) != 0 {
-        // crate::kprintln!("    [PSHED] MCG_STATUS: RIPV=1 (restart IP valid)")  // kprintln disabled (memcpy crash workaround);
+        // crate::kprintln!("    [PSHED] MCG_STATUS: RIPV=1 (restart IP valid)");
     }
     if (mcg_status & MCG_STATUS_EIPV) != 0 {
-        // crate::kprintln!("    [PSHED] MCG_STATUS: EIPV=1 (error IP valid)")  // kprintln disabled (memcpy crash workaround);
+        // crate::kprintln!("    [PSHED] MCG_STATUS: EIPV=1 (error IP valid)");
     }
     if (mcg_status & MCG_STATUS_MCIP) != 0 {
-        // crate::kprintln!("    [PSHED] MCG_STATUS: MCIP=1 (machine check in progress)")  // kprintln disabled (memcpy crash workaround);
+        // crate::kprintln!("    [PSHED] MCG_STATUS: MCIP=1 (machine check in progress)");
     }
 
     // Scan each bank
@@ -325,26 +332,26 @@ pub fn smoke_test() -> bool {
             let (etype, _, uncor) = decode_mci_status(status);
             let _ = &etype;
             let _ = &uncor;
-            // crate::kprintln!("    [PSHED] bank {}: status=0x{:016x} type={} uncorrected={}",  // kprintln disabled (memcpy crash workaround)
-//                 bank, status, etype, uncor);
+            // crate::kprintln!("    [PSHED] bank {}: status=0x{:016x} type={} uncorrected={}",
+            //                 bank, status, etype, uncor);
         }
     }
 
     // Test error source registration
     let added = pshed_add_error_source(ErrorSource::MCE);
     if !added {
-        // crate::kprintln!("  [PSHED SMOKE FAIL] failed to add error source")  // kprintln disabled (memcpy crash workaround);
+        // crate::kprintln!("  [PSHED SMOKE FAIL] failed to add error source");
         return false;
     }
 
     // Test bugcheck data claim
     let acquired = pshed_acquire_bugcheck_data();
     if !acquired {
-        // crate::kprintln!("  [PSHED SMOKE FAIL] failed to acquire bugcheck data")  // kprintln disabled (memcpy crash workaround);
+        // crate::kprintln!("  [PSHED SMOKE FAIL] failed to acquire bugcheck data");
         return false;
     }
     pshed_release_bugcheck_data();
 
-    // crate::kprintln!("  [PSHED SMOKE OK] Platform Hardware Error subsystem healthy")  // kprintln disabled (memcpy crash workaround);
+    // crate::kprintln!("  [PSHED SMOKE OK] Platform Hardware Error subsystem healthy");
     true
 }

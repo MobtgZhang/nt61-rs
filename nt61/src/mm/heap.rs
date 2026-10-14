@@ -20,12 +20,11 @@
 //! - `dealloc()` adds blocks to the free list for future reuse
 //! - Adjacent free blocks are coalesced to prevent fragmentation
 
+use crate::ke::sync::Spinlock;
 use core::alloc::{GlobalAlloc, Layout};
 use core::cell::UnsafeCell;
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use core::ptr;
-use crate::ke::sync::Spinlock;
-
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// Free block header stored at the beginning of each freed block.
 ///
@@ -423,8 +422,7 @@ unsafe impl GlobalAlloc for KernelHeap {
                 .compare_exchange(cur, new_next, Ordering::SeqCst, Ordering::SeqCst)
                 .is_ok()
             {
-                self.allocated
-                    .fetch_add(layout.size(), Ordering::Relaxed);
+                self.allocated.fetch_add(layout.size(), Ordering::Relaxed);
                 stats.total_allocations += 1;
                 stats.current_allocated += layout.size();
                 if stats.current_allocated > stats.peak_allocated {
@@ -454,14 +452,15 @@ unsafe impl GlobalAlloc for KernelHeap {
 
 /// Initialize the kernel heap with a runtime-allocated region.
 ///
-/// We cannot rely on a static BSS region for the heap: the LLD PE
-/// output drops uninitialised-data sections into the
-/// `SizeOfUninitializedData` field only when the linker can prove
-/// the section is BSS-style, and the hand-rolled `linker.ld` we use
-/// for the UEFI target does not currently satisfy that contract
-/// (the resulting PE has `SizeOfUninitializedData = 0` and no
-/// `.bss` section, so a 4 MiB BSS static would silently get
-/// dropped at link time).
+/// We do not rely on a static BSS region for the heap. The
+/// hand-rolled `linker.ld` for the UEFI target describes only
+/// `.text` and `.data`, so a standalone `.bss` output section is
+/// not emitted, and EDK2 rejects a PE section whose VirtualSize is
+/// non-zero but whose PointerToRawData is zero. BSS statics are now
+/// merged into `.data` by `linker.ld` and `linker-rv64.ld`, which
+/// is what the frame and PFN table statics depend on; the heap
+/// itself still comes from the frame allocator so its size is not
+/// fixed at link time.
 ///
 /// Instead, we ask the buddy frame allocator for a 4 MiB region at
 /// runtime. The buddy allocator hands out physical addresses, and
@@ -509,7 +508,9 @@ pub fn init() {
                             (p, HEAP_PAGES_SMALL)
                         }
                         None => {
-                            crate::hal::serial::write_string("[heap] FATAL: 8MB allocation failed\r\n");
+                            crate::hal::serial::write_string(
+                                "[heap] FATAL: 8MB allocation failed\r\n",
+                            );
                             return;
                         }
                     }

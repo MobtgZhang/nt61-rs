@@ -114,7 +114,7 @@ impl Connector {
         Self {
             connector_type,
             encoder,
-            crtc: 0, // Default to CRTC A
+            crtc: 0,        // Default to CRTC A
             i2c_addr: 0x50, // Standard EDID I2C address
         }
     }

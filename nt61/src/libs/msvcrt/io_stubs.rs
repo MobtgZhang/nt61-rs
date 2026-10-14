@@ -10,8 +10,7 @@ pub fn open_file(_filename: *const c_char, _flags: u32) -> usize {
     0 // Return 0 to indicate failure
 }
 
-pub fn close_file(_handle: usize) {
-}
+pub fn close_file(_handle: usize) {}
 
 pub fn read_file(_handle: usize, _buffer: &mut [u8]) -> Result<usize, ()> {
     Err(()) // Not implemented

@@ -13,11 +13,11 @@
 //! caller is responsible for `release()`-ing them.
 
 use super::sid::Sid;
-use super::token::{Token, TokenGroup, TokenPrivilege, TokenTypeEnum, ImpersonationLevel,
-                   SE_GROUP_ENABLED, SE_GROUP_ENABLED_BY_DEFAULT,
-                   SE_PRIVILEGE_ENABLED_BY_DEFAULT, SE_PRIVILEGE_ENABLED,
-                   TOKEN_HAS_IMPERSONATE_PRIVILEGE,
-                   privileges as priv_luids};
+use super::token::{
+    privileges as priv_luids, ImpersonationLevel, Token, TokenGroup, TokenPrivilege, TokenTypeEnum,
+    SE_GROUP_ENABLED, SE_GROUP_ENABLED_BY_DEFAULT, SE_PRIVILEGE_ENABLED,
+    SE_PRIVILEGE_ENABLED_BY_DEFAULT, TOKEN_HAS_IMPERSONATE_PRIVILEGE,
+};
 use super::users;
 
 /// Look up an account and create a primary token for it.
@@ -74,10 +74,7 @@ pub fn logon_user(name: &str) -> Option<*mut Token> {
 
 /// Build an impersonation token from a primary token. Used by
 /// `ImpersonateLoggedOnUser` / `SetThreadToken` paths.
-pub fn create_impersonation(
-    primary_user_sid: Sid,
-    level: ImpersonationLevel,
-) -> Token {
+pub fn create_impersonation(primary_user_sid: Sid, level: ImpersonationLevel) -> Token {
     let mut t = Token::new_impersonation(primary_user_sid, level);
     t.add_group(TokenGroup {
         sid: super::sid::SID_EVERYONE,
@@ -105,7 +102,7 @@ pub fn token_kind(t: &Token) -> TokenTypeEnum {
 }
 
 pub fn init() {
-    // crate::kprintln!("    SE/LOGON: initialized (logon_user / impersonation / name_for_sid)")  // kprintln disabled (memcpy crash workaround);
+    // crate::kprintln!("    SE/LOGON: initialized (logon_user / impersonation / name_for_sid)");
 }
 
 #[cfg(test)]
@@ -142,6 +139,9 @@ mod tests {
         let sid = Sid::well_known(WellKnownSid::LocalSystem);
         let t = create_impersonation(sid, ImpersonationLevel::SecurityDelegation);
         assert_eq!(t.token_type, TokenTypeEnum::TokenImpersonation);
-        assert_eq!(t.impersonation_level, ImpersonationLevel::SecurityDelegation);
+        assert_eq!(
+            t.impersonation_level,
+            ImpersonationLevel::SecurityDelegation
+        );
     }
 }

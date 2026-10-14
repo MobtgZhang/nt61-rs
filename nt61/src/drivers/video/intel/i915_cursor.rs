@@ -85,10 +85,7 @@ impl I915Cursor {
     #[inline]
     fn write_reg(&self, offset: u32, value: u32) {
         unsafe {
-            core::ptr::write_volatile(
-                (self.mmio_base + offset as u64) as *mut u32,
-                value,
-            );
+            core::ptr::write_volatile((self.mmio_base + offset as u64) as *mut u32, value);
         }
     }
 
@@ -97,9 +94,7 @@ impl I915Cursor {
     /// # Arguments
     /// * `size` - The cursor size to use
     pub fn enable(&mut self, size: CursorSize) {
-        let control = CURSOR_ENABLE
-            | CURSOR_FORMAT_ARGB8888
-            | size.to_reg_value();
+        let control = CURSOR_ENABLE | CURSOR_FORMAT_ARGB8888 | size.to_reg_value();
 
         self.write_reg(CURACNTR, control);
         self.size = size;
@@ -165,10 +160,7 @@ impl I915Cursor {
         for (i, &pixel) in data.iter().enumerate() {
             let offset = (i * 4) as u64;
             unsafe {
-                core::ptr::write_volatile(
-                    (sprite_base + offset) as *mut u32,
-                    pixel,
-                );
+                core::ptr::write_volatile((sprite_base + offset) as *mut u32, pixel);
             }
         }
 
@@ -200,10 +192,7 @@ impl I915Cursor {
         for (i, &pixel) in data.iter().enumerate() {
             let offset = (i * 4) as u64;
             unsafe {
-                core::ptr::write_volatile(
-                    (sprite_base + offset) as *mut u32,
-                    pixel,
-                );
+                core::ptr::write_volatile((sprite_base + offset) as *mut u32, pixel);
             }
         }
 
@@ -309,10 +298,7 @@ impl I915CursorPipeB {
     #[inline]
     fn write_reg(&self, offset: u32, value: u32) {
         unsafe {
-            core::ptr::write_volatile(
-                (self.mmio_base + offset as u64) as *mut u32,
-                value,
-            );
+            core::ptr::write_volatile((self.mmio_base + offset as u64) as *mut u32, value);
         }
     }
 
@@ -324,9 +310,7 @@ impl I915CursorPipeB {
 
     /// Enable cursor on Pipe B
     pub fn enable(&mut self, size: CursorSize) {
-        let control = CURSOR_ENABLE
-            | CURSOR_FORMAT_ARGB8888
-            | size.to_reg_value();
+        let control = CURSOR_ENABLE | CURSOR_FORMAT_ARGB8888 | size.to_reg_value();
         self.write_reg(CURBCNTR, control);
         self.size = size;
         self.enabled = true;
@@ -355,10 +339,7 @@ impl I915CursorPipeB {
         for (i, &pixel) in data.iter().enumerate() {
             let offset = (i * 4) as u64;
             unsafe {
-                core::ptr::write_volatile(
-                    (sprite_base + offset) as *mut u32,
-                    pixel,
-                );
+                core::ptr::write_volatile((sprite_base + offset) as *mut u32, pixel);
             }
         }
         self.write_reg(CURBBASE, 0x80000);

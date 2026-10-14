@@ -24,19 +24,19 @@ use crate::hal::x86_64::io_port::{READ_PORT_UCHAR, WRITE_PORT_UCHAR};
 // =====================================================================
 
 mod ports {
-    pub const DMA1_ADDR: [u16; 8]   = [0x00, 0x02, 0x04, 0x06, 0xC0, 0xC4, 0xC8, 0xCC];
-    pub const DMA1_COUNT: [u16; 8]  = [0x01, 0x03, 0x05, 0x07, 0xC2, 0xC6, 0xCA, 0xCE];
-    pub const DMA1_PAGE: [u16; 8]   = [0x87, 0x83, 0x81, 0x82, 0x8F, 0x8B, 0x89, 0x8A];
+    pub const DMA1_ADDR: [u16; 8] = [0x00, 0x02, 0x04, 0x06, 0xC0, 0xC4, 0xC8, 0xCC];
+    pub const DMA1_COUNT: [u16; 8] = [0x01, 0x03, 0x05, 0x07, 0xC2, 0xC6, 0xCA, 0xCE];
+    pub const DMA1_PAGE: [u16; 8] = [0x87, 0x83, 0x81, 0x82, 0x8F, 0x8B, 0x89, 0x8A];
 
     #[allow(dead_code)]
-    pub const DMA1_CMD:    u16 = 0x08;
+    pub const DMA1_CMD: u16 = 0x08;
     #[allow(dead_code)]
     pub const DMA1_STATUS: u16 = 0x08;
-    pub const DMA1_MASK:   u16 = 0x0A;
-    pub const DMA1_MODE:   u16 = 0x0B;
+    pub const DMA1_MASK: u16 = 0x0A;
+    pub const DMA1_MODE: u16 = 0x0B;
     pub const DMA1_FLIPFLOP: u16 = 0x0C;
     #[allow(dead_code)]
-    pub const DMA1_TEMP:   u16 = 0x0D;
+    pub const DMA1_TEMP: u16 = 0x0D;
     #[allow(dead_code)]
     pub const DMA1_MASTER_CLEAR: u16 = 0x0D;
     #[allow(dead_code)]
@@ -74,7 +74,11 @@ fn mask_set(channel: u8) {
 }
 
 fn mask_clear(channel: u8) {
-    let state = if channel < 4 { &DMA1_MASK_STATE } else { &DMA2_MASK_STATE };
+    let state = if channel < 4 {
+        &DMA1_MASK_STATE
+    } else {
+        &DMA2_MASK_STATE
+    };
     let prev = state.load(Ordering::Relaxed);
     let new = prev & !(1 << (channel & 0x03));
     state.store(new, Ordering::Relaxed);
@@ -111,7 +115,11 @@ fn program_channel(channel: u8, mode: u8, addr: u32, count: u16) {
     WRITE_PORT_UCHAR(addr_port, lo);
     WRITE_PORT_UCHAR(addr_port, hi);
     WRITE_PORT_UCHAR(page_port, page);
-    let count_val = if channel < 4 { count - 1 } else { (count >> 1) - 1 };
+    let count_val = if channel < 4 {
+        count - 1
+    } else {
+        (count >> 1) - 1
+    };
     WRITE_PORT_UCHAR(count_port, (count_val & 0xFF) as u8);
     WRITE_PORT_UCHAR(count_port, ((count_val >> 8) & 0xFF) as u8);
     WRITE_PORT_UCHAR(ports::DMA1_MODE, mode | (channel & 0x03));
@@ -122,7 +130,9 @@ fn program_channel(channel: u8, mode: u8, addr: u32, count: u16) {
 /// "remaining" count, with a bias of 1 — the user code adds 1 to
 /// recover the original count.
 pub fn HalReadDmaCounter(channel: u8) -> u8 {
-    if channel >= 8 { return 0; }
+    if channel >= 8 {
+        return 0;
+    }
     reset_flipflop();
     let port = ports::DMA1_COUNT[channel as usize];
     let lo = READ_PORT_UCHAR(port);
@@ -152,7 +162,10 @@ struct CommonBuffer {
 }
 
 static mut BUFFERS: [CommonBuffer; MAX_BUFFERS] = [CommonBuffer {
-    phys: 0, virt: 0, size: 0, in_use: false
+    phys: 0,
+    virt: 0,
+    size: 0,
+    in_use: false,
 }; MAX_BUFFERS];
 
 /// Adapter object returned by `HalGetAdapter`. The fields mirror
@@ -188,19 +201,22 @@ pub fn HalGetAdapter(interface_type: u32, bus_number: u32) -> Option<AdapterInfo
 /// backing store; the returned pointer is identity-mapped (i.e.
 /// the same value in kernel virtual and physical address space).
 pub fn HalAllocateCommonBuffer(adapter: &AdapterInfo, len: usize) -> Option<(u64, u64)> {
-    if len == 0 { return None; }
+    if len == 0 {
+        return None;
+    }
     let aligned = (len + 4095) & !4095;
     unsafe {
         for slot in BUFFERS.iter_mut() {
-            if slot.in_use { continue; }
+            if slot.in_use {
+                continue;
+            }
             // First-fit: allocate from the pool. The pool returns
             // a virtual address; we re-derive the physical one
             // through `mm::pfn::pfn_to_phys` of the backing PFN.
-            let va = crate::mm::pool::allocate(
-                crate::mm::pool::PoolType::NonPaged,
-                aligned,
-            );
-            if va.is_null() { return None; }
+            let va = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, aligned);
+            if va.is_null() {
+                return None;
+            }
             // Identity-map assumption: the BSP page tables map the
             // low 4 GiB 1:1. This is the convention used by the
             // rest of the kernel.
@@ -231,16 +247,30 @@ pub fn HalFreeCommonBuffer(_adapter: &AdapterInfo, phys: u64, virt: u64, size: u
 /// Program a single 8237 channel to perform a single-shot read
 /// of `count` bytes from `buffer`. Returns `true` on success.
 pub fn program_dma_read(channel: u8, buffer: u64, count: u32) -> bool {
-    if channel >= 8 { return false; }
-    program_channel(channel, mode_bits::SINGLE | mode_bits::READ, buffer as u32, count as u16);
+    if channel >= 8 {
+        return false;
+    }
+    program_channel(
+        channel,
+        mode_bits::SINGLE | mode_bits::READ,
+        buffer as u32,
+        count as u16,
+    );
     true
 }
 
 /// Program a single 8237 channel to perform a single-shot write
 /// of `count` bytes to `buffer`. Returns `true` on success.
 pub fn program_dma_write(channel: u8, buffer: u64, count: u32) -> bool {
-    if channel >= 8 { return false; }
-    program_channel(channel, mode_bits::SINGLE | mode_bits::WRITE, buffer as u32, count as u16);
+    if channel >= 8 {
+        return false;
+    }
+    program_channel(
+        channel,
+        mode_bits::SINGLE | mode_bits::WRITE,
+        buffer as u32,
+        count as u16,
+    );
     true
 }
 

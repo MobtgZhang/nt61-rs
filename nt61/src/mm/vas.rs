@@ -32,7 +32,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::ke::sync::Spinlock;
 use crate::mm::pfn;
-use crate::mm::pte::{MMPTE, PfnNumber};
+use crate::mm::pte::{PfnNumber, MMPTE};
 use crate::mm::vad::VadTree;
 
 // Re-export all constants from the single source of truth.
@@ -134,11 +134,16 @@ pub struct MmSystemAddressSpace {
 
 impl MmSystemAddressSpace {
     pub const fn new() -> Self {
-        Self { pml4_phys: 0, pml4_virt: 0, initialized: false }
+        Self {
+            pml4_phys: 0,
+            pml4_virt: 0,
+            initialized: false,
+        }
     }
 }
 
-pub static MM_SYSTEM_VAS: Spinlock<MmSystemAddressSpace> = Spinlock::new(MmSystemAddressSpace::new());
+pub static MM_SYSTEM_VAS: Spinlock<MmSystemAddressSpace> =
+    Spinlock::new(MmSystemAddressSpace::new());
 
 /// Return a virtual pointer to the system PML4.
 ///
@@ -215,7 +220,6 @@ impl MmVirtualAddressSpace {
         let mut allocator = self.user_va_allocator.lock();
         // _protect is intentionally unused - reserved for future use (protection flags)
 
-
         // Align size to page boundary
         let aligned_size = (size + 0xFFF) & !0xFFF;
 
@@ -258,7 +262,9 @@ pub fn verify_self_map() -> Option<PfnNumber> {
     let entry = unsafe { system_pml4_mut().add(MI_SELF_MAP_INDEX) };
     unsafe {
         let pte = *entry;
-        if !pte.is_hardware() { return None; }
+        if !pte.is_hardware() {
+            return None;
+        }
         Some(pte.hardware_page_frame() >> 12)
     }
 }
@@ -298,11 +304,11 @@ pub fn install_self_map(pml4_pfn: PfnNumber) -> Result<(), SelfMapError> {
     let pml4 = pml4_phys as *mut MMPTE;
     let existing = unsafe { *pml4.add(MI_SELF_MAP_INDEX) };
     if existing.is_hardware() {
-    // [DISABLED-KPRINTLN]         // // kprintln!("[VAS] install_self_map: self-map already present at PML4[0x1ED]=0x{:x}", existing.raw())  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // [DISABLED-KPRINTLN]         // // kprintln!("[VAS] install_self_map: self-map already present at PML4[0x1ED]=0x{:x}", existing.raw());
         return Ok(());
     }
 
-    // [DISABLED-KPRINTLN]     // // kprintln!("[VAS] install_self_map: pml4_phys=0x{:x}", pml4_phys)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // [DISABLED-KPRINTLN]     // // kprintln!("[VAS] install_self_map: pml4_phys=0x{:x}", pml4_phys);
 
     // Allocate 3 pages for the self-map chain (pdpt_self, pd_self,
     // pt_self). The chain is closed by pointing `pt_self[0x1ED]` at
@@ -311,14 +317,14 @@ pub fn install_self_map(pml4_pfn: PfnNumber) -> Result<(), SelfMapError> {
     let pdpt_pfn = match pfn::allocate_pfn() {
         Some(p) => p,
         None => {
-    // [DISABLED-KPRINTLN]             // // kprintln!("[VAS] ERROR: install_self_map failed - cannot allocate PDPT page")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // [DISABLED-KPRINTLN]             // // kprintln!("[VAS] ERROR: install_self_map failed - cannot allocate PDPT page");
             return Err(SelfMapError::OutOfMemory);
         }
     };
     let pd_pfn = match pfn::allocate_pfn() {
         Some(p) => p,
         None => {
-    // [DISABLED-KPRINTLN]             // // kprintln!("[VAS] ERROR: install_self_map failed - cannot allocate PD page")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // [DISABLED-KPRINTLN]             // // kprintln!("[VAS] ERROR: install_self_map failed - cannot allocate PD page");
             pfn::free_pfn(pdpt_pfn);
             return Err(SelfMapError::OutOfMemory);
         }
@@ -326,7 +332,7 @@ pub fn install_self_map(pml4_pfn: PfnNumber) -> Result<(), SelfMapError> {
     let pt_pfn = match pfn::allocate_pfn() {
         Some(p) => p,
         None => {
-    // [DISABLED-KPRINTLN]             // // kprintln!("[VAS] ERROR: install_self_map failed - cannot allocate PT page")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // [DISABLED-KPRINTLN]             // // kprintln!("[VAS] ERROR: install_self_map failed - cannot allocate PT page");
             pfn::free_pfn(pdpt_pfn);
             pfn::free_pfn(pd_pfn);
             return Err(SelfMapError::OutOfMemory);
@@ -335,6 +341,20 @@ pub fn install_self_map(pml4_pfn: PfnNumber) -> Result<(), SelfMapError> {
     let pdpt_phys = pfn_to_phys(pdpt_pfn);
     let pd_phys = pfn_to_phys(pd_pfn);
     let pt_phys = pfn_to_phys(pt_pfn);
+
+    let saved_cr0: u64;
+    unsafe {
+        core::arch::asm!(
+            "mov {}, cr0",
+            out(reg) saved_cr0,
+            options(nostack, preserves_flags),
+        );
+        core::arch::asm!(
+            "mov cr0, {}",
+            in(reg) saved_cr0 & !0x0001_0000u64,
+            options(nostack, preserves_flags),
+        );
+    }
 
     // Zero the three new pages. They are all in identity-mapped
     // low memory (the buddy allocator only hands out such pages),
@@ -356,24 +376,6 @@ pub fn install_self_map(pml4_pfn: PfnNumber) -> Result<(), SelfMapError> {
     let pdpt = pdpt_phys as *mut MMPTE;
     let pd = pd_phys as *mut MMPTE;
     let pt = pt_phys as *mut MMPTE;
-    // CRITICAL: The UEFI identity map may have the PML4 page mapped
-    // as read-only (via a 2MB large page or via the boot-time identity
-    // map). Clearing CR0.WP allows ring-0 code to write to read-only
-    // pages so the self-map install can succeed. We restore CR0.WP
-    // immediately after the writes.
-    let saved_cr0: u64;
-    unsafe {
-        core::arch::asm!(
-            "mov {}, cr0",
-            out(reg) saved_cr0,
-            options(nostack, preserves_flags),
-        );
-        core::arch::asm!(
-            "mov cr0, {}",
-            in(reg) saved_cr0 & !0x0001_0000u64, // clear WP (bit 16)
-            options(nostack, preserves_flags),
-        );
-    }
     unsafe {
         // Wire the chain. We point `pt_self[0x1ED]` at the PML4
         // page itself so the self-map walk returns the same PML4
@@ -395,9 +397,9 @@ pub fn install_self_map(pml4_pfn: PfnNumber) -> Result<(), SelfMapError> {
     // installed).
     let _check_pml4 = unsafe { *pml4.add(MI_SELF_MAP_INDEX) };
     // _check_pml4 is intentionally unused - reserved for future verification
-    // [DISABLED-KPRINTLN]     // // kprintln!("[VAS] install_self_map: PML4[0x1ED]=0x{:x}", _check_pml4.raw())  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED-KPRINTLN]     // // kprintln!("[VAS] install_self_map: pdpt=0x{:x} pd=0x{:x} pt=0x{:x} pml4=0x{:x}",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //     // [DISABLED-KPRINTLN]               pdpt_phys, pd_phys, pt_phys, pml4_phys);
+    // [DISABLED-KPRINTLN]     // // kprintln!("[VAS] install_self_map: PML4[0x1ED]=0x{:x}", _check_pml4.raw());
+    // [DISABLED-KPRINTLN]     // // kprintln!("[VAS] install_self_map: pdpt=0x{:x} pd=0x{:x} pt=0x{:x} pml4=0x{:x}",
+    // //     // [DISABLED-KPRINTLN]               pdpt_phys, pd_phys, pt_phys, pml4_phys);
     Ok(())
 }
 
@@ -407,23 +409,23 @@ pub fn install_self_map(_pml4_pfn: PfnNumber) -> Result<(), SelfMapError> {
 }
 
 /// Fallback self-map: only the PML4 entry is recursive.
-/// 
+///
 /// This provides basic self-map capability where PXE_BASE can access
 /// the PML4. PPE_BASE/PDE_BASE/PTE_BASE will not be functional.
 /// Kept as the only option when the frame allocator cannot hand us
 /// enough pages for the full 4-level self-map.
-/// 
+///
 /// # Warning
-/// 
+///
 /// When this fallback is used, the system runs with limited self-map
 /// functionality. Some memory management operations may fail or behave
 /// unexpectedly. This should only occur during early bootstrap when
 /// memory is extremely constrained.
 fn install_single_level_self_map(pml4_phys: u64) {
-    // [DISABLED-KPRINTLN]     // // kprintln!("[VAS] WARNING: Falling back to single-level self-map")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED-KPRINTLN]     // // kprintln!("[VAS] WARNING: Limited functionality - PPE_BASE/PDE_BASE/PTE_BASE may not work")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED-KPRINTLN]     // // kprintln!("[VAS] WARNING: This indicates PFN allocation failure during bootstrap")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    
+    // [DISABLED-KPRINTLN]     // // kprintln!("[VAS] WARNING: Falling back to single-level self-map");
+    // [DISABLED-KPRINTLN]     // // kprintln!("[VAS] WARNING: Limited functionality - PPE_BASE/PDE_BASE/PTE_BASE may not work");
+    // [DISABLED-KPRINTLN]     // // kprintln!("[VAS] WARNING: This indicates PFN allocation failure during bootstrap");
+
     let pte = pml4_phys as *mut u8;
     // The UEFI identity map can leave the PML4 page marked read-only
     // (it gets installed through a 2 MiB large page during
@@ -451,8 +453,8 @@ fn install_single_level_self_map(pml4_phys: u64) {
             options(nostack, preserves_flags),
         );
     }
-    // [DISABLED-KPRINTLN]     // // kprintln!("[VAS] Single-level self-map installed at PML4[0x1ED]=0x{:016x}",   // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //     // [DISABLED-KPRINTLN]               pml4_phys | 0x67);
+    // [DISABLED-KPRINTLN]     // // kprintln!("[VAS] Single-level self-map installed at PML4[0x1ED]=0x{:016x}",
+    // //     // [DISABLED-KPRINTLN]               pml4_phys | 0x67);
 }
 
 /// Install single-level self-map directly to PML4 physical address.
@@ -460,7 +462,7 @@ fn install_single_level_self_map(pml4_phys: u64) {
 /// the self-map window (because it's not set up yet). It writes
 /// directly to the PML4's physical address.
 pub fn install_single_level_self_map_direct(pml4_phys: u64) {
-    // [DISABLED-KPRINTLN]     // // kprintln!("[VAS] install_single: starting, pml4_phys=0x{:x}", pml4_phys)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // [DISABLED-KPRINTLN]     // // kprintln!("[VAS] install_single: starting, pml4_phys=0x{:x}", pml4_phys);
 
     // The PML4 is at pml4_phys (identity-mapped in UEFI).
     // We write directly to the PML4[MI_SELF_MAP_INDEX] entry.
@@ -504,7 +506,11 @@ pub fn _direct_self_map_keepalive(pml4_phys: u64) {
 /// needs 16 PDEs versus 8192 PT entries.
 #[cfg(target_arch = "x86_64")]
 pub fn ensure_low_identity_map(pa_base: u64, size: u64) {
-    crate::boot_println!("[VAS] ensure_low_identity_map: pa_base=0x{:x} size=0x{:x}", pa_base, size);
+    crate::boot_println!(
+        "[VAS] ensure_low_identity_map: pa_base=0x{:x} size=0x{:x}",
+        pa_base,
+        size
+    );
     if pa_base == 0 || size == 0 {
         crate::boot_println!("[VAS] ensure_low_identity_map: zero range, skipping");
         return;
@@ -515,7 +521,11 @@ pub fn ensure_low_identity_map(pa_base: u64, size: u64) {
     let start = pa_base & !(TWO_MB - 1);
     let end_unaligned = pa_base.saturating_add(size);
     let end = (end_unaligned + TWO_MB - 1) & !(TWO_MB - 1);
-    crate::boot_println!("[VAS] ensure_low_identity_map: start=0x{:x} end=0x{:x}", start, end);
+    crate::boot_println!(
+        "[VAS] ensure_low_identity_map: start=0x{:x} end=0x{:x}",
+        start,
+        end
+    );
 
     let pml4_phys = crate::arch::read_current_page_root();
     crate::boot_println!("[VAS] ensure_low_identity_map: pml4_phys=0x{:x}", pml4_phys);
@@ -543,9 +553,11 @@ pub fn ensure_low_identity_map(pa_base: u64, size: u64) {
     }
 
     let mut cur = start;
-    crate::boot_println!("[VAS] ensure_low_identity_map: scanning PML4[0]={:016x} PML4[1]={:016x}",
+    crate::boot_println!(
+        "[VAS] ensure_low_identity_map: scanning PML4[0]={:016x} PML4[1]={:016x}",
         unsafe { (*pml4.add(0)).raw() },
-        unsafe { (*pml4.add(1)).raw() });
+        unsafe { (*pml4.add(1)).raw() }
+    );
     let mut pde_count = 0u64;
     while cur < end {
         let pml4_idx = ((cur >> 39) & 0x1FF) as usize;
@@ -559,7 +571,10 @@ pub fn ensure_low_identity_map(pa_base: u64, size: u64) {
                 let new_pdpt = match crate::mm::pfn::allocate_pfn() {
                     Some(p) => pfn_to_phys(p),
                     None => {
-                        crate::boot_println!("[VAS] ensure_low_identity_map: PDPT alloc failed at cur=0x{:x}", cur);
+                        crate::boot_println!(
+                            "[VAS] ensure_low_identity_map: PDPT alloc failed at cur=0x{:x}",
+                            cur
+                        );
                         break;
                     }
                 };
@@ -594,7 +609,11 @@ pub fn ensure_low_identity_map(pa_base: u64, size: u64) {
 
         cur += TWO_MB;
     }
-    crate::boot_println!("[VAS] ensure_low_identity_map: mapping loop done, cur=0x{:x}, pdes installed={}", cur, pde_count);
+    crate::boot_println!(
+        "[VAS] ensure_low_identity_map: mapping loop done, cur=0x{:x}, pdes installed={}",
+        cur,
+        pde_count
+    );
 
     unsafe {
         core::arch::asm!(
@@ -613,8 +632,14 @@ pub fn ensure_low_identity_map(pa_base: u64, size: u64) {
         core::arch::asm!("mov cr3, {}", in(reg) cr3, options(nostack));
     }
     let cr3_after: u64;
-    unsafe { core::arch::asm!("mov {}, cr3", out(reg) cr3_after, options(nostack)); }
-    crate::boot_println!("[VAS] ensure_low_identity_map: CR3 before flush=0x{:x} after flush=0x{:x}", cr3, cr3_after);
+    unsafe {
+        core::arch::asm!("mov {}, cr3", out(reg) cr3_after, options(nostack));
+    }
+    crate::boot_println!(
+        "[VAS] ensure_low_identity_map: CR3 before flush=0x{:x} after flush=0x{:x}",
+        cr3,
+        cr3_after
+    );
 
     // Self-check: read back every leaf PDE we just installed and
     // confirm it really points at the requested PA with PS=1. If
@@ -642,7 +667,11 @@ pub fn ensure_low_identity_map(pa_base: u64, size: u64) {
                 if bad <= 4 {
                     crate::boot_println!(
                         "[VAS] verify: BAD PDE for pa=0x{:x} -> 0x{:x} (P={} R/W={} PS={})",
-                        verify_cur, pde, pde & 1, (pde >> 1) & 1, (pde >> 7) & 1
+                        verify_cur,
+                        pde,
+                        pde & 1,
+                        (pde >> 1) & 1,
+                        (pde >> 7) & 1
                     );
                 }
             }
@@ -674,7 +703,9 @@ fn install_self_map_with_identity_map(pml4_pfn: PfnNumber) -> Result<(), SelfMap
     let pdpt_pfn = match pfn::allocate_pfn() {
         Some(p) => p,
         None => {
-            crate::hal::serial::write_string("[VAS] install_self_map: ERROR: cannot allocate PDPT\r\n");
+            crate::hal::serial::write_string(
+                "[VAS] install_self_map: ERROR: cannot allocate PDPT\r\n",
+            );
             return Err(SelfMapError::OutOfMemory);
         }
     };
@@ -684,7 +715,9 @@ fn install_self_map_with_identity_map(pml4_pfn: PfnNumber) -> Result<(), SelfMap
     let pd_pfn = match pfn::allocate_pfn() {
         Some(p) => p,
         None => {
-            crate::hal::serial::write_string("[VAS] install_self_map: ERROR: cannot allocate PD\r\n");
+            crate::hal::serial::write_string(
+                "[VAS] install_self_map: ERROR: cannot allocate PD\r\n",
+            );
             pfn::free_pfn(pdpt_pfn);
             return Err(SelfMapError::OutOfMemory);
         }
@@ -695,7 +728,9 @@ fn install_self_map_with_identity_map(pml4_pfn: PfnNumber) -> Result<(), SelfMap
     let pt_pfn = match pfn::allocate_pfn() {
         Some(p) => p,
         None => {
-            crate::hal::serial::write_string("[VAS] install_self_map: ERROR: cannot allocate PT\r\n");
+            crate::hal::serial::write_string(
+                "[VAS] install_self_map: ERROR: cannot allocate PT\r\n",
+            );
             pfn::free_pfn(pdpt_pfn);
             pfn::free_pfn(pd_pfn);
             return Err(SelfMapError::OutOfMemory);
@@ -709,22 +744,11 @@ fn install_self_map_with_identity_map(pml4_pfn: PfnNumber) -> Result<(), SelfMap
     let pd_phys = pfn_to_phys(pd_pfn);
     let pt_phys = pfn_to_phys(pt_pfn);
 
-    // Zero all page table pages.
-    unsafe {
-        core::ptr::write_bytes(pdpt_phys as *mut u8, 0, 4096);
-        core::ptr::write_bytes(pd_phys as *mut u8, 0, 4096);
-        core::ptr::write_bytes(pt_phys as *mut u8, 0, 4096);
-    }
-
-    // Wire the self-map chain. Closing with the PML4 itself lets the
-    // walk terminate at a fixed point (see `install_self_map`).
     let pml4 = pml4_phys as *mut MMPTE;
     let pdpt = pdpt_phys as *mut MMPTE;
     let pd = pd_phys as *mut MMPTE;
     let pt = pt_phys as *mut MMPTE;
 
-    // CRITICAL: Same CR0.WP workaround as `install_self_map` — the
-    // PML4 page may be mapped read-only by the UEFI identity map.
     let saved_cr0: u64;
     unsafe {
         core::arch::asm!(
@@ -734,22 +758,25 @@ fn install_self_map_with_identity_map(pml4_pfn: PfnNumber) -> Result<(), SelfMap
         );
         core::arch::asm!(
             "mov cr0, {}",
-            in(reg) saved_cr0 & !0x0001_0000u64, // clear WP (bit 16)
+            in(reg) saved_cr0 & !0x0001_0000u64,
             options(nostack, preserves_flags),
         );
     }
 
+    // Zero all page table pages.
+    unsafe {
+        core::ptr::write_bytes(pdpt_phys as *mut u8, 0, 4096);
+        core::ptr::write_bytes(pd_phys as *mut u8, 0, 4096);
+        core::ptr::write_bytes(pt_phys as *mut u8, 0, 4096);
+    }
+
+    // Wire the self-map chain. Closing with the PML4 itself lets the
+    // walk terminate at a fixed point (see `install_self_map`).
     unsafe {
         (*pml4.add(MI_SELF_MAP_INDEX)).set_hardware(pdpt_phys, SELF_RW);
         (*pdpt.add(MI_SELF_MAP_INDEX)).set_hardware(pd_phys, SELF_RW);
         (*pd.add(MI_SELF_MAP_INDEX)).set_hardware(pt_phys, SELF_RW);
         (*pt.add(MI_SELF_MAP_INDEX)).set_hardware(pml4_phys, SELF_RW);
-        // Restore CR0.WP.
-        core::arch::asm!(
-            "mov cr0, {}",
-            in(reg) saved_cr0,
-            options(nostack, preserves_flags),
-        );
     }
 
     // CRITICAL: Add an identity-mapping entry for the PML4 page itself.
@@ -767,7 +794,7 @@ fn install_self_map_with_identity_map(pml4_pfn: PfnNumber) -> Result<(), SelfMap
     let pml4_self_idx = ((pml4_phys >> 39) & 0x1FF) as usize;
     let existing_entry = unsafe { *pml4.add(pml4_self_idx) };
     if !existing_entry.is_hardware() {
-    // [DISABLED-KPRINTLN]         // // kprintln!("[VAS] WARNING: PML4[0x{:x}] not mapped, adding identity-mapping", pml4_self_idx)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // [DISABLED-KPRINTLN]         // // kprintln!("[VAS] WARNING: PML4[0x{:x}] not mapped, adding identity-mapping", pml4_self_idx);
         // The PML4 is in low memory. We need to add an identity-mapping
         // for it. Since the PML4 is in low memory, the mapping should
         // be a 2MB large page (PDE with PS bit set).
@@ -782,52 +809,63 @@ fn install_self_map_with_identity_map(pml4_pfn: PfnNumber) -> Result<(), SelfMap
         let pdpt_pfn_for_id = match pfn::allocate_pfn() {
             Some(p) => p,
             None => {
-    // [DISABLED-KPRINTLN]                 // // kprintln!("[VAS] FATAL: cannot allocate PDPT for identity-mapping!")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                unsafe {
+                    core::arch::asm!(
+                        "mov cr0, {}",
+                        in(reg) saved_cr0,
+                        options(nostack, preserves_flags),
+                    );
+                }
+                // [DISABLED-KPRINTLN]                 // // kprintln!("[VAS] FATAL: cannot allocate PDPT for identity-mapping!");
                 return Err(SelfMapError::OutOfMemory);
             }
         };
         let pd_for_id = match pfn::allocate_pfn() {
             Some(p) => p,
             None => {
-    // [DISABLED-KPRINTLN]                 // // kprintln!("[VAS] FATAL: cannot allocate PD for identity-mapping!")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                unsafe {
+                    core::arch::asm!(
+                        "mov cr0, {}",
+                        in(reg) saved_cr0,
+                        options(nostack, preserves_flags),
+                    );
+                }
+                pfn::free_pfn(pdpt_pfn_for_id);
+                // [DISABLED-KPRINTLN]                 // // kprintln!("[VAS] FATAL: cannot allocate PD for identity-mapping!");
                 return Err(SelfMapError::OutOfMemory);
             }
         };
         let pdpt_phys_id = pfn_to_phys(pdpt_pfn_for_id);
         let pd_phys_id = pfn_to_phys(pd_for_id);
-        
+
         // Zero the pages
         unsafe {
             core::ptr::write_bytes(pdpt_phys_id as *mut u8, 0, 4096);
             core::ptr::write_bytes(pd_phys_id as *mut u8, 0, 4096);
-        }
-        
-        // Install PML4 entry -> PDPT
-        unsafe {
             (*pml4.add(pml4_self_idx)).set_hardware(pdpt_phys_id, 0x1 | 0x2 | 0x4 | 0x20 | 0x40);
-        }
-
-        // Calculate the PD index for the PML4 address
-        let pd_idx = ((pml4_phys >> 21) & 0x1FF) as usize;
-        // Install PDPT entry -> PD (large page)
-        let pdpt_va = pdpt_phys_id as *mut MMPTE;
-        let pdpt_idx = ((pml4_phys >> 30) & 0x1FF) as usize;
-        unsafe {
+            let pdpt_va = pdpt_phys_id as *mut MMPTE;
+            let pdpt_idx = ((pml4_phys >> 30) & 0x1FF) as usize;
             (*pdpt_va.add(pdpt_idx)).set_hardware(pd_phys_id, 0x1 | 0x2 | 0x4 | 0x20 | 0x40);
+            let pd_idx = ((pml4_phys >> 21) & 0x1FF) as usize;
+            let pd_va = pd_phys_id as *mut MMPTE;
+            (*pd_va.add(pd_idx))
+                .set_hardware(pml4_phys & !0x1F_FFFF, 0x1 | 0x2 | 0x4 | 0x20 | 0x40 | 0x80);
         }
-
-        // Install PD entry as a 2MB large page covering the PML4
-        let pd_va = pd_phys_id as *mut MMPTE;
-        unsafe {
-            (*pd_va.add(pd_idx)).set_hardware(pml4_phys & !0x1F_FFFF, 0x1 | 0x2 | 0x4 | 0x20 | 0x40 | 0x80);
-        }
-    // [DISABLED-KPRINTLN]         // // kprintln!("[VAS] Added identity-mapping: PML4[0x{:x}] -> PDPT, PDPT[0x{:x}] -> PD(large), PD[0x{:x}] -> 0x{:x}",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //     // [DISABLED-KPRINTLN]             pml4_self_idx, pdpt_idx, pd_idx, pml4_phys & !0x1F_FFFF);
+    // [DISABLED-KPRINTLN]         // // kprintln!("[VAS] Added identity-mapping: PML4[0x{:x}] -> PDPT, PDPT[0x{:x}] -> PD(large), PD[0x{:x}] -> 0x{:x}",
+    // //     // [DISABLED-KPRINTLN]             pml4_self_idx, pdpt_idx, pd_idx, pml4_phys & !0x1F_FFFF);
     } else {
-    // [DISABLED-KPRINTLN]         // // kprintln!("[VAS] Identity-mapping exists at PML4[0x{:x}]", pml4_self_idx)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // [DISABLED-KPRINTLN]         // // kprintln!("[VAS] Identity-mapping exists at PML4[0x{:x}]", pml4_self_idx);
     }
 
-    // [DISABLED-KPRINTLN]     // // kprintln!("[VAS] install_self_map_with_identity_map: done, PML4[0x1ED] set")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    unsafe {
+        core::arch::asm!(
+            "mov cr0, {}",
+            in(reg) saved_cr0,
+            options(nostack, preserves_flags),
+        );
+    }
+
+    // [DISABLED-KPRINTLN]     // // kprintln!("[VAS] install_self_map_with_identity_map: done, PML4[0x1ED] set");
     crate::hal::serial::write_string("[VAS] install_self_map: OK, returning\r\n");
     Ok(())
 }
@@ -912,7 +950,7 @@ pub fn create_user_address_space() -> Option<u64> {
             *dst.add(i) = src_entry;
         }
     }
-    crate::boot_println!("[VAS] create_user_address_space: B: copied system PML4", );
+    crate::boot_println!("[VAS] create_user_address_space: B: copied system PML4",);
     // Install a self-map chain + identity map for this PML4. The
     // system PML4's identity-map entry points at the system PML4's
     // own physical address; the new user PML4 sits at a different
@@ -922,7 +960,7 @@ pub fn create_user_address_space() -> Option<u64> {
     // (and any subsequent context switch to this PML4) can reach
     // the new page tables through the self-map.
     if install_self_map_with_identity_map(pfn).is_err() {
-    // [DISABLED-KPRINTLN]         // // kprintln!("[VAS] ERROR: create_user_address_space failed to install self-map")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // [DISABLED-KPRINTLN]         // // kprintln!("[VAS] ERROR: create_user_address_space failed to install self-map");
         crate::boot_println!("[VAS] create_user_address_space: ERROR: self-map failed");
         pfn::free_pfn(pfn);
         return None;
@@ -941,8 +979,25 @@ pub fn create_user_address_space() -> Option<u64> {
     // kernel writes, so no CR0.WP lift is required.
     #[cfg(target_arch = "x86_64")]
     {
-        crate::boot_println!("[VAS] create_user_address_space: calling force_writable_identity_map(pfn=0x{:x})", pfn);
-        unsafe { force_writable_identity_map(pfn); }
+        crate::boot_println!(
+            "[VAS] create_user_address_space: calling force_writable_identity_map(pfn=0x{:x})",
+            pfn
+        );
+        unsafe {
+            force_writable_identity_map(pfn);
+        }
+    }
+    // TEMPORARY DIAGNOSTIC: hardware write watchpoint on the first 8 bytes of
+    // this PML4 page. Armed after boot-time legitimate writes, so any later
+    // hit identifies the unexpected writer.
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        if pfn == 0x20f2a {
+            core::arch::asm!("mov dr0, {}", in(reg) pfn << 12, options(nomem, nostack));
+            // DR7: L0=1, condition=write (bits16-17=01), length=8 (bits18-19=11).
+            core::arch::asm!("mov dr7, {}", in(reg) 0xD0001u64, options(nomem, nostack));
+            crate::boot_println!("[DB] armed DR0=0x{:x}", pfn << 12);
+        }
     }
     Some(pfn << 12)
 }
@@ -955,7 +1010,10 @@ pub fn create_user_address_space() -> Option<u64> {
 unsafe fn force_writable_identity_map(pfn: PfnNumber) {
     let pml4_phys = pfn << 12;
     let pml4 = pml4_phys as *mut MMPTE;
-    crate::boot_println!("[VAS] force_writable_identity_map: pml4_phys=0x{:x}", pml4_phys);
+    crate::boot_println!(
+        "[VAS] force_writable_identity_map: pml4_phys=0x{:x}",
+        pml4_phys
+    );
     // Clear CR0.WP so we can write to entries the boot loader
     // marked read-only (some EFI firmware identity-maps memory as
     // R/O). Restore WP after the walk.
@@ -977,9 +1035,11 @@ unsafe fn force_writable_identity_map(pfn: PfnNumber) {
     // pages live while servicing a syscall for this process).
     for pml4_idx in 0..PT_ENTRIES {
         let mut pml4e = (*pml4.add(pml4_idx)).raw();
-        if pml4e & 0x1 == 0 { continue; }          // not present
-        // Force W on the PML4 entry first so writes to PDPT[?]
-        // below succeed.
+        if pml4e & 0x1 == 0 {
+            continue;
+        } // not present
+          // Force W on the PML4 entry first so writes to PDPT[?]
+          // below succeed.
         if pml4e & 0x2u64 == 0 {
             pml4e |= 0x2u64;
             core::ptr::write_volatile(pml4.add(pml4_idx) as *mut u64, pml4e);
@@ -993,7 +1053,9 @@ unsafe fn force_writable_identity_map(pfn: PfnNumber) {
         }
         for pdpt_idx in 0..PT_ENTRIES {
             let mut pdpte = (*pdpt.add(pdpt_idx)).raw();
-            if pdpte & 0x1 == 0 { continue; }
+            if pdpte & 0x1 == 0 {
+                continue;
+            }
             // Force W on the PDPT entry too.
             if pdpte & 0x2u64 == 0 {
                 pdpte |= 0x2u64;
@@ -1007,7 +1069,9 @@ unsafe fn force_writable_identity_map(pfn: PfnNumber) {
             let pd = next_phys as *const MMPTE;
             for pd_idx in 0..PT_ENTRIES {
                 let mut pde = (*pd.add(pd_idx)).raw();
-                if pde & 0x1 == 0 { continue; }
+                if pde & 0x1 == 0 {
+                    continue;
+                }
                 // Force W on the PD entry first.
                 if pde & 0x2u64 == 0 {
                     pde |= 0x2u64;
@@ -1021,7 +1085,9 @@ unsafe fn force_writable_identity_map(pfn: PfnNumber) {
                 let pt = pt_phys as *const MMPTE as *mut MMPTE;
                 for pt_idx in 0..PT_ENTRIES {
                     let mut pte = (*pt.add(pt_idx)).raw();
-                    if pte & 0x1 == 0 { continue; }
+                    if pte & 0x1 == 0 {
+                        continue;
+                    }
                     if pte & 0x2u64 == 0 {
                         pte |= 0x2u64;
                         core::ptr::write_volatile(pt.add(pt_idx) as *mut u64, pte);
@@ -1045,7 +1111,9 @@ unsafe fn force_writable_identity_map(pfn: PfnNumber) {
     // user-accessible. Naively copying the system PML4 inherits the
     // kernel U=0 setting, which causes err=0x15 instruction-fetch
     // violations from user mode even though every leaf PTE says U=1.
-    unsafe { force_user_accessible(pfn); }
+    unsafe {
+        force_user_accessible(pfn);
+    }
 }
 
 /// Walk user PML4[0..256] and force U=1 on every PML4/PDPT/PD entry
@@ -1078,7 +1146,9 @@ unsafe fn force_user_accessible(pfn: PfnNumber) {
     // (256..512) keeps U=0.
     for pml4_idx in 0..256 {
         let mut pml4e = (*pml4.add(pml4_idx)).raw();
-        if pml4e & 0x1 == 0 { continue; }
+        if pml4e & 0x1 == 0 {
+            continue;
+        }
         if pml4e & 0x4u64 == 0 {
             pml4e |= 0x4u64;
             core::ptr::write_volatile(pml4.add(pml4_idx) as *mut u64, pml4e);
@@ -1087,21 +1157,29 @@ unsafe fn force_user_accessible(pfn: PfnNumber) {
         let pdpt_phys = pml4e & !0xFFF_u64;
         let pdpt = pdpt_phys as *mut MMPTE;
         // Skip 1GB large pages.
-        if pml4e & (1u64 << 7) != 0 { continue; }
+        if pml4e & (1u64 << 7) != 0 {
+            continue;
+        }
         for pdpt_idx in 0..PT_ENTRIES {
             let mut pdpte = (*pdpt.add(pdpt_idx)).raw();
-            if pdpte & 0x1 == 0 { continue; }
+            if pdpte & 0x1 == 0 {
+                continue;
+            }
             if pdpte & 0x4u64 == 0 {
                 pdpte |= 0x4u64;
                 core::ptr::write_volatile(pdpt.add(pdpt_idx) as *mut u64, pdpte);
                 flipped += 1;
             }
             let next_phys = pdpte & !0xFFF_u64;
-            if pdpte & (1u64 << 7) != 0 { continue; }
+            if pdpte & (1u64 << 7) != 0 {
+                continue;
+            }
             let pd = next_phys as *const MMPTE;
             for pd_idx in 0..PT_ENTRIES {
                 let mut pde = (*pd.add(pd_idx)).raw();
-                if pde & 0x1 == 0 { continue; }
+                if pde & 0x1 == 0 {
+                    continue;
+                }
                 if pde & 0x4u64 == 0 {
                     pde |= 0x4u64;
                     core::ptr::write_volatile(pd.add(pd_idx) as *mut u64, pde);
@@ -1123,7 +1201,9 @@ unsafe fn force_user_accessible(pfn: PfnNumber) {
 pub fn attach_process(pml4_phys: u64) -> u64 {
     let prev = current_root();
     let root_pfn = pml4_phys >> 12;
-    unsafe { crate::arch::load_page_root(root_pfn); }
+    unsafe {
+        crate::arch::load_page_root(root_pfn);
+    }
     set_current_root(pml4_phys);
     // Publish the system PML4 / user PML4 pair in the per-CPU
     // area so the syscall / interrupt stubs can switch CR3 to
@@ -1153,7 +1233,9 @@ pub fn attach_process(pml4_phys: u64) -> u64 {
 
 /// Detach a process. Restores the system root.
 pub fn detach_process(prev: u64) {
-    unsafe { crate::arch::load_page_root(prev >> 12); }
+    unsafe {
+        crate::arch::load_page_root(prev >> 12);
+    }
     set_current_root(prev);
     #[cfg(target_arch = "x86_64")]
     {
@@ -1200,14 +1282,18 @@ pub fn detach_process(prev: u64) {
 fn alloc_zeroed_page() -> Option<u64> {
     let pfn = pfn::allocate_pfn()?;
     let phys = pfn << 12;
-    unsafe { ptr::write_bytes(phys as *mut u8, 0, 4096); }
+    unsafe {
+        ptr::write_bytes(phys as *mut u8, 0, 4096);
+    }
     Some(phys)
 }
 
 /// Public variant of `alloc_zeroed_page` for callers that want to
 /// allocate a backing page outside of `map_user_pages` (e.g. when
 /// they need to write into the page before mapping it).
-pub fn alloc_zeroed_page_for_vas() -> Option<u64> { alloc_zeroed_page() }
+pub fn alloc_zeroed_page_for_vas() -> Option<u64> {
+    alloc_zeroed_page()
+}
 
 /// Read a PTE from a user PML4 at the given PML4 index. The PML4 is
 /// addressed via its physical address (identity-mapped in low memory).
@@ -1303,7 +1389,8 @@ pub fn map_page_in_pml4(pml4_phys: u64, va: u64, pa: u64, flags: u64) -> MmStatu
         if pde_val & PTE_P != 0 && pde_val & (1u64 << 7) != 0 {
             crate::boot_println!(
                 "[VAS] map_page_in_pml4: replacing 2MB large PDE at PD[{}] for va=0x{:x}",
-                pd_idx, va
+                pd_idx,
+                va
             );
             pde_val = 0;
         }
@@ -1316,7 +1403,9 @@ pub fn map_page_in_pml4(pml4_phys: u64, va: u64, pa: u64, flags: u64) -> MmStatu
             pte_write(pd_phys, pd_idx, pde_val);
             crate::boot_println!(
                 "[VAS] map_page_in_pml4: PD[{}] <= 0x{:x} (for va=0x{:x})",
-                pd_idx, pde_val, va
+                pd_idx,
+                pde_val,
+                va
             );
         }
         let pt_phys = pde_val & 0x000F_FFFF_FFFF_F000;
@@ -1339,7 +1428,9 @@ pub fn map_page_in_pml4(pml4_phys: u64, va: u64, pa: u64, flags: u64) -> MmStatu
         let leaf = leaf & !(1u64 << 63);
         crate::boot_println!(
             "[VAS] map_page_in_pml4: PT[{}] <= 0x{:x} (for va=0x{:x})",
-            pt_idx, leaf, va
+            pt_idx,
+            leaf,
+            va
         );
         pte_write(pt_phys, pt_idx, leaf);
     }
@@ -1351,7 +1442,9 @@ pub fn map_page_in_pml4(pml4_phys: u64, va: u64, pa: u64, flags: u64) -> MmStatu
 /// `true`. Returns `false` on the first page that is missing or that
 /// cannot be reached because an intermediate table is absent.
 pub fn is_user_range_mapped(pml4_phys: u64, va: u64, size: u64) -> bool {
-    if size == 0 { return true; }
+    if size == 0 {
+        return true;
+    }
     let mut cur = va & !0xFFFu64;
     let end = (va + size + 0xFFF) & !0xFFFu64;
     while cur < end {
@@ -1361,16 +1454,24 @@ pub fn is_user_range_mapped(pml4_phys: u64, va: u64, size: u64) -> bool {
         let pt_idx = ((cur >> 12) & 0x1FF) as usize;
         unsafe {
             let pml4e_val = pml4e(pml4_phys, pml4_idx);
-            if pml4e_val & PTE_P == 0 { return false; }
+            if pml4e_val & PTE_P == 0 {
+                return false;
+            }
             let pdpt_phys = pml4e_val & 0x000F_FFFF_FFFF_F000;
             let pdpte_val = pte_read(pdpt_phys, pdpt_idx);
-            if pdpte_val & PTE_P == 0 { return false; }
+            if pdpte_val & PTE_P == 0 {
+                return false;
+            }
             let pd_phys = pdpte_val & 0x000F_FFFF_FFFF_F000;
             let pde_val = pte_read(pd_phys, pd_idx);
-            if pde_val & PTE_P == 0 { return false; }
+            if pde_val & PTE_P == 0 {
+                return false;
+            }
             let pt_phys = pde_val & 0x000F_FFFF_FFFF_F000;
             let pte_val = pte_read(pt_phys, pt_idx);
-            if pte_val & PTE_P == 0 { return false; }
+            if pte_val & PTE_P == 0 {
+                return false;
+            }
         }
         cur += 0x1000;
     }
@@ -1387,7 +1488,9 @@ pub fn is_user_range_mapped(pml4_phys: u64, va: u64, size: u64) -> bool {
 /// new tables. Returns `InvalidAddress` if any page in the range is
 /// not currently present.
 pub fn protect_user_range(pml4_phys: u64, va: u64, size: u64, new_protect: u32) -> MmStatus {
-    if size == 0 { return MmStatus::Ok; }
+    if size == 0 {
+        return MmStatus::Ok;
+    }
     let mut cur = va & !0xFFFu64;
     let end = (va + size + 0xFFF) & !0xFFFu64;
     while cur < end {
@@ -1397,25 +1500,39 @@ pub fn protect_user_range(pml4_phys: u64, va: u64, size: u64, new_protect: u32) 
         let pt_idx = ((cur >> 12) & 0x1FF) as usize;
         unsafe {
             let pml4e_val = pml4e(pml4_phys, pml4_idx);
-            if pml4e_val & PTE_P == 0 { return MmStatus::InvalidAddress; }
+            if pml4e_val & PTE_P == 0 {
+                return MmStatus::InvalidAddress;
+            }
             let pdpt_phys = pml4e_val & 0x000F_FFFF_FFFF_F000;
             let pdpte_val = pte_read(pdpt_phys, pdpt_idx);
-            if pdpte_val & PTE_P == 0 { return MmStatus::InvalidAddress; }
+            if pdpte_val & PTE_P == 0 {
+                return MmStatus::InvalidAddress;
+            }
             let pd_phys = pdpte_val & 0x000F_FFFF_FFFF_F000;
             let pde_val = pte_read(pd_phys, pd_idx);
-            if pde_val & PTE_P == 0 { return MmStatus::InvalidAddress; }
+            if pde_val & PTE_P == 0 {
+                return MmStatus::InvalidAddress;
+            }
             let pt_phys = pde_val & 0x000F_FFFF_FFFF_F000;
             let pte_val = pte_read(pt_phys, pt_idx);
-            if pte_val & PTE_P == 0 { return MmStatus::InvalidAddress; }
+            if pte_val & PTE_P == 0 {
+                return MmStatus::InvalidAddress;
+            }
             // Preserve the physical-address bits and P/A/D; replace
             // protection, NX, user/kernel, etc. from new_protect.
             let pa_bits = pte_val & 0x000F_FFFF_FFFF_F000u64;
             // new_protect is a u32 PAGE_* value; combine with the
             // standard hardware PTE bits expected for user mappings.
             let mut new_pte = pa_bits | PTE_P | PTE_A | PTE_D | PTE_US;
-            if new_protect & 0x04 != 0 { new_pte |= PTE_RW; } // PAGE_READWRITE
-            if new_protect & 0x40 != 0 { new_pte |= PTE_RW; } // PAGE_EXECUTE_READWRITE
-            if new_protect & 0xF0 == 0 { new_pte |= PTE_NX; } // non-executable by default
+            if new_protect & 0x04 != 0 {
+                new_pte |= PTE_RW;
+            } // PAGE_READWRITE
+            if new_protect & 0x40 != 0 {
+                new_pte |= PTE_RW;
+            } // PAGE_EXECUTE_READWRITE
+            if new_protect & 0xF0 == 0 {
+                new_pte |= PTE_NX;
+            } // non-executable by default
             pte_write(pt_phys, pt_idx, new_pte);
             invalidate_tlb(cur);
         }
@@ -1429,7 +1546,9 @@ pub fn protect_user_range(pml4_phys: u64, va: u64, size: u64, new_protect: u32) 
 /// `flags`. Returns the first error encountered; partial progress is
 /// not undone.
 pub fn map_user_pages(pml4_phys: u64, va: u64, size: u64, flags: u64) -> MmStatus {
-    if size == 0 { return MmStatus::Ok; }
+    if size == 0 {
+        return MmStatus::Ok;
+    }
     let mut cur = va & !0xFFFu64;
     let end = (va + size + 0xFFF) & !0xFFFu64;
     while cur < end {
@@ -1438,7 +1557,9 @@ pub fn map_user_pages(pml4_phys: u64, va: u64, size: u64, flags: u64) -> MmStatu
             None => return MmStatus::OutOfMemory,
         };
         let r = map_page_in_pml4(pml4_phys, cur, pa, flags);
-        if r != MmStatus::Ok { return r; }
+        if r != MmStatus::Ok {
+            return r;
+        }
         cur += 0x1000;
     }
     MmStatus::Ok
@@ -1447,14 +1568,24 @@ pub fn map_user_pages(pml4_phys: u64, va: u64, size: u64, flags: u64) -> MmStatu
 /// Map a contiguous range of user pages but reuse `phys_base` as the
 /// backing store. Useful for mapping a kernel-side buffer (e.g. a
 /// loaded PE image) into a process.
-pub fn map_user_phys_range(pml4_phys: u64, va: u64, phys_base: u64, size: u64, flags: u64) -> MmStatus {
-    if size == 0 { return MmStatus::Ok; }
+pub fn map_user_phys_range(
+    pml4_phys: u64,
+    va: u64,
+    phys_base: u64,
+    size: u64,
+    flags: u64,
+) -> MmStatus {
+    if size == 0 {
+        return MmStatus::Ok;
+    }
     let mut cur = va & !0xFFFu64;
     let mut pa = phys_base & !0xFFFu64;
     let end = (va + size + 0xFFF) & !0xFFFu64;
     while cur < end {
         let r = map_page_in_pml4(pml4_phys, cur, pa, flags);
-        if r != MmStatus::Ok { return r; }
+        if r != MmStatus::Ok {
+            return r;
+        }
         cur += 0x1000;
         pa += 0x1000;
     }
@@ -1464,7 +1595,9 @@ pub fn map_user_phys_range(pml4_phys: u64, va: u64, phys_base: u64, size: u64, f
 /// Unmap a user range and free the backing physical pages. PT/PD/PDPT
 /// pages that become empty are also freed back to the PFN database.
 pub fn unmap_user_pages(pml4_phys: u64, va: u64, size: u64) -> MmStatus {
-    if size == 0 { return MmStatus::Ok; }
+    if size == 0 {
+        return MmStatus::Ok;
+    }
     let mut cur = va & !0xFFFu64;
     let end = (va + size + 0xFFF) & !0xFFFu64;
     while cur < end {
@@ -1474,18 +1607,29 @@ pub fn unmap_user_pages(pml4_phys: u64, va: u64, size: u64) -> MmStatus {
         let pt_idx = ((cur >> 12) & 0x1FF) as usize;
         unsafe {
             let pml4e_val = pml4e(pml4_phys, pml4_idx);
-            if (pml4e_val & PTE_P) == 0 { cur += 0x1000; continue; }
+            if (pml4e_val & PTE_P) == 0 {
+                cur += 0x1000;
+                continue;
+            }
             let pdpt_phys = pml4e_val & 0x000F_FFFF_FFFF_F000;
             let pdpte_val = pte_read(pdpt_phys, pdpt_idx);
-            if (pdpte_val & PTE_P) == 0 { cur += 0x1000; continue; }
+            if (pdpte_val & PTE_P) == 0 {
+                cur += 0x1000;
+                continue;
+            }
             let pd_phys = pdpte_val & 0x000F_FFFF_FFFF_F000;
             let pde_val = pte_read(pd_phys, pd_idx);
-            if (pde_val & PTE_P) == 0 { cur += 0x1000; continue; }
+            if (pde_val & PTE_P) == 0 {
+                cur += 0x1000;
+                continue;
+            }
             let pt_phys = pde_val & 0x000F_FFFF_FFFF_F000;
             let pte = pte_read(pt_phys, pt_idx);
             if (pte & PTE_P) != 0 {
                 let pa = pte & 0x000F_FFFF_FFFF_F000;
-                if pa != 0 { pfn::free_pfn(pa >> 12); }
+                if pa != 0 {
+                    pfn::free_pfn(pa >> 12);
+                }
                 pte_write(pt_phys, pt_idx, 0);
             }
         }
@@ -1537,10 +1681,10 @@ impl UserVaAllocator {
 /// `MmVirtualAddressSpace::allocate_user_va()` instead.
 pub fn allocate_user_va(desired_base: u64, size: u64, _protect: u32) -> Option<u64> {
     let mut alloc = SYSTEM_VA_ALLOCATOR.lock();
-    
+
     // Align size to page boundary
     let aligned_size = (size + 0xFFF) & !0xFFF;
-    
+
     // Find a suitable VA
     let va = if desired_base == 0 {
         // Allocate from current position
@@ -1558,7 +1702,7 @@ pub fn allocate_user_va(desired_base: u64, size: u64, _protect: u32) -> Option<u
             return None; // Invalid user address
         }
     };
-    
+
     Some(va)
 }
 
@@ -1582,7 +1726,7 @@ pub fn self_test_user_address_space() -> bool {
     let new_pml4_phys = match create_user_address_space() {
         Some(p) => p,
         None => {
-    // [DISABLED-KPRINTLN]             // // kprintln!("[RING3-A1] self_test: create_user_address_space returned None")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // [DISABLED-KPRINTLN]             // // kprintln!("[RING3-A1] self_test: create_user_address_space returned None");
             return false;
         }
     };
@@ -1590,35 +1734,41 @@ pub fn self_test_user_address_space() -> bool {
         let new_pml4 = new_pml4_phys as *const MMPTE;
         let copied = (*new_pml4.add(0)).raw();
         if copied != kernel_entry_0 {
-    // [DISABLED-KPRINTLN]             // // kprintln!("[RING3-A1] FAIL: PML4[0] not copied, got=0x{:x} want=0x{:x}",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //     // [DISABLED-KPRINTLN]                       copied, kernel_entry_0);
+            // [DISABLED-KPRINTLN]             // // kprintln!("[RING3-A1] FAIL: PML4[0] not copied, got=0x{:x} want=0x{:x}",
+            // //     // [DISABLED-KPRINTLN]                       copied, kernel_entry_0);
             return false;
         }
     }
-    // [DISABLED-KPRINTLN]     // // kprintln!("[RING3-A1] OK: user PML4 at 0x{:x}, system PML4 fully copied",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //     // [DISABLED-KPRINTLN]               new_pml4_phys);
+    // [DISABLED-KPRINTLN]     // // kprintln!("[RING3-A1] OK: user PML4 at 0x{:x}, system PML4 fully copied",
+    // //     // [DISABLED-KPRINTLN]               new_pml4_phys);
 
     // A2 self-test: map a single user page and a user stack.
-    if map_user_pages(new_pml4_phys, USER_STACK_BASE, USER_STACK_SIZE, PTE_RW | PTE_US) != MmStatus::Ok {
-    // [DISABLED-KPRINTLN]         // // kprintln!("[RING3-A2] FAIL: map_user_pages for stack returned error")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    if map_user_pages(
+        new_pml4_phys,
+        USER_STACK_BASE,
+        USER_STACK_SIZE,
+        PTE_RW | PTE_US,
+    ) != MmStatus::Ok
+    {
+        // [DISABLED-KPRINTLN]         // // kprintln!("[RING3-A2] FAIL: map_user_pages for stack returned error");
         return false;
     }
-    // [DISABLED-KPRINTLN]     // // kprintln!("[RING3-A2] OK: mapped user stack at 0x{:x} ({} bytes)",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //     // [DISABLED-KPRINTLN]               USER_STACK_BASE, USER_STACK_SIZE);
+    // [DISABLED-KPRINTLN]     // // kprintln!("[RING3-A2] OK: mapped user stack at 0x{:x} ({} bytes)",
+    // //     // [DISABLED-KPRINTLN]               USER_STACK_BASE, USER_STACK_SIZE);
 
     // Map a single 4-KiB page for the user entry stub at USER_ENTRY_BASE.
     if map_user_pages(new_pml4_phys, USER_ENTRY_BASE, 0x1000, PTE_RW | PTE_US) != MmStatus::Ok {
-    // [DISABLED-KPRINTLN]         // // kprintln!("[RING3-A2] FAIL: map_user_pages for entry returned error")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // [DISABLED-KPRINTLN]         // // kprintln!("[RING3-A2] FAIL: map_user_pages for entry returned error");
         return false;
     }
-    // [DISABLED-KPRINTLN]     // // kprintln!("[RING3-A2] OK: mapped user entry at 0x{:x}", USER_ENTRY_BASE)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // [DISABLED-KPRINTLN]     // // kprintln!("[RING3-A2] OK: mapped user entry at 0x{:x}", USER_ENTRY_BASE);
 
     // Free the address space (we have not attached it, so CR3 still
     // points to the system PML4).
     unmap_user_pages(new_pml4_phys, USER_STACK_BASE, USER_STACK_SIZE);
     unmap_user_pages(new_pml4_phys, USER_ENTRY_BASE, 0x1000);
     pfn::free_pfn(new_pml4_phys >> 12);
-    // [DISABLED-KPRINTLN]     // // kprintln!("[RING3-A1/A2] self_test PASS")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // [DISABLED-KPRINTLN]     // // kprintln!("[RING3-A1/A2] self_test PASS");
     true
 }
 
@@ -1675,18 +1825,30 @@ pub const USER_STACK_GUARD_BASE: u64 = USER_STACK_BASE - 0x1000;
 const _: () = {
     // 2 MiB below the user-space canonical limit
     const USER_LIMIT: u64 = 0x0000_7FFF_FFFF_FFFF;
-    assert!(USER_STACK_BASE < USER_LIMIT - 0x0040_0000,
-        "USER_STACK_BASE must be at least 4 MiB below USER_LIMIT");
-    assert!(USER_STACK_TOP < USER_LIMIT,
-        "USER_STACK_TOP must remain in user half of address space");
-    assert!(USER_STACK_TOP < 0x0000_7FFF_EF00_0000,
-        "USER_STACK_TOP must leave 16 MiB for PEB/TEB/heap/guards");
-    assert!(USER_ENTRY_BASE < USER_STACK_BASE,
-        "USER_ENTRY_BASE must be below USER_STACK_BASE (low half)");
-    assert!(USER_ENTRY_BASE >= 0x1000,
-        "USER_ENTRY_BASE must be in low half, not page 0");
-    assert!(USER_ENTRY_BASE & 0xFFFF_8000_0000_0000 == 0,
-        "USER_ENTRY_BASE must NOT live in the kernel canonical-high half");
+    assert!(
+        USER_STACK_BASE < USER_LIMIT - 0x0040_0000,
+        "USER_STACK_BASE must be at least 4 MiB below USER_LIMIT"
+    );
+    assert!(
+        USER_STACK_TOP < USER_LIMIT,
+        "USER_STACK_TOP must remain in user half of address space"
+    );
+    assert!(
+        USER_STACK_TOP < 0x0000_7FFF_EF00_0000,
+        "USER_STACK_TOP must leave 16 MiB for PEB/TEB/heap/guards"
+    );
+    assert!(
+        USER_ENTRY_BASE < USER_STACK_BASE,
+        "USER_ENTRY_BASE must be below USER_STACK_BASE (low half)"
+    );
+    assert!(
+        USER_ENTRY_BASE >= 0x1000,
+        "USER_ENTRY_BASE must be in low half, not page 0"
+    );
+    assert!(
+        USER_ENTRY_BASE & 0xFFFF_8000_0000_0000 == 0,
+        "USER_ENTRY_BASE must NOT live in the kernel canonical-high half"
+    );
 };
 
 /// TEB (Thread Environment Block) base address.
@@ -1777,10 +1939,12 @@ impl SelfMapError {
 
     /// Check if this error indicates a fatal condition
     pub fn is_fatal(&self) -> bool {
-        matches!(self,
+        matches!(
+            self,
             SelfMapError::OutOfMemory
-            | SelfMapError::Pml4NotWritable
-            | SelfMapError::VerificationFailed)
+                | SelfMapError::Pml4NotWritable
+                | SelfMapError::VerificationFailed
+        )
     }
 }
 
@@ -1853,7 +2017,8 @@ pub fn try_enable_self_map() -> Result<SelfMapStatus, &'static str> {
         {
             #[cfg(target_arch = "x86_64")]
             crate::hal::x86_64::serial::write_string(
-                "[VAS] FATAL: self-map verify failed after install_self_map\r\n");
+                "[VAS] FATAL: self-map verify failed after install_self_map\r\n",
+            );
         }
         crate::arch::halt_loop();
     }
@@ -1938,13 +2103,13 @@ pub fn verify_self_map_detailed() -> bool {
 
         // Check if P bit (bit 0) is set
         if entry & 0x01 == 0 {
-    // [DISABLED-KPRINTLN]             // // kprintln!("[VAS] verify_self_map: P bit not set at PML4[0x1ED]")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // [DISABLED-KPRINTLN]             // // kprintln!("[VAS] verify_self_map: P bit not set at PML4[0x1ED]");
             return false;
         }
 
         let entry_pfn = (entry & 0x000F_FFFF_FFFF_F000) >> 12;
         if entry_pfn == pml4_pfn {
-    // [DISABLED-KPRINTLN]             // // kprintln!("[VAS] verify_self_map: PML4[0x1ED]=0x{:016x} (single-level self-map) OK", entry)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // [DISABLED-KPRINTLN]             // // kprintln!("[VAS] verify_self_map: PML4[0x1ED]=0x{:016x} (single-level self-map) OK", entry);
             return true;
         }
 
@@ -1954,28 +2119,28 @@ pub fn verify_self_map_detailed() -> bool {
         let pdpt_phys = entry_pfn << 12;
         let pdpt = pdpt_phys as *const u64;
         if (*pdpt.add(MI_SELF_MAP_INDEX) & 0x01) == 0 {
-    // [DISABLED-KPRINTLN]             // // kprintln!("[VAS] verify_self_map: pdpt[0x1ED] not present")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // [DISABLED-KPRINTLN]             // // kprintln!("[VAS] verify_self_map: pdpt[0x1ED] not present");
             return false;
         }
         let pd_phys = ((*pdpt.add(MI_SELF_MAP_INDEX)) & 0x000F_FFFF_FFFF_F000) >> 12 << 12;
         let pd = pd_phys as *const u64;
         if (*pd.add(MI_SELF_MAP_INDEX) & 0x01) == 0 {
-    // [DISABLED-KPRINTLN]             // // kprintln!("[VAS] verify_self_map: pd[0x1ED] not present")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // [DISABLED-KPRINTLN]             // // kprintln!("[VAS] verify_self_map: pd[0x1ED] not present");
             return false;
         }
         let pt_phys = ((*pd.add(MI_SELF_MAP_INDEX)) & 0x000F_FFFF_FFFF_F000) >> 12 << 12;
         let pt = pt_phys as *const u64;
         if (*pt.add(MI_SELF_MAP_INDEX) & 0x01) == 0 {
-    // [DISABLED-KPRINTLN]             // // kprintln!("[VAS] verify_self_map: pt[0x1ED] not present")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // [DISABLED-KPRINTLN]             // // kprintln!("[VAS] verify_self_map: pt[0x1ED] not present");
             return false;
         }
         let leaf_pfn = ((*pt.add(MI_SELF_MAP_INDEX)) & 0x000F_FFFF_FFFF_F000) >> 12;
         if leaf_pfn != pml4_pfn && leaf_pfn != entry_pfn {
-    // [DISABLED-KPRINTLN]             // // kprintln!("[VAS] verify_self_map: leaf PFN={:x} does not close loop", leaf_pfn)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // [DISABLED-KPRINTLN]             // // kprintln!("[VAS] verify_self_map: leaf PFN={:x} does not close loop", leaf_pfn);
             return false;
         }
-    // [DISABLED-KPRINTLN]         // // kprintln!("[VAS] verify_self_map: 4-level chain OK (pml4=0x{:x}, pdpt=0x{:x}, leaf=0x{:x})",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //     // [DISABLED-KPRINTLN]                   pml4_phys, pdpt_phys, leaf_pfn << 12);
+        // [DISABLED-KPRINTLN]         // // kprintln!("[VAS] verify_self_map: 4-level chain OK (pml4=0x{:x}, pdpt=0x{:x}, leaf=0x{:x})",
+        // //     // [DISABLED-KPRINTLN]                   pml4_phys, pdpt_phys, leaf_pfn << 12);
         true
     }
 }
@@ -2029,12 +2194,16 @@ pub fn init() {
     {
         let s = b"[VAS] init: reserved system PML4 PFN=";
         let mut buf = [0u8; 96];
-        for (i, &b) in s.iter().enumerate() { buf[i] = b; }
+        for (i, &b) in s.iter().enumerate() {
+            buf[i] = b;
+        }
         let mut v = pml4_pfn;
         let mut digits = [0u8; 16];
         let mut n = 0;
-        if v == 0 { digits[0] = b'0'; n = 1; }
-        else {
+        if v == 0 {
+            digits[0] = b'0';
+            n = 1;
+        } else {
             while v > 0 {
                 let d = (v & 0xF) as u8;
                 digits[n] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
@@ -2042,7 +2211,9 @@ pub fn init() {
                 v >>= 4;
             }
         }
-        for i in 0..n { buf[s.len() + i] = digits[n - 1 - i]; }
+        for i in 0..n {
+            buf[s.len() + i] = digits[n - 1 - i];
+        }
         buf[s.len() + n] = b'\r';
         buf[s.len() + n + 1] = b'\n';
         uart_puts(&buf[..s.len() + n + 2]);
@@ -2128,7 +2299,12 @@ mod tests {
         // PXE_BASE is at PTE_BASE with 0x1ED in PML4 index + 0x1ED in
         // PDPT index + 0x1ED in PD index + 0x1ED in PT index:
         // = 0x1ED << 39 | 0x1ED << 30 | 0x1ED << 21 | 0x1ED << 12
-        let want = 0x1EDu64 << 39 | 0x1EDu64 << 30 | 0x1EDu64 << 21 | 0x1EDu64 << 12;
+        // The high 16 bits are the canonical-address sign-extension.
+        let want = 0x1EDu64 << 39
+            | 0x1EDu64 << 30
+            | 0x1EDu64 << 21
+            | 0x1EDu64 << 12
+            | 0xFFFF_0000_0000_0000;
         assert_eq!(PXE_BASE, want);
     }
 
@@ -2220,7 +2396,10 @@ mod tests {
     fn self_map_error_types() {
         // Test SelfMapError can be created and inspected
         let err = SelfMapError::OutOfMemory;
-        assert_eq!(err.as_str(), "Out of memory: failed to allocate page table PFN");
+        assert_eq!(
+            err.as_str(),
+            "Out of memory: failed to allocate page table PFN"
+        );
         assert!(err.is_fatal());
 
         let err2 = SelfMapError::IdentityMappingFailed;

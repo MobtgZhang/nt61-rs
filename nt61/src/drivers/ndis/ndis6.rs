@@ -11,9 +11,11 @@ use crate::ke::sync::Spinlock;
 pub fn ndis_allocate_spin_lock() -> Option<&'static mut Spinlock<u32>> {
     let raw = crate::mm::pool::allocate(
         crate::mm::pool::PoolType::NonPaged,
-        core::mem::size_of::<Spinlock<u32>>()
+        core::mem::size_of::<Spinlock<u32>>(),
     ) as *mut Spinlock<u32>;
-    if raw.is_null() { return None; }
+    if raw.is_null() {
+        return None;
+    }
     unsafe {
         core::ptr::write(raw, Spinlock::new(0));
     }
@@ -32,6 +34,6 @@ pub fn ndis_release_spin_lock(lock: &Spinlock<u32>) {
 
 pub fn smoke_test() -> bool {
     use crate::kprintln;
-    // kprintln!("  [NDIS6 SMOKE] NDIS 6.0 wrapper healthy")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [NDIS6 SMOKE] NDIS 6.0 wrapper healthy");
     true
 }

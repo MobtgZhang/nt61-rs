@@ -96,8 +96,12 @@ pub fn init() {
     let _g = LOCK.lock();
     for i in 0..disk::disk_count() {
         let mut mbr = [0u8; 512];
-        if disk::DiskRead(i, 0, 512, &mut mbr) != 512 { continue; }
-        if mbr[510..512] != MBR_SIGNATURE { continue; }
+        if disk::DiskRead(i, 0, 512, &mut mbr) != 512 {
+            continue;
+        }
+        if mbr[510..512] != MBR_SIGNATURE {
+            continue;
+        }
         // 4 partition entries at 0x1BE.
         for p in 0..4u32 {
             let off = 0x1BEusize + (p as usize) * 16;
@@ -105,10 +109,14 @@ pub fn init() {
                 core::ptr::read_unaligned(mbr.as_ptr().add(off) as *const MbrPartitionEntry)
             };
             let pt = entry.partition_type;
-            if pt == 0 { continue; }
+            if pt == 0 {
+                continue;
+            }
             let lba = u32::from_le(entry.starting_lba) as u64;
             let sc = u32::from_le(entry.sector_count) as u64;
-            if sc == 0 { continue; }
+            if sc == 0 {
+                continue;
+            }
             let name = format_name(i as u32, p + 1);
             add_partition(name, i, p + 1, lba, sc, pt, entry.boot_indicator);
         }
@@ -125,7 +133,9 @@ fn format_name(disk: u32, part: u32) -> String {
 }
 
 fn itoa(mut v: u32) -> String {
-    if v == 0 { return String::from("0"); }
+    if v == 0 {
+        return String::from("0");
+    }
     let mut buf = [0u8; 12];
     let mut i = 0;
     while v > 0 {
@@ -134,15 +144,27 @@ fn itoa(mut v: u32) -> String {
         i += 1;
     }
     let mut s = String::new();
-    while i > 0 { i -= 1; s.push(buf[i] as char); }
+    while i > 0 {
+        i -= 1;
+        s.push(buf[i] as char);
+    }
     s
 }
 
-fn add_partition(name: String, disk_idx: usize, part_num: u32,
-                 lba: u64, sectors: u64, pt: u8, boot: u8) {
+fn add_partition(
+    name: String,
+    disk_idx: usize,
+    part_num: u32,
+    lba: u64,
+    sectors: u64,
+    pt: u8,
+    boot: u8,
+) {
     unsafe {
         for slot in PARTITIONS.iter_mut() {
-            if slot.valid { continue; }
+            if slot.valid {
+                continue;
+            }
             slot.valid = true;
             slot.name = name.clone();
             slot.disk_index = disk_idx;
@@ -152,21 +174,25 @@ fn add_partition(name: String, disk_idx: usize, part_num: u32,
             slot.partition_type = pt;
             slot.boot_indicator = boot;
             TOTAL_PARTITIONS.fetch_add(1, Ordering::Relaxed);
-            // kprintln!("    [PARTMGR] {} LBA={} sectors={} type=0x{:02x}",  // kprintln disabled (memcpy crash workaround)
-//                 name, lba, sectors, pt);
+            // kprintln!("    [PARTMGR] {} LBA={} sectors={} type=0x{:02x}",
+            //                 name, lba, sectors, pt);
             return;
         }
     }
 }
 
 /// Number of partitions currently registered.
-pub fn count() -> u32 { TOTAL_PARTITIONS.load(Ordering::Relaxed) }
+pub fn count() -> u32 {
+    TOTAL_PARTITIONS.load(Ordering::Relaxed)
+}
 
 /// Look up a partition by its device-object path.
 pub fn find(name: &str) -> Option<Partition> {
     unsafe {
         for slot in PARTITIONS.iter() {
-            if !slot.valid { continue; }
+            if !slot.valid {
+                continue;
+            }
             if slot.name == name {
                 return Some(Partition {
                     valid: true,
@@ -191,7 +217,9 @@ pub fn list_all() -> Vec<Partition> {
     let mut out = Vec::new();
     unsafe {
         for slot in PARTITIONS.iter() {
-            if !slot.valid { continue; }
+            if !slot.valid {
+                continue;
+            }
             out.push(Partition {
                 valid: true,
                 name: slot.name.clone(),
@@ -209,31 +237,43 @@ pub fn list_all() -> Vec<Partition> {
     out
 }
 
+/// Partitions belonging to a single disk, in partition-number order.
+///
+/// Mirrors `DISKPART> list partition` after `select disk N`.
+pub fn list_for_disk(disk_idx: usize) -> Vec<Partition> {
+    let mut out = list_all();
+    out.retain(|p| p.disk_index == disk_idx);
+    out.sort_by_key(|p| p.partition_number);
+    out
+}
+
 /// Read `byte_count` bytes from a partition, addressed from the
 /// partition's start (LBA = partition LBA + offset / 512).
 pub fn read(disk_idx: usize, lba: u64, byte_count: usize, buf: &mut [u8]) -> usize {
-    if buf.len() < byte_count { return 0; }
+    if buf.len() < byte_count {
+        return 0;
+    }
     disk::DiskRead(disk_idx, lba * 512, byte_count, buf)
 }
 
 /// Smoke test: enumerate MBR partitions, print them, and read
 /// the first sector of the first partition.
 pub fn smoke_test() -> bool {
-    // kprintln!("  [PARTMGR SMOKE] testing partition manager...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [PARTMGR SMOKE] testing partition manager...");
     let parts = list_all();
-    // kprintln!("  [PARTMGR SMOKE] partitions found: {}", parts.len())  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [PARTMGR SMOKE] partitions found: {}", parts.len());
     for p in &parts {
         let _ = p;
-        // kprintln!("  [PARTMGR SMOKE]   {} LBA={} sectors={} type=0x{:02x}",  // kprintln disabled (memcpy crash workaround)
-//             p.name, p.starting_offset, p.sector_count, p.partition_type);
+        // kprintln!("  [PARTMGR SMOKE]   {} LBA={} sectors={} type=0x{:02x}",
+        //             p.name, p.starting_offset, p.sector_count, p.partition_type);
     }
     if let Some(p0) = parts.first() {
         let mut sec = [0u8; 512];
         let n = disk::DiskRead(p0.disk_index, p0.starting_offset * 512, 512, &mut sec);
         let _ = &n;
-        // kprintln!("  [PARTMGR SMOKE] first sector of {} read: {} bytes (sig {:02x}{:02x})",  // kprintln disabled (memcpy crash workaround)
-//             p0.name, n, sec[510], sec[511]);
+        // kprintln!("  [PARTMGR SMOKE] first sector of {} read: {} bytes (sig {:02x}{:02x})",
+        //             p0.name, n, sec[510], sec[511]);
     }
-    // kprintln!("  [PARTMGR SMOKE OK] partitions={}", count())  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [PARTMGR SMOKE OK] partitions={}", count());
     true
 }

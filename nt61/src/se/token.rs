@@ -23,7 +23,7 @@
 // security ABI and cannot be renamed.
 #![allow(non_snake_case, non_upper_case_globals, dead_code)]
 
-use super::sid::{Sid, WellKnownSid, SID_USERS, SID_INTERACTIVE};
+use super::sid::{Sid, WellKnownSid, SID_INTERACTIVE, SID_USERS};
 
 /// Token information class values.
 pub const TokenUser: u32 = 1;
@@ -96,13 +96,19 @@ pub struct Luid {
 
 impl Default for Luid {
     fn default() -> Self {
-        Self { low_part: 0, high_part: 0 }
+        Self {
+            low_part: 0,
+            high_part: 0,
+        }
     }
 }
 
 impl Luid {
     pub const fn new() -> Self {
-        Self { low_part: 0, high_part: 0 }
+        Self {
+            low_part: 0,
+            high_part: 0,
+        }
     }
 
     pub const fn from_u64(v: u64) -> Self {
@@ -344,7 +350,10 @@ impl Token {
                 attributes: 0,
             }; TOKEN_MAX_GROUPS],
             group_count: 0,
-            privileges: [TokenPrivilege { luid: Luid::new(), attributes: 0 }; TOKEN_MAX_PRIVILEGES],
+            privileges: [TokenPrivilege {
+                luid: Luid::new(),
+                attributes: 0,
+            }; TOKEN_MAX_PRIVILEGES],
             privilege_count: 0,
             refcount: 0,
             _padding: [0; 4],
@@ -379,13 +388,17 @@ impl Token {
 
     /// Check if the token belongs to the administrators group.
     pub fn is_admin(&self) -> bool {
-        self.user.equals(&Sid::well_known(WellKnownSid::LocalSystem))
-            || self.user.equals(&Sid::well_known(WellKnownSid::Administrators))
+        self.user
+            .equals(&Sid::well_known(WellKnownSid::LocalSystem))
+            || self
+                .user
+                .equals(&Sid::well_known(WellKnownSid::Administrators))
     }
 
     /// Check if the token belongs to the LocalSystem account.
     pub fn is_local_system(&self) -> bool {
-        self.user.equals(&Sid::well_known(WellKnownSid::LocalSystem))
+        self.user
+            .equals(&Sid::well_known(WellKnownSid::LocalSystem))
     }
 
     /// Reference counting.
@@ -406,75 +419,174 @@ pub mod privileges {
     use super::Luid;
 
     /// SeCreateTokenPrivilege
-    pub const SE_CREATE_TOKEN_PRIVILEGE: Luid = Luid { low_part: 0x00000002, high_part: 0 };
+    pub const SE_CREATE_TOKEN_PRIVILEGE: Luid = Luid {
+        low_part: 0x00000002,
+        high_part: 0,
+    };
     /// SeAssignPrimaryTokenPrivilege
-    pub const SE_ASSIGN_PRIMARY_TOKEN_PRIVILEGE: Luid = Luid { low_part: 0x00000003, high_part: 0 };
+    pub const SE_ASSIGN_PRIMARY_TOKEN_PRIVILEGE: Luid = Luid {
+        low_part: 0x00000003,
+        high_part: 0,
+    };
     /// SeLockMemoryPrivilege
-    pub const SE_LOCK_MEMORY_PRIVILEGE: Luid = Luid { low_part: 0x00000004, high_part: 0 };
+    pub const SE_LOCK_MEMORY_PRIVILEGE: Luid = Luid {
+        low_part: 0x00000004,
+        high_part: 0,
+    };
     /// SeIncreaseQuotaPrivilege
-    pub const SE_INCREASE_QUOTA_PRIVILEGE: Luid = Luid { low_part: 0x00000005, high_part: 0 };
+    pub const SE_INCREASE_QUOTA_PRIVILEGE: Luid = Luid {
+        low_part: 0x00000005,
+        high_part: 0,
+    };
     /// SeMachineAccountPrivilege
-    pub const SE_MACHINE_ACCOUNT_PRIVILEGE: Luid = Luid { low_part: 0x00000006, high_part: 0 };
+    pub const SE_MACHINE_ACCOUNT_PRIVILEGE: Luid = Luid {
+        low_part: 0x00000006,
+        high_part: 0,
+    };
     /// SeTcbPrivilege
-    pub const SE_TCB_PRIVILEGE: Luid = Luid { low_part: 0x00000007, high_part: 0 };
+    pub const SE_TCB_PRIVILEGE: Luid = Luid {
+        low_part: 0x00000007,
+        high_part: 0,
+    };
     /// SeSecurityPrivilege
-    pub const SE_SECURITY_PRIVILEGE: Luid = Luid { low_part: 0x00000008, high_part: 0 };
+    pub const SE_SECURITY_PRIVILEGE: Luid = Luid {
+        low_part: 0x00000008,
+        high_part: 0,
+    };
     /// SeTakeOwnershipPrivilege
-    pub const SE_TAKE_OWNERSHIP_PRIVILEGE: Luid = Luid { low_part: 0x00000009, high_part: 0 };
+    pub const SE_TAKE_OWNERSHIP_PRIVILEGE: Luid = Luid {
+        low_part: 0x00000009,
+        high_part: 0,
+    };
     /// SeLoadDriverPrivilege
-    pub const SE_LOAD_DRIVER_PRIVILEGE: Luid = Luid { low_part: 0x0000000A, high_part: 0 };
+    pub const SE_LOAD_DRIVER_PRIVILEGE: Luid = Luid {
+        low_part: 0x0000000A,
+        high_part: 0,
+    };
     /// SeSystemProfilePrivilege
-    pub const SE_SYSTEM_PROFILE_PRIVILEGE: Luid = Luid { low_part: 0x0000000B, high_part: 0 };
+    pub const SE_SYSTEM_PROFILE_PRIVILEGE: Luid = Luid {
+        low_part: 0x0000000B,
+        high_part: 0,
+    };
     /// SeSystemtimePrivilege
-    pub const SE_SYSTEMTIME_PRIVILEGE: Luid = Luid { low_part: 0x0000000C, high_part: 0 };
+    pub const SE_SYSTEMTIME_PRIVILEGE: Luid = Luid {
+        low_part: 0x0000000C,
+        high_part: 0,
+    };
     /// SeProfileSingleProcessPrivilege
-    pub const SE_PROFILE_SINGLE_PROCESS_PRIVILEGE: Luid = Luid { low_part: 0x0000000D, high_part: 0 };
+    pub const SE_PROFILE_SINGLE_PROCESS_PRIVILEGE: Luid = Luid {
+        low_part: 0x0000000D,
+        high_part: 0,
+    };
     /// SeIncreaseBasePriorityPrivilege
-    pub const SE_INCREASE_BASE_PRIORITY_PRIVILEGE: Luid = Luid { low_part: 0x0000000E, high_part: 0 };
+    pub const SE_INCREASE_BASE_PRIORITY_PRIVILEGE: Luid = Luid {
+        low_part: 0x0000000E,
+        high_part: 0,
+    };
     /// SeCreatePagefilePrivilege
-    pub const SE_CREATE_PAGEFILE_PRIVILEGE: Luid = Luid { low_part: 0x0000000F, high_part: 0 };
+    pub const SE_CREATE_PAGEFILE_PRIVILEGE: Luid = Luid {
+        low_part: 0x0000000F,
+        high_part: 0,
+    };
     /// SeCreatePermanentPrivilege
-    pub const SE_CREATE_PERMANENT_PRIVILEGE: Luid = Luid { low_part: 0x00000010, high_part: 0 };
+    pub const SE_CREATE_PERMANENT_PRIVILEGE: Luid = Luid {
+        low_part: 0x00000010,
+        high_part: 0,
+    };
     /// SeBackupPrivilege
-    pub const SE_BACKUP_PRIVILEGE: Luid = Luid { low_part: 0x00000011, high_part: 0 };
+    pub const SE_BACKUP_PRIVILEGE: Luid = Luid {
+        low_part: 0x00000011,
+        high_part: 0,
+    };
     /// SeRestorePrivilege
-    pub const SE_RESTORE_PRIVILEGE: Luid = Luid { low_part: 0x00000012, high_part: 0 };
+    pub const SE_RESTORE_PRIVILEGE: Luid = Luid {
+        low_part: 0x00000012,
+        high_part: 0,
+    };
     /// SeShutdownPrivilege
-    pub const SE_SHUTDOWN_PRIVILEGE: Luid = Luid { low_part: 0x00000013, high_part: 0 };
+    pub const SE_SHUTDOWN_PRIVILEGE: Luid = Luid {
+        low_part: 0x00000013,
+        high_part: 0,
+    };
     /// SeDebugPrivilege
-    pub const SE_DEBUG_PRIVILEGE: Luid = Luid { low_part: 0x00000014, high_part: 0 };
+    pub const SE_DEBUG_PRIVILEGE: Luid = Luid {
+        low_part: 0x00000014,
+        high_part: 0,
+    };
     /// SeAuditPrivilege
-    pub const SE_AUDIT_PRIVILEGE: Luid = Luid { low_part: 0x00000015, high_part: 0 };
+    pub const SE_AUDIT_PRIVILEGE: Luid = Luid {
+        low_part: 0x00000015,
+        high_part: 0,
+    };
     /// SeSystemEnvironmentPrivilege
-    pub const SE_SYSTEM_ENVIRONMENT_PRIVILEGE: Luid = Luid { low_part: 0x00000016, high_part: 0 };
+    pub const SE_SYSTEM_ENVIRONMENT_PRIVILEGE: Luid = Luid {
+        low_part: 0x00000016,
+        high_part: 0,
+    };
     /// SeChangeNotifyPrivilege
-    pub const SE_CHANGE_NOTIFY_PRIVILEGE: Luid = Luid { low_part: 0x00000017, high_part: 0 };
+    pub const SE_CHANGE_NOTIFY_PRIVILEGE: Luid = Luid {
+        low_part: 0x00000017,
+        high_part: 0,
+    };
     /// SeRemoteShutdownPrivilege
-    pub const SE_REMOTE_SHUTDOWN_PRIVILEGE: Luid = Luid { low_part: 0x00000018, high_part: 0 };
+    pub const SE_REMOTE_SHUTDOWN_PRIVILEGE: Luid = Luid {
+        low_part: 0x00000018,
+        high_part: 0,
+    };
     /// SeUndockPrivilege
-    pub const SE_UNDOCK_PRIVILEGE: Luid = Luid { low_part: 0x00000019, high_part: 0 };
+    pub const SE_UNDOCK_PRIVILEGE: Luid = Luid {
+        low_part: 0x00000019,
+        high_part: 0,
+    };
     /// SeSyncAgentPrivilege
-    pub const SE_SYNC_AGENT_PRIVILEGE: Luid = Luid { low_part: 0x0000001A, high_part: 0 };
+    pub const SE_SYNC_AGENT_PRIVILEGE: Luid = Luid {
+        low_part: 0x0000001A,
+        high_part: 0,
+    };
     /// SeEnableDelegationPrivilege
-    pub const SE_ENABLE_DELEGATION_PRIVILEGE: Luid = Luid { low_part: 0x0000001B, high_part: 0 };
+    pub const SE_ENABLE_DELEGATION_PRIVILEGE: Luid = Luid {
+        low_part: 0x0000001B,
+        high_part: 0,
+    };
     /// SeManageVolumePrivilege
-    pub const SE_MANAGE_VOLUME_PRIVILEGE: Luid = Luid { low_part: 0x0000001C, high_part: 0 };
+    pub const SE_MANAGE_VOLUME_PRIVILEGE: Luid = Luid {
+        low_part: 0x0000001C,
+        high_part: 0,
+    };
     /// SeImpersonatePrivilege
-    pub const SE_IMPERSONATE_PRIVILEGE: Luid = Luid { low_part: 0x0000001D, high_part: 0 };
+    pub const SE_IMPERSONATE_PRIVILEGE: Luid = Luid {
+        low_part: 0x0000001D,
+        high_part: 0,
+    };
     /// SeCreateGlobalPrivilege
-    pub const SE_CREATE_GLOBAL_PRIVILEGE: Luid = Luid { low_part: 0x0000001E, high_part: 0 };
+    pub const SE_CREATE_GLOBAL_PRIVILEGE: Luid = Luid {
+        low_part: 0x0000001E,
+        high_part: 0,
+    };
     /// SeTrustedCredManAccessPrivilege
-    pub const SE_TRUSTED_CREDMAN_ACCESS_PRIVILEGE: Luid = Luid { low_part: 0x0000001F, high_part: 0 };
+    pub const SE_TRUSTED_CREDMAN_ACCESS_PRIVILEGE: Luid = Luid {
+        low_part: 0x0000001F,
+        high_part: 0,
+    };
     /// SeRelabelPrivilege
-    pub const SE_RELABEL_PRIVILEGE: Luid = Luid { low_part: 0x00000020, high_part: 0 };
+    pub const SE_RELABEL_PRIVILEGE: Luid = Luid {
+        low_part: 0x00000020,
+        high_part: 0,
+    };
     /// SeTimeZonePrivilege
-    pub const SE_TIME_ZONE_PRIVILEGE: Luid = Luid { low_part: 0x00000021, high_part: 0 };
+    pub const SE_TIME_ZONE_PRIVILEGE: Luid = Luid {
+        low_part: 0x00000021,
+        high_part: 0,
+    };
     /// SeCreateSymbolicLinkPrivilege
-    pub const SE_CREATE_SYMBOLIC_LINK_PRIVILEGE: Luid = Luid { low_part: 0x00000022, high_part: 0 };
+    pub const SE_CREATE_SYMBOLIC_LINK_PRIVILEGE: Luid = Luid {
+        low_part: 0x00000022,
+        high_part: 0,
+    };
 }
 
 pub fn init() {
-    // crate::kprintln!("    SE/TOKEN: initialized (Token, Group, Privilege, LUID, well-known SIDs)")  // kprintln disabled (memcpy crash workaround);
+    // crate::kprintln!("    SE/TOKEN: initialized (Token, Group, Privilege, LUID, well-known SIDs)");
 }
 
 /// Create a system token for kernel processes.
@@ -495,7 +607,7 @@ pub fn create_system_token() -> *mut Token {
             let system_sid = Sid::well_known(WellKnownSid::LocalSystem);
             (*token) = Token::new_primary(system_sid);
         }
-        // crate::kprintln!("[SEC] Created system token at 0x{:016x}", token as u64)  // kprintln disabled (memcpy crash workaround);
+        // crate::kprintln!("[SEC] Created system token at 0x{:016x}", token as u64);
     }
     token
 }
@@ -513,7 +625,7 @@ pub fn create_user_token(user_sid: Sid) -> *mut Token {
             core::ptr::write_bytes(token as *mut u8, 0, core::mem::size_of::<Token>());
             (*token) = Token::new_primary(user_sid);
         }
-        // crate::kprintln!("[SEC] Created user token at 0x{:016x}", token as u64)  // kprintln disabled (memcpy crash workaround);
+        // crate::kprintln!("[SEC] Created user token at 0x{:016x}", token as u64);
     }
     token
 }

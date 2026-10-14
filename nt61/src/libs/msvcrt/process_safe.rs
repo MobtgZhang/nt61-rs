@@ -1,10 +1,10 @@
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use spin::{Lazy, Mutex};
 
-use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, AtomicUsize, AtomicI32, AtomicI64, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicI64, AtomicU8};
 
 use super::types::*;
 use core::ptr;
-use core::sync::atomic::{AtomicUsize, Ordering};
 
 extern crate alloc;
 use alloc::boxed::Box;
@@ -62,8 +62,7 @@ struct SignalHandlers {
 unsafe impl Send for SignalHandlers {}
 unsafe impl Sync for SignalHandlers {}
 
-fn default_signal_handler(_sig: c_int) {
-}
+extern "C" fn default_signal_handler(_sig: c_int) {}
 
 static SIGNAL_HANDLERS: Lazy<Mutex<SignalHandlers>> = Lazy::new(|| {
     Mutex::new(SignalHandlers {
@@ -71,18 +70,19 @@ static SIGNAL_HANDLERS: Lazy<Mutex<SignalHandlers>> = Lazy::new(|| {
     })
 });
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn atexit(func: extern "C" fn()) -> c_int {
     let mut handlers = ATEXIT_HANDLERS.lock();
     if handlers.count >= ATEXIT_MAX {
         return -1;
     }
-    handlers.handlers[handlers.count] = Some(func);
+    let index = handlers.count;
+    handlers.handlers[index] = Some(func);
     handlers.count += 1;
     0
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn signal(sig: c_int, handler: SignalHandler) -> SignalHandler {
     if sig < 0 || sig >= 32 {
         return default_signal_handler;

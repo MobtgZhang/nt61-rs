@@ -4,18 +4,18 @@
 //
 //! Clean-room implementation based on public specifications.
 
-pub mod pci_ids;
-pub mod sunxi_de_reg;
-pub mod sunxi_de_fb;
-pub mod sunxi_tcon;
-pub mod sunxi_hdmi;
-pub mod sunxi_mipi_dsi;
 pub mod cedarx_reg;
 pub mod mali400_reg;
 pub mod mali450_reg;
 pub mod malit7_reg;
+pub mod pci_ids;
+pub mod sunxi_de_fb;
+pub mod sunxi_de_reg;
+pub mod sunxi_hdmi;
+pub mod sunxi_mipi_dsi;
+pub mod sunxi_tcon;
 
-pub use pci_ids::{ALLWINNER_VENDOR_ID, SunxiSoc};
+pub use pci_ids::{SunxiSoc, ALLWINNER_VENDOR_ID};
 pub use sunxi_de_fb::DebeDevice;
 
 // =====================================================================

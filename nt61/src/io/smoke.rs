@@ -9,11 +9,11 @@
 
 use crate::rtl::logging::subsystem::IO;
 
-use super::{
-    allocate_driver, allocate_irp, attach_device, complete_irp, create_device,
-    io_stats, register_driver, DeviceType, IO_STATS,
-};
 use super::major;
+use super::{
+    allocate_driver, allocate_irp, attach_device, complete_irp, create_device, io_stats,
+    register_driver, DeviceType, IO_STATS,
+};
 
 /// Run the I/O system smoke test.
 pub fn smoke_test() -> bool {
@@ -30,7 +30,10 @@ pub fn smoke_test() -> bool {
         return false;
     }
 
-    crate::kprintln_info!("IO", "    [IO SMOKE] step 3: create devices (upper + lower)");
+    crate::kprintln_info!(
+        "IO",
+        "    [IO SMOKE] step 3: create devices (upper + lower)"
+    );
     let upper = create_device(driver, DeviceType::Disk, b"Upper");
     let lower = create_device(driver, DeviceType::Disk, b"Lower");
     if upper.is_null() || lower.is_null() {
@@ -42,7 +45,10 @@ pub fn smoke_test() -> bool {
     attach_device(upper, lower);
     unsafe {
         if (*upper).attached_device != lower {
-            crate::kprintln_info!("IO", "    [IO SMOKE FAIL] attach_device: wrong attached_device");
+            crate::kprintln_info!(
+                "IO",
+                "    [IO SMOKE FAIL] attach_device: wrong attached_device"
+            );
             return false;
         }
         if (*lower).attached_to != Some(upper) {
@@ -52,7 +58,10 @@ pub fn smoke_test() -> bool {
     }
 
     let irps_before = IO_STATS.lock().irps_allocated;
-    crate::kprintln_info!("IO", "    [IO SMOKE] step 5: allocate IRP (stack_locations=1)");
+    crate::kprintln_info!(
+        "IO",
+        "    [IO SMOKE] step 5: allocate IRP (stack_locations=1)"
+    );
     let irp = allocate_irp(1);
     if irp.is_null() {
         crate::kprintln_info!("IO", "    [IO SMOKE FAIL] allocate_irp returned null");
@@ -70,11 +79,17 @@ pub fn smoke_test() -> bool {
         (*irp).io_status.information = 0;
     }
 
-    crate::kprintln_info!("IO", "    [IO SMOKE] step 6: complete IRP with STATUS_SUCCESS");
+    crate::kprintln_info!(
+        "IO",
+        "    [IO SMOKE] step 6: complete IRP with STATUS_SUCCESS"
+    );
     complete_irp(irp, 0, 512);
     let irps_completed = IO_STATS.lock().irps_completed;
     if irps_completed < irps_before + 1 {
-        crate::kprintln_info!("IO", "    [IO SMOKE FAIL] irps_completed counter did not advance");
+        crate::kprintln_info!(
+            "IO",
+            "    [IO SMOKE FAIL] irps_completed counter did not advance"
+        );
         return false;
     }
 

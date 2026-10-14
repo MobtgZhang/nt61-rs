@@ -22,12 +22,12 @@
 //!
 //! Clean-room implementation based on Windows 7 DISKPART documentation.
 
-use crate::drivers::{volmgr, partmgr, storage::disk};
+use crate::drivers::{partmgr, storage::disk, volmgr};
 use crate::fs::mount;
 use crate::hal::serial;
+use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
-use alloc::format;
 
 pub struct DiskPartState {
     selected_disk: Option<usize>,
@@ -117,7 +117,7 @@ fn list_disks() -> Result<String, String> {
     for i in 0..disk_count {
         output.push_str(&format!("  Disk {}     ", i));
 
-        if let Some(info) = disk::get_disk_info(i) {
+        if let Some(info) = disk::get_disk(i) {
             output.push_str("Online         ");
 
             let size_gb = info.sector_count / (2 * 1024 * 1024); // Convert sectors to GB
@@ -153,7 +153,9 @@ fn list_disks() -> Result<String, String> {
 
 fn list_partitions(state: &DiskPartState) -> Result<String, String> {
     if state.selected_disk.is_none() {
-        return Err(String::from("There is no disk selected to list partitions.\r\nPlease select a disk and try again."));
+        return Err(String::from(
+            "There is no disk selected to list partitions.\r\nPlease select a disk and try again.",
+        ));
     }
 
     let disk_index = state.selected_disk.unwrap();
@@ -203,8 +205,12 @@ fn list_volumes() -> Result<String, String> {
     let mut output = String::new();
 
     output.push_str("\r\n");
-    output.push_str("  Volume ###  Ltr  Label        Fs     Type        Size     Status     Info\r\n");
-    output.push_str("  ----------  ---  -----------  -----  ----------  -------  ---------  --------\r\n");
+    output.push_str(
+        "  Volume ###  Ltr  Label        Fs     Type        Size     Status     Info\r\n",
+    );
+    output.push_str(
+        "  ----------  ---  -----------  -----  ----------  -------  ---------  --------\r\n",
+    );
 
     let volumes = volmgr::list_all();
     let mount_points = mount::list_all_mount_points();
@@ -216,7 +222,8 @@ fn list_volumes() -> Result<String, String> {
 
         output.push_str(&format!("  Volume {}     ", i));
 
-        let drive_letter = mount_points.iter()
+        let drive_letter = mount_points
+            .iter()
             .find(|mp| mp.volume_name == vol.name)
             .map(|mp| mp.drive_letter)
             .unwrap_or(' ');
@@ -265,10 +272,13 @@ fn list_volumes() -> Result<String, String> {
 
 fn execute_select(args: &[&str], state: &mut DiskPartState) -> Result<String, String> {
     if args.len() < 2 {
-        return Err(String::from("Invalid SELECT syntax. Use: SELECT DISK|PARTITION|VOLUME <number>"));
+        return Err(String::from(
+            "Invalid SELECT syntax. Use: SELECT DISK|PARTITION|VOLUME <number>",
+        ));
     }
 
-    let index: usize = args[1].parse()
+    let index: usize = args[1]
+        .parse()
         .map_err(|_| String::from("Invalid number"))?;
 
     match args[0] {
@@ -283,15 +293,23 @@ fn execute_select(args: &[&str], state: &mut DiskPartState) -> Result<String, St
         }
         "PARTITION" => {
             if state.selected_disk.is_none() {
-                return Err(String::from("There is no disk selected. Please select a disk first."));
+                return Err(String::from(
+                    "There is no disk selected. Please select a disk first.",
+                ));
             }
 
             let disk_index = state.selected_disk.unwrap();
             let partitions = partmgr::list_for_disk(disk_index);
 
-            if partitions.iter().any(|p| p.valid && p.partition_number == index as u32) {
+            if partitions
+                .iter()
+                .any(|p| p.valid && p.partition_number == index as u32)
+            {
                 state.selected_partition = Some(index as u32);
-                Ok(format!("Partition {} is now the selected partition.", index))
+                Ok(format!(
+                    "Partition {} is now the selected partition.",
+                    index
+                ))
             } else {
                 Err(String::from("There is no partition with that number."))
             }
@@ -330,7 +348,7 @@ fn detail_disk(state: &DiskPartState) -> Result<String, String> {
     let disk_index = state.selected_disk.unwrap();
     let mut output = String::new();
 
-    if let Some(info) = disk::get_disk_info(disk_index) {
+    if let Some(info) = disk::get_disk(disk_index) {
         output.push_str(&format!("\r\nDisk ID: {:08X}\r\n", disk_index));
         output.push_str(&format!("Type   : SATA\r\n"));
         output.push_str("Status : Online\r\n");
@@ -352,12 +370,22 @@ fn detail_disk(state: &DiskPartState) -> Result<String, String> {
         output.push_str("Crashdump Disk  : No\r\n");
         output.push_str("Clustered Disk  : No\r\n\r\n");
 
-        output.push_str("  Volume ###  Ltr  Label        Fs     Type        Size     Status     Info\r\n");
-        output.push_str("  ----------  ---  -----------  -----  ----------  -------  ---------  --------\r\n");
+        output.push_str(
+            "  Volume ###  Ltr  Label        Fs     Type        Size     Status     Info\r\n",
+        );
+        output.push_str(
+            "  ----------  ---  -----------  -----  ----------  -------  ---------  --------\r\n",
+        );
 
         let volumes = volmgr::list_all();
-        for vol in volumes.iter().filter(|v| v.valid && v.disk_index == disk_index) {
-            output.push_str(&format!("  Volume {}     ", vol.name.chars().last().unwrap_or('0')));
+        for vol in volumes
+            .iter()
+            .filter(|v| v.valid && v.disk_index == disk_index)
+        {
+            output.push_str(&format!(
+                "  Volume {}     ",
+                vol.name.chars().last().unwrap_or('0')
+            ));
             output.push_str("\r\n");
         }
 
@@ -383,14 +411,31 @@ fn detail_partition(state: &DiskPartState) -> Result<String, String> {
         output.push_str(&format!("\r\nPartition {}\r\n", part.partition_number));
         output.push_str(&format!("Type  : {:02X}\r\n", part.partition_type));
         output.push_str("Hidden: No\r\n");
-        output.push_str(&format!("Active: {}\r\n", if part.boot_indicator == 0x80 { "Yes" } else { "No" }));
-        output.push_str(&format!("Offset in Bytes: {}\r\n\r\n", part.starting_offset * 512));
+        output.push_str(&format!(
+            "Active: {}\r\n",
+            if part.boot_indicator == 0x80 {
+                "Yes"
+            } else {
+                "No"
+            }
+        ));
+        output.push_str(&format!(
+            "Offset in Bytes: {}\r\n\r\n",
+            part.starting_offset * 512
+        ));
 
-        output.push_str("  Volume ###  Ltr  Label        Fs     Type        Size     Status     Info\r\n");
-        output.push_str("  ----------  ---  -----------  -----  ----------  -------  ---------  --------\r\n");
+        output.push_str(
+            "  Volume ###  Ltr  Label        Fs     Type        Size     Status     Info\r\n",
+        );
+        output.push_str(
+            "  ----------  ---  -----------  -----  ----------  -------  ---------  --------\r\n",
+        );
 
         let volumes = volmgr::list_all();
-        for vol in volumes.iter().filter(|v| v.valid && v.disk_index == disk_index) {
+        for vol in volumes
+            .iter()
+            .filter(|v| v.valid && v.disk_index == disk_index)
+        {
             output.push_str("  (Volume info)\r\n");
         }
 
@@ -426,7 +471,10 @@ fn detail_volume(state: &DiskPartState) -> Result<String, String> {
 
         output.push_str(&format!("File System: {}\r\n", vol.fs_name));
         output.push_str("Type       : Partition\r\n");
-        output.push_str(&format!("Status     : {}\r\n", if vol.mounted { "Healthy" } else { "Unmounted" }));
+        output.push_str(&format!(
+            "Status     : {}\r\n",
+            if vol.mounted { "Healthy" } else { "Unmounted" }
+        ));
 
         let size_gb = vol.sector_count / (2 * 1024 * 1024);
         output.push_str(&format!("Capacity   : {} GB\r\n", size_gb));
@@ -457,7 +505,9 @@ fn execute_create(args: &[&str], state: &mut DiskPartState) -> Result<String, St
     let part_type = if args.len() > 1 { args[1] } else { "PRIMARY" };
 
     // TODO: Implement actual partition creation
-    Err(String::from("Partition creation requires administrator privileges and will be implemented."))
+    Err(String::from(
+        "Partition creation requires administrator privileges and will be implemented.",
+    ))
 }
 
 fn execute_delete(args: &[&str], state: &mut DiskPartState) -> Result<String, String> {
@@ -471,14 +521,18 @@ fn execute_delete(args: &[&str], state: &mut DiskPartState) -> Result<String, St
                 return Err(String::from("There is no partition selected."));
             }
             // TODO: Implement partition deletion
-            Err(String::from("Partition deletion requires administrator privileges."))
+            Err(String::from(
+                "Partition deletion requires administrator privileges.",
+            ))
         }
         "VOLUME" => {
             if state.selected_volume.is_none() {
                 return Err(String::from("There is no volume selected."));
             }
             // TODO: Implement volume deletion
-            Err(String::from("Volume deletion requires administrator privileges."))
+            Err(String::from(
+                "Volume deletion requires administrator privileges.",
+            ))
         }
         _ => Err(format!("Invalid DELETE target: {}", args[0])),
     }
@@ -504,7 +558,9 @@ fn execute_format(args: &[&str], state: &DiskPartState) -> Result<String, String
     }
 
     // TODO: Implement actual format operation
-    Err(String::from("Format operation requires administrator privileges."))
+    Err(String::from(
+        "Format operation requires administrator privileges.",
+    ))
 }
 
 fn execute_assign(args: &[&str], state: &DiskPartState) -> Result<String, String> {
@@ -517,11 +573,16 @@ fn execute_assign(args: &[&str], state: &DiskPartState) -> Result<String, String
     } else if args[0] == "LETTER" && args.len() > 1 {
         args[1].chars().next().unwrap_or('C')
     } else {
-        return Err(String::from("Invalid ASSIGN syntax. Use: ASSIGN [LETTER=<letter>]"));
+        return Err(String::from(
+            "Invalid ASSIGN syntax. Use: ASSIGN [LETTER=<letter>]",
+        ));
     };
 
     // TODO: Implement drive letter assignment
-    Ok(format!("DiskPart successfully assigned the drive letter {}.", drive_letter))
+    Ok(format!(
+        "DiskPart successfully assigned the drive letter {}.",
+        drive_letter
+    ))
 }
 
 fn execute_remove(args: &[&str], state: &DiskPartState) -> Result<String, String> {
@@ -530,7 +591,9 @@ fn execute_remove(args: &[&str], state: &DiskPartState) -> Result<String, String
     }
 
     // TODO: Implement drive letter removal
-    Ok(String::from("DiskPart successfully removed the drive letter."))
+    Ok(String::from(
+        "DiskPart successfully removed the drive letter.",
+    ))
 }
 
 fn execute_active(state: &mut DiskPartState) -> Result<String, String> {
@@ -539,7 +602,9 @@ fn execute_active(state: &mut DiskPartState) -> Result<String, String> {
     }
 
     // TODO: Implement marking partition as active
-    Ok(String::from("DiskPart marked the current partition as active."))
+    Ok(String::from(
+        "DiskPart marked the current partition as active.",
+    ))
 }
 
 fn execute_inactive(state: &mut DiskPartState) -> Result<String, String> {
@@ -548,7 +613,9 @@ fn execute_inactive(state: &mut DiskPartState) -> Result<String, String> {
     }
 
     // TODO: Implement marking partition as inactive
-    Ok(String::from("DiskPart marked the current partition as inactive."))
+    Ok(String::from(
+        "DiskPart marked the current partition as inactive.",
+    ))
 }
 
 fn execute_clean(state: &DiskPartState) -> Result<String, String> {
@@ -557,7 +624,9 @@ fn execute_clean(state: &DiskPartState) -> Result<String, String> {
     }
 
     // TODO: Implement disk cleaning
-    Err(String::from("Clean operation requires administrator privileges and confirmation."))
+    Err(String::from(
+        "Clean operation requires administrator privileges and confirmation.",
+    ))
 }
 
 fn execute_convert(args: &[&str], state: &DiskPartState) -> Result<String, String> {
@@ -570,8 +639,12 @@ fn execute_convert(args: &[&str], state: &DiskPartState) -> Result<String, Strin
     }
 
     match args[0] {
-        "MBR" => Err(String::from("Convert to MBR requires administrator privileges.")),
-        "GPT" => Err(String::from("Convert to GPT requires administrator privileges.")),
+        "MBR" => Err(String::from(
+            "Convert to MBR requires administrator privileges.",
+        )),
+        "GPT" => Err(String::from(
+            "Convert to GPT requires administrator privileges.",
+        )),
         _ => Err(format!("Invalid CONVERT target: {}", args[0])),
     }
 }
@@ -582,7 +655,9 @@ fn execute_extend(args: &[&str], state: &DiskPartState) -> Result<String, String
     }
 
     // TODO: Implement volume extension
-    Err(String::from("Extend operation requires administrator privileges."))
+    Err(String::from(
+        "Extend operation requires administrator privileges.",
+    ))
 }
 
 fn execute_shrink(args: &[&str], state: &DiskPartState) -> Result<String, String> {
@@ -591,7 +666,9 @@ fn execute_shrink(args: &[&str], state: &DiskPartState) -> Result<String, String
     }
 
     // TODO: Implement volume shrinking
-    Err(String::from("Shrink operation requires administrator privileges."))
+    Err(String::from(
+        "Shrink operation requires administrator privileges.",
+    ))
 }
 
 fn execute_attributes(args: &[&str], state: &DiskPartState) -> Result<String, String> {

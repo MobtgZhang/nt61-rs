@@ -7,7 +7,9 @@
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use super::{LpcMessage, LpcMessageHeader, LpcMessageType, LpcRegistry, LpcPort, LpcPortType, MAX_PORTS};
+use super::{
+    LpcMessage, LpcMessageHeader, LpcMessageType, LpcPort, LpcPortType, LpcRegistry, MAX_PORTS,
+};
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -139,10 +141,7 @@ pub fn accept_connection_request(
     Some((client_idx, server_comm_idx))
 }
 
-pub fn reject_connection_request(
-    request_id: u32,
-    queue: &mut ConnectionQueue,
-) -> bool {
+pub fn reject_connection_request(request_id: u32, queue: &mut ConnectionQueue) -> bool {
     if (request_id as usize) >= queue.requests.len() {
         return false;
     }
@@ -160,10 +159,7 @@ pub fn reject_connection_request(
     true
 }
 
-pub fn get_next_connection_request(
-    server_port_index: u32,
-    queue: &ConnectionQueue,
-) -> Option<u32> {
+pub fn get_next_connection_request(server_port_index: u32, queue: &ConnectionQueue) -> Option<u32> {
     for i in 0..queue.requests.len() {
         if queue.requests[i].pending && queue.requests[i].server_port_index == server_port_index {
             return Some(i as u32);

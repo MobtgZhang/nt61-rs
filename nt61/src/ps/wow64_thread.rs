@@ -16,9 +16,9 @@
 #![cfg(target_arch = "x86_64")]
 #![allow(dead_code)]
 
-use crate::ps::thread::{Ethread, create_thread};
 use crate::libs::wow64::types::*;
 use crate::libs::wow64::wow64vas;
+use crate::ps::thread::{create_thread, Ethread};
 use alloc::boxed::Box;
 
 // =============================================================================
@@ -111,7 +111,6 @@ pub fn create_wow64_thread(
     start_address: ULONG32,
     parameter: ULONG32,
 ) -> Option<&'static mut Ethread> {
-
     // 1. Create a standard 64-bit thread first
     let thread = create_thread(process, 0)?;
 
@@ -122,11 +121,7 @@ pub fn create_wow64_thread(
     let stack_top = stack_base + DEFAULT_WOW64_STACK_SIZE;
 
     // 4. Initialize CONTEXT32
-    let context = Box::new(init_thread_context32(
-        start_address,
-        parameter,
-        stack_top,
-    ));
+    let context = Box::new(init_thread_context32(start_address, parameter, stack_top));
     let _context_ptr = Box::into_raw(context);
     // _context_ptr is reserved for future use - thread context tracking
 
@@ -172,10 +167,10 @@ fn init_thread_context32(
 
     // Set up the 32-bit register state
     // These will be restored when the thread starts executing
-    context.eip = start_address;       // Entry point
-    context.esp = stack_top - 4;       // Stack pointer (leave room for return address)
-    context.ebp = 0;                    // Frame pointer
-    context.eax = parameter;           // First argument in eax
+    context.eip = start_address; // Entry point
+    context.esp = stack_top - 4; // Stack pointer (leave room for return address)
+    context.ebp = 0; // Frame pointer
+    context.eax = parameter; // First argument in eax
     context.ebx = 0;
     context.ecx = 0;
     context.edx = 0;
@@ -183,7 +178,7 @@ fn init_thread_context32(
     context.edi = 0;
 
     // Set up segment registers for user mode
-    context.cs = 0x23;  // USER_CS (Ring 3 code segment)
+    context.cs = 0x23; // USER_CS (Ring 3 code segment)
     context.ds = 0x2B; // USER_DS (Ring 3 data segment)
     context.es = 0x2B;
     context.fs = 0x53; // TEB selector (Ring 3)
@@ -218,13 +213,13 @@ unsafe fn init_teb32(
     let teb_addr = teb as ULONG32;
 
     // Initialize NT_TIB (Thread Information Block)
-    (*teb).exception_list = 0xFFFFFFFF;     // Initial SEH chain (no handlers)
-    (*teb).stack_base = stack_top;        // Top of stack (highest address)
+    (*teb).exception_list = 0xFFFFFFFF; // Initial SEH chain (no handlers)
+    (*teb).stack_base = stack_top; // Top of stack (highest address)
     (*teb).stack_limit = stack_top - DEFAULT_WOW64_STACK_SIZE; // Stack grows down
     (*teb).sub_system_tib = 0;
     (*teb).fiber_data = 0;
     (*teb).arbitrary_user_pointer = 0;
-    (*teb).self_ = teb_addr;               // TEB points to itself
+    (*teb).self_ = teb_addr; // TEB points to itself
 
     // Client ID
     (*teb).client_id.unique_process = process.unique_process_id as u32;
@@ -263,7 +258,6 @@ unsafe fn init_teb32(
 
     // Exception code (0 = no exception)
     (*teb).exception_code = 0;
-
 }
 
 // =============================================================================

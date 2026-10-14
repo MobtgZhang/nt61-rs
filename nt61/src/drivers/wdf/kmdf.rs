@@ -19,19 +19,22 @@ use alloc::vec::Vec;
 use crate::kprintln;
 
 /// One driver-side object created by `WdfDriverCreate`.
+#[derive(Clone)]
 pub struct WdfDriver {
     pub name: String,
     pub driver_object: *mut crate::io::DriverObject,
 }
 
-static mut WDF_DRIVERS: [Option<WdfDriver>; 16] = [None; 16];
+static mut WDF_DRIVERS: [Option<WdfDriver>; 16] = [const { None }; 16];
 static mut WDF_DRIVER_COUNT: usize = 0;
 
 /// KMDF's `WdfDriverCreate` equivalent. Allocates a driver
 /// object and wires it to the I/O manager's `DriverObject`.
 pub fn wdf_driver_create(name: &str) -> Option<&'static mut WdfDriver> {
     unsafe {
-        if WDF_DRIVER_COUNT >= WDF_DRIVERS.len() { return None; }
+        if WDF_DRIVER_COUNT >= WDF_DRIVERS.len() {
+            return None;
+        }
         let slot = &mut WDF_DRIVERS[WDF_DRIVER_COUNT];
         WDF_DRIVER_COUNT += 1;
         *slot = Some(WdfDriver {
@@ -43,9 +46,11 @@ pub fn wdf_driver_create(name: &str) -> Option<&'static mut WdfDriver> {
 }
 
 /// Number of WDF drivers registered.
-pub fn driver_count() -> usize { unsafe { WDF_DRIVER_COUNT } }
+pub fn driver_count() -> usize {
+    unsafe { WDF_DRIVER_COUNT }
+}
 
 pub fn smoke_test() -> bool {
-    // kprintln!("  [WDF-IMPL SMOKE] WDF impl healthy")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [WDF-IMPL SMOKE] WDF impl healthy");
     true
 }

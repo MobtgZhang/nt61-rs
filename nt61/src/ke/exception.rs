@@ -85,9 +85,9 @@ pub mod unwind_flags {
 #[derive(Clone)]
 #[repr(C)]
 pub struct RuntimeFunction {
-    pub begin_address: u32,        // Function start RVA
-    pub end_address: u32,          // Function end RVA (packed with flags in some formats)
-    pub unwind_info_address: u32,  // Unwind info RVA (can have flags in high bits)
+    pub begin_address: u32,       // Function start RVA
+    pub end_address: u32,         // Function end RVA (packed with flags in some formats)
+    pub unwind_info_address: u32, // Unwind info RVA (can have flags in high bits)
 }
 
 impl RuntimeFunction {
@@ -114,10 +114,10 @@ impl RuntimeFunction {
 /// UNWIND_INFO structure (variable size, min 4 bytes)
 #[repr(C, packed)]
 pub struct UnwindInfo {
-    pub version_and_flags: u8,  // Bits 0-2: version (must be 1), Bit 3: exception flag, Bits 4-7: flags
+    pub version_and_flags: u8, // Bits 0-2: version (must be 1), Bit 3: exception flag, Bits 4-7: flags
     pub size_of_prologue: u8,
     pub count_of_codes: u8,
-    pub frame_register_and_offset: u8,  // Frame register (4 bits) and scaled offset (4 bits)
+    pub frame_register_and_offset: u8, // Frame register (4 bits) and scaled offset (4 bits)
 }
 
 impl UnwindInfo {
@@ -148,8 +148,8 @@ impl UnwindInfo {
 #[repr(C, packed)]
 pub struct UnwindCode {
     pub offset_in_prologue: u8,
-    pub unwind_op_and_op_info: u8,  // Upper 4 bits: operation, Lower 4 bits: operation-specific info
-    pub operation_info: u16,  // Optional immediate operand (2 bytes)
+    pub unwind_op_and_op_info: u8, // Upper 4 bits: operation, Lower 4 bits: operation-specific info
+    pub operation_info: u16,       // Optional immediate operand (2 bytes)
 }
 
 impl UnwindCode {
@@ -164,8 +164,8 @@ impl UnwindCode {
     /// Get the size for this unwind code entry (1 or 3 based on operation type)
     pub fn entry_size(&self) -> usize {
         match self.operation() {
-            UnwindOperationCode::AllocLarge => 3,  // 1 + 2 immediate
-            UnwindOperationCode::SaveIntNonVol | UnwindOperationCode::SaveFltNonVol => 3,  // 1 + 1 + 1
+            UnwindOperationCode::AllocLarge => 3, // 1 + 2 immediate
+            UnwindOperationCode::SaveIntNonVol | UnwindOperationCode::SaveFltNonVol => 3, // 1 + 1 + 1
             UnwindOperationCode::SaveXMM128 | UnwindOperationCode::SaveXMM128Mask => 3,
             _ => 1,
         }
@@ -232,24 +232,24 @@ pub fn setup_handlers(ethread: *mut crate::ps::thread::Ethread) {
         if !teb.is_null() {
             // Set up initial exception handler chain
             // The chain starts with a termination handler that calls RtlUnwind
-            // // kprintln!("[EXCEPTION] Set up exception handlers for thread")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[EXCEPTION] Set up exception handlers for thread");
         }
     }
 }
 
 /// Dispatch an exception to the appropriate handler
-/// 
+///
 /// This is the main entry point for exception dispatch. It tries various
 /// handler types in order until one handles the exception or all are exhausted.
 pub fn dispatch_exception(
     exception_record: &ExceptionRecord,
     context_frame: &mut ContextFrame,
 ) -> ExceptionDisposition {
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         "[EXCEPTION] Dispatching exception 0x{:08x} at address 0x{:016x}",
-// //         exception_record.exception_code,
-// //         exception_record.exception_address
-// //     );
+    // // kprintln!(
+    // //         "[EXCEPTION] Dispatching exception 0x{:08x} at address 0x{:016x}",
+    // //         exception_record.exception_code,
+    // //         exception_record.exception_address
+    // //     );
 
     // 1. First, try the current thread's registered exception handlers
     if let Some(result) = try_current_thread_handler(exception_record, context_frame) {
@@ -269,28 +269,36 @@ pub fn dispatch_exception(
 
     // 4. If this is a user-mode exception, send APC to terminate process
     if is_user_mode_exception(exception_record) {
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "[EXCEPTION] User-mode exception unhandled at 0x{:016x}, code=0x{:08x}",
-// //             exception_record.exception_address,
-// //             exception_record.exception_code
-// //         );
+        // // kprintln!(
+        // //             "[EXCEPTION] User-mode exception unhandled at 0x{:016x}, code=0x{:08x}",
+        // //             exception_record.exception_address,
+        // //             exception_record.exception_code
+        // //         );
         // TODO: Send APC to terminate the process
         return ExceptionDisposition::ContinueSearch;
     }
 
     // 5. Kernel-mode exception - trigger bugcheck
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         "[EXCEPTION] Kernel exception unhandled! Code=0x{:08x} at 0x{:016x}, triggering bugcheck",
-// //         exception_record.exception_code,
-// //         exception_record.exception_address
-// //     );
-    // Note: In actual implementation, this would call KeBugCheckEx
-    
-    ExceptionDisposition::ContinueSearch
+    // An unhandled kernel-mode exception is fatal. Returning
+    // ContinueSearch here let the caller resume on a stack frame that
+    // is already inconsistent with the faulting instruction, so the
+    // kernel keeps running with corrupted state and the real damage
+    // shows up later as an unrelated failure.
+    //
+    // Windows 7 raises KERNEL_MODE_EXCEPTION_NOT_HANDLED (0x8E) at
+    // this point: param1 is the exception code, param2 the exception
+    // address, and params 3-4 are unused.
+    crate::ke::bugcheck::bugcheck_with(
+        crate::ke::bugcheck::BugCheckCode::KernelModeExceptionNotHandled,
+        exception_record.exception_code as u64,
+        exception_record.exception_address,
+        0,
+        0,
+    );
 }
 
 /// Check if an exception occurred in user mode
-/// 
+///
 /// User-mode addresses are in the range 0x1000 to 0x7FFFFFFFFFFF
 pub(crate) fn is_user_mode_exception(exception_record: &ExceptionRecord) -> bool {
     let addr = exception_record.exception_address;
@@ -316,28 +324,28 @@ fn try_runtime_function_handler(
     context_frame: &mut ContextFrame,
 ) -> Option<ExceptionDisposition> {
     let ip = exception_record.exception_address;
-    
+
     // Find RUNTIME_FUNCTION for the current instruction pointer
     if let Some(func) = find_runtime_function_for_ip(ip) {
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "[EXCEPTION] Found RUNTIME_FUNCTION for IP 0x{:016x}: [0x{:08x}-0x{:08x}]",
-// //             ip, func.begin_address, func.end_address
-// //         );
-        
+        // // kprintln!(
+        // //             "[EXCEPTION] Found RUNTIME_FUNCTION for IP 0x{:016x}: [0x{:08x}-0x{:08x}]",
+        // //             ip, func.begin_address, func.end_address
+        // //         );
+
         // Get image base (would need proper implementation)
         let image_base = get_image_base_for_ip(ip)?;
-        
+
         // Get unwind info
         let unwind_info_ptr = get_unwind_info_ptr(image_base, &func)?;
-        
+
         // Check if there's an exception handler
         if has_exception_handler(unwind_info_ptr) {
             let handler_data = get_handler_data(unwind_info_ptr);
-            
-            // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                 "[EXCEPTION] Exception handler found, calling handler..."
-// //             );
-            
+
+            // // kprintln!(
+            // //                 "[EXCEPTION] Exception handler found, calling handler..."
+            // //             );
+
             // Call the exception handler
             return Some(call_exception_handler(
                 exception_record,
@@ -348,7 +356,7 @@ fn try_runtime_function_handler(
             ));
         }
     }
-    
+
     None
 }
 
@@ -369,13 +377,10 @@ fn call_exception_handler(
 }
 
 /// Perform stack unwinding
-pub fn unwind(
-    _target_frame: u64,
-    _exception_record: Option<&ExceptionRecord>,
-) -> ContextFrame {
+pub fn unwind(_target_frame: u64, _exception_record: Option<&ExceptionRecord>) -> ContextFrame {
     let context = ContextFrame::new();
     // _target_frame and _exception_record are intentionally unused - reserved for future logging
-    // // kprintln!("[EXCEPTION] Unwinding to frame 0x{:016x}", _target_frame)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[EXCEPTION] Unwinding to frame 0x{:016x}", _target_frame);
 
     // In a real implementation, this would:
     // 1. Walk the linked list of frames
@@ -439,16 +444,36 @@ pub struct ContextFrame {
 impl ContextFrame {
     pub fn new() -> Self {
         Self {
-            p1_home: 0, p2_home: 0, p3_home: 0, p4_home: 0, p5_home: 0, p6_home: 0,
+            p1_home: 0,
+            p2_home: 0,
+            p3_home: 0,
+            p4_home: 0,
+            p5_home: 0,
+            p6_home: 0,
             context_flags: 0,
             mx_csr: 0,
-            cs: 0x10,  // Kernel code segment
-            efl: 0x202,  // IF=1
-            gs: 0, fs: 0, es: 0, ds: 0,
-            rax: 0, rcx: 0, rdx: 0, rbx: 0,
-            rsp: 0, rbp: 0, rsi: 0, rdi: 0,
-            r8: 0, r9: 0, r10: 0, r11: 0,
-            r12: 0, r13: 0, r14: 0, r15: 0,
+            cs: 0x10,   // Kernel code segment
+            efl: 0x202, // IF=1
+            gs: 0,
+            fs: 0,
+            es: 0,
+            ds: 0,
+            rax: 0,
+            rcx: 0,
+            rdx: 0,
+            rbx: 0,
+            rsp: 0,
+            rbp: 0,
+            rsi: 0,
+            rdi: 0,
+            r8: 0,
+            r9: 0,
+            r10: 0,
+            r11: 0,
+            r12: 0,
+            r13: 0,
+            r14: 0,
+            r15: 0,
             rip: 0,
         }
     }
@@ -457,7 +482,7 @@ impl ContextFrame {
 /// Raise a software exception
 pub fn raise_exception(_code: u32, _address: u64) {
     // _code and _address are intentionally unused - reserved for future implementation
-    // // kprintln!("[EXCEPTION] Software exception raised: code=0x{:08x}", code)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[EXCEPTION] Software exception raised: code=0x{:08x}", code);
 
     // In a real implementation, this would:
     // 1. Create an exception record
@@ -509,8 +534,7 @@ impl ExceptionRegistration {
 }
 
 /// Global exception handler chain (for kernel)
-static KERNEL_EXCEPTION_HANDLERS: Spinlock<Vec<ExceptionRegistration>> =
-    Spinlock::new(Vec::new());
+static KERNEL_EXCEPTION_HANDLERS: Spinlock<Vec<ExceptionRegistration>> = Spinlock::new(Vec::new());
 
 use crate::ke::sync::Spinlock;
 
@@ -526,14 +550,14 @@ pub fn register_handler(handler: ExceptionHandler) {
     let mut handlers = KERNEL_EXCEPTION_HANDLERS.lock();
     let reg = ExceptionRegistration::new(handler as u64);
     handlers.push(reg);
-    // // kprintln!("[EXCEPTION] Registered exception handler")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[EXCEPTION] Registered exception handler");
 }
 
 /// Unregister an exception handler
 pub fn unregister_handler(handler: ExceptionHandler) {
     let mut handlers = KERNEL_EXCEPTION_HANDLERS.lock();
     handlers.retain(|r| r.handler != handler as u64);
-    // // kprintln!("[EXCEPTION] Unregistered exception handler")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[EXCEPTION] Unregistered exception handler");
 }
 
 /// Dispatch exception to registered handlers
@@ -565,11 +589,11 @@ pub fn dispatch_exception_full(
     exception_record: &mut ExceptionRecord,
     context_frame: &mut ContextFrame,
 ) -> ExceptionDisposition {
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         "[EXCEPTION] Full dispatch: code=0x{:08x} addr=0x{:016x}",
-// //         exception_record.exception_code,
-// //         exception_record.exception_address
-// //     );
+    // // kprintln!(
+    // //         "[EXCEPTION] Full dispatch: code=0x{:08x} addr=0x{:016x}",
+    // //         exception_record.exception_code,
+    // //         exception_record.exception_address
+    // //     );
 
     // First, try registered handlers
     let result = dispatch_to_handlers(exception_record, context_frame);
@@ -581,7 +605,7 @@ pub fn dispatch_exception_full(
     // This would be implemented in a full PE loader integration
     // For now, return ContinueSearch which leads to process termination
 
-    // // kprintln!("[EXCEPTION] No handler found, will terminate process")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[EXCEPTION] No handler found, will terminate process");
     ExceptionDisposition::ContinueSearch
 }
 
@@ -590,16 +614,12 @@ pub fn dispatch_exception_full(
 // =============================================================================
 
 /// Handle access violation with detailed information
-pub fn handle_access_violation(
-    _address: u64,
-    _write: bool,
-    _execute: bool,
-) -> Option<u64> {
+pub fn handle_access_violation(_address: u64, _write: bool, _execute: bool) -> Option<u64> {
     // _address, _write, and _execute are intentionally unused - reserved for future logging
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         "[EXCEPTION] Access Violation at 0x{:016x} write={} execute={}",
-// //         _address, _write, _execute
-// //     );
+    // // kprintln!(
+    // //         "[EXCEPTION] Access Violation at 0x{:016x} write={} execute={}",
+    // //         _address, _write, _execute
+    // //     );
 
     // In a real implementation:
     // 1. Check if address is in a valid VAD region
@@ -618,7 +638,7 @@ pub fn handle_access_violation(
 #[cfg(target_arch = "x86_64")]
 pub fn handle_breakpoint_context(_context: &mut ContextFrame) {
     // _context is intentionally unused - reserved for future logging
-    // // kprintln!("[EXCEPTION] Breakpoint at RIP=0x{:016x}", _context.rip)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[EXCEPTION] Breakpoint at RIP=0x{:016x}", _context.rip);
 
     // Step over the breakpoint instruction
     // In real Windows, this decrements RIP to step back
@@ -627,7 +647,7 @@ pub fn handle_breakpoint_context(_context: &mut ContextFrame) {
 
 /// Single step handler
 pub fn handle_single_step(context: &mut ContextFrame) {
-    // // kprintln!("[EXCEPTION] Single step at RIP=0x{:016x}", context.rip)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[EXCEPTION] Single step at RIP=0x{:016x}", context.rip);
 
     // Clear the trap flag in RFLAGS
     context.efl &= !(1 << 8);
@@ -681,36 +701,39 @@ impl ImageExceptionInfo {
     /// Find the RUNTIME_FUNCTION entry containing the given instruction pointer
     pub fn find_function_for_ip(&self, ip: u64) -> Option<&RuntimeFunction> {
         let rel_ip = (ip - self.image_base) as u32;
-        self.runtime_functions.iter().find(|f| {
-            rel_ip >= f.begin_address && rel_ip < f.end_address
-        })
+        self.runtime_functions
+            .iter()
+            .find(|f| rel_ip >= f.begin_address && rel_ip < f.end_address)
     }
 }
 
 /// Global database of loaded images' exception information
-static IMAGE_EXCEPTION_DB: Spinlock<Vec<ImageExceptionInfo>> =
-    Spinlock::new(Vec::new());
+static IMAGE_EXCEPTION_DB: Spinlock<Vec<ImageExceptionInfo>> = Spinlock::new(Vec::new());
 
 /// Register a PE image's RUNTIME_FUNCTION table
-pub fn register_image_runtime_functions(image_base: u64, functions: &[RuntimeFunction], unwind_base: u64) {
+pub fn register_image_runtime_functions(
+    image_base: u64,
+    functions: &[RuntimeFunction],
+    unwind_base: u64,
+) {
     let mut db = IMAGE_EXCEPTION_DB.lock();
     db.push(ImageExceptionInfo {
         image_base,
         runtime_functions: functions.to_vec(),
         unwind_info_base: unwind_base,
     });
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         "[EXCEPTION] Registered {} RUNTIME_FUNCTION entries for image @ 0x{:016x}",
-// //         functions.len(),
-// //         image_base
-// //     );
+    // // kprintln!(
+    // //         "[EXCEPTION] Registered {} RUNTIME_FUNCTION entries for image @ 0x{:016x}",
+    // //         functions.len(),
+    // //         image_base
+    // //     );
 }
 
 /// Unregister a PE image's exception information
 pub fn unregister_image_exception_info(image_base: u64) {
     let mut db = IMAGE_EXCEPTION_DB.lock();
     db.retain(|info| info.image_base != image_base);
-    // // kprintln!("[EXCEPTION] Unregistered exception info for image @ 0x{:016x}", image_base)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[EXCEPTION] Unregistered exception info for image @ 0x{:016x}", image_base);
 }
 
 /// Find RUNTIME_FUNCTION for an IP across all loaded images
@@ -754,9 +777,7 @@ fn has_exception_handler(unwind_info_ptr: *const UnwindInfo) -> bool {
     if unwind_info_ptr.is_null() {
         return false;
     }
-    unsafe {
-        (*unwind_info_ptr).has_exception_handler()
-    }
+    unsafe { (*unwind_info_ptr).has_exception_handler() }
 }
 
 /// Get the exception handler data pointer from unwind info
@@ -777,7 +798,7 @@ fn get_handler_data(unwind_info_ptr: *const UnwindInfo) -> *const u8 {
 }
 
 /// Get image base for an instruction pointer
-/// 
+///
 /// This is a simplified version that searches the registered images.
 fn get_image_base_for_ip(ip: u64) -> Option<u64> {
     let db = IMAGE_EXCEPTION_DB.lock();
@@ -822,29 +843,30 @@ pub fn rtl_virtual_unwind(
     let _rva = (control_pc - image_base) as u32;
     // _rva is intentionally unused - reserved for future logging
 
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         "[UNWIND] RtlVirtualUnwind: image_base=0x{:016x}, control_pc=0x{:016x}, rva=0x{:08x}",
-// //         image_base, control_pc, _rva
-// //     );
+    // // kprintln!(
+    // //         "[UNWIND] RtlVirtualUnwind: image_base=0x{:016x}, control_pc=0x{:016x}, rva=0x{:08x}",
+    // //         image_base, control_pc, _rva
+    // //     );
 
     // Get the unwind info for this function
-    let unwind_info_ptr = (image_base + function_entry.unwind_info_address as u64) as *const UnwindInfo;
+    let unwind_info_ptr =
+        (image_base + function_entry.unwind_info_address as u64) as *const UnwindInfo;
 
     if unwind_info_ptr.is_null() {
-        // // kprintln!("[UNWIND] ERROR: null unwind info")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[UNWIND] ERROR: null unwind info");
         return 0;
     }
 
     unsafe {
         let unwind_info = &*unwind_info_ptr;
 
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "[UNWIND] UnwindInfo: version={}, prologue_size={}, codes={}, flags=0x{:x}",
-// //             unwind_info.version(),
-// //             unwind_info.size_of_prologue,
-// //             unwind_info.count_of_codes,
-// //             unwind_info.flags()
-// //         );
+        // // kprintln!(
+        // //             "[UNWIND] UnwindInfo: version={}, prologue_size={}, codes={}, flags=0x{:x}",
+        // //             unwind_info.version(),
+        // //             unwind_info.size_of_prologue,
+        // //             unwind_info.count_of_codes,
+        // //             unwind_info.flags()
+        // //         );
 
         // Calculate the establisher frame (the frame pointer for this function)
         // This is typically RSP at entry, or RBP if frame pointer is used
@@ -865,7 +887,7 @@ pub fn rtl_virtual_unwind(
             // UnwindInfo is 4 bytes, then UNWIND_CODE array (count * 2 bytes each)
             let codes_ptr = (unwind_info_ptr as *const u8).add(4);
             *handler_data = codes_ptr.add((unwind_info.count_of_codes as usize) * 2);
-            // // kprintln!("[UNWIND] Exception handler present, data at {:p}", *handler_data)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[UNWIND] Exception handler present, data at {:p}", *handler_data);
         }
 
         // Process UNWIND_CODE array in REVERSE order
@@ -878,7 +900,12 @@ pub fn rtl_virtual_unwind(
 
             let code = &*codes_base.add(code_index);
 
-            apply_unwind_code(context_record, code, *establisher_frame, unwind_info.size_of_prologue);
+            apply_unwind_code(
+                context_record,
+                code,
+                *establisher_frame,
+                unwind_info.size_of_prologue,
+            );
         }
 
         // Get the return address from the stack
@@ -887,10 +914,10 @@ pub fn rtl_virtual_unwind(
         // Update the stack pointer
         context_record.rsp += 8;
 
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "[UNWIND] Unwound to return_addr=0x{:016x}, new_rsp=0x{:016x}",
-// //             return_address, context_record.rsp
-// //         );
+        // // kprintln!(
+        // //             "[UNWIND] Unwound to return_addr=0x{:016x}, new_rsp=0x{:016x}",
+        // //             return_address, context_record.rsp
+        // //         );
 
         return_address
     }
@@ -913,19 +940,19 @@ fn apply_unwind_code(
     match operation {
         UnwindOperationCode::PushUnwindHandler => {
             // Handler was pushed on stack, pop it for unwind
-            // // kprintln!("[UNWIND] PushUnwindHandler (reverse)")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[UNWIND] PushUnwindHandler (reverse)");
             // No change needed - handler address stays on stack for exception dispatch
         }
 
         UnwindOperationCode::CopyData => {
             // Reserved for special cases
-            // // kprintln!("[UNWIND] CopyData (reserved)")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[UNWIND] CopyData (reserved)");
         }
 
         UnwindOperationCode::PushMachFrame => {
             // Machine frame was pushed on the stack
             // For unwind, we need to simulate popping this frame
-            // // kprintln!("[UNWIND] PushMachFrame (reverse)")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[UNWIND] PushMachFrame (reverse)");
             // The registers were saved by hardware, no unwind action needed
         }
 
@@ -933,14 +960,14 @@ fn apply_unwind_code(
             // Stack was adjusted by alloca - need to read 16-bit offset
             let offset = unsafe { unwind_code_offset_16(code) } as u64;
             context.rsp += offset;
-            // // kprintln!("[UNWIND] AllocaHomed: rsp += 0x{:x}", offset)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[UNWIND] AllocaHomed: rsp += 0x{:x}", offset);
         }
 
         UnwindOperationCode::SetFp => {
             // Frame pointer was set to RSP + scaled offset
             // The actual frame pointer restoration is handled by establisher_frame
             let _offset = unwind_code_offset(code);
-            // // kprintln!("[UNWIND] SetFp: frame_offset={}", _offset)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[UNWIND] SetFp: frame_offset={}", _offset);
         }
 
         UnwindOperationCode::SaveIntNonVol => {
@@ -952,28 +979,28 @@ fn apply_unwind_code(
             let reg_val = unsafe { core::ptr::read(sp as *const u64) };
 
             match op_info {
-                0  => context.rax = reg_val,
-                1  => context.rcx = reg_val,
-                2  => context.rdx = reg_val,
-                3  => context.rbx = reg_val,
-                4  => context.rsp = reg_val,
-                5  => context.rbp = reg_val,
-                6  => context.rsi = reg_val,
-                7  => context.rdi = reg_val,
-                8  => context.r8  = reg_val,
-                9  => context.r9  = reg_val,
+                0 => context.rax = reg_val,
+                1 => context.rcx = reg_val,
+                2 => context.rdx = reg_val,
+                3 => context.rbx = reg_val,
+                4 => context.rsp = reg_val,
+                5 => context.rbp = reg_val,
+                6 => context.rsi = reg_val,
+                7 => context.rdi = reg_val,
+                8 => context.r8 = reg_val,
+                9 => context.r9 = reg_val,
                 10 => context.r10 = reg_val,
                 11 => context.r11 = reg_val,
                 12 => context.r12 = reg_val,
                 13 => context.r13 = reg_val,
                 14 => context.r14 = reg_val,
                 15 => context.r15 = reg_val,
-                _  => {}
+                _ => {}
             }
-            // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                 "[UNWIND] SaveIntNonVol: restore reg{} = 0x{:016x} from [rsp+0x{:x}]",
-// //                 op_info, reg_val, offset
-// //             );
+            // // kprintln!(
+            // //                 "[UNWIND] SaveIntNonVol: restore reg{} = 0x{:016x} from [rsp+0x{:x}]",
+            // //                 op_info, reg_val, offset
+            // //             );
         }
 
         UnwindOperationCode::SaveFltNonVol => {
@@ -981,10 +1008,10 @@ fn apply_unwind_code(
             // Format: UNWIND_CODE (2 bytes) + offset (1 byte)
             let _offset = unsafe { read_int_nvol_offset(code) } as u64;
             let _reg_idx = op_info;
-            // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                 "[UNWIND] SaveFltNonVol: would restore xmm{} from [rsp+0x{:x}]",
-// //                 _reg_idx + 6, _offset
-// //             );
+            // // kprintln!(
+            // //                 "[UNWIND] SaveFltNonVol: would restore xmm{} from [rsp+0x{:x}]",
+            // //                 _reg_idx + 6, _offset
+            // //             );
             // Note: Full implementation would restore XMM6-XMM15
         }
 
@@ -993,16 +1020,16 @@ fn apply_unwind_code(
             // Format: UNWIND_CODE (2 bytes) + offset (2 bytes)
             let offset = unsafe { unwind_code_offset_16(code) } as u64;
             let _sp = context.rsp + offset;
-            // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                 "[UNWIND] SaveXMM128: would restore xmm{} from [rsp+0x{:x}]",
-// //                 op_info, offset
-// //             );
+            // // kprintln!(
+            // //                 "[UNWIND] SaveXMM128: would restore xmm{} from [rsp+0x{:x}]",
+            // //                 op_info, offset
+            // //             );
             // Note: Full implementation would restore full 128-bit XMM register
         }
 
         UnwindOperationCode::SaveXMM128Mask => {
             // Save XMM registers with mask - rare operation
-            // // kprintln!("[UNWIND] SaveXMM128Mask (rare, op_info={})", op_info)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[UNWIND] SaveXMM128Mask (rare, op_info={})", op_info);
         }
 
         UnwindOperationCode::AllocLarge => {
@@ -1011,26 +1038,26 @@ fn apply_unwind_code(
             // Read 32-bit size from after UNWIND_CODE
             let size = unsafe { read_alloc_large_size(code) } as u64;
             context.rsp += size;
-            // // kprintln!("[UNWIND] AllocLarge: rsp += 0x{:x}", size)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[UNWIND] AllocLarge: rsp += 0x{:x}", size);
         }
 
         UnwindOperationCode::AllocSmall => {
             // Small stack allocation: 8 * (op_info + 1) bytes
             let size = (op_info as u64 + 1) * 8;
             context.rsp += size;
-            // // kprintln!("[UNWIND] AllocSmall: rsp += 0x{:x}", size)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[UNWIND] AllocSmall: rsp += 0x{:x}", size);
         }
 
         UnwindOperationCode::PrologEpilog => {
             // Combined prolog/epilog - rare
-            // // kprintln!("[UNWIND] PrologEpilog (combined, rare)")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[UNWIND] PrologEpilog (combined, rare)");
         }
     }
 }
 
 /// Read offset for SaveIntNonVol and SaveFltNonVol operations
 /// These have a 1-byte offset following the UNWIND_CODE structure
-/// 
+///
 /// # Safety
 /// Caller must ensure the UNWIND_CODE is followed by at least 1 byte of valid memory
 unsafe fn read_int_nvol_offset(code: &UnwindCode) -> u16 {
@@ -1041,7 +1068,7 @@ unsafe fn read_int_nvol_offset(code: &UnwindCode) -> u16 {
 
 /// Read size for AllocLarge operation
 /// AllocLarge has a 4-byte size following the UNWIND_CODE structure
-/// 
+///
 /// # Safety
 /// Caller must ensure the UNWIND_CODE is followed by at least 4 bytes of valid memory
 unsafe fn read_alloc_large_size(code: &UnwindCode) -> u32 {
@@ -1056,11 +1083,11 @@ fn unwind_code_offset(code: &UnwindCode) -> u8 {
 }
 
 /// Read a 16-bit immediate value following the UNWIND_CODE structure
-/// 
+///
 /// UNWIND_CODE is a packed 2-byte structure. For operations that have
 /// a 16-bit immediate following (AllocLarge, SaveXMM128), we need to
 /// read from offset 2 within the operation info field.
-/// 
+///
 /// # Safety
 /// Caller must ensure the UNWIND_CODE is followed by at least 2 bytes of valid memory
 unsafe fn unwind_code_offset_16(code: &UnwindCode) -> u16 {
@@ -1094,7 +1121,7 @@ unsafe fn code_ptr_read_32(_code: &UnwindCode) -> u32 {
 
 /// Read a 32-bit value from a specific offset in the unwind info
 /// This is the correct way to read extended data after UNWIND_CODE
-/// 
+///
 /// # Safety
 /// Caller must ensure the offset is within bounds of the unwind info
 pub unsafe fn read_unwind_info_32(base: *const UnwindInfo, offset_bytes: usize) -> u32 {
@@ -1119,10 +1146,10 @@ pub fn rtl_lookup_function_entry(
 
             // Find the function containing this IP
             if let Some(func) = info.find_function_for_ip(control_pc) {
-                // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                     "[UNWIND] RtlLookupFunctionEntry: found function [0x{:08x}-0x{:08x}] for IP 0x{:016x}",
-// //                     func.begin_address, func.end_address, control_pc
-// //                 );
+                // // kprintln!(
+                // //                     "[UNWIND] RtlLookupFunctionEntry: found function [0x{:08x}-0x{:08x}] for IP 0x{:016x}",
+                // //                     func.begin_address, func.end_address, control_pc
+                // //                 );
                 return Some(func.clone());
             }
         }
@@ -1157,7 +1184,7 @@ pub fn apply_unwind_info(info: &UnwindInfo, context: &mut ContextFrame) -> u64 {
     }
 
     // For compatibility, delegate to the main RtlVirtualUnwind path
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
+    // // kprintln!(
     // //         "[EXCEPTION] apply_unwind_info: frame_reg={}, frame_offset=0x{:x}",
     // //         frame_reg, frame_offset
     // //     );
@@ -1184,11 +1211,11 @@ pub fn rtl_dispatch_exception(
 ) -> ExceptionDisposition {
     record_exception();
 
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         "[EXCEPTION] RtlDispatchException: code=0x{:08x} addr=0x{:016x}",
-// //         exception_record.exception_code,
-// //         exception_record.exception_address
-// //     );
+    // // kprintln!(
+    // //         "[EXCEPTION] RtlDispatchException: code=0x{:08x} addr=0x{:016x}",
+    // //         exception_record.exception_code,
+    // //         exception_record.exception_address
+    // //     );
 
     // 1. Try kernel-registered global handlers first
     let result = dispatch_to_handlers(exception_record, context_frame);
@@ -1208,7 +1235,7 @@ pub fn rtl_dispatch_exception(
 
     loop {
         if unwind_count >= MAX_UNWIND_FRAMES {
-            // // kprintln!("[EXCEPTION] Maximum unwind depth reached, stopping")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[EXCEPTION] Maximum unwind depth reached, stopping");
             break;
         }
 
@@ -1278,7 +1305,7 @@ pub fn rtl_dispatch_exception(
             }
             break;
         }
-        
+
         unwind_count += 1;
     }
 
@@ -1289,7 +1316,7 @@ pub fn rtl_dispatch_exception(
         }
     }
 
-    // // kprintln!("[EXCEPTION] No handler found in chain")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[EXCEPTION] No handler found in chain");
     ExceptionDisposition::ContinueSearch
 }
 
@@ -1323,15 +1350,15 @@ fn call_exception_handler_with_unwind(
     //    - Context frame pointer
     //    - Dispatcher context pointer
     // 3. Return the handler's decision
-    
+
     // For now, return ContinueSearch to continue walking the stack
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         "[EXCEPTION] Would call exception handler at {:p} for function [0x{:08x}-0x{:08x}]",
-// //         handler_data,
-// //         function_entry.begin_address,
-// //         function_entry.end_address
-// //     );
-    
+    // // kprintln!(
+    // //         "[EXCEPTION] Would call exception handler at {:p} for function [0x{:08x}-0x{:08x}]",
+    // //         handler_data,
+    // //         function_entry.begin_address,
+    // //         function_entry.end_address
+    // //     );
+
     ExceptionDisposition::ContinueSearch
 }
 
@@ -1351,30 +1378,32 @@ const DR7_MASK: u64 = 0x0000_FFFF;
 /// Handle debug exception (#DB)
 /// Called when a hardware breakpoint or single-step trap is triggered
 #[cfg(target_arch = "x86_64")]
-pub fn handle_debug_exception(tf: &mut crate::arch::common::trap_frame::TrapFrame) -> ExceptionDisposition {
+pub fn handle_debug_exception(
+    tf: &mut crate::arch::common::trap_frame::TrapFrame,
+) -> ExceptionDisposition {
     let dr6 = read_dr6() & DR6_MASK;
     // _dr7 is intentionally unused - reserved for future breakpoint processing
     let _dr7 = read_dr7() & DR7_MASK;
 
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         "[EXCEPTION] Debug exception: DR6=0x{:016x} DR7=0x{:016x} RIP=0x{:016x}",
-// //         dr6, dr7, tf.rip
-// //     );
+    // // kprintln!(
+    // //         "[EXCEPTION] Debug exception: DR6=0x{:016x} DR7=0x{:016x} RIP=0x{:016x}",
+    // //         dr6, dr7, tf.rip
+    // //     );
 
     // Check each breakpoint condition
     let conditions = [
-        (0x01, "B0", dr6 & 0x01 != 0),  // Breakpoint 0
-        (0x02, "B1", dr6 & 0x02 != 0),  // Breakpoint 1
-        (0x04, "B2", dr6 & 0x04 != 0),  // Breakpoint 2
-        (0x08, "B3", dr6 & 0x08 != 0),  // Breakpoint 3
-        (0x10, "BD", dr6 & 0x10 != 0),  // Debug register access detected
-        (0x20, "BS", dr6 & 0x20 != 0),  // Single step
-        (0x40, "BT", dr6 & 0x40 != 0),  // Task switch
+        (0x01, "B0", dr6 & 0x01 != 0), // Breakpoint 0
+        (0x02, "B1", dr6 & 0x02 != 0), // Breakpoint 1
+        (0x04, "B2", dr6 & 0x04 != 0), // Breakpoint 2
+        (0x08, "B3", dr6 & 0x08 != 0), // Breakpoint 3
+        (0x10, "BD", dr6 & 0x10 != 0), // Debug register access detected
+        (0x20, "BS", dr6 & 0x20 != 0), // Single step
+        (0x40, "BT", dr6 & 0x40 != 0), // Task switch
     ];
 
     for (_mask, _name, active) in conditions {
         if active {
-            // // kprintln!("[EXCEPTION]   {} condition active", name)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[EXCEPTION]   {} condition active", name);
         }
     }
 
@@ -1407,11 +1436,13 @@ pub fn handle_debug_exception(tf: &mut crate::arch::common::trap_frame::TrapFram
 /// Handle breakpoint exception (#BP / INT3)
 /// This is also triggered by the BOUND instruction
 #[cfg(target_arch = "x86_64")]
-pub fn handle_breakpoint_exception(tf: &mut crate::arch::common::trap_frame::TrapFrame) -> ExceptionDisposition {
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         "[EXCEPTION] Breakpoint at RIP=0x{:016x}",
-// //         tf.rip
-// //     );
+pub fn handle_breakpoint_exception(
+    tf: &mut crate::arch::common::trap_frame::TrapFrame,
+) -> ExceptionDisposition {
+    // // kprintln!(
+    // //         "[EXCEPTION] Breakpoint at RIP=0x{:016x}",
+    // //         tf.rip
+    // //     );
 
     // Step over the INT3 instruction by advancing RIP
     // INT3 is a 1-byte instruction (0xCC), so we skip it
@@ -1446,11 +1477,13 @@ pub fn handle_breakpoint_exception(tf: &mut crate::arch::common::trap_frame::Tra
 
 /// Handle invalid opcode exception (#UD)
 #[cfg(target_arch = "x86_64")]
-pub fn handle_invalid_opcode(tf: &mut crate::arch::common::trap_frame::TrapFrame) -> ExceptionDisposition {
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         "[EXCEPTION] Invalid opcode at RIP=0x{:016x}",
-// //         tf.rip
-// //     );
+pub fn handle_invalid_opcode(
+    tf: &mut crate::arch::common::trap_frame::TrapFrame,
+) -> ExceptionDisposition {
+    // // kprintln!(
+    // //         "[EXCEPTION] Invalid opcode at RIP=0x{:016x}",
+    // //         tf.rip
+    // //     );
 
     let mut record = ExceptionRecord::new(EXCEPTION_ILLEGAL_INSTRUCTION, tf.rip);
 
@@ -1480,11 +1513,13 @@ pub fn handle_invalid_opcode(tf: &mut crate::arch::common::trap_frame::TrapFrame
 
 /// Handle privileged instruction exception (#GP)
 #[cfg(target_arch = "x86_64")]
-pub fn handle_privileged_instruction(tf: &mut crate::arch::common::trap_frame::TrapFrame) -> ExceptionDisposition {
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         "[EXCEPTION] Privileged instruction at RIP=0x{:016x}",
-// //         tf.rip
-// //     );
+pub fn handle_privileged_instruction(
+    tf: &mut crate::arch::common::trap_frame::TrapFrame,
+) -> ExceptionDisposition {
+    // // kprintln!(
+    // //         "[EXCEPTION] Privileged instruction at RIP=0x{:016x}",
+    // //         tf.rip
+    // //     );
 
     let mut record = ExceptionRecord::new(EXCEPTION_PRIVILEGED_INSTRUCTION, tf.rip);
 
@@ -1523,10 +1558,10 @@ pub fn handle_page_fault(
 ) -> ExceptionDisposition {
     record_exception();
 
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         "[EXCEPTION] Page fault: addr=0x{:016x} present={} write={} user={} RIP=0x{:016x}",
-// //         address, present, write, user, tf.rip
-// //     );
+    // // kprintln!(
+    // //         "[EXCEPTION] Page fault: addr=0x{:016x} present={} write={} user={} RIP=0x{:016x}",
+    // //         address, present, write, user, tf.rip
+    // //     );
 
     // Try to handle via memory manager
     // In a full implementation, this would:
@@ -1542,11 +1577,8 @@ pub fn handle_page_fault(
         if user { 1u64 } else { 0 },
     ];
 
-    let mut record = ExceptionRecord::with_info(
-        EXCEPTION_ACCESS_VIOLATION,
-        tf.rip,
-        &access_violation_info,
-    );
+    let mut record =
+        ExceptionRecord::with_info(EXCEPTION_ACCESS_VIOLATION, tf.rip, &access_violation_info);
 
     // Try MM handler first
     use crate::mm::access_fault::AccessFlags;
@@ -1560,7 +1592,7 @@ pub fn handle_page_fault(
     };
     let result = crate::mm::access_fault::handle(address, flags);
     if matches!(result, crate::mm::access_fault::FaultStatus::Handled) {
-        // // kprintln!("[EXCEPTION] Page fault handled by MM")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[EXCEPTION] Page fault handled by MM");
         return ExceptionDisposition::ExceptionHandled;
     }
 
@@ -1591,11 +1623,13 @@ pub fn handle_page_fault(
 
 /// Handle divide error (#DE)
 #[cfg(target_arch = "x86_64")]
-pub fn handle_divide_error(tf: &crate::arch::common::trap_frame::TrapFrame) -> ExceptionDisposition {
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         "[EXCEPTION] Divide error at RIP=0x{:016x}",
-// //         tf.rip
-// //     );
+pub fn handle_divide_error(
+    tf: &crate::arch::common::trap_frame::TrapFrame,
+) -> ExceptionDisposition {
+    // // kprintln!(
+    // //         "[EXCEPTION] Divide error at RIP=0x{:016x}",
+    // //         tf.rip
+    // //     );
 
     let mut record = ExceptionRecord::new(EXCEPTION_DIVIDE_BY_ZERO, tf.rip);
 
@@ -1630,10 +1664,10 @@ pub fn handle_debug(tf: &mut crate::arch::common::trap_frame::TrapFrame) -> Exce
     let _dr6 = read_dr6() & DR6_MASK;
     let _dr7 = read_dr7() & DR7_MASK;
 
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         "[EXCEPTION] Debug exception: DR6=0x{:016x} DR7=0x{:016x} RIP=0x{:016x}",
-// //         dr6, dr7, tf.rip
-// //     );
+    // // kprintln!(
+    // //         "[EXCEPTION] Debug exception: DR6=0x{:016x} DR7=0x{:016x} RIP=0x{:016x}",
+    // //         dr6, dr7, tf.rip
+    // //     );
 
     let mut record = ExceptionRecord::new(EXCEPTION_SINGLE_STEP, tf.rip);
 
@@ -1663,11 +1697,13 @@ pub fn handle_debug(tf: &mut crate::arch::common::trap_frame::TrapFrame) -> Exce
 
 /// Handle breakpoint exception (#BP)
 #[cfg(target_arch = "x86_64")]
-pub fn handle_breakpoint(tf: &mut crate::arch::common::trap_frame::TrapFrame) -> ExceptionDisposition {
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         "[EXCEPTION] Breakpoint at RIP=0x{:016x}",
-// //         tf.rip
-// //     );
+pub fn handle_breakpoint(
+    tf: &mut crate::arch::common::trap_frame::TrapFrame,
+) -> ExceptionDisposition {
+    // // kprintln!(
+    // //         "[EXCEPTION] Breakpoint at RIP=0x{:016x}",
+    // //         tf.rip
+    // //     );
 
     // Step over the INT3 instruction
     tf.rip += 1;
@@ -1739,10 +1775,10 @@ pub fn walk_exception_list(
             break;
         }
 
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "[EXCEPTION] Calling handler at 0x{:016x} for exception 0x{:08x}",
-// //             handler, record.exception_code
-// //         );
+        // // kprintln!(
+        // //             "[EXCEPTION] Calling handler at 0x{:016x} for exception 0x{:08x}",
+        // //             handler, record.exception_code
+        // //         );
 
         // Call the handler
         // The handler signature is:
@@ -1788,23 +1824,23 @@ fn walk_teb_exception_list(
     let teb = crate::arch::x86_64::debug::read_gs_offset(0x30);
 
     if teb == 0 {
-        // // kprintln!("[EXCEPTION] TEB is null")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[EXCEPTION] TEB is null");
         return None;
     }
-    
+
     // Get exception list from TEB + 0x00
     let exception_list = get_teb_exception_list(teb);
-    
+
     if exception_list == 0 || exception_list == 0xFFFFFFFFFFFFFFFF {
-        // // kprintln!("[EXCEPTION] TEB ExceptionList is empty or end marker")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[EXCEPTION] TEB ExceptionList is empty or end marker");
         return None;
     }
-    
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         "[EXCEPTION] Walking TEB ExceptionList @ 0x{:016x}",
-// //         exception_list
-// //     );
-    
+
+    // // kprintln!(
+    // //         "[EXCEPTION] Walking TEB ExceptionList @ 0x{:016x}",
+    // //         exception_list
+    // //     );
+
     // Walk the exception list
     let result = walk_exception_list(exception_list, exception_record, context_frame);
 
@@ -1826,12 +1862,12 @@ fn walk_teb_exception_list(
 
 /// Initialize exception handling subsystem
 pub fn extended_init() {
-    // // kprintln!("[EXCEPTION] Extended exception handling initialization")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[EXCEPTION] Extended exception handling initialization");
 
     // Initialize any per-CPU exception state
     // In a full implementation, this would set up per-CPU exception handlers
 
-    // // kprintln!("[EXCEPTION]   - RUNTIME_FUNCTION database initialized")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("[EXCEPTION]   - Exception dispatcher initialized")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("[EXCEPTION]   - Hardware exception handlers registered")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[EXCEPTION]   - RUNTIME_FUNCTION database initialized");
+    // // kprintln!("[EXCEPTION]   - Exception dispatcher initialized");
+    // // kprintln!("[EXCEPTION]   - Hardware exception handlers registered");
 }

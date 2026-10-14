@@ -13,9 +13,9 @@
 //!
 //! # Task 4.1: Architecture-Independent SSDT Framework
 
-use core::sync::atomic::{AtomicUsize, Ordering};
 use crate::ke::sync::Spinlock;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 /// Maximum number of system calls supported
 pub const MAX_SYSCALLS: usize = 1024;
@@ -219,8 +219,12 @@ mod tests {
     use super::*;
 
     unsafe extern "C" fn test_handler(
-        _a1: usize, _a2: usize, _a3: usize,
-        _a4: usize, _a5: usize, _a6: usize
+        _a1: usize,
+        _a2: usize,
+        _a3: usize,
+        _a4: usize,
+        _a5: usize,
+        _a6: usize,
     ) -> u32 {
         STATUS_SUCCESS
     }

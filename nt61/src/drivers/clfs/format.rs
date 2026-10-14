@@ -50,19 +50,19 @@ pub const CLFS_MAX_CLIENTS: usize = 124;
 // ============================================================================
 
 /// Block type constants stored in the sector signature.
-pub const SECTOR_BLOCK_NONE:   u8 = 0x00;
-pub const SECTOR_BLOCK_DATA:   u8 = 0x04;  // Data block
-pub const SECTOR_BLOCK_OWNER:  u8 = 0x08;  // Owner page (metadata)
-pub const SECTOR_BLOCK_BASE:   u8 = 0x10;  // Base record
-pub const SECTOR_BLOCK_END:    u8 = 0x20;  // End of record
-pub const SECTOR_BLOCK_BEGIN:  u8 = 0x40;  // Begin of record
+pub const SECTOR_BLOCK_NONE: u8 = 0x00;
+pub const SECTOR_BLOCK_DATA: u8 = 0x04; // Data block
+pub const SECTOR_BLOCK_OWNER: u8 = 0x08; // Owner page (metadata)
+pub const SECTOR_BLOCK_BASE: u8 = 0x10; // Base record
+pub const SECTOR_BLOCK_END: u8 = 0x20; // End of record
+pub const SECTOR_BLOCK_BEGIN: u8 = 0x40; // Begin of record
 
 /// Block state flags stored in the upper bits of the sector signature.
-pub const CLFS_BLOCK_RESET:            u16 = 0x0000;
-pub const CLFS_BLOCK_ENCODED:          u16 = 0x0100;  // USN fixup applied
-pub const CLFS_BLOCK_DECODED:          u16 = 0x0200;  // USN fixup reversed
-pub const CLFS_BLOCK_LATCHED:         u16 = 0x0400;  // Block is being written
-pub const CLFS_BLOCK_TRUNCATE_DISCARD: u16 = 0x0800;  // Truncate mark
+pub const CLFS_BLOCK_RESET: u16 = 0x0000;
+pub const CLFS_BLOCK_ENCODED: u16 = 0x0100; // USN fixup applied
+pub const CLFS_BLOCK_DECODED: u16 = 0x0200; // USN fixup reversed
+pub const CLFS_BLOCK_LATCHED: u16 = 0x0400; // Block is being written
+pub const CLFS_BLOCK_TRUNCATE_DISCARD: u16 = 0x0800; // Truncate mark
 
 // ============================================================================
 // CLFS_LOG_BLOCK_HEADER
@@ -134,7 +134,9 @@ impl ClfsLogBlockHeader {
 
     /// Get a record offset safely from packed struct.
     pub fn get_record_offset(&self, i: usize) -> u32 {
-        if i >= 16 { return 0; }
+        if i >= 16 {
+            return 0;
+        }
         let offsets = self.read_record_offsets();
         offsets[i]
     }
@@ -294,11 +296,11 @@ impl BlfBlockType {
     /// Get the sector number in the BLF file for this block type.
     pub fn sector_number(&self) -> usize {
         match self {
-            BlfBlockType::Control       => 0,
-            BlfBlockType::ControlShadow=> 1,
-            BlfBlockType::General      => 2,
-            BlfBlockType::GeneralShadow=> 3,
-            BlfBlockType::Truncate    => 4,
+            BlfBlockType::Control => 0,
+            BlfBlockType::ControlShadow => 1,
+            BlfBlockType::General => 2,
+            BlfBlockType::GeneralShadow => 3,
+            BlfBlockType::Truncate => 4,
             BlfBlockType::TruncateShadow => 5,
         }
     }
@@ -364,7 +366,7 @@ impl BlfMetadata {
             let header_bytes = unsafe {
                 core::slice::from_raw_parts(
                     header as *const _ as *const u8,
-                    CLFS_LOG_BLOCK_HEADER_SIZE
+                    CLFS_LOG_BLOCK_HEADER_SIZE,
                 )
             };
             sector[..CLFS_LOG_BLOCK_HEADER_SIZE].copy_from_slice(header_bytes);

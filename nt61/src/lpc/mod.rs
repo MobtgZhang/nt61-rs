@@ -47,10 +47,10 @@
 //! SCM, and is enough to power the smoke test in this phase.
 
 use core::ptr::null_mut;
-use core::sync::atomic::{AtomicU64, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-use crate::kprintln;
 use crate::ke::sync::Spinlock;
+use crate::kprintln;
 
 /// Maximum number of ALPC ports the bootstrap registry can hold.
 /// Real NT uses a hash table; 32 is plenty for the bootstrap
@@ -216,6 +216,11 @@ pub struct LpcPort {
     pub tail: u32,
     /// Whether the port is currently connected.
     pub connected: bool,
+    /// Lifecycle state of the port (ALPC port object state).
+    pub state: port::PortState,
+    /// Creation attributes (`NtAlpcCreatePort` PORT_ATTRIBUTES). Recorded so
+    /// the message-size limit and flags can be enforced on later calls.
+    pub attributes: port::PortAttributes,
 }
 
 impl LpcPort {
@@ -232,6 +237,8 @@ impl LpcPort {
             head: 0,
             tail: 0,
             connected: false,
+            state: port::PortState::Initializing,
+            attributes: port::PortAttributes::const_default(),
         }
     }
 }
@@ -271,7 +278,7 @@ static TOTAL_MESSAGES: AtomicU32 = AtomicU32::new(0);
 
 /// Initialize LPC subsystem.
 pub fn init() {
-    // // kprintln!("    LPC subsystem: initialized (max_ports={}, max_msgs={})", MAX_PORTS, MAX_PORT_MESSAGES)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("    LPC subsystem: initialized (max_ports={}, max_msgs={})", MAX_PORTS, MAX_PORT_MESSAGES);
     // Allocate the registry out of the non-paged pool. A `static`
     // for the registry would land in the BSS / data section of
     // the kernel image, and the UEFI PE loader is known to
@@ -356,7 +363,10 @@ fn lock_registry() -> Option<RegGuard> {
     // SAFETY: the pointer is set once during init() and is never freed
     // (the pool owns the memory for the rest of the kernel's lifetime).
     let reg = unsafe { &mut *ptr };
-    Some(RegGuard { _reg_guard: guard, reg })
+    Some(RegGuard {
+        _reg_guard: guard,
+        reg,
+    })
 }
 
 /// Create a server-side connection port. The port is registered
@@ -403,6 +413,7 @@ pub fn create_connection_port(name: &[u16], owner_pid: u64) -> Option<u32> {
     p.head = 0;
     p.tail = 0;
     p.connected = false;
+    p.state = port::PortState::Initializing;
     reg.count = reg.count + 1;
     Some(idx as u32)
 }
@@ -411,11 +422,7 @@ pub fn create_connection_port(name: &[u16], owner_pid: u64) -> Option<u32> {
 /// communication port for the client and a paired communication
 /// port for the server. Returns the client's port index; the
 /// server's port index is written into `*server_index`.
-pub fn connect_port(
-    server_index: u32,
-    owner_pid: u64,
-    server_index_out: &mut u32,
-) -> Option<u32> {
+pub fn connect_port(server_index: u32, owner_pid: u64, server_index_out: &mut u32) -> Option<u32> {
     let g = match lock_registry() {
         Some(g) => g,
         None => return None,
@@ -458,6 +465,7 @@ pub fn connect_port(
         (*cp).head = 0;
         (*cp).tail = 0;
         (*cp).connected = true;
+        (*cp).state = port::PortState::Active;
     }
     reg.count = reg.count + 1;
 
@@ -477,6 +485,7 @@ pub fn connect_port(
         (*sp).head = 0;
         (*sp).tail = 0;
         (*sp).connected = true;
+        (*sp).state = port::PortState::Active;
 
         // Wire the client's peer_index to the server comm port
         // now that we know its index.
@@ -490,6 +499,7 @@ pub fn connect_port(
         let server_ptr = reg.ports.as_mut_ptr();
         (*server_ptr.add(server_index as usize)).peer_index = server_comm_idx as u32;
         (*server_ptr.add(server_index as usize)).connected = true;
+        (*server_ptr.add(server_index as usize)).state = port::PortState::Active;
     }
 
     *server_index_out = server_comm_idx as u32;
@@ -516,12 +526,19 @@ pub fn send(port_index: u32, msg: &LpcMessage) -> Option<usize> {
     // Look up the local port's peer.
     let connected: bool;
     let peer_index: u32;
+    let max_message_length: u32;
     unsafe {
         let p = reg.ports.as_mut_ptr().add(port_index as usize);
         connected = (*p).connected;
         peer_index = (*p).peer_index;
+        max_message_length = (*p).attributes.max_message_length;
     }
     if !connected {
+        return None;
+    }
+    // `NtAlpcCreatePort` records the port's message-size limit; a larger body
+    // must be rejected instead of being silently truncated to the inline buffer.
+    if msg.data_len > max_message_length {
         return None;
     }
     if (peer_index as usize) >= reg.count as usize {
@@ -542,7 +559,7 @@ pub fn send(port_index: u32, msg: &LpcMessage) -> Option<usize> {
     let slot = (head as usize) % MAX_PORT_MESSAGES;
     let copy_len;
     unsafe {
-        // // kprintln!("    [LPC DBG] send: writing header")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("    [LPC DBG] send: writing header");
         let dst = reg.messages.as_mut_ptr().add(slot);
         // Header copy: field-by-field to avoid a non-temporal SSE
         // store for the aggregate (which silently fails on UC
@@ -556,27 +573,27 @@ pub fn send(port_index: u32, msg: &LpcMessage) -> Option<usize> {
         (*dst).header.sender_tid = src_hdr.sender_tid;
         (*dst).header.client_pid = src_hdr.client_pid;
         (*dst).header.client_tid = src_hdr.client_tid;
-        // // kprintln!("    [LPC DBG] send: header written")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("    [LPC DBG] send: header written");
         let cap = (*dst).data.len();
         copy_len = core::cmp::min(msg.data_len as usize, cap);
-        // // kprintln!("    [LPC DBG] send: copy_len={}", copy_len)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("    [LPC DBG] send: copy_len={}", copy_len);
         // Byte-by-byte copy to avoid `(*dst).data[i] = msg.data[i]`
         // which the compiler can lower to a non-temporal SSE store
         // (same UC-memory issue as the name copy above).
         let dst_data = (*dst).data.as_mut_ptr();
         let src_data = msg.data.as_ptr();
         for i in 0..copy_len {
-            // // kprintln!("    [LPC DBG]   send copying i={}", i)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("    [LPC DBG]   send copying i={}", i);
             core::ptr::write(dst_data.add(i), core::ptr::read(src_data.add(i)));
         }
-        // // kprintln!("    [LPC DBG] send: data copied")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("    [LPC DBG] send: data copied");
         (*dst).data_len = copy_len as u32;
 
-        // // kprintln!("    [LPC DBG] send: updating peer port head/pending at idx={}", peer_index)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("    [LPC DBG] send: updating peer port head/pending at idx={}", peer_index);
         let p = reg.ports.as_mut_ptr().add(peer_index as usize);
         (*p).head = head.wrapping_add(1);
         (*p).pending = pending + 1;
-        // // kprintln!("    [LPC DBG] send: peer updated")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("    [LPC DBG] send: peer updated");
     }
     Some(copy_len)
 }
@@ -633,10 +650,18 @@ pub fn receive(port_index: u32) -> Option<LpcMessage> {
 }
 
 /// Counters for the smoke test.
-pub fn connect_count() -> u64 { CONNECT_COUNT.load(Ordering::Relaxed) }
-pub fn send_count() -> u64 { SEND_COUNT.load(Ordering::Relaxed) }
-pub fn recv_count() -> u64 { RECV_COUNT.load(Ordering::Relaxed) }
-pub fn total_messages() -> u32 { TOTAL_MESSAGES.load(Ordering::Relaxed) }
+pub fn connect_count() -> u64 {
+    CONNECT_COUNT.load(Ordering::Relaxed)
+}
+pub fn send_count() -> u64 {
+    SEND_COUNT.load(Ordering::Relaxed)
+}
+pub fn recv_count() -> u64 {
+    RECV_COUNT.load(Ordering::Relaxed)
+}
+pub fn total_messages() -> u32 {
+    TOTAL_MESSAGES.load(Ordering::Relaxed)
+}
 pub fn port_count() -> u32 {
     let g = match lock_registry() {
         Some(g) => g,
@@ -648,6 +673,21 @@ pub fn port_count() -> u32 {
 /// Re-export of the LPC smoke test. The full implementation
 /// lives in the `smoke` submodule; this re-export keeps the
 /// call site readable as `lpc::smoke_test()`.
-pub fn smoke_test() -> bool { smoke::smoke_test() }
+pub fn smoke_test() -> bool {
+    smoke::smoke_test()
+}
 
 pub mod smoke;
+
+pub mod api;
+pub mod async_ops;
+pub mod attributes;
+pub mod callback;
+pub mod connection;
+pub mod direct;
+pub mod port;
+pub mod queue;
+pub mod section;
+pub mod security;
+pub mod tests;
+pub mod waitqueue;

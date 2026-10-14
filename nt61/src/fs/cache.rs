@@ -11,19 +11,19 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
-use alloc::collections::{BTreeMap, VecDeque};
-use hashbrown::HashMap;
 use crate::ke::sync::Spinlock;
-use core::sync::atomic::{AtomicU64, AtomicUsize, AtomicBool, Ordering};
+use alloc::collections::{BTreeMap, VecDeque};
+use alloc::vec::Vec;
+use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use hashbrown::HashMap;
 
 pub const CACHE_BLOCK_SIZE: usize = 4096;
 pub const CACHE_VIEW_SIZE: usize = 256 * 1024;
 pub const MAX_CACHE_BLOCKS: usize = 16384; // 64 MB cache
 
 /// Read-ahead configuration
-pub const READAHEAD_MIN: usize = 4;   // Minimum read-ahead pages
-pub const READAHEAD_MAX: usize = 32;  // Maximum read-ahead pages
+pub const READAHEAD_MIN: usize = 4; // Minimum read-ahead pages
+pub const READAHEAD_MAX: usize = 32; // Maximum read-ahead pages
 pub const SEQUENTIAL_THRESHOLD: u32 = 3; // Accesses to trigger sequential readahead
 
 /// Write-back configuration
@@ -46,9 +46,9 @@ pub enum CoherencyMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EvictionPolicy {
-    LRU,  // Least Recently Used
-    LFU,  // Least Frequently Used
-    ARC,  // Adaptive Replacement Cache
+    LRU, // Least Recently Used
+    LFU, // Least Frequently Used
+    ARC, // Adaptive Replacement Cache
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,13 +69,13 @@ pub struct CacheBlock {
     pub block_number: u64,
     pub state: CacheBlockState,
     pub ref_count: u32,
-    pub access_count: u32,  // For LFU
+    pub access_count: u32, // For LFU
     pub lru_prev: usize,
     pub lru_next: usize,
     pub pfn: u64,
     pub dirty_time: u64,
     pub access_time: u64,
-    pub sequence_id: u64,   // For sequential detection
+    pub sequence_id: u64, // For sequential detection
 }
 
 impl CacheBlock {
@@ -108,9 +108,10 @@ impl CacheBlock {
     }
 
     pub fn can_evict(&self) -> bool {
-        !self.is_pinned() && !self.is_locked() &&
-        self.state != CacheBlockState::Reading &&
-        self.state != CacheBlockState::Writing
+        !self.is_pinned()
+            && !self.is_locked()
+            && self.state != CacheBlockState::Reading
+            && self.state != CacheBlockState::Writing
     }
 }
 
@@ -139,10 +140,7 @@ impl ReadAheadState {
         if block_number == self.last_block + 1 {
             self.sequential_count += 1;
             if self.sequential_count >= SEQUENTIAL_THRESHOLD {
-                self.window_size = core::cmp::min(
-                    self.window_size * 2,
-                    READAHEAD_MAX
-                );
+                self.window_size = core::cmp::min(self.window_size * 2, READAHEAD_MAX);
             }
         } else {
             self.sequential_count = 0;
@@ -208,19 +206,29 @@ impl CacheStatistics {
         let hits = self.hits.load(Ordering::Relaxed);
         let misses = self.misses.load(Ordering::Relaxed);
         let total = hits + misses;
-        if total == 0 { 0.0 } else { (hits as f32) / (total as f32) * 100.0 }
+        if total == 0 {
+            0.0
+        } else {
+            (hits as f32) / (total as f32) * 100.0
+        }
     }
 
     pub fn readahead_effectiveness(&self) -> f32 {
         let hits = self.readahead_hits.load(Ordering::Relaxed);
         let misses = self.readahead_misses.load(Ordering::Relaxed);
         let total = hits + misses;
-        if total == 0 { 0.0 } else { (hits as f32) / (total as f32) * 100.0 }
+        if total == 0 {
+            0.0
+        } else {
+            (hits as f32) / (total as f32) * 100.0
+        }
     }
 
     pub fn dirty_percentage(&self, total_blocks: usize) -> f32 {
         let dirty = self.dirty_blocks.load(Ordering::Relaxed);
-        if total_blocks == 0 { 0.0 } else {
+        if total_blocks == 0 {
+            0.0
+        } else {
             (dirty as f32) / (total_blocks as f32) * 100.0
         }
     }
@@ -281,7 +289,9 @@ impl CacheManager {
 
             // Update read-ahead state
             let time = current_time();
-            let state = self.readahead_state.entry(file_id)
+            let state = self
+                .readahead_state
+                .entry(file_id)
                 .or_insert_with(ReadAheadState::new);
             state.update(block_number, time);
 
@@ -530,7 +540,9 @@ impl CacheManager {
             timestamp: current_time(),
         };
         self.invalidation_queue.push_back(notif);
-        self.stats.coherency_invalidations.fetch_add(1, Ordering::Relaxed);
+        self.stats
+            .coherency_invalidations
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn process_invalidations(&mut self) {
@@ -699,7 +711,8 @@ pub fn cc_pin_block(file_id: u64, block_number: u64) -> Result<usize, ()> {
     let mut cache = CACHE_MANAGER.lock();
     let cache = cache.as_mut().ok_or(())?;
 
-    let block_idx = cache.lookup(file_id, block_number)
+    let block_idx = cache
+        .lookup(file_id, block_number)
         .or_else(|| cache.allocate(file_id, block_number))
         .ok_or(())?;
 
@@ -729,7 +742,9 @@ pub fn cc_statistics() -> Option<CacheStatistics> {
         readahead_hits: AtomicU64::new(c.stats.readahead_hits.load(Ordering::Relaxed)),
         readahead_misses: AtomicU64::new(c.stats.readahead_misses.load(Ordering::Relaxed)),
         writebacks: AtomicU64::new(c.stats.writebacks.load(Ordering::Relaxed)),
-        coherency_invalidations: AtomicU64::new(c.stats.coherency_invalidations.load(Ordering::Relaxed)),
+        coherency_invalidations: AtomicU64::new(
+            c.stats.coherency_invalidations.load(Ordering::Relaxed),
+        ),
     })
 }
 

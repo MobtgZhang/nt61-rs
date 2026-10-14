@@ -9,9 +9,9 @@
 //! Windows 7 compatibility. Full job accounting and limits will be added
 //! in future phases.
 
-use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use alloc::vec::Vec;
 use crate::ke::sync::Spinlock;
+use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 /// Job object structure (EJOB in Windows terminology)
 ///
@@ -182,9 +182,11 @@ impl JobObject {
     pub fn set_cpu_limit(&self, limit_100ns: u64) {
         self.cpu_time_limit.store(limit_100ns, Ordering::Release);
         if limit_100ns > 0 {
-            self.flags.fetch_or(flags::CPU_LIMIT_ENABLED, Ordering::Release);
+            self.flags
+                .fetch_or(flags::CPU_LIMIT_ENABLED, Ordering::Release);
         } else {
-            self.flags.fetch_and(!flags::CPU_LIMIT_ENABLED, Ordering::Release);
+            self.flags
+                .fetch_and(!flags::CPU_LIMIT_ENABLED, Ordering::Release);
         }
     }
 
@@ -192,9 +194,11 @@ impl JobObject {
     pub fn set_memory_limit(&self, limit_bytes: u64) {
         self.job_memory_limit.store(limit_bytes, Ordering::Release);
         if limit_bytes > 0 {
-            self.flags.fetch_or(flags::MEMORY_LIMIT_ENABLED, Ordering::Release);
+            self.flags
+                .fetch_or(flags::MEMORY_LIMIT_ENABLED, Ordering::Release);
         } else {
-            self.flags.fetch_and(!flags::MEMORY_LIMIT_ENABLED, Ordering::Release);
+            self.flags
+                .fetch_and(!flags::MEMORY_LIMIT_ENABLED, Ordering::Release);
         }
     }
 
@@ -234,7 +238,10 @@ pub fn create_job() -> Result<u64, u32> {
 /// Returns a reference to the job if it exists.
 pub fn open_job(job_id: u64) -> Option<*const JobObject> {
     let table = JOB_TABLE.lock();
-    table.iter().find(|j| j.job_id == job_id).map(|j| j as *const JobObject)
+    table
+        .iter()
+        .find(|j| j.job_id == job_id)
+        .map(|j| j as *const JobObject)
 }
 
 /// Assign a process to a job

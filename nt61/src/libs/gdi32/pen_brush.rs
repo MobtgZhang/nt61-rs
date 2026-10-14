@@ -78,9 +78,23 @@ pub unsafe extern "C" fn CreateBrushIndirect(_log_brush: *const ()) -> HBRUSH {
 
 /// `CreateFontW` — placeholder.
 pub unsafe extern "C" fn CreateFontW(
-    _h: i32, _w: i32, _e: i32, _o: i32, _w2: i32, _b: u32, _i: u32, _u: u32, _s: u32,
-    _cp: u32, _o2: u32, _q: u32, _p: u32, _f: *const u16,
-) -> HFONT { alloc_gdi_handle() as HFONT }
+    _h: i32,
+    _w: i32,
+    _e: i32,
+    _o: i32,
+    _w2: i32,
+    _b: u32,
+    _i: u32,
+    _u: u32,
+    _s: u32,
+    _cp: u32,
+    _o2: u32,
+    _q: u32,
+    _p: u32,
+    _f: *const u16,
+) -> HFONT {
+    alloc_gdi_handle() as HFONT
+}
 
 /// `SelectObject` — return the previously selected object.
 pub extern "C" fn SelectObject(_dc: HDC, obj: *mut core::ffi::c_void) -> *mut core::ffi::c_void {
@@ -89,7 +103,11 @@ pub extern "C" fn SelectObject(_dc: HDC, obj: *mut core::ffi::c_void) -> *mut co
 
 /// `DeleteObject` — return 1 if the handle was known.
 pub unsafe extern "C" fn DeleteObject(obj: *mut core::ffi::c_void) -> BOOL {
-    if has_gdi_handle(obj as u64) { 1 } else { 0 }
+    if has_gdi_handle(obj as u64) {
+        1
+    } else {
+        0
+    }
 }
 
 /// `GetStockObject` — return NULL (the stub has no real

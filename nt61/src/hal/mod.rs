@@ -30,20 +30,20 @@ pub mod riscv64;
 // Common HAL submodules
 pub mod pit {
     //! Timer interface
-    #[cfg(target_arch = "x86_64")]
-    pub use crate::hal::x86_64::pit::*;
     #[cfg(not(target_arch = "x86_64"))]
     pub use crate::hal::common::pit::*;
+    #[cfg(target_arch = "x86_64")]
+    pub use crate::hal::x86_64::pit::*;
 }
 
 pub mod serial {
     //! Serial interface
-    #[cfg(target_arch = "x86_64")]
-    pub use crate::hal::x86_64::serial::*;
     #[cfg(target_arch = "aarch64")]
     pub use crate::hal::aarch64::serial::*;
     #[cfg(target_arch = "riscv64")]
     pub use crate::hal::riscv64::serial::*;
+    #[cfg(target_arch = "x86_64")]
+    pub use crate::hal::x86_64::serial::*;
     // LoongArch64: the canonical serial implementation lives in
     // `crate::arch::loongarch64::serial` (mirrors `crate::hal::loongarch64`
     // for the basic init/write helpers). Re-export from the arch path so
@@ -60,18 +60,18 @@ pub mod serial {
 
 pub mod io_port {
     //! I/O port interface
-    #[cfg(target_arch = "x86_64")]
-    pub use crate::hal::x86_64::io_port::*;
     #[cfg(not(target_arch = "x86_64"))]
     pub use crate::hal::common::io_port::*;
+    #[cfg(target_arch = "x86_64")]
+    pub use crate::hal::x86_64::io_port::*;
 }
 
 pub mod framebuffer {
     //! Framebuffer interface
-    #[cfg(target_arch = "x86_64")]
-    pub use crate::hal::x86_64::framebuffer::*;
     #[cfg(not(target_arch = "x86_64"))]
     pub use crate::hal::common::framebuffer::*;
+    #[cfg(target_arch = "x86_64")]
+    pub use crate::hal::x86_64::framebuffer::*;
 }
 
 // Architecture-specific HAL submodules. These exist only on x86_64;
@@ -134,7 +134,7 @@ pub mod keyboard_input {
 pub fn init() {
     #[cfg(target_arch = "x86_64")]
     {
-//         // // // crate::kprintln!("  Initializing x86_64 HAL...")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+        //         // // // crate::kprintln!("  Initializing x86_64 HAL...");
         x86_64::init();
     }
 
@@ -146,13 +146,13 @@ pub fn init() {
 
     #[cfg(target_arch = "riscv64")]
     {
-//         // // // crate::kprintln!("  Initializing RISC-V64 HAL...")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+        //         // // // crate::kprintln!("  Initializing RISC-V64 HAL...");
         riscv64::init();
     }
 
     #[cfg(target_arch = "loongarch64")]
     {
-//         // // // crate::kprintln!("  Initializing LoongArch64 HAL...")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+        //         // // // crate::kprintln!("  Initializing LoongArch64 HAL...");
         loongarch64::init();
     }
 }
@@ -194,7 +194,11 @@ pub fn hal_initialize_processor(cpu_id: u32, alloc_ist: bool) -> i32 {
         #[cfg(target_arch = "x86_64")]
         crate::hal::x86_64::HalInitializeProcessor(cpu_id, alloc_ist)
     }
-    #[cfg(any(target_arch = "aarch64", target_arch = "riscv64", target_arch = "loongarch64"))]
+    #[cfg(any(
+        target_arch = "aarch64",
+        target_arch = "riscv64",
+        target_arch = "loongarch64"
+    ))]
     {
         let _ = (cpu_id, alloc_ist);
         0

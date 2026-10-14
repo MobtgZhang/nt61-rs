@@ -11,7 +11,7 @@
 use crate::hal::common::pci;
 #[cfg(target_arch = "x86_64")]
 #[cfg(target_arch = "x86_64")]
-use crate::hal::x86_64::dma::{HalAllocateCommonBuffer, HalFreeCommonBuffer, AdapterInfo};
+use crate::hal::x86_64::dma::{AdapterInfo, HalAllocateCommonBuffer, HalFreeCommonBuffer};
 use crate::kprintln;
 
 /// AHCI PCI class: storage (0x01) / SATA (0x06) / AHCI (0x01).
@@ -103,64 +103,79 @@ pub struct AhciPrd {
 impl AhciPrd {
     /// Maximum byte count per PRD entry (64KB)
     pub const MAX_BYTE_COUNT: u32 = 0x10000;
-    
+
     /// EOT flag - last entry in the PRD table
     pub const EOT: u32 = 1 << 31;
-    
+
     /// IOC flag - generate interrupt when this entry completes
     pub const IOC: u32 = 1 << 30;
-    
+
     /// Create a new PRD entry
-    /// 
+    ///
     /// # Arguments
     /// * `phys_addr` - Physical address of the data buffer (must be word-aligned)
     /// * `byte_count` - Number of bytes to transfer (0 = 64KB, max 64KB)
-    /// 
-    /// # Panics
-    /// Panics if byte_count exceeds 64KB
-    pub fn new(phys_addr: u64, byte_count: u32) -> Self {
-        assert!(byte_count <= Self::MAX_BYTE_COUNT, "PRD byte count exceeds 64KB");
-        let bytes = if byte_count == 0 { 0u32 } else { byte_count - 1 };
-        Self {
+    ///
+    /// Create a PRD entry, or `None` when the byte count cannot be encoded.
+    ///
+    /// Per the AHCI spec (Serial ATA IO section 5.3.2.1.3), DescInfo bits
+    /// 15:0 hold `byte_count - 1`, and a stored value of 0 means 65536. So a
+    /// requested count of exactly 64 KB must encode as 0, not as 0xFFFF.
+    /// Returning `None` instead of asserting keeps a malformed transfer from
+    /// turning into a panic (and therefore a bugcheck) on the driver path.
+    pub fn new(phys_addr: u64, byte_count: u32) -> Option<Self> {
+        if byte_count > Self::MAX_BYTE_COUNT {
+            return None;
+        }
+        let bytes = if byte_count == 0 || byte_count == Self::MAX_BYTE_COUNT {
+            0u32
+        } else {
+            byte_count - 1
+        };
+        Some(Self {
             data_base: phys_addr as u32,
             data_base_upper: (phys_addr >> 32) as u32,
             reserved: 0,
-            desc_info: bytes & 0x3FFFF, // 18 bits for byte count
-        }
+            desc_info: bytes & 0xFFFF,
+        })
     }
-    
+
     /// Create a PRD entry with EOT (End of Table) flag
-    pub fn with_eot(phys_addr: u64, byte_count: u32) -> Self {
-        let mut prd = Self::new(phys_addr, byte_count);
+    pub fn with_eot(phys_addr: u64, byte_count: u32) -> Option<Self> {
+        let mut prd = Self::new(phys_addr, byte_count)?;
         prd.desc_info |= Self::EOT;
-        prd
+        Some(prd)
     }
-    
+
     /// Create a PRD entry with Interrupt on Completion flag
-    pub fn with_ioc(phys_addr: u64, byte_count: u32) -> Self {
-        let mut prd = Self::new(phys_addr, byte_count);
+    pub fn with_ioc(phys_addr: u64, byte_count: u32) -> Option<Self> {
+        let mut prd = Self::new(phys_addr, byte_count)?;
         prd.desc_info |= Self::IOC;
-        prd
+        Some(prd)
     }
-    
+
     /// Create a PRD entry with both EOT and IOC flags
-    pub fn with_all(phys_addr: u64, byte_count: u32) -> Self {
-        let mut prd = Self::new(phys_addr, byte_count);
+    pub fn with_all(phys_addr: u64, byte_count: u32) -> Option<Self> {
+        let mut prd = Self::new(phys_addr, byte_count)?;
         prd.desc_info |= Self::EOT | Self::IOC;
-        prd
+        Some(prd)
     }
-    
+
     /// Get the byte count from desc_info (0 means 64KB)
     pub fn byte_count(&self) -> u32 {
         let bc = self.desc_info & 0x3FFFF;
-        if bc == 0 { Self::MAX_BYTE_COUNT } else { bc + 1 }
+        if bc == 0 {
+            Self::MAX_BYTE_COUNT
+        } else {
+            bc + 1
+        }
     }
-    
+
     /// Check if EOT flag is set
     pub fn is_eot(&self) -> bool {
         (self.desc_info & Self::EOT) != 0
     }
-    
+
     /// Get the physical address
     pub fn phys_addr(&self) -> u64 {
         (self.data_base as u64) | ((self.data_base_upper as u64) << 32)
@@ -226,6 +241,8 @@ static mut DISK_INFO: [Option<DiskInfo>; 8] = [None; 8];
 /// - 256 bytes FIS
 /// Total: 4096 bytes aligned
 const AHCI_CMD_STRUCT_SIZE: usize = 4096;
+/// Command table region inside one `AHCI_CMD_STRUCT_SIZE` block.
+pub const AHCI_CMD_TABLE_SIZE: usize = 2048;
 
 /// Number of pre-allocated command structures per controller
 const AHCI_CMD_STRUCTS_PER_CTRL: usize = 8;
@@ -316,8 +333,18 @@ unsafe fn init_dma_pool(controller_idx: usize) -> bool {
             // Zero the buffer
             core::ptr::write_bytes(virt, 0, AHCI_CMD_STRUCT_SIZE);
 
-            // Use virtual address as physical (identity mapping for low memory)
+            // Identity mapping is assumed here, but the PRDT encodes the
+            // address as a 32-bit base plus a 32-bit upper half, and the
+            // controller may be restricted to a 32-bit DMA window. Reject any
+            // buffer that cannot be described by a PRDT entry rather than
+            // handing the hardware a truncated address.
             let phys = virt as u64;
+            if phys > 0xFFFF_FFFF {
+                return false;
+            }
+            if phys % 4 != 0 {
+                return false;
+            }
 
             // Layout: [cmd_list: 1KB][cmd_table: 2KB][fis: 256B][unused: remainder]
             buf.cmd_list_virt = virt;
@@ -372,13 +399,13 @@ fn push_ahci(c: AhciController) {
     }
 }
 
-pub fn count() -> usize { unsafe { AHCI_COUNT } }
+pub fn count() -> usize {
+    unsafe { AHCI_COUNT }
+}
 
 /// Read a 32-bit value from MMIO with volatile access.
 fn mmio_read32(base: u64, offset: u32) -> u32 {
-    unsafe {
-        core::ptr::read_volatile((base + offset as u64) as *const u32)
-    }
+    unsafe { core::ptr::read_volatile((base + offset as u64) as *const u32) }
 }
 
 /// Write a 32-bit value to MMIO with volatile access.
@@ -423,27 +450,29 @@ fn check_port_status(base: u64, port_offset: u64) -> (u32, u32) {
 fn start_port(base: u64, port_offset: u64) -> bool {
     // Clear any pending interrupts
     mmio_write32(base, (port_offset + PORT_IS as u64) as u32, 0xFFFFFFFF);
-    
+
     // Read current command
     let mut cmd = mmio_read32(base, (port_offset + PORT_CMD as u64) as u32);
-    
+
     // Wait for CR to clear if set (with larger timeout)
     if cmd & CMD_CR != 0 {
         let mut timeout = 10000;
-        while timeout > 0 && (mmio_read32(base, (port_offset + PORT_CMD as u64) as u32) & CMD_CR != 0) {
+        while timeout > 0
+            && (mmio_read32(base, (port_offset + PORT_CMD as u64) as u32) & CMD_CR != 0)
+        {
             timeout -= 1;
             for _ in 0..100 {
                 core::hint::spin_loop();
             }
         }
     }
-    
+
     // Enable FIS receive and start
     cmd = mmio_read32(base, (port_offset + PORT_CMD as u64) as u32);
     cmd |= CMD_FRE;
     cmd |= CMD_ST;
     mmio_write32(base, (port_offset + PORT_CMD as u64) as u32, cmd);
-    
+
     // Wait for both FR and CR (with larger timeout for QEMU)
     let mut timeout = 10000;
     while timeout > 0 {
@@ -457,19 +486,19 @@ fn start_port(base: u64, port_offset: u64) -> bool {
             core::hint::spin_loop();
         }
     }
-    
-    // kprintln!("[AHCI] Port start timeout, CMD=0x{:08x}",   // kprintln disabled (memcpy crash workaround)
-//         mmio_read32(base, (port_offset + PORT_CMD as u64) as u32));
+
+    // kprintln!("[AHCI] Port start timeout, CMD=0x{:08x}",
+    //         mmio_read32(base, (port_offset + PORT_CMD as u64) as u32));
     false
 }
 
 fn stop_port(base: u64, port_offset: u64) {
     let mut cmd = mmio_read32(base, (port_offset + PORT_CMD as u64) as u32);
-    
+
     // Clear ST and FRE
     cmd &= !(CMD_ST | CMD_FRE);
     mmio_write32(base, (port_offset + PORT_CMD as u64) as u32, cmd);
-    
+
     // Wait for CR and FR to clear
     let mut timeout = 1000;
     while timeout > 0 {
@@ -486,14 +515,14 @@ fn stop_port(base: u64, port_offset: u64) {
 
 fn probe_port(base: u64, port: usize) -> Option<DiskInfo> {
     let port_offset = 0x100 + (port as u64 * 0x80);
-    
+
     // Check if port is implemented
     let pi = mmio_read32(base, HBA_PI);
-    
+
     if pi & (1 << port) == 0 {
         return None;
     }
-    
+
     // Check device presence and interface power state
     let (det, ipm) = check_port_status(base, port_offset);
 
@@ -536,24 +565,24 @@ fn probe_port(base: u64, port: usize) -> Option<DiskInfo> {
 
 fn init_controller(c: &mut AhciController) -> bool {
     let base = c.bar5_phys;
-    if base == 0 { 
-        return false; 
+    if base == 0 {
+        return false;
     }
-    
+
     // Use identity mapping for QEMU's AHCI (BAR address in low memory)
     let mmio = base;
-    
+
     c.mmio_base = mmio;
-    
+
     // Read capabilities
     c.cap = mmio_read32(mmio, HBA_CAP);
     c.ghc = mmio_read32(mmio, HBA_GHC);
     c.pi = mmio_read32(mmio, HBA_PI);
     c.vs = mmio_read32(mmio, HBA_VS);
-    
+
     // Get number of ports
     c.n_ports = (c.cap & CAP_NP) + 1;
-    
+
     let version = (c.vs >> 16) & 0xFFFF;
     let version_minor = c.vs & 0xFFFF;
     // Validate that the controller implements a known AHCI version.
@@ -587,7 +616,9 @@ fn init_controller(c: &mut AhciController) -> bool {
     // Probe all ports
     let mut disks_found = 0u32;
     for port in 0..c.n_ports as usize {
-        if port >= 32 { break; }
+        if port >= 32 {
+            break;
+        }
 
         if c.pi & (1 << port) != 0 {
             if probe_port(mmio, port).is_some() {
@@ -618,7 +649,9 @@ pub fn init() {
                 }
             }
 
-            if let Some(info) = crate::drivers::bus::pci_bus::find_pci(dev.bus, dev.device, dev.function) {
+            if let Some(info) =
+                crate::drivers::bus::pci_bus::find_pci(dev.bus, dev.device, dev.function)
+            {
                 if let Some(bar5) = first_mmio_bar(&info) {
                     let mut c = AhciController {
                         bar5_phys: bar5,
@@ -635,7 +668,9 @@ pub fn init() {
                         // Roll back the DMA pool reserved for this slot when
                         // the controller fails to initialize.
                         // SAFETY: single-threaded init context.
-                        unsafe { release_dma_pool(ctrl_idx); }
+                        unsafe {
+                            release_dma_pool(ctrl_idx);
+                        }
                     }
                 }
             }
@@ -644,31 +679,33 @@ pub fn init() {
 }
 
 pub fn smoke_test() -> bool {
-    // kprintln!("[AHCI SMOKE] running AHCI controller smoke test...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[AHCI SMOKE] running AHCI controller smoke test...");
     unsafe {
         for slot in AHCI_CONTROLLERS.iter().take(AHCI_COUNT) {
             if let Some(c) = slot {
-                if !c.initialised { return false; }
-                if (c.ghc & GHC_AE) == 0 {
-                    // kprintln!("[AHCI SMOKE FAIL] GHC.AE not set")  // kprintln disabled (memcpy crash workaround);
+                if !c.initialised {
                     return false;
                 }
-                // kprintln!("[AHCI SMOKE] ctrl CAP=0x{:08x} GHC=0x{:08x} PI=0x{:08x} ports={}",  // kprintln disabled (memcpy crash workaround)
-//                     c.cap, c.ghc, c.pi, c.n_ports);
+                if (c.ghc & GHC_AE) == 0 {
+                    // kprintln!("[AHCI SMOKE FAIL] GHC.AE not set");
+                    return false;
+                }
+                // kprintln!("[AHCI SMOKE] ctrl CAP=0x{:08x} GHC=0x{:08x} PI=0x{:08x} ports={}",
+                //                     c.cap, c.ghc, c.pi, c.n_ports);
             }
         }
     }
-    // kprintln!("[AHCI SMOKE OK] AHCI controllers healthy")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[AHCI SMOKE OK] AHCI controllers healthy");
     true
 }
 
 pub fn read_sector(channel: usize, port: usize, lba: u32, buf: &mut [u8]) -> bool {
     if buf.len() < 512 {
-        // kprintln!("[AHCI] Buffer too small")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] Buffer too small");
         return false;
     }
     if channel >= unsafe { AHCI_COUNT } {
-        // kprintln!("[AHCI] Invalid channel {}", channel)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] Invalid channel {}", channel);
         return false;
     }
 
@@ -701,18 +738,18 @@ unsafe fn ahci_read_sector_pio(
 
     // Check if port is implemented
     if (ctrl.pi & (1 << port)) == 0 {
-        // kprintln!("[AHCI] Port {} not implemented", port)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] Port {} not implemented", port);
         return false;
     }
 
     // Check device presence
     let (det, ipm) = check_port_status(mmio, port_offset);
     if det != SSTS_DET_PRESENT && det != SSTS_DET_COMM {
-        // kprintln!("[AHCI] Port {} no device", port)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] Port {} no device", port);
         return false;
     }
     if ipm != 1 {
-        // kprintln!("[AHCI] Port {} not active", port)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] Port {} not active", port);
         return false;
     }
 
@@ -724,7 +761,7 @@ unsafe fn ahci_read_sector_pio(
     let cmd_buf = match allocate_ahci_dma(ctrl_idx) {
         Some(b) => b,
         None => {
-            // kprintln!("[AHCI] Failed to allocate command buffer")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[AHCI] Failed to allocate command buffer");
             return false;
         }
     };
@@ -733,7 +770,7 @@ unsafe fn ahci_read_sector_pio(
     let dma_size = 512;
     let dma_ptr = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, dma_size);
     if dma_ptr.is_null() {
-        // kprintln!("[AHCI] Failed to allocate DMA buffer")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] Failed to allocate DMA buffer");
         free_ahci_dma(ctrl_idx, cmd_buf);
         return false;
     }
@@ -762,84 +799,87 @@ unsafe fn ahci_read_sector_pio(
 
     // Clear structures using RAM writes (not MMIO)
     for i in 0..256 {
-        core::ptr::write_volatile(
-            cmd_list_virt.add(i * 4) as *mut u32,
-            0u32
-        );
+        core::ptr::write_volatile(cmd_list_virt.add(i * 4) as *mut u32, 0u32);
     }
     for i in 0..1024 {
-        core::ptr::write_volatile(
-            cmd_table_virt.add(i * 4) as *mut u32,
-            0u32
-        );
+        core::ptr::write_volatile(cmd_table_virt.add(i * 4) as *mut u32, 0u32);
     }
 
     // Set up command header: 1 PRD, Write=0 (read), C=1
     core::ptr::write_volatile(cmd_list_virt as *mut u32, 0x00050001u32);
     core::ptr::write_volatile(
         (cmd_list_virt as *mut u8).add(4) as *mut u32,
-        cmd_table_phys as u32
+        cmd_table_phys as u32,
     );
     core::ptr::write_volatile(
         (cmd_list_virt as *mut u8).add(8) as *mut u32,
-        (cmd_table_phys >> 32) as u32
+        (cmd_table_phys >> 32) as u32,
     );
 
     // Set up FIS buffer (H2D register FIS)
-    core::ptr::write_volatile(cmd_table_virt as *mut u32, 0x27594027u32);  // FIS type H2D, C bit set
+    core::ptr::write_volatile(cmd_table_virt as *mut u32, 0x27594027u32); // FIS type H2D, C bit set
     core::ptr::write_volatile(
         (cmd_table_virt as *mut u8).add(4) as *mut u32,
-        ATA_CMD_READ_PIO_EXT as u32
+        ATA_CMD_READ_PIO_EXT as u32,
     );
 
     // LBA (48-bit LBA)
-    core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(8) as *mut u32,
-        lba as u32
-    );
+    core::ptr::write_volatile((cmd_table_virt as *mut u8).add(8) as *mut u32, lba as u32);
     core::ptr::write_volatile(
         (cmd_table_virt as *mut u8).add(12) as *mut u32,
-        ((lba >> 8) & 0xFF) as u32
+        ((lba >> 8) & 0xFF) as u32,
     );
     core::ptr::write_volatile(
         (cmd_table_virt as *mut u8).add(16) as *mut u32,
-        ((lba >> 16) & 0xFF) as u32
+        ((lba >> 16) & 0xFF) as u32,
     );
     core::ptr::write_volatile(
         (cmd_table_virt as *mut u8).add(20) as *mut u32,
-        0x00000100u32  // Sector count = 1 in high byte
+        0x00000100u32, // Sector count = 1 in high byte
     );
     core::ptr::write_volatile(
         (cmd_table_virt as *mut u8).add(24) as *mut u32,
-        0x40u32  // Device = LBA mode
+        0x40u32, // Device = LBA mode
     );
 
     // Set up PRD for data buffer at offset 128 (256 bytes per PRD entry)
     core::ptr::write_volatile(
         (cmd_table_virt as *mut u8).add(128) as *mut u32,
-        dma_phys as u32
+        dma_phys as u32,
     );
     core::ptr::write_volatile(
         (cmd_table_virt as *mut u8).add(132) as *mut u32,
-        ((dma_phys >> 32) & 0xFFFFFFFF) as u32
+        ((dma_phys >> 32) & 0xFFFFFFFF) as u32,
     );
     core::ptr::write_volatile(
         (cmd_table_virt as *mut u8).add(136) as *mut u32,
-        (dma_size as u32 - 1) | PRD_EOT
+        (dma_size as u32 - 1) | PRD_EOT,
     );
 
     // Write port registers (these ARE MMIO writes)
-    mmio_write32(mmio, (port_offset + PORT_CLB as u64) as u32, cmd_list_phys as u32);
-    mmio_write32(mmio, (port_offset + PORT_CLBU as u64) as u32, (cmd_list_phys >> 32) as u32);
+    mmio_write32(
+        mmio,
+        (port_offset + PORT_CLB as u64) as u32,
+        cmd_list_phys as u32,
+    );
+    mmio_write32(
+        mmio,
+        (port_offset + PORT_CLBU as u64) as u32,
+        (cmd_list_phys >> 32) as u32,
+    );
     mmio_write32(mmio, (port_offset + PORT_FB as u64) as u32, fis_phys as u32);
-    mmio_write32(mmio, (port_offset + PORT_FBU as u64) as u32, (fis_phys >> 32) as u32);
+    mmio_write32(
+        mmio,
+        (port_offset + PORT_FBU as u64) as u32,
+        (fis_phys >> 32) as u32,
+    );
 
     // Clear interrupts
     mmio_write32(mmio, (port_offset + PORT_IS as u64) as u32, 0xFFFFFFFF);
 
     // Start port
     if !start_port(mmio, port_offset) {
-        // kprintln!("[AHCI] Failed to start port")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] Failed to start port");
         let _ = crate::mm::pool::free(dma_ptr);
         free_ahci_dma(ctrl_idx, cmd_buf);
         return false;
@@ -861,7 +901,7 @@ unsafe fn ahci_read_sector_pio(
 
         let tfd = mmio_read32(mmio, (port_offset + PORT_TFD as u64) as u32);
         if (tfd & (TFD_ERR as u32)) != 0 {
-            // kprintln!("[AHCI] READ error (TFD=0x{:08x}, LBA={})", tfd, lba)  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[AHCI] READ error (TFD=0x{:08x}, LBA={})", tfd, lba);
             break;
         }
 
@@ -878,9 +918,9 @@ unsafe fn ahci_read_sector_pio(
         // Copy data from DMA buffer to output
         let copy_len = core::cmp::min(512, buf.len());
         core::ptr::copy_nonoverlapping(dma_ptr, buf.as_mut_ptr(), copy_len);
-        // kprintln!("[AHCI] Read sector {} via PIO ({} bytes)", lba, copy_len)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] Read sector {} via PIO ({} bytes)", lba, copy_len);
     } else {
-        // kprintln!("[AHCI] READ timeout for LBA={}", lba)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] READ timeout for LBA={}", lba);
     }
 
     // Free DMA buffers
@@ -900,32 +940,32 @@ unsafe fn ahci_read_sector(
     if mmio == 0 {
         return false;
     }
-    
+
     let port_offset = 0x100 + (port as u64 * 0x80);
-    
+
     // Check if port is implemented
     if (ctrl.pi & (1 << port)) == 0 {
-        // kprintln!("[AHCI] Port {} not implemented", port)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] Port {} not implemented", port);
         return false;
     }
-    
+
     // Check device presence
     let (det, ipm) = check_port_status(mmio, port_offset);
     if det != SSTS_DET_PRESENT && det != SSTS_DET_COMM {
-        // kprintln!("[AHCI] Port {} no device", port)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] Port {} no device", port);
         return false;
     }
     if ipm != 1 {
-        // kprintln!("[AHCI] Port {} not active", port)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] Port {} not active", port);
         return false;
     }
-    
+
     // Allocate command structures from DMA pool
     let ctrl_idx = ctrl.controller_idx as usize;
     let cmd_buf = match allocate_ahci_dma(ctrl_idx) {
         Some(b) => b,
         None => {
-            // kprintln!("[AHCI] Failed to allocate command buffer")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[AHCI] Failed to allocate command buffer");
             return false;
         }
     };
@@ -934,7 +974,7 @@ unsafe fn ahci_read_sector(
     let dma_size = 512;
     let dma_ptr = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, dma_size);
     if dma_ptr.is_null() {
-        // kprintln!("[AHCI] Failed to allocate DMA buffer")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] Failed to allocate DMA buffer");
         free_ahci_dma(ctrl_idx, cmd_buf);
         return false;
     }
@@ -963,85 +1003,85 @@ unsafe fn ahci_read_sector(
 
     // Clear structures using RAM writes
     for i in 0..256 {
-        core::ptr::write_volatile(
-            cmd_list_virt.add(i * 4) as *mut u32,
-            0u32
-        );
+        core::ptr::write_volatile(cmd_list_virt.add(i * 4) as *mut u32, 0u32);
     }
     for i in 0..1024 {
-        core::ptr::write_volatile(
-            cmd_table_virt.add(i * 4) as *mut u32,
-            0u32
-        );
+        core::ptr::write_volatile(cmd_table_virt.add(i * 4) as *mut u32, 0u32);
     }
-    
+
     // Set up command header using RAM writes
     core::ptr::write_volatile(cmd_list_virt as *mut u32, 0x00050001u32);
     core::ptr::write_volatile(
         (cmd_list_virt as *mut u8).add(4) as *mut u32,
-        cmd_table_phys as u32
+        cmd_table_phys as u32,
     );
     core::ptr::write_volatile(
         (cmd_list_virt as *mut u8).add(8) as *mut u32,
-        (cmd_table_phys >> 32) as u32
+        (cmd_table_phys >> 32) as u32,
     );
 
     // Set up H2D Register FIS
     core::ptr::write_volatile(cmd_table_virt as *mut u32, 0x27594027u32);
     core::ptr::write_volatile(
         (cmd_table_virt as *mut u8).add(4) as *mut u32,
-        ATA_CMD_READ_DMA_EXT as u32
+        ATA_CMD_READ_DMA_EXT as u32,
     );
-    core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(8) as *mut u32,
-        lba as u32
-    );
+    core::ptr::write_volatile((cmd_table_virt as *mut u8).add(8) as *mut u32, lba as u32);
     core::ptr::write_volatile(
         (cmd_table_virt as *mut u8).add(12) as *mut u32,
-        ((lba >> 8) & 0xFF) as u32
+        ((lba >> 8) & 0xFF) as u32,
     );
     core::ptr::write_volatile(
         (cmd_table_virt as *mut u8).add(16) as *mut u32,
-        ((lba >> 16) & 0xFF) as u32
+        ((lba >> 16) & 0xFF) as u32,
     );
-    core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(20) as *mut u32,
-        0x40u32
-    );
+    core::ptr::write_volatile((cmd_table_virt as *mut u8).add(20) as *mut u32, 0x40u32);
     core::ptr::write_volatile(
         (cmd_table_virt as *mut u8).add(24) as *mut u32,
-        0x00000100u32
+        0x00000100u32,
     );
 
     // Set up PRD
     core::ptr::write_volatile(
         (cmd_table_virt as *mut u8).add(128) as *mut u32,
-        dma_phys as u32
+        dma_phys as u32,
     );
     core::ptr::write_volatile(
         (cmd_table_virt as *mut u8).add(132) as *mut u32,
-        ((dma_phys >> 32) & 0xFFFFFFFF) as u32
+        ((dma_phys >> 32) & 0xFFFFFFFF) as u32,
     );
     core::ptr::write_volatile(
         (cmd_table_virt as *mut u8).add(136) as *mut u32,
-        511 | PRD_EOT
+        511 | PRD_EOT,
     );
 
     // Stop the port first
     stop_port(mmio, port_offset);
 
     // Write port registers
-    mmio_write32(mmio, (port_offset + PORT_CLB as u64) as u32, cmd_list_phys as u32);
-    mmio_write32(mmio, (port_offset + PORT_CLBU as u64) as u32, (cmd_list_phys >> 32) as u32);
+    mmio_write32(
+        mmio,
+        (port_offset + PORT_CLB as u64) as u32,
+        cmd_list_phys as u32,
+    );
+    mmio_write32(
+        mmio,
+        (port_offset + PORT_CLBU as u64) as u32,
+        (cmd_list_phys >> 32) as u32,
+    );
     mmio_write32(mmio, (port_offset + PORT_FB as u64) as u32, fis_phys as u32);
-    mmio_write32(mmio, (port_offset + PORT_FBU as u64) as u32, (fis_phys >> 32) as u32);
+    mmio_write32(
+        mmio,
+        (port_offset + PORT_FBU as u64) as u32,
+        (fis_phys >> 32) as u32,
+    );
 
     // Clear interrupts
     mmio_write32(mmio, (port_offset + PORT_IS as u64) as u32, 0xFFFFFFFF);
 
     // Start port
     if !start_port(mmio, port_offset) {
-        // kprintln!("[AHCI] Failed to start port")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] Failed to start port");
         let _ = crate::mm::pool::free(dma_ptr);
         free_ahci_dma(ctrl_idx, cmd_buf);
         return false;
@@ -1062,7 +1102,7 @@ unsafe fn ahci_read_sector(
 
         let tfd = mmio_read32(mmio, (port_offset + PORT_TFD as u64) as u32);
         if (tfd & (TFD_ERR as u32)) != 0 {
-            // kprintln!("[AHCI] READ DMA error (TFD=0x{:08x}, LBA={})", tfd, lba)  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[AHCI] READ DMA error (TFD=0x{:08x}, LBA={})", tfd, lba);
             break;
         }
 
@@ -1079,9 +1119,9 @@ unsafe fn ahci_read_sector(
         // Copy data from DMA buffer to output buffer
         let copy_len = core::cmp::min(512, buf.len());
         core::ptr::copy_nonoverlapping(dma_ptr, buf.as_mut_ptr(), copy_len);
-        // kprintln!("[AHCI] Read sector {} succeeded (DMA, {} bytes)", lba, copy_len)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] Read sector {} succeeded (DMA, {} bytes)", lba, copy_len);
     } else {
-        // kprintln!("[AHCI] READ DMA timeout for LBA={}", lba)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] READ DMA timeout for LBA={}", lba);
     }
 
     // Free DMA buffers
@@ -1125,14 +1165,14 @@ pub(crate) unsafe fn ahci_dma_read_sectors(
 
     // Check if port is implemented
     if (ctrl.pi & (1 << port)) == 0 {
-        // kprintln!("[AHCI DMA] Port {} not implemented", port)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI DMA] Port {} not implemented", port);
         return false;
     }
 
     // Check device presence
     let (det, ipm) = check_port_status(mmio, port_offset);
     if det != SSTS_DET_PRESENT && det != SSTS_DET_COMM {
-        // kprintln!("[AHCI DMA] Port {} no device", port)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI DMA] Port {} no device", port);
         return false;
     }
     // Surface ipm non-zero as a "device not idle" abort condition - reads
@@ -1147,7 +1187,7 @@ pub(crate) unsafe fn ahci_dma_read_sectors(
     let cmd_buf = match allocate_ahci_dma(ctrl_idx) {
         Some(b) => b,
         None => {
-            // kprintln!("[AHCI DMA] Failed to allocate command buffer")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[AHCI DMA] Failed to allocate command buffer");
             return false;
         }
     };
@@ -1156,7 +1196,7 @@ pub(crate) unsafe fn ahci_dma_read_sectors(
     let data_size = (sectors as usize) * 512;
     let data_ptr = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, data_size);
     if data_ptr.is_null() {
-        // kprintln!("[AHCI DMA] Failed to allocate data buffer")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI DMA] Failed to allocate data buffer");
         free_ahci_dma(ctrl_idx, cmd_buf);
         return false;
     }
@@ -1188,21 +1228,28 @@ pub(crate) unsafe fn ahci_dma_read_sectors(
 
     // Build PRD table in command table (starts at offset 0x80 = 128 bytes)
     let prd_base = 0x80;
-    let prd_count = build_prd_table(cmd_table_virt, prd_base, data_phys, data_size);
+    let prd_count = match build_prd_table(cmd_table_virt, prd_base, data_phys, data_size) {
+        Some(count) => count,
+        None => {
+            let _ = crate::mm::pool::free(data_ptr);
+            free_ahci_dma(ctrl_idx, cmd_buf);
+            return false;
+        }
+    };
 
     // Set up command header
     core::ptr::write_volatile(cmd_list_virt as *mut u32, 0x00050001u32);
     core::ptr::write_volatile(
         (cmd_list_virt as *mut u8).add(4) as *mut u32,
-        cmd_buf.cmd_table_phys as u32
+        cmd_buf.cmd_table_phys as u32,
     );
     core::ptr::write_volatile(
         (cmd_list_virt as *mut u8).add(8) as *mut u32,
-        ((cmd_buf.cmd_table_phys >> 32) & 0xFFFFFFFF) as u32
+        ((cmd_buf.cmd_table_phys >> 32) & 0xFFFFFFFF) as u32,
     );
     core::ptr::write_volatile(
         (cmd_list_virt as *mut u8).add(12) as *mut u32,
-        (prd_count as u32 * 16) | ((data_size as u32) & 0x0003FFFF)
+        (prd_count as u32 * 16) | ((data_size as u32) & 0x0003FFFF),
     );
 
     // Build H2D Register FIS
@@ -1211,31 +1258,53 @@ pub(crate) unsafe fn ahci_dma_read_sectors(
     core::ptr::write_volatile((fis_virt as *mut u8).add(4) as *mut u32, 0u32);
     core::ptr::write_volatile(
         (fis_virt as *mut u8).add(8) as *mut u32,
-        (lba & 0xFF) as u32 | (((lba >> 8) & 0xFF) as u32) << 8 | (((lba >> 16) & 0xFF) as u32) << 16 | (0x40u32 << 24)
+        (lba & 0xFF) as u32
+            | (((lba >> 8) & 0xFF) as u32) << 8
+            | (((lba >> 16) & 0xFF) as u32) << 16
+            | (0x40u32 << 24),
     );
     core::ptr::write_volatile(
         (fis_virt as *mut u8).add(12) as *mut u32,
-        ((lba >> 24) & 0xFF) as u32 | (((lba >> 32) & 0xFF) as u32) << 8 | (((lba >> 40) & 0xFF) as u32) << 16 | (0u32 << 24)
+        ((lba >> 24) & 0xFF) as u32
+            | (((lba >> 32) & 0xFF) as u32) << 8
+            | (((lba >> 40) & 0xFF) as u32) << 16
+            | (0u32 << 24),
     );
     core::ptr::write_volatile(
         (fis_virt as *mut u8).add(16) as *mut u32,
-        sectors as u32 | ((sectors as u32) << 8)
+        sectors as u32 | ((sectors as u32) << 8),
     );
     core::ptr::write_volatile((fis_virt as *mut u8).add(20) as *mut u32, 0u32);
 
     // Stop port and write registers
     stop_port(mmio, port_offset);
-    mmio_write32(mmio, (port_offset + PORT_CLB as u64) as u32, cmd_buf.cmd_list_phys as u32);
-    mmio_write32(mmio, (port_offset + PORT_CLBU as u64) as u32, ((cmd_buf.cmd_list_phys >> 32) & 0xFFFFFFFF) as u32);
-    mmio_write32(mmio, (port_offset + PORT_FB as u64) as u32, cmd_buf.fis_phys as u32);
-    mmio_write32(mmio, (port_offset + PORT_FBU as u64) as u32, ((cmd_buf.fis_phys >> 32) & 0xFFFFFFFF) as u32);
+    mmio_write32(
+        mmio,
+        (port_offset + PORT_CLB as u64) as u32,
+        cmd_buf.cmd_list_phys as u32,
+    );
+    mmio_write32(
+        mmio,
+        (port_offset + PORT_CLBU as u64) as u32,
+        ((cmd_buf.cmd_list_phys >> 32) & 0xFFFFFFFF) as u32,
+    );
+    mmio_write32(
+        mmio,
+        (port_offset + PORT_FB as u64) as u32,
+        cmd_buf.fis_phys as u32,
+    );
+    mmio_write32(
+        mmio,
+        (port_offset + PORT_FBU as u64) as u32,
+        ((cmd_buf.fis_phys >> 32) & 0xFFFFFFFF) as u32,
+    );
 
     // Clear interrupts
     mmio_write32(mmio, (port_offset + PORT_IS as u64) as u32, 0xFFFFFFFF);
 
     // Start port
     if !start_port(mmio, port_offset) {
-        // kprintln!("[AHCI DMA] Failed to start port")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI DMA] Failed to start port");
         let _ = crate::mm::pool::free(data_ptr);
         free_ahci_dma(ctrl_idx, cmd_buf);
         return false;
@@ -1252,7 +1321,7 @@ pub(crate) unsafe fn ahci_dma_read_sectors(
         if ci & 0x01 == 0 {
             let tfd = mmio_read32(mmio, (port_offset + PORT_TFD as u64) as u32);
             if (tfd & (TFD_ERR as u32)) != 0 {
-                // kprintln!("[AHCI DMA] READ error (TFD=0x{:08x}, LBA={})", tfd, lba)  // kprintln disabled (memcpy crash workaround);
+                // kprintln!("[AHCI DMA] READ error (TFD=0x{:08x}, LBA={})", tfd, lba);
                 break;
             }
             success = true;
@@ -1261,7 +1330,7 @@ pub(crate) unsafe fn ahci_dma_read_sectors(
 
         let tfd = mmio_read32(mmio, (port_offset + PORT_TFD as u64) as u32);
         if (tfd & (TFD_ERR as u32)) != 0 {
-            // kprintln!("[AHCI DMA] READ error (TFD=0x{:08x}, LBA={})", tfd, lba)  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[AHCI DMA] READ error (TFD=0x{:08x}, LBA={})", tfd, lba);
             break;
         }
 
@@ -1276,9 +1345,9 @@ pub(crate) unsafe fn ahci_dma_read_sectors(
 
     if success {
         core::ptr::copy_nonoverlapping(data_ptr, buf.as_mut_ptr(), data_size);
-        // kprintln!("[AHCI DMA] Read {} sectors at LBA {} succeeded ({} bytes)", sectors, lba, data_size)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI DMA] Read {} sectors at LBA {} succeeded ({} bytes)", sectors, lba, data_size);
     } else {
-        // kprintln!("[AHCI DMA] READ timeout for LBA={}", lba)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI DMA] READ timeout for LBA={}", lba);
     }
 
     // Free DMA buffers
@@ -1304,13 +1373,13 @@ pub(crate) unsafe fn ahci_dma_write_sectors(
     let port_offset = 0x100 + (port as u64 * 0x80);
 
     if (ctrl.pi & (1 << port)) == 0 {
-        // kprintln!("[AHCI DMA] Port {} not implemented", port)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI DMA] Port {} not implemented", port);
         return false;
     }
 
     let (det, ipm) = check_port_status(mmio, port_offset);
     if det != SSTS_DET_PRESENT && det != SSTS_DET_COMM {
-        // kprintln!("[AHCI DMA] Port {} no device", port)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI DMA] Port {} no device", port);
         return false;
     }
 
@@ -1323,7 +1392,7 @@ pub(crate) unsafe fn ahci_dma_write_sectors(
     let cmd_buf = match allocate_ahci_dma(ctrl_idx) {
         Some(b) => b,
         None => {
-            // kprintln!("[AHCI DMA] Failed to allocate command buffer")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[AHCI DMA] Failed to allocate command buffer");
             return false;
         }
     };
@@ -1331,7 +1400,7 @@ pub(crate) unsafe fn ahci_dma_write_sectors(
     let data_size = (sectors as usize) * 512;
     let data_ptr = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, data_size);
     if data_ptr.is_null() {
-        // kprintln!("[AHCI DMA] Failed to allocate data buffer")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI DMA] Failed to allocate data buffer");
         free_ahci_dma(ctrl_idx, cmd_buf);
         return false;
     }
@@ -1360,21 +1429,28 @@ pub(crate) unsafe fn ahci_dma_write_sectors(
     }
 
     let prd_base = 0x80;
-    let prd_count = build_prd_table(cmd_table_virt, prd_base, data_phys, data_size);
+    let prd_count = match build_prd_table(cmd_table_virt, prd_base, data_phys, data_size) {
+        Some(count) => count,
+        None => {
+            let _ = crate::mm::pool::free(data_ptr);
+            free_ahci_dma(ctrl_idx, cmd_buf);
+            return false;
+        }
+    };
 
     // Command header with W=1 for write
     core::ptr::write_volatile(cmd_list_virt as *mut u32, 0x00050005u32);
     core::ptr::write_volatile(
         (cmd_list_virt as *mut u8).add(4) as *mut u32,
-        cmd_buf.cmd_table_phys as u32
+        cmd_buf.cmd_table_phys as u32,
     );
     core::ptr::write_volatile(
         (cmd_list_virt as *mut u8).add(8) as *mut u32,
-        ((cmd_buf.cmd_table_phys >> 32) & 0xFFFFFFFF) as u32
+        ((cmd_buf.cmd_table_phys >> 32) & 0xFFFFFFFF) as u32,
     );
     core::ptr::write_volatile(
         (cmd_list_virt as *mut u8).add(12) as *mut u32,
-        (prd_count as u32 * 16) | ((data_size as u32) & 0x0003FFFF)
+        (prd_count as u32 * 16) | ((data_size as u32) & 0x0003FFFF),
     );
 
     // H2D Register FIS with WRITE DMA EXT (0x35)
@@ -1382,30 +1458,51 @@ pub(crate) unsafe fn ahci_dma_write_sectors(
     core::ptr::write_volatile(fis_virt as *mut u32, 0x27594027u32);
     core::ptr::write_volatile(
         (fis_virt as *mut u8).add(4) as *mut u32,
-        ATA_CMD_WRITE_DMA_EXT as u32
+        ATA_CMD_WRITE_DMA_EXT as u32,
     );
     core::ptr::write_volatile(
         (fis_virt as *mut u8).add(8) as *mut u32,
-        (lba & 0xFF) as u32 | (((lba >> 8) & 0xFF) as u32) << 8 | (((lba >> 16) & 0xFF) as u32) << 16 | (0x40u32 << 24)
+        (lba & 0xFF) as u32
+            | (((lba >> 8) & 0xFF) as u32) << 8
+            | (((lba >> 16) & 0xFF) as u32) << 16
+            | (0x40u32 << 24),
     );
     core::ptr::write_volatile(
         (fis_virt as *mut u8).add(12) as *mut u32,
-        ((lba >> 24) & 0xFF) as u32 | (((lba >> 32) & 0xFF) as u32) << 8 | (((lba >> 40) & 0xFF) as u32) << 16
+        ((lba >> 24) & 0xFF) as u32
+            | (((lba >> 32) & 0xFF) as u32) << 8
+            | (((lba >> 40) & 0xFF) as u32) << 16,
     );
     core::ptr::write_volatile(
         (fis_virt as *mut u8).add(16) as *mut u32,
-        sectors as u32 | ((sectors as u32) << 8)
+        sectors as u32 | ((sectors as u32) << 8),
     );
 
     stop_port(mmio, port_offset);
-    mmio_write32(mmio, (port_offset + PORT_CLB as u64) as u32, cmd_buf.cmd_list_phys as u32);
-    mmio_write32(mmio, (port_offset + PORT_CLBU as u64) as u32, ((cmd_buf.cmd_list_phys >> 32) & 0xFFFFFFFF) as u32);
-    mmio_write32(mmio, (port_offset + PORT_FB as u64) as u32, cmd_buf.fis_phys as u32);
-    mmio_write32(mmio, (port_offset + PORT_FBU as u64) as u32, ((cmd_buf.fis_phys >> 32) & 0xFFFFFFFF) as u32);
+    mmio_write32(
+        mmio,
+        (port_offset + PORT_CLB as u64) as u32,
+        cmd_buf.cmd_list_phys as u32,
+    );
+    mmio_write32(
+        mmio,
+        (port_offset + PORT_CLBU as u64) as u32,
+        ((cmd_buf.cmd_list_phys >> 32) & 0xFFFFFFFF) as u32,
+    );
+    mmio_write32(
+        mmio,
+        (port_offset + PORT_FB as u64) as u32,
+        cmd_buf.fis_phys as u32,
+    );
+    mmio_write32(
+        mmio,
+        (port_offset + PORT_FBU as u64) as u32,
+        ((cmd_buf.fis_phys >> 32) & 0xFFFFFFFF) as u32,
+    );
     mmio_write32(mmio, (port_offset + PORT_IS as u64) as u32, 0xFFFFFFFF);
 
     if !start_port(mmio, port_offset) {
-        // kprintln!("[AHCI DMA] Failed to start port")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI DMA] Failed to start port");
         let _ = crate::mm::pool::free(data_ptr);
         free_ahci_dma(ctrl_idx, cmd_buf);
         return false;
@@ -1420,7 +1517,7 @@ pub(crate) unsafe fn ahci_dma_write_sectors(
         if ci & 0x01 == 0 {
             let tfd = mmio_read32(mmio, (port_offset + PORT_TFD as u64) as u32);
             if (tfd & (TFD_ERR as u32)) != 0 {
-                // kprintln!("[AHCI DMA] WRITE error (TFD=0x{:08x}, LBA={})", tfd, lba)  // kprintln disabled (memcpy crash workaround);
+                // kprintln!("[AHCI DMA] WRITE error (TFD=0x{:08x}, LBA={})", tfd, lba);
                 break;
             }
             success = true;
@@ -1429,7 +1526,7 @@ pub(crate) unsafe fn ahci_dma_write_sectors(
 
         let tfd = mmio_read32(mmio, (port_offset + PORT_TFD as u64) as u32);
         if (tfd & (TFD_ERR as u32)) != 0 {
-            // kprintln!("[AHCI DMA] WRITE error (TFD=0x{:08x}, LBA={})", tfd, lba)  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[AHCI DMA] WRITE error (TFD=0x{:08x}, LBA={})", tfd, lba);
             break;
         }
 
@@ -1442,9 +1539,9 @@ pub(crate) unsafe fn ahci_dma_write_sectors(
     stop_port(mmio, port_offset);
 
     if success {
-        // kprintln!("[AHCI DMA] Wrote {} sectors at LBA {} succeeded ({} bytes)", sectors, lba, data_size)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI DMA] Wrote {} sectors at LBA {} succeeded ({} bytes)", sectors, lba, data_size);
     } else {
-        // kprintln!("[AHCI DMA] WRITE timeout for LBA={}", lba)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI DMA] WRITE timeout for LBA={}", lba);
     }
 
     let _ = crate::mm::pool::free(data_ptr);
@@ -1469,8 +1566,14 @@ pub(crate) unsafe fn ahci_dma_write_sectors(
 /// * `byte_count` - Total number of bytes to transfer
 ///
 /// # Returns
-/// Number of PRD entries created
-unsafe fn build_prd_table(cmd_table: *mut u8, prd_base: usize, data_phys: u64, byte_count: usize) -> usize {
+/// `Some(number of PRD entries)` when the complete transfer fits, otherwise
+/// `None` without submitting a partial command to the controller.
+unsafe fn build_prd_table(
+    cmd_table: *mut u8,
+    prd_base: usize,
+    data_phys: u64,
+    byte_count: usize,
+) -> Option<usize> {
     let mut prd_count = 0usize;
     let mut current_phys = data_phys;
     let mut remaining = byte_count;
@@ -1478,8 +1581,19 @@ unsafe fn build_prd_table(cmd_table: *mut u8, prd_base: usize, data_phys: u64, b
     // 64KB maximum per PRD
     const MAX_PRD_SIZE: usize = 65536;
     const PRD_BOUNDARY_MASK: u64 = !0xFFFF;
+    // The command table is `AHCI_CMD_TABLE_SIZE` bytes and the PRDT starts at
+    // `prd_base`, so it can hold at most (2048 - prd_base) / 16 entries. The
+    // old code checked the limit *after* writing, so a large transfer wrote a
+    // 257th entry past the end of the block.
+    if prd_base >= AHCI_CMD_TABLE_SIZE {
+        return None;
+    }
+    let max_entries = (AHCI_CMD_TABLE_SIZE - prd_base) / 16;
 
     while remaining > 0 {
+        if prd_count >= max_entries {
+            return None;
+        }
         // Calculate maximum bytes without crossing 64KB boundary
         let boundary_distance = (((current_phys | 0xFFFF) + 1) - current_phys) as usize;
         let bytes_to_end = core::cmp::min(remaining, boundary_distance);
@@ -1493,6 +1607,7 @@ unsafe fn build_prd_table(cmd_table: *mut u8, prd_base: usize, data_phys: u64, b
         } else {
             AhciPrd::new(current_phys, bytes_this_prd as u32)
         };
+        let Some(prd) = prd else { return None };
 
         unsafe {
             core::ptr::write_volatile(prd_ptr, prd);
@@ -1501,25 +1616,20 @@ unsafe fn build_prd_table(cmd_table: *mut u8, prd_base: usize, data_phys: u64, b
         prd_count += 1;
         remaining -= bytes_this_prd;
         current_phys += bytes_this_prd as u64;
-
-        if prd_count > 256 {
-            // kprintln!("[AHCI DMA] Too many PRD entries, truncating transfer")  // kprintln disabled (memcpy crash workaround);
-            break;
-        }
     }
 
-    // kprintln!("[AHCI DMA] Built PRD table: {} entries for {} bytes", prd_count, byte_count)  // kprintln disabled (memcpy crash workaround);
-    prd_count
+    // kprintln!("[AHCI DMA] Built PRD table: {} entries for {} bytes", prd_count, byte_count);
+    Some(prd_count)
 }
 
 /// Write a single sector using DMA mode.
 pub fn write_sector(channel: usize, port: usize, lba: u32, buf: &[u8]) -> bool {
     if buf.len() < 512 {
-        // kprintln!("[AHCI] Write buffer too small")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] Write buffer too small");
         return false;
     }
     if channel >= unsafe { AHCI_COUNT } {
-        // kprintln!("[AHCI] Invalid channel {}", channel)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] Invalid channel {}", channel);
         return false;
     }
 
@@ -1551,18 +1661,18 @@ unsafe fn ahci_write_sector_pio(
 
     // Check if port is implemented
     if (ctrl.pi & (1 << port)) == 0 {
-        // kprintln!("[AHCI] Write: Port {} not implemented", port)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] Write: Port {} not implemented", port);
         return false;
     }
 
     // Check device presence
     let (det, ipm) = check_port_status(mmio, port_offset);
     if det != SSTS_DET_PRESENT && det != SSTS_DET_COMM {
-        // kprintln!("[AHCI] Write: Port {} no device", port)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] Write: Port {} no device", port);
         return false;
     }
     if ipm != 1 {
-        // kprintln!("[AHCI] Write: Port {} not active", port)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] Write: Port {} not active", port);
         return false;
     }
 
@@ -1571,7 +1681,7 @@ unsafe fn ahci_write_sector_pio(
     let cmd_buf = match allocate_ahci_dma(ctrl_idx) {
         Some(b) => b,
         None => {
-            // kprintln!("[AHCI] Write: Failed to allocate command buffer")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[AHCI] Write: Failed to allocate command buffer");
             return false;
         }
     };
@@ -1580,7 +1690,7 @@ unsafe fn ahci_write_sector_pio(
     let dma_size = 512;
     let dma_ptr = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, dma_size);
     if dma_ptr.is_null() {
-        // kprintln!("[AHCI] Write: Failed to allocate DMA buffer")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] Write: Failed to allocate DMA buffer");
         free_ahci_dma(ctrl_idx, cmd_buf);
         return false;
     }
@@ -1609,82 +1719,82 @@ unsafe fn ahci_write_sector_pio(
 
     // Clear structures using RAM writes
     for i in 0..256 {
-        core::ptr::write_volatile(
-            cmd_list_virt.add(i * 4) as *mut u32,
-            0u32
-        );
+        core::ptr::write_volatile(cmd_list_virt.add(i * 4) as *mut u32, 0u32);
     }
     for i in 0..1024 {
-        core::ptr::write_volatile(
-            cmd_table_virt.add(i * 4) as *mut u32,
-            0u32
-        );
+        core::ptr::write_volatile(cmd_table_virt.add(i * 4) as *mut u32, 0u32);
     }
 
     // Set up command header: Write=1, C=1
     core::ptr::write_volatile(cmd_list_virt as *mut u32, 0x00050000u32 | (1 << 6));
     core::ptr::write_volatile(
         (cmd_list_virt as *mut u8).add(4) as *mut u32,
-        cmd_table_phys as u32
+        cmd_table_phys as u32,
     );
     core::ptr::write_volatile(
         (cmd_list_virt as *mut u8).add(8) as *mut u32,
-        (cmd_table_phys >> 32) as u32
+        (cmd_table_phys >> 32) as u32,
     );
 
     // Set up H2D FIS
     core::ptr::write_volatile(cmd_table_virt as *mut u32, 0x27594027u32);
     core::ptr::write_volatile(
         (cmd_table_virt as *mut u8).add(4) as *mut u32,
-        ATA_CMD_WRITE_PIO_EXT as u32
+        ATA_CMD_WRITE_PIO_EXT as u32,
     );
-    core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(8) as *mut u32,
-        lba as u32
-    );
+    core::ptr::write_volatile((cmd_table_virt as *mut u8).add(8) as *mut u32, lba as u32);
     core::ptr::write_volatile(
         (cmd_table_virt as *mut u8).add(12) as *mut u32,
-        ((lba >> 8) & 0xFF) as u32
+        ((lba >> 8) & 0xFF) as u32,
     );
     core::ptr::write_volatile(
         (cmd_table_virt as *mut u8).add(16) as *mut u32,
-        ((lba >> 16) & 0xFF) as u32
+        ((lba >> 16) & 0xFF) as u32,
     );
     core::ptr::write_volatile(
         (cmd_table_virt as *mut u8).add(20) as *mut u32,
-        0x00000100u32
+        0x00000100u32,
     );
-    core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(24) as *mut u32,
-        0x40u32
-    );
+    core::ptr::write_volatile((cmd_table_virt as *mut u8).add(24) as *mut u32, 0x40u32);
 
     // Set up PRD
     core::ptr::write_volatile(
         (cmd_table_virt as *mut u8).add(128) as *mut u32,
-        dma_phys as u32
+        dma_phys as u32,
     );
     core::ptr::write_volatile(
         (cmd_table_virt as *mut u8).add(132) as *mut u32,
-        ((dma_phys >> 32) & 0xFFFFFFFF) as u32
+        ((dma_phys >> 32) & 0xFFFFFFFF) as u32,
     );
     core::ptr::write_volatile(
         (cmd_table_virt as *mut u8).add(136) as *mut u32,
-        (dma_size as u32 - 1) | PRD_EOT
+        (dma_size as u32 - 1) | PRD_EOT,
     );
 
     // Write port registers
-    mmio_write32(mmio, (port_offset + PORT_CLB as u64) as u32, cmd_list_phys as u32);
-    mmio_write32(mmio, (port_offset + PORT_CLBU as u64) as u32, (cmd_list_phys >> 32) as u32);
+    mmio_write32(
+        mmio,
+        (port_offset + PORT_CLB as u64) as u32,
+        cmd_list_phys as u32,
+    );
+    mmio_write32(
+        mmio,
+        (port_offset + PORT_CLBU as u64) as u32,
+        (cmd_list_phys >> 32) as u32,
+    );
     mmio_write32(mmio, (port_offset + PORT_FB as u64) as u32, fis_phys as u32);
-    mmio_write32(mmio, (port_offset + PORT_FBU as u64) as u32, (fis_phys >> 32) as u32);
+    mmio_write32(
+        mmio,
+        (port_offset + PORT_FBU as u64) as u32,
+        (fis_phys >> 32) as u32,
+    );
 
     // Clear interrupts
     mmio_write32(mmio, (port_offset + PORT_IS as u64) as u32, 0xFFFFFFFF);
 
     // Start port
     if !start_port(mmio, port_offset) {
-        // kprintln!("[AHCI] Write: Failed to start port")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] Write: Failed to start port");
         let _ = crate::mm::pool::free(dma_ptr);
         free_ahci_dma(ctrl_idx, cmd_buf);
         return false;
@@ -1705,7 +1815,7 @@ unsafe fn ahci_write_sector_pio(
 
         let tfd = mmio_read32(mmio, (port_offset + PORT_TFD as u64) as u32);
         if (tfd & (TFD_ERR as u32)) != 0 {
-            // kprintln!("[AHCI] WRITE error (TFD=0x{:08x}, LBA={})", tfd, lba)  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[AHCI] WRITE error (TFD=0x{:08x}, LBA={})", tfd, lba);
             break;
         }
 
@@ -1719,9 +1829,9 @@ unsafe fn ahci_write_sector_pio(
     stop_port(mmio, port_offset);
 
     if success {
-        // kprintln!("[AHCI] Write sector {} via PIO (512 bytes)", lba)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] Write sector {} via PIO (512 bytes)", lba);
     } else {
-        // kprintln!("[AHCI] WRITE timeout for LBA={}", lba)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] WRITE timeout for LBA={}", lba);
     }
 
     // Free DMA buffers
@@ -1732,12 +1842,7 @@ unsafe fn ahci_write_sector_pio(
 }
 
 /// Write a single sector using DMA mode.
-unsafe fn ahci_write_sector(
-    ctrl: &mut AhciController,
-    port: usize,
-    lba: u32,
-    buf: &[u8],
-) -> bool {
+unsafe fn ahci_write_sector(ctrl: &mut AhciController, port: usize, lba: u32, buf: &[u8]) -> bool {
     let mmio = ctrl.mmio_base;
     if mmio == 0 {
         return false;
@@ -1747,18 +1852,18 @@ unsafe fn ahci_write_sector(
 
     // Check if port is implemented
     if (ctrl.pi & (1 << port)) == 0 {
-        // kprintln!("[AHCI] Write DMA: Port {} not implemented", port)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] Write DMA: Port {} not implemented", port);
         return false;
     }
 
     // Check device presence
     let (det, ipm) = check_port_status(mmio, port_offset);
     if det != SSTS_DET_PRESENT && det != SSTS_DET_COMM {
-        // kprintln!("[AHCI] Write DMA: Port {} no device", port)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] Write DMA: Port {} no device", port);
         return false;
     }
     if ipm != 1 {
-        // kprintln!("[AHCI] Write DMA: Port {} not active", port)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] Write DMA: Port {} not active", port);
         return false;
     }
 
@@ -1767,7 +1872,7 @@ unsafe fn ahci_write_sector(
     let cmd_buf = match allocate_ahci_dma(ctrl_idx) {
         Some(b) => b,
         None => {
-            // kprintln!("[AHCI] Write DMA: Failed to allocate command buffer")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[AHCI] Write DMA: Failed to allocate command buffer");
             return false;
         }
     };
@@ -1776,7 +1881,7 @@ unsafe fn ahci_write_sector(
     let dma_size = 512;
     let dma_ptr = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, dma_size);
     if dma_ptr.is_null() {
-        // kprintln!("[AHCI] Write DMA: Failed to allocate DMA buffer")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] Write DMA: Failed to allocate DMA buffer");
         free_ahci_dma(ctrl_idx, cmd_buf);
         return false;
     }
@@ -1805,85 +1910,85 @@ unsafe fn ahci_write_sector(
 
     // Clear structures using RAM writes
     for i in 0..256 {
-        core::ptr::write_volatile(
-            cmd_list_virt.add(i * 4) as *mut u32,
-            0u32
-        );
+        core::ptr::write_volatile(cmd_list_virt.add(i * 4) as *mut u32, 0u32);
     }
     for i in 0..1024 {
-        core::ptr::write_volatile(
-            cmd_table_virt.add(i * 4) as *mut u32,
-            0u32
-        );
+        core::ptr::write_volatile(cmd_table_virt.add(i * 4) as *mut u32, 0u32);
     }
 
     // Set up command header
     core::ptr::write_volatile(cmd_list_virt as *mut u32, 0x00050000u32 | (1 << 6));
     core::ptr::write_volatile(
         (cmd_list_virt as *mut u8).add(4) as *mut u32,
-        cmd_table_phys as u32
+        cmd_table_phys as u32,
     );
     core::ptr::write_volatile(
         (cmd_list_virt as *mut u8).add(8) as *mut u32,
-        (cmd_table_phys >> 32) as u32
+        (cmd_table_phys >> 32) as u32,
     );
 
     // Set up H2D Register FIS
     core::ptr::write_volatile(cmd_table_virt as *mut u32, 0x27594027u32);
     core::ptr::write_volatile(
         (cmd_table_virt as *mut u8).add(4) as *mut u32,
-        ATA_CMD_WRITE_DMA_EXT as u32
+        ATA_CMD_WRITE_DMA_EXT as u32,
     );
-    core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(8) as *mut u32,
-        lba as u32
-    );
+    core::ptr::write_volatile((cmd_table_virt as *mut u8).add(8) as *mut u32, lba as u32);
     core::ptr::write_volatile(
         (cmd_table_virt as *mut u8).add(12) as *mut u32,
-        ((lba >> 8) & 0xFF) as u32
+        ((lba >> 8) & 0xFF) as u32,
     );
     core::ptr::write_volatile(
         (cmd_table_virt as *mut u8).add(16) as *mut u32,
-        ((lba >> 16) & 0xFF) as u32
+        ((lba >> 16) & 0xFF) as u32,
     );
-    core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(20) as *mut u32,
-        0x40u32
-    );
+    core::ptr::write_volatile((cmd_table_virt as *mut u8).add(20) as *mut u32, 0x40u32);
     core::ptr::write_volatile(
         (cmd_table_virt as *mut u8).add(24) as *mut u32,
-        0x00000100u32
+        0x00000100u32,
     );
 
     // Set up PRD
     core::ptr::write_volatile(
         (cmd_table_virt as *mut u8).add(128) as *mut u32,
-        dma_phys as u32
+        dma_phys as u32,
     );
     core::ptr::write_volatile(
         (cmd_table_virt as *mut u8).add(132) as *mut u32,
-        ((dma_phys >> 32) & 0xFFFFFFFF) as u32
+        ((dma_phys >> 32) & 0xFFFFFFFF) as u32,
     );
     core::ptr::write_volatile(
         (cmd_table_virt as *mut u8).add(136) as *mut u32,
-        511 | PRD_EOT
+        511 | PRD_EOT,
     );
 
     // Stop the port first
     stop_port(mmio, port_offset);
 
     // Write port registers
-    mmio_write32(mmio, (port_offset + PORT_CLB as u64) as u32, cmd_list_phys as u32);
-    mmio_write32(mmio, (port_offset + PORT_CLBU as u64) as u32, (cmd_list_phys >> 32) as u32);
+    mmio_write32(
+        mmio,
+        (port_offset + PORT_CLB as u64) as u32,
+        cmd_list_phys as u32,
+    );
+    mmio_write32(
+        mmio,
+        (port_offset + PORT_CLBU as u64) as u32,
+        (cmd_list_phys >> 32) as u32,
+    );
     mmio_write32(mmio, (port_offset + PORT_FB as u64) as u32, fis_phys as u32);
-    mmio_write32(mmio, (port_offset + PORT_FBU as u64) as u32, (fis_phys >> 32) as u32);
+    mmio_write32(
+        mmio,
+        (port_offset + PORT_FBU as u64) as u32,
+        (fis_phys >> 32) as u32,
+    );
 
     // Clear interrupts
     mmio_write32(mmio, (port_offset + PORT_IS as u64) as u32, 0xFFFFFFFF);
 
     // Start port
     if !start_port(mmio, port_offset) {
-        // kprintln!("[AHCI] Write DMA: Failed to start port")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] Write DMA: Failed to start port");
         let _ = crate::mm::pool::free(dma_ptr);
         free_ahci_dma(ctrl_idx, cmd_buf);
         return false;
@@ -1904,7 +2009,7 @@ unsafe fn ahci_write_sector(
 
         let tfd = mmio_read32(mmio, (port_offset + PORT_TFD as u64) as u32);
         if (tfd & (TFD_ERR as u32)) != 0 {
-            // kprintln!("[AHCI] WRITE DMA error (TFD=0x{:08x}, LBA={})", tfd, lba)  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[AHCI] WRITE DMA error (TFD=0x{:08x}, LBA={})", tfd, lba);
             break;
         }
 
@@ -1918,9 +2023,9 @@ unsafe fn ahci_write_sector(
     stop_port(mmio, port_offset);
 
     if success {
-        // kprintln!("[AHCI] Write sector {} succeeded (DMA, 512 bytes)", lba)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] Write sector {} succeeded (DMA, 512 bytes)", lba);
     } else {
-        // kprintln!("[AHCI] WRITE DMA timeout for LBA={}", lba)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[AHCI] WRITE DMA timeout for LBA={}", lba);
     }
 
     // Free DMA buffers
@@ -1931,9 +2036,7 @@ unsafe fn ahci_write_sector(
 }
 
 pub fn get_disk_count() -> usize {
-    unsafe {
-        DISK_INFO.iter().filter(|d| d.is_some()).count()
-    }
+    unsafe { DISK_INFO.iter().filter(|d| d.is_some()).count() }
 }
 
 // ============================================================================
@@ -1969,10 +2072,15 @@ impl CompletionKind {
         // Setup FIS, bit 6 = command list completed. When more than
         // one bit is set we prefer D2H > CmdComplete > PioSetup so
         // the recorded kind always reflects the most specific event.
-        if port_is & 0x01 != 0 { CompletionKind::D2hFis }
-        else if port_is & (1 << 6) != 0 { CompletionKind::CommandComplete }
-        else if port_is & (1 << 5) != 0 { CompletionKind::PioSetupFis }
-        else { CompletionKind::None }
+        if port_is & 0x01 != 0 {
+            CompletionKind::D2hFis
+        } else if port_is & (1 << 6) != 0 {
+            CompletionKind::CommandComplete
+        } else if port_is & (1 << 5) != 0 {
+            CompletionKind::PioSetupFis
+        } else {
+            CompletionKind::None
+        }
     }
 }
 
@@ -2042,7 +2150,7 @@ pub fn handle_port_interrupt(controller_idx: usize, port: usize) -> bool {
     let port_is = mmio_read32(mmio, (port_offset + PORT_IS as u64) as u32);
 
     if port_is == 0 {
-        return false;  // No interrupt from this port
+        return false; // No interrupt from this port
     }
 
     // Decompose the PORT_IS bits so each source has a named
@@ -2118,5 +2226,42 @@ pub fn get_last_completion_kind(port: usize) -> CompletionKind {
         } else {
             CompletionKind::None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prd_builder_splits_transfer_at_64k_boundaries() {
+        let mut table = [0u32; AHCI_CMD_TABLE_SIZE / core::mem::size_of::<u32>()];
+        let count =
+            unsafe { build_prd_table(table.as_mut_ptr().cast::<u8>(), 0x80, 0x1_FFF0, 255 * 512) };
+
+        assert_eq!(count, Some(3));
+        let entries = unsafe { table.as_ptr().cast::<u8>().add(0x80).cast::<AhciPrd>() };
+        let first = unsafe { core::ptr::read_volatile(entries) };
+        let second = unsafe { core::ptr::read_volatile(entries.add(1)) };
+        let last = unsafe { core::ptr::read_volatile(entries.add(2)) };
+        assert_eq!(first.byte_count(), 16);
+        assert_eq!(second.byte_count(), 65536);
+        assert_eq!(last.byte_count(), 65008);
+        assert_eq!(last.desc_info & AhciPrd::EOT, AhciPrd::EOT);
+    }
+
+    #[test]
+    fn prd_builder_rejects_transfer_that_exceeds_table_capacity() {
+        let mut table = [0u32; AHCI_CMD_TABLE_SIZE / core::mem::size_of::<u32>()];
+        let count = unsafe {
+            build_prd_table(
+                table.as_mut_ptr().cast::<u8>(),
+                0x80,
+                0x1000,
+                120 * 65536 + 1,
+            )
+        };
+
+        assert_eq!(count, None);
     }
 }

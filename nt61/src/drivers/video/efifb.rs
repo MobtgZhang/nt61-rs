@@ -35,13 +35,7 @@ impl EfiFbState {
     /// Create and initialize the EFI framebuffer state.
     /// Takes the GOP-provided framebuffer info if available.
     #[allow(dead_code)]
-    pub fn new(
-        fb_address: u64,
-        width: u32,
-        height: u32,
-        stride: u32,
-        bpp: u32,
-    ) -> Self {
+    pub fn new(fb_address: u64, width: u32, height: u32, stride: u32, bpp: u32) -> Self {
         let initialized_from_gop = fb_address != 0 && width != 0 && height != 0;
 
         if initialized_from_gop {
@@ -105,8 +99,7 @@ impl EfiFbState {
 }
 
 /// Global EFI framebuffer state.
-static EFI_FB_STATE: core::sync::atomic::AtomicU64 =
-    core::sync::atomic::AtomicU64::new(0);
+static EFI_FB_STATE: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
 fn set_global_state(state: *const EfiFbState) {
     EFI_FB_STATE.store(state as u64, core::sync::atomic::Ordering::Release);
@@ -230,9 +223,7 @@ pub fn smoke_test() -> bool {
 
     match info2.bpp {
         32 => {
-            let pixel = unsafe {
-                core::ptr::read_volatile(fb as *const u32)
-            };
+            let pixel = unsafe { core::ptr::read_volatile(fb as *const u32) };
             if pixel == 0x00FF00FF {
                 log::video_ok("efifb", "smoke test passed (32-bit pixel readback)");
                 // Clear it back.
@@ -244,9 +235,7 @@ pub fn smoke_test() -> bool {
             }
         }
         16 => {
-            let cell = unsafe {
-                core::ptr::read_volatile(fb as *const u16)
-            };
+            let cell = unsafe { core::ptr::read_volatile(fb as *const u16) };
             if cell != 0 {
                 log::video_ok("efifb", "smoke test passed (16-bit cell writable)");
                 return true;

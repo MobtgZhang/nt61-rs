@@ -1,8 +1,6 @@
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, AtomicPtr, Ordering};
-
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use core::ptr;
-use core::sync::atomic::{AtomicPtr, Ordering};
 
 pub struct Heap {
     _private: [u8; 0],

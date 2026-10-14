@@ -184,27 +184,30 @@ impl ObjectIdEntry {
 pub fn create_object_id(table: &mut ObjectIdTable, record_lba: u64, record_size: u32) -> u64 {
     // Find the highest existing object ID
     let mut max_id = REFS_FIRST_USER_OBJECT_ID;
-    
+
     for entry in &table.entries {
         if entry.key.object_id > max_id && entry.key.object_id < u64::MAX - 1 {
             max_id = entry.key.object_id;
         }
     }
-    
+
     let new_id = max_id + 1;
-    
+
     // Add the entry
     table.add_entry(ObjectIdEntry::new(
         ObjectIdKey::new(new_id, 0),
         ObjectIdValue::new(record_lba, record_size),
     ));
-    
+
     new_id
 }
 
 /// Delete an object ID
 pub fn delete_object_id(table: &mut ObjectIdTable, object_id: u64) -> Option<ObjectIdEntry> {
-    let index = table.entries.iter().position(|e| e.key.object_id == object_id)?;
+    let index = table
+        .entries
+        .iter()
+        .position(|e| e.key.object_id == object_id)?;
     Some(table.entries.remove(index))
 }
 
@@ -240,10 +243,10 @@ pub fn key_from_bytes(bytes: &[u8]) -> Option<ObjectIdKey> {
     if bytes.len() < 16 {
         return None;
     }
-    
+
     let object_id = u64::from_le_bytes(bytes[0..8].try_into().ok()?);
     let sub_sequence = u64::from_le_bytes(bytes[8..16].try_into().ok()?);
-    
+
     Some(ObjectIdKey::new(object_id, sub_sequence))
 }
 
@@ -321,7 +324,7 @@ pub fn lookup_object(
 ) -> Option<ObjectLookupResult> {
     // In a real implementation, we would search the Object ID B+ tree
     // For now, return None as we don't have the B+ tree loaded
-    
+
     // Check if it's in our cached entries
     if let Some(entry) = _table.find_by_id(object_id) {
         if entry.key.sub_sequence == sub_sequence {
@@ -333,7 +336,7 @@ pub fn lookup_object(
             ));
         }
     }
-    
+
     None
 }
 
@@ -376,7 +379,8 @@ impl ObjectIdTable {
 
     /// Get user object count
     pub fn user_object_count(&self) -> usize {
-        self.entries.iter()
+        self.entries
+            .iter()
             .filter(|e| e.key.is_user_object())
             .count()
     }
@@ -402,15 +406,19 @@ pub fn debug_print_object_id(object_id: u64) {
 
 /// Print object ID table
 pub fn debug_print_table(table: &ObjectIdTable) {
-    // kprintln!("[REFS] Object ID Table:")  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("  Loaded: {}", table.loaded)  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("  Entries: {}", table.len())  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("  Root LBA: {}", table.root_lba)  // kprintln disabled (memcpy crash workaround);
-    
+    // kprintln!("[REFS] Object ID Table:");
+    // kprintln!("  Loaded: {}", table.loaded);
+    // kprintln!("  Entries: {}", table.len());
+    // kprintln!("  Root LBA: {}", table.root_lba);
+
     for entry in table.iter() {
-        let name = get_special_object_name(entry.key.object_id)
-            .unwrap_or("User Object");
+        let name = get_special_object_name(entry.key.object_id).unwrap_or("User Object");
         // Reference the entry fields to preserve the API contract
-        let _ = (entry.key.object_id, name, entry.value.record_lba, entry.value.record_size);
+        let _ = (
+            entry.key.object_id,
+            name,
+            entry.value.record_lba,
+            entry.value.record_size,
+        );
     }
 }

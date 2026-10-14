@@ -20,25 +20,25 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
-use alloc::string::String;
 use crate::fs::{FileSystem, FileSystemType};
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::ptr::null_mut;
 
 // Submodules
-pub mod superblock;
-pub mod group;
-pub mod inode;
 pub mod bitmap;
 pub mod dir;
 pub mod extent;
+pub mod group;
+pub mod inode;
 pub mod journal;
+pub mod superblock;
 
 // Re-export commonly used types
-pub use superblock::{Ext2SuperBlock, EXT2_SUPER_MAGIC, EXT2_ROOT_INO};
+pub use dir::{Ext2DirEntry, Ext2DirEntryInfo, EXT2_FT_DIR, EXT2_FT_REG_FILE};
 pub use group::Ext2GroupDesc;
 pub use inode::Ext2Inode;
-pub use dir::{Ext2DirEntry, Ext2DirEntryInfo, EXT2_FT_REG_FILE, EXT2_FT_DIR};
+pub use superblock::{Ext2SuperBlock, EXT2_ROOT_INO, EXT2_SUPER_MAGIC};
 
 // ============================================================================
 // File System Instance
@@ -182,10 +182,18 @@ pub fn read_sector(_device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<(
             if Some(base) == sys_base {
                 // Use sys_ramdisk_read which has its own serial prints
                 let n = crate::fs::sys_ramdisk_read(off as u64, buffer);
-                if n >= 512 { Ok(()) } else { Err(()) }
+                if n >= 512 {
+                    Ok(())
+                } else {
+                    Err(())
+                }
             } else {
                 let n = crate::fs::esp_ramdisk_read(off as u64, buffer);
-                if n >= 512 { Ok(()) } else { Err(()) }
+                if n >= 512 {
+                    Ok(())
+                } else {
+                    Err(())
+                }
             }
         }
     } else {
@@ -245,34 +253,34 @@ pub fn write_sector(_device: *mut (), sector: u64, buffer: &[u8]) -> Result<(), 
 
 /// Mount an ext2/ext3/ext4 filesystem
 pub fn mount(device: *mut (), offset: u64) -> Option<&'static mut Ext2FileSystem> {
-    // kprintln!("[EXT2] Mounting ext2/ext3/ext4 filesystem...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[EXT2] Mounting ext2/ext3/ext4 filesystem...");
 
     // Read superblock
     let sb = match superblock::read_superblock(device, offset) {
         Some(s) => s,
         None => {
-            // kprintln!("[EXT2] Failed to read superblock")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[EXT2] Failed to read superblock");
             return None;
         }
     };
 
     // Validate superblock
     if superblock::validate_superblock(&sb).is_err() {
-        // kprintln!("[EXT2] Superblock validation failed")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[EXT2] Superblock validation failed");
         return None;
     }
-    
+
     // Create filesystem instance
     let fs_ptr = crate::mm::pool::allocate(
         crate::mm::pool::PoolType::NonPaged,
         core::mem::size_of::<Ext2FileSystem>(),
     ) as *mut Ext2FileSystem;
-    
+
     if fs_ptr.is_null() {
-        // kprintln!("[EXT2] Failed to allocate filesystem structure")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[EXT2] Failed to allocate filesystem structure");
         return None;
     }
-    
+
     unsafe {
         (*fs_ptr) = Ext2FileSystem::new();
         (*fs_ptr).base.device = device;
@@ -292,44 +300,46 @@ pub fn mount(device: *mut (), offset: u64) -> Option<&'static mut Ext2FileSystem
         } else {
             FileSystemType::Ext2
         };
-        
+
         // Calculate cluster size
         (*fs_ptr).base.cluster_size = (*fs_ptr).block_size;
         (*fs_ptr).base.total_clusters = sb.get_total_blocks();
         (*fs_ptr).base.free_clusters = sb.free_blocks as u64;
     }
-    
+
     // Print filesystem info
     let fs = unsafe { &*fs_ptr };
-    // kprintln!("[EXT2] Mounted {} filesystem", fs.get_fs_type_string())  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("[EXT2]   Block size: {} bytes", fs.block_size)  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("[EXT2]   Block groups: {}", fs.group_count)  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("[EXT2]   Inode size: {} bytes", fs.inode_size)  // kprintln disabled (memcpy crash workaround);
-    
+    // kprintln!("[EXT2] Mounted {} filesystem", fs.get_fs_type_string());
+    // kprintln!("[EXT2]   Block size: {} bytes", fs.block_size);
+    // kprintln!("[EXT2]   Block groups: {}", fs.group_count);
+    // kprintln!("[EXT2]   Inode size: {} bytes", fs.inode_size);
+
     if fs.has_journal() {
-        // kprintln!("[EXT2]   Journal inode: {}", fs.journal_inode)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[EXT2]   Journal inode: {}", fs.journal_inode);
     }
-    
+
     // Replay journal if needed (ext3/ext4)
     if fs.has_journal() {
         if journal::journal_needs_recovery(&fs.superblock) {
-            // kprintln!("[EXT2] Journal needs recovery, replaying...")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[EXT2] Journal needs recovery, replaying...");
             if let Ok(_count) = journal::replay_journal(device, &fs.superblock) {
-                // kprintln!("[EXT2] Replayed {} blocks", count)  // kprintln disabled (memcpy crash workaround);
+                // kprintln!("[EXT2] Replayed {} blocks", count);
             }
         }
     }
 
     // Store globally so `get_mounted_fs()` / `is_mounted()` work for the
     // boot path (load_cmd_exe_from_disk).
-    unsafe { EXT2_MOUNTED_FS = fs_ptr; }
+    unsafe {
+        EXT2_MOUNTED_FS = fs_ptr;
+    }
     Some(unsafe { &mut *fs_ptr })
 }
 
 /// Unmount an ext2 filesystem
 pub fn unmount(_fs: *mut Ext2FileSystem) {
     if !_fs.is_null() {
-        // kprintln!("[EXT2] Filesystem unmounted")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[EXT2] Filesystem unmounted");
         // In a full implementation, we would:
         // 1. Sync all buffers
         // 2. Write superblock
@@ -345,10 +355,10 @@ pub fn unmount(_fs: *mut Ext2FileSystem) {
 pub fn open_file(fs: &Ext2FileSystem, path: &[u8]) -> Option<Ext2Handle> {
     // Look up the path
     let inode_num = dir::path_lookup(fs.base.device, &fs.superblock, path)?;
-    
+
     // Read the inode
     let inode = inode::read_inode(fs.base.device, &fs.superblock, inode_num)?;
-    
+
     Some(Ext2Handle::new(inode_num, &inode, &fs.superblock))
 }
 
@@ -363,12 +373,9 @@ pub fn read_file(fs: &Ext2FileSystem, handle: &mut Ext2Handle, buffer: &mut [u8]
     if handle.at_eof() {
         return 0;
     }
-    
-    let bytes_to_read = core::cmp::min(
-        buffer.len(),
-        (handle.remaining() as usize).min(usize::MAX),
-    );
-    
+
+    let bytes_to_read = core::cmp::min(buffer.len(), (handle.remaining() as usize).min(usize::MAX));
+
     let bytes_read = inode::read_file_data(
         fs.base.device,
         &fs.superblock,
@@ -376,7 +383,7 @@ pub fn read_file(fs: &Ext2FileSystem, handle: &mut Ext2Handle, buffer: &mut [u8]
         handle.current_position,
         &mut buffer[..bytes_to_read],
     );
-    
+
     handle.current_position += bytes_read as u64;
     bytes_read
 }
@@ -389,17 +396,17 @@ pub fn read_file_at(
     buffer: &mut [u8],
 ) -> Option<usize> {
     let inode = inode::read_inode(fs.base.device, &fs.superblock, inode_num)?;
-    
+
     let file_size = inode.get_size(&fs.superblock);
     if offset >= file_size {
         return Some(0);
     }
-    
+
     let bytes_to_read = core::cmp::min(
         buffer.len(),
         ((file_size - offset) as usize).min(usize::MAX),
     );
-    
+
     let bytes_read = inode::read_file_data(
         fs.base.device,
         &fs.superblock,
@@ -407,7 +414,7 @@ pub fn read_file_at(
         offset,
         &mut buffer[..bytes_to_read],
     );
-    
+
     Some(bytes_read)
 }
 
@@ -420,48 +427,45 @@ pub fn list_directory(fs: &Ext2FileSystem, inode_num: u32) -> Option<Vec<dir::Ex
 pub fn get_entry(fs: &Ext2FileSystem, path: &[u8]) -> Option<dir::Ext2DirEntryInfo> {
     let inode_num = dir::path_lookup(fs.base.device, &fs.superblock, path)?;
     let entries = dir::list_directory(fs.base.device, &fs.superblock, inode_num)?;
-    
+
     // Return the last component's entry
     let name = path.split(|&c| c == b'/').last()?;
     if name.is_empty() {
         return None;
     }
-    
+
     entries.into_iter().find(|e| e.name.as_bytes() == name)
 }
 
 /// Read an entire file by path. Returns the raw bytes or an error message.
 /// The `path` is converted internally from Windows-style ("C:\Windows\file")
 /// to ext2-style ("/Windows/file").
-pub fn read_whole_file(fs: &Ext2FileSystem, path: &str) -> Result<alloc::vec::Vec<u8>, &'static str> {
+pub fn read_whole_file(
+    fs: &Ext2FileSystem,
+    path: &str,
+) -> Result<alloc::vec::Vec<u8>, &'static str> {
     // Convert Windows path to ext2 path
     let ext2_path = win_path_to_ext2(path);
-    
+
     // Lookup inode number
     let inode_num = match dir::path_lookup(fs.base.device, &fs.superblock, ext2_path.as_bytes()) {
         Some(n) => n,
         None => return Err("ext2: path_lookup failed"),
     };
-    
+
     // Read inode
     let inode = match inode::read_inode(fs.base.device, &fs.superblock, inode_num) {
         Some(i) => i,
         None => return Err("ext2: read_inode failed"),
     };
-    
+
     let file_size = inode.get_size(&fs.superblock) as usize;
     if file_size == 0 {
         return Ok(Vec::new());
     }
-    
+
     let mut buf: Vec<u8> = alloc::vec![0u8; file_size];
-    let n = inode::read_file_data(
-        fs.base.device,
-        &fs.superblock,
-        &inode,
-        0,
-        &mut buf,
-    );
+    let n = inode::read_file_data(fs.base.device, &fs.superblock, &inode, 0, &mut buf);
     if n == 0 {
         return Err("ext2: read_file_data returned 0");
     }
@@ -540,7 +544,7 @@ pub fn mount_first(device: *mut (), offset: u64) -> Option<&'static mut Ext2File
         if !EXT2_MOUNTED_FS.is_null() {
             return Some(&mut *EXT2_MOUNTED_FS);
         }
-        
+
         let fs = mount(device, offset)?;
         EXT2_MOUNTED_FS = fs as *const _ as *mut Ext2FileSystem;
         Some(&mut *EXT2_MOUNTED_FS)
@@ -562,7 +566,7 @@ pub fn get_mounted_fs() -> Option<&'static mut Ext2FileSystem> {
 pub fn register_driver() {
     // Note: In a full implementation, we would create a FileSystemDriver
     // structure and register it with the fs subsystem
-    // kprintln!("    ext2/ext3/ext4 driver registered")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    ext2/ext3/ext4 driver registered");
 }
 
 // ============================================================================
@@ -608,3 +612,5 @@ pub fn bytes_to_path(bytes: &[u8]) -> String {
         Err(_) => alloc::string::String::from(""),
     }
 }
+
+pub mod extended_api;

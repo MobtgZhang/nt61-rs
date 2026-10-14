@@ -276,8 +276,13 @@ mod tests {
     fn test_page_alignment() {
         assert_eq!(PAGE_SIZE, 4096);
         assert_eq!(PAGE_SHIFT, 12);
-        assert_eq!(PAGE_MASK & PAGE_SIZE, 0);
-        assert_eq!(PAGE_MASK & (PAGE_SIZE - 1), PAGE_SIZE - 1);
+        // PAGE_MASK is `!(PAGE_SIZE - 1)`: low PAGE_SHIFT bits zeroed,
+        // all other bits set. A page-aligned address has zero in the
+        // low bits of `PAGE_SIZE - 1`.
+        assert_eq!(PAGE_MASK & (PAGE_SIZE - 1), 0);
+        // PAGE_SIZE itself is page-aligned, so PAGE_MASK leaves it
+        // unchanged. This sanity-checks the mask width.
+        assert_eq!(PAGE_MASK & PAGE_SIZE, PAGE_SIZE);
     }
 
     #[test]

@@ -157,7 +157,10 @@ pub struct SmokeAggregator {
 impl SmokeAggregator {
     /// Create a new aggregator
     pub fn new() -> Self {
-        Self { total: 0, passed: 0 }
+        Self {
+            total: 0,
+            passed: 0,
+        }
     }
 
     /// Record a subsystem test result

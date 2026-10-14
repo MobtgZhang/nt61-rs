@@ -27,7 +27,12 @@ use core::sync::atomic::{AtomicBool, Ordering};
 /// Master gate for the serial sink. Default is `false` (serial
 /// is enabled). `kernel_main` flips it to `true` once the LFB
 /// is wired so the operator only sees the GUI.
-static DISABLED: AtomicBool = AtomicBool::new(false);
+///
+/// In libtest (`#[cfg(test)]`) the default becomes `true`
+/// because user-mode `out` instructions fault and would crash
+/// the libtest binary. Tests that exercise the serial output
+/// path must explicitly call `set_disabled(false)`.
+static DISABLED: AtomicBool = AtomicBool::new(cfg!(test));
 
 /// Suppress every subsequent `hal::serial::write_*` call until
 /// `set_disabled(false)` is invoked. Idempotent.
@@ -45,7 +50,11 @@ pub fn is_disabled() -> bool {
 /// the bytes were actually written.
 #[inline]
 pub fn if_enabled<F: FnOnce() -> R, R>(f: F) -> Option<R> {
-    if is_disabled() { None } else { Some(f()) }
+    if is_disabled() {
+        None
+    } else {
+        Some(f())
+    }
 }
 
 /// Panic-path re-enable. Wrap a multi-line diagnostic in this

@@ -11,15 +11,15 @@ pub fn init() {
 pub fn strcmp(a: &[u8], b: &[u8]) -> i32 {
     let len_a = a.iter().position(|&x| x == 0).unwrap_or(a.len());
     let len_b = b.iter().position(|&x| x == 0).unwrap_or(b.len());
-    
+
     let len = len_a.min(len_b);
-    
+
     for i in 0..len {
         if a[i] != b[i] {
             return a[i] as i32 - b[i] as i32;
         }
     }
-    
+
     if len_a < len_b {
         -1
     } else if len_a > len_b {
@@ -33,9 +33,9 @@ pub fn strcmp(a: &[u8], b: &[u8]) -> i32 {
 pub fn strcmpi(a: &[u8], b: &[u8]) -> i32 {
     let len_a = a.iter().position(|&x| x == 0).unwrap_or(a.len());
     let len_b = b.iter().position(|&x| x == 0).unwrap_or(b.len());
-    
+
     let len = len_a.min(len_b);
-    
+
     for i in 0..len {
         let ca = a[i].to_ascii_lowercase();
         let cb = b[i].to_ascii_lowercase();
@@ -43,7 +43,7 @@ pub fn strcmpi(a: &[u8], b: &[u8]) -> i32 {
             return ca as i32 - cb as i32;
         }
     }
-    
+
     if len_a < len_b {
         -1
     } else if len_a > len_b {

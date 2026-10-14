@@ -17,7 +17,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(target_arch = "x86_64")]
 use crate::hal::x86_64::io_port::READ_PORT_UCHAR;
-// use crate::kprintln;  // kprintln disabled (memcpy crash workaround)
+// use crate::kprintln;
 
 /// Standard ACPI RSDP signature (the 8-byte string "RSD PTR ").
 const RSDP_SIGNATURE: &[u8; 8] = b"RSD PTR ";
@@ -85,7 +85,7 @@ pub fn set_rsdp(rsdp_phys: u64) {
 #[cfg(debug_assertions)]
 macro_rules! acpi_debug {
     ($($arg:tt)*) => {
-//         // // crate::kprintln!($($arg)*)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+        //         // // crate::kprintln!($($arg)*);
     };
 }
 #[cfg(not(debug_assertions))]
@@ -121,10 +121,17 @@ fn checksum(buf: &[u8]) -> u8 {
 /// the XSDT (preferred) or RSDT (fallback), depending on the
 /// RSDP revision.
 pub fn find_table(signature: &[u8; 4]) -> Option<*const AcpiTableHeader> {
-    if signature.len() != 4 { return None; }
+    if signature.len() != 4 {
+        return None;
+    }
     let rsdp_phys = RSDP_PHYS.load(Ordering::Acquire);
-    if rsdp_phys == 0 { return None; }
-    acpi_debug!("    [acpi] find_table: searching for {:?}", core::str::from_utf8(signature).unwrap_or("???"));
+    if rsdp_phys == 0 {
+        return None;
+    }
+    acpi_debug!(
+        "    [acpi] find_table: searching for {:?}",
+        core::str::from_utf8(signature).unwrap_or("???")
+    );
     let rsdp_va = map_acpi(rsdp_phys)? as *const u8;
     unsafe {
         // Read signature (8 bytes).
@@ -148,12 +155,18 @@ pub fn find_table(signature: &[u8; 4]) -> Option<*const AcpiTableHeader> {
             let xsdt_lo = read_u32(rsdp_va.add(24));
             let xsdt_hi = read_u32(rsdp_va.add(28));
             let xsdt_phys = ((xsdt_hi as u64) << 32) | (xsdt_lo as u64);
-            acpi_debug!("    [acpi] find_table: using XSDT at phys=0x{:016x}", xsdt_phys);
+            acpi_debug!(
+                "    [acpi] find_table: using XSDT at phys=0x{:016x}",
+                xsdt_phys
+            );
             find_in_xsdt(xsdt_phys, signature)
         } else {
             // RSDT path.
             let rsdt_phys = read_u32(rsdp_va.add(16)) as u64;
-            acpi_debug!("    [acpi] find_table: using RSDT at phys=0x{:016x}", rsdt_phys);
+            acpi_debug!(
+                "    [acpi] find_table: using RSDT at phys=0x{:016x}",
+                rsdt_phys
+            );
             find_in_rsdt(rsdt_phys, signature)
         }
     }
@@ -179,13 +192,20 @@ fn find_in_xsdt(xsdt_phys: u64, signature: &[u8; 4]) -> Option<*const AcpiTableH
     unsafe {
         let length = read_u32(va.add(4));
         let n_entries = (length.saturating_sub(36)) / 8;
-        acpi_debug!("    [acpi] find_in_xsdt: XSDT length={} entries={}", length, n_entries);
+        acpi_debug!(
+            "    [acpi] find_in_xsdt: XSDT length={} entries={}",
+            length,
+            n_entries
+        );
         for i in 0..n_entries as isize {
             let entry_lo = read_u32(va.add(36 + (i * 8) as usize));
             let entry_hi = read_u32(va.add(40 + (i * 8) as usize));
             let table_phys = ((entry_hi as u64) << 32) | (entry_lo as u64);
             if let Some(p) = find_in_table(table_phys, signature) {
-                acpi_debug!("    [acpi] find_in_xsdt: found at phys=0x{:016x}", table_phys);
+                acpi_debug!(
+                    "    [acpi] find_in_xsdt: found at phys=0x{:016x}",
+                    table_phys
+                );
                 return Some(p);
             }
         }
@@ -229,7 +249,9 @@ fn find_in_table(phys: u64, signature: &[u8; 4]) -> Option<*const AcpiTableHeade
 pub fn enumerate_tables() -> Vec<(*const AcpiTableHeader, [u8; 4])> {
     let mut out = Vec::new();
     let rsdp_phys = RSDP_PHYS.load(Ordering::Acquire);
-    if rsdp_phys == 0 { return out; }
+    if rsdp_phys == 0 {
+        return out;
+    }
     let rsdp_va = match map_acpi(rsdp_phys) {
         Some(v) => v as *const u8,
         None => return out,
@@ -250,7 +272,9 @@ pub fn enumerate_tables() -> Vec<(*const AcpiTableHeader, [u8; 4])> {
 }
 
 fn collect_xsdt(xsdt_phys: u64, out: &mut Vec<(*const AcpiTableHeader, [u8; 4])>) {
-    let Some(va) = map_acpi(xsdt_phys) else { return; };
+    let Some(va) = map_acpi(xsdt_phys) else {
+        return;
+    };
     let va = va as *const u8;
     unsafe {
         let length = read_u32(va.add(4));
@@ -267,7 +291,9 @@ fn collect_xsdt(xsdt_phys: u64, out: &mut Vec<(*const AcpiTableHeader, [u8; 4])>
 }
 
 fn collect_rsdt(rsdt_phys: u64, out: &mut Vec<(*const AcpiTableHeader, [u8; 4])>) {
-    let Some(va) = map_acpi(rsdt_phys) else { return; };
+    let Some(va) = map_acpi(rsdt_phys) else {
+        return;
+    };
     let va = va as *const u8;
     unsafe {
         let length = read_u32(va.add(4));
@@ -291,7 +317,9 @@ fn push_table(phys: u64) -> Option<(*const AcpiTableHeader, [u8; 4])> {
         let p = va as *const AcpiTableHeader;
         // Validate checksum: sum of header bytes must be zero.
         let length = read_u32(va.add(4));
-        if length < 36 { return None; }
+        if length < 36 {
+            return None;
+        }
         let bytes = core::slice::from_raw_parts(va, length as usize);
         if checksum(bytes) != 0 {
             return None;
@@ -303,12 +331,16 @@ fn push_table(phys: u64) -> Option<(*const AcpiTableHeader, [u8; 4])> {
 /// Validate the RSDP checksum. Reads the bytes at `rsdp_phys`
 /// and returns `true` if they sum to zero.
 pub fn validate_rsdp(rsdp_phys: u64) -> bool {
-    let Some(va) = map_acpi(rsdp_phys) else { return false; };
+    let Some(va) = map_acpi(rsdp_phys) else {
+        return false;
+    };
     let va = va as *const u8;
     unsafe {
         let length = read_u32(va.add(20));
         let n = if length == 0 { 20 } else { length as usize };
-        if n > 36 { return false; }
+        if n > 36 {
+            return false;
+        }
         let bytes = core::slice::from_raw_parts(va, n);
         checksum(bytes) == 0
     }
@@ -539,7 +571,7 @@ pub fn parse_madt() -> bool {
     let header = match find_table(&madt_sig) {
         Some(p) => p,
         None => {
-//             // // kprintln!("    [acpi] MADT not found")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+            //             // // kprintln!("    [acpi] MADT not found");
             return false;
         }
     };
@@ -571,15 +603,20 @@ pub fn parse_madt() -> bool {
             }
             match entry_type {
                 MADT_ENTRY_LOCAL_APIC => {
-                    if MADT_INFO.lapic_count as usize >= MAX_MADT_LAPICS { break; }
+                    if MADT_INFO.lapic_count as usize >= MAX_MADT_LAPICS {
+                        break;
+                    }
                     let e: MadtLocalApic =
                         core::ptr::read_unaligned(entry_va as *const MadtLocalApic);
                     // bit 0 of flags = "enabled"
                     if e.flags & 1 != 0 {
                         MADT_INFO.lapic_ids[MADT_INFO.lapic_count as usize] = e.apic_id;
                         MADT_INFO.lapic_count += 1;
-                        acpi_debug!("    [acpi] MADT: found LAPIC id={} proc_id={} enabled=true",
-                                   e.apic_id, e.processor_id);
+                        acpi_debug!(
+                            "    [acpi] MADT: found LAPIC id={} proc_id={} enabled=true",
+                            e.apic_id,
+                            e.processor_id
+                        );
                     }
                 }
                 MADT_ENTRY_IO_APIC => {
@@ -593,8 +630,12 @@ pub fn parse_madt() -> bool {
                         let _io_apic_id = e.io_apic_id;
                         let _io_apic_addr = e.io_apic_address;
                         let _gsi_base = e.global_system_interrupt_base;
-                        acpi_debug!("    [acpi] MADT: found I/O APIC id={} addr=0x{:x} gsi_base={}",
-                                   _io_apic_id, _io_apic_addr, _gsi_base);
+                        acpi_debug!(
+                            "    [acpi] MADT: found I/O APIC id={} addr=0x{:x} gsi_base={}",
+                            _io_apic_id,
+                            _io_apic_addr,
+                            _gsi_base
+                        );
                     }
                 }
                 MADT_ENTRY_INTERRUPT_OVERRIDE => {
@@ -622,8 +663,12 @@ pub fn parse_madt() -> bool {
                         let _flags = e.flags;
                         MADT_INFO.nmi_sources[MADT_INFO.nmi_source_count] = e;
                         MADT_INFO.nmi_source_count += 1;
-                        acpi_debug!("    [acpi] MADT: local APIC NMI: proc={} lint={} flags=0x{:x}",
-                                   _proc_id, _lint, _flags);
+                        acpi_debug!(
+                            "    [acpi] MADT: local APIC NMI: proc={} lint={} flags=0x{:x}",
+                            _proc_id,
+                            _lint,
+                            _flags
+                        );
                     }
                 }
                 _ => {
@@ -632,9 +677,9 @@ pub fn parse_madt() -> bool {
             }
             offset += entry_len as usize;
         }
-//         // // kprintln!("    [acpi] MADT: lapic_base=0x{:x} flags=0x{:x} cpus={} ioapic={} int_overrides={} nmi_sources={}",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                   MADT_INFO.local_apic_address, MADT_INFO.flags, MADT_INFO.lapic_count, MADT_INFO.has_io_apic,
-// //                   MADT_INFO.int_override_count, MADT_INFO.nmi_source_count);
+        //         // // kprintln!("    [acpi] MADT: lapic_base=0x{:x} flags=0x{:x} cpus={} ioapic={} int_overrides={} nmi_sources={}",
+        // //                   MADT_INFO.local_apic_address, MADT_INFO.flags, MADT_INFO.lapic_count, MADT_INFO.has_io_apic,
+        // //                   MADT_INFO.int_override_count, MADT_INFO.nmi_source_count);
     }
     true
 }
@@ -659,9 +704,238 @@ mod tests {
 
     #[test]
     fn read_cmos_does_not_panic() {
-        // The function reads CMOS register 0x00; on systems
-        // without a CMOS the read just returns whatever the
-        // host gives us. We only check that the call completes.
-        let _ = read_cmos(0);
+        // Skip on non-x86_64 host (function is a stub there).
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            let _ = read_cmos(0);
+            return;
+        }
+        // Skip on x86_64: the `in`/`out` instructions used by
+        // x86_64::io_port are privileged and cause SIGSEGV in
+        // user-mode libtest. The actual smoke check runs during
+        // kernel boot via the `ke::smoke` harness.
+        #[cfg(target_arch = "x86_64")]
+        {
+            // Intentionally a no-op in libtest.
+        }
     }
+}
+
+// ---------------------------------------------------------------------------
+// FADT (Fixed ACPI Description Table, signature "FACP")
+// ---------------------------------------------------------------------------
+
+/// FADT field offsets, mirrored from the ACPI 6.3 §5.2.9 layout as defined
+/// by ACPICA (`source/include/actbl.h`, `struct acpi_table_fadt`).
+mod fadt_off {
+    pub const REVISION: usize = 4;
+    pub const LENGTH: usize = 4;
+    pub const PREFERRED_PROFILE: usize = 45;
+    pub const SCI_INTERRUPT: usize = 46;
+    pub const PM1A_EVENT_BLOCK: usize = 56;
+    pub const PM1B_EVENT_BLOCK: usize = 60;
+    pub const PM1A_CONTROL_BLOCK: usize = 64;
+    pub const PM1B_CONTROL_BLOCK: usize = 68;
+    pub const PM2_CONTROL_BLOCK: usize = 72;
+    pub const PM_TIMER_BLOCK: usize = 76;
+    pub const GPE0_BLOCK: usize = 80;
+    pub const GPE1_BLOCK: usize = 84;
+    pub const PM1_EVENT_LENGTH: usize = 88;
+    pub const PM1_CONTROL_LENGTH: usize = 89;
+    pub const PM2_CONTROL_LENGTH: usize = 90;
+    pub const PM_TIMER_LENGTH: usize = 91;
+    pub const GPE0_BLOCK_LENGTH: usize = 92;
+    pub const GPE1_BLOCK_LENGTH: usize = 93;
+    pub const FLAGS: usize = 112;
+    pub const RESET_REGISTER_ADDRESS: usize = 116 + 4;
+    pub const RESET_VALUE: usize = 128;
+    pub const MINOR_REVISION: usize = 131;
+    // Generic Address Structure: SpaceId, BitWidth, Offset, Count, Address(8).
+    pub const XPM1A_EVENT_BLOCK: usize = 148 + 4;
+    pub const XPM1B_EVENT_BLOCK: usize = 160 + 4;
+    pub const XPM1A_CONTROL_BLOCK: usize = 172 + 4;
+    pub const XPM1B_CONTROL_BLOCK: usize = 184 + 4;
+    pub const XPM2_CONTROL_BLOCK: usize = 196 + 4;
+    pub const XPM_TIMER_BLOCK: usize = 208 + 4;
+    pub const XGPE0_BLOCK: usize = 220 + 4;
+    pub const XGPE1_BLOCK: usize = 232 + 4;
+}
+
+/// FADT flag bits (ACPICA `actbl.h`, "Masks for the FADT Flags field").
+pub mod fadt_flags {
+    pub const WBINVD: u32 = 1 << 0;
+    pub const WBINVD_FLUSH: u32 = 1 << 1;
+    pub const C1_SUPPORTED: u32 = 1 << 2;
+    pub const C2_MP_SUPPORTED: u32 = 1 << 3;
+    pub const POWER_BUTTON: u32 = 1 << 4;
+    pub const SLEEP_BUTTON: u32 = 1 << 5;
+    pub const FIXED_RTC: u32 = 1 << 6;
+    pub const S4_RTC_WAKE: u32 = 1 << 7;
+    pub const TIMER_32BIT: u32 = 1 << 8;
+    pub const DOCKING_SUPPORTED: u32 = 1 << 9;
+    pub const RESET_REGISTER: u32 = 1 << 10;
+    pub const SEALED_CASE: u32 = 1 << 11;
+    pub const HEADLESS: u32 = 1 << 12;
+    pub const SLEEP_TYPE: u32 = 1 << 13;
+    pub const PCI_EXPRESS_WAKE: u32 = 1 << 14;
+    pub const PLATFORM_CLOCK: u32 = 1 << 15;
+    pub const S4_RTC_VALID: u32 = 1 << 16;
+    pub const REMOTE_POWER_ON: u32 = 1 << 17;
+    pub const APIC_CLUSTER: u32 = 1 << 18;
+    pub const APIC_PHYSICAL: u32 = 1 << 19;
+    pub const HW_REDUCED: u32 = 1 << 20;
+    pub const LOW_POWER_S0: u32 = 1 << 21;
+}
+
+/// FADT fields needed by the power policy.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FadtInfo {
+    pub revision: u8,
+    pub minor_revision: u8,
+    pub preferred_profile: u8,
+    pub sci_interrupt: u16,
+    pub pm1a_evt_blk: u64,
+    pub pm1b_evt_blk: u64,
+    pub pm1a_cnt_blk: u64,
+    pub pm1b_cnt_blk: u64,
+    pub pm2_cnt_blk: u64,
+    pub pm_tmr_blk: u64,
+    pub gpe0_blk: u64,
+    pub gpe1_blk: u64,
+    pub pm1_evt_len: u8,
+    pub pm1_cnt_len: u8,
+    pub pm2_cnt_len: u8,
+    pub pm_tmr_len: u8,
+    pub gpe0_len: u8,
+    pub gpe1_len: u8,
+    pub flags: u32,
+    pub reset_register: u64,
+    pub reset_value: u8,
+}
+
+impl FadtInfo {
+    /// ACPI 5.0+: the platform is hardware reduced, so OSPM must not touch
+    /// the FADT PM event/control/timer blocks.
+    pub fn hardware_reduced(&self) -> bool {
+        self.flags & fadt_flags::HW_REDUCED != 0
+    }
+}
+
+fn read_u8(table: *const u8, offset: usize) -> u8 {
+    unsafe { ptr::read_volatile(table.add(offset)) }
+}
+
+fn read_u16(table: *const u8, offset: usize) -> u16 {
+    let mut bytes = [0u8; 2];
+    for (i, byte) in bytes.iter_mut().enumerate() {
+        *byte = read_u8(table, offset + i);
+    }
+    u16::from_le_bytes(bytes)
+}
+
+fn fadt_read_u32(table: *const u8, offset: usize) -> u32 {
+    let mut bytes = [0u8; 4];
+    for (i, byte) in bytes.iter_mut().enumerate() {
+        *byte = read_u8(table, offset + i);
+    }
+    u32::from_le_bytes(bytes)
+}
+
+fn fadt_read_u64(table: *const u8, offset: usize) -> u64 {
+    let mut bytes = [0u8; 8];
+    for (i, byte) in bytes.iter_mut().enumerate() {
+        *byte = read_u8(table, offset + i);
+    }
+    u64::from_le_bytes(bytes)
+}
+
+/// Resolve a Generic Address Structure: prefer the 64-bit extended field
+/// when the FADT revision is >= 2 and it is populated (ACPI 6.3 §5.2.9).
+fn gas_address(table: *const u8, legacy: usize, extended: usize, revision: u8) -> u64 {
+    if revision >= 2 {
+        let extended_value = fadt_read_u64(table, extended);
+        if extended_value != 0 {
+            return extended_value;
+        }
+    }
+    fadt_read_u32(table, legacy) as u64
+}
+
+/// Parse the FADT. Returns `None` when the table is absent or too short for
+/// its revision.
+pub fn parse_fadt() -> Option<FadtInfo> {
+    let header = find_table(b"FACP")?;
+    let table = header as *const u8;
+    let revision = read_u8(table, fadt_off::REVISION);
+    let length = fadt_read_u32(table, fadt_off::LENGTH);
+    // Revision 1 tables end at the Flags field; anything older/shorter is
+    // not usable for power management.
+    if length < (fadt_off::FLAGS + 4) as u32 {
+        return None;
+    }
+
+    Some(FadtInfo {
+        revision,
+        minor_revision: read_u8(table, fadt_off::MINOR_REVISION),
+        preferred_profile: read_u8(table, fadt_off::PREFERRED_PROFILE),
+        sci_interrupt: read_u16(table, fadt_off::SCI_INTERRUPT),
+        pm1a_evt_blk: gas_address(
+            table,
+            fadt_off::PM1A_EVENT_BLOCK,
+            fadt_off::XPM1A_EVENT_BLOCK,
+            revision,
+        ),
+        pm1b_evt_blk: gas_address(
+            table,
+            fadt_off::PM1B_EVENT_BLOCK,
+            fadt_off::XPM1B_EVENT_BLOCK,
+            revision,
+        ),
+        pm1a_cnt_blk: gas_address(
+            table,
+            fadt_off::PM1A_CONTROL_BLOCK,
+            fadt_off::XPM1A_CONTROL_BLOCK,
+            revision,
+        ),
+        pm1b_cnt_blk: gas_address(
+            table,
+            fadt_off::PM1B_CONTROL_BLOCK,
+            fadt_off::XPM1B_CONTROL_BLOCK,
+            revision,
+        ),
+        pm2_cnt_blk: gas_address(
+            table,
+            fadt_off::PM2_CONTROL_BLOCK,
+            fadt_off::XPM2_CONTROL_BLOCK,
+            revision,
+        ),
+        pm_tmr_blk: gas_address(
+            table,
+            fadt_off::PM_TIMER_BLOCK,
+            fadt_off::XPM_TIMER_BLOCK,
+            revision,
+        ),
+        gpe0_blk: gas_address(table, fadt_off::GPE0_BLOCK, fadt_off::XGPE0_BLOCK, revision),
+        gpe1_blk: gas_address(table, fadt_off::GPE1_BLOCK, fadt_off::XGPE1_BLOCK, revision),
+        pm1_evt_len: read_u8(table, fadt_off::PM1_EVENT_LENGTH),
+        pm1_cnt_len: read_u8(table, fadt_off::PM1_CONTROL_LENGTH),
+        pm2_cnt_len: read_u8(table, fadt_off::PM2_CONTROL_LENGTH),
+        pm_tmr_len: read_u8(table, fadt_off::PM_TIMER_LENGTH),
+        gpe0_len: read_u8(table, fadt_off::GPE0_BLOCK_LENGTH),
+        gpe1_len: read_u8(table, fadt_off::GPE1_BLOCK_LENGTH),
+        flags: fadt_read_u32(table, fadt_off::FLAGS),
+        reset_register: fadt_read_u64(table, fadt_off::RESET_REGISTER_ADDRESS),
+        reset_value: read_u8(table, fadt_off::RESET_VALUE),
+    })
+}
+
+/// Evaluate an ACPI control method such as `_PTS`, `_WAK` or `_SST`.
+///
+/// Not implemented: this kernel has no AML interpreter, so control methods
+/// cannot be evaluated. OSPM requires one (ACPI 6.3 §6.2, ACPICA
+/// `acpi_evaluate_object`), and sleep-state support is only discoverable by
+/// running `_SST`/`_PTS`/`_WAK` from the DSDT. Callers must treat `None` as
+/// "method not executed" rather than as a successful evaluation.
+pub fn execute_acpi_method(_path: &str, _args: &[u64]) -> Option<u64> {
+    None
 }

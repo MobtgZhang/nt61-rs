@@ -17,10 +17,16 @@ pub static GDI_LINK: Spinlock<alloc::vec::Vec<(String, String)>> =
 /// Add a forwarder entry; the smoke test uses this to
 /// verify the table is populated.
 pub fn add(name: &str, target: &str) {
-    GDI_LINK.lock().push((String::from(name), String::from(target)));
+    GDI_LINK
+        .lock()
+        .push((String::from(name), String::from(target)));
 }
 
 /// Look up a forwarder; returns `Some(target)` if registered.
 pub fn lookup(name: &str) -> Option<String> {
-    GDI_LINK.lock().iter().find(|(n, _)| n == name).map(|(_, t)| t.clone())
+    GDI_LINK
+        .lock()
+        .iter()
+        .find(|(n, _)| n == name)
+        .map(|(_, t)| t.clone())
 }

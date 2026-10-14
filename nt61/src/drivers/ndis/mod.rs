@@ -56,21 +56,25 @@ static mut REGISTERED_COUNT: usize = 0;
 /// `NDIS_STATUS_SUCCESS` value (0) on success.
 pub fn ndis_m_register_miniport_driver(driver: MiniportDriver) -> i32 {
     unsafe {
-        if REGISTERED_COUNT >= REGISTERED.len() { return status::FAILURE; }
+        if REGISTERED_COUNT >= REGISTERED.len() {
+            return status::FAILURE;
+        }
         REGISTERED[REGISTERED_COUNT] = Some(driver);
         REGISTERED_COUNT += 1;
     }
     status::SUCCESS
 }
 
-pub fn count() -> usize { unsafe { REGISTERED_COUNT } }
+pub fn count() -> usize {
+    unsafe { REGISTERED_COUNT }
+}
 
 pub fn init() {
-    // kprintln!("    NDIS 6.0 miniport wrapper: ready")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    NDIS 6.0 miniport wrapper: ready");
 }
 
 pub fn smoke_test() -> bool {
-    // kprintln!("  [NDIS SMOKE] NDIS wrapper: {} miniport(s) registered", count())  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("  [NDIS SMOKE OK] NDIS stack healthy")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [NDIS SMOKE] NDIS wrapper: {} miniport(s) registered", count());
+    // kprintln!("  [NDIS SMOKE OK] NDIS stack healthy");
     true
 }

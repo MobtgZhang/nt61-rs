@@ -69,8 +69,10 @@ impl Default for Sha256 {
 impl Sha256 {
     pub fn new() -> Self {
         Self {
-            state: [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-                0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19],
+            state: [
+                0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+                0x5be0cd19,
+            ],
             buf: [0; 64],
             buf_len: 0,
             total_len: 0,
@@ -86,7 +88,8 @@ impl Sha256 {
             }
             let remain = 64 - self.buf_len;
             let to_copy = (data.len() - off).min(remain);
-            self.buf[self.buf_len..self.buf_len + to_copy].copy_from_slice(&data[off..off + to_copy]);
+            self.buf[self.buf_len..self.buf_len + to_copy]
+                .copy_from_slice(&data[off..off + to_copy]);
             self.buf_len += to_copy;
             off += to_copy;
         }
@@ -94,23 +97,40 @@ impl Sha256 {
     }
 
     fn process_block(&mut self) {
-        fn rotr(x: u32, n: u32) -> u32 { (x >> n) | (x << (32 - n)) }
-        fn ch(x: u32, y: u32, z: u32) -> u32 { (x & y) ^ (!x & z) }
-        fn maj(x: u32, y: u32, z: u32) -> u32 { (x & y) ^ (x & z) ^ (y & z) }
-        fn s0(x: u32) -> u32 { rotr(x, 2) ^ rotr(x, 13) ^ rotr(x, 22) }
-        fn s1(x: u32) -> u32 { rotr(x, 6) ^ rotr(x, 11) ^ rotr(x, 25) }
-        fn g0(x: u32) -> u32 { rotr(x, 7) ^ rotr(x, 18) ^ (x >> 3) }
-        fn g1(x: u32) -> u32 { rotr(x, 17) ^ rotr(x, 19) ^ (x >> 10) }
+        fn rotr(x: u32, n: u32) -> u32 {
+            (x >> n) | (x << (32 - n))
+        }
+        fn ch(x: u32, y: u32, z: u32) -> u32 {
+            (x & y) ^ (!x & z)
+        }
+        fn maj(x: u32, y: u32, z: u32) -> u32 {
+            (x & y) ^ (x & z) ^ (y & z)
+        }
+        fn s0(x: u32) -> u32 {
+            rotr(x, 2) ^ rotr(x, 13) ^ rotr(x, 22)
+        }
+        fn s1(x: u32) -> u32 {
+            rotr(x, 6) ^ rotr(x, 11) ^ rotr(x, 25)
+        }
+        fn g0(x: u32) -> u32 {
+            rotr(x, 7) ^ rotr(x, 18) ^ (x >> 3)
+        }
+        fn g1(x: u32) -> u32 {
+            rotr(x, 17) ^ rotr(x, 19) ^ (x >> 10)
+        }
 
         let mut w = [0u32; 64];
         for i in 0..16 {
             w[i] = u32::from_le_bytes([
-                self.buf[i * 4], self.buf[i * 4 + 1],
-                self.buf[i * 4 + 2], self.buf[i * 4 + 3]
+                self.buf[i * 4],
+                self.buf[i * 4 + 1],
+                self.buf[i * 4 + 2],
+                self.buf[i * 4 + 3],
             ]);
         }
         for i in 16..64 {
-            w[i] = g1(w[i - 2]).wrapping_add(w[i - 7])
+            w[i] = g1(w[i - 2])
+                .wrapping_add(w[i - 7])
                 .wrapping_add(g0(w[i - 15]))
                 .wrapping_add(w[i - 16]);
         }
@@ -125,12 +145,18 @@ impl Sha256 {
         let mut h = self.state[7];
 
         for i in 0..64 {
-            let t1 = h.wrapping_add(s1(e)).wrapping_add(ch(e, f, g))
-                .wrapping_add(SHA256_K[i]).wrapping_add(w[i]);
+            let t1 = h
+                .wrapping_add(s1(e))
+                .wrapping_add(ch(e, f, g))
+                .wrapping_add(SHA256_K[i])
+                .wrapping_add(w[i]);
             let t2 = s0(a).wrapping_add(maj(a, b, c));
-            h = g; g = f; f = e;
+            h = g;
+            g = f;
+            f = e;
             e = d.wrapping_add(t1);
-            d = c; c = b;
+            d = c;
+            c = b;
             b = a;
             a = t1.wrapping_add(t2);
         }
@@ -176,7 +202,7 @@ const PE_SIGNATURE: u32 = 0x00004550; // "PE\0\0"
 /// DOS header at the start of a PE file.
 #[repr(C)]
 struct DosHeader {
-    pub magic: u16,          // 0x00 "MZ"
+    pub magic: u16, // 0x00 "MZ"
     pub last_size: u16,
     pub num_pages: u16,
     pub relocs: u16,
@@ -265,8 +291,10 @@ pub fn compute_pe_hash(image: &[u8]) -> [u8; 32] {
     }
 
     let pe_sig = u32::from_le_bytes([
-        image[dos_off], image[dos_off + 1],
-        image[dos_off + 2], image[dos_off + 3]
+        image[dos_off],
+        image[dos_off + 1],
+        image[dos_off + 2],
+        image[dos_off + 3],
     ]);
     if pe_sig != PE_SIGNATURE {
         // Not a valid PE file — hash whatever we have
@@ -283,12 +311,24 @@ pub fn compute_pe_hash(image: &[u8]) -> [u8; 32] {
     let coff = CoffHeader {
         machine: u16::from_le_bytes([image[coff_hdr_off], image[coff_hdr_off + 1]]),
         num_sections: u16::from_le_bytes([image[coff_hdr_off + 2], image[coff_hdr_off + 3]]),
-        timestamp: u32::from_le_bytes([image[coff_hdr_off + 4], image[coff_hdr_off + 5],
-            image[coff_hdr_off + 6], image[coff_hdr_off + 7]]),
-        symbol_table: u32::from_le_bytes([image[coff_hdr_off + 8], image[coff_hdr_off + 9],
-            image[coff_hdr_off + 10], image[coff_hdr_off + 11]]),
-        num_symbols: u32::from_le_bytes([image[coff_hdr_off + 12], image[coff_hdr_off + 13],
-            image[coff_hdr_off + 14], image[coff_hdr_off + 15]]),
+        timestamp: u32::from_le_bytes([
+            image[coff_hdr_off + 4],
+            image[coff_hdr_off + 5],
+            image[coff_hdr_off + 6],
+            image[coff_hdr_off + 7],
+        ]),
+        symbol_table: u32::from_le_bytes([
+            image[coff_hdr_off + 8],
+            image[coff_hdr_off + 9],
+            image[coff_hdr_off + 10],
+            image[coff_hdr_off + 11],
+        ]),
+        num_symbols: u32::from_le_bytes([
+            image[coff_hdr_off + 12],
+            image[coff_hdr_off + 13],
+            image[coff_hdr_off + 14],
+            image[coff_hdr_off + 15],
+        ]),
         opt_hdr_size: u16::from_le_bytes([image[coff_hdr_off + 16], image[coff_hdr_off + 17]]),
         characteristics: u16::from_le_bytes([image[coff_hdr_off + 18], image[coff_hdr_off + 19]]),
     };
@@ -303,22 +343,30 @@ pub fn compute_pe_hash(image: &[u8]) -> [u8; 32] {
 
     // Data directories offset depends on PE format
     let data_dir_offset = if opt_magic == PE32_PLUS_MAGIC {
-        opt_hdr_off + 96  // PE32+ has 16 data dirs at offset 96
+        opt_hdr_off + 96 // PE32+ has 16 data dirs at offset 96
     } else {
-        opt_hdr_off + 96  // PE32 also has them here
+        opt_hdr_off + 96 // PE32 also has them here
     };
 
     // The certificate table is data directory entry 5 (index 4, since index 0 is export)
     let cert_dir_offset = data_dir_offset + 4 * 8;
     let cert_rva = if cert_dir_offset + 8 <= image.len() {
-        u32::from_le_bytes([image[cert_dir_offset], image[cert_dir_offset + 1],
-            image[cert_dir_offset + 2], image[cert_dir_offset + 3]])
+        u32::from_le_bytes([
+            image[cert_dir_offset],
+            image[cert_dir_offset + 1],
+            image[cert_dir_offset + 2],
+            image[cert_dir_offset + 3],
+        ])
     } else {
         0
     };
     let _cert_size = if cert_dir_offset + 8 <= image.len() {
-        u32::from_le_bytes([image[cert_dir_offset + 4], image[cert_dir_offset + 5],
-            image[cert_dir_offset + 6], image[cert_dir_offset + 7]])
+        u32::from_le_bytes([
+            image[cert_dir_offset + 4],
+            image[cert_dir_offset + 5],
+            image[cert_dir_offset + 6],
+            image[cert_dir_offset + 7],
+        ])
     } else {
         0
     };
@@ -332,19 +380,37 @@ pub fn compute_pe_hash(image: &[u8]) -> [u8; 32] {
     // Hash each section
     for i in 0..coff.num_sections as usize {
         let off = sec_hdr_off + i * 40;
-        if off + 40 > image.len() { break; }
+        if off + 40 > image.len() {
+            break;
+        }
 
-        let raw_size = u32::from_le_bytes([image[off + 16], image[off + 17],
-            image[off + 18], image[off + 19]]);
-        let raw_offset = u32::from_le_bytes([image[off + 20], image[off + 21],
-            image[off + 22], image[off + 23]]);
+        let raw_size = u32::from_le_bytes([
+            image[off + 16],
+            image[off + 17],
+            image[off + 18],
+            image[off + 19],
+        ]);
+        let raw_offset = u32::from_le_bytes([
+            image[off + 20],
+            image[off + 21],
+            image[off + 22],
+            image[off + 23],
+        ]);
 
         // Skip certificate table section
         if cert_rva != 0 {
-            let sec_rva = u32::from_le_bytes([image[off + 12], image[off + 13],
-                image[off + 14], image[off + 15]]);
-            let sec_vsize = u32::from_le_bytes([image[off + 8], image[off + 9],
-                image[off + 10], image[off + 11]]);
+            let sec_rva = u32::from_le_bytes([
+                image[off + 12],
+                image[off + 13],
+                image[off + 14],
+                image[off + 15],
+            ]);
+            let sec_vsize = u32::from_le_bytes([
+                image[off + 8],
+                image[off + 9],
+                image[off + 10],
+                image[off + 11],
+            ]);
             if cert_rva >= sec_rva && cert_rva < sec_rva + sec_vsize.max(raw_size) {
                 continue;
             }
@@ -380,8 +446,12 @@ pub fn validate_pe_image(image: &[u8]) -> u32 {
     }
 
     // Verify PE signature
-    let pe_sig = u32::from_le_bytes([image[pe_off], image[pe_off + 1],
-        image[pe_off + 2], image[pe_off + 3]]);
+    let pe_sig = u32::from_le_bytes([
+        image[pe_off],
+        image[pe_off + 1],
+        image[pe_off + 2],
+        image[pe_off + 3],
+    ]);
     if pe_sig != PE_SIGNATURE {
         return 0xC0000428u32;
     }
@@ -400,8 +470,8 @@ pub fn validate_pe_image(image: &[u8]) -> u32 {
     // Compute the PE hash
     let hash = compute_pe_hash(image);
     let _ = &hash;
-    // crate::kprintln!("    [CI] PE hash: {:02x}{:02x}...{:02x}{:02x}",  // kprintln disabled (memcpy crash workaround)
-//         hash[0], hash[1], hash[30], hash[31]);
+    // crate::kprintln!("    [CI] PE hash: {:02x}{:02x}...{:02x}{:02x}",
+    //         hash[0], hash[1], hash[30], hash[31]);
 
     // In a full implementation, we'd compare against:
     //   1. Embedded Authenticode signature (WinVerifyTrust)
@@ -419,7 +489,7 @@ pub fn init() {
         CI_POLICY = CI_POLICY_ENABLED | CI_POLICY_DRIVER_ENFORCEMENT;
         INITIALIZED = true;
     }
-    // crate::kprintln!("    CI: initialized (policy=0x{:08x})", CI_POLICY_ENABLED | CI_POLICY_DRIVER_ENFORCEMENT)  // kprintln disabled (memcpy crash workaround);
+    // crate::kprintln!("    CI: initialized (policy=0x{:08x})", CI_POLICY_ENABLED | CI_POLICY_DRIVER_ENFORCEMENT);
 }
 
 /// SeCiCheckImage — the kernel calls this before loading a driver.
@@ -433,31 +503,29 @@ pub fn se_ci_check_image(image: &[u8]) -> u32 {
 }
 
 pub fn smoke_test() -> bool {
-    // crate::kprintln!("  [CI SMOKE] testing Code Integrity...")  // kprintln disabled (memcpy crash workaround);
+    // crate::kprintln!("  [CI SMOKE] testing Code Integrity...");
 
     // Test SHA-256
     let test_data = b"Hello, World!";
     let hash = compute_sha256(test_data);
     let expected = [
-        0xd4, 0x4f, 0x04, 0x39, 0xf3, 0xfb, 0x40, 0x96,
-        0x9d, 0xea, 0x2d, 0x76, 0x60, 0xb1, 0x6c, 0xee,
-        0x9c, 0x4d, 0x95, 0x43, 0x2c, 0xf6, 0xf7, 0x2f,
-        0x7d, 0x27, 0x1a, 0x11, 0x9b, 0x65, 0xf5, 0x0e,
+        0xd4, 0x4f, 0x04, 0x39, 0xf3, 0xfb, 0x40, 0x96, 0x9d, 0xea, 0x2d, 0x76, 0x60, 0xb1, 0x6c,
+        0xee, 0x9c, 0x4d, 0x95, 0x43, 0x2c, 0xf6, 0xf7, 0x2f, 0x7d, 0x27, 0x1a, 0x11, 0x9b, 0x65,
+        0xf5, 0x0e,
     ];
     if hash != expected {
-        // crate::kprintln!("  [CI SMOKE FAIL] SHA-256 mismatch!")  // kprintln disabled (memcpy crash workaround);
+        // crate::kprintln!("  [CI SMOKE FAIL] SHA-256 mismatch!");
         return false;
     }
 
     // Test PE validation on a stub image
-    let fake_mz = [0x4D, 0x5A, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00,
-        0x04, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+    let fake_mz = [
+        0x4D, 0x5A, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+    ];
 
     // PE offset at 0x3C = 0x80
     let mut fake_pe = [0u8; 512];
@@ -472,13 +540,13 @@ pub fn smoke_test() -> bool {
     let coff_off = pe_sig_offset + 4;
     fake_pe[coff_off..][..2].copy_from_slice(&0x8664u16.to_le_bytes()); // AMD64 machine
     fake_pe[coff_off + 2..][..2].copy_from_slice(&1u16.to_le_bytes()); // 1 section
-    // Optional header size
+                                                                       // Optional header size
     fake_pe[coff_off + 16..][..2].copy_from_slice(&0xF0u16.to_le_bytes()); // 240 bytes
 
     let result = validate_pe_image(&fake_pe);
     let _ = &result;
-    // crate::kprintln!("  [CI SMOKE] PE validation result: 0x{:08x}", result as u32)  // kprintln disabled (memcpy crash workaround);
+    // crate::kprintln!("  [CI SMOKE] PE validation result: 0x{:08x}", result as u32);
 
-    // crate::kprintln!("  [CI SMOKE OK] Code Integrity module healthy")  // kprintln disabled (memcpy crash workaround);
+    // crate::kprintln!("  [CI SMOKE OK] Code Integrity module healthy");
     true
 }

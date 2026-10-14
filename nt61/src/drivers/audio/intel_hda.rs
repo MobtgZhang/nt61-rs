@@ -10,11 +10,11 @@
 //! specification 1.0a. No code is copied from any Microsoft or
 //! ReactOS source file.
 
-use alloc::vec::Vec;
 use crate::hal::common::pci;
 use crate::kprintln;
 use crate::mm::pool::{self, PoolType};
-use core::sync::atomic::{AtomicU16, AtomicU32, AtomicBool, Ordering};
+use alloc::vec::Vec;
+use core::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, Ordering};
 
 /// HDA PCI class: multimedia (0x04) / HDA (0x03).
 const HDA_PCI_CLASS: (u8, u8) = (0x04, 0x03);
@@ -37,44 +37,33 @@ const REG_RIRBSTS: u16 = 0x5E;
 const REG_IC: u16 = 0x60;
 const REG_IR: u16 = 0x64;
 
-
 const REG_IRS: u16 = 0x70;
 
-
-
-
-
 /// GCTL bits.
-const GCTL_CRST: u32 = 1 << 0;  // Controller Reset
-
-
+const GCTL_CRST: u32 = 1 << 0; // Controller Reset
 
 /// CORBCTL bits.
 
-const CORBCTL_CORBRUN: u8 = 1 << 1;  // CORB Run
+const CORBCTL_CORBRUN: u8 = 1 << 1; // CORB Run
 
 /// CORBSTS bits.
 
-
-
 /// RIRBCTL bits.
 
-const RIRBCTL_RIRBDMAEN: u8 = 1 << 1;  // RIRB DMA Enable
-const RIRBCTL_RIRBOINTEN: u8 = 1 << 2;  // RIRB Overflow Interrupt Enable
+const RIRBCTL_RIRBDMAEN: u8 = 1 << 1; // RIRB DMA Enable
+const RIRBCTL_RIRBOINTEN: u8 = 1 << 2; // RIRB Overflow Interrupt Enable
 
 /// RIRBSTS bits.
 
-
-
 /// IRS bits.
 
-const IRS_CODECRESET: u16 = 1 << 1;  // Codec Reset
-const IRS_VALID: u16 = 1 << 8;  // IC Valid
-const IRS_BUSY: u16 = 1 << 9;  // IRS Busy
+const IRS_CODECRESET: u16 = 1 << 1; // Codec Reset
+const IRS_VALID: u16 = 1 << 8; // IC Valid
+const IRS_BUSY: u16 = 1 << 9; // IRS Busy
 
 /// CORB/RIRB ring sizes
-const CORB_SIZE: usize = 256;  // 256 entries
-const RIRB_SIZE: usize = 256;  // 256 entries
+const CORB_SIZE: usize = 256; // 256 entries
+const RIRB_SIZE: usize = 256; // 256 entries
 
 /// CORB entry (4 bytes)
 #[repr(C)]
@@ -193,13 +182,10 @@ impl CorbEngine {
         unsafe {
             core::ptr::write_volatile(
                 (mmio + REG_CORBRP as u64) as *mut u16,
-                rp | 0x8000,  // Set the RST bit to reset
+                rp | 0x8000, // Set the RST bit to reset
             );
             // Clear RST bit
-            core::ptr::write_volatile(
-                (mmio + REG_CORBRP as u64) as *mut u16,
-                rp,
-            );
+            core::ptr::write_volatile((mmio + REG_CORBRP as u64) as *mut u16, rp);
         }
     }
 }
@@ -268,10 +254,7 @@ impl RirbEngine {
     /// Set the hardware write pointer (to acknowledge responses)
     pub fn set_write_ptr(&self, mmio: u64, wp: u16) {
         unsafe {
-            core::ptr::write_volatile(
-                (mmio + REG_RIRBWP as u64) as *mut u16,
-                wp,
-            );
+            core::ptr::write_volatile((mmio + REG_RIRBWP as u64) as *mut u16, wp);
         }
     }
 }
@@ -361,28 +344,28 @@ pub mod verbs {
     pub const SET_CHANNEL_COUNT: u16 = 0x0A00;
     /// Set format
     pub const SET_FORMAT: u16 = 0x0B00;
-    
+
     /// Get power state
     pub const GET_POWER_STATE: u16 = 0x0F05;
     /// Set power state
     pub const SET_POWER_STATE: u16 = 0x0F05;
-    
+
     /// Get converter stream/channel
     pub const GET_CONVERTER_STREAM_CHANNEL: u16 = 0x0F06;
     /// Set converter stream/channel
     pub const SET_CONVERTER_STREAM_CHANNEL: u16 = 0x7600;
-    
+
     /// Get widget status
     pub const GET_WIDGET_STATUS: u16 = 0x0F07;
-    
+
     /// Get support states
     pub const GET_SUPPORTED_POWER_STATES: u16 = 0x0F0A;
-    
+
     /// Get digital converter
     pub const GET_DIGITAL_CONVERTER: u16 = 0x0F0D;
     /// Set digital converter
     pub const SET_DIGITAL_CONVERTER: u16 = 0x7D00;
-    
+
     /// Codec ready bit in response
     pub const CODEC_READY_MASK: u32 = 0x80000000;
 }
@@ -499,10 +482,7 @@ static LAST_VERB_PAYLOAD: AtomicU32 = AtomicU32::new(0);
 /// Cached codec enumeration summary, one slot per controller. The
 /// high 16 bits are an ever-incrementing observation tag; the low
 /// 16 bits pack the last seen codec address and node count.
-static SMOKE_CODEC_SUMMARY: [AtomicU32; 2] = [
-    AtomicU32::new(0),
-    AtomicU32::new(0),
-];
+static SMOKE_CODEC_SUMMARY: [AtomicU32; 2] = [AtomicU32::new(0), AtomicU32::new(0)];
 
 /// Return the most recent CORB verb command, NID, and verb payload.
 pub fn last_verb() -> (u32, u8, u16) {
@@ -521,20 +501,22 @@ fn push_hda(c: HdaController) {
     }
 }
 
-pub fn count() -> usize { unsafe { HDA_COUNT } }
+pub fn count() -> usize {
+    unsafe { HDA_COUNT }
+}
 
 /// Get codecs for a controller
 pub fn get_codecs(hda_idx: usize) -> Option<&'static [HdaCodec]> {
-    unsafe {
-        HDAS_CODECS[hda_idx].as_ref().map(|v| v.as_slice())
-    }
+    unsafe { HDAS_CODECS[hda_idx].as_ref().map(|v| v.as_slice()) }
 }
 
 pub fn init() {
     let mut found = 0u32;
     for dev in pci::enumerate() {
         if (dev.class_code, dev.subclass) == HDA_PCI_CLASS {
-            if let Some(info) = crate::drivers::bus::pci_bus::find_pci(dev.bus, dev.device, dev.function) {
+            if let Some(info) =
+                crate::drivers::bus::pci_bus::find_pci(dev.bus, dev.device, dev.function)
+            {
                 if let Some(bar0) = first_mmio_bar(&info) {
                     let mut c = HdaController {
                         bar0_phys: bar0,
@@ -574,15 +556,21 @@ pub fn init_found() -> u32 {
 
 fn first_mmio_bar(info: &crate::drivers::bus::pci_bus::PciDeviceInfo) -> Option<u64> {
     for bar in info.bars.iter() {
-        if !bar.is_io && bar.phys != 0 { return Some(bar.phys); }
+        if !bar.is_io && bar.phys != 0 {
+            return Some(bar.phys);
+        }
     }
     None
 }
 
 fn init_controller(c: &mut HdaController) -> bool {
     let base = c.bar0_phys;
-    if base == 0 { return false; }
-    let Some(mmio) = crate::mm::syspte::map_io_space(base, 1) else { return false; };
+    if base == 0 {
+        return false;
+    }
+    let Some(mmio) = crate::mm::syspte::map_io_space(base, 1) else {
+        return false;
+    };
     c.bar0_virt = mmio;
 
     unsafe {
@@ -592,22 +580,24 @@ fn init_controller(c: &mut HdaController) -> bool {
         c.n_streams_in = ((c.gcap >> 8) & 0x0F) as u8;
         c.n_streams_bidi = ((c.gcap >> 3) & 0x0F) as u8;
         c.n_codecs = (c.gcap & 0x0F) as u8;
-        
-        // kprintln!("  [HDA] GCAP: 0x{:04x}", c.gcap)  // kprintln disabled (memcpy crash workaround);
-        // kprintln!("  [HDA] Streams: {} output, {} input, {} bidirectional",  // kprintln disabled (memcpy crash workaround)
-//             c.n_streams_out, c.n_streams_in, c.n_streams_bidi);
-        // kprintln!("  [HDA] Codecs: {}", c.n_codecs)  // kprintln disabled (memcpy crash workaround);
+
+        // kprintln!("  [HDA] GCAP: 0x{:04x}", c.gcap);
+        // kprintln!("  [HDA] Streams: {} output, {} input, {} bidirectional",
+        //             c.n_streams_out, c.n_streams_in, c.n_streams_bidi);
+        // kprintln!("  [HDA] Codecs: {}", c.n_codecs);
 
         // Step 2: Controller reset
         let gctl = core::ptr::read_volatile((mmio + REG_GCTL as u64) as *const u32);
         core::ptr::write_volatile((mmio + REG_GCTL as u64) as *mut u32, gctl & !GCTL_CRST);
-        
+
         // Wait for CRST to clear
         for _ in 0..1000 {
             let g = core::ptr::read_volatile((mmio + REG_GCTL as u64) as *const u32);
-            if (g & GCTL_CRST) == 0 { break; }
+            if (g & GCTL_CRST) == 0 {
+                break;
+            }
         }
-        
+
         // Small delay after reset
         for _ in 0..100 {
             core::hint::spin_loop();
@@ -618,22 +608,28 @@ fn init_controller(c: &mut HdaController) -> bool {
         let corb_size_bytes = CORB_SIZE * core::mem::size_of::<CorbEntry>();
         let corb_mem = pool::allocate_aligned(PoolType::NonPaged, corb_size_bytes, 128);
         if corb_mem.is_null() {
-            // kprintln!("  [HDA] Failed to allocate CORB memory")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("  [HDA] Failed to allocate CORB memory");
             return false;
         }
-        
+
         let corb_phys = virt_to_phys(corb_mem as u64).unwrap_or(corb_mem as u64);
         let corb_virt = corb_mem as *mut u32;
-        
+
         // Clear CORB
         for i in 0..CORB_SIZE {
             core::ptr::write_volatile(corb_virt.add(i), 0);
         }
-        
+
         // Program CORB registers
-        core::ptr::write_volatile((mmio + REG_CORBLBASE as u64) as *mut u32, (corb_phys & 0xFFFFFFFF) as u32);
-        core::ptr::write_volatile((mmio + REG_CORBUBASE as u64) as *mut u32, ((corb_phys >> 32) & 0xFFFFFFFF) as u32);
-        
+        core::ptr::write_volatile(
+            (mmio + REG_CORBLBASE as u64) as *mut u32,
+            (corb_phys & 0xFFFFFFFF) as u32,
+        );
+        core::ptr::write_volatile(
+            (mmio + REG_CORBUBASE as u64) as *mut u32,
+            ((corb_phys >> 32) & 0xFFFFFFFF) as u32,
+        );
+
         // Initialize CORB engine
         c.corb = Some(CorbEngine::new(corb_phys, corb_virt, CORB_SIZE as u16));
 
@@ -642,34 +638,42 @@ fn init_controller(c: &mut HdaController) -> bool {
         let rirb_size_bytes = RIRB_SIZE * core::mem::size_of::<RirbEntry>();
         let rirb_mem = pool::allocate_aligned(PoolType::NonPaged, rirb_size_bytes, 128);
         if rirb_mem.is_null() {
-            // kprintln!("  [HDA] Failed to allocate RIRB memory")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("  [HDA] Failed to allocate RIRB memory");
             return false;
         }
-        
+
         let rirb_phys = virt_to_phys(rirb_mem as u64).unwrap_or(rirb_mem as u64);
         let rirb_virt = rirb_mem as *mut u64;
-        
+
         // Clear RIRB
         for i in 0..RIRB_SIZE {
             core::ptr::write_volatile(rirb_virt.add(i), 0);
         }
-        
+
         // Program RIRB registers
-        core::ptr::write_volatile((mmio + REG_RIRBLBASE as u64) as *mut u32, (rirb_phys & 0xFFFFFFFF) as u32);
-        core::ptr::write_volatile((mmio + REG_RIRBUBASE as u64) as *mut u32, ((rirb_phys >> 32) & 0xFFFFFFFF) as u32);
-        
+        core::ptr::write_volatile(
+            (mmio + REG_RIRBLBASE as u64) as *mut u32,
+            (rirb_phys & 0xFFFFFFFF) as u32,
+        );
+        core::ptr::write_volatile(
+            (mmio + REG_RIRBUBASE as u64) as *mut u32,
+            ((rirb_phys >> 32) & 0xFFFFFFFF) as u32,
+        );
+
         // Initialize RIRB engine
         c.rirb = Some(RirbEngine::new(rirb_phys, rirb_virt, RIRB_SIZE as u16));
 
         // Step 5: Initialize CORBWP and CORBRP
         core::ptr::write_volatile((mmio + REG_CORBWP as u64) as *mut u16, 0);
         core::ptr::write_volatile((mmio + REG_CORBRP as u64) as *mut u16, 0x8000); // Set RST bit
-        
+
         // Step 6: Enable CORB and RIRB
         core::ptr::write_volatile((mmio + REG_CORBCTL as u64) as *mut u8, CORBCTL_CORBRUN);
-        core::ptr::write_volatile((mmio + REG_RIRBCTL as u64) as *mut u8, 
-            RIRBCTL_RIRBDMAEN | RIRBCTL_RIRBOINTEN);
-        
+        core::ptr::write_volatile(
+            (mmio + REG_RIRBCTL as u64) as *mut u8,
+            RIRBCTL_RIRBDMAEN | RIRBCTL_RIRBOINTEN,
+        );
+
         // Step 7: Clear RIRBWP to 0
         core::ptr::write_volatile((mmio + REG_RIRBWP as u64) as *mut u16, 0);
 
@@ -682,12 +686,12 @@ fn init_controller(c: &mut HdaController) -> bool {
         for codec_addr in 0..c.n_codecs {
             if detect_codec(mmio, codec_addr) {
                 let codec = enumerate_codec(mmio, codec_addr);
-                // kprintln!("  [HDA] Codec {}: {:04x}:{:04x}",   // kprintln disabled (memcpy crash workaround)
-//                     codec_addr, codec.vendor_id, codec.device_id);
+                // kprintln!("  [HDA] Codec {}: {:04x}:{:04x}",
+                //                     codec_addr, codec.vendor_id, codec.device_id);
                 codecs.push(codec);
             }
         }
-        
+
         // Store codecs
         if !codecs.is_empty() {
             {
@@ -732,22 +736,29 @@ fn virt_to_phys(virt: u64) -> Option<u64> {
 fn detect_codec(mmio: u64, codec_addr: u8) -> bool {
     // Use immediate command (IC) to send a GET_VENDOR_ID verb
     // to codec address (codec_addr << 1) | 0 (read)
-    let cmd = ((codec_addr as u32) << 23) | (verbs::GET_PARAMETER as u32) | 
-               ((params::VENDOR_ID as u32) << 8) | (1u32 << 15); // Bit 15 = read
-    
+    let cmd = ((codec_addr as u32) << 23)
+        | (verbs::GET_PARAMETER as u32)
+        | ((params::VENDOR_ID as u32) << 8)
+        | (1u32 << 15); // Bit 15 = read
+
     unsafe {
         // Wait for IRS busy to clear
         for _ in 0..1000 {
             let irs = core::ptr::read_volatile((mmio + REG_IRS as u64) as *const u16);
-            if (irs & IRS_BUSY) == 0 { break; }
+            if (irs & IRS_BUSY) == 0 {
+                break;
+            }
         }
-        
+
         // Write the command
         core::ptr::write_volatile((mmio + REG_IC as u64) as *mut u32, cmd);
-        
+
         // Set IRS_VALID
-        core::ptr::write_volatile((mmio + REG_IRS as u64) as *mut u16, IRS_VALID | IRS_CODECRESET);
-        
+        core::ptr::write_volatile(
+            (mmio + REG_IRS as u64) as *mut u16,
+            IRS_VALID | IRS_CODECRESET,
+        );
+
         // Wait for completion
         for _ in 0..10000 {
             let irs = core::ptr::read_volatile((mmio + REG_IRS as u64) as *const u16);
@@ -761,7 +772,7 @@ fn detect_codec(mmio: u64, codec_addr: u8) -> bool {
             }
         }
     }
-    
+
     false
 }
 
@@ -777,26 +788,27 @@ fn enumerate_codec(mmio: u64, codec_addr: u8) -> HdaCodec {
         root_nid: 0,
         node_count: 0,
     };
-    
+
     {
         // Get Vendor ID
-        codec.vendor_id = send_immediate_cmd(mmio, codec_addr, 
-            verbs::GET_PARAMETER, params::VENDOR_ID) as u16;
-        
+        codec.vendor_id =
+            send_immediate_cmd(mmio, codec_addr, verbs::GET_PARAMETER, params::VENDOR_ID) as u16;
+
         // Get Subsystem ID
-        codec.subsystem_id = send_immediate_cmd(mmio, codec_addr,
-            verbs::GET_PARAMETER, params::SUBSYSTEM_ID);
-        
+        codec.subsystem_id =
+            send_immediate_cmd(mmio, codec_addr, verbs::GET_PARAMETER, params::SUBSYSTEM_ID);
+
         // Get Revision ID
-        codec.revision_id = (send_immediate_cmd(mmio, codec_addr,
-            verbs::GET_PARAMETER, params::REVISION_ID) >> 8) as u8;
-        
+        codec.revision_id =
+            (send_immediate_cmd(mmio, codec_addr, verbs::GET_PARAMETER, params::REVISION_ID) >> 8)
+                as u8;
+
         // Get node count from root node (NID 0)
-        let node_info = send_immediate_cmd(mmio, codec_addr,
-            verbs::GET_PARAMETER, params::NODE_COUNT);
+        let node_info =
+            send_immediate_cmd(mmio, codec_addr, verbs::GET_PARAMETER, params::NODE_COUNT);
         codec.node_count = (node_info & 0xFF) as u8;
         codec.root_nid = ((node_info >> 16) & 0xFF) as u8;
-        
+
         // Calculate device ID from vendor ID and subsystem
         codec.device_id = (codec.subsystem_id >> 16) as u16;
     }
@@ -806,23 +818,26 @@ fn enumerate_codec(mmio: u64, codec_addr: u8) -> HdaCodec {
 
 /// Send an immediate command and get response
 fn send_immediate_cmd(mmio: u64, codec_addr: u8, verb: u16, param: u8) -> u32 {
-    let cmd = ((codec_addr as u32) << 23) | 
-               ((verb | (param as u16)) as u32) |
-               (1u32 << 15); // Read bit
-    
+    let cmd = ((codec_addr as u32) << 23) | ((verb | (param as u16)) as u32) | (1u32 << 15); // Read bit
+
     unsafe {
         // Wait for IRS busy to clear
         for _ in 0..1000 {
             let irs = core::ptr::read_volatile((mmio + REG_IRS as u64) as *const u16);
-            if (irs & IRS_BUSY) == 0 { break; }
+            if (irs & IRS_BUSY) == 0 {
+                break;
+            }
         }
-        
+
         // Write the command
         core::ptr::write_volatile((mmio + REG_IC as u64) as *mut u32, cmd);
-        
+
         // Set IRS_VALID
-        core::ptr::write_volatile((mmio + REG_IRS as u64) as *mut u16, IRS_VALID | IRS_CODECRESET);
-        
+        core::ptr::write_volatile(
+            (mmio + REG_IRS as u64) as *mut u16,
+            IRS_VALID | IRS_CODECRESET,
+        );
+
         // Wait for completion
         for _ in 0..10000 {
             let irs = core::ptr::read_volatile((mmio + REG_IRS as u64) as *const u16);
@@ -831,7 +846,7 @@ fn send_immediate_cmd(mmio: u64, codec_addr: u8, verb: u16, param: u8) -> u32 {
             }
         }
     }
-    
+
     0xFFFFFFFF
 }
 
@@ -842,7 +857,12 @@ pub fn send_codec_cmd(hda_idx: usize, codec: u8, nid: u8, verb: u16) -> Option<u
     unsafe {
         if hda_idx < HDAS.len() {
             if let Some(ref hda) = HDAS[hda_idx] {
-                return Some(send_immediate_cmd(hda.bar0_virt, codec, verb | (nid as u16), 0));
+                return Some(send_immediate_cmd(
+                    hda.bar0_virt,
+                    codec,
+                    verb | (nid as u16),
+                    0,
+                ));
             }
         }
     }
@@ -866,11 +886,11 @@ pub fn get_info(hda_idx: usize) -> Option<(&'static str, u16, u8, u8)> {
 }
 
 pub fn smoke_test() -> bool {
-    // kprintln!("  [HDA SMOKE] Intel HDA controllers: {}", count())  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [HDA SMOKE] Intel HDA controllers: {}", count());
     unsafe {
         for i in 0..HDA_COUNT {
             if let Some(codecs) = HDAS_CODECS[i].as_ref() {
-                // kprintln!("  [HDA SMOKE] Controller {}: {} codec(s)", i, codecs.len())  // kprintln disabled (memcpy crash workaround);
+                // kprintln!("  [HDA SMOKE] Controller {}: {} codec(s)", i, codecs.len());
                 for codec in codecs {
                     let prev = SMOKE_CODEC_SUMMARY[i].load(Ordering::Relaxed);
                     let node_count = codec.node_count as u32;
@@ -881,7 +901,7 @@ pub fn smoke_test() -> bool {
             }
         }
     }
-    // kprintln!("  [HDA SMOKE OK] HDA stack healthy")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [HDA SMOKE OK] HDA stack healthy");
     true
 }
 
@@ -890,31 +910,24 @@ pub fn smoke_test() -> bool {
 // =====================================================================
 
 /// Stream descriptor register offsets (relative to stream base)
-const SD_OFFSET_STS: u16 = 0x00;     // Status
-const SD_OFFSET_PICS: u16 = 0x04;     // Pre-fetch Count
+const SD_OFFSET_STS: u16 = 0x00; // Status
+const SD_OFFSET_PICS: u16 = 0x04; // Pre-fetch Count
 
-const SD_OFFSET_LVI: u16 = 0x0C;      // Last Valid Index
+const SD_OFFSET_LVI: u16 = 0x0C; // Last Valid Index
 
-
-
-
-
-const SD_OFFSET_BDLPL: u16 = 0x24;    // BDL Pointer Lower
-const SD_OFFSET_BDLPU: u16 = 0x28;    // BDL Pointer Upper
+const SD_OFFSET_BDLPL: u16 = 0x24; // BDL Pointer Lower
+const SD_OFFSET_BDLPU: u16 = 0x28; // BDL Pointer Upper
 
 /// Stream status bits
 
-const SD_STS_BCIS: u8 = 1 << 3;      // Buffer Completion Interrupt Status
-const SD_STS_LVBCI: u8 = 1 << 2;     // Last Valid BDL Entry Completed
+const SD_STS_BCIS: u8 = 1 << 3; // Buffer Completion Interrupt Status
+const SD_STS_LVBCI: u8 = 1 << 2; // Last Valid BDL Entry Completed
 
-const SD_STS_UNDERRUN: u8 = 1 << 0;   // Underrun
+const SD_STS_UNDERRUN: u8 = 1 << 0; // Underrun
 
 /// Stream control bits
-const SD_CTL_STREAM_RUN: u32 = 1 << 0;      // Run
-const SD_CTL_STREAM_IOCE: u32 = 1 << 1;    // Interrupt on Completion Enable
-
-
-
+const SD_CTL_STREAM_RUN: u32 = 1 << 0; // Run
+const SD_CTL_STREAM_IOCE: u32 = 1 << 1; // Interrupt on Completion Enable
 
 /// BDL (Buffer Descriptor List) entry
 #[repr(C)]
@@ -924,7 +937,7 @@ pub struct BdlEntry {
     /// Buffer length in bytes (must be a multiple of 128)
     pub len: u32,
     /// BDL entry control
-    pub ioc: u32,  // Bit 0: Interrupt on Completion
+    pub ioc: u32, // Bit 0: Interrupt on Completion
 }
 
 impl BdlEntry {
@@ -986,7 +999,7 @@ impl HdaFormat {
             19200 => 0x6,
             _ => 0x0, // Default to 48kHz
         };
-        
+
         let channels = (self.channels - 1) as u16;
         let bits = match self.bits_per_sample {
             8 => 0x0,
@@ -996,7 +1009,7 @@ impl HdaFormat {
             32 => 0x4,
             _ => 0x1, // Default to 16-bit
         };
-        
+
         (srt << 8) | (channels << 4) | bits
     }
 }
@@ -1056,7 +1069,7 @@ impl HdaStream {
             StreamType::Input => 0x90 + (stream_num as u16) * 0x20,
             StreamType::Bidirectional => 0x80 + (stream_num as u16) * 0x20,
         };
-        
+
         Self {
             mmio,
             stream_num,
@@ -1075,13 +1088,13 @@ impl HdaStream {
             initialized: false,
         }
     }
-    
+
     /// Initialize the stream with given format
     pub fn init(&mut self, format: &HdaFormat) -> Result<(), &'static str> {
         if self.initialized {
             return Err("Stream already initialized");
         }
-        
+
         // Allocate BDL (must be aligned to 128 bytes, 16 or 32 entries)
         let bdl_entries = 32;
         let bdl_bytes = bdl_entries * core::mem::size_of::<BdlEntry>();
@@ -1089,18 +1102,18 @@ impl HdaStream {
         if bdl_mem.is_null() {
             return Err("Failed to allocate BDL");
         }
-        
+
         self.bdl_virt = bdl_mem as *mut BdlEntry;
         self.bdl_phys = virt_to_phys(bdl_mem as u64).unwrap_or(bdl_mem as u64);
         self.bdl_size = bdl_entries;
-        
+
         // Clear BDL
         unsafe {
             for i in 0..bdl_entries {
                 core::ptr::write_volatile(self.bdl_virt.add(i), BdlEntry::new(0, 0, false));
             }
         }
-        
+
         // Program BDL pointer
         let bdl_base = self.base_offset;
         unsafe {
@@ -1113,23 +1126,23 @@ impl HdaStream {
                 ((self.bdl_phys >> 32) & 0xFFFFFFFF) as u32,
             );
         }
-        
+
         // Set format
         self.set_format(format)?;
-        
+
         self.format = Some(*format);
         self.initialized = true;
-        
-        // kprintln!("  [HDA Stream] Stream {} initialized: {}ch {}bit {}Hz",  // kprintln disabled (memcpy crash workaround)
-//             self.stream_num, format.channels, format.bits_per_sample, format.sample_rate);
-        
+
+        // kprintln!("  [HDA Stream] Stream {} initialized: {}ch {}bit {}Hz",
+        //             self.stream_num, format.channels, format.bits_per_sample, format.sample_rate);
+
         Ok(())
     }
-    
+
     /// Set the audio format
     pub fn set_format(&mut self, format: &HdaFormat) -> Result<(), &'static str> {
         let fmt = format.format_code();
-        
+
         // Write format to stream registers
         // The format register is at offset 0x12 in stream registers
         unsafe {
@@ -1138,21 +1151,26 @@ impl HdaStream {
                 fmt,
             );
         }
-        
+
         self.format = Some(*format);
         Ok(())
     }
-    
+
     /// Add a buffer to the BDL
-    pub fn add_buffer(&mut self, addr: u64, len: u32, interrupt: bool) -> Result<usize, &'static str> {
+    pub fn add_buffer(
+        &mut self,
+        addr: u64,
+        len: u32,
+        interrupt: bool,
+    ) -> Result<usize, &'static str> {
         if !self.initialized {
             return Err("Stream not initialized");
         }
-        
+
         if self.current_bdl >= self.bdl_size {
             return Err("BDL full");
         }
-        
+
         let entry = BdlEntry::new(addr, len, interrupt);
         if !entry.is_valid_addr() {
             return Err("Buffer address not 128-byte aligned");
@@ -1160,14 +1178,14 @@ impl HdaStream {
         if !entry.is_valid_len() {
             return Err("Buffer length not a multiple of 128");
         }
-        
+
         unsafe {
             core::ptr::write_volatile(self.bdl_virt.add(self.current_bdl), entry);
         }
-        
+
         let idx = self.current_bdl;
         self.current_bdl += 1;
-        
+
         // Update LVI (Last Valid Index)
         unsafe {
             core::ptr::write_volatile(
@@ -1175,10 +1193,10 @@ impl HdaStream {
                 (self.current_bdl - 1) as u16,
             );
         }
-        
+
         Ok(idx)
     }
-    
+
     /// Clear all buffers from the BDL
     pub fn clear_buffers(&mut self) {
         self.current_bdl = 0;
@@ -1187,7 +1205,7 @@ impl HdaStream {
                 core::ptr::write_volatile(self.bdl_virt.add(i), BdlEntry::new(0, 0, false));
             }
         }
-        
+
         // Reset LVI
         unsafe {
             core::ptr::write_volatile(
@@ -1196,17 +1214,17 @@ impl HdaStream {
             );
         }
     }
-    
+
     /// Start the stream
     pub fn start(&mut self) -> Result<(), &'static str> {
         if !self.initialized {
             return Err("Stream not initialized");
         }
-        
+
         if self.running {
             return Err("Stream already running");
         }
-        
+
         // Clear status
         unsafe {
             core::ptr::write_volatile(
@@ -1214,7 +1232,7 @@ impl HdaStream {
                 0xFF,
             );
         }
-        
+
         // Enable stream
         let ctrl = SD_CTL_STREAM_RUN | SD_CTL_STREAM_IOCE;
         // Write to stream control at offset 0x05
@@ -1224,19 +1242,19 @@ impl HdaStream {
                 ctrl,
             );
         }
-        
+
         self.running = true;
-        // kprintln!("  [HDA Stream] Stream {} started", self.stream_num)  // kprintln disabled (memcpy crash workaround);
-        
+        // kprintln!("  [HDA Stream] Stream {} started", self.stream_num);
+
         Ok(())
     }
-    
+
     /// Stop the stream
     pub fn stop(&mut self) {
         if !self.running {
             return;
         }
-        
+
         // Disable stream
         unsafe {
             core::ptr::write_volatile(
@@ -1244,11 +1262,11 @@ impl HdaStream {
                 0,
             );
         }
-        
+
         self.running = false;
-        // kprintln!("  [HDA Stream] Stream {} stopped", self.stream_num)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [HDA Stream] Stream {} stopped", self.stream_num);
     }
-    
+
     /// Get stream status
     pub fn status(&self) -> u8 {
         unsafe {
@@ -1257,17 +1275,17 @@ impl HdaStream {
             )
         }
     }
-    
+
     /// Check if underrun occurred
     pub fn is_underrun(&self) -> bool {
         (self.status() & SD_STS_UNDERRUN) != 0
     }
-    
+
     /// Check if buffer completed
     pub fn is_buffer_complete(&self) -> bool {
         (self.status() & (SD_STS_BCIS | SD_STS_LVBCI)) != 0
     }
-    
+
     /// Acknowledge buffer completion
     pub fn ack_buffer_complete(&mut self) {
         unsafe {
@@ -1277,7 +1295,7 @@ impl HdaStream {
             );
         }
     }
-    
+
     /// Get current DMA position
     pub fn get_position(&self) -> u32 {
         unsafe {
@@ -1286,7 +1304,7 @@ impl HdaStream {
             )
         }
     }
-    
+
     /// Set the converter (widget) for this stream
     pub fn set_converter(&mut self, codec: u8, widget_nid: u8, channel_id: u8) {
         // The stream-tag and converter info is set in the converter widget
@@ -1298,12 +1316,12 @@ impl HdaStream {
         self.converter_channel = channel_id;
         LAST_SET_CONVERTER_CALLS.fetch_add(1, Ordering::Relaxed);
     }
-    
+
     /// Get stream number
     pub fn stream_number(&self) -> u8 {
         self.stream_num
     }
-    
+
     /// Check if stream is running
     pub fn is_running(&self) -> bool {
         self.running
@@ -1315,7 +1333,7 @@ impl Drop for HdaStream {
         if self.running {
             self.stop();
         }
-        
+
         if !self.bdl_virt.is_null() {
             // Note: We can't actually free the memory here without a proper allocator
             // In a real implementation, would use the memory manager
@@ -1325,7 +1343,11 @@ impl Drop for HdaStream {
 }
 
 /// Create an output (playback) stream
-pub fn create_output_stream(hda_idx: usize, stream_num: u8, format: &HdaFormat) -> Result<HdaStream, &'static str> {
+pub fn create_output_stream(
+    hda_idx: usize,
+    stream_num: u8,
+    format: &HdaFormat,
+) -> Result<HdaStream, &'static str> {
     unsafe {
         if let Some(ref hda) = HDAS[hda_idx] {
             let mut stream = HdaStream::new(hda.bar0_virt, stream_num, StreamType::Output);
@@ -1338,7 +1360,11 @@ pub fn create_output_stream(hda_idx: usize, stream_num: u8, format: &HdaFormat) 
 }
 
 /// Create an input (capture) stream
-pub fn create_input_stream(hda_idx: usize, stream_num: u8, format: &HdaFormat) -> Result<HdaStream, &'static str> {
+pub fn create_input_stream(
+    hda_idx: usize,
+    stream_num: u8,
+    format: &HdaFormat,
+) -> Result<HdaStream, &'static str> {
     unsafe {
         if let Some(ref hda) = HDAS[hda_idx] {
             let mut stream = HdaStream::new(hda.bar0_virt, stream_num, StreamType::Input);

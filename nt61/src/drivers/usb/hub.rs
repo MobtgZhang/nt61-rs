@@ -99,7 +99,7 @@ pub struct HubState {
     pub power_on_delay: u8,
     pub local_power_good: bool,
     pub overcurrent: bool,
-    pub port_status: [u16; 16],  // Up to 15 ports
+    pub port_status: [u16; 16], // Up to 15 ports
     pub port_change: [u16; 16],
 }
 
@@ -108,7 +108,7 @@ impl HubState {
         let mut state = Self::default();
         state.num_ports = num_ports.min(15);
         for i in 0..16 {
-            state.port_status[i] = HUB_PORT_POWER;  // Ports powered on by default
+            state.port_status[i] = HUB_PORT_POWER; // Ports powered on by default
             state.port_change[i] = 0;
         }
         state
@@ -119,7 +119,10 @@ impl HubState {
         if port == 0 || port > self.num_ports as u8 {
             return (0, 0);
         }
-        (self.port_status[port as usize - 1], self.port_change[port as usize - 1])
+        (
+            self.port_status[port as usize - 1],
+            self.port_change[port as usize - 1],
+        )
     }
 
     /// Clear port change bit
@@ -141,11 +144,11 @@ impl HubState {
             HUB_FEATURE_PORT_RESET => {
                 self.port_status[idx] |= HUB_PORT_RESET;
                 self.port_status[idx] &= !HUB_PORT_ENABLE;
-            },
+            }
             HUB_FEATURE_PORT_ENABLE => self.port_status[idx] |= HUB_PORT_ENABLE,
             HUB_FEATURE_PORT_SUSPEND => self.port_status[idx] |= HUB_PORT_SUSPEND,
-            HUB_FEATURE_PORT_CONNECTION => {},
-            _ => {},
+            HUB_FEATURE_PORT_CONNECTION => {}
+            _ => {}
         }
     }
 
@@ -160,14 +163,18 @@ impl HubState {
             HUB_FEATURE_PORT_RESET => {
                 self.port_status[idx] &= !HUB_PORT_RESET;
                 self.port_status[idx] |= HUB_PORT_ENABLE;
-            },
+            }
             HUB_FEATURE_PORT_ENABLE => self.port_status[idx] &= !HUB_PORT_ENABLE,
             HUB_FEATURE_PORT_SUSPEND => self.port_status[idx] &= !HUB_PORT_SUSPEND,
-            HUB_FEATURE_C_PORT_CONNECTION => self.port_change[idx] &= !HUB_FEATURE_C_PORT_CONNECTION,
+            HUB_FEATURE_C_PORT_CONNECTION => {
+                self.port_change[idx] &= !HUB_FEATURE_C_PORT_CONNECTION
+            }
             HUB_FEATURE_C_PORT_ENABLE => self.port_change[idx] &= !HUB_FEATURE_C_PORT_ENABLE,
             HUB_FEATURE_C_PORT_RESET => self.port_change[idx] &= !HUB_FEATURE_C_PORT_RESET,
-            HUB_FEATURE_C_PORT_OVERCURRENT => self.port_change[idx] &= !HUB_FEATURE_C_PORT_OVERCURRENT,
-            _ => {},
+            HUB_FEATURE_C_PORT_OVERCURRENT => {
+                self.port_change[idx] &= !HUB_FEATURE_C_PORT_OVERCURRENT
+            }
+            _ => {}
         }
     }
 }
@@ -194,9 +201,16 @@ pub fn parse_hub_descriptor(data: &[u8]) -> Option<HubDescriptor> {
 
 /// Get hub status
 pub fn get_hub_status(state: &HubState) -> (u16, u16) {
-    let status = if state.local_power_good { HUB_STATUS_LOCAL_POWER } else { 0 }
-        | if state.overcurrent { HUB_STATUS_OVERCURRENT } else { 0 };
-    (status, 0)  // No change bits set
+    let status = if state.local_power_good {
+        HUB_STATUS_LOCAL_POWER
+    } else {
+        0
+    } | if state.overcurrent {
+        HUB_STATUS_OVERCURRENT
+    } else {
+        0
+    };
+    (status, 0) // No change bits set
 }
 
 /// Process a hub class request
@@ -211,37 +225,39 @@ pub fn process_hub_request(
         HUB_REQ_GET_STATUS => {
             // Return hub status (2 bytes status + 2 bytes change)
             4
-        },
+        }
         HUB_REQ_CLEAR_FEATURE => {
             match value {
-                0 => {  // HUB_STATUS_LOCAL_POWER
+                0 => {
+                    // HUB_STATUS_LOCAL_POWER
                     state.local_power_good = true;
-                },
-                1 => {  // HUB_STATUS_OVERCURRENT
+                }
+                1 => {
+                    // HUB_STATUS_OVERCURRENT
                     state.overcurrent = false;
-                },
-                _ => {},
+                }
+                _ => {}
             }
             0
-        },
+        }
         HUB_REQ_GET_PORT_STATUS => {
             // Return port status + change (4 bytes)
             4
-        },
+        }
         HUB_REQ_SET_PORT_FEATURE => {
             state.set_port_feature(index as u8, value);
             0
-        },
+        }
         HUB_REQ_CLEAR_PORT_FEATURE => {
             state.clear_port_feature(index as u8, value);
             0
-        },
+        }
         _ => 0,
     }
 }
 
 pub fn init() {
-    // kprintln!("      USB hub class driver: ready")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("      USB hub class driver: ready");
 }
 
 pub fn smoke_test() -> bool {
@@ -255,6 +271,6 @@ pub fn smoke_test() -> bool {
     let (status, _) = test_state.get_port_status(1);
     assert!(status & HUB_PORT_RESET != 0);
 
-    // kprintln!("  [HUB SMOKE] USB hub driver healthy")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [HUB SMOKE] USB hub driver healthy");
     true
 }

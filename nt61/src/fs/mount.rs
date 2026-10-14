@@ -14,10 +14,10 @@
 //!
 //! Clean-room implementation based on public specifications.
 
-use crate::drivers::{volmgr, partmgr, storage::disk};
-use alloc::format;
+use crate::drivers::{partmgr, storage::disk, volmgr};
 use crate::fs;
 use crate::ke::sync::Spinlock;
+use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -153,8 +153,7 @@ pub fn scan_and_mount_all() {
                     // TODO: Get EXT volume label and free space
                 }
             }
-            _ => {
-            }
+            _ => {}
         }
 
         if mp.mounted {
@@ -166,7 +165,7 @@ pub fn scan_and_mount_all() {
 pub fn detect_filesystem(disk_index: usize, starting_lba: u64) -> FilesystemType {
     let mut boot_sector = [0u8; 512];
 
-    if disk::DiskReadSectors(disk_index, starting_lba * 512, 512, &mut boot_sector) != 512 {
+    if disk::DiskRead(disk_index, starting_lba * 512, 512, &mut boot_sector) != 512 {
         return FilesystemType::Unknown;
     }
 
@@ -191,10 +190,19 @@ pub fn detect_filesystem(disk_index: usize, starting_lba: u64) -> FilesystemType
     }
 
     let mut superblock = [0u8; 512];
-    if disk::DiskReadSectors(disk_index, (starting_lba * 512) + 1024, 512, &mut superblock) == 512 {
+    if disk::DiskRead(
+        disk_index,
+        (starting_lba * 512) + 1024,
+        512,
+        &mut superblock,
+    ) == 512
+    {
         if superblock[56] == 0x53 && superblock[57] == 0xEF {
             let incompat_features = u32::from_le_bytes([
-                superblock[96], superblock[97], superblock[98], superblock[99]
+                superblock[96],
+                superblock[97],
+                superblock[98],
+                superblock[99],
             ]);
 
             if (incompat_features & 0x40) != 0 || (incompat_features & 0x80) != 0 {
@@ -202,7 +210,10 @@ pub fn detect_filesystem(disk_index: usize, starting_lba: u64) -> FilesystemType
             }
 
             let compat_features = u32::from_le_bytes([
-                superblock[92], superblock[93], superblock[94], superblock[95]
+                superblock[92],
+                superblock[93],
+                superblock[94],
+                superblock[95],
             ]);
             if (compat_features & 0x04) != 0 {
                 return FilesystemType::EXT3;
@@ -260,7 +271,6 @@ pub fn unmount(drive_letter: char) -> bool {
     let idx = (drive_letter.to_ascii_uppercase() as u8).saturating_sub(b'A') as usize;
 
     if idx < MAX_MOUNT_POINTS && mount_table[idx].mounted {
-
         mount_table[idx] = MountPoint::new();
         true
     } else {
@@ -268,11 +278,7 @@ pub fn unmount(drive_letter: char) -> bool {
     }
 }
 
-pub fn mount_to_drive_letter(
-    disk_index: usize,
-    partition_index: u32,
-    drive_letter: char,
-) -> bool {
+pub fn mount_to_drive_letter(disk_index: usize, partition_index: u32, drive_letter: char) -> bool {
     let mut mount_table = MOUNT_TABLE.lock();
     let idx = (drive_letter.to_ascii_uppercase() as u8).saturating_sub(b'A') as usize;
 
@@ -281,9 +287,9 @@ pub fn mount_to_drive_letter(
     }
 
     let partitions = partmgr::list_all();
-    let partition = partitions.iter().find(|p| {
-        p.valid && p.disk_index == disk_index && p.partition_number == partition_index
-    });
+    let partition = partitions
+        .iter()
+        .find(|p| p.valid && p.disk_index == disk_index && p.partition_number == partition_index);
 
     if let Some(part) = partition {
         let fs_type = detect_filesystem(disk_index, part.starting_offset);
@@ -313,11 +319,14 @@ pub fn mount_to_drive_letter(
     false
 }
 
-pub fn get_filesystem_info(disk_index: usize, partition_index: u32) -> Option<(FilesystemType, String)> {
+pub fn get_filesystem_info(
+    disk_index: usize,
+    partition_index: u32,
+) -> Option<(FilesystemType, String)> {
     let partitions = partmgr::list_all();
-    let partition = partitions.iter().find(|p| {
-        p.valid && p.disk_index == disk_index && p.partition_number == partition_index
-    });
+    let partition = partitions
+        .iter()
+        .find(|p| p.valid && p.disk_index == disk_index && p.partition_number == partition_index);
 
     if let Some(part) = partition {
         let fs_type = detect_filesystem(disk_index, part.starting_offset);

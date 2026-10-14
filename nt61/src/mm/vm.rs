@@ -46,7 +46,9 @@ use crate::ke::sync::Spinlock;
 pub use self::MemFlags as PageFlags;
 
 // Import memory management constants from single source of truth.
-pub use crate::mm::constants::{PAGE_SIZE, PAGE_SHIFT, PAGE_MASK, KERNEL_BASE, USER_BASE, USER_LIMIT, KERNEL_LIMIT};
+pub use crate::mm::constants::{
+    KERNEL_BASE, KERNEL_LIMIT, PAGE_MASK, PAGE_SHIFT, PAGE_SIZE, USER_BASE, USER_LIMIT,
+};
 
 /// Memory protection flags - matches Windows 7's `PAGE_*` constants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,7 +67,9 @@ impl MemFlags {
     pub const WRITE: Self = Self(1 << 1);
     /// Raw bit value. Useful for handing the protection bits to the
     /// architecture-specific `paging::map_page` helper.
-    pub const fn bits(self) -> u32 { self.0 }
+    pub const fn bits(self) -> u32 {
+        self.0
+    }
     pub const EXECUTE: Self = Self(1 << 2);
     pub const USER: Self = Self(1 << 3);
     pub const GUARD: Self = Self(1 << 4);
@@ -166,20 +170,27 @@ pub(crate) static VM_STATE: Spinlock<VmState> = Spinlock::new(VmState::new());
 
 /// Initialise VM subsystem.
 pub fn init() {
-    // // kprintln!("    Virtual memory manager initialized")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("      Kernel base: 0xFFFF800000000000")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("      User base:   0x0000000000000000")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("    Virtual memory manager initialized");
+    // // kprintln!("      Kernel base: 0xFFFF800000000000");
+    // // kprintln!("      User base:   0x0000000000000000");
 
     // The low-level paging bring-up is per-arch; today only x86_64
     // exposes a callable `init()`. Other targets do their paging
     // setup in `arch::<arch>::init_hardware()` before this point.
     #[cfg(target_arch = "x86_64")]
-    unsafe { paging_impl::init() };
+    unsafe {
+        paging_impl::init()
+    };
 }
 
 /// Allocate a region of virtual address space. Returns the base
 /// address on success.
-pub fn allocate_virtual(base: u64, size: u64, alloc_type: AllocationType, flags: MemFlags) -> Result<u64, ()> {
+pub fn allocate_virtual(
+    base: u64,
+    size: u64,
+    alloc_type: AllocationType,
+    flags: MemFlags,
+) -> Result<u64, ()> {
     let aligned_size = (size + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
     let mut state = VM_STATE.lock();
     let mut addr = if base == 0 {
@@ -191,11 +202,12 @@ pub fn allocate_virtual(base: u64, size: u64, alloc_type: AllocationType, flags:
 
     match alloc_type {
         AllocationType::Commit | AllocationType::Reserve => {
-            if addr.checked_add(aligned_size).is_none() || addr + aligned_size > state.kernel_limit {
+            if addr.checked_add(aligned_size).is_none() || addr + aligned_size > state.kernel_limit
+            {
                 return Err(());
             }
             state.next_alloc_base = addr + aligned_size;
-            // // kprintln!("      Allocated VA region 0x{:x} + 0x{:x}", addr, aligned_size)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("      Allocated VA region 0x{:x} + 0x{:x}", addr, aligned_size);
             Ok(addr)
         }
         _ => {

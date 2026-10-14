@@ -3,6 +3,7 @@
 //! Additional string manipulation functions: prefix/suffix testing,
 //! character operations, and string utilities.
 
+use super::status::{STATUS_INVALID_PARAMETER, STATUS_SUCCESS};
 use super::string::BOOLEAN;
 use super::types::UnicodeString;
 
@@ -177,7 +178,11 @@ pub unsafe extern "C" fn RtlIsTextUnicode(
         *result = if score > 5 { 1 } else { 0 };
     }
 
-    if score > 5 { 1 } else { 0 }
+    if score > 5 {
+        1
+    } else {
+        0
+    }
 }
 
 #[repr(C)]
@@ -208,7 +213,6 @@ pub unsafe extern "C" fn RtlStringFromGUID(
     guid: *const Guid,
     guid_string: *mut UnicodeString,
 ) -> i32 {
-
     if guid.is_null() || guid_string.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
@@ -222,12 +226,7 @@ pub unsafe extern "C" fn RtlStringFromGUID(
     STATUS_SUCCESS
 }
 
-pub unsafe extern "C" fn RtlCharToInteger(
-    string: *const i8,
-    base: u32,
-    value: *mut u32,
-) -> i32 {
-
+pub unsafe extern "C" fn RtlCharToInteger(string: *const i8, base: u32, value: *mut u32) -> i32 {
     if string.is_null() || value.is_null() {
         return STATUS_INVALID_PARAMETER;
     }

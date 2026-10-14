@@ -12,7 +12,7 @@ use crate::kprintln;
 /// Run every driver's self-check and return `true` iff every
 /// one passes.
 pub fn smoke_test() -> bool {
-    // // kprintln!("  [DRIVER SMOKE] running all driver subsystem smoke tests...")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("  [DRIVER SMOKE] running all driver subsystem smoke tests...");
     let mut ok = true;
     ok &= super::bus::smoke_test();
     ok &= super::storage::smoke_test();
@@ -38,9 +38,9 @@ pub fn smoke_test() -> bool {
     ok &= super::fileinfo::smoke_test();
     ok &= super::spldr::smoke_test();
     if ok {
-        // // kprintln!("  [DRIVER SMOKE] all driver checks passed")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("  [DRIVER SMOKE] all driver checks passed");
     } else {
-        // // kprintln!("  [DRIVER SMOKE FAIL] one or more driver checks failed")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("  [DRIVER SMOKE FAIL] one or more driver checks failed");
     }
     ok
 }

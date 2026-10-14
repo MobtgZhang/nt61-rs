@@ -3,10 +3,10 @@
 //! This module extends the basic Job object with full resource accounting,
 //! notification mechanisms, and query APIs.
 
-use super::job::{JobObject, create_job, STATUS_SUCCESS, STATUS_INVALID_PARAMETER};
-use core::sync::atomic::{AtomicU64, Ordering};
-use alloc::vec::Vec;
+use super::job::{create_job, JobObject, STATUS_INVALID_PARAMETER, STATUS_SUCCESS};
 use crate::ke::sync::Spinlock;
+use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 /// Job accounting information
 #[derive(Debug, Clone, Copy)]
@@ -39,7 +39,6 @@ pub struct JobAccountingInfo {
     pub peak_process_memory_used: u64,
 
     /// Peak job memory usage (bytes)
-
     pub peak_job_memory_used: u64,
 }
 
@@ -134,7 +133,8 @@ impl JobAccounting {
             self.read_transfer_count.fetch_add(bytes, Ordering::Relaxed);
         } else {
             self.write_operation_count.fetch_add(1, Ordering::Relaxed);
-            self.write_transfer_count.fetch_add(bytes, Ordering::Relaxed);
+            self.write_transfer_count
+                .fetch_add(bytes, Ordering::Relaxed);
         }
     }
 
@@ -196,16 +196,13 @@ impl JobObject {
                 Ok(unsafe {
                     core::slice::from_raw_parts(
                         &info as *const _ as *const u8,
-                        core::mem::size_of::<JobAccountingInfo>()
-                    ).to_vec()
+                        core::mem::size_of::<JobAccountingInfo>(),
+                    )
+                    .to_vec()
                 })
             }
-            JobInformationClass::BasicLimitInformation => {
-                Err(STATUS_INVALID_PARAMETER)
-            }
-            JobInformationClass::ExtendedLimitInformation => {
-                Err(STATUS_INVALID_PARAMETER)
-            }
+            JobInformationClass::BasicLimitInformation => Err(STATUS_INVALID_PARAMETER),
+            JobInformationClass::ExtendedLimitInformation => Err(STATUS_INVALID_PARAMETER),
         }
     }
 

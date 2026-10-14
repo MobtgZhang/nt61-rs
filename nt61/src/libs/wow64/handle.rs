@@ -75,10 +75,7 @@ where
 /// as borrowed (not owned) and never modify the EPROCESS in
 /// a way that would race with the holder of the original
 /// `&Eprocess` argument.
-pub unsafe fn resolve_to_eprocess(
-    process: &Eprocess,
-    handle: u32,
-) -> Option<*mut Eprocess> {
+pub unsafe fn resolve_to_eprocess(process: &Eprocess, handle: u32) -> Option<*mut Eprocess> {
     if handle == 0 {
         return None;
     }
@@ -115,10 +112,7 @@ pub unsafe fn resolve_to_eprocess(
 }
 
 /// Resolve a HANDLE32 to a raw ETHREAD pointer.
-pub unsafe fn resolve_to_ethread(
-    process: &Eprocess,
-    handle: u32,
-) -> Option<*mut Ethread> {
+pub unsafe fn resolve_to_ethread(process: &Eprocess, handle: u32) -> Option<*mut Ethread> {
     if handle == 0 {
         return None;
     }

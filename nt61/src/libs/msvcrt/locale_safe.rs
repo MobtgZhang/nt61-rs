@@ -1,9 +1,8 @@
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, AtomicPtr, Ordering};
-
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use spin::{Lazy, Mutex};
 
 use super::types::*;
 use core::ptr;
-use core::sync::atomic::{AtomicBool, Ordering};
 
 extern crate alloc;
 use alloc::string::String;
@@ -29,6 +28,10 @@ pub struct lconv {
     pub p_sign_posn: c_char,
     pub n_sign_posn: c_char,
 }
+
+// The locale data is only reachable through the mutex-guarded static that
+// owns it, so the pointer fields can be shared across threads.
+unsafe impl Send for lconv {}
 
 struct LocaleData {
     current_locale: [c_char; 32],
@@ -77,7 +80,9 @@ impl LocaleData {
 
 static LOCALE_DATA: Lazy<Mutex<LocaleData>> = Lazy::new(|| {
     let mut data = LocaleData::new();
-    unsafe { init_c_locale_internal(&mut data); }
+    unsafe {
+        init_c_locale_internal(&mut data);
+    }
     Mutex::new(data)
 });
 
@@ -108,7 +113,7 @@ pub const LC_MONETARY: c_int = 3;
 pub const LC_NUMERIC: c_int = 4;
 pub const LC_TIME: c_int = 5;
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *mut c_char {
     if locale.is_null() {
         let data = LOCALE_DATA.lock();
@@ -125,13 +130,13 @@ pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *m
     ptr::null_mut()
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn localeconv() -> *mut lconv {
     let data = LOCALE_DATA.lock();
     &data.locale_conv as *const lconv as *mut lconv
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _wsetlocale(category: c_int, locale: *const wchar_t) -> *mut wchar_t {
     static mut WIDE_LOCALE: Mutex<[wchar_t; 32]> = Mutex::new([0; 32]);
 

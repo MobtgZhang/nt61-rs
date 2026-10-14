@@ -41,29 +41,29 @@ pub const ZX_E_DC_REVISION: u32 = 0x0014;
 pub const ZX_E_DC_FEATURE: u32 = 0x0018;
 
 /// Control register flags (enhanced)
-pub const ZX_E_DC_CTRL_ENABLE: u32 = 1 << 0;        // DC enable
-pub const ZX_E_DC_CTRL_RUN: u32 = 1 << 1;          // DC running
-pub const ZX_E_DC_CTRL_RESET: u32 = 1 << 2;        // DC reset
-pub const ZX_E_DC_CTRL_VBLANK_INT: u32 = 1 << 3;   // V-blank interrupt enable
-pub const ZX_E_DC_CTRL_REG_UPDATE: u32 = 1 << 4;    // Register update
-pub const ZX_E_DC_CTRL_TE_FREEZE: u32 = 1 << 5;    // TE freeze (for sync)
+pub const ZX_E_DC_CTRL_ENABLE: u32 = 1 << 0; // DC enable
+pub const ZX_E_DC_CTRL_RUN: u32 = 1 << 1; // DC running
+pub const ZX_E_DC_CTRL_RESET: u32 = 1 << 2; // DC reset
+pub const ZX_E_DC_CTRL_VBLANK_INT: u32 = 1 << 3; // V-blank interrupt enable
+pub const ZX_E_DC_CTRL_REG_UPDATE: u32 = 1 << 4; // Register update
+pub const ZX_E_DC_CTRL_TE_FREEZE: u32 = 1 << 5; // TE freeze (for sync)
 
 /// Status register flags (enhanced)
-pub const ZX_E_DC_STATUS_ENABLE: u32 = 1 << 0;     // DC enabled
-pub const ZX_E_DC_STATUS_RUN: u32 = 1 << 1;        // DC running
-pub const ZX_E_DC_STATUS_VBLANK: u32 = 1 << 2;     // V-blank active
-pub const ZX_E_DC_STATUS_ERROR: u32 = 1 << 3;      // Error occurred
+pub const ZX_E_DC_STATUS_ENABLE: u32 = 1 << 0; // DC enabled
+pub const ZX_E_DC_STATUS_RUN: u32 = 1 << 1; // DC running
+pub const ZX_E_DC_STATUS_VBLANK: u32 = 1 << 2; // V-blank active
+pub const ZX_E_DC_STATUS_ERROR: u32 = 1 << 3; // Error occurred
 pub const ZX_E_DC_STATUS_REG_UPDATE: u32 = 1 << 4; // Register update pending
-pub const ZX_E_DC_STATUS_PIPE_A_ON: u32 = 1 << 8;  // Pipe A active
-pub const ZX_E_DC_STATUS_PIPE_B_ON: u32 = 1 << 9;  // Pipe B active
+pub const ZX_E_DC_STATUS_PIPE_A_ON: u32 = 1 << 8; // Pipe A active
+pub const ZX_E_DC_STATUS_PIPE_B_ON: u32 = 1 << 9; // Pipe B active
 
 /// Interrupt flags (enhanced)
-pub const ZX_E_DC_INT_VBLANK_A: u32 = 1 << 0;      // Pipeline A v-blank
-pub const ZX_E_DC_INT_VBLANK_B: u32 = 1 << 1;      // Pipeline B v-blank
+pub const ZX_E_DC_INT_VBLANK_A: u32 = 1 << 0; // Pipeline A v-blank
+pub const ZX_E_DC_INT_VBLANK_B: u32 = 1 << 1; // Pipeline B v-blank
 pub const ZX_E_DC_INT_FIFO_UNDERFLOW: u32 = 1 << 8; // FIFO underflow
-pub const ZX_E_DC_INT_FIFO_OVERFLOW: u32 = 1 << 9;  // FIFO overflow
-pub const ZX_E_DC_INT_REG_UPDATE: u32 = 1 << 16;    // Register update
-pub const ZX_E_DC_INT_PAGE_FAULT: u32 = 1 << 20;    // Page fault
+pub const ZX_E_DC_INT_FIFO_OVERFLOW: u32 = 1 << 9; // FIFO overflow
+pub const ZX_E_DC_INT_REG_UPDATE: u32 = 1 << 16; // Register update
+pub const ZX_E_DC_INT_PAGE_FAULT: u32 = 1 << 20; // Page fault
 
 // =====================================================================
 // Framebuffer Configuration (0x0100 - 0x01FF) - Enhanced
@@ -87,14 +87,14 @@ pub const ZX_E_FB_COLOR_KEY_MASK: u32 = 0x0118;
 pub const ZX_E_FB_GAMMA: u32 = 0x011C;
 
 /// Framebuffer format flags (enhanced)
-pub const ZX_E_FB_FORMAT_BGRA8888: u32 = 0x00;   // BGRA 8888
-pub const ZX_E_FB_FORMAT_RGBA8888: u32 = 0x01;   // RGBA 8888
-pub const ZX_E_FB_FORMAT_RGB565: u32 = 0x02;      // RGB 565
-pub const ZX_E_FB_FORMAT_RGB888: u32 = 0x03;      // RGB 888
-pub const ZX_E_FB_FORMAT_ARGB1555: u32 = 0x04;    // ARGB 1555
-pub const ZX_E_FB_FORMAT_ARGB4444: u32 = 0x05;    // ARGB 4444
-pub const ZX_E_FB_FORMAT_YUV422: u32 = 0x10;      // YUV 4:2:2
-pub const ZX_E_FB_FORMAT_YUV420: u32 = 0x11;      // YUV 4:2:0
+pub const ZX_E_FB_FORMAT_BGRA8888: u32 = 0x00; // BGRA 8888
+pub const ZX_E_FB_FORMAT_RGBA8888: u32 = 0x01; // RGBA 8888
+pub const ZX_E_FB_FORMAT_RGB565: u32 = 0x02; // RGB 565
+pub const ZX_E_FB_FORMAT_RGB888: u32 = 0x03; // RGB 888
+pub const ZX_E_FB_FORMAT_ARGB1555: u32 = 0x04; // ARGB 1555
+pub const ZX_E_FB_FORMAT_ARGB4444: u32 = 0x05; // ARGB 4444
+pub const ZX_E_FB_FORMAT_YUV422: u32 = 0x10; // YUV 4:2:2
+pub const ZX_E_FB_FORMAT_YUV420: u32 = 0x11; // YUV 4:2:0
 
 // =====================================================================
 // CRT Controller A Registers (0x0200 - 0x02FF) - Enhanced
@@ -128,15 +128,15 @@ pub const ZX_E_CRTC_A_ADDR_OFFSET: u32 = 0x0234;
 pub const ZX_E_CRTC_A_BORDER_COLOR: u32 = 0x0238;
 
 /// CRT Controller A control flags
-pub const ZX_E_CRTC_A_CTRL_ENABLE: u32 = 1 << 0;      // CRT enable
-pub const ZX_E_CRTC_A_CTRL_8BPP: u32 = 0 << 2;        // 8 bits per pixel
-pub const ZX_E_CRTC_A_CTRL_16BPP: u32 = 1 << 2;       // 16 bits per pixel
-pub const ZX_E_CRTC_A_CTRL_24BPP: u32 = 2 << 2;         // 24 bits per pixel
-pub const ZX_E_CRTC_A_CTRL_32BPP: u32 = 3 << 2;         // 32 bits per pixel
-pub const ZX_E_CRTC_A_CTRL_HSYNC_POS: u32 = 1 << 6;     // H-sync positive
-pub const ZX_E_CRTC_A_CTRL_VSYNC_POS: u32 = 1 << 7;    // V-sync positive
-pub const ZX_E_CRTC_A_CTRL_INTERLACE: u32 = 1 << 8;    // Interlaced mode
-pub const ZX_E_CRTC_A_CTRL_DOUBLE_SCAN: u32 = 1 << 9;  // Double scan
+pub const ZX_E_CRTC_A_CTRL_ENABLE: u32 = 1 << 0; // CRT enable
+pub const ZX_E_CRTC_A_CTRL_8BPP: u32 = 0 << 2; // 8 bits per pixel
+pub const ZX_E_CRTC_A_CTRL_16BPP: u32 = 1 << 2; // 16 bits per pixel
+pub const ZX_E_CRTC_A_CTRL_24BPP: u32 = 2 << 2; // 24 bits per pixel
+pub const ZX_E_CRTC_A_CTRL_32BPP: u32 = 3 << 2; // 32 bits per pixel
+pub const ZX_E_CRTC_A_CTRL_HSYNC_POS: u32 = 1 << 6; // H-sync positive
+pub const ZX_E_CRTC_A_CTRL_VSYNC_POS: u32 = 1 << 7; // V-sync positive
+pub const ZX_E_CRTC_A_CTRL_INTERLACE: u32 = 1 << 8; // Interlaced mode
+pub const ZX_E_CRTC_A_CTRL_DOUBLE_SCAN: u32 = 1 << 9; // Double scan
 
 // =====================================================================
 // CRT Controller B Registers (0x0300 - 0x03FF)
@@ -202,13 +202,13 @@ pub const ZX_E_PLANE_PRIMARY_COLOR_KEY: u32 = 0x041C;
 pub const ZX_E_PLANE_PRIMARY_GAMMA: u32 = 0x0420;
 
 /// Primary plane control flags
-pub const ZX_E_PLANE_CTRL_ENABLE: u32 = 1 << 0;        // Plane enable
-pub const ZX_E_PLANE_CTRL_KEY_EN: u32 = 1 << 1;         // Color key enable
-pub const ZX_E_PLANE_CTRL_ALPHA_EN: u32 = 1 << 2;       // Alpha blend enable
-pub const ZX_E_PLANE_CTRL_CONST_ALPHA: u32 = 1 << 3;    // Constant alpha
-pub const ZX_E_PLANE_CTRL_FORMAT_SHIFT: u32 = 4;          // Format field shift
-pub const ZX_E_PLANE_CTRL_SCALE_EN: u32 = 1 << 16;      // Scaling enable
-pub const ZX_E_PLANE_CTRL_DEINTERLACE: u32 = 1 << 17;   // Deinterlace
+pub const ZX_E_PLANE_CTRL_ENABLE: u32 = 1 << 0; // Plane enable
+pub const ZX_E_PLANE_CTRL_KEY_EN: u32 = 1 << 1; // Color key enable
+pub const ZX_E_PLANE_CTRL_ALPHA_EN: u32 = 1 << 2; // Alpha blend enable
+pub const ZX_E_PLANE_CTRL_CONST_ALPHA: u32 = 1 << 3; // Constant alpha
+pub const ZX_E_PLANE_CTRL_FORMAT_SHIFT: u32 = 4; // Format field shift
+pub const ZX_E_PLANE_CTRL_SCALE_EN: u32 = 1 << 16; // Scaling enable
+pub const ZX_E_PLANE_CTRL_DEINTERLACE: u32 = 1 << 17; // Deinterlace
 
 // =====================================================================
 // Overlay Plane Registers (0x0500 - 0x05FF) - Enhanced
@@ -405,7 +405,11 @@ pub fn format_to_zxe_format(format: DisplayFormat) -> u32 {
 }
 
 /// Calculate enhanced CRT timing parameters for ZX-E
-pub fn calculate_crtc_timing_enhanced(width: u32, height: u32, _refresh: u32) -> EnhancedCrtcTiming {
+pub fn calculate_crtc_timing_enhanced(
+    width: u32,
+    height: u32,
+    _refresh: u32,
+) -> EnhancedCrtcTiming {
     // Standard timing with overscan for ZX-E
     let h_total = width + 160;
     let h_sync_start = width + 48;

@@ -73,7 +73,6 @@ pub unsafe extern "C" fn CancelWaitableTimer(timer: HANDLE) -> BOOL {
     }
 }
 
-
 pub unsafe extern "C" fn InterlockedIncrement(addend: *mut i32) -> i32 {
     if addend.is_null() {
         return 0;
@@ -209,7 +208,6 @@ pub unsafe extern "C" fn InterlockedXor(destination: *mut i32, value: i32) -> i3
     let atomic = &*(destination as *const AtomicI32);
     atomic.fetch_xor(value, Ordering::SeqCst)
 }
-
 
 #[inline(always)]
 pub extern "C" fn MemoryBarrier() {

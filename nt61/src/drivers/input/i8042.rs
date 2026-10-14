@@ -24,10 +24,10 @@ const CMD_ENABLE_KBD: u8 = 0xAE;
 const CMD_ENABLE_MOUSE: u8 = 0xA8;
 
 /// 8042 command byte bits.
-const CB_KBD_INT: u8 = 1 << 0;     // Keyboard interrupt enable
-const CB_MOUSE_INT: u8 = 1 << 1;   // Mouse interrupt enable
-const CB_KBD_DIS: u8 = 1 << 4;     // Keyboard disable (1 = disabled)
-const CB_MOUSE_DIS: u8 = 1 << 5;   // Mouse disable (1 = disabled)
+const CB_KBD_INT: u8 = 1 << 0; // Keyboard interrupt enable
+const CB_MOUSE_INT: u8 = 1 << 1; // Mouse interrupt enable
+const CB_KBD_DIS: u8 = 1 << 4; // Keyboard disable (1 = disabled)
+const CB_MOUSE_DIS: u8 = 1 << 5; // Mouse disable (1 = disabled)
 
 /// Cached state of the 8042 controller.
 static mut INITIALISED: bool = false;
@@ -37,7 +37,7 @@ static mut MOUSE_INTERRUPTS_ENABLED: bool = false;
 /// Walk the 8042. Enables both the keyboard and the mouse
 /// interrupt paths.
 pub fn init() {
-#[cfg(target_arch = "x86_64")]
+    #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     use crate::hal::x86_64::io_port::{READ_PORT_UCHAR, WRITE_PORT_UCHAR};
     unsafe {
@@ -61,13 +61,12 @@ pub fn init() {
         MOUSE_INTERRUPTS_ENABLED = (cb2 & CB_MOUSE_INT) != 0;
         INITIALISED = true;
     }
-    // kprintln!("      i8042: keyboard+{} mouse+{}",  // kprintln disabled (memcpy crash workaround)
-//               if kbd_interrupts_enabled() { "int" } else { "pol" },
-//               if mouse_interrupts_enabled() { "int" } else { "pol" });
+    // kprintln!("      i8042: keyboard+{} mouse+{}",
+    //               if kbd_interrupts_enabled() { "int" } else { "pol" },
+    //               if mouse_interrupts_enabled() { "int" } else { "pol" });
 }
 
-
-    pub fn kbd_interrupts_enabled() -> bool {
+pub fn kbd_interrupts_enabled() -> bool {
     unsafe { KBD_INTERRUPTS_ENABLED }
 }
 
@@ -76,9 +75,9 @@ pub fn mouse_interrupts_enabled() -> bool {
 }
 
 pub fn smoke_test() -> bool {
-    // kprintln!("  [i8042 SMOKE] i8042 controller: initialised={} kbd_int={} mouse_int={}",  // kprintln disabled (memcpy crash workaround)
-//               unsafe { INITIALISED },
-//               kbd_interrupts_enabled(),
-//               mouse_interrupts_enabled());
+    // kprintln!("  [i8042 SMOKE] i8042 controller: initialised={} kbd_int={} mouse_int={}",
+    //               unsafe { INITIALISED },
+    //               kbd_interrupts_enabled(),
+    //               mouse_interrupts_enabled());
     unsafe { INITIALISED }
 }

@@ -32,7 +32,9 @@ pub fn map_hyperspace(pfn: u64) -> u64 {
     let slot = HYPERSPACE_NEXT.fetch_add(1, Ordering::SeqCst) % HYPERSPACE_ENTRIES;
     let va = HYPERSPACE_BASE + slot * 4096;
     let pte_ptr = pte_address_of(va);
-    if pte_ptr.is_null() { return 0; }
+    if pte_ptr.is_null() {
+        return 0;
+    }
     unsafe {
         let pte = pte_ptr as *mut MMPTE;
         (*pte).set_hardware(pfn << 12, 0x1 | 0x2 | 0x4 | 0x20 | 0x40);
@@ -43,9 +45,13 @@ pub fn map_hyperspace(pfn: u64) -> u64 {
 /// Invalidate the most recent hyperspace mapping. After calling
 /// this the slot can be reused.
 pub fn unmap_hyperspace(va: u64) {
-    if va < HYPERSPACE_BASE || va >= HYPERSPACE_END { return; }
+    if va < HYPERSPACE_BASE || va >= HYPERSPACE_END {
+        return;
+    }
     let pte_ptr = pte_address_of(va);
-    if pte_ptr.is_null() { return; }
+    if pte_ptr.is_null() {
+        return;
+    }
     unsafe {
         let pte = pte_ptr as *mut MMPTE;
         (*pte).clear();

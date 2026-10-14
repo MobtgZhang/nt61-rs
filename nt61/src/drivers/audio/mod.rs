@@ -13,8 +13,8 @@
 
 extern crate alloc;
 
-pub mod intel_hda;
 pub mod ac97;
+pub mod intel_hda;
 pub mod portcls;
 
 pub mod smoke;
@@ -22,22 +22,25 @@ pub mod smoke;
 use crate::kprintln;
 
 pub fn init() {
-    // kprintln!("    Audio drivers: Intel HDA, AC'97, PortCls")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    Audio drivers: Intel HDA, AC'97, PortCls");
     intel_hda::init();
     ac97::init();
     portcls::init();
-    // kprintln!("    Audio stack ready")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    Audio stack ready");
 }
 
-pub fn smoke_test() -> bool { smoke::smoke_test() }
+pub fn smoke_test() -> bool {
+    smoke::smoke_test()
+}
 
-/// Re-export audio functions for public API
-pub use intel_hda::{send_codec_cmd, get_codecs, get_info as get_hda_info};
 pub use ac97::{
-    start_playback, stop_playback, write_pcm_samples,
-    set_master_volume, set_pcm_volume, set_mute, get_playback_position
+    get_playback_position, set_master_volume, set_mute, set_pcm_volume, start_playback,
+    stop_playback, write_pcm_samples,
 };
+/// Re-export audio functions for public API
+pub use intel_hda::{get_codecs, get_info as get_hda_info, send_codec_cmd};
 pub use portcls::{
-    create_wavert_port, start_device, stop_device,
-    get_device_state, create_hda_audio_device,
+    create_hda_audio_device, create_wavert_port, get_device_state, start_device, stop_device,
 };
+
+pub mod audio_core;

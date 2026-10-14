@@ -4,9 +4,9 @@
 
 extern crate alloc;
 
-use super::types::{BOOL, HBRUSH, HDC, HRGN, HWND, Rect};
+use super::types::{Rect, BOOL, HBRUSH, HDC, HRGN, HWND};
 #[cfg(target_arch = "x86_64")]
-use crate::libs::win32k::{fill_rect_on_surface, draw_line_on_surface, clear_surface};
+use crate::libs::win32k::{clear_surface, draw_line_on_surface, fill_rect_on_surface};
 use core::ptr;
 
 /// Ternary raster-operation codes (subset).
@@ -123,7 +123,9 @@ pub extern "C" fn BitBlt(
     // 1. Look up both DC's surfaces
     // 2. Copy the pixels from source to destination
     // 3. Apply the ROP operation
-    let _ = (hdc_dest, x_dest, y_dest, width, height, hdc_src, x_src, y_src, rop);
+    let _ = (
+        hdc_dest, x_dest, y_dest, width, height, hdc_src, x_src, y_src, rop,
+    );
     1
 }
 
@@ -141,13 +143,32 @@ pub extern "C" fn StretchBlt(
     height_src: i32,
     rop: u32,
 ) -> BOOL {
-    let _ = (hdc_dest, x_dest, y_dest, width_dest, height_dest,
-             hdc_src, x_src, y_src, width_src, height_src, rop);
+    let _ = (
+        hdc_dest,
+        x_dest,
+        y_dest,
+        width_dest,
+        height_dest,
+        hdc_src,
+        x_src,
+        y_src,
+        width_src,
+        height_src,
+        rop,
+    );
     1
 }
 
 /// `PatBlt` with actual surface (internal use)
-pub fn pat_blt_surface(surface: &crate::libs::win32k::EngSurface, x: i32, y: i32, w: i32, h: i32, color: u32, rop: u32) -> bool {
+pub fn pat_blt_surface(
+    surface: &crate::libs::win32k::EngSurface,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    color: u32,
+    rop: u32,
+) -> bool {
     use crate::libs::win32k::fill_rect_solid;
 
     match rop {

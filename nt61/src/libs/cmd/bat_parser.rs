@@ -8,10 +8,10 @@
 //! - SETLOCAL/ENDLOCAL environment scoping
 //! - Variable expansion %VAR%
 
-use alloc::string::{String, ToString};
-use alloc::vec::Vec;
 use alloc::boxed::Box;
 use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 /// Batch parser error types
 #[derive(Debug, Clone)]
@@ -64,10 +64,7 @@ pub enum LineType {
     /// SHIFT command (shift batch arguments)
     Shift,
     /// EXIT [/B] command
-    Exit {
-        batch_only: bool,
-        code: Option<i32>,
-    },
+    Exit { batch_only: bool, code: Option<i32> },
     /// Regular command
     Command(String),
 }
@@ -130,7 +127,11 @@ impl BatchParser {
 
     /// Execute a batch file
     /// Returns Ok(()) on normal completion, Err on error
-    pub fn execute(&mut self, filename: &str, executor: &mut dyn BatchExecutor) -> Result<(), BatError> {
+    pub fn execute(
+        &mut self,
+        filename: &str,
+        executor: &mut dyn BatchExecutor,
+    ) -> Result<(), BatError> {
         self.lines.clear();
         self.labels.clear();
         self.current = 0;
@@ -146,10 +147,10 @@ impl BatchParser {
         crate::boot_println!("[BAT] loaded {} bytes from {}", content.len(), filename);
         // Preprocess: remove comments, handle special lines
         self.preprocess(&content);
-        
+
         // Collect labels
         self.collect_labels();
-        
+
         // Execute the batch file. A simple line-cap guards against
         // runaway GOTO/CALL recursion (e.g. an infinite `GOTO :LOOP`
         // because SET /A arithmetic is not supported yet). After
@@ -160,7 +161,10 @@ impl BatchParser {
         while self.current < self.lines.len() && self.running {
             steps += 1;
             if steps > MAX_BAT_STEPS {
-                crate::boot_println!("[BAT] step cap ({}) reached — aborting batch", MAX_BAT_STEPS);
+                crate::boot_println!(
+                    "[BAT] step cap ({}) reached — aborting batch",
+                    MAX_BAT_STEPS
+                );
                 break;
             }
             let line = &self.lines[self.current];
@@ -169,7 +173,7 @@ impl BatchParser {
             // Expand variables in the line
             let expanded = self.expand_variables(line);
             crate::boot_println!("[BAT]   line[{}] '{}'", self.current - 1, expanded);
-            
+
             // Classify and process the line
             match self.classify_line(&expanded) {
                 LineType::Empty => {}
@@ -178,7 +182,11 @@ impl BatchParser {
                 LineType::Goto(label) => {
                     self.handle_goto(&label)?;
                 }
-                LineType::If { condition, true_branch, false_branch } => {
+                LineType::If {
+                    condition,
+                    true_branch,
+                    false_branch,
+                } => {
                     let cond = self.evaluate_condition(&condition)?;
                     // The lowered block-IF puts a GOTO in the true branch
                     // (e.g. `IF "%A%" == "%B%" GOTO :__IF_THEN_1__`). If
@@ -187,8 +195,7 @@ impl BatchParser {
                     // lowering emitted as `GOTO :__IF_ELSE_1__` for the
                     // else-branch case).
                     if cond && !true_branch.is_empty() {
-                        let upper_branch =
-                            true_branch.to_uppercase();
+                        let upper_branch = true_branch.to_uppercase();
                         if upper_branch.starts_with("GOTO ") {
                             let label = true_branch[4..].trim().to_string();
                             self.handle_goto(&label)?;
@@ -203,7 +210,11 @@ impl BatchParser {
                         }
                     }
                 }
-                LineType::For { variable, set, command } => {
+                LineType::For {
+                    variable,
+                    set,
+                    command,
+                } => {
                     self.handle_for(&variable, &set, &command, executor)?;
                 }
                 LineType::Call(target) => {
@@ -268,9 +279,7 @@ impl BatchParser {
                         // the same to keep the test suite's loops
                         // (which use `SET /A VAR-=1`) from spinning
                         // forever.
-                        let (arith, body) = if let Some(stripped) =
-                            set_part.strip_prefix("/A")
-                        {
+                        let (arith, body) = if let Some(stripped) = set_part.strip_prefix("/A") {
                             (true, stripped.trim_start())
                         } else {
                             (false, set_part as &str)
@@ -282,9 +291,7 @@ impl BatchParser {
                         let split = find_assignment_split(body);
                         if let Some((var_name, op, raw_value)) = split {
                             let expanded_value = if arith || op.is_some() {
-                                let lhs = self
-                                    .get_variable(&var_name)
-                                    .unwrap_or_default();
+                                let lhs = self.get_variable(&var_name).unwrap_or_default();
                                 let resolved = if op.is_some() {
                                     // VAR-=N => VAR = (VAR op N)
                                     let op_char = op.unwrap();
@@ -298,8 +305,7 @@ impl BatchParser {
                                     raw_value.to_string()
                                 };
                                 let v = eval_int_expr(&self.expand_variables(&resolved));
-                                v.map(|i| i.to_string())
-                                    .unwrap_or_else(|| resolved)
+                                v.map(|i| i.to_string()).unwrap_or_else(|| resolved)
                             } else {
                                 self.expand_variables(raw_value)
                             };
@@ -346,16 +352,16 @@ impl BatchParser {
     fn preprocess(&mut self, content: &str) {
         let in_block_comment = false;
         let _ = &in_block_comment;
-        
+
         for line in content.lines() {
             let trimmed = line.trim().to_string();
-            
+
             // Skip empty lines
             if trimmed.is_empty() {
                 self.lines.push(String::new());
                 continue;
             }
-            
+
             // Handle labels (`:FOO` or `::FOO`). Both forms are valid
             // goto targets in real Windows CMD; `::FOO` is a
             // comment-shaped label, but GOTO can still land on it.
@@ -368,8 +374,7 @@ impl BatchParser {
                 // exactly one `:` followed by a name) treat it as a
                 // real label; if there are two colons it's the DOS
                 // comment form that doubles as a goto target.
-                let is_real_label =
-                    !trimmed.starts_with("::") || !after_colons.starts_with(':');
+                let is_real_label = !trimmed.starts_with("::") || !after_colons.starts_with(':');
                 let label_name = after_colons.trim_start_matches(':').trim();
                 if !label_name.is_empty() {
                     self.lines.push(trimmed);
@@ -382,7 +387,7 @@ impl BatchParser {
             if trimmed.to_uppercase().starts_with("REM ") || trimmed.to_uppercase() == "REM" {
                 continue;
             }
-            
+
             // Handle @ prefix (suppress echo for this line only).
             // Special-case `@echo off` / `@echo on` because `@echo`
             // would otherwise be parsed as a regular command.
@@ -413,7 +418,7 @@ impl BatchParser {
                 self.lines.push(trimmed);
                 continue;
             }
-            
+
             // Regular line
             self.lines.push(trimmed);
         }
@@ -452,37 +457,27 @@ impl BatchParser {
     /// `IF ... (` blocks), then for an optional `) ELSE (` clause,
     /// then for the second closing `)`.
     fn flatten_block_ifs(&mut self) {
-        let mut out: Vec<alloc::string::String> =
-            alloc::vec::Vec::with_capacity(self.lines.len());
+        let mut out: Vec<alloc::string::String> = alloc::vec::Vec::with_capacity(self.lines.len());
         let mut counter: usize = 0;
         let mut i: usize = 0;
         while i < self.lines.len() {
             let line = self.lines[i].clone();
             let upper = line.to_uppercase();
             if upper.starts_with("IF ") && line.trim_end().ends_with('(') {
-                crate::boot_println!(
-                    "[BAT] flatten-block-if at line[{}]: '{}'",
-                    i,
-                    line
-                );
+                crate::boot_println!("[BAT] flatten-block-if at line[{}]: '{}'", i, line);
                 counter += 1;
                 // Extract the condition by stripping `IF ` prefix
                 // and trailing `(`.
-                let cond = if let Some(rest) =
-                    line.trim_start().strip_prefix("IF ")
-                {
+                let cond = if let Some(rest) = line.trim_start().strip_prefix("IF ") {
                     rest.trim_end().trim_end_matches('(').trim().to_string()
-                } else if let Some(rest) =
-                    line.trim_start().strip_prefix("IF")
-                {
+                } else if let Some(rest) = line.trim_start().strip_prefix("IF") {
                     rest.trim().trim_end_matches('(').trim().to_string()
                 } else {
                     String::new()
                 };
                 // Search for matching `)` taking nesting into
                 // account.
-                let (close_pos, else_pos) =
-                    self.find_block_close(&self.lines, i + 1);
+                let (close_pos, else_pos) = self.find_block_close(&self.lines, i + 1);
                 // Verify by logging what lines we see at i+1..close_pos
                 crate::boot_println!(
                     "[BAT]   flatten verification: i={} line='{}' i+1={} line[{}]='{}' close_pos={} else_pos={:?}",
@@ -501,73 +496,48 @@ impl BatchParser {
                     i += 1;
                     continue;
                 }
-                let then_label = alloc::format!(
-                    "__IF_THEN_{}__",
-                    counter
-                );
-                let else_label = alloc::format!(
-                    "__IF_ELSE_{}__",
-                    counter
-                );
+                let then_label = alloc::format!("__IF_THEN_{}__", counter);
+                let else_label = alloc::format!("__IF_ELSE_{}__", counter);
                 let end_label = alloc::format!("__IF_END_{}__", counter);
                 crate::boot_println!(
                     "[BAT]   flatten result: cond='{}' close_pos={} else_pos={:?}",
-                    cond, close_pos, else_pos
+                    cond,
+                    close_pos,
+                    else_pos
                 );
                 // Build the lowered sequence locally so we can splice it
                 // without doing arithmetic on the out-vector's
                 // indices.
-                let mut lowered: alloc::vec::Vec<
-                    alloc::string::String,
-                > = alloc::vec::Vec::new();
+                let mut lowered: alloc::vec::Vec<alloc::string::String> = alloc::vec::Vec::new();
                 let then_body_end = else_pos.unwrap_or(close_pos);
                 // 1. `IF cond GOTO :then_label`
-                lowered.push(alloc::format!(
-                    "IF {} GOTO :{}",
-                    cond, then_label
-                ));
+                lowered.push(alloc::format!("IF {} GOTO :{}", cond, then_label));
                 // 2. Skip-past: `GOTO :else_label` (ELSE form) or
                 //    `GOTO :end_label` (no-ELSE form). This is
                 //    what cond=false falls into.
                 if let Some(_) = else_pos {
-                    lowered
-                        .push(alloc::format!("GOTO :{}", else_label));
+                    lowered.push(alloc::format!("GOTO :{}", else_label));
                 } else {
-                    lowered
-                        .push(alloc::format!("GOTO :{}", end_label));
+                    lowered.push(alloc::format!("GOTO :{}", end_label));
                 }
                 // 3. `:then_label` + then-body
                 lowered.push(alloc::format!(":{}", then_label));
                 let then_body_end = else_pos.unwrap_or(close_pos);
                 let then_body: alloc::vec::Vec<alloc::string::String> =
-                    self.lines[(i + 1)..then_body_end]
-                        .iter()
-                        .cloned()
-                        .collect();
-                let then_body = self.flatten_lines_block_ifs(
-                    then_body,
-                    counter,
-                );
+                    self.lines[(i + 1)..then_body_end].iter().cloned().collect();
+                let then_body = self.flatten_lines_block_ifs(then_body, counter);
                 counter = then_body.1;
                 for b in then_body.0 {
                     lowered.push(b);
                 }
                 if let Some(ep) = else_pos {
                     // 4. tail GOTO to skip the else branch
-                    lowered
-                        .push(alloc::format!("GOTO :{}", end_label));
+                    lowered.push(alloc::format!("GOTO :{}", end_label));
                     // 5. `:else_label` + else-body
                     lowered.push(alloc::format!(":{}", else_label));
-                    let else_body: alloc::vec::Vec<
-                        alloc::string::String,
-                    > = self.lines[(ep + 1)..close_pos]
-                        .iter()
-                        .cloned()
-                        .collect();
-                    let else_body = self.flatten_lines_block_ifs(
-                        else_body,
-                        counter,
-                    );
+                    let else_body: alloc::vec::Vec<alloc::string::String> =
+                        self.lines[(ep + 1)..close_pos].iter().cloned().collect();
+                    let else_body = self.flatten_lines_block_ifs(else_body, counter);
                     counter = else_body.1;
                     for b in else_body.0 {
                         lowered.push(b);
@@ -604,10 +574,7 @@ impl BatchParser {
         &self,
         lines: alloc::vec::Vec<alloc::string::String>,
         counter: usize,
-    ) -> (
-        alloc::vec::Vec<alloc::string::String>,
-        usize,
-    ) {
+    ) -> (alloc::vec::Vec<alloc::string::String>, usize) {
         let mut counter: usize = counter;
         // Run through `lines`, dropping block-IFs down to
         // goto-chains. We re-use the same lowering shape: each
@@ -622,90 +589,46 @@ impl BatchParser {
         while i < lines.len() {
             let line = lines[i].clone();
             let upper = line.to_uppercase();
-            if upper.starts_with("IF ")
-                && line.trim_end().ends_with('(')
-            {
-                let cond = if let Some(rest) =
-                    line.trim_start().strip_prefix("IF ")
-                {
-                    rest.trim_end()
-                        .trim_end_matches('(')
-                        .trim()
-                        .to_string()
-                } else if let Some(rest) =
-                    line.trim_start().strip_prefix("IF")
-                {
-                    rest.trim()
-                        .trim_end_matches('(')
-                        .trim()
-                        .to_string()
+            if upper.starts_with("IF ") && line.trim_end().ends_with('(') {
+                let cond = if let Some(rest) = line.trim_start().strip_prefix("IF ") {
+                    rest.trim_end().trim_end_matches('(').trim().to_string()
+                } else if let Some(rest) = line.trim_start().strip_prefix("IF") {
+                    rest.trim().trim_end_matches('(').trim().to_string()
                 } else {
                     String::new()
                 };
-                let (close_pos, else_pos) =
-                    self.find_block_close(&lines, i + 1);
+                let (close_pos, else_pos) = self.find_block_close(&lines, i + 1);
                 if close_pos == 0 || close_pos >= lines.len() {
                     out.push(line);
                     i += 1;
                     continue;
                 }
                 counter += 1;
-                let then_label = alloc::format!(
-                    "__IF_THEN_{}__",
-                    counter
-                );
-                let else_label = alloc::format!(
-                    "__IF_ELSE_{}__",
-                    counter
-                );
-                let end_label =
-                    alloc::format!("__IF_END_{}__", counter);
-                let mut lowered: alloc::vec::Vec<
-                    alloc::string::String,
-                > = alloc::vec::Vec::new();
+                let then_label = alloc::format!("__IF_THEN_{}__", counter);
+                let else_label = alloc::format!("__IF_ELSE_{}__", counter);
+                let end_label = alloc::format!("__IF_END_{}__", counter);
+                let mut lowered: alloc::vec::Vec<alloc::string::String> = alloc::vec::Vec::new();
                 let then_body_end = else_pos.unwrap_or(close_pos);
-                lowered.push(alloc::format!(
-                    "IF {} GOTO :{}",
-                    cond, then_label
-                ));
+                lowered.push(alloc::format!("IF {} GOTO :{}", cond, then_label));
                 if let Some(_) = else_pos {
-                    lowered.push(alloc::format!(
-                        "GOTO :{}",
-                        else_label
-                    ));
+                    lowered.push(alloc::format!("GOTO :{}", else_label));
                 } else {
-                    lowered.push(alloc::format!(
-                        "GOTO :{}",
-                        end_label
-                    ));
+                    lowered.push(alloc::format!("GOTO :{}", end_label));
                 }
                 lowered.push(alloc::format!(":{}", then_label));
-                let then_body: alloc::vec::Vec<
-                    alloc::string::String,
-                > = lines[(i + 1)..then_body_end]
-                    .iter()
-                    .cloned()
-                    .collect();
-                let then_body_result =
-                    self.flatten_lines_block_ifs(then_body, counter);
+                let then_body: alloc::vec::Vec<alloc::string::String> =
+                    lines[(i + 1)..then_body_end].iter().cloned().collect();
+                let then_body_result = self.flatten_lines_block_ifs(then_body, counter);
                 counter = then_body_result.1;
                 for b in then_body_result.0 {
                     lowered.push(b);
                 }
                 if let Some(ep) = else_pos {
-                    lowered.push(alloc::format!(
-                        "GOTO :{}",
-                        end_label
-                    ));
+                    lowered.push(alloc::format!("GOTO :{}", end_label));
                     lowered.push(alloc::format!(":{}", else_label));
-                    let else_body: alloc::vec::Vec<
-                        alloc::string::String,
-                    > = lines[(ep + 1)..close_pos]
-                        .iter()
-                        .cloned()
-                        .collect();
-                    let else_body_result =
-                        self.flatten_lines_block_ifs(else_body, counter);
+                    let else_body: alloc::vec::Vec<alloc::string::String> =
+                        lines[(ep + 1)..close_pos].iter().cloned().collect();
+                    let else_body_result = self.flatten_lines_block_ifs(else_body, counter);
                     counter = else_body_result.1;
                     for b in else_body_result.0 {
                         lowered.push(b);
@@ -778,9 +701,7 @@ impl BatchParser {
                 // Inside a nested IF. The `)` here either closes
                 // the nested IF (decrement) or starts its ELSE
                 // (`) ELSE (` token) — wait for the actual close.
-                if !trimmed_upper.starts_with(") ELSE")
-                    && !trimmed_upper.starts_with(")ELSE")
-                {
+                if !trimmed_upper.starts_with(") ELSE") && !trimmed_upper.starts_with(")ELSE") {
                     nested -= 1;
                 }
                 start += 1;
@@ -789,8 +710,7 @@ impl BatchParser {
             // nested == 0: this closes our IF, or transitions to
             // its ELSE.
             if phase == 0
-                && (trimmed_upper.starts_with(") ELSE")
-                    || trimmed_upper.starts_with(")ELSE"))
+                && (trimmed_upper.starts_with(") ELSE") || trimmed_upper.starts_with(")ELSE"))
             {
                 else_idx = Some(start);
                 phase = 2;
@@ -828,10 +748,7 @@ impl BatchParser {
         // recognise this first so the execute loop can skip it
         // (its real meaning is captured by `collect_labels`).
         let trimmed = line.trim_start();
-        if trimmed.starts_with(':')
-            && !trimmed.is_empty()
-            && !trimmed.starts_with("::")
-        {
+        if trimmed.starts_with(':') && !trimmed.is_empty() && !trimmed.starts_with("::") {
             return LineType::Label(trimmed.to_string());
         }
 
@@ -840,28 +757,28 @@ impl BatchParser {
             let target = line[4..].trim().to_string();
             return LineType::Goto(target);
         }
-        
+
         // IF
         if upper.starts_with("IF") {
             return self.classify_if(line);
         }
-        
+
         // FOR
         if upper.starts_with("FOR") {
             return self.classify_for(line);
         }
-        
+
         // CALL
         if upper.starts_with("CALL") {
             let target = line[4..].trim().to_string();
             return LineType::Call(target);
         }
-        
+
         // SETLOCAL
         if upper == "SETLOCAL" || upper.starts_with("SETLOCAL ") {
             return LineType::SetLocal;
         }
-        
+
         // ENDLOCAL
         if upper == "ENDLOCAL" {
             return LineType::EndLocal;
@@ -876,12 +793,12 @@ impl BatchParser {
         if upper == "SHIFT" || upper.starts_with("SHIFT ") || upper == "SHIFT/" {
             return LineType::Shift;
         }
-        
+
         // EXIT
         if upper.starts_with("EXIT") {
             return self.classify_exit(line);
         }
-        
+
         // SET (batch variable assignment)
         // Match SET VAR=value pattern
         if upper.starts_with("SET ") && line.contains('=') {
@@ -894,7 +811,7 @@ impl BatchParser {
                 }
             }
         }
-        
+
         LineType::Command(line.to_string())
     }
 
@@ -984,71 +901,82 @@ impl BatchParser {
     fn classify_for(&self, line: &str) -> LineType {
         // FOR %%variable IN (set) DO command
         let upper = line.to_uppercase();
-        
+
         if upper.contains(" IN (") && upper.contains(") DO ") {
             // Extract parts
             let for_start = upper.find("FOR ").map(|p| p + 4).unwrap_or(0);
             let in_pos = upper.find(" IN (").unwrap_or(0);
             let do_pos = upper.find(") DO ").unwrap_or(0);
-            
+
             let var_part = &line[for_start..in_pos].trim();
             let set_part = &line[in_pos + 5..do_pos].trim();
             let cmd_part = &line[do_pos + 5..].trim();
-            
+
             // Parse variable (remove %% prefix for storage)
             let variable = if var_part.starts_with("%%") {
                 var_part[2..].to_string()
             } else {
                 var_part.to_string()
             };
-            
+
             return LineType::For {
                 variable,
                 set: set_part.to_string(),
                 command: cmd_part.to_string(),
             };
         }
-        
+
         LineType::Command(line.to_string())
     }
 
     /// Classify EXIT statement
     fn classify_exit(&self, line: &str) -> LineType {
         let upper = line.to_uppercase();
-        
+
         if upper == "EXIT" {
-            return LineType::Exit { batch_only: false, code: None };
+            return LineType::Exit {
+                batch_only: false,
+                code: None,
+            };
         }
-        
+
         if upper == "EXIT /B" {
-            return LineType::Exit { batch_only: true, code: None };
+            return LineType::Exit {
+                batch_only: true,
+                code: None,
+            };
         }
-        
+
         if upper.starts_with("EXIT /B ") {
             let code_part = line[8..].trim();
             let code = code_part.parse::<i32>().ok();
-            return LineType::Exit { batch_only: true, code };
+            return LineType::Exit {
+                batch_only: true,
+                code,
+            };
         }
-        
+
         // EXIT with error code
         if upper.starts_with("EXIT ") {
             let code_part = line[5..].trim();
             let code = code_part.parse::<i32>().ok();
-            return LineType::Exit { batch_only: false, code };
+            return LineType::Exit {
+                batch_only: false,
+                code,
+            };
         }
-        
-        LineType::Exit { batch_only: false, code: None }
+
+        LineType::Exit {
+            batch_only: false,
+            code: None,
+        }
     }
 
     /// Handle GOTO command
     fn handle_goto(&mut self, label: &str) -> Result<(), BatError> {
         // Strip ALL leading colons — real CMD accepts `:FOO`, `::FOO`,
         // etc. when reading the GOTO target.
-        let target = label
-            .trim()
-            .trim_start_matches(':')
-            .trim()
-            .to_uppercase();
+        let target = label.trim().trim_start_matches(':').trim().to_uppercase();
 
         // `:EOF` is CMD's predefined end-of-file label — it
         // terminates execution of the current batch. We model
@@ -1107,11 +1035,11 @@ impl BatchParser {
                 let filename = if is_not { parts[2] } else { parts[1] };
                 let _ = &filename;
                 let exists = true; // Simplified: assume file exists
-                
+
                 return Ok(if is_not { !exists } else { exists });
             }
         }
-        
+
         // IF ERRORLEVEL n
         if upper.contains("ERRORLEVEL") {
             let parts: Vec<&str> = condition.split_whitespace().collect();
@@ -1126,15 +1054,13 @@ impl BatchParser {
                 }
             }
         }
-        
+
         // IF [NOT] string1 OP string2  (string or numeric, where OP is
         // one of ==, NEQ, EQU, NEQ, LSS, LEQ, GTR, GEQ). We
         // support an optional leading `NOT` that negates the
         // result.
         let mut is_not = false;
-        let cond_stripped = if let Some(stripped) =
-            condition.trim_start().strip_prefix("NOT ")
-        {
+        let cond_stripped = if let Some(stripped) = condition.trim_start().strip_prefix("NOT ") {
             is_not = true;
             stripped
         } else {
@@ -1172,8 +1098,7 @@ impl BatchParser {
         // comparisons. Expand variables on each side, parse to
         // i64, and apply. We also honour a leading `NOT` that
         // negates the result.
-        let upper_numeric =
-            self.expand_variables(cond_stripped).to_uppercase();
+        let upper_numeric = self.expand_variables(cond_stripped).to_uppercase();
         for (tok, f) in &[
             ("EQU", i64::eq as fn(&i64, &i64) -> bool),
             ("NEQ", i64::ne),
@@ -1188,18 +1113,14 @@ impl BatchParser {
                 // those tokens to nest). The first `tok` may be a
                 // variable name like `MYEQU`. Use the rightmost
                 // match.
-                let last_p = upper_numeric
-                    .rfind(tok)
-                    .unwrap_or(usize::MAX);
+                let last_p = upper_numeric.rfind(tok).unwrap_or(usize::MAX);
                 let p = last_p.min(p);
                 let s1 = cond_stripped[..p].trim().to_string();
                 let s2 = cond_stripped[p + tok.len()..].trim().to_string();
                 let s1_exp = self.expand_variables(&s1);
                 let s2_exp = self.expand_variables(&s2);
-                if let (Ok(a), Ok(b)) = (
-                    s1_exp.trim().parse::<i64>(),
-                    s2_exp.trim().parse::<i64>(),
-                ) {
+                if let (Ok(a), Ok(b)) = (s1_exp.trim().parse::<i64>(), s2_exp.trim().parse::<i64>())
+                {
                     let result = f(&a, &b);
                     return Ok(if is_not { !result } else { result });
                 }
@@ -1215,46 +1136,53 @@ impl BatchParser {
     }
 
     /// Handle FOR loop
-    fn handle_for(&mut self, variable: &str, set: &str, command: &str, executor: &mut dyn BatchExecutor) -> Result<(), BatError> {
+    fn handle_for(
+        &mut self,
+        variable: &str,
+        set: &str,
+        command: &str,
+        executor: &mut dyn BatchExecutor,
+    ) -> Result<(), BatError> {
         // Expand variables in set
         let expanded_set = self.expand_variables(set);
-        
+
         // Parse the set (comma or space separated, or wildcard)
         let items = self.parse_for_set(&expanded_set);
-        
+
         // Execute command for each item
         for item in items {
             let mut expanded_cmd = command.to_string();
-            
+
             // Replace %%variable with item
             let var_pattern = alloc::format!("%{}%", variable.to_uppercase());
             expanded_cmd = expanded_cmd.replace(&var_pattern, &item);
-            
+
             // Also try lowercase
             let var_pattern_lower = alloc::format!("%{}%", variable.to_lowercase());
             expanded_cmd = expanded_cmd.replace(&var_pattern_lower, &item);
-            
+
             // Also try with %%
-            let var_pattern2 = alloc::format!("{}{}", variable.to_uppercase(), variable.to_uppercase());
+            let var_pattern2 =
+                alloc::format!("{}{}", variable.to_uppercase(), variable.to_uppercase());
             expanded_cmd = expanded_cmd.replace(&var_pattern2, &item);
-            
+
             if self.echo {
                 executor.echo_line(&expanded_cmd);
             }
-            
+
             self.error_level = executor.execute_command(&expanded_cmd)? as i32;
         }
-        
+
         Ok(())
     }
 
     /// Parse FOR set into items
     fn parse_for_set(&self, set: &str) -> Vec<String> {
         let mut items = Vec::new();
-        
+
         // Remove parentheses
         let content = set.trim_matches('(').trim_matches(')');
-        
+
         // Split by comma or space
         for part in content.split(|c| c == ',' || c == ' ') {
             let trimmed = part.trim();
@@ -1262,37 +1190,41 @@ impl BatchParser {
                 items.push(trimmed.to_string());
             }
         }
-        
+
         items
     }
 
     /// Handle CALL command
-    fn handle_call(&mut self, target: &str, executor: &mut dyn BatchExecutor) -> Result<(), BatError> {
+    fn handle_call(
+        &mut self,
+        target: &str,
+        executor: &mut dyn BatchExecutor,
+    ) -> Result<(), BatError> {
         let target = target.trim();
-        
+
         // Check if it's calling another batch file
         if target.ends_with(".bat") || target.ends_with(".cmd") {
             // Save current position
             self.call_stack.push(self.current);
-            
+
             // Execute the sub-batch
             let result = self.execute(target, executor);
-            
+
             // Restore position
             if let Some(pos) = self.call_stack.pop() {
                 self.current = pos;
             }
-            
+
             return result;
         }
-        
+
         // Check if it's calling a label (subroutine)
         if target.starts_with(':') {
             let label = target[1..].trim().to_uppercase();
-            
+
             // Save current position
             self.call_stack.push(self.current);
-            
+
             // Find and jump to label
             for (lbl, line_num) in self.labels.iter() {
                 if *lbl == label {
@@ -1300,15 +1232,15 @@ impl BatchParser {
                     return Ok(());
                 }
             }
-            
+
             return Err(BatError::LabelNotFound(target.to_string()));
         }
-        
+
         // Regular command execution via CALL
         if self.echo {
             executor.echo_line(target);
         }
-        
+
         self.error_level = executor.execute_command(target)? as i32;
         Ok(())
     }
@@ -1334,8 +1266,10 @@ impl BatchParser {
     /// Set a batch variable
     pub fn set_variable(&mut self, name: &str, value: &str) {
         // Remove existing variable with same name
-        self.variables.retain(|(n, _)| n.to_uppercase() != name.to_uppercase());
-        self.variables.push((name.to_uppercase(), value.to_string()));
+        self.variables
+            .retain(|(n, _)| n.to_uppercase() != name.to_uppercase());
+        self.variables
+            .push((name.to_uppercase(), value.to_string()));
     }
 
     /// Get a batch variable value
@@ -1366,21 +1300,21 @@ impl BatchParser {
         let mut result = String::new();
         let bytes = s.as_bytes();
         let mut i = 0;
-        
+
         while i < bytes.len() {
             if bytes[i] == b'%' && i + 1 < bytes.len() {
                 // Look for closing %
                 let remaining = &s[i + 1..];
                 if let Some(end_pos) = remaining.find('%') {
                     let var_name = &remaining[..end_pos];
-                    
+
                     // Skip %% (escaped percent)
                     if var_name.is_empty() {
                         result.push('%');
                         i += 2;
                         continue;
                     }
-                    
+
                     // Handle special variables
                     let value = match var_name.to_uppercase().as_str() {
                         "DATE" => {
@@ -1392,7 +1326,9 @@ impl BatchParser {
                                 "Unknown".to_string()
                             }
                             #[cfg(not(target_arch = "x86_64"))]
-                            { "Unknown".to_string() }
+                            {
+                                "Unknown".to_string()
+                            }
                         }
                         "TIME" => {
                             // Get real time from RTC
@@ -1400,28 +1336,45 @@ impl BatchParser {
                             if let Some(time) = crate::hal::cmos::HalQueryRealTimeClock() {
                                 if time.hour >= 12 {
                                     let h = if time.hour == 12 { 12 } else { time.hour - 12 };
-                                    alloc::format!("{:02}:{:02}:{:02} PM", h, time.minute, time.second())
+                                    alloc::format!(
+                                        "{:02}:{:02}:{:02} PM",
+                                        h,
+                                        time.minute,
+                                        time.second()
+                                    )
                                 } else {
                                     let h = if time.hour == 0 { 12 } else { time.hour };
-                                    alloc::format!("{:02}:{:02}:{:02} AM", h, time.minute, time.second())
+                                    alloc::format!(
+                                        "{:02}:{:02}:{:02} AM",
+                                        h,
+                                        time.minute,
+                                        time.second()
+                                    )
                                 }
                             } else {
                                 "Unknown".to_string()
                             }
                             #[cfg(not(target_arch = "x86_64"))]
-                            { "Unknown".to_string() }
+                            {
+                                "Unknown".to_string()
+                            }
                         }
                         "RANDOM" => {
                             // Generate a pseudo-random value based on time
                             #[cfg(target_arch = "x86_64")]
                             if let Some(time) = crate::hal::cmos::HalQueryRealTimeClock() {
-                                let seed = (time.hour as u32 * 3600 + time.minute as u32 * 60 + time.second() as u32) % 32768;
+                                let seed = (time.hour as u32 * 3600
+                                    + time.minute as u32 * 60
+                                    + time.second() as u32)
+                                    % 32768;
                                 format!("{}", seed)
                             } else {
                                 "12345".to_string()
                             }
                             #[cfg(not(target_arch = "x86_64"))]
-                            { "12345".to_string() }
+                            {
+                                "12345".to_string()
+                            }
                         }
                         "ERRORLEVEL" => self.error_level.to_string(),
                         _ => {
@@ -1433,7 +1386,7 @@ impl BatchParser {
                             }
                         }
                     };
-                    
+
                     result.push_str(&value);
                     i += end_pos + 2; // Skip %var%
                     continue;
@@ -1442,16 +1395,20 @@ impl BatchParser {
             result.push(bytes[i] as char);
             i += 1;
         }
-        
+
         result
     }
 
     /// Execute a single command
-    fn execute_command(&mut self, command: &str, executor: &mut dyn BatchExecutor) -> Result<u32, BatError> {
+    fn execute_command(
+        &mut self,
+        command: &str,
+        executor: &mut dyn BatchExecutor,
+    ) -> Result<u32, BatError> {
         if command.is_empty() {
             return Ok(0);
         }
-        
+
         executor.execute_command(command)
     }
 }
@@ -1460,10 +1417,10 @@ impl BatchParser {
 pub trait BatchExecutor {
     /// Read a batch file's contents
     fn read_file(&self, filename: &str) -> Result<String, BatError>;
-    
+
     /// Execute a command, return error level
     fn execute_command(&mut self, command: &str) -> Result<u32, BatError>;
-    
+
     /// Echo a line (for batch echo)
     fn echo_line(&self, line: &str);
 }
@@ -1503,7 +1460,9 @@ fn find_assignment_split(body: &str) -> Option<(String, Option<char>, &str)> {
     let lhs_trim = lhs.trim_end();
     if let Some(last) = lhs_trim.chars().last() {
         if matches!(last, '+' | '-' | '*' | '/' | '%') && lhs_trim.len() >= 2 {
-            let var_name = lhs_trim[..lhs_trim.len() - last.len_utf8()].trim().to_string();
+            let var_name = lhs_trim[..lhs_trim.len() - last.len_utf8()]
+                .trim()
+                .to_string();
             return Some((var_name, Some(last), rhs));
         }
     }

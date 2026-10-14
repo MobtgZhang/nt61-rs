@@ -8,17 +8,15 @@
 use crate::libs::ntdll::types::WCHAR;
 
 // Re-export basic types from ntdll for public use
-pub use crate::libs::ntdll::types::{DWORD, LONG, BYTE, WORD, HANDLE, PVOID, ULONG, PWSTR, PCWSTR};
+pub use crate::libs::ntdll::types::{BYTE, DWORD, HANDLE, LONG, PCWSTR, PVOID, PWSTR, ULONG, WORD};
 
 pub type LPVOID = PVOID;
-
 
 pub type BOOL = i32;
 
 pub const TRUE: BOOL = 1;
 
 pub const FALSE: BOOL = 0;
-
 
 pub const ERROR_SUCCESS: DWORD = 0;
 pub const ERROR_INVALID_FUNCTION: DWORD = 1;
@@ -41,7 +39,6 @@ pub const ERROR_CANTWRITE: DWORD = 1013;
 pub const ERROR_REGISTRY_CORRUPT: DWORD = 1015;
 pub const ERROR_KEY_DELETED: DWORD = 1018;
 pub const ERROR_NONE_MAPPED: DWORD = 1332;
-
 
 pub const REG_NONE: DWORD = 0;
 pub const REG_SZ: DWORD = 1;
@@ -97,7 +94,6 @@ pub const HKEY_PERFORMANCE_DATA: HKEY = 0x80000004 as HKEY;
 pub const HKEY_CURRENT_CONFIG: HKEY = 0x80000005 as HKEY;
 pub const HKEY_DYN_DATA: HKEY = 0x80000006 as HKEY;
 
-
 pub type PSID = PVOID;
 pub type PSID_NAME_USE = *mut SID_NAME_USE;
 
@@ -147,7 +143,6 @@ pub const PROTECTED_DACL_SECURITY_INFORMATION: DWORD = 0x80000000;
 pub const PROTECTED_SACL_SECURITY_INFORMATION: DWORD = 0x40000000;
 pub const UNPROTECTED_DACL_SECURITY_INFORMATION: DWORD = 0x20000000;
 pub const UNPROTECTED_SACL_SECURITY_INFORMATION: DWORD = 0x10000000;
-
 
 pub type SC_HANDLE = HANDLE;
 
@@ -216,7 +211,6 @@ pub struct SERVICE_STATUS {
 
 pub type LPSERVICE_STATUS = *mut SERVICE_STATUS;
 
-
 pub type HANDLE_EVENTLOG = HANDLE;
 
 pub const EVENTLOG_SUCCESS: WORD = 0x0000;
@@ -225,7 +219,6 @@ pub const EVENTLOG_WARNING_TYPE: WORD = 0x0002;
 pub const EVENTLOG_INFORMATION_TYPE: WORD = 0x0004;
 pub const EVENTLOG_AUDIT_SUCCESS: WORD = 0x0008;
 pub const EVENTLOG_AUDIT_FAILURE: WORD = 0x0010;
-
 
 pub const CRED_TYPE_GENERIC: DWORD = 1;
 pub const CRED_TYPE_DOMAIN_PASSWORD: DWORD = 2;
@@ -263,7 +256,6 @@ pub struct FILETIME {
     pub dwHighDateTime: DWORD,
 }
 
-
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct LUID {
@@ -286,7 +278,6 @@ pub const SE_PRIVILEGE_ENABLED: DWORD = 0x00000002;
 pub const SE_PRIVILEGE_ENABLED_BY_DEFAULT: DWORD = 0x00000001;
 pub const SE_PRIVILEGE_REMOVED: DWORD = 0x00000004;
 
-
 pub fn nt_status_to_win32(status: i32) -> DWORD {
     use crate::libs::ntdll::status::*;
 
@@ -297,7 +288,7 @@ pub fn nt_status_to_win32(status: i32) -> DWORD {
         STATUS_INVALID_PARAMETER => ERROR_INVALID_PARAMETER,
         STATUS_NO_MEMORY => ERROR_NOT_ENOUGH_MEMORY,
         STATUS_BUFFER_TOO_SMALL => ERROR_INSUFFICIENT_BUFFER,
-        STATUS_BUFFER_OVERFLOW => ERROR_FILE_NOT_FOUND,  // Also covers STATUS_OBJECT_NAME_NOT_FOUND (same value)
+        STATUS_BUFFER_OVERFLOW => ERROR_FILE_NOT_FOUND, // Also covers STATUS_OBJECT_NAME_NOT_FOUND (same value)
         STATUS_NO_MORE_ENTRIES => ERROR_NO_MORE_ITEMS,
         _ => {
             if status >= 0 {

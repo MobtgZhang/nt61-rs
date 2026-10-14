@@ -11,8 +11,8 @@
 
 extern crate alloc;
 
-pub mod evtx;
 pub mod channels;
+pub mod evtx;
 pub mod xml_export;
 
 use alloc::vec::Vec;
@@ -213,7 +213,9 @@ impl EventLog {
     pub fn export_evtx(&self) -> Vec<u8> {
         let mut tmp = alloc::vec::Vec::new();
         for slot in &self.records[..self.count] {
-            if let Some(rec) = slot { tmp.push(rec.clone()); }
+            if let Some(rec) = slot {
+                tmp.push(rec.clone());
+            }
         }
         evtx::write_evtx_file(&tmp, self.channel)
     }
@@ -221,7 +223,9 @@ impl EventLog {
     pub fn export_xml(&self) -> Vec<u8> {
         let mut tmp = alloc::vec::Vec::new();
         for slot in &self.records[..self.count] {
-            if let Some(rec) = slot { tmp.push(rec.clone()); }
+            if let Some(rec) = slot {
+                tmp.push(rec.clone());
+            }
         }
         xml_export::records_to_xml(&tmp, self.channel)
     }
@@ -233,21 +237,33 @@ impl EventLog {
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
-static mut SYSTEM_LOG: [u8; core::mem::size_of::<EventLog>()] = [0; core::mem::size_of::<EventLog>()];
-static mut APPLICATION_LOG: [u8; core::mem::size_of::<EventLog>()] = [0; core::mem::size_of::<EventLog>()];
-static mut SECURITY_LOG: [u8; core::mem::size_of::<EventLog>()] = [0; core::mem::size_of::<EventLog>()];
-static mut SETUP_LOG: [u8; core::mem::size_of::<EventLog>()] = [0; core::mem::size_of::<EventLog>()];
+/// Byte storage that still satisfies `EventLog`'s alignment.
+///
+/// A plain `[u8; N]` has alignment 1, so casting it to `*mut EventLog` produced
+/// a misaligned pointer. That is undefined behaviour and is detected as a
+/// misaligned-dereference panic under libtest; the explicit alignment makes the
+/// cast sound.
+#[repr(align(16))]
+struct LogStorage([u8; core::mem::size_of::<EventLog>()]);
+
+static mut SYSTEM_LOG: LogStorage = LogStorage([0; core::mem::size_of::<EventLog>()]);
+static mut APPLICATION_LOG: LogStorage = LogStorage([0; core::mem::size_of::<EventLog>()]);
+static mut SECURITY_LOG: LogStorage = LogStorage([0; core::mem::size_of::<EventLog>()]);
+static mut SETUP_LOG: LogStorage = LogStorage([0; core::mem::size_of::<EventLog>()]);
 
 static SYSTEM_LOG_INIT: AtomicBool = AtomicBool::new(false);
 static APPLICATION_LOG_INIT: AtomicBool = AtomicBool::new(false);
 static SECURITY_LOG_INIT: AtomicBool = AtomicBool::new(false);
 static SETUP_LOG_INIT: AtomicBool = AtomicBool::new(false);
 
-fn cast_log_init<'a>(storage: &'a mut [u8], init_flag: &AtomicBool) -> Option<&'a mut EventLog> {
+fn cast_log_init<'a>(
+    storage: &'a mut LogStorage,
+    init_flag: &AtomicBool,
+) -> Option<&'a mut EventLog> {
     if !init_flag.load(Ordering::Acquire) {
         return None;
     }
-    let ptr = storage.as_mut_ptr() as *mut EventLog;
+    let ptr = storage.0.as_mut_ptr() as *mut EventLog;
     unsafe { Some(&mut *ptr) }
 }
 
@@ -271,6 +287,27 @@ fn setup_log_mut() -> Option<&'static mut EventLog> {
     unsafe { cast_log_init(&mut SETUP_LOG, &SETUP_LOG_INIT) }
 }
 
+/// Clear every record in a channel (`ClearEventLog`). Record numbering is kept
+/// so ids stay unique, but the stored records and the count are dropped.
+pub fn clear_channel(channel: EventChannel) -> bool {
+    let log = match channel {
+        EventChannel::System => system_log_mut(),
+        EventChannel::Application => application_log_mut(),
+        EventChannel::Security => security_log_mut(),
+        EventChannel::Setup => setup_log_mut(),
+        EventChannel::ForwardedEvents => None,
+    };
+    let log = match log {
+        Some(l) => l,
+        None => return false,
+    };
+    for slot in log.records.iter_mut() {
+        *slot = None;
+    }
+    log.count = 0;
+    true
+}
+
 /// Initialize all event logs
 pub fn init() {
     // SAFETY: each log is initialized exactly once at boot
@@ -292,7 +329,11 @@ pub fn init() {
         SETUP_LOG_INIT.store(true, Ordering::Release);
     }
 
-    let mut record = EventRecord::new(b"Microsoft-Windows-Kernel-General", 1, EventLevel::Information);
+    let mut record = EventRecord::new(
+        b"Microsoft-Windows-Kernel-General",
+        1,
+        EventLevel::Information,
+    );
     record.set_description("The system boot has begun.");
     if let Some(log) = system_log_mut() {
         log.write(record);
@@ -451,7 +492,11 @@ pub mod security_events {
         record.channel = EventChannel::Security;
         // username is stored separately in user field
         let user_bytes = username.as_bytes();
-        let n = if user_bytes.len() > 127 { 127 } else { user_bytes.len() };
+        let n = if user_bytes.len() > 127 {
+            127
+        } else {
+            user_bytes.len()
+        };
         record.user[..n].copy_from_slice(&user_bytes[..n]);
         record.user_len = n as u8;
         if let Some(log) = security_log_mut() {

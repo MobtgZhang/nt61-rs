@@ -91,15 +91,21 @@ pub fn get_system_time_us() -> u64 {
 
 #[inline]
 fn io_wait() {
-    unsafe { asm!("out 0x80, al", in("al") 0u8, options(nomem, nostack)); }
+    unsafe {
+        asm!("out 0x80, al", in("al") 0u8, options(nomem, nostack));
+    }
 }
 
 /// Set the rate generator on channel 0 to `hz` interrupts per
-    /// second. Returns `true` on success.
+/// second. Returns `true` on success.
 pub fn init(hz: u32) -> bool {
-    if hz == 0 { return false; }
+    if hz == 0 {
+        return false;
+    }
     let divisor = (PIT_FREQUENCY / hz as u64) as u16;
-    if divisor == 0 { return false; }
+    if divisor == 0 {
+        return false;
+    }
 
     // BRING-UP WORKAROUND: do NOT actually program the PIT.
     // Earlier boot paths left the PIT running at 18.2 Hz (or the
@@ -140,10 +146,7 @@ pub fn pit_counter() -> u16 {
 fn pit2_program(freq: u32) -> u16 {
     let freq = freq.max(1) as u64;
     let divisor = (PIT_FREQUENCY / freq).max(1) as u16;
-    let cmd = mode::SEL_CHAN2
-            | mode::ACCESS_LOHI
-            | mode::MODE_3
-            | mode::BINARY;
+    let cmd = mode::SEL_CHAN2 | mode::ACCESS_LOHI | mode::MODE_3 | mode::BINARY;
     WRITE_PORT_UCHAR(PIT_COMMAND, cmd);
     WRITE_PORT_UCHAR(PIT_CHANNEL2, (divisor & 0xFF) as u8);
     io_wait();
@@ -185,7 +188,9 @@ pub fn HalMakeBeep(frequency: u32, duration: u32) -> bool {
 /// legacy behaviour when the system is using a different timer
 /// source (HPET or LAPIC).
 pub fn init_masked(hz: u32) -> bool {
-    if !init(hz) { return false; }
+    if !init(hz) {
+        return false;
+    }
     // Mask IRQ0 at the master PIC. 0x21 bit 0 = 1 disables IRQ0.
     let mask = READ_PORT_UCHAR(0x21);
     WRITE_PORT_UCHAR(0x21, mask | 0x01);

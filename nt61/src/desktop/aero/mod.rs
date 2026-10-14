@@ -16,7 +16,9 @@ pub fn init() {
 /// Aero is enabled if composition is on AND the user has not disabled
 /// the glass colour scheme.
 pub fn is_aero_active() -> bool {
-    desktop().aero_enabled.load(core::sync::atomic::Ordering::Acquire)
+    desktop()
+        .aero_enabled
+        .load(core::sync::atomic::Ordering::Acquire)
 }
 
 /// ARGB tint applied to the glass frame. Defaults to fully transparent.

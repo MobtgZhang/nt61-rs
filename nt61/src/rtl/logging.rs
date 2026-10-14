@@ -43,8 +43,8 @@ use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 #[repr(u8)]
 pub enum LogLevel {
     Error = 0,
-    Warn  = 1,
-    Info  = 2,
+    Warn = 1,
+    Info = 2,
     Debug = 3,
 }
 
@@ -53,8 +53,8 @@ impl LogLevel {
     pub fn as_str(self) -> &'static str {
         match self {
             LogLevel::Error => "Error ",
-            LogLevel::Warn  => "Warn  ",
-            LogLevel::Info  => "Info  ",
+            LogLevel::Warn => "Warn  ",
+            LogLevel::Info => "Info  ",
             LogLevel::Debug => "Debug ",
         }
     }
@@ -63,10 +63,17 @@ impl LogLevel {
     pub fn as_prefix(self) -> &'static str {
         match self {
             LogLevel::Error => "ERROR",
-            LogLevel::Warn  => "WARN ",
-            LogLevel::Info  => "INFO ",
+            LogLevel::Warn => "WARN ",
+            LogLevel::Info => "INFO ",
             LogLevel::Debug => "DEBUG",
         }
+    }
+
+    /// Ordered severity, shared with `windows_log::LogLevel` so both level
+    /// sets can be filtered by the same rule.
+    #[inline]
+    pub fn to_severity(self) -> u8 {
+        self as u8
     }
 }
 
@@ -113,38 +120,38 @@ bitflags::bitflags! {
 
 pub mod subsystem {
     use super::SubsystemFlags;
-    pub const KERNEL:     u32 = SubsystemFlags::KERNEL.bits();
-    pub const MEMORY:     u32 = SubsystemFlags::MEMORY.bits();
-    pub const PROCESS:    u32 = SubsystemFlags::PROCESS.bits();
-    pub const IO:        u32 = SubsystemFlags::IO.bits();
-    pub const FILESYSTEM:u32 = SubsystemFlags::FILESYSTEM.bits();
-    pub const DRIVER:    u32 = SubsystemFlags::DRIVER.bits();
-    pub const NET:       u32 = SubsystemFlags::NET.bits();
-    pub const CLFS:      u32 = SubsystemFlags::CLFS.bits();
-    pub const REGISTRY:   u32 = SubsystemFlags::REGISTRY.bits();
-    pub const DPC:       u32 = SubsystemFlags::DPC.bits();
-    pub const IRQL:      u32 = SubsystemFlags::IRQL.bits();
-    pub const SYNC:      u32 = SubsystemFlags::SYNC.bits();
-    pub const HAL:       u32 = SubsystemFlags::HAL.bits();
-    pub const ARCH:      u32 = SubsystemFlags::ARCH.bits();
-    pub const VFS:       u32 = SubsystemFlags::VFS.bits();
-    pub const FAT32:     u32 = SubsystemFlags::FAT32.bits();
-    pub const NTFS:      u32 = SubsystemFlags::NTFS.bits();
-    pub const USB:       u32 = SubsystemFlags::USB.bits();
-    pub const STORAGE:   u32 = SubsystemFlags::STORAGE.bits();
-    pub const AUDIO:     u32 = SubsystemFlags::AUDIO.bits();
-    pub const VIDEO:     u32 = SubsystemFlags::VIDEO.bits();
-    pub const INPUT:     u32 = SubsystemFlags::INPUT.bits();
-    pub const WIN32K:    u32 = SubsystemFlags::WIN32K.bits();
-    pub const NDIS:      u32 = SubsystemFlags::NDIS.bits();
-    pub const KDCOM:    u32 = SubsystemFlags::KDCOM.bits();
-    pub const DBG:      u32 = SubsystemFlags::DBG.bits();
-    pub const SMOKE:    u32 = SubsystemFlags::SMOKE.bits();
-    pub const PS:       u32 = SubsystemFlags::PS.bits();
-    pub const THREAD:   u32 = SubsystemFlags::THREAD.bits();
-    pub const SCHED:    u32 = SubsystemFlags::SCHED.bits();
-    pub const OB:       u32 = SubsystemFlags::OB.bits();
-    pub const FS:       u32 = SubsystemFlags::FS.bits();
+    pub const KERNEL: u32 = SubsystemFlags::KERNEL.bits();
+    pub const MEMORY: u32 = SubsystemFlags::MEMORY.bits();
+    pub const PROCESS: u32 = SubsystemFlags::PROCESS.bits();
+    pub const IO: u32 = SubsystemFlags::IO.bits();
+    pub const FILESYSTEM: u32 = SubsystemFlags::FILESYSTEM.bits();
+    pub const DRIVER: u32 = SubsystemFlags::DRIVER.bits();
+    pub const NET: u32 = SubsystemFlags::NET.bits();
+    pub const CLFS: u32 = SubsystemFlags::CLFS.bits();
+    pub const REGISTRY: u32 = SubsystemFlags::REGISTRY.bits();
+    pub const DPC: u32 = SubsystemFlags::DPC.bits();
+    pub const IRQL: u32 = SubsystemFlags::IRQL.bits();
+    pub const SYNC: u32 = SubsystemFlags::SYNC.bits();
+    pub const HAL: u32 = SubsystemFlags::HAL.bits();
+    pub const ARCH: u32 = SubsystemFlags::ARCH.bits();
+    pub const VFS: u32 = SubsystemFlags::VFS.bits();
+    pub const FAT32: u32 = SubsystemFlags::FAT32.bits();
+    pub const NTFS: u32 = SubsystemFlags::NTFS.bits();
+    pub const USB: u32 = SubsystemFlags::USB.bits();
+    pub const STORAGE: u32 = SubsystemFlags::STORAGE.bits();
+    pub const AUDIO: u32 = SubsystemFlags::AUDIO.bits();
+    pub const VIDEO: u32 = SubsystemFlags::VIDEO.bits();
+    pub const INPUT: u32 = SubsystemFlags::INPUT.bits();
+    pub const WIN32K: u32 = SubsystemFlags::WIN32K.bits();
+    pub const NDIS: u32 = SubsystemFlags::NDIS.bits();
+    pub const KDCOM: u32 = SubsystemFlags::KDCOM.bits();
+    pub const DBG: u32 = SubsystemFlags::DBG.bits();
+    pub const SMOKE: u32 = SubsystemFlags::SMOKE.bits();
+    pub const PS: u32 = SubsystemFlags::PS.bits();
+    pub const THREAD: u32 = SubsystemFlags::THREAD.bits();
+    pub const SCHED: u32 = SubsystemFlags::SCHED.bits();
+    pub const OB: u32 = SubsystemFlags::OB.bits();
+    pub const FS: u32 = SubsystemFlags::FS.bits();
 }
 
 /// Per-subsystem log level overrides.
@@ -173,19 +180,47 @@ fn get_effective_level(subsystem_bits: u32) -> LogLevel {
 // ---------------------------------------------------------------------------
 // Global Log Level
 // ---------------------------------------------------------------------------
+//
+// Priority-based cfg conditions: higher levels take precedence.
+// Since log_level_debug implies log_level_info, log_level_warn, and
+// log_level_error via feature dependencies, we check in reverse order
+// (from lowest to highest priority) to ensure the most verbose level wins.
+//
+// Priority: debug > info > warn > error
+// Default: Info if no feature is set
 
+// Priority 1: Debug (highest) - only if DEBUG is explicitly enabled AND
+// the feature itself is present (indicating it was the primary request)
 #[cfg(feature = "log_level_debug")]
 pub const GLOBAL_LOG_LEVEL: LogLevel = LogLevel::Debug;
-#[cfg(feature = "log_level_info")]
+
+// Priority 2: Info - if debug is not enabled but info is
+#[cfg(all(feature = "log_level_info", not(feature = "log_level_debug")))]
 pub const GLOBAL_LOG_LEVEL: LogLevel = LogLevel::Info;
-#[cfg(feature = "log_level_warn")]
-pub const GLOBAL_LOG_LEVEL: LogLevel = LogLevel::Warn;
-#[cfg(feature = "log_level_error")]
-pub const GLOBAL_LOG_LEVEL: LogLevel = LogLevel::Error;
+
+// Priority 3: Warn - if neither debug nor info is enabled but warn is
 #[cfg(all(
-    not(feature = "log_level_error"),
+    feature = "log_level_warn",
+    not(feature = "log_level_debug"),
+    not(feature = "log_level_info")
+))]
+pub const GLOBAL_LOG_LEVEL: LogLevel = LogLevel::Warn;
+
+// Priority 4: Error - if none of the above is enabled but error is
+#[cfg(all(
+    feature = "log_level_error",
+    not(feature = "log_level_debug"),
+    not(feature = "log_level_info"),
+    not(feature = "log_level_warn")
+))]
+pub const GLOBAL_LOG_LEVEL: LogLevel = LogLevel::Error;
+
+// Default: Info level when no feature is explicitly set
+#[cfg(all(
+    not(feature = "log_level_debug"),
+    not(feature = "log_level_info"),
     not(feature = "log_level_warn"),
-    not(feature = "log_level_debug")
+    not(feature = "log_level_error")
 ))]
 pub const GLOBAL_LOG_LEVEL: LogLevel = LogLevel::Info;
 
@@ -322,42 +357,42 @@ pub fn format_subsystem_fixed(buf: &mut [u8; 11], name: &str) -> usize {
 pub fn subsystem_to_bits(name: &str) -> u32 {
     use self::subsystem::*;
     match name {
-        "KERNEL"     => KERNEL,
-        "MEMORY"     => MEMORY,
-        "PROCESS"    => PROCESS,
-        "IO"         => IO,
+        "KERNEL" => KERNEL,
+        "MEMORY" => MEMORY,
+        "PROCESS" => PROCESS,
+        "IO" => IO,
         "FILESYSTEM" => FILESYSTEM,
-        "FS"         => FILESYSTEM,
-        "DRIVER"     => DRIVER,
-        "NET"        => NET,
-        "CLFS"       => CLFS,
-        "REGISTRY"   => REGISTRY,
-        "DPC"        => DPC,
-        "IRQL"       => IRQL,
-        "SYNC"       => SYNC,
-        "HAL"        => HAL,
-        "ARCH"       => ARCH,
-        "VFS"        => VFS,
-        "FAT32"      => FAT32,
-        "NTFS"       => NTFS,
-        "USB"        => USB,
-        "STORAGE"    => STORAGE,
-        "AUDIO"      => AUDIO,
-        "VIDEO"      => VIDEO,
-        "INPUT"      => INPUT,
-        "WIN32K"     => WIN32K,
-        "NDIS"       => NDIS,
-        "KDCOM"      => KDCOM,
-        "DBG"        => DBG,
-        "SMOKE"      => SMOKE,
-        "PS"         => PS,
-        "THREAD"     => THREAD,
-        "SCHED"      => SCHED,
-        "OB"         => OB,
-        "APC"        => SYNC,
-        "TIMER"      => DPC,
-        "PAGER"      => MEMORY,
-        _            => KERNEL,
+        "FS" => FILESYSTEM,
+        "DRIVER" => DRIVER,
+        "NET" => NET,
+        "CLFS" => CLFS,
+        "REGISTRY" => REGISTRY,
+        "DPC" => DPC,
+        "IRQL" => IRQL,
+        "SYNC" => SYNC,
+        "HAL" => HAL,
+        "ARCH" => ARCH,
+        "VFS" => VFS,
+        "FAT32" => FAT32,
+        "NTFS" => NTFS,
+        "USB" => USB,
+        "STORAGE" => STORAGE,
+        "AUDIO" => AUDIO,
+        "VIDEO" => VIDEO,
+        "INPUT" => INPUT,
+        "WIN32K" => WIN32K,
+        "NDIS" => NDIS,
+        "KDCOM" => KDCOM,
+        "DBG" => DBG,
+        "SMOKE" => SMOKE,
+        "PS" => PS,
+        "THREAD" => THREAD,
+        "SCHED" => SCHED,
+        "OB" => OB,
+        "APC" => SYNC,
+        "TIMER" => DPC,
+        "PAGER" => MEMORY,
+        _ => KERNEL,
     }
 }
 
@@ -392,7 +427,8 @@ pub fn log_write_impl(level: LogLevel, subsystem: &str, cpu: u32, message: &str)
     let ts_secs = ts / 1000;
     let ts_ms = (ts % 1000) as u32;
 
-    line_buf[pos] = b'['; pos += 1;
+    line_buf[pos] = b'[';
+    pos += 1;
     // Write 6-digit seconds
     let s0 = ((ts_secs / 100000) % 10) as u8;
     let s1 = ((ts_secs / 10000) % 10) as u8;
@@ -400,62 +436,93 @@ pub fn log_write_impl(level: LogLevel, subsystem: &str, cpu: u32, message: &str)
     let s3 = ((ts_secs / 100) % 10) as u8;
     let s4 = ((ts_secs / 10) % 10) as u8;
     let s5 = (ts_secs % 10) as u8;
-    line_buf[pos] = s0 + b'0'; pos += 1;
-    line_buf[pos] = s1 + b'0'; pos += 1;
-    line_buf[pos] = s2 + b'0'; pos += 1;
-    line_buf[pos] = s3 + b'0'; pos += 1;
-    line_buf[pos] = s4 + b'0'; pos += 1;
-    line_buf[pos] = s5 + b'0'; pos += 1;
-    line_buf[pos] = b'.'; pos += 1;
+    line_buf[pos] = s0 + b'0';
+    pos += 1;
+    line_buf[pos] = s1 + b'0';
+    pos += 1;
+    line_buf[pos] = s2 + b'0';
+    pos += 1;
+    line_buf[pos] = s3 + b'0';
+    pos += 1;
+    line_buf[pos] = s4 + b'0';
+    pos += 1;
+    line_buf[pos] = s5 + b'0';
+    pos += 1;
+    line_buf[pos] = b'.';
+    pos += 1;
     // Write 3-digit milliseconds
     let m0 = ((ts_ms / 100) % 10) as u8;
     let m1 = ((ts_ms / 10) % 10) as u8;
     let m2 = (ts_ms % 10) as u8;
-    line_buf[pos] = m0 + b'0'; pos += 1;
-    line_buf[pos] = m1 + b'0'; pos += 1;
-    line_buf[pos] = m2 + b'0'; pos += 1;
-    line_buf[pos] = b']'; pos += 1;
-    line_buf[pos] = b' '; pos += 1;
+    line_buf[pos] = m0 + b'0';
+    pos += 1;
+    line_buf[pos] = m1 + b'0';
+    pos += 1;
+    line_buf[pos] = m2 + b'0';
+    pos += 1;
+    line_buf[pos] = b']';
+    pos += 1;
+    line_buf[pos] = b' ';
+    pos += 1;
 
     // 2. Level: [LEVEL]
     let level_str = level.as_str();
-    line_buf[pos] = b'['; pos += 1;
+    line_buf[pos] = b'[';
+    pos += 1;
     for &b in level_str.as_bytes() {
-        line_buf[pos] = b; pos += 1;
+        line_buf[pos] = b;
+        pos += 1;
     }
-    line_buf[pos] = b']'; pos += 1;
-    line_buf[pos] = b' '; pos += 1;
+    line_buf[pos] = b']';
+    pos += 1;
+    line_buf[pos] = b' ';
+    pos += 1;
 
     // 3. Subsystem: [SUBSYSTEM] (padded to 10 chars)
-    line_buf[pos] = b'['; pos += 1;
+    line_buf[pos] = b'[';
+    pos += 1;
     for (i, &b) in subsystem.as_bytes().iter().enumerate() {
-        if i < 10 { line_buf[pos] = b; pos += 1; }
+        if i < 10 {
+            line_buf[pos] = b;
+            pos += 1;
+        }
     }
     // Pad with spaces
     let sub_len = subsystem.len().min(10);
     while pos < 11 + sub_len {
-        line_buf[pos] = b' '; pos += 1;
+        line_buf[pos] = b' ';
+        pos += 1;
     }
-    line_buf[pos] = b']'; pos += 1;
-    line_buf[pos] = b' '; pos += 1;
+    line_buf[pos] = b']';
+    pos += 1;
+    line_buf[pos] = b' ';
+    pos += 1;
 
     // 4. CPU: [CPU]
-    line_buf[pos] = b'['; pos += 1;
+    line_buf[pos] = b'[';
+    pos += 1;
     if cpu >= 10 {
-        line_buf[pos] = b'0' + (cpu / 10) as u8; pos += 1;
+        line_buf[pos] = b'0' + (cpu / 10) as u8;
+        pos += 1;
     }
-    line_buf[pos] = b'0' + (cpu % 10) as u8; pos += 1;
-    line_buf[pos] = b']'; pos += 1;
-    line_buf[pos] = b' '; pos += 1;
+    line_buf[pos] = b'0' + (cpu % 10) as u8;
+    pos += 1;
+    line_buf[pos] = b']';
+    pos += 1;
+    line_buf[pos] = b' ';
+    pos += 1;
 
     // 5. Message
     for &b in message.as_bytes() {
-        line_buf[pos] = b; pos += 1;
+        line_buf[pos] = b;
+        pos += 1;
     }
 
     // 6. Line ending
-    line_buf[pos] = b'\r'; pos += 1;
-    line_buf[pos] = b'\n'; pos += 1;
+    line_buf[pos] = b'\r';
+    pos += 1;
+    line_buf[pos] = b'\n';
+    pos += 1;
 
     let line_slice = &line_buf[..pos];
     crate::rtl::klog::write_serial(core::str::from_utf8(line_slice).unwrap_or("<bad log utf8>"));
@@ -464,4 +531,16 @@ pub fn log_write_impl(level: LogLevel, subsystem: &str, cpu: u32, message: &str)
 #[inline]
 pub fn should_log(level: LogLevel, subsystem_bits: u32) -> bool {
     level <= get_effective_level(subsystem_bits)
+}
+
+/// Severity-based filter shared by both level sets.
+///
+/// `windows_log::LogLevel` is the DbgPrint-style set, where `Debug` is
+/// `0xFFFFFFFF` rather than an ordered severity, so it cannot be compared
+/// directly against `LogLevel`. Mapping every level to a plain severity
+/// lets the two sets share one filter, which is what makes the `level:`
+/// argument of `kprintln!` mean something instead of being discarded.
+#[inline]
+pub fn should_log_severity(severity: u8, subsystem_bits: u32) -> bool {
+    severity <= get_effective_level(subsystem_bits) as u8
 }

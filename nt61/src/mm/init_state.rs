@@ -116,12 +116,12 @@ fn require_state_failed(current: u8, required: u8, operation: &str) -> ! {
     }
     crate::hal::serial::write_string("\r\n\r\n");
 
-    crate::ke::bugcheck::bugcheck(
-        0xDEAD_0001, // MM_INITIALIZATION_ORDER_VIOLATION
+    crate::ke::bugcheck::bugcheck_with(
+        crate::ke::bugcheck::BugCheckCode::MemoryManagement,
+        0xDEAD_0001, // MM_INITIALIZATION_ORDER_VIOLATION (sub-code)
         current as u64,
         required as u64,
         operation.as_ptr() as u64,
-        0,
     );
 }
 
@@ -168,12 +168,12 @@ fn enter_state_failed(prev: u8, new: u8, operation: &str) -> ! {
     crate::hal::serial::write_string("\r\n");
     crate::hal::serial::write_string("Expected: sequential transition (prev + 1)\r\n\r\n");
 
-    crate::ke::bugcheck::bugcheck(
-        0xDEAD_0002, // MM_INITIALIZATION_STATE_SKIP
+    crate::ke::bugcheck::bugcheck_with(
+        crate::ke::bugcheck::BugCheckCode::MemoryManagement,
+        0xDEAD_0002, // MM_INITIALIZATION_STATE_SKIP (sub-code)
         prev as u64,
         new as u64,
         operation.as_ptr() as u64,
-        0,
     );
 }
 
@@ -187,12 +187,12 @@ fn enter_state_invalid(new: u8, operation: &str) -> ! {
     crate::hal::serial::write_hex_u64(new as u64);
     crate::hal::serial::write_string("\r\n\r\n");
 
-    crate::ke::bugcheck::bugcheck(
-        0xDEAD_0003, // MM_INITIALIZATION_INVALID_STATE
+    crate::ke::bugcheck::bugcheck_with(
+        crate::ke::bugcheck::BugCheckCode::MemoryManagement,
+        0xDEAD_0003, // MM_INITIALIZATION_INVALID_STATE (sub-code)
         new as u64,
         STATE_FULLY_INITIALIZED as u64,
         operation.as_ptr() as u64,
-        0,
     );
 }
 
@@ -207,13 +207,17 @@ mod tests {
 
     #[test]
     fn test_initial_state() {
-        unsafe { reset_for_test(); }
+        unsafe {
+            reset_for_test();
+        }
         assert_eq!(current_state(), STATE_UNINITIALIZED);
     }
 
     #[test]
     fn test_sequential_transitions() {
-        unsafe { reset_for_test(); }
+        unsafe {
+            reset_for_test();
+        }
 
         enter_state(STATE_FRAME_ALLOCATOR, "test");
         assert_eq!(current_state(), STATE_FRAME_ALLOCATOR);
@@ -227,7 +231,9 @@ mod tests {
 
     #[test]
     fn test_require_state_success() {
-        unsafe { reset_for_test(); }
+        unsafe {
+            reset_for_test();
+        }
 
         enter_state(STATE_FRAME_ALLOCATOR, "test");
         enter_state(STATE_PFN_DATABASE, "test");
@@ -239,7 +245,9 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_require_state_failure() {
-        unsafe { reset_for_test(); }
+        unsafe {
+            reset_for_test();
+        }
 
         enter_state(STATE_FRAME_ALLOCATOR, "test");
 
@@ -249,7 +257,9 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_state_skip_detected() {
-        unsafe { reset_for_test(); }
+        unsafe {
+            reset_for_test();
+        }
 
         enter_state(STATE_FRAME_ALLOCATOR, "test");
 
@@ -258,7 +268,9 @@ mod tests {
 
     #[test]
     fn test_has_reached_state() {
-        unsafe { reset_for_test(); }
+        unsafe {
+            reset_for_test();
+        }
 
         assert!(!has_reached_state(STATE_FRAME_ALLOCATOR));
 

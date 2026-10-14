@@ -10,8 +10,8 @@
 
 #![allow(non_snake_case, non_upper_case_globals, dead_code)]
 
-use crate::libs::kernel32::types::{DWORD, BOOL, HANDLE, LPWSTR, LPCWSTR, LPDWORD, LPVOID};
-use crate::libs::ntdll::types::{PVOID, NTSTATUS, BYTE, WORD};
+use crate::libs::kernel32::types::{BOOL, DWORD, HANDLE, LPCWSTR, LPDWORD, LPVOID, LPWSTR};
+use crate::libs::ntdll::types::{BYTE, NTSTATUS, PVOID, WORD};
 
 // Re-export types for public use
 pub use crate::libs::kernel32::types::INVALID_HANDLE_VALUE;
@@ -184,6 +184,7 @@ pub const ERROR_SUCCESS: DWORD = 0;
 pub const ERROR_INVALID_HANDLE: DWORD = 6;
 pub const ERROR_NOT_ENOUGH_MEMORY: DWORD = 8;
 pub const ERROR_INVALID_PARAMETER: DWORD = 87;
+pub const ERROR_ACCESS_DENIED: DWORD = 5;
 pub const ERROR_INSUFFICIENT_BUFFER: DWORD = 122;
 pub const ERROR_SERVICE_DOES_NOT_EXIST: DWORD = 1060;
 pub const ERROR_SERVICE_CANNOT_ACCEPT_CTRL: DWORD = 1061;

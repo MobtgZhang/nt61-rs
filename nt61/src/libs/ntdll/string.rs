@@ -11,7 +11,7 @@
 //! All algorithms follow the published WDK 7.6000 references.
 
 use super::status::{STATUS_BUFFER_TOO_SMALL, STATUS_INVALID_PARAMETER, STATUS_SUCCESS};
-use super::types::{AnsiString, NTSTATUS, UnicodeString};
+use super::types::{AnsiString, UnicodeString, NTSTATUS};
 use core::ffi::c_void;
 use core::ptr;
 
@@ -77,9 +77,13 @@ pub unsafe extern "C" fn RtlCompareUnicodeString(
             return (ca as i32) - (cb as i32);
         }
     }
-    if alen < blen { -1 }
-    else if alen > blen { 1 }
-    else { 0 }
+    if alen < blen {
+        -1
+    } else if alen > blen {
+        1
+    } else {
+        0
+    }
 }
 
 /// `RtlCompareUnicodeStrings` — compare two `PWSTR` of known
@@ -107,9 +111,13 @@ pub unsafe extern "C" fn RtlCompareUnicodeStrings(
             return (ca as i32) - (cb as i32);
         }
     }
-    if s1.len() < s2.len() { -1 }
-    else if s1.len() > s2.len() { 1 }
-    else { 0 }
+    if s1.len() < s2.len() {
+        -1
+    } else if s1.len() > s2.len() {
+        1
+    } else {
+        0
+    }
 }
 
 /// `RtlCopyUnicodeString` — copy `source` into `dest`. Fails
@@ -136,13 +144,20 @@ pub unsafe extern "C" fn RtlCopyUnicodeString(
     if (dst.MaximumLength as usize) < need_bytes {
         // Truncate, like the NT RTL does.
         let cap = (dst.MaximumLength as usize) / 2;
-        if cap > 0 {
-            let cp = cap.saturating_sub(1);
+        if cap >= 2 {
+            // NT truncates to `cap-2` chars so that the null
+            // terminator at position `cap-2` still leaves one
+            // unused slot at the end of the buffer.
+            let cp = cap.saturating_sub(2);
             for i in 0..cp {
                 *dst.Buffer.add(i) = *src.Buffer.add(i);
             }
             *dst.Buffer.add(cp) = 0;
             dst.Length = (cp * 2) as u16;
+        } else if cap == 1 {
+            // Only room for a single null terminator.
+            *dst.Buffer.add(0) = 0;
+            dst.Length = 0;
         }
         return STATUS_BUFFER_TOO_SMALL;
     }
@@ -193,7 +208,9 @@ pub unsafe extern "C" fn RtlAppendUnicodeToString(
         return STATUS_SUCCESS;
     }
     let mut len = 0usize;
-    while *source.add(len) != 0 { len += 1; }
+    while *source.add(len) != 0 {
+        len += 1;
+    }
     let temp = UnicodeString {
         Length: (len * 2) as u16,
         MaximumLength: ((len + 1) * 2) as u16,
@@ -261,7 +278,11 @@ pub unsafe extern "C" fn RtlEqualUnicodeString(
     string2: *const UnicodeString,
     case_insensitive: BOOLEAN,
 ) -> BOOLEAN {
-    if RtlCompareUnicodeString(string1, string2, case_insensitive) == 0 { TRUE } else { FALSE }
+    if RtlCompareUnicodeString(string1, string2, case_insensitive) == 0 {
+        TRUE
+    } else {
+        FALSE
+    }
 }
 
 /// `RtlUnicodeStringToAnsiString` — convert UTF-16 → UTF-8.
@@ -338,7 +359,9 @@ pub unsafe extern "C" fn RtlAnsiStringToUnicodeString(
 /// `RtlFreeAnsiString` / `RtlFreeUnicodeString` — release the
 /// buffer previously allocated by `Rtl*StringTo*String`.
 pub unsafe extern "C" fn RtlFreeAnsiString(ansi_string: *mut AnsiString) {
-    if ansi_string.is_null() { return; }
+    if ansi_string.is_null() {
+        return;
+    }
     let s = &mut *ansi_string;
     if !s.Buffer.is_null() {
         free_string(s.Buffer as *mut c_void);
@@ -349,7 +372,9 @@ pub unsafe extern "C" fn RtlFreeAnsiString(ansi_string: *mut AnsiString) {
 }
 
 pub unsafe extern "C" fn RtlFreeUnicodeString(unicode_string: *mut UnicodeString) {
-    if unicode_string.is_null() { return; }
+    if unicode_string.is_null() {
+        return;
+    }
     let s = &mut *unicode_string;
     if !s.Buffer.is_null() {
         free_string(s.Buffer as *mut c_void);
@@ -374,8 +399,12 @@ pub unsafe extern "C" fn RtlSetStringRoutine(
     free: Option<RtlFreeStringRoutineType>,
     _: *mut c_void,
 ) {
-    if let Some(a) = allocate { ALLOC_ROUTINE = a; }
-    if let Some(f) = free { FREE_ROUTINE = f; }
+    if let Some(a) = allocate {
+        ALLOC_ROUTINE = a;
+    }
+    if let Some(f) = free {
+        FREE_ROUTINE = f;
+    }
 }
 
 unsafe extern "C" fn RtlAllocateString_default(length: u32) -> *mut c_void {
@@ -436,7 +465,10 @@ mod tests {
     fn init_from_null() {
         let mut s = UnicodeString::new();
         unsafe {
-            assert_eq!(RtlInitUnicodeString(&mut s, core::ptr::null()), STATUS_SUCCESS);
+            assert_eq!(
+                RtlInitUnicodeString(&mut s, core::ptr::null()),
+                STATUS_SUCCESS
+            );
             assert_eq!(s.Length, 0);
             assert!(s.Buffer.is_null());
         }
@@ -444,7 +476,14 @@ mod tests {
 
     #[test]
     fn init_from_str() {
-        let raw: [u16; 6] = [b'h' as u16, b'e' as u16, b'l' as u16, b'l' as u16, b'o' as u16, 0];
+        let raw: [u16; 6] = [
+            b'h' as u16,
+            b'e' as u16,
+            b'l' as u16,
+            b'l' as u16,
+            b'o' as u16,
+            0,
+        ];
         let mut s = UnicodeString::new();
         unsafe {
             assert_eq!(RtlInitUnicodeString(&mut s, raw.as_ptr()), STATUS_SUCCESS);
@@ -482,7 +521,16 @@ mod tests {
 
     #[test]
     fn copy_truncates_on_small_buffer() {
-        let src_buf: [u16; 8] = [b'A' as u16, b'B' as u16, b'C' as u16, b'D' as u16, b'E' as u16, b'F' as u16, b'G' as u16, 0];
+        let src_buf: [u16; 8] = [
+            b'A' as u16,
+            b'B' as u16,
+            b'C' as u16,
+            b'D' as u16,
+            b'E' as u16,
+            b'F' as u16,
+            b'G' as u16,
+            0,
+        ];
         let src = us(&src_buf[..7]);
         let mut dst_buf = [0u16; 4];
         let mut dst = UnicodeString {

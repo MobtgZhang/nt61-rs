@@ -114,15 +114,9 @@ impl MessageFilter {
     pub fn matches(&self, msg: &QueuedMessage) -> bool {
         match self {
             MessageFilter::Any => true,
-            MessageFilter::Type(msg_type) => {
-                msg.message.header.message_type == *msg_type as u32
-            }
-            MessageFilter::ReplyTo(req_id) => {
-                msg.is_reply && msg.reply_to_id == *req_id
-            }
-            MessageFilter::FromPid(pid) => {
-                msg.message.header.sender_pid == *pid
-            }
+            MessageFilter::Type(msg_type) => msg.message.header.message_type == *msg_type as u32,
+            MessageFilter::ReplyTo(req_id) => msg.is_reply && msg.reply_to_id == *req_id,
+            MessageFilter::FromPid(pid) => msg.message.header.sender_pid == *pid,
         }
     }
 }

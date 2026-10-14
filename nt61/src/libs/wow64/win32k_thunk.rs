@@ -22,11 +22,10 @@
 #![cfg(target_arch = "x86_64")]
 #![allow(non_camel_case_types)]
 
-use super::types::{ULONG32, STATUS_INVALID_PARAMETER, STATUS_NOT_IMPLEMENTED, STATUS_SUCCESS};
+use super::types::{STATUS_INVALID_PARAMETER, STATUS_NOT_IMPLEMENTED, STATUS_SUCCESS, ULONG32};
 
-pub use super::win32k_user32;
 pub use super::win32k_gdi32;
-
+pub use super::win32k_user32;
 
 pub const WIN32K_SERVICE_TABLE: usize = 1;
 
@@ -34,7 +33,6 @@ pub const MAX_WIN32K_SERVICES: usize = 1024;
 
 pub const IMAGE_SUBSYSTEM_WINDOWS_GUI: u16 = 2;
 pub const IMAGE_SUBSYSTEM_WINDOWS_CUI: u16 = 3;
-
 
 /// These are used to index into the Win32k service table.
 
@@ -79,7 +77,6 @@ pub mod syscall_numbers {
     pub const NtGdiSetPixel: ULONG32 = 0x0110;
 }
 
-
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
 pub struct Win32kSyscallEntry {
@@ -98,10 +95,8 @@ impl Win32kSyscallEntry {
     }
 }
 
-
 static WIN32K_SYSCALL_TABLE: [Option<Win32kSyscallEntry>; MAX_WIN32K_SERVICES] =
     [None; MAX_WIN32K_SERVICES];
-
 
 pub unsafe extern "C" fn Wow64Win32kInitializeThunk(
     callback_info: *const Wow64CallbackInfo,
@@ -114,7 +109,6 @@ pub unsafe extern "C" fn Wow64Win32kInitializeThunk(
     if callback_info.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
-
 
     init_win32k_table();
 
@@ -131,14 +125,14 @@ pub struct Wow64CallbackInfo {
     pub spare: ULONG32,
 }
 
-
 pub unsafe extern "C" fn Wow64Win32kSyscall(
     syscall_id: ULONG32,
     params: *const ULONG32,
 ) -> ULONG32 {
     crate::wow64_klog!(
         "Wow64Win32kSyscall id=0x{:08x} params=0x{:08x}",
-        syscall_id, params as ULONG32
+        syscall_id,
+        params as ULONG32
     );
 
     if params.is_null() {
@@ -164,28 +158,22 @@ pub unsafe extern "C" fn Wow64Win32kSyscall(
         entry.param_count
     );
 
-
     0
 }
 
-
 /// window procedures or hook callbacks), this function is used to
-pub unsafe extern "C" fn Wow64Win32kCallbackReturn(
-    buffer: *const u8,
-    buffer_length: ULONG32,
-) -> ! {
+pub unsafe extern "C" fn Wow64Win32kCallbackReturn(buffer: *const u8, buffer_length: ULONG32) -> ! {
     crate::wow64_klog!(
         "Wow64Win32kCallbackReturn buffer=0x{:016x} length={}",
-        buffer as u64, buffer_length
+        buffer as u64,
+        buffer_length
     );
-
 
     loop {
         core::arch::asm!("hlt");
         core::hint::black_box(());
     }
 }
-
 
 fn init_win32k_table() {
     crate::wow64_klog!("Initializing Win32k syscall table");
@@ -256,19 +244,17 @@ fn register_win32k_syscall(index: usize, entry: Win32kSyscallEntry) {
     }
 }
 
-
 #[repr(C)]
 #[derive(Default)]
 pub struct Msg32 {
-    pub hwnd: ULONG32,        // Window handle
-    pub message: ULONG32,    // Message ID
-    pub wparam: ULONG32,     // Word parameter
-    pub lparam: ULONG32,     // Long parameter
-    pub time: ULONG32,       // Message time
-    pub pt_x: ULONG32,       // Mouse X position
-    pub pt_y: ULONG32,       // Mouse Y position
+    pub hwnd: ULONG32,    // Window handle
+    pub message: ULONG32, // Message ID
+    pub wparam: ULONG32,  // Word parameter
+    pub lparam: ULONG32,  // Long parameter
+    pub time: ULONG32,    // Message time
+    pub pt_x: ULONG32,    // Mouse X position
+    pub pt_y: ULONG32,    // Mouse Y position
 }
-
 
 pub fn init() {
     crate::wow64_klog!("Initializing Win32k thunk module");

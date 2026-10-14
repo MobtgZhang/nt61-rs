@@ -32,7 +32,9 @@ pub unsafe extern "C" fn RtlCreateAcl(
     acl_length: u32,
     acl_revision: u32,
 ) -> NTSTATUS {
-    if acl.is_null() { return STATUS_INVALID_PARAMETER; }
+    if acl.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
     if (acl_length as usize) < core::mem::size_of::<Acl>() {
         return STATUS_BUFFER_TOO_SMALL;
     }
@@ -51,7 +53,9 @@ pub unsafe extern "C" fn RtlAddAccessAllowedAce(
     access_mask: u32,
     sid: PVOID,
 ) -> NTSTATUS {
-    if acl.is_null() { return STATUS_INVALID_PARAMETER; }
+    if acl.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
     let _ = (acl_revision, access_mask, sid);
     (*acl).ace_count = (*acl).ace_count.saturating_add(1);
     (*acl).acl_size = (*acl).acl_size.saturating_add(12);
@@ -65,7 +69,9 @@ pub unsafe extern "C" fn RtlAddAccessDeniedAce(
     access_mask: u32,
     sid: PVOID,
 ) -> NTSTATUS {
-    if acl.is_null() { return STATUS_INVALID_PARAMETER; }
+    if acl.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
     let _ = (acl_revision, access_mask, sid);
     (*acl).ace_count = (*acl).ace_count.saturating_add(1);
     (*acl).acl_size = (*acl).acl_size.saturating_add(12);
@@ -75,14 +81,18 @@ pub unsafe extern "C" fn RtlAddAccessDeniedAce(
 /// `RtlValidAcl` — returns TRUE if the ACL is well-formed.
 /// The bootstrap always returns TRUE.
 pub unsafe extern "C" fn RtlValidAcl(acl: *mut Acl) -> u32 {
-    if acl.is_null() { return 0; }
+    if acl.is_null() {
+        return 0;
+    }
     1
 }
 
 /// `RtlFirstFreeAce` — pointer to the first free byte in the
 /// ACL. We return a fixed offset past the header.
 pub unsafe extern "C" fn RtlFirstFreeAce(acl: *mut Acl) -> PVOID {
-    if acl.is_null() { return ptr::null_mut(); }
+    if acl.is_null() {
+        return ptr::null_mut();
+    }
     let off = (*acl).acl_size as usize;
     (acl as *mut u8).add(off) as PVOID
 }

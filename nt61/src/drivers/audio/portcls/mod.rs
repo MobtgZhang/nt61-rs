@@ -5,9 +5,7 @@
 pub mod portcls;
 
 pub use portcls::{
-    AudioFormat, AudioStream, DeviceState, MiniportDriver, MiniportWaveRT,
-    PortDriver, PortType, PortWaveRT, StreamState,
-    init,
-    create_wavert_port, start_device, stop_device,
-    get_device_state, create_hda_audio_device,
+    create_hda_audio_device, create_wavert_port, get_device_state, init, start_device, stop_device,
+    AudioFormat, AudioStream, DeviceState, MiniportDriver, MiniportWaveRT, PortDriver, PortType,
+    PortWaveRT, StreamState,
 };

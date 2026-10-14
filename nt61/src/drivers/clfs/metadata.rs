@@ -35,7 +35,9 @@ impl ClfsMetadataRecordHeader {
 
     /// Increment the dump count for a new version.
     pub fn next_version(&self) -> Self {
-        Self { dump_count: self.dump_count + 1 }
+        Self {
+            dump_count: self.dump_count + 1,
+        }
     }
 }
 
@@ -69,13 +71,13 @@ pub enum ClfsTruncateState {
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct ClfsTruncateContext {
-    pub e_state: u8,              // ClfsTruncateState
-    pub c_clients: u8,            // Number of clients
-    pub i_client: u8,             // Current client index
+    pub e_state: u8,   // ClfsTruncateState
+    pub c_clients: u8, // Number of clients
+    pub i_client: u8,  // Current client index
     pub b_unused: u8,
-    pub lsn_owner_page: u64,     // LSN of owner page
+    pub lsn_owner_page: u64,      // LSN of owner page
     pub lsn_last_owner_page: u64, // LSN of last owner page
-    pub c_invalid_sector: u32,   // Count of invalid sectors
+    pub c_invalid_sector: u32,    // Count of invalid sectors
 }
 
 impl ClfsTruncateContext {
@@ -187,11 +189,11 @@ impl ClfsControlRecord {
         let mut offset = CLFS_LOG_BLOCK_HEADER_SIZE;
 
         // dump_count (u64)
-        buf[offset..offset+8].copy_from_slice(&self.hdr.dump_count.to_le_bytes());
+        buf[offset..offset + 8].copy_from_slice(&self.hdr.dump_count.to_le_bytes());
         offset += 8;
 
         // magic (u64)
-        buf[offset..offset+8].copy_from_slice(&self.magic.to_le_bytes());
+        buf[offset..offset + 8].copy_from_slice(&self.magic.to_le_bytes());
         offset += 8;
 
         // version (u8)
@@ -203,23 +205,23 @@ impl ClfsControlRecord {
         offset += 1;
 
         // i_extend_block (u16)
-        buf[offset..offset+2].copy_from_slice(&self.i_extend_block.to_le_bytes());
+        buf[offset..offset + 2].copy_from_slice(&self.i_extend_block.to_le_bytes());
         offset += 2;
 
         // i_flush_block (u16)
-        buf[offset..offset+2].copy_from_slice(&self.i_flush_block.to_le_bytes());
+        buf[offset..offset + 2].copy_from_slice(&self.i_flush_block.to_le_bytes());
         offset += 2;
 
         // c_new_block_sectors (u32)
-        buf[offset..offset+4].copy_from_slice(&self.c_new_block_sectors.to_le_bytes());
+        buf[offset..offset + 4].copy_from_slice(&self.c_new_block_sectors.to_le_bytes());
         offset += 4;
 
         // c_extend_start_sectors (u32)
-        buf[offset..offset+4].copy_from_slice(&self.c_extend_start_sectors.to_le_bytes());
+        buf[offset..offset + 4].copy_from_slice(&self.c_extend_start_sectors.to_le_bytes());
         offset += 4;
 
         // c_extend_sectors (u32)
-        buf[offset..offset+4].copy_from_slice(&self.c_extend_sectors.to_le_bytes());
+        buf[offset..offset + 4].copy_from_slice(&self.c_extend_sectors.to_le_bytes());
         offset += 4;
 
         // truncate context
@@ -231,19 +233,19 @@ impl ClfsControlRecord {
         offset += 1;
         buf[offset] = self.truncate.b_unused;
         offset += 1;
-        buf[offset..offset+8].copy_from_slice(&self.truncate.lsn_owner_page.to_le_bytes());
+        buf[offset..offset + 8].copy_from_slice(&self.truncate.lsn_owner_page.to_le_bytes());
         offset += 8;
-        buf[offset..offset+8].copy_from_slice(&self.truncate.lsn_last_owner_page.to_le_bytes());
+        buf[offset..offset + 8].copy_from_slice(&self.truncate.lsn_last_owner_page.to_le_bytes());
         offset += 8;
-        buf[offset..offset+4].copy_from_slice(&self.truncate.c_invalid_sector.to_le_bytes());
+        buf[offset..offset + 4].copy_from_slice(&self.truncate.c_invalid_sector.to_le_bytes());
         offset += 4;
 
         // c_blocks (u16)
-        buf[offset..offset+2].copy_from_slice(&self.c_blocks.to_le_bytes());
+        buf[offset..offset + 2].copy_from_slice(&self.c_blocks.to_le_bytes());
         offset += 2;
 
         // c_reserved (u32)
-        buf[offset..offset+4].copy_from_slice(&self.c_reserved.to_le_bytes());
+        buf[offset..offset + 4].copy_from_slice(&self.c_reserved.to_le_bytes());
         offset += 4;
 
         // rg_blocks array (6 entries)
@@ -265,10 +267,10 @@ impl Default for ClfsControlRecord {
 // ============================================================================
 
 /// Block type constants for metadata blocks.
-pub const CLFS_EXTEND_BLOCK:    u16 = 0x0001;
-pub const CLFS_NORMAL_BLOCK:    u16 = 0x0002;
+pub const CLFS_EXTEND_BLOCK: u16 = 0x0001;
+pub const CLFS_NORMAL_BLOCK: u16 = 0x0002;
 pub const CLFS_ZERO_NORMAL_BLOCK: u16 = 0x0003;
-pub const CLFS_SHADOW_BLOCK:    u16 = 0x0004;
+pub const CLFS_SHADOW_BLOCK: u16 = 0x0004;
 pub const CLFS_ZERO_SHADOW_BLOCK: u16 = 0x0005;
 
 /// CLFS_METADATA_BLOCK — describes one metadata block in the BLF file.
@@ -286,7 +288,11 @@ pub struct ClfsMetadataBlock {
 impl ClfsMetadataBlock {
     /// Create a new metadata block descriptor.
     pub fn new(offset: u32, sectors: u16, flags: u16) -> Self {
-        Self { offset, c_sectors: sectors, flags }
+        Self {
+            offset,
+            c_sectors: sectors,
+            flags,
+        }
     }
 
     /// Create a Control Record block descriptor.
@@ -321,7 +327,9 @@ impl ClfsMetadataBlock {
 
     /// Serialize to 16 bytes.
     pub fn write_to(&self, buf: &mut [u8]) {
-        if buf.len() < 16 { return; }
+        if buf.len() < 16 {
+            return;
+        }
         buf[0..4].copy_from_slice(&self.offset.to_le_bytes());
         buf[4..6].copy_from_slice(&self.c_sectors.to_le_bytes());
         buf[6..8].copy_from_slice(&self.flags.to_le_bytes());
@@ -330,7 +338,9 @@ impl ClfsMetadataBlock {
 
     /// Read from 16 bytes.
     pub fn read_from(buf: &[u8]) -> Option<Self> {
-        if buf.len() < 16 { return None; }
+        if buf.len() < 16 {
+            return None;
+        }
         Some(Self {
             offset: u32::from_le_bytes(buf[0..4].try_into().unwrap()),
             c_sectors: u16::from_le_bytes(buf[4..6].try_into().unwrap()),
@@ -347,14 +357,14 @@ impl ClfsMetadataBlock {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ClfsLogState {
-    Uninitialized   = 0x01,
-    Initialized     = 0x02,
-    Active          = 0x04,
-    PendingDelete   = 0x08,
-    PendingArchive  = 0x10,
-    Shutdown        = 0x20,
-    Multiplexed     = 0x40,
-    Secure          = 0x80,
+    Uninitialized = 0x01,
+    Initialized = 0x02,
+    Active = 0x04,
+    PendingDelete = 0x08,
+    PendingArchive = 0x10,
+    Shutdown = 0x20,
+    Multiplexed = 0x40,
+    Secure = 0x80,
 }
 
 impl ClfsLogState {
@@ -451,12 +461,14 @@ impl ClfsBaseRecordHeader {
 
     /// Serialize to a byte buffer.
     pub fn write_to(&self, buf: &mut [u8]) {
-        if buf.len() < 4096 { return; } // Base record can be larger
+        if buf.len() < 4096 {
+            return;
+        } // Base record can be larger
 
         let mut offset = CLFS_LOG_BLOCK_HEADER_SIZE;
 
         // hdr.dump_count
-        buf[offset..offset+8].copy_from_slice(&self.hdr.dump_count.to_le_bytes());
+        buf[offset..offset + 8].copy_from_slice(&self.hdr.dump_count.to_le_bytes());
         offset += 8;
 
         // cid_log (128-bit / 16 bytes)
@@ -467,27 +479,29 @@ impl ClfsBaseRecordHeader {
 
         // rg_client_sym_tbl (11 * 8 = 88 bytes)
         for &val in &self.rg_client_sym_tbl {
-            buf[offset..offset+8].copy_from_slice(&val.to_le_bytes());
+            buf[offset..offset + 8].copy_from_slice(&val.to_le_bytes());
             offset += 8;
         }
 
         // rg_container_sym_tbl
         for &val in &self.rg_container_sym_tbl {
-            buf[offset..offset+8].copy_from_slice(&val.to_le_bytes());
+            buf[offset..offset + 8].copy_from_slice(&val.to_le_bytes());
             offset += 8;
         }
 
         // rg_security_sym_tbl
         for &val in &self.rg_security_sym_tbl {
-            buf[offset..offset+8].copy_from_slice(&val.to_le_bytes());
+            buf[offset..offset + 8].copy_from_slice(&val.to_le_bytes());
             offset += 8;
         }
 
         // Scalar fields
-        macro_rules! write_u32 { ($val:expr) => {
-            buf[offset..offset+4].copy_from_slice(&($val).to_le_bytes());
-            offset += 4;
-        }; }
+        macro_rules! write_u32 {
+            ($val:expr) => {
+                buf[offset..offset + 4].copy_from_slice(&($val).to_le_bytes());
+                offset += 4;
+            };
+        }
 
         write_u32!(self.c_next_container);
         write_u32!(self.c_next_client);
@@ -499,7 +513,7 @@ impl ClfsBaseRecordHeader {
         write_u32!(self.cb_sector);
 
         // b_unused (u16)
-        buf[offset..offset+2].copy_from_slice(&self.b_unused.to_le_bytes());
+        buf[offset..offset + 2].copy_from_slice(&self.b_unused.to_le_bytes());
         offset += 2;
 
         // e_log_state (u8)
@@ -516,13 +530,13 @@ impl ClfsBaseRecordHeader {
 
         // rg_clients (124 * 4 = 496 bytes)
         for &val in &self.rg_clients {
-            buf[offset..offset+4].copy_from_slice(&val.to_le_bytes());
+            buf[offset..offset + 4].copy_from_slice(&val.to_le_bytes());
             offset += 4;
         }
 
         // rg_containers (1024 * 4 = 4096 bytes)
         for &val in &self.rg_containers {
-            buf[offset..offset+4].copy_from_slice(&val.to_le_bytes());
+            buf[offset..offset + 4].copy_from_slice(&val.to_le_bytes());
             offset += 4;
         }
     }

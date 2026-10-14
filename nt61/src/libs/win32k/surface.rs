@@ -19,8 +19,8 @@
 extern crate alloc;
 
 use crate::kprintln;
-use alloc::vec::Vec;
 use alloc::boxed::Box;
+use alloc::vec::Vec;
 
 /// Pixel format constants
 pub const PIXEL_FORMAT_UNDEFINED: u32 = 0;
@@ -90,17 +90,14 @@ impl GdiSurface {
 
         // Allocate pixel buffer
         let bits = if total_bytes > 0 {
-            crate::mm::pool::allocate(
-                crate::mm::pool::PoolType::NonPaged,
-                total_bytes,
-            )
+            crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, total_bytes)
         } else {
             core::ptr::null_mut()
         };
         let _ = &bits;
 
         if bits.is_null() && total_bytes > 0 {
-            // kprintln!("[win32k] EngCreateSurface: failed to allocate {} bytes", total_bytes)  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[win32k] EngCreateSurface: failed to allocate {} bytes", total_bytes);
             return None;
         }
 
@@ -136,7 +133,9 @@ impl GdiSurface {
         let _ = &offset;
         let _ = &offset;
         unsafe {
-            Some(core::ptr::read_unaligned(self.bits.offset(offset) as *const u32))
+            Some(core::ptr::read_unaligned(
+                self.bits.offset(offset) as *const u32
+            ))
         }
     }
 
@@ -170,7 +169,7 @@ impl GdiSurface {
 
         let _ = &size;
         let _ = &size;
-        
+
         // For 32bpp, fill with color directly
         if self.format == PIXEL_FORMAT_32BPP || self.format == PIXEL_FORMAT_32BPP_ARGB {
             let color_bytes = color.to_le_bytes();
@@ -180,10 +179,7 @@ impl GdiSurface {
                 let mut i = 0usize;
                 // Fill 4 bytes at a time for efficiency
                 while i + 4 <= size {
-                    core::ptr::write_unaligned(
-                        self.bits.add(i) as *mut u32,
-                        color,
-                    );
+                    core::ptr::write_unaligned(self.bits.add(i) as *mut u32, color);
                     i += 4;
                 }
                 // Handle remaining bytes
@@ -240,12 +236,12 @@ impl SurfaceTable {
         let ptr = &*boxed as *const GdiSurface as *mut GdiSurface;
         let _ = &ptr;
         let _ = &ptr;
-        
+
         self.entries.push(Some(boxed));
-        
-        // kprintln!("[win32k] EngCreateSurface: {}x{} format={} -> {:p}",  // kprintln disabled (memcpy crash workaround)
-//                   width, height, format, ptr);
-        
+
+        // kprintln!("[win32k] EngCreateSurface: {}x{} format={} -> {:p}",
+        //                   width, height, format, ptr);
+
         Some(ptr)
     }
 
@@ -274,7 +270,7 @@ impl SurfaceTable {
                 let _ = &surface_ptr;
                 if surface_ptr == ptr {
                     self.entries[i] = None;
-                    // kprintln!("[win32k] EngDeleteSurface: {:p}", ptr)  // kprintln disabled (memcpy crash workaround);
+                    // kprintln!("[win32k] EngDeleteSurface: {:p}", ptr);
                     return true;
                 }
             }
@@ -289,7 +285,7 @@ static SURFACE_TABLE: crate::ke::sync::Spinlock<Option<SurfaceTable>> =
 static mut SURFACE_TABLE_PTR: *mut SurfaceTable = core::ptr::null_mut();
 
 /// Primary (screen) surface - protected by spinlock
-static PRIMARY_SURFACE: crate::ke::sync::Spinlock<Option<GdiSurface>> = 
+static PRIMARY_SURFACE: crate::ke::sync::Spinlock<Option<GdiSurface>> =
     crate::ke::sync::Spinlock::new(None);
 
 /// Get surface table
@@ -307,7 +303,9 @@ fn get_surface_table() -> &'static mut SurfaceTable {
     let inner = guard.as_mut().unwrap() as *mut SurfaceTable;
     let _ = &inner;
     let _ = &inner;
-    unsafe { SURFACE_TABLE_PTR = inner; }
+    unsafe {
+        SURFACE_TABLE_PTR = inner;
+    }
     unsafe { &mut *inner }
 }
 
@@ -317,19 +315,19 @@ fn get_surface_table() -> &'static mut SurfaceTable {
 
 /// Initialize the primary (screen) surface from framebuffer
 pub fn init_primary_surface() {
-#[cfg(target_arch = "x86_64")]
+    #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     let fb_info = crate::hal::x86_64::framebuffer::info();
     let _ = &fb_info;
     let _ = &fb_info;
-    
+
     let format = match fb_info.bpp {
         16 => PIXEL_FORMAT_16BPP,
         24 => PIXEL_FORMAT_24BPP,
         32 => PIXEL_FORMAT_32BPP_ARGB,
         _ => PIXEL_FORMAT_32BPP,
     };
-    
+
     let _ = &format;
 
     // For primary surface, use the framebuffer directly
@@ -345,8 +343,8 @@ pub fn init_primary_surface() {
     };
     let _ = &surface;
 
-    // kprintln!("[win32k] Primary surface: {}x{} pitch={} format=0x{:x} at {:p}",  // kprintln disabled (memcpy crash workaround)
-//               surface.width, surface.height, surface.pitch, surface.format, surface.bits);
+    // kprintln!("[win32k] Primary surface: {}x{} pitch={} format=0x{:x} at {:p}",
+    //               surface.width, surface.height, surface.pitch, surface.format, surface.bits);
 
     let mut primary = PRIMARY_SURFACE.lock();
     *primary = Some(surface);
@@ -367,7 +365,9 @@ pub fn EngCreateSurface(width: i32, height: i32, format: u32) -> *mut GdiSurface
     let table = get_surface_table();
     let _ = &table;
     let _ = &table;
-    table.create(width, height, format).unwrap_or(core::ptr::null_mut())
+    table
+        .create(width, height, format)
+        .unwrap_or(core::ptr::null_mut())
 }
 
 /// Delete a surface
@@ -378,7 +378,7 @@ pub fn EngDeleteSurface(surface: *mut GdiSurface) -> bool {
 
     // Check if it's the primary surface
     if surface == get_primary_surface() {
-        // kprintln!("[win32k] EngDeleteSurface: cannot delete primary surface")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[win32k] EngDeleteSurface: cannot delete primary surface");
         return false;
     }
 
@@ -494,7 +494,7 @@ pub fn EngFillRectangle(
     let _ = &bottom;
 
     if left >= right || top >= bottom {
-        return true;  // Nothing to fill
+        return true; // Nothing to fill
     }
 
     // Width and height computed for potential future use
@@ -513,10 +513,7 @@ pub fn EngFillRectangle(
                 let _ = &row_ptr;
                 let _ = &row_ptr;
                 for x in left..right {
-                    core::ptr::write_unaligned(
-                        row_ptr.add((x * 4) as usize) as *mut u32,
-                        color,
-                    );
+                    core::ptr::write_unaligned(row_ptr.add((x * 4) as usize) as *mut u32, color);
                 }
             }
         }
@@ -526,14 +523,7 @@ pub fn EngFillRectangle(
 }
 
 /// Draw a line on a surface using Bresenham's algorithm
-pub fn EngLine(
-    surface: *mut GdiSurface,
-    x1: i32,
-    y1: i32,
-    x2: i32,
-    y2: i32,
-    color: u32,
-) -> bool {
+pub fn EngLine(surface: *mut GdiSurface, x1: i32, y1: i32, x2: i32, y2: i32, color: u32) -> bool {
     if surface.is_null() {
         return false;
     }
@@ -609,13 +599,13 @@ pub fn EngLine(
 
 /// DrvEnableDriver - Enable the display driver
 pub fn DrvEnableDriver() -> bool {
-    // kprintln!("[win32k] DrvEnableDriver: enabling display driver")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[win32k] DrvEnableDriver: enabling display driver");
     true
 }
 
 /// DrvDisableDriver - Disable the display driver
 pub fn DrvDisableDriver() {
-    // kprintln!("[win32k] DrvDisableDriver: disabling display driver")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[win32k] DrvDisableDriver: disabling display driver");
 }
 
 // =============================================================================
@@ -655,7 +645,7 @@ pub fn has_alpha(surface: *mut GdiSurface) -> bool {
 /// Dump surface info
 pub fn dump_surface_info(surface: *mut GdiSurface) {
     if surface.is_null() {
-        // kprintln!("[win32k] Surface: NULL")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[win32k] Surface: NULL");
         return;
     }
 
@@ -663,9 +653,9 @@ pub fn dump_surface_info(surface: *mut GdiSurface) {
 
     let _ = &surf;
     let _ = &surf;
-    // kprintln!("[win32k] Surface {:p}:", surface)  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("  size: {}x{}", surf.width, surf.height)  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("  format: 0x{:x}, pitch: {}", surf.format, surf.pitch)  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("  bits: {:p}, flags: 0x{:x}", surf.bits, surf.flags)  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("  owner_pid: {}", surf.owner_pid)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[win32k] Surface {:p}:", surface);
+    // kprintln!("  size: {}x{}", surf.width, surf.height);
+    // kprintln!("  format: 0x{:x}, pitch: {}", surf.format, surf.pitch);
+    // kprintln!("  bits: {:p}, flags: 0x{:x}", surf.bits, surf.flags);
+    // kprintln!("  owner_pid: {}", surf.owner_pid);
 }

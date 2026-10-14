@@ -171,10 +171,18 @@ pub fn record_pfn_alloc_failure() {
 pub fn record_page_fault(fault_type: PageFaultType) {
     PERF.page_fault_count.fetch_add(1, Ordering::Relaxed);
     match fault_type {
-        PageFaultType::DemandZero => { PERF.demand_zero_faults.fetch_add(1, Ordering::Relaxed); }
-        PageFaultType::CopyOnWrite => { PERF.cow_faults.fetch_add(1, Ordering::Relaxed); }
-        PageFaultType::Disk => { PERF.disk_faults.fetch_add(1, Ordering::Relaxed); }
-        PageFaultType::GuardPage => { PERF.guard_page_faults.fetch_add(1, Ordering::Relaxed); }
+        PageFaultType::DemandZero => {
+            PERF.demand_zero_faults.fetch_add(1, Ordering::Relaxed);
+        }
+        PageFaultType::CopyOnWrite => {
+            PERF.cow_faults.fetch_add(1, Ordering::Relaxed);
+        }
+        PageFaultType::Disk => {
+            PERF.disk_faults.fetch_add(1, Ordering::Relaxed);
+        }
+        PageFaultType::GuardPage => {
+            PERF.guard_page_faults.fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 
@@ -264,42 +272,42 @@ pub fn record_hyperspace_unmap() {
 
 /// Print all performance statistics
 pub fn print_stats() {
-    // [DISABLED] // // kprintln!("=== Memory Manager Performance Counters ===")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!()  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("--- PFN Allocation ---")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  Allocations:     {}", PERF.pfn_alloc_count.load(Ordering::Relaxed))  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  Frees:           {}", PERF.pfn_free_count.load(Ordering::Relaxed))  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  Failures:       {}", PERF.pfn_alloc_failures.load(Ordering::Relaxed))  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  From Zeroed:    {}", PERF.pfn_zeroed_used.load(Ordering::Relaxed))  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  From Free:      {}", PERF.pfn_free_used.load(Ordering::Relaxed))  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!()  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("--- Page Faults ---")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  Total faults:    {}", PERF.page_fault_count.load(Ordering::Relaxed))  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  Demand zero:     {}", PERF.demand_zero_faults.load(Ordering::Relaxed))  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  Copy-on-write:   {}", PERF.cow_faults.load(Ordering::Relaxed))  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  Disk I/O:        {}", PERF.disk_faults.load(Ordering::Relaxed))  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  Guard page:      {}", PERF.guard_page_faults.load(Ordering::Relaxed))  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!()  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("--- TLB ---")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  Invalidations:   {}", PERF.tlb_invalidations.load(Ordering::Relaxed))  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  INVLPG:          {}", PERF.invlpg_count.load(Ordering::Relaxed))  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  CR3 switches:    {}", PERF.cr3_switches.load(Ordering::Relaxed))  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!()  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("--- VAD Tree ---")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  Inserts:         {}", PERF.vad_insert_count.load(Ordering::Relaxed))  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  Removes:         {}", PERF.vad_remove_count.load(Ordering::Relaxed))  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  Splits:          {}", PERF.vad_split_count.load(Ordering::Relaxed))  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  Merges:          {}", PERF.vad_merge_count.load(Ordering::Relaxed))  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!()  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("--- System PTE Pool ---")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  Allocations:     {}", PERF.syspte_alloc_count.load(Ordering::Relaxed))  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  Frees:           {}", PERF.syspte_free_count.load(Ordering::Relaxed))  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  Failures:        {}", PERF.syspte_alloc_failures.load(Ordering::Relaxed))  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!()  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("--- Hyperspace ---")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  Maps:            {}", PERF.hyperspace_map_count.load(Ordering::Relaxed))  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  Unmaps:          {}", PERF.hyperspace_unmap_count.load(Ordering::Relaxed))  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("===========================================")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // [DISABLED] // // kprintln!("=== Memory Manager Performance Counters ===");
+    // [DISABLED] // // kprintln!();
+    // [DISABLED] // // kprintln!("--- PFN Allocation ---");
+    // [DISABLED] // // kprintln!("  Allocations:     {}", PERF.pfn_alloc_count.load(Ordering::Relaxed));
+    // [DISABLED] // // kprintln!("  Frees:           {}", PERF.pfn_free_count.load(Ordering::Relaxed));
+    // [DISABLED] // // kprintln!("  Failures:       {}", PERF.pfn_alloc_failures.load(Ordering::Relaxed));
+    // [DISABLED] // // kprintln!("  From Zeroed:    {}", PERF.pfn_zeroed_used.load(Ordering::Relaxed));
+    // [DISABLED] // // kprintln!("  From Free:      {}", PERF.pfn_free_used.load(Ordering::Relaxed));
+    // [DISABLED] // // kprintln!();
+    // [DISABLED] // // kprintln!("--- Page Faults ---");
+    // [DISABLED] // // kprintln!("  Total faults:    {}", PERF.page_fault_count.load(Ordering::Relaxed));
+    // [DISABLED] // // kprintln!("  Demand zero:     {}", PERF.demand_zero_faults.load(Ordering::Relaxed));
+    // [DISABLED] // // kprintln!("  Copy-on-write:   {}", PERF.cow_faults.load(Ordering::Relaxed));
+    // [DISABLED] // // kprintln!("  Disk I/O:        {}", PERF.disk_faults.load(Ordering::Relaxed));
+    // [DISABLED] // // kprintln!("  Guard page:      {}", PERF.guard_page_faults.load(Ordering::Relaxed));
+    // [DISABLED] // // kprintln!();
+    // [DISABLED] // // kprintln!("--- TLB ---");
+    // [DISABLED] // // kprintln!("  Invalidations:   {}", PERF.tlb_invalidations.load(Ordering::Relaxed));
+    // [DISABLED] // // kprintln!("  INVLPG:          {}", PERF.invlpg_count.load(Ordering::Relaxed));
+    // [DISABLED] // // kprintln!("  CR3 switches:    {}", PERF.cr3_switches.load(Ordering::Relaxed));
+    // [DISABLED] // // kprintln!();
+    // [DISABLED] // // kprintln!("--- VAD Tree ---");
+    // [DISABLED] // // kprintln!("  Inserts:         {}", PERF.vad_insert_count.load(Ordering::Relaxed));
+    // [DISABLED] // // kprintln!("  Removes:         {}", PERF.vad_remove_count.load(Ordering::Relaxed));
+    // [DISABLED] // // kprintln!("  Splits:          {}", PERF.vad_split_count.load(Ordering::Relaxed));
+    // [DISABLED] // // kprintln!("  Merges:          {}", PERF.vad_merge_count.load(Ordering::Relaxed));
+    // [DISABLED] // // kprintln!();
+    // [DISABLED] // // kprintln!("--- System PTE Pool ---");
+    // [DISABLED] // // kprintln!("  Allocations:     {}", PERF.syspte_alloc_count.load(Ordering::Relaxed));
+    // [DISABLED] // // kprintln!("  Frees:           {}", PERF.syspte_free_count.load(Ordering::Relaxed));
+    // [DISABLED] // // kprintln!("  Failures:        {}", PERF.syspte_alloc_failures.load(Ordering::Relaxed));
+    // [DISABLED] // // kprintln!();
+    // [DISABLED] // // kprintln!("--- Hyperspace ---");
+    // [DISABLED] // // kprintln!("  Maps:            {}", PERF.hyperspace_map_count.load(Ordering::Relaxed));
+    // [DISABLED] // // kprintln!("  Unmaps:          {}", PERF.hyperspace_unmap_count.load(Ordering::Relaxed));
+    // [DISABLED] // // kprintln!("===========================================");
 }
 
 /// Get a summary of PFN statistics
@@ -347,7 +355,7 @@ pub struct PageFaultStats {
 /// Initialize the performance counter system
 pub fn init() {
     // Performance counters start at 0 by default
-    // [DISABLED] // // kprintln!("[MM PERF] Performance counters initialized")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // [DISABLED] // // kprintln!("[MM PERF] Performance counters initialized");
 }
 
 #[cfg(test)]
@@ -358,7 +366,10 @@ mod tests {
     fn test_record_pfn_operations() {
         let initial_alloc = PERF.pfn_alloc_count.load(Ordering::Relaxed);
         record_pfn_alloc(true);
-        assert_eq!(PERF.pfn_alloc_count.load(Ordering::Relaxed), initial_alloc + 1);
+        assert_eq!(
+            PERF.pfn_alloc_count.load(Ordering::Relaxed),
+            initial_alloc + 1
+        );
         assert_eq!(PERF.pfn_zeroed_used.load(Ordering::Relaxed), 1);
     }
 
@@ -373,6 +384,8 @@ mod tests {
     #[test]
     fn test_get_stats() {
         let stats = get_pfn_stats();
-        assert!(stats.alloc_count >= 0);
+        // `alloc_count` is `u64`, so it can never be negative — just
+        // exercise the accessor and keep the test alive.
+        let _ = stats.alloc_count;
     }
 }

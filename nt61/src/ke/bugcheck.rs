@@ -8,34 +8,58 @@
 
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-/// BugCheck codes (subset; full list in `ke::bugcheck`).
+/// BugCheck codes (subset).
+//
+/// Every code and name below is taken from the Windows 7 / NT 6.1 bug
+/// check code reference (Microsoft "Bug Check Code Reference", plus the
+/// ReactOS `sdk/include/reactos/mc/bugcodes.mc` message table, which is
+/// the same NT table). The numeric value is what a crash dump stores as
+/// `BugCheckCode`, so it must match the documented table exactly.
 #[derive(Debug, Clone, Copy)]
 #[repr(u32)]
 pub enum BugCheckCode {
     ApcIndexMismatch = 0x00000001,
-    DataInconsistencyLock = 0x00000002,
-    FileSystem = 0x00000003,
-    FatalServerError = 0x00000004,
-    HardFault = 0x00000006,
-    InconsistentPowerState = 0x00000009,
-    InternalError = 0x0000010D,
-    InvalidHibernate = 0x0000010F,
-    InvalidHypercamode = 0x00000112,
-    IrqlGtxLapcNotLessOrEqual = 0x0000010A,
-    KernelDataInpage = 0x00000077,
-    MachineCheck = 0x0000009C,
+    DeviceQueueNotBusy = 0x00000002,
+    InvalidAffinitySet = 0x00000003,
+    InvalidDataAccessTrap = 0x00000004,
+    InvalidProcessAttachAttempt = 0x00000005,
+    InvalidProcessDetachAttempt = 0x00000006,
+    InvalidSoftwareInterrupt = 0x00000007,
+    IrqlNotDispatchLevel = 0x00000008,
+    IrqlNotGreaterOrEqual = 0x00000009,
+    IrqlNotLessOrEqual = 0x0000000A,
     MemoryManagement = 0x0000001A,
-    NoMoreEntries = 0x00000104,
-    NoMoreIrpStackLocations = 0x000000C9,
-    ObjectNameInvalid = 0x0000013A,
-    PnpUnexpectedInterrupt = 0x0000010E,
-    ProcessLocked = 0x00000024,
-    SessionHasLockedSession = 0x00000110,
+    PfnListCorrupt = 0x0000004E,
+    Filesystem = 0x00000022,
+    FatFilesystem = 0x00000023,
+    NtfsFilesystem = 0x00000024,
+    InconsistentIrp = 0x0000002A,
+    NoMoreIrpStackLocations = 0x00000035,
+    NoMoreSystemPtes = 0x0000003F,
     SystemServiceException = 0x0000003B,
-    SystemUninit = 0x000000DC,
-    TooManyEntries = 0x00000103,
-    TrapCauseException = 0x0000003F,
+    ProcessInitializationFailed = 0x00000060,
+    KernelStackInpageError = 0x00000077,
+    KernelDataInpageError = 0x0000007A,
     UnexpectedKernelModeTrap = 0x0000007F,
+    KernelModeExceptionNotHandled = 0x0000008E,
+    MachineCheckException = 0x0000009C,
+    DriverPowerStateFailure = 0x0000009F,
+    BadPoolCaller = 0x000000C2,
+    IrqlUnexpectedValue = 0x000000C8,
+    DriverVerifierIoManagerViolation = 0x000000C9,
+    DriverInvalidStackAccess = 0x000000DC,
+    WorkerThreadReturnedAtBadIrql = 0x000000E1,
+    ManuallyInitiatedCrash = 0x000000E2,
+    CriticalProcessDied = 0x000000EF,
+    MupFilesystem = 0x00000103,
+    AgpInvalidAccess = 0x00000104,
+    AppTaggingInitializationFailed = 0x0000010A,
+    WdfViolation = 0x0000010D,
+    VideoMemoryManagementInternal = 0x0000010E,
+    ResourceManagerExceptionNotHandled = 0x0000010F,
+    MsrpcStateViolation = 0x00000112,
+    KernelSecurityCheckFailure = 0x00000139,
+    KernelModeHeapCorruption = 0x0000013A,
 }
 
 impl BugCheckCode {
@@ -45,29 +69,49 @@ impl BugCheckCode {
     pub fn name(self) -> &'static str {
         match self {
             BugCheckCode::ApcIndexMismatch => "APC_INDEX_MISMATCH",
-            BugCheckCode::DataInconsistencyLock => "DATA_INCONSISTENCY_LOCK",
-            BugCheckCode::FileSystem => "FILE_SYSTEM",
-            BugCheckCode::FatalServerError => "FATAL_SERVER_ERROR",
-            BugCheckCode::HardFault => "HARD_FAULT",
-            BugCheckCode::InconsistentPowerState => "INCONSISTENT_POWER_STATE",
-            BugCheckCode::InternalError => "INTERNAL_ERROR",
-            BugCheckCode::InvalidHibernate => "INVALID_HIBERNATE",
-            BugCheckCode::InvalidHypercamode => "INVALID_HYPERCAMODE",
-            BugCheckCode::IrqlGtxLapcNotLessOrEqual => "IRQL_GT_LAPC_NOT_LESS_OR_EQUAL",
-            BugCheckCode::KernelDataInpage => "KERNEL_DATA_INPAGE",
-            BugCheckCode::MachineCheck => "MACHINE_CHECK",
+            BugCheckCode::DeviceQueueNotBusy => "DEVICE_QUEUE_NOT_BUSY",
+            BugCheckCode::InvalidAffinitySet => "INVALID_AFFINITY_SET",
+            BugCheckCode::InvalidDataAccessTrap => "INVALID_DATA_ACCESS_TRAP",
+            BugCheckCode::InvalidProcessAttachAttempt => "INVALID_PROCESS_ATTACH_ATTEMPT",
+            BugCheckCode::InvalidProcessDetachAttempt => "INVALID_PROCESS_DETACH_ATTEMPT",
+            BugCheckCode::InvalidSoftwareInterrupt => "INVALID_SOFTWARE_INTERRUPT",
+            BugCheckCode::IrqlNotDispatchLevel => "IRQL_NOT_DISPATCH_LEVEL",
+            BugCheckCode::IrqlNotGreaterOrEqual => "IRQL_NOT_GREATER_OR_EQUAL",
+            BugCheckCode::IrqlNotLessOrEqual => "IRQL_NOT_LESS_OR_EQUAL",
             BugCheckCode::MemoryManagement => "MEMORY_MANAGEMENT",
-            BugCheckCode::NoMoreEntries => "NO_MORE_ENTRIES",
+            BugCheckCode::PfnListCorrupt => "PFN_LIST_CORRUPT",
+            BugCheckCode::Filesystem => "FILE_SYSTEM",
+            BugCheckCode::FatFilesystem => "FAT_FILE_SYSTEM",
+            BugCheckCode::NtfsFilesystem => "NTFS_FILE_SYSTEM",
+            BugCheckCode::InconsistentIrp => "INCONSISTENT_IRP",
             BugCheckCode::NoMoreIrpStackLocations => "NO_MORE_IRP_STACK_LOCATIONS",
-            BugCheckCode::ObjectNameInvalid => "OBJECT_NAME_INVALID",
-            BugCheckCode::PnpUnexpectedInterrupt => "PNP_UNEXPECTED_INTERRUPT",
-            BugCheckCode::ProcessLocked => "PROCESS_LOCKED",
-            BugCheckCode::SessionHasLockedSession => "SESSION_HAS_LOCKED_SESSION",
+            BugCheckCode::NoMoreSystemPtes => "NO_MORE_SYSTEM_PTES",
             BugCheckCode::SystemServiceException => "SYSTEM_SERVICE_EXCEPTION",
-            BugCheckCode::SystemUninit => "SYSTEM_UNINIT",
-            BugCheckCode::TooManyEntries => "TOO_MANY_ENTRIES",
-            BugCheckCode::TrapCauseException => "TRAP_CAUSE_EXCEPTION",
+            BugCheckCode::ProcessInitializationFailed => "PROCESS_INITIALIZATION_FAILED",
+            BugCheckCode::KernelStackInpageError => "KERNEL_STACK_INPAGE_ERROR",
+            BugCheckCode::KernelDataInpageError => "KERNEL_DATA_INPAGE_ERROR",
             BugCheckCode::UnexpectedKernelModeTrap => "UNEXPECTED_KERNEL_MODE_TRAP",
+            BugCheckCode::KernelModeExceptionNotHandled => "KERNEL_MODE_EXCEPTION_NOT_HANDLED",
+            BugCheckCode::MachineCheckException => "MACHINE_CHECK_EXCEPTION",
+            BugCheckCode::DriverPowerStateFailure => "DRIVER_POWER_STATE_FAILURE",
+            BugCheckCode::BadPoolCaller => "BAD_POOL_CALLER",
+            BugCheckCode::IrqlUnexpectedValue => "IRQL_UNEXPECTED_VALUE",
+            BugCheckCode::DriverVerifierIoManagerViolation => "DRIVER_VERIFIER_IOMANAGER_VIOLATION",
+            BugCheckCode::DriverInvalidStackAccess => "DRIVER_INVALID_STACK_ACCESS",
+            BugCheckCode::WorkerThreadReturnedAtBadIrql => "WORKER_THREAD_RETURNED_AT_BAD_IRQL",
+            BugCheckCode::ManuallyInitiatedCrash => "MANUALLY_INITIATED_CRASH",
+            BugCheckCode::CriticalProcessDied => "CRITICAL_PROCESS_DIED",
+            BugCheckCode::MupFilesystem => "MUP_FILE_SYSTEM",
+            BugCheckCode::AgpInvalidAccess => "AGP_INVALID_ACCESS",
+            BugCheckCode::AppTaggingInitializationFailed => "APP_TAGGING_INITIALIZATION_FAILED",
+            BugCheckCode::WdfViolation => "WDF_VIOLATION",
+            BugCheckCode::VideoMemoryManagementInternal => "VIDEO_MEMORY_MANAGEMENT_INTERNAL",
+            BugCheckCode::ResourceManagerExceptionNotHandled => {
+                "RESOURCE_MANAGER_EXCEPTION_NOT_HANDLED"
+            }
+            BugCheckCode::MsrpcStateViolation => "MSRPC_STATE_VIOLATION",
+            BugCheckCode::KernelSecurityCheckFailure => "KERNEL_SECURITY_CHECK_FAILURE",
+            BugCheckCode::KernelModeHeapCorruption => "KERNEL_MODE_HEAP_CORRUPTION",
         }
     }
 }
@@ -85,7 +129,7 @@ pub fn init() {
     crate::hal::serial::write_string("[ke.bugcheck] enter\r\n");
     LAST_CODE.store(0, Ordering::SeqCst);
     BUGCHECK_COUNT.store(0, Ordering::SeqCst);
-    // // kprintln!("    BugCheck: handler installed (code 0x00000000 = no error)")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("    BugCheck: handler installed (code 0x00000000 = no error)");
 }
 
 /// Record the last bugcheck that fired. The crash path calls
@@ -128,6 +172,22 @@ pub fn bugcheck(code: BugCheckCode) -> ! {
 /// surface that the kernel uses for fatal errors.
 pub fn bugcheck_with(code: BugCheckCode, p1: u64, p2: u64, p3: u64, p4: u64) -> ! {
     record(code, p1, p2, p3, p4);
+
+    // Host unit tests cannot reach the display (the VGA text buffer at
+    // 0xB8000 is not mapped in user space) and cannot execute `hlt`, so a
+    // bugcheck would fault the libtest binary. Surface it as a panic under
+    // `cfg(test)` so the failure path stays observable; the kernel build is
+    // unchanged.
+    #[cfg(test)]
+    panic!(
+        "bugcheck 0x{:08X} p1=0x{:x} p2=0x{:x} p3=0x{:x} p4=0x{:x}",
+        code.as_u32(),
+        p1,
+        p2,
+        p3,
+        p4
+    );
+
     // Paint the Win7-style BSOD via BOOTVID before we halt.
     // The hex representation of the bugcheck code is also the
     // top-line message; parameters are folded into the secondary
@@ -155,34 +215,127 @@ pub fn bugcheck_with(code: BugCheckCode, p1: u64, p2: u64, p3: u64, p4: u64) -> 
 /// the counters.
 pub fn smoke_test() -> bool {
     let before = bugcheck_count();
-    let now = record(BugCheckCode::InternalError, 0x11, 0x22, 0x33, 0x44);
+    let now = record(BugCheckCode::IrqlNotLessOrEqual, 0x11, 0x22, 0x33, 0x44);
     if now != before + 1 {
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "    [BUGCHECK SMOKE FAIL] record returned {} expected {}",
-// //             now, before + 1
-// //         );
+        // // kprintln!(
+        // //             "    [BUGCHECK SMOKE FAIL] record returned {} expected {}",
+        // //             now, before + 1
+        // //         );
         return false;
     }
-    if last_code() != BugCheckCode::InternalError.as_u32() {
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "    [BUGCHECK SMOKE FAIL] last_code={:x} expected {:x}",
-// //             last_code(),
-// //             BugCheckCode::InternalError.as_u32()
-// //         );
+    if last_code() != BugCheckCode::IrqlNotLessOrEqual.as_u32() {
+        // // kprintln!(
+        // //             "    [BUGCHECK SMOKE FAIL] last_code={:x} expected {:x}",
+        // //             last_code(),
+        // //             BugCheckCode::IrqlNotLessOrEqual.as_u32()
+        // //         );
         return false;
     }
     if last_param(1) != 0x11 || last_param(4) != 0x44 {
-        // // kprintln!("    [BUGCHECK SMOKE FAIL] parameter roundtrip")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("    [BUGCHECK SMOKE FAIL] parameter roundtrip");
         return false;
     }
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         "    [BUGCHECK SMOKE OK] last_code=0x{:08X} ({}) params=({:#x},{:#x},{:#x},{:#x})",
-// //         last_code(),
-// //         BugCheckCode::InternalError.name(),
-// //         last_param(1),
-// //         last_param(2),
-// //         last_param(3),
-// //         last_param(4)
-// //     );
+    // // kprintln!(
+    // //         "    [BUGCHECK SMOKE OK] last_code=0x{:08X} ({}) params=({:#x},{:#x},{:#x},{:#x})",
+    // //         last_code(),
+    // //         BugCheckCode::IrqlNotLessOrEqual.name(),
+    // //         last_param(1),
+    // //         last_param(2),
+    // //         last_param(3),
+    // //         last_param(4)
+    // //     );
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Codes must match the NT 6.1 bug check code reference.
+    #[test]
+    fn bugcheck_codes_match_documentation() {
+        let expected: &[(u32, &str)] = &[
+            (0x00000001, "APC_INDEX_MISMATCH"),
+            (0x00000002, "DEVICE_QUEUE_NOT_BUSY"),
+            (0x00000003, "INVALID_AFFINITY_SET"),
+            (0x00000004, "INVALID_DATA_ACCESS_TRAP"),
+            (0x00000006, "INVALID_PROCESS_DETACH_ATTEMPT"),
+            (0x00000009, "IRQL_NOT_GREATER_OR_EQUAL"),
+            (0x0000000A, "IRQL_NOT_LESS_OR_EQUAL"),
+            (0x0000001A, "MEMORY_MANAGEMENT"),
+            (0x00000022, "FILE_SYSTEM"),
+            (0x00000024, "NTFS_FILE_SYSTEM"),
+            (0x00000035, "NO_MORE_IRP_STACK_LOCATIONS"),
+            (0x0000003B, "SYSTEM_SERVICE_EXCEPTION"),
+            (0x0000003F, "NO_MORE_SYSTEM_PTES"),
+            (0x0000004E, "PFN_LIST_CORRUPT"),
+            (0x00000060, "PROCESS_INITIALIZATION_FAILED"),
+            (0x00000077, "KERNEL_STACK_INPAGE_ERROR"),
+            (0x0000007A, "KERNEL_DATA_INPAGE_ERROR"),
+            (0x0000007F, "UNEXPECTED_KERNEL_MODE_TRAP"),
+            (0x0000009C, "MACHINE_CHECK_EXCEPTION"),
+            (0x000000C9, "DRIVER_VERIFIER_IOMANAGER_VIOLATION"),
+            (0x000000DC, "DRIVER_INVALID_STACK_ACCESS"),
+            (0x000000E1, "WORKER_THREAD_RETURNED_AT_BAD_IRQL"),
+            (0x000000E2, "MANUALLY_INITIATED_CRASH"),
+            (0x00000103, "MUP_FILE_SYSTEM"),
+            (0x00000104, "AGP_INVALID_ACCESS"),
+            (0x0000010A, "APP_TAGGING_INITIALIZATION_FAILED"),
+            (0x0000010D, "WDF_VIOLATION"),
+            (0x0000010E, "VIDEO_MEMORY_MANAGEMENT_INTERNAL"),
+            (0x0000010F, "RESOURCE_MANAGER_EXCEPTION_NOT_HANDLED"),
+            (0x00000112, "MSRPC_STATE_VIOLATION"),
+            (0x00000139, "KERNEL_SECURITY_CHECK_FAILURE"),
+            (0x0000013A, "KERNEL_MODE_HEAP_CORRUPTION"),
+        ];
+        for (code, name) in expected {
+            let found = match *code {
+                0x00000001 => BugCheckCode::ApcIndexMismatch,
+                0x00000002 => BugCheckCode::DeviceQueueNotBusy,
+                0x00000003 => BugCheckCode::InvalidAffinitySet,
+                0x00000004 => BugCheckCode::InvalidDataAccessTrap,
+                0x00000006 => BugCheckCode::InvalidProcessDetachAttempt,
+                0x00000009 => BugCheckCode::IrqlNotGreaterOrEqual,
+                0x0000000A => BugCheckCode::IrqlNotLessOrEqual,
+                0x0000001A => BugCheckCode::MemoryManagement,
+                0x00000022 => BugCheckCode::Filesystem,
+                0x00000024 => BugCheckCode::NtfsFilesystem,
+                0x00000035 => BugCheckCode::NoMoreIrpStackLocations,
+                0x0000003B => BugCheckCode::SystemServiceException,
+                0x0000003F => BugCheckCode::NoMoreSystemPtes,
+                0x0000004E => BugCheckCode::PfnListCorrupt,
+                0x00000060 => BugCheckCode::ProcessInitializationFailed,
+                0x00000077 => BugCheckCode::KernelStackInpageError,
+                0x0000007A => BugCheckCode::KernelDataInpageError,
+                0x0000007F => BugCheckCode::UnexpectedKernelModeTrap,
+                0x0000009C => BugCheckCode::MachineCheckException,
+                0x000000C9 => BugCheckCode::DriverVerifierIoManagerViolation,
+                0x000000DC => BugCheckCode::DriverInvalidStackAccess,
+                0x000000E1 => BugCheckCode::WorkerThreadReturnedAtBadIrql,
+                0x000000E2 => BugCheckCode::ManuallyInitiatedCrash,
+                0x00000103 => BugCheckCode::MupFilesystem,
+                0x00000104 => BugCheckCode::AgpInvalidAccess,
+                0x0000010A => BugCheckCode::AppTaggingInitializationFailed,
+                0x0000010D => BugCheckCode::WdfViolation,
+                0x0000010E => BugCheckCode::VideoMemoryManagementInternal,
+                0x0000010F => BugCheckCode::ResourceManagerExceptionNotHandled,
+                0x00000112 => BugCheckCode::MsrpcStateViolation,
+                0x00000139 => BugCheckCode::KernelSecurityCheckFailure,
+                0x0000013A => BugCheckCode::KernelModeHeapCorruption,
+                _ => panic!("code {code:#x} is not represented in BugCheckCode"),
+            };
+            assert_eq!(found.as_u32(), *code, "code value mismatch for {name}");
+            assert_eq!(found.name(), *name, "name mismatch for code {code:#x}");
+        }
+    }
+
+    #[test]
+    fn record_roundtrip() {
+        let before = bugcheck_count();
+        let after = record(BugCheckCode::IrqlNotLessOrEqual, 0x1, 0x2, 0x3, 0x4);
+        assert_eq!(after, before + 1);
+        assert_eq!(last_code(), BugCheckCode::IrqlNotLessOrEqual.as_u32());
+        assert_eq!(last_param(1), 0x1);
+        assert_eq!(last_param(4), 0x4);
+    }
 }

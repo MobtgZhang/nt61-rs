@@ -32,7 +32,9 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::drivers::fltmgr::{FltAttachVolume, FltRegisterFilter, FltStartFiltering, FltRegistration};
+use crate::drivers::fltmgr::{
+    FltAttachVolume, FltRegisterFilter, FltRegistration, FltStartFiltering,
+};
 use crate::kprintln;
 
 const MAX_OPEN_RECORDS: usize = 32;
@@ -41,31 +43,31 @@ const MAX_OPEN_RECORDS: usize = 32;
 pub fn init() {
     #[cfg(target_arch = "x86_64")]
     crate::hal::x86_64::serial::write_string("F:A\r\n");
-    // kprintln!("    [FILEINFO] A")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    [FILEINFO] A");
     let _reg = FltRegistration::new();
     #[cfg(target_arch = "x86_64")]
     crate::hal::x86_64::serial::write_string("F:B\r\n");
-    // kprintln!("    [FILEINFO] B")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    [FILEINFO] B");
     let h = FltRegisterFilter("fileinfo");
     #[cfg(target_arch = "x86_64")]
     crate::hal::x86_64::serial::write_string("F:C\r\n");
-    // kprintln!("    [FILEINFO] C h={}", h)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    [FILEINFO] C h={}", h);
     if h == 0 {
-        // kprintln!("    [FILEINFO] D FAILED")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("    [FILEINFO] D FAILED");
         return;
     }
     if FltStartFiltering(h) != 0 {
-        // kprintln!("    [FILEINFO] E FAILED")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("    [FILEINFO] E FAILED");
         return;
     }
     #[cfg(target_arch = "x86_64")]
     crate::hal::x86_64::serial::write_string("F:F\r\n");
     if FltAttachVolume(h, "\\Device\\HarddiskVolume1") != 0 {
-        // kprintln!("    [FILEINFO] F FAILED (ignored)")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("    [FILEINFO] F FAILED (ignored)");
     }
     #[cfg(target_arch = "x86_64")]
     crate::hal::x86_64::serial::write_string("F:G\r\n");
-    // kprintln!("    [FILEINFO] G init complete")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    [FILEINFO] G init complete");
 }
 
 static mut NEXT_ID: AtomicU32 = AtomicU32::new(1);
@@ -78,24 +80,30 @@ pub fn FileInfoRecordOpen(volume: &str, name: &str) -> u64 {
 }
 
 /// `FileInfoGetName` — always returns None in the bootstrap.
-pub fn FileInfoGetName(_id: u64) -> Option<(String, String)> { None }
+pub fn FileInfoGetName(_id: u64) -> Option<(String, String)> {
+    None
+}
 
 /// `FileInfoListOpens` — empty list in the bootstrap.
-pub fn FileInfoListOpens() -> Vec<(u64, String, String)> { Vec::new() }
+pub fn FileInfoListOpens() -> Vec<(u64, String, String)> {
+    Vec::new()
+}
 
-pub fn open_count() -> u32 { unsafe { NEXT_ID.load(Ordering::Relaxed) - 1 } }
+pub fn open_count() -> u32 {
+    unsafe { NEXT_ID.load(Ordering::Relaxed) - 1 }
+}
 
 /// Smoke test: register the minifilter and record three opens.
 pub fn smoke_test() -> bool {
-    // kprintln!("  [FILEINFO SMOKE] testing file information minifilter...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [FILEINFO SMOKE] testing file information minifilter...");
     init();
     let id1 = FileInfoRecordOpen("HarddiskVolume1", "\\Windows\\System32\\ntoskrnl.exe");
     let id2 = FileInfoRecordOpen("HarddiskVolume1", "\\Windows\\System32\\config\\SYSTEM");
     let id3 = FileInfoRecordOpen("HarddiskVolume1", "\\Windows\\System32\\drivers\\disk.sys");
     if id1 == 0 || id2 == 0 || id3 == 0 {
-        // kprintln!("  [FILEINFO SMOKE FAIL] record")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [FILEINFO SMOKE FAIL] record");
         return false;
     }
-    // kprintln!("  [FILEINFO SMOKE OK] ids=({}, {}, {})", id1, id2, id3)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [FILEINFO SMOKE OK] ids=({}, {}, {})", id1, id2, id3);
     true
 }

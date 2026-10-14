@@ -10,13 +10,13 @@ use crate::rtl::logging::subsystem::CLFS;
 
 use super::context::ClfsContainerState;
 use super::format::CLFS_SECTOR_SIZE;
+use super::metadata::{ClfsBaseRecordHeader, ClfsControlRecord};
 use super::record::ClfsLsn;
-use super::{ClfsCreateLogFile, ClfsWriteLogRecord, ClfsReadLogRecord};
-use super::{ClfsFlushBuffers, ClfsMgmtQueryLogInformation, ClfsMgmtLogInformation};
-use super::{ClfsAddLogContainer, ClfsRemoveLogContainer, log_count};
-use super::{container, io, record};
-use super::metadata::{ClfsControlRecord, ClfsBaseRecordHeader};
 use super::STATUS_SUCCESS;
+use super::{container, io, record};
+use super::{log_count, ClfsAddLogContainer, ClfsRemoveLogContainer};
+use super::{ClfsCreateLogFile, ClfsReadLogRecord, ClfsWriteLogRecord};
+use super::{ClfsFlushBuffers, ClfsMgmtLogInformation, ClfsMgmtQueryLogInformation};
 
 /// Run the CLFS smoke test.
 ///
@@ -143,7 +143,12 @@ fn test_container_management() -> bool {
     // Remove the second container (not deleting the file)
     let status = ClfsRemoveLogContainer(log, cid2, false);
     if status != STATUS_SUCCESS {
-        crate::kprintln_info!("CLFS", "  FAIL: Could not remove container {}: status={}", cid2, status);
+        crate::kprintln_info!(
+            "CLFS",
+            "  FAIL: Could not remove container {}: status={}",
+            cid2,
+            status
+        );
         return false;
     }
     crate::kprintln_info!("CLFS", "  OK: Container {} removed (not deleted)", cid2);
@@ -179,7 +184,12 @@ fn test_record_write() -> bool {
         let data = make_test_record(i);
         let status = ClfsWriteLogRecord(log, 0, &data);
         if status != STATUS_SUCCESS {
-            crate::kprintln_info!("CLFS", "  FAIL: Write failed at record {}: status={}", i, status);
+            crate::kprintln_info!(
+                "CLFS",
+                "  FAIL: Write failed at record {}: status={}",
+                i,
+                status
+            );
             return false;
         }
     }
@@ -189,7 +199,11 @@ fn test_record_write() -> bool {
     let large_data = alloc::vec![0xAB; 1024];
     let status = ClfsWriteLogRecord(log, 0, &large_data);
     if status != STATUS_SUCCESS {
-        crate::kprintln_info!("CLFS", "  FAIL: Large record write failed: status={}", status);
+        crate::kprintln_info!(
+            "CLFS",
+            "  FAIL: Large record write failed: status={}",
+            status
+        );
         return false;
     }
     crate::kprintln_info!("CLFS", "  OK: Large record (1KB) written");
@@ -318,7 +332,11 @@ fn test_metadata_structures() -> bool {
         crate::kprintln_info!("CLFS", "  FAIL: Control record should have 6 blocks");
         return false;
     }
-    crate::kprintln_info!("CLFS", "  OK: Control record valid (magic=0x{:016x})", ctrl.magic);
+    crate::kprintln_info!(
+        "CLFS",
+        "  OK: Control record valid (magic=0x{:016x})",
+        ctrl.magic
+    );
 
     // Test Base Record
     let base = ClfsBaseRecordHeader::new();
@@ -330,12 +348,20 @@ fn test_metadata_structures() -> bool {
         crate::kprintln_info!("CLFS", "  FAIL: Base record c_next_client should be 1");
         return false;
     }
-    crate::kprintln_info!("CLFS", "  OK: Base record valid (state={:?})", base.e_log_state);
+    crate::kprintln_info!(
+        "CLFS",
+        "  OK: Base record valid (state={:?})",
+        base.e_log_state
+    );
 
     // Test serialization
     let mut buf = alloc::vec![0u8; 1024];
     ctrl.write_to(&mut buf);
-    crate::kprintln_info!("CLFS", "  OK: Control record serialized ({} bytes)", buf.len());
+    crate::kprintln_info!(
+        "CLFS",
+        "  OK: Control record serialized ({} bytes)",
+        buf.len()
+    );
 
     true
 }
@@ -458,8 +484,8 @@ fn verify_test_record(data: &[u8], expected_seq: u32) -> bool {
         return false;
     }
     let seq = ((data[4] as u32) << 24)
-            | ((data[5] as u32) << 16)
-            | ((data[6] as u32) << 8)
-            | (data[7] as u32);
+        | ((data[5] as u32) << 16)
+        | ((data[6] as u32) << 8)
+        | (data[7] as u32);
     seq == expected_seq
 }

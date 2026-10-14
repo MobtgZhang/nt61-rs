@@ -26,21 +26,25 @@ use crate::kprintln;
 /// Initialise the network driver stack. Walks PCI for each
 /// supported NIC and registers it.
 pub fn init() {
-    // kprintln!("    Network drivers: e1000, rtl8139, virtio-net")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    Network drivers: e1000, rtl8139, virtio-net");
     e1000::init();
     #[cfg(target_arch = "x86_64")]
     rtl8139::init();
     virtio_net::init();
-    // kprintln!("    Network stack ready")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    Network stack ready");
 }
 
 /// Smoke test for the network driver stack. Re-runs each NIC's
 /// self-check.
 pub fn smoke_test() -> bool {
     #[cfg(target_arch = "x86_64")]
-    { smoke::smoke_test() }
+    {
+        smoke::smoke_test()
+    }
     #[cfg(not(target_arch = "x86_64"))]
-    { true }
+    {
+        true
+    }
 }
 
 // =============================================================================
@@ -84,11 +88,16 @@ pub enum NicType {
 
 /// Get the count of available NICs
 pub fn nic_count() -> usize {
-    virtio_net::count() + e1000::count()
-        + {
-            #[cfg(target_arch = "x86_64")]
-            { rtl8139::count() }
-            #[cfg(not(target_arch = "x86_64"))]
-            { 0 }
+    virtio_net::count() + e1000::count() + {
+        #[cfg(target_arch = "x86_64")]
+        {
+            rtl8139::count()
         }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            0
+        }
+    }
 }
+
+pub mod tcpip;

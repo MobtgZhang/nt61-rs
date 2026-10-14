@@ -71,8 +71,8 @@ pub mod srb_function {
 }
 
 /// SCSI Request Block flags.
-pub const SRB_FLAGS_DATA_IN:        u32 = 0x0000_0040;
-pub const SRB_FLAGS_DATA_OUT:       u32 = 0x0000_0080;
+pub const SRB_FLAGS_DATA_IN: u32 = 0x0000_0040;
+pub const SRB_FLAGS_DATA_OUT: u32 = 0x0000_0080;
 pub const SRB_FLAGS_NO_DATA_TRANSFER: u32 = 0x0000_0000;
 pub const SRB_FLAGS_DISABLE_AUTOSENSE: u32 = 0x0000_0100;
 pub const SRB_FLAGS_QUEUE_ACTION_ENABLE: u32 = 0x0000_0002;
@@ -122,16 +122,15 @@ impl Srb {
 }
 
 /// Miniport-to-storport callback signatures.
-pub type HwFindAdapter =
-    unsafe extern "C" fn(device_extension: *mut (), config: *mut PortConfig, output: *mut u32) -> u32;
-pub type HwInitialize =
-    unsafe extern "C" fn(device_extension: *mut ()) -> u32;
-pub type HwStartIo =
-    unsafe extern "C" fn(device_extension: *mut (), srb: *mut Srb) -> u32;
-pub type HwInterrupt =
-    unsafe extern "C" fn(device_extension: *mut ()) -> ();
-pub type HwResetBus =
-    unsafe extern "C" fn(device_extension: *mut (), path_id: u8) -> u32;
+pub type HwFindAdapter = unsafe extern "C" fn(
+    device_extension: *mut (),
+    config: *mut PortConfig,
+    output: *mut u32,
+) -> u32;
+pub type HwInitialize = unsafe extern "C" fn(device_extension: *mut ()) -> u32;
+pub type HwStartIo = unsafe extern "C" fn(device_extension: *mut (), srb: *mut Srb) -> u32;
+pub type HwInterrupt = unsafe extern "C" fn(device_extension: *mut ()) -> ();
+pub type HwResetBus = unsafe extern "C" fn(device_extension: *mut (), path_id: u8) -> u32;
 
 #[repr(C)]
 pub struct PortConfig {
@@ -217,7 +216,9 @@ pub fn StorPortInitialize(name: &str, mut hw: HwInitData) -> u32 {
     let _g = ADAPTER_LOCK.lock();
     unsafe {
         for slot in ADAPTERS.iter_mut() {
-            if slot.valid { continue; }
+            if slot.valid {
+                continue;
+            }
             slot.valid = true;
             slot.name = String::from(name);
             slot.hw = HwInitData {
@@ -234,7 +235,7 @@ pub fn StorPortInitialize(name: &str, mut hw: HwInitData) -> u32 {
             if has_find {
                 slot.device_extension = pool::allocate(pool::PoolType::NonPaged, 4096) as *mut ();
             }
-            // kprintln!("    [STORPORT] bound miniport '{}' at slot", name)  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("    [STORPORT] bound miniport '{}' at slot", name);
             return STORPORT_SUCCESS;
         }
     }
@@ -298,11 +299,15 @@ pub fn StorPortBuildIo(srb: *mut Srb) -> *mut Srb {
 /// `srb` in a per-adapter pending slot and calls the miniport's
 /// `HwStartIo`.
 pub fn StorPortStartIo(adapter_idx: usize, srb: *mut Srb) -> u32 {
-    if adapter_idx >= MAX_ADAPTERS { return STORPORT_INVALID_PARAMETER; }
+    if adapter_idx >= MAX_ADAPTERS {
+        return STORPORT_INVALID_PARAMETER;
+    }
     let _g = ADAPTER_LOCK.lock();
     unsafe {
         let slot = &mut ADAPTERS[adapter_idx];
-        if !slot.valid { return STORPORT_FAILED; }
+        if !slot.valid {
+            return STORPORT_FAILED;
+        }
         slot.submitted += 1;
         if let Some(start_io) = slot.hw.adapter_start_io {
             return start_io(slot.device_extension, srb);
@@ -313,12 +318,21 @@ pub fn StorPortStartIo(adapter_idx: usize, srb: *mut Srb) -> u32 {
 
 pub fn adapter_count() -> usize {
     let mut n = 0;
-    unsafe { for s in ADAPTERS.iter() { if s.valid { n += 1; } } }
+    unsafe {
+        for s in ADAPTERS.iter() {
+            if s.valid {
+                n += 1;
+            }
+        }
+    }
     n
 }
 
 pub fn stats() -> (u32, u32) {
-    (SUBMITTED.load(Ordering::Relaxed), COMPLETED.load(Ordering::Relaxed))
+    (
+        SUBMITTED.load(Ordering::Relaxed),
+        COMPLETED.load(Ordering::Relaxed),
+    )
 }
 
 /// `init` — storport is a framework, so it does not enumerate
@@ -385,8 +399,12 @@ unsafe extern "C" fn stub_start_io(_de: *mut (), srb: *mut Srb) -> u32 {
     0
 }
 unsafe extern "C" fn stub_int(_de: *mut ()) {}
-unsafe extern "C" fn stub_reset(_de: *mut (), _p: u8) -> u32 { 0 }
-unsafe extern "C" fn stub_find(_de: *mut (), _c: *mut PortConfig, _o: *mut u32) -> u32 { 0 }
+unsafe extern "C" fn stub_reset(_de: *mut (), _p: u8) -> u32 {
+    0
+}
+unsafe extern "C" fn stub_find(_de: *mut (), _c: *mut PortConfig, _o: *mut u32) -> u32 {
+    0
+}
 
 /// Bookkeeping for the stub miniport's most recent device
 /// extension pointer. Used only inside this module.

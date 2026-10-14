@@ -1,9 +1,9 @@
 //! NTBTLOG.TXT Writer
 //
 //! Implements the boot log file writer for Windows 7 boot logging.
-//! 
+//!
 //! # Behavior
-//! 
+//!
 //! - Log is written to an internal buffer during boot
 //! - Buffer is cleared at the start of each boot
 //! - Log can be retrieved as raw bytes for writing to disk
@@ -24,29 +24,29 @@ pub fn write_line(line: &[u8]) {
     // Safety: This function is only called during boot sequence
     // when interrupts are disabled, so there's no concurrent access
     let pos = BOOT_LOG_POS.load(Ordering::Relaxed);
-    
+
     if pos + line.len() >= MAX_LOG_SIZE {
         return; // Log buffer full
     }
-    
+
     unsafe {
         BOOT_LOG_BUFFER[pos..pos + line.len()].copy_from_slice(line);
     }
-    
+
     BOOT_LOG_POS.store(pos + line.len(), Ordering::Relaxed);
 }
 
 /// Clear the boot log buffer
 pub fn clear_log() {
     BOOT_LOG_POS.store(0, Ordering::Relaxed);
-    
+
     let pos = BOOT_LOG_POS.load(Ordering::Relaxed);
     unsafe {
         for i in 0..pos {
             BOOT_LOG_BUFFER[i] = 0;
         }
     }
-    
+
     BOOT_LOG_POS.store(0, Ordering::Relaxed);
 }
 
@@ -56,7 +56,7 @@ pub fn get_log() -> Option<&'static [u8]> {
     if pos == 0 {
         return None;
     }
-    
+
     Some(unsafe { &BOOT_LOG_BUFFER[..pos] })
 }
 
@@ -66,7 +66,7 @@ pub fn get_log_len() -> usize {
 }
 
 /// Write formatted boot log entry
-/// 
+///
 /// Format: `YYYY MM DD HH:MM:SS.mmm BOOTLOG_LOADED \SystemRoot\...`
 pub fn write_boot_entry(
     year: u16,
@@ -81,9 +81,9 @@ pub fn write_boot_entry(
 ) {
     let mut line = [b' '; 512];
     let mut pos = 0;
-    
+
     // YYYY
-    line[pos..pos+4].copy_from_slice(&[
+    line[pos..pos + 4].copy_from_slice(&[
         b'0' + ((year / 1000) % 10) as u8,
         b'0' + ((year / 100) % 10) as u8,
         b'0' + ((year / 10) % 10) as u8,
@@ -92,21 +92,21 @@ pub fn write_boot_entry(
     pos += 4;
     line[pos] = b' ';
     pos += 1;
-    
+
     // MM
     line[pos] = b'0' + (month / 10);
     line[pos + 1] = b'0' + (month % 10);
     pos += 2;
     line[pos] = b' ';
     pos += 1;
-    
+
     // DD
     line[pos] = b'0' + (day / 10);
     line[pos + 1] = b'0' + (day % 10);
     pos += 2;
     line[pos] = b' ';
     pos += 1;
-    
+
     // HH:MM:SS.mmm
     line[pos] = b'0' + (hour / 10);
     line[pos + 1] = b'0' + (hour % 10);
@@ -129,7 +129,7 @@ pub fn write_boot_entry(
     pos += 3;
     line[pos] = b' ';
     pos += 1;
-    
+
     // BOOTLOG_LOADED or BOOTLOG_NOT_LOADED
     if loaded {
         let s = b"BOOTLOG_LOADED";
@@ -142,7 +142,7 @@ pub fn write_boot_entry(
     }
     line[pos] = b' ';
     pos += 1;
-    
+
     // Path
     for &b in path {
         if b == 0 {
@@ -153,14 +153,14 @@ pub fn write_boot_entry(
             pos += 1;
         }
     }
-    
+
     // CRLF
     if pos < 510 {
         line[pos] = b'\r';
         line[pos + 1] = b'\n';
         pos += 2;
     }
-    
+
     write_line(&line[..pos]);
 }
 
@@ -185,9 +185,5 @@ pub fn write_footer() {
 /// Write driver loading entry with timestamp
 pub fn write_driver_entry(loaded: bool, path: &[u8]) {
     // Use current time (placeholder - would use RTC in real implementation)
-    write_boot_entry(
-        2026, 6, 30, 9, 0, 0, 0,
-        loaded,
-        path,
-    );
+    write_boot_entry(2026, 6, 30, 9, 0, 0, 0, loaded, path);
 }

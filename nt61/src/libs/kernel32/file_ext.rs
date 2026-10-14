@@ -2,9 +2,10 @@
 //!
 //! Replaces unsafe static mut FIND_HANDLES with synchronized access
 
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use super::types::*;
+use spin::{Lazy, Mutex};
 
 const MAX_FIND_HANDLES: usize = 16;
 
@@ -26,6 +27,11 @@ impl FindHandle {
         }
     }
 }
+
+// The table is only reachable through `FIND_HANDLES`, so the raw handle
+// value can never be observed by two threads at the same time; the mutex
+// serialises every access. Without this the static cannot be `Sync`.
+unsafe impl Send for FindHandle {}
 
 struct FindHandleTable {
     handles: [FindHandle; MAX_FIND_HANDLES],
@@ -65,9 +71,8 @@ impl FindHandleTable {
     }
 }
 
-static FIND_HANDLES: Lazy<Mutex<FindHandleTable>> = Lazy::new(|| {
-    Mutex::new(FindHandleTable::new())
-});
+static FIND_HANDLES: Lazy<Mutex<FindHandleTable>> =
+    Lazy::new(|| Mutex::new(FindHandleTable::new()));
 
 pub fn alloc_find_handle() -> Option<usize> {
     FIND_HANDLES.lock().allocate()

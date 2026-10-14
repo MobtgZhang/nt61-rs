@@ -6,8 +6,8 @@
 //!
 //! References: Windows SDK, WRK security audit, auditpol.exe
 
-use core::sync::atomic::{AtomicU32, Ordering};
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 /// Audit policy categories matching Windows audit policy
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,9 +89,8 @@ impl CategoryPolicy {
 static AUDIT_POLICY_STATE: AtomicU32 = AtomicU32::new(0);
 
 /// Default policy: Enable Logon and AccountLogon events (both success + failure)
-const DEFAULT_POLICY: u32 =
-    (0b11 << (AuditCategory::Logon as u32 * 2)) |
-    (0b11 << (AuditCategory::AccountLogon as u32 * 2));
+const DEFAULT_POLICY: u32 = (0b11 << (AuditCategory::Logon as u32 * 2))
+    | (0b11 << (AuditCategory::AccountLogon as u32 * 2));
 
 /// Initialize audit policy with defaults
 pub fn init() {
@@ -116,14 +115,15 @@ pub fn set_category_policy(category: AuditCategory, policy: CategoryPolicy) {
         let current = AUDIT_POLICY_STATE.load(Ordering::Acquire);
         let shift = (category as u32) * 2;
         let mask = !(0b11 << shift);
-        let new_bits = ((policy.success_enabled as u32) | ((policy.failure_enabled as u32) << 1)) << shift;
+        let new_bits =
+            ((policy.success_enabled as u32) | ((policy.failure_enabled as u32) << 1)) << shift;
         let new_state = (current & mask) | new_bits;
 
         match AUDIT_POLICY_STATE.compare_exchange(
             current,
             new_state,
             Ordering::Release,
-            Ordering::Acquire
+            Ordering::Acquire,
         ) {
             Ok(_) => break,
             Err(_) => continue,
@@ -164,15 +164,42 @@ pub fn enable_failure_only(category: AuditCategory) {
 /// Get all category policies (for enumeration/display)
 pub fn get_all_policies() -> [(AuditCategory, CategoryPolicy); 9] {
     [
-        (AuditCategory::System, get_category_policy(AuditCategory::System)),
-        (AuditCategory::Logon, get_category_policy(AuditCategory::Logon)),
-        (AuditCategory::ObjectAccess, get_category_policy(AuditCategory::ObjectAccess)),
-        (AuditCategory::PrivilegeUse, get_category_policy(AuditCategory::PrivilegeUse)),
-        (AuditCategory::DetailedTracking, get_category_policy(AuditCategory::DetailedTracking)),
-        (AuditCategory::PolicyChange, get_category_policy(AuditCategory::PolicyChange)),
-        (AuditCategory::AccountManagement, get_category_policy(AuditCategory::AccountManagement)),
-        (AuditCategory::DirectoryServiceAccess, get_category_policy(AuditCategory::DirectoryServiceAccess)),
-        (AuditCategory::AccountLogon, get_category_policy(AuditCategory::AccountLogon)),
+        (
+            AuditCategory::System,
+            get_category_policy(AuditCategory::System),
+        ),
+        (
+            AuditCategory::Logon,
+            get_category_policy(AuditCategory::Logon),
+        ),
+        (
+            AuditCategory::ObjectAccess,
+            get_category_policy(AuditCategory::ObjectAccess),
+        ),
+        (
+            AuditCategory::PrivilegeUse,
+            get_category_policy(AuditCategory::PrivilegeUse),
+        ),
+        (
+            AuditCategory::DetailedTracking,
+            get_category_policy(AuditCategory::DetailedTracking),
+        ),
+        (
+            AuditCategory::PolicyChange,
+            get_category_policy(AuditCategory::PolicyChange),
+        ),
+        (
+            AuditCategory::AccountManagement,
+            get_category_policy(AuditCategory::AccountManagement),
+        ),
+        (
+            AuditCategory::DirectoryServiceAccess,
+            get_category_policy(AuditCategory::DirectoryServiceAccess),
+        ),
+        (
+            AuditCategory::AccountLogon,
+            get_category_policy(AuditCategory::AccountLogon),
+        ),
     ]
 }
 
@@ -207,19 +234,19 @@ pub enum AuditSubcategory {
 impl AuditSubcategory {
     pub fn parent_category(&self) -> AuditCategory {
         match self {
-            AuditSubcategory::LogonSubcat |
-            AuditSubcategory::LogoffSubcat |
-            AuditSubcategory::AccountLockoutSubcat => AuditCategory::Logon,
+            AuditSubcategory::LogonSubcat
+            | AuditSubcategory::LogoffSubcat
+            | AuditSubcategory::AccountLockoutSubcat => AuditCategory::Logon,
 
-            AuditSubcategory::FileSystemSubcat |
-            AuditSubcategory::RegistrySubcat |
-            AuditSubcategory::KernelObjectSubcat => AuditCategory::ObjectAccess,
+            AuditSubcategory::FileSystemSubcat
+            | AuditSubcategory::RegistrySubcat
+            | AuditSubcategory::KernelObjectSubcat => AuditCategory::ObjectAccess,
 
-            AuditSubcategory::SensitivePrivilegeUseSubcat |
-            AuditSubcategory::NonSensitivePrivilegeUseSubcat => AuditCategory::PrivilegeUse,
+            AuditSubcategory::SensitivePrivilegeUseSubcat
+            | AuditSubcategory::NonSensitivePrivilegeUseSubcat => AuditCategory::PrivilegeUse,
 
-            AuditSubcategory::ProcessCreationSubcat |
-            AuditSubcategory::ProcessTerminationSubcat => AuditCategory::DetailedTracking,
+            AuditSubcategory::ProcessCreationSubcat
+            | AuditSubcategory::ProcessTerminationSubcat => AuditCategory::DetailedTracking,
         }
     }
 

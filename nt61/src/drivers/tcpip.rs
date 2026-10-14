@@ -11,16 +11,14 @@
 //! Clean-room implementation. Spec source: RFC 793 (TCP), RFC 768 (UDP),
 //! RFC 791 (IP), and Microsoft "Network Driver" reference.
 
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 #[allow(non_snake_case)]
-
 extern crate alloc;
 
-use alloc::vec::Vec;
-use core::sync::atomic::{AtomicU32, Ordering};
 use crate::io::{DeviceObject, DeviceType, DriverObject};
 use crate::ke::sync::Spinlock;
+use alloc::vec::Vec;
 
 const MAX_INTERFACES: usize = 8;
 
@@ -37,7 +35,7 @@ pub struct NetworkInterface {
     pub gateway: [u8; 4],
     pub mac_address: [u8; 6],
     pub mtu: u16,
-    pub link_speed: u64,  // bits per second
+    pub link_speed: u64, // bits per second
     pub packets_sent: u64,
     pub packets_received: u64,
     pub bytes_sent: u64,
@@ -54,7 +52,7 @@ impl NetworkInterface {
             gateway: [0, 0, 0, 0],
             mac_address: [0, 0, 0, 0, 0, 0],
             mtu: 1500,
-            link_speed: 1_000_000_000,  // 1 Gbps
+            link_speed: 1_000_000_000, // 1 Gbps
             packets_sent: 0,
             packets_received: 0,
             bytes_sent: 0,
@@ -158,7 +156,7 @@ pub fn init() {
     unsafe {
         INTERFACES[0].valid = true;
         INTERFACES[0].interface_index = 1;
-        INTERFACES[0].ip_address = [10, 0, 2, 15];  // Default QEMU address
+        INTERFACES[0].ip_address = [10, 0, 2, 15]; // Default QEMU address
         INTERFACES[0].subnet_mask = [255, 255, 255, 0];
         INTERFACES[0].gateway = [10, 0, 2, 2];
         INTERFACE_COUNT.store(1, Ordering::Relaxed);
@@ -207,7 +205,7 @@ pub fn tcp_connect(
                 conn.local_port = local_port;
                 conn.remote_addr = remote_addr;
                 conn.remote_port = remote_port;
-                conn.seq_num = 1000;  // Initial sequence number
+                conn.seq_num = 1000; // Initial sequence number
                 TCP_CONNECTION_COUNT.fetch_add(1, Ordering::Relaxed);
                 return Some(idx);
             }
@@ -247,10 +245,7 @@ pub fn tcp_send(connection_id: usize, data: &[u8]) -> Option<usize> {
         }
 
         let socket_id = connection_id as u32;
-        let result = crate::netstack::tcp::send(
-            socket_id,
-            data,
-        );
+        let result = crate::netstack::tcp::send(socket_id, data);
 
         if let Some(bytes_sent) = result {
             conn.segments_sent += 1;
@@ -328,12 +323,7 @@ pub fn udp_sendto(
         }
 
         let remote_ip = u32::from_be_bytes(remote_addr);
-        let result = crate::netstack::udp::send(
-            socket_id as usize,
-            remote_ip,
-            remote_port,
-            data,
-        );
+        let result = crate::netstack::udp::send(socket_id as usize, remote_ip, remote_port, data);
 
         if let Some(bytes_sent) = result {
             socket.datagrams_sent += 1;
@@ -344,10 +334,7 @@ pub fn udp_sendto(
     }
 }
 
-pub fn udp_recvfrom(
-    socket_id: usize,
-    buffer: &mut [u8],
-) -> Option<(usize, [u8; 4], u16)> {
+pub fn udp_recvfrom(socket_id: usize, buffer: &mut [u8]) -> Option<(usize, [u8; 4], u16)> {
     if socket_id >= MAX_UDP_SOCKETS {
         return None;
     }
@@ -408,8 +395,8 @@ pub fn DriverEntry(driver: *mut DriverObject) -> u32 {
 
 pub mod dispatch {
     use super::*;
-    use crate::io::{Irp, IoStackLocation};
     use crate::io::major::*;
+    use crate::io::{IoStackLocation, Irp};
 
     pub fn Create(device: *mut DeviceObject, irp: *mut Irp) -> u32 {
         0 // STATUS_SUCCESS

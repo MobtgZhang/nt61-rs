@@ -76,10 +76,7 @@ impl StarfiveDevice {
             return;
         }
         unsafe {
-            core::ptr::write_volatile(
-                (self.dc_base + offset as u64) as *mut u32,
-                value,
-            );
+            core::ptr::write_volatile((self.dc_base + offset as u64) as *mut u32, value);
         }
     }
 }
@@ -114,7 +111,7 @@ impl GpuDriver for StarfiveDevice {
     fn init(&mut self) -> Result<(), GpuError> {
         // Verify display controller is accessible
         let version = self.read_reg(STARFIVE_REG_VERSION);
-        
+
         if version == 0 {
             return Err(GpuError::Unknown(1));
         }
@@ -157,7 +154,10 @@ impl GpuDriver for StarfiveDevice {
         })
     }
 
-    fn set_mode(&mut self, mode: &crate::drivers::video::core::gpu_common::DisplayMode) -> Result<(), GpuError> {
+    fn set_mode(
+        &mut self,
+        mode: &crate::drivers::video::core::gpu_common::DisplayMode,
+    ) -> Result<(), GpuError> {
         self.init_framebuffer(Some(*mode)).map(|_| ())
     }
 
@@ -205,10 +205,7 @@ impl GpuDriver for StarfiveDevice {
         let pixels = ((self.pitch as usize) * (self.height as usize)) / 4;
         for i in 0..pixels {
             unsafe {
-                core::ptr::write_volatile(
-                    (self.fb_virt + (i as u64 * 4)) as *mut u32,
-                    color,
-                );
+                core::ptr::write_volatile((self.fb_virt + (i as u64 * 4)) as *mut u32, color);
             }
         }
     }
@@ -220,10 +217,7 @@ impl GpuDriver for StarfiveDevice {
 
         let offset = ((y * self.pitch) + (x * 4)) as u64;
         unsafe {
-            core::ptr::write_volatile(
-                (self.fb_virt + offset) as *mut u32,
-                color,
-            );
+            core::ptr::write_volatile((self.fb_virt + offset) as *mut u32, color);
         }
     }
 
@@ -266,7 +260,7 @@ impl StarfiveDevice {
         // - Device tree (fdt)
         // - OpenSBI firmware
         // - UEFI GOP
-        
+
         // For now, use default values
         self.fb_phys = 0x0;
         self.fb_size = 8 * 1024 * 1024; // 8MB default
@@ -283,26 +277,24 @@ impl StarfiveDevice {
         // Step 2: Configure framebuffer
         self.write_reg(STARFIVE_REG_FB0_ADDR, self.fb_phys as u32);
         self.write_reg(STARFIVE_REG_FB0_STRIDE, self.pitch);
-        self.write_reg(STARFIVE_REG_FB0_SIZE, 
-            ((self.height as u32) << 16) | self.width);
+        self.write_reg(
+            STARFIVE_REG_FB0_SIZE,
+            ((self.height as u32) << 16) | self.width,
+        );
 
         // Step 3: Configure horizontal timing
         let h_total = self.width + 160;
         let h_sync_start = self.width + 48;
         let h_sync_end = self.width + 112;
-        self.write_reg(STARFIVE_REG_HORZ_TIMING,
-            (h_total << 16) | self.width);
-        self.write_reg(STARFIVE_REG_HORZ_SYNC,
-            (h_sync_end << 16) | h_sync_start);
+        self.write_reg(STARFIVE_REG_HORZ_TIMING, (h_total << 16) | self.width);
+        self.write_reg(STARFIVE_REG_HORZ_SYNC, (h_sync_end << 16) | h_sync_start);
 
         // Step 4: Configure vertical timing
         let v_total = self.height + 30;
         let v_sync_start = self.height + 10;
         let v_sync_end = self.height + 12;
-        self.write_reg(STARFIVE_REG_VERT_TIMING,
-            (v_total << 16) | self.height);
-        self.write_reg(STARFIVE_REG_VERT_SYNC,
-            (v_sync_end << 16) | v_sync_start);
+        self.write_reg(STARFIVE_REG_VERT_TIMING, (v_total << 16) | self.height);
+        self.write_reg(STARFIVE_REG_VERT_SYNC, (v_sync_end << 16) | v_sync_start);
 
         // Step 5: Configure pixel format
         self.write_reg(STARFIVE_REG_FORMAT, STARFIVE_FORMAT_BGRA8888);
@@ -401,7 +393,7 @@ pub const STARFIVE_FORMAT_RGB565: u32 = 0x02;
 pub fn probe() -> bool {
     // Check if we're running on StarFive hardware
     // This would typically check device tree or OpenSBI platform info
-    
+
     // For now, return false to let other drivers try
     // Real implementation would check:
     // - Device tree compatible string
@@ -425,7 +417,7 @@ pub fn init() -> Option<StarfiveDevice> {
     };
 
     let mut device = StarfiveDevice::new(soc);
-    
+
     if device.init().is_ok() {
         Some(device)
     } else {

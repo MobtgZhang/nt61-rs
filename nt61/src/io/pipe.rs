@@ -91,18 +91,25 @@ fn with_pipe<R>(idx: usize, f: impl FnOnce(&mut PipeState) -> R) -> Option<R> {
     pipes.get_mut(idx).and_then(|s| s.as_mut().map(f))
 }
 
-/// Create an anonymous pipe. Returns (read_end_id, write_end_id)
+/// Create an anonymous pipe. Returns (slot_idx, read_end_id, write_end_id)
 /// where each id is a kernel-side pipe handle (not an NT HANDLE
 /// yet — wrappers below add that).
-pub fn create_anonymous() -> Option<(u64, u64)> {
+pub fn create_anonymous() -> Option<(usize, u64, u64)> {
     let id = NEXT_PIPE_ID.fetch_add(2, Ordering::Relaxed);
     let state = PipeState::new();
     let idx = alloc_slot(state);
     let read_id = id;
     let write_id = id.wrapping_add(1);
-    crate::boot_println!("[PIPE] create_anonymous: slot={} read_id={} write_id={}",
-        idx, read_id, write_id);
-    Some((read_id, write_id))
+    // Boot trace goes through serial; user-mode libtest would
+    // SIGSEGV on the `out` instruction, so we guard it.
+    #[cfg(not(test))]
+    crate::boot_println!(
+        "[PIPE] create_anonymous: slot={} read_id={} write_id={}",
+        idx,
+        read_id,
+        write_id
+    );
+    Some((idx, read_id, write_id))
 }
 
 /// Look up the slot index and direction for a pipe id. The pipe
@@ -130,7 +137,9 @@ pub fn slot_for_id(pipe_id: u64) -> Option<(usize, bool)> {
 /// of bytes actually read (0 means EOF / pipe closed with no data).
 pub fn read(idx: usize, buf: &mut [u8]) -> usize {
     let mut pipes = PIPES.lock();
-    let Some(slot) = pipes.get_mut(idx) else { return 0 };
+    let Some(slot) = pipes.get_mut(idx) else {
+        return 0;
+    };
     let Some(state) = slot.as_mut() else { return 0 };
     if !state.read_open {
         return 0;
@@ -150,7 +159,9 @@ pub fn read(idx: usize, buf: &mut [u8]) -> usize {
 /// accepted (may be less than `data.len()` if the buffer is full).
 pub fn write(idx: usize, data: &[u8]) -> usize {
     let mut pipes = PIPES.lock();
-    let Some(slot) = pipes.get_mut(idx) else { return 0 };
+    let Some(slot) = pipes.get_mut(idx) else {
+        return 0;
+    };
     let Some(state) = slot.as_mut() else { return 0 };
     if !state.write_open {
         return 0;
@@ -172,7 +183,9 @@ pub fn write(idx: usize, data: &[u8]) -> usize {
 /// blocked readers (with EOF if no data buffered).
 pub fn close_end(idx: usize, is_read: bool) {
     let mut pipes = PIPES.lock();
-    let Some(slot) = pipes.get_mut(idx) else { return };
+    let Some(slot) = pipes.get_mut(idx) else {
+        return;
+    };
     let Some(state) = slot.as_mut() else { return };
     if is_read {
         state.read_open = false;
@@ -191,7 +204,11 @@ pub fn close_end(idx: usize, is_read: bool) {
 /// NtWaitForSingleObject can be wired to the pipe.
 pub fn event_target(idx: usize, is_read: bool) -> u64 {
     with_pipe(idx, |s| {
-        if is_read { s.read_event_target } else { s.write_event_target }
+        if is_read {
+            s.read_event_target
+        } else {
+            s.write_event_target
+        }
     })
     .unwrap_or(0)
 }
@@ -206,7 +223,7 @@ pub fn debug_pipe_count() -> usize {
 /// code can talk to them via NtWriteFile / NtReadFile, and return
 /// the read and write NT HANDLEs.
 pub fn create_anonymous_handles() -> Option<(u64, u64)> {
-    let (read_id, write_id) = create_anonymous()?;
+    let (_slot, read_id, write_id) = create_anonymous()?;
     // Translate to NT handle table indices via ntdll::file so
     // NtReadFile/NtWriteFile can route through the pipe layer.
     let read_handle = crate::libs::ntdll::file::alloc_pipe_handle(read_id);

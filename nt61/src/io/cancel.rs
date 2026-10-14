@@ -21,8 +21,8 @@ use alloc::collections::VecDeque;
 use core::ptr::null_mut;
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use crate::ke::sync::Spinlock;
 use super::Irp;
+use crate::ke::sync::Spinlock;
 use crate::libs::ntdll::status::*;
 
 pub type CancelRoutine = unsafe extern "C" fn(irp: *mut Irp);
@@ -132,7 +132,6 @@ pub unsafe extern "C" fn cancel_queued_irp(irp: *mut Irp) {
         return;
     }
 
-
     (*irp).flags |= super::IRP_CANCEL_INDICATED;
     (*irp).io_status.status = STATUS_CANCELLED as u32;
     (*irp).io_status.information = 0;
@@ -150,8 +149,23 @@ pub fn create_cancel_safe_queue() -> CancelSafeQueue {
 mod tests {
     use super::*;
 
+    /// `allocate_irp()` goes through the non-paged pool, which requires a
+    /// configured kernel heap. The host test binary never runs `mm::init()`,
+    /// so back `KERNEL_HEAP` with a static region before allocating.
+    fn ensure_test_heap() {
+        if crate::mm::heap::KERNEL_HEAP.configured_region().is_some() {
+            return;
+        }
+        static mut TEST_HEAP: [u8; 64 * 1024] = [0u8; 64 * 1024];
+        unsafe {
+            let base = core::ptr::addr_of_mut!(TEST_HEAP) as *mut u8;
+            crate::mm::heap::KERNEL_HEAP.configure(base, TEST_HEAP.len());
+        }
+    }
+
     #[test]
     fn queue_insert_remove() {
+        ensure_test_heap();
         let queue = create_cancel_safe_queue();
         let irp = super::super::allocate_irp(1);
 
@@ -159,7 +173,7 @@ mod tests {
         assert!(queue.insert(irp));
         assert_eq!(queue.count(), 1);
 
-        let removed = queue.remove_next();
+        let removed = unsafe { queue.remove_next() };
         assert_eq!(removed, irp);
         assert_eq!(queue.count(), 0);
 
@@ -168,10 +182,14 @@ mod tests {
 
     #[test]
     fn queue_flush() {
+        ensure_test_heap();
         let queue = create_cancel_safe_queue();
 
         let irp1 = super::super::allocate_irp(1);
         let irp2 = super::super::allocate_irp(1);
+
+        assert!(!irp1.is_null());
+        assert!(!irp2.is_null());
 
         queue.insert(irp1);
         queue.insert(irp2);

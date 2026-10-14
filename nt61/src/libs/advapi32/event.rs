@@ -9,16 +9,13 @@
 //! - ReadEventLogW — Read events from the log
 //! - ClearEventLogW — Clear an event log
 
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 #[allow(non_snake_case, non_upper_case_globals, dead_code)]
-
-use core::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, AtomicBool, AtomicPtr, Ordering};
 use super::types::*;
-use crate::libs::ntdll::types::{HANDLE, PVOID, DWORD, WORD, BYTE, PWSTR, PCWSTR};
-use core::ptr::{null_mut, null};
+use crate::libs::ntdll::types::{BYTE, DWORD, HANDLE, PCWSTR, PVOID, PWSTR, WORD};
 use alloc::vec::Vec;
-
+use core::ptr::{null, null_mut};
 
 const MAX_EVENT_ENTRIES: usize = 1024;
 
@@ -55,7 +52,8 @@ impl EventLogEntry {
     }
 }
 
-static mut EVENT_LOG: [EventLogEntry; MAX_EVENT_ENTRIES] = [EventLogEntry::new(); MAX_EVENT_ENTRIES];
+static mut EVENT_LOG: [EventLogEntry; MAX_EVENT_ENTRIES] =
+    [EventLogEntry::new(); MAX_EVENT_ENTRIES];
 static EVENT_LOG_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Copy, Clone)]
@@ -77,7 +75,11 @@ static mut EVENT_HANDLES: [EventSourceHandle; MAX_EVENT_HANDLES] = [EventSourceH
     in_use: false,
 }; MAX_EVENT_HANDLES];
 
-fn alloc_event_handle(source_name: &[u16], is_source: bool, access: DWORD) -> Option<HANDLE_EVENTLOG> {
+fn alloc_event_handle(
+    source_name: &[u16],
+    is_source: bool,
+    access: DWORD,
+) -> Option<HANDLE_EVENTLOG> {
     unsafe {
         for (i, entry) in EVENT_HANDLES.iter_mut().enumerate() {
             if !entry.in_use {
@@ -132,14 +134,6 @@ unsafe fn copy_wide_to_buffer(dest: &mut [u16], src: PCWSTR) {
     dest[i] = 0;
 }
 
-
-
-
-
-
-
-
-
 #[no_mangle]
 pub unsafe extern "C" fn ReadEventLogW(
     hEventLog: HANDLE_EVENTLOG,
@@ -169,7 +163,6 @@ pub unsafe extern "C" fn ReadEventLogW(
 
     0 // FALSE
 }
-
 
 #[no_mangle]
 pub unsafe extern "C" fn GetNumberOfEventLogRecords(
@@ -229,10 +222,7 @@ pub unsafe extern "C" fn BackupEventLogW(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn NotifyChangeEventLog(
-    hEventLog: HANDLE_EVENTLOG,
-    hEvent: HANDLE,
-) -> LONG {
+pub unsafe extern "C" fn NotifyChangeEventLog(hEventLog: HANDLE_EVENTLOG, hEvent: HANDLE) -> LONG {
     if get_event_handle(hEventLog).is_none() {
         return 0; // FALSE
     }

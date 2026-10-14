@@ -30,10 +30,10 @@ extern crate alloc;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use crate::ps::process::Process;
-use crate::ke::sync::Spinlock;
-use crate::registry::cm;
 use crate::boot_println;
+use crate::ke::sync::Spinlock;
+use crate::ps::process::Process;
+use crate::registry::cm;
 
 // ============================================================================
 // Constants
@@ -98,8 +98,8 @@ pub struct Session {
     pub id: SessionId,
     pub flags: u32,
     pub process_count: u32,
-    pub desktop: *mut (),  // Desktop object
-    pub window_station: *mut (),  // Window station object
+    pub desktop: *mut (),        // Desktop object
+    pub window_station: *mut (), // Window station object
 }
 
 impl Session {
@@ -234,7 +234,7 @@ pub fn init() {
 /// Start SMSS main function
 #[allow(dead_code)]
 pub fn start_smss(_process: &Process) {
-    // kprintln!("[SMSS] Starting Session Manager...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] Starting Session Manager...");
 
     // Phase 1: Initialize system
     phase1_initialize();
@@ -248,12 +248,12 @@ pub fn start_smss(_process: &Process) {
     // Phase 4: Start winlogon
     phase4_start_winlogon();
 
-    // kprintln!("[SMSS] Session Manager started successfully")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] Session Manager started successfully");
 }
 
 /// Phase 1: Initialize SMSS
 fn phase1_initialize() {
-    // kprintln!("[SMSS] Phase 1: Initializing...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] Phase 1: Initializing...");
 
     // Initialize environment variables
     init_environment();
@@ -277,23 +277,23 @@ fn phase1_initialize() {
     // Initialize the object manager namespace
     initialize_object_manager();
 
-    // kprintln!("[SMSS] Phase 1 complete")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] Phase 1 complete");
 }
 
 /// Initialize system page table entries (system PTE pool)
 fn initialize_system_ptes() {
-    // kprintln!("[SMSS] Initializing System PTEs...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] Initializing System PTEs...");
 
     // System PTEs are used for mapping kernel-mode data structures
     // In a full implementation, this would allocate and initialize
     // the system PTE pool used for driver I/O buffers, MDL allocations, etc.
 
-    // kprintln!("[SMSS]   System PTE pool initialized")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS]   System PTE pool initialized");
 }
 
 /// Initialize the object manager namespace
 fn initialize_object_manager() {
-    // kprintln!("[SMSS] Initializing Object Manager namespace...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] Initializing Object Manager namespace...");
 
     // Create root directories
     let _ = crate::ob::create_directory(b"\\");
@@ -302,12 +302,12 @@ fn initialize_object_manager() {
     let _ = crate::ob::create_directory(b"\\Sessions");
     let _ = crate::ob::create_directory(b"\\BaseNamedObjects");
 
-    // kprintln!("[SMSS]   Object Manager root directories created")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS]   Object Manager root directories created");
 }
 
 /// Phase 2: Create sessions
 fn phase2_create_sessions() {
-    // kprintln!("[SMSS] Phase 2: Creating sessions...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] Phase 2: Creating sessions...");
 
     // Create Session 0 (system session)
     create_session_0();
@@ -321,15 +321,15 @@ fn phase2_create_sessions() {
     // Process pending renames from Windows Update
     process_pending_renames();
 
-    // kprintln!("[SMSS] Phase 2 complete: {} sessions created", {  // kprintln disabled (memcpy crash workaround)
-//         let st = SMSS_STATE.lock();
-//         st.session_count
-//     });
+    // kprintln!("[SMSS] Phase 2 complete: {} sessions created", {
+    //         let st = SMSS_STATE.lock();
+    //         st.session_count
+    //     });
 }
 
 /// Create DOS drive letter symbolic links
 fn create_dos_drive_links() {
-    // kprintln!("[SMSS] Creating DOS drive links...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] Creating DOS drive links...");
 
     // Create symbolic links: \??\C: -> \Device\HarddiskVolume1
     let drive_links: [(u8, &str); 4] = [
@@ -341,15 +341,15 @@ fn create_dos_drive_links() {
 
     for (drive, target) in drive_links.iter() {
         let _ = (drive, target);
-        // kprintln!("[SMSS]   {}: -> {}", *drive as char, target)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[SMSS]   {}: -> {}", *drive as char, target);
     }
 
-    // kprintln!("[SMSS] DOS drive links created")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] DOS drive links created");
 }
 
 /// Phase 3: Start subsystems
 fn phase3_start_subsystems() {
-    // kprintln!("[SMSS] Phase 3: Starting subsystems...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] Phase 3: Starting subsystems...");
 
     // Start CSRSS for Session 0
     start_csrss(0);
@@ -363,12 +363,12 @@ fn phase3_start_subsystems() {
     // Start the Windows subsystem (DxgK.sys for graphics)
     start_graphics_subsystem();
 
-    // kprintln!("[SMSS] Phase 3 complete: All subsystems started")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] Phase 3 complete: All subsystems started");
 }
 
 /// Start the graphics subsystem
 fn start_graphics_subsystem() {
-    // kprintln!("[SMSS] Starting graphics subsystem...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] Starting graphics subsystem...");
 
     // The graphics subsystem includes:
     // - win32k.sys (kernel-mode graphics driver)
@@ -376,12 +376,12 @@ fn start_graphics_subsystem() {
     // - dxgddi.sys (display driver interface)
 
     // In a full implementation, this would load and initialize these drivers
-    // kprintln!("[SMSS]   Graphics subsystem loaded")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS]   Graphics subsystem loaded");
 }
 
 /// Phase 4: Start winlogon
 fn phase4_start_winlogon() {
-    // kprintln!("[SMSS] Phase 4: Starting winlogon...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] Phase 4: Starting winlogon...");
 
     // Execute boot commands from registry
     execute_boot_commands();
@@ -398,46 +398,46 @@ fn phase4_start_winlogon() {
     // Create default desktop
     create_default_desktop();
 
-    // kprintln!("[SMSS] Phase 4 complete: Login subsystem ready")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] Phase 4 complete: Login subsystem ready");
 }
 
 /// Create WinSta0 (interactive window station)
 fn create_winsta0() {
-    // kprintln!("[SMSS] Creating WinSta0...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] Creating WinSta0...");
 
     // WinSta0 is the interactive window station for the first user session
     // All interactive processes attach to WinSta0
 
-    // kprintln!("[SMSS]   WinSta0 created")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS]   WinSta0 created");
 }
 
 /// Create default desktop
 fn create_default_desktop() {
-    // kprintln!("[SMSS] Creating default desktop...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] Creating default desktop...");
 
     // DefaultDesktop is the default desktop on WinSta0
     // This is where logon UI and user shell appear
 
-    // kprintln!("[SMSS]   Default desktop created")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS]   Default desktop created");
 }
 
 /// Initialize environment variables
 fn init_environment() {
-    // kprintln!("[SMSS] Initializing environment...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] Initializing environment...");
 
     // System root
     let system_root = "\\??\\C:\\Windows";
-    // kprintln!("[SMSS]   SystemRoot: {}", system_root)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS]   SystemRoot: {}", system_root);
     let _ = system_root;
 
     // System drive
     let system_drive = b'C';
-    // kprintln!("[SMSS]   SystemDrive: {}:", system_drive as char)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS]   SystemDrive: {}:", system_drive as char);
     let _ = system_drive;
 
     // PATH variable
     let path = "C:\\Windows\\System32;C:\\Windows";
-    // kprintln!("[SMSS]   PATH: {}", path)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS]   PATH: {}", path);
     let _ = path;
 
     // Process environment variables
@@ -452,10 +452,10 @@ fn init_environment() {
 
     for (key, value) in env_vars.iter() {
         let _ = (key, value);
-        // kprintln!("[SMSS]   {}={}", key, value)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[SMSS]   {}={}", key, value);
     }
 
-    // kprintln!("[SMSS] Environment initialized: {} variables", env_vars.len())  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] Environment initialized: {} variables", env_vars.len());
 }
 
 /// Initialize TEB (Thread Environment Block) for a user-mode thread.
@@ -538,8 +538,8 @@ pub fn init_teb(ethread: *mut crate::ps::thread::Ethread) -> *mut crate::ps::thr
         // Store TEB pointer in ETHREAD.
         (*ethread).kthread.teb = teb;
 
-        // kprintln!("[SMSS] TEB initialized: va=0x{:016x} for PID {} TID {}",  // kprintln disabled (memcpy crash workaround)
-//             teb_va, (*teb).client_id.unique_process, (*teb).client_id.unique_thread);
+        // kprintln!("[SMSS] TEB initialized: va=0x{:016x} for PID {} TID {}",
+        //             teb_va, (*teb).client_id.unique_process, (*teb).client_id.unique_thread);
 
         teb
     }
@@ -631,8 +631,8 @@ pub fn init_peb(process: *mut crate::ps::process::Eprocess) -> *mut crate::ps::p
         // Set PEB pointer in EPROCESS.
         (*process).Peb = peb;
 
-        // kprintln!("[SMSS] PEB initialized: va=0x{:016x} for PID {}",  // kprintln disabled (memcpy crash workaround)
-//             peb_va, (*process).unique_process_id);
+        // kprintln!("[SMSS] PEB initialized: va=0x{:016x} for PID {}",
+        //             peb_va, (*process).unique_process_id);
 
         // Allocate and initialise RTL_USER_PROCESS_PARAMETERS.
         let params = init_process_parameters(process);
@@ -649,7 +649,9 @@ pub fn init_peb(process: *mut crate::ps::process::Eprocess) -> *mut crate::ps::p
 ///
 /// This structure holds the command line, environment, and directory
 /// information for the process.
-fn init_process_parameters(process: *mut crate::ps::process::Eprocess) -> *mut crate::ps::process::RtlUserProcessParameters {
+fn init_process_parameters(
+    process: *mut crate::ps::process::Eprocess,
+) -> *mut crate::ps::process::RtlUserProcessParameters {
     const PARAMS_BASE: u64 = 0x0000_7FFF_D000;
     const PARAMS_SIZE: u64 = 0x1000;
 
@@ -680,7 +682,8 @@ fn init_process_parameters(process: *mut crate::ps::process::Eprocess) -> *mut c
         let params = params_va as *mut crate::ps::process::RtlUserProcessParameters;
         core::ptr::write_bytes(params as *mut u8, 0, PARAMS_SIZE as usize);
 
-        (*params).maximum_length = core::mem::size_of::<crate::ps::process::RtlUserProcessParameters>() as u32;
+        (*params).maximum_length =
+            core::mem::size_of::<crate::ps::process::RtlUserProcessParameters>() as u32;
         (*params).initial_flags = 0x200000; // NORMAL_PRIORITY_CLASS
 
         // Current directory: C:\
@@ -718,7 +721,7 @@ fn init_process_parameters(process: *mut crate::ps::process::Eprocess) -> *mut c
         (*params).command_line.MaximumLength = 0;
         (*params).command_line.Buffer = core::ptr::null_mut();
 
-        // kprintln!("[SMSS] RTL_USER_PROCESS_PARAMETERS initialized: va=0x{:016x}", params_va)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[SMSS] RTL_USER_PROCESS_PARAMETERS initialized: va=0x{:016x}", params_va);
 
         params
     }
@@ -733,12 +736,12 @@ pub fn init_teb_peb_for_boot_processes() {
         if pid == 0 || pid == 4 {
             return true;
         }
-        
+
         // Check if process pointer is valid
         if process.is_null() {
             return true;
         }
-        
+
         // Check PML4 validity before trying to initialize PEB
         let pml4 = unsafe { (*process).page_table_pml4 };
         if pml4 == 0 {
@@ -757,7 +760,7 @@ pub fn init_teb_peb_for_boot_processes() {
 ///
 /// Creates DOS device symbolic links in the object manager namespace
 fn init_dos_devices() {
-    // kprintln!("[SMSS] Initializing DOS devices...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] Initializing DOS devices...");
 
     // Create device objects in \Device\.
     let devices: [(&[u8], &[u8]); 4] = [
@@ -786,26 +789,26 @@ fn init_dos_devices() {
         let link_h = crate::ob::create_object(parent, name, crate::ob::ObType::SymbolicLink, 0);
         if !link_h.is_null() {
             let _ = crate::ob::insert_object(parent, link_h);
-            // kprintln!("[SMSS]   Created \\??\\{:?}", core::str::from_utf8(name).unwrap_or("?"))  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[SMSS]   Created \\??\\{:?}", core::str::from_utf8(name).unwrap_or("?"));
         }
     }
 
-    // kprintln!("[SMSS] DOS devices initialized: {} devices, {} symbolic links", devices.len(), dos_links.len())  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] DOS devices initialized: {} devices, {} symbolic links", devices.len(), dos_links.len());
 }
 
 /// Initialize system root
 fn init_system_root() {
-    // kprintln!("[SMSS] Setting system root...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] Setting system root...");
 
     // Query system root from registry or use default
     let mut system_root = [0u16; 260];
-    
+
     // Try to get SystemRoot from the SOFTWARE hive
     if let Some(root_str) = cm::query_string(
         "\\Registry\\Machine\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
-        "SystemRoot"
+        "SystemRoot",
     ) {
-        // kprintln!("[SMSS] SystemRoot from registry: {}", root_str)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[SMSS] SystemRoot from registry: {}", root_str);
         let root_u16: Vec<u16> = root_str.encode_utf16().collect();
         let len = root_u16.len().min(259);
         system_root[..len].copy_from_slice(&root_u16[..len]);
@@ -832,7 +835,10 @@ pub fn create_session_0() {
 
     // Create the session in SMSS state
     let mut st = SMSS_STATE.lock();
-    if st.create_session(session_id, SessionFlags::SYSTEM).is_none() {
+    if st
+        .create_session(session_id, SessionFlags::SYSTEM)
+        .is_none()
+    {
         // Failed to create session, continue anyway
     }
     drop(st);
@@ -852,7 +858,7 @@ pub fn create_session_0() {
 
 /// Create Session 1 (user session)
 pub fn create_session_1() {
-    // kprintln!("[SMSS] Creating Session 1...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] Creating Session 1...");
 
     // Session 1 is the first user session
     // Console users and remote desktop sessions run here
@@ -863,7 +869,7 @@ pub fn create_session_1() {
     let mut st = SMSS_STATE.lock();
     if let Some(slot) = st.create_session(session_id, SessionFlags::CONSOLE) {
         let _ = slot;
-        // kprintln!("[SMSS]   Session 1 created in slot {}", slot)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[SMSS]   Session 1 created in slot {}", slot);
     }
 
     // Create session object in object manager
@@ -877,10 +883,10 @@ pub fn create_session_1() {
     if !session_obj.is_null() {
         let handle = crate::ob::insert_object(b"\\Sessions", session_obj);
         let _ = handle;
-        // kprintln!("[SMSS]   Session 1 object created with handle {}", handle)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[SMSS]   Session 1 object created with handle {}", handle);
     }
 
-    // kprintln!("[SMSS] Session 1 created successfully")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] Session 1 created successfully");
 }
 
 /// Start CSRSS for a session
@@ -893,12 +899,15 @@ fn start_csrss(session_id: u32) {
         session_id,
         PID_CSRSS + (session_id as u64 * 0x100),
     );
-    boot_println!("[SMSS] start_csrss({}) load_and_create_process returned", session_id);
+    boot_println!(
+        "[SMSS] start_csrss({}) load_and_create_process returned",
+        session_id
+    );
 }
 
 /// Start Win32 subsystem
 fn start_win32k() {
-    // kprintln!("[SMSS] Starting Win32 subsystem...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] Starting Win32 subsystem...");
 
     // win32k is gated to x86_64 at the module level
     // (`libs/win32k.rs` is itself x86_64-only); the cfg here is
@@ -912,19 +921,19 @@ fn start_win32k() {
         crate::libs::win32k::register_services();
     }
 
-    // kprintln!("[SMSS]   win32k.sys initialized")  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("[SMSS]   Shadow SSDT services registered")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS]   win32k.sys initialized");
+    // kprintln!("[SMSS]   Shadow SSDT services registered");
 
     // Create session Win32 state for each session
     let session_count = SMSS_STATE.lock().session_count;
     for session_id in 0..session_count {
         let _ = session_id;
-        // kprintln!("[SMSS]   Initializing Win32 state for Session {}", session_id)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[SMSS]   Initializing Win32 state for Session {}", session_id);
         // In a full implementation, this would create the session's
         // win32k.sys state (desktop heap, user process, etc.)
     }
 
-    // kprintln!("[SMSS] Win32 subsystem started successfully")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] Win32 subsystem started successfully");
 }
 
 /// Start wininit process
@@ -947,8 +956,11 @@ pub fn start_wininit() {
         PID_WININIT,
     ) {
         Ok(result) => {
-            boot_println!("[SMSS]   wininit.exe loaded: PID=0x{:x}, entry=0x{:016x}",
-                         result.pid, result.entry_point);
+            boot_println!(
+                "[SMSS]   wininit.exe loaded: PID=0x{:x}, entry=0x{:016x}",
+                result.pid,
+                result.entry_point
+            );
         }
         Err(e) => {
             boot_println!("[SMSS]   Warning: Failed to load wininit.exe: {:?}", e);
@@ -976,8 +988,11 @@ pub fn start_winlogon() {
         PID_WINLOGON,
     ) {
         Ok(result) => {
-            boot_println!("[SMSS]   winlogon.exe loaded: PID=0x{:x}, entry=0x{:016x}",
-                         result.pid, result.entry_point);
+            boot_println!(
+                "[SMSS]   winlogon.exe loaded: PID=0x{:x}, entry=0x{:016x}",
+                result.pid,
+                result.entry_point
+            );
         }
         Err(e) => {
             boot_println!("[SMSS]   Warning: Failed to load winlogon.exe: {:?}", e);
@@ -988,29 +1003,27 @@ pub fn start_winlogon() {
 /// Execute boot execute commands
 #[allow(dead_code)]
 fn execute_boot_commands() {
-    // kprintln!("[SMSS] Executing boot commands...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] Executing boot commands...");
 
     // Execute commands from HKLM\System\CurrentControlSet\Control\Session Manager\BootExecute
     // Typical value: "autocheck autochk *"
     // This runs before winlogon
 
-    let boot_commands = [
-        "autocheck autochk *",
-    ];
+    let boot_commands = ["autocheck autochk *"];
 
     for cmd in boot_commands.iter() {
         let _ = cmd;
-        // kprintln!("[SMSS]   Executing: {}", cmd)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[SMSS]   Executing: {}", cmd);
         // In a full implementation, this would spawn the command
     }
 
-    // kprintln!("[SMSS] Boot commands executed")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] Boot commands executed");
 }
 
 /// Handle pending file rename operations
 #[allow(dead_code)]
 fn process_pending_renames() {
-    // kprintln!("[SMSS] Processing pending file renames...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] Processing pending file renames...");
 
     // Process PendingFileRenameOperations from registry
     // This handles file operations that couldn't complete during boot
@@ -1019,13 +1032,13 @@ fn process_pending_renames() {
     // from HKLM\System\CurrentControlSet\Control\Session Manager
     // and execute the queued rename/move operations
 
-    // kprintln!("[SMSS] Pending renames processed")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] Pending renames processed");
 }
 
 /// Create paging file
 #[allow(dead_code)]
 fn create_paging_files() {
-    // kprintln!("[SMSS] Creating paging files...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] Creating paging files...");
 
     // Query from HKLM\System\CurrentControlSet\Control\Session Manager\Memory Management
     // Create pagefile.sys as specified
@@ -1041,7 +1054,7 @@ fn query_registry_value(_key: &[u16], _value: &[u16], _output: &mut [u8]) -> usi
 /// SMSS main entry
 pub fn smss_main() -> ! {
     // Main SMSS loop
-    // kprintln!("[SMSS] SMSS main loop entered")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[SMSS] SMSS main loop entered");
 
     // Wait for termination
     loop {
@@ -1061,7 +1074,7 @@ pub fn init_win32_subsystem() {
     // - GDI (Graphics Device Interface)
     // - USER (Window Manager)
     // - Display driver interface
-    
+
     // Create CSRSS process for each session
     // CSRSS manages:
     // - Console windows
@@ -1107,8 +1120,11 @@ pub fn start_services() {
         PID_SERVICES,
     ) {
         Ok(result) => {
-            boot_println!("[SMSS]   services.exe loaded: PID=0x{:x}, entry=0x{:016x}", 
-                         result.pid, result.entry_point);
+            boot_println!(
+                "[SMSS]   services.exe loaded: PID=0x{:x}, entry=0x{:016x}",
+                result.pid,
+                result.entry_point
+            );
         }
         Err(e) => {
             boot_println!("[SMSS]   Warning: Failed to load services.exe: {:?}", e);
@@ -1131,8 +1147,11 @@ pub fn start_lsass() {
         PID_LSASS,
     ) {
         Ok(result) => {
-            boot_println!("[SMSS]   lsass.exe loaded: PID=0x{:x}, entry=0x{:016x}", 
-                         result.pid, result.entry_point);
+            boot_println!(
+                "[SMSS]   lsass.exe loaded: PID=0x{:x}, entry=0x{:016x}",
+                result.pid,
+                result.entry_point
+            );
         }
         Err(e) => {
             boot_println!("[SMSS]   Warning: Failed to load lsass.exe: {:?}", e);
@@ -1157,9 +1176,9 @@ pub fn start_lsass() {
 /// 6. The state and config structs are well-sized (system_root
 ///    is 260 UTF-16 code units, which matches MAX_PATH).
 pub fn smoke_test() -> bool {
-    // kprintln!("  [SMSS SMOKE] running session-manager smoke test...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [SMSS SMOKE] running session-manager smoke test...");
     init();
-    // kprintln!("  [SMSS SMOKE OK] session-manager initialized")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [SMSS SMOKE OK] session-manager initialized");
     true
 }
 
@@ -1200,8 +1219,13 @@ pub fn load_and_create_process(
     session_id: u32,
     base_pid: u64,
 ) -> Result<SystemExeLoadResult, ExeLoadError> {
-    boot_println!("[SMSS] load_and_create_process: path={} name={} session={} pid=0x{:x}",
-                  disk_path, process_name, session_id, base_pid);
+    boot_println!(
+        "[SMSS] load_and_create_process: path={} name={} session={} pid=0x{:x}",
+        disk_path,
+        process_name,
+        session_id,
+        base_pid
+    );
 
     // Step 1: Read the PE file from the mounted disk
     boot_println!("[SMSS] Reading PE from disk...");
@@ -1209,7 +1233,7 @@ pub fn load_and_create_process(
         Some(data) => {
             boot_println!("[SMSS] pe_data acquired, len={}", data.len());
             data
-        },
+        }
         None => {
             boot_println!("[SMSS] Failed to read {} from disk", disk_path);
             return Err(ExeLoadError::FileNotFound);
@@ -1227,8 +1251,11 @@ pub fn load_and_create_process(
         }
     };
 
-    boot_println!("[SMSS] PE parsed: entry=0x{:016x}, base=0x{:016x}", 
-                  entry_point, image_base);
+    boot_println!(
+        "[SMSS] PE parsed: entry=0x{:016x}, base=0x{:016x}",
+        entry_point,
+        image_base
+    );
 
     // Step 3: Create the process using the PE data
     let pid = base_pid;
@@ -1240,7 +1267,11 @@ pub fn load_and_create_process(
         }
     };
 
-    boot_println!("[SMSS] Created process {} with PID 0x{:x}", process_name, pid);
+    boot_println!(
+        "[SMSS] Created process {} with PID 0x{:x}",
+        process_name,
+        pid
+    );
 
     // Step 4: Get PML4 for loading PE
     let pml4_phys = unsafe { (*process).pml4_phys };
@@ -1254,8 +1285,13 @@ pub fn load_and_create_process(
     {
         match crate::loader::load_into_user_address_space(pml4_phys, &pe_data) {
             Some(mapping) => {
-                boot_println!("[SMSS] Loaded PE into process {}: base=0x{:x} entry=0x{:x} size=0x{:x}",
-                             process_name, mapping.image_base, mapping.entry_point, mapping.image_size);
+                boot_println!(
+                    "[SMSS] Loaded PE into process {}: base=0x{:x} entry=0x{:x} size=0x{:x}",
+                    process_name,
+                    mapping.image_base,
+                    mapping.entry_point,
+                    mapping.image_size
+                );
                 boot_println!("[SMSS] About to set user_rip...");
                 // Update process with the correct entry point and image base from the loader
                 unsafe {
@@ -1267,7 +1303,10 @@ pub fn load_and_create_process(
                 boot_println!("[SMSS] Building Ok result...");
             }
             None => {
-                boot_println!("[SMSS] Failed to load PE into address space for {}", process_name);
+                boot_println!(
+                    "[SMSS] Failed to load PE into address space for {}",
+                    process_name
+                );
                 return Err(ExeLoadError::LoadFailed);
             }
         }
@@ -1355,12 +1394,20 @@ pub fn spawn_user_subsystem(user_path_ptr: *const u8) -> Option<u64> {
 
     match load_and_create_process(&disk_path, &leaf, /*session_id*/ 1, pid) {
         Ok(r) => {
-            boot_println!("[SMSS] spawn_user_subsystem: launched {} pid=0x{:x} entry=0x{:x}",
-                          leaf, r.pid, r.entry_point);
+            boot_println!(
+                "[SMSS] spawn_user_subsystem: launched {} pid=0x{:x} entry=0x{:x}",
+                leaf,
+                r.pid,
+                r.entry_point
+            );
             Some(r.pid)
         }
         Err(e) => {
-            boot_println!("[SMSS] spawn_user_subsystem: failed to load {}: {:?}", leaf, e);
+            boot_println!(
+                "[SMSS] spawn_user_subsystem: failed to load {}: {:?}",
+                leaf,
+                e
+            );
             None
         }
     }
@@ -1419,13 +1466,13 @@ pub fn read_pe_from_disk(path: &str) -> Option<core::mem::ManuallyDrop<Vec<u8>>>
 /// Read PE from FAT32 filesystem
 fn read_pe_from_fat32(path: &str) -> Option<core::mem::ManuallyDrop<Vec<u8>>> {
     boot_println!("[SMSS] read_pe_from_fat32: path={}", path);
-    
+
     // Check if FAT32 is mounted
     if !crate::fs::fat32::is_mounted() {
         boot_println!("[SMSS] FAT32 not mounted");
         return None;
     }
-    
+
     // IMPORTANT: Set the active partition to System partition (C:) before
     // performing any file operations. The mount step restores the active
     // partition to None/ESP, but read_sector needs to know which partition
@@ -1434,20 +1481,29 @@ fn read_pe_from_fat32(path: &str) -> Option<core::mem::ManuallyDrop<Vec<u8>>> {
     if let Some(sys_base) = crate::fs::sys_mirror_address() {
         crate::fs::set_active_partition_ramdisk(Some(sys_base));
     }
-    
+
     let result = read_pe_from_fat32_impl(path);
-    
+
     // Restore previous active partition
     crate::fs::set_active_partition_ramdisk(prev);
-    
+
     result
 }
 
 /// Internal implementation of FAT32 PE reading
 fn read_pe_from_fat32_impl(path: &str) -> Option<core::mem::ManuallyDrop<Vec<u8>>> {
-    boot_println!("[SMSS] FAT32: is_mounted={}", crate::fs::fat32::is_mounted());
-    boot_println!("[SMSS] FAT32: active_ramdisk={:?}", crate::fs::active_partition_ramdisk().is_some());
-    boot_println!("[SMSS] FAT32: active_size={:?}", crate::fs::active_partition_size());
+    boot_println!(
+        "[SMSS] FAT32: is_mounted={}",
+        crate::fs::fat32::is_mounted()
+    );
+    boot_println!(
+        "[SMSS] FAT32: active_ramdisk={:?}",
+        crate::fs::active_partition_ramdisk().is_some()
+    );
+    boot_println!(
+        "[SMSS] FAT32: active_size={:?}",
+        crate::fs::active_partition_size()
+    );
     let fs = crate::fs::fat32::get_mounted_fs()?;
     boot_println!("[SMSS] FAT32: fs={:?}", fs as *const _);
     boot_println!("[SMSS] FAT32: root_cluster={}", fs.fat_data.root_cluster);
@@ -1458,12 +1514,12 @@ fn read_pe_from_fat32_impl(path: &str) -> Option<core::mem::ManuallyDrop<Vec<u8>
     let cluster = entry.first_cluster();
     let size = entry.file_size() as usize;
     boot_println!("[SMSS] FAT32: found cluster={} size={}", cluster, size);
-    
+
     if size == 0 || size > 1024 * 1024 {
         boot_println!("[SMSS] FAT32: size out of range");
         return None;
     }
-    
+
     // For files larger than the PEB-loaded limit (8 KB), truncate
     // the read to what fits in the loader's small buffer window.
     // The PE builder emits fixed-size stubs, so reading the first
@@ -1636,12 +1692,12 @@ fn read_pe_from_ntfs_impl(
         }
         let remaining = total_size - read_total;
         let chunk_cap = remaining.min(8192);
-        let buf_slice = unsafe {
-            core::slice::from_raw_parts_mut(ptr.add(read_total), chunk_cap)
-        };
+        let buf_slice = unsafe { core::slice::from_raw_parts_mut(ptr.add(read_total), chunk_cap) };
         boot_println!(
             "[SMSS] NTFS: read_file iter {} offset=0x{:x} cap={}",
-            read_count, read_total, chunk_cap
+            read_count,
+            read_total,
+            chunk_cap
         );
         match crate::fs::ntfs::read_file(fs, &mut handle, buf_slice) {
             Ok(0) => {
@@ -1733,110 +1789,134 @@ fn parse_pe_headers(pe_data: &[u8]) -> Option<(u64, u64)> {
     if pe_data.len() < 64 {
         return None;
     }
-    
+
     // Check for MZ signature
-    if pe_data[0] != 0x4D || pe_data[1] != 0x5A { // 'MZ'
+    if pe_data[0] != 0x4D || pe_data[1] != 0x5A {
+        // 'MZ'
         return None;
     }
-    
+
     // Get PE header offset from DOS header at offset 0x3C
-    let pe_offset = u32::from_le_bytes([pe_data[0x3C], pe_data[0x3D], pe_data[0x3E], pe_data[0x3F]]) as usize;
-    
+    let pe_offset =
+        u32::from_le_bytes([pe_data[0x3C], pe_data[0x3D], pe_data[0x3E], pe_data[0x3F]]) as usize;
+
     // Verify PE header
     if pe_data.len() < pe_offset + 6 {
         return None;
     }
-    
+
     // Check for PE signature
-    if pe_data[pe_offset] != 0x50 || pe_data[pe_offset + 1] != 0x45 || 
-       pe_data[pe_offset + 2] != 0x00 || pe_data[pe_offset + 3] != 0x00 {
+    if pe_data[pe_offset] != 0x50
+        || pe_data[pe_offset + 1] != 0x45
+        || pe_data[pe_offset + 2] != 0x00
+        || pe_data[pe_offset + 3] != 0x00
+    {
         return None;
     }
-    
+
     // Get COFF header
     let coff_offset = pe_offset + 4;
     if pe_data.len() < coff_offset + 20 {
         return None;
     }
-    
+
     let machine = u16::from_le_bytes([pe_data[coff_offset], pe_data[coff_offset + 1]]);
-    
+
     // Verify machine type (x64 = 0x8664, x86 = 0x014c)
     #[cfg(target_arch = "x86_64")]
     let expected_machine = 0x8664u16;
     #[cfg(not(target_arch = "x86_64"))]
     let expected_machine = 0x014cu16;
-    
+
     if machine != expected_machine {
         return None;
     }
-    
+
     let num_sections = u16::from_le_bytes([pe_data[coff_offset + 2], pe_data[coff_offset + 3]]);
-    let optional_header_size = u16::from_le_bytes([pe_data[coff_offset + 16], pe_data[coff_offset + 17]]);
-    
+    let optional_header_size =
+        u16::from_le_bytes([pe_data[coff_offset + 16], pe_data[coff_offset + 17]]);
+
     // Get optional header to find entry point and image base
     let optional_offset = coff_offset + 20;
-    
+
     // Check for PE32+ (64-bit) or PE32 (32-bit)
     if pe_data.len() < optional_offset + 2 {
         return None;
     }
-    
+
     let magic = u16::from_le_bytes([pe_data[optional_offset], pe_data[optional_offset + 1]]);
-    
+
     let entry_point: u64;
     let image_base: u64;
-    
-    if magic == 0x20B { // PE32+ (64-bit)
+
+    if magic == 0x20B {
+        // PE32+ (64-bit)
         if pe_data.len() < optional_offset + 24 {
             return None;
         }
         entry_point = u64::from_le_bytes([
-            pe_data[optional_offset + 16], pe_data[optional_offset + 17],
-            pe_data[optional_offset + 18], pe_data[optional_offset + 19],
-            pe_data[optional_offset + 20], pe_data[optional_offset + 21],
-            pe_data[optional_offset + 22], pe_data[optional_offset + 23],
+            pe_data[optional_offset + 16],
+            pe_data[optional_offset + 17],
+            pe_data[optional_offset + 18],
+            pe_data[optional_offset + 19],
+            pe_data[optional_offset + 20],
+            pe_data[optional_offset + 21],
+            pe_data[optional_offset + 22],
+            pe_data[optional_offset + 23],
         ]);
         image_base = u64::from_le_bytes([
-            pe_data[optional_offset + 24], pe_data[optional_offset + 25],
-            pe_data[optional_offset + 26], pe_data[optional_offset + 27],
-            pe_data[optional_offset + 28], pe_data[optional_offset + 29],
-            pe_data[optional_offset + 30], pe_data[optional_offset + 31],
+            pe_data[optional_offset + 24],
+            pe_data[optional_offset + 25],
+            pe_data[optional_offset + 26],
+            pe_data[optional_offset + 27],
+            pe_data[optional_offset + 28],
+            pe_data[optional_offset + 29],
+            pe_data[optional_offset + 30],
+            pe_data[optional_offset + 31],
         ]);
-    } else if magic == 0x10B { // PE32 (32-bit)
+    } else if magic == 0x10B {
+        // PE32 (32-bit)
         if pe_data.len() < optional_offset + 28 {
             return None;
         }
         entry_point = u32::from_le_bytes([
-            pe_data[optional_offset + 16], pe_data[optional_offset + 17],
-            pe_data[optional_offset + 18], pe_data[optional_offset + 19],
+            pe_data[optional_offset + 16],
+            pe_data[optional_offset + 17],
+            pe_data[optional_offset + 18],
+            pe_data[optional_offset + 19],
         ]) as u64;
         image_base = u32::from_le_bytes([
-            pe_data[optional_offset + 28], pe_data[optional_offset + 29],
-            pe_data[optional_offset + 30], pe_data[optional_offset + 31],
+            pe_data[optional_offset + 28],
+            pe_data[optional_offset + 29],
+            pe_data[optional_offset + 30],
+            pe_data[optional_offset + 31],
         ]) as u64;
     } else {
         return None;
     }
-    
+
     Some((entry_point, image_base))
 }
 
 /// Load a PE image into a process's address space.
-fn load_pe_into_process(process: *mut crate::ps::process::Eprocess, pe_data: &[u8], preferred_base: u64) -> Result<(), ExeLoadError> {
+fn load_pe_into_process(
+    process: *mut crate::ps::process::Eprocess,
+    pe_data: &[u8],
+    preferred_base: u64,
+) -> Result<(), ExeLoadError> {
     // Get the process's PML4
     let pml4_phys = unsafe { (*process).page_table_pml4 };
     if pml4_phys == 0 {
         return Err(ExeLoadError::LoadFailed);
     }
-    
+
     // Parse the PE to get sections
     let sections = parse_pe_sections(pe_data);
     if sections.is_none() {
         return Err(ExeLoadError::InvalidPe);
     }
     let sections = sections.unwrap();
-    
+
     // Calculate total image size
     let mut image_size: u64 = 0;
     for section in &sections {
@@ -1845,30 +1925,35 @@ fn load_pe_into_process(process: *mut crate::ps::process::Eprocess, pe_data: &[u
             image_size = end;
         }
     }
-    
+
     // Allocate memory for the image at the preferred base or nearby
     let image_base = allocate_image_memory(process, preferred_base, image_size)?;
-    
-    boot_println!("[SMSS] Allocated {} bytes at 0x{:016x}", image_size, image_base);
-    
+
+    boot_println!(
+        "[SMSS] Allocated {} bytes at 0x{:016x}",
+        image_size,
+        image_base
+    );
+
     // Map the PE sections into memory
     for section in &sections {
         let dest_addr = image_base + section.virtual_address as u64;
-        let src_data = &pe_data[section.raw_offset as usize..section.raw_offset as usize + section.raw_size as usize];
-        
+        let src_data = &pe_data
+            [section.raw_offset as usize..section.raw_offset as usize + section.raw_size as usize];
+
         // Map a page for this section if not already mapped
         let page_start = dest_addr & !0xFFF;
         let page_end = (dest_addr + section.virtual_size as u64 + 0xFFF) & !0xFFF;
-        
+
         for page_addr in (page_start..page_end).step_by(0x1000) {
             let _ = map_user_page(process, page_addr);
         }
-        
+
         // Copy section data
         unsafe {
             let dest_ptr = dest_addr as *mut u8;
             dest_ptr.copy_from_nonoverlapping(src_data.as_ptr(), src_data.len());
-            
+
             // Zero-fill remaining bytes if virtual size > raw size
             if section.virtual_size > section.raw_size {
                 let zero_start = src_data.len();
@@ -1877,12 +1962,12 @@ fn load_pe_into_process(process: *mut crate::ps::process::Eprocess, pe_data: &[u
             }
         }
     }
-    
+
     // Update process's image base
     unsafe {
         (*process).user_image_base = image_base;
     }
-    
+
     Ok(())
 }
 
@@ -1897,47 +1982,58 @@ struct PeSection {
 /// Parse section headers from PE file.
 fn parse_pe_sections(pe_data: &[u8]) -> Option<Vec<PeSection>> {
     // Get PE header offset
-    let pe_offset = u32::from_le_bytes([pe_data[0x3C], pe_data[0x3D], pe_data[0x3E], pe_data[0x3F]]) as usize;
+    let pe_offset =
+        u32::from_le_bytes([pe_data[0x3C], pe_data[0x3D], pe_data[0x3E], pe_data[0x3F]]) as usize;
     let coff_offset = pe_offset + 4;
-    
-    let num_sections = u16::from_le_bytes([pe_data[coff_offset + 2], pe_data[coff_offset + 3]]) as usize;
-    let optional_header_size = u16::from_le_bytes([pe_data[coff_offset + 16], pe_data[coff_offset + 17]]) as usize;
-    
+
+    let num_sections =
+        u16::from_le_bytes([pe_data[coff_offset + 2], pe_data[coff_offset + 3]]) as usize;
+    let optional_header_size =
+        u16::from_le_bytes([pe_data[coff_offset + 16], pe_data[coff_offset + 17]]) as usize;
+
     let section_table_offset = coff_offset + 20 + optional_header_size as usize;
-    
+
     let mut sections = Vec::new();
-    
+
     for i in 0..num_sections {
         let section_offset = section_table_offset + i * 40;
         if pe_data.len() < section_offset + 40 {
             return None;
         }
-        
+
         let mut name = [0u8; 8];
         name.copy_from_slice(&pe_data[section_offset..section_offset + 8]);
-        
+
         let virtual_size = u32::from_le_bytes([
-            pe_data[section_offset + 8], pe_data[section_offset + 9],
-            pe_data[section_offset + 10], pe_data[section_offset + 11],
+            pe_data[section_offset + 8],
+            pe_data[section_offset + 9],
+            pe_data[section_offset + 10],
+            pe_data[section_offset + 11],
         ]);
         let virtual_address = u32::from_le_bytes([
-            pe_data[section_offset + 12], pe_data[section_offset + 13],
-            pe_data[section_offset + 14], pe_data[section_offset + 15],
+            pe_data[section_offset + 12],
+            pe_data[section_offset + 13],
+            pe_data[section_offset + 14],
+            pe_data[section_offset + 15],
         ]);
         let raw_size = u32::from_le_bytes([
-            pe_data[section_offset + 16], pe_data[section_offset + 17],
-            pe_data[section_offset + 18], pe_data[section_offset + 19],
+            pe_data[section_offset + 16],
+            pe_data[section_offset + 17],
+            pe_data[section_offset + 18],
+            pe_data[section_offset + 19],
         ]);
         let raw_offset = u32::from_le_bytes([
-            pe_data[section_offset + 20], pe_data[section_offset + 21],
-            pe_data[section_offset + 22], pe_data[section_offset + 23],
+            pe_data[section_offset + 20],
+            pe_data[section_offset + 21],
+            pe_data[section_offset + 22],
+            pe_data[section_offset + 23],
         ]);
-        
+
         // Skip empty sections
         if virtual_size == 0 && raw_size == 0 {
             continue;
         }
-        
+
         sections.push(PeSection {
             virtual_address,
             virtual_size,
@@ -1945,51 +2041,58 @@ fn parse_pe_sections(pe_data: &[u8]) -> Option<Vec<PeSection>> {
             raw_size,
         });
     }
-    
+
     Some(sections)
 }
 
 /// Allocate memory for a PE image in a process's address space.
-fn allocate_image_memory(process: *mut crate::ps::process::Eprocess, preferred_base: u64, size: u64) -> Result<u64, ExeLoadError> {
+fn allocate_image_memory(
+    process: *mut crate::ps::process::Eprocess,
+    preferred_base: u64,
+    size: u64,
+) -> Result<u64, ExeLoadError> {
     let pml4_phys = unsafe { (*process).page_table_pml4 };
     if pml4_phys == 0 {
         return Err(ExeLoadError::LoadFailed);
     }
-    
+
     // For simplicity, we'll use a fixed allocation region
     // In a full implementation, we'd search for a suitable region
     let mut base = preferred_base;
-    
+
     // Round up to page boundary
     base = (base + 0xFFF) & !0xFFF;
-    
+
     // Allocate pages for the image
     let num_pages = ((size + 0xFFF) / 0x1000) as usize;
-    
+
     for i in 0..num_pages {
         let page_addr = base + (i as u64 * 0x1000);
         if map_user_page(process, page_addr).is_err() {
             return Err(ExeLoadError::LoadFailed);
         }
     }
-    
+
     Ok(base)
 }
 
 /// Map a user-mode page into a process's address space.
-fn map_user_page(process: *mut crate::ps::process::Eprocess, virtual_addr: u64) -> Result<(), ExeLoadError> {
+fn map_user_page(
+    process: *mut crate::ps::process::Eprocess,
+    virtual_addr: u64,
+) -> Result<(), ExeLoadError> {
     let pml4_phys = unsafe { (*process).page_table_pml4 };
     if pml4_phys == 0 {
         return Err(ExeLoadError::LoadFailed);
     }
-    
+
     // Allocate a physical page
     let result = crate::mm::vas::alloc_zeroed_page_for_vas();
     if result.is_none() {
         return Err(ExeLoadError::LoadFailed);
     }
     let phys_addr = result.unwrap();
-    
+
     // Map the page with RW and US (user/supervisor) flags
     let status = crate::mm::vas::map_page_in_pml4(
         pml4_phys,
@@ -1997,11 +2100,11 @@ fn map_user_page(process: *mut crate::ps::process::Eprocess, virtual_addr: u64) 
         phys_addr,
         crate::mm::vas::PTE_RW | crate::mm::vas::PTE_US,
     );
-    
+
     if status != crate::mm::vas::MmStatus::Ok {
         return Err(ExeLoadError::LoadFailed);
     }
-    
+
     Ok(())
 }
 
@@ -2026,16 +2129,16 @@ pub fn start_boot_sequence() {
     boot_println!("[BOOT] ============================================");
     boot_println!("[BOOT] Windows 7 Boot Sequence (No Desktop Mode)");
     boot_println!("[BOOT] ============================================");
-    
+
     // Phase 1: Initialize SMSS
     boot_println!("[BOOT] Phase 1: Initializing Session Manager...");
     phase1_initialize();
-    
+
     // Phase 2: Create sessions
     boot_println!("[BOOT] Phase 2: Creating Sessions...");
     phase2_create_sessions();
-    
-// Phase 3: Start subsystems (CSRSS)
+
+    // Phase 3: Start subsystems (CSRSS)
     boot_println!("[BOOT] Phase 3: Starting Subsystems...");
     phase3_start_subsystems();
 
@@ -2108,15 +2211,21 @@ fn start_boot_subsystems() {
     // Start CSRSS for Session 0
     boot_println!("[BOOT]   Starting CSRSS for Session 0...");
     if let Err(e) = launch_csrss(0) {
-        boot_println!("[BOOT]   Warning: Failed to launch CSRSS Session 0: {:?}", e);
+        boot_println!(
+            "[BOOT]   Warning: Failed to launch CSRSS Session 0: {:?}",
+            e
+        );
     } else {
         boot_println!("[BOOT]   CSRSS Session 0 started successfully");
     }
-    
+
     // Start CSRSS for Session 1
     boot_println!("[BOOT]   Starting CSRSS for Session 1...");
     if let Err(e) = launch_csrss(1) {
-        boot_println!("[BOOT]   Warning: Failed to launch CSRSS Session 1: {:?}", e);
+        boot_println!(
+            "[BOOT]   Warning: Failed to launch CSRSS Session 1: {:?}",
+            e
+        );
     } else {
         boot_println!("[BOOT]   CSRSS Session 1 started successfully");
     }
@@ -2168,9 +2277,13 @@ fn phase5_start_logon() {
 /// Launch CSRSS for a specific session.
 fn launch_csrss(session_id: u32) -> Result<SystemExeLoadResult, ExeLoadError> {
     let disk_path = "C:\\Windows\\System32\\csrss.exe";
-    let process_name = if session_id == 0 { "csrss.exe (Session 0)" } else { "csrss.exe (Session 1)" };
+    let process_name = if session_id == 0 {
+        "csrss.exe (Session 0)"
+    } else {
+        "csrss.exe (Session 1)"
+    };
     let base_pid = PID_CSRSS + (session_id as u64 * 0x100);
-    
+
     load_and_create_process(disk_path, process_name, session_id, base_pid)
 }
 
@@ -2179,9 +2292,9 @@ fn launch_wininit() -> Result<SystemExeLoadResult, ExeLoadError> {
     let disk_path = "C:\\Windows\\System32\\wininit.exe";
     let process_name = "wininit.exe";
     let base_pid = PID_WININIT;
-    
+
     let result = load_and_create_process(disk_path, process_name, SESSION_0, base_pid)?;
-    
+
     // WinInit should start services.exe and lsass.exe
     // For now, we'll also start them directly from SMSS
     boot_println!("[BOOT]   Launching services.exe from wininit...");
@@ -2190,14 +2303,14 @@ fn launch_wininit() -> Result<SystemExeLoadResult, ExeLoadError> {
     } else {
         boot_println!("[BOOT]   services.exe started successfully");
     }
-    
+
     boot_println!("[BOOT]   Launching lsass.exe from wininit...");
     if let Err(e) = launch_lsass() {
         boot_println!("[BOOT]   Warning: Failed to launch lsass.exe: {:?}", e);
     } else {
         boot_println!("[BOOT]   lsass.exe started successfully");
     }
-    
+
     Ok(result)
 }
 
@@ -2292,7 +2405,9 @@ fn launch_cmd_shell() {
                         let user_rsp = unsafe { (*proc_ptr).user_rsp };
                         boot_println!("[BOOT]   Dispatching cmd.exe into Ring 3 (PML4=0x{:x} RIP=0x{:x} RSP=0x{:x})",
                                       pml4_phys, user_rip, user_rsp);
-                        crate::arch::x86_64::user_entry::enter_first_user_thread(pml4_phys, user_rip, user_rsp);
+                        crate::arch::x86_64::user_entry::enter_first_user_thread(
+                            pml4_phys, user_rip, user_rsp,
+                        );
                     } else {
                         boot_println!("[BOOT]   ERROR: cmd.exe main_thread is NULL");
                     }
@@ -2311,7 +2426,7 @@ fn launch_cmd_shell() {
         Err(e) => {
             boot_println!("[BOOT]   ERROR: Failed to launch cmd.exe: {:?}", e);
             boot_println!("[BOOT]   System cannot proceed without a shell!");
-            
+
             // Fallback: Show error message
             show_boot_error();
         }
@@ -2320,23 +2435,27 @@ fn launch_cmd_shell() {
 
 /// Transfer control to a user-mode process.
 fn transfer_to_user_mode(pid: u64, entry_point: u64) {
-    boot_println!("[BOOT] Transferring control to PID 0x{:x} at entry 0x{:016x}", pid, entry_point);
-    
+    boot_println!(
+        "[BOOT] Transferring control to PID 0x{:x} at entry 0x{:016x}",
+        pid,
+        entry_point
+    );
+
     // Find the process
     if let Some(process) = crate::ps::process::get_by_pid(pid) {
         let process_ptr = process as *mut crate::ps::process::Eprocess;
         boot_println!("[BOOT] Found process, preparing user-mode transition...");
-        
+
         // The main thread should already be created by create_user_process
         let main_thread = unsafe { (*process_ptr).main_thread };
         if !main_thread.is_null() {
             boot_println!("[BOOT] Main thread found, setting up user-mode context...");
-            
+
             // Set the entry point in the process
             unsafe {
                 (*process_ptr).user_rip = entry_point;
             }
-            
+
             boot_println!("[BOOT] User-mode entry point set to 0x{:016x}", entry_point);
         } else {
             boot_println!("[BOOT] WARNING: No main thread found for PID 0x{:x}", pid);
@@ -2344,7 +2463,7 @@ fn transfer_to_user_mode(pid: u64, entry_point: u64) {
     } else {
         boot_println!("[BOOT] ERROR: Process PID 0x{:x} not found!", pid);
     }
-    
+
     // Signal that CMD is ready
     boot_println!("");
     boot_println!("============================================");

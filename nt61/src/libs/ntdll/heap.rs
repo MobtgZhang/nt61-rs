@@ -18,8 +18,8 @@
 //! (`mm::pool::NonPaged`) — the user-mode side of this kernel
 //! never executes, so the heap is shared with the kernel itself.
 
-use super::types::{HANDLE, NTSTATUS, PVOID};
 use super::status::{STATUS_INVALID_PARAMETER, STATUS_SUCCESS};
+use super::types::{HANDLE, NTSTATUS, PVOID};
 use crate::ke::sync::Spinlock;
 use crate::mm::pool::{self, PoolType};
 use core::ptr;
@@ -79,15 +79,37 @@ struct HeapState {
     bytes_free: u64,
     alloc_count: u64,
     free_count: u64,
+    /// Range of block headers this heap has handed out. Caller pointers are
+    /// checked against it before the block header is read, so an arbitrary
+    /// pointer can never cause a read of memory the heap does not own.
+    lowest_block: *mut BlockHeader,
+    highest_block_end: *mut BlockHeader,
+}
+
+impl HeapState {
+    unsafe fn owns_block(&self, hdr: *mut BlockHeader) -> bool {
+        if self.lowest_block.is_null() {
+            return false;
+        }
+        hdr >= self.lowest_block && hdr < self.highest_block_end
+    }
+
+    unsafe fn record_block(&mut self, hdr: *mut BlockHeader, size: usize) {
+        if self.lowest_block.is_null() || hdr < self.lowest_block {
+            self.lowest_block = hdr;
+        }
+        let end = (hdr as *mut u8).add(HEADER_SIZE + size) as *mut BlockHeader;
+        if end > self.highest_block_end {
+            self.highest_block_end = end;
+        }
+    }
 }
 
 unsafe impl Send for Heap {}
 unsafe impl Sync for Heap {}
 
-const POOL_TAG_HEAP: u32 = (b'R' as u32) << 24
-    | (b't' as u32) << 16
-    | (b'l' as u32) << 8
-    | (b'H' as u32);
+const POOL_TAG_HEAP: u32 =
+    (b'R' as u32) << 24 | (b't' as u32) << 16 | (b'l' as u32) << 8 | (b'H' as u32);
 
 /// The default process heap. The NT 6.1 SDK's `GetProcessHeap`
 /// returns a pointer to this structure.
@@ -117,6 +139,8 @@ pub unsafe extern "C" fn RtlCreateHeap(
         bytes_free: 0,
         alloc_count: 0,
         free_count: 0,
+        lowest_block: ptr::null_mut(),
+        highest_block_end: ptr::null_mut(),
     });
     h as HANDLE
 }
@@ -124,7 +148,9 @@ pub unsafe extern "C" fn RtlCreateHeap(
 /// `RtlDestroyHeap` — release a heap previously returned by
 /// `RtlCreateHeap`.
 pub unsafe extern "C" fn RtlDestroyHeap(heap_handle: HANDLE) -> HANDLE {
-    if heap_handle.is_null() { return ptr::null_mut(); }
+    if heap_handle.is_null() {
+        return ptr::null_mut();
+    }
     let h = heap_handle as *mut Heap;
     // Free all live blocks first.
     let mut state = (*h).lock.lock();
@@ -149,10 +175,7 @@ pub unsafe extern "C" fn RtlGetProcessHeap() -> HANDLE {
 /// `RtlGetProcessHeaps` — fill the caller-supplied array with
 /// heap handles and return the number written. We only have one
 /// heap (the default process heap), so this is always 1.
-pub unsafe extern "C" fn RtlGetProcessHeaps(
-    count: u32,
-    process_heaps: *mut HANDLE,
-) -> u32 {
+pub unsafe extern "C" fn RtlGetProcessHeaps(count: u32, process_heaps: *mut HANDLE) -> u32 {
     if process_heaps.is_null() || count == 0 {
         return 0;
     }
@@ -162,7 +185,9 @@ pub unsafe extern "C" fn RtlGetProcessHeaps(
 }
 
 unsafe fn ensure_process_heap() {
-    if PROCESS_HEAP_INIT.load(Ordering::Acquire) != 0 { return; }
+    if PROCESS_HEAP_INIT.load(Ordering::Acquire) != 0 {
+        return;
+    }
     let h = RtlCreateHeap(0, ptr::null_mut(), 0, 0, ptr::null_mut(), ptr::null_mut());
     PROCESS_HEAP = h as *mut Heap;
     PROCESS_HEAP_INIT.store(1, Ordering::Release);
@@ -170,14 +195,14 @@ unsafe fn ensure_process_heap() {
 
 /// `RtlAllocateHeap` — allocate `size` bytes from `heap`. If
 /// `heap` is NULL the default process heap is used.
-pub unsafe extern "C" fn RtlAllocateHeap(
-    heap_handle: HANDLE,
-    flags: u32,
-    size: usize,
-) -> PVOID {
-    if size == 0 { return ptr::null_mut(); }
+pub unsafe extern "C" fn RtlAllocateHeap(heap_handle: HANDLE, flags: u32, size: usize) -> PVOID {
+    if size == 0 {
+        return ptr::null_mut();
+    }
     let heap = resolve_heap(heap_handle);
-    if heap.is_null() { return ptr::null_mut(); }
+    if heap.is_null() {
+        return ptr::null_mut();
+    }
 
     let real_size = align_up(size, HEAP_ALIGN);
     let total = HEADER_SIZE + real_size;
@@ -214,18 +239,24 @@ pub unsafe extern "C" fn RtlAllocateHeap(
 
     // Allocate a fresh block from the pool.
     let raw = pool::allocate(PoolType::NonPaged, total);
-    if raw.is_null() { return ptr::null_mut(); }
+    if raw.is_null() {
+        return ptr::null_mut();
+    }
     let hdr = raw as *mut BlockHeader;
-    ptr::write(hdr, BlockHeader {
-        magic: HEADER_MAGIC_ALLOC,
-        size: real_size as u32,
-        owner: heap,
-        next_free: ptr::null_mut(),
-    });
+    ptr::write(
+        hdr,
+        BlockHeader {
+            magic: HEADER_MAGIC_ALLOC,
+            size: real_size as u32,
+            owner: heap,
+            next_free: ptr::null_mut(),
+        },
+    );
     {
         let mut state = (*heap).lock.lock();
         state.bytes_in_use = state.bytes_in_use.saturating_add(real_size as u64);
         state.alloc_count = state.alloc_count.wrapping_add(1);
+        state.record_block(hdr, real_size);
     }
     let p = (*hdr).user_ptr();
     if flags & HEAP_ZERO_MEMORY != 0 {
@@ -236,15 +267,22 @@ pub unsafe extern "C" fn RtlAllocateHeap(
 
 /// `RtlFreeHeap` — release a block back to `heap`. Returns
 /// TRUE on success, FALSE if the block is invalid.
-pub unsafe extern "C" fn RtlFreeHeap(
-    heap_handle: HANDLE,
-    _flags: u32,
-    heap_pointer: PVOID,
-) -> u8 {
-    if heap_pointer.is_null() { return 1; }
+pub unsafe extern "C" fn RtlFreeHeap(heap_handle: HANDLE, _flags: u32, heap_pointer: PVOID) -> u8 {
+    if heap_pointer.is_null() {
+        return 1;
+    }
     let heap = resolve_heap(heap_handle);
-    if heap.is_null() { return 0; }
+    if heap.is_null() {
+        return 0;
+    }
     let hdr = BlockHeader::from_user(heap_pointer as *mut u8);
+    // The pointer is caller-supplied and untrusted: it may point anywhere in
+    // the address space. Validate that it belongs to this heap before reading
+    // its header, otherwise the read itself can fault on unmapped memory.
+    let mut state = (*heap).lock.lock();
+    if !state.owns_block(hdr) {
+        return 0;
+    }
     if (*hdr).magic != HEADER_MAGIC_ALLOC {
         return 0;
     }
@@ -252,7 +290,6 @@ pub unsafe extern "C" fn RtlFreeHeap(
         // Allow it but log; mismatched owner usually means wrong
         // heap was passed in.
     }
-    let mut state = (*heap).lock.lock();
     (*hdr).magic = HEADER_MAGIC_FREE;
     (*hdr).next_free = state.free_list;
     state.free_list = hdr;
@@ -274,8 +311,16 @@ pub unsafe extern "C" fn RtlReAllocateHeap(
         return RtlAllocateHeap(heap_handle, flags, size);
     }
     let heap = resolve_heap(heap_handle);
-    if heap.is_null() { return ptr::null_mut(); }
+    if heap.is_null() {
+        return ptr::null_mut();
+    }
     let old_hdr = BlockHeader::from_user(memory as *mut u8);
+    {
+        let state = (*heap).lock.lock();
+        if !state.owns_block(old_hdr) {
+            return ptr::null_mut();
+        }
+    }
     if (*old_hdr).magic != HEADER_MAGIC_ALLOC {
         return ptr::null_mut();
     }
@@ -288,21 +333,35 @@ pub unsafe extern "C" fn RtlReAllocateHeap(
         return memory;
     }
     let new_p = RtlAllocateHeap(heap_handle, flags, size);
-    if new_p.is_null() { return ptr::null_mut(); }
-    core::ptr::copy_nonoverlapping(memory as *const u8, new_p as *mut u8, (*old_hdr).size as usize);
+    if new_p.is_null() {
+        return ptr::null_mut();
+    }
+    core::ptr::copy_nonoverlapping(
+        memory as *const u8,
+        new_p as *mut u8,
+        (*old_hdr).size as usize,
+    );
     RtlFreeHeap(heap_handle, 0, memory);
     new_p
 }
 
 /// `RtlSizeHeap` — return the allocated size of `memory`.
-pub unsafe extern "C" fn RtlSizeHeap(
-    _heap_handle: HANDLE,
-    _flags: u32,
-    memory: PVOID,
-) -> usize {
-    if memory.is_null() { return 0; }
+pub unsafe extern "C" fn RtlSizeHeap(heap_handle: HANDLE, _flags: u32, memory: PVOID) -> usize {
+    if memory.is_null() {
+        return 0;
+    }
+    let heap = resolve_heap(heap_handle);
+    if heap.is_null() {
+        return 0;
+    }
     let hdr = BlockHeader::from_user(memory as *mut u8);
-    if (*hdr).magic != HEADER_MAGIC_ALLOC { return 0; }
+    let state = (*heap).lock.lock();
+    if !state.owns_block(hdr) {
+        return 0;
+    }
+    if (*hdr).magic != HEADER_MAGIC_ALLOC {
+        return 0;
+    }
     (*hdr).size as usize
 }
 
@@ -316,7 +375,9 @@ pub struct HeapStats {
 
 pub unsafe fn heap_stats(heap_handle: HANDLE) -> Option<HeapStats> {
     let heap = resolve_heap(heap_handle);
-    if heap.is_null() { return None; }
+    if heap.is_null() {
+        return None;
+    }
     let s = (*heap).lock.lock();
     Some(HeapStats {
         bytes_in_use: s.bytes_in_use,
@@ -351,8 +412,23 @@ fn align_up(v: usize, a: usize) -> usize {
 mod tests {
     use super::*;
 
+    // The pool is backed by the kernel heap, which is only configured by
+    // `kernel_main`. Tests must configure a region themselves so the heap
+    // paths are actually exercised instead of silently skipped.
+    fn ensure_test_heap() {
+        if crate::mm::heap::KERNEL_HEAP.configured_region().is_some() {
+            return;
+        }
+        static mut TEST_HEAP: [u8; 256 * 1024] = [0u8; 256 * 1024];
+        unsafe {
+            let base = core::ptr::addr_of_mut!(TEST_HEAP) as *mut u8;
+            crate::mm::heap::KERNEL_HEAP.configure(base, TEST_HEAP.len());
+        }
+    }
+
     #[test]
     fn round_trip() {
+        ensure_test_heap();
         unsafe {
             let h = RtlCreateHeap(0, ptr::null_mut(), 0, 0, ptr::null_mut(), ptr::null_mut());
             assert!(!h.is_null());
@@ -367,13 +443,18 @@ mod tests {
 
     #[test]
     fn zero_memory_flag() {
+        ensure_test_heap();
         unsafe {
             let h = RtlCreateHeap(0, ptr::null_mut(), 0, 0, ptr::null_mut(), ptr::null_mut());
+            assert!(!h.is_null());
             let p = RtlAllocateHeap(h, HEAP_ZERO_MEMORY, 64) as *mut u8;
             assert!(!p.is_null());
             let mut all_zero = true;
             for i in 0..64 {
-                if *p.add(i) != 0 { all_zero = false; break; }
+                if *p.add(i) != 0 {
+                    all_zero = false;
+                    break;
+                }
             }
             assert!(all_zero);
             RtlFreeHeap(h, 0, p as PVOID);
@@ -383,10 +464,14 @@ mod tests {
 
     #[test]
     fn realloc_preserves() {
+        ensure_test_heap();
         unsafe {
             let h = RtlCreateHeap(0, ptr::null_mut(), 0, 0, ptr::null_mut(), ptr::null_mut());
+            assert!(!h.is_null());
             let p = RtlAllocateHeap(h, 0, 32) as *mut u8;
-            for i in 0..32 { *p.add(i) = (i as u8).wrapping_mul(3); }
+            for i in 0..32 {
+                *p.add(i) = (i as u8).wrapping_mul(3);
+            }
             let q = RtlReAllocateHeap(h, 0, p as PVOID, 200) as *mut u8;
             assert!(!q.is_null());
             for i in 0..32 {

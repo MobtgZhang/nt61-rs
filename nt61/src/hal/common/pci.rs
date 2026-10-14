@@ -24,7 +24,7 @@
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
-// use crate::kprintln;  // kprintln disabled (memcpy crash workaround)
+// use crate::kprintln;
 use crate::hal::common::acpi::get_mcfg_base;
 
 // =====================================================================
@@ -43,9 +43,9 @@ pub fn setup_config_method() {
         // q35 exposes bus 0 in the first MCFG entry.
         // With 1 MiB per bus, 64 buses give 64 MiB coverage.
         PCI_ECAM_BASE.store(mcfg_base, Ordering::Release);
-//         // // kprintln!("  [PCI] ECAM base=0x{:016x} (64-bus window)", mcfg_base)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+    //         // // kprintln!("  [PCI] ECAM base=0x{:016x} (64-bus window)", mcfg_base);
     } else {
-//         // // kprintln!("  [PCI] MCFG not found — using legacy CF8/CFC")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+        //         // // kprintln!("  [PCI] MCFG not found — using legacy CF8/CFC");
     }
 }
 
@@ -81,7 +81,9 @@ fn mmio_read32(addr: u64) -> u32 {
 
 /// Write 32-bit to MMIO (aligned).
 fn mmio_write32(addr: u64, value: u32) {
-    unsafe { core::ptr::write_volatile(addr as *mut u32, value); }
+    unsafe {
+        core::ptr::write_volatile(addr as *mut u32, value);
+    }
 }
 
 /// Read a 32-bit value via ECAM MMIO.
@@ -114,7 +116,7 @@ fn legacy_addr(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
         | ((bus as u32) << 16)
         | (((dev & 0x1F) as u32) << 11)
         | (((func & 0x07) as u32) << 8)
-        | (((offset & 0xFC) as u32))
+        | ((offset & 0xFC) as u32)
 }
 
 /// Read 32-bit via legacy CF8/CFC.
@@ -123,7 +125,11 @@ fn legacy_read32(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
     WRITE_PORT_ULONG(PCI_CONFIG_ADDRESS, legacy_addr(bus, dev, func, offset));
     let value = READ_PORT_ULONG(PCI_CONFIG_DATA);
     let shift = (offset & 0x03) * 8;
-    if shift != 0 { value >> shift } else { value }
+    if shift != 0 {
+        value >> shift
+    } else {
+        value
+    }
 }
 
 /// Write 32-bit via legacy CF8/CFC.
@@ -145,9 +151,13 @@ pub fn read_config_dword(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
         ecam_read32(bus, dev, func, offset)
     } else {
         #[cfg(target_arch = "x86_64")]
-        { legacy_read32(bus, dev, func, offset) }
+        {
+            legacy_read32(bus, dev, func, offset)
+        }
         #[cfg(not(target_arch = "x86_64"))]
-        { 0 }
+        {
+            0
+        }
     }
 }
 
@@ -157,9 +167,13 @@ pub fn write_config_dword(bus: u8, dev: u8, func: u8, offset: u8, value: u32) {
         ecam_write32(bus, dev, func, offset, value)
     } else {
         #[cfg(target_arch = "x86_64")]
-        { legacy_write32(bus, dev, func, offset, value); }
+        {
+            legacy_write32(bus, dev, func, offset, value);
+        }
         #[cfg(not(target_arch = "x86_64"))]
-        { let _ = (bus, dev, func, offset, value); }
+        {
+            let _ = (bus, dev, func, offset, value);
+        }
     }
 }
 
@@ -177,7 +191,13 @@ pub fn write_config_word(bus: u8, dev: u8, func: u8, offset: u8, value: u16) {
     let shift = (offset & 0x02) * 8;
     let mask = !(0xFFFFu32 << shift);
     let dword = read_config_dword(bus, dev, func, aligned);
-    write_config_dword(bus, dev, func, aligned, (dword & mask) | (((value as u32) & 0xFFFF) << shift));
+    write_config_dword(
+        bus,
+        dev,
+        func,
+        aligned,
+        (dword & mask) | (((value as u32) & 0xFFFF) << shift),
+    );
 }
 
 /// Read an 8-bit value from PCI configuration space.
@@ -194,7 +214,13 @@ pub fn write_config_byte(bus: u8, dev: u8, func: u8, offset: u8, value: u8) {
     let shift = (offset & 0x03) * 8;
     let mask = !(0xFFu32 << shift);
     let dword = read_config_dword(bus, dev, func, aligned);
-    write_config_dword(bus, dev, func, aligned, (dword & mask) | (((value as u32) & 0xFF) << shift));
+    write_config_dword(
+        bus,
+        dev,
+        func,
+        aligned,
+        (dword & mask) | (((value as u32) & 0xFF) << shift),
+    );
 }
 
 // =====================================================================
@@ -286,17 +312,19 @@ fn record_config_read(bus: u8, dev: u8, func: u8, reg: u8) {
 }
 
 fn record_ecam_addr(addr: u64) {
-    unsafe { PCI_LAST_ECAM_ADDR = addr; }
+    unsafe {
+        PCI_LAST_ECAM_ADDR = addr;
+    }
 }
 
 /// Dump the last access info to the serial console.
 pub fn dump_last_access() {
     {
         if use_ecam() {
-//             // // kprintln!("  [PCI] last ECAM addr=0x{:016x}", PCI_LAST_ECAM_ADDR)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+            //             // // kprintln!("  [PCI] last ECAM addr=0x{:016x}", PCI_LAST_ECAM_ADDR);
         } else {
-//             // // kprintln!("  [PCI] last access: bus={} dev={} func={} reg=0x{:02x}",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                      PCI_LAST_BUS, PCI_LAST_DEV, PCI_LAST_FUNC, PCI_LAST_REG);
+            //             // // kprintln!("  [PCI] last access: bus={} dev={} func={} reg=0x{:02x}",
+            // //                      PCI_LAST_BUS, PCI_LAST_DEV, PCI_LAST_FUNC, PCI_LAST_REG);
         }
     }
 }
@@ -390,18 +418,15 @@ pub fn enumerate() -> &'static [PciDevice] {
         };
     }
 
-//     // // kprintln!("  [PCI] starting enumeration... (scanning bus 0)")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+    //     // // kprintln!("  [PCI] starting enumeration... (scanning bus 0)");
     enumerate_recursive();
     let count = unsafe { PCI_CACHE_COUNT };
-//     // // kprintln!("  [PCI] enumeration complete: {} device(s) found", count)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+    //     // // kprintln!("  [PCI] enumeration complete: {} device(s) found", count);
 
     unsafe {
         PCI_CACHE_COUNT = count;
         PCI_CACHE_VALID = true;
-        core::slice::from_raw_parts(
-            PCI_DEVICE_CACHE.as_ptr() as *const PciDevice,
-            count,
-        )
+        core::slice::from_raw_parts(PCI_DEVICE_CACHE.as_ptr() as *const PciDevice, count)
     }
 }
 
@@ -426,7 +451,9 @@ pub fn get_device(bus: u8, device: u8, function: u8) -> Option<PciDevice> {
 
 /// Read a BAR (Base Address Register).
 pub fn read_bar(dev: &PciDevice, index: u8) -> u64 {
-    if index >= 6 { return 0; }
+    if index >= 6 {
+        return 0;
+    }
     let off = 0x10 + (index as u8) * 4;
     let raw = read_config_dword(dev.bus, dev.device, dev.function, off);
     if raw & 1 == 0 {
@@ -465,11 +492,11 @@ pub fn init() {
     // Verify the ISA bridge is reachable.
     let isa_bridge = read_config_dword(0, 31, 0, 0);
     record_config_read(0, 31, 0, 0);
-//     // // kprintln!("  [PCI] ISA bridge id=0x{:08x}", isa_bridge)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+    //     // // kprintln!("  [PCI] ISA bridge id=0x{:08x}", isa_bridge);
     if isa_bridge != 0xFFFF_FFFF {
-//         // // kprintln!("  [PCI] PCI subsystem ready")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+        //         // // kprintln!("  [PCI] PCI subsystem ready");
     } else {
-//         // // kprintln!("  [PCI] WARNING: ISA bridge not found on bus 0")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);  // kprintln disabled (memcpy crash workaround)
+        //         // // kprintln!("  [PCI] WARNING: ISA bridge not found on bus 0");
     }
 }
 
@@ -477,7 +504,14 @@ pub fn init() {
 mod tests {
     #[test]
     fn address_encoding() {
+        // Standard PCI configuration address encoding:
+        //   bit 31:    enable
+        //   bits 16-23: bus number (8 bits)
+        //   bits 11-15: device number (5 bits)
+        //   bits 8-10:  function number (3 bits)
+        //   bits 2-7:   register offset (6 bits)
+        //   bits 0-1:   0
         let addr = (1u32 << 31) | (1u32 << 16) | (2u32 << 11) | (3u32 << 8);
-        assert_eq!(addr, 0x8001_0820);
+        assert_eq!(addr, 0x8001_1300);
     }
 }

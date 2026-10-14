@@ -5,7 +5,10 @@
 //! hazard: an attacker can supply an unmapped address (causing a kernel
 //! page fault and system-wide crash) or a kernel address (allowing
 //! writes into kernel memory through a user-mode call). SMAP/SMEP are
-//! not yet enforced in this build.
+//! enforced by `arch::x86_64::cpu_flags::enable_user_boundary_protection()`
+//! (CR4 bit 10 / bit 9), so a missed probe raises #PF instead of silently
+//! corrupting user memory. The software probe below is still required:
+//! SMAP makes the access fault, it does not validate the range.
 //!
 //! These helpers wrap `translate_virt` with a stricter policy: they
 //! reject pointers outside the canonical user range, reject overflow,
@@ -59,16 +62,7 @@ pub fn probe_user_read(ptr: u64, len: usize) -> Result<(), i32> {
     let end = ptr + len as u64;
     let mut va = ptr & !0xFFF;
     while va < end {
-        let phys = match vm::virt_to_phys(va) {
-            Some(p) => p,
-            None => return Err(STATUS_ACCESS_VIOLATION),
-        };
-        // Reject mappings that target the kernel half. The kernel image
-        // can be mapped into the user half via the self-map, but those
-        // pages have the user bit cleared in real NT. We use a strict
-        // rule: if the translation produces a physical page that is
-        // also exposed as kernel memory, treat it as kernel-only.
-        if kernel_alias(phys) {
+        if !page_is_user_accessible(va, false) {
             return Err(STATUS_ACCESS_VIOLATION);
         }
         va += 0x1000;
@@ -90,14 +84,7 @@ pub fn probe_user_write(ptr: u64, len: usize) -> Result<(), i32> {
     let end = ptr + len as u64;
     let mut va = ptr & !0xFFF;
     while va < end {
-        let phys = match vm::virt_to_phys(va) {
-            Some(p) => p,
-            None => return Err(STATUS_ACCESS_VIOLATION),
-        };
-        if kernel_alias(phys) {
-            return Err(STATUS_ACCESS_VIOLATION);
-        }
-        if !page_writable(va) {
+        if !page_is_user_accessible(va, true) {
             return Err(STATUS_ACCESS_VIOLATION);
         }
         va += 0x1000;
@@ -113,9 +100,7 @@ pub fn copy_from_user(dst: &mut [u8], src: u64) -> Result<(), i32> {
         return Ok(());
     }
     probe_user_read(src, len)?;
-    // SAFETY: probe_user_read verified the entire range is present and
-    // user-readable. The buffer is a fresh Rust slice; we never hold a
-    // reference to user memory longer than this call.
+    let _guard = crate::arch::x86_64::cpu_flags::SmapGuard::open();
     unsafe {
         core::ptr::copy_nonoverlapping(src as *const u8, dst.as_mut_ptr(), len);
     }
@@ -130,6 +115,7 @@ pub fn copy_to_user(dst: u64, src: &[u8]) -> Result<(), i32> {
         return Ok(());
     }
     probe_user_write(dst, len)?;
+    let _guard = crate::arch::x86_64::cpu_flags::SmapGuard::open();
     unsafe {
         core::ptr::copy_nonoverlapping(src.as_ptr(), dst as *mut u8, len);
     }
@@ -152,33 +138,64 @@ pub fn write_user<T: Copy>(dst: u64, src: &T) -> Result<(), i32> {
     copy_to_user(dst, bytes)
 }
 
-/// Treat a translated physical address as a kernel-only alias and
-/// reject it. The x86_64 self-map projects kernel PTEs into the user
-/// half so a translation that lands on a kernel physical page is a
-/// tell that the user pointer reached kernel memory. We only treat
-/// addresses that are actually inside the kernel virtual range as
-/// aliasing — pure user mappings of kernel data are still rare in
-/// our kernel but the conservative thing is to forbid them.
-fn kernel_alias(phys: u64) -> bool {
-    // We don't have a global "physical layout" export here. As a
-    // simple safety net, refuse any translation whose virtual address
-    // (the caller knew it as `va`) was in the kernel range. We can't
-    // reach that here, so return false in the conservative direction.
-    let _ = phys;
-    false
+/// Walk the four-level table and return the leaf entry covering `va`.
+fn leaf_entry(va: u64) -> Option<crate::mm::pte::MMPTE> {
+    let pml4_phys = crate::mm::vas::current_root();
+    if pml4_phys == 0 {
+        return None;
+    }
+
+    let pml4 = pml4_phys as *const crate::mm::pte::MMPTE;
+    let pml4e = unsafe { *pml4.add(((va >> 39) & 0x1FF) as usize) };
+    if !pml4e.is_hardware() || pml4e.large() {
+        return None;
+    }
+
+    let pdpt = pml4e.hardware_page_frame() as *const crate::mm::pte::MMPTE;
+    let pdpte = unsafe { *pdpt.add(((va >> 30) & 0x1FF) as usize) };
+    if !pdpte.is_hardware() {
+        return None;
+    }
+    if pdpte.large() {
+        return Some(pdpte);
+    }
+
+    let page_directory = pdpte.hardware_page_frame() as *const crate::mm::pte::MMPTE;
+    let pde = unsafe { *page_directory.add(((va >> 21) & 0x1FF) as usize) };
+    if !pde.is_hardware() {
+        return None;
+    }
+    if pde.large() {
+        return Some(pde);
+    }
+
+    let page_table = pde.hardware_page_frame() as *const crate::mm::pte::MMPTE;
+    let pte = unsafe { *page_table.add(((va >> 12) & 0x1FF) as usize) };
+    if !pte.is_hardware() {
+        return None;
+    }
+    Some(pte)
 }
 
-/// Return whether the leaf PTE covering `va` has the writable bit set.
-/// For now we only check the in-kernel self-map view: `va` is the
-/// already-probed virtual address. We re-derive the PTE by walking the
-/// table.
-fn page_writable(va: u64) -> bool {
-    // Use the public translate function as a primary check. If the
-    // page is mapped, treat it as writable (the kernel marks most
-    // user pages RW; the few read-only segments will still satisfy
-    // this and we accept the relaxed behavior to avoid deeper
-    // coupling to the per-arch PTE walker).
-    vm::virt_to_phys(va).is_some()
+/// True iff `va` is backed by a present, user-owned mapping.
+///
+/// The U/S bit is the part that matters: a mapping without it is
+/// kernel-only, so a "user pointer" that resolves through it is a
+/// kernel page reached through a user syscall. With CR4.SMAP set the CPU
+/// faults on such an access, but the probe still has to reject it so the
+/// caller gets an access violation rather than a fault on its own stack.
+fn page_is_user_accessible(va: u64, require_write: bool) -> bool {
+    let entry = match leaf_entry(va) {
+        Some(e) => e,
+        None => return false,
+    };
+    if !entry.user() {
+        return false;
+    }
+    if require_write && !entry.writable() {
+        return false;
+    }
+    true
 }
 
 /// Returns true iff `va` is in the kernel virtual address range.

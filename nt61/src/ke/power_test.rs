@@ -2,9 +2,8 @@
 //!
 //! Tests for kernel power management functionality.
 
+use crate::io::{PowerActionType, SystemPowerState};
 use crate::ke::power::*;
-use crate::io::{SystemPowerState, PowerActionType};
-
 
 /// Test CPU C-state transitions
 pub fn test_cpu_c_states() -> bool {
@@ -40,7 +39,12 @@ pub fn test_cpu_p_states() -> bool {
     for i in 0..info.p_state_count {
         if set_cpu_p_state(i) {
             let p_state = info.p_states[i as usize];
-            kprintln!("[POWER-TEST] P-state {}: {} MHz, {} mV", i, p_state.frequency, p_state.voltage);
+            kprintln!(
+                "[POWER-TEST] P-state {}: {} MHz, {} mV",
+                i,
+                p_state.frequency,
+                p_state.voltage
+            );
         }
     }
 
@@ -52,7 +56,6 @@ pub fn test_cpu_p_states() -> bool {
 }
 
 /// Test system power policy
-
 use crate::kprintln;
 pub fn test_power_policy() -> bool {
     kprintln!("[POWER-TEST] Testing system power policy...");
@@ -111,7 +114,7 @@ pub fn test_power_transition_validation() -> bool {
 
     for (from, to) in valid_transitions.iter() {
         kprintln!("[POWER-TEST] Testing transition {:?} -> {:?}", from, to);
-    // Note: We don't actually perform the transition, just validate);;
+        // Note: We don't actually perform the transition, just validate);;
     }
 
     kprintln!("[POWER-TEST] Power transition validation test passed");
@@ -163,7 +166,11 @@ pub fn run_all_tests() -> bool {
     }
 
     kprintln!("[POWER-TEST] ========================================");
-    kprintln!("[POWER-TEST] Test Results: {} passed, {} failed", passed, failed);
+    kprintln!(
+        "[POWER-TEST] Test Results: {} passed, {} failed",
+        passed,
+        failed
+    );
     kprintln!("[POWER-TEST] ========================================");
 
     failed == 0

@@ -8,23 +8,25 @@ use super::dc;
 use super::paint;
 use super::pen_brush;
 use super::text;
-use super::types::{FALSE, TRUE, Size, TextMetricW, Rect};
+use super::types::{Rect, Size, TextMetricW, FALSE, TRUE};
 use super::{alloc_gdi_handle, has_gdi_handle};
-use core::sync::atomic::{AtomicU32, Ordering};
 use core::ptr;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 static TEST_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 fn case(_name: &str, ok: bool) -> bool {
     let n = TEST_COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
     let _ = &n;
-    // crate::kprintln!("      [gdi32/{:02}] {} {}", n, if ok { "PASS" } else { "FAIL" }, name)  // kprintln disabled (memcpy crash workaround);
+    // crate::kprintln!("      [gdi32/{:02}] {} {}", n, if ok { "PASS" } else { "FAIL" }, name);
     ok
 }
 
 fn test_get_release_dc() -> bool {
     let h = dc::GetDC(core::ptr::null_mut());
-    if h == core::ptr::null_mut() { return false; }
+    if h == core::ptr::null_mut() {
+        return false;
+    }
     let r = dc::ReleaseDC(core::ptr::null_mut(), h);
     r == 1
 }
@@ -86,7 +88,9 @@ fn test_invalid_rect() -> bool {
 }
 
 fn test_create_font() -> bool {
-    let h = unsafe { pen_brush::CreateFontW(16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, core::ptr::null()) };
+    let h = unsafe {
+        pen_brush::CreateFontW(16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, core::ptr::null())
+    };
     h != core::ptr::null_mut()
 }
 
@@ -101,7 +105,7 @@ fn test_get_stock_object() -> bool {
 }
 
 pub fn smoke_test() -> bool {
-    // crate::kprintln!("    [gdi32] running smoke tests (stubbed)")  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("    [gdi32] all PASS (stubbed)")  // kprintln disabled (memcpy crash workaround);
+    // crate::kprintln!("    [gdi32] running smoke tests (stubbed)");
+    // crate::kprintln!("    [gdi32] all PASS (stubbed)");
     true
 }

@@ -42,7 +42,7 @@ use core::ptr;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::ke::sync::Spinlock;
-use crate::mm::pte::{pfn_to_phys, pfn_from_phys, PfnNumber, MMPTE};
+use crate::mm::pte::{pfn_from_phys, pfn_to_phys, PfnNumber, MMPTE};
 
 /// Page frame state — see module docs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,10 +93,17 @@ impl MMPFNSTATE {
         self as u32
     }
     pub fn is_standby(self) -> bool {
-        matches!(self,
-            MMPFNSTATE::Standby0 | MMPFNSTATE::Standby1 | MMPFNSTATE::Standby2
-            | MMPFNSTATE::Standby3 | MMPFNSTATE::Standby4 | MMPFNSTATE::Standby5
-            | MMPFNSTATE::Standby6 | MMPFNSTATE::Standby7)
+        matches!(
+            self,
+            MMPFNSTATE::Standby0
+                | MMPFNSTATE::Standby1
+                | MMPFNSTATE::Standby2
+                | MMPFNSTATE::Standby3
+                | MMPFNSTATE::Standby4
+                | MMPFNSTATE::Standby5
+                | MMPFNSTATE::Standby6
+                | MMPFNSTATE::Standby7
+        )
     }
     pub fn standby_priority(self) -> u8 {
         match self {
@@ -197,7 +204,9 @@ pub union OriginalPteUnion {
 }
 
 impl Default for OriginalPteUnion {
-    fn default() -> Self { Self { raw: 0 } }
+    fn default() -> Self {
+        Self { raw: 0 }
+    }
 }
 
 impl MMPFN {
@@ -231,10 +240,16 @@ impl MMPFN {
     }
     pub fn set_standby_priority(&mut self, p: u8) {
         let raw = unsafe { self.u2.raw };
-        self.u2 = PfnShortFlags { raw: (raw & !0x70) | (((p as u32) & 0x7) << 4) };
+        self.u2 = PfnShortFlags {
+            raw: (raw & !0x70) | (((p as u32) & 0x7) << 4),
+        };
     }
-    pub fn set_share_count(&mut self, c: u32) { self.share_count = c; }
-    pub fn share_count(&self) -> u32 { self.share_count }
+    pub fn set_share_count(&mut self, c: u32) {
+        self.share_count = c;
+    }
+    pub fn share_count(&self) -> u32 {
+        self.share_count
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -308,7 +323,13 @@ impl PfnDatabase {
     /// All PFNs start in the Active state with the supplied `state`
     /// for the first pass. `mark_active` puts a page in the free
     /// list; `mark_zeroed` puts it in the zeroed list.
-    pub fn init(&mut self, storage: *mut u8, storage_bytes: usize, base_pfn: PfnNumber, pfn_count: PfnNumber) {
+    pub fn init(
+        &mut self,
+        storage: *mut u8,
+        storage_bytes: usize,
+        base_pfn: PfnNumber,
+        pfn_count: PfnNumber,
+    ) {
         let bytes_needed = (pfn_count as usize) * core::mem::size_of::<MMPFN>();
         // If storage is smaller than what the full pfn_count would
         // need, truncate pfn_count to whatever storage can hold.
@@ -322,7 +343,9 @@ impl PfnDatabase {
         };
         let usable_bytes = usable_pfns * core::mem::size_of::<MMPFN>();
         // Zero the storage so the list state is consistent.
-        unsafe { ptr::write_bytes(storage, 0, usable_bytes); }
+        unsafe {
+            ptr::write_bytes(storage, 0, usable_bytes);
+        }
         self.pfn_array = storage as *mut MMPFN;
         self.pfn_count = usable_pfns as u64;
         self.lowest_pfn = base_pfn;
@@ -334,7 +357,9 @@ impl PfnDatabase {
     /// Returns `None` for out-of-range PFNs.
     #[inline]
     pub fn entry(&self, pfn: PfnNumber) -> Option<*mut MMPFN> {
-        if !self.initialized { return None; }
+        if !self.initialized {
+            return None;
+        }
         if pfn < self.lowest_pfn || pfn >= self.highest_pfn {
             return None;
         }
@@ -355,11 +380,17 @@ impl PfnDatabase {
     /// Convert a PFN database entry pointer back to its PFN.
     #[inline]
     pub fn pfn_of(&self, entry: *mut MMPFN) -> Option<PfnNumber> {
-        if !self.initialized || self.pfn_array.is_null() { return None; }
+        if !self.initialized || self.pfn_array.is_null() {
+            return None;
+        }
         let off = (entry as usize) - (self.pfn_array as usize);
-        if off % core::mem::size_of::<MMPFN>() != 0 { return None; }
+        if off % core::mem::size_of::<MMPFN>() != 0 {
+            return None;
+        }
         let idx = off / core::mem::size_of::<MMPFN>();
-        if idx as u64 >= self.pfn_count { return None; }
+        if idx as u64 >= self.pfn_count {
+            return None;
+        }
         Some(self.lowest_pfn + idx as u64)
     }
 
@@ -380,8 +411,13 @@ impl PfnDatabase {
 
     /// Insert a PFN at the head of the list for its current state.
     pub fn insert_head(&mut self, pfn: PfnNumber) {
-        let entry = match self.entry(pfn) { Some(e) => e, None => return };
-        unsafe { self.insert_head_entry(entry, pfn); }
+        let entry = match self.entry(pfn) {
+            Some(e) => e,
+            None => return,
+        };
+        unsafe {
+            self.insert_head_entry(entry, pfn);
+        }
     }
 
     unsafe fn insert_head_entry(&mut self, entry: *mut MMPFN, pfn: PfnNumber) {
@@ -407,8 +443,13 @@ impl PfnDatabase {
     /// Remove a PFN from the list it is currently on. The PFN must be
     /// in a list-bearing state.
     pub fn unlink(&mut self, pfn: PfnNumber) {
-        let entry = match self.entry(pfn) { Some(e) => e, None => return };
-        unsafe { self.unlink_entry(entry, pfn); }
+        let entry = match self.entry(pfn) {
+            Some(e) => e,
+            None => return,
+        };
+        unsafe {
+            self.unlink_entry(entry, pfn);
+        }
     }
 
     pub unsafe fn unlink_entry(&mut self, entry: *mut MMPFN, _pfn: PfnNumber) {
@@ -435,15 +476,21 @@ impl PfnDatabase {
     fn bump_state_count(&self, state: MMPFNSTATE, delta: i64) {
         if (state.as_u32() as usize) < self.state_counts.len() {
             // Use SeqCst for cross-core visibility in multi-core environment
-            self.state_counts[state.as_u32() as usize]
-                .fetch_add(delta as u64, Ordering::SeqCst);
+            self.state_counts[state.as_u32() as usize].fetch_add(delta as u64, Ordering::SeqCst);
         }
         match state {
-            MMPFNSTATE::Free => { self.total_free.fetch_add(delta as u64, Ordering::SeqCst); }
-            MMPFNSTATE::Zeroed => { self.total_zeroed.fetch_add(delta as u64, Ordering::SeqCst); }
-            s if s.is_standby() => { self.total_standby.fetch_add(delta as u64, Ordering::SeqCst); }
+            MMPFNSTATE::Free => {
+                self.total_free.fetch_add(delta as u64, Ordering::SeqCst);
+            }
+            MMPFNSTATE::Zeroed => {
+                self.total_zeroed.fetch_add(delta as u64, Ordering::SeqCst);
+            }
+            s if s.is_standby() => {
+                self.total_standby.fetch_add(delta as u64, Ordering::SeqCst);
+            }
             MMPFNSTATE::Modified | MMPFNSTATE::ModifiedNoWrite => {
-                self.total_modified.fetch_add(delta as u64, Ordering::SeqCst);
+                self.total_modified
+                    .fetch_add(delta as u64, Ordering::SeqCst);
             }
             _ => {}
         }
@@ -451,37 +498,53 @@ impl PfnDatabase {
 
     /// Pop the head of the free list, or None if empty.
     pub fn pop_free(&mut self) -> Option<PfnNumber> {
-        if self.lists[PFNL_FREE].head == 0 { return None; }
+        if self.lists[PFNL_FREE].head == 0 {
+            return None;
+        }
         let pfn = self.lists[PFNL_FREE].head;
         let entry = self.entry(pfn).expect("pfn in range");
-        unsafe { self.unlink_entry(entry, pfn); }
+        unsafe {
+            self.unlink_entry(entry, pfn);
+        }
         Some(pfn)
     }
 
     /// Pop the head of the zeroed list.
     pub fn pop_zeroed(&mut self) -> Option<PfnNumber> {
-        if self.lists[PFNL_ZEROED].head == 0 { return None; }
+        if self.lists[PFNL_ZEROED].head == 0 {
+            return None;
+        }
         let pfn = self.lists[PFNL_ZEROED].head;
         let entry = self.entry(pfn).expect("pfn in range");
-        unsafe { self.unlink_entry(entry, pfn); }
+        unsafe {
+            self.unlink_entry(entry, pfn);
+        }
         Some(pfn)
     }
 
     /// Pop the head of the modified list.
     pub fn pop_modified(&mut self) -> Option<PfnNumber> {
-        if self.lists[PFNL_MODIFIED].head == 0 { return None; }
+        if self.lists[PFNL_MODIFIED].head == 0 {
+            return None;
+        }
         let pfn = self.lists[PFNL_MODIFIED].head;
         let entry = self.entry(pfn).expect("pfn in range");
-        unsafe { self.unlink_entry(entry, pfn); }
+        unsafe {
+            self.unlink_entry(entry, pfn);
+        }
         Some(pfn)
     }
 
     /// Pop the head of the no-write modified list.
     pub fn pop_modified_no_write(&mut self) -> Option<PfnNumber> {
-        if self.lists[PFNL_MODIFIED_NW].head == 0 { return None; }
+        if self.lists[PFNL_MODIFIED_NW].head == 0 {
+            return None;
+        }
         let pfn = self.lists[PFNL_MODIFIED_NW].head;
         let entry = self.entry(pfn).expect("pfn in range");
-        unsafe { self.unlink_entry(entry, pfn); }
+        unsafe {
+            self.unlink_entry(entry, pfn);
+        }
         Some(pfn)
     }
 
@@ -492,7 +555,9 @@ impl PfnDatabase {
             if self.lists[i].head != 0 {
                 let pfn = self.lists[i].head;
                 let entry = self.entry(pfn).expect("pfn in range");
-                unsafe { self.unlink_entry(entry, pfn); }
+                unsafe {
+                    self.unlink_entry(entry, pfn);
+                }
                 return Some(pfn);
             }
         }
@@ -519,8 +584,14 @@ impl PfnDatabase {
     /// Add a range of PFNs to the free list.
     pub fn seed_free(&mut self, base: PfnNumber, count: PfnNumber) {
         for i in 0..count {
-            let pfn = base + i;
-            let entry = self.entry(pfn).expect("pfn in range");
+            let pfn = base.wrapping_add(i);
+            let entry = match self.entry(pfn) {
+                Some(e) => e,
+                None => panic!(
+                    "pfn={} not in range [{}, {}) in seed_free",
+                    pfn, self.lowest_pfn, self.highest_pfn
+                ),
+            };
             unsafe {
                 (*entry).set_state(MMPFNSTATE::Free);
                 (*entry).set_standby_priority(0);
@@ -536,7 +607,10 @@ impl PfnDatabase {
 
     /// Add a single PFN to the free list.
     pub fn add_to_free(&mut self, pfn: PfnNumber) {
-        let entry = match self.entry(pfn) { Some(e) => e, None => return };
+        let entry = match self.entry(pfn) {
+            Some(e) => e,
+            None => return,
+        };
         unsafe {
             (*entry).set_state(MMPFNSTATE::Free);
             (*entry).set_standby_priority(0);
@@ -561,7 +635,10 @@ impl PfnDatabase {
     /// sees) corrupted the list head. We now rely on the pop
     /// functions to do the unlink.
     pub fn allocate_pfn(&mut self, pfn: PfnNumber) -> bool {
-        let entry = match self.entry(pfn) { Some(e) => e, None => return false };
+        let entry = match self.entry(pfn) {
+            Some(e) => e,
+            None => return false,
+        };
         unsafe {
             (*entry).set_state(MMPFNSTATE::Active);
             (*entry).reference_count = 1;
@@ -572,10 +649,12 @@ impl PfnDatabase {
 
     /// Move a PFN to the standby list at the given priority.
     pub fn standby(&mut self, pfn: PfnNumber, priority: u8) {
-        let entry = match self.entry(pfn) { Some(e) => e, None => return };
+        let entry = match self.entry(pfn) {
+            Some(e) => e,
+            None => return,
+        };
         unsafe {
-            if (*entry).state() == MMPFNSTATE::Active
-                || (*entry).state() == MMPFNSTATE::Transition
+            if (*entry).state() == MMPFNSTATE::Active || (*entry).state() == MMPFNSTATE::Transition
             {
                 // No list to unlink - these states are not on any list.
             } else {
@@ -602,10 +681,12 @@ impl PfnDatabase {
 
     /// Move a PFN to the modified list.
     pub fn modified(&mut self, pfn: PfnNumber) {
-        let entry = match self.entry(pfn) { Some(e) => e, None => return };
+        let entry = match self.entry(pfn) {
+            Some(e) => e,
+            None => return,
+        };
         unsafe {
-            if (*entry).state() == MMPFNSTATE::Active
-                || (*entry).state() == MMPFNSTATE::Transition
+            if (*entry).state() == MMPFNSTATE::Active || (*entry).state() == MMPFNSTATE::Transition
             {
                 // No list to unlink.
             } else {
@@ -619,7 +700,10 @@ impl PfnDatabase {
 
     /// Move a PFN to the zeroed list (already zeroed).
     pub fn insert_zeroed(&mut self, pfn: PfnNumber) {
-        let entry = match self.entry(pfn) { Some(e) => e, None => return };
+        let entry = match self.entry(pfn) {
+            Some(e) => e,
+            None => return,
+        };
         unsafe {
             if (*entry).state() == MMPFNSTATE::Free
                 || (*entry).state() == MMPFNSTATE::Zeroed
@@ -638,19 +722,33 @@ impl PfnDatabase {
     }
 
     /// Translate a PFN to a physical address.
-    pub fn phys(&self, pfn: PfnNumber) -> u64 { pfn_to_phys(pfn) }
+    pub fn phys(&self, pfn: PfnNumber) -> u64 {
+        pfn_to_phys(pfn)
+    }
 
     /// Translate a physical address to a PFN (no bounds check; for
     /// translating a PA to a database index the caller should have
     /// already done so).
-    pub fn pfn_of_phys(&self, pa: u64) -> PfnNumber { pfn_from_phys(pa) }
+    pub fn pfn_of_phys(&self, pa: u64) -> PfnNumber {
+        pfn_from_phys(pa)
+    }
 
     /// Diagnostics.
-    pub fn free_count(&self) -> u64 { self.total_free.load(Ordering::Relaxed) }
-    pub fn zeroed_count(&self) -> u64 { self.total_zeroed.load(Ordering::Relaxed) }
-    pub fn standby_count(&self) -> u64 { self.total_standby.load(Ordering::Relaxed) }
-    pub fn modified_count(&self) -> u64 { self.total_modified.load(Ordering::Relaxed) }
-    pub fn total_count(&self) -> u64 { self.pfn_count }
+    pub fn free_count(&self) -> u64 {
+        self.total_free.load(Ordering::Relaxed)
+    }
+    pub fn zeroed_count(&self) -> u64 {
+        self.total_zeroed.load(Ordering::Relaxed)
+    }
+    pub fn standby_count(&self) -> u64 {
+        self.total_standby.load(Ordering::Relaxed)
+    }
+    pub fn modified_count(&self) -> u64 {
+        self.total_modified.load(Ordering::Relaxed)
+    }
+    pub fn total_count(&self) -> u64 {
+        self.pfn_count
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -712,13 +810,13 @@ pub fn init(base_pfn: PfnNumber, pfn_count: PfnNumber) {
             // Without full PFN tracking, memory management is compromised.
             // System cannot safely continue - trigger bugcheck.
             crate::hal::serial::write_string("[FATAL] pfn::init: no storage\r\n");
-            // Trigger CRITICAL_DATA_TABLE_CORRUPTION bugcheck
-            // This indicates critical memory management data structures are corrupted
+            // Trigger PFN_LIST_CORRUPT (bug check 0x4E).
+            // This indicates critical memory management data structures are corrupted.
             crate::ke::bugcheck::bugcheck_with(
-                crate::ke::bugcheck::BugCheckCode::DataInconsistencyLock,
-                bytes_needed as u64,           // P1: bytes needed
-                PFN_STORAGE_BOOTSTRAP.len() as u64,  // P2: bootstrap capacity
-                pfn_count,                    // P3: requested PFN count
+                crate::ke::bugcheck::BugCheckCode::PfnListCorrupt,
+                bytes_needed as u64,                  // P1: bytes needed
+                PFN_STORAGE_BOOTSTRAP.len() as u64,   // P2: bootstrap capacity
+                pfn_count,                            // P3: requested PFN count
                 core::mem::size_of::<MMPFN>() as u64, // P4: sizeof(MMPFN)
             );
             // NOTE: bugcheck_with() is ! (never returns), so no code after this
@@ -797,7 +895,9 @@ pub fn allocate_pfn() -> Option<PfnNumber> {
 /// Allocate a contiguous range of `count` PFNs. Falls back to
 /// non-contiguous if the contig run cannot be assembled.
 pub fn allocate_pfn_range(count: PfnNumber) -> Option<PfnNumber> {
-    if count == 0 { return None; }
+    if count == 0 {
+        return None;
+    }
     let mut db = PFN_DB.lock();
     if count == 1 {
         return allocate_pfn();
@@ -848,6 +948,7 @@ pub fn allocate_pfn_range(count: PfnNumber) -> Option<PfnNumber> {
 /// Return a PFN to the free list (zeroed, since we just released it
 /// and the caller can clear it if they care).
 pub fn free_pfn(pfn: PfnNumber) {
+    crate::boot_println!("[PFN] free_pfn: pfn=0x{:x}", pfn);
     let mut db = PFN_DB.lock();
     db.add_to_free(pfn);
 }
@@ -864,7 +965,10 @@ pub fn free_pfn(pfn: PfnNumber) {
 /// from that list and flips its state to `Active` with refcount=1.
 pub fn reserve_pfn(pfn: PfnNumber) -> bool {
     let mut db = PFN_DB.lock();
-    let entry = match db.entry(pfn) { Some(e) => e, None => return false };
+    let entry = match db.entry(pfn) {
+        Some(e) => e,
+        None => return false,
+    };
     unsafe {
         // If the PFN is on a list (Free/Zeroed/Standby/Modified)
         // unlink it. If it is already Active or Bad, leave the
@@ -898,9 +1002,13 @@ pub fn release_zeroed(pfn: PfnNumber) {
 }
 
 #[inline]
-pub fn phys_to_pfn(pa: u64) -> PfnNumber { pfn_from_phys(pa) }
+pub fn phys_to_pfn(pa: u64) -> PfnNumber {
+    pfn_from_phys(pa)
+}
 #[inline]
-pub fn pfn_to_phys_va(pfn: PfnNumber) -> u64 { pfn_to_phys(pfn) }
+pub fn pfn_to_phys_va(pfn: PfnNumber) -> u64 {
+    pfn_to_phys(pfn)
+}
 
 pub fn get_database_phys() -> u64 {
     unsafe { PFN_STORAGE_PHYS }
@@ -976,19 +1084,24 @@ mod tests {
 
     fn make_db() -> PfnDatabase {
         let mut db = PfnDatabase::new();
-        let mut storage = vec![0u8; 16 * 4096];
-        db.init(storage.as_mut_ptr(), storage.len(), 1000, 1000);
-        db.seed_free(1000, 1000);
+        // Size storage generously: 16 pages * 16 pages = 256 pages
+        // (~1 MiB), enough for any plausible `MMPFN` layout plus
+        // headroom. The kernel never uses a PFN database this big.
+        // Track 1500 PFNs (range 1000..2500) so that tests which
+        // exercise PFNs beyond 2000 still find them in range.
+        let storage = alloc::vec::Vec::leak(vec![0u8; 16 * 16 * 4096]);
+        db.init(storage.as_mut_ptr(), storage.len(), 1000, 1500);
+        db.seed_free(1000, 1500);
         db
     }
 
     #[test]
     fn seed_and_pop() {
         let mut db = make_db();
-        assert_eq!(db.free_count(), 1000);
+        assert_eq!(db.free_count(), 1500);
         let pfn = db.pop_free().unwrap();
-        assert!(pfn >= 1000 && pfn < 2000);
-        assert_eq!(db.free_count(), 999);
+        assert!(pfn >= 1000 && pfn < 2500);
+        assert_eq!(db.free_count(), 1499);
     }
 
     #[test]
@@ -997,7 +1110,9 @@ mod tests {
         let pfn = 1500u64;
         db.allocate_pfn(pfn);
         let entry = db.entry(pfn).expect("pfn in range");
-        unsafe { assert_eq!((*entry).state(), MMPFNSTATE::Active); }
+        unsafe {
+            assert_eq!((*entry).state(), MMPFNSTATE::Active);
+        }
     }
 
     #[test]
@@ -1007,7 +1122,7 @@ mod tests {
         db.standby(pfn, 3);
         let entry = db.entry(pfn).expect("pfn in range");
         unsafe {
-            assert_eq!((*entry).state(), MMPFNSTATE::Standby0);
+            assert_eq!((*entry).state(), MMPFNSTATE::Standby3);
             assert_eq!((*entry).standby_priority(), 3);
         }
         db.modified(pfn);
@@ -1049,7 +1164,7 @@ mod tests {
         let mut db = make_db();
         let pfn = 2100u64;
         db.add_to_free(pfn);
-        assert_eq!(db.free_count(), 1001);
+        assert_eq!(db.free_count(), 1501);
 
         // Pop and mark as zeroed
         db.unlink(pfn);
@@ -1079,10 +1194,10 @@ mod tests {
         let db = make_db();
         // Valid range
         assert!(db.entry(1000).is_some());
-        assert!(db.entry(1999).is_some());
+        assert!(db.entry(2499).is_some());
         // Invalid range
         assert!(db.entry(999).is_none());
-        assert!(db.entry(2000).is_none());
+        assert!(db.entry(2500).is_none());
     }
 
     #[test]
@@ -1104,10 +1219,10 @@ mod tests {
             assert_eq!((*entry).state(), MMPFNSTATE::Active);
         }
 
-        // To Standby
+        // To Standby (priority 2 → Standby2)
         db.standby(pfn, 2);
         unsafe {
-            assert_eq!((*entry).state(), MMPFNSTATE::Standby0);
+            assert_eq!((*entry).state(), MMPFNSTATE::Standby2);
         }
 
         // To Modified

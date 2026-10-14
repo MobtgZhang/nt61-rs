@@ -15,11 +15,11 @@
 
 extern crate alloc;
 
-pub mod uhci;
 pub mod ehci;
-pub mod xhci;
-pub mod hub;
 pub mod hid;
+pub mod hub;
+pub mod uhci;
+pub mod xhci;
 
 pub mod smoke;
 
@@ -29,7 +29,7 @@ use crate::kprintln;
 /// registers itself with the bus layer; the hub and HID drivers
 /// then bind to whichever devices the controllers discover.
 pub fn init() {
-    // kprintln!("    USB drivers: UHCI, EHCI, xHCI, hub, HID")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    USB drivers: UHCI, EHCI, xHCI, hub, HID");
     #[cfg(target_arch = "x86_64")]
     crate::hal::x86_64::serial::write_string("USB:before_uhci\r\n");
     uhci::init();
@@ -57,12 +57,14 @@ pub fn init() {
     crate::hal::x86_64::serial::write_string("USB:after_hid\r\n");
     #[cfg(target_arch = "x86_64")]
     crate::hal::x86_64::serial::write_string("USB:done\r\n");
-    // kprintln!("    USB stack ready")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    USB stack ready");
 }
 
 /// Smoke test for the USB driver stack. Re-runs each driver's
 /// self-check and aggregates.
-pub fn smoke_test() -> bool { smoke::smoke_test() }
+pub fn smoke_test() -> bool {
+    smoke::smoke_test()
+}
 
 /// Poll all USB host controllers and feed any pending HID
 /// boot-keyboard reports into the shared keyboard ring buffer.

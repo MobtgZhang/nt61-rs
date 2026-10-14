@@ -13,10 +13,10 @@
 
 #![allow(non_snake_case)]
 
-use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use alloc::vec::Vec;
-use alloc::sync::Arc;
 use crate::kprintln;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 /// Maximum number of windows in the system.
 const MAX_WINDOWS: usize = 4096;
@@ -51,10 +51,18 @@ impl WindowStyle {
     pub const TAB_STOP: u32 = 0x00010000;
     pub const VISIBLE: u32 = 0x10000000;
 
-    pub const fn new(bits: u32) -> Self { Self(bits) }
-    pub const fn bits(&self) -> u32 { self.0 }
-    pub fn set(&mut self, flag: u32) { self.0 |= flag; }
-    pub fn contains(&self, flag: u32) -> bool { (self.0 & flag) == flag }
+    pub const fn new(bits: u32) -> Self {
+        Self(bits)
+    }
+    pub const fn bits(&self) -> u32 {
+        self.0
+    }
+    pub fn set(&mut self, flag: u32) {
+        self.0 |= flag;
+    }
+    pub fn contains(&self, flag: u32) -> bool {
+        (self.0 & flag) == flag
+    }
 }
 
 /// Extended window style flags as a bitmask wrapper.
@@ -83,10 +91,18 @@ impl WindowStyleEx {
     pub const TRANSPARENT: u32 = 0x00000020;
     pub const WINDOW_EDGE: u32 = 0x00000100;
 
-    pub const fn new(bits: u32) -> Self { Self(bits) }
-    pub const fn bits(&self) -> u32 { self.0 }
-    pub fn set(&mut self, flag: u32) { self.0 |= flag; }
-    pub fn contains(&self, flag: u32) -> bool { (self.0 & flag) == flag }
+    pub const fn new(bits: u32) -> Self {
+        Self(bits)
+    }
+    pub const fn bits(&self) -> u32 {
+        self.0
+    }
+    pub fn set(&mut self, flag: u32) {
+        self.0 |= flag;
+    }
+    pub fn contains(&self, flag: u32) -> bool {
+        (self.0 & flag) == flag
+    }
 }
 
 /// Window message types
@@ -273,8 +289,18 @@ impl WindowObject {
             title: [0; 256],
             style: 0,
             ex_style: 0,
-            rect: Rect { left: 0, top: 0, right: 0, bottom: 0 },
-            client_rect: Rect { left: 0, top: 0, right: 0, bottom: 0 },
+            rect: Rect {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            },
+            client_rect: Rect {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            },
             parent: None,
             owner: None,
             children: Vec::new(),
@@ -413,8 +439,8 @@ impl WindowManager {
         self.hwnd_index.push((hwnd, index));
         self.window_count.fetch_add(1, Ordering::Relaxed);
 
-        // kprintln!("[win32k] CreateWindow: hwnd={:#x}, class={:?}, style={:#x}",  // kprintln disabled (memcpy crash workaround)
-//             hwnd, "WindowClass", style);
+        // kprintln!("[win32k] CreateWindow: hwnd={:#x}, class={:?}, style={:#x}",
+        //             hwnd, "WindowClass", style);
 
         Some(hwnd)
     }
@@ -444,16 +470,18 @@ impl WindowManager {
     /// Destroy a window and all its children.
     pub fn destroy_window(&mut self, hwnd: u64) -> bool {
         // Step 1: Find window index
-        let window_index = self.hwnd_index.iter()
+        let window_index = self
+            .hwnd_index
+            .iter()
             .find(|(h, _)| *h == hwnd)
             .map(|(_, idx)| *idx);
         let _ = &window_index;
-        
+
         let window_index = match window_index {
             Some(idx) => idx,
             None => return false, // Window doesn't exist
         };
-        
+
         let _ = &window_index;
 
         // Get window info before we modify anything
@@ -488,12 +516,11 @@ impl WindowManager {
         // Step 5: Remove from index
         self.hwnd_index.retain(|(h, _)| *h != hwnd);
 
-
         // Step 6: Mark slot as None (don't shift Vec elements)
         self.windows[window_index] = None;
         self.window_count.fetch_sub(1, Ordering::Relaxed);
 
-        // kprintln!("[win32k] DestroyWindow: hwnd={:#x}", hwnd)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[win32k] DestroyWindow: hwnd={:#x}", hwnd);
         true
     }
 
@@ -513,7 +540,7 @@ impl WindowManager {
                 self.post_message(hwnd, WindowMessage::WM_SHOWWINDOW as u32, 0, 0);
             }
 
-            // kprintln!("[win32k] ShowWindow: hwnd={:#x}, show={}", hwnd, show)  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[win32k] ShowWindow: hwnd={:#x}, show={}", hwnd, show);
             true
         } else {
             false
@@ -521,14 +548,7 @@ impl WindowManager {
     }
 
     /// Set window position.
-    pub fn set_window_pos(
-        &mut self,
-        hwnd: u64,
-        x: i32,
-        y: i32,
-        width: i32,
-        height: i32,
-    ) -> bool {
+    pub fn set_window_pos(&mut self, hwnd: u64, x: i32, y: i32, width: i32, height: i32) -> bool {
         if let Some(window) = self.get_window_mut(hwnd) {
             let old_rect = window.rect;
             let _ = &old_rect;
@@ -536,15 +556,18 @@ impl WindowManager {
             window.set_rect(x, y, width, height);
 
             if window.visible {
-                self.post_message(hwnd, WindowMessage::WM_MOVE as u32,
-                    x as u64, y as i64);
-                self.post_message(hwnd, WindowMessage::WM_SIZE as u32,
-                    width as u64, height as i64);
+                self.post_message(hwnd, WindowMessage::WM_MOVE as u32, x as u64, y as i64);
+                self.post_message(
+                    hwnd,
+                    WindowMessage::WM_SIZE as u32,
+                    width as u64,
+                    height as i64,
+                );
                 self.post_message(hwnd, WindowMessage::WM_PAINT as u32, 0, 0);
             }
 
-            // kprintln!("[win32k] SetWindowPos: hwnd={:#x}, ({},{}) {}x{}",  // kprintln disabled (memcpy crash workaround)
-//                 hwnd, x, y, width, height);
+            // kprintln!("[win32k] SetWindowPos: hwnd={:#x}, ({},{}) {}x{}",
+            //                 hwnd, x, y, width, height);
             true
         } else {
             false
@@ -564,7 +587,7 @@ impl WindowManager {
     /// Post a message to a window's message queue.
     pub fn post_message(&mut self, hwnd: u64, msg: u32, wparam: u64, lparam: i64) -> bool {
         let _ = (hwnd, msg, wparam, lparam);
-        // kprintln!("[win32k] PostMessage: hwnd={:#x}, msg={:#x}", hwnd, msg)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[win32k] PostMessage: hwnd={:#x}, msg={:#x}", hwnd, msg);
         // In a full implementation, this would add to the message queue
         true
     }
@@ -574,8 +597,8 @@ impl WindowManager {
         let _ = (hwnd, msg, wparam, lparam);
         if let Some(window) = self.get_window(hwnd) {
             let _ = window;
-            // kprintln!("[win32k] SendMessage: hwnd={:#x}, msg={:#x}, wparam={:#x}",  // kprintln disabled (memcpy crash workaround)
-//                 hwnd, msg, wparam);
+            // kprintln!("[win32k] SendMessage: hwnd={:#x}, msg={:#x}, wparam={:#x}",
+            //                 hwnd, msg, wparam);
             // In a full implementation, call window's WndProc
             0
         } else {
@@ -629,7 +652,7 @@ impl WindowManager {
         if let Some(window) = self.get_window_mut(hwnd) {
             window.foreground = true;
         }
-        // kprintln!("[win32k] SetForegroundWindow: hwnd={:#x}", hwnd)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[win32k] SetForegroundWindow: hwnd={:#x}", hwnd);
         Some(old)
     }
 
@@ -643,7 +666,7 @@ impl WindowManager {
         let old = self.active_window.swap(hwnd, Ordering::SeqCst);
         let _ = &old;
         let _ = &old;
-        // kprintln!("[win32k] SetActiveWindow: hwnd={:#x}", hwnd)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[win32k] SetActiveWindow: hwnd={:#x}", hwnd);
         Some(old)
     }
 
@@ -665,7 +688,7 @@ impl WindowManager {
             // Send WM_SETFOCUS to new window
             self.post_message(hwnd, WindowMessage::WM_SETFOCUS as u32, 0, 0);
         }
-        // kprintln!("[win32k] SetFocus: hwnd={:#x}", hwnd)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[win32k] SetFocus: hwnd={:#x}", hwnd);
         Some(old)
     }
 
@@ -679,7 +702,7 @@ impl WindowManager {
         let old = self.capture_window.swap(hwnd, Ordering::SeqCst);
         let _ = &old;
         let _ = &old;
-        // kprintln!("[win32k] SetCapture: hwnd={:#x}", hwnd)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[win32k] SetCapture: hwnd={:#x}", hwnd);
         Some(old)
     }
 
@@ -691,7 +714,7 @@ impl WindowManager {
         if old != 0 {
             self.post_message(old, WindowMessage::WM_CANCELMODE as u32, 0, 0);
         }
-        // kprintln!("[win32k] ReleaseCapture")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[win32k] ReleaseCapture");
     }
 
     /// Get capture window.
@@ -706,10 +729,17 @@ impl WindowManager {
             let _ = &was_enabled;
             let _ = &was_enabled;
             window.enabled = enable;
-            self.post_message(hwnd,
-                if enable { WindowMessage::WM_ENABLE as u32 } else { WindowMessage::WM_ENABLE as u32 },
-                1, 0);
-            // kprintln!("[win32k] EnableWindow: hwnd={:#x}, enable={}", hwnd, enable)  // kprintln disabled (memcpy crash workaround);
+            self.post_message(
+                hwnd,
+                if enable {
+                    WindowMessage::WM_ENABLE as u32
+                } else {
+                    WindowMessage::WM_ENABLE as u32
+                },
+                1,
+                0,
+            );
+            // kprintln!("[win32k] EnableWindow: hwnd={:#x}, enable={}", hwnd, enable);
             was_enabled
         } else {
             false
@@ -733,7 +763,7 @@ use crate::ke::sync::Spinlock;
 
 /// Initialize the window manager.
 pub fn init() {
-    // kprintln!("[win32k] Window manager initialized")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[win32k] Window manager initialized");
 }
 
 /// Create a new window.
@@ -750,7 +780,9 @@ pub fn create_window_internal(
     wndproc: u64,
 ) -> Option<u64> {
     let mut wm = WINDOW_MANAGER.lock();
-    wm.create_window(class_name, title, style, ex_style, x, y, width, height, parent, wndproc)
+    wm.create_window(
+        class_name, title, style, ex_style, x, y, width, height, parent, wndproc,
+    )
 }
 
 /// Destroy a window.
@@ -766,13 +798,7 @@ pub fn show_window_internal(hwnd: u64, show: bool) -> bool {
 }
 
 /// Set window position.
-pub fn set_window_pos_internal(
-    hwnd: u64,
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
-) -> bool {
+pub fn set_window_pos_internal(hwnd: u64, x: i32, y: i32, width: i32, height: i32) -> bool {
     let mut wm = WINDOW_MANAGER.lock();
     wm.set_window_pos(hwnd, x, y, width, height)
 }

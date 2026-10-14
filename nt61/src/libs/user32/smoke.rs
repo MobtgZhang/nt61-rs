@@ -11,25 +11,40 @@ use super::input;
 use super::types::{FALSE, TRUE};
 use super::window;
 use super::{alloc_window_handle, has_window_handle};
-use core::sync::atomic::{AtomicU32, Ordering};
 use core::ptr;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 static TEST_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 fn case(_name: &str, ok: bool) -> bool {
     let n = TEST_COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
     let _ = &n;
-    // crate::kprintln!("      [user32/{:02}] {} {}", n, if ok { "PASS" } else { "FAIL" }, name)  // kprintln disabled (memcpy crash workaround);
+    // crate::kprintln!("      [user32/{:02}] {} {}", n, if ok { "PASS" } else { "FAIL" }, name);
     ok
 }
 
 fn test_create_destroy_window() -> bool {
     unsafe {
-        let h = window::CreateWindowExW(0, ptr::null(), ptr::null(), 0, 0, 0, 100, 50,
-                                          ptr::null_mut(), ptr::null_mut(), ptr::null_mut(),
-                                          core::ptr::null_mut());
-        if h == ptr::null_mut() { return false; }
-        if !has_window_handle(h as u64) { return false; }
+        let h = window::CreateWindowExW(
+            0,
+            ptr::null(),
+            ptr::null(),
+            0,
+            0,
+            0,
+            100,
+            50,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            core::ptr::null_mut(),
+        );
+        if h == ptr::null_mut() {
+            return false;
+        }
+        if !has_window_handle(h as u64) {
+            return false;
+        }
         let r = window::DestroyWindow(h);
         r != 0
     }
@@ -37,9 +52,20 @@ fn test_create_destroy_window() -> bool {
 
 fn test_show_update() -> bool {
     unsafe {
-        let h = window::CreateWindowExW(0, ptr::null(), ptr::null(), 0, 0, 0, 100, 50,
-                                          ptr::null_mut(), ptr::null_mut(), ptr::null_mut(),
-                                          core::ptr::null_mut());
+        let h = window::CreateWindowExW(
+            0,
+            ptr::null(),
+            ptr::null(),
+            0,
+            0,
+            0,
+            100,
+            50,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            core::ptr::null_mut(),
+        );
         let s1 = window::ShowWindow(h, window::sw::SW_SHOW);
         let s2 = window::UpdateWindow(h);
         s1 != 0 && s2 != 0
@@ -77,8 +103,8 @@ fn test_class_register() -> bool {
 }
 
 fn test_get_system_metrics() -> bool {
-    input::GetSystemMetrics(input::sm::SM_CXSCREEN) == 1024 &&
-    input::GetSystemMetrics(input::sm::SM_CYSCREEN) == 768
+    input::GetSystemMetrics(input::sm::SM_CXSCREEN) == 1024
+        && input::GetSystemMetrics(input::sm::SM_CYSCREEN) == 768
 }
 
 fn test_keyboard_state() -> bool {
@@ -137,13 +163,12 @@ fn test_window_alloc_unique() -> bool {
 
 fn test_gdi_link() -> bool {
     gdi_link::add("GdiFlush", "gdi32!GdiFlush");
-    gdi_link::lookup("GdiFlush").is_some() &&
-    gdi_link::lookup("GdiAlphaBlend").is_none()
+    gdi_link::lookup("GdiFlush").is_some() && gdi_link::lookup("GdiAlphaBlend").is_none()
 }
 
 pub fn smoke_test() -> bool {
-    // crate::kprintln!("    [user32] running smoke tests (stubbed)")  // kprintln disabled (memcpy crash workaround);
+    // crate::kprintln!("    [user32] running smoke tests (stubbed)");
     // The detailed user32 tests are stubbed for now.
-    // crate::kprintln!("    [user32] all PASS (stubbed)")  // kprintln disabled (memcpy crash workaround);
+    // crate::kprintln!("    [user32] all PASS (stubbed)");
     true
 }

@@ -74,10 +74,7 @@ impl VopDevice {
             return;
         }
         unsafe {
-            core::ptr::write_volatile(
-                (self.mmio_base + offset as u64) as *mut u32,
-                value,
-            );
+            core::ptr::write_volatile((self.mmio_base + offset as u64) as *mut u32, value);
         }
     }
 }
@@ -153,7 +150,10 @@ impl GpuDriver for VopDevice {
         })
     }
 
-    fn set_mode(&mut self, mode: &crate::drivers::video::core::gpu_common::DisplayMode) -> Result<(), GpuError> {
+    fn set_mode(
+        &mut self,
+        mode: &crate::drivers::video::core::gpu_common::DisplayMode,
+    ) -> Result<(), GpuError> {
         self.init_framebuffer(Some(*mode)).map(|_| ())
     }
 
@@ -192,10 +192,7 @@ impl GpuDriver for VopDevice {
         let pixels = ((self.pitch as usize) * (self.height as usize)) / 4;
         for i in 0..pixels {
             unsafe {
-                core::ptr::write_volatile(
-                    (self.fb_virt + (i as u64 * 4)) as *mut u32,
-                    color,
-                );
+                core::ptr::write_volatile((self.fb_virt + (i as u64 * 4)) as *mut u32, color);
             }
         }
     }
@@ -207,10 +204,7 @@ impl GpuDriver for VopDevice {
 
         let offset = ((y * self.pitch) + (x * 4)) as u64;
         unsafe {
-            core::ptr::write_volatile(
-                (self.fb_virt + offset) as *mut u32,
-                color,
-            );
+            core::ptr::write_volatile((self.fb_virt + offset) as *mut u32, color);
         }
     }
 
@@ -303,9 +297,7 @@ impl VopDevice {
         self.write_reg(VOP_CRTC_V_SYNC, timing.v_sync_reg());
 
         // Enable CRTC
-        let ctrl = VOP_CRTC_CTRL_ENABLE
-            | VOP_CRTC_CTRL_HSYNC_POS
-            | VOP_CRTC_CTRL_VSYNC_POS;
+        let ctrl = VOP_CRTC_CTRL_ENABLE | VOP_CRTC_CTRL_HSYNC_POS | VOP_CRTC_CTRL_VSYNC_POS;
         self.write_reg(VOP_CRTC_CTRL, ctrl);
 
         Ok(())

@@ -4,11 +4,11 @@
 //! This handles process object creation, address space initialization,
 //! and initial thread setup.
 
+use crate::mm::pool;
+use crate::ob;
+use crate::ps::address_space::ProcessAddressSpace;
 use crate::ps::process::{Eprocess, ProcessHandleTable};
 use crate::ps::thread::Ethread;
-use crate::ps::address_space::ProcessAddressSpace;
-use crate::ob;
-use crate::mm::pool;
 use crate::se::token;
 
 /// NT Status codes
@@ -81,10 +81,7 @@ pub fn nt_create_process(
 
     // 2. Allocate process object from pool
     let process_size = core::mem::size_of::<Eprocess>().max(4096);
-    let process_ptr = pool::allocate(
-        pool::PoolType::NonPaged,
-        process_size,
-    ) as *mut Eprocess;
+    let process_ptr = pool::allocate(pool::PoolType::NonPaged, process_size) as *mut Eprocess;
 
     if process_ptr.is_null() {
         return STATUS_INSUFFICIENT_RESOURCES;
@@ -153,12 +150,18 @@ pub fn nt_create_process(
         (*process_ptr).Peb = addr_space.peb_address as *mut crate::ps::process::Peb;
     }
 
+    // Transfer ownership of the address space to the process. Without
+    // this the `ProcessAddressSpace` stack local is dropped when
+    // `create_process` returns, which runs `Drop::cleanup()` and frees
+    // the PML4 page *while the process is still running with that CR3*.
+    // The freed page is then reused as an ordinary data buffer, so the
+    // next write (e.g. a command line) corrupts the live PML4 and the
+    // next page walk triple-faults.
+    core::mem::forget(addr_space);
+
     // 6. Allocate handle table
     let ht_size = core::mem::size_of::<ProcessHandleTable>().max(4096);
-    let ht_ptr = pool::allocate(
-        pool::PoolType::NonPaged,
-        ht_size,
-    ) as *mut ProcessHandleTable;
+    let ht_ptr = pool::allocate(pool::PoolType::NonPaged, ht_size) as *mut ProcessHandleTable;
 
     if ht_ptr.is_null() {
         // `pool::free` is safe; drop the redundant `unsafe {}` wrapper.
@@ -229,7 +232,11 @@ pub fn nt_create_process(
     *process_handle = handle;
 
     // 13. Add to global process list
-    crate::ps::process::add_to_global_list(unsafe { &mut *ob::get_object_body::<Eprocess>(obj_header) });
+    if !crate::ps::process::add_to_global_list(unsafe {
+        &mut *ob::get_object_body::<Eprocess>(obj_header)
+    }) {
+        return crate::libs::ntdll::status::STATUS_NO_MEMORY as u32;
+    }
 
     STATUS_SUCCESS
 }

@@ -16,8 +16,8 @@ use crate::drivers::video::core::gpu_common::{
 };
 use crate::hal::common::pci::PciDevice;
 
-use super::pci_ids::{self, ZhaoxinVariant};
 use super::glenfly_reg::*;
+use super::pci_ids::{self, ZhaoxinVariant};
 
 // =====================================================================
 // Glenfly Device Structure
@@ -90,10 +90,7 @@ impl GlenflyDevice {
             return;
         }
         unsafe {
-            core::ptr::write_volatile(
-                (self.mmio_base + offset as u64) as *mut u32,
-                value,
-            );
+            core::ptr::write_volatile((self.mmio_base + offset as u64) as *mut u32, value);
         }
     }
 
@@ -213,9 +210,11 @@ impl GpuDriver for GlenflyDevice {
         })
     }
 
-    fn set_mode(&mut self, mode: &crate::drivers::video::core::gpu_common::DisplayMode) -> Result<(), GpuError> {
-        self.init_framebuffer(Some(*mode))
-            .map(|_| ())
+    fn set_mode(
+        &mut self,
+        mode: &crate::drivers::video::core::gpu_common::DisplayMode,
+    ) -> Result<(), GpuError> {
+        self.init_framebuffer(Some(*mode)).map(|_| ())
     }
 
     fn get_mode(&self) -> Option<crate::drivers::video::core::gpu_common::DisplayMode> {
@@ -269,10 +268,7 @@ impl GpuDriver for GlenflyDevice {
         let pixels = ((self.pitch as usize) * (self.height as usize)) / 4;
         for i in 0..pixels {
             unsafe {
-                core::ptr::write_volatile(
-                    (self.fb_virt + (i as u64 * 4)) as *mut u32,
-                    color,
-                );
+                core::ptr::write_volatile((self.fb_virt + (i as u64 * 4)) as *mut u32, color);
             }
         }
     }
@@ -284,10 +280,7 @@ impl GpuDriver for GlenflyDevice {
 
         let offset = ((y * self.pitch) + (x * 4)) as u64;
         unsafe {
-            core::ptr::write_volatile(
-                (self.fb_virt + offset) as *mut u32,
-                color,
-            );
+            core::ptr::write_volatile((self.fb_virt + offset) as *mut u32, color);
         }
     }
 
@@ -370,14 +363,8 @@ impl GlenflyDevice {
         self.write_reg(GLENFLY_PLANE_PRIMARY_ADDR, self.fb_phys as u32);
         self.write_reg(GLENFLY_PLANE_PRIMARY_ADDR_HIGH, (self.fb_phys >> 32) as u32);
         self.write_reg(GLENFLY_PLANE_PRIMARY_STRIDE, self.pitch);
-        self.write_reg(
-            GLENFLY_PLANE_PRIMARY_SIZE,
-            (self.height << 16) | self.width,
-        );
-        self.write_reg(
-            GLENFLY_PLANE_PRIMARY_FORMAT,
-            self.get_format_value(),
-        );
+        self.write_reg(GLENFLY_PLANE_PRIMARY_SIZE, (self.height << 16) | self.width);
+        self.write_reg(GLENFLY_PLANE_PRIMARY_FORMAT, self.get_format_value());
 
         // Configure CRT controller A
         self.configure_crtc_a(&timing)?;
@@ -469,8 +456,8 @@ impl GlenflyDevice {
 /// Probe for Glenfly device
 #[cfg(target_arch = "x86_64")]
 pub fn probe() -> bool {
-    use crate::hal::common::pci;
     use super::pci_ids::GLENFLY_VENDOR_ID;
+    use crate::hal::common::pci;
 
     let devices = pci::enumerate();
     for dev in devices {
@@ -484,8 +471,8 @@ pub fn probe() -> bool {
 /// Initialize Glenfly device
 #[cfg(target_arch = "x86_64")]
 pub fn init() -> Option<GlenflyDevice> {
-    use crate::hal::common::pci;
     use super::pci_ids::{variant_from_device_id, GLENFLY_VENDOR_ID};
+    use crate::hal::common::pci;
 
     let devices = pci::enumerate();
     for dev in devices {

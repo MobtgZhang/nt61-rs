@@ -224,7 +224,7 @@ pub const MMIO_OUT_OF_RANGE: u32 = 0xDEAD_BEEFu32;
 impl core::fmt::Debug for MmioGuard {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("MmioGuard")
-            .field("base", &format_args!("0x{:016X}", self.range.base))
+            .field("base", &format_args!("0x{:08X}", self.range.base))
             .field("size", &format_args!("0x{:X}", self.range.size))
             .finish()
     }

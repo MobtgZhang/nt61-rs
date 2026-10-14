@@ -10,18 +10,18 @@
 
 extern crate alloc;
 
-pub mod gpu_common;
-pub mod vram;
-pub mod irq;
 pub mod dpc;
+pub mod gpu_common;
+pub mod irq;
 pub mod power;
+pub mod vram;
 
 // MMIO guard with bounds checking and spinlock synchronization
 pub mod mmio_guard;
 
-pub use gpu_common::*;
-pub use vram::*;
-pub use irq::*;
 pub use dpc::*;
-pub use power::*;
+pub use gpu_common::*;
+pub use irq::*;
 pub use mmio_guard::*;
+pub use power::*;
+pub use vram::*;

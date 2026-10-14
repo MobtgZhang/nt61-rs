@@ -3,10 +3,10 @@
 //! This module provides real process management functionality,
 //! replacing the stub/mock implementations.
 
-use alloc::string::{String, ToString};
-use alloc::vec::Vec;
 use crate::ke::sync::Spinlock;
 use crate::libs::ntdll::types::NTSTATUS;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 static PROCESS_TABLE: Spinlock<ProcessTable> = Spinlock::new(ProcessTable::new());
 
@@ -222,20 +222,43 @@ pub fn wait_for_process_exit(pid: u64, timeout_ms: Option<u64>) -> Result<i32, N
 }
 
 fn extract_process_name(command: &str) -> String {
-    let parts: Vec<&str> = command.split_whitespace().collect();
-    if parts.is_empty() {
+    if command.is_empty() {
         return String::from("unknown.exe");
     }
 
-    let exe_path = parts[0];
-
-    if let Some(pos) = exe_path.rfind('\\') {
-        String::from(&exe_path[pos + 1..])
-    } else if let Some(pos) = exe_path.rfind('/') {
-        String::from(&exe_path[pos + 1..])
+    // Resolve the image path the way CreateProcess does: a quoted first token
+    // is taken verbatim (spaces included), otherwise the image is the text up
+    // to the first whitespace after the last path separator. Everything after
+    // that is arguments.
+    let image = if let Some(rest) = command.strip_prefix('"') {
+        match rest.find('"') {
+            Some(end) => &rest[..end],
+            None => rest,
+        }
+    } else if command.contains('/') || command.contains('\\') {
+        let pos = command
+            .rfind('/')
+            .unwrap_or(0)
+            .max(command.rfind('\\').unwrap_or(0));
+        let tail = &command[pos + 1..];
+        match tail.find(char::is_whitespace) {
+            Some(ws) => &command[..pos + 1 + ws],
+            None => command,
+        }
     } else {
-        String::from(exe_path)
+        command.split_whitespace().next().unwrap_or(command)
+    };
+
+    let base = match (image.rfind('/'), image.rfind('\\')) {
+        (Some(a), Some(b)) => &image[a.max(b) + 1..],
+        (Some(a), None) => &image[a + 1..],
+        (None, Some(b)) => &image[b + 1..],
+        (None, None) => image,
+    };
+    if base.is_empty() {
+        return String::from("unknown.exe");
     }
+    String::from(base)
 }
 
 fn get_current_time() -> u64 {
@@ -250,7 +273,6 @@ fn yield_cpu() {
 
 pub fn init() {
     let mut table = PROCESS_TABLE.lock();
-
 
     table.processes.push(ProcessEntry {
         pid: 4,
@@ -292,8 +314,14 @@ mod tests {
 
     #[test]
     fn test_extract_process_name() {
-        assert_eq!(extract_process_name("C:\\Windows\\System32\\cmd.exe"), "cmd.exe");
+        assert_eq!(
+            extract_process_name("C:\\Windows\\System32\\cmd.exe"),
+            "cmd.exe"
+        );
         assert_eq!(extract_process_name("notepad.exe"), "notepad.exe");
-        assert_eq!(extract_process_name("C:/Program Files/app.exe -arg"), "app.exe");
+        assert_eq!(
+            extract_process_name("C:/Program Files/app.exe -arg"),
+            "app.exe"
+        );
     }
 }

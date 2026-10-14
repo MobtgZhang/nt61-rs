@@ -23,17 +23,21 @@ pub mod smoke;
 use crate::kprintln;
 
 pub fn init() {
-    // kprintln!("    Input drivers: i8042, USB HID keyboard / mouse")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    Input drivers: i8042, USB HID keyboard / mouse");
     #[cfg(target_arch = "x86_64")]
     i8042::init();
     usb_hid_kbd::init();
     usb_hid_mouse::init();
-    // kprintln!("    Input stack ready")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    Input stack ready");
 }
 
 pub fn smoke_test() -> bool {
     #[cfg(target_arch = "x86_64")]
-    { smoke::smoke_test() }
+    {
+        smoke::smoke_test()
+    }
     #[cfg(not(target_arch = "x86_64"))]
-    { true }
+    {
+        true
+    }
 }

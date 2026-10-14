@@ -5,9 +5,9 @@
 //
 //! Clean-room implementation based on Intel Graphics PRM.
 
-use alloc::vec::Vec;
-use crate::drivers::video::log;
 use crate::drivers::video::intel::i915_pll;
+use crate::drivers::video::log;
+use alloc::vec::Vec;
 
 /// DDI port identifiers
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,7 +44,7 @@ impl DdiPort {
             _ => 0x64100,
         }
     }
-    
+
     /// Get the register offset for DDI AUX control
     pub fn aux_ctl_reg(&self) -> u32 {
         match self {
@@ -56,7 +56,7 @@ impl DdiPort {
             _ => 0x64104,
         }
     }
-    
+
     /// Get the register offset for DDI_BUF_TRANS
     pub fn buf_trans_reg(&self) -> u32 {
         match self {
@@ -111,7 +111,6 @@ const DDI_AUX_CTL_TIMEOUT_500US: u32 = 0 << 28;
 
 const DDI_AUX_CTL_REPLY_ACK: u32 = 1 << 24;
 
-
 /// Hotplug status bits
 const HOTPLUG_INT_STATUS_A: u32 = 1 << 0;
 const HOTPLUG_INT_STATUS_B: u32 = 1 << 2;
@@ -119,16 +118,13 @@ const HOTPLUG_INT_STATUS_C: u32 = 1 << 4;
 const HOTPLUG_INT_STATUS_D: u32 = 1 << 6;
 const HOTPLUG_INT_STATUS_TC1: u32 = 1 << 10;
 
-
-
-
 /// Detect if a monitor is connected to a DDI port
 pub fn detect_monitor(mmio: u64, port: DdiPort) -> bool {
     let buf_ctl = port.buf_ctl_reg();
-    
+
     unsafe {
         let val = core::ptr::read_volatile((mmio + buf_ctl as u64) as *const u32);
-        
+
         // Check if port is enabled and not idle
         (val & DDI_BUF_CTL_ENABLE) != 0 && (val & DDI_BUF_CTL_IDLE_DETECT) == 0
     }
@@ -138,9 +134,7 @@ pub fn detect_monitor(mmio: u64, port: DdiPort) -> bool {
 pub fn read_sfuse_strap(mmio: u64) -> u32 {
     // SFUSE register varies by generation
     // On modern platforms it's at 0x20100 or similar
-    unsafe {
-        core::ptr::read_volatile((mmio + 0x20100) as *const u32)
-    }
+    unsafe { core::ptr::read_volatile((mmio + 0x20100) as *const u32) }
 }
 
 /// Get the port type based on platform configuration
@@ -159,7 +153,7 @@ pub fn get_port_type(port: DdiPort) -> PortType {
 pub fn config_dp_buffer(mmio: u64, port: DdiPort, lane_count: u8) {
     let buf_ctl = port.buf_ctl_reg();
     let buf_trans = port.buf_trans_reg();
-    
+
     // Configure buffer enable
     let width_ctl = match lane_count {
         1 => DDI_BUF_CTL_PORT_WIDTH_1,
@@ -167,45 +161,39 @@ pub fn config_dp_buffer(mmio: u64, port: DdiPort, lane_count: u8) {
         4 => DDI_BUF_CTL_PORT_WIDTH_4,
         _ => DDI_BUF_CTL_PORT_WIDTH_4,
     };
-    
+
     let buf_ctl_val = DDI_BUF_CTL_ENABLE | width_ctl;
-    
+
     unsafe {
         // Disable buffer first
-        core::ptr::write_volatile(
-            (mmio + buf_ctl as u64) as *mut u32,
-            0,
-        );
-        
+        core::ptr::write_volatile((mmio + buf_ctl as u64) as *mut u32, 0);
+
         // Configure buffer translation entries
         // Entry 0: default entry for DP
         core::ptr::write_volatile(
             (mmio + buf_trans as u64) as *mut u32,
             0x7F7F7F7F, // Default balanced entry
         );
-        
+
         // Enable buffer
-        core::ptr::write_volatile(
-            (mmio + buf_ctl as u64) as *mut u32,
-            buf_ctl_val,
-        );
+        core::ptr::write_volatile((mmio + buf_ctl as u64) as *mut u32, buf_ctl_val);
     }
-    
-    log::video_log("i915-ddi", &alloc::format!("Port {:?} buffer configured for {} lanes", port, lane_count));
+
+    log::video_log(
+        "i915-ddi",
+        &alloc::format!("Port {:?} buffer configured for {} lanes", port, lane_count),
+    );
 }
 
 /// Configure DDI buffer for HDMI output
 pub fn config_hdmi_buffer(mmio: u64, port: DdiPort) {
     let buf_ctl = port.buf_ctl_reg();
     let buf_trans = port.buf_trans_reg();
-    
+
     unsafe {
         // Disable buffer first
-        core::ptr::write_volatile(
-            (mmio + buf_ctl as u64) as *mut u32,
-            0,
-        );
-        
+        core::ptr::write_volatile((mmio + buf_ctl as u64) as *mut u32, 0);
+
         // Configure buffer translation for HDMI
         // Use TMDS character rate entries
         for i in 0..8 {
@@ -214,28 +202,31 @@ pub fn config_hdmi_buffer(mmio: u64, port: DdiPort) {
                 0x5F5F5F5F, // TMDS compatible entry
             );
         }
-        
+
         // Enable buffer with 4 lanes
         core::ptr::write_volatile(
             (mmio + buf_ctl as u64) as *mut u32,
             DDI_BUF_CTL_ENABLE | DDI_BUF_CTL_PORT_WIDTH_4,
         );
     }
-    
-    log::video_log("i915-ddi", &alloc::format!("Port {:?} configured for HDMI", port));
+
+    log::video_log(
+        "i915-ddi",
+        &alloc::format!("Port {:?} configured for HDMI", port),
+    );
 }
 
 /// Configure DDI buffer for eDP output
 pub fn config_edp_buffer(mmio: u64, port: DdiPort, lane_count: u8) {
     let buf_ctl = port.buf_ctl_reg();
-    
+
     let width_ctl = match lane_count {
         1 => DDI_BUF_CTL_PORT_WIDTH_1,
         2 => DDI_BUF_CTL_PORT_WIDTH_2,
         4 => DDI_BUF_CTL_PORT_WIDTH_4,
         _ => DDI_BUF_CTL_PORT_WIDTH_4,
     };
-    
+
     unsafe {
         // Configure for eDP
         core::ptr::write_volatile(
@@ -243,8 +234,11 @@ pub fn config_edp_buffer(mmio: u64, port: DdiPort, lane_count: u8) {
             DDI_BUF_CTL_ENABLE | width_ctl,
         );
     }
-    
-    log::video_log("i915-ddi", &alloc::format!("Port {:?} configured for eDP ({} lanes)", port, lane_count));
+
+    log::video_log(
+        "i915-ddi",
+        &alloc::format!("Port {:?} configured for eDP ({} lanes)", port, lane_count),
+    );
 }
 
 /// Enable DDI port
@@ -260,23 +254,18 @@ pub fn enable_port(mmio: u64, port: DdiPort, port_type: PortType, lane_count: u8
 /// Disable DDI port
 pub fn disable_port(mmio: u64, port: DdiPort) {
     let buf_ctl = port.buf_ctl_reg();
-    
+
     unsafe {
-        core::ptr::write_volatile(
-            (mmio + buf_ctl as u64) as *mut u32,
-            0,
-        );
+        core::ptr::write_volatile((mmio + buf_ctl as u64) as *mut u32, 0);
     }
-    
+
     log::video_log("i915-ddi", &alloc::format!("Port {:?} disabled", port));
 }
 
 /// Read hotplug status
 pub fn read_hotplug_status(mmio: u64) -> u32 {
     // Hotplug status register location varies by generation
-    unsafe {
-        core::ptr::read_volatile((mmio + 0xC4030) as *const u32)
-    }
+    unsafe { core::ptr::read_volatile((mmio + 0xC4030) as *const u32) }
 }
 
 /// Clear hotplug interrupt
@@ -289,13 +278,10 @@ pub fn clear_hotplug_interrupt(mmio: u64, port: DdiPort) {
         DdiPort::DdiT => HOTPLUG_INT_STATUS_TC1,
         _ => 0,
     };
-    
+
     if mask != 0 {
         unsafe {
-            core::ptr::write_volatile(
-                (mmio + 0xC4038) as *mut u32,
-                mask,
-            );
+            core::ptr::write_volatile((mmio + 0xC4038) as *mut u32, mask);
         }
     }
 }
@@ -310,7 +296,7 @@ pub fn aux_transaction(
     read_len: usize,
 ) -> Result<Vec<u8>, &'static str> {
     let aux_ctl = port.aux_ctl_reg();
-    
+
     // Wait for any previous transaction to complete
     for _ in 0..1000 {
         unsafe {
@@ -321,17 +307,17 @@ pub fn aux_transaction(
         }
         core::hint::spin_loop();
     }
-    
+
     // Build command
     // Bits 31-28: Command type
     // Bits 27-20: Message length
     // Bits 19-8: I2C address or DPCD address
     // Bits 7-0: Address bytes
-    
+
     let cmd_val = (cmd as u32) << 28;
     let len_val = ((write_data.len() as u32) << 16) | ((read_len as u32) << 8);
     let addr_val = addr & 0xFFFF;
-    
+
     // Write command to AUX DATA register (varies by generation)
     unsafe {
         core::ptr::write_volatile(
@@ -339,7 +325,7 @@ pub fn aux_transaction(
             cmd_val | len_val | addr_val,
         );
     }
-    
+
     // Write data if any
     for (i, &byte) in write_data.iter().enumerate() {
         unsafe {
@@ -349,7 +335,7 @@ pub fn aux_transaction(
             );
         }
     }
-    
+
     // Start transaction
     unsafe {
         core::ptr::write_volatile(
@@ -357,7 +343,7 @@ pub fn aux_transaction(
             DDI_AUX_CTL_SEND_BUSY | DDI_AUX_CTL_TIMEOUT_500US,
         );
     }
-    
+
     // Wait for completion
     for _ in 0..5000 {
         unsafe {
@@ -369,7 +355,7 @@ pub fn aux_transaction(
                     let mut response = Vec::with_capacity(read_len);
                     for i in 0..read_len.min(16) {
                         let val = core::ptr::read_volatile(
-                            (mmio + aux_ctl as u64 + 8 + (i as u64 * 4)) as *const u32
+                            (mmio + aux_ctl as u64 + 8 + (i as u64 * 4)) as *const u32,
                         );
                         response.push(val as u8);
                     }
@@ -381,7 +367,7 @@ pub fn aux_transaction(
         }
         core::hint::spin_loop();
     }
-    
+
     Err("AUX timeout")
 }
 
@@ -412,30 +398,31 @@ pub fn probe_ports(mmio: u64) -> Vec<DdiPortState> {
     let port_count_hint = ((sfuse & 0xF) as usize).max(4).min(8);
 
     log::video_log("i915-ddi", &alloc::format!("SFUSE strap: 0x{:08x}", sfuse));
-    LAST_PORT_HINT.store(port_count_hint as u32, core::sync::atomic::Ordering::Relaxed);
+    LAST_PORT_HINT.store(
+        port_count_hint as u32,
+        core::sync::atomic::Ordering::Relaxed,
+    );
     ports.reserve(port_count_hint);
 
     // Check each port for presence
-    let port_list = [
-        DdiPort::DdiA,
-        DdiPort::DdiB,
-        DdiPort::DdiC,
-        DdiPort::DdiD,
-    ];
-    
+    let port_list = [DdiPort::DdiA, DdiPort::DdiB, DdiPort::DdiC, DdiPort::DdiD];
+
     for port in port_list {
         let port_type = get_port_type(port);
         let has_monitor = detect_monitor(mmio, port);
-        
+
         ports.push(DdiPortState {
             port,
             port_type,
             enabled: has_monitor,
             has_hotplug: true, // Most DDI ports support hotplug
         });
-        
+
         if has_monitor {
-            log::video_log("i915-ddi", &alloc::format!("Port {:?} ({:?}): connected", port, port_type));
+            log::video_log(
+                "i915-ddi",
+                &alloc::format!("Port {:?} ({:?}): connected", port, port_type),
+            );
         }
     }
 
@@ -454,4 +441,3 @@ pub fn last_sfuse() -> u32 {
 pub fn last_port_hint() -> u32 {
     LAST_PORT_HINT.load(core::sync::atomic::Ordering::Relaxed)
 }
-

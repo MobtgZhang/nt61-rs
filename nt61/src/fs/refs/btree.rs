@@ -153,7 +153,7 @@ impl RefsBtreeKey {
 
     /// Get the total key size
     pub fn total_size(&self) -> usize {
-        24 + self.data.len()  // 3 x u64 + data
+        24 + self.data.len() // 3 x u64 + data
     }
 }
 
@@ -305,7 +305,7 @@ pub fn parse_page(buffer: &[u8], lba: u64) -> Option<RefsBtreePage> {
     };
 
     if !header.is_valid() {
-        // kprintln!("[REFS] Invalid B+ tree page magic: 0x{:08x}", magic)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[REFS] Invalid B+ tree page magic: 0x{:08x}", magic);
         return None;
     }
 
@@ -355,7 +355,10 @@ pub fn parse_page(buffer: &[u8], lba: u64) -> Option<RefsBtreePage> {
     // The key and value data are interleaved after the key entries
     // For simplicity, we store them separately
     let key_data_size = if key_count > 0 {
-        keys.iter().map(|k| k.key_offset as usize + k.key_len as usize).max().unwrap_or(0)
+        keys.iter()
+            .map(|k| k.key_offset as usize + k.key_len as usize)
+            .max()
+            .unwrap_or(0)
     } else {
         0
     };
@@ -404,7 +407,7 @@ pub fn compare_keys(a: &RefsBtreeKey, b: &RefsBtreeKey) -> core::cmp::Ordering {
 /// Find a key in a page using binary search
 pub fn find_key_in_page(page: &RefsBtreePage, key: &RefsBtreeKey) -> Option<usize> {
     let key_count = page.header.get_key_count() as usize;
-    
+
     if key_count == 0 {
         return None;
     }
@@ -415,24 +418,24 @@ pub fn find_key_in_page(page: &RefsBtreePage, key: &RefsBtreeKey) -> Option<usiz
 
     while left < right {
         let mid = (left + right) / 2;
-        
+
         // Get the key at mid position
         let entry = &page.keys[mid];
-        
+
         // Extract key data from page
         let key_data_start = entry.key_offset as usize;
         let key_data_len = entry.key_len as usize;
-        
+
         if key_data_start + key_data_len > page.key_data.len() {
             break;
         }
-        
+
         let key_data = &page.key_data[key_data_start..key_data_start + key_data_len];
-        
+
         // Compare with target key (simplified - just compare first 24 bytes)
         let compare_len = core::cmp::min(key_data_len, 24);
         let target_bytes = key.as_bytes();
-        
+
         match key_data[..compare_len].cmp(&target_bytes[..compare_len]) {
             core::cmp::Ordering::Equal => {
                 if key_data_len > 24 && target_bytes.len() > 24 {
@@ -502,7 +505,7 @@ pub fn find_leaf_page(
     // 1. Start at the root page
     // 2. Navigate down the tree based on key comparisons
     // 3. Return the leaf page containing the key
-    
+
     // This is a simplified placeholder
     None
 }
@@ -517,20 +520,17 @@ pub fn insert_key(
     // 1. Find the correct position
     // 2. Insert the key and value
     // 3. Handle page splitting if needed
-    
+
     Err(())
 }
 
 /// Delete a key from the tree
-pub fn delete_key(
-    _page: &mut RefsBtreePage,
-    _key: &RefsBtreeKey,
-) -> Result<(), ()> {
+pub fn delete_key(_page: &mut RefsBtreePage, _key: &RefsBtreeKey) -> Result<(), ()> {
     // In a real implementation, we would:
     // 1. Find the key
     // 2. Remove it from the page
     // 3. Handle page merging if needed
-    
+
     Err(())
 }
 
@@ -562,28 +562,30 @@ impl<'a> Iterator for BtreeIterator<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let page = self.page?;
         let index = self.index;
-        
+
         if index >= page.header.get_key_count() as usize {
             return None;
         }
-        
+
         let entry = &page.keys[index];
         self.index += 1;
-        
+
         // Extract key and value from page data
         let key_start = entry.key_offset as usize;
         let key_len = entry.key_len as usize;
         let value_start = entry.value_offset as usize;
         let value_len = entry.value_len as usize;
-        
-        if key_start + key_len > page.key_data.len() || 
-           value_start + value_len > page.value_data.len() {
+
+        if key_start + key_len > page.key_data.len()
+            || value_start + value_len > page.value_data.len()
+        {
             return None;
         }
-        
+
         let key = RefsBtreeKey::from_bytes(&page.key_data[key_start..key_start + key_len])?;
-        let value = RefsBtreeValue::new(page.value_data[value_start..value_start + value_len].to_vec());
-        
+        let value =
+            RefsBtreeValue::new(page.value_data[value_start..value_start + value_len].to_vec());
+
         Some((key, value))
     }
 }
@@ -594,16 +596,16 @@ impl<'a> Iterator for BtreeIterator<'a> {
 
 /// Print page information for debugging
 pub fn debug_print_page(page: &RefsBtreePage) {
-    // kprintln!("[REFS] B+ Tree Page:")  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("  Magic:     0x{:08x}", page.header.magic)  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("  Flags:     0x{:02x}", page.header.flags)  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("  Height:    {}", page.header.height)  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("  Key count: {}", page.header.key_count)  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("  LBA:       {}", page.lba)  // kprintln disabled (memcpy crash workaround);
-    
+    // kprintln!("[REFS] B+ Tree Page:");
+    // kprintln!("  Magic:     0x{:08x}", page.header.magic);
+    // kprintln!("  Flags:     0x{:02x}", page.header.flags);
+    // kprintln!("  Height:    {}", page.header.height);
+    // kprintln!("  Key count: {}", page.header.key_count);
+    // kprintln!("  LBA:       {}", page.lba);
+
     if page.header.is_leaf() {
-        // kprintln!("  Type:      LEAF")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  Type:      LEAF");
     } else {
-        // kprintln!("  Type:      INDEX")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  Type:      INDEX");
     }
 }

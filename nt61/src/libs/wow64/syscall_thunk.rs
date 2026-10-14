@@ -17,17 +17,17 @@
 //!   * geoffchappell.com — wow64 system service dispatching
 //!   * ReactOS `win32ss/gdi/gdi32/objects/thunk.c`
 
-use crate::libs::wow64::types::*;
 use crate::libs::wow64::ssd::{self, service_numbers};
+use crate::libs::wow64::types::*;
 
 // 32-bit NTSTATUS values (unsigned representation, see ssd.rs for context).
-const STATUS_SUCCESS_32: ULONG32           = 0x00000000;
-const STATUS_NOT_IMPLEMENTED_32: ULONG32   = 0xC0000002;
+const STATUS_SUCCESS_32: ULONG32 = 0x00000000;
+const STATUS_NOT_IMPLEMENTED_32: ULONG32 = 0xC0000002;
 const STATUS_INVALID_PARAMETER_32: ULONG32 = 0xC000000D;
-const STATUS_NO_MEMORY_32: ULONG32         = 0xC0000017;
-const STATUS_INVALID_HANDLE_32: ULONG32    = 0xC0000008;
-const STATUS_UNSUCCESSFUL_32: ULONG32      = 0xC0000001;
-const STATUS_ACCESS_DENIED_32: ULONG32     = 0xC0000022;
+const STATUS_NO_MEMORY_32: ULONG32 = 0xC0000017;
+const STATUS_INVALID_HANDLE_32: ULONG32 = 0xC0000008;
+const STATUS_UNSUCCESSFUL_32: ULONG32 = 0xC0000001;
+const STATUS_ACCESS_DENIED_32: ULONG32 = 0xC0000022;
 
 // =============================================================================
 // Wow64 System Service Entry Point
@@ -61,7 +61,9 @@ pub unsafe extern "C" fn Wow64SystemServiceEx(
 ) -> ULONG32 {
     crate::wow64_klog!(
         "Wow64SystemServiceEx tbl=0x{:08x} svc=0x{:03x} args=0x{:08x}",
-        service_table, service_number, args
+        service_table,
+        service_number,
+        args
     );
 
     // Validate service table pointer
@@ -75,10 +77,7 @@ pub unsafe extern "C" fn Wow64SystemServiceEx(
     // Decode service number: format is [table:4][index:12]
     let table_index = ssd::get_table_index(service_number);
     let service_index = ssd::get_service_index(service_number);
-    crate::wow64_klog!(
-        "Dispatch tbl={} idx=0x{:03x}",
-        table_index, service_index
-    );
+    crate::wow64_klog!("Dispatch tbl={} idx=0x{:03x}", table_index, service_index);
 
     // Look up the service
     match ssd::lookup_service(service_number) {
@@ -105,82 +104,40 @@ pub unsafe extern "C" fn Wow64SystemServiceEx(
 /// performed. Each branch is responsible for parsing the
 /// argument pointer (which already lives in low memory) and
 /// forwarding to the appropriate 64-bit implementation.
-pub unsafe fn dispatch_service(
-    service_number: ULONG32,
-    args: *const u32,
-) -> ULONG32 {
+pub unsafe fn dispatch_service(service_number: ULONG32, args: *const u32) -> ULONG32 {
     if args.is_null() {
         return STATUS_INVALID_PARAMETER_32;
     }
     match service_number {
         // Memory management services
-        service_numbers::NT_ALLOCATE_VIRTUAL_MEMORY => {
-            nt_allocate_virtual_memory_thunk(args)
-        }
-        service_numbers::NT_FREE_VIRTUAL_MEMORY => {
-            nt_free_virtual_memory_thunk(args)
-        }
-        service_numbers::NT_QUERY_VIRTUAL_MEMORY => {
-            nt_query_virtual_memory_thunk(args)
-        }
-        service_numbers::NT_PROTECT_VIRTUAL_MEMORY => {
-            nt_protect_virtual_memory_thunk(args)
-        }
-        service_numbers::NT_READ_PROCESS_MEMORY => {
-            nt_read_process_memory_thunk(args)
-        }
-        service_numbers::NT_WRITE_PROCESS_MEMORY => {
-            nt_write_process_memory_thunk(args)
-        }
+        service_numbers::NT_ALLOCATE_VIRTUAL_MEMORY => nt_allocate_virtual_memory_thunk(args),
+        service_numbers::NT_FREE_VIRTUAL_MEMORY => nt_free_virtual_memory_thunk(args),
+        service_numbers::NT_QUERY_VIRTUAL_MEMORY => nt_query_virtual_memory_thunk(args),
+        service_numbers::NT_PROTECT_VIRTUAL_MEMORY => nt_protect_virtual_memory_thunk(args),
+        service_numbers::NT_READ_PROCESS_MEMORY => nt_read_process_memory_thunk(args),
+        service_numbers::NT_WRITE_PROCESS_MEMORY => nt_write_process_memory_thunk(args),
 
         // Process services
-        service_numbers::NT_CREATE_PROCESS => {
-            nt_create_process_thunk(args)
-        }
-        service_numbers::NT_OPEN_PROCESS => {
-            nt_open_process_thunk(args)
-        }
-        service_numbers::NT_QUERY_INFORMATION_PROCESS => {
-            nt_query_information_process_thunk(args)
-        }
-        service_numbers::NT_SET_INFORMATION_PROCESS => {
-            nt_set_information_process_thunk(args)
-        }
+        service_numbers::NT_CREATE_PROCESS => nt_create_process_thunk(args),
+        service_numbers::NT_OPEN_PROCESS => nt_open_process_thunk(args),
+        service_numbers::NT_QUERY_INFORMATION_PROCESS => nt_query_information_process_thunk(args),
+        service_numbers::NT_SET_INFORMATION_PROCESS => nt_set_information_process_thunk(args),
 
         // Thread services
-        service_numbers::NT_CREATE_THREAD => {
-            nt_create_thread_thunk(args)
-        }
-        service_numbers::NT_OPEN_THREAD => {
-            nt_open_thread_thunk(args)
-        }
-        service_numbers::NT_GET_CONTEXT_THREAD => {
-            nt_get_context_thread_thunk(args)
-        }
-        service_numbers::NT_SET_CONTEXT_THREAD => {
-            nt_set_context_thread_thunk(args)
-        }
-        service_numbers::NT_QUERY_INFORMATION_THREAD => {
-            nt_query_information_thread_thunk(args)
-        }
-        service_numbers::NT_SET_INFORMATION_THREAD => {
-            nt_set_information_thread_thunk(args)
-        }
+        service_numbers::NT_CREATE_THREAD => nt_create_thread_thunk(args),
+        service_numbers::NT_OPEN_THREAD => nt_open_thread_thunk(args),
+        service_numbers::NT_GET_CONTEXT_THREAD => nt_get_context_thread_thunk(args),
+        service_numbers::NT_SET_CONTEXT_THREAD => nt_set_context_thread_thunk(args),
+        service_numbers::NT_QUERY_INFORMATION_THREAD => nt_query_information_thread_thunk(args),
+        service_numbers::NT_SET_INFORMATION_THREAD => nt_set_information_thread_thunk(args),
 
         // Exception services
-        service_numbers::NT_RAISE_EXCEPTION => {
-            nt_raise_exception_thunk(args)
-        }
-        service_numbers::NT_DISPATCH_EXCEPTION => {
-            nt_dispatch_exception_thunk(args)
-        }
+        service_numbers::NT_RAISE_EXCEPTION => nt_raise_exception_thunk(args),
+        service_numbers::NT_DISPATCH_EXCEPTION => nt_dispatch_exception_thunk(args),
 
         // Unknown service
         _ => {
-            crate::wow64_klog!(
-                "Unhandled service 0x{:03x}",
-                service_number
-            );
+            crate::wow64_klog!("Unhandled service 0x{:03x}", service_number);
             STATUS_NOT_IMPLEMENTED_32
         }
     }
@@ -200,16 +157,19 @@ pub unsafe fn dispatch_service(
 /// * [4] AllocationType
 /// * [5] Protect
 unsafe extern "C" fn nt_allocate_virtual_memory_thunk(args: *const u32) -> ULONG32 {
-    let process_handle   = *args;
+    let process_handle = *args;
     let base_address_ptr = args.add(1) as *mut u32;
-    let zero_bits        = *args.add(2);
-    let region_size_ptr  = args.add(3) as *mut u32;
-    let allocation_type  = *args.add(4);
-    let protect          = *args.add(5);
+    let zero_bits = *args.add(2);
+    let region_size_ptr = args.add(3) as *mut u32;
+    let allocation_type = *args.add(4);
+    let protect = *args.add(5);
 
     crate::wow64_klog!(
         "NtAllocateVirtualMemory proc=0x{:08x} type=0x{:08x} prot=0x{:08x} zb={:#x}",
-        process_handle, allocation_type, protect, zero_bits
+        process_handle,
+        allocation_type,
+        protect,
+        zero_bits
     );
     if process_handle == 0 {
         return STATUS_INVALID_HANDLE_32;
@@ -234,14 +194,15 @@ unsafe extern "C" fn nt_allocate_virtual_memory_thunk(args: *const u32) -> ULONG
 
 /// NtFreeVirtualMemory thunk (32-bit args).
 unsafe extern "C" fn nt_free_virtual_memory_thunk(args: *const u32) -> ULONG32 {
-    let process_handle   = *args;
+    let process_handle = *args;
     let base_address_ptr = args.add(1) as *mut u32;
-    let region_size_ptr  = args.add(2) as *mut u32;
-    let free_type        = *args.add(3);
+    let region_size_ptr = args.add(2) as *mut u32;
+    let free_type = *args.add(3);
 
     crate::wow64_klog!(
         "NtFreeVirtualMemory proc=0x{:08x} type=0x{:08x}",
-        process_handle, free_type
+        process_handle,
+        free_type
     );
     if process_handle == 0 {
         return STATUS_INVALID_HANDLE_32;
@@ -254,16 +215,19 @@ unsafe extern "C" fn nt_free_virtual_memory_thunk(args: *const u32) -> ULONG32 {
 
 /// NtQueryVirtualMemory thunk (32-bit args).
 unsafe extern "C" fn nt_query_virtual_memory_thunk(args: *const u32) -> ULONG32 {
-    let process_handle        = *args;
-    let base_address          = *args.add(1);
-    let memory_info_class     = *args.add(2);
-    let memory_info_ptr       = args.add(3) as *mut u8;
-    let memory_info_length    = *args.add(4);
-    let return_length_ptr     = args.add(5) as *mut u32;
+    let process_handle = *args;
+    let base_address = *args.add(1);
+    let memory_info_class = *args.add(2);
+    let memory_info_ptr = args.add(3) as *mut u8;
+    let memory_info_length = *args.add(4);
+    let return_length_ptr = args.add(5) as *mut u32;
 
     crate::wow64_klog!(
         "NtQueryVirtualMemory proc=0x{:08x} addr=0x{:08x} class={} len={}",
-        process_handle, base_address, memory_info_class, memory_info_length
+        process_handle,
+        base_address,
+        memory_info_class,
+        memory_info_length
     );
     if process_handle == 0 {
         return STATUS_INVALID_HANDLE_32;
@@ -282,22 +246,21 @@ unsafe extern "C" fn nt_query_virtual_memory_thunk(args: *const u32) -> ULONG32 
 
 /// NtProtectVirtualMemory thunk (32-bit args).
 unsafe extern "C" fn nt_protect_virtual_memory_thunk(args: *const u32) -> ULONG32 {
-    let process_handle   = *args;
+    let process_handle = *args;
     let base_address_ptr = args.add(1) as *mut u32;
-    let region_size_ptr  = args.add(2) as *mut u32;
-    let new_protect      = *args.add(3);
-    let old_protect_ptr  = args.add(4) as *mut u32;
+    let region_size_ptr = args.add(2) as *mut u32;
+    let new_protect = *args.add(3);
+    let old_protect_ptr = args.add(4) as *mut u32;
 
     crate::wow64_klog!(
         "NtProtectVirtualMemory proc=0x{:08x} prot=0x{:08x}",
-        process_handle, new_protect
+        process_handle,
+        new_protect
     );
     if process_handle == 0 {
         return STATUS_INVALID_HANDLE_32;
     }
-    if base_address_ptr.is_null() || region_size_ptr.is_null()
-        || old_protect_ptr.is_null()
-    {
+    if base_address_ptr.is_null() || region_size_ptr.is_null() || old_protect_ptr.is_null() {
         return STATUS_INVALID_PARAMETER_32;
     }
     STATUS_NOT_IMPLEMENTED_32
@@ -305,15 +268,17 @@ unsafe extern "C" fn nt_protect_virtual_memory_thunk(args: *const u32) -> ULONG3
 
 /// NtReadProcessMemory thunk (32-bit args).
 unsafe extern "C" fn nt_read_process_memory_thunk(args: *const u32) -> ULONG32 {
-    let process_handle             = *args;
-    let base_address               = *args.add(1);
-    let _buffer                   = *args.add(2);
-    let size                       = *args.add(3);
-    let number_of_bytes_read_ptr   = args.add(4) as *mut u32;
+    let process_handle = *args;
+    let base_address = *args.add(1);
+    let _buffer = *args.add(2);
+    let size = *args.add(3);
+    let number_of_bytes_read_ptr = args.add(4) as *mut u32;
 
     crate::wow64_klog!(
         "NtReadProcessMemory proc=0x{:08x} addr=0x{:08x} size=0x{:08x}",
-        process_handle, base_address, size
+        process_handle,
+        base_address,
+        size
     );
     if process_handle == 0 {
         return STATUS_INVALID_HANDLE_32;
@@ -326,15 +291,17 @@ unsafe extern "C" fn nt_read_process_memory_thunk(args: *const u32) -> ULONG32 {
 
 /// NtWriteProcessMemory thunk (32-bit args).
 unsafe extern "C" fn nt_write_process_memory_thunk(args: *const u32) -> ULONG32 {
-    let process_handle             = *args;
-    let base_address               = *args.add(1);
-    let _buffer                   = *args.add(2);
-    let size                       = *args.add(3);
+    let process_handle = *args;
+    let base_address = *args.add(1);
+    let _buffer = *args.add(2);
+    let size = *args.add(3);
     let number_of_bytes_written_ptr = args.add(4) as *mut u32;
 
     crate::wow64_klog!(
         "NtWriteProcessMemory proc=0x{:08x} addr=0x{:08x} size=0x{:08x}",
-        process_handle, base_address, size
+        process_handle,
+        base_address,
+        size
     );
     if process_handle == 0 {
         return STATUS_INVALID_HANDLE_32;
@@ -352,17 +319,20 @@ unsafe extern "C" fn nt_write_process_memory_thunk(args: *const u32) -> ULONG32 
 /// NtCreateProcess thunk (32-bit args).
 unsafe extern "C" fn nt_create_process_thunk(args: *const u32) -> ULONG32 {
     let process_handle_ptr = args.add(0) as *mut u32;
-    let desired_access     = *args.add(1);
-    let object_attributes  = *args.add(2);
-    let parent_process     = *args.add(3);
-    let inherit_handle     = *args.add(4);
-    let section_handle     = *args.add(5);
-    let debug_port         = *args.add(6);
-    let token              = *args.add(7);
+    let desired_access = *args.add(1);
+    let object_attributes = *args.add(2);
+    let parent_process = *args.add(3);
+    let inherit_handle = *args.add(4);
+    let section_handle = *args.add(5);
+    let debug_port = *args.add(6);
+    let token = *args.add(7);
 
     crate::wow64_klog!(
         "NtCreateProcess parent=0x{:08x} access=0x{:08x} inherit={} section=0x{:08x}",
-        parent_process, desired_access, inherit_handle, section_handle
+        parent_process,
+        desired_access,
+        inherit_handle,
+        section_handle
     );
     if process_handle_ptr.is_null() {
         return STATUS_INVALID_PARAMETER_32;
@@ -374,9 +344,9 @@ unsafe extern "C" fn nt_create_process_thunk(args: *const u32) -> ULONG32 {
 /// NtOpenProcess thunk (32-bit args).
 unsafe extern "C" fn nt_open_process_thunk(args: *const u32) -> ULONG32 {
     let process_handle_ptr = args.add(0) as *mut u32;
-    let desired_access     = *args.add(1);
-    let object_attributes  = *args.add(2);
-    let client_id         = args.add(3) as *const ClientId32;
+    let desired_access = *args.add(1);
+    let object_attributes = *args.add(2);
+    let client_id = args.add(3) as *const ClientId32;
 
     let pid = if !client_id.is_null() {
         (*client_id).unique_process
@@ -385,7 +355,8 @@ unsafe extern "C" fn nt_open_process_thunk(args: *const u32) -> ULONG32 {
     };
     crate::wow64_klog!(
         "NtOpenProcess access=0x{:08x} pid=0x{:08x}",
-        desired_access, pid
+        desired_access,
+        pid
     );
     if process_handle_ptr.is_null() {
         return STATUS_INVALID_PARAMETER_32;
@@ -396,15 +367,17 @@ unsafe extern "C" fn nt_open_process_thunk(args: *const u32) -> ULONG32 {
 
 /// NtQueryInformationProcess thunk (32-bit args).
 unsafe extern "C" fn nt_query_information_process_thunk(args: *const u32) -> ULONG32 {
-    let process_handle    = *args;
-    let info_class        = *args.add(1);
-    let info_ptr          = args.add(2) as *mut u8;
-    let info_length       = *args.add(3);
+    let process_handle = *args;
+    let info_class = *args.add(1);
+    let info_ptr = args.add(2) as *mut u8;
+    let info_length = *args.add(3);
     let return_length_ptr = args.add(4) as *mut u32;
 
     crate::wow64_klog!(
         "NtQueryInformationProcess handle=0x{:08x} class={} len={}",
-        process_handle, info_class, info_length
+        process_handle,
+        info_class,
+        info_length
     );
     if process_handle == 0 {
         return STATUS_INVALID_HANDLE_32;
@@ -422,13 +395,15 @@ unsafe extern "C" fn nt_query_information_process_thunk(args: *const u32) -> ULO
 /// NtSetInformationProcess thunk (32-bit args).
 unsafe extern "C" fn nt_set_information_process_thunk(args: *const u32) -> ULONG32 {
     let process_handle = *args;
-    let info_class     = *args.add(1);
-    let info_ptr       = *args.add(2);
-    let info_length    = *args.add(3);
+    let info_class = *args.add(1);
+    let info_ptr = *args.add(2);
+    let info_length = *args.add(3);
 
     crate::wow64_klog!(
         "NtSetInformationProcess handle=0x{:08x} class={} len={:#x}",
-        process_handle, info_class, info_length
+        process_handle,
+        info_class,
+        info_length
     );
     if process_handle == 0 {
         return STATUS_INVALID_HANDLE_32;
@@ -446,32 +421,39 @@ unsafe extern "C" fn nt_set_information_process_thunk(args: *const u32) -> ULONG
 /// NtCreateThread thunk (32-bit args).
 unsafe extern "C" fn nt_create_thread_thunk(args: *const u32) -> ULONG32 {
     let thread_handle_ptr = args.add(0) as *mut u32;
-    let desired_access     = *args.add(1);
-    let object_attributes  = *args.add(2);
-    let process_handle     = *args.add(3);
-    let client_id_ptr      = args.add(4) as *mut ClientId32;
-    let thread_context     = args.add(5) as *const Context32;
-    let user_stack         = args.add(6);
-    let start_routine      = *args.add(7);
+    let desired_access = *args.add(1);
+    let object_attributes = *args.add(2);
+    let process_handle = *args.add(3);
+    let client_id_ptr = args.add(4) as *mut ClientId32;
+    let thread_context = args.add(5) as *const Context32;
+    let user_stack = args.add(6);
+    let start_routine = *args.add(7);
 
     crate::wow64_klog!(
         "NtCreateThread proc=0x{:08x} start=0x{:08x} access=0x{:08x}",
-        process_handle, start_routine, desired_access
+        process_handle,
+        start_routine,
+        desired_access
     );
     if process_handle == 0 || start_routine == 0 {
         return STATUS_INVALID_PARAMETER_32;
     }
-    let _ = (thread_handle_ptr, object_attributes, client_id_ptr,
-             thread_context, user_stack);
+    let _ = (
+        thread_handle_ptr,
+        object_attributes,
+        client_id_ptr,
+        thread_context,
+        user_stack,
+    );
     STATUS_NOT_IMPLEMENTED_32
 }
 
 /// NtOpenThread thunk (32-bit args).
 unsafe extern "C" fn nt_open_thread_thunk(args: *const u32) -> ULONG32 {
-    let thread_handle_ptr  = args.add(0) as *mut u32;
-    let desired_access     = *args.add(1);
-    let object_attributes  = *args.add(2);
-    let client_id         = args.add(3) as *const ClientId32;
+    let thread_handle_ptr = args.add(0) as *mut u32;
+    let desired_access = *args.add(1);
+    let object_attributes = *args.add(2);
+    let client_id = args.add(3) as *const ClientId32;
 
     let tid = if !client_id.is_null() {
         (*client_id).unique_thread
@@ -480,7 +462,8 @@ unsafe extern "C" fn nt_open_thread_thunk(args: *const u32) -> ULONG32 {
     };
     crate::wow64_klog!(
         "NtOpenThread access=0x{:08x} tid=0x{:08x}",
-        desired_access, tid
+        desired_access,
+        tid
     );
     if thread_handle_ptr.is_null() {
         return STATUS_INVALID_PARAMETER_32;
@@ -491,13 +474,14 @@ unsafe extern "C" fn nt_open_thread_thunk(args: *const u32) -> ULONG32 {
 
 /// NtGetContextThread thunk (32-bit args).
 unsafe extern "C" fn nt_get_context_thread_thunk(args: *const u32) -> ULONG32 {
-    let thread_handle    = *args;
-    let context_ptr      = args.add(1) as *mut Context32;
-    let context_length   = *args.add(2);
+    let thread_handle = *args;
+    let context_ptr = args.add(1) as *mut Context32;
+    let context_length = *args.add(2);
 
     crate::wow64_klog!(
         "NtGetContextThread handle=0x{:08x} len=0x{:08x}",
-        thread_handle, context_length
+        thread_handle,
+        context_length
     );
     if thread_handle == 0 {
         return STATUS_INVALID_HANDLE_32;
@@ -510,13 +494,14 @@ unsafe extern "C" fn nt_get_context_thread_thunk(args: *const u32) -> ULONG32 {
 
 /// NtSetContextThread thunk (32-bit args).
 unsafe extern "C" fn nt_set_context_thread_thunk(args: *const u32) -> ULONG32 {
-    let thread_handle    = *args;
-    let context_ptr      = args.add(1) as *const Context32;
-    let context_length   = *args.add(2);
+    let thread_handle = *args;
+    let context_ptr = args.add(1) as *const Context32;
+    let context_length = *args.add(2);
 
     crate::wow64_klog!(
         "NtSetContextThread handle=0x{:08x} len=0x{:08x}",
-        thread_handle, context_length
+        thread_handle,
+        context_length
     );
     if thread_handle == 0 {
         return STATUS_INVALID_HANDLE_32;
@@ -529,15 +514,17 @@ unsafe extern "C" fn nt_set_context_thread_thunk(args: *const u32) -> ULONG32 {
 
 /// NtQueryInformationThread thunk (32-bit args).
 unsafe extern "C" fn nt_query_information_thread_thunk(args: *const u32) -> ULONG32 {
-    let thread_handle    = *args;
-    let info_class        = *args.add(1);
-    let info_ptr          = args.add(2) as *mut u8;
-    let info_length       = *args.add(3);
+    let thread_handle = *args;
+    let info_class = *args.add(1);
+    let info_ptr = args.add(2) as *mut u8;
+    let info_length = *args.add(3);
     let return_length_ptr = args.add(4) as *mut u32;
 
     crate::wow64_klog!(
         "NtQueryInformationThread handle=0x{:08x} class={} len={}",
-        thread_handle, info_class, info_length
+        thread_handle,
+        info_class,
+        info_length
     );
     if thread_handle == 0 {
         return STATUS_INVALID_HANDLE_32;
@@ -552,13 +539,15 @@ unsafe extern "C" fn nt_query_information_thread_thunk(args: *const u32) -> ULON
 /// NtSetInformationThread thunk (32-bit args).
 unsafe extern "C" fn nt_set_information_thread_thunk(args: *const u32) -> ULONG32 {
     let thread_handle = *args;
-    let info_class     = *args.add(1);
-    let info_ptr       = *args.add(2);
-    let info_length    = *args.add(3);
+    let info_class = *args.add(1);
+    let info_ptr = *args.add(2);
+    let info_length = *args.add(3);
 
     crate::wow64_klog!(
         "NtSetInformationThread handle=0x{:08x} class={} len={:#x}",
-        thread_handle, info_class, info_length
+        thread_handle,
+        info_class,
+        info_length
     );
     if thread_handle == 0 {
         return STATUS_INVALID_HANDLE_32;
@@ -576,8 +565,8 @@ unsafe extern "C" fn nt_set_information_thread_thunk(args: *const u32) -> ULONG3
 /// NtRaiseException thunk (32-bit args).
 unsafe extern "C" fn nt_raise_exception_thunk(args: *const u32) -> ULONG32 {
     let exception_record = args.add(0) as *const ExceptionRecord32;
-    let context_ptr      = args.add(1) as *mut Context32;
-    let first_chance     = *args.add(2);
+    let context_ptr = args.add(1) as *mut Context32;
+    let first_chance = *args.add(2);
 
     let code = if !exception_record.is_null() {
         (*exception_record).exception_code
@@ -586,7 +575,8 @@ unsafe extern "C" fn nt_raise_exception_thunk(args: *const u32) -> ULONG32 {
     };
     crate::wow64_klog!(
         "NtRaiseException code=0x{:08x} first_chance={}",
-        code, first_chance
+        code,
+        first_chance
     );
     if exception_record.is_null() || context_ptr.is_null() {
         return STATUS_INVALID_PARAMETER_32;
@@ -597,17 +587,14 @@ unsafe extern "C" fn nt_raise_exception_thunk(args: *const u32) -> ULONG32 {
 /// NtDispatchException thunk (32-bit args).
 unsafe extern "C" fn nt_dispatch_exception_thunk(args: *const u32) -> ULONG32 {
     let exception_record = args.add(0) as *const ExceptionRecord32;
-    let context_ptr      = args.add(1) as *mut Context32;
+    let context_ptr = args.add(1) as *mut Context32;
 
     let code = if !exception_record.is_null() {
         (*exception_record).exception_code
     } else {
         0
     };
-    crate::wow64_klog!(
-        "NtDispatchException code=0x{:08x}",
-        code
-    );
+    crate::wow64_klog!("NtDispatchException code=0x{:08x}", code);
     if exception_record.is_null() {
         return STATUS_INVALID_PARAMETER_32;
     }
@@ -663,32 +650,17 @@ fn register_service_thunks() {
         svc::NT_ALLOCATE_VIRTUAL_MEMORY,
         nt_allocate_virtual_memory_thunk,
     );
-    ssd_mod::update_service_handler(
-        svc::NT_FREE_VIRTUAL_MEMORY,
-        nt_free_virtual_memory_thunk,
-    );
-    ssd_mod::update_service_handler(
-        svc::NT_QUERY_VIRTUAL_MEMORY,
-        nt_query_virtual_memory_thunk,
-    );
+    ssd_mod::update_service_handler(svc::NT_FREE_VIRTUAL_MEMORY, nt_free_virtual_memory_thunk);
+    ssd_mod::update_service_handler(svc::NT_QUERY_VIRTUAL_MEMORY, nt_query_virtual_memory_thunk);
     ssd_mod::update_service_handler(
         svc::NT_PROTECT_VIRTUAL_MEMORY,
         nt_protect_virtual_memory_thunk,
     );
-    ssd_mod::update_service_handler(
-        svc::NT_READ_PROCESS_MEMORY,
-        nt_read_process_memory_thunk,
-    );
-    ssd_mod::update_service_handler(
-        svc::NT_WRITE_PROCESS_MEMORY,
-        nt_write_process_memory_thunk,
-    );
+    ssd_mod::update_service_handler(svc::NT_READ_PROCESS_MEMORY, nt_read_process_memory_thunk);
+    ssd_mod::update_service_handler(svc::NT_WRITE_PROCESS_MEMORY, nt_write_process_memory_thunk);
 
     // Process services
-    ssd_mod::update_service_handler(
-        svc::NT_OPEN_PROCESS,
-        nt_open_process_thunk,
-    );
+    ssd_mod::update_service_handler(svc::NT_OPEN_PROCESS, nt_open_process_thunk);
     ssd_mod::update_service_handler(
         svc::NT_QUERY_INFORMATION_PROCESS,
         nt_query_information_process_thunk,
@@ -699,22 +671,10 @@ fn register_service_thunks() {
     );
 
     // Thread services
-    ssd_mod::update_service_handler(
-        svc::NT_CREATE_THREAD,
-        nt_create_thread_thunk,
-    );
-    ssd_mod::update_service_handler(
-        svc::NT_OPEN_THREAD,
-        nt_open_thread_thunk,
-    );
-    ssd_mod::update_service_handler(
-        svc::NT_GET_CONTEXT_THREAD,
-        nt_get_context_thread_thunk,
-    );
-    ssd_mod::update_service_handler(
-        svc::NT_SET_CONTEXT_THREAD,
-        nt_set_context_thread_thunk,
-    );
+    ssd_mod::update_service_handler(svc::NT_CREATE_THREAD, nt_create_thread_thunk);
+    ssd_mod::update_service_handler(svc::NT_OPEN_THREAD, nt_open_thread_thunk);
+    ssd_mod::update_service_handler(svc::NT_GET_CONTEXT_THREAD, nt_get_context_thread_thunk);
+    ssd_mod::update_service_handler(svc::NT_SET_CONTEXT_THREAD, nt_set_context_thread_thunk);
     ssd_mod::update_service_handler(
         svc::NT_QUERY_INFORMATION_THREAD,
         nt_query_information_thread_thunk,
@@ -725,14 +685,8 @@ fn register_service_thunks() {
     );
 
     // Exception services
-    ssd_mod::update_service_handler(
-        svc::NT_RAISE_EXCEPTION,
-        nt_raise_exception_thunk,
-    );
-    ssd_mod::update_service_handler(
-        svc::NT_DISPATCH_EXCEPTION,
-        nt_dispatch_exception_thunk,
-    );
+    ssd_mod::update_service_handler(svc::NT_RAISE_EXCEPTION, nt_raise_exception_thunk);
+    ssd_mod::update_service_handler(svc::NT_DISPATCH_EXCEPTION, nt_dispatch_exception_thunk);
 
     crate::wow64_klog!("Service thunks registered");
 }

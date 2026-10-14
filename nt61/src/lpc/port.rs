@@ -6,8 +6,8 @@
 //! - Port reference counting
 //! - Port state management
 
-use core::ptr::null_mut;
 use crate::ke::sync::Spinlock;
+use core::ptr::null_mut;
 
 use super::{LpcPort, LpcPortType, LpcRegistry, MAX_PORTS};
 
@@ -32,6 +32,19 @@ pub struct PortAttributes {
 
 impl Default for PortAttributes {
     fn default() -> Self {
+        Self {
+            max_message_length: 256,
+            max_pool_usage: 64 * 1024,
+            memory_reserve: 0,
+            flags: 0,
+            security_qos: 0,
+        }
+    }
+}
+
+impl PortAttributes {
+    /// Const form of the same defaults so `LpcPort::empty()` can stay a `const fn`.
+    pub const fn const_default() -> Self {
         Self {
             max_message_length: 256,
             max_pool_usage: 64 * 1024,
@@ -85,8 +98,9 @@ pub fn create_port_ex(
     p.head = 0;
     p.tail = 0;
     p.connected = false;
+    p.state = PortState::Initializing;
 
-    let _ = attrs;
+    p.attributes = *attrs;
 
     reg.count = reg.count + 1;
     Some(idx as u32)
@@ -107,8 +121,10 @@ pub fn close_port(port_index: u32, reg: &mut LpcRegistry) -> bool {
             let peer = reg.ports.as_mut_ptr().add(peer_idx as usize);
             (*peer).connected = false;
             (*peer).peer_index = 0;
+            (*peer).state = PortState::Closed;
         }
 
+        (*p).state = PortState::Closed;
         (*p).head = 0;
         (*p).tail = 0;
         (*p).pending = 0;
@@ -125,12 +141,6 @@ pub fn get_port_state(port_index: u32, reg: &LpcRegistry) -> PortState {
 
     unsafe {
         let p = reg.ports.as_ptr().add(port_index as usize);
-        if (*p).connected {
-            PortState::Active
-        } else if (*p).port_type == LpcPortType::Unknown {
-            PortState::Closed
-        } else {
-            PortState::Initializing
-        }
+        (*p).state
     }
 }

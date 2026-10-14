@@ -40,7 +40,9 @@ pub fn allocate_ipi_vector(handler: IpiHandler) -> Option<u8> {
 
 /// Free a previously-allocated IPI vector.
 pub fn free_ipi_vector(vector: u8) {
-    if vector < IPI_DYNAMIC_BASE || vector > IPI_DYNAMIC_END { return; }
+    if vector < IPI_DYNAMIC_BASE || vector > IPI_DYNAMIC_END {
+        return;
+    }
     unsafe {
         let idx = (vector - IPI_DYNAMIC_BASE) as usize;
         IPI_HANDLERS[idx] = None;
@@ -86,13 +88,17 @@ pub fn handle_ipi_panic_stop() {
     // scheduler lock here because the BSP may be holding it
     // and we want to be polite. HLT is the polite idle.
     loop {
-        if !panic_stop_set() { break; }
+        if !panic_stop_set() {
+            break;
+        }
         crate::arch::halt();
     }
 }
 
 pub fn handle_ipi_dynamic(vector: u8) {
-    if vector < IPI_DYNAMIC_BASE || vector > IPI_DYNAMIC_END { return; }
+    if vector < IPI_DYNAMIC_BASE || vector > IPI_DYNAMIC_END {
+        return;
+    }
     let idx = (vector - IPI_DYNAMIC_BASE) as usize;
     let handler = unsafe { IPI_HANDLERS[idx] };
     if let Some(h) = handler {
@@ -128,7 +134,7 @@ use crate::ke::sync::{DispatcherHeader, WaitResult};
 use crate::ps::thread::Ethread;
 
 const WAIT_LIST_MAX: usize = 128;
-const WAIT_LIST_EXTRA: usize = 64;  // Extra slots when primary is full
+const WAIT_LIST_EXTRA: usize = 64; // Extra slots when primary is full
 const WAIT_LIST_TOTAL: usize = WAIT_LIST_MAX + WAIT_LIST_EXTRA;
 
 #[repr(C)]
@@ -228,8 +234,7 @@ pub fn wait_on(object: &DispatcherHeader, timeout_ms: u32) -> WaitResult {
             // Insert the thread's wait_list_entry at the tail of
             // the wait list (sentinel-style intrusive list).
             let head_ptr: *mut crate::ps::process::ListEntry = &mut WAIT_LIST_HEAD;
-            let e_ptr: *mut crate::ps::process::ListEntry =
-                &mut (*current).kthread.wait_list_entry;
+            let e_ptr: *mut crate::ps::process::ListEntry = &mut (*current).kthread.wait_list_entry;
             (*e_ptr).blink = (*head_ptr).blink;
             (*e_ptr).flink = head_ptr;
             (*(*head_ptr).blink).flink = e_ptr;
@@ -240,10 +245,10 @@ pub fn wait_on(object: &DispatcherHeader, timeout_ms: u32) -> WaitResult {
             (e_ptr, entry.deadline_ticks)
         }
     }; // Lock released here before schedule()
-    
+
     // Yield the CPU to the scheduler
     crate::ke::scheduler::schedule();
-    
+
     // After schedule returns, check whether we were signalled or timed out
     if object.signal_state != 0 {
         WaitResult::Success
@@ -264,14 +269,14 @@ pub fn wake(object: &DispatcherHeader, all: bool) {
         let mut cur: *mut crate::ps::process::ListEntry = (*head_ptr).flink;
         let mut woken: u32 = 0;
         while !cur.is_null() && cur != head_ptr {
-            let wait_entry_offset =
-                core::mem::offset_of!(Ethread, kthread) +
-                core::mem::offset_of!(crate::ps::thread::Kthread, wait_list_entry);
+            let wait_entry_offset = core::mem::offset_of!(Ethread, kthread)
+                + core::mem::offset_of!(crate::ps::thread::Kthread, wait_list_entry);
             let ethread = (cur as u64 - wait_entry_offset as u64) as *mut Ethread;
             let next: *mut crate::ps::process::ListEntry = (*cur).flink;
             let mut found = false;
             for i in 0..WAIT_LIST_MAX {
-                if WAIT_ENTRIES[i].in_use && WAIT_ENTRIES[i].thread == ethread
+                if WAIT_ENTRIES[i].in_use
+                    && WAIT_ENTRIES[i].thread == ethread
                     && WAIT_ENTRIES[i].object == object as *const DispatcherHeader
                 {
                     // Mark free, ready thread.
@@ -281,10 +286,10 @@ pub fn wake(object: &DispatcherHeader, all: bool) {
                     // Determine boost type based on object type
                     let object_type = object.type_;
                     let boost_type = match object_type {
-                        0 => crate::ke::scheduler::PriorityBoostType::EventSet,     // Event
+                        0 => crate::ke::scheduler::PriorityBoostType::EventSet, // Event
                         1 => crate::ke::scheduler::PriorityBoostType::MutantRelease, // Mutex
-                        2 => crate::ke::scheduler::PriorityBoostType::Special,     // Semaphore
-                        5 => crate::ke::scheduler::PriorityBoostType::Special,     // Timer
+                        2 => crate::ke::scheduler::PriorityBoostType::Special,  // Semaphore
+                        5 => crate::ke::scheduler::PriorityBoostType::Special,  // Timer
                         _ => crate::ke::scheduler::PriorityBoostType::Special,
                     };
 
@@ -295,7 +300,9 @@ pub fn wake(object: &DispatcherHeader, all: bool) {
                     crate::ke::scheduler::add_ready(ethread, priority);
                     woken += 1;
                     found = true;
-                    if !all { return; }
+                    if !all {
+                        return;
+                    }
                     break;
                 }
             }
@@ -316,7 +323,9 @@ pub fn wake(object: &DispatcherHeader, all: bool) {
                 (*cur).blink = cur;
             }
             cur = next;
-            if !all && woken > 0 { return; }
+            if !all && woken > 0 {
+                return;
+            }
         }
     }
 }
@@ -333,14 +342,14 @@ fn find_free_slot() -> Option<usize> {
         if WAIT_EXTRA_USED < WAIT_LIST_EXTRA {
             let slot = WAIT_LIST_MAX + WAIT_EXTRA_USED;
             WAIT_EXTRA_USED += 1;
-            // // crate::kprintln!("[DISPATCH] find_free_slot: using extra slot {}, total extra used: {}",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                              slot, WAIT_EXTRA_USED);
+            // // crate::kprintln!("[DISPATCH] find_free_slot: using extra slot {}, total extra used: {}",
+            // //                              slot, WAIT_EXTRA_USED);
             return Some(slot);
         }
     }
     // Both pools exhausted
-    // // crate::kprintln!("[DISPATCH] find_free_slot: all wait entries exhausted ({} + {})",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                      WAIT_LIST_MAX, WAIT_LIST_EXTRA);
+    // // crate::kprintln!("[DISPATCH] find_free_slot: all wait entries exhausted ({} + {})",
+    // //                      WAIT_LIST_MAX, WAIT_LIST_EXTRA);
     None
 }
 
@@ -365,9 +374,8 @@ pub fn tick_wait_list() {
         let head_ptr: *mut crate::ps::process::ListEntry = &mut WAIT_LIST_HEAD;
         let mut cur: *mut crate::ps::process::ListEntry = (*head_ptr).flink;
         while !cur.is_null() && cur != head_ptr {
-            let wait_entry_offset =
-                core::mem::offset_of!(Ethread, kthread) +
-                core::mem::offset_of!(crate::ps::thread::Kthread, wait_list_entry);
+            let wait_entry_offset = core::mem::offset_of!(Ethread, kthread)
+                + core::mem::offset_of!(crate::ps::thread::Kthread, wait_list_entry);
             let ethread = (cur as u64 - wait_entry_offset as u64) as *mut Ethread;
             let next: *mut crate::ps::process::ListEntry = (*cur).flink;
             let mut found = false;
@@ -381,7 +389,8 @@ pub fn tick_wait_list() {
 
                         // Apply priority boost for timeout wake
                         let boost_type = crate::ke::scheduler::PriorityBoostType::Special;
-                        let new_priority = crate::ke::scheduler::ki_boost_thread(ethread, boost_type);
+                        let new_priority =
+                            crate::ke::scheduler::ki_boost_thread(ethread, boost_type);
                         let priority = new_priority as u8;
 
                         crate::ke::scheduler::add_ready(ethread, priority);

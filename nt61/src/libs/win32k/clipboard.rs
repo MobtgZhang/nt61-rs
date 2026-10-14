@@ -3,8 +3,8 @@
 //! Implements clipboard operations for win32k.sys
 //! Reference: Windows SDK, ReactOS win32ss/user
 
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use crate::ke::sync::Spinlock;
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Clipboard format types
 pub const CF_TEXT: u32 = 1;

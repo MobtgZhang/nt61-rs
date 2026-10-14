@@ -108,32 +108,32 @@ impl WdfIoQueue {
     /// Set callbacks
     pub fn set_callbacks(&mut self, callbacks: &WdfIoQueueCallbacks) {
         // Store callbacks for later use
-        // kprintln!("  [WDF] Queue callbacks configured")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [WDF] Queue callbacks configured");
     }
     
     /// Start the queue
     pub fn start(&mut self) {
         self.state = WdfQueueState::Normal;
-        // kprintln!("  [WDF] Queue started")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [WDF] Queue started");
     }
     
     /// Stop the queue
     pub fn stop(&mut self) {
         self.state = WdfQueueState::Drain;
-        // kprintln!("  [WDF] Queue stopped")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [WDF] Queue stopped");
     }
     
     /// Drain the queue
     pub fn drain(&mut self) {
         self.state = WdfQueueState::Drain;
-        // kprintln!("  [WDF] Queue draining")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [WDF] Queue draining");
     }
     
     /// Purge the queue
     pub fn purge(&mut self) {
         self.state = WdfQueueState::Purge;
         self.requests.clear();
-        // kprintln!("  [WDF] Queue purged")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [WDF] Queue purged");
     }
     
     /// Get queue state
@@ -145,16 +145,16 @@ impl WdfIoQueue {
     pub fn process_request(&self, request: &mut WdfRequest) {
         match request.request_type {
             WdfRequestType::Read => {
-                // kprintln!("  [WDF] Processing READ request")  // kprintln disabled (memcpy crash workaround);
+                // kprintln!("  [WDF] Processing READ request");
             }
             WdfRequestType::Write => {
-                // kprintln!("  [WDF] Processing WRITE request")  // kprintln disabled (memcpy crash workaround);
+                // kprintln!("  [WDF] Processing WRITE request");
             }
             WdfRequestType::DeviceIoControl => {
-                // kprintln!("  [WDF] Processing IOCTL request")  // kprintln disabled (memcpy crash workaround);
+                // kprintln!("  [WDF] Processing IOCTL request");
             }
             _ => {
-                // kprintln!("  [WDF] Processing request type {:?}", request.request_type)  // kprintln disabled (memcpy crash workaround);
+                // kprintln!("  [WDF] Processing request type {:?}", request.request_type);
             }
         }
     }
@@ -195,7 +195,7 @@ pub enum WdfRequestMode {
     Normal,
     FastIoCheck,
     NotSupported,
-    Not Possible,
+    NotPossible,
 }
 
 /// WDF request file object
@@ -249,7 +249,7 @@ impl WdfIoTarget {
     
     /// Open a file target
     pub fn open_file(filename: &str) -> Result<Self, &'static str> {
-        // kprintln!("  [WDF] Opening I/O target: {}", filename)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [WDF] Opening I/O target: {}", filename);
         Ok(Self {
             target_type: WdfIoTargetType::File,
             handle: core::ptr::null(),
@@ -259,19 +259,19 @@ impl WdfIoTarget {
     
     /// Send request synchronously
     pub fn send(&self, request: &WdfRequest, timeout_ms: u32) -> Result<(), &'static str> {
-        // kprintln!("  [WDF] Sending request to target")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [WDF] Sending request to target");
         Ok(())
     }
     
     /// Format and send request
     pub fn send_format(&self, request: &WdfRequest) -> Result<(), &'static str> {
-        // kprintln!("  [WDF] Formatting and sending request")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [WDF] Formatting and sending request");
         Ok(())
     }
     
     /// Close the target
     pub fn close(&self) {
-        // kprintln!("  [WDF] Closing I/O target")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [WDF] Closing I/O target");
     }
 }
 

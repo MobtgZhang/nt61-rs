@@ -38,13 +38,13 @@ pub mod window;
 /// Initialise the user32 stub. The bootstrap reports the
 /// surfaces the kernel supports.
 pub fn init() {
-    // kprintln!("    [user32] init")  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("      window   : CreateWindowExW/DefWindowProcW/Destroy/Show/Update")  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("      class    : RegisterClassExW/UnregisterClassW")  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("      input    : GetAsyncKeyState/KeyboardState/Cursor/SystemMetrics")  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("      gdi_link : forwarders to gdi32")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    [user32] init");
+    // kprintln!("      window   : CreateWindowExW/DefWindowProcW/Destroy/Show/Update");
+    // kprintln!("      class    : RegisterClassExW/UnregisterClassW");
+    // kprintln!("      input    : GetAsyncKeyState/KeyboardState/Cursor/SystemMetrics");
+    // kprintln!("      gdi_link : forwarders to gdi32");
     let _ = gdi_link::GDI_LINK.lock();
-    // kprintln!("    [user32] ready")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    [user32] ready");
 }
 
 /// Window-handle table for the kernel-side bookkeeping. User32
@@ -68,3 +68,5 @@ pub fn has_window_handle(h: u64) -> bool {
 
 pub mod smoke;
 pub use smoke::smoke_test as run_smoke;
+
+pub mod dialog;

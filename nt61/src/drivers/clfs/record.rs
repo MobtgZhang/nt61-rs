@@ -41,9 +41,8 @@ impl ClfsLsn {
     /// - `record_index`: Record number within block (0-511)
     #[inline]
     pub fn new(container_id: u32, block_offset: u32, record_index: u16) -> Self {
-        let lsn = ((container_id as u64) << 32)
-                | ((block_offset as u64) << 9)
-                | (record_index as u64);
+        let lsn =
+            ((container_id as u64) << 32) | ((block_offset as u64) << 9) | (record_index as u64);
         ClfsLsn(lsn)
     }
 
@@ -98,8 +97,10 @@ impl ClfsLsn {
     /// Advance to the next block, resetting record index to 0.
     #[inline]
     pub fn next_block(&self) -> ClfsLsn {
-        ClfsLsn((self.0 & !0x3FF_FFFF_E00) // Clear block_offset and record_index
-                | (((self.block_offset() as u64) + 1) << 9))
+        ClfsLsn(
+            (self.0 & !0x3FF_FFFF_E00) // Clear block_offset and record_index
+                | (((self.block_offset() as u64) + 1) << 9),
+        )
     }
 
     /// Advance by one LSN (next record in the log).
@@ -111,10 +112,13 @@ impl ClfsLsn {
 
 impl core::fmt::Display for ClfsLsn {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "L#{:03}:{:07}:{:03}",
+        write!(
+            f,
+            "L#{:03}:{:07}:{:03}",
             self.container_id(),
             self.block_offset(),
-            self.record_index())
+            self.record_index()
+        )
     }
 }
 
@@ -152,9 +156,9 @@ pub struct ClfsRecordFlags(pub u8);
 
 impl ClfsRecordFlags {
     pub const NONE: ClfsRecordFlags = ClfsRecordFlags(0);
-    pub const RESET: ClfsRecordFlags = ClfsRecordFlags(0x01);       // First record of a series
-    pub const SECOND: ClfsRecordFlags = ClfsRecordFlags(0x02);      // Second record of a series
-    pub const CLIENT: ClfsRecordFlags = ClfsRecordFlags(0x04);      // Client-owned record
+    pub const RESET: ClfsRecordFlags = ClfsRecordFlags(0x01); // First record of a series
+    pub const SECOND: ClfsRecordFlags = ClfsRecordFlags(0x02); // Second record of a series
+    pub const CLIENT: ClfsRecordFlags = ClfsRecordFlags(0x04); // Client-owned record
 
     pub fn has(&self, flag: ClfsRecordFlags) -> bool {
         (self.0 & flag.0) != 0
@@ -232,7 +236,11 @@ impl ClfsLogRecordHeader {
             size,
             reserved: 0,
             record_length,
-            previous_record_length: if previous_lsn.is_null() { 0 } else { header_plus_data as u32 },
+            previous_record_length: if previous_lsn.is_null() {
+                0
+            } else {
+                header_plus_data as u32
+            },
             lsn: lsn.0,
             previous_lsn: previous_lsn.0,
             target_lsn: 0,

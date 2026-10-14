@@ -1,27 +1,32 @@
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
-use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, AtomicUsize, AtomicI32, AtomicI64, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicI64, AtomicU8};
 
 use super::types::*;
 use core::ptr;
-use core::sync::atomic::{AtomicPtr, Ordering};
 
 static STRTOK_NEXT: AtomicPtr<c_char> = AtomicPtr::new(ptr::null_mut());
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strtok(str: *mut c_char, delim: *const c_char) -> *mut c_char {
     if str.is_null() {
         let saved = STRTOK_NEXT.load(Ordering::Relaxed);
         if saved.is_null() {
             return ptr::null_mut();
         }
-        strtok_r(saved, delim, &mut STRTOK_NEXT as *mut AtomicPtr<c_char> as *mut *mut c_char)
+        let mut saved_ptr = saved;
+        let result = strtok_r(saved, delim, &mut saved_ptr);
+        STRTOK_NEXT.store(saved_ptr, Ordering::Relaxed);
+        result
     } else {
-        strtok_r(str, delim, &mut STRTOK_NEXT as *mut AtomicPtr<c_char> as *mut *mut c_char)
+        let mut saved_ptr = STRTOK_NEXT.load(Ordering::Relaxed);
+        let result = strtok_r(str, delim, &mut saved_ptr);
+        STRTOK_NEXT.store(saved_ptr, Ordering::Relaxed);
+        result
     }
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strtok_r(
     str: *mut c_char,
     delim: *const c_char,
@@ -31,11 +36,7 @@ pub unsafe extern "C" fn strtok_r(
         return ptr::null_mut();
     }
 
-    let mut token_start = if str.is_null() {
-        *saveptr
-    } else {
-        str
-    };
+    let mut token_start = if str.is_null() { *saveptr } else { str };
 
     if token_start.is_null() {
         return ptr::null_mut();

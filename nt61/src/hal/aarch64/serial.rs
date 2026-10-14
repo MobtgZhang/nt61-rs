@@ -68,7 +68,11 @@ pub fn write_string(s: &str) {
 pub fn write_u32_hex(val: u32) {
     for i in (0..8).rev() {
         let nibble = ((val >> (i * 4)) & 0xF) as u8;
-        let c = if nibble < 10 { b'0' + nibble } else { b'A' + nibble - 10 };
+        let c = if nibble < 10 {
+            b'0' + nibble
+        } else {
+            b'A' + nibble - 10
+        };
         write_char(c);
     }
 }
@@ -77,7 +81,11 @@ pub fn write_u32_hex(val: u32) {
 pub fn write_hex_u64(v: u64) {
     for i in (0..16).rev() {
         let nibble = ((v >> (i * 4)) & 0xF) as u8;
-        let c = if nibble < 10 { b'0' + nibble } else { b'A' + nibble - 10 };
+        let c = if nibble < 10 {
+            b'0' + nibble
+        } else {
+            b'A' + nibble - 10
+        };
         write_char(c);
     }
 }

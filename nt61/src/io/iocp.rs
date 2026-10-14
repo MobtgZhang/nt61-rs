@@ -13,10 +13,10 @@
 //! 3. **Associated File Handles**: Files/sockets bound to the IOCP
 //! 4. **Overlapped I/O**: Async operations with OVERLAPPED structure
 
-use alloc::vec::Vec;
-use alloc::collections::VecDeque;
-use core::sync::atomic::{AtomicU64, AtomicU32, Ordering};
 use crate::ke::sync::Spinlock;
+use alloc::collections::VecDeque;
+use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 /// Maximum number of I/O completion ports
 pub const MAX_IOCP: usize = 256;
@@ -47,7 +47,6 @@ pub struct IoCompletionPacket {
     pub overlapped: u64,
 
     /// I/O status (NTSTATUS)
-
     pub status: u32,
 }
 
@@ -243,11 +242,7 @@ pub fn close_io_completion_port(port_id: u64) -> u32 {
 }
 
 /// Associate a file handle with an IOCP
-pub fn associate_handle_with_iocp(
-    port_id: u64,
-    handle: u64,
-    completion_key: u64,
-) -> u32 {
+pub fn associate_handle_with_iocp(port_id: u64, handle: u64, completion_key: u64) -> u32 {
     let table = IOCP_TABLE.lock();
 
     for slot in table.iter() {

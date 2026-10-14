@@ -20,8 +20,6 @@
 [target.x86_64-unknown-uefi]
 linker = "rust-lld"
 rustflags = [
-    "-C", "link-arg=--script=/home/mobtgzhang/github2/nt61-rs/nt61/src/boot/linker.ld",
-    "-C", "link-arg=--entry=efi_main",
     # Set the PE ImageBase to 0x140000000 so the boot manager's
     # AnyPages allocation at ~0x5A00000 has a positive delta for
     # relocations, making IMAGE_HANDLE land in a valid low-memory

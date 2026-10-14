@@ -18,9 +18,9 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
-use alloc::collections::BTreeMap;
 use crate::ke::sync::Spinlock;
+use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,13 +165,8 @@ impl NotifyManager {
         watch_subtree: bool,
     ) -> u64 {
         let watcher_id = self.generate_watcher_id();
-        let watcher = DirectoryWatcher::new(
-            watcher_id,
-            directory_id,
-            process_id,
-            filter,
-            watch_subtree,
-        );
+        let watcher =
+            DirectoryWatcher::new(watcher_id, directory_id, process_id, filter, watch_subtree);
 
         self.watchers.insert(watcher_id, watcher);
 
@@ -236,9 +231,7 @@ impl NotifyManager {
     }
 
     pub fn get_events(&mut self, watcher_id: u64) -> Option<Vec<NotifyEvent>> {
-        self.watchers
-            .get_mut(&watcher_id)
-            .map(|w| w.get_events())
+        self.watchers.get_mut(&watcher_id).map(|w| w.get_events())
     }
 
     pub fn has_events(&self, watcher_id: u64) -> bool {
@@ -249,7 +242,8 @@ impl NotifyManager {
     }
 
     pub fn unregister_process(&mut self, process_id: u32) {
-        let to_remove: Vec<u64> = self.watchers
+        let to_remove: Vec<u64> = self
+            .watchers
             .iter()
             .filter(|(_, w)| w.process_id == process_id)
             .map(|(&id, _)| id)
@@ -359,8 +353,18 @@ pub fn notify_file_renamed(
     new_name: &[u16],
     parent_ids: &[u64],
 ) {
-    notify_change(directory_id, NotifyAction::RenamedOldName, old_name, parent_ids);
-    notify_change(directory_id, NotifyAction::RenamedNewName, new_name, parent_ids);
+    notify_change(
+        directory_id,
+        NotifyAction::RenamedOldName,
+        old_name,
+        parent_ids,
+    );
+    notify_change(
+        directory_id,
+        NotifyAction::RenamedNewName,
+        new_name,
+        parent_ids,
+    );
 }
 
 fn current_time() -> u64 {

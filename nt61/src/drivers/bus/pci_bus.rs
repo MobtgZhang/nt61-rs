@@ -42,10 +42,17 @@ impl Default for PciDeviceInfo {
     fn default() -> Self {
         Self {
             pci: PciDevice {
-                bus: 0, device: 0, function: 0,
-                vendor_id: 0, device_id: 0,
-                class_code: 0, subclass: 0, prog_if: 0,
-                header_type: 0, irq: 0, revision: 0,
+                bus: 0,
+                device: 0,
+                function: 0,
+                vendor_id: 0,
+                device_id: 0,
+                class_code: 0,
+                subclass: 0,
+                prog_if: 0,
+                header_type: 0,
+                irq: 0,
+                revision: 0,
             },
             bars: [BarInfo::default(); MAX_BARS],
             irq: 0,
@@ -58,15 +65,29 @@ impl Default for PciDeviceInfo {
 
 static mut PCI_DEVICES: [PciDeviceInfo; 16] = [PciDeviceInfo {
     pci: PciDevice {
-        bus: 0, device: 0, function: 0,
-        vendor_id: 0, device_id: 0,
-        class_code: 0, subclass: 0, prog_if: 0,
-        header_type: 0, irq: 0, revision: 0,
+        bus: 0,
+        device: 0,
+        function: 0,
+        vendor_id: 0,
+        device_id: 0,
+        class_code: 0,
+        subclass: 0,
+        prog_if: 0,
+        header_type: 0,
+        irq: 0,
+        revision: 0,
     },
     bars: [BarInfo {
-        phys: 0, size: 0, is_io: false, is_64: false, prefetchable: false,
+        phys: 0,
+        size: 0,
+        is_io: false,
+        is_64: false,
+        prefetchable: false,
     }; MAX_BARS],
-    irq: 0, bus_master: false, memory_space: false, io_space: false,
+    irq: 0,
+    bus_master: false,
+    memory_space: false,
+    io_space: false,
 }; 16];
 static mut PCI_COUNT: usize = 0;
 
@@ -83,10 +104,7 @@ fn push_pci_info(info: PciDeviceInfo) {
 pub fn find_pci(bus: u8, device: u8, function: u8) -> Option<PciDeviceInfo> {
     unsafe {
         for info in PCI_DEVICES.iter().take(PCI_COUNT) {
-            if info.pci.bus == bus
-                && info.pci.device == device
-                && info.pci.function == function
-            {
+            if info.pci.bus == bus && info.pci.device == device && info.pci.function == function {
                 return Some(*info);
             }
         }
@@ -95,18 +113,20 @@ pub fn find_pci(bus: u8, device: u8, function: u8) -> Option<PciDeviceInfo> {
 }
 
 /// Number of PCI devices the bus driver has registered.
-pub fn pci_count() -> usize { unsafe { PCI_COUNT } }
+pub fn pci_count() -> usize {
+    unsafe { PCI_COUNT }
+}
 
 /// Walk PCI, register every device, and decode the BARs.
 pub fn init() {
-    // kprintln!("      [PCI] pci_bus::init() called")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("      [PCI] pci_bus::init() called");
     let devices = pci::enumerate();
     for dev in devices {
         let _ = pnp::register_pci_device(dev);
         let info = decode_device(&dev);
         push_pci_info(info);
     }
-    // kprintln!("      PCI bus: enumerated {} devices", devices.len())  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("      PCI bus: enumerated {} devices", devices.len());
 }
 
 fn decode_device(dev: &PciDevice) -> PciDeviceInfo {
@@ -126,7 +146,9 @@ fn decode_device(dev: &PciDevice) -> PciDeviceInfo {
 }
 
 fn decode_bar(dev: &PciDevice, index: u8) -> BarInfo {
-    if index >= 6 { return BarInfo::default(); }
+    if index >= 6 {
+        return BarInfo::default();
+    }
     let off: u8 = 0x10 + index * 4;
     let raw = pci::read_config_dword(dev.bus, dev.device, dev.function, off);
     if raw == 0 {
@@ -149,5 +171,11 @@ fn decode_bar(dev: &PciDevice, index: u8) -> BarInfo {
     // On QEMU q35 the legacy CF8/CFC write to the BAR can confuse the
     // host bridge; we just record the raw address and zero the size.
     // Functional drivers that need size can probe at runtime.
-    BarInfo { phys, size: 0, is_io: false, is_64, prefetchable: prefetch }
+    BarInfo {
+        phys,
+        size: 0,
+        is_io: false,
+        is_64,
+        prefetchable: prefetch,
+    }
 }

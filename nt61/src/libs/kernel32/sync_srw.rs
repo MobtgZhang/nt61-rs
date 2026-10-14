@@ -11,10 +11,9 @@
 //!   * MSDN Library "Windows 7" — Synchronization Functions
 //!   * Windows Internals 7th Ed. - Chapter 8
 
-use super::types::{BOOL, TRUE, FALSE};
+use super::types::{BOOL, FALSE, TRUE};
 use crate::ke::sync::Spinlock;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-
 
 #[repr(C)]
 pub struct SRWLOCK {
@@ -35,14 +34,12 @@ const SRW_WAKING: u64 = 0x04;
 const SRW_MULTIPLE_SHARED: u64 = 0x08;
 const SRW_MASK: u64 = 0x0F;
 
-
 pub unsafe extern "C" fn InitializeSRWLock(srw_lock: *mut SRWLOCK) {
     if srw_lock.is_null() {
         return;
     }
     (*srw_lock).ptr.store(0, Ordering::Release);
 }
-
 
 pub unsafe extern "C" fn AcquireSRWLockExclusive(srw_lock: *mut SRWLOCK) {
     if srw_lock.is_null() {
@@ -53,7 +50,12 @@ pub unsafe extern "C" fn AcquireSRWLockExclusive(srw_lock: *mut SRWLOCK) {
     let current_thread = get_current_thread_id();
 
     if lock
-        .compare_exchange(0, SRW_LOCKED | (current_thread << 4), Ordering::Acquire, Ordering::Relaxed)
+        .compare_exchange(
+            0,
+            SRW_LOCKED | (current_thread << 4),
+            Ordering::Acquire,
+            Ordering::Relaxed,
+        )
         .is_ok()
     {
         return;
@@ -91,7 +93,12 @@ pub unsafe extern "C" fn TryAcquireSRWLockExclusive(srw_lock: *mut SRWLOCK) -> B
     let current_thread = get_current_thread_id();
 
     if lock
-        .compare_exchange(0, SRW_LOCKED | (current_thread << 4), Ordering::Acquire, Ordering::Relaxed)
+        .compare_exchange(
+            0,
+            SRW_LOCKED | (current_thread << 4),
+            Ordering::Acquire,
+            Ordering::Relaxed,
+        )
         .is_ok()
     {
         TRUE
@@ -112,7 +119,6 @@ pub unsafe extern "C" fn ReleaseSRWLockExclusive(srw_lock: *mut SRWLOCK) {
 
     lock.store(new_state, Ordering::Release);
 }
-
 
 pub unsafe extern "C" fn AcquireSRWLockShared(srw_lock: *mut SRWLOCK) {
     if srw_lock.is_null() {
@@ -201,7 +207,6 @@ pub unsafe extern "C" fn ReleaseSRWLockShared(srw_lock: *mut SRWLOCK) {
     }
 }
 
-
 #[repr(C)]
 pub struct CONDITION_VARIABLE {
     ptr: AtomicU64,
@@ -215,6 +220,7 @@ impl CONDITION_VARIABLE {
     }
 }
 
+#[derive(Copy, Clone)]
 struct WaiterNode {
     thread_id: u64,
     signaled: bool,
@@ -223,6 +229,7 @@ struct WaiterNode {
 const MAX_CVS: usize = 64;
 const MAX_WAITERS_PER_CV: usize = 16;
 
+#[derive(Copy, Clone)]
 struct CVWaiters {
     cv_addr: u64,
     waiters: [Option<WaiterNode>; MAX_WAITERS_PER_CV],
@@ -239,8 +246,7 @@ impl CVWaiters {
     }
 }
 
-static CV_WAITER_TABLE: Spinlock<[CVWaiters; MAX_CVS]> =
-    Spinlock::new([CVWaiters::new(); MAX_CVS]);
+static CV_WAITER_TABLE: Spinlock<[CVWaiters; MAX_CVS]> = Spinlock::new([CVWaiters::new(); MAX_CVS]);
 
 pub unsafe extern "C" fn InitializeConditionVariable(condition_variable: *mut CONDITION_VARIABLE) {
     if condition_variable.is_null() {
@@ -251,7 +257,7 @@ pub unsafe extern "C" fn InitializeConditionVariable(condition_variable: *mut CO
 
 pub unsafe extern "C" fn SleepConditionVariableCS(
     condition_variable: *mut CONDITION_VARIABLE,
-    critical_section: *mut super::sync::CRITICAL_SECTION,
+    critical_section: *mut super::sync::CriticalSection,
     milliseconds: u32,
 ) -> BOOL {
     if condition_variable.is_null() || critical_section.is_null() {
@@ -284,11 +290,11 @@ pub unsafe extern "C" fn SleepConditionVariableCS(
 
     super::sync::LeaveCriticalSection(critical_section);
 
-    let start = crate::ke::time::get_ticks();
+    let start = crate::ke::time::get_tick_count() as u64;
     let timeout_ticks = if milliseconds == 0xFFFFFFFF {
         u64::MAX
     } else {
-        (milliseconds as u64) * 1000 // Approximate
+        milliseconds as u64
     };
 
     let mut signaled = false;
@@ -313,7 +319,7 @@ pub unsafe extern "C" fn SleepConditionVariableCS(
         }
 
         if milliseconds != 0xFFFFFFFF {
-            let elapsed = crate::ke::time::get_ticks() - start;
+            let elapsed = crate::ke::time::get_tick_count() as u64 - start;
             if elapsed >= timeout_ticks {
                 break;
             }
@@ -392,7 +398,7 @@ pub unsafe extern "C" fn SleepConditionVariableSRW(
         ReleaseSRWLockExclusive(srw_lock);
     }
 
-    let start = crate::ke::time::get_ticks();
+    let start = crate::ke::time::get_tick_count() as u64;
     let timeout_ticks = if milliseconds == 0xFFFFFFFF {
         u64::MAX
     } else {
@@ -421,7 +427,7 @@ pub unsafe extern "C" fn SleepConditionVariableSRW(
         }
 
         if milliseconds != 0xFFFFFFFF {
-            let elapsed = crate::ke::time::get_ticks() - start;
+            let elapsed = crate::ke::time::get_tick_count() as u64 - start;
             if elapsed >= timeout_ticks {
                 break;
             }
@@ -507,7 +513,6 @@ pub unsafe extern "C" fn WakeAllConditionVariable(condition_variable: *mut CONDI
         }
     }
 }
-
 
 fn get_current_thread_id() -> u64 {
     1

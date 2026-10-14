@@ -11,10 +11,13 @@
 //!
 //! References: Windows SDK, WRK security audit
 
-use super::token::Token;
+use super::audit_log::{
+    clear_log as audit_clear_log, get_recent_records, get_record_count, get_statistics,
+    query_records, write_audit_record, AuditRecord,
+};
+use super::audit_policy::{is_enabled as policy_is_enabled, presets, AuditCategory};
 use super::sid::Sid;
-use super::audit_policy::{AuditCategory, is_enabled as policy_is_enabled};
-use super::audit_log::{AuditRecord, write_audit_record};
+use super::token::{create_system_token, Token};
 use alloc::string::{String, ToString};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,7 +69,10 @@ pub fn se_auditing_state() -> bool {
 }
 
 /// Check if auditing is enabled for a specific category and outcome
-pub fn se_auditing_state_for_category(category: AuditCategoryId, outcome: AuditEventOutcome) -> bool {
+pub fn se_auditing_state_for_category(
+    category: AuditCategoryId,
+    outcome: AuditEventOutcome,
+) -> bool {
     let audit_cat = category.to_audit_category();
     let success = matches!(outcome, AuditEventOutcome::Success);
     policy_is_enabled(audit_cat, success)
@@ -80,16 +86,14 @@ pub fn se_set_audit_policy(
 ) {
     use super::audit_policy::{set_category_policy, CategoryPolicy};
     let audit_cat = category.to_audit_category();
-    set_category_policy(audit_cat, CategoryPolicy::new(success_enabled, failure_enabled));
+    set_category_policy(
+        audit_cat,
+        CategoryPolicy::new(success_enabled, failure_enabled),
+    );
 }
 
 /// Audit a logon event
-pub fn se_audit_logon(
-    outcome: AuditEventOutcome,
-    user_sid: &Sid,
-    logon_type: u32,
-    logon_id: u64,
-) {
+pub fn se_audit_logon(outcome: AuditEventOutcome, user_sid: &Sid, logon_type: u32, logon_id: u64) {
     if !se_auditing_state_for_category(AuditCategoryId::Logon, outcome) {
         return;
     }
@@ -100,12 +104,7 @@ pub fn se_audit_logon(
     };
 
     let success = matches!(outcome, AuditEventOutcome::Success);
-    let mut record = AuditRecord::new(
-        event_id,
-        AuditCategory::Logon,
-        success,
-        user_sid.clone(),
-    );
+    let mut record = AuditRecord::new(event_id, AuditCategory::Logon, success, user_sid.clone());
 
     let details = alloc::format!(
         "Logon Type: {}, Logon ID: 0x{:016X}",
@@ -203,10 +202,7 @@ pub fn se_audit_privilege_use(
 }
 
 /// Audit policy change
-pub fn se_audit_policy_change(
-    token: &Token,
-    change_type: &str,
-) {
+pub fn se_audit_policy_change(token: &Token, change_type: &str) {
     if !se_auditing_state_for_category(AuditCategoryId::PolicyChange, AuditEventOutcome::Success) {
         return;
     }
@@ -260,7 +256,8 @@ pub fn se_audit_process_creation(
     process_name: &str,
     parent_pid: u64,
 ) {
-    if !se_auditing_state_for_category(AuditCategoryId::DetailTracking, AuditEventOutcome::Success) {
+    if !se_auditing_state_for_category(AuditCategoryId::DetailTracking, AuditEventOutcome::Success)
+    {
         return;
     }
 
@@ -273,23 +270,16 @@ pub fn se_audit_process_creation(
 
     record.set_process_info(process_id, 0);
 
-    let details = alloc::format!(
-        "Process Name: {}, Parent PID: {}",
-        process_name,
-        parent_pid
-    );
+    let details = alloc::format!("Process Name: {}, Parent PID: {}", process_name, parent_pid);
     record.set_details(details);
 
     write_audit_record(record);
 }
 
 /// Audit process termination
-pub fn se_audit_process_termination(
-    token: &Token,
-    process_id: u64,
-    exit_code: i32,
-) {
-    if !se_auditing_state_for_category(AuditCategoryId::DetailTracking, AuditEventOutcome::Success) {
+pub fn se_audit_process_termination(token: &Token, process_id: u64, exit_code: i32) {
+    if !se_auditing_state_for_category(AuditCategoryId::DetailTracking, AuditEventOutcome::Success)
+    {
         return;
     }
 
@@ -309,21 +299,13 @@ pub fn se_audit_process_termination(
 }
 
 /// Audit system event
-pub fn se_audit_system_event(
-    event_id: u16,
-    description: &str,
-) {
+pub fn se_audit_system_event(event_id: u16, description: &str) {
     if !se_auditing_state_for_category(AuditCategoryId::System, AuditEventOutcome::Success) {
         return;
     }
 
     let system_sid = Sid::well_known(super::sid::WellKnownSid::LocalSystem);
-    let mut record = AuditRecord::new(
-        event_id,
-        AuditCategory::System,
-        true,
-        system_sid,
-    );
+    let mut record = AuditRecord::new(event_id, AuditCategory::System, true, system_sid);
 
     record.set_details(description.to_string());
 
@@ -356,7 +338,11 @@ pub fn se_open_object_audit_alarm(
         token_ref,
         object_type_name,
         object_name.unwrap_or(""),
-        if access_granted { granted_access } else { desired_access },
+        if access_granted {
+            granted_access
+        } else {
+            desired_access
+        },
     );
 }
 
@@ -418,4 +404,648 @@ pub fn init() {
     // Set default policies
     se_set_audit_policy(AuditCategoryId::Logon, true, true);
     se_set_audit_policy(AuditCategoryId::AccountLogon, true, true);
+}
+
+// ============================================================================
+// Demo Functions (for testing and demonstration)
+// ============================================================================
+
+#[allow(dead_code)]
+pub fn run_audit_demo() {
+    crate::kprintln!("\n=== Security Audit System Demo ===\n");
+
+    // 1. Initialize audit system
+    crate::kprintln!("1. Initializing audit system...");
+    init();
+    crate::kprintln!("   Audit system initialized");
+
+    // 2. Configure audit policies
+    crate::kprintln!("\n2. Configuring audit policies...");
+    presets::apply_baseline();
+    crate::kprintln!("   Applied baseline audit policy");
+
+    // Display current policies
+    let policies = super::audit_policy::get_all_policies();
+    for (category, policy) in &policies {
+        if policy.is_any_enabled() {
+            crate::kprintln!(
+                "   {} - Success: {}, Failure: {}",
+                category.name(),
+                policy.success_enabled,
+                policy.failure_enabled
+            );
+        }
+    }
+
+    // 3. Generate sample audit events
+    crate::kprintln!("\n3. Generating sample audit events...");
+
+    // Logon event
+    let user_sid = Sid::well_known(super::sid::WellKnownSid::World);
+    se_audit_logon(
+        AuditEventOutcome::Success,
+        &user_sid,
+        2, // Interactive logon
+        0x1234567890ABCDEF,
+    );
+    crate::kprintln!("   Generated logon event (4624)");
+
+    // Object access event
+    let token_ptr = create_system_token();
+    if token_ptr.is_null() {
+        return;
+    }
+    let token = unsafe { &*token_ptr };
+    se_audit_object_access(
+        AuditEventOutcome::Success,
+        token,
+        "File",
+        "C:\\Windows\\System32\\config\\SAM",
+        0x001F01FF, // GENERIC_ALL
+    );
+    crate::kprintln!("   Generated object access event (4663)");
+
+    // Privilege use event
+    let privilege = super::token::Luid {
+        low_part: super::seaccess::privileges::SE_DEBUG as u32,
+        high_part: 0,
+    };
+    se_audit_privilege_use(AuditEventOutcome::Success, token, &privilege);
+    crate::kprintln!("   Generated privilege use event (4673)");
+
+    // Policy change event
+    se_audit_policy_change(token, "Audit policy modified");
+    crate::kprintln!("   Generated policy change event (4719)");
+
+    // Process creation event
+    se_audit_process_creation(token, 1234, "C:\\Windows\\System32\\notepad.exe", 4);
+    crate::kprintln!("   Generated process creation event (4688)");
+
+    // 4. Query audit logs
+    crate::kprintln!("\n4. Querying audit logs...");
+
+    let all_events = query_records(None, None, None, None, 100);
+    crate::kprintln!("   Total events: {}", all_events.len());
+
+    let logon_events = query_records(Some(AuditCategory::Logon), None, None, None, 100);
+    crate::kprintln!("   Logon events: {}", logon_events.len());
+
+    let object_events = query_records(Some(AuditCategory::ObjectAccess), None, None, None, 100);
+    crate::kprintln!("   Object access events: {}", object_events.len());
+
+    // 5. Display statistics
+    crate::kprintln!("\n5. Audit log statistics:");
+    let stats = get_statistics();
+    crate::kprintln!("   Current records: {}", stats.current_count);
+    crate::kprintln!("   Total written: {}", stats.total_written);
+    crate::kprintln!("   Rotations: {}", stats.rotation_count);
+    crate::kprintln!("   Next record ID: {}", stats.next_record_id);
+
+    // 6. Display recent events
+    crate::kprintln!("\n6. Recent audit events:");
+    let recent = get_recent_records(5);
+    for (i, event) in recent.iter().enumerate() {
+        crate::kprintln!(
+            "   [{}] Event ID: {}, Category: {}, Success: {}",
+            i + 1,
+            event.event_id,
+            event.category.name(),
+            event.success
+        );
+        if !event.object_name.is_empty() {
+            crate::kprintln!("       Object: {}", event.object_name);
+        }
+        if !event.details.is_empty() {
+            crate::kprintln!("       Details: {}", event.details);
+        }
+    }
+
+    crate::kprintln!("\n=== Demo Complete ===\n");
+}
+
+/// Test audit policy changes
+#[allow(dead_code)]
+pub fn test_audit_policy_changes() {
+    crate::kprintln!("\n=== Audit Policy Change Test ===\n");
+
+    audit_clear_log();
+
+    // Test different policy configurations
+    crate::kprintln!("1. Testing minimal policy...");
+    presets::apply_minimal();
+
+    let token_ptr = create_system_token();
+    if token_ptr.is_null() {
+        return;
+    }
+    let token = unsafe { &*token_ptr };
+
+    // This should be logged (Logon enabled)
+    let sid = Sid::well_known(super::sid::WellKnownSid::World);
+    se_audit_logon(AuditEventOutcome::Success, &sid, 2, 0x1234);
+
+    // This should NOT be logged (ObjectAccess disabled)
+    se_audit_object_access(
+        AuditEventOutcome::Success,
+        token,
+        "File",
+        "test.txt",
+        0x001F01FF,
+    );
+
+    let count_minimal = get_record_count();
+    crate::kprintln!("   Events with minimal policy: {}", count_minimal);
+
+    crate::kprintln!("\n2. Testing comprehensive policy...");
+    presets::apply_comprehensive();
+
+    // Both should be logged now
+    se_audit_logon(AuditEventOutcome::Success, &sid, 2, 0x5678);
+    se_audit_object_access(
+        AuditEventOutcome::Success,
+        &token,
+        "File",
+        "test2.txt",
+        0x001F01FF,
+    );
+
+    let count_comprehensive = get_record_count();
+    crate::kprintln!(
+        "   Events with comprehensive policy: {}",
+        count_comprehensive
+    );
+
+    crate::kprintln!("\n=== Test Complete ===\n");
+}
+
+// ============================================================================
+// Verification Functions (compile-time API verification)
+// ============================================================================
+
+#[allow(dead_code)]
+fn verify_audit_policy_api() {
+    // Policy management
+    super::audit_policy::init();
+    let _ = super::audit_policy::get_category_policy(AuditCategory::Logon);
+    super::audit_policy::enable_category(AuditCategory::ObjectAccess);
+    super::audit_policy::disable_category(AuditCategory::System);
+    let _ = super::audit_policy::is_enabled(AuditCategory::Logon, true);
+
+    // Presets
+    presets::apply_minimal();
+    presets::apply_baseline();
+    presets::apply_comprehensive();
+}
+
+#[allow(dead_code)]
+fn verify_audit_log_api() {
+    // Log management
+    super::audit_log::init();
+    let _ = get_record_count();
+    let _ = get_statistics();
+    let _ = get_recent_records(10);
+
+    // Querying
+    let _ = query_records(None, None, None, None, 100);
+    let sid = Sid::well_known(super::sid::WellKnownSid::World);
+    let _ = super::audit_log::query_by_user(&sid, 100);
+    let _ = super::audit_log::query_by_object("test", 100);
+}
+
+#[allow(dead_code)]
+fn verify_audit_event_api() {
+    // Event generation
+    init();
+
+    let sid = Sid::well_known(super::sid::WellKnownSid::World);
+    let token_ptr = create_system_token();
+    if token_ptr.is_null() {
+        return;
+    }
+    let token = unsafe { &*token_ptr };
+    let privilege = super::token::Luid {
+        low_part: 0,
+        high_part: 0,
+    };
+
+    se_audit_logon(AuditEventOutcome::Success, &sid, 2, 0);
+    se_audit_logoff(&sid, 0);
+    se_audit_object_access(AuditEventOutcome::Success, token, "File", "test.txt", 0);
+    se_audit_privilege_use(AuditEventOutcome::Success, token, &privilege);
+    se_audit_policy_change(token, "test");
+    se_audit_account_management(AuditEventOutcome::Success, token, &sid, "test");
+    se_audit_process_creation(token, 0, "test", 0);
+    se_audit_process_termination(token, 0, 0);
+    se_audit_system_event(0, "test");
+}
+
+#[allow(dead_code)]
+pub fn verify_all() {
+    verify_audit_policy_api();
+    verify_audit_log_api();
+    verify_audit_event_api();
+}
+
+// ============================================================================
+// Unit Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_audit_policy_initialization() {
+        crate::se::audit_policy::init();
+
+        // Check default policies (Logon and AccountLogon should be enabled)
+        let logon_policy = crate::se::audit_policy::get_category_policy(AuditCategory::Logon);
+        assert!(logon_policy.success_enabled);
+        assert!(logon_policy.failure_enabled);
+
+        let account_logon_policy =
+            crate::se::audit_policy::get_category_policy(AuditCategory::AccountLogon);
+        assert!(account_logon_policy.success_enabled);
+        assert!(account_logon_policy.failure_enabled);
+    }
+
+    #[test]
+    fn test_audit_policy_set_get() {
+        crate::se::audit_policy::init();
+
+        // Set a custom policy
+        let category = AuditCategory::ObjectAccess;
+        let policy = crate::se::audit_policy::CategoryPolicy::new(true, false);
+        crate::se::audit_policy::set_category_policy(category, policy);
+
+        // Verify it was set correctly
+        let retrieved = crate::se::audit_policy::get_category_policy(category);
+        assert!(retrieved.success_enabled);
+        assert!(!retrieved.failure_enabled);
+    }
+
+    #[test]
+    fn test_audit_policy_enable_disable() {
+        crate::se::audit_policy::init();
+
+        // Enable a category
+        crate::se::audit_policy::enable_category(AuditCategory::PrivilegeUse);
+        assert!(crate::se::audit_policy::is_enabled(
+            AuditCategory::PrivilegeUse,
+            true
+        ));
+        assert!(crate::se::audit_policy::is_enabled(
+            AuditCategory::PrivilegeUse,
+            false
+        ));
+
+        // Disable it
+        crate::se::audit_policy::disable_category(AuditCategory::PrivilegeUse);
+        assert!(!crate::se::audit_policy::is_enabled(
+            AuditCategory::PrivilegeUse,
+            true
+        ));
+        assert!(!crate::se::audit_policy::is_enabled(
+            AuditCategory::PrivilegeUse,
+            false
+        ));
+    }
+
+    #[test]
+    fn test_audit_policy_presets() {
+        // Test minimal preset
+        presets::apply_minimal();
+        assert!(crate::se::audit_policy::is_enabled(
+            AuditCategory::Logon,
+            true
+        ));
+        assert!(!crate::se::audit_policy::is_enabled(
+            AuditCategory::ObjectAccess,
+            true
+        ));
+
+        // Test comprehensive preset
+        presets::apply_comprehensive();
+        assert!(crate::se::audit_policy::is_enabled(
+            AuditCategory::ObjectAccess,
+            true
+        ));
+        assert!(crate::se::audit_policy::is_enabled(
+            AuditCategory::PrivilegeUse,
+            true
+        ));
+        assert!(crate::se::audit_policy::is_enabled(
+            AuditCategory::System,
+            true
+        ));
+    }
+
+    #[test]
+    fn test_audit_log_write() {
+        crate::se::audit_log::init();
+        audit_clear_log();
+
+        let sid = Sid::well_known(crate::se::sid::WellKnownSid::World);
+        let mut record = AuditRecord::new(4624, AuditCategory::Logon, true, sid);
+        record.set_details(String::from("Test logon event"));
+
+        write_audit_record(record);
+
+        let count = get_record_count();
+        assert!(count > 0);
+    }
+
+    #[test]
+    fn test_audit_log_query_by_category() {
+        crate::se::audit_log::init();
+        audit_clear_log();
+
+        let sid = Sid::well_known(crate::se::sid::WellKnownSid::World);
+
+        // Write different event types
+        for i in 0..5 {
+            let category = if i % 2 == 0 {
+                AuditCategory::Logon
+            } else {
+                AuditCategory::ObjectAccess
+            };
+
+            let record = AuditRecord::new(4624, category, true, sid.clone());
+            write_audit_record(record);
+        }
+
+        // Query by category
+        let logon_events = query_records(Some(AuditCategory::Logon), None, None, None, 100);
+        assert_eq!(logon_events.len(), 3);
+
+        let object_events = query_records(Some(AuditCategory::ObjectAccess), None, None, None, 100);
+        assert_eq!(object_events.len(), 2);
+    }
+
+    #[test]
+    fn test_audit_log_query_by_success() {
+        crate::se::audit_log::init();
+        audit_clear_log();
+
+        let sid = Sid::well_known(crate::se::sid::WellKnownSid::World);
+
+        // Write mixed success/failure events
+        for i in 0..10 {
+            let record = AuditRecord::new(4624, AuditCategory::Logon, i % 2 == 0, sid.clone());
+            write_audit_record(record);
+        }
+
+        // Query success only
+        let success_events = query_records(None, None, None, Some(true), 100);
+        assert_eq!(success_events.len(), 5);
+
+        // Query failure only
+        let failure_events = query_records(None, None, None, Some(false), 100);
+        assert_eq!(failure_events.len(), 5);
+    }
+
+    #[test]
+    fn test_audit_log_rotation() {
+        crate::se::audit_log::init();
+        audit_clear_log();
+
+        let sid = Sid::well_known(crate::se::sid::WellKnownSid::World);
+
+        // Write more than MAX_AUDIT_RECORDS to trigger rotation
+        for i in 0..crate::se::audit_log::MAX_AUDIT_RECORDS + 100 {
+            let record = AuditRecord::new(4624, AuditCategory::Logon, true, sid.clone());
+            write_audit_record(record);
+        }
+
+        let stats = get_statistics();
+        assert!(stats.rotation_count > 0);
+        assert_eq!(stats.current_count, crate::se::audit_log::MAX_AUDIT_RECORDS);
+        assert_eq!(
+            stats.total_written,
+            crate::se::audit_log::MAX_AUDIT_RECORDS as u64 + 100
+        );
+    }
+
+    #[test]
+    fn test_audit_logon_event() {
+        init();
+        audit_clear_log();
+
+        // Enable logon auditing
+        se_set_audit_policy(AuditCategoryId::Logon, true, true);
+
+        let sid = Sid::well_known(crate::se::sid::WellKnownSid::World);
+
+        // Generate a successful logon event
+        se_audit_logon(AuditEventOutcome::Success, &sid, 2, 0x1234567890ABCDEF);
+
+        // Verify event was logged
+        let events = query_records(Some(AuditCategory::Logon), None, None, Some(true), 10);
+        assert!(events.len() > 0);
+        assert_eq!(events[0].event_id, 4624);
+    }
+
+    #[test]
+    fn test_audit_logoff_event() {
+        init();
+        audit_clear_log();
+
+        se_set_audit_policy(AuditCategoryId::Logon, true, true);
+
+        let sid = Sid::well_known(crate::se::sid::WellKnownSid::World);
+
+        se_audit_logoff(&sid, 0x1234567890ABCDEF);
+
+        let events = query_records(Some(AuditCategory::Logon), None, None, None, 10);
+        assert!(events.len() > 0);
+        assert_eq!(events[0].event_id, 4634);
+    }
+
+    #[test]
+    fn test_audit_object_access_event() {
+        init();
+        audit_clear_log();
+
+        se_set_audit_policy(AuditCategoryId::ObjectAccess, true, true);
+
+        let token = Token::new_primary(Sid::well_known(crate::se::sid::WellKnownSid::LocalSystem));
+
+        se_audit_object_access(
+            AuditEventOutcome::Success,
+            &token,
+            "File",
+            "C:\\Windows\\System32\\test.txt",
+            0x001F01FF, // GENERIC_ALL
+        );
+
+        let events = query_records(
+            Some(AuditCategory::ObjectAccess),
+            None,
+            None,
+            Some(true),
+            10,
+        );
+        assert!(events.len() > 0);
+        assert_eq!(events[0].event_id, 4663);
+        assert!(events[0].object_name.contains("test.txt"));
+    }
+
+    #[test]
+    fn test_audit_privilege_use_event() {
+        init();
+        audit_clear_log();
+
+        se_set_audit_policy(AuditCategoryId::PrivilegeUse, true, true);
+
+        let token = Token::new_primary(Sid::well_known(crate::se::sid::WellKnownSid::LocalSystem));
+        let privilege = crate::se::token::Luid {
+            low_part: crate::se::seaccess::privileges::SE_DEBUG as u32,
+            high_part: 0,
+        };
+
+        se_audit_privilege_use(AuditEventOutcome::Success, &token, &privilege);
+
+        let events = query_records(
+            Some(AuditCategory::PrivilegeUse),
+            None,
+            None,
+            Some(true),
+            10,
+        );
+        assert!(events.len() > 0);
+        assert_eq!(events[0].event_id, 4673);
+    }
+
+    #[test]
+    fn test_audit_policy_change_event() {
+        init();
+        audit_clear_log();
+
+        se_set_audit_policy(AuditCategoryId::PolicyChange, true, true);
+
+        let token = Token::new_primary(Sid::well_known(crate::se::sid::WellKnownSid::LocalSystem));
+
+        se_audit_policy_change(&token, "Audit Policy Modified");
+
+        let events = query_records(Some(AuditCategory::PolicyChange), None, None, None, 10);
+        assert!(events.len() > 0);
+        assert_eq!(events[0].event_id, 4719);
+    }
+
+    #[test]
+    fn test_audit_process_creation() {
+        init();
+        audit_clear_log();
+
+        se_set_audit_policy(AuditCategoryId::DetailTracking, true, true);
+
+        let token = Token::new_primary(Sid::well_known(crate::se::sid::WellKnownSid::LocalSystem));
+
+        se_audit_process_creation(&token, 1234, "C:\\Windows\\System32\\notepad.exe", 4);
+
+        let events = query_records(Some(AuditCategory::DetailedTracking), None, None, None, 10);
+        assert!(events.len() > 0);
+        assert_eq!(events[0].event_id, 4688);
+        assert_eq!(events[0].process_id, 1234);
+    }
+
+    #[test]
+    fn test_audit_system_event() {
+        init();
+        audit_clear_log();
+
+        se_set_audit_policy(AuditCategoryId::System, true, true);
+
+        se_audit_system_event(5038, "System integrity check failed");
+
+        let events = query_records(Some(AuditCategory::System), None, None, None, 10);
+        assert!(events.len() > 0);
+        assert_eq!(events[0].event_id, 5038);
+    }
+
+    #[test]
+    fn test_audit_filtering_respects_policy() {
+        init();
+        audit_clear_log();
+
+        // Disable object access auditing
+        se_set_audit_policy(AuditCategoryId::ObjectAccess, false, false);
+
+        let token = Token::new_primary(Sid::well_known(crate::se::sid::WellKnownSid::LocalSystem));
+
+        // Try to generate an object access event
+        se_audit_object_access(
+            AuditEventOutcome::Success,
+            &token,
+            "File",
+            "test.txt",
+            0x001F01FF,
+        );
+
+        // Should not be logged
+        let events = query_records(Some(AuditCategory::ObjectAccess), None, None, None, 10);
+        assert_eq!(events.len(), 0);
+
+        // Enable it
+        se_set_audit_policy(AuditCategoryId::ObjectAccess, true, true);
+
+        // Try again
+        se_audit_object_access(
+            AuditEventOutcome::Success,
+            &token,
+            "File",
+            "test.txt",
+            0x001F01FF,
+        );
+
+        // Should be logged now
+        let events = query_records(Some(AuditCategory::ObjectAccess), None, None, None, 10);
+        assert!(events.len() > 0);
+    }
+
+    #[test]
+    fn test_audit_log_query_by_user() {
+        crate::se::audit_log::init();
+        audit_clear_log();
+
+        let sid1 = Sid::well_known(crate::se::sid::WellKnownSid::World);
+        let sid2 = Sid::well_known(crate::se::sid::WellKnownSid::LocalSystem);
+
+        // Write events for different users
+        for i in 0..5 {
+            let sid = if i % 2 == 0 {
+                sid1.clone()
+            } else {
+                sid2.clone()
+            };
+            let record = AuditRecord::new(4624, AuditCategory::Logon, true, sid);
+            write_audit_record(record);
+        }
+
+        // Query by user
+        let user1_events = crate::se::audit_log::query_by_user(&sid1, 100);
+        assert_eq!(user1_events.len(), 3);
+
+        let user2_events = crate::se::audit_log::query_by_user(&sid2, 100);
+        assert_eq!(user2_events.len(), 2);
+    }
+
+    #[test]
+    fn test_audit_log_statistics() {
+        crate::se::audit_log::init();
+        audit_clear_log();
+
+        let sid = Sid::well_known(crate::se::sid::WellKnownSid::World);
+
+        // Write some events
+        for i in 0..10 {
+            let record = AuditRecord::new(4624, AuditCategory::Logon, true, sid.clone());
+            write_audit_record(record);
+        }
+
+        let stats = get_statistics();
+        assert_eq!(stats.current_count, 10);
+        assert_eq!(stats.total_written, 10);
+        assert!(stats.next_record_id > 10);
+    }
 }

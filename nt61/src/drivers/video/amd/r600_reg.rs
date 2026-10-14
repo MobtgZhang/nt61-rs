@@ -348,7 +348,14 @@ pub fn calc_crtc_timing(
     let v_total = height + 30;
     let v_sync_start = height + 10;
     let v_sync_end = height + 12;
-    (h_total, h_sync_start, h_sync_end, v_total, v_sync_start, v_sync_end)
+    (
+        h_total,
+        h_sync_start,
+        h_sync_end,
+        v_total,
+        v_sync_start,
+        v_sync_end,
+    )
 }
 
 /// Check if GPU is idle

@@ -15,18 +15,18 @@
 //! - Ice Lake
 //! - Tiger Lake
 
-pub mod pci_ids;
-pub mod i915_reg;
-pub mod i915_fb;
 pub mod i915_cursor;
-pub mod i915_irq;
-pub mod i915_pm;
-pub mod i915_pll;
 pub mod i915_ddi;
+pub mod i915_fb;
+pub mod i915_irq;
+pub mod i915_pll;
+pub mod i915_pm;
+pub mod i915_reg;
+pub mod pci_ids;
 
 use crate::drivers::video::core::gpu_common::{
-    self, GpuDeviceInfo, GpuDriver, GpuFeatures, GpuFramebufferInfo,
-    DisplayMode, IntelGeneration, PixelFormat,
+    self, DisplayMode, GpuDeviceInfo, GpuDriver, GpuFeatures, GpuFramebufferInfo, IntelGeneration,
+    PixelFormat,
 };
 use crate::drivers::video::core::mmio_guard::{MmioGuard, MAX_MMIO_SIZE};
 use crate::drivers::video::log;
@@ -102,7 +102,7 @@ impl I915Device {
     /// Enable power wells
     pub fn enable_power_wells(&mut self) {
         use i915_reg::*;
-        
+
         // Enable power well 1 (main display power)
         let power = self.read_reg(HSW_PWR_WELL_B_STATUS);
         if power & HSW_PWR_WELL_STATE_REQ_ONLY == 0 {
@@ -245,10 +245,7 @@ impl GpuDriver for I915Device {
         let num_pixels = ((self.pitch as usize) * (self.height as usize)) / 4;
         for i in 0..num_pixels {
             unsafe {
-                core::ptr::write_volatile(
-                    (self.fb_virt + (i as u64 * 4)) as *mut u32,
-                    color,
-                );
+                core::ptr::write_volatile((self.fb_virt + (i as u64 * 4)) as *mut u32, color);
             }
         }
     }
@@ -264,10 +261,7 @@ impl GpuDriver for I915Device {
 
         let offset = ((y * self.pitch) + (x * 4)) as u64;
         unsafe {
-            core::ptr::write_volatile(
-                (self.fb_virt + offset) as *mut u32,
-                color,
-            );
+            core::ptr::write_volatile((self.fb_virt + offset) as *mut u32, color);
         }
     }
 
@@ -336,10 +330,7 @@ impl I915Device {
         self.write_reg(PIPEA_DSPABASE, self.fb_phys as u32);
         self.write_reg(PIPEA_DSPASTRIDE, self.pitch);
         self.write_reg(PIPEA_DSPAOFFSET, 0);
-        self.write_reg(
-            PIPEA_DSPASIZE,
-            ((self.height - 1) << 16) | (self.width - 1),
-        );
+        self.write_reg(PIPEA_DSPASIZE, ((self.height - 1) << 16) | (self.width - 1));
 
         // Enable Plane A
         self.write_reg(PIPEA_DSPCNTR, DISPLAY_ENABLE | 0 << 20);

@@ -61,6 +61,15 @@ SECTIONS {
         *(.data .data.*)
         *(.got .got.*)
         *(.got.plt .got.plt.*)
+        /* BSS statics (#[link_section = ".bss"], e.g. the frame and
+         * PFN tables) must land in an allocated output section. The
+         * hand-rolled PE header above only describes `.text` and
+         * `.data`, and objcopy/EDK2 reject a PE section whose
+         * VirtualSize is non-zero but PointerToRawData is zero, so
+         * a standalone `.bss` output section is dropped from the
+         * image. Merging it into `.data` (same as linker-la64.ld)
+         * keeps the storage present and zero-filled. */
+        *(.bss .bss.*)
     } : data
     
     /DISCARD/ : {

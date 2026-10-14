@@ -24,13 +24,11 @@
 extern crate alloc;
 use alloc::string::ToString;
 
-use crate::{hal, arch, mm, ke, ob, io, fs, lpc, ps, servers, drivers, registry};
+use crate::{arch, drivers, fs, hal, io, ke, lpc, mm, ob, ps, registry, servers};
 
 // Import Windows 7 standard logging macros
 #[allow(unused_imports)]
-use crate::boot_print;
-#[allow(unused_imports)]
-use crate::boot_println;
+use crate::boot_err;
 #[allow(unused_imports)]
 use crate::boot_header;
 #[allow(unused_imports)]
@@ -38,17 +36,19 @@ use crate::boot_milestone;
 #[allow(unused_imports)]
 use crate::boot_ok;
 #[allow(unused_imports)]
-use crate::boot_err;
+use crate::boot_print;
+#[allow(unused_imports)]
+use crate::boot_println;
+#[allow(unused_imports)]
+use crate::kprintln_info;
+#[allow(unused_imports)]
+use crate::ntbtlog;
 #[allow(unused_imports)]
 use crate::phase_header;
 #[allow(unused_imports)]
 use crate::phase_init;
 #[allow(unused_imports)]
 use crate::sos_load;
-#[allow(unused_imports)]
-use crate::ntbtlog;
-#[allow(unused_imports)]
-use crate::kprintln_info;
 
 // ============================================================================
 // Boot-time contract (re-exported for backward compatibility)
@@ -130,7 +130,9 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     for i in (0..16u8).rev() {
         let n = ((bi_ptr >> (i * 4)) & 0xF) as usize;
         // SAFETY: writing to serial port is safe at this stage
-        unsafe { crate::arch::boot::early_write_byte(H[n]); }
+        unsafe {
+            crate::arch::boot::early_write_byte(H[n]);
+        }
     }
     crate::arch::boot::early_write_str(b"\r\n");
     let magic = boot_info.magic;
@@ -138,7 +140,9 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     for i in (0..16u8).rev() {
         let n = ((magic >> (i * 4)) & 0xF) as usize;
         // SAFETY: writing to serial port is safe at this stage
-        unsafe { crate::arch::boot::early_write_byte(H[n]); }
+        unsafe {
+            crate::arch::boot::early_write_byte(H[n]);
+        }
     }
     crate::arch::boot::early_write_str(b"\r\n");
 
@@ -249,8 +253,12 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     // the init order. Halt rather than continue into
     // `arch::init_hardware()` with an inconsistent view of memory.
     if !mm::is_initialized() {
-        crate::arch::boot::early_write_str(b"FATAL: mm::init() returned without setting INITIALIZED. Halting.\r\n");
-        loop { crate::arch::halt(); }
+        crate::arch::boot::early_write_str(
+            b"FATAL: mm::init() returned without setting INITIALIZED. Halting.\r\n",
+        );
+        loop {
+            crate::arch::halt();
+        }
     }
 
     boot_println!("Memory manager initialized");
@@ -387,7 +395,10 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     crate::boot_println!("[PHASE5] B: hardcoded value = 0x{:x}", test_val);
     let bi_base = boot_info.esp_image_base;
     crate::boot_println!("[PHASE5] C: read boot_info.esp_image_base, no fmt");
-    crate::boot_println!("[PHASE5] D: calling mount_esp_from_bootinfo (esp_base=0x{:x})", bi_base);
+    crate::boot_println!(
+        "[PHASE5] D: calling mount_esp_from_bootinfo (esp_base=0x{:x})",
+        bi_base
+    );
     crate::boot_println!("[PHASE5] E: after format-args print");
     fs::mount_esp_from_bootinfo(boot_info);
     crate::boot_println!("[PHASE5] mount_esp_from_bootinfo returned");
@@ -395,13 +406,19 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     // partition on the disk, captured by winload's
     // `capture_system_partition`) so the NTFS driver
     // can read the boot sector for mounting.
-    crate::boot_println!("[PHASE5] calling mount_sys_from_bootinfo (sys_base=0x{:x})", boot_info.sys_image_base);
+    crate::boot_println!(
+        "[PHASE5] calling mount_sys_from_bootinfo (sys_base=0x{:x})",
+        boot_info.sys_image_base
+    );
     fs::mount_sys_from_bootinfo(boot_info);
     crate::boot_println!("[PHASE5] mount_sys_from_bootinfo returned");
     // Mount the ISO boot RAM disk (combined FAT32 image from ISO)
     // as the X: drive. This is only populated for ISO boot;
     // for disk-booted configurations this is a no-op.
-    crate::boot_println!("[PHASE5] calling mount_ramdisk_from_bootinfo (ramdisk_base=0x{:x})", boot_info.ramdisk_image_base);
+    crate::boot_println!(
+        "[PHASE5] calling mount_ramdisk_from_bootinfo (ramdisk_base=0x{:x})",
+        boot_info.ramdisk_image_base
+    );
     fs::mount_ramdisk_from_bootinfo(boot_info);
     crate::boot_println!("[PHASE5] mount_ramdisk_from_bootinfo returned");
     crate::boot_println!("[PHASE5] calling fs::init");
@@ -437,7 +454,10 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     // and itself creates the user-mode process tree, so there is
     // nothing for the host `load_system_files` step to do other
     // than initialise the (now mostly-empty) image database.
-    phase_header!(9, "System Image Loader (reserved - disk ntoskrnl manages this)");
+    phase_header!(
+        9,
+        "System Image Loader (reserved - disk ntoskrnl manages this)"
+    );
     load_system_files();
 
     // ============================================================================
@@ -597,7 +617,9 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
             // falls through to the kernel-side shell for backwards
             // compatibility. The actual print below is a single
             // status line that ends up on the operator's screen.
-            boot_println!("[SAFE-CMD] SafeModeCmd: entering visible Log + CMD pane (user-mode priority)");
+            boot_println!(
+                "[SAFE-CMD] SafeModeCmd: entering visible Log + CMD pane (user-mode priority)"
+            );
             run_safe_mode_shell(servers::cmd::ShellMode::SafeModeCmd);
         }
         BootMode::SafeModeDebug => {
@@ -637,7 +659,9 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
             #[allow(unreachable_code)]
             {
                 crate::hal::serial::write_string("[KERNEL] user thread returned, halting\r\n");
-                loop { crate::arch::halt(); }
+                loop {
+                    crate::arch::halt();
+                }
             }
         }
     }
@@ -677,9 +701,8 @@ fn mask_all_irqs_for_safe_mode() {
 /// sees a usable `C:\>` prompt.
 fn run_safe_mode_shell(mode: servers::cmd::ShellMode) -> ! {
     use crate::hal::text_console::{
-        COLS, ROWS, ATTR_TITLE, ATTR_DEFAULT, ATTR_HR,
-        put_title_bar_bytes, write_hr, put_line, set_attr, set_cursor,
-        log_line_count, read_log_lines,
+        log_line_count, put_line, put_title_bar_bytes, read_log_lines, set_attr, set_cursor,
+        write_hr, ATTR_DEFAULT, ATTR_HR, ATTR_TITLE, COLS, ROWS,
     };
 
     // ------------------------------------------------------------------
@@ -688,10 +711,8 @@ fn run_safe_mode_shell(mode: servers::cmd::ShellMode) -> ! {
     set_attr(ATTR_DEFAULT);
     crate::hal::text_console::clear();
     let title_bytes: &[u8] = match mode {
-        servers::cmd::ShellMode::SafeModeCmd =>
-            b" NT6.1.7601 Safe Mode -- Command Prompt ",
-        servers::cmd::ShellMode::SafeModeDebug =>
-            b" NT6.1.7601 Safe Mode -- Kernel Debug ",
+        servers::cmd::ShellMode::SafeModeCmd => b" NT6.1.7601 Safe Mode -- Command Prompt ",
+        servers::cmd::ShellMode::SafeModeDebug => b" NT6.1.7601 Safe Mode -- Kernel Debug ",
     };
     put_title_bar_bytes(title_bytes, ATTR_TITLE);
 
@@ -741,7 +762,11 @@ fn run_safe_mode_shell(mode: servers::cmd::ShellMode) -> ! {
             for (i, line) in buf[start..n].iter().enumerate() {
                 set_cursor(0, pane_top + i as u8);
                 // Print up to COLS bytes; stop at NUL.
-                let len = line.iter().position(|&c| c == 0).unwrap_or(line.len()).min(COLS);
+                let len = line
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(line.len())
+                    .min(COLS);
                 for &c in &line[..len] {
                     crate::hal::text_console::put_byte(c);
                 }
@@ -845,12 +870,16 @@ fn load_system_files() {
     // Initialize the system image database
     // SAFETY: This is called only once during kernel boot on the BSP
     unsafe {
-        core::ptr::addr_of_mut!(SYSTEM_IMAGE_DB)
-            .write(core::mem::MaybeUninit::new(crate::loader::ImageDatabase::new()));
+        core::ptr::addr_of_mut!(SYSTEM_IMAGE_DB).write(core::mem::MaybeUninit::new(
+            crate::loader::ImageDatabase::new(),
+        ));
     }
     boot_ok!("Image database initialized");
 
-    boot_milestone!("KERNEL", "Skipping host-side PE synthesis (disk ntoskrnl manages this)");
+    boot_milestone!(
+        "KERNEL",
+        "Skipping host-side PE synthesis (disk ntoskrnl manages this)"
+    );
 
     // Phase 9 image base addresses. These are intentionally
     // named with the `_` prefix because Phase 9 host-side PE
@@ -863,11 +892,11 @@ fn load_system_files() {
     // system image is meant to be mapped into the kernel
     // address space.
     let _image_bases: [(&str, u64); 5] = [
-        ("hal.dll",     kernel_layout::HAL_BASE),
+        ("hal.dll", kernel_layout::HAL_BASE),
         ("ntoskrnl.exe", kernel_layout::NTOSKRNL_BASE),
-        ("ntdll.dll",   kernel_layout::NTOSKRNL_BASE + 0xA0000),
+        ("ntdll.dll", kernel_layout::NTOSKRNL_BASE + 0xA0000),
         ("kernel32.dll", kernel_layout::NTOSKRNL_BASE + 0x500000),
-        ("smss.exe",    kernel_layout::SMSS_BASE),
+        ("smss.exe", kernel_layout::SMSS_BASE),
     ];
 
     // Image database handle. Also `_`-prefixed because the
@@ -875,7 +904,10 @@ fn load_system_files() {
     // initialised above and made ready for future Phase 9
     // loaders to consume via the `unsafe` deref pattern below.
     let _db: &mut crate::loader::ImageDatabase = unsafe {
-        (*core::ptr::addr_of_mut!(SYSTEM_IMAGE_DB)).as_mut_ptr().as_mut().unwrap()
+        (*core::ptr::addr_of_mut!(SYSTEM_IMAGE_DB))
+            .as_mut_ptr()
+            .as_mut()
+            .unwrap()
     };
 
     // Load each image
@@ -966,7 +998,9 @@ fn run_smoke_test() {
     //   already x86_64-only (other targets fall back to a no-op
     //   `run_smoke_test` below), so no inner `cfg` gate is needed
     //   here.
-    boot_println!("  [USER_ENTRY] first_user_enter + call_first_user_enter: linked, callable (TLE-8 SKIP)");
+    boot_println!(
+        "  [USER_ENTRY] first_user_enter + call_first_user_enter: linked, callable (TLE-8 SKIP)"
+    );
     aggregator.record("USER_ENTRY", true);
 
     // Print summary
@@ -1003,11 +1037,11 @@ fn create_system_processes() {
     if let Some(sys) = sys_result {
         boot_println!("    System process created successfully (PID 4)");
         sys.set_name(b"System\0");
-        
+
         // 3. Create System threads for the System process
         boot_println!("  Phase 11: Creating System threads...");
         create_system_threads();
-        
+
         // 4. Initialize System process working set
         boot_println!("  Phase 11: Initializing System process working set...");
         init_system_process_working_set(sys);
@@ -1047,12 +1081,14 @@ fn create_system_threads() {
     match ps::thread::create_thread(sys_process as *mut _, 0x4000) {
         Some(thread) => {
             {
-                (*thread).kthread.base_priority = 0;  // Low priority
+                (*thread).kthread.base_priority = 0; // Low priority
                 (*thread).kthread.priority = 0;
                 (*thread).kthread.state = ps::thread::KThreadState::Ready;
             }
-            boot_println!("        MiZeroPageThread TID {} created",
-                (*thread).client_id.unique_thread);
+            boot_println!(
+                "        MiZeroPageThread TID {} created",
+                (*thread).client_id.unique_thread
+            );
             // Add to ready queue
             ke::scheduler::add_ready(thread as *mut _, 0);
         }
@@ -1066,12 +1102,14 @@ fn create_system_threads() {
     match ps::thread::create_thread(sys_process as *mut _, 0x4000) {
         Some(thread) => {
             {
-                (*thread).kthread.base_priority = 0;  // Low priority
+                (*thread).kthread.base_priority = 0; // Low priority
                 (*thread).kthread.priority = 0;
                 (*thread).kthread.state = ps::thread::KThreadState::Ready;
             }
-            boot_println!("        MiModifiedPageWriter TID {} created",
-                (*thread).client_id.unique_thread);
+            boot_println!(
+                "        MiModifiedPageWriter TID {} created",
+                (*thread).client_id.unique_thread
+            );
             ke::scheduler::add_ready(thread as *mut _, 0);
         }
         None => {
@@ -1084,12 +1122,14 @@ fn create_system_threads() {
     match ps::thread::create_thread(sys_process as *mut _, 0x4000) {
         Some(thread) => {
             {
-                (*thread).kthread.base_priority = 8;  // Normal priority
+                (*thread).kthread.base_priority = 8; // Normal priority
                 (*thread).kthread.priority = 8;
                 (*thread).kthread.state = ps::thread::KThreadState::Ready;
             }
-            boot_println!("        System worker TID {} created",
-                (*thread).client_id.unique_thread);
+            boot_println!(
+                "        System worker TID {} created",
+                (*thread).client_id.unique_thread
+            );
             ke::scheduler::add_ready(thread as *mut _, 8);
         }
         None => {
@@ -1114,19 +1154,21 @@ fn init_system_process_working_set(sys: *mut ps::process::Eprocess) {
         boot_println!("    init_system_process_working_set: null process pointer");
         return;
     }
-    
+
     unsafe {
         // Set working set parameters for System process
         // System process has a larger working set than user processes
         // because it holds all kernel-mode data structures
         (*sys).mm_size_of_working_set = 64 * 1024 * 1024; // 64MB initial estimate
         (*sys).page_fault_count = 0;
-        
+
         // Initialize memory management links
         (*sys).mm_process_links.init();
-        
-        boot_println!("    System process working set initialized: {} bytes", 
-            (*sys).mm_size_of_working_set);
+
+        boot_println!(
+            "    System process working set initialized: {} bytes",
+            (*sys).mm_size_of_working_set
+        );
     }
 }
 
@@ -1166,7 +1208,10 @@ fn start_session_manager() {
         );
 
         if smss_process.is_some() {
-            boot_println!("    SMSS process (PID {}) created with initial thread", ps::process::PID_SMSS);
+            boot_println!(
+                "    SMSS process (PID {}) created with initial thread",
+                ps::process::PID_SMSS
+            );
 
             // 2. Initialize session management in SMSS
             crate::servers::smss::init();
@@ -1240,4 +1285,3 @@ pub fn enter_first_user_thread() -> ! {
 // enter_first_user_thread()`) does not have to know which architecture it
 // runs on.
 // ---------------------------------------------------------------------------
-

@@ -15,9 +15,42 @@
 
 extern crate alloc;
 
+use crate::rtl::logging::{subsystem as log_subsystem, LogLevel};
+use alloc::vec::Vec;
 use core::alloc::{GlobalAlloc, Layout};
 use core::sync::atomic::{AtomicU64, Ordering};
-use alloc::vec::Vec;
+
+/// Pool diagnostics.
+///
+/// The allocation path used to emit 18 unconditional UART writes per
+/// allocation. On a 115200 baud console that is on the order of a
+/// millisecond of serial time for every pool hit, which is more than the
+/// allocation itself, and it buries the diagnostics that actually matter
+/// (double free, tag mismatch). Diagnostics are now emitted only when the
+/// MEMORY subsystem logs at the requested level, and as one line per
+/// decision instead of a pre/post breadcrumb pair.
+pub fn trace(level: LogLevel, args: core::fmt::Arguments<'_>) {
+    if !crate::rtl::logging::should_log(level, log_subsystem::MEMORY) {
+        return;
+    }
+    use core::fmt::Write;
+    let mut buf = [0u8; 128];
+    let mut writer = crate::rtl::klog::BufferWriter::new(&mut buf);
+    let _ = writer.write_fmt(args);
+    let len = writer.pos();
+    crate::rtl::logging::log_write_impl(
+        level,
+        "MEMORY",
+        crate::rtl::logging::current_cpu(),
+        core::str::from_utf8(&buf[..len]).unwrap_or("<bad log utf8>"),
+    );
+}
+
+macro_rules! pool_trace {
+    ($level:expr, $($arg:tt)*) => {
+        $crate::mm::pool::trace($level, core::format_args!($($arg)*))
+    };
+}
 
 pub use crate::ke::sync::Spinlock;
 
@@ -68,10 +101,14 @@ pub const BLOCK_FREED: u8 = 0x01;
 #[repr(C)]
 #[repr(align(32))]
 pub struct PoolHeader {
-    pub previous_size: u16,
-    pub block_size: u16,
+    // NT 6.1 stores the block sizes as 20-bit fields inside 32-bit words.
+    // Keeping them as u16 truncated any allocation above 65535 bytes, so the
+    // recorded size no longer matched the real block and `free()` reclaimed
+    // the wrong span, corrupting the pool.
+    pub previous_size: u32,
+    pub block_size: u32,
     pub pool_type: u8,
-    pub flags: u8,           // Changed from padding to flags for double-free detection
+    pub flags: u8, // Changed from padding to flags for double-free detection
     pub pool_tag: u32,
     /// NT uses this to chain all allocations of the same tag into a
     /// per-tag list for `poolmon`. We just keep it as opaque book-
@@ -140,7 +177,8 @@ pub struct PoolStats {
 }
 
 /// Global pool descriptors.
-static NON_PAGED_POOL: Spinlock<PoolDescriptor> = Spinlock::new(PoolDescriptor::new(PoolType::NonPaged));
+static NON_PAGED_POOL: Spinlock<PoolDescriptor> =
+    Spinlock::new(PoolDescriptor::new(PoolType::NonPaged));
 static PAGED_POOL: Spinlock<PoolDescriptor> = Spinlock::new(PoolDescriptor::new(PoolType::Paged));
 
 /// Convert a 4-byte ASCII tag to a 32-bit `u32` with the
@@ -163,15 +201,15 @@ pub mod tags {
     pub const IO: u32 = make_tag(b'I', b'O', b' ', b' ');
     pub const MM: u32 = make_tag(b'M', b'm', b' ', b' ');
     // Network-related tags
-    pub const NETBUF: u32 = make_tag(b'N', b'B', b'u', b'f');    // Network buffer
-    pub const NETNBL: u32 = make_tag(b'N', b'B', b'L', b' ');    // NET_BUFFER_LIST
-    pub const NETNB: u32 = make_tag(b'N', b'B', b' ', b' ');     // NET_BUFFER
-    pub const NETMDL: u32 = make_tag(b'M', b'D', b'L', b' ');    // MDL
-    pub const NETDESC: u32 = make_tag(b'N', b'D', b's', b'c');  // NIC descriptor
-    pub const NETTCB: u32 = make_tag(b'T', b'C', b'B', b' ');   // TCP control block
-    pub const NETSOCK: u32 = make_tag(b'S', b'O', b'C', b'K');   // Socket
-    pub const NETPACK: u32 = make_tag(b'P', b'K', b'T', b' ');   // Packet
-    pub const NETVIRT: u32 = make_tag(b'V', b'I', b'R', b'T');   // Virtqueue
+    pub const NETBUF: u32 = make_tag(b'N', b'B', b'u', b'f'); // Network buffer
+    pub const NETNBL: u32 = make_tag(b'N', b'B', b'L', b' '); // NET_BUFFER_LIST
+    pub const NETNB: u32 = make_tag(b'N', b'B', b' ', b' '); // NET_BUFFER
+    pub const NETMDL: u32 = make_tag(b'M', b'D', b'L', b' '); // MDL
+    pub const NETDESC: u32 = make_tag(b'N', b'D', b's', b'c'); // NIC descriptor
+    pub const NETTCB: u32 = make_tag(b'T', b'C', b'B', b' '); // TCP control block
+    pub const NETSOCK: u32 = make_tag(b'S', b'O', b'C', b'K'); // Socket
+    pub const NETPACK: u32 = make_tag(b'P', b'K', b'T', b' '); // Packet
+    pub const NETVIRT: u32 = make_tag(b'V', b'I', b'R', b'T'); // Virtqueue
 }
 
 /// Lookaside list entry. Real NT lookasides are per-CPU structures;
@@ -204,18 +242,41 @@ impl LookasideList {
 /// We first try to allocate from the free list (for memory reuse),
 /// then fall back to the bump allocator if no suitable block is found.
 fn alloc_raw(total_size: usize, pool_type: PoolType, tag: u32) -> *mut u8 {
+    // Free-list entries record the complete block, including the header, so
+    // requests must be normalized before searching. Otherwise the split point
+    // can land inside the user region and corrupt data on first use.
+    let align = 16usize;
+    let padded = (total_size + align - 1) & !(align - 1);
+    let total_alloc_size = PoolHeader::HEADER_SIZE + padded;
+    let user_align = align.max(32);
+    let layout = match Layout::from_size_align(total_alloc_size, user_align) {
+        Ok(l) => l,
+        Err(_) => {
+            pool_trace!(
+                LogLevel::Error,
+                "alloc_raw: invalid layout size={}",
+                total_size
+            );
+            return core::ptr::null_mut();
+        }
+    };
+
     // First, try to allocate from the free list (fast path for freed memory)
-    crate::hal::serial::write_string("[pool] alloc-raw-pre-freelist\r\n");
-    if let Some(ptr) = allocate_from_freelist(pool_type, total_size) {
-        crate::hal::serial::write_string("[pool] alloc-raw-from-freelist\r\n");
-        // [DISABLED] // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// // // [DISABLED]             level: crate::rtl::logging::LogLevel::Debug,
-// // // [DISABLED]             subsystem: "POOL",
-// // // [DISABLED]             "alloc_raw: allocated from free list, ptr=0x{:x}", ptr as u64
-// // // [DISABLED]         );
+    if let Some(ptr) = allocate_from_freelist(pool_type, total_alloc_size) {
+        pool_trace!(
+            LogLevel::Debug,
+            "alloc_raw: freelist hit ptr=0x{:x} size={}",
+            ptr as u64,
+            total_alloc_size
+        );
+        unsafe {
+            let header = ptr.sub(PoolHeader::HEADER_SIZE) as *mut PoolHeader;
+            (*header).previous_size = 0;
+            (*header).pool_tag = tag;
+        }
         // The freelist path also needs to update the authoritative
         // PoolDescriptor stats (was previously leaking allocations
-        // — only the bump path incremented total_bytes / total_allocs).
+        // - only the bump path incremented total_bytes / total_allocs).
         let descriptor = if pool_type.is_paged() {
             &PAGED_POOL
         } else {
@@ -227,58 +288,41 @@ fn alloc_raw(total_size: usize, pool_type: PoolType, tag: u32) -> *mut u8 {
         return ptr;
     }
 
-    // Fall back to bump allocator
-    let align = 16usize;
-    let padded = (total_size + align - 1) & !(align - 1);
-    let user_align = align.max(32);
-    let layout = match Layout::from_size_align(PoolHeader::HEADER_SIZE + padded, user_align) {
-        Ok(l) => l,
-        Err(_) => return core::ptr::null_mut(),
-    };
-    crate::hal::serial::write_string("[pool] alloc-raw-pre-heap\r\n");
-
     // SAFETY: We call our own KernelHeap directly. The bump
     // allocator is single-threaded for the pool's purposes (the
     // pool is protected by a spinlock at the descriptor level,
     // not at the per-allocation level).
-    let heap_configured = crate::mm::heap::KERNEL_HEAP.configured_region();
-    match heap_configured {
-        Some((base, size)) => {
-            crate::hal::serial::write_string("[pool] heap-configured yes base=");
-            crate::hal::serial::write_hex_u64(base as u64);
-            crate::hal::serial::write_string(" size=");
-            crate::hal::serial::write_hex_u64(size as u64);
-            crate::hal::serial::write_string("\r\n");
-        }
-        None => {
-            crate::hal::serial::write_string("[pool] heap-configured NONE\r\n");
-        }
-    }
     let ptr = unsafe {
-        <crate::mm::heap::KernelHeap as GlobalAlloc>::alloc(
-            &crate::mm::heap::KERNEL_HEAP,
-            layout,
-        )
+        <crate::mm::heap::KernelHeap as GlobalAlloc>::alloc(&crate::mm::heap::KERNEL_HEAP, layout)
     };
-    crate::hal::serial::write_string("[pool] alloc-raw-post-heap ptr=");
-    crate::hal::serial::write_hex_u64(ptr as u64);
-    crate::hal::serial::write_string("\r\n");
     if ptr.is_null() {
+        match crate::mm::heap::KERNEL_HEAP.configured_region() {
+            Some((base, size)) => pool_trace!(
+                LogLevel::Error,
+                "alloc_raw: heap exhausted size={} region=0x{:x}+0x{:x}",
+                PoolHeader::HEADER_SIZE + padded,
+                base as u64,
+                size as u64,
+            ),
+            None => pool_trace!(
+                LogLevel::Error,
+                "alloc_raw: heap not configured size={}",
+                PoolHeader::HEADER_SIZE + padded,
+            ),
+        }
         return core::ptr::null_mut();
     }
-    crate::hal::serial::write_string("[pool] alloc-raw-pre-write-header\r\n");
 
     unsafe {
         let header = ptr as *mut PoolHeader;
         (*header).previous_size = 0;
-        (*header).block_size = (PoolHeader::HEADER_SIZE + padded) as u16;
+        (*header).block_size = (PoolHeader::HEADER_SIZE + padded) as u32;
         (*header).pool_type = pool_type as u8;
-        (*header).flags = PoolHeader::BLOCK_VALID;  // Initialize flags
+        (*header).flags = PoolHeader::BLOCK_VALID; // Initialize flags
         (*header).pool_tag = tag;
         (*header).allocator_back_trace_index = 0;
         (*header).reserved = [0; 3];
     }
-    crate::hal::serial::write_string("[pool] alloc-raw-post-write-header\r\n");
 
     let descriptor = if pool_type.is_paged() {
         &PAGED_POOL
@@ -286,9 +330,7 @@ fn alloc_raw(total_size: usize, pool_type: PoolType, tag: u32) -> *mut u8 {
         &NON_PAGED_POOL
     };
 
-    crate::hal::serial::write_string("[pool] alloc-raw-pre-desc-lock\r\n");
     let mut d = descriptor.lock();
-    crate::hal::serial::write_string("[pool] alloc-raw-post-desc-lock\r\n");
     d.total_bytes += (PoolHeader::HEADER_SIZE + padded) as u64;
     d.total_allocs.fetch_add(1, Ordering::Relaxed);
     drop(d);
@@ -300,10 +342,17 @@ fn alloc_raw(total_size: usize, pool_type: PoolType, tag: u32) -> *mut u8 {
     // aligned SSE/AVX store that requires the stack to also be
     // 32-byte aligned for the source).
     let user_ptr = unsafe { ptr.add(PoolHeader::HEADER_SIZE) };
-    crate::hal::serial::write_string("[pool] alloc-raw-pre-memset\r\n");
-    unsafe { core::ptr::write_bytes(user_ptr, 0u8, padded); }
-    crate::hal::serial::write_string("[pool] alloc-raw-post-memset\r\n");
+    unsafe {
+        core::ptr::write_bytes(user_ptr, 0u8, padded);
+    }
 
+    pool_trace!(
+        LogLevel::Debug,
+        "alloc_raw: bump hit ptr=0x{:x} size={} tag={}",
+        ptr as u64,
+        total_size,
+        tag,
+    );
     user_ptr
 }
 
@@ -316,11 +365,9 @@ pub fn allocate(pool_type: PoolType, size: usize) -> *mut u8 {
     // The lazy initialization in ensure_pool_state_initialized() is
     // called from within allocate_from_freelist's ensure_pool_state_initialized(),
     // and also from the bump-allocator fallback below.
-    crate::hal::serial::write_string("[pool] alloc-enter\r\n");
     crate::mm::pool::ensure_pool_state_initialized();
-    crate::hal::serial::write_string("[pool] alloc-pre-raw\r\n");
     let p = alloc_raw(size, pool_type, 0);
-    crate::hal::serial::write_string("[pool] alloc-done\r\n");
+    pool_trace!(LogLevel::Debug, "allocate({}) -> 0x{:x}", size, p as u64);
     p
 }
 
@@ -341,51 +388,63 @@ pub fn allocate_tagged(pool_type: PoolType, size: usize, tag: u32) -> *mut u8 {
 pub fn allocate_aligned(pool_type: PoolType, size: usize, alignment: usize) -> *mut u8 {
     // Alignment must be at least 16 (pool header alignment)
     let align = alignment.max(16);
-    
-    // Check if size already satisfies alignment requirement
-    // For small allocations, we need to overallocate
-    let extra = if size % align == 0 {
-        0
-    } else {
-        align - (size % align)
-    };
-    
-    // Allocate extra space for alignment adjustment
-    let ptr = alloc_raw(size + extra + align, pool_type, 0);
+    if size == 0 {
+        return core::ptr::null_mut();
+    }
+
+    // Padding has to be computed from the *base address*, not from `size`:
+    // `size % align` says nothing about whether the returned pointer is
+    // aligned. Reserve `align` slack plus 8 bytes for the back-pointer that
+    // `free_aligned` needs.
+    let ptr = alloc_raw(size + align + 8, pool_type, 0);
     if ptr.is_null() {
         return core::ptr::null_mut();
     }
-    
-    // Align the pointer - store original pointer in first few bytes for free
+
+    // Always start the aligned region at least 8 bytes past the real user
+    // pointer, so the back-pointer slot is inside the allocation even when the
+    // base is already aligned. Without this, `free_aligned` would read the
+    // pool header as metadata.
     let addr = ptr as usize;
-    let aligned = (addr + align - 1) & !(align - 1);
+    let aligned = (addr + 8 + align - 1) & !(align - 1);
     let aligned_ptr = aligned as *mut u8;
-    
-    // Store the original pointer just before the aligned region
-    // so we can free it correctly later
-    if aligned_ptr != ptr {
-        unsafe {
-            let meta_ptr = (aligned_ptr as *mut *mut u8).offset(-1);
-            *meta_ptr = ptr;
-        }
+    unsafe {
+        let meta_ptr = (aligned_ptr as *mut *mut u8).sub(1);
+        *meta_ptr = ptr;
     }
-    
+
     aligned_ptr
 }
 
+/// Free a pointer returned by `allocate_aligned`.
+///
+/// `free()` cannot be used here: it reads a `PoolHeader` at `ptr - HEADER_SIZE`,
+/// while an aligned allocation only guarantees a back-pointer at `ptr - 8`.
+/// Returns null, matching `free()`.
+///
+/// # Safety
+/// `ptr` must have been returned by `allocate_aligned` with the same alignment.
+pub fn free_aligned(ptr: *mut u8) -> *mut u8 {
+    if ptr.is_null() {
+        return core::ptr::null_mut();
+    }
+    let original = unsafe { *((ptr as *mut *mut u8).sub(1)) };
+    free(original)
+}
+
 /// Free a previous pool allocation and return null.
-/// 
+///
 /// This function implements proper deallocation with free list support and coalescing.
 /// After freeing, it returns null to prevent use-after-free bugs.
-/// 
+///
 /// # Safety
-/// 
+///
 /// - The pointer must have been allocated by `allocate` or `allocate_tagged`
 /// - The pointer must not be used after calling this function
 /// - The pointer must not be freed twice
-/// 
+///
 /// # Example
-/// 
+///
 /// ```ignore
 /// let ptr = pool::allocate(pool::PoolType::NonPaged, size);
 /// // use ptr...
@@ -401,13 +460,23 @@ pub fn free(ptr: *mut u8) -> *mut u8 {
 
         // Check for double-free vulnerability
         if header.is_freed() {
-            // [DISABLED] // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// // // [DISABLED]                 level: crate::rtl::logging::LogLevel::Error,
-// // // [DISABLED]                 subsystem: "POOL",
-// // // [DISABLED]                 "DOUBLE FREE DETECTED at 0x{:x} (already freed, tag=0x{:08x})",
-// // // [DISABLED]                 ptr as u64, header.pool_tag
-// // // [DISABLED]             );
-            return core::ptr::null_mut();
+            // NT treats a double free as pool corruption. Returning here would
+            // let the allocator continue from a free list that may have already
+            // been mutated for this block, so the condition must be fatal and
+            // carry the caller address/tag in the bugcheck parameters.
+            crate::kprintln!(
+                level: crate::rtl::logging::LogLevel::Error,
+                subsystem: "POOL",
+                "DOUBLE FREE DETECTED at 0x{:x} (already freed, tag=0x{:08x})",
+                ptr as u64, header.pool_tag
+            );
+            crate::ke::bugcheck::bugcheck_with(
+                crate::ke::bugcheck::BugCheckCode::BadPoolCaller,
+                0x2,
+                ptr as u64,
+                header.pool_tag as u64,
+                0,
+            );
         }
 
         // Mark block as freed to prevent double-free
@@ -445,21 +514,21 @@ pub fn free(ptr: *mut u8) -> *mut u8 {
         let mut d = descriptor.lock();
         d.total_bytes = d.total_bytes.saturating_sub(total as u64);
         drop(d);
-        
+
         // Return null to prevent use-after-free
-        // [DISABLED] // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// // // [DISABLED]             level: crate::rtl::logging::LogLevel::Debug,
-// // // [DISABLED]             subsystem: "POOL",
-// // // [DISABLED]             "free: freed {} bytes, returning null", total
-// // // [DISABLED]         );
+        // [DISABLED] // // kprintln!(
+        // // // [DISABLED]             level: crate::rtl::logging::LogLevel::Debug,
+        // // // [DISABLED]             subsystem: "POOL",
+        // // // [DISABLED]             "free: freed {} bytes, returning null", total
+        // // // [DISABLED]         );
         core::ptr::null_mut()
     }
 }
 
 /// Macro to free and null a pointer in one expression.
-/// 
+///
 /// # Example
-/// 
+///
 /// ```ignore
 /// FREE_NULL!(ptr);  // ptr is now null
 /// ```
@@ -484,12 +553,22 @@ pub fn free_with_tag(ptr: *mut u8, tag: u32) -> *mut u8 {
             let header_ptr = ptr.sub(PoolHeader::HEADER_SIZE);
             let header = &*(header_ptr as *const PoolHeader);
             if header.pool_tag != tag {
-                // [DISABLED] // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// // // [DISABLED]                     level: crate::rtl::logging::LogLevel::Warn,
-// // // [DISABLED]                     subsystem: "POOL",
-// // // [DISABLED]                     "free_with_tag mismatch: expected {:08x}, got {:08x}",
-// // // [DISABLED]                     tag, header.pool_tag
-// // // [DISABLED]                 );
+                // A mismatched tag means the caller is freeing an allocation
+                // through the wrong ownership contract. Windows reports this
+                // as BAD_POOL_CALLER rather than silently freeing the block.
+                crate::kprintln!(
+                    level: crate::rtl::logging::LogLevel::Warn,
+                    subsystem: "POOL",
+                    "free_with_tag mismatch: expected {:08x}, got {:08x}",
+                    tag, header.pool_tag
+                );
+                crate::ke::bugcheck::bugcheck_with(
+                    crate::ke::bugcheck::BugCheckCode::BadPoolCaller,
+                    0x9,
+                    ptr as u64,
+                    header.pool_tag as u64,
+                    tag as u64,
+                );
             }
         }
     }
@@ -546,23 +625,18 @@ pub fn init() {
 /// Free block entry in the free list
 #[repr(C)]
 pub struct FreeBlock {
-    /// Pointer to next free block (null if last)
-    pub next: *mut FreeBlock,
-    /// Pointer to previous free block (null if first)
-    pub prev: *mut FreeBlock,
     /// Size of this free block (including header)
     pub size: usize,
-    /// Pool type
-    pub pool_type: PoolType,
+    /// Pool type. Stored as `u8` so the `PoolHeader` freed flag at the next
+    /// byte is not overwritten by free-list metadata.
+    pub pool_type: u8,
 }
 
 impl FreeBlock {
     pub fn new(size: usize, pool_type: PoolType) -> Self {
         Self {
-            next: core::ptr::null_mut(),
-            prev: core::ptr::null_mut(),
             size,
-            pool_type,
+            pool_type: pool_type as u8,
         }
     }
 }
@@ -606,7 +680,7 @@ fn ensure_pool_state_initialized() {
             return;
         }
     }
-    
+
     // Slow path: acquire lock and init if needed
     let mut guard = POOL_STATE.lock();
     if guard.is_none() {
@@ -623,7 +697,7 @@ where
 {
     // Ensure initialization first (no locks held)
     ensure_pool_state_initialized();
-    
+
     // Acquire lock and call closure
     let mut guard = POOL_STATE.lock();
     // State is guaranteed to exist now
@@ -686,7 +760,7 @@ pub fn allocate_from_freelist(pool_type: PoolType, size: usize) -> Option<*mut u
                 let block_start = block_ptr as *mut u8;
                 let total_alloc_size = block.size; // includes HEADER_SIZE
                 let header = block_start as *mut PoolHeader;
-                (*header).block_size = total_alloc_size as u16;
+                (*header).block_size = total_alloc_size as u32;
                 (*header).flags = PoolHeader::BLOCK_VALID;
                 return Some(block_start.add(PoolHeader::HEADER_SIZE));
             }
@@ -711,7 +785,6 @@ pub fn free_to_freelist(ptr: *mut u8, total_size: usize, pool_type: PoolType) {
         } else {
             &mut state.nonpaged_freelist
         };
-
 
         // Get block boundaries for coalescing
         let block_start = ptr as usize;
@@ -739,12 +812,12 @@ pub fn free_to_freelist(ptr: *mut u8, total_size: usize, pool_type: PoolType) {
                     // Merge: extend existing block
                     (*existing_ptr).size += total_size;
                     bump_coalesce_count(pool_type);
-                    // [DISABLED] // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// // // [DISABLED]                         level: crate::rtl::logging::LogLevel::Debug,
-// // // [DISABLED]                         subsystem: "POOL",
-// // // [DISABLED]                         "Coalesced: block before + our block, new_size={}",
-// // // [DISABLED]                         (*existing_ptr).size
-// // // [DISABLED]                     );
+                    // [DISABLED] // // kprintln!(
+                    // // // [DISABLED]                         level: crate::rtl::logging::LogLevel::Debug,
+                    // // // [DISABLED]                         subsystem: "POOL",
+                    // // // [DISABLED]                         "Coalesced: block before + our block, new_size={}",
+                    // // // [DISABLED]                         (*existing_ptr).size
+                    // // // [DISABLED]                     );
                     return;
                 } else if block_end == existing_start {
                     // existing block is directly after our block
@@ -752,16 +825,12 @@ pub fn free_to_freelist(ptr: *mut u8, total_size: usize, pool_type: PoolType) {
                     (*block_ptr).size += (*existing_ptr).size;
                     freelist[i] = block_ptr;
                     bump_coalesce_count(pool_type);
-                    // [DISABLED] // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// // // [DISABLED]                         level: crate::rtl::logging::LogLevel::Debug,
-// // // [DISABLED]                         subsystem: "POOL",
-// // // [DISABLED]                         "Coalesced: our block + block after, new_size={}",
-// // // [DISABLED]                         (*block_ptr).size
-// // // [DISABLED]                     );
-
-                    // Need to set next/prev for the merged block
-                    (*block_ptr).next = (*existing_ptr).next;
-                    (*block_ptr).prev = (*existing_ptr).prev;
+                    // [DISABLED] // // kprintln!(
+                    // // // [DISABLED]                         level: crate::rtl::logging::LogLevel::Debug,
+                    // // // [DISABLED]                         subsystem: "POOL",
+                    // // // [DISABLED]                         "Coalesced: our block + block after, new_size={}",
+                    // // // [DISABLED]                         (*block_ptr).size
+                    // // // [DISABLED]                     );
 
                     // Remove the old entry (already replaced)
                     // and return since we're done
@@ -781,12 +850,12 @@ pub fn free_to_freelist(ptr: *mut u8, total_size: usize, pool_type: PoolType) {
             freelist.insert(insert_pos, block_ptr);
         }
 
-        // [DISABLED] // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// // // [DISABLED]             level: crate::rtl::logging::LogLevel::Debug,
-// // // [DISABLED]             subsystem: "POOL",
-// // // [DISABLED]             "free_to_freelist: inserted block size={} at position {}",
-// // // [DISABLED]             total_size, insert_pos
-// // // [DISABLED]         );
+        // [DISABLED] // // kprintln!(
+        // // // [DISABLED]             level: crate::rtl::logging::LogLevel::Debug,
+        // // // [DISABLED]             subsystem: "POOL",
+        // // // [DISABLED]             "free_to_freelist: inserted block size={} at position {}",
+        // // // [DISABLED]             total_size, insert_pos
+        // // // [DISABLED]         );
     });
 }
 
@@ -805,3 +874,39 @@ fn bump_coalesce_count(pool_type: PoolType) {
 /// Get pool statistics (deprecated — see get_stats above).
 #[allow(dead_code)]
 const _POOL_STATS_PLACEHOLDER: () = ();
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ensure_test_heap() {
+        if crate::mm::heap::KERNEL_HEAP.configured_region().is_some() {
+            return;
+        }
+
+        const TEST_HEAP_LEN: usize = 64 * 1024;
+        static mut TEST_HEAP: [u8; TEST_HEAP_LEN] = [0u8; TEST_HEAP_LEN];
+        let len = TEST_HEAP_LEN;
+        crate::mm::heap::KERNEL_HEAP
+            .configure(core::ptr::addr_of_mut!(TEST_HEAP) as *mut u8, len);
+    }
+
+    #[test]
+    #[should_panic(expected = "bugcheck 0x000000C2 p1=0x2")]
+    fn double_free_bugs_check() {
+        ensure_test_heap();
+        let ptr = allocate_tagged(PoolType::NonPaged, 32, tags::MM);
+        assert!(!ptr.is_null());
+        free(ptr);
+        free(ptr);
+    }
+
+    #[test]
+    #[should_panic(expected = "bugcheck 0x000000C2 p1=0x9")]
+    fn mismatched_pool_tag_bugs_check() {
+        ensure_test_heap();
+        let ptr = allocate_tagged(PoolType::NonPaged, 32, tags::PROCESS);
+        assert!(!ptr.is_null());
+        free_with_tag(ptr, tags::THREAD);
+    }
+}

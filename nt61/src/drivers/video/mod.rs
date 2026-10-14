@@ -30,19 +30,24 @@
 
 extern crate alloc;
 
-pub mod vga;
-#[cfg(target_arch = "x86_64")]
-pub mod efifb;
 #[cfg(target_arch = "x86_64")]
 pub mod bochs_vbe;
-pub mod edid;
-pub mod i2c_ddc;
 pub mod dp_aux;
+pub mod edid;
+#[cfg(target_arch = "x86_64")]
+pub mod efifb;
+pub mod i2c_ddc;
+pub mod vga;
 
 #[cfg(target_arch = "x86_64")]
 pub mod smoke;
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "loongarch64", target_arch = "riscv64"))]
+#[cfg(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "loongarch64",
+    target_arch = "riscv64"
+))]
 pub mod core;
 
 // Video driver logging utilities
@@ -240,7 +245,8 @@ pub fn init() {
     #[cfg(target_arch = "x86_64")]
     crate::hal::x86_64::serial::write_string("V:done\r\n");
     log::video_log("video", "Video driver stack initialized");
-}/// Run smoke tests on all video drivers
+}
+/// Run smoke tests on all video drivers
 pub fn smoke_test() -> bool {
     #[cfg(target_arch = "x86_64")]
     {
@@ -300,3 +306,5 @@ pub fn get_gpu_info() {
         }
     }
 }
+
+pub mod hdcp;

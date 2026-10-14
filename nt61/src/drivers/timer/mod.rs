@@ -16,17 +16,21 @@ extern crate alloc;
 use crate::kprintln;
 
 pub fn init() {
-    // kprintln!("    Timer drivers: HPET, ACPI PM (skipped due to PTE bug)")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    Timer drivers: HPET, ACPI PM (skipped due to PTE bug)");
     // hpet::init() and acpi_pm::init() are disabled because
     // mm::syspte::map_io_space writes to the wrong PTE address
     // for the system PTE region (0xFFFF_F900_0000_0000).
     // The PTE_BASE self-map only covers the first 512 GiB of
     // kernel virtual address space; the system PTE region is
     // outside that range.
-    // kprintln!("    Timer stack ready (HPET and ACPI PM disabled)")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    Timer stack ready (HPET and ACPI PM disabled)");
 }
 
 pub fn smoke_test() -> bool {
-    // kprintln!("  [TIMER SMOKE OK] Timer stack healthy (stub mode)")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [TIMER SMOKE OK] Timer stack healthy (stub mode)");
     true
 }
+
+pub mod acpi_pm;
+pub mod hpet;
+pub mod smoke;

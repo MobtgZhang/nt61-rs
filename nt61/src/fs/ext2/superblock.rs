@@ -27,13 +27,13 @@ pub const EXT2_SUPER_MAGIC: u16 = 0xEF53;
 pub const SUPERBLOCK_OFFSET: u64 = 1024;
 
 /// ext2 revision levels
-pub const EXT2_GOOD_OLD_REV: u32 = 0;  // Revision 0
-pub const EXT2_CURRENT_REV: u32 = 1;   // Revision 1 with dynamic inode size
+pub const EXT2_GOOD_OLD_REV: u32 = 0; // Revision 0
+pub const EXT2_CURRENT_REV: u32 = 1; // Revision 1 with dynamic inode size
 
 /// Feature compatibility flags - Compatible features can be ignored safely
 pub const EXT2_FEATURE_COMPAT_DIR_PREALLOC: u32 = 0x0001;
 pub const EXT2_FEATURE_COMPAT_IMAGIC_INODES: u32 = 0x0002;
-pub const EXT2_FEATURE_COMPAT_HAS_JOURNAL: u32 = 0x0004;  // ext3 journal
+pub const EXT2_FEATURE_COMPAT_HAS_JOURNAL: u32 = 0x0004; // ext3 journal
 pub const EXT2_FEATURE_COMPAT_EXT_ATTR: u32 = 0x0008;
 pub const EXT2_FEATURE_COMPAT_RESIZE_INODE: u32 = 0x0010;
 pub const EXT2_FEATURE_COMPAT_DIR_INDEX: u32 = 0x0020;
@@ -41,19 +41,19 @@ pub const EXT2_FEATURE_COMPAT_DIR_INDEX: u32 = 0x0020;
 /// Feature incompatibility flags - Must be supported
 pub const EXT2_FEATURE_INCOMPAT_COMPRESSION: u32 = 0x0001;
 pub const EXT2_FEATURE_INCOMPAT_FILETYPE: u32 = 0x0002;
-pub const EXT2_FEATURE_INCOMPAT_RECOVER: u32 = 0x0004;    // ext3 needs recovery
+pub const EXT2_FEATURE_INCOMPAT_RECOVER: u32 = 0x0004; // ext3 needs recovery
 pub const EXT2_FEATURE_INCOMPAT_JOURNAL_DEV: u32 = 0x0008; // Journal device
 pub const EXT2_FEATURE_INCOMPAT_META_BG: u32 = 0x0010;
-pub const EXT2_FEATURE_INCOMPAT_EXTENTS: u32 = 0x0040;     // ext4 extents
-pub const EXT2_FEATURE_INCOMPAT_FLEX_BG: u32 = 0x0020;     // Flexible block groups
-pub const EXT2_FEATURE_INCOMPAT_EA_INODE: u32 = 0x0080;    // Extended attributes in inode
-pub const EXT2_FEATURE_INCOMPAT_DIRDATA: u32 = 0x0100;    // Data in directory entry
+pub const EXT2_FEATURE_INCOMPAT_EXTENTS: u32 = 0x0040; // ext4 extents
+pub const EXT2_FEATURE_INCOMPAT_FLEX_BG: u32 = 0x0020; // Flexible block groups
+pub const EXT2_FEATURE_INCOMPAT_EA_INODE: u32 = 0x0080; // Extended attributes in inode
+pub const EXT2_FEATURE_INCOMPAT_DIRDATA: u32 = 0x0100; // Data in directory entry
 pub const EXT2_FEATURE_INCOMPAT_BG_USE_META_BG: u32 = 0x0200;
-pub const EXT2_FEATURE_INCOMPAT_BIGALLOC: u32 = 0x0400;     // ext4 bigalloc
+pub const EXT2_FEATURE_INCOMPAT_BIGALLOC: u32 = 0x0400; // ext4 bigalloc
 pub const EXT2_FEATURE_INCOMPAT_METADATA_CSUM: u32 = 0x0800; // ext4 metadata checksum
-pub const EXT2_FEATURE_INCOMPAT_LARGEDIR: u32 = 0x4000;    // >2GB directories
+pub const EXT2_FEATURE_INCOMPAT_LARGEDIR: u32 = 0x4000; // >2GB directories
 pub const EXT2_FEATURE_INCOMPAT_INLINE_DATA: u32 = 0x8000; // ext4 inline data
-pub const EXT2_FEATURE_INCOMPAT_ENCRYPT: u32 = 0x10000;    // ext4 encryption
+pub const EXT2_FEATURE_INCOMPAT_ENCRYPT: u32 = 0x10000; // ext4 encryption
 
 /// Read-only compatible features - Can be mounted read-only if not supported
 pub const EXT2_FEATURE_RO_COMPAT_SPARSE_SUPER: u32 = 0x0001;
@@ -528,16 +528,16 @@ pub fn read_superblock(device: *mut (), offset: u64) -> Option<Ext2SuperBlock> {
     let sb_sector = sb_byte_offset / 512;
     // Two adjacent sectors cover the 1024-byte superblock.
     if read_sectors(device, sb_sector, 2, &mut buffer).is_err() {
-        // kprintln!("[EXT2] Failed to read superblock at sector {}", sb_sector)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[EXT2] Failed to read superblock at sector {}", sb_sector);
         return None;
     }
     let sb = unsafe { core::ptr::read_unaligned(buffer.as_ptr() as *const Ext2SuperBlock) };
-    
+
     if !sb.is_valid() {
-        // kprintln!("[EXT2] Invalid superblock magic: 0x{:04x}", sb.magic)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[EXT2] Invalid superblock magic: 0x{:04x}", sb.magic);
         return None;
     }
-    
+
     Some(sb)
 }
 
@@ -546,65 +546,65 @@ pub fn read_superblock(device: *mut (), offset: u64) -> Option<Ext2SuperBlock> {
 pub fn validate_superblock(sb: &Ext2SuperBlock) -> FsResult<()> {
     // Check magic number
     if sb.magic != EXT2_SUPER_MAGIC {
-        // kprintln!("[EXT2] Invalid magic number: 0x{:04x}", sb.magic)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[EXT2] Invalid magic number: 0x{:04x}", sb.magic);
         return Err(FsError::DiskCorrupt);
     }
-    
+
     // Check revision level
     if sb.rev_level > EXT2_CURRENT_REV + 1 {
-        // kprintln!("[EXT2] Unsupported revision level: {}", sb.rev_level)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[EXT2] Unsupported revision level: {}", sb.rev_level);
         return Err(FsError::FileSystemLimit);
     }
-    
+
     // Check for incompatible features we don't support
     let incompat = sb.incompatible_features;
-    
+
     if (incompat & EXT2_FEATURE_INCOMPAT_COMPRESSION) != 0 {
-        // kprintln!("[EXT2] Compression not supported")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[EXT2] Compression not supported");
         return Err(FsError::FileSystemLimit);
     }
-    
+
     if (incompat & EXT2_FEATURE_INCOMPAT_JOURNAL_DEV) != 0 {
-        // kprintln!("[EXT2] Journal device not supported")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[EXT2] Journal device not supported");
         return Err(FsError::FileSystemLimit);
     }
-    
+
     // ext3 features are ok
     if (incompat & EXT2_FEATURE_INCOMPAT_RECOVER) != 0 {
-        // kprintln!("[EXT2] Filesystem needs recovery")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[EXT2] Filesystem needs recovery");
         // This is not an error, just a warning
     }
-    
+
     // Check inode size for dynamic revision
     if sb.is_dynamic_rev() && sb.inode_size < 128 {
-        // kprintln!("[EXT2] Inode size too small: {}", sb.inode_size)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[EXT2] Inode size too small: {}", sb.inode_size);
         return Err(FsError::DiskCorrupt);
     }
-    
+
     // Check for sane values
     if sb.blocks_per_group == 0 || sb.inodes_per_group == 0 {
-        // kprintln!("[EXT2] Invalid group sizes")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[EXT2] Invalid group sizes");
         return Err(FsError::DiskCorrupt);
     }
-    
+
     if sb.first_data_block == 0 && sb.block_size == 0 {
-        // kprintln!("[EXT2] Invalid first data block")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[EXT2] Invalid first data block");
         return Err(FsError::DiskCorrupt);
     }
-    
+
     // Check for 64-bit features we don't support
     if sb.has_64bit() {
-        // kprintln!("[EXT2] 64-bit filesystem support is limited")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[EXT2] 64-bit filesystem support is limited");
         // Continue anyway, we have partial support
     }
-    
+
     // Log filesystem type
-    // kprintln!("[EXT2] Detected {} filesystem", sb.get_fs_type_string())  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("[EXT2]   Block size: {} bytes", sb.get_block_size())  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("[EXT2]   Total blocks: {} ({} groups)", sb.blocks_count, sb.get_group_count())  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("[EXT2]   Total inodes: {} ({} per group)", sb.inodes_count, sb.inodes_per_group)  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("[EXT2]   Inode size: {} bytes", sb.get_inode_size())  // kprintln disabled (memcpy crash workaround);
-    
+    // kprintln!("[EXT2] Detected {} filesystem", sb.get_fs_type_string());
+    // kprintln!("[EXT2]   Block size: {} bytes", sb.get_block_size());
+    // kprintln!("[EXT2]   Total blocks: {} ({} groups)", sb.blocks_count, sb.get_group_count());
+    // kprintln!("[EXT2]   Total inodes: {} ({} per group)", sb.inodes_count, sb.inodes_per_group);
+    // kprintln!("[EXT2]   Inode size: {} bytes", sb.get_inode_size());
+
     Ok(())
 }
 
@@ -644,7 +644,7 @@ impl Ext2FeatureSupport {
     pub fn is_ext3(&self) -> bool {
         self.has_journal
     }
-    
+
     /// Check if filesystem is ext4
     pub fn is_ext4(&self) -> bool {
         self.has_extents || self.has_flex_bg || self.has_bigalloc || self.has_metadata_csum
@@ -660,7 +660,7 @@ pub fn read_sector(_device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<(
     if buffer.len() < 512 {
         return Err(());
     }
-    
+
     // Prefer the *active* partition mirror, when one is set by
     // the dispatcher in `fs::mod`. This is what lets EXT2 mount
     // and read from the system partition properly.
@@ -685,7 +685,7 @@ pub fn read_sector(_device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<(
         }
         return Err(());
     }
-    
+
     // Fallback: route to RAM disk for bootstrap filesystem operations
     let sector_num = sector as usize;
     if crate::drivers::storage::ramdisk::read(sector_num, buffer) {
@@ -703,7 +703,12 @@ pub fn read_sector(_device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<(
 }
 
 /// Read multiple sectors from device
-pub fn read_sectors(device: *mut (), start_sector: u64, count: u32, buffer: &mut [u8]) -> Result<(), ()> {
+pub fn read_sectors(
+    device: *mut (),
+    start_sector: u64,
+    count: u32,
+    buffer: &mut [u8],
+) -> Result<(), ()> {
     let sector_size = 512usize;
     let needed = (count as usize) * sector_size;
 
@@ -722,7 +727,13 @@ pub fn read_sectors(device: *mut (), start_sector: u64, count: u32, buffer: &mut
     // zeroes for any ext superblock smaller than 512 KiB.
     for i in 0..count as usize {
         let sector = start_sector + (i as u64);
-        if read_sector(device, sector, &mut buffer[i * sector_size..(i + 1) * sector_size]).is_err() {
+        if read_sector(
+            device,
+            sector,
+            &mut buffer[i * sector_size..(i + 1) * sector_size],
+        )
+        .is_err()
+        {
             return Err(());
         }
     }
@@ -735,7 +746,7 @@ pub fn write_sector(_device: *mut (), sector: u64, buffer: &[u8]) -> Result<(), 
     if buffer.len() < 512 {
         return Err(());
     }
-    
+
     // Route to RAM disk or AHCI
     let sector_num = sector as usize;
     if crate::drivers::storage::ramdisk::write(sector_num, buffer) {
@@ -759,34 +770,34 @@ pub fn write_sector(_device: *mut (), sector: u64, buffer: &[u8]) -> Result<(), 
 impl Ext2SuperBlock {
     /// Print superblock information for debugging
     pub fn debug_print(&self) {
-        // kprintln!("[EXT2] Superblock Information:")  // kprintln disabled (memcpy crash workaround);
-        // kprintln!("  Magic:              0x{:04x}", self.magic)  // kprintln disabled (memcpy crash workaround);
-        // kprintln!("  Revision:           {}.{}",   // kprintln disabled (memcpy crash workaround)
-//             if self.is_dynamic_rev() { 1 } else { 0 },
-//             self.minor_rev_level);
-        // kprintln!("  Filesystem type:    {}", self.get_fs_type_string())  // kprintln disabled (memcpy crash workaround);
-        // kprintln!("  Block size:        {} bytes (shift={})",   // kprintln disabled (memcpy crash workaround)
-//             self.get_block_size(), self.block_size);
-        // kprintln!("  Fragment size:     {} bytes", self.get_fragment_size())  // kprintln disabled (memcpy crash workaround);
-        // kprintln!("  Total blocks:      {} (groups: {})",   // kprintln disabled (memcpy crash workaround)
-//             self.blocks_count, self.get_group_count());
-        // kprintln!("  Total inodes:      {} (per group: {})",   // kprintln disabled (memcpy crash workaround)
-//             self.inodes_count, self.inodes_per_group);
-        // kprintln!("  Blocks per group:  {}", self.blocks_per_group)  // kprintln disabled (memcpy crash workaround);
-        // kprintln!("  Inode size:       {} bytes", self.get_inode_size())  // kprintln disabled (memcpy crash workaround);
-        // kprintln!("  State:             0x{:04x}", self.state)  // kprintln disabled (memcpy crash workaround);
-        // kprintln!("  Errors:           0x{:04x}", self.errors)  // kprintln disabled (memcpy crash workaround);
-        // kprintln!("  Mount count:      {}/{}", self.mnt_count, self.max_mnt_count)  // kprintln disabled (memcpy crash workaround);
-        // kprintln!("  Compatible:       0x{:08x}", self.compatible_features)  // kprintln disabled (memcpy crash workaround);
-        // kprintln!("  Incompatible:     0x{:08x}", self.incompatible_features)  // kprintln disabled (memcpy crash workaround);
-        // kprintln!("  Read-only compat:  0x{:08x}", self.ro_compatible_features)  // kprintln disabled (memcpy crash workaround);
-        
+        // kprintln!("[EXT2] Superblock Information:");
+        // kprintln!("  Magic:              0x{:04x}", self.magic);
+        // kprintln!("  Revision:           {}.{}",
+        //             if self.is_dynamic_rev() { 1 } else { 0 },
+        //             self.minor_rev_level);
+        // kprintln!("  Filesystem type:    {}", self.get_fs_type_string());
+        // kprintln!("  Block size:        {} bytes (shift={})",
+        //             self.get_block_size(), self.block_size);
+        // kprintln!("  Fragment size:     {} bytes", self.get_fragment_size());
+        // kprintln!("  Total blocks:      {} (groups: {})",
+        //             self.blocks_count, self.get_group_count());
+        // kprintln!("  Total inodes:      {} (per group: {})",
+        //             self.inodes_count, self.inodes_per_group);
+        // kprintln!("  Blocks per group:  {}", self.blocks_per_group);
+        // kprintln!("  Inode size:       {} bytes", self.get_inode_size());
+        // kprintln!("  State:             0x{:04x}", self.state);
+        // kprintln!("  Errors:           0x{:04x}", self.errors);
+        // kprintln!("  Mount count:      {}/{}", self.mnt_count, self.max_mnt_count);
+        // kprintln!("  Compatible:       0x{:08x}", self.compatible_features);
+        // kprintln!("  Incompatible:     0x{:08x}", self.incompatible_features);
+        // kprintln!("  Read-only compat:  0x{:08x}", self.ro_compatible_features);
+
         if self.has_journal() {
-            // kprintln!("  Journal inode:     {}", self.journal_inode)  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("  Journal inode:     {}", self.journal_inode);
         }
-        
+
         if self.has_extents() {
-            // kprintln!("  Extents:           ENABLED")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("  Extents:           ENABLED");
         }
     }
 }

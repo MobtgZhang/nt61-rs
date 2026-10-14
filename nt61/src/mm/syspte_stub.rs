@@ -15,8 +15,7 @@ pub fn reserve_system_ptes(_count: u64) -> Option<u64> {
 }
 
 /// Release system PTEs. Non-x86_64 stub: no-op.
-pub fn release_system_ptes(_va: u64) {
-}
+pub fn release_system_ptes(_va: u64) {}
 
 /// Map I/O space. Non-x86_64 stub: returns None.
 pub fn map_io_space(_pa: u64, _count: u64) -> Option<u64> {
@@ -24,9 +23,7 @@ pub fn map_io_space(_pa: u64, _count: u64) -> Option<u64> {
 }
 
 /// Unmap I/O space. Non-x86_64 stub: no-op.
-pub fn unmap_io_space(_va: u64, _count: u64) {
-}
+pub fn unmap_io_space(_va: u64, _count: u64) {}
 
 /// Initialise the system PTE pool. Non-x86_64 stub: no-op.
-pub fn init() {
-}
+pub fn init() {}

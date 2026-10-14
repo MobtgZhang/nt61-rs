@@ -8,8 +8,8 @@
 extern crate alloc;
 
 use crate::kprintln;
-use crate::libs::win32k::objects::{Rect, GdiBrush, GdiPen};
 use crate::libs::win32k::dc::DcObject;
+use crate::libs::win32k::objects::{GdiBrush, GdiPen, Rect};
 use crate::libs::win32k::surface::{GdiSurface, PIXEL_FORMAT_32BPP, PIXEL_FORMAT_32BPP_ARGB};
 use alloc::vec::Vec;
 
@@ -130,8 +130,16 @@ pub fn GreBitBlt(
             let _ = &src_surface;
             let _ = &src_surface;
             if !src_surface.is_null() {
-                return bitblt_copy(dst_surface, dst_x, dst_y, width, height,
-                                   src_surface, src_x, src_y);
+                return bitblt_copy(
+                    dst_surface,
+                    dst_x,
+                    dst_y,
+                    width,
+                    height,
+                    src_surface,
+                    src_x,
+                    src_y,
+                );
             }
         }
         return false;
@@ -167,8 +175,18 @@ pub fn GreBitBlt(
         let _ = &src_surface;
         let _ = &src_surface;
         if !src_surface.is_null() {
-            return bitblt_generic(dst_surface, dst_x, dst_y, width, height,
-                               src_surface, src_x, src_y, rop, dst_dc);
+            return bitblt_generic(
+                dst_surface,
+                dst_x,
+                dst_y,
+                width,
+                height,
+                src_surface,
+                src_x,
+                src_y,
+                rop,
+                dst_dc,
+            );
         }
     }
 
@@ -217,8 +235,7 @@ fn bitblt_copy(
     let _ = &src_height;
 
     // Ensure we're in bounds
-    if dst_x >= dst_width || dst_y >= dst_height ||
-       src_x >= src_width || src_y >= src_height {
+    if dst_x >= dst_width || dst_y >= dst_height || src_x >= src_width || src_y >= src_height {
         return false;
     }
 
@@ -259,8 +276,8 @@ fn bitblt_copy(
         }
     }
 
-    // kprintln!("[win32k] bitblt_copy: {}x{} from ({},{}) to ({},{})",  // kprintln disabled (memcpy crash workaround)
-//               actual_width, actual_height, src_x, src_y, dst_x, dst_y);
+    // kprintln!("[win32k] bitblt_copy: {}x{} from ({},{}) to ({},{})",
+    //               actual_width, actual_height, src_x, src_y, dst_x, dst_y);
 
     true
 }
@@ -296,10 +313,14 @@ fn bitblt_generic(
     }
 
     // Clip
-    let actual_width = width.min(dst_surf.width - dst_x).min(src_surf.width - src_x);
+    let actual_width = width
+        .min(dst_surf.width - dst_x)
+        .min(src_surf.width - src_x);
     let _ = &actual_width;
     let _ = &actual_width;
-    let actual_height = height.min(dst_surf.height - dst_y).min(src_surf.height - src_y);
+    let actual_height = height
+        .min(dst_surf.height - dst_y)
+        .min(src_surf.height - src_y);
     let _ = &actual_height;
     let _ = &actual_height;
 
@@ -325,11 +346,13 @@ fn bitblt_generic(
                 let _ = &src_offset;
                 let _ = &src_offset;
 
-                let dst_pixel = core::ptr::read_unaligned(dst_surf.bits.offset(dst_offset) as *const u32);
+                let dst_pixel =
+                    core::ptr::read_unaligned(dst_surf.bits.offset(dst_offset) as *const u32);
 
                 let _ = &dst_pixel;
                 let _ = &dst_pixel;
-                let src_pixel = core::ptr::read_unaligned(src_surf.bits.offset(src_offset) as *const u32);
+                let src_pixel =
+                    core::ptr::read_unaligned(src_surf.bits.offset(src_offset) as *const u32);
                 let _ = &src_pixel;
                 let _ = &src_pixel;
 
@@ -343,8 +366,8 @@ fn bitblt_generic(
         }
     }
 
-    // kprintln!("[win32k] bitblt_generic: {}x{} at ({},{}) rop=0x{:08x}",  // kprintln disabled (memcpy crash workaround)
-//               actual_width, actual_height, dst_x, dst_y, rop);
+    // kprintln!("[win32k] bitblt_generic: {}x{} at ({},{}) rop=0x{:08x}",
+    //               actual_width, actual_height, dst_x, dst_y, rop);
 
     true
 }
@@ -396,7 +419,14 @@ pub fn GrePatBlt(
 // =============================================================================
 
 /// Fill rectangle with solid color
-fn fill_rect_solid(surface: *mut GdiSurface, x: i32, y: i32, width: i32, height: i32, color: u32) -> bool {
+fn fill_rect_solid(
+    surface: *mut GdiSurface,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    color: u32,
+) -> bool {
     if surface.is_null() {
         return false;
     }
@@ -447,16 +477,13 @@ fn fill_rect_solid(surface: *mut GdiSurface, x: i32, y: i32, width: i32, height:
             let _ = &line_ptr;
             let _ = &line_ptr;
             for col in left..right {
-                core::ptr::write_unaligned(
-                    line_ptr.add((col * 4) as usize) as *mut u32,
-                    color,
-                );
+                core::ptr::write_unaligned(line_ptr.add((col * 4) as usize) as *mut u32, color);
             }
         }
     }
 
-    // kprintln!("[win32k] fill_rect_solid: {}x{} at ({},{}) color=0x{:08x}",  // kprintln disabled (memcpy crash workaround)
-//               actual_width, actual_height, left, top, color);
+    // kprintln!("[win32k] fill_rect_solid: {}x{} at ({},{}) color=0x{:08x}",
+    //               actual_width, actual_height, left, top, color);
 
     true
 }
@@ -503,14 +530,10 @@ fn invert_rect(surface: *mut GdiSurface, x: i32, y: i32, width: i32, height: i32
             let _ = &line_ptr;
             let _ = &line_ptr;
             for col in left..right {
-                let pixel = core::ptr::read_unaligned(
-                    line_ptr.add((col * 4) as usize) as *const u32
-                );
+                let pixel =
+                    core::ptr::read_unaligned(line_ptr.add((col * 4) as usize) as *const u32);
                 let _ = &pixel;
-                core::ptr::write_unaligned(
-                    line_ptr.add((col * 4) as usize) as *mut u32,
-                    !pixel,
-                );
+                core::ptr::write_unaligned(line_ptr.add((col * 4) as usize) as *mut u32, !pixel);
             }
         }
     }
@@ -519,13 +542,7 @@ fn invert_rect(surface: *mut GdiSurface, x: i32, y: i32, width: i32, height: i32
 }
 
 /// GreRectangle - Draw rectangle outline
-pub fn GreRectangle(
-    dc: &mut DcObject,
-    left: i32,
-    top: i32,
-    right: i32,
-    bottom: i32,
-) -> bool {
+pub fn GreRectangle(dc: &mut DcObject, left: i32, top: i32, right: i32, bottom: i32) -> bool {
     let surface = get_dc_surface(dc);
     let _ = &surface;
     let _ = &surface;
@@ -550,21 +567,28 @@ pub fn GreRectangle(
     let _ = &height;
 
     // Draw outline
-    draw_line(surface, left, top, right - 1, top, pen_color);           // Top
+    draw_line(surface, left, top, right - 1, top, pen_color); // Top
     draw_line(surface, left, bottom - 1, right - 1, bottom - 1, pen_color); // Bottom
-    draw_line(surface, left, top, left, bottom - 1, pen_color);       // Left
-    draw_line(surface, right - 1, top, right - 1, bottom - 1, pen_color);   // Right
+    draw_line(surface, left, top, left, bottom - 1, pen_color); // Left
+    draw_line(surface, right - 1, top, right - 1, bottom - 1, pen_color); // Right
 
     // Fill with brush if present
     if dc.brush != 0 {
         let brush_color = crate::libs::win32k::objects::GdiGetBrushColor(dc.brush);
         let _ = &brush_color;
         let _ = &brush_color;
-        fill_rect_solid(surface, left + 1, top + 1, width - 1, height - 1, brush_color);
+        fill_rect_solid(
+            surface,
+            left + 1,
+            top + 1,
+            width - 1,
+            height - 1,
+            brush_color,
+        );
     }
 
-    // kprintln!("[win32k] GreRectangle: ({},{})-({},{}) pen=0x{:x} brush=0x{:x}",  // kprintln disabled (memcpy crash workaround)
-//               left, top, right, bottom, dc.pen, dc.brush);
+    // kprintln!("[win32k] GreRectangle: ({},{})-({},{}) pen=0x{:x} brush=0x{:x}",
+    //               left, top, right, bottom, dc.pen, dc.brush);
 
     true
 }
@@ -659,8 +683,15 @@ pub fn draw_line(surface: *mut GdiSurface, x1: i32, y1: i32, x2: i32, y2: i32, c
 }
 
 /// Draw a line with specified width (rounded caps)
-pub fn draw_line_width(surface: *mut GdiSurface, x1: i32, y1: i32, x2: i32, y2: i32, 
-                       width: i32, color: u32) -> bool {
+pub fn draw_line_width(
+    surface: *mut GdiSurface,
+    x1: i32,
+    y1: i32,
+    x2: i32,
+    y2: i32,
+    width: i32,
+    color: u32,
+) -> bool {
     if surface.is_null() || width <= 0 {
         return false;
     }
@@ -724,7 +755,7 @@ pub fn draw_line_width(surface: *mut GdiSurface, x1: i32, y1: i32, x2: i32, y2: 
         let len_f = len as f32;
         let _ = &len_f;
         let _ = &len_f;
-        
+
         // Normalized perpendicular offset
         let ox = (nx as f32 / len_f) * offset_f;
         let _ = &ox;
@@ -750,17 +781,13 @@ pub fn draw_line_width(surface: *mut GdiSurface, x1: i32, y1: i32, x2: i32, y2: 
         draw_line(surface, sx, sy, ex, ey, color);
     }
 
-    // kprintln!("[win32k] draw_line_width: ({},{})-({},{}), width={}",   // kprintln disabled (memcpy crash workaround)
-//               x1, y1, x2, y2, width);
+    // kprintln!("[win32k] draw_line_width: ({},{})-({},{}), width={}",
+    //               x1, y1, x2, y2, width);
     true
 }
 
 /// GreLineTo - Draw line to point using pen width
-pub fn GreLineTo(
-    dc: &mut DcObject,
-    end_x: i32,
-    end_y: i32,
-) -> bool {
+pub fn GreLineTo(dc: &mut DcObject, end_x: i32, end_y: i32) -> bool {
     let surface = get_dc_surface(dc);
     let _ = &surface;
     let _ = &surface;
@@ -794,28 +821,26 @@ pub fn GreLineTo(
     let _ = &start_y;
 
     if pen_width > 1 {
-        draw_line_width(surface, start_x, start_y, end_x, end_y, pen_width, pen_color);
+        draw_line_width(
+            surface, start_x, start_y, end_x, end_y, pen_width, pen_color,
+        );
     } else {
         draw_line(surface, start_x, start_y, end_x, end_y, pen_color);
     }
 
-    // kprintln!("[win32k] GreLineTo: ({},{})-({},{}), pen_width={}",   // kprintln disabled (memcpy crash workaround)
-//               start_x, start_y, end_x, end_y, pen_width);
+    // kprintln!("[win32k] GreLineTo: ({},{})-({},{}), pen_width={}",
+    //               start_x, start_y, end_x, end_y, pen_width);
 
     true
 }
 
 /// GreMoveTo - Set current position (stub)
-pub fn GreMoveTo(
-    dc: &mut DcObject,
-    x: i32,
-    y: i32,
-) {
+pub fn GreMoveTo(dc: &mut DcObject, x: i32, y: i32) {
     let _ = dc;
     let _ = x;
     let _ = y;
     // Would store current position in DC
-    // kprintln!("[win32k] GreMoveTo: ({},{})", x, y)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[win32k] GreMoveTo: ({},{})", x, y);
 }
 
 // =============================================================================
@@ -850,7 +875,7 @@ fn draw_ellipse_midpoint(surface: *mut GdiSurface, cx: i32, cy: i32, rx: i32, ry
     // Check if dimensions might cause overflow in calculations
     // (rx * rx) fits in i32 only if rx <= 46340 (sqrt(i32::MAX))
     if rx > 46340 || ry > 46340 {
-        // kprintln!("[win32k] draw_ellipse_midpoint: dimensions too large, rx={}, ry={}", rx, ry)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[win32k] draw_ellipse_midpoint: dimensions too large, rx={}, ry={}", rx, ry);
         return;
     }
 
@@ -878,7 +903,7 @@ fn draw_ellipse_midpoint(surface: *mut GdiSurface, cx: i32, cy: i32, rx: i32, ry
     while px < py {
         // Draw 4 symmetric points (convert back to i32 for drawing)
         draw_pixel_symmetric(surf, cx, cy, x as i32, y as i32, color);
-        
+
         x += 1;
         px += two_ry2;
         if p < 0 {
@@ -892,10 +917,10 @@ fn draw_ellipse_midpoint(surface: *mut GdiSurface, cx: i32, cy: i32, rx: i32, ry
 
     // Region 2: transition point
     p = ry2 * (x + 1) * (x + 1) + rx2 * (y - 1) * (y - 1) - rx2 * ry2;
-    
+
     while y >= 0 {
         draw_pixel_symmetric(surf, cx, cy, x as i32, y as i32, color);
-        
+
         y -= 1;
         py -= two_rx2;
         if p > 0 {
@@ -931,13 +956,7 @@ fn draw_pixel_symmetric(surf: &GdiSurface, cx: i32, cy: i32, x: i32, y: i32, col
 }
 
 /// GreEllipse - Draw ellipse
-pub fn GreEllipse(
-    dc: &mut DcObject,
-    left: i32,
-    top: i32,
-    right: i32,
-    bottom: i32,
-) -> bool {
+pub fn GreEllipse(dc: &mut DcObject, left: i32, top: i32, right: i32, bottom: i32) -> bool {
     let surface = get_dc_surface(dc);
     let _ = &surface;
     let _ = &surface;
@@ -978,7 +997,7 @@ pub fn GreEllipse(
         fill_ellipse(surface, cx, cy, rx - 1, ry - 1, brush_color);
     }
 
-    // kprintln!("[win32k] GreEllipse: ({},{})-({},{})", left, top, right, bottom)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[win32k] GreEllipse: ({},{})-({},{})", left, top, right, bottom);
 
     true
 }
@@ -1041,10 +1060,7 @@ fn fill_ellipse(surface: *mut GdiSurface, cx: i32, cy: i32, rx: i32, ry: i32, co
 // =============================================================================
 
 /// GrePolygon - Draw and fill polygon
-pub fn GrePolygon(
-    dc: &mut DcObject,
-    points: &[(i32, i32)],
-) -> bool {
+pub fn GrePolygon(dc: &mut DcObject, points: &[(i32, i32)]) -> bool {
     if points.len() < 3 {
         return false;
     }
@@ -1131,7 +1147,7 @@ fn fill_polygon(surface: *mut GdiSurface, points: &[(i32, i32)], color: u32) {
 
         // Sort and fill between pairs
         intersections.sort_by(|a, b| a.cmp(b));
-        
+
         for i in (0..intersections.len()).step_by(2) {
             if i + 1 < intersections.len() {
                 let start = intersections[i];
@@ -1140,7 +1156,7 @@ fn fill_polygon(surface: *mut GdiSurface, points: &[(i32, i32)], color: u32) {
                 let end = intersections[i + 1];
                 let _ = &end;
                 let _ = &end;
-                
+
                 for x in start..=end {
                     if x >= 0 && x < surf.width && y >= 0 && y < surf.height {
                         let offset = (y * surf.pitch + x * 4) as isize;
@@ -1161,10 +1177,7 @@ fn fill_polygon(surface: *mut GdiSurface, points: &[(i32, i32)], color: u32) {
 // =============================================================================
 
 /// GrePolyline - Draw connected lines
-pub fn GrePolyline(
-    dc: &mut DcObject,
-    points: &[(i32, i32)],
-) -> bool {
+pub fn GrePolyline(dc: &mut DcObject, points: &[(i32, i32)]) -> bool {
     if points.len() < 2 {
         return false;
     }
@@ -1186,7 +1199,14 @@ pub fn GrePolyline(
     let _ = &pen_color;
 
     for i in 0..points.len() - 1 {
-        draw_line(surface, points[i].0, points[i].1, points[i + 1].0, points[i + 1].1, pen_color);
+        draw_line(
+            surface,
+            points[i].0,
+            points[i].1,
+            points[i + 1].0,
+            points[i + 1].1,
+            pen_color,
+        );
     }
 
     true
@@ -1221,9 +1241,7 @@ pub fn GreGetPixel(dc: &DcObject, x: i32, y: i32) -> u32 {
 
     let _ = &offset;
     let _ = &offset;
-    unsafe {
-        core::ptr::read_unaligned(surf.bits.offset(offset) as *const u32)
-    }
+    unsafe { core::ptr::read_unaligned(surf.bits.offset(offset) as *const u32) }
 }
 
 /// GreSetPixel - Set pixel color
@@ -1297,7 +1315,7 @@ pub fn GreGradientFillHorizontal(
             let color = lerp_color(color1, color2, t);
             let _ = &color;
             let _ = &color;
-            
+
             if x >= 0 && x < surf.width && y >= 0 && y < surf.height {
                 let offset = (y * surf.pitch + x * 4) as isize;
                 let _ = &offset;

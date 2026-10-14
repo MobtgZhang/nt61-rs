@@ -44,11 +44,13 @@ fn test_apc_routine() -> bool {
 }
 
 fn test_ldrp_initialize() -> bool {
-    let r = unsafe { thunk::Wow64LdrpInitialize(
-        core::ptr::null_mut(),
-        core::ptr::null_mut(),
-        core::ptr::null_mut()
-    ) };
+    let r = unsafe {
+        thunk::Wow64LdrpInitialize(
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+        )
+    };
     r == 0
 }
 
@@ -67,14 +69,14 @@ fn test_allocate_vm32() -> bool {
 pub fn smoke_test() -> bool {
     crate::wow64_klog!("    [wow64] running smoke tests");
     let results = [
-        run_case("ptr32_to_ptr",        test_ptr32_to_ptr()),
-        run_case("ptr_to_ptr32",        test_ptr_to_ptr32()),
-        run_case("service_table",        test_service_table_populated()),
-        run_case("prepare_exception",    test_prepare_for_exception()),
-        run_case("apc_routine",        test_apc_routine()),
-        run_case("ldrp_initialize",     test_ldrp_initialize()),
-        run_case("system_service_ex",   test_system_service_ex()),
-        run_case("allocate_vm32",        test_allocate_vm32()),
+        run_case("ptr32_to_ptr", test_ptr32_to_ptr()),
+        run_case("ptr_to_ptr32", test_ptr_to_ptr32()),
+        run_case("service_table", test_service_table_populated()),
+        run_case("prepare_exception", test_prepare_for_exception()),
+        run_case("apc_routine", test_apc_routine()),
+        run_case("ldrp_initialize", test_ldrp_initialize()),
+        run_case("system_service_ex", test_system_service_ex()),
+        run_case("allocate_vm32", test_allocate_vm32()),
     ];
     let all_pass = results.iter().all(|&x| x);
     crate::wow64_klog!("    [wow64] all PASS: {}", all_pass);

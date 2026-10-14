@@ -9,9 +9,9 @@
 //! specification. No code is copied from any Microsoft or
 //! ReactOS source file.
 
-use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use crate::hal::common::pci;
 use crate::kprintln;
+use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 // ============================================================================
 // Constants
@@ -26,40 +26,24 @@ const REG_VS: u64 = 0x08;
 const REG_CC: u64 = 0x14;
 const REG_CSTS: u64 = 0x1C;
 
-
-
-
-
-
 /// Doorbell offsets (relative to BAR0, stride depends on DSTRD)
-const REG_SQ0TDBL: u64 = 0x1000;  // First submission queue doorbell
-const REG_CQ0HDBL: u64 = 0x1004;  // First completion queue doorbell
+const REG_SQ0TDBL: u64 = 0x1000; // First submission queue doorbell
+const REG_CQ0HDBL: u64 = 0x1004; // First completion queue doorbell
 
 /// CAP register fields
-const CAP_MQES_MASK: u64 = 0xFFFF;      // Max Queue Entries Supported
+const CAP_MQES_MASK: u64 = 0xFFFF; // Max Queue Entries Supported
 
-
-
-const CAP_DSTRD_MASK: u64 = 0xF << 32;  // Doorbell Stride
-
-
+const CAP_DSTRD_MASK: u64 = 0xF << 32; // Doorbell Stride
 
 /// CC register fields
 const CC_EN: u32 = 1 << 0;
 
-const CC_SHN_MASK: u32 = 0x3 << 10;    // Shutdown Notification
-
+const CC_SHN_MASK: u32 = 0x3 << 10; // Shutdown Notification
 
 const CC_MPS_SHIFT: u32 = 7;
 
-
-
 /// CSTS register fields
-const CSTS_RDY: u32 = 1 << 0;    // Ready
-
-
-
-
+const CSTS_RDY: u32 = 1 << 0; // Ready
 
 // ============================================================================
 // Admin Commands
@@ -82,12 +66,6 @@ const ADMIN_ASYNC_EVENT: u8 = 0x0C;
 const ADMIN_FW_COMMIT: u8 = 0x10;
 const ADMIN_FW_IMAGE: u8 = 0x11;
 
-
-
-
-
-
-
 // ============================================================================
 // NVMe Data Structures
 // ============================================================================
@@ -105,9 +83,15 @@ impl NvmePrp {
     /// Create a PRP from a single buffer
     pub fn single(phys_addr: u64, size: u64) -> Self {
         if size <= 4096 {
-            Self { prp1: phys_addr, prp2: 0 }
+            Self {
+                prp1: phys_addr,
+                prp2: 0,
+            }
         } else {
-            Self { prp1: phys_addr, prp2: phys_addr + 4096 }
+            Self {
+                prp1: phys_addr,
+                prp2: phys_addr + 4096,
+            }
         }
     }
 }
@@ -306,7 +290,9 @@ impl NvmeSqEntry {
     /// selects download/replace/activate.
     pub fn fw_commit(slot: u8, action: u8) -> Self {
         Self {
-            cdw0: ADMIN_FW_COMMIT as u32 | (((slot as u32) & 0x7) << 2) | ((action as u32 & 0x7) << 5),
+            cdw0: ADMIN_FW_COMMIT as u32
+                | (((slot as u32) & 0x7) << 2)
+                | ((action as u32 & 0x7) << 5),
             nsid: 0,
             cdw2: 0,
             cdw3: 0,
@@ -659,7 +645,9 @@ pub fn ring_sq_doorbell_qword(controller: usize, sq_id: u16, value: u64) {
 // ============================================================================
 
 /// Number of NVMe controllers found
-pub fn count() -> usize { unsafe { NVME_COUNT } }
+pub fn count() -> usize {
+    unsafe { NVME_COUNT }
+}
 
 /// Get controller info
 pub fn get_controller_info(controller: usize) -> Option<NvmeControllerInfo> {
@@ -692,7 +680,9 @@ pub fn init() {
 
     for dev in pci::enumerate() {
         if (dev.class_code, dev.subclass, dev.prog_if) == NVME_PCI_CLASS {
-            if let Some(info) = crate::drivers::bus::pci_bus::find_pci(dev.bus, dev.device, dev.function) {
+            if let Some(info) =
+                crate::drivers::bus::pci_bus::find_pci(dev.bus, dev.device, dev.function)
+            {
                 if let Some(bar0) = first_mmio_bar(&info) {
                     let mut c = NvmeController::default();
                     if init_controller(&mut c, bar0) {
@@ -708,7 +698,9 @@ pub fn init() {
     // (storage-class driver, FS stack) can query how many controllers we
     // exposed without re-walking the global array. The previous code
     // computed `found` then discarded it; this version caches it.
-    unsafe { NVME_INIT_FOUND = found; }
+    unsafe {
+        NVME_INIT_FOUND = found;
+    }
 }
 
 /// Number of controllers discovered during the last `init()` call.
@@ -721,7 +713,9 @@ pub fn init_found_count() -> u32 {
 
 fn first_mmio_bar(info: &crate::drivers::bus::pci_bus::PciDeviceInfo) -> Option<u64> {
     for bar in info.bars.iter() {
-        if !bar.is_io && bar.phys != 0 { return Some(bar.phys); }
+        if !bar.is_io && bar.phys != 0 {
+            return Some(bar.phys);
+        }
     }
     None
 }
@@ -731,50 +725,52 @@ fn first_mmio_bar(info: &crate::drivers::bus::pci_bus::PciDeviceInfo) -> Option<
 // ============================================================================
 
 fn init_controller(c: &mut NvmeController, bar0: u64) -> bool {
-    let Some(mmio) = crate::mm::syspte::map_io_space(bar0, 1) else { return false; };
-    
+    let Some(mmio) = crate::mm::syspte::map_io_space(bar0, 1) else {
+        return false;
+    };
+
     c.bar0_phys = bar0;
     c.mmio_base = mmio;
-    
+
     unsafe {
         // Read CAP register
         c.cap = mmio_read64(mmio, REG_CAP);
-        
+
         // Parse CAP fields
         c.max_q_entries = ((c.cap & CAP_MQES_MASK) + 1) as u16;
         c.doorbell_stride = 4u32 << (((c.cap >> 32) & CAP_DSTRD_MASK) >> 32);
-        
+
         // Read version
         c.vs = mmio_read32(mmio, REG_VS);
-        
+
         // Parse page size from CC register
         let mps = (mmio_read32(mmio, REG_CC) >> 7) & 0xF;
         c.page_size = 1u32 << (12 + mps as u32);
-        
+
         // Reset the controller
         if !reset_controller(c) {
             return false;
         }
-        
+
         // Enable the controller
         if !enable_controller(c) {
             return false;
         }
-        
+
         // Perform Identify
         if !identify_controller(c) {
-            // kprintln!("[NVMe] Warning: Identify command failed")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[NVMe] Warning: Identify command failed");
         }
-        
+
         c.state = NvmeControllerState::Ready;
-        
-        // kprintln!("[NVMe] Controller ready: CAP=0x{:016x}", c.cap)  // kprintln disabled (memcpy crash workaround);
-        // kprintln!("[NVMe]   Version: {}.{}.{}",   // kprintln disabled (memcpy crash workaround)
-//                   (c.vs >> 16) & 0xFF, (c.vs >> 8) & 0xFF, c.vs & 0xFF);
-        // kprintln!("[NVMe]   Max Queue Entries: {}", c.max_q_entries)  // kprintln disabled (memcpy crash workaround);
-        // kprintln!("[NVMe]   Page Size: {}", c.page_size)  // kprintln disabled (memcpy crash workaround);
-        // kprintln!("[NVMe]   Namespaces: {}", c.namespace_count)  // kprintln disabled (memcpy crash workaround);
-        
+
+        // kprintln!("[NVMe] Controller ready: CAP=0x{:016x}", c.cap);
+        // kprintln!("[NVMe]   Version: {}.{}.{}",
+        //                   (c.vs >> 16) & 0xFF, (c.vs >> 8) & 0xFF, c.vs & 0xFF);
+        // kprintln!("[NVMe]   Max Queue Entries: {}", c.max_q_entries);
+        // kprintln!("[NVMe]   Page Size: {}", c.page_size);
+        // kprintln!("[NVMe]   Namespaces: {}", c.namespace_count);
+
         true
     }
 }
@@ -783,25 +779,26 @@ fn reset_controller(c: &mut NvmeController) -> bool {
     unsafe {
         // Read current CC
         let mut cc = mmio_read32(c.mmio_base, REG_CC);
-        
+
         // Shutdown if enabled
         if (cc & CC_EN) != 0 {
-            cc = (cc & !CC_SHN_MASK) | (2 << 10);  // Normal shutdown
+            cc = (cc & !CC_SHN_MASK) | (2 << 10); // Normal shutdown
             mmio_write32(c.mmio_base, REG_CC, cc);
-            
+
             // Wait for shutdown to complete
             for _ in 0..1_000_000 {
                 let csts = mmio_read32(c.mmio_base, REG_CSTS);
-                if (csts & 0xC) == 0xC {  // Shutdown status bits
+                if (csts & 0xC) == 0xC {
+                    // Shutdown status bits
                     break;
                 }
             }
         }
-        
+
         // Disable controller
         cc = mmio_read32(c.mmio_base, REG_CC) & !CC_EN;
         mmio_write32(c.mmio_base, REG_CC, cc);
-        
+
         // Wait for RDY to clear
         for _ in 0..1_000_000 {
             let csts = mmio_read32(c.mmio_base, REG_CSTS);
@@ -809,8 +806,8 @@ fn reset_controller(c: &mut NvmeController) -> bool {
                 return true;
             }
         }
-        
-        // kprintln!("[NVMe] Controller reset timeout")  // kprintln disabled (memcpy crash workaround);
+
+        // kprintln!("[NVMe] Controller reset timeout");
         false
     }
 }
@@ -820,7 +817,7 @@ fn enable_controller(c: &mut NvmeController) -> bool {
         // Configure CC: enable with NVM command set
         let cc = CC_EN | (4u32 << CC_MPS_SHIFT) | (6u32 << 16) | (4u32 << 20);
         mmio_write32(c.mmio_base, REG_CC, cc);
-        
+
         // Wait for RDY
         for _ in 0..10_000_000 {
             let csts = mmio_read32(c.mmio_base, REG_CSTS);
@@ -830,8 +827,8 @@ fn enable_controller(c: &mut NvmeController) -> bool {
                 return true;
             }
         }
-        
-        // kprintln!("[NVMe] Controller enable timeout, CSTS=0x{:x}", c.csts)  // kprintln disabled (memcpy crash workaround);
+
+        // kprintln!("[NVMe] Controller enable timeout, CSTS=0x{:x}", c.csts);
         false
     }
 }
@@ -841,10 +838,10 @@ fn identify_controller(c: &mut NvmeController) -> bool {
     let buf_size = 4096;
     let buf = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, buf_size);
     if buf.is_null() {
-        // kprintln!("[NVMe] Failed to allocate identify buffer")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[NVMe] Failed to allocate identify buffer");
         return false;
     }
-    
+
     // Get physical address
     // This is critical for NVMe DMA - we cannot use virtual address as physical
     let phys = match crate::mm::vm::virt_to_phys(buf as u64) {
@@ -855,34 +852,37 @@ fn identify_controller(c: &mut NvmeController) -> bool {
             return false;
         }
     };
-    
+
     unsafe {
         // Build IDENTIFY command
         let cmd = NvmeSqEntry::identify(1, 0, phys, 0);
-        
+
         // Submit command (simplified - in real implementation would use admin queue)
         if !submit_admin_command(c, cmd) {
             let _ = crate::mm::pool::free(buf);
             return false;
         }
-        
+
         // Copy result to identify data
         core::ptr::copy_nonoverlapping(buf, c.identify_data.as_mut_ptr(), buf_size);
-        
+
         // Parse identify data
         let id_controller = &*(c.identify_data.as_ptr() as *const NvmeIdentifyController);
         c.controller_id = id_controller.controller_id;
         c.namespace_count = id_controller.nn;
-        
-        // kprintln!("[NVMe] Identify: VID=0x{:04x} SSVID=0x{:04x}",   // kprintln disabled (memcpy crash workaround)
-//                  id_controller.vid, id_controller.ssvid);
-        
+
+        // kprintln!("[NVMe] Identify: VID=0x{:04x} SSVID=0x{:04x}",
+        //                  id_controller.vid, id_controller.ssvid);
+
         // Print model
         let model_bytes = &id_controller.model;
         let model = core::str::from_utf8(model_bytes).unwrap_or("(invalid)");
 
         // Trim trailing NULs and whitespace before publishing the model.
-        let trimmed_len = model.bytes().take_while(|b| *b != 0 && !b.is_ascii_whitespace()).count();
+        let trimmed_len = model
+            .bytes()
+            .take_while(|b| *b != 0 && !b.is_ascii_whitespace())
+            .count();
         let trimmed = &model[..trimmed_len.min(model.len())];
 
         // Publish model length into identify_data for any later
@@ -893,9 +893,9 @@ fn identify_controller(c: &mut NvmeController) -> bool {
             core::ptr::write_bytes(ptr as *mut u8, 0, id_controller.model.len() - trimmed_len);
         }
         let _ = trimmed; // reserved for future model-string accessor
-        // kprintln!("[NVMe]   Model: {}", model)  // kprintln disabled (memcpy crash workaround);
+                         // kprintln!("[NVMe]   Model: {}", model);
     }
-    
+
     let _ = crate::mm::pool::free(buf);
     true
 }
@@ -1096,7 +1096,7 @@ pub fn read_sectors(controller: usize, nsid: u32, lba: u64, buffer: &mut [u8]) -
             // LBA in CDW10 (low 32 bits) and CDW11 (high 16 bits in the
             // upper half of the dword, low 16 bits reserved / LRW fields).
             let mut cmd = NvmeSqEntry::default();
-            cmd.cdw0 = 0x0002_0000;  // NVM read command
+            cmd.cdw0 = 0x0002_0000; // NVM read command
             cmd.nsid = nsid;
             cmd.prp1 = phys;
             cmd.prp2 = 0;
@@ -1157,7 +1157,7 @@ pub fn write_sectors(controller: usize, nsid: u32, lba: u64, buffer: &[u8]) -> b
             // uses the same LBA encoding as Read: CDW10 = LBA low,
             // CDW11 = LBA high in the upper 16 bits.
             let mut cmd = NvmeSqEntry::default();
-            cmd.cdw0 = 0x0001_0000;  // NVM write command
+            cmd.cdw0 = 0x0001_0000; // NVM write command
             cmd.nsid = nsid;
             cmd.prp1 = phys;
             cmd.prp2 = 0;
@@ -1179,7 +1179,5 @@ pub fn write_sectors(controller: usize, nsid: u32, lba: u64, buffer: &[u8]) -> b
 
 /// Get the number of NVMe controllers found
 pub fn get_controller_count() -> usize {
-    unsafe {
-        NVME_CONTROLLERS.iter().filter(|c| c.is_some()).count()
-    }
+    unsafe { NVME_CONTROLLERS.iter().filter(|c| c.is_some()).count() }
 }

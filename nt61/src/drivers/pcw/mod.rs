@@ -45,7 +45,7 @@ pub struct CounterDescriptor {
 /// One counter set.
 pub struct CounterSet {
     pub valid: bool,
-    pub name_buf: [u8; 16],  // Fixed-size name buffer
+    pub name_buf: [u8; 16], // Fixed-size name buffer
     pub name_len: usize,
     pub set_id: u32,
     pub counters: [CounterDescriptor; MAX_COUNTERS_PER_SET],
@@ -58,7 +58,11 @@ pub struct CounterSet {
 
 impl CounterSet {
     pub const fn new() -> Self {
-        const EMPTY: CounterDescriptor = CounterDescriptor { id: 0, name_hash: 0, type_: 0 };
+        const EMPTY: CounterDescriptor = CounterDescriptor {
+            id: 0,
+            name_hash: 0,
+            type_: 0,
+        };
         Self {
             valid: false,
             name_buf: [0u8; 16],
@@ -88,7 +92,9 @@ pub fn PcwRegister(name: &str, counters: &[CounterDescriptor]) -> u32 {
     let _g = LOCK.lock();
     unsafe {
         for slot in SETS.iter_mut() {
-            if slot.valid { continue; }
+            if slot.valid {
+                continue;
+            }
             slot.valid = true;
             // Copy name into fixed-size buffer
             let name_bytes = name.as_bytes();
@@ -102,8 +108,14 @@ pub fn PcwRegister(name: &str, counters: &[CounterDescriptor]) -> u32 {
             slot.counter_count = counters.len() as u32;
             slot.samples = 0;
             for i in 0..MAX_COUNTERS_PER_SET {
-                slot.counters[i] = if i < counters.len() { counters[i] } else {
-                    CounterDescriptor { id: 0, name_hash: 0, type_: 0 }
+                slot.counters[i] = if i < counters.len() {
+                    counters[i]
+                } else {
+                    CounterDescriptor {
+                        id: 0,
+                        name_hash: 0,
+                        type_: 0,
+                    }
                 };
                 slot.values[i] = 0;
             }
@@ -119,7 +131,9 @@ pub fn PcwUnregister(set_id: u32) -> bool {
     let _g = LOCK.lock();
     unsafe {
         for slot in SETS.iter_mut() {
-            if !slot.valid || slot.set_id != set_id { continue; }
+            if !slot.valid || slot.set_id != set_id {
+                continue;
+            }
             slot.valid = false;
             return true;
         }
@@ -134,8 +148,12 @@ pub fn PcwCounter(set_id: u32, counter_index: u32, value: u64) -> bool {
     let _g = LOCK.lock();
     unsafe {
         for slot in SETS.iter_mut() {
-            if !slot.valid || slot.set_id != set_id { continue; }
-            if (counter_index as usize) >= MAX_COUNTERS_PER_SET { return false; }
+            if !slot.valid || slot.set_id != set_id {
+                continue;
+            }
+            if (counter_index as usize) >= MAX_COUNTERS_PER_SET {
+                return false;
+            }
             slot.values[counter_index as usize] = value;
             slot.samples += 1;
             TOTAL_SAMPLES.fetch_add(1, Ordering::Relaxed);
@@ -153,7 +171,9 @@ pub fn PcwCollect() -> Vec<([u8; 16], usize, u32, [u64; MAX_COUNTERS_PER_SET])> 
     let _g = LOCK.lock();
     unsafe {
         for slot in SETS.iter() {
-            if !slot.valid { continue; }
+            if !slot.valid {
+                continue;
+            }
             let mut values = [0u64; MAX_COUNTERS_PER_SET];
             for i in 0..slot.counter_count as usize {
                 values[i] = slot.values[i];
@@ -164,39 +184,85 @@ pub fn PcwCollect() -> Vec<([u8; 16], usize, u32, [u64; MAX_COUNTERS_PER_SET])> 
     out
 }
 
-pub fn set_count() -> u32 { REGISTERED.load(Ordering::Relaxed) }
-pub fn total_samples() -> u64 { TOTAL_SAMPLES.load(Ordering::Relaxed) }
+pub fn set_count() -> u32 {
+    REGISTERED.load(Ordering::Relaxed)
+}
+pub fn total_samples() -> u64 {
+    TOTAL_SAMPLES.load(Ordering::Relaxed)
+}
 
 /// Pre-defined counter sets that the kernel registers for its
 /// own subsystems.
 pub fn register_default_sets() {
     // 1. CPU counters.
     let cpu = [
-        CounterDescriptor { id: 1, name_hash: hash_name("dpc_time"),     type_: 0 },
-        CounterDescriptor { id: 2, name_hash: hash_name("interrupt_time"), type_: 0 },
-        CounterDescriptor { id: 3, name_hash: hash_name("user_time"),    type_: 0 },
-        CounterDescriptor { id: 4, name_hash: hash_name("kernel_time"),  type_: 0 },
+        CounterDescriptor {
+            id: 1,
+            name_hash: hash_name("dpc_time"),
+            type_: 0,
+        },
+        CounterDescriptor {
+            id: 2,
+            name_hash: hash_name("interrupt_time"),
+            type_: 0,
+        },
+        CounterDescriptor {
+            id: 3,
+            name_hash: hash_name("user_time"),
+            type_: 0,
+        },
+        CounterDescriptor {
+            id: 4,
+            name_hash: hash_name("kernel_time"),
+            type_: 0,
+        },
     ];
     PcwRegister("CPU", &cpu);
     // 2. IO counters.
     let io = [
-        CounterDescriptor { id: 1, name_hash: hash_name("reads"),        type_: 0 },
-        CounterDescriptor { id: 2, name_hash: hash_name("writes"),       type_: 0 },
-        CounterDescriptor { id: 3, name_hash: hash_name("bytes_read"),   type_: 0 },
-        CounterDescriptor { id: 4, name_hash: hash_name("bytes_written"), type_: 0 },
+        CounterDescriptor {
+            id: 1,
+            name_hash: hash_name("reads"),
+            type_: 0,
+        },
+        CounterDescriptor {
+            id: 2,
+            name_hash: hash_name("writes"),
+            type_: 0,
+        },
+        CounterDescriptor {
+            id: 3,
+            name_hash: hash_name("bytes_read"),
+            type_: 0,
+        },
+        CounterDescriptor {
+            id: 4,
+            name_hash: hash_name("bytes_written"),
+            type_: 0,
+        },
     ];
     PcwRegister("IO", &io);
     // 3. Memory counters.
     let mm = [
-        CounterDescriptor { id: 1, name_hash: hash_name("pool_nonpaged_bytes"), type_: 0 },
-        CounterDescriptor { id: 2, name_hash: hash_name("pool_paged_bytes"),   type_: 0 },
+        CounterDescriptor {
+            id: 1,
+            name_hash: hash_name("pool_nonpaged_bytes"),
+            type_: 0,
+        },
+        CounterDescriptor {
+            id: 2,
+            name_hash: hash_name("pool_paged_bytes"),
+            type_: 0,
+        },
     ];
     PcwRegister("Memory", &mm);
 }
 
 fn hash_name(s: &str) -> u32 {
     let mut h: u32 = 5381;
-    for b in s.bytes() { h = h.wrapping_mul(33).wrapping_add(b as u32); }
+    for b in s.bytes() {
+        h = h.wrapping_mul(33).wrapping_add(b as u32);
+    }
     h
 }
 
@@ -204,21 +270,21 @@ fn hash_name(s: &str) -> u32 {
 pub fn init() {
     // Defer counter set registration to the smoke test path so
     // that a slow or unavailable storage doesn't block boot.
-    // kprintln!("    [PCW] performance counter window host ready")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    [PCW] performance counter window host ready");
 }
 
 /// Simplified smoke test - skip the Vec-based PcwCollect calls.
 pub fn smoke_test() -> bool {
-    // kprintln!("  [PCW SMOKE] testing performance counter window...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [PCW SMOKE] testing performance counter window...");
     register_default_sets();
     // Skip PcwCollect which uses Vec - just test counter registration
     let n1 = PcwCounter(1, 0, 12345); // CPU dpc_time
-    let n2 = PcwCounter(2, 0, 100);   // IO reads
-    let n3 = PcwCounter(2, 1, 50);    // IO writes
+    let n2 = PcwCounter(2, 0, 100); // IO reads
+    let n3 = PcwCounter(2, 1, 50); // IO writes
     if !(n1 && n2 && n3) {
-        // kprintln!("  [PCW SMOKE FAIL] counter push")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [PCW SMOKE FAIL] counter push");
         return false;
     }
-    // kprintln!("  [PCW SMOKE OK] sets={} total_samples={}", set_count(), total_samples())  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [PCW SMOKE OK] sets={} total_samples={}", set_count(), total_samples());
     true
 }

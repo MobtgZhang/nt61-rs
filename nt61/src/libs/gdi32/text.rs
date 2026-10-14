@@ -2,7 +2,7 @@
 
 extern crate alloc;
 
-use super::types::{BOOL, HDC, HFONT, LPCWSTR, Size, TextMetricW};
+use super::types::{Size, TextMetricW, BOOL, HDC, HFONT, LPCWSTR};
 use core::ptr;
 
 /// `TextOutW` — placeholder, return non-zero.
@@ -24,14 +24,21 @@ pub unsafe extern "C" fn GetTextExtentPoint32W(
     len: i32,
     size: *mut Size,
 ) -> BOOL {
-    if size.is_null() { return 0; }
-    *size = Size { cx: (len as i32) * 8, cy: 16 };
+    if size.is_null() {
+        return 0;
+    }
+    *size = Size {
+        cx: (len as i32) * 8,
+        cy: 16,
+    };
     1
 }
 
 /// `GetTextMetricsW` — fill a default metrics block.
 pub unsafe extern "C" fn GetTextMetricsW(_dc: HDC, m: *mut TextMetricW) -> BOOL {
-    if m.is_null() { return 0; }
+    if m.is_null() {
+        return 0;
+    }
     let t = &mut *m;
     t.tm_height = 16;
     t.tm_ascent = 12;

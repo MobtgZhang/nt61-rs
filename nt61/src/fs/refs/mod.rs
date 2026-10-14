@@ -20,24 +20,24 @@
 
 extern crate alloc;
 
-use alloc::vec;
-use alloc::string::{String, ToString};
 use crate::fs::{FileSystem, FileSystemType};
+use alloc::string::{String, ToString};
+use alloc::vec;
 use core::ptr::null_mut;
 
 // Submodules
-pub mod superblock;
 pub mod btree;
 pub mod chunk;
 pub mod integrity;
 pub mod object;
+pub mod superblock;
 
 // Re-export commonly used types
-pub use superblock::{RefsSuperBlock, REFS_SIGNATURE};
-pub use btree::{RefsBtree, RefsBtreePage, RefsBtreeKey};
-pub use chunk::{RefsChunkDescriptor, ChunkTable};
+pub use btree::{RefsBtree, RefsBtreeKey, RefsBtreePage};
+pub use chunk::{ChunkTable, RefsChunkDescriptor};
 pub use integrity::crc32c;
-pub use object::{ObjectIdTable, ObjectIdEntry, REFS_OBJECT_ID_ROOT};
+pub use object::{ObjectIdEntry, ObjectIdTable, REFS_OBJECT_ID_ROOT};
+pub use superblock::{RefsSuperBlock, REFS_SIGNATURE};
 
 // ============================================================================
 // File System Instance
@@ -164,16 +164,16 @@ pub fn read_sector(_device: *mut (), lba: u64, buffer: &mut [u8]) -> Result<(), 
     if buffer.len() < 512 {
         return Err(());
     }
-    
+
     let sector_num = lba as usize;
     if crate::drivers::storage::ramdisk::read(sector_num, buffer) {
         return Ok(());
     }
-    
+
     if crate::drivers::storage::ahci::read_sector(0, 0, lba as u32, buffer) {
         return Ok(());
     }
-    
+
     Err(())
 }
 
@@ -181,18 +181,24 @@ pub fn read_sector(_device: *mut (), lba: u64, buffer: &mut [u8]) -> Result<(), 
 pub fn read_sectors(device: *mut (), lba: u64, count: u32, buffer: &mut [u8]) -> Result<(), ()> {
     let sector_size = 512usize;
     let needed = (count as usize) * sector_size;
-    
+
     if buffer.len() < needed {
         return Err(());
     }
-    
+
     for i in 0..count as usize {
         let offset = (lba + (i as u64)) * (sector_size as u64);
-        if read_sector(device, offset, &mut buffer[i * sector_size..(i + 1) * sector_size]).is_err() {
+        if read_sector(
+            device,
+            offset,
+            &mut buffer[i * sector_size..(i + 1) * sector_size],
+        )
+        .is_err()
+        {
             return Err(());
         }
     }
-    
+
     Ok(())
 }
 
@@ -202,41 +208,41 @@ pub fn read_sectors(device: *mut (), lba: u64, count: u32, buffer: &mut [u8]) ->
 
 /// Mount a ReFS filesystem
 pub fn mount(device: *mut ()) -> Option<&'static mut RefsFileSystem> {
-    // kprintln!("[REFS] Mounting ReFS filesystem...")  // kprintln disabled (memcpy crash workaround);
-    
+    // kprintln!("[REFS] Mounting ReFS filesystem...");
+
     // Read superblock
     let sb = match superblock::read_superblock(device) {
         Some(s) => s,
         None => {
-            // kprintln!("[REFS] Failed to read superblock")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[REFS] Failed to read superblock");
             return None;
         }
     };
-    
+
     // Validate superblock
     if superblock::validate_superblock(&sb).is_err() {
-        // kprintln!("[REFS] Superblock validation failed")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[REFS] Superblock validation failed");
         return None;
     }
-    
+
     // Create filesystem instance
     let fs_ptr = crate::mm::pool::allocate(
         crate::mm::pool::PoolType::NonPaged,
         core::mem::size_of::<RefsFileSystem>(),
     ) as *mut RefsFileSystem;
-    
+
     if fs_ptr.is_null() {
-        // kprintln!("[REFS] Failed to allocate filesystem structure")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[REFS] Failed to allocate filesystem structure");
         return None;
     }
-    
+
     // Extract values from superblock before moving it
     let sector_size = sb.get_sector_size();
     let cluster_size = sb.get_cluster_size();
     let total_clusters = sb.get_total_clusters();
     let read_only = sb.is_read_only();
     let object_table_lba = superblock::read_object_id_table_lba(&sb);
-    
+
     unsafe {
         (*fs_ptr) = RefsFileSystem::new();
         (*fs_ptr).base.device = device;
@@ -248,32 +254,32 @@ pub fn mount(device: *mut ()) -> Option<&'static mut RefsFileSystem> {
         (*fs_ptr).base.total_clusters = total_clusters;
         (*fs_ptr).base.sector_size = (*fs_ptr).sector_size;
         (*fs_ptr).read_only = read_only;
-        
+
         // Initialize object ID table
         (*fs_ptr).object_table = ObjectIdTable::from_btree(object_table_lba);
     }
-    
+
     let fs = unsafe { &*fs_ptr };
-    
+
     // Print volume info
     fs.superblock.debug_print();
-    
+
     // Check for integrity streams
     if fs.has_integrity {
-        // kprintln!("[REFS] Integrity streams: ENABLED")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[REFS] Integrity streams: ENABLED");
     }
-    
+
     if fs.read_only {
-        // kprintln!("[REFS] Mounted READ-ONLY")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[REFS] Mounted READ-ONLY");
     }
-    
+
     Some(unsafe { &mut *fs_ptr })
 }
 
 /// Unmount a ReFS filesystem
 pub fn unmount(_fs: *mut RefsFileSystem) {
     if !_fs.is_null() {
-        // kprintln!("[REFS] Filesystem unmounted")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[REFS] Filesystem unmounted");
     }
 }
 
@@ -285,7 +291,7 @@ pub fn unmount(_fs: *mut RefsFileSystem) {
 pub fn open_by_object_id(fs: &RefsFileSystem, object_id: u64) -> Option<RefsHandle> {
     // Look up object in the Object ID table
     let _entry = object::find_by_object_id(&fs.object_table, object_id)?;
-    
+
     // For now, create a simple handle
     Some(RefsHandle::new(object_id, 0, false))
 }
@@ -295,35 +301,30 @@ pub fn read_file(fs: &RefsFileSystem, handle: &mut RefsHandle, buffer: &mut [u8]
     if handle.at_eof() {
         return 0;
     }
-    
-    let bytes_to_read = core::cmp::min(
-        buffer.len(),
-        (handle.remaining() as usize).min(usize::MAX),
-    );
-    
+
+    let bytes_to_read = core::cmp::min(buffer.len(), (handle.remaining() as usize).min(usize::MAX));
+
     // Calculate which cluster this is
     let cluster_size = fs.cluster_size as u64;
     let current_cluster = handle.current_position / cluster_size;
     let offset_in_cluster = handle.current_position % cluster_size;
-    
+
     // Find the chunk for this cluster
-    if let Some(lba) = chunk::vcn_to_lba(
-        &[],
-        &fs.superblock,
-        current_cluster
-    ) {
-        
+    if let Some(lba) = chunk::vcn_to_lba(&[], &fs.superblock, current_cluster) {
         // Read from the cluster
         let mut cluster_data = vec![0u8; cluster_size as usize];
         let sectors_per_cluster = (cluster_size / fs.sector_size as u64) as u32;
         if read_sectors(fs.base.device, lba, sectors_per_cluster, &mut cluster_data).is_ok() {
-            let copy_len = core::cmp::min(bytes_to_read, (cluster_size - offset_in_cluster) as usize);
-            buffer[..copy_len].copy_from_slice(&cluster_data[offset_in_cluster as usize..offset_in_cluster as usize + copy_len]);
+            let copy_len =
+                core::cmp::min(bytes_to_read, (cluster_size - offset_in_cluster) as usize);
+            buffer[..copy_len].copy_from_slice(
+                &cluster_data[offset_in_cluster as usize..offset_in_cluster as usize + copy_len],
+            );
             handle.current_position += copy_len as u64;
             return copy_len;
         }
     }
-    
+
     0
 }
 
@@ -334,12 +335,12 @@ pub fn read_file(fs: &RefsFileSystem, handle: &mut RefsHandle, buffer: &mut [u8]
 /// Load a B+ tree page from disk
 pub fn load_btree_page(device: *mut (), lba: u64) -> Option<RefsBtreePage> {
     let mut buffer = vec![0u8; 4096]; // Standard page size
-    
+
     if read_sectors(device, lba, 8, &mut buffer).is_err() {
-        // kprintln!("[REFS] Failed to read B+ tree page at LBA {}", lba)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[REFS] Failed to read B+ tree page at LBA {}", lba);
         return None;
     }
-    
+
     btree::parse_page(&buffer, lba)
 }
 
@@ -351,12 +352,12 @@ pub fn find_in_object_tree(
 ) -> Option<RefsBtreePage> {
     // Load the Object ID tree root
     let root_lba = fs.object_table.root_lba;
-    
+
     if root_lba == 0 {
-        // kprintln!("[REFS] Object ID tree root not set")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[REFS] Object ID tree root not set");
         return None;
     }
-    
+
     load_btree_page(device, root_lba)
 }
 
@@ -394,7 +395,7 @@ pub fn get_mounted_fs() -> Option<&'static mut RefsFileSystem> {
 pub fn register_driver() {
     // Note: In a full implementation, we would create a FileSystemDriver
     // structure and register it with the fs subsystem
-    // kprintln!("    ReFS driver registered")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    ReFS driver registered");
 }
 
 // ============================================================================

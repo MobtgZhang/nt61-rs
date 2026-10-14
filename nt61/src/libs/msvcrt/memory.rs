@@ -10,13 +10,15 @@ use core::ptr;
 extern crate alloc;
 use alloc::alloc::{alloc, alloc_zeroed, dealloc, realloc as alloc_realloc};
 
-static ERRNO: AtomicI32 = 0;
+fn set_errno(value: errno_t) {
+    unsafe { super::tls_errno_safe::_set_errno(value) };
+}
 
 #[repr(C)]
 struct AllocHeader {
     size: usize,
     alignment: usize,
-    magic: u32,  // For validation
+    magic: u32, // For validation
 }
 
 const ALLOC_MAGIC: u32 = 0xDEADBEEF;
@@ -32,7 +34,7 @@ unsafe fn get_user_ptr(header: *mut AllocHeader) -> *mut c_void {
     (header as usize + HEADER_SIZE) as *mut c_void
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn malloc(size: size_t) -> *mut c_void {
     if size == 0 {
         return ptr::null_mut();
@@ -42,14 +44,14 @@ pub unsafe extern "C" fn malloc(size: size_t) -> *mut c_void {
     let layout = match Layout::from_size_align(total_size, DEFAULT_ALIGNMENT) {
         Ok(l) => l,
         Err(_) => {
-            ERRNO = ENOMEM;
+            set_errno(ENOMEM);
             return ptr::null_mut();
         }
     };
 
     let ptr = alloc(layout);
     if ptr.is_null() {
-        ERRNO = ENOMEM;
+        set_errno(ENOMEM);
         return ptr::null_mut();
     }
 
@@ -61,7 +63,7 @@ pub unsafe extern "C" fn malloc(size: size_t) -> *mut c_void {
     get_user_ptr(header)
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn free(ptr: *mut c_void) {
     if ptr.is_null() {
         return;
@@ -70,7 +72,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     let header = get_header(ptr);
 
     if (*header).magic != ALLOC_MAGIC {
-        ERRNO = EINVAL;
+        set_errno(EINVAL);
         return;
     }
 
@@ -84,12 +86,12 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     }
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn calloc(count: size_t, size: size_t) -> *mut c_void {
     let total_size = match count.checked_mul(size) {
         Some(s) => s,
         None => {
-            ERRNO = ENOMEM;
+            set_errno(ENOMEM);
             return ptr::null_mut();
         }
     };
@@ -102,14 +104,14 @@ pub unsafe extern "C" fn calloc(count: size_t, size: size_t) -> *mut c_void {
     let layout = match Layout::from_size_align(alloc_size, DEFAULT_ALIGNMENT) {
         Ok(l) => l,
         Err(_) => {
-            ERRNO = ENOMEM;
+            set_errno(ENOMEM);
             return ptr::null_mut();
         }
     };
 
     let ptr = alloc_zeroed(layout);
     if ptr.is_null() {
-        ERRNO = ENOMEM;
+        set_errno(ENOMEM);
         return ptr::null_mut();
     }
 
@@ -121,7 +123,7 @@ pub unsafe extern "C" fn calloc(count: size_t, size: size_t) -> *mut c_void {
     get_user_ptr(header)
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_void {
     if ptr.is_null() {
         return malloc(new_size);
@@ -135,7 +137,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
     let header = get_header(ptr);
 
     if (*header).magic != ALLOC_MAGIC {
-        ERRNO = EINVAL;
+        set_errno(EINVAL);
         return ptr::null_mut();
     }
 
@@ -147,14 +149,14 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
     let old_layout = match Layout::from_size_align(old_total, align) {
         Ok(l) => l,
         Err(_) => {
-            ERRNO = EINVAL;
+            set_errno(EINVAL);
             return ptr::null_mut();
         }
     };
 
     let new_ptr = alloc_realloc(header as *mut u8, old_layout, new_total);
     if new_ptr.is_null() {
-        ERRNO = ENOMEM;
+        set_errno(ENOMEM);
         return ptr::null_mut();
     }
 
@@ -166,15 +168,15 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
     get_user_ptr(new_header)
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _aligned_malloc(size: size_t, alignment: size_t) -> *mut c_void {
     if size == 0 || alignment == 0 || !alignment.is_power_of_two() {
-        ERRNO = EINVAL;
+        set_errno(EINVAL);
         return ptr::null_mut();
     }
 
     if alignment > MAX_ALIGNMENT {
-        ERRNO = EINVAL;
+        set_errno(EINVAL);
         return ptr::null_mut();
     }
 
@@ -182,14 +184,14 @@ pub unsafe extern "C" fn _aligned_malloc(size: size_t, alignment: size_t) -> *mu
     let layout = match Layout::from_size_align(total_size, alignment) {
         Ok(l) => l,
         Err(_) => {
-            ERRNO = ENOMEM;
+            set_errno(ENOMEM);
             return ptr::null_mut();
         }
     };
 
     let ptr = alloc(layout);
     if ptr.is_null() {
-        ERRNO = ENOMEM;
+        set_errno(ENOMEM);
         return ptr::null_mut();
     }
 
@@ -201,19 +203,19 @@ pub unsafe extern "C" fn _aligned_malloc(size: size_t, alignment: size_t) -> *mu
     get_user_ptr(header)
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _aligned_free(ptr: *mut c_void) {
     free(ptr);
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _aligned_realloc(
     ptr: *mut c_void,
     new_size: size_t,
     alignment: size_t,
 ) -> *mut c_void {
     if alignment == 0 || !alignment.is_power_of_two() {
-        ERRNO = EINVAL;
+        set_errno(EINVAL);
         return ptr::null_mut();
     }
 
@@ -229,7 +231,7 @@ pub unsafe extern "C" fn _aligned_realloc(
     let header = get_header(ptr);
 
     if (*header).magic != ALLOC_MAGIC {
-        ERRNO = EINVAL;
+        set_errno(EINVAL);
         return ptr::null_mut();
     }
 
@@ -239,7 +241,11 @@ pub unsafe extern "C" fn _aligned_realloc(
     if old_align != alignment {
         let new_ptr = _aligned_malloc(new_size, alignment);
         if !new_ptr.is_null() {
-            let copy_size = if old_size < new_size { old_size } else { new_size };
+            let copy_size = if old_size < new_size {
+                old_size
+            } else {
+                new_size
+            };
             ptr::copy_nonoverlapping(ptr as *const u8, new_ptr as *mut u8, copy_size);
             _aligned_free(ptr);
         }
@@ -253,14 +259,14 @@ pub unsafe extern "C" fn _aligned_realloc(
     let old_layout = match Layout::from_size_align(old_total, alignment) {
         Ok(l) => l,
         Err(_) => {
-            ERRNO = EINVAL;
+            set_errno(EINVAL);
             return ptr::null_mut();
         }
     };
 
     let new_ptr = alloc_realloc(header as *mut u8, old_layout, new_total);
     if new_ptr.is_null() {
-        ERRNO = ENOMEM;
+        set_errno(ENOMEM);
         return ptr::null_mut();
     }
 
@@ -272,7 +278,7 @@ pub unsafe extern "C" fn _aligned_realloc(
     get_user_ptr(new_header)
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _malloc_dbg(
     size: size_t,
     _block_type: c_int,
@@ -282,12 +288,12 @@ pub unsafe extern "C" fn _malloc_dbg(
     malloc(size)
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _free_dbg(ptr: *mut c_void, _block_type: c_int) {
     free(ptr);
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _calloc_dbg(
     count: size_t,
     size: size_t,
@@ -298,7 +304,7 @@ pub unsafe extern "C" fn _calloc_dbg(
     calloc(count, size)
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _realloc_dbg(
     ptr: *mut c_void,
     new_size: size_t,
@@ -309,12 +315,12 @@ pub unsafe extern "C" fn _realloc_dbg(
     realloc(ptr, new_size)
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _expand(ptr: *mut c_void, new_size: size_t) -> *mut c_void {
     ptr::null_mut()
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _msize(ptr: *mut c_void) -> size_t {
     if ptr.is_null() {
         return 0;
@@ -329,22 +335,22 @@ pub unsafe extern "C" fn _msize(ptr: *mut c_void) -> size_t {
     (*header).size
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _heapchk() -> c_int {
     0
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _heapmin() -> c_int {
     0
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _set_new_handler(_handler: *const c_void) -> *const c_void {
     ptr::null()
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _query_new_handler() -> *const c_void {
     ptr::null()
 }

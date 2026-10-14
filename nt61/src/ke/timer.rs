@@ -82,10 +82,8 @@ fn timer_array() -> &'static mut [Ktimer; MAX_TIMERS] {
     crate::hal::serial::write_string("[ke.timer] ta:locked\r\n");
     if g.is_null() {
         crate::hal::serial::write_string("[ke.timer] ta:alloc\r\n");
-        let bytes = pool::allocate(
-            pool::PoolType::NonPaged,
-            MAX_TIMERS * TIMER_SIZE,
-        ) as *mut Ktimer;
+        let bytes =
+            pool::allocate(pool::PoolType::NonPaged, MAX_TIMERS * TIMER_SIZE) as *mut Ktimer;
         crate::hal::serial::write_string("[ke.timer] ta:post-alloc\r\n");
         if bytes.is_null() {
             crate::hal::serial::write_string("[ke.timer] ta:fb\r\n");
@@ -154,7 +152,7 @@ unsafe fn write_ktimer(dst: *mut u8, kt: &Ktimer) {
     core::ptr::write(dst.add(2) as *mut u16, h.size);
     core::ptr::write(dst.add(4), h.inserted);
     core::ptr::write(dst.add(5) as *mut [u8; 3], h.spare);
-    core::ptr::write(dst.add(8)  as *mut u64, kt.due_time);
+    core::ptr::write(dst.add(8) as *mut u64, kt.due_time);
     core::ptr::write(dst.add(16) as *mut u64, kt.period);
     core::ptr::write(dst.add(24) as *mut *const u8, kt.name.as_ptr());
     core::ptr::write(dst.add(32) as *mut usize, kt.name.len());
@@ -207,39 +205,39 @@ pub fn tick() -> usize {
 /// Arms a 1 ms timer, advances the system clock by 5 ms, ticks
 /// the timer subsystem, and verifies the timer fired.
 pub fn smoke_test() -> bool {
-    // // kprintln!("    [TIMER SMOKE] enter")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("    [TIMER SMOKE] enter");
     use crate::ke::time;
     let arr = timer_array();
-    // // kprintln!("    [TIMER SMOKE] timer_array ok")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("    [TIMER SMOKE] timer_array ok");
     // Allocate a fresh slot.
     let idx = match create_timer("smoke") {
         Some(i) => i,
         None => {
-            // // kprintln!("    [TIMER SMOKE FAIL] could not allocate timer")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("    [TIMER SMOKE FAIL] could not allocate timer");
             return false;
         }
     };
-    // // kprintln!("    [TIMER SMOKE] timer allocated at idx={}", idx)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("    [TIMER SMOKE] timer allocated at idx={}", idx);
     // Arm it 1 ms from now.
     arr[idx].arm_ms(1);
-    // // kprintln!("    [TIMER SMOKE] timer armed, advancing ticks")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("    [TIMER SMOKE] timer armed, advancing ticks");
     // Advance system time by 5 ms so the deadline is well past.
     time::advance_ticks(5);
-    // // kprintln!("    [TIMER SMOKE] ticks advanced, ticking")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("    [TIMER SMOKE] ticks advanced, ticking");
     let fired = tick();
-    // // kprintln!("    [TIMER SMOKE] tick()={}", fired)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("    [TIMER SMOKE] tick()={}", fired);
     if fired < 1 {
-        // // kprintln!("    [TIMER SMOKE FAIL] tick()={} expected >= 1", fired)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("    [TIMER SMOKE FAIL] tick()={} expected >= 1", fired);
         return false;
     }
     if arr[idx].header.signal_state == 0 {
-        // // kprintln!("    [TIMER SMOKE FAIL] timer not signalled")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("    [TIMER SMOKE FAIL] timer not signalled");
         return false;
     }
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         "    [TIMER SMOKE OK] armed+expired+signalled fired={}",
-// //         fired
-// //     );
+    // // kprintln!(
+    // //         "    [TIMER SMOKE OK] armed+expired+signalled fired={}",
+    // //         fired
+    // //     );
     // Free the slot for subsequent tests (use field-by-field write
     // to avoid the SSE/non-temporal fault that the heap's UC memory
     // type would otherwise hit on a whole-struct copy).
@@ -248,7 +246,7 @@ pub fn smoke_test() -> bool {
         // DispatcherHeader -> 8 zero bytes
         core::ptr::write_bytes(dst, 0u8, 8);
         // due_time, period, name ptr, name len, armed
-        core::ptr::write(dst.add(8)  as *mut u64, 0u64);
+        core::ptr::write(dst.add(8) as *mut u64, 0u64);
         core::ptr::write(dst.add(16) as *mut u64, 0u64);
         core::ptr::write(dst.add(24) as *mut *const u8, core::ptr::null());
         core::ptr::write(dst.add(32) as *mut usize, 0usize);

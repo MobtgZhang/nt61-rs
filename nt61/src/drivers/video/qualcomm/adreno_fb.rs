@@ -8,8 +8,8 @@ use crate::drivers::video::core::gpu_common::{
     GpuDriver, GpuError, GpuFeatures, GpuFramebufferInfo, PixelFormat,
 };
 
-use super::pci_ids::{self, AdrenoGeneration};
 use super::adreno_reg::*;
+use super::pci_ids::{self, AdrenoGeneration};
 
 // =====================================================================
 // Adreno Device Structure
@@ -70,10 +70,7 @@ impl AdrenoDevice {
             return;
         }
         unsafe {
-            core::ptr::write_volatile(
-                (self.mmio_base + offset as u64) as *mut u32,
-                value,
-            );
+            core::ptr::write_volatile((self.mmio_base + offset as u64) as *mut u32, value);
         }
     }
 
@@ -160,7 +157,10 @@ impl GpuDriver for AdrenoDevice {
         })
     }
 
-    fn set_mode(&mut self, mode: &crate::drivers::video::core::gpu_common::DisplayMode) -> Result<(), GpuError> {
+    fn set_mode(
+        &mut self,
+        mode: &crate::drivers::video::core::gpu_common::DisplayMode,
+    ) -> Result<(), GpuError> {
         self.init_framebuffer(Some(*mode)).map(|_| ())
     }
 
@@ -194,10 +194,7 @@ impl GpuDriver for AdrenoDevice {
         let pixels = ((self.pitch as usize) * (self.height as usize)) / 4;
         for i in 0..pixels {
             unsafe {
-                core::ptr::write_volatile(
-                    (self.fb_virt + (i as u64 * 4)) as *mut u32,
-                    color,
-                );
+                core::ptr::write_volatile((self.fb_virt + (i as u64 * 4)) as *mut u32, color);
             }
         }
     }
@@ -209,10 +206,7 @@ impl GpuDriver for AdrenoDevice {
 
         let offset = ((y * self.pitch) + (x * 4)) as u64;
         unsafe {
-            core::ptr::write_volatile(
-                (self.fb_virt + offset) as *mut u32,
-                color,
-            );
+            core::ptr::write_volatile((self.fb_virt + offset) as *mut u32, color);
         }
     }
 

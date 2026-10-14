@@ -17,8 +17,8 @@
 //
 //! References: Windows SDK, WRK secobj.c, ReactOS
 
+use super::acl::{AceFlags, AceType, Acl};
 use super::sid::Sid;
-use super::acl::{Acl, AceFlags, AceType};
 use super::token::{Token, SE_GROUP_ENABLED, SE_GROUP_USE_FOR_DENY_ONLY};
 
 /// Maximum number of SIDs in an access check.
@@ -96,8 +96,11 @@ pub const ACCESS_SYNCHRONIZE: u32 = 0x00100000;
 pub const ACCESS_STANDARD_RIGHTS_READ: u32 = ACCESS_READ_CONTROL;
 pub const ACCESS_STANDARD_RIGHTS_WRITE: u32 = ACCESS_READ_CONTROL;
 pub const ACCESS_STANDARD_RIGHTS_EXECUTE: u32 = ACCESS_READ_CONTROL;
-pub const ACCESS_STANDARD_RIGHTS_ALL: u32 = ACCESS_DELETE | ACCESS_READ_CONTROL
-    | ACCESS_WRITE_DAC | ACCESS_WRITE_OWNER | ACCESS_SYNCHRONIZE;
+pub const ACCESS_STANDARD_RIGHTS_ALL: u32 = ACCESS_DELETE
+    | ACCESS_READ_CONTROL
+    | ACCESS_WRITE_DAC
+    | ACCESS_WRITE_OWNER
+    | ACCESS_SYNCHRONIZE;
 
 /// Process access rights.
 pub const PROCESS_QUERY_INFORMATION: u32 = 0x0400;
@@ -215,219 +218,165 @@ fn sid_in_token(sid: &Sid, token: &Token) -> bool {
 ///
 /// Returns: AccessCheckResult::Allowed or AccessCheckResult::Denied
 pub fn check_access(
+    desired_access: u32,
+    token: &Token,
+    owner: &Sid,
+    dacl: *const Acl,
+    generic_mapping: Option<&GenericMapping>,
+) -> AccessCheckResult {
+    check_access_with_granted(desired_access, token, owner, dacl, generic_mapping).0
+}
+
+fn check_access_with_granted(
     mut desired_access: u32,
     token: &Token,
     _owner: &Sid,
     dacl: *const Acl,
     generic_mapping: Option<&GenericMapping>,
-) -> AccessCheckResult {
-    // Map generic rights
+) -> (AccessCheckResult, u32) {
+    let maximum_allowed = (desired_access & ACCESS_MAXIMUM_ALLOWED) != 0;
+    desired_access &= !ACCESS_MAXIMUM_ALLOWED;
+
     if let Some(gm) = generic_mapping {
         gm.map_generic(&mut desired_access);
     }
 
-    // NULL DACL means full access
+    let maximum_access = generic_mapping
+        .map(|gm| gm.generic_all)
+        .unwrap_or(u32::MAX & !ACCESS_MAXIMUM_ALLOWED);
+
     if dacl.is_null() {
-        return AccessCheckResult::Allowed;
+        let granted = if maximum_allowed {
+            maximum_access
+        } else {
+            desired_access
+        };
+        return (AccessCheckResult::Allowed, granted);
     }
 
-    // ============================================================
-    // PRIVILEGE OVERRIDES (before DACL check)
-    // ============================================================
-
-    // SeTakeOwnershipPrivilege override: grant WRITE_OWNER if privilege is enabled
     if (desired_access & ACCESS_WRITE_OWNER) != 0 {
-        let take_ownership_luid = super::token::Luid {
+        let luid = super::token::Luid {
             low_part: privileges::SE_TAKE_OWNERSHIP as u32,
             high_part: 0,
         };
-        if token.has_privilege(&take_ownership_luid) {
-            // crate::kprintln!("[SE] SeAccessCheck: SeTakeOwnershipPrivilege override granted")  // kprintln disabled (memcpy crash workaround);
-            return AccessCheckResult::Allowed;
+        if token.has_privilege(&luid) {
+            return (AccessCheckResult::Allowed, desired_access);
         }
     }
 
-    // SeSecurityPrivilege override: grant ACCESS_SYSTEM_SECURITY if privilege is enabled
     if (desired_access & ACCESS_SYSTEM_SECURITY) != 0 {
-        let security_luid = super::token::Luid {
+        let luid = super::token::Luid {
             low_part: privileges::SE_SECURITY as u32,
             high_part: 0,
         };
-        if token.has_privilege(&security_luid) {
-            // crate::kprintln!("[SE] SeAccessCheck: SeSecurityPrivilege override granted")  // kprintln disabled (memcpy crash workaround);
-            return AccessCheckResult::Allowed;
+        if token.has_privilege(&luid) {
+            return (AccessCheckResult::Allowed, desired_access);
         }
     }
 
-    // SeBackupPrivilege override: grant READ_CONTROL | FILE_READ_DATA if enabled
     if (desired_access & ACCESS_READ_CONTROL) != 0 {
-        let backup_luid = super::token::Luid {
+        let luid = super::token::Luid {
             low_part: privileges::SE_BACKUP as u32,
             high_part: 0,
         };
-        if token.has_privilege(&backup_luid) {
-            // crate::kprintln!("[SE] SeAccessCheck: SeBackupPrivilege override granted")  // kprintln disabled (memcpy crash workaround);
-            return AccessCheckResult::Allowed;
+        if token.has_privilege(&luid) {
+            return (AccessCheckResult::Allowed, desired_access);
         }
     }
 
-    // SeRestorePrivilege override: grant WRITE_DAC | FILE_WRITE_DATA if enabled
     if (desired_access & ACCESS_WRITE_DAC) != 0 {
-        let restore_luid = super::token::Luid {
+        let luid = super::token::Luid {
             low_part: privileges::SE_RESTORE as u32,
             high_part: 0,
         };
-        if token.has_privilege(&restore_luid) {
-            // crate::kprintln!("[SE] SeAccessCheck: SeRestorePrivilege override granted")  // kprintln disabled (memcpy crash workaround);
-            return AccessCheckResult::Allowed;
+        if token.has_privilege(&luid) {
+            return (AccessCheckResult::Allowed, desired_access);
         }
     }
 
-    // SeDebugPrivilege override: grant specific access for debugging
-    // Windows behavior: SeDebugPrivilege only allows specific debug-related access rights,
-    // not all access. Additionally, it should only work for administrators.
-    //
-    // The allowed access includes:
-    // - PROCESS_ALL_ACCESS (0x1F0FFF)
-    // - PROCESS_QUERY_INFORMATION (0x0400)
-    // - PROCESS_QUERY_LIMITED_INFORMATION (0x1000)
-    // - PROCESS_VM_READ (0x0010)
-    // - PROCESS_VM_WRITE (0x0010)
-    // - PROCESS_VM_OPERATION (0x0020)
-    // - PROCESS_DUP_HANDLE (0x0040)
-    // - PROCESS_CREATE_THREAD (0x0002)
-    const SE_DEBUG_ALLOWED_ACCESS: u32 =
-        PROCESS_ALL_ACCESS |
-        PROCESS_QUERY_INFORMATION |
-        PROCESS_QUERY_LIMITED_INFORMATION |
-        PROCESS_VM_READ |
-        PROCESS_VM_WRITE |
-        PROCESS_VM_OPERATION |
-        PROCESS_DUP_HANDLE |
-        PROCESS_CREATE_THREAD;
-
+    const SE_DEBUG_ALLOWED_ACCESS: u32 = PROCESS_ALL_ACCESS
+        | PROCESS_QUERY_INFORMATION
+        | PROCESS_QUERY_LIMITED_INFORMATION
+        | PROCESS_VM_READ
+        | PROCESS_VM_WRITE
+        | PROCESS_VM_OPERATION
+        | PROCESS_DUP_HANDLE
+        | PROCESS_CREATE_THREAD;
     if (desired_access & SE_DEBUG_ALLOWED_ACCESS) != 0 {
-        let debug_luid = super::token::Luid {
+        let luid = super::token::Luid {
             low_part: privileges::SE_DEBUG as u32,
             high_part: 0,
         };
-        // Only grant if privilege is enabled AND token is admin or LocalSystem
-        if token.has_privilege(&debug_luid) && token.is_admin() {
-            // crate::kprintln!("[SE] SeAccessCheck: SeDebugPrivilege override granted (admin)")  // kprintln disabled (memcpy crash workaround);
-            return AccessCheckResult::Allowed;
+        if token.has_privilege(&luid) && token.is_admin() {
+            return (AccessCheckResult::Allowed, desired_access);
         }
     }
 
-    // ============================================================
-    // DACL WALK
-    // ============================================================
-
     let acl = unsafe { &*dacl };
+    if !acl.is_valid() {
+        return (AccessCheckResult::Denied, 0);
+    }
+    let walk_limit = acl.acl_size as usize;
+    let mut granted_access = 0u32;
+    let mut denied_access = 0u32;
+    let mut offset = 8usize;
 
-    // Walk the DACL ACE by ACE
-    let mut granted_access: u32 = 0;
-    let mut denied_access: u32 = 0;
-
-    let mut offset = 8usize; // Skip ACL header
-    while offset + 4 <= acl.acl_size as usize {
+    while offset + 4 <= walk_limit {
         let ace_type = acl.data[offset];
-        let _ace_flags = acl.data[offset + 1];
-        let ace_size = acl.data[offset + 2] as usize
-            | ((acl.data[offset + 3] as usize) << 8);
-
-        if ace_size < 8 {
+        let ace_size = acl.data[offset + 2] as usize | ((acl.data[offset + 3] as usize) << 8);
+        if ace_size < 8 || offset + ace_size > walk_limit {
             break;
         }
 
-        let ace_mask = u32::from_le_bytes([acl.data[offset + 4], acl.data[offset + 5], acl.data[offset + 6], acl.data[offset + 7]]);
-
-        // Extract the SID from the ACE
-        // ACE header (4) + mask (4) = 8, then SID
+        let ace_mask = u32::from_le_bytes([
+            acl.data[offset + 4],
+            acl.data[offset + 5],
+            acl.data[offset + 6],
+            acl.data[offset + 7],
+        ]);
         let sid_offset = offset + 8;
-        let sid_size = ace_size - 8;
-        if sid_size >= 8 {
-            // Read SID from the ACL data
-            let sid = read_sid_from_acl(&acl.data, sid_offset);
-
-            let ace_type = AceType::from_u8(ace_type);
-
-            match ace_type {
-                AceType::AccessDenied => {
-                    // ACCESS_DENIED_ACE — denied bits apply regardless
-                    // of enabled/disabled group status
-                    if sid_in_token(&sid, token) {
-                        denied_access |= ace_mask;
-                    }
-                }
-                AceType::AccessAllowed => {
-                    // ACCESS_ALLOWED_ACE — only grant if the SID
-                    // matches an enabled group or the user
-                    if sid_matches_token(&sid, token) {
-                        granted_access |= ace_mask;
-                    }
-                }
-                _ => {}
-            }
+        if ace_size < 16 {
+            return (AccessCheckResult::Denied, 0);
         }
+        let Some(sid) = read_sid_from_acl(&acl.data[sid_offset..offset + ace_size]) else {
+            return (AccessCheckResult::Denied, 0);
+        };
+        let Some(ace_type) = AceType::from_u8(ace_type) else {
+            return (AccessCheckResult::Denied, 0);
+        };
 
+        match ace_type {
+            AceType::AccessDenied if sid_in_token(&sid, token) => denied_access |= ace_mask,
+            AceType::AccessAllowed if sid_matches_token(&sid, token) => granted_access |= ace_mask,
+            _ => {}
+        }
         offset += ace_size;
     }
 
-    // Any requested access that was explicitly denied -> DENY
+    granted_access &= !denied_access;
     if (desired_access & denied_access) != 0 {
-        return AccessCheckResult::Denied;
+        return (AccessCheckResult::Denied, 0);
     }
 
-    // Granted access from ALLOWED ACEs
     let remaining = desired_access & !granted_access;
-
-    // If anything remains ungranted, check MAXIMUM_ALLOWED
-    if remaining == 0 {
-        return AccessCheckResult::Allowed;
+    if remaining != 0 {
+        return (AccessCheckResult::Denied, 0);
     }
 
-    // For MAXIMUM_ALLOWED, check if we have any enabled group matching
-    if (desired_access & ACCESS_MAXIMUM_ALLOWED) != 0 {
-        return AccessCheckResult::Allowed;
+    let granted = if maximum_allowed {
+        granted_access & maximum_access
+    } else {
+        granted_access & desired_access
+    };
+    if maximum_allowed && granted == 0 {
+        return (AccessCheckResult::Denied, 0);
     }
-
-    // Check if the remaining access is just SYNCHRONIZE (often ignored)
-    if remaining == ACCESS_SYNCHRONIZE || remaining == ACCESS_STANDARD_RIGHTS_READ {
-        return AccessCheckResult::Allowed;
-    }
-
-    // Default: access denied
-    AccessCheckResult::Denied
+    (AccessCheckResult::Allowed, granted)
 }
 
 /// Read a SID from ACL data at the given offset.
-fn read_sid_from_acl(data: &[u8; 512], offset: usize) -> Sid {
-    // SID layout: revision(1) + subauth_count(1) + ia(6) + subauths(variable)
-    if offset + 8 > data.len() {
-        return Sid::well_known(super::sid::WellKnownSid::Null);
-    }
-    let _revision = data[offset];
-    let subauth_count = data[offset + 1];
-    let mut ia = [0u8; 6];
-    ia[0] = data[offset + 2];
-    ia[1] = data[offset + 3];
-    ia[2] = data[offset + 4];
-    ia[3] = data[offset + 5];
-    ia[4] = data[offset + 6];
-    ia[5] = data[offset + 7];
-
-    let count = subauth_count as usize;
-    let mut subs = [0u32; 8];
-    for i in 0..count.min(8) {
-        let off = offset + 8 + i * 4;
-        if off + 4 <= data.len() {
-            subs[i] = u32::from_le_bytes([data[off], data[off+1], data[off+2], data[off+3]]);
-        }
-    }
-
-    Sid::with_authority_and_subs_arr(ia, count as u8,
-        subs[0], subs[1], subs[2], subs[3],
-        subs[4], subs[5], subs[6], subs[7])
+fn read_sid_from_acl(data: &[u8]) -> Option<Sid> {
+    Sid::from_bytes(data)
 }
 
 /// SePrivilegeCheck — check if a token has required privileges.
@@ -463,73 +412,73 @@ pub static FILE_GENERIC_MAPPING: GenericMapping = GenericMapping::new(
 /// Generic registry mapping.
 pub static REGISTRY_GENERIC_MAPPING: GenericMapping = GenericMapping::new(
     0x00020000 | 0x0001 | 0x0002 | 0x0004 | 0x0008 | 0x0010, // KEY_READ etc.
-    0x00020000 | 0x0002 | 0x0004 | 0x0010 | 0x0020,           // KEY_WRITE etc.
-    0x00020000 | 0x0004 | 0x0008,                              // KEY_EXECUTE
-    0xF003F,                                                    // KEY_ALL_ACCESS
+    0x00020000 | 0x0002 | 0x0004 | 0x0010 | 0x0020,          // KEY_WRITE etc.
+    0x00020000 | 0x0004 | 0x0008,                            // KEY_EXECUTE
+    0xF003F,                                                 // KEY_ALL_ACCESS
 );
 
 /// Generic process mapping.
 pub static PROCESS_GENERIC_MAPPING: GenericMapping = GenericMapping::new(
-    PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,     // Generic read
+    PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, // Generic read
     PROCESS_CREATE_PROCESS | PROCESS_CREATE_THREAD | PROCESS_DUP_HANDLE, // Generic write
-    PROCESS_QUERY_LIMITED_INFORMATION,               // Generic execute
-    PROCESS_ALL_ACCESS,                               // Generic all
+    PROCESS_QUERY_LIMITED_INFORMATION,           // Generic execute
+    PROCESS_ALL_ACCESS,                          // Generic all
 );
 
 /// Generic thread mapping.
 pub static THREAD_GENERIC_MAPPING: GenericMapping = GenericMapping::new(
-    THREAD_QUERY_INFORMATION | THREAD_GET_CONTEXT,   // Generic read
-    THREAD_SET_INFORMATION | THREAD_SET_CONTEXT,    // Generic write
-    THREAD_QUERY_LIMITED_INFORMATION,                // Generic execute
-    THREAD_ALL_ACCESS,                               // Generic all
+    THREAD_QUERY_INFORMATION | THREAD_GET_CONTEXT, // Generic read
+    THREAD_SET_INFORMATION | THREAD_SET_CONTEXT,   // Generic write
+    THREAD_QUERY_LIMITED_INFORMATION,              // Generic execute
+    THREAD_ALL_ACCESS,                             // Generic all
 );
 
 /// Generic directory mapping.
 pub static DIRECTORY_GENERIC_MAPPING: GenericMapping = GenericMapping::new(
-    DIRECTORY_QUERY | DIRECTORY_TRAVERSE,            // Generic read
+    DIRECTORY_QUERY | DIRECTORY_TRAVERSE, // Generic read
     DIRECTORY_CREATE_SUBDIRECTORY | DIRECTORY_ADD_FILE, // Generic write
-    DIRECTORY_QUERY | DIRECTORY_TRAVERSE,            // Generic execute
-    DIRECTORY_ALL_ACCESS,                            // Generic all
+    DIRECTORY_QUERY | DIRECTORY_TRAVERSE, // Generic execute
+    DIRECTORY_ALL_ACCESS,                 // Generic all
 );
 
 /// Generic event mapping.
 pub static EVENT_GENERIC_MAPPING: GenericMapping = GenericMapping::new(
-    EVENT_QUERY_STATE,                               // Generic read
-    EVENT_MODIFY_STATE,                             // Generic write
-    EVENT_QUERY_STATE,                               // Generic execute
-    EVENT_ALL_ACCESS,                               // Generic all
+    EVENT_QUERY_STATE,  // Generic read
+    EVENT_MODIFY_STATE, // Generic write
+    EVENT_QUERY_STATE,  // Generic execute
+    EVENT_ALL_ACCESS,   // Generic all
 );
 
 /// Generic semaphore mapping.
 pub static SEMAPHORE_GENERIC_MAPPING: GenericMapping = GenericMapping::new(
-    SEMAPHORE_QUERY_STATE,                          // Generic read
-    SEMAPHORE_MODIFY_STATE,                         // Generic write
-    SEMAPHORE_QUERY_STATE,                          // Generic execute
-    SEMAPHORE_ALL_ACCESS,                           // Generic all
+    SEMAPHORE_QUERY_STATE,  // Generic read
+    SEMAPHORE_MODIFY_STATE, // Generic write
+    SEMAPHORE_QUERY_STATE,  // Generic execute
+    SEMAPHORE_ALL_ACCESS,   // Generic all
 );
 
 /// Generic mutant (mutex) mapping.
 pub static MUTANT_GENERIC_MAPPING: GenericMapping = GenericMapping::new(
-    MUTANT_QUERY_STATE,                             // Generic read
-    MUTANT_QUERY_STATE,                             // Generic write (not typically granted)
-    MUTANT_QUERY_STATE,                             // Generic execute
-    MUTANT_ALL_ACCESS,                              // Generic all
+    MUTANT_QUERY_STATE, // Generic read
+    MUTANT_QUERY_STATE, // Generic write (not typically granted)
+    MUTANT_QUERY_STATE, // Generic execute
+    MUTANT_ALL_ACCESS,  // Generic all
 );
 
 /// Generic section (shared memory) mapping.
 pub static SECTION_GENERIC_MAPPING: GenericMapping = GenericMapping::new(
-    SECTION_MAP_READ | SECTION_QUERY,                // Generic read
-    SECTION_MAP_WRITE | SECTION_MAP_EXECUTE,         // Generic write
-    SECTION_MAP_EXECUTE,                            // Generic execute
-    SECTION_ALL_ACCESS,                             // Generic all
+    SECTION_MAP_READ | SECTION_QUERY,        // Generic read
+    SECTION_MAP_WRITE | SECTION_MAP_EXECUTE, // Generic write
+    SECTION_MAP_EXECUTE,                     // Generic execute
+    SECTION_ALL_ACCESS,                      // Generic all
 );
 
 /// Generic token mapping.
 pub static TOKEN_GENERIC_MAPPING: GenericMapping = GenericMapping::new(
-    TOKEN_QUERY,                                    // Generic read
+    TOKEN_QUERY,                                   // Generic read
     TOKEN_ADJUST_PRIVILEGES | TOKEN_ADJUST_GROUPS, // Generic write
-    TOKEN_QUERY,                                    // Generic execute
-    TOKEN_ALL_ACCESS,                               // Generic all
+    TOKEN_QUERY,                                   // Generic execute
+    TOKEN_ALL_ACCESS,                              // Generic all
 );
 
 /// Object type identifiers for access checks.
@@ -557,6 +506,38 @@ pub enum ObTypeIndex {
     File = 19,
     Semaphore = 20,
     // ... more types
+}
+
+impl ObTypeIndex {
+    /// Map the 1-byte `ObjectHeader.type_index` (Windows 7+ ObTypeIndex)
+    /// to this enum. Unknown indices map to `Null` so the caller falls
+    /// back to the default generic mapping instead of guessing.
+    pub const fn from_u8(value: u8) -> ObTypeIndex {
+        match value {
+            0 => ObTypeIndex::Null,
+            1 => ObTypeIndex::Process,
+            2 => ObTypeIndex::Thread,
+            3 => ObTypeIndex::Directory,
+            4 => ObTypeIndex::SymbolicLink,
+            5 => ObTypeIndex::Token,
+            6 => ObTypeIndex::ProcessToken,
+            7 => ObTypeIndex::ThreadToken,
+            8 => ObTypeIndex::Event,
+            9 => ObTypeIndex::EventPair,
+            10 => ObTypeIndex::Mutant,
+            11 => ObTypeIndex::Callback,
+            12 => ObTypeIndex::Section,
+            13 => ObTypeIndex::Alias,
+            14 => ObTypeIndex::WindowStation,
+            15 => ObTypeIndex::Desktop,
+            16 => ObTypeIndex::Type,
+            17 => ObTypeIndex::ObjectDirectory,
+            18 => ObTypeIndex::Key,
+            19 => ObTypeIndex::File,
+            20 => ObTypeIndex::Semaphore,
+            _ => ObTypeIndex::Null,
+        }
+    }
 }
 
 /// Get the GenericMapping for an object type.
@@ -608,42 +589,22 @@ pub fn se_access_check(
 
     // Validate inputs
     if token_ptr.is_null() {
-        // crate::kprintln!("[SE] SeAccessCheck: NULL token, denying access")  // kprintln disabled (memcpy crash workaround);
+        // crate::kprintln!("[SE] SeAccessCheck: NULL token, denying access");
         return (AccessCheckResult::Denied, 0);
     }
 
     let token = unsafe { &*token_ptr };
 
-    // NULL security descriptor means full access
-    if sd_ptr.is_null() {
-        // crate::kprintln!("[SE] SeAccessCheck: NULL SD, allowing full access")  // kprintln disabled (memcpy crash workaround);
-        return (AccessCheckResult::Allowed, desired_access);
-    }
-
-    let sd = unsafe { &*sd_ptr };
-
-    // NULL DACL means full access
-    if sd.dacl.is_null() {
-        // crate::kprintln!("[SE] SeAccessCheck: NULL DACL, allowing full access")  // kprintln disabled (memcpy crash workaround);
-        return (AccessCheckResult::Allowed, desired_access);
-    }
-
-    // Perform the access check
-    let result = check_access(
-        desired_access,
-        token,
-        &sd.owner,
-        sd.dacl,
-        Some(generic_mapping),
-    );
-
-    // Calculate granted access
-    let granted = match result {
-        AccessCheckResult::Allowed => desired_access,
-        AccessCheckResult::Denied => 0,
+    // A null security descriptor has the same effective access semantics as a
+    // null DACL for this simplified kernel interface.
+    let (owner, dacl) = if sd_ptr.is_null() {
+        (&token.user, core::ptr::null())
+    } else {
+        let sd = unsafe { &*sd_ptr };
+        (&sd.owner, sd.dacl)
     };
 
-    (result, granted)
+    check_access_with_granted(desired_access, token, owner, dacl, Some(generic_mapping))
 }
 
 /// SeAccessCheckByType — access check with object-type specific logic.
@@ -671,11 +632,34 @@ pub struct SecurityDescriptor {
     pub control: u16,
     pub owner: Sid,
     pub group: Sid,
-    pub sacl: *const Acl,    // System ACL
-    pub dacl: *const Acl,    // Discretionary ACL
+    pub sacl: *const Acl, // System ACL
+    pub dacl: *const Acl, // Discretionary ACL
 }
 
 impl SecurityDescriptor {
+    /// Validate the descriptor against the documented SECURITY_DESCRIPTOR
+    /// layout (SE_REVISION = 1). Present ACLs must themselves be valid.
+    pub fn is_valid(&self) -> bool {
+        if self.revision != 1 {
+            return false;
+        }
+
+        unsafe {
+            if (self.control & super::descriptor::SE_DACL_PRESENT) != 0 && !self.dacl.is_null() {
+                if !(*self.dacl).is_valid() {
+                    return false;
+                }
+            }
+            if (self.control & super::descriptor::SE_SACL_PRESENT) != 0 && !self.sacl.is_null() {
+                if !(*self.sacl).is_valid() {
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
+
     /// Create a default security descriptor with NULL DACL (allows all).
     ///
     /// Returns a pointer to a statically allocated NULL DACL security descriptor.
@@ -700,7 +684,7 @@ impl SecurityDescriptor {
         ) as *mut SecurityDescriptor;
 
         if sd_ptr.is_null() {
-            // crate::kprintln!("[SE] SecurityDescriptor::from_token: allocation failed")  // kprintln disabled (memcpy crash workaround);
+            // crate::kprintln!("[SE] SecurityDescriptor::from_token: allocation failed");
             return core::ptr::null();
         }
 
@@ -718,7 +702,7 @@ impl SecurityDescriptor {
             let dacl = build_dacl_from_token(token);
             (*sd_ptr).dacl = dacl;
 
-            // crate::kprintln!("[SE] SecurityDescriptor::from_token: created SD for user")  // kprintln disabled (memcpy crash workaround);
+            // crate::kprintln!("[SE] SecurityDescriptor::from_token: created SD for user");
         }
 
         sd_ptr as *const Self
@@ -732,129 +716,45 @@ impl SecurityDescriptor {
 /// - Read access to the token's primary group
 /// - Standard rights to enabled groups
 fn build_dacl_from_token(token: &super::token::Token) -> *const Acl {
-    // Calculate ACE count: owner + primary_group + enabled groups
-    let mut ace_count = 2u16; // owner + primary_group
-
-    // Count enabled groups
-    for i in 0..token.group_count {
-        if token.groups[i].is_enabled() {
-            ace_count += 1;
-        }
-    }
-
-    // Calculate total DACL size
-    // ACL header: 8 bytes
-    // Each ACE: 8 bytes header + SID size
-    let sid_size = 8 + (token.user.sub_authority_count as usize) * 4;
-    let ace_size = (8 + sid_size) as u16;
-    let _total_acl_size = (8 + ace_count as usize * ace_size as usize) as u16;
-    // _total_acl_size is reserved for future use in ACL validation
-
-    // Try to allocate ACL inline in the SD or separately
-    // For simplicity, we'll embed a small DACL directly
-    // ACL structure uses inline data storage, so we build it in-place
-
-    // For this implementation, create a simple ACL with:
-    // 1. ACCESS_ALLOWED_ACE for the user with GENERIC_ALL
-    // 2. ACCESS_ALLOWED_ACE for SYSTEM with GENERIC_ALL (common in Windows)
-    // 3. ACCESS_ALLOWED_ACE for each enabled group with GENERIC_READ
-
-    // Use a fixed-size inline ACL for simplicity
     let acl_ptr = crate::mm::pool::allocate(
         crate::mm::pool::PoolType::NonPaged,
         core::mem::size_of::<Acl>(),
     ) as *mut Acl;
 
     if acl_ptr.is_null() {
-        // crate::kprintln!("[SE] build_dacl_from_token: ACL allocation failed")  // kprintln disabled (memcpy crash workaround);
         return core::ptr::null();
     }
 
     unsafe {
-        // Initialize ACL header
-        (*acl_ptr).revision = 2; // ACL_REVISION2
-        (*acl_ptr).sbz1 = 0;
-        (*acl_ptr).acl_size = core::mem::size_of::<Acl>() as u16;
-        (*acl_ptr).ace_count = ace_count;
-        (*acl_ptr).sbz2 = 0;
+        core::ptr::write(acl_ptr, Acl::new());
+        let acl = &mut *acl_ptr;
 
-        // Build ACEs starting at offset 8 (after ACL header)
-        let mut offset = 8usize;
-        let max_size = core::mem::size_of::<Acl>();
-
-        // ACE 1: Grant GENERIC_ALL to the user (owner)
-        if offset + 8 + sid_size <= max_size {
-            // ACE Header
-            (*acl_ptr).data[offset] = 0x00; // ACCESS_ALLOWED_ACE_TYPE
-            (*acl_ptr).data[offset + 1] = 0x00; // flags
-            (*acl_ptr).data[offset + 2] = (ace_size & 0xFF) as u8;
-            (*acl_ptr).data[offset + 3] = ((ace_size >> 8) & 0xFF) as u8;
-
-            // Access mask: GENERIC_ALL | standard rights
-            let access_mask: u32 = ACCESS_GENERIC_ALL | ACCESS_DELETE | ACCESS_READ_CONTROL |
-                                   ACCESS_WRITE_DAC | ACCESS_WRITE_OWNER | ACCESS_SYNCHRONIZE;
-            (*acl_ptr).data[offset + 4] = (access_mask & 0xFF) as u8;
-            (*acl_ptr).data[offset + 5] = ((access_mask >> 8) & 0xFF) as u8;
-            (*acl_ptr).data[offset + 6] = ((access_mask >> 16) & 0xFF) as u8;
-            (*acl_ptr).data[offset + 7] = ((access_mask >> 24) & 0xFF) as u8;
-
-            // Copy user SID
-            let sid_offset = offset + 8;
-            copy_sid(&token.user, &mut (*acl_ptr).data, sid_offset);
-            offset += ace_size as usize;
+        let owner_mask = ACCESS_GENERIC_ALL
+            | ACCESS_DELETE
+            | ACCESS_READ_CONTROL
+            | ACCESS_WRITE_DAC
+            | ACCESS_WRITE_OWNER
+            | ACCESS_SYNCHRONIZE;
+        if !acl.add_access_allowed(&token.user, owner_mask, AceFlags::NONE) {
+            crate::mm::pool::free(acl_ptr as *mut u8);
+            return core::ptr::null();
         }
 
-        // ACE 2: Grant GENERIC_ALL to SYSTEM (primary group, treated as well-known)
-        // Build a well-known SID for LocalSystem: S-1-5-18
-        if offset + 8 + sid_size <= max_size {
-            (*acl_ptr).data[offset] = 0x00; // ACCESS_ALLOWED_ACE_TYPE
-            (*acl_ptr).data[offset + 1] = 0x00;
-            (*acl_ptr).data[offset + 2] = (ace_size & 0xFF) as u8;
-            (*acl_ptr).data[offset + 3] = ((ace_size >> 8) & 0xFF) as u8;
-
-            let access_mask: u32 = ACCESS_GENERIC_ALL;
-            (*acl_ptr).data[offset + 4] = (access_mask & 0xFF) as u8;
-            (*acl_ptr).data[offset + 5] = ((access_mask >> 8) & 0xFF) as u8;
-            (*acl_ptr).data[offset + 6] = ((access_mask >> 16) & 0xFF) as u8;
-            (*acl_ptr).data[offset + 7] = ((access_mask >> 24) & 0xFF) as u8;
-
-            // SID: S-1-5-18 (LocalSystem)
-            let sid_offset = offset + 8;
-            (*acl_ptr).data[sid_offset] = 1; // revision
-            (*acl_ptr).data[sid_offset + 1] = 1; // sub_authority_count
-            (*acl_ptr).data[sid_offset + 2] = 0; // identifier_authority[0]
-            (*acl_ptr).data[sid_offset + 3] = 0; // identifier_authority[1]
-            (*acl_ptr).data[sid_offset + 4] = 0; // identifier_authority[2]
-            (*acl_ptr).data[sid_offset + 5] = 0; // identifier_authority[3]
-            (*acl_ptr).data[sid_offset + 6] = 5; // identifier_authority[4] (NT AUTHORITY)
-            (*acl_ptr).data[sid_offset + 7] = 18; // identifier_authority[5] (18 = LocalSystem)
-            // sub_authority[0] = 18
-            (*acl_ptr).data[sid_offset + 8] = 18;
-            (*acl_ptr).data[sid_offset + 9] = 0;
-            (*acl_ptr).data[sid_offset + 10] = 0;
-            (*acl_ptr).data[sid_offset + 11] = 0;
-            offset += ace_size as usize;
+        let system_sid = super::sid::Sid::well_known(super::sid::WellKnownSid::LocalSystem);
+        if !acl.add_access_allowed(&system_sid, ACCESS_GENERIC_ALL, AceFlags::NONE) {
+            crate::mm::pool::free(acl_ptr as *mut u8);
+            return core::ptr::null();
         }
 
-        // ACE 3+: Grant GENERIC_READ to enabled groups
-        for i in 0..token.group_count {
-            if token.groups[i].is_enabled() && offset + 8 + sid_size <= max_size {
-                (*acl_ptr).data[offset] = 0x00; // ACCESS_ALLOWED_ACE_TYPE
-                (*acl_ptr).data[offset + 1] = 0x02; // CONTAINER_INHERIT
-                (*acl_ptr).data[offset + 2] = (ace_size & 0xFF) as u8;
-                (*acl_ptr).data[offset + 3] = ((ace_size >> 8) & 0xFF) as u8;
-
-                // Access mask: GENERIC_READ | SYNCHRONIZE
-                let access_mask: u32 = ACCESS_GENERIC_READ | ACCESS_SYNCHRONIZE;
-                (*acl_ptr).data[offset + 4] = (access_mask & 0xFF) as u8;
-                (*acl_ptr).data[offset + 5] = ((access_mask >> 8) & 0xFF) as u8;
-                (*acl_ptr).data[offset + 6] = ((access_mask >> 16) & 0xFF) as u8;
-                (*acl_ptr).data[offset + 7] = ((access_mask >> 24) & 0xFF) as u8;
-
-                // Copy group SID
-                let sid_offset = offset + 8;
-                copy_sid(&token.groups[i].sid, &mut (*acl_ptr).data, sid_offset);
-                offset += ace_size as usize;
+        for group in token.groups.iter().take(token.group_count) {
+            if group.is_enabled()
+                && !acl.add_access_allowed(
+                    &group.sid,
+                    ACCESS_GENERIC_READ | ACCESS_SYNCHRONIZE,
+                    AceFlags::CONTAINER_INHERIT,
+                )
+            {
+                break;
             }
         }
     }
@@ -862,28 +762,11 @@ fn build_dacl_from_token(token: &super::token::Token) -> *const Acl {
     acl_ptr as *const Acl
 }
 
-/// Copy a SID to a byte array at the specified offset.
-fn copy_sid(sid: &Sid, dest: &mut [u8], offset: usize) {
-    dest[offset] = sid.revision;
-    dest[offset + 1] = sid.sub_authority_count;
-    // Copy identifier_authority (6 bytes)
-    for i in 0..6 {
-        dest[offset + 2 + i] = sid.identifier_authority[i];
-    }
-    // Copy sub_authority (up to 8 * 4 = 32 bytes)
-    let sub_count = sid.sub_authority_count as usize;
-    for i in 0..sub_count.min(8) {
-        let val = sid.sub_authority[i];
-        dest[offset + 8 + i * 4] = (val & 0xFF) as u8;
-        dest[offset + 8 + i * 4 + 1] = ((val >> 8) & 0xFF) as u8;
-        dest[offset + 8 + i * 4 + 2] = ((val >> 16) & 0xFF) as u8;
-        dest[offset + 8 + i * 4 + 3] = ((val >> 24) & 0xFF) as u8;
-    }
-}
-
 /// Build a security descriptor for a process.
 /// This is called from ps/process.rs to create proper process security descriptors.
-pub fn build_process_security_descriptor(process: *mut crate::ps::process::Eprocess) -> *const SecurityDescriptor {
+pub fn build_process_security_descriptor(
+    process: *mut crate::ps::process::Eprocess,
+) -> *const SecurityDescriptor {
     if process.is_null() {
         return core::ptr::null();
     }
@@ -892,12 +775,12 @@ pub fn build_process_security_descriptor(process: *mut crate::ps::process::Eproc
         let token_ptr = (*process).get_token();
         if token_ptr.is_null() {
             // System process has no token, use NULL DACL
-            // crate::kprintln!("[SE] build_process_security_descriptor: null token, using NULL DACL")  // kprintln disabled (memcpy crash workaround);
+            // crate::kprintln!("[SE] build_process_security_descriptor: null token, using NULL DACL");
             return SecurityDescriptor::new_null_dacl();
         }
 
         let token = &*token_ptr;
-        // crate::kprintln!("[SE] build_process_security_descriptor: building SD from token")  // kprintln disabled (memcpy crash workaround);
+        // crate::kprintln!("[SE] build_process_security_descriptor: building SD from token");
         SecurityDescriptor::from_token(token)
     }
 }
@@ -940,6 +823,68 @@ pub fn create_null_dacl_sd() -> *const SecurityDescriptor {
 }
 
 pub fn init() {
-    // crate::kprintln!("    SE/ACCESS: initialized (SeAccessCheck, SePrivilegeCheck, GenericMapping)")  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("      Generic mappings: PROCESS, THREAD, FILE, KEY, DIRECTORY, EVENT, etc.")  // kprintln disabled (memcpy crash workaround);
+    // crate::kprintln!("    SE/ACCESS: initialized (SeAccessCheck, SePrivilegeCheck, GenericMapping)");
+    // crate::kprintln!("      Generic mappings: PROCESS, THREAD, FILE, KEY, DIRECTORY, EVENT, etc.");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        check_access, se_access_check, AccessCheckResult, ObTypeIndex, SecurityDescriptor,
+        ACCESS_MAXIMUM_ALLOWED, ACCESS_READ_CONTROL, ACCESS_SYNCHRONIZE,
+    };
+    use crate::se::{
+        acl::Acl,
+        sid::{Sid, WellKnownSid},
+        token::Token,
+    };
+
+    #[test]
+    fn empty_dacl_does_not_grant_standard_or_synchronize_access() {
+        let token = Token::new_primary(Sid::well_known(WellKnownSid::Users));
+        let acl = Acl::new();
+
+        assert_eq!(
+            check_access(ACCESS_READ_CONTROL, &token, &token.user, &acl, None,),
+            AccessCheckResult::Denied
+        );
+        assert_eq!(
+            check_access(ACCESS_SYNCHRONIZE, &token, &token.user, &acl, None,),
+            AccessCheckResult::Denied
+        );
+    }
+
+    #[test]
+    fn maximum_allowed_is_not_treated_as_a_literal_right() {
+        let token = Token::new_primary(Sid::well_known(WellKnownSid::Users));
+        let acl = Acl::new();
+        let sd = SecurityDescriptor {
+            revision: 1,
+            sbz1: 0,
+            control: 0,
+            owner: token.user,
+            group: token.user,
+            sacl: core::ptr::null(),
+            dacl: &acl,
+        };
+
+        let (result, granted) =
+            se_access_check(ObTypeIndex::File, &sd, ACCESS_MAXIMUM_ALLOWED, &token);
+        assert_eq!(result, AccessCheckResult::Denied);
+        assert_eq!(granted, 0);
+    }
+
+    #[test]
+    fn maximum_allowed_on_null_dacl_returns_mapped_access_without_request_bit() {
+        let token = Token::new_primary(Sid::well_known(WellKnownSid::Users));
+        let (result, granted) = se_access_check(
+            ObTypeIndex::File,
+            core::ptr::null(),
+            ACCESS_MAXIMUM_ALLOWED,
+            &token,
+        );
+        assert_eq!(result, AccessCheckResult::Allowed);
+        assert_eq!(granted & ACCESS_MAXIMUM_ALLOWED, 0);
+        assert_ne!(granted, 0);
+    }
 }

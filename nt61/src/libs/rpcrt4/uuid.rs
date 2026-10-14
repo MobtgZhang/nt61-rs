@@ -2,7 +2,7 @@
 //!
 //! Implements UUID creation, string conversion, and comparison operations.
 
-use super::types::{UUID, RPC_STATUS, RPC_S_OK, RPC_S_INVALID_STRING_UUID, RPC_S_OUT_OF_MEMORY};
+use super::types::{RPC_STATUS, RPC_S_INVALID_STRING_UUID, RPC_S_OK, RPC_S_OUT_OF_MEMORY, UUID};
 use core::sync::atomic::{AtomicU64, Ordering};
 
 static UUID_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -15,7 +15,6 @@ pub unsafe extern "C" fn UuidCreate(uuid: *mut UUID) -> RPC_STATUS {
     }
 
     let counter = UUID_COUNTER.fetch_add(1, Ordering::SeqCst);
-
 
     (*uuid).data1 = (counter as u32).wrapping_mul(0x9E3779B9);
     (*uuid).data2 = ((counter >> 32) as u16).wrapping_mul(0x9E37);
@@ -34,7 +33,10 @@ pub unsafe extern "C" fn UuidCreate(uuid: *mut UUID) -> RPC_STATUS {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn UuidToStringW(uuid: *const UUID, string_uuid: *mut *mut u16) -> RPC_STATUS {
+pub unsafe extern "C" fn UuidToStringW(
+    uuid: *const UUID,
+    string_uuid: *mut *mut u16,
+) -> RPC_STATUS {
     if uuid.is_null() || string_uuid.is_null() {
         return RPC_S_OUT_OF_MEMORY;
     }
@@ -210,18 +212,34 @@ pub unsafe extern "C" fn UuidCompare(
     }
 
     if (*uuid1).data1 != (*uuid2).data1 {
-        return if (*uuid1).data1 < (*uuid2).data1 { -1 } else { 1 };
+        return if (*uuid1).data1 < (*uuid2).data1 {
+            -1
+        } else {
+            1
+        };
     }
     if (*uuid1).data2 != (*uuid2).data2 {
-        return if (*uuid1).data2 < (*uuid2).data2 { -1 } else { 1 };
+        return if (*uuid1).data2 < (*uuid2).data2 {
+            -1
+        } else {
+            1
+        };
     }
     if (*uuid1).data3 != (*uuid2).data3 {
-        return if (*uuid1).data3 < (*uuid2).data3 { -1 } else { 1 };
+        return if (*uuid1).data3 < (*uuid2).data3 {
+            -1
+        } else {
+            1
+        };
     }
 
     for i in 0..8 {
         if (*uuid1).data4[i] != (*uuid2).data4[i] {
-            return if (*uuid1).data4[i] < (*uuid2).data4[i] { -1 } else { 1 };
+            return if (*uuid1).data4[i] < (*uuid2).data4[i] {
+                -1
+            } else {
+                1
+            };
         }
     }
 
@@ -243,7 +261,11 @@ pub unsafe extern "C" fn UuidIsNil(uuid: *const UUID, status: *mut RPC_STATUS) -
         && (*uuid).data3 == 0
         && (*uuid).data4.iter().all(|&b| b == 0);
 
-    if is_nil { 1 } else { 0 }
+    if is_nil {
+        1
+    } else {
+        0
+    }
 }
 
 #[no_mangle]
@@ -267,5 +289,9 @@ pub unsafe extern "C" fn UuidEqual(
     status: *mut RPC_STATUS,
 ) -> i32 {
     let cmp = UuidCompare(uuid1, uuid2, status);
-    if cmp == 0 { 1 } else { 0 }
+    if cmp == 0 {
+        1
+    } else {
+        0
+    }
 }

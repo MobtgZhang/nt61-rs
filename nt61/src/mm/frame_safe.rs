@@ -1,8 +1,7 @@
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
-use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, AtomicUsize, AtomicI32, AtomicI64, AtomicPtr, Ordering};
-
-use core::sync::atomic::{AtomicU64, AtomicUsize, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicI64, AtomicU8};
+use spin::{Lazy, Mutex};
 
 const FRAME_TABLE_BYTES: usize = 1024 * 1024; // 1 MB
 
@@ -30,9 +29,8 @@ impl FrameAllocator {
     }
 }
 
-static FRAME_ALLOCATOR: Lazy<Mutex<FrameAllocator>> = Lazy::new(|| {
-    Mutex::new(FrameAllocator::new())
-});
+static FRAME_ALLOCATOR: Lazy<Mutex<FrameAllocator>> =
+    Lazy::new(|| Mutex::new(FrameAllocator::new()));
 
 pub fn init_dyn_allocator(
     frame_infos: *mut u8,
@@ -45,8 +43,12 @@ pub fn init_dyn_allocator(
     let alloc = FRAME_ALLOCATOR.lock();
     alloc.dyn_frame_infos.store(frame_infos, Ordering::Release);
     alloc.dyn_buddy_nodes.store(buddy_nodes, Ordering::Release);
-    alloc.dyn_frame_infos_phys.store(frame_infos_phys, Ordering::Release);
-    alloc.dyn_buddy_nodes_phys.store(buddy_nodes_phys, Ordering::Release);
+    alloc
+        .dyn_frame_infos_phys
+        .store(frame_infos_phys, Ordering::Release);
+    alloc
+        .dyn_buddy_nodes_phys
+        .store(buddy_nodes_phys, Ordering::Release);
     alloc.dyn_len.store(len, Ordering::Release);
     alloc.dyn_base_phys.store(base_phys, Ordering::Release);
 }

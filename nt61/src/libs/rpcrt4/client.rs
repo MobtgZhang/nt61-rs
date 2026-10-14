@@ -115,8 +115,14 @@ unsafe fn establish_connection(binding: RPC_BINDING_HANDLE) -> RPC_STATUS {
     let conn_idx = state.find_connection(binding).unwrap();
 
     let ncalrpc = [
-        b'n' as u16, b'c' as u16, b'a' as u16, b'l' as u16,
-        b'r' as u16, b'p' as u16, b'c' as u16, 0,
+        b'n' as u16,
+        b'c' as u16,
+        b'a' as u16,
+        b'l' as u16,
+        b'r' as u16,
+        b'p' as u16,
+        b'c' as u16,
+        0,
     ];
 
     if !wstrcmp((*bind_internal).protseq.as_ptr(), ncalrpc.as_ptr()) {
@@ -127,9 +133,18 @@ unsafe fn establish_connection(binding: RPC_BINDING_HANDLE) -> RPC_STATUS {
     let mut pos = 0;
 
     let prefix = [
-        b'\\' as u16, b'R' as u16, b'P' as u16, b'C' as u16,
-        b' ' as u16, b'C' as u16, b'o' as u16, b'n' as u16,
-        b't' as u16, b'r' as u16, b'o' as u16, b'l' as u16,
+        b'\\' as u16,
+        b'R' as u16,
+        b'P' as u16,
+        b'C' as u16,
+        b' ' as u16,
+        b'C' as u16,
+        b'o' as u16,
+        b'n' as u16,
+        b't' as u16,
+        b'r' as u16,
+        b'o' as u16,
+        b'l' as u16,
         b'\\' as u16,
     ];
 
@@ -250,9 +265,7 @@ pub unsafe extern "C" fn RpcClientCall(
 /// (Client code should use the server.rs implementation directly)
 
 #[no_mangle]
-pub unsafe extern "C" fn RpcMgmtSetServerStackSize(
-    thread_stack_size: u32,
-) -> RPC_STATUS {
+pub unsafe extern "C" fn RpcMgmtSetServerStackSize(thread_stack_size: u32) -> RPC_STATUS {
     let _ = thread_stack_size;
     RPC_S_OK
 }
@@ -317,9 +330,7 @@ pub unsafe extern "C" fn RpcAsyncCancelCall(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn RpcAsyncGetCallStatus(
-    async_handle: *mut core::ffi::c_void,
-) -> RPC_STATUS {
+pub unsafe extern "C" fn RpcAsyncGetCallStatus(async_handle: *mut core::ffi::c_void) -> RPC_STATUS {
     if async_handle.is_null() {
         return RPC_S_INVALID_BINDING;
     }
@@ -328,25 +339,46 @@ pub unsafe extern "C" fn RpcAsyncGetCallStatus(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn RpcNetworkIsProtseqValidW(
-    protseq: *const u16,
-) -> RPC_STATUS {
+pub unsafe extern "C" fn RpcNetworkIsProtseqValidW(protseq: *const u16) -> RPC_STATUS {
     if protseq.is_null() {
         return RPC_S_INVALID_STRING_BINDING;
     }
 
     let ncalrpc = [
-        b'n' as u16, b'c' as u16, b'a' as u16, b'l' as u16,
-        b'r' as u16, b'p' as u16, b'c' as u16, 0,
+        b'n' as u16,
+        b'c' as u16,
+        b'a' as u16,
+        b'l' as u16,
+        b'r' as u16,
+        b'p' as u16,
+        b'c' as u16,
+        0,
     ];
     let ncacn_np = [
-        b'n' as u16, b'c' as u16, b'a' as u16, b'c' as u16,
-        b'n' as u16, b'_' as u16, b'n' as u16, b'p' as u16, 0,
+        b'n' as u16,
+        b'c' as u16,
+        b'a' as u16,
+        b'c' as u16,
+        b'n' as u16,
+        b'_' as u16,
+        b'n' as u16,
+        b'p' as u16,
+        0,
     ];
     let ncacn_ip_tcp = [
-        b'n' as u16, b'c' as u16, b'a' as u16, b'c' as u16,
-        b'n' as u16, b'_' as u16, b'i' as u16, b'p' as u16,
-        b'_' as u16, b't' as u16, b'c' as u16, b'p' as u16, 0,
+        b'n' as u16,
+        b'c' as u16,
+        b'a' as u16,
+        b'c' as u16,
+        b'n' as u16,
+        b'_' as u16,
+        b'i' as u16,
+        b'p' as u16,
+        b'_' as u16,
+        b't' as u16,
+        b'c' as u16,
+        b'p' as u16,
+        0,
     ];
 
     if wstrcmp(protseq, ncalrpc.as_ptr()) {

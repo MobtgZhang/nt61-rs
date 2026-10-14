@@ -4,17 +4,17 @@
 //
 //! Clean-room implementation based on public specifications.
 
-pub mod pci_ids;
-pub mod adreno_reg;
-pub mod adreno_fb;
-pub mod adreno_gmu;
 pub mod a3xx_reg;
 pub mod a4xx_reg;
 pub mod a5xx_reg;
 pub mod a6xx_reg;
+pub mod adreno_fb;
+pub mod adreno_gmu;
+pub mod adreno_reg;
+pub mod pci_ids;
 
-pub use pci_ids::{QUALCOMM_VENDOR_ID, AdrenoGeneration};
 pub use adreno_fb::AdrenoDevice;
+pub use pci_ids::{AdrenoGeneration, QUALCOMM_VENDOR_ID};
 
 // =====================================================================
 // Hardware Support

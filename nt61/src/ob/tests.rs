@@ -10,7 +10,9 @@
 //! - Symbolic link resolution
 
 use crate::rtl::testing::TestStats;
+use alloc::boxed::Box;
 use core::ptr::null_mut;
+use core::sync::atomic::AtomicU32;
 
 /// Run all object manager unit tests
 pub fn run_tests() -> bool {
@@ -81,7 +83,11 @@ fn test_object_creation() -> bool {
 
     // Verify initial state
     unsafe {
-        if (*header).ref_count.load(core::sync::atomic::Ordering::Acquire) != 1 {
+        if (*header)
+            .ref_count
+            .load(core::sync::atomic::Ordering::Acquire)
+            != 1
+        {
             return false;
         }
     }
@@ -93,12 +99,7 @@ fn test_object_creation() -> bool {
 fn test_object_insertion() -> bool {
     use super::{create_object, insert_object, ObType};
 
-    let header = create_object(
-        b"\\KernelObjects",
-        b"TestObj2",
-        ObType::Mutant,
-        128,
-    );
+    let header = create_object(b"\\KernelObjects", b"TestObj2", ObType::Mutant, 128);
 
     if header.is_null() {
         return false;
@@ -116,12 +117,7 @@ fn test_object_insertion() -> bool {
 fn test_object_deletion() -> bool {
     use super::{create_object, dereference_object, ObType};
 
-    let header = create_object(
-        b"\\KernelObjects",
-        b"TestObjDelete",
-        ObType::Semaphore,
-        32,
-    );
+    let header = create_object(b"\\KernelObjects", b"TestObjDelete", ObType::Semaphore, 32);
 
     if header.is_null() {
         return false;
@@ -139,12 +135,7 @@ fn test_object_deletion() -> bool {
 fn test_object_lookup() -> bool {
     use super::{create_object, insert_object, lookup_object, ObType};
 
-    let header = create_object(
-        b"\\KernelObjects",
-        b"TestObjLookup",
-        ObType::Timer,
-        64,
-    );
+    let header = create_object(b"\\KernelObjects", b"TestObjLookup", ObType::Timer, 64);
 
     if header.is_null() {
         return false;
@@ -173,7 +164,7 @@ fn test_object_lookup() -> bool {
 // =============================================================================
 
 fn test_reference_increment() -> bool {
-    use super::{create_object, reference_object, dereference_object, ObType};
+    use super::{create_object, dereference_object, reference_object, ObType};
 
     let header = create_object(
         b"\\KernelObjects",
@@ -210,14 +201,9 @@ fn test_reference_increment() -> bool {
 }
 
 fn test_reference_decrement() -> bool {
-    use super::{create_object, reference_object, dereference_object, ObType};
+    use super::{create_object, dereference_object, reference_object, ObType};
 
-    let header = create_object(
-        b"\\KernelObjects",
-        b"TestRefDec",
-        ObType::Section,
-        128,
-    );
+    let header = create_object(b"\\KernelObjects", b"TestRefDec", ObType::Section, 128);
 
     if header.is_null() {
         return false;
@@ -243,12 +229,7 @@ fn test_reference_decrement() -> bool {
 fn test_reference_zero_deletion() -> bool {
     use super::{create_object, dereference_object, ObType};
 
-    let header = create_object(
-        b"\\KernelObjects",
-        b"TestRefZero",
-        ObType::Job,
-        64,
-    );
+    let header = create_object(b"\\KernelObjects", b"TestRefZero", ObType::Job, 64);
 
     if header.is_null() {
         return false;
@@ -270,12 +251,7 @@ fn test_reference_zero_deletion() -> bool {
 fn test_handle_allocation() -> bool {
     use super::{create_object, insert_object, ObType};
 
-    let header = create_object(
-        b"\\KernelObjects",
-        b"TestHandle1",
-        ObType::Process,
-        256,
-    );
+    let header = create_object(b"\\KernelObjects", b"TestHandle1", ObType::Process, 256);
 
     if header.is_null() {
         return false;
@@ -291,14 +267,9 @@ fn test_handle_allocation() -> bool {
 }
 
 fn test_handle_close() -> bool {
-    use super::{create_object, insert_object, close_handle_global, ObType};
+    use super::{close_handle_global, create_object, insert_object, ObType};
 
-    let header = create_object(
-        b"\\KernelObjects",
-        b"TestHandleClose",
-        ObType::Thread,
-        512,
-    );
+    let header = create_object(b"\\KernelObjects", b"TestHandleClose", ObType::Thread, 512);
 
     if header.is_null() {
         return false;
@@ -324,15 +295,11 @@ fn test_handle_close() -> bool {
 }
 
 fn test_handle_lookup() -> bool {
-    use super::{create_object, insert_object, reference_object_by_handle,
-                dereference_object, ObType};
+    use super::{
+        create_object, dereference_object, insert_object, reference_object_by_handle, ObType,
+    };
 
-    let header = create_object(
-        b"\\KernelObjects",
-        b"TestHandleLookup",
-        ObType::Device,
-        128,
-    );
+    let header = create_object(b"\\KernelObjects", b"TestHandleLookup", ObType::Device, 128);
 
     if header.is_null() {
         return false;
@@ -405,11 +372,7 @@ fn test_directory_enumeration() -> bool {
     // Verify standard directories exist
     use super::lookup_directory;
 
-    let dirs = [
-        b"\\Device" as &[u8],
-        b"\\Driver",
-        b"\\KernelObjects",
-    ];
+    let dirs = [b"\\Device" as &[u8], b"\\Driver", b"\\KernelObjects"];
 
     for path in &dirs {
         let dir = lookup_directory(path);
@@ -451,13 +414,13 @@ fn test_invalid_names() -> bool {
     use super::{validate_object_name, STATUS_SUCCESS};
 
     let invalid_names = [
-        b"" as &[u8],           // Empty
-        b"<invalid>",            // Angle brackets
-        b"bad|name",             // Pipe
-        b"test?",                // Question mark
-        b"file*",                // Asterisk
-        b"path/to",              // Forward slash
-        b"name\0with\0null",     // Null bytes
+        b"" as &[u8],        // Empty
+        b"<invalid>",        // Angle brackets
+        b"bad|name",         // Pipe
+        b"test?",            // Question mark
+        b"file*",            // Asterisk
+        b"path/to",          // Forward slash
+        b"name\0with\0null", // Null bytes
     ];
 
     for name in &invalid_names {
@@ -472,7 +435,7 @@ fn test_invalid_names() -> bool {
 }
 
 fn test_name_length_limits() -> bool {
-    use super::{validate_object_name, STATUS_SUCCESS, MAX_NAME_LEN};
+    use super::{validate_object_name, MAX_NAME_LEN, STATUS_SUCCESS};
 
     // Max length name (should succeed)
     let mut long_name = [b'A'; 200];
@@ -495,12 +458,7 @@ fn test_name_length_limits() -> bool {
 fn test_path_traversal() -> bool {
     use super::{validate_object_name, STATUS_SUCCESS};
 
-    let traversal_attempts = [
-        b".." as &[u8],
-        b"..\\test",
-        b"test\\..",
-        b"..\\..\\etc",
-    ];
+    let traversal_attempts = [b".." as &[u8], b"..\\test", b"test\\..", b"..\\..\\etc"];
 
     for name in &traversal_attempts {
         let result = validate_object_name(name);
@@ -520,12 +478,7 @@ fn test_path_traversal() -> bool {
 fn test_security_descriptor_set() -> bool {
     use super::{create_object, ob_set_security_descriptor, ObType, STATUS_SUCCESS};
 
-    let header = create_object(
-        b"\\KernelObjects",
-        b"TestSecDesc",
-        ObType::Token,
-        64,
-    );
+    let header = create_object(b"\\KernelObjects", b"TestSecDesc", ObType::Token, 64);
 
     if header.is_null() {
         return false;
@@ -546,15 +499,12 @@ fn test_security_descriptor_set() -> bool {
 }
 
 fn test_security_descriptor_query() -> bool {
-    use super::{create_object, ob_set_security_descriptor,
-                ob_query_security_descriptor, ObType, STATUS_SUCCESS};
+    use super::{
+        create_object, ob_query_security_descriptor, ob_set_security_descriptor, ObType,
+        STATUS_SUCCESS,
+    };
 
-    let header = create_object(
-        b"\\KernelObjects",
-        b"TestSecQuery",
-        ObType::Key,
-        128,
-    );
+    let header = create_object(b"\\KernelObjects", b"TestSecQuery", ObType::Key, 128);
 
     if header.is_null() {
         return false;
@@ -579,9 +529,101 @@ fn test_security_descriptor_query() -> bool {
 }
 
 fn test_access_check() -> bool {
-    // Access check requires full security subsystem
-    crate::boot_println!("    Access check: basic validation OK");
+    use super::{
+        create_object, insert_object_into_process, reference_object_by_handle_with_access, ObType,
+    };
+    use crate::ps::process::{Eprocess, ProcessHandleTable, HANDLE_TABLE_SIZE};
+    use crate::se::acl::{AceFlags, Acl};
+    use crate::se::descriptor::SE_DACL_PRESENT;
+    use crate::se::seaccess::{
+        SecurityDescriptor, EVENT_MODIFY_STATE, ACCESS_SYNCHRONIZE,
+    };
+    use crate::se::sid::SID_USERS;
+    use crate::se::token::Token;
+
+    static mut TEST_HEAP_STORAGE: [u8; 1024 * 1024] = [0; 1024 * 1024];
+    unsafe {
+        crate::mm::heap::KERNEL_HEAP.configure(
+            core::ptr::addr_of_mut!(TEST_HEAP_STORAGE).cast::<u8>(),
+            TEST_HEAP_STORAGE.len(),
+        );
+    }
+
+    super::init();
+
+    let process = Box::leak(Box::new(Eprocess::new()));
+    let table = Box::leak(Box::new(ProcessHandleTable {
+        slots: [null_mut(); HANDLE_TABLE_SIZE],
+        valid: [0; HANDLE_TABLE_SIZE],
+        next_slot: 1,
+        handle_count: AtomicU32::new(0),
+    }));
+    process.object_table = table;
+
+    let token = Box::leak(Box::new(Token::new_primary(SID_USERS)));
+    process.set_token(token);
+
+    let acl = Box::leak(Box::new(Acl::new()));
+    if !(*acl).add_access_denied(
+        &(*token).user,
+        EVENT_MODIFY_STATE,
+        AceFlags::NONE,
+    ) {
+        return false;
+    }
+    if !(*acl).add_access_allowed(
+        &(*token).user,
+        ACCESS_SYNCHRONIZE,
+        AceFlags::NONE,
+    ) {
+        return false;
+    }
+    let descriptor = Box::leak(Box::new(SecurityDescriptor {
+        revision: 1,
+        sbz1: 0,
+        control: SE_DACL_PRESENT,
+        owner: (*token).user,
+        group: (*token).primary_group,
+        sacl: null_mut(),
+        dacl: acl,
+    }));
+
+    let header = create_object(
+        b"\\KernelObjects",
+        b"AccessCheckTest",
+        ObType::EventNotification,
+        64,
+    );
+    if header.is_null() {
+        return false;
+    }
+    unsafe {
+        (*header).security_descriptor = descriptor;
+    }
+
+    let handle = insert_object_into_process(process, b"\\KernelObjects", header);
+    if handle == 0 {
+        return false;
+    }
+
+    let denied = reference_object_by_handle_with_access(handle, EVENT_MODIFY_STATE, process);
+    if !denied.is_null() {
+        super::dereference_object(denied);
+        return false;
+    }
+
+    let allowed = reference_object_by_handle_with_access(handle, ACCESS_SYNCHRONIZE, process);
+    if allowed.is_null() {
+        return false;
+    }
+    super::dereference_object(allowed);
+
     true
+}
+
+#[test]
+fn handle_access_check_enforces_dacl_against_process_token() {
+    assert!(test_access_check());
 }
 
 // =============================================================================
@@ -591,11 +633,7 @@ fn test_access_check() -> bool {
 fn test_symlink_creation() -> bool {
     use super::{create_symbolic_link, insert_object};
 
-    let header = create_symbolic_link(
-        b"\\??",
-        b"TestLink",
-        b"\\Device\\TestDevice",
-    );
+    let header = create_symbolic_link(b"\\??", b"TestLink", b"\\Device\\TestDevice");
 
     if header.is_null() {
         return false;
@@ -613,11 +651,7 @@ fn test_symlink_creation() -> bool {
 fn test_symlink_resolution() -> bool {
     use super::{create_symbolic_link, insert_object, lookup_object, resolve_symbolic_link};
 
-    let header = create_symbolic_link(
-        b"\\??",
-        b"TestLink2",
-        b"\\Device",
-    );
+    let header = create_symbolic_link(b"\\??", b"TestLink2", b"\\Device");
 
     if header.is_null() {
         return false;
@@ -625,7 +659,7 @@ fn test_symlink_resolution() -> bool {
 
     insert_object(b"\\??", header);
 
-    let resolved = unsafe { resolve_symbolic_link(header) };
+    let resolved = resolve_symbolic_link(header);
     if resolved.is_null() {
         return false;
     }
@@ -645,14 +679,9 @@ fn test_symlink_cycle_detection() -> bool {
 // =============================================================================
 
 fn test_object_type_query() -> bool {
-    use super::{create_object, ObType, ob_get_type_name};
+    use super::{create_object, ob_get_type_name, ObType};
 
-    let header = create_object(
-        b"\\KernelObjects",
-        b"TestTypeQuery",
-        ObType::Driver,
-        64,
-    );
+    let header = create_object(b"\\KernelObjects", b"TestTypeQuery", ObType::Driver, 64);
 
     if header.is_null() {
         return false;

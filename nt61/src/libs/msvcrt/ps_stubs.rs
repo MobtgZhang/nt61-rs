@@ -2,7 +2,6 @@
 //!
 //! Stub implementations for process-related operations
 
-
 use crate::kprintln;
 use crate::libs::msvcrt::types::*;
 use alloc::string::String;

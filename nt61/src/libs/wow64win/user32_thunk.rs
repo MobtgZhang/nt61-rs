@@ -8,11 +8,10 @@
 #![allow(non_camel_case_types)]
 #![allow(dead_code)]
 
-use crate::libs::wow64win::{
-    Msg32, syscall_numbers,
-    Wow64Win32kSyscall, Wow64Win32kCallbackReturn,
-};
 use crate::libs::wow64::types::*;
+use crate::libs::wow64win::{
+    syscall_numbers, Msg32, Wow64Win32kCallbackReturn, Wow64Win32kSyscall,
+};
 
 // =============================================================================
 // Handle Types
@@ -267,7 +266,6 @@ pub unsafe extern "C" fn Wow64CreateWindowExW(
     instance: HINSTANCE32,
     param: ULONG32,
 ) -> HWND32 {
-
     // Build parameter array for syscall
     let params: [ULONG32; 12] = [
         ex_style,
@@ -285,10 +283,7 @@ pub unsafe extern "C" fn Wow64CreateWindowExW(
     ];
 
     // Make Win32k syscall
-    let result = Wow64Win32kSyscall(
-        syscall_numbers::NtUserCreateWindowEx,
-        params.as_ptr(),
-    );
+    let result = Wow64Win32kSyscall(syscall_numbers::NtUserCreateWindowEx, params.as_ptr());
 
     // log via wow64_klog!; using wow64_klog! instead
     result
@@ -306,10 +301,7 @@ pub unsafe extern "C" fn Wow64DestroyWindow(hwnd: HWND32) -> BOOL32 {
     // log via wow64_klog!; using wow64_klog! instead
 
     let params: [ULONG32; 1] = [hwnd];
-    let result = Wow64Win32kSyscall(
-        syscall_numbers::NtUserDestroyWindow,
-        params.as_ptr(),
-    );
+    let result = Wow64Win32kSyscall(syscall_numbers::NtUserDestroyWindow, params.as_ptr());
 
     result as BOOL32
 }
@@ -323,12 +315,8 @@ pub unsafe extern "C" fn Wow64DestroyWindow(hwnd: HWND32) -> BOOL32 {
 /// # Returns
 /// * TRUE if the window was previously visible, FALSE otherwise
 pub unsafe extern "C" fn Wow64ShowWindow(hwnd: HWND32, cmd_show: ULONG32) -> BOOL32 {
-
     let params: [ULONG32; 2] = [hwnd, cmd_show];
-    let result = Wow64Win32kSyscall(
-        syscall_numbers::NtUserShowWindow,
-        params.as_ptr(),
-    );
+    let result = Wow64Win32kSyscall(syscall_numbers::NtUserShowWindow, params.as_ptr());
 
     result as BOOL32
 }
@@ -347,7 +335,6 @@ pub unsafe extern "C" fn Wow64GetMessageW(
     _msg_filter_min: ULONG32,
     _msg_filter_max: ULONG32,
 ) -> BOOL32 {
-
     if msg.is_null() {
         return 0;
     }
@@ -376,7 +363,6 @@ pub unsafe extern "C" fn Wow64PeekMessageW(
     _msg_filter_max: ULONG32,
     _remove_msg: ULONG32,
 ) -> BOOL32 {
-
     0
 }
 
@@ -424,12 +410,8 @@ pub unsafe extern "C" fn Wow64PostMessageW(
     wparam: WPARAM32,
     lparam: LPARAM32,
 ) -> BOOL32 {
-
     let params: [ULONG32; 4] = [hwnd, msg, wparam, lparam];
-    let result = Wow64Win32kSyscall(
-        syscall_numbers::NtUserPostMessage,
-        params.as_ptr(),
-    );
+    let result = Wow64Win32kSyscall(syscall_numbers::NtUserPostMessage, params.as_ptr());
 
     result as BOOL32
 }
@@ -448,12 +430,8 @@ pub unsafe extern "C" fn Wow64SendMessageW(
     wparam: WPARAM32,
     lparam: LPARAM32,
 ) -> LRESULT32 {
-
     let params: [ULONG32; 4] = [hwnd, msg, wparam, lparam];
-    let result = Wow64Win32kSyscall(
-        syscall_numbers::NtUserSendMessage,
-        params.as_ptr(),
-    );
+    let result = Wow64Win32kSyscall(syscall_numbers::NtUserSendMessage, params.as_ptr());
 
     result as LRESULT32
 }
@@ -470,10 +448,7 @@ pub unsafe extern "C" fn Wow64GetDC(hwnd: HWND32) -> HDC32 {
     // log via wow64_klog!; using wow64_klog! instead
 
     let params: [ULONG32; 1] = [hwnd];
-    let result = Wow64Win32kSyscall(
-        syscall_numbers::NtGdiGetDC,
-        params.as_ptr(),
-    );
+    let result = Wow64Win32kSyscall(syscall_numbers::NtGdiGetDC, params.as_ptr());
 
     result
 }
@@ -483,12 +458,8 @@ pub unsafe extern "C" fn Wow64GetDC(hwnd: HWND32) -> HDC32 {
 /// # Returns
 /// * 1 if successful, 0 otherwise
 pub unsafe extern "C" fn Wow64ReleaseDC(hwnd: HWND32, hdc: HDC32) -> i32 {
-
     let params: [ULONG32; 2] = [hwnd, hdc];
-    let result = Wow64Win32kSyscall(
-        syscall_numbers::NtGdiReleaseDC,
-        params.as_ptr(),
-    );
+    let result = Wow64Win32kSyscall(syscall_numbers::NtGdiReleaseDC, params.as_ptr());
 
     result as i32
 }

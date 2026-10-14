@@ -33,7 +33,9 @@ const EPOCH_DIFF_100NS: u64 = 116_444_736_000_000_000;
 
 /// `GetSystemTime`.
 pub unsafe extern "C" fn GetSystemTime(out: *mut SystemTime) {
-    if out.is_null() { return; }
+    if out.is_null() {
+        return;
+    }
     let ms = crate::ke::time::get_system_time();
     let s = (ms / 1000) as u64;
     let ns = ((ms % 1000) as u64) * 1_000_000;
@@ -42,11 +44,15 @@ pub unsafe extern "C" fn GetSystemTime(out: *mut SystemTime) {
 
 /// `GetLocalTime` — same as `GetSystemTime` since we
 /// have no concept of time zones.
-pub unsafe extern "C" fn GetLocalTime(out: *mut SystemTime) { GetSystemTime(out); }
+pub unsafe extern "C" fn GetLocalTime(out: *mut SystemTime) {
+    GetSystemTime(out);
+}
 
 /// `GetSystemTimeAsFileTime`.
 pub unsafe extern "C" fn GetSystemTimeAsFileTime(out: *mut FileTime) {
-    if out.is_null() { return; }
+    if out.is_null() {
+        return;
+    }
     let ms = crate::ke::time::get_system_time();
     let ft = ms.wrapping_mul(10_000).wrapping_add(EPOCH_DIFF_100NS);
     (*out).low = ft as u32;
@@ -67,14 +73,18 @@ pub extern "C" fn GetTickCount64() -> u64 {
 
 /// `QueryPerformanceCounter`.
 pub unsafe extern "C" fn QueryPerformanceCounter(counter: *mut i64) -> i32 {
-    if counter.is_null() { return 0; }
+    if counter.is_null() {
+        return 0;
+    }
     *counter = crate::ke::time::get_system_time() as i64;
     1
 }
 
 /// `QueryPerformanceFrequency` — 1 MHz.
 pub unsafe extern "C" fn QueryPerformanceFrequency(freq: *mut i64) -> i32 {
-    if freq.is_null() { return 0; }
+    if freq.is_null() {
+        return 0;
+    }
     *freq = 1_000_000;
     1
 }
@@ -98,7 +108,9 @@ fn fill_system_time(out: *mut SystemTime, s: u64, ns: u64) {
     let mut d = days;
     loop {
         let dy = if is_leap(year) { 366 } else { 365 };
-        if d < dy { break; }
+        if d < dy {
+            break;
+        }
         d -= dy;
         year += 1;
     }

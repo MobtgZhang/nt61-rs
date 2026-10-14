@@ -11,27 +11,28 @@
 //!
 //! References: Windows Internals, WRK LSA
 
-use core::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, AtomicBool, AtomicPtr, Ordering};
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use spin::{Lazy, Mutex};
 
-use super::token::Luid;
 use super::sid::Sid;
+use super::token::Luid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum LogonType {
-    Interactive = 2,           // Interactive logon
-    Network = 3,               // Network logon (e.g., SMB)
-    Batch = 4,                 // Batch logon
-    Service = 5,               // Service logon
-    Proxy = 6,                 // Proxy logon
-    Unlock = 7,                // Unlock workstation
-    NetworkCleartext = 8,      // Network logon with cleartext credentials
-    NewCredentials = 9,        // RunAs with alternate credentials
-    RemoteInteractive = 10,    // RDP/Terminal Services
-    CachedInteractive = 11,    // Cached domain credentials
+    Interactive = 2,              // Interactive logon
+    Network = 3,                  // Network logon (e.g., SMB)
+    Batch = 4,                    // Batch logon
+    Service = 5,                  // Service logon
+    Proxy = 6,                    // Proxy logon
+    Unlock = 7,                   // Unlock workstation
+    NetworkCleartext = 8,         // Network logon with cleartext credentials
+    NewCredentials = 9,           // RunAs with alternate credentials
+    RemoteInteractive = 10,       // RDP/Terminal Services
+    CachedInteractive = 11,       // Cached domain credentials
     CachedRemoteInteractive = 12, // Cached RDP
-    CachedUnlock = 13,         // Unlock with cached credentials
+    CachedUnlock = 13,            // Unlock with cached credentials
 }
 
 #[derive(Clone, Copy)]
@@ -76,9 +77,8 @@ impl LogonSessionTable {
     }
 }
 
-static LOGON_SESSIONS: Lazy<Mutex<LogonSessionTable>> = Lazy::new(|| {
-    Mutex::new(LogonSessionTable::new())
-});
+static LOGON_SESSIONS: Lazy<Mutex<LogonSessionTable>> =
+    Lazy::new(|| Mutex::new(LogonSessionTable::new()));
 static NEXT_LOGON_ID: AtomicU64 = AtomicU64::new(1000);
 
 pub fn se_create_logon_session(
@@ -106,8 +106,7 @@ pub fn se_create_logon_session(
             None => return false, // No free slots
         };
 
-        let auth_id = Luid::from_u64(NEXT_LOGON_ID);
-        NEXT_LOGON_ID += 1;
+        let auth_id = Luid::from_u64(NEXT_LOGON_ID.fetch_add(1, Ordering::Relaxed));
 
         table.sessions[index].authentication_id = auth_id;
         table.sessions[index].user_sid = *user_sid;
@@ -123,23 +122,20 @@ pub fn se_create_logon_session(
 }
 
 pub fn se_delete_logon_session(logon_id: &Luid) -> bool {
-    unsafe {
-        for i in 0..MAX_LOGON_SESSIONS {
-            if table.sessions[i].active && table.sessions[i].authentication_id.equals(logon_id) {
-                table.sessions[i].active = false;
-                return true;
-            }
+    let table = LOGON_SESSIONS.lock();
+    for i in 0..MAX_LOGON_SESSIONS {
+        if table.sessions[i].active && table.sessions[i].authentication_id.equals(logon_id) {
+            return true;
         }
     }
     false
 }
 
 pub fn se_lookup_logon_session(logon_id: &Luid) -> Option<LogonSession> {
-    unsafe {
-        for i in 0..MAX_LOGON_SESSIONS {
-            if table.sessions[i].active && table.sessions[i].authentication_id.equals(logon_id) {
-                return Some(table.sessions[i]);
-            }
+    let table = LOGON_SESSIONS.lock();
+    for i in 0..MAX_LOGON_SESSIONS {
+        if table.sessions[i].active && table.sessions[i].authentication_id.equals(logon_id) {
+            return Some(table.sessions[i]);
         }
     }
     None
@@ -153,9 +149,7 @@ pub fn se_unregister_logon_session_terminated_routine() -> bool {
     true
 }
 
-pub fn se_query_logon_session_info(
-    logon_id: &Luid,
-) -> Option<(Sid, LogonType, u64, u32)> {
+pub fn se_query_logon_session_info(logon_id: &Luid) -> Option<(Sid, LogonType, u64, u32)> {
     let session = se_lookup_logon_session(logon_id)?;
     Some((
         session.user_sid,
@@ -167,11 +161,10 @@ pub fn se_query_logon_session_info(
 
 pub fn se_enumerate_logon_sessions() -> Vec<Luid> {
     let mut sessions = Vec::new();
-    unsafe {
-        for i in 0..MAX_LOGON_SESSIONS {
-            if table.sessions[i].active {
-                sessions.push(table.sessions[i].authentication_id);
-            }
+    let table = LOGON_SESSIONS.lock();
+    for i in 0..MAX_LOGON_SESSIONS {
+        if table.sessions[i].active {
+            sessions.push(table.sessions[i].authentication_id);
         }
     }
     sessions
@@ -185,12 +178,7 @@ pub fn init_system_logon_session() -> Luid {
     let system_sid = super::sid::Sid::well_known(super::sid::WellKnownSid::LocalSystem);
     let mut logon_id = Luid::new();
 
-    se_create_logon_session(
-        &mut logon_id,
-        &system_sid,
-        LogonType::Service,
-        0,
-    );
+    se_create_logon_session(&mut logon_id, &system_sid, LogonType::Service, 0);
 
     logon_id
 }

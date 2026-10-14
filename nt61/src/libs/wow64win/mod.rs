@@ -22,11 +22,13 @@
 #![cfg(target_arch = "x86_64")]
 #![allow(non_camel_case_types)]
 
-use crate::libs::wow64::types::{ULONG32, STATUS_INVALID_PARAMETER, STATUS_NOT_IMPLEMENTED, STATUS_SUCCESS};
+use crate::libs::wow64::types::{
+    STATUS_INVALID_PARAMETER, STATUS_NOT_IMPLEMENTED, STATUS_SUCCESS, ULONG32,
+};
 
 // Re-export all Win32k thunk functions
-pub mod user32_thunk;
 pub mod gdi32_thunk;
+pub mod user32_thunk;
 
 // =============================================================================
 // Win32k Constants
@@ -200,7 +202,8 @@ pub unsafe extern "C" fn Wow64Win32kSyscall(
 ) -> ULONG32 {
     crate::wow64_klog!(
         "Wow64Win32kSyscall id=0x{:08x} params=0x{:08x}",
-        syscall_id, params as ULONG32
+        syscall_id,
+        params as ULONG32
     );
 
     // Validate parameters
@@ -255,13 +258,11 @@ pub unsafe extern "C" fn Wow64Win32kSyscall(
 ///
 /// # Returns
 /// * Does not return normally
-pub unsafe extern "C" fn Wow64Win32kCallbackReturn(
-    buffer: *const u8,
-    buffer_length: ULONG32,
-) -> ! {
+pub unsafe extern "C" fn Wow64Win32kCallbackReturn(buffer: *const u8, buffer_length: ULONG32) -> ! {
     crate::wow64_klog!(
         "Wow64Win32kCallbackReturn buffer=0x{:016x} length={}",
-        buffer as u64, buffer_length
+        buffer as u64,
+        buffer_length
     );
 
     // In a real implementation:
@@ -362,13 +363,13 @@ fn register_win32k_syscall(index: usize, entry: Win32kSyscallEntry) {
 #[repr(C)]
 #[derive(Default)]
 pub struct Msg32 {
-    pub hwnd: ULONG32,        // Window handle
-    pub message: ULONG32,    // Message ID
-    pub wparam: ULONG32,     // Word parameter
-    pub lparam: ULONG32,     // Long parameter
-    pub time: ULONG32,       // Message time
-    pub pt_x: ULONG32,       // Mouse X position
-    pub pt_y: ULONG32,       // Mouse Y position
+    pub hwnd: ULONG32,    // Window handle
+    pub message: ULONG32, // Message ID
+    pub wparam: ULONG32,  // Word parameter
+    pub lparam: ULONG32,  // Long parameter
+    pub time: ULONG32,    // Message time
+    pub pt_x: ULONG32,    // Mouse X position
+    pub pt_y: ULONG32,    // Mouse Y position
 }
 
 // =============================================================================

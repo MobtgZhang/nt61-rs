@@ -12,8 +12,8 @@
 //! ## Chunk Table
 //! ReFS maintains a chunk table that maps file offsets to chunks.
 
-use alloc::vec::Vec;
 use super::superblock::RefsSuperBlock;
+use alloc::vec::Vec;
 
 // ============================================================================
 // Chunk Constants
@@ -193,19 +193,16 @@ impl ChunkTable {
 // ============================================================================
 
 /// Find a chunk by VCN
-pub fn find_chunk_by_vcn(
-    chunks: &[RefsChunkDescriptor],
-    vcn: u64,
-) -> Option<(usize, u64)> {
+pub fn find_chunk_by_vcn(chunks: &[RefsChunkDescriptor], vcn: u64) -> Option<(usize, u64)> {
     // In a real implementation, we would search through the chunk table
     // to find the chunk containing the given VCN
-    
+
     // Simplified: return first chunk
     if !chunks.is_empty() {
         let offset = vcn.min(chunks[0].vcn_length - 1);
         return Some((0, offset));
     }
-    
+
     None
 }
 
@@ -217,52 +214,47 @@ pub fn vcn_to_physical(
 ) -> Option<(u64, u64)> {
     // vcn_to_physical: given virtual cluster, find the physical LCN and byte offset
     let mut current_vcn = 0u64;
-    
+
     for chunk in chunks {
         if vcn < current_vcn + chunk.vcn_length {
             let offset_in_chunk = vcn - current_vcn;
-            
+
             if chunk.is_hole() {
                 // Hole - return None for hole
                 return None;
             }
-            
+
             let physical_lcn = chunk.lcn + offset_in_chunk;
             let byte_offset = physical_lcn * (sb.get_cluster_size() as u64);
             return Some((physical_lcn, byte_offset));
         }
-        
+
         current_vcn += chunk.vcn_length;
     }
-    
+
     None
 }
 
 /// Convert VCN to LBA
-pub fn vcn_to_lba(
-    chunks: &[RefsChunkDescriptor],
-    sb: &RefsSuperBlock,
-    vcn: u64,
-) -> Option<u64> {
-    vcn_to_physical(chunks, sb, vcn).map(|(lcn, _)| {
-        lcn * ((sb.get_cluster_size() / sb.get_sector_size()) as u64)
-    })
+pub fn vcn_to_lba(chunks: &[RefsChunkDescriptor], sb: &RefsSuperBlock, vcn: u64) -> Option<u64> {
+    vcn_to_physical(chunks, sb, vcn)
+        .map(|(lcn, _)| lcn * ((sb.get_cluster_size() / sb.get_sector_size()) as u64))
 }
 
 /// Check if a VCN range is a hole
 pub fn is_hole_range(chunks: &[RefsChunkDescriptor], start_vcn: u64, _count: u64) -> bool {
     let mut current_vcn = 0u64;
-    
+
     for chunk in chunks {
         if start_vcn >= current_vcn && start_vcn < current_vcn + chunk.vcn_length {
             // start_vcn is in this chunk
             let offset_in_chunk = start_vcn - current_vcn;
             return chunk.is_hole() && offset_in_chunk == 0;
         }
-        
+
         current_vcn += chunk.vcn_length;
     }
-    
+
     // VCN not found - treat as hole
     true
 }
@@ -278,7 +270,7 @@ pub fn find_largest_free_region(
 ) -> Option<(u64, u64)> {
     // Simplified: return region starting at cluster 4096 with 1024 clusters
     // In reality, we would scan the allocation bitmap
-    
+
     if total_clusters > 8192 {
         Some((4096, 4096)) // (start, length)
     } else {
@@ -287,27 +279,24 @@ pub fn find_largest_free_region(
 }
 
 /// Allocate a chunk
-pub fn allocate_chunk(
-    _sb: &RefsSuperBlock,
-    _length: u64,
-) -> Option<RefsChunkDescriptor> {
+pub fn allocate_chunk(_sb: &RefsSuperBlock, _length: u64) -> Option<RefsChunkDescriptor> {
     // In a real implementation, we would:
     // 1. Scan the allocation bitmap
     // 2. Find a contiguous free region
     // 3. Mark it as allocated
     // 4. Return the chunk descriptor
-    
+
     // Simplified: return a synthetic chunk
     static mut NEXT_LCN: u64 = 4096;
-    
+
     unsafe {
         let lcn = NEXT_LCN;
         NEXT_LCN += _length;
-        
+
         if lcn + _length > _sb.get_total_clusters() {
             return None;
         }
-        
+
         Some(RefsChunkDescriptor {
             flags: REFS_CHUNK_FLAG_NONE,
             lcn,
@@ -323,12 +312,12 @@ pub fn free_chunk(_sb: &RefsSuperBlock, chunk: &RefsChunkDescriptor) -> Result<(
     // In a real implementation, we would:
     // 1. Mark the clusters as free in the allocation bitmap
     // 2. Update any allocation tables
-    
+
     if chunk.is_hole() {
         // Can't free a hole
         return Err(());
     }
-    
+
     Ok(())
 }
 
@@ -337,13 +326,10 @@ pub fn free_chunk(_sb: &RefsSuperBlock, chunk: &RefsChunkDescriptor) -> Result<(
 // ============================================================================
 
 /// Build chunk table from file record
-pub fn build_chunk_table(
-    _sb: &RefsSuperBlock,
-    chunks: &[RefsChunkDescriptor],
-) -> ChunkTable {
+pub fn build_chunk_table(_sb: &RefsSuperBlock, chunks: &[RefsChunkDescriptor]) -> ChunkTable {
     let mut table = ChunkTable::new();
     let mut current_vcn = 0u64;
-    
+
     for (i, chunk) in chunks.iter().enumerate() {
         if chunk.vcn_length > 0 {
             table.entries.push(ChunkTableEntry {
@@ -354,7 +340,7 @@ pub fn build_chunk_table(
             current_vcn += chunk.vcn_length;
         }
     }
-    
+
     table.chunk_count = chunks.len() as u32;
     table
 }
@@ -391,25 +377,29 @@ const REFS_DEFAULT_CLUSTER_SIZE: u32 = 65536;
 
 /// Print chunk information
 pub fn debug_print_chunk(chunk: &RefsChunkDescriptor, _sb: &RefsSuperBlock) {
-    // kprintln!("  Chunk:")  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("    Flags:  0x{:016x}", chunk.flags)  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("    LCN:    {}", chunk.lcn)  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("    VCNs:   {}", chunk.vcn_length)  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("    Size:   {} bytes", chunk.get_byte_length(sb))  // kprintln disabled (memcpy crash workaround);
-    
+    // kprintln!("  Chunk:");
+    // kprintln!("    Flags:  0x{:016x}", chunk.flags);
+    // kprintln!("    LCN:    {}", chunk.lcn);
+    // kprintln!("    VCNs:   {}", chunk.vcn_length);
+    // kprintln!("    Size:   {} bytes", chunk.get_byte_length(sb));
+
     if chunk.is_hole() {
-        // kprintln!("    Type:   HOLE")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("    Type:   HOLE");
     } else {
-        // kprintln!("    Type:   DATA")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("    Type:   DATA");
     }
 }
 
 /// Print chunk table
-pub fn debug_print_chunk_table(table: &ChunkTable, chunks: &[RefsChunkDescriptor], _sb: &RefsSuperBlock) {
+pub fn debug_print_chunk_table(
+    table: &ChunkTable,
+    chunks: &[RefsChunkDescriptor],
+    _sb: &RefsSuperBlock,
+) {
     // Iterate the table to validate the entries; the actual logging
     // was disabled (memcpy crash workaround). Iterating here keeps
     // the API contract and exercises the data structures.
-    
+
     for entry in &table.entries {
         let chunk = &chunks[entry.chunk_index as usize];
         // Reference fields to retain the API contract

@@ -34,11 +34,13 @@ use crate::libs::wow64::types::*;
 pub unsafe extern "C" fn Wow64ApcRoutine(
     apc: *mut Kapc32,
     thread: u64, // ETHREAD kernel pointer
-    frame: u64,   // 32-bit frame pointer
+    frame: u64,  // 32-bit frame pointer
 ) {
     crate::wow64_klog!(
         "Wow64ApcRoutine apc=0x{:016x} thread=0x{:016x} frame=0x{:016x}",
-        apc as u64, thread, frame
+        apc as u64,
+        thread,
+        frame
     );
 
     // Validate APC pointer
@@ -54,7 +56,10 @@ pub unsafe extern "C" fn Wow64ApcRoutine(
 
     crate::wow64_klog!(
         "APC params: routine=0x{:08x} ctx=0x{:08x} arg1=0x{:08x} arg2=0x{:08x}",
-        normal_routine, normal_context, system_argument1, system_argument2
+        normal_routine,
+        normal_context,
+        system_argument1,
+        system_argument2
     );
 
     // In a real implementation:
@@ -66,24 +71,19 @@ pub unsafe extern "C" fn Wow64ApcRoutine(
 
     // For now, just log the call
     if normal_routine != 0 {
-        crate::wow64_klog!(
-            "Would call 32-bit APC routine at 0x{:08x}",
-            normal_routine
-        );
+        crate::wow64_klog!("Would call 32-bit APC routine at 0x{:08x}", normal_routine);
     }
 }
 
 /// `Wow64ApcKernelRoutine` — Kernel-mode APC routine.
 ///
 /// This is called when a kernel-mode APC needs to be delivered to a 32-bit thread.
-pub unsafe extern "C" fn Wow64ApcKernelRoutine(
-    apc: *mut Kapc32,
-    thread: u64,
-    frame: u64,
-) {
+pub unsafe extern "C" fn Wow64ApcKernelRoutine(apc: *mut Kapc32, thread: u64, frame: u64) {
     crate::wow64_klog!(
         "Wow64ApcKernelRoutine apc=0x{:016x} thread=0x{:016x} frame=0x{:016x}",
-        apc as u64, thread, frame
+        apc as u64,
+        thread,
+        frame
     );
 
     if apc.is_null() {
@@ -102,13 +102,8 @@ pub unsafe extern "C" fn Wow64ApcKernelRoutine(
 /// `Wow64ApcRundownRoutine` — APC rundown routine.
 ///
 /// Called when a thread is being terminated while APCs are queued.
-pub unsafe extern "C" fn Wow64ApcRundownRoutine(
-    apc: *mut Kapc32,
-) {
-    crate::wow64_klog!(
-        "Wow64ApcRundownRoutine apc=0x{:016x}",
-        apc as u64
-    );
+pub unsafe extern "C" fn Wow64ApcRundownRoutine(apc: *mut Kapc32) {
+    crate::wow64_klog!("Wow64ApcRundownRoutine apc=0x{:016x}", apc as u64);
 
     if !apc.is_null() {
         let rundown_routine = (*apc).rundown_routine;
@@ -145,7 +140,9 @@ pub unsafe extern "C" fn Wow64PrepareForException(
 ) -> i32 {
     crate::wow64_klog!(
         "Wow64PrepareForException code=0x{:08x} flags=0x{:08x} addr=0x{:08x}",
-        exception_code, exception_flags, exception_address
+        exception_code,
+        exception_flags,
+        exception_address
     );
 
     // Check if exception is continuable
@@ -180,7 +177,9 @@ pub unsafe extern "C" fn Wow64RaiseException(
 ) -> ULONG32 {
     crate::wow64_klog!(
         "Wow64RaiseException record=0x{:08x} ctx=0x{:08x} frame=0x{:08x}",
-        exception_record as u32, context as u32, exception_frame
+        exception_record as u32,
+        context as u32,
+        exception_frame
     );
 
     // Validate inputs
@@ -194,7 +193,8 @@ pub unsafe extern "C" fn Wow64RaiseException(
 
     crate::wow64_klog!(
         "Raise exception: code=0x{:08x} flags=0x{:08x}",
-        exception_code, exception_flags
+        exception_code,
+        exception_flags
     );
 
     // In a real implementation:
@@ -225,7 +225,9 @@ pub unsafe extern "C" fn Wow64DispatchException(
 ) -> ULONG32 {
     crate::wow64_klog!(
         "Wow64DispatchException record=0x{:08x} ctx=0x{:08x} frame=0x{:08x}",
-        exception_record as u32, context as u32, exception_frame
+        exception_record as u32,
+        context as u32,
+        exception_frame
     );
 
     // Validate inputs
@@ -239,7 +241,9 @@ pub unsafe extern "C" fn Wow64DispatchException(
 
     crate::wow64_klog!(
         "Dispatch exception: code=0x{:08x} addr=0x{:08x} params={}",
-        exception_code, exception_address, number_parameters
+        exception_code,
+        exception_address,
+        number_parameters
     );
 
     // In a real implementation:
@@ -268,13 +272,11 @@ pub unsafe extern "C" fn Wow64DispatchException(
 ///
 /// # Returns
 /// * Does not return; transfers control back to 32-bit code
-pub unsafe extern "C" fn Wow64CallbackReturn(
-    buffer: *const u8,
-    buffer_length: ULONG32,
-) -> ! {
+pub unsafe extern "C" fn Wow64CallbackReturn(buffer: *const u8, buffer_length: ULONG32) -> ! {
     crate::wow64_klog!(
         "Wow64CallbackReturn buffer=0x{:016x} length={}",
-        buffer as u64, buffer_length
+        buffer as u64,
+        buffer_length
     );
 
     // In a real implementation:
@@ -381,7 +383,8 @@ pub unsafe extern "C" fn wow64_prepare_for_exception(
 ) -> i32 {
     crate::wow64_klog!(
         "wow64_prepare_for_exception er={:p} ctx={:p}",
-        exception_record, context
+        exception_record,
+        context
     );
     if exception_record.is_null() || context.is_null() {
         return -1; // STATUS_INVALID_PARAMETER
@@ -390,9 +393,7 @@ pub unsafe extern "C" fn wow64_prepare_for_exception(
 }
 
 /// `wow64_apc_routine` — APC delivery thunk for 32-bit threads.
-pub unsafe extern "C" fn wow64_apc_routine(
-    apc: *mut core::ffi::c_void,
-) {
+pub unsafe extern "C" fn wow64_apc_routine(apc: *mut core::ffi::c_void) {
     crate::wow64_klog!("wow64_apc_routine apc={:p}", apc);
     let _ = apc;
 }
@@ -405,7 +406,9 @@ pub unsafe extern "C" fn wow64_ldrp_initialize(
 ) -> i32 {
     crate::wow64_klog!(
         "wow64_ldrp_initialize ctx={:p} entry={:p} param={:p}",
-        context, entry, param
+        context,
+        entry,
+        param
     );
     if entry.is_null() {
         return -1;

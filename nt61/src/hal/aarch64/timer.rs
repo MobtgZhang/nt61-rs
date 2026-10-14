@@ -99,7 +99,9 @@ pub fn smoke_test() -> bool {
     let mut b = a;
     for _ in 0..1024 {
         b = counter();
-        if b != a { break; }
+        if b != a {
+            break;
+        }
     }
     b > a
 }

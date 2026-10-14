@@ -11,10 +11,10 @@
 
 use crate::hal::common::pci;
 use crate::hal::common::pit;
+use crate::ke::sync::Spinlock;
 use crate::kprintln;
 use crate::mm::pool::{self, PoolType};
-use crate::ke::sync::Spinlock;
-use core::sync::atomic::{AtomicU16, AtomicU32, AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, Ordering};
 
 /// virtio-net PCI vendor / device ID.
 const VIRTIO_NET_VID: u16 = 0x1AF4;
@@ -23,7 +23,6 @@ const VIRTIO_NET_DID: u16 = 0x1000;
 /// virtio MMIO register offsets (BAR0, starting at offset 0).
 const REG_MAGIC: u64 = 0x00;
 const REG_VERSION: u64 = 0x04;
-
 
 const REG_DEVICE_FEATURES: u64 = 0x10;
 const REG_DRIVER_FEATURES: u64 = 0x20;
@@ -36,7 +35,6 @@ const REG_QUEUE_NOTIFY: u64 = 0x50;
 const REG_DEVICE_STATUS: u64 = 0x70;
 const REG_ISR_STATUS: u64 = 0x60;
 
-
 /// Magic value for the modern MMIO transport: "virt".
 const MAGIC_VALUE: u32 = 0x74726976;
 
@@ -46,37 +44,22 @@ const STATUS_DRIVER: u32 = 2;
 const STATUS_DRIVER_OK: u32 = 4;
 const STATUS_FEATURES_OK: u32 = 8;
 
-
-
 /// virtio feature bits for network device
-const VIRTIO_NET_F_CSUM: u32 = 0;        // Device handles partial CSUM
-const VIRTIO_NET_F_GUEST_CSUM: u32 = 1;   // Guest handles partial CSUM
-const VIRTIO_NET_F_MAC: u32 = 5;          // Device has given MAC address
+const VIRTIO_NET_F_CSUM: u32 = 0; // Device handles partial CSUM
+const VIRTIO_NET_F_GUEST_CSUM: u32 = 1; // Guest handles partial CSUM
+const VIRTIO_NET_F_MAC: u32 = 5; // Device has given MAC address
 
-
-
-
-
-
-
-
-const VIRTIO_NET_F_STATUS: u32 = 16;      // Device provides configuration status
-
-
-
-
+const VIRTIO_NET_F_STATUS: u32 = 16; // Device provides configuration status
 
 /// virtqueue constants
-const VIRTIO_NET_RX_QUEUE: u16 = 0;  // Receive queue index
-const VIRTIO_NET_TX_QUEUE: u16 = 1;  // Transmit queue index
-const DEFAULT_QUEUE_SIZE: u16 = 256;  // Number of descriptors per queue
-const BUFFER_SIZE: usize = 2048;      // Buffer size for TX/RX
+const VIRTIO_NET_RX_QUEUE: u16 = 0; // Receive queue index
+const VIRTIO_NET_TX_QUEUE: u16 = 1; // Transmit queue index
+const DEFAULT_QUEUE_SIZE: u16 = 256; // Number of descriptors per queue
+const BUFFER_SIZE: usize = 2048; // Buffer size for TX/RX
 
 /// virtio config space offset
 const CONFIG_MAC: u64 = 0;
 const CONFIG_STATUS: u64 = 6;
-
-
 
 /// Pool tags for network buffers
 mod tags {
@@ -89,16 +72,15 @@ mod tags {
 /// Virtqueue descriptor (16 bytes)
 #[repr(C)]
 struct VirtqDesc {
-    pub addr: u64,      // Physical address of buffer
-    pub len: u32,       // Length of buffer
-    pub flags: u16,     // VIRTQ_DESC_F_* flags
-    pub next: u16,      // Next descriptor index in chain
+    pub addr: u64,  // Physical address of buffer
+    pub len: u32,   // Length of buffer
+    pub flags: u16, // VIRTQ_DESC_F_* flags
+    pub next: u16,  // Next descriptor index in chain
 }
 
 /// Descriptor flags
 
-const VIRTQ_DESC_F_WRITE: u16 = 2;      // Device writes (RX buffer)
-
+const VIRTQ_DESC_F_WRITE: u16 = 2; // Device writes (RX buffer)
 
 /// Virtqueue available ring entry (6 bytes)
 #[repr(C)]
@@ -112,8 +94,8 @@ struct VirtqAvail {
 /// Virtqueue used ring entry (16 bytes)
 #[repr(C)]
 struct VirtqUsedElem {
-    pub id: u32,   // Index of descriptor that was used
-    pub len: u32,  // Length of data written
+    pub id: u32,  // Index of descriptor that was used
+    pub len: u32, // Length of data written
 }
 
 /// Virtqueue used ring header
@@ -142,18 +124,18 @@ struct VirtQueue {
 
 impl VirtQueue {
     /// Initialize a virtqueue
-    unsafe fn init(
-        mmio: *mut u8,
-        queue_idx: u16,
-        num: u16,
-    ) -> Option<VirtQueue> {
+    unsafe fn init(mmio: *mut u8, queue_idx: u16, num: u16) -> Option<VirtQueue> {
         // Select the queue
-        core::ptr::write_volatile((mmio as *mut u32).add((REG_QUEUE_SEL / 4) as usize), queue_idx as u32);
+        core::ptr::write_volatile(
+            (mmio as *mut u32).add((REG_QUEUE_SEL / 4) as usize),
+            queue_idx as u32,
+        );
 
         // Check max queue size
-        let max = core::ptr::read_volatile((mmio as *const u16).add((REG_QUEUE_NUM_MAX / 2) as usize));
+        let max =
+            core::ptr::read_volatile((mmio as *const u16).add((REG_QUEUE_NUM_MAX / 2) as usize));
         if max == 0 || num > max {
-            // kprintln!("  [virtio-net] Queue {} max size {} < requested {}", queue_idx, max, num)  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("  [virtio-net] Queue {} max size {} < requested {}", queue_idx, max, num);
             return None;
         }
 
@@ -163,14 +145,15 @@ impl VirtQueue {
         let used_size = 4 + (num as usize) * core::mem::size_of::<VirtqUsedElem>() + 2;
 
         let align: usize = 4096;
-        let total_size = (desc_size + align - 1) & !(align - 1)
-            + (avail_size + align - 1) & !(align - 1)
-            + (used_size + align - 1) & !(align - 1);
+        let total_size = (desc_size + align - 1)
+            & !(align - 1) + (avail_size + align - 1)
+            & !(align - 1) + (used_size + align - 1)
+            & !(align - 1);
 
         // Allocate non-paged memory for the queue
         let mem = pool::allocate_aligned(PoolType::NonPaged, total_size, align);
         if mem.is_null() {
-            // kprintln!("  [virtio-net] Failed to allocate queue memory")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("  [virtio-net] Failed to allocate queue memory");
             return None;
         }
 
@@ -207,10 +190,16 @@ impl VirtQueue {
         }
 
         // Set queue size
-        core::ptr::write_volatile((mmio as *mut u32).add((REG_QUEUE_NUM / 4) as usize), num as u32);
+        core::ptr::write_volatile(
+            (mmio as *mut u32).add((REG_QUEUE_NUM / 4) as usize),
+            num as u32,
+        );
 
         // Set queue PFN (physical page number)
-        core::ptr::write_volatile((mmio as *mut u32).add((REG_QUEUE_PFN / 4) as usize), (desc_phys / 4096) as u32);
+        core::ptr::write_volatile(
+            (mmio as *mut u32).add((REG_QUEUE_PFN / 4) as usize),
+            (desc_phys / 4096) as u32,
+        );
 
         Some(VirtQueue {
             desc,
@@ -353,7 +342,7 @@ impl VirtQueue {
 
         reclaimed
     }
-    
+
     /// Wait for TX completion with timeout
     /// Returns true if at least one buffer was completed
     pub fn wait_tx_complete(&mut self, timeout_us: u64) -> bool {
@@ -507,11 +496,15 @@ fn push_nic(n: Nic) {
     let count = unsafe { NIC_COUNT };
     if count < nics.len() {
         nics[count] = Some(n);
-        unsafe { NIC_COUNT += 1; }
+        unsafe {
+            NIC_COUNT += 1;
+        }
     }
 }
 
-pub fn count() -> usize { unsafe { NIC_COUNT } }
+pub fn count() -> usize {
+    unsafe { NIC_COUNT }
+}
 
 /// Get a NIC by index
 pub fn get_nic(index: usize) -> Option<&'static Nic> {
@@ -524,13 +517,15 @@ pub fn get_nic(index: usize) -> Option<&'static Nic> {
 }
 
 pub fn init() {
-#[cfg(target_arch = "x86_64")]
+    #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     crate::hal::x86_64::serial::write_string("NET:virtio_start\r\n");
     let mut found = 0u32;
     for dev in pci::enumerate() {
         if dev.vendor_id == VIRTIO_NET_VID && dev.device_id == VIRTIO_NET_DID {
-            if let Some(info) = crate::drivers::bus::pci_bus::find_pci(dev.bus, dev.device, dev.function) {
+            if let Some(info) =
+                crate::drivers::bus::pci_bus::find_pci(dev.bus, dev.device, dev.function)
+            {
                 if let Some(bar0) = first_mmio_bar(&info) {
                     let mut n = Nic {
                         bar0_phys: bar0,
@@ -554,22 +549,26 @@ pub fn init() {
             }
         }
     }
-#[cfg(target_arch = "x86_64")]
+    #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     crate::hal::x86_64::serial::write_string("NET:virtio_done\r\n");
-    // kprintln!("      virtio-net: {} NIC(s) initialised", found)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("      virtio-net: {} NIC(s) initialised", found);
 }
 
 fn first_mmio_bar(info: &crate::drivers::bus::pci_bus::PciDeviceInfo) -> Option<u64> {
     for bar in info.bars.iter() {
-        if !bar.is_io && bar.phys != 0 { return Some(bar.phys); }
+        if !bar.is_io && bar.phys != 0 {
+            return Some(bar.phys);
+        }
     }
     None
 }
 
 fn init_nic(n: &mut Nic) -> bool {
     let base = n.bar0_phys;
-    if base == 0 { return false; }
+    if base == 0 {
+        return false;
+    }
     let mmio_base = crate::mm::syspte::map_io_space(base, 1);
     let mmio = match mmio_base {
         Some(m) => m as *mut u8,
@@ -580,20 +579,24 @@ fn init_nic(n: &mut Nic) -> bool {
     unsafe {
         let magic = core::ptr::read_volatile((mmio as *const u32).add((REG_MAGIC / 4) as usize));
         if magic != MAGIC_VALUE {
-            // kprintln!("  [virtio-net] Bad magic: 0x{:08x}", magic)  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("  [virtio-net] Bad magic: 0x{:08x}", magic);
             return false;
         }
 
         n.version = core::ptr::read_volatile((mmio as *const u32).add((REG_VERSION / 4) as usize));
 
         // Acknowledge + driver.
-        let status = core::ptr::read_volatile((mmio as *const u32).add((REG_DEVICE_STATUS / 4) as usize));
-        core::ptr::write_volatile((mmio as *mut u32).add((REG_DEVICE_STATUS / 4) as usize),
-                                  status | STATUS_ACKNOWLEDGE | STATUS_DRIVER);
+        let status =
+            core::ptr::read_volatile((mmio as *const u32).add((REG_DEVICE_STATUS / 4) as usize));
+        core::ptr::write_volatile(
+            (mmio as *mut u32).add((REG_DEVICE_STATUS / 4) as usize),
+            status | STATUS_ACKNOWLEDGE | STATUS_DRIVER,
+        );
 
         // Read device features and negotiate driver features
-        let dev_features = core::ptr::read_volatile((mmio as *const u64).add((REG_DEVICE_FEATURES / 8) as usize));
-        // kprintln!("  [virtio-net] Device features: 0x{:016x}", dev_features)  // kprintln disabled (memcpy crash workaround);
+        let dev_features =
+            core::ptr::read_volatile((mmio as *const u64).add((REG_DEVICE_FEATURES / 8) as usize));
+        // kprintln!("  [virtio-net] Device features: 0x{:016x}", dev_features);
 
         // Negotiate features: we want MAC at minimum
         let mut driver_features: u64 = 0;
@@ -608,41 +611,48 @@ fn init_nic(n: &mut Nic) -> bool {
             driver_features |= 1 << VIRTIO_NET_F_GUEST_CSUM;
         }
 
-        core::ptr::write_volatile((mmio as *mut u64).add((REG_DRIVER_FEATURES / 8) as usize), driver_features);
+        core::ptr::write_volatile(
+            (mmio as *mut u64).add((REG_DRIVER_FEATURES / 8) as usize),
+            driver_features,
+        );
 
         // Set features OK
-        let status = core::ptr::read_volatile((mmio as *const u32).add((REG_DEVICE_STATUS / 4) as usize));
-        core::ptr::write_volatile((mmio as *mut u32).add((REG_DEVICE_STATUS / 4) as usize),
-                                  status | STATUS_FEATURES_OK);
+        let status =
+            core::ptr::read_volatile((mmio as *const u32).add((REG_DEVICE_STATUS / 4) as usize));
+        core::ptr::write_volatile(
+            (mmio as *mut u32).add((REG_DEVICE_STATUS / 4) as usize),
+            status | STATUS_FEATURES_OK,
+        );
 
         // Read MAC address from config space
         for i in 0..6 {
             n.mac[i] = core::ptr::read_volatile((mmio as *const u8).add((CONFIG_MAC as usize) + i));
         }
-        // kprintln!("  [virtio-net] MAC: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",  // kprintln disabled (memcpy crash workaround)
-//                   n.mac[0], n.mac[1], n.mac[2], n.mac[3], n.mac[4], n.mac[5]);
+        // kprintln!("  [virtio-net] MAC: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+        //                   n.mac[0], n.mac[1], n.mac[2], n.mac[3], n.mac[4], n.mac[5]);
 
         // Read link status
         if driver_features & (1 << VIRTIO_NET_F_STATUS) != 0 {
-            let config_status = core::ptr::read_volatile((mmio as *const u16).add((CONFIG_STATUS / 2) as usize));
+            let config_status =
+                core::ptr::read_volatile((mmio as *const u16).add((CONFIG_STATUS / 2) as usize));
             n.link_up = (config_status & 1) != 0;
         }
 
         // Setup RX queue (queue 0)
         if let Some(rx) = VirtQueue::init(mmio, VIRTIO_NET_RX_QUEUE, DEFAULT_QUEUE_SIZE) {
             n.rx_queue = Some(rx);
-            // kprintln!("  [virtio-net] RX queue initialized")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("  [virtio-net] RX queue initialized");
         } else {
-            // kprintln!("  [virtio-net] Failed to initialize RX queue")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("  [virtio-net] Failed to initialize RX queue");
             return false;
         }
 
         // Setup TX queue (queue 1)
         if let Some(tx) = VirtQueue::init(mmio, VIRTIO_NET_TX_QUEUE, DEFAULT_QUEUE_SIZE) {
             n.tx_queue = Some(tx);
-            // kprintln!("  [virtio-net] TX queue initialized")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("  [virtio-net] TX queue initialized");
         } else {
-            // kprintln!("  [virtio-net] Failed to initialize TX queue")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("  [virtio-net] Failed to initialize TX queue");
             return false;
         }
 
@@ -651,7 +661,7 @@ fn init_nic(n: &mut Nic) -> bool {
             for _ in 0..DEFAULT_QUEUE_SIZE {
                 let buf = pool::allocate_tagged(PoolType::NonPaged, BUFFER_SIZE, tags::NETBUF);
                 if buf.is_null() {
-                    // kprintln!("  [virtio-net] Failed to allocate RX buffer")  // kprintln disabled (memcpy crash workaround);
+                    // kprintln!("  [virtio-net] Failed to allocate RX buffer");
                     break;
                 }
                 if rx.add_rx_buffer(buf, BUFFER_SIZE).is_none() {
@@ -662,19 +672,22 @@ fn init_nic(n: &mut Nic) -> bool {
         }
 
         // Set driver OK
-        let status = core::ptr::read_volatile((mmio as *const u32).add((REG_DEVICE_STATUS / 4) as usize));
-        core::ptr::write_volatile((mmio as *mut u32).add((REG_DEVICE_STATUS / 4) as usize),
-                                  status | STATUS_DRIVER_OK);
+        let status =
+            core::ptr::read_volatile((mmio as *const u32).add((REG_DEVICE_STATUS / 4) as usize));
+        core::ptr::write_volatile(
+            (mmio as *mut u32).add((REG_DEVICE_STATUS / 4) as usize),
+            status | STATUS_DRIVER_OK,
+        );
 
-        // kprintln!("  [virtio-net] Link up: {}", n.link_up)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [virtio-net] Link up: {}", n.link_up);
         n.initialised = true;
     }
     true
 }
 
 pub fn smoke_test() -> bool {
-    // kprintln!("  [virtio-net SMOKE] virtio-net NICs: {}", count())  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("  [virtio-net SMOKE OK] virtio-net stack healthy")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [virtio-net SMOKE] virtio-net NICs: {}", count());
+    // kprintln!("  [virtio-net SMOKE OK] virtio-net stack healthy");
     true
 }
 
@@ -701,7 +714,7 @@ pub fn send(nic_idx: usize, data: &[u8], wait: bool) -> bool {
     // Allocate a buffer for the packet
     let buf = pool::allocate_tagged(PoolType::NonPaged, data.len(), tags::NETPKT);
     if buf.is_null() {
-        // kprintln!("  [virtio-net] Failed to allocate TX buffer")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [virtio-net] Failed to allocate TX buffer");
         return false;
     }
 
@@ -726,7 +739,7 @@ pub fn send(nic_idx: usize, data: &[u8], wait: bool) -> bool {
     unsafe {
         core::ptr::write_volatile(
             (mmio as *mut u32).add((REG_QUEUE_NOTIFY / 4) as usize),
-            VIRTIO_NET_TX_QUEUE as u32
+            VIRTIO_NET_TX_QUEUE as u32,
         );
     }
 
@@ -735,7 +748,7 @@ pub fn send(nic_idx: usize, data: &[u8], wait: bool) -> bool {
         if let Some(ref mut tx) = n.tx_queue {
             // Wait up to 1 second for TX completion
             if !tx.wait_tx_complete(1_000_000) {
-                // kprintln!("  [virtio-net] TX completion timeout")  // kprintln disabled (memcpy crash workaround);
+                // kprintln!("  [virtio-net] TX completion timeout");
                 // Don't fail the send - the packet was queued
             }
         }
@@ -777,13 +790,11 @@ pub fn receive(nic_idx: usize, buffer: &mut [u8]) -> Option<usize> {
     let mmio = n.bar0_virt;
     unsafe {
         // Read ISR status to check for pending interrupts
-        let isr = core::ptr::read_volatile(
-            (mmio as *const u8).add(REG_ISR_STATUS as usize)
-        );
+        let isr = core::ptr::read_volatile((mmio as *const u8).add(REG_ISR_STATUS as usize));
 
         if isr & 0x1 != 0 {
             // RX interrupt pending, process packets
-            // kprintln!("  [virtio-net] RX interrupt")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("  [virtio-net] RX interrupt");
         }
     }
 
@@ -830,13 +841,19 @@ pub fn is_link_up(nic_idx: usize) -> bool {
 /// Get TX packet count
 pub fn get_tx_count(nic_idx: usize) -> u32 {
     let nics = get_nics();
-    nics[nic_idx].as_ref().map(|n| n.tx_count.load(Ordering::Relaxed)).unwrap_or(0)
+    nics[nic_idx]
+        .as_ref()
+        .map(|n| n.tx_count.load(Ordering::Relaxed))
+        .unwrap_or(0)
 }
 
 /// Get RX packet count
 pub fn get_rx_count(nic_idx: usize) -> u32 {
     let nics = get_nics();
-    nics[nic_idx].as_ref().map(|n| n.rx_count.load(Ordering::Relaxed)).unwrap_or(0)
+    nics[nic_idx]
+        .as_ref()
+        .map(|n| n.rx_count.load(Ordering::Relaxed))
+        .unwrap_or(0)
 }
 
 /// Handle interrupt from virtio-net NIC
@@ -852,9 +869,7 @@ pub fn interrupt_handler(nic_idx: usize) {
     let mmio = n.bar0_virt;
     unsafe {
         // Read and clear ISR status
-        let isr = core::ptr::read_volatile(
-            (mmio as *const u8).add(REG_ISR_STATUS as usize)
-        );
+        let isr = core::ptr::read_volatile((mmio as *const u8).add(REG_ISR_STATUS as usize));
 
         if isr & 0x1 != 0 {
             // RX packet available
@@ -865,14 +880,14 @@ pub fn interrupt_handler(nic_idx: usize) {
             if let Some(ref mut tx) = n.tx_queue {
                 let reclaimed = tx.poll_tx_completion();
                 if reclaimed > 0 {
-                    // kprintln!("  [virtio-net] Reclaimed {} TX buffers", reclaimed)  // kprintln disabled (memcpy crash workaround);
+                    // kprintln!("  [virtio-net] Reclaimed {} TX buffers", reclaimed);
                 }
             }
             guard.sending = false;
         }
         if isr & 0x3 != 0 {
             // Configuration change
-            // kprintln!("  [virtio-net] Config change interrupt")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("  [virtio-net] Config change interrupt");
         }
     }
 }
@@ -904,9 +919,9 @@ pub fn flush_tx(nic_idx: usize) -> bool {
             guard.sending = false;
             return true;
         }
-        
+
         // Timeout - still mark as not sending to avoid deadlock
-        // kprintln!("  [virtio-net] TX flush timeout, forcing completion")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [virtio-net] TX flush timeout, forcing completion");
         guard.sending = false;
         return false;
     }

@@ -19,7 +19,11 @@ struct Line {
 
 impl Line {
     const fn empty() -> Self {
-        Self { bytes: [0u8; super::COLS], attr: super::ATTR_DEFAULT, len: 0 }
+        Self {
+            bytes: [0u8; super::COLS],
+            attr: super::ATTR_DEFAULT,
+            len: 0,
+        }
     }
 }
 
@@ -39,7 +43,9 @@ pub fn init() {
 }
 
 pub fn set_attr(attr: u8) {
-    unsafe { CUR_ATTR = attr; }
+    unsafe {
+        CUR_ATTR = attr;
+    }
 }
 
 pub fn put_byte(b: u8) {
@@ -106,7 +112,10 @@ pub fn clear() {
     // ANSI: ESC [ 2 J   clear entire screen
     //        ESC [ H     move cursor to (0, 0)
     crate::arch::loongarch64::serial::write_string("\x1b[2J\x1b[H\r\n[screen cleared]\r\n");
-    unsafe { commit_line(); commit_line(); }
+    unsafe {
+        commit_line();
+        commit_line();
+    }
 }
 
 pub fn set_cursor(x: u8, y: u8) {
@@ -118,25 +127,53 @@ pub fn set_cursor(x: u8, y: u8) {
 
 fn format_ansi_cup<'a>(buf: &'a mut [u8; 16], row: u32, col: u32) -> &'a str {
     let mut p = 0;
-    buf[p] = 0x1b; p += 1;
-    buf[p] = b'['; p += 1;
+    buf[p] = 0x1b;
+    p += 1;
+    buf[p] = b'[';
+    p += 1;
     let mut tmp = [0u8; 8];
     let mut n = 0;
     let mut v = row;
-    if v == 0 { tmp[n] = b'0'; n += 1; } else {
-        while v > 0 { tmp[n] = b'0' + (v % 10) as u8; v /= 10; n += 1; }
-        for i in 0..n/2 { tmp.swap(i, n-1-i); }
+    if v == 0 {
+        tmp[n] = b'0';
+        n += 1;
+    } else {
+        while v > 0 {
+            tmp[n] = b'0' + (v % 10) as u8;
+            v /= 10;
+            n += 1;
+        }
+        for i in 0..n / 2 {
+            tmp.swap(i, n - 1 - i);
+        }
     }
-    for i in 0..n { buf[p] = tmp[i]; p += 1; }
-    buf[p] = b';'; p += 1;
+    for i in 0..n {
+        buf[p] = tmp[i];
+        p += 1;
+    }
+    buf[p] = b';';
+    p += 1;
     n = 0;
     v = col;
-    if v == 0 { tmp[n] = b'0'; n += 1; } else {
-        while v > 0 { tmp[n] = b'0' + (v % 10) as u8; v /= 10; n += 1; }
-        for i in 0..n/2 { tmp.swap(i, n-1-i); }
+    if v == 0 {
+        tmp[n] = b'0';
+        n += 1;
+    } else {
+        while v > 0 {
+            tmp[n] = b'0' + (v % 10) as u8;
+            v /= 10;
+            n += 1;
+        }
+        for i in 0..n / 2 {
+            tmp.swap(i, n - 1 - i);
+        }
     }
-    for i in 0..n { buf[p] = tmp[i]; p += 1; }
-    buf[p] = b'H'; p += 1;
+    for i in 0..n {
+        buf[p] = tmp[i];
+        p += 1;
+    }
+    buf[p] = b'H';
+    p += 1;
     unsafe { core::str::from_utf8_unchecked(&buf[..p]) }
 }
 

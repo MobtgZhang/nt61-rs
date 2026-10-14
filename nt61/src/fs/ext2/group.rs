@@ -197,7 +197,7 @@ pub fn calculate_gdt_size(sb: &Ext2SuperBlock) -> usize {
     } else {
         EXT2_BGDESC_SIZE_OLD
     };
-    
+
     // Round up to block boundary
     let total = group_count * desc_size;
     let block_size = sb.get_block_size() as usize;
@@ -215,47 +215,44 @@ pub fn get_gdt_start_block(sb: &Ext2SuperBlock) -> u64 {
 }
 
 /// Read the entire group descriptor table from disk
-pub fn read_group_desc_table(
-    device: *mut (),
-    sb: &Ext2SuperBlock,
-) -> Option<Ext2GroupDescTable> {
+pub fn read_group_desc_table(device: *mut (), sb: &Ext2SuperBlock) -> Option<Ext2GroupDescTable> {
     let group_count = sb.get_group_count();
     let block_size = sb.get_block_size() as usize;
-    
+
     // Determine descriptor size
     let desc_size = if sb.is_dynamic_rev() && sb.inode_size >= 255 {
         EXT2_BGDESC_SIZE_NEW
     } else {
         EXT2_BGDESC_SIZE_OLD
     };
-    
+
     // Calculate total size needed
     let total_size = (group_count as usize) * desc_size;
     let blocks_needed = (total_size + block_size - 1) / block_size;
-    
+
     // Read the GDT
     let gdt_start = get_gdt_start_block(sb);
     let mut buffer = vec![0u8; blocks_needed * block_size];
-    
-    if super::superblock::read_sectors(device, gdt_start, blocks_needed as u32, &mut buffer).is_err() {
-        // kprintln!("[EXT2] Failed to read group descriptor table")  // kprintln disabled (memcpy crash workaround);
+
+    if super::superblock::read_sectors(device, gdt_start, blocks_needed as u32, &mut buffer)
+        .is_err()
+    {
+        // kprintln!("[EXT2] Failed to read group descriptor table");
         return None;
     }
-    
+
     // Parse descriptors
     let mut descriptors = Vec::with_capacity(group_count as usize);
     for i in 0..group_count {
         let offset = (i as usize) * desc_size;
         if offset + EXT2_BGDESC_SIZE_OLD <= buffer.len() {
             let desc = unsafe {
-                core::ptr::read_unaligned(
-                    buffer.as_ptr().add(offset) as *const Ext2GroupDesc
-                )
+                core::ptr::read_unaligned(buffer.as_ptr().add(offset) as *const Ext2GroupDesc)
             };
             descriptors.push(desc);
         }
     }
-    
+
     Some(Ext2GroupDescTable {
         descriptors,
         group_count,
@@ -271,38 +268,36 @@ pub fn read_group_descriptor(
 ) -> Option<Ext2GroupDesc> {
     let group_count = sb.get_group_count();
     if group_num >= group_count {
-        // kprintln!("[EXT2] Group number {} out of range (max {})", group_num, group_count)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[EXT2] Group number {} out of range (max {})", group_num, group_count);
         return None;
     }
-    
+
     // Determine descriptor size
     let desc_size = if sb.is_dynamic_rev() && sb.inode_size >= 255 {
         EXT2_BGDESC_SIZE_NEW
     } else {
         EXT2_BGDESC_SIZE_OLD
     };
-    
+
     // Calculate block and offset
     let block_size = sb.get_block_size() as usize;
     let gdt_start = get_gdt_start_block(sb);
     let desc_offset = (group_num as usize) * desc_size;
     let block_offset = desc_offset % block_size;
     let block_num = desc_offset / block_size;
-    
+
     // Read the block
     let mut buffer = vec![0u8; block_size];
     let sector = (gdt_start + block_num as u64) * (block_size / 512) as u64;
-    
+
     if super::superblock::read_sector(device, sector, &mut buffer).is_err() {
-        // kprintln!("[EXT2] Failed to read GDT block for group {}", group_num)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[EXT2] Failed to read GDT block for group {}", group_num);
         return None;
     }
-    
+
     // Parse descriptor
     Some(unsafe {
-        core::ptr::read_unaligned(
-            buffer.as_ptr().add(block_offset) as *const Ext2GroupDesc
-        )
+        core::ptr::read_unaligned(buffer.as_ptr().add(block_offset) as *const Ext2GroupDesc)
     })
 }
 
@@ -343,23 +338,23 @@ pub fn has_backup_superblock(sb: &Ext2SuperBlock, group: u32) -> bool {
     if group == 0 {
         return true; // Primary superblock
     }
-    
+
     if !sb.has_sparse_super() {
         // All groups have backup if not sparse
         return true;
     }
-    
+
     // Sparse super: backups at groups 1, 3, 5, 7, 9, 25, 27...
     // (powers of 2 minus 1, up to a reasonable limit)
     if group == 1 || group == 3 || group == 5 || group == 7 || group == 9 {
         return true;
     }
-    
+
     // Groups like 25, 27, 29, 31 for larger filesystems
     if group >= 25 && group <= 27 {
         return true;
     }
-    
+
     false
 }
 
@@ -421,13 +416,13 @@ pub fn is_uninit_group(sb: &Ext2SuperBlock, group: u32) -> bool {
     if sb.has_sparse_super() && !has_backup_superblock(sb, group) {
         return true;
     }
-    
+
     // With meta_bg, groups in meta_bg > 0 may be uninitialized
     if (sb.incompatible_features & 0x10) != 0 {
         // meta_bg feature - groups may have different layouts
         return false; // Simplified for now
     }
-    
+
     false
 }
 
@@ -437,7 +432,7 @@ pub fn flex_bg_first_group(_sb: &Ext2SuperBlock, group: u32, log_groups_per_flex
     if log_groups_per_flex == 0 {
         return group;
     }
-    
+
     let groups_per_flex = 1u32 << log_groups_per_flex;
     (group / groups_per_flex) * groups_per_flex
 }

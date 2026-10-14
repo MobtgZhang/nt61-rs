@@ -188,7 +188,7 @@ pub struct DcObject {
     pub pen: u64,
     pub brush: u64,
     pub font: u64,
-    pub palette_handle: u64,  // renamed to avoid conflict with palette field
+    pub palette_handle: u64, // renamed to avoid conflict with palette field
     pub bitmap: u64,
     pub region: u64,
 
@@ -235,7 +235,7 @@ impl DcObject {
             palette_handle: 0,
             bitmap: 0,
             region: 0,
-            text_color: 0x00000000,  // Black
+            text_color: 0x00000000, // Black
             bg_color: 0x00FFFFFF,   // White
             text_align: TA_LEFT | TA_TOP | TA_NOUPDATECP,
             bk_mode: OPAQUE,
@@ -330,7 +330,7 @@ impl DcHandleTable {
         let _ = &dc;
 
         if dc.is_null() {
-            // kprintln!("[win32k] DcHandleTable::create: failed to allocate DC")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[win32k] DcHandleTable::create: failed to allocate DC");
             return 0;
         }
 
@@ -350,8 +350,8 @@ impl DcHandleTable {
         self.next_handle += 1;
         self.entries.push(Some(dc as *mut DcObject));
 
-        // kprintln!("[win32k] DcHandleTable::create: type=0x{:08x}, surface=0x{:x} -> handle=0x{:08x}",  // kprintln disabled (memcpy crash workaround)
-//                   dc_type, surface, handle);
+        // kprintln!("[win32k] DcHandleTable::create: type=0x{:08x}, surface=0x{:x} -> handle=0x{:08x}",
+        //                   dc_type, surface, handle);
 
         handle
     }
@@ -385,7 +385,7 @@ impl DcHandleTable {
                     }
                     let _ = crate::mm::pool::free(ptr as *mut u8);
                 }
-                // kprintln!("[win32k] DcHandleTable::delete: handle=0x{:08x}", handle)  // kprintln disabled (memcpy crash workaround);
+                // kprintln!("[win32k] DcHandleTable::delete: handle=0x{:08x}", handle);
                 return true;
             }
         }
@@ -425,7 +425,9 @@ pub fn get_dc_table() -> &'static mut DcHandleTable {
     let inner = guard.as_mut().unwrap() as *mut DcHandleTable;
     let _ = &inner;
     let _ = &inner;
-    unsafe { DC_TABLE_PTR = inner; }
+    unsafe {
+        DC_TABLE_PTR = inner;
+    }
     unsafe { &mut *inner }
 }
 
@@ -481,12 +483,12 @@ pub fn GreGetDCForBitmap(bitmap_handle: u64) -> u64 {
     let table = get_dc_table();
     let _ = &table;
     let _ = &table;
-    
+
     // Create a memory DC compatible with the primary surface
     let mem_dc = table.create(DC_TYPE_MEMORY, 0);
     let _ = &mem_dc;
     let _ = &mem_dc;
-    
+
     mem_dc
 }
 
@@ -656,23 +658,47 @@ pub fn GreSelectObject(dc_handle: u64, object_handle: u64) -> u64 {
         let obj_type = (object_handle >> 16) & 0xFFFF;
         let _ = &obj_type;
         let _ = &obj_type;
-        
+
         let old_handle = match obj_type {
-            0x0005 => { let old = dc.pen; dc.pen = object_handle; old }
-            0x0007 => { let old = dc.brush; dc.brush = object_handle; old }
-            0x0004 => { let old = dc.font; dc.font = object_handle; old }
-            0x0003 => { let old = dc.palette_handle; dc.palette_handle = object_handle; old }
-            0x0008 => { let old = dc.region; dc.region = object_handle; old }
-            0x0002 => { let old = dc.bitmap; dc.bitmap = object_handle; old }
+            0x0005 => {
+                let old = dc.pen;
+                dc.pen = object_handle;
+                old
+            }
+            0x0007 => {
+                let old = dc.brush;
+                dc.brush = object_handle;
+                old
+            }
+            0x0004 => {
+                let old = dc.font;
+                dc.font = object_handle;
+                old
+            }
+            0x0003 => {
+                let old = dc.palette_handle;
+                dc.palette_handle = object_handle;
+                old
+            }
+            0x0008 => {
+                let old = dc.region;
+                dc.region = object_handle;
+                old
+            }
+            0x0002 => {
+                let old = dc.bitmap;
+                dc.bitmap = object_handle;
+                old
+            }
             _ => 0,
         };
-        
+
         // Increment reference count for new object
         crate::libs::win32k::objects::GdiSelectObject(object_handle);
-        
-        // kprintln!("[win32k] GreSelectObject: dc=0x{:08x}, obj=0x{:016x}, old=0x{:016x}",  // kprintln disabled (memcpy crash workaround)
-//                   dc_handle, object_handle, old_handle);
-        
+
+        // kprintln!("[win32k] GreSelectObject: dc=0x{:08x}, obj=0x{:016x}, old=0x{:016x}",
+        //                   dc_handle, object_handle, old_handle);
+
         old_handle
     } else {
         0
@@ -729,7 +755,7 @@ pub fn GreSaveDC(dc_handle: u64) -> i32 {
         let count = dc.saved_states.len() as i32;
         let _ = &count;
         let _ = &count;
-        // kprintln!("[win32k] GreSaveDC: dc=0x{:08x}, saved_count={}", dc_handle, count)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[win32k] GreSaveDC: dc=0x{:08x}, saved_count={}", dc_handle, count);
         count
     } else {
         0
@@ -769,7 +795,7 @@ pub fn GreSetMapMode(dc_handle: u64, mode: i32) -> i32 {
         let _ = &old;
         let _ = &old;
         dc.map_mode = mode;
-        
+
         // Update viewport/window extents based on mapping mode
         match mode {
             MM_TEXT => {
@@ -794,8 +820,8 @@ pub fn GreSetMapMode(dc_handle: u64, mode: i32) -> i32 {
             }
             _ => {}
         }
-        
-        // kprintln!("[win32k] GreSetMapMode: dc=0x{:08x}, mode={}", dc_handle, mode)  // kprintln disabled (memcpy crash workaround);
+
+        // kprintln!("[win32k] GreSetMapMode: dc=0x{:08x}, mode={}", dc_handle, mode);
         old
     } else {
         MM_TEXT
@@ -847,7 +873,12 @@ pub fn GreSetWindowExtEx(dc_handle: u64, cx: i32, cy: i32, old_size: Option<&mut
 }
 
 /// Set viewport origin
-pub fn GreSetViewportOrgEx(dc_handle: u64, x: i32, y: i32, old_origin: Option<&mut PointL>) -> bool {
+pub fn GreSetViewportOrgEx(
+    dc_handle: u64,
+    x: i32,
+    y: i32,
+    old_origin: Option<&mut PointL>,
+) -> bool {
     let table = get_dc_table();
     let _ = &table;
     let _ = &table;
@@ -899,19 +930,19 @@ pub fn dump_dc_info(dc_handle: u64) {
     let _ = &table;
     if let Some(dc) = table.get(dc_handle) {
         let _ = dc;
-        // kprintln!("[win32k] DC 0x{:08x} info:", dc_handle)  // kprintln disabled (memcpy crash workaround);
-        // kprintln!("  type: 0x{:08x}, surface: 0x{:x}", dc.dc_type, dc.surface)  // kprintln disabled (memcpy crash workaround);
-        // kprintln!("  pen: 0x{:016x}, brush: 0x{:016x}, font: 0x{:016x}",  // kprintln disabled (memcpy crash workaround)
-//                   dc.pen, dc.brush, dc.font);
-        // kprintln!("  text_color: 0x{:08x}, bg_color: 0x{:08x}", dc.text_color, dc.bg_color)  // kprintln disabled (memcpy crash workaround);
-        // kprintln!("  text_align: 0x{:x}, bk_mode: {}, rop_mode: {}",  // kprintln disabled (memcpy crash workaround)
-//                   dc.text_align, dc.bk_mode, dc.rop_mode);
-        // kprintln!("  map_mode: {}, viewport: {}x{}, window: {}x{}",  // kprintln disabled (memcpy crash workaround)
-//                   dc.map_mode, dc.viewport_ext.cx, dc.viewport_ext.cy,
-//                   dc.window_ext.cx, dc.window_ext.cy);
-        // kprintln!("  viewport_org: ({}, {}), window_org: ({}, {})",  // kprintln disabled (memcpy crash workaround)
-//                   dc.viewport_org.x, dc.viewport_org.y,
-//                   dc.window_org.x, dc.window_org.y);
-        // kprintln!("  saved_states: {}", dc.saved_states.len())  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[win32k] DC 0x{:08x} info:", dc_handle);
+        // kprintln!("  type: 0x{:08x}, surface: 0x{:x}", dc.dc_type, dc.surface);
+        // kprintln!("  pen: 0x{:016x}, brush: 0x{:016x}, font: 0x{:016x}",
+        //                   dc.pen, dc.brush, dc.font);
+        // kprintln!("  text_color: 0x{:08x}, bg_color: 0x{:08x}", dc.text_color, dc.bg_color);
+        // kprintln!("  text_align: 0x{:x}, bk_mode: {}, rop_mode: {}",
+        //                   dc.text_align, dc.bk_mode, dc.rop_mode);
+        // kprintln!("  map_mode: {}, viewport: {}x{}, window: {}x{}",
+        //                   dc.map_mode, dc.viewport_ext.cx, dc.viewport_ext.cy,
+        //                   dc.window_ext.cx, dc.window_ext.cy);
+        // kprintln!("  viewport_org: ({}, {}), window_org: ({}, {})",
+        //                   dc.viewport_org.x, dc.viewport_org.y,
+        //                   dc.window_org.x, dc.window_org.y);
+        // kprintln!("  saved_states: {}", dc.saved_states.len());
     }
 }

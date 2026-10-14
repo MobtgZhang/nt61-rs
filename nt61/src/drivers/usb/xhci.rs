@@ -11,15 +11,14 @@
 //! revision 1.2. No code is copied from any Microsoft or ReactOS
 //! source file.
 
-use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use crate::kprintln;
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 // ============================================================================
 // Constants
 // ============================================================================
 
 /// xHCI PCI class (0x0C, 0x03, 0x30).
-
 
 /// xHCI capability register offsets.
 pub const CAPLENGTH: u8 = 0x00;
@@ -32,16 +31,6 @@ pub const HCCPARAMS2: u8 = 0x14;
 pub const DBOFF: u8 = 0x14;
 pub const RTSOFF: u8 = 0x18;
 
-
-
-
-
-
-
-
-
-
-
 /// xHCI operational register offsets (relative to op_base).
 pub const USBCMD: u16 = 0x00;
 pub const USBSTS: u16 = 0x04;
@@ -49,13 +38,6 @@ pub const USBINTR: u16 = 0x08;
 pub const CRCR: u16 = 0x10;
 pub const DCBAAP: u16 = 0x18;
 pub const CONFIG: u16 = 0x20;
-
-
-
-
-
-
-
 
 /// USBCMD bits.
 pub const USBCMD_RUN: u32 = 1 << 0;
@@ -65,10 +47,6 @@ pub const USBCMD_HSEE: u32 = 1 << 3;
 pub const USBCMD_LHCRST: u32 = 1 << 7;
 pub const USBCMD_CSS: u32 = 1 << 8;
 pub const USBCMD_CRS: u32 = 1 << 9;
-
-
-
-
 
 /// USBSTS bits.
 pub const USBSTS_HCH: u32 = 1 << 0;
@@ -81,19 +59,11 @@ pub const USBSTS_SRE: u32 = 1 << 10;
 pub const USBSTS_CNR: u32 = 1 << 11;
 pub const USBSTS_HCE: u32 = 1 << 12;
 
-
-
-
-
 /// CRCR bits.
 pub const CRCR_RCS: u32 = 1 << 0;
 pub const CRCR_CS: u32 = 1 << 1;
 pub const CRCR_CA: u32 = 1 << 2;
 pub const CRCR_CRR: u32 = 1 << 3;
-
-
-
-
 
 // ============================================================================
 // xHCI TRB Types
@@ -109,7 +79,6 @@ const TRB_TYPE_NOOP: u32 = 8;
 const TRB_TYPE_ENABLE_SLOT: u32 = 9;
 const TRB_TYPE_DISABLE_SLOT: u32 = 10;
 const TRB_TYPE_ADDRESS_DEVICE: u32 = 11;
-
 
 const TRB_TYPE_TRANSFER_EVENT: u32 = 32;
 const TRB_TYPE_COMMAND_COMPLETION: u32 = 33;
@@ -133,23 +102,21 @@ pub const COMP_BABBLE: u32 = 37;
 pub const COMP_BUFFER_OVERRUN: u32 = 38;
 
 /// TRB bits
-pub const TRB_C: u32 = 1 << 0;         // Cycle bit
-pub const TRB_TC: u32 = 1 << 1;        // Toggle cycle
-pub const TRB_IOC: u32 = 1 << 5;        // Interrupt on Complete
-pub const TRB_IDT: u32 = 1 << 6;       // Immediate Data
-pub const TRB_ISP: u32 = 1 << 2;       // Interrupt on Short Packet
-pub const TRB_CH: u32 = 1 << 3;        // Chain Bit
-pub const TRB_BEI: u32 = 1 << 5;       // Block Event Interrupt
-pub const TRB_ENT: u32 = 1 << 1;       // Evaluate Next TRB
-pub const TRB_NS: u32 = 1 << 16;       // No Snoop
-pub const TRB_LST: u32 = 1 << 10;      // Stream Last
-pub const TRB_HWO: u32 = 1 << 0;       // Hardware Owned
-pub const TRB_AER: u32 = 1 << 6;       // Accept Event on Error
+pub const TRB_C: u32 = 1 << 0; // Cycle bit
+pub const TRB_TC: u32 = 1 << 1; // Toggle cycle
+pub const TRB_IOC: u32 = 1 << 5; // Interrupt on Complete
+pub const TRB_IDT: u32 = 1 << 6; // Immediate Data
+pub const TRB_ISP: u32 = 1 << 2; // Interrupt on Short Packet
+pub const TRB_CH: u32 = 1 << 3; // Chain Bit
+pub const TRB_BEI: u32 = 1 << 5; // Block Event Interrupt
+pub const TRB_ENT: u32 = 1 << 1; // Evaluate Next TRB
+pub const TRB_NS: u32 = 1 << 16; // No Snoop
+pub const TRB_LST: u32 = 1 << 10; // Stream Last
+pub const TRB_HWO: u32 = 1 << 0; // Hardware Owned
+pub const TRB_AER: u32 = 1 << 6; // Accept Event on Error
 
 /// Setup Stage TRB Transfer Type
 const SETUP_STAGE_SETUP: u8 = 0;
-
-
 
 /// Status Stage TRB Direction
 const STATUS_STAGE_IN: u8 = 1;
@@ -172,12 +139,10 @@ impl XhciTrb {
             ptr_low: ring_phys as u32,
             ptr_high: (ring_phys >> 32) as u32,
             status: 0,
-            control: TRB_TYPE_LINK 
-                | (if tc { TRB_C } else { 0 })
-                | (TRB_TC << 10),
+            control: TRB_TYPE_LINK | (if tc { TRB_C } else { 0 }) | (TRB_TC << 10),
         }
     }
-    
+
     /// Create a NOOP TRB
     pub fn noop() -> Self {
         Self {
@@ -187,26 +152,27 @@ impl XhciTrb {
             control: TRB_TYPE_NOOP,
         }
     }
-    
+
     /// Create a SETUP stage TRB
     pub fn setup_stage(request_type: u8, request: u8, value: u16, index: u16, length: u16) -> Self {
-        let bm = (((request_type as u32) << 24)
-            | ((request as u32) << 16)
-            | ((value as u32) << 0)) as u32;
+        let bm = (((request_type as u32) << 24) | ((request as u32) << 16) | ((value as u32) << 0))
+            as u32;
         Self {
             ptr_low: bm,
             ptr_high: (((index as u32) << 16) | (length as u32)) as u32,
-            status: 8,  // 8 bytes of setup data
-            control: TRB_TYPE_SETUP_STAGE 
-                | (((SETUP_STAGE_SETUP as u32) << 16)
-                | TRB_IDT 
-                | TRB_IOC) as u32,
+            status: 8, // 8 bytes of setup data
+            control: TRB_TYPE_SETUP_STAGE
+                | (((SETUP_STAGE_SETUP as u32) << 16) | TRB_IDT | TRB_IOC) as u32,
         }
     }
-    
+
     /// Create a DATA stage TRB
     pub fn data_stage(ptr: u64, len: u32, dir_in: bool, chain: bool) -> Self {
-        let dir_val = if dir_in { STATUS_STAGE_IN } else { STATUS_STAGE_OUT };
+        let dir_val = if dir_in {
+            STATUS_STAGE_IN
+        } else {
+            STATUS_STAGE_OUT
+        };
         let chain_val = if chain { TRB_CH } else { 0 };
         Self {
             ptr_low: (ptr as u32),
@@ -216,20 +182,23 @@ impl XhciTrb {
                 | (((dir_val as u32) << 16) | TRB_ISP | chain_val | TRB_IOC),
         }
     }
-    
+
     /// Create a STATUS stage TRB
     pub fn status_stage(dir_in: bool, chain: bool) -> Self {
-        let dir_val = if dir_in { STATUS_STAGE_IN } else { STATUS_STAGE_OUT };
+        let dir_val = if dir_in {
+            STATUS_STAGE_IN
+        } else {
+            STATUS_STAGE_OUT
+        };
         let chain_val = if chain { TRB_CH } else { 0 };
         Self {
             ptr_low: 0,
             ptr_high: 0,
             status: 0,
-            control: TRB_TYPE_STATUS_STAGE
-                | (((dir_val as u32) << 16) | chain_val | TRB_IOC),
+            control: TRB_TYPE_STATUS_STAGE | (((dir_val as u32) << 16) | chain_val | TRB_IOC),
         }
     }
-    
+
     /// Create a NORMAL TRB
     pub fn normal(ptr: u64, len: u32, td_size: u8, chain: bool, ioc: bool) -> Self {
         Self {
@@ -242,32 +211,32 @@ impl XhciTrb {
                 | (if ioc { TRB_IOC } else { 0 }),
         }
     }
-    
+
     /// Get cycle bit
     pub fn cycle_bit(&self) -> bool {
         (self.control & TRB_C) != 0
     }
-    
+
     /// Get completion code
     pub fn completion_code(&self) -> u32 {
         self.status & 0xFF
     }
-    
+
     /// Get transferred bytes
     pub fn transferred_bytes(&self) -> u32 {
         (self.status >> 16) & 0xFFFFFF
     }
-    
+
     /// Get TRB type
     pub fn trb_type(&self) -> u32 {
         self.control & 0x3F
     }
-    
+
     /// Check if this is a transfer event
     pub fn is_transfer_event(&self) -> bool {
         self.trb_type() == TRB_TYPE_TRANSFER_EVENT
     }
-    
+
     /// Check if successful
     pub fn is_success(&self) -> bool {
         self.completion_code() == COMP_SUCCESS || self.completion_code() == COMP_SHORT_PACKET
@@ -285,19 +254,17 @@ impl XhciTrb {
             control: TRB_TYPE_ENABLE_SLOT | ((slot_type as u32) << 16),
         }
     }
-    
+
     /// Create an ADDRESS DEVICE command
     pub fn address_device(bdf: u32, ctx_base: u64) -> Self {
         Self {
             ptr_low: ctx_base as u32,
             ptr_high: (ctx_base >> 32) as u32,
             status: 0,
-            control: TRB_TYPE_ADDRESS_DEVICE 
-                | TRB_BEI 
-                | (bdf << 16),
+            control: TRB_TYPE_ADDRESS_DEVICE | TRB_BEI | (bdf << 16),
         }
     }
-    
+
     /// Create a DISABLE SLOT command
     pub fn disable_slot(slot_id: u8) -> Self {
         Self {
@@ -344,9 +311,7 @@ impl XhciTrb {
             ptr_low: 0,
             ptr_high: 0,
             status: 0,
-            control: TRB_TYPE_DOORBELL
-                | ((slot_id as u32) << 0)
-                | ((stream_id as u32) << 16),
+            control: TRB_TYPE_DOORBELL | ((slot_id as u32) << 0) | ((stream_id as u32) << 16),
         }
     }
 }
@@ -468,7 +433,8 @@ pub(crate) struct XhciController {
     port_count: u8,
 }
 
-static mut XHCI_CONTROLLERS: [Option<XhciController>; 4] = [Option::None, Option::None, Option::None, Option::None];
+static mut XHCI_CONTROLLERS: [Option<XhciController>; 4] =
+    [Option::None, Option::None, Option::None, Option::None];
 static mut XHCI_COUNT: usize = 0;
 
 /// Register a new xHCI controller. Returns false if all slots are full.
@@ -511,24 +477,27 @@ pub(crate) fn placeholder_controller() -> XhciController {
 /// tests so all fields are exercised by the diagnostic path.
 pub fn diagnostics(controller: usize) -> Option<XhciDiagnostics> {
     unsafe {
-        XHCI_CONTROLLERS.get(controller).and_then(|c| c.as_ref()).map(|c| XhciDiagnostics {
-            bar0_phys: c.bar0_phys,
-            mmio_base: c.mmio_base,
-            cap_length: c.cap_length,
-            hci_version: c.hci_version,
-            max_slots: c.max_slots,
-            max_ports: c.max_ports,
-            hcs_params2: c.hcs_params2,
-            hcc_params1: c.hcc_params1,
-            cmd: c.cmd,
-            sts: c.sts,
-            initialised: c.initialised,
-            port_count: c.port_count,
-            dcbaa_phys: c.dcbaa.phys,
-            dcbaa_virt: c.dcbaa.virt,
-            cmd_ring_phys: c.cmd_ring.phys,
-            cmd_ring_size: c.cmd_ring.size,
-        })
+        XHCI_CONTROLLERS
+            .get(controller)
+            .and_then(|c| c.as_ref())
+            .map(|c| XhciDiagnostics {
+                bar0_phys: c.bar0_phys,
+                mmio_base: c.mmio_base,
+                cap_length: c.cap_length,
+                hci_version: c.hci_version,
+                max_slots: c.max_slots,
+                max_ports: c.max_ports,
+                hcs_params2: c.hcs_params2,
+                hcc_params1: c.hcc_params1,
+                cmd: c.cmd,
+                sts: c.sts,
+                initialised: c.initialised,
+                port_count: c.port_count,
+                dcbaa_phys: c.dcbaa.phys,
+                dcbaa_virt: c.dcbaa.virt,
+                cmd_ring_phys: c.cmd_ring.phys,
+                cmd_ring_size: c.cmd_ring.size,
+            })
     }
 }
 
@@ -553,7 +522,9 @@ pub struct XhciDiagnostics {
     pub cmd_ring_size: usize,
 }
 
-pub fn count() -> usize { unsafe { XHCI_COUNT } }
+pub fn count() -> usize {
+    unsafe { XHCI_COUNT }
+}
 
 // ============================================================================
 // MMIO Helpers
@@ -680,15 +651,12 @@ pub fn transfers_submitted() -> u32 {
 // ============================================================================
 
 /// PORTSC bits
-const PORTSC_CCS: u32 = 1 << 0;     // Current Connect Status
-const PORTSC_CSC: u32 = 1 << 1;     // Connect Status Change
-const PORTSC_PE: u32 = 1 << 2;      // Port Enable
-const PORTSC_PEC: u32 = 1 << 3;    // Port Enable Change
+const PORTSC_CCS: u32 = 1 << 0; // Current Connect Status
+const PORTSC_CSC: u32 = 1 << 1; // Connect Status Change
+const PORTSC_PE: u32 = 1 << 2; // Port Enable
+const PORTSC_PEC: u32 = 1 << 3; // Port Enable Change
 
-
-
-const PORTSC_PR: u32 = 1 << 4;      // Port Reset
-
+const PORTSC_PR: u32 = 1 << 4; // Port Reset
 
 /// Clear-bit selector mask: bits to write back into the PORTSC to
 /// acknowledge a status change. Used by `clear_port_status_changes`.
@@ -696,7 +664,7 @@ const PORTSC_CHANGE_MASK: u32 = PORTSC_CSC | PORTSC_PEC;
 
 /// Get port status register
 fn get_port_reg(c: &XhciController, port: u8) -> u32 {
-    let port_reg_base = 0x400;  // Port registers start at offset 0x400
+    let port_reg_base = 0x400; // Port registers start at offset 0x400
     let port_offset = port_reg_base + (port as u32) * 0x10;
     unsafe { mmio_read32(c.mmio_base + c.cap_length as u64, port_offset) }
 }
@@ -749,33 +717,37 @@ pub fn reset_port(controller: usize, port: u8) -> Result<UsbSpeed, &'static str>
             Some(Some(c)) => c,
             _ => return Err("Invalid controller"),
         };
-        
+
         let port_reg_base = 0x400 + (port as u32) * 0x10;
         let op_base = c.mmio_base + c.cap_length as u64;
-        
+
         // Clear status bits
         let portsc = get_port_reg(c, port);
         mmio_write32(op_base, port_reg_base, portsc | 0x8000007C);
-        
+
         // Start reset
         mmio_write32(op_base, port_reg_base, portsc | PORTSC_PR);
-        
+
         // Wait for reset to complete (50ms)
         for _ in 0..50000 {
             let psc = get_port_reg(c, port);
-            if (psc & PORTSC_PR) == 0 { break; }
+            if (psc & PORTSC_PR) == 0 {
+                break;
+            }
         }
-        
+
         // Small delay
-        for _ in 0..1000 { core::hint::spin_loop(); }
-        
+        for _ in 0..1000 {
+            core::hint::spin_loop();
+        }
+
         // Clear status change bits
         let portsc = get_port_reg(c, port);
         mmio_write32(op_base, port_reg_base, portsc | 0x8000007C);
-        
+
         let speed = UsbSpeed::from_portsc(get_port_reg(c, port));
-        
-        // kprintln!("[xHCI] Port {} reset complete, speed: {:?}", port, speed)  // kprintln disabled (memcpy crash workaround);
+
+        // kprintln!("[xHCI] Port {} reset complete, speed: {:?}", port, speed);
         Ok(speed)
     }
 }
@@ -809,17 +781,22 @@ pub fn enable_slot(slot_type: u8) -> Result<u8, &'static str> {
             Some(Some(c)) => c,
             _ => return Err("No controller"),
         };
-        
+
         let trb = XhciTrb::enable_slot(slot_type);
         execute_command(c, trb)?;
-        
+
         // Return slot ID (would come from event in real impl)
         Ok(1)
     }
 }
 
 /// Address a device
-pub fn address_device(slot: u8, port: u8, speed: UsbSpeed, ctx_base: u64) -> Result<(), &'static str> {
+pub fn address_device(
+    slot: u8,
+    port: u8,
+    speed: UsbSpeed,
+    ctx_base: u64,
+) -> Result<(), &'static str> {
     unsafe {
         let c = match XHCI_CONTROLLERS.get_mut(0) {
             Some(Some(c)) => c,
@@ -865,14 +842,14 @@ pub struct UsbSetupPacket {
 impl UsbSetupPacket {
     pub fn get_descriptor(dtype: u8, index: u8, len: u16) -> Self {
         Self {
-            request_type: 0x80,  // IN, Standard, Device
+            request_type: 0x80, // IN, Standard, Device
             request: 0x06,
             value: ((dtype as u16) << 8) | (index as u16),
             index: 0,
             length: len,
         }
     }
-    
+
     pub fn set_address(addr: u8) -> Self {
         Self {
             request_type: 0x00,
@@ -901,8 +878,7 @@ pub fn control_transfer(
     // Real implementation ring a doorbell for `slot`. We use the helper
     // doorbell() function so the `unsafe` doorbell path is exercised
     // even in this stub.
-    let payload = ((setup.length as u32) << 16)
-        | ((setup.value as u32) << 0);
+    let payload = ((setup.length as u32) << 16) | ((setup.value as u32) << 0);
     let buf_addr = match data {
         Some((p, _)) => p as u64,
         None => 0,
@@ -926,13 +902,13 @@ pub fn get_descriptor(_controller: usize, _port: u8) -> Result<UsbDeviceDescript
 /// Enumerate a device on a port
 pub fn enumerate_device(controller: usize, port: u8) -> Result<UsbDevice, &'static str> {
     let speed = reset_port(controller, port)?;
-    
+
     // In real implementation:
     // 1. Enable slot
     // 2. Address device
     // 3. Get descriptors
     // 4. Configure endpoint
-    
+
     Ok(UsbDevice {
         address: 1,
         port,

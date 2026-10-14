@@ -109,7 +109,7 @@ pub fn all_accounts() -> &'static [AccountEntry] {
 }
 
 pub fn init() {
-    // crate::kprintln!("    SE/USERS: initialized (built-in accounts: SYSTEM, Administrators, nt61test)")  // kprintln disabled (memcpy crash workaround);
+    // crate::kprintln!("    SE/USERS: initialized (built-in accounts: SYSTEM, Administrators, nt61test)");
 }
 
 #[cfg(test)]

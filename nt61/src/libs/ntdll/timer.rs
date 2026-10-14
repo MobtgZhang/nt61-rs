@@ -11,24 +11,24 @@ use super::file::{alloc_handle, lookup_handle, HandleKind};
 use super::status::{
     STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER, STATUS_SUCCESS, STATUS_TIMER_NOT_CANCELED,
 };
-use super::types::{HANDLE, NTSTATUS, PVOID, LARGE_INTEGER, LargeInteger};
+use super::types::{LargeInteger, HANDLE, LARGE_INTEGER, NTSTATUS, PVOID};
 use crate::ke::sync::Spinlock;
 use core::ptr;
-
 
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimerType {
-    NotificationTimer = 0, // Manual-reset
+    NotificationTimer = 0,    // Manual-reset
     SynchronizationTimer = 1, // Auto-reset
 }
 
 #[derive(Clone, Copy)]
 struct TimerState {
     timer_type: u32,
-    due_time: LargeInteger,  // Changed from i64 to LargeInteger
-    period: i32, // Milliseconds (0 = one-shot)
+    due_time: LargeInteger, // Changed from i64 to LargeInteger
+    period: i32,            // Milliseconds (0 = one-shot)
     signaled: bool,
+    armed: bool,
     apc_routine: PVOID,
     apc_context: PVOID,
 }
@@ -40,6 +40,7 @@ impl TimerState {
             due_time: LargeInteger { quad_part: 0 },
             period: 0,
             signaled: false,
+            armed: false,
             apc_routine: ptr::null_mut(),
             apc_context: ptr::null_mut(),
         }
@@ -47,9 +48,7 @@ impl TimerState {
 }
 
 const MAX_TIMERS: usize = 64;
-static TIMER_STATES: Spinlock<[Option<TimerState>; MAX_TIMERS]> =
-    Spinlock::new([None; MAX_TIMERS]);
-
+static TIMER_STATES: Spinlock<[Option<TimerState>; MAX_TIMERS]> = Spinlock::new([None; MAX_TIMERS]);
 
 pub unsafe extern "C" fn NtCreateTimer(
     timer_handle: *mut HANDLE,
@@ -103,12 +102,8 @@ pub unsafe extern "C" fn NtOpenTimer(
     STATUS_INVALID_PARAMETER
 }
 
-
-pub type TimerApcRoutine = unsafe extern "C" fn(
-    timer_context: PVOID,
-    timer_low_value: u32,
-    timer_high_value: i32,
-);
+pub type TimerApcRoutine =
+    unsafe extern "C" fn(timer_context: PVOID, timer_low_value: u32, timer_high_value: i32);
 
 pub unsafe extern "C" fn NtSetTimer(
     timer_handle: HANDLE,
@@ -148,18 +143,14 @@ pub unsafe extern "C" fn NtSetTimer(
     state.due_time = *due_time;
     state.period = period;
     state.signaled = false;
+    state.armed = true;
     state.apc_routine = timer_apc_routine;
     state.apc_context = timer_context;
-
 
     STATUS_SUCCESS
 }
 
-
-pub unsafe extern "C" fn NtCancelTimer(
-    timer_handle: HANDLE,
-    current_state: *mut u8,
-) -> NTSTATUS {
+pub unsafe extern "C" fn NtCancelTimer(timer_handle: HANDLE, current_state: *mut u8) -> NTSTATUS {
     if timer_handle.is_null() {
         return STATUS_INVALID_HANDLE;
     }
@@ -184,14 +175,22 @@ pub unsafe extern "C" fn NtCancelTimer(
         *current_state = if state.signaled { 1 } else { 0 };
     }
 
+    // ReactOS ntoskrnl/ex/timer.c (ExCancelTimer) and the NT 6.1 DDI both
+    // report STATUS_TIMER_NOT_CANCELED when the timer was not armed, so the
+    // caller can distinguish "nothing to cancel" from a successful cancel.
+    if !state.armed {
+        return STATUS_TIMER_NOT_CANCELED;
+    }
+
     state.due_time = LargeInteger { quad_part: 0 };
     state.period = 0;
     state.signaled = false;
-
+    state.armed = false;
+    state.apc_routine = ptr::null_mut();
+    state.apc_context = ptr::null_mut();
 
     STATUS_SUCCESS
 }
-
 
 #[repr(u32)]
 pub enum TimerInformationClass {

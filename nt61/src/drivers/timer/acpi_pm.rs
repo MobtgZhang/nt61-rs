@@ -25,7 +25,9 @@ struct AcpiPm {
 
 static mut PM_TIMER: Option<AcpiPm> = None;
 
-pub fn port() -> u16 { unsafe { PM_TIMER.map(|p| p.port).unwrap_or(0) } }
+pub fn port() -> u16 {
+    unsafe { PM_TIMER.map(|p| p.port).unwrap_or(0) }
+}
 
 /// Walk the FADT to find the PM timer port, then probe the bit
 /// width (24 or 32). The 24-bit variant rolls over when bit 23
@@ -51,15 +53,17 @@ pub fn init() {
             });
         }
     }
-    // kprintln!("      ACPI PM timer: port=0x{:x} width={}-bit",  // kprintln disabled (memcpy crash workaround)
-//               port(), width());
+    // kprintln!("      ACPI PM timer: port=0x{:x} width={}-bit",
+    //               port(), width());
 }
 
-fn width() -> u8 { unsafe { PM_TIMER.map(|p| p.width).unwrap_or(0) } }
+fn width() -> u8 {
+    unsafe { PM_TIMER.map(|p| p.width).unwrap_or(0) }
+}
 
 pub fn smoke_test() -> bool {
-    // kprintln!("  [ACPI-PM SMOKE] PM timer: port=0x{:x} width={}-bit",  // kprintln disabled (memcpy crash workaround)
-//               port(), width());
-    // kprintln!("  [ACPI-PM SMOKE OK] ACPI PM timer healthy")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [ACPI-PM SMOKE] PM timer: port=0x{:x} width={}-bit",
+    //               port(), width());
+    // kprintln!("  [ACPI-PM SMOKE OK] ACPI PM timer healthy");
     true
 }

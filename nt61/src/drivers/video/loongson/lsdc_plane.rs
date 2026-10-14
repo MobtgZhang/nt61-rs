@@ -85,12 +85,7 @@ impl PrimaryPlane {
     /// Write a register
     #[inline]
     fn write_reg(&self, offset: u32, value: u32) {
-        unsafe {
-            core::ptr::write_volatile(
-                (self.dc_base + offset as u64) as *mut u32,
-                value,
-            )
-        }
+        unsafe { core::ptr::write_volatile((self.dc_base + offset as u64) as *mut u32, value) }
     }
 
     /// Configure the primary plane
@@ -226,12 +221,7 @@ impl CursorPlane {
     /// Write a register
     #[inline]
     fn write_reg(&self, offset: u32, value: u32) {
-        unsafe {
-            core::ptr::write_volatile(
-                (self.dc_base + offset as u64) as *mut u32,
-                value,
-            )
-        }
+        unsafe { core::ptr::write_volatile((self.dc_base + offset as u64) as *mut u32, value) }
     }
 
     /// Configure the cursor
@@ -396,14 +386,9 @@ impl PlaneManager {
     }
 
     /// Configure both planes
-    pub fn configure(
-        &mut self,
-        fb_addr: u64,
-        stride: u32,
-        width: u32,
-        height: u32,
-    ) {
-        self.primary.configure(fb_addr, stride, width, height, PlaneFormat::Bgra8888);
+    pub fn configure(&mut self, fb_addr: u64, stride: u32, width: u32, height: u32) {
+        self.primary
+            .configure(fb_addr, stride, width, height, PlaneFormat::Bgra8888);
         self.primary.enable();
     }
 

@@ -23,7 +23,7 @@ pub const NTDLL_MAX_HANDLES: usize = 256;
 
 /// Allocate a handle slot for an object in the ntdll table AND
 /// register it in ob's global kernel handle table.
-/// 
+///
 /// Returns the ntdll handle (1-based, 0 = failure).
 /// The caller should use `alloc_handle` in `file.rs` for the ntdll
 /// table slot, and this function registers the object in ob.
@@ -41,10 +41,10 @@ pub fn ob_register_object(
 
     // Register in ob's global kernel handle table
     let ob_handle = ob::insert_object(parent_path, ob_header);
-    
+
     if ob_handle == 0 {
         // Failed to register in ob - should not happen for kernel handles
-        // kprintln disabled (memcpy crash workaround)
+
         let _ = name;
         return 0;
     }
@@ -81,11 +81,7 @@ pub fn ob_register_file(
 }
 
 /// Allocate a handle for an event object in ob's namespace.
-pub fn ob_register_event(
-    ob_header: *mut ob::ObjectHeader,
-    parent_path: &[u8],
-    name: &[u8],
-) -> u64 {
+pub fn ob_register_event(ob_header: *mut ob::ObjectHeader, parent_path: &[u8], name: &[u8]) -> u64 {
     ob_register_object(ob_header, parent_path, name)
 }
 
@@ -124,14 +120,27 @@ pub fn ob_lookup_handle(handle: u64) -> *mut ob::ObjectHeader {
 }
 
 /// Look up an object header by handle in a specific process's table.
-pub fn ob_lookup_handle_in_process(
+pub fn ob_lookup_handle_in_process(handle: u64, process: *mut Eprocess) -> *mut ob::ObjectHeader {
+    if handle == 0 {
+        return core::ptr::null_mut();
+    }
+    ob::reference_object_by_handle_in_process(handle, process)
+}
+
+/// Look up a handle and run `SeAccessCheck` for `desired_access`.
+///
+/// This is the handle-path entry point that enforces the object's
+/// security descriptor; `ob_lookup_handle*` above stay as pure lookups
+/// for kernel-mode callers, which do not need an access check.
+pub fn ob_lookup_handle_with_access(
     handle: u64,
+    desired_access: u32,
     process: *mut Eprocess,
 ) -> *mut ob::ObjectHeader {
     if handle == 0 {
         return core::ptr::null_mut();
     }
-    ob::reference_object_by_handle_in_process(handle, process)
+    ob::reference_object_by_handle_with_access(handle, desired_access, process)
 }
 
 /// Reference an object by handle and return the body pointer.
@@ -163,16 +172,14 @@ pub fn ob_create_and_register(
 
 /// Initialize the ob integration layer.
 /// In the bootstrap, this is a no-op since ob::init() handles setup.
-pub fn init() {
-    // kprintln disabled (memcpy crash workaround)
-}
+pub fn init() {}
 
 // =============================================================================
 // Object Manager Syscall Implementations
 // =============================================================================
 
-use super::types::{HANDLE, NTSTATUS};
 use super::status::STATUS_SUCCESS;
+use super::types::{HANDLE, NTSTATUS};
 
 /// NtCreateDirectoryObject - Creates a directory object
 pub unsafe extern "C" fn NtCreateDirectoryObject(
@@ -184,11 +191,7 @@ pub unsafe extern "C" fn NtCreateDirectoryObject(
         return STATUS_SUCCESS;
     }
 
-    let handle = ob_register_object(
-        core::ptr::null_mut(),
-        b"\\",
-        b"\\??\\",
-    );
+    let handle = ob_register_object(core::ptr::null_mut(), b"\\", b"\\??\\");
 
     *directory_handle = handle as HANDLE;
     STATUS_SUCCESS
@@ -219,9 +222,18 @@ pub unsafe extern "C" fn NtQueryDirectoryObject(
     return_length: *mut u32,
     context: *mut u32,
 ) -> NTSTATUS {
-    let _ = (directory_handle, buffer, length, restart_scan, iteration_handle, context);
+    let _ = (
+        directory_handle,
+        buffer,
+        length,
+        restart_scan,
+        iteration_handle,
+        context,
+    );
     if !return_length.is_null() {
-        unsafe { *return_length = 0; }
+        unsafe {
+            *return_length = 0;
+        }
     }
     STATUS_SUCCESS
 }

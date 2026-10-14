@@ -14,8 +14,8 @@
 //!
 //! References: Windows SDK winnt.h, WRK
 
-use super::sid::Sid;
 use super::acl::Acl;
+use super::sid::Sid;
 
 pub const SE_OWNER_DEFAULTED: u16 = 0x0001;
 pub const SE_GROUP_DEFAULTED: u16 = 0x0002;
@@ -246,5 +246,4 @@ pub fn set_sacl_security_descriptor(
     true
 }
 
-pub fn init() {
-}
+pub fn init() {}

@@ -40,8 +40,11 @@ use crate::ke::shadow_ssdt::SHADOW_MAX_SERVICES;
 /// Maximum number of services in the SSDT
 pub const SSDT_MAX_SERVICES: usize = 512;
 
-/// Maximum argument size (in bytes) for a single service call
-pub const SSDT_MAX_ARGUMENT_SIZE: usize = 0x400;
+/// Maximum argument size (in bytes) for a single service call. The argument
+/// size decoded by `get_argument_size()` is a byte count taken from a single
+/// byte of the service number, so 255 is both the architecture limit and the
+/// actual value checked by the syscall entry.
+pub const SSDT_MAX_ARGUMENT_SIZE: usize = u8::MAX as usize;
 
 /// Service table descriptor - describes a service table
 #[repr(C)]
@@ -90,25 +93,24 @@ impl Default for KeServiceDescriptorTable {
 /// Global KeServiceDescriptorTable (Windows-compatible)
 /// This is the official NT service descriptor table that can be exported
 /// for debugging and compatibility purposes.
-static mut KE_SERVICE_DESCRIPTOR_TABLE: KeServiceDescriptorTable = 
-    KeServiceDescriptorTable {
-        base: KeServiceDescriptor {
-            service_table: core::ptr::null(),
-            counter_table: core::ptr::null(),
-            service_count: 0,
-            argument_table: core::ptr::null(),
-        },
-        shadow: KeServiceDescriptor {
-            service_table: core::ptr::null(),
-            counter_table: core::ptr::null(),
-            service_count: 0,
-            argument_table: core::ptr::null(),
-        },
-        reserved: [0; 2],
-    };
+static mut KE_SERVICE_DESCRIPTOR_TABLE: KeServiceDescriptorTable = KeServiceDescriptorTable {
+    base: KeServiceDescriptor {
+        service_table: core::ptr::null(),
+        counter_table: core::ptr::null(),
+        service_count: 0,
+        argument_table: core::ptr::null(),
+    },
+    shadow: KeServiceDescriptor {
+        service_table: core::ptr::null(),
+        counter_table: core::ptr::null(),
+        service_count: 0,
+        argument_table: core::ptr::null(),
+    },
+    reserved: [0; 2],
+};
 
 /// Get a reference to the global KeServiceDescriptorTable
-/// 
+///
 /// This table is populated during init() and contains pointers to
 /// both the native and shadow (win32k) service tables.
 pub fn get_service_descriptor_table() -> &'static KeServiceDescriptorTable {
@@ -178,9 +180,11 @@ pub struct ServiceTableEntry {
 
 impl ServiceTableEntry {
     pub const fn new() -> Self {
-        Self { handler: core::ptr::null() }
+        Self {
+            handler: core::ptr::null(),
+        }
     }
-    
+
     pub const fn is_null(&self) -> bool {
         self.handler.is_null()
     }
@@ -198,13 +202,13 @@ impl EncodedServiceEntry {
     pub const fn new() -> Self {
         Self { encoded: 0 }
     }
-    
+
     pub const fn is_null(&self) -> bool {
         self.encoded == 0
     }
-    
+
     /// Create an encoded entry from handler address and table base
-    /// 
+    ///
     /// # Arguments
     /// * `handler` - The absolute address of the service handler
     /// * `table_base` - The base address of KiServiceTable
@@ -215,14 +219,14 @@ impl EncodedServiceEntry {
         let encoded = (offset_units << 4) | (arg_size as u32 & 0xF);
         Self { encoded }
     }
-    
+
     /// Get handler address from encoded entry
     pub fn get_handler(&self, table_base: u64) -> *const () {
         let offset_units = self.encoded >> 4;
         let offset = (offset_units as u64) * 16;
         (table_base.wrapping_add(offset)) as *const ()
     }
-    
+
     /// Get argument size from encoded entry
     pub fn get_argument_size(&self) -> u8 {
         (self.encoded & 0xF) as u8
@@ -255,19 +259,19 @@ static mut KI_ARGUMENT_TABLE: [u8; SSDT_MAX_SERVICES] = [0; SSDT_MAX_SERVICES];
 /// This function should be called during kernel initialization
 pub fn init() {
     crate::hal::serial::write_string("[ke.ssdt] enter\r\n");
-    // // kprintln!("[SSDT] Initializing System Service Dispatch Table...")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[SSDT] Initializing System Service Dispatch Table...");
     // Initialize KeServiceDescriptorTable with proper pointers
     unsafe {
         let table_base = KI_SERVICE_TABLE.as_ptr() as u64;
         let arg_base = KI_ARGUMENT_TABLE.as_ptr();
-        
+
         KE_SERVICE_DESCRIPTOR_TABLE.base = KeServiceDescriptor {
             service_table: table_base as *const (),
             counter_table: core::ptr::null(),
             service_count: SSDT_MAX_SERVICES as u32,
             argument_table: arg_base,
         };
-        
+
         // Initialize shadow table (win32k) - will be populated later
         KE_SERVICE_DESCRIPTOR_TABLE.shadow = KeServiceDescriptor {
             service_table: SHADOW_SERVICE_TABLE.as_ptr() as *const (),
@@ -275,16 +279,16 @@ pub fn init() {
             service_count: SHADOW_MAX_SERVICES as u32,
             argument_table: SHADOW_ARGUMENT_TABLE.as_ptr(),
         };
-        
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "[SSDT] KeServiceDescriptorTable initialized:");
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "  - Native base: 0x{:016x}, services: {}, args: {:p}",
-// //             table_base, SSDT_MAX_SERVICES, arg_base
-// //         );
+
+        // // kprintln!(
+        // //             "[SSDT] KeServiceDescriptorTable initialized:");
+        // // kprintln!(
+        // //             "  - Native base: 0x{:016x}, services: {}, args: {:p}",
+        // //             table_base, SSDT_MAX_SERVICES, arg_base
+        // //         );
     }
-    
-    // // kprintln!("[SSDT] SSDT initialized with {} max services", SSDT_MAX_SERVICES)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+
+    // // kprintln!("[SSDT] SSDT initialized with {} max services", SSDT_MAX_SERVICES);
 }
 
 /// Get a service handler from the SSDT
@@ -294,7 +298,7 @@ pub fn get_service_handler(service_number: u32) -> Option<*const ()> {
     if index >= SSDT_MAX_SERVICES {
         return None;
     }
-    
+
     unsafe {
         let entry = &KI_SERVICE_TABLE[index];
         if entry.handler.is_null() {
@@ -311,36 +315,34 @@ pub fn get_service_argument_size(service_number: u32) -> u32 {
     if index >= SSDT_MAX_SERVICES {
         return 0;
     }
-    
-    unsafe {
-        KI_ARGUMENT_TABLE[index] as u32
-    }
+
+    unsafe { KI_ARGUMENT_TABLE[index] as u32 }
 }
 
 /// Register a service handler in the SSDT
-/// 
+///
 /// # Safety
 /// This function modifies a static mutable array. It should only be
 /// called during initialization when no other cores are running.
 pub unsafe fn register_service(service_number: u32, handler: *const (), arg_size: u8) {
     let index = get_service_index(service_number) as usize;
     if index >= SSDT_MAX_SERVICES {
-        // // kprintln!("[SSDT] ERROR: Service index {} out of range", index)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[SSDT] ERROR: Service index {} out of range", index);
         return;
     }
-    
+
     KI_SERVICE_TABLE[index].handler = handler;
     KI_ARGUMENT_TABLE[index] = arg_size;
-    
-    // // kprintln!("[SSDT] Registered service #{:03x} at index {} (args={})",   // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //              service_number, index, arg_size);
+
+    // // kprintln!("[SSDT] Registered service #{:03x} at index {} (args={})",
+    // //              service_number, index, arg_size);
 }
 
 /// Register a service handler using Windows-compatible encoded offset
-/// 
+///
 /// This function stores the service in the encoded table using the
 /// Windows 7 x64 SSDT format: handler = base + (encoded >> 4) * 16
-/// 
+///
 /// # Safety
 /// This function modifies static mutable arrays. Only call during init.
 pub unsafe fn register_service_encoded(
@@ -351,36 +353,33 @@ pub unsafe fn register_service_encoded(
 ) {
     let index = get_service_index(service_number) as usize;
     if index >= SSDT_MAX_SERVICES {
-        // // kprintln!("[SSDT] ERROR: Encoded service index {} out of range", index)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[SSDT] ERROR: Encoded service index {} out of range", index);
         return;
     }
-    
+
     // Also store in the direct pointer table for backward compatibility
     KI_SERVICE_TABLE[index].handler = handler;
-    
+
     // Store encoded entry
-    KI_SERVICE_TABLE_ENCODED[index] = EncodedServiceEntry::create(
-        handler as u64,
-        table_base,
-        arg_size,
-    );
+    KI_SERVICE_TABLE_ENCODED[index] =
+        EncodedServiceEntry::create(handler as u64, table_base, arg_size);
     KI_ARGUMENT_TABLE[index] = arg_size;
-    
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         "[SSDT] Registered encoded service #{:03x} at index {} (args={}, offset_encoded=0x{:08x})", 
-// //         service_number, index, arg_size, KI_SERVICE_TABLE_ENCODED[index].encoded
-// //     );
+
+    // // kprintln!(
+    // //         "[SSDT] Registered encoded service #{:03x} at index {} (args={}, offset_encoded=0x{:08x})",
+    // //         service_number, index, arg_size, KI_SERVICE_TABLE_ENCODED[index].encoded
+    // //     );
 }
 
 /// Get handler using Windows-compatible encoded offset calculation
-/// 
+///
 /// Returns the handler address computed as: base + (encoded >> 4) * 16
 pub fn get_service_handler_encoded(service_number: u32, table_base: u64) -> Option<*const ()> {
     let index = get_service_index(service_number) as usize;
     if index >= SSDT_MAX_SERVICES {
         return None;
     }
-    
+
     unsafe {
         let entry = &KI_SERVICE_TABLE_ENCODED[index];
         if entry.is_null() {
@@ -398,7 +397,7 @@ pub fn get_service_handler_encoded(service_number: u32, table_base: u64) -> Opti
 }
 
 /// Get KiServiceTable base address (for use with encoded entries)
-/// 
+///
 /// Returns the address of the KiServiceTable static array.
 /// This is needed for computing encoded offsets.
 pub fn get_service_table_base() -> u64 {
@@ -429,7 +428,7 @@ pub fn get_shadow_service_handler(service_number: u32) -> Option<*const ()> {
     if index >= SSDT_MAX_SERVICES {
         return None;
     }
-    
+
     unsafe {
         let entry = &SHADOW_SERVICE_TABLE[index];
         if entry.handler.is_null() {
@@ -441,22 +440,22 @@ pub fn get_shadow_service_handler(service_number: u32) -> Option<*const ()> {
 }
 
 /// Register a shadow (win32k) service handler
-/// 
+///
 /// # Safety
 /// This function modifies a static mutable array. It should only be
 /// called during initialization.
 pub unsafe fn register_shadow_service(service_number: u32, handler: *const (), arg_size: u8) {
     let index = (service_number & 0xFFF) as usize;
     if index >= SSDT_MAX_SERVICES {
-        // // kprintln!("[SSDT] ERROR: Shadow service index {} out of range", index)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[SSDT] ERROR: Shadow service index {} out of range", index);
         return;
     }
-    
+
     SHADOW_SERVICE_TABLE[index].handler = handler;
     SHADOW_ARGUMENT_TABLE[index] = arg_size;
-    
-    // // kprintln!("[SSDT] Registered shadow service #{:04x} at index {} (args={})",   // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //              service_number, index, arg_size);
+
+    // // kprintln!("[SSDT] Registered shadow service #{:04x} at index {} (args={})",
+    // //              service_number, index, arg_size);
 }
 
 // =====================================================================
@@ -468,7 +467,7 @@ pub unsafe fn register_shadow_service(service_number: u32, handler: *const (), a
 /// and a pointer to the trap frame.
 pub fn dispatch_service(service_number: u32, trap_frame: *mut ()) -> u64 {
     let table_index = get_table_index(service_number);
-    
+
     match table_index {
         0 => {
             // Native service table - use encoded offset if available
@@ -477,24 +476,21 @@ pub fn dispatch_service(service_number: u32, trap_frame: *mut ()) -> u64 {
                 Some(handler) => {
                     // Call the handler
                     unsafe {
-                        let fn_ptr: extern "C" fn(*mut ()) -> u64 = 
-                            core::mem::transmute(handler);
+                        let fn_ptr: extern "C" fn(*mut ()) -> u64 = core::mem::transmute(handler);
                         fn_ptr(trap_frame)
                     }
                 }
                 None => {
                     // Fall back to direct lookup
                     match get_service_handler(service_number) {
-                        Some(handler) => {
-                            unsafe {
-                                let fn_ptr: extern "C" fn(*mut ()) -> u64 = 
-                                    core::mem::transmute(handler);
-                                fn_ptr(trap_frame)
-                            }
-                        }
+                        Some(handler) => unsafe {
+                            let fn_ptr: extern "C" fn(*mut ()) -> u64 =
+                                core::mem::transmute(handler);
+                            fn_ptr(trap_frame)
+                        },
                         None => {
-                            // // kprintln!("[SSDT] Unimplemented native service 0x{:03x}",   // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                                      get_service_index(service_number));
+                            // // kprintln!("[SSDT] Unimplemented native service 0x{:03x}",
+                            // //                                      get_service_index(service_number));
                             0xC0000001u32 as u64 // STATUS_NOT_IMPLEMENTED
                         }
                     }
@@ -504,22 +500,19 @@ pub fn dispatch_service(service_number: u32, trap_frame: *mut ()) -> u64 {
         1 => {
             // Shadow (win32k) service table
             match get_shadow_service_handler(service_number) {
-                Some(handler) => {
-                    unsafe {
-                        let fn_ptr: extern "C" fn(*mut ()) -> u64 = 
-                            core::mem::transmute(handler);
-                        fn_ptr(trap_frame)
-                    }
-                }
+                Some(handler) => unsafe {
+                    let fn_ptr: extern "C" fn(*mut ()) -> u64 = core::mem::transmute(handler);
+                    fn_ptr(trap_frame)
+                },
                 None => {
-                    // // kprintln!("[SSDT] Unimplemented shadow service 0x{:04x}",   // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                              service_number);
+                    // // kprintln!("[SSDT] Unimplemented shadow service 0x{:04x}",
+                    // //                              service_number);
                     0xC0000001u32 as u64
                 }
             }
         }
         _ => {
-            // // kprintln!("[SSDT] Unknown table index {}", table_index)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[SSDT] Unknown table index {}", table_index);
             0xC0000001u32 as u64
         }
     }
@@ -531,24 +524,24 @@ pub fn dispatch_service(service_number: u32, trap_frame: *mut ()) -> u64 {
 
 /// Run SSDT smoke test
 pub fn smoke_test() -> bool {
-    // // kprintln!("  [SSDT SMOKE] running SSDT smoke test...")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    
+    // // kprintln!("  [SSDT SMOKE] running SSDT smoke test...");
+
     // Check that the service tables are accessible
     let table_ptr = unsafe { KI_SERVICE_TABLE.as_ptr() };
     if table_ptr.is_null() {
-        // // kprintln!("  [SSDT SMOKE FAIL] KiServiceTable is null")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("  [SSDT SMOKE FAIL] KiServiceTable is null");
         return false;
     }
-    
+
     let arg_ptr = unsafe { KI_ARGUMENT_TABLE.as_ptr() };
     if arg_ptr.is_null() {
-        // // kprintln!("  [SSDT SMOKE FAIL] KiArgumentTable is null")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("  [SSDT SMOKE FAIL] KiArgumentTable is null");
         return false;
     }
-    
-    // // kprintln!("  [SSDT SMOKE] KiServiceTable: {:p}", table_ptr)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("  [SSDT SMOKE] KiArgumentTable: {:p}", arg_ptr)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("  [SSDT SMOKE] Max services: {}", SSDT_MAX_SERVICES)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("  [SSDT SMOKE OK]")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+
+    // // kprintln!("  [SSDT SMOKE] KiServiceTable: {:p}", table_ptr);
+    // // kprintln!("  [SSDT SMOKE] KiArgumentTable: {:p}", arg_ptr);
+    // // kprintln!("  [SSDT SMOKE] Max services: {}", SSDT_MAX_SERVICES);
+    // // kprintln!("  [SSDT SMOKE OK]");
     true
 }

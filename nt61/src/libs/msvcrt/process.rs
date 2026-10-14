@@ -3,6 +3,7 @@
 //! Replaces unsafe static mut with synchronized access
 
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, AtomicPtr, Ordering};
+use spin::{Lazy, Mutex};
 
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, AtomicUsize, AtomicI32, AtomicI64, AtomicPtr, Ordering};
 use super::types::*;
@@ -74,7 +75,7 @@ static SIGNAL_HANDLERS: Lazy<Mutex<SignalHandlers>> = Lazy::new(|| {
     })
 });
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn atexit(func: extern "C" fn()) -> c_int {
     let mut handlers = ATEXIT_HANDLERS.lock();
     if handlers.count >= ATEXIT_MAX {
@@ -85,7 +86,7 @@ pub unsafe extern "C" fn atexit(func: extern "C" fn()) -> c_int {
     0
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn signal(sig: c_int, handler: SignalHandler) -> SignalHandler {
     if sig < 0 || sig >= 32 {
         return default_signal_handler;

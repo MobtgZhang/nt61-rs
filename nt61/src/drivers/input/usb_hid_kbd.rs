@@ -36,7 +36,6 @@ const MOD_RCTRL: u8 = 1 << 4;
 const MOD_RSHIFT: u8 = 1 << 5;
 const MOD_RALT: u8 = 1 << 6;
 
-
 /// Maximum number of keys that can be simultaneously pressed.
 const MAX_KEYS: usize = 6;
 
@@ -320,10 +319,10 @@ fn vk_to_ascii(vk: u16, modifier: u8) -> Option<u8> {
         (0xBE, false) => Some(b'.'),
         (0xBE, true) => Some(b'>'),
         // Special
-        (0x08, _) => Some(0x08), // Backspace
-        (0x09, _) => Some(0x09), // Tab
+        (0x08, _) => Some(0x08),  // Backspace
+        (0x09, _) => Some(0x09),  // Tab
         (0x0D, _) => Some(b'\n'), // Enter
-        (0x20, _) => Some(b' '), // Space
+        (0x20, _) => Some(b' '),  // Space
         _ => None,
     }
 }
@@ -331,7 +330,7 @@ fn vk_to_ascii(vk: u16, modifier: u8) -> Option<u8> {
 /// Enqueue a character to the system keyboard input queue.
 /// This bridges USB keyboard input to the PS/2 keyboard queue.
 fn enqueue_usb_char(ch: u8) {
-#[cfg(target_arch = "x86_64")]
+    #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     crate::hal::x86_64::keyboard::enqueue_char(ch);
 }
@@ -347,12 +346,12 @@ fn handle_key_event(modifier: u8, key_code: u8) {
         enqueue_usb_char(ch);
     }
 
-    // kprintln!(  // kprintln disabled (memcpy crash workaround)
-//         "[USB-KBD] key: vk=0x{:02x} mod=0x{:02x} ch={:?}",
-//         vk,
-//         modifier,
-//         vk_to_ascii(vk, modifier).map(|c| c as char)
-//     );
+    // kprintln!(
+    //         "[USB-KBD] key: vk=0x{:02x} mod=0x{:02x} ch={:?}",
+    //         vk,
+    //         modifier,
+    //         vk_to_ascii(vk, modifier).map(|c| c as char)
+    //     );
 }
 
 /// Process an interrupt transfer report from the USB device.
@@ -376,8 +375,8 @@ pub fn process_report(data: &[u8]) {
         }
 
         // Check if this key was already pressed
-        let was_pressed = (0..MAX_KEYS)
-            .any(|j| USB_KBD_LAST_KEYCODES[j].load(Ordering::Relaxed) == key);
+        let was_pressed =
+            (0..MAX_KEYS).any(|j| USB_KBD_LAST_KEYCODES[j].load(Ordering::Relaxed) == key);
 
         if !was_pressed {
             handle_key_event(report.modifiers, key);
@@ -395,7 +394,7 @@ pub fn process_report(data: &[u8]) {
 pub fn init() {
     USB_KBD_INITIALIZED.store(true, Ordering::SeqCst);
     USB_KBD_BOOT_PROTOCOL.store(true, Ordering::SeqCst);
-    // kprintln!("      USB HID keyboard: ready")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("      USB HID keyboard: ready");
 }
 
 /// Initialise with device parameters.
@@ -412,7 +411,7 @@ pub fn set_idle(timeout: u8) {
 
 /// Smoke test the USB HID keyboard driver.
 pub fn smoke_test() -> bool {
-    // kprintln!("  [HID-KBD SMOKE] testing USB HID keyboard...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [HID-KBD SMOKE] testing USB HID keyboard...");
 
     // Test boot report parsing
     let test_report = [
@@ -425,41 +424,41 @@ pub fn smoke_test() -> bool {
     let report = match BootKbdReport::from_bytes(&test_report) {
         Some(r) => r,
         None => {
-            // kprintln!("  [HID-KBD SMOKE FAIL] from_bytes failed")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("  [HID-KBD SMOKE FAIL] from_bytes failed");
             return false;
         }
     };
 
     // Check modifiers
     if report.modifiers != 0x00 {
-        // kprintln!("  [HID-KBD SMOKE FAIL] unexpected modifiers: 0x{:02x}", report.modifiers)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [HID-KBD SMOKE FAIL] unexpected modifiers: 0x{:02x}", report.modifiers);
         return false;
     }
 
     // Check keycode
     if report.keycodes[0] != 0x04 {
-        // kprintln!("  [HID-KBD SMOKE FAIL] unexpected keycode: 0x{:02x}", report.keycodes[0])  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [HID-KBD SMOKE FAIL] unexpected keycode: 0x{:02x}", report.keycodes[0]);
         return false;
     }
 
     // Check VK translation
     let vk = hid_to_vk(0x04);
     if vk != 0x41 {
-        // kprintln!("  [HID-KBD SMOKE FAIL] hid_to_vk(0x04) = 0x{:02x}, expected 0x41", vk)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [HID-KBD SMOKE FAIL] hid_to_vk(0x04) = 0x{:02x}, expected 0x41", vk);
         return false;
     }
 
     // Check ASCII translation
     let ch = vk_to_ascii(vk, 0);
     if ch != Some(b'a') {
-        // kprintln!("  [HID-KBD SMOKE FAIL] vk_to_ascii(0x41, 0) = {:?}, expected 'a'", ch)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [HID-KBD SMOKE FAIL] vk_to_ascii(0x41, 0) = {:?}, expected 'a'", ch);
         return false;
     }
 
     // Check shift translation
     let ch = vk_to_ascii(vk, MOD_LSHIFT);
     if ch != Some(b'A') {
-        // kprintln!("  [HID-KBD SMOKE FAIL] vk_to_ascii(0x41, SHIFT) = {:?}, expected 'A'", ch)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [HID-KBD SMOKE FAIL] vk_to_ascii(0x41, SHIFT) = {:?}, expected 'A'", ch);
         return false;
     }
 
@@ -471,7 +470,7 @@ pub fn smoke_test() -> bool {
     };
 
     if !mod_report.is_shift() {
-        // kprintln!("  [HID-KBD SMOKE FAIL] is_shift() returned false")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [HID-KBD SMOKE FAIL] is_shift() returned false");
         return false;
     }
 
@@ -479,14 +478,14 @@ pub fn smoke_test() -> bool {
     let vk = hid_to_vk(0x1E); // '1' key
     let ch = vk_to_ascii(vk, MOD_LSHIFT);
     if ch != Some(b'!') {
-        // kprintln!("  [HID-KBD SMOKE FAIL] '1' with shift = {:?}, expected '!'", ch)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [HID-KBD SMOKE FAIL] '1' with shift = {:?}, expected '!'", ch);
         return false;
     }
 
-    // kprintln!("  [HID-KBD SMOKE OK] USB HID keyboard healthy")  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("    - Boot report parsing: OK")  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("    - HID to VK mapping: OK")  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("    - VK to ASCII translation: OK")  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("    - Modifier key detection: OK")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [HID-KBD SMOKE OK] USB HID keyboard healthy");
+    // kprintln!("    - Boot report parsing: OK");
+    // kprintln!("    - HID to VK mapping: OK");
+    // kprintln!("    - VK to ASCII translation: OK");
+    // kprintln!("    - Modifier key detection: OK");
     true
 }

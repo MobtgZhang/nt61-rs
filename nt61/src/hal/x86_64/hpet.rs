@@ -40,19 +40,27 @@ fn hpet_va() -> u64 {
 
 fn hpet_reg(off: u64) -> u32 {
     let va = hpet_va();
-    if va == 0 { return 0; }
+    if va == 0 {
+        return 0;
+    }
     unsafe { ptr::read_volatile((va + off) as *const u32) }
 }
 
 fn hpet_reg_write(off: u64, val: u32) {
     let va = hpet_va();
-    if va == 0 { return; }
-    unsafe { ptr::write_volatile((va + off) as *mut u32, val); }
+    if va == 0 {
+        return;
+    }
+    unsafe {
+        ptr::write_volatile((va + off) as *mut u32, val);
+    }
 }
 
 fn hpet_reg64(off: u64) -> u64 {
     let va = hpet_va();
-    if va == 0 { return 0; }
+    if va == 0 {
+        return 0;
+    }
     unsafe { ptr::read_volatile((va + off) as *const u64) }
 }
 
@@ -60,13 +68,17 @@ fn hpet_reg64(off: u64) -> u64 {
 /// of the ACPI HPET table; if it is 0 we silently succeed with
 /// HPET disabled.
 pub fn init(acpi_hpet_phys: u64) -> bool {
-    if acpi_hpet_phys == 0 { return false; }
+    if acpi_hpet_phys == 0 {
+        return false;
+    }
     let table_va = acpi_hpet_phys as *const AcpiHpetTable;
     let base: u64 = unsafe {
         let p = core::ptr::addr_of!((*table_va).base_address);
         ptr::read_unaligned(p)
     };
-    if base == 0 { return false; }
+    if base == 0 {
+        return false;
+    }
 
     // Map the registers. The HPET spec requires a 1 KiB aligned
     // region; we map 1 page (4 KiB) which is plenty.
@@ -75,7 +87,9 @@ pub fn init(acpi_hpet_phys: u64) -> bool {
 
     let cap = hpet_reg64(HPET_REG_CAP);
     let period_fs = cap >> 32; // femtoseconds per tick
-    if period_fs == 0 { return false; }
+    if period_fs == 0 {
+        return false;
+    }
     let hz = 1_000_000_000_000_000u64 / period_fs as u64;
     HPET_FREQ_HZ.store(hz, Ordering::Release);
     HPET_PERIOD_FS.store(period_fs as u64, Ordering::Release);
@@ -113,7 +127,9 @@ pub fn counter_lo() -> u32 {
 /// tearing.
 pub fn counter() -> u64 {
     let va = hpet_va();
-    if va == 0 { return 0; }
+    if va == 0 {
+        return 0;
+    }
     let hi_first = unsafe { ptr::read_volatile((va + HPET_REG_COUNTER + 4) as *const u32) } as u64;
     let lo = unsafe { ptr::read_volatile((va + HPET_REG_COUNTER) as *const u32) } as u64;
     let hi_second = unsafe { ptr::read_volatile((va + HPET_REG_COUNTER + 4) as *const u32) } as u64;
@@ -143,10 +159,14 @@ pub fn HalQueryPerformanceCounter() -> i64 {
 /// fell back to a coarse spin.
 pub fn delay_us(us: u32) -> bool {
     let hz = hpet_freq_hz();
-    if hz == 0 { return false; }
+    if hz == 0 {
+        return false;
+    }
     let start = counter();
     let ticks = (hz * us as u64) / 1_000_000;
-    if ticks == 0 { return false; }
+    if ticks == 0 {
+        return false;
+    }
     loop {
         let now = counter();
         if now.wrapping_sub(start) >= ticks {

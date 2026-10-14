@@ -10,11 +10,11 @@
 //! - Multi-process consistency
 //! - Memory-mapped file support
 
-use alloc::vec::Vec;
-use alloc::collections::VecDeque;
-use hashbrown::HashMap;
-use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use crate::ke::sync::Spinlock;
+use alloc::collections::VecDeque;
+use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use hashbrown::HashMap;
 
 /// Page size for cache operations (4KB)
 pub const PAGE_SIZE: usize = 4096;
@@ -69,7 +69,10 @@ pub struct PageKey {
 
 impl PageKey {
     pub fn new(file_id: u64, page_index: u64) -> Self {
-        Self { file_id, page_index }
+        Self {
+            file_id,
+            page_index,
+        }
     }
 }
 
@@ -119,9 +122,7 @@ impl CachedPage {
     }
 
     pub fn can_evict(&self) -> bool {
-        !self.is_locked() &&
-        self.state != PageState::Reading &&
-        self.state != PageState::Writing
+        !self.is_locked() && self.state != PageState::Reading && self.state != PageState::Writing
     }
 }
 
@@ -214,13 +215,21 @@ impl PageCacheStats {
     pub fn hit_rate(&self) -> f32 {
         let hits = self.hits.load(Ordering::Relaxed);
         let total = hits + self.misses.load(Ordering::Relaxed);
-        if total == 0 { 0.0 } else { (hits as f32) / (total as f32) * 100.0 }
+        if total == 0 {
+            0.0
+        } else {
+            (hits as f32) / (total as f32) * 100.0
+        }
     }
 
     pub fn readahead_effectiveness(&self) -> f32 {
         let hits = self.readahead_hits.load(Ordering::Relaxed);
         let total = hits + self.readahead_misses.load(Ordering::Relaxed);
-        if total == 0 { 0.0 } else { (hits as f32) / (total as f32) * 100.0 }
+        if total == 0 {
+            0.0
+        } else {
+            (hits as f32) / (total as f32) * 100.0
+        }
     }
 }
 
@@ -404,7 +413,9 @@ impl PageCache {
 
     /// Perform read-ahead based on access pattern
     pub fn readahead(&mut self, file_id: u64, page_index: u64) {
-        let state = self.readahead_state.entry(file_id)
+        let state = self
+            .readahead_state
+            .entry(file_id)
             .or_insert_with(ReadAheadState::new);
 
         state.update(page_index);
@@ -450,7 +461,9 @@ impl PageCache {
 
     /// Invalidate all pages for a file
     pub fn invalidate_file(&mut self, file_id: u64) {
-        let to_remove: Vec<(PageKey, usize)> = self.page_map.iter()
+        let to_remove: Vec<(PageKey, usize)> = self
+            .page_map
+            .iter()
             .filter(|(key, _)| key.file_id == file_id)
             .map(|(key, &idx)| (*key, idx))
             .collect();
@@ -534,7 +547,10 @@ pub fn page_cache_lookup(key: PageKey) -> Option<usize> {
 
 pub fn page_cache_insert(key: PageKey, pfn: u64) -> Result<usize, &'static str> {
     let mut cache = PAGE_CACHE.lock();
-    cache.as_mut().ok_or("Cache not initialized")?.insert(key, pfn)
+    cache
+        .as_mut()
+        .ok_or("Cache not initialized")?
+        .insert(key, pfn)
 }
 
 pub fn page_cache_mark_dirty(idx: usize) {
@@ -551,18 +567,16 @@ pub fn page_cache_flush_all() -> Result<usize, &'static str> {
 
 pub fn page_cache_statistics() -> Option<PageCacheStats> {
     let cache = PAGE_CACHE.lock();
-    cache.as_ref().map(|c| {
-        PageCacheStats {
-            hits: AtomicU64::new(c.stats.hits.load(Ordering::Relaxed)),
-            misses: AtomicU64::new(c.stats.misses.load(Ordering::Relaxed)),
-            reads: AtomicU64::new(c.stats.reads.load(Ordering::Relaxed)),
-            writes: AtomicU64::new(c.stats.writes.load(Ordering::Relaxed)),
-            evictions: AtomicU64::new(c.stats.evictions.load(Ordering::Relaxed)),
-            writebacks: AtomicU64::new(c.stats.writebacks.load(Ordering::Relaxed)),
-            readahead_hits: AtomicU64::new(c.stats.readahead_hits.load(Ordering::Relaxed)),
-            readahead_misses: AtomicU64::new(c.stats.readahead_misses.load(Ordering::Relaxed)),
-            dirty_pages: AtomicUsize::new(c.stats.dirty_pages.load(Ordering::Relaxed)),
-            total_pages: AtomicUsize::new(c.stats.total_pages.load(Ordering::Relaxed)),
-        }
+    cache.as_ref().map(|c| PageCacheStats {
+        hits: AtomicU64::new(c.stats.hits.load(Ordering::Relaxed)),
+        misses: AtomicU64::new(c.stats.misses.load(Ordering::Relaxed)),
+        reads: AtomicU64::new(c.stats.reads.load(Ordering::Relaxed)),
+        writes: AtomicU64::new(c.stats.writes.load(Ordering::Relaxed)),
+        evictions: AtomicU64::new(c.stats.evictions.load(Ordering::Relaxed)),
+        writebacks: AtomicU64::new(c.stats.writebacks.load(Ordering::Relaxed)),
+        readahead_hits: AtomicU64::new(c.stats.readahead_hits.load(Ordering::Relaxed)),
+        readahead_misses: AtomicU64::new(c.stats.readahead_misses.load(Ordering::Relaxed)),
+        dirty_pages: AtomicUsize::new(c.stats.dirty_pages.load(Ordering::Relaxed)),
+        total_pages: AtomicUsize::new(c.stats.total_pages.load(Ordering::Relaxed)),
     })
 }

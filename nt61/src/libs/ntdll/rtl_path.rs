@@ -10,7 +10,7 @@
 
 use super::file::wide_to_string;
 use super::status::{STATUS_BUFFER_TOO_SMALL, STATUS_INVALID_PARAMETER, STATUS_SUCCESS};
-use super::types::{PVOID, UnicodeString};
+use super::types::{UnicodeString, PVOID};
 use alloc::string::String;
 use core::ptr;
 
@@ -30,7 +30,9 @@ pub unsafe extern "C" fn RtlGetFullPathName_U(
     }
     // Compute the input length.
     let mut in_len = 0;
-    while *file_name.add(in_len) != 0 { in_len += 1; }
+    while *file_name.add(in_len) != 0 {
+        in_len += 1;
+    }
     if in_len == 0 {
         return 0;
     }
@@ -45,9 +47,12 @@ pub unsafe extern "C" fn RtlGetFullPathName_U(
     }
     let mut i = 0;
     if needs_drive {
-        *buffer.add(i) = b'C' as u16; i += 1;
-        *buffer.add(i) = b':' as u16; i += 1;
-        *buffer.add(i) = b'\\' as u16; i += 1;
+        *buffer.add(i) = b'C' as u16;
+        i += 1;
+        *buffer.add(i) = b':' as u16;
+        i += 1;
+        *buffer.add(i) = b'\\' as u16;
+        i += 1;
     }
     for j in 0..in_len {
         *buffer.add(i + j) = *file_name.add(j);
@@ -73,7 +78,9 @@ pub unsafe extern "C" fn RtlDosPathNameToNtPathName_U(
     }
     // Build the NT path string.
     let mut in_len = 0;
-    while *dos_name.add(in_len) != 0 { in_len += 1; }
+    while *dos_name.add(in_len) != 0 {
+        in_len += 1;
+    }
     if in_len < 2 {
         return 0;
     }
@@ -81,7 +88,9 @@ pub unsafe extern "C" fn RtlDosPathNameToNtPathName_U(
     let total_chars = in_len + 4;
     let total_bytes = (total_chars + 1) * 2;
     let buf = super::heap::RtlAllocateHeap(
-        core::ptr::null_mut(), super::heap::HEAP_ZERO_MEMORY, total_bytes
+        core::ptr::null_mut(),
+        super::heap::HEAP_ZERO_MEMORY,
+        total_bytes,
     ) as *mut u16;
     if buf.is_null() {
         return 0;
@@ -101,7 +110,9 @@ pub unsafe extern "C" fn RtlDosPathNameToNtPathName_U(
         // Find the last `\` in the source path.
         let mut last = 0;
         for i in 0..in_len {
-            if *dos_name.add(i) == b'\\' as u16 { last = i; }
+            if *dos_name.add(i) == b'\\' as u16 {
+                last = i;
+            }
         }
         if last < in_len {
             *file_part = buf.add(4 + last + 1);
@@ -128,17 +139,26 @@ pub unsafe extern "C" fn RtlPrefixString(
     string2: *const UnicodeString,
     case_insensitive: u8,
 ) -> u32 {
-    if string1.is_null() || string2.is_null() { return 0; }
+    if string1.is_null() || string2.is_null() {
+        return 0;
+    }
     let a = &*string1;
     let b = &*string2;
-    if a.Length > b.Length { return 0; }
+    if a.Length > b.Length {
+        return 0;
+    }
     for i in 0..(a.Length as usize / 2) {
         let (ca, cb) = if case_insensitive != 0 {
-            (super::string::RtlUpcaseUnicodeChar(*a.Buffer.add(i)), super::string::RtlUpcaseUnicodeChar(*b.Buffer.add(i)))
+            (
+                super::string::RtlUpcaseUnicodeChar(*a.Buffer.add(i)),
+                super::string::RtlUpcaseUnicodeChar(*b.Buffer.add(i)),
+            )
         } else {
             (*a.Buffer.add(i), *b.Buffer.add(i))
         };
-        if ca != cb { return 0; }
+        if ca != cb {
+            return 0;
+        }
     }
     1
 }
@@ -149,15 +169,21 @@ pub unsafe extern "C" fn RtlCreateUnicodeString(
     unicode_string: *mut UnicodeString,
     source: *const u16,
 ) -> u8 {
-    if unicode_string.is_null() || source.is_null() { return 0; }
+    if unicode_string.is_null() || source.is_null() {
+        return 0;
+    }
     let mut len = 0;
-    while *source.add(len) != 0 { len += 1; }
+    while *source.add(len) != 0 {
+        len += 1;
+    }
     let bytes = (len + 1) * 2;
-    let buf = super::heap::RtlAllocateHeap(
-        core::ptr::null_mut(), 0, bytes
-    ) as *mut u16;
-    if buf.is_null() { return 0; }
-    for i in 0..len { *buf.add(i) = *source.add(i); }
+    let buf = super::heap::RtlAllocateHeap(core::ptr::null_mut(), 0, bytes) as *mut u16;
+    if buf.is_null() {
+        return 0;
+    }
+    for i in 0..len {
+        *buf.add(i) = *source.add(i);
+    }
     *buf.add(len) = 0;
     (*unicode_string).Buffer = buf;
     (*unicode_string).Length = (len * 2) as u16;

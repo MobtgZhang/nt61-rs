@@ -82,10 +82,7 @@ impl VirtioGpuDevice {
             return;
         }
         unsafe {
-            core::ptr::write_volatile(
-                (self.mmio_base + offset as u64) as *mut u32,
-                value,
-            );
+            core::ptr::write_volatile((self.mmio_base + offset as u64) as *mut u32, value);
         }
     }
 }
@@ -160,7 +157,10 @@ impl GpuDriver for VirtioGpuDevice {
         })
     }
 
-    fn set_mode(&mut self, mode: &crate::drivers::video::core::gpu_common::DisplayMode) -> Result<(), GpuError> {
+    fn set_mode(
+        &mut self,
+        mode: &crate::drivers::video::core::gpu_common::DisplayMode,
+    ) -> Result<(), GpuError> {
         self.init_framebuffer(Some(*mode)).map(|_| ())
     }
 
@@ -197,10 +197,7 @@ impl GpuDriver for VirtioGpuDevice {
         let pixels = ((self.pitch as usize) * (self.height as usize)) / 4;
         for i in 0..pixels {
             unsafe {
-                core::ptr::write_volatile(
-                    (self.fb_virt + (i as u64 * 4)) as *mut u32,
-                    color,
-                );
+                core::ptr::write_volatile((self.fb_virt + (i as u64 * 4)) as *mut u32, color);
             }
         }
     }
@@ -212,10 +209,7 @@ impl GpuDriver for VirtioGpuDevice {
 
         let offset = ((y * self.pitch) + (x * 4)) as u64;
         unsafe {
-            core::ptr::write_volatile(
-                (self.fb_virt + offset) as *mut u32,
-                color,
-            );
+            core::ptr::write_volatile((self.fb_virt + offset) as *mut u32, color);
         }
     }
 
@@ -255,7 +249,7 @@ impl VirtioGpuDevice {
     fn reset(&mut self) {
         // Write to reset register
         self.write_reg(VIRTIO_GPU_REG_STATUS, VIRTIO_GPU_STATUS_RESET);
-        
+
         // Wait for reset to complete
         let mut retries = 100;
         while retries > 0 {
@@ -272,7 +266,7 @@ impl VirtioGpuDevice {
         // Read display configuration
         let width = self.read_reg(VIRTIO_GPU_REG_H);
         let height = self.read_reg(VIRTIO_GPU_REG_W);
-        
+
         // Only update if valid
         if width > 0 && width < 8192 {
             self.width = width;
@@ -294,7 +288,7 @@ impl VirtioGpuDevice {
     fn init_from_firmware(&mut self) {
         // Get framebuffer info from virtio-gpu configuration
         // In QEMU, the framebuffer is typically set up by the firmware
-        
+
         // Default values
         self.fb_phys = 0x0;
         self.fb_size = (self.width * self.height * 4) as u64;
@@ -304,9 +298,9 @@ impl VirtioGpuDevice {
     /// Set virtio driver status
     fn set_driver_status(&mut self) {
         let mut status = 0u32;
-        status |= VIRTIO_GPU_STATUS_ACK;       // Acknowledge
-        status |= VIRTIO_GPU_STATUS_DRIVER;    // Driver loaded
-        status |= VIRTIO_GPU_STATUS_DRIVER_OK;  // Driver ready
+        status |= VIRTIO_GPU_STATUS_ACK; // Acknowledge
+        status |= VIRTIO_GPU_STATUS_DRIVER; // Driver loaded
+        status |= VIRTIO_GPU_STATUS_DRIVER_OK; // Driver ready
         self.write_reg(VIRTIO_GPU_REG_STATUS, status);
     }
 
@@ -315,13 +309,13 @@ impl VirtioGpuDevice {
         // Configure display resolution
         self.write_reg(VIRTIO_GPU_REG_H, self.height);
         self.write_reg(VIRTIO_GPU_REG_W, self.width);
-        
+
         // Set framebuffer address
         self.write_reg(VIRTIO_GPU_REG_FB_ADDR, self.fb_phys as u32);
-        
+
         // Enable scanout
         self.write_reg(VIRTIO_GPU_REG_SCANOUT_ID, 0);
-        
+
         // Request display update
         self.write_reg(VIRTIO_GPU_REG_DISPLAY_READ, 0);
         self.write_reg(VIRTIO_GPU_REG_DISPLAY_WRITE, 0);
@@ -350,7 +344,7 @@ impl VirtioGpuDevice {
     /// Get display information
     pub fn get_display_info(&mut self) -> Option<VirtGpuDisplayInfo> {
         self.send_command(VIRTIO_GPU_CMD_GET_DISPLAY_INFO, 0);
-        
+
         if self.wait_command_complete(1000).is_ok() {
             let rect = self.read_reg(VIRTIO_GPU_REG_DISPLAY_READ);
             Some(VirtGpuDisplayInfo {
@@ -367,82 +361,158 @@ impl VirtioGpuDevice {
     }
 
     /// Create a 2D resource
-    pub fn resource_create_2d(&mut self, resource_id: u32, format: u32, width: u32, height: u32) -> Result<(), GpuError> {
+    pub fn resource_create_2d(
+        &mut self,
+        resource_id: u32,
+        format: u32,
+        width: u32,
+        height: u32,
+    ) -> Result<(), GpuError> {
         // For virtio-gpu 2D resources
         // In blob mode, this would create a backing store
         // For simple framebuffer mode, the scanout is direct
-        
+
         // Store resource info
-        log::video_log("virtio-gpu", &alloc::format!("Resource {}: {}x{} format {}", resource_id, width, height, format));
-        
+        log::video_log(
+            "virtio-gpu",
+            &alloc::format!(
+                "Resource {}: {}x{} format {}",
+                resource_id,
+                width,
+                height,
+                format
+            ),
+        );
+
         Ok(())
     }
 
     /// Set scanout configuration
-    pub fn set_scanout(&mut self, scanout_id: u32, resource_id: u32, x: u32, y: u32, width: u32, height: u32) -> Result<(), GpuError> {
+    pub fn set_scanout(
+        &mut self,
+        scanout_id: u32,
+        resource_id: u32,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+    ) -> Result<(), GpuError> {
         self.write_reg(VIRTIO_GPU_REG_SCANOUT_ID, scanout_id);
-        
+
         // In virtio-gpu 0.2+, scanout is configured via resource
-        log::video_log("virtio-gpu", &alloc::format!("Scanout {}: resource {} at ({}, {}) {}x{}", scanout_id, resource_id, x, y, width, height));
-        
+        log::video_log(
+            "virtio-gpu",
+            &alloc::format!(
+                "Scanout {}: resource {} at ({}, {}) {}x{}",
+                scanout_id,
+                resource_id,
+                x,
+                y,
+                width,
+                height
+            ),
+        );
+
         Ok(())
     }
 
     /// Transfer to host (upload to GPU)
-    pub fn transfer_to_host_2d(&mut self, resource_id: u32, offset: u64, x: u32, y: u32, width: u32, height: u32) -> Result<(), GpuError> {
+    pub fn transfer_to_host_2d(
+        &mut self,
+        resource_id: u32,
+        offset: u64,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+    ) -> Result<(), GpuError> {
         // Upload a region of the resource from guest to host
         self.send_command(VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D, 0);
-        
-        log::video_log("virtio-gpu", &alloc::format!("Transfer to host: resource {} region ({}, {}) {}x{}", resource_id, x, y, width, height));
-        
+
+        log::video_log(
+            "virtio-gpu",
+            &alloc::format!(
+                "Transfer to host: resource {} region ({}, {}) {}x{}",
+                resource_id,
+                x,
+                y,
+                width,
+                height
+            ),
+        );
+
         self.wait_command_complete(1000)
     }
 
     /// Flush display
     pub fn flush(&mut self, x: u32, y: u32, width: u32, height: u32) -> Result<(), GpuError> {
         self.send_command(VIRTIO_GPU_CMD_FLUSH, 0);
-        
+
         // Signal display update
         self.write_reg(VIRTIO_GPU_REG_DISPLAY_WRITE, 1);
-        
-        log::video_log("virtio-gpu", &alloc::format!("Flush: ({}, {}) {}x{}", x, y, width, height));
-        
+
+        log::video_log(
+            "virtio-gpu",
+            &alloc::format!("Flush: ({}, {}) {}x{}", x, y, width, height),
+        );
+
         self.wait_command_complete(100)
     }
 
     /// Attach backing storage to a resource
-    pub fn resource_attach_backing(&mut self, resource_id: u32, entries: &[VirtGpuMemEntry]) -> Result<(), GpuError> {
+    pub fn resource_attach_backing(
+        &mut self,
+        resource_id: u32,
+        entries: &[VirtGpuMemEntry],
+    ) -> Result<(), GpuError> {
         self.send_command(VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING, 0);
-        
-        log::video_log("virtio-gpu", &alloc::format!("Attach backing to resource {}", resource_id));
-        
+
+        log::video_log(
+            "virtio-gpu",
+            &alloc::format!("Attach backing to resource {}", resource_id),
+        );
+
         self.wait_command_complete(100)
     }
 
     /// Detach backing storage
     pub fn resource_detach_backing(&mut self, resource_id: u32) -> Result<(), GpuError> {
         self.send_command(VIRTIO_GPU_CMD_RESOURCE_DETACH_BACKING, 0);
-        
-        log::video_log("virtio-gpu", &alloc::format!("Detach backing from resource {}", resource_id));
-        
+
+        log::video_log(
+            "virtio-gpu",
+            &alloc::format!("Detach backing from resource {}", resource_id),
+        );
+
         self.wait_command_complete(100)
     }
 
     /// Create a 3D context (for VirGL)
-    pub fn context_create(&mut self, context_id: u32, nlen: u32, name: &str) -> Result<(), GpuError> {
+    pub fn context_create(
+        &mut self,
+        context_id: u32,
+        nlen: u32,
+        name: &str,
+    ) -> Result<(), GpuError> {
         self.send_command(VIRTIO_GPU_CMD_CTX_CREATE, 0);
-        
-        log::video_log("virtio-gpu", &alloc::format!("Create 3D context {}", context_id));
-        
+
+        log::video_log(
+            "virtio-gpu",
+            &alloc::format!("Create 3D context {}", context_id),
+        );
+
         self.wait_command_complete(100)
     }
 
     /// Submit 3D commands (for VirGL)
     pub fn context_submit(&mut self, context_id: u32, commands: &[u8]) -> Result<(), GpuError> {
         self.send_command(VIRTIO_GPU_CMD_CTX_ATTACH_BACKING, 0);
-        
-        log::video_log("virtio-gpu", &alloc::format!("Submit {} bytes to context {}", commands.len(), context_id));
-        
+
+        log::video_log(
+            "virtio-gpu",
+            &alloc::format!("Submit {} bytes to context {}", commands.len(), context_id),
+        );
+
         self.wait_command_complete(1000)
     }
 
@@ -563,7 +633,7 @@ pub const VIRTIO_GPU_F_CROSS_DEVICE: u32 = 1 << 1;
 pub fn probe() -> bool {
     // Check if virtio-gpu is present
     // In QEMU, virtio-gpu is typically at a known MMIO address
-    
+
     // For now, always return true to enable development
     // Real implementation would check PCI/vendor IDs
     true
@@ -577,7 +647,7 @@ pub fn init() -> Option<VirtioGpuDevice> {
     }
 
     let mut device = VirtioGpuDevice::new(pci_ids::VIRTIO_GPU_DEVICE_ID as u32);
-    
+
     if device.init().is_ok() {
         Some(device)
     } else {
@@ -605,19 +675,19 @@ pub fn init() -> Option<VirtioGpuDevice> {
 pub mod qemu_config {
     /// Default display width
     pub const DEFAULT_WIDTH: u32 = 1024;
-    
+
     /// Default display height  
     pub const DEFAULT_HEIGHT: u32 = 768;
-    
+
     /// Default pixel format
     pub const DEFAULT_FORMAT: u32 = 0x00; // ARGB
-    
+
     /// Default framebuffer size (8MB)
     pub const DEFAULT_FB_SIZE: u64 = 8 * 1024 * 1024;
-    
+
     /// MMIO base for virtio-gpu in QEMU riscv64 virt machine
     pub const QEMU_VIRTIO_GPU_BASE: u64 = 0x1000_0000;
-    
+
     /// MMIO size for virtio-gpu
     pub const QEMU_VIRTIO_GPU_SIZE: u64 = 0x2000;
 }
@@ -658,7 +728,10 @@ pub mod features {
 
     /// Get default resolution
     pub fn default_resolution() -> (u32, u32) {
-        (super::qemu_config::DEFAULT_WIDTH, super::qemu_config::DEFAULT_HEIGHT)
+        (
+            super::qemu_config::DEFAULT_WIDTH,
+            super::qemu_config::DEFAULT_HEIGHT,
+        )
     }
 }
 
@@ -697,10 +770,7 @@ pub struct VirtGpuMemEntry {
 
 impl Default for VirtGpuMemEntry {
     fn default() -> Self {
-        Self {
-            addr: 0,
-            length: 0,
-        }
+        Self { addr: 0, length: 0 }
     }
 }
 
@@ -759,8 +829,9 @@ impl VirtGpuResourceManager {
     pub fn create_resource(&mut self, width: u32, height: u32, format: u32) -> u32 {
         let id = self.next_id;
         self.next_id += 1;
-        
-        self.resources.push(VirtGpuResource::new(id, width, height, format));
+
+        self.resources
+            .push(VirtGpuResource::new(id, width, height, format));
         id
     }
 

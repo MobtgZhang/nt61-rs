@@ -45,8 +45,8 @@ pub fn smoke_test() -> bool {
 // =============================================================================
 
 fn test_pfn_database() -> bool {
-    use crate::mm::pfn;
     use crate::mm::perf::get_pfn_stats;
+    use crate::mm::pfn;
 
     // Check PFN database is initialized
     let pfn_count = pfn::get_database_count();
@@ -65,8 +65,8 @@ fn test_pfn_database() -> bool {
 }
 
 fn test_kernel_heap() -> bool {
-    use core::alloc::GlobalAlloc;
     use crate::mm::heap::KERNEL_HEAP;
+    use core::alloc::GlobalAlloc;
 
     // Try a small allocation
     let layout = core::alloc::Layout::from_size_align(64, 8).unwrap();
@@ -87,7 +87,9 @@ fn test_kernel_heap() -> bool {
     }
 
     // Free the allocation
-    unsafe { KERNEL_HEAP.dealloc(ptr, layout); };
+    unsafe {
+        KERNEL_HEAP.dealloc(ptr, layout);
+    };
     crate::boot_println!("    Heap alloc/free: OK");
 
     true
@@ -133,7 +135,7 @@ fn test_system_pte_pool() -> bool {
 }
 
 fn test_vad_tree() -> bool {
-    use crate::mm::vad::{VadTree, VadEntry, VadProtection};
+    use crate::mm::vad::{VadEntry, VadProtection, VadTree};
 
     let mut tree = VadTree::new();
     crate::boot_println!("    [VAD] tree constructed");
@@ -146,8 +148,11 @@ fn test_vad_tree() -> bool {
     vad.starting_vpn = 0x1000;
     vad.ending_vpn = 0x2000;
     vad.protection = VadProtection::READWRITE;
-    crate::boot_println!("    [VAD] vad constructed: start_pfn=0x{:x} end_pfn=0x{:x}",
-        vad.starting_vpn, vad.ending_vpn);
+    crate::boot_println!(
+        "    [VAD] vad constructed: start_pfn=0x{:x} end_pfn=0x{:x}",
+        vad.starting_vpn,
+        vad.ending_vpn
+    );
 
     // Insert the VAD
     match tree.insert(&mut vad) {
@@ -162,20 +167,33 @@ fn test_vad_tree() -> bool {
     // [0x1000, 0x2000] window. PFN 0x1500 corresponds to byte
     // address `0x1500 << 12 = 0x1500000` (≈ 21 MiB).
     let probe_addr: u64 = 0x1500 << 12;
-    crate::boot_println!("    [VAD] tree.root=0x{:x} node_count={} probe_pfn=0x{:x}",
-        tree.root as u64, tree.count(), probe_addr >> 12);
+    crate::boot_println!(
+        "    [VAD] tree.root=0x{:x} node_count={} probe_pfn=0x{:x}",
+        tree.root as u64,
+        tree.count(),
+        probe_addr >> 12
+    );
     match tree.find(probe_addr) {
-        Some(p) => crate::boot_println!("    [VAD] find OK @ 0x{:x} (probe=0x{:x})",
-            p as u64, probe_addr),
+        Some(p) => crate::boot_println!(
+            "    [VAD] find OK @ 0x{:x} (probe=0x{:x})",
+            p as u64,
+            probe_addr
+        ),
         None => {
-            crate::boot_println!("    [VAD] find FAILED (0x{:x} not found, root=0x{:x})",
-                probe_addr, tree.root as u64);
+            crate::boot_println!(
+                "    [VAD] find FAILED (0x{:x} not found, root=0x{:x})",
+                probe_addr,
+                tree.root as u64
+            );
             // Dump the root's fields for debugging.
             if !tree.root.is_null() {
                 unsafe {
                     let r = &*tree.root;
-                    crate::boot_println!("    [VAD] root.starting_vpn=0x{:x} root.ending_vpn=0x{:x}",
-                        r.starting_vpn, r.ending_vpn);
+                    crate::boot_println!(
+                        "    [VAD] root.starting_vpn=0x{:x} root.ending_vpn=0x{:x}",
+                        r.starting_vpn,
+                        r.ending_vpn
+                    );
                 }
             }
             return false;
@@ -201,8 +219,8 @@ fn test_page_fault_handler() -> bool {
 }
 
 fn test_performance_counters() -> bool {
-    use crate::mm::perf;
     use crate::mm::logging;
+    use crate::mm::perf;
 
     // Verify perf module is accessible
     let stats = perf::get_pfn_stats();
@@ -233,7 +251,11 @@ pub fn smoke_test_light() -> bool {
         let _pte_ok = test_system_pte_pool();
         true
     } else {
-        crate::boot_println!("Lightweight test: FAILED (pfn={}, selfmap={})", pfn_ok, selfmap_ok);
+        crate::boot_println!(
+            "Lightweight test: FAILED (pfn={}, selfmap={})",
+            pfn_ok,
+            selfmap_ok
+        );
         false
     }
 }

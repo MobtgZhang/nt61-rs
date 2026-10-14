@@ -92,10 +92,7 @@ impl RadeonCursor {
     #[inline]
     fn write_reg(&self, offset: u32, value: u32) {
         unsafe {
-            core::ptr::write_volatile(
-                (self.mmio_base + offset as u64) as *mut u32,
-                value,
-            );
+            core::ptr::write_volatile((self.mmio_base + offset as u64) as *mut u32, value);
         }
     }
 
@@ -104,9 +101,7 @@ impl RadeonCursor {
     /// # Arguments
     /// * `size` - The cursor size to use
     pub fn enable(&mut self, size: CursorSize) {
-        let control = CUR_ENABLE
-            | CUR_MODE_ARGB
-            | self.size_to_reg(size);
+        let control = CUR_ENABLE | CUR_MODE_ARGB | self.size_to_reg(size);
 
         self.write_reg(AVIVO_D1CUR_CONTROL + self.crtc_offset, control);
         self.size = size;
@@ -119,7 +114,10 @@ impl RadeonCursor {
     /// The cursor sprite data is preserved.
     pub fn disable(&mut self) {
         let control = self.read_reg(AVIVO_D1CUR_CONTROL + self.crtc_offset);
-        self.write_reg(AVIVO_D1CUR_CONTROL + self.crtc_offset, control & !CUR_ENABLE);
+        self.write_reg(
+            AVIVO_D1CUR_CONTROL + self.crtc_offset,
+            control & !CUR_ENABLE,
+        );
         self.enabled = false;
     }
 
@@ -168,10 +166,7 @@ impl RadeonCursor {
         for (i, &pixel) in data.iter().enumerate() {
             let offset = (i * 4) as u64;
             unsafe {
-                core::ptr::write_volatile(
-                    (sprite_base + offset) as *mut u32,
-                    pixel,
-                );
+                core::ptr::write_volatile((sprite_base + offset) as *mut u32, pixel);
             }
         }
     }
@@ -191,7 +186,10 @@ impl RadeonCursor {
 
         // Set the cursor address to point to VRAM
         self.write_reg(AVIVO_D1CUR_ADDR + self.crtc_offset, vram_offset as u32);
-        self.write_reg(AVIVO_D1CUR_ADDR + self.crtc_offset + 4, (vram_offset >> 32) as u32);
+        self.write_reg(
+            AVIVO_D1CUR_ADDR + self.crtc_offset + 4,
+            (vram_offset >> 32) as u32,
+        );
     }
 
     /// Set cursor color key (for transparency)
@@ -295,20 +293,19 @@ impl EvergreenCursor {
     #[inline]
     fn write_reg(&self, offset: u32, value: u32) {
         unsafe {
-            core::ptr::write_volatile(
-                (self.mmio_base + offset as u64) as *mut u32,
-                value,
-            );
+            core::ptr::write_volatile((self.mmio_base + offset as u64) as *mut u32, value);
         }
     }
 
     /// Enable cursor
     pub fn enable(&self, size: CursorSize) {
         // Evergreen cursor registers at different offsets
-        let control = CUR_ENABLE | CUR_MODE_ARGB | match size {
-            CursorSize::Size32x32 => 0 << 16,
-            CursorSize::Size64x64 => 1 << 16,
-        };
+        let control = CUR_ENABLE
+            | CUR_MODE_ARGB
+            | match size {
+                CursorSize::Size32x32 => 0 << 16,
+                CursorSize::Size64x64 => 1 << 16,
+            };
         self.write_reg(0x6428 + self.crtc_offset, control);
     }
 
@@ -336,10 +333,7 @@ impl EvergreenCursor {
         let sprite_base = self.mmio_base + 0x10000;
         for (i, &pixel) in data.iter().enumerate() {
             unsafe {
-                core::ptr::write_volatile(
-                    (sprite_base + (i as u64 * 4)) as *mut u32,
-                    pixel,
-                );
+                core::ptr::write_volatile((sprite_base + (i as u64 * 4)) as *mut u32, pixel);
             }
         }
         self.write_reg(0x6430 + self.crtc_offset, 0x10000);
@@ -384,19 +378,18 @@ impl SouthernIslandsCursor {
     #[inline]
     fn write_reg(&self, offset: u32, value: u32) {
         unsafe {
-            core::ptr::write_volatile(
-                (self.mmio_base + offset as u64) as *mut u32,
-                value,
-            );
+            core::ptr::write_volatile((self.mmio_base + offset as u64) as *mut u32, value);
         }
     }
 
     /// Enable cursor
     pub fn enable(&self, size: CursorSize) {
-        let control = CUR_ENABLE | CUR_MODE_ARGB | match size {
-            CursorSize::Size32x32 => 0 << 16,
-            CursorSize::Size64x64 => 1 << 16,
-        };
+        let control = CUR_ENABLE
+            | CUR_MODE_ARGB
+            | match size {
+                CursorSize::Size32x32 => 0 << 16,
+                CursorSize::Size64x64 => 1 << 16,
+            };
         self.write_reg(0x6428 + self.crtc_offset, control);
     }
 
@@ -423,10 +416,7 @@ impl SouthernIslandsCursor {
         let sprite_base = self.mmio_base + 0x10000;
         for (i, &pixel) in data.iter().enumerate() {
             unsafe {
-                core::ptr::write_volatile(
-                    (sprite_base + (i as u64 * 4)) as *mut u32,
-                    pixel,
-                );
+                core::ptr::write_volatile((sprite_base + (i as u64 * 4)) as *mut u32, pixel);
             }
         }
         self.write_reg(0x6434 + self.crtc_offset, 0x10000);

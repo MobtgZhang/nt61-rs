@@ -8,17 +8,14 @@
 //! - CredFree — Free credential memory
 //! - CredGetSessionTypes — Get session credential types
 
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 #[allow(non_snake_case, non_upper_case_globals, dead_code)]
-
-use core::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, AtomicBool, AtomicPtr, Ordering};
 use super::types::*;
-use crate::libs::ntdll::types::{HANDLE, PVOID, DWORD, PWSTR, PCWSTR};
-use core::ptr::{null_mut, null};
-use alloc::vec::Vec;
+use crate::libs::ntdll::types::{DWORD, HANDLE, PCWSTR, PVOID, PWSTR};
 use alloc::boxed::Box;
-
+use alloc::vec::Vec;
+use core::ptr::{null, null_mut};
 
 const MAX_CREDENTIALS: usize = 256;
 
@@ -44,7 +41,10 @@ impl StoredCredential {
             cred_type: 0,
             target_name: [0; 256],
             comment: [0; 256],
-            last_written: FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 },
+            last_written: FILETIME {
+                dwLowDateTime: 0,
+                dwHighDateTime: 0,
+            },
             credential_blob: [0; 512],
             credential_blob_size: 0,
             persist: 0,
@@ -55,7 +55,8 @@ impl StoredCredential {
     }
 }
 
-static mut CREDENTIAL_STORE: [StoredCredential; MAX_CREDENTIALS] = [StoredCredential::new(); MAX_CREDENTIALS];
+static mut CREDENTIAL_STORE: [StoredCredential; MAX_CREDENTIALS] =
+    [StoredCredential::new(); MAX_CREDENTIALS];
 
 unsafe fn copy_wide_to_buffer(dest: &mut [u16], src: PCWSTR) {
     if src.is_null() {
@@ -93,21 +94,15 @@ unsafe fn wide_str_equal(s1: &[u16], s2: PCWSTR) -> bool {
 
 fn get_current_filetime() -> FILETIME {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
-    unsafe {
-        COUNTER += 1;
-        FILETIME {
-            dwLowDateTime: (COUNTER & 0xFFFFFFFF) as DWORD,
-            dwHighDateTime: (COUNTER >> 32) as DWORD,
-        }
+    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+    FILETIME {
+        dwLowDateTime: (counter & 0xFFFFFFFF) as DWORD,
+        dwHighDateTime: (counter >> 32) as DWORD,
     }
 }
 
-
 #[no_mangle]
-pub unsafe extern "C" fn CredWriteW(
-    Credential: PCREDENTIALW,
-    Flags: DWORD,
-) -> LONG {
+pub unsafe extern "C" fn CredWriteW(Credential: PCREDENTIALW, Flags: DWORD) -> LONG {
     if Credential.is_null() {
         return 0; // FALSE
     }
@@ -152,7 +147,10 @@ pub unsafe extern "C" fn CredWriteW(
     copy_wide_to_buffer(&mut stored.user_name, cred.UserName);
 
     if !cred.CredentialBlob.is_null() && cred.CredentialBlobSize > 0 {
-        let copy_size = core::cmp::min(cred.CredentialBlobSize as usize, stored.credential_blob.len());
+        let copy_size = core::cmp::min(
+            cred.CredentialBlobSize as usize,
+            stored.credential_blob.len(),
+        );
         let blob_slice = core::slice::from_raw_parts(cred.CredentialBlob, copy_size);
         stored.credential_blob[..copy_size].copy_from_slice(blob_slice);
         stored.credential_blob_size = copy_size as DWORD;
@@ -196,7 +194,10 @@ pub unsafe extern "C" fn CredReadW(
             Type: 0,
             TargetName: null_mut(),
             Comment: null_mut(),
-            LastWritten: FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 },
+            LastWritten: FILETIME {
+                dwLowDateTime: 0,
+                dwHighDateTime: 0,
+            },
             CredentialBlobSize: 0,
             CredentialBlob: null_mut(),
             Persist: 0,
@@ -227,11 +228,7 @@ pub unsafe extern "C" fn CredReadW(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn CredDeleteW(
-    TargetName: PCWSTR,
-    Type: DWORD,
-    Flags: DWORD,
-) -> LONG {
+pub unsafe extern "C" fn CredDeleteW(TargetName: PCWSTR, Type: DWORD, Flags: DWORD) -> LONG {
     if TargetName.is_null() {
         return 0; // FALSE
     }
@@ -312,9 +309,7 @@ pub unsafe extern "C" fn CredGetSessionTypes(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn CredIsMarshaledCredentialW(
-    MarshaledCredential: PCWSTR,
-) -> LONG {
+pub unsafe extern "C" fn CredIsMarshaledCredentialW(MarshaledCredential: PCWSTR) -> LONG {
     if MarshaledCredential.is_null() {
         return 0; // FALSE
     }

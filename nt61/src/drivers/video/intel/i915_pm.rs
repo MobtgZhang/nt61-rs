@@ -41,12 +41,7 @@ impl I915PowerManager {
     /// Write register
     #[inline]
     fn write_reg(&self, offset: u32, value: u32) {
-        unsafe {
-            core::ptr::write_volatile(
-                (self.mmio_base + offset as u64) as *mut u32,
-                value,
-            )
-        }
+        unsafe { core::ptr::write_volatile((self.mmio_base + offset as u64) as *mut u32, value) }
     }
 
     /// Get power well state

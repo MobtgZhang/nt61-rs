@@ -6,8 +6,7 @@
 //! `wininit.exe`. We keep the module so the build does not break
 //! when the source tree mentions `pid1` in older commits.
 
-
 /// Stub.
 pub fn init() {
-    // kprintln!("    pid1 stub: present")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    pid1 stub: present");
 }

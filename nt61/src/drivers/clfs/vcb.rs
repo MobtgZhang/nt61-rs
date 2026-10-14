@@ -7,7 +7,7 @@ use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use crate::rtl::logging::subsystem::CLFS;
 
-use super::context::{ClfsContainerContext, ClfsClientContext, ClfsContainerState};
+use super::context::{ClfsClientContext, ClfsContainerContext, ClfsContainerState};
 use super::format::{BlfMetadata, CLFS_DEFAULT_CONTAINER_SIZE};
 use super::metadata::{ClfsBaseRecordHeader, ClfsControlRecord, ClfsLogState};
 use super::record::ClfsLsn;
@@ -17,21 +17,21 @@ use super::record::ClfsLsn;
 // ============================================================================
 
 /// Desired access mode flags for opening a log.
-pub const CLFS_FLAG_CREATE:          u32 = 0x0000_0001; // Create new log
-pub const CLFS_FLAG_OPEN_EXISTING:   u32 = 0x0000_0002; // Open existing log
-pub const CLFS_FLAG_FORCE_APPEND:    u32 = 0x0000_0004; // Force append mode
-pub const CLFS_FLAG_FORCE_SEQUENCE:  u32 = 0x0000_0008; // Force sequential access
+pub const CLFS_FLAG_CREATE: u32 = 0x0000_0001; // Create new log
+pub const CLFS_FLAG_OPEN_EXISTING: u32 = 0x0000_0002; // Open existing log
+pub const CLFS_FLAG_FORCE_APPEND: u32 = 0x0000_0004; // Force append mode
+pub const CLFS_FLAG_FORCE_SEQUENCE: u32 = 0x0000_0008; // Force sequential access
 
 /// Share mode flags.
-pub const CLFS_SHARE_READ:   u32 = 0x0000_0001;
-pub const CLFS_SHARE_WRITE:  u32 = 0x0000_0002;
+pub const CLFS_SHARE_READ: u32 = 0x0000_0001;
+pub const CLFS_SHARE_WRITE: u32 = 0x0000_0002;
 
 /// Create disposition flags.
-pub const CLFS_CREATE_NEW:         u32 = 0x0000_0001;
-pub const CLFS_CREATE_ALWAYS:      u32 = 0x0000_0002;
-pub const CLFS_OPEN_EXISTING:      u32 = 0x0000_0003;
-pub const CLFS_OPEN_ALWAYS:        u32 = 0x0000_0004;
-pub const CLFS_TRUNCATE_EXISTING:  u32 = 0x0000_0005;
+pub const CLFS_CREATE_NEW: u32 = 0x0000_0001;
+pub const CLFS_CREATE_ALWAYS: u32 = 0x0000_0002;
+pub const CLFS_OPEN_EXISTING: u32 = 0x0000_0003;
+pub const CLFS_OPEN_ALWAYS: u32 = 0x0000_0004;
+pub const CLFS_TRUNCATE_EXISTING: u32 = 0x0000_0005;
 
 // ============================================================================
 // VCB Structure
@@ -183,13 +183,17 @@ impl ClfsVcb {
 
     /// Find a client by ID.
     pub fn get_client(&self, cid: u32) -> Option<&ClfsClientContext> {
-        if cid >= 124 { return None; }
+        if cid >= 124 {
+            return None;
+        }
         self.clients[cid as usize].as_ref()
     }
 
     /// Get a mutable reference to a client.
     pub fn get_client_mut(&mut self, cid: u32) -> Option<&mut ClfsClientContext> {
-        if cid >= 124 { return None; }
+        if cid >= 124 {
+            return None;
+        }
         self.clients[cid as usize].as_mut()
     }
 
@@ -212,18 +216,23 @@ impl ClfsVcb {
 
     /// Get a container by ID.
     pub fn get_container(&self, cid: u32) -> Option<&ClfsContainerContext> {
-        if cid >= 1023 { return None; }
+        if cid >= 1023 {
+            return None;
+        }
         self.containers[cid as usize].as_ref()
     }
 
     /// Mark a container as inactive.
     pub fn deactivate_container(&mut self, cid: u32) {
-        if cid >= 1023 { return; }
+        if cid >= 1023 {
+            return;
+        }
         if let Some(ref ctx) = self.containers[cid as usize] {
             self.total_log_size.fetch_sub(ctx.size(), Ordering::Relaxed);
         }
         self.active_containers.fetch_sub(1, Ordering::Relaxed);
-        self.base_record.c_active_containers = self.base_record.c_active_containers.saturating_sub(1);
+        self.base_record.c_active_containers =
+            self.base_record.c_active_containers.saturating_sub(1);
 
         if let Some(ref mut ctx) = self.containers[cid as usize] {
             ctx.e_state = ClfsContainerState::Inactive;

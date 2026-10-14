@@ -60,5 +60,4 @@ pub fn nvc0_fb_init(dev: &mut NouveauDevice) -> Result<(), GpuError> {
     Ok(())
 }
 
-pub mod nvc0_reg {
-}
+pub mod nvc0_reg {}

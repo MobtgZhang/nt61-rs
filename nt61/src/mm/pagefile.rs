@@ -18,13 +18,13 @@
 
 #![allow(non_snake_case)]
 
-use core::sync::atomic::{AtomicU64, Ordering};
 use core::fmt;
+use core::sync::atomic::{AtomicU64, Ordering};
 
+use crate::fs::FileSystemType;
+use crate::kprintln_info;
 use crate::mm::pfn;
 use crate::mm::pte::pfn_to_phys;
-use crate::kprintln_info;
-use crate::fs::FileSystemType;
 
 const MAX_PAGING_FILES: usize = 16;
 const PAGES_PER_FILE: u64 = 4096;
@@ -56,8 +56,11 @@ impl Default for PageFileHandle {
 
 impl fmt::Display for PageFileHandle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "PageFileHandle(handle={}, device={}, fs={:?}, sectors={}, pages={})",
-               self.handle, self.device_id, self.fs_type, self.start_sector, self.size_pages)
+        write!(
+            f,
+            "PageFileHandle(handle={}, device={}, fs={:?}, sectors={}, pages={})",
+            self.handle, self.device_id, self.fs_type, self.start_sector, self.size_pages
+        )
     }
 }
 
@@ -70,7 +73,7 @@ pub struct DiskPageFileMeta {
 }
 
 /// PagingFile - represents a paging file in the system
-/// 
+///
 /// A paging file is used to store pages of memory that are not currently in use.
 /// Windows uses one or more paging files to supplement physical RAM.
 pub struct PagingFile {
@@ -242,24 +245,30 @@ pub fn init() {
         let base_pfn = match crate::mm::frame::allocate_pages(PAGES_PER_FILE) {
             Some(p) => p / 4096,
             None => {
-                // [DISABLED] // // kprintln!("    [mm] pagefile: dynamic alloc failed, pagefile disabled")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                // [DISABLED] // // kprintln!("    [mm] pagefile: dynamic alloc failed, pagefile disabled");
                 0
             }
         };
         init_paging_file(&mut PAGE_FILES[0], PAGES_PER_FILE);
         PAGE_FILES[0].enabled = base_pfn != 0;
         PAGE_FILES[0].base_pfn = base_pfn;
-        // [DISABLED] // // kprintln!("    [mm] pagefile: {} pages available ({} MiB)",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// // // [DISABLED]             PAGES_PER_FILE, PAGES_PER_FILE * 4096 / (1024 * 1024));
+        // [DISABLED] // // kprintln!("    [mm] pagefile: {} pages available ({} MiB)",
+        // // // [DISABLED]             PAGES_PER_FILE, PAGES_PER_FILE * 4096 / (1024 * 1024));
     }
 }
 
 pub fn read_page(page_file_no: u32, offset: u32) -> Option<u64> {
-    if page_file_no as usize >= MAX_PAGING_FILES { return None; }
+    if page_file_no as usize >= MAX_PAGING_FILES {
+        return None;
+    }
     unsafe {
         let pf = &PAGE_FILES[page_file_no as usize];
-        if !pf.enabled { return None; }
-        if (offset as u64) >= pf.page_count { return None; }
+        if !pf.enabled {
+            return None;
+        }
+        if (offset as u64) >= pf.page_count {
+            return None;
+        }
         let dst_pfn = pfn::allocate_pfn()?;
         let dst_pa = pfn_to_phys(dst_pfn);
         let src_pa = pfn_to_phys(pf.base_pfn + offset as u64);
@@ -275,14 +284,23 @@ pub fn read_page(page_file_no: u32, offset: u32) -> Option<u64> {
 
 pub fn write_modified_page(pfn_no: u64) {
     let db = pfn::PFN_DB.lock();
-    let entry = match db.entry(pfn_no) { Some(e) => e, None => return };
+    let entry = match db.entry(pfn_no) {
+        Some(e) => e,
+        None => return,
+    };
     unsafe {
         let pf_no = ((*entry).u3.flags.paging_file as u32) as usize;
-        if pf_no >= MAX_PAGING_FILES { return; }
+        if pf_no >= MAX_PAGING_FILES {
+            return;
+        }
         let pf = &mut PAGE_FILES[pf_no];
-        if !pf.enabled { return; }
+        if !pf.enabled {
+            return;
+        }
         let offset = (*entry).u3.flags.paging_file_offset;
-        if (offset as u64) >= pf.page_count { return; }
+        if (offset as u64) >= pf.page_count {
+            return;
+        }
         let dst_pa = pfn_to_phys(pf.base_pfn + offset as u64);
         let src_pa = pfn_to_phys(pfn_no);
         let src = src_pa as *const u64;
@@ -333,11 +351,17 @@ pub fn set_paging_file(page_file_no: u32, base_pfn: u64, page_count: u64) {
 }
 
 pub fn grow_pagefile(page_file_no: u32, new_size: u64) -> bool {
-    if page_file_no as usize >= MAX_PAGING_FILES { return false; }
+    if page_file_no as usize >= MAX_PAGING_FILES {
+        return false;
+    }
     unsafe {
         let pf = &mut PAGE_FILES[page_file_no as usize];
-        if !pf.enabled { return false; }
-        if new_size <= pf.page_count { return false; }
+        if !pf.enabled {
+            return false;
+        }
+        if new_size <= pf.page_count {
+            return false;
+        }
         let _old_size = pf.page_count;
         pf.page_count = new_size;
         pf.max_size.store(new_size, Ordering::SeqCst);
@@ -347,7 +371,7 @@ pub fn grow_pagefile(page_file_no: u32, new_size: u64) -> bool {
         }
         pf.bitmap_words = new_bitmap_words;
         // _old_size is intentionally unused - reserved for future logging
-        // [DISABLED] // // kprintln!("[pagefile] grow_pagefile #{}: {} -> {} pages", page_file_no, _old_size, new_size)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // [DISABLED] // // kprintln!("[pagefile] grow_pagefile #{}: {} -> {} pages", page_file_no, _old_size, new_size);
         true
     }
 }
@@ -369,7 +393,9 @@ pub fn get_total_free_pagefile_pages() -> u64 {
     unsafe {
         for i in 0..MAX_PAGING_FILES {
             if PAGE_FILES[i].enabled {
-                free += PAGE_FILES[i].page_count.saturating_sub(PAGE_FILES[i].used_count);
+                free += PAGE_FILES[i]
+                    .page_count
+                    .saturating_sub(PAGE_FILES[i].used_count);
             }
         }
     }
@@ -377,7 +403,9 @@ pub fn get_total_free_pagefile_pages() -> u64 {
 }
 
 pub fn is_pagefile_enabled(page_file_no: u32) -> bool {
-    if page_file_no as usize >= MAX_PAGING_FILES { return false; }
+    if page_file_no as usize >= MAX_PAGING_FILES {
+        return false;
+    }
     unsafe { PAGE_FILES[page_file_no as usize].enabled }
 }
 
@@ -397,7 +425,9 @@ pub fn set_disk_pagefile(
     start_sector: u64,
     size_pages: u64,
 ) -> bool {
-    if page_file_no as usize >= MAX_PAGING_FILES { return false; }
+    if page_file_no as usize >= MAX_PAGING_FILES {
+        return false;
+    }
     let pagefile_size_mb = size_pages * 4096 / (1024 * 1024);
     unsafe {
         init_paging_file(&mut PAGE_FILES[page_file_no as usize], size_pages);
@@ -422,9 +452,13 @@ pub fn set_disk_pagefile(
         pf.max_size = AtomicU64::new(size_pages);
         pf.current_size = AtomicU64::new(size_pages);
         init_bitmap(page_file_no as usize, size_pages);
-        kprintln_info!("MEMORY",
+        kprintln_info!(
+            "MEMORY",
             "Disk-backed pagefile #{} enabled: {} pages ({} MB)",
-            page_file_no, size_pages, pagefile_size_mb);
+            page_file_no,
+            size_pages,
+            pagefile_size_mb
+        );
         true
     }
 }
@@ -465,9 +499,14 @@ pub fn write_page_to_disk(pfn: u64, pagefile_no: u32, offset: u32) -> bool {
         let sector_offset = (offset * 8) as u64; // Convert to u64 for addition
         let start_sector = pf.disk_meta.start_sector + sector_offset;
 
-        kprintln_info!("MEMORY",
+        kprintln_info!(
+            "MEMORY",
             "write_page_to_disk: PFN {} -> disk pagefile {} offset {} (sector {})",
-            pfn, pagefile_no, offset, start_sector);
+            pfn,
+            pagefile_no,
+            offset,
+            start_sector
+        );
 
         // Write 8 sectors (4096 bytes) to disk
         let mut buffer = [0u8; 512];
@@ -487,19 +526,23 @@ pub fn write_page_to_disk(pfn: u64, pagefile_no: u32, offset: u32) -> bool {
             if !crate::drivers::storage::block::write_block(
                 pf.disk_meta.device_id,
                 start_sector + (i as u64),
-                &buffer
+                &buffer,
             ) {
                 success = false;
-                // [DISABLED] // // kprintln!("[pagefile] write_page_to_disk: failed at sector {}",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// // // [DISABLED]                           start_sector + (i as u64));
+                // [DISABLED] // // kprintln!("[pagefile] write_page_to_disk: failed at sector {}",
+                // // // [DISABLED]                           start_sector + (i as u64));
                 break;
             }
         }
 
         if success {
-            kprintln_info!("MEMORY",
+            kprintln_info!(
+                "MEMORY",
                 "write_page_to_disk: PFN {} written to disk (pagefile {}, offset {})",
-                pfn, pagefile_no, offset);
+                pfn,
+                pagefile_no,
+                offset
+            );
         }
         return success;
     } else {
@@ -517,9 +560,13 @@ pub fn write_page_to_disk(pfn: u64, pagefile_no: u32, offset: u32) -> bool {
             }
         }
 
-        kprintln_info!("MEMORY",
+        kprintln_info!(
+            "MEMORY",
             "write_page_to_disk: PFN {} -> RAM pagefile {} offset {}",
-            pfn, pagefile_no, offset);
+            pfn,
+            pagefile_no,
+            offset
+        );
         return true;
     }
 }
@@ -547,8 +594,7 @@ pub fn read_page_from_disk(pagefile_no: u32, offset: u32) -> Option<u64> {
     let new_pfn = match pfn::allocate_pfn() {
         Some(p) => p,
         None => {
-            kprintln_info!("MEMORY",
-                "read_page_from_disk: Failed to allocate PFN");
+            kprintln_info!("MEMORY", "read_page_from_disk: Failed to allocate PFN");
             return None;
         }
     };
@@ -560,9 +606,14 @@ pub fn read_page_from_disk(pagefile_no: u32, offset: u32) -> Option<u64> {
         let sector_offset = (offset * 8) as u64; // Convert to u64 for addition
         let start_sector = pf.disk_meta.start_sector + sector_offset;
 
-        kprintln_info!("MEMORY",
+        kprintln_info!(
+            "MEMORY",
             "read_page_from_disk: pagefile {} offset {} -> PFN {} (sector {})",
-            pagefile_no, offset, new_pfn, start_sector);
+            pagefile_no,
+            offset,
+            new_pfn,
+            start_sector
+        );
 
         // Read 8 sectors (4096 bytes) from disk
         let mut buffer = [0u8; 512];
@@ -573,11 +624,11 @@ pub fn read_page_from_disk(pagefile_no: u32, offset: u32) -> Option<u64> {
             if !crate::drivers::storage::block::read_block(
                 pf.disk_meta.device_id,
                 start_sector + (i as u64),
-                &mut buffer
+                &mut buffer,
             ) {
                 success = false;
-                // [DISABLED] // // kprintln!("[pagefile] read_page_from_disk: failed at sector {}",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// // // [DISABLED]                           start_sector + (i as u64));
+                // [DISABLED] // // kprintln!("[pagefile] read_page_from_disk: failed at sector {}",
+                // // // [DISABLED]                           start_sector + (i as u64));
                 break;
             }
 
@@ -596,9 +647,13 @@ pub fn read_page_from_disk(pagefile_no: u32, offset: u32) -> Option<u64> {
             return None;
         }
 
-        kprintln_info!("MEMORY",
+        kprintln_info!(
+            "MEMORY",
             "read_page_from_disk: page {} read from disk (pagefile {}, offset {})",
-            new_pfn, pagefile_no, offset);
+            new_pfn,
+            pagefile_no,
+            offset
+        );
     } else {
         // RAM-backed pagefile: memory-to-memory copy
         let src_pa = pfn_to_phys(pf.base_pfn + offset as u64);
@@ -614,9 +669,13 @@ pub fn read_page_from_disk(pagefile_no: u32, offset: u32) -> Option<u64> {
             }
         }
 
-        kprintln_info!("MEMORY",
+        kprintln_info!(
+            "MEMORY",
             "read_page_from_disk: pagefile {} offset {} -> PFN {}",
-            pagefile_no, offset, new_pfn);
+            pagefile_no,
+            offset,
+            new_pfn
+        );
     }
 
     Some(new_pfn)

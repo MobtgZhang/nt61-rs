@@ -113,7 +113,7 @@ pub struct VadEntry {
     pub parent: *mut VadEntry,
     pub left: *mut VadEntry,
     pub right: *mut VadEntry,
-    pub balance_factor: i8,      // AVL balance: -1, 0, +1
+    pub balance_factor: i8, // AVL balance: -1, 0, +1
     pub _pad0: u8,
     pub _pad1: u16,
     pub flags: VadFlags,
@@ -221,7 +221,8 @@ impl VadTree {
     fn rotate_right_locked(&self, y: *mut VadEntry) {
         // SAFETY: caller must hold `self.lock`. We have exclusive
         // access to `self` for the duration of the lock.
-        let self_mut: *mut Self = unsafe { core::mem::transmute::<*const Self, *mut Self>(self as *const Self) };
+        let self_mut: *mut Self =
+            unsafe { core::mem::transmute::<*const Self, *mut Self>(self as *const Self) };
         let root_ptr: *mut *mut VadEntry = unsafe { &raw mut (*self_mut).root };
         unsafe {
             let x = (*y).left;
@@ -266,7 +267,8 @@ impl VadTree {
     ///     T2 T3  T1  T2
     fn rotate_left_locked(&self, x: *mut VadEntry) {
         // SAFETY: caller must hold `self.lock`.
-        let self_mut: *mut Self = unsafe { core::mem::transmute::<*const Self, *mut Self>(self as *const Self) };
+        let self_mut: *mut Self =
+            unsafe { core::mem::transmute::<*const Self, *mut Self>(self as *const Self) };
         let root_ptr: *mut *mut VadEntry = unsafe { &raw mut (*self_mut).root };
         unsafe {
             let y = (*x).right;
@@ -752,7 +754,8 @@ impl VadTree {
         // SpinlockGuard held by the caller prevents us from taking
         // `&mut self` here. The internal raw-pointer writes are
         // serialised by the lock.
-        let self_mut: *mut Self = unsafe { core::mem::transmute::<*const Self, *mut Self>(self as *const Self) };
+        let self_mut: *mut Self =
+            unsafe { core::mem::transmute::<*const Self, *mut Self>(self as *const Self) };
         let root_ptr: *mut *mut VadEntry = unsafe { &raw mut (*self_mut).root };
         unsafe {
             let has_left = !(*node).left.is_null();
@@ -870,20 +873,26 @@ impl VadTree {
     }
 
     /// Allocate and initialize a new VAD from the kernel pool.
-    pub fn allocate_vad(&self, start: u64, end: u64, vad_type: VadType, protection: VadProtection) -> *mut VadEntry {
+    pub fn allocate_vad(
+        &self,
+        start: u64,
+        end: u64,
+        vad_type: VadType,
+        protection: VadProtection,
+    ) -> *mut VadEntry {
         let vad = crate::mm::pool::allocate(
             crate::mm::pool::PoolType::NonPaged,
             core::mem::size_of::<VadEntry>(),
         ) as *mut VadEntry;
         let _ = &vad;
-        // // crate::kprintln!("[VAD] allocate_vad: pool returned 0x{:x}", vad as u64)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // crate::kprintln!("[VAD] allocate_vad: pool returned 0x{:x}", vad as u64);
         if !vad.is_null() {
             unsafe {
-                // // crate::kprintln!("[VAD] allocate_vad: about to zero-fill VadEntry at 0x{:x} (size={})", vad as u64, core::mem::size_of::<VadEntry>())  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                // // crate::kprintln!("[VAD] allocate_vad: about to zero-fill VadEntry at 0x{:x} (size={})", vad as u64, core::mem::size_of::<VadEntry>());
                 core::ptr::write_bytes(vad, 0u8, core::mem::size_of::<VadEntry>());
-                // // crate::kprintln!("[VAD] allocate_vad: zero-filled, set_range")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                // // crate::kprintln!("[VAD] allocate_vad: zero-filled, set_range");
                 (*vad).set_range(start, end);
-                // // crate::kprintln!("[VAD] allocate_vad: set_range done")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                // // crate::kprintln!("[VAD] allocate_vad: set_range done");
                 (*vad).vad_type = vad_type;
                 (*vad).protection = protection;
             }
@@ -1052,7 +1061,13 @@ impl VadTree {
         result
     }
 
-    fn find_overlapping_impl(&self, node: *mut VadEntry, start: u64, end: u64, result: &mut Vec<*mut VadEntry>) {
+    fn find_overlapping_impl(
+        &self,
+        node: *mut VadEntry,
+        start: u64,
+        end: u64,
+        result: &mut Vec<*mut VadEntry>,
+    ) {
         if node.is_null() {
             return;
         }
@@ -1137,7 +1152,10 @@ impl VadTree {
                     crate::mm::vas::PTE_US | crate::mm::vas::PTE_A
                 }
                 VadProtection::READWRITE | VadProtection::WRITE => {
-                    crate::mm::vas::PTE_RW | crate::mm::vas::PTE_US | crate::mm::vas::PTE_A | crate::mm::vas::PTE_D
+                    crate::mm::vas::PTE_RW
+                        | crate::mm::vas::PTE_US
+                        | crate::mm::vas::PTE_A
+                        | crate::mm::vas::PTE_D
                 }
                 VadProtection::EXECUTE => {
                     crate::mm::vas::PTE_US | crate::mm::vas::PTE_A | crate::mm::vas::PTE_NX
@@ -1146,7 +1164,11 @@ impl VadTree {
                     crate::mm::vas::PTE_US | crate::mm::vas::PTE_A | crate::mm::vas::PTE_NX
                 }
                 VadProtection::EXECUTE_READWRITE => {
-                    crate::mm::vas::PTE_RW | crate::mm::vas::PTE_US | crate::mm::vas::PTE_A | crate::mm::vas::PTE_D | crate::mm::vas::PTE_NX
+                    crate::mm::vas::PTE_RW
+                        | crate::mm::vas::PTE_US
+                        | crate::mm::vas::PTE_A
+                        | crate::mm::vas::PTE_D
+                        | crate::mm::vas::PTE_NX
                 }
                 VadProtection::WRITECOPY => {
                     crate::mm::vas::PTE_US | crate::mm::vas::PTE_A | crate::mm::vas::PTE_RW
@@ -1169,7 +1191,7 @@ impl VadTree {
                 let pfn_no = match crate::mm::pfn::allocate_pfn() {
                     Some(p) => p,
                     None => {
-                        // // kprintln!("[VAD] map_vad_to_ptes: OOM at VPN {}", vpn)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                        // // kprintln!("[VAD] map_vad_to_ptes: OOM at VPN {}", vpn);
                         break;
                     }
                 };
@@ -1183,7 +1205,7 @@ impl VadTree {
                 let status = crate::mm::vas::map_page_in_pml4(root, va, pa, pte_flags);
                 if status != crate::mm::vas::MmStatus::Ok {
                     crate::mm::pfn::free_pfn(pfn_no);
-                    // // kprintln!("[VAD] map_vad_to_ptes: map_page failed at VA=0x{:016x}", va)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                    // // kprintln!("[VAD] map_vad_to_ptes: map_page failed at VA=0x{:016x}", va);
                     break;
                 }
 
@@ -1207,8 +1229,8 @@ impl VadTree {
                 vpn += 1;
             }
 
-            // // kprintln!("[VAD] map_vad_to_ptes: mapped {} pages for VPN range [{:#x}, {:#x}]",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                 mapped, start_vpn, end_vpn);
+            // // kprintln!("[VAD] map_vad_to_ptes: mapped {} pages for VPN range [{:#x}, {:#x}]",
+            // //                 mapped, start_vpn, end_vpn);
             mapped
         }
     }
@@ -1246,7 +1268,11 @@ impl VadTree {
         let _ = &aligned_size;
         let _ = &aligned_size;
         // Reserved for future use: starting VPN for gap finding
-        let _start_vpn = if desired_base == 0 { 0 } else { desired_base >> 12 };
+        let _start_vpn = if desired_base == 0 {
+            0
+        } else {
+            desired_base >> 12
+        };
         let _ = &_start_vpn;
         let _ = &_start_vpn;
 
@@ -1259,7 +1285,11 @@ impl VadTree {
 
         if gaps.is_empty() {
             // No VADs yet, return a default gap from the user space start
-            let gap_start = if desired_base == 0 { 0x10000 } else { desired_base };
+            let gap_start = if desired_base == 0 {
+                0x10000
+            } else {
+                desired_base
+            };
             let _ = &gap_start;
             let _ = &gap_start;
             return Some((gap_start, gap_start + aligned_size));
@@ -1311,7 +1341,13 @@ impl VadTree {
     ///
     /// This is a helper for `find_gap()` that performs an in-order traversal
     /// and records the gaps between VADs.
-    unsafe fn collect_gaps(&self, node: *mut VadEntry, min_vpn: u64, max_vpn: u64, gaps: &mut Vec<(u64, u64)>) {
+    unsafe fn collect_gaps(
+        &self,
+        node: *mut VadEntry,
+        min_vpn: u64,
+        max_vpn: u64,
+        gaps: &mut Vec<(u64, u64)>,
+    ) {
         if node.is_null() {
             return;
         }

@@ -41,7 +41,11 @@ pub unsafe extern "C" fn Wow64QueryInformationProcess(
     crate::wow64_klog!(
         "Wow64QueryInformationProcess handle=0x{:08x} class={} \
          buf=0x{:08x} sz={} retlen_ptr=0x{:08x}",
-        process_handle, information_class, buffer, buffer_size, return_length
+        process_handle,
+        information_class,
+        buffer,
+        buffer_size,
+        return_length
     );
     if process_handle == 0 {
         return STATUS_INVALID_HANDLE;
@@ -109,10 +113,7 @@ pub unsafe extern "C" fn Wow64QueryInformationProcess(
         21 => STATUS_NOT_IMPLEMENTED,
 
         _ => {
-            crate::wow64_klog!(
-                "Unknown process information class {}",
-                information_class
-            );
+            crate::wow64_klog!("Unknown process information class {}", information_class);
             STATUS_INVALID_PARAMETER
         }
     }
@@ -141,7 +142,10 @@ pub unsafe extern "C" fn Wow64SetInformationProcess(
     crate::wow64_klog!(
         "Wow64SetInformationProcess handle=0x{:08x} class={} \
          buf=0x{:08x} sz={}",
-        process_handle, information_class, buffer, buffer_size
+        process_handle,
+        information_class,
+        buffer,
+        buffer_size
     );
     if process_handle == 0 {
         return STATUS_INVALID_HANDLE;
@@ -194,7 +198,11 @@ pub unsafe extern "C" fn Wow64QueryInformationThread(
     crate::wow64_klog!(
         "Wow64QueryInformationThread handle=0x{:08x} class={} \
          buf=0x{:08x} sz={} retlen_ptr=0x{:08x}",
-        thread_handle, information_class, buffer, buffer_size, return_length
+        thread_handle,
+        information_class,
+        buffer,
+        buffer_size,
+        return_length
     );
     if thread_handle == 0 {
         return STATUS_INVALID_HANDLE;
@@ -244,10 +252,7 @@ pub unsafe extern "C" fn Wow64QueryInformationThread(
         12 => STATUS_NOT_IMPLEMENTED,
 
         _ => {
-            crate::wow64_klog!(
-                "Unknown thread information class {}",
-                information_class
-            );
+            crate::wow64_klog!("Unknown thread information class {}", information_class);
             STATUS_INVALID_PARAMETER
         }
     }
@@ -276,7 +281,10 @@ pub unsafe extern "C" fn Wow64SetInformationThread(
     crate::wow64_klog!(
         "Wow64SetInformationThread handle=0x{:08x} class={} \
          buf=0x{:08x} sz={}",
-        thread_handle, information_class, buffer, buffer_size
+        thread_handle,
+        information_class,
+        buffer,
+        buffer_size
     );
     if thread_handle == 0 {
         return STATUS_INVALID_HANDLE;
@@ -295,10 +303,7 @@ pub unsafe extern "C" fn Wow64SetInformationThread(
         // ThreadImpersonationToken - Set impersonation token
         5 => STATUS_NOT_IMPLEMENTED,
         _ => {
-            crate::wow64_klog!(
-                "Unknown thread set information class {}",
-                information_class
-            );
+            crate::wow64_klog!("Unknown thread set information class {}", information_class);
             STATUS_INVALID_PARAMETER
         }
     }
@@ -324,7 +329,9 @@ pub unsafe extern "C" fn Wow64GetContextThread(
 ) -> ULONG32 {
     crate::wow64_klog!(
         "Wow64GetContextThread handle=0x{:08x} ctx=0x{:08x} sz=0x{:x}",
-        thread_handle, context, context_size
+        thread_handle,
+        context,
+        context_size
     );
 
     // Validate context buffer
@@ -366,8 +373,8 @@ pub unsafe extern "C" fn Wow64GetContextThread(
     (*ctx).esp = 0;
     (*ctx).eip = 0;
     (*ctx).eflags = 0;
-    (*ctx).cs = 0x23;  // USER_CS
-    (*ctx).ss = 0x2B;  // USER_SS
+    (*ctx).cs = 0x23; // USER_CS
+    (*ctx).ss = 0x2B; // USER_SS
     (*ctx).ds = 0;
     (*ctx).es = 0;
     (*ctx).fs = 0;
@@ -400,7 +407,9 @@ pub unsafe extern "C" fn Wow64SetContextThread(
 ) -> ULONG32 {
     crate::wow64_klog!(
         "Wow64SetContextThread handle=0x{:08x} ctx=0x{:08x} sz=0x{:x}",
-        thread_handle, context, context_size
+        thread_handle,
+        context,
+        context_size
     );
 
     // Validate context buffer
@@ -495,7 +504,10 @@ pub unsafe extern "C" fn wow64_query_information_process(
 ) -> u32 {
     crate::wow64_klog!(
         "wow64_query_information_process proc={:#x} class={:#x} buf={:#x} sz={}",
-        process_handle, information_class, buffer, buffer_size
+        process_handle,
+        information_class,
+        buffer,
+        buffer_size
     );
     // Forward to the actual implementation
     Wow64QueryInformationProcess(
@@ -503,7 +515,7 @@ pub unsafe extern "C" fn wow64_query_information_process(
         information_class,
         buffer,
         buffer_size,
-        0 // return_length_ptr
+        0, // return_length_ptr
     )
 }
 
@@ -516,13 +528,11 @@ pub unsafe extern "C" fn wow64_set_information_thread(
 ) -> u32 {
     crate::wow64_klog!(
         "wow64_set_information_thread thr={:#x} class={:#x} buf={:#x} sz={}",
-        thread_handle, information_class, buffer, buffer_size
-    );
-    // Forward to the actual implementation
-    Wow64SetInformationThread(
         thread_handle,
         information_class,
         buffer,
         buffer_size
-    )
+    );
+    // Forward to the actual implementation
+    Wow64SetInformationThread(thread_handle, information_class, buffer, buffer_size)
 }

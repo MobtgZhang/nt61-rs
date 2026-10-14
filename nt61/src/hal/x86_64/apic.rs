@@ -144,29 +144,78 @@ fn ioapic_va() -> u64 {
 }
 
 #[inline]
-pub fn apic_read(off: u64) -> u32 { read_lapic(off) }
+pub fn apic_read(off: u64) -> u32 {
+    read_lapic(off)
+}
 
 #[inline]
-pub fn apic_write(off: u64, val: u32) { write_lapic(off, val) }
+pub fn apic_write(off: u64, val: u32) {
+    write_lapic(off, val)
+}
+
+// =====================================================================
+// Task priority (TPR)
+// =====================================================================
+
+/// Is the Local APIC mapped and usable?
+///
+/// `LAPIC_VA` is only non-zero after `init()`/`init_from_madt()` has mapped
+/// the registers. Before that the LAPIC is not reachable, so the IRQL model
+/// must stay a software counter. This is also the guard that keeps unit
+/// tests (which run in userspace) from touching privileged state.
+#[inline]
+pub fn is_ready() -> bool {
+    lapic_va() != 0
+}
+
+/// Write the LAPIC task-priority register.
+///
+/// `tpr` is the 8-bit TPR encoding (priority in the high nibble), i.e. the
+/// value produced by the documented `IrqlToTpr()` mapping. No-op when the
+/// LAPIC is not mapped.
+#[inline]
+pub fn set_tpr(tpr: u8) {
+    if lapic_va() == 0 {
+        return;
+    }
+    write_lapic(lapic_reg::TPR, (tpr & 0xFF) as u32);
+}
+
+/// Read the LAPIC task-priority register (0 when not mapped).
+#[inline]
+pub fn get_tpr() -> u32 {
+    if lapic_va() == 0 {
+        return 0;
+    }
+    read_lapic(lapic_reg::TPR)
+}
 
 #[inline]
 fn read_lapic(off: u64) -> u32 {
     let va = lapic_va();
-    if va == 0 { return 0; }
+    if va == 0 {
+        return 0;
+    }
     unsafe { ptr::read_volatile((va + off) as *const u32) }
 }
 
 #[inline]
 fn write_lapic(off: u64, val: u32) {
     let va = lapic_va();
-    if va == 0 { return; }
-    unsafe { ptr::write_volatile((va + off) as *mut u32, val); }
+    if va == 0 {
+        return;
+    }
+    unsafe {
+        ptr::write_volatile((va + off) as *mut u32, val);
+    }
 }
 
 #[inline]
 fn read_ioapic(off: u32) -> u32 {
     let va = ioapic_va();
-    if va == 0 { return 0; }
+    if va == 0 {
+        return 0;
+    }
     unsafe {
         ptr::write_volatile(va as *mut u32, off);
         ptr::read_volatile((va + 16) as *const u32)
@@ -176,7 +225,9 @@ fn read_ioapic(off: u32) -> u32 {
 #[inline]
 fn write_ioapic(off: u32, val: u32) {
     let va = ioapic_va();
-    if va == 0 { return; }
+    if va == 0 {
+        return;
+    }
     unsafe {
         ptr::write_volatile(va as *mut u32, off);
         ptr::write_volatile((va + 16) as *mut u32, val);
@@ -224,7 +275,10 @@ pub fn init() -> bool {
 
     // Software enable + spurious vector 0xFF.
     let svr = read_lapic(lapic_reg::SVR);
-    write_lapic(lapic_reg::SVR, svr | svr::ENABLE | svr::SPURIOUS_VECTOR_MASK);
+    write_lapic(
+        lapic_reg::SVR,
+        svr | svr::ENABLE | svr::SPURIOUS_VECTOR_MASK,
+    );
 
     // Accept all interrupts: TPR = 0.
     write_lapic(lapic_reg::TPR, 0);
@@ -264,13 +318,16 @@ pub fn init_smp() {
         let apic_base_msr = rdmsr(0x1B);
         apic_base_msr & 0x0000_0FFF_FFFF_F000
     };
-    let va = crate::mm::syspte::map_io_space(phys.max(LAPIC_BASE), 1)
-        .unwrap_or(phys.max(LAPIC_BASE));
+    let va =
+        crate::mm::syspte::map_io_space(phys.max(LAPIC_BASE), 1).unwrap_or(phys.max(LAPIC_BASE));
     LAPIC_VA.store(va, Ordering::Release);
 
     // Software enable + spurious vector 0xFF.
     let svr = read_lapic(lapic_reg::SVR);
-    write_lapic(lapic_reg::SVR, svr | svr::ENABLE | svr::SPURIOUS_VECTOR_MASK);
+    write_lapic(
+        lapic_reg::SVR,
+        svr | svr::ENABLE | svr::SPURIOUS_VECTOR_MASK,
+    );
 
     // Accept all interrupts: TPR = 0.
     write_lapic(lapic_reg::TPR, 0);

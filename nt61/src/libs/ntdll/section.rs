@@ -11,8 +11,7 @@
 
 use super::file::{alloc_handle, free_handle, HandleKind};
 use super::status::{
-    STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER, STATUS_NOT_IMPLEMENTED,
-    STATUS_SUCCESS,
+    STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER, STATUS_NOT_IMPLEMENTED, STATUS_SUCCESS,
 };
 use super::types::{HANDLE, NTSTATUS, PVOID, SIZE_T};
 use core::ptr;
@@ -27,11 +26,21 @@ pub unsafe extern "C" fn NtCreateSection(
     allocation_attributes: u32,
     file_handle: HANDLE,
 ) -> NTSTATUS {
-    if section_handle.is_null() { return STATUS_INVALID_PARAMETER; }
-    let _ = (object_attributes, maximum_size, section_page_protection,
-             allocation_attributes, file_handle, desired_access);
+    if section_handle.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
+    let _ = (
+        object_attributes,
+        maximum_size,
+        section_page_protection,
+        allocation_attributes,
+        file_handle,
+        desired_access,
+    );
     let h = alloc_handle(HandleKind::Section, 0xC0DE_CAFE_F00D_BEEF);
-    if h.is_null() { return STATUS_INVALID_HANDLE; }
+    if h.is_null() {
+        return STATUS_INVALID_HANDLE;
+    }
     *section_handle = h;
     STATUS_SUCCESS
 }
@@ -50,10 +59,22 @@ pub unsafe extern "C" fn NtMapViewOfSection(
     allocation_type: u32,
     win32_protect: u32,
 ) -> NTSTATUS {
-    if section_handle.is_null() { return STATUS_INVALID_HANDLE; }
-    let _ = (process_handle, zero_bits, commit_size, section_offset,
-             view_size, inherit_disposition, allocation_type, win32_protect);
-    if base_address.is_null() { return STATUS_INVALID_PARAMETER; }
+    if section_handle.is_null() {
+        return STATUS_INVALID_HANDLE;
+    }
+    let _ = (
+        process_handle,
+        zero_bits,
+        commit_size,
+        section_offset,
+        view_size,
+        inherit_disposition,
+        allocation_type,
+        win32_protect,
+    );
+    if base_address.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
     // The bootstrap never executes user code, so we never
     // actually map anything. Return a fixed placeholder VA.
     *base_address = 0x0000_7000_0000_0000usize as PVOID;
@@ -78,12 +99,18 @@ pub unsafe extern "C" fn NtQuerySection(
     _length: SIZE_T,
     _return_length: *mut SIZE_T,
 ) -> NTSTATUS {
-    if section_handle.is_null() { return STATUS_INVALID_HANDLE; }
+    if section_handle.is_null() {
+        return STATUS_INVALID_HANDLE;
+    }
     STATUS_NOT_IMPLEMENTED
 }
 
 /// `NtClose` (re-exported so kernel32 can call it without
 /// touching the file module).
 pub unsafe extern "C" fn NtCloseSection(h: HANDLE) -> NTSTATUS {
-    if free_handle(h) { STATUS_SUCCESS } else { STATUS_INVALID_HANDLE }
+    if free_handle(h) {
+        STATUS_SUCCESS
+    } else {
+        STATUS_INVALID_HANDLE
+    }
 }

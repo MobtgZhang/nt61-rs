@@ -185,7 +185,11 @@ impl HidReportBuffer {
         report.modifiers = self.data[0];
         report.reserved = self.data[1];
         for i in 0..6 {
-            report.key_codes[i] = if i + 2 < self.length { self.data[i + 2] } else { 0 };
+            report.key_codes[i] = if i + 2 < self.length {
+                self.data[i + 2]
+            } else {
+                0
+            };
         }
         true
     }
@@ -198,7 +202,11 @@ impl HidReportBuffer {
         report.buttons = self.data[0];
         report.x_movement = self.data[1] as i8;
         report.y_movement = self.data[2] as i8;
-        report.vertical_wheel = if self.length > 3 { self.data[3] as i8 } else { 0 };
+        report.vertical_wheel = if self.length > 3 {
+            self.data[3] as i8
+        } else {
+            0
+        };
         true
     }
 }
@@ -209,69 +217,69 @@ impl HidReportBuffer {
 
 /// HID report descriptor for a standard boot keyboard
 pub const BOOT_KEYBOARD_HID_DESCRIPTOR: &[u8] = &[
-    0x05, 0x01,        // Usage Page (Generic Desktop)
-    0x09, 0x06,        // Usage (Keyboard)
-    0xA1, 0x01,        // Collection (Application)
-    0x05, 0x07,        //   Usage Page (Key Codes)
-    0x19, 0xE0,        //   Usage Minimum (224) - Left Control
-    0x29, 0xE7,        //   Usage Maximum (231) - Right GUI
-    0x15, 0x00,        //   Logical Minimum (0)
-    0x25, 0x01,        //   Logical Maximum (1)
-    0x75, 0x01,        //   Report Size (1)
-    0x95, 0x08,        //   Report Count (8)
-    0x81, 0x02,        //   Input (Data, Variable, Absolute) - Modifier byte
-    0x95, 0x01,        //   Report Count (1)
-    0x75, 0x08,        //   Report Size (8)
-    0x81, 0x01,        //   Input (Constant) - Reserved byte
-    0x95, 0x05,        //   Report Count (5)
-    0x75, 0x01,        //   Report Size (1)
-    0x05, 0x08,        //   Usage Page (LEDs)
-    0x19, 0x01,        //   Usage Minimum (1) - Num Lock
-    0x29, 0x05,        //   Usage Maximum (5) - Kana
-    0x91, 0x02,        //   Output (Data, Variable, Absolute) - LED report
-    0x95, 0x01,        //   Report Count (1)
-    0x75, 0x03,        //   Report Size (3)
-    0x91, 0x01,        //   Output (Constant) - LED report padding
-    0x95, 0x06,        //   Report Count (6)
-    0x75, 0x08,        //   Report Size (8)
-    0x15, 0x00,        //   Logical Minimum (0)
-    0x25, 0x65,        //   Logical Maximum (101)
-    0x05, 0x07,        //   Usage Page (Key Codes)
-    0x19, 0x00,        //   Usage Minimum (0)
-    0x29, 0x65,        //   Usage Maximum (101)
-    0x81, 0x00,        //   Input (Data, Array) - Key array
-    0xC0,              // End Collection
+    0x05, 0x01, // Usage Page (Generic Desktop)
+    0x09, 0x06, // Usage (Keyboard)
+    0xA1, 0x01, // Collection (Application)
+    0x05, 0x07, //   Usage Page (Key Codes)
+    0x19, 0xE0, //   Usage Minimum (224) - Left Control
+    0x29, 0xE7, //   Usage Maximum (231) - Right GUI
+    0x15, 0x00, //   Logical Minimum (0)
+    0x25, 0x01, //   Logical Maximum (1)
+    0x75, 0x01, //   Report Size (1)
+    0x95, 0x08, //   Report Count (8)
+    0x81, 0x02, //   Input (Data, Variable, Absolute) - Modifier byte
+    0x95, 0x01, //   Report Count (1)
+    0x75, 0x08, //   Report Size (8)
+    0x81, 0x01, //   Input (Constant) - Reserved byte
+    0x95, 0x05, //   Report Count (5)
+    0x75, 0x01, //   Report Size (1)
+    0x05, 0x08, //   Usage Page (LEDs)
+    0x19, 0x01, //   Usage Minimum (1) - Num Lock
+    0x29, 0x05, //   Usage Maximum (5) - Kana
+    0x91, 0x02, //   Output (Data, Variable, Absolute) - LED report
+    0x95, 0x01, //   Report Count (1)
+    0x75, 0x03, //   Report Size (3)
+    0x91, 0x01, //   Output (Constant) - LED report padding
+    0x95, 0x06, //   Report Count (6)
+    0x75, 0x08, //   Report Size (8)
+    0x15, 0x00, //   Logical Minimum (0)
+    0x25, 0x65, //   Logical Maximum (101)
+    0x05, 0x07, //   Usage Page (Key Codes)
+    0x19, 0x00, //   Usage Minimum (0)
+    0x29, 0x65, //   Usage Maximum (101)
+    0x81, 0x00, //   Input (Data, Array) - Key array
+    0xC0, // End Collection
 ];
 
 /// HID report descriptor for a standard boot mouse
 pub const BOOT_MOUSE_HID_DESCRIPTOR: &[u8] = &[
-    0x05, 0x01,        // Usage Page (Generic Desktop)
-    0x09, 0x02,        // Usage (Mouse)
-    0xA1, 0x01,        // Collection (Application)
-    0x09, 0x01,        //   Usage (Pointer)
-    0xA1, 0x00,        //   Collection (Physical)
-    0x05, 0x09,        //     Usage Page (Buttons)
-    0x19, 0x01,        //     Usage Minimum (1) - Button 1
-    0x29, 0x03,        //     Usage Maximum (3) - Button 3
-    0x15, 0x00,        //     Logical Minimum (0)
-    0x25, 0x01,        //     Logical Maximum (1)
-    0x95, 0x03,        //     Report Count (3)
-    0x75, 0x01,        //     Report Size (1)
-    0x81, 0x02,        //     Input (Data, Variable, Absolute) - Button bits
-    0x95, 0x01,        //     Report Count (1)
-    0x75, 0x05,        //     Report Size (5)
-    0x81, 0x01,        //     Input (Constant) - Padding
-    0x05, 0x01,        //     Usage Page (Generic Desktop)
-    0x09, 0x30,        //     Usage (X)
-    0x09, 0x31,        //     Usage (Y)
-    0x09, 0x38,        //     Usage (Wheel)
-    0x15, 0x81,        //     Logical Minimum (-127)
-    0x25, 0x7F,        //     Logical Maximum (127)
-    0x75, 0x08,        //     Report Size (8)
-    0x95, 0x03,        //     Report Count (3)
-    0x81, 0x06,        //     Input (Data, Variable, Relative) - X, Y, Wheel
-    0xC0,              //   End Collection
-    0xC0,              // End Collection
+    0x05, 0x01, // Usage Page (Generic Desktop)
+    0x09, 0x02, // Usage (Mouse)
+    0xA1, 0x01, // Collection (Application)
+    0x09, 0x01, //   Usage (Pointer)
+    0xA1, 0x00, //   Collection (Physical)
+    0x05, 0x09, //     Usage Page (Buttons)
+    0x19, 0x01, //     Usage Minimum (1) - Button 1
+    0x29, 0x03, //     Usage Maximum (3) - Button 3
+    0x15, 0x00, //     Logical Minimum (0)
+    0x25, 0x01, //     Logical Maximum (1)
+    0x95, 0x03, //     Report Count (3)
+    0x75, 0x01, //     Report Size (1)
+    0x81, 0x02, //     Input (Data, Variable, Absolute) - Button bits
+    0x95, 0x01, //     Report Count (1)
+    0x75, 0x05, //     Report Size (5)
+    0x81, 0x01, //     Input (Constant) - Padding
+    0x05, 0x01, //     Usage Page (Generic Desktop)
+    0x09, 0x30, //     Usage (X)
+    0x09, 0x31, //     Usage (Y)
+    0x09, 0x38, //     Usage (Wheel)
+    0x15, 0x81, //     Logical Minimum (-127)
+    0x25, 0x7F, //     Logical Maximum (127)
+    0x75, 0x08, //     Report Size (8)
+    0x95, 0x03, //     Report Count (3)
+    0x81, 0x06, //     Input (Data, Variable, Relative) - X, Y, Wheel
+    0xC0, //   End Collection
+    0xC0, // End Collection
 ];
 
 /// HID descriptor (part of configuration)
@@ -290,30 +298,27 @@ pub struct HidDescriptor {
 /// Get HID report descriptor for a device type
 pub fn get_report_descriptor(protocol: HidProtocol) -> &'static [u8] {
     match protocol {
-        HidProtocol::Boot => BOOT_KEYBOARD_HID_DESCRIPTOR,  // Default to keyboard
+        HidProtocol::Boot => BOOT_KEYBOARD_HID_DESCRIPTOR, // Default to keyboard
         HidProtocol::Report => BOOT_KEYBOARD_HID_DESCRIPTOR,
         HidProtocol::None => &[],
     }
 }
 
 /// Create a HID descriptor
-pub fn create_hid_descriptor(
-    hid_version: u16,
-    report_desc_length: u16,
-) -> HidDescriptor {
+pub fn create_hid_descriptor(hid_version: u16, report_desc_length: u16) -> HidDescriptor {
     HidDescriptor {
         desc_length: core::mem::size_of::<HidDescriptor>() as u8,
-        desc_type: 0x21,  // HID descriptor type
+        desc_type: 0x21, // HID descriptor type
         hid_version,
-        country_code: 0,  // Not localized
+        country_code: 0, // Not localized
         num_descriptors: 1,
-        report_desc_type: 0x22,  // Report descriptor type
+        report_desc_type: 0x22, // Report descriptor type
         report_desc_length,
     }
 }
 
 pub fn init() {
-    // kprintln!("      USB HID class driver: ready (boot keyboard / mouse)")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("      USB HID class driver: ready (boot keyboard / mouse)");
 }
 
 /// Number of registered USB HID keyboards we are tracking. Each
@@ -386,7 +391,9 @@ pub fn register_keyboard() -> Option<usize> {
 pub fn submit_report(slot: usize, report: BootKeyboardReport) {
     // SAFETY: single-threaded polling path; no concurrent access.
     unsafe {
-        if slot >= MAX_USB_KEYBOARDS { return; }
+        if slot >= MAX_USB_KEYBOARDS {
+            return;
+        }
         USB_KEYBOARDS[slot].current_report = report;
     }
 }
@@ -406,7 +413,9 @@ pub fn poll_keyboards() {
     // SAFETY: single-threaded polling path; no concurrent access.
     unsafe {
         for slot in USB_KEYBOARDS.iter_mut() {
-            if !slot.in_use { continue; }
+            if !slot.in_use {
+                continue;
+            }
             let cur = slot.current_report;
             let prev = slot.prev_report;
 
@@ -417,7 +426,7 @@ pub fn poll_keyboards() {
                 slot.caps_lock = !slot.caps_lock;
             }
 
-#[cfg(target_arch = "x86_64")]
+            #[cfg(target_arch = "x86_64")]
             #[cfg(target_arch = "x86_64")]
             let shift = crate::hal::x86_64::keyboard_unified::hid_shift_state(cur.modifiers);
             let caps = slot.caps_lock;
@@ -425,9 +434,11 @@ pub fn poll_keyboards() {
             // Emit any usage codes present in `cur` that were not
             // in `prev` — these are newly pressed keys.
             for &usage in cur.key_codes.iter() {
-                if usage == 0 { continue; }
+                if usage == 0 {
+                    continue;
+                }
                 if !prev.key_codes.contains(&usage) {
-#[cfg(target_arch = "x86_64")]
+                    #[cfg(target_arch = "x86_64")]
                     #[cfg(target_arch = "x86_64")]
                     crate::hal::x86_64::keyboard_unified::hid_emit(usage, shift, caps);
                 }
@@ -453,7 +464,7 @@ pub fn smoke_test() -> bool {
     let mut buffer = HidReportBuffer::new();
     buffer.data[0] = HID_MOD_LSHIFT | HID_MOD_LCTRL;
     buffer.data[1] = 0;
-    buffer.data[2] = 0x04;  // 'a' key
+    buffer.data[2] = 0x04; // 'a' key
     buffer.length = 3;
 
     let mut report = BootKeyboardReport::default();
@@ -473,6 +484,6 @@ pub fn smoke_test() -> bool {
     assert!(mouse_report.buttons == HID_MOUSE_BTN_LEFT);
     assert!(mouse_report.x_movement == 10);
 
-    // kprintln!("  [HID SMOKE] USB HID driver healthy")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [HID SMOKE] USB HID driver healthy");
     true
 }

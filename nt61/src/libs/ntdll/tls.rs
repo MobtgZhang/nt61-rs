@@ -6,12 +6,16 @@
 //
 //! References: MSDN Library "Windows 7" — Thread Local Storage.
 
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use super::status::{STATUS_INVALID_PARAMETER, STATUS_NO_MEMORY, STATUS_SUCCESS};
 use super::types::{NTSTATUS, PVOID};
 use crate::ke::sync::Spinlock;
 use core::ptr;
+use spin::{Lazy, Mutex};
+
+extern crate alloc;
+use alloc::vec::Vec;
 
 const TLS_MINIMUM_AVAILABLE: usize = 64;
 const TLS_EXPANSION_SLOTS: usize = 1024;
@@ -27,8 +31,27 @@ static TLS_LOCK: Spinlock<TlsState> = Spinlock::new(TlsState {
     next_free: 0,
 });
 
-static TLS_DATA: Lazy<Mutex<[usize; TLS_MINIMUM_AVAILABLE]>> = Lazy::new(|| Mutex::new([0; TLS_MINIMUM_AVAILABLE]));
-static TLS_EXPANSION: Lazy<Mutex<[usize; TLS_EXPANSION_SLOTS]>> = Lazy::new(|| Mutex::new([0; TLS_EXPANSION_SLOTS]));
+/// Per-thread TLS storage.
+///
+/// `TlsGetValue`/`TlsSetValue` are per-thread by definition (Win32 DDI:
+/// "the value is stored in the calling thread's TLS array"), so the table
+/// must be keyed by the calling thread rather than shared process-wide.
+/// Expansion slots are allocated lazily, matching the Windows behaviour
+/// where slots 64..1087 only exist once the thread has used them.
+struct TlsThreadState {
+    thread_id: usize,
+    base: [usize; TLS_MINIMUM_AVAILABLE],
+    expansion: Vec<usize>,
+}
+
+static TLS_THREADS: Lazy<Mutex<Vec<TlsThreadState>>> = Lazy::new(|| Mutex::new(Vec::new()));
+
+fn current_thread_id() -> usize {
+    match crate::arch::common::percpu::try_get_current() {
+        Some(area) if !area.current_thread.is_null() => area.current_thread as usize,
+        _ => 0,
+    }
+}
 
 pub unsafe extern "C" fn TlsAlloc() -> u32 {
     let mut state = TLS_LOCK.lock();
@@ -92,17 +115,17 @@ pub unsafe extern "C" fn TlsGetValue(index: u32) -> PVOID {
         return ptr::null_mut();
     }
 
-    // Get thread ID (simplified - use slot 0 for bootstrap)
-    let thread_id = 0usize;
-    if thread_id >= 8 {
-        return ptr::null_mut();
-    }
-
+    let thread_id = current_thread_id();
+    let table = TLS_THREADS.lock();
+    let entry = match table.iter().find(|entry| entry.thread_id == thread_id) {
+        Some(entry) => entry,
+        None => return ptr::null_mut(),
+    };
     if (index as usize) < TLS_MINIMUM_AVAILABLE {
-        TLS_DATA[thread_id][index as usize] as PVOID
+        entry.base[index as usize] as PVOID
     } else {
         let expansion_idx = (index as usize) - TLS_MINIMUM_AVAILABLE;
-        TLS_EXPANSION[thread_id][expansion_idx] as PVOID
+        entry.expansion.get(expansion_idx).copied().unwrap_or(0) as PVOID
     }
 }
 
@@ -111,25 +134,33 @@ pub unsafe extern "C" fn TlsSetValue(index: u32, value: PVOID) -> u32 {
         return 0;
     }
 
-    // Get thread ID (simplified - use slot 0 for bootstrap)
-    let thread_id = 0usize;
-    if thread_id >= 8 {
-        return 0;
-    }
-
+    let thread_id = current_thread_id();
+    let mut table = TLS_THREADS.lock();
+    let entry_index = match table.iter().position(|entry| entry.thread_id == thread_id) {
+        Some(entry_index) => entry_index,
+        None => {
+            table.push(TlsThreadState {
+                thread_id,
+                base: [0; TLS_MINIMUM_AVAILABLE],
+                expansion: Vec::new(),
+            });
+            table.len() - 1
+        }
+    };
+    let entry = &mut table[entry_index];
     if (index as usize) < TLS_MINIMUM_AVAILABLE {
-        TLS_DATA[thread_id][index as usize] = value as usize;
+        entry.base[index as usize] = value as usize;
     } else {
         let expansion_idx = (index as usize) - TLS_MINIMUM_AVAILABLE;
-        TLS_EXPANSION[thread_id][expansion_idx] = value as usize;
+        if entry.expansion.len() <= expansion_idx {
+            entry.expansion.resize(expansion_idx + 1, 0);
+        }
+        entry.expansion[expansion_idx] = value as usize;
     }
     1
 }
 
-pub unsafe extern "C" fn RtlFlsAlloc(
-    _callback: PVOID,
-    index: *mut u32,
-) -> NTSTATUS {
+pub unsafe extern "C" fn RtlFlsAlloc(_callback: PVOID, index: *mut u32) -> NTSTATUS {
     RtlAllocateThreadLocalStorageIndex(index)
 }
 

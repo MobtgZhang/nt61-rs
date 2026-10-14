@@ -10,8 +10,8 @@
 
 #[cfg(test)]
 mod tests {
-    use alloc::{string::String, vec::Vec};
     use crate::servers::{csrss, services};
+    use alloc::{string::String, vec::Vec};
 
     #[test]
     fn test_csrss_session_management() {
@@ -72,6 +72,14 @@ mod tests {
     fn test_csrss_win32_connection() {
         csrss::init();
 
+        // A process must already be registered in the CSRSS process list before
+        // it can attach to the Win32 subsystem: CSRSS creates the CSR_PROCESS
+        // record when it is notified of process creation, and the win32k
+        // connection (ReactOS: win32k/ssinit.c UserInitProcess) operates on that
+        // existing record. Connecting an unregistered process must fail.
+        assert!(!csrss::connect_to_win32(1000, 0));
+        assert!(csrss::notify_process_created(1000, 0, 0, "csrss_test.exe"));
+
         // Connect process to Win32 subsystem
         assert!(csrss::connect_to_win32(1000, 0));
     }
@@ -116,15 +124,13 @@ mod tests {
         services::init();
 
         // Enumerate services by type
-        let share_process_services = services::enumerate_services(
-            services::ServiceType::ShareProcess
-        );
+        let share_process_services =
+            services::enumerate_services(services::ServiceType::ShareProcess);
         assert!(share_process_services.len() > 0);
 
         // Enumerate services by state
-        let stopped_services = services::enumerate_services_by_state(
-            services::ServiceState::Stopped
-        );
+        let stopped_services =
+            services::enumerate_services_by_state(services::ServiceState::Stopped);
         assert!(stopped_services.len() > 0);
     }
 
@@ -157,7 +163,10 @@ mod tests {
 
         let service_info = info.unwrap();
         assert_eq!(service_info.name.trim_end_matches('\0'), "RpcSs");
-        assert_eq!(service_info.service_type, services::ServiceType::ShareProcess);
+        assert_eq!(
+            service_info.service_type,
+            services::ServiceType::ShareProcess
+        );
     }
 
     #[test]
@@ -199,7 +208,10 @@ mod tests {
         // Query service status
         let queried = services::query_service_status_ex(handle_idx);
         assert!(queried.is_some());
-        assert_eq!(queried.unwrap().current_state, services::ServiceState::Running);
+        assert_eq!(
+            queried.unwrap().current_state,
+            services::ServiceState::Running
+        );
 
         // Dispatch control code
         let result = services::dispatch_service_control(&service_name, 0x04);
@@ -225,11 +237,12 @@ mod tests {
         let console = csrss::alloc_console(2000, 0);
         assert_ne!(console, 0);
 
+        // Register the process first (CSR process-creation notification), then
+        // attach it to the Win32 subsystem.
+        assert!(csrss::notify_process_created(2000, 1000, 0, "services.exe"));
+
         let win32_connected = csrss::connect_to_win32(2000, 0);
         assert!(win32_connected);
-
-        // Notify CSRSS of process creation
-        csrss::notify_process_created(2000, 1000, 0, "services.exe");
 
         // Verify the notification was recorded
         let (_sessions, notifications, _port) = csrss::get_statistics();

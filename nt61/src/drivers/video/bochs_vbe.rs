@@ -197,26 +197,126 @@ fn probe_modeset_table() {
     let _ = vbe_val::DISPI_ENABLED;
 
     let table: &[VbeModeDesc] = &[
-        VbeModeDesc { mode: vbe_val::VBE_640X400X8,   width: 640,  height: 400,  bpp: 8  },
-        VbeModeDesc { mode: vbe_val::VBE_640X480X8,   width: 640,  height: 480,  bpp: 8  },
-        VbeModeDesc { mode: vbe_val::VBE_800X600X8,   width: 800,  height: 600,  bpp: 8  },
-        VbeModeDesc { mode: vbe_val::VBE_1024X768X8,  width: 1024, height: 768,  bpp: 8  },
-        VbeModeDesc { mode: vbe_val::VBE_1280X1024X8, width: 1280, height: 1024, bpp: 8  },
-        VbeModeDesc { mode: vbe_val::VBE_320X200X15,  width: 320,  height: 200,  bpp: 15 },
-        VbeModeDesc { mode: vbe_val::VBE_320X200X16,  width: 320,  height: 200,  bpp: 16 },
-        VbeModeDesc { mode: vbe_val::VBE_320X200X32,  width: 320,  height: 200,  bpp: 32 },
-        VbeModeDesc { mode: vbe_val::VBE_640X480X15,  width: 640,  height: 480,  bpp: 15 },
-        VbeModeDesc { mode: vbe_val::VBE_640X480X16,  width: 640,  height: 480,  bpp: 16 },
-        VbeModeDesc { mode: vbe_val::VBE_640X480X32,  width: 640,  height: 480,  bpp: 32 },
-        VbeModeDesc { mode: vbe_val::VBE_800X600X15,  width: 800,  height: 600,  bpp: 15 },
-        VbeModeDesc { mode: vbe_val::VBE_800X600X16,  width: 800,  height: 600,  bpp: 16 },
-        VbeModeDesc { mode: vbe_val::VBE_800X600X32,  width: 800,  height: 600,  bpp: 32 },
-        VbeModeDesc { mode: vbe_val::VBE_1024X768X15, width: 1024, height: 768,  bpp: 15 },
-        VbeModeDesc { mode: vbe_val::VBE_1024X768X16, width: 1024, height: 768,  bpp: 16 },
-        VbeModeDesc { mode: vbe_val::VBE_1024X768X32, width: 1024, height: 768,  bpp: 32 },
-        VbeModeDesc { mode: vbe_val::VBE_1280X1024X15,width: 1280, height: 1024, bpp: 15 },
-        VbeModeDesc { mode: vbe_val::VBE_1280X1024X16,width: 1280, height: 1024, bpp: 16 },
-        VbeModeDesc { mode: vbe_val::VBE_1280X1024X32,width: 1280, height: 1024, bpp: 32 },
+        VbeModeDesc {
+            mode: vbe_val::VBE_640X400X8,
+            width: 640,
+            height: 400,
+            bpp: 8,
+        },
+        VbeModeDesc {
+            mode: vbe_val::VBE_640X480X8,
+            width: 640,
+            height: 480,
+            bpp: 8,
+        },
+        VbeModeDesc {
+            mode: vbe_val::VBE_800X600X8,
+            width: 800,
+            height: 600,
+            bpp: 8,
+        },
+        VbeModeDesc {
+            mode: vbe_val::VBE_1024X768X8,
+            width: 1024,
+            height: 768,
+            bpp: 8,
+        },
+        VbeModeDesc {
+            mode: vbe_val::VBE_1280X1024X8,
+            width: 1280,
+            height: 1024,
+            bpp: 8,
+        },
+        VbeModeDesc {
+            mode: vbe_val::VBE_320X200X15,
+            width: 320,
+            height: 200,
+            bpp: 15,
+        },
+        VbeModeDesc {
+            mode: vbe_val::VBE_320X200X16,
+            width: 320,
+            height: 200,
+            bpp: 16,
+        },
+        VbeModeDesc {
+            mode: vbe_val::VBE_320X200X32,
+            width: 320,
+            height: 200,
+            bpp: 32,
+        },
+        VbeModeDesc {
+            mode: vbe_val::VBE_640X480X15,
+            width: 640,
+            height: 480,
+            bpp: 15,
+        },
+        VbeModeDesc {
+            mode: vbe_val::VBE_640X480X16,
+            width: 640,
+            height: 480,
+            bpp: 16,
+        },
+        VbeModeDesc {
+            mode: vbe_val::VBE_640X480X32,
+            width: 640,
+            height: 480,
+            bpp: 32,
+        },
+        VbeModeDesc {
+            mode: vbe_val::VBE_800X600X15,
+            width: 800,
+            height: 600,
+            bpp: 15,
+        },
+        VbeModeDesc {
+            mode: vbe_val::VBE_800X600X16,
+            width: 800,
+            height: 600,
+            bpp: 16,
+        },
+        VbeModeDesc {
+            mode: vbe_val::VBE_800X600X32,
+            width: 800,
+            height: 600,
+            bpp: 32,
+        },
+        VbeModeDesc {
+            mode: vbe_val::VBE_1024X768X15,
+            width: 1024,
+            height: 768,
+            bpp: 15,
+        },
+        VbeModeDesc {
+            mode: vbe_val::VBE_1024X768X16,
+            width: 1024,
+            height: 768,
+            bpp: 16,
+        },
+        VbeModeDesc {
+            mode: vbe_val::VBE_1024X768X32,
+            width: 1024,
+            height: 768,
+            bpp: 32,
+        },
+        VbeModeDesc {
+            mode: vbe_val::VBE_1280X1024X15,
+            width: 1280,
+            height: 1024,
+            bpp: 15,
+        },
+        VbeModeDesc {
+            mode: vbe_val::VBE_1280X1024X16,
+            width: 1280,
+            height: 1024,
+            bpp: 16,
+        },
+        VbeModeDesc {
+            mode: vbe_val::VBE_1280X1024X32,
+            width: 1280,
+            height: 1024,
+            bpp: 32,
+        },
     ];
     let valid = table.iter().filter(|m| m.mode != 0).count();
     log::video_log_hex("bochsvbe", "modeset entries", valid as u32);
@@ -225,7 +325,10 @@ fn probe_modeset_table() {
     // (width, height, bpp) as three hex lines. This exercises every
     // field of `VbeModeDesc` so the compiler keeps them live, and it
     // gives the boot log a single human-readable "max mode" line.
-    if let Some(top) = table.iter().max_by_key(|m| (m.width as u32) * (m.height as u32)) {
+    if let Some(top) = table
+        .iter()
+        .max_by_key(|m| (m.width as u32) * (m.height as u32))
+    {
         log::video_log_hex("bochsvbe", "max mode w", top.width as u32);
         log::video_log_hex("bochsvbe", "max mode h", top.height as u32);
         log::video_log_hex("bochsvbe", "max mode bpp", top.bpp as u32);
@@ -330,7 +433,10 @@ pub fn init() {
         state.set_mode(requested_xres, requested_yres, requested_bpp);
 
         // Verify the mode was set correctly using the cached state.
-        if state.xres == requested_xres && state.yres == requested_yres && state.bpp == requested_bpp {
+        if state.xres == requested_xres
+            && state.yres == requested_yres
+            && state.bpp == requested_bpp
+        {
             log::video_ok("bochsvbe", "display mode set: 1024x768x32");
         } else {
             log::video_warn("bochsvbe", "display mode set but values differ");
@@ -375,7 +481,10 @@ pub fn init() {
             state.disable();
         }
     } else {
-        log::video_warn("bochsvbe", "Bochs VBE hardware not detected (this is normal on real hardware)");
+        log::video_warn(
+            "bochsvbe",
+            "Bochs VBE hardware not detected (this is normal on real hardware)",
+        );
     }
 }
 
@@ -395,9 +504,7 @@ pub fn smoke_test() -> bool {
             }
 
             // Read.
-            let read_val = unsafe {
-                core::ptr::read_volatile(fb)
-            };
+            let read_val = unsafe { core::ptr::read_volatile(fb) };
 
             // Clear.
             unsafe {

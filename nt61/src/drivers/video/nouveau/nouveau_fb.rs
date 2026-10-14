@@ -18,8 +18,11 @@ use crate::drivers::video::core::gpu_common::{
 };
 use crate::hal::common::pci::PciDevice;
 
+use super::nouveau_reg::{
+    self, CrtcTiming, NV110_PFB_ENABLED, NV110_PFB_OFFSET, NVC0_PFB_ENABLED, NVC0_PFB_OFFSET,
+    NVD0_PFB_ENABLED, NVD0_PFB_OFFSET,
+};
 use super::pci_ids::{self, NouveauArchitecture};
-use super::nouveau_reg::{self, CrtcTiming, NVC0_PFB_OFFSET, NVC0_PFB_ENABLED, NVD0_PFB_OFFSET, NVD0_PFB_ENABLED, NV110_PFB_OFFSET, NV110_PFB_ENABLED};
 
 // =====================================================================
 // Nouveau Device Structure
@@ -113,10 +116,7 @@ impl NouveauDevice {
             return;
         }
         unsafe {
-            core::ptr::write_volatile(
-                (self.mmio_base + offset as u64) as *mut u32,
-                value,
-            );
+            core::ptr::write_volatile((self.mmio_base + offset as u64) as *mut u32, value);
         }
     }
 
@@ -136,10 +136,7 @@ impl NouveauDevice {
             return;
         }
         unsafe {
-            core::ptr::write_volatile(
-                (self.mmio_base + offset as u64) as *mut u64,
-                value,
-            );
+            core::ptr::write_volatile((self.mmio_base + offset as u64) as *mut u64, value);
         }
     }
 
@@ -255,7 +252,10 @@ impl GpuDriver for NouveauDevice {
         })
     }
 
-    fn set_mode(&mut self, mode: &crate::drivers::video::core::gpu_common::DisplayMode) -> Result<(), GpuError> {
+    fn set_mode(
+        &mut self,
+        mode: &crate::drivers::video::core::gpu_common::DisplayMode,
+    ) -> Result<(), GpuError> {
         self.init_framebuffer(Some(*mode)).map(|_| ())
     }
 
@@ -290,10 +290,7 @@ impl GpuDriver for NouveauDevice {
         let pixels = ((self.pitch as usize) * (self.height as usize)) / 4;
         for i in 0..pixels {
             unsafe {
-                core::ptr::write_volatile(
-                    (self.fb_virt + (i as u64 * 4)) as *mut u32,
-                    color,
-                );
+                core::ptr::write_volatile((self.fb_virt + (i as u64 * 4)) as *mut u32, color);
             }
         }
     }
@@ -305,10 +302,7 @@ impl GpuDriver for NouveauDevice {
 
         let offset = ((y * self.pitch) + (x * 4)) as u64;
         unsafe {
-            core::ptr::write_volatile(
-                (self.fb_virt + offset) as *mut u32,
-                color,
-            );
+            core::ptr::write_volatile((self.fb_virt + offset) as *mut u32, color);
         }
     }
 
@@ -470,8 +464,8 @@ pub fn nv110_init(dev: &mut NouveauDevice) -> Result<(), GpuError> {
 /// Probe for NVIDIA GPU
 #[cfg(target_arch = "x86_64")]
 pub fn probe() -> bool {
-    use crate::hal::common::pci;
     use super::pci_ids::NVIDIA_VENDOR_ID;
+    use crate::hal::common::pci;
 
     let devices = pci::enumerate();
     for dev in devices {
@@ -485,8 +479,8 @@ pub fn probe() -> bool {
 /// Initialize NVIDIA GPU
 #[cfg(target_arch = "x86_64")]
 pub fn init() -> Option<NouveauDevice> {
-    use crate::hal::common::pci;
     use super::pci_ids::NVIDIA_VENDOR_ID;
+    use crate::hal::common::pci;
 
     let devices = pci::enumerate();
     for dev in devices {
@@ -496,10 +490,18 @@ pub fn init() -> Option<NouveauDevice> {
             if device.init().is_ok() {
                 // Initialize architecture-specific
                 match device.arch {
-                    NouveauArchitecture::NV50 => { let _ = nv50_init(&mut device); }
-                    NouveauArchitecture::NVC0 => { let _ = nvc0_init(&mut device); }
-                    NouveauArchitecture::NVD0 => { let _ = nvd0_init(&mut device); }
-                    _ => { let _ = nv110_init(&mut device); }
+                    NouveauArchitecture::NV50 => {
+                        let _ = nv50_init(&mut device);
+                    }
+                    NouveauArchitecture::NVC0 => {
+                        let _ = nvc0_init(&mut device);
+                    }
+                    NouveauArchitecture::NVD0 => {
+                        let _ = nvd0_init(&mut device);
+                    }
+                    _ => {
+                        let _ = nv110_init(&mut device);
+                    }
                 }
 
                 // Try to initialize framebuffer

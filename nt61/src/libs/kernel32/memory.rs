@@ -64,11 +64,7 @@ pub unsafe extern "C" fn VirtualAlloc(
 }
 
 /// `VirtualFree`.
-pub unsafe extern "C" fn VirtualFree(
-    address: LPVOID,
-    size: usize,
-    free_type: DWORD,
-) -> BOOL {
+pub unsafe extern "C" fn VirtualFree(address: LPVOID, size: usize, free_type: DWORD) -> BOOL {
     let mut base = address as *mut u8;
     let mut s = size;
     let status = ntdll_vm::NtFreeVirtualMemory(
@@ -77,7 +73,12 @@ pub unsafe extern "C" fn VirtualFree(
         &mut s,
         free_type,
     );
-    if status == STATUS_SUCCESS { TRUE } else { SetLastError(87); FALSE }
+    if status == STATUS_SUCCESS {
+        TRUE
+    } else {
+        SetLastError(87);
+        FALSE
+    }
 }
 
 /// `VirtualProtect`.
@@ -96,7 +97,12 @@ pub unsafe extern "C" fn VirtualProtect(
         new_protect,
         old_protect,
     );
-    if status == STATUS_SUCCESS { TRUE } else { SetLastError(87); FALSE }
+    if status == STATUS_SUCCESS {
+        TRUE
+    } else {
+        SetLastError(87);
+        FALSE
+    }
 }
 
 /// `MEMORY_BASIC_INFORMATION`.
@@ -120,7 +126,10 @@ pub unsafe extern "C" fn VirtualQuery(
     buffer: *mut MemoryBasicInformation,
     length: usize,
 ) -> usize {
-    if buffer.is_null() { SetLastError(87); return 0; }
+    if buffer.is_null() {
+        SetLastError(87);
+        return 0;
+    }
     if length < core::mem::size_of::<MemoryBasicInformation>() {
         SetLastError(122);
         return 0;
@@ -153,13 +162,24 @@ pub unsafe extern "C" fn HeapCreate(
     _initial_size: usize,
     _maximum_size: usize,
 ) -> HANDLE {
-    ntdll_heap::RtlCreateHeap(options, ptr::null_mut(), 0, 0, ptr::null_mut(), ptr::null_mut())
+    ntdll_heap::RtlCreateHeap(
+        options,
+        ptr::null_mut(),
+        0,
+        0,
+        ptr::null_mut(),
+        ptr::null_mut(),
+    )
 }
 
 /// `HeapDestroy`.
 pub unsafe extern "C" fn HeapDestroy(heap: HANDLE) -> BOOL {
     let result = ntdll_heap::RtlDestroyHeap(heap);
-    if result.is_null() { TRUE } else { FALSE }
+    if result.is_null() {
+        TRUE
+    } else {
+        FALSE
+    }
 }
 
 /// `GetProcessHeap`.
@@ -173,13 +193,22 @@ pub unsafe extern "C" fn HeapAlloc(heap: HANDLE, flags: DWORD, bytes: usize) -> 
 }
 
 /// `HeapReAlloc`.
-pub unsafe extern "C" fn HeapReAlloc(heap: HANDLE, flags: DWORD, memory: LPVOID, bytes: usize) -> LPVOID {
+pub unsafe extern "C" fn HeapReAlloc(
+    heap: HANDLE,
+    flags: DWORD,
+    memory: LPVOID,
+    bytes: usize,
+) -> LPVOID {
     ntdll_heap::RtlReAllocateHeap(heap, flags, memory, bytes)
 }
 
 /// `HeapFree`.
 pub unsafe extern "C" fn HeapFree(heap: HANDLE, flags: DWORD, memory: LPVOID) -> BOOL {
-    if ntdll_heap::RtlFreeHeap(heap, flags, memory) == 1 { TRUE } else { FALSE }
+    if ntdll_heap::RtlFreeHeap(heap, flags, memory) == 1 {
+        TRUE
+    } else {
+        FALSE
+    }
 }
 
 /// `HeapSize`.
@@ -194,19 +223,29 @@ pub unsafe extern "C" fn HeapSize(heap: HANDLE, flags: DWORD, memory: LPVOID) ->
 pub unsafe extern "C" fn GlobalAlloc(flags: DWORD, bytes: usize) -> HANDLE {
     let h = GetProcessHeap();
     let mut f = 0;
-    if flags & 0x0040 != 0 { f |= ntdll_heap::HEAP_ZERO_MEMORY; }
+    if flags & 0x0040 != 0 {
+        f |= ntdll_heap::HEAP_ZERO_MEMORY;
+    }
     let p = ntdll_heap::RtlAllocateHeap(h, f, bytes);
-    if p.is_null() { return ptr::null_mut(); }
+    if p.is_null() {
+        return ptr::null_mut();
+    }
     p
 }
 
 /// `GlobalFree`.
 pub unsafe extern "C" fn GlobalFree(memory: HANDLE) -> HANDLE {
-    if HeapFree(GetProcessHeap(), 0, memory) != 0 { ptr::null_mut() } else { memory }
+    if HeapFree(GetProcessHeap(), 0, memory) != 0 {
+        ptr::null_mut()
+    } else {
+        memory
+    }
 }
 
 /// `LocalAlloc` — same as GlobalAlloc in modern Windows.
 pub unsafe extern "C" fn LocalAlloc(flags: DWORD, bytes: usize) -> HANDLE {
     GlobalAlloc(flags, bytes)
 }
-pub unsafe extern "C" fn LocalFree(memory: HANDLE) -> HANDLE { GlobalFree(memory) }
+pub unsafe extern "C" fn LocalFree(memory: HANDLE) -> HANDLE {
+    GlobalFree(memory)
+}

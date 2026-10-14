@@ -18,7 +18,7 @@ uefi-raw = "0.14.0"
 # `kernel_main` uses `Vec` / `String` for the registry hive /
 # boot-driver descriptors it consumes from `BootInfo`.
 [target.'cfg(target_arch = "x86_64")'.dependencies]
-nt61 = { path = "../..", default-features = false, features = ["x86_64"] }
+nt61 = { path = "../..", default-features = false, features = ["x86_64", "alloc"] }
 
 [[bin]]
 name = "nt61-winload"

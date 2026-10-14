@@ -15,18 +15,17 @@
 //!   * ReactOS ke/wait.c
 //!   * WRK base/ntos/ex/synch.c
 
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
-use super::types::{HANDLE, NTSTATUS, PVOID};
-use super::status::{
-    STATUS_SUCCESS, STATUS_TIMEOUT, STATUS_WAIT_0, STATUS_WAIT_1, STATUS_WAIT_2,
-    STATUS_ABANDONED, STATUS_ABANDONED_WAIT_0, STATUS_USER_APC, STATUS_ALERTED,
-    STATUS_INVALID_PARAMETER, STATUS_INVALID_HANDLE,
-};
 use super::file::{lookup_handle, HandleKind};
+use super::status::{
+    STATUS_ABANDONED, STATUS_ABANDONED_WAIT_0, STATUS_ALERTED, STATUS_INVALID_HANDLE,
+    STATUS_INVALID_PARAMETER, STATUS_SUCCESS, STATUS_TIMEOUT, STATUS_USER_APC, STATUS_WAIT_0,
+    STATUS_WAIT_1, STATUS_WAIT_2,
+};
+use super::types::{HANDLE, NTSTATUS, PVOID};
 use crate::ke::sync::Spinlock;
 use core::ptr;
-
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -56,7 +55,6 @@ pub const WAIT_TYPE_ANY: u16 = 0; // WaitAny - return when any object is signale
 pub const WAIT_TYPE_ALL: u16 = 1; // WaitAll - return when all objects are signaled
 
 pub const MAXIMUM_WAIT_OBJECTS: usize = 64;
-
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,7 +107,6 @@ fn get_current_wait_context() -> Option<&'static mut ThreadWaitContext> {
     }
 }
 
-
 fn is_object_signaled(handle: HANDLE) -> (bool, bool) {
     let entry = match lookup_handle(handle) {
         Some(e) => e,
@@ -142,11 +139,7 @@ fn auto_reset_object(handle: HANDLE) {
     let _ = handle;
 }
 
-fn wait_for_single_object_internal(
-    handle: HANDLE,
-    timeout_ms: u64,
-    alertable: bool,
-) -> NTSTATUS {
+fn wait_for_single_object_internal(handle: HANDLE, timeout_ms: u64, alertable: bool) -> NTSTATUS {
     let (signaled, auto_reset) = is_object_signaled(handle);
     if signaled {
         if auto_reset {
@@ -167,7 +160,6 @@ fn wait_for_single_object_internal(
     ctx.wait_blocks[0].object = handle as u64;
     ctx.wait_blocks[0].wait_key = 0;
     ctx.wait_blocks[0].wait_type = WAIT_TYPE_ANY;
-
 
     if timeout_ms == 0 {
         ctx.state = WaitState::TimedOut;
@@ -235,7 +227,11 @@ fn wait_for_multiple_objects_internal(
 
     ctx.state = WaitState::Waiting;
     ctx.wait_count = count as usize;
-    ctx.wait_type = if wait_all { WAIT_TYPE_ALL } else { WAIT_TYPE_ANY };
+    ctx.wait_type = if wait_all {
+        WAIT_TYPE_ALL
+    } else {
+        WAIT_TYPE_ANY
+    };
     ctx.timeout_ms = timeout_ms;
 
     for (i, &handle) in handle_slice.iter().enumerate() {
@@ -262,11 +258,7 @@ fn wait_for_multiple_objects_internal(
 
 // Public Wait Functions (used by sync.rs)
 
-pub fn nt_wait_for_single_object(
-    handle: HANDLE,
-    alertable: u8,
-    timeout: *const i64,
-) -> NTSTATUS {
+pub fn nt_wait_for_single_object(handle: HANDLE, alertable: u8, timeout: *const i64) -> NTSTATUS {
     if handle.is_null() {
         return STATUS_INVALID_HANDLE;
     }
@@ -320,20 +312,16 @@ pub fn nt_wait_for_multiple_objects(
 // Signal Functions (used by sync.rs)
 
 pub fn signal_event(handle: HANDLE) -> bool {
-
     !handle.is_null()
 }
 
 pub fn release_mutex(handle: HANDLE) -> bool {
-
     !handle.is_null()
 }
 
 pub fn release_semaphore(handle: HANDLE, release_count: i32) -> bool {
-
     !handle.is_null() && release_count > 0
 }
-
 
 pub fn test_alert() -> bool {
     false

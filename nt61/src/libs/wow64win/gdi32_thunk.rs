@@ -8,9 +8,9 @@
 #![allow(non_camel_case_types)]
 #![allow(dead_code)]
 
+use crate::libs::wow64::types::*;
 use crate::libs::wow64win::syscall_numbers;
 use crate::libs::wow64win::Wow64Win32kSyscall;
-use crate::libs::wow64::types::*;
 
 // =============================================================================
 // Handle Types
@@ -172,10 +172,7 @@ pub unsafe extern "C" fn Wow64CreateCompatibleDC(hdc: HDC32) -> HDC32 {
     // log via wow64_klog!; using wow64_klog! instead
 
     let params: [ULONG32; 1] = [hdc];
-    let result = Wow64Win32kSyscall(
-        syscall_numbers::NtGdiCreateCompatibleDC,
-        params.as_ptr(),
-    );
+    let result = Wow64Win32kSyscall(syscall_numbers::NtGdiCreateCompatibleDC, params.as_ptr());
 
     result
 }
@@ -192,10 +189,7 @@ pub unsafe extern "C" fn Wow64DeleteDC(hdc: HDC32) -> BOOL32 {
     // log via wow64_klog!; using wow64_klog! instead
 
     let params: [ULONG32; 1] = [hdc];
-    let result = Wow64Win32kSyscall(
-        syscall_numbers::NtGdiDeleteDC,
-        params.as_ptr(),
-    );
+    let result = Wow64Win32kSyscall(syscall_numbers::NtGdiDeleteDC, params.as_ptr());
 
     result as BOOL32
 }
@@ -209,12 +203,8 @@ pub unsafe extern "C" fn Wow64DeleteDC(hdc: HDC32) -> BOOL32 {
 /// # Returns
 /// * Handle to the previously selected object or NULL on error
 pub unsafe extern "C" fn Wow64SelectObject(hdc: HDC32, h_object: HANDLE32) -> HANDLE32 {
-
     let params: [ULONG32; 2] = [hdc, h_object];
-    let result = Wow64Win32kSyscall(
-        syscall_numbers::NtGdiSelectObject,
-        params.as_ptr(),
-    );
+    let result = Wow64Win32kSyscall(syscall_numbers::NtGdiSelectObject, params.as_ptr());
 
     result
 }
@@ -231,10 +221,7 @@ pub unsafe extern "C" fn Wow64DeleteObject(h_object: HANDLE32) -> BOOL32 {
     // log via wow64_klog!; using wow64_klog! instead
 
     let params: [ULONG32; 1] = [h_object];
-    let result = Wow64Win32kSyscall(
-        syscall_numbers::NtGdiDeleteObject,
-        params.as_ptr(),
-    );
+    let result = Wow64Win32kSyscall(syscall_numbers::NtGdiDeleteObject, params.as_ptr());
 
     result as BOOL32
 }
@@ -252,7 +239,6 @@ pub unsafe extern "C" fn Wow64CreatePen(
     _width: ULONG32,
     _color: ULONG32,
 ) -> HPEN32 {
-
     // In a real implementation, this would call win32k.sys
     // For stub, return 0
     0
@@ -287,7 +273,6 @@ pub unsafe extern "C" fn Wow64CreateCompatibleBitmap(
     _width: i32,
     _height: i32,
 ) -> HBITMAP32 {
-
     // In a real implementation, this would call win32k.sys
     // For stub, return 0
     0
@@ -306,7 +291,6 @@ pub unsafe extern "C" fn Wow64GetObject(
     _buffer_size: ULONG32,
     _buffer: ULONG32,
 ) -> i32 {
-
     // In a real implementation, this would call win32k.sys
     // For stub, return 0
     0
@@ -327,18 +311,8 @@ pub unsafe extern "C" fn Wow64TextOutW(
     text: ULONG32,
     length: i32,
 ) -> BOOL32 {
-
-    let params: [ULONG32; 5] = [
-        hdc,
-        x as ULONG32,
-        y as ULONG32,
-        text,
-        length as ULONG32,
-    ];
-    let result = Wow64Win32kSyscall(
-        syscall_numbers::NtGdiTextOut,
-        params.as_ptr(),
-    );
+    let params: [ULONG32; 5] = [hdc, x as ULONG32, y as ULONG32, text, length as ULONG32];
+    let result = Wow64Win32kSyscall(syscall_numbers::NtGdiTextOut, params.as_ptr());
 
     result as BOOL32
 }
@@ -361,7 +335,6 @@ pub unsafe extern "C" fn Wow64ExtTextOutW(
     _length: ULONG32,
     _dx: ULONG32,
 ) -> BOOL32 {
-
     // In a real implementation, this would call win32k.sys
     // For stub, return 0
     0
@@ -386,7 +359,6 @@ pub unsafe extern "C" fn Wow64BitBlt(
     y_src: i32,
     rop: ULONG32,
 ) -> BOOL32 {
-
     let params: [ULONG32; 9] = [
         hdc_dest,
         x_dest as ULONG32,
@@ -398,10 +370,7 @@ pub unsafe extern "C" fn Wow64BitBlt(
         y_src as ULONG32,
         rop,
     ];
-    let result = Wow64Win32kSyscall(
-        syscall_numbers::NtGdiBitBlt,
-        params.as_ptr(),
-    );
+    let result = Wow64Win32kSyscall(syscall_numbers::NtGdiBitBlt, params.as_ptr());
 
     result as BOOL32
 }
@@ -422,7 +391,6 @@ pub unsafe extern "C" fn Wow64PatBlt(
     height: i32,
     rop: ULONG32,
 ) -> BOOL32 {
-
     let params: [ULONG32; 6] = [
         hdc,
         x as ULONG32,
@@ -431,10 +399,7 @@ pub unsafe extern "C" fn Wow64PatBlt(
         height as ULONG32,
         rop,
     ];
-    let result = Wow64Win32kSyscall(
-        syscall_numbers::NtGdiPatBlt,
-        params.as_ptr(),
-    );
+    let result = Wow64Win32kSyscall(syscall_numbers::NtGdiPatBlt, params.as_ptr());
 
     result as BOOL32
 }
@@ -474,12 +439,7 @@ pub unsafe extern "C" fn Wow64GetStockObject(object: i32) -> HANDLE32 {
 ///
 /// # Returns
 /// * Non-zero if successful, 0 otherwise
-pub unsafe extern "C" fn Wow64FillRect(
-    _hdc: HDC32,
-    _rect: ULONG32,
-    _brush: HBRUSH32,
-) -> i32 {
-
+pub unsafe extern "C" fn Wow64FillRect(_hdc: HDC32, _rect: ULONG32, _brush: HBRUSH32) -> i32 {
     // In a real implementation, this would use PatBlt or similar
     // For stub, return 1
     1
@@ -494,7 +454,6 @@ pub unsafe extern "C" fn Wow64FillRect(
 /// # Returns
 /// * Color of the pixel or CLR_INVALID on error
 pub unsafe extern "C" fn Wow64GetPixel(_hdc: HDC32, _x: i32, _y: i32) -> ULONG32 {
-
     // In a real implementation, this would call win32k.sys
     // For stub, return 0 (black)
     0
@@ -508,13 +467,7 @@ pub unsafe extern "C" fn Wow64GetPixel(_hdc: HDC32, _x: i32, _y: i32) -> ULONG32
 ///
 /// # Returns
 /// * Color of the pixel before it was set or CLR_INVALID on error
-pub unsafe extern "C" fn Wow64SetPixel(
-    _hdc: HDC32,
-    _x: i32,
-    _y: i32,
-    _color: ULONG32,
-) -> ULONG32 {
-
+pub unsafe extern "C" fn Wow64SetPixel(_hdc: HDC32, _x: i32, _y: i32, _color: ULONG32) -> ULONG32 {
     // In a real implementation, this would call win32k.sys
     // For stub, return CLR_INVALID (0xFFFFFFFF)
     0xFFFFFFFF

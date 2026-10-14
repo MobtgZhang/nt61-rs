@@ -89,16 +89,15 @@ fn is_empty_rect(rect: &Rect) -> bool {
 
 /// Check if rect A is contained in rect B
 fn rect_contains(outer: &Rect, inner: &Rect) -> bool {
-    inner.left >= outer.left &&
-    inner.right <= outer.right &&
-    inner.top >= outer.top &&
-    inner.bottom <= outer.bottom
+    inner.left >= outer.left
+        && inner.right <= outer.right
+        && inner.top >= outer.top
+        && inner.bottom <= outer.bottom
 }
 
 /// Check if two rectangles intersect
 fn rects_intersect(a: &Rect, b: &Rect) -> bool {
-    !(a.right <= b.left || a.left >= b.right ||
-      a.bottom <= b.top || a.top >= b.bottom)
+    !(a.right <= b.left || a.left >= b.right || a.bottom <= b.top || a.top >= b.bottom)
 }
 
 /// Compute intersection of two rectangles
@@ -119,8 +118,8 @@ fn rect_intersection(a: &Rect, b: &Rect) -> Option<Rect> {
 pub fn GreCreateRectRgn(left: i32, top: i32, right: i32, bottom: i32) -> u64 {
     let region = crate::libs::win32k::objects::GdiCreateRectRgn(left, top, right, bottom);
     let _ = &region;
-    // kprintln!("[win32k] GreCreateRectRgn: ({},{})-({},{}) -> handle=0x{:016x}",  // kprintln disabled (memcpy crash workaround)
-//               left, top, right, bottom, region);
+    // kprintln!("[win32k] GreCreateRectRgn: ({},{})-({},{}) -> handle=0x{:016x}",
+    //               left, top, right, bottom, region);
     region
 }
 
@@ -143,8 +142,7 @@ pub fn GreDeleteRegion(region: u64) -> bool {
 
 /// Check if two rectangles overlap
 fn rects_overlap(a: &Rect, b: &Rect) -> bool {
-    a.left < b.right && a.right > b.left &&
-    a.top < b.bottom && a.bottom > b.top
+    a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
 }
 
 /// Simple region union - add a rectangle to existing region
@@ -188,8 +186,10 @@ fn add_rect_to_region(region: &mut GdiRegionData, rect: &Rect) {
 }
 
 /// Compute the bounding box union of two regions
-fn compute_union_bounds(r1: &crate::libs::win32k::objects::GdiRegion, 
-                       r2: &crate::libs::win32k::objects::GdiRegion) -> Rect {
+fn compute_union_bounds(
+    r1: &crate::libs::win32k::objects::GdiRegion,
+    r2: &crate::libs::win32k::objects::GdiRegion,
+) -> Rect {
     Rect::new(
         r1.extents.left.min(r2.extents.left),
         r1.extents.top.min(r2.extents.top),
@@ -199,8 +199,10 @@ fn compute_union_bounds(r1: &crate::libs::win32k::objects::GdiRegion,
 }
 
 /// Compute the intersection bounding box of two regions
-fn compute_intersection_bounds(r1: &crate::libs::win32k::objects::GdiRegion,
-                              r2: &crate::libs::win32k::objects::GdiRegion) -> Option<Rect> {
+fn compute_intersection_bounds(
+    r1: &crate::libs::win32k::objects::GdiRegion,
+    r2: &crate::libs::win32k::objects::GdiRegion,
+) -> Option<Rect> {
     let left = r1.extents.left.max(r2.extents.left);
     let _ = &left;
     let top = r1.extents.top.max(r2.extents.top);
@@ -209,7 +211,7 @@ fn compute_intersection_bounds(r1: &crate::libs::win32k::objects::GdiRegion,
     let _ = &right;
     let bottom = r1.extents.bottom.min(r2.extents.bottom);
     let _ = &bottom;
-    
+
     if right > left && bottom > top {
         Some(Rect::new(left, top, right, bottom))
     } else {
@@ -280,46 +282,51 @@ pub fn GreCombineRgn(
     match mode {
         RegionCombineMode::Copy => {
             // Copy src1 to dest
-            let dest_region = unsafe { &mut *(dest_ptr as *mut crate::libs::win32k::objects::GdiRegion) };
+            let dest_region =
+                unsafe { &mut *(dest_ptr as *mut crate::libs::win32k::objects::GdiRegion) };
             let _ = &dest_region;
             *dest_region = *src1_region;
-            // kprintln!("[win32k] GreCombineRgn: Copy -> {}",   // kprintln disabled (memcpy crash workaround)
-//                 if dest_region.num_rects > 0 { "Simple" } else { "Null" });
+            // kprintln!("[win32k] GreCombineRgn: Copy -> {}",
+            //                 if dest_region.num_rects > 0 { "Simple" } else { "Null" });
         }
         RegionCombineMode::Union => {
             // Union of src1 and src2
-            let dest_region = unsafe { &mut *(dest_ptr as *mut crate::libs::win32k::objects::GdiRegion) };
+            let dest_region =
+                unsafe { &mut *(dest_ptr as *mut crate::libs::win32k::objects::GdiRegion) };
             let _ = &dest_region;
             *dest_region = *src1_region;
-            
+
             if let Some(src2) = src2_ptr {
-                let src2_region = unsafe { &*(src2 as *const crate::libs::win32k::objects::GdiRegion) };
+                let src2_region =
+                    unsafe { &*(src2 as *const crate::libs::win32k::objects::GdiRegion) };
                 let _ = &src2_region;
                 // Use proper bounding box union
                 dest_region.extents = compute_union_bounds(src1_region, src2_region);
                 dest_region.num_rects = 2; // Mark as potentially complex
-                // kprintln!("[win32k] GreCombineRgn: Union -> bounds ({},{})-({},{})",  // kprintln disabled (memcpy crash workaround)
-//                     dest_region.extents.left, dest_region.extents.top,
-//                     dest_region.extents.right, dest_region.extents.bottom);
+                                           // kprintln!("[win32k] GreCombineRgn: Union -> bounds ({},{})-({},{})",
+                                           //                     dest_region.extents.left, dest_region.extents.top,
+                                           //                     dest_region.extents.right, dest_region.extents.bottom);
             }
         }
         RegionCombineMode::Intersection => {
             // Intersection of src1 and src2
-            let dest_region = unsafe { &mut *(dest_ptr as *mut crate::libs::win32k::objects::GdiRegion) };
+            let dest_region =
+                unsafe { &mut *(dest_ptr as *mut crate::libs::win32k::objects::GdiRegion) };
             let _ = &dest_region;
-            
+
             if let Some(src2) = src2_ptr {
-                let src2_region = unsafe { &*(src2 as *const crate::libs::win32k::objects::GdiRegion) };
+                let src2_region =
+                    unsafe { &*(src2 as *const crate::libs::win32k::objects::GdiRegion) };
                 let _ = &src2_region;
-                
+
                 if let Some(inter) = compute_intersection_bounds(src1_region, src2_region) {
                     dest_region.extents = inter;
                     dest_region.num_rects = 1;
-                    // kprintln!("[win32k] GreCombineRgn: Intersection -> ({},{})-({},{})",  // kprintln disabled (memcpy crash workaround)
-//                         inter.left, inter.top, inter.right, inter.bottom);
+                    // kprintln!("[win32k] GreCombineRgn: Intersection -> ({},{})-({},{})",
+                    //                         inter.left, inter.top, inter.right, inter.bottom);
                 } else {
                     dest_region.num_rects = 0;
-                    // kprintln!("[win32k] GreCombineRgn: Intersection -> Null (no overlap)")  // kprintln disabled (memcpy crash workaround);
+                    // kprintln!("[win32k] GreCombineRgn: Intersection -> Null (no overlap)");
                 }
             } else {
                 // src2 is null region
@@ -329,27 +336,30 @@ pub fn GreCombineRgn(
         RegionCombineMode::Difference => {
             // src1 minus src2: simplified to just use src1
             // A full implementation would compute polygon difference
-            let dest_region = unsafe { &mut *(dest_ptr as *mut crate::libs::win32k::objects::GdiRegion) };
+            let dest_region =
+                unsafe { &mut *(dest_ptr as *mut crate::libs::win32k::objects::GdiRegion) };
             let _ = &dest_region;
             *dest_region = *src1_region;
-            // kprintln!("[win32k] GreCombineRgn: Difference -> using src1 bounds")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[win32k] GreCombineRgn: Difference -> using src1 bounds");
         }
         RegionCombineMode::Xor => {
             // XOR of src1 and src2: simplified using bounding boxes
             // Full implementation would compute symmetric difference
-            let dest_region = unsafe { &mut *(dest_ptr as *mut crate::libs::win32k::objects::GdiRegion) };
+            let dest_region =
+                unsafe { &mut *(dest_ptr as *mut crate::libs::win32k::objects::GdiRegion) };
             let _ = &dest_region;
             *dest_region = *src1_region;
 
             if let Some(src2) = src2_ptr {
-                let src2_region = unsafe { &*(src2 as *const crate::libs::win32k::objects::GdiRegion) };
+                let src2_region =
+                    unsafe { &*(src2 as *const crate::libs::win32k::objects::GdiRegion) };
                 let _ = &src2_region;
                 // Use bounding box union for XOR (approximation)
                 dest_region.extents = compute_union_bounds(src1_region, src2_region);
                 dest_region.num_rects = 2;
-                // kprintln!("[win32k] GreCombineRgn: Xor -> union bounds ({},{})-({},{})",  // kprintln disabled (memcpy crash workaround)
-//                     dest_region.extents.left, dest_region.extents.top,
-//                     dest_region.extents.right, dest_region.extents.bottom);
+                // kprintln!("[win32k] GreCombineRgn: Xor -> union bounds ({},{})-({},{})",
+                //                     dest_region.extents.left, dest_region.extents.top,
+                //                     dest_region.extents.right, dest_region.extents.bottom);
             }
         }
     }
@@ -386,11 +396,11 @@ pub fn GreEqualRgn(region1: u64, region2: u64) -> bool {
     let r2 = unsafe { &*(ptr2.unwrap() as *const crate::libs::win32k::objects::GdiRegion) };
     let _ = &r2;
 
-    r1.extents.left == r2.extents.left &&
-    r1.extents.top == r2.extents.top &&
-    r1.extents.right == r2.extents.right &&
-    r1.extents.bottom == r2.extents.bottom &&
-    r1.num_rects == r2.num_rects
+    r1.extents.left == r2.extents.left
+        && r1.extents.top == r2.extents.top
+        && r1.extents.right == r2.extents.right
+        && r1.extents.bottom == r2.extents.bottom
+        && r1.num_rects == r2.num_rects
 }
 
 /// Check if a point is in a region
@@ -405,8 +415,7 @@ pub fn GrePtInRegion(region: u64, x: i32, y: i32) -> bool {
     let _ = &r;
 
     // Check extents first
-    if x < r.extents.left || x >= r.extents.right ||
-       y < r.extents.top || y >= r.extents.bottom {
+    if x < r.extents.left || x >= r.extents.right || y < r.extents.top || y >= r.extents.bottom {
         return false;
     }
 
@@ -463,7 +472,7 @@ pub fn GreSelectClipRgn(dc: u64, region: u64) -> i32 {
         let _old_region = dc_obj.clip_region;
         let _ = &_old_region;
         dc_obj.clip_region = region;
-        
+
         if region == 0 {
             return RegionType::Null as i32;
         }
@@ -509,22 +518,22 @@ pub fn GreExtExcludeClipRect(dc: u64, left: i32, top: i32, right: i32, bottom: i
     if let Some(dc_obj) = crate::libs::win32k::dc::get_dc(dc) {
         let _exclude_rect = Rect::new(left, top, right, bottom);
         let _ = &_exclude_rect;
-        
+
         if dc_obj.clip_region != 0 {
             // Create a new region with the rectangle excluded
             // This is a simplified implementation
             // Full implementation would split the region around the rectangle
-            
+
             let mut box_rect = Rect::new(0, 0, 0, 0);
             let _current_type = GreGetRgnBox(dc_obj.clip_region, &mut box_rect);
             let _ = &_current_type;
-            
+
             // For simplicity, just clear the clip region
             dc_obj.clip_region = 0;
-            
+
             return RegionType::Null as i32;
         }
-        
+
         RegionType::Null as i32
     } else {
         RegionType::Null as i32
@@ -540,15 +549,15 @@ pub fn dump_region_info(region: u64) {
     let ptr = crate::libs::win32k::objects::GdiGetObjectPtr(region);
     let _ = &ptr;
     if ptr.is_none() {
-        // kprintln!("[win32k] Region 0x{:016x}: NULL", region)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[win32k] Region 0x{:016x}: NULL", region);
         return;
     }
 
     let r = unsafe { &*(ptr.unwrap() as *const crate::libs::win32k::objects::GdiRegion) };
     let _ = &r;
-    
-    // kprintln!("[win32k] Region 0x{:016x}:", region)  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("  extents: ({},{})-({},{})",   // kprintln disabled (memcpy crash workaround)
-//               r.extents.left, r.extents.top, r.extents.right, r.extents.bottom);
-    // kprintln!("  rectangles: {}", r.num_rects)  // kprintln disabled (memcpy crash workaround);
+
+    // kprintln!("[win32k] Region 0x{:016x}:", region);
+    // kprintln!("  extents: ({},{})-({},{})",
+    //               r.extents.left, r.extents.top, r.extents.right, r.extents.bottom);
+    // kprintln!("  rectangles: {}", r.num_rects);
 }

@@ -10,9 +10,7 @@ pub fn read_rtc_timestamp() -> i64 {
 
 /// Read Time Stamp Counter
 pub fn rdtsc() -> u64 {
-    unsafe {
-        core::arch::x86_64::_rdtsc()
-    }
+    unsafe { core::arch::x86_64::_rdtsc() }
 }
 
 /// Get TSC frequency in Hz

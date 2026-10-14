@@ -14,9 +14,14 @@ use crate::kprintln;
 
 /// Initialize the advapi32 stub.
 pub fn init() {
-    // crate::kprintln!("    ADVAPI32: init")  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("      registry: ready (RegOpenKeyEx etc.)")  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("      security: ready (OpenProcessToken etc.)")  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("      services: ready (OpenSCManager etc.)")  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("      crypto:   ready (CryptAcquireContext etc.)")  // kprintln disabled (memcpy crash workaround);
+    // crate::kprintln!("    ADVAPI32: init");
+    // crate::kprintln!("      registry: ready (RegOpenKeyEx etc.)");
+    // crate::kprintln!("      security: ready (OpenProcessToken etc.)");
+    // crate::kprintln!("      services: ready (OpenSCManager etc.)");
+    // crate::kprintln!("      crypto:   ready (CryptAcquireContext etc.)");
 }
+
+pub mod cred;
+pub mod event;
+pub mod service;
+pub mod types;

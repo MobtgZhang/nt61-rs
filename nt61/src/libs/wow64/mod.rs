@@ -33,21 +33,21 @@ extern crate alloc;
 use crate::ke::sync::Spinlock;
 use alloc::vec::Vec;
 
-pub mod klog;
+pub mod apc_exc_thunk;
+pub mod cpu;
 pub mod handle;
+pub mod klog;
+pub mod mem_thunk;
+pub mod ps_thunk;
+pub mod ssd;
+pub mod syscall_thunk;
 pub mod thunk;
 pub mod types;
 pub mod wow64vas;
-pub mod ssd;
-pub mod syscall_thunk;
-pub mod mem_thunk;
-pub mod ps_thunk;
-pub mod apc_exc_thunk;
 
 /// WoW64 service table. The stub uses this to verify the
 /// service dispatch table is reachable.
-pub static WOW64_SERVICES: Spinlock<Vec<(&'static str, u64)>> =
-    Spinlock::new(Vec::new());
+pub static WOW64_SERVICES: Spinlock<Vec<(&'static str, u64)>> = Spinlock::new(Vec::new());
 
 /// Initialise the wow64 stub.
 pub fn init() {
@@ -56,9 +56,17 @@ pub fn init() {
     // thunk layers also get a chance to publish themselves.
     ssd::init_service_table();
     thunk::register_services();
-    crate::wow64_klog!("ready ({} services registered)",
-        WOW64_SERVICES.lock().len());
+    crate::wow64_klog!(
+        "ready ({} services registered)",
+        WOW64_SERVICES.lock().len()
+    );
 }
 
 pub mod smoke;
 pub use smoke::smoke_test as run_smoke;
+
+pub mod syscall;
+pub mod tests;
+pub mod win32k_gdi32;
+pub mod win32k_thunk;
+pub mod win32k_user32;

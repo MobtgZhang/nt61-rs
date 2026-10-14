@@ -3,10 +3,10 @@
 //! Implements user-mode address space initialization for NT processes.
 //! Handles PEB/TEB mapping, user stack creation, and VAD tree management.
 
-use crate::mm::vad::{VadTree, VadType, VadEntry, VadProtection, VadFlags};
 use crate::mm::pfn;
-use crate::mm::vas;
 use crate::mm::pool;
+use crate::mm::vad::{VadEntry, VadFlags, VadProtection, VadTree, VadType};
+use crate::mm::vas;
 use core::ptr::null_mut;
 
 /// User stack base address (Windows 7 x64 layout)
@@ -72,12 +72,14 @@ impl ProcessAddressSpace {
             self.user_stack_base,
             self.user_stack_size,
             vas::PTE_RW | vas::PTE_US, // User, Read/Write
-        ) != vas::MmStatus::Ok {
+        ) != vas::MmStatus::Ok
+        {
             return Err(());
         }
 
         // Allocate and insert VAD entry for stack
-        let vad = pool::allocate(pool::PoolType::NonPaged, core::mem::size_of::<VadEntry>()) as *mut VadEntry;
+        let vad = pool::allocate(pool::PoolType::NonPaged, core::mem::size_of::<VadEntry>())
+            as *mut VadEntry;
         if vad.is_null() {
             return Err(());
         }
@@ -104,12 +106,14 @@ impl ProcessAddressSpace {
             self.peb_address,
             0x1000,
             vas::PTE_RW | vas::PTE_US,
-        ) != vas::MmStatus::Ok {
+        ) != vas::MmStatus::Ok
+        {
             return Err(());
         }
 
         // Allocate and insert VAD entry for PEB
-        let vad = pool::allocate(pool::PoolType::NonPaged, core::mem::size_of::<VadEntry>()) as *mut VadEntry;
+        let vad = pool::allocate(pool::PoolType::NonPaged, core::mem::size_of::<VadEntry>())
+            as *mut VadEntry;
         if vad.is_null() {
             return Err(());
         }
@@ -136,12 +140,14 @@ impl ProcessAddressSpace {
             self.teb_address,
             0x1000,
             vas::PTE_RW | vas::PTE_US,
-        ) != vas::MmStatus::Ok {
+        ) != vas::MmStatus::Ok
+        {
             return Err(());
         }
 
         // Allocate and insert VAD entry for TEB
-        let vad = pool::allocate(pool::PoolType::NonPaged, core::mem::size_of::<VadEntry>()) as *mut VadEntry;
+        let vad = pool::allocate(pool::PoolType::NonPaged, core::mem::size_of::<VadEntry>())
+            as *mut VadEntry;
         if vad.is_null() {
             return Err(());
         }
@@ -171,12 +177,14 @@ impl ProcessAddressSpace {
             base,
             aligned_size,
             vas::PTE_RW | vas::PTE_US,
-        ) != vas::MmStatus::Ok {
+        ) != vas::MmStatus::Ok
+        {
             return Err(());
         }
 
         // Allocate and insert VAD entry for image
-        let vad = pool::allocate(pool::PoolType::NonPaged, core::mem::size_of::<VadEntry>()) as *mut VadEntry;
+        let vad = pool::allocate(pool::PoolType::NonPaged, core::mem::size_of::<VadEntry>())
+            as *mut VadEntry;
         if vad.is_null() {
             return Err(());
         }
@@ -207,33 +215,17 @@ impl ProcessAddressSpace {
     /// Clean up the address space (called on process termination)
     pub fn cleanup(&mut self) {
         // Unmap user stack
-        let _ = vas::unmap_user_pages(
-            self.pml4_phys,
-            self.user_stack_base,
-            self.user_stack_size,
-        );
+        let _ = vas::unmap_user_pages(self.pml4_phys, self.user_stack_base, self.user_stack_size);
 
         // Unmap PEB
-        let _ = vas::unmap_user_pages(
-            self.pml4_phys,
-            self.peb_address,
-            0x1000,
-        );
+        let _ = vas::unmap_user_pages(self.pml4_phys, self.peb_address, 0x1000);
 
         // Unmap TEB
-        let _ = vas::unmap_user_pages(
-            self.pml4_phys,
-            self.teb_address,
-            0x1000,
-        );
+        let _ = vas::unmap_user_pages(self.pml4_phys, self.teb_address, 0x1000);
 
         // Unmap image
         if self.image_base != 0 && self.image_size != 0 {
-            let _ = vas::unmap_user_pages(
-                self.pml4_phys,
-                self.image_base,
-                self.image_size,
-            );
+            let _ = vas::unmap_user_pages(self.pml4_phys, self.image_base, self.image_size);
         }
 
         // Free the PML4

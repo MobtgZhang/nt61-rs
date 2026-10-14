@@ -13,9 +13,11 @@
 #![allow(dead_code)]
 
 use super::*;
-use crate::libs::wow64::types::*;
-use crate::libs::wow64::syscall::*;
 use crate::libs::wow64::cpu::*;
+use crate::libs::wow64::syscall::*;
+use crate::libs::wow64::types::*;
+use crate::loader::pe32;
+use crate::loader::{DosHeader, FileHeader, PE_SIGNATURE};
 
 // =============================================================================
 // System Call Conversion Tests
@@ -68,7 +70,11 @@ fn test_ntstatus_conversion() {
 #[test]
 fn test_pointer_validation() {
     // Valid pointers
-    assert!(validate_wow64_pointer(0x0000_1000));
+    // The lower 64 KB of the user address space is reserved by the system
+    // (ReactOS `ntdll` uses `MIN_USER_ADDRESS = 0x10000`), so 0x1000 is not a
+    // valid WoW64 pointer even though it is inside the 2 GB window.
+    assert!(!validate_wow64_pointer(0x0000_1000));
+    assert!(validate_wow64_pointer(0x0001_0000));
     assert!(validate_wow64_pointer(0x7FFE_0000));
     assert!(validate_wow64_pointer(0));
 
@@ -264,12 +270,12 @@ fn test_alignment_helpers() {
 fn test_syscall_dispatch_flow() {
     // Simulate a 32-bit system call
     let args: [u32; 6] = [
-        0xFFFF_FFFF,  // Process handle
-        0x0012_FF00,  // Base address pointer
-        0,            // Zero bits
-        0x0012_FF04,  // Region size pointer
-        0x1000,       // Allocation type (MEM_COMMIT)
-        0x04,         // Protect (PAGE_READWRITE)
+        0xFFFF_FFFF, // Process handle
+        0x0012_FF00, // Base address pointer
+        0,           // Zero bits
+        0x0012_FF04, // Region size pointer
+        0x1000,      // Allocation type (MEM_COMMIT)
+        0x04,        // Protect (PAGE_READWRITE)
     ];
 
     let mut ctx = SyscallContext::new(args.as_ptr(), 6);
@@ -338,14 +344,7 @@ fn test_allocate_vm32_invalid_pointer() {
 
 #[test]
 fn test_allocate_vm32_valid_pointer_not_implemented() {
-    let args: [u32; 6] = [
-        0xFFFF_FFFF,
-        0x0012_FF00,
-        0,
-        0x0012_FF04,
-        0x0000_1000,
-        0x04,
-    ];
+    let args: [u32; 6] = [0xFFFF_FFFF, 0x0012_FF00, 0, 0x0012_FF04, 0x0000_1000, 0x04];
     let mut ctx = SyscallContext::new(args.as_ptr(), 6);
     let status = dispatch_nt_allocate_virtual_memory(&mut ctx);
     // Pointers are valid, but the call is not wired through yet.
@@ -354,12 +353,7 @@ fn test_allocate_vm32_valid_pointer_not_implemented() {
 
 #[test]
 fn test_free_vm32_invalid_pointer() {
-    let args: [u32; 4] = [
-        0xFFFF_FFFF,
-        0x9000_0000,
-        0x0012_FF04,
-        0x8000,
-    ];
+    let args: [u32; 4] = [0xFFFF_FFFF, 0x9000_0000, 0x0012_FF04, 0x8000];
     let mut ctx = SyscallContext::new(args.as_ptr(), 4);
     let status = dispatch_nt_free_virtual_memory(&mut ctx);
     assert_eq!(status, STATUS_INVALID_PARAMETER);
@@ -370,7 +364,7 @@ fn test_query_vm32_dispatches() {
     let args: [u32; 6] = [
         0xFFFF_FFFF,
         0x0012_0000,
-        0,          // MemoryBasicInformation
+        0, // MemoryBasicInformation
         0x0012_FF00,
         0xFF,
         0x0012_FF80,
@@ -383,10 +377,12 @@ fn test_query_vm32_dispatches() {
 
 #[test]
 fn test_create_file_dispatches() {
+    // We need a real IO_STATUS_BLOCK pointer; use the stack.
+    let mut iosb = [0u32; 2];
     let args: [u32; 11] = [
         0xFFFF_FFFF,
-        0x0012_FF00, // object attributes
-        &args[8] as *const u32 as u32, // bogus io status block
+        0x0012_FF00,                     // object attributes
+        &mut iosb[0] as *mut u32 as u32, // real IO_STATUS_BLOCK on the stack
         0,
         0x0000_0080, // FILE_SHARE_READ
         0x0000_0001, // FILE_OPEN
@@ -396,26 +392,10 @@ fn test_create_file_dispatches() {
         0,
         0,
     ];
-    // We need a real IO_STATUS_BLOCK pointer; use the stack.
-    let mut iosb = [0u32; 2];
-    let args2: [u32; 11] = [
-        0xFFFF_FFFF,
-        0x0012_FF00,
-        &mut iosb[0] as *mut u32 as u32,
-        0,
-        0x80,
-        0x01,
-        0x20,
-        0,
-        0,
-        0,
-        0,
-    ];
-    let mut ctx = SyscallContext::new(args2.as_ptr(), 11);
+    let mut ctx = SyscallContext::new(args.as_ptr(), 11);
     let status = dispatch_nt_create_file(&mut ctx);
     // Out-of-range "object attributes" pointer → STATUS_INVALID_PARAMETER
     assert_eq!(status, STATUS_INVALID_PARAMETER);
-    let _ = args; // suppress unused warning
 }
 
 #[test]
@@ -467,9 +447,6 @@ fn test_alignment_helpers_extended() {
 
 #[test]
 fn test_pe32_image_validation_synthetic() {
-    use crate::loader::pe32;
-    use crate::loader::{DosHeader, FileHeader, PE_SIGNATURE};
-
     // Minimal DOS header.
     let mut dos = [0u8; core::mem::size_of::<DosHeader>()];
     dos[0] = b'M';
@@ -482,38 +459,51 @@ fn test_pe32_image_validation_synthetic() {
         time_date_stamp: 0,
         pointer_to_symbol_table: 0,
         number_of_symbols: 0,
-        size_of_optional_header: core::mem::size_of::<pe32::OptionalHeader32Std>() as u16,
+        size_of_optional_header: (core::mem::size_of::<pe32::OptionalHeader32Std>()
+            + core::mem::size_of::<pe32::OptionalHeader32Windows>())
+            as u16,
         characteristics: 0x0102, // EXECUTABLE_IMAGE | LINE_NUMS_STRIPPED
     };
 
-    // OptionalHeader32Std — sizes/values are mostly placeholders.
-    let oh = pe32::OptionalHeader32Std {
-        magic: pe32::IMAGE_NT_OPTIONAL_HDR32_MAGIC,
-        linker_version: 14,
-        size_of_code: 0x1000,
-        size_of_initialized_data: 0,
-        size_of_uninitialized_data: 0,
-        address_of_entry_point: 0x0000_1010,
-        base_of_code: 0x0000_1000,
-        base_of_data: 0x0000_2000,
-        image_base: pe32::PE32_EXE_IMAGE_BASE,
-        section_alignment: pe32::PE32_SECTION_ALIGNMENT,
-        file_alignment: pe32::PE32_FILE_ALIGNMENT,
-        os_version_min: 0x0006_0001, // 6.1
-        image_version_min: 0x0000_0000,
-        subsystem_version_min: 0x0006_0001,
-        win32_version_value: 0,
-        size_of_image: 0x0001_0000,
-        size_of_headers: 0x400,
-        checksum: 0,
-        subsystem: 0x0003,            // WINDOWS_CUI
-        dll_characteristics: 0x0000,
-        size_of_stack_reserve: 0x0010_0000,
-        size_of_stack_commit: 0x0000_1000,
-        size_of_heap_reserve: 0x0010_0000,
-        size_of_heap_commit: 0x0000_1000,
-        loader_flags: 0,
-        number_of_rva_and_sizes: 16,
+    // OptionalHeader32Std + OptionalHeader32Windows — values are
+    // mostly placeholders, but the field layout must match the
+    // documented PE32 optional header (0x1C + 0x44 = 0x60).
+    let oh = pe32::OptionalHeader32Ext {
+        standard: pe32::OptionalHeader32Std {
+            magic: pe32::IMAGE_NT_OPTIONAL_HDR32_MAGIC,
+            major_linker_version: 14,
+            minor_linker_version: 0,
+            size_of_code: 0x1000,
+            size_of_initialized_data: 0,
+            size_of_uninitialized_data: 0,
+            address_of_entry_point: 0x0000_1010,
+            base_of_code: 0x0000_1000,
+            base_of_data: 0x0000_2000,
+        },
+        windows: pe32::OptionalHeader32Windows {
+            image_base: pe32::PE32_EXE_IMAGE_BASE,
+            section_alignment: pe32::PE32_SECTION_ALIGNMENT,
+            file_alignment: pe32::PE32_FILE_ALIGNMENT,
+            major_os_version: 6,
+            minor_os_version: 1, // 6.1
+            major_image_version: 0,
+            minor_image_version: 0,
+            major_subsystem_version: 6,
+            minor_subsystem_version: 1,
+            win32_version_value: 0,
+            size_of_image: 0x0001_0000,
+            size_of_headers: 0x400,
+            check_sum: 0,
+            subsystem: 0x0003, // WINDOWS_CUI
+            dll_characteristics: 0x0000,
+            size_of_stack_reserve: 0x0010_0000,
+            size_of_stack_commit: 0x0000_1000,
+            size_of_heap_reserve: 0x0010_0000,
+            size_of_heap_commit: 0x0000_1000,
+            loader_flags: 0,
+            number_of_rva_and_sizes: 16,
+        },
+        data_directory: [pe32::ImageDataDirectory::default(); 16],
     };
 
     // The PE_SIGNATURE + FileHeader + OptionalHeader sit
@@ -524,23 +514,68 @@ fn test_pe32_image_validation_synthetic() {
     let _ = dos;
     let _ = fh;
     let _ = oh;
-    assert_eq!(PE_SIGNATURE, [b'P', b'E', 0, 0]);
-    assert_eq!(oh.magic, pe32::IMAGE_NT_OPTIONAL_HDR32_MAGIC);
-    assert_eq!(oh.image_base, 0x0040_0000);
+    assert_eq!(PE_SIGNATURE, 0x0000_4550); // "PE\0\0"
+    assert_eq!(oh.standard.magic, pe32::IMAGE_NT_OPTIONAL_HDR32_MAGIC);
+    assert_eq!(oh.windows.image_base, 0x0040_0000);
+    assert!(!oh.is_dll(&fh));
 }
-
 #[test]
 fn test_pe32_is_32bit_image() {
     // The machine constant is the canonical signal.
     assert_eq!(pe32::IMAGE_FILE_MACHINE_I386, 0x014C);
-    assert_ne!(pe32::IMAGE_FILE_MACHINE_I386, pe32::IMAGE_FILE_MACHINE_AMD64);
+    assert_ne!(
+        pe32::IMAGE_FILE_MACHINE_I386,
+        pe32::IMAGE_FILE_MACHINE_AMD64
+    );
 }
 
 #[test]
 fn test_pe32_optional_header_size() {
-    // OptionalHeader32Std + 16 data directories = OptionalHeader32Ext.
-    // We only assert the *standard* size which is documented.
-    assert_eq!(core::mem::size_of::<crate::loader::pe32::OptionalHeader32Std>(), 0x60);
+    // Documented PE32 optional header: 28-byte standard fields +
+    // 68-byte Windows-specific fields + 16 data directories.
+    assert_eq!(
+        core::mem::size_of::<crate::loader::pe32::OptionalHeader32Std>(),
+        0x1C
+    );
+    assert_eq!(
+        core::mem::size_of::<crate::loader::pe32::OptionalHeader32Windows>(),
+        0x44
+    );
+    assert_eq!(
+        core::mem::size_of::<crate::loader::pe32::OptionalHeader32Ext>(),
+        0xE0
+    );
+    // PE32+ has no BaseOfData and uses 8-byte sizes: 24 + 88 + 128.
+    assert_eq!(
+        core::mem::size_of::<crate::loader::OptionalHeader64>(),
+        0x70
+    );
+    assert_eq!(
+        core::mem::size_of::<crate::loader::OptionalHeader32>(),
+        0x60
+    );
+}
+
+#[test]
+fn test_wow64_address_space_has_no_overlap() {
+    // KUSER_SHARED_DATA is a fixed read-only page in every process,
+    // 32-bit or 64-bit, so it can never be handed to a system DLL.
+    assert_eq!(KUSER_SHARED_DATA_BASE, 0x7FFE_0000);
+    assert_eq!(KUSER_SHARED_DATA_SIZE, 0x1000);
+    assert!(WOW64_SYSTEM_DLL_BASE + WOW64_SYSTEM_DLL_SIZE <= KUSER_SHARED_DATA_BASE);
+    assert!(!crate::libs::wow64::wow64vas::is_in_system_dll_region(
+        KUSER_SHARED_DATA_BASE
+    ));
+    assert!(crate::libs::wow64::wow64vas::is_in_system_dll_region(
+        0x7C00_0000
+    ));
+
+    // The system DLL region must stay inside 32-bit user space.
+    assert!(WOW64_SYSTEM_DLL_BASE >= WOW64_USER_SPACE_START);
+    assert!(WOW64_SYSTEM_DLL_BASE + WOW64_SYSTEM_DLL_SIZE <= WOW64_USER_SPACE_END + 1);
+
+    // The WoW64 TEB points at the PEB, so the two cannot share a page.
+    assert_ne!(PEB32_VIRTUAL_ADDRESS, TEB32_BASE_ADDRESS);
 }
 
 #[test]
@@ -554,7 +589,10 @@ fn test_wow64_process_creation_inputs() {
     // And the legacy PROCESS_CREATE_FLAGS_INHERIT_FROM_PARENT (0x0000_0001)
     // must not be set together with it.
     const PROCESS_CREATE_FLAGS_INHERIT_FROM_PARENT: u32 = 0x0000_0001;
-    assert_ne!(PROCESS_CREATE_FLAGS_INHERIT_FROM_PARENT, PROCESS_WOW64_INFORMATION);
+    assert_ne!(
+        PROCESS_CREATE_FLAGS_INHERIT_FROM_PARENT,
+        PROCESS_WOW64_INFORMATION
+    );
 }
 
 // =============================================================================
@@ -587,23 +625,44 @@ pub fn run_wow64_smoke_tests() -> usize {
     run_test!(test_pointer_alignment, "Pointer alignment");
 
     // New 32-bit syscall + PE32 tests.
-    run_test!(test_allocate_vm32_invalid_pointer, "NtAllocateVirtualMemory32 bad ptr");
-    run_test!(test_allocate_vm32_valid_pointer_not_implemented, "NtAllocateVirtualMemory32 stub");
-    run_test!(test_free_vm32_invalid_pointer, "NtFreeVirtualMemory32 bad ptr");
-    run_test!(test_query_vm32_dispatches, "NtQueryVirtualMemory32 dispatch");
-    run_test!(test_create_file_dispatches, "NtCreateFile32 input validation");
-    run_test!(test_read_write_file_invalid_handle, "NtRead/WriteFile32 invalid handle");
-    run_test!(test_alignment_helpers_extended, "alignment + ptr conversion");
+    run_test!(
+        test_allocate_vm32_invalid_pointer,
+        "NtAllocateVirtualMemory32 bad ptr"
+    );
+    run_test!(
+        test_allocate_vm32_valid_pointer_not_implemented,
+        "NtAllocateVirtualMemory32 stub"
+    );
+    run_test!(
+        test_free_vm32_invalid_pointer,
+        "NtFreeVirtualMemory32 bad ptr"
+    );
+    run_test!(
+        test_query_vm32_dispatches,
+        "NtQueryVirtualMemory32 dispatch"
+    );
+    run_test!(
+        test_create_file_dispatches,
+        "NtCreateFile32 input validation"
+    );
+    run_test!(
+        test_read_write_file_invalid_handle,
+        "NtRead/WriteFile32 invalid handle"
+    );
+    run_test!(
+        test_alignment_helpers_extended,
+        "alignment + ptr conversion"
+    );
     run_test!(test_pe32_image_validation_synthetic, "PE32 header layout");
     run_test!(test_pe32_is_32bit_image, "PE32 machine type");
     run_test!(test_pe32_optional_header_size, "PE32 optional header size");
+    run_test!(
+        test_wow64_address_space_has_no_overlap,
+        "WoW64 address space layout"
+    );
     run_test!(test_wow64_process_creation_inputs, "WoW64 process flags");
 
-    crate::wow64_klog!(
-        "WoW64 smoke tests: {}/{} passed",
-        passed,
-        total
-    );
+    crate::wow64_klog!("WoW64 smoke tests: {}/{} passed", passed, total);
 
     passed
 }

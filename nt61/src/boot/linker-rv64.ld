@@ -41,6 +41,12 @@ SECTIONS {
         *(.data .data.*)
         *(.got .got.*)
         *(.got.plt .got.plt.*)
+        /* Same as linker-la64.ld: BSS statics have to be part of an
+         * allocated output section. `objcopy -O pei-riscv64-little`
+         * strips a standalone `.bss` (see tools/src/fs/build.rs), so
+         * without this rule the frame/PFN table statics disappear
+         * from the image. */
+        *(.bss .bss.*)
     } :data
 
     /DISCARD/ : {

@@ -30,10 +30,10 @@ use super::superblock::Ext2SuperBlock;
 pub const EXT4_EXTENT_MAGIC: u16 = 0xF30A;
 
 /// Extent header flags
-pub const EXT4_EXT_FLAGS_LEAF: u16 = 0x0001;       // Leaf node
-pub const EXT4_EXT_FLAGS_INDEX: u16 = 0x0002;      // Index node
-pub const EXT4_EXT_FLAGS_UNINIT: u16 = 0x0004;     // Uninitialized
-pub const EXT4_EXT_FLAGS_LEAF_NEW: u16 = 0x0001;   // New format leaf
+pub const EXT4_EXT_FLAGS_LEAF: u16 = 0x0001; // Leaf node
+pub const EXT4_EXT_FLAGS_INDEX: u16 = 0x0002; // Index node
+pub const EXT4_EXT_FLAGS_UNINIT: u16 = 0x0004; // Uninitialized
+pub const EXT4_EXT_FLAGS_LEAF_NEW: u16 = 0x0001; // New format leaf
 
 /// Maximum number of entries in an extent header
 pub const EXT4_EXTENT_COUNT: usize = 5;
@@ -124,7 +124,7 @@ impl Ext4Extent {
     pub fn get_len(&self) -> u32 {
         // For ext4, ee_len is a 16-bit field (ee_len_hi contains upper 16 bits of a 32-bit value)
         // But in practice, ext4 uses 16-bit lengths, so we combine with ee_len_hi properly
-        let len_lo = (self.ee_len_hi & 0x8000) as u32;  // Check if upper bit set (indicates 32-bit)
+        let len_lo = (self.ee_len_hi & 0x8000) as u32; // Check if upper bit set (indicates 32-bit)
         if len_lo != 0 {
             // 32-bit length mode
             ((self.ee_len_hi as u32) << 16) | 0xFFFF
@@ -206,31 +206,32 @@ impl ExtentTree {
         // In ext4, the extent header is stored in the first "block" pointer
         // which is actually replaced by the extent header when extents are used
         let first_block = inode.block[0];
-        
+
         if first_block == 0 {
             return None;
         }
-        
+
         // Read the extent header block
         let mut buffer = vec![0u8; block_size as usize];
         let sector = first_block as u64 * (block_size / 512) as u64;
-        
+
         if super::superblock::read_sector(
-            core::ptr::null_mut(),  // Will be provided by caller
+            core::ptr::null_mut(), // Will be provided by caller
             sector,
-            &mut buffer
-        ).is_err() {
+            &mut buffer,
+        )
+        .is_err()
+        {
             return None;
         }
-        
-        let header = unsafe {
-            core::ptr::read_unaligned(buffer.as_ptr() as *const Ext4ExtentHeader)
-        };
-        
+
+        let header =
+            unsafe { core::ptr::read_unaligned(buffer.as_ptr() as *const Ext4ExtentHeader) };
+
         if !header.is_valid() {
             return None;
         }
-        
+
         Some(Self {
             depth: header.depth,
             root_header: header,
@@ -246,11 +247,11 @@ impl ExtentTree {
         logical: u32,
     ) -> Option<u64> {
         let first_block = inode.block[0];
-        
+
         if first_block == 0 {
             return None;
         }
-        
+
         // Start from the root and traverse the tree
         self.find_in_node(device, first_block, block_size, logical)
     }
@@ -265,68 +266,63 @@ impl ExtentTree {
     ) -> Option<u64> {
         let mut buffer = vec![0u8; block_size as usize];
         let sector = node_block as u64 * (block_size / 512) as u64;
-        
+
         if super::superblock::read_sector(device, sector, &mut buffer).is_err() {
             return None;
         }
-        
-        let header = unsafe {
-            core::ptr::read_unaligned(buffer.as_ptr() as *const Ext4ExtentHeader)
-        };
-        
+
+        let header =
+            unsafe { core::ptr::read_unaligned(buffer.as_ptr() as *const Ext4ExtentHeader) };
+
         if !header.is_valid() {
             return None;
         }
-        
+
         if header.is_leaf() {
             // Leaf node - search extent entries
             let entry_size = core::mem::size_of::<Ext4Extent>();
             let header_size = core::mem::size_of::<Ext4ExtentHeader>();
-            
+
             for i in 0..header.entries as usize {
                 let offset = header_size + i * entry_size;
                 if offset + entry_size > buffer.len() {
                     break;
                 }
-                
+
                 let extent = unsafe {
-                    core::ptr::read_unaligned(
-                        buffer.as_ptr().add(offset) as *const Ext4Extent
-                    )
+                    core::ptr::read_unaligned(buffer.as_ptr().add(offset) as *const Ext4Extent)
                 };
-                
+
                 if extent.covers(logical) {
                     return extent.logical_to_physical(logical);
                 }
             }
-            
+
             None
         } else {
             // Index node - find the right child
             let entry_size = core::mem::size_of::<Ext4ExtentIdx>();
             let header_size = core::mem::size_of::<Ext4ExtentHeader>();
-            
+
             // Find the first index that covers our logical block
             let mut chosen_idx: Option<Ext4ExtentIdx> = None;
-            
+
             for i in 0..header.entries as usize {
                 let offset = header_size + i * entry_size;
                 if offset + entry_size > buffer.len() {
                     break;
                 }
-                
+
                 let idx: Ext4ExtentIdx = unsafe {
-                    core::ptr::read_unaligned(
-                        buffer.as_ptr().add(offset) as *const Ext4ExtentIdx
-                    )
+                    core::ptr::read_unaligned(buffer.as_ptr().add(offset) as *const Ext4ExtentIdx)
                 };
-                
+
                 if idx.covers(logical) {
                     chosen_idx = Some(idx);
                     break;
                 }
             }
-            
+
             // Use the last index if no index covers our logical block
             if chosen_idx.is_none() && header.entries > 0 {
                 let offset = header_size + ((header.entries - 1) as usize) * entry_size;
@@ -338,7 +334,7 @@ impl ExtentTree {
                     });
                 }
             }
-            
+
             if let Some(ref idx) = chosen_idx {
                 // Recurse into child node
                 self.find_in_node(device, idx.get_child_block() as u32, block_size, logical)
@@ -359,7 +355,7 @@ pub fn format_leaf_header(entries: u16, max_entries: u16) -> Ext4ExtentHeader {
         magic: EXT4_EXTENT_MAGIC,
         entries,
         max_entries,
-        depth: 0,  // Leaf nodes have depth 0
+        depth: 0, // Leaf nodes have depth 0
         generation: 0,
     }
 }
@@ -391,31 +387,31 @@ pub fn create_extent_idx(logical: u32, child_block: u64) -> Ext4ExtentIdx {
 
 /// Check if an inode uses extents
 pub fn inode_uses_extents(inode: &Ext2Inode) -> bool {
-    (inode.flags & 0x00080000) != 0  // EXT2_EXTENTS_FL
+    (inode.flags & 0x00080000) != 0 // EXT2_EXTENTS_FL
 }
 
 /// Validate an extent entry
 pub fn validate_extent(extent: &Ext4Extent, max_logical: u32) -> bool {
     // Check magic
     // Note: We don't have the header here, so we can't check magic
-    
+
     // Check length is valid (1-32768 blocks)
     let len = extent.get_len();
     if len == 0 || len > 32768 {
         return false;
     }
-    
+
     // Check logical block is within range
     if extent.ee_block > max_logical {
         return false;
     }
-    
+
     // Check for overflow
     let end = extent.ee_block as u64 + len as u64;
     if end > max_logical as u64 + 32768 {
         return false;
     }
-    
+
     true
 }
 
@@ -430,109 +426,97 @@ pub fn validate_extent_idx(idx: &Ext4ExtentIdx) -> bool {
 // ============================================================================
 
 /// Print extent tree for debugging
-pub fn debug_print_tree(
-    device: *mut (),
-    inode: &Ext2Inode,
-    sb: &Ext2SuperBlock,
-) {
+pub fn debug_print_tree(device: *mut (), inode: &Ext2Inode, sb: &Ext2SuperBlock) {
     let block_size = sb.get_block_size();
-    
+
     if !inode_uses_extents(inode) {
-        // kprintln!("[EXT4] Inode does not use extents")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[EXT4] Inode does not use extents");
         return;
     }
-    
+
     let first_block = inode.block[0];
     if first_block == 0 {
-        // kprintln!("[EXT4] Extent tree root is zero")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[EXT4] Extent tree root is zero");
         return;
     }
-    
-    // kprintln!("[EXT4] Extent tree root at block {}", first_block)  // kprintln disabled (memcpy crash workaround);
+
+    // kprintln!("[EXT4] Extent tree root at block {}", first_block);
     debug_print_node(device, first_block, block_size, 0);
 }
 
 /// Recursively print extent tree nodes
 fn debug_print_node(device: *mut (), block: u32, block_size: u32, depth: usize) {
     let _indent = "  ".repeat(depth);
-    
+
     let mut buffer = vec![0u8; block_size as usize];
     let sector = block as u64 * (block_size / 512) as u64;
-    
+
     if super::superblock::read_sector(device, sector, &mut buffer).is_err() {
-        // kprintln!("{}Failed to read extent block {}", indent, block)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("{}Failed to read extent block {}", indent, block);
         return;
     }
-    
-    let header = unsafe {
-        core::ptr::read_unaligned(buffer.as_ptr() as *const Ext4ExtentHeader)
-    };
-    
+
+    let header = unsafe { core::ptr::read_unaligned(buffer.as_ptr() as *const Ext4ExtentHeader) };
+
     if !header.is_valid() {
-        // kprintln!("{}Invalid extent header at block {}", indent, block)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("{}Invalid extent header at block {}", indent, block);
         return;
     }
-    
-    // kprintln!("{}{}extent header: depth={}, entries={}/{}",   // kprintln disabled (memcpy crash workaround)
-//         indent,
-//         if header.is_leaf() { "[LEAF]" } else { "[INDEX]" },
-//         header.depth,
-//         header.entries,
-//         header.max_entries
-//     );
-    
+
+    // kprintln!("{}{}extent header: depth={}, entries={}/{}",
+    //         indent,
+    //         if header.is_leaf() { "[LEAF]" } else { "[INDEX]" },
+    //         header.depth,
+    //         header.entries,
+    //         header.max_entries
+    //     );
+
     if header.is_leaf() {
         // Print extent entries
         let entry_size = core::mem::size_of::<Ext4Extent>();
         let header_size = core::mem::size_of::<Ext4ExtentHeader>();
-        
+
         for i in 0..core::cmp::min(header.entries as usize, 10) {
             let offset = header_size + i * entry_size;
             if offset + entry_size > buffer.len() {
                 break;
             }
-            
+
             let extent = unsafe {
-                core::ptr::read_unaligned(
-                    buffer.as_ptr().add(offset) as *const Ext4Extent
-                )
+                core::ptr::read_unaligned(buffer.as_ptr().add(offset) as *const Ext4Extent)
             };
             // Reference extent fields to preserve API contract
             let _ = (extent.ee_block, extent.get_physical(), extent.get_len());
         }
-        
+
         if header.entries > 10 {
-            // kprintln!("{}  ... and {} more entries", indent, header.entries - 10)  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("{}  ... and {} more entries", indent, header.entries - 10);
         }
     } else {
         // Print index entries
         let entry_size = core::mem::size_of::<Ext4ExtentIdx>();
         let header_size = core::mem::size_of::<Ext4ExtentHeader>();
-        
+
         for i in 0..core::cmp::min(header.entries as usize, 5) {
             let offset = header_size + i * entry_size;
             if offset + entry_size > buffer.len() {
                 break;
             }
-            
+
             let idx = unsafe {
-                core::ptr::read_unaligned(
-                    buffer.as_ptr().add(offset) as *const Ext4ExtentIdx
-                )
+                core::ptr::read_unaligned(buffer.as_ptr().add(offset) as *const Ext4ExtentIdx)
             };
             // Reference idx fields to preserve API contract
             let _ = (idx.ei_block, idx.get_child_block());
         }
-        
+
         // Recurse into first child for demo
         if header.entries > 0 {
             let offset = header_size;
             let idx = unsafe {
-                core::ptr::read_unaligned(
-                    buffer.as_ptr().add(offset) as *const Ext4ExtentIdx
-                )
+                core::ptr::read_unaligned(buffer.as_ptr().add(offset) as *const Ext4ExtentIdx)
             };
-            
+
             debug_print_node(device, idx.get_child_block() as u32, block_size, depth + 1);
         }
     }

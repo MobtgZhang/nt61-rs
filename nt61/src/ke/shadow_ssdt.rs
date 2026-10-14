@@ -14,7 +14,6 @@
 
 #![cfg(target_arch = "x86_64")]
 
-
 /// Maximum number of shadow services (0x1000 entries for 0x1000-0x1FFF range)
 pub const SHADOW_MAX_SERVICES: usize = 0x1000;
 
@@ -27,18 +26,19 @@ pub struct ShadowServiceEntry {
 
 impl ShadowServiceEntry {
     pub const fn new() -> Self {
-        Self { handler: core::ptr::null() }
+        Self {
+            handler: core::ptr::null(),
+        }
     }
-    
+
     pub const fn is_null(&self) -> bool {
         self.handler.is_null()
     }
 }
 
 /// Shadow SSDT - Win32k service table
-static mut SHADOW_SERVICE_TABLE: [ShadowServiceEntry; SHADOW_MAX_SERVICES] = {
-    [ShadowServiceEntry::new(); SHADOW_MAX_SERVICES]
-};
+static mut SHADOW_SERVICE_TABLE: [ShadowServiceEntry; SHADOW_MAX_SERVICES] =
+    [ShadowServiceEntry::new(); SHADOW_MAX_SERVICES];
 
 /// Shadow argument count table
 static mut SHADOW_ARGUMENT_TABLE: [u8; SHADOW_MAX_SERVICES] = [0; SHADOW_MAX_SERVICES];
@@ -50,8 +50,8 @@ static mut SHADOW_ARGUMENT_TABLE: [u8; SHADOW_MAX_SERVICES] = [0; SHADOW_MAX_SER
 /// Initialize the Shadow SSDT
 pub fn init() {
     crate::hal::serial::write_string("[ke.shadow_ssdt] enter\r\n");
-    // // kprintln!("[SHADOW SSDT] Initializing Shadow System Service Dispatch Table...")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("[SHADOW SSDT] Shadow SSDT initialized with {} max services", SHADOW_MAX_SERVICES)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[SHADOW SSDT] Initializing Shadow System Service Dispatch Table...");
+    // // kprintln!("[SHADOW SSDT] Shadow SSDT initialized with {} max services", SHADOW_MAX_SERVICES);
 }
 
 /// Initialize and register all win32k shadow services
@@ -63,269 +63,442 @@ pub fn init() {
 /// This function modifies static mutable arrays. It should only be called
 /// during initialization when no other cores are running.
 pub unsafe fn init_shadow_services() {
-    // // kprintln!("[SHADOW SSDT] Registering win32k shadow services...")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[SHADOW SSDT] Registering win32k shadow services...");
 
     // Import syscall module
     use crate::libs::win32k::syscall;
 
     // USER services (indices 0x000-0x0FF after masking 0x1xxx)
     // Full syscall numbers are 0x1000-0x10FF, masked = 0x000-0x0FF
-    register_shadow_service(0x000, syscall::nt_user_set_thread_state as *const (), 8);    // 0x1000
-    register_shadow_service(0x001, syscall::nt_user_peek_message as *const (), 16);       // 0x1001
-    register_shadow_service(0x002, syscall::nt_user_call_one_param as *const (), 8);      // 0x1002
-    register_shadow_service(0x003, syscall::nt_user_get_key_state as *const (), 8);      // 0x1003
-    register_shadow_service(0x004, syscall::nt_user_invalidate_rect as *const (), 12);    // 0x1004
-    register_shadow_service(0x005, syscall::nt_user_call_no_param as *const (), 4);       // 0x1005
-    register_shadow_service(0x006, syscall::nt_user_get_message as *const (), 16);         // 0x1006
-    register_shadow_service(0x007, syscall::nt_user_message_call as *const (), 24);        // 0x1007
-    register_shadow_service(0x00a, syscall::nt_user_get_dc as *const (), 8);               // 0x100a
-    register_shadow_service(0x00c, syscall::nt_user_wait_message as *const (), 4);          // 0x100c
-    register_shadow_service(0x00d, syscall::nt_user_translate_message as *const (), 8);     // 0x100d
-    register_shadow_service(0x00e, syscall::nt_user_get_prop as *const (), 8);              // 0x100e
-    register_shadow_service(0x00f, syscall::nt_user_post_message as *const (), 16);         // 0x100f
-    register_shadow_service(0x010, syscall::nt_user_query_window as *const (), 8);          // 0x1010
-    register_shadow_service(0x011, syscall::nt_user_translate_accelerator as *const (), 16);// 0x1011
-    register_shadow_service(0x013, syscall::nt_user_redraw_window as *const (), 16);       // 0x1013
-    register_shadow_service(0x014, syscall::nt_user_window_from_point as *const (), 8);     // 0x1014
-    register_shadow_service(0x015, syscall::nt_user_call_msg_filter as *const (), 8);      // 0x1015
-    register_shadow_service(0x016, syscall::nt_user_validate_timer_callback as *const (), 8);// 0x1016
-    register_shadow_service(0x017, syscall::nt_user_begin_paint as *const (), 8);           // 0x1017
-    register_shadow_service(0x018, syscall::nt_user_set_timer as *const (), 16);           // 0x1018
-    register_shadow_service(0x019, syscall::nt_user_end_paint as *const (), 8);             // 0x1019
-    register_shadow_service(0x01a, syscall::nt_user_set_cursor as *const (), 8);            // 0x101a
-    register_shadow_service(0x01b, syscall::nt_user_kill_timer as *const (), 8);            // 0x101b
-    register_shadow_service(0x01c, syscall::nt_user_build_hwnd_list as *const (), 24);      // 0x101c
-    register_shadow_service(0x01d, syscall::nt_user_select_palette as *const (), 8);        // 0x101d
-    register_shadow_service(0x01e, syscall::nt_user_call_next_hook_ex as *const (), 16);    // 0x101e
-    register_shadow_service(0x01f, syscall::nt_user_hide_caret as *const (), 4);             // 0x101f
-    register_shadow_service(0x021, syscall::nt_user_call_hwnd_lock as *const (), 4);        // 0x1021
-    register_shadow_service(0x022, syscall::nt_user_get_process_window_station as *const (), 4); // 0x1022
-    register_shadow_service(0x024, syscall::nt_user_set_window_pos as *const (), 32);       // 0x1024
-    register_shadow_service(0x025, syscall::nt_user_show_caret as *const (), 4);            // 0x1025
-    register_shadow_service(0x026, syscall::nt_user_end_defer_window_pos_ex as *const (), 8); // 0x1026
-    register_shadow_service(0x027, syscall::nt_user_call_hwnd_param_lock as *const (), 12); // 0x1027
-    register_shadow_service(0x028, syscall::nt_user_vk_key_scan_ex as *const (), 16);       // 0x1028
-    register_shadow_service(0x02a, syscall::nt_user_call_two_param as *const (), 12);        // 0x102a
-    register_shadow_service(0x02c, syscall::nt_user_copy_accelerator_table as *const (), 12);// 0x102c
-    register_shadow_service(0x02d, syscall::nt_user_notify_win_event as *const (), 16);    // 0x102d
-    register_shadow_service(0x02f, syscall::nt_user_is_clipboard_format_available as *const (), 4); // 0x102f
-    register_shadow_service(0x030, syscall::nt_user_set_scroll_info as *const (), 16);      // 0x1030
-    register_shadow_service(0x032, syscall::nt_user_create_caret as *const (), 16);         // 0x1032
-    register_shadow_service(0x036, syscall::nt_user_dispatch_message as *const (), 8);       // 0x1036
-    register_shadow_service(0x037, syscall::nt_user_register_window_message as *const (), 8); // 0x1037
-    register_shadow_service(0x03c, syscall::nt_user_get_foreground_window as *const (), 4);  // 0x103c
-    register_shadow_service(0x03d, syscall::nt_user_show_scroll_bar as *const (), 12);      // 0x103d
-    register_shadow_service(0x03e, syscall::nt_user_find_existing_cursor_icon as *const (), 16); // 0x103e
-    register_shadow_service(0x042, syscall::nt_user_system_parameters_info as *const (), 16); // 0x1042
-    register_shadow_service(0x044, syscall::nt_user_get_async_key_state as *const (), 8);    // 0x1044
-    register_shadow_service(0x045, syscall::nt_user_change_clipboard_chain as *const (), 8);               // 0x1045
-    register_shadow_service(0x046, syscall::nt_user_remove_prop as *const (), 8);             // 0x1046
-    register_shadow_service(0x049, syscall::nt_user_set_capture as *const (), 8);            // 0x1049
-    register_shadow_service(0x04a, syscall::nt_user_enum_display_devices as *const (), 16);   // 0x104a
-    register_shadow_service(0x04c, syscall::nt_user_set_prop as *const (), 12);             // 0x104c
-    register_shadow_service(0x04e, syscall::nt_user_sb_get_parms as *const (), 8);           // 0x104e
-    register_shadow_service(0x04f, syscall::nt_user_get_icon_info as *const (), 8);           // 0x104f
-    register_shadow_service(0x050, syscall::nt_user_exclude_update_rgn as *const (), 12);     // 0x1050
-    register_shadow_service(0x051, syscall::nt_user_set_focus as *const (), 8);              // 0x1051
-    register_shadow_service(0x053, syscall::nt_user_defer_window_pos as *const (), 32);      // 0x1053
-    register_shadow_service(0x054, syscall::nt_user_get_update_rect as *const (), 12);        // 0x1054
-    register_shadow_service(0x056, syscall::nt_user_get_clipboard_sequence_number as *const (), 4); // 0x1056
-    register_shadow_service(0x058, syscall::nt_user_show_window as *const (), 8);             // 0x1058
-    register_shadow_service(0x059, syscall::nt_user_get_keyboard_layout_list as *const (), 8); // 0x1059
-    register_shadow_service(0x05b, syscall::nt_user_map_virtual_key_ex as *const (), 16);     // 0x105b
-    register_shadow_service(0x05c, syscall::nt_user_set_window_long as *const (), 16);        // 0x105c
-    register_shadow_service(0x05e, syscall::nt_user_move_window as *const (), 24);          // 0x105e
-    register_shadow_service(0x05f, syscall::nt_user_post_thread_message as *const (), 16);   // 0x105f
-    register_shadow_service(0x060, syscall::nt_user_draw_icon_ex as *const (), 40);            // 0x1060
-    register_shadow_service(0x061, syscall::nt_user_get_system_menu as *const (), 8);          // 0x1061
-    register_shadow_service(0x063, syscall::nt_user_internal_get_window_text as *const (), 12);// 0x1063
-    register_shadow_service(0x064, syscall::nt_user_get_window_dc as *const (), 8);          // 0x1064
-    register_shadow_service(0x06b, syscall::nt_user_scroll_dc as *const (), 28);             // 0x106b
-    register_shadow_service(0x06c, syscall::nt_user_get_object_information as *const (), 16); // 0x106c
-    register_shadow_service(0x06e, syscall::nt_user_find_window_ex as *const (), 24);         // 0x106e
-    register_shadow_service(0x070, syscall::nt_user_unhook_windows_hook_ex as *const (), 8); // 0x1070
-    register_shadow_service(0x076, syscall::nt_user_create_window_ex as *const (), 44);       // 0x1076
-    register_shadow_service(0x077, syscall::nt_user_set_parent as *const (), 12);            // 0x1077
-    register_shadow_service(0x078, syscall::nt_user_get_keyboard_state as *const (), 8);     // 0x1078
-    register_shadow_service(0x079, syscall::nt_user_to_unicode_ex as *const (), 24);         // 0x1079
-    register_shadow_service(0x07a, syscall::nt_user_get_control_brush as *const (), 8);      // 0x107a
-    register_shadow_service(0x07b, syscall::nt_user_get_class_name as *const (), 12);         // 0x107b
-    register_shadow_service(0x07f, syscall::nt_user_def_set_text as *const (), 12);           // 0x107f
-    register_shadow_service(0x082, syscall::nt_user_send_input as *const (), 16);            // 0x1082
-    register_shadow_service(0x083, syscall::nt_user_get_thread_desktop as *const (), 8);      // 0x1083
-    register_shadow_service(0x086, syscall::nt_user_get_update_rgn as *const (), 12);          // 0x1086
-    register_shadow_service(0x088, syscall::nt_user_get_icon_size as *const (), 12);         // 0x1088
-    register_shadow_service(0x089, syscall::nt_user_fill_window as *const (), 16);            // 0x1089
-    register_shadow_service(0x08c, syscall::nt_user_set_windows_hook_ex as *const (), 24);   // 0x108c
-    register_shadow_service(0x08d, syscall::nt_user_notify_process_create as *const (), 16); // 0x108d
-    register_shadow_service(0x08f, syscall::nt_user_get_title_bar_info as *const (), 8);    // 0x108f
-    register_shadow_service(0x091, syscall::nt_user_set_thread_desktop as *const (), 8);     // 0x1091
-    register_shadow_service(0x092, syscall::nt_user_get_dcex as *const (), 16);               // 0x1092
-    register_shadow_service(0x093, syscall::nt_user_get_scroll_bar_info as *const (), 8);    // 0x1093
-    register_shadow_service(0x095, syscall::nt_user_set_window_fnid as *const (), 8);         // 0x1095
-    register_shadow_service(0x097, syscall::nt_user_calc_menu_bar as *const (), 20);          // 0x1097
-    register_shadow_service(0x098, syscall::nt_user_thunked_menu_item_info as *const (), 24); // 0x1098
-    register_shadow_service(0x099, syscall::nt_gdi_exclude_clip_rect as *const (), 24);      // 0x1099
-    register_shadow_service(0x09a, syscall::nt_gdi_create_dib_section as *const (), 28);      // 0x109a
-    register_shadow_service(0x09b, syscall::nt_gdi_get_dc_for_bitmap as *const (), 4);       // 0x109b
-    register_shadow_service(0x09c, syscall::nt_user_destroy_cursor as *const (), 8);          // 0x109c
-    register_shadow_service(0x09d, syscall::nt_user_destroy_window as *const (), 4);          // 0x109d
-    register_shadow_service(0x09e, syscall::nt_user_call_hwnd_param as *const (), 12);        // 0x109e
-    register_shadow_service(0x09f, syscall::nt_gdi_create_dibitmap_internal as *const (), 24); // 0x109f
-    register_shadow_service(0x0a0, syscall::nt_user_open_window_station as *const (), 12);    // 0x10a0
-    register_shadow_service(0x0a4, syscall::nt_user_set_cursor_icon_data as *const (), 24);   // 0x10a4
-    register_shadow_service(0x0a6, syscall::nt_user_close_desktop as *const (), 8);           // 0x10a6
-    register_shadow_service(0x0a7, syscall::nt_user_open_desktop as *const (), 28);           // 0x10a7
-    register_shadow_service(0x0a8, syscall::nt_user_set_process_window_station as *const (), 8); // 0x10a8
-    register_shadow_service(0x0a9, syscall::nt_user_get_atom_name as *const (), 8);           // 0x10a9
-    register_shadow_service(0x0ae, syscall::nt_user_build_hwnd_list as *const (), 12);        // 0x10ae
-    register_shadow_service(0x0b0, syscall::nt_user_register_class_ex_wow as *const (), 32); // 0x10b0
-    register_shadow_service(0x0b2, syscall::nt_user_get_ancestor as *const (), 8);           // 0x10b2
-    register_shadow_service(0x0b5, syscall::nt_user_close_window_station as *const (), 8);   // 0x10b5
-    register_shadow_service(0x0b6, syscall::nt_user_get_double_click_time as *const (), 4);  // 0x10b6
-    register_shadow_service(0x0b7, syscall::nt_user_enable_scroll_bar as *const (), 12);     // 0x10b7
-    register_shadow_service(0x0b9, syscall::nt_user_get_class_info_ex as *const (), 16);    // 0x10b9
-    register_shadow_service(0x0bb, syscall::nt_user_unregister_class as *const (), 12);     // 0x10bb
-    register_shadow_service(0x0bc, syscall::nt_user_delete_menu as *const (), 8);           // 0x10bc
-    register_shadow_service(0x0be, syscall::nt_user_scroll_window_ex as *const (), 32);      // 0x10be
-    register_shadow_service(0x0c0, syscall::nt_user_set_class_long as *const (), 16);         // 0x10c0
-    register_shadow_service(0x0c1, syscall::nt_user_get_menu_bar_info as *const (), 12);     // 0x10c1
-    register_shadow_service(0x0c8, syscall::nt_user_invalidate_rgn as *const (), 12);        // 0x10c8
-    register_shadow_service(0x0c9, syscall::nt_user_get_clipboard_owner as *const (), 4);   // 0x10c9
-    register_shadow_service(0x0ca, syscall::nt_user_set_window_rgn as *const (), 12);        // 0x10ca
-    register_shadow_service(0x0cd, syscall::nt_user_validate_rect as *const (), 8);          // 0x10cd
-    register_shadow_service(0x0ce, syscall::nt_user_close_clipboard as *const (), 4);         // 0x10ce
-    register_shadow_service(0x0cf, syscall::nt_user_open_clipboard as *const (), 8);          // 0x10cf
-    register_shadow_service(0x0d1, syscall::nt_user_set_clipboard_data as *const (), 8);      // 0x10d1
-    register_shadow_service(0x0d2, syscall::nt_user_enable_menu_item as *const (), 12);       // 0x10d2
-    register_shadow_service(0x0d3, syscall::nt_user_alter_window_style as *const (), 12);     // 0x10d3
-    register_shadow_service(0x0d5, syscall::nt_user_get_window_placement as *const (), 8);   // 0x10d5
-    register_shadow_service(0x0d8, syscall::nt_user_get_open_clipboard_window as *const (), 4); // 0x10d8
-    register_shadow_service(0x0d9, syscall::nt_user_set_thread_state as *const (), 8);       // 0x10d9
-    register_shadow_service(0x0db, syscall::nt_user_track_mouse_event as *const (), 16);      // 0x10db
-    register_shadow_service(0x0dd, syscall::nt_user_destroy_menu as *const (), 4);             // 0x10dd
-    register_shadow_service(0x0df, syscall::nt_user_console_control as *const (), 16);        // 0x10df
-    register_shadow_service(0x0e0, syscall::nt_user_set_active_window as *const (), 8);        // 0x10e0
-    register_shadow_service(0x0e1, syscall::nt_user_set_information_thread as *const (), 16);  // 0x10e1
-    register_shadow_service(0x0e2, syscall::nt_user_set_window_placement as *const (), 8);     // 0x10e2
-    register_shadow_service(0x0e3, syscall::nt_user_get_control_color as *const (), 8);        // 0x10e3
-    register_shadow_service(0x0e8, syscall::nt_user_set_window_word as *const (), 12);         // 0x10e8
-    register_shadow_service(0x0e9, syscall::nt_user_get_clipboard_format_name as *const (), 12); // 0x10e9
-    register_shadow_service(0x0ea, syscall::nt_user_real_internal_get_message as *const (), 24); // 0x10ea
-    register_shadow_service(0x0eb, syscall::nt_user_create_local_mem_handle as *const (), 8); // 0x10eb
-    register_shadow_service(0x0ec, syscall::nt_user_attach_thread_input as *const (), 12);   // 0x10ec
-    register_shadow_service(0x0ee, syscall::nt_user_paint_menu_bar as *const (), 20);        // 0x10ee
-    register_shadow_service(0x0ef, syscall::nt_user_set_keyboard_state as *const (), 8);     // 0x10ef
-    register_shadow_service(0x0f1, syscall::nt_user_create_accelerator_table as *const (), 8); // 0x10f1
-    register_shadow_service(0x0f3, syscall::nt_user_get_alt_tab_info as *const (), 20);       // 0x10f3
-    register_shadow_service(0x0f4, syscall::nt_user_get_caret_blink_time as *const (), 4);   // 0x10f4
-    register_shadow_service(0x0f6, syscall::nt_user_process_connect as *const (), 16);        // 0x10f6
-    register_shadow_service(0x0f7, syscall::nt_user_enum_display_devices as *const (), 16);   // 0x10f7
-    register_shadow_service(0x0f8, syscall::nt_user_empty_clipboard as *const (), 4);         // 0x10f8
-    register_shadow_service(0x0f9, syscall::nt_user_get_clipboard_data as *const (), 8);      // 0x10f9
-    register_shadow_service(0x0fa, syscall::nt_user_remove_menu as *const (), 8);             // 0x10fa
-    register_shadow_service(0x0fd, syscall::nt_user_convert_mem_handle as *const (), 12);      // 0x10fd
-    register_shadow_service(0x0fe, syscall::nt_user_destroy_accelerator_table as *const (), 4); // 0x10fe
-    register_shadow_service(0x0ff, syscall::nt_user_get_gui_thread_info as *const (), 8);   // 0x10ff
+    register_shadow_service(0x000, syscall::nt_user_set_thread_state as *const (), 8); // 0x1000
+    register_shadow_service(0x001, syscall::nt_user_peek_message as *const (), 16); // 0x1001
+    register_shadow_service(0x002, syscall::nt_user_call_one_param as *const (), 8); // 0x1002
+    register_shadow_service(0x003, syscall::nt_user_get_key_state as *const (), 8); // 0x1003
+    register_shadow_service(0x004, syscall::nt_user_invalidate_rect as *const (), 12); // 0x1004
+    register_shadow_service(0x005, syscall::nt_user_call_no_param as *const (), 4); // 0x1005
+    register_shadow_service(0x006, syscall::nt_user_get_message as *const (), 16); // 0x1006
+    register_shadow_service(0x007, syscall::nt_user_message_call as *const (), 24); // 0x1007
+    register_shadow_service(0x00a, syscall::nt_user_get_dc as *const (), 8); // 0x100a
+    register_shadow_service(0x00c, syscall::nt_user_wait_message as *const (), 4); // 0x100c
+    register_shadow_service(0x00d, syscall::nt_user_translate_message as *const (), 8); // 0x100d
+    register_shadow_service(0x00e, syscall::nt_user_get_prop as *const (), 8); // 0x100e
+    register_shadow_service(0x00f, syscall::nt_user_post_message as *const (), 16); // 0x100f
+    register_shadow_service(0x010, syscall::nt_user_query_window as *const (), 8); // 0x1010
+    register_shadow_service(
+        0x011,
+        syscall::nt_user_translate_accelerator as *const (),
+        16,
+    ); // 0x1011
+    register_shadow_service(0x013, syscall::nt_user_redraw_window as *const (), 16); // 0x1013
+    register_shadow_service(0x014, syscall::nt_user_window_from_point as *const (), 8); // 0x1014
+    register_shadow_service(0x015, syscall::nt_user_call_msg_filter as *const (), 8); // 0x1015
+    register_shadow_service(
+        0x016,
+        syscall::nt_user_validate_timer_callback as *const (),
+        8,
+    ); // 0x1016
+    register_shadow_service(0x017, syscall::nt_user_begin_paint as *const (), 8); // 0x1017
+    register_shadow_service(0x018, syscall::nt_user_set_timer as *const (), 16); // 0x1018
+    register_shadow_service(0x019, syscall::nt_user_end_paint as *const (), 8); // 0x1019
+    register_shadow_service(0x01a, syscall::nt_user_set_cursor as *const (), 8); // 0x101a
+    register_shadow_service(0x01b, syscall::nt_user_kill_timer as *const (), 8); // 0x101b
+    register_shadow_service(0x01c, syscall::nt_user_build_hwnd_list as *const (), 24); // 0x101c
+    register_shadow_service(0x01d, syscall::nt_user_select_palette as *const (), 8); // 0x101d
+    register_shadow_service(0x01e, syscall::nt_user_call_next_hook_ex as *const (), 16); // 0x101e
+    register_shadow_service(0x01f, syscall::nt_user_hide_caret as *const (), 4); // 0x101f
+    register_shadow_service(0x021, syscall::nt_user_call_hwnd_lock as *const (), 4); // 0x1021
+    register_shadow_service(
+        0x022,
+        syscall::nt_user_get_process_window_station as *const (),
+        4,
+    ); // 0x1022
+    register_shadow_service(0x024, syscall::nt_user_set_window_pos as *const (), 32); // 0x1024
+    register_shadow_service(0x025, syscall::nt_user_show_caret as *const (), 4); // 0x1025
+    register_shadow_service(
+        0x026,
+        syscall::nt_user_end_defer_window_pos_ex as *const (),
+        8,
+    ); // 0x1026
+    register_shadow_service(
+        0x027,
+        syscall::nt_user_call_hwnd_param_lock as *const (),
+        12,
+    ); // 0x1027
+    register_shadow_service(0x028, syscall::nt_user_vk_key_scan_ex as *const (), 16); // 0x1028
+    register_shadow_service(0x02a, syscall::nt_user_call_two_param as *const (), 12); // 0x102a
+    register_shadow_service(
+        0x02c,
+        syscall::nt_user_copy_accelerator_table as *const (),
+        12,
+    ); // 0x102c
+    register_shadow_service(0x02d, syscall::nt_user_notify_win_event as *const (), 16); // 0x102d
+    register_shadow_service(
+        0x02f,
+        syscall::nt_user_is_clipboard_format_available as *const (),
+        4,
+    ); // 0x102f
+    register_shadow_service(0x030, syscall::nt_user_set_scroll_info as *const (), 16); // 0x1030
+    register_shadow_service(0x032, syscall::nt_user_create_caret as *const (), 16); // 0x1032
+    register_shadow_service(0x036, syscall::nt_user_dispatch_message as *const (), 8); // 0x1036
+    register_shadow_service(
+        0x037,
+        syscall::nt_user_register_window_message as *const (),
+        8,
+    ); // 0x1037
+    register_shadow_service(
+        0x03c,
+        syscall::nt_user_get_foreground_window as *const (),
+        4,
+    ); // 0x103c
+    register_shadow_service(0x03d, syscall::nt_user_show_scroll_bar as *const (), 12); // 0x103d
+    register_shadow_service(
+        0x03e,
+        syscall::nt_user_find_existing_cursor_icon as *const (),
+        16,
+    ); // 0x103e
+    register_shadow_service(
+        0x042,
+        syscall::nt_user_system_parameters_info as *const (),
+        16,
+    ); // 0x1042
+    register_shadow_service(0x044, syscall::nt_user_get_async_key_state as *const (), 8); // 0x1044
+    register_shadow_service(
+        0x045,
+        syscall::nt_user_change_clipboard_chain as *const (),
+        8,
+    ); // 0x1045
+    register_shadow_service(0x046, syscall::nt_user_remove_prop as *const (), 8); // 0x1046
+    register_shadow_service(0x049, syscall::nt_user_set_capture as *const (), 8); // 0x1049
+    register_shadow_service(
+        0x04a,
+        syscall::nt_user_enum_display_devices as *const (),
+        16,
+    ); // 0x104a
+    register_shadow_service(0x04c, syscall::nt_user_set_prop as *const (), 12); // 0x104c
+    register_shadow_service(0x04e, syscall::nt_user_sb_get_parms as *const (), 8); // 0x104e
+    register_shadow_service(0x04f, syscall::nt_user_get_icon_info as *const (), 8); // 0x104f
+    register_shadow_service(0x050, syscall::nt_user_exclude_update_rgn as *const (), 12); // 0x1050
+    register_shadow_service(0x051, syscall::nt_user_set_focus as *const (), 8); // 0x1051
+    register_shadow_service(0x053, syscall::nt_user_defer_window_pos as *const (), 32); // 0x1053
+    register_shadow_service(0x054, syscall::nt_user_get_update_rect as *const (), 12); // 0x1054
+    register_shadow_service(
+        0x056,
+        syscall::nt_user_get_clipboard_sequence_number as *const (),
+        4,
+    ); // 0x1056
+    register_shadow_service(0x058, syscall::nt_user_show_window as *const (), 8); // 0x1058
+    register_shadow_service(
+        0x059,
+        syscall::nt_user_get_keyboard_layout_list as *const (),
+        8,
+    ); // 0x1059
+    register_shadow_service(0x05b, syscall::nt_user_map_virtual_key_ex as *const (), 16); // 0x105b
+    register_shadow_service(0x05c, syscall::nt_user_set_window_long as *const (), 16); // 0x105c
+    register_shadow_service(0x05e, syscall::nt_user_move_window as *const (), 24); // 0x105e
+    register_shadow_service(0x05f, syscall::nt_user_post_thread_message as *const (), 16); // 0x105f
+    register_shadow_service(0x060, syscall::nt_user_draw_icon_ex as *const (), 40); // 0x1060
+    register_shadow_service(0x061, syscall::nt_user_get_system_menu as *const (), 8); // 0x1061
+    register_shadow_service(
+        0x063,
+        syscall::nt_user_internal_get_window_text as *const (),
+        12,
+    ); // 0x1063
+    register_shadow_service(0x064, syscall::nt_user_get_window_dc as *const (), 8); // 0x1064
+    register_shadow_service(0x06b, syscall::nt_user_scroll_dc as *const (), 28); // 0x106b
+    register_shadow_service(
+        0x06c,
+        syscall::nt_user_get_object_information as *const (),
+        16,
+    ); // 0x106c
+    register_shadow_service(0x06e, syscall::nt_user_find_window_ex as *const (), 24); // 0x106e
+    register_shadow_service(
+        0x070,
+        syscall::nt_user_unhook_windows_hook_ex as *const (),
+        8,
+    ); // 0x1070
+    register_shadow_service(0x076, syscall::nt_user_create_window_ex as *const (), 44); // 0x1076
+    register_shadow_service(0x077, syscall::nt_user_set_parent as *const (), 12); // 0x1077
+    register_shadow_service(0x078, syscall::nt_user_get_keyboard_state as *const (), 8); // 0x1078
+    register_shadow_service(0x079, syscall::nt_user_to_unicode_ex as *const (), 24); // 0x1079
+    register_shadow_service(0x07a, syscall::nt_user_get_control_brush as *const (), 8); // 0x107a
+    register_shadow_service(0x07b, syscall::nt_user_get_class_name as *const (), 12); // 0x107b
+    register_shadow_service(0x07f, syscall::nt_user_def_set_text as *const (), 12); // 0x107f
+    register_shadow_service(0x082, syscall::nt_user_send_input as *const (), 16); // 0x1082
+    register_shadow_service(0x083, syscall::nt_user_get_thread_desktop as *const (), 8); // 0x1083
+    register_shadow_service(0x086, syscall::nt_user_get_update_rgn as *const (), 12); // 0x1086
+    register_shadow_service(0x088, syscall::nt_user_get_icon_size as *const (), 12); // 0x1088
+    register_shadow_service(0x089, syscall::nt_user_fill_window as *const (), 16); // 0x1089
+    register_shadow_service(0x08c, syscall::nt_user_set_windows_hook_ex as *const (), 24); // 0x108c
+    register_shadow_service(
+        0x08d,
+        syscall::nt_user_notify_process_create as *const (),
+        16,
+    ); // 0x108d
+    register_shadow_service(0x08f, syscall::nt_user_get_title_bar_info as *const (), 8); // 0x108f
+    register_shadow_service(0x091, syscall::nt_user_set_thread_desktop as *const (), 8); // 0x1091
+    register_shadow_service(0x092, syscall::nt_user_get_dcex as *const (), 16); // 0x1092
+    register_shadow_service(0x093, syscall::nt_user_get_scroll_bar_info as *const (), 8); // 0x1093
+    register_shadow_service(0x095, syscall::nt_user_set_window_fnid as *const (), 8); // 0x1095
+    register_shadow_service(0x097, syscall::nt_user_calc_menu_bar as *const (), 20); // 0x1097
+    register_shadow_service(
+        0x098,
+        syscall::nt_user_thunked_menu_item_info as *const (),
+        24,
+    ); // 0x1098
+    register_shadow_service(0x099, syscall::nt_gdi_exclude_clip_rect as *const (), 24); // 0x1099
+    register_shadow_service(0x09a, syscall::nt_gdi_create_dib_section as *const (), 28); // 0x109a
+    register_shadow_service(0x09b, syscall::nt_gdi_get_dc_for_bitmap as *const (), 4); // 0x109b
+    register_shadow_service(0x09c, syscall::nt_user_destroy_cursor as *const (), 8); // 0x109c
+    register_shadow_service(0x09d, syscall::nt_user_destroy_window as *const (), 4); // 0x109d
+    register_shadow_service(0x09e, syscall::nt_user_call_hwnd_param as *const (), 12); // 0x109e
+    register_shadow_service(
+        0x09f,
+        syscall::nt_gdi_create_dibitmap_internal as *const (),
+        24,
+    ); // 0x109f
+    register_shadow_service(0x0a0, syscall::nt_user_open_window_station as *const (), 12); // 0x10a0
+    register_shadow_service(
+        0x0a4,
+        syscall::nt_user_set_cursor_icon_data as *const (),
+        24,
+    ); // 0x10a4
+    register_shadow_service(0x0a6, syscall::nt_user_close_desktop as *const (), 8); // 0x10a6
+    register_shadow_service(0x0a7, syscall::nt_user_open_desktop as *const (), 28); // 0x10a7
+    register_shadow_service(
+        0x0a8,
+        syscall::nt_user_set_process_window_station as *const (),
+        8,
+    ); // 0x10a8
+    register_shadow_service(0x0a9, syscall::nt_user_get_atom_name as *const (), 8); // 0x10a9
+    register_shadow_service(0x0ae, syscall::nt_user_build_hwnd_list as *const (), 12); // 0x10ae
+    register_shadow_service(
+        0x0b0,
+        syscall::nt_user_register_class_ex_wow as *const (),
+        32,
+    ); // 0x10b0
+    register_shadow_service(0x0b2, syscall::nt_user_get_ancestor as *const (), 8); // 0x10b2
+    register_shadow_service(0x0b5, syscall::nt_user_close_window_station as *const (), 8); // 0x10b5
+    register_shadow_service(
+        0x0b6,
+        syscall::nt_user_get_double_click_time as *const (),
+        4,
+    ); // 0x10b6
+    register_shadow_service(0x0b7, syscall::nt_user_enable_scroll_bar as *const (), 12); // 0x10b7
+    register_shadow_service(0x0b9, syscall::nt_user_get_class_info_ex as *const (), 16); // 0x10b9
+    register_shadow_service(0x0bb, syscall::nt_user_unregister_class as *const (), 12); // 0x10bb
+    register_shadow_service(0x0bc, syscall::nt_user_delete_menu as *const (), 8); // 0x10bc
+    register_shadow_service(0x0be, syscall::nt_user_scroll_window_ex as *const (), 32); // 0x10be
+    register_shadow_service(0x0c0, syscall::nt_user_set_class_long as *const (), 16); // 0x10c0
+    register_shadow_service(0x0c1, syscall::nt_user_get_menu_bar_info as *const (), 12); // 0x10c1
+    register_shadow_service(0x0c8, syscall::nt_user_invalidate_rgn as *const (), 12); // 0x10c8
+    register_shadow_service(0x0c9, syscall::nt_user_get_clipboard_owner as *const (), 4); // 0x10c9
+    register_shadow_service(0x0ca, syscall::nt_user_set_window_rgn as *const (), 12); // 0x10ca
+    register_shadow_service(0x0cd, syscall::nt_user_validate_rect as *const (), 8); // 0x10cd
+    register_shadow_service(0x0ce, syscall::nt_user_close_clipboard as *const (), 4); // 0x10ce
+    register_shadow_service(0x0cf, syscall::nt_user_open_clipboard as *const (), 8); // 0x10cf
+    register_shadow_service(0x0d1, syscall::nt_user_set_clipboard_data as *const (), 8); // 0x10d1
+    register_shadow_service(0x0d2, syscall::nt_user_enable_menu_item as *const (), 12); // 0x10d2
+    register_shadow_service(0x0d3, syscall::nt_user_alter_window_style as *const (), 12); // 0x10d3
+    register_shadow_service(0x0d5, syscall::nt_user_get_window_placement as *const (), 8); // 0x10d5
+    register_shadow_service(
+        0x0d8,
+        syscall::nt_user_get_open_clipboard_window as *const (),
+        4,
+    ); // 0x10d8
+    register_shadow_service(0x0d9, syscall::nt_user_set_thread_state as *const (), 8); // 0x10d9
+    register_shadow_service(0x0db, syscall::nt_user_track_mouse_event as *const (), 16); // 0x10db
+    register_shadow_service(0x0dd, syscall::nt_user_destroy_menu as *const (), 4); // 0x10dd
+    register_shadow_service(0x0df, syscall::nt_user_console_control as *const (), 16); // 0x10df
+    register_shadow_service(0x0e0, syscall::nt_user_set_active_window as *const (), 8); // 0x10e0
+    register_shadow_service(
+        0x0e1,
+        syscall::nt_user_set_information_thread as *const (),
+        16,
+    ); // 0x10e1
+    register_shadow_service(0x0e2, syscall::nt_user_set_window_placement as *const (), 8); // 0x10e2
+    register_shadow_service(0x0e3, syscall::nt_user_get_control_color as *const (), 8); // 0x10e3
+    register_shadow_service(0x0e8, syscall::nt_user_set_window_word as *const (), 12); // 0x10e8
+    register_shadow_service(
+        0x0e9,
+        syscall::nt_user_get_clipboard_format_name as *const (),
+        12,
+    ); // 0x10e9
+    register_shadow_service(
+        0x0ea,
+        syscall::nt_user_real_internal_get_message as *const (),
+        24,
+    ); // 0x10ea
+    register_shadow_service(
+        0x0eb,
+        syscall::nt_user_create_local_mem_handle as *const (),
+        8,
+    ); // 0x10eb
+    register_shadow_service(0x0ec, syscall::nt_user_attach_thread_input as *const (), 12); // 0x10ec
+    register_shadow_service(0x0ee, syscall::nt_user_paint_menu_bar as *const (), 20); // 0x10ee
+    register_shadow_service(0x0ef, syscall::nt_user_set_keyboard_state as *const (), 8); // 0x10ef
+    register_shadow_service(
+        0x0f1,
+        syscall::nt_user_create_accelerator_table as *const (),
+        8,
+    ); // 0x10f1
+    register_shadow_service(0x0f3, syscall::nt_user_get_alt_tab_info as *const (), 20); // 0x10f3
+    register_shadow_service(0x0f4, syscall::nt_user_get_caret_blink_time as *const (), 4); // 0x10f4
+    register_shadow_service(0x0f6, syscall::nt_user_process_connect as *const (), 16); // 0x10f6
+    register_shadow_service(
+        0x0f7,
+        syscall::nt_user_enum_display_devices as *const (),
+        16,
+    ); // 0x10f7
+    register_shadow_service(0x0f8, syscall::nt_user_empty_clipboard as *const (), 4); // 0x10f8
+    register_shadow_service(0x0f9, syscall::nt_user_get_clipboard_data as *const (), 8); // 0x10f9
+    register_shadow_service(0x0fa, syscall::nt_user_remove_menu as *const (), 8); // 0x10fa
+    register_shadow_service(0x0fd, syscall::nt_user_convert_mem_handle as *const (), 12); // 0x10fd
+    register_shadow_service(
+        0x0fe,
+        syscall::nt_user_destroy_accelerator_table as *const (),
+        4,
+    ); // 0x10fe
+    register_shadow_service(0x0ff, syscall::nt_user_get_gui_thread_info as *const (), 8); // 0x10ff
 
     // GDI services (indices 0x008-0x280 after masking 0x1xxx)
     // Full syscall numbers are 0x1008-0x1280, masked = 0x008-0x280
-    register_shadow_service(0x008, syscall::nt_gdi_bit_blt as *const (), 48);                // 0x1008
-    register_shadow_service(0x009, syscall::nt_gdi_get_char_set as *const (), 8);              // 0x1009
-    register_shadow_service(0x00b, syscall::nt_gdi_select_object as *const (), 8);             // 0x100b
-    register_shadow_service(0x012, syscall::nt_gdi_combine_rgn as *const (), 4);                      // 0x1012
-    register_shadow_service(0x020, syscall::nt_gdi_exclude_clip_rect as *const (), 20);      // 0x1020
-    register_shadow_service(0x023, syscall::nt_gdi_delete_object as *const (), 4);             // 0x1023
-    register_shadow_service(0x02b, syscall::nt_gdi_invert_rgn as *const (), 8);           // 0x102b
-    register_shadow_service(0x031, syscall::nt_gdi_stretch_blt as *const (), 44);              // 0x1031
-    register_shadow_service(0x034, syscall::nt_gdi_combine_rgn as *const (), 16);             // 0x1034
-    register_shadow_service(0x035, syscall::nt_gdi_get_dc_object as *const (), 8);            // 0x1035
-    register_shadow_service(0x038, syscall::nt_gdi_ext_text_out as *const (), 32);            // 0x1038
-    register_shadow_service(0x039, syscall::nt_gdi_select_font as *const (), 8);               // 0x1039
-    register_shadow_service(0x03a, syscall::nt_gdi_restore_dc as *const (), 8);                // 0x103a
-    register_shadow_service(0x03b, syscall::nt_gdi_save_dc as *const (), 4);                  // 0x103b
-    register_shadow_service(0x03f, syscall::nt_gdi_get_dc_dword as *const (), 12);             // 0x103f
-    register_shadow_service(0x041, syscall::nt_gdi_line_to as *const (), 12);                  // 0x1041
-    register_shadow_service(0x043, syscall::nt_gdi_get_app_clip_box as *const (), 8);         // 0x1043
-    register_shadow_service(0x047, syscall::nt_gdi_do_palette as *const (), 20);                // 0x1047
-    register_shadow_service(0x04b, syscall::nt_gdi_create_compatible_bitmap as *const (), 16); // 0x104b
-    register_shadow_service(0x04d, syscall::nt_gdi_get_text_charset_info as *const (), 8);    // 0x104d
-    register_shadow_service(0x052, syscall::nt_gdi_ext_get_object_w as *const (), 12);        // 0x1052
-    register_shadow_service(0x055, syscall::nt_gdi_create_compatible_dc as *const (), 8);       // 0x1055
-    register_shadow_service(0x057, syscall::nt_gdi_create_pen as *const (), 16);               // 0x1057
-    register_shadow_service(0x05a, syscall::nt_gdi_pat_blt as *const (), 32);                  // 0x105a
-    register_shadow_service(0x05d, syscall::nt_gdi_hfont_create as *const (), 16);             // 0x105d
-    register_shadow_service(0x062, syscall::nt_gdi_draw_stream as *const (), 24);              // 0x1062
-    register_shadow_service(0x066, syscall::nt_gdi_invert_rgn as *const (), 12);               // 0x1066
-    register_shadow_service(0x067, syscall::nt_gdi_get_rgn_box as *const (), 8);               // 0x1067
-    register_shadow_service(0x069, syscall::nt_gdi_mask_blt as *const (), 44);                  // 0x1069
-    register_shadow_service(0x06a, syscall::nt_gdi_get_width_table as *const (), 20);           // 0x106a
-    register_shadow_service(0x06f, syscall::nt_gdi_poly_pat_blt as *const (), 24);             // 0x106f
-    register_shadow_service(0x071, syscall::nt_gdi_get_nearest_color as *const (), 12);        // 0x1071
-    register_shadow_service(0x072, syscall::nt_gdi_transform_points as *const (), 20);           // 0x1072
-    register_shadow_service(0x073, syscall::nt_gdi_get_dc_point as *const (), 8);             // 0x1073
-    register_shadow_service(0x074, syscall::nt_gdi_create_dib_brush as *const (), 20);        // 0x1074
-    register_shadow_service(0x075, syscall::nt_gdi_get_text_metrics_w as *const (), 8);       // 0x1075
-    register_shadow_service(0x07c, syscall::nt_gdi_alpha_blend as *const (), 40);             // 0x107c
-    register_shadow_service(0x07d, syscall::nt_gdi_dd_blt as *const (), 48);                  // 0x107d
-    register_shadow_service(0x07e, syscall::nt_gdi_offset_rgn as *const (), 8);               // 0x107e
-    register_shadow_service(0x080, syscall::nt_gdi_get_text_face_w as *const (), 12);          // 0x1080
-    register_shadow_service(0x081, syscall::nt_gdi_stretch_dibits_internal as *const (), 44);   // 0x1081
-    register_shadow_service(0x084, syscall::nt_gdi_create_rect_rgn as *const (), 20);          // 0x1084
-    register_shadow_service(0x085, syscall::nt_gdi_get_dibits_internal as *const (), 28);       // 0x1085
-    register_shadow_service(0x087, syscall::nt_gdi_delete_client_obj as *const (), 4);         // 0x1087
-    register_shadow_service(0x08a, syscall::nt_gdi_ext_create_region as *const (), 20);       // 0x108a
-    register_shadow_service(0x08b, syscall::nt_gdi_compute_xform_coefficients as *const (), 8); // 0x108b
-    register_shadow_service(0x08e, syscall::nt_gdi_unrealize_object as *const (), 4);         // 0x108e
-    register_shadow_service(0x090, syscall::nt_gdi_rectangle as *const (), 24);              // 0x1090
-    register_shadow_service(0x094, syscall::nt_gdi_get_text_extent as *const (), 16);         // 0x1094
-    register_shadow_service(0x096, syscall::nt_gdi_set_layout as *const (), 8);              // 0x1096
-    register_shadow_service(0x09a, syscall::nt_gdi_create_dib_section as *const (), 28);      // 0x109a
-    register_shadow_service(0x09f, syscall::nt_gdi_create_dibitmap_internal as *const (), 24); // 0x109f
-    register_shadow_service(0x0a1, syscall::nt_gdi_dd_delete_surface_object as *const (), 4);   // 0x10a1
-    register_shadow_service(0x0a2, syscall::nt_gdi_dd_can_create_surface as *const (), 8);    // 0x10a2
-    register_shadow_service(0x0a3, syscall::nt_gdi_dd_create_surface as *const (), 32);        // 0x10a3
-    register_shadow_service(0x0a5, syscall::nt_gdi_dd_destroy_surface as *const (), 4);        // 0x10a5
-    register_shadow_service(0x0aa, syscall::nt_gdi_dd_reset_visrgn as *const (), 4);           // 0x10aa
-    register_shadow_service(0x0ab, syscall::nt_gdi_ext_create_pen as *const (), 32);         // 0x10ab
-    register_shadow_service(0x0ac, syscall::nt_gdi_create_palette_internal as *const (), 8);   // 0x10ac
-    register_shadow_service(0x0ad, syscall::nt_gdi_set_brush_org as *const (), 8);             // 0x10ad
-    register_shadow_service(0x0af, syscall::nt_gdi_set_pixel as *const (), 16);                // 0x10af
-    register_shadow_service(0x0b1, syscall::nt_gdi_create_pattern_brush_internal as *const (), 16); // 0x10b1
-    register_shadow_service(0x0b3, syscall::nt_gdi_get_outline_text_metrics_internal_w as *const (), 12); // 0x10b3
-    register_shadow_service(0x0b4, syscall::nt_gdi_set_bitmap_bits as *const (), 12);          // 0x10b4
-    register_shadow_service(0x0b8, syscall::nt_gdi_create_solid_brush as *const (), 4);       // 0x10b8
-    register_shadow_service(0x0ba, syscall::nt_gdi_create_client_obj as *const (), 8);        // 0x10ba
-    register_shadow_service(0x0bd, syscall::nt_gdi_rect_in_region as *const (), 8);           // 0x10bd
-    register_shadow_service(0x0bf, syscall::nt_gdi_get_pixel as *const (), 12);               // 0x10bf
-    register_shadow_service(0x0d4, syscall::nt_gdi_poly_pat_blt as *const (), 16);                  // 0x10d4
-    register_shadow_service(0x0d6, syscall::nt_gdi_invert_rgn as *const (), 16);   // 0x10d6
-    register_shadow_service(0x0da, syscall::nt_gdi_compute_xform_coefficients as *const (), 28);                 // 0x10da
-    register_shadow_service(0x0de, syscall::nt_gdi_set_bitmap_bits as *const (), 12);         // 0x10de
-    register_shadow_service(0x0e4, syscall::nt_gdi_save_dc as *const (), 4);              // 0x10e4
-    register_shadow_service(0x0e5, syscall::nt_gdi_get_app_clip_box as *const (), 8);            // 0x10e5
-    register_shadow_service(0x0ed, syscall::nt_gdi_create_palette_internal as *const (), 8);   // 0x10ed
-    register_shadow_service(0x0fb, syscall::nt_gdi_restore_dc as *const (), 12);        // 0x10fb
+    register_shadow_service(0x008, syscall::nt_gdi_bit_blt as *const (), 48); // 0x1008
+    register_shadow_service(0x009, syscall::nt_gdi_get_char_set as *const (), 8); // 0x1009
+    register_shadow_service(0x00b, syscall::nt_gdi_select_object as *const (), 8); // 0x100b
+    register_shadow_service(0x012, syscall::nt_gdi_combine_rgn as *const (), 4); // 0x1012
+    register_shadow_service(0x020, syscall::nt_gdi_exclude_clip_rect as *const (), 20); // 0x1020
+    register_shadow_service(0x023, syscall::nt_gdi_delete_object as *const (), 4); // 0x1023
+    register_shadow_service(0x02b, syscall::nt_gdi_invert_rgn as *const (), 8); // 0x102b
+    register_shadow_service(0x031, syscall::nt_gdi_stretch_blt as *const (), 44); // 0x1031
+    register_shadow_service(0x034, syscall::nt_gdi_combine_rgn as *const (), 16); // 0x1034
+    register_shadow_service(0x035, syscall::nt_gdi_get_dc_object as *const (), 8); // 0x1035
+    register_shadow_service(0x038, syscall::nt_gdi_ext_text_out as *const (), 32); // 0x1038
+    register_shadow_service(0x039, syscall::nt_gdi_select_font as *const (), 8); // 0x1039
+    register_shadow_service(0x03a, syscall::nt_gdi_restore_dc as *const (), 8); // 0x103a
+    register_shadow_service(0x03b, syscall::nt_gdi_save_dc as *const (), 4); // 0x103b
+    register_shadow_service(0x03f, syscall::nt_gdi_get_dc_dword as *const (), 12); // 0x103f
+    register_shadow_service(0x041, syscall::nt_gdi_line_to as *const (), 12); // 0x1041
+    register_shadow_service(0x043, syscall::nt_gdi_get_app_clip_box as *const (), 8); // 0x1043
+    register_shadow_service(0x047, syscall::nt_gdi_do_palette as *const (), 20); // 0x1047
+    register_shadow_service(
+        0x04b,
+        syscall::nt_gdi_create_compatible_bitmap as *const (),
+        16,
+    ); // 0x104b
+    register_shadow_service(0x04d, syscall::nt_gdi_get_text_charset_info as *const (), 8); // 0x104d
+    register_shadow_service(0x052, syscall::nt_gdi_ext_get_object_w as *const (), 12); // 0x1052
+    register_shadow_service(0x055, syscall::nt_gdi_create_compatible_dc as *const (), 8); // 0x1055
+    register_shadow_service(0x057, syscall::nt_gdi_create_pen as *const (), 16); // 0x1057
+    register_shadow_service(0x05a, syscall::nt_gdi_pat_blt as *const (), 32); // 0x105a
+    register_shadow_service(0x05d, syscall::nt_gdi_hfont_create as *const (), 16); // 0x105d
+    register_shadow_service(0x062, syscall::nt_gdi_draw_stream as *const (), 24); // 0x1062
+    register_shadow_service(0x066, syscall::nt_gdi_invert_rgn as *const (), 12); // 0x1066
+    register_shadow_service(0x067, syscall::nt_gdi_get_rgn_box as *const (), 8); // 0x1067
+    register_shadow_service(0x069, syscall::nt_gdi_mask_blt as *const (), 44); // 0x1069
+    register_shadow_service(0x06a, syscall::nt_gdi_get_width_table as *const (), 20); // 0x106a
+    register_shadow_service(0x06f, syscall::nt_gdi_poly_pat_blt as *const (), 24); // 0x106f
+    register_shadow_service(0x071, syscall::nt_gdi_get_nearest_color as *const (), 12); // 0x1071
+    register_shadow_service(0x072, syscall::nt_gdi_transform_points as *const (), 20); // 0x1072
+    register_shadow_service(0x073, syscall::nt_gdi_get_dc_point as *const (), 8); // 0x1073
+    register_shadow_service(0x074, syscall::nt_gdi_create_dib_brush as *const (), 20); // 0x1074
+    register_shadow_service(0x075, syscall::nt_gdi_get_text_metrics_w as *const (), 8); // 0x1075
+    register_shadow_service(0x07c, syscall::nt_gdi_alpha_blend as *const (), 40); // 0x107c
+    register_shadow_service(0x07d, syscall::nt_gdi_dd_blt as *const (), 48); // 0x107d
+    register_shadow_service(0x07e, syscall::nt_gdi_offset_rgn as *const (), 8); // 0x107e
+    register_shadow_service(0x080, syscall::nt_gdi_get_text_face_w as *const (), 12); // 0x1080
+    register_shadow_service(
+        0x081,
+        syscall::nt_gdi_stretch_dibits_internal as *const (),
+        44,
+    ); // 0x1081
+    register_shadow_service(0x084, syscall::nt_gdi_create_rect_rgn as *const (), 20); // 0x1084
+    register_shadow_service(0x085, syscall::nt_gdi_get_dibits_internal as *const (), 28); // 0x1085
+    register_shadow_service(0x087, syscall::nt_gdi_delete_client_obj as *const (), 4); // 0x1087
+    register_shadow_service(0x08a, syscall::nt_gdi_ext_create_region as *const (), 20); // 0x108a
+    register_shadow_service(
+        0x08b,
+        syscall::nt_gdi_compute_xform_coefficients as *const (),
+        8,
+    ); // 0x108b
+    register_shadow_service(0x08e, syscall::nt_gdi_unrealize_object as *const (), 4); // 0x108e
+    register_shadow_service(0x090, syscall::nt_gdi_rectangle as *const (), 24); // 0x1090
+    register_shadow_service(0x094, syscall::nt_gdi_get_text_extent as *const (), 16); // 0x1094
+    register_shadow_service(0x096, syscall::nt_gdi_set_layout as *const (), 8); // 0x1096
+    register_shadow_service(0x09a, syscall::nt_gdi_create_dib_section as *const (), 28); // 0x109a
+    register_shadow_service(
+        0x09f,
+        syscall::nt_gdi_create_dibitmap_internal as *const (),
+        24,
+    ); // 0x109f
+    register_shadow_service(
+        0x0a1,
+        syscall::nt_gdi_dd_delete_surface_object as *const (),
+        4,
+    ); // 0x10a1
+    register_shadow_service(0x0a2, syscall::nt_gdi_dd_can_create_surface as *const (), 8); // 0x10a2
+    register_shadow_service(0x0a3, syscall::nt_gdi_dd_create_surface as *const (), 32); // 0x10a3
+    register_shadow_service(0x0a5, syscall::nt_gdi_dd_destroy_surface as *const (), 4); // 0x10a5
+    register_shadow_service(0x0aa, syscall::nt_gdi_dd_reset_visrgn as *const (), 4); // 0x10aa
+    register_shadow_service(0x0ab, syscall::nt_gdi_ext_create_pen as *const (), 32); // 0x10ab
+    register_shadow_service(
+        0x0ac,
+        syscall::nt_gdi_create_palette_internal as *const (),
+        8,
+    ); // 0x10ac
+    register_shadow_service(0x0ad, syscall::nt_gdi_set_brush_org as *const (), 8); // 0x10ad
+    register_shadow_service(0x0af, syscall::nt_gdi_set_pixel as *const (), 16); // 0x10af
+    register_shadow_service(
+        0x0b1,
+        syscall::nt_gdi_create_pattern_brush_internal as *const (),
+        16,
+    ); // 0x10b1
+    register_shadow_service(
+        0x0b3,
+        syscall::nt_gdi_get_outline_text_metrics_internal_w as *const (),
+        12,
+    ); // 0x10b3
+    register_shadow_service(0x0b4, syscall::nt_gdi_set_bitmap_bits as *const (), 12); // 0x10b4
+    register_shadow_service(0x0b8, syscall::nt_gdi_create_solid_brush as *const (), 4); // 0x10b8
+    register_shadow_service(0x0ba, syscall::nt_gdi_create_client_obj as *const (), 8); // 0x10ba
+    register_shadow_service(0x0bd, syscall::nt_gdi_rect_in_region as *const (), 8); // 0x10bd
+    register_shadow_service(0x0bf, syscall::nt_gdi_get_pixel as *const (), 12); // 0x10bf
+    register_shadow_service(0x0d4, syscall::nt_gdi_poly_pat_blt as *const (), 16); // 0x10d4
+    register_shadow_service(0x0d6, syscall::nt_gdi_invert_rgn as *const (), 16); // 0x10d6
+    register_shadow_service(
+        0x0da,
+        syscall::nt_gdi_compute_xform_coefficients as *const (),
+        28,
+    ); // 0x10da
+    register_shadow_service(0x0de, syscall::nt_gdi_set_bitmap_bits as *const (), 12); // 0x10de
+    register_shadow_service(0x0e4, syscall::nt_gdi_save_dc as *const (), 4); // 0x10e4
+    register_shadow_service(0x0e5, syscall::nt_gdi_get_app_clip_box as *const (), 8); // 0x10e5
+    register_shadow_service(
+        0x0ed,
+        syscall::nt_gdi_create_palette_internal as *const (),
+        8,
+    ); // 0x10ed
+    register_shadow_service(0x0fb, syscall::nt_gdi_restore_dc as *const (), 12);
+    // 0x10fb
 
-    // // kprintln!("[SHADOW SSDT] Registered {} win32k shadow services", SHADOW_MAX_SERVICES)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[SHADOW SSDT] Registered {} win32k shadow services", SHADOW_MAX_SERVICES);
 }
 
 /// Register a shadow (win32k) service handler
-/// 
+///
 /// # Safety
 /// This function modifies a static mutable array. It should only be
 /// called during initialization when no other cores are running.
 pub unsafe fn register_shadow_service(service_index: u32, handler: *const (), arg_size: u8) {
     if service_index as usize >= SHADOW_MAX_SERVICES {
-        // // kprintln!("[SHADOW SSDT] ERROR: Service index 0x{:03x} out of range", service_index)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[SHADOW SSDT] ERROR: Service index 0x{:03x} out of range", service_index);
         return;
     }
-    
+
     SHADOW_SERVICE_TABLE[service_index as usize].handler = handler;
     SHADOW_ARGUMENT_TABLE[service_index as usize] = arg_size;
-    
-    // // kprintln!("[SHADOW SSDT] Registered shadow service 0x{:04x} at index {} (args={})",   // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //               service_index, service_index, arg_size);
+
+    // // kprintln!("[SHADOW SSDT] Registered shadow service 0x{:04x} at index {} (args={})",
+    // //               service_index, service_index, arg_size);
 }
 
 /// Get a shadow service handler
@@ -333,7 +506,7 @@ pub fn get_shadow_service(service_index: u32) -> Option<*const ()> {
     if service_index as usize >= SHADOW_MAX_SERVICES {
         return None;
     }
-    
+
     unsafe {
         let entry = &SHADOW_SERVICE_TABLE[service_index as usize];
         if entry.handler.is_null() {
@@ -1191,27 +1364,24 @@ pub const NtUserSetWindowLongPtr: u32 = 0x133a;
 // =====================================================================
 
 /// Dispatch a shadow system service call
-/// 
+///
 /// The syscall number contains the table index in the high bits:
 /// - High 16 bits (bits 31-16): Table index (0x1 for win32k)
 /// - Low 16 bits (bits 15-0): Service index within the table
-/// 
+///
 /// For win32k, we extract the low 12 bits as the service index.
 pub fn dispatch_shadow_service(service_number: u32, trap_frame: *mut ()) -> u64 {
     // Extract the service index from the syscall number
     let service_index = service_number & 0xFFF;
-    
+
     match get_shadow_service(service_index) {
-        Some(handler) => {
-            unsafe {
-                let fn_ptr: extern "C" fn(*mut ()) -> u64 = 
-                    core::mem::transmute(handler);
-                fn_ptr(trap_frame)
-            }
-        }
+        Some(handler) => unsafe {
+            let fn_ptr: extern "C" fn(*mut ()) -> u64 = core::mem::transmute(handler);
+            fn_ptr(trap_frame)
+        },
         None => {
-            // // kprintln!("[SHADOW SSDT] Unimplemented shadow service 0x{:04x}",   // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                       service_number);
+            // // kprintln!("[SHADOW SSDT] Unimplemented shadow service 0x{:04x}",
+            // //                       service_number);
             0xC0000001u32 as u64 // STATUS_NOT_IMPLEMENTED
         }
     }
@@ -1236,24 +1406,24 @@ pub fn get_win32k_service_index(syscall_num: u32) -> u32 {
 
 /// Run Shadow SSDT smoke test
 pub fn smoke_test() -> bool {
-    // // kprintln!("  [SHADOW SSDT SMOKE] running Shadow SSDT smoke test...")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    
+    // // kprintln!("  [SHADOW SSDT SMOKE] running Shadow SSDT smoke test...");
+
     let table_ptr = unsafe { SHADOW_SERVICE_TABLE.as_ptr() };
     if table_ptr.is_null() {
-        // // kprintln!("  [SHADOW SSDT SMOKE FAIL] ShadowServiceTable is null")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("  [SHADOW SSDT SMOKE FAIL] ShadowServiceTable is null");
         return false;
     }
-    
+
     let arg_ptr = unsafe { SHADOW_ARGUMENT_TABLE.as_ptr() };
     if arg_ptr.is_null() {
-        // // kprintln!("  [SHADOW SSDT SMOKE FAIL] ShadowArgumentTable is null")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("  [SHADOW SSDT SMOKE FAIL] ShadowArgumentTable is null");
         return false;
     }
-    
-    // // kprintln!("  [SHADOW SSDT SMOKE] ShadowServiceTable: {:p}", table_ptr)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("  [SHADOW SSDT SMOKE] ShadowArgumentTable: {:p}", arg_ptr)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("  [SHADOW SSDT SMOKE] Max shadow services: {}", SHADOW_MAX_SERVICES)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("  [SHADOW SSDT SMOKE] is_win32k_syscall(0x1234) = {}", is_win32k_syscall(0x1234))  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("  [SHADOW SSDT SMOKE OK]")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+
+    // // kprintln!("  [SHADOW SSDT SMOKE] ShadowServiceTable: {:p}", table_ptr);
+    // // kprintln!("  [SHADOW SSDT SMOKE] ShadowArgumentTable: {:p}", arg_ptr);
+    // // kprintln!("  [SHADOW SSDT SMOKE] Max shadow services: {}", SHADOW_MAX_SERVICES);
+    // // kprintln!("  [SHADOW SSDT SMOKE] is_win32k_syscall(0x1234) = {}", is_win32k_syscall(0x1234));
+    // // kprintln!("  [SHADOW SSDT SMOKE OK]");
     true
 }

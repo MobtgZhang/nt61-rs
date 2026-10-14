@@ -10,12 +10,12 @@
 //! - Pinned and mapped cache views
 //! - Write-through and write-back modes
 
-use alloc::vec::Vec;
-use alloc::collections::VecDeque;
-use hashbrown::HashMap;
-use core::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use crate::ke::sync::Spinlock;
-use crate::mm::page_cache::{PageKey, EvictionPolicy};
+use crate::mm::page_cache::{EvictionPolicy, PageKey};
+use alloc::collections::VecDeque;
+use alloc::vec::Vec;
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use hashbrown::HashMap;
 
 /// View size for cache mapping (256 KB)
 pub const CACHE_VIEW_SIZE: usize = 256 * 1024;
@@ -58,7 +58,6 @@ pub struct CacheBuffer {
     /// Buffer ID
     pub id: usize,
     /// File identifier
-
     pub file_id: u64,
     /// Offset in file
     pub offset: u64,
@@ -153,7 +152,9 @@ impl BufferPool {
         }
 
         // Get free buffer
-        let id = self.free_list.pop_front()
+        let id = self
+            .free_list
+            .pop_front()
             .ok_or("No free buffers available")?;
 
         // Initialize buffer
@@ -356,7 +357,12 @@ impl CacheManager {
     }
 
     /// Read data from cache
-    pub fn read(&mut self, file_id: u64, offset: u64, buffer: &mut [u8]) -> Result<usize, &'static str> {
+    pub fn read(
+        &mut self,
+        file_id: u64,
+        offset: u64,
+        buffer: &mut [u8],
+    ) -> Result<usize, &'static str> {
         self.read_count.fetch_add(1, Ordering::Relaxed);
 
         let mut bytes_read = 0;
@@ -365,10 +371,7 @@ impl CacheManager {
         while bytes_read < buffer.len() {
             let buffer_offset = (current_offset / BUFFER_SIZE as u64) * BUFFER_SIZE as u64;
             let offset_in_buffer = (current_offset % BUFFER_SIZE as u64) as usize;
-            let to_read = core::cmp::min(
-                BUFFER_SIZE - offset_in_buffer,
-                buffer.len() - bytes_read
-            );
+            let to_read = core::cmp::min(BUFFER_SIZE - offset_in_buffer, buffer.len() - bytes_read);
 
             // Try to get from cache
             let buffer_id = match self.buffer_pool.buffer_map.get(&(file_id, buffer_offset)) {
@@ -399,7 +402,12 @@ impl CacheManager {
     }
 
     /// Write data to cache
-    pub fn write(&mut self, file_id: u64, offset: u64, buffer: &[u8]) -> Result<usize, &'static str> {
+    pub fn write(
+        &mut self,
+        file_id: u64,
+        offset: u64,
+        buffer: &[u8],
+    ) -> Result<usize, &'static str> {
         self.write_count.fetch_add(1, Ordering::Relaxed);
 
         let mut bytes_written = 0;
@@ -408,10 +416,8 @@ impl CacheManager {
         while bytes_written < buffer.len() {
             let buffer_offset = (current_offset / BUFFER_SIZE as u64) * BUFFER_SIZE as u64;
             let offset_in_buffer = (current_offset % BUFFER_SIZE as u64) as usize;
-            let to_write = core::cmp::min(
-                BUFFER_SIZE - offset_in_buffer,
-                buffer.len() - bytes_written
-            );
+            let to_write =
+                core::cmp::min(BUFFER_SIZE - offset_in_buffer, buffer.len() - bytes_written);
 
             // Allocate or get buffer
             let buffer_id = self.buffer_pool.allocate(file_id, buffer_offset)?;
@@ -459,7 +465,8 @@ impl CacheManager {
 
         self.buffer_pool.clear_dirty(buffer_id);
         self.flush_count.fetch_add(1, Ordering::Relaxed);
-        self.lazy_writer.record_flush(get_timestamp(), BUFFER_SIZE as u64);
+        self.lazy_writer
+            .record_flush(get_timestamp(), BUFFER_SIZE as u64);
 
         Ok(())
     }
@@ -479,7 +486,9 @@ impl CacheManager {
 
     /// Flush buffers for a specific file
     pub fn flush_file(&mut self, file_id: u64) -> Result<usize, &'static str> {
-        let dirty_buffers: Vec<usize> = self.buffer_pool.get_dirty_buffers()
+        let dirty_buffers: Vec<usize> = self
+            .buffer_pool
+            .get_dirty_buffers()
             .iter()
             .filter(|&&id| self.buffer_pool.buffers[id].file_id == file_id)
             .copied()
@@ -516,7 +525,11 @@ impl CacheManager {
 
         for ra_offset in (start..end).step_by(BUFFER_SIZE) {
             // Skip if already cached
-            if self.buffer_pool.buffer_map.contains_key(&(file_id, ra_offset)) {
+            if self
+                .buffer_pool
+                .buffer_map
+                .contains_key(&(file_id, ra_offset))
+            {
                 continue;
             }
 
@@ -528,7 +541,12 @@ impl CacheManager {
     }
 
     /// Create a cache view
-    pub fn create_view(&mut self, file_id: u64, offset: u64, size: usize) -> Result<usize, &'static str> {
+    pub fn create_view(
+        &mut self,
+        file_id: u64,
+        offset: u64,
+        size: usize,
+    ) -> Result<usize, &'static str> {
         let view = CacheView::new(file_id, offset, size);
         let view_list = self.views.entry(file_id).or_insert_with(Vec::new);
         view_list.push(view);
@@ -537,8 +555,7 @@ impl CacheManager {
 
     /// Pin a cache view
     pub fn pin_view(&mut self, file_id: u64, view_id: usize) -> Result<(), &'static str> {
-        let view_list = self.views.get_mut(&file_id)
-            .ok_or("File not found")?;
+        let view_list = self.views.get_mut(&file_id).ok_or("File not found")?;
 
         if view_id >= view_list.len() {
             return Err("Invalid view ID");
@@ -550,8 +567,7 @@ impl CacheManager {
 
     /// Unpin a cache view
     pub fn unpin_view(&mut self, file_id: u64, view_id: usize) -> Result<(), &'static str> {
-        let view_list = self.views.get_mut(&file_id)
-            .ok_or("File not found")?;
+        let view_list = self.views.get_mut(&file_id).ok_or("File not found")?;
 
         if view_id >= view_list.len() {
             return Err("Invalid view ID");
@@ -570,7 +586,10 @@ impl CacheManager {
         self.views.remove(&file_id);
 
         // Remove buffers
-        let to_remove: Vec<_> = self.buffer_pool.buffer_map.iter()
+        let to_remove: Vec<_> = self
+            .buffer_pool
+            .buffer_map
+            .iter()
             .filter(|((fid, _), _)| *fid == file_id)
             .map(|((fid, offset), _)| (*fid, *offset))
             .collect();
@@ -594,7 +613,9 @@ impl CacheManager {
 
         // Flush old dirty buffers
         let threshold_time = current_time.saturating_sub(self.lazy_writer.interval);
-        let old_dirty: Vec<usize> = self.buffer_pool.get_dirty_buffers()
+        let old_dirty: Vec<usize> = self
+            .buffer_pool
+            .get_dirty_buffers()
             .iter()
             .filter(|&&id| self.buffer_pool.buffers[id].dirty_time < threshold_time)
             .copied()
@@ -685,41 +706,56 @@ pub fn init(write_mode: WriteMode) {
 /// Read from cache
 pub fn cc_read(file_id: u64, offset: u64, buffer: &mut [u8]) -> Result<usize, &'static str> {
     let mut cm = CACHE_MANAGER.lock();
-    cm.as_mut().ok_or("Cache manager not initialized")?.read(file_id, offset, buffer)
+    cm.as_mut()
+        .ok_or("Cache manager not initialized")?
+        .read(file_id, offset, buffer)
 }
 
 /// Write to cache
 pub fn cc_write(file_id: u64, offset: u64, buffer: &[u8]) -> Result<usize, &'static str> {
     let mut cm = CACHE_MANAGER.lock();
-    cm.as_mut().ok_or("Cache manager not initialized")?.write(file_id, offset, buffer)
+    cm.as_mut()
+        .ok_or("Cache manager not initialized")?
+        .write(file_id, offset, buffer)
 }
 
 /// Flush all dirty buffers
 pub fn cc_flush_all() -> Result<usize, &'static str> {
     let mut cm = CACHE_MANAGER.lock();
-    cm.as_mut().ok_or("Cache manager not initialized")?.flush_all()
+    cm.as_mut()
+        .ok_or("Cache manager not initialized")?
+        .flush_all()
 }
 
 /// Flush file buffers
 pub fn cc_flush_file(file_id: u64) -> Result<usize, &'static str> {
     let mut cm = CACHE_MANAGER.lock();
-    cm.as_mut().ok_or("Cache manager not initialized")?.flush_file(file_id)
+    cm.as_mut()
+        .ok_or("Cache manager not initialized")?
+        .flush_file(file_id)
 }
 
 /// Invalidate file cache
 pub fn cc_invalidate_file(file_id: u64) -> Result<(), &'static str> {
     let mut cm = CACHE_MANAGER.lock();
-    cm.as_mut().ok_or("Cache manager not initialized")?.invalidate_file(file_id)
+    cm.as_mut()
+        .ok_or("Cache manager not initialized")?
+        .invalidate_file(file_id)
 }
 
 /// Background flush
 pub fn cc_background_flush() -> Result<usize, &'static str> {
     let mut cm = CACHE_MANAGER.lock();
-    cm.as_mut().ok_or("Cache manager not initialized")?.background_flush()
+    cm.as_mut()
+        .ok_or("Cache manager not initialized")?
+        .background_flush()
 }
 
 /// Get statistics
 pub fn cc_statistics() -> Result<CacheManagerStats, &'static str> {
     let cm = CACHE_MANAGER.lock();
-    Ok(cm.as_ref().ok_or("Cache manager not initialized")?.statistics())
+    Ok(cm
+        .as_ref()
+        .ok_or("Cache manager not initialized")?
+        .statistics())
 }

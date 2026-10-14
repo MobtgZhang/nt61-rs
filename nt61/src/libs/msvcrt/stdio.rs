@@ -5,10 +5,11 @@
 //! Note: Variadic functions in this implementation use a simplified approach.
 //! Full printf format string support would require extensive parsing logic.
 
-use core::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, AtomicBool, AtomicPtr, Ordering};
-use super::types::*;
 use super::string::*;
+use super::types::*;
 use core::ptr;
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use spin::{Lazy, Mutex};
 
 extern crate alloc;
 
@@ -26,9 +27,7 @@ impl FilePoolData {
     }
 }
 
-static FILE_POOL: Lazy<Mutex<FilePoolData>> = Lazy::new(|| {
-    Mutex::new(FilePoolData::new())
-});
+static FILE_POOL: Lazy<Mutex<FilePoolData>> = Lazy::new(|| Mutex::new(FilePoolData::new()));
 static FILE_POOL_INIT: AtomicBool = AtomicBool::new(false);
 
 struct StandardStreams {
@@ -57,6 +56,25 @@ static STD_STREAMS: Lazy<Mutex<StandardStreams>> = Lazy::new(|| {
     streams.stderr_file.handle = 2;
     Mutex::new(streams)
 });
+
+static mut STDIN_STREAM: FILE = FILE::new();
+static mut STDOUT_STREAM: FILE = FILE::new();
+static mut STDERR_STREAM: FILE = FILE::new();
+
+unsafe fn stdin() -> *mut FILE {
+    STDIN_STREAM.handle = 0;
+    &mut STDIN_STREAM
+}
+
+unsafe fn stdout() -> *mut FILE {
+    STDOUT_STREAM.handle = 1;
+    &mut STDOUT_STREAM
+}
+
+unsafe fn stderr() -> *mut FILE {
+    STDERR_STREAM.handle = 2;
+    &mut STDERR_STREAM
+}
 
 unsafe fn init_file_pool() {
     if !FILE_POOL_INIT.load(Ordering::Relaxed) {
@@ -95,7 +113,7 @@ unsafe fn parse_mode(mode: *const c_char) -> u32 {
     flags
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn fopen(filename: *const c_char, mode: *const c_char) -> *mut FILE {
     if filename.is_null() || mode.is_null() {
         return ptr::null_mut();
@@ -109,26 +127,27 @@ pub unsafe extern "C" fn fopen(filename: *const c_char, mode: *const c_char) -> 
     }
 
     for i in 0..FILE_POOL_SIZE {
-        if FILE_POOL[i].handle == 0 {
+        let mut pool = FILE_POOL.lock();
+        if pool.files[i].handle == 0 {
             let handle = super::io_stubs::open_file(filename, flags);
             if handle == 0 {
                 return ptr::null_mut();
             }
 
-            FILE_POOL[i].handle = handle;
-            FILE_POOL[i].position = 0;
-            FILE_POOL[i].eof = false;
-            FILE_POOL[i].error = false;
-            FILE_POOL[i].flags = flags;
+            pool.files[i].handle = handle;
+            pool.files[i].position = 0;
+            pool.files[i].eof = false;
+            pool.files[i].error = false;
+            pool.files[i].flags = flags;
 
-            return &mut FILE_POOL[i] as *mut FILE;
+            return pool.files.as_mut_ptr().wrapping_add(i);
         }
     }
 
     ptr::null_mut()
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn fclose(stream: *mut FILE) -> c_int {
     if stream.is_null() {
         return EOF;
@@ -150,7 +169,7 @@ pub unsafe extern "C" fn fclose(stream: *mut FILE) -> c_int {
     0
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn fread(
     ptr: *mut c_void,
     size: size_t,
@@ -180,7 +199,7 @@ pub unsafe extern "C" fn fread(
     }
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn fwrite(
     ptr: *const c_void,
     size: size_t,
@@ -216,7 +235,7 @@ pub unsafe extern "C" fn fwrite(
     }
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn fseek(stream: *mut FILE, offset: c_long, whence: c_int) -> c_int {
     if stream.is_null() {
         return -1;
@@ -227,15 +246,13 @@ pub unsafe extern "C" fn fseek(stream: *mut FILE, offset: c_long, whence: c_int)
     let new_pos = match whence {
         SEEK_SET => offset as usize,
         SEEK_CUR => (file.position as isize + offset as isize) as usize,
-        SEEK_END => {
-            match super::io_stubs::get_file_size(file.handle) {
-                Ok(size) => (size as isize + offset as isize) as usize,
-                Err(_) => {
-                    file.error = true;
-                    return -1;
-                }
+        SEEK_END => match super::io_stubs::get_file_size(file.handle) {
+            Ok(size) => (size as isize + offset as isize) as usize,
+            Err(_) => {
+                file.error = true;
+                return -1;
             }
-        }
+        },
         _ => return -1,
     };
 
@@ -252,7 +269,7 @@ pub unsafe extern "C" fn fseek(stream: *mut FILE, offset: c_long, whence: c_int)
     }
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn ftell(stream: *mut FILE) -> c_long {
     if stream.is_null() {
         return -1;
@@ -260,7 +277,7 @@ pub unsafe extern "C" fn ftell(stream: *mut FILE) -> c_long {
     (*stream).position as c_long
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn rewind(stream: *mut FILE) {
     if !stream.is_null() {
         fseek(stream, 0, SEEK_SET);
@@ -268,23 +285,31 @@ pub unsafe extern "C" fn rewind(stream: *mut FILE) {
     }
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn feof(stream: *mut FILE) -> c_int {
     if stream.is_null() {
         return 0;
     }
-    if (*stream).eof { 1 } else { 0 }
+    if (*stream).eof {
+        1
+    } else {
+        0
+    }
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn ferror(stream: *mut FILE) -> c_int {
     if stream.is_null() {
         return 0;
     }
-    if (*stream).error { 1 } else { 0 }
+    if (*stream).error {
+        1
+    } else {
+        0
+    }
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn clearerr(stream: *mut FILE) {
     if !stream.is_null() {
         (*stream).eof = false;
@@ -292,12 +317,12 @@ pub unsafe extern "C" fn clearerr(stream: *mut FILE) {
     }
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn fflush(_stream: *mut FILE) -> c_int {
     0
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn fgetc(stream: *mut FILE) -> c_int {
     if stream.is_null() {
         return EOF;
@@ -310,7 +335,7 @@ pub unsafe extern "C" fn fgetc(stream: *mut FILE) -> c_int {
     }
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn fputc(c: c_int, stream: *mut FILE) -> c_int {
     if stream.is_null() {
         return EOF;
@@ -323,7 +348,7 @@ pub unsafe extern "C" fn fputc(c: c_int, stream: *mut FILE) -> c_int {
     }
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn fgets(s: *mut c_char, n: c_int, stream: *mut FILE) -> *mut c_char {
     if s.is_null() || stream.is_null() || n <= 0 {
         return ptr::null_mut();
@@ -348,7 +373,7 @@ pub unsafe extern "C" fn fgets(s: *mut c_char, n: c_int, stream: *mut FILE) -> *
     s
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn fputs(s: *const c_char, stream: *mut FILE) -> c_int {
     if s.is_null() || stream.is_null() {
         return EOF;
@@ -361,41 +386,41 @@ pub unsafe extern "C" fn fputs(s: *const c_char, stream: *mut FILE) -> c_int {
     }
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn getc(stream: *mut FILE) -> c_int {
     fgetc(stream)
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn putc(c: c_int, stream: *mut FILE) -> c_int {
     fputc(c, stream)
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn getchar() -> c_int {
-    fgetc(stdin)
+    fgetc(stdin())
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn putchar(c: c_int) -> c_int {
-    fputc(c, stdout)
+    fputc(c, stdout())
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn puts(s: *const c_char) -> c_int {
     if s.is_null() {
         return EOF;
     }
-    if fputs(s, stdout) == EOF {
+    if fputs(s, stdout()) == EOF {
         return EOF;
     }
-    if fputc(b'\n' as c_int, stdout) == EOF {
+    if fputc(b'\n' as c_int, stdout()) == EOF {
         return EOF;
     }
     0
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn ungetc(c: c_int, stream: *mut FILE) -> c_int {
     if stream.is_null() || c == EOF {
         return EOF;
@@ -412,7 +437,7 @@ pub unsafe extern "C" fn ungetc(c: c_int, stream: *mut FILE) -> c_int {
 
 // Simplified sprintf/printf - NOTE: These are minimal implementations
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn sprintf(s: *mut c_char, format: *const c_char, _args: ...) -> c_int {
     if s.is_null() || format.is_null() {
         return -1;
@@ -431,8 +456,13 @@ pub unsafe extern "C" fn sprintf(s: *mut c_char, format: *const c_char, _args: .
     i as c_int
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn snprintf(s: *mut c_char, n: size_t, format: *const c_char, _args: ...) -> c_int {
+#[cfg_attr(not(test), no_mangle)]
+pub unsafe extern "C" fn snprintf(
+    s: *mut c_char,
+    n: size_t,
+    format: *const c_char,
+    _args: ...
+) -> c_int {
     if s.is_null() || format.is_null() || n == 0 {
         return -1;
     }
@@ -450,17 +480,22 @@ pub unsafe extern "C" fn snprintf(s: *mut c_char, n: size_t, format: *const c_ch
     i as c_int
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn vsprintf(_s: *mut c_char, _format: *const c_char, _ap: ...) -> c_int {
     0
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn vsnprintf(_s: *mut c_char, _n: size_t, _format: *const c_char, _ap: ...) -> c_int {
+#[cfg_attr(not(test), no_mangle)]
+pub unsafe extern "C" fn vsnprintf(
+    _s: *mut c_char,
+    _n: size_t,
+    _format: *const c_char,
+    _ap: ...
+) -> c_int {
     0
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn printf(format: *const c_char, _args: ...) -> c_int {
     if format.is_null() {
         return -1;
@@ -478,7 +513,7 @@ pub unsafe extern "C" fn printf(format: *const c_char, _args: ...) -> c_int {
     i as c_int
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn fprintf(stream: *mut FILE, format: *const c_char, _args: ...) -> c_int {
     if stream.is_null() || format.is_null() {
         return -1;
@@ -496,47 +531,47 @@ pub unsafe extern "C" fn fprintf(stream: *mut FILE, format: *const c_char, _args
     i as c_int
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn vprintf(_format: *const c_char, _ap: ...) -> c_int {
     0
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn vfprintf(_stream: *mut FILE, _format: *const c_char, _ap: ...) -> c_int {
     0
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn sscanf(_s: *const c_char, _format: *const c_char, _args: ...) -> c_int {
     0
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn scanf(_format: *const c_char, _args: ...) -> c_int {
     0
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn fscanf(_stream: *mut FILE, _format: *const c_char, _args: ...) -> c_int {
     0
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn vsscanf(_s: *const c_char, _format: *const c_char, _ap: ...) -> c_int {
     0
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn vscanf(_format: *const c_char, _ap: ...) -> c_int {
     0
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn vfscanf(_stream: *mut FILE, _format: *const c_char, _ap: ...) -> c_int {
     0
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn remove(filename: *const c_char) -> c_int {
     if filename.is_null() {
         return -1;
@@ -547,7 +582,7 @@ pub unsafe extern "C" fn remove(filename: *const c_char) -> c_int {
     }
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn rename(old: *const c_char, new: *const c_char) -> c_int {
     if old.is_null() || new.is_null() {
         return -1;
@@ -558,16 +593,19 @@ pub unsafe extern "C" fn rename(old: *const c_char, new: *const c_char) -> c_int
     }
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn tmpfile() -> *mut FILE {
     let temp_name = b"/tmp/tmpXXXXXX\0";
-    fopen(temp_name.as_ptr() as *const c_char, b"w+b\0".as_ptr() as *const c_char)
+    fopen(
+        temp_name.as_ptr() as *const c_char,
+        b"w+b\0".as_ptr() as *const c_char,
+    )
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn tmpnam(s: *mut c_char) -> *mut c_char {
     static TMP_COUNTER: AtomicU32 = AtomicU32::new(0);
-    TMP_COUNTER += 1;
+    TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
 
     let template = b"/tmp/tmp00000000\0";
     for i in 0..template.len() {

@@ -18,13 +18,13 @@
 //
 //! Clean-room implementation based on public specifications.
 
-pub mod pci_ids;
-pub mod zxd_reg;
-pub mod zxd_fb;
-pub mod zxe_reg;
-pub mod zxe_fb;
-pub mod glenfly_reg;
 pub mod glenfly_fb;
+pub mod glenfly_reg;
+pub mod pci_ids;
+pub mod zxd_fb;
+pub mod zxd_reg;
+pub mod zxe_fb;
+pub mod zxe_reg;
 
 use crate::drivers::video::core::gpu_common::{
     GpuDeviceInfo, GpuDriver, GpuFeatures, GpuFramebufferInfo, PixelFormat,
@@ -126,10 +126,7 @@ impl ZhaoxinDevice {
             return;
         }
         unsafe {
-            core::ptr::write_volatile(
-                (self.mmio_base + offset as u64) as *mut u32,
-                value,
-            );
+            core::ptr::write_volatile((self.mmio_base + offset as u64) as *mut u32, value);
         }
     }
 }
@@ -150,7 +147,11 @@ impl GpuDriver for ZhaoxinDevice {
             has_3d_accel: variant_features.has_3d_accel,
             has_video_decode: variant_features.has_video_decode,
             has_compute: false,
-            max_texture_size: if variant_features.has_3d_accel { 4096 } else { 2048 },
+            max_texture_size: if variant_features.has_3d_accel {
+                4096
+            } else {
+                2048
+            },
             max_render_targets: variant_features.num_overlay_planes as u32,
             has_cursor: variant_features.has_cursor,
             cursor_size: variant_features.cursor_size as u32,
@@ -170,7 +171,9 @@ impl GpuDriver for ZhaoxinDevice {
         self.fb_phys &= !0xF;
 
         if self.mmio_base == 0 {
-            return Err(crate::drivers::video::core::gpu_common::GpuError::Unknown(1));
+            return Err(crate::drivers::video::core::gpu_common::GpuError::Unknown(
+                1,
+            ));
         }
 
         // Enable bus mastering
@@ -215,7 +218,10 @@ impl GpuDriver for ZhaoxinDevice {
         })
     }
 
-    fn set_mode(&mut self, mode: &crate::drivers::video::core::gpu_common::DisplayMode) -> Result<(), crate::drivers::video::core::gpu_common::GpuError> {
+    fn set_mode(
+        &mut self,
+        mode: &crate::drivers::video::core::gpu_common::DisplayMode,
+    ) -> Result<(), crate::drivers::video::core::gpu_common::GpuError> {
         self.init_framebuffer(Some(*mode)).map(|_| ())
     }
 
@@ -231,13 +237,20 @@ impl GpuDriver for ZhaoxinDevice {
         ))
     }
 
-    fn enable_vblank(&mut self, _head: u32) -> Result<(), crate::drivers::video::core::gpu_common::GpuError> {
+    fn enable_vblank(
+        &mut self,
+        _head: u32,
+    ) -> Result<(), crate::drivers::video::core::gpu_common::GpuError> {
         Ok(())
     }
 
     fn disable_vblank(&mut self, _head: u32) {}
 
-    fn wait_vblank(&self, _head: u32, _timeout_ms: u32) -> Result<(), crate::drivers::video::core::gpu_common::GpuError> {
+    fn wait_vblank(
+        &self,
+        _head: u32,
+        _timeout_ms: u32,
+    ) -> Result<(), crate::drivers::video::core::gpu_common::GpuError> {
         Ok(())
     }
 
@@ -249,10 +262,7 @@ impl GpuDriver for ZhaoxinDevice {
         let pixels = ((self.pitch as usize) * (self.height as usize)) / 4;
         for i in 0..pixels {
             unsafe {
-                core::ptr::write_volatile(
-                    (self.fb_virt + (i as u64 * 4)) as *mut u32,
-                    color,
-                );
+                core::ptr::write_volatile((self.fb_virt + (i as u64 * 4)) as *mut u32, color);
             }
         }
     }
@@ -264,10 +274,7 @@ impl GpuDriver for ZhaoxinDevice {
 
         let offset = ((y * self.pitch) + (x * 4)) as u64;
         unsafe {
-            core::ptr::write_volatile(
-                (self.fb_virt + offset) as *mut u32,
-                color,
-            );
+            core::ptr::write_volatile((self.fb_virt + offset) as *mut u32, color);
         }
     }
 

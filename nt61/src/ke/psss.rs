@@ -20,8 +20,8 @@
 
 #![allow(non_snake_case)]
 
-use crate::mm::{working_set, writer, zeropage};
 use crate::ke::dispatch;
+use crate::mm::{working_set, writer, zeropage};
 
 /// Run one tick of the PSSS workers. Called from the timer
 /// ISR (or, in the bootstrap, by the BSP loop).
@@ -46,7 +46,7 @@ pub fn psss_tick() {
         unsafe {
             if FIRST {
                 FIRST = false;
-                // // kprintln!("    [psss] first tick: zeroed={} wrote={}", z, w)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                // // kprintln!("    [psss] first tick: zeroed={} wrote={}", z, w);
             }
         }
     }

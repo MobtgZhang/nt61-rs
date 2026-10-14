@@ -24,7 +24,7 @@ pub fn init() {
     // Initialize interrupt handling subsystem
     interrupt::init();
     
-    // kprintln!("    NDIS protocol layer: initialized")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    NDIS protocol layer: initialized");
 }
 
 /// Network buffer list types

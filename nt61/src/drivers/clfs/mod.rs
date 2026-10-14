@@ -37,32 +37,32 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
 use alloc::boxed::Box;
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use crate::ke::sync::Spinlock;
 use crate::rtl::logging::subsystem::CLFS;
 
-pub mod format;    // BLF disk format, block headers, CRC, sector fixup
-pub mod record;    // LSN management, record headers
-pub mod metadata;  // Control record, base record, truncate record
-pub mod context;   // Client context, container context, node IDs
-pub mod vcb;      // Volume Control Block
-pub mod fcb;      // File Control Block
-pub mod io;       // I/O operations, error types
-pub mod container; // Container management
+pub mod container;
+pub mod context; // Client context, container context, node IDs
+pub mod fcb; // File Control Block
+pub mod format; // BLF disk format, block headers, CRC, sector fixup
+pub mod io; // I/O operations, error types
+pub mod metadata; // Control record, base record, truncate record
+pub mod record; // LSN management, record headers
+pub mod vcb; // Volume Control Block // Container management
 
 // ============================================================================
 // Re-exports
 // ============================================================================
 
 pub use context::{ClfsClientContext, ClfsContainerContext};
-pub use io::{ClfsError, ClfsStats, CLFS_STATS};
-pub use record::{ClfsLsn, ClfsLogRecordHeader};
-pub use metadata::{ClfsControlRecord, ClfsBaseRecordHeader};
-pub use vcb::ClfsVcb;
 pub use format::CLFS_SECTOR_SIZE;
+pub use io::{ClfsError, ClfsStats, CLFS_STATS};
+pub use metadata::{ClfsBaseRecordHeader, ClfsControlRecord};
+pub use record::{ClfsLogRecordHeader, ClfsLsn};
+pub use vcb::ClfsVcb;
 
 pub mod smoke;
 
@@ -250,9 +250,13 @@ pub fn ClfsCreateLogFile(name: &[u8], _desired_access: u32, share_access: u32) -
             if !entry.valid {
                 entry.initialize(name);
                 TOTAL_CREATED.fetch_add(1, Ordering::Relaxed);
-                crate::kprintln_info!("CLFS", "  [CLFS] log created: {:?} (handle=#{:08x}, slot={})",
+                crate::kprintln_info!(
+                    "CLFS",
+                    "  [CLFS] log created: {:?} (handle=#{:08x}, slot={})",
                     core::str::from_utf8(name).unwrap_or("<invalid>"),
-                    NEXT_HANDLE.load(Ordering::Relaxed), i);
+                    NEXT_HANDLE.load(Ordering::Relaxed),
+                    i
+                );
                 return NEXT_HANDLE.fetch_add(1, Ordering::Relaxed);
             }
         }
@@ -286,8 +290,12 @@ pub fn ClfsOpenLogFile(name: &[u8]) -> u32 {
 pub fn ClfsWriteLogRecord(handle: u32, client_id: u32, data: &[u8]) -> u32 {
     // Validate data size
     if data.len() > MAX_DATA_SIZE {
-        crate::kprintln_info!("CLFS", "  [CLFS] write failed: data too large ({} > {})",
-            data.len(), MAX_DATA_SIZE);
+        crate::kprintln_info!(
+            "CLFS",
+            "  [CLFS] write failed: data too large ({} > {})",
+            data.len(),
+            MAX_DATA_SIZE
+        );
         return STATUS_BUFFER_TOO_SMALL;
     }
 
@@ -297,7 +305,11 @@ pub fn ClfsWriteLogRecord(handle: u32, client_id: u32, data: &[u8]) -> u32 {
     let entry = match validate_handle(handle) {
         Some(e) => e,
         None => {
-            crate::kprintln_info!("CLFS", "  [CLFS] write failed: invalid handle #{:08x}", handle);
+            crate::kprintln_info!(
+                "CLFS",
+                "  [CLFS] write failed: invalid handle #{:08x}",
+                handle
+            );
             return STATUS_INVALID_HANDLE;
         }
     };
@@ -340,8 +352,14 @@ pub fn ClfsWriteLogRecord(handle: u32, client_id: u32, data: &[u8]) -> u32 {
 
     TOTAL_APPENDED.fetch_add(1, Ordering::Relaxed);
 
-    crate::kprintln_info!("CLFS", "  [CLFS] write: handle=#{:08x} lsn={} client_id={} data_len={}",
-        handle, lsn, client_id, data.len());
+    crate::kprintln_info!(
+        "CLFS",
+        "  [CLFS] write: handle=#{:08x} lsn={} client_id={} data_len={}",
+        handle,
+        lsn,
+        client_id,
+        data.len()
+    );
 
     STATUS_SUCCESS
 }
@@ -427,8 +445,12 @@ pub fn ClfsFlushBuffers(handle: u32) -> u32 {
     let appended = TOTAL_APPENDED.load(Ordering::Relaxed);
     TOTAL_FLUSHED.fetch_add(appended, Ordering::Relaxed);
 
-    crate::kprintln_info!("CLFS", "  [CLFS] flush: handle=#{:08x} flushed {} records",
-        handle, appended);
+    crate::kprintln_info!(
+        "CLFS",
+        "  [CLFS] flush: handle=#{:08x} flushed {} records",
+        handle,
+        appended
+    );
 
     let _ = io::flush_vcb(vcb);
     STATUS_SUCCESS
@@ -494,8 +516,13 @@ pub fn ClfsMgmtQueryLogInformation(handle: u32, info: &mut ClfsMgmtLogInformatio
     info.record_count = appended as u32;
     info.flags = 0;
 
-    crate::kprintln_info!("CLFS", "  [CLFS] query: handle=#{:08x} size={} records={}",
-        handle, total, appended);
+    crate::kprintln_info!(
+        "CLFS",
+        "  [CLFS] query: handle=#{:08x} size={} records={}",
+        handle,
+        total,
+        appended
+    );
 
     STATUS_SUCCESS
 }
@@ -531,7 +558,12 @@ pub fn ClfsAddLogContainer(handle: u32, size: u64, name: &[u8]) -> u32 {
 
     match container::add_container(vcb, size as usize, name) {
         Ok(cid) => {
-            crate::kprintln_info!("CLFS", "  [CLFS] container {} added (handle=#{:08x})", cid, handle);
+            crate::kprintln_info!(
+                "CLFS",
+                "  [CLFS] container {} added (handle=#{:08x})",
+                cid,
+                handle
+            );
             cid
         }
         Err(e) => {
@@ -576,7 +608,9 @@ pub fn log_count() -> usize {
     let mut n = 0;
     unsafe {
         for entry in LOG_TABLE.iter() {
-            if entry.valid { n += 1; }
+            if entry.valid {
+                n += 1;
+            }
         }
     }
     n

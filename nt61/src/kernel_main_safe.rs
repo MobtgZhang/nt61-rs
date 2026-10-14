@@ -1,7 +1,5 @@
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, AtomicPtr, Ordering};
-
-
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use spin::{Lazy, Mutex};
 
 pub struct SystemImageDb {
     db: Option<crate::loader::ImageDatabase>,
@@ -42,9 +40,7 @@ impl SystemImageDb {
     }
 }
 
-static SYSTEM_IMAGE_DB: Lazy<Mutex<SystemImageDb>> = Lazy::new(|| {
-    Mutex::new(SystemImageDb::new())
-});
+static SYSTEM_IMAGE_DB: Lazy<Mutex<SystemImageDb>> = Lazy::new(|| Mutex::new(SystemImageDb::new()));
 
 pub fn init_system_image_db(db: crate::loader::ImageDatabase) {
     SYSTEM_IMAGE_DB.lock().init(db);

@@ -20,12 +20,12 @@
 //! - Saved CPU state
 //! - Compressed memory image
 
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use crate::kprintln_error;
 use crate::kprintln_info;
 use crate::kprintln_warn;
-use crate::kprintln_error;
 use crate::mm::pagefile;
 
 /// Hibernate file header signature
@@ -209,11 +209,11 @@ pub struct HiberfilMeta {
 pub fn check_hiberfil() -> HiberfilMeta {
     // Check pagefile for hiberfil usage
     let pagefile_info = pagefile::get_pagefile_info(0);
-    
+
     if let Some(info) = pagefile_info {
         let size_bytes = info.total_pages * 4096;
         let size_mb = size_bytes / (1024 * 1024);
-        
+
         return HiberfilMeta {
             exists: info.total_pages > 0,
             size_bytes,
@@ -221,15 +221,14 @@ pub fn check_hiberfil() -> HiberfilMeta {
             valid: size_bytes >= (128 * 1024 * 1024), // At least 128 MB
         };
     }
-    
+
     HiberfilMeta::default()
 }
 
 /// Enter a power state.
 pub fn enter_power_state(state: PowerState) -> bool {
     if !is_enabled() {
-        kprintln_error!("MEMORY",
-            "Hibernate subsystem not enabled");
+        kprintln_error!("MEMORY", "Hibernate subsystem not enabled");
         return false;
     }
 
@@ -239,10 +238,9 @@ pub fn enter_power_state(state: PowerState) -> bool {
         PowerState::S5Shutdown => {
             shutdown_system();
             true
-        },
+        }
         _ => {
-            kprintln_warn!("MEMORY",
-                "Power state {:?} not implemented", state);
+            kprintln_warn!("MEMORY", "Power state {:?} not implemented", state);
             false
         }
     }
@@ -256,45 +254,45 @@ pub fn enter_power_state(state: PowerState) -> bool {
 /// - Wake-up interrupt configuration
 pub fn save_s3_state() -> bool {
     kprintln_info!("MEMORY", "Initiating S3 suspend (Suspend to RAM)...");
-    
+
     // 1. Freeze all processes
     kprintln_info!("MEMORY", "Freezing processes...");
     if !freeze_processes() {
         kprintln_error!("MEMORY", "Failed to freeze processes");
         return false;
     }
-    
+
     // 2. Sync filesystems
     kprintln_info!("MEMORY", "Syncing filesystems...");
     sync_filesystems();
-    
+
     // 3. Save CPU state
     kprintln_info!("MEMORY", "Saving CPU state...");
     let cpu_state = save_cpu_state();
-    
+
     // 4. Configure wake interrupts
     kprintln_info!("MEMORY", "Configuring wake interrupts...");
     configure_wake_interrupts();
-    
+
     // 5. Enter low power state
     kprintln_info!("MEMORY", "Entering S3 low power state...");
     enter_low_power_state(PowerState::S3Suspend);
-    
+
     // If we return, resume was triggered
     kprintln_info!("MEMORY", "Resuming from S3...");
-    
+
     // Restore CPU state
     kprintln_info!("MEMORY", "Restoring CPU state...");
     restore_cpu_state(cpu_state);
-    
+
     // Unfreeze processes
     kprintln_info!("MEMORY", "Unfreezing processes...");
     unfreeze_processes();
-    
+
     // Update stats
     let stats = get_stats();
     update_stats(stats.total_resumes + 1, stats.total_hibernations);
-    
+
     true
 }
 
@@ -307,27 +305,27 @@ pub fn save_s3_state() -> bool {
 /// - Wake information
 pub fn save_s4_state() -> bool {
     kprintln_info!("MEMORY", "Initiating S4 hibernate (Hibernate to Disk)...");
-    
+
     let start_time = get_tick_count_ms();
-    
+
     // 1. Notify processes of hibernate
     kprintln_info!("MEMORY", "Notifying processes...");
     if !notify_processes_hibernate() {
         kprintln_error!("MEMORY", "Failed to notify processes");
         return false;
     }
-    
+
     // 2. Freeze all processes
     kprintln_info!("MEMORY", "Freezing processes...");
     if !freeze_processes() {
         kprintln_error!("MEMORY", "Failed to freeze processes");
         return false;
     }
-    
+
     // 3. Sync all filesystems
     kprintln_info!("MEMORY", "Syncing all filesystems...");
     sync_filesystems();
-    
+
     // 4. Create/update hiberfil.sys
     kprintln_info!("MEMORY", "Creating hiberfil.sys...");
     if !create_hiberfil() {
@@ -335,47 +333,51 @@ pub fn save_s4_state() -> bool {
         unfreeze_processes();
         return false;
     }
-    
+
     // 5. Save memory image
     kprintln_info!("MEMORY", "Saving memory image...");
     let memory_size = get_memory_size();
     let compression = CompressionType::Lznt1;
-    
+
     let hiber_size = save_memory_image(compression);
     if hiber_size == 0 {
         kprintln_error!("MEMORY", "Failed to save memory image");
         return false;
     }
-    
+
     // 6. Save CPU state
     kprintln_info!("MEMORY", "Saving CPU state...");
     let cpu_state_size = save_cpu_state_full();
-    
+
     // 7. Write hibernate header
     kprintln_info!("MEMORY", "Writing hibernate header...");
     if !write_hibernate_header(hiber_size, memory_size, cpu_state_size, compression) {
         kprintln_error!("MEMORY", "Failed to write hibernate header");
         return false;
     }
-    
+
     // 8. Save wake information
     kprintln_info!("MEMORY", "Saving wake information...");
     save_wake_information();
-    
+
     // 9. Close and flush hiberfil
     kprintln_info!("MEMORY", "Flushing hiberfil.sys...");
     flush_hiberfil();
-    
+
     let end_time = get_tick_count_ms();
     let duration = end_time - start_time;
-    
-    kprintln_info!("MEMORY", "Hibernate complete: {} MB in {} ms", 
-                  hiber_size / (1024 * 1024), duration);
-    
+
+    kprintln_info!(
+        "MEMORY",
+        "Hibernate complete: {} MB in {} ms",
+        hiber_size / (1024 * 1024),
+        duration
+    );
+
     // 10. Power off
     kprintln_info!("MEMORY", "Powering off...");
     power_off();
-    
+
     // Should not return
     kprintln_error!("MEMORY", "ERROR: Returned from power off!");
     false
@@ -386,9 +388,9 @@ pub fn save_s4_state() -> bool {
 /// This function restores the system from hibernate state.
 pub fn restore_s4_state() -> bool {
     kprintln_info!("MEMORY", "Resuming from S4 hibernate...");
-    
+
     let start_time = get_tick_count_ms();
-    
+
     // 1. Read hibernate header
     kprintln_info!("MEMORY", "Reading hibernate header...");
     let header = match read_hibernate_header() {
@@ -398,45 +400,44 @@ pub fn restore_s4_state() -> bool {
             return false;
         }
     };
-    
+
     // 2. Verify header
     if !verify_hibernate_header(&header) {
         kprintln_error!("MEMORY", "Invalid hibernate header");
         return false;
     }
-    
+
     // 3. Restore CPU state
     kprintln_info!("MEMORY", "Restoring CPU state...");
     if !restore_cpu_state_full(header.cpu_state_size) {
         kprintln_error!("MEMORY", "Failed to restore CPU state");
         return false;
     }
-    
+
     // 4. Restore memory image
     kprintln_info!("MEMORY", "Restoring memory image...");
     if !restore_memory_image(header.compression) {
-        kprintln_error!("MEMORY",
-            "Failed to restore memory image");
+        kprintln_error!("MEMORY", "Failed to restore memory image");
         return false;
     }
 
     // 5. Restore wake information
     kprintln_info!("MEMORY", "Restoring wake information...");
     restore_wake_information();
-    
+
     // 6. Unfreeze processes
     kprintln_info!("MEMORY", "Unfreezing processes...");
     unfreeze_processes();
-    
+
     let end_time = get_tick_count_ms();
     let duration = end_time - start_time;
-    
+
     // Update stats
     let stats = get_stats();
     update_stats(stats.total_resumes, stats.total_hibernations + 1);
-    
+
     kprintln_info!("MEMORY", "Resume complete in {} ms", duration);
-    
+
     true
 }
 
@@ -495,7 +496,7 @@ fn enter_low_power_state(state: PowerState) {
     // 2. Configure ACPI for the target state
     // 3. Execute the low power state instruction
     kprintln_info!("MEMORY", "Would enter power state {:?}", state);
-    
+
     // For simulation, just return
 }
 
@@ -520,13 +521,13 @@ fn create_hiberfil() -> bool {
 fn save_memory_image(compression: CompressionType) -> u64 {
     // Simplified: calculate size without actually saving
     let memory_size = get_memory_size();
-    
+
     // Compress if requested (simplified - no actual compression)
     let compressed_size = match compression {
         CompressionType::None => memory_size,
         _ => memory_size, // Simplified: assume no compression
     };
-    
+
     compressed_size
 }
 
@@ -595,12 +596,12 @@ fn verify_hibernate_header(header: &HibernateHeader) -> bool {
     if &header.signature != HIBER_SIGNATURE {
         return false;
     }
-    
+
     // Check version
     if header.version != HIBER_VERSION {
         return false;
     }
-    
+
     true
 }
 
@@ -665,11 +666,11 @@ pub fn print_status() {
     let _stats = get_stats();
     // Reserved for future use: hiberfil metadata
     let _meta = check_hiberfil();
-    
-    // [DISABLED] // // kprintln!("[HIBER] Status:")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  Enabled: {}", is_enabled())  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  Hiberfil.sys: {} MB (exists={}, valid={})",   // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// // // [DISABLED]               meta.size_mb, meta.exists, meta.valid);
-    // [DISABLED] // // kprintln!("  Total Hibernations: {}", stats.total_hibernations)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // [DISABLED] // // kprintln!("  Total Resumes: {}", stats.total_resumes)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+
+    // [DISABLED] // // kprintln!("[HIBER] Status:");
+    // [DISABLED] // // kprintln!("  Enabled: {}", is_enabled());
+    // [DISABLED] // // kprintln!("  Hiberfil.sys: {} MB (exists={}, valid={})",
+    // // // [DISABLED]               meta.size_mb, meta.exists, meta.valid);
+    // [DISABLED] // // kprintln!("  Total Hibernations: {}", stats.total_hibernations);
+    // [DISABLED] // // kprintln!("  Total Resumes: {}", stats.total_resumes);
 }

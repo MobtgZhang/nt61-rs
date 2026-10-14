@@ -5,15 +5,15 @@
 
 // FS module uses NT-driver naming (FCB, VCB, IRP_MJ_*, ...).
 
-pub mod vfs;
+#[cfg(target_arch = "x86_64")]
+pub mod ext2; // ext2/ext3/ext4 filesystem support
 pub mod fat32;
 pub mod ntfs;
 #[cfg(target_arch = "x86_64")]
-pub mod ext2;   // ext2/ext3/ext4 filesystem support
-#[cfg(target_arch = "x86_64")]
-pub mod refs;    // ReFS (Resilient File System) support
-pub mod windows_paths; // Windows 7 path and directory mapping
+pub mod refs; // ReFS (Resilient File System) support
 pub mod smoke;
+pub mod vfs;
+pub mod windows_paths; // Windows 7 path and directory mapping
 
 use crate::ke::sync::Spinlock;
 
@@ -66,10 +66,14 @@ impl DeviceSelection {
                 for i in 0..count {
                     if let Some(device) = crate::drivers::storage::get_device(i) {
                         let matches = match (self, device.device_type) {
-                            (DeviceSelection::ByType(StorageDeviceType::RamDisk), 
-                             crate::drivers::storage::StorageDeviceType::RamDisk) => true,
-                            (DeviceSelection::ByType(StorageDeviceType::AhciDisk),
-                             crate::drivers::storage::StorageDeviceType::AhciDisk) => true,
+                            (
+                                DeviceSelection::ByType(StorageDeviceType::RamDisk),
+                                crate::drivers::storage::StorageDeviceType::RamDisk,
+                            ) => true,
+                            (
+                                DeviceSelection::ByType(StorageDeviceType::AhciDisk),
+                                crate::drivers::storage::StorageDeviceType::AhciDisk,
+                            ) => true,
                             _ => false,
                         };
                         if matches && device.present {
@@ -122,11 +126,11 @@ pub enum FsError {
     /// Path not found
     PathNotFound = 0xC000003A,
     /// No such file
-    NoSuchFile = 0xC0000229,  // STATUS_NO_SUCH_FILE
+    NoSuchFile = 0xC0000229, // STATUS_NO_SUCH_FILE
     /// Object name invalid
     ObjectNameInvalid = 0xC0000033,
     /// Object path not found
-    ObjectPathNotFound = 0xC000003B,  // Use a different value
+    ObjectPathNotFound = 0xC000003B, // Use a different value
 
     // Access control errors
     /// Access denied
@@ -142,7 +146,7 @@ pub enum FsError {
     /// Is a directory
     IsADirectory = 0xC00000BA,
     /// File is a directory (alias)
-    FileIsADirectory = 0xC00000BB,  // Different value for alias
+    FileIsADirectory = 0xC00000BB, // Different value for alias
     /// Directory not empty
     DirectoryNotEmpty = 0xC0000101,
 
@@ -293,8 +297,7 @@ pub struct FileSystemInfo {
 }
 
 /// Registered file systems (simplified - fixed size array)
-pub static FILE_SYSTEMS: Spinlock<FileSystemRegistry> =
-    Spinlock::new(FileSystemRegistry::new());
+pub static FILE_SYSTEMS: Spinlock<FileSystemRegistry> = Spinlock::new(FileSystemRegistry::new());
 
 pub struct FileSystemRegistry {
     pub drivers: [*mut FileSystemDriver; 8],
@@ -445,7 +448,7 @@ pub fn register(filesystem: *mut FileSystemDriver) {
 /// Unregister a file system driver from the registry.
 pub fn unregister(filesystem: *mut FileSystemDriver) {
     let mut fs_list = FILE_SYSTEMS.lock();
-    
+
     // Search for the filesystem in the registry and remove it
     let mut found = false;
     for i in 0..fs_list.count {
@@ -457,25 +460,29 @@ pub fn unregister(filesystem: *mut FileSystemDriver) {
             fs_list.drivers[i] = fs_list.drivers[i + 1];
         }
     }
-    
+
     if found && fs_list.count > 0 {
         let new_count = fs_list.count - 1;
         fs_list.count = new_count;
         fs_list.drivers[new_count] = core::ptr::null_mut();
     }
-    
+
     // Prevent unused variable warning - filesystem pointer used for comparison above
     let _ = filesystem;
 }
 
 /// Mount a file system
 /// Allocates a new FileSystem structure and initializes it with the given device and type.
-pub fn mount(device: *mut (), _path: &[u16], fs_type: FileSystemType) -> Option<&'static mut FileSystem> {
+pub fn mount(
+    device: *mut (),
+    _path: &[u16],
+    fs_type: FileSystemType,
+) -> Option<&'static mut FileSystem> {
     let fs = crate::mm::pool::allocate(
         crate::mm::pool::PoolType::NonPaged,
         core::mem::size_of::<FileSystem>(),
     ) as *mut FileSystem;
-    
+
     if !fs.is_null() {
         // Avoid the aggregate `core::ptr::write(fs, FileSystem {...})`
         // pattern that emits a non-temporal SSE store on the
@@ -675,9 +682,13 @@ pub fn clear_boot_partition_registry() {
 
 /// Accessor for the System partition size (filled by
 /// `mount_sys_from_bootinfo`).
-pub fn sys_partition_size() -> &'static Spinlock<usize> { &SYS_PARTITION_SIZE }
+pub fn sys_partition_size() -> &'static Spinlock<usize> {
+    &SYS_PARTITION_SIZE
+}
 /// Accessor for the System partition sector size.
-pub fn sys_partition_sector_size() -> &'static Spinlock<usize> { &SYS_PARTITION_SECTOR_SIZE }
+pub fn sys_partition_sector_size() -> &'static Spinlock<usize> {
+    &SYS_PARTITION_SECTOR_SIZE
+}
 
 /// Pointer that the dispatcher sets to whichever partition mirror
 /// is currently being mounted. Read by `fat32::read_sector` so that
@@ -727,7 +738,11 @@ pub fn set_active_partition_size(size: usize) {
 /// Read the active partition size.
 pub fn active_partition_size() -> Option<usize> {
     let v = *ACTIVE_PARTITION_SIZE.lock();
-    if v == 0 { None } else { Some(v) }
+    if v == 0 {
+        None
+    } else {
+        Some(v)
+    }
 }
 
 /// Read a contiguous range of bytes from the ESP mirror.
@@ -735,7 +750,11 @@ pub fn active_partition_size() -> Option<usize> {
 /// the destination slice. Truncates silently if the request
 /// runs past the end of the mirror.
 pub fn esp_ramdisk_read(offset: u64, buf: &mut [u8]) -> usize {
-    crate::boot_println!("    [ESP-RD] esp_ramdisk_read entered, offset=0x{:x} buf.len={}", offset, buf.len());
+    crate::boot_println!(
+        "    [ESP-RD] esp_ramdisk_read entered, offset=0x{:x} buf.len={}",
+        offset,
+        buf.len()
+    );
     let guard = ESP_RAMDISK.lock();
     crate::boot_println!("    [ESP-RD] ESP_RAMDISK locked");
     let disk = match guard.as_ref() {
@@ -746,14 +765,22 @@ pub fn esp_ramdisk_read(offset: u64, buf: &mut [u8]) -> usize {
         }
     };
     let off = offset as usize;
-    crate::boot_println!("    [ESP-RD] disk.base=0x{:x} size=0x{:x}", disk.base as u64, disk.size);
+    crate::boot_println!(
+        "    [ESP-RD] disk.base=0x{:x} size=0x{:x}",
+        disk.base as u64,
+        disk.size
+    );
     if off >= disk.size {
         crate::boot_println!("    [ESP-RD] offset past end, returning 0");
         return 0;
     }
     let avail = disk.size - off;
     let n = core::cmp::min(buf.len(), avail);
-    crate::boot_println!("    [ESP-RD] about to copy_nonoverlapping from 0x{:x} ({} bytes)", disk.base as u64 + off as u64, n);
+    crate::boot_println!(
+        "    [ESP-RD] about to copy_nonoverlapping from 0x{:x} ({} bytes)",
+        disk.base as u64 + off as u64,
+        n
+    );
     // SAFETY: `base..base+size` is a valid allocation that
     // survives ExitBootServices (the UEFI pool is preserved by
     // the kernel's early page mapping). The `read_volatile` keeps
@@ -897,7 +924,7 @@ pub fn mount_esp_from_bootinfo(boot_info: &crate::boot_types::BootInfo) {
         boot_info.esp_image_base, boot_info.esp_image_size,
         boot_info.esp_block_size, boot_info.esp_disk_start, boot_info.esp_disk_sectors);
     if boot_info.esp_image_base == 0 || boot_info.esp_image_size == 0 {
-        // // kprintln!("    FAT32: no ESP mirror in BootInfo; using built-in listing")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("    FAT32: no ESP mirror in BootInfo; using built-in listing");
         return;
     }
     // Ensure the kernel page table identity-maps the winload capture
@@ -921,7 +948,11 @@ pub fn mount_esp_from_bootinfo(boot_info: &crate::boot_types::BootInfo) {
     // panic happens here with a diagnostic on the serial log.
     let probe_ptr = boot_info.esp_image_base as *const u8;
     let probe_byte = unsafe { core::ptr::read_volatile(probe_ptr) };
-    crate::boot_println!("    [ESP-MNT] probe byte @ 0x{:x} = 0x{:x}", boot_info.esp_image_base, probe_byte);
+    crate::boot_println!(
+        "    [ESP-MNT] probe byte @ 0x{:x} = 0x{:x}",
+        boot_info.esp_image_base,
+        probe_byte
+    );
     // SAFETY: `boot_info.esp_image_base` is a UEFI-allocated
     // physical page that winload explicitly preserves across
     // ExitBootServices. The kernel's early page map covers all
@@ -946,7 +977,7 @@ pub fn mount_esp_from_bootinfo(boot_info: &crate::boot_types::BootInfo) {
         block_size,
     });
     crate::boot_println!("    [ESP-MNT] ESP_RAMDISK set");
-    // // kprintln!("    FAT32: ESP mirror @ phys 0x{:x} ({} MiB, block={})",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("    FAT32: ESP mirror @ phys 0x{:x} ({} MiB, block={})",;
     //     base as u64, size / (1024 * 1024), block_size);
 
     // Publish the start-sector/count fields used by CMD for
@@ -1040,10 +1071,10 @@ impl FsType {
     fn as_str(&self) -> &'static str {
         match self {
             FsType::Fat32 => "FAT32",
-            FsType::Ntfs  => "NTFS",
-            FsType::Ext4  => "ext4",
-            FsType::Ext3  => "ext3",
-            FsType::Ext2  => "ext2",
+            FsType::Ntfs => "NTFS",
+            FsType::Ext4 => "ext4",
+            FsType::Ext3 => "ext3",
+            FsType::Ext2 => "ext2",
             FsType::Unknown => "unknown",
         }
     }
@@ -1090,9 +1121,8 @@ pub fn detect_fs_type(base_ptr: *const u8) -> FsType {
             //   ... (see ext2/superblock.rs)
             //   s_feature_incompat @ 0x60 (relative to superblock start at 1024).
             //   So the absolute offset is 1024 + 0x60 = 0x460.
-            let incompat = u32::from_le_bytes([
-                sector[0x460], sector[0x461], sector[0x462], sector[0x463],
-            ]);
+            let incompat =
+                u32::from_le_bytes([sector[0x460], sector[0x461], sector[0x462], sector[0x463]]);
             // EXT4_FEATURE_INCOMPAT_EXTENTS = 0x0040
             if (incompat & 0x0040) != 0 {
                 return FsType::Ext4;
@@ -1101,9 +1131,8 @@ pub fn detect_fs_type(base_ptr: *const u8) -> FsType {
             // s_feature_compat is at sb-offset 0x5C, superblock starts
             // at partition byte 1024 (=0x400), so the absolute offset
             // is 0x45C.
-            let compat = u32::from_le_bytes([
-                sector[0x45C], sector[0x45D], sector[0x45E], sector[0x45F],
-            ]);
+            let compat =
+                u32::from_le_bytes([sector[0x45C], sector[0x45D], sector[0x45E], sector[0x45F]]);
             if (compat & 0x0004) != 0 {
                 return FsType::Ext3;
             }
@@ -1119,8 +1148,12 @@ pub fn detect_fs_type(base_ptr: *const u8) -> FsType {
 /// type. Returns `true` if a driver claimed the partition.
 fn mount_partition_detected(drive_letter: u16, base_ptr: *const u8, ramdisk: PartRamdisk) -> bool {
     let fs_type = detect_fs_type(base_ptr);
-    crate::boot_println!("[MOUNT] drive={}: detected {} (base=0x{:x})",
-        drive_letter as u8 as char, fs_type.as_str(), base_ptr as u64);
+    crate::boot_println!(
+        "[MOUNT] drive={}: detected {} (base=0x{:x})",
+        drive_letter as u8 as char,
+        fs_type.as_str(),
+        base_ptr as u64
+    );
     match fs_type {
         FsType::Fat32 => {
             let path = [drive_letter, 0];
@@ -1134,11 +1167,17 @@ fn mount_partition_detected(drive_letter: u16, base_ptr: *const u8, ramdisk: Par
             set_active_partition_ramdisk(prev);
             match res {
                 Some(_fs) => {
-                    crate::boot_println!("[MOUNT] drive={}: FAT32 mounted", drive_letter as u8 as char);
+                    crate::boot_println!(
+                        "[MOUNT] drive={}: FAT32 mounted",
+                        drive_letter as u8 as char
+                    );
                     true
                 }
                 None => {
-                    crate::boot_println!("[MOUNT] drive={}: FAT32 mount failed", drive_letter as u8 as char);
+                    crate::boot_println!(
+                        "[MOUNT] drive={}: FAT32 mount failed",
+                        drive_letter as u8 as char
+                    );
                     false
                 }
             }
@@ -1154,11 +1193,17 @@ fn mount_partition_detected(drive_letter: u16, base_ptr: *const u8, ramdisk: Par
             set_active_partition_ramdisk(prev);
             match res {
                 Some(_fs) => {
-                    crate::boot_println!("[MOUNT] drive={}: NTFS mounted", drive_letter as u8 as char);
+                    crate::boot_println!(
+                        "[MOUNT] drive={}: NTFS mounted",
+                        drive_letter as u8 as char
+                    );
                     true
                 }
                 None => {
-                    crate::boot_println!("[MOUNT] drive={}: NTFS mount failed", drive_letter as u8 as char);
+                    crate::boot_println!(
+                        "[MOUNT] drive={}: NTFS mount failed",
+                        drive_letter as u8 as char
+                    );
                     false
                 }
             }
@@ -1174,8 +1219,10 @@ fn mount_partition_detected(drive_letter: u16, base_ptr: *const u8, ramdisk: Par
                 let disk_size = match ramdisk.kind_size() {
                     Some(s) => s,
                     None => {
-                        crate::boot_println!("[MOUNT] drive={}: EXT4 mount skipped (no size info)",
-                            drive_letter as u8 as char);
+                        crate::boot_println!(
+                            "[MOUNT] drive={}: EXT4 mount skipped (no size info)",
+                            drive_letter as u8 as char
+                        );
                         return false;
                     }
                 };
@@ -1190,8 +1237,10 @@ fn mount_partition_detected(drive_letter: u16, base_ptr: *const u8, ramdisk: Par
                     /*read_only=*/ true,
                 );
                 if !ok {
-                    crate::boot_println!("[MOUNT] drive={}: EXT4 install_from_external failed",
-                        drive_letter as u8 as char);
+                    crate::boot_println!(
+                        "[MOUNT] drive={}: EXT4 install_from_external failed",
+                        drive_letter as u8 as char
+                    );
                     return false;
                 }
             }
@@ -1199,11 +1248,19 @@ fn mount_partition_detected(drive_letter: u16, base_ptr: *const u8, ramdisk: Par
             // driver ignores it and goes through `drivers::storage::ramdisk`.
             match crate::fs::ext2::mount(core::ptr::null_mut(), 0) {
                 Some(_fs) => {
-                    crate::boot_println!("[MOUNT] drive={}: {} mounted", drive_letter as u8 as char, fs_type.as_str());
+                    crate::boot_println!(
+                        "[MOUNT] drive={}: {} mounted",
+                        drive_letter as u8 as char,
+                        fs_type.as_str()
+                    );
                     true
                 }
                 None => {
-                    crate::boot_println!("[MOUNT] drive={}: {} mount failed", drive_letter as u8 as char, fs_type.as_str());
+                    crate::boot_println!(
+                        "[MOUNT] drive={}: {} mount failed",
+                        drive_letter as u8 as char,
+                        fs_type.as_str()
+                    );
                     false
                 }
             }
@@ -1214,13 +1271,17 @@ fn mount_partition_detected(drive_letter: u16, base_ptr: *const u8, ramdisk: Par
         // wildcard arm keeps the match exhaustive when they are absent.
         #[cfg(not(target_arch = "x86_64"))]
         FsType::Ext2 | FsType::Ext3 | FsType::Ext4 => {
-            crate::boot_println!("[MOUNT] drive={}: EXT filesystem driver not built on this arch",
-                drive_letter as u8 as char);
+            crate::boot_println!(
+                "[MOUNT] drive={}: EXT filesystem driver not built on this arch",
+                drive_letter as u8 as char
+            );
             false
         }
         FsType::Unknown => {
-            crate::boot_println!("[MOUNT] drive={}: unknown filesystem type, NOT mounted",
-                drive_letter as u8 as char);
+            crate::boot_println!(
+                "[MOUNT] drive={}: unknown filesystem type, NOT mounted",
+                drive_letter as u8 as char
+            );
             false
         }
     }
@@ -1320,4 +1381,19 @@ pub fn get_fat32_partition_info() -> (u64, u64, bool) {
 /// lives in the `smoke` submodule; this re-export keeps the call
 /// site readable as `fs::smoke_test()` (matching the convention used
 /// by the other subsystems).
-pub fn smoke_test() -> bool { smoke::smoke_test() }
+pub fn smoke_test() -> bool {
+    smoke::smoke_test()
+}
+
+pub mod cache;
+pub mod cache_complete;
+pub mod cache_manager;
+pub mod cache_test;
+pub mod diskpart;
+pub mod filter;
+pub mod locking;
+pub mod mount;
+pub mod notify;
+pub mod section;
+pub mod tests;
+pub mod vss;

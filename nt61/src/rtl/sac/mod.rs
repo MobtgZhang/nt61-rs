@@ -19,15 +19,27 @@ static SAC_INITIALIZED: AtomicBool = AtomicBool::new(false);
 /// Whether we are in SAC command mode
 static IN_SAC_MODE: AtomicBool = AtomicBool::new(false);
 
-pub fn enable() { EMS_ENABLED.store(true, Ordering::Release); }
-pub fn disable() { EMS_ENABLED.store(false, Ordering::Release); }
-pub fn is_enabled() -> bool { EMS_ENABLED.load(Ordering::Acquire) }
+pub fn enable() {
+    EMS_ENABLED.store(true, Ordering::Release);
+}
+pub fn disable() {
+    EMS_ENABLED.store(false, Ordering::Release);
+}
+pub fn is_enabled() -> bool {
+    EMS_ENABLED.load(Ordering::Acquire)
+}
 pub fn init() {
-    if !is_enabled() { return; }
+    if !is_enabled() {
+        return;
+    }
     SAC_INITIALIZED.store(true, Ordering::Release);
 }
-pub fn is_initialized() -> bool { SAC_INITIALIZED.load(Ordering::Acquire) }
-pub fn is_in_sac_mode() -> bool { IN_SAC_MODE.load(Ordering::Acquire) }
+pub fn is_initialized() -> bool {
+    SAC_INITIALIZED.load(Ordering::Acquire)
+}
+pub fn is_in_sac_mode() -> bool {
+    IN_SAC_MODE.load(Ordering::Acquire)
+}
 
 pub fn stop_sac_loop() {
     IN_SAC_MODE.store(false, Ordering::Release);
@@ -86,7 +98,9 @@ pub fn start_sac_loop() {
             } else {
                 core::hint::spin_loop();
             }
-            if !is_in_sac_mode() { break; }
+            if !is_in_sac_mode() {
+                break;
+            }
         }
     }
     IN_SAC_MODE.store(false, Ordering::Release);
@@ -97,7 +111,9 @@ fn print_sac_banner() {
     {
         use crate::hal::serial;
         serial::write_string("\r\nComputer is booting, SAC started and initialized.\r\n");
-        serial::write_string("\r\nUse the \"ch -?\" command for information about using channels.\r\n");
+        serial::write_string(
+            "\r\nUse the \"ch -?\" command for information about using channels.\r\n",
+        );
         serial::write_string("\r\nSAC>");
     }
 }

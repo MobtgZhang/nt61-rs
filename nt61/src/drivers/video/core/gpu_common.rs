@@ -6,28 +6,27 @@
 //! Clean-room implementation based on industry standards.
 
 use crate::hal::common::pci::{self, PciDevice};
-use alloc::vec::Vec;
 use alloc::boxed::Box;
+use alloc::vec::Vec;
 
 #[allow(dead_code)]
-
 // =====================================================================
 // GPU Vendor IDs
 // =====================================================================
 
 /// GPU Vendor IDs (PCI Vendor IDs)
 pub mod vendors {
-    pub const VENDOR_LOONGSON: u16 = 0x0014;    // Loongson Technology
-    pub const VENDOR_INTEL: u16 = 0x8086;        // Intel
-    pub const VENDOR_AMD: u16 = 0x1002;           // AMD/ATI
-    pub const VENDOR_NVIDIA: u16 = 0x10DE;        // NVIDIA
-    pub const VENDOR_ZHAOXIN: u16 = 0x1D17;       // Zhaoxin Electronics
-    pub const VENDOR_GLENFLY: u16 = 0x1F31;      // Glenfly Technology
-    pub const VENDOR_ROCKCHIP: u16 = 0x220E;      // Rockchip
-    pub const VENDOR_ALLWINNER: u16 = 0x1D3D;    // Allwinner Technology
-    pub const VENDOR_QUALCOMM: u16 = 0x5143;      // Qualcomm
-    pub const VENDOR_STARFIVE: u16 = 0x1D6A;       // StarFive Technology (corrected)
-    pub const VENDOR_VIRTIO: u16 = 0x1AF4;         // Red Hat (virtio)
+    pub const VENDOR_LOONGSON: u16 = 0x0014; // Loongson Technology
+    pub const VENDOR_INTEL: u16 = 0x8086; // Intel
+    pub const VENDOR_AMD: u16 = 0x1002; // AMD/ATI
+    pub const VENDOR_NVIDIA: u16 = 0x10DE; // NVIDIA
+    pub const VENDOR_ZHAOXIN: u16 = 0x1D17; // Zhaoxin Electronics
+    pub const VENDOR_GLENFLY: u16 = 0x1F31; // Glenfly Technology
+    pub const VENDOR_ROCKCHIP: u16 = 0x220E; // Rockchip
+    pub const VENDOR_ALLWINNER: u16 = 0x1D3D; // Allwinner Technology
+    pub const VENDOR_QUALCOMM: u16 = 0x5143; // Qualcomm
+    pub const VENDOR_STARFIVE: u16 = 0x1D6A; // StarFive Technology (corrected)
+    pub const VENDOR_VIRTIO: u16 = 0x1AF4; // Red Hat (virtio)
 
     /// Check if a vendor ID is a known GPU vendor
     pub fn is_gpu_vendor(vendor_id: u16) -> bool {
@@ -209,7 +208,9 @@ impl PixelFormat {
     /// Get bytes per pixel
     pub fn bytes_per_pixel(&self) -> u32 {
         match self {
-            PixelFormat::Bgra8888 | PixelFormat::Rgba8888 | PixelFormat::Bgrx8888
+            PixelFormat::Bgra8888
+            | PixelFormat::Rgba8888
+            | PixelFormat::Bgrx8888
             | PixelFormat::Xrgb8888 => 4,
             PixelFormat::Bgr565 => 2,
             PixelFormat::G8 => 1,
@@ -310,13 +311,7 @@ pub struct GpuFramebufferInfo {
 
 impl GpuFramebufferInfo {
     /// Create new framebuffer info
-    pub fn new(
-        address: u64,
-        width: u32,
-        height: u32,
-        pitch: u32,
-        bpp: u32,
-    ) -> Self {
+    pub fn new(address: u64, width: u32, height: u32, pitch: u32, bpp: u32) -> Self {
         let format = match bpp {
             32 => PixelFormat::Bgra8888,
             24 => PixelFormat::Bgrx8888,
@@ -511,7 +506,10 @@ pub trait GpuDriver: Send + Sync {
     fn init(&mut self) -> Result<(), GpuError>;
 
     /// Initialize framebuffer with a specific mode
-    fn init_framebuffer(&mut self, mode: Option<DisplayMode>) -> Result<GpuFramebufferInfo, GpuError>;
+    fn init_framebuffer(
+        &mut self,
+        mode: Option<DisplayMode>,
+    ) -> Result<GpuFramebufferInfo, GpuError>;
 
     /// Set display mode
     fn set_mode(&mut self, mode: &DisplayMode) -> Result<(), GpuError>;
@@ -548,24 +546,32 @@ pub trait GpuDriver: Send + Sync {
 pub trait MultiHead: GpuDriver {
     /// Enumerate available display connectors
     fn enumerate_connectors(&self) -> Vec<DisplayConnector>;
-    
+
     /// Get the status of a connector
     fn get_connector_status(&self, connector: DisplayConnector) -> ConnectorStatus;
-    
+
     /// Enable a connector
-    fn enable_connector(&mut self, connector: DisplayConnector, mode: DisplayMode) -> Result<(), GpuError>;
-    
+    fn enable_connector(
+        &mut self,
+        connector: DisplayConnector,
+        mode: DisplayMode,
+    ) -> Result<(), GpuError>;
+
     /// Disable a connector
     fn disable_connector(&mut self, connector: DisplayConnector);
-    
+
     /// Set the power state of a connector
     fn set_connector_power(&mut self, connector: DisplayConnector, on: bool);
-    
+
     /// Get the number of available heads
     fn head_count(&self) -> usize;
-    
+
     /// Configure multiple displays
-    fn configure_multihead(&mut self, heads: &[DisplayHead], mode: DisplayModeType) -> Result<(), GpuError>;
+    fn configure_multihead(
+        &mut self,
+        heads: &[DisplayHead],
+        mode: DisplayModeType,
+    ) -> Result<(), GpuError>;
 }
 
 // =====================================================================
@@ -591,20 +597,14 @@ pub enum DiscoveredGpu {
         family: AmdFamily,
     },
     /// NVIDIA GPU
-    Nvidia {
-        device: PciDevice,
-        arch: NvidiaArch,
-    },
+    Nvidia { device: PciDevice, arch: NvidiaArch },
     /// Zhaoxin GPU
     Zhaoxin {
         device: PciDevice,
         variant: ZhaoxinVariant,
     },
     /// Rockchip GPU
-    Rockchip {
-        device: PciDevice,
-        soc: RockchipSoc,
-    },
+    Rockchip { device: PciDevice, soc: RockchipSoc },
     /// Qualcomm GPU
     Qualcomm {
         device: PciDevice,
@@ -616,18 +616,11 @@ pub enum DiscoveredGpu {
         soc: AllwinnerSoc,
     },
     /// StarFive GPU (RISC-V)
-    Starfive {
-        device: PciDevice,
-        soc: StarfiveSoc,
-    },
+    Starfive { device: PciDevice, soc: StarfiveSoc },
     /// virtio-gpu (QEMU)
-    VirtioGpu {
-        device: PciDevice,
-    },
+    VirtioGpu { device: PciDevice },
     /// Unknown GPU
-    Unknown {
-        device: PciDevice,
-    },
+    Unknown { device: PciDevice },
 }
 
 /// Loongson chip variants
@@ -843,10 +836,7 @@ pub fn discover_gpus() -> Vec<DiscoveredGpu> {
             match dev.vendor_id {
                 vendors::VENDOR_LOONGSON => {
                     let chip = loongson_chip_from_device_id(dev.device_id);
-                    gpus.push(DiscoveredGpu::Loongson {
-                        device: *dev,
-                        chip,
-                    });
+                    gpus.push(DiscoveredGpu::Loongson { device: *dev, chip });
                 }
                 vendors::VENDOR_INTEL => {
                     let gen = intel_generation_from_device_id(dev.device_id);
@@ -864,10 +854,7 @@ pub fn discover_gpus() -> Vec<DiscoveredGpu> {
                 }
                 vendors::VENDOR_NVIDIA => {
                     let arch = nvidia_arch_from_device_id(dev.device_id);
-                    gpus.push(DiscoveredGpu::Nvidia {
-                        device: *dev,
-                        arch,
-                    });
+                    gpus.push(DiscoveredGpu::Nvidia { device: *dev, arch });
                 }
                 vendors::VENDOR_ZHAOXIN | vendors::VENDOR_GLENFLY => {
                     let variant = zhaoxin_variant_from_device_id(dev.device_id);
@@ -878,10 +865,7 @@ pub fn discover_gpus() -> Vec<DiscoveredGpu> {
                 }
                 vendors::VENDOR_ROCKCHIP => {
                     let soc = rockchip_soc_from_device_id(dev.device_id);
-                    gpus.push(DiscoveredGpu::Rockchip {
-                        device: *dev,
-                        soc,
-                    });
+                    gpus.push(DiscoveredGpu::Rockchip { device: *dev, soc });
                 }
                 vendors::VENDOR_QUALCOMM => {
                     let gen = qualcomm_gen_from_device_id(dev.device_id);
@@ -892,22 +876,14 @@ pub fn discover_gpus() -> Vec<DiscoveredGpu> {
                 }
                 vendors::VENDOR_ALLWINNER => {
                     let soc = allwinner_soc_from_device_id(dev.device_id);
-                    gpus.push(DiscoveredGpu::Allwinner {
-                        device: *dev,
-                        soc,
-                    });
+                    gpus.push(DiscoveredGpu::Allwinner { device: *dev, soc });
                 }
                 vendors::VENDOR_STARFIVE => {
                     let soc = starfive_soc_from_device_id(dev.device_id);
-                    gpus.push(DiscoveredGpu::Starfive {
-                        device: *dev,
-                        soc,
-                    });
+                    gpus.push(DiscoveredGpu::Starfive { device: *dev, soc });
                 }
                 vendors::VENDOR_VIRTIO => {
-                    gpus.push(DiscoveredGpu::VirtioGpu {
-                        device: *dev,
-                    });
+                    gpus.push(DiscoveredGpu::VirtioGpu { device: *dev });
                 }
                 _ => {
                     gpus.push(DiscoveredGpu::Unknown { device: *dev });
@@ -1013,20 +989,20 @@ fn amd_family_from_device_id(device_id: u16) -> AmdFamily {
     if (0x68BE..=0x69FF).contains(&device_id) {
         return AmdFamily::Evergreen;
     }
-    // Southern Islands: 0x6760-0x67FF
-    if (0x6760..=0x67FF).contains(&device_id) {
-        return AmdFamily::Southern;
-    }
-    // Sea Islands: 0x6600-0x666F or 0x67B0-0x67FF
-    if (0x6600..=0x666F).contains(&device_id) || (0x67B0..=0x67FF).contains(&device_id) {
-        return AmdFamily::Sea;
-    }
     // Polaris: 0x67C0-0x67FF or 0x69C0-0x69FF or 0x6FDF
     if (0x67C0..=0x67FF).contains(&device_id)
         || (0x69C0..=0x69FF).contains(&device_id)
         || device_id == 0x6FDF
     {
         return AmdFamily::Polaris;
+    }
+    // Southern Islands: 0x6760-0x67BF (after Polaris to avoid overlap)
+    if (0x6760..=0x67BF).contains(&device_id) {
+        return AmdFamily::Southern;
+    }
+    // Sea Islands: 0x6600-0x666F
+    if (0x6600..=0x666F).contains(&device_id) {
+        return AmdFamily::Sea;
     }
     AmdFamily::Unknown
 }
@@ -1036,13 +1012,13 @@ fn nvidia_arch_from_device_id(device_id: u16) -> NvidiaArch {
     // Simplified version
     let family = device_id >> 8;
     match family {
-        0x06 => NvidiaArch::Tesla,      // GeForce 8xxx-9xxx
-        0x0F => NvidiaArch::Fermi,      // GeForce GTX 400/500
-        0x10 | 0x11 | 0x12 => NvidiaArch::Kepler, // GeForce GTX 600/700
-        0x13 => NvidiaArch::Maxwell,     // GeForce GTX 900
-        0x14 | 0x15 | 0x16 => NvidiaArch::Pascal, // GeForce GTX 1000
-        0x17 | 0x18 => NvidiaArch::Turing, // RTX 2000
-        0x1E | 0x20 | 0x21 => NvidiaArch::Ampere, // RTX 3000
+        0x06 => NvidiaArch::Tesla,                            // GeForce 8xxx-9xxx
+        0x0F => NvidiaArch::Fermi,                            // GeForce GTX 400/500
+        0x10 | 0x11 | 0x12 => NvidiaArch::Kepler,             // GeForce GTX 600/700
+        0x13 => NvidiaArch::Maxwell,                          // GeForce GTX 900
+        0x14 | 0x15 | 0x16 => NvidiaArch::Pascal,             // GeForce GTX 1000
+        0x17 | 0x18 => NvidiaArch::Turing,                    // RTX 2000
+        0x1E | 0x20 | 0x21 => NvidiaArch::Ampere,             // RTX 3000
         0x22 | 0x23 | 0x24 | 0x25 => NvidiaArch::AdaLovelace, // RTX 4000
         _ => NvidiaArch::Unknown,
     }
@@ -1121,21 +1097,19 @@ fn starfive_soc_from_device_id(device_id: u16) -> StarfiveSoc {
 
 /// Find GPU by vendor ID
 pub fn find_gpu_by_vendor(vendor_id: u16) -> Option<DiscoveredGpu> {
-    discover_gpus()
-        .into_iter()
-        .find(|gpu| match gpu {
-            DiscoveredGpu::Loongson { device, .. } => device.vendor_id == vendor_id,
-            DiscoveredGpu::Intel { device, .. } => device.vendor_id == vendor_id,
-            DiscoveredGpu::Amd { device, .. } => device.vendor_id == vendor_id,
-            DiscoveredGpu::Nvidia { device, .. } => device.vendor_id == vendor_id,
-            DiscoveredGpu::Zhaoxin { device, .. } => device.vendor_id == vendor_id,
-            DiscoveredGpu::Rockchip { device, .. } => device.vendor_id == vendor_id,
-            DiscoveredGpu::Qualcomm { device, .. } => device.vendor_id == vendor_id,
-            DiscoveredGpu::Allwinner { device, .. } => device.vendor_id == vendor_id,
-            DiscoveredGpu::Starfive { device, .. } => device.vendor_id == vendor_id,
-            DiscoveredGpu::VirtioGpu { device, .. } => device.vendor_id == vendor_id,
-            DiscoveredGpu::Unknown { device, .. } => device.vendor_id == vendor_id,
-        })
+    discover_gpus().into_iter().find(|gpu| match gpu {
+        DiscoveredGpu::Loongson { device, .. } => device.vendor_id == vendor_id,
+        DiscoveredGpu::Intel { device, .. } => device.vendor_id == vendor_id,
+        DiscoveredGpu::Amd { device, .. } => device.vendor_id == vendor_id,
+        DiscoveredGpu::Nvidia { device, .. } => device.vendor_id == vendor_id,
+        DiscoveredGpu::Zhaoxin { device, .. } => device.vendor_id == vendor_id,
+        DiscoveredGpu::Rockchip { device, .. } => device.vendor_id == vendor_id,
+        DiscoveredGpu::Qualcomm { device, .. } => device.vendor_id == vendor_id,
+        DiscoveredGpu::Allwinner { device, .. } => device.vendor_id == vendor_id,
+        DiscoveredGpu::Starfive { device, .. } => device.vendor_id == vendor_id,
+        DiscoveredGpu::VirtioGpu { device, .. } => device.vendor_id == vendor_id,
+        DiscoveredGpu::Unknown { device, .. } => device.vendor_id == vendor_id,
+    })
 }
 
 // =====================================================================
@@ -1150,7 +1124,9 @@ pub struct GpuDriverRegistry {
 impl GpuDriverRegistry {
     /// Create new registry
     pub fn new() -> Self {
-        Self { drivers: Vec::new() }
+        Self {
+            drivers: Vec::new(),
+        }
     }
 
     /// Register a GPU driver
@@ -1317,7 +1293,7 @@ mod tests {
     fn test_edid_standard_timing_wide() {
         use crate::drivers::video::edid::EdidStandardTiming;
         let timing = EdidStandardTiming {
-            horz_pixels_div_8_minus_31: 60, // (60+31)*8 = 728
+            horz_pixels_div_8_minus_31: 60,    // (60+31)*8 = 728
             refresh_minus_60_and_aspect: 0x80, // 16:9 ratio, 60Hz
         };
         assert_eq!(timing.horizontal_resolution(), 728);

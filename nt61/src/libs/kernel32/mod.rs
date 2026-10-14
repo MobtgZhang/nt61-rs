@@ -30,38 +30,48 @@
 //!   * ReactOS 0.3.x winbase.h
 //!   * Wine 1.7.x kernel32.spec
 
-pub mod types;
-pub mod error;
-pub mod env;
-pub mod time;
-pub mod handle;
-pub mod file;
-pub mod module;
-pub mod memory;
-pub mod sync;
-pub mod process;
-pub mod thread;
 pub mod console;
+pub mod env;
+pub mod error;
+pub mod file;
+pub mod handle;
+pub mod memory;
+pub mod module;
+pub mod process;
 pub mod smoke;
+pub mod sync;
+pub mod thread;
+pub mod time;
+pub mod types;
 
 /// Initialise the kernel32 stub. Walks every submodule's
 /// `init()` (where one is defined) and prints a status
 /// line.
 pub fn init() {
-    // crate::kprintln!("    KERNEL32: init")  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("      types:   ready")  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("      error:   ready (GetLastError/SetLastError)")  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("      env:     ready (GetEnvironmentVariableW)")  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("      time:    ready (GetSystemTime/GetTickCount)")  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("      handle:  ready (CloseHandle)")  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("      file:    ready (CreateFileW/ReadFile/WriteFile)")  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("      module:  ready (LoadLibraryW/GetProcAddress)")  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("      memory:  ready (VirtualAlloc/HeapAlloc)")  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("      sync:    ready (CreateEventW/WaitForSingleObject)")  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("      process: ready (CreateProcessW)")  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("      thread:  ready (CreateThread/Sleep)")  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("      console: ready (WriteConsoleW/AllocConsole)")  // kprintln disabled (memcpy crash workaround);
+    // crate::kprintln!("    KERNEL32: init");
+    // crate::kprintln!("      types:   ready");
+    // crate::kprintln!("      error:   ready (GetLastError/SetLastError)");
+    // crate::kprintln!("      env:     ready (GetEnvironmentVariableW)");
+    // crate::kprintln!("      time:    ready (GetSystemTime/GetTickCount)");
+    // crate::kprintln!("      handle:  ready (CloseHandle)");
+    // crate::kprintln!("      file:    ready (CreateFileW/ReadFile/WriteFile)");
+    // crate::kprintln!("      module:  ready (LoadLibraryW/GetProcAddress)");
+    // crate::kprintln!("      memory:  ready (VirtualAlloc/HeapAlloc)");
+    // crate::kprintln!("      sync:    ready (CreateEventW/WaitForSingleObject)");
+    // crate::kprintln!("      process: ready (CreateProcessW)");
+    // crate::kprintln!("      thread:  ready (CreateThread/Sleep)");
+    // crate::kprintln!("      console: ready (WriteConsoleW/AllocConsole)");
 }
 
 /// Re-export of the kernel32 smoke test aggregator.
-pub fn smoke_test() -> bool { smoke::smoke_test() }
+pub fn smoke_test() -> bool {
+    smoke::smoke_test()
+}
+
+pub mod console_ext;
+pub mod file_async;
+pub mod file_ext;
+pub mod file_ext_safe;
+pub mod process_ext;
+pub mod sync_ext;
+pub mod sync_srw;

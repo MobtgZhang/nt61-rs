@@ -15,9 +15,8 @@
 extern crate alloc;
 
 use super::status::{
-    STATUS_ACCESS_DENIED, STATUS_BUFFER_TOO_SMALL, STATUS_INVALID_HANDLE,
-    STATUS_INVALID_PARAMETER, STATUS_NOT_IMPLEMENTED,
-    STATUS_NO_MEMORY, STATUS_SUCCESS,
+    STATUS_ACCESS_DENIED, STATUS_BUFFER_TOO_SMALL, STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER,
+    STATUS_NOT_IMPLEMENTED, STATUS_NO_MEMORY, STATUS_SUCCESS,
 };
 use super::types::{HANDLE, NTSTATUS, PVOID, SIZE_T};
 use crate::ke::sync::Spinlock;
@@ -30,8 +29,8 @@ use core::ptr;
 const USER_BASE: u64 = 0x0000_7000_0000_0000;
 
 /// Pool tag for virtual memory allocations (4-character tag: 'VMem')
-const VMEM_POOL_TAG: u32 = (b'V' as u32) | (b'M' as u32) << 8
-    | (b'e' as u32) << 16 | (b'm' as u32) << 24;
+const VMEM_POOL_TAG: u32 =
+    (b'V' as u32) | (b'M' as u32) << 8 | (b'e' as u32) << 16 | (b'm' as u32) << 24;
 
 /// Memory allocation tracking entry.
 struct MemEntry {
@@ -106,7 +105,8 @@ fn is_valid_protect(protect: u32) -> bool {
             | page::PAGE_EXECUTE_READ
             | page::PAGE_EXECUTE_READWRITE
             | page::PAGE_EXECUTE_WRITECOPY
-            | page::PAGE_GUARD | page::PAGE_NOCACHE
+            | page::PAGE_GUARD
+            | page::PAGE_NOCACHE
             | page::PAGE_WRITECOMBINE
     )
 }
@@ -124,8 +124,8 @@ pub unsafe extern "C" fn NtAllocateVirtualMemory(
     protect: u32,
 ) -> NTSTATUS {
     use super::status::STATUS_INVALID_PARAMETER;
-    use super::types::page;
     use super::types::mem;
+    use super::types::page;
 
     // Parameter validation
     if base_address.is_null() || region_size.is_null() {
@@ -144,14 +144,22 @@ pub unsafe extern "C" fn NtAllocateVirtualMemory(
 
     // Align size to page boundary
     let aligned_size = align_to_page(sz) as u64;
-    let actual_size = if aligned_size == 0 { PAGE_SIZE } else { aligned_size };
+    let actual_size = if aligned_size == 0 {
+        PAGE_SIZE
+    } else {
+        aligned_size
+    };
 
     // Determine allocation type
     let _do_reserve = (allocation_type & mem::MEM_RESERVE) != 0;
     let _do_commit = (allocation_type & mem::MEM_COMMIT) != 0;
 
     // Default protection if not specified
-    let effective_protect = if protect == 0 { page::PAGE_READWRITE } else { protect };
+    let effective_protect = if protect == 0 {
+        page::PAGE_READWRITE
+    } else {
+        protect
+    };
 
     // Determine the target address
     let desired_base = if (*base_address).is_null() {
@@ -161,11 +169,8 @@ pub unsafe extern "C" fn NtAllocateVirtualMemory(
     };
 
     // Try to allocate from kernel VAS first
-    let alloc_result = crate::mm::vas::allocate_user_va(
-        desired_base,
-        actual_size,
-        effective_protect,
-    );
+    let alloc_result =
+        crate::mm::vas::allocate_user_va(desired_base, actual_size, effective_protect);
 
     let virt_addr = match alloc_result {
         Some(addr) => addr,
@@ -205,8 +210,8 @@ pub unsafe extern "C" fn NtFreeVirtualMemory(
     region_size: *mut SIZE_T,
     free_type: u32,
 ) -> NTSTATUS {
-    use super::types::mem;
     use super::status::STATUS_INVALID_HANDLE;
+    use super::types::mem;
 
     // Parameter validation
     if base_address.is_null() || (*base_address).is_null() {
@@ -327,8 +332,8 @@ pub unsafe extern "C" fn NtQueryVirtualMemory(
     memory_information_length: SIZE_T,
     return_length: *mut SIZE_T,
 ) -> NTSTATUS {
-    use super::types::page;
     use super::types::mem;
+    use super::types::page;
 
     if memory_information.is_null() {
         return STATUS_INVALID_PARAMETER;
@@ -353,9 +358,10 @@ pub unsafe extern "C" fn NtQueryVirtualMemory(
 
     // Look up the allocation
     let table = MEMORY_TABLE.lock();
-    if let Some(entry) = table.iter().find(|e| {
-        virt_addr >= e.base_address && virt_addr < e.base_address + e.region_size
-    }) {
+    if let Some(entry) = table
+        .iter()
+        .find(|e| virt_addr >= e.base_address && virt_addr < e.base_address + e.region_size)
+    {
         let mbi = &mut *(memory_information as *mut MemoryBasicInformation);
         mbi.base_address = entry.base_address as PVOID;
         mbi.allocation_base = entry.base_address as PVOID;
@@ -412,7 +418,11 @@ pub unsafe extern "C" fn NtReadVirtualMemory(
         return STATUS_NOT_IMPLEMENTED;
     }
 
-    core::ptr::copy_nonoverlapping(base_address as *const u8, buffer as *mut u8, number_of_bytes_to_read);
+    core::ptr::copy_nonoverlapping(
+        base_address as *const u8,
+        buffer as *mut u8,
+        number_of_bytes_to_read,
+    );
     if !number_of_bytes_read.is_null() {
         *number_of_bytes_read = number_of_bytes_to_read;
     }
@@ -435,7 +445,11 @@ pub unsafe extern "C" fn NtWriteVirtualMemory(
         return STATUS_NOT_IMPLEMENTED;
     }
 
-    core::ptr::copy_nonoverlapping(buffer as *const u8, base_address as *mut u8, number_of_bytes_to_write);
+    core::ptr::copy_nonoverlapping(
+        buffer as *const u8,
+        base_address as *mut u8,
+        number_of_bytes_to_write,
+    );
     if !number_of_bytes_written.is_null() {
         *number_of_bytes_written = number_of_bytes_to_write;
     }

@@ -5,8 +5,8 @@
 
 #![allow(non_snake_case)]
 
-use core::sync::atomic::AtomicU64;
 use crate::kprintln;
+use core::sync::atomic::AtomicU64;
 
 // =============================================================================
 // Coordinate Systems
@@ -65,10 +65,18 @@ impl UpdateRegionFlags {
     pub const RDW_FRAME: u32 = 0x0400;
     pub const RDW_NOFRAME: u32 = 0x0800;
 
-    pub const fn new(bits: u32) -> Self { Self(bits) }
-    pub const fn bits(&self) -> u32 { self.0 }
-    pub fn set(&mut self, flag: u32) { self.0 |= flag; }
-    pub fn contains(&self, flag: u32) -> bool { (self.0 & flag) == flag }
+    pub const fn new(bits: u32) -> Self {
+        Self(bits)
+    }
+    pub const fn bits(&self) -> u32 {
+        self.0
+    }
+    pub fn set(&mut self, flag: u32) {
+        self.0 |= flag;
+    }
+    pub fn contains(&self, flag: u32) -> bool {
+        (self.0 & flag) == flag
+    }
 }
 
 // =============================================================================
@@ -146,11 +154,11 @@ pub fn lp_to_dp(hdc: u64, points: &mut [POINT]) -> bool {
             pt.x = dx;
             pt.y = dy;
         }
-        // kprintln!("[win32k] lp_to_dp: hdc={:#x}, {} points, scale=({:.2},{:.2})",  // kprintln disabled (memcpy crash workaround)
-//             hdc, points.len(), scale_x, scale_y);
+        // kprintln!("[win32k] lp_to_dp: hdc={:#x}, {} points, scale=({:.2},{:.2})",
+        //             hdc, points.len(), scale_x, scale_y);
         true
     } else {
-        // kprintln!("[win32k] lp_to_dp: hdc={:#x} not found", hdc)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[win32k] lp_to_dp: hdc={:#x} not found", hdc);
         false
     }
 }
@@ -206,11 +214,11 @@ pub fn dp_to_lp(hdc: u64, points: &mut [POINT]) -> bool {
             pt.x = lx;
             pt.y = ly;
         }
-        // kprintln!("[win32k] dp_to_lp: hdc={:#x}, {} points, scale=({:.2},{:.2})",  // kprintln disabled (memcpy crash workaround)
-//             hdc, points.len(), scale_x, scale_y);
+        // kprintln!("[win32k] dp_to_lp: hdc={:#x}, {} points, scale=({:.2},{:.2})",
+        //             hdc, points.len(), scale_x, scale_y);
         true
     } else {
-        // kprintln!("[win32k] dp_to_lp: hdc={:#x} not found", hdc)  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[win32k] dp_to_lp: hdc={:#x} not found", hdc);
         false
     }
 }
@@ -221,7 +229,7 @@ pub fn rect_lp_to_dp(hdc: u64, rect: &mut crate::libs::win32k::window::Rect) -> 
         POINT::new(rect.left, rect.top),
         POINT::new(rect.right, rect.bottom),
     ];
-    
+
     if lp_to_dp(hdc, &mut points) {
         // Get new bounds
         let left = points[0].x.min(points[1].x);
@@ -236,15 +244,15 @@ pub fn rect_lp_to_dp(hdc: u64, rect: &mut crate::libs::win32k::window::Rect) -> 
         let bottom = points[0].y.max(points[1].y);
         let _ = &bottom;
         let _ = &bottom;
-        
+
         rect.left = left;
         rect.top = top;
         rect.right = right;
         rect.bottom = bottom;
-        
-        // kprintln!("[win32k] rect_lp_to_dp: hdc={:#x}, ({},{})-({},{}) -> ({},{})-({},{})",  // kprintln disabled (memcpy crash workaround)
-//             hdc, rect.left, rect.top, rect.right, rect.bottom,
-//             rect.left, rect.top, rect.right, rect.bottom);
+
+        // kprintln!("[win32k] rect_lp_to_dp: hdc={:#x}, ({},{})-({},{}) -> ({},{})-({},{})",
+        //             hdc, rect.left, rect.top, rect.right, rect.bottom,
+        //             rect.left, rect.top, rect.right, rect.bottom);
         true
     } else {
         false
@@ -257,7 +265,7 @@ pub fn rect_dp_to_lp(hdc: u64, rect: &mut crate::libs::win32k::window::Rect) -> 
         POINT::new(rect.left, rect.top),
         POINT::new(rect.right, rect.bottom),
     ];
-    
+
     if dp_to_lp(hdc, &mut points) {
         let left = points[0].x.min(points[1].x);
         let _ = &left;
@@ -271,15 +279,15 @@ pub fn rect_dp_to_lp(hdc: u64, rect: &mut crate::libs::win32k::window::Rect) -> 
         let bottom = points[0].y.max(points[1].y);
         let _ = &bottom;
         let _ = &bottom;
-        
+
         rect.left = left;
         rect.top = top;
         rect.right = right;
         rect.bottom = bottom;
-        
-        // kprintln!("[win32k] rect_dp_to_lp: hdc={:#x}, ({},{})-({},{}) -> ({},{})-({},{})",  // kprintln disabled (memcpy crash workaround)
-//             hdc, rect.left, rect.top, rect.right, rect.bottom,
-//             rect.left, rect.top, rect.right, rect.bottom);
+
+        // kprintln!("[win32k] rect_dp_to_lp: hdc={:#x}, ({},{})-({},{}) -> ({},{})-({},{})",
+        //             hdc, rect.left, rect.top, rect.right, rect.bottom,
+        //             rect.left, rect.top, rect.right, rect.bottom);
         true
     } else {
         false
@@ -300,14 +308,14 @@ pub struct BeginPaintResult {
 /// BeginPaint - Prepare a window for painting.
 /// Returns a DC with the update region selected and the clipping region set.
 pub fn begin_paint(hwnd: u64) -> Option<BeginPaintResult> {
-    // kprintln!("[win32k] BeginPaint: hwnd={:#x}", hwnd)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[win32k] BeginPaint: hwnd={:#x}", hwnd);
 
     // Get the window's DC
     let hdc = crate::libs::win32k::dc::GreCreateDisplayDC();
     let _ = &hdc;
     let _ = &hdc;
     if hdc == 0 {
-        // kprintln!("[win32k] BeginPaint: failed to create DC")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[win32k] BeginPaint: failed to create DC");
         return None;
     }
 
@@ -332,8 +340,8 @@ pub fn begin_paint(hwnd: u64) -> Option<BeginPaintResult> {
     };
     let _ = &paint_struct;
 
-    // kprintln!("[win32k] BeginPaint: hdc={:#x}, rect=({},{})-({},{})",  // kprintln disabled (memcpy crash workaround)
-//         hdc, client_rect.left, client_rect.top, client_rect.right, client_rect.bottom);
+    // kprintln!("[win32k] BeginPaint: hdc={:#x}, rect=({},{})-({},{})",
+    //         hdc, client_rect.left, client_rect.top, client_rect.right, client_rect.bottom);
 
     Some(BeginPaintResult { hdc, paint_struct })
 }
@@ -341,7 +349,7 @@ pub fn begin_paint(hwnd: u64) -> Option<BeginPaintResult> {
 /// EndPaint - End a paint operation.
 /// Releases the DC and validates the update region.
 pub fn end_paint(hwnd: u64, hdc: u64) -> bool {
-    // kprintln!("[win32k] EndPaint: hwnd={:#x}, hdc={:#x}", hwnd, hdc)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[win32k] EndPaint: hwnd={:#x}, hdc={:#x}", hwnd, hdc);
 
     // Release the DC
     let _ = crate::libs::win32k::dc::GreDeleteDC(hdc);
@@ -362,9 +370,13 @@ pub fn end_paint(hwnd: u64, hdc: u64) -> bool {
 
 /// InvalidateRect - Add a rectangle to the update region.
 /// Causes WM_PAINT to be posted.
-pub fn invalidate_rect(hwnd: u64, rect: Option<crate::libs::win32k::window::Rect>, erase: bool) -> bool {
-    // kprintln!("[win32k] InvalidateRect: hwnd={:#x}, rect={:?}, erase={}",  // kprintln disabled (memcpy crash workaround)
-//         hwnd, rect, erase);
+pub fn invalidate_rect(
+    hwnd: u64,
+    rect: Option<crate::libs::win32k::window::Rect>,
+    erase: bool,
+) -> bool {
+    // kprintln!("[win32k] InvalidateRect: hwnd={:#x}, rect={:?}, erase={}",
+    //         hwnd, rect, erase);
 
     // Add the rectangle to the window's dirty list
     crate::libs::win32k::window::invalidate_rect_internal(hwnd, rect);
@@ -383,7 +395,7 @@ pub fn invalidate_rect(hwnd: u64, rect: Option<crate::libs::win32k::window::Rect
 /// ValidateRect - Remove a rectangle from the update region.
 /// Prevents WM_PAINT from being generated for this area.
 pub fn validate_rect(hwnd: u64, rect: Option<crate::libs::win32k::window::Rect>) -> bool {
-    // kprintln!("[win32k] ValidateRect: hwnd={:#x}, rect={:?}", hwnd, rect)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[win32k] ValidateRect: hwnd={:#x}, rect={:?}", hwnd, rect);
 
     // In a full implementation, this would remove the rect from the update region
     // For now, just mark the window as not dirty
@@ -406,7 +418,7 @@ pub fn validate_rect(hwnd: u64, rect: Option<crate::libs::win32k::window::Rect>)
 /// UpdateWindow - Send WM_PAINT directly to a window.
 /// Unlike InvalidateRect, this sends WM_PAINT immediately.
 pub fn update_window(hwnd: u64) -> bool {
-    // kprintln!("[win32k] UpdateWindow: hwnd={:#x}", hwnd)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[win32k] UpdateWindow: hwnd={:#x}", hwnd);
     crate::libs::win32k::window::update_window_internal(hwnd)
 }
 
@@ -419,7 +431,7 @@ pub fn redraw_window(
     flags: u32,
 ) -> bool {
     let _ = (hwnd, rect, rgn, flags);
-    // kprintln!("[win32k] RedrawWindow: hwnd={:#x}, flags={:#x}", hwnd, flags)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[win32k] RedrawWindow: hwnd={:#x}, flags={:#x}", hwnd, flags);
 
     let flags = UpdateRegionFlags::new(flags);
 
@@ -456,8 +468,8 @@ pub fn client_to_screen(hwnd: u64, point: &mut POINT) -> bool {
     if let Some(client_rect) = crate::libs::win32k::window::get_window_rect_internal(hwnd) {
         point.x += client_rect.left;
         point.y += client_rect.top;
-        // kprintln!("[win32k] ClientToScreen: hwnd={:#x}, ({},{}) -> ({},{})",  // kprintln disabled (memcpy crash workaround)
-//             hwnd, point.x - client_rect.left, point.y - client_rect.top, point.x, point.y);
+        // kprintln!("[win32k] ClientToScreen: hwnd={:#x}, ({},{}) -> ({},{})",
+        //             hwnd, point.x - client_rect.left, point.y - client_rect.top, point.x, point.y);
         true
     } else {
         false
@@ -469,8 +481,8 @@ pub fn screen_to_client(hwnd: u64, point: &mut POINT) -> bool {
     if let Some(client_rect) = crate::libs::win32k::window::get_window_rect_internal(hwnd) {
         point.x -= client_rect.left;
         point.y -= client_rect.top;
-        // kprintln!("[win32k] ScreenToClient: hwnd={:#x}, ({},{}) -> ({},{})",  // kprintln disabled (memcpy crash workaround)
-//             hwnd, point.x + client_rect.left, point.y + client_rect.top, point.x, point.y);
+        // kprintln!("[win32k] ScreenToClient: hwnd={:#x}, ({},{}) -> ({},{})",
+        //             hwnd, point.x + client_rect.left, point.y + client_rect.top, point.x, point.y);
         true
     } else {
         false
@@ -510,8 +522,8 @@ pub fn map_window_points(hwnd_src: u64, hwnd_dst: u64, points: &mut [POINT]) -> 
 /// Fill a rectangle with a brush.
 /// Common helper used by WM_ERASEBKGND and other handlers.
 pub fn fill_rect(hdc: u64, rect: &Rect, hbr: u64) -> i32 {
-    // kprintln!("[win32k] FillRect: hdc={:#x}, rect={:?}, hbr={:#x}",  // kprintln disabled (memcpy crash workaround)
-//         hdc, rect, hbr);
+    // kprintln!("[win32k] FillRect: hdc={:#x}, rect={:?}, hbr={:#x}",
+    //         hdc, rect, hbr);
 
     // Get the brush color/style
     if hbr == 0 {

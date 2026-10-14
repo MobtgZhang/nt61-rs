@@ -10,7 +10,6 @@
 
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-
 /// Maximum number of IDT vectors the kernel is willing to route.
 pub const MAX_IDT_VECTORS: usize = 256;
 
@@ -105,13 +104,13 @@ pub fn init() {
     let _ipi_base = 0xE0u8;
     let _ipi_end = 0xEFu8;
     // _ipi_base and _ipi_end are intentionally unused - reserved for future logging
-    // // kprintln!("    Interrupt subsystem: IDT ({} vectors) ready", MAX_IDT_VECTORS)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
+    // // kprintln!("    Interrupt subsystem: IDT ({} vectors) ready", MAX_IDT_VECTORS);
+    // // kprintln!(
     // //         "      IPI vectors: 0x{:02x}..0x{:02x} (dispatcher-owned)",
     // //         _ipi_base, _ipi_end
     // //     );
-    // // kprintln!("      Spurious vector: 0xFF (masked)")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
+    // // kprintln!("      Spurious vector: 0xFF (masked)");
+    // // kprintln!(
     // //         "      Total interrupts observed: {} (spurious: {})",
     // //         TOTAL_INTERRUPTS.load(Ordering::Relaxed),
     // //         SPURIOUS_INTERRUPTS.load(Ordering::Relaxed)
@@ -175,11 +174,9 @@ pub fn total_interrupt_count() -> u64 {
 /// DPC processing at DISPATCH_LEVEL.
 pub fn request_dpc() {
     // Use the DPC subsystem's insert function
-    if let Some(_idx) = crate::ke::dpc::insert(
-        dpc_dummy_routine,
-        core::ptr::null_mut(),
-        "interrupt_dpc",
-    ) {
+    if let Some(_idx) =
+        crate::ke::dpc::insert(dpc_dummy_routine, core::ptr::null_mut(), "interrupt_dpc")
+    {
         // DPC queued successfully
     }
 }
@@ -212,33 +209,33 @@ pub fn smoke_test() -> bool {
     let total_after = total_interrupt_count();
     let spurious_after = SPURIOUS_INTERRUPTS.load(Ordering::Relaxed);
     if after != before + 5 {
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "    [INTERRUPT SMOKE FAIL] fire count: before={} after={}",
-// //             before, after
-// //         );
+        // // kprintln!(
+        // //             "    [INTERRUPT SMOKE FAIL] fire count: before={} after={}",
+        // //             before, after
+        // //         );
         return false;
     }
     if total_after != total_before + 6 {
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "    [INTERRUPT SMOKE FAIL] total: before={} after={}",
-// //             total_before, total_after
-// //         );
+        // // kprintln!(
+        // //             "    [INTERRUPT SMOKE FAIL] total: before={} after={}",
+        // //             total_before, total_after
+        // //         );
         return false;
     }
     if spurious_after < 1 {
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "    [INTERRUPT SMOKE FAIL] spurious counter did not advance: {}",
-// //             spurious_after
-// //         );
+        // // kprintln!(
+        // //             "    [INTERRUPT SMOKE FAIL] spurious counter did not advance: {}",
+        // //             spurious_after
+        // //         );
         return false;
     }
     if vector_owner(test_vector) != Some((owner, HandlerKind::ConnectedIsr)) {
-        // // kprintln!("    [INTERRUPT SMOKE FAIL] owner mismatch")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("    [INTERRUPT SMOKE FAIL] owner mismatch");
         return false;
     }
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         "    [INTERRUPT SMOKE OK] test_vector=0x{:02x} fires={} total={} spurious={}",
-// //         test_vector, after, total_after, spurious_after
-// //     );
+    // // kprintln!(
+    // //         "    [INTERRUPT SMOKE OK] test_vector=0x{:02x} fires={} total={} spurious={}",
+    // //         test_vector, after, total_after, spurious_after
+    // //     );
     true
 }

@@ -11,7 +11,7 @@
 
 use alloc::vec::Vec;
 
-use super::sid::{Sid, WellKnownSid, SID_REVISION, SID_MAX_SUB_AUTHORITIES};
+use super::sid::{Sid, WellKnownSid, SID_MAX_SUB_AUTHORITIES, SID_REVISION};
 
 pub fn allocate_and_initialize_sid(
     identifier_authority: [u8; 6],
@@ -71,9 +71,7 @@ pub fn equal_sid(sid1: *const Sid, sid2: *const Sid) -> bool {
         return false;
     }
 
-    unsafe {
-        (*sid1).equals(&*sid2)
-    }
+    unsafe { (*sid1).equals(&*sid2) }
 }
 
 pub fn valid_sid(sid: *const Sid) -> bool {
@@ -101,9 +99,7 @@ pub fn length_sid(sid: *const Sid) -> u32 {
         return 0;
     }
 
-    unsafe {
-        (*sid).size() as u32
-    }
+    unsafe { (*sid).size() as u32 }
 }
 
 pub fn identifier_authority_sid(sid: *const Sid) -> u64 {
@@ -111,9 +107,7 @@ pub fn identifier_authority_sid(sid: *const Sid) -> u64 {
         return 0;
     }
 
-    unsafe {
-        (*sid).identifier_authority()
-    }
+    unsafe { (*sid).identifier_authority() }
 }
 
 pub fn sub_authority_count_sid(sid: *const Sid) -> u8 {
@@ -121,9 +115,7 @@ pub fn sub_authority_count_sid(sid: *const Sid) -> u8 {
         return 0;
     }
 
-    unsafe {
-        (*sid).sub_authority_count
-    }
+    unsafe { (*sid).sub_authority_count }
 }
 
 pub fn sub_authority_sid(sid: *mut Sid, sub_authority_index: u32) -> *mut u32 {
@@ -140,7 +132,11 @@ pub fn sub_authority_sid(sid: *mut Sid, sub_authority_index: u32) -> *mut u32 {
     }
 }
 
-pub fn convert_sid_to_unicode_string(sid: *const Sid, output: &mut [u16], max_length: usize) -> bool {
+pub fn convert_sid_to_unicode_string(
+    sid: *const Sid,
+    output: &mut [u16],
+    max_length: usize,
+) -> bool {
     if sid.is_null() || output.len() == 0 {
         return false;
     }
@@ -148,7 +144,10 @@ pub fn convert_sid_to_unicode_string(sid: *const Sid, output: &mut [u16], max_le
     unsafe {
         let sid_str = (*sid).to_string();
         let mut len = 0;
-        for i in 0..max_length.min(output.len()) {
+        for i in 0..max_length
+            .min(output.len())
+            .min(crate::se::sid::SID_STRING_MAX)
+        {
             if sid_str[i] == 0 {
                 break;
             }
@@ -179,7 +178,10 @@ pub fn allocate_well_known_sid(which: WellKnownSid) -> *mut Sid {
     sid_ptr
 }
 
-pub fn create_security_descriptor_for_sid(owner: *const Sid, group: *const Sid) -> *mut super::seaccess::SecurityDescriptor {
+pub fn create_security_descriptor_for_sid(
+    owner: *const Sid,
+    group: *const Sid,
+) -> *mut super::seaccess::SecurityDescriptor {
     if owner.is_null() {
         return core::ptr::null_mut();
     }
@@ -197,8 +199,8 @@ pub fn create_security_descriptor_for_sid(owner: *const Sid, group: *const Sid) 
         (*sd_ptr).revision = 1;
         (*sd_ptr).sbz1 = 0;
         (*sd_ptr).control = 0;
-        (*sd_ptr).owner = owner as *mut Sid;
-        (*sd_ptr).group = if group.is_null() { owner as *mut Sid } else { group as *mut Sid };
+        (*sd_ptr).owner = *owner;
+        (*sd_ptr).group = if group.is_null() { *owner } else { *group };
         (*sd_ptr).sacl = core::ptr::null_mut();
         (*sd_ptr).dacl = core::ptr::null_mut();
     }
@@ -238,8 +240,14 @@ pub fn parse_sid_string(sid_string: &str) -> Option<Sid> {
     Some(Sid::with_authority_and_subs_arr(
         ia,
         sub_count as u8,
-        sub_authorities[0], sub_authorities[1], sub_authorities[2], sub_authorities[3],
-        sub_authorities[4], sub_authorities[5], sub_authorities[6], sub_authorities[7],
+        sub_authorities[0],
+        sub_authorities[1],
+        sub_authorities[2],
+        sub_authorities[3],
+        sub_authorities[4],
+        sub_authorities[5],
+        sub_authorities[6],
+        sub_authorities[7],
     ))
 }
 
@@ -249,9 +257,7 @@ pub fn is_well_known_sid(sid: *const Sid, which: WellKnownSid) -> bool {
     }
 
     let well_known = Sid::well_known(which);
-    unsafe {
-        (*sid).equals(&well_known)
-    }
+    unsafe { (*sid).equals(&well_known) }
 }
 
 pub fn get_sid_rid(sid: *const Sid) -> u32 {
@@ -325,12 +331,10 @@ pub fn create_domain_sid(domain_sid: *const Sid, rid: u32) -> *mut Sid {
 }
 
 pub fn create_integrity_sid(level: u32) -> *mut Sid {
-
     let ia = [0, 0, 0, 0, 0, 16]; // Authority 16 = Mandatory Label
     let sub_authorities = [level];
 
     allocate_and_initialize_sid(ia, 1, &sub_authorities)
 }
 
-pub fn init() {
-}
+pub fn init() {}

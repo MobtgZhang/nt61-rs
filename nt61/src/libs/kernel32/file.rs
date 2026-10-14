@@ -16,14 +16,14 @@ use super::error::{GetLastError, SetLastError};
 use super::handle::CloseHandle;
 use super::types::{BOOL, DWORD, FALSE, HANDLE, LPCWSTR, TRUE};
 use crate::libs::ntdll::file as ntdll_file;
-use alloc::string::String;
-use core::ptr;
+use crate::libs::ntdll::status::nt_status_to_dos_error;
 use crate::libs::ntdll::status::{
     STATUS_BUFFER_TOO_SMALL, STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER,
     STATUS_OBJECT_NAME_NOT_FOUND, STATUS_SUCCESS,
 };
 use crate::libs::ntdll::types::{IoStatusBlock, ObjectAttributes, UnicodeString};
-use crate::libs::ntdll::status::nt_status_to_dos_error;
+use alloc::string::String;
+use core::ptr;
 
 // ---------------------------------------------------------------------------
 // Win32 access / share / creation flags (subset)
@@ -81,19 +81,27 @@ const INVALID_SET_FILE_POINTER: u32 = 0xFFFF_FFFF;
 // ---------------------------------------------------------------------------
 
 unsafe fn wide_to_string(p: *const u16) -> Option<String> {
-    if p.is_null() { return None; }
+    if p.is_null() {
+        return None;
+    }
     let mut len = 0;
-    while *p.add(len) != 0 { len += 1; }
+    while *p.add(len) != 0 {
+        len += 1;
+    }
     let slice = core::slice::from_raw_parts(p, len);
     let mut out = String::new();
     for &c in slice {
-        if let Some(ch) = char::from_u32(c as u32) { out.push(ch); }
+        if let Some(ch) = char::from_u32(c as u32) {
+            out.push(ch);
+        }
     }
     Some(out)
 }
 
 fn map_nt_status(s: i32) -> u32 {
-    if s == STATUS_SUCCESS { return 0; }
+    if s == STATUS_SUCCESS {
+        return 0;
+    }
     let dos = nt_status_to_dos_error(s);
     SetLastError(dos);
     dos
@@ -112,9 +120,15 @@ fn map_create_disposition(c: u32) -> u32 {
 
 fn map_desired_access(a: u32) -> u32 {
     let mut n = 0;
-    if a & access::GENERIC_READ != 0 { n |= 0x001F_0000; }
-    if a & access::GENERIC_WRITE != 0 { n |= 0x0012_0080; }
-    if a & access::GENERIC_EXECUTE != 0 { n |= 0x0012_0000; }
+    if a & access::GENERIC_READ != 0 {
+        n |= 0x001F_0000;
+    }
+    if a & access::GENERIC_WRITE != 0 {
+        n |= 0x0012_0080;
+    }
+    if a & access::GENERIC_EXECUTE != 0 {
+        n |= 0x0012_0000;
+    }
     n
 }
 
@@ -138,13 +152,18 @@ pub unsafe extern "C" fn CreateFileW(
     }
     let name = match wide_to_string(file_name) {
         Some(s) => s,
-        None => { SetLastError(123); return -1isize as HANDLE; },
+        None => {
+            SetLastError(123);
+            return -1isize as HANDLE;
+        }
     };
     // Convert to UTF-16 for ntdll.
     let mut buf: [u16; 256] = [0; 256];
     let mut i = 0;
     for c in name.encode_utf16() {
-        if i + 1 >= buf.len() { break; }
+        if i + 1 >= buf.len() {
+            break;
+        }
         buf[i] = c;
         i += 1;
     }
@@ -175,8 +194,11 @@ pub unsafe extern "C" fn CreateFileW(
     );
     let _ = (security_attributes, template_file);
     if status != STATUS_SUCCESS {
-        if status == STATUS_OBJECT_NAME_NOT_FOUND { SetLastError(2); }
-        else { SetLastError(map_nt_status(status)); }
+        if status == STATUS_OBJECT_NAME_NOT_FOUND {
+            SetLastError(2);
+        } else {
+            SetLastError(map_nt_status(status));
+        }
         return -1isize as HANDLE;
     }
     handle
@@ -197,9 +219,15 @@ pub unsafe extern "C" fn ReadFile(
     let _ = overlapped;
     let mut iosb: IoStatusBlock = IoStatusBlock::new();
     let status = ntdll_file::NtReadFile(
-        file, ptr::null_mut(), ptr::null_mut(), ptr::null_mut(),
-        &mut iosb, buffer as *mut _, bytes_to_read,
-        ptr::null_mut(), ptr::null_mut(),
+        file,
+        ptr::null_mut(),
+        ptr::null_mut(),
+        ptr::null_mut(),
+        &mut iosb,
+        buffer as *mut _,
+        bytes_to_read,
+        ptr::null_mut(),
+        ptr::null_mut(),
     );
     if status != STATUS_SUCCESS && status != crate::libs::ntdll::status::STATUS_END_OF_FILE as i32 {
         SetLastError(map_nt_status(status));
@@ -225,9 +253,15 @@ pub unsafe extern "C" fn WriteFile(
     let _ = overlapped;
     let mut iosb: IoStatusBlock = IoStatusBlock::new();
     let status = ntdll_file::NtWriteFile(
-        file, ptr::null_mut(), ptr::null_mut(), ptr::null_mut(),
-        &mut iosb, buffer as *mut _, bytes_to_write,
-        ptr::null_mut(), ptr::null_mut(),
+        file,
+        ptr::null_mut(),
+        ptr::null_mut(),
+        ptr::null_mut(),
+        &mut iosb,
+        buffer as *mut _,
+        bytes_to_write,
+        ptr::null_mut(),
+        ptr::null_mut(),
     );
     if status != STATUS_SUCCESS {
         SetLastError(map_nt_status(status));
@@ -246,9 +280,11 @@ pub unsafe extern "C" fn WriteFile(
 /// `GetFileSize`.
 pub unsafe extern "C" fn GetFileSize(file: HANDLE, file_size_high: *mut DWORD) -> DWORD {
     let mut iosb: IoStatusBlock = IoStatusBlock::new();
-    let mut fsi: ntdll_file::FileStandardInformation = ntdll_file::FileStandardInformation::default();
+    let mut fsi: ntdll_file::FileStandardInformation =
+        ntdll_file::FileStandardInformation::default();
     let status = ntdll_file::NtQueryInformationFile(
-        file, &mut iosb,
+        file,
+        &mut iosb,
         &mut fsi as *mut _ as *mut _,
         core::mem::size_of::<ntdll_file::FileStandardInformation>() as u32,
         5, // FileStandardInformation
@@ -267,9 +303,11 @@ pub unsafe extern "C" fn GetFileSize(file: HANDLE, file_size_high: *mut DWORD) -
 /// `GetFileSizeEx`.
 pub unsafe extern "C" fn GetFileSizeEx(file: HANDLE, file_size: *mut i64) -> BOOL {
     let mut iosb: IoStatusBlock = IoStatusBlock::new();
-    let mut fsi: ntdll_file::FileStandardInformation = ntdll_file::FileStandardInformation::default();
+    let mut fsi: ntdll_file::FileStandardInformation =
+        ntdll_file::FileStandardInformation::default();
     let status = ntdll_file::NtQueryInformationFile(
-        file, &mut iosb,
+        file,
+        &mut iosb,
         &mut fsi as *mut _ as *mut _,
         core::mem::size_of::<ntdll_file::FileStandardInformation>() as u32,
         5,
@@ -290,14 +328,25 @@ pub unsafe extern "C" fn GetFileSizeEx(file: HANDLE, file_size: *mut i64) -> BOO
 
 /// `DeleteFileW`.
 pub unsafe extern "C" fn DeleteFileW(file_name: LPCWSTR) -> BOOL {
-    if file_name.is_null() { SetLastError(87); return FALSE; }
+    if file_name.is_null() {
+        SetLastError(87);
+        return FALSE;
+    }
     let name = match wide_to_string(file_name) {
         Some(s) => s,
-        None => { SetLastError(123); return FALSE; },
+        None => {
+            SetLastError(123);
+            return FALSE;
+        }
     };
     let mut buf: [u16; 256] = [0; 256];
     let mut i = 0;
-    for c in name.encode_utf16() { if i + 1 < buf.len() { buf[i] = c; i += 1; } }
+    for c in name.encode_utf16() {
+        if i + 1 < buf.len() {
+            buf[i] = c;
+            i += 1;
+        }
+    }
     buf[i] = 0;
     let mut oa = ObjectAttributes::new();
     let mut name_us = UnicodeString {
@@ -308,18 +357,16 @@ pub unsafe extern "C" fn DeleteFileW(file_name: LPCWSTR) -> BOOL {
     oa.object_name = &mut name_us;
     oa.attributes = 0x40;
     let status = ntdll_file::NtDeleteFile(&mut oa);
-    if status == STATUS_SUCCESS { TRUE } else {
+    if status == STATUS_SUCCESS {
+        TRUE
+    } else {
         SetLastError(map_nt_status(status));
         FALSE
     }
 }
 
 /// `MoveFileExW`.
-pub unsafe extern "C" fn MoveFileExW(
-    _existing: LPCWSTR,
-    _new: LPCWSTR,
-    _flags: DWORD,
-) -> BOOL {
+pub unsafe extern "C" fn MoveFileExW(_existing: LPCWSTR, _new: LPCWSTR, _flags: DWORD) -> BOOL {
     SetLastError(50); // ERROR_NOT_IMPLEMENTED
     FALSE
 }
@@ -332,7 +379,9 @@ pub unsafe extern "C" fn MoveFileExW(
 pub unsafe extern "C" fn FlushFileBuffers(file: HANDLE) -> BOOL {
     let mut iosb: IoStatusBlock = IoStatusBlock::new();
     let status = ntdll_file::NtFlushBuffersFile(file, &mut iosb);
-    if status == STATUS_SUCCESS { TRUE } else {
+    if status == STATUS_SUCCESS {
+        TRUE
+    } else {
         SetLastError(map_nt_status(status));
         FALSE
     }
@@ -350,7 +399,9 @@ pub unsafe extern "C" fn SetFilePointer(
 }
 
 /// `SetEndOfFile`.
-pub unsafe extern "C" fn SetEndOfFile(_file: HANDLE) -> BOOL { TRUE }
+pub unsafe extern "C" fn SetEndOfFile(_file: HANDLE) -> BOOL {
+    TRUE
+}
 
 /// Re-export `CloseHandle` for callers that only need this
 /// file module.

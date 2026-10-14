@@ -32,29 +32,29 @@ extern crate alloc;
 
 use crate::kprintln;
 
-pub mod kernel32;
-pub mod ntdll;
 pub mod advapi32;
-pub mod msvcrt;
-pub mod rpcrt4;
-pub mod user32;
+pub mod cmd;
 pub mod gdi32;
-pub mod ws2_32;
+pub mod kernel32;
+pub mod msvcrt;
+pub mod ntdll;
+pub mod rpcrt4;
+pub mod sechost;
+pub mod server;
+pub mod user32;
 #[cfg(target_arch = "x86_64")]
 pub mod win32k;
 #[cfg(target_arch = "x86_64")]
 pub mod wow64;
 pub mod wow64win;
-pub mod sechost;
-pub mod server;
-pub mod cmd;
+pub mod ws2_32;
 
 pub mod smoke;
 
 /// Initialise the library stubs. Each module prints its
 /// own banner; this function just reports completion.
 pub fn init() {
-    // kprintln!("    Library stubs: initialising...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    Library stubs: initialising...");
     ntdll::init();
     kernel32::init();
     advapi32::init();
@@ -70,14 +70,18 @@ pub fn init() {
     }
     sechost::init();
     server::init();
-    // kprintln!("    Library stubs: initialised")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    Library stubs: initialised");
 }
 
 /// Aggregator smoke test. Walks every stub in turn and
 /// reports a single boolean result.
 pub fn smoke_test() -> bool {
     #[cfg(target_arch = "x86_64")]
-    { smoke::smoke_test() }
+    {
+        smoke::smoke_test()
+    }
     #[cfg(not(target_arch = "x86_64"))]
-    { true }
+    {
+        true
+    }
 }

@@ -12,11 +12,11 @@ use crate::rtl::logging::subsystem::CLFS;
 
 use super::context::ClfsContainerContext;
 use super::format::{
-    self, BlfMetadata, BlfBlockType, ClfsLogBlockHeader,
-    CLFS_SECTOR_SIZE, CLFS_LOG_BLOCK_HEADER_SIZE,
+    self, BlfBlockType, BlfMetadata, ClfsLogBlockHeader, CLFS_LOG_BLOCK_HEADER_SIZE,
+    CLFS_SECTOR_SIZE,
 };
 use super::metadata::ClfsControlRecord;
-use super::record::{ClfsLsn, ClfsLogRecordHeader, CLFS_LOG_RECORD_HEADER_SIZE};
+use super::record::{ClfsLogRecordHeader, ClfsLsn, CLFS_LOG_RECORD_HEADER_SIZE};
 use super::vcb::ClfsVcb;
 
 // ============================================================================
@@ -45,19 +45,19 @@ impl ClfsError {
     /// Convert to NTSTATUS.
     pub fn to_ntstatus(self) -> u32 {
         match self {
-            ClfsError::Success           => 0,
-            ClfsError::InvalidParameter  => 0xC000000D,
-            ClfsError::InvalidHandle    => 0xC0000008,
-            ClfsError::InvalidLogState  => 0xC0000188,
-            ClfsError::BufferTooSmall   => 0xC0000023,
-            ClfsError::LogFileFull      => 0xC0000188,
-            ClfsError::ChecksumMismatch  => 0xC0000008,
-            ClfsError::SectorFixupError  => 0xC0000008,
-            ClfsError::CorruptMetadata   => 0xC0000008,
+            ClfsError::Success => 0,
+            ClfsError::InvalidParameter => 0xC000000D,
+            ClfsError::InvalidHandle => 0xC0000008,
+            ClfsError::InvalidLogState => 0xC0000188,
+            ClfsError::BufferTooSmall => 0xC0000023,
+            ClfsError::LogFileFull => 0xC0000188,
+            ClfsError::ChecksumMismatch => 0xC0000008,
+            ClfsError::SectorFixupError => 0xC0000008,
+            ClfsError::CorruptMetadata => 0xC0000008,
             ClfsError::ContainerNotFound => 0xC0000008,
-            ClfsError::OutOfMemory      => 0xC0000017,
-            ClfsError::IoError          => 0xC000000E,
-            ClfsError::NotInitialized   => 0xC0000001,
+            ClfsError::OutOfMemory => 0xC0000017,
+            ClfsError::IoError => 0xC000000E,
+            ClfsError::NotInitialized => 0xC0000001,
         }
     }
 }
@@ -168,7 +168,10 @@ impl ContainerBuffer {
 // ============================================================================
 
 /// Read a log block from a container buffer.
-pub fn read_log_block(container: &ContainerBuffer, block_offset: usize) -> Result<alloc::vec::Vec<u8>, ClfsError> {
+pub fn read_log_block(
+    container: &ContainerBuffer,
+    block_offset: usize,
+) -> Result<alloc::vec::Vec<u8>, ClfsError> {
     // Read the first sector to get the block header
     let mut header_sector = [0u8; CLFS_SECTOR_SIZE];
     container.read_sector(block_offset, &mut header_sector)?;
@@ -189,8 +192,12 @@ pub fn read_log_block(container: &ContainerBuffer, block_offset: usize) -> Resul
     let stored_checksum = format::read_u32_le(&block[16..20]);
     let computed = format::compute_block_checksum(&block);
     if stored_checksum != computed {
-        crate::kprintln_info!("CLFS", "  [CLFS] checksum mismatch: stored=0x{:08x} computed=0x{:08x}",
-            stored_checksum, computed);
+        crate::kprintln_info!(
+            "CLFS",
+            "  [CLFS] checksum mismatch: stored=0x{:08x} computed=0x{:08x}",
+            stored_checksum,
+            computed
+        );
         return Err(ClfsError::ChecksumMismatch);
     }
 
@@ -221,10 +228,8 @@ pub fn write_log_block(
     Ok(())
 }
 
-static LAST_WRITE_USN: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0);
-static WRITE_BLOCKS: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0);
+static LAST_WRITE_USN: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+static WRITE_BLOCKS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 /// Return `(last_write_usn, write_block_calls)` accumulators from
 /// `write_log_block`.
@@ -245,7 +250,12 @@ fn parse_block_header(sector: &[u8]) -> Result<ClfsLogBlockHeader, ClfsError> {
     let minor_version = sector[1];
 
     if major_version != 0x15 || minor_version != 0x00 {
-        crate::kprintln_info!("CLFS", "  [CLFS] invalid block version: {:#x}.{:#x}", major_version, minor_version);
+        crate::kprintln_info!(
+            "CLFS",
+            "  [CLFS] invalid block version: {:#x}.{:#x}",
+            major_version,
+            minor_version
+        );
         return Err(ClfsError::CorruptMetadata);
     }
 
@@ -277,13 +287,16 @@ fn parse_block_header(sector: &[u8]) -> Result<ClfsLogBlockHeader, ClfsError> {
 // ============================================================================
 
 /// Read a record from a block at the given offset.
-pub fn read_record_from_block(block: &[u8], offset: usize) -> Result<ClfsLogRecordHeader, ClfsError> {
+pub fn read_record_from_block(
+    block: &[u8],
+    offset: usize,
+) -> Result<ClfsLogRecordHeader, ClfsError> {
     if offset >= block.len() {
         return Err(ClfsError::InvalidParameter);
     }
 
-    let header = ClfsLogRecordHeader::read_from(&block[offset..])
-        .ok_or(ClfsError::CorruptMetadata)?;
+    let header =
+        ClfsLogRecordHeader::read_from(&block[offset..]).ok_or(ClfsError::CorruptMetadata)?;
 
     if !header.is_valid() {
         return Err(ClfsError::CorruptMetadata);
@@ -293,7 +306,10 @@ pub fn read_record_from_block(block: &[u8], offset: usize) -> Result<ClfsLogReco
 }
 
 /// Read the data portion of a record.
-pub fn read_record_data(block: &[u8], header: &ClfsLogRecordHeader) -> Result<alloc::vec::Vec<u8>, ClfsError> {
+pub fn read_record_data(
+    block: &[u8],
+    header: &ClfsLogRecordHeader,
+) -> Result<alloc::vec::Vec<u8>, ClfsError> {
     let offset = CLFS_LOG_RECORD_HEADER_SIZE;
     let data_end = header.record_length as usize;
     if offset + data_end > block.len() {

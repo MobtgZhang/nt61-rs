@@ -93,6 +93,18 @@ impl LogLevel {
             LogLevel::Debug => "DEBUG",
         }
     }
+
+    /// Map a DbgPrint-style level onto the ordered severity used by
+    /// `rtl::logging`. `LogLevel::Debug` is `0xFFFFFFFF` in this set, so
+    /// comparing it against `logging::LogLevel` directly is meaningless.
+    pub fn to_severity(self) -> u8 {
+        match self {
+            LogLevel::Error => 0,
+            LogLevel::Warning => 1,
+            LogLevel::Info => 2,
+            LogLevel::Debug => 3,
+        }
+    }
 }
 
 // ============================================================================
@@ -112,25 +124,40 @@ fn format_timestamp_short(buf: &mut [u8], ms: u64) -> usize {
     let minutes = (ms / 60000) % 60;
     let seconds = (ms / 1000) % 60;
     let millis = (ms % 1000) as u16;
-    
+
     let mut pos = 0;
-    buf[pos] = b'['; pos += 1;
-    
-    buf[pos] = b'0' + ((hours / 10) as u8); pos += 1;
-    buf[pos] = b'0' + ((hours % 10) as u8); pos += 1;
-    buf[pos] = b':'; pos += 1;
-    buf[pos] = b'0' + ((minutes / 10) as u8); pos += 1;
-    buf[pos] = b'0' + ((minutes % 10) as u8); pos += 1;
-    buf[pos] = b':'; pos += 1;
-    buf[pos] = b'0' + ((seconds / 10) as u8); pos += 1;
-    buf[pos] = b'0' + ((seconds % 10) as u8); pos += 1;
-    buf[pos] = b'.'; pos += 1;
-    buf[pos] = b'0' + ((millis / 100) as u8); pos += 1;
-    buf[pos] = b'0' + (((millis / 10) % 10) as u8); pos += 1;
-    buf[pos] = b'0' + ((millis % 10) as u8); pos += 1;
-    buf[pos] = b']'; pos += 1;
-    buf[pos] = b' '; pos += 1;
-    
+    buf[pos] = b'[';
+    pos += 1;
+
+    buf[pos] = b'0' + ((hours / 10) as u8);
+    pos += 1;
+    buf[pos] = b'0' + ((hours % 10) as u8);
+    pos += 1;
+    buf[pos] = b':';
+    pos += 1;
+    buf[pos] = b'0' + ((minutes / 10) as u8);
+    pos += 1;
+    buf[pos] = b'0' + ((minutes % 10) as u8);
+    pos += 1;
+    buf[pos] = b':';
+    pos += 1;
+    buf[pos] = b'0' + ((seconds / 10) as u8);
+    pos += 1;
+    buf[pos] = b'0' + ((seconds % 10) as u8);
+    pos += 1;
+    buf[pos] = b'.';
+    pos += 1;
+    buf[pos] = b'0' + ((millis / 100) as u8);
+    pos += 1;
+    buf[pos] = b'0' + (((millis / 10) % 10) as u8);
+    pos += 1;
+    buf[pos] = b'0' + ((millis % 10) as u8);
+    pos += 1;
+    buf[pos] = b']';
+    pos += 1;
+    buf[pos] = b' ';
+    pos += 1;
+
     pos
 }
 
@@ -144,86 +171,146 @@ pub fn write_ntbtlog_line(file_path: &str, loaded: bool) {
     let ts = now();
     let mut buf = [0u8; 512];
     let mut pos = 0;
-    
+
     // YYYY
-    buf[pos] = b'0' + ((ts.year / 1000) % 10) as u8; pos += 1;
-    buf[pos] = b'0' + ((ts.year / 100) % 10) as u8; pos += 1;
-    buf[pos] = b'0' + ((ts.year / 10) % 10) as u8; pos += 1;
-    buf[pos] = b'0' + (ts.year % 10) as u8; pos += 1;
-    buf[pos] = b' '; pos += 1;
-    
+    buf[pos] = b'0' + ((ts.year / 1000) % 10) as u8;
+    pos += 1;
+    buf[pos] = b'0' + ((ts.year / 100) % 10) as u8;
+    pos += 1;
+    buf[pos] = b'0' + ((ts.year / 10) % 10) as u8;
+    pos += 1;
+    buf[pos] = b'0' + (ts.year % 10) as u8;
+    pos += 1;
+    buf[pos] = b' ';
+    pos += 1;
+
     // MM
-    buf[pos] = b'0' + (ts.month / 10) as u8; pos += 1;
-    buf[pos] = b'0' + (ts.month % 10) as u8; pos += 1;
-    buf[pos] = b' '; pos += 1;
-    
+    buf[pos] = b'0' + (ts.month / 10) as u8;
+    pos += 1;
+    buf[pos] = b'0' + (ts.month % 10) as u8;
+    pos += 1;
+    buf[pos] = b' ';
+    pos += 1;
+
     // DD
-    buf[pos] = b'0' + (ts.day / 10) as u8; pos += 1;
-    buf[pos] = b'0' + (ts.day % 10) as u8; pos += 1;
-    buf[pos] = b' '; pos += 1;
-    
+    buf[pos] = b'0' + (ts.day / 10) as u8;
+    pos += 1;
+    buf[pos] = b'0' + (ts.day % 10) as u8;
+    pos += 1;
+    buf[pos] = b' ';
+    pos += 1;
+
     // HH:MM:SS.mmm
-    buf[pos] = b'0' + (ts.hour / 10) as u8; pos += 1;
-    buf[pos] = b'0' + (ts.hour % 10) as u8; pos += 1;
-    buf[pos] = b':'; pos += 1;
-    buf[pos] = b'0' + (ts.minute / 10) as u8; pos += 1;
-    buf[pos] = b'0' + (ts.minute % 10) as u8; pos += 1;
-    buf[pos] = b':'; pos += 1;
-    buf[pos] = b'0' + (ts.second / 10) as u8; pos += 1;
-    buf[pos] = b'0' + (ts.second % 10) as u8; pos += 1;
-    buf[pos] = b'.'; pos += 1;
-    buf[pos] = b'0' + ((ts.millisecond / 100) % 10) as u8; pos += 1;
-    buf[pos] = b'0' + ((ts.millisecond / 10) % 10) as u8; pos += 1;
-    buf[pos] = b'0' + (ts.millisecond % 10) as u8; pos += 1;
-    buf[pos] = b' '; pos += 1;
-    
+    buf[pos] = b'0' + (ts.hour / 10) as u8;
+    pos += 1;
+    buf[pos] = b'0' + (ts.hour % 10) as u8;
+    pos += 1;
+    buf[pos] = b':';
+    pos += 1;
+    buf[pos] = b'0' + (ts.minute / 10) as u8;
+    pos += 1;
+    buf[pos] = b'0' + (ts.minute % 10) as u8;
+    pos += 1;
+    buf[pos] = b':';
+    pos += 1;
+    buf[pos] = b'0' + (ts.second / 10) as u8;
+    pos += 1;
+    buf[pos] = b'0' + (ts.second % 10) as u8;
+    pos += 1;
+    buf[pos] = b'.';
+    pos += 1;
+    buf[pos] = b'0' + ((ts.millisecond / 100) % 10) as u8;
+    pos += 1;
+    buf[pos] = b'0' + ((ts.millisecond / 10) % 10) as u8;
+    pos += 1;
+    buf[pos] = b'0' + (ts.millisecond % 10) as u8;
+    pos += 1;
+    buf[pos] = b' ';
+    pos += 1;
+
     // BOOTLOG_LOADED or BOOTLOG_NOT_LOADED
     if loaded {
-        buf[pos] = b'B'; pos += 1;
-        buf[pos] = b'O'; pos += 1;
-        buf[pos] = b'O'; pos += 1;
-        buf[pos] = b'T'; pos += 1;
-        buf[pos] = b'L'; pos += 1;
-        buf[pos] = b'O'; pos += 1;
-        buf[pos] = b'G'; pos += 1;
-        buf[pos] = b'_'; pos += 1;
-        buf[pos] = b'L'; pos += 1;
-        buf[pos] = b'O'; pos += 1;
-        buf[pos] = b'A'; pos += 1;
-        buf[pos] = b'D'; pos += 1;
-        buf[pos] = b'E'; pos += 1;
-        buf[pos] = b'D'; pos += 1;
+        buf[pos] = b'B';
+        pos += 1;
+        buf[pos] = b'O';
+        pos += 1;
+        buf[pos] = b'O';
+        pos += 1;
+        buf[pos] = b'T';
+        pos += 1;
+        buf[pos] = b'L';
+        pos += 1;
+        buf[pos] = b'O';
+        pos += 1;
+        buf[pos] = b'G';
+        pos += 1;
+        buf[pos] = b'_';
+        pos += 1;
+        buf[pos] = b'L';
+        pos += 1;
+        buf[pos] = b'O';
+        pos += 1;
+        buf[pos] = b'A';
+        pos += 1;
+        buf[pos] = b'D';
+        pos += 1;
+        buf[pos] = b'E';
+        pos += 1;
+        buf[pos] = b'D';
+        pos += 1;
     } else {
-        buf[pos] = b'B'; pos += 1;
-        buf[pos] = b'O'; pos += 1;
-        buf[pos] = b'O'; pos += 1;
-        buf[pos] = b'T'; pos += 1;
-        buf[pos] = b'L'; pos += 1;
-        buf[pos] = b'O'; pos += 1;
-        buf[pos] = b'G'; pos += 1;
-        buf[pos] = b'_'; pos += 1;
-        buf[pos] = b'N'; pos += 1;
-        buf[pos] = b'O'; pos += 1;
-        buf[pos] = b'T'; pos += 1;
-        buf[pos] = b'_'; pos += 1;
-        buf[pos] = b'L'; pos += 1;
-        buf[pos] = b'O'; pos += 1;
-        buf[pos] = b'A'; pos += 1;
-        buf[pos] = b'D'; pos += 1;
-        buf[pos] = b'E'; pos += 1;
-        buf[pos] = b'D'; pos += 1;
+        buf[pos] = b'B';
+        pos += 1;
+        buf[pos] = b'O';
+        pos += 1;
+        buf[pos] = b'O';
+        pos += 1;
+        buf[pos] = b'T';
+        pos += 1;
+        buf[pos] = b'L';
+        pos += 1;
+        buf[pos] = b'O';
+        pos += 1;
+        buf[pos] = b'G';
+        pos += 1;
+        buf[pos] = b'_';
+        pos += 1;
+        buf[pos] = b'N';
+        pos += 1;
+        buf[pos] = b'O';
+        pos += 1;
+        buf[pos] = b'T';
+        pos += 1;
+        buf[pos] = b'_';
+        pos += 1;
+        buf[pos] = b'L';
+        pos += 1;
+        buf[pos] = b'O';
+        pos += 1;
+        buf[pos] = b'A';
+        pos += 1;
+        buf[pos] = b'D';
+        pos += 1;
+        buf[pos] = b'E';
+        pos += 1;
+        buf[pos] = b'D';
+        pos += 1;
     }
-    
-    buf[pos] = b' '; pos += 1;
-    
+
+    buf[pos] = b' ';
+    pos += 1;
+
     // File path
     for &b in file_path.as_bytes() {
-        buf[pos] = b; pos += 1;
+        buf[pos] = b;
+        pos += 1;
     }
-    
-    buf[pos] = b'\r'; pos += 1;
-    buf[pos] = b'\n'; pos += 1;
-    
+
+    buf[pos] = b'\r';
+    pos += 1;
+    buf[pos] = b'\n';
+    pos += 1;
+
     let s = unsafe { core::str::from_utf8_unchecked(&buf[..pos]) };
     write_serial(s);
 }
@@ -233,22 +320,33 @@ pub fn write_ntbtlog_line(file_path: &str, loaded: bool) {
 pub fn write_sos_loading(file_path: &str) {
     let mut buf = [0u8; 256];
     let mut pos = 0;
-    
-    buf[pos] = b'L'; pos += 1;
-    buf[pos] = b'o'; pos += 1;
-    buf[pos] = b'a'; pos += 1;
-    buf[pos] = b'd'; pos += 1;
-    buf[pos] = b'i'; pos += 1;
-    buf[pos] = b'n'; pos += 1;
-    buf[pos] = b'g'; pos += 1;
-    buf[pos] = b' '; pos += 1;
-    
+
+    buf[pos] = b'L';
+    pos += 1;
+    buf[pos] = b'o';
+    pos += 1;
+    buf[pos] = b'a';
+    pos += 1;
+    buf[pos] = b'd';
+    pos += 1;
+    buf[pos] = b'i';
+    pos += 1;
+    buf[pos] = b'n';
+    pos += 1;
+    buf[pos] = b'g';
+    pos += 1;
+    buf[pos] = b' ';
+    pos += 1;
+
     for &b in file_path.as_bytes() {
-        buf[pos] = b; pos += 1;
+        buf[pos] = b;
+        pos += 1;
     }
-    
-    buf[pos] = b'\r'; pos += 1;
-    buf[pos] = b'\n'; pos += 1;
+
+    buf[pos] = b'\r';
+    pos += 1;
+    buf[pos] = b'\n';
+    pos += 1;
 
     let s = unsafe { core::str::from_utf8_unchecked(&buf[..pos]) };
     write_serial(s);
@@ -271,30 +369,49 @@ pub fn write_loader_phase_header(phase: u32) {
     let mut pos = 0;
 
     // "--- Phase L"
-    buf[pos] = b'-'; pos += 1;
-    buf[pos] = b'-'; pos += 1;
-    buf[pos] = b'-'; pos += 1;
-    buf[pos] = b' '; pos += 1;
-    buf[pos] = b'P'; pos += 1;
-    buf[pos] = b'h'; pos += 1;
-    buf[pos] = b'a'; pos += 1;
-    buf[pos] = b's'; pos += 1;
-    buf[pos] = b'e'; pos += 1;
-    buf[pos] = b' '; pos += 1;
-    buf[pos] = b'L'; pos += 1;
+    buf[pos] = b'-';
+    pos += 1;
+    buf[pos] = b'-';
+    pos += 1;
+    buf[pos] = b'-';
+    pos += 1;
+    buf[pos] = b' ';
+    pos += 1;
+    buf[pos] = b'P';
+    pos += 1;
+    buf[pos] = b'h';
+    pos += 1;
+    buf[pos] = b'a';
+    pos += 1;
+    buf[pos] = b's';
+    pos += 1;
+    buf[pos] = b'e';
+    pos += 1;
+    buf[pos] = b' ';
+    pos += 1;
+    buf[pos] = b'L';
+    pos += 1;
 
     // Two-digit zero-padded number.
     let p = phase.min(99);
-    buf[pos] = b'0' + ((p / 10) as u8); pos += 1;
-    buf[pos] = b'0' + ((p % 10) as u8); pos += 1;
+    buf[pos] = b'0' + ((p / 10) as u8);
+    pos += 1;
+    buf[pos] = b'0' + ((p % 10) as u8);
+    pos += 1;
 
     // " ---\r\n"
-    buf[pos] = b' '; pos += 1;
-    buf[pos] = b'-'; pos += 1;
-    buf[pos] = b'-'; pos += 1;
-    buf[pos] = b'-'; pos += 1;
-    buf[pos] = b'\r'; pos += 1;
-    buf[pos] = b'\n'; pos += 1;
+    buf[pos] = b' ';
+    pos += 1;
+    buf[pos] = b'-';
+    pos += 1;
+    buf[pos] = b'-';
+    pos += 1;
+    buf[pos] = b'-';
+    pos += 1;
+    buf[pos] = b'\r';
+    pos += 1;
+    buf[pos] = b'\n';
+    pos += 1;
 
     let s = unsafe { core::str::from_utf8_unchecked(&buf[..pos]) };
     write_serial(s);
@@ -314,30 +431,49 @@ pub fn write_kernel_phase_header(phase: u32) {
     let mut pos = 0;
 
     // "--- Phase K"
-    buf[pos] = b'-'; pos += 1;
-    buf[pos] = b'-'; pos += 1;
-    buf[pos] = b'-'; pos += 1;
-    buf[pos] = b' '; pos += 1;
-    buf[pos] = b'P'; pos += 1;
-    buf[pos] = b'h'; pos += 1;
-    buf[pos] = b'a'; pos += 1;
-    buf[pos] = b's'; pos += 1;
-    buf[pos] = b'e'; pos += 1;
-    buf[pos] = b' '; pos += 1;
-    buf[pos] = b'K'; pos += 1;
+    buf[pos] = b'-';
+    pos += 1;
+    buf[pos] = b'-';
+    pos += 1;
+    buf[pos] = b'-';
+    pos += 1;
+    buf[pos] = b' ';
+    pos += 1;
+    buf[pos] = b'P';
+    pos += 1;
+    buf[pos] = b'h';
+    pos += 1;
+    buf[pos] = b'a';
+    pos += 1;
+    buf[pos] = b's';
+    pos += 1;
+    buf[pos] = b'e';
+    pos += 1;
+    buf[pos] = b' ';
+    pos += 1;
+    buf[pos] = b'K';
+    pos += 1;
 
     // Two-digit zero-padded number.
     let p = phase.min(99);
-    buf[pos] = b'0' + ((p / 10) as u8); pos += 1;
-    buf[pos] = b'0' + ((p % 10) as u8); pos += 1;
+    buf[pos] = b'0' + ((p / 10) as u8);
+    pos += 1;
+    buf[pos] = b'0' + ((p % 10) as u8);
+    pos += 1;
 
     // " ---\r\n"
-    buf[pos] = b' '; pos += 1;
-    buf[pos] = b'-'; pos += 1;
-    buf[pos] = b'-'; pos += 1;
-    buf[pos] = b'-'; pos += 1;
-    buf[pos] = b'\r'; pos += 1;
-    buf[pos] = b'\n'; pos += 1;
+    buf[pos] = b' ';
+    pos += 1;
+    buf[pos] = b'-';
+    pos += 1;
+    buf[pos] = b'-';
+    pos += 1;
+    buf[pos] = b'-';
+    pos += 1;
+    buf[pos] = b'\r';
+    pos += 1;
+    buf[pos] = b'\n';
+    pos += 1;
 
     let s = unsafe { core::str::from_utf8_unchecked(&buf[..pos]) };
     write_serial(s);
@@ -349,48 +485,84 @@ pub fn write_phase_header(phase: u32) {
     let mut buf = [0u8; 64];
     let mut pos = 0;
 
-    buf[pos] = b'-'; pos += 1;
-    buf[pos] = b'-'; pos += 1;
-    buf[pos] = b'-'; pos += 1;
-    buf[pos] = b' '; pos += 1;
-    buf[pos] = b'P'; pos += 1;
-    buf[pos] = b'h'; pos += 1;
-    buf[pos] = b'a'; pos += 1;
-    buf[pos] = b's'; pos += 1;
-    buf[pos] = b'e'; pos += 1;
-    buf[pos] = b' '; pos += 1;
+    buf[pos] = b'-';
+    pos += 1;
+    buf[pos] = b'-';
+    pos += 1;
+    buf[pos] = b'-';
+    pos += 1;
+    buf[pos] = b' ';
+    pos += 1;
+    buf[pos] = b'P';
+    pos += 1;
+    buf[pos] = b'h';
+    pos += 1;
+    buf[pos] = b'a';
+    pos += 1;
+    buf[pos] = b's';
+    pos += 1;
+    buf[pos] = b'e';
+    pos += 1;
+    buf[pos] = b' ';
+    pos += 1;
 
     // Phase number
     if phase < 10 {
-        buf[pos] = b'0'; pos += 1;
-        buf[pos] = b'0'; pos += 1;
-        buf[pos] = b'0' + (phase as u8); pos += 1;
+        buf[pos] = b'0';
+        pos += 1;
+        buf[pos] = b'0';
+        pos += 1;
+        buf[pos] = b'0' + (phase as u8);
+        pos += 1;
     } else if phase < 100 {
-        buf[pos] = b'0'; pos += 1;
-        buf[pos] = b'0' + ((phase / 10) as u8); pos += 1;
-        buf[pos] = b'0' + ((phase % 10) as u8); pos += 1;
+        buf[pos] = b'0';
+        pos += 1;
+        buf[pos] = b'0' + ((phase / 10) as u8);
+        pos += 1;
+        buf[pos] = b'0' + ((phase % 10) as u8);
+        pos += 1;
     }
 
-    buf[pos] = b' '; pos += 1;
-    buf[pos] = b'I'; pos += 1;
-    buf[pos] = b'n'; pos += 1;
-    buf[pos] = b't'; pos += 1;
-    buf[pos] = b'i'; pos += 1;
-    buf[pos] = b'a'; pos += 1;
-    buf[pos] = b'l'; pos += 1;
-    buf[pos] = b'i'; pos += 1;
-    buf[pos] = b'z'; pos += 1;
-    buf[pos] = b'a'; pos += 1;
-    buf[pos] = b't'; pos += 1;
-    buf[pos] = b'i'; pos += 1;
-    buf[pos] = b'o'; pos += 1;
-    buf[pos] = b'n'; pos += 1;
-    buf[pos] = b' '; pos += 1;
-    buf[pos] = b'-'; pos += 1;
-    buf[pos] = b'-'; pos += 1;
-    buf[pos] = b'-'; pos += 1;
-    buf[pos] = b'\r'; pos += 1;
-    buf[pos] = b'\n'; pos += 1;
+    buf[pos] = b' ';
+    pos += 1;
+    buf[pos] = b'I';
+    pos += 1;
+    buf[pos] = b'n';
+    pos += 1;
+    buf[pos] = b't';
+    pos += 1;
+    buf[pos] = b'i';
+    pos += 1;
+    buf[pos] = b'a';
+    pos += 1;
+    buf[pos] = b'l';
+    pos += 1;
+    buf[pos] = b'i';
+    pos += 1;
+    buf[pos] = b'z';
+    pos += 1;
+    buf[pos] = b'a';
+    pos += 1;
+    buf[pos] = b't';
+    pos += 1;
+    buf[pos] = b'i';
+    pos += 1;
+    buf[pos] = b'o';
+    pos += 1;
+    buf[pos] = b'n';
+    pos += 1;
+    buf[pos] = b' ';
+    pos += 1;
+    buf[pos] = b'-';
+    pos += 1;
+    buf[pos] = b'-';
+    pos += 1;
+    buf[pos] = b'-';
+    pos += 1;
+    buf[pos] = b'\r';
+    pos += 1;
+    buf[pos] = b'\n';
+    pos += 1;
 
     let s = unsafe { core::str::from_utf8_unchecked(&buf[..pos]) };
     write_serial(s);
@@ -401,36 +573,47 @@ pub fn write_phase_header(phase: u32) {
 pub fn write_phase_item(component: &str, message: &str) {
     let mut buf = [0u8; 256];
     let mut pos = 0;
-    
+
     // Indent 4 spaces
-    buf[pos] = b' '; pos += 1;
-    buf[pos] = b' '; pos += 1;
-    buf[pos] = b' '; pos += 1;
-    buf[pos] = b' '; pos += 1;
-    
+    buf[pos] = b' ';
+    pos += 1;
+    buf[pos] = b' ';
+    pos += 1;
+    buf[pos] = b' ';
+    pos += 1;
+    buf[pos] = b' ';
+    pos += 1;
+
     // Component name (padded to 16 chars)
     for &b in component.as_bytes() {
         if pos < 20 {
-            buf[pos] = b; pos += 1;
+            buf[pos] = b;
+            pos += 1;
         }
     }
     while pos < 20 {
-        buf[pos] = b' '; pos += 1;
+        buf[pos] = b' ';
+        pos += 1;
     }
-    
-    buf[pos] = b':'; pos += 1;
-    buf[pos] = b' '; pos += 1;
-    
+
+    buf[pos] = b':';
+    pos += 1;
+    buf[pos] = b' ';
+    pos += 1;
+
     // Message
     for &b in message.as_bytes() {
         if pos < 240 {
-            buf[pos] = b; pos += 1;
+            buf[pos] = b;
+            pos += 1;
         }
     }
-    
-    buf[pos] = b'\r'; pos += 1;
-    buf[pos] = b'\n'; pos += 1;
-    
+
+    buf[pos] = b'\r';
+    pos += 1;
+    buf[pos] = b'\n';
+    pos += 1;
+
     let s = unsafe { core::str::from_utf8_unchecked(&buf[..pos]) };
     write_serial(s);
 }
@@ -440,49 +623,71 @@ pub fn write_phase_item(component: &str, message: &str) {
 pub fn write_kdprint(component: &str, message: &str) {
     let mut buf = [0u8; 256];
     let mut pos = 0;
-    
+
     // [hh:mm:ss.xxx]
-    buf[pos] = b'['; pos += 1;
-    
+    buf[pos] = b'[';
+    pos += 1;
+
     let boot_ms = get_boot_ms();
     let hours = (boot_ms / 3600000) % 24;
     let minutes = (boot_ms / 60000) % 60;
     let seconds = (boot_ms / 1000) % 60;
     let millis = (boot_ms % 1000) as u16;
-    
-    buf[pos] = b'0' + ((hours / 10) as u8); pos += 1;
-    buf[pos] = b'0' + ((hours % 10) as u8); pos += 1;
-    buf[pos] = b':'; pos += 1;
-    buf[pos] = b'0' + ((minutes / 10) as u8); pos += 1;
-    buf[pos] = b'0' + ((minutes % 10) as u8); pos += 1;
-    buf[pos] = b':'; pos += 1;
-    buf[pos] = b'0' + ((seconds / 10) as u8); pos += 1;
-    buf[pos] = b'0' + ((seconds % 10) as u8); pos += 1;
-    buf[pos] = b'.'; pos += 1;
-    buf[pos] = b'0' + ((millis / 100) as u8); pos += 1;
-    buf[pos] = b'0' + (((millis / 10) % 10) as u8); pos += 1;
-    buf[pos] = b'0' + ((millis % 10) as u8); pos += 1;
-    buf[pos] = b']'; pos += 1;
-    buf[pos] = b' '; pos += 1;
-    
+
+    buf[pos] = b'0' + ((hours / 10) as u8);
+    pos += 1;
+    buf[pos] = b'0' + ((hours % 10) as u8);
+    pos += 1;
+    buf[pos] = b':';
+    pos += 1;
+    buf[pos] = b'0' + ((minutes / 10) as u8);
+    pos += 1;
+    buf[pos] = b'0' + ((minutes % 10) as u8);
+    pos += 1;
+    buf[pos] = b':';
+    pos += 1;
+    buf[pos] = b'0' + ((seconds / 10) as u8);
+    pos += 1;
+    buf[pos] = b'0' + ((seconds % 10) as u8);
+    pos += 1;
+    buf[pos] = b'.';
+    pos += 1;
+    buf[pos] = b'0' + ((millis / 100) as u8);
+    pos += 1;
+    buf[pos] = b'0' + (((millis / 10) % 10) as u8);
+    pos += 1;
+    buf[pos] = b'0' + ((millis % 10) as u8);
+    pos += 1;
+    buf[pos] = b']';
+    pos += 1;
+    buf[pos] = b' ';
+    pos += 1;
+
     // [COMPONENT]
-    buf[pos] = b'['; pos += 1;
+    buf[pos] = b'[';
+    pos += 1;
     for &b in component.as_bytes() {
-        buf[pos] = b; pos += 1;
+        buf[pos] = b;
+        pos += 1;
     }
-    buf[pos] = b']'; pos += 1;
-    buf[pos] = b' '; pos += 1;
-    
+    buf[pos] = b']';
+    pos += 1;
+    buf[pos] = b' ';
+    pos += 1;
+
     // Message (with length check)
     for &b in message.as_bytes() {
         if pos < 240 {
-            buf[pos] = b; pos += 1;
+            buf[pos] = b;
+            pos += 1;
         }
     }
-    
-    buf[pos] = b'\r'; pos += 1;
-    buf[pos] = b'\n'; pos += 1;
-    
+
+    buf[pos] = b'\r';
+    pos += 1;
+    buf[pos] = b'\n';
+    pos += 1;
+
     let s = unsafe { core::str::from_utf8_unchecked(&buf[..pos]) };
     write_serial(s);
 }

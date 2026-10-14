@@ -8,10 +8,10 @@
 //! EPROCESS: 0x4D0 bytes on Windows 7 x64 RTM
 //! Reference: Vergilius Project, geoffchappell.com reverse engineering
 
+use crate::ke::sync::DispatcherHeader;
 use crate::mm::vad::VadTree;
 use crate::mm::working_set::MmWorkingSet;
-use crate::ke::sync::DispatcherHeader;
-use crate::ps::thread::{Ethread, Thread, KThreadState};
+use crate::ps::thread::{Ethread, KThreadState, Thread};
 use core::ptr::null_mut;
 
 /// Process ID constants
@@ -74,7 +74,9 @@ const OWNER_MASK: u64 = !0x3;
 
 impl ExPushLock {
     pub const fn new() -> Self {
-        Self { value: AtomicU64::new(0) }
+        Self {
+            value: AtomicU64::new(0),
+        }
     }
 
     /// Acquire the lock, spinning until it succeeds. Safe to call from
@@ -147,7 +149,7 @@ impl ExPushLock {
             // Owner tracking: verify current owner, clear LOCK bit, preserve WAITERS bit
             let cur_owner = cur & OWNER_MASK;
             if cur_owner == (owner & OWNER_MASK) {
-                cur & !LOCK_FLAG  // Preserve WAITERS
+                cur & !LOCK_FLAG // Preserve WAITERS
             } else {
                 // Not the owner - don't modify (should not happen if caller holds lock)
                 cur
@@ -155,12 +157,9 @@ impl ExPushLock {
         };
 
         if desired != cur {
-            let _ = self.value.compare_exchange(
-                cur,
-                desired,
-                Ordering::Release,
-                Ordering::Acquire,
-            );
+            let _ = self
+                .value
+                .compare_exchange(cur, desired, Ordering::Release, Ordering::Acquire);
         }
     }
 
@@ -242,12 +241,16 @@ impl Clone for ExFastRef {
 impl ExFastRef {
     /// Create a null fast ref (zero value — both pointer and count are 0).
     pub fn new() -> Self {
-        Self { value: AtomicU64::new(0) }
+        Self {
+            value: AtomicU64::new(0),
+        }
     }
 
     /// Wrap a raw u64 value directly.
     pub fn from_raw(raw: u64) -> Self {
-        Self { value: AtomicU64::new(raw) }
+        Self {
+            value: AtomicU64::new(raw),
+        }
     }
 
     /// Create from an object pointer with initial embedded reference count of 1.
@@ -257,7 +260,9 @@ impl ExFastRef {
     pub unsafe fn from_object(obj: *const ()) -> Self {
         // SAFETY: caller guarantees obj is valid.
         let raw = (obj as u64 & !0x7) | 1u64; // pointer + count = 1
-        Self { value: AtomicU64::new(raw) }
+        Self {
+            value: AtomicU64::new(raw),
+        }
     }
 
     /// Return the current raw u64 value.
@@ -359,7 +364,7 @@ impl KAffinityEx {
             mask: [0],
         }
     }
-    
+
     pub fn set_cpu(&mut self, cpu: u32) {
         if cpu < 64 {
             self.mask[0] = 1u64 << cpu;
@@ -431,84 +436,84 @@ pub struct Eprocess {
     pub kprocess_padding: [u8; 40],
 
     // === 0x160: EPROCESS-specific fields ===
-    
+
     // === 0x160: Process Lock ===
     /// Push lock for process operations
     pub eprocess_lock: ExPushLock,
-    
+
     // === 0x168: Timing ===
     /// Process creation time
     pub create_time: u64,
     /// Process exit time
     pub exit_time: u64,
-    
+
     // === 0x178: Rundown Protection ===
     /// Rundown protection for process
     pub rundown_protect: ExRundownRef,
-    
+
     // === 0x180: Unique Process ID ===
     /// Unique process identifier
     pub unique_process_id: u64,
-    
+
     // === 0x188: Exit Status ===
     /// Process exit status
     pub exit_status: i32,
     pub exit_status_pad: u32,
-    
+
     // === 0x190: Active Process Links ===
     /// List entry for global process list (PsActiveProcessLinks)
     pub active_process_links: ListEntry,
-    
+
     // === 0x198: Quota ===
     /// Pooled commit usage [2]
     pub process_quota_usage: [u64; 2],
     /// Peak pooled commit [2]
     pub process_quota_peak: [u64; 2],
-    
+
     // === 0x1B8: Commit Charge ===
     /// Current commit charge (volatile)
     pub commit_charge: u64,
-    
+
     // === 0x1C0: Quota Block ===
     /// Quota block pointer
     pub quota_block: u64,
     /// CPU quota block pointer
     pub cpu_quota_block: u64,
-    
+
     // === 0x1D0: Virtual Memory Size ===
     /// Peak virtual memory size
     pub peak_virtual_size: u64,
     /// Current virtual memory size
     pub virtual_size: u64,
-    
+
     // === 0x1E0: Session Process Links ===
     /// Session process list link
     pub session_process_links: ListEntry,
-    
+
     // === 0x1F0: Debug Port ===
     /// Debug port for exception handling
     pub debug_port: u64,
-    
+
     // === 0x1F8: Exception Port ===
     /// Exception port (union of port data pointer and value)
     pub exception_port: u64,
-    
+
     // === 0x200: Object Table ===
     /// Handle table pointer
     pub object_table: *mut ProcessHandleTable,
-    
+
     // === 0x208: Token ===
     /// Security token (EX_FAST_REF)
     pub token: ExFastRef,
-    
+
     // === 0x210: Working Set Page ===
     /// Working set page
     pub working_set_page: u64,
-    
+
     // === 0x218: Address Creation Lock ===
     /// Address space creation lock
     pub address_creation_lock: ExPushLock,
-    
+
     // === 0x220: Page Table ===
     /// Page table PML4 physical address
     pub page_table_pml4: u64,
@@ -516,57 +521,57 @@ pub struct Eprocess {
     pub pml4_phys: u64,
     /// Page table lock
     pub page_table_lock: u64,
-    
+
     // === 0x238: Job Status ===
     /// Job status flags
     pub job_status: u32,
-    
+
     // === 0x23C: Job Flags ===
     /// Job flags
     pub job_flags: u32,
-    
+
     // === 0x240: Spare/Reserved ===
     pub spare0: u64,
-    
+
     // === 0x248: Security Port ===
     /// Security port pointer
     pub security_port: u64,
-    
+
     // === 0x250: Spare ===
     pub spare1: u64,
-    
+
     // === 0x258: PaeTop ===
     /// PAE top
     pub pae_top: u64,
-    
+
     // === 0x260: Session ID ===
     /// Session identifier
     pub session_id: u32,
     pub spare2: u32,
-    
+
     // === 0x268: Spare ===
     pub spare3: u64,
-    
+
     // === 0x270: Shared User Data ===
     /// Pointer to shared user data
     pub shared_user_data: u64,
-    
+
     // === 0x278: Spare ===
     pub spare4: u64,
-    
+
     // === 0x280: Process Affinity ===
     /// Process affinity mask (extended)
     pub process_affinity: KAffinityEx,
-    
+
     // === 0x298: Unique Process ID (8 bytes) ===
     pub unique_process_id_full: u64,
-    
+
     // === 0x2A0: Spare ===
     pub spare5: u64,
-    
+
     // === 0x2A8: Default Thread High Group Priority ===
     pub default_thread_high_group_priority: u64,
-    
+
     // === 0x2B0: Token Active Process ===
     pub token_active_process: u32,
     pub spare6: u32,
@@ -581,46 +586,46 @@ pub struct Eprocess {
     // === 0x338: PEB Pointer ===  **FIXED: Correct Windows 7 x64 offset**
     /// Process Environment Block pointer
     pub Peb: *mut Peb,
-    
+
     // === 0x340: Fault Table ===  (shifted from 0x2C0)
     /// Fault table address
     pub fault_table_address: u64,
     /// Fault table entry
     pub fault_table_entry: u8,
     pub spare7: [u8; 7],
-    
+
     // === 0x350: Section Object ===  (shifted from 0x2D0)
     /// Section object (EX_FAST_REF)
     pub section_object: ExFastRef,
-    
+
     // === 0x358: Protection ===  (shifted from 0x2D8)
     /// Process protection level
     pub protection: PsProtection,
     pub spare8: [u8; 5],
-    
+
     // === 0x360: Spare ===  (shifted from 0x2E0)
     pub spare9: u32,
-    
+
     // === 0x368: Thread List Head (from KPROCESS, second instance) ===  (shifted from 0x2E8)
     /// Head of thread list
     pub thread_list_head2: u64,
-    
+
     // === 0x370: Win32 Process ===  (shifted from 0x2F0)
     /// Win32 process info
     pub win32_process: u64,
-    
+
     // === 0x378: Win32 Window Station ===  (shifted from 0x2F8)
     /// Win32 window station
     pub win32_window_station: u64,
-    
+
     // === 0x380: GDI Handle Table ===  (shifted from 0x300)
     /// GDI handle table
     pub gdi_handle_table: u64,
-    
+
     // === 0x388: GDI Batch ===  (shifted from 0x308)
     /// GDI batch
     pub gdi_batch: u64,
-    
+
     // === 0x390: GDI DC Attr ===  (shifted from 0x310)
     /// GDI DC attribute list
     pub gdi_dc_attr_list: u64,
@@ -628,7 +633,7 @@ pub struct Eprocess {
     pub gdi_client_pid: u64,
     /// GDI client TID
     pub gdi_client_tid: u64,
-    
+
     // === 0x3A8: Server DLL ===  (shifted from 0x328)
     /// Server silo
     pub server_silo: u64,
@@ -636,55 +641,55 @@ pub struct Eprocess {
     pub shell_service_object: u64,
     /// Environment pointer
     pub environment_pointer: u64,
-    
+
     // === 0x3C0: Spare ===  (shifted from 0x340)
     pub spare10: u64,
-    
+
     // === 0x3C8: LUID Device Maps Enabled ===  (shifted from 0x348)
     pub luid_device_maps_enabled: u64,
-    
+
     // === 0x3D0: Spare ===  (shifted from 0x350)
     pub spare11: u64,
-    
+
     // === 0x3D8: Spare ===  (shifted from 0x358)
     pub spare12: u64,
-    
+
     // === 0x3E0: MmProcessLinks ===  (shifted from 0x360)
     /// Memory manager process links
     pub mm_process_links: ListEntry,
-    
+
     // === 0x3F0: Section Object (file) ===  (shifted from 0x370)
     /// File object
     pub section_object_file: u64,
-    
+
     // === 0x3F8: Image File Name ===  (shifted from 0x378)
     /// Process image file name (15 bytes + null)
     pub image_file_name: [u8; 15],
-    
+
     // === 0x407: Padding ===  (shifted from 0x387)
     pub name_padding: u8,
-    
+
     // === 0x408: Spare ===  (shifted from 0x388)
     pub spare13: u64,
-    
+
     // === 0x410: Modify Page Time ===  (shifted from 0x390)
     pub modify_page_time: u64,
-    
+
     // === 0x418: Last AppDomain Time ===  (shifted from 0x398)
     pub last_app_domain_time: u64,
-    
+
     // === 0x420: Spare ===  (shifted from 0x3A0)
     pub spare14: u64,
-    
+
     // === 0x428: Energy Tracking ===  (shifted from 0x3A8)
     pub energy_tracking: u64,
-    
+
     // === 0x430: User Image Info ===  (shifted from 0x3B0)
     /// User image base address
     pub user_image_base: u64,
     /// User image size
     pub user_image_size: u64,
-    
+
     // === 0x440: User Stack (Phase 0 fields) ===  (shifted from 0x3C0)
     /// User-mode stack base
     pub user_stack_base: u64,
@@ -701,53 +706,53 @@ pub struct Eprocess {
     /// the BSP's current-thread pointer. May be null for system
     /// processes that have no main thread (kernel threads).
     pub main_thread: *mut Ethread,
-    
+
     // === 0x460: VAD Root ===  (shifted from 0x3F0)
     /// Virtual address descriptor root
     pub vad_root: VadTree,
-    
+
     // === 0x458: Spare ===  (shifted from 0x3E8)
     pub spare16: u64,
-    
+
     // === 0x460: Mm Working Set ===  (shifted from 0x3F0)
     /// Working set info
     pub working_set: MmWorkingSet,
-    
+
     // === 0x4A0: Spare ===  (shifted from 0x430)
     pub spare17: u64,
-    
+
     // === 0x4A8: Page Fault Count ===  (shifted from 0x438)
     /// Page fault counter
     pub page_fault_count: u64,
-    
+
     // === 0x4B0: Spare ===  (shifted from 0x440)
     pub spare18: u64,
-    
+
     // === 0x4B8: Mm SizeOfWorkingSet ===  (shifted from 0x448)
     pub mm_size_of_working_set: u64,
-    
+
     // === 0x4C0: Spare ===  (shifted from 0x450)
     pub spare19: u64,
-    
+
     // === 0x4C8: Memory Management ===  (shifted from 0x458)
     /// VM state
     pub vm_state: u32,
-    
+
     // === 0x4CC: Working Set Expansion Links ===  (shifted from 0x45C)
     pub working_set_expansion_links: u64,
-    
+
     // === 0x4D4: Spare ===  (shifted from 0x464)
     pub spare20: u64,
-    
+
     // === 0x4DC: Flags 2 ===  (shifted from 0x46C)
     pub flags2: u32,
-    
+
     // === 0x4E0: Spare ===  (shifted from 0x470)
     pub spare21: u64,
-    
+
     // === 0x4E8: Dcache Timer ===  (shifted from 0x478)
     pub dcache_timer: u64,
-    
+
     // === 0x4F0: Spare ===  (shifted from 0x480)
     pub spare22: [u64; 14],
 
@@ -759,7 +764,6 @@ pub struct Eprocess {
     pub wow64_last_error: u32,
     pub wow64_vas_ptr: u64,
     pub wow64_reserved: [u64; 4],
-
     // === 0x500: END ===
     // Structure ends here - total size should be approximately 0x540 for Windows 7 x64
 }
@@ -787,9 +791,9 @@ pub const PEB_VIRTUAL_ADDRESS: u64 = 0x0000_0000_7FFE_D000;
 /// - Windows 7 SP1 x64:  0x000000007FFDE000
 pub fn get_peb_address(is_sp1: bool) -> u64 {
     if is_sp1 {
-        0x0000_0000_7FFE_D000  // Windows 7 SP1 x64
+        0x0000_0000_7FFE_D000 // Windows 7 SP1 x64
     } else {
-        0x0000_0000_7FFE_0000  // Windows 7 RTM x64
+        0x0000_0000_7FFE_0000 // Windows 7 RTM x64
     }
 }
 
@@ -970,16 +974,20 @@ impl Eprocess {
             wow64_reserved: [0; 4],
         }
     }
-    
+
     /// Set process ID
     pub fn set_pid(&mut self, pid: u64) {
         self.unique_process_id = pid;
         self.unique_process_id_full = pid;
     }
-    
+
     /// Set image name
     pub fn set_name(&mut self, name: &[u8]) {
-        let base_start = name.iter().rposition(|&b| b == b'\\').map(|p| p + 1).unwrap_or(0);
+        let base_start = name
+            .iter()
+            .rposition(|&b| b == b'\\')
+            .map(|p| p + 1)
+            .unwrap_or(0);
         let base_name = &name[base_start..];
         let len = base_name.len().min(14);
         for i in 0..len {
@@ -988,7 +996,7 @@ impl Eprocess {
     }
 
     /// Set the process token (primary security token)
-    /// 
+    ///
     /// In Windows 7, EX_FAST_REF uses low 3-4 bits for reference count.
     /// When setting a new token, we initialize the reference count to 1.
     pub fn set_token(&mut self, token_ptr: *mut crate::se::token::Token) {
@@ -1002,7 +1010,7 @@ impl Eprocess {
     pub fn get_token(&self) -> *mut crate::se::token::Token {
         self.token.get_object() as *mut crate::se::token::Token
     }
-    
+
     /// Get thread count from process
     pub fn thread_count(&mut self) -> u32 {
         let mut count = 0u32;
@@ -1057,10 +1065,9 @@ impl ListEntry {
         // Anything else is non-empty (or inconsistent — treat as
         // non-empty to avoid misinterpreting a partially
         // initialised node).
-        (self.flink.is_null() && self.blink.is_null())
-            || (self.flink == me && self.blink == me)
+        (self.flink.is_null() && self.blink.is_null()) || (self.flink == me && self.blink == me)
     }
-    
+
     pub fn insert_tail(&mut self, entry: *mut ListEntry) {
         unsafe {
             (*entry).blink = self.blink;
@@ -1069,7 +1076,7 @@ impl ListEntry {
             self.blink = entry;
         }
     }
-    
+
     pub fn remove(&mut self) {
         unsafe {
             (*self.flink).blink = self.blink;
@@ -1124,12 +1131,12 @@ pub struct Peb {
 // =============================================================================
 
 /// PEB internal field offsets for compile-time verification
-pub const PEB_BEING_DEBUGGED_OFFSET: usize = 0x00;       // PEB+0x00 (header byte 0)
-pub const PEB_IMAGE_BASE_ADDRESS: usize = 0x10;          // PEB+0x10
-pub const PEB_LDR_OFFSET: usize = 0x18;                  // PEB+0x18
-pub const PEB_PROCESS_PARAMETERS: usize = 0x20;           // PEB+0x20
-pub const PEB_PROCESS_HEAP: usize = 0x28;                // PEB+0x28
-pub const PEB_NT_GLOBAL_FLAG: usize = 0x38;              // PEB+0x38
+pub const PEB_BEING_DEBUGGED_OFFSET: usize = 0x00; // PEB+0x00 (header byte 0)
+pub const PEB_IMAGE_BASE_ADDRESS: usize = 0x10; // PEB+0x10
+pub const PEB_LDR_OFFSET: usize = 0x18; // PEB+0x18
+pub const PEB_PROCESS_PARAMETERS: usize = 0x20; // PEB+0x20
+pub const PEB_PROCESS_HEAP: usize = 0x28; // PEB+0x28
+pub const PEB_NT_GLOBAL_FLAG: usize = 0x38; // PEB+0x38
 
 impl Peb {
     pub fn new() -> Self {
@@ -1156,9 +1163,7 @@ impl Peb {
     /// Get BeingDebugged flag from PEB header
     #[inline]
     pub fn being_debugged(&self) -> bool {
-        unsafe {
-            *(self.header as *const u8) != 0
-        }
+        unsafe { *(self.header as *const u8) != 0 }
     }
 
     /// Get image base address from PEB
@@ -1448,10 +1453,8 @@ pub fn create_system_process(pid: u64) -> Option<&'static mut Eprocess> {
     // addresses which need page-table mapping before they can be
     // accessed through a pointer).
     let process_size = core::mem::size_of::<Eprocess>().max(4096);
-    let process = crate::mm::pool::allocate(
-        crate::mm::pool::PoolType::NonPaged,
-        process_size,
-    ) as *mut Eprocess;
+    let process = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, process_size)
+        as *mut Eprocess;
 
     if !process.is_null() {
         unsafe {
@@ -1461,10 +1464,8 @@ pub fn create_system_process(pid: u64) -> Option<&'static mut Eprocess> {
 
             // Allocate handle table from pool as well (needs virtual address)
             let ht_size = core::mem::size_of::<ProcessHandleTable>().max(256);
-            let ht_ptr = crate::mm::pool::allocate(
-                crate::mm::pool::PoolType::NonPaged,
-                ht_size,
-            ) as *mut ProcessHandleTable;
+            let ht_ptr = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, ht_size)
+                as *mut ProcessHandleTable;
             if !ht_ptr.is_null() {
                 core::ptr::write_bytes(ht_ptr as *mut u8, 0, ht_size);
                 (*ht_ptr).next_slot = 1;
@@ -1475,7 +1476,7 @@ pub fn create_system_process(pid: u64) -> Option<&'static mut Eprocess> {
             let system_token = crate::se::token::create_system_token();
             if !system_token.is_null() {
                 (*process).set_token(system_token);
-                // // kprintln!("    [PS] Assigned system token at 0x{:016x} to PID {} (system)", system_token as u64, pid)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                // // kprintln!("    [PS] Assigned system token at 0x{:016x} to PID {} (system)", system_token as u64, pid);
             }
         }
 
@@ -1495,7 +1496,11 @@ pub fn create_system_process(pid: u64) -> Option<&'static mut Eprocess> {
 }
 
 /// Create user process
-pub fn create_user_process(image: &[u8], pid: u64, user_entry_override: Option<u64>) -> Option<&'static mut Eprocess> {
+pub fn create_user_process(
+    image: &[u8],
+    pid: u64,
+    user_entry_override: Option<u64>,
+) -> Option<&'static mut Eprocess> {
     // The PEB and stack frames are NOT used: the user stack is
     // created via `map_user_pages`, and a real PEB would need to be
     // mapped into the user address space at a chosen VA. Avoid
@@ -1551,7 +1556,8 @@ pub fn create_user_process(image: &[u8], pid: u64, user_entry_override: Option<u
         crate::mm::vas::USER_STACK_BASE,
         crate::mm::vas::USER_STACK_SIZE,
         crate::mm::vas::PTE_RW | crate::mm::vas::PTE_US,
-    ) != crate::mm::vas::MmStatus::Ok {
+    ) != crate::mm::vas::MmStatus::Ok
+    {
         crate::mm::pfn::free_pfn(pml4_phys >> 12);
         crate::mm::pool::free(thread_buf);
         crate::mm::pool::free(process_buf);
@@ -1586,7 +1592,8 @@ pub fn create_user_process(image: &[u8], pid: u64, user_entry_override: Option<u
         (*process).Peb = core::ptr::null_mut();
         (*process).object_table = ht_ptr;
         (*process).user_stack_base = crate::mm::vas::USER_STACK_BASE;
-        (*process).user_stack_limit = crate::mm::vas::USER_STACK_BASE + crate::mm::vas::USER_STACK_SIZE;
+        (*process).user_stack_limit =
+            crate::mm::vas::USER_STACK_BASE + crate::mm::vas::USER_STACK_SIZE;
         (*process).user_rsp = user_rsp;
         (*process).kprocess_thread_list_head.init();
         (*process).set_name(image);
@@ -1599,7 +1606,9 @@ pub fn create_user_process(image: &[u8], pid: u64, user_entry_override: Option<u
 
         // Initialize thread
         let thread = thread_ptr;
-        (*thread).client_id.set(pid, pid.wrapping_shl(8).wrapping_add(1));
+        (*thread)
+            .client_id
+            .set(pid, pid.wrapping_shl(8).wrapping_add(1));
         (*thread).kthread.process = process;
         (*thread).threads_process = process;
         (*thread).kthread.state = KThreadState::Initialized;
@@ -1607,9 +1616,9 @@ pub fn create_user_process(image: &[u8], pid: u64, user_entry_override: Option<u
         (*thread).kthread.priority = 8;
         (*thread).kthread.global_thread_list_entry.init();
 
-        (*process).kprocess_thread_list_head.insert_tail(
-            &mut (*thread).kthread.global_thread_list_entry as *mut ListEntry
-        );
+        (*process)
+            .kprocess_thread_list_head
+            .insert_tail(&mut (*thread).kthread.global_thread_list_entry as *mut ListEntry);
 
         // Publish the new thread as the process's main thread so
         // `setup_bsp` can install it into the per-CPU current_thread
@@ -1732,6 +1741,21 @@ pub fn get_process_list_ptr() -> &'static crate::ke::sync::Spinlock<ProcessList>
     &PROCESS_LIST
 }
 
+/// Register a process in the global process list.
+///
+/// Returns `false` when the list is full. The caller must not already hold
+/// the `PROCESS_LIST` lock: the list is a non-reentrant `Spinlock`.
+pub fn add_to_global_list(process: &mut Eprocess) -> bool {
+    let mut list = PROCESS_LIST.lock();
+    if list.process_count >= MAX_PROCESSES {
+        return false;
+    }
+    let index = list.process_count;
+    list.processes[index] = process as *mut Eprocess;
+    list.process_count = index + 1;
+    true
+}
+
 /// Iterate over all processes with a callback function.
 /// Returns false if iteration was aborted by the callback.
 pub fn for_each_process<F>(mut f: F) -> bool
@@ -1758,7 +1782,10 @@ where
 /// `global_thread_list_entry` fields of each thread's KTHREAD (offset 0x0C8).
 ///
 /// Returns the ETHREAD pointer if found.
-pub fn find_thread_in_process(process: *mut Eprocess, tid: u64) -> Option<*mut crate::ps::thread::Ethread> {
+pub fn find_thread_in_process(
+    process: *mut Eprocess,
+    tid: u64,
+) -> Option<*mut crate::ps::thread::Ethread> {
     if process.is_null() {
         return None;
     }
@@ -1778,9 +1805,8 @@ pub fn find_thread_in_process(process: *mut Eprocess, tid: u64) -> Option<*mut c
             // (Kthread is at ETHREAD offset 0, so no additional Kthread offset needed.)
             const GLOBAL_THREAD_ENTRY_OFFSET: usize =
                 core::mem::offset_of!(crate::ps::thread::Kthread, global_thread_list_entry);
-            debug_assert!(GLOBAL_THREAD_ENTRY_OFFSET == 0x0C8);  // Win7 documented offset
-            let ethread = (entry as *mut u8)
-                .offset(-(GLOBAL_THREAD_ENTRY_OFFSET as isize))
+            debug_assert!(GLOBAL_THREAD_ENTRY_OFFSET == 0x0C8); // Win7 documented offset
+            let ethread = (entry as *mut u8).offset(-(GLOBAL_THREAD_ENTRY_OFFSET as isize))
                 as *mut crate::ps::thread::Ethread;
 
             if !ethread.is_null() && (*ethread).client_id.unique_thread == tid {
@@ -1806,7 +1832,7 @@ pub fn find_thread_in_process(process: *mut Eprocess, tid: u64) -> Option<*mut c
 pub fn init() {
     use crate::hal::serial;
     serial::write_string("PS:init_start\r\n");
-    // // kprintln!("  Initializing process subsystem...")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("  Initializing process subsystem...");
 
     // 1. Create Idle process (PID 0)
     // The Idle process represents CPU idle time and has no threads to schedule.
@@ -1815,13 +1841,13 @@ pub fn init() {
     serial::write_string("PS:create_idle_done\r\n");
     if let Some(p) = idle {
         p.set_name(b"Idle\0");
-        // // kprintln!("    Created Idle process (PID {})", PID_IDLE)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("    Created Idle process (PID {})", PID_IDLE);
 
         // Register Idle process in the global process list
         let mut list = PROCESS_LIST.lock();
         list.idle_process = Some(p as *mut Eprocess);
     } else {
-        // // kprintln!("[ERROR] Failed to create Idle process")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[ERROR] Failed to create Idle process");
     }
 
     // NOTE: The following processes are NOT created here to avoid duplicate creation:
@@ -1831,7 +1857,7 @@ pub fn init() {
     // - WINLOGON process (PID 768): Created by start_session_manager() in kernel_main.rs
 
     serial::write_string("PS:init_done\r\n");
-    // // kprintln!("  Process subsystem initialized: {} processes", process_count())  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("  Process subsystem initialized: {} processes", process_count());
 }
 
 /// Stub for non-x86_64 architectures: process creation is not
@@ -1868,7 +1894,7 @@ pub fn create_process_full(
         inherit_from_parent(process, parent);
     }
 
-    // // kprintln!("[PS] create_process_full: PID {} created", pid)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[PS] create_process_full: PID {} created", pid);
     Some(process)
 }
 
@@ -1904,10 +1930,9 @@ const PID_BITMAP_FIRST: u64 = PID_SMSS + 256;
 /// also rely on the caller's invariant that the first 256 PIDs are
 /// never handed out.
 static PID_BITMAP: [core::sync::atomic::AtomicU64; PID_BITMAP_WORDS] =
-    [const { core::sync::atomic::AtomicU64::new(0) };
-        PID_BITMAP_WORDS];
+    [const { core::sync::atomic::AtomicU64::new(0) }; PID_BITMAP_WORDS];
 
-fn allocate_pid() -> Option<u64> {
+pub fn allocate_pid() -> Option<u64> {
     use core::sync::atomic::Ordering;
     // Scan the bitmap for the first zero bit. Atomic CAS loop so
     // multiple CPUs can allocate concurrently without racing.
@@ -1922,12 +1947,7 @@ fn allocate_pid() -> Option<u64> {
             }
             let bit = free.trailing_zeros() as u64;
             let mask = 1u64 << bit;
-            match word.compare_exchange(
-                cur,
-                cur | mask,
-                Ordering::AcqRel,
-                Ordering::Relaxed,
-            ) {
+            match word.compare_exchange(cur, cur | mask, Ordering::AcqRel, Ordering::Relaxed) {
                 Ok(_) => {
                     return Some(PID_BITMAP_FIRST + (word_idx as u64) * 64 + bit);
                 }
@@ -1965,15 +1985,15 @@ static _NEXT_PID_HINT: AtomicU64 = AtomicU64::new(PID_BITMAP_FIRST);
 // Security Access Check Functions
 // =============================================================================
 
+pub use crate::libs::ntdll::status::STATUS_ACCESS_DENIED as _STATUS_ACCESS_DENIED_NT;
+pub use crate::libs::ntdll::status::STATUS_INVALID_PARAMETER as _STATUS_INVALID_PARAMETER_NT;
+pub use crate::libs::ntdll::status::STATUS_PRIVILEGE_NOT_HELD as _STATUS_PRIVILEGE_NOT_HELD_NT;
 /// NTSTATUS codes for security operations.
 /// NTSTATUS codes for security operations. The canonical values
 /// live in `libs::ntdll::status`; we re-export them here as `u32`
 /// to keep the historical PS subsystem API stable (these were
 /// defined as `u32` long before the ntdll table was extended).
 pub use crate::libs::ntdll::status::STATUS_SUCCESS as _STATUS_SUCCESS_NT;
-pub use crate::libs::ntdll::status::STATUS_ACCESS_DENIED as _STATUS_ACCESS_DENIED_NT;
-pub use crate::libs::ntdll::status::STATUS_INVALID_PARAMETER as _STATUS_INVALID_PARAMETER_NT;
-pub use crate::libs::ntdll::status::STATUS_PRIVILEGE_NOT_HELD as _STATUS_PRIVILEGE_NOT_HELD_NT;
 
 pub const STATUS_SUCCESS: u32 = _STATUS_SUCCESS_NT as u32;
 pub const STATUS_ACCESS_DENIED: u32 = _STATUS_ACCESS_DENIED_NT as u32;
@@ -2005,7 +2025,7 @@ pub fn ps_open_process(
     let target = match get_by_pid(target_pid) {
         Some(p) => p as *mut Eprocess,
         None => {
-            // // kprintln!("[PS] ps_open_process: process {} not found", target_pid)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[PS] ps_open_process: process {} not found", target_pid);
             return Err(STATUS_INVALID_PARAMETER);
         }
     };
@@ -2017,7 +2037,7 @@ pub fn ps_open_process(
         // Use current thread's token
         let current_token = get_current_thread_token();
         if current_token.is_null() {
-            // // kprintln!("[PS] ps_open_process: no token available")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[PS] ps_open_process: no token available");
             return Err(STATUS_ACCESS_DENIED);
         }
         unsafe { &*current_token }
@@ -2028,7 +2048,7 @@ pub fn ps_open_process(
     // In a full implementation, this would be a separate security descriptor
     let security_descriptor = build_process_security_descriptor(target);
     if security_descriptor.is_null() {
-        // // kprintln!("[PS] ps_open_process: failed to get security descriptor")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[PS] ps_open_process: failed to get security descriptor");
         return Err(STATUS_ACCESS_DENIED);
     }
 
@@ -2041,8 +2061,8 @@ pub fn ps_open_process(
     );
     let _ = &granted;
 
-    // // kprintln!("[PS] ps_open_process: PID={} access=0x{:x} result={:?} granted=0x{:x}",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //              target_pid, desired_access, result, granted);
+    // // kprintln!("[PS] ps_open_process: PID={} access=0x{:x} result={:?} granted=0x{:x}",
+    // //              target_pid, desired_access, result, granted);
 
     match result {
         crate::se::seaccess::AccessCheckResult::Allowed => Ok(target),
@@ -2069,7 +2089,7 @@ pub fn ps_open_process_for_debug(
 
         if token.has_privilege(&debug_luid) {
             // SeDebugPrivilege overrides DACL check
-            // // kprintln!("[PS] ps_open_process_for_debug: SeDebugPrivilege override for PID {}", target_pid)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[PS] ps_open_process_for_debug: SeDebugPrivilege override for PID {}", target_pid);
 
             if let Some(p) = get_by_pid(target_pid) {
                 return Ok(p as *mut Eprocess);
@@ -2106,7 +2126,7 @@ pub fn ps_set_primary_token(
     };
 
     if !token.has_privilege(&privilege) {
-        // // kprintln!("[PS] ps_set_primary_token: caller lacks SE_ASSIGN_PRIMARY_TOKEN")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[PS] ps_set_primary_token: caller lacks SE_ASSIGN_PRIMARY_TOKEN");
         return STATUS_PRIVILEGE_NOT_HELD;
     }
 
@@ -2115,7 +2135,7 @@ pub fn ps_set_primary_token(
         unsafe {
             (*target).set_token(new_token);
         }
-        // // kprintln!("[PS] ps_set_primary_token: token updated successfully")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[PS] ps_set_primary_token: token updated successfully");
         STATUS_SUCCESS
     } else {
         STATUS_INVALID_PARAMETER
@@ -2161,6 +2181,8 @@ pub fn get_current_thread_token() -> *const crate::se::token::Token {
 ///
 /// Creates a proper security descriptor based on the process's token.
 /// Delegates to seaccess module for proper security descriptor construction.
-pub fn build_process_security_descriptor(process: *mut Eprocess) -> *const crate::se::seaccess::SecurityDescriptor {
+pub fn build_process_security_descriptor(
+    process: *mut Eprocess,
+) -> *const crate::se::seaccess::SecurityDescriptor {
     crate::se::seaccess::build_process_security_descriptor(process)
 }

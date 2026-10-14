@@ -18,9 +18,9 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
-use alloc::collections::BTreeMap;
 use crate::ke::sync::Spinlock;
+use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,6 +40,7 @@ pub enum SnapshotType {
     Differential = 2,
 }
 
+#[derive(Clone)]
 pub struct VolumeSnapshot {
     pub id: u64,
     pub volume_id: u64,
@@ -107,7 +108,6 @@ impl VssManager {
             writer(snapshot_id)?;
         }
 
-
         snapshot.activate();
         self.snapshots.insert(snapshot_id, snapshot);
         self.snapshots_created.fetch_add(1, Ordering::Relaxed);
@@ -118,7 +118,6 @@ impl VssManager {
     pub fn delete_snapshot(&mut self, snapshot_id: u64) -> Result<(), ()> {
         if let Some(mut snapshot) = self.snapshots.remove(&snapshot_id) {
             snapshot.state = SnapshotState::Deleting;
-
 
             self.snapshots_deleted.fetch_add(1, Ordering::Relaxed);
             Ok(())

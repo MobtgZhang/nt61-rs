@@ -11,9 +11,9 @@
 //! - Buffer management
 
 extern crate alloc;
-use alloc::vec::Vec;
 use alloc::string::String;
-use core::sync::atomic::{AtomicU32, AtomicBool, Ordering};
+use alloc::vec::Vec;
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// Audio device types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -249,7 +249,7 @@ impl Drop for AudioBuffer {
     fn drop(&mut self) {
         if !self.data.is_null() {
             use crate::mm::pool;
-            pool::free(self.data);
+            pool::free_aligned(self.data);
             self.data = core::ptr::null_mut();
         }
     }
@@ -561,7 +561,12 @@ impl AudioDeviceManager {
     }
 
     /// Create an audio stream
-    pub fn create_stream(&mut self, device_id: u32, direction: StreamDirection, format: AudioFormat) -> Option<u32> {
+    pub fn create_stream(
+        &mut self,
+        device_id: u32,
+        direction: StreamDirection,
+        format: AudioFormat,
+    ) -> Option<u32> {
         // Verify device exists
         if self.get_device(device_id).is_none() {
             return None;

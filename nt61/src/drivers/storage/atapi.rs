@@ -39,8 +39,7 @@ pub fn init() {
 }
 
 /// Count of ATAPI devices observed during the most recent `init()`.
-static LAST_ATAPI_COUNT: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0);
+static LAST_ATAPI_COUNT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 /// Diagnostic accessor for the ATAPI device count.
 pub fn atapi_count() -> u32 {
@@ -48,6 +47,6 @@ pub fn atapi_count() -> u32 {
 }
 
 pub fn smoke_test() -> bool {
-    // kprintln!("  [ATAPI SMOKE] ATAPI subsystem healthy")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [ATAPI SMOKE] ATAPI subsystem healthy");
     true
 }

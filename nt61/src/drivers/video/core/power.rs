@@ -348,8 +348,7 @@ impl GpuPowerManager {
 
     /// Set target power state
     pub fn set_target_state(&self, state: GpuPowerState) {
-        self.target_state
-            .store(state as u32, Ordering::Release);
+        self.target_state.store(state as u32, Ordering::Release);
     }
 
     /// Transition to target power state
@@ -365,9 +364,15 @@ impl GpuPowerManager {
 
         // Perform transition sequence
         match target {
-            GpuPowerState::D0 => { self.power_up(); true }
-            GpuPowerState::D3 => { self.power_down(); true }
-            _ => { self.enter_state(target) }
+            GpuPowerState::D0 => {
+                self.power_up();
+                true
+            }
+            GpuPowerState::D3 => {
+                self.power_down();
+                true
+            }
+            _ => self.enter_state(target),
         }
     }
 
@@ -408,8 +413,7 @@ impl GpuPowerManager {
         // D1: Reduce clock frequency, keep some power
         // D2: Further reduce clocks, reduce power
 
-        self.current_state
-            .store(state as u32, Ordering::Release);
+        self.current_state.store(state as u32, Ordering::Release);
         true
     }
 

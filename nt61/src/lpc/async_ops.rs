@@ -142,7 +142,8 @@ pub fn complete_async_operation(
     queue: &mut AsyncQueue,
 ) -> bool {
     for i in 0..queue.operations.len() {
-        if queue.operations[i].op_id == op_id && queue.operations[i].status == AsyncStatus::Pending {
+        if queue.operations[i].op_id == op_id && queue.operations[i].status == AsyncStatus::Pending
+        {
             queue.operations[i].status = status;
             queue.operations[i].result = result;
             queue.operations[i].bytes_transferred = bytes_transferred;

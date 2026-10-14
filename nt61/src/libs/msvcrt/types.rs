@@ -63,6 +63,11 @@ pub struct FILE {
     pub error: bool,
 }
 
+// FILE objects are only reachable through the mutex-guarded pools that own
+// them, so sharing them across threads is sound as long as access goes
+// through the guard.
+unsafe impl Send for FILE {}
+
 impl FILE {
     pub const fn new() -> Self {
         FILE {
@@ -86,15 +91,15 @@ pub const _IONBF: c_int = 2; // No buffering
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct tm {
-    pub tm_sec: c_int,    // seconds after the minute [0, 60]
-    pub tm_min: c_int,    // minutes after the hour [0, 59]
-    pub tm_hour: c_int,   // hours since midnight [0, 23]
-    pub tm_mday: c_int,   // day of the month [1, 31]
-    pub tm_mon: c_int,    // months since January [0, 11]
-    pub tm_year: c_int,   // years since 1900
-    pub tm_wday: c_int,   // days since Sunday [0, 6]
-    pub tm_yday: c_int,   // days since January 1 [0, 365]
-    pub tm_isdst: c_int,  // Daylight Saving Time flag
+    pub tm_sec: c_int,   // seconds after the minute [0, 60]
+    pub tm_min: c_int,   // minutes after the hour [0, 59]
+    pub tm_hour: c_int,  // hours since midnight [0, 23]
+    pub tm_mday: c_int,  // day of the month [1, 31]
+    pub tm_mon: c_int,   // months since January [0, 11]
+    pub tm_year: c_int,  // years since 1900
+    pub tm_wday: c_int,  // days since Sunday [0, 6]
+    pub tm_yday: c_int,  // days since January 1 [0, 365]
+    pub tm_isdst: c_int, // Daylight Saving Time flag
 }
 
 impl tm {

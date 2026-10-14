@@ -76,3 +76,6 @@ pub type LANGID = u16;
 /// void.
 pub type LPCVOID = *const core::ffi::c_void;
 pub type LPVOID = *mut core::ffi::c_void;
+
+/// `LPDWORD` — pointer to a `DWORD` (winbase.h).
+pub type LPDWORD = *mut DWORD;

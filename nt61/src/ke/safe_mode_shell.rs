@@ -50,9 +50,9 @@
 //! The shell never returns; it only terminates by halting,
 //! rebooting, or panicking.
 
-use core::sync::atomic::{AtomicU64, Ordering};
-use core::fmt::Write;
 use alloc::string::ToString;
+use core::fmt::Write;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 /// Number of rows reserved for the log pane. With 25 total
 /// rows we keep 22 for logs, 1 for the divider, 1 for the
@@ -90,16 +90,23 @@ struct Input {
 
 impl Input {
     const fn empty() -> Self {
-        Self { buf: [0u8; INPUT_MAX], len: 0 }
+        Self {
+            buf: [0u8; INPUT_MAX],
+            len: 0,
+        }
     }
     fn push(&mut self, b: u8) -> bool {
-        if self.len >= INPUT_MAX { return false; }
+        if self.len >= INPUT_MAX {
+            return false;
+        }
         self.buf[self.len] = b;
         self.len += 1;
         true
     }
     fn pop(&mut self) -> bool {
-        if self.len == 0 { return false; }
+        if self.len == 0 {
+            return false;
+        }
         self.len -= 1;
         true
     }
@@ -112,7 +119,9 @@ impl Input {
         // path on every Enter press.
         unsafe { core::str::from_utf8_unchecked(&self.buf[..self.len]) }
     }
-    fn clear(&mut self) { self.len = 0; }
+    fn clear(&mut self) {
+        self.len = 0;
+    }
 }
 
 /// Tiny `core::fmt::Write` adapter on a fixed-size byte
@@ -124,7 +133,12 @@ struct FmtBuf<const N: usize> {
 }
 
 impl<const N: usize> FmtBuf<N> {
-    const fn new() -> Self { Self { bytes: [0u8; N], len: 0 } }
+    const fn new() -> Self {
+        Self {
+            bytes: [0u8; N],
+            len: 0,
+        }
+    }
     fn as_str(&self) -> &str {
         // SAFETY: only ASCII text is ever written through
         // `write_str`, so the byte slice is valid UTF-8.
@@ -135,7 +149,9 @@ impl<const N: usize> FmtBuf<N> {
 impl<const N: usize> Write for FmtBuf<N> {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         for &b in s.as_bytes() {
-            if self.len >= N { return Err(core::fmt::Error); }
+            if self.len >= N {
+                return Err(core::fmt::Error);
+            }
             self.bytes[self.len] = b;
             self.len += 1;
         }
@@ -217,7 +233,7 @@ pub fn enter(boot_mode: u32) -> ! {
 /// Paint the title bar, divider, and prompt placeholder that
 /// form the "static" frame of the shell window.
 fn paint_static_frame() {
-    use crate::hal::text_console::{set_attr, clear, put_title_bar, write_hr};
+    use crate::hal::text_console::{clear, put_title_bar, set_attr, write_hr};
 
     clear();
     set_attr(crate::hal::text_console::ATTR_TITLE);
@@ -260,7 +276,9 @@ fn paint_log_pane() {
     }
     let mut buf = [[0u8; crate::hal::text_console::COLS + 2]; 1];
     let n = crate::hal::text_console::read_log_lines(&mut buf);
-    if n == 0 { return; }
+    if n == 0 {
+        return;
+    }
     let attr = buf[0][crate::hal::text_console::COLS];
     let len = buf[0][crate::hal::text_console::COLS + 1] as usize;
     crate::hal::text_console::set_attr(attr);
@@ -273,7 +291,7 @@ fn paint_log_pane() {
 /// Repaint the prompt. `prefix` is the current input buffer;
 /// pass an empty string when refreshing after Enter.
 fn paint_prompt(prefix: &str) {
-    use crate::hal::text_console::{set_attr, set_cursor, put_byte};
+    use crate::hal::text_console::{put_byte, set_attr, set_cursor};
     set_attr(crate::hal::text_console::ATTR_PROMPT);
     set_cursor(0, PROMPT_ROW);
     put_byte(b'C');
@@ -289,7 +307,7 @@ fn paint_prompt(prefix: &str) {
 /// nothing — the caller is expected to call `paint_prompt`
 /// afterwards to redraw the prompt.
 fn print_line(s: &str) {
-    use crate::hal::text_console::{set_attr, set_cursor, put_byte};
+    use crate::hal::text_console::{put_byte, set_attr, set_cursor};
     set_attr(crate::hal::text_console::ATTR_DEFAULT);
     set_cursor(0, PROMPT_ROW);
     for b in s.bytes() {
@@ -321,7 +339,10 @@ fn dispatch(line: &str) -> Result<(), CmdError> {
     }
     let (cmd, rest) = split_first_word(trimmed);
     match cmd {
-        "help" | "?" => { paint_help(); Ok(()) }
+        "help" | "?" => {
+            paint_help();
+            Ok(())
+        }
         "ver" => {
             print_line("NT6.1.7601 kernel v0.1 (SafeBoot CMD)");
             Ok(())
@@ -340,7 +361,9 @@ fn dispatch(line: &str) -> Result<(), CmdError> {
             crate::arch::halt_loop();
         }
         "panic" => {
-            if rest.is_empty() { return Err(CmdError::MissingArg); }
+            if rest.is_empty() {
+                return Err(CmdError::MissingArg);
+            }
             panic!("user-requested panic from SafeBoot shell: {}", rest);
         }
         "boot-mode" => {
@@ -388,7 +411,9 @@ fn dump_log_ring() {
     }
     let mut buf = [[0u8; crate::hal::text_console::COLS + 2]; 1];
     let n = crate::hal::text_console::read_log_lines(&mut buf);
-    if n == 0 { return; }
+    if n == 0 {
+        return;
+    }
     let attr = buf[0][crate::hal::text_console::COLS];
     let len = buf[0][crate::hal::text_console::COLS + 1] as usize;
     crate::hal::text_console::set_attr(attr);
@@ -401,9 +426,7 @@ fn dump_log_ring() {
         // SAFETY: ring slots are populated byte-by-byte from
         // either ASCII printables or control chars (LF/CR/BS).
         // Each individual byte is valid UTF-8 on its own.
-        let _ = s.write_str(unsafe {
-            core::str::from_utf8_unchecked(core::slice::from_ref(&b))
-        });
+        let _ = s.write_str(unsafe { core::str::from_utf8_unchecked(core::slice::from_ref(&b)) });
     }
     print_line(s.as_str());
 }
@@ -418,13 +441,27 @@ fn boot_mode_name(m: u32) -> &'static str {
 }
 
 #[cfg(target_arch = "x86_64")]
-fn arch_label() -> &'static str { "x86_64" }
+fn arch_label() -> &'static str {
+    "x86_64"
+}
 #[cfg(target_arch = "aarch64")]
-fn arch_label() -> &'static str { "aarch64" }
+fn arch_label() -> &'static str {
+    "aarch64"
+}
 #[cfg(target_arch = "riscv64")]
-fn arch_label() -> &'static str { "riscv64" }
+fn arch_label() -> &'static str {
+    "riscv64"
+}
 #[cfg(target_arch = "loongarch64")]
-fn arch_label() -> &'static str { "loongarch64" }
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64",
-              target_arch = "riscv64", target_arch = "loongarch64")))]
-fn arch_label() -> &'static str { "unknown" }
+fn arch_label() -> &'static str {
+    "loongarch64"
+}
+#[cfg(not(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "riscv64",
+    target_arch = "loongarch64"
+)))]
+fn arch_label() -> &'static str {
+    "unknown"
+}

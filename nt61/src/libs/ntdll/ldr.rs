@@ -16,12 +16,12 @@
 
 use super::file::wide_to_string;
 use super::status::{
-    STATUS_DLL_NOT_FOUND, STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER,
-    STATUS_NOT_FOUND, STATUS_SUCCESS,
+    STATUS_DLL_NOT_FOUND, STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER, STATUS_NOT_FOUND,
+    STATUS_SUCCESS,
 };
-use super::types::{HANDLE, NTSTATUS, PVOID, UnicodeString};
-use crate::kprintln;
+use super::types::{UnicodeString, HANDLE, NTSTATUS, PVOID};
 use crate::ke::sync::Spinlock;
+use crate::kprintln;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::ptr;
@@ -55,7 +55,7 @@ pub fn init_with_image_db(db: &'static mut crate::loader::ImageDatabase) {
     unsafe {
         KERNEL_IMAGE_DB = Some(db);
     }
-    // kprintln!("    [LDR] LdrLoadDll integration: initialized")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    [LDR] LdrLoadDll integration: initialized");
 }
 
 /// Find a loaded DLL by name
@@ -100,7 +100,7 @@ pub unsafe extern "C" fn LdrLoadDll(
     if name.is_empty() {
         return STATUS_DLL_NOT_FOUND;
     }
-    
+
     // Search the LDR list first - if already loaded, return existing handle
     {
         let list = LDR_LIST.lock();
@@ -111,29 +111,30 @@ pub unsafe extern "C" fn LdrLoadDll(
             }
         }
     }
-    
+
     // Try to load from the kernel's ImageDatabase
-    let (base, size, entry_point, loaded_ptr) = if let Some(ref mut db) = unsafe { KERNEL_IMAGE_DB.as_mut() } {
-        // Look up in the kernel's image database
-        if let Some(img_base) = db.find_image_base(&name) {
-            // Image is registered - get its info
-            let img_size = 0x100000; // Placeholder - would get from LoadedImage
-            (img_base, img_size, img_base + 0x1000, 0)
+    let (base, size, entry_point, loaded_ptr) =
+        if let Some(ref mut db) = unsafe { KERNEL_IMAGE_DB.as_mut() } {
+            // Look up in the kernel's image database
+            if let Some(img_base) = db.find_image_base(&name) {
+                // Image is registered - get its info
+                let img_size = 0x100000; // Placeholder - would get from LoadedImage
+                (img_base, img_size, img_base + 0x1000, 0)
+            } else {
+                // Not in database - this is a new DLL load
+                // In a full implementation, we'd read from disk here
+                // For now, use placeholder
+                let placeholder_base: u64 =
+                    0x0000_7000_0000_0000 + (LDR_LIST.lock().len() as u64) * 0x0010_0000;
+                (placeholder_base, 0x100000, placeholder_base + 0x1000, 0)
+            }
         } else {
-            // Not in database - this is a new DLL load
-            // In a full implementation, we'd read from disk here
-            // For now, use placeholder
-            let placeholder_base: u64 = 0x0000_7000_0000_0000
-                + (LDR_LIST.lock().len() as u64) * 0x0010_0000;
+            // No database - use placeholder
+            let placeholder_base: u64 =
+                0x0000_7000_0000_0000 + (LDR_LIST.lock().len() as u64) * 0x0010_0000;
             (placeholder_base, 0x100000, placeholder_base + 0x1000, 0)
-        }
-    } else {
-        // No database - use placeholder
-        let placeholder_base: u64 = 0x0000_7000_0000_0000
-            + (LDR_LIST.lock().len() as u64) * 0x0010_0000;
-        (placeholder_base, 0x100000, placeholder_base + 0x1000, 0)
-    };
-    
+        };
+
     // Add to LDR list
     {
         let mut list = LDR_LIST.lock();
@@ -149,9 +150,9 @@ pub unsafe extern "C" fn LdrLoadDll(
             loaded_image_ptr: loaded_ptr,
         });
     }
-    
-    // kprintln!("    [LDR] LdrLoadDll({}) -> base=0x{:016x}", name, base)  // kprintln disabled (memcpy crash workaround);
-    
+
+    // kprintln!("    [LDR] LdrLoadDll({}) -> base=0x{:016x}", name, base);
+
     *dll_handle = base as HANDLE;
     STATUS_SUCCESS
 }
@@ -232,7 +233,9 @@ pub unsafe extern "C" fn LdrEnumerateLoadedModules(
 /// `LdrUnloadDll` — release a DLL. The bootstrap never frees
 /// user DLLs; we just remove the entry from the LDR list.
 pub unsafe extern "C" fn LdrUnloadDll(dll_handle: HANDLE) -> NTSTATUS {
-    if dll_handle.is_null() { return STATUS_INVALID_HANDLE; }
+    if dll_handle.is_null() {
+        return STATUS_INVALID_HANDLE;
+    }
     let target = dll_handle as u64;
     let mut list = LDR_LIST.lock();
     if let Some(pos) = list.iter().position(|e| e.base == target) {
@@ -248,11 +251,27 @@ pub unsafe extern "C" fn LdrUnloadDll(dll_handle: HANDLE) -> NTSTATUS {
 pub unsafe extern "C" fn LdrGetDllDirectory(buffer: PVOID, buffer_length: u32) -> u32 {
     if !buffer.is_null() && buffer_length >= 22 {
         let path: [u16; 21] = [
-            b'C' as u16, b':' as u16, b'\\' as u16,
-            b'W' as u16, b'i' as u16, b'n' as u16, b'd' as u16, b'o' as u16,
-            b'w' as u16, b's' as u16, b'\\' as u16,
-            b'S' as u16, b'y' as u16, b's' as u16, b't' as u16, b'e' as u16,
-            b'm' as u16, b'3' as u16, b'2' as u16, 0, 0,
+            b'C' as u16,
+            b':' as u16,
+            b'\\' as u16,
+            b'W' as u16,
+            b'i' as u16,
+            b'n' as u16,
+            b'd' as u16,
+            b'o' as u16,
+            b'w' as u16,
+            b's' as u16,
+            b'\\' as u16,
+            b'S' as u16,
+            b'y' as u16,
+            b's' as u16,
+            b't' as u16,
+            b'e' as u16,
+            b'm' as u16,
+            b'3' as u16,
+            b'2' as u16,
+            0,
+            0,
         ];
         core::ptr::copy_nonoverlapping(path.as_ptr(), buffer as *mut u16, path.len());
     }
@@ -275,15 +294,23 @@ pub fn ldr_snapshot() -> Vec<LdrEntry> {
 /// module's name lookup. We do not depend on `String::eq_*
 /// helpers (those pull in `memcmp`).
 fn ascii_eq(a: &str, b: &str) -> bool {
-    if a.len() != b.len() { return false; }
+    if a.len() != b.len() {
+        return false;
+    }
     let ab = a.as_bytes();
     let bb = b.as_bytes();
     for i in 0..ab.len() {
         let mut ca = ab[i];
         let mut cb = bb[i];
-        if ca >= b'a' && ca <= b'z' { ca -= 0x20; }
-        if cb >= b'a' && cb <= b'z' { cb -= 0x20; }
-        if ca != cb { return false; }
+        if ca >= b'a' && ca <= b'z' {
+            ca -= 0x20;
+        }
+        if cb >= b'a' && cb <= b'z' {
+            cb -= 0x20;
+        }
+        if ca != cb {
+            return false;
+        }
     }
     true
 }

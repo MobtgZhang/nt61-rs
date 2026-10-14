@@ -22,7 +22,7 @@ pub enum MemTestStatus {
 /// Memory test results
 #[repr(C)]
 pub struct MemTestResults {
-    pub signature: u32,              // "MTES"
+    pub signature: u32, // "MTES"
     pub version: u32,
     pub test_start_addr: u64,
     pub test_end_addr: u64,
@@ -53,16 +53,16 @@ pub struct TestPatterns;
 impl TestPatterns {
     /// Standard test patterns
     pub const PATTERNS: [u64; 8] = [
-        0x0000_0000_0000_0000,  // All zeros
-        0xFFFF_FFFF_FFFF_FFFF,  // All ones
-        0xAAAA_AAAA_AAAA_AAAA,  // Alternating bits
-        0x5555_5555_5555_5555,  // Inverse alternating
-        0x00FF_00FF_00FF_00FF,  // 16-bit blocks
-        0x0F0F_0F0F_0F0F_0F0F,  // 8-bit blocks
-        0x3333_3333_CCCC_CCCC,  // 2-bit patterns
-        0xCCCC_CCCC_3333_3333,  // Inverse 2-bit
+        0x0000_0000_0000_0000, // All zeros
+        0xFFFF_FFFF_FFFF_FFFF, // All ones
+        0xAAAA_AAAA_AAAA_AAAA, // Alternating bits
+        0x5555_5555_5555_5555, // Inverse alternating
+        0x00FF_00FF_00FF_00FF, // 16-bit blocks
+        0x0F0F_0F0F_0F0F_0F0F, // 8-bit blocks
+        0x3333_3333_CCCC_CCCC, // 2-bit patterns
+        0xCCCC_CCCC_3333_3333, // Inverse 2-bit
     ];
-    
+
     /// Get pattern name
     pub fn name(index: usize) -> &'static str {
         match index {
@@ -89,37 +89,37 @@ impl MemTestContext {
     pub fn new(data: &'static mut MemTestResults) -> Self {
         Self { data }
     }
-    
+
     /// Run all test patterns
     pub fn run_tests(&mut self) -> &MemTestResults {
         self.data.test_status = MemTestStatus::Running;
         self.data.test_start_time = get_time_ticks();
-        
+
         for (i, pattern) in TestPatterns::PATTERNS.iter().enumerate() {
             self.run_pattern_test(*pattern, i as u32);
             self.data.patterns_tested = (i + 1) as u32;
-            
+
             // Stop on first error
             if self.data.errors_found > 0 {
                 self.data.test_status = MemTestStatus::Failed;
                 break;
             }
         }
-        
+
         if self.data.errors_found == 0 {
             self.data.test_status = MemTestStatus::Passed;
         }
-        
+
         self.data.test_end_time = get_time_ticks();
         &self.data
     }
-    
+
     /// Run a single pattern test
     fn run_pattern_test(&mut self, pattern: u64, test_type: u32) {
         let start = self.data.test_start_addr;
         let end = self.data.test_end_addr;
         let inv_pattern = !pattern;
-        
+
         // Phase 1: Write pattern
         unsafe {
             let mut ptr = start as *mut u64;
@@ -128,7 +128,7 @@ impl MemTestContext {
                 ptr = ptr.offset(1);
             }
         }
-        
+
         // Phase 2: Verify pattern
         unsafe {
             let mut ptr = start as *const u64;
@@ -141,7 +141,7 @@ impl MemTestContext {
                 ptr = ptr.offset(1);
             }
         }
-        
+
         // Phase 3: Write inverse
         unsafe {
             let mut ptr = start as *mut u64;
@@ -150,7 +150,7 @@ impl MemTestContext {
                 ptr = ptr.offset(1);
             }
         }
-        
+
         // Phase 4: Verify inverse
         unsafe {
             let mut ptr = start as *const u64;
@@ -164,7 +164,7 @@ impl MemTestContext {
             }
         }
     }
-    
+
     /// Record an error
     fn record_error(&mut self, addr: u64, expected: u64, actual: u64, test_type: u32) {
         if self.data.errors_found < 256 {
@@ -194,11 +194,11 @@ pub fn quick_test(start: u64, end: u64) -> bool {
     results.test_start_addr = start;
     results.test_end_addr = end;
     results.total_size_kb = (end - start) / 1024;
-    
+
     let mut ctx = MemTestContext::new(unsafe {
         core::mem::transmute::<&mut MemTestResults, &'static mut MemTestResults>(&mut results)
     });
-    
+
     let result = ctx.run_tests();
     result.errors_found == 0
 }
@@ -233,7 +233,7 @@ impl MemTestResults {
     pub fn is_valid(&self) -> bool {
         self.signature == MEMTEST_SIGNATURE
     }
-    
+
     /// Get human-readable status
     pub fn status_string(&self) -> &'static str {
         match self.test_status {

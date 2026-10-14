@@ -30,11 +30,11 @@ const REG_PORTSC1: u16 = 0x10;
 const REG_PORTSC2: u16 = 0x12;
 
 /// USBCMD bits.
-const USBCMD_RS: u16 = 1 << 0;       // Run/Stop
-const USBCMD_HCRESET: u16 = 1 << 1;  // Host Controller Reset
+const USBCMD_RS: u16 = 1 << 0; // Run/Stop
+const USBCMD_HCRESET: u16 = 1 << 1; // Host Controller Reset
 
 /// USBSTS bits.
-const USBSTS_HCH: u16 = 1 << 0;      // Host Controller Halted
+const USBSTS_HCH: u16 = 1 << 0; // Host Controller Halted
 
 /// One UHCI controller. We only need the BAR4 address and the
 /// CCSR (Configure Flag) for the smoke test.
@@ -60,14 +60,18 @@ fn push_uhci(c: UhciController) {
 }
 
 /// Number of UHCI controllers the driver has found.
-pub fn count() -> usize { unsafe { UHCI_COUNT } }
+pub fn count() -> usize {
+    unsafe { UHCI_COUNT }
+}
 
 /// Walk PCI for UHCI controllers and initialise each.
 pub fn init() {
     let mut found = 0u32;
     for dev in pci::enumerate() {
         if (dev.class_code, dev.subclass, dev.prog_if) == UHCI_PCI_CLASS {
-            if let Some(info) = crate::drivers::bus::pci_bus::find_pci(dev.bus, dev.device, dev.function) {
+            if let Some(info) =
+                crate::drivers::bus::pci_bus::find_pci(dev.bus, dev.device, dev.function)
+            {
                 if let Some(bar4) = first_io_bar(&info) {
                     let mut c = UhciController {
                         bar4_phys: bar4,
@@ -86,8 +90,7 @@ pub fn init() {
 }
 
 /// Cached discovery result for the most recent `init()` call.
-static INIT_FOUND: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0);
+static INIT_FOUND: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 /// Return the number of controllers observed by the most recent
 /// `init()` call.
@@ -95,17 +98,19 @@ pub fn init_found() -> u32 {
     INIT_FOUND.load(core::sync::atomic::Ordering::Relaxed)
 }
 
-fn first_io_bar(info: &crate::drivers::bus::pci_bus::PciDeviceInfo)
-    -> Option<u64>
-{
+fn first_io_bar(info: &crate::drivers::bus::pci_bus::PciDeviceInfo) -> Option<u64> {
     for bar in info.bars.iter() {
-        if bar.is_io && bar.phys != 0 { return Some(bar.phys); }
+        if bar.is_io && bar.phys != 0 {
+            return Some(bar.phys);
+        }
     }
     None
 }
 
 fn init_controller(c: &mut UhciController) -> bool {
-    if c.bar4_phys == 0 { return false; }
+    if c.bar4_phys == 0 {
+        return false;
+    }
     // We can't really do I/O port reads from a high-half address
     // on x86_64. The real driver would do `outl`/`inl` to the
     // physical IO port. For the bootstrap we mark the controller
@@ -117,7 +122,7 @@ fn init_controller(c: &mut UhciController) -> bool {
 }
 
 pub fn smoke_test() -> bool {
-    // kprintln!("  [UHCI SMOKE] UHCI controllers: {}", count())  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("  [UHCI SMOKE OK] UHCI stack healthy")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [UHCI SMOKE] UHCI controllers: {}", count());
+    // kprintln!("  [UHCI SMOKE OK] UHCI stack healthy");
     true
 }

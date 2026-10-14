@@ -17,9 +17,9 @@
 
 #![cfg(target_arch = "x86_64")]
 
+use super::nv50_fb::nv50_reg::{NV_CRTC_H_TOTAL, NV_CRTC_V_TOTAL, NV_FB_PITCH};
 use crate::drivers::video::core::gpu_common::GpuFeatures;
 use crate::drivers::video::log;
-use super::nv50_fb::nv50_reg::{NV_FB_PITCH, NV_CRTC_H_TOTAL, NV_CRTC_V_TOTAL};
 
 // =====================================================================
 // Legacy Device IDs
@@ -273,7 +273,6 @@ pub fn device_name(device_id: u16) -> &'static str {
 
 /// CRTC horizontal sync end
 
-
 /// CRTC vertical total
 
 /// CRTC vertical display end
@@ -286,12 +285,10 @@ pub fn device_name(device_id: u16) -> &'static str {
 
 /// CRTC vertical sync end
 
-
 // PCRTC (Primary CRTC)
 /// PCRTC control
 
 /// PCRTC cursor
-
 
 // FB (Framebuffer)
 /// FB configuration
@@ -302,18 +299,15 @@ pub fn device_name(device_id: u16) -> &'static str {
 
 /// FB pitch
 
-
 // PGRAPH (Graphics Engine)
 /// PGRAPH control
 
 /// PGRAPH status
 
-
 // CRTC control bits
 /// CRTC enable
 
 /// CRTC double scan
-
 
 // =====================================================================
 // Probe and Init Functions
@@ -341,8 +335,7 @@ pub fn probe() -> bool {
     false
 }
 
-static PROBE_HITS: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0);
+static PROBE_HITS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 /// Number of times `probe` discovered a Tesla legacy GPU.
 pub fn probe_hits() -> u32 {
@@ -392,18 +385,13 @@ pub fn init_framebuffer(
 /// Write a register
 pub fn write_reg(base: u64, offset: u32, value: u32) {
     unsafe {
-        core::ptr::write_volatile(
-            (base + offset as u64) as *mut u32,
-            value,
-        );
+        core::ptr::write_volatile((base + offset as u64) as *mut u32, value);
     }
 }
 
 /// Read a register
 pub fn read_reg(base: u64, offset: u32) -> u32 {
-    unsafe {
-        core::ptr::read_volatile((base + offset as u64) as *const u32)
-    }
+    unsafe { core::ptr::read_volatile((base + offset as u64) as *const u32) }
 }
 
 // =====================================================================
@@ -414,15 +402,20 @@ pub fn read_reg(base: u64, offset: u32) -> u32 {
 pub fn print_detection_info() {
     if let Some((device_id, arch)) = get_legacy_gpu_info() {
         let _name = device_name(device_id);
-        log::video_log("nouveau", &alloc::format!("Found: {} ({})", _name, arch.name()));
+        log::video_log(
+            "nouveau",
+            &alloc::format!("Found: {} ({})", _name, arch.name()),
+        );
         // Publish a packed summary `(arch_id << 16) | device_id` so
         // callers can introspect discovery without touching the console.
-        LAST_DETECT.store(((arch as u32) << 16) | device_id as u32, core::sync::atomic::Ordering::Relaxed);
+        LAST_DETECT.store(
+            ((arch as u32) << 16) | device_id as u32,
+            core::sync::atomic::Ordering::Relaxed,
+        );
     }
 }
 
-static LAST_DETECT: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0);
+static LAST_DETECT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 /// Returns the most recent `(arch_id, device_id)` detected by
 /// `print_detection_info`, packed into a single u32.

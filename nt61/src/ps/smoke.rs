@@ -32,10 +32,10 @@ use crate::rtl::testing::TestStats;
 use core::sync::atomic::Ordering;
 
 use super::process::{
-    get_by_pid, ListEntry, Eprocess, Process, MAX_PROCESSES, PID_CSRSS, PID_IDLE, PID_LSASS,
-    PID_SERVICES, PID_SMSS, PID_SYSTEM, PID_WINLOGON, ExFastRef,
+    get_by_pid, Eprocess, ExFastRef, ListEntry, Process, MAX_PROCESSES, PID_CSRSS, PID_IDLE,
+    PID_LSASS, PID_SERVICES, PID_SMSS, PID_SYSTEM, PID_WINLOGON,
 };
-use super::thread::{DispatcherHeader, Ethread, KThreadState, Kthread, THREAD_COUNT, NEXT_TID};
+use super::thread::{DispatcherHeader, Ethread, KThreadState, Kthread, NEXT_TID, THREAD_COUNT};
 
 /// Run the full Phase 7 process / thread smoke test.
 pub fn smoke_test() -> bool {
@@ -75,7 +75,12 @@ fn step1_pid_constants() -> bool {
     if PID_LSASS != 1152 {
         return false;
     }
-    crate::boot_println!("    PID_IDLE={}, PID_SYSTEM={}, PID_SMSS={}", PID_IDLE, PID_SYSTEM, PID_SMSS);
+    crate::boot_println!(
+        "    PID_IDLE={}, PID_SYSTEM={}, PID_SMSS={}",
+        PID_IDLE,
+        PID_SYSTEM,
+        PID_SMSS
+    );
     true
 }
 
@@ -210,7 +215,11 @@ fn step4_create_user_process() -> bool {
     }
 
     // Name was set. Eprocess::image_file_name holds the base name only.
-    let base_start = image.iter().rposition(|&b| b == b'\\').map(|p| p + 1).unwrap_or(0);
+    let base_start = image
+        .iter()
+        .rposition(|&b| b == b'\\')
+        .map(|p| p + 1)
+        .unwrap_or(0);
     let base_name = &image[base_start..];
     let mut name_match = true;
     for i in 0..base_name.len().min(process.image_file_name.len()) {

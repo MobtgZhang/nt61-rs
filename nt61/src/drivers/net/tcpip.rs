@@ -1,17 +1,13 @@
-
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 #[allow(non_snake_case)]
 #[allow(dead_code)]
-
 extern crate alloc;
 
+use crate::io::{self, DeviceObject, DeviceType, DriverObject, IoStackLocation, Irp};
+use crate::ke::sync::Spinlock;
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use crate::io::{DeviceObject, DeviceType, DriverObject, Irp, IoStackLocation};
-use crate::ke::sync::Spinlock;
-
 
 const MAX_TDI_ADDRESS_OBJECTS: usize = 256;
 
@@ -44,13 +40,12 @@ const IOCTL_TDI_INTERNAL_RECEIVE: u32 = 0x00120101;
 const IOCTL_TDI_INTERNAL_CONNECT: u32 = 0x00120102;
 const IOCTL_TDI_INTERNAL_DISCONNECT: u32 = 0x00120103;
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u16)]
 pub enum TdiAddressType {
     Unspecified = 0,
-    TdiAddressTypeIp = 2,      // AF_INET
-    TdiAddressTypeIpv6 = 23,   // AF_INET6
+    TdiAddressTypeIp = 2,    // AF_INET
+    TdiAddressTypeIpv6 = 23, // AF_INET6
 }
 
 #[repr(C)]
@@ -210,7 +205,10 @@ pub struct NetworkInterface {
     pub subnet_mask: [u8; 4],
     pub gateway: [u8; 4],
     pub mac_address: [u8; 6],
-    pub mtu: u16,
+    /// IPv4 MTU. Must be `u32`: RFC 1122 §3.2 requires the loopback MTU to
+    /// be at least the largest MTU of any attached network, which does not
+    /// fit in 16 bits (`netstack::ethif::NetworkInterface` already uses u32).
+    pub mtu: u32,
     pub link_speed: u64,
     pub ipv6_addresses: [[u8; 16]; 4],
     pub ipv6_count: usize,
@@ -254,7 +252,6 @@ impl NetworkInterface {
         }
     }
 }
-
 
 static TDI_ADDRESS_OBJECTS: Spinlock<Vec<TdiAddressObject>> = Spinlock::new(Vec::new());
 static TDI_CONNECTION_OBJECTS: Spinlock<Vec<TdiConnectionObject>> = Spinlock::new(Vec::new());
@@ -306,7 +303,6 @@ impl TcpIpStatistics {
 }
 
 static TCPIP_STATS: TcpIpStatistics = TcpIpStatistics::new();
-
 
 pub fn init() {
     if DRIVER_INITIALIZED.load(Ordering::Acquire) != 0 {
@@ -361,7 +357,6 @@ pub fn is_initialized() -> bool {
     DRIVER_INITIALIZED.load(Ordering::Acquire) != 0
 }
 
-
 pub fn tdi_create_address_object(protocol: u8) -> Option<u32> {
     let id = NEXT_ADDRESS_ID.fetch_add(1, Ordering::Relaxed);
     let mut addr_obj = TdiAddressObject::new(id);
@@ -394,7 +389,8 @@ pub fn tdi_delete_address_object(id: u32) -> bool {
 
 pub fn tdi_bind_address(id: u32, address: &TdiAddressIp) -> Result<(), i32> {
     let mut objects = TDI_ADDRESS_OBJECTS.lock();
-    let obj = objects.iter_mut()
+    let obj = objects
+        .iter_mut()
         .find(|obj| obj.id == id && obj.valid)
         .ok_or(-1)?; // STATUS_INVALID_HANDLE
 
@@ -406,12 +402,10 @@ pub fn tdi_bind_address(id: u32, address: &TdiAddressIp) -> Result<(), i32> {
         crate::netstack::socket::SocketType::Raw
     };
 
-    let socket_id = crate::netstack::socket::socket_auto(socket_type)
-        .ok_or(-2)?; // STATUS_INSUFFICIENT_RESOURCES
+    let socket_id = crate::netstack::socket::socket_auto(socket_type).ok_or(-2)?; // STATUS_INSUFFICIENT_RESOURCES
 
     let netstack_addr = address.to_netstack_addr();
-    crate::netstack::socket::bind(socket_id, &netstack_addr)
-        .map_err(|_| -3)?; // STATUS_ADDRESS_ALREADY_ASSOCIATED
+    crate::netstack::socket::bind(socket_id, &netstack_addr).map_err(|_| -3)?; // STATUS_ADDRESS_ALREADY_ASSOCIATED
 
     obj.address_type = TdiAddressType::TdiAddressTypeIp;
     obj.address_ip = Some(*address);
@@ -423,7 +417,8 @@ pub fn tdi_bind_address(id: u32, address: &TdiAddressIp) -> Result<(), i32> {
 
 pub fn tdi_listen(id: u32, backlog: u32) -> Result<(), i32> {
     let mut objects = TDI_ADDRESS_OBJECTS.lock();
-    let obj = objects.iter_mut()
+    let obj = objects
+        .iter_mut()
         .find(|obj| obj.id == id && obj.valid)
         .ok_or(-1)?;
 
@@ -433,13 +428,11 @@ pub fn tdi_listen(id: u32, backlog: u32) -> Result<(), i32> {
 
     let socket_id = obj.socket_id.ok_or(-3)?;
 
-    crate::netstack::socket::listen(socket_id, backlog)
-        .map_err(|_| -4)?;
+    crate::netstack::socket::listen(socket_id, backlog).map_err(|_| -4)?;
 
     obj.state = TdiAddressState::Listening;
     Ok(())
 }
-
 
 pub fn tdi_create_connection_object(context: u64) -> Option<u32> {
     let id = NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed);
@@ -473,7 +466,8 @@ pub fn tdi_delete_connection_object(id: u32) -> bool {
 
 pub fn tdi_associate_address(conn_id: u32, addr_id: u32) -> Result<(), i32> {
     let mut conn_objects = TDI_CONNECTION_OBJECTS.lock();
-    let conn = conn_objects.iter_mut()
+    let conn = conn_objects
+        .iter_mut()
         .find(|obj| obj.id == conn_id && obj.valid)
         .ok_or(-1)?;
 
@@ -483,7 +477,10 @@ pub fn tdi_associate_address(conn_id: u32, addr_id: u32) -> Result<(), i32> {
 
     {
         let addr_objects = TDI_ADDRESS_OBJECTS.lock();
-        if !addr_objects.iter().any(|obj| obj.id == addr_id && obj.valid) {
+        if !addr_objects
+            .iter()
+            .any(|obj| obj.id == addr_id && obj.valid)
+        {
             return Err(-3); // Invalid address object
         }
     }
@@ -493,7 +490,10 @@ pub fn tdi_associate_address(conn_id: u32, addr_id: u32) -> Result<(), i32> {
 
     drop(conn_objects);
     let mut addr_objects = TDI_ADDRESS_OBJECTS.lock();
-    if let Some(addr_obj) = addr_objects.iter_mut().find(|obj| obj.id == addr_id && obj.valid) {
+    if let Some(addr_obj) = addr_objects
+        .iter_mut()
+        .find(|obj| obj.id == addr_id && obj.valid)
+    {
         addr_obj.connections.push(conn_id);
     }
 
@@ -502,7 +502,8 @@ pub fn tdi_associate_address(conn_id: u32, addr_id: u32) -> Result<(), i32> {
 
 pub fn tdi_disassociate_address(conn_id: u32) -> Result<(), i32> {
     let mut conn_objects = TDI_CONNECTION_OBJECTS.lock();
-    let conn = conn_objects.iter_mut()
+    let conn = conn_objects
+        .iter_mut()
         .find(|obj| obj.id == conn_id && obj.valid)
         .ok_or(-1)?;
 
@@ -512,7 +513,10 @@ pub fn tdi_disassociate_address(conn_id: u32) -> Result<(), i32> {
 
     drop(conn_objects);
     let mut addr_objects = TDI_ADDRESS_OBJECTS.lock();
-    if let Some(addr_obj) = addr_objects.iter_mut().find(|obj| obj.id == addr_id && obj.valid) {
+    if let Some(addr_obj) = addr_objects
+        .iter_mut()
+        .find(|obj| obj.id == addr_id && obj.valid)
+    {
         addr_obj.connections.retain(|&id| id != conn_id);
     }
 
@@ -525,7 +529,8 @@ pub fn tdi_connect(
     timeout: Option<u64>,
 ) -> Result<(), i32> {
     let mut conn_objects = TDI_CONNECTION_OBJECTS.lock();
-    let conn = conn_objects.iter_mut()
+    let conn = conn_objects
+        .iter_mut()
         .find(|obj| obj.id == conn_id && obj.valid)
         .ok_or(-1)?;
 
@@ -537,7 +542,8 @@ pub fn tdi_connect(
 
     let (local_ip, local_port) = {
         let addr_objects = TDI_ADDRESS_OBJECTS.lock();
-        let addr_obj = addr_objects.iter()
+        let addr_obj = addr_objects
+            .iter()
             .find(|obj| obj.id == addr_id && obj.valid)
             .ok_or(-4)?;
 
@@ -548,14 +554,16 @@ pub fn tdi_connect(
     let remote_ip = remote_address.in_addr;
     let remote_port = u16::from_be(remote_address.sin_port);
 
-    let tcp_socket_id = crate::netstack::tcp::connect(local_ip, local_port, remote_ip, remote_port)
-        .ok_or(-6)?; // Connection failed
+    let tcp_socket_id =
+        crate::netstack::tcp::connect(local_ip, local_port, remote_ip, remote_port).ok_or(-6)?; // Connection failed
 
     conn.tcp_socket_id = Some(tcp_socket_id);
     conn.remote_address = Some(*remote_address);
     conn.state = TdiConnectionState::Connecting;
 
-    TCPIP_STATS.tcp_connections_established.fetch_add(1, Ordering::Relaxed);
+    TCPIP_STATS
+        .tcp_connections_established
+        .fetch_add(1, Ordering::Relaxed);
 
     // TODO: Wait for connection to establish (with timeout)
     conn.state = TdiConnectionState::Connected;
@@ -566,7 +574,8 @@ pub fn tdi_connect(
 pub fn tdi_accept(addr_id: u32, conn_id: u32) -> Result<(), i32> {
     let child_socket_id = {
         let addr_objects = TDI_ADDRESS_OBJECTS.lock();
-        let addr_obj = addr_objects.iter()
+        let addr_obj = addr_objects
+            .iter()
             .find(|obj| obj.id == addr_id && obj.valid)
             .ok_or(-1)?;
 
@@ -576,12 +585,12 @@ pub fn tdi_accept(addr_id: u32, conn_id: u32) -> Result<(), i32> {
 
         let socket_id = addr_obj.socket_id.ok_or(-3)?;
 
-        crate::netstack::socket::accept(socket_id)
-            .map_err(|_| -4)? // No pending connections
+        crate::netstack::socket::accept(socket_id).map_err(|_| -4)? // No pending connections
     };
 
     let mut conn_objects = TDI_CONNECTION_OBJECTS.lock();
-    let conn = conn_objects.iter_mut()
+    let conn = conn_objects
+        .iter_mut()
         .find(|obj| obj.id == conn_id && obj.valid)
         .ok_or(-5)?;
 
@@ -599,7 +608,8 @@ pub fn tdi_accept(addr_id: u32, conn_id: u32) -> Result<(), i32> {
 
 pub fn tdi_disconnect(conn_id: u32, flags: u32) -> Result<(), i32> {
     let mut conn_objects = TDI_CONNECTION_OBJECTS.lock();
-    let conn = conn_objects.iter_mut()
+    let conn = conn_objects
+        .iter_mut()
         .find(|obj| obj.id == conn_id && obj.valid)
         .ok_or(-1)?;
 
@@ -619,7 +629,8 @@ pub fn tdi_disconnect(conn_id: u32, flags: u32) -> Result<(), i32> {
 
 pub fn tdi_send(conn_id: u32, data: &[u8], flags: u32) -> Result<usize, i32> {
     let mut conn_objects = TDI_CONNECTION_OBJECTS.lock();
-    let conn = conn_objects.iter_mut()
+    let conn = conn_objects
+        .iter_mut()
         .find(|obj| obj.id == conn_id && obj.valid)
         .ok_or(-1)?;
 
@@ -629,19 +640,21 @@ pub fn tdi_send(conn_id: u32, data: &[u8], flags: u32) -> Result<usize, i32> {
 
     let socket_id = conn.tcp_socket_id.ok_or(-3)?;
 
-    let bytes_sent = crate::netstack::tcp::send(socket_id, data)
-        .ok_or(-4)?; // Send failed
+    let bytes_sent = crate::netstack::tcp::send(socket_id, data).ok_or(-4)?; // Send failed
 
     conn.bytes_sent += bytes_sent as u64;
     conn.segments_sent += 1;
-    TCPIP_STATS.tcp_segments_sent.fetch_add(1, Ordering::Relaxed);
+    TCPIP_STATS
+        .tcp_segments_sent
+        .fetch_add(1, Ordering::Relaxed);
 
     Ok(bytes_sent)
 }
 
 pub fn tdi_receive(conn_id: u32, buffer: &mut [u8], flags: u32) -> Result<usize, i32> {
     let mut conn_objects = TDI_CONNECTION_OBJECTS.lock();
-    let conn = conn_objects.iter_mut()
+    let conn = conn_objects
+        .iter_mut()
         .find(|obj| obj.id == conn_id && obj.valid)
         .ok_or(-1)?;
 
@@ -651,13 +664,14 @@ pub fn tdi_receive(conn_id: u32, buffer: &mut [u8], flags: u32) -> Result<usize,
 
     let socket_id = conn.tcp_socket_id.ok_or(-3)?;
 
-    let bytes_received = crate::netstack::tcp::receive(socket_id, buffer)
-        .ok_or(-4)?; // Receive failed or would block
+    let bytes_received = crate::netstack::tcp::receive(socket_id, buffer).ok_or(-4)?; // Receive failed or would block
 
     conn.bytes_received += bytes_received as u64;
     if bytes_received > 0 {
         conn.segments_received += 1;
-        TCPIP_STATS.tcp_segments_received.fetch_add(1, Ordering::Relaxed);
+        TCPIP_STATS
+            .tcp_segments_received
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     Ok(bytes_received)
@@ -669,7 +683,8 @@ pub fn tdi_send_datagram(
     data: &[u8],
 ) -> Result<usize, i32> {
     let mut addr_objects = TDI_ADDRESS_OBJECTS.lock();
-    let addr_obj = addr_objects.iter_mut()
+    let addr_obj = addr_objects
+        .iter_mut()
         .find(|obj| obj.id == addr_id && obj.valid)
         .ok_or(-1)?;
 
@@ -684,12 +699,14 @@ pub fn tdi_send_datagram(
 
     let remote_sa = crate::netstack::socket::SockAddr::new(2, remote_port.to_be(), remote_ip);
 
-    let bytes_sent = crate::netstack::socket::sendto(socket_id, data, &remote_sa)
-        .map_err(|_| -4)?;
+    let bytes_sent =
+        crate::netstack::socket::sendto(socket_id, data, &remote_sa).map_err(|_| -4)?;
 
     addr_obj.bytes_sent += bytes_sent as u64;
     addr_obj.packets_sent += 1;
-    TCPIP_STATS.udp_datagrams_sent.fetch_add(1, Ordering::Relaxed);
+    TCPIP_STATS
+        .udp_datagrams_sent
+        .fetch_add(1, Ordering::Relaxed);
 
     Ok(bytes_sent)
 }
@@ -700,7 +717,8 @@ pub fn tdi_receive_datagram(
     remote_address: &mut TdiAddressIp,
 ) -> Result<usize, i32> {
     let mut addr_objects = TDI_ADDRESS_OBJECTS.lock();
-    let addr_obj = addr_objects.iter_mut()
+    let addr_obj = addr_objects
+        .iter_mut()
         .find(|obj| obj.id == addr_id && obj.valid)
         .ok_or(-1)?;
 
@@ -710,18 +728,19 @@ pub fn tdi_receive_datagram(
 
     let socket_id = addr_obj.socket_id.ok_or(-3)?;
 
-    let (bytes_received, remote_sa) = crate::netstack::socket::recvfrom(socket_id, buffer)
-        .map_err(|_| -4)?;
+    let (bytes_received, remote_sa) =
+        crate::netstack::socket::recvfrom(socket_id, buffer).map_err(|_| -4)?;
 
     *remote_address = TdiAddressIp::new(remote_sa.port, remote_sa.ip());
 
     addr_obj.bytes_received += bytes_received as u64;
     addr_obj.packets_received += 1;
-    TCPIP_STATS.udp_datagrams_received.fetch_add(1, Ordering::Relaxed);
+    TCPIP_STATS
+        .udp_datagrams_received
+        .fetch_add(1, Ordering::Relaxed);
 
     Ok(bytes_received)
 }
-
 
 pub fn register_interface(
     ip_addr: [u8; 4],
@@ -734,7 +753,8 @@ pub fn register_interface(
     for iface in interfaces.iter_mut() {
         if !iface.valid {
             iface.valid = true;
-            iface.interface_index = (iface as *const _ as usize / core::mem::size_of::<NetworkInterface>()) as u32 + 1;
+            iface.interface_index =
+                (iface as *const _ as usize / core::mem::size_of::<NetworkInterface>()) as u32 + 1;
             iface.ip_address = ip_addr;
             iface.subnet_mask = subnet_mask;
             iface.gateway = gateway;
@@ -765,33 +785,37 @@ pub fn unregister_interface(interface_index: u32) -> bool {
 pub fn get_interface(interface_index: u32) -> Option<NetworkInterface> {
     let interfaces = NETWORK_INTERFACES.lock();
 
-    interfaces.iter()
+    interfaces
+        .iter()
         .find(|iface| iface.valid && iface.interface_index == interface_index)
         .copied()
 }
 
 pub fn get_interfaces() -> Vec<NetworkInterface> {
     let interfaces = NETWORK_INTERFACES.lock();
-    interfaces.iter()
+    interfaces
+        .iter()
         .filter(|iface| iface.valid)
         .copied()
         .collect()
 }
 
-
 pub fn ipv4_input(src_ip: u32, dst_ip: u32, protocol: u8, data: &[u8]) {
-    TCPIP_STATS.ip_packets_received.fetch_add(1, Ordering::Relaxed);
+    TCPIP_STATS
+        .ip_packets_received
+        .fetch_add(1, Ordering::Relaxed);
 
     let for_us = {
         let interfaces = NETWORK_INTERFACES.lock();
-        interfaces.iter().any(|iface| {
-            iface.valid && iface.up &&
-            u32::from_be_bytes(iface.ip_address) == dst_ip
-        })
+        interfaces
+            .iter()
+            .any(|iface| iface.valid && iface.up && u32::from_be_bytes(iface.ip_address) == dst_ip)
     };
 
     if !for_us {
-        TCPIP_STATS.ip_packets_discarded.fetch_add(1, Ordering::Relaxed);
+        TCPIP_STATS
+            .ip_packets_discarded
+            .fetch_add(1, Ordering::Relaxed);
         return;
     }
 
@@ -800,24 +824,32 @@ pub fn ipv4_input(src_ip: u32, dst_ip: u32, protocol: u8, data: &[u8]) {
         17 => udp_input(src_ip, dst_ip, data),
         1 => icmp_input(src_ip, dst_ip, data),
         _ => {
-            TCPIP_STATS.ip_packets_discarded.fetch_add(1, Ordering::Relaxed);
+            TCPIP_STATS
+                .ip_packets_discarded
+                .fetch_add(1, Ordering::Relaxed);
         }
     }
 }
 
 fn tcp_input(src_ip: u32, dst_ip: u32, data: &[u8]) {
     crate::netstack::tcp::tcp_input(src_ip, dst_ip, data);
-    TCPIP_STATS.tcp_segments_received.fetch_add(1, Ordering::Relaxed);
+    TCPIP_STATS
+        .tcp_segments_received
+        .fetch_add(1, Ordering::Relaxed);
 }
 
 fn udp_input(src_ip: u32, dst_ip: u32, data: &[u8]) {
     crate::netstack::udp::udp_input(src_ip, dst_ip, data);
-    TCPIP_STATS.udp_datagrams_received.fetch_add(1, Ordering::Relaxed);
+    TCPIP_STATS
+        .udp_datagrams_received
+        .fetch_add(1, Ordering::Relaxed);
 }
 
-fn icmp_input(src_ip: u32, dst_ip: u32, data: &[u8]) {
-    crate::netstack::icmp::icmp_input(src_ip, dst_ip, data);
-    TCPIP_STATS.icmp_messages_received.fetch_add(1, Ordering::Relaxed);
+fn icmp_input(src_ip: u32, _dst_ip: u32, data: &[u8]) {
+    crate::netstack::icmp::icmp_input(src_ip, data);
+    TCPIP_STATS
+        .icmp_messages_received
+        .fetch_add(1, Ordering::Relaxed);
 }
 
 pub fn ipv4_output(src_ip: u32, dst_ip: u32, protocol: u8, data: &[u8]) -> bool {
@@ -826,9 +858,15 @@ pub fn ipv4_output(src_ip: u32, dst_ip: u32, protocol: u8, data: &[u8]) -> bool 
     if result {
         TCPIP_STATS.ip_packets_sent.fetch_add(1, Ordering::Relaxed);
         match protocol {
-            6 => TCPIP_STATS.tcp_segments_sent.fetch_add(1, Ordering::Relaxed),
-            17 => TCPIP_STATS.udp_datagrams_sent.fetch_add(1, Ordering::Relaxed),
-            1 => TCPIP_STATS.icmp_messages_sent.fetch_add(1, Ordering::Relaxed),
+            6 => TCPIP_STATS
+                .tcp_segments_sent
+                .fetch_add(1, Ordering::Relaxed),
+            17 => TCPIP_STATS
+                .udp_datagrams_sent
+                .fetch_add(1, Ordering::Relaxed),
+            1 => TCPIP_STATS
+                .icmp_messages_sent
+                .fetch_add(1, Ordering::Relaxed),
             _ => 0,
         };
     }
@@ -836,63 +874,62 @@ pub fn ipv4_output(src_ip: u32, dst_ip: u32, protocol: u8, data: &[u8]) -> bool 
     result
 }
 
-
-pub fn dispatch_create(device: *mut DeviceObject, irp: *mut Irp) -> u32 {
+pub unsafe extern "C" fn dispatch_create(device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if !is_initialized() {
-        return 0xC0000001; // STATUS_UNSUCCESSFUL
+        return 0xC0000001_u32 as i32; // STATUS_UNSUCCESSFUL
     }
 
-    unsafe {
-        let stack = (*irp).get_current_stack_location();
+    {
+        let stack = io::irp_stack::get_current_stack_location(irp);
         if stack.is_null() {
-            return 0xC0000001;
+            return 0xC0000001_u32 as i32;
         }
 
         let addr_id = tdi_create_address_object(6); // TCP
 
         if let Some(id) = addr_id {
-            (*irp).IoStatus.Information = id as usize;
-            (*irp).IoStatus.Status = 0; // STATUS_SUCCESS
+            (*irp).io_status.information = id as usize;
+            (*irp).io_status.status = 0; // STATUS_SUCCESS
             return 0; // STATUS_SUCCESS
         } else {
-            (*irp).IoStatus.Status = 0xC000009A; // STATUS_INSUFFICIENT_RESOURCES
-            return 0xC000009A;
+            (*irp).io_status.status = 0xC000009A; // STATUS_INSUFFICIENT_RESOURCES
+            return 0xC000009A_u32 as i32;
         }
     }
 }
 
-pub fn dispatch_close(device: *mut DeviceObject, irp: *mut Irp) -> u32 {
+pub unsafe extern "C" fn dispatch_close(device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     unsafe {
-        (*irp).IoStatus.Status = 0; // STATUS_SUCCESS
-        (*irp).IoStatus.Information = 0;
+        (*irp).io_status.status = 0; // STATUS_SUCCESS
+        (*irp).io_status.information = 0;
         0 // STATUS_SUCCESS
     }
 }
 
-pub fn dispatch_cleanup(device: *mut DeviceObject, irp: *mut Irp) -> u32 {
+pub unsafe extern "C" fn dispatch_cleanup(device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     unsafe {
-        (*irp).IoStatus.Status = 0;
-        (*irp).IoStatus.Information = 0;
+        (*irp).io_status.status = 0;
+        (*irp).io_status.information = 0;
         0
     }
 }
 
-pub fn dispatch_device_control(device: *mut DeviceObject, irp: *mut Irp) -> u32 {
+pub unsafe extern "C" fn dispatch_device_control(device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if !is_initialized() {
         unsafe {
-            (*irp).IoStatus.Status = 0xC0000001;
-            return 0xC0000001;
+            (*irp).io_status.status = 0xC0000001;
+            return 0xC0000001_u32 as i32;
         }
     }
 
     unsafe {
-        let stack = (*irp).get_current_stack_location();
+        let stack = io::irp_stack::get_current_stack_location(irp);
         if stack.is_null() {
-            (*irp).IoStatus.Status = 0xC0000001;
-            return 0xC0000001;
+            (*irp).io_status.status = 0xC0000001;
+            return 0xC0000001_u32 as i32;
         }
 
-        let ioctl_code = (*stack).Parameters.DeviceIoControl.IoControlCode;
+        let ioctl_code = (*stack).parameters.device_io_control.io_control_code;
 
         let status = match ioctl_code {
             IOCTL_TDI_ACCEPT => handle_tdi_accept(irp, stack),
@@ -910,32 +947,35 @@ pub fn dispatch_device_control(device: *mut DeviceObject, irp: *mut Irp) -> u32 
             IOCTL_TDI_SET_EVENT_HANDLER => handle_tdi_set_event_handler(irp, stack),
             IOCTL_TDI_ACTION => handle_tdi_action(irp, stack),
             _ => {
-                (*irp).IoStatus.Information = 0;
+                (*irp).io_status.information = 0;
                 0xC0000002 // STATUS_NOT_IMPLEMENTED
             }
         };
 
-        (*irp).IoStatus.Status = status;
-        status
+        (*irp).io_status.status = status;
+        status as i32
     }
 }
 
-pub fn dispatch_internal_device_control(device: *mut DeviceObject, irp: *mut Irp) -> u32 {
+pub unsafe extern "C" fn dispatch_internal_device_control(
+    device: *mut DeviceObject,
+    irp: *mut Irp,
+) -> i32 {
     if !is_initialized() {
         unsafe {
-            (*irp).IoStatus.Status = 0xC0000001;
-            return 0xC0000001;
+            (*irp).io_status.status = 0xC0000001;
+            return 0xC0000001_u32 as i32;
         }
     }
 
     unsafe {
-        let stack = (*irp).get_current_stack_location();
+        let stack = io::irp_stack::get_current_stack_location(irp);
         if stack.is_null() {
-            (*irp).IoStatus.Status = 0xC0000001;
-            return 0xC0000001;
+            (*irp).io_status.status = 0xC0000001;
+            return 0xC0000001_u32 as i32;
         }
 
-        let ioctl_code = (*stack).Parameters.DeviceIoControl.IoControlCode;
+        let ioctl_code = (*stack).parameters.device_io_control.io_control_code;
 
         let status = match ioctl_code {
             IOCTL_TDI_INTERNAL_SEND => handle_tdi_send(irp, stack),
@@ -945,15 +985,14 @@ pub fn dispatch_internal_device_control(device: *mut DeviceObject, irp: *mut Irp
             _ => 0xC0000002, // STATUS_NOT_IMPLEMENTED
         };
 
-        (*irp).IoStatus.Status = status;
-        status
+        (*irp).io_status.status = status;
+        status as i32
     }
 }
 
-
 unsafe fn handle_tdi_accept(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
-    let input_buffer = (*stack).Parameters.DeviceIoControl.Type3InputBuffer as *const u8;
-    let input_length = (*stack).Parameters.DeviceIoControl.InputBufferLength as usize;
+    let input_buffer = (*stack).parameters.device_io_control.type3_input_buffer as *const u8;
+    let input_length = (*stack).parameters.device_io_control.input_buffer_length as usize;
 
     if input_buffer.is_null() || input_length < 8 {
         return 0xC000000D; // STATUS_INVALID_PARAMETER
@@ -974,7 +1013,7 @@ unsafe fn handle_tdi_accept(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
 
     match tdi_accept(addr_id, conn_id) {
         Ok(()) => {
-            (*irp).IoStatus.Information = 0;
+            (*irp).io_status.information = 0;
             0 // STATUS_SUCCESS
         }
         Err(_) => 0xC0000001, // STATUS_UNSUCCESSFUL
@@ -982,8 +1021,8 @@ unsafe fn handle_tdi_accept(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
 }
 
 unsafe fn handle_tdi_connect(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
-    let input_buffer = (*stack).Parameters.DeviceIoControl.Type3InputBuffer as *const u8;
-    let input_length = (*stack).Parameters.DeviceIoControl.InputBufferLength as usize;
+    let input_buffer = (*stack).parameters.device_io_control.type3_input_buffer as *const u8;
+    let input_length = (*stack).parameters.device_io_control.input_buffer_length as usize;
 
     if input_buffer.is_null() || input_length < 20 {
         return 0xC000000D; // STATUS_INVALID_PARAMETER
@@ -997,8 +1036,10 @@ unsafe fn handle_tdi_connect(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 
     ]);
 
     let remote_addr_slice = core::slice::from_raw_parts(input_buffer.offset(4), 14);
-    let remote_address = TdiAddressIp::from_bytes(remote_addr_slice)
-        .ok_or(0xC000000D)?;
+    let remote_address = match TdiAddressIp::from_bytes(remote_addr_slice) {
+        Some(addr) => addr,
+        None => return 0xC000000D, // STATUS_INVALID_PARAMETER
+    };
 
     let timeout = if input_length >= 22 {
         Some(u32::from_le_bytes([
@@ -1013,7 +1054,7 @@ unsafe fn handle_tdi_connect(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 
 
     match tdi_connect(conn_id, &remote_address, timeout) {
         Ok(()) => {
-            (*irp).IoStatus.Information = 0;
+            (*irp).io_status.information = 0;
             0 // STATUS_SUCCESS
         }
         Err(_) => 0xC0000001, // STATUS_UNSUCCESSFUL
@@ -1021,8 +1062,8 @@ unsafe fn handle_tdi_connect(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 
 }
 
 unsafe fn handle_tdi_disconnect(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
-    let input_buffer = (*stack).Parameters.DeviceIoControl.Type3InputBuffer as *const u8;
-    let input_length = (*stack).Parameters.DeviceIoControl.InputBufferLength as usize;
+    let input_buffer = (*stack).parameters.device_io_control.type3_input_buffer as *const u8;
+    let input_length = (*stack).parameters.device_io_control.input_buffer_length as usize;
 
     if input_buffer.is_null() || input_length < 8 {
         return 0xC000000D;
@@ -1043,7 +1084,7 @@ unsafe fn handle_tdi_disconnect(irp: *mut Irp, stack: *mut IoStackLocation) -> u
 
     match tdi_disconnect(conn_id, flags) {
         Ok(()) => {
-            (*irp).IoStatus.Information = 0;
+            (*irp).io_status.information = 0;
             0
         }
         Err(_) => 0xC0000001,
@@ -1051,8 +1092,8 @@ unsafe fn handle_tdi_disconnect(irp: *mut Irp, stack: *mut IoStackLocation) -> u
 }
 
 unsafe fn handle_tdi_listen(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
-    let input_buffer = (*stack).Parameters.DeviceIoControl.Type3InputBuffer as *const u8;
-    let input_length = (*stack).Parameters.DeviceIoControl.InputBufferLength as usize;
+    let input_buffer = (*stack).parameters.device_io_control.type3_input_buffer as *const u8;
+    let input_length = (*stack).parameters.device_io_control.input_buffer_length as usize;
 
     if input_buffer.is_null() || input_length < 8 {
         return 0xC000000D;
@@ -1073,7 +1114,7 @@ unsafe fn handle_tdi_listen(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
 
     match tdi_listen(addr_id, backlog) {
         Ok(()) => {
-            (*irp).IoStatus.Information = 0;
+            (*irp).io_status.information = 0;
             0
         }
         Err(_) => 0xC0000001,
@@ -1081,8 +1122,8 @@ unsafe fn handle_tdi_listen(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
 }
 
 unsafe fn handle_tdi_send(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
-    let input_buffer = (*stack).Parameters.DeviceIoControl.Type3InputBuffer as *const u8;
-    let input_length = (*stack).Parameters.DeviceIoControl.InputBufferLength as usize;
+    let input_buffer = (*stack).parameters.device_io_control.type3_input_buffer as *const u8;
+    let input_length = (*stack).parameters.device_io_control.input_buffer_length as usize;
 
     if input_buffer.is_null() || input_length < 12 {
         return 0xC000000D;
@@ -1115,7 +1156,7 @@ unsafe fn handle_tdi_send(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
 
     match tdi_send(conn_id, data, flags) {
         Ok(bytes_sent) => {
-            (*irp).IoStatus.Information = bytes_sent;
+            (*irp).io_status.information = bytes_sent;
             0
         }
         Err(_) => 0xC0000001,
@@ -1123,9 +1164,9 @@ unsafe fn handle_tdi_send(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
 }
 
 unsafe fn handle_tdi_receive(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
-    let input_buffer = (*stack).Parameters.DeviceIoControl.Type3InputBuffer as *const u8;
-    let output_buffer = (*irp).UserBuffer as *mut u8;
-    let output_length = (*stack).Parameters.DeviceIoControl.OutputBufferLength as usize;
+    let input_buffer = (*stack).parameters.device_io_control.type3_input_buffer as *const u8;
+    let output_buffer = (*irp).user_buffer as *mut u8;
+    let output_length = (*stack).parameters.device_io_control.output_buffer_length as usize;
 
     if input_buffer.is_null() || output_buffer.is_null() || output_length == 0 {
         return 0xC000000D;
@@ -1148,7 +1189,7 @@ unsafe fn handle_tdi_receive(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 
 
     match tdi_receive(conn_id, buffer, flags) {
         Ok(bytes_received) => {
-            (*irp).IoStatus.Information = bytes_received;
+            (*irp).io_status.information = bytes_received;
             0
         }
         Err(_) => 0xC0000001,
@@ -1156,8 +1197,8 @@ unsafe fn handle_tdi_receive(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 
 }
 
 unsafe fn handle_tdi_send_datagram(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
-    let input_buffer = (*stack).Parameters.DeviceIoControl.Type3InputBuffer as *const u8;
-    let input_length = (*stack).Parameters.DeviceIoControl.InputBufferLength as usize;
+    let input_buffer = (*stack).parameters.device_io_control.type3_input_buffer as *const u8;
+    let input_length = (*stack).parameters.device_io_control.input_buffer_length as usize;
 
     if input_buffer.is_null() || input_length < 22 {
         return 0xC000000D;
@@ -1171,8 +1212,10 @@ unsafe fn handle_tdi_send_datagram(irp: *mut Irp, stack: *mut IoStackLocation) -
     ]);
 
     let remote_addr_slice = core::slice::from_raw_parts(input_buffer.offset(4), 14);
-    let remote_address = TdiAddressIp::from_bytes(remote_addr_slice)
-        .ok_or(0xC000000D)?;
+    let remote_address = match TdiAddressIp::from_bytes(remote_addr_slice) {
+        Some(addr) => addr,
+        None => return 0xC000000D, // STATUS_INVALID_PARAMETER
+    };
 
     let data_length = u32::from_le_bytes([
         *input_buffer.offset(18),
@@ -1189,7 +1232,7 @@ unsafe fn handle_tdi_send_datagram(irp: *mut Irp, stack: *mut IoStackLocation) -
 
     match tdi_send_datagram(addr_id, &remote_address, data) {
         Ok(bytes_sent) => {
-            (*irp).IoStatus.Information = bytes_sent;
+            (*irp).io_status.information = bytes_sent;
             0
         }
         Err(_) => 0xC0000001,
@@ -1197,9 +1240,9 @@ unsafe fn handle_tdi_send_datagram(irp: *mut Irp, stack: *mut IoStackLocation) -
 }
 
 unsafe fn handle_tdi_receive_datagram(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
-    let input_buffer = (*stack).Parameters.DeviceIoControl.Type3InputBuffer as *const u8;
-    let output_buffer = (*irp).UserBuffer as *mut u8;
-    let output_length = (*stack).Parameters.DeviceIoControl.OutputBufferLength as usize;
+    let input_buffer = (*stack).parameters.device_io_control.type3_input_buffer as *const u8;
+    let output_buffer = (*irp).user_buffer as *mut u8;
+    let output_length = (*stack).parameters.device_io_control.output_buffer_length as usize;
 
     if input_buffer.is_null() || output_buffer.is_null() || output_length < 14 {
         return 0xC000000D;
@@ -1217,14 +1260,26 @@ unsafe fn handle_tdi_receive_datagram(irp: *mut Irp, stack: *mut IoStackLocation
 
     match tdi_receive_datagram(addr_id, data_buffer, &mut remote_address) {
         Ok(bytes_received) => {
-            output_buffer.offset(0).write(((remote_address.sin_port >> 8) & 0xFF) as u8);
-            output_buffer.offset(1).write((remote_address.sin_port & 0xFF) as u8);
-            output_buffer.offset(2).write(((remote_address.in_addr >> 24) & 0xFF) as u8);
-            output_buffer.offset(3).write(((remote_address.in_addr >> 16) & 0xFF) as u8);
-            output_buffer.offset(4).write(((remote_address.in_addr >> 8) & 0xFF) as u8);
-            output_buffer.offset(5).write((remote_address.in_addr & 0xFF) as u8);
+            output_buffer
+                .offset(0)
+                .write(((remote_address.sin_port >> 8) & 0xFF) as u8);
+            output_buffer
+                .offset(1)
+                .write((remote_address.sin_port & 0xFF) as u8);
+            output_buffer
+                .offset(2)
+                .write(((remote_address.in_addr >> 24) & 0xFF) as u8);
+            output_buffer
+                .offset(3)
+                .write(((remote_address.in_addr >> 16) & 0xFF) as u8);
+            output_buffer
+                .offset(4)
+                .write(((remote_address.in_addr >> 8) & 0xFF) as u8);
+            output_buffer
+                .offset(5)
+                .write((remote_address.in_addr & 0xFF) as u8);
 
-            (*irp).IoStatus.Information = 14 + bytes_received;
+            (*irp).io_status.information = 14 + bytes_received;
             0
         }
         Err(_) => 0xC0000001,
@@ -1232,8 +1287,8 @@ unsafe fn handle_tdi_receive_datagram(irp: *mut Irp, stack: *mut IoStackLocation
 }
 
 unsafe fn handle_tdi_associate_address(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
-    let input_buffer = (*stack).Parameters.DeviceIoControl.Type3InputBuffer as *const u8;
-    let input_length = (*stack).Parameters.DeviceIoControl.InputBufferLength as usize;
+    let input_buffer = (*stack).parameters.device_io_control.type3_input_buffer as *const u8;
+    let input_length = (*stack).parameters.device_io_control.input_buffer_length as usize;
 
     if input_buffer.is_null() || input_length < 8 {
         return 0xC000000D;
@@ -1254,7 +1309,7 @@ unsafe fn handle_tdi_associate_address(irp: *mut Irp, stack: *mut IoStackLocatio
 
     match tdi_associate_address(conn_id, addr_id) {
         Ok(()) => {
-            (*irp).IoStatus.Information = 0;
+            (*irp).io_status.information = 0;
             0
         }
         Err(_) => 0xC0000001,
@@ -1262,8 +1317,8 @@ unsafe fn handle_tdi_associate_address(irp: *mut Irp, stack: *mut IoStackLocatio
 }
 
 unsafe fn handle_tdi_disassociate_address(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
-    let input_buffer = (*stack).Parameters.DeviceIoControl.Type3InputBuffer as *const u8;
-    let input_length = (*stack).Parameters.DeviceIoControl.InputBufferLength as usize;
+    let input_buffer = (*stack).parameters.device_io_control.type3_input_buffer as *const u8;
+    let input_length = (*stack).parameters.device_io_control.input_buffer_length as usize;
 
     if input_buffer.is_null() || input_length < 4 {
         return 0xC000000D;
@@ -1278,7 +1333,7 @@ unsafe fn handle_tdi_disassociate_address(irp: *mut Irp, stack: *mut IoStackLoca
 
     match tdi_disassociate_address(conn_id) {
         Ok(()) => {
-            (*irp).IoStatus.Information = 0;
+            (*irp).io_status.information = 0;
             0
         }
         Err(_) => 0xC0000001,
@@ -1286,25 +1341,24 @@ unsafe fn handle_tdi_disassociate_address(irp: *mut Irp, stack: *mut IoStackLoca
 }
 
 unsafe fn handle_tdi_query_information(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
-    (*irp).IoStatus.Information = 0;
+    (*irp).io_status.information = 0;
     0 // STATUS_SUCCESS
 }
 
 unsafe fn handle_tdi_set_information(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
-    (*irp).IoStatus.Information = 0;
+    (*irp).io_status.information = 0;
     0 // STATUS_SUCCESS
 }
 
 unsafe fn handle_tdi_set_event_handler(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
-    (*irp).IoStatus.Information = 0;
+    (*irp).io_status.information = 0;
     0 // STATUS_SUCCESS
 }
 
 unsafe fn handle_tdi_action(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
-    (*irp).IoStatus.Information = 0;
+    (*irp).io_status.information = 0;
     0 // STATUS_SUCCESS
 }
-
 
 pub fn get_statistics() -> &'static TcpIpStatistics {
     &TCPIP_STATS
@@ -1322,18 +1376,19 @@ pub fn get_interface_count() -> usize {
     NETWORK_INTERFACES.lock().iter().filter(|i| i.valid).count()
 }
 
-
 pub fn DriverEntry(driver: *mut DriverObject) -> u32 {
     init();
 
     unsafe {
         if !driver.is_null() {
             use crate::io::major::*;
-            (*driver).MajorFunction[IRP_MJ_CREATE] = Some(dispatch_create);
-            (*driver).MajorFunction[IRP_MJ_CLOSE] = Some(dispatch_close);
-            (*driver).MajorFunction[IRP_MJ_CLEANUP] = Some(dispatch_cleanup);
-            (*driver).MajorFunction[IRP_MJ_DEVICE_CONTROL] = Some(dispatch_device_control);
-            (*driver).MajorFunction[IRP_MJ_INTERNAL_DEVICE_CONTROL] = Some(dispatch_internal_device_control);
+            (*driver).major_functions[IRP_MJ_CREATE as usize] = Some(dispatch_create);
+            (*driver).major_functions[IRP_MJ_CLOSE as usize] = Some(dispatch_close);
+            (*driver).major_functions[IRP_MJ_CLEANUP as usize] = Some(dispatch_cleanup);
+            (*driver).major_functions[IRP_MJ_DEVICE_CONTROL as usize] =
+                Some(dispatch_device_control);
+            (*driver).major_functions[IRP_MJ_INTERNAL_DEVICE_CONTROL as usize] =
+                Some(dispatch_internal_device_control);
         }
     }
 

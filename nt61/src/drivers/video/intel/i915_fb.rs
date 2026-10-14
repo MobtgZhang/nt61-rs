@@ -2,9 +2,9 @@
 //
 //! Implements framebuffer initialization and pixel operations
 
-use crate::drivers::video::intel::i915_reg::*;
-use crate::drivers::video::intel::i915_reg::PIPEA_DSPABASE;
 use crate::drivers::video::core::gpu_common::{DisplayMode, GpuFramebufferInfo, PixelFormat};
+use crate::drivers::video::intel::i915_reg::PIPEA_DSPABASE;
+use crate::drivers::video::intel::i915_reg::*;
 
 /// i915 framebuffer
 #[derive(Debug)]
@@ -51,12 +51,7 @@ impl I915Framebuffer {
     /// Write register
     #[inline]
     pub fn write_reg(&self, offset: u32, value: u32) {
-        unsafe {
-            core::ptr::write_volatile(
-                (self.mmio_base + offset as u64) as *mut u32,
-                value,
-            )
-        }
+        unsafe { core::ptr::write_volatile((self.mmio_base + offset as u64) as *mut u32, value) }
     }
 
     /// Initialize framebuffer
@@ -128,10 +123,7 @@ impl I915Framebuffer {
         self.write_reg(PIPEA_DSPAOFFSET, 0);
 
         // Size
-        self.write_reg(
-            PIPEA_DSPASIZE,
-            ((self.height - 1) << 16) | (self.width - 1),
-        );
+        self.write_reg(PIPEA_DSPASIZE, ((self.height - 1) << 16) | (self.width - 1));
 
         // Enable plane
         let format_val = pixel_format_to_reg(self.format);
@@ -149,10 +141,7 @@ impl I915Framebuffer {
         let pixels = ((self.pitch as usize) * (self.height as usize)) / 4;
         for i in 0..pixels {
             unsafe {
-                core::ptr::write_volatile(
-                    (self.fb_virt + (i as u64 * 4)) as *mut u32,
-                    color,
-                );
+                core::ptr::write_volatile((self.fb_virt + (i as u64 * 4)) as *mut u32, color);
             }
         }
     }
@@ -165,10 +154,7 @@ impl I915Framebuffer {
 
         let offset = ((y * self.pitch) + (x * 4)) as u64;
         unsafe {
-            core::ptr::write_volatile(
-                (self.fb_virt + offset) as *mut u32,
-                color,
-            );
+            core::ptr::write_volatile((self.fb_virt + offset) as *mut u32, color);
         }
     }
 
@@ -179,9 +165,7 @@ impl I915Framebuffer {
         }
 
         let offset = ((y * self.pitch) + (x * 4)) as u64;
-        unsafe {
-            core::ptr::read_volatile((self.fb_virt + offset) as *const u32)
-        }
+        unsafe { core::ptr::read_volatile((self.fb_virt + offset) as *const u32) }
     }
 
     /// Get info

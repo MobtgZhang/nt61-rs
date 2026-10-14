@@ -9,11 +9,11 @@ use crate::kprintln;
 
 /// Initialize the NDIS miniport layer
 pub fn init() {
-    // kprintln!("      NDIS miniport: registration helpers ready")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("      NDIS miniport: registration helpers ready");
 }
 
 /// Smoke test for NDIS miniport
 pub fn smoke_test() -> bool {
-    // kprintln!("  [NDIS-MP SMOKE] NDIS miniport helpers healthy")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [NDIS-MP SMOKE] NDIS miniport helpers healthy");
     true
 }

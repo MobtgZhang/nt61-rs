@@ -8,7 +8,7 @@
 
 use super::file::{lookup_handle, HandleKind};
 use super::status::{STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER, STATUS_SUCCESS};
-use super::types::{HANDLE, IoStatusBlock, PVOID, ULONG};
+use super::types::{IoStatusBlock, HANDLE, PVOID, ULONG};
 use crate::mm::user_copy;
 use core::ptr;
 
@@ -32,8 +32,12 @@ pub unsafe extern "C" fn NtDeviceIoControlFile(
     // Probe the IOSB before any handle lookup so that a bad user
     // pointer is rejected with STATUS_ACCESS_VIOLATION rather than
     // crashing the kernel.
-    if user_copy::probe_user_write(io_status_block as u64,
-        core::mem::size_of::<IoStatusBlock>()).is_err() {
+    if user_copy::probe_user_write(
+        io_status_block as u64,
+        core::mem::size_of::<IoStatusBlock>(),
+    )
+    .is_err()
+    {
         return STATUS_ACCESS_VIOLATION_VALUE;
     }
 
@@ -108,6 +112,8 @@ const STATUS_ACCESS_VIOLATION_VALUE: i32 = 0xC0000005_u32 as i32;
 /// it. Returns the NT HANDLE on success.
 pub fn create_afd_handle(socket_id: u32) -> HANDLE {
     let handle = crate::netstack::afd::create(socket_id);
-    let Some(h) = handle else { return ptr::null_mut(); };
+    let Some(h) = handle else {
+        return ptr::null_mut();
+    };
     super::file::alloc_handle(HandleKind::Afd, h)
 }

@@ -36,7 +36,6 @@ use crate::mm::pool;
 const MAX_SNAPSHOTS: usize = 8;
 const MAX_DIFF_ENTRIES: usize = 64;
 
-
 /// One diff-area entry. A real driver would store the original
 /// sector bytes here; we just remember which sector was
 /// modified so the smoke test can verify the diff was tracked.
@@ -58,7 +57,10 @@ struct Snapshot {
 
 impl Snapshot {
     const fn new() -> Self {
-        const EMPTY: DiffEntry = DiffEntry { used: false, sector: 0 };
+        const EMPTY: DiffEntry = DiffEntry {
+            used: false,
+            sector: 0,
+        };
         Self {
             valid: false,
             id: 0,
@@ -81,16 +83,20 @@ pub fn VolsnapCreateSnapshot(volume: &str) -> u64 {
     let _g = LOCK.lock();
     unsafe {
         for slot in SNAPSHOTS.iter_mut() {
-            if slot.valid { continue; }
+            if slot.valid {
+                continue;
+            }
             slot.valid = true;
             slot.id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
             slot.volume = String::from(volume);
             slot.timestamp = crate::ke::time::get_tick_count() as u64;
             slot.diff_used = 0;
-            for d in slot.diff.iter_mut() { d.used = false; }
+            for d in slot.diff.iter_mut() {
+                d.used = false;
+            }
             TOTAL_SNAPSHOTS.fetch_add(1, Ordering::Relaxed);
-            // kprintln!("    [VOLSNAP] created snapshot #{} of {} (ts={})",  // kprintln disabled (memcpy crash workaround)
-//                 slot.id, volume, slot.timestamp);
+            // kprintln!("    [VOLSNAP] created snapshot #{} of {} (ts={})",
+            //                 slot.id, volume, slot.timestamp);
             return slot.id;
         }
     }
@@ -103,10 +109,16 @@ pub fn VolsnapRecordDiff(id: u64, sector: u64) -> bool {
     let _g = LOCK.lock();
     unsafe {
         for slot in SNAPSHOTS.iter_mut() {
-            if !slot.valid || slot.id != id { continue; }
-            if slot.diff_used >= MAX_DIFF_ENTRIES { return false; }
+            if !slot.valid || slot.id != id {
+                continue;
+            }
+            if slot.diff_used >= MAX_DIFF_ENTRIES {
+                return false;
+            }
             for d in slot.diff.iter_mut() {
-                if d.used { continue; }
+                if d.used {
+                    continue;
+                }
                 d.used = true;
                 d.sector = sector;
                 slot.diff_used += 1;
@@ -122,7 +134,9 @@ pub fn VolsnapDeleteSnapshot(id: u64) -> bool {
     let _g = LOCK.lock();
     unsafe {
         for slot in SNAPSHOTS.iter_mut() {
-            if !slot.valid || slot.id != id { continue; }
+            if !slot.valid || slot.id != id {
+                continue;
+            }
             slot.valid = false;
             slot.id = 0;
             return true;
@@ -136,14 +150,22 @@ pub fn VolsnapDeleteSnapshot(id: u64) -> bool {
 /// ShadowCopyN` names.
 pub fn VolsnapQuerySnapshots() -> Vec<u64> {
     let mut out = Vec::new();
-    unsafe { for s in SNAPSHOTS.iter() { if s.valid { out.push(s.id); } } }
+    unsafe {
+        for s in SNAPSHOTS.iter() {
+            if s.valid {
+                out.push(s.id);
+            }
+        }
+    }
     out
 }
 
-pub fn snapshot_count() -> u64 { TOTAL_SNAPSHOTS.load(Ordering::Relaxed) }
+pub fn snapshot_count() -> u64 {
+    TOTAL_SNAPSHOTS.load(Ordering::Relaxed)
+}
 
 /// `init` — no-op; the real driver spins up a worker thread.
-pub fn init() { }
+pub fn init() {}
 
 /// Build a human-readable name for snapshot `id`. Mountmgr
 /// turns this into the `\\?\GLOBALROOT\Device\...` path.
@@ -151,20 +173,30 @@ pub fn name_for(id: u64) -> String {
     let mut s = String::with_capacity(40);
     s.push_str("\\Device\\HarddiskVolumeShadowCopy");
     let mut v = id as u32;
-    if v == 0 { s.push('0'); return s; }
+    if v == 0 {
+        s.push('0');
+        return s;
+    }
     let mut buf = [0u8; 12];
     let mut j = 0;
-    while v > 0 { buf[j] = b'0' + (v % 10) as u8; v /= 10; j += 1; }
-    while j > 0 { j -= 1; s.push(buf[j] as char); }
+    while v > 0 {
+        buf[j] = b'0' + (v % 10) as u8;
+        v /= 10;
+        j += 1;
+    }
+    while j > 0 {
+        j -= 1;
+        s.push(buf[j] as char);
+    }
     s
 }
 
 /// Smoke test: simplified to just verify the module loads.
 pub fn smoke_test() -> bool {
-    // kprintln!("  [VOLSNAP SMOKE] testing volume shadow copy...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [VOLSNAP SMOKE] testing volume shadow copy...");
     let count = snapshot_count();
     let _ = &count;
-    // kprintln!("  [VOLSNAP SMOKE OK] total_snapshots={} magic=0x{:08x}",  // kprintln disabled (memcpy crash workaround)
-//         count, SNAPSHOT_MAGIC);
+    // kprintln!("  [VOLSNAP SMOKE OK] total_snapshots={} magic=0x{:08x}",
+    //         count, SNAPSHOT_MAGIC);
     true
 }

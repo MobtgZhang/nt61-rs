@@ -13,7 +13,10 @@ use crate::kprintln;
 
 /// Initialize the sechost stub.
 pub fn init() {
-    // crate::kprintln!("    SECHOST: init")  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("      COM:  ready (CoInitializeEx)")  // kprintln disabled (memcpy crash workaround);
-    // crate::kprintln!("      RPC:  ready (SvcMgr entry points)")  // kprintln disabled (memcpy crash workaround);
+    // crate::kprintln!("    SECHOST: init");
+    // crate::kprintln!("      COM:  ready (CoInitializeEx)");
+    // crate::kprintln!("      RPC:  ready (SvcMgr entry points)");
 }
+
+pub mod event;
+pub mod types;

@@ -20,6 +20,15 @@ use core::ptr;
 
 const PROCESS_BASIC_INFO_SIZE: usize = 24; // sizeof(PROCESS_BASIC_INFORMATION) on x64
 
+/// Current-process pseudo-handle.
+///
+/// The NT/Win32 DDI defines `NtCurrentProcess()` as `(HANDLE)-1`: it is not a
+/// real entry in the object table, it is recognised by the `Nt*` entry points
+/// as "the calling process".
+pub fn NtCurrentProcess() -> HANDLE {
+    (-1isize) as HANDLE
+}
+
 /// `NtCreateProcess` — create a new process. We route to
 /// `ps::process::create_user_process`.
 pub unsafe extern "C" fn NtCreateProcess(
@@ -32,14 +41,25 @@ pub unsafe extern "C" fn NtCreateProcess(
     debug_port: PVOID,
     exception_port: PVOID,
 ) -> NTSTATUS {
-    if process_handle.is_null() { return STATUS_INVALID_PARAMETER; }
-    let _ = (object_attributes, parent_process, inherit_object_table,
-             section_handle, debug_port, exception_port, desired_access);
+    if process_handle.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
+    let _ = (
+        object_attributes,
+        parent_process,
+        inherit_object_table,
+        section_handle,
+        debug_port,
+        exception_port,
+        desired_access,
+    );
     let pid = ps::PID_SYSTEM.wrapping_add(0x1000); // ad-hoc new PID
     match ps::create_user_process(b"\\SystemRoot\\System32\\newproc.exe\0", pid, None) {
         Some(_) => {
             let h = alloc_handle(HandleKind::Process, pid);
-            if h.is_null() { return STATUS_INVALID_HANDLE; }
+            if h.is_null() {
+                return STATUS_INVALID_HANDLE;
+            }
             *process_handle = h;
             STATUS_SUCCESS
         }
@@ -87,7 +107,9 @@ pub unsafe extern "C" fn NtOpenProcess(
         return STATUS_INVALID_HANDLE;
     }
     let h = alloc_handle(HandleKind::Process, pid);
-    if h.is_null() { return STATUS_INVALID_HANDLE; }
+    if h.is_null() {
+        return STATUS_INVALID_HANDLE;
+    }
     *process_handle = h;
     let _ = (desired_access, object_attributes);
     STATUS_SUCCESS
@@ -96,11 +118,10 @@ pub unsafe extern "C" fn NtOpenProcess(
 /// `NtTerminateProcess` — set the EPROCESS exit status and mark
 /// the current thread as Terminated so the next syscall return
 /// (or the next preempt) will be the last one.
-pub unsafe extern "C" fn NtTerminateProcess(
-    process_handle: HANDLE,
-    exit_status: i32,
-) -> NTSTATUS {
-    if process_handle.is_null() { return STATUS_INVALID_HANDLE; }
+pub unsafe extern "C" fn NtTerminateProcess(process_handle: HANDLE, exit_status: i32) -> NTSTATUS {
+    if process_handle.is_null() {
+        return STATUS_INVALID_HANDLE;
+    }
     // Mark the current thread terminated. The scheduler will
     // observe the state on the next preempt/timer tick and stop
     // running this thread.
@@ -130,33 +151,51 @@ pub unsafe extern "C" fn NtQueryInformationProcess(
         0 => {
             // ProcessBasicInformation: returns ExitStatus, ...
             if process_information_length < PROCESS_BASIC_INFO_SIZE as u32 {
-                if !return_length.is_null() { *return_length = PROCESS_BASIC_INFO_SIZE as u32; }
+                if !return_length.is_null() {
+                    *return_length = PROCESS_BASIC_INFO_SIZE as u32;
+                }
                 return super::status::STATUS_BUFFER_TOO_SMALL;
             }
             // Zero the structure: PEB base address, affinity
             // mask, base priority, unique PID, parent PID.
             core::ptr::write_bytes(process_information, 0, PROCESS_BASIC_INFO_SIZE);
-            if !return_length.is_null() { *return_length = PROCESS_BASIC_INFO_SIZE as u32; }
+            if !return_length.is_null() {
+                *return_length = PROCESS_BASIC_INFO_SIZE as u32;
+            }
             STATUS_SUCCESS
         }
         26 => {
             // ProcessWow64Information — we are 64-bit, so the
             // result is a NULL pointer.
-            if process_information_length < 8 { return super::status::STATUS_BUFFER_TOO_SMALL; }
+            if process_information_length < 8 {
+                return super::status::STATUS_BUFFER_TOO_SMALL;
+            }
             *(process_information as *mut u64) = 0;
-            if !return_length.is_null() { *return_length = 8; }
+            if !return_length.is_null() {
+                *return_length = 8;
+            }
             STATUS_SUCCESS
         }
         27 => {
             // ProcessImageFileName
-            if process_information_length < 16 { return super::status::STATUS_BUFFER_TOO_SMALL; }
+            if process_information_length < 16 {
+                return super::status::STATUS_BUFFER_TOO_SMALL;
+            }
             let name = b"\\SystemRoot\\System32";
-            core::ptr::copy_nonoverlapping(name.as_ptr(), process_information as *mut u8, name.len());
-            if !return_length.is_null() { *return_length = name.len() as u32; }
+            core::ptr::copy_nonoverlapping(
+                name.as_ptr(),
+                process_information as *mut u8,
+                name.len(),
+            );
+            if !return_length.is_null() {
+                *return_length = name.len() as u32;
+            }
             STATUS_SUCCESS
         }
         _ => {
-            if !return_length.is_null() { *return_length = 0; }
+            if !return_length.is_null() {
+                *return_length = 0;
+            }
             STATUS_INVALID_INFO_CLASS
         }
     }

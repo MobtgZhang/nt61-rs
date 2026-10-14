@@ -20,14 +20,11 @@ use core::ptr::null_mut;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::ke::sync::Spinlock;
-use crate::mm::pool;
 use crate::libs::ntdll::status::*;
+use crate::mm::pool;
 
-pub type ApcRoutine = unsafe extern "C" fn(
-    apc_context: *mut (),
-    io_status_block: *mut IoStatusBlock,
-    reserved: u32,
-);
+pub type ApcRoutine =
+    unsafe extern "C" fn(apc_context: *mut (), io_status_block: *mut IoStatusBlock, reserved: u32);
 
 /// APC modes (kernel vs user).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,7 +32,6 @@ pub type ApcRoutine = unsafe extern "C" fn(
 pub enum ApcMode {
     KernelMode = 0,
     /// User APC - delivered when returning to user mode
-
     UserMode = 1,
 }
 

@@ -11,9 +11,9 @@
 //
 //! Clean-room implementation based on DP 1.4 specification.
 
-use alloc::vec::Vec;
-use alloc::format;
 use crate::drivers::video::log;
+use alloc::format;
+use alloc::vec::Vec;
 
 // ============================================================================
 // Constants
@@ -23,15 +23,14 @@ use crate::drivers::video::log;
 const DP_AUX_BASE: u64 = 0x0;
 
 /// AUX channel register offsets (Intel GENx GPUs)
-const REG_AUX_DATA: u16 = 0x6400;   // AUX channel data register
-const REG_AUX_CTL: u16 = 0x6404;   // AUX channel control
+const REG_AUX_DATA: u16 = 0x6400; // AUX channel data register
+const REG_AUX_CTL: u16 = 0x6404; // AUX channel control
 const REG_AUX_STATUS: u16 = 0x6408; // AUX channel status
 
 /// AUX channel I2C slave address for DDC
 const DDC_I2C_ADDR: u8 = 0x50;
 
 /// AUX channel I2C slave address for GMCH (Graphics Memory Controller Hub)
-
 
 /// DPCD register addresses
 pub mod dpcd {
@@ -63,10 +62,10 @@ pub mod dpcd {
     pub const ADJUSTED_LINK_TRAINING_COUNT: u32 = 0x206;
 
     // Link bandwidth
-    pub const BW_1_62_GBPS: u8 = 0x06;  // 1.62 Gbps per lane
-    pub const BW_2_7_GBPS: u8 = 0x0A;   // 2.7 Gbps per lane
-    pub const BW_5_4_GBPS: u8 = 0x14;   // 5.4 Gbps per lane
-    pub const BW_8_1_GBPS: u8 = 0x1E;   // 8.1 Gbps per lane
+    pub const BW_1_62_GBPS: u8 = 0x06; // 1.62 Gbps per lane
+    pub const BW_2_7_GBPS: u8 = 0x0A; // 2.7 Gbps per lane
+    pub const BW_5_4_GBPS: u8 = 0x14; // 5.4 Gbps per lane
+    pub const BW_8_1_GBPS: u8 = 0x1E; // 8.1 Gbps per lane
 
     // Lane count
     pub const LANE_COUNT_1: u8 = 0x01;
@@ -244,32 +243,32 @@ impl DpAuxChannel {
         for _ in 0..(self.timeout_us / 10) {
             let status = self.read_reg(REG_AUX_STATUS);
             let aux_status = AuxStatus::from_raw(status);
-            
+
             if aux_status.is_ack() || aux_status.is_nack() {
                 return Ok(());
             }
-            
+
             if aux_status.is_timeout() {
                 return Err(AuxError::Timeout);
             }
-            
+
             // Small delay
             for _ in 0..100 {
                 core::hint::spin_loop();
             }
         }
-        
+
         Err(AuxError::Timeout)
     }
 
     /// Send a native AUX transaction
-    /// 
+    ///
     /// # Arguments
     /// * `cmd` - AUX command
     /// * `addr` - 20-bit address (DPCD or I2C address)
     /// * `write_data` - Data to write (for write commands)
     /// * `read_len` - Number of bytes to read (for read commands)
-    /// 
+    ///
     /// # Returns
     /// * `Ok(data)` - Read data (for read commands) or empty vec (for write)
     /// * `Err(error)` - Error code
@@ -286,7 +285,11 @@ impl DpAuxChannel {
         }
 
         // Calculate message size
-        let write_len = if cmd == AuxCommand::NativeWrite { write_data.len() } else { 0 };
+        let write_len = if cmd == AuxCommand::NativeWrite {
+            write_data.len()
+        } else {
+            0
+        };
         let total_len = 4 + write_len; // Header (4 bytes) + data
 
         if total_len > 16 {
@@ -303,7 +306,7 @@ impl DpAuxChannel {
         // Note: In reality, data might need to be written to multiple registers
         // This is a simplified implementation
         self.write_reg(REG_AUX_DATA, header);
-        
+
         // Write data bytes
         for (i, &byte) in write_data.iter().enumerate() {
             let offset = ((i / 4) as u16) * 4;
@@ -324,11 +327,11 @@ impl DpAuxChannel {
 
         // Check status
         let status = AuxStatus::from_raw(self.read_reg(REG_AUX_STATUS));
-        
+
         if status.is_nack() {
             return Err(AuxError::Nack);
         }
-        
+
         if status.is_timeout() {
             return Err(AuxError::Timeout);
         }
@@ -349,14 +352,9 @@ impl DpAuxChannel {
     pub fn dpcd_read(&mut self, addr: u32) -> Result<u8, AuxError> {
         // Add base offset for DPCD addresses
         let dpcd_addr = addr & 0xFFFF;
-        
+
         // Read 1 byte
-        let data = self.native_transaction(
-            AuxCommand::NativeRead,
-            dpcd_addr,
-            &[],
-            1,
-        )?;
+        let data = self.native_transaction(AuxCommand::NativeRead, dpcd_addr, &[], 1)?;
 
         Ok(data.first().copied().unwrap_or(0))
     }
@@ -364,13 +362,8 @@ impl DpAuxChannel {
     /// Write DPCD register
     pub fn dpcd_write(&mut self, addr: u32, value: u8) -> Result<(), AuxError> {
         let dpcd_addr = addr & 0xFFFF;
-        
-        self.native_transaction(
-            AuxCommand::NativeWrite,
-            dpcd_addr,
-            &[value],
-            0,
-        )?;
+
+        self.native_transaction(AuxCommand::NativeWrite, dpcd_addr, &[value], 0)?;
 
         Ok(())
     }
@@ -378,31 +371,21 @@ impl DpAuxChannel {
     /// Read multiple DPCD registers
     pub fn dpcd_read_multi(&mut self, addr: u32, len: usize) -> Result<Vec<u8>, AuxError> {
         let dpcd_addr = addr & 0xFFFF;
-        
+
         // Limit read length (typical max is 16 bytes)
         let read_len = len.min(16);
-        
-        self.native_transaction(
-            AuxCommand::NativeRead,
-            dpcd_addr,
-            &[],
-            read_len,
-        )
+
+        self.native_transaction(AuxCommand::NativeRead, dpcd_addr, &[], read_len)
     }
 
     /// Write multiple DPCD registers
     pub fn dpcd_write_multi(&mut self, addr: u32, data: &[u8]) -> Result<(), AuxError> {
         let dpcd_addr = addr & 0xFFFF;
-        
+
         // Limit write length
         let write_data = &data[..data.len().min(16)];
-        
-        self.native_transaction(
-            AuxCommand::NativeWrite,
-            dpcd_addr,
-            write_data,
-            0,
-        )?;
+
+        self.native_transaction(AuxCommand::NativeWrite, dpcd_addr, write_data, 0)?;
 
         Ok(())
     }
@@ -421,7 +404,10 @@ impl DpAuxChannel {
 
         // Publish the encoded EDID address used for the transaction
         // so external observers can verify the encode path.
-        LAST_EDID_ADDR.store((DDC_I2C_ADDR as u32) << 8, core::sync::atomic::Ordering::Relaxed);
+        LAST_EDID_ADDR.store(
+            (DDC_I2C_ADDR as u32) << 8,
+            core::sync::atomic::Ordering::Relaxed,
+        );
         EDID_READS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
         // Start I2C write transaction
@@ -493,12 +479,7 @@ impl DpAuxChannel {
             AuxCommand::I2cReadDataStop // Send NACK
         };
 
-        let response = self.native_transaction(
-            cmd,
-            (DDC_I2C_ADDR as u32) << 8,
-            &[],
-            1,
-        )?;
+        let response = self.native_transaction(cmd, (DDC_I2C_ADDR as u32) << 8, &[], 1)?;
 
         Ok(response.first().copied().unwrap_or(0))
     }
@@ -513,17 +494,17 @@ impl DpAuxChannel {
     pub fn detect_sinks(&mut self) -> Result<u8, AuxError> {
         // Read sink count from DPCD
         let sink_count_reg = self.dpcd_read(dpcd::SINK_COUNT)?;
-        
+
         // Bits 7:4 = device count, bit 0 = CPReady
         let device_count = (sink_count_reg >> 4) & 0x0F;
-        
+
         Ok(device_count)
     }
 
     /// Check if link is trained
     pub fn is_link_up(&mut self) -> Result<bool, AuxError> {
         let sink_status = self.dpcd_read(dpcd::SINK_STATUS)?;
-        
+
         // Bit 0 = link status (0 = not trained, 1 = trained)
         Ok((sink_status & 0x01) != 0)
     }
@@ -554,7 +535,12 @@ impl DpAuxChannel {
     }
 
     /// Set lane voltage swing and pre-emphasis
-    pub fn set_lane_training(&mut self, lane: usize, vswing: u8, preemphasis: u8) -> Result<(), AuxError> {
+    pub fn set_lane_training(
+        &mut self,
+        lane: usize,
+        vswing: u8,
+        preemphasis: u8,
+    ) -> Result<(), AuxError> {
         let reg = if lane < 2 {
             dpcd::TRAINING_LANE0_SET + (lane as u32)
         } else {
@@ -566,7 +552,7 @@ impl DpAuxChannel {
         // Bit 5: max VSwing reached
         // Bit 6: max pre-emphasis reached
         let value = (vswing & 0x03) | ((preemphasis & 0x03) << 2);
-        
+
         self.dpcd_write(reg, value)
     }
 }
@@ -628,7 +614,7 @@ impl Default for LinkTrainingConfig {
 }
 
 /// Perform DisplayPort link training
-/// 
+///
 /// This is a simplified link training implementation.
 /// A full implementation would:
 /// 1. Set link bandwidth and lane count
@@ -663,16 +649,20 @@ pub fn train_link(aux: &mut DpAuxChannel, config: LinkTrainingConfig) -> Result<
     // Step 5: Verify link status
     if aux.is_link_up()? {
         log::video_ok("dp-aux", "Link training completed");
-        log::video_log("dp-aux", &alloc::format!("BW: {} Gbps, Lanes: {}",
-            match aux.get_link_bw()? {
-                dpcd::BW_1_62_GBPS => 1.62,
-                dpcd::BW_2_7_GBPS => 2.7,
-                dpcd::BW_5_4_GBPS => 5.4,
-                dpcd::BW_8_1_GBPS => 8.1,
-                _ => 0.0,
-            },
-            aux.get_lane_count()?
-        ));
+        log::video_log(
+            "dp-aux",
+            &alloc::format!(
+                "BW: {} Gbps, Lanes: {}",
+                match aux.get_link_bw()? {
+                    dpcd::BW_1_62_GBPS => 1.62,
+                    dpcd::BW_2_7_GBPS => 2.7,
+                    dpcd::BW_5_4_GBPS => 5.4,
+                    dpcd::BW_8_1_GBPS => 8.1,
+                    _ => 0.0,
+                },
+                aux.get_lane_count()?
+            ),
+        );
         Ok(())
     } else {
         log::video_error("dp-aux", "Link training failed");
@@ -690,15 +680,15 @@ static mut DP_AUX_CHANNEL: Option<DpAuxChannel> = None;
 /// Initialize the DisplayPort AUX subsystem
 pub fn init() {
     log::video_log("dp-aux", "initializing");
-    
+
     // In a real implementation, we would:
     // 1. Enumerate PCI devices to find GPU
     // 2. Read BAR1 for AUX base address
     // 3. Create AUX channel instance
-    
+
     // For now, create with default base
     let aux = DpAuxChannel::new(DP_AUX_BASE);
-    
+
     unsafe {
         DP_AUX_CHANNEL = Some(aux);
     }

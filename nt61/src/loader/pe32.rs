@@ -17,8 +17,8 @@
 #![allow(dead_code)]
 
 use crate::loader::{DosHeader, FileHeader, SectionHeader, PE_SIGNATURE};
-use alloc::vec::Vec;
 use alloc::string::String;
+use alloc::vec::Vec;
 
 // =============================================================================
 // PE32 Constants
@@ -46,6 +46,12 @@ pub const PE32_SECTION_ALIGNMENT: u32 = 0x1000;
 /// File alignment for PE32 (typically 0x200).
 pub const PE32_FILE_ALIGNMENT: u32 = 0x200;
 
+/// COFF FileHeader characteristic: the image is a DLL.
+/// Note that "is a DLL" is a *file header* characteristic, not a
+/// `DllCharacteristics` flag — `DllCharacteristics` bit 0x2000 is
+/// `IMAGE_DLLCHARACTERISTICS_WDM_DRIVER` instead.
+pub const IMAGE_FILE_DLL: u16 = 0x2000;
+
 // =============================================================================
 // PE32 Optional Header (Extended)
 // =============================================================================
@@ -61,37 +67,21 @@ pub struct OptionalHeader32Ext {
     pub data_directory: [ImageDataDirectory; 16],
 }
 
-/// Standard PE32 optional header fields.
-/// Size: 0x68 bytes (96 bytes).
+/// Standard COFF fields of the PE32 optional header.
+/// Offsets are relative to the start of the optional header.
+/// Size: 0x1C bytes (28 bytes).
 #[repr(C)]
 #[derive(Default)]
 pub struct OptionalHeader32Std {
     pub magic: u16,                      // 0x00: PE32 = 0x10B
-    pub linker_version: u8,              // 0x02
+    pub major_linker_version: u8,        // 0x02
+    pub minor_linker_version: u8,        // 0x03
     pub size_of_code: u32,               // 0x04
     pub size_of_initialized_data: u32,   // 0x08
     pub size_of_uninitialized_data: u32, // 0x0C
     pub address_of_entry_point: u32,     // 0x10
     pub base_of_code: u32,               // 0x14
     pub base_of_data: u32,               // 0x18
-    pub image_base: u32,                 // 0x1C (32-bit!)
-    pub section_alignment: u32,          // 0x20
-    pub file_alignment: u32,             // 0x24
-    pub os_version_min: u16,             // 0x28
-    pub image_version_min: u16,           // 0x2A
-    pub subsystem_version_min: u16,       // 0x2C
-    pub win32_version_value: u32,         // 0x30
-    pub size_of_image: u32,              // 0x34
-    pub size_of_headers: u32,            // 0x38
-    pub checksum: u32,                   // 0x3C
-    pub subsystem: u16,                   // 0x40
-    pub dll_characteristics: u16,         // 0x42
-    pub size_of_stack_reserve: u32,      // 0x44
-    pub size_of_stack_commit: u32,       // 0x48
-    pub size_of_heap_reserve: u32,       // 0x4C
-    pub size_of_heap_commit: u32,        // 0x50
-    pub loader_flags: u32,               // 0x54
-    pub number_of_rva_and_sizes: u32,    // 0x58
 }
 
 impl OptionalHeader32Std {
@@ -99,34 +89,51 @@ impl OptionalHeader32Std {
     pub fn entry_point_rva(&self) -> u32 {
         self.address_of_entry_point
     }
+}
 
+/// Windows-specific fields of the PE32 optional header. These follow
+/// the standard COFF fields and are read by the loader (image base,
+/// sizes, subsystem, DLL characteristics, stack/heap defaults).
+/// Size: 0x44 bytes (68 bytes); data directories follow at 0x60.
+#[repr(C)]
+#[derive(Default)]
+pub struct OptionalHeader32Windows {
+    pub image_base: u32,              // 0x1C (32-bit)
+    pub section_alignment: u32,       // 0x20
+    pub file_alignment: u32,          // 0x24
+    pub major_os_version: u16,        // 0x28
+    pub minor_os_version: u16,        // 0x2A
+    pub major_image_version: u16,     // 0x2C
+    pub minor_image_version: u16,     // 0x2E
+    pub major_subsystem_version: u16, // 0x30
+    pub minor_subsystem_version: u16, // 0x32
+    pub win32_version_value: u32,     // 0x34
+    pub size_of_image: u32,           // 0x38
+    pub size_of_headers: u32,         // 0x3C
+    pub check_sum: u32,               // 0x40
+    pub subsystem: u16,               // 0x44
+    pub dll_characteristics: u16,     // 0x46
+    pub size_of_stack_reserve: u32,   // 0x48
+    pub size_of_stack_commit: u32,    // 0x4C
+    pub size_of_heap_reserve: u32,    // 0x50
+    pub size_of_heap_commit: u32,     // 0x54
+    pub loader_flags: u32,            // 0x58
+    pub number_of_rva_and_sizes: u32, // 0x5C
+}
+
+impl OptionalHeader32Windows {
     /// Get image size.
     pub fn image_size(&self) -> u32 {
         self.size_of_image
     }
-
-    /// Check if this is a DLL.
-    pub fn is_dll(&self) -> bool {
-        self.dll_characteristics & 0x2000 != 0
-    }
 }
 
-/// Windows-specific PE32 optional header fields.
-/// These follow the standard fields in the optional header.
-#[repr(C)]
-#[derive(Default)]
-pub struct OptionalHeader32Windows {
-    /// Section alignment must equal memory alignment.
-    pub check_sum: u32,                  // 0x5C
-    pub subsystem: u16,                  // 0x60
-    pub dll_characteristics: u16,         // 0x62
-    pub size_of_stack_reserve: u32,      // 0x64
-    pub size_of_stack_commit: u32,       // 0x68
-    pub size_of_heap_reserve: u32,       // 0x6C
-    pub size_of_heap_commit: u32,        // 0x70
-    pub loader_flags: u32,               // 0x74
-    pub number_of_rva_and_sizes: u32,    // 0x78
-    // Data directories follow at 0x7C
+impl OptionalHeader32Ext {
+    /// A PE32 image is a DLL when the COFF FileHeader carries
+    /// `IMAGE_FILE_DLL` (0x2000) in `Characteristics`.
+    pub fn is_dll(&self, file_header: &FileHeader) -> bool {
+        file_header.characteristics & IMAGE_FILE_DLL != 0
+    }
 }
 
 /// Image data directory entry.
@@ -308,9 +315,10 @@ pub fn parse_pe32(data: &[u8]) -> Option<PE32HeaderInfo> {
     }
 
     // Parse DOS header
-    let dos_header = unsafe {
-        &*(data.as_ptr() as *const DosHeader)
-    };
+    // Copy the header out of the buffer instead of forming a reference to it:
+    // `e_lfanew` can place the PE header at an offset that is not aligned for
+    // the struct, and a `&T` over an unaligned pointer is UB in Rust.
+    let dos_header = unsafe { core::ptr::read_unaligned(data.as_ptr() as *const DosHeader) };
 
     if !dos_header.is_valid() {
         return None;
@@ -340,9 +348,8 @@ pub fn parse_pe32(data: &[u8]) -> Option<PE32HeaderInfo> {
         return None;
     }
 
-    let file_header = unsafe {
-        &*(data.as_ptr().add(fh_offset) as *const FileHeader)
-    };
+    let file_header =
+        unsafe { core::ptr::read_unaligned(data.as_ptr().add(fh_offset) as *const FileHeader) };
 
     // Verify machine type is I386
     if file_header.machine != IMAGE_FILE_MACHINE_I386 {
@@ -359,7 +366,9 @@ pub fn parse_pe32(data: &[u8]) -> Option<PE32HeaderInfo> {
     }
 
     let opt_header = unsafe {
-        &*(data.as_ptr().add(oh_offset) as *const crate::loader::OptionalHeader32)
+        core::ptr::read_unaligned(
+            data.as_ptr().add(oh_offset) as *const crate::loader::OptionalHeader32
+        )
     };
 
     if opt_header.magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC {
@@ -375,26 +384,22 @@ pub fn parse_pe32(data: &[u8]) -> Option<PE32HeaderInfo> {
         if offset + core::mem::size_of::<SectionHeader>() > data.len() {
             break;
         }
-        let section = unsafe {
-            core::ptr::read_unaligned(data.as_ptr().add(offset) as *const SectionHeader)
-        };
+        let section =
+            unsafe { core::ptr::read_unaligned(data.as_ptr().add(offset) as *const SectionHeader) };
         sections.push(section);
     }
 
-//         "[PE32] Parsed PE32: sections={}, image_base=0x{:08x}, entry=0x{:08x}",
-//         num_sections,
-//         opt_header.image_base,
-//         opt_header.address_of_entry_point
-//     );
+    //         "[PE32] Parsed PE32: sections={}, image_base=0x{:08x}, entry=0x{:08x}",
+    //         num_sections,
+    //         opt_header.image_base,
+    //         opt_header.address_of_entry_point
+    //     );
 
     Some(PE32HeaderInfo {
         dos_header_offset: 0,
         pe_header_offset: pe_offset,
-        // SAFETY: These references come from `data` which is a valid slice
-        // for the entire call. Copying out via `core::ptr::read` produces
-        // a bitwise copy (FileHeader/OptionalHeader32 are `Copy`).
-        file_header: unsafe { core::ptr::read(file_header) },
-        optional_header: unsafe { core::ptr::read(opt_header) },
+        file_header,
+        optional_header: opt_header,
         section_headers: sections,
     })
 }
@@ -412,7 +417,9 @@ impl PE32HeaderInfo {
     /// Get the data directory at the given index.
     pub fn get_data_directory(&self, _index: usize) -> Option<ImageDataDirectory> {
         // Data directories start after the optional header
-        // For PE32, they are at offset 0x78 from the start of optional header
+        // For PE32 they start at offset 0x60 from the start of the optional
+        // header (0x70 for PE32+). This parsed view does not keep the raw
+        // header bytes, so the directories cannot be read from here.
         // But in our OptionalHeader32 layout, they're not included
         // This is a simplified version
         None
@@ -433,8 +440,10 @@ impl PE32HeaderInfo {
     /// Convert an RVA to a file offset.
     pub fn rva_to_file_offset(&self, rva: u32) -> Option<u32> {
         for section in &self.section_headers {
-            if rva >= section.virtual_address &&
-               rva < section.virtual_address + section.virtual_size.max(section.size_of_raw_data) {
+            if rva >= section.virtual_address
+                && rva
+                    < section.virtual_address + section.virtual_size.max(section.size_of_raw_data)
+            {
                 let offset_in_section = rva - section.virtual_address;
                 return Some(section.pointer_to_raw_data + offset_in_section);
             }
@@ -542,14 +551,11 @@ pub fn load_pe32(data: &[u8], preferred_base: u32) -> Option<LoadedImage32> {
     };
 
     // Create loaded image structure
-    let mut image = LoadedImage32::new(
-        load_base,
-        opt.size_of_image,
-    );
+    let mut image = LoadedImage32::new(load_base, opt.size_of_image);
     image.entry_point_rva = opt.address_of_entry_point;
     image.image_base = opt.image_base;
     image.number_of_sections = header_info.file_header.number_of_sections;
-    image.is_dll = opt.dll_characteristics & 0x2000 != 0;
+    image.is_dll = header_info.file_header.characteristics & IMAGE_FILE_DLL != 0;
     image.subsystem = opt.subsystem;
 
     // Copy section headers
@@ -567,11 +573,11 @@ pub fn load_pe32(data: &[u8], preferred_base: u32) -> Option<LoadedImage32> {
     // 5. Set up TLS
     // 6. Call entry point
 
-//         "[PE32] Loaded image: base=0x{:08x}, size=0x{:08x}, entry=0x{:08x}",
-//         load_base,
-//         opt.size_of_image,
-//         opt.address_of_entry_point
-//     );
+    //         "[PE32] Loaded image: base=0x{:08x}, size=0x{:08x}, entry=0x{:08x}",
+    //         load_base,
+    //         opt.size_of_image,
+    //         opt.address_of_entry_point
+    //     );
 
     Some(image)
 }
@@ -611,5 +617,4 @@ pub fn apply_relocations(_image: &mut LoadedImage32, delta: i32) {
 // =============================================================================
 
 /// Initialize the PE32 loader.
-pub fn init() {
-}
+pub fn init() {}

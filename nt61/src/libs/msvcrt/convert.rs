@@ -5,8 +5,7 @@
 use super::types::*;
 use core::ptr;
 
-
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub extern "C" fn isalpha(c: c_int) -> c_int {
     let ch = c as u8;
     if (ch >= b'a' && ch <= b'z') || (ch >= b'A' && ch <= b'Z') {
@@ -16,7 +15,7 @@ pub extern "C" fn isalpha(c: c_int) -> c_int {
     }
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub extern "C" fn isdigit(c: c_int) -> c_int {
     let ch = c as u8;
     if ch >= b'0' && ch <= b'9' {
@@ -26,7 +25,7 @@ pub extern "C" fn isdigit(c: c_int) -> c_int {
     }
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub extern "C" fn isalnum(c: c_int) -> c_int {
     if isalpha(c) != 0 || isdigit(c) != 0 {
         1
@@ -35,7 +34,7 @@ pub extern "C" fn isalnum(c: c_int) -> c_int {
     }
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub extern "C" fn isspace(c: c_int) -> c_int {
     let ch = c as u8;
     if ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r' || ch == b'\x0b' || ch == b'\x0c' {
@@ -45,7 +44,7 @@ pub extern "C" fn isspace(c: c_int) -> c_int {
     }
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub extern "C" fn isupper(c: c_int) -> c_int {
     let ch = c as u8;
     if ch >= b'A' && ch <= b'Z' {
@@ -55,7 +54,7 @@ pub extern "C" fn isupper(c: c_int) -> c_int {
     }
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub extern "C" fn islower(c: c_int) -> c_int {
     let ch = c as u8;
     if ch >= b'a' && ch <= b'z' {
@@ -65,7 +64,7 @@ pub extern "C" fn islower(c: c_int) -> c_int {
     }
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub extern "C" fn isxdigit(c: c_int) -> c_int {
     let ch = c as u8;
     if (ch >= b'0' && ch <= b'9') || (ch >= b'a' && ch <= b'f') || (ch >= b'A' && ch <= b'F') {
@@ -75,7 +74,7 @@ pub extern "C" fn isxdigit(c: c_int) -> c_int {
     }
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub extern "C" fn isprint(c: c_int) -> c_int {
     let ch = c as u8;
     if ch >= 32 && ch <= 126 {
@@ -85,7 +84,7 @@ pub extern "C" fn isprint(c: c_int) -> c_int {
     }
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub extern "C" fn isgraph(c: c_int) -> c_int {
     let ch = c as u8;
     if ch >= 33 && ch <= 126 {
@@ -95,7 +94,7 @@ pub extern "C" fn isgraph(c: c_int) -> c_int {
     }
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub extern "C" fn iscntrl(c: c_int) -> c_int {
     let ch = c as u8;
     if ch < 32 || ch == 127 {
@@ -105,7 +104,7 @@ pub extern "C" fn iscntrl(c: c_int) -> c_int {
     }
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub extern "C" fn ispunct(c: c_int) -> c_int {
     if isgraph(c) != 0 && isalnum(c) == 0 {
         1
@@ -114,8 +113,7 @@ pub extern "C" fn ispunct(c: c_int) -> c_int {
     }
 }
 
-
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub extern "C" fn tolower(c: c_int) -> c_int {
     let ch = c as u8;
     if ch >= b'A' && ch <= b'Z' {
@@ -125,7 +123,7 @@ pub extern "C" fn tolower(c: c_int) -> c_int {
     }
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub extern "C" fn toupper(c: c_int) -> c_int {
     let ch = c as u8;
     if ch >= b'a' && ch <= b'z' {
@@ -135,18 +133,17 @@ pub extern "C" fn toupper(c: c_int) -> c_int {
     }
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub extern "C" fn _tolower(c: c_int) -> c_int {
     tolower(c)
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub extern "C" fn _toupper(c: c_int) -> c_int {
     toupper(c)
 }
 
-
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn atoi(s: *const c_char) -> c_int {
     if s.is_null() {
         return 0;
@@ -176,7 +173,7 @@ pub unsafe extern "C" fn atoi(s: *const c_char) -> c_int {
     result * sign
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn atol(s: *const c_char) -> c_long {
     if s.is_null() {
         return 0;
@@ -206,7 +203,7 @@ pub unsafe extern "C" fn atol(s: *const c_char) -> c_long {
     result * sign
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn atoll(s: *const c_char) -> c_longlong {
     if s.is_null() {
         return 0;
@@ -236,17 +233,13 @@ pub unsafe extern "C" fn atoll(s: *const c_char) -> c_longlong {
     result * sign
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn atof(s: *const c_char) -> c_double {
     strtod(s, ptr::null_mut())
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn strtol(
-    s: *const c_char,
-    endptr: *mut *mut c_char,
-    base: c_int,
-) -> c_long {
+#[cfg_attr(not(test), no_mangle)]
+pub unsafe extern "C" fn strtol(s: *const c_char, endptr: *mut *mut c_char, base: c_int) -> c_long {
     if s.is_null() || base < 0 || base == 1 || base > 36 {
         return 0;
     }
@@ -304,7 +297,9 @@ pub unsafe extern "C" fn strtol(
             break;
         }
 
-        result = result.wrapping_mul(actual_base as c_long).wrapping_add(digit as c_long);
+        result = result
+            .wrapping_mul(actual_base as c_long)
+            .wrapping_add(digit as c_long);
         i += 1;
     }
 
@@ -319,7 +314,7 @@ pub unsafe extern "C" fn strtol(
     result * sign
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strtoul(
     s: *const c_char,
     endptr: *mut *mut c_char,
@@ -328,7 +323,7 @@ pub unsafe extern "C" fn strtoul(
     strtol(s, endptr, base) as c_ulong
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strtoll(
     s: *const c_char,
     endptr: *mut *mut c_char,
@@ -386,7 +381,9 @@ pub unsafe extern "C" fn strtoll(
             break;
         }
 
-        result = result.wrapping_mul(actual_base as c_longlong).wrapping_add(digit as c_longlong);
+        result = result
+            .wrapping_mul(actual_base as c_longlong)
+            .wrapping_add(digit as c_longlong);
         i += 1;
     }
 
@@ -401,7 +398,7 @@ pub unsafe extern "C" fn strtoll(
     result * sign
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strtoull(
     s: *const c_char,
     endptr: *mut *mut c_char,
@@ -410,7 +407,7 @@ pub unsafe extern "C" fn strtoull(
     strtoll(s, endptr, base) as c_ulonglong
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strtod(s: *const c_char, endptr: *mut *mut c_char) -> c_double {
     if s.is_null() {
         return 0.0;
@@ -487,13 +484,12 @@ pub unsafe extern "C" fn strtod(s: *const c_char, endptr: *mut *mut c_char) -> c
     result * sign
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strtof(s: *const c_char, endptr: *mut *mut c_char) -> c_float {
     strtod(s, endptr) as c_float
 }
 
-
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn itoa(value: c_int, str: *mut c_char, base: c_int) -> *mut c_char {
     if str.is_null() || base < 2 || base > 36 {
         return ptr::null_mut();
@@ -540,17 +536,17 @@ pub unsafe extern "C" fn itoa(value: c_int, str: *mut c_char, base: c_int) -> *m
     str
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _itoa(value: c_int, str: *mut c_char, base: c_int) -> *mut c_char {
     itoa(value, str, base)
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _ltoa(value: c_long, str: *mut c_char, base: c_int) -> *mut c_char {
     itoa(value as c_int, str, base)
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _itoa_s(
     value: c_int,
     str: *mut c_char,
@@ -569,7 +565,7 @@ pub unsafe extern "C" fn _itoa_s(
     0
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _ltoa_s(
     value: c_long,
     str: *mut c_char,
@@ -579,16 +575,12 @@ pub unsafe extern "C" fn _ltoa_s(
     _itoa_s(value as c_int, str, size, base)
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn _i64toa(
-    value: c_longlong,
-    str: *mut c_char,
-    base: c_int,
-) -> *mut c_char {
+#[cfg_attr(not(test), no_mangle)]
+pub unsafe extern "C" fn _i64toa(value: c_longlong, str: *mut c_char, base: c_int) -> *mut c_char {
     itoa(value as c_int, str, base)
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _ui64toa(
     value: c_ulonglong,
     str: *mut c_char,

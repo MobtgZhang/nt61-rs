@@ -41,13 +41,25 @@ pub unsafe extern "C" fn CreateEventW(
 
 /// `SetEvent` / `ResetEvent` / `PulseEvent`.
 pub unsafe extern "C" fn SetEvent(event: HANDLE) -> BOOL {
-    if ntdll_sync::NtSetEvent(event, ptr::null_mut()) == STATUS_SUCCESS { TRUE } else { FALSE }
+    if ntdll_sync::NtSetEvent(event, ptr::null_mut()) == STATUS_SUCCESS {
+        TRUE
+    } else {
+        FALSE
+    }
 }
 pub unsafe extern "C" fn ResetEvent(event: HANDLE) -> BOOL {
-    if ntdll_sync::NtResetEvent(event, ptr::null_mut()) == STATUS_SUCCESS { TRUE } else { FALSE }
+    if ntdll_sync::NtResetEvent(event, ptr::null_mut()) == STATUS_SUCCESS {
+        TRUE
+    } else {
+        FALSE
+    }
 }
 pub unsafe extern "C" fn PulseEvent(event: HANDLE) -> BOOL {
-    if ntdll_sync::NtPulseEvent(event, ptr::null_mut()) == STATUS_SUCCESS { TRUE } else { FALSE }
+    if ntdll_sync::NtPulseEvent(event, ptr::null_mut()) == STATUS_SUCCESS {
+        TRUE
+    } else {
+        FALSE
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -72,7 +84,11 @@ pub unsafe extern "C" fn CreateMutexW(
 
 /// `ReleaseMutex`.
 pub unsafe extern "C" fn ReleaseMutex(mutex: HANDLE) -> BOOL {
-    if ntdll_sync::NtReleaseMutant(mutex, ptr::null_mut()) == STATUS_SUCCESS { TRUE } else { FALSE }
+    if ntdll_sync::NtReleaseMutant(mutex, ptr::null_mut()) == STATUS_SUCCESS {
+        TRUE
+    } else {
+        FALSE
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -104,7 +120,9 @@ pub unsafe extern "C" fn ReleaseSemaphore(
 ) -> BOOL {
     if ntdll_sync::NtReleaseSemaphore(semaphore, release_count, previous_count) == STATUS_SUCCESS {
         TRUE
-    } else { FALSE }
+    } else {
+        FALSE
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -119,11 +137,19 @@ const INFINITE: DWORD = 0xFFFF_FFFF;
 
 /// `WaitForSingleObject`.
 pub unsafe extern "C" fn WaitForSingleObject(handle: HANDLE, _milliseconds: DWORD) -> DWORD {
-    if handle.is_null() { SetLastError(6); return WAIT_FAILED; }
+    if handle.is_null() {
+        SetLastError(6);
+        return WAIT_FAILED;
+    }
     let status = ntdll_sync::NtWaitForSingleObject(handle, 0, ptr::null_mut());
-    if status == STATUS_SUCCESS { WAIT_OBJECT_0 }
-    else if status == STATUS_INVALID_HANDLE { SetLastError(6); WAIT_FAILED }
-    else { WAIT_TIMEOUT }
+    if status == STATUS_SUCCESS {
+        WAIT_OBJECT_0
+    } else if status == STATUS_INVALID_HANDLE {
+        SetLastError(6);
+        WAIT_FAILED
+    } else {
+        WAIT_TIMEOUT
+    }
 }
 
 /// `WaitForMultipleObjects`.
@@ -138,9 +164,18 @@ pub unsafe extern "C" fn WaitForMultipleObjects(
         return WAIT_FAILED;
     }
     let wait_type = if wait_all != 0 { 0 } else { 1 };
-    let status = ntdll_sync::NtWaitForMultipleObjects(count, handles as *mut _, wait_type, 0, ptr::null_mut());
-    if status == STATUS_SUCCESS { WAIT_OBJECT_0 }
-    else { WAIT_TIMEOUT }
+    let status = ntdll_sync::NtWaitForMultipleObjects(
+        count,
+        handles as *mut _,
+        wait_type,
+        0,
+        ptr::null_mut(),
+    );
+    if status == STATUS_SUCCESS {
+        WAIT_OBJECT_0
+    } else {
+        WAIT_TIMEOUT
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -161,7 +196,9 @@ pub struct CriticalSection {
 
 /// `InitializeCriticalSection`.
 pub unsafe extern "C" fn InitializeCriticalSection(cs: *mut CriticalSection) {
-    if cs.is_null() { return; }
+    if cs.is_null() {
+        return;
+    }
     (*cs).lock = AtomicU32::new(0);
     (*cs).recursion_count = 0;
     (*cs).owning_thread = 0;
@@ -171,7 +208,9 @@ pub unsafe extern "C" fn InitializeCriticalSection(cs: *mut CriticalSection) {
 
 /// `EnterCriticalSection`.
 pub unsafe extern "C" fn EnterCriticalSection(cs: *mut CriticalSection) {
-    if cs.is_null() { return; }
+    if cs.is_null() {
+        return;
+    }
     let _g = (*cs).spin.lock();
     (*cs).recursion_count += 1;
     (*cs).owning_thread = 1;
@@ -179,23 +218,37 @@ pub unsafe extern "C" fn EnterCriticalSection(cs: *mut CriticalSection) {
 
 /// `LeaveCriticalSection`.
 pub unsafe extern "C" fn LeaveCriticalSection(cs: *mut CriticalSection) {
-    if cs.is_null() { return; }
-    if (*cs).recursion_count > 0 { (*cs).recursion_count -= 1; }
-    if (*cs).recursion_count == 0 { (*cs).owning_thread = 0; }
+    if cs.is_null() {
+        return;
+    }
+    if (*cs).recursion_count > 0 {
+        (*cs).recursion_count -= 1;
+    }
+    if (*cs).recursion_count == 0 {
+        (*cs).owning_thread = 0;
+    }
 }
 
 /// `DeleteCriticalSection`.
 pub unsafe extern "C" fn DeleteCriticalSection(cs: *mut CriticalSection) {
-    if cs.is_null() { return; }
+    if cs.is_null() {
+        return;
+    }
     (*cs).magic = 0;
 }
 
 /// `InitializeCriticalSectionAndSpinCount` / `SetCriticalSectionSpinCount`.
-pub unsafe extern "C" fn InitializeCriticalSectionAndSpinCount(cs: *mut CriticalSection, _spins: DWORD) -> BOOL {
+pub unsafe extern "C" fn InitializeCriticalSectionAndSpinCount(
+    cs: *mut CriticalSection,
+    _spins: DWORD,
+) -> BOOL {
     InitializeCriticalSection(cs);
     TRUE
 }
 
-pub unsafe extern "C" fn SetCriticalSectionSpinCount(_cs: *mut CriticalSection, _spins: DWORD) -> DWORD {
+pub unsafe extern "C" fn SetCriticalSectionSpinCount(
+    _cs: *mut CriticalSection,
+    _spins: DWORD,
+) -> DWORD {
     0
 }

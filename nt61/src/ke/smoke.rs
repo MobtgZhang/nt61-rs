@@ -12,14 +12,12 @@
 // x86_64-specific encoding).
 #![cfg(target_arch = "x86_64")]
 
-use crate::ke::ssdt::{
-    EncodedServiceEntry, ServiceTableEntry,
-    get_service_descriptor_table, get_service_table_base,
-    SSDT_MAX_SERVICES,
-};
 use crate::ke::exception::{
-    ExceptionDisposition, ExceptionRecord, ContextFrame,
-    dispatch_exception, is_user_mode_exception,
+    dispatch_exception, is_user_mode_exception, ContextFrame, ExceptionDisposition, ExceptionRecord,
+};
+use crate::ke::ssdt::{
+    get_service_descriptor_table, get_service_table_base, EncodedServiceEntry, ServiceTableEntry,
+    SSDT_MAX_SERVICES,
 };
 
 /// Run SSDT smoke test for P1-1 fixes

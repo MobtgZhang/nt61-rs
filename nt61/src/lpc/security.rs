@@ -58,7 +58,6 @@ pub enum SecurityQos {
     /// Impersonation - server can impersonate on local system
     Impersonation = 2,
     /// Delegation - server can impersonate on remote systems
-
     Delegation = 3,
 }
 
@@ -123,11 +122,7 @@ impl PortSecurity {
 }
 
 /// Check if a process has access to a port
-pub fn check_port_access(
-    security: &PortSecurity,
-    pid: u64,
-    requested_access: u32,
-) -> bool {
+pub fn check_port_access(security: &PortSecurity, pid: u64, requested_access: u32) -> bool {
     // Simplified access check for bootstrap
     // In real NT, this would do full SID-based ACL checks
 

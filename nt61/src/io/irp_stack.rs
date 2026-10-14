@@ -4,8 +4,8 @@
 //! in the device stack. As the IRP travels down the stack, each driver
 //! gets its own stack location with parameters for that layer.
 
+use super::{DeviceObject, FileObject, IoParameters, IoStackLocation, Irp};
 use core::ptr::null_mut;
-use super::{Irp, IoStackLocation, DeviceObject, FileObject, IoParameters};
 
 #[inline]
 pub fn get_current_stack_location(irp: *mut Irp) -> *mut IoStackLocation {
@@ -32,8 +32,8 @@ pub fn get_next_stack_location(irp: *mut Irp) -> *mut IoStackLocation {
             return null_mut();
         }
 
-        let next = (stack_base as usize - core::mem::size_of::<IoStackLocation>())
-            as *mut IoStackLocation;
+        let next =
+            (stack_base as usize - core::mem::size_of::<IoStackLocation>()) as *mut IoStackLocation;
         next
     }
 }
@@ -69,9 +69,7 @@ pub fn copy_current_irp_stack_location_to_next(irp: *mut Irp) {
 
 pub fn set_completion_routine(
     irp: *mut Irp,
-    completion_routine: Option<
-        unsafe extern "C" fn(*mut DeviceObject, *mut Irp, *mut ()) -> i32
-    >,
+    completion_routine: Option<unsafe extern "C" fn(*mut DeviceObject, *mut Irp, *mut ()) -> i32>,
     context: *mut (),
     invoke_on_success: bool,
     invoke_on_error: bool,
@@ -129,9 +127,7 @@ pub fn is_irp_pending(irp: *mut Irp) -> bool {
         return false;
     }
 
-    unsafe {
-        (*irp).pending_returned != 0
-    }
+    unsafe { (*irp).pending_returned != 0 }
 }
 
 pub fn init_stack_location(
@@ -207,7 +203,7 @@ pub fn build_device_io_control_irp(
             (*stack).file_object = null_mut();
 
             (*stack).parameters = IoParameters {
-                as_u64: io_control_code as u64
+                as_u64: io_control_code as u64,
             };
         }
 
@@ -217,9 +213,7 @@ pub fn build_device_io_control_irp(
     irp
 }
 
-pub fn get_read_write_parameters(
-    stack: *const IoStackLocation,
-) -> Option<(*mut u8, u32, u64)> {
+pub fn get_read_write_parameters(stack: *const IoStackLocation) -> Option<(*mut u8, u32, u64)> {
     if stack.is_null() {
         return None;
     }

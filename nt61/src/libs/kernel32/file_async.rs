@@ -7,11 +7,10 @@
 //!   * MSDN Library "Windows 7" — Synchronization and Overlapped I/O
 //!   * Windows Internals 7th Ed. - Chapter 11
 
-use super::types::{BOOL, DWORD, FALSE, HANDLE, TRUE};
 use super::error::SetLastError;
+use super::types::{BOOL, DWORD, FALSE, HANDLE, TRUE};
 use crate::ke::sync::Spinlock;
 use core::ptr;
-
 
 #[repr(C)]
 pub struct OVERLAPPED {
@@ -38,7 +37,7 @@ const IO_STATUS_PENDING: usize = 0x00000103;
 const IO_STATUS_SUCCESS: usize = 0x00000000;
 const IO_STATUS_ERROR: usize = 0xFFFFFFFF;
 
-
+#[derive(Copy, Clone)]
 struct AsyncIoState {
     handle: HANDLE,
     buffer: *mut u8,
@@ -64,7 +63,6 @@ impl AsyncIoState {
 const MAX_ASYNC_OPS: usize = 64;
 static ASYNC_IO_TABLE: Spinlock<[Option<AsyncIoState>; MAX_ASYNC_OPS]> =
     Spinlock::new([None; MAX_ASYNC_OPS]);
-
 
 pub unsafe extern "C" fn ReadFile(
     h_file: HANDLE,
@@ -111,7 +109,6 @@ pub unsafe extern "C" fn ReadFile(
     });
 
     drop(table);
-
 
     let bytes_read = super::file::ReadFile(
         h_file,
@@ -233,7 +230,6 @@ pub unsafe extern "C" fn WriteFile(
     FALSE
 }
 
-
 pub unsafe extern "C" fn GetOverlappedResult(
     h_file: HANDLE,
     overlapped: *mut OVERLAPPED,
@@ -283,7 +279,6 @@ pub unsafe extern "C" fn HasOverlappedIoCompleted(overlapped: *const OVERLAPPED)
         FALSE
     }
 }
-
 
 pub unsafe extern "C" fn CancelIo(h_file: HANDLE) -> BOOL {
     if h_file.is_null() {

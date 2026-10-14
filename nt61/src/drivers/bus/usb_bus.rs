@@ -34,5 +34,5 @@ pub fn init() {
             }
         }
     }
-    // kprintln!("      USB bus: {} host controller(s) discovered", hc_count)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("      USB bus: {} host controller(s) discovered", hc_count);
 }

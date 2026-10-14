@@ -11,22 +11,22 @@
 //! The LSDC supports dual display output (Pipeline A and B),
 //! hardware cursor, and multiple pixel formats.
 
-pub mod pci_ids;
-pub mod lsdc_reg;
+pub mod lsdc_connector;
+pub mod lsdc_crtc;
 pub mod lsdc_fb;
 pub mod lsdc_irq;
-pub mod lsdc_crtc;
-pub mod lsdc_connector;
 pub mod lsdc_plane;
+pub mod lsdc_reg;
+pub mod pci_ids;
 
-#[cfg(target_arch = "loongarch64")]
-use crate::hal::common::pci;
 use crate::drivers::video::core::gpu_common::{
-    self, GpuDeviceInfo, GpuDriver, GpuFeatures, GpuFramebufferInfo,
-    DisplayMode, LoongsonChip, PixelFormat,
+    self, DisplayMode, GpuDeviceInfo, GpuDriver, GpuFeatures, GpuFramebufferInfo, LoongsonChip,
+    PixelFormat,
 };
 use crate::drivers::video::core::mmio_guard::{MmioGuard, MAX_MMIO_SIZE};
 use crate::drivers::video::log;
+#[cfg(target_arch = "loongarch64")]
+use crate::hal::common::pci;
 
 /// Loongson DC device
 #[derive(Debug)]
@@ -238,7 +238,7 @@ impl GpuDriver for LsDcDevice {
 
     fn enable_vblank(&mut self, head: u32) -> Result<(), gpu_common::GpuError> {
         use lsdc_reg::*;
-        
+
         let mask = match head {
             0 => INT_VBLANK_A,
             1 => INT_VBLANK_B,
@@ -252,7 +252,7 @@ impl GpuDriver for LsDcDevice {
 
     fn disable_vblank(&mut self, head: u32) {
         use lsdc_reg::*;
-        
+
         let mask = match head {
             0 => INT_VBLANK_A,
             1 => INT_VBLANK_B,
@@ -265,7 +265,7 @@ impl GpuDriver for LsDcDevice {
 
     fn wait_vblank(&self, head: u32, timeout_ms: u32) -> Result<(), gpu_common::GpuError> {
         use lsdc_reg::*;
-        
+
         // Poll for vblank
         let int_mask = match head {
             0 => INT_VBLANK_A,
@@ -297,10 +297,7 @@ impl GpuDriver for LsDcDevice {
         let pixels = ((self.pitch as usize) * (self.height as usize)) / 4;
         for i in 0..pixels {
             unsafe {
-                core::ptr::write_volatile(
-                    (self.fb_virt + (i as u64 * 4)) as *mut u32,
-                    color,
-                );
+                core::ptr::write_volatile((self.fb_virt + (i as u64 * 4)) as *mut u32, color);
             }
         }
     }
@@ -316,10 +313,7 @@ impl GpuDriver for LsDcDevice {
 
         let offset = (y * self.pitch / 4) + x;
         unsafe {
-            core::ptr::write_volatile(
-                (self.fb_virt + (offset as u64 * 4)) as *mut u32,
-                color,
-            );
+            core::ptr::write_volatile((self.fb_virt + (offset as u64 * 4)) as *mut u32, color);
         }
     }
 
@@ -377,14 +371,8 @@ impl LsDcDevice {
         // Configure primary plane
         self.write_reg(PLANE_PRIMARY_ADDR, self.fb_phys as u32);
         self.write_reg(PLANE_PRIMARY_STRIDE, self.pitch);
-        self.write_reg(
-            PLANE_PRIMARY_SIZE,
-            (height << 16) | width,
-        );
-        self.write_reg(
-            PLANE_PRIMARY_CTRL,
-            PLANE_ENABLE | PLANE_FORMAT_BGRA,
-        );
+        self.write_reg(PLANE_PRIMARY_SIZE, (height << 16) | width);
+        self.write_reg(PLANE_PRIMARY_CTRL, PLANE_ENABLE | PLANE_FORMAT_BGRA);
 
         // Set CRTC A framebuffer address
         self.write_reg(CRTC_A_ADDR, self.fb_phys as u32);

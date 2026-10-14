@@ -24,13 +24,13 @@
 
 #![allow(non_snake_case)]
 
+use alloc::vec::Vec;
 use core::sync::atomic::AtomicU64;
 use core::sync::atomic::Ordering;
-use alloc::vec::Vec;
 
 use crate::mm::pfn;
 use crate::mm::pte::MMPTE;
-use crate::mm::vas::{PT_ENTRIES};
+use crate::mm::vas::PT_ENTRIES;
 
 /// Default working-set minimum (pages).
 pub const WS_MIN: u64 = 50;
@@ -193,10 +193,11 @@ pub fn trim_working_set(pml4_phys: u64, target: u64) -> u64 {
                         let state = unsafe { (*entry).state() };
                         // Only unlink if the PFN is on a list.
                         // Active pages are NOT on any list.
-                        if state != pfn::MMPFNSTATE::Active
-                            && state != pfn::MMPFNSTATE::Transition
+                        if state != pfn::MMPFNSTATE::Active && state != pfn::MMPFNSTATE::Transition
                         {
-                            unsafe { db.unlink_entry(entry, pfn_no); }
+                            unsafe {
+                                db.unlink_entry(entry, pfn_no);
+                            }
                         }
                     }
                     db.standby(pfn_no, 0);
@@ -302,8 +303,8 @@ pub fn age_working_set(pml4_phys: u64) -> WorkingSetAgingStats {
     let _ = scanned;
     let _ = aged_pages;
 
-    // [DISABLED] // // kprintln!("[WS] age_working_set: scanned {} pages, {} not accessed",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// // // [DISABLED]         scanned, aged_pages);
+    // [DISABLED] // // kprintln!("[WS] age_working_set: scanned {} pages, {} not accessed",
+    // // // [DISABLED]         scanned, aged_pages);
     stats
 }
 
@@ -441,7 +442,9 @@ pub fn add_to_working_set(pml4_phys: u64, va: u64) -> bool {
         return false;
     }
     pte.set_accessed(true);
-    unsafe { core::ptr::write_volatile(pte_ptr, pte); }
+    unsafe {
+        core::ptr::write_volatile(pte_ptr, pte);
+    }
 
     // Best-effort accounting: ignore failures (e.g. no current
     // process installed during early boot).
@@ -465,7 +468,9 @@ pub fn remove_from_working_set(pml4_phys: u64, va: u64) -> bool {
         return false;
     }
     pte.set_accessed(false);
-    unsafe { core::ptr::write_volatile(pte_ptr, pte); }
+    unsafe {
+        core::ptr::write_volatile(pte_ptr, pte);
+    }
     bump_current(-1i64 as u64);
     true
 }
@@ -484,7 +489,10 @@ fn bump_current(delta: u64) {
         return;
     }
     unsafe {
-        (*proc).working_set.current.fetch_add(delta, Ordering::Relaxed);
+        (*proc)
+            .working_set
+            .current
+            .fetch_add(delta, Ordering::Relaxed);
     }
 }
 
@@ -542,8 +550,8 @@ pub fn lock_working_set(_pml4_phys: u64, base_address: u64, size: u64) -> i32 {
 
     // Suppress unused variable warnings - reserved for future logging
     let _ = locked;
-    // [DISABLED] // // kprintln!("[WS] lock_working_set: VA=0x{:016x}, size={}, locked={}",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// // // [DISABLED]         base_address, size, locked);
+    // [DISABLED] // // kprintln!("[WS] lock_working_set: VA=0x{:016x}, size={}, locked={}",
+    // // // [DISABLED]         base_address, size, locked);
     0
 }
 
@@ -572,8 +580,8 @@ pub fn unlock_working_set(_pml4_phys: u64, base_address: u64, size: u64) -> i32 
 
     // Suppress unused variable warnings - reserved for future logging
     let _ = unlocked;
-    // [DISABLED] // // kprintln!("[WS] unlock_working_set: VA=0x{:016x}, size={}, unlocked={}",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// // // [DISABLED]         base_address, size, unlocked);
+    // [DISABLED] // // kprintln!("[WS] unlock_working_set: VA=0x{:016x}, size={}, unlocked={}",
+    // // // [DISABLED]         base_address, size, unlocked);
     0
 }
 
@@ -663,7 +671,7 @@ pub fn query_working_set_ex(pml4_phys: u64) -> Vec<WorkingSetEntryEx> {
         }
     }
 
-    // [DISABLED] // // kprintln!("[WS] query_working_set_ex: found {} entries", entries.len())  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // [DISABLED] // // kprintln!("[WS] query_working_set_ex: found {} entries", entries.len());
     entries
 }
 
@@ -674,7 +682,7 @@ pub fn query_working_set_ex(pml4_phys: u64) -> Vec<WorkingSetEntryEx> {
 /// Trim the process working set.
 pub fn MmTrimProcessWorkingSet(_process_handle: u64, _min_size: i64) -> i32 {
     // _process_handle and _min_size are intentionally unused - reserved for future logging
-    // [DISABLED] // // kprintln!("[WS] MmTrimProcessWorkingSet: handle={:#x}, min={}", _process_handle, _min_size)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // [DISABLED] // // kprintln!("[WS] MmTrimProcessWorkingSet: handle={:#x}, min={}", _process_handle, _min_size);
 
     let pml4 = crate::mm::vas::current_root();
     if pml4 == 0 {
@@ -696,25 +704,25 @@ pub fn MmTrimProcessWorkingSet(_process_handle: u64, _min_size: i64) -> i32 {
 
     // Suppress unused variable warnings
     let _ = total_trimmed;
-    // [DISABLED] // // kprintln!("[WS] MmTrimProcessWorkingSet: trimmed {} pages", total_trimmed)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // [DISABLED] // // kprintln!("[WS] MmTrimProcessWorkingSet: trimmed {} pages", total_trimmed);
     0
 }
 
 /// Set the minimum working set size for a process.
 pub fn set_process_working_set_minimum(_process_handle: u64, _min_size: u64) -> i32 {
     // _process_handle and _min_size are intentionally unused - reserved for future logging
-    // [DISABLED] // // kprintln!("[WS] set_process_working_set_minimum: handle={:#x}, min={}", _process_handle, _min_size)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // [DISABLED] // // kprintln!("[WS] set_process_working_set_minimum: handle={:#x}, min={}", _process_handle, _min_size);
     0
 }
 
 /// Set the maximum working set size for a process.
 pub fn set_process_working_set_maximum(_process_handle: u64, _max_size: u64) -> i32 {
     // _process_handle and _max_size are intentionally unused - reserved for future logging
-    // [DISABLED] // // kprintln!("[WS] set_process_working_set_maximum: handle={:#x}, max={}", _process_handle, _max_size)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // [DISABLED] // // kprintln!("[WS] set_process_working_set_maximum: handle={:#x}, max={}", _process_handle, _max_size);
     0
 }
 
 /// Initialize the working set subsystem.
 pub fn working_set_init() {
-    // [DISABLED] // // kprintln!("[MM] Working set manager initialized")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // [DISABLED] // // kprintln!("[MM] Working set manager initialized");
 }

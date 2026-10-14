@@ -4,6 +4,7 @@
 
 use super::types::*;
 use core::ptr;
+use spin::{Lazy, Mutex};
 
 extern crate alloc;
 use alloc::vec::Vec;
@@ -24,9 +25,7 @@ impl FilePool {
     }
 }
 
-static FILE_POOL: Lazy<Mutex<FilePool>> = Lazy::new(|| {
-    Mutex::new(FilePool::new())
-});
+static FILE_POOL: Lazy<Mutex<FilePool>> = Lazy::new(|| Mutex::new(FilePool::new()));
 
 static STDIN: Lazy<Mutex<FILE>> = Lazy::new(|| {
     let mut file = FILE::new();
@@ -46,18 +45,18 @@ static STDERR: Lazy<Mutex<FILE>> = Lazy::new(|| {
     Mutex::new(file)
 });
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn __get_stdin() -> *mut FILE {
     // For now, return null and let callers use file descriptors 0/1/2
     ptr::null_mut()
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn __get_stdout() -> *mut FILE {
     ptr::null_mut()
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn __get_stderr() -> *mut FILE {
     ptr::null_mut()
 }

@@ -6,8 +6,8 @@ use super::types::*;
 use core::ptr;
 
 extern crate alloc;
-use alloc::vec::Vec;
 use alloc::boxed::Box;
+use alloc::vec::Vec;
 
 pub const _IOFBF: c_int = 0; // Full buffering
 pub const _IOLBF: c_int = 1; // Line buffering
@@ -119,7 +119,6 @@ impl FileBuffer {
     }
 }
 
-
 pub unsafe fn flush_write_buffer(file: *mut FILE) -> Result<(), ()> {
     if file.is_null() {
         return Err(());
@@ -128,7 +127,6 @@ pub unsafe fn flush_write_buffer(file: *mut FILE) -> Result<(), ()> {
     let f = &mut *file;
 
     // Get buffer from file (stored in unused field - would need proper FILE structure extension)
-
 
     Ok(())
 }
@@ -139,7 +137,6 @@ pub unsafe fn fill_read_buffer(file: *mut FILE) -> Result<usize, ()> {
     }
 
     let f = &mut *file;
-
 
     Ok(0)
 }
@@ -157,7 +154,6 @@ pub unsafe fn buffered_fread(
     let total_size = size * count;
     let dest = core::slice::from_raw_parts_mut(ptr as *mut u8, total_size);
     let mut bytes_read = 0;
-
 
     match super::io_stubs::read_file((*stream).handle, dest) {
         Ok(n) => {
@@ -206,7 +202,7 @@ pub unsafe fn buffered_fwrite(
     }
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn setvbuf(
     stream: *mut FILE,
     buf: *mut c_char,
@@ -221,11 +217,10 @@ pub unsafe extern "C" fn setvbuf(
         return -1;
     }
 
-
     0
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn setbuf(stream: *mut FILE, buf: *mut c_char) {
     if buf.is_null() {
         setvbuf(stream, ptr::null_mut(), _IONBF, 0);
@@ -234,19 +229,17 @@ pub unsafe extern "C" fn setbuf(stream: *mut FILE, buf: *mut c_char) {
     }
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn setlinebuf(stream: *mut FILE) {
     setvbuf(stream, ptr::null_mut(), _IOLBF, 0);
 }
 
-pub unsafe fn fflush_all() {
-}
+pub unsafe fn fflush_all() {}
 
 pub unsafe fn read_ahead(file: *mut FILE, _hint_bytes: usize) -> Result<(), ()> {
     if file.is_null() {
         return Err(());
     }
-
 
     Ok(())
 }
@@ -256,7 +249,6 @@ pub unsafe fn write_behind(file: *mut FILE) -> Result<(), ()> {
         return Err(());
     }
 
-
     Ok(())
 }
 
@@ -264,7 +256,6 @@ pub unsafe fn set_direct_io(file: *mut FILE, enable: bool) -> Result<(), ()> {
     if file.is_null() {
         return Err(());
     }
-
 
     Ok(())
 }
@@ -297,6 +288,5 @@ impl MappedFile {
 }
 
 impl Drop for MappedFile {
-    fn drop(&mut self) {
-    }
+    fn drop(&mut self) {}
 }

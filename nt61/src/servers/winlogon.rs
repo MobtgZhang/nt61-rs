@@ -11,7 +11,6 @@
 //! In the bootstrap we model WinLogon as a kernel thread that runs
 //! the `winlogon_main` loop and reports login events via ALPC.
 
-
 /// WinLogon state.
 pub struct WinLogonState {
     pub session_id: u32,
@@ -31,12 +30,12 @@ impl WinLogonState {
 
 /// Initialize the WinLogon subsystem.
 pub fn init() {
-    // kprintln!("    WinLogon: initialized")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    WinLogon: initialized");
 }
 
 /// WinLogon main loop.
 pub fn winlogon_main() -> ! {
-    // kprintln!("[WinLogon] Logon manager started")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[WinLogon] Logon manager started");
     // In a real implementation, WinLogon would:
     //   1. Wait for SAS (CTRL+ALT+DELETE) via `Win32k.sys`
     //   2. Run the credential provider chain

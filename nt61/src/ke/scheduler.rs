@@ -14,10 +14,11 @@
 //! and restoring the caller's registers; this file just selects the
 //! next thread).
 
+use crate::ke::irql::{self, Irql};
 use crate::ke::sync::Spinlock;
 use crate::ps::thread::{create_idle_thread as create_thread_idle, Ethread, KThreadState};
 use core::ptr::null_mut;
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 /// Maximum number of CPUs supported.
 const MAX_CPUS: usize = 4;
@@ -59,8 +60,8 @@ pub const MAX_BOOSTED_PRIORITY: i8 = 15;
 pub const DECAY_TIME_MS: u32 = 4000;
 
 /// Priority decay constants
-pub const DECAY_AMOUNT: i8 = 1;  // Amount to decay per interval
-pub const DECAY_CHECK_INTERVAL: u32 = 1000;  // Check for decay every 1 second
+pub const DECAY_AMOUNT: i8 = 1; // Amount to decay per interval
+pub const DECAY_CHECK_INTERVAL: u32 = 1000; // Check for decay every 1 second
 
 /// Balance constants
 pub const BALANCE_THRESHOLD_DEFAULT: usize = 2;
@@ -211,7 +212,8 @@ impl ReadyQueue {
         unsafe {
             let queue = &mut self.queues[priority as usize];
             // Use global_thread_list_entry from KTHREAD (within ETHREAD)
-            let entry = core::ptr::addr_of_mut!((*thread).kthread.global_thread_list_entry) as *mut ListEntry;
+            let entry = core::ptr::addr_of_mut!((*thread).kthread.global_thread_list_entry)
+                as *mut ListEntry;
             queue.add_tail(entry);
         }
     }
@@ -337,12 +339,12 @@ impl ListEntry {
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub struct WaitBlock {
-    pub wait_list_entry: ListEntry,  // 0x00
-    pub thread: *mut Ethread,        // 0x10
-    pub object: u64,                 // 0x18
-    pub next_wait_block: u64,        // 0x20
-    pub wait_key: u16,                // 0x28
-    pub wait_type: u16,               // 0x2A
+    pub wait_list_entry: ListEntry, // 0x00
+    pub thread: *mut Ethread,       // 0x10
+    pub object: u64,                // 0x18
+    pub next_wait_block: u64,       // 0x20
+    pub wait_key: u16,              // 0x28
+    pub wait_type: u16,             // 0x2A
 }
 
 /// Processor Control Block (PRCB) - Windows 7 x64 KPRCB Layout
@@ -370,194 +372,194 @@ pub struct WaitBlock {
 #[repr(align(16))]
 pub struct Prcb {
     // === 0x000: Basic Scheduler ===
-    pub current_thread: *mut Ethread,     // 0x000
-    pub current_thread_pad: u64,           // 0x008
-    pub idle_thread: *mut Ethread,         // 0x010
-    pub idle_thread_pad: u64,              // 0x018
-    pub next_thread: *mut Ethread,         // 0x020
-    pub standby_thread: *mut Ethread,      // 0x028
-    pub old_thread: *mut Ethread,          // 0x030
-    pub idle_ready_threads: ListEntry,     // 0x038 (16 bytes, ends at 0x048)
-    
+    pub current_thread: *mut Ethread,  // 0x000
+    pub current_thread_pad: u64,       // 0x008
+    pub idle_thread: *mut Ethread,     // 0x010
+    pub idle_thread_pad: u64,          // 0x018
+    pub next_thread: *mut Ethread,     // 0x020
+    pub standby_thread: *mut Ethread,  // 0x028
+    pub old_thread: *mut Ethread,      // 0x030
+    pub idle_ready_threads: ListEntry, // 0x038 (16 bytes, ends at 0x048)
+
     // Padding from 0x048 to 0x0C8 (128 bytes)
     _pad_basic1: [u8; 0xC8 - 0x048],
-    
-    pub ready_summary: AtomicU32,             // 0x0C8 (atomic for SMP safety)
-    pub ready_summary_padding: u32,        // 0x0CC
-    
+
+    pub ready_summary: AtomicU32,   // 0x0C8 (atomic for SMP safety)
+    pub ready_summary_padding: u32, // 0x0CC
+
     // ready_queues array at 0x0D0 - 32 priority queues
     // Each ListHead is 16 bytes (3 x 8-byte fields with padding)
-    pub ready_queues: [ListHead; 32],     // 0x0D0 (512 bytes, ends at 0x2D0)
-    
+    pub ready_queues: [ListHead; 32], // 0x0D0 (512 bytes, ends at 0x2D0)
+
     // After ready_queues at 0x2D0:
-    pub dispatcher_lock: u64,              // 0x2D0
-    pub dispatcher_lock_pad: u64,          // 0x2D8
-    pub schedule_dpc: u64,                // 0x2E0
-    _pad_2e8: u8,                        // 0x2E8
-    pub panic_in_progress: u8,            // 0x2E9
-    pub dpc_time: u16,                    // 0x2EA
-    pub timer_table: u64,                 // 0x2EC
-    pub timer_expiration: i64,            // 0x2F4
-    
+    pub dispatcher_lock: u64,     // 0x2D0
+    pub dispatcher_lock_pad: u64, // 0x2D8
+    pub schedule_dpc: u64,        // 0x2E0
+    _pad_2e8: u8,                 // 0x2E8
+    pub panic_in_progress: u8,    // 0x2E9
+    pub dpc_time: u16,            // 0x2EA
+    pub timer_table: u64,         // 0x2EC
+    pub timer_expiration: i64,    // 0x2F4
+
     // === 0x300: Processor Info ===
-    pub quantum_remaining: u32,           // 0x300
-    pub quantum_initial: u32,             // 0x304
-    pub processor_number: u8,              // 0x308
-    pub normal_cpu: u8,                   // 0x309
-    pub group_index: u8,                  // 0x30A
-    pub apic_id: u8,                     // 0x30B
-    pub local_apic_version: u8,           // 0x30C
-    pub cpu_type: u8,                     // 0x30D
-    pub cpu_features: u8,                 // 0x30E
-    pub cpu_features_pad: u8,              // 0x30F
-    pub cpu_brand: [u8; 64],              // 0x310
-    pub logical_processors: u16,           // 0x350
-    pub group_processor_count: u8,        // 0x352
-    _pad_353: u8,                        // 0x353
-    pub last_dispatch_time: u64,          // 0x358
-    pub cache: [CacheInfo; 5],            // 0x360 (80 bytes, ends at 0x3B0)
-    
+    pub quantum_remaining: u32,    // 0x300
+    pub quantum_initial: u32,      // 0x304
+    pub processor_number: u8,      // 0x308
+    pub normal_cpu: u8,            // 0x309
+    pub group_index: u8,           // 0x30A
+    pub apic_id: u8,               // 0x30B
+    pub local_apic_version: u8,    // 0x30C
+    pub cpu_type: u8,              // 0x30D
+    pub cpu_features: u8,          // 0x30E
+    pub cpu_features_pad: u8,      // 0x30F
+    pub cpu_brand: [u8; 64],       // 0x310
+    pub logical_processors: u16,   // 0x350
+    pub group_processor_count: u8, // 0x352
+    _pad_353: u8,                  // 0x353
+    pub last_dispatch_time: u64,   // 0x358
+    pub cache: [CacheInfo; 5],     // 0x360 (80 bytes, ends at 0x3B0)
+
     // Padding from 0x3B0 to 0x400 (80 bytes)
     _pad_proc_info: [u8; 0x400 - 0x3B0],
-    
+
     // === 0x400: DPC Data ===
-    pub dpc_data: DpcData,                // 0x400
-    pub dpc_stack: u64,                   // 0x430
-    pub max_dpc_queue_depth: u32,         // 0x438
-    pub dpc_queue_depth: u32,             // 0x43C
-    pub dpc_request_pending: u8,          // 0x440
-    pub dpc_request_slot: [u8; 2],        // 0x441
-    pub dpc_routine_active: u8,           // 0x443
-    pub dpc_thread_active: u8,            // 0x444
-    pub dpc_unused: u8,                   // 0x445
-    pub timer_service_index: u8,          // 0x446
-    pub timer_banner: u8,                  // 0x447
-    pub npx_configuration: u8,             // 0x448
-    pub npx_sp: u64,                     // 0x450
-    pub pdc_cpu: u64,                    // 0x458
-    pub system_calls: u32,                 // 0x460
-    
+    pub dpc_data: DpcData,         // 0x400
+    pub dpc_stack: u64,            // 0x430
+    pub max_dpc_queue_depth: u32,  // 0x438
+    pub dpc_queue_depth: u32,      // 0x43C
+    pub dpc_request_pending: u8,   // 0x440
+    pub dpc_request_slot: [u8; 2], // 0x441
+    pub dpc_routine_active: u8,    // 0x443
+    pub dpc_thread_active: u8,     // 0x444
+    pub dpc_unused: u8,            // 0x445
+    pub timer_service_index: u8,   // 0x446
+    pub timer_banner: u8,          // 0x447
+    pub npx_configuration: u8,     // 0x448
+    pub npx_sp: u64,               // 0x450
+    pub pdc_cpu: u64,              // 0x458
+    pub system_calls: u32,         // 0x460
+
     // Padding from 0x464 to 0x500 (156 bytes)
     _pad_dpc: [u8; 0x500 - 0x464],
-    
+
     // === 0x500: Interrupt & Timer ===
-    pub interrupt_count: u64,             // 0x500
-    pub dpc_interrupt_count: u64,         // 0x508
-    pub timer_interrupt_count: u64,        // 0x510
-    pub pending_interrupts: u64,          // 0x518
-    pub interrupt_mode: u8,               // 0x520
-    _pad_int: [u8; 7],                    // 0x521
-    pub timer_vector: u64,                // 0x528
-    pub local_apic: [u8; 0x100],         // 0x530
-    
+    pub interrupt_count: u64,       // 0x500
+    pub dpc_interrupt_count: u64,   // 0x508
+    pub timer_interrupt_count: u64, // 0x510
+    pub pending_interrupts: u64,    // 0x518
+    pub interrupt_mode: u8,         // 0x520
+    _pad_int: [u8; 7],              // 0x521
+    pub timer_vector: u64,          // 0x528
+    pub local_apic: [u8; 0x100],    // 0x530
+
     // Padding from 0x630 to 0x700 (208 bytes)
     _pad_int_timer: [u8; 0x700 - 0x630],
-    
+
     // === 0x700: Power & Thermal ===
-    pub power_state: u32,                 // 0x700
-    pub thermal_zone: u64,                // 0x708
-    pub power_policy: u64,                // 0x710
-    pub idle_function: u64,               // 0x718
-    pub idle_state: [u8; 0xE8],          // 0x720 (232 bytes, ends at 0x808)
-    
+    pub power_state: u32,       // 0x700
+    pub thermal_zone: u64,      // 0x708
+    pub power_policy: u64,      // 0x710
+    pub idle_function: u64,     // 0x718
+    pub idle_state: [u8; 0xE8], // 0x720 (232 bytes, ends at 0x808)
+
     // Padding from 0x808 to 0x900 (248 bytes)
     _pad_power: [u8; 0x900 - 0x808],
-    
+
     // === 0x900: Statistics ===
-    pub context_switch_count: u64,         // 0x900
-    pub cycle_time: u64,                  // 0x908
-    pub cycle_time_padding: u64,          // 0x910
-    pub wait_continuation_count: u64,     // 0x918
-    pub ready_continuation_count: u64,    // 0x920
-    pub kernel_time: u64,                 // 0x928
-    pub user_time: u64,                   // 0x930
-    pub dpc_time_stat: u64,               // 0x938
-    pub interrupt_time: u64,              // 0x940
-    pub page_fault_count: u32,            // 0x948
-    pub cache_fill_count: u32,            // 0x94C
-    pub syscall_count: u32,               // 0x950
-    pub interrupt_count_stat: u32,         // 0x954
+    pub context_switch_count: u64,       // 0x900
+    pub cycle_time: u64,                 // 0x908
+    pub cycle_time_padding: u64,         // 0x910
+    pub wait_continuation_count: u64,    // 0x918
+    pub ready_continuation_count: u64,   // 0x920
+    pub kernel_time: u64,                // 0x928
+    pub user_time: u64,                  // 0x930
+    pub dpc_time_stat: u64,              // 0x938
+    pub interrupt_time: u64,             // 0x940
+    pub page_fault_count: u32,           // 0x948
+    pub cache_fill_count: u32,           // 0x94C
+    pub syscall_count: u32,              // 0x950
+    pub interrupt_count_stat: u32,       // 0x954
     pub dpc_count: u32,                  // 0x958
-    pub pad_95c: u32,                   // 0x95C
-    pub passive_affinity_count: u32,      // 0x960
+    pub pad_95c: u32,                    // 0x95C
+    pub passive_affinity_count: u32,     // 0x960
     pub pad_cpu: u64,                    // 0x968
-    pub debugger_options: u64,             // 0x970
+    pub debugger_options: u64,           // 0x970
     pub pad_974: u32,                    // 0x978
     pub pad_97c: u32,                    // 0x97C
     pub seed: u64,                       // 0x980
     pub node_seed: [u64; 2],             // 0x988
-    pub stall_scale_factor: u32,           // 0x998
-    pub multi_thread_processor_set: u64,  // 0x9A0
-    
+    pub stall_scale_factor: u32,         // 0x998
+    pub multi_thread_processor_set: u64, // 0x9A0
+
     // Padding from 0x9A8 to 0xA00 (88 bytes)
     _pad_stat: [u8; 0xA00 - 0x9A8],
-    
+
     // === 0xA00: MultiThread Processor Set ===
-    pub mt_wait_bitset: [u8; 64],         // 0xA00
-    pub mt_processor_set: u64,            // 0xA40
-    pub mt_aprocessors: u64,              // 0xA48
-    
+    pub mt_wait_bitset: [u8; 64], // 0xA00
+    pub mt_processor_set: u64,    // 0xA40
+    pub mt_aprocessors: u64,      // 0xA48
+
     // Padding from 0xA50 to 0xB00 (176 bytes)
     _pad_mt: [u8; 0xB00 - 0xA50],
-    
+
     // === 0xB00: Waiting & Scheduling ===
-    pub wait_intes: u64,                  // 0xB00
-    pub wait_block: [WaitBlock; 8],       // 0xB08
-    pub wait_list_head: ListEntry,        // 0xB88
-    pub affinity_suspend_quantum: u8,       // 0xB98
-    pub suspend_timer_in_use: u8,          // 0xB99
-    pub cpu_vendor: u8,                   // 0xB9A
-    pub dbg_cpu: u8,                     // 0xB9B
-    pub ccd_time: u64,                    // 0xBA0
-    pub ready_summary_smt: u64,           // 0xBA8
-    pub smt_period: u32,                  // 0xBB0
-    pub smt_csd_barrier: u32,             // 0xBB4
-    pub wait_affinity: u32,               // 0xBB8
-    pub pad_8bc: u32,                     // 0xBBC
-    pub initial_stall: u32,               // 0xBC0
-    pub pad_8c4: u32,                     // 0xBC4
-    pub pad_8c8: u64,                     // 0xBC8
-    pub pad_8d0: u64,                     // 0xBD0
-    pub wait_outstanding: u8,              // 0xBD8
-    _pad_wait: [u8; 3],                  // 0xBD9
-    pub yield_needed: u32,                // 0xBDC
-    pub yield_outstanding: u32,            // 0xBE0
-    pub pad_8e4: u32,                     // 0xBE4
-    pub pad_8e8: u64,                     // 0xBE8
-    pub pad_8f0: u64,                     // 0xBF0
-    pub pad_8f8: u64,                     // 0xBF8
-    
+    pub wait_intes: u64,              // 0xB00
+    pub wait_block: [WaitBlock; 8],   // 0xB08
+    pub wait_list_head: ListEntry,    // 0xB88
+    pub affinity_suspend_quantum: u8, // 0xB98
+    pub suspend_timer_in_use: u8,     // 0xB99
+    pub cpu_vendor: u8,               // 0xB9A
+    pub dbg_cpu: u8,                  // 0xB9B
+    pub ccd_time: u64,                // 0xBA0
+    pub ready_summary_smt: u64,       // 0xBA8
+    pub smt_period: u32,              // 0xBB0
+    pub smt_csd_barrier: u32,         // 0xBB4
+    pub wait_affinity: u32,           // 0xBB8
+    pub pad_8bc: u32,                 // 0xBBC
+    pub initial_stall: u32,           // 0xBC0
+    pub pad_8c4: u32,                 // 0xBC4
+    pub pad_8c8: u64,                 // 0xBC8
+    pub pad_8d0: u64,                 // 0xBD0
+    pub wait_outstanding: u8,         // 0xBD8
+    _pad_wait: [u8; 3],               // 0xBD9
+    pub yield_needed: u32,            // 0xBDC
+    pub yield_outstanding: u32,       // 0xBE0
+    pub pad_8e4: u32,                 // 0xBE4
+    pub pad_8e8: u64,                 // 0xBE8
+    pub pad_8f0: u64,                 // 0xBF0
+    pub pad_8f8: u64,                 // 0xBF8
+
     // Padding from 0xC00 to 0xD00 (256 bytes)
     _pad_wait2: [u8; 0xD00 - 0xC00],
-    
+
     // === 0xD00: Schedule Groups ===
-    pub schedule_groups: u64,             // 0xD00
-    pub schedule_slots: [u64; 16],        // 0xD08
-    pub schedule_last_slot: u32,           // 0xD88
-    pub schedule_slots_padding: u32,       // 0xD8C
-    pub ccd_runnable_max: u32,           // 0xD90
-    pub ccd_runnable: u32,               // 0xD94
-    
+    pub schedule_groups: u64,        // 0xD00
+    pub schedule_slots: [u64; 16],   // 0xD08
+    pub schedule_last_slot: u32,     // 0xD88
+    pub schedule_slots_padding: u32, // 0xD8C
+    pub ccd_runnable_max: u32,       // 0xD90
+    pub ccd_runnable: u32,           // 0xD94
+
     // Padding from 0xD98 to 0xE00 (104 bytes)
     _pad_sched: [u8; 0xE00 - 0xD98],
-    
+
     // === 0xE00: Cache Data ===
     _pad_cache: [u8; 0xF00 - 0xE00],
-    
+
     // === 0xF00: Performance Counters ===
-    pub perf_global: u64,                 // 0xF00
-    pub perf_global_mask: u64,            // 0xF08
-    pub perf_global_spin: u64,             // 0xF10
-    pub perf_counter: [u64; 8],           // 0xF18 (64 bytes, ends at 0xF58)
-    
+    pub perf_global: u64,       // 0xF00
+    pub perf_global_mask: u64,  // 0xF08
+    pub perf_global_spin: u64,  // 0xF10
+    pub perf_counter: [u64; 8], // 0xF18 (64 bytes, ends at 0xF58)
+
     // PrcbType/Size/Version (final section)
-    pub prcb_type: u16,                   // 0xF58 (should be 0x0864)
-    pub prcb_size: u16,                   // 0xF5A (should be 0x0F80)
-    pub minor_version: u8,                // 0xF5C
-    pub major_version: u8,                // 0xF5D
-    pub build_number: u16,                // 0xF5E
-    pub q_system_time: u64,               // 0xF60
-    pub pad_f68: [u8; 0x118],           // 0xF68 - Fill to 0xF80 (280 bytes)
+    pub prcb_type: u16,       // 0xF58 (should be 0x0864)
+    pub prcb_size: u16,       // 0xF5A (should be 0x0F80)
+    pub minor_version: u8,    // 0xF5C
+    pub major_version: u8,    // 0xF5D
+    pub build_number: u16,    // 0xF5E
+    pub q_system_time: u64,   // 0xF60
+    pub pad_f68: [u8; 0x118], // 0xF68 - Fill to 0xF80 (280 bytes)
 }
 
 // Note: Prcb structure is expanded for Windows 7 x64 compatibility
@@ -568,40 +570,60 @@ pub struct Prcb {
 // These assertions ensure the struct layout matches Windows 7 x64 KPRCB layout
 
 // Verify basic scheduler fields
-const _: () = assert!(core::mem::offset_of!(Prcb, current_thread) == 0x000,
-    "current_thread must be at offset 0x000");
-const _: () = assert!(core::mem::offset_of!(Prcb, idle_ready_threads) == 0x038,
-    "idle_ready_threads must be at offset 0x038");
+const _: () = assert!(
+    core::mem::offset_of!(Prcb, current_thread) == 0x000,
+    "current_thread must be at offset 0x000"
+);
+const _: () = assert!(
+    core::mem::offset_of!(Prcb, idle_ready_threads) == 0x038,
+    "idle_ready_threads must be at offset 0x038"
+);
 
 // Verify ready_summary at 0x0C8 (critical for scheduling)
-const _: () = assert!(core::mem::offset_of!(Prcb, ready_summary) == 0x0C8,
-    "ready_summary must be at offset 0x0C8 for Windows 7 x64 compatibility");
+const _: () = assert!(
+    core::mem::offset_of!(Prcb, ready_summary) == 0x0C8,
+    "ready_summary must be at offset 0x0C8 for Windows 7 x64 compatibility"
+);
 
 // Verify ready_queues at 0x0D0
-const _: () = assert!(core::mem::offset_of!(Prcb, ready_queues) == 0x0D0,
-    "ready_queues must be at offset 0x0D0 for Windows 7 x64 compatibility");
+const _: () = assert!(
+    core::mem::offset_of!(Prcb, ready_queues) == 0x0D0,
+    "ready_queues must be at offset 0x0D0 for Windows 7 x64 compatibility"
+);
 
 // Verify dispatcher_lock at 0x2D0
-const _: () = assert!(core::mem::offset_of!(Prcb, dispatcher_lock) == 0x2D0,
-    "dispatcher_lock must be at offset 0x2D0 for Windows 7 x64 compatibility");
+const _: () = assert!(
+    core::mem::offset_of!(Prcb, dispatcher_lock) == 0x2D0,
+    "dispatcher_lock must be at offset 0x2D0 for Windows 7 x64 compatibility"
+);
 
 // Verify processor info fields
-const _: () = assert!(core::mem::offset_of!(Prcb, quantum_remaining) == 0x300,
-    "quantum_remaining must be at offset 0x300");
-const _: () = assert!(core::mem::offset_of!(Prcb, processor_number) == 0x308,
-    "processor_number must be at offset 0x308");
+const _: () = assert!(
+    core::mem::offset_of!(Prcb, quantum_remaining) == 0x300,
+    "quantum_remaining must be at offset 0x300"
+);
+const _: () = assert!(
+    core::mem::offset_of!(Prcb, processor_number) == 0x308,
+    "processor_number must be at offset 0x308"
+);
 
 // Verify perf_global in second half
-const _: () = assert!(core::mem::offset_of!(Prcb, perf_global) >= 0xE00,
-    "perf_global should be in second half of structure");
+const _: () = assert!(
+    core::mem::offset_of!(Prcb, perf_global) >= 0xE00,
+    "perf_global should be in second half of structure"
+);
 
 // Verify prcb_type in final section
-const _: () = assert!(core::mem::offset_of!(Prcb, prcb_type) > 0xF00,
-    "prcb_type should be in the final section of Prcb");
+const _: () = assert!(
+    core::mem::offset_of!(Prcb, prcb_type) > 0xF00,
+    "prcb_type should be in the final section of Prcb"
+);
 
 // Verify prcb_size is 0x0F80
-const _: () = assert!(core::mem::size_of::<Prcb>() >= 0xF80,
-    "Prcb size must be at least 0xF80 bytes for Windows 7 x64 compatibility");
+const _: () = assert!(
+    core::mem::size_of::<Prcb>() >= 0xF80,
+    "Prcb size must be at least 0xF80 bytes for Windows 7 x64 compatibility"
+);
 
 impl Prcb {
     /// Create a new PRCB for the given CPU ID
@@ -622,7 +644,7 @@ impl Prcb {
             ready_summary: AtomicU32::new(0),
             ready_summary_padding: 0,
             ready_queues: [ListHead::new(); 32],
-            
+
             // After ready_queues at 0x2D0:
             dispatcher_lock: 0,
             dispatcher_lock_pad: 0,
@@ -632,7 +654,7 @@ impl Prcb {
             dpc_time: 0,
             timer_table: 0,
             timer_expiration: 0,
-            
+
             // === 0x300: Processor Info ===
             quantum_remaining: QUANTUM_DEFAULT,
             quantum_initial: QUANTUM_DEFAULT,
@@ -651,7 +673,7 @@ impl Prcb {
             last_dispatch_time: 0,
             cache: [CacheInfo::empty(); 5],
             _pad_proc_info: [0; 0x400 - 0x3B0],
-            
+
             // === 0x400: DPC Data ===
             dpc_data: DpcData::new(),
             dpc_stack: 0,
@@ -669,7 +691,7 @@ impl Prcb {
             pdc_cpu: 0,
             system_calls: 0,
             _pad_dpc: [0; 0x500 - 0x464],
-            
+
             // === 0x500: Interrupt & Timer ===
             interrupt_count: 0,
             dpc_interrupt_count: 0,
@@ -680,7 +702,7 @@ impl Prcb {
             timer_vector: 0,
             local_apic: [0; 0x100],
             _pad_int_timer: [0; 0x700 - 0x630],
-            
+
             // === 0x700: Power & Thermal ===
             power_state: 0,
             thermal_zone: 0,
@@ -688,7 +710,7 @@ impl Prcb {
             idle_function: 0,
             idle_state: [0; 0xE8],
             _pad_power: [0; 0x900 - 0x808],
-            
+
             // === 0x900: Statistics ===
             context_switch_count: 0,
             cycle_time: 0,
@@ -715,13 +737,13 @@ impl Prcb {
             stall_scale_factor: 0,
             multi_thread_processor_set: 0,
             _pad_stat: [0; 0xA00 - 0x9A8],
-            
+
             // === 0xA00: MultiThread Processor Set ===
             mt_wait_bitset: [0; 64],
             mt_processor_set: 0,
             mt_aprocessors: 0,
             _pad_mt: [0; 0xB00 - 0xA50],
-            
+
             // === 0xB00: Waiting & Scheduling ===
             wait_intes: 0,
             wait_block: [WaitBlock {
@@ -756,7 +778,7 @@ impl Prcb {
             pad_8f0: 0,
             pad_8f8: 0,
             _pad_wait2: [0; 0xD00 - 0xC00],
-            
+
             // === 0xD00: Schedule Groups ===
             schedule_groups: 0,
             schedule_slots: [0; 16],
@@ -765,16 +787,16 @@ impl Prcb {
             ccd_runnable_max: 0,
             ccd_runnable: 0,
             _pad_sched: [0; 0xE00 - 0xD98],
-            
+
             // === 0xE00: Cache Data ===
             _pad_cache: [0; 0xF00 - 0xE00],
-            
+
             // === 0xF00: Performance Counters ===
             perf_global: 0,
             perf_global_mask: 0,
             perf_global_spin: 0,
             perf_counter: [0; 8],
-            
+
             // PrcbType/Size/Version
             prcb_type: 0x0864,
             prcb_size: 0x0F80,
@@ -837,9 +859,13 @@ static CPU_COUNT: AtomicU32 = AtomicU32::new(1);
 // For now, we use a simple array-based approach.
 const MAX_PERCPU_LOCKS: usize = 32;
 
-// Raw array of lock states for per-CPU locks
-// 0 = unlocked, 1 = locked
-static mut PRCB_LOCK_STATES: [u8; MAX_PERCPU_LOCKS] = [0; MAX_PERCPU_LOCKS];
+// Lock states for per-CPU locks.
+// 0 = unlocked, otherwise the owning CPU number + 1. Storing the owner
+// makes reentrant acquisition detectable instead of silently deadlocking,
+// and makes acquire/release an atomic CAS rather than a non-atomic
+// read-modify-write (which is a data race and therefore UB).
+static PRCB_LOCK_STATES: [AtomicU8; MAX_PERCPU_LOCKS] =
+    [const { AtomicU8::new(0) }; MAX_PERCPU_LOCKS];
 
 /// Per-CPU per-priority ready queue locks for fine-grained locking.
 /// Each (CPU, priority) combination has its own lock, allowing parallel
@@ -849,48 +875,54 @@ static mut PRCB_LOCK_STATES: [u8; MAX_PERCPU_LOCKS] = [0; MAX_PERCPU_LOCKS];
 /// - Operations on different CPUs don't contend
 /// - Operations on different priority queues don't contend
 const MAX_PRIORITY: usize = 32;
-const MAX_CPU_SUPPORTED: usize = 4;  // Match MAX_PER_CPU in syscall.rs
+const MAX_CPU_SUPPORTED: usize = MAX_CPUS;
 
 // Per-CPU per-priority locks: [cpu][priority]
 // Each lock protects a single priority queue on a single CPU.
-// Using u8 arrays (0=unlocked, 1=locked) to avoid Copy issues with Spinlock.
-static mut READY_QUEUE_LOCKS: [[u8; MAX_PRIORITY]; MAX_CPU_SUPPORTED] = [
-    [0u8; MAX_PRIORITY],
-    [0u8; MAX_PRIORITY],
-    [0u8; MAX_PRIORITY],
-    [0u8; MAX_PRIORITY],
-];
+// 0 = unlocked, otherwise the owning CPU number + 1.
+static READY_QUEUE_LOCKS: [[AtomicU8; MAX_PRIORITY]; MAX_CPU_SUPPORTED] =
+    [const { [const { AtomicU8::new(0) }; MAX_PRIORITY] }; MAX_CPU_SUPPORTED];
 
 /// RAII guard for a ready queue lock. Releases the lock on drop.
 /// FIX 2.9: Refactored to use proper RAII pattern instead of closure.
 pub struct QueueLockGuard {
     cpu: usize,
     priority: usize,
-    acquired: bool,  // Track if lock was actually acquired
+    owner: u8,
+    acquired: bool, // Track if lock was actually acquired
 }
 
 impl QueueLockGuard {
-    /// Create a new guard (typically called by lock_ready_queue)
-    fn new(cpu: usize, priority: usize) -> Self {
-        let cpu_idx = cpu.min(MAX_CPU_SUPPORTED - 1);
-        let priority_idx = priority.min(MAX_PRIORITY - 1);
-        Self {
-            cpu: cpu_idx,
-            priority: priority_idx,
-            acquired: true,
-        }
+    /// Lock index protected by this guard.
+    pub fn cpu(&self) -> usize {
+        self.cpu
+    }
+
+    /// Priority index protected by this guard.
+    pub fn priority(&self) -> usize {
+        self.priority
     }
 }
 
 impl Drop for QueueLockGuard {
     fn drop(&mut self) {
-        // Release the lock if it was acquired
         if self.acquired {
-            unsafe {
-                READY_QUEUE_LOCKS[self.cpu][self.priority] = 0;
-            }
+            let _ = READY_QUEUE_LOCKS[self.cpu][self.priority].compare_exchange(
+                self.owner,
+                0,
+                Ordering::Release,
+                Ordering::Relaxed,
+            );
         }
     }
+}
+
+fn current_lock_owner() -> Option<u8> {
+    if !crate::arch::common::percpu::is_ready() {
+        return Some(1);
+    }
+    let cpu = get_current_cpu();
+    (cpu < u8::MAX as usize).then_some((cpu + 1) as u8)
 }
 
 /// Lock a specific ready queue (CPU + priority combination).
@@ -899,21 +931,35 @@ impl Drop for QueueLockGuard {
 /// FIX 2.9: Uses proper RAII pattern with Drop implementation
 /// instead of returning a closure. This avoids monomorphization
 /// issues with `impl FnOnce()` return type.
-#[inline(always)]
-pub fn lock_ready_queue(cpu: usize, priority: usize) -> QueueLockGuard {
-    // Bounds check and clamp to valid range
-    let cpu_idx = cpu.min(MAX_CPU_SUPPORTED - 1);
-    let priority_idx = priority.min(MAX_PRIORITY - 1);
-
-    // Acquire the lock with simple TAS
-    unsafe {
-        while READY_QUEUE_LOCKS[cpu_idx][priority_idx] != 0 {
-            core::hint::spin_loop();
-        }
-        READY_QUEUE_LOCKS[cpu_idx][priority_idx] = 1;
+pub fn lock_ready_queue(cpu: usize, priority: usize) -> Option<QueueLockGuard> {
+    // Out-of-range indices are rejected rather than silently clamped: a
+    // clamped index aliases a different queue's lock, so two CPUs could
+    // mutate the same queue concurrently. A reentrant acquisition on the
+    // same CPU is also rejected (spinlocks are not reentrant), which
+    // prevents a guard from releasing a lock it never owned.
+    if cpu >= MAX_CPU_SUPPORTED || priority >= MAX_PRIORITY {
+        return None;
     }
-
-    QueueLockGuard::new(cpu, priority)
+    let owner = current_lock_owner()?;
+    let slot = &READY_QUEUE_LOCKS[cpu][priority];
+    loop {
+        match slot.compare_exchange(0, owner, Ordering::Acquire, Ordering::Acquire) {
+            Ok(_) => {
+                return Some(QueueLockGuard {
+                    cpu,
+                    priority,
+                    owner,
+                    acquired: true,
+                })
+            }
+            Err(state) => {
+                if state == owner {
+                    return None;
+                }
+                core::hint::spin_loop();
+            }
+        }
+    }
 }
 
 /// Lock the dispatcher lock for a specific CPU.
@@ -921,14 +967,23 @@ pub fn lock_ready_queue(cpu: usize, priority: usize) -> QueueLockGuard {
 ///
 /// In a full implementation, this would use a ticket spinlock
 /// like the Windows KPRCB dispatcher lock for fairness.
-pub fn lock_prcb(cpu: usize) {
-    if cpu < MAX_PERCPU_LOCKS {
-        unsafe {
-            // Simple TAS spinlock
-            while PRCB_LOCK_STATES[cpu] != 0 {
+pub fn lock_prcb(cpu: usize) -> bool {
+    if cpu >= MAX_PERCPU_LOCKS {
+        return false;
+    }
+    let Some(owner) = current_lock_owner() else {
+        return false;
+    };
+    let slot = &PRCB_LOCK_STATES[cpu];
+    loop {
+        match slot.compare_exchange(0, owner, Ordering::Acquire, Ordering::Acquire) {
+            Ok(_) => return true,
+            Err(state) => {
+                if state == owner {
+                    return false;
+                }
                 core::hint::spin_loop();
             }
-            PRCB_LOCK_STATES[cpu] = 1;
         }
     }
 }
@@ -936,8 +991,13 @@ pub fn lock_prcb(cpu: usize) {
 /// Unlock the dispatcher lock for a specific CPU.
 pub fn unlock_prcb(cpu: usize) {
     if cpu < MAX_PERCPU_LOCKS {
-        unsafe {
-            PRCB_LOCK_STATES[cpu] = 0;
+        if let Some(owner) = current_lock_owner() {
+            let _ = PRCB_LOCK_STATES[cpu].compare_exchange(
+                owner,
+                0,
+                Ordering::Release,
+                Ordering::Relaxed,
+            );
         }
     }
 }
@@ -950,16 +1010,16 @@ pub fn get_current_cpu() -> usize {
 /// Initialize scheduler.
 pub fn init() {
     crate::hal::serial::write_string("[ke.scheduler] enter\r\n");
-    // // kprintln!("    Initializing scheduler...")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("    Initializing scheduler...");
     // Bootstrap: we don't actually need a full Prcb for the
     // single-CPU bring-up; defer Prcb allocation until SMP is
     // initialised.
-    // // kprintln!("      Ready queues: initialized")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!("      CPU 0: ready")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("      Ready queues: initialized");
+    // // kprintln!("      CPU 0: ready");
     if SMP_INITIALIZED.load(Ordering::SeqCst) {
-        // // kprintln!("    Scheduler initialized (SMP support: enabled)")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("    Scheduler initialized (SMP support: enabled)");
     } else {
-        // // kprintln!("    Scheduler initialized (SMP support: single-core)")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("    Scheduler initialized (SMP support: single-core)");
     }
 }
 
@@ -967,12 +1027,12 @@ pub fn init() {
 /// allocated on first call; subsequent calls replace the current
 /// thread. Returns true if the BSP PRCB was newly created.
 pub fn setup_bsp(thread: *mut Ethread) -> bool {
-    // // kprintln!("  [SCHED] setup_bsp: enter thread=0x{:x}", thread as u64)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("  [SCHED] setup_bsp: enter thread=0x{:x}", thread as u64);
     let mut sched = SCHEDULER.lock();
     let newly_created = sched.cpus[0].is_none();
-    // // kprintln!("  [SCHED] setup_bsp: scheduler locked, newly_created={}", newly_created)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("  [SCHED] setup_bsp: scheduler locked, newly_created={}", newly_created);
     if newly_created {
-        // // kprintln!("  [SCHED] setup_bsp: building Prcb via pool")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("  [SCHED] setup_bsp: building Prcb via pool");
         // Allocate the Prcb from the kernel pool (the pool zeros
         // its user region, then we set up the non-null fields
         // manually). This avoids the SSE stack-to-heap copy that
@@ -985,8 +1045,8 @@ pub fn setup_bsp(thread: *mut Ethread) -> bool {
             core::mem::size_of::<Prcb>(),
         ) as *mut Prcb;
         if raw.is_null() {
-            // // kprintln!("[FATAL] setup_bsp: PRCB pool allocation failed")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-            // // kprintln!("[FATAL] Cannot initialize scheduler - system cannot continue")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[FATAL] setup_bsp: PRCB pool allocation failed");
+            // // kprintln!("[FATAL] Cannot initialize scheduler - system cannot continue");
             // PRCB allocation failure is fatal - trigger bugcheck
             // Use SystemUninit (0xDC) for system initialization failures
             // P1 = 0x6B (PROCESS_INITIALIZATION_FAILURE sub-code)
@@ -994,15 +1054,15 @@ pub fn setup_bsp(thread: *mut Ethread) -> bool {
             // P3 = size of PRCB
             // P4 = 0
             crate::ke::bugcheck::bugcheck_with(
-                crate::ke::bugcheck::BugCheckCode::SystemUninit,
-                0x6B,  // PROCESS_INITIALIZATION_FAILURE
-                0,      // CPU ID (0 for BSP)
+                crate::ke::bugcheck::BugCheckCode::ProcessInitializationFailed,
+                0x6B, // PROCESS_INITIALIZATION_FAILURE
+                0,    // CPU ID (0 for BSP)
                 core::mem::size_of::<Prcb>() as u64,
                 0,
             );
             // NOTE: bugcheck_with() does not return
         }
-        // // kprintln!("  [SCHED] setup_bsp: Prcb pool-allocated at 0x{:x}", raw as u64)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("  [SCHED] setup_bsp: Prcb pool-allocated at 0x{:x}", raw as u64);
         unsafe {
             (*raw).processor_number = 0;
             (*raw).dispatcher_lock = 0;
@@ -1022,7 +1082,9 @@ pub fn setup_bsp(thread: *mut Ethread) -> bool {
         let leaked: &'static mut Prcb = unsafe { &mut *raw };
         sched.cpus[0] = Some(leaked);
     }
-    let prcb = sched.cpus[0].as_mut().expect("PRCB slot 0 just initialised");
+    let prcb = sched.cpus[0]
+        .as_mut()
+        .expect("PRCB slot 0 just initialised");
     prcb.current_thread = thread;
     prcb.idle_thread = thread;
     if sched.num_cpus == 0 {
@@ -1030,7 +1092,7 @@ pub fn setup_bsp(thread: *mut Ethread) -> bool {
     }
     sched.current_cpu = 0;
     drop(sched);
-    // // kprintln!("  [SCHED] setup_bsp: prcb updated, publishing current_thread into per-CPU area")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("  [SCHED] setup_bsp: prcb updated, publishing current_thread into per-CPU area");
     // Mirror the change through the per-CPU area (`gs:[0x10]`)
     // Publish the current thread/process into the per-CPU area so callers
     // that read the current thread via the per-CPU register see the
@@ -1040,7 +1102,7 @@ pub fn setup_bsp(thread: *mut Ethread) -> bool {
         crate::arch::common::percpu::set_current_thread(thread);
         crate::arch::common::percpu::set_current_process(unsafe { (*thread).threads_process });
     }
-    // // kprintln!("  [SCHED] setup_bsp: done")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("  [SCHED] setup_bsp: done");
     newly_created
 }
 
@@ -1057,13 +1119,13 @@ pub fn init_smp(cpu_count: u32) {
             core::mem::size_of::<Prcb>(),
         ) as *mut Prcb;
         if raw.is_null() {
-            // // kprintln!("[FATAL] init_smp: PRCB pool allocation failed for CPU {}", i)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-            // // kprintln!("[FATAL] SMP initialization failed - cannot continue")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[FATAL] init_smp: PRCB pool allocation failed for CPU {}", i);
+            // // kprintln!("[FATAL] SMP initialization failed - cannot continue");
             // AP PRCB allocation failure is also fatal
             crate::ke::bugcheck::bugcheck_with(
-                crate::ke::bugcheck::BugCheckCode::SystemUninit,
-                0x6B,  // PROCESS_INITIALIZATION_FAILURE
-                i as u64,  // CPU ID
+                crate::ke::bugcheck::BugCheckCode::ProcessInitializationFailed,
+                0x6B,     // PROCESS_INITIALIZATION_FAILURE
+                i as u64, // CPU ID
                 core::mem::size_of::<Prcb>() as u64,
                 0,
             );
@@ -1094,7 +1156,7 @@ pub fn init_smp(cpu_count: u32) {
     drop(scheduler);
     CPU_COUNT.store(cpu_count, Ordering::SeqCst);
     SMP_INITIALIZED.store(true, Ordering::SeqCst);
-    // // kprintln!("      SMP initialized with multiple CPUs")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("      SMP initialized with multiple CPUs");
 }
 
 /// Add thread to ready queue.
@@ -1118,7 +1180,7 @@ pub fn add_ready(thread: *mut Ethread, priority: u8) {
         // Otherwise, use the current CPU for cache locality
         let home_cpu = (*thread).kthread.home_cpu;
         let affinity = (*thread).kthread.affinity_mask;
-        
+
         // Check if home CPU is allowed by affinity
         if (affinity & (1u64 << home_cpu)) != 0 {
             home_cpu as usize
@@ -1129,23 +1191,34 @@ pub fn add_ready(thread: *mut Ethread, priority: u8) {
         }
     };
 
+    // Same lock protocol as `ki_balance_processor`: the scheduler lock is
+    // held first, then the per-(CPU, priority) queue lock. Without this
+    // guard the queue could be mutated here while a balancing CPU mutated
+    // the very same queue under the queue lock.
+    let _queue_guard = match lock_ready_queue(target_cpu, priority as usize) {
+        Some(g) => g,
+        None => return,
+    };
+
     if SMP_INITIALIZED.load(Ordering::SeqCst) && target_cpu < scheduler.cpus.len() {
         // Add to per-CPU PRCB ready queue
         if let Some(ref mut prcb) = scheduler.cpus[target_cpu] {
             let entry_ptr = unsafe {
-                core::ptr::addr_of_mut!((*thread).kthread.global_thread_list_entry) as *mut ListEntry
+                core::ptr::addr_of_mut!((*thread).kthread.global_thread_list_entry)
+                    as *mut ListEntry
             };
             prcb.ready_queues[priority as usize].add_tail(entry_ptr);
             // Update ready summary bitmask for fast priority check
             // Update ready summary atomically
-            prcb.ready_summary.fetch_or(1u32 << priority, Ordering::AcqRel);
-            
-            // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                 level: crate::rtl::logging::LogLevel::Debug,
-// //                 subsystem: "SCHED",
-// //                 "add_ready: thread added to CPU {} priority {} (home_cpu={})",
-// //                 target_cpu, priority, unsafe { (*thread).kthread.home_cpu }
-// //             );
+            prcb.ready_summary
+                .fetch_or(1u32 << priority, Ordering::AcqRel);
+
+            // // kprintln!(
+            // //                 level: crate::rtl::logging::LogLevel::Debug,
+            // //                 subsystem: "SCHED",
+            // //                 "add_ready: thread added to CPU {} priority {} (home_cpu={})",
+            // //                 target_cpu, priority, unsafe { (*thread).kthread.home_cpu }
+            // //             );
             return;
         }
     }
@@ -1156,9 +1229,10 @@ pub fn add_ready(thread: *mut Ethread, priority: u8) {
             core::ptr::addr_of_mut!((*thread).kthread.global_thread_list_entry) as *mut ListEntry
         };
         prcb.ready_queues[priority as usize].add_tail(entry_ptr);
-            // Update ready summary atomically
-            prcb.ready_summary.fetch_or(1u32 << priority, Ordering::AcqRel);
-            // // kprintln!("[SCHED] add_ready: fallback to CPU 0, priority {}", priority)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // Update ready summary atomically
+        prcb.ready_summary
+            .fetch_or(1u32 << priority, Ordering::AcqRel);
+        // // kprintln!("[SCHED] add_ready: fallback to CPU 0, priority {}", priority);
     }
 }
 
@@ -1171,14 +1245,14 @@ pub fn remove_ready(thread: *mut Ethread) {
     if thread.is_null() {
         return;
     }
-    
+
     let mut scheduler = SCHEDULER.lock();
-    
+
     // Determine which CPU's queue the thread should be in
     let target_cpu = unsafe {
         let home_cpu = (*thread).kthread.home_cpu;
         let affinity = (*thread).kthread.affinity_mask;
-        
+
         // Check if home CPU is allowed by affinity
         if (affinity & (1u64 << home_cpu)) != 0 {
             home_cpu as usize
@@ -1187,14 +1261,20 @@ pub fn remove_ready(thread: *mut Ethread) {
             scheduler.current_cpu as usize
         }
     };
-    
+
     // Get the thread's priority level
     let priority = unsafe { (*thread).kthread.base_priority as u8 };
-    
+
     if priority >= 32 {
         return;
     }
-    
+
+    // Same lock protocol as `add_ready` and `ki_balance_processor`.
+    let _queue_guard = match lock_ready_queue(target_cpu, priority as usize) {
+        Some(g) => g,
+        None => return,
+    };
+
     // Search for the thread in the target CPU's ready queue
     if target_cpu < scheduler.cpus.len() {
         if let Some(ref mut prcb) = scheduler.cpus[target_cpu] {
@@ -1204,8 +1284,9 @@ pub fn remove_ready(thread: *mut Ethread) {
             while !entry_ptr.is_null() {
                 unsafe {
                     // Compare entry pointers - queue stores pointers to global_thread_list_entry
-                    let thread_list_ptr = core::ptr::addr_of!((*thread).kthread.global_thread_list_entry) 
-                        as *mut ListEntry;
+                    let thread_list_ptr =
+                        core::ptr::addr_of!((*thread).kthread.global_thread_list_entry)
+                            as *mut ListEntry;
 
                     if entry_ptr == thread_list_ptr {
                         // Found it - remove from list
@@ -1230,30 +1311,31 @@ pub fn remove_ready(thread: *mut Ethread) {
 
                         // Update ready_summary atomically if queue is now empty
                         if queue.is_empty() {
-                            prcb.ready_summary.fetch_and(!(1u32 << priority), Ordering::AcqRel);
+                            prcb.ready_summary
+                                .fetch_and(!(1u32 << priority), Ordering::AcqRel);
                         }
-                        
-                        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                             level: crate::rtl::logging::LogLevel::Debug,
-// //                             subsystem: "SCHED",
-// //                             "remove_ready: removed thread from CPU {} priority {}",
-// //                             target_cpu, priority
-// //                         );
+
+                        // // kprintln!(
+                        // //                             level: crate::rtl::logging::LogLevel::Debug,
+                        // //                             subsystem: "SCHED",
+                        // //                             "remove_ready: removed thread from CPU {} priority {}",
+                        // //                             target_cpu, priority
+                        // //                         );
                         return;
                     }
-                    
+
                     entry_ptr = (*entry_ptr).flink;
                 }
             }
         }
     }
-    
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         level: crate::rtl::logging::LogLevel::Debug,
-// //         subsystem: "SCHED",
-// //         "remove_ready: thread not found in CPU {} queue (priority={})",
-// //         target_cpu, priority
-// //     );
+
+    // // kprintln!(
+    // //         level: crate::rtl::logging::LogLevel::Debug,
+    // //         subsystem: "SCHED",
+    // //         "remove_ready: thread not found in CPU {} queue (priority={})",
+    // //         target_cpu, priority
+    // //     );
 }
 
 /// Schedule the next thread on the current CPU.
@@ -1275,8 +1357,21 @@ pub fn schedule() -> bool {
     // Use get_current_cpu() to get the real CPU ID from GS base
     let cpu = get_current_cpu();
 
+    // Scheduling is only legal at DISPATCH_LEVEL. Above it we are in an
+    // interrupt (or DPC) context and swapping the kernel stack would
+    // corrupt the interrupt stack; record the request instead.
+    if irql::get_current_irql() > Irql::DispatchLevel {
+        request_reschedule(cpu);
+        return false;
+    }
+
     // Acquire per-CPU dispatcher lock first
-    lock_prcb(cpu);
+    if !lock_prcb(cpu) {
+        // Reentrant acquisition or out-of-range CPU: the dispatcher lock
+        // is already held by this CPU, so re-entering the dispatcher here
+        // would deadlock. Bail out and let the outer dispatcher run.
+        return false;
+    }
 
     // Hold the scheduler lock for the duration of thread selection and PRCB update
     let mut scheduler = SCHEDULER.lock();
@@ -1284,9 +1379,15 @@ pub fn schedule() -> bool {
     // Get current thread from PRCB
     let current = if cpu < scheduler.cpus.len() {
         scheduler.cpus[cpu].as_ref().and_then(|p| {
-            if p.current_thread.is_null() { None } else { Some(p.current_thread) }
+            if p.current_thread.is_null() {
+                None
+            } else {
+                Some(p.current_thread)
+            }
         })
-    } else { None };
+    } else {
+        None
+    };
 
     // Try to pick the next thread from per-CPU PRCB queue
     let next = if SMP_INITIALIZED.load(Ordering::SeqCst) && cpu < scheduler.cpus.len() {
@@ -1296,18 +1397,30 @@ pub fn schedule() -> bool {
             if summary != 0 {
                 // Find MSB (highest priority) set
                 let priority = 31 - summary.leading_zeros() as u8;
+                let _queue_guard = match lock_ready_queue(cpu, priority as usize) {
+                    Some(guard) => guard,
+                    None => {
+                        drop(scheduler);
+                        unlock_prcb(cpu);
+                        return false;
+                    }
+                };
                 if let Some(entry) = prcb.ready_queues[priority as usize].remove_head() {
                     // Convert ListEntry to Ethread
                     // The queue stores pointers to global_thread_list_entry
                     let ethread_ptr = unsafe {
                         let kthread_offset = core::mem::offset_of!(Ethread, kthread)
-                            + core::mem::offset_of!(crate::ps::thread::Kthread, global_thread_list_entry);
+                            + core::mem::offset_of!(
+                                crate::ps::thread::Kthread,
+                                global_thread_list_entry
+                            );
                         (entry as *mut u8).offset(-(kthread_offset as isize)) as *mut Ethread
                     };
 
                     // Clear the ready summary bit atomically if queue is now empty
                     if prcb.ready_queues[priority as usize].is_empty() {
-                        prcb.ready_summary.fetch_and(!(1u32 << priority), Ordering::AcqRel);
+                        prcb.ready_summary
+                            .fetch_and(!(1u32 << priority), Ordering::AcqRel);
                     }
 
                     Some(ethread_ptr)
@@ -1326,15 +1439,27 @@ pub fn schedule() -> bool {
             let summary = prcb.ready_summary.load(Ordering::Acquire);
             if summary != 0 {
                 let priority = 31 - summary.leading_zeros() as u8;
+                let _queue_guard = match lock_ready_queue(0, priority as usize) {
+                    Some(guard) => guard,
+                    None => {
+                        drop(scheduler);
+                        unlock_prcb(cpu);
+                        return false;
+                    }
+                };
                 if let Some(entry) = prcb.ready_queues[priority as usize].remove_head() {
                     let ethread_ptr = unsafe {
                         let kthread_offset = core::mem::offset_of!(Ethread, kthread)
-                            + core::mem::offset_of!(crate::ps::thread::Kthread, global_thread_list_entry);
+                            + core::mem::offset_of!(
+                                crate::ps::thread::Kthread,
+                                global_thread_list_entry
+                            );
                         (entry as *mut u8).offset(-(kthread_offset as isize)) as *mut Ethread
                     };
                     if prcb.ready_queues[priority as usize].is_empty() {
                         // Update ready_summary atomically
-                        prcb.ready_summary.fetch_and(!(1u32 << priority), Ordering::AcqRel);
+                        prcb.ready_summary
+                            .fetch_and(!(1u32 << priority), Ordering::AcqRel);
                     }
                     Some(ethread_ptr)
                 } else {
@@ -1391,6 +1516,15 @@ pub fn schedule() -> bool {
 /// triggers a reschedule.
 /// Also implements priority decay mechanism (P2 Enhancement).
 pub fn tick() {
+    // The clock ISR runs at CLOCK_LEVEL (28). A context switch is only
+    // legal at DISPATCH_LEVEL, so the ISR records a reschedule request
+    // and the dispatcher performs the swap once IRQL has been lowered
+    // (`dispatch_pending_reschedule`, called from the ISR exit path).
+    let previous_irql = irql::raise_irql(Irql::ClockLevel);
+
+    // Advance the authoritative clock once per tick.
+    crate::ke::time::advance_tick();
+
     let mut scheduler = SCHEDULER.lock();
     // Use get_current_cpu() to get the real CPU ID from GS base
     let cpu = get_current_cpu();
@@ -1404,7 +1538,7 @@ pub fn tick() {
 
             // When quantum reaches zero, trigger reschedule
             if prcb.quantum_remaining == 0 {
-                // // kprintln!("[SCHED] tick: quantum expired")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                // // kprintln!("[SCHED] tick: quantum expired");
 
                 // Unboost current thread's priority if boost has expired
                 // This starts the decay process instead of instant drop
@@ -1415,9 +1549,10 @@ pub fn tick() {
                 // Reset quantum for next thread
                 prcb.quantum_remaining = QUANTUM_DEFAULT;
                 prcb.quantum_initial = QUANTUM_DEFAULT;
-                // Drop lock and call schedule
+                // Do not swap context from the ISR: request a reschedule
+                // and let the dispatcher run it at DISPATCH_LEVEL.
                 drop(scheduler);
-                schedule();
+                request_reschedule(cpu);
             } else {
                 // Check for priority decay even when quantum hasn't expired.
                 // This allows gradual decay during the thread's quantum.
@@ -1427,14 +1562,58 @@ pub fn tick() {
             }
         }
     }
+
+    irql::lower_irql(previous_irql);
 }
 
-/// Get current system tick count (for priority decay timing)
+/// Per-CPU reschedule requests raised by the clock ISR.
+static PENDING_RESCHEDULE: [AtomicBool; MAX_CPUS] = [const { AtomicBool::new(false) }; MAX_CPUS];
+
+/// Record that the dispatcher must run on `cpu` once IRQL drops to
+/// DISPATCH_LEVEL.
+pub fn request_reschedule(cpu: usize) {
+    if cpu < MAX_CPUS {
+        PENDING_RESCHEDULE[cpu].store(true, Ordering::Release);
+    }
+}
+
+/// True if `cpu` has an outstanding reschedule request.
+pub fn has_pending_reschedule(cpu: usize) -> bool {
+    cpu < MAX_CPUS && PENDING_RESCHEDULE[cpu].load(Ordering::Acquire)
+}
+
+/// Run the dispatcher for a pending ISR reschedule request.
+///
+/// Must be called from the ISR exit path, after IRQL has been lowered
+/// to DISPATCH_LEVEL. Calling `schedule()` while still at CLOCK_LEVEL
+/// swaps the stack in interrupt context, which is not a legal
+/// scheduling point.
+pub fn dispatch_pending_reschedule() -> bool {
+    let cpu = get_current_cpu();
+    if !has_pending_reschedule(cpu) {
+        return false;
+    }
+    if irql::get_current_irql() > Irql::DispatchLevel {
+        return false;
+    }
+    let consumed =
+        PENDING_RESCHEDULE[cpu].compare_exchange(true, false, Ordering::AcqRel, Ordering::Acquire);
+    if consumed.is_err() {
+        // Already consumed by another path.
+        return false;
+    }
+    schedule()
+}
+
+/// Get current system tick count (for priority decay timing).
+///
+/// This is a getter and must not advance the clock. The previous
+/// implementation used `fetch_add(1)`, so every read moved the shared
+/// clock: all threads' elapsed time increased by one tick on every
+/// read, which made priority-decay timing unreliable. The authoritative
+/// clock is `ke::time`, advanced once per tick by the clock ISR.
 fn get_ticks() -> u64 {
-    // In a real implementation, this would read a monotonic counter
-    // For now, we use a simple global counter
-    static TICK_COUNTER: AtomicU64 = AtomicU64::new(0);
-    TICK_COUNTER.fetch_add(1, Ordering::SeqCst)
+    crate::ke::time::get_tick_count() as u64 / TICK_MS as u64
 }
 
 /// Convert milliseconds to timer ticks
@@ -1455,15 +1634,15 @@ pub fn idle_loop() -> ! {
 pub fn create_idle_thread() {
     let mut scheduler = SCHEDULER.lock();
     let cpu_id = scheduler.num_cpus as u32;
-    
+
     if scheduler.num_idle_threads >= scheduler.idle_threads.len() {
-        // // kprintln!("[SCHED] create_idle_thread: idle thread array full (num={})",   // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                  scheduler.num_idle_threads);
+        // // kprintln!("[SCHED] create_idle_thread: idle thread array full (num={})",
+        // //                  scheduler.num_idle_threads);
         return;
     }
-    
-    // // kprintln!("[SCHED] create_idle_thread: creating for CPU {}", cpu_id)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    
+
+    // // kprintln!("[SCHED] create_idle_thread: creating for CPU {}", cpu_id);
+
     match create_thread_idle(cpu_id) {
         Some(idle) => {
             let idx = scheduler.num_idle_threads;
@@ -1472,13 +1651,13 @@ pub fn create_idle_thread() {
             if let Some(ref mut prcb) = scheduler.cpus[0] {
                 prcb.idle_thread = idle;
                 prcb.current_thread = idle;
-                // // kprintln!("[SCHED] create_idle_thread: idle thread set for CPU 0, idle=0x{:x}", idle as *const Ethread as u64)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                // // kprintln!("[SCHED] create_idle_thread: idle thread set for CPU 0, idle=0x{:x}", idle as *const Ethread as u64);
             } else {
-                // // kprintln!("[SCHED] create_idle_thread: WARNING - CPU 0 PRCB not initialized")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                // // kprintln!("[SCHED] create_idle_thread: WARNING - CPU 0 PRCB not initialized");
             }
         }
         None => {
-            // // kprintln!("[SCHED] create_idle_thread: FAILED to create idle thread for CPU {}", cpu_id)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[SCHED] create_idle_thread: FAILED to create idle thread for CPU {}", cpu_id);
         }
     }
 }
@@ -1498,7 +1677,7 @@ pub fn init_thread_quantum(_thread: *mut Ethread, quantum: Quantum) {
         Quantum::Standard => (QUANTUM_DEFAULT, QUANTUM_DEFAULT),
         Quantum::Long => (QUANTUM_FOREGROUND, QUANTUM_FOREGROUND),
     };
-    
+
     let mut scheduler = SCHEDULER.lock();
     let cpu = scheduler.current_cpu as usize;
     if let Some(ref mut prcb) = scheduler.cpus[cpu] {
@@ -1537,7 +1716,11 @@ pub fn get_remaining_quantum() -> u32 {
 /// also delegates to the same slot.
 pub fn get_current_thread() -> Option<&'static mut Ethread> {
     let ptr = crate::arch::common::percpu::get_current_thread();
-    if ptr.is_null() { None } else { unsafe { ptr.as_mut() } }
+    if ptr.is_null() {
+        None
+    } else {
+        unsafe { ptr.as_mut() }
+    }
 }
 
 /// Yield to scheduler.
@@ -1573,13 +1756,13 @@ pub fn init_smp_this_cpu(cpu_id: u32) {
             core::mem::size_of::<Prcb>(),
         ) as *mut Prcb;
         if raw.is_null() {
-            // // kprintln!("[FATAL] init_smp_this_cpu: PRCB pool allocation failed for CPU {}", cpu_id)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-            // // kprintln!("[FATAL] Per-CPU initialization failed - cannot continue")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[FATAL] init_smp_this_cpu: PRCB pool allocation failed for CPU {}", cpu_id);
+            // // kprintln!("[FATAL] Per-CPU initialization failed - cannot continue");
             // Per-CPU PRCB allocation failure is also fatal
             crate::ke::bugcheck::bugcheck_with(
-                crate::ke::bugcheck::BugCheckCode::SystemUninit,
-                0x6B,  // PROCESS_INITIALIZATION_FAILURE
-                cpu_id as u64,  // CPU ID
+                crate::ke::bugcheck::BugCheckCode::ProcessInitializationFailed,
+                0x6B,          // PROCESS_INITIALIZATION_FAILURE
+                cpu_id as u64, // CPU ID
                 core::mem::size_of::<Prcb>() as u64,
                 0,
             );
@@ -1666,8 +1849,8 @@ pub fn set_thread_affinity(thread: *mut Ethread, affinity_mask: u64) -> bool {
         (*thread).kthread.home_cpu = new_home as u8;
         (*thread).kthread.affinitized = 1;
 
-        // // kprintln!("[SCHED] set_thread_affinity: thread affinity=0x{:016x}, home_cpu={}",   // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                   affinity_mask, new_home);
+        // // kprintln!("[SCHED] set_thread_affinity: thread affinity=0x{:016x}, home_cpu={}",
+        // //                   affinity_mask, new_home);
     }
 
     true
@@ -1678,9 +1861,7 @@ pub fn get_thread_affinity(thread: *mut Ethread) -> u64 {
     if thread.is_null() {
         return 0;
     }
-    unsafe {
-        (*thread).kthread.affinity_mask
-    }
+    unsafe { (*thread).kthread.affinity_mask }
 }
 
 /// Calculate the exact load of a CPU (total thread count in all queues)
@@ -1719,7 +1900,10 @@ fn find_migratable_thread(prcb: &Prcb) -> Option<(*mut Ethread, u8)> {
             unsafe {
                 let ethread_ptr = {
                     let kthread_offset = core::mem::offset_of!(Ethread, kthread)
-                        + core::mem::offset_of!(crate::ps::thread::Kthread, global_thread_list_entry);
+                        + core::mem::offset_of!(
+                            crate::ps::thread::Kthread,
+                            global_thread_list_entry
+                        );
                     (entry_ptr as *mut u8).offset(-(kthread_offset as isize)) as *mut Ethread
                 };
 
@@ -1756,7 +1940,7 @@ pub fn ki_balance_processor(target_cpu: u32) {
         return;
     }
 
-    // // kprintln!("[SCHED] KiBalanceProcessor: balancing for CPU {}", target_cpu)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[SCHED] KiBalanceProcessor: balancing for CPU {}", target_cpu);
 
     // Perform load balancing for the target CPU
     let _cpu_idx = target_cpu as usize;
@@ -1783,15 +1967,19 @@ pub fn ki_balance_processor(target_cpu: u32) {
         }
     }
 
-    let avg_load = if num_cpus > 0 { total_load / num_cpus as usize } else { 0 };
+    let avg_load = if num_cpus > 0 {
+        total_load / num_cpus as usize
+    } else {
+        0
+    };
     let threshold = calculate_balance_threshold(avg_load);
 
     // Only migrate if load difference exceeds threshold
     if max_load > min_load + threshold && max_load > 0 {
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "[SCHED] KiBalanceProcessor: CPU {} (load={}) -> CPU {} (load={}), threshold={}",
-// //             max_cpu, max_load, min_cpu, min_load, threshold
-// //         );
+        // // kprintln!(
+        // //             "[SCHED] KiBalanceProcessor: CPU {} (load={}) -> CPU {} (load={}), threshold={}",
+        // //             max_cpu, max_load, min_cpu, min_load, threshold
+        // //         );
 
         // Attempt to migrate a thread from the most loaded CPU to the least loaded.
         // Use fine-grained per-queue locking to reduce contention.
@@ -1801,7 +1989,8 @@ pub fn ki_balance_processor(target_cpu: u32) {
 
                 // Lock the source queue first, then the target queue
                 // to avoid deadlocks (always lock in same order: lower CPU first)
-                let (first_cpu, first_priority, second_cpu, second_priority) = if max_cpu <= min_cpu {
+                let (first_cpu, first_priority, second_cpu, second_priority) = if max_cpu <= min_cpu
+                {
                     (max_cpu, priority_idx, min_cpu, priority_idx)
                 } else {
                     (min_cpu, priority_idx, max_cpu, priority_idx)
@@ -1810,15 +1999,25 @@ pub fn ki_balance_processor(target_cpu: u32) {
                 // Scope for the locks - both locks must be held during migration
                 // FIX 2.9: Using RAII pattern - locks auto-release on drop
                 {
-                    // Acquire both locks
-                    let _guard1 = lock_ready_queue(first_cpu, first_priority);
-                    let _guard2 = lock_ready_queue(second_cpu, second_priority);
+                    // Acquire both locks. Both are held while the scheduler
+                    // lock is held, so the lock order is always
+                    // dispatcher lock -> scheduler lock -> queue lock.
+                    let guard1 = match lock_ready_queue(first_cpu, first_priority) {
+                        Some(g) => g,
+                        None => return,
+                    };
+                    let guard2 = match lock_ready_queue(second_cpu, second_priority) {
+                        Some(g) => g,
+                        None => return,
+                    };
+                    let _ = (&guard1, &guard2);
 
                     // Now perform the migration under the queue locks
                     // Locks are automatically released when guards go out of scope
                     let queue = &mut max_prcb.ready_queues[priority_idx];
                     let entry_ptr = unsafe {
-                        core::ptr::addr_of_mut!((*thread).kthread.global_thread_list_entry) as *mut ListEntry
+                        core::ptr::addr_of_mut!((*thread).kthread.global_thread_list_entry)
+                            as *mut ListEntry
                     };
 
                     // Remove from source CPU queue
@@ -1843,7 +2042,9 @@ pub fn ki_balance_processor(target_cpu: u32) {
 
                         if queue.is_empty() {
                             // Update ready_summary atomically
-                            max_prcb.ready_summary.fetch_and(!(1u32 << priority), Ordering::AcqRel);
+                            max_prcb
+                                .ready_summary
+                                .fetch_and(!(1u32 << priority), Ordering::AcqRel);
                         }
                     }
 
@@ -1855,18 +2056,21 @@ pub fn ki_balance_processor(target_cpu: u32) {
                     // Add to target CPU queue
                     if let Some(ref mut min_prcb) = scheduler.cpus[min_cpu] {
                         let new_entry_ptr = unsafe {
-                            core::ptr::addr_of_mut!((*thread).kthread.global_thread_list_entry) as *mut ListEntry
+                            core::ptr::addr_of_mut!((*thread).kthread.global_thread_list_entry)
+                                as *mut ListEntry
                         };
                         min_prcb.ready_queues[priority_idx].add_tail(new_entry_ptr);
                         // Update ready_summary atomically
-                        min_prcb.ready_summary.fetch_or(1u32 << priority, Ordering::AcqRel);
+                        min_prcb
+                            .ready_summary
+                            .fetch_or(1u32 << priority, Ordering::AcqRel);
 
                         let _tid = unsafe { (*thread).client_id.unique_thread };
                         // _tid is intentionally unused - reserved for future logging
-                        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                             "[SCHED] KiBalanceProcessor: TID {} migrated from CPU {} to CPU {}",
-// //                             _tid, max_cpu, min_cpu
-// //                         );
+                        // // kprintln!(
+                        // //                             "[SCHED] KiBalanceProcessor: TID {} migrated from CPU {} to CPU {}",
+                        // //                             _tid, max_cpu, min_cpu
+                        // //                         );
                     }
 
                     // FIX 2.9: No explicit release needed - RAII guards auto-release on drop
@@ -1894,8 +2098,8 @@ fn migrate_thread_locked(
         // Find first valid CPU from affinity
         let valid_cpu = affinity.trailing_zeros() as usize;
         if valid_cpu >= scheduler.cpus.len() {
-            // // kprintln!("[SCHED] migrate_thread_locked: no valid target CPU for TID {}",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                      unsafe { (*thread).client_id.unique_thread });
+            // // kprintln!("[SCHED] migrate_thread_locked: no valid target CPU for TID {}",
+            // //                      unsafe { (*thread).client_id.unique_thread });
             return;
         }
     }
@@ -1907,13 +2111,13 @@ fn migrate_thread_locked(
         // Note: The actual queue removal and insertion is handled by the caller
         // (balance_load or ki_balance_processor) to avoid lock issues
 
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "[SCHED] migrate_thread_locked: TID {} from CPU {} to CPU {} (priority={})",
-// //             (*thread).client_id.unique_thread,
-// //             from_cpu,
-// //             to_cpu,
-// //             priority
-// //         );
+        // // kprintln!(
+        // //             "[SCHED] migrate_thread_locked: TID {} from CPU {} to CPU {} (priority={})",
+        // //             (*thread).client_id.unique_thread,
+        // //             from_cpu,
+        // //             to_cpu,
+        // //             priority
+        // //         );
     }
 }
 
@@ -1958,16 +2162,17 @@ pub fn balance_load() {
 
     // Only migrate if load difference exceeds threshold
     if max_load > min_load + threshold && max_load > 0 {
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "[SCHED] balance_load: CPU {} (load={}) -> CPU {} (load={}), threshold={}, avg={}",
-// //             max_cpu, max_load, min_cpu, min_load, threshold, avg_load
-// //         );
+        // // kprintln!(
+        // //             "[SCHED] balance_load: CPU {} (load={}) -> CPU {} (load={}), threshold={}, avg={}",
+        // //             max_cpu, max_load, min_cpu, min_load, threshold, avg_load
+        // //         );
 
         if let Some(ref mut max_prcb) = scheduler.cpus[max_cpu] {
             if let Some((thread, priority)) = find_migratable_thread(max_prcb) {
                 let queue = &mut max_prcb.ready_queues[priority as usize];
                 let entry_ptr = unsafe {
-                    core::ptr::addr_of_mut!((*thread).kthread.global_thread_list_entry) as *mut ListEntry
+                    core::ptr::addr_of_mut!((*thread).kthread.global_thread_list_entry)
+                        as *mut ListEntry
                 };
 
                 // Remove from source CPU queue
@@ -1992,7 +2197,9 @@ pub fn balance_load() {
 
                     if queue.is_empty() {
                         // Update ready_summary atomically
-                        max_prcb.ready_summary.fetch_and(!(1u32 << priority), Ordering::AcqRel);
+                        max_prcb
+                            .ready_summary
+                            .fetch_and(!(1u32 << priority), Ordering::AcqRel);
                     }
                 }
 
@@ -2000,21 +2207,24 @@ pub fn balance_load() {
                 migrate_thread_locked(&mut scheduler, thread, max_cpu, min_cpu, priority);
 
                 // Add to target CPU queue
-                    if let Some(ref mut min_prcb) = scheduler.cpus[min_cpu] {
-                        let new_entry_ptr = unsafe {
-                            core::ptr::addr_of_mut!((*thread).kthread.global_thread_list_entry) as *mut ListEntry
-                        };
-                        min_prcb.ready_queues[priority as usize].add_tail(new_entry_ptr);
-                        // Update ready_summary atomically
-                        min_prcb.ready_summary.fetch_or(1u32 << priority, Ordering::AcqRel);
+                if let Some(ref mut min_prcb) = scheduler.cpus[min_cpu] {
+                    let new_entry_ptr = unsafe {
+                        core::ptr::addr_of_mut!((*thread).kthread.global_thread_list_entry)
+                            as *mut ListEntry
+                    };
+                    min_prcb.ready_queues[priority as usize].add_tail(new_entry_ptr);
+                    // Update ready_summary atomically
+                    min_prcb
+                        .ready_summary
+                        .fetch_or(1u32 << priority, Ordering::AcqRel);
 
-                        let _tid = unsafe { (*thread).client_id.unique_thread };
-                        // _tid is intentionally unused - reserved for future logging
-                        // // kprintln!("[SCHED] balance_load: TID {} migrated from CPU {} to CPU {}",  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                              _tid, max_cpu, min_cpu);
-                    }
+                    let _tid = unsafe { (*thread).client_id.unique_thread };
+                    // _tid is intentionally unused - reserved for future logging
+                    // // kprintln!("[SCHED] balance_load: TID {} migrated from CPU {} to CPU {}",
+                    // //                              _tid, max_cpu, min_cpu);
+                }
             } else {
-                // // kprintln!("[SCHED] balance_load: no migratable thread found on CPU {}", max_cpu)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                // // kprintln!("[SCHED] balance_load: no migratable thread found on CPU {}", max_cpu);
             }
         }
     }
@@ -2075,14 +2285,14 @@ pub fn ki_boost_thread(thread: *mut Ethread, boost_type: PriorityBoostType) -> i
             // Record boost timestamp for decay mechanism
             kthread.boost_time = get_ticks();
             kthread.decay_started = 1;
-            // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                 "[SCHED] KiBoostThread: TID {} priority {} -> {} (boost_type={:?}, boost={})",
-// //                 (*thread).client_id.unique_thread,
-// //                 current,
-// //                 new_priority,
-// //                 boost_type,
-// //                 boost_amount
-// //             );
+            // // kprintln!(
+            // //                 "[SCHED] KiBoostThread: TID {} priority {} -> {} (boost_type={:?}, boost={})",
+            // //                 (*thread).client_id.unique_thread,
+            // //                 current,
+            // //                 new_priority,
+            // //                 boost_type,
+            // //                 boost_amount
+            // //             );
         }
 
         new_priority
@@ -2101,13 +2311,13 @@ pub fn ki_unboost_thread(thread: *mut Ethread) {
             // This matches Windows behavior where priority decays gradually.
             kthread.decay_started = 1;
             kthread.boost_time = get_ticks();
-            // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                 "[SCHED] KiUnboostThread: TID {} starting decay from {} to {} (will decay over {}ms)",
-// //                 (*thread).client_id.unique_thread,
-// //                 current,
-// //                 base,
-// //                 DECAY_TIME_MS
-// //             );
+            // // kprintln!(
+            // //                 "[SCHED] KiUnboostThread: TID {} starting decay from {} to {} (will decay over {}ms)",
+            // //                 (*thread).client_id.unique_thread,
+            // //                 current,
+            // //                 base,
+            // //                 DECAY_TIME_MS
+            // //             );
             // Note: We don't change kthread.priority here - let ki_decay_priority handle it
             // The thread will remain at boosted priority until decay kicks in
         }
@@ -2138,20 +2348,20 @@ pub fn ki_decay_priority(thread: *mut Ethread) {
 
         if new_priority == base {
             kthread.decay_started = 0;
-            // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                 "[SCHED] KiDecayPriority: TID {} decayed to base priority {}",
-// //                 (*thread).client_id.unique_thread,
-// //                 base
-// //             );
+            // // kprintln!(
+            // //                 "[SCHED] KiDecayPriority: TID {} decayed to base priority {}",
+            // //                 (*thread).client_id.unique_thread,
+            // //                 base
+            // //             );
         } else {
             // Update boost time for next decay interval
             kthread.boost_time = get_ticks();
-            // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                 "[SCHED] KiDecayPriority: TID {} priority {} -> {}",
-// //                 (*thread).client_id.unique_thread,
-// //                 current,
-// //                 new_priority
-// //             );
+            // // kprintln!(
+            // //                 "[SCHED] KiDecayPriority: TID {} priority {} -> {}",
+            // //                 (*thread).client_id.unique_thread,
+            // //                 current,
+            // //                 new_priority
+            // //             );
         }
     }
 }
@@ -2263,9 +2473,9 @@ impl TimerTable {
 
 /// Initialize dispatcher lock for a PRCB
 pub fn init_dispatcher_lock(prcb: &mut Prcb) {
-    prcb.dispatcher_lock = 0;  // Indicates lock is not held
+    prcb.dispatcher_lock = 0; // Indicates lock is not held
     prcb.panic_in_progress = 0;
-    // // kprintln!("[SCHED] Dispatcher lock initialized for PRCB")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[SCHED] Dispatcher lock initialized for PRCB");
 }
 
 /// Initialize timer table for a PRCB
@@ -2275,7 +2485,7 @@ pub fn init_timer_table(prcb: &mut Prcb) {
     prcb.timer_expiration = 0;
     prcb.timer_service_index = 0;
     prcb.timer_banner = 0;
-    // // kprintln!("[SCHED] Timer table initialized for PRCB")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[SCHED] Timer table initialized for PRCB");
 }
 
 /// Try to acquire the dispatcher lock for the current CPU
@@ -2291,7 +2501,7 @@ pub fn acquire_dispatcher_lock() -> bool {
             let _current_thread = prcb.current_thread;
             // For now, just set the lock (simple implementation)
             prcb.dispatcher_lock = 1;
-            // // kprintln!("[SCHED] Dispatcher lock acquired for CPU {}", cpu)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[SCHED] Dispatcher lock acquired for CPU {}", cpu);
             return true;
         }
         // Acquire the lock
@@ -2308,7 +2518,7 @@ pub fn release_dispatcher_lock() {
 
     if let Some(ref mut prcb) = scheduler.cpus[cpu] {
         prcb.dispatcher_lock = 0;
-        // // kprintln!("[SCHED] Dispatcher lock released for CPU {}", cpu)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[SCHED] Dispatcher lock released for CPU {}", cpu);
     }
 }
 
@@ -2338,17 +2548,19 @@ pub fn init_scheduler_extensions(prcb: &mut Prcb, _cpu_id: u32) {
     prcb.schedule_dpc = 0;
 
     // _cpu_id is intentionally unused - reserved for future logging
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         "[SCHED] Scheduler extensions initialized for CPU {}: dispatcher_lock, timer_table, idle_ready_threads",
-// //         _cpu_id
-// //     );
+    // // kprintln!(
+    // //         "[SCHED] Scheduler extensions initialized for CPU {}: dispatcher_lock, timer_table, idle_ready_threads",
+    // //         _cpu_id
+    // //     );
 }
 
 /// Get PRCB for a specific CPU
 pub fn get_prcb(cpu: usize) -> Option<&'static mut Prcb> {
     let mut scheduler = SCHEDULER.lock();
     if cpu < scheduler.cpus.len() {
-        scheduler.cpus[cpu].take().map(|p| unsafe { &mut *(p as *mut Prcb) })
+        scheduler.cpus[cpu]
+            .take()
+            .map(|p| unsafe { &mut *(p as *mut Prcb) })
     } else {
         None
     }

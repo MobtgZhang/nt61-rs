@@ -71,9 +71,18 @@ pub fn ps2_poll_char() -> Option<u8> {
     // SAFETY: single-threaded polling path; no concurrent access.
     unsafe {
         match sc {
-            0x2A | 0x36 => { POLLED_SHIFT = true; return None; }
-            0xAA | 0xB6 => { POLLED_SHIFT = false; return None; }
-            0x3A => { POLLED_CAPS = !POLLED_CAPS; return None; }
+            0x2A | 0x36 => {
+                POLLED_SHIFT = true;
+                return None;
+            }
+            0xAA | 0xB6 => {
+                POLLED_SHIFT = false;
+                return None;
+            }
+            0x3A => {
+                POLLED_CAPS = !POLLED_CAPS;
+                return None;
+            }
             0xE0 => {
                 // Drain the second byte of an extended scancode.
                 let mut waited = 0u32;
@@ -84,7 +93,9 @@ pub fn ps2_poll_char() -> Option<u8> {
                         break;
                     }
                     waited += 1;
-                    if waited > 100000 { break; }
+                    if waited > 100000 {
+                        break;
+                    }
                     core::hint::spin_loop();
                 }
                 return None;
@@ -128,18 +139,34 @@ pub fn hid_usage_to_ascii(usage: u8) -> Option<u8> {
         // Letters a..z (usage codes 0x04..0x1D).
         0x04..=0x1D => b'a' + (usage - 0x04),
         // Digits 1..9, 0.
-        0x1E => b'1', 0x1F => b'2', 0x20 => b'3', 0x21 => b'4',
-        0x22 => b'5', 0x23 => b'6', 0x24 => b'7', 0x25 => b'8',
-        0x26 => b'9', 0x27 => b'0',
+        0x1E => b'1',
+        0x1F => b'2',
+        0x20 => b'3',
+        0x21 => b'4',
+        0x22 => b'5',
+        0x23 => b'6',
+        0x24 => b'7',
+        0x25 => b'8',
+        0x26 => b'9',
+        0x27 => b'0',
         // Basic punctuation.
-        0x28 => b'\n', // Enter
-        0x29 => 0x1B,  // Escape
+        0x28 => b'\n',   // Enter
+        0x29 => 0x1B,    // Escape
         0x2A => b'\x08', // Backspace
-        0x2B => b'\t', // Tab
-        0x2C => b' ',  // Spacebar
-        0x2D => b'-', 0x2E => b'=', 0x2F => b'[', 0x30 => b']',
-        0x31 => b'\\', 0x32 => b'#', 0x33 => b';', 0x34 => b'\'',
-        0x35 => b'`', 0x36 => b',', 0x37 => b'.', 0x38 => b'/',
+        0x2B => b'\t',   // Tab
+        0x2C => b' ',    // Spacebar
+        0x2D => b'-',
+        0x2E => b'=',
+        0x2F => b'[',
+        0x30 => b']',
+        0x31 => b'\\',
+        0x32 => b'#',
+        0x33 => b';',
+        0x34 => b'\'',
+        0x35 => b'`',
+        0x36 => b',',
+        0x37 => b'.',
+        0x38 => b'/',
         // CapsLock — handled as a modifier by the caller.
         0x39 => return None,
         _ => return None,
@@ -154,12 +181,28 @@ pub fn hid_usage_to_ascii(usage: u8) -> Option<u8> {
 pub fn hid_usage_shifted(usage: u8) -> Option<u8> {
     Some(match usage {
         0x04..=0x1D => 0, // Letters — caller uppercases.
-        0x1E => b'!', 0x1F => b'@', 0x20 => b'#', 0x21 => b'$',
-        0x22 => b'%', 0x23 => b'^', 0x24 => b'&', 0x25 => b'*',
-        0x26 => b'(', 0x27 => b')',
-        0x2D => b'_', 0x2E => b'+', 0x2F => b'{', 0x30 => b'}',
-        0x31 => b'|', 0x32 => b'~', 0x33 => b':', 0x34 => b'"',
-        0x35 => b'~', 0x36 => b'<', 0x37 => b'>', 0x38 => b'?',
+        0x1E => b'!',
+        0x1F => b'@',
+        0x20 => b'#',
+        0x21 => b'$',
+        0x22 => b'%',
+        0x23 => b'^',
+        0x24 => b'&',
+        0x25 => b'*',
+        0x26 => b'(',
+        0x27 => b')',
+        0x2D => b'_',
+        0x2E => b'+',
+        0x2F => b'{',
+        0x30 => b'}',
+        0x31 => b'|',
+        0x32 => b'~',
+        0x33 => b':',
+        0x34 => b'"',
+        0x35 => b'~',
+        0x36 => b'<',
+        0x37 => b'>',
+        0x38 => b'?',
         _ => return None,
     })
 }
@@ -167,7 +210,9 @@ pub fn hid_usage_shifted(usage: u8) -> Option<u8> {
 /// Decode a single HID usage code given the current modifier
 /// state and emit it into the shared keyboard ring buffer.
 pub fn hid_emit(usage: u8, shift: bool, caps: bool) {
-    if usage == 0 { return; } // 0 = no event in the array slot.
+    if usage == 0 {
+        return;
+    } // 0 = no event in the array slot.
 
     let base = match hid_usage_to_ascii(usage) {
         Some(c) => c,
@@ -176,7 +221,11 @@ pub fn hid_emit(usage: u8, shift: bool, caps: bool) {
 
     let c = if base.is_ascii_alphabetic() {
         let upper = if shift { !caps } else { caps };
-        if upper { base.to_ascii_uppercase() } else { base }
+        if upper {
+            base.to_ascii_uppercase()
+        } else {
+            base
+        }
     } else if shift {
         hid_usage_shifted(usage).unwrap_or(base)
     } else {

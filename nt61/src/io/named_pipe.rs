@@ -12,8 +12,8 @@
 //!
 //! Reference: MSDN "CreateNamedPipeW" / "Named Pipes".
 
-use crate::ke::sync::Spinlock;
 use crate::io::pipe;
+use crate::ke::sync::Spinlock;
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -88,8 +88,7 @@ pub fn create_named_pipe(
         });
         table.last_mut().unwrap()
     };
-    let (read_id, write_id) = pipe::create_anonymous()?;
-    let slot = pipe::slot_for_id(read_id)?.0;
+    let (slot, read_id, write_id) = pipe::create_anonymous()?;
     let inst = PipeInstance {
         slot,
         read_id,
@@ -144,7 +143,13 @@ mod tests {
 
     #[test]
     fn create_and_lookup_named_pipe() {
-        let _ = create_named_pipe("test_pipe_a", PipeDirection::Duplex, PipeMode::ByteStream, 1);
+        let r = create_named_pipe(
+            "test_pipe_a",
+            PipeDirection::Duplex,
+            PipeMode::ByteStream,
+            1,
+        );
+        assert!(r.is_some(), "create_named_pipe must succeed");
         let inst = find_instance("test_pipe_a");
         assert!(inst.is_some(), "newly-created named pipe must be visible");
         let inst = inst.unwrap();
@@ -163,8 +168,18 @@ mod tests {
 
     #[test]
     fn respects_max_instances() {
-        let _ = create_named_pipe("test_pipe_c", PipeDirection::Duplex, PipeMode::ByteStream, 1);
-        let second = create_named_pipe("test_pipe_c", PipeDirection::Duplex, PipeMode::ByteStream, 1);
+        let _ = create_named_pipe(
+            "test_pipe_c",
+            PipeDirection::Duplex,
+            PipeMode::ByteStream,
+            1,
+        );
+        let second = create_named_pipe(
+            "test_pipe_c",
+            PipeDirection::Duplex,
+            PipeMode::ByteStream,
+            1,
+        );
         assert!(second.is_none(), "second instance beyond max=1 must fail");
         // Cleanup.
         close_pipe("test_pipe_c");

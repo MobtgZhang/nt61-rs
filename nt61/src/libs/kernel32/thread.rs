@@ -24,8 +24,15 @@ pub unsafe extern "C" fn CreateThread(
     let mut h: HANDLE = ptr::null_mut();
     let mut oa = crate::libs::ntdll::types::ObjectAttributes::new();
     let status = ntdll_thread::NtCreateThread(
-        &mut h, 0, &mut oa, ptr::null_mut(), ptr::null_mut(),
-        ptr::null_mut(), ptr::null_mut(), 0, 0,
+        &mut h,
+        0,
+        &mut oa,
+        ptr::null_mut(),
+        ptr::null_mut(),
+        ptr::null_mut(),
+        ptr::null_mut(),
+        0,
+        0,
     );
     if status != STATUS_SUCCESS {
         SetLastError(8);
@@ -38,24 +45,35 @@ pub unsafe extern "C" fn CreateThread(
 }
 
 /// `GetCurrentThread` / `GetCurrentThreadId` / `GetThreadId`.
-pub extern "C" fn GetCurrentThread() -> HANDLE { HANDLE_CURRENT_THREAD }
-pub extern "C" fn GetCurrentThreadId() -> DWORD { crate::ps::process::PID_SYSTEM.wrapping_add(1) as u32 }
+pub extern "C" fn GetCurrentThread() -> HANDLE {
+    HANDLE_CURRENT_THREAD
+}
+pub extern "C" fn GetCurrentThreadId() -> DWORD {
+    crate::ps::process::PID_SYSTEM.wrapping_add(1) as u32
+}
 pub extern "C" fn GetThreadId(thread: HANDLE) -> DWORD {
-    if thread.is_null() { return 0; }
+    if thread.is_null() {
+        return 0;
+    }
     crate::ps::process::PID_SYSTEM.wrapping_add(1) as u32
 }
 
 /// `ExitThread` — terminate the current thread.
 pub unsafe extern "C" fn ExitThread(exit_code: DWORD) -> ! {
     ntdll_thread::NtTerminateThread(HANDLE_CURRENT_THREAD, exit_code);
-    loop { core::hint::spin_loop(); }
+    loop {
+        core::hint::spin_loop();
+    }
 }
 
 /// `TerminateThread`.
 pub unsafe extern "C" fn TerminateThread(thread: HANDLE, exit_code: DWORD) -> BOOL {
     if ntdll_thread::NtTerminateThread(thread, exit_code) == STATUS_SUCCESS {
         TRUE
-    } else { SetLastError(6); FALSE }
+    } else {
+        SetLastError(6);
+        FALSE
+    }
 }
 
 /// `SuspendThread` / `ResumeThread`.
@@ -96,8 +114,12 @@ pub extern "C" fn SwitchToThread() -> BOOL {
 }
 
 /// `GetThreadPriority` / `SetThreadPriority` — accept the call.
-pub unsafe extern "C" fn GetThreadPriority(_thread: HANDLE) -> i32 { 0 }
-pub unsafe extern "C" fn SetThreadPriority(_thread: HANDLE, _priority: i32) -> BOOL { TRUE }
+pub unsafe extern "C" fn GetThreadPriority(_thread: HANDLE) -> i32 {
+    0
+}
+pub unsafe extern "C" fn SetThreadPriority(_thread: HANDLE, _priority: i32) -> BOOL {
+    TRUE
+}
 
 /// `GetThreadTimes`.
 #[repr(C)]
@@ -114,9 +136,17 @@ pub unsafe extern "C" fn GetThreadTimes(
     kernel: *mut FileTime,
     user: *mut FileTime,
 ) -> BOOL {
-    if !creation.is_null() { *creation = FileTime::default(); }
-    if !exit.is_null() { *exit = FileTime::default(); }
-    if !kernel.is_null() { *kernel = FileTime::default(); }
-    if !user.is_null() { *user = FileTime::default(); }
+    if !creation.is_null() {
+        *creation = FileTime::default();
+    }
+    if !exit.is_null() {
+        *exit = FileTime::default();
+    }
+    if !kernel.is_null() {
+        *kernel = FileTime::default();
+    }
+    if !user.is_null() {
+        *user = FileTime::default();
+    }
     TRUE
 }

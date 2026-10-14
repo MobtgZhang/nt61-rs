@@ -57,10 +57,7 @@ impl DirectBufferRegistry {
 static DIRECT_SEND_COUNT: AtomicU64 = AtomicU64::new(0);
 static DIRECT_RECV_COUNT: AtomicU64 = AtomicU64::new(0);
 
-pub fn allocate_direct_buffer(
-    port_index: u32,
-    registry: &mut DirectBufferRegistry,
-) -> Option<u32> {
+pub fn allocate_direct_buffer(port_index: u32, registry: &mut DirectBufferRegistry) -> Option<u32> {
     if (registry.count as usize) >= MAX_DIRECT_BUFFERS {
         return None;
     }
@@ -86,9 +83,19 @@ pub fn direct_send(
     let buffer = &mut registry.buffers[buffer_id as usize];
 
     let (dst_buf, len_field, ready_flag, complete_flag) = if is_client {
-        (&mut buffer.client_buffer[..], &mut buffer.client_len, DIRECT_FLAG_CLIENT_READY, DIRECT_FLAG_CLIENT_COMPLETE)
+        (
+            &mut buffer.client_buffer[..],
+            &mut buffer.client_len,
+            DIRECT_FLAG_CLIENT_READY,
+            DIRECT_FLAG_CLIENT_COMPLETE,
+        )
     } else {
-        (&mut buffer.server_buffer[..], &mut buffer.server_len, DIRECT_FLAG_SERVER_READY, DIRECT_FLAG_SERVER_COMPLETE)
+        (
+            &mut buffer.server_buffer[..],
+            &mut buffer.server_len,
+            DIRECT_FLAG_SERVER_READY,
+            DIRECT_FLAG_SERVER_COMPLETE,
+        )
     };
 
     let copy_len = core::cmp::min(message.data_len as usize, dst_buf.len());
@@ -116,9 +123,17 @@ pub fn direct_receive(
     let buffer = &registry.buffers[buffer_id as usize];
 
     let (src_buf, len, ready_flag) = if is_client {
-        (&buffer.server_buffer[..], buffer.server_len, DIRECT_FLAG_SERVER_READY)
+        (
+            &buffer.server_buffer[..],
+            buffer.server_len,
+            DIRECT_FLAG_SERVER_READY,
+        )
     } else {
-        (&buffer.client_buffer[..], buffer.client_len, DIRECT_FLAG_CLIENT_READY)
+        (
+            &buffer.client_buffer[..],
+            buffer.client_len,
+            DIRECT_FLAG_CLIENT_READY,
+        )
     };
 
     if (buffer.flags & ready_flag) == 0 {
@@ -135,10 +150,7 @@ pub fn direct_receive(
     Some(message)
 }
 
-pub fn free_direct_buffer(
-    buffer_id: u32,
-    registry: &mut DirectBufferRegistry,
-) -> bool {
+pub fn free_direct_buffer(buffer_id: u32, registry: &mut DirectBufferRegistry) -> bool {
     if (buffer_id as usize) >= registry.count as usize {
         return false;
     }

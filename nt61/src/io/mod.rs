@@ -24,9 +24,9 @@ use crate::ke::sync::Spinlock;
 use crate::kprintln;
 use crate::mm::pool;
 
-pub mod smoke;
-pub mod pipe;
 pub mod named_pipe;
+pub mod pipe;
+pub mod smoke;
 
 // ---------------------------------------------------------------------------
 // I/O system constants
@@ -50,6 +50,7 @@ pub mod major {
     pub const IRP_MJ_DEVICE_CONTROL: u8 = 0x0E;
     pub const IRP_MJ_PNP: u8 = 0x0F;
     pub const IRP_MJ_POWER: u8 = 0x10;
+    pub const IRP_MJ_INTERNAL_DEVICE_CONTROL: u8 = 0x12;
     pub const IRP_MJ_CLEANUP: u8 = 0x12;
 }
 
@@ -96,22 +97,22 @@ pub enum PowerStateType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum SystemPowerState {
-    S0 = 0,  // Working
-    S1 = 1,  // Sleep
-    S2 = 2,  // Deeper sleep
-    S3 = 3,  // Suspend to RAM
-    S4 = 4,  // Hibernate
-    S5 = 5,  // Soft off
+    S0 = 0, // Working
+    S1 = 1, // Sleep
+    S2 = 2, // Deeper sleep
+    S3 = 3, // Suspend to RAM
+    S4 = 4, // Hibernate
+    S5 = 5, // Soft off
 }
 
 /// Device power states (D0-D3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum DevicePowerState {
-    D0 = 0,  // Working
-    D1 = 1,  // Lightest sleep
-    D2 = 2,  // Deeper sleep
-    D3 = 3,  // Deepest sleep (hot removed)
+    D0 = 0, // Working
+    D1 = 1, // Lightest sleep
+    D2 = 2, // Deeper sleep
+    D3 = 3, // Deepest sleep (hot removed)
 }
 
 /// Power action types.
@@ -215,15 +216,11 @@ static DRIVER_LIST: Spinlock<[Option<DriverEntry>; MAX_DRIVERS]> =
 
 /// VPB (Volume Parameter Block) table.
 #[allow(unused)]
-static VPB_TABLE: Spinlock<[Option<Vpb>; MAX_VPBs]> =
-    Spinlock::new([const { None }; MAX_VPBs]);
+static VPB_TABLE: Spinlock<[Option<Vpb>; MAX_VPBs]> = Spinlock::new([const { None }; MAX_VPBs]);
 
 /// I/O manager signature tag for sanity checks.
 pub const IO_MANAGER_TAG: u32 =
-    (b'I' as u32) << 24
-    | (b'o' as u32) << 16
-    | (b'M' as u32) << 8
-    | (b'0' as u32);
+    (b'I' as u32) << 24 | (b'o' as u32) << 16 | (b'M' as u32) << 8 | (b'0' as u32);
 
 // ---------------------------------------------------------------------------
 // List entry
@@ -237,7 +234,10 @@ pub struct ListEntry {
 
 impl ListEntry {
     pub const fn new() -> Self {
-        Self { flink: null_mut(), blink: null_mut() }
+        Self {
+            flink: null_mut(),
+            blink: null_mut(),
+        }
     }
 
     pub fn init(&mut self) {
@@ -271,6 +271,8 @@ pub struct Irp {
     pub allocate_stack: u8,
     pub current_stack: *mut IoStackLocation,
     pub original_irp: *mut Irp,
+    /// wdm.h `_IRP.UserBuffer`: caller buffer for buffered / direct I/O.
+    pub user_buffer: *mut (),
 }
 
 impl Irp {
@@ -289,6 +291,7 @@ impl Irp {
             allocate_stack: 0,
             current_stack: null_mut(),
             original_irp: null_mut(),
+            user_buffer: null_mut(),
         }
     }
 }
@@ -302,13 +305,28 @@ pub struct IoStatusBlock {
 
 impl IoStatusBlock {
     pub const fn new() -> Self {
-        Self { status: 0, information: 0 }
+        Self {
+            status: 0,
+            information: 0,
+        }
     }
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
+pub struct DeviceIoControlParameters {
+    pub output_buffer_length: u32,
+    pub input_buffer_length: u32,
+    pub io_control_code: u32,
+    pub type3_input_buffer: *mut (),
+}
+
+/// wdm.h `_IO_STACK_LOCATION.Parameters`: a union of per-major-function
+/// parameter blocks. Only the members used by the I/O manager are modelled.
+#[repr(C)]
 pub union IoParameters {
     pub as_u64: u64,
+    pub device_io_control: DeviceIoControlParameters,
 }
 
 #[repr(C)]
@@ -370,7 +388,11 @@ pub struct UnicodeString {
 
 impl UnicodeString {
     pub const fn new() -> Self {
-        Self { Length: 0, MaximumLength: 0, Buffer: null_mut() }
+        Self {
+            Length: 0,
+            MaximumLength: 0,
+            Buffer: null_mut(),
+        }
     }
 }
 
@@ -449,10 +471,10 @@ impl DeviceObject {
 
     /// Set the device power state.
     pub fn set_device_power_state(&mut self, new_state: DevicePowerState) {
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "[I/O] Device power state transition: {:?} -> {:?}",
-// //             self.device_power_state, new_state
-// //         );
+        // // kprintln!(
+        // //             "[I/O] Device power state transition: {:?} -> {:?}",
+        // //             self.device_power_state, new_state
+        // //         );
         self.device_power_state = new_state;
     }
 }
@@ -462,9 +484,8 @@ impl DeviceObject {
 // ---------------------------------------------------------------------------
 
 /// Dispatch function type for driver major functions.
-pub type DriverDispatch = Option<
-    unsafe extern "C" fn(device: *mut DeviceObject, irp: *mut Irp) -> i32,
->;
+pub type DriverDispatch =
+    Option<unsafe extern "C" fn(device: *mut DeviceObject, irp: *mut Irp) -> i32>;
 
 #[repr(C)]
 pub struct DriverObject {
@@ -553,15 +574,15 @@ struct VpbEntry {
 
 /// VPB flags
 pub mod vpb_flags {
-    pub const REMOUNT: u32 = 0x00000001;     // Volume requires remount
-    pub const MOUNTED: u32 = 0x00000002;     // Volume is mounted
-    pub const LOCKED: u32 = 0x00000004;      // Volume is locked
+    pub const REMOUNT: u32 = 0x00000001; // Volume requires remount
+    pub const MOUNTED: u32 = 0x00000002; // Volume is mounted
+    pub const LOCKED: u32 = 0x00000004; // Volume is locked
     pub const DISMOUNT_PENDING: u32 = 0x00000008; // Dismount is pending
-    pub const MOUNT_PENDING: u32 = 0x00000010;   // Mount is pending
-    pub const SYSTEM: u32 = 0x00000020;      // System volume
-    pub const BOOT: u32 = 0x00000040;       // Boot volume
+    pub const MOUNT_PENDING: u32 = 0x00000010; // Mount is pending
+    pub const SYSTEM: u32 = 0x00000020; // System volume
+    pub const BOOT: u32 = 0x00000040; // Boot volume
     pub const BOOT_PARTITION: u32 = 0x00000080; // Boot partition
-    pub const PAGEFAULT: u32 = 0x00000100;   // Page fault volume
+    pub const PAGEFAULT: u32 = 0x00000100; // Page fault volume
 }
 
 /// Allocate a VPB for a device object.
@@ -572,7 +593,7 @@ pub fn allocate_vpb() -> *mut Vpb {
     }
     unsafe {
         core::ptr::write_bytes(raw as *mut u8, 0, core::mem::size_of::<Vpb>());
-        (*raw).r#type = 0x0007;  // IO_TYPE_VPB
+        (*raw).r#type = 0x0007; // IO_TYPE_VPB
         (*raw).size = core::mem::size_of::<Vpb>() as u16;
         (*raw).ref_count = AtomicU32::new(1);
     }
@@ -642,9 +663,7 @@ pub fn is_vpb_mounted(vpb: *mut Vpb) -> bool {
     if vpb.is_null() {
         return false;
     }
-    unsafe {
-        ((*vpb).flags & vpb_flags::MOUNTED) != 0
-    }
+    unsafe { ((*vpb).flags & vpb_flags::MOUNTED) != 0 }
 }
 
 // ---------------------------------------------------------------------------
@@ -704,23 +723,42 @@ pub fn IoCompleteRequest(irp: *mut Irp, priority_boost: i32) {
 
 /// Allocate an IRP from the pool. Returns `null_mut()` if the pool
 /// is exhausted.
-pub fn allocate_irp(_stack_locations: u8) -> *mut Irp {
+pub fn allocate_irp(stack_locations: u8) -> *mut Irp {
+    if stack_locations == 0 {
+        return null_mut();
+    }
+
     let sz = core::mem::size_of::<Irp>();
     let sl_sz = core::mem::size_of::<IoStackLocation>();
-    let total = sz + (sl_sz * 1);
+    let total = sz + (sl_sz * stack_locations as usize);
     let raw = pool::allocate(pool::PoolType::NonPaged, total) as *mut Irp;
     if raw.is_null() {
         return null_mut();
     }
+
     unsafe {
         core::ptr::write_bytes(raw as *mut u8, 0, total);
-        (*raw).stack_count = 1;
-        (*raw).current_location = 1;
-        // The stack location follows the IRP body.
-        let sl_ptr = (raw as *mut u8).add(sz) as *mut IoStackLocation;
-        (*raw).current_stack = sl_ptr;
-        (*sl_ptr) = IoStackLocation::new();
+
+        // WRK `ExAllocateIrp`: the stack locations follow the IRP body and
+        // are numbered 1..StackCount from the low end. `CurrentLocation`
+        // starts at `StackCount` and `CurrentStack` points at location
+        // StackCount, so `IoGetNextStackLocation` walks downwards through
+        // the driver stack. Pointing at location 1 instead makes the first
+        // `get_next_stack_location()` return memory before the allocation.
+        (*raw).stack_count = stack_locations;
+        (*raw).current_location = stack_locations;
+        (*raw).allocate_stack = 1;
+
+        let stack_base = (raw as *mut u8).add(sz) as *mut IoStackLocation;
+        for i in 0..stack_locations as usize {
+            let sl = stack_base.add(i);
+            (*sl) = IoStackLocation::new();
+            (*sl).device_object = null_mut();
+            (*sl).file_object = null_mut();
+        }
+        (*raw).current_stack = stack_base.add((stack_locations - 1) as usize);
     }
+
     IO_STATS.lock().irps_allocated += 1;
     raw
 }
@@ -754,16 +792,39 @@ pub fn complete_irp(irp: *mut Irp, status: i32, information: usize) {
 
 /// Allocate a driver object from the non-paged pool.
 pub fn allocate_driver(name: &[u8]) -> *mut DriverObject {
-    let raw = pool::allocate(pool::PoolType::NonPaged, core::mem::size_of::<DriverObject>())
-        as *mut DriverObject;
+    // `UnicodeString` is a length plus a pointer: setting only the lengths left
+    // `Buffer` null, so any reader of `driver_name.Buffer` dereferenced a null
+    // pointer. Store the name in the same pool block as the object, matching
+    // `create_device`.
+    let name_units = match core::str::from_utf8(name) {
+        Ok(s) => s.chars().count(),
+        Err(_) => name.len(),
+    };
+    let block_size = core::mem::size_of::<DriverObject>() + (name_units + 1) * 2;
+    let raw = pool::allocate(pool::PoolType::NonPaged, block_size) as *mut DriverObject;
     if raw.is_null() {
         return null_mut();
     }
     unsafe {
-        core::ptr::write_bytes(raw as *mut u8, 0, core::mem::size_of::<DriverObject>());
+        core::ptr::write_bytes(raw as *mut u8, 0, block_size);
         let d = &mut (*raw);
-        d.driver_name.Length = name.len() as u16;
-        d.driver_name.MaximumLength = name.len() as u16;
+        let name_buffer = (raw as *mut u8).add(core::mem::size_of::<DriverObject>()) as *mut u16;
+        let mut written = 0usize;
+        if let Ok(s) = core::str::from_utf8(name) {
+            for ch in s.chars().take(name_units) {
+                core::ptr::write(name_buffer.add(written), ch as u16);
+                written += 1;
+            }
+        } else {
+            for &b in name {
+                core::ptr::write(name_buffer.add(written), b as u16);
+                written += 1;
+            }
+        }
+        core::ptr::write(name_buffer.add(written), 0);
+        d.driver_name.Length = (written * 2) as u16;
+        d.driver_name.MaximumLength = ((written + 1) * 2) as u16;
+        d.driver_name.Buffer = name_buffer;
     }
     raw
 }
@@ -789,7 +850,7 @@ pub fn register_driver(driver: *mut DriverObject) -> bool {
                 de.next = core::ptr::null_mut();
                 // de.name is already zero (Option::None with zeroed bytes)
             }
-            
+
             // Get driver name from the driver object (extract from UnicodeString)
             let driver_name_storage = unsafe {
                 let name_ptr = (*driver).driver_name.Buffer;
@@ -800,7 +861,9 @@ pub fn register_driver(driver: *mut DriverObject) -> bool {
                     let max_chars = (name_len / 2).min(32);
                     for j in 0..max_chars {
                         let c = core::ptr::read_volatile(name_ptr.add(j));
-                        if c == 0 { break; }
+                        if c == 0 {
+                            break;
+                        }
                         if name_len_out < 64 {
                             name[name_len_out] = c as u8;
                             name_len_out += 1;
@@ -817,7 +880,7 @@ pub fn register_driver(driver: *mut DriverObject) -> bool {
             if !driver_name_slice.is_empty() {
                 register_driver_in_object_manager(driver, driver_name_slice);
             }
-            
+
             return true;
         }
     }
@@ -829,7 +892,7 @@ fn register_driver_in_object_manager(driver: *mut DriverObject, driver_name: &[u
     if driver.is_null() || driver_name.is_empty() {
         return;
     }
-    
+
     // Create an object header for the driver
     let header = crate::ob::create_object(
         b"\\Driver",
@@ -837,29 +900,29 @@ fn register_driver_in_object_manager(driver: *mut DriverObject, driver_name: &[u
         crate::ob::ObType::Driver,
         core::mem::size_of::<DriverObject>(),
     );
-    
+
     if !header.is_null() {
         unsafe {
             // Set the body pointer to our driver object
             (*header).body = driver as *mut ();
-            
+
             // Create a default security descriptor (NULL DACL = allow all)
             let sd = crate::se::seaccess::create_null_dacl_sd();
             if !sd.is_null() {
                 (*header).security_descriptor = sd as *mut crate::se::seaccess::SecurityDescriptor;
             }
         }
-        
+
         // Insert into the namespace
         let handle = crate::ob::insert_object(b"\\Driver", header);
         if handle != 0 {
-            // // kprintln!("[I/O] Registered driver {:x?} in OB namespace, handle={}",   // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                      driver_name, handle);
+            // // kprintln!("[I/O] Registered driver {:x?} in OB namespace, handle={}",
+            // //                      driver_name, handle);
         } else {
-            // // kprintln!("[I/O] WARNING: Failed to insert driver into OB namespace")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[I/O] WARNING: Failed to insert driver into OB namespace");
         }
     } else {
-        // // kprintln!("[I/O] WARNING: Failed to create OB header for driver")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[I/O] WARNING: Failed to create OB header for driver");
     }
 }
 
@@ -870,13 +933,19 @@ pub fn create_device(
     device_type: DeviceType,
     device_name: &[u8],
 ) -> *mut DeviceObject {
-    let raw = pool::allocate(pool::PoolType::NonPaged, core::mem::size_of::<DeviceObject>())
-        as *mut DeviceObject;
+    // The name is stored in the same pool block as the device object so the
+    // UnicodeString buffer has the same lifetime as the object itself.
+    let name_units = match core::str::from_utf8(device_name) {
+        Ok(s) => s.chars().count(),
+        Err(_) => device_name.len(),
+    };
+    let block_size = core::mem::size_of::<DeviceObject>() + (name_units + 1) * 2;
+    let raw = pool::allocate(pool::PoolType::NonPaged, block_size) as *mut DeviceObject;
     if raw.is_null() {
         return null_mut();
     }
     unsafe {
-        core::ptr::write_bytes(raw as *mut u8, 0, core::mem::size_of::<DeviceObject>());
+        core::ptr::write_bytes(raw as *mut u8, 0, block_size);
         (*raw).device_type = device_type;
         (*raw).driver_object = driver;
         (*raw).ref_count = AtomicU32::new(1);
@@ -885,17 +954,33 @@ pub fn create_device(
         (*raw).device_queue.init();
         (*raw).driver_queues.init();
         (*raw).device_lock.init();
+
+        let name_buffer = (raw as *mut u8).add(core::mem::size_of::<DeviceObject>()) as *mut u16;
+        let mut written = 0usize;
+        if let Ok(s) = core::str::from_utf8(device_name) {
+            for ch in s.chars().take(name_units) {
+                core::ptr::write(name_buffer.add(written), ch as u16);
+                written += 1;
+            }
+        }
+        core::ptr::write(name_buffer.add(written), 0);
+        (*raw).device_name = UnicodeString {
+            Length: (written * 2) as u16,
+            MaximumLength: ((written + 1) * 2) as u16,
+            Buffer: name_buffer,
+        };
+
         // Link into the driver's device list.
         (*raw).next_device = (*driver).device_object;
         (*driver).device_object = raw;
     }
-    
+
     // Register the device in the object manager namespace
     // Skip registration if OB is not initialized yet (during early boot)
     if device_name.len() > 0 && !device_name.iter().all(|&b| b == 0) {
         register_device_in_object_manager(raw, device_name);
     }
-    
+
     raw
 }
 
@@ -904,14 +989,14 @@ fn register_device_in_object_manager(device: *mut DeviceObject, device_name: &[u
     if device.is_null() {
         return;
     }
-    
+
     // Extract just the device name (without \Device\ prefix)
     let name = if device_name.starts_with(b"\\Device\\") {
         &device_name[b"\\Device\\".len()..]
     } else {
         device_name
     };
-    
+
     // Create an object header for the device
     let header = crate::ob::create_object(
         b"\\Device",
@@ -919,28 +1004,28 @@ fn register_device_in_object_manager(device: *mut DeviceObject, device_name: &[u
         crate::ob::ObType::Device,
         core::mem::size_of::<DeviceObject>(),
     );
-    
+
     if !header.is_null() {
         unsafe {
             // Set the body pointer to our device object
             (*header).body = device as *mut ();
-            
+
             // Create a default security descriptor (NULL DACL = allow all)
             let sd = crate::se::seaccess::create_null_dacl_sd();
             if !sd.is_null() {
                 (*header).security_descriptor = sd as *mut crate::se::seaccess::SecurityDescriptor;
             }
         }
-        
+
         // Insert into the namespace
         let handle = crate::ob::insert_object(b"\\Device", header);
         if handle != 0 {
-            // // kprintln!("[I/O] Registered device {:?} in OB namespace, handle={}", name, handle)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[I/O] Registered device {:?} in OB namespace, handle={}", name, handle);
         } else {
-            // // kprintln!("[I/O] WARNING: Failed to insert device {:?} into OB namespace", name)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[I/O] WARNING: Failed to insert device {:?} into OB namespace", name);
         }
     } else {
-        // // kprintln!("[I/O] WARNING: Failed to create OB header for device {:?}", name)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[I/O] WARNING: Failed to create OB header for device {:?}", name);
     }
 }
 
@@ -1008,15 +1093,18 @@ pub fn init() {
     if !null_driver.is_null() {
         unsafe {
             // Set up default major function handlers
-            (*null_driver).major_functions[major::IRP_MJ_CREATE as usize] = Some(null_create_dispatch);
-            (*null_driver).major_functions[major::IRP_MJ_CLOSE as usize] = Some(null_close_dispatch);
+            (*null_driver).major_functions[major::IRP_MJ_CREATE as usize] =
+                Some(null_create_dispatch);
+            (*null_driver).major_functions[major::IRP_MJ_CLOSE as usize] =
+                Some(null_close_dispatch);
             (*null_driver).major_functions[major::IRP_MJ_READ as usize] = Some(null_read_dispatch);
-            (*null_driver).major_functions[major::IRP_MJ_WRITE as usize] = Some(null_write_dispatch);
+            (*null_driver).major_functions[major::IRP_MJ_WRITE as usize] =
+                Some(null_write_dispatch);
 
             // Create the NULL device
             let null_device = create_device(null_driver, DeviceType::Null, b"\\Device\\Null");
             if !null_device.is_null() {
-                // // kprintln!("      NULL device created")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                // // kprintln!("      NULL device created");
             }
         }
         register_driver(null_driver);
@@ -1031,25 +1119,27 @@ pub fn init() {
             (*fs_driver).major_functions[major::IRP_MJ_CLOSE as usize] = Some(fs_close_dispatch);
             (*fs_driver).major_functions[major::IRP_MJ_READ as usize] = Some(fs_read_dispatch);
             (*fs_driver).major_functions[major::IRP_MJ_WRITE as usize] = Some(fs_write_dispatch);
-            (*fs_driver).major_functions[major::IRP_MJ_CLEANUP as usize] = Some(fs_cleanup_dispatch);
-            (*fs_driver).major_functions[major::IRP_MJ_DEVICE_CONTROL as usize] = Some(fs_device_control_dispatch);
+            (*fs_driver).major_functions[major::IRP_MJ_CLEANUP as usize] =
+                Some(fs_cleanup_dispatch);
+            (*fs_driver).major_functions[major::IRP_MJ_DEVICE_CONTROL as usize] =
+                Some(fs_device_control_dispatch);
             (*fs_driver).major_functions[major::IRP_MJ_PNP as usize] = Some(fs_pnp_dispatch);
             (*fs_driver).major_functions[major::IRP_MJ_POWER as usize] = Some(fs_power_dispatch);
 
             // Create the filesystem device
             let fs_device = create_device(fs_driver, DeviceType::FileSystem, b"\\Device\\Fs");
             if !fs_device.is_null() {
-                // // kprintln!("      Filesystem device created")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                // // kprintln!("      Filesystem device created");
             }
         }
         register_driver(fs_driver);
     }
 
-    // // kprintln!("    I/O Manager: initialized")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         "      drivers_max={} devices_max={} vpb_max={} irp_pool={}",
-// //         MAX_DRIVERS, MAX_DEVICES, MAX_VPBs, MAX_IRP_POOL
-// //     );
+    // // kprintln!("    I/O Manager: initialized");
+    // // kprintln!(
+    // //         "      drivers_max={} devices_max={} vpb_max={} irp_pool={}",
+    // //         MAX_DRIVERS, MAX_DEVICES, MAX_VPBs, MAX_IRP_POOL
+    // //     );
 }
 
 // ---------------------------------------------------------------------------
@@ -1057,17 +1147,14 @@ pub fn init() {
 // ---------------------------------------------------------------------------
 
 use crate::libs::ntdll::status::{
-    STATUS_SUCCESS, STATUS_INVALID_PARAMETER, STATUS_NO_SUCH_DEVICE, STATUS_END_OF_FILE,
-    STATUS_ACCESS_DENIED, STATUS_OBJECT_NAME_NOT_FOUND, STATUS_OBJECT_PATH_NOT_FOUND,
-    STATUS_NO_MEMORY, STATUS_NOT_IMPLEMENTED, STATUS_INVALID_DEVICE_REQUEST,
-    STATUS_OBJECT_NAME_INVALID,
+    STATUS_ACCESS_DENIED, STATUS_END_OF_FILE, STATUS_INVALID_DEVICE_REQUEST,
+    STATUS_INVALID_PARAMETER, STATUS_NOT_IMPLEMENTED, STATUS_NO_MEMORY, STATUS_NO_SUCH_DEVICE,
+    STATUS_OBJECT_NAME_INVALID, STATUS_OBJECT_NAME_NOT_FOUND, STATUS_OBJECT_PATH_NOT_FOUND,
+    STATUS_SUCCESS,
 };
 
 /// Default NULL device dispatch for IRP_MJ_CREATE
-unsafe extern "C" fn null_create_dispatch(
-    _device: *mut DeviceObject,
-    irp: *mut Irp,
-) -> i32 {
+unsafe extern "C" fn null_create_dispatch(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if !irp.is_null() {
         (*irp).io_status.status = STATUS_SUCCESS as u32;
         (*irp).io_status.information = 0;
@@ -1077,10 +1164,7 @@ unsafe extern "C" fn null_create_dispatch(
 }
 
 /// Default NULL device dispatch for IRP_MJ_CLOSE
-unsafe extern "C" fn null_close_dispatch(
-    _device: *mut DeviceObject,
-    irp: *mut Irp,
-) -> i32 {
+unsafe extern "C" fn null_close_dispatch(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if !irp.is_null() {
         (*irp).io_status.status = STATUS_SUCCESS as u32;
         (*irp).io_status.information = 0;
@@ -1090,10 +1174,7 @@ unsafe extern "C" fn null_close_dispatch(
 }
 
 /// Default NULL device dispatch for IRP_MJ_READ
-unsafe extern "C" fn null_read_dispatch(
-    _device: *mut DeviceObject,
-    irp: *mut Irp,
-) -> i32 {
+unsafe extern "C" fn null_read_dispatch(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if !irp.is_null() {
         // NULL device returns end of file (0 bytes read)
         (*irp).io_status.status = STATUS_END_OF_FILE as u32;
@@ -1104,10 +1185,7 @@ unsafe extern "C" fn null_read_dispatch(
 }
 
 /// Default NULL device dispatch for IRP_MJ_WRITE
-unsafe extern "C" fn null_write_dispatch(
-    _device: *mut DeviceObject,
-    irp: *mut Irp,
-) -> i32 {
+unsafe extern "C" fn null_write_dispatch(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if !irp.is_null() {
         // NULL device discards writes, returns success
         (*irp).io_status.status = STATUS_SUCCESS as u32;
@@ -1124,29 +1202,24 @@ unsafe extern "C" fn null_write_dispatch(
 
 /// IRP_MJ_CREATE dispatch for filesystem devices.
 /// Opens or creates a file on the filesystem.
-unsafe extern "C" fn fs_create_dispatch(
-    device: *mut DeviceObject,
-    irp: *mut Irp,
-) -> i32 {
+unsafe extern "C" fn fs_create_dispatch(device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if irp.is_null() {
         return STATUS_INVALID_PARAMETER as i32;
     }
 
     let stack = (*irp).current_stack;
-    
+
     // Create a file object for this open
-    let file_obj_ptr = pool::allocate(
-        pool::PoolType::NonPaged,
-        core::mem::size_of::<FileObject>(),
-    ) as *mut FileObject;
-    
+    let file_obj_ptr = pool::allocate(pool::PoolType::NonPaged, core::mem::size_of::<FileObject>())
+        as *mut FileObject;
+
     if file_obj_ptr.is_null() {
         (*irp).io_status.status = STATUS_NO_MEMORY as u32;
         (*irp).io_status.information = 0;
         IoCompleteRequest(irp, 0);
         return STATUS_NO_MEMORY as i32;
     }
-    
+
     // Initialize file object
     (*file_obj_ptr).device_object = device;
     (*file_obj_ptr).vpb = (*device).vpb;
@@ -1154,12 +1227,12 @@ unsafe extern "C" fn fs_create_dispatch(
     (*file_obj_ptr).file_name = UnicodeString::new();
     (*file_obj_ptr).current_byte_offset = 0;
     (*file_obj_ptr).flags = 0;
-    
+
     // Store file object in stack location for subsequent operations
     if !stack.is_null() {
         (*stack).file_object = file_obj_ptr;
     }
-    
+
     (*irp).io_status.status = STATUS_SUCCESS as u32;
     (*irp).io_status.information = 0;
     IoCompleteRequest(irp, 0);
@@ -1168,10 +1241,7 @@ unsafe extern "C" fn fs_create_dispatch(
 
 /// IRP_MJ_READ dispatch for filesystem devices.
 /// Reads data from an open file.
-unsafe extern "C" fn fs_read_dispatch(
-    _device: *mut DeviceObject,
-    irp: *mut Irp,
-) -> i32 {
+unsafe extern "C" fn fs_read_dispatch(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if irp.is_null() {
         return STATUS_INVALID_PARAMETER as i32;
     }
@@ -1194,37 +1264,37 @@ unsafe extern "C" fn fs_read_dispatch(
     let params = (*stack).parameters.as_u64;
     let buffer = (params & 0xFFFFFFFF) as *mut u8;
     let length = ((params >> 32) & 0xFFFFFFFF) as u32;
-    
+
     // Route to the underlying filesystem via VFS
     let byte_offset = (*file_obj).current_byte_offset;
-    
+
     if buffer.is_null() || length == 0 {
         (*irp).io_status.status = STATUS_SUCCESS as u32;
         (*irp).io_status.information = 0;
         IoCompleteRequest(irp, 0);
         return STATUS_SUCCESS as i32;
     }
-    
+
     // Use VFS to read from RAM disk
     let result = crate::fs::vfs::read_file_sectors(
-        0,              // Use byte_offset-based reading
+        0, // Use byte_offset-based reading
         buffer as u64,
         length,
         byte_offset,
     );
-    
+
     // Update file position if read succeeded
     if result.status == 0 {
         (*file_obj).current_byte_offset += result.bytes_read as u64;
     }
-    
+
     // Update statistics
     {
         let mut stats = IO_STATS.lock();
         stats.bytes_read += result.bytes_read as u64;
         stats.reads += 1;
     }
-    
+
     (*irp).io_status.status = result.status;
     (*irp).io_status.information = result.bytes_read;
     IoCompleteRequest(irp, 0);
@@ -1233,10 +1303,7 @@ unsafe extern "C" fn fs_read_dispatch(
 
 /// IRP_MJ_WRITE dispatch for filesystem devices.
 /// Writes data to an open file.
-unsafe extern "C" fn fs_write_dispatch(
-    _device: *mut DeviceObject,
-    irp: *mut Irp,
-) -> i32 {
+unsafe extern "C" fn fs_write_dispatch(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if irp.is_null() {
         return STATUS_INVALID_PARAMETER as i32;
     }
@@ -1259,37 +1326,37 @@ unsafe extern "C" fn fs_write_dispatch(
     let params = (*stack).parameters.as_u64;
     let buffer = (params & 0xFFFFFFFF) as *mut u8;
     let length = ((params >> 32) & 0xFFFFFFFF) as u32;
-    
+
     // Route to the underlying filesystem via VFS
     let byte_offset = (*file_obj).current_byte_offset;
-    
+
     if buffer.is_null() || length == 0 {
         (*irp).io_status.status = STATUS_SUCCESS as u32;
         (*irp).io_status.information = 0;
         IoCompleteRequest(irp, 0);
         return STATUS_SUCCESS as i32;
     }
-    
+
     // Use VFS to write to RAM disk
     let result = crate::fs::vfs::write_file_sectors(
-        0,              // Use byte_offset-based writing
+        0, // Use byte_offset-based writing
         buffer as u64,
         length,
         byte_offset,
     );
-    
+
     // Update file position if write succeeded
     if result.status == 0 {
         (*file_obj).current_byte_offset += result.bytes_written as u64;
     }
-    
+
     // Update statistics
     {
         let mut stats = IO_STATS.lock();
         stats.bytes_written += result.bytes_written as u64;
         stats.writes += 1;
     }
-    
+
     (*irp).io_status.status = result.status;
     (*irp).io_status.information = result.bytes_written;
     IoCompleteRequest(irp, 0);
@@ -1298,10 +1365,7 @@ unsafe extern "C" fn fs_write_dispatch(
 
 /// IRP_MJ_CLOSE dispatch for filesystem devices.
 /// Closes a file handle.
-unsafe extern "C" fn fs_close_dispatch(
-    _device: *mut DeviceObject,
-    irp: *mut Irp,
-) -> i32 {
+unsafe extern "C" fn fs_close_dispatch(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if !irp.is_null() {
         (*irp).io_status.status = STATUS_SUCCESS as u32;
         (*irp).io_status.information = 0;
@@ -1312,10 +1376,7 @@ unsafe extern "C" fn fs_close_dispatch(
 
 /// IRP_MJ_CLEANUP dispatch for filesystem devices.
 /// Called when the last handle to a file is being closed.
-unsafe extern "C" fn fs_cleanup_dispatch(
-    _device: *mut DeviceObject,
-    irp: *mut Irp,
-) -> i32 {
+unsafe extern "C" fn fs_cleanup_dispatch(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if !irp.is_null() {
         (*irp).io_status.status = STATUS_SUCCESS as u32;
         (*irp).io_status.information = 0;
@@ -1326,10 +1387,7 @@ unsafe extern "C" fn fs_cleanup_dispatch(
 
 /// IRP_MJ_DEVICE_CONTROL dispatch for filesystem devices.
 /// Handles IOCTL requests from user mode.
-unsafe extern "C" fn fs_device_control_dispatch(
-    _device: *mut DeviceObject,
-    irp: *mut Irp,
-) -> i32 {
+unsafe extern "C" fn fs_device_control_dispatch(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if !irp.is_null() {
         // Most IOCTLs are not supported in bootstrap
         (*irp).io_status.status = STATUS_INVALID_DEVICE_REQUEST as u32;
@@ -1341,10 +1399,7 @@ unsafe extern "C" fn fs_device_control_dispatch(
 
 /// IRP_MJ_PNP dispatch for filesystem devices.
 /// Handles Plug and Play IRPs.
-unsafe extern "C" fn fs_pnp_dispatch(
-    _device: *mut DeviceObject,
-    irp: *mut Irp,
-) -> i32 {
+unsafe extern "C" fn fs_pnp_dispatch(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if !irp.is_null() {
         let stack = (*irp).current_stack;
         if !stack.is_null() {
@@ -1383,10 +1438,7 @@ unsafe extern "C" fn fs_pnp_dispatch(
 
 /// IRP_MJ_POWER dispatch for filesystem devices.
 /// Handles power management IRPs with full minor function dispatch.
-unsafe extern "C" fn fs_power_dispatch(
-    _device: *mut DeviceObject,
-    irp: *mut Irp,
-) -> i32 {
+unsafe extern "C" fn fs_power_dispatch(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if !irp.is_null() {
         let stack = (*irp).current_stack;
         if !stack.is_null() {
@@ -1394,26 +1446,26 @@ unsafe extern "C" fn fs_power_dispatch(
             match minor {
                 power::IRP_MN_WAIT_WAKE => {
                     // Wait/Wake - device can wake the system
-                    // // kprintln!("[I/O] Power: IRP_MN_WAIT_WAKE")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                    // // kprintln!("[I/O] Power: IRP_MN_WAIT_WAKE");
                     (*irp).io_status.status = STATUS_SUCCESS as u32;
                 }
                 power::IRP_MN_POWER_SEQUENCE => {
                     // Power Sequence - query power sequence counters
-                    // // kprintln!("[I/O] Power: IRP_MN_POWER_SEQUENCE")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                    // // kprintln!("[I/O] Power: IRP_MN_POWER_SEQUENCE");
                     (*irp).io_status.status = STATUS_SUCCESS as u32;
                 }
                 power::IRP_MN_SET_POWER => {
                     // Set Power - transition device to new power state
-                    // // kprintln!("[I/O] Power: IRP_MN_SET_POWER")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                    // // kprintln!("[I/O] Power: IRP_MN_SET_POWER");
                     (*irp).io_status.status = STATUS_SUCCESS as u32;
                 }
                 power::IRP_MN_QUERY_POWER => {
                     // Query Power - check if device can enter new power state
-                    // // kprintln!("[I/O] Power: IRP_MN_QUERY_POWER")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                    // // kprintln!("[I/O] Power: IRP_MN_QUERY_POWER");
                     (*irp).io_status.status = STATUS_SUCCESS as u32;
                 }
                 _ => {
-                    // // kprintln!("[I/O] Power: unknown minor function 0x{:02x}", minor)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                    // // kprintln!("[I/O] Power: unknown minor function 0x{:02x}", minor);
                     (*irp).io_status.status = STATUS_NOT_IMPLEMENTED as u32;
                 }
             }
@@ -1429,7 +1481,9 @@ unsafe extern "C" fn fs_power_dispatch(
 /// re-export keeps the call site readable as `io::smoke_test()`
 /// (matching the `mm::smoke_test()` / `ke::smoke_test()` /
 /// `ob::smoke_test()` convention used by `kernel_main`).
-pub fn smoke_test() -> bool { smoke::smoke_test() }
+pub fn smoke_test() -> bool {
+    smoke::smoke_test()
+}
 
 // ---------------------------------------------------------------------------
 // PnP Device Startup Sequence
@@ -1472,23 +1526,23 @@ pub fn pnp_start_device(device: *mut DeviceObject) -> bool {
     unsafe {
         // Check if device is already started
         if (*device).pnp_state == DevicePnPState::Started {
-            // // kprintln!("[I/O] PnP: device already started")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[I/O] PnP: device already started");
             return true;
         }
 
         // Query device capabilities first
         let cap_result = pnp_query_capabilities(device);
         if !cap_result {
-            // // kprintln!("[I/O] PnP: device does not support required capabilities")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[I/O] PnP: device does not support required capabilities");
             return false;
         }
 
         // Start the device
         (*device).set_pnp_state(DevicePnPState::Started);
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "[I/O] PnP: device started (type={:?})",
-// //             (*device).device_type
-// //         );
+        // // kprintln!(
+        // //             "[I/O] PnP: device started (type={:?})",
+        // //             (*device).device_type
+        // //         );
 
         true
     }
@@ -1503,7 +1557,7 @@ fn pnp_query_capabilities(device: *mut DeviceObject) -> bool {
     // In a full implementation, this would send IRP_MN_QUERY_CAPABILITIES
     // and wait for the result. For the bootstrap, we assume all
     // devices support basic PnP capabilities.
-    // // kprintln!("[I/O] PnP: querying device capabilities")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[I/O] PnP: querying device capabilities");
     true
 }
 
@@ -1516,7 +1570,7 @@ pub fn pnp_query_device_relations(device: *mut DeviceObject) -> u32 {
     // In a full implementation, this sends IRP_MN_QUERY_DEVICE_RELATIONS
     // and returns the number of child devices found.
     // For the bootstrap, we return 0 (no bus enumeration simulation).
-    // // kprintln!("[I/O] PnP: querying device relations (no children in bootstrap)")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[I/O] PnP: querying device relations (no children in bootstrap)");
     0
 }
 
@@ -1542,16 +1596,16 @@ pub fn pnp_remove_device(device: *mut DeviceObject) -> bool {
         }
 
         (*device).set_pnp_state(DevicePnPState::RemovePending);
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "[I/O] PnP: device removal pending (type={:?})",
-// //             (*device).device_type
-// //         );
+        // // kprintln!(
+        // //             "[I/O] PnP: device removal pending (type={:?})",
+        // //             (*device).device_type
+        // //         );
 
         // In a full implementation, would send IRP_MN_REMOVE_DEVICE
         // to the device stack and clean up resources.
 
         (*device).set_pnp_state(DevicePnPState::Deleted);
-        // // kprintln!("[I/O] PnP: device deleted")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("[I/O] PnP: device deleted");
 
         true
     }
@@ -1565,10 +1619,10 @@ pub fn pnp_surprise_removal(device: *mut DeviceObject) -> bool {
 
     unsafe {
         (*device).set_pnp_state(DevicePnPState::SurpriseRemoved);
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "[I/O] PnP: device surprise removed (type={:?})",
-// //             (*device).device_type
-// //         );
+        // // kprintln!(
+        // //             "[I/O] PnP: device surprise removed (type={:?})",
+        // //             (*device).device_type
+        // //         );
         true
     }
 }
@@ -1581,18 +1635,18 @@ pub fn pnp_stop_device(device: *mut DeviceObject) -> bool {
 
     unsafe {
         if (*device).pnp_state != DevicePnPState::Started {
-            // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //                 "[I/O] PnP: cannot stop device - not in Started state (current={:?})",
-// //                 (*device).pnp_state
-// //             );
+            // // kprintln!(
+            // //                 "[I/O] PnP: cannot stop device - not in Started state (current={:?})",
+            // //                 (*device).pnp_state
+            // //             );
             return false;
         }
 
         (*device).set_pnp_state(DevicePnPState::Stopped);
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "[I/O] PnP: device stopped (type={:?})",
-// //             (*device).device_type
-// //         );
+        // // kprintln!(
+        // //             "[I/O] PnP: device stopped (type={:?})",
+        // //             (*device).device_type
+        // //         );
         true
     }
 }
@@ -1624,14 +1678,14 @@ pub fn pnp_enumerate_and_start_all() {
         }
     }
 
-    // [DISABLED] // // kprintln!("[I/O] PnP enumerated: started={}, failed={}", started_count, failed_count)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // [DISABLED] // // kprintln!("[I/O] PnP enumerated: started={}, failed={}", started_count, failed_count);
     let _ = (&started_count, &failed_count);
 }
 
 /// Initialize the PnP manager.
 /// Sets up the PnP state machine and prepares for device enumeration.
 pub fn pnp_init() {
-    // // kprintln!("[I/O] PnP manager initialized")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[I/O] PnP manager initialized");
 }
 
 // ============================================================================
@@ -1674,15 +1728,15 @@ impl DeviceStack {
         unsafe {
             // Link filter above target
             (*filter).attached_device = self.top_device;
-            
+
             // Update target's attached_to field
             (*self.top_device).attached_to = Some(filter);
-            
+
             // Add to our tracking list
             if let Some(ref mut list) = self.attached_devices {
                 list.push(self.top_device);
             }
-            
+
             // Update top to the filter
             self.top_device = filter;
         }
@@ -1698,7 +1752,7 @@ impl DeviceStack {
         unsafe {
             let below = (*filter).attached_device;
             let above = (*filter).attached_to;
-            
+
             // Re-link the chain
             if let Some(above_dev) = above {
                 (*above_dev).attached_device = below;
@@ -1706,7 +1760,7 @@ impl DeviceStack {
             if !below.is_null() {
                 (*below).attached_to = above;
             }
-            
+
             // Update top/bottom if needed
             if self.top_device == filter {
                 self.top_device = below;
@@ -1714,7 +1768,7 @@ impl DeviceStack {
             if self.bottom_device == filter {
                 self.bottom_device = below;
             }
-            
+
             // Remove from tracking list
             if let Some(ref mut list) = self.attached_devices {
                 list.retain(|&d| d != filter);
@@ -1742,100 +1796,108 @@ pub struct FastIoDispatch {
     /// Size of this structure (for versioning).
     pub size: u32,
     /// FastIoCheckIfPossible - verify fast I/O can be used.
-    pub fast_io_check_if_possible: Option<unsafe extern "C" fn(
-        _device: *mut DeviceObject,
-        _file: *mut FileObject,
-        _byte_offset: u64,
-        _length: u32,
-        _lock: bool,
-        _check_for_read: bool,
-        _wait: bool,
-        _alert: bool,
-    ) -> bool>,
+    pub fast_io_check_if_possible: Option<
+        unsafe extern "C" fn(
+            _device: *mut DeviceObject,
+            _file: *mut FileObject,
+            _byte_offset: u64,
+            _length: u32,
+            _lock: bool,
+            _check_for_read: bool,
+            _wait: bool,
+            _alert: bool,
+        ) -> bool,
+    >,
     /// FastIoRead - read without creating an IRP.
-    pub fast_io_read: Option<unsafe extern "C" fn(
-        _device: *mut DeviceObject,
-        _file: *mut FileObject,
-        _buffer: *mut u8,
-        _length: u32,
-        _wait: bool,
-    ) -> bool>,
+    pub fast_io_read: Option<
+        unsafe extern "C" fn(
+            _device: *mut DeviceObject,
+            _file: *mut FileObject,
+            _buffer: *mut u8,
+            _length: u32,
+            _wait: bool,
+        ) -> bool,
+    >,
     /// FastIoWrite - write without creating an IRP.
-    pub fast_io_write: Option<unsafe extern "C" fn(
-        _device: *mut DeviceObject,
-        _file: *mut FileObject,
-        _buffer: *const u8,
-        _length: u32,
-        _wait: bool,
-    ) -> bool>,
+    pub fast_io_write: Option<
+        unsafe extern "C" fn(
+            _device: *mut DeviceObject,
+            _file: *mut FileObject,
+            _buffer: *const u8,
+            _length: u32,
+            _wait: bool,
+        ) -> bool,
+    >,
     /// FastIoQueryBasicInfo - query basic file information.
-    pub fast_io_query_basic_info: Option<unsafe extern "C" fn(
-        _device: *mut DeviceObject,
-        _file: *mut FileObject,
-        _wait: bool,
-    ) -> bool>,
+    pub fast_io_query_basic_info: Option<
+        unsafe extern "C" fn(
+            _device: *mut DeviceObject,
+            _file: *mut FileObject,
+            _wait: bool,
+        ) -> bool,
+    >,
     /// FastIoQueryStandardInfo - query standard file information.
-    pub fast_io_query_standard_info: Option<unsafe extern "C" fn(
-        _device: *mut DeviceObject,
-        _file: *mut FileObject,
-        _wait: bool,
-    ) -> bool>,
+    pub fast_io_query_standard_info: Option<
+        unsafe extern "C" fn(
+            _device: *mut DeviceObject,
+            _file: *mut FileObject,
+            _wait: bool,
+        ) -> bool,
+    >,
     /// FastIoLock - lock a region of a file.
-    pub fast_io_lock: Option<unsafe extern "C" fn(
-        _device: *mut DeviceObject,
-        _file: *mut FileObject,
-        _byte_offset: u64,
-        _length: u64,
-        _wait: bool,
-        _exclusive: bool,
-    ) -> bool>,
+    pub fast_io_lock: Option<
+        unsafe extern "C" fn(
+            _device: *mut DeviceObject,
+            _file: *mut FileObject,
+            _byte_offset: u64,
+            _length: u64,
+            _wait: bool,
+            _exclusive: bool,
+        ) -> bool,
+    >,
     /// FastIoUnlockSingle - unlock a single region.
-    pub fast_io_unlock_single: Option<unsafe extern "C" fn(
-        _device: *mut DeviceObject,
-        _file: *mut FileObject,
-        _byte_offset: u64,
-        _length: u64,
-    ) -> bool>,
+    pub fast_io_unlock_single: Option<
+        unsafe extern "C" fn(
+            _device: *mut DeviceObject,
+            _file: *mut FileObject,
+            _byte_offset: u64,
+            _length: u64,
+        ) -> bool,
+    >,
     /// FastIoUnlockAll - unlock all regions.
-    pub fast_io_unlock_all: Option<unsafe extern "C" fn(
-        _device: *mut DeviceObject,
-        _file: *mut FileObject,
-    ) -> bool>,
+    pub fast_io_unlock_all:
+        Option<unsafe extern "C" fn(_device: *mut DeviceObject, _file: *mut FileObject) -> bool>,
     /// FastIoUnlockAllByKey - unlock by key.
-    pub fast_io_unlock_all_by_key: Option<unsafe extern "C" fn(
-        _device: *mut DeviceObject,
-        _file: *mut FileObject,
-        _key: u64,
-    ) -> bool>,
+    pub fast_io_unlock_all_by_key: Option<
+        unsafe extern "C" fn(_device: *mut DeviceObject, _file: *mut FileObject, _key: u64) -> bool,
+    >,
     /// FastIoDeviceControl - device I/O control.
-    pub fast_io_device_control: Option<unsafe extern "C" fn(
-        _device: *mut DeviceObject,
-        _file: *mut FileObject,
-        _wait: bool,
-        _input: bool,
-    ) -> bool>,
+    pub fast_io_device_control: Option<
+        unsafe extern "C" fn(
+            _device: *mut DeviceObject,
+            _file: *mut FileObject,
+            _wait: bool,
+            _input: bool,
+        ) -> bool,
+    >,
     /// FastIoAcquireForModWrite - acquire for modified write.
-    pub fast_io_acquire_for_mod_write: Option<unsafe extern "C" fn(
-        _device: *mut DeviceObject,
-        _file: *mut FileObject,
-        _byte_offset: u64,
-        _length: u64,
-    ) -> bool>,
+    pub fast_io_acquire_for_mod_write: Option<
+        unsafe extern "C" fn(
+            _device: *mut DeviceObject,
+            _file: *mut FileObject,
+            _byte_offset: u64,
+            _length: u64,
+        ) -> bool,
+    >,
     /// FastIoReleaseForModWrite - release from modified write.
-    pub fast_io_release_for_mod_write: Option<unsafe extern "C" fn(
-        _device: *mut DeviceObject,
-        _file: *mut FileObject,
-    ) -> bool>,
+    pub fast_io_release_for_mod_write:
+        Option<unsafe extern "C" fn(_device: *mut DeviceObject, _file: *mut FileObject) -> bool>,
     /// FastIoAcquireForCcFlush - acquire for cache flush.
-    pub fast_io_acquire_for_cc_flush: Option<unsafe extern "C" fn(
-        _device: *mut DeviceObject,
-        _file: *mut FileObject,
-    ) -> bool>,
+    pub fast_io_acquire_for_cc_flush:
+        Option<unsafe extern "C" fn(_device: *mut DeviceObject, _file: *mut FileObject) -> bool>,
     /// FastIoReleaseForCcFlush - release from cache flush.
-    pub fast_io_release_for_cc_flush: Option<unsafe extern "C" fn(
-        _device: *mut DeviceObject,
-        _file: *mut FileObject,
-    ) -> bool>,
+    pub fast_io_release_for_cc_flush:
+        Option<unsafe extern "C" fn(_device: *mut DeviceObject, _file: *mut FileObject) -> bool>,
 }
 
 impl FastIoDispatch {
@@ -1959,14 +2021,15 @@ pub fn irp_is_cancelled(irp: *mut Irp) -> bool {
     if irp.is_null() {
         return true;
     }
-    unsafe {
-        ((*irp).flags & IRP_CANCEL_INDICATED) != 0
-    }
+    unsafe { ((*irp).flags & IRP_CANCEL_INDICATED) != 0 }
 }
 
 /// Set cancel routine for an IRP.
 /// This is called by the driver to set up cancellation support.
-pub fn set_irp_cancel_routine(_irp: *mut Irp, _cancel_routine: Option<unsafe extern "C" fn(*mut Irp)>) {
+pub fn set_irp_cancel_routine(
+    _irp: *mut Irp,
+    _cancel_routine: Option<unsafe extern "C" fn(*mut Irp)>,
+) {
     // In a full implementation, this would set a pointer to the cancel routine
     // that gets called when the IRP is cancelled.
     // For the bootstrap, we just track the cancelled state.
@@ -2072,3 +2135,15 @@ impl DriverDispatchTable {
     }
 }
 
+pub mod apc;
+pub mod cancel;
+pub mod dispatch;
+pub mod driver_loader;
+pub mod fsctl;
+pub mod iocomplete;
+pub mod iocp;
+pub mod irp_pool_complete;
+pub mod irp_stack;
+pub mod tests;
+pub mod timeout;
+pub mod transfer;

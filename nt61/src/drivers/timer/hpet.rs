@@ -14,7 +14,7 @@ use crate::hal::common::acpi;
 use crate::kprintln;
 
 /// HPET register offsets.
-const REG_CAP_ID: u64 = 0x00;   // 4-byte capability, 4-byte revision
+const REG_CAP_ID: u64 = 0x00; // 4-byte capability, 4-byte revision
 const REG_CONFIG: u64 = 0x10;
 const REG_COUNTER: u64 = 0xF0;
 
@@ -38,20 +38,22 @@ fn push_hpet(h: Hpet) {
     }
 }
 
-pub fn count() -> usize { unsafe { HPET_COUNT } }
+pub fn count() -> usize {
+    unsafe { HPET_COUNT }
+}
 
 /// Look up the HPET table in the ACPI tables and initialise it.
 pub fn init() {
-#[cfg(target_arch = "x86_64")]
+    #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     crate::hal::x86_64::serial::serial_puts("HPET1\n");
     let sig: [u8; 4] = *b"HPET";
     let hdr = acpi::find_table(&sig);
-#[cfg(target_arch = "x86_64")]
+    #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     crate::hal::x86_64::serial::serial_puts("HPET2\n");
     if let Some(hdr) = hdr {
-#[cfg(target_arch = "x86_64")]
+        #[cfg(target_arch = "x86_64")]
         #[cfg(target_arch = "x86_64")]
         crate::hal::x86_64::serial::serial_puts("HPET3\n");
         // HPET table is bigger than the standard 36-byte header.
@@ -61,19 +63,19 @@ pub fn init() {
             let base_lo = core::ptr::read_volatile(body_va as *const u32);
             let base_hi = core::ptr::read_volatile(body_va.add(4) as *const u32);
             let base = ((base_hi as u64) << 32) | (base_lo as u64);
-#[cfg(target_arch = "x86_64")]
+            #[cfg(target_arch = "x86_64")]
             #[cfg(target_arch = "x86_64")]
             crate::hal::x86_64::serial::serial_puts("HPET4\n");
             if let Some(mmio) = crate::mm::syspte::map_io_space(base & !0xFFF, 4) {
-#[cfg(target_arch = "x86_64")]
+                #[cfg(target_arch = "x86_64")]
                 #[cfg(target_arch = "x86_64")]
                 crate::hal::x86_64::serial::serial_puts("HPET5\n");
                 let cap_id = core::ptr::read_volatile((mmio + REG_CAP_ID) as *const u32);
-#[cfg(target_arch = "x86_64")]
+                #[cfg(target_arch = "x86_64")]
                 #[cfg(target_arch = "x86_64")]
                 crate::hal::x86_64::serial::serial_puts("HPET6\n");
                 let period_fs = core::ptr::read_volatile((mmio + REG_CAP_ID + 4) as *const u32);
-#[cfg(target_arch = "x86_64")]
+                #[cfg(target_arch = "x86_64")]
                 #[cfg(target_arch = "x86_64")]
                 crate::hal::x86_64::serial::serial_puts("HPET7\n");
                 let freq_hz = 1_000_000_000_000_000u64 / (period_fs as u64);
@@ -87,7 +89,7 @@ pub fn init() {
             }
         }
     }
-    // kprintln!("      HPET: {} timer(s) initialised", count())  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("      HPET: {} timer(s) initialised", count());
 }
 
 // Suppress unused warning
@@ -95,7 +97,7 @@ pub fn init() {
 const _UNUSED: () = ();
 
 pub fn smoke_test() -> bool {
-    // kprintln!("  [HPET SMOKE] HPET timers: {}", count())  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("  [HPET SMOKE OK] HPET stack healthy")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [HPET SMOKE] HPET timers: {}", count());
+    // kprintln!("  [HPET SMOKE OK] HPET stack healthy");
     true
 }

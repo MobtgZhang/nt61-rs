@@ -24,7 +24,8 @@ pub struct WdfDeviceConfig {
     /// Device init callback
     pub evt_device_init: Option<extern "C" fn(*mut WdfDeviceInit)>,
     /// Device add callback
-    pub evt_device_add: Option<extern "C" fn(*mut WdfDriver, *mut WdfDeviceInit) -> WdfDeviceStatus>,
+    pub evt_device_add:
+        Option<extern "C" fn(*mut WdfDriver, *mut WdfDeviceInit) -> WdfDeviceStatus>,
     /// Prepare hardware callback
     pub evt_device_prepare_hardware: Option<extern "C" fn(*mut WdfDevice) -> WdfDeviceStatus>,
     /// Release hardware callback
@@ -44,12 +45,12 @@ impl WdfDeviceConfig {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     /// Set device init callback
     pub fn set_evt_device_init(&mut self, callback: extern "C" fn(*mut WdfDeviceInit)) {
         self.evt_device_init = Some(callback);
     }
-    
+
     /// Set device add callback
     pub fn set_evt_device_add(
         &mut self,
@@ -63,16 +64,16 @@ impl WdfDeviceConfig {
 pub trait WdfDeviceInterface {
     /// Initialize the device
     fn init(&mut self) -> Result<(), &'static str>;
-    
+
     /// Start the device
     fn start(&mut self) -> Result<(), &'static str>;
-    
+
     /// Stop the device
     fn stop(&mut self) -> Result<(), &'static str>;
-    
+
     /// Get device state
     fn state(&self) -> WdfDeviceState;
-    
+
     /// Get power state
     fn power_state(&self) -> WdfPowerState;
 }
@@ -80,7 +81,7 @@ pub trait WdfDeviceInterface {
 /// WDF device utilities
 pub mod util {
     use super::*;
-    
+
     /// Get device property
     pub fn get_device_property(device: &WdfDevice, property: DeviceProperty) -> Option<Vec<u8>> {
         match property {
@@ -91,12 +92,16 @@ pub mod util {
             _ => None,
         }
     }
-    
+
     /// Set device property
-    pub fn set_device_property(device: &mut WdfDevice, property: DeviceProperty, value: &[u8]) -> Result<(), &'static str> {
+    pub fn set_device_property(
+        device: &mut WdfDevice,
+        property: DeviceProperty,
+        value: &[u8],
+    ) -> Result<(), &'static str> {
         Ok(())
     }
-    
+
     /// Get device PNP state
     pub fn get_device_pnp_state(device: &WdfDevice) -> WdfPnpState {
         match device.state {
@@ -107,7 +112,7 @@ pub mod util {
             WdfDeviceState::Deleted => WdfPnpState::Removed,
         }
     }
-    
+
     /// Get device power state
     pub fn get_device_power_state(device: &WdfDevice) -> WdfPowerState {
         device.power_state
@@ -144,7 +149,7 @@ pub enum WdfPnpState {
 /// WDF request forwarding
 pub mod forward {
     use super::*;
-    
+
     /// Forward request to target
     pub fn forward_request(
         _request: &WdfRequest,
@@ -152,7 +157,7 @@ pub mod forward {
     ) -> Result<(), &'static str> {
         Ok(())
     }
-    
+
     /// Complete request with information
     pub fn complete_with_information(
         request: &mut WdfRequest,
@@ -161,7 +166,7 @@ pub mod forward {
     ) {
         request.complete(status);
     }
-    
+
     /// Complete request with NT status
     pub fn complete_with_nt_status(request: &mut WdfRequest, status: i32) {
         let wdf_status = match status {
@@ -175,7 +180,7 @@ pub mod forward {
 /// WDF IRP handling
 pub mod irp {
     use super::*;
-    
+
     /// Major IRP function codes
     pub const IRP_MJ_CREATE: u8 = 0x00;
     pub const IRP_MJ_CREATE_NAMED_PIPE: u8 = 0x01;
@@ -202,7 +207,7 @@ pub mod irp {
     pub const IRP_MJ_QUERY_QUOTA: u8 = 0x19;
     pub const IRP_MJ_SET_QUOTA: u8 = 0x1A;
     pub const IRP_MJ_PNP: u8 = 0x1B;
-    
+
     /// Minor IRP function codes for PNP
     pub const IRP_MN_START_DEVICE: u8 = 0x00;
     pub const IRP_MN_QUERY_STOP_DEVICE: u8 = 0x01;
@@ -213,7 +218,7 @@ pub mod irp {
     pub const IRP_MN_EJECT: u8 = 0x18;
     pub const IRP_MN_QUERY_ID: u8 = 0x19;
     pub const IRP_MN_QUERY_PNP_DEVICE_STATE: u8 = 0x1A;
-    
+
     /// Minor IRP function codes for Power
     pub const IRP_MN_QUERY_POWER: u8 = 0x00;
     pub const IRP_MN_SET_POWER: u8 = 0x01;
@@ -224,22 +229,22 @@ pub mod irp {
 /// WDF WDM utilities
 pub mod wdm {
     use super::*;
-    
+
     /// Get associated device object
     pub fn get_associated_device(request: &WdfRequest) -> Option<WdfDevice> {
         Some(WdfDevice::new(&WdfDeviceInit::new()).ok()?)
     }
-    
+
     /// Get device object from request
     pub fn get_device_object(request: &WdfRequest) -> Option<WdfObjectHandle> {
         Some(core::ptr::null())
     }
-    
+
     /// Get current IRP stack location
     pub fn get_current_stack_location(request: &WdfRequest) -> Option<*mut IrpStack> {
         None
     }
-    
+
     /// IRP stack location
     #[repr(C)]
     pub struct IrpStack {
@@ -259,19 +264,21 @@ pub struct WdfDeviceCollection {
 impl WdfDeviceCollection {
     /// Create a new collection
     pub fn new() -> Self {
-        Self { devices: Vec::new() }
+        Self {
+            devices: Vec::new(),
+        }
     }
-    
+
     /// Add device to collection
     pub fn add(&mut self, device: WdfDevice) {
         self.devices.push(device);
     }
-    
+
     /// Get number of devices
     pub fn count(&self) -> usize {
         self.devices.len()
     }
-    
+
     /// Get device at index
     pub fn get(&self, index: usize) -> Option<&WdfDevice> {
         self.devices.get(index)

@@ -41,7 +41,7 @@ pub mod srb_status {
 /// a no-op; the real driver would initialise the sense buffer
 /// pool and the SRB extension allocator.
 pub fn init() {
-    // kprintln!("      SCSI miniport: ready")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("      SCSI miniport: ready");
 }
 
 /// SCSI CDB opcodes (from SPC-4)
@@ -116,8 +116,7 @@ impl SenseData {
 ///
 /// This implementation routes commands to the underlying storage
 /// (ATA/NVMe) based on the CDB operation code.
-pub fn send_cdb(_target: u8, cdb: &[u8], _direction: u8,
-                buffer: &mut [u8]) -> u8 {
+pub fn send_cdb(_target: u8, cdb: &[u8], _direction: u8, buffer: &mut [u8]) -> u8 {
     use crate::drivers::storage;
 
     // Validate CDB
@@ -129,9 +128,7 @@ pub fn send_cdb(_target: u8, cdb: &[u8], _direction: u8,
 
     match opcode {
         // TEST UNIT READY - always succeed in bootstrap
-        cdb_opcodes::TEST_UNIT_READY => {
-            srb_status::SUCCESS
-        }
+        cdb_opcodes::TEST_UNIT_READY => srb_status::SUCCESS,
 
         // INQUIRY - return basic device information
         cdb_opcodes::INQUIRY => {
@@ -139,15 +136,15 @@ pub fn send_cdb(_target: u8, cdb: &[u8], _direction: u8,
                 return srb_status::ERROR;
             }
             // EVPD = 0, Page Code = 0: Standard inquiry data
-            buffer[0] = 0x00;  // Peripheral qualifier: connected, peripheral device type
-            buffer[1] = 0x00;  // Peripheral device type: direct access device
-            buffer[2] = 0x06;  // Version: SPC-4
-            buffer[3] = 0x02;  // Response data format: CCS
-            buffer[4] = 31;     // Additional length
-            buffer[5] = 0x00;  // Flags
-            buffer[6] = 0x00;  // Flags
-            buffer[7] = 0x00;  // Flags
-            // Vendor identification (8 bytes)
+            buffer[0] = 0x00; // Peripheral qualifier: connected, peripheral device type
+            buffer[1] = 0x00; // Peripheral device type: direct access device
+            buffer[2] = 0x06; // Version: SPC-4
+            buffer[3] = 0x02; // Response data format: CCS
+            buffer[4] = 31; // Additional length
+            buffer[5] = 0x00; // Flags
+            buffer[6] = 0x00; // Flags
+            buffer[7] = 0x00; // Flags
+                              // Vendor identification (8 bytes)
             buffer[8..16].copy_from_slice(b"NT6.1    ");
             // Product identification (16 bytes)
             buffer[16..32].copy_from_slice(b"Virtual Disk     ");
@@ -250,10 +247,10 @@ pub fn send_cdb(_target: u8, cdb: &[u8], _direction: u8,
                 return srb_status::ERROR;
             }
             // Return minimal mode sense data
-            buffer[0] = 0x03;  // Mode data length
-            buffer[1] = 0x00;  // Medium type: default
-            buffer[2] = 0x00;  // Device-specific parameters
-            buffer[3] = 0x00;  // Block descriptor length
+            buffer[0] = 0x03; // Mode data length
+            buffer[1] = 0x00; // Medium type: default
+            buffer[2] = 0x00; // Device-specific parameters
+            buffer[3] = 0x00; // Block descriptor length
             srb_status::SUCCESS
         }
 
@@ -272,11 +269,15 @@ pub fn send_cdb(_target: u8, cdb: &[u8], _direction: u8,
 
         // READ(6) - legacy 6-byte read with 21-bit LBA.
         cdb_opcodes::READ_6 => {
-            if cdb.len() < 6 { return srb_status::INVALID_REQUEST; }
+            if cdb.len() < 6 {
+                return srb_status::INVALID_REQUEST;
+            }
             // Top 3 bits are the LBA; bottom 5 bits of byte 4 plus
             // byte 5 form the rest. Synthetic device ignores them.
             let expected_len = (cdb[4] as usize) * 512;
-            if buffer.len() < expected_len { return srb_status::ERROR; }
+            if buffer.len() < expected_len {
+                return srb_status::ERROR;
+            }
             for chunk in buffer[..expected_len].chunks_mut(512) {
                 chunk.fill(0);
             }
@@ -285,7 +286,9 @@ pub fn send_cdb(_target: u8, cdb: &[u8], _direction: u8,
 
         // WRITE(6) - legacy 6-byte write.
         cdb_opcodes::WRITE_6 => {
-            if cdb.len() < 6 { return srb_status::INVALID_REQUEST; }
+            if cdb.len() < 6 {
+                return srb_status::INVALID_REQUEST;
+            }
             // Accepted but not persisted in bootstrap.
             srb_status::SUCCESS
         }
@@ -298,7 +301,9 @@ pub fn send_cdb(_target: u8, cdb: &[u8], _direction: u8,
 
         // READ(12) - 12-byte variant of READ(10).
         cdb_opcodes::READ_12 => {
-            if cdb.len() < 12 { return srb_status::INVALID_REQUEST; }
+            if cdb.len() < 12 {
+                return srb_status::INVALID_REQUEST;
+            }
             // Parse LBA (4 bytes BE) and length (4 bytes BE).
             let lba = ((cdb[2] as u32) << 24)
                 | ((cdb[3] as u32) << 16)
@@ -308,9 +313,13 @@ pub fn send_cdb(_target: u8, cdb: &[u8], _direction: u8,
                 | ((cdb[7] as u32) << 16)
                 | ((cdb[8] as u32) << 8)
                 | (cdb[9] as u32);
-            if lba >= 0x3FFFFFFF { return srb_status::INVALID_REQUEST; }
+            if lba >= 0x3FFFFFFF {
+                return srb_status::INVALID_REQUEST;
+            }
             let expected_len = (length as usize) * 512;
-            if buffer.len() < expected_len { return srb_status::ERROR; }
+            if buffer.len() < expected_len {
+                return srb_status::ERROR;
+            }
             for chunk in buffer[..expected_len].chunks_mut(512) {
                 chunk.fill(0);
             }
@@ -319,7 +328,9 @@ pub fn send_cdb(_target: u8, cdb: &[u8], _direction: u8,
 
         // WRITE(12) - 12-byte variant of WRITE(10).
         cdb_opcodes::WRITE_12 => {
-            if cdb.len() < 12 { return srb_status::INVALID_REQUEST; }
+            if cdb.len() < 12 {
+                return srb_status::INVALID_REQUEST;
+            }
             // Parse LBA and length for parity with READ_12; bootstrap
             // does not actually persist the bytes but acknowledges.
             let length = ((cdb[6] as u32) << 24)
@@ -332,14 +343,18 @@ pub fn send_cdb(_target: u8, cdb: &[u8], _direction: u8,
 
         // READ(16) - 16-byte variant, 8-byte LBA.
         cdb_opcodes::READ_16 => {
-            if cdb.len() < 16 { return srb_status::INVALID_REQUEST; }
+            if cdb.len() < 16 {
+                return srb_status::INVALID_REQUEST;
+            }
             // 64-bit LBA at bytes 2..10; length at bytes 10..14.
             let length = ((cdb[10] as u32) << 24)
                 | ((cdb[11] as u32) << 16)
                 | ((cdb[12] as u32) << 8)
                 | (cdb[13] as u32);
             let expected_len = (length as usize) * 512;
-            if buffer.len() < expected_len { return srb_status::ERROR; }
+            if buffer.len() < expected_len {
+                return srb_status::ERROR;
+            }
             for chunk in buffer[..expected_len].chunks_mut(512) {
                 chunk.fill(0);
             }
@@ -348,19 +363,21 @@ pub fn send_cdb(_target: u8, cdb: &[u8], _direction: u8,
 
         // WRITE(16) - 16-byte variant.
         cdb_opcodes::WRITE_16 => {
-            if cdb.len() < 16 { return srb_status::INVALID_REQUEST; }
+            if cdb.len() < 16 {
+                return srb_status::INVALID_REQUEST;
+            }
             srb_status::SUCCESS
         }
 
         // Unknown/unsupported command
         _ => {
-            // kprintln!("[SCSI] Unsupported CDB opcode: 0x{:02x}", opcode)  // kprintln disabled;
+            crate::kprintln!("[SCSI] Unsupported CDB opcode: 0x{:02x}", opcode);
             srb_status::INVALID_REQUEST
         }
     }
 }
 
 pub fn smoke_test() -> bool {
-    // kprintln!("  [SCSI SMOKE] SCSI miniport healthy")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [SCSI SMOKE] SCSI miniport healthy");
     true
 }

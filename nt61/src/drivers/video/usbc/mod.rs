@@ -6,12 +6,10 @@
 pub mod thunderbolt;
 
 pub use thunderbolt::{
-    UsbCConnectorState, UsbCDataRole, UsbCPowerRole, UsbCConnectorType,
-    AltModeType, UsbCPortConfig, UsbCConnector, UsbCPartnerInfo, UsbCCableInfo,
-    DisplayPortOverUsbC, DpVersion, DpPinAssignment, DpLinkConfig, DpLinkRate,
-    ThunderboltConfig, ThunderboltVersion, TbtTunnelStatus,
-    PdMessageType, PdContract, PdPowerProfile,
-    UsbCPortController, UsbCManager,
-    init, detect_ports, get_displayport_configs, get_thunderbolt_configs,
-    enable_dp_output, disable_dp_output,
+    detect_ports, disable_dp_output, enable_dp_output, get_displayport_configs,
+    get_thunderbolt_configs, init, AltModeType, DisplayPortOverUsbC, DpLinkConfig, DpLinkRate,
+    DpPinAssignment, DpVersion, PdContract, PdMessageType, PdPowerProfile, TbtTunnelStatus,
+    ThunderboltConfig, ThunderboltVersion, UsbCCableInfo, UsbCConnector, UsbCConnectorState,
+    UsbCConnectorType, UsbCDataRole, UsbCManager, UsbCPartnerInfo, UsbCPortConfig,
+    UsbCPortController, UsbCPowerRole,
 };

@@ -10,15 +10,14 @@
 //! Clean-room implementation. Spec source: Microsoft "Mouse
 //! Class Driver" reference and USB HID 1.11.
 
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 #[allow(non_snake_case)]
-
 extern crate alloc;
 
-use core::sync::atomic::{AtomicU32, AtomicI32, Ordering};
 use crate::io::{DeviceObject, DeviceType, DriverObject};
 use crate::ke::sync::Spinlock;
+use core::sync::atomic::AtomicI32;
 
 /// Maximum number of mouse devices.
 const MAX_MICE: usize = 4;
@@ -31,8 +30,8 @@ const EVENT_BUFFER_SIZE: usize = 64;
 pub struct MouseEvent {
     pub dx: i16,
     pub dy: i16,
-    pub dz: i16,  // scroll wheel
-    pub buttons: u8,  // bit flags: 0=left, 1=right, 2=middle
+    pub dz: i16,     // scroll wheel
+    pub buttons: u8, // bit flags: 0=left, 1=right, 2=middle
     pub timestamp: u64,
 }
 
@@ -54,7 +53,6 @@ pub struct MouseDevice {
     pub device_object: *mut DeviceObject,
     pub driver: *mut DriverObject,
     /// Ring buffer of mouse events.
-
     pub events: [MouseEvent; EVENT_BUFFER_SIZE],
     pub event_head: usize,
     pub event_tail: usize,
@@ -81,8 +79,7 @@ impl MouseDevice {
     }
 }
 
-static mut MICE: [MouseDevice; MAX_MICE] =
-    [const { MouseDevice::new() }; MAX_MICE];
+static mut MICE: [MouseDevice; MAX_MICE] = [const { MouseDevice::new() }; MAX_MICE];
 static MOUSE_LOCK: Spinlock<()> = Spinlock::new(());
 static MOUSE_EVENT_COUNT: AtomicU32 = AtomicU32::new(0);
 

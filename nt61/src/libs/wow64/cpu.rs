@@ -382,11 +382,7 @@ pub fn get_segment_base(cpu_state: &Wow64CpuState, segment: SegmentRegister) -> 
 }
 
 /// Set the base address of a segment.
-pub fn set_segment_base(
-    cpu_state: &mut Wow64CpuState,
-    segment: SegmentRegister,
-    base: u64,
-) {
+pub fn set_segment_base(cpu_state: &mut Wow64CpuState, segment: SegmentRegister, base: u64) {
     match segment {
         SegmentRegister::CS => cpu_state.segments.cs_base = base,
         SegmentRegister::DS => cpu_state.segments.ds_base = base,

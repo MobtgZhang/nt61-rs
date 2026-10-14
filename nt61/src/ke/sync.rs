@@ -16,12 +16,25 @@ use core::sync::atomic::{AtomicU32, Ordering};
 pub type Irql = u8;
 
 /// IRQL levels
-pub const IRQL_LEVEL_LOWEST: Irql = 0;
+//
+// NT 6.1 defines 32 IRQLs (0..31). The documented x86/x64 layout is:
+//   PASSIVE 0, APC 1, DISPATCH 2, GATE 3, DEVICE_LEVEL_1..10 = 4..13,
+//   reserved device levels 14..26, PROFILE 27, CLOCK2 28, IPI 29,
+//   POWER 30, HIGH 31.
+// IRQL 3 is a software level; hardware device IRQLs (DIRQL) only start
+// at 4. See `ke::irql::Irql` for the typed view of the same table.
+pub const IRQL_LEVEL_PASSIVE: Irql = 0;
+pub const IRQL_LEVEL_LOWEST: Irql = IRQL_LEVEL_PASSIVE;
 pub const IRQL_LEVEL_APC: Irql = 1;
 pub const IRQL_LEVEL_DISPATCH: Irql = 2;
-pub const IRQL_LEVEL_IPI: Irql = 3;
-pub const IRQL_LEVEL_POWER: Irql = 4;
-pub const IRQL_LEVEL_HIGHEST: Irql = 5;
+pub const IRQL_LEVEL_GATE: Irql = 3;
+pub const IRQL_LEVEL_DEVICE_BASE: Irql = 4;
+pub const IRQL_LEVEL_DEVICE_10: Irql = 13;
+pub const IRQL_LEVEL_PROFILE: Irql = 27;
+pub const IRQL_LEVEL_CLOCK2: Irql = 28;
+pub const IRQL_LEVEL_IPI: Irql = 29;
+pub const IRQL_LEVEL_POWER: Irql = 30;
+pub const IRQL_LEVEL_HIGHEST: Irql = 31;
 
 /// Interrupt-disable / restore bracket. We use the architecture's
 /// interrupt flag - on x86_64 it is the IF flag, on aarch64 it is
@@ -29,27 +42,27 @@ pub const IRQL_LEVEL_HIGHEST: Irql = 5;
 /// `crmd.ie`. The helpers in `arch::*` are the only place that needs
 /// to know the encoding.
 pub struct IrqlRestore {
-    // Stores the IRQL value observed at `raise()` time so the
-    // matching `Drop` can restore it. On the UEFI-boot path the
-    // kernel never owns the IDT / APIC yet, so `Drop` is a no-op
-    // and the field is currently unread; once BSP-only initialisation
-    // moves out of boot services this field becomes the canonical
-    // IRQL save slot.
-    #[allow(dead_code)]
-    previous: u64,
+    /// The IRQL observed at `raise()` time, restored by `Drop`.
+    previous: crate::ke::irql::Irql,
 }
 
 impl IrqlRestore {
-    /// In UEFI environment, we skip interrupt manipulation to avoid conflicts.
-    /// The spinlock will work without interrupt disabling.
+    /// Raise the current CPU to DISPATCH_LEVEL and remember the level
+    /// we came from.
+    ///
+    /// NT requires spinlocks to be taken at DISPATCH_LEVEL: a lock held
+    /// at PASSIVE_LEVEL can be contended by an ISR that raises to the
+    /// same level on the same CPU, which deadlocks. Raising on acquire
+    /// and restoring on drop is the `KeRaiseIrql`/`KeLowerIrql` pair.
     pub fn raise() -> Self {
-        Self { previous: 0 }
+        let previous = crate::ke::irql::raise_irql(crate::ke::irql::Irql::DispatchLevel);
+        Self { previous }
     }
 }
 
 impl Drop for IrqlRestore {
     fn drop(&mut self) {
-        // No-op in UEFI environment
+        crate::ke::irql::lower_irql(self.previous);
     }
 }
 
@@ -103,13 +116,34 @@ impl<T: ?Sized> Spinlock<T> {
         {
             // Disable interrupts while the lock is held to prevent ISR deadlock
             let irql_guard = IrqlRestore::raise();
-            Some(SpinlockGuard { 
+            Some(SpinlockGuard {
                 lock: self,
                 _irql_guard: Some(irql_guard),
             })
         } else {
             None
         }
+    }
+
+    /// Plain acquire/release pair for callers that cannot hold an RAII
+    /// guard across two functions (the WDF spinlock API). The RAII
+    /// `lock()` guard is still preferred when the scope is lexical.
+    ///
+    /// The caller must pair `acquire()` with `release()`; the IRQL raised
+    /// on acquire is lowered by `release()` rather than by a `Drop`.
+    pub fn acquire(&self) {
+        while self
+            .locked
+            .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            crate::arch::cpu_relax();
+        }
+    }
+
+    /// Release a lock taken with `acquire()`.
+    pub fn release(&self) {
+        self.locked.store(0, Ordering::Release);
     }
 
     /// Acquire the lock, spinning until it is free. Interrupts are
@@ -152,7 +186,7 @@ impl<T: ?Sized> Spinlock<T> {
                 // Check if this is the first warning or a power-of-2 threshold crossing
                 let is_threshold_crossing = (spins == 10001) || (spins & (spins - 1)) == 0;
                 if is_threshold_crossing {
-                    // // crate::kprintln!("[SYNC] Spinlock warning: spinning for {} iterations", spins)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+                    // // crate::kprintln!("[SYNC] Spinlock warning: spinning for {} iterations", spins);
                 }
             }
         }
@@ -168,7 +202,7 @@ impl<T: ?Sized> Spinlock<T> {
 /// and interrupts are re-enabled.
 pub struct SpinlockGuard<'a, T: ?Sized + 'a> {
     lock: &'a Spinlock<T>,
-    _irql_guard: Option<IrqlRestore>,  // Saved IRQL state, re-enabled on drop
+    _irql_guard: Option<IrqlRestore>, // Saved IRQL state, re-enabled on drop
 }
 
 impl<'a, T: ?Sized> core::ops::Deref for SpinlockGuard<'a, T> {
@@ -198,17 +232,17 @@ impl<'a, T: ?Sized> Drop for SpinlockGuard<'a, T> {
 #[derive(Clone)]
 #[repr(C)]
 pub struct DispatcherHeader {
-    pub type_: u8,              // 0x00
-    pub signal_state: u8,        // 0x01
-    pub size: u16,              // 0x02
-    pub inserted: u8,           // 0x04
-    pub spare: [u8; 3],         // 0x05 - 8 bytes total so far
+    pub type_: u8,        // 0x00
+    pub signal_state: u8, // 0x01
+    pub size: u16,        // 0x02
+    pub inserted: u8,     // 0x04
+    pub spare: [u8; 3],   // 0x05 - 8 bytes total so far
     // Additional fields to reach 0x18 (24 bytes)
-    pub absolute: u8,            // 0x08 - for timers
-    pub co_started: u8,          // 0x09 - for timers  
-    pub co_terminated: u8,      // 0x0A - for timers
-    pub inactive: u8,           // 0x0B - for timers
-    pub reserved: [u64; 2],     // 0x0C - 16 bytes to reach 0x18
+    pub absolute: u8,       // 0x08 - for timers
+    pub co_started: u8,     // 0x09 - for timers
+    pub co_terminated: u8,  // 0x0A - for timers
+    pub inactive: u8,       // 0x0B - for timers
+    pub reserved: [u64; 2], // 0x0C - 16 bytes to reach 0x18
 }
 
 impl DispatcherHeader {
@@ -428,7 +462,114 @@ pub fn wake(object: &DispatcherHeader, all: bool) {
     crate::ke::dispatch::wake(object, all)
 }
 
+// ======================================================================
+// OnceLock: simple one-shot initializer (kernel-mode equivalent)
+// ======================================================================
+
+use core::cell::UnsafeCell;
+use core::sync::atomic::Ordering as AOrdering;
+
+/// One-shot initializer. Once initialized, get() returns the value.
+///
+/// Suitable for low-IRQL kernel boot-time initialization. The first
+/// `get_or_init` call wins; subsequent calls return the previously stored
+/// value.
+pub struct OnceLock<T> {
+    state: AtomicU32,
+    value: UnsafeCell<core::mem::MaybeUninit<T>>,
+}
+
+const ONCE_UNINIT: u32 = 0;
+const ONCE_RUNNING: u32 = 1;
+const ONCE_READY: u32 = 2;
+
+impl<T> OnceLock<T> {
+    pub const fn new() -> Self {
+        Self {
+            state: AtomicU32::new(ONCE_UNINIT),
+            value: UnsafeCell::new(core::mem::MaybeUninit::uninit()),
+        }
+    }
+
+    /// Try to get the stored value. Returns None if not yet initialized.
+    pub fn get(&self) -> Option<&T> {
+        if self.state.load(AOrdering::Acquire) == ONCE_READY {
+            // SAFETY: state == READY implies value was initialized.
+            unsafe { Some(&*(*self.value.get()).as_ptr()) }
+        } else {
+            None
+        }
+    }
+
+    /// Initialize (if not already) and return the value.
+    pub fn get_or_init<F: FnOnce() -> T>(&self, f: F) -> &T {
+        // Fast path
+        if self.state.load(AOrdering::Acquire) == ONCE_READY {
+            unsafe { return &*(*self.value.get()).as_ptr() };
+        }
+
+        // Try to transition UNINIT -> RUNNING
+        if self
+            .state
+            .compare_exchange(
+                ONCE_UNINIT,
+                ONCE_RUNNING,
+                AOrdering::AcqRel,
+                AOrdering::Acquire,
+            )
+            .is_ok()
+        {
+            // We are the initializer
+            let v = f();
+            unsafe {
+                (*self.value.get()).write(v);
+            }
+            self.state.store(ONCE_READY, AOrdering::Release);
+            unsafe { &*(*self.value.get()).as_ptr() }
+        } else {
+            // Spin-wait briefly until the initializer finishes.
+            while self.state.load(AOrdering::Acquire) != ONCE_READY {
+                core::hint::spin_loop();
+            }
+            unsafe { &*(*self.value.get()).as_ptr() }
+        }
+    }
+}
+
+impl<T> Default for OnceLock<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// SAFETY: Kernel-mode. Single-threaded boot-time usage. Mutations of state
+// are atomic; the value is only set once and is then read-only. Sharing
+// across threads is OK under IRQL discipline.
+unsafe impl<T: Send + Sync> Sync for OnceLock<T> {}
+unsafe impl<T: Send> Send for OnceLock<T> {}
+
 /// Initialize the synchronization subsystem.
 pub fn init() {
     crate::hal::serial::write_string("[ke.sync] enter\r\n");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn irql_constants_match_nt61_table() {
+        assert_eq!(IRQL_LEVEL_PASSIVE, 0);
+        assert_eq!(IRQL_LEVEL_APC, 1);
+        assert_eq!(IRQL_LEVEL_DISPATCH, 2);
+        assert_eq!(IRQL_LEVEL_GATE, 3);
+        assert_eq!(IRQL_LEVEL_DEVICE_BASE, 4);
+        assert_eq!(IRQL_LEVEL_DEVICE_10, 13);
+        assert_eq!(IRQL_LEVEL_PROFILE, 27);
+        assert_eq!(IRQL_LEVEL_CLOCK2, 28);
+        assert_eq!(IRQL_LEVEL_IPI, 29);
+        assert_eq!(IRQL_LEVEL_POWER, 30);
+        assert_eq!(IRQL_LEVEL_HIGHEST, 31);
+        assert_eq!(IRQL_LEVEL_LOWEST, IRQL_LEVEL_PASSIVE);
+    }
 }

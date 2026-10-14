@@ -24,6 +24,12 @@ use crate::kprintln;
 // ---------------------------------------------------------------------------
 
 /// Standard I/O port pairs for the two legacy ATA channels.
+/// The control block sits at command base + 0x206 (0x1F0 -> 0x3F6,
+/// 0x170 -> 0x376), matching the legacy PCI IDE mapping used by
+/// ReactOS `drivers/storage/ide/pciidex/pata.h` and QEMU's
+/// `ide_portio2_list`. The device control register is at offset 0 of
+/// that block, so `ctrl + 2` would land on 0x3F8 -- COM1's data
+/// register -- and corrupt the serial console.
 const PRIMARY_IO: u16 = 0x1F0;
 const PRIMARY_CTRL: u16 = 0x3F6;
 const SECONDARY_IO: u16 = 0x170;
@@ -60,6 +66,25 @@ const SR_ERR: u8 = 0x01;
 const ATA_TIMEOUT_US: u32 = 5_000_000; // 5 seconds
 const ATA_POLL_INTERVAL: u32 = 100; // 100 iterations at 100 cycles each
 
+/// Device control register bits. Bit 1 is nIEN (set = interrupts disabled)
+/// and bit 2 is SRST (set = reset asserted); bit 3 is the legacy "always
+/// set" bit and bit 7 is HOB. This layout matches Linux
+/// `include/linux/ata.h` (ATA_NIEN = 1<<1, ATA_SRST = 1<<2), FreeBSD
+/// `sys/dev/ata/ata-all.h` (ATA_A_IDS 0x02, ATA_A_RESET 0x04), ReactOS
+/// `drivers/storage/ide/atapi_old/atapi.h` (IDE_DC_DISABLE_INTERRUPTS
+/// 0x02, IDE_DC_RESET_CONTROLLER 0x04) and QEMU `hw/ide/ide-internal.h`
+/// (IDE_CTRL_DISABLE_IRQ 0x02, IDE_CTRL_RESET 0x04).
+const DC_IEN: u8 = 0x02;
+const DC_SRST: u8 = 0x04;
+
+/// Device control register values: assert SRST with interrupts disabled,
+/// then release SRST while keeping interrupts disabled.
+const DC_ASSERT_RESET: u8 = DC_IEN | DC_SRST; // 0x06
+const DC_RELEASE_RESET: u8 = DC_IEN; // 0x02
+
+/// Offset of the device control register inside the control block.
+const DC_REGISTER_OFFSET: u16 = 0;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -87,7 +112,8 @@ impl Default for AtaChannel {
 impl AtaChannel {
     const fn new(io_base: u16, ctrl_base: u16) -> Self {
         Self {
-            io_base, ctrl_base,
+            io_base,
+            ctrl_base,
             has_device: false,
             is_atapi: false,
             lba_supported: false,
@@ -125,10 +151,7 @@ pub fn init() {
     let mut pci_ide = 0u32;
     for dev in pci::enumerate() {
         // PCI class 0x01 (storage), subclass 0x01 (IDE), prog-if 0x80/0x8A.
-        if dev.class_code == 0x01
-            && dev.subclass == 0x01
-            && (dev.prog_if & 0x05) != 0
-        {
+        if dev.class_code == 0x01 && dev.subclass == 0x01 && (dev.prog_if & 0x05) != 0 {
             pci_ide += 1;
         }
     }
@@ -145,12 +168,9 @@ pub fn init() {
 }
 
 /// Most recently observed PCI IDE controller count.
-static LAST_PCI_IDE: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0);
-static LAST_CHAN0: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0);
-static LAST_CHAN1: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0);
+static LAST_PCI_IDE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+static LAST_CHAN0: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+static LAST_CHAN1: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 /// Returns the count of PCI IDE controllers observed by the most
 /// recent `init()`.
@@ -166,7 +186,9 @@ pub fn last_chan1_present() -> bool {
     LAST_CHAN1.load(Ordering::Relaxed) != 0
 }
 
-pub fn has_device(idx: usize) -> bool { unsafe { CHANNELS[idx].has_device } }
+pub fn has_device(idx: usize) -> bool {
+    unsafe { CHANNELS[idx].has_device }
+}
 pub fn atapi_present(idx: usize) -> bool {
     unsafe { idx < CHANNELS.len() && CHANNELS[idx].is_atapi }
 }
@@ -174,7 +196,9 @@ pub fn atapi_present(idx: usize) -> bool {
 /// Number of 512-byte sectors reported by IDENTIFY DEVICE.
 pub fn total_sectors(idx: usize) -> u64 {
     unsafe {
-        if idx >= CHANNELS.len() || !CHANNELS[idx].has_device { return 0; }
+        if idx >= CHANNELS.len() || !CHANNELS[idx].has_device {
+            return 0;
+        }
         CHANNELS[idx].total_sectors
     }
 }
@@ -182,7 +206,9 @@ pub fn total_sectors(idx: usize) -> u64 {
 /// Check if LBA48 is supported.
 pub fn lba48_supported(idx: usize) -> bool {
     unsafe {
-        if idx >= CHANNELS.len() || !CHANNELS[idx].has_device { return false; }
+        if idx >= CHANNELS.len() || !CHANNELS[idx].has_device {
+            return false;
+        }
         CHANNELS[idx].lba48_supported
     }
 }
@@ -197,20 +223,20 @@ pub fn lba48_supported(idx: usize) -> bool {
 /// to extract the LBA / LBA48 capability bits and the total
 /// sector count.
 pub fn probe_channel(idx: usize) {
-#[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
-    use crate::hal::x86_64::io_port::{
-        READ_PORT_UCHAR, READ_PORT_USHORT, WRITE_PORT_UCHAR,
-    };
+    #[cfg(target_arch = "x86_64")]
+    use crate::hal::x86_64::io_port::{READ_PORT_UCHAR, READ_PORT_USHORT, WRITE_PORT_UCHAR};
     unsafe {
         let ch = &mut CHANNELS[idx];
         let io = ch.io_base;
         let ctrl = ch.ctrl_base;
-        // Soft reset: clear SRST bit then set it.
-        WRITE_PORT_UCHAR(ctrl + 2, 0x06); // SRST
-        for _ in 0..1000 { core::hint::spin_loop(); }
-        WRITE_PORT_UCHAR(ctrl + 2, 0x02); // nIEN
-        // Wait for BSY to clear.
+        // Soft reset: assert SRST, hold it, then release it.
+        WRITE_PORT_UCHAR(ctrl + DC_REGISTER_OFFSET, DC_ASSERT_RESET); // assert SRST
+        for _ in 0..1000 {
+            core::hint::spin_loop();
+        }
+        WRITE_PORT_UCHAR(ctrl + DC_REGISTER_OFFSET, DC_RELEASE_RESET); // release SRST, nIEN stays disabled
+                                                                       // Wait for BSY to clear.
         if !wait_not_busy(io + 7, ATA_TIMEOUT_US) {
             ch.has_device = false;
             return;
@@ -260,15 +286,19 @@ pub fn probe_channel(idx: usize) {
 /// Wait for the drive to not be busy. Returns true if BSY cleared
 /// within `timeout_us` microseconds.
 unsafe fn wait_not_busy(status_port: u16, timeout_us: u32) -> bool {
-#[cfg(target_arch = "x86_64")]
+    #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     use crate::hal::x86_64::io_port::READ_PORT_UCHAR;
     let iterations = timeout_us / 100;
     for _ in 0..iterations {
         let s = READ_PORT_UCHAR(status_port);
-        if (s & SR_BSY) == 0 { return true; }
+        if (s & SR_BSY) == 0 {
+            return true;
+        }
         // Spin for ~100 cycles
-        for _ in 0..100 { core::hint::spin_loop(); }
+        for _ in 0..100 {
+            core::hint::spin_loop();
+        }
     }
     false
 }
@@ -276,16 +306,22 @@ unsafe fn wait_not_busy(status_port: u16, timeout_us: u32) -> bool {
 /// Wait for DRQ to be set (and BSY cleared). Returns true if
 /// DRQ was asserted within `timeout_us` microseconds.
 unsafe fn wait_drq(status_port: u16, timeout_us: u32) -> bool {
-#[cfg(target_arch = "x86_64")]
+    #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     use crate::hal::x86_64::io_port::READ_PORT_UCHAR;
     let iterations = timeout_us / 100;
     for _ in 0..iterations {
         let s = READ_PORT_UCHAR(status_port);
-        if (s & SR_BSY) == 0 && (s & SR_DRQ) != 0 { return true; }
+        if (s & SR_BSY) == 0 && (s & SR_DRQ) != 0 {
+            return true;
+        }
         // Check for error
-        if (s & SR_ERR) != 0 { return false; }
-        for _ in 0..100 { core::hint::spin_loop(); }
+        if (s & SR_ERR) != 0 {
+            return false;
+        }
+        for _ in 0..100 {
+            core::hint::spin_loop();
+        }
     }
     false
 }
@@ -313,9 +349,27 @@ fn parse_string_from_words(data: &[u16; 256], start: usize, target: &mut [u8]) {
     target[end..].fill(0);
 }
 
+/// Parse the LBA capability and sector count out of an IDENTIFY DEVICE page.
+/// Word 60-61 holds the 28-bit capacity, word 83 bit 10 flags LBA48 support,
+/// and words 100-103 hold the 48-bit capacity (Linux `ATA_ID_LBA_CAPACITY` =
+/// 60 and `ATA_ID_LBA_CAPACITY_2` = 100; QEMU writes the same word indices).
+fn identify_capacity(data: &[u16; 256]) -> (bool, bool, u64) {
+    let lba28 = ((data[61] as u64) << 16) | (data[60] as u64);
+    let lba48 = (data[83] & (1 << 10)) != 0;
+    let total = if lba48 {
+        ((data[103] as u64) << 48)
+            | ((data[102] as u64) << 32)
+            | ((data[101] as u64) << 16)
+            | (data[100] as u64)
+    } else {
+        lba28
+    };
+    (lba28 > 0 || lba48, lba48, total)
+}
+
 /// Send IDENTIFY DEVICE (0xEC) and parse the LBA capacity words.
 unsafe fn identify_ata(io: u16, ch: &mut AtaChannel) {
-#[cfg(target_arch = "x86_64")]
+    #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     use crate::hal::x86_64::io_port::{READ_PORT_USHORT, WRITE_PORT_UCHAR};
     // Use LBA0 = 0.
@@ -334,40 +388,32 @@ unsafe fn identify_ata(io: u16, ch: &mut AtaChannel) {
     for i in 0..256 {
         data[i] = READ_PORT_USHORT(io);
     }
-    // Word 60..61: total sectors (28-bit LBA).
-    let lba28 = ((data[61] as u64) << 16) | (data[60] as u64);
-    // Word 83 bit 10: LBA48 supported.
-    let lba48 = (data[83] & (1 << 10)) != 0;
-    ch.lba_supported = lba28 > 0 || lba48;
+    let (lba_supported, lba48, total_sectors) = identify_capacity(&data);
+    ch.lba_supported = lba_supported;
     ch.lba48_supported = lba48;
-    ch.total_sectors = if lba48 {
-        ((data[102] as u64) << 48)
-            | ((data[101] as u64) << 32)
-            | ((data[100] as u64) << 16)
-            | (data[99] as u64)
-    } else {
-        lba28
-    };
+    ch.total_sectors = total_sectors;
 
     // Parse model and serial number
     parse_string_from_words(&data, 27, &mut ch.model);
     parse_string_from_words(&data, 10, &mut ch.serial);
 
-    // kprintln!("      ATA: device found - model: {:?} serial: {:?}",  // kprintln disabled (memcpy crash workaround)
-//              core::str::from_utf8(&ch.model),
-//              core::str::from_utf8(&ch.serial));
-    // kprintln!("      ATA: LBA28={} LBA48={} sectors={}",  // kprintln disabled (memcpy crash workaround)
-//              ch.lba_supported, ch.lba48_supported, ch.total_sectors);
+    // kprintln!("      ATA: device found - model: {:?} serial: {:?}",
+    //              core::str::from_utf8(&ch.model),
+    //              core::str::from_utf8(&ch.serial));
+    // kprintln!("      ATA: LBA28={} LBA48={} sectors={}",
+    //              ch.lba_supported, ch.lba48_supported, ch.total_sectors);
 }
 
 unsafe fn identify_atapi(io: u16) {
-#[cfg(target_arch = "x86_64")]
+    #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     use crate::hal::x86_64::io_port::{READ_PORT_USHORT, WRITE_PORT_UCHAR};
     // Issue ATAPI IDENTIFY PACKET (0xA1). For the bootstrap we
     // just verify the device responded and discard the data.
     WRITE_PORT_UCHAR(io + 7, CMD_IDENTIFY_PACKET);
-    if !wait_drq(io + 7, ATA_TIMEOUT_US) { return; }
+    if !wait_drq(io + 7, ATA_TIMEOUT_US) {
+        return;
+    }
     for _ in 0..256 {
         let _ = READ_PORT_USHORT(io);
     }
@@ -400,18 +446,22 @@ pub fn write_sector(idx: usize, lba: u32, buf: &[u16; 256]) -> bool {
 /// Write `count` sectors from `buf` to `lba` on channel `idx`.
 /// Returns `true` on success. Only LBA28 is used.
 pub fn write_sectors(idx: usize, lba: u32, count: u8, buf: &[u16]) -> bool {
-#[cfg(target_arch = "x86_64")]
+    #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     use crate::hal::x86_64::io_port::{READ_PORT_USHORT, WRITE_PORT_UCHAR, WRITE_PORT_USHORT};
-    if buf.len() < (count as usize) * 256 { return false; }
+    if buf.len() < (count as usize) * 256 {
+        return false;
+    }
     unsafe {
         let ch = &mut CHANNELS[idx];
-        if !ch.has_device || ch.is_atapi { return false; }
+        if !ch.has_device || ch.is_atapi {
+            return false;
+        }
         let io = ch.io_base;
 
         // Wait for drive to be ready
         if !wait_not_busy(io + 7, ATA_TIMEOUT_US) {
-            // kprintln!("[ATA] write_sectors: device busy")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[ATA] write_sectors: device busy");
             return false;
         }
 
@@ -430,7 +480,7 @@ pub fn write_sectors(idx: usize, lba: u32, count: u8, buf: &[u16]) -> bool {
         for i in 0..(count as usize) {
             // Wait for drive to request data
             if !wait_drq(io + 7, ATA_TIMEOUT_US) {
-                // kprintln!("[ATA] write_sectors: DRQ timeout at sector {}", i)  // kprintln disabled (memcpy crash workaround);
+                // kprintln!("[ATA] write_sectors: DRQ timeout at sector {}", i);
                 return false;
             }
 
@@ -442,7 +492,7 @@ pub fn write_sectors(idx: usize, lba: u32, count: u8, buf: &[u16]) -> bool {
 
         // Wait for write to complete
         if !wait_not_busy(io + 7, ATA_TIMEOUT_US) {
-            // kprintln!("[ATA] write_sectors: completion timeout")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[ATA] write_sectors: completion timeout");
             return false;
         }
 
@@ -454,13 +504,17 @@ pub fn write_sectors(idx: usize, lba: u32, count: u8, buf: &[u16]) -> bool {
 /// Returns `true` on success. Only LBA28 is used (QEMU's default
 /// IDE image is small enough not to need LBA48).
 pub fn read_sectors(idx: usize, lba: u32, count: u8, buf: &mut [u16]) -> bool {
-#[cfg(target_arch = "x86_64")]
+    #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     use crate::hal::x86_64::io_port::{READ_PORT_USHORT, WRITE_PORT_UCHAR};
-    if buf.len() < (count as usize) * 256 { return false; }
+    if buf.len() < (count as usize) * 256 {
+        return false;
+    }
     unsafe {
         let ch = &mut CHANNELS[idx];
-        if !ch.has_device || ch.is_atapi { return false; }
+        if !ch.has_device || ch.is_atapi {
+            return false;
+        }
         let io = ch.io_base;
         // Select drive 0, LBA mode.
         WRITE_PORT_UCHAR(io + 6, 0xE0 | ((lba >> 24) & 0x0F) as u8);
@@ -471,7 +525,7 @@ pub fn read_sectors(idx: usize, lba: u32, count: u8, buf: &mut [u16]) -> bool {
         WRITE_PORT_UCHAR(io + 5, (lba >> 16) as u8);
         WRITE_PORT_UCHAR(io + 7, CMD_READ_SECTORS);
         if !wait_drq(io + 7, ATA_TIMEOUT_US) {
-            // kprintln!("[ATA] read_sectors: DRQ timeout")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[ATA] read_sectors: DRQ timeout");
             return false;
         }
         for i in 0..(count as usize) * 256 {
@@ -488,11 +542,13 @@ pub fn read_sectors(idx: usize, lba: u32, count: u8, buf: &mut [u16]) -> bool {
 /// Read sectors using 48-bit LBA (extended).
 /// `lba` is a 48-bit sector number, `count` is up to 65535 sectors.
 pub fn read_sectors_lba48(idx: usize, lba: u64, count: u16, buf: &mut [u16]) -> bool {
-#[cfg(target_arch = "x86_64")]
+    #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     use crate::hal::x86_64::io_port::{READ_PORT_USHORT, WRITE_PORT_UCHAR, WRITE_PORT_USHORT};
 
-    if buf.len() < (count as usize) * 256 { return false; }
+    if buf.len() < (count as usize) * 256 {
+        return false;
+    }
 
     unsafe {
         let ch = &mut CHANNELS[idx];
@@ -544,11 +600,13 @@ pub fn read_sectors_lba48(idx: usize, lba: u64, count: u16, buf: &mut [u16]) -> 
 
 /// Write sectors using 48-bit LBA (extended).
 pub fn write_sectors_lba48(idx: usize, lba: u64, count: u16, buf: &[u16]) -> bool {
-#[cfg(target_arch = "x86_64")]
+    #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     use crate::hal::x86_64::io_port::{READ_PORT_USHORT, WRITE_PORT_UCHAR, WRITE_PORT_USHORT};
 
-    if buf.len() < (count as usize) * 256 { return false; }
+    if buf.len() < (count as usize) * 256 {
+        return false;
+    }
 
     unsafe {
         let ch = &mut CHANNELS[idx];
@@ -632,7 +690,7 @@ pub struct SmartAttribute {
 
 /// Read SMART data from the drive.
 pub fn read_smart_data(idx: usize) -> Option<SmartData> {
-#[cfg(target_arch = "x86_64")]
+    #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     use crate::hal::x86_64::io_port::{READ_PORT_USHORT, WRITE_PORT_UCHAR};
 
@@ -734,13 +792,71 @@ pub fn read_smart_data(idx: usize) -> Option<SmartData> {
 /// Smoke test for the ATA driver. Probes both channels and
 /// reports what was found.
 pub fn smoke_test() -> bool {
-    // kprintln!("  [ATA SMOKE] running ATA PIO smoke test...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [ATA SMOKE] running ATA PIO smoke test...");
     // Channel 0 should be probed without panicking even on a
     // machine that has no ATA device.
     let _ = has_device(0);
     let _ = has_device(1);
-    // kprintln!("  [ATA SMOKE] channels probed: chan0={} chan1={}",  // kprintln disabled (memcpy crash workaround)
-//               has_device(0), has_device(1));
-    // kprintln!("  [ATA SMOKE OK] ATA driver healthy")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [ATA SMOKE] channels probed: chan0={} chan1={}",
+    //               has_device(0), has_device(1));
+    // kprintln!("  [ATA SMOKE OK] ATA driver healthy");
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_control_block_base_matches_legacy_ide_mapping() {
+        // Legacy PCI IDE control block = command block base + 0x206.
+        assert_eq!(PRIMARY_CTRL, PRIMARY_IO + 0x206);
+        assert_eq!(SECONDARY_CTRL, SECONDARY_IO + 0x206);
+    }
+
+    #[test]
+    fn test_device_control_register_does_not_alias_com1() {
+        // The device control register is at offset 0 of the control
+        // block. Offset 2 aliased COM1 (0x3F8), which is what leaked
+        // raw bytes into the serial console.
+        assert_eq!(DC_REGISTER_OFFSET, 0);
+        assert_eq!(PRIMARY_CTRL + DC_REGISTER_OFFSET, 0x3F6);
+        assert_ne!(PRIMARY_CTRL + DC_REGISTER_OFFSET, 0x3F8);
+    }
+
+    #[test]
+    fn test_identify_capacity_uses_spec_word_indices() {
+        let mut data = [0u16; 256];
+        data[60] = 0xFFFF;
+        data[61] = 0x0001;
+        data[83] = 1 << 10;
+        data[100] = 0x0001;
+        data[101] = 0x0002;
+        data[102] = 0x0003;
+        data[103] = 0x0004;
+        let (lba, lba48, total) = identify_capacity(&data);
+        assert!(lba && lba48);
+        assert_eq!(total, 0x4_0003_0002_0001);
+
+        data[83] = 0;
+        let (lba, lba48, total) = identify_capacity(&data);
+        assert!(lba && !lba48);
+        assert_eq!(total, 0x1_FFFF);
+    }
+
+    #[test]
+    fn test_soft_reset_values_assert_then_release_srst() {
+        // SRST is bit 2 (set asserts reset) and nIEN is bit 1 (set disables
+        // interrupts), per Linux/QEMU/FreeBSD/ReactOS.
+        assert_eq!(DC_ASSERT_RESET & DC_SRST, DC_SRST, "must assert SRST");
+        assert_eq!(DC_RELEASE_RESET & DC_SRST, 0, "must release SRST");
+        assert_eq!(
+            DC_ASSERT_RESET & DC_IEN,
+            DC_IEN,
+            "nIEN disabled during reset"
+        );
+        assert_eq!(DC_RELEASE_RESET & DC_IEN, DC_IEN, "nIEN stays disabled");
+        assert_eq!(DC_ASSERT_RESET, 0x06);
+        assert_eq!(DC_RELEASE_RESET, 0x02);
+    }
 }

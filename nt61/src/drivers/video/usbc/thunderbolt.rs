@@ -17,9 +17,9 @@
 
 use crate::drivers::video::log;
 use crate::ke::sync::Spinlock;
+use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
-use alloc::string::String;
 
 /// USB-C connector state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,7 +98,7 @@ impl AltModeType {
             AltModeType::VendorSpecific(svid) => *svid as u16,
         }
     }
-    
+
     /// Get alt mode name
     pub fn name(&self) -> &'static str {
         match self {
@@ -138,10 +138,7 @@ impl Default for UsbCPortConfig {
         Self {
             connector_type: UsbCConnectorType::Receptacle,
             supports_usb: true,
-            supported_alt_modes: vec![
-                AltModeType::DisplayPort,
-                AltModeType::Thunderbolt3,
-            ],
+            supported_alt_modes: vec![AltModeType::DisplayPort, AltModeType::Thunderbolt3],
             max_power_mw: 100_000, // 100W
             supports_pd: true,
             supports_dp: true,
@@ -295,7 +292,7 @@ impl DpVersion {
             DpVersion::Dp20 | DpVersion::Dp21 => 4, // With UHBR
         }
     }
-    
+
     /// Get name
     pub fn name(&self) -> &'static str {
         match self {
@@ -456,7 +453,7 @@ impl ThunderboltVersion {
             ThunderboltVersion::Usb4 => "USB4",
         }
     }
-    
+
     /// Get max bandwidth (Gbps)
     pub fn max_bandwidth_gbps(&self) -> u32 {
         match self {
@@ -611,57 +608,60 @@ impl UsbCPortController {
             initialized: false,
         }
     }
-    
+
     /// Initialize the USB-C port
     pub fn init(&mut self) -> Result<(), &'static str> {
-        log::video_log("usbc", &alloc::format!("Initializing port {}", self.port_id));
-        
+        log::video_log(
+            "usbc",
+            &alloc::format!("Initializing port {}", self.port_id),
+        );
+
         // Configure CC pins
         self.configure_cc_pins()?;
-        
+
         // Enable VBUS detection
         self.enable_vbus_detection()?;
-        
+
         self.initialized = true;
         log::video_log("usbc", &alloc::format!("Port {} initialized", self.port_id));
-        
+
         Ok(())
     }
-    
+
     /// Configure CC pins
     fn configure_cc_pins(&mut self) -> Result<(), &'static str> {
         // In real hardware, would configure GPIO/registers
         log::video_log("usbc", "CC pins configured");
         Ok(())
     }
-    
+
     /// Enable VBUS detection
     fn enable_vbus_detection(&mut self) -> Result<(), &'static str> {
         // In real hardware, would enable VBUS voltage sensing
         log::video_log("usbc", "VBUS detection enabled");
         Ok(())
     }
-    
+
     /// Detect cable and partner
     pub fn detect(&mut self) -> Result<UsbCConnectorState, &'static str> {
         if !self.initialized {
             return Err("Port not initialized");
         }
-        
+
         // Simulate cable detection
         self.pd_state = PdState::CableDetection;
-        
+
         // Check VBUS
         let vbus_present = self.check_vbus()?;
-        
+
         if !vbus_present {
             self.connector.state = UsbCConnectorState::Disconnected;
             return Ok(UsbCConnectorState::Disconnected);
         }
-        
+
         // Detect CC state to determine partner
         let cc_state = self.detect_cc_state()?;
-        
+
         match cc_state {
             CcState::NothingConnected => {
                 self.connector.state = UsbCConnectorState::Disconnected;
@@ -681,16 +681,16 @@ impl UsbCPortController {
                 self.connector.state = UsbCConnectorState::AltModeActive;
             }
         }
-        
+
         Ok(self.connector.state)
     }
-    
+
     /// Check VBUS presence
     fn check_vbus(&self) -> Result<bool, &'static str> {
         // In real hardware, would read VBUS voltage
         Ok(true)
     }
-    
+
     /// CC state detection
     fn detect_cc_state(&self) -> Result<CcState, &'static str> {
         // In real hardware, would measure CC voltage levels
@@ -699,58 +699,69 @@ impl UsbCPortController {
         // Rp (host) = 56kΩ (default), 22kΩ (1.5A), 10kΩ (3A)
         Ok(CcState::UsbHostConnected)
     }
-    
+
     /// Enter an alternate mode
     pub fn enter_alt_mode(&mut self, alt_mode: AltModeType) -> Result<(), &'static str> {
-        log::video_log("usbc", &alloc::format!("Entering {} alt mode", alt_mode.name()));
-        
+        log::video_log(
+            "usbc",
+            &alloc::format!("Entering {} alt mode", alt_mode.name()),
+        );
+
         // Check if alt mode is supported
-        if !self.connector.config.supported_alt_modes.contains(&alt_mode) {
+        if !self
+            .connector
+            .config
+            .supported_alt_modes
+            .contains(&alt_mode)
+        {
             return Err("Alt mode not supported");
         }
-        
+
         match alt_mode {
             AltModeType::DisplayPort => self.enter_dp_alt_mode()?,
             AltModeType::Thunderbolt3 => self.enter_tbt_alt_mode()?,
             _ => return Err("Alt mode not implemented"),
         }
-        
+
         self.connector.active_alt_mode = Some(alt_mode);
         self.connector.state = UsbCConnectorState::AltModeActive;
-        
+
         Ok(())
     }
-    
+
     /// Enter DisplayPort alternate mode
     fn enter_dp_alt_mode(&mut self) -> Result<(), &'static str> {
         // Discover DisplayPort capabilities
         let dp_capable = self.discover_dp_capability()?;
-        
+
         if !dp_capable {
             return Err("Partner does not support DisplayPort");
         }
-        
+
         // Configure DisplayPort over USB-C
         let mut dp_config = DisplayPortOverUsbC::new(self.port_id);
-        
+
         // Determine pin assignment based on cable/device capabilities
         dp_config.pin_assignment = self.select_dp_pin_assignment()?;
         let lane_count = dp_config.pin_assignment.lanes();
         dp_config.lane_count = lane_count;
-        
+
         self.connector.dp_config = Some(dp_config);
-        log::video_log("usbc", &alloc::format!("DisplayPort alt mode entered ({} lanes)", lane_count));
-        
+        log::video_log(
+            "usbc",
+            &alloc::format!("DisplayPort alt mode entered ({} lanes)", lane_count),
+        );
+
         Ok(())
     }
-    
+
     /// Discover DisplayPort capability
     fn discover_dp_capability(&self) -> Result<bool, &'static str> {
         // In real implementation, would query partner via SOP'
         // For now, assume capable
         Ok(true)
     }
-    
+
     /// Select appropriate DP pin assignment
     fn select_dp_pin_assignment(&self) -> Result<DpPinAssignment, &'static str> {
         // Check cable type
@@ -760,36 +771,42 @@ impl UsbCPortController {
                 return Ok(DpPinAssignment::E);
             }
         }
-        
+
         // Default to E for best compatibility
         Ok(DpPinAssignment::E)
     }
-    
+
     /// Enter Thunderbolt alternate mode
     fn enter_tbt_alt_mode(&mut self) -> Result<(), &'static str> {
         // Check Thunderbolt capability
         if !self.connector.config.supports_thunderbolt {
             return Err("Thunderbolt not supported on this port");
         }
-        
+
         // Configure Thunderbolt
         let mut tb_config = ThunderboltConfig::new(self.port_id);
         tb_config.connected = true;
-        
+
         self.connector.tb_config = Some(tb_config);
         self.connector.state = UsbCConnectorState::ThunderboltActive;
-        
+
         log::video_log("usbc", "Thunderbolt alt mode entered");
-        
+
         Ok(())
     }
-    
+
     /// Exit alternate mode
     pub fn exit_alt_mode(&mut self) -> Result<(), &'static str> {
         if let Some(alt_mode) = self.connector.active_alt_mode.take() {
-            log::video_log("usbc", &alloc::format!("Exiting {} alt mode", alt_mode.name()));
+            log::video_log(
+                "usbc",
+                &alloc::format!("Exiting {} alt mode", alt_mode.name()),
+            );
             ALT_MODE_EXITS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-            LAST_EXITED_ALT_MODE.store(alt_mode.name().len() as u32, core::sync::atomic::Ordering::Relaxed);
+            LAST_EXITED_ALT_MODE.store(
+                alt_mode.name().len() as u32,
+                core::sync::atomic::Ordering::Relaxed,
+            );
         } else {
             ALT_MODE_EXIT_NULLS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         }
@@ -797,39 +814,39 @@ impl UsbCPortController {
         self.connector.dp_config = None;
         self.connector.tb_config = None;
         self.connector.state = UsbCConnectorState::UsbConnected;
-        
+
         Ok(())
     }
-    
+
     /// Start USB Power Delivery negotiation
     pub fn negotiate_power_delivery(&mut self) -> Result<PdContract, &'static str> {
         if !self.connector.config.supports_pd {
             return Err("Power Delivery not supported");
         }
-        
+
         self.pd_state = PdState::CapabilityExchange;
-        
+
         // Get source capabilities (would be from partner via PD)
         let source_caps = self.get_source_capabilities()?;
-        
+
         // Select best power profile
         let selected_profile = self.select_power_profile(&source_caps)?;
-        
+
         // Request the profile
         self.pd_state = PdState::ContractNegotiation;
         self.send_pd_request(selected_profile)?;
-        
+
         // Wait for accept
         let accepted = self.wait_for_accept()?;
-        
+
         if !accepted {
             return Err("Power contract negotiation failed");
         }
-        
+
         // Wait for power ready
         self.pd_state = PdState::ContractActive;
         self.wait_power_ready()?;
-        
+
         let contract = PdContract {
             profile: selected_profile,
             current_ma: 3000,
@@ -838,14 +855,20 @@ impl UsbCPortController {
             max_voltage_mv: 20000,
             active: true,
         };
-        
+
         self.pd_contract = Some(contract.clone());
-        log::video_log("usbc", &alloc::format!("Power contract established: {}V @ {}mA",
-            contract.voltage_mv / 1000, contract.current_ma));
-        
+        log::video_log(
+            "usbc",
+            &alloc::format!(
+                "Power contract established: {}V @ {}mA",
+                contract.voltage_mv / 1000,
+                contract.current_ma
+            ),
+        );
+
         Ok(contract)
     }
-    
+
     /// Get source capabilities
     fn get_source_capabilities(&self) -> Result<Vec<PdPowerProfile>, &'static str> {
         // In real implementation, would receive PD message
@@ -856,41 +879,44 @@ impl UsbCPortController {
             PdPowerProfile::Fixed20V,
         ])
     }
-    
+
     /// Select best power profile
-    fn select_power_profile(&self, _profiles: &[PdPowerProfile]) -> Result<PdPowerProfile, &'static str> {
+    fn select_power_profile(
+        &self,
+        _profiles: &[PdPowerProfile],
+    ) -> Result<PdPowerProfile, &'static str> {
         // Select 20V for maximum power (for display)
         Ok(PdPowerProfile::Fixed20V)
     }
-    
+
     /// Send PD request
     fn send_pd_request(&self, _profile: PdPowerProfile) -> Result<(), &'static str> {
         // In real implementation, would send PD message
         Ok(())
     }
-    
+
     /// Wait for accept
     fn wait_for_accept(&self) -> Result<bool, &'static str> {
         // In real implementation, would wait for PD message
         Ok(true)
     }
-    
+
     /// Wait for power ready
     fn wait_power_ready(&self) -> Result<(), &'static str> {
         // In real implementation, would wait for PS_RDY message
         Ok(())
     }
-    
+
     /// Get connector state
     pub fn state(&self) -> UsbCConnectorState {
         self.connector.state
     }
-    
+
     /// Get DisplayPort configuration
     pub fn get_dp_config(&self) -> Option<&DisplayPortOverUsbC> {
         self.connector.dp_config.as_ref()
     }
-    
+
     /// Get Thunderbolt configuration
     pub fn get_tb_config(&self) -> Option<&ThunderboltConfig> {
         self.connector.tb_config.as_ref()
@@ -932,36 +958,42 @@ impl UsbCManager {
             initialized: false,
         }
     }
-    
+
     /// Add a USB-C port
     pub fn add_port(&mut self, port_id: u32) -> &mut UsbCPortController {
         let port = UsbCPortController::new(port_id);
         self.ports.push(port);
         self.ports.last_mut().unwrap()
     }
-    
+
     /// Initialize all ports
     pub fn init(&mut self) -> Result<(), &'static str> {
         log::video_log("usbc", "Initializing USB-C manager...");
-        
+
         for port in &mut self.ports {
             port.init()?;
         }
-        
+
         self.initialized = true;
-        log::video_log("usbc", &alloc::format!("{} port(s) initialized", self.ports.len()));
-        
+        log::video_log(
+            "usbc",
+            &alloc::format!("{} port(s) initialized", self.ports.len()),
+        );
+
         Ok(())
     }
-    
+
     /// Detect all ports
     pub fn detect_all(&mut self) {
         for port in &mut self.ports {
             match port.detect() {
                 Ok(state) => {
                     if state != UsbCConnectorState::Disconnected {
-                        log::video_log("usbc", &alloc::format!("Port {}: {:?}", port.port_id, state));
-                        
+                        log::video_log(
+                            "usbc",
+                            &alloc::format!("Port {}: {:?}", port.port_id, state),
+                        );
+
                         // Auto-detect and enter best alt mode
                         if let Some(ref mut conn) = port.connector.partner_info {
                             if conn.is_thunderbolt {
@@ -973,13 +1005,16 @@ impl UsbCManager {
                     }
                 }
                 Err(_e) => {
-                    log::video_error("usbc", &alloc::format!("Port {} detection error: {}", port.port_id, _e));
+                    log::video_error(
+                        "usbc",
+                        &alloc::format!("Port {} detection error: {}", port.port_id, _e),
+                    );
                     PORT_DETECT_ERRS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 }
             }
         }
     }
-    
+
     /// Get DisplayPort configurations
     pub fn get_all_dp_configs(&self) -> Vec<&DisplayPortOverUsbC> {
         self.ports
@@ -987,7 +1022,7 @@ impl UsbCManager {
             .filter_map(|p| p.get_dp_config())
             .collect()
     }
-    
+
     /// Get Thunderbolt configurations
     pub fn get_all_tb_configs(&self) -> Vec<&ThunderboltConfig> {
         self.ports
@@ -1011,7 +1046,7 @@ static USB_C_MANAGER: Spinlock<Option<UsbCManager>> = Spinlock::new(None);
 
 /// Initialize USB-C subsystem
 pub fn init() {
-#[cfg(target_arch = "x86_64")]
+    #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     crate::hal::x86_64::serial::write_string("USBC:start\r\n");
     log::video_log("usbc", "USB-C/Thunderbolt: initializing...");
@@ -1025,13 +1060,13 @@ pub fn init() {
     // shape we initialise the manager with zero ports and let the
     // real enumeration populate it later (no production code path
     // is exercised here — this is bootstrap only).
-#[cfg(target_arch = "x86_64")]
+    #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     crate::hal::x86_64::serial::write_string("USBC:stub_init\r\n");
     let manager = UsbCManager::new();
 
     *USB_C_MANAGER.lock() = Some(manager);
-#[cfg(target_arch = "x86_64")]
+    #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     crate::hal::x86_64::serial::write_string("USBC:done\r\n");
 }
@@ -1046,10 +1081,7 @@ pub fn detect_ports() {
 /// Get DisplayPort configurations from all USB-C ports
 pub fn get_displayport_configs() -> Vec<DisplayPortOverUsbC> {
     if let Some(ref manager) = *USB_C_MANAGER.lock() {
-        manager.get_all_dp_configs()
-            .into_iter()
-            .cloned()
-            .collect()
+        manager.get_all_dp_configs().into_iter().cloned().collect()
     } else {
         Vec::new()
     }
@@ -1058,37 +1090,46 @@ pub fn get_displayport_configs() -> Vec<DisplayPortOverUsbC> {
 /// Get Thunderbolt configurations from all USB-C ports
 pub fn get_thunderbolt_configs() -> Vec<ThunderboltConfig> {
     if let Some(ref manager) = *USB_C_MANAGER.lock() {
-        manager.get_all_tb_configs()
-            .into_iter()
-            .cloned()
-            .collect()
+        manager.get_all_tb_configs().into_iter().cloned().collect()
     } else {
         Vec::new()
     }
 }
 
 /// Enable DisplayPort output on a USB-C port
-pub fn enable_dp_output(port_id: u32, lane_count: u8, link_rate: DpLinkRate) -> Result<(), &'static str> {
+pub fn enable_dp_output(
+    port_id: u32,
+    lane_count: u8,
+    link_rate: DpLinkRate,
+) -> Result<(), &'static str> {
     if let Some(ref mut manager) = *USB_C_MANAGER.lock() {
         if let Some(port) = manager.ports.iter_mut().find(|p| p.port_id == port_id) {
             // Enter DisplayPort alt mode if not already
             if port.state() != UsbCConnectorState::AltModeActive {
                 port.enter_alt_mode(AltModeType::DisplayPort)?;
             }
-            
+
             // Configure link
             if let Some(ref mut dp_config) = port.connector.dp_config {
                 dp_config.link_config.lane_count = lane_count;
                 dp_config.link_config.link_rate = link_rate;
                 dp_config.enabled = true;
-                
-                log::video_log("usbc/DP", &alloc::format!("Port {} enabled: {} lanes @ {:?}", port_id, lane_count, link_rate));
-                
+
+                log::video_log(
+                    "usbc/DP",
+                    &alloc::format!(
+                        "Port {} enabled: {} lanes @ {:?}",
+                        port_id,
+                        lane_count,
+                        link_rate
+                    ),
+                );
+
                 return Ok(());
             }
         }
     }
-    
+
     Err("Port not found")
 }
 
@@ -1112,14 +1153,10 @@ pub fn disable_dp_output(port_id: u32) -> Result<(), &'static str> {
 // resorting to `#[allow(unused_variables)]`).
 // =====================================================================
 
-static ALT_MODE_EXITS: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0);
-static ALT_MODE_EXIT_NULLS: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0);
-static LAST_EXITED_ALT_MODE: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0);
-static PORT_DETECT_ERRS: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0);
+static ALT_MODE_EXITS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+static ALT_MODE_EXIT_NULLS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+static LAST_EXITED_ALT_MODE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+static PORT_DETECT_ERRS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 /// Return `(alt_mode_exits, alt_mode_exits_null, last_exit_name_len, port_detect_errs)`.
 pub fn alt_mode_exit_stats() -> (u32, u32, u32, u32) {

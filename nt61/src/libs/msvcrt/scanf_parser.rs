@@ -7,8 +7,8 @@ use core::ptr;
 
 #[derive(Default)]
 struct ScanfSpec {
-    suppress: bool,           // '*' - don't assign
-    width: Option<usize>,     // max field width
+    suppress: bool,       // '*' - don't assign
+    width: Option<usize>, // max field width
     length: LengthModifier,
     specifier: char,
 }
@@ -16,13 +16,13 @@ struct ScanfSpec {
 #[derive(Copy, Clone, PartialEq)]
 enum LengthModifier {
     None,
-    Char,      // hh
-    Short,     // h
-    Long,      // l
-    LongLong,  // ll
-    IntMax,    // j
-    Size,      // z
-    PtrDiff,   // t
+    Char,       // hh
+    Short,      // h
+    Long,       // l
+    LongLong,   // ll
+    IntMax,     // j
+    Size,       // z
+    PtrDiff,    // t
     LongDouble, // L
 }
 
@@ -88,10 +88,22 @@ unsafe fn parse_scanf_spec(format: *const c_char, pos: &mut usize) -> Option<Sca
                 LengthModifier::Long
             }
         }
-        b'j' => { *pos += 1; LengthModifier::IntMax }
-        b'z' => { *pos += 1; LengthModifier::Size }
-        b't' => { *pos += 1; LengthModifier::PtrDiff }
-        b'L' => { *pos += 1; LengthModifier::LongDouble }
+        b'j' => {
+            *pos += 1;
+            LengthModifier::IntMax
+        }
+        b'z' => {
+            *pos += 1;
+            LengthModifier::Size
+        }
+        b't' => {
+            *pos += 1;
+            LengthModifier::PtrDiff
+        }
+        b'L' => {
+            *pos += 1;
+            LengthModifier::LongDouble
+        }
         _ => LengthModifier::None,
     };
 
@@ -227,11 +239,7 @@ unsafe fn scan_unsigned(
     Some(value)
 }
 
-unsafe fn scan_float(
-    input: *const c_char,
-    pos: &mut usize,
-    width: Option<usize>,
-) -> Option<f64> {
+unsafe fn scan_float(input: *const c_char, pos: &mut usize, width: Option<usize>) -> Option<f64> {
     let start = *pos;
     let max_width = width.unwrap_or(usize::MAX);
 
@@ -245,16 +253,22 @@ unsafe fn scan_float(
         *pos += 1;
     }
 
-    if (*input.add(*pos) as u8 == b'i' || *input.add(*pos) as u8 == b'I') &&
-       (*input.add(*pos + 1) as u8 == b'n' || *input.add(*pos + 1) as u8 == b'N') &&
-       (*input.add(*pos + 2) as u8 == b'f' || *input.add(*pos + 2) as u8 == b'F') {
+    if (*input.add(*pos) as u8 == b'i' || *input.add(*pos) as u8 == b'I')
+        && (*input.add(*pos + 1) as u8 == b'n' || *input.add(*pos + 1) as u8 == b'N')
+        && (*input.add(*pos + 2) as u8 == b'f' || *input.add(*pos + 2) as u8 == b'F')
+    {
         *pos += 3;
-        return Some(if negative { f64::NEG_INFINITY } else { f64::INFINITY });
+        return Some(if negative {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        });
     }
 
-    if (*input.add(*pos) as u8 == b'n' || *input.add(*pos) as u8 == b'N') &&
-       (*input.add(*pos + 1) as u8 == b'a' || *input.add(*pos + 1) as u8 == b'A') &&
-       (*input.add(*pos + 2) as u8 == b'n' || *input.add(*pos + 2) as u8 == b'N') {
+    if (*input.add(*pos) as u8 == b'n' || *input.add(*pos) as u8 == b'N')
+        && (*input.add(*pos + 1) as u8 == b'a' || *input.add(*pos + 1) as u8 == b'A')
+        && (*input.add(*pos + 2) as u8 == b'n' || *input.add(*pos + 2) as u8 == b'N')
+    {
         *pos += 3;
         return Some(f64::NAN);
     }
@@ -293,7 +307,9 @@ unsafe fn scan_float(
         return None;
     }
 
-    if (*input.add(*pos) as u8 == b'e' || *input.add(*pos) as u8 == b'E') && (*pos - start) < max_width {
+    if (*input.add(*pos) as u8 == b'e' || *input.add(*pos) as u8 == b'E')
+        && (*pos - start) < max_width
+    {
         *pos += 1;
         let mut exp_negative = false;
         if *input.add(*pos) == b'-' as c_char {
@@ -380,4 +396,3 @@ unsafe fn scan_char(
 
     true
 }
-

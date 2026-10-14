@@ -118,15 +118,25 @@ pub unsafe extern "C" fn RtlGetCurrentPeb() -> *mut Peb {
 
 /// `RtlGetThreadErrorMode` / `RtlSetThreadErrorMode` — return 0
 /// (default error mode).
-pub unsafe extern "C" fn RtlGetThreadErrorMode() -> u32 { 0 }
-pub unsafe extern "C" fn RtlSetThreadErrorMode(_mode: u32, _old_mode: *mut u32) -> i32 { 0 }
+pub unsafe extern "C" fn RtlGetThreadErrorMode() -> u32 {
+    0
+}
+pub unsafe extern "C" fn RtlSetThreadErrorMode(_mode: u32, _old_mode: *mut u32) -> i32 {
+    0
+}
 
 /// `PebGetVersion` — return the OS version. We report
 /// `6.1.7601` (Windows 7 SP1 build 7601).
 pub unsafe extern "C" fn PebGetVersion(major: *mut u32, minor: *mut u32, build: *mut u32) -> u32 {
-    if !major.is_null() { *major = 6; }
-    if !minor.is_null() { *minor = 1; }
-    if !build.is_null() { *build = 7601; }
+    if !major.is_null() {
+        *major = 6;
+    }
+    if !minor.is_null() {
+        *minor = 1;
+    }
+    if !build.is_null() {
+        *build = 7601;
+    }
     0
 }
 
@@ -134,5 +144,7 @@ pub unsafe extern "C" fn PebGetVersion(major: *mut u32, minor: *mut u32, build: 
 /// `NtTerminateThread` with the supplied status.
 pub unsafe extern "C" fn RtlExitUserThread(exit_status: u32) -> ! {
     super::thread::NtTerminateThread(-1isize as HANDLE, exit_status);
-    loop { core::hint::spin_loop(); }
+    loop {
+        core::hint::spin_loop();
+    }
 }

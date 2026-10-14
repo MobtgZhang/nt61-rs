@@ -36,32 +36,44 @@ static mut DRIVER: *mut DriverObject = core::ptr::null_mut();
 /// miniport binding happens later; here we just want the device
 /// in the namespace.
 pub fn init(driver: *mut DriverObject) {
-    if INITIALISED.load(Ordering::Acquire) { return; }
+    if INITIALISED.load(Ordering::Acquire) {
+        return;
+    }
     unsafe {
-        if driver.is_null() { return; }
-        let dev = crate::io::create_device(driver, DeviceType::Unknown,
-            SPLDR_DEVICE_NAME.as_bytes());
-        if dev.is_null() { return; }
+        if driver.is_null() {
+            return;
+        }
+        let dev =
+            crate::io::create_device(driver, DeviceType::Unknown, SPLDR_DEVICE_NAME.as_bytes());
+        if dev.is_null() {
+            return;
+        }
         DEVICE = dev;
         DRIVER = driver;
         INITIALISED.store(true, Ordering::Release);
     }
-    // kprintln!("    [SPLDR] created device {}", SPLDR_DEVICE_NAME)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    [SPLDR] created device {}", SPLDR_DEVICE_NAME);
 }
 
 /// `SpldrInitNoDriver` — initialise spldr without a driver
 /// object. The device name is published but the object is a
 /// placeholder; the smoke test can still verify the entry.
 pub fn init_no_driver() {
-    if INITIALISED.load(Ordering::Acquire) { return; }
+    if INITIALISED.load(Ordering::Acquire) {
+        return;
+    }
     INITIALISED.store(true, Ordering::Release);
-    // kprintln!("    [SPLDR] placeholder initialised (no driver)")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    [SPLDR] placeholder initialised (no driver)");
 }
 
-pub fn device_name() -> &'static str { SPLDR_DEVICE_NAME }
+pub fn device_name() -> &'static str {
+    SPLDR_DEVICE_NAME
+}
 
 pub fn open() -> u32 {
-    if !INITIALISED.load(Ordering::Acquire) { return 0; }
+    if !INITIALISED.load(Ordering::Acquire) {
+        return 0;
+    }
     if BUSY.swap(true, Ordering::AcqRel) {
         return 0; // only one open at a time
     }
@@ -70,27 +82,33 @@ pub fn open() -> u32 {
 }
 
 pub fn close() {
-    if !INITIALISED.load(Ordering::Acquire) { return; }
+    if !INITIALISED.load(Ordering::Acquire) {
+        return;
+    }
     BUSY.store(false, Ordering::Release);
 }
 
-pub fn open_count() -> u32 { OPEN_COUNT.load(Ordering::Relaxed) }
-pub fn initialised() -> bool { INITIALISED.load(Ordering::Acquire) }
+pub fn open_count() -> u32 {
+    OPEN_COUNT.load(Ordering::Relaxed)
+}
+pub fn initialised() -> bool {
+    INITIALISED.load(Ordering::Acquire)
+}
 
 /// Smoke test: open and close the spldr device.
 pub fn smoke_test() -> bool {
-    // kprintln!("  [SPLDR SMOKE] testing SPL driver loader...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [SPLDR SMOKE] testing SPL driver loader...");
     if !initialised() {
         // Init the driver object (we use a global placeholder)
-        // kprintln!("  [SPLDR SMOKE] not initialised; passing vacuously")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [SPLDR SMOKE] not initialised; passing vacuously");
         return true;
     }
     if open() == 0 {
-        // kprintln!("  [SPLDR SMOKE FAIL] open")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [SPLDR SMOKE FAIL] open");
         return false;
     }
     close();
-    // kprintln!("  [SPLDR SMOKE OK] device={} opens={}",  // kprintln disabled (memcpy crash workaround)
-//         device_name(), open_count());
+    // kprintln!("  [SPLDR SMOKE OK] device={} opens={}",
+    //         device_name(), open_count());
     true
 }

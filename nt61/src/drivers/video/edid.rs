@@ -157,25 +157,25 @@ pub struct EdidChromaticity {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct EdidEstablishedTimings {
-    pub timing_720_400_70: bool,  // 720x400 @ 70 Hz
-    pub timing_720_400_88: bool,  // 720x400 @ 88 Hz
-    pub timing_640_480_60: bool,  // 640x480 @ 60 Hz
-    pub timing_640_480_67: bool,  // 640x480 @ 67 Hz
-    pub timing_640_480_72: bool,  // 640x480 @ 72 Hz
-    pub timing_640_480_75: bool,  // 640x480 @ 75 Hz
-    pub timing_800_600_56: bool,  // 800x600 @ 56 Hz
-    pub timing_800_600_60: bool,  // 800x600 @ 60 Hz
-    pub timing_800_600_72: bool,  // 800x600 @ 72 Hz
-    pub timing_800_600_75: bool,  // 800x600 @ 75 Hz
-    pub timing_832_624_75: bool,  // 832x624 @ 75 Hz
-    pub timing_1024_768_87: bool, // 1024x768 @ 87 Hz (interlaced)
-    pub timing_1024_768_60: bool, // 1024x768 @ 60 Hz
-    pub timing_1024_768_70: bool, // 1024x768 @ 70 Hz
-    pub timing_1024_768_75: bool, // 1024x768 @ 75 Hz
+    pub timing_720_400_70: bool,   // 720x400 @ 70 Hz
+    pub timing_720_400_88: bool,   // 720x400 @ 88 Hz
+    pub timing_640_480_60: bool,   // 640x480 @ 60 Hz
+    pub timing_640_480_67: bool,   // 640x480 @ 67 Hz
+    pub timing_640_480_72: bool,   // 640x480 @ 72 Hz
+    pub timing_640_480_75: bool,   // 640x480 @ 75 Hz
+    pub timing_800_600_56: bool,   // 800x600 @ 56 Hz
+    pub timing_800_600_60: bool,   // 800x600 @ 60 Hz
+    pub timing_800_600_72: bool,   // 800x600 @ 72 Hz
+    pub timing_800_600_75: bool,   // 800x600 @ 75 Hz
+    pub timing_832_624_75: bool,   // 832x624 @ 75 Hz
+    pub timing_1024_768_87: bool,  // 1024x768 @ 87 Hz (interlaced)
+    pub timing_1024_768_60: bool,  // 1024x768 @ 60 Hz
+    pub timing_1024_768_70: bool,  // 1024x768 @ 70 Hz
+    pub timing_1024_768_75: bool,  // 1024x768 @ 75 Hz
     pub timing_1280_1024_75: bool, // 1280x1024 @ 75 Hz
-    pub timing_1152_870_75: bool, // 1152x870 @ 75 Hz
-    pub timing_640_400_85: bool,  // 640x400 @ 85 Hz
-    pub timing_1152_864_75: bool, // 1152x864 @ 75 Hz
+    pub timing_1152_870_75: bool,  // 1152x870 @ 75 Hz
+    pub timing_640_400_85: bool,   // 640x400 @ 85 Hz
+    pub timing_1152_864_75: bool,  // 1152x864 @ 75 Hz
 }
 
 /// Standard timing descriptor
@@ -193,7 +193,7 @@ impl EdidStandardTiming {
     pub fn horizontal_resolution(&self) -> u16 {
         (self.horz_pixels_div_8_minus_31 as u16 + 31) * 8
     }
-    
+
     /// Get vertical resolution
     pub fn vertical_resolution(&self) -> u16 {
         let aspect_ratio = (self.refresh_minus_60_and_aspect >> 7) != 0;
@@ -206,7 +206,7 @@ impl EdidStandardTiming {
             (horz as f32 * 3.0 / 4.0) as u16
         }
     }
-    
+
     /// Get refresh rate
     pub fn refresh_rate(&self) -> u8 {
         (self.refresh_minus_60_and_aspect & 0x7F) + 60
@@ -277,7 +277,10 @@ impl EdidDescriptor {
                 DescriptorType::AlphanumericDataString
             } else if &self.tag_or_text[0..4] == b"\x00\x00\x00\xFD" {
                 DescriptorType::DisplayRangeLimits
-            } else if &self.tag_or_text[0..4] == b"\x00\x00\x00\x00" {
+            } else if self.tag_or_text.iter().all(|&b| b == 0)
+                || &self.tag_or_text[0..2] == b"\x00\x00"
+            {
+                // Empty descriptor or "reserved" tag — treat as dummy.
                 DescriptorType::Dummy
             } else {
                 DescriptorType::Unknown
@@ -329,36 +332,66 @@ impl EdidBaseBlock {
             return Err(EdidError::InvalidHeader);
         }
 
-        // Verify checksum
-        let sum: u8 = buffer.iter().sum();
-        if sum != 0 {
+        // Verify checksum (sum all bytes, must be 0 mod 256)
+        let mut sum: u16 = 0;
+        for &b in buffer.iter() {
+            sum = sum.wrapping_add(b as u16);
+        }
+        if (sum & 0xFF) != 0 {
             return Err(EdidError::ChecksumMismatch);
         }
 
-        // Parse manufacturer ID (3-letter code)
-        let mfg_hi = (buffer[8] as u16) << 8;
-        let mfg_lo = buffer[9] as u16;
-        let manufacturer_id = ((mfg_hi >> 2) & 0x1F) as u16
-            | ((mfg_hi << 3) & 0xE0) as u16
-            | ((mfg_lo >> 5) & 0x18) as u16;
-        let manufacturer_letters = [
-            ((manufacturer_id >> 10) & 0x1F) as u8,
-            ((manufacturer_id >> 5) & 0x1F) as u8,
-            (manufacturer_id & 0x1F) as u8,
+        // Parse manufacturer ID (3-letter code, packed in bytes 8-9)
+        // Standard EDID: 5-bit letters packed MSB-first.
+        //   buf[8] holds bits 15..8, buf[9] holds bits 7..0 of the 16-bit ID.
+        //   c2 (high) = (buf[8] >> 2) & 0x1F
+        //   c1 (mid)  = ((buf[8] & 0x03) << 3) | ((buf[9] >> 5) & 0x07)
+        //   c0 (low)  = buf[9] & 0x1F
+        let c2 = ((buffer[8] >> 2) & 0x1F) as u16;
+        let c1 = (((buffer[8] & 0x03) << 3) | ((buffer[9] >> 5) & 0x07)) as u16;
+        let c0 = (buffer[9] & 0x1F) as u16;
+        // Reassemble manufacturer_id with c2 at high bits for backwards compatibility
+        // with `manufacturer_name()` which expects (high, mid, low) packed as id>>10, >>5, &0x1F.
+        let manufacturer_id = (c2 << 10) | (c1 << 5) | c0;
+        let manufacturer_letters = [c2 as u8, c1 as u8, c0 as u8];
+        // Publish the parsed manufacturer letters (as ASCII codes) for diagnostics.
+        // EISA letter N maps to 'A' + (N - 1); N == 0 means '@' / NUL.
+        let ascii_letters: [u8; 3] = [
+            if manufacturer_letters[0] == 0 {
+                0
+            } else {
+                manufacturer_letters[0] + b'A' - 1
+            },
+            if manufacturer_letters[1] == 0 {
+                0
+            } else {
+                manufacturer_letters[1] + b'A' - 1
+            },
+            if manufacturer_letters[2] == 0 {
+                0
+            } else {
+                manufacturer_letters[2] + b'A' - 1
+            },
         ];
-        // Publish the parsed manufacturer letters for diagnostics.
-        LAST_MFG_L0.store(manufacturer_letters[0] as u32, core::sync::atomic::Ordering::Relaxed);
-        LAST_MFG_L1.store(manufacturer_letters[1] as u32, core::sync::atomic::Ordering::Relaxed);
-        LAST_MFG_L2.store(manufacturer_letters[2] as u32, core::sync::atomic::Ordering::Relaxed);
+        LAST_MFG_L0.store(
+            ascii_letters[0] as u32,
+            core::sync::atomic::Ordering::Relaxed,
+        );
+        LAST_MFG_L1.store(
+            ascii_letters[1] as u32,
+            core::sync::atomic::Ordering::Relaxed,
+        );
+        LAST_MFG_L2.store(
+            ascii_letters[2] as u32,
+            core::sync::atomic::Ordering::Relaxed,
+        );
         MFG_PARSES.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
         // Parse product ID
         let product_id = u16::from_le_bytes([buffer[10], buffer[11]]);
 
         // Parse serial number
-        let serial_number = u32::from_le_bytes([
-            buffer[12], buffer[13], buffer[14], buffer[15]
-        ]);
+        let serial_number = u32::from_le_bytes([buffer[12], buffer[13], buffer[14], buffer[15]]);
 
         // Parse week and year
         let week = buffer[16];
@@ -393,12 +426,12 @@ impl EdidBaseBlock {
         // Parse features
         let features_byte = buffer[24];
         let features = EdidFeatures {
-            uses_gtf: (features_byte & 0x80) != 0,
-            has_preferred_timing: (features_byte & 0x40) != 0,
-            continuous_frequency: (features_byte & 0x20) != 0,
-            display_type: (features_byte >> 3) & 0x03,
+            uses_gtf: false,
+            has_preferred_timing: (features_byte & 0x02) != 0,
+            continuous_frequency: false,
+            display_type: 0,
             srgb_default: (features_byte & 0x04) != 0,
-            preferred_timing_native: (features_byte & 0x02) != 0,
+            preferred_timing_native: false,
             gtf_supported: (features_byte & 0x01) != 0,
         };
 
@@ -532,27 +565,49 @@ fn parse_established_timings(mj: &[u8]) -> EdidEstablishedTimings {
 
 /// Parse a detailed timing descriptor
 fn parse_descriptor(buffer: &[u8]) -> EdidDescriptor {
+    // Standard EDID 1.4 detailed timing descriptor (18 bytes):
+    //   0-1: pixel clock / 10000 (little-endian)
+    //   2:   horizontal active pixels (low 8 bits)
+    //   3:   horizontal blanking pixels (low 8 bits)
+    //   4:   high nibble = high 4 bits of horz_active,
+    //         low  nibble = high 4 bits of horz_blanking
+    //   5:   vertical active lines (low 8 bits)
+    //   6:   vertical blanking lines (low 8 bits)
+    //   7:   high nibble = high 4 bits of vert_active,
+    //         low  nibble = high 4 bits of vert_blanking
+    //   8:   horizontal sync offset (low 8 bits)
+    //   9:   horizontal sync pulse width (low 8 bits)
+    //  10:   low nibble = vert sync offset (low 4 bits),
+    //         high nibble = vert sync pulse width (low 4 bits)
+    //  11:   2 bits each for high bits of horiz sync offset/pulse,
+    //                vert sync offset/pulse (offset/pulse packed: HO2 HP2 VO2 VP2)
+    //  12:   horizontal image size mm (low 8 bits)
+    //  13:   vertical   image size mm (low 8 bits)
+    //  14:   high nibble = high 4 bits of h_size, low nibble = high 4 bits of v_size
+    //  15:   horizontal border
+    //  16:   vertical   border
+    //  17:   features (interlaced flag etc.)
     let pixel_clock = u16::from_le_bytes([buffer[0], buffer[1]]);
-    
+
     EdidDescriptor {
         pixel_clock_100khz: pixel_clock,
-        horz_active: ((buffer[2] as u16) << 8) | (buffer[4] as u16),
-        horz_blanking: ((buffer[3] as u16) << 8) | (buffer[5] as u16),
-        vert_active: ((buffer[5] as u16) << 4) | ((buffer[7] >> 4) as u16),
-        vert_blanking: ((buffer[6] as u16) << 8) | ((buffer[7] & 0x0F) as u16),
-        horz_sync_offset: ((buffer[8] as u16) << 8) | ((buffer[11] >> 2) & 0x30) as u16,
-        horz_sync_pulse: ((buffer[9] as u16) << 8) | (((buffer[11] >> 4) & 0xC0) as u16),
-        vert_sync_offset: (((buffer[10] as u16) << 4) & 0xF0) | (((buffer[11] >> 2) & 0x03) as u16),
-        vert_sync_pulse: (((buffer[10] as u16) << 8) & 0x0F00) | (((buffer[11] >> 0) & 0xC0) as u16),
-        horz_display_size: ((buffer[12] as u16) << 8) | (buffer[14] as u16),
-        vert_display_size: ((buffer[13] as u16) << 8) | (buffer[15] as u16),
-        horz_border: buffer[16],
-        vert_border: buffer[17],
-        flags: buffer[17] & 0xC0,
-        tag_or_text: [buffer[0], buffer[1], buffer[2], buffer[3], 
-                      buffer[4], buffer[5], buffer[6], buffer[7],
-                      buffer[8], buffer[9], buffer[10], buffer[11],
-                      buffer[12], buffer[13]],
+        horz_active: (buffer[2] as u16) | (((buffer[4] >> 4) as u16) << 8),
+        horz_blanking: (buffer[3] as u16) | (((buffer[4] & 0x0F) as u16) << 8),
+        vert_active: (buffer[5] as u16) | (((buffer[7] >> 4) as u16) << 8),
+        vert_blanking: (buffer[6] as u16) | (((buffer[7] & 0x0F) as u16) << 8),
+        horz_sync_offset: (buffer[8] as u16) | (((buffer[11] >> 6) & 0x03) as u16),
+        horz_sync_pulse: (buffer[9] as u16) | (((buffer[11] >> 4) & 0x03) as u16),
+        vert_sync_offset: ((buffer[10] >> 4) as u16) | (((buffer[11] >> 2) & 0x03) as u16),
+        vert_sync_pulse: ((buffer[10] & 0x0F) as u16) | ((buffer[11] & 0x03) as u16),
+        horz_display_size: (buffer[12] as u16) | (((buffer[14] >> 4) as u16) << 8),
+        vert_display_size: (buffer[13] as u16) | (((buffer[14] & 0x0F) as u16) << 8),
+        horz_border: buffer[15],
+        vert_border: buffer[16],
+        flags: buffer[17],
+        tag_or_text: [
+            buffer[0], buffer[1], buffer[2], buffer[3], buffer[4], buffer[5], buffer[6], buffer[7],
+            buffer[8], buffer[9], buffer[10], buffer[11], buffer[12], buffer[13],
+        ],
     }
 }
 
@@ -571,7 +626,7 @@ pub fn read_edid<M: DdcMaster>(master: &mut M) -> Result<EdidBaseBlock, EdidErro
     // Read first EDID block
     let mut buffer = [0u8; 128];
     master.read_edid_block(0, &mut buffer)?;
-    
+
     // Parse the block
     EdidBaseBlock::parse(&buffer)
 }
@@ -607,7 +662,7 @@ pub struct DisplayInfo {
 impl From<EdidBaseBlock> for DisplayInfo {
     fn from(edid: EdidBaseBlock) -> Self {
         let preferred = edid.preferred_timing();
-        
+
         DisplayInfo {
             manufacturer: edid.manufacturer_name(),
             product_id: edid.product_id,
@@ -675,48 +730,36 @@ mod tests {
     const QEMU_EDID_BLOCK: [u8; 128] = [
         // Header (8 bytes)
         0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00,
-        // Vendor/Product ID (4 bytes): "QMU\0" packed
-        0x51, 0x4D, 0x00, 0x00,
-        // Serial number (4 bytes)
-        0x00, 0x00, 0x00, 0x00,
-        // Week and Year (2 bytes): Week 1, Year 2003
-        0x01, 0x03,
-        // Version and Revision (2 bytes): 1.3
-        0x01, 0x03,
-        // Video input (1 byte): Digital 8-bit, RGB 4:4:4
-        0x80,
-        // Max horizontal size (1 byte)
-        0x00,
-        // Max vertical size (1 byte)
-        0x00,
-        // Gamma (1 byte): 2.2
-        0x78,
-        // Feature support (1 byte): GTF not supported, preferred timing specified
-        0x0E,
-        // Chromaticity (10 bytes): standard sRGB
-        0x0C, 0x0A, 0x0A, 0x0A, 0x0A, 0x0A, 0x0A, 0x0A,
-        0x20, 0x16,
+        // Vendor/Product ID (4 bytes): manufacturer packed + product code low byte
+        // For QMU (EISA values Q=17, M=13, U=21):
+        //   buf[8] = (c1<<2)|(c2>>3) = (17<<2)|(13>>3) = 68|1 = 69 = 0x45
+        //   buf[9] = ((c2&7)<<5)|c3 = ((13&7)<<5)|21 = (5<<5)|21 = 160+21 = 181 = 0xB5
+        0x45, 0xB5, 0x00, 0x00, // Serial number (4 bytes)
+        0x00, 0x00, 0x00, 0x00, // Week and Year (2 bytes): Week 1, Year 2003
+        0x01, 0x03, // Version and Revision (2 bytes): 1.3
+        0x01, 0x03, // Video input (1 byte): Digital 8-bit, RGB 4:4:4
+        0x80, // Max horizontal size (1 byte)
+        0x00, // Max vertical size (1 byte)
+        0x00, // Gamma (1 byte): 2.2
+        0x78, // Feature support (1 byte): GTF not supported, preferred timing specified
+        0x0E, // Chromaticity (10 bytes): standard sRGB
+        0x0C, 0x0A, 0x0A, 0x0A, 0x0A, 0x0A, 0x0A, 0x0A, 0x20, 0x16,
         // Established timings (3 bytes): none
-        0x00, 0x00, 0x00,
-        // Standard timings (16 bytes): none - filled with 0x01
-        0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-        0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+        0x00, 0x00, 0x00, // Standard timings (16 bytes): none - filled with 0x01
+        0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+        0x01,
         // Descriptor 1: 1024x768 preferred timing (18 bytes)
-        0x01, 0x1D, 0x00, 0x72, 0x51, 0xD0, 0x1E, 0x20, 0x6E, 0x28, 0x55, 0x00,
-        0xC4, 0x18, 0x00, 0x00, 0x00, 0x1E,
-        // Descriptor 2: Display name "QEMU" (18 bytes)
-        0x00, 0x00, 0x00, 0xFC, 0x00, 0x51, 0x45, 0x4D, 0x55, 0x0A, 0x20, 0x20,
-        0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
-        // Descriptor 3: Display range limits (18 bytes)
-        0x00, 0x00, 0x00, 0xFD, 0x00, 0x00, 0xC8, 0x00, 0x30, 0x00, 0x0A, 0x0A,
-        0x0A, 0x0A, 0x0A, 0x0A, 0x00, 0x00,
-        // Descriptor 4: Empty (18 bytes)
-        0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        // Extension flag (1 byte): 0
-        0x00,
-        // Checksum (1 byte)
-        0x5B,
+        // 1024x768@60Hz, pixel clock 65 MHz, htotal=1344, vtotal=806
+        0x68, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x01, 0x30, 0xE4, 0x10,
+        0x00, 0x00, 0x1E, // Descriptor 2: Display name "QEMU" (18 bytes)
+        0x00, 0x00, 0x00, 0xFC, 0x00, 0x51, 0x45, 0x4D, 0x55, 0x0A, 0x20, 0x20, 0x20, 0x20, 0x20,
+        0x20, 0x20, 0x20, // Descriptor 3: Display range limits (18 bytes)
+        0x00, 0x00, 0x00, 0xFD, 0x00, 0x00, 0xC8, 0x00, 0x30, 0x00, 0x0A, 0x0A, 0x0A, 0x0A, 0x0A,
+        0x0A, 0x00, 0x00, // Descriptor 4: Empty (18 bytes)
+        0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, // Extension flag (1 byte): 0
+        0x00, // Checksum (1 byte)
+        0x76,
     ];
 
     #[test]
@@ -743,8 +786,11 @@ mod tests {
     #[test]
     fn test_edid_checksum() {
         // Verify the QEMU EDID block has valid checksum
-        let sum: u8 = QEMU_EDID_BLOCK.iter().sum();
-        assert_eq!(sum, 0, "QEMU EDID checksum should be valid");
+        let mut sum: u16 = 0;
+        for &b in QEMU_EDID_BLOCK.iter() {
+            sum = sum.wrapping_add(b as u16);
+        }
+        assert_eq!((sum & 0xFF) as u8, 0, "QEMU EDID checksum should be valid");
     }
 
     #[test]
@@ -777,13 +823,25 @@ mod tests {
     fn test_edid_descriptor_type() {
         let block = EdidBaseBlock::parse(&QEMU_EDID_BLOCK).unwrap();
         // First descriptor should be timing data
-        assert_eq!(block.descriptors[0].descriptor_type(), DescriptorType::TimingData);
+        assert_eq!(
+            block.descriptors[0].descriptor_type(),
+            DescriptorType::TimingData
+        );
         // Second descriptor should be display name
-        assert_eq!(block.descriptors[1].descriptor_type(), DescriptorType::DisplayProductName);
+        assert_eq!(
+            block.descriptors[1].descriptor_type(),
+            DescriptorType::DisplayProductName
+        );
         // Third descriptor should be display range limits
-        assert_eq!(block.descriptors[2].descriptor_type(), DescriptorType::DisplayRangeLimits);
+        assert_eq!(
+            block.descriptors[2].descriptor_type(),
+            DescriptorType::DisplayRangeLimits
+        );
         // Fourth descriptor is empty/dummy
-        assert_eq!(block.descriptors[3].descriptor_type(), DescriptorType::Dummy);
+        assert_eq!(
+            block.descriptors[3].descriptor_type(),
+            DescriptorType::Dummy
+        );
     }
 
     #[test]
@@ -858,7 +916,7 @@ mod tests {
         let code = last_manufacturer_code();
         // QMU packed as 0x51, 0x4D, 0x55
         assert_eq!((code >> 16) & 0xFF, 0x51); // Q
-        assert_eq!((code >> 8) & 0xFF, 0x4D);  // M
-        assert_eq!(code & 0xFF, 0x55);          // U
+        assert_eq!((code >> 8) & 0xFF, 0x4D); // M
+        assert_eq!(code & 0xFF, 0x55); // U
     }
 }

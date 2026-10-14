@@ -12,9 +12,9 @@
 //! - `aero`    : Glass blur, glass reflection, colorization
 //! - `applications` : Built-in shell apps (calc, notepad, clock, taskbar)
 
-pub mod dwm;
 pub mod aero;
 pub mod applications;
+pub mod dwm;
 
 // =====================================================================
 // Desktop state — uses OnceLock so the spin is removed.
@@ -54,23 +54,31 @@ pub fn desktop() -> &'static Desktop {
 
 /// Toggle DWM composition.
 pub fn set_composition_enabled(on: bool) {
-    desktop().composition_enabled.store(on, core::sync::atomic::Ordering::Release);
+    desktop()
+        .composition_enabled
+        .store(on, core::sync::atomic::Ordering::Release);
 }
 
 /// Toggle Aero Glass effects.
 pub fn set_aero_enabled(on: bool) {
-    desktop().aero_enabled.store(on, core::sync::atomic::Ordering::Release);
+    desktop()
+        .aero_enabled
+        .store(on, core::sync::atomic::Ordering::Release);
 }
 
 /// Switch the active virtual desktop.
 pub fn switch_to_workspace(id: u32) {
-    desktop().active_workspace.store(id, core::sync::atomic::Ordering::Release);
+    desktop()
+        .active_workspace
+        .store(id, core::sync::atomic::Ordering::Release);
 }
 
 /// Allocate a virtual desktop id.
 pub fn allocate_workspace() -> Option<u32> {
     let d = desktop();
-    let prev = d.virtual_desktop_count.fetch_add(1, core::sync::atomic::Ordering::AcqRel);
+    let prev = d
+        .virtual_desktop_count
+        .fetch_add(1, core::sync::atomic::Ordering::AcqRel);
     if prev < 256 {
         Some(prev)
     } else {
@@ -82,7 +90,6 @@ pub fn allocate_workspace() -> Option<u32> {
 ///
 /// Must be called after `win32k::init()` and `graphics::init()`.
 pub fn init() {
-    boot_desktop();
     // Default desktop is set up lazily via OnceLock; nothing else to do.
     dwm::init();
     aero::init();

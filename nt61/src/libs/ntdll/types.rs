@@ -99,7 +99,11 @@ pub type LARGE_INTEGER = LargeInteger;
 
 impl UnicodeString {
     pub const fn new() -> Self {
-        Self { Length: 0, MaximumLength: 0, Buffer: core::ptr::null_mut() }
+        Self {
+            Length: 0,
+            MaximumLength: 0,
+            Buffer: core::ptr::null_mut(),
+        }
     }
 
     pub fn from_slice(s: &[u16]) -> Self {
@@ -111,17 +115,42 @@ impl UnicodeString {
     }
 
     pub fn from_str(s: &str) -> Self {
-        let mut buf = [0u16; 256];
-        let mut i = 0;
-        for c in s.chars().take(255) {
-            buf[i] = c as u16;
-            i += 1;
+        // `Buffer` must outlive this call. Pointing it at a stack-local array
+        // left the caller holding a dangling pointer once the frame unwound, so
+        // the buffer is allocated through the RTL string routine; the documented
+        // way to release it is `RtlFreeUnicodeString`.
+        let units = s
+            .chars()
+            .map(|c| if (c as u32) > 0xFFFF { 2 } else { 1 })
+            .sum::<usize>()
+            .min(255);
+        let buffer = unsafe { super::string::alloc_string(((units + 1) * 2) as u32) } as *mut WCHAR;
+        if buffer.is_null() {
+            return Self::new();
         }
-        buf[i] = 0;
+        let mut i = 0usize;
+        for c in s.chars() {
+            let cp = c as u32;
+            if i + (if cp > 0xFFFF { 2 } else { 1 }) > units {
+                break;
+            }
+            if cp > 0xFFFF {
+                let v = cp - 0x10000;
+                unsafe {
+                    buffer.add(i).write((0xD800 + (v >> 10)) as u16);
+                    buffer.add(i + 1).write((0xDC00 + (v & 0x3FF)) as u16);
+                }
+                i += 2;
+            } else {
+                unsafe { buffer.add(i).write(cp as u16) };
+                i += 1;
+            }
+        }
+        unsafe { buffer.add(i).write(0) };
         Self {
             Length: (i * 2) as u16,
             MaximumLength: ((i + 1) * 2) as u16,
-            Buffer: buf.as_mut_ptr(),
+            Buffer: buffer,
         }
     }
 
@@ -146,7 +175,9 @@ impl core::fmt::Debug for UnicodeString {
         } else {
             let s = self.as_slice();
             for &c in s {
-                if c == 0 { break; }
+                if c == 0 {
+                    break;
+                }
                 if let Some(ch) = char::from_u32(c as u32) {
                     write!(f, "{}", ch)?;
                 } else {
@@ -169,7 +200,11 @@ pub struct AnsiString {
 
 impl AnsiString {
     pub const fn new() -> Self {
-        Self { Length: 0, MaximumLength: 0, Buffer: core::ptr::null_mut() }
+        Self {
+            Length: 0,
+            MaximumLength: 0,
+            Buffer: core::ptr::null_mut(),
+        }
     }
 }
 
@@ -213,7 +248,10 @@ pub struct IoStatusBlock {
 
 impl IoStatusBlock {
     pub const fn new() -> Self {
-        Self { status: 0, information: 0 }
+        Self {
+            status: 0,
+            information: 0,
+        }
     }
 }
 
@@ -260,7 +298,10 @@ pub struct ClientId {
 
 impl ClientId {
     pub const fn new() -> Self {
-        Self { unique_process: core::ptr::null_mut(), unique_thread: core::ptr::null_mut() }
+        Self {
+            unique_process: core::ptr::null_mut(),
+            unique_thread: core::ptr::null_mut(),
+        }
     }
 }
 
@@ -274,7 +315,10 @@ pub struct ListEntry {
 
 impl ListEntry {
     pub const fn new() -> Self {
-        Self { flink: core::ptr::null_mut(), blink: core::ptr::null_mut() }
+        Self {
+            flink: core::ptr::null_mut(),
+            blink: core::ptr::null_mut(),
+        }
     }
 
     pub fn init(&mut self) {
@@ -338,15 +382,15 @@ pub enum FileInformationClass {
 impl FileInformationClass {
     pub fn from_u32(v: u32) -> Option<FileInformationClass> {
         match v {
-            1  => Some(FileInformationClass::FileDirectoryInformation),
-            2  => Some(FileInformationClass::FileFullDirectoryInformation),
-            3  => Some(FileInformationClass::FileBothDirectoryInformation),
-            4  => Some(FileInformationClass::FileBasicInformation),
-            5  => Some(FileInformationClass::FileStandardInformation),
-            6  => Some(FileInformationClass::FileInternalInformation),
-            7  => Some(FileInformationClass::FileEaInformation),
-            8  => Some(FileInformationClass::FileAccessInformation),
-            9  => Some(FileInformationClass::FileNameInformation),
+            1 => Some(FileInformationClass::FileDirectoryInformation),
+            2 => Some(FileInformationClass::FileFullDirectoryInformation),
+            3 => Some(FileInformationClass::FileBothDirectoryInformation),
+            4 => Some(FileInformationClass::FileBasicInformation),
+            5 => Some(FileInformationClass::FileStandardInformation),
+            6 => Some(FileInformationClass::FileInternalInformation),
+            7 => Some(FileInformationClass::FileEaInformation),
+            8 => Some(FileInformationClass::FileAccessInformation),
+            9 => Some(FileInformationClass::FileNameInformation),
             10 => Some(FileInformationClass::FileRenameInformation),
             11 => Some(FileInformationClass::FileLinkInformation),
             12 => Some(FileInformationClass::FileNamesInformation),
@@ -378,7 +422,7 @@ impl FileInformationClass {
             38 => Some(FileInformationClass::FileIdFullDirectoryInformation),
             39 => Some(FileInformationClass::FileValidDataLengthInformation),
             40 => Some(FileInformationClass::FileShortNameInformation),
-            _  => None,
+            _ => None,
         }
     }
 }
@@ -402,19 +446,19 @@ impl FileInformationClass {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct FileDirectoryInformation {
-    pub next_entry_offset: u32,       // 0x00
-    pub file_index: u32,              // 0x04
-    pub creation_time: i64,           // 0x08
-    pub last_access_time: i64,        // 0x10
-    pub last_write_time: i64,         // 0x18
-    pub change_time: i64,             // 0x20
-    pub end_of_file: i64,             // 0x28
-    pub allocation_size: i64,         // 0x30
-    pub file_attributes: u32,         // 0x38
-    pub file_name_length: u32,        // 0x3C
-    pub ea_size: u32,                 // 0x40
+    pub next_entry_offset: u32, // 0x00
+    pub file_index: u32,        // 0x04
+    pub creation_time: i64,     // 0x08
+    pub last_access_time: i64,  // 0x10
+    pub last_write_time: i64,   // 0x18
+    pub change_time: i64,       // 0x20
+    pub end_of_file: i64,       // 0x28
+    pub allocation_size: i64,   // 0x30
+    pub file_attributes: u32,   // 0x38
+    pub file_name_length: u32,  // 0x3C
+    pub ea_size: u32,           // 0x40
     // 4 bytes of implicit padding to keep the FAM at 8-byte alignment.
-    pub file_name: [u16; 1],          // 0x48 (FAM, variable length)
+    pub file_name: [u16; 1], // 0x48 (FAM, variable length)
 }
 const _: () = assert!(
     core::mem::size_of::<FileDirectoryInformation>() == 0x48,
@@ -426,21 +470,21 @@ const _: () = assert!(
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct FileBothDirectoryInformation {
-    pub next_entry_offset: u32,       // 0x00
-    pub file_index: u32,              // 0x04
-    pub creation_time: i64,           // 0x08
-    pub last_access_time: i64,        // 0x10
-    pub last_write_time: i64,         // 0x18
-    pub change_time: i64,             // 0x20
-    pub end_of_file: i64,             // 0x28
-    pub allocation_size: i64,         // 0x30
-    pub file_attributes: u32,         // 0x38
-    pub file_name_length: u32,        // 0x3C
-    pub ea_size: u32,                 // 0x40
-    pub short_name_length: u8,        // 0x44
-    pub _pad0: [u8; 1],               // 0x45
-    pub short_name: [u16; 12],        // 0x46 (24 bytes)
-    pub file_name: [u16; 1],          // 0x5E (FAM, variable length)
+    pub next_entry_offset: u32, // 0x00
+    pub file_index: u32,        // 0x04
+    pub creation_time: i64,     // 0x08
+    pub last_access_time: i64,  // 0x10
+    pub last_write_time: i64,   // 0x18
+    pub change_time: i64,       // 0x20
+    pub end_of_file: i64,       // 0x28
+    pub allocation_size: i64,   // 0x30
+    pub file_attributes: u32,   // 0x38
+    pub file_name_length: u32,  // 0x3C
+    pub ea_size: u32,           // 0x40
+    pub short_name_length: u8,  // 0x44
+    pub _pad0: [u8; 1],         // 0x45
+    pub short_name: [u16; 12],  // 0x46 (24 bytes)
+    pub file_name: [u16; 1],    // 0x5E (FAM, variable length)
 }
 const _: () = assert!(
     core::mem::size_of::<FileBothDirectoryInformation>() == 0x60,
@@ -454,22 +498,22 @@ const _: () = assert!(
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct FileIdBothDirectoryInformation {
-    pub next_entry_offset: u32,       // 0x00
-    pub file_index: u32,              // 0x04
-    pub creation_time: i64,           // 0x08
-    pub last_access_time: i64,        // 0x10
-    pub last_write_time: i64,         // 0x18
-    pub change_time: i64,             // 0x20
-    pub end_of_file: i64,             // 0x28
-    pub allocation_size: i64,         // 0x30
-    pub file_attributes: u32,         // 0x38
-    pub file_name_length: u32,        // 0x3C
-    pub ea_size: u32,                 // 0x40
-    pub short_name_length: u8,        // 0x44
-    pub _pad0: [u8; 1],               // 0x45
-    pub short_name: [u16; 12],        // 0x46 (24 bytes)
-    pub file_id: i64,                 // 0x5E
-    pub file_name: [u16; 1],          // 0x66 (FAM, variable length)
+    pub next_entry_offset: u32, // 0x00
+    pub file_index: u32,        // 0x04
+    pub creation_time: i64,     // 0x08
+    pub last_access_time: i64,  // 0x10
+    pub last_write_time: i64,   // 0x18
+    pub change_time: i64,       // 0x20
+    pub end_of_file: i64,       // 0x28
+    pub allocation_size: i64,   // 0x30
+    pub file_attributes: u32,   // 0x38
+    pub file_name_length: u32,  // 0x3C
+    pub ea_size: u32,           // 0x40
+    pub short_name_length: u8,  // 0x44
+    pub _pad0: [u8; 1],         // 0x45
+    pub short_name: [u16; 12],  // 0x46 (24 bytes)
+    pub file_id: i64,           // 0x5E
+    pub file_name: [u16; 1],    // 0x66 (FAM, variable length)
 }
 const _: () = assert!(
     core::mem::size_of::<FileIdBothDirectoryInformation>() == 0x70,
@@ -673,12 +717,19 @@ pub mod file_access {
     pub const WRITE_DAC: u32 = 0x0004_0000;
     pub const WRITE_OWNER: u32 = 0x0008_0000;
     pub const SYNCHRONIZE: u32 = 0x0010_0000;
-    pub const FILE_GENERIC_READ: u32 = STANDARD_RIGHTS_READ
-        | FILE_READ_DATA | FILE_READ_ATTRIBUTES | FILE_READ_EA | SYNCHRONIZE;
+    pub const FILE_GENERIC_READ: u32 =
+        STANDARD_RIGHTS_READ | FILE_READ_DATA | FILE_READ_ATTRIBUTES | FILE_READ_EA | SYNCHRONIZE;
     pub const FILE_GENERIC_WRITE: u32 = STANDARD_RIGHTS_WRITE
-        | FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES | FILE_WRITE_EA | FILE_APPEND_DATA | SYNCHRONIZE;
+        | FILE_WRITE_DATA
+        | FILE_WRITE_ATTRIBUTES
+        | FILE_WRITE_EA
+        | FILE_APPEND_DATA
+        | SYNCHRONIZE;
     pub const FILE_GENERIC_EXECUTE: u32 = STANDARD_RIGHTS_EXECUTE
-        | FILE_READ_DATA | FILE_EXECUTE | FILE_READ_ATTRIBUTES | SYNCHRONIZE;
+        | FILE_READ_DATA
+        | FILE_EXECUTE
+        | FILE_READ_ATTRIBUTES
+        | SYNCHRONIZE;
     pub const FILE_ALL_ACCESS: u32 = STANDARD_RIGHTS_REQUIRED | SYNCHRONIZE | 0x1FF;
     pub const STANDARD_RIGHTS_READ: u32 = READ_CONTROL;
     pub const STANDARD_RIGHTS_WRITE: u32 = READ_CONTROL;

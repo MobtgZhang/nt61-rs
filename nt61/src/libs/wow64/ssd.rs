@@ -21,13 +21,13 @@ use crate::libs::wow64::types::*;
 // surface we re-export the same numeric value as `u32` so it can be
 // returned from `extern "C"` thunks whose ABI is unsigned 32-bit
 // (`ULONG32` / `NTSTATUS32`).
-const STATUS_SUCCESS_32: ULONG32           = 0x00000000;
-const STATUS_NOT_IMPLEMENTED_32: ULONG32   = 0xC0000002;
+const STATUS_SUCCESS_32: ULONG32 = 0x00000000;
+const STATUS_NOT_IMPLEMENTED_32: ULONG32 = 0xC0000002;
 const STATUS_INVALID_PARAMETER_32: ULONG32 = 0xC000000D;
-const STATUS_NO_MEMORY_32: ULONG32         = 0xC0000017;
-const STATUS_INVALID_HANDLE_32: ULONG32    = 0xC0000008;
-const STATUS_UNSUCCESSFUL_32: ULONG32      = 0xC0000001;
-const STATUS_ACCESS_DENIED_32: ULONG32     = 0xC0000022;
+const STATUS_NO_MEMORY_32: ULONG32 = 0xC0000017;
+const STATUS_INVALID_HANDLE_32: ULONG32 = 0xC0000008;
+const STATUS_UNSUCCESSFUL_32: ULONG32 = 0xC0000001;
+const STATUS_ACCESS_DENIED_32: ULONG32 = 0xC0000022;
 
 // =============================================================================
 // Service Number Constants
@@ -144,11 +144,7 @@ pub struct Wow64ServiceDescriptor {
 
 impl Wow64ServiceDescriptor {
     /// Create a new service descriptor.
-    pub fn new(
-        service_table: ULONG32,
-        service_limit: ULONG32,
-        arguments_table: ULONG32,
-    ) -> Self {
+    pub fn new(service_table: ULONG32, service_limit: ULONG32, arguments_table: ULONG32) -> Self {
         Self {
             service_table,
             counter_table: 0,
@@ -195,7 +191,10 @@ impl ServiceEntry {
 
     /// Create an empty service entry.
     pub const fn empty() -> Self {
-        Self { handler: None, arg_size: 0 }
+        Self {
+            handler: None,
+            arg_size: 0,
+        }
     }
 
     /// Get argument size as u32.
@@ -264,11 +263,7 @@ pub fn is_shadow_service(service_number: ULONG32) -> bool {
 /// # Safety
 /// The caller must ensure that the stack pointer and index are valid.
 #[inline]
-pub unsafe fn get_argument_32(
-    args: *const u32,
-    index: u32,
-    size: u32,
-) -> u64 {
+pub unsafe fn get_argument_32(args: *const u32, index: u32, size: u32) -> u64 {
     match size {
         4 => *args.add(index as usize) as u64,
         8 => {
@@ -341,7 +336,6 @@ pub fn lookup_service(service_number: ULONG32) -> Option<ServiceHandler> {
 /// Initialize the service table with stub entries.
 /// In a real implementation, this would parse ntdll.dll exports.
 pub fn init_service_table() {
-
     // Register memory management services
     register_base_service(
         service_numbers::NT_ALLOCATE_VIRTUAL_MEMORY,
@@ -454,15 +448,10 @@ pub fn init_service_table() {
         stub_handler,
         12, // 3 args * 4 bytes
     );
-
 }
 
 /// Register a base (ntdll) service.
-fn register_base_service(
-    service_number: ULONG32,
-    handler: ServiceHandler,
-    arg_size: u8,
-) {
+fn register_base_service(service_number: ULONG32, handler: ServiceHandler, arg_size: u8) {
     let idx = get_service_index(service_number) as usize;
     if idx < BASE_SERVICE_TABLE_SIZE {
         // Safety: Writing to static mutable storage during init
@@ -473,11 +462,7 @@ fn register_base_service(
 }
 
 /// Register a shadow (win32k) service.
-fn register_shadow_service(
-    service_number: ULONG32,
-    handler: ServiceHandler,
-    arg_size: u8,
-) {
+fn register_shadow_service(service_number: ULONG32, handler: ServiceHandler, arg_size: u8) {
     let idx = get_service_index(service_number) as usize;
     if idx < SHADOW_SERVICE_TABLE_SIZE {
         unsafe {
@@ -489,18 +474,12 @@ fn register_shadow_service(
 /// Update an existing service handler in the base table.
 /// This allows external modules (like syscall_thunk) to replace
 /// stub handlers with real implementations after init.
-pub fn update_service_handler(
-    service_number: ULONG32,
-    handler: ServiceHandler,
-) {
+pub fn update_service_handler(service_number: ULONG32, handler: ServiceHandler) {
     register_base_service(service_number, handler, 0);
 }
 
 /// Update an existing shadow service handler.
-pub fn update_shadow_service_handler(
-    service_number: ULONG32,
-    handler: ServiceHandler,
-) {
+pub fn update_shadow_service_handler(service_number: ULONG32, handler: ServiceHandler) {
     register_shadow_service(service_number, handler, 0);
 }
 
@@ -522,46 +501,35 @@ unsafe extern "C" fn stub_handler(_args: *const u32) -> ULONG32 {
 ///
 /// # Returns
 /// * NTSTATUS from the service
-pub unsafe fn dispatch_service(
-    service_number: ULONG32,
-    args: *const u32,
-) -> ULONG32 {
+pub unsafe fn dispatch_service(service_number: ULONG32, args: *const u32) -> ULONG32 {
     let table_idx = get_table_index(service_number);
     let svc_idx = get_service_index(service_number);
 
     match table_idx {
         0 => {
             if svc_idx as usize >= BASE_SERVICE_TABLE_SIZE {
-                crate::wow64_klog!(
-                    "[SSD] Invalid base svc idx 0x{:03x}", svc_idx
-                );
+                crate::wow64_klog!("[SSD] Invalid base svc idx 0x{:03x}", svc_idx);
                 return STATUS_INVALID_PARAMETER_32;
             }
             let entry = &BASE_SERVICE_TABLE[svc_idx as usize];
             match entry.get_handler() {
                 Some(handler) => handler(args),
                 None => {
-                    crate::wow64_klog!(
-                        "[SSD] Unregistered base svc 0x{:03x}", svc_idx
-                    );
+                    crate::wow64_klog!("[SSD] Unregistered base svc 0x{:03x}", svc_idx);
                     STATUS_NOT_IMPLEMENTED_32
                 }
             }
         }
         1 => {
             if svc_idx as usize >= SHADOW_SERVICE_TABLE_SIZE {
-                crate::wow64_klog!(
-                    "[SSD] Invalid shadow svc idx 0x{:03x}", svc_idx
-                );
+                crate::wow64_klog!("[SSD] Invalid shadow svc idx 0x{:03x}", svc_idx);
                 return STATUS_INVALID_PARAMETER_32;
             }
             let entry = &SHADOW_SERVICE_TABLE[svc_idx as usize];
             match entry.get_handler() {
                 Some(handler) => handler(args),
                 None => {
-                    crate::wow64_klog!(
-                        "[SSD] Unregistered shadow svc 0x{:03x}", svc_idx
-                    );
+                    crate::wow64_klog!("[SSD] Unregistered shadow svc 0x{:03x}", svc_idx);
                     STATUS_NOT_IMPLEMENTED_32
                 }
             }
@@ -569,7 +537,8 @@ pub unsafe fn dispatch_service(
         _ => {
             crate::wow64_klog!(
                 "[SSD] Unknown table index {} for svc 0x{:08x}",
-                table_idx, service_number
+                table_idx,
+                service_number
             );
             STATUS_INVALID_PARAMETER_32
         }

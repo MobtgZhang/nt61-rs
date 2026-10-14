@@ -50,12 +50,7 @@ impl RadeonFramebuffer {
     /// Write register
     #[inline]
     fn write_reg(&self, offset: u32, value: u32) {
-        unsafe {
-            core::ptr::write_volatile(
-                (self.mmio_base + offset as u64) as *mut u32,
-                value,
-            )
-        }
+        unsafe { core::ptr::write_volatile((self.mmio_base + offset as u64) as *mut u32, value) }
     }
 
     /// Initialize framebuffer
@@ -140,10 +135,7 @@ impl RadeonFramebuffer {
         let pixels = ((self.pitch as usize) * (self.height as usize)) / 4;
         for i in 0..pixels {
             unsafe {
-                core::ptr::write_volatile(
-                    (self.fb_virt + (i as u64 * 4)) as *mut u32,
-                    color,
-                );
+                core::ptr::write_volatile((self.fb_virt + (i as u64 * 4)) as *mut u32, color);
             }
         }
     }
@@ -156,10 +148,7 @@ impl RadeonFramebuffer {
 
         let offset = ((y * self.pitch) + (x * 4)) as u64;
         unsafe {
-            core::ptr::write_volatile(
-                (self.fb_virt + offset) as *mut u32,
-                color,
-            );
+            core::ptr::write_volatile((self.fb_virt + offset) as *mut u32, color);
         }
     }
 

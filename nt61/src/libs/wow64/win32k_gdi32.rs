@@ -10,10 +10,9 @@
 #![allow(non_camel_case_types)]
 #![allow(dead_code)]
 
+use super::types::*;
 use super::win32k_thunk::syscall_numbers;
 use super::win32k_thunk::Wow64Win32kSyscall;
-use super::types::*;
-
 
 pub type HDC32 = ULONG32;
 pub type HPEN32 = ULONG32;
@@ -26,7 +25,6 @@ pub type HICON32 = ULONG32;
 pub type HCURSOR32 = ULONG32;
 pub type HANDLE32 = ULONG32;
 pub type BOOL32 = i32;
-
 
 pub mod rop {
     use super::ULONG32;
@@ -48,8 +46,8 @@ pub mod rop {
     pub const NOMIRRORBITMAP: ULONG32 = 0x80000000;
 }
 
-
 pub mod object_type {
+    use super::ULONG32;
     pub const REGION: ULONG32 = 1;
     pub const PEN: ULONG32 = 2;
     pub const FONT: ULONG32 = 6;
@@ -67,8 +65,8 @@ pub mod object_type {
     pub const EXTLOGFONT: ULONG32 = 21;
 }
 
-
 pub mod pen_style {
+    use super::ULONG32;
     pub const PS_SOLID: ULONG32 = 0;
     pub const PS_DASH: ULONG32 = 1;
     pub const PS_DOT: ULONG32 = 2;
@@ -89,8 +87,8 @@ pub mod pen_style {
     pub const PS_JOIN_MASK: ULONG32 = 0x0000F000;
 }
 
-
 pub mod brush_style {
+    use super::ULONG32;
     pub const BS_SOLID: ULONG32 = 0;
     pub const BS_NULL: ULONG32 = 1;
     pub const BS_HOLLOW: ULONG32 = 1;
@@ -104,8 +102,8 @@ pub mod brush_style {
     pub const BS_MONOPATTERN: ULONG32 = 9;
 }
 
-
 pub mod stock_object {
+    use super::ULONG32;
     pub const WHITE_BRUSH: ULONG32 = 0;
     pub const LTGRAY_BRUSH: ULONG32 = 1;
     pub const GRAY_BRUSH: ULONG32 = 2;
@@ -124,90 +122,61 @@ pub mod stock_object {
     pub const SYSTEM_FIXED_FONT: ULONG32 = 16;
 }
 
-
 pub unsafe extern "C" fn Wow64CreateCompatibleDC(hdc: HDC32) -> HDC32 {
-
     let params: [ULONG32; 1] = [hdc];
-    let result = Wow64Win32kSyscall(
-        syscall_numbers::NtGdiCreateCompatibleDC,
-        params.as_ptr(),
-    );
+    let result = Wow64Win32kSyscall(syscall_numbers::NtGdiCreateCompatibleDC, params.as_ptr());
 
     result
 }
-
 
 pub unsafe extern "C" fn Wow64DeleteDC(hdc: HDC32) -> BOOL32 {
-
     let params: [ULONG32; 1] = [hdc];
-    let result = Wow64Win32kSyscall(
-        syscall_numbers::NtGdiDeleteDC,
-        params.as_ptr(),
-    );
+    let result = Wow64Win32kSyscall(syscall_numbers::NtGdiDeleteDC, params.as_ptr());
 
     result as BOOL32
 }
 
-
 pub unsafe extern "C" fn Wow64SelectObject(hdc: HDC32, h_object: HANDLE32) -> HANDLE32 {
-
     let params: [ULONG32; 2] = [hdc, h_object];
-    let result = Wow64Win32kSyscall(
-        syscall_numbers::NtGdiSelectObject,
-        params.as_ptr(),
-    );
+    let result = Wow64Win32kSyscall(syscall_numbers::NtGdiSelectObject, params.as_ptr());
 
     result
 }
 
-
 pub unsafe extern "C" fn Wow64DeleteObject(h_object: HANDLE32) -> BOOL32 {
-
     let params: [ULONG32; 1] = [h_object];
-    let result = Wow64Win32kSyscall(
-        syscall_numbers::NtGdiDeleteObject,
-        params.as_ptr(),
-    );
+    let result = Wow64Win32kSyscall(syscall_numbers::NtGdiDeleteObject, params.as_ptr());
 
     result as BOOL32
 }
-
 
 pub unsafe extern "C" fn Wow64CreatePen(
     _style: ULONG32,
     _width: ULONG32,
     _color: ULONG32,
 ) -> HPEN32 {
-
     0
 }
-
 
 pub unsafe extern "C" fn Wow64CreateSolidBrush(_color: ULONG32) -> HBRUSH32 {
-
     0
 }
-
 
 pub unsafe extern "C" fn Wow64CreateCompatibleBitmap(
     _hdc: HDC32,
     _width: i32,
     _height: i32,
 ) -> HBITMAP32 {
-
     0
 }
-
 
 pub unsafe extern "C" fn Wow64GetObject(
     _h_object: HANDLE32,
     _buffer_size: ULONG32,
     _buffer: ULONG32,
 ) -> i32 {
-
     0
 }
-
 
 pub unsafe extern "C" fn Wow64TextOutW(
     hdc: HDC32,
@@ -216,22 +185,11 @@ pub unsafe extern "C" fn Wow64TextOutW(
     text: ULONG32,
     length: i32,
 ) -> BOOL32 {
-
-    let params: [ULONG32; 5] = [
-        hdc,
-        x as ULONG32,
-        y as ULONG32,
-        text,
-        length as ULONG32,
-    ];
-    let result = Wow64Win32kSyscall(
-        syscall_numbers::NtGdiTextOut,
-        params.as_ptr(),
-    );
+    let params: [ULONG32; 5] = [hdc, x as ULONG32, y as ULONG32, text, length as ULONG32];
+    let result = Wow64Win32kSyscall(syscall_numbers::NtGdiTextOut, params.as_ptr());
 
     result as BOOL32
 }
-
 
 pub unsafe extern "C" fn Wow64ExtTextOutW(
     _hdc: HDC32,
@@ -243,10 +201,8 @@ pub unsafe extern "C" fn Wow64ExtTextOutW(
     _length: ULONG32,
     _dx: ULONG32,
 ) -> BOOL32 {
-
     0
 }
-
 
 pub unsafe extern "C" fn Wow64BitBlt(
     hdc_dest: HDC32,
@@ -259,7 +215,6 @@ pub unsafe extern "C" fn Wow64BitBlt(
     y_src: i32,
     rop: ULONG32,
 ) -> BOOL32 {
-
     let params: [ULONG32; 9] = [
         hdc_dest,
         x_dest as ULONG32,
@@ -271,14 +226,10 @@ pub unsafe extern "C" fn Wow64BitBlt(
         y_src as ULONG32,
         rop,
     ];
-    let result = Wow64Win32kSyscall(
-        syscall_numbers::NtGdiBitBlt,
-        params.as_ptr(),
-    );
+    let result = Wow64Win32kSyscall(syscall_numbers::NtGdiBitBlt, params.as_ptr());
 
     result as BOOL32
 }
-
 
 pub unsafe extern "C" fn Wow64PatBlt(
     hdc: HDC32,
@@ -288,7 +239,6 @@ pub unsafe extern "C" fn Wow64PatBlt(
     height: i32,
     rop: ULONG32,
 ) -> BOOL32 {
-
     let params: [ULONG32; 6] = [
         hdc,
         x as ULONG32,
@@ -297,17 +247,12 @@ pub unsafe extern "C" fn Wow64PatBlt(
         height as ULONG32,
         rop,
     ];
-    let result = Wow64Win32kSyscall(
-        syscall_numbers::NtGdiPatBlt,
-        params.as_ptr(),
-    );
+    let result = Wow64Win32kSyscall(syscall_numbers::NtGdiPatBlt, params.as_ptr());
 
     result as BOOL32
 }
 
-
 pub unsafe extern "C" fn Wow64GetStockObject(object: i32) -> HANDLE32 {
-
     match object as ULONG32 {
         stock_object::WHITE_BRUSH => 0x80000001,
         stock_object::LTGRAY_BRUSH => 0x80000002,
@@ -323,30 +268,15 @@ pub unsafe extern "C" fn Wow64GetStockObject(object: i32) -> HANDLE32 {
     }
 }
 
-
-pub unsafe extern "C" fn Wow64FillRect(
-    _hdc: HDC32,
-    _rect: ULONG32,
-    _brush: HBRUSH32,
-) -> i32 {
-
+pub unsafe extern "C" fn Wow64FillRect(_hdc: HDC32, _rect: ULONG32, _brush: HBRUSH32) -> i32 {
     // In a real implementation, this would use PatBlt or similar
     1
 }
 
-
 pub unsafe extern "C" fn Wow64GetPixel(_hdc: HDC32, _x: i32, _y: i32) -> ULONG32 {
-
     0
 }
 
-
-pub unsafe extern "C" fn Wow64SetPixel(
-    _hdc: HDC32,
-    _x: i32,
-    _y: i32,
-    _color: ULONG32,
-) -> ULONG32 {
-
+pub unsafe extern "C" fn Wow64SetPixel(_hdc: HDC32, _x: i32, _y: i32, _color: ULONG32) -> ULONG32 {
     0xFFFFFFFF
 }

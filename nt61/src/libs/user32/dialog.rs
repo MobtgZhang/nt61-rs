@@ -11,7 +11,6 @@ use super::window::CreateWindowExW;
 use crate::ke::sync::Spinlock;
 use core::ptr;
 
-
 #[repr(C, packed)]
 pub struct DLGTEMPLATE {
     pub style: u32,
@@ -34,7 +33,7 @@ pub struct DLGITEMTEMPLATE {
     pub id: u16,
 }
 
-
+#[derive(Copy, Clone)]
 struct DialogState {
     hwnd: HWND,
     proc: DLGPROC,
@@ -57,7 +56,6 @@ static DIALOG_TABLE: Spinlock<[DialogState; MAX_DIALOGS]> =
 
 pub type DLGPROC = Option<unsafe extern "C" fn(HWND, u32, usize, isize) -> isize>;
 
-
 pub unsafe extern "C" fn DialogBoxParamW(
     h_instance: HINSTANCE,
     lp_template_name: *const u16,
@@ -69,13 +67,15 @@ pub unsafe extern "C" fn DialogBoxParamW(
         return -1;
     }
 
-
     let hwnd = CreateWindowExW(
         0,
         b"#32770\0".as_ptr() as *const u16, // Dialog class
         ptr::null(),
         0x80000000 | 0x00C00000, // WS_POPUP | WS_CAPTION
-        100, 100, 300, 200,
+        100,
+        100,
+        300,
+        200,
         h_wnd_parent,
         ptr::null_mut(),
         h_instance,
@@ -129,7 +129,6 @@ pub unsafe extern "C" fn DialogBoxIndirectParamW(
     0
 }
 
-
 pub unsafe extern "C" fn CreateDialogParamW(
     h_instance: HINSTANCE,
     lp_template_name: *const u16,
@@ -146,7 +145,10 @@ pub unsafe extern "C" fn CreateDialogParamW(
         b"#32770\0".as_ptr() as *const u16,
         ptr::null(),
         0x80000000 | 0x00C00000,
-        100, 100, 300, 200,
+        100,
+        100,
+        300,
+        200,
         h_wnd_parent,
         ptr::null_mut(),
         h_instance,
@@ -188,7 +190,6 @@ pub unsafe extern "C" fn CreateDialogIndirectParamW(
     ptr::null_mut()
 }
 
-
 pub unsafe extern "C" fn EndDialog(h_dlg: HWND, n_result: isize) -> i32 {
     if h_dlg.is_null() {
         return 0;
@@ -206,12 +207,10 @@ pub unsafe extern "C" fn EndDialog(h_dlg: HWND, n_result: isize) -> i32 {
     1
 }
 
-
 pub unsafe extern "C" fn GetDlgItem(h_dlg: HWND, n_id_dlg_item: i32) -> HWND {
     if h_dlg.is_null() {
         return ptr::null_mut();
     }
-
 
     let _ = n_id_dlg_item;
     ptr::null_mut()
@@ -279,11 +278,7 @@ pub unsafe extern "C" fn SetDlgItemTextW(
     1
 }
 
-pub unsafe extern "C" fn CheckDlgButton(
-    h_dlg: HWND,
-    n_id_button: i32,
-    u_check: u32,
-) -> i32 {
+pub unsafe extern "C" fn CheckDlgButton(h_dlg: HWND, n_id_button: i32, u_check: u32) -> i32 {
     if h_dlg.is_null() {
         return 0;
     }
@@ -300,7 +295,6 @@ pub unsafe extern "C" fn IsDlgButtonChecked(h_dlg: HWND, n_id_button: i32) -> u3
     let _ = n_id_button;
     0
 }
-
 
 pub mod dm {
     pub const DM_GETDEFID: u32 = 0x0400;

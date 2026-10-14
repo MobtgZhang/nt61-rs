@@ -24,8 +24,8 @@
 
 use alloc::vec;
 
-use super::superblock::Ext2SuperBlock;
 use super::inode::{read_inode, Ext2Inode};
+use super::superblock::Ext2SuperBlock;
 
 // ============================================================================
 // Journal Constants
@@ -102,7 +102,7 @@ pub struct JournalDescriptorHeader {
     /// Generic header
     pub header: JournalHeader,
     /// Block numbers for this transaction
-    pub block_refs: [u32; 16],  // Variable size, padded to block size
+    pub block_refs: [u32; 16], // Variable size, padded to block size
 }
 
 impl JournalSuperBlock {
@@ -211,77 +211,69 @@ impl JournalState {
 // ============================================================================
 
 /// Open the journal and read the superblock
-pub fn open_journal(
-    device: *mut (),
-    sb: &Ext2SuperBlock,
-) -> Option<JournalSuperBlock> {
+pub fn open_journal(device: *mut (), sb: &Ext2SuperBlock) -> Option<JournalSuperBlock> {
     let journal_inode = sb.journal_inode;
-    
+
     if journal_inode == 0 {
-        // kprintln!("[EXT3] No journal inode in superblock")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[EXT3] No journal inode in superblock");
         return None;
     }
-    
+
     // Read journal inode
     let inode = read_inode(device, sb, journal_inode)?;
-    
+
     if inode.is_deleted() {
-        // kprintln!("[EXT3] Journal inode has been deleted")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[EXT3] Journal inode has been deleted");
         return None;
     }
-    
+
     // Read journal superblock from the journal inode
     let mut buffer = vec![0u8; JOURNAL_BLOCK_SIZE];
     let _offset = 0usize;
-    
+
     // Read first block of journal
     let lba = super::inode::logical_to_lba(device, sb, &inode, 0)?;
     if super::superblock::read_sector(device, lba, &mut buffer).is_err() {
-        // kprintln!("[EXT3] Failed to read journal superblock")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[EXT3] Failed to read journal superblock");
         return None;
     }
-    
+
     // Parse journal superblock
-    let j_sb = unsafe {
-        core::ptr::read_unaligned(buffer.as_ptr() as *const JournalSuperBlock)
-    };
-    
+    let j_sb = unsafe { core::ptr::read_unaligned(buffer.as_ptr() as *const JournalSuperBlock) };
+
     if !j_sb.is_valid() {
-        // kprintln!("[EXT3] Invalid journal superblock")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[EXT3] Invalid journal superblock");
         return None;
     }
-    
-    // kprintln!("[EXT3] Journal opened: {} blocks, max_trans={}",  // kprintln disabled (memcpy crash workaround)
-//         j_sb.max_blocks, j_sb.max_transactions);
-    
+
+    // kprintln!("[EXT3] Journal opened: {} blocks, max_trans={}",
+    //         j_sb.max_blocks, j_sb.max_transactions);
+
     Some(j_sb)
 }
 
 /// Replay the journal after a crash
-pub fn replay_journal(
-    device: *mut (),
-    sb: &Ext2SuperBlock,
-) -> Result<usize, ()> {
+pub fn replay_journal(device: *mut (), sb: &Ext2SuperBlock) -> Result<usize, ()> {
     if !sb.has_journal() {
-        return Ok(0);  // No journal, nothing to replay
+        return Ok(0); // No journal, nothing to replay
     }
-    
+
     // Open the journal
     let j_sb = match open_journal(device, sb) {
         Some(js) => js,
         None => return Err(()),
     };
-    
-    // kprintln!("[EXT3] Replaying journal...")  // kprintln disabled (memcpy crash workaround);
-    
+
+    // kprintln!("[EXT3] Replaying journal...");
+
     let mut replayed_count = 0;
     let mut current_block = j_sb.first_block;
     let end_block = j_sb.first_block + j_sb.max_blocks;
-    
+
     while current_block < end_block {
         // Read journal block
         let mut buffer = vec![0u8; JOURNAL_BLOCK_SIZE];
-        
+
         // For internal journals, read from journal inode
         // (simplified - assumes block 0 corresponds to journal block)
         if current_block >= j_sb.first_block && current_block < j_sb.first_block + 1 {
@@ -290,8 +282,10 @@ pub fn replay_journal(
                 Some(i) => i,
                 None => break,
             };
-            
-            if let Some(lba) = super::inode::logical_to_lba(device, sb, &inode, current_block - j_sb.first_block) {
+
+            if let Some(lba) =
+                super::inode::logical_to_lba(device, sb, &inode, current_block - j_sb.first_block)
+            {
                 if super::superblock::read_sector(device, lba, &mut buffer).is_err() {
                     break;
                 }
@@ -301,21 +295,19 @@ pub fn replay_journal(
         } else {
             break;
         }
-        
+
         // Parse journal header
-        let header = unsafe {
-            core::ptr::read_unaligned(buffer.as_ptr() as *const JournalHeader)
-        };
-        
+        let header = unsafe { core::ptr::read_unaligned(buffer.as_ptr() as *const JournalHeader) };
+
         if !header.is_valid() {
             break;
         }
-        
+
         match header.block_type {
             JBD2_DESCRIPTOR_BLOCK => {
                 // Descriptor block - process the blocks listed
-                // kprintln!("[EXT3] Replaying descriptor block, seq={}", header.sequence)  // kprintln disabled (memcpy crash workaround);
-                
+                // kprintln!("[EXT3] Replaying descriptor block, seq={}", header.sequence);
+
                 // In a full implementation, we would:
                 // 1. Read the data blocks referenced
                 // 2. Write them to the actual filesystem
@@ -324,28 +316,28 @@ pub fn replay_journal(
             }
             JBD2_COMMIT_BLOCK => {
                 // Commit block - transaction is complete
-                // kprintln!("[EXT3] Transaction {} committed", header.sequence)  // kprintln disabled (memcpy crash workaround);
+                // kprintln!("[EXT3] Transaction {} committed", header.sequence);
             }
             JBD2_REVOKE_BLOCK => {
                 // Revoke block - some blocks were revoked
-                // kprintln!("[EXT3] Revoke block, seq={}", header.sequence)  // kprintln disabled (memcpy crash workaround);
+                // kprintln!("[EXT3] Revoke block, seq={}", header.sequence);
             }
             _ => {
                 // Unknown block type
                 break;
             }
         }
-        
+
         current_block += 1;
-        
+
         // Safety limit
         if replayed_count > 100 {
-            // kprintln!("[EXT3] Replay limit reached")  // kprintln disabled (memcpy crash workaround);
+            // kprintln!("[EXT3] Replay limit reached");
             break;
         }
     }
-    
-    // kprintln!("[EXT3] Journal replayed {} blocks", replayed_count)  // kprintln disabled (memcpy crash workaround);
+
+    // kprintln!("[EXT3] Journal replayed {} blocks", replayed_count);
     Ok(replayed_count)
 }
 
@@ -390,16 +382,12 @@ pub fn journal_commit_transaction(
 }
 
 /// Abort a journal transaction (on error)
-pub fn journal_abort_transaction(
-    _device: *mut (),
-    _sb: &Ext2SuperBlock,
-    _transaction_id: u32,
-) {
+pub fn journal_abort_transaction(_device: *mut (), _sb: &Ext2SuperBlock, _transaction_id: u32) {
     // Mark journal as aborted
     // In a full implementation, we would:
     // 1. Stop logging
     // 2. Mark filesystem as needing fsck
-    // kprintln!("[EXT3] Journal transaction {} aborted", _transaction_id)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[EXT3] Journal transaction {} aborted", _transaction_id);
 }
 
 // ============================================================================
@@ -407,46 +395,46 @@ pub fn journal_abort_transaction(
 // ============================================================================
 
 /// Find the last valid transaction in the journal
-pub fn find_last_transaction(
-    device: *mut (),
-    sb: &Ext2SuperBlock,
-) -> Option<u32> {
+pub fn find_last_transaction(device: *mut (), sb: &Ext2SuperBlock) -> Option<u32> {
     let j_sb = open_journal(device, sb)?;
-    
+
     // Start from the end and work backwards
     let mut current_block = j_sb.first_block + j_sb.max_blocks - 1;
     let mut last_valid_seq: Option<u32> = None;
-    
+
     while current_block > j_sb.first_block {
         // Read block
         let inode = match read_inode(device, sb, sb.journal_inode) {
             Some(i) => i,
             None => break,
         };
-        
+
         let mut buffer = vec![0u8; JOURNAL_BLOCK_SIZE];
-        let lba = match super::inode::logical_to_lba(device, sb, &inode, current_block - j_sb.first_block) {
+        let lba = match super::inode::logical_to_lba(
+            device,
+            sb,
+            &inode,
+            current_block - j_sb.first_block,
+        ) {
             Some(l) => l,
             None => break,
         };
-        
+
         if super::superblock::read_sector(device, lba, &mut buffer).is_err() {
             current_block -= 1;
             continue;
         }
-        
-        let header = unsafe {
-            core::ptr::read_unaligned(buffer.as_ptr() as *const JournalHeader)
-        };
-        
+
+        let header = unsafe { core::ptr::read_unaligned(buffer.as_ptr() as *const JournalHeader) };
+
         if header.is_valid() && header.is_commit() {
             last_valid_seq = Some(header.sequence);
             break;
         }
-        
+
         current_block -= 1;
     }
-    
+
     last_valid_seq
 }
 
@@ -457,7 +445,7 @@ pub fn get_journal_sequence(sb: &Ext2SuperBlock) -> Option<u32> {
     if !sb.has_journal() {
         return None;
     }
-    
+
     // For now, return 0 as we haven't opened the journal yet
     Some(0)
 }
@@ -468,13 +456,13 @@ pub fn get_journal_sequence(sb: &Ext2SuperBlock) -> Option<u32> {
 
 /// Print journal superblock for debugging
 pub fn debug_print_journal_sb(_sb: &JournalSuperBlock) {
-    // kprintln!("[EXT3] Journal Superblock:")  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("  Magic:        0x{:08x}", sb.header.magic)  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("  Blocks:       {}", sb.max_blocks)  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("  Max trans:    {}", sb.max_transactions)  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("  First block:  {}", sb.first_block)  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("  Start:        {}", sb.start)  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("  Last trans:   {}", sb.last_transaction)  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("  Current trans: {}", sb.transaction_id)  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("  Sequence:     {}", sb.journal_sequence)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("[EXT3] Journal Superblock:");
+    // kprintln!("  Magic:        0x{:08x}", sb.header.magic);
+    // kprintln!("  Blocks:       {}", sb.max_blocks);
+    // kprintln!("  Max trans:    {}", sb.max_transactions);
+    // kprintln!("  First block:  {}", sb.first_block);
+    // kprintln!("  Start:        {}", sb.start);
+    // kprintln!("  Last trans:   {}", sb.last_transaction);
+    // kprintln!("  Current trans: {}", sb.transaction_id);
+    // kprintln!("  Sequence:     {}", sb.journal_sequence);
 }

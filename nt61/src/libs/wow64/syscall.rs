@@ -133,9 +133,7 @@ pub fn validate_wow64_pointer(ptr32: ULONG32) -> bool {
 }
 
 /// Convert a 32-bit UNICODE_STRING to 64-bit.
-pub fn convert_unicode_string_32_to_64(
-    str32: *const UnicodeString32,
-) -> Option<(u16, u16, u64)> {
+pub fn convert_unicode_string_32_to_64(str32: *const UnicodeString32) -> Option<(u16, u16, u64)> {
     if str32.is_null() {
         return None;
     }
@@ -152,10 +150,7 @@ pub fn convert_unicode_string_32_to_64(
 
 /// Convert CLIENT_ID32 to CLIENT_ID64.
 pub fn convert_client_id_32_to_64(cid32: &ClientId32) -> (u64, u64) {
-    (
-        cid32.unique_process as u64,
-        cid32.unique_thread as u64,
-    )
+    (cid32.unique_process as u64, cid32.unique_thread as u64)
 }
 
 /// Convert OBJECT_ATTRIBUTES32 to 64-bit representation.
@@ -168,9 +163,7 @@ pub struct ObjectAttributes64 {
     pub security_quality_of_service: u64,
 }
 
-pub fn convert_object_attributes_32_to_64(
-    oa32_ptr: ULONG32,
-) -> Option<ObjectAttributes64> {
+pub fn convert_object_attributes_32_to_64(oa32_ptr: ULONG32) -> Option<ObjectAttributes64> {
     if oa32_ptr == 0 {
         return None;
     }
@@ -381,8 +374,7 @@ pub fn dispatch_nt_allocate_virtual_memory(ctx: &mut SyscallContext) -> ULONG32 
     let protect = ctx.next_u32();
 
     // Validate pointers
-    if !validate_wow64_pointer(base_address_ptr) ||
-       !validate_wow64_pointer(region_size_ptr) {
+    if !validate_wow64_pointer(base_address_ptr) || !validate_wow64_pointer(region_size_ptr) {
         return STATUS_INVALID_PARAMETER;
     }
 
@@ -403,8 +395,7 @@ pub fn dispatch_nt_free_virtual_memory(ctx: &mut SyscallContext) -> ULONG32 {
     let region_size_ptr = ctx.next_u32();
     let free_type = ctx.next_u32();
 
-    if !validate_wow64_pointer(base_address_ptr) ||
-       !validate_wow64_pointer(region_size_ptr) {
+    if !validate_wow64_pointer(base_address_ptr) || !validate_wow64_pointer(region_size_ptr) {
         return STATUS_INVALID_PARAMETER;
     }
 
@@ -443,20 +434,27 @@ pub fn dispatch_nt_create_file(ctx: &mut SyscallContext) -> ULONG32 {
     let ea_buffer = ctx.next_u32();
     let ea_length = ctx.next_u32();
 
-    if !validate_wow64_pointer(file_handle_ptr) ||
-       !validate_wow64_pointer(io_status_block_ptr) {
+    if !validate_wow64_pointer(file_handle_ptr) || !validate_wow64_pointer(io_status_block_ptr) {
         return STATUS_INVALID_PARAMETER;
     }
 
-    let _ = (desired_access, object_attributes_ptr, allocation_size_ptr,
-             file_attributes, share_access, create_disposition,
-             create_options, ea_buffer, ea_length);
+    let _ = (
+        desired_access,
+        object_attributes_ptr,
+        allocation_size_ptr,
+        file_attributes,
+        share_access,
+        create_disposition,
+        create_options,
+        ea_buffer,
+        ea_length,
+    );
     STATUS_NOT_IMPLEMENTED
 }
 
 /// Dispatch NtReadFile (32-bit → 64-bit).
 pub fn dispatch_nt_read_file(ctx: &mut SyscallContext) -> ULONG32 {
-    let _file_handle = ctx.next_u32();
+    let file_handle = ctx.next_u32();
     let _event = ctx.next_u32();
     let _apc_routine = ctx.next_u32();
     let _apc_context = ctx.next_u32();
@@ -466,8 +464,14 @@ pub fn dispatch_nt_read_file(ctx: &mut SyscallContext) -> ULONG32 {
     let byte_offset_ptr = ctx.next_u32();
     let _key = ctx.next_u32();
 
-    if !validate_wow64_pointer(io_status_block_ptr) ||
-       !validate_wow64_pointer(buffer_ptr) {
+    // `NtReadFile` resolves the object handle before probing the caller
+    // buffers, so an invalid handle reports `STATUS_INVALID_HANDLE` rather
+    // than `STATUS_INVALID_PARAMETER`.
+    if !crate::libs::wow64::handle::is_real_handle(file_handle) {
+        return STATUS_INVALID_HANDLE;
+    }
+
+    if !validate_wow64_pointer(io_status_block_ptr) || !validate_wow64_pointer(buffer_ptr) {
         return STATUS_INVALID_PARAMETER;
     }
 
@@ -477,7 +481,7 @@ pub fn dispatch_nt_read_file(ctx: &mut SyscallContext) -> ULONG32 {
 
 /// Dispatch NtWriteFile (32-bit → 64-bit).
 pub fn dispatch_nt_write_file(ctx: &mut SyscallContext) -> ULONG32 {
-    let _file_handle = ctx.next_u32();
+    let file_handle = ctx.next_u32();
     let _event = ctx.next_u32();
     let _apc_routine = ctx.next_u32();
     let _apc_context = ctx.next_u32();
@@ -487,8 +491,12 @@ pub fn dispatch_nt_write_file(ctx: &mut SyscallContext) -> ULONG32 {
     let byte_offset_ptr = ctx.next_u32();
     let _key = ctx.next_u32();
 
-    if !validate_wow64_pointer(io_status_block_ptr) ||
-       !validate_wow64_pointer(buffer_ptr) {
+    // Same ordering as `NtWriteFile`: handle lookup precedes parameter probes.
+    if !crate::libs::wow64::handle::is_real_handle(file_handle) {
+        return STATUS_INVALID_HANDLE;
+    }
+
+    if !validate_wow64_pointer(io_status_block_ptr) || !validate_wow64_pointer(buffer_ptr) {
         return STATUS_INVALID_PARAMETER;
     }
 

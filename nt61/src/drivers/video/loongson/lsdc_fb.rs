@@ -3,8 +3,8 @@
 //! Implements framebuffer initialization, mode setting, and pixel
 //! operations for the Loongson DC.
 
-use crate::drivers::video::loongson::lsdc_reg::*;
 use crate::drivers::video::core::gpu_common::{DisplayMode, GpuFramebufferInfo, PixelFormat};
+use crate::drivers::video::loongson::lsdc_reg::*;
 
 /// Loongson DC framebuffer
 #[derive(Debug)]
@@ -51,12 +51,7 @@ impl LsDcFramebuffer {
     /// Write a DC register
     #[inline]
     fn write_reg(&self, offset: u32, value: u32) {
-        unsafe {
-            core::ptr::write_volatile(
-                (self.dc_base + offset as u64) as *mut u32,
-                value,
-            )
-        }
+        unsafe { core::ptr::write_volatile((self.dc_base + offset as u64) as *mut u32, value) }
     }
 
     /// Get DC version
@@ -160,14 +155,8 @@ impl LsDcFramebuffer {
     fn configure_primary_plane(&mut self) -> Result<(), &'static str> {
         self.write_reg(PLANE_PRIMARY_ADDR, self.fb_phys as u32);
         self.write_reg(PLANE_PRIMARY_STRIDE, self.pitch);
-        self.write_reg(
-            PLANE_PRIMARY_SIZE,
-            (self.height << 16) | self.width,
-        );
-        self.write_reg(
-            PLANE_PRIMARY_CTRL,
-            PLANE_ENABLE | PLANE_FORMAT_BGRA,
-        );
+        self.write_reg(PLANE_PRIMARY_SIZE, (self.height << 16) | self.width);
+        self.write_reg(PLANE_PRIMARY_CTRL, PLANE_ENABLE | PLANE_FORMAT_BGRA);
         Ok(())
     }
 
@@ -213,10 +202,7 @@ impl LsDcFramebuffer {
         let num_pixels = ((self.pitch as usize) * (self.height as usize)) / 4;
         for i in 0..num_pixels {
             unsafe {
-                core::ptr::write_volatile(
-                    (self.fb_virt + (i as u64 * 4)) as *mut u32,
-                    color,
-                );
+                core::ptr::write_volatile((self.fb_virt + (i as u64 * 4)) as *mut u32, color);
             }
         }
     }
@@ -233,10 +219,7 @@ impl LsDcFramebuffer {
 
         let offset = ((y * self.pitch) + (x * 4)) as u64;
         unsafe {
-            core::ptr::write_volatile(
-                (self.fb_virt + offset) as *mut u32,
-                color,
-            );
+            core::ptr::write_volatile((self.fb_virt + offset) as *mut u32, color);
         }
     }
 
@@ -251,9 +234,7 @@ impl LsDcFramebuffer {
         }
 
         let offset = ((y * self.pitch) + (x * 4)) as u64;
-        unsafe {
-            core::ptr::read_volatile((self.fb_virt + offset) as *const u32)
-        }
+        unsafe { core::ptr::read_volatile((self.fb_virt + offset) as *const u32) }
     }
 
     /// Fill a rectangle
@@ -269,7 +250,15 @@ impl LsDcFramebuffer {
     }
 
     /// Copy a region within the framebuffer
-    pub fn copy_region(&mut self, src_x: u32, src_y: u32, dst_x: u32, dst_y: u32, width: u32, height: u32) {
+    pub fn copy_region(
+        &mut self,
+        src_x: u32,
+        src_y: u32,
+        dst_x: u32,
+        dst_y: u32,
+        width: u32,
+        height: u32,
+    ) {
         // Ensure source and destination don't overlap
         let src_offset = (src_y * self.pitch + src_x * 4) as usize;
         let dst_offset = (dst_y * self.pitch + dst_x * 4) as usize;

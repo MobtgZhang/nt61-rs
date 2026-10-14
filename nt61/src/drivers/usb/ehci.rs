@@ -12,8 +12,8 @@
 //! revision 1.0 + supplement. No code is copied from any
 //! Microsoft or ReactOS source file.
 
-use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use crate::kprintln;
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 
 // Helper functions for MMIO access
 unsafe fn mmio_read32(base: u64, offset: u32) -> u32 {
@@ -30,55 +30,26 @@ unsafe fn mmio_write32(base: u64, offset: u32, value: u32) {
 
 /// EHCI PCI class (0x0C, 0x03, 0x20).
 
-
 /// EHCI capability register offsets (relative to BAR0).
 
-
-
-
-
 /// EHCI operational register offsets (relative to `op_base`).
-
-
-
-
-
-
 
 const OP_PORTSC: u32 = 0x44;
 
 /// USBCMD bits.
 
-
-
-
-
-
 /// USBSTS bits.
 
-
-
-
-
-
 /// PORTSC bits.
-const PORTSC_CCS: u32 = 1 << 0;    // Current Connect Status
-const PORTSC_CSC: u32 = 1 << 1;    // Connect Status Change
-const PORTSC_PE: u32 = 1 << 2;     // Port Enable
-const PORTSC_PEC: u32 = 1 << 3;   // Port Enable Change
+const PORTSC_CCS: u32 = 1 << 0; // Current Connect Status
+const PORTSC_CSC: u32 = 1 << 1; // Connect Status Change
+const PORTSC_PE: u32 = 1 << 2; // Port Enable
+const PORTSC_PEC: u32 = 1 << 3; // Port Enable Change
 
-const PORTSC_PR: u32 = 1 << 8;     // Port Reset
-const PORTSC_HSP: u32 = 1 << 9;    // High Speed
-
-
+const PORTSC_PR: u32 = 1 << 8; // Port Reset
+const PORTSC_HSP: u32 = 1 << 9; // High Speed
 
 /// HCCPARAMS bits.
-
-
-
-
-
-
 
 // ============================================================================
 // USB Descriptor Structures
@@ -87,10 +58,10 @@ const PORTSC_HSP: u32 = 1 << 9;    // High Speed
 /// USB speed enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UsbSpeed {
-    Low = 0,      // 1.5 Mbps
-    Full = 1,     // 12 Mbps
-    High = 2,     // 480 Mbps
-    Super = 3,    // 5 Gbps (for EHCI this is always High)
+    Low = 0,   // 1.5 Mbps
+    Full = 1,  // 12 Mbps
+    High = 2,  // 480 Mbps
+    Super = 3, // 5 Gbps (for EHCI this is always High)
 }
 
 impl UsbSpeed {
@@ -157,23 +128,15 @@ pub struct UsbEndpointDescriptor {
 const QTD_TOKEN_ACTIVE: u32 = 1 << 7;
 const QTD_TOKEN_HALT: u32 = 1 << 6;
 
-
-
-
-
-
-
-
-
 /// EHCI Queue Transfer Descriptor (qTD) - 64 bytes
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct EhciQtd {
-    pub next_qtd: u32,          // Next qTD pointer
-    pub alt_next_qtd: u32,      // Alternate next qTD
-    pub token: u32,              // Token (pid, status, bytes)
-    pub buffer_ptr: u32,         // Buffer pointer (low 32 bits)
-    pub buffer_ptr_hi: u32,      // Buffer pointer (high 32 bits)
+    pub next_qtd: u32,      // Next qTD pointer
+    pub alt_next_qtd: u32,  // Alternate next qTD
+    pub token: u32,         // Token (pid, status, bytes)
+    pub buffer_ptr: u32,    // Buffer pointer (low 32 bits)
+    pub buffer_ptr_hi: u32, // Buffer pointer (high 32 bits)
     pub ext_buffer_ptr: u32,
     pub reserved: [u32; 5],
 }
@@ -183,11 +146,9 @@ impl EhciQtd {
     pub fn new(buf_phys: u64, buf_len: usize, pid: u8) -> Self {
         let total_bytes = (buf_len as u32).min(16 * 1024 * 1024);
         Self {
-            next_qtd: 1,  // Terminate
+            next_qtd: 1, // Terminate
             alt_next_qtd: 1,
-            token: QTD_TOKEN_ACTIVE 
-                | ((pid as u32 & 0x3) << 8)
-                | ((total_bytes & 0x7FFF) << 16),
+            token: QTD_TOKEN_ACTIVE | ((pid as u32 & 0x3) << 8) | ((total_bytes & 0x7FFF) << 16),
             buffer_ptr: buf_phys as u32,
             buffer_ptr_hi: (buf_phys >> 32) as u32,
             ext_buffer_ptr: 0,
@@ -215,13 +176,13 @@ impl EhciQtd {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct EhciQh {
-    pub horiz_link_ptr: u32,     // Horizontal link pointer
-    pub ep_cap: u32,             // Endpoint capabilities
-    pub current_qtd: u32,        // Current qTD pointer
-    pub next_qtd: u32,           // Next qTD pointer
-    pub alt_next_qtd: u32,       // Alternate next qTD
-    pub token: u32,              // Status token
-    pub buffer_ptr: [u32; 5],     // Buffer pointers (page 0-4)
+    pub horiz_link_ptr: u32,  // Horizontal link pointer
+    pub ep_cap: u32,          // Endpoint capabilities
+    pub current_qtd: u32,     // Current qTD pointer
+    pub next_qtd: u32,        // Next qTD pointer
+    pub alt_next_qtd: u32,    // Alternate next qTD
+    pub token: u32,           // Status token
+    pub buffer_ptr: [u32; 5], // Buffer pointers (page 0-4)
 }
 
 impl EhciQh {
@@ -229,7 +190,7 @@ impl EhciQh {
     pub fn new(ep_addr: u8, _ep_type: u8, max_packet: u16, speed: UsbSpeed) -> Self {
         let is_in = (ep_addr & 0x80) != 0;
         let dir_nak = if is_in { 2u32 << 30 } else { 0 };
-        
+
         let ep_cap = (dir_nak)
             | (3u32 << 28)  // nak_count = 3
             | ((match speed {
@@ -242,7 +203,7 @@ impl EhciQh {
             | (((max_packet as u32) & 0x3FF) << 16);
 
         Self {
-            horiz_link_ptr: 1,  // Terminate
+            horiz_link_ptr: 1, // Terminate
             ep_cap,
             current_qtd: 1,
             next_qtd: 1,
@@ -336,7 +297,8 @@ impl Default for EhciController {
     }
 }
 
-static mut EHCI_CONTROLLERS: [Option<EhciController>; 4] = [Option::None, Option::None, Option::None, Option::None];
+static mut EHCI_CONTROLLERS: [Option<EhciController>; 4] =
+    [Option::None, Option::None, Option::None, Option::None];
 static mut EHCI_COUNT: usize = 0;
 static EHCI_ADDRESS_COUNTER: AtomicU8 = AtomicU8::new(1);
 
@@ -374,8 +336,7 @@ pub fn init() {
 }
 
 /// Most recently observed EHCI controller count.
-static INIT_FOUND: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0);
+static INIT_FOUND: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 /// Return the number of controllers registered by the most
 /// recent `init()` call.
@@ -423,35 +384,37 @@ pub fn reset_port(controller: usize, port: u8) -> Result<UsbSpeed, &'static str>
             Some(Some(c)) => {
                 let op_base = c.mmio_base + c.cap_length as u64;
                 let port_reg = OP_PORTSC + (port as u32) * 4;
-                
+
                 let mut portsc = mmio_read32(op_base, port_reg);
-                
+
                 // Clear status bits
                 portsc |= PORTSC_CSC | PORTSC_PEC;
                 mmio_write32(op_base, port_reg, portsc);
-                
+
                 // Start reset
                 portsc |= PORTSC_PR;
                 mmio_write32(op_base, port_reg, portsc);
-                
+
                 // Wait for reset to complete (50ms)
                 for _ in 0..50000 {
                     portsc = mmio_read32(op_base, port_reg);
-                    if (portsc & PORTSC_PR) == 0 { break; }
+                    if (portsc & PORTSC_PR) == 0 {
+                        break;
+                    }
                 }
-                
+
                 // Check if reset worked
                 if (portsc & PORTSC_CCS) == 0 {
                     return Err("Device disconnected during reset");
                 }
-                
+
                 // Enable port
                 portsc |= PORTSC_PE;
                 mmio_write32(op_base, port_reg, portsc);
-                
+
                 let speed = UsbSpeed::from_portsc(portsc);
-                // kprintln!("[EHCI] Port {} reset complete, speed: {:?}", port, speed)  // kprintln disabled (memcpy crash workaround);
-                
+                // kprintln!("[EHCI] Port {} reset complete, speed: {:?}", port, speed);
+
                 Ok(speed)
             }
             _ => Err("Invalid controller"),
@@ -478,14 +441,14 @@ impl UsbSetupPacket {
     /// Create a GET_DESCRIPTOR request
     pub fn get_descriptor(dtype: u8, index: u8, len: u16) -> Self {
         Self {
-            request_type: 0x80,  // IN, Standard, Device
+            request_type: 0x80, // IN, Standard, Device
             request: 0x06,
             value: ((dtype as u16) << 8) | (index as u16),
             index: 0,
             length: len,
         }
     }
-    
+
     /// Create a SET_ADDRESS request
     pub fn set_address(addr: u8) -> Self {
         Self {
@@ -496,7 +459,7 @@ impl UsbSetupPacket {
             length: 0,
         }
     }
-    
+
     /// Create a SET_CONFIGURATION request
     pub fn set_configuration(config: u8) -> Self {
         Self {
@@ -527,18 +490,18 @@ fn allocate_address() -> u8 {
 pub fn enumerate_device(controller: usize, port: u8) -> Result<UsbDevice, &'static str> {
     // Reset port
     let speed = reset_port(controller, port)?;
-    
+
     // Allocate new address
     let new_addr = allocate_address();
-    // kprintln!("[EHCI] Allocated address {} for port {}", new_addr, port)  // kprintln disabled (memcpy crash workaround);
-    
+    // kprintln!("[EHCI] Allocated address {} for port {}", new_addr, port);
+
     // In real implementation, would execute control transfers here
     // - GET_DESCRIPTOR from address 0
     // - SET_ADDRESS to new_addr
     // - GET_DESCRIPTOR from new_addr
     // - GET_CONFIGURATION
     // - SET_CONFIGURATION
-    
+
     Ok(UsbDevice {
         address: new_addr,
         port,
@@ -568,7 +531,11 @@ pub fn smoke_test() -> bool {
                         let portsc = get_port_status(i, p);
                         let connected = (portsc & PORTSC_CCS) != 0;
                         let enabled = (portsc & PORTSC_PE) != 0;
-                        let speed = if (portsc & PORTSC_HSP) != 0 { "HIGH" } else { "FULL" };
+                        let speed = if (portsc & PORTSC_HSP) != 0 {
+                            "HIGH"
+                        } else {
+                            "FULL"
+                        };
                         port_total += 1;
                         if connected {
                             port_connected += 1;
@@ -596,19 +563,15 @@ pub fn smoke_test() -> bool {
             }
         }
 
-        // kprintln!("  [EHCI SMOKE OK] EHCI stack healthy")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("  [EHCI SMOKE OK] EHCI stack healthy");
         true
     }
 }
 
-static SMOKE_PORT_TOTAL: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0);
-static SMOKE_PORT_CONNECTED: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0);
-static SMOKE_PORT_ENABLED: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0);
-static SMOKE_PORT_HIGH: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0);
+static SMOKE_PORT_TOTAL: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+static SMOKE_PORT_CONNECTED: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+static SMOKE_PORT_ENABLED: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+static SMOKE_PORT_HIGH: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 /// Return `(total, connected, enabled, high_speed)` from the
 /// most recent smoke-test pass.
@@ -625,21 +588,26 @@ pub fn smoke_port_summary() -> (u32, u32, u32, u32) {
 /// mutate any state. Used by smoke tests and other diagnostics.
 pub fn diagnostics(controller: usize) -> Option<EhciDiagnostics> {
     unsafe {
-        EHCI_CONTROLLERS.get(controller).and_then(|c| c.as_ref()).map(|c| EhciDiagnostics {
-            bar0_phys: c.bar0_phys,
-            mmio_base: c.mmio_base,
-            cap_length: c.cap_length,
-            hci_version: c.hci_version,
-            n_ports: c.n_ports,
-            hcc_params: c.hcc_params,
-            cmd: c.cmd,
-            sts: c.sts,
-            initialised: c.initialised,
-            async_qh_phys: c.async_qh_phys,
-            async_qh_virt: c.async_qh_virt,
-            next_address: c.next_address.load(core::sync::atomic::Ordering::Relaxed),
-            device_connected: c.device_connected.load(core::sync::atomic::Ordering::Relaxed),
-        })
+        EHCI_CONTROLLERS
+            .get(controller)
+            .and_then(|c| c.as_ref())
+            .map(|c| EhciDiagnostics {
+                bar0_phys: c.bar0_phys,
+                mmio_base: c.mmio_base,
+                cap_length: c.cap_length,
+                hci_version: c.hci_version,
+                n_ports: c.n_ports,
+                hcc_params: c.hcc_params,
+                cmd: c.cmd,
+                sts: c.sts,
+                initialised: c.initialised,
+                async_qh_phys: c.async_qh_phys,
+                async_qh_virt: c.async_qh_virt,
+                next_address: c.next_address.load(core::sync::atomic::Ordering::Relaxed),
+                device_connected: c
+                    .device_connected
+                    .load(core::sync::atomic::Ordering::Relaxed),
+            })
     }
 }
 

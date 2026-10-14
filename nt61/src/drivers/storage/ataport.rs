@@ -49,8 +49,6 @@ pub struct AtaPassThrough {
     pub current_task_file: [u8; 8],
 }
 
-
-
 #[derive(Copy, Clone)]
 pub struct AtaAdapter {
     pub valid: bool,
@@ -83,11 +81,15 @@ static IO_COUNT: AtomicU32 = AtomicU32::new(0);
 
 /// `AtaPortInitialize` — bind to channel `c` (0=primary, 1=secondary).
 pub fn AtaPortInitialize(channel: u8) -> u32 {
-    if (channel as usize) >= MAX_ADAPTERS { return ATA_PORT_FAILED; }
+    if (channel as usize) >= MAX_ADAPTERS {
+        return ATA_PORT_FAILED;
+    }
     let _g = ADAPTER_LOCK.lock();
     unsafe {
         let a = &mut ADAPTERS[channel as usize];
-        if a.valid { return ATA_PORT_SUCCESS; }
+        if a.valid {
+            return ATA_PORT_SUCCESS;
+        }
         a.valid = true;
         a.channel = channel;
         a.io_count = 0;
@@ -95,15 +97,17 @@ pub fn AtaPortInitialize(channel: u8) -> u32 {
         a.device_object = core::ptr::null_mut();
     }
     ata::probe_channel(channel as usize);
-    // kprintln!("    [ATAPORT] bound channel {} (has_device={})",  // kprintln disabled (memcpy crash workaround)
-//         channel, ata::has_device(channel as usize));
+    // kprintln!("    [ATAPORT] bound channel {} (has_device={})",
+    //         channel, ata::has_device(channel as usize));
     ATA_PORT_SUCCESS
 }
 
 /// `AtaPortStartIo` — process a pass-through IOCTL. Returns the
 /// bytes transferred on success or u32::MAX on error.
 pub fn AtaPortStartIo(channel: u8, request: &AtaPassThrough, buf: &mut [u16]) -> u32 {
-    if (channel as usize) >= MAX_ADAPTERS { return u32::MAX; }
+    if (channel as usize) >= MAX_ADAPTERS {
+        return u32::MAX;
+    }
     IO_COUNT.fetch_add(1, Ordering::Relaxed);
     // Find the first command byte in the current task file.
     let cmd = request.current_task_file[7];
@@ -116,7 +120,9 @@ pub fn AtaPortStartIo(channel: u8, request: &AtaPassThrough, buf: &mut [u16]) ->
         0x20 => {
             // READ SECTORS (PIO 28-bit).
             let sz = (count as usize) * 256;
-            if buf.len() < sz { return u32::MAX; }
+            if buf.len() < sz {
+                return u32::MAX;
+            }
             if ata::read_sectors(channel as usize, lba, count, buf) {
                 let r = (sz * 2) as u32;
                 IO_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -127,7 +133,9 @@ pub fn AtaPortStartIo(channel: u8, request: &AtaPassThrough, buf: &mut [u16]) ->
         }
         0xEC => {
             // IDENTIFY DEVICE.
-            if buf.len() < 256 { return u32::MAX; }
+            if buf.len() < 256 {
+                return u32::MAX;
+            }
             // The PIO driver doesn't expose identify; we cheat
             // and just touch the channel to confirm it's live.
             ata::probe_channel(channel as usize);
@@ -139,8 +147,10 @@ pub fn AtaPortStartIo(channel: u8, request: &AtaPassThrough, buf: &mut [u16]) ->
 
 /// Read a sector via the ATAPORT driver. Returns true on success.
 pub fn read_sector(channel: u8, _lba: u32, buf: &mut [u16; 256]) -> bool {
-    if (channel as usize) >= MAX_ADAPTERS { return false; }
-    
+    if (channel as usize) >= MAX_ADAPTERS {
+        return false;
+    }
+
     // Initialize the adapter if not already done
     unsafe {
         let a = &mut ADAPTERS[channel as usize];
@@ -149,41 +159,55 @@ pub fn read_sector(channel: u8, _lba: u32, buf: &mut [u16; 256]) -> bool {
             ata::probe_channel(channel as usize);
         }
     }
-    
+
     // Use ATA command 0x20 (READ SECTORS PIO)
     let request = AtaPassThrough {
         length: 0,
         ata_flags: 0x02, // ATA_FLAGS_DATA_IN
-        path_id: 0, target_id: 0, lun: 0, reserved_as_0: 0,
+        path_id: 0,
+        target_id: 0,
+        lun: 0,
+        reserved_as_0: 0,
         data_buffer_offset: 0,
         data_transfer_length: 512,
         previous_task_file: [0; 8],
         current_task_file: [0, 1, 0, 0, 0, 0, 0, 0x20], // READ SECTORS command
     };
-    
+
     let result = AtaPortStartIo(channel, &request, buf);
     result != u32::MAX && result == 512
 }
 
 pub fn adapter_count() -> usize {
     let mut n = 0;
-    unsafe { for a in ADAPTERS.iter() { if a.valid { n += 1; } } }
+    unsafe {
+        for a in ADAPTERS.iter() {
+            if a.valid {
+                n += 1;
+            }
+        }
+    }
     n
 }
 
-pub fn io_count() -> u32 { IO_COUNT.load(Ordering::Relaxed) }
+pub fn io_count() -> u32 {
+    IO_COUNT.load(Ordering::Relaxed)
+}
 
 /// Smoke test: bind both ATA channels, issue a no-op read, and
 /// confirm the IO counter advances.
 pub fn smoke_test() -> bool {
-    // kprintln!("  [ATAPORT SMOKE] testing ATA port driver...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("  [ATAPORT SMOKE] testing ATA port driver...");
     AtaPortInitialize(0);
     AtaPortInitialize(1);
     let mut buf = [0u16; 256];
     let req = AtaPassThrough {
         length: 0,
         ata_flags: 0x02, // ATA_FLAGS_DATA_IN
-        path_id: 0, target_id: 0, lun: 0, reserved_as_0: 0,
+        path_id: 0,
+        target_id: 0,
+        lun: 0,
+        reserved_as_0: 0,
         data_buffer_offset: 0,
         data_transfer_length: 512,
         previous_task_file: [0; 8],
@@ -202,8 +226,7 @@ pub fn smoke_test() -> bool {
 
 /// Most recently observed `AtaPortStartIo` byte count from the
 /// smoke-test path.
-static LAST_SMOKE_BYTES: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0);
+static LAST_SMOKE_BYTES: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 /// Diagnostic accessor.
 pub fn last_smoke_bytes() -> u32 {
@@ -212,23 +235,23 @@ pub fn last_smoke_bytes() -> u32 {
 
 /// `init` — bind the ataport driver to both ATA channels.
 pub fn init() {
-#[cfg(target_arch = "x86_64")]
+    #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     crate::hal::x86_64::serial::write_string("ataport:init:start\r\n");
     AtaPortInitialize(0);
-#[cfg(target_arch = "x86_64")]
+    #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     crate::hal::x86_64::serial::write_string("ataport:init:ch0_done\r\n");
     AtaPortInitialize(1);
-#[cfg(target_arch = "x86_64")]
+    #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     crate::hal::x86_64::serial::write_string("ataport:init:ch1_done\r\n");
     AtaPortInitialize(0);
-#[cfg(target_arch = "x86_64")]
+    #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     crate::hal::x86_64::serial::write_string("ataport:init:ch0_again_done\r\n");
     AtaPortInitialize(1);
-#[cfg(target_arch = "x86_64")]
+    #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     crate::hal::x86_64::serial::write_string("ataport:init:ch1_again_done\r\n");
 }

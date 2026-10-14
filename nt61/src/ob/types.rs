@@ -150,11 +150,8 @@ pub type ObQueryNameProcedure = unsafe extern "C" fn(
 
 /// Okay to close procedure callback type
 /// Called when checking if an object can be closed
-pub type ObOkayToCloseProcedure = unsafe extern "C" fn(
-    process: *mut (),
-    object: *mut (),
-    handle: *mut (),
-) -> u32;
+pub type ObOkayToCloseProcedure =
+    unsafe extern "C" fn(process: *mut (), object: *mut (), handle: *mut ()) -> u32;
 
 // =============================================================================
 // Object Type
@@ -166,7 +163,7 @@ pub type ObOkayToCloseProcedure = unsafe extern "C" fn(
 pub struct ObjectType {
     pub type_index: u8,
     _padding: [u8; 7],
-    pub name: [u16; 32],          // Unicode type name (64 bytes)
+    pub name: [u16; 32], // Unicode type name (64 bytes)
     pub default_security: *mut (),
     pub pool_tag: u32,
     pub valid_access_mask: u32,
@@ -249,90 +246,90 @@ impl ObjectType {
 
 /// Directory object generic mapping
 pub const DIRECTORY_GENERIC_MAPPING: GenericMapping = GenericMapping::new(
-    0x0001 | 0x0002,  // DIRECTORY_QUERY | DIRECTORY_TRAVERSE
-    0x0001 | 0x0004,  // DIRECTORY_CREATE_SUBDIRECTORY | DIRECTORY_ADD_FILE
-    0x0001 | 0x0002,  // DIRECTORY_QUERY | DIRECTORY_TRAVERSE
+    0x0001 | 0x0002, // DIRECTORY_QUERY | DIRECTORY_TRAVERSE
+    0x0001 | 0x0004, // DIRECTORY_CREATE_SUBDIRECTORY | DIRECTORY_ADD_FILE
+    0x0001 | 0x0002, // DIRECTORY_QUERY | DIRECTORY_TRAVERSE
     0x000F,          // DIRECTORY_ALL_ACCESS
 );
 
 /// Device object generic mapping
 pub const DEVICE_GENERIC_MAPPING: GenericMapping = GenericMapping::new(
-    0x0001,           // DEVICE_READ
-    0x0002,           // DEVICE_WRITE
-    0x0004,           // DEVICE_EXECUTE
-    0x000F,           // DEVICE_ALL_ACCESS
+    0x0001, // DEVICE_READ
+    0x0002, // DEVICE_WRITE
+    0x0004, // DEVICE_EXECUTE
+    0x000F, // DEVICE_ALL_ACCESS
 );
 
 /// Driver object generic mapping
 pub const DRIVER_GENERIC_MAPPING: GenericMapping = GenericMapping::new(
-    0x0001,           // DRIVER_QUERY
-    0x0002,           // DRIVER_SET
-    0x0004,           // DRIVER_EXECUTE
-    0x000F,           // DRIVER_ALL_ACCESS
+    0x0001, // DRIVER_QUERY
+    0x0002, // DRIVER_SET
+    0x0004, // DRIVER_EXECUTE
+    0x000F, // DRIVER_ALL_ACCESS
 );
 
 /// Event object generic mapping
 pub const EVENT_GENERIC_MAPPING: GenericMapping = GenericMapping::new(
-    0x0001,           // EVENT_QUERY_STATE
-    0x0002,           // EVENT_MODIFY_STATE
-    0x0001,           // EVENT_QUERY_STATE
-    0x001F,           // EVENT_ALL_ACCESS
+    0x0001, // EVENT_QUERY_STATE
+    0x0002, // EVENT_MODIFY_STATE
+    0x0001, // EVENT_QUERY_STATE
+    0x001F, // EVENT_ALL_ACCESS
 );
 
 /// Mutant (mutex) object generic mapping
 pub const MUTANT_GENERIC_MAPPING: GenericMapping = GenericMapping::new(
-    0x0001,           // MUTANT_QUERY_STATE
-    0x0001,           // MUTANT_QUERY_STATE
-    0x0001,           // MUTANT_QUERY_STATE
-    0x001F,           // MUTANT_ALL_ACCESS
+    0x0001, // MUTANT_QUERY_STATE
+    0x0001, // MUTANT_QUERY_STATE
+    0x0001, // MUTANT_QUERY_STATE
+    0x001F, // MUTANT_ALL_ACCESS
 );
 
 /// Semaphore object generic mapping
 pub const SEMAPHORE_GENERIC_MAPPING: GenericMapping = GenericMapping::new(
-    0x0001,           // SEMAPHORE_QUERY_STATE
+    0x0001,          // SEMAPHORE_QUERY_STATE
     0x0002 | 0x0004, // SEMAPHORE_MODIFY_STATE | SEMAPHORE_QUERY_STATE
-    0x0001,           // SEMAPHORE_QUERY_STATE
-    0x001F,           // SEMAPHORE_ALL_ACCESS
+    0x0001,          // SEMAPHORE_QUERY_STATE
+    0x001F,          // SEMAPHORE_ALL_ACCESS
 );
 
 /// SymbolicLink object generic mapping
 pub const SYMBOLIC_LINK_GENERIC_MAPPING: GenericMapping = GenericMapping::new(
-    0x0001,           // SYMBOLIC_LINK_QUERY
-    0x0001,           // SYMBOLIC_LINK_QUERY (write via delete/recreate)
-    0x0001,           // SYMBOLIC_LINK_QUERY
-    0x0001,           // SYMBOLIC_LINK_ALL_ACCESS
+    0x0001, // SYMBOLIC_LINK_QUERY
+    0x0001, // SYMBOLIC_LINK_QUERY (write via delete/recreate)
+    0x0001, // SYMBOLIC_LINK_QUERY
+    0x0001, // SYMBOLIC_LINK_ALL_ACCESS
 );
 
 /// Process object generic mapping
 pub const PROCESS_GENERIC_MAPPING: GenericMapping = GenericMapping::new(
-    0x0410,           // PROCESS_QUERY_INFORMATION | PROCESS_VM_READ
-    0x043F,           // PROCESS_CREATE_PROCESS | PROCESS_CREATE_THREAD | etc.
-    0x0410,           // PROCESS_QUERY_LIMITED_INFORMATION
-    0x1F0FFF,        // PROCESS_ALL_ACCESS
+    0x0410,   // PROCESS_QUERY_INFORMATION | PROCESS_VM_READ
+    0x043F,   // PROCESS_CREATE_PROCESS | PROCESS_CREATE_THREAD | etc.
+    0x0410,   // PROCESS_QUERY_LIMITED_INFORMATION
+    0x1F0FFF, // PROCESS_ALL_ACCESS
 );
 
 /// Thread object generic mapping
 pub const THREAD_GENERIC_MAPPING: GenericMapping = GenericMapping::new(
-    0x0410,           // THREAD_QUERY_INFORMATION | THREAD_GET_CONTEXT
-    0x043F,           // THREAD_SET_INFORMATION | THREAD_SET_CONTEXT | etc.
-    0x0410,           // THREAD_QUERY_LIMITED_INFORMATION
-    0x1F03FF,        // THREAD_ALL_ACCESS
+    0x0410,   // THREAD_QUERY_INFORMATION | THREAD_GET_CONTEXT
+    0x043F,   // THREAD_SET_INFORMATION | THREAD_SET_CONTEXT | etc.
+    0x0410,   // THREAD_QUERY_LIMITED_INFORMATION
+    0x1F03FF, // THREAD_ALL_ACCESS
 );
 
 /// Token object generic mapping
 pub const TOKEN_GENERIC_MAPPING: GenericMapping = GenericMapping::new(
-    0x0008,           // TOKEN_QUERY
-    0x00E0,           // TOKEN_ADJUST_PRIVILEGES | TOKEN_ADJUST_GROUPS | etc.
-    0x0008,           // TOKEN_QUERY
-    0x00F07FF,        // TOKEN_ALL_ACCESS
+    0x0008,    // TOKEN_QUERY
+    0x00E0,    // TOKEN_ADJUST_PRIVILEGES | TOKEN_ADJUST_GROUPS | etc.
+    0x0008,    // TOKEN_QUERY
+    0x00F07FF, // TOKEN_ALL_ACCESS
 );
 
 /// Section object generic mapping
 pub const SECTION_GENERIC_MAPPING: GenericMapping = GenericMapping::new(
-    0x0005,           // SECTION_MAP_READ | SECTION_QUERY
-    0x0006,           // SECTION_MAP_WRITE | SECTION_MAP_EXECUTE
-    0x0004,           // SECTION_MAP_EXECUTE
-    0x000F,           // SECTION_ALL_ACCESS
+    0x0005, // SECTION_MAP_READ | SECTION_QUERY
+    0x0006, // SECTION_MAP_WRITE | SECTION_MAP_EXECUTE
+    0x0004, // SECTION_MAP_EXECUTE
+    0x000F, // SECTION_ALL_ACCESS
 );
 
 // =============================================================================
@@ -344,16 +341,16 @@ pub const SECTION_GENERIC_MAPPING: GenericMapping = GenericMapping::new(
 /// that exist in the NT type table but are unused in this kernel.
 pub fn get_type_name(type_index: u8) -> &'static str {
     match type_index {
-        0  => "Type",
-        1  => "Process",
-        2  => "Thread",
-        3  => "Directory",
-        4  => "SymbolicLink",
-        5  => "Token",
-        6  => "Job",
-        7  => "EventNotification",
-        8  => "EventSynchronization",
-        9  => "Section",
+        0 => "Type",
+        1 => "Process",
+        2 => "Thread",
+        3 => "Directory",
+        4 => "SymbolicLink",
+        5 => "Token",
+        6 => "Job",
+        7 => "EventNotification",
+        8 => "EventSynchronization",
+        9 => "Section",
         10 => "Mutant",
         11 => "Semaphore",
         12 => "Reserved12",
@@ -382,7 +379,7 @@ pub fn get_type_name(type_index: u8) -> &'static str {
         35 => "WmiGuid",
         36 => "PowerRequest",
         37 => "W32Object",
-        _  => "Unknown",
+        _ => "Unknown",
     }
 }
 
@@ -391,14 +388,12 @@ pub fn get_type_name(type_index: u8) -> &'static str {
 // =============================================================================
 
 /// Global registry of object types
-static mut OB_TYPE_TABLE: [*mut ObjectType; MAX_OBJECT_TYPES] = 
+static mut OB_TYPE_TABLE: [*mut ObjectType; MAX_OBJECT_TYPES] =
     [core::ptr::null_mut(); MAX_OBJECT_TYPES];
 
 /// Pool tag for object types
-const OB_TYPE_POOL_TAG: u32 = (b'O' as u32) << 24
-    | (b'b' as u32) << 16
-    | (b'T' as u32) << 8
-    | (b'y' as u32);
+const OB_TYPE_POOL_TAG: u32 =
+    (b'O' as u32) << 24 | (b'b' as u32) << 16 | (b'T' as u32) << 8 | (b'y' as u32);
 
 /// Initialize the object type system
 pub fn init_types() {
@@ -512,13 +507,8 @@ pub fn init_types() {
         for i in 0..MAX_OBJECT_TYPES {
             if OB_TYPE_TABLE[i].is_null() {
                 let name = get_type_name(i as u8);
-                OB_TYPE_TABLE[i] = create_object_type(
-                    i as u8,
-                    name,
-                    GenericMapping::default(),
-                    0,
-                    None,
-                );
+                OB_TYPE_TABLE[i] =
+                    create_object_type(i as u8, name, GenericMapping::default(), 0, None);
                 // If backfill creation itself fails, the serial output above
                 // will have printed FATAL; keep trying the rest of the table.
             }
@@ -556,10 +546,7 @@ fn create_object_type(
 ) -> *mut ObjectType {
     let size = core::mem::size_of::<ObjectType>();
 
-    let obj_type = pool::allocate(
-        pool::PoolType::NonPaged,
-        size,
-    ) as *mut ObjectType;
+    let obj_type = pool::allocate(pool::PoolType::NonPaged, size) as *mut ObjectType;
 
     if obj_type.is_null() {
         crate::hal::serial::write_string("[OB] FATAL: alloc failed\r\n");
@@ -599,35 +586,35 @@ pub fn get_object_type(type_index: u8) -> *mut ObjectType {
 /// Delete procedure for Directory objects
 unsafe extern "C" fn directory_delete_procedure(_object: *mut ()) {
     // _object is intentionally unused - reserved for future debugging
-    // // kprintln!("[OB] Deleting Directory object at {:016x}", _object as u64)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[OB] Deleting Directory object at {:016x}", _object as u64);
     // Directory cleanup: nothing specific to do
 }
 
 /// Delete procedure for Device objects
 unsafe extern "C" fn device_delete_procedure(_object: *mut ()) {
     // _object is intentionally unused - reserved for future debugging
-    // // kprintln!("[OB] Deleting Device object at {:016x}", _object as u64)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[OB] Deleting Device object at {:016x}", _object as u64);
     // Device cleanup: nothing specific to do in bootstrap
 }
 
 /// Delete procedure for Driver objects
 unsafe extern "C" fn driver_delete_procedure(_object: *mut ()) {
     // _object is intentionally unused - reserved for future debugging
-    // // kprintln!("[OB] Deleting Driver object at {:016x}", _object as u64)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[OB] Deleting Driver object at {:016x}", _object as u64);
     // Driver cleanup: nothing specific to do in bootstrap
 }
 
 /// Delete procedure for SymbolicLink objects
 unsafe extern "C" fn symlink_delete_procedure(_object: *mut ()) {
     // _object is intentionally unused - reserved for future debugging
-    // // kprintln!("[OB] Deleting SymbolicLink object at {:016x}", _object as u64)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[OB] Deleting SymbolicLink object at {:016x}", _object as u64);
     // SymbolicLink cleanup: nothing specific to do
 }
 
 /// Delete procedure for Token objects
 unsafe extern "C" fn token_delete_procedure(_object: *mut ()) {
     // _object is intentionally unused - reserved for future debugging
-    // // kprintln!("[OB] Deleting Token object at {:016x}", _object as u64)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[OB] Deleting Token object at {:016x}", _object as u64);
     // Token cleanup: free the token memory
     // Note: In a full implementation, we'd decrement token reference count
     // and only free when it reaches zero

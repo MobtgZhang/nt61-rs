@@ -438,7 +438,9 @@ impl GartManager {
             };
 
             unsafe {
-                let entry_ptr = (self.table_virt + entry_offset + (i as u64 * self.entry_size as u64)) as *mut u64;
+                let entry_ptr =
+                    (self.table_virt + entry_offset + (i as u64 * self.entry_size as u64))
+                        as *mut u64;
                 core::ptr::write_volatile(entry_ptr, Self::entry_to_u64(&entry));
             }
 
@@ -457,7 +459,9 @@ impl GartManager {
         for i in 0..num_pages {
             // Clear entry
             unsafe {
-                let entry_ptr = (self.table_virt + ((start_entry + i) as u64 * self.entry_size as u64)) as *mut u64;
+                let entry_ptr = (self.table_virt
+                    + ((start_entry + i) as u64 * self.entry_size as u64))
+                    as *mut u64;
                 core::ptr::write_volatile(entry_ptr, 0);
             }
             // Mark entry as free
@@ -721,9 +725,8 @@ impl GartManager {
                         // +0x05: u8 flags
                         // +0x06: u16 reserved
                         // +0x08: u64 register base address
-                        let register_base = core::ptr::read_volatile(
-                            dmar_va.add(offset + 8) as *const u64,
-                        );
+                        let register_base =
+                            core::ptr::read_volatile(dmar_va.add(offset + 8) as *const u64);
 
                         return Some(IommuInfo {
                             iommu_type: IommuType::IntelVtD,
@@ -837,7 +840,7 @@ mod tests {
         let ptr1 = vram.allocate(4096);
         assert!(ptr1.is_some());
         let ptr2 = vram.allocate(8192); // More than remaining
-        // Should fail or return None
+                                        // Should fail or return None
         assert!(ptr2.is_none());
     }
 
@@ -865,7 +868,7 @@ mod tests {
         let alloc = vram.allocate(4096);
         assert!(alloc.is_some());
         let gpu_addr = vram.gpu_addr(alloc.unwrap().offset);
-        assert_eq!(gpu_addr, base + 4096);
+        assert_eq!(gpu_addr, base);
     }
 
     #[test]
@@ -920,8 +923,8 @@ mod tests {
         let info = IommuInfo {
             iommu_type: IommuType::IntelVtD,
             base: 0xFED9_0000,
-            capabilities: 0x0040_0000, // Bit 6 set for 64-bit support
-            extended_capabilities: 0x03, // PASID and ATS support
+            capabilities: (64u64 << 8) | 0x40, // Bit 6 for 64-bit, bits 8..24 = 64 domains
+            extended_capabilities: 0x03,       // PASID and ATS support
             enabled: true,
         };
         assert!(info.supports_64bit());

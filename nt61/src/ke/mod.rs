@@ -12,27 +12,26 @@
 //! `smoke` submodule and is called from `kernel_main` after
 //! Phase 9.
 
-pub mod scheduler;
-pub mod spinlock;
-pub mod sync;
-pub mod interrupt;
-pub mod irql;
-pub mod time;
-pub mod timer;
 pub mod apc;
-pub mod dpc;
 pub mod bugcheck;
 pub mod dispatch;
-pub mod psss;
-#[cfg(target_arch = "x86_64")]
-pub mod smoke;
+pub mod dpc;
 pub mod exception;
-#[cfg(target_arch = "x86_64")]
-pub mod ssdt;
+pub mod interrupt;
+pub mod irql;
+pub mod memdiag;
+pub mod psss;
+pub mod safe_mode_shell;
+pub mod scheduler;
 #[cfg(target_arch = "x86_64")]
 pub mod shadow_ssdt;
-pub mod memdiag;
-pub mod safe_mode_shell;
+#[cfg(target_arch = "x86_64")]
+pub mod smoke;
+#[cfg(target_arch = "x86_64")]
+pub mod ssdt;
+pub mod sync;
+pub mod time;
+pub mod timer;
 
 /// Initialize the kernel executive.
 ///
@@ -84,6 +83,15 @@ fn post_ke() {
 /// (matching the `mm::smoke_test()` / `ob::smoke_test()` /
 /// `io::smoke_test()` convention used by `kernel_main`).
 #[cfg(target_arch = "x86_64")]
-pub fn smoke_test() -> bool { smoke::smoke_test() }
+pub fn smoke_test() -> bool {
+    smoke::smoke_test()
+}
 #[cfg(not(target_arch = "x86_64"))]
-pub fn smoke_test() -> bool { true }
+pub fn smoke_test() -> bool {
+    true
+}
+
+pub mod power;
+pub mod power_test;
+pub mod scheduler_api;
+pub mod ssdt_common;

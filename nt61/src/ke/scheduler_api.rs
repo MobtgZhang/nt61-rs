@@ -1,9 +1,9 @@
-
 // =============================================================================
 // Process Management API for Commands Module
 // =============================================================================
 
 use alloc::string::String;
+use alloc::vec;
 use alloc::vec::Vec;
 
 #[derive(Debug, Clone)]
@@ -20,7 +20,7 @@ pub struct ProcessInfo {
 }
 
 pub fn get_process_list() -> Vec<ProcessInfo> {
-    use crate::ps::process::get_all_processes;
+    use crate::ps::process_mgmt::get_all_processes;
 
     let mut processes = Vec::new();
 
@@ -166,7 +166,7 @@ pub fn find_processes_by_name(name: &str) -> Vec<u32> {
 }
 
 pub fn terminate_process(pid: u32) -> bool {
-    use crate::ps::process::terminate_process_by_pid;
+    use crate::ps::process_mgmt::terminate_process_by_pid;
 
     if pid == 0 || pid == 4 || pid < 260 {
         return false;
@@ -176,6 +176,7 @@ pub fn terminate_process(pid: u32) -> bool {
 }
 
 pub fn kill_process_forced(pid: u32) -> bool {
+    use crate::ps::process_mgmt::terminate_process_by_pid;
 
     if pid == 0 || pid == 4 {
         return false;
@@ -191,7 +192,7 @@ pub fn create_process(
     minimized: bool,
     maximized: bool,
 ) -> Option<u32> {
-    use crate::ps::process::create_user_process;
+    use crate::ps::process_mgmt::create_user_process;
 
     match create_user_process(command, work_dir, priority) {
         Ok(pid) => Some(pid as u32),
@@ -200,7 +201,7 @@ pub fn create_process(
 }
 
 pub fn wait_for_process(pid: u32) {
-    use crate::ps::process::wait_for_process_exit;
+    use crate::ps::process_mgmt::wait_for_process_exit;
 
     let _ = wait_for_process_exit(pid as u64, None);
 }

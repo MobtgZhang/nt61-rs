@@ -15,7 +15,9 @@ pub struct SystemTime {
 
 /// Get current system time
 pub fn get_system_time() -> SystemTime {
-    SystemTime { time: TimeSpec::default() }
+    SystemTime {
+        time: TimeSpec::default(),
+    }
 }
 
 /// Get current time in nanoseconds

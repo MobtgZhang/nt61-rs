@@ -108,11 +108,7 @@ pub fn wake_port_waiters(port_index: u32, queue: &mut WaitQueue) -> u32 {
     woken
 }
 
-pub fn wake_reply_waiter(
-    port_index: u32,
-    message_id: u64,
-    queue: &mut WaitQueue,
-) -> Option<u64> {
+pub fn wake_reply_waiter(port_index: u32, message_id: u64, queue: &mut WaitQueue) -> Option<u64> {
     for i in 0..queue.entries.len() {
         if queue.entries[i].active
             && queue.entries[i].port_index == port_index

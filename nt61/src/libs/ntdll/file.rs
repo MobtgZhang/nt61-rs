@@ -17,15 +17,12 @@
 //! `wdm.h` for the relevant information structures.
 
 use super::status::{
-    STATUS_ACCESS_DENIED, STATUS_ACCESS_VIOLATION, STATUS_BUFFER_TOO_SMALL, STATUS_INVALID_HANDLE,
-    STATUS_INVALID_INFO_CLASS, STATUS_INVALID_PARAMETER, STATUS_NOT_A_DIRECTORY,
-    STATUS_NOT_IMPLEMENTED, STATUS_OBJECT_NAME_INVALID,
-    STATUS_OBJECT_PATH_NOT_FOUND, STATUS_SUCCESS, STATUS_END_OF_FILE,
+    STATUS_ACCESS_DENIED, STATUS_ACCESS_VIOLATION, STATUS_BUFFER_TOO_SMALL, STATUS_END_OF_FILE,
+    STATUS_INVALID_HANDLE, STATUS_INVALID_INFO_CLASS, STATUS_INVALID_PARAMETER,
+    STATUS_NOT_A_DIRECTORY, STATUS_NOT_IMPLEMENTED, STATUS_OBJECT_NAME_INVALID,
+    STATUS_OBJECT_PATH_NOT_FOUND, STATUS_SUCCESS,
 };
-use super::types::{
-    HANDLE, IoStatusBlock, NTSTATUS, PVOID, UnicodeString,
-    FileInformationClass,
-};
+use super::types::{FileInformationClass, IoStatusBlock, UnicodeString, HANDLE, NTSTATUS, PVOID};
 use crate::fs::ntfs::RawDirEntry;
 use crate::ke::sync::Spinlock;
 use crate::kprintln;
@@ -79,7 +76,9 @@ struct HandleTable {
 impl HandleTable {
     const fn new() -> Self {
         const NONE: Option<HandleEntry> = None;
-        Self { entries: [NONE; MAX_HANDLES] }
+        Self {
+            entries: [NONE; MAX_HANDLES],
+        }
     }
 }
 
@@ -87,7 +86,11 @@ pub(crate) fn alloc_handle(kind: HandleKind, target: u64) -> HANDLE {
     let mut tbl = HANDLE_TABLE.lock();
     for (i, e) in tbl.entries.iter_mut().enumerate() {
         if e.is_none() {
-            *e = Some(HandleEntry { in_use: true, kind, target });
+            *e = Some(HandleEntry {
+                in_use: true,
+                kind,
+                target,
+            });
             return encode_handle(i);
         }
     }
@@ -97,8 +100,12 @@ pub(crate) fn alloc_handle(kind: HandleKind, target: u64) -> HANDLE {
 pub(crate) fn free_handle(h: HANDLE) -> bool {
     let idx = decode_handle(h);
     let mut tbl = HANDLE_TABLE.lock();
-    if idx >= MAX_HANDLES { return false; }
-    if tbl.entries[idx].is_none() { return false; }
+    if idx >= MAX_HANDLES {
+        return false;
+    }
+    if tbl.entries[idx].is_none() {
+        return false;
+    }
     tbl.entries[idx] = None;
     true
 }
@@ -106,7 +113,9 @@ pub(crate) fn free_handle(h: HANDLE) -> bool {
 pub(crate) fn lookup_handle(h: HANDLE) -> Option<HandleEntry> {
     let idx = decode_handle(h);
     let tbl = HANDLE_TABLE.lock();
-    if idx >= MAX_HANDLES { return None; }
+    if idx >= MAX_HANDLES {
+        return None;
+    }
     tbl.entries[idx]
 }
 
@@ -115,7 +124,9 @@ fn encode_handle(idx: usize) -> HANDLE {
 }
 
 fn decode_handle(h: HANDLE) -> usize {
-    if h.is_null() { return usize::MAX; }
+    if h.is_null() {
+        return usize::MAX;
+    }
     ((h as u64) - 1) as usize
 }
 
@@ -273,8 +284,8 @@ pub unsafe extern "C" fn NtCreateFile(
     ea_length: u32,
 ) -> NTSTATUS {
     use super::status::{
-        STATUS_ACCESS_DENIED, STATUS_OBJECT_NAME_INVALID, STATUS_OBJECT_PATH_NOT_FOUND,
-        STATUS_SUCCESS, STATUS_FILE_IS_A_DIRECTORY, STATUS_NO_SUCH_FILE,
+        STATUS_ACCESS_DENIED, STATUS_FILE_IS_A_DIRECTORY, STATUS_NO_SUCH_FILE,
+        STATUS_OBJECT_NAME_INVALID, STATUS_OBJECT_PATH_NOT_FOUND, STATUS_SUCCESS,
     };
 
     if file_handle.is_null() || object_attributes.is_null() || io_status_block.is_null() {
@@ -324,7 +335,7 @@ pub unsafe extern "C" fn NtCreateFile(
         0x00000003 => 3, // FILE_OPEN_IF
         0x00000004 => 4, // FILE_OVERWRITE
         0x00000005 => 5, // FILE_OVERWRITE_IF
-        _ => 1, // Default to FILE_OPEN
+        _ => 1,          // Default to FILE_OPEN
     };
 
     // Check if this is a directory open request
@@ -347,8 +358,7 @@ pub unsafe extern "C" fn NtCreateFile(
 
     // For bootstrap, use sector counter for file context
     // In a full implementation, this would create a real VFS node
-    static SECTOR_COUNTER: core::sync::atomic::AtomicU64 =
-        core::sync::atomic::AtomicU64::new(1);
+    static SECTOR_COUNTER: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(1);
 
     let node_ptr = if let Some(node) = existing_node {
         node as *const _ as u64
@@ -372,7 +382,14 @@ pub unsafe extern "C" fn NtCreateFile(
     (*io_status_block).status = STATUS_SUCCESS;
     (*io_status_block).information = create_disposition as usize;
 
-    let _ = (allocation_size, file_attributes, share_access, create_options, ea_buffer, ea_length);
+    let _ = (
+        allocation_size,
+        file_attributes,
+        share_access,
+        create_options,
+        ea_buffer,
+        ea_length,
+    );
     STATUS_SUCCESS
 }
 
@@ -388,7 +405,7 @@ pub unsafe extern "C" fn NtOpenFile(
     // Security access check before opening
     let security_result = check_file_access(object_attributes, desired_access);
     if !security_result {
-        // kprintln!("[NTDLL] NtOpenFile: access denied by security check")  // kprintln disabled (memcpy crash workaround);
+        // kprintln!("[NTDLL] NtOpenFile: access denied by security check");
         return STATUS_ACCESS_DENIED;
     }
 
@@ -411,7 +428,10 @@ pub unsafe extern "C" fn NtOpenFile(
 ///
 /// This performs SeAccessCheck on the file's security descriptor
 /// before allowing the open operation.
-fn check_file_access(object_attributes: *mut super::types::ObjectAttributes, _desired_access: u32) -> bool {
+fn check_file_access(
+    object_attributes: *mut super::types::ObjectAttributes,
+    _desired_access: u32,
+) -> bool {
     if object_attributes.is_null() {
         return false;
     }
@@ -462,20 +482,27 @@ pub unsafe extern "C" fn NtReadFile(
     byte_offset: *mut i64,
     _key: *mut u32,
 ) -> NTSTATUS {
-    if io_status_block.is_null() { return STATUS_INVALID_PARAMETER; }
+    if io_status_block.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
     if lookup_handle(file_handle).is_none() {
         return STATUS_INVALID_HANDLE;
     }
     if buffer.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
-    if crate::mm::user_copy::probe_user_write(io_status_block as u64,
-        core::mem::size_of::<IoStatusBlock>()).is_err() {
+    if crate::mm::user_copy::probe_user_write(
+        io_status_block as u64,
+        core::mem::size_of::<IoStatusBlock>(),
+    )
+    .is_err()
+    {
         return STATUS_ACCESS_VIOLATION;
     }
     if !byte_offset.is_null() {
-        if crate::mm::user_copy::probe_user_write(byte_offset as u64,
-            core::mem::size_of::<i64>()).is_err() {
+        if crate::mm::user_copy::probe_user_write(byte_offset as u64, core::mem::size_of::<i64>())
+            .is_err()
+        {
             return STATUS_ACCESS_VIOLATION;
         }
     }
@@ -493,10 +520,14 @@ pub unsafe extern "C" fn NtReadFile(
                 let _ = &file_ctx;
                 // Use VFS to read from RAM disk
                 let result = crate::fs::vfs::read_file_sectors(
-                    0,  // Use byte_offset-based reading
+                    0, // Use byte_offset-based reading
                     buffer as u64,
                     length,
-                    if byte_offset.is_null() { 0 } else { *byte_offset as u64 },
+                    if byte_offset.is_null() {
+                        0
+                    } else {
+                        *byte_offset as u64
+                    },
                 );
                 (*io_status_block).status = result.status as i32;
                 (*io_status_block).information = result.bytes_read;
@@ -513,9 +544,7 @@ pub unsafe extern "C" fn NtReadFile(
                     return STATUS_INVALID_HANDLE;
                 }
                 let slot = pipe_slot_for(e.target);
-                let buf = core::slice::from_raw_parts_mut(
-                    buffer as *mut u8, length as usize,
-                );
+                let buf = core::slice::from_raw_parts_mut(buffer as *mut u8, length as usize);
                 let n = crate::io::pipe::read(slot, buf);
                 (*io_status_block).status = if n == 0 {
                     // EOF on a closed pipe.
@@ -548,20 +577,27 @@ pub unsafe extern "C" fn NtWriteFile(
     byte_offset: *mut i64,
     _key: *mut u32,
 ) -> NTSTATUS {
-    if io_status_block.is_null() { return STATUS_INVALID_PARAMETER; }
+    if io_status_block.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
     if lookup_handle(file_handle).is_none() {
         return STATUS_INVALID_HANDLE;
     }
     if buffer.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
-    if crate::mm::user_copy::probe_user_write(io_status_block as u64,
-        core::mem::size_of::<IoStatusBlock>()).is_err() {
+    if crate::mm::user_copy::probe_user_write(
+        io_status_block as u64,
+        core::mem::size_of::<IoStatusBlock>(),
+    )
+    .is_err()
+    {
         return STATUS_ACCESS_VIOLATION;
     }
     if !byte_offset.is_null() {
-        if crate::mm::user_copy::probe_user_write(byte_offset as u64,
-            core::mem::size_of::<i64>()).is_err() {
+        if crate::mm::user_copy::probe_user_write(byte_offset as u64, core::mem::size_of::<i64>())
+            .is_err()
+        {
             return STATUS_ACCESS_VIOLATION;
         }
     }
@@ -576,10 +612,14 @@ pub unsafe extern "C" fn NtWriteFile(
             HandleKind::File => {
                 // Use VFS to write to RAM disk
                 let result = crate::fs::vfs::write_file_sectors(
-                    0,  // Use byte_offset-based writing
+                    0, // Use byte_offset-based writing
                     buffer as u64,
                     length,
-                    if byte_offset.is_null() { 0 } else { *byte_offset as u64 },
+                    if byte_offset.is_null() {
+                        0
+                    } else {
+                        *byte_offset as u64
+                    },
                 );
                 (*io_status_block).status = result.status as i32;
                 (*io_status_block).information = result.bytes_written;
@@ -596,9 +636,7 @@ pub unsafe extern "C" fn NtWriteFile(
                     return STATUS_INVALID_HANDLE;
                 }
                 let slot = pipe_slot_for(e.target);
-                let buf = core::slice::from_raw_parts(
-                    buffer as *const u8, length as usize,
-                );
+                let buf = core::slice::from_raw_parts(buffer as *const u8, length as usize);
                 let n = crate::io::pipe::write(slot, buf);
                 (*io_status_block).status = STATUS_SUCCESS as i32;
                 (*io_status_block).information = n;
@@ -629,21 +667,29 @@ pub unsafe extern "C" fn NtQueryInformationFile(
         return STATUS_INVALID_HANDLE;
     }
     let class: FileInformationClass = match file_information_class {
-        4  => FileInformationClass::FileBasicInformation,
-        5  => FileInformationClass::FileStandardInformation,
+        4 => FileInformationClass::FileBasicInformation,
+        5 => FileInformationClass::FileStandardInformation,
         14 => FileInformationClass::FilePositionInformation,
         20 => FileInformationClass::FileEndOfFileInformation,
-        _  => {
+        _ => {
             (*io_status_block).status = STATUS_NOT_IMPLEMENTED;
             (*io_status_block).information = 0;
             return STATUS_NOT_IMPLEMENTED;
         }
     };
     let needed = match class {
-        FileInformationClass::FileBasicInformation     => core::mem::size_of::<FileBasicInformation>() as u32,
-        FileInformationClass::FileStandardInformation  => core::mem::size_of::<FileStandardInformation>() as u32,
-        FileInformationClass::FilePositionInformation  => core::mem::size_of::<FilePositionInformation>() as u32,
-        FileInformationClass::FileEndOfFileInformation => core::mem::size_of::<FileEndOfFileInformation>() as u32,
+        FileInformationClass::FileBasicInformation => {
+            core::mem::size_of::<FileBasicInformation>() as u32
+        }
+        FileInformationClass::FileStandardInformation => {
+            core::mem::size_of::<FileStandardInformation>() as u32
+        }
+        FileInformationClass::FilePositionInformation => {
+            core::mem::size_of::<FilePositionInformation>() as u32
+        }
+        FileInformationClass::FileEndOfFileInformation => {
+            core::mem::size_of::<FileEndOfFileInformation>() as u32
+        }
         _ => unreachable!(),
     };
     if length < needed {
@@ -696,8 +742,10 @@ pub unsafe extern "C" fn NtSetInformationFile(
     length: u32,
     file_information_class: u32,
 ) -> NTSTATUS {
-    use super::status::{STATUS_BUFFER_TOO_SMALL, STATUS_INVALID_HANDLE, STATUS_INVALID_INFO_CLASS,
-                        STATUS_SUCCESS, STATUS_CANNOT_DELETE, STATUS_DIRECTORY_NOT_EMPTY};
+    use super::status::{
+        STATUS_BUFFER_TOO_SMALL, STATUS_CANNOT_DELETE, STATUS_DIRECTORY_NOT_EMPTY,
+        STATUS_INVALID_HANDLE, STATUS_INVALID_INFO_CLASS, STATUS_SUCCESS,
+    };
 
     if io_status_block.is_null() || file_information.is_null() {
         return STATUS_INVALID_PARAMETER;
@@ -711,7 +759,9 @@ pub unsafe extern "C" fn NtSetInformationFile(
     match file_information_class {
         13 => {
             // FileDispositionInformation
-            if length < 1 { return STATUS_BUFFER_TOO_SMALL; }
+            if length < 1 {
+                return STATUS_BUFFER_TOO_SMALL;
+            }
             let info = &*(file_information as *const FileDispositionInformation);
             if info.delete_file != 0 {
                 // Mark the file for deletion
@@ -730,7 +780,9 @@ pub unsafe extern "C" fn NtSetInformationFile(
         }
         14 => {
             // FilePositionInformation
-            if length < 8 { return STATUS_BUFFER_TOO_SMALL; }
+            if length < 8 {
+                return STATUS_BUFFER_TOO_SMALL;
+            }
             let _info = &*(file_information as *const FilePositionInformation);
             // Position is tracked per-handle in a real implementation
             // For now, we acknowledge the request
@@ -740,7 +792,9 @@ pub unsafe extern "C" fn NtSetInformationFile(
         }
         22 => {
             // FileEndOfFileInformation
-            if length < 8 { return STATUS_BUFFER_TOO_SMALL; }
+            if length < 8 {
+                return STATUS_BUFFER_TOO_SMALL;
+            }
             // Setting end of file would require VFS support
             (*io_status_block).status = STATUS_SUCCESS;
             (*io_status_block).information = 0;
@@ -758,21 +812,31 @@ pub unsafe extern "C" fn NtSetInformationFile(
 /// Closes the handle in both the ntdll table and the kernel's
 /// object manager (if ob integration is enabled).
 pub unsafe extern "C" fn NtClose(handle: HANDLE) -> NTSTATUS {
-    if handle.is_null() { return STATUS_INVALID_HANDLE; }
-    
+    if handle.is_null() {
+        return STATUS_INVALID_HANDLE;
+    }
+
     // First close in ob's global handle table (if integration enabled)
     // Note: In this bootstrap, the ntdll table is the primary table,
     // and ob registration is optional for kernel objects.
-    
+
     // Then close in the ntdll handle table
-    if free_handle(handle) { STATUS_SUCCESS } else { STATUS_INVALID_HANDLE }
+    if free_handle(handle) {
+        STATUS_SUCCESS
+    } else {
+        STATUS_INVALID_HANDLE
+    }
 }
 
 /// `NtDeleteFile` — delete a file by name. The bootstrap does
 /// not have a writeable FS, so this always returns
 /// `STATUS_NOT_IMPLEMENTED` (mapped to `ERROR_INVALID_FUNCTION`).
-pub unsafe extern "C" fn NtDeleteFile(object_attributes: *mut super::types::ObjectAttributes) -> NTSTATUS {
-    if object_attributes.is_null() { return STATUS_INVALID_PARAMETER; }
+pub unsafe extern "C" fn NtDeleteFile(
+    object_attributes: *mut super::types::ObjectAttributes,
+) -> NTSTATUS {
+    if object_attributes.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
     let _ = object_attributes;
     STATUS_NOT_IMPLEMENTED
 }
@@ -782,8 +846,12 @@ pub unsafe extern "C" fn NtFlushBuffersFile(
     file_handle: HANDLE,
     io_status_block: *mut IoStatusBlock,
 ) -> NTSTATUS {
-    if io_status_block.is_null() { return STATUS_INVALID_PARAMETER; }
-    if lookup_handle(file_handle).is_none() { return STATUS_INVALID_HANDLE; }
+    if io_status_block.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
+    if lookup_handle(file_handle).is_none() {
+        return STATUS_INVALID_HANDLE;
+    }
     (*io_status_block).status = STATUS_SUCCESS;
     (*io_status_block).information = 0;
     STATUS_SUCCESS
@@ -797,7 +865,9 @@ pub unsafe extern "C" fn NtQueryVolumeInformationFile(
     length: u32,
     _fs_information_class: u32,
 ) -> NTSTATUS {
-    if io_status_block.is_null() { return STATUS_INVALID_PARAMETER; }
+    if io_status_block.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
     let _ = (fs_information, length);
 
     (*io_status_block).status = STATUS_SUCCESS;
@@ -813,7 +883,9 @@ pub unsafe extern "C" fn NtSetVolumeInformationFile(
     length: u32,
     fs_information_class: u32,
 ) -> NTSTATUS {
-    if io_status_block.is_null() { return STATUS_INVALID_PARAMETER; }
+    if io_status_block.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
     let _ = (fs_information, length, fs_information_class);
 
     (*io_status_block).status = STATUS_SUCCESS;
@@ -940,9 +1012,7 @@ pub unsafe extern "C" fn NtQueryDirectoryFile(
     // 2. Resolve the file handle.
     let entry = lookup_handle(file_handle);
     let file_ctx = match entry {
-        Some(e) if e.kind == HandleKind::File => {
-            FileContext::decode(e.target)
-        }
+        Some(e) if e.kind == HandleKind::File => FileContext::decode(e.target),
         _ => return STATUS_INVALID_HANDLE,
     };
 
@@ -991,17 +1061,23 @@ pub unsafe extern "C" fn NtQueryDirectoryFile(
         let entry_size: u32 = match info_class {
             FileInformationClass::FileDirectoryInformation => {
                 let needed = ((0x48 + name_bytes) + 7) & !7u32;
-                if remaining < needed { break; }
+                if remaining < needed {
+                    break;
+                }
                 needed
             }
             FileInformationClass::FileBothDirectoryInformation => {
                 let needed = ((0x60 + name_bytes) + 7) & !7u32;
-                if remaining < needed { break; }
+                if remaining < needed {
+                    break;
+                }
                 needed
             }
             FileInformationClass::FileIdBothDirectoryInformation => {
                 let needed = ((0x70 + name_bytes) + 7) & !7u32;
-                if remaining < needed { break; }
+                if remaining < needed {
+                    break;
+                }
                 needed
             }
             _ => break,
@@ -1011,13 +1087,16 @@ pub unsafe extern "C" fn NtQueryDirectoryFile(
         if prev_entry_ptr != 0 {
             match info_class {
                 FileInformationClass::FileDirectoryInformation => {
-                    (*(prev_entry_ptr as *mut super::types::FileDirectoryInformation)).next_entry_offset = entry_size;
+                    (*(prev_entry_ptr as *mut super::types::FileDirectoryInformation))
+                        .next_entry_offset = entry_size;
                 }
                 FileInformationClass::FileBothDirectoryInformation => {
-                    (*(prev_entry_ptr as *mut super::types::FileBothDirectoryInformation)).next_entry_offset = entry_size;
+                    (*(prev_entry_ptr as *mut super::types::FileBothDirectoryInformation))
+                        .next_entry_offset = entry_size;
                 }
                 FileInformationClass::FileIdBothDirectoryInformation => {
-                    (*(prev_entry_ptr as *mut super::types::FileIdBothDirectoryInformation)).next_entry_offset = entry_size;
+                    (*(prev_entry_ptr as *mut super::types::FileIdBothDirectoryInformation))
+                        .next_entry_offset = entry_size;
                 }
                 _ => {}
             }
@@ -1054,7 +1133,12 @@ pub unsafe extern "C" fn NtQueryDirectoryFile(
 // ---------------------------------------------------------------------------
 
 pub fn handle_count() -> usize {
-    HANDLE_TABLE.lock().entries.iter().filter(|e| e.is_some()).count()
+    HANDLE_TABLE
+        .lock()
+        .entries
+        .iter()
+        .filter(|e| e.is_some())
+        .count()
 }
 
 /// Register a pipe end with the handle table. `pipe_id` is the
@@ -1082,11 +1166,15 @@ pub(crate) fn pipe_is_write(target: u64) -> bool {
 }
 
 pub(crate) fn wide_to_string(s: &UnicodeString) -> Option<String> {
-    if s.Buffer.is_null() { return None; }
+    if s.Buffer.is_null() {
+        return None;
+    }
     let slice = s.as_slice();
     let mut out = String::new();
     for &c in slice {
-        if c == 0 { break; }
+        if c == 0 {
+            break;
+        }
         if let Some(ch) = char::from_u32(c as u32) {
             out.push(ch);
         }

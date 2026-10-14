@@ -16,7 +16,6 @@
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
-
 /// Tick frequency in Hz. The PIT/HAL is programmed to this rate.
 pub const TICKS_PER_SECOND: u32 = 1000;
 /// 100-ns intervals per millisecond. NT epoch math.
@@ -67,11 +66,11 @@ pub fn init() {
     ADVANCE_COUNT.store(0, Ordering::SeqCst);
     let source = pick_time_source();
     unsafe { TIME_SOURCE = source };
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
+    // // kprintln!(
     // //         "    Time: source={:?} freq={}Hz ({}ms/tick)",
     // //         source, TICKS_PER_SECOND, 1000 / TICKS_PER_SECOND
     // //     );
-    // // kprintln!("    Time: tick_count=0 system_time=0 interrupt_time=0")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("    Time: tick_count=0 system_time=0 interrupt_time=0");
 }
 
 /// Advance the time counters by one tick. Called from the clock
@@ -145,32 +144,32 @@ pub fn smoke_test() -> bool {
     let it_after = get_interrupt_time();
 
     if after != before + 7 {
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "    [TIME SMOKE FAIL] tick_count: {} -> {}",
-// //             before, after
-// //         );
+        // // kprintln!(
+        // //             "    [TIME SMOKE FAIL] tick_count: {} -> {}",
+        // //             before, after
+        // //         );
         return false;
     }
     if adv_after != adv_before + 7 {
-        // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //             "    [TIME SMOKE FAIL] advance_count: {} -> {}",
-// //             adv_before, adv_after
-// //         );
+        // // kprintln!(
+        // //             "    [TIME SMOKE FAIL] advance_count: {} -> {}",
+        // //             adv_before, adv_after
+        // //         );
         return false;
     }
     if st_after != st_before + 7 * HUNDRED_NS_PER_MS {
-        // // kprintln!("    [TIME SMOKE FAIL] system_time math")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("    [TIME SMOKE FAIL] system_time math");
         return false;
     }
     if it_after != it_before + 7 * HUNDRED_NS_PER_MS {
-        // // kprintln!("    [TIME SMOKE FAIL] interrupt_time math")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("    [TIME SMOKE FAIL] interrupt_time math");
         return false;
     }
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         "    [TIME SMOKE OK] tick_count={} system_time={}us interrupt_time={}us",
-// //         after,
-// //         st_after / 10,
-// //         it_after / 10
-// //     );
+    // // kprintln!(
+    // //         "    [TIME SMOKE OK] tick_count={} system_time={}us interrupt_time={}us",
+    // //         after,
+    // //         st_after / 10,
+    // //         it_after / 10
+    // //     );
     true
 }

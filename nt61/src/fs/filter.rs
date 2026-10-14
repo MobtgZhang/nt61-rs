@@ -18,10 +18,10 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
-use alloc::vec;
-use alloc::string::String;
 use crate::ke::sync::Spinlock;
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -164,7 +164,8 @@ impl FilterManager {
         let filter = FilterInstance::new(id, registration);
         self.filters.push(filter);
 
-        self.filters.sort_by(|a, b| b.registration.altitude.cmp(&a.registration.altitude));
+        self.filters
+            .sort_by(|a, b| b.registration.altitude.cmp(&a.registration.altitude));
 
         id
     }
@@ -288,9 +289,7 @@ pub fn statistics() -> Option<FilterStatistics> {
 
 pub fn list_filters() -> Vec<FilterInfo> {
     let mgr = FILTER_MANAGER.lock();
-    mgr.as_ref()
-        .map(|m| m.list_filters())
-        .unwrap_or_default()
+    mgr.as_ref().map(|m| m.list_filters()).unwrap_or_default()
 }
 
 pub fn example_antivirus_filter() -> MinifilterRegistration {
@@ -313,7 +312,9 @@ pub fn example_encryption_filter() -> MinifilterRegistration {
     MinifilterRegistration {
         name: String::from("Encryption"),
         operations: vec![FsOperation::Read, FsOperation::Write],
-        flags: FilterFlags { bits: FilterFlags::PRE_OPERATION.bits | FilterFlags::POST_OPERATION.bits },
+        flags: FilterFlags {
+            bits: FilterFlags::PRE_OPERATION.bits | FilterFlags::POST_OPERATION.bits,
+        },
         pre_operation: Some(encrypt_pre_operation),
         post_operation: Some(encrypt_post_operation),
         altitude: 141000, // Encryption altitude range

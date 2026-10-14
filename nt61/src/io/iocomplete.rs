@@ -28,8 +28,8 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::ke::sync::Spinlock;
-use crate::mm::pool;
 use crate::kprintln;
+use crate::mm::pool;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -158,7 +158,7 @@ impl IoCompletion {
         } else {
             // Queue full — drop the packet (in a real system, this
             // would return STATUS_NO_MEMORY or similar)
-            // // kprintln!("[IOCP] port {} queue full, dropping packet", self.port_number)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[IOCP] port {} queue full, dropping packet", self.port_number);
         }
         q.len()
     }
@@ -224,39 +224,57 @@ impl core::fmt::Debug for IoCompletion {
 // Global IOCP registry
 // ---------------------------------------------------------------------------
 
-static COMPLETION_PORTS: Spinlock<Vec<Option<IoCompletion>>> =
-    Spinlock::new(alloc::vec![None; MAX_COMPLETION_PORTS]);
+static COMPLETION_PORTS: Spinlock<Vec<Option<IoCompletion>>> = Spinlock::new(Vec::new());
 
 /// Create a new I/O Completion Port.
 /// Returns the port handle (index into the global table).
 pub fn IoCreateCompletionPort(key: usize) -> Option<usize> {
     let mut ports = COMPLETION_PORTS.lock();
 
+    // `IoCompletion` is not `Clone` (it owns a `Spinlock`), so the table
+    // cannot be built with the repeat-count `vec![]` form in a const
+    // context. Grow it lazily on first use instead.
+    let have = ports.len();
+    if have < MAX_COMPLETION_PORTS {
+        ports.reserve_exact(MAX_COMPLETION_PORTS - have);
+        for _ in have..MAX_COMPLETION_PORTS {
+            ports.push(None);
+        }
+    }
+
     for (i, slot) in ports.iter_mut().enumerate() {
         if slot.is_none() {
             let port = IoCompletion::new(key);
             *slot = Some(port);
-            // // kprintln!("[IOCP] created port #{} key=0x{:x}", i, key)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[IOCP] created port #{} key=0x{:x}", i, key);
             return Some(i);
         }
     }
 
-    // // kprintln!("[IOCP] out of completion port slots")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("[IOCP] out of completion port slots");
     None
 }
 
-/// Look up a completion port by handle.
-pub fn lookup_port(handle: usize) -> Option<&'static IoCompletion> {
+/// Look up a completion port by handle and run `f` while the registry lock is
+/// held.
+///
+/// Handing out `&'static IoCompletion` was unsound: the slot is an `Option`
+/// inside a growable `Vec`, so `IoCloseCompletionPort` (or a reallocation) can
+/// invalidate the reference while a caller still holds it. The reference must
+/// not outlive the lock that owns the table.
+pub fn with_port<F, R>(handle: usize, f: F) -> Option<R>
+where
+    F: FnOnce(&IoCompletion) -> R,
+{
     let ports = COMPLETION_PORTS.lock();
-    ports.get(handle).and_then(|p| p.as_ref())
+    let slot = ports.get(handle)?.as_ref()?;
+    Some(f(slot))
 }
 
-/// Look up a mutable completion port by handle.
-pub fn lookup_port_mut(handle: usize) -> Option<&'static mut IoCompletion> {
-    let mut ports = COMPLETION_PORTS.lock();
-    let slot = ports.get_mut(handle)?;
-    // SAFETY: we hold the lock exclusively
-    unsafe { core::mem::transmute::<Option<&IoCompletion>, Option<&'static mut IoCompletion>>(slot.as_ref()) }
+/// Whether a completion port handle is valid.
+pub fn port_exists(handle: usize) -> bool {
+    let ports = COMPLETION_PORTS.lock();
+    matches!(ports.get(handle), Some(Some(_)))
 }
 
 /// Close a completion port.
@@ -264,7 +282,7 @@ pub fn IoCloseCompletionPort(handle: usize) -> bool {
     let mut ports = COMPLETION_PORTS.lock();
     if let Some(slot) = ports.get_mut(handle) {
         if slot.is_some() {
-            // // kprintln!("[IOCP] closing port #{}", handle)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[IOCP] closing port #{}", handle);
             *slot = None;
             return true;
         }
@@ -295,20 +313,20 @@ pub fn NtSetIoCompletion(
     status: u32,
     information: usize,
 ) -> u32 {
-    let port = match lookup_port(port_handle) {
-        Some(p) => p,
+    let packet =
+        IoCompletionPacket::new(completion_key, core::ptr::null_mut(), status, information);
+    let depth = match with_port(port_handle, |p| p.enqueue(packet)) {
+        Some(d) => d,
         None => {
-            // // kprintln!("[IOCP] NtSetIoCompletion: invalid port handle {}", port_handle)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+            // // kprintln!("[IOCP] NtSetIoCompletion: invalid port handle {}", port_handle);
             return 0xC0000001; // STATUS_UNSUCCESSFUL
         }
     };
-
-    let packet = IoCompletionPacket::new(completion_key, core::ptr::null_mut(), status, information);
-    let depth = port.enqueue(packet);
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         "[IOCP] NtSetIoCompletion port={} key=0x{:x} status=0x{:08x} info={} depth={}",
-// //         port_handle, completion_key, status, information, depth
-// //     );
+    let _ = depth;
+    // // kprintln!(
+    // //         "[IOCP] NtSetIoCompletion port={} key=0x{:x} status=0x{:08x} info={} depth={}",
+    // //         port_handle, completion_key, status, information, depth
+    // //     );
     0 // STATUS_SUCCESS
 }
 
@@ -330,15 +348,14 @@ pub struct IoCompletionResult {
     pub apc_context: *mut (),
 }
 
-pub fn NtRemoveIoCompletion(
-    port_handle: usize,
-    timeout_ms: u32,
-) -> Option<IoCompletionResult> {
-    let port = lookup_port(port_handle)?;
+pub fn NtRemoveIoCompletion(port_handle: usize, timeout_ms: u32) -> Option<IoCompletionResult> {
+    if !port_exists(port_handle) {
+        return None;
+    }
 
     if timeout_ms == 0 {
         // Non-blocking — just try to dequeue
-        let packet = port.dequeue()?;
+        let packet = with_port(port_handle, |p| p.dequeue())??;
         return Some(IoCompletionResult {
             status: packet.status,
             information: packet.information,
@@ -352,7 +369,7 @@ pub fn NtRemoveIoCompletion(
     let max_iters = (timeout_ms as usize) * 100_000_000;
 
     for i in 0..max_iters {
-        if let Some(packet) = port.dequeue() {
+        if let Some(packet) = with_port(port_handle, |p| p.dequeue()).flatten() {
             return Some(IoCompletionResult {
                 status: packet.status,
                 information: packet.information,
@@ -375,7 +392,8 @@ pub fn NtRemoveIoCompletion(
 /// with the port so that I/O completions on that file are routed
 /// to the port. Here we just register the file's completion key.
 pub fn IoBindIoCompletion(port_handle: usize, file_key: usize) -> bool {
-    lookup_port(port_handle).is_some()
+    let _ = file_key;
+    port_exists(port_handle)
 }
 
 // ---------------------------------------------------------------------------
@@ -384,71 +402,106 @@ pub fn IoBindIoCompletion(port_handle: usize, file_key: usize) -> bool {
 
 /// Smoke test the IOCP subsystem.
 pub fn smoke_test() -> bool {
-    // // kprintln!("  [IOCP SMOKE] testing IOCP subsystem...")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("  [IOCP SMOKE] testing IOCP subsystem...");
 
     // 1. Create a port
     let port = IoCreateCompletionPort(0xDEADBEEF);
     if port.is_none() {
-        // // kprintln!("  [IOCP SMOKE FAIL] IoCreateCompletionPort returned None")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("  [IOCP SMOKE FAIL] IoCreateCompletionPort returned None");
         return false;
     }
     let port_handle = port.unwrap();
-    // // kprintln!("    port handle = {}", port_handle)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("    port handle = {}", port_handle);
 
     // 2. Enqueue some packets via NtSetIoCompletion
     let status = NtSetIoCompletion(port_handle, 0x1111, 0, 512);
     if status != 0 {
-        // // kprintln!("  [IOCP SMOKE FAIL] NtSetIoCompletion failed: 0x{:08x}", status)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("  [IOCP SMOKE FAIL] NtSetIoCompletion failed: 0x{:08x}", status);
         return false;
     }
 
     let status = NtSetIoCompletion(port_handle, 0x2222, 0, 256);
     if status != 0 {
-        // // kprintln!("  [IOCP SMOKE FAIL] NtSetIoCompletion failed: 0x{:08x}", status)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("  [IOCP SMOKE FAIL] NtSetIoCompletion failed: 0x{:08x}", status);
         return false;
     }
 
     // 3. Dequeue via NtRemoveIoCompletion
     let result = NtRemoveIoCompletion(port_handle, 0);
     if result.is_none() {
-        // // kprintln!("  [IOCP SMOKE FAIL] NtRemoveIoCompletion timed out")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("  [IOCP SMOKE FAIL] NtRemoveIoCompletion timed out");
         return false;
     }
     let result = result.unwrap();
-    // // kprintln!(  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround)
-// //         "    packet: key=0x{:x} status=0x{:08x} info={}",
-// //         result.completion_key, result.status, result.information
-// //     );
+    // // kprintln!(
+    // //         "    packet: key=0x{:x} status=0x{:08x} info={}",
+    // //         result.completion_key, result.status, result.information
+    // //     );
 
     // 4. Check depth
-    let port = lookup_port(port_handle).unwrap();
-    let depth = port.depth();
-    // // kprintln!("    remaining depth = {}", depth)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    let depth = with_port(port_handle, |p| p.depth()).unwrap();
+    // // kprintln!("    remaining depth = {}", depth);
     if depth != 1 {
-        // // kprintln!("  [IOCP SMOKE FAIL] expected depth 1, got {}", depth)  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("  [IOCP SMOKE FAIL] expected depth 1, got {}", depth);
         return false;
     }
 
     // 5. Dequeue remaining packet
     let result = NtRemoveIoCompletion(port_handle, 0);
     if result.is_none() {
-        // // kprintln!("  [IOCP SMOKE FAIL] second NtRemoveIoCompletion timed out")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("  [IOCP SMOKE FAIL] second NtRemoveIoCompletion timed out");
         return false;
     }
 
     // 6. Verify empty queue
     let result = NtRemoveIoCompletion(port_handle, 0);
     if result.is_some() {
-        // // kprintln!("  [IOCP SMOKE FAIL] unexpected third packet")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("  [IOCP SMOKE FAIL] unexpected third packet");
         return false;
     }
 
     // 7. Close the port
     if !IoCloseCompletionPort(port_handle) {
-        // // kprintln!("  [IOCP SMOKE FAIL] IoCloseCompletionPort failed")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+        // // kprintln!("  [IOCP SMOKE FAIL] IoCloseCompletionPort failed");
         return false;
     }
 
-    // // kprintln!("  [IOCP SMOKE OK] IOCP subsystem healthy")  // kprintln disabled (memcpy crash workaround)  // kprintln disabled (memcpy crash workaround);
+    // // kprintln!("  [IOCP SMOKE OK] IOCP subsystem healthy");
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The port reference handed out by the old `lookup_port` was a `&'static`
+    // transmute of a slot inside a growable `Vec`; closing the port (or a
+    // reallocation) invalidated it while callers still held it. `with_port`
+    // keeps the reference inside the lock, which is what these tests pin down.
+    #[test]
+    fn port_reference_does_not_outlive_the_lock() {
+        let handle = IoCreateCompletionPort(0x1234).expect("no free completion port slot");
+        assert!(port_exists(handle));
+        assert_eq!(with_port(handle, |p| p.key()), Some(0x1234));
+
+        let packet = IoCompletionPacket::new(0x1234, core::ptr::null_mut(), 0, 7);
+        assert_eq!(with_port(handle, |p| p.enqueue(packet)), Some(1));
+        assert_eq!(with_port(handle, |p| p.depth()), Some(1));
+
+        let popped = with_port(handle, |p| p.dequeue()).flatten();
+        assert!(popped.is_some());
+        assert_eq!(popped.unwrap().information, 7);
+        assert_eq!(with_port(handle, |p| p.depth()), Some(0));
+
+        assert!(IoCloseCompletionPort(handle));
+        assert!(!port_exists(handle));
+        assert_eq!(with_port(handle, |p| p.key()), None);
+        assert!(!IoCloseCompletionPort(handle));
+    }
+
+    #[test]
+    fn unknown_handle_has_no_port() {
+        assert!(!port_exists(usize::MAX));
+        assert_eq!(with_port(usize::MAX, |p| p.key()), None);
+    }
 }

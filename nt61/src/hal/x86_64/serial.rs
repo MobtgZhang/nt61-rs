@@ -24,7 +24,7 @@ pub fn init() {
     init_port(COM1_PORT);
     super::mark_serial_initialized();
     // TEMP: Skip kprintln! to isolate the crash
-    // // crate::kprintln!("    Serial port (COM1) initialized at I/O 0x3F8")  // kprintln disabled (memcpy crash workaround);
+    // // crate::kprintln!("    Serial port (COM1) initialized at I/O 0x3F8");
 }
 
 /// Alias for init (used by legacy arch/ code)
@@ -36,35 +36,35 @@ pub fn serial_init() {
 pub fn init_port(port: u16) {
     // Disable interrupts
     outb(port + UART_REG_IER, 0x00);
-    
+
     // Set DLAB
     outb(port + UART_REG_LCR, 0x80);
-    
+
     // Set divisor (baud rate = 115200 / divisor)
     outb(port + 0, 0x03); // LSB
     outb(port + 1, 0x00); // MSB (divisor 3 = 38400 baud)
-    
+
     // 8 bits, no parity, one stop bit
     outb(port + UART_REG_LCR, 0x03);
-    
+
     // Enable FIFO
     outb(port + UART_REG_FCR, 0x01);
-    
+
     // Set MCR (RTS/DSR)
     outb(port + UART_REG_MCR, 0x03);
-    
+
     // Loopback mode test
     outb(port + UART_REG_MCR, 0x1F);
-    
+
     // Check loopback
     outb(port + 0, 0xAE);
-    
+
     // Verify
     if inb(port + 0) != 0xAE {
         // Port not responding
         return;
     }
-    
+
     // Back to normal mode
     outb(port + UART_REG_MCR, 0x0F);
 }
@@ -117,7 +117,11 @@ pub fn write_hex_u64(v: u64) {
     // `format!` here (no `alloc`), so emit nibble by nibble.
     for i in (0..16).rev() {
         let nib = ((v >> (i * 4)) & 0xF) as u8;
-        let c = if nib < 10 { b'0' + nib } else { b'a' + nib - 10 };
+        let c = if nib < 10 {
+            b'0' + nib
+        } else {
+            b'a' + nib - 10
+        };
         write_char(c);
     }
 }
@@ -218,15 +222,15 @@ impl SerialConsole {
     pub fn new() -> Self {
         Self
     }
-    
+
     pub fn write(&self, s: &str) {
         write_string(s);
     }
-    
+
     pub fn write_byte(&self, b: u8) {
         write_char(b);
     }
-    
+
     pub fn flush(&self) {
         // UART auto-flushes
     }

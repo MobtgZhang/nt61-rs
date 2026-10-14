@@ -20,9 +20,13 @@ impl Output for () {
 /// FAT32 root and feeding each line back through `dispatch_fn`.
 /// Returns `true` if the command looked like a batch filename and
 /// was handled (whether successfully or with a parse error).
-pub fn run_batch_file<O: Output>(cmd: &[u8], output: &mut O, mut dispatch_fn: impl FnMut(&[u8])) -> bool {
+pub fn run_batch_file<O: Output>(
+    cmd: &[u8],
+    output: &mut O,
+    mut dispatch_fn: impl FnMut(&[u8]),
+) -> bool {
     use crate::fs::fat32;
-    
+
     // Take the first whitespace-delimited token.
     let mut end = 0;
     while end < cmd.len() && cmd[end] != b' ' && cmd[end] != b'\t' {
@@ -32,7 +36,7 @@ pub fn run_batch_file<O: Output>(cmd: &[u8], output: &mut O, mut dispatch_fn: im
     if name.is_empty() {
         return false;
     }
-    
+
     // Check if it ends with .bat or .cmd
     let lower_end = name
         .iter()
@@ -50,7 +54,7 @@ pub fn run_batch_file<O: Output>(cmd: &[u8], output: &mut O, mut dispatch_fn: im
     if !ends_in_bat && !ends_in_cmd {
         return false;
     }
-    
+
     if !fat32::is_mounted() {
         output.put_str(b"[BAT] FAT32 not mounted\r\n");
         return true;
@@ -58,7 +62,7 @@ pub fn run_batch_file<O: Output>(cmd: &[u8], output: &mut O, mut dispatch_fn: im
     let Some(fs) = fat32::get_mounted_fs() else {
         return true;
     };
-    
+
     // Dispatch order:
     //   1. The full Windows-style path is tried first via
     //      `find_file_at_path`. This makes the canonical
@@ -87,17 +91,17 @@ pub fn run_batch_file<O: Output>(cmd: &[u8], output: &mut O, mut dispatch_fn: im
             return true;
         }
     };
-    
+
     let cluster = entry.first_cluster();
     let size = entry.file_size() as usize;
     if size == 0 {
         return true;
     }
-    
+
     let mut buf = [0u8; 8192];
     let read_size = core::cmp::min(size, buf.len());
     let n = fat32::read_file(fs, cluster, read_size as u32, &mut buf).unwrap_or(0);
-    
+
     // Process the batch file line by line
     let mut line = [0u8; 128];
     let mut line_len = 0usize;
@@ -132,14 +136,14 @@ pub struct BatchExecutor<F> {
     dispatch_fn: F,
 }
 
-impl<F> BatchExecutor<F> 
+impl<F> BatchExecutor<F>
 where
     F: FnMut(&[u8]),
 {
     pub fn new(dispatch_fn: F) -> Self {
         Self { dispatch_fn }
     }
-    
+
     pub fn run<O: Output>(&mut self, _output: &mut O, filename: &[u8]) -> bool {
         run_batch_file(filename, _output, |cmd| (self.dispatch_fn)(cmd))
     }

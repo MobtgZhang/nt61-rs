@@ -11,7 +11,7 @@
 //! stages; for now this module provides a testable launcher that
 //! can be unit-tested without the bare-metal kernel.
 
-use super::config::{SshdConfig, PermitRoot};
+use super::config::{PermitRoot, SshdConfig};
 use crate::ke::sync::Spinlock;
 use alloc::string::String;
 
@@ -32,8 +32,7 @@ pub enum LauncherError {
     AlreadyRunning,
 }
 
-static LAUNCHER_STATE: Spinlock<LauncherState> =
-    Spinlock::new(LauncherState::Uninitialised);
+static LAUNCHER_STATE: Spinlock<LauncherState> = Spinlock::new(LauncherState::Uninitialised);
 
 /// Mark the launcher state. `start_listener` walks through the
 /// transitions: Uninitialised → ConfigLoaded → ListenerBound →
@@ -50,7 +49,9 @@ pub fn set_state(next: LauncherState) -> bool {
         | (LauncherState::Accepting, LauncherState::Stopped) => true,
         _ => false,
     };
-    if ok { *current = next; }
+    if ok {
+        *current = next;
+    }
     ok
 }
 
@@ -86,13 +87,10 @@ pub fn config_allows_pubkey(cfg: &SshdConfig, user: &str) -> bool {
         return false;
     }
     // PermitRootLogin policy.
-    if user.eq_ignore_ascii_case("root")
-        || user.eq_ignore_ascii_case("administrator")
-    {
+    if user.eq_ignore_ascii_case("root") || user.eq_ignore_ascii_case("administrator") {
         return matches!(
             cfg.permit_root_login,
-            PermitRoot::Yes | PermitRoot::WithoutPassword
-                | PermitRoot::ProhibitPassword
+            PermitRoot::Yes | PermitRoot::WithoutPassword | PermitRoot::ProhibitPassword
         );
     }
     true
@@ -176,7 +174,8 @@ mod tests {
         assert!(set_state(LauncherState::ConfigLoaded));
         assert!(set_state(LauncherState::Stopped));
         reset();
-        assert!(set_state(LauncherState::Uninitialised));
+        // After reset(), the state is back to Uninitialised,
+        // so going straight to Stopped must work.
         assert!(set_state(LauncherState::Stopped));
     }
 }

@@ -16,9 +16,9 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
-use alloc::collections::BTreeMap;
 use crate::ke::sync::Spinlock;
+use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,17 +47,17 @@ impl SectionProtection {
     }
 
     pub fn is_writable(&self) -> bool {
-        self.contains(Self::PAGE_READWRITE) ||
-        self.contains(Self::PAGE_WRITECOPY) ||
-        self.contains(Self::PAGE_EXECUTE_READWRITE) ||
-        self.contains(Self::PAGE_EXECUTE_WRITECOPY)
+        self.contains(Self::PAGE_READWRITE)
+            || self.contains(Self::PAGE_WRITECOPY)
+            || self.contains(Self::PAGE_EXECUTE_READWRITE)
+            || self.contains(Self::PAGE_EXECUTE_WRITECOPY)
     }
 
     pub fn is_executable(&self) -> bool {
-        self.contains(Self::PAGE_EXECUTE) ||
-        self.contains(Self::PAGE_EXECUTE_READ) ||
-        self.contains(Self::PAGE_EXECUTE_READWRITE) ||
-        self.contains(Self::PAGE_EXECUTE_WRITECOPY)
+        self.contains(Self::PAGE_EXECUTE)
+            || self.contains(Self::PAGE_EXECUTE_READ)
+            || self.contains(Self::PAGE_EXECUTE_READWRITE)
+            || self.contains(Self::PAGE_EXECUTE_WRITECOPY)
     }
 }
 
@@ -211,7 +211,8 @@ impl SectionManager {
             return Err(());
         }
 
-        let base = base_address.unwrap_or_else(|| self.allocate_view_address(process_id, view_size));
+        let base =
+            base_address.unwrap_or_else(|| self.allocate_view_address(process_id, view_size));
 
         let view = SectionView {
             section_id,
@@ -229,9 +230,11 @@ impl SectionManager {
     }
 
     pub fn unmap_view(&mut self, process_id: u32, base_address: u64) -> Result<(), ()> {
-        if let Some(pos) = self.views.iter().position(|v| {
-            v.process_id == process_id && v.base_address == base_address
-        }) {
+        if let Some(pos) = self
+            .views
+            .iter()
+            .position(|v| v.process_id == process_id && v.base_address == base_address)
+        {
             self.views.remove(pos);
             self.views_unmapped.fetch_add(1, Ordering::Relaxed);
             Ok(())
@@ -252,7 +255,8 @@ impl SectionManager {
     }
 
     pub fn unmap_process_views(&mut self, process_id: u32) {
-        let to_remove: Vec<u64> = self.views
+        let to_remove: Vec<u64> = self
+            .views
             .iter()
             .filter(|v| v.process_id == process_id)
             .map(|v| v.base_address)
@@ -314,20 +318,14 @@ pub fn create_file_mapping(
     Ok(mgr.create_section(SectionType::File, Some(file_id), max_size, protection))
 }
 
-pub fn create_image_section(
-    file_id: u64,
-    max_size: u64,
-) -> Result<u64, ()> {
+pub fn create_image_section(file_id: u64, max_size: u64) -> Result<u64, ()> {
     let mut mgr = SECTION_MANAGER.lock();
     let mgr = mgr.as_mut().ok_or(())?;
     let protection = SectionProtection::PAGE_EXECUTE_READWRITE;
     Ok(mgr.create_section(SectionType::Image, Some(file_id), max_size, protection))
 }
 
-pub fn create_pagefile_section(
-    max_size: u64,
-    protection: SectionProtection,
-) -> Result<u64, ()> {
+pub fn create_pagefile_section(max_size: u64, protection: SectionProtection) -> Result<u64, ()> {
     let mut mgr = SECTION_MANAGER.lock();
     let mgr = mgr.as_mut().ok_or(())?;
     Ok(mgr.create_section(SectionType::PageFile, None, max_size, protection))
@@ -343,7 +341,14 @@ pub fn map_view_of_section(
 ) -> Result<u64, ()> {
     let mut mgr = SECTION_MANAGER.lock();
     let mgr = mgr.as_mut().ok_or(())?;
-    mgr.map_view(section_id, process_id, base_address, section_offset, view_size, protection)
+    mgr.map_view(
+        section_id,
+        process_id,
+        base_address,
+        section_offset,
+        view_size,
+        protection,
+    )
 }
 
 pub fn unmap_view_of_section(process_id: u32, base_address: u64) -> Result<(), ()> {

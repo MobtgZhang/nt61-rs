@@ -16,12 +16,12 @@
 // SeSinglePrivilegeCheck, SE_* access masks, SID_*, ...).
 #![allow(unused_imports)]
 
-pub mod sid;
 pub mod acl;
-pub mod token;
-pub mod seaccess;
-pub mod users;
 pub mod logon;
+pub mod seaccess;
+pub mod sid;
+pub mod token;
+pub mod users;
 
 use crate::kprintln;
 
@@ -33,5 +33,18 @@ pub fn init() {
     seaccess::init();
     users::init();
     logon::init();
-    // crate::kprintln!("    Security Reference Monitor: initialized")  // kprintln disabled (memcpy crash workaround);
+    // crate::kprintln!("    Security Reference Monitor: initialized");
 }
+
+pub mod aclmgmt;
+pub mod appcontainer;
+pub mod audit;
+pub mod audit_log;
+pub mod audit_policy;
+pub mod descriptor;
+pub mod logonsession;
+pub mod refmon;
+pub mod sidmgmt;
+pub mod smoke;
+pub mod tests;
+pub mod tokenmgmt;

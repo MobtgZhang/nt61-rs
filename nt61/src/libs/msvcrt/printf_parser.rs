@@ -7,11 +7,11 @@ use core::ptr;
 
 #[derive(Default)]
 struct FormatFlags {
-    left_justify: bool,    // '-'
-    force_sign: bool,      // '+'
-    space_sign: bool,      // ' '
-    alternate: bool,       // '#'
-    zero_pad: bool,        // '0'
+    left_justify: bool, // '-'
+    force_sign: bool,   // '+'
+    space_sign: bool,   // ' '
+    alternate: bool,    // '#'
+    zero_pad: bool,     // '0'
 }
 
 struct FormatSpec {
@@ -25,13 +25,13 @@ struct FormatSpec {
 #[derive(Copy, Clone, PartialEq)]
 enum LengthModifier {
     None,
-    Char,      // hh
-    Short,     // h
-    Long,      // l
-    LongLong,  // ll
-    IntMax,    // j
-    Size,      // z
-    PtrDiff,   // t
+    Char,       // hh
+    Short,      // h
+    Long,       // l
+    LongLong,   // ll
+    IntMax,     // j
+    Size,       // z
+    PtrDiff,    // t
     LongDouble, // L
 }
 
@@ -120,10 +120,22 @@ unsafe fn parse_format_spec(format: *const c_char, pos: &mut usize) -> Option<Fo
                 LengthModifier::Long
             }
         }
-        b'j' => { *pos += 1; LengthModifier::IntMax }
-        b'z' => { *pos += 1; LengthModifier::Size }
-        b't' => { *pos += 1; LengthModifier::PtrDiff }
-        b'L' => { *pos += 1; LengthModifier::LongDouble }
+        b'j' => {
+            *pos += 1;
+            LengthModifier::IntMax
+        }
+        b'z' => {
+            *pos += 1;
+            LengthModifier::Size
+        }
+        b't' => {
+            *pos += 1;
+            LengthModifier::PtrDiff
+        }
+        b'L' => {
+            *pos += 1;
+            LengthModifier::LongDouble
+        }
         _ => LengthModifier::None,
     };
 
@@ -148,7 +160,11 @@ fn format_int_with_spec(
     let mut temp_len = 0;
 
     let negative = value < 0;
-    let mut num = if negative { value.wrapping_neg() as u64 } else { value as u64 };
+    let mut num = if negative {
+        value.wrapping_neg() as u64
+    } else {
+        value as u64
+    };
 
     let digits = if uppercase {
         b"0123456789ABCDEF"
@@ -203,7 +219,11 @@ fn format_int_with_spec(
     let mut pos = 0;
 
     if !spec.flags.left_justify && width > total_len {
-        let pad_char = if spec.flags.zero_pad && spec.precision.is_none() { b'0' } else { b' ' };
+        let pad_char = if spec.flags.zero_pad && spec.precision.is_none() {
+            b'0'
+        } else {
+            b' '
+        };
 
         if pad_char == b'0' {
             for i in 0..prefix_len {
@@ -297,7 +317,11 @@ fn format_uint_with_spec(
     let mut pos = 0;
 
     if !spec.flags.left_justify && width > total_len {
-        let pad_char = if spec.flags.zero_pad && spec.precision.is_none() { b'0' } else { b' ' };
+        let pad_char = if spec.flags.zero_pad && spec.precision.is_none() {
+            b'0'
+        } else {
+            b' '
+        };
 
         if pad_char == b'0' {
             for i in 0..prefix_len {
@@ -340,11 +364,7 @@ fn format_uint_with_spec(
     pos
 }
 
-unsafe fn format_string_with_spec(
-    s: *const c_char,
-    spec: &FormatSpec,
-    buf: &mut [u8],
-) -> usize {
+unsafe fn format_string_with_spec(s: *const c_char, spec: &FormatSpec, buf: &mut [u8]) -> usize {
     if s.is_null() {
         let null_str = b"(null)";
         let len = null_str.len();
@@ -441,7 +461,7 @@ fn format_float_with_spec(
         }
 
         let int_part = val as u64;
-        buf[pos] = (b'0' + int_part as u8);
+        buf[pos] = b'0' + int_part as u8;
         pos += 1;
 
         if precision > 0 || spec.flags.alternate {

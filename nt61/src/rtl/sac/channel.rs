@@ -80,7 +80,10 @@ impl ChannelManager {
         // Find the first empty slot index first
         let mut empty_idx: Option<usize> = None;
         for (i, slot) in self.channels.iter().enumerate() {
-            if slot.is_none() { empty_idx = Some(i); break; }
+            if slot.is_none() {
+                empty_idx = Some(i);
+                break;
+            }
         }
         if let Some(idx) = empty_idx {
             let id = self.next_id;
@@ -88,7 +91,9 @@ impl ChannelManager {
             let mut ch = Channel::new(id, name);
             // Deactivate all others then activate this one
             for s in self.channels.iter_mut() {
-                if let Some(c) = s { c.is_current = false; }
+                if let Some(c) = s {
+                    c.is_current = false;
+                }
             }
             ch.is_current = true;
             self.current_id = id;
@@ -121,27 +126,40 @@ impl ChannelManager {
 
     pub fn get_channel(&self, id: ChannelId) -> Option<&Channel> {
         for slot in &self.channels {
-            if let Some(ch) = slot { if ch.id == id { return Some(ch); } }
+            if let Some(ch) = slot {
+                if ch.id == id {
+                    return Some(ch);
+                }
+            }
         }
         None
     }
 
-    pub fn next_id(&self) -> ChannelId { self.next_id }
+    pub fn next_id(&self) -> ChannelId {
+        self.next_id
+    }
 }
 
 /// Global channel manager stored in a raw byte buffer.
 /// ChannelManager is not Default+Copy safe for `static`, so we hold a buffer.
-static mut CHANNEL_MGR_BUF: [u8; core::mem::size_of::<ChannelManager>()] =
-    [0; core::mem::size_of::<ChannelManager>()];
+/// The buffer must still satisfy `ChannelManager`'s alignment: a plain
+/// `[u8; N]` is alignment 1, so casting it to `*mut ChannelManager` was a
+/// misaligned pointer (undefined behaviour).
+#[repr(align(16))]
+struct ChannelMgrStorage([u8; core::mem::size_of::<ChannelManager>()]);
+
+static mut CHANNEL_MGR_BUF: ChannelMgrStorage =
+    ChannelMgrStorage([0; core::mem::size_of::<ChannelManager>()]);
 static mut CHANNEL_MGR_INITIALIZED: bool = false;
 
 unsafe fn channel_mgr() -> &'static mut ChannelManager {
+    let storage = core::ptr::addr_of_mut!(CHANNEL_MGR_BUF);
+    let ptr = (*storage).0.as_mut_ptr().cast::<ChannelManager>();
     if !CHANNEL_MGR_INITIALIZED {
-        let ptr = core::ptr::addr_of_mut!(CHANNEL_MGR_BUF).cast::<ChannelManager>();
         core::ptr::write(ptr, ChannelManager::new());
         CHANNEL_MGR_INITIALIZED = true;
     }
-    &mut *core::ptr::addr_of_mut!(CHANNEL_MGR_BUF).cast::<ChannelManager>()
+    &mut *ptr
 }
 
 /// Create a new channel

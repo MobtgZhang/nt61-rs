@@ -104,12 +104,7 @@ impl LsDcCrtc {
     /// Write a register
     #[inline]
     fn write_reg(&self, offset: u32, value: u32) {
-        unsafe {
-            core::ptr::write_volatile(
-                (self.dc_base + offset as u64) as *mut u32,
-                value,
-            )
-        }
+        unsafe { core::ptr::write_volatile((self.dc_base + offset as u64) as *mut u32, value) }
     }
 
     /// Enable the CRT controller
@@ -199,8 +194,15 @@ impl LsDcCrtc {
         self.write_reg(self.timing_v_reg(), v_timing);
 
         // Polarity
-        let polarity = if h_polarity_high { CRTC_HPOLARITY_HIGH } else { 0 }
-            | if v_polarity_high { CRTC_VPOLARITY_HIGH } else { 0 };
+        let polarity = if h_polarity_high {
+            CRTC_HPOLARITY_HIGH
+        } else {
+            0
+        } | if v_polarity_high {
+            CRTC_VPOLARITY_HIGH
+        } else {
+            0
+        };
         self.write_reg(self.polarity_reg(), polarity);
     }
 
@@ -257,8 +259,15 @@ impl DualCrtcManager {
     }
 
     /// Enable both CRTCs
-    pub fn enable_both(&mut self, width_a: u32, height_a: u32, fb_addr_a: u64,
-                       width_b: u32, height_b: u32, fb_addr_b: u64) {
+    pub fn enable_both(
+        &mut self,
+        width_a: u32,
+        height_a: u32,
+        fb_addr_a: u64,
+        width_b: u32,
+        height_b: u32,
+        fb_addr_b: u64,
+    ) {
         self.crtc_a.enable(width_a, height_a, fb_addr_a);
         self.crtc_b.enable(width_b, height_b, fb_addr_b);
     }
