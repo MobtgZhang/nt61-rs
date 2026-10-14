@@ -8,9 +8,9 @@
 //
 //! Clean-room implementation based on RFC 2131/2132.
 
-use alloc::vec::Vec;
 use alloc::format;
 use alloc::string::String;
+use alloc::vec::Vec;
 
 /// DHCP message types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -352,7 +352,7 @@ impl DhcpOptions {
     fn parse(options: &[u8]) -> Self {
         let mut opts = DhcpOptions::default();
         let mut i = 0;
-        
+
         while i < options.len() {
             let code = options[i];
             if code == 0 {
@@ -365,24 +365,30 @@ impl DhcpOptions {
             if i + 1 >= options.len() {
                 break;
             }
-            
+
             let len = options[i + 1] as usize;
             if i + 2 + len > options.len() {
                 break;
             }
-            
+
             let data = &options[i + 2..i + 2 + len];
-            
+
             match code {
                 1 => {
                     if data.len() >= 4 {
-                        opts.subnet_mask = Some(u32::from_be_bytes([data[0], data[1], data[2], data[3]]));
+                        opts.subnet_mask =
+                            Some(u32::from_be_bytes([data[0], data[1], data[2], data[3]]));
                     }
                 }
                 3 => {
                     for j in (0..data.len()).step_by(4) {
                         if j + 4 <= data.len() {
-                            let router_ip = u32::from_be_bytes([data[j], data[j+1], data[j+2], data[j+3]]);
+                            let router_ip = u32::from_be_bytes([
+                                data[j],
+                                data[j + 1],
+                                data[j + 2],
+                                data[j + 3],
+                            ]);
                             opts.routers.push(router_ip);
                             if opts.router.is_none() {
                                 opts.router = Some(router_ip);
@@ -393,14 +399,24 @@ impl DhcpOptions {
                 4 => {
                     for j in (0..data.len()).step_by(4) {
                         if j + 4 <= data.len() {
-                            opts.time_servers.push(u32::from_be_bytes([data[j], data[j+1], data[j+2], data[j+3]]));
+                            opts.time_servers.push(u32::from_be_bytes([
+                                data[j],
+                                data[j + 1],
+                                data[j + 2],
+                                data[j + 3],
+                            ]));
                         }
                     }
                 }
                 5 => {
                     for j in (0..data.len()).step_by(4) {
                         if j + 4 <= data.len() {
-                            opts.name_servers.push(u32::from_be_bytes([data[j], data[j+1], data[j+2], data[j+3]]));
+                            opts.name_servers.push(u32::from_be_bytes([
+                                data[j],
+                                data[j + 1],
+                                data[j + 2],
+                                data[j + 3],
+                            ]));
                         }
                     }
                 }
@@ -408,7 +424,12 @@ impl DhcpOptions {
                     let mut dns = [0u32; 3];
                     let dns_count = (data.len() / 4).min(3);
                     for j in 0..dns_count {
-                        dns[j] = u32::from_be_bytes([data[j * 4], data[j * 4 + 1], data[j * 4 + 2], data[j * 4 + 3]]);
+                        dns[j] = u32::from_be_bytes([
+                            data[j * 4],
+                            data[j * 4 + 1],
+                            data[j * 4 + 2],
+                            data[j * 4 + 3],
+                        ]);
                     }
                     opts.dns_servers = Some(dns);
                     opts.domain_name_servers = opts.name_servers.clone();
@@ -424,25 +445,33 @@ impl DhcpOptions {
                 }
                 28 => {
                     if data.len() >= 4 {
-                        opts.broadcast_address = Some(u32::from_be_bytes([data[0], data[1], data[2], data[3]]));
+                        opts.broadcast_address =
+                            Some(u32::from_be_bytes([data[0], data[1], data[2], data[3]]));
                     }
                 }
                 42 => {
                     for j in (0..data.len()).step_by(4) {
                         if j + 4 <= data.len() {
-                            opts.ntp_servers.push(u32::from_be_bytes([data[j], data[j+1], data[j+2], data[j+3]]));
+                            opts.ntp_servers.push(u32::from_be_bytes([
+                                data[j],
+                                data[j + 1],
+                                data[j + 2],
+                                data[j + 3],
+                            ]));
                         }
                     }
                 }
                 50 => {
                     // Requested IP Address
                     if data.len() >= 4 {
-                        let _requested_ip = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
+                        let _requested_ip =
+                            u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
                     }
                 }
                 51 => {
                     if data.len() >= 4 {
-                        opts.lease_time = Some(u32::from_be_bytes([data[0], data[1], data[2], data[3]]));
+                        opts.lease_time =
+                            Some(u32::from_be_bytes([data[0], data[1], data[2], data[3]]));
                     }
                 }
                 53 => {
@@ -452,13 +481,12 @@ impl DhcpOptions {
                 }
                 54 => {
                     if data.len() >= 4 {
-                        opts.server_id = Some(u32::from_be_bytes([data[0], data[1], data[2], data[3]]));
+                        opts.server_id =
+                            Some(u32::from_be_bytes([data[0], data[1], data[2], data[3]]));
                     }
                 }
-                55 => {
-                }
-                56 => {
-                }
+                55 => {}
+                56 => {}
                 57 => {
                     if data.len() >= 2 {
                         opts.max_message_size = Some(u16::from_be_bytes([data[0], data[1]]));
@@ -466,12 +494,14 @@ impl DhcpOptions {
                 }
                 58 => {
                     if data.len() >= 4 {
-                        opts.renewal_time = Some(u32::from_be_bytes([data[0], data[1], data[2], data[3]]));
+                        opts.renewal_time =
+                            Some(u32::from_be_bytes([data[0], data[1], data[2], data[3]]));
                     }
                 }
                 59 => {
                     if data.len() >= 4 {
-                        opts.rebinding_time = Some(u32::from_be_bytes([data[0], data[1], data[2], data[3]]));
+                        opts.rebinding_time =
+                            Some(u32::from_be_bytes([data[0], data[1], data[2], data[3]]));
                     }
                 }
                 60 => {
@@ -486,13 +516,12 @@ impl DhcpOptions {
                 67 => {
                     opts.bootfile_name = Some(data.to_vec());
                 }
-                _ => {
-                }
+                _ => {}
             }
-            
+
             i += 2 + len;
         }
-        
+
         opts
     }
 
@@ -528,7 +557,7 @@ pub struct DhcpClient {
 impl DhcpClient {
     pub fn new() -> Self {
         use crate::hal::common::pit;
-        
+
         Self {
             xid: pit::get_system_time_ms() as u32,
             state: DhcpState::Init,
@@ -555,70 +584,70 @@ impl DhcpClient {
 
     fn build_discover(&self, chaddr: &[u8; 6]) -> Vec<u8> {
         let mut msg = self.build_base_message(DhcpOperation::BootRequest, chaddr);
-        
+
         msg.push(DhcpOptionCode::DhcpMessageType as u8);
         msg.push(1);
         msg.push(DhcpMessageType::Discover.to_u8());
-        
+
         msg.push(DhcpOptionCode::RequestedIpAddress as u8);
         msg.push(4);
         msg.extend_from_slice(&self.requested_ip.to_be_bytes());
-        
+
         msg.push(DhcpOptionCode::ClientIdentifier as u8);
         msg.push(7);
         msg.push(1);
         msg.extend_from_slice(chaddr);
-        
+
         msg.push(DhcpOptionCode::ParameterRequestList as u8);
         msg.push(3);
         msg.push(DhcpOptionCode::SubnetMask as u8);
         msg.push(DhcpOptionCode::Router as u8);
         msg.push(DhcpOptionCode::DomainNameServer as u8);
-        
+
         msg.push(DhcpOptionCode::End as u8);
-        
+
         msg
     }
-    
+
     fn build_request(&self, chaddr: &[u8; 6], requested_ip: u32, server_id: u32) -> Vec<u8> {
         let mut msg = self.build_base_message(DhcpOperation::BootRequest, chaddr);
-        
+
         msg.push(DhcpOptionCode::DhcpMessageType as u8);
         msg.push(1);
         msg.push(DhcpMessageType::Request.to_u8());
-        
+
         msg.push(DhcpOptionCode::RequestedIpAddress as u8);
         msg.push(4);
         msg.extend_from_slice(&requested_ip.to_be_bytes());
-        
+
         msg.push(DhcpOptionCode::ServerIdentifier as u8);
         msg.push(4);
         msg.extend_from_slice(&server_id.to_be_bytes());
-        
+
         msg.push(DhcpOptionCode::ClientIdentifier as u8);
         msg.push(7);
         msg.push(1);
         msg.extend_from_slice(chaddr);
-        
+
         msg.push(DhcpOptionCode::ParameterRequestList as u8);
         msg.push(3);
         msg.push(DhcpOptionCode::SubnetMask as u8);
         msg.push(DhcpOptionCode::Router as u8);
         msg.push(DhcpOptionCode::DomainNameServer as u8);
-        
+
         msg.push(DhcpOptionCode::End as u8);
-        
+
         msg
     }
 
     fn build_base_message(&self, op: DhcpOperation, chaddr: &[u8; 6]) -> Vec<u8> {
         let mut msg = Vec::with_capacity(240 + 64);
-        
+
         msg.push(match op {
             DhcpOperation::BootRequest => 1,
             DhcpOperation::BootReply => 2,
         });
-        
+
         msg.push(1);
         msg.push(6);
         msg.push(0);
@@ -634,7 +663,7 @@ impl DhcpClient {
         msg.extend_from_slice(&[0u8; 64]);
         msg.extend_from_slice(&[0u8; 128]);
         msg.extend_from_slice(&[99, 130, 83, 99]);
-        
+
         msg
     }
 
@@ -658,16 +687,12 @@ impl DhcpClient {
             return false;
         }
 
-        let options_data = if msg.len() > 240 {
-            &msg[240..]
-        } else {
-            &[]
-        };
-        
+        let options_data = if msg.len() > 240 { &msg[240..] } else { &[] };
+
         let options = DhcpOptions::parse(options_data);
-        
+
         let your_ip = u32::from_be_bytes([msg[16], msg[17], msg[18], msg[19]]);
-        
+
         match options.message_type {
             Some(DhcpMessageType::Offer) => {
                 if self.state == DhcpState::Selecting {
@@ -685,15 +710,20 @@ impl DhcpClient {
             Some(DhcpMessageType::Ack) => {
                 if self.state == DhcpState::Requesting {
                     self.lease.set_ip(your_ip);
-                    self.lease.set_subnet_mask(options.subnet_mask.unwrap_or(0xFFFFFF00));
+                    self.lease
+                        .set_subnet_mask(options.subnet_mask.unwrap_or(0xFFFFFF00));
                     self.lease.set_gateway(options.router.unwrap_or(0));
                     self.lease.set_server_id(options.server_id.unwrap_or(0));
                     self.lease.set_lease_times(
                         options.lease_time.unwrap_or(7200),
-                        options.renewal_time.unwrap_or(options.lease_time.unwrap_or(7200) / 2),
-                        options.rebinding_time.unwrap_or((options.lease_time.unwrap_or(7200) * 7) / 8),
+                        options
+                            .renewal_time
+                            .unwrap_or(options.lease_time.unwrap_or(7200) / 2),
+                        options
+                            .rebinding_time
+                            .unwrap_or((options.lease_time.unwrap_or(7200) * 7) / 8),
                     );
-                    
+
                     if let Some(dns) = options.dns_servers {
                         self.lease.set_dns(dns);
                         // Propagate the first DNS server to the
@@ -721,7 +751,8 @@ impl DhcpClient {
                         }
                     }
 
-                    self.lease.set_lease_start(crate::hal::common::pit::get_system_time_ms() as u64);
+                    self.lease
+                        .set_lease_start(crate::hal::common::pit::get_system_time_ms() as u64);
 
                     self.state = DhcpState::Bound;
                     true
@@ -730,7 +761,10 @@ impl DhcpClient {
                 }
             }
             Some(DhcpMessageType::Nak) => {
-                if self.state == DhcpState::Requesting || self.state == DhcpState::Renewing || self.state == DhcpState::Rebinding {
+                if self.state == DhcpState::Requesting
+                    || self.state == DhcpState::Renewing
+                    || self.state == DhcpState::Rebinding
+                {
                     self.state = DhcpState::Init;
                     self.new_xid();
                     true
@@ -749,7 +783,7 @@ impl DhcpClient {
     pub fn get_state(&self) -> DhcpState {
         self.state
     }
-    
+
     pub fn get_state_str(&self) -> &'static str {
         self.state.as_str()
     }
@@ -768,24 +802,24 @@ impl DhcpClient {
 
     pub fn check_lease(&mut self) {
         use crate::hal::common::pit;
-        
+
         if self.state != DhcpState::Bound {
             return;
         }
-        
+
         let now = pit::get_system_time_ms() as u64;
         let elapsed = now - self.lease.lease_start;
-        
+
         if elapsed > (self.lease.renewal_time as u64 * 1000) {
             self.state = DhcpState::Renewing;
             self.new_xid();
             self.state_start_time = now;
         }
-        
+
         if elapsed > (self.lease.rebinding_time as u64 * 1000) {
             self.state = DhcpState::Rebinding;
         }
-        
+
         if elapsed > (self.lease.lease_time as u64 * 1000) {
             self.state = DhcpState::Init;
         }
@@ -821,7 +855,8 @@ impl DhcpClient {
 }
 
 pub fn format_ip(ip: u32) -> String {
-    format!("{}.{}.{}.{}",
+    format!(
+        "{}.{}.{}.{}",
         (ip >> 24) as u8,
         (ip >> 16) as u8,
         (ip >> 8) as u8,
@@ -849,9 +884,7 @@ pub fn init() {
     // Bind a UDP socket on the well-known DHCP client port (68).
     // `udp::create_socket` returns the socket index. We treat
     // `usize::MAX` as "not yet bound".
-    if DHCP_SOCKET_IDX.load(core::sync::atomic::Ordering::Acquire)
-        != usize::MAX
-    {
+    if DHCP_SOCKET_IDX.load(core::sync::atomic::Ordering::Acquire) != usize::MAX {
         return;
     }
     if let Some(idx) = udp::create_socket(DHCP_CLIENT_PORT, 0) {

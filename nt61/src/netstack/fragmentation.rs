@@ -10,9 +10,9 @@
 //! Clean-room implementation based on RFC 791, RFC 815, RFC 1858.
 
 use crate::ke::sync::Spinlock;
-use alloc::vec::Vec;
-use alloc::vec;
 use alloc::collections::BTreeMap;
+use alloc::vec;
+use alloc::vec::Vec;
 
 const MAX_FRAGMENTS_PER_PACKET: usize = 64;
 
@@ -146,11 +146,7 @@ pub fn init() {
     *FRAGMENT_STATS.lock() = FragmentStats::new();
 }
 
-pub fn fragment_packet(
-    payload: &[u8],
-    mtu: usize,
-    identification: u16,
-) -> Vec<Vec<u8>> {
+pub fn fragment_packet(payload: &[u8], mtu: usize, identification: u16) -> Vec<Vec<u8>> {
     let ip_header_size = 20; // Minimum IPv4 header size
     let max_fragment_size = ((mtu - ip_header_size) / 8) * 8; // Must be multiple of 8
 

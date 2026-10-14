@@ -55,7 +55,7 @@ pub const MAX_AFD_ENDPOINTS: usize = 64;
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AfdAddress {
-    pub family: u16,    // 2 = AF_INET
+    pub family: u16, // 2 = AF_INET
     pub port: u16,
     pub addr: [u8; 4],
     pub zeros: [u8; 8],
@@ -66,7 +66,12 @@ impl AfdAddress {
         Self {
             family,
             port,
-            addr: [(ip >> 0) as u8, (ip >> 8) as u8, (ip >> 16) as u8, (ip >> 24) as u8],
+            addr: [
+                (ip >> 0) as u8,
+                (ip >> 8) as u8,
+                (ip >> 16) as u8,
+                (ip >> 24) as u8,
+            ],
             zeros: [0; 8],
         }
     }
@@ -104,9 +109,13 @@ fn encode_handle(slot: usize, generation: u64) -> u64 {
 }
 
 fn decode_handle(handle: u64) -> Option<(usize, u64)> {
-    if handle == 0 { return None; }
+    if handle == 0 {
+        return None;
+    }
     let slot = (handle & 0xFFFF) as usize;
-    if slot >= MAX_AFD_ENDPOINTS { return None; }
+    if slot >= MAX_AFD_ENDPOINTS {
+        return None;
+    }
     let generation = (handle >> 16) & 0x0000_FFFF_FFFF_FFFF;
     Some((slot, generation))
 }
@@ -122,7 +131,11 @@ pub fn create(socket_id: u32) -> Option<u64> {
         };
         if slot.is_none() || next_gen != 0 {
             let generation = if next_gen == 0 { 1 } else { next_gen };
-            *slot = Some(AfdEndpoint { socket_id, in_use: true, generation });
+            *slot = Some(AfdEndpoint {
+                socket_id,
+                in_use: true,
+                generation,
+            });
             // Reserve the global sequence so handles cannot be confused
             // for any other handle space (e.g. the file handle table).
             let _ = NEXT_HANDLE_SEQ.fetch_add(1, Ordering::Relaxed);
@@ -145,7 +158,9 @@ fn with_endpoint<R>(handle: u64, f: impl FnOnce(&mut AfdEndpoint) -> R) -> Optio
 }
 
 fn destroy(handle: u64) {
-    let Some((slot_idx, generation)) = decode_handle(handle) else { return; };
+    let Some((slot_idx, generation)) = decode_handle(handle) else {
+        return;
+    };
     let mut endpoints = AFD_ENDPOINTS.lock();
     if let Some(slot) = endpoints.get_mut(slot_idx) {
         if let Some(ep) = slot.as_ref() {
@@ -159,13 +174,10 @@ fn destroy(handle: u64) {
 /// Dispatch an AFD IOCTL. `input` is the raw bytes that msafd
 /// sent; `output` is the buffer the caller wants results in.
 /// Returns the NTSTATUS.
-pub fn dispatch(
-    handle: u64,
-    ioctl: u32,
-    input: &[u8],
-    output: &mut [u8],
-) -> i32 {
-    let Some(ep) = (match ioctl { _ => with_endpoint(handle, |e| e.socket_id) }) else {
+pub fn dispatch(handle: u64, ioctl: u32, input: &[u8], output: &mut [u8]) -> i32 {
+    let Some(ep) = (match ioctl {
+        _ => with_endpoint(handle, |e| e.socket_id),
+    }) else {
         return -1; // STATUS_INVALID_HANDLE
     };
     match ioctl {
@@ -199,7 +211,9 @@ fn decode_addr(input: &[u8]) -> Option<AfdAddress> {
 }
 
 fn afd_bind(socket_id: u32, input: &[u8]) -> i32 {
-    let Some(addr) = decode_addr(input) else { return -1; };
+    let Some(addr) = decode_addr(input) else {
+        return -1;
+    };
     let sa = addr.to_sockaddr();
     let result = socket::bind(socket_id, &sa);
     match result {
@@ -233,16 +247,18 @@ fn afd_accept(socket_id: u32, _input: &[u8], output: &mut [u8]) -> i32 {
                 output[0..2].copy_from_slice(&addr.family.to_le_bytes());
                 output[2..4].copy_from_slice(&addr.port.to_be_bytes());
                 output[4..8].copy_from_slice(&addr.addr);
-            output[8..16].copy_from_slice(&addr.zeros);
+                output[8..16].copy_from_slice(&addr.zeros);
+            }
+            peer_socket_id as i32
         }
-        peer_socket_id as i32
-    }
-    Err(_) => -3, // STATUS_CANT_WAIT
+        Err(_) => -3, // STATUS_CANT_WAIT
     }
 }
 
 fn afd_connect(socket_id: u32, input: &[u8]) -> i32 {
-    let Some(addr) = decode_addr(input) else { return -1; };
+    let Some(addr) = decode_addr(input) else {
+        return -1;
+    };
     let sa = addr.to_sockaddr();
     match socket::connect(socket_id, &sa) {
         Ok(()) => 0,
@@ -265,9 +281,7 @@ fn afd_send(socket_id: u32, input: &[u8], _output: &mut [u8]) -> i32 {
     if crate::mm::user_copy::probe_user_read(buf_ptr, buf_len as usize).is_err() {
         return -8; // STATUS_ACCESS_VIOLATION
     }
-    let payload = unsafe {
-        core::slice::from_raw_parts(buf_ptr as *const u8, buf_len as usize)
-    };
+    let payload = unsafe { core::slice::from_raw_parts(buf_ptr as *const u8, buf_len as usize) };
     match socket::send(socket_id, payload) {
         Ok(n) => n as i32,
         Err(_) => -2,
@@ -284,9 +298,7 @@ fn afd_recv(socket_id: u32, input: &[u8], output: &mut [u8]) -> i32 {
     if crate::mm::user_copy::probe_user_write(buf_ptr, len).is_err() {
         return -8; // STATUS_ACCESS_VIOLATION
     }
-    let dst = unsafe {
-        core::slice::from_raw_parts_mut(buf_ptr as *mut u8, len)
-    };
+    let dst = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, len) };
     match socket::recv(socket_id, dst) {
         Ok(n) => n as i32,
         Err(_) => -3, // STATUS_CANT_WAIT
@@ -330,7 +342,9 @@ fn afd_get_name(socket_id: u32, input: &[u8], output: &mut [u8]) -> i32 {
         1 => socket::get_remote_addr(socket_id),
         _ => None,
     };
-    let Some(addr) = addr else { return -1; };
+    let Some(addr) = addr else {
+        return -1;
+    };
     if output.len() < 16 {
         return -1;
     }
@@ -369,12 +383,7 @@ pub fn endpoint_count() -> usize {
 /// Test helper: forward an AFD dispatch through this module so
 /// host unit tests can exercise the decoder logic.
 #[doc(hidden)]
-pub fn dispatch_for_test(
-    handle: u64,
-    ioctl: u32,
-    input: &[u8],
-    output: &mut [u8],
-) -> i32 {
+pub fn dispatch_for_test(handle: u64, ioctl: u32, input: &[u8], output: &mut [u8]) -> i32 {
     dispatch(handle, ioctl, input, output)
 }
 

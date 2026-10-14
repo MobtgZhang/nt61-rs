@@ -13,14 +13,22 @@ impl Ipv6Addr {
     pub const fn new(a: u16, b: u16, c: u16, d: u16, e: u16, f: u16, g: u16, h: u16) -> Self {
         Self {
             octets: [
-                (a >> 8) as u8, a as u8,
-                (b >> 8) as u8, b as u8,
-                (c >> 8) as u8, c as u8,
-                (d >> 8) as u8, d as u8,
-                (e >> 8) as u8, e as u8,
-                (f >> 8) as u8, f as u8,
-                (g >> 8) as u8, g as u8,
-                (h >> 8) as u8, h as u8,
+                (a >> 8) as u8,
+                a as u8,
+                (b >> 8) as u8,
+                b as u8,
+                (c >> 8) as u8,
+                c as u8,
+                (d >> 8) as u8,
+                d as u8,
+                (e >> 8) as u8,
+                e as u8,
+                (f >> 8) as u8,
+                f as u8,
+                (g >> 8) as u8,
+                g as u8,
+                (h >> 8) as u8,
+                h as u8,
             ],
         }
     }
@@ -69,7 +77,7 @@ impl fmt::Debug for Ipv6Addr {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Ipv6Header {
-    pub version_class_label: u32,  // Version(4) + Traffic Class(8) + Flow Label(20)
+    pub version_class_label: u32, // Version(4) + Traffic Class(8) + Flow Label(20)
     pub payload_length: u16,
     pub next_header: u8,
     pub hop_limit: u8,
@@ -168,9 +176,8 @@ impl Ipv6RoutingTable {
 
     pub fn delete_route(&mut self, dest: &Ipv6Addr, prefix_len: u8) -> bool {
         let initial_len = self.routes.len();
-        self.routes.retain(|r| {
-            &r.destination != dest || r.prefix_len != prefix_len
-        });
+        self.routes
+            .retain(|r| &r.destination != dest || r.prefix_len != prefix_len);
         self.routes.len() < initial_len
     }
 

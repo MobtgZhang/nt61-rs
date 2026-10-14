@@ -4,8 +4,8 @@
 //
 //! Clean-room implementation based on RFC 768.
 
-use crate::netstack::ipv4;
 use crate::ke::sync::Spinlock;
+use crate::netstack::ipv4;
 use alloc::vec::Vec;
 
 /// UDP header size
@@ -123,8 +123,7 @@ impl Default for UdpStats {
 }
 
 /// Global UDP statistics
-static UDP_STATS: Spinlock<UdpStats> =
-    Spinlock::new(UdpStats::zero());
+static UDP_STATS: Spinlock<UdpStats> = Spinlock::new(UdpStats::zero());
 
 /// Initialize the UDP module
 pub fn init() {
@@ -136,8 +135,14 @@ pub fn init() {
 /// Calculate UDP checksum (with pseudo-header)
 fn calculate_checksum(src_ip: u32, dst_ip: u32, udp_data: &[u8]) -> u16 {
     let pseudo = [
-        (src_ip >> 24) as u8, (src_ip >> 16) as u8, (src_ip >> 8) as u8, src_ip as u8,
-        (dst_ip >> 24) as u8, (dst_ip >> 16) as u8, (dst_ip >> 8) as u8, dst_ip as u8,
+        (src_ip >> 24) as u8,
+        (src_ip >> 16) as u8,
+        (src_ip >> 8) as u8,
+        src_ip as u8,
+        (dst_ip >> 24) as u8,
+        (dst_ip >> 16) as u8,
+        (dst_ip >> 8) as u8,
+        dst_ip as u8,
         0,  // Reserved
         17, // UDP protocol number
         ((udp_data.len() >> 8) & 0xFF) as u8,
@@ -178,7 +183,10 @@ pub fn create_socket(local_port: Port, local_ip: u32) -> Option<usize> {
     let mut sockets = UDP_SOCKETS.lock();
 
     // Check if port is already in use
-    if sockets.iter().any(|s| s.local_port == local_port && s.local_ip == local_ip) {
+    if sockets
+        .iter()
+        .any(|s| s.local_port == local_port && s.local_ip == local_ip)
+    {
         return None;
     }
 
@@ -208,12 +216,7 @@ pub fn connect(socket_idx: usize, remote_ip: u32, remote_port: Port) -> bool {
 }
 
 /// Send a UDP datagram
-pub fn send(
-    socket_idx: usize,
-    dst_ip: u32,
-    dst_port: Port,
-    data: &[u8],
-) -> Option<usize> {
+pub fn send(socket_idx: usize, dst_ip: u32, dst_port: Port, data: &[u8]) -> Option<usize> {
     // Extract socket info first to avoid borrow issues
     let (src_ip, local_port) = {
         let sockets = UDP_SOCKETS.lock();
@@ -225,7 +228,9 @@ pub fn send(
             socket.local_ip
         } else {
             // Get primary IP
-            crate::netstack::ipif::get_our_ip_addresses().first().copied()?
+            crate::netstack::ipif::get_our_ip_addresses()
+                .first()
+                .copied()?
         };
         (src_ip, socket.local_port)
     };
@@ -284,10 +289,15 @@ pub fn send_connected(socket_idx: usize, data: &[u8]) -> Option<usize> {
 }
 
 /// Process incoming UDP packet
-pub fn udp_input(src_ip: u32, dst_ip: u32, data: &[u8]) {
+/// Deliver a datagram to a bound socket.
+///
+/// Returns `true` when a socket accepted it. The caller (the IPv4 input path)
+/// is responsible for the ICMP Port Unreachable because RFC 1122 requires the
+/// error to quote the *internet header*, which only the IP layer has.
+pub fn udp_input(src_ip: u32, dst_ip: u32, data: &[u8]) -> bool {
     let header = match UdpHeader::from_bytes(data) {
         Some(h) => h,
-        None => return,
+        None => return false,
     };
 
     let payload = if data.len() > UDP_HDR_SIZE {
@@ -304,10 +314,10 @@ pub fn udp_input(src_ip: u32, dst_ip: u32, data: &[u8]) {
     let mut sockets_mut = UDP_SOCKETS.lock();
 
     // Look for exact match and deliver
-    if let Some(idx) = sockets_mut.iter().position(|s| {
-        s.local_port == header.dst_port
-            && (s.local_ip == 0 || s.local_ip == dst_ip)
-    }) {
+    if let Some(idx) = sockets_mut
+        .iter()
+        .position(|s| s.local_port == header.dst_port && (s.local_ip == 0 || s.local_ip == dst_ip))
+    {
         // Deliver to socket
         let packet = UdpPacket {
             src_ip,
@@ -315,19 +325,17 @@ pub fn udp_input(src_ip: u32, dst_ip: u32, data: &[u8]) {
             data: payload.to_vec(),
         };
         sockets_mut[idx].rx_buf.push(packet);
+        true
     } else {
-        // No socket listening, send ICMP port unreachable
-        // (simplified - actual implementation would send ICMP)
+        // No socket listening: the caller reports Port Unreachable.
         let mut stats = UDP_STATS.lock();
         stats.datagrams_dropped += 1;
+        false
     }
 }
 
 /// Receive a UDP datagram
-pub fn receive(
-    socket_idx: usize,
-    buffer: &mut [u8],
-) -> Option<(u32, Port, usize)> {
+pub fn receive(socket_idx: usize, buffer: &mut [u8]) -> Option<(u32, Port, usize)> {
     let mut sockets = UDP_SOCKETS.lock();
 
     if socket_idx >= sockets.len() {

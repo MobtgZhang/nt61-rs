@@ -2,9 +2,9 @@
 //!
 //! Implements retransmission timers and other TCP timers according to RFC 6298.
 
+use crate::hal::common::pit;
 use crate::ke::sync::Spinlock;
 use alloc::collections::BTreeMap;
-use crate::hal::common::pit;
 
 /// TCP timer types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

@@ -4,11 +4,11 @@
 //
 //! Clean-room implementation based on RFC 826.
 
-use crate::netstack::eth::{self, ETHER_TYPE_ARP};
-use crate::netstack::ipif;
-use crate::netstack::ethif;
 use crate::drivers::net::NicType;
 use crate::ke::sync::Spinlock;
+use crate::netstack::eth::{self, ETHER_TYPE_ARP};
+use crate::netstack::ethif;
+use crate::netstack::ipif;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -189,7 +189,11 @@ pub fn arp_input(data: &[u8], nic_type: NicType, nic_index: usize) {
     };
 
     // Verify ARP packet is for IPv4 over Ethernet
-    if header.hw_type != 1 || header.proto_type != 0x0800 || header.hw_size != 6 || header.proto_size != 4 {
+    if header.hw_type != 1
+        || header.proto_type != 0x0800
+        || header.hw_size != 6
+        || header.proto_size != 4
+    {
         return;
     }
 
@@ -206,7 +210,13 @@ pub fn arp_input(data: &[u8], nic_type: NicType, nic_index: usize) {
     match header.operation {
         1 => {
             // ARP Request - send reply
-            send_reply(header.target_ip, header.sender_ip, header.sender_mac, nic_type, nic_index);
+            send_reply(
+                header.target_ip,
+                header.sender_ip,
+                header.sender_mac,
+                nic_type,
+                nic_index,
+            );
         }
         2 => {
             // ARP Reply - already added to cache above
@@ -232,7 +242,7 @@ pub fn send_request(target_ip: u32, nic_type: NicType, nic_index: usize) {
 
     // Build ARP request
     let header = ArpHeader {
-        hw_type: 1, // Ethernet
+        hw_type: 1,         // Ethernet
         proto_type: 0x0800, // IPv4
         hw_size: 6,
         proto_size: 4,

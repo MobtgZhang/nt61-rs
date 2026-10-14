@@ -147,6 +147,4 @@ pub fn get_routing_table() -> alloc::vec::Vec<RouteEntry> {
     alloc::vec::Vec::new()
 }
 
-pub fn clear_routing_table() {
-}
-
+pub fn clear_routing_table() {}

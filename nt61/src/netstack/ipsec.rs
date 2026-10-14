@@ -233,11 +233,7 @@ pub fn check_outbound_policy(
     PolicyAction::Bypass
 }
 
-pub fn check_inbound_policy(
-    src_ip: u32,
-    dst_ip: u32,
-    has_ipsec: bool,
-) -> bool {
+pub fn check_inbound_policy(src_ip: u32, dst_ip: u32, has_ipsec: bool) -> bool {
     let db = IPSEC_DB.lock();
 
     for policy in &db.spd {
@@ -256,20 +252,14 @@ pub fn check_inbound_policy(
     true
 }
 
-pub fn protect_packet(
-    _payload: &[u8],
-    _spi: u32,
-) -> Option<Vec<u8>> {
+pub fn protect_packet(_payload: &[u8], _spi: u32) -> Option<Vec<u8>> {
     let mut stats = IPSEC_STATS.lock();
     stats.packets_protected += 1;
 
     None
 }
 
-pub fn verify_packet(
-    _packet: &[u8],
-    _spi: u32,
-) -> Option<Vec<u8>> {
+pub fn verify_packet(_packet: &[u8], _spi: u32) -> Option<Vec<u8>> {
     let mut stats = IPSEC_STATS.lock();
     stats.packets_verified += 1;
 

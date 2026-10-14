@@ -23,10 +23,10 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::netstack::udp;
-use crate::netstack::ipv4;
-use crate::netstack::ipif;
 use crate::ke::sync::Spinlock;
+use crate::netstack::ipif;
+use crate::netstack::ipv4;
+use crate::netstack::udp;
 
 /// Default DNS server port.
 pub const DNS_PORT: u16 = 53;
@@ -60,8 +60,7 @@ pub struct DnsRecord {
     pub expires_at_ms: u64,
 }
 
-static CACHE: Spinlock<BTreeMap<(String, u16), DnsRecord>> =
-    Spinlock::new(BTreeMap::new());
+static CACHE: Spinlock<BTreeMap<(String, u16), DnsRecord>> = Spinlock::new(BTreeMap::new());
 
 /// Currently configured DNS server (set by DHCP or by a static
 /// configuration helper). Stored in host byte order for cheap
@@ -74,9 +73,13 @@ static QUERY_ID: AtomicU32 = AtomicU32::new(0);
 /// Set the DNS server used for non-literal lookups.
 pub fn set_dns_server(server_ip: u32) {
     *DNS_SERVER.lock() = server_ip;
-    crate::boot_println!("[DNS] server set to {}.{}.{}.{}",
-        (server_ip >> 24) & 0xFF, (server_ip >> 16) & 0xFF,
-        (server_ip >> 8) & 0xFF, server_ip & 0xFF);
+    crate::boot_println!(
+        "[DNS] server set to {}.{}.{}.{}",
+        (server_ip >> 24) & 0xFF,
+        (server_ip >> 16) & 0xFF,
+        (server_ip >> 8) & 0xFF,
+        server_ip & 0xFF
+    );
 }
 
 /// Return the configured DNS server (0 if unset).
@@ -176,16 +179,14 @@ fn parse_response(buf: &[u8], qtype: u16) -> Option<u32> {
         }
         let rtype = u16::from_be_bytes([buf[off], buf[off + 1]]);
         let _rclass = u16::from_be_bytes([buf[off + 2], buf[off + 3]]);
-        let _ttl = u32::from_be_bytes([buf[off + 4], buf[off + 5],
-                                       buf[off + 6], buf[off + 7]]);
+        let _ttl = u32::from_be_bytes([buf[off + 4], buf[off + 5], buf[off + 6], buf[off + 7]]);
         let rdlen = u16::from_be_bytes([buf[off + 8], buf[off + 9]]) as usize;
         off += 10;
         if off + rdlen > buf.len() {
             return None;
         }
         if rtype == qtype && rdlen == 4 && qtype == 1 {
-            let ip = u32::from_be_bytes([buf[off], buf[off + 1],
-                                         buf[off + 2], buf[off + 3]]);
+            let ip = u32::from_be_bytes([buf[off], buf[off + 1], buf[off + 2], buf[off + 3]]);
             return Some(ip);
         }
         off += rdlen;
@@ -230,16 +231,11 @@ pub fn resolve_af(name: &str, family: u16) -> Result<u32, DnsError> {
 
     let server_port = DNS_PORT;
     let local_port = 0; // kernel-assigned ephemeral
-    let local_ip = ipif::get_our_ip_addresses()
-        .first()
-        .copied()
-        .unwrap_or(0);
-    let sock = udp::create_socket(local_port, local_ip)
-        .ok_or(DnsError::Other)?;
+    let local_ip = ipif::get_our_ip_addresses().first().copied().unwrap_or(0);
+    let sock = udp::create_socket(local_port, local_ip).ok_or(DnsError::Other)?;
     let qtype: u16 = 1; // A
     let datagram = build_query(name, qtype);
-    udp::send(sock, server, server_port, &datagram)
-        .ok_or(DnsError::Other)?;
+    udp::send(sock, server, server_port, &datagram).ok_or(DnsError::Other)?;
 
     // Block up to 2 seconds for a reply.
     let deadline = crate::hal::common::pit::get_system_time_ms() as u64 + 2000;
@@ -276,11 +272,21 @@ fn cache_insert(name: &str, family: u16, addr: u32, ttl_ms: u64) {
     let mut cache = CACHE.lock();
     if cache.len() >= MAX_CACHE {
         // Drop the entry with the earliest expiry.
-        if let Some((k, _)) = cache.iter().min_by_key(|(_, v)| v.expires_at_ms).map(|(k, v)| (k.clone(), v.expires_at_ms)) {
+        if let Some((k, _)) = cache
+            .iter()
+            .min_by_key(|(_, v)| v.expires_at_ms)
+            .map(|(k, v)| (k.clone(), v.expires_at_ms))
+        {
             cache.remove(&k);
         }
     }
-    cache.insert((name.to_string(), family), DnsRecord { addr, expires_at_ms });
+    cache.insert(
+        (name.to_string(), family),
+        DnsRecord {
+            addr,
+            expires_at_ms,
+        },
+    );
 }
 
 /// Parse an IPv4 dotted-quad string. Used as a fast path so that

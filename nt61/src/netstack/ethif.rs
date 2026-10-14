@@ -7,11 +7,10 @@
 
 use crate::drivers::net::{self, NicType};
 use crate::ke::sync::Spinlock;
-use alloc::vec::Vec;
 use alloc::format;
+use alloc::vec::Vec;
 
 /// Maximum number of Ethernet interfaces
-
 
 /// Ethernet interface state
 #[derive(Clone)]
@@ -110,13 +109,7 @@ pub fn init() {
     for i in 0..virtio_count {
         if let Some(mac) = net::virtio_net::get_mac(i) {
             let name = format!("virtio{}\0", i);
-            let eth_if = EthInterface::new(
-                if_index,
-                name.as_bytes(),
-                mac,
-                NicType::VirtioNet,
-                i,
-            );
+            let eth_if = EthInterface::new(if_index, name.as_bytes(), mac, NicType::VirtioNet, i);
             interfaces.push(eth_if);
             if_index += 1;
         }
@@ -127,13 +120,7 @@ pub fn init() {
     for i in 0..e1000_count {
         if let Some(mac) = net::e1000::get_mac(i) {
             let name = format!("e1000{}\0", i);
-            let eth_if = EthInterface::new(
-                if_index,
-                name.as_bytes(),
-                mac,
-                NicType::E1000,
-                i,
-            );
+            let eth_if = EthInterface::new(if_index, name.as_bytes(), mac, NicType::E1000, i);
             interfaces.push(eth_if);
             if_index += 1;
         }
@@ -146,13 +133,7 @@ pub fn init() {
         for i in 0..rtl_count {
             if let Some(mac) = net::rtl8139::get_mac(i) {
                 let name = format!("rtl8139{}\0", i);
-                let eth_if = EthInterface::new(
-                    if_index,
-                    name.as_bytes(),
-                    mac,
-                    NicType::Rtl8139,
-                    i,
-                );
+                let eth_if = EthInterface::new(if_index, name.as_bytes(), mac, NicType::Rtl8139, i);
                 interfaces.push(eth_if);
                 if_index += 1;
             }

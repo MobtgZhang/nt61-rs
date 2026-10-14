@@ -32,15 +32,17 @@ fn test_slow_start() {
     let mut tcb = TcpControlBlock::new();
     let mss = tcb.mss as u32;
 
-    // Initial cwnd should be 10 MSS
-    assert_eq!(tcb.cwnd, 10 * mss);
+    // Windows 7 uses an initial cwnd of 2 * MSS. RFC 6299 §2 allows up to
+    // min(max(4*MSS, 4380), 10*MSS), which for MSS = 1460 is 4 * MSS, so a
+    // plain "10 * MSS" expectation is not correct for Ethernet MTU.
+    assert_eq!(tcb.cwnd, INITIAL_CWND);
     assert_eq!(tcb.congestion_state, CongestionState::SlowStart);
 
     // Simulate ACK for MSS bytes
     tcb.on_ack_slow_start(mss);
 
     // cwnd should increase by MSS
-    assert_eq!(tcb.cwnd, 11 * mss);
+    assert_eq!(tcb.cwnd, INITIAL_CWND + mss);
 }
 
 /// Test congestion avoidance

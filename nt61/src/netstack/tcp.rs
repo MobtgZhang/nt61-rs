@@ -4,11 +4,13 @@
 //
 //! Clean-room implementation based on RFC 793, 1122, 9293.
 
-use crate::netstack::ipv4;
+use crate::hal::common::pit;
 use crate::ke::sync::Spinlock;
+use crate::netstack::ipv4;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, Ordering};
-use crate::hal::common::pit;
+
+pub use crate::netstack::tcp_congestion::{CongestionState, INITIAL_CWND};
 
 /// TCP port
 pub type Port = u16;
@@ -90,6 +92,23 @@ impl TcpHeader {
         ((self.data_offset_flags >> 12) as usize) * 4
     }
 
+    /// Maximum TCP header length: the data offset is a 4-bit field, so the
+    /// largest legal header is 15 * 4 = 60 bytes (RFC 793 section 3.1).
+    pub const MAX_HDR_SIZE: usize = 60;
+
+    /// Validate that `data` actually contains a full TCP header.
+    ///
+    /// The data offset is attacker-controlled, so callers must not index a
+    /// slice with `header_length()` before this check passes. A data offset
+    /// below 5 (20 bytes) is illegal and must be rejected.
+    pub fn validate(&self, data: &[u8]) -> bool {
+        let hdr = self.header_length();
+        if hdr < TCP_HDR_SIZE || hdr > Self::MAX_HDR_SIZE {
+            return false;
+        }
+        data.len() >= hdr
+    }
+
     /// Get TCP flags
     pub fn flags(&self) -> u8 {
         (self.data_offset_flags & 0xFF) as u8
@@ -143,12 +162,12 @@ pub struct TcpControlBlock {
     /// Connection state
     pub state: TcpState,
     /// Send sequence numbers
-    pub snd_una: u32,  // Unacknowledged
-    pub snd_nxt: u32,  // Next to send
-    pub snd_iss: u32,  // Initial send sequence
+    pub snd_una: u32, // Unacknowledged
+    pub snd_nxt: u32, // Next to send
+    pub snd_iss: u32, // Initial send sequence
     /// Receive sequence numbers
-    pub rcv_nxt: u32,  // Next expected
-    pub rcv_irs: u32,  // Initial receive sequence
+    pub rcv_nxt: u32, // Next expected
+    pub rcv_irs: u32, // Initial receive sequence
     /// Window sizes
     pub snd_wnd: u16,
     pub rcv_wnd: u16,
@@ -161,13 +180,19 @@ pub struct TcpControlBlock {
     /// Socket reference
     pub socket_id: u32,
     /// Timer values
-    pub rto: u32,  // Retransmission timeout
-    pub srtt: u32,  // Smoothed round trip time
+    pub rto: u32, // Retransmission timeout
+    pub srtt: u32,   // Smoothed round trip time
     pub rttvar: u32, // Round trip time variation
     /// Congestion control
-    pub cwnd: u32,         // Congestion window
-    pub ssthresh: u32,     // Slow start threshold
-    pub dup_acks: u8,      // Duplicate ACK count
+    pub cwnd: u32, // Congestion window
+    pub ssthresh: u32, // Slow start threshold
+    pub dup_acks: u8, // Duplicate ACK count
+    /// RFC 5681 congestion-control phase.
+    pub congestion_state: CongestionState,
+    /// RFC 5681 §3.2 `recover`: the highest sequence number that was
+    /// outstanding when fast retransmit was triggered. Fast Recovery is
+    /// exited when an ACK acknowledges this value.
+    pub recover: u32,
     /// Retransmission
     pub retransmit_count: u8,
     pub last_send_time: u64,
@@ -203,16 +228,18 @@ impl TcpControlBlock {
             rto: 3000,
             srtt: 0,
             rttvar: 0,
-            cwnd: 1460,           // Start with one MSS
-            ssthresh: 65535,      // High threshold for slow start
+            cwnd: INITIAL_CWND, // Windows 7 default: 2 * MSS (RFC 6299 allows up to 10 * MSS)
+            ssthresh: 65535,    // High threshold for slow start
             dup_acks: 0,
+            congestion_state: CongestionState::SlowStart,
+            recover: 0,
             retransmit_count: 0,
             last_send_time: pit::get_system_time_ms() as u64,
             in_retransmit: false,
             listen_socket_id: 0,
         }
     }
-    
+
     /// Update RTT estimate using Jacobson/Karels algorithm
     pub fn update_rtt(&mut self, measured_rtt: u32) {
         if self.srtt == 0 {
@@ -227,118 +254,159 @@ impl TcpControlBlock {
                 self.srtt - measured_rtt
             };
             self.rttvar = (3 * self.rttvar + delta) / 4;
-            
+
             // Update SRTT
             self.srtt = (7 * self.srtt + measured_rtt) / 8;
         }
-        
+
         // Calculate RTO with minimum 1 second and maximum 60 seconds
         let rto_calc = self.srtt + 4 * self.rttvar;
         self.rto = rto_calc.max(1000).min(60000);
     }
-    
+
     /// Handle duplicate ACK for fast retransmit
     pub fn on_duplicate_ack(&mut self) {
         self.dup_acks += 1;
-        
+
         // Three duplicate ACKs trigger fast retransmit
         if self.dup_acks == 3 {
-            // Fast retransmit: retransmit one segment
-            self.ssthresh = (self.cwnd / 2).max(2 * self.mss as u32);
-            self.cwnd = self.ssthresh + 3 * self.mss as u32;
-            // Retransmission would be triggered by the caller
+            // RFC 5681 §3.2: ssthresh = max(SegmentsOutstanding/2, 2*MSS).
+            // The reduction is based on the flight size, not on cwnd, so a
+            // partially-filled window is not penalised twice.
+            let flight = self.flight_size();
+            self.ssthresh = (flight / 2).max(2 * self.mss as u32);
+            self.cwnd = self.ssthresh.saturating_add(3 * self.mss as u32);
+            // RFC 5681 §3.2: recover = SND.UNA + SND.MAXWND, where
+            // SND.MAXWND = min(ssthresh, offered window).
+            self.recover = self.snd_una.wrapping_add(self.ssthresh);
+            self.congestion_state = CongestionState::FastRecovery;
         } else if self.dup_acks > 3 {
-            // Additional duplicate ACKs: increase cwnd
-            self.cwnd = self.cwnd + self.mss as u32;
+            // RFC 5681 §3.2: while in Fast Recovery, each additional
+            // duplicate ACK deflates the flight size by one segment, so
+            // cwnd may grow by one MSS. Outside Fast Recovery a duplicate
+            // ACK must not grow the window.
+            if self.congestion_state == CongestionState::FastRecovery {
+                self.cwnd = self.cwnd.saturating_add(self.mss as u32);
+            }
         }
     }
-    
+
     /// Handle ACK during slow start
-    pub fn on_ack_slow_start(&mut self) {
-        // Exponential increase: cwnd += MSS
-        self.cwnd = self.cwnd + self.mss as u32;
-        
-        // Check if we've reached ssthresh
+    pub fn on_ack_slow_start(&mut self, acked_bytes: u32) {
+        // RFC 5681 §4.1: during slow start cwnd grows by one segment per
+        // ACK (bounded by the amount of data the ACK actually covers).
+        self.cwnd = self.cwnd.saturating_add(acked_bytes.min(self.mss as u32));
+
+        // RFC 5681 §4.1: once cwnd reaches ssthresh the connection enters
+        // congestion avoidance; without this transition the connection
+        // stays in slow start forever and cwnd grows exponentially.
         if self.cwnd >= self.ssthresh {
-            // Transition to congestion avoidance
+            self.congestion_state = CongestionState::CongestionAvoidance;
         }
     }
-    
+
     /// Handle ACK during congestion avoidance
-    pub fn on_ack_congestion_avoidance(&mut self) {
-        // Linear increase: cwnd += MSS * MSS / cwnd
-        let increment = ((self.mss as u32) * (self.mss as u32)) / self.cwnd;
-        self.cwnd = self.cwnd + increment;
+    pub fn on_ack_congestion_avoidance(&mut self, acked_bytes: u32) {
+        // RFC 5681 §4.2: linear increase, one segment per RTT, i.e.
+        // cwnd += MSS * acked_bytes / cwnd.
+        if self.cwnd == 0 {
+            return;
+        }
+        let increment = (self.mss as u32) * acked_bytes.min(self.mss as u32) / self.cwnd;
+        self.cwnd = self.cwnd.saturating_add(increment);
     }
-    
+
     /// Handle successful ACK
     pub fn on_ack(&mut self, ack_num: u32) {
         // Update duplicate ACK counter
-        if ack_num > self.snd_una {
+        if seq_after(ack_num, self.snd_una) {
             // New data is acked
             self.dup_acks = 0;
-            
-            // Calculate flight size and check for congestion window issues
-            let flight_size = self.snd_nxt - ack_num;
-            
-            // Ensure cwnd accounts for acked data
-            if flight_size > self.cwnd {
-                // This shouldn't happen normally, but handle gracefully
-                self.cwnd = flight_size;
+
+            let acked_bytes = ack_num.wrapping_sub(self.snd_una);
+
+            // RFC 5681 §3.2: the ACK that acknowledges `recover` ends Fast
+            // Recovery; cwnd is set to ssthresh (Reno) before normal
+            // congestion avoidance resumes.
+            if self.congestion_state == CongestionState::FastRecovery
+                && seq_after_or_equal(ack_num, self.recover)
+            {
+                self.cwnd = self.ssthresh;
+                self.congestion_state = CongestionState::CongestionAvoidance;
+                self.snd_una = ack_num;
+                return;
             }
-            
-            if self.cwnd < self.ssthresh {
-                // Slow start
-                self.on_ack_slow_start();
-            } else {
-                // Congestion avoidance
-                self.on_ack_congestion_avoidance();
+
+            match self.congestion_state {
+                CongestionState::SlowStart => self.on_ack_slow_start(acked_bytes),
+                _ => self.on_ack_congestion_avoidance(acked_bytes),
             }
         } else if ack_num == self.snd_una {
             // Duplicate ACK
             self.on_duplicate_ack();
         }
-        
+
         // Update send sequence
         self.snd_una = ack_num;
     }
-    
+
     /// Handle timeout - triple duplicate ACK scenario
     pub fn on_timeout(&mut self) {
         // Save RTT measurement for next connection
         let saved_rto = self.rto;
-        
+
         // Record retransmission info for statistics
         self.retransmit_count += 1;
         self.in_retransmit = true;
-        
+
         // Enter slow start
-        self.ssthresh = (self.cwnd / 2).max(2 * self.mss as u32);
+        // RFC 6298 §P2 / RFC 5681 §4: ssthresh = max(FlightSize/2, 2*MSS).
+        self.ssthresh = (self.flight_size() / 2).max(2 * self.mss as u32);
         self.cwnd = self.mss as u32;
-        
-        // Double retransmission timeout using saved value
+        self.congestion_state = CongestionState::SlowStart;
+        self.recover = self.snd_una.wrapping_add(self.cwnd);
+
+        // RFC 6298 §P2: exponential backoff, clamped to the 60 s maximum.
         self.rto = (saved_rto * 2).min(60000);
-        
+
         // Reset dup ACK counter
         self.dup_acks = 0;
-        
-        // kprintln!("  [TCP] Timeout: ssthresh={}, cwnd={}, rto={}",   // kprintln disabled (memcpy crash workaround)
-//             self.ssthresh, self.cwnd, saved_rto);
+
+        // kprintln!("  [TCP] Timeout: ssthresh={}, cwnd={}, rto={}",
+        //             self.ssthresh, self.cwnd, saved_rto);
     }
-    
+
     /// Check if we can send more data
     pub fn can_send(&self) -> bool {
         let effective_window = self.cwnd.min(self.snd_wnd as u32);
-        let flight_size = self.snd_nxt - self.snd_una;
+        let flight_size = self.flight_size();
         flight_size < effective_window
     }
-    
+
     /// Get the number of bytes we can send
     pub fn send_window(&self) -> u32 {
         let effective_window = self.cwnd.min(self.snd_wnd as u32);
-        let flight_size = self.snd_nxt - self.snd_una;
+        let flight_size = self.flight_size();
         effective_window.saturating_sub(flight_size)
     }
+
+    /// RFC 6298 §2 FlightSize = SND.NXT - SND.UNA, computed with
+    /// wrap-safe sequence arithmetic.
+    pub fn flight_size(&self) -> u32 {
+        self.snd_nxt.wrapping_sub(self.snd_una)
+    }
+}
+
+/// RFC 6298 §2 wrap-safe sequence comparison: `a` is after `b` when the
+/// signed distance `a - b` is positive in the 32-bit sequence space.
+#[inline]
+fn seq_after(a: u32, b: u32) -> bool {
+    a.wrapping_sub(b) < 0x8000_0000 && a != b
+}
+
+#[inline]
+fn seq_after_or_equal(a: u32, b: u32) -> bool {
+    a == b || a.wrapping_sub(b) < 0x8000_0000
 }
 
 /// Global TCB table
@@ -412,10 +480,16 @@ pub fn init() {
 fn calculate_tcp_checksum(src_ip: u32, dst_ip: u32, tcp_data: &[u8]) -> u16 {
     // Pseudo-header
     let pseudo = [
-        (src_ip >> 24) as u8, (src_ip >> 16) as u8, (src_ip >> 8) as u8, src_ip as u8,
-        (dst_ip >> 24) as u8, (dst_ip >> 16) as u8, (dst_ip >> 8) as u8, dst_ip as u8,
-        0,  // Protocol
-        6,  // TCP protocol number
+        (src_ip >> 24) as u8,
+        (src_ip >> 16) as u8,
+        (src_ip >> 8) as u8,
+        src_ip as u8,
+        (dst_ip >> 24) as u8,
+        (dst_ip >> 16) as u8,
+        (dst_ip >> 8) as u8,
+        dst_ip as u8,
+        0, // Protocol
+        6, // TCP protocol number
         ((tcp_data.len() >> 8) & 0xFF) as u8,
         (tcp_data.len() & 0xFF) as u8,
     ];
@@ -467,19 +541,15 @@ fn find_listener(local_ip: u32, local_port: Port) -> Option<usize> {
         .iter()
         .enumerate()
         .find(|(_, tcb)| {
-            tcb.local_ip == local_ip && tcb.local_port == local_port && tcb.state == TcpState::Listen
+            tcb.local_ip == local_ip
+                && tcb.local_port == local_port
+                && tcb.state == TcpState::Listen
         })
         .map(|(i, _)| i)
 }
 
 /// Send a TCP segment
-fn send_segment(
-    tcb: &mut TcpControlBlock,
-    flags: u8,
-    seq: u32,
-    ack: u32,
-    data: Option<&[u8]>,
-) {
+fn send_segment(tcb: &mut TcpControlBlock, flags: u8, seq: u32, ack: u32, data: Option<&[u8]>) {
     let data_len = data.map(|d| d.len()).unwrap_or(0);
     let packet_len = TCP_HDR_SIZE + data_len;
 
@@ -516,20 +586,63 @@ fn send_segment(
 }
 
 /// Process incoming TCP segment
+/// Send a RST for a segment that matched no connection.
+///
+/// RFC 793 section 3.7: if the segment acknowledges something, the reset
+/// carries that acknowledgement number as its sequence number; otherwise it
+/// acknowledges the data the segment carried. A RST must never be sent in
+/// reply to a RST, otherwise two hosts ping-pong reset segments forever.
+fn send_reset(header: &TcpHeader, src_ip: u32, dst_ip: u32, payload_len: usize) {
+    let flags = header.flags();
+    if flags & tcp_flags::RST != 0 {
+        return;
+    }
+
+    let (seq, ack) = if flags & tcp_flags::ACK != 0 {
+        (header.ack, 0)
+    } else {
+        (0, header.seq.saturating_add(payload_len as u32))
+    };
+
+    let mut packet = Vec::with_capacity(TCP_HDR_SIZE);
+    let offset_flags = ((TCP_HDR_SIZE / 4) as u16) << 12 | tcp_flags::RST as u16;
+
+    packet.extend_from_slice(&header.dst_port.to_be_bytes());
+    packet.extend_from_slice(&header.src_port.to_be_bytes());
+    packet.extend_from_slice(&seq.to_be_bytes());
+    packet.extend_from_slice(&ack.to_be_bytes());
+    packet.extend_from_slice(&offset_flags.to_be_bytes());
+    packet.extend_from_slice(&0u16.to_be_bytes()); // window
+    packet.extend_from_slice(&0u16.to_be_bytes()); // checksum placeholder
+    packet.extend_from_slice(&0u16.to_be_bytes()); // urgent
+
+    let checksum = calculate_tcp_checksum(dst_ip, src_ip, &packet);
+    packet[16..18].copy_from_slice(&checksum.to_be_bytes());
+
+    let mut stats = TCP_STATS.lock();
+    stats.resets += 1;
+    drop(stats);
+
+    // We are the destination of the offending segment, so the reset
+    // goes back with our address as the source.
+    let _ = crate::netstack::ipv4::send_ipv4(dst_ip, src_ip, 6, &packet);
+}
+
 pub fn tcp_input(src_ip: u32, dst_ip: u32, data: &[u8]) {
     let header = match TcpHeader::from_bytes(data) {
         Some(h) => h,
         None => return,
     };
 
-    let payload = if data.len() > TCP_HDR_SIZE {
-        &data[TCP_HDR_SIZE..]
-    } else {
-        &[]
-    };
+    // Payload starts at the data offset, not at the fixed 20-byte minimum:
+    // segments carrying TCP options (window scale, SACK, timestamps) would
+    // otherwise have their option bytes handed to the upper layer as data.
+    if !header.validate(data) {
+        return;
+    }
+    let payload = &data[header.header_length()..];
 
     let flags = header.flags();
-    let _payload_len = payload.len(); // Available for processing
 
     let mut stats = TCP_STATS.lock();
     stats.segs_received += 1;
@@ -593,15 +706,22 @@ pub fn tcp_input(src_ip: u32, dst_ip: u32, data: &[u8]) {
                     // Send SYN-ACK
                     {
                         let tcb = &mut connections[new_idx];
-                        send_segment(tcb, tcp_flags::SYN | tcp_flags::ACK, tcb.snd_iss, tcb.rcv_nxt, None);
+                        send_segment(
+                            tcb,
+                            tcp_flags::SYN | tcp_flags::ACK,
+                            tcb.snd_iss,
+                            tcb.rcv_nxt,
+                            None,
+                        );
                     }
 
                     let mut stats = TCP_STATS.lock();
                     stats.passive_opens += 1;
                 }
             } else {
-                // No matching connection, send RST
-                // (simplified - actual RST handling would need more care)
+                // No matching connection and no listening socket: the
+                // segment is for a closed port, so RFC 793 requires a RST.
+                send_reset(&header, src_ip, dst_ip, payload.len());
             }
         }
     }
@@ -612,7 +732,12 @@ pub fn tcp_input(src_ip: u32, dst_ip: u32, data: &[u8]) {
 /// SynReceived (i.e. completed the passive 3-way handshake). The
 /// caller is responsible for enqueuing the TCB onto the listening
 /// socket's accept queue in that case.
-fn handle_tcp_segment(tcb: &mut TcpControlBlock, header: TcpHeader, flags: u8, payload: &[u8]) -> bool {
+fn handle_tcp_segment(
+    tcb: &mut TcpControlBlock,
+    header: TcpHeader,
+    flags: u8,
+    payload: &[u8],
+) -> bool {
     let payload_len = payload.len();
     let mut established_now = false;
 
@@ -659,7 +784,7 @@ fn handle_tcp_segment(tcb: &mut TcpControlBlock, header: TcpHeader, flags: u8, p
                 // Use new congestion control ACK handler
                 tcb.on_ack(header.ack);
             }
-            
+
             // Check for duplicate ACKs (fast retransmit trigger)
             if flags & tcp_flags::ACK != 0 && header.ack == tcb.snd_una {
                 // This is a duplicate ACK - handled in on_ack
@@ -718,9 +843,22 @@ fn handle_tcp_segment(tcb: &mut TcpControlBlock, header: TcpHeader, flags: u8, p
 
 /// Generate Initial Sequence Number
 fn generate_isn() -> u32 {
-    // Simple ISN generation - use PIT ticks for seeding
-    let now = pit::get_system_time_ms() as u32;
-    now
+    // RFC 6751 (Recommendations on Random TCP Initial Sequence Numbers)
+    // requires the ISN to be unpredictable: a tick-derived ISN lets an
+    // off-path attacker guess the next sequence number and inject data or
+    // hijack the connection. Draw from the kernel CSPRNG, which is seeded
+    // from PIT/TSC/memory-map entropy, and fall back to a mixed tick only
+    // when the DRBG is unavailable.
+    let mut out = [0u8; 4];
+    if crate::crypto::csprng::fill(&mut out) {
+        return u32::from_le_bytes(out);
+    }
+    // Fallback only: mix the tick through a splitmix64 finalizer so the
+    // ISN is not simply the tick value.
+    let mut z = pit::get_system_time_ms() as u64 ^ 0x9E37_79B9_7F4A_7C15;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    (z ^ (z >> 31)) as u32
 }
 
 /// Create a TCP listening endpoint. The returned socket_id is
@@ -733,9 +871,7 @@ pub fn listen(local_ip: u32, local_port: Port) -> Option<u32> {
     // Reject duplicate listen on the same (local_ip, local_port)
     // so the kernel does not double-arm accept queues.
     if connections.iter().any(|tcb| {
-        tcb.local_ip == local_ip
-            && tcb.local_port == local_port
-            && tcb.state == TcpState::Listen
+        tcb.local_ip == local_ip && tcb.local_port == local_port && tcb.state == TcpState::Listen
     }) {
         return None;
     }
@@ -759,9 +895,7 @@ pub fn close_listen(local_ip: u32, local_port: Port) -> bool {
     let mut connections = TCP_CONNECTIONS.lock();
     let before = connections.len();
     connections.retain(|tcb| {
-        !(tcb.local_ip == local_ip
-            && tcb.local_port == local_port
-            && tcb.state == TcpState::Listen)
+        !(tcb.local_ip == local_ip && tcb.local_port == local_port && tcb.state == TcpState::Listen)
     });
     connections.len() != before
 }
@@ -802,17 +936,32 @@ pub fn connect(local_ip: u32, local_port: Port, remote_ip: u32, remote_port: Por
 pub fn close(socket_id: u32) -> bool {
     let mut connections = TCP_CONNECTIONS.lock();
 
-    if let Some(idx) = connections.iter().position(|tcb| tcb.socket_id == socket_id) {
+    if let Some(idx) = connections
+        .iter()
+        .position(|tcb| tcb.socket_id == socket_id)
+    {
         let tcb = &mut connections[idx];
 
         match tcb.state {
             TcpState::Established => {
                 tcb.state = TcpState::FinWait1;
-                send_segment(tcb, tcp_flags::FIN | tcp_flags::ACK, tcb.snd_nxt, tcb.rcv_nxt, None);
+                send_segment(
+                    tcb,
+                    tcp_flags::FIN | tcp_flags::ACK,
+                    tcb.snd_nxt,
+                    tcb.rcv_nxt,
+                    None,
+                );
             }
             TcpState::CloseWait => {
                 tcb.state = TcpState::LastAck;
-                send_segment(tcb, tcp_flags::FIN | tcp_flags::ACK, tcb.snd_nxt, tcb.rcv_nxt, None);
+                send_segment(
+                    tcb,
+                    tcp_flags::FIN | tcp_flags::ACK,
+                    tcb.snd_nxt,
+                    tcb.rcv_nxt,
+                    None,
+                );
             }
             _ => {
                 tcb.state = TcpState::Closed;
@@ -828,7 +977,10 @@ pub fn close(socket_id: u32) -> bool {
 pub fn send(socket_id: u32, data: &[u8]) -> Option<usize> {
     let mut connections = TCP_CONNECTIONS.lock();
 
-    let idx = match connections.iter().position(|tcb| tcb.socket_id == socket_id) {
+    let idx = match connections
+        .iter()
+        .position(|tcb| tcb.socket_id == socket_id)
+    {
         Some(i) => i,
         None => return None,
     };
@@ -874,7 +1026,9 @@ pub fn send(socket_id: u32, data: &[u8]) -> Option<usize> {
 pub fn receive(socket_id: u32, buffer: &mut [u8]) -> Option<usize> {
     let idx = {
         let connections = TCP_CONNECTIONS.lock();
-        connections.iter().position(|tcb| tcb.socket_id == socket_id)?
+        connections
+            .iter()
+            .position(|tcb| tcb.socket_id == socket_id)?
     };
 
     {
@@ -909,17 +1063,18 @@ pub fn get_stats() -> TcpStats {
 pub fn check_retransmit_timers() {
     use crate::hal::common::pit;
     let now = pit::get_system_time_ms() as u64;
-    
+
     let mut connections = TCP_CONNECTIONS.lock();
-    
+
     for i in 0..connections.len() {
         // Check if this connection needs retransmission
         let needs_retransmit = {
             let tcb = &connections[i];
             // Only check established connections
-            if tcb.state != TcpState::Established 
-               && tcb.state != TcpState::SynSent
-               && tcb.state != TcpState::SynReceived {
+            if tcb.state != TcpState::Established
+                && tcb.state != TcpState::SynSent
+                && tcb.state != TcpState::SynReceived
+            {
                 false
             } else if tcb.snd_nxt > tcb.snd_una {
                 // Calculate time since last send
@@ -929,16 +1084,16 @@ pub fn check_retransmit_timers() {
                 false
             }
         };
-        
+
         if needs_retransmit {
             // Get mutable reference for retransmission
             let tcb = &mut connections[i];
-            // kprintln!("  [TCP] Retransmission timeout for socket {}", tcb.socket_id)  // kprintln disabled (memcpy crash workaround);
-            
+            // kprintln!("  [TCP] Retransmission timeout for socket {}", tcb.socket_id);
+
             let mut stats = TCP_STATS.lock();
             stats.segs_retrans += 1;
             drop(stats);
-            
+
             // Retransmit the segment. We resend the bytes from the
             // start of tx_buf (which holds data not yet ACKed). The
             // previously-sent `snd_nxt..snd_una` range has been

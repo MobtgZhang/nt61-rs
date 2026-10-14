@@ -31,12 +31,15 @@ pub const MSS: u32 = 1460;
 pub const INITIAL_CWND: u32 = 2 * MSS;
 
 /// Minimum / maximum RTO bounds (RFC 6298).
-pub const MIN_RTO: u32 = 200;     // 200 ms
-pub const MAX_RTO: u32 = 60_000;  // 60 s
+/// RFC 6298 §2 (P2) requires the minimum RTO to be 1 second; the previous
+/// 200 ms floor contradicted `tcp_timer::rfc6298::MIN_RTO` and produced
+/// sub-second retransmits.
+pub const MIN_RTO: u32 = 1000; // 1 s (RFC 6298 §2 P2)
+pub const MAX_RTO: u32 = 60_000; // 60 s
 
 /// CUBIC parameters (RFC 8312 §5).
-const CUBIC_C: f64 = 0.4;             // window-reduction constant
-const CUBIC_BETA: f64 = 0.7;          // multiplicative decrease factor
+const CUBIC_C: f64 = 0.4; // window-reduction constant
+const CUBIC_BETA: f64 = 0.7; // multiplicative decrease factor
 /// CUBIC `W_max` (the congestion window at the last loss event) is
 /// kept in a struct field rather than as a constant.
 
@@ -54,6 +57,42 @@ pub enum CongestionState {
     FastRecovery,
 }
 
+/// Cube root without libm.
+///
+/// `f64::cbrt` and `f64::powi` are libm intrinsics and are not available
+/// in a `no_std` kernel, so CUBIC needs its own. Newton's method on
+/// `f(x) = x^3 - v` converges in a handful of iterations for the window
+/// sizes this module sees (v is at most a few hundred thousand), and it
+/// keeps the sign so `K` stays correct for a negative argument.
+fn cube_root(v: f64) -> f64 {
+    if v == 0.0 {
+        return 0.0;
+    }
+    let neg = v < 0.0;
+    let a = if neg { -v } else { v };
+    // Starting guess: anything > 0 works, but a/(3) is close enough that
+    // the loop below settles in <10 iterations. Guard against a zero
+    // first step for sub-unit arguments.
+    let mut x = if a >= 1.0 { a / 3.0 } else { 1.0 };
+    for _ in 0..64 {
+        let next = (2.0 * x + a / (x * x)) / 3.0;
+        if next == x {
+            break;
+        }
+        x = next;
+    }
+    if neg {
+        -x
+    } else {
+        x
+    }
+}
+
+#[inline]
+fn cube(x: f64) -> f64 {
+    x * x * x
+}
+
 /// Compute the cubic function:
 ///   `W(t) = C * (t - K)³ + W_max`
 /// where `K = cbrt(W_max * (1 - beta) / C)`.
@@ -65,9 +104,9 @@ fn cubic_window(t_ms: f64, w_max: u32, epoch_ms: f64) -> u32 {
     let w_max_f = w_max as f64;
     let beta = CUBIC_BETA;
     // K = cube_root( W_max * (1 - beta) / C )
-    let k = ((w_max_f * (1.0 - beta)) / CUBIC_C).cbrt();
+    let k = cube_root((w_max_f * (1.0 - beta)) / CUBIC_C);
     let t = t_ms - epoch_ms;
-    let raw = CUBIC_C * (t - k).powi(3) + w_max_f;
+    let raw = CUBIC_C * cube(t - k) + w_max_f;
     if raw < INITIAL_CWND as f64 {
         INITIAL_CWND as u32
     } else {
@@ -236,9 +275,9 @@ impl CongestionControl {
 
 #[derive(Debug, Clone, Copy)]
 pub struct RetransmissionTimeout {
-    pub srtt_ms: i32,    // smoothed RTT
-    pub rttvar_ms: i32,  // mean deviation
-    pub rto_ms: u32,     // current retransmission timeout
+    pub srtt_ms: i32,   // smoothed RTT
+    pub rttvar_ms: i32, // mean deviation
+    pub rto_ms: u32,    // current retransmission timeout
     /// Karn's algorithm: skip RTT measurement while this is true.
     pub karn_skip: bool,
 }
@@ -322,8 +361,8 @@ impl TcpSendWindow {
     /// Pull up to `max_bytes` of buffered data to send. Returns the
     /// (sequence_number, payload) pair the caller should transmit.
     pub fn get_sendable_data(&mut self, max_bytes: usize) -> Option<(u32, &[u8])> {
-        let available = (self.send_una as usize + self.buffer.len())
-            .saturating_sub(self.send_next as usize);
+        let available =
+            (self.send_una as usize + self.buffer.len()).saturating_sub(self.send_next as usize);
         if available == 0 {
             return None;
         }
@@ -332,7 +371,7 @@ impl TcpSendWindow {
         let data = &self.buffer[offset..offset + send_bytes];
         let seq = self.send_next;
         self.send_next = self.send_next.wrapping_add(send_bytes as u32);
-        if self.send_next.wrapping_sub(self.send_max) < send_bytes as u32 {
+        if seq_lt(self.send_max, self.send_next) {
             self.send_max = self.send_next;
         }
         Some((seq, data))
@@ -497,5 +536,9 @@ mod tests {
 }
 
 fn max(a: u32, b: u32) -> u32 {
-    if a > b { a } else { b }
+    if a > b {
+        a
+    } else {
+        b
+    }
 }

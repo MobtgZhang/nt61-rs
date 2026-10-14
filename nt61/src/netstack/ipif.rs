@@ -219,7 +219,12 @@ pub fn get_our_ip_addresses() -> Vec<u32> {
 }
 
 /// Configure a static IP address
-pub fn configure_static_ip(eth_if_index: u32, address: u32, netmask: u32, gateway: u32) -> Option<u32> {
+pub fn configure_static_ip(
+    eth_if_index: u32,
+    address: u32,
+    netmask: u32,
+    gateway: u32,
+) -> Option<u32> {
     add_interface(address, netmask, gateway, eth_if_index)
 }
 
@@ -240,7 +245,7 @@ pub fn configure_static_ip(eth_if_index: u32, address: u32, netmask: u32, gatewa
 pub fn seed_loopback() -> Option<u32> {
     let addr = u32::from_be_bytes([127, 0, 0, 1]);
     let mask = u32::from_be_bytes([255, 0, 0, 0]);
-    let gw   = u32::from_be_bytes([0, 0, 0, 0]);
+    let gw = u32::from_be_bytes([0, 0, 0, 0]);
     add_interface(addr, mask, gw, u32::MAX)
 }
 

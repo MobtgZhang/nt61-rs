@@ -159,8 +159,8 @@ static NAT_STATS: Spinlock<NatStats> = Spinlock::new(NatStats {
 });
 
 const TCP_TIMEOUT_MS: u64 = 7200_000; // 2 hours
-const UDP_TIMEOUT_MS: u64 = 300_000;  // 5 minutes
-const ICMP_TIMEOUT_MS: u64 = 60_000;  // 1 minute
+const UDP_TIMEOUT_MS: u64 = 300_000; // 5 minutes
+const ICMP_TIMEOUT_MS: u64 = 60_000; // 1 minute
 
 pub fn init() {
     *NAT_STATE.lock() = NatStateInternal::new();
@@ -215,10 +215,7 @@ pub fn translate_outbound(
     Some((nat_ip, nat_port))
 }
 
-pub fn translate_inbound(
-    dst_port: u16,
-    protocol: u8,
-) -> Option<(u32, u16)> {
+pub fn translate_inbound(dst_port: u16, protocol: u8) -> Option<(u32, u16)> {
     let inbound_key = InboundKey {
         nat_src_port: dst_port,
         protocol,
@@ -252,9 +249,11 @@ pub fn add_port_forward(
 ) -> bool {
     let mut state = NAT_STATE.lock();
 
-    if state.port_forwards.iter().any(|r| {
-        r.external_port == external_port && r.protocol == protocol
-    }) {
+    if state
+        .port_forwards
+        .iter()
+        .any(|r| r.external_port == external_port && r.protocol == protocol)
+    {
         return false;
     }
 
@@ -271,9 +270,9 @@ pub fn add_port_forward(
 pub fn remove_port_forward(external_port: u16, protocol: u8) -> bool {
     let mut state = NAT_STATE.lock();
     let before = state.port_forwards.len();
-    state.port_forwards.retain(|r| {
-        !(r.external_port == external_port && r.protocol == protocol)
-    });
+    state
+        .port_forwards
+        .retain(|r| !(r.external_port == external_port && r.protocol == protocol));
     state.port_forwards.len() != before
 }
 

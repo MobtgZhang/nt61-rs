@@ -7,6 +7,12 @@
 //! - UDP send/receive
 //! - Congestion control
 //! - Packet processing
+//!
+//! The suite is written against the APIs that actually exist: the socket
+//! layer (`netstack::socket`) owns socket creation/bind/accept/close, while
+//! `netstack::tcp` and `netstack::udp` own the protocol paths. The previous
+//! version called `tcp::create_socket`, `udp::bind`, `netstack::packet`,
+//! `netstack::checksum` and `netstack::fragment`, none of which exist.
 
 use crate::rtl::testing::TestStats;
 
@@ -56,122 +62,109 @@ pub fn run_tests() -> bool {
 // =============================================================================
 
 fn test_tcp_socket_creation() -> bool {
-    use crate::netstack::tcp;
+    use crate::netstack::socket;
 
-    let socket = tcp::create_socket();
-    if socket.is_null() {
+    let socket_id = match socket::socket(socket::SocketType::Stream, socket::Protocol::Tcp) {
+        Some(socket_id) => socket_id,
+        None => return false,
+    };
+
+    crate::boot_println!("    Created TCP socket id {}", socket_id);
+
+    if socket::get_state(socket_id) != Some(socket::SocketState::Closed) {
+        crate::boot_println!("    TCP socket: unexpected initial state");
+        let _ = socket::close(socket_id);
         return false;
     }
 
-    unsafe {
-        crate::boot_println!("    Created TCP socket at {:p}", socket);
-        tcp::close_socket(socket);
-    }
-
+    let _ = socket::close(socket_id);
     true
 }
 
 fn test_tcp_connect() -> bool {
     use crate::netstack::tcp;
 
-    let socket = tcp::create_socket();
-    if socket.is_null() {
-        return false;
-    }
-
-    // Try to connect to localhost:80
-    let addr = [127, 0, 0, 1];
-    let port = 80u16;
-
-    let result = tcp::connect(socket, &addr, port);
-
-    match result {
-        Ok(()) => {
-            crate::boot_println!("    TCP connect: OK");
-            unsafe { tcp::close_socket(socket); }
-            true
-        }
-        Err(_) => {
+    // Loopback: 127.0.0.1:12345 -> 127.0.0.1:80
+    let socket_id = match tcp::connect(0x7F00_0001, 12345, 0x7F00_0001, 80) {
+        Some(socket_id) => socket_id,
+        None => {
             crate::boot_println!("    TCP connect: no network (OK for testing)");
-            unsafe { tcp::close_socket(socket); }
-            true
+            return true;
         }
-    }
+    };
+
+    crate::boot_println!("    TCP connect: OK (socket {})", socket_id);
+    tcp::close(socket_id);
+    true
 }
 
 fn test_tcp_listen() -> bool {
     use crate::netstack::tcp;
 
-    let socket = tcp::create_socket();
-    if socket.is_null() {
-        return false;
-    }
-
-    let port = 8080u16;
-    let result = tcp::listen(socket, port, 5);
-
-    match result {
-        Ok(()) => {
-            crate::boot_println!("    TCP listen on port {}: OK", port);
-            unsafe { tcp::close_socket(socket); }
-            true
-        }
-        Err(_) => {
+    let socket_id = match tcp::listen(0x7F00_0001, 8080) {
+        Some(socket_id) => socket_id,
+        None => {
             crate::boot_println!("    TCP listen: error (acceptable)");
-            unsafe { tcp::close_socket(socket); }
-            true
+            return true;
         }
+    };
+
+    crate::boot_println!("    TCP listen on port 8080: OK");
+    if !tcp::close_listen(0x7F00_0001, 8080) {
+        crate::boot_println!("    TCP close_listen: failed");
     }
+    tcp::close(socket_id);
+    true
 }
 
 fn test_tcp_accept() -> bool {
-    use crate::netstack::tcp;
+    use crate::netstack::socket;
 
-    let listen_socket = tcp::create_socket();
-    if listen_socket.is_null() {
-        return false;
+    let listen_socket = match socket::socket(socket::SocketType::Stream, socket::Protocol::Tcp) {
+        Some(listen_socket) => listen_socket,
+        None => return false,
+    };
+
+    let addr = socket::SockAddr::new(2, 8081u16.to_be(), 0x7F00_0001);
+    if socket::bind(listen_socket, &addr).is_err() {
+        let _ = socket::close(listen_socket);
+        crate::boot_println!("    TCP accept: cannot bind (OK)");
+        return true;
     }
 
-    let result = tcp::listen(listen_socket, 8081, 5);
-    if result.is_err() {
-        unsafe { tcp::close_socket(listen_socket); }
+    if socket::listen(listen_socket, 5).is_err() {
+        let _ = socket::close(listen_socket);
         crate::boot_println!("    TCP accept: cannot listen (OK)");
         return true;
     }
 
-    // Non-blocking accept
-    let accept_result = tcp::accept(listen_socket, false);
-
-    match accept_result {
+    // Non-blocking accept: no pending connection means WouldBlock.
+    match socket::accept(listen_socket) {
         Ok(client_socket) => {
-            crate::boot_println!("    TCP accept: got connection");
-            unsafe {
-                tcp::close_socket(client_socket);
-                tcp::close_socket(listen_socket);
-            }
-            true
+            crate::boot_println!("    TCP accept: got connection {}", client_socket);
+            let _ = socket::close(client_socket);
         }
-        Err(_) => {
-            crate::boot_println!("    TCP accept: no connections (OK)");
-            unsafe { tcp::close_socket(listen_socket); }
-            true
+        Err(err) => {
+            crate::boot_println!("    TCP accept: {:?} (OK)", err);
         }
     }
+
+        let _ = socket::close(listen_socket);
+    true
 }
 
 fn test_tcp_close() -> bool {
-    use crate::netstack::tcp;
+    use crate::netstack::socket;
 
-    let socket = tcp::create_socket();
-    if socket.is_null() {
+    let socket_id = match socket::socket(socket::SocketType::Stream, socket::Protocol::Tcp) {
+        Some(socket_id) => socket_id,
+        None => return false,
+    };
+
+    if socket::close(socket_id).is_err() {
         return false;
     }
-
-    unsafe {
-        tcp::close_socket(socket);
-        crate::boot_println!("    TCP close: OK");
-    }
-
+    crate::boot_println!("    TCP close: OK");
     true
 }
 
@@ -182,48 +175,42 @@ fn test_tcp_close() -> bool {
 fn test_tcp_send() -> bool {
     use crate::netstack::tcp;
 
-    let socket = tcp::create_socket();
-    if socket.is_null() {
-        return false;
-    }
+    let socket_id = match tcp::connect(0x7F00_0001, 12346, 0x7F00_0001, 80) {
+        Some(socket_id) => socket_id,
+        None => {
+            crate::boot_println!("    TCP send: not connected (OK)");
+            return true;
+        }
+    };
 
     let data = b"Test data";
-    let result = tcp::send(socket, data);
-
-    match result {
-        Ok(bytes_sent) => {
-            crate::boot_println!("    TCP send: {} bytes", bytes_sent);
-        }
-        Err(_) => {
-            crate::boot_println!("    TCP send: not connected (OK)");
-        }
+    match tcp::send(socket_id, data) {
+        Some(bytes_sent) => crate::boot_println!("    TCP send: {} bytes", bytes_sent),
+        None => crate::boot_println!("    TCP send: not connected (OK)"),
     }
 
-    unsafe { tcp::close_socket(socket); }
+    tcp::close(socket_id);
     true
 }
 
 fn test_tcp_receive() -> bool {
     use crate::netstack::tcp;
 
-    let socket = tcp::create_socket();
-    if socket.is_null() {
-        return false;
-    }
+    let socket_id = match tcp::connect(0x7F00_0001, 12347, 0x7F00_0001, 80) {
+        Some(socket_id) => socket_id,
+        None => {
+            crate::boot_println!("    TCP receive: no data (OK)");
+            return true;
+        }
+    };
 
     let mut buffer = [0u8; 1024];
-    let result = tcp::receive(socket, &mut buffer);
-
-    match result {
-        Ok(bytes_received) => {
-            crate::boot_println!("    TCP receive: {} bytes", bytes_received);
-        }
-        Err(_) => {
-            crate::boot_println!("    TCP receive: no data (OK)");
-        }
+    match tcp::receive(socket_id, &mut buffer) {
+        Some(bytes_received) => crate::boot_println!("    TCP receive: {} bytes", bytes_received),
+        None => crate::boot_println!("    TCP receive: no data (OK)"),
     }
 
-    unsafe { tcp::close_socket(socket); }
+    tcp::close(socket_id);
     true
 }
 
@@ -238,24 +225,19 @@ fn test_tcp_retransmission() -> bool {
 // =============================================================================
 
 fn test_tcp_state_transitions() -> bool {
-    use crate::netstack::tcp::{TcpState, create_socket};
+    use crate::netstack::socket;
 
-    let socket = create_socket();
-    if socket.is_null() {
-        return false;
+    let socket_id = match socket::socket(socket::SocketType::Stream, socket::Protocol::Tcp) {
+        Some(socket_id) => socket_id,
+        None => return false,
+    };
+
+    if socket::get_state(socket_id) != Some(socket::SocketState::Closed) {
+        crate::boot_println!("    Initial state: {:?}", socket::get_state(socket_id));
     }
 
-    unsafe {
-        // Check initial state
-        let state = (*socket).state;
-        if state != TcpState::Closed {
-            crate::boot_println!("    Initial state: {:?}", state);
-        }
-
-        crate::boot_println!("    TCP state machine: OK");
-        crate::netstack::tcp::close_socket(socket);
-    }
-
+    crate::boot_println!("    TCP state machine: OK");
+    let _ = socket::close(socket_id);
     true
 }
 
@@ -278,91 +260,69 @@ fn test_tcp_fin_ack() -> bool {
 fn test_udp_socket_creation() -> bool {
     use crate::netstack::udp;
 
-    let socket = udp::create_socket();
-    if socket.is_null() {
-        return false;
-    }
+    let socket_idx = match udp::create_socket(9000, 0x7F00_0001) {
+        Some(socket_idx) => socket_idx,
+        None => return false,
+    };
 
-    unsafe {
-        crate::boot_println!("    Created UDP socket at {:p}", socket);
-        udp::close_socket(socket);
-    }
-
+    crate::boot_println!("    Created UDP socket index {}", socket_idx);
+    udp::close_socket(socket_idx);
     true
 }
 
 fn test_udp_send() -> bool {
     use crate::netstack::udp;
 
-    let socket = udp::create_socket();
-    if socket.is_null() {
-        return false;
-    }
+    let socket_idx = match udp::create_socket(9002, 0x7F00_0001) {
+        Some(socket_idx) => socket_idx,
+        None => return false,
+    };
 
     let data = b"UDP test";
-    let addr = [127, 0, 0, 1];
-    let port = 9000u16;
-
-    let result = udp::sendto(socket, data, &addr, port);
-
-    match result {
-        Ok(bytes_sent) => {
-            crate::boot_println!("    UDP send: {} bytes", bytes_sent);
-        }
-        Err(_) => {
-            crate::boot_println!("    UDP send: no network (OK)");
-        }
+    match udp::send(socket_idx, 0x7F00_0001, 9000, data) {
+        Some(bytes_sent) => crate::boot_println!("    UDP send: {} bytes", bytes_sent),
+        None => crate::boot_println!("    UDP send: no network (OK)"),
     }
 
-    unsafe { udp::close_socket(socket); }
+    udp::close_socket(socket_idx);
     true
 }
 
 fn test_udp_receive() -> bool {
     use crate::netstack::udp;
 
-    let socket = udp::create_socket();
-    if socket.is_null() {
-        return false;
-    }
+    let socket_idx = match udp::create_socket(9003, 0x7F00_0001) {
+        Some(socket_idx) => socket_idx,
+        None => return false,
+    };
 
     let mut buffer = [0u8; 1024];
-    let result = udp::recvfrom(socket, &mut buffer);
-
-    match result {
-        Ok((bytes_received, _addr, _port)) => {
-            crate::boot_println!("    UDP receive: {} bytes", bytes_received);
+    match udp::receive(socket_idx, &mut buffer) {
+        Some((_src_ip, _port, bytes_received)) => {
+            crate::boot_println!("    UDP receive: {} bytes", bytes_received)
         }
-        Err(_) => {
-            crate::boot_println!("    UDP receive: no data (OK)");
-        }
+        None => crate::boot_println!("    UDP receive: no data (OK)"),
     }
 
-    unsafe { udp::close_socket(socket); }
+    udp::close_socket(socket_idx);
     true
 }
 
 fn test_udp_bind() -> bool {
-    use crate::netstack::udp;
+    use crate::netstack::socket;
 
-    let socket = udp::create_socket();
-    if socket.is_null() {
-        return false;
+    let socket_id = match socket::socket(socket::SocketType::Dgram, socket::Protocol::Udp) {
+        Some(socket_id) => socket_id,
+        None => return false,
+    };
+
+    let addr = socket::SockAddr::new(2, 9001u16.to_be(), 0x7F00_0001);
+    match socket::bind(socket_id, &addr) {
+        Ok(()) => crate::boot_println!("    UDP bind to port 9001: OK"),
+        Err(err) => crate::boot_println!("    UDP bind: {:?} (acceptable)", err),
     }
 
-    let port = 9001u16;
-    let result = udp::bind(socket, port);
-
-    match result {
-        Ok(()) => {
-            crate::boot_println!("    UDP bind to port {}: OK", port);
-        }
-        Err(_) => {
-            crate::boot_println!("    UDP bind: error (acceptable)");
-        }
-    }
-
-    unsafe { udp::close_socket(socket); }
+    let _ = socket::close(socket_id);
     true
 }
 
@@ -373,24 +333,29 @@ fn test_udp_bind() -> bool {
 fn test_tcp_slow_start() -> bool {
     use crate::netstack::tcp;
 
-    let socket = tcp::create_socket();
-    if socket.is_null() {
+    let socket_id = match tcp::connect(0x7F00_0001, 12348, 0x7F00_0001, 80) {
+        Some(socket_id) => socket_id,
+        None => {
+            crate::boot_println!("    TCP slow start: no connection (OK)");
+            return true;
+        }
+    };
+
+    let cwnd = match tcp::get_cwnd(socket_id) {
+        Some(cwnd) => cwnd,
+        None => {
+            tcp::close(socket_id);
+            return false;
+        }
+    };
+
+    crate::boot_println!("    TCP initial cwnd: {}", cwnd);
+    if cwnd == 0 {
+        tcp::close(socket_id);
         return false;
     }
 
-    unsafe {
-        // Check initial congestion window
-        let cwnd = (*socket).cwnd;
-        crate::boot_println!("    TCP initial cwnd: {}", cwnd);
-
-        if cwnd == 0 {
-            tcp::close_socket(socket);
-            return false;
-        }
-
-        tcp::close_socket(socket);
-    }
-
+    tcp::close(socket_id);
     true
 }
 
@@ -417,26 +382,30 @@ fn test_tcp_fast_recovery() -> bool {
 // =============================================================================
 
 fn test_packet_parse() -> bool {
-    use crate::netstack::packet;
+    use crate::netstack::ipv4;
 
-    // Create a test packet
-    let test_packet = [
-        0x45, 0x00, 0x00, 0x3c, // IP header
-        0x1c, 0x46, 0x40, 0x00,
-        0x40, 0x06, 0xb1, 0xe6,
-        0xc0, 0xa8, 0x01, 0x01, // Source IP
-        0xc0, 0xa8, 0x01, 0x02, // Dest IP
+    // Minimal IPv4 header: version 4, IHL 5, total length 20, TCP.
+    let mut packet = [
+        0x45u8, 0x00, 0x00, 0x14, // version/IHL, TOS, total length
+        0x1c, 0x46, 0x40, 0x00, // identification, flags/offset
+        0x40, 0x06, 0x00, 0x00, // TTL, protocol, checksum (filled below)
+        0xc0, 0xa8, 0x01, 0x01, // source
+        0xc0, 0xa8, 0x01, 0x02, // destination
     ];
 
-    let result = packet::parse_ip_header(&test_packet);
+    let checksum = ipv4::calculate_checksum(&packet);
+    packet[10..12].copy_from_slice(&checksum.to_be_bytes());
 
-    match result {
-        Ok(header) => {
-            crate::boot_println!("    Parsed IP packet: version={}, protocol={}",
-                               header.version, header.protocol);
+    match ipv4::parse_ipv4_header(&packet) {
+        Some((header, _payload)) => {
+            crate::boot_println!(
+                "    Parsed IP packet: version/IHL=0x{:02x}, protocol={}",
+                header.version_ihl,
+                header.protocol
+            );
             true
         }
-        Err(_) => {
+        None => {
             crate::boot_println!("    Packet parse: error");
             false
         }
@@ -444,15 +413,18 @@ fn test_packet_parse() -> bool {
 }
 
 fn test_checksum_calculation() -> bool {
-    use crate::netstack::checksum;
+    use crate::netstack::ipv4;
 
     let data = b"Test data for checksum";
-    let checksum = checksum::calculate_checksum(data);
+    let checksum = ipv4::calculate_checksum(data);
 
     crate::boot_println!("    Checksum: 0x{:04x}", checksum);
 
-    // Verify checksum is non-zero for non-empty data
-    if checksum == 0 && !data.is_empty() {
+    // A checksum computed over data that already contains its own checksum
+    // must verify; that is the property RFC 1191/RFC 768 rely on.
+    let mut framed = data.to_vec();
+    framed.extend_from_slice(&checksum.to_be_bytes());
+    if ipv4::calculate_checksum(&framed) != 0 {
         return false;
     }
 
@@ -460,24 +432,25 @@ fn test_checksum_calculation() -> bool {
 }
 
 fn test_packet_fragmentation() -> bool {
-    use crate::netstack::fragment;
+    use crate::netstack::fragmentation;
 
     let large_data = [0u8; 2000]; // Larger than MTU
     let mtu = 1500;
 
-    let fragments = fragment::fragment_packet(&large_data, mtu);
+    let fragments = fragmentation::fragment_packet(&large_data, mtu, 0x1234);
 
-    match fragments {
-        Ok(frags) => {
-            crate::boot_println!("    Fragmented into {} packets", frags.len());
-            if frags.len() < 2 {
-                return false;
-            }
-            true
-        }
-        Err(_) => {
-            crate::boot_println!("    Fragmentation: error (acceptable)");
-            true
+    crate::boot_println!("    Fragmented into {} packets", fragments.len());
+    if fragments.len() < 2 {
+        return false;
+    }
+
+    // Every fragment except the last must carry a payload that is a multiple
+    // of 8 bytes (IPv4 fragment offset granularity).
+    for fragment in fragments.iter().take(fragments.len() - 1) {
+        if fragment.len() <= 20 || fragment.len() % 8 != 0 {
+            return false;
         }
     }
+
+    true
 }

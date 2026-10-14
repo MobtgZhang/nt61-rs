@@ -4,9 +4,9 @@
 //
 //! Clean-room implementation based on RFC 792.
 
-use crate::netstack::ipv4;
-use crate::netstack::ipif;
 use crate::ke::sync::Spinlock;
+use crate::netstack::ipif;
+use crate::netstack::ipv4;
 use alloc::vec::Vec;
 
 /// ICMP message types
@@ -294,13 +294,7 @@ fn handle_dest_unreachable(header: IcmpHeader, data: &[u8]) {
 }
 
 /// Send an ICMP echo reply
-pub fn send_echo_reply(
-    src_ip: u32,
-    dst_ip: u32,
-    identifier: u16,
-    sequence: u16,
-    data: &[u8],
-) {
+pub fn send_echo_reply(src_ip: u32, dst_ip: u32, identifier: u16, sequence: u16, data: &[u8]) {
     // Build ICMP header
     let mut header = [0u8; 8];
     header[0] = 0; // Echo Reply
@@ -367,11 +361,7 @@ pub fn send_dest_unreachable(
 }
 
 /// Send ICMP time exceeded
-pub fn send_time_exceeded(
-    src_ip: u32,
-    dst_ip: u32,
-    original_packet: &[u8],
-) {
+pub fn send_time_exceeded(src_ip: u32, dst_ip: u32, original_packet: &[u8]) {
     let mut header = [0u8; 8];
     header[0] = 11; // Time Exceeded
     header[1] = 0; // Code 0: TTL expired

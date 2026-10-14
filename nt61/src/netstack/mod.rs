@@ -5,27 +5,26 @@
 //
 //! Clean-room implementation based on RFCs and standard networking practices.
 
-pub mod eth;
-pub mod ipv4;
-pub mod ipv6;
-pub mod ethif;
-pub mod ipif;
+pub mod afd;
 pub mod arp;
-pub mod icmp;
-pub mod tcp;
-pub mod udp;
-pub mod socket;
 pub mod dhcp;
 pub mod dns;
-pub mod afd;
-
+pub mod eth;
+pub mod ethif;
+pub mod icmp;
+pub mod ipif;
+pub mod ipv4;
+pub mod ipv6;
+pub mod socket;
+pub mod tcp;
+pub mod udp;
 
 /// Global network stack state
 static mut NETWORK_STACK_INITIALIZED: bool = false;
 
 /// Initialize the network stack
 pub fn init() {
-    // kprintln!("    Network stack: initializing...")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    Network stack: initializing...");
 
     // Initialize submodules
     ethif::init();
@@ -35,13 +34,18 @@ pub fn init() {
     tcp::init();
     udp::init();
     socket::init();
+    fragmentation::init();
+    routing::init();
+    nat::init();
+    ipsec::init();
+    wfp::init();
     dns::flush_cache();
 
     unsafe {
         NETWORK_STACK_INITIALIZED = true;
     }
 
-    // kprintln!("    Network stack: ready")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    Network stack: ready");
 }
 
 /// Check if the network stack is initialized
@@ -93,3 +97,15 @@ pub fn send_packet(data: &[u8], protocol: ipv4::Protocol, dst_ip: u32) -> bool {
     // Send the packet
     ipv4::send_ipv4(ip_if.address, dst_ip, protocol as u8, data)
 }
+
+pub mod fragmentation;
+pub mod ipsec;
+pub mod ipv6_complete;
+pub mod nat;
+pub mod routing;
+pub mod smoke;
+pub mod tcp_congestion;
+pub mod tcp_test;
+pub mod tcp_timer;
+pub mod tests;
+pub mod wfp;

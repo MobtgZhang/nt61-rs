@@ -9,9 +9,9 @@
 //
 //! Clean-room implementation based on RFC 8200, RFC 4861, RFC 4862.
 
-use alloc::vec::Vec;
-use alloc::string::String;
 use alloc::format;
+use alloc::string::String;
+use alloc::vec::Vec;
 
 /// IPv6 constants
 pub const IPV6_HEADER_SIZE: usize = 40;
@@ -87,7 +87,9 @@ impl IPv6Header {
 
         Some(IPv6Header {
             version_class: data[0],
-            flow_label: (((data[0] & 0x0F) as u32) << 16) | ((data[1] as u32) << 8) | (data[2] as u32),
+            flow_label: (((data[0] & 0x0F) as u32) << 16)
+                | ((data[1] as u32) << 8)
+                | (data[2] as u32),
             payload_length: u16::from_be_bytes([data[4], data[5]]),
             next_header: data[6],
             hop_limit: data[7],
@@ -141,9 +143,10 @@ impl IPv6Header {
     /// Get IPv4-mapped IPv6 address as IPv4
     pub fn as_ipv4(&self) -> Option<u32> {
         // Check for ::ffff:xxxx.xxxx.xxxx.xxxx
-        if self.dst_addr[0..10] == [0u8; 10] 
-           && self.dst_addr[10] == 0xFF 
-           && self.dst_addr[11] == 0xFF {
+        if self.dst_addr[0..10] == [0u8; 10]
+            && self.dst_addr[10] == 0xFF
+            && self.dst_addr[11] == 0xFF
+        {
             Some(u32::from_be_bytes([
                 self.dst_addr[12],
                 self.dst_addr[13],
@@ -162,13 +165,15 @@ pub mod addr {
 
     /// Link-local prefix
     pub const LINK_LOCAL_PREFIX: &[u8; 8] = &[0xFE, 0x80, 0, 0, 0, 0, 0, 0];
-    
+
     /// All-nodes multicast address
-    pub const ALL_NODES_MULTICAST: &[u8; 16] = &[0xFF, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
-    
+    pub const ALL_NODES_MULTICAST: &[u8; 16] =
+        &[0xFF, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+
     /// All-routers multicast address
-    pub const ALL_ROUTERS_MULTICAST: &[u8; 16] = &[0xFF, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2];
-    
+    pub const ALL_ROUTERS_MULTICAST: &[u8; 16] =
+        &[0xFF, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2];
+
     /// Solicited-node multicast prefix
     pub const SOLICITED_NODE_PREFIX: &[u8; 13] = &[0xFF, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0xFF];
 
@@ -197,13 +202,13 @@ pub mod addr {
         let parts: Vec<u16> = (0..8)
             .map(|i| u16::from_be_bytes([ipv6[i * 2], ipv6[i * 2 + 1]]))
             .collect();
-        
+
         // Find longest run of zeros
         let mut best_start = 0;
         let mut best_len = 0;
         let mut cur_start = 0;
         let mut cur_len = 0;
-        
+
         for (i, &part) in parts.iter().enumerate() {
             if part == 0 {
                 if cur_len == 0 {
@@ -218,7 +223,7 @@ pub mod addr {
                 cur_len = 0;
             }
         }
-        
+
         let mut result = String::new();
         for (i, &part) in parts.iter().enumerate() {
             if i == best_start && best_len > 1 {
@@ -232,7 +237,7 @@ pub mod addr {
                 result.push_str(&format!("{:x}", part));
             }
         }
-        
+
         result
     }
 }
@@ -325,7 +330,7 @@ impl NdpState {
 }
 
 /// NDP cache
-static NDP_CACHE: crate::ke::sync::Spinlock<Vec<NdpNeighbor>> = 
+static NDP_CACHE: crate::ke::sync::Spinlock<Vec<NdpNeighbor>> =
     crate::ke::sync::Spinlock::new(Vec::new());
 
 /// IPv6 statistics
@@ -380,21 +385,21 @@ static IPV6_STATS: crate::ke::sync::Spinlock<Ipv6Stats> =
 
 /// Initialize IPv6 stack
 pub fn init() {
-    // kprintln!("    IPv6: initializing...")  // kprintln disabled (memcpy crash workaround);
-    
+    // kprintln!("    IPv6: initializing...");
+
     // Clear NDP cache
     NDP_CACHE.lock().clear();
-    
+
     let mut stats = IPV6_STATS.lock();
     *stats = Ipv6Stats::zero();
-    
-    // kprintln!("    IPv6: ready")  // kprintln disabled (memcpy crash workaround);
+
+    // kprintln!("    IPv6: ready");
 }
 
 /// Calculate ICMPv6 checksum
 fn calculate_icmpv6_checksum(src: &[u8; 16], dst: &[u8; 16], data: &[u8]) -> u16 {
     let mut sum: u32 = 0;
-    
+
     // Pseudo-header
     for i in 0..8 {
         sum += (src[i * 2] as u32) << 8 | (src[i * 2 + 1] as u32);
@@ -403,7 +408,7 @@ fn calculate_icmpv6_checksum(src: &[u8; 16], dst: &[u8; 16], data: &[u8]) -> u16
     sum += 58; // Next header (ICMPv6)
     sum += (data.len() >> 15) as u32;
     sum += (data.len() & 0x7FFF) as u32;
-    
+
     // ICMPv6 data
     for chunk in data.chunks(2) {
         if chunk.len() == 2 {
@@ -412,11 +417,11 @@ fn calculate_icmpv6_checksum(src: &[u8; 16], dst: &[u8; 16], data: &[u8]) -> u16
             sum += chunk[0] as u32;
         }
     }
-    
+
     while sum > 0xFFFF {
         sum = (sum & 0xFFFF) + (sum >> 16);
     }
-    
+
     !sum as u16
 }
 
@@ -426,25 +431,26 @@ pub fn ipv6_input(data: &[u8]) {
         Some(h) => h,
         None => return,
     };
-    
+
     let mut stats = IPV6_STATS.lock();
     stats.packets_received += 1;
-    
+
     let payload = if data.len() > IPV6_HEADER_SIZE {
         &data[IPV6_HEADER_SIZE..]
     } else {
         &[]
     };
-    
+
     drop(stats);
-    
+
     // Handle extension headers (simplified - just skip for now)
     let mut offset = IPV6_HEADER_SIZE;
     let mut next_header = header.next_header;
-    
+
     while next_header == ExtensionHeaderType::HopByHopOptions as u8
-          || next_header == ExtensionHeaderType::DestinationOptions as u8
-          || next_header == ExtensionHeaderType::Routing as u8 {
+        || next_header == ExtensionHeaderType::DestinationOptions as u8
+        || next_header == ExtensionHeaderType::Routing as u8
+    {
         if offset + 2 > payload.len() {
             return;
         }
@@ -452,7 +458,7 @@ pub fn ipv6_input(data: &[u8]) {
         next_header = payload[offset];
         offset += (ext_len + 1) * 8;
     }
-    
+
     // Handle fragmentation
     if next_header == ExtensionHeaderType::Fragment as u8 {
         // Simplified: just skip fragment header
@@ -462,7 +468,7 @@ pub fn ipv6_input(data: &[u8]) {
         next_header = payload[offset];
         offset += 8;
     }
-    
+
     // Process based on next header
     match next_header.into() {
         NextHeader::Icmpv6 => {
@@ -487,20 +493,20 @@ fn icmpv6_input(ipv6_header: &IPv6Header, header_offset: usize, data: &[u8]) {
     } else {
         return;
     };
-    
+
     let icmp_header = match Icmpv6Header::from_bytes(payload) {
         Some(h) => h,
         None => return,
     };
-    
+
     let icmp_data = if payload.len() > 4 {
         &payload[4..]
     } else {
         &[]
     };
-    
+
     let mut stats = IPV6_STATS.lock();
-    
+
     match icmp_header.msg_type.into() {
         Icmpv6Type::RouterSolicitation => {
             stats.router_solicitations += 1;
@@ -588,10 +594,16 @@ fn handle_router_advertisement(data: &[u8]) {
                 if opt_len >= 5 && offset + 32 <= data.len() {
                     let prefix_len = data[offset + 2];
                     let valid_lifetime = u32::from_be_bytes([
-                        data[offset + 4], data[offset + 5], data[offset + 6], data[offset + 7]
+                        data[offset + 4],
+                        data[offset + 5],
+                        data[offset + 6],
+                        data[offset + 7],
                     ]);
                     let preferred_lifetime = u32::from_be_bytes([
-                        data[offset + 8], data[offset + 9], data[offset + 10], data[offset + 11]
+                        data[offset + 8],
+                        data[offset + 9],
+                        data[offset + 10],
+                        data[offset + 11],
                     ]);
                     prefix_info_holder = Some((prefix_len, valid_lifetime, preferred_lifetime));
                 }
@@ -645,34 +657,34 @@ fn handle_neighbor_advertisement(_src: &[u8; 16], data: &[u8]) {
     if data.len() < 24 {
         return;
     }
-    
+
     use crate::hal::common::pit;
-    
+
     // Target address is at offset 4-20
     let mut target = [0u8; 16];
     target.copy_from_slice(&data[4..20]);
-    
+
     // Check for source link-layer option
     let mut ll_addr = None;
     let mut offset = 24;
     while offset + 8 <= data.len() {
         let opt_type = data[offset];
         let opt_len = data[offset + 1] as usize;
-        
+
         if opt_type == 2 && opt_len >= 1 && offset + 8 <= data.len() {
             let mut addr = [0u8; 6];
             addr.copy_from_slice(&data[offset + 2..offset + 8]);
             ll_addr = Some(addr);
             break;
         }
-        
+
         offset += (opt_len * 8) as usize;
     }
-    
+
     // Update NDP cache
     let mut cache = NDP_CACHE.lock();
     let now = pit::get_system_time_ms() as u64;
-    
+
     if let Some(addr) = ll_addr {
         if let Some(entry) = cache.iter_mut().find(|e| e.ipv6_addr == target) {
             entry.link_addr = addr;
@@ -686,8 +698,8 @@ fn handle_neighbor_advertisement(_src: &[u8; 16], data: &[u8]) {
                 updated_at: now,
             });
         }
-        // kprintln!("  [IPv6]   MAC: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",  // kprintln disabled (memcpy crash workaround)
-//             addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
+        // kprintln!("  [IPv6]   MAC: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+        //             addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
     }
 }
 
@@ -695,7 +707,7 @@ fn handle_neighbor_advertisement(_src: &[u8; 16], data: &[u8]) {
 pub fn send_ipv6(src: &[u8; 16], dst: &[u8; 16], next_header: u8, data: &[u8]) -> bool {
     let total_len = IPV6_HEADER_SIZE + data.len();
     let mut packet = Vec::with_capacity(total_len);
-    
+
     let header = IPv6Header {
         version_class: 0x60, // Version 6, no traffic class
         flow_label: 0,
@@ -705,10 +717,10 @@ pub fn send_ipv6(src: &[u8; 16], dst: &[u8; 16], next_header: u8, data: &[u8]) -
         src_addr: *src,
         dst_addr: *dst,
     };
-    
+
     header.to_bytes(&mut packet);
     packet.extend_from_slice(data);
-    
+
     // Calculate ICMPv6 checksum if needed
     if next_header == 58 {
         // ICMPv6
@@ -716,7 +728,7 @@ pub fn send_ipv6(src: &[u8; 16], dst: &[u8; 16], next_header: u8, data: &[u8]) -
         packet[42] = (checksum >> 8) as u8;
         packet[43] = (checksum & 0xFF) as u8;
     }
-    
+
     // Send via Ethernet
     let dst_mac = if dst[0] == 0xFF {
         // Compute multicast MAC from IPv6 multicast address
@@ -734,7 +746,7 @@ pub fn send_ipv6(src: &[u8; 16], dst: &[u8; 16], next_header: u8, data: &[u8]) -
             [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
         }
     };
-    
+
     // Build Ethernet frame using the shared helper so we get a proper
     // 14-byte header with the correct ethertype. NET-5 fix: previously
     // this function returned `true` without ever calling the NIC, so
@@ -756,9 +768,7 @@ pub fn send_ipv6(src: &[u8; 16], dst: &[u8; 16], next_header: u8, data: &[u8]) -
 
     // Hand off to the primary NIC. If no NIC is up, fail honestly
     // (return false) rather than silently dropping the frame.
-    let Some((nic_type, nic_idx)) =
-        crate::netstack::ethif::get_primary_interface()
-    else {
+    let Some((nic_type, nic_idx)) = crate::netstack::ethif::get_primary_interface() else {
         return false;
     };
     crate::drivers::net::send_to_nic(nic_type, nic_idx, &frame)
@@ -769,17 +779,17 @@ fn send_echo_reply(dst: &[u8; 16], data: &[u8]) {
     // Build echo reply
     let mut reply = Vec::with_capacity(4 + data.len());
     reply.push(129); // Echo Reply
-    reply.push(0);   // Code
-    reply.push(0);    // Checksum (placeholder)
+    reply.push(0); // Code
+    reply.push(0); // Checksum (placeholder)
     reply.push(0);
     reply.extend_from_slice(data);
-    
+
     // Calculate checksum
     let src: [u8; 16] = [0xFE, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]; // Link-local source
     let checksum = calculate_icmpv6_checksum(&src, dst, &reply);
     reply[2] = (checksum >> 8) as u8;
     reply[3] = (checksum & 0xFF) as u8;
-    
+
     send_ipv6(&src, dst, 58, &reply);
 }
 
@@ -791,7 +801,8 @@ pub fn get_stats() -> Ipv6Stats {
 /// Lookup neighbor in NDP cache
 pub fn lookup_neighbor(ipv6: &[u8; 16]) -> Option<[u8; 6]> {
     let cache = NDP_CACHE.lock();
-    cache.iter()
+    cache
+        .iter()
         .find(|e| e.ipv6_addr == *ipv6)
         .map(|e| e.link_addr)
 }
@@ -801,7 +812,7 @@ pub fn add_neighbor(ipv6: &[u8; 16], mac: &[u8; 6]) {
     use crate::hal::common::pit;
     let mut cache = NDP_CACHE.lock();
     let now = pit::get_system_time_ms() as u64;
-    
+
     if let Some(entry) = cache.iter_mut().find(|e| e.ipv6_addr == *ipv6) {
         entry.link_addr = *mac;
         entry.state = NdpState::Reachable;

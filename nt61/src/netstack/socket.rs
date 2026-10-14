@@ -4,10 +4,10 @@
 //
 //! Clean-room implementation.
 
+use crate::ke::sync::Spinlock;
+use crate::netstack::ipif;
 use crate::netstack::tcp;
 use crate::netstack::udp;
-use crate::netstack::ipif;
-use crate::ke::sync::Spinlock;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -65,7 +65,12 @@ impl SockAddr {
         Self {
             family,
             port,
-            addr: [(ip >> 0) as u8, (ip >> 8) as u8, (ip >> 16) as u8, (ip >> 24) as u8],
+            addr: [
+                (ip >> 0) as u8,
+                (ip >> 8) as u8,
+                (ip >> 16) as u8,
+                (ip >> 24) as u8,
+            ],
             zeros: [0; 8],
         }
     }
@@ -77,8 +82,15 @@ impl SockAddr {
     pub fn to_string(&self) -> alloc::string::String {
         alloc::format!(
             "{}:{}.{}.{}.{}:{}",
-            if self.family == 2 { "AF_INET" } else { "AF_UNKNOWN" },
-            self.addr[0], self.addr[1], self.addr[2], self.addr[3],
+            if self.family == 2 {
+                "AF_INET"
+            } else {
+                "AF_UNKNOWN"
+            },
+            self.addr[0],
+            self.addr[1],
+            self.addr[2],
+            self.addr[3],
             u16::from_be(self.port)
         )
     }
@@ -188,12 +200,15 @@ pub fn bind(socket_id: u32, addr: &SockAddr) -> Result<(), SocketError> {
     let port = addr.port;
 
     // Check port conflicts first (before mutable borrow)
-    let port_conflict = sockets.iter().any(|s| s.id != socket_id && s.bind_port == port && s.state != SocketState::Closed);
+    let port_conflict = sockets
+        .iter()
+        .any(|s| s.id != socket_id && s.bind_port == port && s.state != SocketState::Closed);
     if port_conflict {
         return Err(SocketError::AddressInUse);
     }
 
-    let socket = sockets.iter_mut()
+    let socket = sockets
+        .iter_mut()
         .find(|s| s.id == socket_id)
         .ok_or(SocketError::InvalidSocket)?;
 
@@ -253,7 +268,8 @@ pub fn listen(socket_id: u32, backlog: u32) -> Result<(), SocketError> {
 pub fn accept(socket_id: u32) -> Result<u32, SocketError> {
     let mut sockets = SOCKETS.lock();
 
-    let socket = sockets.iter_mut()
+    let socket = sockets
+        .iter_mut()
         .find(|s| s.id == socket_id)
         .ok_or(SocketError::InvalidSocket)?;
 
@@ -281,8 +297,7 @@ pub fn accept(socket_id: u32) -> Result<u32, SocketError> {
 /// caller should drop the connection per RFC 793 §3.7 backlog).
 pub fn enqueue_accept(listen_socket_id: u32, peer_tcp_id: u32) -> bool {
     let mut sockets = SOCKETS.lock();
-    let Some(socket) = sockets.iter_mut().find(|s| s.id == listen_socket_id)
-    else {
+    let Some(socket) = sockets.iter_mut().find(|s| s.id == listen_socket_id) else {
         return false;
     };
     if socket.state != SocketState::Listening {
@@ -303,7 +318,8 @@ pub fn enqueue_accept(listen_socket_id: u32, peer_tcp_id: u32) -> bool {
 pub fn connect(socket_id: u32, addr: &SockAddr) -> Result<(), SocketError> {
     let mut sockets = SOCKETS.lock();
 
-    let socket = sockets.iter_mut()
+    let socket = sockets
+        .iter_mut()
         .find(|s| s.id == socket_id)
         .ok_or(SocketError::InvalidSocket)?;
 
@@ -324,8 +340,8 @@ pub fn connect(socket_id: u32, addr: &SockAddr) -> Result<(), SocketError> {
             }
         }
         SocketType::Dgram => {
-            let socket_idx = udp::create_socket(addr.port, addr.ip())
-                .ok_or(SocketError::ConnectionRefused)?;
+            let socket_idx =
+                udp::create_socket(addr.port, addr.ip()).ok_or(SocketError::ConnectionRefused)?;
             socket.udp_socket_idx = Some(socket_idx);
             socket.remote_addr = Some(*addr);
             socket.state = SocketState::Connected;
@@ -338,12 +354,16 @@ pub fn connect(socket_id: u32, addr: &SockAddr) -> Result<(), SocketError> {
 pub fn send(socket_id: u32, data: &[u8]) -> Result<usize, SocketError> {
     let sockets = SOCKETS.lock();
 
-    if let Some(s) = sockets.iter().find(|s| s.id == socket_id && s.state == SocketState::Connected) {
+    if let Some(s) = sockets
+        .iter()
+        .find(|s| s.id == socket_id && s.state == SocketState::Connected)
+    {
         match s.socket_type {
             SocketType::Stream => {
                 if let Some(tcp_id) = s.tcp_socket_id {
                     drop(sockets);
-                    tcp::send(tcp_id, data).map(|n| n as usize)
+                    tcp::send(tcp_id, data)
+                        .map(|n| n as usize)
                         .ok_or(SocketError::ConnectionReset)
                 } else {
                     Err(SocketError::NotConnected)
@@ -373,7 +393,10 @@ pub fn send(socket_id: u32, data: &[u8]) -> Result<usize, SocketError> {
 pub fn recv(socket_id: u32, buffer: &mut [u8]) -> Result<usize, SocketError> {
     let sockets = SOCKETS.lock();
 
-    if let Some(s) = sockets.iter().find(|s| s.id == socket_id && s.state == SocketState::Connected) {
+    if let Some(s) = sockets
+        .iter()
+        .find(|s| s.id == socket_id && s.state == SocketState::Connected)
+    {
         match s.socket_type {
             SocketType::Stream => {
                 if let Some(tcp_id) = s.tcp_socket_id {
@@ -401,6 +424,67 @@ pub fn recv(socket_id: u32, buffer: &mut [u8]) -> Result<usize, SocketError> {
         }
     } else {
         Err(SocketError::InvalidSocket)
+    }
+}
+
+/// `sendto`: send a datagram to an explicit peer.
+///
+/// Winsock semantics: on a connection-oriented (stream) socket the
+/// destination address is ignored and the call behaves like `send`.
+/// `SockAddr.port` is stored in network byte order, so it is converted to
+/// host order before being handed to the UDP layer.
+pub fn sendto(socket_id: u32, data: &[u8], addr: &SockAddr) -> Result<usize, SocketError> {
+    let sockets = SOCKETS.lock();
+    let s = sockets
+        .iter()
+        .find(|s| s.id == socket_id)
+        .ok_or(SocketError::InvalidSocket)?;
+    match s.socket_type {
+        SocketType::Stream => {
+            let tcp_id = s.tcp_socket_id.ok_or(SocketError::NotConnected)?;
+            drop(sockets);
+            tcp::send(tcp_id, data)
+                .map(|n| n as usize)
+                .ok_or(SocketError::ConnectionReset)
+        }
+        SocketType::Dgram => {
+            let udp_idx = s.udp_socket_idx.ok_or(SocketError::NotConnected)?;
+            let dst_ip = addr.ip();
+            let dst_port = u16::from_be(addr.port);
+            drop(sockets);
+            udp::send(udp_idx, dst_ip, dst_port, data)
+                .map(|n| n as usize)
+                .ok_or(SocketError::WouldBlock)
+        }
+        _ => Err(SocketError::InvalidArgument),
+    }
+}
+
+/// `recvfrom`: receive a datagram and report the peer it arrived from.
+pub fn recvfrom(socket_id: u32, buffer: &mut [u8]) -> Result<(usize, SockAddr), SocketError> {
+    let sockets = SOCKETS.lock();
+    let s = sockets
+        .iter()
+        .find(|s| s.id == socket_id)
+        .ok_or(SocketError::InvalidSocket)?;
+    match s.socket_type {
+        SocketType::Dgram => {
+            let udp_idx = s.udp_socket_idx.ok_or(SocketError::NotConnected)?;
+            drop(sockets);
+            let (src_ip, src_port, n) =
+                udp::receive(udp_idx, buffer).ok_or(SocketError::WouldBlock)?;
+            Ok((n, SockAddr::new(2, src_port.to_be(), src_ip)))
+        }
+        SocketType::Stream => {
+            let tcp_id = s.tcp_socket_id.ok_or(SocketError::NotConnected)?;
+            let peer = s.remote_addr.ok_or(SocketError::NotConnected)?;
+            drop(sockets);
+            let n = tcp::receive(tcp_id, buffer)
+                .map(|n| n as usize)
+                .ok_or(SocketError::WouldBlock)?;
+            Ok((n, peer))
+        }
+        _ => Err(SocketError::InvalidArgument),
     }
 }
 
@@ -456,14 +540,20 @@ pub fn get_state(socket_id: u32) -> Option<SocketState> {
 /// Copy the local address of a socket (or None if not bound).
 pub fn get_local_addr(socket_id: u32) -> Option<SockAddr> {
     let sockets = SOCKETS.lock();
-    sockets.iter().find(|s| s.id == socket_id).and_then(|s| s.local_addr)
+    sockets
+        .iter()
+        .find(|s| s.id == socket_id)
+        .and_then(|s| s.local_addr)
 }
 
 /// Copy the remote address of a socket (or None if not
 /// connected).
 pub fn get_remote_addr(socket_id: u32) -> Option<SockAddr> {
     let sockets = SOCKETS.lock();
-    sockets.iter().find(|s| s.id == socket_id).and_then(|s| s.remote_addr)
+    sockets
+        .iter()
+        .find(|s| s.id == socket_id)
+        .and_then(|s| s.remote_addr)
 }
 
 pub fn socket_count() -> usize {

@@ -41,7 +41,7 @@ pub enum FilterDirection {
 #[derive(Debug, Clone, Copy)]
 pub enum FilterCondition {
     SourceIp(u32, u32), // IP, mask
-    DestIp(u32, u32), // IP, mask
+    DestIp(u32, u32),   // IP, mask
     SourcePort(u16),
     DestPort(u16),
     Protocol(u8),
