@@ -4,8 +4,8 @@
 //! re-exports the real shell implementation from `crate::servers::cmd`.
 
 #[cfg(target_arch = "x86_64")]
-pub use crate::libs::server::cmd::ShellMode;
+pub use crate::libs::server::cmd::run_batch_file;
 #[cfg(target_arch = "x86_64")]
 pub use crate::libs::server::cmd::run_shell;
 #[cfg(target_arch = "x86_64")]
-pub use crate::libs::server::cmd::run_batch_file;
+pub use crate::libs::server::cmd::ShellMode;

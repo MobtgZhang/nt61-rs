@@ -18,12 +18,12 @@
 //! input backend (PS/2 8042 on x86_64, UART FIFO on the others) so
 //! the bring-up never depends on a working interrupt controller.
 
-use crate::hal::text_console;
-use crate::hal::cmos;
-use crate::fs::fat32;
 use crate::fs;
+use crate::fs::fat32;
+use crate::hal::cmos;
+use crate::hal::text_console;
 use crate::ke::sync::Spinlock;
-use crate::libs::cmd::bat_parser::{BatchParser, BatchExecutor, BatError};
+use crate::libs::cmd::bat_parser::{BatError, BatchExecutor, BatchParser};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
@@ -121,7 +121,7 @@ impl Cwd {
         c.set_str(b"C:\\");
         c
     }
-    
+
     fn set_str(&mut self, s: &[u8]) {
         self.len = 0;
         for &c in s.iter().take(127) {
@@ -130,11 +130,11 @@ impl Cwd {
         }
         self.path[self.len] = 0;
     }
-    
+
     fn as_cstr(&self) -> &[u8] {
         &self.path[..self.len]
     }
-    
+
     fn push(&mut self, name: &[u8]) {
         if self.len > 0 && self.path[self.len - 1] != b'\\' {
             if self.len < 126 {
@@ -148,7 +148,7 @@ impl Cwd {
         }
         self.path[self.len] = 0;
     }
-    
+
     fn pop(&mut self) {
         // Remove last path component
         while self.len > 0 && self.path[self.len - 1] != b'\\' {
@@ -333,9 +333,8 @@ fn read_command() -> [u8; CMD_BUFFER_SIZE] {
                 // TAB - Command completion
                 0x09 => {
                     // Get partial input
-                    let input = core::str::from_utf8(&buf[..pos])
-                        .unwrap_or("");
-                    
+                    let input = core::str::from_utf8(&buf[..pos]).unwrap_or("");
+
                     if let Some(completion) = find_completion(input) {
                         // If already complete and there's more, cycle through options
                         if completion.len() > pos {
@@ -364,45 +363,50 @@ fn read_command() -> [u8; CMD_BUFFER_SIZE] {
                     escape_seq = 2;
                 }
                 // Arrow keys (after ESC[)
-                0x41 if escape_seq == 2 => { // Up arrow
+                0x41 if escape_seq == 2 => {
+                    // Up arrow
                     escape_seq = 0;
                     if history_len > 0 {
                         // Clear current line
                         for _ in 0..pos {
                             serial_print(b"\x08 \x08");
                         }
-                        
+
                         // Move to previous history entry
                         if history_index == 0 {
                             history_index = history_len;
                         } else if history_index > 1 {
                             history_index -= 1;
                         }
-                        
+
                         // Get history entry
                         let history = CMD_HISTORY.lock();
                         if history_index > 0 && history_index <= history.len() {
                             let entry = &history[history_index - 1];
-                            let len = entry.iter().position(|&x| x == 0).unwrap_or(CMD_BUFFER_SIZE);
+                            let len = entry
+                                .iter()
+                                .position(|&x| x == 0)
+                                .unwrap_or(CMD_BUFFER_SIZE);
                             buf[..len].copy_from_slice(&entry[..len]);
                             pos = len;
-                            
+
                             // Print the command
                             serial_print(&buf[..pos]);
                         }
                     }
                 }
-                0x42 if escape_seq == 2 => { // Down arrow
+                0x42 if escape_seq == 2 => {
+                    // Down arrow
                     escape_seq = 0;
                     if history_len > 0 && history_index < history_len {
                         // Clear current line
                         for _ in 0..pos {
                             serial_print(b"\x08 \x08");
                         }
-                        
+
                         // Move to next history entry
                         history_index += 1;
-                        
+
                         if history_index > history_len {
                             // After last entry, show empty line
                             pos = 0;
@@ -411,10 +415,13 @@ fn read_command() -> [u8; CMD_BUFFER_SIZE] {
                             let history = CMD_HISTORY.lock();
                             if history_index > 0 && history_index <= history.len() {
                                 let entry = &history[history_index - 1];
-                                let len = entry.iter().position(|&x| x == 0).unwrap_or(CMD_BUFFER_SIZE);
+                                let len = entry
+                                    .iter()
+                                    .position(|&x| x == 0)
+                                    .unwrap_or(CMD_BUFFER_SIZE);
                                 buf[..len].copy_from_slice(&entry[..len]);
                                 pos = len;
-                                
+
                                 // Print the command
                                 serial_print(&buf[..pos]);
                             }
@@ -427,11 +434,13 @@ fn read_command() -> [u8; CMD_BUFFER_SIZE] {
                         pos = 0;
                     }
                 }
-                0x44 if escape_seq == 2 => { // Left arrow
+                0x44 if escape_seq == 2 => {
+                    // Left arrow
                     escape_seq = 0;
                     // For now, just ignore left arrow (full cursor movement is complex)
                 }
-                0x43 if escape_seq == 2 => { // Right arrow
+                0x43 if escape_seq == 2 => {
+                    // Right arrow
                     escape_seq = 0;
                     // For now, just ignore right arrow
                 }
@@ -458,7 +467,7 @@ fn read_command() -> [u8; CMD_BUFFER_SIZE] {
             core::hint::spin_loop();
         }
     }
-    
+
     // Save to history if command is not empty
     let cmd_len = buf.iter().position(|&c| c == 0).unwrap_or(CMD_BUFFER_SIZE);
     if cmd_len > 0 {
@@ -468,18 +477,18 @@ fn read_command() -> [u8; CMD_BUFFER_SIZE] {
             let last = &history[history.len() - 1];
             last[..cmd_len] == buf[..cmd_len]
         };
-        
+
         if !is_duplicate {
             // Add new command
             history.push(buf);
-            
+
             // Trim history if too long
             while history.len() > MAX_HISTORY {
                 history.remove(0);
             }
         }
     }
-    
+
     buf
 }
 
@@ -491,25 +500,24 @@ fn find_completion(input: &str) -> Option<String> {
     if word_to_complete.is_empty() {
         return None;
     }
-    
+
     // Common commands to complete
     let commands = [
-        "CD", "CHDIR", "CLS", "COPY", "DATE", "DEL", "DIR", 
-        "ECHO", "EXIT", "HELP", "MD", "MKDIR", "MOVE", "RD",
-        "RMDIR", "REN", "RENAME", "SET", "TIME", "TYPE", "VER", "VOL",
-        "MOUNTVOL", "KDBG", "NTFS", "FAT32"
+        "CD", "CHDIR", "CLS", "COPY", "DATE", "DEL", "DIR", "ECHO", "EXIT", "HELP", "MD", "MKDIR",
+        "MOVE", "RD", "RMDIR", "REN", "RENAME", "SET", "TIME", "TYPE", "VER", "VOL", "MOUNTVOL",
+        "KDBG", "NTFS", "FAT32",
     ];
-    
+
     let word_upper = word_to_complete.to_uppercase();
     let mut matches: Vec<&str> = Vec::new();
-    
+
     // Check commands first
     for cmd in commands.iter() {
         if cmd.starts_with(&word_upper) {
             matches.push(cmd);
         }
     }
-    
+
     // If no command matches, try directory names (simplified)
     if matches.is_empty() && fat32::is_mounted() {
         // Try to read from filesystem
@@ -523,7 +531,7 @@ fn find_completion(input: &str) -> Option<String> {
             }
         }
     }
-    
+
     if matches.len() == 1 {
         // Single match - return the full completion
         let match_str = matches[0];
@@ -539,13 +547,17 @@ fn find_completion(input: &str) -> Option<String> {
             serial_print(b" ");
         }
         serial_print(b"\r\n");
-        
+
         // Find common prefix
         if !matches.is_empty() {
             let first = matches[0];
             let mut prefix_len = word_to_complete.len();
             for m in matches.iter().skip(1) {
-                while prefix_len > 0 && !m.to_uppercase().starts_with(&first[..prefix_len].to_uppercase()) {
+                while prefix_len > 0
+                    && !m
+                        .to_uppercase()
+                        .starts_with(&first[..prefix_len].to_uppercase())
+                {
                     prefix_len -= 1;
                 }
             }
@@ -554,7 +566,7 @@ fn find_completion(input: &str) -> Option<String> {
             }
         }
     }
-    
+
     None
 }
 
@@ -567,16 +579,16 @@ fn process_command(cmd: &[u8; CMD_BUFFER_SIZE], mode: &ShellMode, cwd: &mut Cwd)
     if cmd_len == 0 {
         return false;
     }
-    
+
     let cmd_str = match core::str::from_utf8(&cmd[..cmd_len]) {
         Ok(s) => s.trim(),
         Err(_) => return false,
     };
-    
+
     if cmd_str.is_empty() {
         return false;
     }
-    
+
     // Process command chain with redirection
     process_command_chain(cmd_str, mode, cwd)
 }
@@ -585,26 +597,26 @@ fn process_command(cmd: &[u8; CMD_BUFFER_SIZE], mode: &ShellMode, cwd: &mut Cwd)
 fn process_command_chain(cmd_str: &str, mode: &ShellMode, cwd: &mut Cwd) -> bool {
     // First, handle output redirection
     let (cmd_part, redirect_file, append) = parse_redirection(cmd_str);
-    
+
     // If redirection, we would write output to file
     // For now, just process the command part
     let _ = redirect_file;
     let _ = append;
-    
+
     // Handle command chaining: && || &
     // Split by & (but not && or ||)
     let parts = split_command_chain(cmd_part);
-    
+
     let mut last_result = false;
-    
+
     for part in parts {
         let part = part.trim();
         if part.is_empty() {
             continue;
         }
-        
+
         let (operator, cmd_to_run) = parse_chain_operator(part);
-        
+
         match operator {
             ChainOperator::And => {
                 // cmd1 && cmd2 - run cmd2 only if cmd1 succeeds
@@ -624,7 +636,7 @@ fn process_command_chain(cmd_str: &str, mode: &ShellMode, cwd: &mut Cwd) -> bool
             }
         }
     }
-    
+
     false
 }
 
@@ -632,24 +644,24 @@ fn process_command_chain(cmd_str: &str, mode: &ShellMode, cwd: &mut Cwd) -> bool
 #[derive(Debug, Clone, Copy)]
 enum ChainOperator {
     None,
-    And,  // &&
-    Or,    // ||
+    And, // &&
+    Or,  // ||
 }
 
 /// Parse chain operator from command string
 fn parse_chain_operator(cmd: &str) -> (ChainOperator, &str) {
     let cmd = cmd.trim();
-    
+
     // Check for &&
     if let Some(pos) = cmd.find("&&") {
         return (ChainOperator::And, cmd[..pos].trim());
     }
-    
+
     // Check for ||
     if let Some(pos) = cmd.find("||") {
         return (ChainOperator::Or, cmd[..pos].trim());
     }
-    
+
     (ChainOperator::None, cmd)
 }
 
@@ -658,7 +670,7 @@ fn split_command_chain(cmd: &str) -> Vec<String> {
     let mut parts = Vec::new();
     let mut current = String::new();
     let mut chars = cmd.chars().peekable();
-    
+
     while let Some(c) = chars.next() {
         if c == '&' {
             // Check what follows
@@ -683,12 +695,12 @@ fn split_command_chain(cmd: &str) -> Vec<String> {
             current.push(c);
         }
     }
-    
+
     // Don't forget the last part
     if !current.trim().is_empty() {
         parts.push(current.trim().to_string());
     }
-    
+
     parts
 }
 
@@ -696,25 +708,25 @@ fn split_command_chain(cmd: &str) -> Vec<String> {
 /// Returns (command, output_file, append)
 fn parse_redirection(cmd: &str) -> (&str, Option<&str>, bool) {
     let cmd_bytes = cmd.as_bytes();
-    
+
     // Check for >> (append)
     for i in (2..cmd_bytes.len()).rev() {
-        if cmd_bytes[i] == b'>' && cmd_bytes[i-1] == b'>' {
-            let before = &cmd[..i-1].trim();
-            let file = cmd[i+1..].trim();
+        if cmd_bytes[i] == b'>' && cmd_bytes[i - 1] == b'>' {
+            let before = &cmd[..i - 1].trim();
+            let file = cmd[i + 1..].trim();
             return (before, Some(file), true);
         }
     }
-    
+
     // Check for > (overwrite)
     for i in (1..cmd_bytes.len()).rev() {
-        if cmd_bytes[i] == b'>' && cmd_bytes[i-1] != b'>' {
+        if cmd_bytes[i] == b'>' && cmd_bytes[i - 1] != b'>' {
             let before = &cmd[..i].trim();
-            let file = cmd[i+1..].trim();
+            let file = cmd[i + 1..].trim();
             return (before, Some(file), false);
         }
     }
-    
+
     (cmd, None, false)
 }
 
@@ -723,22 +735,36 @@ fn execute_single_command(cmd_str: &str, mode: &ShellMode, cwd: &mut Cwd) -> boo
     if cmd_str.is_empty() {
         return false;
     }
-    
+
     // Expand environment variables
     let expanded = expand_env_vars(cmd_str);
-    
+
+    if let Some(echo) = parse_echo_command(&expanded) {
+        match echo {
+            EchoCommand::EmptyLine => serial_print(b"\r\n"),
+            EchoCommand::Status => serial_print(b"ECHO is on.\r\n"),
+            EchoCommand::Text(text) => {
+                serial_print(text.as_bytes());
+                serial_print(b"\r\n");
+            }
+        }
+        return false;
+    }
+
     // Get command name
-    let cmd_name = expanded.split_whitespace().next()
+    let cmd_name = expanded
+        .split_whitespace()
+        .next()
         .unwrap_or("")
         .to_uppercase();
-    
+
     if cmd_name.is_empty() {
         return false;
     }
-    
+
     // Get arguments
     let args = &expanded[cmd_name.len()..].trim();
-    
+
     match cmd_name.as_str() {
         "CD" | "CHDIR" => cmd_cd(args, cwd),
         "DIR" | "LS" => cmd_dir(cwd, args),
@@ -755,14 +781,8 @@ fn execute_single_command(cmd_str: &str, mode: &ShellMode, cwd: &mut Cwd) -> boo
         "TIME" => cmd_time(args),
         "HELP" | "?" => cmd_help(),
         "EXIT" => return true,
-        "ECHO" => {
-            if args.is_empty() {
-                serial_print(b"ECHO is on.\r\n");
-            } else {
-                serial_print(args.as_bytes());
-                serial_print(b"\r\n");
-            }
-        }
+        "HALT" => cmd_halt(),
+        "REBOOT" => cmd_reboot(),
         "MOUNTVOL" => cmd_mountvol(),
         "VOL" => cmd_vol(),
         // File operation commands
@@ -794,7 +814,7 @@ fn execute_single_command(cmd_str: &str, mode: &ShellMode, cwd: &mut Cwd) -> boo
             serial_print(b"operable program or batch file.\r\n");
         }
     }
-    
+
     false
 }
 
@@ -807,7 +827,7 @@ fn expand_env_vars(s: &str) -> String {
     let mut result = String::new();
     let bytes = s.as_bytes();
     let mut i = 0;
-    
+
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
             // Look for closing %
@@ -823,7 +843,7 @@ fn expand_env_vars(s: &str) -> String {
         result.push(bytes[i] as char);
         i += 1;
     }
-    
+
     result
 }
 
@@ -844,7 +864,7 @@ fn get_env_var(name: &str) -> String {
         "TEMP" | "TMP" => return String::from("C:\\Windows\\Temp"),
         _ => {}
     }
-    
+
     // Try kernel32 API
     {
         let name_wide: Vec<u16> = name.encode_utf16().chain(core::iter::once(0)).collect();
@@ -853,7 +873,7 @@ fn get_env_var(name: &str) -> String {
             crate::libs::kernel32::env::GetEnvironmentVariableW(
                 name_wide.as_ptr(),
                 buffer.as_mut_ptr(),
-                256
+                256,
             )
         };
         if result > 0 && result < 256 {
@@ -862,7 +882,7 @@ fn get_env_var(name: &str) -> String {
             return value;
         }
     }
-    
+
     String::new()
 }
 
@@ -877,9 +897,9 @@ fn cmd_cd(args: &str, cwd: &mut Cwd) {
         serial_print(b"\r\n");
         return;
     }
-    
+
     let target = args.as_bytes();
-    
+
     // Handle special cases
     if target == b"." {
         // Stay in current directory
@@ -887,16 +907,17 @@ fn cmd_cd(args: &str, cwd: &mut Cwd) {
     }
     if target == b".." {
         // Go up one level
-        if cwd.len > 3 { // Don't go above C:\
+        if cwd.len > 3 {
+            // Don't go above C:\
             cwd.pop();
         }
         return;
     }
-    
+
     // For now, just accept the change (real filesystem navigation is complex)
     // In a full implementation, we would verify the directory exists
     cwd.push(target);
-    
+
     // Remove trailing backslash except for root
     while cwd.len > 3 && cwd.path[cwd.len - 1] == b'\\' {
         cwd.len -= 1;
@@ -904,15 +925,69 @@ fn cmd_cd(args: &str, cwd: &mut Cwd) {
     }
 }
 
+enum EchoCommand<'a> {
+    EmptyLine,
+    Status,
+    Text(&'a str),
+}
+
+fn parse_echo_command(command: &str) -> Option<EchoCommand<'_>> {
+    let command = command.trim();
+    if command.eq_ignore_ascii_case("ECHO.") {
+        return Some(EchoCommand::EmptyLine);
+    }
+
+    let name = command.split_whitespace().next()?;
+    if name.eq_ignore_ascii_case("ECHO") {
+        let args = command[name.len()..].trim();
+        if args.is_empty() {
+            Some(EchoCommand::Status)
+        } else {
+            Some(EchoCommand::Text(args))
+        }
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod echo_command_tests {
+    use super::{parse_echo_command, EchoCommand};
+
+    #[test]
+    fn echo_dot_emits_an_empty_line() {
+        assert!(matches!(
+            parse_echo_command("echo."),
+            Some(EchoCommand::EmptyLine)
+        ));
+    }
+
+    #[test]
+    fn echo_text_is_preserved() {
+        assert!(matches!(
+            parse_echo_command("echo hello world"),
+            Some(EchoCommand::Text("hello world"))
+        ));
+    }
+
+    #[test]
+    fn echo_without_arguments_reports_status() {
+        assert!(matches!(
+            parse_echo_command("echo"),
+            Some(EchoCommand::Status)
+        ));
+    }
+}
+
 /// DIR options structure
 struct DirOptions {
-    recursive: bool,      // /S - include subdirectories
-    brief: bool,          // /B - bare format (no header/summary)
-    wide: bool,           // /W - wide format
-    attr_filter: u32,    // /A - attribute filter
-    sort_order: u8,      // /O - sort order
+    recursive: bool,  // /S - include subdirectories
+    brief: bool,      // /B - bare format (no header/summary)
+    wide: bool,       // /W - wide format
+    attr_filter: u32, // /A - attribute filter
+    sort_order: u8,   // /O - sort order
     #[allow(unused)]
-    display_hidden: bool,  // Show hidden files
+    display_hidden: bool, // Show hidden files
 }
 
 impl DirOptions {
@@ -922,7 +997,7 @@ impl DirOptions {
             brief: false,
             wide: false,
             attr_filter: 0xFF, // All attributes by default
-            sort_order: 0,      // Name sort
+            sort_order: 0,     // Name sort
             display_hidden: true,
         }
     }
@@ -932,10 +1007,10 @@ impl DirOptions {
 fn parse_dir_options(args: &str) -> (DirOptions, &str) {
     let mut options = DirOptions::new();
     let mut path = "";
-    
+
     for part in args.split_whitespace() {
         let upper = part.to_uppercase();
-        
+
         if upper.starts_with("/S") {
             options.recursive = true;
         } else if upper == "/B" {
@@ -959,7 +1034,7 @@ fn parse_dir_options(args: &str) -> (DirOptions, &str) {
             }
         }
     }
-    
+
     (options, path)
 }
 
@@ -968,7 +1043,7 @@ fn parse_attr_filter(attr_str: &str) -> u32 {
     let mut filter = 0u32;
     // Bit 0: Read-only, Bit 1: Hidden, Bit 2: System, Bit 3: Directory
     // Bit 4: Archive, Bit 5: Device, Bit 6: Normal, Bit 7: Temporary
-    
+
     for c in attr_str.chars() {
         match c {
             'D' | 'd' => filter |= 0x10, // Directory
@@ -976,15 +1051,15 @@ fn parse_attr_filter(attr_str: &str) -> u32 {
             'H' | 'h' => filter |= 0x02, // Hidden
             'S' | 's' => filter |= 0x04, // System
             'A' | 'a' => filter |= 0x20, // Archive
-            '-' => {} // Negation not implemented yet
+            '-' => {}                    // Negation not implemented yet
             _ => {}
         }
     }
-    
+
     if filter == 0 {
         filter = 0xFF; // All attributes
     }
-    
+
     filter
 }
 
@@ -992,38 +1067,38 @@ fn parse_attr_filter(attr_str: &str) -> u32 {
 fn parse_sort_order(sort_str: &str) -> u8 {
     // 0: Name, 1: Extension, 2: Size, 3: Date
     // Bit 7: Descending order
-    
+
     let mut order = 0u8;
-    
+
     for c in sort_str.chars() {
         match c {
-            'N' | 'n' => order = 0,  // Name
-            'E' | 'e' => order = 1,  // Extension
-            'S' | 's' => order = 2,  // Size
-            'D' | 'd' => order = 3,  // Date
-            '-' => order |= 0x80,    // Descending
+            'N' | 'n' => order = 0, // Name
+            'E' | 'e' => order = 1, // Extension
+            'S' | 's' => order = 2, // Size
+            'D' | 'd' => order = 3, // Date
+            '-' => order |= 0x80,   // Descending
             _ => {}
         }
     }
-    
+
     order
 }
 
 fn cmd_dir(cwd: &Cwd, args: &str) {
     // Parse options
     let (options, _path) = parse_dir_options(args);
-    
+
     // Brief format (/B) suppresses headers and summary
     if !options.brief {
         // Print header with volume info
         serial_print(b" Volume in drive C is EFI\r\n");
         serial_print(b" Volume Serial Number is 0000-0000\r\n\r\n");
-        
+
         serial_print(b" Directory of ");
         serial_print(cwd.as_cstr());
         serial_print(b"\r\n\r\n");
     }
-    
+
     // Print . and ..
     if !options.brief && !options.wide {
         serial_print(b"06/20/2026  12:00 AM    <DIR>          .\r\n");
@@ -1032,12 +1107,12 @@ fn cmd_dir(cwd: &Cwd, args: &str) {
         serial_print(b".\r\n");
         serial_print(b"..\r\n");
     }
-    
+
     // Initialize counters
     let mut file_count: u32 = 0;
     let mut dir_count: u32 = 2; // . and ..
     let mut total_size: u64 = 0;
-    
+
     // Check filesystem and list entries
     if fs::ntfs::is_mounted() {
         // Use NTFS filesystem
@@ -1046,18 +1121,18 @@ fn cmd_dir(cwd: &Cwd, args: &str) {
             // For now, fall through to built-in listing
         }
     }
-    
+
     if fat32::is_mounted() {
         // Try to read directory entries from FAT32
         if let Some(fs) = fat32::get_mounted_fs() {
             let mut entries = [fat32::FatDirEntry::new(); MAX_DIR_ENTRIES];
             let count = fat32::list_root_directory(fs, &mut entries);
-            
+
             // Show real entries
             for i in 0..count {
                 let entry = &entries[i];
                 let name_len = entry.name.iter().position(|&c| c == 0).unwrap_or(13);
-                
+
                 if entry.is_dir {
                     if !options.brief && !options.wide {
                         serial_print(b"06/20/2026  12:00 PM    <DIR>          ");
@@ -1095,7 +1170,7 @@ fn cmd_dir(cwd: &Cwd, args: &str) {
         // Use built-in directory listing
         print_builtin_dir(cwd, &options);
     }
-    
+
     // Print summary (unless /B)
     if !options.brief {
         if options.wide {
@@ -1117,7 +1192,7 @@ fn cmd_dir(cwd: &Cwd, args: &str) {
 fn print_builtin_dir(cwd: &Cwd, options: &DirOptions) {
     // Get built-in entries based on current path
     let path_str = core::str::from_utf8(cwd.as_cstr()).unwrap_or("");
-    
+
     // Helper to print directory entry
     let print_entry = |is_dir: bool, name: &[u8], size: u32| {
         if !options.brief && !options.wide {
@@ -1145,8 +1220,11 @@ fn print_builtin_dir(cwd: &Cwd, options: &DirOptions) {
             serial_print(b"\r\n");
         }
     };
-    
-    if path_str == "C:\\" || path_str == "C:" || path_str.contains("Windows") && !path_str.contains("System32") {
+
+    if path_str == "C:\\"
+        || path_str == "C:"
+        || path_str.contains("Windows") && !path_str.contains("System32")
+    {
         // Windows directory
         print_entry(true, b"System32", 0);
         print_entry(true, b"Boot", 0);
@@ -1174,7 +1252,10 @@ fn print_builtin_dir(cwd: &Cwd, options: &DirOptions) {
         print_entry(false, b"advapi32.dll", 3072);
         print_entry(false, b"rpcrt4.dll", 4096);
         print_entry(false, b"msvcrt110.dll", 8192);
-    } else if path_str.contains("Boot") || path_str.contains("Config") || path_str.contains("drivers") {
+    } else if path_str.contains("Boot")
+        || path_str.contains("Config")
+        || path_str.contains("drivers")
+    {
         print_entry(false, b"BCD", 8192);
         print_entry(false, b"bootmgr.exe", 1024);
         print_entry(false, b"bootsect.sys", 512);
@@ -1189,7 +1270,7 @@ fn print_builtin_dir(cwd: &Cwd, options: &DirOptions) {
         print_entry(false, b"config.sys", 256);
         print_entry(false, b"pagefile.sys", 12288);
     }
-    
+
     if options.wide {
         serial_print(b"\r\n");
     }
@@ -1198,10 +1279,10 @@ fn print_builtin_dir(cwd: &Cwd, options: &DirOptions) {
 fn cmd_type(path: &str, _cwd: &Cwd) {
     // Build full path
     let filename = path.as_bytes();
-    
+
     // Check filesystem availability
     let fs_mounted = fat32::is_mounted() || fs::ntfs::is_mounted();
-    
+
     if !fs_mounted {
         serial_print(b"No filesystem mounted.\r\n");
         serial_print(b"Cannot read file: ");
@@ -1209,7 +1290,7 @@ fn cmd_type(path: &str, _cwd: &Cwd) {
         serial_print(b"\r\n");
         return;
     }
-    
+
     // Try NTFS first if mounted
     let _ntfs_used = if fs::ntfs::is_mounted() {
         if let Some(_ntfs_fs) = fs::ntfs::get_mounted_fs() {
@@ -1222,17 +1303,17 @@ fn cmd_type(path: &str, _cwd: &Cwd) {
     } else {
         false
     };
-    
+
     // Try FAT32
     if fat32::is_mounted() {
         if let Some(fs) = fat32::get_mounted_fs() {
             let mut buffer = [0u8; 512];
-            
+
             // Look for file in root directory
             if let Some(entry) = find_file_in_root(fs, filename) {
                 let cluster = entry.first_cluster();
                 let size = entry.file_size();
-                
+
                 if size > 0 {
                     // Read file content
                     let read_size = core::cmp::min(size as usize, buffer.len());
@@ -1257,23 +1338,26 @@ fn cmd_type(path: &str, _cwd: &Cwd) {
                     }
                 }
             }
-            
+
             serial_print(b"File not found: ");
             serial_print(filename);
             serial_print(b"\r\n");
             return;
         }
-        
+
         serial_print(b"Failed to access filesystem.\r\n");
     } else if !_ntfs_used {
         serial_print(b"No filesystem available.\r\n");
     }
 }
 
-fn find_file_in_root<'a>(fs: &'a fat32::Fat32FileSystem, filename: &[u8]) -> Option<fat32::FatDirectoryEntry> {
+fn find_file_in_root<'a>(
+    fs: &'a fat32::Fat32FileSystem,
+    filename: &[u8],
+) -> Option<fat32::FatDirectoryEntry> {
     // Convert filename to 8.3 format
     let mut short_name = [0x20u8; 11];
-    
+
     // Find extension separator
     let mut ext_start = 0;
     let mut base_end = filename.len();
@@ -1283,13 +1367,13 @@ fn find_file_in_root<'a>(fs: &'a fat32::Fat32FileSystem, filename: &[u8]) -> Opt
             base_end = i;
         }
     }
-    
+
     // Base name (up to 8 chars)
     let base_len = core::cmp::min(base_end, 8);
     for i in 0..base_len {
         short_name[i] = filename[i].to_ascii_uppercase();
     }
-    
+
     // Extension (up to 3 chars after dot)
     if ext_start > 0 && ext_start < filename.len() {
         let ext_len = core::cmp::min(filename.len() - ext_start, 3);
@@ -1297,7 +1381,7 @@ fn find_file_in_root<'a>(fs: &'a fat32::Fat32FileSystem, filename: &[u8]) -> Opt
             short_name[8 + i] = filename[ext_start + i].to_ascii_uppercase();
         }
     }
-    
+
     // Use the existing find_file_in_root function
     fat32::find_file_in_root(fs, &short_name)
 }
@@ -1305,6 +1389,20 @@ fn find_file_in_root<'a>(fs: &'a fat32::Fat32FileSystem, filename: &[u8]) -> Opt
 fn cmd_ver() {
     serial_print(b"Microsoft Windows [Version 6.1.7601]\r\n");
     serial_print(b"Copyright (c) 2009 Microsoft Corporation. All rights reserved.\r\n");
+}
+
+fn cmd_halt() {
+    #[cfg(target_arch = "x86_64")]
+    crate::hal::x86_64::halt::HalReturnToFirmware(2);
+    #[cfg(not(target_arch = "x86_64"))]
+    crate::arch::halt();
+}
+
+fn cmd_reboot() {
+    #[cfg(target_arch = "x86_64")]
+    crate::hal::x86_64::halt::HalReturnToFirmware(1);
+    #[cfg(not(target_arch = "x86_64"))]
+    crate::arch::halt();
 }
 
 fn cmd_date(args: &str) {
@@ -1452,7 +1550,7 @@ fn cmd_mountvol() {
 fn cmd_vol() {
     serial_print(b" Volume in drive C is EFI\r\n");
     serial_print(b" Volume Serial Number is 0000-0000\r\n");
-    
+
     // Show filesystem status
     if fat32::is_mounted() {
         serial_print(b" Filesystem: FAT32 (mounted)\r\n");
@@ -1463,7 +1561,7 @@ fn cmd_vol() {
 
 fn cmd_kdbg(args: &str) {
     let first = args.split_whitespace().next().unwrap_or("");
-    
+
     match first.to_uppercase().as_str() {
         "" => {
             serial_print(b"KD> Commands available: g, p, t, r, u, d, lm\r\n");
@@ -1521,7 +1619,7 @@ fn cmd_copy(args: &str, _cwd: &Cwd) {
         serial_print(b"Syntax: COPY source [+source2...] dest\r\n");
         return;
     }
-    
+
     // Find the last space-separated token (destination)
     let parts: Vec<&str> = args.split_whitespace().collect();
     if parts.len() < 2 {
@@ -1529,16 +1627,16 @@ fn cmd_copy(args: &str, _cwd: &Cwd) {
         serial_print(b"Syntax: COPY source dest\r\n");
         return;
     }
-    
+
     let dest = parts[parts.len() - 1];
     let sources: Vec<&str> = parts[..parts.len() - 1].to_vec();
-    
+
     // Check if filesystem is available
     if !fat32::is_mounted() {
         serial_print(b"No filesystem mounted. Cannot copy.\r\n");
         return;
     }
-    
+
     let fs = match fat32::get_mounted_fs() {
         Some(f) => f,
         None => {
@@ -1546,10 +1644,10 @@ fn cmd_copy(args: &str, _cwd: &Cwd) {
             return;
         }
     };
-    
+
     // Convert destination to 8.3 format
     let dest_83 = fat32::name_to_83(dest);
-    
+
     // Check if destination already exists
     if fat32::file_exists_in_root(fs, &dest_83) {
         serial_print(b"Destination file already exists: ");
@@ -1557,29 +1655,29 @@ fn cmd_copy(args: &str, _cwd: &Cwd) {
         serial_print(b"\r\n");
         return;
     }
-    
+
     let mut copied_count: u32 = 0;
 
     for source in sources {
         let source = source.trim_matches('"');
-        
+
         serial_print(b"        ");
         serial_print(source.as_bytes());
         serial_print(b"\r\n");
-        
+
         // Convert source to 8.3 format
         let source_83 = fat32::name_to_83(source);
-        
+
         // Find source file
         if let Some(source_entry) = fat32::find_file_in_root(fs, &source_83) {
             let source_cluster = source_entry.first_cluster();
             let source_size = source_entry.file_size();
-            
+
             if source_cluster == 0 || source_cluster >= fat32::FAT32_EOC {
                 serial_print(b"        Invalid source file cluster.\r\n");
                 continue;
             }
-            
+
             // Allocate new cluster for destination
             let dest_cluster = match fat32::allocate_cluster(fs, 0) {
                 Ok(c) => c,
@@ -1588,20 +1686,25 @@ fn cmd_copy(args: &str, _cwd: &Cwd) {
                     continue;
                 }
             };
-            
+
             // Copy file data cluster by cluster
             let cluster_size = fs.base.cluster_size as usize;
             let mut remaining = source_size as usize;
             let mut current_source_cluster = source_cluster;
             let mut current_dest_cluster = dest_cluster;
-            
-            while remaining > 0 && current_source_cluster >= 2 && current_source_cluster < fat32::FAT32_EOC {
+
+            while remaining > 0
+                && current_source_cluster >= 2
+                && current_source_cluster < fat32::FAT32_EOC
+            {
                 let to_copy = core::cmp::min(remaining, cluster_size);
-                
+
                 // Read from source
                 if to_copy > 0 {
                     let mut read_buf = alloc::vec![0u8; to_copy];
-                    if fat32::read_file(fs, current_source_cluster, to_copy as u32, &mut read_buf).is_ok() {
+                    if fat32::read_file(fs, current_source_cluster, to_copy as u32, &mut read_buf)
+                        .is_ok()
+                    {
                         // Write to destination
                         if fat32::write_cluster(fs, current_dest_cluster, &read_buf).is_err() {
                             serial_print(b"        Error writing to destination.\r\n");
@@ -1609,16 +1712,16 @@ fn cmd_copy(args: &str, _cwd: &Cwd) {
                         }
                     }
                 }
-                
+
                 remaining = remaining.saturating_sub(to_copy);
-                
+
                 // Move to next source cluster
                 let next_source = fat32::read_fat_entry(fs, current_source_cluster);
                 if next_source >= fat32::FAT32_EOC || remaining == 0 {
                     break;
                 }
                 current_source_cluster = next_source;
-                
+
                 // Allocate next destination cluster if needed
                 if remaining > 0 {
                     match fat32::allocate_cluster(fs, current_dest_cluster) {
@@ -1630,7 +1733,7 @@ fn cmd_copy(args: &str, _cwd: &Cwd) {
                     }
                 }
             }
-            
+
             // Create destination file entry
             if fat32::create_file_in_root(fs, &dest_83, dest_cluster, source_size).is_ok() {
                 serial_print(b"        1 file(s) copied.\r\n");
@@ -1646,7 +1749,7 @@ fn cmd_copy(args: &str, _cwd: &Cwd) {
             serial_print(b"\r\n");
         }
     }
-    
+
     serial_print(b"       ");
     serial_print_str(&format_number(copied_count));
     serial_print(b" file(s) copied.\r\n");
@@ -1659,12 +1762,12 @@ fn cmd_del(args: &str, _cwd: &Cwd) {
         serial_print(b"Syntax: DEL [/F] [/Q] pathname\r\n");
         return;
     }
-    
+
     // Parse options
     let mut force = false;
     let mut quiet = false;
     let mut pathname = String::new();
-    
+
     for part in args.split_whitespace() {
         match part.to_uppercase().as_str() {
             "/F" => force = true,
@@ -1677,18 +1780,18 @@ fn cmd_del(args: &str, _cwd: &Cwd) {
             }
         }
     }
-    
+
     if pathname.is_empty() {
         serial_print(b"Syntax: DEL pathname\r\n");
         return;
     }
-    
+
     // Check if filesystem is available
     if !fat32::is_mounted() {
         serial_print(b"No filesystem mounted. Cannot delete.\r\n");
         return;
     }
-    
+
     let fs = match fat32::get_mounted_fs() {
         Some(f) => f,
         None => {
@@ -1696,10 +1799,10 @@ fn cmd_del(args: &str, _cwd: &Cwd) {
             return;
         }
     };
-    
+
     // Convert filename to 8.3 format
     let name_83 = fat32::name_to_83(&pathname);
-    
+
     // Find the file
     if let Some((_cluster, byte_offset)) = fat32::find_file_in_root_ex(fs, &name_83) {
         // Read entry to get cluster and size
@@ -1714,8 +1817,10 @@ fn cmd_del(args: &str, _cwd: &Cwd) {
         }
 
         // Get cluster from entry (offset 20-21 for high word, 26-27 for low word)
-        let high = u16::from_le_bytes([buffer[offset_in_sector + 20], buffer[offset_in_sector + 21]]);
-        let low = u16::from_le_bytes([buffer[offset_in_sector + 26], buffer[offset_in_sector + 27]]);
+        let high =
+            u16::from_le_bytes([buffer[offset_in_sector + 20], buffer[offset_in_sector + 21]]);
+        let low =
+            u16::from_le_bytes([buffer[offset_in_sector + 26], buffer[offset_in_sector + 27]]);
         let file_cluster = ((high as u32) << 16) | (low as u32);
 
         serial_print(b"Deleting: ");
@@ -1752,16 +1857,16 @@ fn cmd_mkdir(args: &str, _cwd: &Cwd) {
         serial_print(b"Syntax: MD pathname\r\n");
         return;
     }
-    
+
     // Remove quotes if present
     let path = path.trim_matches('"');
-    
+
     // Check if filesystem is available
     if !fat32::is_mounted() {
         serial_print(b"No filesystem mounted. Cannot create directory.\r\n");
         return;
     }
-    
+
     let fs = match fat32::get_mounted_fs() {
         Some(f) => f,
         None => {
@@ -1769,10 +1874,10 @@ fn cmd_mkdir(args: &str, _cwd: &Cwd) {
             return;
         }
     };
-    
+
     // Convert directory name to 8.3 format
     let name_83 = fat32::name_to_83(path);
-    
+
     // Check if directory already exists
     if fat32::file_exists_in_root(fs, &name_83) {
         serial_print(b"Directory already exists: ");
@@ -1780,11 +1885,11 @@ fn cmd_mkdir(args: &str, _cwd: &Cwd) {
         serial_print(b"\r\n");
         return;
     }
-    
+
     serial_print(b"Creating directory: ");
     serial_print(path.as_bytes());
     serial_print(b"\r\n");
-    
+
     // Allocate a cluster for the directory
     let dir_cluster = match fat32::allocate_cluster(fs, 0) {
         Ok(c) => c,
@@ -1793,39 +1898,39 @@ fn cmd_mkdir(args: &str, _cwd: &Cwd) {
             return;
         }
     };
-    
+
     // Clear the cluster (initialize directory with . and .. entries)
     let mut dir_data = alloc::vec![0u8; 4096];
-    
+
     // Create . entry (self reference)
     dir_data[0] = b'.';
     dir_data[1..11].copy_from_slice(&[b' '; 10]);
     dir_data[11] = 0x10; // Directory attribute
-    // first_cluster_high and first_cluster_low point to this directory
+                         // first_cluster_high and first_cluster_low point to this directory
     let high = (dir_cluster >> 16) as u16;
     let low = (dir_cluster & 0xFFFF) as u16;
     dir_data[20] = high as u8;
     dir_data[21] = (high >> 8) as u8;
     dir_data[26] = low as u8;
     dir_data[27] = (low >> 8) as u8;
-    
+
     // Create .. entry (parent reference - root)
     dir_data[32..42].copy_from_slice(&[b'.'; 10]);
     dir_data[43] = 0x10; // Directory attribute
-    // first_cluster for root directory is 0 (root)
-    // .. entry points to root (cluster 0 means root in parent)
+                         // first_cluster for root directory is 0 (root)
+                         // .. entry points to root (cluster 0 means root in parent)
     dir_data[52] = 0; // high
     dir_data[53] = 0;
     dir_data[58] = 0; // low
     dir_data[59] = 0;
-    
+
     // Write directory data
     if fat32::write_cluster(fs, dir_cluster, &dir_data).is_err() {
         serial_print(b"Failed to initialize directory cluster.\r\n");
         let _ = fat32::free_cluster_chain(fs, dir_cluster);
         return;
     }
-    
+
     // Create directory entry in root
     if fat32::create_dir_in_root(fs, &name_83, dir_cluster).is_ok() {
         serial_print(b"        1 dir(s) created.\r\n");
@@ -1842,12 +1947,12 @@ fn cmd_rmdir(args: &str, _cwd: &Cwd) {
         serial_print(b"Syntax: RD [/S] [/Q] pathname\r\n");
         return;
     }
-    
+
     // Parse options
     let mut recursive = false;
     let mut quiet = false;
     let mut pathname = String::new();
-    
+
     for part in args.split_whitespace() {
         match part.to_uppercase().as_str() {
             "/S" => recursive = true,
@@ -1859,18 +1964,18 @@ fn cmd_rmdir(args: &str, _cwd: &Cwd) {
             }
         }
     }
-    
+
     if pathname.is_empty() {
         serial_print(b"Syntax: RD pathname\r\n");
         return;
     }
-    
+
     // Check if filesystem is available
     if !fat32::is_mounted() {
         serial_print(b"No filesystem mounted. Cannot remove directory.\r\n");
         return;
     }
-    
+
     let fs = match fat32::get_mounted_fs() {
         Some(f) => f,
         None => {
@@ -1878,28 +1983,30 @@ fn cmd_rmdir(args: &str, _cwd: &Cwd) {
             return;
         }
     };
-    
+
     // Convert directory name to 8.3 format
     let name_83 = fat32::name_to_83(&pathname);
-    
+
     // Find the directory entry
     if let Some((cluster, byte_offset)) = fat32::find_file_in_root_ex(fs, &name_83) {
         // Read entry to get cluster
         let sector_size = fs.base.sector_size as usize;
         let sector_index = byte_offset / sector_size;
         let offset_in_sector = byte_offset % sector_size;
-        
+
         let mut buffer = [0u8; 512];
         if fat32::read_cluster_sector(fs, cluster, sector_index as u32, &mut buffer).is_err() {
             serial_print(b"Error reading directory entry.\r\n");
             return;
         }
-        
+
         // Get cluster from entry
-        let high = u16::from_le_bytes([buffer[offset_in_sector + 20], buffer[offset_in_sector + 21]]);
-        let low = u16::from_le_bytes([buffer[offset_in_sector + 26], buffer[offset_in_sector + 27]]);
+        let high =
+            u16::from_le_bytes([buffer[offset_in_sector + 20], buffer[offset_in_sector + 21]]);
+        let low =
+            u16::from_le_bytes([buffer[offset_in_sector + 26], buffer[offset_in_sector + 27]]);
         let dir_cluster = ((high as u32) << 16) | (low as u32);
-        
+
         if recursive {
             serial_print(b"Removing directory tree: ");
         } else {
@@ -1907,20 +2014,20 @@ fn cmd_rmdir(args: &str, _cwd: &Cwd) {
         }
         serial_print(pathname.as_bytes());
         serial_print(b"\r\n");
-        
+
         if recursive && !quiet {
             serial_print(b"Are you sure (Y/N)? ");
             // For now, assume yes
             serial_print(b"Y\r\n");
         }
-        
+
         // Free the directory cluster
         if dir_cluster >= 2 {
             if fat32::free_cluster_chain(fs, dir_cluster).is_err() {
                 serial_print(b"Warning: Error freeing directory clusters.\r\n");
             }
         }
-        
+
         // Mark directory entry as deleted
         if fat32::delete_file_entry(fs, cluster, byte_offset).is_ok() {
             serial_print(b"        1 dir(s) removed.\r\n");
@@ -1941,7 +2048,7 @@ fn cmd_move(args: &str, _cwd: &Cwd) {
         serial_print(b"Syntax: MOVE source dest\r\n");
         return;
     }
-    
+
     // Find the destination (last token)
     let parts: Vec<&str> = args.split_whitespace().collect();
     if parts.len() < 2 {
@@ -1949,16 +2056,16 @@ fn cmd_move(args: &str, _cwd: &Cwd) {
         serial_print(b"Syntax: MOVE source dest\r\n");
         return;
     }
-    
+
     let source = parts[0].trim_matches('"');
     let dest = parts[parts.len() - 1].trim_matches('"');
-    
+
     // Check if filesystem is available
     if !fat32::is_mounted() {
         serial_print(b"No filesystem mounted. Cannot move.\r\n");
         return;
     }
-    
+
     let fs = match fat32::get_mounted_fs() {
         Some(f) => f,
         None => {
@@ -1966,11 +2073,11 @@ fn cmd_move(args: &str, _cwd: &Cwd) {
             return;
         }
     };
-    
+
     // Convert to 8.3 format
     let source_83 = fat32::name_to_83(source);
     let dest_83 = fat32::name_to_83(dest);
-    
+
     // Check if destination already exists
     if fat32::file_exists_in_root(fs, &dest_83) {
         serial_print(b"Destination file already exists: ");
@@ -1978,7 +2085,7 @@ fn cmd_move(args: &str, _cwd: &Cwd) {
         serial_print(b"\r\n");
         return;
     }
-    
+
     // Find source file
     if let Some((_cluster, _byte_offset)) = fat32::find_file_in_root_ex(fs, &source_83) {
         serial_print(b"Moving: ");
@@ -2007,7 +2114,7 @@ fn cmd_rename(args: &str, _cwd: &Cwd) {
         serial_print(b"Syntax: REN source dest\r\n");
         return;
     }
-    
+
     // Find the new name (last token)
     let parts: Vec<&str> = args.split_whitespace().collect();
     if parts.len() < 2 {
@@ -2015,16 +2122,16 @@ fn cmd_rename(args: &str, _cwd: &Cwd) {
         serial_print(b"Syntax: REN source dest\r\n");
         return;
     }
-    
+
     let source = parts[0].trim_matches('"');
     let dest = parts[parts.len() - 1].trim_matches('"');
-    
+
     // Check if filesystem is available
     if !fat32::is_mounted() {
         serial_print(b"No filesystem mounted. Cannot rename.\r\n");
         return;
     }
-    
+
     let fs = match fat32::get_mounted_fs() {
         Some(f) => f,
         None => {
@@ -2032,11 +2139,11 @@ fn cmd_rename(args: &str, _cwd: &Cwd) {
             return;
         }
     };
-    
+
     // Convert to 8.3 format
     let source_83 = fat32::name_to_83(source);
     let dest_83 = fat32::name_to_83(dest);
-    
+
     // Check if destination already exists
     if fat32::file_exists_in_root(fs, &dest_83) {
         serial_print(b"A file with that name already exists: ");
@@ -2044,7 +2151,7 @@ fn cmd_rename(args: &str, _cwd: &Cwd) {
         serial_print(b"\r\n");
         return;
     }
-    
+
     // Find source file
     if fat32::find_file_in_root(fs, &source_83).is_some() {
         serial_print(b"Renaming: ");
@@ -2052,7 +2159,7 @@ fn cmd_rename(args: &str, _cwd: &Cwd) {
         serial_print(b"\r\n        To: ");
         serial_print(dest.as_bytes());
         serial_print(b"\r\n");
-        
+
         // Rename the file
         if fat32::rename_file_in_root(fs, &source_83, &dest_83).is_ok() {
             serial_print(b"        1 file(s) renamed.\r\n");
@@ -2070,7 +2177,7 @@ fn cmd_rename(args: &str, _cwd: &Cwd) {
 /// Syntax: SET [variable=value] or SET [variable]
 fn cmd_set(args: &str) {
     let args = args.trim();
-    
+
     if args.is_empty() {
         // Display all environment variables
         serial_print(b"COMPUTERNAME=NT61\r\n");
@@ -2087,24 +2194,24 @@ fn cmd_set(args: &str) {
         serial_print(b"WINDIR=C:\\Windows\r\n");
         return;
     }
-    
+
     if args.contains('=') {
         // Set a variable
         let parts: Vec<&str> = args.splitn(2, '=').collect();
         let name = parts[0].trim();
         let value = if parts.len() > 1 { parts[1].trim() } else { "" };
-        
+
         // Use kernel32 API to set the variable
         let name_wide: Vec<u16> = name.encode_utf16().chain(core::iter::once(0)).collect();
         let value_wide: Vec<u16> = value.encode_utf16().chain(core::iter::once(0)).collect();
-        
+
         let result = unsafe {
             crate::libs::kernel32::env::SetEnvironmentVariableW(
                 name_wide.as_ptr(),
-                value_wide.as_ptr()
+                value_wide.as_ptr(),
             )
         };
-        
+
         if result != 0 {
             serial_print(name.as_bytes());
             serial_print(b"=");
@@ -2134,7 +2241,7 @@ fn cmd_ntfs_info() {
     serial_print(b"\r\n");
     serial_print(b"NTFS File System Information:\r\n");
     serial_print(b"-----------------------------\r\n");
-    
+
     // Check both FAT32 and NTFS
     if fs::ntfs::is_mounted() {
         serial_print(b"  Status:        Mounted\r\n");
@@ -2147,7 +2254,7 @@ fn cmd_ntfs_info() {
     } else {
         serial_print(b"  Status:        No filesystem mounted\r\n");
     }
-    
+
     serial_print(b"\r\n");
 }
 
@@ -2223,7 +2330,7 @@ fn format_size(size: u32) -> [u8; 16] {
     let mut pos = 15;
     let mut digits = 0;
     let mut n = size;
-    
+
     if n == 0 {
         buf[pos] = b'0';
     } else {
@@ -2238,7 +2345,7 @@ fn format_size(size: u32) -> [u8; 16] {
             pos -= 1;
         }
     }
-    
+
     buf
 }
 
@@ -2283,7 +2390,10 @@ impl CmdBatchExecutor {
             }
         }
         cwd.path[cwd.len] = 0;
-        Self { cwd, error_level: 0 }
+        Self {
+            cwd,
+            error_level: 0,
+        }
     }
 
     /// Read `filename` through the FAT32 driver. This is the
@@ -2301,7 +2411,9 @@ impl CmdBatchExecutor {
         } else if let Some(e) = find_file_in_root(fs, filename.as_bytes()) {
             e
         } else {
-            return Err(BatError::FileNotFound(alloc::string::String::from(filename)));
+            return Err(BatError::FileNotFound(alloc::string::String::from(
+                filename,
+            )));
         };
         let cluster = entry.first_cluster();
         let size = entry.file_size() as usize;
@@ -2354,7 +2466,9 @@ impl CmdBatchExecutor {
             Some(h) => h,
             None => {
                 crate::fs::set_active_partition_ramdisk(prev_active);
-                return Err(BatError::FileNotFound(alloc::string::String::from(filename)));
+                return Err(BatError::FileNotFound(alloc::string::String::from(
+                    filename,
+                )));
             }
         };
 
@@ -2399,7 +2513,9 @@ impl CmdBatchExecutor {
         let data = match crate::fs::ext2::read_whole_file(fs, filename) {
             Ok(v) => v,
             Err(_) => {
-                return Err(BatError::FileNotFound(alloc::string::String::from(filename)));
+                return Err(BatError::FileNotFound(alloc::string::String::from(
+                    filename,
+                )));
             }
         };
         Ok(normalise_batch_text(&data))
@@ -2467,9 +2583,9 @@ impl BatchExecutor for CmdBatchExecutor {
         match fs_type {
             crate::fs::FsType::Fat32 => self.read_file_fat32(filename),
             crate::fs::FsType::Ntfs => self.read_file_ntfs(filename),
-            crate::fs::FsType::Ext2
-            | crate::fs::FsType::Ext3
-            | crate::fs::FsType::Ext4 => self.read_file_ext2(filename),
+            crate::fs::FsType::Ext2 | crate::fs::FsType::Ext3 | crate::fs::FsType::Ext4 => {
+                self.read_file_ext2(filename)
+            }
             crate::fs::FsType::Unknown => {
                 // Last-ditch attempt: try FAT32 anyway since the
                 // ESP still uses it on every supported boot.
