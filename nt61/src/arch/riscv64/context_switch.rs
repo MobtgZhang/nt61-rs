@@ -125,7 +125,7 @@ pub unsafe extern "C" fn swap_context(out_rsp_addr: *mut u64, new_rsp: u64) {
         // offsets.
         "addi  sp, sp, -128",
         "sd    ra,   0(sp)",
-        "sd    sp,   8(sp)",   // sp here is *decremented* sp
+        "sd    sp,   8(sp)", // sp here is *decremented* sp
         "sd    gp,   16(sp)",
         "sd    tp,   24(sp)",
         "sd    s0,   32(sp)",
@@ -143,12 +143,11 @@ pub unsafe extern "C" fn swap_context(out_rsp_addr: *mut u64, new_rsp: u64) {
         // Publish the saved sp to *out_rsp_addr.
         "mv    t0, sp",
         "sd    t0, 0(a0)",
-
         // ---- Restore the incoming thread ----
         // Switch to the new stack and load the callee-saved set.
         "mv    sp, a1",
         "ld    ra,   0(sp)",
-        "ld    sp,   8(sp)",   // sp is restored *from* the frame
+        "ld    sp,   8(sp)", // sp is restored *from* the frame
         "ld    gp,   16(sp)",
         "ld    tp,   24(sp)",
         "ld    s0,   32(sp)",
@@ -180,11 +179,7 @@ pub unsafe extern "C" fn swap_context(out_rsp_addr: *mut u64, new_rsp: u64) {
 /// This is used by `ke::process::create_user_process` to bootstrap a
 /// new thread's kernel-stack context before its first
 /// `swap_context`.
-pub fn init_user_frame(
-    frame: &mut ContextFrame,
-    user_entry: u64,
-    user_stack_top: u64,
-) {
+pub fn init_user_frame(frame: &mut ContextFrame, user_entry: u64, user_stack_top: u64) {
     frame.ra = user_entry; // ret after swap_context -> user_entry
     frame.sp = user_stack_top;
     frame.gp = 0;
@@ -380,11 +375,7 @@ unsafe fn restore_context_from_cpu_context(incoming: *const super::context::CpuC
 /// `stack_top` must point at writable memory holding at least
 /// [`ContextFrame::SIZE`] bytes of stack space.
 #[no_mangle]
-pub unsafe extern "C" fn seed_thread_frame(
-    stack_top: *mut u64,
-    entry: u64,
-    arg: u64,
-) -> u64 {
+pub unsafe extern "C" fn seed_thread_frame(stack_top: *mut u64, entry: u64, arg: u64) -> u64 {
     unsafe {
         // The kernel `swap_context` pushes the frame downward by
         // `CONTEXT_FRAME_SIZE`, so the frame's top-of-stack address
@@ -393,11 +384,11 @@ pub unsafe extern "C" fn seed_thread_frame(
         let frame_addr = stack_top as u64 - ContextFrame::SIZE as u64;
         let frame = frame_addr as *mut u64;
         // CpuContext field offsets used by save/restore above.
-        frame.add(1).write(entry);   // ra  -> entry
+        frame.add(1).write(entry); // ra  -> entry
         frame.add(2).write(stack_top as u64); // sp = stack_top
-        frame.add(3).write(0);       // gp
-        frame.add(4).write(arg);     // tp -> arg
-        // s0..s11 are callee-saved, init to 0
+        frame.add(3).write(0); // gp
+        frame.add(4).write(arg); // tp -> arg
+                                 // s0..s11 are callee-saved, init to 0
         frame_addr
     }
 }

@@ -317,7 +317,9 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
     //    (RSP at function entry). The per-CPU area is a Rust
     //    static so we can write it directly via the gs: prefix.
     let kernel_sp: u64;
-    unsafe { core::arch::asm!("mov {}, rsp", out(reg) kernel_sp, options(nostack, preserves_flags)); }
+    unsafe {
+        core::arch::asm!("mov {}, rsp", out(reg) kernel_sp, options(nostack, preserves_flags));
+    }
     crate::hal::x86_64::serial::write_string("[UE] kernel_sp=");
     crate::hal::x86_64::serial::write_u64_hex(kernel_sp);
     crate::hal::x86_64::serial::write_string("\r\n");
@@ -367,7 +369,11 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
         let saved_cr3: u64;
         core::arch::asm!("mov {}, cr3", out(reg) saved_cr3, options(nostack, preserves_flags));
         let per_cpu = crate::arch::x86_64::syscall::get_per_cpu();
-        let sys_pml4 = if !per_cpu.is_null() { (*per_cpu).system_pml4 } else { 0 };
+        let sys_pml4 = if !per_cpu.is_null() {
+            (*per_cpu).system_pml4
+        } else {
+            0
+        };
         if sys_pml4 != 0 && sys_pml4 != saved_cr3 {
             core::arch::asm!("mov cr3, {}", in(reg) sys_pml4, options(nostack, preserves_flags));
         }
@@ -390,7 +396,7 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
                     let pte = core::ptr::read_unaligned((pt_phys as *const u64).add(pt_idx));
                     if pte & 1 != 0 {
                         frame_phys = pte & 0x000F_FFFF_FFFF_F000;
-                        frame_off  = user_rip & 0xFFF;
+                        frame_off = user_rip & 0xFFF;
                         found = true;
                     }
                 }
@@ -444,7 +450,8 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
             let pt_idx_dbg = ((user_rip >> 12) & 0x1FF) as usize;
             let pml4e_dbg = core::ptr::read_unaligned((pml4_phys as *const u64).add(pml4_idx_dbg));
             let pdpt_phys_dbg = pml4e_dbg & 0x000F_FFFF_FFFF_F000;
-            let pdpte_dbg = core::ptr::read_unaligned((pdpt_phys_dbg as *const u64).add(pdpt_idx_dbg));
+            let pdpte_dbg =
+                core::ptr::read_unaligned((pdpt_phys_dbg as *const u64).add(pdpt_idx_dbg));
             let pd_phys_dbg = pdpte_dbg & 0x000F_FFFF_FFFF_F000;
             let pde_dbg = core::ptr::read_unaligned((pd_phys_dbg as *const u64).add(pd_idx_dbg));
             let pt_phys_dbg = pde_dbg & 0x000F_FFFF_FFFF_F000;
@@ -466,8 +473,20 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
             crate::hal::x86_64::serial::write_string("]=0x");
             crate::hal::x86_64::serial::write_u64_hex(pte_dbg);
             crate::hal::x86_64::serial::write_string("\r\n");
-            let _ = (pml4_idx_dbg, pdpt_idx_dbg, pd_idx_dbg, pt_idx_dbg,
-                     pml4e_dbg, pdpte_dbg, pde_dbg, pte_dbg);
+            let _ = (
+                pml4_idx_dbg,
+                pdpt_idx_dbg,
+                pd_idx_dbg,
+                pt_idx_dbg,
+                pml4e_dbg,
+                pdpte_dbg,
+                pde_dbg,
+                pte_dbg,
+            );
+            // TEMP DIAGNOSTIC (remove before delivery): walk the user PML4
+            // for the VGA text buffer and the GOP LFB.
+            dbg_walk_user_pml4(pml4_phys, 0xB8000, "vga_text");
+            dbg_walk_user_pml4(pml4_phys, 0x80000000, "gop_lfb");
         } else {
             crate::hal::x86_64::serial::write_string("[UE] cmd.exe entry page walk FAILED: PML4[");
             crate::hal::x86_64::serial::write_u32_hex(pml4_idx as u32);
@@ -625,7 +644,7 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
 
     // crate::kprintln!("[USER] about to call first_user_enter");
     // crate::kprintln!("[USER]   will iretq with RIP=0x{:x} RSP=0x{:x} CS=0x{:x} SS=0x{:x} RFLAGS=0x{:x}",
-// //         user_rip, user_rsp, USER_CS as u64, USER_SS as u64, USER_RFLAGS);
+    // //         user_rip, user_rsp, USER_CS as u64, USER_SS as u64, USER_RFLAGS);
     // We disable interrupts and transfer to Ring 3 via an inline
     // iretq. We pass `user_rip` and `user_rsp` through Rust
     // `let` bindings that the compiler can't keep in any
@@ -738,7 +757,7 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
     // first_user_enter never returns; suppress unreachable warning.
     #[allow(unreachable_code)]
     loop {
-#[cfg(target_arch = "x86_64")]
+        #[cfg(target_arch = "x86_64")]
         #[cfg(target_arch = "x86_64")]
         {
             // Output 'w' to serial when we somehow return from iretq.
@@ -746,7 +765,7 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
             // was misconfigured and jumped somewhere unexpected.
             unsafe {
                 core::arch::asm!(
-                    "mov al, 0x77",  // 'w'
+                    "mov al, 0x77", // 'w'
                     "mov dx, 0x3F8",
                     "out dx, al",
                     options(nostack, preserves_flags),
@@ -757,4 +776,63 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
         crate::boot_println!("[UE] post-iret unreachable (CPU survived iretq!)");
         crate::arch::halt();
     }
+}
+
+// TEMP DIAGNOSTIC (remove before delivery): walk a VA in a specific PML4.
+#[cfg(target_arch = "x86_64")]
+unsafe fn dbg_walk_user_pml4(pml4_phys: u64, va: u64, label: &str) {
+    crate::hal::x86_64::serial::write_string("[DIAG] user PML4 walk ");
+    crate::hal::x86_64::serial::write_string(label);
+    crate::hal::x86_64::serial::write_string(" va=0x");
+    crate::hal::x86_64::serial::write_hex_u64(va);
+    crate::hal::x86_64::serial::write_string(" CR3=0x");
+    crate::hal::x86_64::serial::write_hex_u64(pml4_phys);
+    let pml4e =
+        core::ptr::read_unaligned((pml4_phys as *const u64).add(((va >> 39) & 0x1FF) as usize));
+    crate::hal::x86_64::serial::write_string(" PML4E=0x");
+    crate::hal::x86_64::serial::write_hex_u64(pml4e);
+    if pml4e & 1 == 0 {
+        crate::hal::x86_64::serial::write_string(" MISSING\n");
+        return;
+    }
+    let pdpt_phys = pml4e & 0x000F_FFFF_FFFF_F000;
+    let pdpte =
+        core::ptr::read_unaligned((pdpt_phys as *const u64).add(((va >> 30) & 0x1FF) as usize));
+    crate::hal::x86_64::serial::write_string(" PDPT[");
+    crate::hal::x86_64::serial::write_u32_hex(((va >> 30) & 0x1FF) as u32);
+    crate::hal::x86_64::serial::write_string("]=0x");
+    crate::hal::x86_64::serial::write_hex_u64(pdpte);
+    if pdpte & 1 == 0 {
+        crate::hal::x86_64::serial::write_string(" MISSING\n");
+        return;
+    }
+    if pdpte & 0x80 != 0 {
+        crate::hal::x86_64::serial::write_string(" LARGE\n");
+        return;
+    }
+    let pd_phys = pdpte & 0x000F_FFFF_FFFF_F000;
+    let pde = core::ptr::read_unaligned((pd_phys as *const u64).add(((va >> 21) & 0x1FF) as usize));
+    crate::hal::x86_64::serial::write_string(" PD[");
+    crate::hal::x86_64::serial::write_u32_hex(((va >> 21) & 0x1FF) as u32);
+    crate::hal::x86_64::serial::write_string("]=0x");
+    crate::hal::x86_64::serial::write_hex_u64(pde);
+    if pde & 1 == 0 {
+        crate::hal::x86_64::serial::write_string(" MISSING\n");
+        return;
+    }
+    if pde & 0x80 != 0 {
+        crate::hal::x86_64::serial::write_string(" LARGE\n");
+        return;
+    }
+    let pt_phys = pde & 0x000F_FFFF_FFFF_F000;
+    let pte = core::ptr::read_unaligned((pt_phys as *const u64).add(((va >> 12) & 0x1FF) as usize));
+    crate::hal::x86_64::serial::write_string(" PT[");
+    crate::hal::x86_64::serial::write_u32_hex(((va >> 12) & 0x1FF) as u32);
+    crate::hal::x86_64::serial::write_string("]=0x");
+    crate::hal::x86_64::serial::write_hex_u64(pte);
+    if pte & 1 == 0 {
+        crate::hal::x86_64::serial::write_string(" MISSING\n");
+        return;
+    }
+    crate::hal::x86_64::serial::write_string(" present\n");
 }

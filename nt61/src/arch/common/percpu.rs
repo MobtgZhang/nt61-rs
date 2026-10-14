@@ -10,12 +10,16 @@
 //! |--------|-------|-------|
 //! | 0x00 | `user_rsp` | Saved user stack on syscall/trap entry |
 //! | 0x08 | `kernel_rsp` | Kernel stack loaded on trap entry |
-//! | 0x0C | `cpu_id` | Logical CPU number (0=BSP, 1+=APs) |
-//! | 0x10 | `current_thread` | ETHREAD pointer |
-//! | 0x18 | `current_process` | EPROCESS pointer |
-//! | 0x20 | `irql` | Current IRQL |
-//! | 0x28 | `syscall_count` | Per-CPU syscall counter |
-//! | 0x30 | `interrupt_count` | Per-CPU interrupt counter |
+//! | 0x10 | `cpu_id` | Logical CPU number (0=BSP, 1+=APs); `0x14` is pad |
+//! | 0x18 | `current_thread` | ETHREAD pointer |
+//! | 0x20 | `current_process` | EPROCESS pointer |
+//! | 0x28 | `irql` | Current IRQL (u8); `0x29..0x2F` is pad |
+//! | 0x30 | `syscall_count` | Per-CPU syscall counter |
+//! | 0x38 | `interrupt_count` | Per-CPU interrupt counter |
+//! | 0x40 | `arch_ptr` | TSS / arch slot |
+//! | 0x48 | `system_pml4` | Physical address of the system PML4 |
+//! | 0x50 | `user_pml4` | Physical address of the active user PML4 |
+//! | 0x58 | `syscall_snap_addr` | Read by the syscall entry stub as `gs:[0x58]` |
 //
 //! ## Architecture mechanism
 //
@@ -28,6 +32,26 @@
 
 use crate::ps::process::Eprocess;
 use crate::ps::thread::Ethread;
+use core::sync::atomic::{AtomicBool, Ordering};
+
+/// True once a per-CPU area has actually been installed for the current
+/// CPU. Reading the per-CPU base requires an arch-specific privileged
+/// instruction (`rdmsr` on x86_64, `TPIDR_EL1` read on aarch64), so any
+/// caller that runs before `init()` must not go through `get_current()`.
+/// This flag is the single gate that makes "is the per-CPU area usable?"
+/// answerable without executing a ring-0 instruction.
+static PERCPU_READY: AtomicBool = AtomicBool::new(false);
+
+/// Has the per-CPU area for this CPU been installed?
+pub fn is_ready() -> bool {
+    PERCPU_READY.load(Ordering::Acquire)
+}
+
+/// Mark the per-CPU area as installed. Called by `init()` after the
+/// architecture hook succeeds.
+pub fn mark_ready() {
+    PERCPU_READY.store(true, Ordering::Release);
+}
 
 // =====================================================================
 // PerCpuArea — canonical structure (4 KiB, cache-line aligned)
@@ -85,7 +109,7 @@ pub struct PerCpuArea {
     /// does not fit in a sign-extended 32-bit LEA immediate).
     pub syscall_snap_addr: u64,
     /// Reserved for future use / padding to 4 KiB.
-    pub _reserved: [u64; 59],
+    pub _reserved: [u64; 500],
 }
 
 impl PerCpuArea {
@@ -106,7 +130,7 @@ impl PerCpuArea {
             system_pml4: 0,
             user_pml4: 0,
             syscall_snap_addr: 0,
-            _reserved: [0; 59],
+            _reserved: [0; 500],
         }
     }
 }
@@ -174,7 +198,23 @@ extern "Rust" {
 /// For BSP (cpu_id=0), uses a static PerCpuArea.
 /// For APs, allocates a new page from the kernel pool.
 pub unsafe fn init(cpu_id: u32) -> u64 {
-    unsafe { __percpu_init(cpu_id) }
+    let base = unsafe { __percpu_init(cpu_id) };
+    if base != 0 {
+        mark_ready();
+    }
+    base
+}
+
+/// Return a mutable reference to the current CPU's PerCpuArea.
+///
+/// Returns `None` when the per-CPU area has not been installed yet, so
+/// callers can fall back to their own single-CPU storage instead of
+/// executing a privileged per-CPU read.
+pub fn try_get_current() -> Option<&'static mut PerCpuArea> {
+    if !is_ready() {
+        return None;
+    }
+    Some(unsafe { __percpu_get_current() })
 }
 
 /// Return a mutable reference to the current CPU's PerCpuArea.
@@ -218,4 +258,41 @@ pub fn set_current_process(process: *mut Eprocess) {
 /// Read the EPROCESS pointer of the currently-running process.
 pub fn get_current_process() -> *mut Eprocess {
     unsafe { __percpu_get_current_process() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hot_path_offsets_match_documented_layout() {
+        assert_eq!(core::mem::size_of::<PerCpuArea>(), 4096);
+        assert_eq!(core::mem::align_of::<PerCpuArea>(), 64);
+
+        let mut area = PerCpuArea::new(3);
+        let base = &mut area as *mut PerCpuArea as usize;
+        let off = |p: *const u8| p as usize - base;
+
+        assert_eq!(off(&area.user_rsp as *const u64 as *const u8), 0x00);
+        assert_eq!(off(&area.kernel_rsp as *const u64 as *const u8), 0x08);
+        assert_eq!(off(&area.cpu_id as *const u32 as *const u8), 0x10);
+        assert_eq!(
+            off(&area.current_thread as *const *mut Ethread as *const u8),
+            0x18
+        );
+        assert_eq!(
+            off(&area.current_process as *const *mut Eprocess as *const u8),
+            0x20
+        );
+        assert_eq!(off(&area.irql as *const u8), 0x28);
+        assert_eq!(off(&area.syscall_count as *const u64 as *const u8), 0x30);
+        assert_eq!(off(&area.interrupt_count as *const u64 as *const u8), 0x38);
+        assert_eq!(off(&area.arch_ptr as *const u64 as *const u8), 0x40);
+        assert_eq!(off(&area.system_pml4 as *const u64 as *const u8), 0x48);
+        assert_eq!(off(&area.user_pml4 as *const u64 as *const u8), 0x50);
+        assert_eq!(
+            off(&area.syscall_snap_addr as *const u64 as *const u8),
+            0x58
+        );
+    }
 }

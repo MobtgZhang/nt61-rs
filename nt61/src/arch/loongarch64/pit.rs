@@ -12,13 +12,17 @@ pub fn init(base: u64) {
 pub fn set_compare(deadline: u64) {
     let b = TIMER_BASE.load(Ordering::Acquire);
     if b != 0 {
-        unsafe { ptr::write_volatile((b + 0x40) as *mut u64, deadline); }
+        unsafe {
+            ptr::write_volatile((b + 0x40) as *mut u64, deadline);
+        }
     }
 }
 
 pub fn read_count() -> u64 {
     let b = TIMER_BASE.load(Ordering::Acquire);
-    if b == 0 { return 0; }
+    if b == 0 {
+        return 0;
+    }
     unsafe { ptr::read_volatile(b as *const u64) }
 }
 

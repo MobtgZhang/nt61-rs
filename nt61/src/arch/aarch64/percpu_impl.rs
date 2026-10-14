@@ -27,8 +27,7 @@ use crate::ps::thread::Ethread;
 // =====================================================================
 
 /// Per-CPU area storage. Each CPU has its own page.
-static PER_CPU_PAGES: [AtomicU64; MAX_PER_CPU] =
-    [const { AtomicU64::new(0) }; MAX_PER_CPU];
+static PER_CPU_PAGES: [AtomicU64; MAX_PER_CPU] = [const { AtomicU64::new(0) }; MAX_PER_CPU];
 
 /// BSP per-CPU area. Static so it can be used during early boot
 /// before the pool allocator is ready.
@@ -74,10 +73,7 @@ pub unsafe extern "Rust" fn __percpu_init(cpu_id: u32) -> u64 {
 /// is ready). Sets up `PER_CPU_PAGES[0]` pointing to `PER_CPU_0`.
 #[no_mangle]
 pub fn init_storage() {
-    PER_CPU_PAGES[0].store(
-        core::ptr::addr_of_mut!(PER_CPU_0) as u64,
-        Ordering::Release,
-    );
+    PER_CPU_PAGES[0].store(core::ptr::addr_of_mut!(PER_CPU_0) as u64, Ordering::Release);
 }
 
 /// Allocate and zero a per-CPU area page for the given CPU id.
@@ -86,10 +82,8 @@ pub unsafe fn allocate(cpu_id: u32) -> u64 {
     if cpu_id as usize >= MAX_PER_CPU {
         return 0;
     }
-    let page = crate::mm::pool::allocate(
-        crate::mm::pool::PoolType::NonPaged,
-        PER_CPU_AREA_SIZE,
-    ) as u64;
+    let page =
+        crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, PER_CPU_AREA_SIZE) as u64;
     if page == 0 {
         return 0;
     }

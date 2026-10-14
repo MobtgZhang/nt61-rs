@@ -60,12 +60,17 @@ pub fn translate_instruction(buf: &mut EmitBuffer, dec: &Decoded) -> Result<(), 
 
 /// Translate an entire basic block starting at `code_base + offset`.
 /// Stops at the first control-flow instruction (jmp/ret/intr/etc).
-pub fn translate_block(code: &[u8], mut offset: usize, buf: &mut EmitBuffer) -> Result<usize, TranslateError> {
+pub fn translate_block(
+    code: &[u8],
+    mut offset: usize,
+    buf: &mut EmitBuffer,
+) -> Result<usize, TranslateError> {
     while offset < code.len() {
-        let (decoded, consumed) = match crate::arch::loongarch64::btl::decoder::decode_one(code, offset) {
-            Ok((d, c)) => (d, c),
-            Err(_) => break,
-        };
+        let (decoded, consumed) =
+            match crate::arch::loongarch64::btl::decoder::decode_one(code, offset) {
+                Ok((d, c)) => (d, c),
+                Err(_) => break,
+            };
         translate_instruction(buf, &decoded)?;
         offset = consumed;
         if matches!(decoded.opcode, 0xE9 | 0xEB | 0xC3 | 0xE8 | 0xCC | 0xCD) {

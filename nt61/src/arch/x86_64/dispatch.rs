@@ -5,6 +5,17 @@
 //! vector number.
 
 use crate::mm::access_fault::{self, AccessFlags};
+use core::sync::atomic::{AtomicBool, Ordering};
+
+/// Re-entrancy guard for the `#PF` dispatcher.
+///
+/// A fault raised while the handler is already running used to recurse
+/// until the kernel stack was exhausted, escalating to `#DF` and then a
+/// triple fault (guest reset). Windows 7 (`MmAccessFault`) and ReactOS
+/// (`ntoskrnl/ex/exception.c`) never retry a fault from inside the fault
+/// dispatch: a user-mode access violation terminates the process, a
+/// kernel-mode one raises a bugcheck.
+static PF_IN_HANDLER: AtomicBool = AtomicBool::new(false);
 
 /// Registers saved by `int_common_dispatch`. The frame layout
 /// matches the on-stack layout pushed by the stub:
@@ -61,11 +72,11 @@ pub struct TrapFrame {
 pub struct KTrapFrame {
     // === Volatile registers (clobbered by syscall) ===
     pub rax: u64,
-    pub rcx: u64,    // Syscall clobbers this -> contains user RIP
+    pub rcx: u64, // Syscall clobbers this -> contains user RIP
     pub rdx: u64,
     pub r8: u64,
     pub r9: u64,
-    pub r10: u64,    // arg0 (RCX clobbered by syscall)
+    pub r10: u64, // arg0 (RCX clobbered by syscall)
     pub r11: u64,
 
     // === Non-volatile integer registers ===
@@ -89,11 +100,11 @@ pub struct KTrapFrame {
     _gs_pad: u16,
 
     // === Control registers (from trap/interrupt) ===
-    pub rip: u64,      // User RIP
-    pub cs: u64,       // User CS
+    pub rip: u64, // User RIP
+    pub cs: u64,  // User CS
     pub rflags: u64,
-    pub rsp: u64,      // User RSP
-    pub ss: u64,       // User SS
+    pub rsp: u64, // User RSP
+    pub ss: u64,  // User SS
 
     // === Exception/interrupt info ===
     pub vector: u64,
@@ -192,9 +203,179 @@ pub fn vector_has_error_code(v: u64) -> bool {
     matches!(v, 8 | 10 | 11 | 12 | 13 | 14 | 17)
 }
 
+/// Read one page-table entry through the self-map window.
+///
+/// The self-map windows (`PXE_BASE`/`PPE_BASE`/`PDE_BASE`/`PTE_BASE`)
+/// resolve through the page table that is currently loaded, so this is
+/// the same walk the CPU performed for the faulting address. Casting a
+/// page-table *physical* address to a pointer is not equivalent: the
+/// low half of a user address space maps those virtual addresses to
+/// whatever the process owns there, not to the page tables.
+#[cfg(target_arch = "x86_64")]
+unsafe fn read_self_map_entry(base: u64, idx: usize) -> u64 {
+    core::ptr::read_volatile((base + (idx as u64) * 8) as *const u64)
+}
+
+/// Raw UART sink for trap handlers.
+///
+/// `out` to COM1 touches no memory, so it is the only output path that
+/// cannot itself fault while the handler is running with the faulting
+/// process's page table. Everything else in the logging stack writes to
+/// statics, the LFB or the VGA text buffer, and any of those can
+/// re-fault inside the handler.
+#[cfg(target_arch = "x86_64")]
+#[inline(never)]
+unsafe fn raw_out(b: u8) {
+    core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") b, options(nostack));
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn raw_str(s: &[u8]) {
+    for &b in s {
+        raw_out(b);
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn raw_hex64(v: u64) {
+    for i in (0..16).rev() {
+        let n = ((v >> (i * 4)) & 0xF) as u8;
+        raw_out(if n < 10 { b'0' + n } else { b'A' + n - 10 });
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn raw_field(name: &[u8], value: u64) {
+    raw_str(name);
+    raw_hex64(value);
+    raw_str(b" ");
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn trace_entry(name: &str, idx: usize, val: u64) {
+    crate::hal::x86_64::serial::write_string(name);
+    crate::hal::x86_64::serial::write_string("[");
+    crate::hal::x86_64::serial::write_u32_hex(idx as u32);
+    crate::hal::x86_64::serial::write_string("]=");
+    crate::hal::x86_64::serial::write_u64_hex(val);
+    crate::hal::x86_64::serial::write_string("\r\n");
+}
+
+/// Fault-context trace. Uses only the UART sink and only reads memory
+/// that is guaranteed reachable from the faulting address space.
+#[cfg(target_arch = "x86_64")]
+unsafe fn trace_fault_walk(cr2: u64, err: u64, rip: u64, cs: u64, cr3: u64) {
+    crate::hal::common::serial_disable::with_serial_unmasked(|| {
+        let cr0: u64;
+        let tmp: u64;
+        core::arch::asm!("mov {tmp}, cr0", tmp = out(reg) tmp, options(nostack));
+        cr0 = tmp;
+
+        crate::hal::x86_64::serial::write_string("[PF-ENTRY] cr2=");
+        crate::hal::x86_64::serial::write_u64_hex(cr2);
+        crate::hal::x86_64::serial::write_string(" err=");
+        crate::hal::x86_64::serial::write_u64_hex(err);
+        crate::hal::x86_64::serial::write_string(" rip=");
+        crate::hal::x86_64::serial::write_u64_hex(rip);
+        crate::hal::x86_64::serial::write_string(" cs=");
+        crate::hal::x86_64::serial::write_u64_hex(cs);
+        crate::hal::x86_64::serial::write_string(" cr3=");
+        crate::hal::x86_64::serial::write_u64_hex(cr3);
+        crate::hal::x86_64::serial::write_string(" cr0=");
+        crate::hal::x86_64::serial::write_u64_hex(cr0);
+        crate::hal::x86_64::serial::write_string(" wp=");
+        crate::hal::x86_64::serial::write_u32_hex(((cr0 >> 16) & 1) as u32);
+        crate::hal::x86_64::serial::write_string("\r\n");
+        raw_str(b"[RAW]");
+        raw_field(b"cr2=", cr2);
+        raw_field(b"err=", err);
+        raw_field(b"rip=", rip);
+        raw_field(b"cs=", cs);
+        raw_field(b"cr3=", cr3);
+        raw_field(b"wp=", (cr0 >> 16) & 1);
+        raw_str(b"\r\n");
+
+        let pml4_idx = ((cr2 >> 39) & 0x1FF) as usize;
+        let pdpt_idx = ((cr2 >> 30) & 0x1FF) as usize;
+        let pd_idx = ((cr2 >> 21) & 0x1FF) as usize;
+        let pt_idx = ((cr2 >> 12) & 0x1FF) as usize;
+
+        trace_entry(
+            "[SELFMAP] PML4",
+            pml4_idx,
+            read_self_map_entry(crate::mm::vas::PXE_BASE, pml4_idx),
+        );
+        trace_entry(
+            "[SELFMAP] PDPT",
+            pdpt_idx,
+            read_self_map_entry(crate::mm::vas::PPE_BASE, pdpt_idx),
+        );
+        trace_entry(
+            "[SELFMAP] PD",
+            pd_idx,
+            read_self_map_entry(crate::mm::vas::PDE_BASE, pd_idx),
+        );
+        trace_entry(
+            "[SELFMAP] PT",
+            pt_idx,
+            read_self_map_entry(crate::mm::vas::PTE_BASE, pt_idx),
+        );
+    });
+}
+
 #[no_mangle]
 pub extern "C" fn dispatch_trap_frame(vector: u64, tf: *mut TrapFrame) {
-    if tf.is_null() { return; }
+    if tf.is_null() {
+        return;
+    }
+    #[cfg(target_arch = "x86_64")]
+    if vector == 14 {
+        let frame = unsafe { &*tf };
+        let cr2: u64;
+        let cr3: u64;
+        unsafe {
+            let mut tmp: u64;
+            core::arch::asm!("mov {tmp}, cr2", tmp = out(reg) tmp, options(nostack));
+            cr2 = tmp;
+            core::arch::asm!("mov {tmp}, cr3", tmp = out(reg) tmp, options(nostack));
+            cr3 = tmp;
+        }
+        // Re-entrancy guard. A `#PF` whose handler faults again cannot be
+        // delivered: the CPU escalates to `#DF`, and a faulting `#DF`
+        // handler triple-faults and resets the platform. Windows 7
+        // `MmAccessFault` and ReactOS `ntoskrnl/ex/exception.c` never
+        // re-enter the fault dispatch — a user-mode access violation
+        // terminates the process, a kernel-mode one bugchecks.
+        if PF_IN_HANDLER.swap(true, Ordering::AcqRel) {
+            crate::hal::common::serial_disable::with_serial_unmasked(|| {
+                crate::hal::x86_64::serial::write_string("[PF-NESTED] cr2=");
+                crate::hal::x86_64::serial::write_u64_hex(cr2);
+                crate::hal::x86_64::serial::write_string(" err=");
+                crate::hal::x86_64::serial::write_u64_hex(frame.error_code);
+                crate::hal::x86_64::serial::write_string(" rip=");
+                crate::hal::x86_64::serial::write_u64_hex(frame.rip);
+                crate::hal::x86_64::serial::write_string(" cs=");
+                crate::hal::x86_64::serial::write_u64_hex(frame.cs);
+                crate::hal::x86_64::serial::write_string(" -> terminating faulting process\r\n");
+            });
+            if frame.cs & 3 != 0 {
+                crate::ps::process::process_exit(0xC0000005); // STATUS_ACCESS_VIOLATION
+            }
+            loop {
+                unsafe {
+                    core::arch::asm!("hlt", options(nostack));
+                }
+            }
+        }
+        unsafe {
+            crate::rtl::klog::set_fault_context(true);
+            trace_fault_walk(cr2, frame.error_code, frame.rip, frame.cs, cr3);
+            handle_page_fault(frame.error_code, frame);
+            crate::rtl::klog::set_fault_context(false);
+        }
+        PF_IN_HANDLER.store(false, Ordering::Release);
+        return;
+    }
     crate::boot_println!("[DT] dispatch vector={} tf={:x}", vector, tf as u64);
     unsafe {
         // The stub passed the vector as a u64 (so its top bits are
@@ -220,9 +401,9 @@ pub extern "C" fn dispatch_trap_frame(vector: u64, tf: *mut TrapFrame) {
         // frame overlap; the FIX is to use the correct offset here,
         // not to rename the field.
         let frame_top = (tf as *const u64).offset(15); // [rsp + 0x78]
-        // After the int_stub's `push rdi` (which puts the vector at
-        // offset 0x78) and the CPU-pushed iret frame, the actual
-        // error_code lives at offset 0x80 and RIP at offset 0x88.
+                                                       // After the int_stub's `push rdi` (which puts the vector at
+                                                       // offset 0x78) and the CPU-pushed iret frame, the actual
+                                                       // error_code lives at offset 0x80 and RIP at offset 0x88.
         let error_code_slot = (tf as *const u64).offset(16); // [rsp + 0x80]
         let error_code = if vector_has_error_code(vector) {
             *error_code_slot
@@ -241,32 +422,88 @@ pub extern "C" fn dispatch_trap_frame(vector: u64, tf: *mut TrapFrame) {
         match vector {
             // === CPU EXCEPTIONS (Vectors 0-31) ===
             0 => { /* #DE - Divide Error - handled by CPU */ }
-            1 => { /* #DB - Debug - handled by CPU */ }
+            1 => {
+                /* #DB - Debug - handled by CPU */
+                // TEMPORARY DIAGNOSTIC: report the writer RIP, capped so the
+                // re-executed store cannot produce an unbounded log.
+                if crate::arch::x86_64::debug::read_dr7() & 1 != 0 {
+                    {
+                        if DB_HITS < 24 {
+                            DB_HITS += 1;
+                            crate::boot_println!(
+                                "[DB] hit {} DR0=0x{:x}",
+                                DB_HITS,
+                                crate::arch::x86_64::debug::dbg_read_dr0()
+                            );
+                        } else {
+                            crate::arch::x86_64::debug::write_dr7(0);
+                        }
+                    }
+                }
+            }
             2 => { /* #NMI - Non-Maskable Interrupt */ }
             3 => { /* #BP - Breakpoint (INT3) - could be debug or kernel panic */ }
             4 => { /* #OF - Overflow (INTO) */ }
             5 => { /* #BR - Bound Range Exceeded */ }
-            6 => { /* #UD - Invalid Opcode */ handle_invalid_opcode(&*tf); return; }
-            7 => { /* #NM - Device Not Available */ handle_device_not_available(&*tf); }
-            8 => { /* #DF - Double Fault - CRITICAL */ handle_double_fault(error_code, &*tf); return; }
+            6 => {
+                /* #UD - Invalid Opcode */
+                handle_invalid_opcode(&*tf);
+                return;
+            }
+            7 => {
+                /* #NM - Device Not Available */
+                handle_device_not_available(&*tf);
+            }
+            8 => {
+                /* #DF - Double Fault - CRITICAL */
+                handle_double_fault(error_code, &*tf);
+                return;
+            }
             9 => { /* Coprocessor Segment Overrun - deprecated, ignore */ }
-            10 => { /* #TS - Invalid TSS */ handle_general_protection(error_code, &*tf); return; }
-            11 => { /* #NP - Segment Not Present */ handle_segment_not_present(error_code, &*tf); return; }
-            12 => { /* #SS - Stack Fault */ handle_stack_fault(error_code, &*tf); return; }
-            13 => { /* #GP - General Protection Fault - CRITICAL */ handle_general_protection(error_code, &*tf); return; }
-            14 => { /* #PF - Page Fault */ handle_page_fault(error_code, &*tf); }
-            15 => { /* Reserved - Intel defined as 'Unknown' */ 
+            10 => {
+                /* #TS - Invalid TSS */
+                handle_general_protection(error_code, &*tf);
+                return;
+            }
+            11 => {
+                /* #NP - Segment Not Present */
+                handle_segment_not_present(error_code, &*tf);
+                return;
+            }
+            12 => {
+                /* #SS - Stack Fault */
+                handle_stack_fault(error_code, &*tf);
+                return;
+            }
+            13 => {
+                /* #GP - General Protection Fault - CRITICAL */
+                handle_general_protection(error_code, &*tf);
+                return;
+            }
+            14 => {
+                /* #PF - Page Fault */
+                handle_page_fault(error_code, &*tf);
+            }
+            15 => { /* Reserved - Intel defined as 'Unknown' */
                 // // crate::kprintln!("[FAULT] Vector 15 (Intel reserved)");
             }
             16 => { /* #MF - x87 Floating Point Error */ }
-            17 => { /* #AC - Alignment Check */ handle_alignment_check(error_code, &*tf); return; }
-            18 => { /* #MC - Machine Check - CRITICAL */ handle_machine_check(&*tf); return; }
+            17 => {
+                /* #AC - Alignment Check */
+                handle_alignment_check(error_code, &*tf);
+                return;
+            }
+            18 => {
+                /* #MC - Machine Check - CRITICAL */
+                handle_machine_check(&*tf);
+                return;
+            }
             19 => { /* #XM - SIMD Floating Point Error */ }
             20 => { /* #VE - Virtualization Exception */ }
             21..=31 => {
                 // // crate::kprintln!("[FAULT] Reserved exception vector {}", vector);
             }
-            
+
             // === PIT / HPET / keyboard / APIC timer vectors ===
             32 => {
                 #[cfg(target_arch = "x86_64")]
@@ -276,6 +513,15 @@ pub extern "C" fn dispatch_trap_frame(vector: u64, tf: *mut TrapFrame) {
                     crate::boot_println!("[DT32] after irq_dispatch before tick");
                     crate::ke::scheduler::tick();
                     crate::boot_println!("[DT32] after tick");
+                    // ISR exit: the clock ISR itself runs at CLOCK_LEVEL and
+                    // cannot swap context. Lower to DISPATCH_LEVEL, retire any
+                    // deferred work, and only then honour the reschedule the
+                    // ISR recorded.
+                    let dispatch_irql =
+                        crate::ke::irql::raise_irql(crate::ke::irql::Irql::DispatchLevel);
+                    crate::ke::dpc::ki_retire_dpc_list();
+                    crate::ke::scheduler::dispatch_pending_reschedule();
+                    crate::ke::irql::lower_irql(dispatch_irql);
                 }
             }
             #[cfg(target_arch = "x86_64")]
@@ -308,7 +554,7 @@ pub extern "C" fn dispatch_trap_frame(vector: u64, tf: *mut TrapFrame) {
             46 => crate::hal::x86_64::pic::irq_dispatch(14),
             #[cfg(target_arch = "x86_64")]
             47 => crate::hal::x86_64::pic::irq_dispatch(15),
-            
+
             // === IPI vectors ===
             // The x86_64 architecture reserves 0xE0..0xEF for inter-processor interrupts
             0xE0 => crate::ke::dispatch::handle_ipi_reschedule(),
@@ -316,10 +562,10 @@ pub extern "C" fn dispatch_trap_frame(vector: u64, tf: *mut TrapFrame) {
             0xE2 => crate::ke::dispatch::handle_ipi_intr_exit(),
             0xE3 => crate::ke::dispatch::handle_ipi_panic_stop(),
             0xE4..=0xEF => crate::ke::dispatch::handle_ipi_dynamic(vector as u8),
-            
+
             // === Spurious APIC ===
             0xFF => {}
-            
+
             // === Unknown vectors ===
             _v => {
                 // _v is intentionally unused - unknown vectors are logged/ignored
@@ -347,6 +593,34 @@ fn handle_page_fault(error_code: u64, tf: &TrapFrame) {
     }
     #[cfg(not(target_arch = "x86_64"))]
     let cr2 = 0;
+
+    // Emit a fmt-free trace of the faulting address before touching any
+    // static or buffered writer. `boot_println!` pulls in `core::fmt`
+    // plus the bootvid/VGA mirrors, which is exactly the path that
+    // re-faulted on the nested `#PF`; a bare UART write is the only sink
+    // guaranteed reachable from a faulting context.
+    #[cfg(target_arch = "x86_64")]
+    {
+        crate::hal::common::serial_disable::with_serial_unmasked(|| {
+            crate::hal::x86_64::serial::write_string("[PF] cr2=");
+            crate::hal::x86_64::serial::write_u64_hex(cr2);
+            crate::hal::x86_64::serial::write_string(" err=");
+            crate::hal::x86_64::serial::write_u64_hex(error_code);
+            crate::hal::x86_64::serial::write_string(" rip=");
+            crate::hal::x86_64::serial::write_u64_hex(tf.rip);
+            crate::hal::x86_64::serial::write_string(" cs=");
+            crate::hal::x86_64::serial::write_u64_hex(tf.cs);
+            crate::hal::x86_64::serial::write_string(" rsp=");
+            crate::hal::x86_64::serial::write_u64_hex(tf.rsp);
+            crate::hal::x86_64::serial::write_string("\r\n");
+        });
+    }
+
+    // The re-entrancy guard lives at the top of `dispatch_trap_frame`,
+    // which is the first code that runs on a nested `#PF`. Reaching
+    // this point means the guard is already armed by the outer
+    // dispatch, so it must not be re-armed here.
+
     let actual_cr3: u64 = {
         #[cfg(target_arch = "x86_64")]
         unsafe {
@@ -355,7 +629,9 @@ fn handle_page_fault(error_code: u64, tf: &TrapFrame) {
             tmp
         }
         #[cfg(not(target_arch = "x86_64"))]
-        { 0 }
+        {
+            0
+        }
     };
     let actual_cr0: u64 = {
         #[cfg(target_arch = "x86_64")]
@@ -365,7 +641,9 @@ fn handle_page_fault(error_code: u64, tf: &TrapFrame) {
             tmp
         }
         #[cfg(not(target_arch = "x86_64"))]
-        { 0 }
+        {
+            0
+        }
     };
     let actual_cr4: u64 = {
         #[cfg(target_arch = "x86_64")]
@@ -375,7 +653,9 @@ fn handle_page_fault(error_code: u64, tf: &TrapFrame) {
             tmp
         }
         #[cfg(not(target_arch = "x86_64"))]
-        { 0 }
+        {
+            0
+        }
     };
     let actual_efer: u64 = {
         #[cfg(target_arch = "x86_64")]
@@ -394,7 +674,9 @@ fn handle_page_fault(error_code: u64, tf: &TrapFrame) {
             tmp
         }
         #[cfg(not(target_arch = "x86_64"))]
-        { 0 }
+        {
+            0
+        }
     };
     crate::boot_println!("[PF] cr2=0x{:x} err=0x{:x} cr3=0x{:x} cr0=0x{:x} cr4=0x{:x} efer=0x{:x} tf.rip=0x{:x} tf.cs=0x{:x}", cr2, error_code, actual_cr3, actual_cr0, actual_cr4, actual_efer, tf.rip, tf.cs);
 
@@ -404,30 +686,38 @@ fn handle_page_fault(error_code: u64, tf: &TrapFrame) {
     #[cfg(target_arch = "x86_64")]
     unsafe {
         let pte_frame_pa = {
-            let root = crate::mm::vas::current_root();
             let pml4_idx = ((cr2 >> 39) & 0x1FF) as usize;
             let pdpt_idx = ((cr2 >> 30) & 0x1FF) as usize;
             let pd_idx = ((cr2 >> 21) & 0x1FF) as usize;
             let pt_idx = ((cr2 >> 12) & 0x1FF) as usize;
-            let pml4e = core::ptr::read_volatile((root as *const u64).add(pml4_idx));
+            let pml4e = read_self_map_entry(crate::mm::vas::PXE_BASE, pml4_idx);
             if pml4e & 1 != 0 {
                 let pdpt_phys = pml4e & 0x000F_FFFF_FFFF_F000;
-                let pdpte = core::ptr::read_volatile((pdpt_phys as *const u64).add(pdpt_idx));
+                let pdpte = read_self_map_entry(crate::mm::vas::PPE_BASE, pdpt_idx);
                 if pdpte & 1 != 0 {
                     let pd_phys = pdpte & 0x000F_FFFF_FFFF_F000;
-                    let pde = core::ptr::read_volatile((pd_phys as *const u64).add(pd_idx));
+                    let pde = read_self_map_entry(crate::mm::vas::PDE_BASE, pd_idx);
                     if pde & 1 != 0 {
                         let pt_phys = pde & 0x000F_FFFF_FFFF_F000;
-                        let pte = core::ptr::read_volatile((pt_phys as *const u64).add(pt_idx));
+                        let pte = read_self_map_entry(crate::mm::vas::PTE_BASE, pt_idx);
                         if pte & 1 != 0 {
                             pte & 0x000F_FFFF_FFFF_F000
-                        } else { 0 }
-                    } else { 0 }
-                } else { 0 }
-            } else { 0 }
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                }
+            } else {
+                0
+            }
         };
         if pte_frame_pa != 0 {
-            let bytes = core::ptr::read_volatile((pte_frame_pa as *const u8).add((cr2 & 0xFFF) as usize));
+            let bytes =
+                core::ptr::read_volatile((pte_frame_pa as *const u8).add((cr2 & 0xFFF) as usize));
             crate::boot_println!("[PF] bytes at faulting VA: {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}", bytes, core::ptr::read_volatile((pte_frame_pa as *const u8).add((cr2 & 0xFFF) as usize + 1)), core::ptr::read_volatile((pte_frame_pa as *const u8).add((cr2 & 0xFFF) as usize + 2)), core::ptr::read_volatile((pte_frame_pa as *const u8).add((cr2 & 0xFFF) as usize + 3)), core::ptr::read_volatile((pte_frame_pa as *const u8).add((cr2 & 0xFFF) as usize + 4)), core::ptr::read_volatile((pte_frame_pa as *const u8).add((cr2 & 0xFFF) as usize + 5)), core::ptr::read_volatile((pte_frame_pa as *const u8).add((cr2 & 0xFFF) as usize + 6)), core::ptr::read_volatile((pte_frame_pa as *const u8).add((cr2 & 0xFFF) as usize + 7)));
         }
     }
@@ -436,35 +726,36 @@ fn handle_page_fault(error_code: u64, tf: &TrapFrame) {
     {
         // Walk the page table for the faulting VA and dump the PTE so
         // we can see what permissions the page actually has.
-        let root = crate::mm::vas::current_root();
         let pml4_idx = ((cr2 >> 39) & 0x1FF) as usize;
         let pdpt_idx = ((cr2 >> 30) & 0x1FF) as usize;
         let pd_idx = ((cr2 >> 21) & 0x1FF) as usize;
         let pt_idx = ((cr2 >> 12) & 0x1FF) as usize;
         unsafe {
-            let pml4e = core::ptr::read_volatile((root as *const u64).add(pml4_idx));
+            let pml4e = read_self_map_entry(crate::mm::vas::PXE_BASE, pml4_idx);
             crate::boot_println!("[PF]   PML4[{}]=0x{:x}", pml4_idx, pml4e);
             if pml4e & 1 != 0 {
-                let pdpt_phys = pml4e & 0x000F_FFFF_FFFF_F000;
-                let pdpte = core::ptr::read_volatile((pdpt_phys as *const u64).add(pdpt_idx));
+                let pdpte = read_self_map_entry(crate::mm::vas::PPE_BASE, pdpt_idx);
                 crate::boot_println!("[PF]   PDPT[{}]=0x{:x}", pdpt_idx, pdpte);
                 if pdpte & 1 != 0 {
-                    let pd_phys = pdpte & 0x000F_FFFF_FFFF_F000;
-                    let pde = core::ptr::read_volatile((pd_phys as *const u64).add(pd_idx));
+                    let pde = read_self_map_entry(crate::mm::vas::PDE_BASE, pd_idx);
                     crate::boot_println!("[PF]   PD[{}]=0x{:x}", pd_idx, pde);
                     if pde & 1 != 0 {
-                        let pt_phys = pde & 0x000F_FFFF_FFFF_F000;
-                        let pte = core::ptr::read_volatile((pt_phys as *const u64).add(pt_idx));
-                        crate::boot_println!("[PF]   PT[{}]=0x{:x} NX={}", pt_idx, pte, (pte >> 63) & 1);
+                        let pte = read_self_map_entry(crate::mm::vas::PTE_BASE, pt_idx);
+                        crate::boot_println!(
+                            "[PF]   PT[{}]=0x{:x} NX={}",
+                            pt_idx,
+                            pte,
+                            (pte >> 63) & 1
+                        );
                     }
                 }
             }
         }
         // Also dump ALL PML4 entries to see the full picture.
         unsafe {
-            crate::boot_println!("[PF] DUMP ALL PML4 ENTRIES (root=0x{:x}):", root);
+            crate::boot_println!("[PF] DUMP ALL PML4 ENTRIES (self-map window):");
             for i in 0..512 {
-                let e = core::ptr::read_volatile((root as *const u64).add(i));
+                let e = read_self_map_entry(crate::mm::vas::PXE_BASE, i);
                 if e & 1 != 0 {
                     crate::boot_println!("[PF]   PML4[{}]=0x{:x}", i, e);
                 }
@@ -481,12 +772,16 @@ fn handle_page_fault(error_code: u64, tf: &TrapFrame) {
         #[cfg(target_arch = "x86_64")]
         {
             // CRITICAL: Use early_pf_halt to avoid triggering another PF.
-            unsafe { early_pf_halt(); }
+            unsafe {
+                early_pf_halt();
+            }
         }
         #[cfg(not(target_arch = "x86_64"))]
         {
             loop {
-                unsafe { core::arch::asm!("hlt", options(nostack)); }
+                unsafe {
+                    core::arch::asm!("hlt", options(nostack));
+                }
             }
         }
     }
@@ -509,15 +804,27 @@ fn handle_page_fault(error_code: u64, tf: &TrapFrame) {
         access_fault::FaultStatus::CheckVad => {
             // // crate::kprintln!("[PF] va=0x{:016x} CheckVad (VAD lookup needed)", cr2);
             // Kernel-mode VAD faults are typically fatal — halt.
-            loop { unsafe { core::arch::asm!("hlt", options(nostack)); } }
+            loop {
+                unsafe {
+                    core::arch::asm!("hlt", options(nostack));
+                }
+            }
         }
         access_fault::FaultStatus::AccessViolation => {
             // // crate::kprintln!("[PF] FATAL: AccessViolation at va=0x{:016x}", cr2);
-            loop { unsafe { core::arch::asm!("hlt", options(nostack)); } }
+            loop {
+                unsafe {
+                    core::arch::asm!("hlt", options(nostack));
+                }
+            }
         }
         access_fault::FaultStatus::OutOfMemory => {
             // // crate::kprintln!("[PF] FATAL: OutOfMemory at va=0x{:016x}", cr2);
-            loop { unsafe { core::arch::asm!("hlt", options(nostack)); } }
+            loop {
+                unsafe {
+                    core::arch::asm!("hlt", options(nostack));
+                }
+            }
         }
     }
 }
@@ -587,7 +894,9 @@ fn handle_stack_fault(error_code: u64, tf: &TrapFrame) {
     let selector_id = error_code & 0xFFFF;
     let ext = (error_code >> 16) & 1 != 0;
     let cr3: u64;
-    unsafe { core::arch::asm!("mov {}, cr3", out(reg) cr3, options(nostack, preserves_flags)); }
+    unsafe {
+        core::arch::asm!("mov {}, cr3", out(reg) cr3, options(nostack, preserves_flags));
+    }
     crate::boot_println!("[FAULT] #SS id={} ext={} sel=0x{:04x} rip=0x{:016x} rsp=0x{:016x} cs=0x{:x} ss=0x{:x} cr3=0x{:x}",
         selector_id, ext, selector_id, tf.rip, tf.rsp, tf.cs, tf.ss, cr3);
     // Print a few bytes of code around RIP to identify the failing
@@ -599,7 +908,12 @@ fn handle_stack_fault(error_code: u64, tf: &TrapFrame) {
             let addr = tf.rip.wrapping_add(off as u64);
             let byte: u8 = core::ptr::read_volatile(p.offset(off as isize));
             if off == 0 {
-                crate::boot_println!("  code[{:+}] @ 0x{:016x} = 0x{:02x}  <-- RIP", off, addr, byte);
+                crate::boot_println!(
+                    "  code[{:+}] @ 0x{:016x} = 0x{:02x}  <-- RIP",
+                    off,
+                    addr,
+                    byte
+                );
             } else {
                 crate::boot_println!("  code[{:+}] @ 0x{:016x} = 0x{:02x}", off, addr, byte);
             }
@@ -607,24 +921,51 @@ fn handle_stack_fault(error_code: u64, tf: &TrapFrame) {
     }
     // Dump our saved GP registers so we can see what the
     // crashed frame was working with.
-    crate::boot_println!("[FAULT-REGS] rax=0x{:016x} rcx=0x{:016x} rdx=0x{:016x}",
-        tf.rax, tf.rcx, tf.rdx);
-    crate::boot_println!("[FAULT-REGS] rbx=0x{:016x} rbp=0x{:016x} rsi=0x{:016x} rdi=0x{:016x}",
-        tf.rbx, tf.rbp, tf.rsi, tf.rdi);
-    crate::boot_println!("[FAULT-REGS] r8 =0x{:016x} r9 =0x{:016x} r10=0x{:016x} r11=0x{:016x}",
-        tf.r8, tf.r9, tf.r10, tf.r11);
-    crate::boot_println!("[FAULT-REGS] r12=0x{:016x} r13=0x{:016x} r14=0x{:016x} r15=0x{:016x}",
-        tf.r12, tf.r13, tf.r14, tf.r15);
+    crate::boot_println!(
+        "[FAULT-REGS] rax=0x{:016x} rcx=0x{:016x} rdx=0x{:016x}",
+        tf.rax,
+        tf.rcx,
+        tf.rdx
+    );
+    crate::boot_println!(
+        "[FAULT-REGS] rbx=0x{:016x} rbp=0x{:016x} rsi=0x{:016x} rdi=0x{:016x}",
+        tf.rbx,
+        tf.rbp,
+        tf.rsi,
+        tf.rdi
+    );
+    crate::boot_println!(
+        "[FAULT-REGS] r8 =0x{:016x} r9 =0x{:016x} r10=0x{:016x} r11=0x{:016x}",
+        tf.r8,
+        tf.r9,
+        tf.r10,
+        tf.r11
+    );
+    crate::boot_println!(
+        "[FAULT-REGS] r12=0x{:016x} r13=0x{:016x} r14=0x{:016x} r15=0x{:016x}",
+        tf.r12,
+        tf.r13,
+        tf.r14,
+        tf.r15
+    );
     // Print addresses of known kernel symbols so we can
     // locate the image base at runtime.
-    crate::boot_println!("[FAULT-SYMS] handle_stack_fault=0x{:x}",
-        handle_stack_fault as *const () as usize);
-    crate::boot_println!("[FAULT-SYMS] kernel_main=0x{:x}",
-        crate::kernel_main::kernel_main as *const () as usize);
-    crate::boot_println!("[FAULT-SYMS] early_write_str=0x{:x}",
-        crate::arch::boot::early_write_str as *const () as usize);
-    crate::boot_println!("[FAULT-SYMS] write_early=0x{:x}",
-        crate::rtl::klog::write_early as *const () as usize);
+    crate::boot_println!(
+        "[FAULT-SYMS] handle_stack_fault=0x{:x}",
+        handle_stack_fault as *const () as usize
+    );
+    crate::boot_println!(
+        "[FAULT-SYMS] kernel_main=0x{:x}",
+        crate::kernel_main::kernel_main as *const () as usize
+    );
+    crate::boot_println!(
+        "[FAULT-SYMS] early_write_str=0x{:x}",
+        crate::arch::boot::early_write_str as *const () as usize
+    );
+    crate::boot_println!(
+        "[FAULT-SYMS] write_early=0x{:x}",
+        crate::rtl::klog::write_early as *const () as usize
+    );
     // Dump 256 bytes around RIP to identify what we crashed into.
     let rip_p = tf.rip as *const u8;
     unsafe {
@@ -649,7 +990,8 @@ fn handle_stack_fault(error_code: u64, tf: &TrapFrame) {
                     idx += 3;
                 }
             }
-            let hex_str = core::str::from_utf8(&hex_buf[..idx.min(hex_buf.len()-1)]).unwrap_or("?");
+            let hex_str =
+                core::str::from_utf8(&hex_buf[..idx.min(hex_buf.len() - 1)]).unwrap_or("?");
             let addr = tf.rip.wrapping_add(row as u64);
             crate::boot_println!("[FAULT-MEM] +{:04x} @ 0x{:016x} = {}", row, addr, hex_str);
         }
@@ -677,18 +1019,28 @@ fn handle_stack_fault(error_code: u64, tf: &TrapFrame) {
                     idx += 3;
                 }
             }
-            let hex_str = core::str::from_utf8(&hex_buf[..idx.min(hex_buf.len()-1)]).unwrap_or("?");
+            let hex_str =
+                core::str::from_utf8(&hex_buf[..idx.min(hex_buf.len() - 1)]).unwrap_or("?");
             let addr = p256_before.wrapping_add(row as u64);
-            crate::boot_println!("[FAULT-MEM] -{:#x}+{:04x} @ 0x{:016x} = {}",
-                0x200u64, row, addr, hex_str);
+            crate::boot_println!(
+                "[FAULT-MEM] -{:#x}+{:04x} @ 0x{:016x} = {}",
+                0x200u64,
+                row,
+                addr,
+                hex_str
+            );
         }
     }
     // Walk the RBP chain. With optimizations enabled RBP isn't
     // always a frame pointer, so we verify each candidate by
     // checking that the saved RBP looks like a stack address
     // (between rsp and our idea of the stack base).
-    let stack_hi = tf.rsp.wrapping_add(0x40000);  // generous upper bound
-    crate::boot_println!("[FAULT-RBP] walking rbp chain starting at rbp=0x{:016x} rsp=0x{:016x}", tf.rbp, tf.rsp);
+    let stack_hi = tf.rsp.wrapping_add(0x40000); // generous upper bound
+    crate::boot_println!(
+        "[FAULT-RBP] walking rbp chain starting at rbp=0x{:016x} rsp=0x{:016x}",
+        tf.rbp,
+        tf.rsp
+    );
     // Just dump raw stack bytes (no RBP walk which can fault on bogus memory)
     unsafe {
         let stack_top = tf.rsp;
@@ -705,7 +1057,9 @@ fn handle_stack_fault(error_code: u64, tf: &TrapFrame) {
                 }
                 bytes[i as usize] = core::ptr::read_volatile(pp);
             }
-            if !valid { break; }
+            if !valid {
+                break;
+            }
             let mut hex_buf = [0u8; 80];
             let mut idx = 0;
             for (i, b) in bytes.iter().enumerate() {
@@ -722,16 +1076,21 @@ fn handle_stack_fault(error_code: u64, tf: &TrapFrame) {
                     idx += 3;
                 }
             }
-            let hex_str = core::str::from_utf8(&hex_buf[..idx.min(hex_buf.len()-1)]).unwrap_or("?");
-            crate::boot_println!("[FAULT-STK] +{:04x} @ 0x{:016x} = {}",
-                offset, addr, hex_str);
+            let hex_str =
+                core::str::from_utf8(&hex_buf[..idx.min(hex_buf.len() - 1)]).unwrap_or("?");
+            crate::boot_println!(
+                "[FAULT-STK] +{:04x} @ 0x{:016x} = {}",
+                offset,
+                addr,
+                hex_str
+            );
         }
     }
-    
+
     // // crate::kprintln!("[FAULT] #SS (Stack Fault)");
     // // crate::kprintln!("  Error code: ID={} EXT={} Selector=0x{:04x}", selector_id, ext, selector_id);
     // // crate::kprintln!("  RIP=0x{:016x} RSP=0x{:016x}", tf.rip, tf.rsp);
-    
+
     // Check if user mode
     let user_mode = tf.cs & 3 != 0;
     if !user_mode {
@@ -750,7 +1109,7 @@ fn handle_segment_not_present(_error_code: u64, _tf: &TrapFrame) {
     let _selector_id = _error_code & 0xFFFF;
     let _ext = (_error_code >> 16) & 1 != 0;
     let _ti = (_error_code >> 14) & 1 != 0; // TI bit: LDT vs GDT
-    // _selector_id, _ext, _ti, and _tf are intentionally unused - reserved for future logging
+                                            // _selector_id, _ext, _ti, and _tf are intentionally unused - reserved for future logging
 
     // // crate::kprintln!("[FAULT] #NP (Segment Not Present)");
     // // crate::kprintln!("  Error code: ID={} EXT={} TI={} Selector=0x{:04x}", _selector_id, _ext, _ti, _selector_id);
@@ -790,7 +1149,7 @@ fn handle_invalid_opcode(tf: &TrapFrame) {
         let ptr = tf.rip as *const u8;
         core::ptr::read(ptr)
     };
-    
+
     if code == 0x0F {
         let code2 = unsafe {
             let ptr = (tf.rip + 1) as *const u8;
@@ -852,3 +1211,4 @@ fn handle_alignment_check(_error_code: u64, tf: &TrapFrame) {
         }
     }
 }
+static mut DB_HITS: u32 = 0;

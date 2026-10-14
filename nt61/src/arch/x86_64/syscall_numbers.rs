@@ -667,3 +667,14 @@ pub const SYS_GET_RTC: u32 = 0x0212;
 /// prints a valid answer even on a network-less QEMU harness.
 /// Used by the user-mode `cmd.exe` stub's `ipconfig` builtin.
 pub const SYS_NETCFG_GET: u32 = 0x0213;
+
+/// Return control to firmware. `arg0` is one of the
+/// `FIRMWARE_REENTRY` values understood by
+/// `hal::x86_64::halt::HalReturnToFirmware`:
+///
+///   0 = HAL_HALT (park the CPU)
+///   1 = HAL_REBOOT (warm reset)
+///   2 = HAL_SHUTDOWN (ACPI S5 soft-off)
+///
+/// The syscall never returns.
+pub const SYS_RETURN_TO_FIRMWARE: u32 = 0x0214;

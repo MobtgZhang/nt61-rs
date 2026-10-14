@@ -34,14 +34,16 @@ pub fn init(base: u64) {
         // Disable all interrupts initially
         for context in 0..8 {
             for word in 0..(PLIC_NUM_SOURCES / 32) {
-                let enable_addr = base + offset::ENABLE_BASE
+                let enable_addr = base
+                    + offset::ENABLE_BASE
                     + context * offset::ENABLE_STRIDE
                     + (word as u64) * 4;
                 core::ptr::write_volatile(enable_addr as *mut u32, 0);
             }
 
             // Set threshold to 0 (accept all priorities)
-            let threshold_addr = base + offset::CONTEXT_BASE
+            let threshold_addr = base
+                + offset::CONTEXT_BASE
                 + context * offset::CONTEXT_STRIDE
                 + offset::THRESHOLD_OFFSET;
             core::ptr::write_volatile(threshold_addr as *mut u32, 0);
@@ -69,7 +71,8 @@ pub fn enable_irq(irq: u32, hart: u32) {
     let bit_idx = irq % 32;
 
     unsafe {
-        let enable_addr = base + offset::ENABLE_BASE
+        let enable_addr = base
+            + offset::ENABLE_BASE
             + (context as u64) * offset::ENABLE_STRIDE
             + (word_idx as u64) * 4;
         let mut val = core::ptr::read_volatile(enable_addr as *const u32);
@@ -90,7 +93,8 @@ pub fn disable_irq(irq: u32, hart: u32) {
     let bit_idx = irq % 32;
 
     unsafe {
-        let enable_addr = base + offset::ENABLE_BASE
+        let enable_addr = base
+            + offset::ENABLE_BASE
             + (context as u64) * offset::ENABLE_STRIDE
             + (word_idx as u64) * 4;
         let mut val = core::ptr::read_volatile(enable_addr as *const u32);
@@ -135,7 +139,8 @@ pub fn set_threshold(hart: u32, threshold: u8) {
 
     let context = hart * 2 + 1;
     unsafe {
-        let threshold_addr = base + offset::CONTEXT_BASE
+        let threshold_addr = base
+            + offset::CONTEXT_BASE
             + (context as u64) * offset::CONTEXT_STRIDE
             + offset::THRESHOLD_OFFSET;
         core::ptr::write_volatile(threshold_addr as *mut u32, threshold as u32);
@@ -151,7 +156,8 @@ pub fn claim(hart: u32) -> u32 {
 
     let context = hart * 2 + 1;
     unsafe {
-        let claim_addr = base + offset::CONTEXT_BASE
+        let claim_addr = base
+            + offset::CONTEXT_BASE
             + (context as u64) * offset::CONTEXT_STRIDE
             + offset::CLAIM_COMPLETE_OFFSET;
         core::ptr::read_volatile(claim_addr as *const u32)
@@ -167,7 +173,8 @@ pub fn complete(hart: u32, irq: u32) {
 
     let context = hart * 2 + 1;
     unsafe {
-        let complete_addr = base + offset::CONTEXT_BASE
+        let complete_addr = base
+            + offset::CONTEXT_BASE
             + (context as u64) * offset::CONTEXT_STRIDE
             + offset::CLAIM_COMPLETE_OFFSET;
         core::ptr::write_volatile(complete_addr as *mut u32, irq);

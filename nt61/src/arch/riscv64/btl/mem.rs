@@ -32,7 +32,9 @@ pub fn set_decoder_mode(m: DecMode) {
 pub fn decoder_mode() -> DecMode {
     if DEC_MODE.load(core::sync::atomic::Ordering::Acquire) == 0 {
         DecMode::Mode32
-    } else { DecMode::Mode64 }
+    } else {
+        DecMode::Mode64
+    }
 }
 
 /// Kernel-mode proxy: translate a guest read into a kernel-side
@@ -52,7 +54,9 @@ pub fn write_virt(_va: u64, _data: &[u8]) -> bool {
 
 fn buf_fill(buf: &mut [u8], v: u8) -> usize {
     let n = buf.len();
-    for b in buf.iter_mut() { *b = v; }
+    for b in buf.iter_mut() {
+        *b = v;
+    }
     n
 }
 

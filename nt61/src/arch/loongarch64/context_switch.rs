@@ -109,11 +109,7 @@ mod asm_impl {
 ///
 /// This is used by `ke::process::create_user_process` to bootstrap a
 /// new thread's kernel-stack context before its first `swap_context`.
-pub fn init_user_frame(
-    frame: &mut ContextFrame,
-    user_entry: u64,
-    user_stack_top: u64,
-) {
+pub fn init_user_frame(frame: &mut ContextFrame, user_entry: u64, user_stack_top: u64) {
     frame.r0 = 0;
     frame.ra = user_entry; // when we `ertn` out of swap_context, ra jumps here
     frame.sp = user_stack_top;
@@ -190,10 +186,7 @@ pub unsafe fn restore_context(frame: *const ContextFrame) {
 /// Same as `swap_context` plus `out` must be a `ContextFrame` of a
 /// currently-running thread.
 #[no_mangle]
-pub unsafe extern "C" fn KiSwapContext(
-    out: *mut ContextFrame,
-    incoming: *const ContextFrame,
-) {
+pub unsafe extern "C" fn KiSwapContext(out: *mut ContextFrame, incoming: *const ContextFrame) {
     // Save callee-saved registers into `out`.
     save_context(out);
     // Restore callee-saved registers from `incoming`.

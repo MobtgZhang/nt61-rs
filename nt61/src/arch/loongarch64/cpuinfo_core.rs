@@ -55,9 +55,7 @@ static CAPS: [AtomicU32; MAX_CPUS] = {
     // Initialize all zeros via a const helper.
     [const { AtomicU32::new(0) }; MAX_CPUS]
 };
-static CAPS_EXT: [AtomicU32; MAX_CPUS] = {
-    [const { AtomicU32::new(0) }; MAX_CPUS]
-};
+static CAPS_EXT: [AtomicU32; MAX_CPUS] = { [const { AtomicU32::new(0) }; MAX_CPUS] };
 
 fn encode_primary(cap: &PerCpuCapability) -> u32 {
     // Bits 0..=7 physical_id, bits 8..=15 thread_id, bits 16..=23 smt_threads,
@@ -70,7 +68,9 @@ fn encode_primary(cap: &PerCpuCapability) -> u32 {
 
 fn encode_ext(cap: &PerCpuCapability) -> u32 {
     let mut v = cap.features;
-    if cap.is_primary_thread { v |= 1 << 31; }
+    if cap.is_primary_thread {
+        v |= 1 << 31;
+    }
     v
 }
 
@@ -90,7 +90,9 @@ fn decode(idx: usize) -> PerCpuCapability {
 /// Populate `cpu_id`'s capability record from the SoC/cpuinfo state.
 /// Designed to be called once during boot for each logical CPU.
 pub fn set_for_cpu(cpu_id: usize, physical_id: u8, thread_id: u8) {
-    if cpu_id >= MAX_CPUS { return; }
+    if cpu_id >= MAX_CPUS {
+        return;
+    }
     let smt_threads = if soc::is_smt_capable() { 2 } else { 1 };
     let microarch = soc::microarch_get() as u8;
     let features = crate::arch::loongarch64::cpuinfo::features_mask() as u32;

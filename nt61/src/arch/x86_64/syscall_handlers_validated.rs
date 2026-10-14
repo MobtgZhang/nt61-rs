@@ -4,10 +4,10 @@
 //! to safely handle user-mode parameters in system calls.
 
 use super::syscall_validation::{
-    probe_for_read, probe_for_write, probe_for_read_aligned, probe_for_write_aligned,
-    capture_user_string, STATUS_ACCESS_VIOLATION,
+    capture_user_string, probe_for_read, probe_for_read_aligned, probe_for_write,
+    probe_for_write_aligned, STATUS_ACCESS_VIOLATION,
 };
-use crate::libs::ntdll::types::{NTSTATUS, HANDLE};
+use crate::libs::ntdll::types::{HANDLE, NTSTATUS};
 
 /// All user-mode pointers are validated before access.
 pub unsafe fn nt_read_file_validated(
@@ -104,7 +104,7 @@ pub unsafe fn nt_allocate_virtual_memory_validated(
 pub unsafe fn nt_create_file_validated(
     file_handle: *mut HANDLE,
     desired_access: u32,
-    object_name_ptr: *const u8,  // UNICODE_STRING pointer
+    object_name_ptr: *const u8, // UNICODE_STRING pointer
     share_access: u32,
     create_disposition: u32,
 ) -> NTSTATUS {

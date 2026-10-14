@@ -30,12 +30,12 @@ pub fn init_with_base(base: u64) {
     plic::init(real);
     // Threshold = 0 — accept everything enabled above priority 0.
     plic::set_threshold(0, 1, 0); // hart 0, S-mode context
-    // Pre-enable the typical QEMU virt IRQs.
-    //   1 = virtio device 0 (block, net, ...)
-    //   10 = UART16550 (used by `serial.rs`)
-    // These can be re-tuned by the platform driver later.
+                                  // Pre-enable the typical QEMU virt IRQs.
+                                  //   1 = virtio device 0 (block, net, ...)
+                                  //   10 = UART16550 (used by `serial.rs`)
+                                  // These can be re-tuned by the platform driver later.
     plic::enable(10, 7); // UART16550 priority 7
-    plic::enable(1, 1);  // virtio priority 1
+    plic::enable(1, 1); // virtio priority 1
 }
 
 /// Handle a pending external interrupt on the current hart.

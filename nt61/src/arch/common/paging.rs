@@ -31,14 +31,22 @@ impl PageFlags {
     pub const fn contains(self, other: Self) -> bool {
         (self.0 & other.0) == other.0
     }
-    pub const fn bits(self) -> u64 { self.0 }
-    pub const fn from_bits(bits: u64) -> Self { Self(bits) }
-    pub const fn with(self, flag: Self) -> Self { Self(self.0 | flag.0) }
+    pub const fn bits(self) -> u64 {
+        self.0
+    }
+    pub const fn from_bits(bits: u64) -> Self {
+        Self(bits)
+    }
+    pub const fn with(self, flag: Self) -> Self {
+        Self(self.0 | flag.0)
+    }
 }
 
 impl core::ops::BitOr for PageFlags {
     type Output = Self;
-    fn bitor(self, rhs: Self) -> Self { Self(self.0 | rhs.0) }
+    fn bitor(self, rhs: Self) -> Self {
+        Self(self.0 | rhs.0)
+    }
 }
 
 // =====================================================================

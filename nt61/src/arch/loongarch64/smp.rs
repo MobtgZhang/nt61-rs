@@ -19,12 +19,18 @@ use crate::arch::loongarch64::soc;
 
 static CPU_COUNT: AtomicU32 = AtomicU32::new(1);
 
-pub fn cpu_count() -> u32 { CPU_COUNT.load(Ordering::Relaxed) }
+pub fn cpu_count() -> u32 {
+    CPU_COUNT.load(Ordering::Relaxed)
+}
 
 /// Number of SMT threads per physical core for the running SoC.
 /// Returns `1` for LA364/LA464, `2` for LA664.
 pub fn smt_threads() -> u8 {
-    if soc::is_smt_capable() { 2 } else { 1 }
+    if soc::is_smt_capable() {
+        2
+    } else {
+        1
+    }
 }
 
 /// Total logical CPUs considering SMT:

@@ -22,8 +22,8 @@ pub mod context;
 pub mod context_switch;
 pub mod cpuinfo;
 pub mod csr;
-pub mod framebuffer;
 pub mod fpu;
+pub mod framebuffer;
 pub mod gdt;
 pub mod hpet;
 pub mod idt;
@@ -114,8 +114,13 @@ pub fn get_cpu_count() -> u32 {
 // Re-export commonly used types (matches x86_64 / aarch64 / loongarch64
 // re-exports in their respective `arch/*/mod.rs`).
 pub use context::CpuContext;
-pub use context_switch::{ContextFrame, swap_context};
+pub use context_switch::{swap_context, ContextFrame};
 pub use cpuinfo::{IsaExtensions, PerHartCpuInfo};
 pub use paging::{PageTableEntry, PhysAddr, VirtAddr};
 pub use soc::{SocInfo, SocType};
 pub use trap::{TrapFrame, TrapKind};
+pub mod atomic;
+pub mod clint_enhanced;
+pub mod plic_enhanced;
+pub mod ssdt;
+pub mod tlb;

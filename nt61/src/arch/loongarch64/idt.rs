@@ -16,15 +16,15 @@ global_asm!(
     ".align 12",
     ".global loongarch64_exception",
     "loongarch64_exception:",
-    "  csrwr $t0, 0x30",   // SAVE0 = scratch
-    "  csrrd $t0, 0x1",    // PRMD
-    "  csrwr $t0, 0x31",   // SAVE1
-    "  csrrd $t0, 0x6",    // ERA
-    "  csrwr $t0, 0x32",   // SAVE2
-    "  csrrd $t0, 0x7",    // BADV
-    "  csrwr $t0, 0x33",   // SAVE3
-    "  csrrd $t0, 0x0",    // CRMD
-    "  csrwr $t0, 0x34",   // SAVE4
+    "  csrwr $t0, 0x30", // SAVE0 = scratch
+    "  csrrd $t0, 0x1",  // PRMD
+    "  csrwr $t0, 0x31", // SAVE1
+    "  csrrd $t0, 0x6",  // ERA
+    "  csrwr $t0, 0x32", // SAVE2
+    "  csrrd $t0, 0x7",  // BADV
+    "  csrwr $t0, 0x33", // SAVE3
+    "  csrrd $t0, 0x0",  // CRMD
+    "  csrwr $t0, 0x34", // SAVE4
     "  la  $sp, _exception_stack_top",
     "  addi.d $sp, $sp, -224",
     "  st.d $ra, $sp, 0",
@@ -113,6 +113,8 @@ pub fn init() {
 #[no_mangle]
 pub extern "C" fn handle_trap(_frame: u64) {
     let cause: u64;
-    unsafe { asm!("csrrd {}, 0x9", out(reg) cause, options(nostack)); }
+    unsafe {
+        asm!("csrrd {}, 0x9", out(reg) cause, options(nostack));
+    }
     // crate::kprintln!("[loongarch] exception cause=0x{:x}", cause);
 }

@@ -18,7 +18,7 @@ use core::arch::asm;
 use core::ptr;
 
 use crate::mm::pfn;
-use crate::mm::pte::{MMPTE, pfn_from_phys, pfn_to_phys};
+use crate::mm::pte::{pfn_from_phys, pfn_to_phys, MMPTE};
 use crate::mm::vas::{pde_address_of, ppe_address_of, pte_address_of, pxe_address_of};
 
 pub const PAGE_SIZE: u64 = 4096;
@@ -34,11 +34,21 @@ pub struct PageTableEntry {
     pub value: u64,
 }
 impl PageTableEntry {
-    pub const fn empty() -> Self { Self { value: 0 } }
-    pub fn present(&self) -> bool { (self.value & 1) != 0 }
-    pub fn writable(&self) -> bool { (self.value & 2) != 0 }
-    pub fn user(&self) -> bool { (self.value & 4) != 0 }
-    pub fn frame(&self) -> u64 { self.value & 0x000F_FFFF_FFFF_F000 }
+    pub const fn empty() -> Self {
+        Self { value: 0 }
+    }
+    pub fn present(&self) -> bool {
+        (self.value & 1) != 0
+    }
+    pub fn writable(&self) -> bool {
+        (self.value & 2) != 0
+    }
+    pub fn user(&self) -> bool {
+        (self.value & 4) != 0
+    }
+    pub fn frame(&self) -> u64 {
+        self.value & 0x000F_FFFF_FFFF_F000
+    }
     pub fn set(&mut self, addr: u64, flags: u64) {
         self.value = (addr & 0x000F_FFFF_FFFF_F000) | (flags & 0xFFF);
     }
@@ -51,19 +61,27 @@ impl PageTableEntry {
 fn walk_to_leaf(va: u64) -> Option<*mut MMPTE> {
     // PML4 entry (PXE)
     let pxe = unsafe { &*pxe_address_of(va) };
-    if !pxe.is_hardware() { return None; }
+    if !pxe.is_hardware() {
+        return None;
+    }
     // PDPT entry (PPE)
     let ppe = unsafe { &*ppe_address_of(va) };
-    if !ppe.is_hardware() { return None; }
+    if !ppe.is_hardware() {
+        return None;
+    }
     // PD entry (PDE)
     let pde = unsafe { &*pde_address_of(va) };
-    if !pde.is_hardware() { return None; }
+    if !pde.is_hardware() {
+        return None;
+    }
     if pde.large() {
         // 2 MiB page — caller handles large pages via map_large_page.
         return None;
     }
     let pte = pte_address_of(va);
-    if pte.is_null() { return None; }
+    if pte.is_null() {
+        return None;
+    }
     Some(pte)
 }
 
@@ -77,7 +95,7 @@ unsafe fn install_intermediate(parent_pte: *mut u64, level: u32) -> bool {
     };
     let new_pa = pfn_to_phys(new_pfn);
     // // kprintln!("[MAP] install_intermediate: pfn={} pa=0x{:x} parent=0x{:x} level={}",
-// //               new_pfn, new_pa, parent_pte as u64, level);
+    // //               new_pfn, new_pa, parent_pte as u64, level);
     // Try the direct identity-mapped write first. If the
     // UEFI-loaded page tables identity-map this PFN, this is
     // the fastest path.
@@ -125,7 +143,9 @@ pub fn map_page(va: u64, pa: u64, flags: u64) -> bool {
     let pml4_pa = crate::mm::vas::current_root();
     // // kprintln!("[MAP] map_page: pml4_pa=0x{:x}", pml4_pa);
     let pml4_va = pml4_pa; // identity-mapped in low memory under UEFI.
-    if pml4_va == 0 { return false; }
+    if pml4_va == 0 {
+        return false;
+    }
 
     let pml4_idx = ((va >> 39) & 0x1FF) as usize;
     let pml4e = (pml4_va as *mut u64).wrapping_add(pml4_idx);
@@ -135,7 +155,9 @@ pub fn map_page(va: u64, pa: u64, flags: u64) -> bool {
         // // kprintln!("[MAP] map_page: pml4e_val=0x{:x}", pml4e_val);
         if (pml4e_val & 1) == 0 {
             // // kprintln!("[MAP] map_page: installing PDPT");
-            if !install_intermediate(pml4e, 1) { return false; }
+            if !install_intermediate(pml4e, 1) {
+                return false;
+            }
         }
         let pdpt_va = *pml4e & 0x000F_FFFF_FFFF_F000;
         // // kprintln!("[MAP] map_page: pdpt_va=0x{:x}", pdpt_va);
@@ -146,7 +168,9 @@ pub fn map_page(va: u64, pa: u64, flags: u64) -> bool {
         // // kprintln!("[MAP] map_page: pdpte_val=0x{:x}", pdpte_val);
         if (pdpte_val & 1) == 0 {
             // // kprintln!("[MAP] map_page: installing PD");
-            if !install_intermediate(pdpte, 2) { return false; }
+            if !install_intermediate(pdpte, 2) {
+                return false;
+            }
         }
         let pd_va = *pdpte & 0x000F_FFFF_FFFF_F000;
         // // kprintln!("[MAP] map_page: pd_va=0x{:x}", pd_va);
@@ -157,7 +181,9 @@ pub fn map_page(va: u64, pa: u64, flags: u64) -> bool {
         // // kprintln!("[MAP] map_page: pde_val=0x{:x}", pde_val);
         if (pde_val & 1) == 0 {
             // // kprintln!("[MAP] map_page: installing PT");
-            if !install_intermediate(pde, 3) { return false; }
+            if !install_intermediate(pde, 3) {
+                return false;
+            }
         }
         let pt_va = *pde & 0x000F_FFFF_FFFF_F000;
         // // kprintln!("[MAP] map_page: pt_va=0x{:x}", pt_va);
@@ -178,10 +204,14 @@ pub fn map_page(va: u64, pa: u64, flags: u64) -> bool {
 /// address.
 pub fn unmap_page(va: u64) -> Option<u64> {
     let pte_ptr = pte_address_of(va);
-    if pte_ptr.is_null() { return None; }
+    if pte_ptr.is_null() {
+        return None;
+    }
     unsafe {
         let pte = &mut *pte_ptr;
-        if !pte.is_hardware() { return None; }
+        if !pte.is_hardware() {
+            return None;
+        }
         let pa = pte.hardware_page_frame();
         pte.clear();
         invalidate_tlb(va);
@@ -194,20 +224,32 @@ pub fn unmap_page(va: u64) -> Option<u64> {
 /// PTE state.
 pub fn translate_virt(va: u64) -> Option<u64> {
     let pxe = unsafe { &*pxe_address_of(va) };
-    if !pxe.is_hardware() { return None; }
-    if pxe.large() { return None; }
+    if !pxe.is_hardware() {
+        return None;
+    }
+    if pxe.large() {
+        return None;
+    }
     let ppe = unsafe { &*ppe_address_of(va) };
-    if !ppe.is_hardware() { return None; }
-    if ppe.large() { return None; }
+    if !ppe.is_hardware() {
+        return None;
+    }
+    if ppe.large() {
+        return None;
+    }
     let pde = unsafe { &*pde_address_of(va) };
-    if !pde.is_hardware() { return None; }
+    if !pde.is_hardware() {
+        return None;
+    }
     if pde.large() {
         // 2 MiB page: physical base is bits 51:21.
         let pa = pde.hardware_page_frame() & !0x1F_FFFF;
         return Some(pa | (va & 0x1F_FFFF));
     }
     let pte = unsafe { &*pte_address_of(va) };
-    if !pte.is_hardware() { return None; }
+    if !pte.is_hardware() {
+        return None;
+    }
     Some(pte.hardware_page_frame() | (va & 0xFFF))
 }
 
@@ -230,7 +272,9 @@ pub unsafe fn init() {
 /// Read the current CR3.
 pub fn read_page_root_pfn() -> u64 {
     let cr3: u64;
-    unsafe { asm!("mov {}, cr3", out(reg) cr3, options(nostack)); }
+    unsafe {
+        asm!("mov {}, cr3", out(reg) cr3, options(nostack));
+    }
     pfn_from_phys(cr3)
 }
 

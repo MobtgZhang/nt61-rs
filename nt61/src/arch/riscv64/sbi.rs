@@ -33,7 +33,9 @@ pub struct SbiRet {
 
 impl SbiRet {
     pub const SUCCESS: SbiRet = SbiRet { error: 0, value: 0 };
-    pub fn is_ok(&self) -> bool { self.error == 0 }
+    pub fn is_ok(&self) -> bool {
+        self.error == 0
+    }
 }
 
 /// Make an SBI call (EID in a7, FID in a6, args in a0..a5).
@@ -44,8 +46,16 @@ impl SbiRet {
 /// the running firmware; an unsupported EID may produce arbitrary
 /// behaviour on legacy firmwares.
 #[inline(always)]
-pub unsafe fn sbi_call(eid: u64, fid: u64, arg0: u64, arg1: u64, arg2: u64,
-                        arg3: u64, arg4: u64, arg5: u64) -> SbiRet {
+pub unsafe fn sbi_call(
+    eid: u64,
+    fid: u64,
+    arg0: u64,
+    arg1: u64,
+    arg2: u64,
+    arg3: u64,
+    arg4: u64,
+    arg5: u64,
+) -> SbiRet {
     let (err, val): (i64, i64);
     asm!(
         "mv    a0, {a0}",
@@ -71,7 +81,10 @@ pub unsafe fn sbi_call(eid: u64, fid: u64, arg0: u64, arg1: u64, arg2: u64,
         val = out(reg) val,
         options(nostack),
     );
-    SbiRet { error: err, value: val }
+    SbiRet {
+        error: err,
+        value: val,
+    }
 }
 
 // =====================================================================
@@ -136,7 +149,16 @@ pub unsafe fn impl_id() -> u64 {
 /// supports it.
 pub unsafe fn set_timer(stime_value: u64) -> SbiRet {
     if probe(eid::TIME) {
-        sbi_call(eid::TIME, 0 /* SET_TIMER */, stime_value, 0, 0, 0, 0, 0)
+        sbi_call(
+            eid::TIME,
+            0, /* SET_TIMER */
+            stime_value,
+            0,
+            0,
+            0,
+            0,
+            0,
+        )
     } else {
         sbi_call(eid::LEGACY_SET_TIMER, 0, stime_value, 0, 0, 0, 0, 0)
     }
@@ -157,7 +179,16 @@ pub unsafe fn set_timer(stime_value: u64) -> SbiRet {
 /// spec defines a custom calling convention — the entry must
 /// immediately switch to the kernel's per-CPU trampoline).
 pub unsafe fn hsm_hart_start(hartid: u64, start_addr: u64, opaque: u64) -> SbiRet {
-    sbi_call(eid::HSM, 0 /* HART_START */, hartid, start_addr, opaque, 0, 0, 0)
+    sbi_call(
+        eid::HSM,
+        0, /* HART_START */
+        hartid,
+        start_addr,
+        opaque,
+        0,
+        0,
+        0,
+    )
 }
 
 /// Stop the calling hart. Used for shutdown sequences where the
@@ -168,7 +199,16 @@ pub unsafe fn hsm_hart_stop() -> SbiRet {
 
 /// Get the hart's status (started / stopped).
 pub unsafe fn hsm_hart_status(hartid: u64) -> SbiRet {
-    sbi_call(eid::HSM, 2 /* HART_GET_STATUS */, hartid, 0, 0, 0, 0, 0)
+    sbi_call(
+        eid::HSM,
+        2, /* HART_GET_STATUS */
+        hartid,
+        0,
+        0,
+        0,
+        0,
+        0,
+    )
 }
 
 // =====================================================================
@@ -193,7 +233,16 @@ pub enum ResetType {
 }
 
 pub unsafe fn system_reset(ty: ResetType) -> SbiRet {
-    sbi_call(eid::SRST, 0 /* SYSTEM_RESET */, ty as u64, 0, 0, 0, 0, 0)
+    sbi_call(
+        eid::SRST,
+        0, /* SYSTEM_RESET */
+        ty as u64,
+        0,
+        0,
+        0,
+        0,
+        0,
+    )
 }
 
 // =====================================================================

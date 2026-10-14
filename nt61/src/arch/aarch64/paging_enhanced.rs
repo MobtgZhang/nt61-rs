@@ -6,8 +6,8 @@
 //! - TLB integration
 //! - Cache coherency
 
-use super::tlb;
 use super::cache;
+use super::tlb;
 use core::arch::asm;
 
 pub const PAGE_SIZE: u64 = 4096;
@@ -316,7 +316,7 @@ pub fn init() {
             | (0 << 14)             // TG0: 4KB granule
             | (2 << 30)             // TG1: 4KB granule
             | (1 << 23)             // EPD0: use TTBR0
-            | (0 << 37);            // TBI0: top byte ignored
+            | (0 << 37); // TBI0: top byte ignored
 
         asm!("msr tcr_el1, {}", in(reg) tcr, options(nostack));
         asm!("isb", options(nostack));

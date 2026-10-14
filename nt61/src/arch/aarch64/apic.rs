@@ -20,23 +20,35 @@ static mut GICC_BASE: u64 = 0;
 
 fn gicd_reg(off: u32) -> u32 {
     let b = unsafe { GICD_BASE };
-    if b == 0 { return 0; }
+    if b == 0 {
+        return 0;
+    }
     unsafe { ptr::read_volatile((b + off as u64) as *const u32) }
 }
 fn gicd_write(off: u32, val: u32) {
     let b = unsafe { GICD_BASE };
-    if b == 0 { return; }
-    unsafe { ptr::write_volatile((b + off as u64) as *mut u32, val); }
+    if b == 0 {
+        return;
+    }
+    unsafe {
+        ptr::write_volatile((b + off as u64) as *mut u32, val);
+    }
 }
 fn gicc_reg(off: u32) -> u32 {
     let b = unsafe { GICC_BASE };
-    if b == 0 { return 0; }
+    if b == 0 {
+        return 0;
+    }
     unsafe { ptr::read_volatile((b + off as u64) as *const u32) }
 }
 fn gicc_write(off: u32, val: u32) {
     let b = unsafe { GICC_BASE };
-    if b == 0 { return; }
-    unsafe { ptr::write_volatile((b + off as u64) as *mut u32, val); }
+    if b == 0 {
+        return;
+    }
+    unsafe {
+        ptr::write_volatile((b + off as u64) as *mut u32, val);
+    }
 }
 
 /// Initialise the GIC distributor and CPU interface. `gicd_base`

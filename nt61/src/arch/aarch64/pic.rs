@@ -5,8 +5,7 @@
 //! enable / acknowledge primitives under a more familiar interface.
 
 pub use crate::hal::aarch64::apic::{
-    handle_irq as pic_handle_irq,
-    dispatch_irq as pic_dispatch_irq,
+    dispatch_irq as pic_dispatch_irq, handle_irq as pic_handle_irq,
 };
 
 /// Enable an SPI on the controller. On GICv2 this maps to writing the

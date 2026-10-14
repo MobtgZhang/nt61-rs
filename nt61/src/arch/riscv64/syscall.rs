@@ -118,7 +118,9 @@ pub unsafe extern "C" fn dispatch_syscall(frame: *mut TrapFrame) {
     // Return value goes back in $a0 of the saved frame. The
     // trap dispatcher in [`super::trap`] is responsible for
     // advancing `sepc` past the `ecall`.
-    unsafe { (*frame).a0 = result; }
+    unsafe {
+        (*frame).a0 = result;
+    }
 }
 
 /// Top-level handler. Phase 1 dispatches the subset of NT calls
@@ -159,29 +161,35 @@ fn handle(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> u64
         SYS_NT_QUERY_VIRTUAL_MEMORY => {
             // Phase 3: validate that the virtual address falls inside a
             // known user-mode mapping. The address is passed in `a1`.
-            if a1 == 0 { return STATUS_INVALID_PARAMETER; }
+            if a1 == 0 {
+                return STATUS_INVALID_PARAMETER;
+            }
             verify_user_va(a1)
         }
         SYS_NT_PROTECT_VIRTUAL_MEMORY => {
             // Placeholder: bogus protection values are rejected.
-            if a3 == 0 { return STATUS_INVALID_PARAMETER; }
+            if a3 == 0 {
+                return STATUS_INVALID_PARAMETER;
+            }
             let _ = (a1, a2, a3);
             STATUS_NOT_IMPLEMENTED
         }
         SYS_NT_ALLOCATE_VIRTUAL_MEMORY => {
             // 'a2' is the zero-bit size, a3 the allocation type.
-            if a2 == 0 { return STATUS_INVALID_PARAMETER; }
+            if a2 == 0 {
+                return STATUS_INVALID_PARAMETER;
+            }
             verify_user_va(a1)
         }
-        SYS_NT_FREE_VIRTUAL_MEMORY => {
-            verify_user_va(a1)
-        }
+        SYS_NT_FREE_VIRTUAL_MEMORY => verify_user_va(a1),
         SYS_NT_FLUSH_INSTRUCTION_CACHE => {
             // Flush a region of user-mode memory from the I-cache.
             // For RV64 the relevant instruction is `fence.i`; the
             // BTL module hooks into this call to ensure translated
             // blocks are coherent with self-modifying code.
-            unsafe { flush_icache_range(a1, a2); }
+            unsafe {
+                flush_icache_range(a1, a2);
+            }
             STATUS_SUCCESS
         }
         _ => {
@@ -202,7 +210,9 @@ fn verify_user_va(va: u64) -> u64 {
         return STATUS_SUCCESS;
     }
     // For Phase 3 we accept anything in the lower half as user VA.
-    if va < 0x7FFF_FFFF_FFFF { return STATUS_SUCCESS; }
+    if va < 0x7FFF_FFFF_FFFF {
+        return STATUS_SUCCESS;
+    }
     STATUS_ACCESS_VIOLATION
 }
 
@@ -214,12 +224,11 @@ fn verify_user_va(va: u64) -> u64 {
 /// uses just the base `fence.i` which is uniform across the 8 SoCs.
 #[inline(never)]
 unsafe fn flush_icache_range(_start: u64, _size: u64) {
-    if _size == 0 { return; }
+    if _size == 0 {
+        return;
+    }
     unsafe {
-        core::arch::asm!(
-            "fence.i",
-            options(nostack, readonly),
-        );
+        core::arch::asm!("fence.i", options(nostack, readonly),);
     }
 }
 
@@ -249,6 +258,8 @@ pub fn dispatch_syscall_raw(num: u64, args: [u64; 5]) -> u64 {
 #[inline(always)]
 fn read_a7() -> u64 {
     let v: u64;
-    unsafe { asm!("mv {}, a7", out(reg) v, options(nostack, preserves_flags)); }
+    unsafe {
+        asm!("mv {}, a7", out(reg) v, options(nostack, preserves_flags));
+    }
     v
 }

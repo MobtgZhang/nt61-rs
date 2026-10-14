@@ -59,7 +59,9 @@ pub fn translate_nt_syscall(nr: u32) -> Option<u64> {
         (nt::NtOpenProcessToken, 0x36),
     ];
     for &(n, t) in mapping {
-        if n == nr { return Some(t); }
+        if n == nr {
+            return Some(t);
+        }
     }
     None
 }

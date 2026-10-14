@@ -246,13 +246,21 @@ pub mod sstatus {
     pub const MXR: u64 = 1 << 19;
 
     #[inline(always)]
-    pub fn read() -> u64 { unsafe { csrr(0x100) } }
+    pub fn read() -> u64 {
+        unsafe { csrr(0x100) }
+    }
     #[inline(always)]
-    pub fn write(v: u64) { unsafe { super::csrw(0x100, v) } }
+    pub fn write(v: u64) {
+        unsafe { super::csrw(0x100, v) }
+    }
     #[inline(always)]
-    pub fn set(mask: u64) { unsafe { super::csrs(0x100, mask) } }
+    pub fn set(mask: u64) {
+        unsafe { super::csrs(0x100, mask) }
+    }
     #[inline(always)]
-    pub fn clear(mask: u64) { unsafe { super::csrc(0x100, mask) } }
+    pub fn clear(mask: u64) {
+        unsafe { super::csrc(0x100, mask) }
+    }
 }
 
 // =====================================================================
@@ -269,13 +277,21 @@ pub mod sie {
     pub const SEIE: u64 = 1 << 9;
 
     #[inline(always)]
-    pub fn read() -> u64 { unsafe { csrr(0x104) } }
+    pub fn read() -> u64 {
+        unsafe { csrr(0x104) }
+    }
     #[inline(always)]
-    pub fn write(v: u64) { unsafe { super::csrw(0x104, v) } }
+    pub fn write(v: u64) {
+        unsafe { super::csrw(0x104, v) }
+    }
     #[inline(always)]
-    pub fn set(mask: u64) { unsafe { super::csrs(0x104, mask) } }
+    pub fn set(mask: u64) {
+        unsafe { super::csrs(0x104, mask) }
+    }
     #[inline(always)]
-    pub fn clear(mask: u64) { unsafe { super::csrc(0x104, mask) } }
+    pub fn clear(mask: u64) {
+        unsafe { super::csrc(0x104, mask) }
+    }
 }
 
 // =====================================================================
@@ -290,9 +306,13 @@ pub mod stvec {
     pub const BASE_MASK: u64 = !0b11;
 
     #[inline(always)]
-    pub fn read() -> u64 { unsafe { csrr(0x105) } }
+    pub fn read() -> u64 {
+        unsafe { csrr(0x105) }
+    }
     #[inline(always)]
-    pub fn write(v: u64) { unsafe { super::csrw(0x105, v) } }
+    pub fn write(v: u64) {
+        unsafe { super::csrw(0x105, v) }
+    }
 }
 
 // =====================================================================
@@ -306,13 +326,21 @@ pub mod sip {
     pub const SEIP: u64 = 1 << 9;
 
     #[inline(always)]
-    pub fn read() -> u64 { unsafe { csrr(0x144) } }
+    pub fn read() -> u64 {
+        unsafe { csrr(0x144) }
+    }
     #[inline(always)]
-    pub fn write(v: u64) { unsafe { super::csrw(0x144, v) } }
+    pub fn write(v: u64) {
+        unsafe { super::csrw(0x144, v) }
+    }
     #[inline(always)]
-    pub fn set(mask: u64) { unsafe { super::csrs(0x144, mask) } }
+    pub fn set(mask: u64) {
+        unsafe { super::csrs(0x144, mask) }
+    }
     #[inline(always)]
-    pub fn clear(mask: u64) { unsafe { super::csrc(0x144, mask) } }
+    pub fn clear(mask: u64) {
+        unsafe { super::csrc(0x144, mask) }
+    }
 }
 
 // =====================================================================
@@ -335,9 +363,13 @@ pub mod satp {
     pub const MODE_BARE: u64 = 0;
 
     #[inline(always)]
-    pub fn read() -> u64 { unsafe { csrr(0x180) } }
+    pub fn read() -> u64 {
+        unsafe { csrr(0x180) }
+    }
     #[inline(always)]
-    pub fn write(v: u64) { unsafe { super::csrw(0x180, v) } }
+    pub fn write(v: u64) {
+        unsafe { super::csrw(0x180, v) }
+    }
 }
 
 // =====================================================================
@@ -346,35 +378,68 @@ pub mod satp {
 
 pub mod sepc {
     use super::csrr;
-    #[inline(always)] pub fn read() -> u64 { unsafe { csrr(0x141) } }
-    #[inline(always)] pub fn write(v: u64) { unsafe { super::csrw(0x141, v) } }
+    #[inline(always)]
+    pub fn read() -> u64 {
+        unsafe { csrr(0x141) }
+    }
+    #[inline(always)]
+    pub fn write(v: u64) {
+        unsafe { super::csrw(0x141, v) }
+    }
 }
 
 pub mod scause {
     use super::csrr;
-    #[inline(always)] pub fn read() -> u64 { unsafe { csrr(0x142) } }
-    #[inline(always)] pub fn write(v: u64) { unsafe { super::csrw(0x142, v) } }
+    #[inline(always)]
+    pub fn read() -> u64 {
+        unsafe { csrr(0x142) }
+    }
+    #[inline(always)]
+    pub fn write(v: u64) {
+        unsafe { super::csrw(0x142, v) }
+    }
 }
 
 pub mod stval {
     use super::csrr;
-    #[inline(always)] pub fn read() -> u64 { unsafe { csrr(0x143) } }
-    #[inline(always)] pub fn write(v: u64) { unsafe { super::csrw(0x143, v) } }
+    #[inline(always)]
+    pub fn read() -> u64 {
+        unsafe { csrr(0x143) }
+    }
+    #[inline(always)]
+    pub fn write(v: u64) {
+        unsafe { super::csrw(0x143, v) }
+    }
 }
 
 pub mod sscratch {
     use super::csrr;
-    #[inline(always)] pub fn read() -> u64 { unsafe { csrr(0x140) } }
-    #[inline(always)] pub fn write(v: u64) { unsafe { super::csrw(0x140, v) } }
+    #[inline(always)]
+    pub fn read() -> u64 {
+        unsafe { csrr(0x140) }
+    }
+    #[inline(always)]
+    pub fn write(v: u64) {
+        unsafe { super::csrw(0x140, v) }
+    }
 }
 
 pub mod senvcfg {
     use super::csrr;
     /// FIOM — Fence of I/O implies Memory.
     pub const FIOM: u64 = 1 << 0;
-    #[inline(always)] pub fn read() -> u64 { unsafe { csrr(0x10A) } }
-    #[inline(always)] pub fn write(v: u64) { unsafe { super::csrw(0x10A, v) } }
-    #[inline(always)] pub fn set(mask: u64) { unsafe { super::csrs(0x10A, mask) } }
+    #[inline(always)]
+    pub fn read() -> u64 {
+        unsafe { csrr(0x10A) }
+    }
+    #[inline(always)]
+    pub fn write(v: u64) {
+        unsafe { super::csrw(0x10A, v) }
+    }
+    #[inline(always)]
+    pub fn set(mask: u64) {
+        unsafe { super::csrs(0x10A, mask) }
+    }
 }
 
 // =====================================================================
@@ -384,13 +449,17 @@ pub mod senvcfg {
 #[inline(always)]
 pub fn read_tp() -> u64 {
     let v: u64;
-    unsafe { asm!("mv {}, tp", out(reg) v, options(nostack, preserves_flags)); }
+    unsafe {
+        asm!("mv {}, tp", out(reg) v, options(nostack, preserves_flags));
+    }
     v
 }
 
 #[inline(always)]
 pub fn write_tp(v: u64) {
-    unsafe { asm!("mv tp, {}", in(reg) v, options(nostack, preserves_flags)); }
+    unsafe {
+        asm!("mv tp, {}", in(reg) v, options(nostack, preserves_flags));
+    }
 }
 
 // =====================================================================
@@ -400,22 +469,34 @@ pub fn write_tp(v: u64) {
 
 pub mod mhartid {
     use super::csrr;
-    #[inline(always)] pub fn read() -> u64 { unsafe { csrr(0xF14) } }
+    #[inline(always)]
+    pub fn read() -> u64 {
+        unsafe { csrr(0xF14) }
+    }
 }
 
 pub mod mvendorid {
     use super::csrr;
-    #[inline(always)] pub fn read() -> u64 { unsafe { csrr(0xF11) } }
+    #[inline(always)]
+    pub fn read() -> u64 {
+        unsafe { csrr(0xF11) }
+    }
 }
 
 pub mod marchid {
     use super::csrr;
-    #[inline(always)] pub fn read() -> u64 { unsafe { csrr(0xF12) } }
+    #[inline(always)]
+    pub fn read() -> u64 {
+        unsafe { csrr(0xF12) }
+    }
 }
 
 pub mod mimpid {
     use super::csrr;
-    #[inline(always)] pub fn read() -> u64 { unsafe { csrr(0xF13) } }
+    #[inline(always)]
+    pub fn read() -> u64 {
+        unsafe { csrr(0xF13) }
+    }
 }
 
 // =====================================================================
@@ -429,5 +510,8 @@ pub mod misa {
     /// Extension letters (bits 25:0).
     pub const EXT_MASK: u64 = 0x03FF_FFFF;
 
-    #[inline(always)] pub fn read() -> u64 { unsafe { csrr(0x301) } }
+    #[inline(always)]
+    pub fn read() -> u64 {
+        unsafe { csrr(0x301) }
+    }
 }

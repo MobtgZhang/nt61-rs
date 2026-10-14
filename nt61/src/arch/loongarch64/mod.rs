@@ -5,9 +5,9 @@
 //! EBASE. For the bootstrap we just make sure the CPU is in a clean
 //! kernel state and leave the exception vectors at the firmware default.
 
+pub mod btl;
 pub mod context;
 pub mod context_switch;
-pub mod btl;
 pub mod cpuinfo;
 pub mod cpuinfo_core;
 pub mod exception_stack;
@@ -63,7 +63,8 @@ pub fn init() {
         // default (4-level page table) by setting PWCL/PWCH from
         // the canonical values in the architecture manual. These
         // match what Linux uses for a 48-bit VA configuration.
-        let pwcl: u64 = (0x0C << 30) | (0x0C << 24) | (0x0C << 18) | (0x0C << 12) | (0x04 << 6) | 0x04;
+        let pwcl: u64 =
+            (0x0C << 30) | (0x0C << 24) | (0x0C << 18) | (0x0C << 12) | (0x04 << 6) | 0x04;
         let pwch: u64 = (0x0C << 6) | 0x0C;
         asm!("csrwr {}, 0x1C", in(reg) pwcl);
         asm!("csrwr {}, 0x1D", in(reg) pwch);
@@ -89,4 +90,10 @@ pub fn get_cpu_count() -> u32 {
 
 // Re-export commonly used types (matches x86_64 re-exports in arch/x86_64/mod.rs)
 pub use context::CpuContext;
-pub use paging::{PageTableEntry, VirtAddr, PhysAddr};
+pub use paging::{PageTableEntry, PhysAddr, VirtAddr};
+
+pub mod apic;
+pub mod cache;
+pub mod interrupt;
+pub mod ssdt;
+pub mod tlb;

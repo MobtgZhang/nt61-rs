@@ -32,8 +32,8 @@ use super::cache::{insert as cache_insert, lookup as cache_lookup};
 use super::codegen::{encode_block, CodeBlock};
 use super::decoder::{decode_block, DecMode, X86Inst, MAX_DECODED_INSTS};
 use super::mem::{decoder_mode, set_decoder_mode};
-use super::translator::{translate_block, IrInst};
 use super::syscall_glue::{btl_syscall_dispatch, BtlSyscallResult};
+use super::translator::{translate_block, IrInst};
 
 /// Maximum cached guest length translated per call. The first
 /// pass over a chunk of code may translate up to this many bytes
@@ -81,12 +81,16 @@ pub fn translate_and_dispatch(guest_va: u64) -> u64 {
         return host;
     }
     let bytes = read_guest_bytes(guest_va);
-    if bytes.is_empty() { return 0; }
+    if bytes.is_empty() {
+        return 0;
+    }
     let mode = decoder_mode();
     let mut insts = [X86Inst::empty(); MAX_DECODED_INSTS];
     let mut ir: [IrInst; MAX_DECODED_INSTS] = [IrInst::empty(); MAX_DECODED_INSTS];
     let n_dec = decode_block(bytes, guest_va, mode, &mut insts);
-    if n_dec == 0 { return 0; }
+    if n_dec == 0 {
+        return 0;
+    }
     let n_ir = translate_block(&insts[..n_dec], mode, &mut ir);
     let cb: CodeBlock = encode_block(&ir[..n_ir], guest_va);
     // Materialise the code block into cache. We use a tiny static
@@ -103,7 +107,9 @@ fn try_cached(guest_va: u64) -> Option<u64> {
     if host != 0 {
         CACHE_HITS.fetch_add(1, Ordering::Relaxed);
         Some(host)
-    } else { None }
+    } else {
+        None
+    }
 }
 
 fn read_guest_bytes(va: u64) -> &'static [u8] {
@@ -121,8 +127,7 @@ fn read_guest_bytes(va: u64) -> &'static [u8] {
 /// [`crate::arch::riscv64::syscall::dispatch_syscall`] but is
 /// called with the guest-side argument capture (the `rdi..`
 /// registers were lowered to `a0..a5`).
-pub fn route_syscall(num: u64, a0: u64, a1: u64, a2: u64,
-                     a3: u64, a4: u64) -> u64 {
+pub fn route_syscall(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64) -> u64 {
     SYSCALLS_ROUTED.fetch_add(1, Ordering::Relaxed);
     match btl_syscall_dispatch(num, a0, a1, a2, a3, a4) {
         BtlSyscallResult::Handled { result } => result,

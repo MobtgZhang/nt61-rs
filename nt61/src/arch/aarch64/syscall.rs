@@ -61,7 +61,11 @@ pub unsafe extern "C" fn syscall_dispatch_with_tf(syscall_num: u64, tf: *mut Tra
                 Some(b) => b as u64,
                 None => u64::MAX,
             };
-            if c.is_some() { 0 } else { 0xC000_0011 } // STATUS_NO_DATA
+            if c.is_some() {
+                0
+            } else {
+                0xC000_0011
+            } // STATUS_NO_DATA
         }
         _ => STATUS_NOT_IMPLEMENTED,
     }

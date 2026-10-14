@@ -27,16 +27,16 @@ use core::arch::asm;
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrapKind {
-    Int = 0,         // External interrupt
-    PIl = 1,         // Reserved / pending interrupt
-    PIS = 2,         // Same
-    PME = 3,         // Performance monitor
-    PpiHvi = 4,      // Same family
-    Syscall = 5,     // `syscall` instruction (user mode)
-    Breakpoint = 6,  // `break`
+    Int = 0,        // External interrupt
+    PIl = 1,        // Reserved / pending interrupt
+    PIS = 2,        // Same
+    PME = 3,        // Performance monitor
+    PpiHvi = 4,     // Same family
+    Syscall = 5,    // `syscall` instruction (user mode)
+    Breakpoint = 6, // `break`
     InstNonAligned = 7,
     InstAccessFault = 8,
-    InstPageFault = 9,   // PIF
+    InstPageFault = 9, // PIF
     InstPageNonPresentFault = 10,
     InstPageWriteFault = 11,
     LoadPageFault = 12,
@@ -84,10 +84,10 @@ impl From<u32> for TrapKind {
 pub struct TrapFrame {
     pub ra: u64,
     pub tp: u64,
-    pub s: [u64; 9],   // s0..s8
+    pub s: [u64; 9], // s0..s8
     pub fp: u64,
-    pub a: [u64; 8],   // a0..a7
-    pub t: [u64; 8],   // t0..t7
+    pub a: [u64; 8], // a0..a7
+    pub t: [u64; 8], // t0..t7
 }
 
 /// Address-error / page-fault information extracted from the
@@ -103,7 +103,9 @@ pub struct FaultInfo {
 #[inline(always)]
 pub fn read_estat() -> u32 {
     let v: u32;
-    unsafe { asm!("csrrd {0}, 0x9", out(reg) v, options(nostack)); }
+    unsafe {
+        asm!("csrrd {0}, 0x9", out(reg) v, options(nostack));
+    }
     v
 }
 
@@ -111,7 +113,9 @@ pub fn read_estat() -> u32 {
 #[inline(always)]
 pub fn read_era() -> u64 {
     let v: u64;
-    unsafe { asm!("csrrd {0}, 0x6", out(reg) v, options(nostack)); }
+    unsafe {
+        asm!("csrrd {0}, 0x6", out(reg) v, options(nostack));
+    }
     v
 }
 
@@ -119,7 +123,9 @@ pub fn read_era() -> u64 {
 #[inline(always)]
 pub fn read_badv() -> u64 {
     let v: u64;
-    unsafe { asm!("csrrd {0}, 0x7", out(reg) v, options(nostack)); }
+    unsafe {
+        asm!("csrrd {0}, 0x7", out(reg) v, options(nostack));
+    }
     v
 }
 
@@ -127,7 +133,9 @@ pub fn read_badv() -> u64 {
 #[inline(always)]
 pub fn read_prmd() -> u32 {
     let v: u32;
-    unsafe { asm!("csrrd {0}, 0x1", out(reg) v, options(nostack)); }
+    unsafe {
+        asm!("csrrd {0}, 0x1", out(reg) v, options(nostack));
+    }
     v
 }
 
@@ -151,11 +159,11 @@ pub extern "C" fn trap_dispatch(frame: *mut TrapFrame) {
             // module which fills in $a0 with the return value and
             // patches the trap frame so the saved ERA advances past
             // the syscall instruction (we don't actually replay it).
-            unsafe { crate::arch::loongarch64::syscall::dispatch_syscall(frame); }
+            unsafe {
+                crate::arch::loongarch64::syscall::dispatch_syscall(frame);
+            }
         }
-        TrapKind::InstPageFault
-        | TrapKind::LoadPageFault
-        | TrapKind::StorePageFault => {
+        TrapKind::InstPageFault | TrapKind::LoadPageFault | TrapKind::StorePageFault => {
             // Phase 1: not implemented yet — Phase 2 will plug in the
             // mm::vas page-fault handler.
             let badv = read_badv();
@@ -184,8 +192,10 @@ pub extern "C" fn trap_dispatch(frame: *mut TrapFrame) {
         }
         _ => {
             let era = read_era();
-            panic!("LA64 unhandled trap: {:?} (ESTAT={:#x}) @ ERA={:#x}",
-                   kind, estat, era);
+            panic!(
+                "LA64 unhandled trap: {:?} (ESTAT={:#x}) @ ERA={:#x}",
+                kind, estat, era
+            );
         }
     }
 }

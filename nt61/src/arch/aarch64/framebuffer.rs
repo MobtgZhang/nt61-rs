@@ -78,12 +78,16 @@ pub fn clear(color: u32) {
 /// as 32-bit BGRA pixels.
 pub fn blit(data: &[u8], x: u32, y: u32, w: u32, h: u32) {
     let info = lfb::info();
-    if info.address == 0 { return; }
+    if info.address == 0 {
+        return;
+    }
     let bytes_per_pixel = (info.bpp / 8) as usize;
     for row in 0..h {
         for col in 0..w {
             let idx = ((row * w + col) as usize) * bytes_per_pixel;
-            if idx + 3 >= data.len() { return; }
+            if idx + 3 >= data.len() {
+                return;
+            }
             let r = data[idx + 2];
             let g = data[idx + 1];
             let b = data[idx + 0];

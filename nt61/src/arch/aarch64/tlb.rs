@@ -18,12 +18,7 @@ pub fn flush_all() {
     unsafe {
         // TLBI VMALLE1IS - invalidate all stage 1 translations for EL1
         // Inner Shareable variant (broadcasts to all cores)
-        asm!(
-            "tlbi vmalle1is",
-            "dsb ish",
-            "isb",
-            options(nostack)
-        );
+        asm!("tlbi vmalle1is", "dsb ish", "isb", options(nostack));
     }
 }
 
@@ -182,12 +177,7 @@ pub fn set_asid(asid: Asid) {
 pub fn flush_kernel() {
     unsafe {
         // Invalidate all EL1 translations
-        asm!(
-            "tlbi vmalle1is",
-            "dsb ish",
-            "isb",
-            options(nostack)
-        );
+        asm!("tlbi vmalle1is", "dsb ish", "isb", options(nostack));
     }
 }
 
@@ -201,11 +191,6 @@ pub fn flush_user() {
 #[inline]
 pub fn flush_all_both() {
     unsafe {
-        asm!(
-            "tlbi vmalle1is",
-            "dsb ish",
-            "isb",
-            options(nostack)
-        );
+        asm!("tlbi vmalle1is", "dsb ish", "isb", options(nostack));
     }
 }

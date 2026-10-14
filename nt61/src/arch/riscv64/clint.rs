@@ -49,7 +49,9 @@ pub fn init(base: u64) {
 /// Read the current `mtime` value.
 pub fn read_mtime() -> u64 {
     let b = CLINT_BASE.load(Ordering::Acquire);
-    if b == 0 { return 0; }
+    if b == 0 {
+        return 0;
+    }
     unsafe { core::ptr::read_volatile((b + CLINT_MTIME_OFFSET) as *const u64) }
 }
 
@@ -60,7 +62,9 @@ pub fn read_mtime() -> u64 {
 /// `mtime >= mtimecmp[hart]`.
 pub fn set_mtimecmp(hart: u32, ticks: u64) {
     let b = CLINT_BASE.load(Ordering::Acquire);
-    if b == 0 { return; }
+    if b == 0 {
+        return;
+    }
     let offset = CLINT_MTIMECMP_BASE + (hart as u64) * CLINT_MTIMECMP_STRIDE;
     unsafe { core::ptr::write_volatile((b + offset) as *mut u64, ticks) };
 }
@@ -72,14 +76,18 @@ pub fn set_mtimecmp(hart: u32, ticks: u64) {
 /// naturally.
 pub fn raise_msip(hart: u32) {
     let b = CLINT_BASE.load(Ordering::Acquire);
-    if b == 0 { return; }
+    if b == 0 {
+        return;
+    }
     let offset = CLINT_MSIP_BASE + (hart as u64) * CLINT_MSIP_STRIDE;
     unsafe { core::ptr::write_volatile((b + offset) as *mut u32, 1) };
 }
 
 pub fn clear_msip(hart: u32) {
     let b = CLINT_BASE.load(Ordering::Acquire);
-    if b == 0 { return; }
+    if b == 0 {
+        return;
+    }
     let offset = CLINT_MSIP_BASE + (hart as u64) * CLINT_MSIP_STRIDE;
     unsafe { core::ptr::write_volatile((b + offset) as *mut u32, 0) };
 }

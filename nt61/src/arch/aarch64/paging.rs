@@ -49,11 +49,21 @@ pub struct PageTableEntry {
     pub value: u64,
 }
 impl PageTableEntry {
-    pub const fn empty() -> Self { Self { value: 0 } }
-    pub fn present(&self) -> bool { (self.value & 1) != 0 }
-    pub fn writable(&self) -> bool { (self.value & 2) != 0 }
-    pub fn user(&self) -> bool { (self.value & 4) != 0 }
-    pub fn frame(&self) -> u64 { self.value & 0x000F_FFFF_FFFF_F000 }
+    pub const fn empty() -> Self {
+        Self { value: 0 }
+    }
+    pub fn present(&self) -> bool {
+        (self.value & 1) != 0
+    }
+    pub fn writable(&self) -> bool {
+        (self.value & 2) != 0
+    }
+    pub fn user(&self) -> bool {
+        (self.value & 4) != 0
+    }
+    pub fn frame(&self) -> u64 {
+        self.value & 0x000F_FFFF_FFFF_F000
+    }
     pub fn set(&mut self, addr: u64, flags: u64) {
         self.value = (addr & 0x000F_FFFF_FFFF_F000) | (flags & 0xFFF);
     }
@@ -82,8 +92,12 @@ fn make_table_desc(pa: u64) -> u64 {
     // Access Flag checking is enabled — set bit 10 to be safe.
     (pa & 0x0000_FFFF_FFFF_F000) | 0x3 | (1u64 << 10)
 }
-fn is_valid_table(e: u64) -> bool { (e & 0x3) == 0x3 }
-fn is_valid_page(e: u64) -> bool { (e & 0x3) == 0x1 || (e & 0x3) == 0x3 }
+fn is_valid_table(e: u64) -> bool {
+    (e & 0x3) == 0x3
+}
+fn is_valid_page(e: u64) -> bool {
+    (e & 0x3) == 0x1 || (e & 0x3) == 0x3
+}
 
 /// Address (PA) of the page table that backs L0 of the kernel
 /// half of the address space. The page root itself is left
@@ -103,7 +117,11 @@ fn current_l0_phys() -> u64 {
         asm!("mrs {}, TTBR1_EL1", out(reg) ttbr1, options(nostack));
         asm!("mrs {}, TTBR0_EL1", out(reg) ttbr0, options(nostack));
     }
-    let chosen = if (ttbr1 & 0x0000_FFFF_FFFF_F000) != 0 { ttbr1 } else { ttbr0 };
+    let chosen = if (ttbr1 & 0x0000_FFFF_FFFF_F000) != 0 {
+        ttbr1
+    } else {
+        ttbr0
+    };
     chosen & 0x0000_FFFF_FFFF_F000
 }
 
@@ -239,7 +257,9 @@ unsafe fn leaf_pte_ptr_for(va: u64) -> *mut u64 {
 
 pub fn map_page(va: u64, pa: u64, flags: u64) -> bool {
     let l3_pte = unsafe { leaf_pte_ptr_for(va) };
-    if l3_pte.is_null() { return false; }
+    if l3_pte.is_null() {
+        return false;
+    }
     // Write the leaf as an AArch64 page descriptor (bits[1:0] = 0b11).
     let desc = make_page_desc(pa, flags);
     unsafe {
@@ -265,10 +285,14 @@ pub fn map_page(va: u64, pa: u64, flags: u64) -> bool {
 
 pub fn unmap_page(va: u64) -> Option<u64> {
     let l3_pte = unsafe { leaf_pte_ptr_for(va) };
-    if l3_pte.is_null() { return None; }
+    if l3_pte.is_null() {
+        return None;
+    }
     unsafe {
         let pte = core::ptr::read_volatile(l3_pte);
-        if !is_valid_page(pte) { return None; }
+        if !is_valid_page(pte) {
+            return None;
+        }
         let pa = pte & 0x0000_FFFF_FFFF_F000;
         core::ptr::write_volatile(l3_pte, 0);
         asm!("tlbi VAE1, {}", in(reg) va >> 12, options(nostack));
@@ -287,19 +311,27 @@ pub fn translate_virt(va: u64) -> Option<u64> {
         let l3_idx = ((va >> 12) & 0x1FF) as usize;
         let l0 = l0_phys as *const u64;
         let l0e = core::ptr::read_volatile(l0.add(l0_idx));
-        if (l0e & 0x3) != 0x3 { return None; }
+        if (l0e & 0x3) != 0x3 {
+            return None;
+        }
         let l1_phys = l0e & 0x0000_FFFF_FFFF_F000;
         let l1 = l1_phys as *const u64;
         let l1e = core::ptr::read_volatile(l1.add(l1_idx));
-        if (l1e & 0x3) != 0x3 { return None; }
+        if (l1e & 0x3) != 0x3 {
+            return None;
+        }
         let l2_phys = l1e & 0x0000_FFFF_FFFF_F000;
         let l2 = l2_phys as *const u64;
         let l2e = core::ptr::read_volatile(l2.add(l2_idx));
-        if (l2e & 0x3) != 0x3 { return None; }
+        if (l2e & 0x3) != 0x3 {
+            return None;
+        }
         let l3_phys = l2e & 0x0000_FFFF_FFFF_F000;
         let l3 = l3_phys as *const u64;
         let l3e = core::ptr::read_volatile(l3.add(l3_idx));
-        if !is_valid_page(l3e) { return None; }
+        if !is_valid_page(l3e) {
+            return None;
+        }
         Some((l3e & 0x0000_FFFF_FFFF_F000) | (va & 0xFFF))
     }
 }
@@ -313,7 +345,9 @@ pub unsafe fn load_page_root(pml4_pfn: u64) {
 
 pub fn read_page_root_pfn() -> u64 {
     let pa: u64;
-    unsafe { asm!("mrs {}, TTBR1_EL1", out(reg) pa, options(nostack)); }
+    unsafe {
+        asm!("mrs {}, TTBR1_EL1", out(reg) pa, options(nostack));
+    }
     pa >> 12
 }
 
@@ -407,7 +441,9 @@ pub fn identity_map_region(pa: u64, size: u64) -> bool {
             let l0e = core::ptr::read_volatile(l0.add(l0_idx));
             if (l0e & 0x3) != 0x3 {
                 // L0 missing — install a fresh L1.
-                if !map_page(cur, cur, HEAP_FLAGS) { return false; }
+                if !map_page(cur, cur, HEAP_FLAGS) {
+                    return false;
+                }
                 count += 1;
                 cur = cur.saturating_add(PAGE_SIZE);
                 continue;
@@ -416,7 +452,9 @@ pub fn identity_map_region(pa: u64, size: u64) -> bool {
             let l1 = l1_phys as *mut u64;
             let l1e = core::ptr::read_volatile(l1.add(l1_idx));
             if (l1e & 0x3) != 0x3 {
-                if !map_page(cur, cur, HEAP_FLAGS) { return false; }
+                if !map_page(cur, cur, HEAP_FLAGS) {
+                    return false;
+                }
                 count += 1;
                 cur = cur.saturating_add(PAGE_SIZE);
                 continue;
@@ -432,8 +470,7 @@ pub fn identity_map_region(pa: u64, size: u64) -> bool {
                 let block_base = l2e & 0xFFFF_FFFF_E000_0000;
                 let block_end = block_base.saturating_add(2 * 1024 * 1024);
                 // Advance `cur` to the next 2 MiB boundary (or `end`)
-                let next_2mb = (cur & !((2u64 * 1024 * 1024) - 1))
-                    .saturating_add(2 * 1024 * 1024);
+                let next_2mb = (cur & !((2u64 * 1024 * 1024) - 1)).saturating_add(2 * 1024 * 1024);
                 let advance = next_2mb.min(end).min(block_end);
                 let pages_in_block = (advance - cur) / PAGE_SIZE;
                 skipped += pages_in_block;
@@ -443,7 +480,9 @@ pub fn identity_map_region(pa: u64, size: u64) -> bool {
 
             // L2 has no block descriptor — install a 4 KiB page
             // mapping via the existing leaf_pte_ptr_for path.
-            if !map_page(cur, cur, HEAP_FLAGS) { return false; }
+            if !map_page(cur, cur, HEAP_FLAGS) {
+                return false;
+            }
             count += 1;
             cur = cur.saturating_add(PAGE_SIZE);
         }

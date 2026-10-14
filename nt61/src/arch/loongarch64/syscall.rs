@@ -22,49 +22,63 @@ use crate::arch::loongarch64::trap::TrapFrame;
 #[inline(always)]
 fn read_a7() -> u64 {
     let v: u64;
-    unsafe { asm!("move {}, $a7", out(reg) v, options(nostack, preserves_flags)); }
+    unsafe {
+        asm!("move {}, $a7", out(reg) v, options(nostack, preserves_flags));
+    }
     v
 }
 
 #[inline(always)]
 fn read_a0() -> u64 {
     let v: u64;
-    unsafe { asm!("move {}, $a0", out(reg) v, options(nostack, preserves_flags)); }
+    unsafe {
+        asm!("move {}, $a0", out(reg) v, options(nostack, preserves_flags));
+    }
     v
 }
 
 #[inline(always)]
 fn read_a1() -> u64 {
     let v: u64;
-    unsafe { asm!("move {}, $a1", out(reg) v, options(nostack, preserves_flags)); }
+    unsafe {
+        asm!("move {}, $a1", out(reg) v, options(nostack, preserves_flags));
+    }
     v
 }
 
 #[inline(always)]
 fn read_a2() -> u64 {
     let v: u64;
-    unsafe { asm!("move {}, $a2", out(reg) v, options(nostack, preserves_flags)); }
+    unsafe {
+        asm!("move {}, $a2", out(reg) v, options(nostack, preserves_flags));
+    }
     v
 }
 
 #[inline(always)]
 fn read_a3() -> u64 {
     let v: u64;
-    unsafe { asm!("move {}, $a3", out(reg) v, options(nostack, preserves_flags)); }
+    unsafe {
+        asm!("move {}, $a3", out(reg) v, options(nostack, preserves_flags));
+    }
     v
 }
 
 #[inline(always)]
 fn read_a4() -> u64 {
     let v: u64;
-    unsafe { asm!("move {}, $a4", out(reg) v, options(nostack, preserves_flags)); }
+    unsafe {
+        asm!("move {}, $a4", out(reg) v, options(nostack, preserves_flags));
+    }
     v
 }
 
 #[inline(always)]
 fn read_a5() -> u64 {
     let v: u64;
-    unsafe { asm!("move {}, $a5", out(reg) v, options(nostack, preserves_flags)); }
+    unsafe {
+        asm!("move {}, $a5", out(reg) v, options(nostack, preserves_flags));
+    }
     v
 }
 

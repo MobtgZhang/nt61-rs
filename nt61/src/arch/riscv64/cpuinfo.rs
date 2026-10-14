@@ -23,14 +23,24 @@ use core::sync::atomic::{AtomicU64, Ordering};
 pub struct IsaExtensions(pub u64);
 
 impl IsaExtensions {
-    pub const fn empty() -> Self { Self(0) }
-    pub const fn from_bits(bits: u64) -> Self { Self(bits) }
-    pub const fn bits(self) -> u64 { self.0 }
+    pub const fn empty() -> Self {
+        Self(0)
+    }
+    pub const fn from_bits(bits: u64) -> Self {
+        Self(bits)
+    }
+    pub const fn bits(self) -> u64 {
+        self.0
+    }
     pub const fn contains(self, other: Self) -> bool {
         (self.0 & other.0) == other.0
     }
-    pub const fn insert(&mut self, other: Self) { self.0 |= other.0; }
-    pub const fn remove(&mut self, other: Self) { self.0 &= !other.0; }
+    pub const fn insert(&mut self, other: Self) {
+        self.0 |= other.0;
+    }
+    pub const fn remove(&mut self, other: Self) {
+        self.0 &= !other.0;
+    }
 }
 
 // Extension letter bits — directly mirror `misa[25:0]`.
@@ -88,20 +98,36 @@ impl IsaExtensions {
 // Convenience aggregates.
 impl IsaExtensions {
     /// I + M + A + C — the IMAC profile.
-    pub const RV_IMAC_BASE: Self = Self(
-        Self::I.0 | Self::M.0 | Self::A.0 | Self::C.0 | Self::U.0 | Self::S.0
-    );
+    pub const RV_IMAC_BASE: Self =
+        Self(Self::I.0 | Self::M.0 | Self::A.0 | Self::C.0 | Self::U.0 | Self::S.0);
     /// I + M + A + F + D + C — the GC profile.
     pub const RV_GC_BASE: Self = Self(
-        Self::I.0 | Self::M.0 | Self::A.0 | Self::F.0
-        | Self::D.0 | Self::C.0 | Self::U.0 | Self::S.0
-        | Self::ZICSR.0 | Self::ZIFENCEI.0 | Self::ZICNTR.0
+        Self::I.0
+            | Self::M.0
+            | Self::A.0
+            | Self::F.0
+            | Self::D.0
+            | Self::C.0
+            | Self::U.0
+            | Self::S.0
+            | Self::ZICSR.0
+            | Self::ZIFENCEI.0
+            | Self::ZICNTR.0,
     );
     /// GCV profile — adds Vector.
     pub const RV_GCV_BASE: Self = Self(
-        Self::I.0 | Self::M.0 | Self::A.0 | Self::F.0
-        | Self::D.0 | Self::C.0 | Self::V.0 | Self::U.0 | Self::S.0
-        | Self::ZICSR.0 | Self::ZIFENCEI.0 | Self::ZICNTR.0
+        Self::I.0
+            | Self::M.0
+            | Self::A.0
+            | Self::F.0
+            | Self::D.0
+            | Self::C.0
+            | Self::V.0
+            | Self::U.0
+            | Self::S.0
+            | Self::ZICSR.0
+            | Self::ZIFENCEI.0
+            | Self::ZICNTR.0,
     );
 }
 
@@ -113,7 +139,9 @@ impl IsaExtensions {
 #[inline(always)]
 fn read_misa() -> u64 {
     let v: u64;
-    unsafe { core::arch::asm!("csrr {}, 0x301", out(reg) v, options(nostack)); }
+    unsafe {
+        core::arch::asm!("csrr {}, 0x301", out(reg) v, options(nostack));
+    }
     v
 }
 
@@ -131,20 +159,48 @@ fn parse_misa(misa: u64) -> IsaExtensions {
         // Probably RV32 — leave the parsed letters alone but do
         // not enable RV64-only aggregates (F/D/V).
     }
-    if misa & (1 << 0) != 0 { e.insert(IsaExtensions::A); }
-    if misa & (1 << 1) != 0 { e.insert(IsaExtensions::B); }
-    if misa & (1 << 2) != 0 { e.insert(IsaExtensions::C); }
-    if misa & (1 << 3) != 0 { e.insert(IsaExtensions::D); }
-    if misa & (1 << 5) != 0 { e.insert(IsaExtensions::F); }
-    if misa & (1 << 7) != 0 { e.insert(IsaExtensions::H); }
-    if misa & (1 << 8) != 0 { e.insert(IsaExtensions::I); }
-    if misa & (1 << 9) != 0 { e.insert(IsaExtensions::J); }
-    if misa & (1 << 11) != 0 { e.insert(IsaExtensions::K); }
-    if misa & (1 << 12) != 0 { e.insert(IsaExtensions::M); }
-    if misa & (1 << 15) != 0 { e.insert(IsaExtensions::P); }
-    if misa & (1 << 18) != 0 { e.insert(IsaExtensions::S); }
-    if misa & (1 << 20) != 0 { e.insert(IsaExtensions::U); }
-    if misa & (1 << 21) != 0 { e.insert(IsaExtensions::V); }
+    if misa & (1 << 0) != 0 {
+        e.insert(IsaExtensions::A);
+    }
+    if misa & (1 << 1) != 0 {
+        e.insert(IsaExtensions::B);
+    }
+    if misa & (1 << 2) != 0 {
+        e.insert(IsaExtensions::C);
+    }
+    if misa & (1 << 3) != 0 {
+        e.insert(IsaExtensions::D);
+    }
+    if misa & (1 << 5) != 0 {
+        e.insert(IsaExtensions::F);
+    }
+    if misa & (1 << 7) != 0 {
+        e.insert(IsaExtensions::H);
+    }
+    if misa & (1 << 8) != 0 {
+        e.insert(IsaExtensions::I);
+    }
+    if misa & (1 << 9) != 0 {
+        e.insert(IsaExtensions::J);
+    }
+    if misa & (1 << 11) != 0 {
+        e.insert(IsaExtensions::K);
+    }
+    if misa & (1 << 12) != 0 {
+        e.insert(IsaExtensions::M);
+    }
+    if misa & (1 << 15) != 0 {
+        e.insert(IsaExtensions::P);
+    }
+    if misa & (1 << 18) != 0 {
+        e.insert(IsaExtensions::S);
+    }
+    if misa & (1 << 20) != 0 {
+        e.insert(IsaExtensions::U);
+    }
+    if misa & (1 << 21) != 0 {
+        e.insert(IsaExtensions::V);
+    }
 
     // Always-on sub-exts on any conformant RISC-V core — they're
     // so universally implemented that misa does not report them.
@@ -172,10 +228,17 @@ pub struct PerHartCpuInfo {
 }
 
 impl PerHartCpuInfo {
-    pub const fn empty() -> Self { Self {
-        hart_id: 0, misa_value: 0, isa: IsaExtensions::empty(),
-        mvendorid: 0, marchid: 0, mimpid: 0, supports_svinval: false,
-    } }
+    pub const fn empty() -> Self {
+        Self {
+            hart_id: 0,
+            misa_value: 0,
+            isa: IsaExtensions::empty(),
+            mvendorid: 0,
+            marchid: 0,
+            mimpid: 0,
+            supports_svinval: false,
+        }
+    }
 }
 
 // =====================================================================
@@ -193,8 +256,7 @@ static MISA: AtomicU64 = AtomicU64::new(0);
 pub const MAX_HARTS: usize = 64;
 
 /// Per-hart feature snapshots, indexed by hart id.
-static HART_FEATURES: [AtomicU64; MAX_HARTS] =
-    [const { AtomicU64::new(0) }; MAX_HARTS];
+static HART_FEATURES: [AtomicU64; MAX_HARTS] = [const { AtomicU64::new(0) }; MAX_HARTS];
 
 /// Cached senvcfg value (Sv48 hint etc.).
 static SENVCFG: AtomicU64 = AtomicU64::new(0);
@@ -235,7 +297,9 @@ pub fn probe_current_hart(hart_id: u32) -> IsaExtensions {
 /// Return the per-hart ISA extensions for `hart_id`. The result
 /// is zero-extended if the hart has not been probed yet.
 pub fn hart_features(hart_id: u32) -> IsaExtensions {
-    if (hart_id as usize) >= MAX_HARTS { return IsaExtensions::empty(); }
+    if (hart_id as usize) >= MAX_HARTS {
+        return IsaExtensions::empty();
+    }
     IsaExtensions(HART_FEATURES[hart_id as usize].load(Ordering::Acquire))
 }
 
@@ -247,7 +311,9 @@ pub fn hart_features(hart_id: u32) -> IsaExtensions {
 /// at which point the kernel falls back to Sv39.
 pub fn supports_sv48() -> bool {
     let misa = MISA.load(Ordering::Acquire);
-    if misa == 0 { detect_all(); }
+    if misa == 0 {
+        detect_all();
+    }
     let mxl = (MISA.load(Ordering::Acquire) >> 62) & 0b11;
     mxl == 2
 }
@@ -287,7 +353,9 @@ pub fn has(ext: IsaExtensions) -> bool {
 /// Raw `misa` value.
 pub fn misa() -> u64 {
     let v = MISA.load(Ordering::Acquire);
-    if v == 0 { detect_all(); }
+    if v == 0 {
+        detect_all();
+    }
     MISA.load(Ordering::Acquire)
 }
 
@@ -318,6 +386,5 @@ pub fn smoke_test() -> bool {
     let f = features_mask();
     // I + S + U must be set on every conformant hart — the bit
     // positions are reserved by the spec.
-    f.contains(IsaExtensions::I) && f.contains(IsaExtensions::S)
-        && f.contains(IsaExtensions::U)
+    f.contains(IsaExtensions::I) && f.contains(IsaExtensions::S) && f.contains(IsaExtensions::U)
 }

@@ -6,9 +6,7 @@
 //! aarch64 port).
 
 pub use crate::arch::riscv64::apic::{
-    handle_irq as pic_handle_irq,
-    dispatch_irq as pic_dispatch_irq,
-    send_ipi,
+    dispatch_irq as pic_dispatch_irq, handle_irq as pic_handle_irq, send_ipi,
 };
 
 /// Enable an SPI on the controller. On RISC-V this maps to a PLIC

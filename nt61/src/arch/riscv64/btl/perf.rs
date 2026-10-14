@@ -23,15 +23,29 @@ use core::sync::atomic::{AtomicU64, Ordering};
 /// 16 counters indexed by IrOp tag. TheIrOp size follows the
 /// tree in `translator.rs`.
 static HIST: [AtomicU64; 16] = [
-    AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0),
-    AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0),
-    AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0),
-    AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
 ];
 
 /// Bump the counter for the IR tag at slot `idx`.
 pub fn record(idx: usize) {
-    if idx >= HIST.len() { return; }
+    if idx >= HIST.len() {
+        return;
+    }
     HIST[idx].fetch_add(1, Ordering::Relaxed);
 }
 
@@ -54,9 +68,8 @@ pub fn reset() {
 
 /// Total counter.
 pub fn total() -> u64 {
-    HIST.iter().fold(0u64, |acc, c| {
-        acc.wrapping_add(c.load(Ordering::Relaxed))
-    })
+    HIST.iter()
+        .fold(0u64, |acc, c| acc.wrapping_add(c.load(Ordering::Relaxed)))
 }
 
 pub fn init() {}

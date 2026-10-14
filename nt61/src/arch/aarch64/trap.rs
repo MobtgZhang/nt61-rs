@@ -59,10 +59,10 @@ pub struct TrapFrame {
     pub x29: u64,
     pub x30: u64,
     pub sp: u64,
-    pub elr_el1: u64,        // PC where exception was taken
-    pub spsr_el1: u64,       // PSTATE at time of exception
-    pub esr_el1: u64,        // Exception Syndrome Register
-    pub far_el1: u64,        // Fault Address Register
+    pub elr_el1: u64,  // PC where exception was taken
+    pub spsr_el1: u64, // PSTATE at time of exception
+    pub esr_el1: u64,  // Exception Syndrome Register
+    pub far_el1: u64,  // Fault Address Register
     pub exception_class: u64,
     pub reserved: u64,
 }
@@ -124,16 +124,14 @@ pub unsafe extern "C" fn arch_aarch64_trap_dispatch(kind: u64, tf: *mut TrapFram
             // Maskable interrupt from EL0.
             handle_irq();
         }
-        exception_kind::CURRENT_EL_SP0_SYNC
-        | exception_kind::CURRENT_EL_SPX_SYNC => {
+        exception_kind::CURRENT_EL_SP0_SYNC | exception_kind::CURRENT_EL_SPX_SYNC => {
             // Synchronous exception from EL1: kernel fault (page fault,
             // unknown instruction). For the bootstrap we just print
             // details and continue (the kernel image is small enough
             // that a stray fault is unlikely).
             handle_kernel_sync(tf_ref);
         }
-        exception_kind::CURRENT_EL_SP0_IRQ
-        | exception_kind::CURRENT_EL_SPX_IRQ => {
+        exception_kind::CURRENT_EL_SP0_IRQ | exception_kind::CURRENT_EL_SPX_IRQ => {
             handle_irq();
         }
         _ => {
@@ -158,12 +156,8 @@ fn handle_lower_sync(tf: &mut TrapFrame) {
             // which returns the NTSTATUS / kernel status. The result
             // must be propagated back to the caller in X0.
             let syscall_num = tf.x16;
-            let result = unsafe {
-                crate::arch::aarch64::syscall::syscall_dispatch_with_tf(
-                    syscall_num,
-                    tf,
-                )
-            };
+            let result =
+                unsafe { crate::arch::aarch64::syscall::syscall_dispatch_with_tf(syscall_num, tf) };
             tf.x0 = result;
             // Advance the PC past the SVC instruction (SVC #imm is 4 bytes).
             tf.elr_el1 = tf.elr_el1.wrapping_add(4);

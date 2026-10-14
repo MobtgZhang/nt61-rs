@@ -18,7 +18,7 @@
 //!   - StarFive JH7110 datasheet
 //!   - ESWIN EIC7700X product brief
 
-use core::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 use crate::arch::riscv64::cpuinfo;
 
@@ -207,7 +207,11 @@ pub struct PmpConfig {
 
 impl PmpConfig {
     pub const fn empty() -> Self {
-        Self { pmp_count: 0, grain: 0, has_mseccfg: false }
+        Self {
+            pmp_count: 0,
+            grain: 0,
+            has_mseccfg: false,
+        }
     }
 }
 
@@ -289,7 +293,9 @@ static SOC: SocCache = SocCache::new();
 #[inline(always)]
 fn read_mvendorid() -> u32 {
     let v: u32;
-    unsafe { core::arch::asm!("csrr {}, 0xF11", out(reg) v, options(nostack)); }
+    unsafe {
+        core::arch::asm!("csrr {}, 0xF11", out(reg) v, options(nostack));
+    }
     v
 }
 
@@ -297,7 +303,9 @@ fn read_mvendorid() -> u32 {
 #[inline(always)]
 fn read_marchid() -> u64 {
     let v: u64;
-    unsafe { core::arch::asm!("csrr {}, 0xF12", out(reg) v, options(nostack)); }
+    unsafe {
+        core::arch::asm!("csrr {}, 0xF12", out(reg) v, options(nostack));
+    }
     v
 }
 
@@ -305,7 +313,9 @@ fn read_marchid() -> u64 {
 #[inline(always)]
 fn read_mimpid() -> u64 {
     let v: u64;
-    unsafe { core::arch::asm!("csrr {}, 0xF13", out(reg) v, options(nostack)); }
+    unsafe {
+        core::arch::asm!("csrr {}, 0xF13", out(reg) v, options(nostack));
+    }
     v
 }
 
@@ -349,19 +359,31 @@ fn classify(vendor: u32, arch: u64, _impl_: u64) -> SocType {
             return SocType::SiFiveU74;
         }
         // SiFive P550 (in-order, performance-class).
-        if arch == 0x2 { return SocType::SiFiveP550; }
+        if arch == 0x2 {
+            return SocType::SiFiveP550;
+        }
         // SpacemiT vendor extension range.
-        if arch == 0x8000 { return SocType::SpacemiTK1; }
-        if arch == 0x8001 { return SocType::SpacemiTK3; }
-        if arch == 0x8002 { return SocType::SpacemiTM1; }
+        if arch == 0x8000 {
+            return SocType::SpacemiTK1;
+        }
+        if arch == 0x8001 {
+            return SocType::SpacemiTK3;
+        }
+        if arch == 0x8002 {
+            return SocType::SpacemiTM1;
+        }
     }
     // T-Head vendor id is 0x5B7.
     if vendor == 0x5B7 {
         // C910 (TH1520) reports marchid=0; C920 (SG2042) reports
         // marchid=1. The cluster / hart count distinguishes them
         // further but we keep classification conservative here.
-        if arch == 0 { return SocType::TH1520_C910; }
-        if arch == 1 { return SocType::SophonSG2042_C920; }
+        if arch == 0 {
+            return SocType::TH1520_C910;
+        }
+        if arch == 1 {
+            return SocType::SophonSG2042_C920;
+        }
     }
     // ESWIN vendor id is 0x678.
     if vendor == 0x678 && arch == 0x1 {
@@ -387,8 +409,17 @@ fn info_for(t: SocType) -> SocInfo {
             interrupt_controller: InterruptControllerType::Plic,
             timer: TimerType::ClintMTime,
             smp_method: SmpMethod::SbiHsm,
-            cache: CacheInfo { line_size: 64, l1d_size_kib: 32, l1i_size_kib: 32, has_coherent_icache: false },
-            pmp: PmpConfig { pmp_count: 16, grain: 0, has_mseccfg: false },
+            cache: CacheInfo {
+                line_size: 64,
+                l1d_size_kib: 32,
+                l1i_size_kib: 32,
+                has_coherent_icache: false,
+            },
+            pmp: PmpConfig {
+                pmp_count: 16,
+                grain: 0,
+                has_mseccfg: false,
+            },
             phys_addr_bits: 32,
         },
         SocType::SiFiveU74 => SocInfo {
@@ -400,8 +431,17 @@ fn info_for(t: SocType) -> SocInfo {
             interrupt_controller: InterruptControllerType::Plic,
             timer: TimerType::ClintMTime,
             smp_method: SmpMethod::SbiHsm,
-            cache: CacheInfo { line_size: 64, l1d_size_kib: 32, l1i_size_kib: 32, has_coherent_icache: false },
-            pmp: PmpConfig { pmp_count: 8, grain: 0, has_mseccfg: false },
+            cache: CacheInfo {
+                line_size: 64,
+                l1d_size_kib: 32,
+                l1i_size_kib: 32,
+                has_coherent_icache: false,
+            },
+            pmp: PmpConfig {
+                pmp_count: 8,
+                grain: 0,
+                has_mseccfg: false,
+            },
             phys_addr_bits: 32,
         },
         // -- SpacemiT K1: octa-core RV64IMAC, APLIC-style PLIC, no V.
@@ -414,8 +454,17 @@ fn info_for(t: SocType) -> SocInfo {
             interrupt_controller: InterruptControllerType::Plic,
             timer: TimerType::AclintMTime,
             smp_method: SmpMethod::SbiHsm,
-            cache: CacheInfo { line_size: 64, l1d_size_kib: 32, l1i_size_kib: 32, has_coherent_icache: false },
-            pmp: PmpConfig { pmp_count: 16, grain: 0, has_mseccfg: true },
+            cache: CacheInfo {
+                line_size: 64,
+                l1d_size_kib: 32,
+                l1i_size_kib: 32,
+                has_coherent_icache: false,
+            },
+            pmp: PmpConfig {
+                pmp_count: 16,
+                grain: 0,
+                has_mseccfg: true,
+            },
             phys_addr_bits: 40,
         },
         // -- SpacemiT K3: dual-cluster 16-core RV64GCV with V extension.
@@ -428,8 +477,17 @@ fn info_for(t: SocType) -> SocInfo {
             interrupt_controller: InterruptControllerType::Plic,
             timer: TimerType::AclintMTime,
             smp_method: SmpMethod::SbiHsm,
-            cache: CacheInfo { line_size: 64, l1d_size_kib: 64, l1i_size_kib: 64, has_coherent_icache: true },
-            pmp: PmpConfig { pmp_count: 16, grain: 0, has_mseccfg: true },
+            cache: CacheInfo {
+                line_size: 64,
+                l1d_size_kib: 64,
+                l1i_size_kib: 64,
+                has_coherent_icache: true,
+            },
+            pmp: PmpConfig {
+                pmp_count: 16,
+                grain: 0,
+                has_mseccfg: true,
+            },
             phys_addr_bits: 40,
         },
         // -- SpacemiT M1: server-class 64-core RV64GC.
@@ -442,8 +500,17 @@ fn info_for(t: SocType) -> SocInfo {
             interrupt_controller: InterruptControllerType::AplicM,
             timer: TimerType::AclintMTime,
             smp_method: SmpMethod::SbiHsm,
-            cache: CacheInfo { line_size: 128, l1d_size_kib: 64, l1i_size_kib: 64, has_coherent_icache: true },
-            pmp: PmpConfig { pmp_count: 64, grain: 0, has_mseccfg: true },
+            cache: CacheInfo {
+                line_size: 128,
+                l1d_size_kib: 64,
+                l1i_size_kib: 64,
+                has_coherent_icache: true,
+            },
+            pmp: PmpConfig {
+                pmp_count: 64,
+                grain: 0,
+                has_mseccfg: true,
+            },
             phys_addr_bits: 48,
         },
         // -- ESWIN EIC7700X: 4-core RV64GC + small NPU.
@@ -456,8 +523,17 @@ fn info_for(t: SocType) -> SocInfo {
             interrupt_controller: InterruptControllerType::Plic,
             timer: TimerType::AclintMTime,
             smp_method: SmpMethod::SbiHsm,
-            cache: CacheInfo { line_size: 64, l1d_size_kib: 32, l1i_size_kib: 32, has_coherent_icache: false },
-            pmp: PmpConfig { pmp_count: 16, grain: 0, has_mseccfg: true },
+            cache: CacheInfo {
+                line_size: 64,
+                l1d_size_kib: 32,
+                l1i_size_kib: 32,
+                has_coherent_icache: false,
+            },
+            pmp: PmpConfig {
+                pmp_count: 16,
+                grain: 0,
+                has_mseccfg: true,
+            },
             phys_addr_bits: 40,
         },
         // -- SiFive P550: high-performance RV64GC, in-order.
@@ -470,8 +546,17 @@ fn info_for(t: SocType) -> SocInfo {
             interrupt_controller: InterruptControllerType::AplicM,
             timer: TimerType::AclintMTime,
             smp_method: SmpMethod::SbiHsm,
-            cache: CacheInfo { line_size: 64, l1d_size_kib: 32, l1i_size_kib: 32, has_coherent_icache: true },
-            pmp: PmpConfig { pmp_count: 8, grain: 0, has_mseccfg: false },
+            cache: CacheInfo {
+                line_size: 64,
+                l1d_size_kib: 32,
+                l1i_size_kib: 32,
+                has_coherent_icache: true,
+            },
+            pmp: PmpConfig {
+                pmp_count: 8,
+                grain: 0,
+                has_mseccfg: false,
+            },
             phys_addr_bits: 40,
         },
         // -- TH1520 / 玄铁 C910: 4-core RV64GCV, multi-cluster.
@@ -484,8 +569,17 @@ fn info_for(t: SocType) -> SocInfo {
             interrupt_controller: InterruptControllerType::Plic,
             timer: TimerType::ClintMTime,
             smp_method: SmpMethod::SbiHsm,
-            cache: CacheInfo { line_size: 64, l1d_size_kib: 32, l1i_size_kib: 32, has_coherent_icache: false },
-            pmp: PmpConfig { pmp_count: 16, grain: 0, has_mseccfg: true },
+            cache: CacheInfo {
+                line_size: 64,
+                l1d_size_kib: 32,
+                l1i_size_kib: 32,
+                has_coherent_icache: false,
+            },
+            pmp: PmpConfig {
+                pmp_count: 16,
+                grain: 0,
+                has_mseccfg: true,
+            },
             phys_addr_bits: 40,
         },
         // -- JH7110 (VisionFive 2): 4-core SiFive U74 in a JH71x0 SoC.
@@ -498,8 +592,17 @@ fn info_for(t: SocType) -> SocInfo {
             interrupt_controller: InterruptControllerType::Plic,
             timer: TimerType::ClintMTime,
             smp_method: SmpMethod::SbiHsm,
-            cache: CacheInfo { line_size: 64, l1d_size_kib: 32, l1i_size_kib: 32, has_coherent_icache: false },
-            pmp: PmpConfig { pmp_count: 8, grain: 0, has_mseccfg: false },
+            cache: CacheInfo {
+                line_size: 64,
+                l1d_size_kib: 32,
+                l1i_size_kib: 32,
+                has_coherent_icache: false,
+            },
+            pmp: PmpConfig {
+                pmp_count: 8,
+                grain: 0,
+                has_mseccfg: false,
+            },
             phys_addr_bits: 32,
         },
         // -- SOPHON SG2042 (XuanTie C920): server 64-core RV64GCV.
@@ -512,8 +615,17 @@ fn info_for(t: SocType) -> SocInfo {
             interrupt_controller: InterruptControllerType::AplicM,
             timer: TimerType::AclintMTime,
             smp_method: SmpMethod::SbiHsm,
-            cache: CacheInfo { line_size: 128, l1d_size_kib: 64, l1i_size_kib: 64, has_coherent_icache: true },
-            pmp: PmpConfig { pmp_count: 64, grain: 0, has_mseccfg: true },
+            cache: CacheInfo {
+                line_size: 128,
+                l1d_size_kib: 64,
+                l1i_size_kib: 64,
+                has_coherent_icache: true,
+            },
+            pmp: PmpConfig {
+                pmp_count: 64,
+                grain: 0,
+                has_mseccfg: true,
+            },
             phys_addr_bits: 48,
         },
         // -- Generic fallback profiles.
@@ -606,7 +718,8 @@ pub fn current_soc() -> SocInfo {
 /// configuration, secure boot, ...).
 pub fn init_soc() {
     let info = current_soc();
-    SOC.phys_addr_bits.store(info.phys_addr_bits, Ordering::Relaxed);
+    SOC.phys_addr_bits
+        .store(info.phys_addr_bits, Ordering::Relaxed);
     SOC.cpu_count.store(info.cpu_count, Ordering::Relaxed);
 }
 

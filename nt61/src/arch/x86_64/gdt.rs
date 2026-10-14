@@ -43,15 +43,14 @@ pub const KERNEL_CS: u16 = 0x38;
 pub const KERNEL_DS: u16 = 0x18;
 /// User code selector: SYSRET destination. Slot 5 (offset 0x28), RPL=3 → 0x2b.
 /// Set by IA32_STAR hardware on SYSRET; must match STAR[63:48]+16.
-pub const USER_CS: u16 = 0x28 | 3;   // 0x2b
+pub const USER_CS: u16 = 0x28 | 3; // 0x2b
 /// User data/stack selector: SYSRET SS destination. Slot 4 (offset 0x20), RPL=3 → 0x23.
-pub const USER_DS: u16 = 0x20 | 3;   // 0x23
+pub const USER_DS: u16 = 0x20 | 3; // 0x23
 /// TSS selector: slot 8 (offset 0x40).
 pub const TSS_SEL: u16 = 0x40;
 
 /// Re-export USER_DS as USER_SS for modules that use the SS naming convention.
 pub use USER_DS as USER_SS;
-
 
 /// 8-byte GDT entry.
 #[repr(C, packed)]
@@ -67,19 +66,54 @@ pub struct GdtEntry {
 
 impl GdtEntry {
     pub const fn empty() -> Self {
-        Self { limit_low: 0, base_low: 0, base_mid: 0, access: 0, flags: 0, base_high: 0 }
+        Self {
+            limit_low: 0,
+            base_low: 0,
+            base_mid: 0,
+            access: 0,
+            flags: 0,
+            base_high: 0,
+        }
     }
     pub const fn kernel_code64() -> Self {
-        Self { limit_low: 0xFFFF, base_low: 0, base_mid: 0, access: 0x9B, flags: 0xAF, base_high: 0 }
+        Self {
+            limit_low: 0xFFFF,
+            base_low: 0,
+            base_mid: 0,
+            access: 0x9B,
+            flags: 0xAF,
+            base_high: 0,
+        }
     }
     pub const fn kernel_data64() -> Self {
-        Self { limit_low: 0xFFFF, base_low: 0, base_mid: 0, access: 0x93, flags: 0xCF, base_high: 0 }
+        Self {
+            limit_low: 0xFFFF,
+            base_low: 0,
+            base_mid: 0,
+            access: 0x93,
+            flags: 0xCF,
+            base_high: 0,
+        }
     }
     pub const fn user_code64() -> Self {
-        Self { limit_low: 0xFFFF, base_low: 0, base_mid: 0, access: 0xFB, flags: 0xAF, base_high: 0 }
+        Self {
+            limit_low: 0xFFFF,
+            base_low: 0,
+            base_mid: 0,
+            access: 0xFB,
+            flags: 0xAF,
+            base_high: 0,
+        }
     }
     pub const fn user_data64() -> Self {
-        Self { limit_low: 0xFFFF, base_low: 0, base_mid: 0, access: 0xF3, flags: 0xCF, base_high: 0 }
+        Self {
+            limit_low: 0xFFFF,
+            base_low: 0,
+            base_mid: 0,
+            access: 0xF3,
+            flags: 0xCF,
+            base_high: 0,
+        }
     }
 }
 
@@ -99,8 +133,16 @@ pub struct TssDescriptor {
 
 impl TssDescriptor {
     pub const fn empty() -> Self {
-        Self { limit_low: 0, base_low: 0, base_mid: 0, access: 0, flags: 0,
-               base_high: 0, base_upper: 0, _reserved: 0 }
+        Self {
+            limit_low: 0,
+            base_low: 0,
+            base_mid: 0,
+            access: 0,
+            flags: 0,
+            base_high: 0,
+            base_upper: 0,
+            _reserved: 0,
+        }
     }
     pub fn from_tss(base: u64, limit: u32) -> Self {
         Self {
@@ -136,44 +178,89 @@ impl TssDescriptor {
 /// existing layout) plus extra entries e8..eB for the TSS.
 #[repr(C, packed)]
 pub struct GdtTable {
-    pub e0: GdtEntry,           // slot 0: null
-    pub e1: GdtEntry,           // slot 1: kernel CS (OVMF)
-    pub e2: GdtEntry,           // slot 2: kernel DS (slot owned by us, kernel_data64)
-    pub e3: GdtEntry,           // slot 3: kernel SS (slot owned by us, kernel_data64)
-    pub e4: GdtEntry,           // slot 4: user SS (DPL=3, selector 0x23)
-    pub e5: GdtEntry,           // slot 5: user CS (DPL=3, selector 0x2b)
-    pub e6: GdtEntry,           // slot 6: (unused, OVMF)
-    pub e7: GdtEntry,           // slot 7: (unused, OVMF)
-    pub e8: TssDescriptor,      // slot 8: TSS (16 bytes)
-    pub e9: GdtEntry,           // slot 9: (part of TSS, padding)
-    pub eA: GdtEntry,           // slot 10: (unused)
-    pub eB: GdtEntry,           // slot 11: (unused)
+    pub e0: GdtEntry,      // slot 0: null
+    pub e1: GdtEntry,      // slot 1: kernel CS (OVMF)
+    pub e2: GdtEntry,      // slot 2: kernel DS (slot owned by us, kernel_data64)
+    pub e3: GdtEntry,      // slot 3: kernel SS (slot owned by us, kernel_data64)
+    pub e4: GdtEntry,      // slot 4: user SS (DPL=3, selector 0x23)
+    pub e5: GdtEntry,      // slot 5: user CS (DPL=3, selector 0x2b)
+    pub e6: GdtEntry,      // slot 6: (unused, OVMF)
+    pub e7: GdtEntry,      // slot 7: (unused, OVMF)
+    pub e8: TssDescriptor, // slot 8: TSS (16 bytes)
+    pub e9: GdtEntry,      // slot 9: (part of TSS, padding)
+    pub eA: GdtEntry,      // slot 10: (unused)
+    pub eB: GdtEntry,      // slot 11: (unused)
 }
 
 /// Compile-time assertions verifying the struct layout matches the
 /// slot-based selector constants and actual GDT offsets.
 const _: () = {
     // Verify each field lands at the correct GDT slot offset.
-    assert!(core::mem::offset_of!(GdtTable, e0) == 0x00, "e0 must be at offset 0x00");
-    assert!(core::mem::offset_of!(GdtTable, e1) == 0x08, "e1 must be at offset 0x08");
-    assert!(core::mem::offset_of!(GdtTable, e2) == 0x10, "e2 must be at offset 0x10");
-    assert!(core::mem::offset_of!(GdtTable, e3) == 0x18, "e3 must be at offset 0x18 (slot 3)");
-    assert!(core::mem::offset_of!(GdtTable, e4) == 0x20, "e4 must be at offset 0x20 (slot 4)");
-    assert!(core::mem::offset_of!(GdtTable, e5) == 0x28, "e5 must be at offset 0x28 (slot 5)");
-    assert!(core::mem::offset_of!(GdtTable, e6) == 0x30, "e6 must be at offset 0x30 (slot 6)");
-    assert!(core::mem::offset_of!(GdtTable, e7) == 0x38, "e7 must be at offset 0x38 (slot 7)");
-    assert!(core::mem::offset_of!(GdtTable, e8) == 0x40, "e8 must be at offset 0x40 (slot 8, TSS)");
-    assert!(core::mem::offset_of!(GdtTable, e9) == 0x50, "e9 must be at offset 0x50");
-    assert!(core::mem::offset_of!(GdtTable, eA) == 0x58, "eA must be at offset 0x58");
-    assert!(core::mem::offset_of!(GdtTable, eB) == 0x60, "eB must be at offset 0x60");
+    assert!(
+        core::mem::offset_of!(GdtTable, e0) == 0x00,
+        "e0 must be at offset 0x00"
+    );
+    assert!(
+        core::mem::offset_of!(GdtTable, e1) == 0x08,
+        "e1 must be at offset 0x08"
+    );
+    assert!(
+        core::mem::offset_of!(GdtTable, e2) == 0x10,
+        "e2 must be at offset 0x10"
+    );
+    assert!(
+        core::mem::offset_of!(GdtTable, e3) == 0x18,
+        "e3 must be at offset 0x18 (slot 3)"
+    );
+    assert!(
+        core::mem::offset_of!(GdtTable, e4) == 0x20,
+        "e4 must be at offset 0x20 (slot 4)"
+    );
+    assert!(
+        core::mem::offset_of!(GdtTable, e5) == 0x28,
+        "e5 must be at offset 0x28 (slot 5)"
+    );
+    assert!(
+        core::mem::offset_of!(GdtTable, e6) == 0x30,
+        "e6 must be at offset 0x30 (slot 6)"
+    );
+    assert!(
+        core::mem::offset_of!(GdtTable, e7) == 0x38,
+        "e7 must be at offset 0x38 (slot 7)"
+    );
+    assert!(
+        core::mem::offset_of!(GdtTable, e8) == 0x40,
+        "e8 must be at offset 0x40 (slot 8, TSS)"
+    );
+    assert!(
+        core::mem::offset_of!(GdtTable, e9) == 0x50,
+        "e9 must be at offset 0x50"
+    );
+    assert!(
+        core::mem::offset_of!(GdtTable, eA) == 0x58,
+        "eA must be at offset 0x58"
+    );
+    assert!(
+        core::mem::offset_of!(GdtTable, eB) == 0x60,
+        "eB must be at offset 0x60"
+    );
 
     // Verify GdtTable is large enough to cover the TSS (e8, 16 bytes).
-    assert!(core::mem::size_of::<GdtTable>() >= 0x48 + 8, "GdtTable must cover slots 0..9");
+    assert!(
+        core::mem::size_of::<GdtTable>() >= 0x48 + 8,
+        "GdtTable must cover slots 0..9"
+    );
 
     // Verify selector constants match their slot × 8 + RPL layout.
-    assert!(USER_CS == (5 * 8 | 3), "USER_CS must be slot 5 with RPL=3 (0x2b)");
-    assert!(USER_DS == (4 * 8 | 3), "USER_DS must be slot 4 with RPL=3 (0x23)");
-    assert!(TSS_SEL == (8 * 8),         "TSS_SEL must be slot 8 (0x40)");
+    assert!(
+        USER_CS == (5 * 8 | 3),
+        "USER_CS must be slot 5 with RPL=3 (0x2b)"
+    );
+    assert!(
+        USER_DS == (4 * 8 | 3),
+        "USER_DS must be slot 4 with RPL=3 (0x23)"
+    );
+    assert!(TSS_SEL == (8 * 8), "TSS_SEL must be slot 8 (0x40)");
 };
 
 #[repr(C, packed)]
@@ -189,17 +276,15 @@ static mut GDT: GdtTable = GdtTable {
     e1: GdtEntry::kernel_code64(),
     e2: GdtEntry::kernel_data64(),
     e3: GdtEntry::kernel_data64(), // slot 3: kernel SS, DPL=0 — owned by this table, not OVMF
-    e4: GdtEntry::empty(),            // slot 4: user SS (DPL=3) — written by init()
-    e5: GdtEntry::empty(),            // slot 5: user CS (DPL=3) — written by init()
-    e6: GdtEntry::empty(),            // slot 6: (unused, OVMF)
-    e7: GdtEntry::empty(),            // slot 7: (unused, OVMF)
-    e8: TssDescriptor::empty(),      // slot 8: TSS — written by init()
-    e9: GdtEntry::empty(),            // slot 9: (part of TSS)
-    eA: GdtEntry::empty(),            // slot 10: (unused)
-    eB: GdtEntry::empty(),            // slot 11: (unused)
+    e4: GdtEntry::empty(),         // slot 4: user SS (DPL=3) — written by init()
+    e5: GdtEntry::empty(),         // slot 5: user CS (DPL=3) — written by init()
+    e6: GdtEntry::empty(),         // slot 6: (unused, OVMF)
+    e7: GdtEntry::empty(),         // slot 7: (unused, OVMF)
+    e8: TssDescriptor::empty(),    // slot 8: TSS — written by init()
+    e9: GdtEntry::empty(),         // slot 9: (part of TSS)
+    eA: GdtEntry::empty(),         // slot 10: (unused)
+    eB: GdtEntry::empty(),         // slot 11: (unused)
 };
-
-
 
 /// Initialise the GDT and load the TR.
 ///
@@ -277,10 +362,7 @@ pub fn init() {
         //   (binary 1100; bit0=G=1, bit1=D=1, bit2=L=0, bit3=AVL=0).
         //   iretq-style load of SS at CPL=3 must find a writable
         //   data segment with DPL=3 in long mode.
-        (0x0000_FFFFu64)
-            | (0xF3u64 << 40)
-            | (0xFu64 << 48)
-            | (0xCu64 << 52)
+        (0x0000_FFFFu64) | (0xF3u64 << 40) | (0xFu64 << 48) | (0xCu64 << 52)
     };
     let user_cs: u64 = {
         // access (bits 40..47) = 0xFB → P=1 DPL=3 S=1 Type=B
@@ -296,10 +378,7 @@ pub fn init() {
         //   zeroed — which is exactly the truncation we saw
         //   (`rsp=0x7fffde100000` → `rsp=0xde100000`).
         //   0xA = 0b1010 → bit0=G=1, bit1=D=0, bit2=L=1, bit3=AVL=0.
-        (0x0000_FFFFu64)
-            | (0xFBu64 << 40)
-            | (0xFu64 << 48)
-            | (0xAu64 << 52)
+        (0x0000_FFFFu64) | (0xFBu64 << 40) | (0xFu64 << 48) | (0xAu64 << 52)
     };
     #[cfg(target_arch = "x86_64")]
     let tss = crate::arch::x86_64::tss::current_tss_base_limit();
@@ -318,12 +397,12 @@ pub fn init() {
         //   bits 96..128 = reserved   (32 bits, must be 0)
         let desc = TssDescriptor::from_tss(tss.0, tss.1);
         let lo: u64 = (desc.limit_low as u64)
-                    | ((desc.base_low as u64) << 16)
-                    | ((desc.base_mid as u64) << 32)
-                    | ((desc.access as u64) << 40)
-                    | (((desc.limit_low as u64 >> 16) & 0xF) << 48)
-                    | (((desc.flags as u64) & 0xF) << 52)
-                    | (((desc.base_high as u64) & 0xFF) << 56);
+            | ((desc.base_low as u64) << 16)
+            | ((desc.base_mid as u64) << 32)
+            | ((desc.access as u64) << 40)
+            | (((desc.limit_low as u64 >> 16) & 0xF) << 48)
+            | (((desc.flags as u64) & 0xF) << 52)
+            | (((desc.base_high as u64) & 0xFF) << 56);
         let hi: u64 = desc.base_upper as u64;
         (lo, hi)
     };
@@ -360,41 +439,43 @@ pub fn init() {
     //     (the CPU rejects the descriptor because SS must be a writable
     //     data segment in long mode).
     //   base_high (bits 56..63) = 0 (flat)
-    let kernel_ds: u64 =
-        (0x0000_FFFFu64)       // bits 0..15 limit_low
+    let kernel_ds: u64 = (0x0000_FFFFu64)       // bits 0..15 limit_low
         | (0x93u64 << 40)      // bits 40..47 access
         | (0xFu64 << 48)       // bits 48..51 limit_high
-        | (0xCu64 << 52);      // bits 52..55 flags (G=1 D=1 L=0 AVL=0)
-    // GS descriptor: 32-bit flat data, DPL=3, granularity=4 KiB.
-    //   access = 0xF3 = P=1, DPL=3, S=1, Type=3 (data RW/accessed)
-    //   limit  = 0x000FFFFF (G=1)
-    //   flags  = 0xC       = G=1 D=1 L=0 AVL=0
-    //   base   = 0
-    // GS descriptor (slot 6, selector 0x30): DPL=0 (kernel-accessible),
-    //   expand-UP 4-GiB data. We use a DPL=0 descriptor so the kernel's
-    //   own `mov gs, 0x30` in `init()` does not trip the CPL ≤ DPL check.
-    //   The GDT-side DPL does not influence how the `gs:` prefix
-    //   resolves the GS base — the base comes from IA32_GS_BASE
-    //   (kernel) or IA32_KERNEL_GS_BASE (user, after swapgs). The DPL
-    //   only matters for explicit `mov gs, sel` / `pop gs` instructions.
-    //   access (bits 40..47) = 0x93 → P=1 DPL=0 S=1 Type=3 (data R/W,
-    //     expand-UP, accessed)
-    //   limit_high = 0xF, flags = G=1 D=1 L=0 AVL=0  (0xC << 52)
-    let gs_descriptor: u64 =
-        (0x0000_FFFFu64)
-        | (0x93u64 << 40)
-        | (0xFu64 << 48)
-        | (0xCu64 << 52);
+        | (0xCu64 << 52); // bits 52..55 flags (G=1 D=1 L=0 AVL=0)
+                          // GS descriptor: 32-bit flat data, DPL=3, granularity=4 KiB.
+                          //   access = 0xF3 = P=1, DPL=3, S=1, Type=3 (data RW/accessed)
+                          //   limit  = 0x000FFFFF (G=1)
+                          //   flags  = 0xC       = G=1 D=1 L=0 AVL=0
+                          //   base   = 0
+                          // GS descriptor (slot 6, selector 0x30): DPL=0 (kernel-accessible),
+                          //   expand-UP 4-GiB data. We use a DPL=0 descriptor so the kernel's
+                          //   own `mov gs, 0x30` in `init()` does not trip the CPL ≤ DPL check.
+                          //   The GDT-side DPL does not influence how the `gs:` prefix
+                          //   resolves the GS base — the base comes from IA32_GS_BASE
+                          //   (kernel) or IA32_KERNEL_GS_BASE (user, after swapgs). The DPL
+                          //   only matters for explicit `mov gs, sel` / `pop gs` instructions.
+                          //   access (bits 40..47) = 0x93 → P=1 DPL=0 S=1 Type=3 (data R/W,
+                          //     expand-UP, accessed)
+                          //   limit_high = 0xF, flags = G=1 D=1 L=0 AVL=0  (0xC << 52)
+    let gs_descriptor: u64 = (0x0000_FFFFu64) | (0x93u64 << 40) | (0xFu64 << 48) | (0xCu64 << 52);
     // KERNEL_CS at slot 7 (selector 0x38): proper 64-bit code descriptor.
     //   access (bits 40..47) = 0x9B → P=1 DPL=0 S=1 Type=B (code, exec/read, non-conforming, accessed)
     //   flags + limit_high (bits 48..55) = 0xAF → G=1 D=0 L=1 AVL=0 limit_high=0xF
     // OVMF's default slot 7 has D=1 L=1 which QEMU treats as 32-bit,
     // breaking pushq/iretq in the kernel.
-    let kernel_cs: u64 =
-        (0x0000_FFFFu64)       // bits 0..15: limit_low = 0xFFFF
+    let kernel_cs: u64 = (0x0000_FFFFu64)       // bits 0..15: limit_low = 0xFFFF
         | (0x9Bu64 << 40)      // bits 40..47: access = 0x9B
-        | (0xAFu64 << 48);     // bits 48..55: flags + limit_high = 0xAF (G=1 D=0 L=1 AVL=0 + limit_high=0xF)
-    let data: [u64; 7] = [kernel_ds, user_ss, user_cs, gs_descriptor, kernel_cs, tss_lo, tss_hi];
+        | (0xAFu64 << 48); // bits 48..55: flags + limit_high = 0xAF (G=1 D=0 L=1 AVL=0 + limit_high=0xF)
+    let data: [u64; 7] = [
+        kernel_ds,
+        user_ss,
+        user_cs,
+        gs_descriptor,
+        kernel_cs,
+        tss_lo,
+        tss_hi,
+    ];
     // NOTE: kprintln removed because MM is not initialized yet
 
     // Read GDTR, write the augmented slots directly from Rust, then
@@ -616,14 +697,14 @@ pub fn build_per_cpu_gdt(out: &mut PerCpuGdt, tss_base: u64, tss_limit: u32) {
     out.e1 = GdtEntry::kernel_code64();
     out.e2 = GdtEntry::kernel_data64();
     out.e3 = GdtEntry::kernel_data64(); // slot 3: kernel SS — owned by this GDT, not OVMF
-    out.e4 = GdtEntry::empty();              // slot 4: user SS — written by init()
-    out.e5 = GdtEntry::empty();              // slot 5: user CS — written by init()
-    out.e6 = GdtEntry::empty();              // slot 6: (unused)
-    out.e7 = GdtEntry::empty();              // slot 7: (unused)
+    out.e4 = GdtEntry::empty(); // slot 4: user SS — written by init()
+    out.e5 = GdtEntry::empty(); // slot 5: user CS — written by init()
+    out.e6 = GdtEntry::empty(); // slot 6: (unused)
+    out.e7 = GdtEntry::empty(); // slot 7: (unused)
     out.e8 = TssDescriptor::from_tss(tss_base, tss_limit); // slot 8: TSS
-    out.e9 = GdtEntry::empty();              // slot 9: (TSS high)
-    out.eA = GdtEntry::empty();              // slot 10: (unused)
-    out.eB = GdtEntry::empty();              // slot 11: (unused)
+    out.e9 = GdtEntry::empty(); // slot 9: (TSS high)
+    out.eA = GdtEntry::empty(); // slot 10: (unused)
+    out.eB = GdtEntry::empty(); // slot 11: (unused)
 }
 
 /// Dump the current GDT to the serial console. Used during the
@@ -648,7 +729,7 @@ pub fn dump_gdt_for_debug() {
             buf[2], buf[3], buf[4], buf[5], buf[6], buf[7], buf[8], buf[9],
         ]);
     }
-//     // // // crate::kprintln!("[GDT-DBG] GDTR: limit=0x{:x} base=0x{:x}", limit, base);
+    //     // // // crate::kprintln!("[GDT-DBG] GDTR: limit=0x{:x} base=0x{:x}", limit, base);
     // Walk the GDT entries. Each entry is 8 bytes (16 if it's a
     // TSS descriptor; we report every 8-byte slot as a single
     // entry for simplicity).
@@ -663,7 +744,6 @@ pub fn dump_gdt_for_debug() {
         let dpl = (access >> 5) & 0x3;
         let is_code_or_data = present && (access & 0x10) != 0;
         if present && is_code_or_data {
-          
             let _ = (i, access, flags, dpl, hi);
         }
     }

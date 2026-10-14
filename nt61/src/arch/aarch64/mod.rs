@@ -111,7 +111,7 @@ pub fn init() {
         asm!("mrs {}, sctlr_el1", out(reg) sctlr);
         sctlr |= 1 << 19; // WXN
         sctlr |= 1 << 12; // I-cache
-        sctlr |= 1 << 2;  // C-cache
+        sctlr |= 1 << 2; // C-cache
         asm!("msr sctlr_el1, {}", in(reg) sctlr);
         crate::hal::serial::write_string("aarch64_init:isb\r\n");
 
@@ -150,5 +150,11 @@ pub fn get_cpu_count() -> u32 {
 // Re-export commonly used types (matches x86_64 re-exports in arch/x86_64/mod.rs)
 // Note: PAGE_SIZE/PAGE_SHIFT are already defined at module level above.
 pub use context::CpuContext;
-pub use paging::{PageTableEntry, VirtAddr, PhysAddr};
+pub use paging::{PageTableEntry, PhysAddr, VirtAddr};
 pub use soc::{SocInfo, SocType};
+
+pub mod cache;
+pub mod gic;
+pub mod paging_enhanced;
+pub mod ssdt;
+pub mod tlb;

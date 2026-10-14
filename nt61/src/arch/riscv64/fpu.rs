@@ -69,7 +69,9 @@ impl FpuState {
 }
 
 impl Default for FpuState {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Initialise an FPU state buffer for a fresh thread.
@@ -140,7 +142,9 @@ pub unsafe fn fpu_save(state: &mut FpuState) {
 /// Restore FPU + V state from `state` into the CPU.
 #[inline(never)]
 pub unsafe fn fpu_restore(state: &FpuState) {
-    if !state.valid { return; }
+    if !state.valid {
+        return;
+    }
 
     // Restore fcsr first so the rounding mode is correct.
     if state.fs_field >= 2 {

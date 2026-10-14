@@ -213,6 +213,18 @@ global_asm!(
     ".balign 16",
     "int_common_dispatch:",
     "  cld",
+    // DIAGNOSTIC: emit '!' + the vector byte straight to COM1 before any
+    // memory access. If a handler cannot be entered (bad RSP0/IST stack)
+    // nothing is emitted, which distinguishes "handler never entered" from
+    // "handler entered but its logging path re-faults".
+    "  mov dx, 0x3F8",
+    "  cmp edi, 32",
+    "  jae diag_done",
+    "  mov al, 0x21",
+    "  out dx, al",
+    "  mov al, dil",
+    "  out dx, al",
+    "diag_done:",
     "  push r15", "  push r14", "  push r13", "  push r12",
     "  push r11", "  push r10", "  push r9",  "  push r8",
     "  push rdi", "  push rsi", "  push rbp", "  push rbx",
@@ -343,17 +355,10 @@ global_asm!(
     "  mov r12, rax",                       // r12 = &snap (callee-preserved)
     "  mov [rax + 8], r14",                 // snap.rip = user RIP
     "  mov [rax + 24], r13",                // snap.user_r13 = user R13 (preserved before clobber)
-    // Copy 8 bytes from user RIP into snap.rip_bytes via movs. RSI =
-    // user RIP (R-X page, kernel-readable from the user PML4). RDI =
-    // &snap.rip_bytes (R+W kernel page). DS:[RSI] -> ES:[RDI].
-    "  mov rsi, r14",                       // rsi = user RIP (source)
-    "  lea rdi, [rax + 16]",                // rdi = &snap.rip_bytes (dest)
-    "  mov rcx, 8",                         // count = 8 bytes
-    "  rep movsb",                          // copy 8 bytes from [user RIP] -> snap.rip_bytes
-    // Reload &snap into RAX (rep movsb advanced RDI and clobbered AL).
+    "  mov qword ptr [rax + 16], 0",         // no fault-prone read across a user page boundary
+    // Reload &snap and read the syscall number without clobbering user RDI.
     "  mov rax, r12",                       // rax = &snap
-    "  mov rdi, [rax]",                     // rdi = snap.rax = user syscall number
-    "  mov r13, rdi",                       // r13 = syscall number (preserved)
+    "  mov r13, [rax]",                     // r13 = syscall number (preserved)
     // Windows x64 ABI: extern "C" takes arg1=RCX, arg2=RDX. Move the
     // syscall number into RCX for syscall_dispatch(syscall_num, tf).
     "  mov rcx, r13",                       // rcx = syscall number (arg1)
@@ -363,7 +368,7 @@ global_asm!(
     "  mov r15, gs:[0x0]",                  // r15 = user rsp (saved for trap frame)
     // Push in reverse field order. Use R14 (= preserved user RIP)
     // for slot 17, not RCX — RCX has been clobbered to 0 by the
-    // `rep movsb` above. The trap frame's `rip` slot must hold the
+    // snapshot above. The trap frame's `rip` slot must hold the
     // real user-mode RIP so sysretq can return to it.
     "  push {user_ss}",                 // 21: ss = USER_SS (Ring 3 data, DPL=3)
     "  push r15",                        // 20: rsp = user rsp

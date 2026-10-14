@@ -28,7 +28,9 @@ pub enum SmpMethod {
 static METHOD: AtomicU32 = AtomicU32::new(0);
 static CPU_COUNT: AtomicU32 = AtomicU32::new(1);
 
-pub fn cpu_count() -> u32 { CPU_COUNT.load(Ordering::Relaxed) }
+pub fn cpu_count() -> u32 {
+    CPU_COUNT.load(Ordering::Relaxed)
+}
 
 pub fn set_method(m: SmpMethod) {
     METHOD.store(m as u32, Ordering::Release);
@@ -46,11 +48,7 @@ pub fn get_method() -> SmpMethod {
 /// `context_id` (passed in `x0` to the entry) through the SMCCC
 /// interface. Returns the SMCCC return code in the lower 32 bits;
 /// PSCI status codes are encoded in the upper 32.
-pub unsafe fn psci_cpu_on(
-    target_cpu: u64,
-    entry: u64,
-    context_id: u64,
-) -> i64 {
+pub unsafe fn psci_cpu_on(target_cpu: u64, entry: u64, context_id: u64) -> i64 {
     let mut r: i64 = 0;
     unsafe {
         asm!(
@@ -114,11 +112,21 @@ pub unsafe extern "Rust" fn __smp_boot_secondary(pml4_pfn: u64) {
     for cpu in 1..secondary_count {
         match get_method() {
             SmpMethod::PSCI => {
-                let _ = unsafe { psci_cpu_on(cpu as u64, crate::arch::aarch64::smp::secondary_entry as *const () as u64, pml4_pfn) };
+                let _ = unsafe {
+                    psci_cpu_on(
+                        cpu as u64,
+                        crate::arch::aarch64::smp::secondary_entry as *const () as u64,
+                        pml4_pfn,
+                    )
+                };
             }
-            SmpMethod::SpinTable => {
-                unsafe { spin_table_release(cpu as usize, crate::arch::aarch64::smp::secondary_entry as *const () as u64, pml4_pfn); }
-            }
+            SmpMethod::SpinTable => unsafe {
+                spin_table_release(
+                    cpu as usize,
+                    crate::arch::aarch64::smp::secondary_entry as *const () as u64,
+                    pml4_pfn,
+                );
+            },
             SmpMethod::FirmwareManaged => {
                 // No-op: firmware has already released secondary cores.
             }
@@ -129,7 +137,9 @@ pub unsafe extern "Rust" fn __smp_boot_secondary(pml4_pfn: u64) {
 #[no_mangle]
 pub extern "Rust" fn __smp_get_current_cpu_id() -> u32 {
     let mpidr: u64;
-    unsafe { asm!("mrs {}, MPIDR_EL1", out(reg) mpidr, options(nostack)); }
+    unsafe {
+        asm!("mrs {}, MPIDR_EL1", out(reg) mpidr, options(nostack));
+    }
     ((mpidr >> 8) & 0xFF) as u32
 }
 

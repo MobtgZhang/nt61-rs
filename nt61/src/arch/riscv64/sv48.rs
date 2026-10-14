@@ -32,7 +32,7 @@
 use core::arch::asm;
 
 use crate::mm::pfn;
-use crate::mm::pte::{MMPTE, pfn_to_phys};
+use crate::mm::pte::{pfn_to_phys, MMPTE};
 use crate::mm::vas::{pde_address_of, ppe_address_of, pte_address_of, pxe_address_of};
 
 /// Sv48 satp mode (8 = Sv39, 9 = Sv48).
@@ -52,7 +52,9 @@ fn make_pte(pa: u64, flags: u64) -> u64 {
     ((pa >> 12) << 10) | (flags & 0xFF) | PTE_V
 }
 
-fn is_valid(e: u64) -> bool { (e & PTE_V) != 0 }
+fn is_valid(e: u64) -> bool {
+    (e & PTE_V) != 0
+}
 fn is_leaf(e: u64) -> bool {
     (e & (PTE_R | PTE_W | PTE_X)) != 0
 }
@@ -95,15 +97,21 @@ pub unsafe fn map_page_sv48(root_pa: u64, va: u64, pa: u64, flags: u64) -> bool 
     unsafe {
         let pxe = &mut *pxe_ptr;
         if !is_valid(pxe.raw()) {
-            if !install_intermediate_riscv(pxe) { return false; }
+            if !install_intermediate_riscv(pxe) {
+                return false;
+            }
         }
         let ppe = &mut *ppe_ptr;
         if !is_valid(ppe.raw()) {
-            if !install_intermediate_riscv(ppe) { return false; }
+            if !install_intermediate_riscv(ppe) {
+                return false;
+            }
         }
         let pde = &mut *pde_ptr;
         if !is_valid(pde.raw()) {
-            if !install_intermediate_riscv(pde) { return false; }
+            if !install_intermediate_riscv(pde) {
+                return false;
+            }
         }
         let pte = &mut *pte_ptr;
         *pte = MMPTE::from_raw(make_pte(pa, flags));
@@ -115,10 +123,14 @@ pub unsafe fn map_page_sv48(root_pa: u64, va: u64, pa: u64, flags: u64) -> bool 
 /// Unmap a virtual page in Sv48 mode.
 pub unsafe fn unmap_page_sv48(va: u64) -> Option<u64> {
     let pte_ptr = pte_address_of(va);
-    if pte_ptr.is_null() { return None; }
+    if pte_ptr.is_null() {
+        return None;
+    }
     unsafe {
         let pte = &mut *pte_ptr;
-        if !is_valid(pte.raw()) { return None; }
+        if !is_valid(pte.raw()) {
+            return None;
+        }
         let pa = pte.hardware_page_frame();
         pte.clear();
         asm!("sfence.vma {}, zero", in(reg) va, options(nostack));
@@ -129,13 +141,21 @@ pub unsafe fn unmap_page_sv48(va: u64) -> Option<u64> {
 /// Translate a virtual address in Sv48 mode.
 pub unsafe fn translate_virt_sv48(va: u64) -> Option<u64> {
     let pxe = unsafe { &*pxe_address_of(va) };
-    if !is_valid(pxe.raw()) { return None; }
+    if !is_valid(pxe.raw()) {
+        return None;
+    }
     let ppe = unsafe { &*ppe_address_of(va) };
-    if !is_valid(ppe.raw()) { return None; }
+    if !is_valid(ppe.raw()) {
+        return None;
+    }
     let pde = unsafe { &*pde_address_of(va) };
-    if !is_valid(pde.raw()) { return None; }
+    if !is_valid(pde.raw()) {
+        return None;
+    }
     let pte = unsafe { &*pte_address_of(va) };
-    if !is_valid(pte.raw()) { return None; }
+    if !is_valid(pte.raw()) {
+        return None;
+    }
     if is_leaf(pte.raw()) {
         return Some(pte.hardware_page_frame() | (va & 0xFFF));
     }
@@ -171,6 +191,5 @@ pub fn choose_mode() -> u64 {
 
 /// Smoke test: verify Sv48 mode bits.
 pub fn smoke_test() -> bool {
-    SATP_MODE_SV48 == (9u64 << 60)
-        && SV48_LEVELS == 4
+    SATP_MODE_SV48 == (9u64 << 60) && SV48_LEVELS == 4
 }

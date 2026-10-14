@@ -73,7 +73,11 @@ pub struct MemoryRegion {
 impl MemoryRegion {
     /// Create a new memory region
     pub fn new(phys_base: u64, size: u64, usable: bool) -> Self {
-        Self { phys_base, size, usable }
+        Self {
+            phys_base,
+            size,
+            usable,
+        }
     }
 
     /// Get the number of 2MB pages in this region
@@ -114,7 +118,9 @@ impl DynamicPageTable {
     }
 
     /// Get the PML4 virtual address
-    pub fn pml4_virtual(&self) -> u64 { self.pml4_virt }
+    pub fn pml4_virtual(&self) -> u64 {
+        self.pml4_virt
+    }
 
     /// Get the PML4 physical address
     pub fn pml4_physical(&self) -> u64 {
@@ -207,11 +213,7 @@ pub unsafe fn map_physical_to_virtual(
 ///
 /// This function modifies page tables and should only be called during
 /// early boot or when no threads are running.
-pub unsafe fn unmap_virtual(
-    pml4: *mut u64,
-    virt: u64,
-    size: u64,
-) -> Result<(), &'static str> {
+pub unsafe fn unmap_virtual(pml4: *mut u64, virt: u64, size: u64) -> Result<(), &'static str> {
     // Simplified implementation
     let _ = (pml4, virt, size);
     Ok(())
@@ -306,11 +308,7 @@ impl MemoryStats {
 ///
 /// This function takes the UEFI memory map and converts it into
 /// a list of usable memory regions.
-pub fn parse_uefi_memory_map(
-    map_addr: u64,
-    map_size: u64,
-    entry_size: u64,
-) -> Vec<MemoryRegion> {
+pub fn parse_uefi_memory_map(map_addr: u64, map_size: u64, entry_size: u64) -> Vec<MemoryRegion> {
     let mut regions = Vec::new();
 
     if map_addr == 0 || map_size == 0 || entry_size == 0 {
@@ -320,9 +318,7 @@ pub fn parse_uefi_memory_map(
     // UEFI memory descriptor structure:
     // Type (u32), PhysicalStart (u64), VirtualStart (u64), NumberOfPages (u64), Attribute (u64)
 
-
     let entries = map_size as usize / entry_size as usize;
-
 
     let _ = &entries;
     let _ = &entries;
@@ -389,9 +385,7 @@ pub fn calculate_page_table_requirements(memory_bytes: u64) -> (u64, u64) {
 
     // Each PT entry covers 4KB
 
-
     let pml4_needed = (memory_bytes + PML4_COVERAGE - 1) / PML4_COVERAGE;
-
 
     let _ = &pml4_needed;
     let _ = &pml4_needed;
@@ -423,7 +417,6 @@ pub fn calculate_page_table_requirements(memory_bytes: u64) -> (u64, u64) {
 /// 3. Memory region calculations work
 /// 4. Page table requirement calculations work
 pub fn smoke_test() -> bool {
-
     // // kprintln!("  [DYNAMIC PAGING SMOKE] running dynamic paging smoke test...");
     let mut ok = true;
 
@@ -480,8 +473,8 @@ pub fn smoke_test() -> bool {
     // // kprintln!("  [DYNAMIC PAGING SMOKE] test 5: page table requirements");
     // Reserved for future use: page table calculation for large memory regions
     let (_pml4_needed, _page_tables) = calculate_page_table_requirements(16 * 1024 * 1024 * 1024); // 16GB
-    // // kprintln!("  [DYNAMIC PAGING SMOKE]   16GB needs {} PML4 entries, ~{} page tables",
-    //         pml4_needed, page_tables);
+                                                                                                   // // kprintln!("  [DYNAMIC PAGING SMOKE]   16GB needs {} PML4 entries, ~{} page tables",
+                                                                                                   //         pml4_needed, page_tables);
 
     // Test 6: Memory stats
     // // kprintln!("  [DYNAMIC PAGING SMOKE] test 6: memory stats");

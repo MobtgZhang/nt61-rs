@@ -12,7 +12,7 @@
 #![cfg(target_arch = "loongarch64")]
 
 use core::arch::asm;
-use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 
 /// CPUCFG word 0 — lowest PRID field.
 const CPUCFG_WORD0: u16 = 0;

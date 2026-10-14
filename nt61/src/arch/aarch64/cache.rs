@@ -238,12 +238,7 @@ pub fn flush_dcache_range(start: u64, size: usize) {
 #[inline]
 pub fn invalidate_icache_all() {
     unsafe {
-        asm!(
-            "ic ialluis",
-            "dsb ish",
-            "isb",
-            options(nostack)
-        );
+        asm!("ic ialluis", "dsb ish", "isb", options(nostack));
     }
 }
 
@@ -255,12 +250,7 @@ pub fn invalidate_icache_range(start: u64, size: usize) {
 
     // Then invalidate instruction cache
     unsafe {
-        asm!(
-            "ic ialluis",
-            "dsb ish",
-            "isb",
-            options(nostack)
-        );
+        asm!("ic ialluis", "dsb ish", "isb", options(nostack));
     }
 }
 
@@ -319,10 +309,6 @@ pub fn isb() {
 #[inline]
 pub fn memory_barrier() {
     unsafe {
-        asm!(
-            "dsb sy",
-            "isb",
-            options(nostack)
-        );
+        asm!("dsb sy", "isb", options(nostack));
     }
 }

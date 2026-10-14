@@ -73,8 +73,7 @@ pub unsafe extern "C" fn swap_context(out_rsp: *mut u64, new_rsp: u64) {
             //
             // We don't have a separate push because the dispatcher
             // allocates the frame lazily through `seed_thread_frame`.
-
-            "sub  sp, sp, #96",          // 12 * 8
+            "sub  sp, sp, #96", // 12 * 8
             "stp  x19, x20, [sp, #0x00]",
             "stp  x21, x22, [sp, #0x10]",
             "stp  x23, x24, [sp, #0x20]",
@@ -82,8 +81,7 @@ pub unsafe extern "C" fn swap_context(out_rsp: *mut u64, new_rsp: u64) {
             "stp  x27, x28, [sp, #0x40]",
             "stp  x29, x30, [sp, #0x50]",
             "mov  x4, sp",
-            "str  x4, [x0]",             // *out_rsp = sp
-
+            "str  x4, [x0]", // *out_rsp = sp
             // Restore the incoming frame and `ret` into it.
             "mov  sp, x1",
             "ldp  x19, x20, [sp, #0x00]",
@@ -94,7 +92,6 @@ pub unsafe extern "C" fn swap_context(out_rsp: *mut u64, new_rsp: u64) {
             "ldp  x29, x30, [sp, #0x50]",
             "add  sp, sp, #96",
             "ret",
-
             // We never return through Rust ABI; the `ret` jumps
             // into the saved LR of the incoming thread.
             options(noreturn),
@@ -113,11 +110,7 @@ pub unsafe extern "C" fn swap_context(out_rsp: *mut u64, new_rsp: u64) {
 /// `stack_top` must point at writable memory holding at least
 /// [`ContextFrame::SIZE`] bytes of stack space.
 #[no_mangle]
-pub unsafe extern "C" fn seed_thread_frame(
-    stack_top: *mut u64,
-    entry: u64,
-    arg: u64,
-) -> u64 {
+pub unsafe extern "C" fn seed_thread_frame(stack_top: *mut u64, entry: u64, arg: u64) -> u64 {
     unsafe {
         // The kernel pushes the frame "downward" by the asm above
         // (sub sp). The frame's top-of-stack address is therefore
@@ -130,21 +123,21 @@ pub unsafe extern "C" fn seed_thread_frame(
         //   [10] x29, [11] x30  (LR — must point at `entry`)
         // We pass `arg` in x19 which is where the entry expects it.
         let frame = frame_addr as *mut u64;
-        frame.add(0).write(0);  // x19
-        frame.add(1).write(0);  // x20
-        frame.add(2).write(0);  // x21
-        frame.add(3).write(0);  // x22
-        frame.add(4).write(0);  // x23
-        frame.add(5).write(0);  // x24
-        frame.add(6).write(0);  // x25
-        frame.add(7).write(0);  // x26
-        frame.add(8).write(0);  // x27
-        frame.add(9).write(0);  // x28
+        frame.add(0).write(0); // x19
+        frame.add(1).write(0); // x20
+        frame.add(2).write(0); // x21
+        frame.add(3).write(0); // x22
+        frame.add(4).write(0); // x23
+        frame.add(5).write(0); // x24
+        frame.add(6).write(0); // x25
+        frame.add(7).write(0); // x26
+        frame.add(8).write(0); // x27
+        frame.add(9).write(0); // x28
         frame.add(10).write(0); // x29 (FP)
         frame.add(11).write(entry); // x30 (LR) -> entry
-        // Patch x19 in the frame to `arg` after the writes are
-        // committed. x19 is the first callee-saved arg register
-        // for an `extern "C" fn(u64)` per AAPCS.
+                                    // Patch x19 in the frame to `arg` after the writes are
+                                    // committed. x19 is the first callee-saved arg register
+                                    // for an `extern "C" fn(u64)` per AAPCS.
         frame.add(0).write(arg); // x19 = arg
         frame_addr
     }

@@ -37,20 +37,28 @@ pub enum BtlSyscallResult {
 
 /// Glue dispatcher. The arguments arrive in the same calling
 /// convention as the native RV64 NT dispatcher (a0..a5).
-pub fn btl_syscall_dispatch(num: u64, a0: u64, a1: u64, a2: u64,
-                            a3: u64, a4: u64) -> BtlSyscallResult {
+pub fn btl_syscall_dispatch(
+    num: u64,
+    a0: u64,
+    a1: u64,
+    a2: u64,
+    a3: u64,
+    a4: u64,
+) -> BtlSyscallResult {
     if num >= MAX_SERVICE {
         return BtlSyscallResult::NotHandled;
     }
     // Phase 4: forward directly to the native RV64 dispatcher. We
     // ignore the upper-range services for now.
-    let result = crate::arch::riscv64::syscall::dispatch_syscall_raw(num,
-                                                                     [a0, a1, a2, a3, a4]);
+    let result = crate::arch::riscv64::syscall::dispatch_syscall_raw(num, [a0, a1, a2, a3, a4]);
     BtlSyscallResult::Handled { result }
 }
 
 pub fn init() {}
 
 pub fn smoke_test() -> bool {
-    matches!(btl_syscall_dispatch(0, 0, 0, 0, 0, 0), BtlSyscallResult::Handled { .. })
+    matches!(
+        btl_syscall_dispatch(0, 0, 0, 0, 0, 0),
+        BtlSyscallResult::Handled { .. }
+    )
 }

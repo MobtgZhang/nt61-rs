@@ -2,8 +2,8 @@
 
 #![cfg(target_arch = "loongarch64")]
 
-use crate::arch::loongarch64::btl::emit::EmitBuffer;
 use crate::arch::loongarch64::btl::decoder::Decoded;
+use crate::arch::loongarch64::btl::emit::EmitBuffer;
 
 use super::TranslateError;
 
@@ -16,6 +16,12 @@ pub fn translate(buf: &mut EmitBuffer, dec: &Decoded) -> Result<(), TranslateErr
     }
 }
 
-fn mov(_buf: &mut EmitBuffer, _dec: &Decoded) -> Result<(), TranslateError> { Ok(()) }
-fn lea(_buf: &mut EmitBuffer, _dec: &Decoded) -> Result<(), TranslateError> { Ok(()) }
-fn movs(_buf: &mut EmitBuffer, _dec: &Decoded) -> Result<(), TranslateError> { Ok(()) }
+fn mov(_buf: &mut EmitBuffer, _dec: &Decoded) -> Result<(), TranslateError> {
+    Ok(())
+}
+fn lea(_buf: &mut EmitBuffer, _dec: &Decoded) -> Result<(), TranslateError> {
+    Ok(())
+}
+fn movs(_buf: &mut EmitBuffer, _dec: &Decoded) -> Result<(), TranslateError> {
+    Ok(())
+}

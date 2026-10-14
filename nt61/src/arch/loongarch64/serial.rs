@@ -38,7 +38,11 @@ pub fn serial_init(base: u64) {
 
 fn base() -> u64 {
     let b = UART_BASE.load(Ordering::Acquire);
-    if b == 0 { 0x1FE0_0000 } else { b }
+    if b == 0 {
+        0x1FE0_0000
+    } else {
+        b
+    }
 }
 
 /// Write a single character to the UART. Honours the global
@@ -59,7 +63,9 @@ pub fn write_string(s: &str) {
     if crate::hal::common::serial_disable::is_disabled() {
         return;
     }
-    for c in s.bytes() { write_char(c); }
+    for c in s.bytes() {
+        write_char(c);
+    }
 }
 
 /// Write a string followed by CRLF.
@@ -141,10 +147,14 @@ pub fn data_available() -> bool {
 }
 
 /// Legacy alias for `init()`-style entry points.
-pub fn serial_putc(b: u8) { write_char(b); }
+pub fn serial_putc(b: u8) {
+    write_char(b);
+}
 
 /// Legacy alias for `write_string`.
-pub fn serial_puts(s: &str) { write_string(s); }
+pub fn serial_puts(s: &str) {
+    write_string(s);
+}
 
 /// Legacy alias for `read_char`.
 pub fn serial_getc() -> i16 {
@@ -158,10 +168,17 @@ pub fn serial_getc() -> i16 {
 pub struct Stdout;
 
 impl Stdout {
-    pub fn new() -> Self { Stdout }
-    pub fn write(&self, s: &str) { write_string(s); }
-    pub fn write_byte(&self, b: u8) { write_char(b); }
-    pub fn flush(&self) { /* MMIO writes are synchronous. */ }
+    pub fn new() -> Self {
+        Stdout
+    }
+    pub fn write(&self, s: &str) {
+        write_string(s);
+    }
+    pub fn write_byte(&self, b: u8) {
+        write_char(b);
+    }
+    pub fn flush(&self) { /* MMIO writes are synchronous. */
+    }
 }
 
 extern crate alloc;

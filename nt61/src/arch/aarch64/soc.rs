@@ -105,59 +105,67 @@ pub struct CacheInfo {
 
 impl Default for CacheInfo {
     fn default() -> Self {
-        Self { line_size: 64, l1d_size_kib: 0, l1i_size_kib: 0 }
+        Self {
+            line_size: 64,
+            l1d_size_kib: 0,
+            l1i_size_kib: 0,
+        }
     }
 }
 
 /// Top-level SoC information.
 #[derive(Debug, Clone, Copy)]
 pub struct SocInfo {
-        pub soc_type: SocType,
-        pub name: &'static str,
-        pub architecture: ArchVersion,
-        pub cpu_count: u32,
-        pub has_aes: bool,
-        pub has_sha2: bool,
-        pub has_neon: bool,
-        pub has_crc32: bool,
-        pub has_virtualization: bool,
-        pub interrupt_controller: InterruptController,
-        pub timer: TimerType,
-        pub smp_method: SmpMethod,
-        pub cache: CacheInfo,
-        pub has_numa: bool,
-    }
-    
+    pub soc_type: SocType,
+    pub name: &'static str,
+    pub architecture: ArchVersion,
+    pub cpu_count: u32,
+    pub has_aes: bool,
+    pub has_sha2: bool,
+    pub has_neon: bool,
+    pub has_crc32: bool,
+    pub has_virtualization: bool,
+    pub interrupt_controller: InterruptController,
+    pub timer: TimerType,
+    pub smp_method: SmpMethod,
+    pub cache: CacheInfo,
+    pub has_numa: bool,
+}
+
 impl SocInfo {
-        /// Empty/unknown SoC descriptor.
-        pub const fn unknown() -> Self {
-            Self {
-                soc_type: SocType::Unknown,
-                    name: "Unknown",
-                architecture: ArchVersion::Unknown,
-                cpu_count: 1,
-                has_aes: false,
-                has_sha2: false,
-                has_neon: false,
-                has_crc32: false,
-                has_virtualization: false,
-                interrupt_controller: InterruptController::None,
-                timer: TimerType::GenericTimer,
-                smp_method: SmpMethod::FirmwareManaged,
-                cache: CacheInfo { line_size: 64, l1d_size_kib: 0, l1i_size_kib: 0 },
-                has_numa: false,
-            }
-        }
-    
-        /// Convert to a stable `u32` suitable for storing in `AtomicU32`.
-        pub fn as_u32(&self) -> u32 {
-            self.soc_type as u32
+    /// Empty/unknown SoC descriptor.
+    pub const fn unknown() -> Self {
+        Self {
+            soc_type: SocType::Unknown,
+            name: "Unknown",
+            architecture: ArchVersion::Unknown,
+            cpu_count: 1,
+            has_aes: false,
+            has_sha2: false,
+            has_neon: false,
+            has_crc32: false,
+            has_virtualization: false,
+            interrupt_controller: InterruptController::None,
+            timer: TimerType::GenericTimer,
+            smp_method: SmpMethod::FirmwareManaged,
+            cache: CacheInfo {
+                line_size: 64,
+                l1d_size_kib: 0,
+                l1i_size_kib: 0,
+            },
+            has_numa: false,
         }
     }
-    
-    /// Atomic slot storing the detected `SocType`.
-    static SOC_TYPE: AtomicU32 = AtomicU32::new(0);
-    
+
+    /// Convert to a stable `u32` suitable for storing in `AtomicU32`.
+    pub fn as_u32(&self) -> u32 {
+        self.soc_type as u32
+    }
+}
+
+/// Atomic slot storing the detected `SocType`.
+static SOC_TYPE: AtomicU32 = AtomicU32::new(0);
+
 /// Return just the interrupt controller for the currently-detected
 /// SoC. This is the only field every early-boot caller needs from
 /// [`SocInfo`]; returning the entire struct eagerly used to cause
@@ -206,23 +214,23 @@ fn _legacy_current_soc_removed() {
     // Removed: old impl called `info_for` on every call. Kept as
     // documentation; the real `current_soc` is above.
 }
-    
-    /// Detect the SoC the kernel is currently running on.
-    ///
-    /// The detection uses (in order of preference):
-    ///
-    /// 1. The DTB-supplied `model` string, if exposed via UEFI or the
-    ///    boot stub (not yet wired up).
-    /// 2. The MIDR_EL1 register — encodes the implementing part number.
-    /// 3. A fallback to "QEMUVirt" when running on the QEMU `virt`
-    ///    platform (detected by MPIDR_EL1 == 0.
-    ///
-    /// # Why ARMv7 SoCs are mapped explicitly
-    ///
-    /// RK3288 (Cortex-A17) and RK3066 (Cortex-A9) are 32-bit-only parts.
-    /// On such hardware the AArch64 kernel simply cannot run; we map
-    /// them to [`SocType::UnsupportedArmV7`] so the boot can fail fast
-    /// with a clear diagnostic rather than spinning.
+
+/// Detect the SoC the kernel is currently running on.
+///
+/// The detection uses (in order of preference):
+///
+/// 1. The DTB-supplied `model` string, if exposed via UEFI or the
+///    boot stub (not yet wired up).
+/// 2. The MIDR_EL1 register — encodes the implementing part number.
+/// 3. A fallback to "QEMUVirt" when running on the QEMU `virt`
+///    platform (detected by MPIDR_EL1 == 0.
+///
+/// # Why ARMv7 SoCs are mapped explicitly
+///
+/// RK3288 (Cortex-A17) and RK3066 (Cortex-A9) are 32-bit-only parts.
+/// On such hardware the AArch64 kernel simply cannot run; we map
+/// them to [`SocType::UnsupportedArmV7`] so the boot can fail fast
+/// with a clear diagnostic rather than spinning.
 pub fn detect_soc() -> SocType {
     let midr: u64;
     unsafe {
@@ -279,25 +287,25 @@ pub fn detect_soc() -> SocType {
     crate::hal::serial::write_string("hal_soc:detect_soc_done\r\n");
     detected
 }
-    
-    fn detect_phytium(part: u64) -> SocType {
-        match part {
-            0x000 => SocType::PhytiumFT2000,
-            0x001 => SocType::PhytiumD2000,
-            0x002 => SocType::PhytiumD3000,
-            _ => SocType::PhytiumFT2000,
-        }
+
+fn detect_phytium(part: u64) -> SocType {
+    match part {
+        0x000 => SocType::PhytiumFT2000,
+        0x001 => SocType::PhytiumD2000,
+        0x002 => SocType::PhytiumD3000,
+        _ => SocType::PhytiumFT2000,
     }
-    
-    fn detect_rockchip(part: u64) -> SocType {
-        match part {
-            0x000 => SocType::RockchipRK3399,
-            0x001 => SocType::RockchipRK356x,
-            0x002 => SocType::RockchipRK3588,
-            _ => SocType::RockchipRK3399,
-        }
+}
+
+fn detect_rockchip(part: u64) -> SocType {
+    match part {
+        0x000 => SocType::RockchipRK3399,
+        0x001 => SocType::RockchipRK356x,
+        0x002 => SocType::RockchipRK3588,
+        _ => SocType::RockchipRK3399,
     }
-    
+}
+
 /// Initialise the SoC layer: detect, configure, and publish.
 ///
 /// Stores the detected `SocType` in the atomic slot so other HAL
@@ -390,7 +398,11 @@ pub fn init_soc() {
         (*slot).timer = TimerType::GenericTimer;
         (*slot).smp_method = SmpMethod::FirmwareManaged;
         crate::hal::serial::write_string("hal_soc:before_cache_write\r\n");
-        (*slot).cache = CacheInfo { line_size: 64, l1d_size_kib: 0, l1i_size_kib: 0 };
+        (*slot).cache = CacheInfo {
+            line_size: 64,
+            l1d_size_kib: 0,
+            l1i_size_kib: 0,
+        };
         crate::hal::serial::write_string("hal_soc:after_cache_write\r\n");
         (*slot).has_numa = false;
     }

@@ -10,8 +10,8 @@
 //! - Scheduling statistics
 //! - Memory management state (PML4, kernel stack)
 
-use core::arch::asm;
 use crate::ke::sync::Spinlock;
+use core::arch::asm;
 
 /// Per-CPU data structure (stored at GS:0)
 #[repr(C)]
@@ -222,7 +222,11 @@ pub fn init_ap(cpu_id: u32, apic_id: u32) {
 
     // Validate installation
     let percpu = PerCpuData::current();
-    assert!(percpu.validate(), "AP {} Per-CPU data validation failed", cpu_id);
+    assert!(
+        percpu.validate(),
+        "AP {} Per-CPU data validation failed",
+        cpu_id
+    );
 }
 
 /// Get Per-CPU data for a specific CPU (by CPU ID)

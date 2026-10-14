@@ -16,9 +16,9 @@
 //! no-op on aarch64/riscv64/loongarch64 where there is no legacy
 //! 8259 pair), so `kernel_main` can call every helper unconditionally.
 
+use crate::boot_types::BootInfo;
 #[allow(unused_imports)]
 use crate::{boot_print, boot_println};
-use crate::boot_types::BootInfo;
 
 /// Re-export of the kernel's `BootMode` so callers don't need to
 /// import the canonical definition from two places.
@@ -111,8 +111,7 @@ fn arch_early_ensure_serial_ready_loongarch() -> u64 {
 }
 
 #[cfg(target_arch = "loongarch64")]
-static ARCH_EARLY_LAST_CRMD: core::sync::atomic::AtomicU64 =
-    core::sync::atomic::AtomicU64::new(0);
+static ARCH_EARLY_LAST_CRMD: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
 /// Adopt the GOP / firmware-provided framebuffer that `winload`
 /// published in `BootInfo`. The pixel writer is the cross-arch
@@ -142,7 +141,8 @@ pub fn adopt_bootinfo_framebuffer(boot: &BootInfo) -> bool {
         boot.framebuffer_height,
         boot.framebuffer_stride,
         boot.framebuffer_format,
-    ).is_some()
+    )
+    .is_some()
     {
         crate::hal::common::framebuffer::set_attr(0x07);
     }
@@ -258,7 +258,7 @@ pub fn mask_all_irqs_for_polled_io() {
 /// `SafeModeCmd`      -> plain text mode.
 /// `SafeModeDebug`    -> SOS mode (driver-load verbose) + ntbtlog.
 pub fn configure_boot_display(mode: BootMode) {
-    use crate::drivers::bootvid::{set_boot_mode, display_windows_logo, BootDisplayMode};
+    use crate::drivers::bootvid::{display_windows_logo, set_boot_mode, BootDisplayMode};
     match mode {
         BootMode::Normal => {
             set_boot_mode(BootDisplayMode::Normal);
@@ -333,20 +333,30 @@ pub const fn has_user_mode_hand_off() -> bool {
 /// it without an architecture-specific `cfg` block.
 pub const fn arch_name_line() -> &'static str {
     #[cfg(target_arch = "x86_64")]
-    { "  x86_64  (QEMU: -machine pc)" }
+    {
+        "  x86_64  (QEMU: -machine pc)"
+    }
     #[cfg(target_arch = "aarch64")]
-    { "  aarch64  (QEMU: -machine virt)" }
+    {
+        "  aarch64  (QEMU: -machine virt)"
+    }
     #[cfg(target_arch = "riscv64")]
-    { "  riscv64  (QEMU: -machine virt)" }
+    {
+        "  riscv64  (QEMU: -machine virt)"
+    }
     #[cfg(target_arch = "loongarch64")]
-    { "  loongarch64 (QEMU: -machine virt)" }
+    {
+        "  loongarch64 (QEMU: -machine virt)"
+    }
     #[cfg(not(any(
         target_arch = "x86_64",
         target_arch = "aarch64",
         target_arch = "riscv64",
         target_arch = "loongarch64",
     )))]
-    { "  unknown architecture" }
+    {
+        "  unknown architecture"
+    }
 }
 
 /// True if the platform exposes a linear framebuffer that bootvid
@@ -430,7 +440,8 @@ fn try_launch_cmd_exe_arch() -> ! {
 
 /// Launch CSRSS for Session 0
 #[cfg(target_arch = "x86_64")]
-fn launch_csrss_session_0() -> Result<crate::servers::smss::SystemExeLoadResult, crate::servers::smss::ExeLoadError> {
+fn launch_csrss_session_0(
+) -> Result<crate::servers::smss::SystemExeLoadResult, crate::servers::smss::ExeLoadError> {
     boot_println!("[SAFE-CMD] Launching CSRSS for Session 0...");
     crate::servers::smss::load_and_create_process(
         "C:\\Windows\\System32\\csrss.exe",
@@ -442,7 +453,8 @@ fn launch_csrss_session_0() -> Result<crate::servers::smss::SystemExeLoadResult,
 
 /// Launch CSRSS for Session 1
 #[cfg(target_arch = "x86_64")]
-fn launch_csrss_session_1() -> Result<crate::servers::smss::SystemExeLoadResult, crate::servers::smss::ExeLoadError> {
+fn launch_csrss_session_1(
+) -> Result<crate::servers::smss::SystemExeLoadResult, crate::servers::smss::ExeLoadError> {
     boot_println!("[SAFE-CMD] Launching CSRSS for Session 1...");
     crate::servers::smss::load_and_create_process(
         "C:\\Windows\\System32\\csrss.exe",
@@ -454,7 +466,8 @@ fn launch_csrss_session_1() -> Result<crate::servers::smss::SystemExeLoadResult,
 
 /// Launch wininit.exe
 #[cfg(target_arch = "x86_64")]
-fn launch_wininit_exe() -> Result<crate::servers::smss::SystemExeLoadResult, crate::servers::smss::ExeLoadError> {
+fn launch_wininit_exe(
+) -> Result<crate::servers::smss::SystemExeLoadResult, crate::servers::smss::ExeLoadError> {
     boot_println!("[SAFE-CMD] Launching wininit.exe...");
     let result = crate::servers::smss::load_and_create_process(
         "C:\\Windows\\System32\\wininit.exe",
@@ -462,7 +475,7 @@ fn launch_wininit_exe() -> Result<crate::servers::smss::SystemExeLoadResult, cra
         0,
         0x400,
     )?;
-    
+
     // wininit.exe should start services.exe and lsass.exe
     // We start them directly from here to ensure they're launched
     boot_println!("[SAFE-CMD] Launching services.exe...");
@@ -472,7 +485,7 @@ fn launch_wininit_exe() -> Result<crate::servers::smss::SystemExeLoadResult, cra
         0,
         0x500,
     );
-    
+
     boot_println!("[SAFE-CMD] Launching lsass.exe...");
     let _ = crate::servers::smss::load_and_create_process(
         "C:\\Windows\\System32\\lsass.exe",
@@ -480,7 +493,7 @@ fn launch_wininit_exe() -> Result<crate::servers::smss::SystemExeLoadResult, cra
         0,
         0x600,
     );
-    
+
     Ok(result)
 }
 
@@ -497,7 +510,10 @@ const CMD_EXE_DISK_PATH: &str = "C:\\Windows\\System32\\cmd.exe";
 /// Returns the raw file bytes wrapped in a `Vec<u8>`. The image must
 /// be a valid PE32+ — the loader will reject it otherwise.
 fn load_cmd_exe_from_disk() -> Result<core::mem::ManuallyDrop<alloc::vec::Vec<u8>>, &'static str> {
-    boot_println!("[SAFE-CMD] load_cmd_exe_from_disk: target = {}", CMD_EXE_DISK_PATH);
+    boot_println!(
+        "[SAFE-CMD] load_cmd_exe_from_disk: target = {}",
+        CMD_EXE_DISK_PATH
+    );
 
     // Probe the system partition to pick the right FS driver.
     // This handles all three build variants correctly:
@@ -531,7 +547,11 @@ fn load_cmd_exe_from_disk() -> Result<core::mem::ManuallyDrop<alloc::vec::Vec<u8
                         boot_println!("[SAFE-CMD] FAT32 cmd.exe entry is zero-length");
                         Err("zero-length cmd.exe entry")
                     } else {
-                        boot_println!("[SAFE-CMD] FAT32 cmd.exe entry: cluster={} size={}", cluster, size);
+                        boot_println!(
+                            "[SAFE-CMD] FAT32 cmd.exe entry: cluster={} size={}",
+                            cluster,
+                            size
+                        );
                         // Allocate via the kernel pool instead of KernelHeap so
                         // we side-step the same SIMD-alignment / Stack-Fault
                         // class of issues we hit with the system exes. We
@@ -539,23 +559,30 @@ fn load_cmd_exe_from_disk() -> Result<core::mem::ManuallyDrop<alloc::vec::Vec<u8
                         // grab a pool buffer, hand it to the FAT32 read
                         // routine, and return it wrapped in `ManuallyDrop`
                         // so the kernel heap never sees a free() for it.
-                        let ptr = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, size);
+                        let ptr =
+                            crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, size);
                         if ptr.is_null() {
-                            boot_println!("[SAFE-CMD] pool alloc failed for cmd.exe ({} bytes)", size);
+                            boot_println!(
+                                "[SAFE-CMD] pool alloc failed for cmd.exe ({} bytes)",
+                                size
+                            );
                             return Err("pool alloc failed");
                         }
                         let mut buf_slice = unsafe { core::slice::from_raw_parts_mut(ptr, size) };
-                        match crate::fs::fat32::read_file(fs, cluster, size as u32, &mut buf_slice) {
+                        match crate::fs::fat32::read_file(fs, cluster, size as u32, &mut buf_slice)
+                        {
                             Ok(n) if n >= 2 && buf_slice[0] == b'M' && buf_slice[1] == b'Z' => {
                                 boot_println!("[SAFE-CMD] FAT32 cmd.exe read OK ({} bytes)", n);
-                                let mut v = unsafe {
-                                    alloc::vec::Vec::from_raw_parts(ptr, n, size)
-                                };
+                                let mut v =
+                                    unsafe { alloc::vec::Vec::from_raw_parts(ptr, n, size) };
                                 v.truncate(n);
                                 return Ok(core::mem::ManuallyDrop::new(v));
                             }
                             Ok(n) => {
-                                boot_println!("[SAFE-CMD] FAT32 cmd.exe {} bytes but MZ mismatch", n);
+                                boot_println!(
+                                    "[SAFE-CMD] FAT32 cmd.exe {} bytes but MZ mismatch",
+                                    n
+                                );
                                 return Err("FAT32 cmd.exe MZ mismatch");
                             }
                             Err(_) => {
@@ -584,7 +611,10 @@ fn load_cmd_exe_from_disk() -> Result<core::mem::ManuallyDrop<alloc::vec::Vec<u8
             match try_load_cmd_exe_from_ntfs() {
                 Ok(img) => return Ok(img),
                 Err(e) => {
-                    boot_println!("[SAFE-CMD] NTFS load failed: {} (no fallback — cmd.exe must live on disk)", e);
+                    boot_println!(
+                        "[SAFE-CMD] NTFS load failed: {} (no fallback — cmd.exe must live on disk)",
+                        e
+                    );
                     return Err(e);
                 }
             }
@@ -622,7 +652,11 @@ fn load_cmd_exe_from_disk() -> Result<core::mem::ManuallyDrop<alloc::vec::Vec<u8
                     }
                 }
                 Err(e) => {
-                    boot_println!("[SAFE-CMD] EXT read_whole_file({}) failed: {}", CMD_EXE_DISK_PATH, e);
+                    boot_println!(
+                        "[SAFE-CMD] EXT read_whole_file({}) failed: {}",
+                        CMD_EXE_DISK_PATH,
+                        e
+                    );
                     return Err("EXT cmd.exe read failed");
                 }
             }
@@ -659,7 +693,8 @@ fn load_cmd_exe_from_disk() -> Result<core::mem::ManuallyDrop<alloc::vec::Vec<u8
 /// Returns `Ok(vec)` on success and `Err(&'static str)` on any
 /// failure. cmd.exe MUST come from the on-disk NTFS partition —
 /// there is no longer an in-memory fallback path.
-fn try_load_cmd_exe_from_ntfs() -> Result<core::mem::ManuallyDrop<alloc::vec::Vec<u8>>, &'static str> {
+fn try_load_cmd_exe_from_ntfs() -> Result<core::mem::ManuallyDrop<alloc::vec::Vec<u8>>, &'static str>
+{
     if !crate::fs::ntfs::is_mounted() {
         return Err("NTFS not mounted");
     }
@@ -730,15 +765,10 @@ fn try_load_cmd_exe_from_ntfs() -> Result<core::mem::ManuallyDrop<alloc::vec::Ve
         }
     }
     crate::fs::set_active_partition_ramdisk(prev_active);
-    if read_total < 2
-        || unsafe { *ptr } != b'M'
-        || unsafe { *ptr.add(1) } != b'Z'
-    {
+    if read_total < 2 || unsafe { *ptr } != b'M' || unsafe { *ptr.add(1) } != b'Z' {
         return Err("NTFS cmd.exe MZ mismatch");
     }
-    let mut v = unsafe {
-        alloc::vec::Vec::from_raw_parts(ptr, read_total, total_size)
-    };
+    let mut v = unsafe { alloc::vec::Vec::from_raw_parts(ptr, read_total, total_size) };
     v.truncate(read_total);
     Ok(core::mem::ManuallyDrop::new(v))
 }
@@ -794,14 +824,21 @@ fn create_user_process_with_pe_x86_64(
             return None;
         }
     };
-    boot_println!("[SAFE-CMD] create_user_process_with_pe: D (PE loaded, entry=0x{:x})", mapping.entry_point);
+    boot_println!(
+        "[SAFE-CMD] create_user_process_with_pe: D (PE loaded, entry=0x{:x})",
+        mapping.entry_point
+    );
     unsafe {
         (*process).user_rip = mapping.entry_point;
         (*process).user_image_base = mapping.image_base;
         (*process).user_image_size = mapping.image_size;
     }
-    boot_println!("[SAFE-CMD] PE loaded: image_base=0x{:x} entry=0x{:x} size=0x{:x}",
-                  mapping.image_base, mapping.entry_point, mapping.image_size);
+    boot_println!(
+        "[SAFE-CMD] PE loaded: image_base=0x{:x} entry=0x{:x} size=0x{:x}",
+        mapping.image_base,
+        mapping.entry_point,
+        mapping.image_size
+    );
     Some(process)
 }
 
@@ -851,25 +888,35 @@ fn enter_first_user_thread_arch() -> ! {
         )
         .unwrap_or_else(|| {
             boot_println!("FATAL: create_user_process (stub) returned None");
-            loop { crate::arch::halt(); }
+            loop {
+                crate::arch::halt();
+            }
         });
         process = p as *mut Eprocess;
         if !crate::userspace::minimal_stub::install_into_pml4(unsafe { (*process).pml4_phys }) {
             boot_println!("FATAL: install_into_pml4 failed");
-            loop { crate::arch::halt(); }
+            loop {
+                crate::arch::halt();
+            }
         }
     }
     if process.is_null() {
         boot_println!("FATAL: no user process was created");
-        loop { crate::arch::halt(); }
+        loop {
+            crate::arch::halt();
+        }
     }
 
     let pml4_phys = unsafe { (*process).pml4_phys };
     let user_rip = unsafe { (*process).user_rip };
     let user_rsp = unsafe { (*process).user_rsp };
     let main_thread = unsafe { (*process).main_thread };
-    boot_println!("User process: PML4=0x{:x} RIP=0x{:x} RSP=0x{:x}",
-                  pml4_phys, user_rip, user_rsp);
+    boot_println!(
+        "User process: PML4=0x{:x} RIP=0x{:x} RSP=0x{:x}",
+        pml4_phys,
+        user_rip,
+        user_rsp
+    );
 
     if !main_thread.is_null() {
         crate::ke::scheduler::setup_bsp(main_thread);
@@ -903,19 +950,27 @@ fn enter_first_user_thread_arch() -> ! {
             Some(p) => p as *mut Eprocess,
             None => {
                 boot_println!("FATAL: create_user_process (stub) returned None");
-                loop { crate::arch::halt(); }
+                loop {
+                    crate::arch::halt();
+                }
             }
         };
         if !crate::userspace::minimal_stub::install_into_pml4(unsafe { (*p).pml4_phys }) {
             boot_println!("FATAL: install_into_pml4 failed");
-            loop { crate::arch::halt(); }
+            loop {
+                crate::arch::halt();
+            }
         }
         let pml4_phys = unsafe { (*p).pml4_phys };
         let user_rip = unsafe { (*p).user_rip };
         let user_rsp = unsafe { (*p).user_rsp };
         let main_thread = unsafe { (*p).main_thread };
-        boot_println!("User process: PML4=0x{:x} RIP=0x{:x} RSP=0x{:x}",
-                      pml4_phys, user_rip, user_rsp);
+        boot_println!(
+            "User process: PML4=0x{:x} RIP=0x{:x} RSP=0x{:x}",
+            pml4_phys,
+            user_rip,
+            user_rsp
+        );
         if !main_thread.is_null() {
             crate::ke::scheduler::setup_bsp(main_thread);
         }
@@ -923,7 +978,9 @@ fn enter_first_user_thread_arch() -> ! {
         crate::arch::aarch64::user_entry::enter_first_user_thread(pml4_phys, user_rip, user_rsp);
     }
     boot_println!("RING3_STUB_FALLBACK disabled on this arch");
-    loop { crate::arch::halt(); }
+    loop {
+        crate::arch::halt();
+    }
 }
 
 #[cfg(target_arch = "riscv64")]
@@ -946,19 +1003,27 @@ fn enter_first_user_thread_arch() -> ! {
             Some(p) => p as *mut Eprocess,
             None => {
                 boot_println!("FATAL: create_user_process (stub) returned None");
-                loop { crate::arch::halt(); }
+                loop {
+                    crate::arch::halt();
+                }
             }
         };
         if !crate::userspace::minimal_stub::install_into_pml4(unsafe { (*p).pml4_phys }) {
             boot_println!("FATAL: install_into_pml4 failed");
-            loop { crate::arch::halt(); }
+            loop {
+                crate::arch::halt();
+            }
         }
         let pml4_phys = unsafe { (*p).pml4_phys };
         let user_rip = unsafe { (*p).user_rip };
         let user_rsp = unsafe { (*p).user_rsp };
         let main_thread = unsafe { (*p).main_thread };
-        boot_println!("User process: PML4=0x{:x} RIP=0x{:x} RSP=0x{:x}",
-                      pml4_phys, user_rip, user_rsp);
+        boot_println!(
+            "User process: PML4=0x{:x} RIP=0x{:x} RSP=0x{:x}",
+            pml4_phys,
+            user_rip,
+            user_rsp
+        );
         if !main_thread.is_null() {
             crate::ke::scheduler::setup_bsp(main_thread);
         }
@@ -966,7 +1031,9 @@ fn enter_first_user_thread_arch() -> ! {
         crate::arch::riscv64::user_entry::enter_first_user_thread(pml4_phys, user_rip, user_rsp);
     }
     boot_println!("RING3_STUB_FALLBACK disabled on this arch");
-    loop { crate::arch::halt(); }
+    loop {
+        crate::arch::halt();
+    }
 }
 
 #[cfg(target_arch = "loongarch64")]
@@ -989,27 +1056,39 @@ fn enter_first_user_thread_arch() -> ! {
             Some(p) => p as *mut Eprocess,
             None => {
                 boot_println!("FATAL: create_user_process (stub) returned None");
-                loop { crate::arch::halt(); }
+                loop {
+                    crate::arch::halt();
+                }
             }
         };
         if !crate::userspace::minimal_stub::install_into_pml4(unsafe { (*p).pml4_phys }) {
             boot_println!("FATAL: install_into_pml4 failed");
-            loop { crate::arch::halt(); }
+            loop {
+                crate::arch::halt();
+            }
         }
         let pml4_phys = unsafe { (*p).pml4_phys };
         let user_rip = unsafe { (*p).user_rip };
         let user_rsp = unsafe { (*p).user_rsp };
         let main_thread = unsafe { (*p).main_thread };
-        boot_println!("User process: PGD=0x{:x} RIP=0x{:x} RSP=0x{:x}",
-                      pml4_phys, user_rip, user_rsp);
+        boot_println!(
+            "User process: PGD=0x{:x} RIP=0x{:x} RSP=0x{:x}",
+            pml4_phys,
+            user_rip,
+            user_rsp
+        );
         if !main_thread.is_null() {
             crate::ke::scheduler::setup_bsp(main_thread);
         }
         boot_println!("Dispatching into PLV0...");
-        crate::arch::loongarch64::user_entry::enter_first_user_thread(pml4_phys, user_rip, user_rsp);
+        crate::arch::loongarch64::user_entry::enter_first_user_thread(
+            pml4_phys, user_rip, user_rsp,
+        );
     }
     boot_println!("RING3_STUB_FALLBACK disabled on this arch");
-    loop { crate::arch::halt(); }
+    loop {
+        crate::arch::halt();
+    }
 }
 
 /// Set to `true` to use the Milestone B path (real PE loading).

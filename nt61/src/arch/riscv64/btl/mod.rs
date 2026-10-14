@@ -72,4 +72,6 @@ pub fn init() {
 
 /// Smoke test — Phase 4 ships a no-op validator that returns
 /// `true` for every platform.
-pub fn smoke_test() -> bool { true }
+pub fn smoke_test() -> bool {
+    true
+}

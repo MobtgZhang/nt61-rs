@@ -55,7 +55,9 @@ pub fn base() -> u64 {
 /// Source 0 has no effect (priority 0 = disabled).
 pub fn set_priority(irq: u32, prio: u8) {
     let b = PLIC_BASE.load(Ordering::Acquire);
-    if b == 0 { return; }
+    if b == 0 {
+        return;
+    }
     let off = PLIC_PRIORITY_BASE + (irq as u64) * 4;
     unsafe { core::ptr::write_volatile((b + off) as *mut u32, prio as u32) };
 }
@@ -63,7 +65,9 @@ pub fn set_priority(irq: u32, prio: u8) {
 /// Read the priority of a given IRQ source.
 pub fn get_priority(irq: u32) -> u32 {
     let b = PLIC_BASE.load(Ordering::Acquire);
-    if b == 0 { return 0; }
+    if b == 0 {
+        return 0;
+    }
     let off = PLIC_PRIORITY_BASE + (irq as u64) * 4;
     unsafe { core::ptr::read_volatile((b + off) as *const u32) }
 }
@@ -75,7 +79,9 @@ pub fn get_priority(irq: u32) -> u32 {
 /// context = `hart * 2 + 1`.
 pub fn enable_irq(irq: u32, hart: u32, context: u32) {
     let b = PLIC_BASE.load(Ordering::Acquire);
-    if b == 0 { return; }
+    if b == 0 {
+        return;
+    }
     let ctx_idx = hart * 2 + context;
     let off = PLIC_ENABLE_BASE + (ctx_idx as u64) * PLIC_ENABLE_STRIDE + ((irq / 32) as u64) * 4;
     let shift = irq % 32;
@@ -89,7 +95,9 @@ pub fn enable_irq(irq: u32, hart: u32, context: u32) {
 /// Disable `irq` for the given `(hart, context)` pair.
 pub fn disable_irq(irq: u32, hart: u32, context: u32) {
     let b = PLIC_BASE.load(Ordering::Acquire);
-    if b == 0 { return; }
+    if b == 0 {
+        return;
+    }
     let ctx_idx = hart * 2 + context;
     let off = PLIC_ENABLE_BASE + (ctx_idx as u64) * PLIC_ENABLE_STRIDE + ((irq / 32) as u64) * 4;
     let shift = irq % 32;
@@ -104,10 +112,11 @@ pub fn disable_irq(irq: u32, hart: u32, context: u32) {
 /// IRQs with priority <= threshold are masked.
 pub fn set_threshold(hart: u32, context: u32, threshold: u8) {
     let b = PLIC_BASE.load(Ordering::Acquire);
-    if b == 0 { return; }
+    if b == 0 {
+        return;
+    }
     let ctx_idx = hart * 2 + context;
-    let off = PLIC_CONTEXT_BASE + (ctx_idx as u64) * PLIC_CONTEXT_STRIDE
-        + PLIC_THRESHOLD_OFFSET;
+    let off = PLIC_CONTEXT_BASE + (ctx_idx as u64) * PLIC_CONTEXT_STRIDE + PLIC_THRESHOLD_OFFSET;
     unsafe { core::ptr::write_volatile((b + off) as *mut u32, threshold as u32) };
 }
 
@@ -115,27 +124,31 @@ pub fn set_threshold(hart: u32, context: u32, threshold: u8) {
 /// [`PLIC_NO_INTERRUPT`] (0) if no interrupt is pending.
 pub fn claim(hart: u32, context: u32) -> u32 {
     let b = PLIC_BASE.load(Ordering::Acquire);
-    if b == 0 { return PLIC_NO_INTERRUPT; }
+    if b == 0 {
+        return PLIC_NO_INTERRUPT;
+    }
     let ctx_idx = hart * 2 + context;
-    let off = PLIC_CONTEXT_BASE + (ctx_idx as u64) * PLIC_CONTEXT_STRIDE
-        + PLIC_CLAIM_OFFSET;
+    let off = PLIC_CONTEXT_BASE + (ctx_idx as u64) * PLIC_CONTEXT_STRIDE + PLIC_CLAIM_OFFSET;
     unsafe { core::ptr::read_volatile((b + off) as *const u32) }
 }
 
 /// Complete (acknowledge EOI) an IRQ for `(hart, context)`.
 pub fn complete(hart: u32, context: u32, irq: u32) {
     let b = PLIC_BASE.load(Ordering::Acquire);
-    if b == 0 { return; }
+    if b == 0 {
+        return;
+    }
     let ctx_idx = hart * 2 + context;
-    let off = PLIC_CONTEXT_BASE + (ctx_idx as u64) * PLIC_CONTEXT_STRIDE
-        + PLIC_CLAIM_OFFSET;
+    let off = PLIC_CONTEXT_BASE + (ctx_idx as u64) * PLIC_CONTEXT_STRIDE + PLIC_CLAIM_OFFSET;
     unsafe { core::ptr::write_volatile((b + off) as *mut u32, irq) };
 }
 
 /// Read the per-hart pending bit for an IRQ.
 pub fn is_pending(irq: u32) -> bool {
     let b = PLIC_BASE.load(Ordering::Acquire);
-    if b == 0 { return false; }
+    if b == 0 {
+        return false;
+    }
     let off = PLIC_PENDING_BASE + ((irq / 32) as u64) * 4;
     let shift = irq % 32;
     unsafe {

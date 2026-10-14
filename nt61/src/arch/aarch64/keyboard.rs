@@ -11,8 +11,14 @@ static TAIL: AtomicU8 = AtomicU8::new(0);
 
 pub fn irq_handler() {
     // No-op: requires HID driver.
-    let _ = (&BUF, HEAD.load(Ordering::Relaxed), TAIL.load(Ordering::Relaxed));
+    let _ = (
+        &BUF,
+        HEAD.load(Ordering::Relaxed),
+        TAIL.load(Ordering::Relaxed),
+    );
 }
 
-pub fn getc() -> i16 { -1 }
+pub fn getc() -> i16 {
+    -1
+}
 pub fn init() {}

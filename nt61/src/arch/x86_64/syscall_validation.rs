@@ -5,22 +5,34 @@
 //!
 //! All user-mode pointers must be validated before dereferencing to prevent
 //! privilege escalation attacks (Ring 3 → Ring 0).
+//!
+//! The canonical probe implementation lives in `crate::mm::user_copy`: it
+//! walks the page tables, requires every page in the range to be present,
+//! rejects kernel aliases, and (for write probes) requires the writable bit.
+//! This module is the syscall-facing wrapper around it so both share one
+//! policy. A probe that only checks "is this address in the user half" is
+//! not a probe — it accepts unmapped memory, and the dereference then faults
+//! inside the kernel instead of raising a catchable access violation.
 
 use core::ptr;
 
 /// In Windows x64, user-mode address space is limited to 0x00007FFF_FFFFFFFF
 const USER_MAX_ADDRESS: usize = 0x7FFF_FFFF_FFFF;
 
-pub const STATUS_SUCCESS: u32 = 0x00000000;
-pub const STATUS_ACCESS_VIOLATION: u32 = 0xC0000005;
-pub const STATUS_INVALID_PARAMETER: u32 = 0xC000000D;
-pub const STATUS_DATATYPE_MISALIGNMENT: u32 = 0x80000002;
+// NTSTATUS is a signed 32-bit value in the documented ABI, so the probe
+// helpers report it as `i32` and callers can return it directly from a
+// syscall handler without a lossy cast.
+pub const STATUS_SUCCESS: i32 = 0x00000000;
+pub const STATUS_ACCESS_VIOLATION: i32 = 0xC0000005u32 as i32;
+pub const STATUS_INVALID_PARAMETER: i32 = 0xC000000Du32 as i32;
+pub const STATUS_DATATYPE_MISALIGNMENT: i32 = 0x80000002u32 as i32;
 
 /// Verify that a user-mode pointer is safe to read from.
 /// 1. The address is within user-mode address space
+/// 2. Every page covering the range is present and mapped user-readable
 /// 3. The entire range is within user-mode bounds
 #[inline]
-pub unsafe fn probe_for_read(address: *const u8, length: usize) -> Result<(), u32> {
+pub unsafe fn probe_for_read(address: *const u8, length: usize) -> Result<(), i32> {
     if address.is_null() {
         return Err(STATUS_ACCESS_VIOLATION);
     }
@@ -47,18 +59,38 @@ pub unsafe fn probe_for_read(address: *const u8, length: usize) -> Result<(), u3
         return Err(STATUS_INVALID_PARAMETER);
     }
 
+    // Page-table level probe: the range must actually be mapped.
+    crate::mm::user_copy::probe_user_read(addr as u64, length)?;
+
     Ok(())
 }
 
 /// Verify that a user-mode pointer is safe to write to.
 /// 1. The address is within user-mode address space
+/// 2. Every page covering the range is present, mapped and writable
 /// 3. The entire range is within user-mode bounds
+//
+// A write probe that forwards to the read probe is not a write probe: it
+// accepts read-only mappings and the caller then writes through them. The
+// writable bit has to be checked explicitly.
 
 #[inline]
-pub unsafe fn probe_for_write(address: *mut u8, length: usize) -> Result<(), u32> {
-    // Reuse read validation
-    probe_for_read(address as *const u8, length)?;
-
+pub unsafe fn probe_for_write(address: *mut u8, length: usize) -> Result<(), i32> {
+    if address.is_null() {
+        return Err(STATUS_ACCESS_VIOLATION);
+    }
+    let addr = address as usize;
+    if addr >= USER_MAX_ADDRESS {
+        return Err(STATUS_ACCESS_VIOLATION);
+    }
+    if length == 0 {
+        return Ok(());
+    }
+    let end = addr.checked_add(length).ok_or(STATUS_INVALID_PARAMETER)?;
+    if end > USER_MAX_ADDRESS {
+        return Err(STATUS_ACCESS_VIOLATION);
+    }
+    crate::mm::user_copy::probe_user_write(addr as u64, length)?;
 
     Ok(())
 }
@@ -68,14 +100,15 @@ pub unsafe fn probe_for_read_aligned(
     address: *const u8,
     length: usize,
     alignment: usize,
-) -> Result<(), u32> {
-    probe_for_read(address, length)?;
-
-    if (address as usize) % alignment != 0 {
+) -> Result<(), i32> {
+    // NT orders these checks the other way round from the naive reading of
+    // the API: ProbeForRead/ProbeForWrite test alignment first and only
+    // then probe the range. Reporting misalignment before probing means a
+    // caller never walks page tables for a pointer that is rejected anyway.
+    if alignment > 1 && (address as usize) % alignment != 0 {
         return Err(STATUS_DATATYPE_MISALIGNMENT);
     }
-
-    Ok(())
+    probe_for_read(address, length)
 }
 
 #[inline]
@@ -83,22 +116,16 @@ pub unsafe fn probe_for_write_aligned(
     address: *mut u8,
     length: usize,
     alignment: usize,
-) -> Result<(), u32> {
-    probe_for_write(address, length)?;
-
-    if (address as usize) % alignment != 0 {
+) -> Result<(), i32> {
+    if alignment > 1 && (address as usize) % alignment != 0 {
         return Err(STATUS_DATATYPE_MISALIGNMENT);
     }
-
-    Ok(())
+    probe_for_write(address, length)
 }
 
 /// Validate a user-mode string pointer (null-terminated)
 /// Validates that a null-terminated string is entirely within user-mode
-pub unsafe fn probe_for_read_string(
-    address: *const u8,
-    max_length: usize,
-) -> Result<usize, u32> {
+pub unsafe fn probe_for_read_string(address: *const u8, max_length: usize) -> Result<usize, i32> {
     if address.is_null() {
         return Err(STATUS_ACCESS_VIOLATION);
     }
@@ -111,10 +138,10 @@ pub unsafe fn probe_for_read_string(
 
     let mut len = 0;
     while len < max_length {
-        // Check if this byte is still in user space
         probe_for_read(address.add(len), 1)?;
-
-        if *address.add(len) == 0 {
+        let mut byte = 0u8;
+        crate::mm::user_copy::read_user(address.add(len) as u64, &mut byte)?;
+        if byte == 0 {
             return Ok(len);
         }
 
@@ -129,7 +156,7 @@ pub unsafe fn probe_for_read_string(
 pub unsafe fn probe_for_read_unicode_string(
     address: *const u16,
     max_length: usize,
-) -> Result<usize, u32> {
+) -> Result<usize, i32> {
     if address.is_null() {
         return Err(STATUS_ACCESS_VIOLATION);
     }
@@ -142,10 +169,10 @@ pub unsafe fn probe_for_read_unicode_string(
 
     let mut len = 0;
     while len < max_length {
-        // Check if this character is still in user space
         probe_for_read(address.add(len) as *const u8, 2)?;
-
-        if *address.add(len) == 0 {
+        let mut character = 0u16;
+        crate::mm::user_copy::read_user(address.add(len) as u64, &mut character)?;
+        if character == 0 {
             return Ok(len);
         }
 
@@ -155,14 +182,58 @@ pub unsafe fn probe_for_read_unicode_string(
     Err(STATUS_INVALID_PARAMETER)
 }
 
+/// Probe a user-mode `UNICODE_STRING`.
+///
+/// The structure itself is user-controlled, so both the header and the
+/// buffer it points at must be probed. `Length` is a byte count, so the
+/// buffer range is `Length` bytes and must not exceed `MaximumLength`.
+pub unsafe fn probe_unicode_string(address: *const u8) -> Result<(), i32> {
+    if address.is_null() {
+        return Err(STATUS_ACCESS_VIOLATION);
+    }
+    probe_for_read(
+        address,
+        core::mem::size_of::<crate::libs::ntdll::types::UnicodeString>(),
+    )?;
+
+    let mut header: crate::libs::ntdll::types::UnicodeString =
+        unsafe { core::mem::zeroed() };
+    crate::mm::user_copy::read_user(address as u64, &mut header)?;
+    if header.Length > header.MaximumLength {
+        return Err(STATUS_INVALID_PARAMETER);
+    }
+    if header.Length == 0 {
+        return Ok(());
+    }
+    if header.Buffer.is_null() {
+        return Err(STATUS_ACCESS_VIOLATION);
+    }
+    probe_for_read(header.Buffer as *const u8, header.Length as usize)
+}
+
+/// Copy a user-mode null-terminated byte string into a kernel buffer.
+///
+/// The whole scan happens inside a probed range, so the caller never
+/// dereferences unvalidated user memory. Returns the number of bytes
+/// copied (excluding the terminator).
+pub unsafe fn capture_user_string(
+    address: *const u8,
+    max_length: usize,
+    dst: &mut [u8],
+) -> Result<usize, i32> {
+    let len = probe_for_read_string(address, max_length)?;
+    if len > dst.len() {
+        return Err(STATUS_INVALID_PARAMETER);
+    }
+    crate::mm::user_copy::copy_from_user(&mut dst[..len], address as u64)?;
+    Ok(len)
+}
+
 #[macro_export]
 macro_rules! probe_read {
     ($ptr:expr, $size:expr) => {
         unsafe {
-            $crate::arch::x86_64::syscall_validation::probe_for_read(
-                $ptr as *const u8,
-                $size,
-            )?
+            $crate::arch::x86_64::syscall_validation::probe_for_read($ptr as *const u8, $size)?
         }
     };
 }
@@ -171,10 +242,7 @@ macro_rules! probe_read {
 macro_rules! probe_write {
     ($ptr:expr, $size:expr) => {
         unsafe {
-            $crate::arch::x86_64::syscall_validation::probe_for_write(
-                $ptr as *mut u8,
-                $size,
-            )?
+            $crate::arch::x86_64::syscall_validation::probe_for_write($ptr as *mut u8, $size)?
         }
     };
 }
@@ -216,10 +284,11 @@ mod tests {
 
     #[test]
     fn test_probe_for_read_valid() {
+        // A user-half address that is not backed by a mapped page must be
+        // rejected: bounds alone are not a probe.
         unsafe {
-            // Valid user-mode address (we can't actually read it, but validation should pass)
             let result = probe_for_read(0x1000 as *const u8, 100);
-            assert!(result.is_ok());
+            assert!(result.is_err());
         }
     }
 
@@ -231,8 +300,19 @@ mod tests {
                 Err(STATUS_DATATYPE_MISALIGNMENT)
             );
 
-            let result = probe_for_read_aligned(0x1000 as *const u8, 8, 8);
-            assert!(result.is_ok());
+            // Aligned but not mapped: a probe that only checks bounds would
+            // say "ok" here and the caller would fault on the dereference.
+            assert_eq!(
+                probe_for_read_aligned(0x1000 as *const u8, 8, 8),
+                Err(STATUS_ACCESS_VIOLATION)
+            );
+
+            // Alignment is reported before the range is walked, so a
+            // misaligned kernel pointer still reports misalignment.
+            assert_eq!(
+                probe_for_write_aligned(0x1001 as *mut u8, 8, 8),
+                Err(STATUS_DATATYPE_MISALIGNMENT)
+            );
         }
     }
 }

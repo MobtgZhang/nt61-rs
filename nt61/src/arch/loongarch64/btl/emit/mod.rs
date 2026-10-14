@@ -9,7 +9,7 @@
 
 pub mod la64_reg;
 
-pub use la64_reg::{La64Reg, Operand, emit_label};
+pub use la64_reg::{emit_label, La64Reg, Operand};
 
 #[derive(Copy, Clone, Debug)]
 pub struct PendingBranch {
@@ -42,10 +42,19 @@ impl EmitBuffer {
             pending: alloc::vec::Vec::new(),
         }
     }
-    pub fn push_insn(&mut self, raw: u32) { self.code.push(raw); }
-    pub fn mark(&mut self, pc: u32) { /* branch targets stored as offsets */ let _ = pc; }
-    pub fn len(&self) -> usize { self.code.len() }
-    pub fn is_empty(&self) -> bool { self.code.is_empty() }
+    pub fn push_insn(&mut self, raw: u32) {
+        self.code.push(raw);
+    }
+    pub fn mark(&mut self, pc: u32) {
+        /* branch targets stored as offsets */
+        let _ = pc;
+    }
+    pub fn len(&self) -> usize {
+        self.code.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.code.is_empty()
+    }
 }
 
 // Re-export the allocation API needed by emit-buffer callers.

@@ -19,7 +19,9 @@ use core::sync::atomic::{AtomicU32, Ordering};
 static CPU_COUNT: AtomicU32 = AtomicU32::new(1);
 
 /// Return the cached CPU count.
-pub fn cpu_count() -> u32 { CPU_COUNT.load(Ordering::Relaxed) }
+pub fn cpu_count() -> u32 {
+    CPU_COUNT.load(Ordering::Relaxed)
+}
 
 /// SBI HSM hart_start (re-exported here for callers that already
 /// imported from this module).
@@ -30,7 +32,9 @@ pub unsafe fn sbi_hsm_hart_start(hart_id: u64, start_addr: u64, opaque: u64) -> 
 /// Read the running hart's id from the `mhartid` CSR.
 pub fn current_hart_id() -> u32 {
     let id: u32;
-    unsafe { asm!("csrr {}, mhartid", out(reg) id, options(nostack)); }
+    unsafe {
+        asm!("csrr {}, mhartid", out(reg) id, options(nostack));
+    }
     id
 }
 
@@ -83,7 +87,9 @@ pub unsafe extern "Rust" fn __smp_boot_secondary(satp_root: u64) {
     // real hart count.
     let max = 4u32;
     for hart in 0..max {
-        if hart == boot { continue; }
+        if hart == boot {
+            continue;
+        }
         // Trampoline address — the secondary entry. We use the
         // symbol exported above; SBI requires a physical address.
         let trampoline = __smp_secondary_entry as *const () as u64;

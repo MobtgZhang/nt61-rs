@@ -12,7 +12,9 @@ pub fn init(base: u64) {
 
 pub fn enable_irq(irq: u32) {
     let b = PIC_BASE.load(Ordering::Acquire);
-    if b == 0 { return; }
+    if b == 0 {
+        return;
+    }
     let reg = (irq / 32) as u64;
     unsafe {
         let v = ptr::read_volatile((b + 0x200 + reg * 4) as *const u32);
@@ -22,13 +24,17 @@ pub fn enable_irq(irq: u32) {
 
 pub fn irq_status() -> u32 {
     let b = PIC_BASE.load(Ordering::Acquire);
-    if b == 0 { return 0; }
+    if b == 0 {
+        return 0;
+    }
     unsafe { ptr::read_volatile((b + 0x3A0) as *const u32) }
 }
 
 pub fn ack(irq: u32) {
     let b = PIC_BASE.load(Ordering::Acquire);
-    if b == 0 { return; }
+    if b == 0 {
+        return;
+    }
     let reg = (irq / 32) as u64;
     unsafe {
         let v = ptr::read_volatile((b + 0x280 + reg * 4) as *const u32);

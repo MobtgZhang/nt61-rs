@@ -38,12 +38,12 @@ impl BootAnimation {
             animation_frame: 0,
         }
     }
-    
+
     /// Update animation state
     pub fn tick(&mut self) {
         self.animation_frame = (self.animation_frame + 1) % 60;
         self.progress = (self.progress + 0.005).min(1.0);
-        
+
         // Update phase based on progress
         self.phase = match () {
             _ if self.progress < 0.1 => BootPhase::Starting,
@@ -54,7 +54,7 @@ impl BootAnimation {
             _ => BootPhase::Complete,
         };
     }
-    
+
     /// Get status message for current phase
     pub fn status_message(&self) -> &'static str {
         match self.phase {
@@ -66,7 +66,7 @@ impl BootAnimation {
             BootPhase::Complete => "Ready",
         }
     }
-    
+
     /// Check if animation is complete
     pub fn is_complete(&self) -> bool {
         self.phase == BootPhase::Complete

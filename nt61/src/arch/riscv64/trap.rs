@@ -172,7 +172,9 @@ pub struct FaultInfo {
 #[inline(always)]
 pub fn read_scause() -> u64 {
     let v: u64;
-    unsafe { asm!("csrr {}, 0x142", out(reg) v, options(nostack)); }
+    unsafe {
+        asm!("csrr {}, 0x142", out(reg) v, options(nostack));
+    }
     v
 }
 
@@ -180,7 +182,9 @@ pub fn read_scause() -> u64 {
 #[inline(always)]
 pub fn read_sepc() -> u64 {
     let v: u64;
-    unsafe { asm!("csrr {}, 0x141", out(reg) v, options(nostack)); }
+    unsafe {
+        asm!("csrr {}, 0x141", out(reg) v, options(nostack));
+    }
     v
 }
 
@@ -188,7 +192,9 @@ pub fn read_sepc() -> u64 {
 #[inline(always)]
 pub fn read_stval() -> u64 {
     let v: u64;
-    unsafe { asm!("csrr {}, 0x143", out(reg) v, options(nostack)); }
+    unsafe {
+        asm!("csrr {}, 0x143", out(reg) v, options(nostack));
+    }
     v
 }
 
@@ -196,14 +202,18 @@ pub fn read_stval() -> u64 {
 #[inline(always)]
 pub fn read_sstatus() -> u64 {
     let v: u64;
-    unsafe { asm!("csrr {}, 0x100", out(reg) v, options(nostack)); }
+    unsafe {
+        asm!("csrr {}, 0x100", out(reg) v, options(nostack));
+    }
     v
 }
 
 /// Write `sepc` CSR.
 #[inline(always)]
 pub fn write_sepc(v: u64) {
-    unsafe { asm!("csrw 0x141, {}", in(reg) v, options(nostack)); }
+    unsafe {
+        asm!("csrw 0x141, {}", in(reg) v, options(nostack));
+    }
 }
 
 /// Top-level trap dispatcher invoked from `handle_trap` in
@@ -244,7 +254,9 @@ pub extern "C" fn riscv64_trap_dispatch(frame: *mut TrapFrame) {
                 // advances past the `ecall` instruction (we
                 // re-execute it as an `ecall` only by accident —
                 // advance by 4 to be safe).
-                unsafe { crate::arch::riscv64::syscall::dispatch_syscall(frame); }
+                unsafe {
+                    crate::arch::riscv64::syscall::dispatch_syscall(frame);
+                }
                 // Advance sepc past the ecall (4 bytes on RV64).
                 unsafe {
                     let new_sepc = sepc.wrapping_add(4);
@@ -263,16 +275,12 @@ pub extern "C" fn riscv64_trap_dispatch(frame: *mut TrapFrame) {
                 // don't re-trigger. Real debugger support lands
                 // later.
                 unsafe {
-                    let new_sepc = sepc.wrapping_add(
-                        if is_compressed_at(sepc) { 2 } else { 4 }
-                    );
+                    let new_sepc = sepc.wrapping_add(if is_compressed_at(sepc) { 2 } else { 4 });
                     (*frame).sepc = new_sepc;
                     write_sepc(new_sepc);
                 }
             }
-            TrapKind::LoadPageFault
-            | TrapKind::StorePageFault
-            | TrapKind::InstructionPageFault => {
+            TrapKind::LoadPageFault | TrapKind::StorePageFault | TrapKind::InstructionPageFault => {
                 // Phase 1: not implemented yet — Phase 2 will plug
                 // in the mm::vas page-fault handler. For now we
                 // panic with diagnostic info so we can iterate.
@@ -344,8 +352,8 @@ pub fn init() {
     let _ = sie;
     crate::arch::riscv64::csr::sie::set(
         crate::arch::riscv64::csr::sie::SEIE
-        | crate::arch::riscv64::csr::sie::STIE
-        | crate::arch::riscv64::csr::sie::SSIE,
+            | crate::arch::riscv64::csr::sie::STIE
+            | crate::arch::riscv64::csr::sie::SSIE,
     );
     // Init the CLINT and PLIC.
     crate::arch::riscv64::clint::init(0x2000000);

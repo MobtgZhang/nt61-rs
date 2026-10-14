@@ -47,12 +47,18 @@ pub mod feature {
 
 impl CpuFeatures {
     pub const fn empty() -> Self {
-        Self { bits_word11: 0, bits_word12: 0 }
+        Self {
+            bits_word11: 0,
+            bits_word12: 0,
+        }
     }
 
     /// Construct from raw CPUCFG words.
     pub const fn from_raw(w11: u64, w12: u64) -> Self {
-        Self { bits_word11: w11, bits_word12: w12 }
+        Self {
+            bits_word11: w11,
+            bits_word12: w12,
+        }
     }
 
     /// True if the named feature is present.
@@ -86,12 +92,24 @@ fn read_word_12() -> u64 {
 pub fn detect_all() -> CpuFeatures {
     let feat = CpuFeatures::from_raw(read_word_11(), read_word_12());
     let mut bits: u64 = 0;
-    if feat.has(feature::LSX) { bits |= feature::LSX; }
-    if feat.has(feature::LASX) { bits |= feature::LASX; }
-    if feat.has(feature::LBT) { bits |= feature::LBT; }
-    if feat.has(feature::LVZ) { bits |= feature::LVZ; }
-    if feat.has(feature::LAM) { bits |= feature::LAM; }
-    if feat.has(feature::SMT) { bits |= feature::SMT; }
+    if feat.has(feature::LSX) {
+        bits |= feature::LSX;
+    }
+    if feat.has(feature::LASX) {
+        bits |= feature::LASX;
+    }
+    if feat.has(feature::LBT) {
+        bits |= feature::LBT;
+    }
+    if feat.has(feature::LVZ) {
+        bits |= feature::LVZ;
+    }
+    if feat.has(feature::LAM) {
+        bits |= feature::LAM;
+    }
+    if feat.has(feature::SMT) {
+        bits |= feature::SMT;
+    }
     FEATURES.store(bits, Ordering::Release);
     feat
 }

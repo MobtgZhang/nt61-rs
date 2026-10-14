@@ -12,10 +12,25 @@ pub mod simd;
 
 #[derive(Copy, Clone, Debug)]
 pub enum OperandKind {
-    Reg { index: u8, bits: u8 },
-    Imm { value: u32, bits: u8 },
-    Mem { base: u8, index: u8, scale: u8, disp: i32, bits: u8 },
-    RelAddr { offset: i32, bits: u8 },
+    Reg {
+        index: u8,
+        bits: u8,
+    },
+    Imm {
+        value: u32,
+        bits: u8,
+    },
+    Mem {
+        base: u8,
+        index: u8,
+        scale: u8,
+        disp: i32,
+        bits: u8,
+    },
+    RelAddr {
+        offset: i32,
+        bits: u8,
+    },
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -52,7 +67,10 @@ pub fn decode_one(code: &[u8], offset: usize) -> Result<(Decoded, usize), Decode
     let mut d = Decoded::empty();
     d.opcode = opcode;
     d.operand_count = 1;
-    d.operands[0] = OperandKind::Imm { value: opcode, bits: 8 };
+    d.operands[0] = OperandKind::Imm {
+        value: opcode,
+        bits: 8,
+    };
     d.length = 1;
     Ok((d, offset + 1))
 }

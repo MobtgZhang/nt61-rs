@@ -46,12 +46,12 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use crate::arch::x86_64::syscall_numbers as nums;
 
 // AMD64 MSRs for the SYSCALL mechanism.
-const IA32_LSTAR: u32 = 0xC0000082;     // long-mode SYSCALL target RIP
-const IA32_STAR: u32 = 0xC0000081;     // CS/SS selectors for SYSRET
-const IA32_FMASK: u32 = 0xC0000084;    // RFLAGS mask on SYSCALL
-const IA32_EFER: u32 = 0xC0000080;     // EFER (bit 0 = SCE = SYSCALL enable)
+const IA32_LSTAR: u32 = 0xC0000082; // long-mode SYSCALL target RIP
+const IA32_STAR: u32 = 0xC0000081; // CS/SS selectors for SYSRET
+const IA32_FMASK: u32 = 0xC0000084; // RFLAGS mask on SYSCALL
+const IA32_EFER: u32 = 0xC0000080; // EFER (bit 0 = SCE = SYSCALL enable)
 const IA32_KERNEL_GS_BASE: u32 = 0xC0000102; // Kernel GS base (used by SWAPGS)
-const IA32_GS_BASE: u32 = 0xC0000101;  // User GS base (set by kernel on swapgs)
+const IA32_GS_BASE: u32 = 0xC0000101; // User GS base (set by kernel on swapgs)
 
 /// Segment selectors used for SYSRET. All are re-exported from `gdt.rs`
 /// which is the authoritative source for the OVMF-augmented GDT layout.
@@ -109,29 +109,18 @@ pub const PER_CPU_CURRENT_PROCESS_OFFSET: usize = 0x18;
 // that callers (scheduler.rs, smp.rs, irql.rs, ...) can use a stable
 // API regardless of where the underlying implementation lives.
 // =====================================================================
-
 pub use crate::arch::common::percpu::{
-    PerCpuArea,
-    init as percpu_init,
-    get_current,
-    get_current_cpu_id,
-    set_kernel_stack,
-    set_user_rsp,
-    set_current_thread,
-    get_current_thread,
-    set_current_process,
-    get_current_process,
-    MAX_PER_CPU,
-    PER_CPU_AREA_SIZE,
+    get_current, get_current_cpu_id, get_current_process, get_current_thread, init as percpu_init,
+    set_current_process, set_current_thread, set_kernel_stack, set_user_rsp, PerCpuArea,
+    MAX_PER_CPU, PER_CPU_AREA_SIZE,
 };
 
 #[cfg(target_arch = "x86_64")]
 #[cfg(target_arch = "x86_64")]
 pub use crate::arch::x86_64::percpu_impl::{
-    init_storage,
-    allocate as allocate_per_cpu_area,
     __percpu_get_current as per_cpu_ptr_mut,
-    __percpu_get_current_cpu_id as get_current_cpu_id_from_gs,
+    __percpu_get_current_cpu_id as get_current_cpu_id_from_gs, allocate as allocate_per_cpu_area,
+    init_storage,
 };
 
 /// Safe wrapper for percpu init (unsafe call).
@@ -140,7 +129,9 @@ pub fn init(cpu_id: u32) -> u64 {
 }
 
 /// Legacy alias for init.
-pub fn init_per_cpu(cpu_id: u32) -> u64 { init(cpu_id) }
+pub fn init_per_cpu(cpu_id: u32) -> u64 {
+    init(cpu_id)
+}
 
 /// Return a raw pointer to the BSP per-CPU area. Used by the
 /// MM code to publish the system / user PML4 pair so the
@@ -275,10 +266,18 @@ fn wrmsr(msr: u32, val: u64) {
     }
 }
 
-pub fn set_kernel_gs_base(base: u64) { wrmsr(IA32_KERNEL_GS_BASE, base); }
-pub fn set_user_gs_base(base: u64) { wrmsr(IA32_GS_BASE, base); }
-pub fn get_user_gs_base() -> u64 { rdmsr(IA32_GS_BASE) }
-pub fn get_kernel_gs_base() -> u64 { rdmsr(IA32_KERNEL_GS_BASE) }
+pub fn set_kernel_gs_base(base: u64) {
+    wrmsr(IA32_KERNEL_GS_BASE, base);
+}
+pub fn set_user_gs_base(base: u64) {
+    wrmsr(IA32_GS_BASE, base);
+}
+pub fn get_user_gs_base() -> u64 {
+    rdmsr(IA32_GS_BASE)
+}
+pub fn get_kernel_gs_base() -> u64 {
+    rdmsr(IA32_KERNEL_GS_BASE)
+}
 
 // =====================================================================
 // Argument extraction helpers
@@ -304,31 +303,131 @@ pub fn get_kernel_gs_base() -> u64 { rdmsr(IA32_KERNEL_GS_BASE) }
 // frame's `rsp` field on entry, and stack args are read relative
 // to that pointer.
 //
+// The ntdll thunk is a normal function, so the caller's `call`
+// pushed a return address at [rsp]. The first stack argument is
+// therefore at [rsp + 8], not [rsp + 0]. (Shadow space lives
+// below the return address, at [rsp - 32 .. rsp - 8], so it is
+// not part of the argument area.)
+
+/// Offset of the first stack argument from the user RSP recorded
+/// in the trap frame: 8 bytes for the return address.
+const STACK_ARG_BASE: u64 = 8;
+//
 // This is the convention that every `ntdll.dll` thunk on the
 // user-mode side uses; the kernel reads arguments back from
 // exactly these registers.
 // =====================================================================
 
 #[inline(always)]
-fn arg0(tf: &TrapFrame) -> u64 { tf.r10 }
+fn arg0(tf: &TrapFrame) -> u64 {
+    tf.r10
+}
 #[inline(always)]
-fn arg1(tf: &TrapFrame) -> u64 { tf.rdx }
+fn arg1(tf: &TrapFrame) -> u64 {
+    tf.rdx
+}
 #[inline(always)]
-fn arg2(tf: &TrapFrame) -> u64 { tf.r8 }
+fn arg2(tf: &TrapFrame) -> u64 {
+    tf.r8
+}
 #[inline(always)]
-fn arg3(tf: &TrapFrame) -> u64 { tf.r9 }
+fn arg3(tf: &TrapFrame) -> u64 {
+    tf.r9
+}
 #[inline(always)]
-fn arg4(tf: &TrapFrame) -> u64 { stack_arg(tf, 0) }
+fn arg4(tf: &TrapFrame) -> u64 {
+    stack_arg(tf, 0)
+}
 #[inline(always)]
-fn arg5(tf: &TrapFrame) -> u64 { stack_arg(tf, 1) }
+fn arg5(tf: &TrapFrame) -> u64 {
+    stack_arg(tf, 1)
+}
 
 /// Read a stack-passed argument. `n` is the index of the
 /// argument (0 = first stack arg, 1 = second stack arg, ...).
-/// On entry to the kernel, the user RSP points at the first
-/// stack argument.
+/// On entry to the kernel, the user RSP points at the return
+/// address of the ntdll thunk; the first stack argument follows
+/// it at `rsp + 8`.
+//
+// The user RSP is attacker-controlled, so it is never dereferenced
+// directly. Every read goes through `read_stack_arg`, which probes
+// the covering page first (see `syscall_validation`): an unmapped
+// or kernel-half RSP is rejected instead of faulting inside the
+// kernel. A rejected read yields 0 and marks the dispatch as
+// invalid so the caller gets `STATUS_ACCESS_VIOLATION`.
 #[inline(always)]
 fn stack_arg(tf: &TrapFrame, n: usize) -> u64 {
-    unsafe { *((tf.rsp as *const u64).add(n)) }
+    match read_stack_arg(tf, n) {
+        Some(v) => v,
+        None => {
+            mark_bad_stack_arg();
+            0
+        }
+    }
+}
+
+/// Probe then read one stack argument. Returns `None` when the
+/// slot is not validated user memory.
+#[inline]
+fn read_stack_arg(tf: &TrapFrame, n: usize) -> Option<u64> {
+    let addr = tf.rsp.checked_add(STACK_ARG_BASE + n as u64 * 8)?;
+    unsafe {
+        if crate::arch::x86_64::syscall_validation::probe_for_read(addr as *const u8, 8).is_err() {
+            return None;
+        }
+        let mut value = 0u64;
+        if crate::mm::user_copy::read_user(addr, &mut value).is_err() {
+            return None;
+        }
+        Some(value)
+    }
+}
+
+/// Set when a stack argument failed validation. `dispatch` checks
+/// this after the handler runs so a handler that dereferences a
+/// bad argument still reports an access violation.
+static BAD_STACK_ARG: AtomicU32 = AtomicU32::new(0);
+
+#[inline]
+fn mark_bad_stack_arg() {
+    BAD_STACK_ARG.store(1, Ordering::Relaxed);
+}
+
+#[inline]
+fn clear_bad_stack_arg() {
+    BAD_STACK_ARG.store(0, Ordering::Relaxed);
+}
+
+/// Validate the argument window the handler will read.
+///
+/// The service number encodes the argument size in bits 16-31
+/// (bytes, i.e. parameter count * 8). Only the parameters beyond
+/// the four register arguments live on the user stack, so the
+/// window to probe is `(arg_size - 32)` bytes starting at the
+/// return-address slot. This mirrors what `KiSystemCall64` does
+/// on Windows 7 x64: the parameter area is probed before the
+/// handler is allowed to touch it.
+fn validate_stack_args(tf: &TrapFrame, syscall_num: u32) -> i32 {
+    let arg_size = crate::ke::ssdt::get_argument_size(syscall_num) as usize;
+    if arg_size == 0 {
+        return crate::arch::x86_64::syscall_validation::STATUS_SUCCESS;
+    }
+    if arg_size > crate::ke::ssdt::SSDT_MAX_ARGUMENT_SIZE {
+        return crate::arch::x86_64::syscall_validation::STATUS_INVALID_PARAMETER;
+    }
+    let stack_bytes = arg_size.saturating_sub(4 * 8);
+    if stack_bytes == 0 {
+        return crate::arch::x86_64::syscall_validation::STATUS_SUCCESS;
+    }
+    let base = match tf.rsp.checked_add(STACK_ARG_BASE) {
+        Some(v) => v,
+        None => return crate::arch::x86_64::syscall_validation::STATUS_ACCESS_VIOLATION,
+    };
+    unsafe {
+        crate::arch::x86_64::syscall_validation::probe_for_read(base as *const u8, stack_bytes)
+            .err()
+            .unwrap_or(crate::arch::x86_64::syscall_validation::STATUS_SUCCESS)
+    }
 }
 
 // =====================================================================
@@ -343,13 +442,34 @@ fn not_implemented() -> SyscallResult {
 }
 
 #[inline(always)]
-fn success() -> SyscallResult { 0 }
+fn success() -> SyscallResult {
+    0
+}
 
+/// Entry point for a native service call.
+///
+/// The user stack window is validated before any handler runs, and
+/// re-checked afterwards in case a handler read beyond the declared
+/// argument window. A failed validation is reported as
+/// `STATUS_ACCESS_VIOLATION` rather than faulting in Ring 0.
 fn dispatch(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
-    use crate::libs::ntdll::types::{
-        HANDLE, IoStatusBlock, ObjectAttributes, ClientId, PVOID, SIZE_T, UnicodeString,
-    };
+    clear_bad_stack_arg();
+    let status = validate_stack_args(tf, syscall_num);
+    if status != 0 {
+        return status as SyscallResult;
+    }
+    let result = dispatch_service(syscall_num, tf);
+    if BAD_STACK_ARG.load(Ordering::Relaxed) != 0 {
+        return crate::arch::x86_64::syscall_validation::STATUS_ACCESS_VIOLATION as SyscallResult;
+    }
+    result
+}
+
+fn dispatch_service(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
     use crate::libs::ntdll::status::STATUS_SUCCESS;
+    use crate::libs::ntdll::types::{
+        ClientId, IoStatusBlock, ObjectAttributes, UnicodeString, HANDLE, PVOID, SIZE_T,
+    };
 
     // Check for Shadow SSDT (win32k) services
     // Shadow services are in range 0x1000-0x1FFF
@@ -357,266 +477,323 @@ fn dispatch(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
     let table_index = (syscall_num >> 12) & 0xF;
     if table_index == 0x1 {
         // Shadow SSDT (win32k.sys) service
-        let result = crate::ke::shadow_ssdt::dispatch_shadow_service(syscall_num, tf as *const _ as *mut _);
+        let result =
+            crate::ke::shadow_ssdt::dispatch_shadow_service(syscall_num, tf as *const _ as *mut _);
         return result as SyscallResult;
     }
 
     #[allow(unreachable_patterns)]
     match syscall_num {
         // ---- Process / Thread ----
-        nums::NtCreateProcess => {
-            unsafe { crate::libs::ntdll::process::NtCreateProcess(
-                arg0(tf) as *mut HANDLE, arg1(tf) as u32,
+        nums::NtCreateProcess => unsafe {
+            crate::libs::ntdll::process::NtCreateProcess(
+                arg0(tf) as *mut HANDLE,
+                arg1(tf) as u32,
                 arg2(tf) as *mut ObjectAttributes,
-                arg3(tf) as HANDLE, arg4(tf) as u8, arg5(tf) as HANDLE,
-                stack_arg(tf, 0) as PVOID, stack_arg(tf, 1) as PVOID,
-            ) as i64 }
-        }
-        nums::NtCreateProcessEx => {
-            unsafe { crate::libs::ntdll::process::NtCreateProcessEx(
-                arg0(tf) as *mut HANDLE, arg1(tf) as u32,
-                arg2(tf) as *mut ObjectAttributes,
-                arg3(tf) as HANDLE, arg4(tf) as u32,
+                arg3(tf) as HANDLE,
+                arg4(tf) as u8,
                 arg5(tf) as HANDLE,
-                stack_arg(tf, 0) as PVOID, stack_arg(tf, 1) as PVOID,
+                stack_arg(tf, 0) as PVOID,
+                stack_arg(tf, 1) as PVOID,
+            ) as i64
+        },
+        nums::NtCreateProcessEx => unsafe {
+            crate::libs::ntdll::process::NtCreateProcessEx(
+                arg0(tf) as *mut HANDLE,
+                arg1(tf) as u32,
+                arg2(tf) as *mut ObjectAttributes,
+                arg3(tf) as HANDLE,
+                arg4(tf) as u32,
+                arg5(tf) as HANDLE,
+                stack_arg(tf, 0) as PVOID,
+                stack_arg(tf, 1) as PVOID,
                 stack_arg(tf, 2) as u32,
-            ) as i64 }
-        }
-        nums::NtOpenProcess => {
-            unsafe { crate::libs::ntdll::process::NtOpenProcess(
-                arg0(tf) as *mut HANDLE, arg1(tf) as u32,
-                arg2(tf) as *mut ObjectAttributes, arg3(tf) as *mut ClientId,
-            ) as i64 }
-        }
-        nums::NtTerminateProcess => {
-            unsafe { crate::libs::ntdll::process::NtTerminateProcess(
-                arg0(tf) as HANDLE, arg1(tf) as i32,
-            ) as i64 }
-        }
-        nums::NtQueryInformationProcess => {
-            unsafe { crate::libs::ntdll::process::NtQueryInformationProcess(
-                arg0(tf) as HANDLE, arg1(tf) as u32, arg2(tf) as PVOID,
-                arg3(tf) as u32, arg4(tf) as *mut u32,
-            ) as i64 }
-        }
-        nums::NtSetInformationProcess => {
-            unsafe { crate::libs::ntdll::process::NtSetInformationProcess(
-                arg0(tf) as HANDLE, arg1(tf) as u32, arg2(tf) as PVOID,
+            ) as i64
+        },
+        nums::NtOpenProcess => unsafe {
+            crate::libs::ntdll::process::NtOpenProcess(
+                arg0(tf) as *mut HANDLE,
+                arg1(tf) as u32,
+                arg2(tf) as *mut ObjectAttributes,
+                arg3(tf) as *mut ClientId,
+            ) as i64
+        },
+        nums::NtTerminateProcess => unsafe {
+            crate::libs::ntdll::process::NtTerminateProcess(arg0(tf) as HANDLE, arg1(tf) as i32)
+                as i64
+        },
+        nums::NtQueryInformationProcess => unsafe {
+            crate::libs::ntdll::process::NtQueryInformationProcess(
+                arg0(tf) as HANDLE,
+                arg1(tf) as u32,
+                arg2(tf) as PVOID,
                 arg3(tf) as u32,
-            ) as i64 }
-        }
+                arg4(tf) as *mut u32,
+            ) as i64
+        },
+        nums::NtSetInformationProcess => unsafe {
+            crate::libs::ntdll::process::NtSetInformationProcess(
+                arg0(tf) as HANDLE,
+                arg1(tf) as u32,
+                arg2(tf) as PVOID,
+                arg3(tf) as u32,
+            ) as i64
+        },
         nums::NtTrimProcessWorkingSet => {
             // NtTrimProcessWorkingSet(handle, min_ws, max_ws)
-            crate::mm::working_set::MmTrimProcessWorkingSet(
-                arg0(tf) as u64, arg1(tf) as i64,
-            ) as i64
+            crate::mm::working_set::MmTrimProcessWorkingSet(arg0(tf) as u64, arg1(tf) as i64) as i64
         }
 
         // ---- Virtual Memory ----
-        nums::NtAllocateVirtualMemory => {
-            unsafe { crate::libs::ntdll::virtual_mem::NtAllocateVirtualMemory(
-                arg0(tf) as HANDLE, arg1(tf) as *mut PVOID,
-                arg2(tf) as usize, arg3(tf) as *mut SIZE_T,
-                arg4(tf) as u32, arg5(tf) as u32,
-            ) as i64 }
-        }
-        nums::NtFreeVirtualMemory => {
-            unsafe { crate::libs::ntdll::virtual_mem::NtFreeVirtualMemory(
-                arg0(tf) as HANDLE, arg1(tf) as *mut PVOID,
-                arg2(tf) as *mut SIZE_T, arg3(tf) as u32,
-            ) as i64 }
-        }
-        nums::NtProtectVirtualMemory => {
-            unsafe { crate::libs::ntdll::virtual_mem::NtProtectVirtualMemory(
-                arg0(tf) as HANDLE, arg1(tf) as *mut PVOID,
-                arg2(tf) as *mut SIZE_T, arg3(tf) as u32, arg4(tf) as *mut u32,
-            ) as i64 }
-        }
-        nums::NtQueryVirtualMemory => {
-            unsafe { crate::libs::ntdll::virtual_mem::NtQueryVirtualMemory(
-                arg0(tf) as HANDLE, arg1(tf) as PVOID, arg2(tf) as u32,
-                arg3(tf) as PVOID, arg4(tf) as usize, arg5(tf) as *mut usize,
-            ) as i64 }
-        }
-        nums::NtReadVirtualMemory => {
-            unsafe { crate::libs::ntdll::virtual_mem::NtReadVirtualMemory(
-                arg0(tf) as HANDLE, arg1(tf) as PVOID, arg2(tf) as PVOID,
-                arg3(tf) as usize, arg4(tf) as *mut usize,
-            ) as i64 }
-        }
-        nums::NtWriteVirtualMemory => {
-            unsafe { crate::libs::ntdll::virtual_mem::NtWriteVirtualMemory(
-                arg0(tf) as HANDLE, arg1(tf) as PVOID, arg2(tf) as PVOID,
-                arg3(tf) as usize, arg4(tf) as *mut usize,
-            ) as i64 }
-        }
+        nums::NtAllocateVirtualMemory => unsafe {
+            crate::libs::ntdll::virtual_mem::NtAllocateVirtualMemory(
+                arg0(tf) as HANDLE,
+                arg1(tf) as *mut PVOID,
+                arg2(tf) as usize,
+                arg3(tf) as *mut SIZE_T,
+                arg4(tf) as u32,
+                arg5(tf) as u32,
+            ) as i64
+        },
+        nums::NtFreeVirtualMemory => unsafe {
+            crate::libs::ntdll::virtual_mem::NtFreeVirtualMemory(
+                arg0(tf) as HANDLE,
+                arg1(tf) as *mut PVOID,
+                arg2(tf) as *mut SIZE_T,
+                arg3(tf) as u32,
+            ) as i64
+        },
+        nums::NtProtectVirtualMemory => unsafe {
+            crate::libs::ntdll::virtual_mem::NtProtectVirtualMemory(
+                arg0(tf) as HANDLE,
+                arg1(tf) as *mut PVOID,
+                arg2(tf) as *mut SIZE_T,
+                arg3(tf) as u32,
+                arg4(tf) as *mut u32,
+            ) as i64
+        },
+        nums::NtQueryVirtualMemory => unsafe {
+            crate::libs::ntdll::virtual_mem::NtQueryVirtualMemory(
+                arg0(tf) as HANDLE,
+                arg1(tf) as PVOID,
+                arg2(tf) as u32,
+                arg3(tf) as PVOID,
+                arg4(tf) as usize,
+                arg5(tf) as *mut usize,
+            ) as i64
+        },
+        nums::NtReadVirtualMemory => unsafe {
+            crate::libs::ntdll::virtual_mem::NtReadVirtualMemory(
+                arg0(tf) as HANDLE,
+                arg1(tf) as PVOID,
+                arg2(tf) as PVOID,
+                arg3(tf) as usize,
+                arg4(tf) as *mut usize,
+            ) as i64
+        },
+        nums::NtWriteVirtualMemory => unsafe {
+            crate::libs::ntdll::virtual_mem::NtWriteVirtualMemory(
+                arg0(tf) as HANDLE,
+                arg1(tf) as PVOID,
+                arg2(tf) as PVOID,
+                arg3(tf) as usize,
+                arg4(tf) as *mut usize,
+            ) as i64
+        },
 
         // ---- File I/O ----
-        nums::NtClose => {
-            unsafe { crate::libs::ntdll::file::NtClose(arg0(tf) as HANDLE) as i64 }
-        }
-        nums::NtCreateFile => {
-            unsafe { crate::libs::ntdll::file::NtCreateFile(
-                arg0(tf) as *mut HANDLE, arg1(tf) as u32,
-                arg2(tf) as *mut ObjectAttributes, arg3(tf) as *mut IoStatusBlock,
+        nums::NtClose => unsafe { crate::libs::ntdll::file::NtClose(arg0(tf) as HANDLE) as i64 },
+        nums::NtCreateFile => unsafe {
+            crate::libs::ntdll::file::NtCreateFile(
+                arg0(tf) as *mut HANDLE,
+                arg1(tf) as u32,
+                arg2(tf) as *mut ObjectAttributes,
+                arg3(tf) as *mut IoStatusBlock,
                 stack_arg(tf, 0) as *mut i64,
-                stack_arg(tf, 1) as u32, stack_arg(tf, 2) as u32,
-                stack_arg(tf, 3) as u32, stack_arg(tf, 4) as u32,
-                stack_arg(tf, 5) as PVOID, stack_arg(tf, 6) as u32,
-            ) as i64 }
-        }
-        nums::NtOpenFile => {
-            unsafe { crate::libs::ntdll::file::NtOpenFile(
-                arg0(tf) as *mut HANDLE, arg1(tf) as u32,
-                arg2(tf) as *mut ObjectAttributes, arg3(tf) as *mut IoStatusBlock,
-                arg4(tf) as u32, arg5(tf) as u32,
-            ) as i64 }
-        }
-        nums::NtReadFile => {
-            unsafe { crate::libs::ntdll::file::NtReadFile(
-                arg0(tf) as HANDLE, arg1(tf) as HANDLE,
-                arg2(tf) as PVOID, arg3(tf) as PVOID,
+                stack_arg(tf, 1) as u32,
+                stack_arg(tf, 2) as u32,
+                stack_arg(tf, 3) as u32,
+                stack_arg(tf, 4) as u32,
+                stack_arg(tf, 5) as PVOID,
+                stack_arg(tf, 6) as u32,
+            ) as i64
+        },
+        nums::NtOpenFile => unsafe {
+            crate::libs::ntdll::file::NtOpenFile(
+                arg0(tf) as *mut HANDLE,
+                arg1(tf) as u32,
+                arg2(tf) as *mut ObjectAttributes,
+                arg3(tf) as *mut IoStatusBlock,
+                arg4(tf) as u32,
+                arg5(tf) as u32,
+            ) as i64
+        },
+        nums::NtReadFile => unsafe {
+            crate::libs::ntdll::file::NtReadFile(
+                arg0(tf) as HANDLE,
+                arg1(tf) as HANDLE,
+                arg2(tf) as PVOID,
+                arg3(tf) as PVOID,
                 stack_arg(tf, 0) as *mut IoStatusBlock,
                 stack_arg(tf, 1) as PVOID,
                 stack_arg(tf, 2) as u32,
                 stack_arg(tf, 3) as *mut i64,
                 stack_arg(tf, 4) as *mut u32,
-            ) as i64 }
-        }
-        nums::NtWriteFile => {
-            unsafe { crate::libs::ntdll::file::NtWriteFile(
-                arg0(tf) as HANDLE, arg1(tf) as HANDLE,
-                arg2(tf) as PVOID, arg3(tf) as PVOID,
+            ) as i64
+        },
+        nums::NtWriteFile => unsafe {
+            crate::libs::ntdll::file::NtWriteFile(
+                arg0(tf) as HANDLE,
+                arg1(tf) as HANDLE,
+                arg2(tf) as PVOID,
+                arg3(tf) as PVOID,
                 stack_arg(tf, 0) as *mut IoStatusBlock,
                 stack_arg(tf, 1) as PVOID,
                 stack_arg(tf, 2) as u32,
                 stack_arg(tf, 3) as *mut i64,
                 stack_arg(tf, 4) as *mut u32,
-            ) as i64 }
-        }
-        nums::NtQueryInformationFile => {
-            unsafe { crate::libs::ntdll::file::NtQueryInformationFile(
-                arg0(tf) as HANDLE, arg1(tf) as *mut IoStatusBlock,
-                arg2(tf) as PVOID, arg3(tf) as u32, stack_arg(tf, 0) as u32,
-            ) as i64 }
-        }
-        nums::NtSetInformationFile => {
-            unsafe { crate::libs::ntdll::file::NtSetInformationFile(
-                arg0(tf) as HANDLE, arg1(tf) as *mut IoStatusBlock,
-                arg2(tf) as PVOID, arg3(tf) as u32, stack_arg(tf, 0) as u32,
-            ) as i64 }
-        }
-        nums::NtFlushBuffersFile => {
-            unsafe { crate::libs::ntdll::file::NtFlushBuffersFile(
-                arg0(tf) as HANDLE, arg1(tf) as *mut IoStatusBlock,
-            ) as i64 }
-        }
-        nums::NtDeleteFile => {
-            unsafe { crate::libs::ntdll::file::NtDeleteFile(
-                arg0(tf) as *mut ObjectAttributes,
-            ) as i64 }
-        }
+            ) as i64
+        },
+        nums::NtQueryInformationFile => unsafe {
+            crate::libs::ntdll::file::NtQueryInformationFile(
+                arg0(tf) as HANDLE,
+                arg1(tf) as *mut IoStatusBlock,
+                arg2(tf) as PVOID,
+                arg3(tf) as u32,
+                stack_arg(tf, 0) as u32,
+            ) as i64
+        },
+        nums::NtSetInformationFile => unsafe {
+            crate::libs::ntdll::file::NtSetInformationFile(
+                arg0(tf) as HANDLE,
+                arg1(tf) as *mut IoStatusBlock,
+                arg2(tf) as PVOID,
+                arg3(tf) as u32,
+                stack_arg(tf, 0) as u32,
+            ) as i64
+        },
+        nums::NtFlushBuffersFile => unsafe {
+            crate::libs::ntdll::file::NtFlushBuffersFile(
+                arg0(tf) as HANDLE,
+                arg1(tf) as *mut IoStatusBlock,
+            ) as i64
+        },
+        nums::NtDeleteFile => unsafe {
+            crate::libs::ntdll::file::NtDeleteFile(arg0(tf) as *mut ObjectAttributes) as i64
+        },
         nums::NtDeviceIoControlFile => {
             // (HANDLE FileHandle, HANDLE Event, PVOID ApcRoutine,
             //  PVOID ApcContext, PIO_STATUS_BLOCK IoStatusBlock,
             //  ULONG IoControlCode, PVOID InputBuffer,
             //  ULONG InputBufferLength, PVOID OutputBuffer,
             //  ULONG OutputBufferLength)
-            unsafe { crate::libs::ntdll::ioctl::NtDeviceIoControlFile(
-                arg0(tf) as HANDLE,
-                arg1(tf) as HANDLE,
-                arg2(tf) as PVOID,
-                arg3(tf) as PVOID,
-                arg4(tf) as *mut IoStatusBlock,
-                arg5(tf) as u32,
-                stack_arg(tf, 0) as PVOID,
-                stack_arg(tf, 1) as u32,
-                stack_arg(tf, 2) as PVOID,
-                stack_arg(tf, 3) as u32,
-            ) as i64 }
+            unsafe {
+                crate::libs::ntdll::ioctl::NtDeviceIoControlFile(
+                    arg0(tf) as HANDLE,
+                    arg1(tf) as HANDLE,
+                    arg2(tf) as PVOID,
+                    arg3(tf) as PVOID,
+                    arg4(tf) as *mut IoStatusBlock,
+                    arg5(tf) as u32,
+                    stack_arg(tf, 0) as PVOID,
+                    stack_arg(tf, 1) as u32,
+                    stack_arg(tf, 2) as PVOID,
+                    stack_arg(tf, 3) as u32,
+                ) as i64
+            }
         }
 
         // ---- Sections ----
-        nums::NtCreateSection => {
-            unsafe { crate::libs::ntdll::section::NtCreateSection(
-                arg0(tf) as *mut HANDLE, arg1(tf) as u32,
-                arg2(tf) as *mut ObjectAttributes, arg3(tf) as *mut i64,
-                arg4(tf) as u32, arg5(tf) as u32,
+        nums::NtCreateSection => unsafe {
+            crate::libs::ntdll::section::NtCreateSection(
+                arg0(tf) as *mut HANDLE,
+                arg1(tf) as u32,
+                arg2(tf) as *mut ObjectAttributes,
+                arg3(tf) as *mut i64,
+                arg4(tf) as u32,
+                arg5(tf) as u32,
                 stack_arg(tf, 0) as HANDLE,
-            ) as i64 }
-        }
-        nums::NtMapViewOfSection => {
-            unsafe { crate::libs::ntdll::section::NtMapViewOfSection(
-                arg0(tf) as HANDLE, arg1(tf) as HANDLE,
-                arg2(tf) as *mut PVOID, arg3(tf) as usize, arg4(tf) as usize,
+            ) as i64
+        },
+        nums::NtMapViewOfSection => unsafe {
+            crate::libs::ntdll::section::NtMapViewOfSection(
+                arg0(tf) as HANDLE,
+                arg1(tf) as HANDLE,
+                arg2(tf) as *mut PVOID,
+                arg3(tf) as usize,
+                arg4(tf) as usize,
                 stack_arg(tf, 0) as *mut i64,
                 stack_arg(tf, 1) as *mut usize,
                 stack_arg(tf, 2) as u32,
                 stack_arg(tf, 3) as u32,
                 stack_arg(tf, 4) as u32,
-            ) as i64 }
-        }
-        nums::NtUnmapViewOfSection => {
-            unsafe { crate::libs::ntdll::section::NtUnmapViewOfSection(
-                arg0(tf) as HANDLE, arg1(tf) as PVOID,
-            ) as i64 }
-        }
+            ) as i64
+        },
+        nums::NtUnmapViewOfSection => unsafe {
+            crate::libs::ntdll::section::NtUnmapViewOfSection(arg0(tf) as HANDLE, arg1(tf) as PVOID)
+                as i64
+        },
 
         // ---- Synchronization primitives ----
-        nums::NtCreateEvent => {
-            unsafe { crate::libs::ntdll::sync::NtCreateEvent(
-                arg0(tf) as *mut HANDLE, arg1(tf) as u32,
-                arg2(tf) as *mut ObjectAttributes, arg3(tf) as u32, arg4(tf) as u8,
-            ) as i64 }
-        }
-        nums::NtSetEvent => {
-            unsafe { crate::libs::ntdll::sync::NtSetEvent(
-                arg0(tf) as HANDLE, arg1(tf) as *mut u32,
-            ) as i64 }
-        }
-        nums::NtResetEvent => {
-            unsafe { crate::libs::ntdll::sync::NtResetEvent(
-                arg0(tf) as HANDLE, arg1(tf) as *mut u32,
-            ) as i64 }
-        }
-        nums::NtClearEvent => {
-            unsafe { crate::libs::ntdll::sync::NtClearEvent(arg0(tf) as HANDLE) as i64 }
-        }
-        nums::NtPulseEvent => {
-            unsafe { crate::libs::ntdll::sync::NtPulseEvent(
-                arg0(tf) as HANDLE, arg1(tf) as *mut u32,
-            ) as i64 }
-        }
-        nums::NtCreateMutant => {
-            unsafe { crate::libs::ntdll::sync::NtCreateMutant(
-                arg0(tf) as *mut HANDLE, arg1(tf) as u32,
-                arg2(tf) as *mut ObjectAttributes, arg3(tf) as u8,
-            ) as i64 }
-        }
-        nums::NtReleaseMutant => {
-            unsafe { crate::libs::ntdll::sync::NtReleaseMutant(
-                arg0(tf) as HANDLE, arg1(tf) as *mut u32,
-            ) as i64 }
-        }
-        nums::NtCreateSemaphore => {
-            unsafe { crate::libs::ntdll::sync::NtCreateSemaphore(
-                arg0(tf) as *mut HANDLE, arg1(tf) as u32,
-                arg2(tf) as *mut ObjectAttributes, arg3(tf) as u32, arg4(tf) as u32,
-            ) as i64 }
-        }
-        nums::NtReleaseSemaphore => {
-            unsafe { crate::libs::ntdll::sync::NtReleaseSemaphore(
-                arg0(tf) as HANDLE, arg1(tf) as u32, arg2(tf) as *mut u32,
-            ) as i64 }
-        }
-        nums::NtCreateTimer => {
-            unsafe { crate::libs::ntdll::sync::NtCreateTimer(
-                arg0(tf) as *mut HANDLE, arg1(tf) as u32,
-                arg2(tf) as *mut ObjectAttributes, arg3(tf) as u32,
-            ) as i64 }
-        }
-        nums::NtSetTimer => {
-            unsafe { crate::libs::ntdll::sync::NtSetTimer(
+        nums::NtCreateEvent => unsafe {
+            crate::libs::ntdll::sync::NtCreateEvent(
+                arg0(tf) as *mut HANDLE,
+                arg1(tf) as u32,
+                arg2(tf) as *mut ObjectAttributes,
+                arg3(tf) as u32,
+                arg4(tf) as u8,
+            ) as i64
+        },
+        nums::NtSetEvent => unsafe {
+            crate::libs::ntdll::sync::NtSetEvent(arg0(tf) as HANDLE, arg1(tf) as *mut u32) as i64
+        },
+        nums::NtResetEvent => unsafe {
+            crate::libs::ntdll::sync::NtResetEvent(arg0(tf) as HANDLE, arg1(tf) as *mut u32) as i64
+        },
+        nums::NtClearEvent => unsafe {
+            crate::libs::ntdll::sync::NtClearEvent(arg0(tf) as HANDLE) as i64
+        },
+        nums::NtPulseEvent => unsafe {
+            crate::libs::ntdll::sync::NtPulseEvent(arg0(tf) as HANDLE, arg1(tf) as *mut u32) as i64
+        },
+        nums::NtCreateMutant => unsafe {
+            crate::libs::ntdll::sync::NtCreateMutant(
+                arg0(tf) as *mut HANDLE,
+                arg1(tf) as u32,
+                arg2(tf) as *mut ObjectAttributes,
+                arg3(tf) as u8,
+            ) as i64
+        },
+        nums::NtReleaseMutant => unsafe {
+            crate::libs::ntdll::sync::NtReleaseMutant(arg0(tf) as HANDLE, arg1(tf) as *mut u32)
+                as i64
+        },
+        nums::NtCreateSemaphore => unsafe {
+            crate::libs::ntdll::sync::NtCreateSemaphore(
+                arg0(tf) as *mut HANDLE,
+                arg1(tf) as u32,
+                arg2(tf) as *mut ObjectAttributes,
+                arg3(tf) as u32,
+                arg4(tf) as u32,
+            ) as i64
+        },
+        nums::NtReleaseSemaphore => unsafe {
+            crate::libs::ntdll::sync::NtReleaseSemaphore(
+                arg0(tf) as HANDLE,
+                arg1(tf) as u32,
+                arg2(tf) as *mut u32,
+            ) as i64
+        },
+        nums::NtCreateTimer => unsafe {
+            crate::libs::ntdll::sync::NtCreateTimer(
+                arg0(tf) as *mut HANDLE,
+                arg1(tf) as u32,
+                arg2(tf) as *mut ObjectAttributes,
+                arg3(tf) as u32,
+            ) as i64
+        },
+        nums::NtSetTimer => unsafe {
+            crate::libs::ntdll::sync::NtSetTimer(
                 arg0(tf) as crate::libs::ntdll::types::HANDLE,
                 arg1(tf) as *const i64,
                 arg2(tf) as u32,
@@ -624,34 +801,37 @@ fn dispatch(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
                 arg4(tf) as *mut (),
                 arg5(tf) as u8,
                 stack_arg(tf, 0) as *mut crate::libs::ntdll::types::HANDLE,
-            ) as i64 }
-        }
-        nums::NtCancelTimer => {
-            unsafe { crate::libs::ntdll::sync::NtCancelTimer(
+            ) as i64
+        },
+        nums::NtCancelTimer => unsafe {
+            crate::libs::ntdll::sync::NtCancelTimer(
                 arg0(tf) as crate::libs::ntdll::types::HANDLE,
                 arg1(tf) as *mut crate::libs::ntdll::types::HANDLE,
-            ) as i64 }
-        }
-        nums::NtWaitForSingleObject => {
-            unsafe { crate::libs::ntdll::sync::NtWaitForSingleObject(
-                arg0(tf) as HANDLE, arg1(tf) as u8, arg2(tf) as *mut i64,
-            ) as i64 }
-        }
-        nums::NtWaitForMultipleObjects => {
-            unsafe { crate::libs::ntdll::sync::NtWaitForMultipleObjects(
-                arg0(tf) as u32, arg1(tf) as *mut HANDLE,
-                arg2(tf) as u32, arg3(tf) as u8, arg4(tf) as *mut i64,
-            ) as i64 }
-        }
-        nums::NtDelayExecution => {
-            crate::libs::ntdll::sync::NtDelayExecution(
-                arg0(tf) as u8, arg1(tf) as *mut i64,
             ) as i64
+        },
+        nums::NtWaitForSingleObject => unsafe {
+            crate::libs::ntdll::sync::NtWaitForSingleObject(
+                arg0(tf) as HANDLE,
+                arg1(tf) as u8,
+                arg2(tf) as *mut i64,
+            ) as i64
+        },
+        nums::NtWaitForMultipleObjects => unsafe {
+            crate::libs::ntdll::sync::NtWaitForMultipleObjects(
+                arg0(tf) as u32,
+                arg1(tf) as *mut HANDLE,
+                arg2(tf) as u32,
+                arg3(tf) as u8,
+                arg4(tf) as *mut i64,
+            ) as i64
+        },
+        nums::NtDelayExecution => {
+            crate::libs::ntdll::sync::NtDelayExecution(arg0(tf) as u8, arg1(tf) as *mut i64) as i64
         }
 
         // ---- Registry ----
-        nums::NtCreateKey => {
-            unsafe { crate::libs::ntdll::registry::NtCreateKey(
+        nums::NtCreateKey => unsafe {
+            crate::libs::ntdll::registry::NtCreateKey(
                 arg0(tf) as *mut HANDLE,
                 arg1(tf) as u32,
                 arg2(tf) as *mut ObjectAttributes,
@@ -659,208 +839,208 @@ fn dispatch(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
                 arg4(tf) as *mut UnicodeString,
                 arg5(tf) as u32,
                 stack_arg(tf, 0) as *mut u32,
-            ) as i64 }
-        }
-        nums::NtOpenKey => {
-            unsafe { crate::libs::ntdll::registry::NtOpenKey(
+            ) as i64
+        },
+        nums::NtOpenKey => unsafe {
+            crate::libs::ntdll::registry::NtOpenKey(
                 arg0(tf) as *mut HANDLE,
                 arg1(tf) as u32,
                 arg2(tf) as *mut ObjectAttributes,
-            ) as i64 }
-        }
-        nums::NtDeleteKey => {
-            unsafe { crate::libs::ntdll::registry::NtDeleteKey(
-                arg0(tf) as HANDLE,
-            ) as i64 }
-        }
-        nums::NtDeleteValueKey => {
-            unsafe { crate::libs::ntdll::registry::NtDeleteValueKey(
+            ) as i64
+        },
+        nums::NtDeleteKey => unsafe {
+            crate::libs::ntdll::registry::NtDeleteKey(arg0(tf) as HANDLE) as i64
+        },
+        nums::NtDeleteValueKey => unsafe {
+            crate::libs::ntdll::registry::NtDeleteValueKey(
                 arg0(tf) as HANDLE,
                 arg1(tf) as *mut UnicodeString,
-            ) as i64 }
-        }
-        nums::NtQueryKey => {
-            unsafe { crate::libs::ntdll::registry::NtQueryKey(
+            ) as i64
+        },
+        nums::NtQueryKey => unsafe {
+            crate::libs::ntdll::registry::NtQueryKey(
                 arg0(tf) as HANDLE,
                 arg1(tf) as u32,
                 arg2(tf) as PVOID,
                 arg3(tf) as u32,
                 arg4(tf) as *mut u32,
-            ) as i64 }
-        }
-        nums::NtSetValueKey => {
-            unsafe { crate::libs::ntdll::registry::NtSetValueKey(
+            ) as i64
+        },
+        nums::NtSetValueKey => unsafe {
+            crate::libs::ntdll::registry::NtSetValueKey(
                 arg0(tf) as HANDLE,
                 arg1(tf) as *mut UnicodeString,
                 arg2(tf) as u32,
                 arg3(tf) as u32,
                 arg4(tf) as PVOID,
                 arg5(tf) as u32,
-            ) as i64 }
-        }
+            ) as i64
+        },
         nums::NtSetInformationKey => not_implemented(),
-        nums::NtQueryValueKey => {
-            unsafe { crate::libs::ntdll::registry::NtQueryValueKey(
+        nums::NtQueryValueKey => unsafe {
+            crate::libs::ntdll::registry::NtQueryValueKey(
                 arg0(tf) as HANDLE,
                 arg1(tf) as *mut UnicodeString,
                 arg2(tf) as u32,
                 arg3(tf) as PVOID,
                 arg4(tf) as u32,
                 arg5(tf) as *mut u32,
-            ) as i64 }
-        }
-        nums::NtEnumerateKey => {
-            unsafe { crate::libs::ntdll::registry::NtEnumerateKey(
+            ) as i64
+        },
+        nums::NtEnumerateKey => unsafe {
+            crate::libs::ntdll::registry::NtEnumerateKey(
                 arg0(tf) as HANDLE,
                 arg1(tf) as u32,
                 arg2(tf) as u32,
                 arg3(tf) as PVOID,
                 arg4(tf) as u32,
                 arg5(tf) as *mut u32,
-            ) as i64 }
-        }
-        nums::NtEnumerateValueKey => {
-            unsafe { crate::libs::ntdll::registry::NtEnumerateValueKey(
+            ) as i64
+        },
+        nums::NtEnumerateValueKey => unsafe {
+            crate::libs::ntdll::registry::NtEnumerateValueKey(
                 arg0(tf) as HANDLE,
                 arg1(tf) as u32,
                 arg2(tf) as u32,
                 arg3(tf) as PVOID,
                 arg4(tf) as u32,
                 arg5(tf) as *mut u32,
-            ) as i64 }
-        }
+            ) as i64
+        },
         nums::NtFlushKey => STATUS_SUCCESS as i64,
         nums::NtLoadKey => not_implemented(),
         nums::NtUnloadKey => not_implemented(),
         nums::NtSaveKey => not_implemented(),
 
         // ---- System Info ----
-        nums::NtQuerySystemInformation => {
-            unsafe { crate::libs::ntdll::info::NtQuerySystemInformation(
-                arg0(tf) as u32, arg1(tf) as PVOID, arg2(tf) as u32,
+        nums::NtQuerySystemInformation => unsafe {
+            crate::libs::ntdll::info::NtQuerySystemInformation(
+                arg0(tf) as u32,
+                arg1(tf) as PVOID,
+                arg2(tf) as u32,
                 arg3(tf) as *mut u32,
-            ) as i64 }
-        }
-        nums::NtSetSystemInformation => {
-            unsafe { crate::libs::ntdll::info::NtSetSystemInformation(
-                arg0(tf) as u32, arg1(tf) as PVOID, arg2(tf) as u32,
-            ) as i64 }
-        }
+            ) as i64
+        },
+        nums::NtSetSystemInformation => unsafe {
+            crate::libs::ntdll::info::NtSetSystemInformation(
+                arg0(tf) as u32,
+                arg1(tf) as PVOID,
+                arg2(tf) as u32,
+            ) as i64
+        },
         nums::NtQuerySystemTime => success(),
         nums::NtSetSystemTime => success(),
         nums::NtQueryPerformanceCounter => success(),
 
         // ---- Thread ----
         nums::NtCreateThread => {
-            unsafe { crate::libs::ntdll::thread::NtCreateThread(
-                arg0(tf) as *mut HANDLE,
-                arg1(tf) as u32,
-                arg2(tf) as *mut ObjectAttributes,
-                arg3(tf) as HANDLE,
-                arg4(tf) as *mut ClientId,
-                stack_arg(tf, 0) as PVOID,  // start_context
-                stack_arg(tf, 1) as PVOID,  // start_routine
-                stack_arg(tf, 2) as usize,  // stack_committed
-                stack_arg(tf, 3) as usize,  // stack_size
-            ) as i64 }
+            unsafe {
+                crate::libs::ntdll::thread::NtCreateThread(
+                    arg0(tf) as *mut HANDLE,
+                    arg1(tf) as u32,
+                    arg2(tf) as *mut ObjectAttributes,
+                    arg3(tf) as HANDLE,
+                    arg4(tf) as *mut ClientId,
+                    stack_arg(tf, 0) as PVOID, // start_context
+                    stack_arg(tf, 1) as PVOID, // start_routine
+                    stack_arg(tf, 2) as usize, // stack_committed
+                    stack_arg(tf, 3) as usize, // stack_size
+                ) as i64
+            }
         }
-        nums::NtOpenThread => {
-            unsafe { crate::libs::ntdll::thread::NtOpenThread(
+        nums::NtOpenThread => unsafe {
+            crate::libs::ntdll::thread::NtOpenThread(
                 arg0(tf) as *mut HANDLE,
                 arg1(tf) as u32,
                 arg2(tf) as *mut ObjectAttributes,
                 arg3(tf) as *mut ClientId,
-            ) as i64 }
-        }
-        nums::NtResumeThread => {
-            unsafe { crate::libs::ntdll::thread::NtResumeThread(
-                arg0(tf) as HANDLE,
-                arg1(tf) as *mut u32,
-            ) as i64 }
-        }
-        nums::NtSuspendThread => {
-            unsafe { crate::libs::ntdll::thread::NtSuspendThread(
-                arg0(tf) as HANDLE,
-                arg1(tf) as *mut u32,
-            ) as i64 }
-        }
-        nums::NtTerminateThread => {
-            unsafe { crate::libs::ntdll::thread::NtTerminateThread(
-                arg0(tf) as HANDLE,
-                arg1(tf) as u32,
-            ) as i64 }
-        }
-        nums::NtQueryInformationThread => {
-            unsafe { crate::libs::ntdll::thread::NtQueryInformationThread(
+            ) as i64
+        },
+        nums::NtResumeThread => unsafe {
+            crate::libs::ntdll::thread::NtResumeThread(arg0(tf) as HANDLE, arg1(tf) as *mut u32)
+                as i64
+        },
+        nums::NtSuspendThread => unsafe {
+            crate::libs::ntdll::thread::NtSuspendThread(arg0(tf) as HANDLE, arg1(tf) as *mut u32)
+                as i64
+        },
+        nums::NtTerminateThread => unsafe {
+            crate::libs::ntdll::thread::NtTerminateThread(arg0(tf) as HANDLE, arg1(tf) as u32)
+                as i64
+        },
+        nums::NtQueryInformationThread => unsafe {
+            crate::libs::ntdll::thread::NtQueryInformationThread(
                 arg0(tf) as HANDLE,
                 arg1(tf) as u32,
                 arg2(tf) as PVOID,
                 arg3(tf) as u32,
                 stack_arg(tf, 0) as *mut u32,
-            ) as i64 }
-        }
+            ) as i64
+        },
         nums::NtCreateThreadEx => {
-            unsafe { crate::libs::ntdll::thread::NtCreateThreadEx(
-                arg0(tf) as *mut HANDLE,
-                arg1(tf) as u32,
-                arg2(tf) as *mut ObjectAttributes,
-                arg3(tf) as HANDLE,
-                arg4(tf) as PVOID,
-                arg5(tf) as PVOID,
-                stack_arg(tf, 0) as u32,  // create_flags
-                stack_arg(tf, 1) as usize, // zero_bits
-                stack_arg(tf, 2) as usize, // stack_size
-                stack_arg(tf, 3) as usize, // maximum_stack_size
-                stack_arg(tf, 4) as PVOID, // attribute_list
-            ) as i64 }
+            unsafe {
+                crate::libs::ntdll::thread::NtCreateThreadEx(
+                    arg0(tf) as *mut HANDLE,
+                    arg1(tf) as u32,
+                    arg2(tf) as *mut ObjectAttributes,
+                    arg3(tf) as HANDLE,
+                    arg4(tf) as PVOID,
+                    arg5(tf) as PVOID,
+                    stack_arg(tf, 0) as u32,   // create_flags
+                    stack_arg(tf, 1) as usize, // zero_bits
+                    stack_arg(tf, 2) as usize, // stack_size
+                    stack_arg(tf, 3) as usize, // maximum_stack_size
+                    stack_arg(tf, 4) as PVOID, // attribute_list
+                ) as i64
+            }
         }
-        nums::NtGetContextThread => {
-            unsafe { crate::libs::ntdll::thread::NtGetContextThread(
+        nums::NtGetContextThread => unsafe {
+            crate::libs::ntdll::thread::NtGetContextThread(
                 arg0(tf) as HANDLE,
                 arg1(tf) as *mut crate::libs::ntdll::thread::Context,
-            ) as i64 }
-        }
-        nums::NtSetContextThread => {
-            unsafe { crate::libs::ntdll::thread::NtSetContextThread(
+            ) as i64
+        },
+        nums::NtSetContextThread => unsafe {
+            crate::libs::ntdll::thread::NtSetContextThread(
                 arg0(tf) as HANDLE,
                 arg1(tf) as *const crate::libs::ntdll::thread::Context,
-            ) as i64 }
-        }
-        nums::NtQueueApcThread => {
-            unsafe { crate::libs::ntdll::thread::NtQueueApcThread(
+            ) as i64
+        },
+        nums::NtQueueApcThread => unsafe {
+            crate::libs::ntdll::thread::NtQueueApcThread(
                 arg0(tf) as HANDLE,
                 arg1(tf) as PVOID,
                 arg2(tf) as PVOID,
                 arg3(tf) as PVOID,
                 arg4(tf) as PVOID,
-            ) as i64 }
-        }
-        nums::NtSetInformationThread => {
-            unsafe { crate::libs::ntdll::thread::NtSetInformationThread(
+            ) as i64
+        },
+        nums::NtSetInformationThread => unsafe {
+            crate::libs::ntdll::thread::NtSetInformationThread(
                 arg0(tf) as HANDLE,
                 arg1(tf) as u32,
                 arg2(tf) as PVOID,
                 arg3(tf) as u32,
-            ) as i64 }
-        }
+            ) as i64
+        },
 
         // ---- Object Manager ----
-        nums::NtCreateDirectoryObject => {
-            unsafe { crate::libs::ntdll::ob_integration::NtCreateDirectoryObject(
+        nums::NtCreateDirectoryObject => unsafe {
+            crate::libs::ntdll::ob_integration::NtCreateDirectoryObject(
                 arg0(tf) as *mut HANDLE,
                 arg1(tf) as u32,
                 arg2(tf) as *mut ObjectAttributes,
-            ) as i64 }
-        }
-        nums::NtOpenDirectoryObject => {
-            unsafe { crate::libs::ntdll::ob_integration::NtOpenDirectoryObject(
+            ) as i64
+        },
+        nums::NtOpenDirectoryObject => unsafe {
+            crate::libs::ntdll::ob_integration::NtOpenDirectoryObject(
                 arg0(tf) as *mut HANDLE,
                 arg1(tf) as u32,
                 arg2(tf) as *mut ObjectAttributes,
-            ) as i64 }
-        }
-        nums::NtQueryDirectoryObject => {
-            unsafe { crate::libs::ntdll::ob_integration::NtQueryDirectoryObject(
+            ) as i64
+        },
+        nums::NtQueryDirectoryObject => unsafe {
+            crate::libs::ntdll::ob_integration::NtQueryDirectoryObject(
                 arg0(tf) as HANDLE,
                 arg1(tf) as *mut u8,
                 arg2(tf) as u32,
@@ -868,21 +1048,21 @@ fn dispatch(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
                 arg4(tf) as u32,
                 arg5(tf) as *mut u32,
                 stack_arg(tf, 0) as *mut u32,
-            ) as i64 }
-        }
+            ) as i64
+        },
         nums::NtQuerySecurityObject => not_implemented(),
         nums::NtSetSecurityObject => not_implemented(),
         nums::NtDuplicateObject => not_implemented(),
         nums::NtQueryObject => not_implemented(),
 
         // ---- Token / Security ----
-        nums::NtOpenProcessToken => {
-            unsafe { crate::libs::ntdll::ob_integration::NtOpenProcessToken(
+        nums::NtOpenProcessToken => unsafe {
+            crate::libs::ntdll::ob_integration::NtOpenProcessToken(
                 arg0(tf) as HANDLE,
                 arg1(tf) as u32,
                 arg2(tf) as *mut HANDLE,
-            ) as i64 }
-        }
+            ) as i64
+        },
         nums::NtOpenThreadToken => not_implemented(),
         nums::NtAccessCheck => not_implemented(),
         nums::NtPrivilegeCheck => not_implemented(),
@@ -898,24 +1078,24 @@ fn dispatch(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
         nums::NtTestAlert => success(),
 
         // ---- Volume / File Information ----
-        nums::NtQueryVolumeInformationFile => {
-            unsafe { crate::libs::ntdll::file::NtQueryVolumeInformationFile(
+        nums::NtQueryVolumeInformationFile => unsafe {
+            crate::libs::ntdll::file::NtQueryVolumeInformationFile(
                 arg0(tf) as HANDLE,
                 arg1(tf) as *mut IoStatusBlock,
                 arg2(tf) as PVOID,
                 arg3(tf) as u32,
                 arg4(tf) as u32,
-            ) as i64 }
-        }
-        nums::NtSetVolumeInformationFile => {
-            unsafe { crate::libs::ntdll::file::NtSetVolumeInformationFile(
+            ) as i64
+        },
+        nums::NtSetVolumeInformationFile => unsafe {
+            crate::libs::ntdll::file::NtSetVolumeInformationFile(
                 arg0(tf) as HANDLE,
                 arg1(tf) as *mut IoStatusBlock,
                 arg2(tf) as PVOID,
                 arg3(tf) as u32,
                 arg4(tf) as u32,
-            ) as i64 }
-        }
+            ) as i64
+        },
         nums::NtQueryAttributesFile => not_implemented(),
         nums::NtQueryFullAttributesFile => not_implemented(),
         nums::NtQueryDirectoryFile => {
@@ -924,19 +1104,21 @@ fn dispatch(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
             // arg4(IoStatusBlock), stack0(FileInformation), stack1(Length),
             // stack2(FileInformationClass), stack3(ReturnSingleEntry),
             // stack4(FileName), stack5(RestartScan)
-            unsafe { crate::libs::ntdll::file::NtQueryDirectoryFile(
-                arg0(tf) as HANDLE,
-                arg1(tf) as HANDLE,
-                arg2(tf) as PVOID,
-                arg3(tf) as PVOID,
-                arg4(tf) as *mut IoStatusBlock,
-                stack_arg(tf, 0) as PVOID,
-                stack_arg(tf, 1) as u32,
-                stack_arg(tf, 2) as u32,
-                stack_arg(tf, 3) as u8,
-                stack_arg(tf, 4) as *mut crate::libs::ntdll::types::UnicodeString,
-                stack_arg(tf, 5) as u8,
-            ) as i64 }
+            unsafe {
+                crate::libs::ntdll::file::NtQueryDirectoryFile(
+                    arg0(tf) as HANDLE,
+                    arg1(tf) as HANDLE,
+                    arg2(tf) as PVOID,
+                    arg3(tf) as PVOID,
+                    arg4(tf) as *mut IoStatusBlock,
+                    stack_arg(tf, 0) as PVOID,
+                    stack_arg(tf, 1) as u32,
+                    stack_arg(tf, 2) as u32,
+                    stack_arg(tf, 3) as u8,
+                    stack_arg(tf, 4) as *mut crate::libs::ntdll::types::UnicodeString,
+                    stack_arg(tf, 5) as u8,
+                ) as i64
+            }
         }
         nums::NtQueryEaFile => not_implemented(),
         nums::NtSetEaFile => not_implemented(),
@@ -978,7 +1160,9 @@ fn dispatch(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
                 // this matches the path the build tool installs
                 // the batch file at (see
                 // `tools/src/fs/build.rs::add_autoexec_bat`).
-                crate::boot_println!("[syscall] SYS_RUN_AUTOEXEC: arg0=NULL, using default C:\\tests\\autoexec.bat");
+                crate::boot_println!(
+                    "[syscall] SYS_RUN_AUTOEXEC: arg0=NULL, using default C:\\tests\\autoexec.bat"
+                );
                 crate::servers::cmd::run_batch_file("C:\\tests\\autoexec.bat")
                     .map_err(|e| {
                         crate::boot_println!(
@@ -1050,12 +1234,12 @@ fn dispatch(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
             // in the asm does not turn the entire banner into NULs.
             let mut ch: u8 = 0;
             for &candidate in &[
-                arg0(tf),   // r10 — Microsoft x64 ABI arg0
-                tf.rdx,     // rdx — where the cmd.exe stub leaves the byte
-                tf.rdi,     // rdi — sometimes clobbered by `mov eax, imm`
-                tf.rsi,     // rsi — printable source ptr low byte
-                tf.r8,      // r8  — preserved across syscalls
-                tf.r12,     // r12 — preserved banner pointer (low byte is junk)
+                arg0(tf), // r10 — Microsoft x64 ABI arg0
+                tf.rdx,   // rdx — where the cmd.exe stub leaves the byte
+                tf.rdi,   // rdi — sometimes clobbered by `mov eax, imm`
+                tf.rsi,   // rsi — printable source ptr low byte
+                tf.r8,    // r8  — preserved across syscalls
+                tf.r12,   // r12 — preserved banner pointer (low byte is junk)
             ] {
                 let b = (candidate & 0xFF) as u8;
                 if b != 0 {
@@ -1142,37 +1326,35 @@ fn dispatch(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
         // SYS_GET_KEY (0x0204) - blocking: spin until a key
         // (PS/2 or serial) arrives, then return the byte. Used by
         // boot-time single-keypress probes.
-        nums::SYS_GET_KEY => {
-            loop {
-                if crate::hal::x86_64::serial::data_available() {
-                    if let Some(c) = crate::hal::x86_64::serial::read_char() {
-                        return c as i64;
-                    }
+        nums::SYS_GET_KEY => loop {
+            if crate::hal::x86_64::serial::data_available() {
+                if let Some(c) = crate::hal::x86_64::serial::read_char() {
+                    return c as i64;
                 }
-                let mut status: u8 = 0;
+            }
+            let mut status: u8 = 0;
+            unsafe {
+                core::arch::asm!(
+                    "mov dx, 0x64",
+                    "in al, dx",
+                    out("al") status,
+                    options(nostack, preserves_flags),
+                );
+            }
+            if (status & 0x01) != 0 {
+                let mut scancode: u8 = 0;
                 unsafe {
                     core::arch::asm!(
-                        "mov dx, 0x64",
+                        "mov dx, 0x60",
                         "in al, dx",
-                        out("al") status,
+                        out("al") scancode,
                         options(nostack, preserves_flags),
                     );
                 }
-                if (status & 0x01) != 0 {
-                    let mut scancode: u8 = 0;
-                    unsafe {
-                        core::arch::asm!(
-                            "mov dx, 0x60",
-                            "in al, dx",
-                            out("al") scancode,
-                            options(nostack, preserves_flags),
-                        );
-                    }
-                    return scancode as i64;
-                }
-                core::hint::spin_loop();
+                return scancode as i64;
             }
-        }
+            core::hint::spin_loop();
+        },
 
         // SYS_READ_LINE (0x0211) - read up to `arg1` bytes from
         // the serial UART into the user buffer at `arg0`. Stops
@@ -1199,13 +1381,19 @@ fn dispatch(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
                     }
                 };
                 if b == b'\r' || b == b'\n' {
-                    unsafe { core::ptr::write_volatile(user_buf.add(written), 0); }
+                    unsafe {
+                        core::ptr::write_volatile(user_buf.add(written), 0);
+                    }
                     return written as i64;
                 }
-                unsafe { core::ptr::write_volatile(user_buf.add(written), b); }
+                unsafe {
+                    core::ptr::write_volatile(user_buf.add(written), b);
+                }
                 written += 1;
             }
-            unsafe { core::ptr::write_volatile(user_buf.add(written), 0); }
+            unsafe {
+                core::ptr::write_volatile(user_buf.add(written), 0);
+            }
             written as i64
         }
 
@@ -1246,11 +1434,10 @@ fn dispatch(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
                 out[6] = t.get_second();
                 out[7] = t.weekday;
             }
-            unsafe {
-                let src = &out as *const u8;
-                core::ptr::copy_nonoverlapping(src, user_buf, out.len());
+            match crate::mm::user_copy::copy_to_user(user_buf as u64, &out) {
+                Ok(()) => out.len() as i64,
+                Err(status) => status as i64,
             }
-            out.len() as i64
         }
 
         // SYS_NETCFG_GET (0x0213) - copy the active network
@@ -1285,15 +1472,29 @@ fn dispatch(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
             } else {
                 // No interface registered — fall back to loopback so
                 // the user-mode `ipconfig` always prints something.
-                out[0] = 127; out[1] = 0; out[2] = 0; out[3] = 1;
-                out[4] = 255; out[5] = 255; out[6] = 255; out[7] = 0;
+                out[0] = 127;
+                out[1] = 0;
+                out[2] = 0;
+                out[3] = 1;
+                out[4] = 255;
+                out[5] = 255;
+                out[6] = 255;
+                out[7] = 0;
                 out[12] = 1;
             }
-            unsafe {
-                let src = &out as *const u8;
-                core::ptr::copy_nonoverlapping(src, user_buf, out.len());
+            match crate::mm::user_copy::copy_to_user(user_buf as u64, &out) {
+                Ok(()) => out.len() as i64,
+                Err(status) => status as i64,
             }
-            out.len() as i64
+        }
+
+        // SYS_RETURN_TO_FIRMWARE (0x0214) - hand control back to the
+        // firmware for a warm reboot or an ACPI soft-off. The action
+        // constant arrives in `arg0`; `HalReturnToFirmware` never
+        // returns, so this arm diverges.
+        nums::SYS_RETURN_TO_FIRMWARE => {
+            let action = arg0(tf) as u32;
+            crate::hal::x86_64::halt::HalReturnToFirmware(action);
         }
 
         // SYS_SPAWN_SUBSYSTEM_PROCESS (0x0210) - read a
@@ -1305,8 +1506,8 @@ fn dispatch(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
         nums::SYS_SPAWN_SUBSYSTEM_PROCESS => {
             let user_path_ptr = arg0(tf) as *const u8;
             crate::boot_println!("[SYS-SPAWN] user_path_ptr=0x{:x}", user_path_ptr as u64);
-            let pid = crate::servers::smss::spawn_user_subsystem(user_path_ptr)
-                .unwrap_or(0xFFFFFFFFu64);
+            let pid =
+                crate::servers::smss::spawn_user_subsystem(user_path_ptr).unwrap_or(0xFFFFFFFFu64);
             pid as i64
         }
 
@@ -1359,7 +1560,9 @@ pub extern "C" fn syscall_dispatch(syscall_num: u64, tf: *mut TrapFrame) -> u64 
     DEBUG_FIRED.fetch_add(1, Ordering::Relaxed);
     // Increment the per-CPU syscall counter.
     let ptr = get_current() as *mut PerCpuArea;
-    unsafe { (*ptr).syscall_count += 1; }
+    unsafe {
+        (*ptr).syscall_count += 1;
+    }
     unsafe {
         let tf_ref: &TrapFrame = &*tf;
         let result = dispatch(syscall_num as u32, tf_ref);
@@ -1381,7 +1584,9 @@ pub fn is_initialised() -> bool {
 /// four AMD64 MSRs (`IA32_EFER.SCE`, `IA32_STAR`, `IA32_LSTAR`,
 /// `IA32_FMASK`) and installs the per-CPU area as the GS base.
 pub fn init_syscall_msrs() {
-    if INITIALISED.swap(1, Ordering::AcqRel) != 0 { return; }
+    if INITIALISED.swap(1, Ordering::AcqRel) != 0 {
+        return;
+    }
 
     // 1. Enable SYSCALL in EFER (SCE = bit 0).
     let efer = rdmsr(IA32_EFER);
@@ -1445,8 +1650,8 @@ pub fn init_syscall_msrs() {
     //    into the kernel's GS base and the subsequent `gs:[0x0]`
     //    (user_rsp save) would corrupt UEFI data structures.
     set_user_gs_base(0);
-    init_storage();  // Initialize the per-CPU pages storage
-    let cpu_base = init(0);  // Init BSP's per-CPU area
+    init_storage(); // Initialize the per-CPU pages storage
+    let cpu_base = init(0); // Init BSP's per-CPU area
 
     // 5b. Publish the absolute virtual address of SYSCALL_ENTRY_SNAP
     //     into the per-CPU area at gs:[0x58]. The syscall_entry asm
@@ -1457,8 +1662,7 @@ pub fn init_syscall_msrs() {
     //     and which a `mov rax, snap` form would instead dereference).
     unsafe {
         let area = get_per_cpu();
-        (*area).syscall_snap_addr =
-            &SYSCALL_ENTRY_SNAP as *const SyscallEntrySnap as u64;
+        (*area).syscall_snap_addr = &SYSCALL_ENTRY_SNAP as *const SyscallEntrySnap as u64;
     }
 
     // 6. Initialize SSDT
@@ -1466,11 +1670,11 @@ pub fn init_syscall_msrs() {
 
     // NOTE: kprintln removed because MM is not initialized yet
     // Original code was:
-//     // // // // kprintln!("[SYSCALL] init: EFER.SCE=1, STAR=0x{:016x}, FMASK=0x200, GS_BASE=0x{:016x}",
-// // //     //           star, cpu_base);
-//     // // // // kprintln!("[SYSCALL] USER_CS=0x{:x} USER_SS=0x{:x} KERNEL_CS=0x{:x} KERNEL_DS=0x{:x}",
-// // //     //           USER_CS, USER_SS, KERNEL_CS, KERNEL_DS);
-    let _ = star;  // Suppress unused variable warning
+    //     // // // // kprintln!("[SYSCALL] init: EFER.SCE=1, STAR=0x{:016x}, FMASK=0x200, GS_BASE=0x{:016x}",
+    // // //     //           star, cpu_base);
+    //     // // // // kprintln!("[SYSCALL] USER_CS=0x{:x} USER_SS=0x{:x} KERNEL_CS=0x{:x} KERNEL_DS=0x{:x}",
+    // // //     //           USER_CS, USER_SS, KERNEL_CS, KERNEL_DS);
+    let _ = star; // Suppress unused variable warning
     let _ = cpu_base;
 }
 
@@ -1479,43 +1683,43 @@ pub fn init_syscall_msrs() {
 /// syscalls from user mode; this only verifies the dispatch
 /// table is reachable and consistent.
 pub fn smoke_test() -> bool {
-//     // // // kprintln!("  [SYSCALL SMOKE] testing SYSCALL/SYSRET dispatch...");
+    //     // // // kprintln!("  [SYSCALL SMOKE] testing SYSCALL/SYSRET dispatch...");
 
     // 1. Initialisation must have run.
     if !is_initialised() {
-//         // // // kprintln!("  [SYSCALL SMOKE FAIL] SYSCALL not initialised");
+        //         // // // kprintln!("  [SYSCALL SMOKE FAIL] SYSCALL not initialised");
         return false;
     }
 
     // 2. EFER.SCE must be set.
     let efer = rdmsr(IA32_EFER);
     if (efer & 0x1) == 0 {
-//         // // // kprintln!("  [SYSCALL SMOKE FAIL] EFER.SCE=0");
+        //         // // // kprintln!("  [SYSCALL SMOKE FAIL] EFER.SCE=0");
         return false;
     }
 
     // 3. IA32_LSTAR must point to syscall_entry.
     let lstar = rdmsr(IA32_LSTAR);
     if lstar != (syscall_entry as *const () as u64) {
-//         // // // kprintln!("  [SYSCALL SMOKE FAIL] LSTAR=0x{:016x}", lstar);
+        //         // // // kprintln!("  [SYSCALL SMOKE FAIL] LSTAR=0x{:016x}", lstar);
         return false;
     }
 
     // 4. Per-CPU area must be installed. Check IA32_KERNEL_GS_BASE.
     let gs = per_cpu_ptr_mut() as *const _ as u64;
     if gs == 0 {
-//         // // // kprintln!("  [SYSCALL SMOKE FAIL] GS_BASE=0 (not initialized)");
+        //         // // // kprintln!("  [SYSCALL SMOKE FAIL] GS_BASE=0 (not initialized)");
         return false;
     }
-//     // // // kprintln!("    [SYSCALL] CPU 0 GS_BASE=0x{:016x}", gs);
+    //     // // // kprintln!("    [SYSCALL] CPU 0 GS_BASE=0x{:016x}", gs);
 
     // 4b. Verify get_current_cpu_id_from_gs() returns correct CPU ID
     let cpu_id = get_current_cpu_id_from_gs();
     if cpu_id != 0 {
-//         // // // kprintln!("  [SYSCALL SMOKE FAIL] get_current_cpu_id_from_gs()={}, expected 0", cpu_id);
+        //         // // // kprintln!("  [SYSCALL SMOKE FAIL] get_current_cpu_id_from_gs()={}, expected 0", cpu_id);
         return false;
     }
-//     // // // kprintln!("    [SYSCALL] get_current_cpu_id_from_gs()=0 (BSP) OK");
+    //     // // // kprintln!("    [SYSCALL] get_current_cpu_id_from_gs()=0 (BSP) OK");
 
     // 5. The dispatch table must be reachable. We synthesise a
     //    minimal TrapFrame and call dispatch_one for a few
@@ -1530,13 +1734,13 @@ pub fn smoke_test() -> bool {
     tf.rdx = 0;
     tf.rcx = 0;
     let r1 = dispatch(nums::NtClose, &tf);
-//     // // // kprintln!("    [SYSCALL] NtClose(null) => 0x{:x}", r1 as u32);
+    //     // // // kprintln!("    [SYSCALL] NtClose(null) => 0x{:x}", r1 as u32);
 
     let r2 = dispatch(nums::NtTestAlert, &tf);
-//     // // // kprintln!("    [SYSCALL] NtTestAlert     => 0x{:x}", r2 as u32);
+    //     // // // kprintln!("    [SYSCALL] NtTestAlert     => 0x{:x}", r2 as u32);
 
     let r3 = dispatch(nums::NtQuerySystemInformation, &tf);
-//     // // // kprintln!("    [SYSCALL] NtQuerySystemInformation(null) => 0x{:x}", r3 as u32);
+    //     // // // kprintln!("    [SYSCALL] NtQuerySystemInformation(null) => 0x{:x}", r3 as u32);
 
     // 5a. Verify the three dispatch results are valid NTSTATUS values
     //     (high 16 bits of an i32 must fit in 0x8000_0000..=0xFFFF_FFFF
@@ -1571,7 +1775,7 @@ pub fn smoke_test() -> bool {
     // 7. Run Shadow SSDT smoke test
     crate::ke::shadow_ssdt::smoke_test();
 
-//     // // // kprintln!("  [SYSCALL SMOKE OK] syscalls_total={} interrupts_total={}",
-// // //               total_syscalls(), total_interrupts());
+    //     // // // kprintln!("  [SYSCALL SMOKE OK] syscalls_total={} interrupts_total={}",
+    // // //               total_syscalls(), total_interrupts());
     true
 }

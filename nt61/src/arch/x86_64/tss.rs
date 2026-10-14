@@ -43,20 +43,20 @@ const IST_SIZE: usize = 65536;
 /// the exact layout required by the hardware.
 #[repr(C, packed)]
 pub struct Tss {
-    pub _reserved0: u32,         // 0x00-0x03
-    pub rsp0: u64,                // 0x04-0x0B
-    pub rsp1: u64,               // 0x0C-0x13
-    pub rsp2: u64,                // 0x14-0x1B
-    pub _reserved1: u32,          // 0x1C-0x1F (4 bytes per Intel spec)
-    pub ist1: u64,               // 0x20-0x27
-    pub ist2: u64,               // 0x28-0x2F
-    pub ist3: u64,               // 0x30-0x37
-    pub ist4: u64,               // 0x38-0x3F
-    pub ist5: u64,               // 0x40-0x47
-    pub ist6: u64,               // 0x48-0x4F
-    pub ist7: u64,               // 0x50-0x57
-    pub _reserved2: [u8; 16],    // 0x58-0x67 (reserved per Intel)
-    pub io_bitmap_base: u16,     // 0x68-0x69 (offset to I/O permission bitmap, or >= TSS limit)
+    pub _reserved0: u32,      // 0x00-0x03
+    pub rsp0: u64,            // 0x04-0x0B
+    pub rsp1: u64,            // 0x0C-0x13
+    pub rsp2: u64,            // 0x14-0x1B
+    pub _reserved1: u32,      // 0x1C-0x1F (4 bytes per Intel spec)
+    pub ist1: u64,            // 0x20-0x27
+    pub ist2: u64,            // 0x28-0x2F
+    pub ist3: u64,            // 0x30-0x37
+    pub ist4: u64,            // 0x38-0x3F
+    pub ist5: u64,            // 0x40-0x47
+    pub ist6: u64,            // 0x48-0x4F
+    pub ist7: u64,            // 0x50-0x57
+    pub _reserved2: [u8; 16], // 0x58-0x67 (reserved per Intel)
+    pub io_bitmap_base: u16,  // 0x68-0x69 (offset to I/O permission bitmap, or >= TSS limit)
 }
 
 impl Tss {
@@ -67,7 +67,13 @@ impl Tss {
             rsp1: 0,
             rsp2: 0,
             _reserved1: 0,
-            ist1: 0, ist2: 0, ist3: 0, ist4: 0, ist5: 0, ist6: 0, ist7: 0,
+            ist1: 0,
+            ist2: 0,
+            ist3: 0,
+            ist4: 0,
+            ist5: 0,
+            ist6: 0,
+            ist7: 0,
             _reserved2: [0; 16],
             io_bitmap_base: size_of::<Tss>() as u16,
         }
@@ -78,19 +84,55 @@ impl Tss {
 /// This catches any accidental changes to the structure that would break
 /// the expected offsets.
 const _: () = {
-    assert!(core::mem::offset_of!(Tss, rsp0) == 0x04, "RSP0 must be at offset 0x04");
-    assert!(core::mem::offset_of!(Tss, rsp1) == 0x0C, "RSP1 must be at offset 0x0C");
-    assert!(core::mem::offset_of!(Tss, rsp2) == 0x14, "RSP2 must be at offset 0x14");
-    assert!(core::mem::offset_of!(Tss, ist1) == 0x20, "IST1 must be at offset 0x20");
-    assert!(core::mem::offset_of!(Tss, ist2) == 0x28, "IST2 must be at offset 0x28");
-    assert!(core::mem::offset_of!(Tss, ist3) == 0x30, "IST3 must be at offset 0x30");
-    assert!(core::mem::offset_of!(Tss, ist4) == 0x38, "IST4 must be at offset 0x38");
-    assert!(core::mem::offset_of!(Tss, ist5) == 0x40, "IST5 must be at at offset 0x40");
-    assert!(core::mem::offset_of!(Tss, ist6) == 0x48, "IST6 must be at offset 0x48");
-    assert!(core::mem::offset_of!(Tss, ist7) == 0x50, "IST7 must be at offset 0x50");
-    assert!(core::mem::offset_of!(Tss, io_bitmap_base) == 0x68, "IO bitmap base must be at offset 0x68");
+    assert!(
+        core::mem::offset_of!(Tss, rsp0) == 0x04,
+        "RSP0 must be at offset 0x04"
+    );
+    assert!(
+        core::mem::offset_of!(Tss, rsp1) == 0x0C,
+        "RSP1 must be at offset 0x0C"
+    );
+    assert!(
+        core::mem::offset_of!(Tss, rsp2) == 0x14,
+        "RSP2 must be at offset 0x14"
+    );
+    assert!(
+        core::mem::offset_of!(Tss, ist1) == 0x20,
+        "IST1 must be at offset 0x20"
+    );
+    assert!(
+        core::mem::offset_of!(Tss, ist2) == 0x28,
+        "IST2 must be at offset 0x28"
+    );
+    assert!(
+        core::mem::offset_of!(Tss, ist3) == 0x30,
+        "IST3 must be at offset 0x30"
+    );
+    assert!(
+        core::mem::offset_of!(Tss, ist4) == 0x38,
+        "IST4 must be at offset 0x38"
+    );
+    assert!(
+        core::mem::offset_of!(Tss, ist5) == 0x40,
+        "IST5 must be at at offset 0x40"
+    );
+    assert!(
+        core::mem::offset_of!(Tss, ist6) == 0x48,
+        "IST6 must be at offset 0x48"
+    );
+    assert!(
+        core::mem::offset_of!(Tss, ist7) == 0x50,
+        "IST7 must be at offset 0x50"
+    );
+    assert!(
+        core::mem::offset_of!(Tss, io_bitmap_base) == 0x68,
+        "IO bitmap base must be at offset 0x68"
+    );
     // Verify total size
-    assert!(core::mem::size_of::<Tss>() >= 0x6A, "Tss must be at least 106 bytes");
+    assert!(
+        core::mem::size_of::<Tss>() >= 0x6A,
+        "Tss must be at least 106 bytes"
+    );
 };
 
 #[repr(C, align(8))]
@@ -170,8 +212,10 @@ pub fn install_ist_stack(ist_top: [u64; 7]) {
         // IST7 at offset 0x50
         core::ptr::write_unaligned(tss_ptr.add(0x50) as *mut u64, ist_top[6]);
         // io_bitmap_base at offset 0x68 (must be >= sizeof(Tss) to indicate no I/O bitmap)
-        core::ptr::write_unaligned(tss_ptr.add(0x68) as *mut u16,
-            core::mem::size_of::<Tss>() as u16);
+        core::ptr::write_unaligned(
+            tss_ptr.add(0x68) as *mut u16,
+            core::mem::size_of::<Tss>() as u16,
+        );
     }
 }
 
@@ -252,14 +296,20 @@ static mut AP_TSS: [PerCpuTss; MAX_APS] = [const {
 /// Return a pointer to the AP TSS for `ap_index` (0-based, BSP is
 /// excluded).
 pub fn ap_tss(ap_index: usize) -> *mut PerCpuTss {
-    if ap_index >= MAX_APS { core::ptr::null_mut() } else { unsafe { &mut AP_TSS[ap_index] } }
+    if ap_index >= MAX_APS {
+        core::ptr::null_mut()
+    } else {
+        unsafe { &mut AP_TSS[ap_index] }
+    }
 }
 
 /// Initialise an AP's TSS: set the IST stack pointer, return the
 /// TSS address and limit so the per-CPU GDT can be built around it.
 pub unsafe fn init_ap_tss(ap_index: usize, rsp0: u64) -> Option<(*mut Tss, u32)> {
     let slot = ap_tss(ap_index);
-    if slot.is_null() { return None; }
+    if slot.is_null() {
+        return None;
+    }
     let tss = &mut (*slot).tss;
     let stack_top = (&(*slot).ist_stack as *const u8) as u64 + IST_SIZE as u64;
     tss.rsp0 = rsp0;

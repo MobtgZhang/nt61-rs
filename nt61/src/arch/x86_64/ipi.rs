@@ -9,18 +9,18 @@
 //! IPI vectors are allocated in the high range (0xF0-0xFF) to avoid
 //! conflicts with hardware IRQs.
 
+use crate::hal::x86_64::apic::{apic_read, apic_write, lapic_reg};
 use core::arch::asm;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use crate::hal::x86_64::apic::{apic_write, apic_read, lapic_reg};
 
 /// IPI vector assignments
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum IpiVector {
-    Reschedule = 0xF0,  // Request reschedule on target CPU
-    TlbFlush = 0xF1,    // Flush TLB on target CPU
+    Reschedule = 0xF0,   // Request reschedule on target CPU
+    TlbFlush = 0xF1,     // Flush TLB on target CPU
     FunctionCall = 0xF2, // Execute a function on target CPU
-    Stop = 0xF3,        // Stop/halt target CPU
+    Stop = 0xF3,         // Stop/halt target CPU
 }
 
 impl IpiVector {
@@ -43,7 +43,7 @@ impl IpiVector {
 #[derive(Debug, Clone, Copy)]
 #[repr(u32)]
 pub enum IpiDeliveryMode {
-    Fixed = 0,       // Normal interrupt
+    Fixed = 0, // Normal interrupt
     LowestPriority = 1,
     Smi = 2,
     Nmi = 4,
@@ -70,7 +70,11 @@ static IPI_TLB_FLUSH_COUNT: AtomicU64 = AtomicU64::new(0);
 
 /// Send an IPI to a specific CPU (by APIC ID)
 pub fn send_ipi(target_apic_id: u32, vector: IpiVector) {
-    send_ipi_raw(target_apic_id, vector.as_u8() as u32, IpiDeliveryMode::Fixed);
+    send_ipi_raw(
+        target_apic_id,
+        vector.as_u8() as u32,
+        IpiDeliveryMode::Fixed,
+    );
     IPI_SENT.fetch_add(1, Ordering::Relaxed);
 }
 
@@ -85,7 +89,9 @@ pub fn send_ipi_raw(target_apic_id: u32, vector: u32, delivery_mode: IpiDelivery
             break;
         }
         timeout -= 1;
-        unsafe { asm!("pause", options(nostack, preserves_flags)); }
+        unsafe {
+            asm!("pause", options(nostack, preserves_flags));
+        }
     }
 
     if timeout == 0 {
@@ -105,9 +111,7 @@ pub fn send_ipi_raw(target_apic_id: u32, vector: u32, delivery_mode: IpiDelivery
     // Bit 14: Level (1=assert, 0=de-assert)
     // Bit 15: Trigger Mode (0=edge, 1=level)
     // Bits 18-19: Destination Shorthand
-    let icr_low = vector
-        | ((delivery_mode as u32) << 8)
-        | (1 << 14); // Assert level
+    let icr_low = vector | ((delivery_mode as u32) << 8) | (1 << 14); // Assert level
 
     apic_write(lapic_reg::ICR_LOW, icr_low);
 }
@@ -128,7 +132,9 @@ pub fn broadcast_ipi_raw(vector: u32, delivery_mode: IpiDeliveryMode) {
             break;
         }
         timeout -= 1;
-        unsafe { asm!("pause", options(nostack, preserves_flags)); }
+        unsafe {
+            asm!("pause", options(nostack, preserves_flags));
+        }
     }
 
     if timeout == 0 {
@@ -178,7 +184,9 @@ pub fn handle_reschedule_ipi() {
     }
 
     // Send EOI to acknowledge the interrupt
-    unsafe { apic_eoi(); }
+    unsafe {
+        apic_eoi();
+    }
 }
 
 /// Handle TLB flush IPI
@@ -201,7 +209,9 @@ pub fn handle_tlb_flush_ipi() {
     }
 
     // Send EOI
-    unsafe { apic_eoi(); }
+    unsafe {
+        apic_eoi();
+    }
 }
 
 /// Handle function call IPI
@@ -217,7 +227,9 @@ pub fn handle_function_call_ipi() {
     }
 
     // Send EOI
-    unsafe { apic_eoi(); }
+    unsafe {
+        apic_eoi();
+    }
 }
 
 /// Handle stop IPI
@@ -226,13 +238,7 @@ pub fn handle_stop_ipi() {
 
     // Disable interrupts and halt
     unsafe {
-        asm!(
-            "cli",
-            "2:",
-            "hlt",
-            "jmp 2b",
-            options(noreturn)
-        );
+        asm!("cli", "2:", "hlt", "jmp 2b", options(noreturn));
     }
 }
 
@@ -285,7 +291,9 @@ pub fn flush_tlb_all() {
     // This is a simple spin; a more sophisticated implementation
     // would use acknowledgments
     for _ in 0..1000 {
-        unsafe { asm!("pause", options(nostack, preserves_flags)); }
+        unsafe {
+            asm!("pause", options(nostack, preserves_flags));
+        }
     }
 }
 

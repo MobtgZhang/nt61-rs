@@ -23,7 +23,9 @@ pub fn serial_init(base: u64) {
 
 pub fn serial_putc(b: u8) {
     let base = UART_BASE.load(Ordering::Acquire);
-    if base == 0 { return; }
+    if base == 0 {
+        return;
+    }
     unsafe {
         while ptr::read_volatile((base + UART_LSR) as *const u8) & 0x20 == 0 {}
         ptr::write_volatile((base + UART_THR) as *mut u8, b);
@@ -31,14 +33,20 @@ pub fn serial_putc(b: u8) {
 }
 
 pub fn serial_puts(s: &str) {
-    for c in s.bytes() { serial_putc(c); }
+    for c in s.bytes() {
+        serial_putc(c);
+    }
 }
 
 pub fn serial_getc() -> i16 {
     let base = UART_BASE.load(Ordering::Acquire);
-    if base == 0 { return -1; }
+    if base == 0 {
+        return -1;
+    }
     unsafe {
-        if ptr::read_volatile((base + UART_LSR) as *const u8) & 0x01 == 0 { return -1; }
+        if ptr::read_volatile((base + UART_LSR) as *const u8) & 0x01 == 0 {
+            return -1;
+        }
         ptr::read_volatile((base + UART_THR) as *const u8) as i16
     }
 }
@@ -51,7 +59,9 @@ pub fn serial_getc() -> i16 {
 /// hook up a `kbd` driver.
 pub fn handle_rx() {
     let base = UART_BASE.load(Ordering::Acquire);
-    if base == 0 { return; }
+    if base == 0 {
+        return;
+    }
     unsafe {
         // Drain up to 16 bytes.
         for _ in 0..16 {

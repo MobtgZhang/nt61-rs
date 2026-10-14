@@ -48,7 +48,6 @@ global_asm!(
     // The return address is on the new stack right after the
     // last popped register; the caller's `ret` will land there.
     "    ret",
-
     // ---- FPU state save via XSAVE ----
     // void fpu_save(void *state_buffer)
     // rdi = buffer pointer
@@ -58,22 +57,20 @@ global_asm!(
     // We save XMM0-XMM15 (512 bytes) + MXCSR (4 bytes) + FPU state
     // Total: 512 + 64 (header) = 576 bytes minimum, we use 512 bytes
     // Feature mask: 0x7 = X87 | SSE | AVX
-    "    mov rax, 0x7",          // Feature mask: X87 + SSE + AVX
-    "    mov rdx, 0",           // Extended feature mask (high 32 bits)
+    "    mov rax, 0x7", // Feature mask: X87 + SSE + AVX
+    "    mov rdx, 0",   // Extended feature mask (high 32 bits)
     "    xsave [rdi]",
     "    ret",
-
     // ---- FPU state restore via XRSTOR ----
     // void fpu_restore(void *state_buffer)
     // rdi = buffer pointer
     ".global fpu_restore",
     "fpu_restore:",
     // XRSTOR to restore XMM, X87, and AVX state
-    "    mov rax, 0x7",          // Feature mask: X87 + SSE + AVX
-    "    mov rdx, 0",           // Extended feature mask (high 32 bits)
+    "    mov rax, 0x7", // Feature mask: X87 + SSE + AVX
+    "    mov rdx, 0",   // Extended feature mask (high 32 bits)
     "    xrstor [rdi]",
     "    ret",
-
     // ---- Initialize FPU state ----
     // void fpu_init(void *state_buffer)
     ".global fpu_init",
@@ -139,14 +136,22 @@ pub struct ContextFrame {
 
 impl ContextFrame {
     pub const fn new() -> Self {
-        Self { rbx: 0, rbp: 0, r12: 0, r13: 0, r14: 0, r15: 0, return_ip: 0 }
+        Self {
+            rbx: 0,
+            rbp: 0,
+            r12: 0,
+            r13: 0,
+            r14: 0,
+            r15: 0,
+            return_ip: 0,
+        }
     }
 }
 
 /// Thread state buffer that includes both general-purpose register state
 /// and FPU/SIMD state.
 #[repr(C)]
-#[repr(align(64))]  // 64-byte alignment for XSAVE
+#[repr(align(64))] // 64-byte alignment for XSAVE
 pub struct ThreadStateBuffer {
     /// FPU/SSE/AVX state (512 bytes for full XSAVE area)
     pub fpu_state: [u8; FPU_STATE_SIZE],
@@ -221,15 +226,23 @@ pub fn push_context(stack_top: u64, entry: u64, arg0: u64) -> u64 {
         // Top of the new stack: argument (passed in rdi), then
         // the return address. The kernel's entry thunk pops
         // the argument and calls the user entry.
-        sp -= 8; *(sp as *mut u64) = arg0;
-        sp -= 8; *(sp as *mut u64) = entry;
+        sp -= 8;
+        *(sp as *mut u64) = arg0;
+        sp -= 8;
+        *(sp as *mut u64) = entry;
         // ContextFrame fields, pushed in reverse-pop order.
-        sp -= 8; *(sp as *mut u64) = 0; // r15
-        sp -= 8; *(sp as *mut u64) = 0; // r14
-        sp -= 8; *(sp as *mut u64) = 0; // r13
-        sp -= 8; *(sp as *mut u64) = 0; // r12
-        sp -= 8; *(sp as *mut u64) = 0; // rbp
-        sp -= 8; *(sp as *mut u64) = 0; // rbx
+        sp -= 8;
+        *(sp as *mut u64) = 0; // r15
+        sp -= 8;
+        *(sp as *mut u64) = 0; // r14
+        sp -= 8;
+        *(sp as *mut u64) = 0; // r13
+        sp -= 8;
+        *(sp as *mut u64) = 0; // r12
+        sp -= 8;
+        *(sp as *mut u64) = 0; // rbp
+        sp -= 8;
+        *(sp as *mut u64) = 0; // rbx
         sp
     }
 }
@@ -331,7 +344,9 @@ pub fn save_fpu_context() {
     if !current.is_null() {
         let fpu_state_ptr = unsafe { (*current).get_fpu_state_ptr() };
         if !fpu_state_ptr.is_null() {
-            unsafe { fpu_save(fpu_state_ptr); }
+            unsafe {
+                fpu_save(fpu_state_ptr);
+            }
         }
     }
 }
@@ -346,7 +361,9 @@ pub fn restore_fpu_context() {
     if !current.is_null() {
         let fpu_state_ptr = unsafe { (*current).get_fpu_state_ptr() };
         if !fpu_state_ptr.is_null() {
-            unsafe { fpu_restore(fpu_state_ptr); }
+            unsafe {
+                fpu_restore(fpu_state_ptr);
+            }
         }
     }
 }
@@ -357,12 +374,12 @@ pub fn init_thread_fpu_state() -> Option<&'static mut ThreadStateBuffer> {
         crate::mm::pool::PoolType::NonPaged,
         core::mem::size_of::<ThreadStateBuffer>(),
     ) as *mut ThreadStateBuffer;
-    
+
     if buffer.is_null() {
         // // kprintln!("[CONTEXT] FATAL: Cannot allocate FPU state buffer");
         return None;
     }
-    
+
     // Verify 64-byte alignment (XSAVE requires 64-byte alignment)
     // Non-paged pool allocations are typically page-aligned, but we verify at runtime
     if (buffer as u64) % 64 != 0 {
@@ -371,18 +388,18 @@ pub fn init_thread_fpu_state() -> Option<&'static mut ThreadStateBuffer> {
         // gives us a misaligned pointer, we need to handle it.
         // For now, continue - the pool allocator should return aligned memory.
     }
-    
+
     unsafe {
         // Initialize the buffer
         core::ptr::write_bytes(
             buffer as *mut u8,
             0,
-            core::mem::size_of::<ThreadStateBuffer>()
+            core::mem::size_of::<ThreadStateBuffer>(),
         );
-        
+
         // Initialize FPU state to clean values
         fpu_init(buffer as *mut u8);
-        
+
         Some(&mut *buffer)
     }
 }

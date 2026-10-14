@@ -64,7 +64,9 @@ pub fn lookup(guest_va: u64) -> u64 {
     let e = &CACHE[slot];
     if e.key.load(Ordering::Acquire) == guest_va {
         e.host.load(Ordering::Acquire)
-    } else { 0 }
+    } else {
+        0
+    }
 }
 
 /// Clear all entries. Used after a kernel module load / unload
@@ -78,7 +80,9 @@ pub fn flush() {
 }
 
 /// Total number of inserts since boot (for unit testing).
-pub fn insert_count() -> usize { INSERTS.load(Ordering::Relaxed) }
+pub fn insert_count() -> usize {
+    INSERTS.load(Ordering::Relaxed)
+}
 
 pub fn init() {}
 

@@ -5,7 +5,12 @@
 //! between x86_64, aarch64, riscv64 and loongarch64 live here. Anything
 //! portable goes in `hal::*` instead.
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "riscv64", target_arch = "loongarch64"))]
+#[cfg(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "riscv64",
+    target_arch = "loongarch64"
+))]
 use core::arch::asm;
 
 // `core::arch::asm!` and `global_asm!` are the only way to write
@@ -53,7 +58,9 @@ pub fn init_hardware() {
     // (or a buggy earlier step) may have left IF=1, and a stray
     // IRQ into an empty IDT slot causes #GP, which causes #GP, …
     #[cfg(target_arch = "x86_64")]
-    unsafe { core::arch::asm!("cli", options(nostack, preserves_flags)); }
+    unsafe {
+        core::arch::asm!("cli", options(nostack, preserves_flags));
+    }
     #[cfg(target_arch = "x86_64")]
     {
         crate::hal::serial::write_string("arch_start\r\n");
@@ -74,6 +81,13 @@ pub fn init_hardware() {
         crate::hal::serial::write_string("gdt_done\r\n");
         x86_64::idt::init();
         crate::hal::serial::write_string("idt_done\r\n");
+        // SMEP (CR4 bit 9) and SMAP (CR4 bit 10) are the hardware half of
+        // the ring boundary. Without them every user-pointer check in the
+        // kernel is a software-only policy: a path that forgets to probe
+        // silently reads or writes user memory instead of raising a
+        // catchable #PF. Set them as early as possible, on every CPU.
+        x86_64::cpu_flags::enable_user_boundary_protection();
+        crate::hal::serial::write_string("smep_smap_done\r\n");
         x86_64::syscall::init_syscall_msrs();
         crate::hal::serial::write_string("syscall_done\r\n");
 
@@ -306,13 +320,21 @@ pub fn wait_for_interrupt() {
 /// of inline `core::arch::asm!("pause")` in non-arch modules.
 pub fn cpu_relax() {
     #[cfg(target_arch = "x86_64")]
-    unsafe { asm!("pause", options(nostack, preserves_flags)); }
+    unsafe {
+        asm!("pause", options(nostack, preserves_flags));
+    }
     #[cfg(target_arch = "aarch64")]
-    unsafe { asm!("yield", options(nostack, preserves_flags)); }
+    unsafe {
+        asm!("yield", options(nostack, preserves_flags));
+    }
     #[cfg(target_arch = "riscv64")]
-    unsafe { asm!("nop", options(nostack, preserves_flags)); }
+    unsafe {
+        asm!("nop", options(nostack, preserves_flags));
+    }
     #[cfg(target_arch = "loongarch64")]
-    unsafe { asm!("nop", options(nostack, preserves_flags)); }
+    unsafe {
+        asm!("nop", options(nostack, preserves_flags));
+    }
 }
 
 /// Full memory barrier, ordering all loads/stores before to all
@@ -443,36 +465,60 @@ pub unsafe fn load_page_root(pml4_pfn: u64) {
 /// Read the current page-table root PFN.
 pub fn read_page_root_pfn() -> u64 {
     #[cfg(target_arch = "x86_64")]
-    { x86_64::paging::read_page_root_pfn() }
+    {
+        x86_64::paging::read_page_root_pfn()
+    }
     #[cfg(target_arch = "aarch64")]
-    { aarch64::paging::read_page_root_pfn() }
+    {
+        aarch64::paging::read_page_root_pfn()
+    }
     #[cfg(target_arch = "riscv64")]
-    { riscv64::paging::read_page_root_pfn() }
+    {
+        riscv64::paging::read_page_root_pfn()
+    }
     #[cfg(target_arch = "loongarch64")]
-    { loongarch64::paging::read_page_root_pfn() }
+    {
+        loongarch64::paging::read_page_root_pfn()
+    }
 }
 /// Invalidate the TLB entry for a single virtual address.
 pub fn invalidate_tlb(va: u64) {
     #[cfg(target_arch = "x86_64")]
-    { x86_64::paging::invalidate_tlb(va); }
+    {
+        x86_64::paging::invalidate_tlb(va);
+    }
     #[cfg(target_arch = "aarch64")]
-    { aarch64::paging::invalidate_tlb(va); }
+    {
+        aarch64::paging::invalidate_tlb(va);
+    }
     #[cfg(target_arch = "riscv64")]
-    { riscv64::paging::invalidate_tlb(va); }
+    {
+        riscv64::paging::invalidate_tlb(va);
+    }
     #[cfg(target_arch = "loongarch64")]
-    { loongarch64::paging::invalidate_tlb(va); }
+    {
+        loongarch64::paging::invalidate_tlb(va);
+    }
 }
 
 /// Flush the entire TLB (all entries).
 pub fn flush_tlb() {
     #[cfg(target_arch = "x86_64")]
-    { x86_64::paging::flush_tlb(); }
+    {
+        x86_64::paging::flush_tlb();
+    }
     #[cfg(target_arch = "aarch64")]
-    { aarch64::paging::flush_tlb(); }
+    {
+        aarch64::paging::flush_tlb();
+    }
     #[cfg(target_arch = "riscv64")]
-    { riscv64::paging::flush_tlb(); }
+    {
+        riscv64::paging::flush_tlb();
+    }
     #[cfg(target_arch = "loongarch64")]
-    { loongarch64::paging::flush_tlb(); }
+    {
+        loongarch64::paging::flush_tlb();
+    }
 }
 
 pub fn get_stack_pointer() -> u64 {
@@ -517,25 +563,33 @@ pub fn read_current_page_root() -> u64 {
     #[cfg(target_arch = "x86_64")]
     {
         let cr3: u64;
-        unsafe { core::arch::asm!("mov {}, cr3", out(reg) cr3, options(nostack, preserves_flags)); }
+        unsafe {
+            core::arch::asm!("mov {}, cr3", out(reg) cr3, options(nostack, preserves_flags));
+        }
         cr3 & !0xFFFu64
     }
     #[cfg(target_arch = "aarch64")]
     {
         let ttbr1: u64;
-        unsafe { core::arch::asm!("mrs {}, ttbr1_el1", out(reg) ttbr1, options(nostack)); }
+        unsafe {
+            core::arch::asm!("mrs {}, ttbr1_el1", out(reg) ttbr1, options(nostack));
+        }
         ttbr1 & !0xFFFu64
     }
     #[cfg(target_arch = "riscv64")]
     {
         let satp: u64;
-        unsafe { core::arch::asm!("csrr {}, satp", out(reg) satp, options(nostack)); }
+        unsafe {
+            core::arch::asm!("csrr {}, satp", out(reg) satp, options(nostack));
+        }
         satp & 0x000F_FFFF_FFFF_F000
     }
     #[cfg(target_arch = "loongarch64")]
     {
         let pgdh: u64;
-        unsafe { core::arch::asm!("csrrd {}, 0x18", out(reg) pgdh, options(nostack)); }
+        unsafe {
+            core::arch::asm!("csrrd {}, 0x18", out(reg) pgdh, options(nostack));
+        }
         pgdh & !0xFFFu64
     }
 }

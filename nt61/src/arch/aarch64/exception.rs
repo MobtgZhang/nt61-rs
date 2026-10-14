@@ -28,83 +28,66 @@ global_asm!(
     ".align 11",
     ".global exception_vector",
     "exception_vector:",
-
     // ============================================================
     //   Current EL with SP0 — kernel saved on its own stack
     // ============================================================
     ".align 7",
     "current_el_sp0_sync:",
     "  b current_el_sp0_sync_stub",
-
     ".align 7",
     "current_el_sp0_irq:",
     "  b current_el_sp0_irq_stub",
-
     ".align 7",
     "current_el_sp0_fiq:",
     "  b current_el_sp0_fiq_stub",
-
     ".align 7",
     "current_el_sp0_serror:",
     "  b current_el_sp0_serror_stub",
-
     // ============================================================
     //   Current EL with SPx — kernel using current SP
     // ============================================================
     ".align 7",
     "current_el_spx_sync:",
     "  b current_el_spx_sync_stub",
-
     ".align 7",
     "current_el_spx_irq:",
     "  b current_el_spx_irq_stub",
-
     ".align 7",
     "current_el_spx_fiq:",
     "  b current_el_spx_fiq_stub",
-
     ".align 7",
     "current_el_spx_serror:",
     "  b current_el_spx_serror_stub",
-
     // ============================================================
     //   Lower EL using AArch64 (EL0 / 64-bit) — user-mode exceptions
     // ============================================================
     ".align 7",
     "lower_el_aarch64_sync:",
     "  b lower_el_aarch64_sync_stub",
-
     ".align 7",
     "lower_el_aarch64_irq:",
     "  b lower_el_aarch64_irq_stub",
-
     ".align 7",
     "lower_el_aarch64_fiq:",
     "  b lower_el_aarch64_fiq_stub",
-
     ".align 7",
     "lower_el_aarch64_serror:",
     "  b lower_el_aarch64_serror_stub",
-
     // ============================================================
     //   Lower EL using AArch32 — not supported, loop forever
     // ============================================================
     ".align 7",
     "lower_el_aarch32_sync:",
     "  b .",
-
     ".align 7",
     "lower_el_aarch32_irq:",
     "  b .",
-
     ".align 7",
     "lower_el_aarch32_fiq:",
     "  b .",
-
     ".align 7",
     "lower_el_aarch32_serror:",
     "  b .",
-
     // ============================================================
     //   Stubs — saved-context layout
     // ============================================================
@@ -124,7 +107,6 @@ global_asm!(
     //.   [sp, #0x118]  far_el1
     //.   [sp, #0x120]  exception_class
     //.   [sp, #0x128]  reserved
-
     ".macro save_context kind",
     "  sub  sp, sp, #0x130",
     "  stp  x0, x1, [sp, #0x000]",
@@ -154,7 +136,6 @@ global_asm!(
     "  mov  x0, #\\kind",
     "  mov  x1, sp",
     ".endm",
-
     ".macro restore_context",
     "  ldp  x0, x1, [sp, #0x000]",
     "  ldp  x2, x3, [sp, #0x010]",
@@ -174,7 +155,6 @@ global_asm!(
     "  ldr  x30, [sp, #0x0F0]",
     "  add  sp, sp, #0x130",
     ".endm",
-
     // ============================================================
     //   Stub bodies — each calls into `arch_aarch64_trap_dispatch`
     // ============================================================
@@ -184,77 +164,66 @@ global_asm!(
     "  bl   arch_aarch64_trap_dispatch",
     "  restore_context",
     "  eret",
-
     ".global current_el_sp0_irq_stub",
     "current_el_sp0_irq_stub:",
     "  save_context 1",
     "  bl   arch_aarch64_trap_dispatch",
     "  restore_context",
     "  eret",
-
     ".global current_el_sp0_fiq_stub",
     "current_el_sp0_fiq_stub:",
     "  save_context 2",
     "  bl   arch_aarch64_trap_dispatch",
     "  restore_context",
     "  eret",
-
     ".global current_el_sp0_serror_stub",
     "current_el_sp0_serror_stub:",
     "  save_context 3",
     "  bl   arch_aarch64_trap_dispatch",
     "  restore_context",
     "  eret",
-
     ".global current_el_spx_sync_stub",
     "current_el_spx_sync_stub:",
     "  save_context 4",
     "  bl   arch_aarch64_trap_dispatch",
     "  restore_context",
     "  eret",
-
     ".global current_el_spx_irq_stub",
     "current_el_spx_irq_stub:",
     "  save_context 5",
     "  bl   arch_aarch64_trap_dispatch",
     "  restore_context",
     "  eret",
-
     ".global current_el_spx_fiq_stub",
     "current_el_spx_fiq_stub:",
     "  save_context 6",
     "  bl   arch_aarch64_trap_dispatch",
     "  restore_context",
     "  eret",
-
     ".global current_el_spx_serror_stub",
     "current_el_spx_serror_stub:",
     "  save_context 7",
     "  bl   arch_aarch64_trap_dispatch",
     "  restore_context",
     "  eret",
-
     ".global lower_el_aarch64_sync_stub",
     "lower_el_aarch64_sync_stub:",
     "  save_context 8",
     "  bl   arch_aarch64_trap_dispatch",
     "  restore_context",
     "  eret",
-
     ".global lower_el_aarch64_irq_stub",
     "lower_el_aarch64_irq_stub:",
     "  save_context 9",
     "  bl   arch_aarch64_trap_dispatch",
     "  restore_context",
     "  eret",
-
     ".global lower_el_aarch64_fiq_stub",
     "lower_el_aarch64_fiq_stub:",
     "  save_context 10",
     "  bl   arch_aarch64_trap_dispatch",
     "  restore_context",
     "  eret",
-
     ".global lower_el_aarch64_serror_stub",
     "lower_el_aarch64_serror_stub:",
     "  save_context 11",

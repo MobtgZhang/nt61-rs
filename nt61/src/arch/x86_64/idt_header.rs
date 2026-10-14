@@ -9,5 +9,5 @@
 //! address, segment selector (always `KERNEL_CS`), IST field, type
 //! and DPL, plus the upper 32 bits of the handler address.
 
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, AtomicPtr, Ordering};
 use core::arch::asm;
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};

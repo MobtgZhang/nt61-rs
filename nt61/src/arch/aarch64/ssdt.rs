@@ -11,7 +11,7 @@
 //! - Return value: X0
 //! - SVC instruction triggers exception to EL1
 
-use crate::ke::ssdt_common::{self, STATUS_SUCCESS, STATUS_NOT_IMPLEMENTED};
+use crate::ke::ssdt_common::{self, STATUS_NOT_IMPLEMENTED, STATUS_SUCCESS};
 
 /// System call entry point for AArch64
 ///
@@ -29,10 +29,7 @@ pub unsafe extern "C" fn aarch64_syscall_entry(
     arg5: usize,
     arg6: usize,
 ) -> u32 {
-    ssdt_common::dispatch_syscall(
-        syscall_number,
-        arg1, arg2, arg3, arg4, arg5, arg6
-    )
+    ssdt_common::dispatch_syscall(syscall_number, arg1, arg2, arg3, arg4, arg5, arg6)
 }
 
 /// Register a system call for AArch64
@@ -64,7 +61,12 @@ unsafe fn register_common_syscalls() {
     let _ = register_syscall(0x000F, nt_close, 1, "NtClose");
 
     // NtQuerySystemInformation
-    let _ = register_syscall(0x0036, nt_query_system_information, 4, "NtQuerySystemInformation");
+    let _ = register_syscall(
+        0x0036,
+        nt_query_system_information,
+        4,
+        "NtQuerySystemInformation",
+    );
 
     // NtCreateFile
     let _ = register_syscall(0x0055, nt_create_file, 11, "NtCreateFile");
@@ -73,20 +75,40 @@ unsafe fn register_common_syscalls() {
 }
 
 // Placeholder implementations
-unsafe extern "C" fn nt_close(_handle: usize, _: usize, _: usize, _: usize, _: usize, _: usize) -> u32 {
+unsafe extern "C" fn nt_close(
+    _handle: usize,
+    _: usize,
+    _: usize,
+    _: usize,
+    _: usize,
+    _: usize,
+) -> u32 {
     STATUS_SUCCESS
 }
 
 unsafe extern "C" fn nt_query_system_information(
-    _class: usize, _buffer: usize, _length: usize, _ret_length: usize, _: usize, _: usize
+    _class: usize,
+    _buffer: usize,
+    _length: usize,
+    _ret_length: usize,
+    _: usize,
+    _: usize,
 ) -> u32 {
     STATUS_NOT_IMPLEMENTED
 }
 
 unsafe extern "C" fn nt_create_file(
-    _handle: usize, _access: usize, _obj_attr: usize, _io_status: usize,
-    _alloc_size: usize, _attr: usize, _share: usize, _disposition: usize,
-    _options: usize, _ea: usize, _ea_length: usize
+    _handle: usize,
+    _access: usize,
+    _obj_attr: usize,
+    _io_status: usize,
+    _alloc_size: usize,
+    _attr: usize,
+    _share: usize,
+    _disposition: usize,
+    _options: usize,
+    _ea: usize,
+    _ea_length: usize,
 ) -> u32 {
     STATUS_NOT_IMPLEMENTED
 }

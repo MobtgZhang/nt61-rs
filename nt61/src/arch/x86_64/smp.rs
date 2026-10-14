@@ -15,6 +15,8 @@ use core::arch::asm;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 #[cfg(target_arch = "x86_64")]
+use crate::arch::x86_64::cpu_flags;
+#[cfg(target_arch = "x86_64")]
 #[cfg(target_arch = "x86_64")]
 use crate::arch::x86_64::gdt;
 #[cfg(target_arch = "x86_64")]
@@ -42,15 +44,15 @@ static mut AP_GDTS: [gdt::PerCpuGdt; tss::MAX_APS] = [const {
         e0: gdt::GdtEntry::empty(),
         e1: gdt::GdtEntry::kernel_code64(),
         e2: gdt::GdtEntry::kernel_data64(),
-        e3: gdt::GdtEntry::empty(),            // slot 3: kernel SS (OVMF)
-        e4: gdt::GdtEntry::empty(),            // slot 4: user SS — init() fills via OVMF GDT
-        e5: gdt::GdtEntry::empty(),            // slot 5: user CS — init() fills via OVMF GDT
-        e6: gdt::GdtEntry::empty(),            // slot 6: (unused)
-        e7: gdt::GdtEntry::empty(),            // slot 7: (unused)
-        e8: gdt::TssDescriptor::empty(),       // slot 8: TSS
-        e9: gdt::GdtEntry::empty(),            // slot 9: (TSS high)
-        eA: gdt::GdtEntry::empty(),            // slot 10: (unused)
-        eB: gdt::GdtEntry::empty(),            // slot 11: (unused)
+        e3: gdt::GdtEntry::empty(),      // slot 3: kernel SS (OVMF)
+        e4: gdt::GdtEntry::empty(),      // slot 4: user SS — init() fills via OVMF GDT
+        e5: gdt::GdtEntry::empty(),      // slot 5: user CS — init() fills via OVMF GDT
+        e6: gdt::GdtEntry::empty(),      // slot 6: (unused)
+        e7: gdt::GdtEntry::empty(),      // slot 7: (unused)
+        e8: gdt::TssDescriptor::empty(), // slot 8: TSS
+        e9: gdt::GdtEntry::empty(),      // slot 9: (TSS high)
+        eA: gdt::GdtEntry::empty(),      // slot 10: (unused)
+        eB: gdt::GdtEntry::empty(),      // slot 11: (unused)
     }
 }; tss::MAX_APS];
 
@@ -74,7 +76,7 @@ pub unsafe fn smp_boot_aps(pml4_pfn: u64) {
     // // kprintln!("  - CPU count: {}", info.lapic_count);
     if info.has_io_apic {
         // // kprintln!("  - I/O APIC: id={} addr=0x{:x} gsi_base={}",
-// //                   info.io_apic_id, info.io_apic_address, info.io_apic_gsi_base);
+        // //                   info.io_apic_id, info.io_apic_address, info.io_apic_gsi_base);
     }
     // // kprintln!("  - Interrupt overrides: {}", info.int_override_count);
     // // kprintln!("  - NMI sources: {}", info.nmi_source_count);
@@ -258,15 +260,23 @@ fn delay_ms(ms: u32) {
     let freq = hpet::hpet_freq_hz();
     if freq == 0 {
         // Coarse fallback.
-        for _ in 0..(ms as u64 * 200_000) { unsafe { asm!("pause"); } }
+        for _ in 0..(ms as u64 * 200_000) {
+            unsafe {
+                asm!("pause");
+            }
+        }
         return;
     }
     let start = hpet::counter();
     let target = ms as u64 * freq / 1000;
     loop {
         let now = hpet::counter();
-        if now.wrapping_sub(start) >= target { break; }
-        unsafe { asm!("pause"); }
+        if now.wrapping_sub(start) >= target {
+            break;
+        }
+        unsafe {
+            asm!("pause");
+        }
     }
 }
 
@@ -276,8 +286,12 @@ fn send_ipi(apic_id: u8, icr_low: u32) {
     // Spin until the IPI completes (delivery status bit 12 = 0).
     for _ in 0..10000 {
         let v = apic_read(lapic_reg::ICR_LOW);
-        if v & 0x1000 == 0 { break; }
-        unsafe { asm!("pause"); }
+        if v & 0x1000 == 0 {
+            break;
+        }
+        unsafe {
+            asm!("pause");
+        }
     }
 }
 
@@ -372,11 +386,7 @@ core::arch::global_asm!(
 /// initialisation order (PML4 ready before LAPIC ID is
 /// published), at which point it will be wired up.
 #[allow(dead_code)]
-unsafe fn patch_trampoline(
-    pml4_paddr: u64,
-    ap_stack: u64,
-    ap_index: u64,
-) {
+unsafe fn patch_trampoline(pml4_paddr: u64, ap_stack: u64, ap_index: u64) {
     extern "C" {
         static mut _trampoline_pml4: u32;
         static mut _trampoline_ap_stack: u64;
@@ -391,7 +401,9 @@ unsafe fn patch_trampoline(
 /// its own GDT/IDT/TSS and call into the scheduler.
 #[no_mangle]
 pub unsafe extern "C" fn ap_entry() -> ! {
-    loop { asm!("hlt"); }
+    loop {
+        asm!("hlt");
+    }
 }
 
 /// 64-bit long-mode AP entry. Called by the trampoline after the
@@ -403,20 +415,27 @@ pub unsafe extern "C" fn ap_entry_long(ap_index: u64) -> ! {
     let ap_idx = ap_index as usize;
     if ap_idx >= tss::MAX_APS {
         // // crate::kprintln!("[smp] ap_index {} out of range, parking", ap_index);
-        loop { asm!("hlt"); }
+        loop {
+            asm!("hlt");
+        }
     }
+
+    // CR4 is per-CPU. An AP boots with a boot-strapped CR4 (PAE only), so
+    // SMEP/SMAP have to be re-established on every AP rather than relying
+    // on the BSP having set them.
+    cpu_flags::enable_user_boundary_protection();
 
     // Allocate a per-AP kernel stack. 64 KiB is more than enough
     // for bring-up; the real per-thread kernel stacks are
     // allocated later by the scheduler.
     const AP_STACK_SIZE: usize = 64 * 1024;
-    let stack_base = crate::mm::pool::allocate(
-        crate::mm::pool::PoolType::NonPaged,
-        AP_STACK_SIZE,
-    ) as u64;
+    let stack_base =
+        crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, AP_STACK_SIZE) as u64;
     if stack_base == 0 {
         // // crate::kprintln!("[smp] AP {} stack OOM, parking", ap_index);
-        loop { asm!("hlt"); }
+        loop {
+            asm!("hlt");
+        }
     }
     let rsp0 = stack_base + AP_STACK_SIZE as u64 - 16;
 
@@ -430,7 +449,9 @@ pub unsafe extern "C" fn ap_entry_long(ap_index: u64) -> ! {
         Some(v) => v,
         None => {
             // // crate::kprintln!("[smp] AP {} TSS init failed, parking", ap_index);
-            loop { asm!("hlt"); }
+            loop {
+                asm!("hlt");
+            }
         }
     };
     // SAFETY: Same reasoning as above - this AP's GDT slot is private during boot
@@ -441,7 +462,7 @@ pub unsafe extern "C" fn ap_entry_long(ap_index: u64) -> ! {
 
     // 2. Initialise the local APIC. The BSP may have set the
     //    spurious-interrupt vector; each AP must re-enable it.
-#[cfg(target_arch = "x86_64")]
+    #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     crate::hal::x86_64::apic::init_smp();
 
@@ -452,12 +473,14 @@ pub unsafe extern "C" fn ap_entry_long(ap_index: u64) -> ! {
     let per_cpu_page = crate::arch::x86_64::syscall::allocate_per_cpu_area(ap_index as u32);
     if per_cpu_page == 0 {
         // // crate::kprintln!("[smp] AP {} per-CPU area OOM, parking", ap_index);
-        loop { asm!("hlt"); }
+        loop {
+            asm!("hlt");
+        }
     }
 
     // 4. Install the per-CPU area as this CPU's GS base.
     //    This MUST be done before any gs:[] access.
-#[cfg(target_arch = "x86_64")]
+    #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
     crate::arch::x86_64::syscall::set_kernel_gs_base(per_cpu_page);
     // // crate::kprintln!("[smp] AP {} GS_BASE set to 0x{:016x}", ap_index, per_cpu_page);

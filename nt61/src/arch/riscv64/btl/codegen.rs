@@ -25,7 +25,11 @@ pub struct CodeBlock {
 
 impl CodeBlock {
     pub const fn empty() -> Self {
-        Self { bytes: [0x13; MAX_CODE_BYTES], len: 0, raw_va: 0 }
+        Self {
+            bytes: [0x13; MAX_CODE_BYTES],
+            len: 0,
+            raw_va: 0,
+        }
     }
     pub fn as_slice(&self) -> &[u8] {
         &self.bytes[..self.len.min(MAX_CODE_BYTES)]
@@ -47,8 +51,10 @@ pub fn encode_block(ir: &[IrInst], raw_va: u64) -> CodeBlock {
     let mut off = 0;
     for inst in ir {
         let nop = encode_nop();
-        if off + 4 > MAX_CODE_BYTES { break; }
-        cb.bytes[off..off+4].copy_from_slice(&nop);
+        if off + 4 > MAX_CODE_BYTES {
+            break;
+        }
+        cb.bytes[off..off + 4].copy_from_slice(&nop);
         off += 4;
         let _ = inst;
     }

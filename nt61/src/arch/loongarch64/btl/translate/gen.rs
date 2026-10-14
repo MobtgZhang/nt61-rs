@@ -2,8 +2,8 @@
 
 #![cfg(target_arch = "loongarch64")]
 
-use crate::arch::loongarch64::btl::emit::EmitBuffer;
 use crate::arch::loongarch64::btl::decoder::Decoded;
+use crate::arch::loongarch64::btl::emit::EmitBuffer;
 
 use super::TranslateError;
 
@@ -29,11 +29,27 @@ pub fn translate(buf: &mut EmitBuffer, dec: &Decoded) -> Result<(), TranslateErr
     }
 }
 
-fn xchg(_buf: &mut EmitBuffer, _dec: &Decoded) -> Result<(), TranslateError> { Ok(()) }
-fn mov_rm_r(_buf: &mut EmitBuffer, _dec: &Decoded) -> Result<(), TranslateError> { Ok(()) }
-fn mov_r_imm8(_buf: &mut EmitBuffer, _dec: &Decoded) -> Result<(), TranslateError> { Ok(()) }
-fn mov_r_imm(_buf: &mut EmitBuffer, _dec: &Decoded) -> Result<(), TranslateError> { Ok(()) }
-fn alu_rm_r(_buf: &mut EmitBuffer, _dec: &Decoded) -> Result<(), TranslateError> { Ok(()) }
-fn alu_r_rm(_buf: &mut EmitBuffer, _dec: &Decoded) -> Result<(), TranslateError> { Ok(()) }
-fn shift(_buf: &mut EmitBuffer, _dec: &Decoded) -> Result<(), TranslateError> { Ok(()) }
-fn cmp(_buf: &mut EmitBuffer, _dec: &Decoded) -> Result<(), TranslateError> { Ok(()) }
+fn xchg(_buf: &mut EmitBuffer, _dec: &Decoded) -> Result<(), TranslateError> {
+    Ok(())
+}
+fn mov_rm_r(_buf: &mut EmitBuffer, _dec: &Decoded) -> Result<(), TranslateError> {
+    Ok(())
+}
+fn mov_r_imm8(_buf: &mut EmitBuffer, _dec: &Decoded) -> Result<(), TranslateError> {
+    Ok(())
+}
+fn mov_r_imm(_buf: &mut EmitBuffer, _dec: &Decoded) -> Result<(), TranslateError> {
+    Ok(())
+}
+fn alu_rm_r(_buf: &mut EmitBuffer, _dec: &Decoded) -> Result<(), TranslateError> {
+    Ok(())
+}
+fn alu_r_rm(_buf: &mut EmitBuffer, _dec: &Decoded) -> Result<(), TranslateError> {
+    Ok(())
+}
+fn shift(_buf: &mut EmitBuffer, _dec: &Decoded) -> Result<(), TranslateError> {
+    Ok(())
+}
+fn cmp(_buf: &mut EmitBuffer, _dec: &Decoded) -> Result<(), TranslateError> {
+    Ok(())
+}

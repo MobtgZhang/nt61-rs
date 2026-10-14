@@ -113,13 +113,17 @@ pub const HOST_HANDOFF_SLOT_VADDR: u64 = 0x7a3ff000;
 /// binary and its load address depends on the bootloader).
 #[inline(never)]
 #[no_mangle]
-pub extern "C" fn ntoskrnl_kisystemstartup_thunk(boot_info: *const crate::boot_types::BootInfo) -> ! {
+pub extern "C" fn ntoskrnl_kisystemstartup_thunk(
+    boot_info: *const crate::boot_types::BootInfo,
+) -> ! {
     // =======================================================================
     // PHASE K00: ntoskrnl entry received from disk stub
     // =======================================================================
     crate::rtl::windows_log::write_kernel_phase_header(0);
-    crate::boot_println!("[NTOSKRNL-HOST] KiSystemStartup thunk entered from disk image; bi=0x{:x}",
-        boot_info as u64);
+    crate::boot_println!(
+        "[NTOSKRNL-HOST] KiSystemStartup thunk entered from disk image; bi=0x{:x}",
+        boot_info as u64
+    );
 
     // EARLY DIAGNOSTIC: write 'T' to serial *immediately* on entry,
     // BEFORE any other Rust code runs. If the disk blob's `call rax`
@@ -164,9 +168,13 @@ pub extern "C" fn ntoskrnl_kisystemstartup_thunk(boot_info: *const crate::boot_t
             bi.framebuffer_stride
         );
         if crate::arch::boot::adopt_bootinfo_framebuffer(bi) {
-            crate::boot_println!("[NTOSKRNL-HOST] K00: GOP framebuffer adopted -> bootvid LFB live");
+            crate::boot_println!(
+                "[NTOSKRNL-HOST] K00: GOP framebuffer adopted -> bootvid LFB live"
+            );
         } else {
-            crate::boot_println!("[NTOSKRNL-HOST] K00: no framebuffer from winload (legacy text buffer path)");
+            crate::boot_println!(
+                "[NTOSKRNL-HOST] K00: no framebuffer from winload (legacy text buffer path)"
+            );
         }
         // Bring up the VGA text console / bootvid LFB mirror so
         // subsequent `boot_println!` writes appear on all three
@@ -181,7 +189,9 @@ pub extern "C" fn ntoskrnl_kisystemstartup_thunk(boot_info: *const crate::boot_t
     // PHASE K01: arch::init_hardware (PIC/GDT/IDT/TSS/SYSCALL MSR)
     // =======================================================================
     crate::rtl::windows_log::write_kernel_phase_header(1);
-    crate::boot_println!("[NTOSKRNL-HOST] K01: arch::init_hardware (PIC/GDT/IDT/TSS/SYSCALL) before SMSS");
+    crate::boot_println!(
+        "[NTOSKRNL-HOST] K01: arch::init_hardware (PIC/GDT/IDT/TSS/SYSCALL) before SMSS"
+    );
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -211,10 +221,10 @@ pub extern "C" fn ntoskrnl_kisystemstartup_thunk(boot_info: *const crate::boot_t
             core::arch::asm!("rdmsr", in("ecx") 0xC0000102u32,
                 lateout("eax") gsbase_lo, lateout("edx") gsbase_hi);
         }
-        let efer   = ((efer_hi   as u64) << 32) | (efer_lo   as u64);
-        let star   = ((star_hi   as u64) << 32) | (star_lo   as u64);
-        let lstar  = ((lstar_hi  as u64) << 32) | (lstar_lo  as u64);
-        let fmask  = ((fmask_hi  as u64) << 32) | (fmask_lo  as u64);
+        let efer = ((efer_hi as u64) << 32) | (efer_lo as u64);
+        let star = ((star_hi as u64) << 32) | (star_lo as u64);
+        let lstar = ((lstar_hi as u64) << 32) | (lstar_lo as u64);
+        let fmask = ((fmask_hi as u64) << 32) | (fmask_lo as u64);
         let gsbase = ((gsbase_hi as u64) << 32) | (gsbase_lo as u64);
         crate::boot_println!(
             "[NTOSKRNL-HOST] syscall_msrs: EFER=0x{:x} STAR=0x{:x} LSTAR=0x{:x} FMASK=0x{:x} GS_BASE=0x{:x}",
@@ -244,7 +254,9 @@ pub extern "C" fn ntoskrnl_kisystemstartup_thunk(boot_info: *const crate::boot_t
     // PHASE K02: mm::init (PFN/heap/pool/VAS)
     // =======================================================================
     crate::rtl::windows_log::write_kernel_phase_header(2);
-    crate::boot_println!("[NTOSKRNL-HOST] primer: running host PHASE5 (file-system bring-up) before SMSS");
+    crate::boot_println!(
+        "[NTOSKRNL-HOST] primer: running host PHASE5 (file-system bring-up) before SMSS"
+    );
     if !boot_info.is_null() {
         unsafe {
             // Raw serial print to avoid the format-args code path,
@@ -280,8 +292,12 @@ pub extern "C" fn ntoskrnl_kisystemstartup_thunk(boot_info: *const crate::boot_t
         }
     }
     crate::fs::init();
-    crate::boot_println!("[NTOSKRNL-HOST] K03: fs bring-up done; SYS_RAMDISK base=0x{:x}",
-        crate::fs::sys_mirror_address().map(|p| p as u64).unwrap_or(0));
+    crate::boot_println!(
+        "[NTOSKRNL-HOST] K03: fs bring-up done; SYS_RAMDISK base=0x{:x}",
+        crate::fs::sys_mirror_address()
+            .map(|p| p as u64)
+            .unwrap_or(0)
+    );
 
     // =======================================================================
     // PHASE K04: cm::init(boot_info) — reserved
@@ -321,9 +337,7 @@ pub extern "C" fn ntoskrnl_kisystemstartup_thunk(boot_info: *const crate::boot_t
         "[NTOSKRNL-HOST] K06: drivers::bus::init (PCI/ACPI/USB root)\r\n",
     );
     crate::drivers::bus::init();
-    crate::hal::serial::write_string(
-        "[NTOSKRNL-HOST] K06: bus enumeration done\r\n",
-    );
+    crate::hal::serial::write_string("[NTOSKRNL-HOST] K06: bus enumeration done\r\n");
 
     // =======================================================================
     // PHASE K07: re-load BOOT_START drivers from disk and invoke DriverEntry
@@ -389,9 +403,7 @@ pub extern "C" fn ntoskrnl_kisystemstartup_thunk(boot_info: *const crate::boot_t
         "[NTOSKRNL-HOST] K08a: drivers::net::init (e1000 / rtl8139 / virtio-net miniport)\r\n",
     );
     crate::drivers::net::init();
-    crate::hal::serial::write_string(
-        "[NTOSKRNL-HOST] K08a: drivers::net::init returned\r\n",
-    );
+    crate::hal::serial::write_string("[NTOSKRNL-HOST] K08a: drivers::net::init returned\r\n");
 
     // K08c: protocol stack bring-up. The same call order
     // `mod.rs::init` already uses internally, but we call it
@@ -401,9 +413,7 @@ pub extern "C" fn ntoskrnl_kisystemstartup_thunk(boot_info: *const crate::boot_t
         "[NTOSKRNL-HOST] K08c: netstack::init (arp/ipif/tcp/udp/socket)\r\n",
     );
     crate::netstack::init();
-    crate::hal::serial::write_string(
-        "[NTOSKRNL-HOST] K08c: netstack::init returned\r\n",
-    );
+    crate::hal::serial::write_string("[NTOSKRNL-HOST] K08c: netstack::init returned\r\n");
 
     // Drive `pnp::start_all_pending()` so any PCI device that was
     // registered by K06 and not yet bound (e.g. a second virtio-blk
@@ -415,9 +425,7 @@ pub extern "C" fn ntoskrnl_kisystemstartup_thunk(boot_info: *const crate::boot_t
         "[NTOSKRNL-HOST] K08d: pnp::start_all_pending (start unbound PCI devices)\r\n",
     );
     let _started = crate::drivers::bus::pnp::start_all_pending();
-    crate::hal::serial::write_string(
-        "[NTOSKRNL-HOST] K08d: pnp::start_all_pending returned\r\n",
-    );
+    crate::hal::serial::write_string("[NTOSKRNL-HOST] K08d: pnp::start_all_pending returned\r\n");
 
     // =======================================================================
     // PHASE K09: Configuration Manager (registry) re-init
@@ -490,7 +498,9 @@ pub extern "C" fn ntoskrnl_kisystemstartup_thunk(boot_info: *const crate::boot_t
     if !launched {
         crate::boot_println!("[NTOSKRNL-HOST] FATAL: try_launch_cmd_exe returned false");
         crate::boot_println!("[NTOSKRNL-HOST]        the user-mode boot chain did not complete");
-        crate::boot_println!("[NTOSKRNL-HOST]        check earlier log lines for the failing subsystem");
+        crate::boot_println!(
+            "[NTOSKRNL-HOST]        check earlier log lines for the failing subsystem"
+        );
         loop {
             crate::arch::halt();
         }
@@ -542,7 +552,11 @@ pub unsafe extern "C" fn rax_diag() {
     let mut v = slot_value;
     for _ in 0..16 {
         let nibble = (v & 0xF) as u8;
-        let ch = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+        let ch = if nibble < 10 {
+            b'0' + nibble
+        } else {
+            b'a' + nibble - 10
+        };
         core::arch::asm!(
             "mov dx, 0x3f8",
             "mov al, {b}",

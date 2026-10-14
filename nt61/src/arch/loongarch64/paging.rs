@@ -38,11 +38,21 @@ pub struct PageTableEntry {
     pub value: u64,
 }
 impl PageTableEntry {
-    pub const fn empty() -> Self { Self { value: 0 } }
-    pub fn present(&self) -> bool { (self.value & 1) != 0 }
-    pub fn writable(&self) -> bool { (self.value & 2) != 0 }
-    pub fn user(&self) -> bool { (self.value & 4) != 0 }
-    pub fn frame(&self) -> u64 { self.value & 0x000F_FFFF_FFFF_F000 }
+    pub const fn empty() -> Self {
+        Self { value: 0 }
+    }
+    pub fn present(&self) -> bool {
+        (self.value & 1) != 0
+    }
+    pub fn writable(&self) -> bool {
+        (self.value & 2) != 0
+    }
+    pub fn user(&self) -> bool {
+        (self.value & 4) != 0
+    }
+    pub fn frame(&self) -> u64 {
+        self.value & 0x000F_FFFF_FFFF_F000
+    }
     pub fn set(&mut self, addr: u64, flags: u64) {
         self.value = (addr & 0x000F_FFFF_FFFF_F000) | (flags & 0xFFF);
     }
@@ -64,7 +74,9 @@ fn make_pte_loong(pa: u64, flags: u64) -> u64 {
         | if flags & (1u64 << 63) != 0 { PTE_NX } else { 0 };
     pte
 }
-fn is_valid_loong(e: u64) -> bool { (e & PTE_V) != 0 }
+fn is_valid_loong(e: u64) -> bool {
+    (e & PTE_V) != 0
+}
 fn is_table_loong(e: u64) -> bool {
     is_valid_loong(e) && (e & (1u64 << 1)) == 0
 }
@@ -75,7 +87,9 @@ fn is_table_loong(e: u64) -> bool {
 #[inline]
 fn root_phys() -> u64 {
     let pa: u64;
-    unsafe { asm!("csrrd {}, 0x19", out(reg) pa, options(nostack)); }
+    unsafe {
+        asm!("csrrd {}, 0x19", out(reg) pa, options(nostack));
+    }
     pa & 0x0000_FFFF_FFFF_F000
 }
 
@@ -148,7 +162,9 @@ unsafe fn leaf_pte_for(va: u64) -> *mut u64 {
 
 pub fn map_page(va: u64, pa: u64, flags: u64) -> bool {
     let l3_pte = unsafe { leaf_pte_for(va) };
-    if l3_pte.is_null() { return false; }
+    if l3_pte.is_null() {
+        return false;
+    }
     unsafe {
         core::ptr::write_volatile(l3_pte, make_pte_loong(pa, flags));
         asm!("invtlb 0, $r0, {0}", in(reg) va, options(nostack));
@@ -158,10 +174,14 @@ pub fn map_page(va: u64, pa: u64, flags: u64) -> bool {
 
 pub fn unmap_page(va: u64) -> Option<u64> {
     let l3_pte = unsafe { leaf_pte_for(va) };
-    if l3_pte.is_null() { return None; }
+    if l3_pte.is_null() {
+        return None;
+    }
     unsafe {
         let pte = core::ptr::read_volatile(l3_pte);
-        if !is_valid_loong(pte) { return None; }
+        if !is_valid_loong(pte) {
+            return None;
+        }
         let pa = pte & 0x000F_FFFF_FFFF_F000;
         core::ptr::write_volatile(l3_pte, 0);
         asm!("invtlb 0, $r0, {0}", in(reg) va, options(nostack));
@@ -178,19 +198,27 @@ pub fn translate_virt(va: u64) -> Option<u64> {
         let l3_idx = ((va >> 21) & 0x1FF) as usize;
         let l0 = l0_phys as *const u64;
         let l0e = core::ptr::read_volatile(l0.add(l0_idx));
-        if !is_table_loong(l0e) { return None; }
+        if !is_table_loong(l0e) {
+            return None;
+        }
         let l1_phys = l0e & 0x000F_FFFF_FFFF_F000;
         let l1 = l1_phys as *const u64;
         let l1e = core::ptr::read_volatile(l1.add(l1_idx));
-        if !is_table_loong(l1e) { return None; }
+        if !is_table_loong(l1e) {
+            return None;
+        }
         let l2_phys = l1e & 0x000F_FFFF_FFFF_F000;
         let l2 = l2_phys as *const u64;
         let l2e = core::ptr::read_volatile(l2.add(l2_idx));
-        if !is_table_loong(l2e) { return None; }
+        if !is_table_loong(l2e) {
+            return None;
+        }
         let l3_phys = l2e & 0x000F_FFFF_FFFF_F000;
         let l3 = l3_phys as *const u64;
         let l3e = core::ptr::read_volatile(l3.add(l3_idx));
-        if !is_valid_loong(l3e) { return None; }
+        if !is_valid_loong(l3e) {
+            return None;
+        }
         Some((l3e & 0x000F_FFFF_FFFF_F000) | (va & 0xFFF))
     }
 }
@@ -214,7 +242,9 @@ pub unsafe fn load_page_root(pml4_pfn: u64) {
 
 pub fn read_page_root_pfn() -> u64 {
     let pa: u64;
-    unsafe { asm!("csrrd {}, 0x19", out(reg) pa, options(nostack)); }
+    unsafe {
+        asm!("csrrd {}, 0x19", out(reg) pa, options(nostack));
+    }
     pa >> 12
 }
 

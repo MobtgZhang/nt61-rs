@@ -23,9 +23,9 @@
 
 #![cfg(target_arch = "loongarch64")]
 
+pub mod cache;
 pub mod common;
 pub mod cpu;
-pub mod cache;
 pub mod decoder;
 pub mod emit;
 pub mod syscall;
@@ -42,5 +42,5 @@ pub fn init() {
 }
 
 pub use cache::{TranslationCache, TranslationCacheEntry};
-pub use cpu::{GuestRegs, GuestFlags};
-pub use translate::{TranslateError, translate_block, translate_instruction};
+pub use cpu::{GuestFlags, GuestRegs};
+pub use translate::{translate_block, translate_instruction, TranslateError};

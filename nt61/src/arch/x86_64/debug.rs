@@ -31,6 +31,16 @@ pub fn read_dr7() -> u64 {
     value
 }
 
+/// TEMPORARY DIAGNOSTIC: read DR0.
+#[inline]
+pub fn dbg_read_dr0() -> u64 {
+    let value: u64;
+    unsafe {
+        core::arch::asm!("mov {}, dr0", out(reg) value, options(nomem, nostack));
+    }
+    value
+}
+
 /// Write debug register DR7 (debug control).
 #[inline]
 pub fn write_dr7(value: u64) {

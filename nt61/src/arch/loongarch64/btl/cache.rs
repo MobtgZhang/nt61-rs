@@ -20,7 +20,12 @@ pub struct TranslationCacheEntry {
 
 impl TranslationCacheEntry {
     pub const fn empty() -> Self {
-        Self { guest_rip: 0, host_code: 0, guest_size: 0, host_size: 0 }
+        Self {
+            guest_rip: 0,
+            host_code: 0,
+            guest_size: 0,
+            host_size: 0,
+        }
     }
 }
 
@@ -59,4 +64,6 @@ pub fn init() {
     // allocation / W^X policy.
 }
 
-pub fn translation_cache() -> &'static TranslationCache { &TC }
+pub fn translation_cache() -> &'static TranslationCache {
+    &TC
+}

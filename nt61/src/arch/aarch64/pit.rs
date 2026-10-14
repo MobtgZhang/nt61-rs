@@ -20,7 +20,9 @@ pub fn timer_freq() -> u64 {
 
 pub fn timer_count() -> u64 {
     let v: u64;
-    unsafe { asm!("mrs {}, CNTPCT_EL0", out(reg) v, options(nostack)); }
+    unsafe {
+        asm!("mrs {}, CNTPCT_EL0", out(reg) v, options(nostack));
+    }
     v
 }
 

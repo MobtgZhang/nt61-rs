@@ -5,8 +5,8 @@
 //! loongarch64). Architecture-specific implementations live in the
 //! respective `arch/*/` directories.
 
-pub mod percpu;
 pub mod paging;
-pub mod user_entry;
+pub mod percpu;
 pub mod smp;
 pub mod trap_frame;
+pub mod user_entry;

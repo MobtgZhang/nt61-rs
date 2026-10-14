@@ -2,8 +2,8 @@
 
 #![cfg(target_arch = "loongarch64")]
 
-use crate::arch::loongarch64::btl::emit::EmitBuffer;
 use crate::arch::loongarch64::btl::decoder::Decoded;
+use crate::arch::loongarch64::btl::emit::EmitBuffer;
 
 use super::TranslateError;
 

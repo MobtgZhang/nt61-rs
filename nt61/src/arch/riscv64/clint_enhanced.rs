@@ -58,9 +58,7 @@ pub fn read_mtime() -> u64 {
         return 0;
     }
 
-    unsafe {
-        core::ptr::read_volatile((base + offset::MTIME) as *const u64)
-    }
+    unsafe { core::ptr::read_volatile((base + offset::MTIME) as *const u64) }
 }
 
 /// Set mtimecmp for specific hart

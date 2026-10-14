@@ -15,13 +15,17 @@ pub fn init(base: u64) {
 pub fn set_next(ticks: u64) {
     let b = CLINT_BASE.load(Ordering::Acquire);
     if b != 0 {
-        unsafe { core::ptr::write_volatile((b + CLINT_MTIMECMP) as *mut u64, ticks); }
+        unsafe {
+            core::ptr::write_volatile((b + CLINT_MTIMECMP) as *mut u64, ticks);
+        }
     }
 }
 
 pub fn time() -> u64 {
     let b = CLINT_BASE.load(Ordering::Acquire);
-    if b == 0 { return 0; }
+    if b == 0 {
+        return 0;
+    }
     unsafe { core::ptr::read_volatile((b + CLINT_MTIME) as *const u64) }
 }
 

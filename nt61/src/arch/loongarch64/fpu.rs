@@ -63,7 +63,9 @@ impl FpuState {
 }
 
 impl Default for FpuState {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Initialise an FPU state buffer for a fresh thread. Zeros the
@@ -123,7 +125,9 @@ pub unsafe fn fpu_save(state: &mut FpuState) {
 /// Marked `unsafe` for the same reason as `fpu_save`.
 #[inline(never)]
 pub unsafe fn fpu_restore(state: &FpuState) {
-    if !state.valid { return; }
+    if !state.valid {
+        return;
+    }
     // Restore the FP regs (the scalar half). LoongArch allows
     // addressing only the first FP register from inside `asm!`;
     // the loop here represents the compiler-time unroll that
@@ -147,8 +151,12 @@ pub unsafe fn enable(lsx: bool, lasx: bool) {
     let mut euen: u32;
     asm!("csrrd {0}, 0x2", out(reg) euen, options(nostack));
     euen |= 0b001; // always FPE
-    if lsx { euen |= 0b010; }
-    if lasx { euen |= 0b100; }
+    if lsx {
+        euen |= 0b010;
+    }
+    if lasx {
+        euen |= 0b100;
+    }
     asm!("csrwr {0}, 0x2", in(reg) euen as u64, options(nostack));
 }
 
