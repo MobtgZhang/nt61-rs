@@ -160,10 +160,10 @@ impl NtfsSecurityDescriptor {
             well_known_sids::SYSTEM => {
                 // SYSTEM SID: S-1-5-18
                 sd.owner_size = 12;
-                sd.owner[0] = 0x01;  // Revision
-                sd.owner[1] = 0x02;  // SubAuthorityCount
+                sd.owner[0] = 0x01; // Revision
+                sd.owner[1] = 0x02; // SubAuthorityCount
                 sd.owner[2..8].copy_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x05]); // NT AUTHORITY
-                sd.owner[8] = 0x12;  // SYSTEM RID
+                sd.owner[8] = 0x12; // SYSTEM RID
                 sd.owner[9] = 0x00;
             }
             well_known_sids::EVERYONE => {
@@ -171,7 +171,8 @@ impl NtfsSecurityDescriptor {
                 sd.owner_size = 8;
                 sd.owner[0] = 0x01;
                 sd.owner[1] = 0x01;
-                sd.owner[2..8].copy_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x01]); // WORLD
+                sd.owner[2..8].copy_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x01]);
+                // WORLD
             }
             well_known_sids::ADMINISTRATORS => {
                 // Administrators SID: S-1-5-32-544
@@ -179,7 +180,7 @@ impl NtfsSecurityDescriptor {
                 sd.owner[0] = 0x01;
                 sd.owner[1] = 0x02;
                 sd.owner[2..8].copy_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x05]); // NT AUTHORITY
-                sd.owner[8] = 0x20;  // SubAuthority (DOMAIN_ALIAS_RID_ADMINS)
+                sd.owner[8] = 0x20; // SubAuthority (DOMAIN_ALIAS_RID_ADMINS)
                 sd.owner[9] = 0x02;
                 sd.owner[10] = 0x00;
                 sd.owner[11] = 0x00;
@@ -196,69 +197,69 @@ impl NtfsSecurityDescriptor {
         let mut dacl = [0u8; 512];
 
         // ACL Header
-        dacl[0] = 0x05;           // Revision (ACL_REVISION)
-        dacl[1] = 0x02;           // Sbz1
-        dacl[2] = 0x14;           // ACL size (little endian)
+        dacl[0] = 0x05; // Revision (ACL_REVISION)
+        dacl[1] = 0x02; // Sbz1
+        dacl[2] = 0x14; // ACL size (little endian)
         dacl[3] = 0x00;
-        dacl[4] = 0x02;            // ACE count
+        dacl[4] = 0x02; // ACE count
         dacl[5] = 0x00;
-        dacl[6] = 0x00;           // Sbz2
+        dacl[6] = 0x00; // Sbz2
         dacl[7] = 0x00;
 
         // ACE 1: SYSTEM - full access (ACCESS_ALLOWED_ACE)
         let ace1_offset = 8;
-        dacl[ace1_offset] = 0x00;        // ACE type (ACCESS_ALLOWED_ACE_TYPE)
-        dacl[ace1_offset + 1] = 0x00;    // ACE flags
-        dacl[ace1_offset + 2] = 0x18;    // ACE size
+        dacl[ace1_offset] = 0x00; // ACE type (ACCESS_ALLOWED_ACE_TYPE)
+        dacl[ace1_offset + 1] = 0x00; // ACE flags
+        dacl[ace1_offset + 2] = 0x18; // ACE size
         dacl[ace1_offset + 3] = 0x00;
         // Access mask (GENERIC_ALL | STANDARD_RIGHTS_ALL | SPECIFIC_RIGHTS_ALL)
-        dacl[ace1_offset + 4] = 0xFF;    // GenericAll
-        dacl[ace1_offset + 5] = 0xFF;    // Standard rights
-        dacl[ace1_offset + 6] = 0x01;    // Specific rights
+        dacl[ace1_offset + 4] = 0xFF; // GenericAll
+        dacl[ace1_offset + 5] = 0xFF; // Standard rights
+        dacl[ace1_offset + 6] = 0x01; // Specific rights
         dacl[ace1_offset + 7] = 0x00;
 
         // SID for SYSTEM (S-1-5-18)
         let sid1_offset = ace1_offset + 8;
-        dacl[sid1_offset] = 0x01;       // Revision
-        dacl[sid1_offset + 1] = 0x02;    // SubAuthorityCount
-        // IdentifierAuthority (NT AUTHORITY)
+        dacl[sid1_offset] = 0x01; // Revision
+        dacl[sid1_offset + 1] = 0x02; // SubAuthorityCount
+                                      // IdentifierAuthority (NT AUTHORITY)
         dacl[sid1_offset + 2] = 0x00;
         dacl[sid1_offset + 3] = 0x00;
         dacl[sid1_offset + 4] = 0x00;
         dacl[sid1_offset + 5] = 0x00;
         dacl[sid1_offset + 6] = 0x00;
-        dacl[sid1_offset + 7] = 0x05;    // SECURITY_NT_AUTHORITY
-        // SubAuthorities
-        dacl[sid1_offset + 8] = 0x12;    // SECURITY_LOCAL_SYSTEM_RID
+        dacl[sid1_offset + 7] = 0x05; // SECURITY_NT_AUTHORITY
+                                      // SubAuthorities
+        dacl[sid1_offset + 8] = 0x12; // SECURITY_LOCAL_SYSTEM_RID
         dacl[sid1_offset + 9] = 0x00;
         dacl[sid1_offset + 10] = 0x00;
         dacl[sid1_offset + 11] = 0x00;
 
         // ACE 2: Everyone - read/execute (ACCESS_ALLOWED_ACE)
         let ace2_offset = ace1_offset + 20;
-        dacl[ace2_offset] = 0x00;        // ACE type
-        dacl[ace2_offset + 1] = 0x00;    // ACE flags (CONTAINER_INHERIT_ACE | OBJECT_INHERIT_ACE)
-        dacl[ace2_offset + 2] = 0x14;   // ACE size
+        dacl[ace2_offset] = 0x00; // ACE type
+        dacl[ace2_offset + 1] = 0x00; // ACE flags (CONTAINER_INHERIT_ACE | OBJECT_INHERIT_ACE)
+        dacl[ace2_offset + 2] = 0x14; // ACE size
         dacl[ace2_offset + 3] = 0x00;
         // Access mask (FILE_READ_DATA | FILE_EXECUTE | READ_CONTROL)
-        dacl[ace2_offset + 4] = 0x20;    // FILE_READ_DATA
-        dacl[ace2_offset + 5] = 0x01;    // FILE_EXECUTE
-        dacl[ace2_offset + 6] = 0x00;    // READ_CONTROL
+        dacl[ace2_offset + 4] = 0x20; // FILE_READ_DATA
+        dacl[ace2_offset + 5] = 0x01; // FILE_EXECUTE
+        dacl[ace2_offset + 6] = 0x00; // READ_CONTROL
         dacl[ace2_offset + 7] = 0x00;
 
         // SID for Everyone (S-1-1-0)
         let sid2_offset = ace2_offset + 8;
-        dacl[sid2_offset] = 0x01;        // Revision
-        dacl[sid2_offset + 1] = 0x01;   // SubAuthorityCount
-        // IdentifierAuthority (WORLD)
+        dacl[sid2_offset] = 0x01; // Revision
+        dacl[sid2_offset + 1] = 0x01; // SubAuthorityCount
+                                      // IdentifierAuthority (WORLD)
         dacl[sid2_offset + 2] = 0x00;
         dacl[sid2_offset + 3] = 0x00;
         dacl[sid2_offset + 4] = 0x00;
         dacl[sid2_offset + 5] = 0x00;
         dacl[sid2_offset + 6] = 0x00;
-        dacl[sid2_offset + 7] = 0x01;   // SECURITY_WORLD_SID_AUTHORITY
-        // SubAuthority
-        dacl[sid2_offset + 8] = 0x00;    // SECURITY_NULL_SID_AUTHORITY
+        dacl[sid2_offset + 7] = 0x01; // SECURITY_WORLD_SID_AUTHORITY
+                                      // SubAuthority
+        dacl[sid2_offset + 8] = 0x00; // SECURITY_NULL_SID_AUTHORITY
         dacl[sid2_offset + 9] = 0x00;
         dacl[sid2_offset + 10] = 0x00;
         dacl[sid2_offset + 11] = 0x00;
@@ -352,26 +353,34 @@ fn sid_matches_well_known(sid: &[u8], wk_sid: SecurityId) -> bool {
     match wk_sid {
         well_known_sids::EVERYONE => {
             // S-1-1-0
-            sid.len() >= 8 && sid[0] == 0x01 && sid[1] == 0x01 &&
-            &sid[2..8] == &[0x00, 0x00, 0x00, 0x00, 0x00, 0x01]
+            sid.len() >= 8
+                && sid[0] == 0x01
+                && sid[1] == 0x01
+                && &sid[2..8] == &[0x00, 0x00, 0x00, 0x00, 0x00, 0x01]
         }
         well_known_sids::SYSTEM => {
             // S-1-5-18
-            sid.len() >= 12 && sid[0] == 0x01 && sid[1] == 0x02 &&
-            &sid[2..8] == &[0x00, 0x00, 0x00, 0x00, 0x00, 0x05] &&
-            sid[8] == 0x12
+            sid.len() >= 12
+                && sid[0] == 0x01
+                && sid[1] == 0x02
+                && &sid[2..8] == &[0x00, 0x00, 0x00, 0x00, 0x00, 0x05]
+                && sid[8] == 0x12
         }
         well_known_sids::ADMINISTRATORS => {
             // S-1-5-32-544
-            sid.len() >= 12 && sid[0] == 0x01 && sid[1] == 0x02 &&
-            &sid[2..8] == &[0x00, 0x00, 0x00, 0x00, 0x00, 0x05] &&
-            u32::from_le_bytes([sid[8], sid[9], sid[10], sid[11]]) == 0x00000220
+            sid.len() >= 12
+                && sid[0] == 0x01
+                && sid[1] == 0x02
+                && &sid[2..8] == &[0x00, 0x00, 0x00, 0x00, 0x00, 0x05]
+                && u32::from_le_bytes([sid[8], sid[9], sid[10], sid[11]]) == 0x00000220
         }
         well_known_sids::USERS => {
             // S-1-5-32-545
-            sid.len() >= 12 && sid[0] == 0x01 && sid[1] == 0x02 &&
-            &sid[2..8] == &[0x00, 0x00, 0x00, 0x00, 0x00, 0x05] &&
-            u32::from_le_bytes([sid[8], sid[9], sid[10], sid[11]]) == 0x00000221
+            sid.len() >= 12
+                && sid[0] == 0x01
+                && sid[1] == 0x02
+                && &sid[2..8] == &[0x00, 0x00, 0x00, 0x00, 0x00, 0x05]
+                && u32::from_le_bytes([sid[8], sid[9], sid[10], sid[11]]) == 0x00000221
         }
         _ => false,
     }
@@ -475,7 +484,9 @@ pub fn security_id_to_descriptor(id: SecurityId) -> *const crate::se::seaccess::
 }
 
 /// Build a SeAccessCheck-compatible security descriptor from NTFS format.
-fn build_descriptor_from_ntfs(_desc: &NtfsSecurityDescriptor) -> *const crate::se::seaccess::SecurityDescriptor {
+fn build_descriptor_from_ntfs(
+    _desc: &NtfsSecurityDescriptor,
+) -> *const crate::se::seaccess::SecurityDescriptor {
     // For simplicity, we just return the null DACL version
     // A full implementation would properly convert the NTFS format
     crate::se::seaccess::SecurityDescriptor::new_null_dacl()
@@ -594,13 +605,16 @@ pub fn check_access(sd: &NtfsSecurityDescriptor, caller_sid: &[u8], desired_acce
             let ace_sid = &sd.dacl[sid_start..sid_start + sid_len];
 
             // Check if the caller SID matches this ACE
-            let matches = sid_matches(caller_sid, ace_sid) || sid_matches_well_known(caller_sid, sd.id);
+            let matches =
+                sid_matches(caller_sid, ace_sid) || sid_matches_well_known(caller_sid, sd.id);
 
             if matches {
                 match ace_type {
                     AceType::AccessAllowed => {
                         // Check if desired access is covered
-                        if (desired_access & access_mask) == desired_access || access_mask == 0xFFFFFFFF {
+                        if (desired_access & access_mask) == desired_access
+                            || access_mask == 0xFFFFFFFF
+                        {
                             access_granted = true;
                         }
                     }
@@ -673,7 +687,10 @@ pub fn check_file_access(security_id: SecurityId, desired_access: u32) -> bool {
 ///
 /// # Returns
 /// * Security descriptor if found
-pub fn read_security_descriptor(_ntfs: &crate::fs::ntfs::NtfsData, _security_id: SecurityId) -> Option<NtfsSecurityDescriptor> {
+pub fn read_security_descriptor(
+    _ntfs: &crate::fs::ntfs::NtfsData,
+    _security_id: SecurityId,
+) -> Option<NtfsSecurityDescriptor> {
     // For bootstrap, return default security
     // A full implementation would read from $Secure:$SDS
     Some(NtfsSecurityDescriptor::new_default())
@@ -681,8 +698,8 @@ pub fn read_security_descriptor(_ntfs: &crate::fs::ntfs::NtfsData, _security_id:
 
 /// Initialize NTFS security subsystem.
 pub fn init() {
-    // kprintln!("    NTFS Security: initialized")  // kprintln disabled (memcpy crash workaround);
-    // kprintln!("      Security descriptor cache: {} entries", MAX_SECURITY_DESCRIPTORS)  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("    NTFS Security: initialized");
+    // kprintln!("      Security descriptor cache: {} entries", MAX_SECURITY_DESCRIPTORS);
 
     // Pre-populate with default security descriptors
     let default_file = get_default_file_security();
@@ -698,5 +715,5 @@ pub fn init() {
     let admin_sd = NtfsSecurityDescriptor::new_well_known(well_known_sids::ADMINISTRATORS);
     add_security_descriptor(admin_sd);
 
-    // kprintln!("      Pre-populated well-known SIDs")  // kprintln disabled (memcpy crash workaround);
+    // kprintln!("      Pre-populated well-known SIDs");
 }

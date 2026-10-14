@@ -7,6 +7,9 @@
 //! - File data writes
 //! - Journal integration
 
+use alloc::vec;
+use alloc::vec::Vec;
+
 #[cfg(test)]
 mod tests {
     use super::super::*;
@@ -20,9 +23,17 @@ mod tests {
             buffer[i] = (i % 256) as u8;
         }
 
-        // Write to sector 0 (would be boot sector in real scenario)
+        // A null device with no AHCI controller and no RAM disk has no
+        // backing store, so `write_sector` must report failure rather than
+        // silently pretend the sector landed on disk.
         let result = write_sector(core::ptr::null_mut(), 0, &buffer);
-        assert!(result.is_ok(), "Write sector should succeed");
+        assert!(
+            result.is_err(),
+            "Write sector must fail without a backing store"
+        );
+
+        // A short buffer is rejected before any device is touched.
+        assert!(write_sector(core::ptr::null_mut(), 0, &buffer[..511]).is_err());
     }
 
     #[test]
@@ -33,7 +44,7 @@ mod tests {
         // Set up header
         record[0..4].copy_from_slice(b"FILE");
         record[4..6].copy_from_slice(&48u16.to_le_bytes()); // fixup offset
-        record[6..8].copy_from_slice(&3u16.to_le_bytes());  // fixup size (1 + 2 sectors)
+        record[6..8].copy_from_slice(&3u16.to_le_bytes()); // fixup size (1 + 2 sectors)
 
         // Set fixup signature
         record[48..50].copy_from_slice(&0x1234u16.to_le_bytes());
@@ -44,13 +55,20 @@ mod tests {
         let result = prepare_fixup_for_write(&mut record);
         assert!(result, "Fixup preparation should succeed");
 
-        // Verify fixup signature was written to sector end
+        // ntfs-3g cyclically increments the update sequence number (skipping
+        // 0 and 0xFFFF), so the value written to each sector end is 0x1235.
         let sector_end = u16::from_le_bytes([record[510], record[511]]);
-        assert_eq!(sector_end, 0x1234, "Fixup signature should be at sector end");
+        assert_eq!(
+            sector_end, 0x1235,
+            "Fixup signature should be at sector end"
+        );
 
         // Verify original value was saved to fixup array
         let saved_value = u16::from_le_bytes([record[50], record[51]]);
-        assert_eq!(saved_value, 0xABCD, "Original value should be saved in fixup array");
+        assert_eq!(
+            saved_value, 0xABCD,
+            "Original value should be saved in fixup array"
+        );
     }
 
     #[test]

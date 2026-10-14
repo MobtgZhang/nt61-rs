@@ -11,8 +11,8 @@
 //! - HSM (Hierarchical Storage Management) stubs
 //! - SIS (Single Instance Storage) links
 
-use alloc::vec::Vec;
 use alloc::string::String;
+use alloc::vec::Vec;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
@@ -75,18 +75,12 @@ pub fn parse_reparse_point(data: &[u8]) -> Result<ReparsePoint, ()> {
     let reparse_data = &data[8..8 + data_length];
 
     match reparse_tag {
-        0xA000000C => {
-            parse_symlink(reparse_data)
-        }
-        0xA0000003 => {
-            parse_mount_point(reparse_data)
-        }
-        _ => {
-            Ok(ReparsePoint::Unknown {
-                tag: reparse_tag,
-                data: reparse_data.to_vec(),
-            })
-        }
+        0xA000000C => parse_symlink(reparse_data),
+        0xA0000003 => parse_mount_point(reparse_data),
+        _ => Ok(ReparsePoint::Unknown {
+            tag: reparse_tag,
+            data: reparse_data.to_vec(),
+        }),
     }
 }
 
@@ -181,10 +175,7 @@ fn parse_mount_point(data: &[u8]) -> Result<ReparsePoint, ()> {
     }
     let print_name = parse_utf16_string(&path_buffer[print_start..print_end]);
 
-    Ok(ReparsePoint::MountPoint {
-        target,
-        print_name,
-    })
+    Ok(ReparsePoint::MountPoint { target, print_name })
 }
 
 fn parse_utf16_string(data: &[u8]) -> Vec<u16> {
@@ -201,10 +192,7 @@ fn parse_utf16_string(data: &[u8]) -> Vec<u16> {
     result
 }
 
-pub fn create_symlink_reparse_data(
-    target: &[u16],
-    relative: bool,
-) -> Vec<u8> {
+pub fn create_symlink_reparse_data(target: &[u16], relative: bool) -> Vec<u8> {
     let mut data = Vec::new();
 
     data.extend_from_slice(&(ReparseTag::Symlink as u32).to_le_bytes());

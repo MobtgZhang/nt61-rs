@@ -11,8 +11,8 @@
 //! - $EFS alternate data stream stores encrypted FEK
 //! - DDF (Data Decryption Field) and DRF (Data Recovery Field)
 
-use alloc::vec::Vec;
 use alloc::vec;
+use alloc::vec::Vec;
 
 pub const EFS_VERSION: u32 = 3;
 
@@ -62,9 +62,8 @@ pub fn parse_efs_stream(stream_data: &[u8]) -> Result<(EfsStreamHeader, Vec<EfsK
         return Err(());
     }
 
-    let header = unsafe {
-        core::ptr::read_unaligned(stream_data.as_ptr() as *const EfsStreamHeader)
-    };
+    let header =
+        unsafe { core::ptr::read_unaligned(stream_data.as_ptr() as *const EfsStreamHeader) };
 
     if header.version != EFS_VERSION {
         return Err(());
@@ -94,8 +93,18 @@ fn parse_key_entries(data: &[u8]) -> Result<Vec<EfsKeyEntry>, ()> {
             break;
         }
 
-        let length = u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]);
-        let sid_length = u32::from_le_bytes([data[offset + 4], data[offset + 5], data[offset + 6], data[offset + 7]]);
+        let length = u32::from_le_bytes([
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ]);
+        let sid_length = u32::from_le_bytes([
+            data[offset + 4],
+            data[offset + 5],
+            data[offset + 6],
+            data[offset + 7],
+        ]);
 
         let entry_start = offset + 8;
         let sid_end = entry_start + sid_length as usize;
@@ -154,16 +163,15 @@ pub fn encrypt_fek_with_public_key(fek: &[u8], _public_key: &[u8]) -> Result<Vec
 }
 
 /// Decrypt FEK with user's private key
-pub fn decrypt_fek_with_private_key(encrypted_fek: &[u8], _private_key: &[u8]) -> Result<Vec<u8>, ()> {
+pub fn decrypt_fek_with_private_key(
+    encrypted_fek: &[u8],
+    _private_key: &[u8],
+) -> Result<Vec<u8>, ()> {
     // In a real implementation, use RSA/ECC
     Ok(encrypted_fek.to_vec())
 }
 
-pub fn create_efs_stream(
-    fek: &[u8],
-    user_sid: &[u8],
-    public_key: &[u8],
-) -> Result<Vec<u8>, ()> {
+pub fn create_efs_stream(fek: &[u8], user_sid: &[u8], public_key: &[u8]) -> Result<Vec<u8>, ()> {
     let encrypted_fek = encrypt_fek_with_public_key(fek, public_key)?;
 
     let mut stream = Vec::new();

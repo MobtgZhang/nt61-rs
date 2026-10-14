@@ -11,8 +11,8 @@
 //! - Sparse compression units stored as holes
 //! - Uncompressed data stored when compression doesn't help
 
-use alloc::vec::Vec;
 use alloc::vec;
+use alloc::vec::Vec;
 
 #[repr(C)]
 pub struct CompressionBlockHeader {
@@ -86,7 +86,8 @@ pub fn decompress_lznt1(compressed: &[u8], decompressed: &mut [u8]) -> Result<us
                             break;
                         }
 
-                        let token = u16::from_le_bytes([compressed[src_pos], compressed[src_pos + 1]]);
+                        let token =
+                            u16::from_le_bytes([compressed[src_pos], compressed[src_pos + 1]]);
                         src_pos += 2;
 
                         let length = ((token >> 12) & 0x0F) as usize + 3;
@@ -195,9 +196,7 @@ fn find_best_match(data: &[u8], pos: usize) -> (usize, usize) {
 
     for i in window_start..pos {
         let mut length = 0;
-        while pos + length < data.len() &&
-              data[i + length] == data[pos + length] &&
-              length < 18 {
+        while pos + length < data.len() && data[i + length] == data[pos + length] && length < 18 {
             length += 1;
         }
 

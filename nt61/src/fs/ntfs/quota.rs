@@ -12,9 +12,9 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
-use alloc::collections::BTreeMap;
 use crate::ke::sync::Spinlock;
+use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,7 +44,6 @@ pub struct QuotaEntry {
     pub quota_limit: u64,
     pub quota_threshold: u64,
     /// Bytes used by this user
-
     pub quota_used: u64,
     pub exceeded: bool,
 }
@@ -167,13 +166,15 @@ impl QuotaManager {
             }
 
             if threshold_exceeded {
-                self.threshold_exceeded_count.fetch_add(1, Ordering::Relaxed);
+                self.threshold_exceeded_count
+                    .fetch_add(1, Ordering::Relaxed);
             }
         } else {
             entry.quota_used += bytes;
 
             if entry.is_threshold_exceeded() {
-                self.threshold_exceeded_count.fetch_add(1, Ordering::Relaxed);
+                self.threshold_exceeded_count
+                    .fetch_add(1, Ordering::Relaxed);
             }
         }
 
@@ -258,12 +259,7 @@ pub fn set_default_quotas(volume_id: u64, limit: u64, threshold: u64) -> Result<
 }
 
 /// Set quota for a specific user on a volume
-pub fn set_user_quota(
-    volume_id: u64,
-    sid: &[u8],
-    limit: u64,
-    threshold: u64,
-) -> Result<(), ()> {
+pub fn set_user_quota(volume_id: u64, sid: &[u8], limit: u64, threshold: u64) -> Result<(), ()> {
     let mut managers = QUOTA_MANAGERS.lock();
     let mgr = managers.get_mut(&volume_id).ok_or(())?;
     mgr.set_user_quota(sid, limit, threshold);

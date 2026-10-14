@@ -19,8 +19,8 @@
 //! 4. Abort (undo) incomplete transactions
 
 extern crate alloc;
-use alloc::vec::Vec;
 use alloc::collections::VecDeque;
+use alloc::vec::Vec;
 use core::mem;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -168,7 +168,8 @@ impl LogFile {
         record_type: LogRecordType,
         data: Vec<u8>,
     ) -> Result<Lsn, &'static str> {
-        let transaction = self.transactions
+        let transaction = self
+            .transactions
             .iter_mut()
             .find(|t| t.id == transaction_id && t.state == TransactionState::Active)
             .ok_or("Transaction not found or not active")?;
@@ -200,7 +201,8 @@ impl LogFile {
     pub fn commit_transaction(&mut self, transaction_id: u32) -> Result<(), &'static str> {
         // Check if transaction exists and is active
         {
-            let transaction = self.transactions
+            let transaction = self
+                .transactions
                 .iter()
                 .find(|t| t.id == transaction_id)
                 .ok_or("Transaction not found")?;
@@ -211,14 +213,12 @@ impl LogFile {
         }
 
         // Write commit record
-        let commit_lsn = self.write_record(
-            transaction_id,
-            LogRecordType::CommitTransaction,
-            Vec::new(),
-        )?;
+        let commit_lsn =
+            self.write_record(transaction_id, LogRecordType::CommitTransaction, Vec::new())?;
 
         // Update transaction state
-        let transaction = self.transactions
+        let transaction = self
+            .transactions
             .iter_mut()
             .find(|t| t.id == transaction_id)
             .ok_or("Transaction not found")?;
@@ -230,7 +230,8 @@ impl LogFile {
     }
 
     pub fn abort_transaction(&mut self, transaction_id: u32) -> Result<(), &'static str> {
-        let transaction = self.transactions
+        let transaction = self
+            .transactions
             .iter_mut()
             .find(|t| t.id == transaction_id)
             .ok_or("Transaction not found")?;
@@ -269,20 +270,19 @@ impl LogFile {
         }
 
         for record in &self.log_buffer {
-            if committed_transactions.contains(&record.transaction_id) {
-            }
+            if committed_transactions.contains(&record.transaction_id) {}
         }
 
         for transaction_id in active_transactions {
-            let mut transaction_records: Vec<_> = self.log_buffer
+            let mut transaction_records: Vec<_> = self
+                .log_buffer
                 .iter()
                 .filter(|r| r.transaction_id == transaction_id)
                 .collect();
 
             transaction_records.sort_by(|a, b| b.lsn.cmp(&a.lsn));
 
-            for record in transaction_records {
-            }
+            for record in transaction_records {}
         }
 
         Ok(())
@@ -364,12 +364,19 @@ mod tests {
 
         let txn_id = logfile.begin_transaction();
 
-        logfile.write_record(txn_id, LogRecordType::CreateAttribute, vec![1, 2, 3]).unwrap();
-        logfile.write_record(txn_id, LogRecordType::UpdateResidentValue, vec![4, 5, 6]).unwrap();
+        logfile
+            .write_record(txn_id, LogRecordType::CreateAttribute, vec![1, 2, 3])
+            .unwrap();
+        logfile
+            .write_record(txn_id, LogRecordType::UpdateResidentValue, vec![4, 5, 6])
+            .unwrap();
 
         logfile.commit_transaction(txn_id).unwrap();
 
-        assert_eq!(logfile.transactions[txn_id as usize].state, TransactionState::Committed);
+        assert_eq!(
+            logfile.transactions[txn_id as usize].state,
+            TransactionState::Committed
+        );
     }
 
     #[test]
@@ -377,11 +384,15 @@ mod tests {
         let mut logfile = LogFile::new(1000);
 
         let txn1 = logfile.begin_transaction();
-        logfile.write_record(txn1, LogRecordType::CreateAttribute, vec![1]).unwrap();
+        logfile
+            .write_record(txn1, LogRecordType::CreateAttribute, vec![1])
+            .unwrap();
         logfile.commit_transaction(txn1).unwrap();
 
         let txn2 = logfile.begin_transaction();
-        logfile.write_record(txn2, LogRecordType::CreateAttribute, vec![2]).unwrap();
+        logfile
+            .write_record(txn2, LogRecordType::CreateAttribute, vec![2])
+            .unwrap();
 
         logfile.recover().unwrap();
     }

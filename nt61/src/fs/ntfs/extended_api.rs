@@ -30,6 +30,7 @@ use alloc::vec::Vec;
 
 use super::compression as comp;
 use super::encryption as efs;
+use super::get_mounted_fs;
 use super::logfile;
 use super::logfile::LogFile;
 use super::quota;
@@ -39,21 +40,21 @@ use super::reparse;
 // Feature flag constants (from <winuser.h> / <winnt.h>)
 // =============================================================================
 
-pub const FILE_ATTRIBUTE_READONLY: u32         = 0x0000_0001;
-pub const FILE_ATTRIBUTE_HIDDEN: u32           = 0x0000_0002;
-pub const FILE_ATTRIBUTE_SYSTEM: u32           = 0x0000_0004;
-pub const FILE_ATTRIBUTE_DIRECTORY: u32        = 0x0000_0010;
-pub const FILE_ATTRIBUTE_ARCHIVE: u32          = 0x0000_0020;
-pub const FILE_ATTRIBUTE_DEVICE: u32           = 0x0000_0040;
-pub const FILE_ATTRIBUTE_NORMAL: u32           = 0x0000_0080;
-pub const FILE_ATTRIBUTE_TEMPORARY: u32         = 0x0000_0100;
-pub const FILE_ATTRIBUTE_SPARSE_FILE: u32      = 0x0000_0200;
-pub const FILE_ATTRIBUTE_REPARSE_POINT: u32    = 0x0000_0400;
-pub const FILE_ATTRIBUTE_COMPRESSED: u32       = 0x0000_0800;
-pub const FILE_ATTRIBUTE_OFFLINE: u32          = 0x0000_1000;
-pub const FILE_ATTRIBUTE_NOT_CONTENT_INDEXED:u32 = 0x0000_2000;
-pub const FILE_ATTRIBUTE_ENCRYPTED: u32        = 0x0000_4000;
-pub const FILE_ATTRIBUTE_VIRTUAL: u32          = 0x0000_FFFF;
+pub const FILE_ATTRIBUTE_READONLY: u32 = 0x0000_0001;
+pub const FILE_ATTRIBUTE_HIDDEN: u32 = 0x0000_0002;
+pub const FILE_ATTRIBUTE_SYSTEM: u32 = 0x0000_0004;
+pub const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x0000_0010;
+pub const FILE_ATTRIBUTE_ARCHIVE: u32 = 0x0000_0020;
+pub const FILE_ATTRIBUTE_DEVICE: u32 = 0x0000_0040;
+pub const FILE_ATTRIBUTE_NORMAL: u32 = 0x0000_0080;
+pub const FILE_ATTRIBUTE_TEMPORARY: u32 = 0x0000_0100;
+pub const FILE_ATTRIBUTE_SPARSE_FILE: u32 = 0x0000_0200;
+pub const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+pub const FILE_ATTRIBUTE_COMPRESSED: u32 = 0x0000_0800;
+pub const FILE_ATTRIBUTE_OFFLINE: u32 = 0x0000_1000;
+pub const FILE_ATTRIBUTE_NOT_CONTENT_INDEXED: u32 = 0x0000_2000;
+pub const FILE_ATTRIBUTE_ENCRYPTED: u32 = 0x0000_4000;
+pub const FILE_ATTRIBUTE_VIRTUAL: u32 = 0x0001_0000;
 
 // =============================================================================
 // Volume-level feature state
@@ -126,8 +127,14 @@ impl StandardInformation {
         }
         let read_u64 = |o: usize| -> u64 {
             u64::from_le_bytes([
-                data[o], data[o+1], data[o+2], data[o+3],
-                data[o+4], data[o+5], data[o+6], data[o+7],
+                data[o],
+                data[o + 1],
+                data[o + 2],
+                data[o + 3],
+                data[o + 4],
+                data[o + 5],
+                data[o + 6],
+                data[o + 7],
             ])
         };
         Some(Self {
@@ -177,13 +184,17 @@ pub fn parse_data_attr_header(data_attr: &[u8]) -> Option<DataAttrHeader> {
     }
     let read_u64 = |o: usize| -> u64 {
         u64::from_le_bytes([
-            data_attr[o], data_attr[o+1], data_attr[o+2], data_attr[o+3],
-            data_attr[o+4], data_attr[o+5], data_attr[o+6], data_attr[o+7],
+            data_attr[o],
+            data_attr[o + 1],
+            data_attr[o + 2],
+            data_attr[o + 3],
+            data_attr[o + 4],
+            data_attr[o + 5],
+            data_attr[o + 6],
+            data_attr[o + 7],
         ])
     };
-    let read_u16 = |o: usize| -> u16 {
-        u16::from_le_bytes([data_attr[o], data_attr[o+1]])
-    };
+    let read_u16 = |o: usize| -> u16 { u16::from_le_bytes([data_attr[o], data_attr[o + 1]]) };
     Some(DataAttrHeader {
         starting_vcn: read_u64(0x10),
         last_vcn: read_u64(0x18),
@@ -317,10 +328,8 @@ pub fn read_compressed_data_attr<F: FnMut(u64, &mut [u8]) -> bool>(
 
         // Decompress into a staging buffer of unit_size bytes.
         let mut decompressed_unit: Vec<u8> = alloc::vec![0u8; unit_size];
-        let decompressed_size = comp::decompress_lznt1(
-            &compressed_unit[..read],
-            &mut decompressed_unit,
-        ).unwrap_or(0);
+        let decompressed_size =
+            comp::decompress_lznt1(&compressed_unit[..read], &mut decompressed_unit).unwrap_or(0);
 
         // Copy the requested slice into `out`.
         let copy_off = (logical_offset - unit_start) as usize;
@@ -332,9 +341,8 @@ pub fn read_compressed_data_attr<F: FnMut(u64, &mut [u8]) -> bool>(
         if copy_len == 0 {
             break;
         }
-        out[total_written..total_written + copy_len].copy_from_slice(
-            &decompressed_unit[copy_off..copy_off + copy_len],
-        );
+        out[total_written..total_written + copy_len]
+            .copy_from_slice(&decompressed_unit[copy_off..copy_off + copy_len]);
         total_written += copy_len;
         logical_offset += copy_len as u64;
         unit_index += 1;
@@ -369,8 +377,7 @@ pub fn write_compressed_data_attr(
 
         // If compression doesn't shrink the chunk, store it verbatim.
         let mut compressed = alloc::vec![0u8; chunk_len + chunk_len / 8 + 16];
-        let compressed_len = comp::compress_lznt1(chunk, &mut compressed)
-            .unwrap_or(chunk_len);
+        let compressed_len = comp::compress_lznt1(chunk, &mut compressed).unwrap_or(chunk_len);
         let to_write: &[u8] = if compressed_len < chunk_len {
             &compressed[..compressed_len]
         } else {
@@ -437,7 +444,12 @@ pub fn journal_begin(features: &mut VolumeFeatures) -> Option<u32> {
     features.journal.as_mut().map(|j| j.begin_transaction())
 }
 
-pub fn journal_log(features: &mut VolumeFeatures, txn: u32, kind: logfile::LogRecordType, data: Vec<u8>) -> Result<(), &'static str> {
+pub fn journal_log(
+    features: &mut VolumeFeatures,
+    txn: u32,
+    kind: logfile::LogRecordType,
+    data: Vec<u8>,
+) -> Result<(), &'static str> {
     let journal = features.journal.as_mut().ok_or("journal not attached")?;
     journal.write_record(txn, kind, data).map(|_| ())
 }
@@ -462,6 +474,51 @@ pub fn attach_journal(features: &mut VolumeFeatures, max_records: usize) {
 // Smoke / unit tests
 // =============================================================================
 
+// ---------------------------------------------------------------------------
+// Volume information (Windows 7 `GetVolumeInformationW` surface)
+// ---------------------------------------------------------------------------
+
+/// Cached volume space usage for the mounted NTFS volume.
+///
+/// Free space is derived from the `$Bitmap` (LCN bitmap) cluster count
+/// recorded on the VCB at mount time; `GetVolumeInformationW` reports the
+/// same numbers through `lpTotalClusters` / `lpFreeClusters`.
+pub struct NtfsSpaceUsage {
+    pub total_kb: u64,
+    pub free_kb: u64,
+    pub used_kb: u64,
+}
+
+pub fn get_space_usage() -> Option<NtfsSpaceUsage> {
+    let fs = get_mounted_fs()?;
+    if !fs.ntfs_data.mounted {
+        return None;
+    }
+    let cluster_size = fs.ntfs_data.cluster_size.max(1) as u64;
+    let total = fs.base.total_clusters;
+    let free = fs.base.free_clusters;
+    Some(NtfsSpaceUsage {
+        total_kb: total.saturating_mul(cluster_size) / 1024,
+        free_kb: free.saturating_mul(cluster_size) / 1024,
+        used_kb: total.saturating_sub(free).saturating_mul(cluster_size) / 1024,
+    })
+}
+
+/// Volume label of the mounted NTFS volume, as cached on the VCB.
+pub fn get_volume_label() -> Result<alloc::string::String, ()> {
+    let fs = get_mounted_fs().ok_or(())?;
+    let units = fs
+        .base
+        .volume_name
+        .iter()
+        .take_while(|&&unit| unit != 0)
+        .copied();
+    let label: alloc::string::String = char::decode_utf16(units).flat_map(|r| r.ok()).collect();
+    if label.is_empty() {
+        return Err(());
+    }
+    Ok(label)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -470,8 +527,8 @@ mod tests {
     fn standard_information_flags() {
         let mut payload = [0u8; 0x30];
         // Set FILE_ATTRIBUTE_COMPRESSED | FILE_ATTRIBUTE_ENCRYPTED
-        payload[0x20] = 0x18;
-        payload[0x21] = 0x00;
+        payload[0x20] = 0x00;
+        payload[0x21] = 0x48;
         let si = StandardInformation::parse(&payload).unwrap();
         assert!(si.is_compressed());
         assert!(si.is_encrypted());
