@@ -20,10 +20,10 @@ pub struct QuotaLimits {
 impl QuotaLimits {
     pub fn windows7_defaults() -> Self {
         Self {
-            max_registry_size: 512 * 1024 * 1024,  // 512 MB
-            max_hive_size: 256 * 1024 * 1024,      // 256 MB
-            max_user_size: 64 * 1024 * 1024,       // 64 MB
-            warning_threshold: 95,                  // 95%
+            max_registry_size: 512 * 1024 * 1024, // 512 MB
+            max_hive_size: 256 * 1024 * 1024,     // 256 MB
+            max_user_size: 64 * 1024 * 1024,      // 64 MB
+            warning_threshold: 95,                // 95%
         }
     }
 
@@ -41,7 +41,6 @@ impl Default for QuotaLimits {
 #[derive(Debug)]
 pub struct QuotaUsage {
     /// Total bytes used
-
     used: AtomicU64,
     peak: AtomicU64,
     key_count: AtomicU64,
@@ -169,11 +168,7 @@ impl QuotaManager {
         }
     }
 
-    pub fn check_allocation(
-        &self,
-        hive_id: usize,
-        size: u64,
-    ) -> Result<(), HiveError> {
+    pub fn check_allocation(&self, hive_id: usize, size: u64) -> Result<(), HiveError> {
         if !self.enforcement_enabled {
             return Ok(());
         }
@@ -260,7 +255,9 @@ impl QuotaManager {
             limits: self.limits,
             global_used: self.global_usage.used(),
             global_peak: self.global_usage.peak(),
-            global_percent: self.global_usage.usage_percent(self.limits.max_registry_size),
+            global_percent: self
+                .global_usage
+                .usage_percent(self.limits.max_registry_size),
             total_keys: self.global_usage.key_count(),
             total_values: self.global_usage.value_count(),
             total_allocations: self.global_usage.allocation_count(),

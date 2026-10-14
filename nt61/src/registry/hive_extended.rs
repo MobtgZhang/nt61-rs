@@ -4,15 +4,17 @@
 //! functionality for registry hives. Complements the read-only parser in hive.rs.
 
 extern crate alloc;
-use alloc::string::String;
-use alloc::vec::Vec;
 use alloc::collections::BTreeMap;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec;
+use alloc::vec::Vec;
 
-use super::hive::{Hive, HiveError, KeyNode, Value, ValueType};
 use super::cell_allocator::{CellAllocator, CellFlags};
-use super::security::SecurityDescriptor;
-use super::flush::{FlushManager, FlushFlags};
+use super::flush::{FlushFlags, FlushManager};
+use super::hive::{Hive, HiveError, KeyNode, Value, ValueType};
 use super::quota::QuotaManager;
+use super::security::SecurityDescriptor;
 
 pub struct WritableHive {
     base_hive: Option<&'static [u8]>,
@@ -121,11 +123,7 @@ impl WritableHive {
         Ok(())
     }
 
-    pub fn delete_value(
-        &mut self,
-        key_offset: u32,
-        value_name: &str,
-    ) -> Result<(), HiveError> {
+    pub fn delete_value(&mut self, key_offset: u32, value_name: &str) -> Result<(), HiveError> {
         if let Some(key_data) = self.new_keys.get_mut(&key_offset) {
             key_data.values.retain(|v| v.name != value_name);
             self.dirty = true;
@@ -163,10 +161,8 @@ impl WritableHive {
     }
 
     pub fn serialize(&self) -> Result<Vec<u8>, HiveError> {
-
         if let Some(base) = self.base_hive {
             let bytes = base.to_vec();
-
 
             Ok(bytes)
         } else {
@@ -175,7 +171,6 @@ impl WritableHive {
     }
 
     pub fn commit(&mut self) -> Result<(), HiveError> {
-
         self.mark_clean();
         Ok(())
     }
@@ -347,7 +342,8 @@ mod tests {
             "TestValue",
             ValueType::String,
             vec![0x48, 0x00, 0x69, 0x00], // "Hi" in UTF-16LE
-        ).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(hive.modification_count(), 1);
     }

@@ -5,8 +5,8 @@
 //! free lists and bitmap tracking for efficient space management.
 
 extern crate alloc;
-use alloc::vec::Vec;
 use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use super::hive::HiveError;
@@ -85,7 +85,8 @@ impl CellAllocator {
                 }
 
                 self.allocated.insert(offset, aligned_size);
-                self.total_allocated.fetch_add(aligned_size, Ordering::SeqCst);
+                self.total_allocated
+                    .fetch_add(aligned_size, Ordering::SeqCst);
                 self.total_free.fetch_sub(cell.size, Ordering::SeqCst);
 
                 return Ok(offset);
@@ -101,13 +102,15 @@ impl CellAllocator {
 
         self.next_offset.store(new_next, Ordering::SeqCst);
         self.allocated.insert(offset, aligned_size);
-        self.total_allocated.fetch_add(aligned_size, Ordering::SeqCst);
+        self.total_allocated
+            .fetch_add(aligned_size, Ordering::SeqCst);
 
         Ok(offset)
     }
 
     pub fn free(&mut self, offset: u32) -> Result<(), HiveError> {
-        let size = self.allocated
+        let size = self
+            .allocated
             .remove(&offset)
             .ok_or(HiveError::InvalidPointer)?;
 
@@ -131,7 +134,10 @@ impl CellAllocator {
         let mut result_size = size;
 
         for bucket in &mut self.free_lists {
-            if let Some(pos) = bucket.iter().position(|cell| cell.offset + cell.size == offset) {
+            if let Some(pos) = bucket
+                .iter()
+                .position(|cell| cell.offset + cell.size == offset)
+            {
                 let prev = bucket.remove(pos);
                 result_offset = prev.offset;
                 result_size += prev.size;

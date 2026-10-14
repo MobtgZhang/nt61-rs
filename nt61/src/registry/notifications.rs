@@ -4,9 +4,10 @@
 //! Supports monitoring registry keys for changes with various filter options.
 
 extern crate alloc;
-use alloc::vec::Vec;
 use alloc::sync::Arc;
-use core::sync::atomic::{AtomicU32, AtomicBool, Ordering};
+use alloc::vec;
+use alloc::vec::Vec;
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use super::hive::HiveError;
 
@@ -40,11 +41,21 @@ impl NotifyFilter {
 
     pub fn to_flags(&self) -> u32 {
         let mut flags = 0;
-        if self.name { flags |= Self::CHANGE_NAME; }
-        if self.attributes { flags |= Self::CHANGE_ATTRIBUTES; }
-        if self.last_set { flags |= Self::CHANGE_LAST_SET; }
-        if self.security { flags |= Self::CHANGE_SECURITY; }
-        if self.thread_agnostic { flags |= Self::THREAD_AGNOSTIC; }
+        if self.name {
+            flags |= Self::CHANGE_NAME;
+        }
+        if self.attributes {
+            flags |= Self::CHANGE_ATTRIBUTES;
+        }
+        if self.last_set {
+            flags |= Self::CHANGE_LAST_SET;
+        }
+        if self.security {
+            flags |= Self::CHANGE_SECURITY;
+        }
+        if self.thread_agnostic {
+            flags |= Self::THREAD_AGNOSTIC;
+        }
         flags
     }
 
@@ -67,18 +78,10 @@ pub enum ChangeType {
 impl ChangeType {
     pub fn matches_filter(&self, filter: &NotifyFilter) -> bool {
         match self {
-            ChangeType::KeyCreated | ChangeType::KeyDeleted | ChangeType::KeyRenamed => {
-                filter.name
-            }
-            ChangeType::ValueSet | ChangeType::ValueDeleted => {
-                filter.last_set
-            }
-            ChangeType::SecurityChanged => {
-                filter.security
-            }
-            ChangeType::AttributeChanged => {
-                filter.attributes
-            }
+            ChangeType::KeyCreated | ChangeType::KeyDeleted | ChangeType::KeyRenamed => filter.name,
+            ChangeType::ValueSet | ChangeType::ValueDeleted => filter.last_set,
+            ChangeType::SecurityChanged => filter.security,
+            ChangeType::AttributeChanged => filter.attributes,
         }
     }
 }
@@ -152,7 +155,8 @@ impl NotificationManager {
     }
 
     pub fn unregister(&mut self, id: u32) -> Result<(), HiveError> {
-        let pos = self.requests
+        let pos = self
+            .requests
             .iter()
             .position(|req| req.id == id)
             .ok_or(HiveError::InvalidPointer)?;
@@ -161,12 +165,7 @@ impl NotificationManager {
         Ok(())
     }
 
-    pub fn notify_change(
-        &self,
-        key_offset: u32,
-        change_type: ChangeType,
-        key_path: &[u32],
-    ) {
+    pub fn notify_change(&self, key_offset: u32, change_type: ChangeType, key_path: &[u32]) {
         for request in &self.requests {
             if request.is_triggered() {
                 continue;

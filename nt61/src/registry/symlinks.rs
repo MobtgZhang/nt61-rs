@@ -4,13 +4,15 @@
 //! to another. Follows Windows symbolic link semantics with REG_LINK values.
 
 extern crate alloc;
-use alloc::string::String;
-use alloc::vec::Vec;
 use alloc::collections::BTreeMap;
 use alloc::format;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec;
+use alloc::vec::Vec;
 
 use super::hive::HiveError;
-use super::path::{ParsedPath, Hive};
+use super::path::{Hive, ParsedPath};
 
 pub const MAX_SYMLINK_DEPTH: usize = 32;
 
@@ -54,8 +56,7 @@ impl SymbolicLink {
     }
 
     pub fn parse_target(&self) -> Result<ParsedPath, HiveError> {
-        ParsedPath::parse(&self.target_path)
-            .map_err(|_| HiveError::InvalidPointer)
+        ParsedPath::parse(&self.target_path).map_err(|_| HiveError::InvalidPointer)
     }
 
     pub fn to_value_data(&self) -> Vec<u8> {
@@ -81,8 +82,7 @@ impl SymbolicLink {
             chars.push(c);
         }
 
-        let target_path = String::from_utf16(&chars)
-            .map_err(|_| HiveError::BadUtf16)?;
+        let target_path = String::from_utf16(&chars).map_err(|_| HiveError::BadUtf16)?;
 
         Ok(Self::new(source_offset, target_path))
     }
@@ -115,10 +115,7 @@ impl SymlinkManager {
         self.links.contains_key(&key_offset)
     }
 
-    pub fn resolve(
-        &self,
-        key_offset: u32,
-    ) -> Result<ResolvedLink, HiveError> {
+    pub fn resolve(&self, key_offset: u32) -> Result<ResolvedLink, HiveError> {
         let current_offset = key_offset;
         let mut depth = 0;
         let mut path_chain = Vec::new();
@@ -129,7 +126,12 @@ impl SymlinkManager {
 
                 depth += 1;
 
-                if path_chain.iter().filter(|p| **p == link.target_path).count() > 1 {
+                if path_chain
+                    .iter()
+                    .filter(|p| **p == link.target_path)
+                    .count()
+                    > 1
+                {
                     return Err(HiveError::InvalidPointer);
                 }
 
@@ -230,22 +232,19 @@ impl CommonSymlinks {
     pub fn current_control_set(control_set_num: u32) -> SymbolicLink {
         SymbolicLink::new(
             0, // Would be the actual offset of CurrentControlSet key
-            format!("\\Registry\\Machine\\System\\ControlSet{:03}", control_set_num),
+            format!(
+                "\\Registry\\Machine\\System\\ControlSet{:03}",
+                control_set_num
+            ),
         )
     }
 
     pub fn current_user(user_sid: &str) -> SymbolicLink {
-        SymbolicLink::new(
-            0,
-            format!("\\Registry\\User\\{}", user_sid),
-        )
+        SymbolicLink::new(0, format!("\\Registry\\User\\{}", user_sid))
     }
 
     pub fn classes_root() -> SymbolicLink {
-        SymbolicLink::new(
-            0,
-            String::from("\\Registry\\Machine\\Software\\Classes"),
-        )
+        SymbolicLink::new(0, String::from("\\Registry\\Machine\\Software\\Classes"))
     }
 }
 
@@ -254,8 +253,7 @@ pub fn validate_symlink_target(target_path: &str) -> Result<(), HiveError> {
         return Err(HiveError::InvalidPointer);
     }
 
-    ParsedPath::parse(target_path)
-        .map_err(|_| HiveError::InvalidPointer)?;
+    ParsedPath::parse(target_path).map_err(|_| HiveError::InvalidPointer)?;
 
     if target_path.contains("..") {
         return Err(HiveError::InvalidPointer);

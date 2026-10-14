@@ -90,7 +90,9 @@ pub fn init(boot_info: &BootInfo) {
     // SAFETY: This runs once on the BSP before any other CM
     // call. All writes are to static mutable state that we own.
     unsafe {
-        if INITIALIZED { return; }
+        if INITIALIZED {
+            return;
+        }
 
         kprintln!(
             subsystem: "CM",
@@ -190,9 +192,8 @@ pub fn init(boot_info: &BootInfo) {
             // not reused by the kernel's allocator). The kernel
             // identity-maps this physical address, so the VA==
             // PA mapping lets us read them as a borrowed slice.
-            let bytes: &'static [u8] = core::slice::from_raw_parts(
-                lh.ptr as *const u8, lh.len as usize,
-            );
+            let bytes: &'static [u8] =
+                core::slice::from_raw_parts(lh.ptr as *const u8, lh.len as usize);
             kprintln!(
                 subsystem: "CM",
                 "    [CM]   about to call Hive::parse on {} bytes",
@@ -202,12 +203,12 @@ pub fn init(boot_info: &BootInfo) {
                 Ok(hive) => {
                     let name = lh.name_str();
                     let idx = match name {
-                        "System"   => 0,
+                        "System" => 0,
                         "Software" => 1,
                         "Security" => 2,
-                        "SAM"      => 3,
-                        "Default"  => 4,
-                        "BCD"      => 5,
+                        "SAM" => 3,
+                        "Default" => 4,
+                        "BCD" => 5,
                         _ => continue, // unknown hive name
                     };
                     kprintln!(
@@ -237,12 +238,12 @@ pub fn init(boot_info: &BootInfo) {
 
 fn mounted(h: HiveId) -> Option<&'static MountedHive> {
     let idx = match h {
-        HiveId::System   => 0,
+        HiveId::System => 0,
         HiveId::Software => 1,
         HiveId::Security => 2,
-        HiveId::SAM      => 3,
-        HiveId::Default  => 4,
-        HiveId::BCD      => 5,
+        HiveId::SAM => 3,
+        HiveId::Default => 4,
+        HiveId::BCD => 5,
     };
     // SAFETY: We never write to MOUNTED after init.
     unsafe { MOUNTED[idx].as_ref() }
@@ -276,7 +277,6 @@ pub fn query_value(path: &str, name: &str) -> Option<Value> {
     );
     result
 }
-
 
 /// Convenience: query a DWORD value.
 pub fn query_dword(path: &str, name: &str) -> Option<u32> {

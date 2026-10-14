@@ -39,9 +39,15 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use super::hive::{
-    CELL_HEADER, CELL_MAGIC_LK, CELL_MAGIC_NK, CELL_MAGIC_VK, HBIN_MAGIC, HBIN_SIZE,
-    REGF_HEADER_SIZE, REGF_MAGIC, REGF_VERSION, ValueType,
+    ValueType, CELL_HEADER, CELL_MAGIC_LK, CELL_MAGIC_NK, CELL_MAGIC_VK, HBIN_MAGIC, HBIN_SIZE,
+    REGF_HEADER_SIZE, REGF_MAGIC, REGF_VERSION,
 };
+
+/// An HBIN block carries a 32-byte header (signature, offset-to-next,
+/// reserved fields, signature2, size, timestamp, spare); the cells start at
+/// `HBIN + 32`. In a real hive the root cell offset is therefore `0x1020`,
+/// not `0x1000`.
+pub const HBIN_HEADER_SIZE: usize = 32;
 
 #[derive(Debug, Clone)]
 pub struct HiveValue {
@@ -69,7 +75,7 @@ impl HiveWriter {
         Self {
             // Start the body after the REGF header so `body_off`
             // is also a valid file offset for the cells.
-            body: Vec::with_capacity(HBIN_SIZE - REGF_HEADER_SIZE),
+            body: Vec::with_capacity(HBIN_SIZE - HBIN_HEADER_SIZE),
         }
     }
 
@@ -83,7 +89,7 @@ impl HiveWriter {
         let total_aligned = Self::align_up(total, 8);
         let pad = total_aligned - total;
 
-        let file_off = (REGF_HEADER_SIZE + self.body.len()) as u32;
+        let file_off = (REGF_HEADER_SIZE + HBIN_HEADER_SIZE + self.body.len()) as u32;
 
         // size (i32, LE) — header + payload, *positive* = allocated.
         let size = total_aligned as i32;
@@ -196,7 +202,7 @@ impl HiveWriter {
         let root_off = self.write_key(root)?;
         // If the body overflowed one HBIN we'd need to emit more;
         // for our small registry trees it always fits in 4 KiB.
-        if REGF_HEADER_SIZE + self.body.len() > HBIN_SIZE {
+        if self.body.len() > HBIN_SIZE - HBIN_HEADER_SIZE {
             return Err("hive too large for one HBIN");
         }
         let cell_count = count_cells(&self.body);
@@ -217,7 +223,7 @@ impl HiveWriter {
         hbin[0..4].copy_from_slice(HBIN_MAGIC);
         // offset_next = 0 (single HBIN)
         hbin[8..32].copy_from_slice(&[0u8; 24]);
-        hbin[REGF_HEADER_SIZE - REGF_HEADER_SIZE..].copy_from_slice(&self.body);
+        hbin[HBIN_HEADER_SIZE..HBIN_HEADER_SIZE + self.body.len()].copy_from_slice(&self.body);
         // hbin[0..32] is the HBIN header; the cells start at HBIN[32].
 
         // ---- Concatenate ---------------------------------------------

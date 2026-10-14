@@ -5,8 +5,9 @@
 //! for registry modifications.
 
 extern crate alloc;
-use alloc::vec::Vec;
 use alloc::collections::BTreeMap;
+use alloc::vec;
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use super::hive::HiveError;
@@ -89,7 +90,7 @@ pub struct RegistryTransaction {
     operations: Vec<RegistryOperation>,
     start_time: u64,
     timeout_us: u64,
-    read_set: BTreeMap<u32, u64>, // key_offset -> version
+    read_set: BTreeMap<u32, u64>,  // key_offset -> version
     write_set: BTreeMap<u32, u64>, // key_offset -> version
 }
 
@@ -138,7 +139,6 @@ impl RegistryTransaction {
 
         self.state = TransactionState::Preparing;
 
-
         self.state = TransactionState::Prepared;
         Ok(())
     }
@@ -149,7 +149,6 @@ impl RegistryTransaction {
         }
 
         self.state = TransactionState::Committing;
-
 
         self.state = TransactionState::Committed;
         Ok(())
@@ -164,7 +163,6 @@ impl RegistryTransaction {
         }
 
         self.state = TransactionState::Aborting;
-
 
         self.state = TransactionState::Aborted;
         Ok(())
@@ -188,6 +186,10 @@ pub struct TransactionManager {
     next_id: AtomicU64,
     commit_count: AtomicU32,
     max_transactions: usize,
+    /// Keys already committed by another transaction. A write-write conflict
+    /// is only visible at commit time, so the manager must keep the committed
+    /// write set after the transaction itself is removed from `transactions`.
+    committed_write_sets: BTreeMap<u32, u64>,
 }
 
 impl TransactionManager {
@@ -197,14 +199,11 @@ impl TransactionManager {
             next_id: AtomicU64::new(1),
             commit_count: AtomicU32::new(0),
             max_transactions,
+            committed_write_sets: BTreeMap::new(),
         }
     }
 
-    pub fn begin(
-        &mut self,
-        isolation: IsolationLevel,
-        timeout_us: u64,
-    ) -> Result<u64, HiveError> {
+    pub fn begin(&mut self, isolation: IsolationLevel, timeout_us: u64) -> Result<u64, HiveError> {
         if self.transactions.len() >= self.max_transactions {
             return Err(HiveError::OutOfBounds);
         }
@@ -232,13 +231,19 @@ impl TransactionManager {
             return Err(HiveError::InvalidPointer);
         }
 
-        let txn = self.transactions
-            .get_mut(&id)
-            .ok_or(HiveError::InvalidPointer)?;
+        let keys: Vec<u32> = {
+            let txn = self
+                .transactions
+                .get_mut(&id)
+                .ok_or(HiveError::InvalidPointer)?;
+            txn.prepare()?;
+            txn.commit()?;
+            txn.write_set.keys().copied().collect()
+        };
 
-        txn.prepare()?;
-
-        txn.commit()?;
+        for key in keys {
+            self.committed_write_sets.insert(key, id);
+        }
 
         self.commit_count.fetch_add(1, Ordering::SeqCst);
         self.transactions.remove(&id);
@@ -247,7 +252,8 @@ impl TransactionManager {
     }
 
     pub fn rollback(&mut self, id: u64) -> Result<(), HiveError> {
-        let txn = self.transactions
+        let txn = self
+            .transactions
             .get_mut(&id)
             .ok_or(HiveError::InvalidPointer)?;
 
@@ -258,28 +264,27 @@ impl TransactionManager {
     }
 
     fn has_conflicts(&self, txn_id: u64) -> Result<bool, HiveError> {
-        let txn = self.transactions
+        let txn = self
+            .transactions
             .get(&txn_id)
             .ok_or(HiveError::InvalidPointer)?;
 
-        for (other_id, other_txn) in &self.transactions {
-            if *other_id == txn_id {
-                continue;
-            }
-
-            if !other_txn.is_active() {
-                continue;
-            }
-
-            for key in txn.write_set.keys() {
-                if other_txn.write_set.contains_key(key) {
+        // First-committer-wins: a write-write conflict only becomes real once
+        // the other transaction has actually committed. An active transaction
+        // that merely holds the key in its write set may still roll back, so it
+        // must not abort this commit.
+        for key in txn.write_set.keys() {
+            if let Some(owner) = self.committed_write_sets.get(key) {
+                if *owner != txn_id {
                     return Ok(true);
                 }
             }
+        }
 
-            if matches!(txn.isolation, IsolationLevel::Serializable) {
-                for key in txn.read_set.keys() {
-                    if other_txn.write_set.contains_key(key) {
+        if matches!(txn.isolation, IsolationLevel::Serializable) {
+            for key in txn.read_set.keys() {
+                if let Some(owner) = self.committed_write_sets.get(key) {
+                    if *owner != txn_id {
                         return Ok(true);
                     }
                 }

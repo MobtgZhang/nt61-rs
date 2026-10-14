@@ -10,10 +10,10 @@ use alloc::vec::Vec;
 
 use crate::registry::path::PathError;
 
-pub mod reg;
+pub mod cm;
 pub mod hive;
 pub mod path;
-pub mod cm;
+pub mod reg;
 
 pub use cm as configuration_manager;
 
@@ -114,16 +114,8 @@ pub fn smoke_test() -> bool {
             Some("Default"),
             2,
         ),
-        (
-            "System\\CurrentControlSet\\Services",
-            Some("System"),
-            2,
-        ),
-        (
-            "SOFTWARE\\Microsoft",
-            Some("Software"),
-            1,
-        ),
+        ("System\\CurrentControlSet\\Services", Some("System"), 2),
+        ("SOFTWARE\\Microsoft", Some("Software"), 1),
     ];
 
     for (path, expected_hive, expected_subkeys) in test_cases {
@@ -221,3 +213,15 @@ pub fn smoke_test() -> bool {
     }
     all_ok
 }
+
+pub mod cell_allocator;
+pub mod flush;
+pub mod hive_extended;
+pub mod hive_writer;
+pub mod notifications;
+pub mod quota;
+pub mod security;
+pub mod smoke;
+pub mod symlinks;
+pub mod transactions;
+pub mod virtualization;

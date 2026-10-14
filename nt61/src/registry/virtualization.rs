@@ -5,14 +5,14 @@
 //! Windows Vista+ UAC virtualization behavior.
 
 extern crate alloc;
-use alloc::string::{String, ToString};
-use alloc::vec::Vec;
-use alloc::vec;
 use alloc::collections::BTreeMap;
 use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec;
+use alloc::vec::Vec;
 
 use super::hive::HiveError;
-use super::path::{ParsedPath, Hive};
+use super::path::{Hive, ParsedPath};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VirtualizationFlags {
@@ -37,7 +37,9 @@ impl Default for VirtualizationFlags {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VirtualStore {
     /// Per-user virtual store (HKCU\Software\Classes\VirtualStore)
-    PerUser { user_sid: String },
+    PerUser {
+        user_sid: String,
+    },
     Machine,
 }
 
@@ -219,9 +221,7 @@ impl VirtualizationManager {
             };
         }
 
-        KeyAccessResolution::Direct {
-            offset: key_offset,
-        }
+        KeyAccessResolution::Direct { offset: key_offset }
     }
 
     pub fn create_virtual_copy(
@@ -279,12 +279,16 @@ impl Default for VirtualizationManager {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeyAccessResolution {
-    Direct { offset: u32 },
+    Direct {
+        offset: u32,
+    },
     Virtual {
         physical_offset: u32,
         virtual_offset: u32,
     },
-    RedirectToVirtual { virtual_offset: u32 },
+    RedirectToVirtual {
+        virtual_offset: u32,
+    },
     Merged {
         physical_offset: u32,
         virtual_offset: u32,

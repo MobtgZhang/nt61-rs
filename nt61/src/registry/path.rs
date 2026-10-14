@@ -21,7 +21,6 @@ use alloc::vec::Vec;
 
 use super::hive::HiveError;
 
-
 /// The five standard hives we recognise in CM paths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hive {
@@ -47,13 +46,13 @@ impl Hive {
 
     pub fn from_name(s: &str) -> Option<Self> {
         match s {
-            "System"   => Some(Hive::System),
+            "System" => Some(Hive::System),
             "Software" => Some(Hive::Software),
             "Security" => Some(Hive::Security),
-            "SAM"      => Some(Hive::SAM),
-            "Default"  => Some(Hive::Default),
+            "SAM" => Some(Hive::SAM),
+            "Default" => Some(Hive::Default),
             ".DEFAULT" => Some(Hive::Default),
-            "BCD"      => Some(Hive::BCD),
+            "BCD" => Some(Hive::BCD),
             _ => None,
         }
     }
@@ -116,7 +115,10 @@ impl ParsedPath {
                 let after_backslash = &remainder[1..]; // skip the backslash
 
                 // Check for Machine or User prefix and skip it
-                let after_prefix = if after_backslash.to_ascii_uppercase().starts_with("MACHINE\\") {
+                let after_prefix = if after_backslash
+                    .to_ascii_uppercase()
+                    .starts_with("MACHINE\\")
+                {
                     &after_backslash[8..] // skip "Machine\"
                 } else if after_backslash.to_ascii_uppercase().starts_with("USER\\") {
                     &after_backslash[5..] // skip "User\"
@@ -147,8 +149,7 @@ impl ParsedPath {
             Some(name) => {
                 // Remove trailing backslash if present
                 let name = name.trim_end_matches('\\');
-                Hive::from_name(name)
-                    .ok_or_else(|| PathError::UnknownHive(String::from(name)))?
+                Hive::from_name(name).ok_or_else(|| PathError::UnknownHive(String::from(name)))?
             }
             None => Hive::System, // Default to System hive if not specified
         };

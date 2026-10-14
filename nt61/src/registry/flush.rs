@@ -4,6 +4,7 @@
 //! Ensures registry changes are written to disk safely with crash recovery.
 
 extern crate alloc;
+use alloc::vec;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -62,12 +63,14 @@ impl HiveSyncState {
     }
 
     pub fn mark_dirty(&self) {
-        self.state.store(FlushState::Dirty as u64, Ordering::Release);
+        self.state
+            .store(FlushState::Dirty as u64, Ordering::Release);
         self.pending_modifications.fetch_add(1, Ordering::SeqCst);
     }
 
     pub fn mark_clean(&self) {
-        self.state.store(FlushState::Clean as u64, Ordering::Release);
+        self.state
+            .store(FlushState::Clean as u64, Ordering::Release);
         self.pending_modifications.store(0, Ordering::Release);
     }
 
@@ -109,16 +112,19 @@ impl HiveSyncState {
         if self.flush_in_progress.swap(true, Ordering::Acquire) {
             return Err(HiveError::InvalidPointer); // Flush already in progress
         }
-        self.state.store(FlushState::Flushing as u64, Ordering::Release);
+        self.state
+            .store(FlushState::Flushing as u64, Ordering::Release);
         Ok(())
     }
 
     pub fn complete_flush(&self, success: bool) {
         if success {
-            self.state.store(FlushState::Clean as u64, Ordering::Release);
+            self.state
+                .store(FlushState::Clean as u64, Ordering::Release);
             self.pending_modifications.store(0, Ordering::Release);
         } else {
-            self.state.store(FlushState::Error as u64, Ordering::Release);
+            self.state
+                .store(FlushState::Error as u64, Ordering::Release);
         }
         self.flush_in_progress.store(false, Ordering::Release);
     }
@@ -162,14 +168,9 @@ impl FlushManager {
             state.set_modified_time(timestamp);
 
             match self.strategy {
-                FlushStrategy::Immediate => {
-                }
-                FlushStrategy::WriteThrough => {
-                }
-                _ => {
-                    if state.pending_count() >= self.force_flush_threshold {
-                    }
-                }
+                FlushStrategy::Immediate => {}
+                FlushStrategy::WriteThrough => {}
+                _ => if state.pending_count() >= self.force_flush_threshold {},
             }
         }
     }
@@ -180,7 +181,8 @@ impl FlushManager {
         flags: FlushFlags,
         timestamp: u64,
     ) -> Result<(), HiveError> {
-        let state = self.hive_states
+        let state = self
+            .hive_states
             .get(hive_id)
             .ok_or(HiveError::OutOfBounds)?;
 
@@ -189,7 +191,6 @@ impl FlushManager {
         }
 
         state.begin_flush()?;
-
 
         let success = self.perform_flush(hive_id, flags);
 
@@ -279,9 +280,18 @@ pub struct LogEntry {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LogOperation {
-    AllocateCell { offset: u32, size: u32 },
-    FreeCell { offset: u32 },
-    ModifyCell { offset: u32, old_data: Vec<u8>, new_data: Vec<u8> },
+    AllocateCell {
+        offset: u32,
+        size: u32,
+    },
+    FreeCell {
+        offset: u32,
+    },
+    ModifyCell {
+        offset: u32,
+        old_data: Vec<u8>,
+        new_data: Vec<u8>,
+    },
     Checkpoint,
 }
 

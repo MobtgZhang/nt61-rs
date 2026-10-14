@@ -4,8 +4,9 @@
 //! Windows Security Descriptor format with DACL/SACL support.
 
 extern crate alloc;
-use alloc::vec::Vec;
+use alloc::format;
 use alloc::vec;
+use alloc::vec::Vec;
 use core::fmt;
 
 use super::hive::HiveError;
@@ -65,20 +66,48 @@ impl SecurityControl {
 
     pub fn to_flags(&self) -> u16 {
         let mut flags = 0;
-        if self.owner_defaulted { flags |= Self::OWNER_DEFAULTED; }
-        if self.group_defaulted { flags |= Self::GROUP_DEFAULTED; }
-        if self.dacl_present { flags |= Self::DACL_PRESENT; }
-        if self.dacl_defaulted { flags |= Self::DACL_DEFAULTED; }
-        if self.sacl_present { flags |= Self::SACL_PRESENT; }
-        if self.sacl_defaulted { flags |= Self::SACL_DEFAULTED; }
-        if self.dacl_auto_inherit_req { flags |= Self::DACL_AUTO_INHERIT_REQ; }
-        if self.sacl_auto_inherit_req { flags |= Self::SACL_AUTO_INHERIT_REQ; }
-        if self.dacl_auto_inherited { flags |= Self::DACL_AUTO_INHERITED; }
-        if self.sacl_auto_inherited { flags |= Self::SACL_AUTO_INHERITED; }
-        if self.dacl_protected { flags |= Self::DACL_PROTECTED; }
-        if self.sacl_protected { flags |= Self::SACL_PROTECTED; }
-        if self.rm_control_valid { flags |= Self::RM_CONTROL_VALID; }
-        if self.self_relative { flags |= Self::SELF_RELATIVE; }
+        if self.owner_defaulted {
+            flags |= Self::OWNER_DEFAULTED;
+        }
+        if self.group_defaulted {
+            flags |= Self::GROUP_DEFAULTED;
+        }
+        if self.dacl_present {
+            flags |= Self::DACL_PRESENT;
+        }
+        if self.dacl_defaulted {
+            flags |= Self::DACL_DEFAULTED;
+        }
+        if self.sacl_present {
+            flags |= Self::SACL_PRESENT;
+        }
+        if self.sacl_defaulted {
+            flags |= Self::SACL_DEFAULTED;
+        }
+        if self.dacl_auto_inherit_req {
+            flags |= Self::DACL_AUTO_INHERIT_REQ;
+        }
+        if self.sacl_auto_inherit_req {
+            flags |= Self::SACL_AUTO_INHERIT_REQ;
+        }
+        if self.dacl_auto_inherited {
+            flags |= Self::DACL_AUTO_INHERITED;
+        }
+        if self.sacl_auto_inherited {
+            flags |= Self::SACL_AUTO_INHERITED;
+        }
+        if self.dacl_protected {
+            flags |= Self::DACL_PROTECTED;
+        }
+        if self.sacl_protected {
+            flags |= Self::SACL_PROTECTED;
+        }
+        if self.rm_control_valid {
+            flags |= Self::RM_CONTROL_VALID;
+        }
+        if self.self_relative {
+            flags |= Self::SELF_RELATIVE;
+        }
         flags
     }
 }
@@ -136,14 +165,30 @@ impl KeyAccessRights {
 
     pub fn to_mask(&self) -> u32 {
         let mut mask = 0;
-        if self.query_value { mask |= Self::QUERY_VALUE; }
-        if self.set_value { mask |= Self::SET_VALUE; }
-        if self.create_sub_key { mask |= Self::CREATE_SUB_KEY; }
-        if self.enumerate_sub_keys { mask |= Self::ENUMERATE_SUB_KEYS; }
-        if self.notify { mask |= Self::NOTIFY; }
-        if self.create_link { mask |= Self::CREATE_LINK; }
-        if self.wow64_64key { mask |= Self::WOW64_64KEY; }
-        if self.wow64_32key { mask |= Self::WOW64_32KEY; }
+        if self.query_value {
+            mask |= Self::QUERY_VALUE;
+        }
+        if self.set_value {
+            mask |= Self::SET_VALUE;
+        }
+        if self.create_sub_key {
+            mask |= Self::CREATE_SUB_KEY;
+        }
+        if self.enumerate_sub_keys {
+            mask |= Self::ENUMERATE_SUB_KEYS;
+        }
+        if self.notify {
+            mask |= Self::NOTIFY;
+        }
+        if self.create_link {
+            mask |= Self::CREATE_LINK;
+        }
+        if self.wow64_64key {
+            mask |= Self::WOW64_64KEY;
+        }
+        if self.wow64_32key {
+            mask |= Self::WOW64_32KEY;
+        }
         mask
     }
 }
@@ -238,10 +283,14 @@ impl fmt::Display for Sid {
         write!(f, "S-{}-", self.revision)?;
 
         let authority_value = u64::from_be_bytes([
-            0, 0,
-            self.authority[0], self.authority[1],
-            self.authority[2], self.authority[3],
-            self.authority[4], self.authority[5],
+            0,
+            0,
+            self.authority[0],
+            self.authority[1],
+            self.authority[2],
+            self.authority[3],
+            self.authority[4],
+            self.authority[5],
         ]);
         write!(f, "{}", authority_value)?;
 
@@ -498,11 +547,7 @@ impl Default for SecurityDescriptor {
     }
 }
 
-pub fn check_access(
-    sd: &SecurityDescriptor,
-    sid: &Sid,
-    requested_access: u32,
-) -> bool {
+pub fn check_access(sd: &SecurityDescriptor, sid: &Sid, requested_access: u32) -> bool {
     let dacl = match &sd.dacl {
         Some(dacl) => dacl,
         None => return true,

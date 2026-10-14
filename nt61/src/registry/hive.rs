@@ -105,7 +105,7 @@ impl ValueType {
 /// A parsed value read out of a `vk` cell.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Value {
-    pub name: String,        // empty string = default value
+    pub name: String, // empty string = default value
     pub value_type: ValueType,
     pub data: Vec<u8>,
 }
@@ -123,8 +123,10 @@ impl Value {
         }
         let mut out = String::new();
         for i in (0..bytes.len()).step_by(2) {
-            let cu = u16::from_le_bytes([bytes[i], bytes[i+1]]);
-            if cu == 0 { break; }
+            let cu = u16::from_le_bytes([bytes[i], bytes[i + 1]]);
+            if cu == 0 {
+                break;
+            }
             match char::from_u32(cu as u32) {
                 Some(c) => out.push(c),
                 None => return None,
@@ -135,18 +137,31 @@ impl Value {
 
     /// Decode a little-endian u32 (REG_DWORD).
     pub fn as_u32(&self) -> Option<u32> {
-        if self.data.len() < 4 { return None; }
+        if self.data.len() < 4 {
+            return None;
+        }
         Some(u32::from_le_bytes([
-            self.data[0], self.data[1], self.data[2], self.data[3],
+            self.data[0],
+            self.data[1],
+            self.data[2],
+            self.data[3],
         ]))
     }
 
     /// Decode a little-endian u64 (REG_QWORD).
     pub fn as_u64(&self) -> Option<u64> {
-        if self.data.len() < 8 { return None; }
+        if self.data.len() < 8 {
+            return None;
+        }
         Some(u64::from_le_bytes([
-            self.data[0], self.data[1], self.data[2], self.data[3],
-            self.data[4], self.data[5], self.data[6], self.data[7],
+            self.data[0],
+            self.data[1],
+            self.data[2],
+            self.data[3],
+            self.data[4],
+            self.data[5],
+            self.data[6],
+            self.data[7],
         ]))
     }
 }
@@ -154,35 +169,59 @@ impl Value {
 /// A parsed node key (`nk` cell).
 #[derive(Debug, Clone)]
 pub struct KeyNode {
-    pub offset: u32,         // file offset of the cell
+    pub offset: u32, // file offset of the cell
     pub name: String,
     pub flags: u16,
 }
 
 #[inline]
 fn read_u32(b: &[u8], off: usize) -> Option<u32> {
-    if off + 4 > b.len() { return None; }
-    Some(u32::from_le_bytes([b[off], b[off+1], b[off+2], b[off+3]]))
+    if off + 4 > b.len() {
+        return None;
+    }
+    Some(u32::from_le_bytes([
+        b[off],
+        b[off + 1],
+        b[off + 2],
+        b[off + 3],
+    ]))
 }
 
 #[inline]
 fn read_u16(b: &[u8], off: usize) -> Option<u16> {
-    if off + 2 > b.len() { return None; }
-    Some(u16::from_le_bytes([b[off], b[off+1]]))
+    if off + 2 > b.len() {
+        return None;
+    }
+    Some(u16::from_le_bytes([b[off], b[off + 1]]))
 }
 
 #[inline]
 fn read_i32(b: &[u8], off: usize) -> Option<i32> {
-    if off + 4 > b.len() { return None; }
-    Some(i32::from_le_bytes([b[off], b[off+1], b[off+2], b[off+3]]))
+    if off + 4 > b.len() {
+        return None;
+    }
+    Some(i32::from_le_bytes([
+        b[off],
+        b[off + 1],
+        b[off + 2],
+        b[off + 3],
+    ]))
 }
 
 #[inline]
 fn read_u64(b: &[u8], off: usize) -> Option<u64> {
-    if off + 8 > b.len() { return None; }
+    if off + 8 > b.len() {
+        return None;
+    }
     Some(u64::from_le_bytes([
-        b[off], b[off+1], b[off+2], b[off+3],
-        b[off+4], b[off+5], b[off+6], b[off+7],
+        b[off],
+        b[off + 1],
+        b[off + 2],
+        b[off + 3],
+        b[off + 4],
+        b[off + 5],
+        b[off + 6],
+        b[off + 7],
     ]))
 }
 
@@ -192,7 +231,7 @@ fn decode_utf16le(b: &[u8]) -> Result<String, HiveError> {
     }
     let mut out = String::new();
     for i in (0..b.len()).step_by(2) {
-        let cu = u16::from_le_bytes([b[i], b[i+1]]);
+        let cu = u16::from_le_bytes([b[i], b[i + 1]]);
         match char::from_u32(cu as u32) {
             Some(c) => out.push(c),
             None => return Err(HiveError::BadUtf16),
@@ -241,11 +280,17 @@ impl<'a> Hive<'a> {
             return Err(HiveError::OutOfBounds);
         }
 
-        Ok(Hive { bytes, root_cell, cell_count })
+        Ok(Hive {
+            bytes,
+            root_cell,
+            cell_count,
+        })
     }
 
     /// The cell count recorded in the header.
-    pub fn cell_count(&self) -> u32 { self.cell_count }
+    pub fn cell_count(&self) -> u32 {
+        self.cell_count
+    }
 
     /// Root node-key cell.
     pub fn root(&self) -> Result<KeyNode, HiveError> {
@@ -274,17 +319,21 @@ impl<'a> Hive<'a> {
     fn read_nk(&self, off: u32) -> Result<KeyNode, HiveError> {
         let sz = self.read_cell_header(off as usize, CELL_MAGIC_NK)?;
         let p = off as usize + CELL_HEADER;
-        let flags   = read_u16(self.bytes, p).ok_or(HiveError::Truncated)?;
-        let _nsubs  = read_u32(self.bytes, p + 2).ok_or(HiveError::Truncated)?;
+        let flags = read_u16(self.bytes, p).ok_or(HiveError::Truncated)?;
+        let _nsubs = read_u32(self.bytes, p + 2).ok_or(HiveError::Truncated)?;
         let _subk_o = read_u32(self.bytes, p + 6).ok_or(HiveError::Truncated)?;
-        let _nv     = read_u32(self.bytes, p + 10).ok_or(HiveError::Truncated)?;
-        let _vo     = read_u32(self.bytes, p + 14).ok_or(HiveError::Truncated)?;
+        let _nv = read_u32(self.bytes, p + 10).ok_or(HiveError::Truncated)?;
+        let _vo = read_u32(self.bytes, p + 14).ok_or(HiveError::Truncated)?;
         let name_len = read_u16(self.bytes, p + 18).ok_or(HiveError::Truncated)? as usize;
         if p + 20 + name_len * 2 > off as usize + sz {
             return Err(HiveError::Truncated);
         }
-        let name = decode_utf16le(&self.bytes[p + 20 .. p + 20 + name_len * 2])?;
-        Ok(KeyNode { offset: off, name, flags })
+        let name = decode_utf16le(&self.bytes[p + 20..p + 20 + name_len * 2])?;
+        Ok(KeyNode {
+            offset: off,
+            name,
+            flags,
+        })
     }
 
     /// Enumerate immediate subkeys of a node.
@@ -307,8 +356,8 @@ impl<'a> Hive<'a> {
         }
         let mut out = Vec::with_capacity(count);
         for i in 0..count {
-            let child_off = read_u32(self.bytes, lk_data + 4 + i * 4)
-                .ok_or(HiveError::Truncated)?;
+            let child_off =
+                read_u32(self.bytes, lk_data + 4 + i * 4).ok_or(HiveError::Truncated)?;
             out.push(self.read_nk(child_off)?);
         }
         Ok(out)
@@ -347,15 +396,16 @@ impl<'a> Hive<'a> {
             let name = if name_len == 0 {
                 String::new()
             } else {
-                decode_utf16le(&self.bytes[cp + 2 .. cp + 2 + name_len * 2])?
+                decode_utf16le(&self.bytes[cp + 2..cp + 2 + name_len * 2])?
             };
             let after_name = cp + 2 + name_len * 2;
             let data_type = read_u32(self.bytes, after_name).ok_or(HiveError::Truncated)?;
-            let data_len = read_u32(self.bytes, after_name + 4).ok_or(HiveError::Truncated)? as usize;
+            let data_len =
+                read_u32(self.bytes, after_name + 4).ok_or(HiveError::Truncated)? as usize;
             if after_name + 8 + data_len > cur_off + sz {
                 return Err(HiveError::Truncated);
             }
-            let data = self.bytes[after_name + 8 .. after_name + 8 + data_len].to_vec();
+            let data = self.bytes[after_name + 8..after_name + 8 + data_len].to_vec();
             out.push(Value {
                 name,
                 value_type: ValueType::from_u32(data_type),
