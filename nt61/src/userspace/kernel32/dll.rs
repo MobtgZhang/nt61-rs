@@ -8,8 +8,13 @@ pub fn load_library_w(_name: &[u16]) -> Result<HANDLE, NTSTATUS> {
     Err(-1)
 }
 
-pub fn get_proc_address(_module: HANDLE, _name: &[u8]) -> Option<unsafe extern "system" fn() -> isize> {
+pub fn get_proc_address(
+    _module: HANDLE,
+    _name: &[u8],
+) -> Option<unsafe extern "system" fn() -> isize> {
     None
 }
 
-pub fn free_library(_h: HANDLE) -> Result<(), NTSTATUS> { Ok(()) }
+pub fn free_library(_h: HANDLE) -> Result<(), NTSTATUS> {
+    Ok(())
+}

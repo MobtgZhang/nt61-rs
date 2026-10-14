@@ -66,18 +66,18 @@ pub mod user_params;
 pub mod ntdll;
 
 // Phase 3: kernel32.dll — wraps crate::libs::kernel32 + CRT helpers.
-pub mod kernel32;
 pub mod crt;
+pub mod kernel32;
 
 // Phase 4: system processes.
 // These re-export from crate::libs::server/ (the bridge to servers/).
-pub mod smss;
 pub mod csrss;
-pub mod services;
 pub mod lsass;
+pub mod services;
+pub mod smss;
 pub mod winlogon;
 
 // Phase 5: user-mode utilities / shell programs.
 pub mod cmd;
-pub mod more;
 pub mod find;
+pub mod more;

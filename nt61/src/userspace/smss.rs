@@ -10,7 +10,7 @@
 //! - `crate::userspace::smss` — user-mode shim that re-exports from
 //!   `libs::server::smss`
 
-pub use crate::libs::server::smss::smss_main;
-pub use crate::libs::server::smss::init;
 pub use crate::libs::server::smss::create_session_0;
 pub use crate::libs::server::smss::create_session_1;
+pub use crate::libs::server::smss::init;
+pub use crate::libs::server::smss::smss_main;

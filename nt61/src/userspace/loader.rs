@@ -161,8 +161,7 @@ pub fn user_fallback_bytes() -> &'static [u8] {
 
 const FALLBACK_IMAGE: [u8; 16] = [
     0xC3, // ret
-    0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
-    0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+    0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
 ];
 
 // ---------------------------------------------------------------------------
@@ -213,7 +212,9 @@ pub fn init_peb_in_pml4(pml4: u64) -> Result<u64, NTSTATUS> {
         Some(p) => crate::mm::pte::pfn_to_phys(p),
         None => return Err(STATUS_NO_MEMORY),
     };
-    if phys == 0 { return Err(STATUS_NO_MEMORY); }
+    if phys == 0 {
+        return Err(STATUS_NO_MEMORY);
+    }
     let r = vas::map_page_in_pml4(pml4, PEB_VA, phys, pte::PTE_P | pte::PTE_RW | pte::PTE_US);
     if r != vas::MmStatus::Ok {
         return Err(STATUS_NO_MEMORY);
@@ -227,7 +228,9 @@ pub fn init_teb_in_pml4(pml4: u64, _peb: u64) -> Result<u64, NTSTATUS> {
         Some(p) => crate::mm::pte::pfn_to_phys(p),
         None => return Err(STATUS_NO_MEMORY),
     };
-    if phys == 0 { return Err(STATUS_NO_MEMORY); }
+    if phys == 0 {
+        return Err(STATUS_NO_MEMORY);
+    }
     let r = vas::map_page_in_pml4(pml4, TEB_VA, phys, pte::PTE_P | pte::PTE_RW | pte::PTE_US);
     if r != vas::MmStatus::Ok {
         return Err(STATUS_NO_MEMORY);
@@ -242,11 +245,7 @@ pub fn init_teb_in_pml4(pml4: u64, _peb: u64) -> Result<u64, NTSTATUS> {
 /// Reserve the canonical user stack above `TEB_VA`, write a small
 /// startup frame, and return the initial user-mode RSP. The Windows
 /// x64 ABI requires RSP to be 16-byte aligned at the call site.
-pub fn build_user_stack(
-    _pml4: u64,
-    _teb_va: u64,
-    _image_path: &str,
-) -> Result<u64, NTSTATUS> {
+pub fn build_user_stack(_pml4: u64, _teb_va: u64, _image_path: &str) -> Result<u64, NTSTATUS> {
     // The full implementation walks ProcessParameters, env, command
     // line, and a small "thread-startup" frame. For Phase 1 we hand
     // back a placeholder 16-byte-aligned address above the TEB.

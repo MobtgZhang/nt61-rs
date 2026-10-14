@@ -27,7 +27,9 @@ pub const TRUNCATE_EXISTING: u32 = 5;
 pub struct FileHandle(HANDLE);
 
 impl FileHandle {
-    pub fn as_handle(&self) -> HANDLE { self.0 }
+    pub fn as_handle(&self) -> HANDLE {
+        self.0
+    }
 }
 
 pub fn create_file_w(
@@ -47,13 +49,19 @@ pub fn read_file(
     _buf: &mut [u8],
     _bytes_read: *mut u32,
     _overlapped: *mut (),
-) -> Result<(), NTSTATUS> { Err(-1) }
+) -> Result<(), NTSTATUS> {
+    Err(-1)
+}
 
 pub fn write_file(
     _h: HANDLE,
     _buf: &[u8],
     _bytes_written: *mut u32,
     _overlapped: *mut (),
-) -> Result<(), NTSTATUS> { Err(-1) }
+) -> Result<(), NTSTATUS> {
+    Err(-1)
+}
 
-pub fn close_handle(_h: HANDLE) -> Result<(), NTSTATUS> { Ok(()) }
+pub fn close_handle(_h: HANDLE) -> Result<(), NTSTATUS> {
+    Ok(())
+}

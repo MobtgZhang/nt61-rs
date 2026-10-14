@@ -5,20 +5,26 @@
 
 #![allow(dead_code)]
 
-use crate::libs::ntdll::types::{NTSTATUS, HANDLE};
+use crate::libs::ntdll::types::{HANDLE, NTSTATUS};
 
 pub const THREAD_ALL_ACCESS: u32 = 0x001F_03FF;
 pub const PROCESS_ALL_ACCESS: u32 = 0x001F_0FFF;
 
 #[inline]
-pub fn get_current_process() -> HANDLE { core::ptr::null_mut() }
+pub fn get_current_process() -> HANDLE {
+    core::ptr::null_mut()
+}
 
 #[inline]
-pub fn get_current_thread() -> HANDLE { core::ptr::null_mut() }
+pub fn get_current_thread() -> HANDLE {
+    core::ptr::null_mut()
+}
 
 pub fn exit_process(exit_code: u32) -> ! {
     // Phase 1: loop forever so the system remains alive.
-    loop { core::hint::black_box(exit_code); }
+    loop {
+        core::hint::black_box(exit_code);
+    }
 }
 
 pub fn exit_thread(exit_code: u32) -> ! {
@@ -45,7 +51,9 @@ pub fn terminate_process(_p: HANDLE, _code: u32) -> Result<(), NTSTATUS> {
 }
 
 #[inline]
-pub fn get_last_error() -> u32 { 0 }
+pub fn get_last_error() -> u32 {
+    0
+}
 #[inline]
 pub fn set_last_error(_: u32) {}
 

@@ -15,7 +15,9 @@ pub extern "system" fn __crt_startup(
 
 /// TLS / atexit slot allocation stubs — Phase 3 fills these in.
 pub fn _initterm(_table: *const unsafe extern "system" fn()) {}
-pub fn _initterm_e(_table: *const unsafe extern "system" fn() -> i32) -> i32 { 0 }
+pub fn _initterm_e(_table: *const unsafe extern "system" fn() -> i32) -> i32 {
+    0
+}
 
 /// SEH trampoline — Phase 3 implements the Win7 SEH4 setup.
 pub fn _set_app_type(_app_type: i32) {}
@@ -36,7 +38,9 @@ pub fn __security_check_cookie(cookie: u64) {
 
 // Stubs for non-x86_64 builds.
 #[cfg(not(target_arch = "x86_64"))]
-pub fn __security_cookie() -> u64 { 0 }
+pub fn __security_cookie() -> u64 {
+    0
+}
 
 #[cfg(not(target_arch = "x86_64"))]
 pub fn __security_check_cookie(_cookie: u64) {}

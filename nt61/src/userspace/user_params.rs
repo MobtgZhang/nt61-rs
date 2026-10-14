@@ -13,9 +13,7 @@ use core::ffi::c_void;
 use core::mem::size_of;
 use core::ptr;
 
-use crate::libs::ntdll::types::{
-    NTSTATUS, UNICODE_STRING, WCHAR,
-};
+use crate::libs::ntdll::types::{NTSTATUS, UNICODE_STRING, WCHAR};
 #[cfg(target_arch = "x86_64")]
 use crate::userspace::peb_teb::{Peb, RtlUserProcessParameters};
 
@@ -107,7 +105,9 @@ pub fn build_process_parameters(
             Buffer: ptr::null_mut(),
         },
         CurrentDirectories: [crate::userspace::peb_teb::RTL_DRIVE_LETTER_CURDIR {
-            Flags: 0, Length: 0, TimeStamp: 0,
+            Flags: 0,
+            Length: 0,
+            TimeStamp: 0,
             DosPath: UNICODE_STRING {
                 Length: 0,
                 MaximumLength: 0,
@@ -122,8 +122,12 @@ pub fn build_process_parameters(
     use alloc::alloc::{alloc, Layout};
     let layout = Layout::new::<RtlUserProcessParameters>();
     let raw = unsafe { alloc(layout) as *mut RtlUserProcessParameters };
-    if raw.is_null() { return Err(-0x0FFF_FFFFi32 as NTSTATUS); }
-    unsafe { ptr::write(raw, params); }
+    if raw.is_null() {
+        return Err(-0x0FFF_FFFFi32 as NTSTATUS);
+    }
+    unsafe {
+        ptr::write(raw, params);
+    }
     Ok(raw)
 }
 
@@ -132,8 +136,12 @@ pub fn install_process_parameters(
     peb: *mut Peb,
     params: *mut RtlUserProcessParameters,
 ) -> NTSTATUS {
-    if peb.is_null() || params.is_null() { return -1i32; }
-    unsafe { (*peb).ProcessParameters = params; }
+    if peb.is_null() || params.is_null() {
+        return -1i32;
+    }
+    unsafe {
+        (*peb).ProcessParameters = params;
+    }
     0
 }
 

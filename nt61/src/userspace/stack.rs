@@ -13,7 +13,7 @@
 
 #![cfg(target_arch = "x86_64")]
 
-use crate::libs::ntdll::types::{NTSTATUS};
+use crate::libs::ntdll::types::NTSTATUS;
 use crate::mm::vas;
 #[cfg(target_arch = "x86_64")]
 use crate::userspace::peb_teb::RtlUserProcessParameters;
@@ -50,8 +50,8 @@ pub fn build_startup_frame(
     // Phase 2 when the syscall layer tracks the buffer pointers.
     let strings_base = USER_STACK_TOP - 0x8000;
     let _image_va = copy_utf16(pml4, strings_base, image_name)?;
-    let _cmd_va   = copy_utf16(pml4, strings_base + 0x1000, command_line)?;
-    let _env_va   = copy_utf16(pml4, strings_base + 0x2000, environment)?;
+    let _cmd_va = copy_utf16(pml4, strings_base + 0x1000, command_line)?;
+    let _env_va = copy_utf16(pml4, strings_base + 0x2000, environment)?;
 
     // Initial RSP keeps 32 bytes free for any future frame-padding.
     let initial_rsp = USER_STACK_TOP - 64;
@@ -94,7 +94,9 @@ pub fn populate_process_parameters(
 pub fn enable_stack_guard(pml4: u64) -> Result<(), NTSTATUS> {
     let bottom = USER_STACK_TOP - USER_STACK_SIZE;
     let r = vas::protect_user_range(pml4, bottom, USER_STACK_GUARD, 0x1); // PAGE_NOACCESS
-    if r != vas::MmStatus::Ok { return Err(-0x0FFF_FFFFi32 as NTSTATUS); }
+    if r != vas::MmStatus::Ok {
+        return Err(-0x0FFF_FFFFi32 as NTSTATUS);
+    }
     Ok(())
 }
 
@@ -104,7 +106,9 @@ pub fn __security_cookie() -> u64 {
     use core::sync::atomic::{AtomicU64, Ordering};
     static COOKIE: AtomicU64 = AtomicU64::new(0);
     let r = COOKIE.load(Ordering::Relaxed);
-    if r != 0 { return r; }
+    if r != 0 {
+        return r;
+    }
     // Mix the address of the function with the PID/TID; for Phase 1
     // we just use the function pointer.
     let new_cookie = 0xDEAD_BEEF_CAFE_BABE;
