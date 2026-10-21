@@ -13,11 +13,9 @@
 //!
 //! References: Windows Internals, WRK
 
-use super::acl::Acl;
 use super::seaccess::{AccessCheckResult, GenericMapping, SecurityDescriptor};
-use super::sid::Sid;
-use super::token::{ImpersonationLevel, Luid, Token, TokenTypeEnum};
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use super::token::{luid, ImpersonationLevel, Token};
+use core::sync::atomic::{AtomicBool, Ordering};
 
 static SRM_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
@@ -32,7 +30,7 @@ pub struct SecuritySubjectContext {
     pub client_token: *mut Token,
     pub impersonation_level: ImpersonationLevel,
     pub primary_token: *mut Token,
-    pub process_audit_id: Luid,
+    pub process_audit_id: luid,
 }
 
 impl SecuritySubjectContext {
@@ -41,14 +39,40 @@ impl SecuritySubjectContext {
             client_token: core::ptr::null_mut(),
             impersonation_level: ImpersonationLevel::SecurityAnonymous,
             primary_token: core::ptr::null_mut(),
-            process_audit_id: Luid::new(),
+            process_audit_id: luid::new(),
         }
     }
 
     pub fn capture() -> Self {
-        let ctx = Self::new();
+        let mut ctx = Self::new();
 
-        // otherwise use the process token
+        // Windows NT semantics for SeCaptureSecuritySubjectContext:
+        //   - Client token: the thread's impersonation token
+        //     (ETHREAD -> ClientSecurity -> ClientToken).
+        //   - Primary token: the process's primary token
+        //     (EPROCESS -> Token).
+        //   - Impersonation level: from the client token's
+        //     impersonation level, or SecurityAnonymous if no client token.
+
+        // 1. Client (impersonation) token from the calling ETHREAD.
+        let thread = crate::ps::thread::get_current_ethread();
+        if !thread.is_null() {
+            let thread_token = unsafe { (*thread).primary_token };
+            if thread_token != 0 {
+                let token = thread_token as *mut Token;
+                ctx.client_token = token;
+                ctx.impersonation_level = unsafe { (*token).impersonation_level };
+            }
+
+            // 2. Primary token from the owning EPROCESS.
+            let process = unsafe { (*thread).threads_process };
+            if !process.is_null() {
+                let proc_token = unsafe { (*process).token.get_object() };
+                if proc_token != 0 {
+                    ctx.primary_token = proc_token as *mut Token;
+                }
+            }
+        }
 
         ctx
     }
@@ -89,8 +113,11 @@ pub fn se_access_check_with_context(
     let mut access = desired_access | previous_granted_access;
     generic_mapping.map_generic(&mut access);
 
+    // Deny-by-default when there is no security descriptor.
+    // This matches ob/mod.rs policy: bootstrap objects without an SD
+    // must not silently grant access in production.
     if security_descriptor.is_null() {
-        return (AccessCheckResult::Allowed, access);
+        return (AccessCheckResult::Denied, 0);
     }
 
     let sd = unsafe { &*security_descriptor };
@@ -140,7 +167,7 @@ pub fn se_assign_security(
         if !explicit_descriptor.is_null() {
             (*new_sd).owner = (*explicit_descriptor).owner;
         } else if !token.is_null() {
-            // Owner comes from token's user SID
+            // owner comes from token's user SID
             let token_ref = &*token;
             (*new_sd).owner = token_ref.user;
         }
@@ -285,6 +312,114 @@ pub fn se_set_security_descriptor_info(
     true
 }
 
+/// Audit an object-access event. Delegates to the SE audit subsystem,
+/// which writes to the event log buffer if auditing is enabled for the
+/// ObjectAccess category.
+pub fn audit_event(
+    object_type: &str,
+    object_name: Option<&str>,
+    security_descriptor: *const SecurityDescriptor,
+    token: *const Token,
+    desired_access: u32,
+    granted_access: u32,
+    access_granted: bool,
+) {
+    super::audit::se_open_object_audit_alarm(
+        object_type,
+        object_name,
+        security_descriptor,
+        token,
+        desired_access,
+        granted_access,
+        access_granted,
+    );
+}
+
+/// Full access check with audit: captures the subject context, performs
+/// the access check against a security descriptor, and generates an
+/// audit event for the outcome. Returns (result, granted_access).
+pub fn check_access(
+    security_descriptor: *const SecurityDescriptor,
+    desired_access: u32,
+    generic_mapping: &GenericMapping,
+    object_type: &str,
+    object_name: Option<&str>,
+) -> (AccessCheckResult, u32) {
+    let subject = SecuritySubjectContext::capture();
+    let token = subject.effective_token();
+
+    let (result, granted) = se_access_check_with_context(
+        security_descriptor,
+        &subject,
+        desired_access,
+        generic_mapping,
+        0,
+    );
+
+    // Audit the outcome (no-op if auditing is disabled or token is null).
+    audit_event(
+        object_type,
+        object_name,
+        security_descriptor,
+        token,
+        desired_access,
+        granted,
+        matches!(result, AccessCheckResult::Allowed),
+    );
+
+    (result, granted)
+}
+
 pub fn init() {
     init_phase0();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capture_returns_null_tokens_in_test_context() {
+        // In the unit test environment there is no per-CPU current
+        // thread installed, so capture() should return a context
+        // with null tokens (rather than dangling pointers).
+        let ctx = SecuritySubjectContext::capture();
+        assert!(ctx.client_token.is_null());
+        assert!(ctx.primary_token.is_null());
+        assert!(ctx.effective_token().is_null());
+    }
+
+    #[test]
+    fn capture_new_default_has_null_tokens() {
+        let ctx = SecuritySubjectContext::new();
+        assert!(ctx.client_token.is_null());
+        assert!(ctx.primary_token.is_null());
+    }
+
+    #[test]
+    fn effective_token_prefers_client_over_primary() {
+        let mut ctx = SecuritySubjectContext::new();
+        let dummy = 0x1000 as *mut Token;
+
+        // Only primary set.
+        ctx.primary_token = dummy;
+        assert_eq!(ctx.effective_token(), dummy);
+
+        // Client set: client takes precedence.
+        let dummy2 = 0x2000 as *mut Token;
+        ctx.client_token = dummy2;
+        assert_eq!(ctx.effective_token(), dummy2);
+    }
+
+    #[test]
+    fn release_nulls_tokens() {
+        let mut ctx = SecuritySubjectContext::new();
+        ctx.client_token = 0x1000 as *mut Token;
+        ctx.primary_token = 0x2000 as *mut Token;
+
+        ctx.release();
+
+        assert!(ctx.client_token.is_null());
+        assert!(ctx.primary_token.is_null());
+    }
 }

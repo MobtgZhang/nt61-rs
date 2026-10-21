@@ -6,7 +6,6 @@
 //!
 //! References: Windows SDK, WRK security audit, auditpol.exe
 
-use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 /// Audit policy categories matching Windows audit policy
@@ -310,6 +309,7 @@ mod tests {
 
     #[test]
     fn test_policy_get_set() {
+        let _guard = crate::se::audit_log::test_support::TestGuard::new();
         init();
 
         let cat = AuditCategory::ObjectAccess;
@@ -323,6 +323,7 @@ mod tests {
 
     #[test]
     fn test_is_enabled() {
+        let _guard = crate::se::audit_log::test_support::TestGuard::new();
         init();
         enable_category(AuditCategory::System);
 
@@ -332,6 +333,7 @@ mod tests {
 
     #[test]
     fn test_presets() {
+        let _guard = crate::se::audit_log::test_support::TestGuard::new();
         presets::apply_minimal();
         assert!(is_enabled(AuditCategory::Logon, true));
         assert!(!is_enabled(AuditCategory::ObjectAccess, true));

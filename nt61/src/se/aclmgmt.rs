@@ -5,8 +5,8 @@
 //!
 //! References: Windows SDK advapi32, WRK
 
-use super::acl::{AceFlags, AceHeader, AceType, Acl, ACL_REVISION, MAX_ACES};
-use super::sid::Sid;
+use super::acl::{AceFlags, AceHeader, AceType, Acl, ACL_REVISION};
+use super::sid::sid;
 
 pub fn create_acl(acl: *mut Acl, acl_length: u32, acl_revision: u8) -> bool {
     if acl.is_null() {
@@ -37,7 +37,7 @@ pub fn add_access_allowed_ace(
     acl: *mut Acl,
     ace_revision: u8,
     access_mask: u32,
-    sid: &Sid,
+    sid: &sid,
 ) -> bool {
     if acl.is_null() {
         return false;
@@ -56,7 +56,7 @@ pub fn add_access_allowed_ace_ex(
     ace_revision: u8,
     ace_flags: AceFlags,
     access_mask: u32,
-    sid: &Sid,
+    sid: &sid,
 ) -> bool {
     if acl.is_null() {
         return false;
@@ -70,7 +70,7 @@ pub fn add_access_allowed_ace_ex(
     }
 }
 
-pub fn add_access_denied_ace(acl: *mut Acl, ace_revision: u8, access_mask: u32, sid: &Sid) -> bool {
+pub fn add_access_denied_ace(acl: *mut Acl, ace_revision: u8, access_mask: u32, sid: &sid) -> bool {
     if acl.is_null() {
         return false;
     }
@@ -88,7 +88,7 @@ pub fn add_access_denied_ace_ex(
     ace_revision: u8,
     ace_flags: AceFlags,
     access_mask: u32,
-    sid: &Sid,
+    sid: &sid,
 ) -> bool {
     if acl.is_null() {
         return false;
@@ -107,7 +107,7 @@ pub fn add_mandatory_ace(
     ace_revision: u8,
     ace_flags: AceFlags,
     mandatory_policy: u32,
-    label_sid: &Sid,
+    label_sid: &sid,
 ) -> bool {
     if acl.is_null() {
         return false;
@@ -306,7 +306,7 @@ pub fn valid_acl(acl: *const Acl) -> bool {
     unsafe { (*acl).is_valid() }
 }
 
-pub fn find_ace_by_sid(acl: *const Acl, sid: &Sid) -> Option<u32> {
+pub fn find_ace_by_sid(acl: *const Acl, sid: &sid) -> Option<u32> {
     if acl.is_null() {
         return None;
     }
@@ -363,11 +363,11 @@ pub fn find_ace_by_sid(acl: *const Acl, sid: &Sid) -> Option<u32> {
     None
 }
 
-fn read_sid_from_acl_data(data: &[u8]) -> Option<Sid> {
-    Sid::from_bytes(data)
+fn read_sid_from_acl_data(data: &[u8]) -> Option<sid> {
+    sid::from_bytes(data)
 }
 
-pub fn build_default_dacl(owner: &Sid, is_container: bool) -> *mut Acl {
+pub fn build_default_dacl(owner: &sid, is_container: bool) -> *mut Acl {
     let acl_ptr = crate::mm::pool::allocate(
         crate::mm::pool::PoolType::NonPaged,
         core::mem::size_of::<Acl>(),
@@ -416,7 +416,7 @@ mod tests {
     #[test]
     fn acl_management_uses_inline_data_for_ace_addresses() {
         let mut acl = Acl::new();
-        let sid = Sid::well_known(WellKnownSid::LocalSystem);
+        let sid = sid::well_known(WellKnownSid::LocalSystem);
         assert!(add_access_allowed_ace(&mut acl, ACL_REVISION, 0x10, &sid));
 
         let (ace, ok) = get_ace(&acl, 0);
@@ -440,7 +440,7 @@ mod tests {
     #[test]
     fn malformed_sid_is_not_treated_as_a_match() {
         let mut acl = Acl::new();
-        let sid = Sid::well_known(WellKnownSid::LocalSystem);
+        let sid = sid::well_known(WellKnownSid::LocalSystem);
         assert!(add_access_allowed_ace(&mut acl, ACL_REVISION, 0x10, &sid));
         let used = acl.acl_size as usize;
         acl.data[17] = 2;

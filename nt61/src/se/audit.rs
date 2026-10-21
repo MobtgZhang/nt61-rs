@@ -16,9 +16,9 @@ use super::audit_log::{
     query_records, write_audit_record, AuditRecord,
 };
 use super::audit_policy::{is_enabled as policy_is_enabled, presets, AuditCategory};
-use super::sid::Sid;
+use super::sid::sid;
 use super::token::{create_system_token, Token};
-use alloc::string::{String, ToString};
+use alloc::string::ToString;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
@@ -93,7 +93,7 @@ pub fn se_set_audit_policy(
 }
 
 /// Audit a logon event
-pub fn se_audit_logon(outcome: AuditEventOutcome, user_sid: &Sid, logon_type: u32, logon_id: u64) {
+pub fn se_audit_logon(outcome: AuditEventOutcome, user_sid: &sid, logon_type: u32, logon_id: u64) {
     if !se_auditing_state_for_category(AuditCategoryId::Logon, outcome) {
         return;
     }
@@ -117,7 +117,7 @@ pub fn se_audit_logon(outcome: AuditEventOutcome, user_sid: &Sid, logon_type: u3
 }
 
 /// Audit a logoff event
-pub fn se_audit_logoff(user_sid: &Sid, logon_id: u64) {
+pub fn se_audit_logoff(user_sid: &sid, logon_id: u64) {
     if !se_auditing_state_for_category(AuditCategoryId::Logon, AuditEventOutcome::Success) {
         return;
     }
@@ -176,7 +176,7 @@ pub fn se_audit_object_access(
 pub fn se_audit_privilege_use(
     outcome: AuditEventOutcome,
     token: &Token,
-    privilege_luid: &super::token::Luid,
+    privilege_luid: &super::token::luid,
 ) {
     if !se_auditing_state_for_category(AuditCategoryId::PrivilegeUse, outcome) {
         return;
@@ -224,7 +224,7 @@ pub fn se_audit_policy_change(token: &Token, change_type: &str) {
 pub fn se_audit_account_management(
     outcome: AuditEventOutcome,
     token: &Token,
-    target_sid: &Sid,
+    target_sid: &sid,
     operation: &str,
 ) {
     if !se_auditing_state_for_category(AuditCategoryId::AccountManagement, outcome) {
@@ -304,7 +304,7 @@ pub fn se_audit_system_event(event_id: u16, description: &str) {
         return;
     }
 
-    let system_sid = Sid::well_known(super::sid::WellKnownSid::LocalSystem);
+    let system_sid = sid::well_known(super::sid::WellKnownSid::LocalSystem);
     let mut record = AuditRecord::new(event_id, AuditCategory::System, true, system_sid);
 
     record.set_details(description.to_string());
@@ -349,7 +349,7 @@ pub fn se_open_object_audit_alarm(
 /// Check privilege and audit
 pub fn se_privilege_check_and_audit(
     token: &Token,
-    required_privilege: &super::token::Luid,
+    required_privilege: &super::token::luid,
 ) -> bool {
     let has_privilege = token.has_privilege(required_privilege);
 
@@ -381,7 +381,7 @@ fn logon_type_name(logon_type: u32) -> &'static str {
 }
 
 /// Helper: Convert privilege LUID to name
-fn privilege_luid_to_name(luid: &super::token::Luid) -> &'static str {
+fn privilege_luid_to_name(luid: &super::token::luid) -> &'static str {
     match luid.low_part as i64 {
         super::seaccess::privileges::SE_DEBUG => "SeDebugPrivilege",
         super::seaccess::privileges::SE_BACKUP => "SeBackupPrivilege",
@@ -410,7 +410,6 @@ pub fn init() {
 // Demo Functions (for testing and demonstration)
 // ============================================================================
 
-#[allow(dead_code)]
 pub fn run_audit_demo() {
     crate::kprintln!("\n=== Security Audit System Demo ===\n");
 
@@ -441,7 +440,7 @@ pub fn run_audit_demo() {
     crate::kprintln!("\n3. Generating sample audit events...");
 
     // Logon event
-    let user_sid = Sid::well_known(super::sid::WellKnownSid::World);
+    let user_sid = sid::well_known(super::sid::WellKnownSid::World);
     se_audit_logon(
         AuditEventOutcome::Success,
         &user_sid,
@@ -466,7 +465,7 @@ pub fn run_audit_demo() {
     crate::kprintln!("   Generated object access event (4663)");
 
     // Privilege use event
-    let privilege = super::token::Luid {
+    let privilege = super::token::luid {
         low_part: super::seaccess::privileges::SE_DEBUG as u32,
         high_part: 0,
     };
@@ -524,7 +523,6 @@ pub fn run_audit_demo() {
 }
 
 /// Test audit policy changes
-#[allow(dead_code)]
 pub fn test_audit_policy_changes() {
     crate::kprintln!("\n=== Audit Policy Change Test ===\n");
 
@@ -541,7 +539,7 @@ pub fn test_audit_policy_changes() {
     let token = unsafe { &*token_ptr };
 
     // This should be logged (Logon enabled)
-    let sid = Sid::well_known(super::sid::WellKnownSid::World);
+    let sid = sid::well_known(super::sid::WellKnownSid::World);
     se_audit_logon(AuditEventOutcome::Success, &sid, 2, 0x1234);
 
     // This should NOT be logged (ObjectAccess disabled)
@@ -582,7 +580,6 @@ pub fn test_audit_policy_changes() {
 // Verification Functions (compile-time API verification)
 // ============================================================================
 
-#[allow(dead_code)]
 fn verify_audit_policy_api() {
     // Policy management
     super::audit_policy::init();
@@ -597,7 +594,6 @@ fn verify_audit_policy_api() {
     presets::apply_comprehensive();
 }
 
-#[allow(dead_code)]
 fn verify_audit_log_api() {
     // Log management
     super::audit_log::init();
@@ -607,23 +603,22 @@ fn verify_audit_log_api() {
 
     // Querying
     let _ = query_records(None, None, None, None, 100);
-    let sid = Sid::well_known(super::sid::WellKnownSid::World);
+    let sid = sid::well_known(super::sid::WellKnownSid::World);
     let _ = super::audit_log::query_by_user(&sid, 100);
     let _ = super::audit_log::query_by_object("test", 100);
 }
 
-#[allow(dead_code)]
 fn verify_audit_event_api() {
     // Event generation
     init();
 
-    let sid = Sid::well_known(super::sid::WellKnownSid::World);
+    let sid = sid::well_known(super::sid::WellKnownSid::World);
     let token_ptr = create_system_token();
     if token_ptr.is_null() {
         return;
     }
     let token = unsafe { &*token_ptr };
-    let privilege = super::token::Luid {
+    let privilege = super::token::luid {
         low_part: 0,
         high_part: 0,
     };
@@ -639,7 +634,6 @@ fn verify_audit_event_api() {
     se_audit_system_event(0, "test");
 }
 
-#[allow(dead_code)]
 pub fn verify_all() {
     verify_audit_policy_api();
     verify_audit_log_api();
@@ -653,9 +647,11 @@ pub fn verify_all() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::String;
 
     #[test]
     fn test_audit_policy_initialization() {
+        let _guard = crate::se::audit_log::test_support::TestGuard::new();
         crate::se::audit_policy::init();
 
         // Check default policies (Logon and AccountLogon should be enabled)
@@ -671,6 +667,7 @@ mod tests {
 
     #[test]
     fn test_audit_policy_set_get() {
+        let _guard = crate::se::audit_log::test_support::TestGuard::new();
         crate::se::audit_policy::init();
 
         // Set a custom policy
@@ -686,6 +683,7 @@ mod tests {
 
     #[test]
     fn test_audit_policy_enable_disable() {
+        let _guard = crate::se::audit_log::test_support::TestGuard::new();
         crate::se::audit_policy::init();
 
         // Enable a category
@@ -713,6 +711,7 @@ mod tests {
 
     #[test]
     fn test_audit_policy_presets() {
+        let _guard = crate::se::audit_log::test_support::TestGuard::new();
         // Test minimal preset
         presets::apply_minimal();
         assert!(crate::se::audit_policy::is_enabled(
@@ -742,10 +741,11 @@ mod tests {
 
     #[test]
     fn test_audit_log_write() {
+        let _guard = crate::se::audit_log::test_support::TestGuard::new();
         crate::se::audit_log::init();
         audit_clear_log();
 
-        let sid = Sid::well_known(crate::se::sid::WellKnownSid::World);
+        let sid = sid::well_known(crate::se::sid::WellKnownSid::World);
         let mut record = AuditRecord::new(4624, AuditCategory::Logon, true, sid);
         record.set_details(String::from("Test logon event"));
 
@@ -757,12 +757,13 @@ mod tests {
 
     #[test]
     fn test_audit_log_query_by_category() {
+        let _guard = crate::se::audit_log::test_support::TestGuard::new();
         crate::se::audit_log::init();
         audit_clear_log();
 
-        let sid = Sid::well_known(crate::se::sid::WellKnownSid::World);
+        let sid = sid::well_known(crate::se::sid::WellKnownSid::World);
 
-        // Write different event types
+        // write different event types
         for i in 0..5 {
             let category = if i % 2 == 0 {
                 AuditCategory::Logon
@@ -784,12 +785,13 @@ mod tests {
 
     #[test]
     fn test_audit_log_query_by_success() {
+        let _guard = crate::se::audit_log::test_support::TestGuard::new();
         crate::se::audit_log::init();
         audit_clear_log();
 
-        let sid = Sid::well_known(crate::se::sid::WellKnownSid::World);
+        let sid = sid::well_known(crate::se::sid::WellKnownSid::World);
 
-        // Write mixed success/failure events
+        // write mixed success/failure events
         for i in 0..10 {
             let record = AuditRecord::new(4624, AuditCategory::Logon, i % 2 == 0, sid.clone());
             write_audit_record(record);
@@ -806,13 +808,14 @@ mod tests {
 
     #[test]
     fn test_audit_log_rotation() {
+        let _guard = crate::se::audit_log::test_support::TestGuard::new();
         crate::se::audit_log::init();
         audit_clear_log();
 
-        let sid = Sid::well_known(crate::se::sid::WellKnownSid::World);
+        let sid = sid::well_known(crate::se::sid::WellKnownSid::World);
 
-        // Write more than MAX_AUDIT_RECORDS to trigger rotation
-        for i in 0..crate::se::audit_log::MAX_AUDIT_RECORDS + 100 {
+        // write more than MAX_AUDIT_RECORDS to trigger rotation
+        for _i in 0..crate::se::audit_log::MAX_AUDIT_RECORDS + 100 {
             let record = AuditRecord::new(4624, AuditCategory::Logon, true, sid.clone());
             write_audit_record(record);
         }
@@ -828,13 +831,14 @@ mod tests {
 
     #[test]
     fn test_audit_logon_event() {
+        let _guard = crate::se::audit_log::test_support::TestGuard::new();
         init();
         audit_clear_log();
 
         // Enable logon auditing
         se_set_audit_policy(AuditCategoryId::Logon, true, true);
 
-        let sid = Sid::well_known(crate::se::sid::WellKnownSid::World);
+        let sid = sid::well_known(crate::se::sid::WellKnownSid::World);
 
         // Generate a successful logon event
         se_audit_logon(AuditEventOutcome::Success, &sid, 2, 0x1234567890ABCDEF);
@@ -847,12 +851,13 @@ mod tests {
 
     #[test]
     fn test_audit_logoff_event() {
+        let _guard = crate::se::audit_log::test_support::TestGuard::new();
         init();
         audit_clear_log();
 
         se_set_audit_policy(AuditCategoryId::Logon, true, true);
 
-        let sid = Sid::well_known(crate::se::sid::WellKnownSid::World);
+        let sid = sid::well_known(crate::se::sid::WellKnownSid::World);
 
         se_audit_logoff(&sid, 0x1234567890ABCDEF);
 
@@ -863,12 +868,13 @@ mod tests {
 
     #[test]
     fn test_audit_object_access_event() {
+        let _guard = crate::se::audit_log::test_support::TestGuard::new();
         init();
         audit_clear_log();
 
         se_set_audit_policy(AuditCategoryId::ObjectAccess, true, true);
 
-        let token = Token::new_primary(Sid::well_known(crate::se::sid::WellKnownSid::LocalSystem));
+        let token = Token::new_primary(sid::well_known(crate::se::sid::WellKnownSid::LocalSystem));
 
         se_audit_object_access(
             AuditEventOutcome::Success,
@@ -892,13 +898,14 @@ mod tests {
 
     #[test]
     fn test_audit_privilege_use_event() {
+        let _guard = crate::se::audit_log::test_support::TestGuard::new();
         init();
         audit_clear_log();
 
         se_set_audit_policy(AuditCategoryId::PrivilegeUse, true, true);
 
-        let token = Token::new_primary(Sid::well_known(crate::se::sid::WellKnownSid::LocalSystem));
-        let privilege = crate::se::token::Luid {
+        let token = Token::new_primary(sid::well_known(crate::se::sid::WellKnownSid::LocalSystem));
+        let privilege = crate::se::token::luid {
             low_part: crate::se::seaccess::privileges::SE_DEBUG as u32,
             high_part: 0,
         };
@@ -918,12 +925,13 @@ mod tests {
 
     #[test]
     fn test_audit_policy_change_event() {
+        let _guard = crate::se::audit_log::test_support::TestGuard::new();
         init();
         audit_clear_log();
 
         se_set_audit_policy(AuditCategoryId::PolicyChange, true, true);
 
-        let token = Token::new_primary(Sid::well_known(crate::se::sid::WellKnownSid::LocalSystem));
+        let token = Token::new_primary(sid::well_known(crate::se::sid::WellKnownSid::LocalSystem));
 
         se_audit_policy_change(&token, "Audit Policy Modified");
 
@@ -934,12 +942,13 @@ mod tests {
 
     #[test]
     fn test_audit_process_creation() {
+        let _guard = crate::se::audit_log::test_support::TestGuard::new();
         init();
         audit_clear_log();
 
         se_set_audit_policy(AuditCategoryId::DetailTracking, true, true);
 
-        let token = Token::new_primary(Sid::well_known(crate::se::sid::WellKnownSid::LocalSystem));
+        let token = Token::new_primary(sid::well_known(crate::se::sid::WellKnownSid::LocalSystem));
 
         se_audit_process_creation(&token, 1234, "C:\\Windows\\System32\\notepad.exe", 4);
 
@@ -951,6 +960,7 @@ mod tests {
 
     #[test]
     fn test_audit_system_event() {
+        let _guard = crate::se::audit_log::test_support::TestGuard::new();
         init();
         audit_clear_log();
 
@@ -965,13 +975,14 @@ mod tests {
 
     #[test]
     fn test_audit_filtering_respects_policy() {
+        let _guard = crate::se::audit_log::test_support::TestGuard::new();
         init();
         audit_clear_log();
 
         // Disable object access auditing
         se_set_audit_policy(AuditCategoryId::ObjectAccess, false, false);
 
-        let token = Token::new_primary(Sid::well_known(crate::se::sid::WellKnownSid::LocalSystem));
+        let token = Token::new_primary(sid::well_known(crate::se::sid::WellKnownSid::LocalSystem));
 
         // Try to generate an object access event
         se_audit_object_access(
@@ -1005,13 +1016,14 @@ mod tests {
 
     #[test]
     fn test_audit_log_query_by_user() {
+        let _guard = crate::se::audit_log::test_support::TestGuard::new();
         crate::se::audit_log::init();
         audit_clear_log();
 
-        let sid1 = Sid::well_known(crate::se::sid::WellKnownSid::World);
-        let sid2 = Sid::well_known(crate::se::sid::WellKnownSid::LocalSystem);
+        let sid1 = sid::well_known(crate::se::sid::WellKnownSid::World);
+        let sid2 = sid::well_known(crate::se::sid::WellKnownSid::LocalSystem);
 
-        // Write events for different users
+        // write events for different users
         for i in 0..5 {
             let sid = if i % 2 == 0 {
                 sid1.clone()
@@ -1032,13 +1044,14 @@ mod tests {
 
     #[test]
     fn test_audit_log_statistics() {
+        let _guard = crate::se::audit_log::test_support::TestGuard::new();
         crate::se::audit_log::init();
         audit_clear_log();
 
-        let sid = Sid::well_known(crate::se::sid::WellKnownSid::World);
+        let sid = sid::well_known(crate::se::sid::WellKnownSid::World);
 
-        // Write some events
-        for i in 0..10 {
+        // write some events
+        for _i in 0..10 {
             let record = AuditRecord::new(4624, AuditCategory::Logon, true, sid.clone());
             write_audit_record(record);
         }

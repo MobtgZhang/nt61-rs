@@ -2,7 +2,7 @@
 //
 //! Implements the Windows security model:
 //!   * SID (Security Identifier) — uniquely identifies a principal
-//!   * ACL (Access Control List) — list of ACEs granting/denying access
+//!   * ACL (Access control List) — list of ACEs granting/denying access
 //!   * TOKEN — per-process security context with user, groups, privileges
 //!   * SeAccessCheck — the core access validation function
 //!   * SePrivilegeCheck — checks if a token has required privileges
@@ -14,7 +14,6 @@
 
 // Security subsystem uses NT-driver naming (SeAccessCheck,
 // SeSinglePrivilegeCheck, SE_* access masks, SID_*, ...).
-#![allow(unused_imports)]
 
 pub mod acl;
 pub mod logon;
@@ -22,8 +21,6 @@ pub mod seaccess;
 pub mod sid;
 pub mod token;
 pub mod users;
-
-use crate::kprintln;
 
 /// Initialize the Security Reference Monitor.
 pub fn init() {
@@ -42,6 +39,7 @@ pub mod audit;
 pub mod audit_log;
 pub mod audit_policy;
 pub mod descriptor;
+pub mod integrity;
 pub mod logonsession;
 pub mod refmon;
 pub mod sidmgmt;

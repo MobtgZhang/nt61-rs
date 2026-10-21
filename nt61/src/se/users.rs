@@ -18,7 +18,7 @@
 //! continue to live in `se::token`. This module is purely the
 //! "who exists" lookup.
 
-use super::sid::{Sid, WellKnownSid};
+use super::sid::{sid, WellKnownSid};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccountKind {
@@ -34,7 +34,7 @@ pub struct AccountEntry {
     /// the well-known RIDs; `User` accounts use the placeholder
     /// `0x3E8 + slot`.
     pub rid: u32,
-    pub sid: Sid,
+    pub sid: sid,
     pub kind: AccountKind,
     /// Whether the account is currently enabled. OpenSSH skips
     /// disabled accounts at logon.
@@ -43,28 +43,28 @@ pub struct AccountEntry {
 
 const SYSTEM: AccountEntry = AccountEntry {
     rid: 18,
-    sid: Sid::well_known(WellKnownSid::LocalSystem),
+    sid: sid::well_known(WellKnownSid::LocalSystem),
     kind: AccountKind::System,
     enabled: true,
 };
 
 const ADMINS: AccountEntry = AccountEntry {
     rid: 544,
-    sid: Sid::well_known(WellKnownSid::Administrators),
+    sid: sid::well_known(WellKnownSid::Administrators),
     kind: AccountKind::Administrators,
     enabled: true,
 };
 
 const GUESTS: AccountEntry = AccountEntry {
     rid: 546,
-    sid: Sid::well_known(WellKnownSid::Guests),
+    sid: sid::well_known(WellKnownSid::Guests),
     kind: AccountKind::Guest,
     enabled: false,
 };
 
 const NT61TEST: AccountEntry = AccountEntry {
     rid: 1001,
-    sid: Sid::with_2subs([0, 0, 0, 0, 0, 5], 21, 1001),
+    sid: sid::with_2subs([0, 0, 0, 0, 0, 5], 21, 1001),
     kind: AccountKind::User,
     enabled: true,
 };
@@ -72,7 +72,7 @@ const NT61TEST: AccountEntry = AccountEntry {
 const BUILTIN: &[AccountEntry] = &[SYSTEM, ADMINS, GUESTS, NT61TEST];
 
 /// Look up an account by SID.
-pub fn lookup_by_sid(sid: &Sid) -> Option<AccountEntry> {
+pub fn lookup_by_sid(sid: &sid) -> Option<AccountEntry> {
     for a in BUILTIN {
         if a.sid.equals(sid) {
             return Some(*a);
@@ -131,7 +131,7 @@ mod tests {
 
     #[test]
     fn lookup_system_by_sid() {
-        let sid = Sid::well_known(WellKnownSid::LocalSystem);
+        let sid = sid::well_known(WellKnownSid::LocalSystem);
         let sys = lookup_by_sid(&sid).unwrap();
         assert_eq!(sys.rid, 18);
     }

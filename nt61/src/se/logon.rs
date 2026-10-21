@@ -12,7 +12,7 @@
 //! All tokens returned here are kernel-pool allocated; the
 //! caller is responsible for `release()`-ing them.
 
-use super::sid::Sid;
+use super::sid::sid;
 use super::token::{
     privileges as priv_luids, ImpersonationLevel, Token, TokenGroup, TokenPrivilege, TokenTypeEnum,
     SE_GROUP_ENABLED, SE_GROUP_ENABLED_BY_DEFAULT, SE_PRIVILEGE_ENABLED,
@@ -74,7 +74,7 @@ pub fn logon_user(name: &str) -> Option<*mut Token> {
 
 /// Build an impersonation token from a primary token. Used by
 /// `ImpersonateLoggedOnUser` / `SetThreadToken` paths.
-pub fn create_impersonation(primary_user_sid: Sid, level: ImpersonationLevel) -> Token {
+pub fn create_impersonation(primary_user_sid: sid, level: ImpersonationLevel) -> Token {
     let mut t = Token::new_impersonation(primary_user_sid, level);
     t.add_group(TokenGroup {
         sid: super::sid::SID_EVERYONE,
@@ -85,7 +85,7 @@ pub fn create_impersonation(primary_user_sid: Sid, level: ImpersonationLevel) ->
 
 /// Convert a SID back to the user name (inverse of logon_user).
 /// Returns `None` for SIDs we don't know.
-pub fn name_for_sid(sid: &Sid) -> Option<&'static str> {
+pub fn name_for_sid(sid: &sid) -> Option<&'static str> {
     let account = users::lookup_by_sid(sid)?;
     Some(match account.kind {
         users::AccountKind::System => "SYSTEM",
@@ -96,7 +96,7 @@ pub fn name_for_sid(sid: &Sid) -> Option<&'static str> {
 }
 
 /// Token type as exposed to user-mode callers (e.g. via
-/// `NtQueryInformationToken(TokenType)`).
+/// `NT_QUERY_INFORMATION_TOKEN(TOKEN_TYPE)`).
 pub fn token_kind(t: &Token) -> TokenTypeEnum {
     t.token_type
 }
@@ -130,14 +130,14 @@ mod tests {
 
     #[test]
     fn name_for_sid_round_trip() {
-        let sid = Sid::well_known(WellKnownSid::LocalSystem);
-        assert_eq!(name_for_sid(&sid), Some("SYSTEM"));
+        let system_sid = crate::se::sid::sid::well_known(WellKnownSid::LocalSystem);
+        assert_eq!(name_for_sid(&system_sid), Some("SYSTEM"));
     }
 
     #[test]
     fn impersonation_token_has_correct_level() {
-        let sid = Sid::well_known(WellKnownSid::LocalSystem);
-        let t = create_impersonation(sid, ImpersonationLevel::SecurityDelegation);
+        let system_sid = crate::se::sid::sid::well_known(WellKnownSid::LocalSystem);
+        let t = create_impersonation(system_sid, ImpersonationLevel::SecurityDelegation);
         assert_eq!(t.token_type, TokenTypeEnum::TokenImpersonation);
         assert_eq!(
             t.impersonation_level,

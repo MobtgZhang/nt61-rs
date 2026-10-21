@@ -11,21 +11,21 @@
 
 use alloc::vec::Vec;
 
-use super::sid::{Sid, WellKnownSid, SID_MAX_SUB_AUTHORITIES, SID_REVISION};
+use super::sid::{sid, WellKnownSid, SID_MAX_SUB_AUTHORITIES, SID_REVISION};
 
 pub fn allocate_and_initialize_sid(
     identifier_authority: [u8; 6],
     sub_authority_count: u8,
     sub_authorities: &[u32],
-) -> *mut Sid {
+) -> *mut sid {
     if sub_authority_count as usize > SID_MAX_SUB_AUTHORITIES {
         return core::ptr::null_mut();
     }
 
     let sid_ptr = crate::mm::pool::allocate(
         crate::mm::pool::PoolType::NonPaged,
-        core::mem::size_of::<Sid>(),
-    ) as *mut Sid;
+        core::mem::size_of::<sid>(),
+    ) as *mut sid;
 
     if sid_ptr.is_null() {
         return core::ptr::null_mut();
@@ -48,13 +48,13 @@ pub fn allocate_and_initialize_sid(
     sid_ptr
 }
 
-pub fn free_sid(sid: *mut Sid) {
+pub fn free_sid(sid: *mut sid) {
     if !sid.is_null() {
         crate::mm::pool::free(sid as *mut u8);
     }
 }
 
-pub fn copy_sid(destination: *mut Sid, source: *const Sid) -> bool {
+pub fn copy_sid(destination: *mut sid, source: *const sid) -> bool {
     if destination.is_null() || source.is_null() {
         return false;
     }
@@ -66,7 +66,7 @@ pub fn copy_sid(destination: *mut Sid, source: *const Sid) -> bool {
     true
 }
 
-pub fn equal_sid(sid1: *const Sid, sid2: *const Sid) -> bool {
+pub fn equal_sid(sid1: *const sid, sid2: *const sid) -> bool {
     if sid1.is_null() || sid2.is_null() {
         return false;
     }
@@ -74,7 +74,7 @@ pub fn equal_sid(sid1: *const Sid, sid2: *const Sid) -> bool {
     unsafe { (*sid1).equals(&*sid2) }
 }
 
-pub fn valid_sid(sid: *const Sid) -> bool {
+pub fn valid_sid(sid: *const sid) -> bool {
     if sid.is_null() {
         return false;
     }
@@ -94,7 +94,7 @@ pub fn valid_sid(sid: *const Sid) -> bool {
     }
 }
 
-pub fn length_sid(sid: *const Sid) -> u32 {
+pub fn length_sid(sid: *const sid) -> u32 {
     if sid.is_null() {
         return 0;
     }
@@ -102,7 +102,7 @@ pub fn length_sid(sid: *const Sid) -> u32 {
     unsafe { (*sid).size() as u32 }
 }
 
-pub fn identifier_authority_sid(sid: *const Sid) -> u64 {
+pub fn identifier_authority_sid(sid: *const sid) -> u64 {
     if sid.is_null() {
         return 0;
     }
@@ -110,7 +110,7 @@ pub fn identifier_authority_sid(sid: *const Sid) -> u64 {
     unsafe { (*sid).identifier_authority() }
 }
 
-pub fn sub_authority_count_sid(sid: *const Sid) -> u8 {
+pub fn sub_authority_count_sid(sid: *const sid) -> u8 {
     if sid.is_null() {
         return 0;
     }
@@ -118,7 +118,7 @@ pub fn sub_authority_count_sid(sid: *const Sid) -> u8 {
     unsafe { (*sid).sub_authority_count }
 }
 
-pub fn sub_authority_sid(sid: *mut Sid, sub_authority_index: u32) -> *mut u32 {
+pub fn sub_authority_sid(sid: *mut sid, sub_authority_index: u32) -> *mut u32 {
     if sid.is_null() {
         return core::ptr::null_mut();
     }
@@ -133,7 +133,7 @@ pub fn sub_authority_sid(sid: *mut Sid, sub_authority_index: u32) -> *mut u32 {
 }
 
 pub fn convert_sid_to_unicode_string(
-    sid: *const Sid,
+    sid: *const sid,
     output: &mut [u16],
     max_length: usize,
 ) -> bool {
@@ -161,26 +161,26 @@ pub fn convert_sid_to_unicode_string(
     }
 }
 
-pub fn allocate_well_known_sid(which: WellKnownSid) -> *mut Sid {
+pub fn allocate_well_known_sid(which: WellKnownSid) -> *mut sid {
     let sid_ptr = crate::mm::pool::allocate(
         crate::mm::pool::PoolType::NonPaged,
-        core::mem::size_of::<Sid>(),
-    ) as *mut Sid;
+        core::mem::size_of::<sid>(),
+    ) as *mut sid;
 
     if sid_ptr.is_null() {
         return core::ptr::null_mut();
     }
 
     unsafe {
-        *sid_ptr = Sid::well_known(which);
+        *sid_ptr = sid::well_known(which);
     }
 
     sid_ptr
 }
 
 pub fn create_security_descriptor_for_sid(
-    owner: *const Sid,
-    group: *const Sid,
+    owner: *const sid,
+    group: *const sid,
 ) -> *mut super::seaccess::SecurityDescriptor {
     if owner.is_null() {
         return core::ptr::null_mut();
@@ -208,7 +208,7 @@ pub fn create_security_descriptor_for_sid(
     sd_ptr
 }
 
-pub fn parse_sid_string(sid_string: &str) -> Option<Sid> {
+pub fn parse_sid_string(sid_string: &str) -> Option<sid> {
     let parts: Vec<&str> = sid_string.split('-').collect();
 
     if parts.len() < 3 || parts[0] != "S" {
@@ -237,7 +237,7 @@ pub fn parse_sid_string(sid_string: &str) -> Option<Sid> {
         sub_authorities[i] = parts[3 + i].parse::<u32>().ok()?;
     }
 
-    Some(Sid::with_authority_and_subs_arr(
+    Some(sid::with_authority_and_subs_arr(
         ia,
         sub_count as u8,
         sub_authorities[0],
@@ -251,16 +251,16 @@ pub fn parse_sid_string(sid_string: &str) -> Option<Sid> {
     ))
 }
 
-pub fn is_well_known_sid(sid: *const Sid, which: WellKnownSid) -> bool {
+pub fn is_well_known_sid(sid: *const sid, which: WellKnownSid) -> bool {
     if sid.is_null() {
         return false;
     }
 
-    let well_known = Sid::well_known(which);
+    let well_known = sid::well_known(which);
     unsafe { (*sid).equals(&well_known) }
 }
 
-pub fn get_sid_rid(sid: *const Sid) -> u32 {
+pub fn get_sid_rid(sid: *const sid) -> u32 {
     if sid.is_null() {
         return 0;
     }
@@ -274,7 +274,7 @@ pub fn get_sid_rid(sid: *const Sid) -> u32 {
     }
 }
 
-pub fn sid_in_domain(sid: *const Sid, domain_sid: *const Sid) -> bool {
+pub fn sid_in_domain(sid: *const sid, domain_sid: *const sid) -> bool {
     if sid.is_null() || domain_sid.is_null() {
         return false;
     }
@@ -301,7 +301,7 @@ pub fn sid_in_domain(sid: *const Sid, domain_sid: *const Sid) -> bool {
     }
 }
 
-pub fn create_domain_sid(domain_sid: *const Sid, rid: u32) -> *mut Sid {
+pub fn create_domain_sid(domain_sid: *const sid, rid: u32) -> *mut sid {
     if domain_sid.is_null() {
         return core::ptr::null_mut();
     }
@@ -314,8 +314,8 @@ pub fn create_domain_sid(domain_sid: *const Sid, rid: u32) -> *mut Sid {
 
         let new_sid_ptr = crate::mm::pool::allocate(
             crate::mm::pool::PoolType::NonPaged,
-            core::mem::size_of::<Sid>(),
-        ) as *mut Sid;
+            core::mem::size_of::<sid>(),
+        ) as *mut sid;
 
         if new_sid_ptr.is_null() {
             return core::ptr::null_mut();
@@ -330,7 +330,7 @@ pub fn create_domain_sid(domain_sid: *const Sid, rid: u32) -> *mut Sid {
     }
 }
 
-pub fn create_integrity_sid(level: u32) -> *mut Sid {
+pub fn create_integrity_sid(level: u32) -> *mut sid {
     let ia = [0, 0, 0, 0, 0, 16]; // Authority 16 = Mandatory Label
     let sub_authorities = [level];
 

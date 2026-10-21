@@ -1,4 +1,4 @@
-//! Access Control Lists (ACL) and Access Control Entries (ACE)
+//! Access control Lists (ACL) and Access control Entries (ACE)
 //
 //! An ACL is a list of ACEs. Each ACE grants or denies a specific
 //! set of access rights to a set of SIDs.
@@ -13,7 +13,7 @@
 //
 //! References: Windows SDK winnt.h, WRK
 
-use super::sid::{Sid, SID_MAX_SUB_AUTHORITIES};
+use super::sid::sid;
 
 /// ACL revision levels.
 pub const ACL_REVISION: u8 = 2;
@@ -205,7 +205,7 @@ pub struct Acl {
 }
 
 impl Acl {
-    /// Create an empty ACL.
+    /// create an empty ACL.
     pub const fn new() -> Self {
         Self {
             revision: ACL_REVISION,
@@ -264,7 +264,7 @@ impl Acl {
             if matches!(
                 self.data[offset],
                 0x00 | 0x01 | 0x02 | 0x09 | 0x0A | 0x0D | 0x0E | 0x11 | 0x14
-            ) && (ace_size < 16 || Sid::from_bytes(&self.data[offset + 8..ace_end]).is_none())
+            ) && (ace_size < 16 || sid::from_bytes(&self.data[offset + 8..ace_end]).is_none())
             {
                 return None;
             }
@@ -276,16 +276,16 @@ impl Acl {
     }
 
     /// Add an ACCESS_ALLOWED_ACE to this ACL.
-    pub fn add_access_allowed(&mut self, sid: &Sid, mask: u32, flags: AceFlags) -> bool {
+    pub fn add_access_allowed(&mut self, sid: &sid, mask: u32, flags: AceFlags) -> bool {
         self.add_ace(AceType::AccessAllowed, flags, mask, sid)
     }
 
     /// Add an ACCESS_DENIED_ACE to this ACL.
-    pub fn add_access_denied(&mut self, sid: &Sid, mask: u32, flags: AceFlags) -> bool {
+    pub fn add_access_denied(&mut self, sid: &sid, mask: u32, flags: AceFlags) -> bool {
         self.add_ace(AceType::AccessDenied, flags, mask, sid)
     }
 
-    pub fn add_ace(&mut self, ace_type: AceType, flags: AceFlags, mask: u32, sid: &Sid) -> bool {
+    pub fn add_ace(&mut self, ace_type: AceType, flags: AceFlags, mask: u32, sid: &sid) -> bool {
         if !sid.is_valid() || self.ace_count as usize >= MAX_ACES {
             return false;
         }
@@ -303,13 +303,13 @@ impl Acl {
 
         let data = &mut self.data;
 
-        // Write header
+        // write header
         data[offset] = ace_type as u8;
         data[offset + 1] = flags.bits();
         data[offset + 2] = (ace_size & 0xFF) as u8;
         data[offset + 3] = (ace_size >> 8) as u8;
 
-        // Write mask
+        // write mask
         data[offset + 4] = (mask & 0xFF) as u8;
         data[offset + 5] = ((mask >> 8) & 0xFF) as u8;
         data[offset + 6] = ((mask >> 16) & 0xFF) as u8;
@@ -344,7 +344,7 @@ pub static ACL_EVERYONE_FULL: Acl = Acl::new();
 /// Well-known NULL DACL (no protection).
 pub static ACL_NULL: Acl = Acl::new();
 
-/// Create a default DACL that grants Everyone read/execute access.
+/// create a default DACL that grants Everyone read/execute access.
 pub fn create_default_dacl() -> Acl {
     // Note: in real implementation, we'd use SID_EVERYONE
     // For now, just create an empty ACL.
@@ -367,11 +367,11 @@ pub fn init() {
 #[cfg(test)]
 mod tests {
     use super::{AceType, Acl, ACL_REVISION};
-    use crate::se::sid::Sid;
+    use crate::se::sid::sid;
 
     #[test]
     fn malformed_sid_count_is_bounded() {
-        let sid = Sid {
+        let sid = sid {
             revision: 1,
             sub_authority_count: u8::MAX,
             identifier_authority: [0; 6],
@@ -381,7 +381,7 @@ mod tests {
         assert!(!sid.is_valid());
         assert_eq!(sid.size(), 8 + 8 * 4);
         let _ = sid.to_string();
-        assert!(!sid.equals(&Sid::new()));
+        assert!(!sid.equals(&sid::new()));
     }
 
     #[test]
@@ -403,7 +403,7 @@ mod tests {
     #[test]
     fn acl_copies_and_validates_sid_in_added_ace() {
         let mut acl = Acl::new();
-        let sid = Sid::well_known(crate::se::sid::WellKnownSid::LocalSystem);
+        let sid = sid::well_known(crate::se::sid::WellKnownSid::LocalSystem);
 
         assert!(acl.add_access_allowed(&sid, 0x1234, super::AceFlags::NONE));
         assert!(acl.is_valid());

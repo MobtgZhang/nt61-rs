@@ -50,9 +50,9 @@ pub fn run_tests() -> bool {
 // =============================================================================
 
 fn test_sid_creation() -> bool {
-    use crate::se::sid::Sid;
+    use crate::se::sid::sid;
 
-    let sid = Sid::well_known(crate::se::sid::WellKnownSid::LocalSystem);
+    let sid = sid::well_known(crate::se::sid::WellKnownSid::LocalSystem);
 
     // Verify revision
     if sid.revision != 1 {
@@ -73,12 +73,12 @@ fn test_sid_creation() -> bool {
 }
 
 fn test_sid_validation() -> bool {
-    use crate::se::sid::Sid;
+    use crate::se::sid::sid;
 
-    let sid = Sid::well_known(crate::se::sid::WellKnownSid::LocalSystem);
+    let sid = sid::well_known(crate::se::sid::WellKnownSid::LocalSystem);
 
     // Valid SID should have:
-    // - Revision = 1
+    // - revision = 1
     // - Sub-authority count > 0 and <= 15
     // - Valid identifier authority
 
@@ -94,10 +94,10 @@ fn test_sid_validation() -> bool {
 }
 
 fn test_sid_comparison() -> bool {
-    use crate::se::sid::Sid;
+    use crate::se::sid::sid;
 
-    let sid1 = Sid::well_known(crate::se::sid::WellKnownSid::LocalSystem);
-    let sid2 = Sid::well_known(crate::se::sid::WellKnownSid::LocalSystem);
+    let sid1 = sid::well_known(crate::se::sid::WellKnownSid::LocalSystem);
+    let sid2 = sid::well_known(crate::se::sid::WellKnownSid::LocalSystem);
 
     // Should be equal
     if !sid1.equals(&sid2) {
@@ -105,7 +105,7 @@ fn test_sid_comparison() -> bool {
     }
 
     // Different SIDs should not be equal
-    let sid3 = Sid::well_known(crate::se::sid::WellKnownSid::Administrators);
+    let sid3 = sid::well_known(crate::se::sid::WellKnownSid::Administrators);
     if sid1.equals(&sid3) {
         return false;
     }
@@ -114,12 +114,12 @@ fn test_sid_comparison() -> bool {
 }
 
 fn test_well_known_sids() -> bool {
-    use crate::se::sid::Sid;
+    use crate::se::sid::sid;
 
     // Test well-known SID creation
-    let system = Sid::well_known(crate::se::sid::WellKnownSid::LocalSystem);
-    let admins = Sid::well_known(crate::se::sid::WellKnownSid::Administrators);
-    let users = Sid::well_known(crate::se::sid::WellKnownSid::Users);
+    let system = sid::well_known(crate::se::sid::WellKnownSid::LocalSystem);
+    let admins = sid::well_known(crate::se::sid::WellKnownSid::Administrators);
+    let users = sid::well_known(crate::se::sid::WellKnownSid::Users);
 
     // Verify they're all different
     if system.equals(&admins) {
@@ -160,11 +160,11 @@ fn test_acl_creation() -> bool {
 }
 
 fn test_ace_addition() -> bool {
-    use crate::se::acl::{AceType, Acl};
-    use crate::se::sid::Sid;
+    use crate::se::acl::Acl;
+    use crate::se::sid::sid;
 
     let mut acl = Acl::new();
-    let sid = Sid::well_known(crate::se::sid::WellKnownSid::Administrators);
+    let sid = sid::well_known(crate::se::sid::WellKnownSid::Administrators);
 
     // Add an ACE
     let result = acl.add_access_allowed(
@@ -223,14 +223,14 @@ fn test_token_creation() -> bool {
 }
 
 fn test_token_sid_assignment() -> bool {
-    use crate::se::{sid::Sid, token};
+    use crate::se::{sid::sid, token};
 
     let token_ptr = token::create_system_token();
     if token_ptr.is_null() {
         return false;
     }
 
-    let sid = Sid::well_known(crate::se::sid::WellKnownSid::LocalSystem);
+    let sid = sid::well_known(crate::se::sid::WellKnownSid::LocalSystem);
 
     unsafe {
         (*token_ptr).user = sid;
@@ -245,7 +245,7 @@ fn test_token_sid_assignment() -> bool {
 }
 
 fn test_token_groups() -> bool {
-    use crate::se::{sid::Sid, token};
+    use crate::se::{sid::sid, token};
 
     let token_ptr = token::create_system_token();
     if token_ptr.is_null() {
@@ -254,7 +254,7 @@ fn test_token_groups() -> bool {
 
     unsafe {
         // Add groups
-        let admin_sid = Sid::well_known(crate::se::sid::WellKnownSid::Administrators);
+        let admin_sid = sid::well_known(crate::se::sid::WellKnownSid::Administrators);
         let before = (*token_ptr).group_count;
         (*token_ptr).add_group(token::TokenGroup::new(
             admin_sid,
@@ -306,19 +306,14 @@ fn test_token_privileges() -> bool {
 // =============================================================================
 
 fn test_access_check_allow() -> bool {
-    use crate::se::{
-        acl::{AceType, Acl},
-        seaccess,
-        sid::Sid,
-        token,
-    };
+    use crate::se::{seaccess, token};
 
     let token_ptr = token::create_system_token();
     if token_ptr.is_null() {
         return false;
     }
 
-    // Create security descriptor with NULL DACL (allow all)
+    // create security descriptor with NULL DACL (allow all)
     let sd = seaccess::create_null_dacl_sd();
     if sd.is_null() {
         return false;
@@ -345,31 +340,26 @@ fn test_access_check_allow() -> bool {
 }
 
 fn test_access_check_deny() -> bool {
-    use crate::se::{
-        acl::{AceType, Acl},
-        seaccess,
-        sid::Sid,
-        token,
-    };
+    use crate::se::{acl::Acl, seaccess, sid::sid, token};
 
     let token_ptr = token::create_system_token();
     if token_ptr.is_null() {
         return false;
     }
 
-    // Create security descriptor with explicit deny
+    // create security descriptor with explicit deny
     let mut dacl = Acl::new();
-    let sid = Sid::well_known(crate::se::sid::WellKnownSid::Users);
+    let sid = sid::well_known(crate::se::sid::WellKnownSid::Users);
     dacl.add_access_denied(&sid, 0x001F01FF, crate::se::acl::AceFlags::NONE);
 
     let dacl = Acl::new();
 
-    let sd = seaccess::SecurityDescriptor {
+    let _sd = seaccess::SecurityDescriptor {
         revision: 1,
         sbz1: 0,
         control: 0x8004,
-        owner: Sid::well_known(crate::se::sid::WellKnownSid::LocalSystem),
-        group: Sid::well_known(crate::se::sid::WellKnownSid::Administrators),
+        owner: sid::well_known(crate::se::sid::WellKnownSid::LocalSystem),
+        group: sid::well_known(crate::se::sid::WellKnownSid::Administrators),
         sacl: core::ptr::null(),
         dacl: &dacl as *const Acl,
     };
@@ -419,7 +409,7 @@ fn test_security_descriptor_creation() -> bool {
 }
 
 fn test_security_descriptor_dacl() -> bool {
-    use crate::se::{acl::Acl, seaccess, sid::Sid};
+    use crate::se::{acl::Acl, seaccess, sid::sid};
 
     let dacl = Acl::new();
 
@@ -427,8 +417,8 @@ fn test_security_descriptor_dacl() -> bool {
         revision: 1,
         sbz1: 0,
         control: 0x8004,
-        owner: Sid::well_known(crate::se::sid::WellKnownSid::LocalSystem),
-        group: Sid::well_known(crate::se::sid::WellKnownSid::Administrators),
+        owner: sid::well_known(crate::se::sid::WellKnownSid::LocalSystem),
+        group: sid::well_known(crate::se::sid::WellKnownSid::Administrators),
         sacl: core::ptr::null(),
         dacl: &dacl as *const Acl,
     };
@@ -442,10 +432,10 @@ fn test_security_descriptor_dacl() -> bool {
 }
 
 fn test_security_descriptor_owner() -> bool {
-    use crate::se::{seaccess, sid::Sid};
+    use crate::se::{seaccess, sid::sid};
 
-    let owner = Sid::well_known(crate::se::sid::WellKnownSid::LocalSystem);
-    let group = Sid::well_known(crate::se::sid::WellKnownSid::Administrators);
+    let owner = sid::well_known(crate::se::sid::WellKnownSid::LocalSystem);
+    let group = sid::well_known(crate::se::sid::WellKnownSid::Administrators);
 
     let sd = seaccess::SecurityDescriptor {
         revision: 1,

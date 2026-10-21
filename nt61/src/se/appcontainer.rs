@@ -18,7 +18,7 @@
 
 use alloc::vec::Vec;
 
-use super::sid::Sid;
+use super::sid::sid;
 use super::token::{Token, TokenGroup, SE_GROUP_ENABLED, SE_GROUP_ENABLED_BY_DEFAULT};
 
 pub const TOKEN_IS_APP_CONTAINER: u32 = 0x00000001;
@@ -41,15 +41,15 @@ pub mod capabilities {
     pub const CAPABILITY_CONTACTS: u32 = 0x0000000C;
 }
 
-pub fn create_capability_sid(capability_rid: u32) -> Sid {
+pub fn create_capability_sid(capability_rid: u32) -> sid {
     let ia = [0, 0, 0, 0, 0, 15];
-    Sid::with_authority_and_subs_arr(ia, 2, 3, capability_rid, 0, 0, 0, 0, 0, 0)
+    sid::with_authority_and_subs_arr(ia, 2, 3, capability_rid, 0, 0, 0, 0, 0, 0)
 }
 
-pub fn create_app_container_sid(package_name: &str) -> Sid {
+pub fn create_app_container_sid(package_name: &str) -> sid {
     let ia = [0, 0, 0, 0, 0, 15];
     let hash = simple_string_hash(package_name);
-    Sid::with_authority_and_subs_arr(ia, 2, 2, hash, 0, 0, 0, 0, 0, 0)
+    sid::with_authority_and_subs_arr(ia, 2, 2, hash, 0, 0, 0, 0, 0, 0)
 }
 
 fn simple_string_hash(s: &str) -> u32 {
@@ -69,7 +69,7 @@ pub fn se_token_is_app_container(token: *const Token) -> bool {
 
 pub fn se_create_app_container_token(
     parent_token: *const Token,
-    package_sid: &Sid,
+    package_sid: &sid,
     capabilities: &[u32],
 ) -> *mut Token {
     if parent_token.is_null() {
@@ -110,7 +110,7 @@ pub fn se_create_app_container_token(
     new_token
 }
 
-pub fn se_query_app_container_info(token: *const Token) -> Option<(Sid, Vec<Sid>)> {
+pub fn se_query_app_container_info(token: *const Token) -> Option<(sid, Vec<sid>)> {
     if !se_token_is_app_container(token) {
         return None;
     }
@@ -157,7 +157,7 @@ pub fn se_token_has_capability(token: *const Token, capability_rid: u32) -> bool
 
 pub fn se_app_container_access_check(
     token: *const Token,
-    desired_access: u32,
+    _desired_access: u32,
     resource_type: AppContainerResourceType,
 ) -> bool {
     if !se_token_is_app_container(token) {
@@ -195,12 +195,12 @@ pub enum AppContainerResourceType {
     EnterpriseAuth,
 }
 
-pub fn se_derive_app_container_sid_from_name(package_name: &str) -> *mut Sid {
+pub fn se_derive_app_container_sid_from_name(package_name: &str) -> *mut sid {
     let sid = create_app_container_sid(package_name);
     let sid_ptr = crate::mm::pool::allocate(
         crate::mm::pool::PoolType::NonPaged,
-        core::mem::size_of::<Sid>(),
-    ) as *mut Sid;
+        core::mem::size_of::<sid>(),
+    ) as *mut sid;
 
     if !sid_ptr.is_null() {
         unsafe {
@@ -213,16 +213,16 @@ pub fn se_derive_app_container_sid_from_name(package_name: &str) -> *mut Sid {
 
 #[repr(C)]
 pub struct SecurityAttributes {
-    pub app_container_sid: Sid,
-    pub capabilities: [Sid; 16],
+    pub app_container_sid: sid,
+    pub capabilities: [sid; 16],
     pub capability_count: usize,
 }
 
 impl SecurityAttributes {
     pub fn new() -> Self {
         Self {
-            app_container_sid: Sid::new(),
-            capabilities: [Sid::new(); 16],
+            app_container_sid: sid::new(),
+            capabilities: [sid::new(); 16],
             capability_count: 0,
         }
     }

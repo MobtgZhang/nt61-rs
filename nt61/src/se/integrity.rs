@@ -1,4 +1,4 @@
-//! Mandatory Integrity Control (MIC)
+//! Mandatory Integrity control (MIC)
 //!
 //! Implements Windows Vista+ integrity levels that enforce the "no write-up"
 //! policy: a process at a lower integrity level cannot write to objects at
@@ -14,9 +14,10 @@
 //!
 //! References: Windows SDK, Windows Internals
 
-use super::sid::Sid;
-use super::token::{Token, TokenGroup, SE_GROUP_INTEGRITY, SE_GROUP_INTEGRITY_ENABLED, SE_GROUP_ENABLED};
-use super::acl::Acl;
+use super::sid::sid;
+use super::token::{
+    Token, TokenGroup, SE_GROUP_ENABLED, SE_GROUP_INTEGRITY, SE_GROUP_INTEGRITY_ENABLED,
+};
 
 pub const SECURITY_MANDATORY_UNTRUSTED_RID: u32 = 0x0000;
 pub const SECURITY_MANDATORY_LOW_RID: u32 = 0x1000;
@@ -30,22 +31,16 @@ pub const SYSTEM_MANDATORY_LABEL_NO_WRITE_UP: u32 = 0x1;
 pub const SYSTEM_MANDATORY_LABEL_NO_READ_UP: u32 = 0x2;
 pub const SYSTEM_MANDATORY_LABEL_NO_EXECUTE_UP: u32 = 0x4;
 
-pub fn create_integrity_level_sid(level_rid: u32) -> Sid {
+pub fn create_integrity_level_sid(level_rid: u32) -> sid {
     let ia = [0, 0, 0, 0, 0, 16];
-    Sid::with_authority_and_subs_arr(
-        ia,
-        1,
-        level_rid, 0, 0, 0, 0, 0, 0, 0,
-    )
+    sid::with_authority_and_subs_arr(ia, 1, level_rid, 0, 0, 0, 0, 0, 0, 0)
 }
 
 pub fn se_token_integrity_level(token: *const Token) -> u32 {
     if token.is_null() {
         return SECURITY_MANDATORY_MEDIUM_RID;
     }
-    unsafe {
-        (*token).integrity_level_rid
-    }
+    unsafe { (*token).integrity_level_rid }
 }
 
 pub fn se_set_token_integrity_level(token: *mut Token, level_rid: u32) -> bool {
@@ -63,7 +58,8 @@ pub fn se_set_token_integrity_level(token: *mut Token, level_rid: u32) -> bool {
             let sid = &(*token).groups[i].sid;
             if sid.identifier_authority() == 16 {
                 (*token).groups[i].sid = integrity_sid;
-                (*token).groups[i].attributes = SE_GROUP_INTEGRITY | SE_GROUP_INTEGRITY_ENABLED | SE_GROUP_ENABLED;
+                (*token).groups[i].attributes =
+                    SE_GROUP_INTEGRITY | SE_GROUP_INTEGRITY_ENABLED | SE_GROUP_ENABLED;
                 found = true;
                 break;
             }
@@ -91,11 +87,10 @@ pub fn se_check_mandatory_integrity(
 
     let subject_level = se_token_integrity_level(subject_token);
 
-    const WRITE_ACCESS_MASK: u32 =
-        super::seaccess::ACCESS_GENERIC_WRITE |
-        super::seaccess::ACCESS_WRITE_DAC |
-        super::seaccess::ACCESS_WRITE_OWNER |
-        0x40000000; // GENERIC_WRITE
+    const WRITE_ACCESS_MASK: u32 = super::seaccess::ACCESS_GENERIC_WRITE
+        | super::seaccess::ACCESS_WRITE_DAC
+        | super::seaccess::ACCESS_WRITE_OWNER
+        | 0x40000000; // GENERIC_WRITE
 
     if (desired_access & WRITE_ACCESS_MASK) != 0 {
         if subject_level < object_integrity {
@@ -129,14 +124,17 @@ pub fn se_get_object_integrity_level(
                 }
 
                 let ace_type = sacl.data[offset];
-                let ace_size = (sacl.data[offset + 2] as usize) | ((sacl.data[offset + 3] as usize) << 8);
+                let ace_size =
+                    (sacl.data[offset + 2] as usize) | ((sacl.data[offset + 3] as usize) << 8);
                 if ace_size < 16 || offset + ace_size > limit {
                     break;
                 }
 
                 if ace_type == 0x11 {
                     let sid_offset = offset + 8;
-                    if let Some(sid) = read_sid_from_acl_data(&sacl.data[sid_offset..offset + ace_size]) {
+                    if let Some(sid) =
+                        read_sid_from_acl_data(&sacl.data[sid_offset..offset + ace_size])
+                    {
                         if sid.identifier_authority() == 16 && sid.sub_authority_count >= 1 {
                             return sid.sub_authority[0];
                         }
@@ -151,19 +149,18 @@ pub fn se_get_object_integrity_level(
     SECURITY_MANDATORY_MEDIUM_RID
 }
 
-fn read_sid_from_acl_data(data: &[u8]) -> Option<Sid> {
-    Sid::from_bytes(data)
+fn read_sid_from_acl_data(data: &[u8]) -> Option<sid> {
+    sid::from_bytes(data)
 }
 
 pub fn se_set_object_integrity_level(
     security_descriptor: *mut super::seaccess::SecurityDescriptor,
-    level_rid: u32,
-    policy: u32,
+    _level_rid: u32,
+    _policy: u32,
 ) -> bool {
     if security_descriptor.is_null() {
         return false;
     }
-
 
     unsafe {
         (*security_descriptor).control |= super::descriptor::SE_SACL_PRESENT;
@@ -249,5 +246,4 @@ pub fn se_integrity_access_check(
     se_check_mandatory_integrity(subject_token, object_integrity, desired_access)
 }
 
-pub fn init() {
-}
+pub fn init() {}

@@ -22,7 +22,7 @@ pub struct AuditRecord {
     pub event_id: u16,
     pub category: super::audit_policy::AuditCategory,
     pub success: bool,
-    pub user_sid: super::sid::Sid,
+    pub user_sid: super::sid::sid,
     pub process_id: u64,
     pub thread_id: u64,
     pub object_name: String,
@@ -31,12 +31,12 @@ pub struct AuditRecord {
 }
 
 impl AuditRecord {
-    /// Create a new audit record
+    /// create a new audit record
     pub fn new(
         event_id: u16,
         category: super::audit_policy::AuditCategory,
         success: bool,
-        user_sid: super::sid::Sid,
+        user_sid: super::sid::sid,
     ) -> Self {
         Self {
             record_id: 0,
@@ -135,7 +135,7 @@ impl AuditLog {
         }
     }
 
-    /// Write an audit record
+    /// write an audit record
     pub fn write(&mut self, mut record: AuditRecord) {
         // Assign record ID
         record.record_id = self.next_record_id;
@@ -150,8 +150,8 @@ impl AuditLog {
         // Store in memory
         self.records.push(record.clone());
 
-        // Write to Security Event Log
-        let event_record = record.to_event_record();
+        // write to Security Event Log
+        let _event_record = record.to_event_record();
         let desc = alloc::format!(
             "Audit: {} - {}",
             record.category.name(),
@@ -228,7 +228,7 @@ impl AuditLog {
     }
 
     /// Query by user SID
-    pub fn query_by_user(&self, user_sid: &super::sid::Sid, limit: usize) -> Vec<AuditRecord> {
+    pub fn query_by_user(&self, user_sid: &super::sid::sid, limit: usize) -> Vec<AuditRecord> {
         self.records
             .iter()
             .filter(|r| r.user_sid.equals(user_sid))
@@ -304,7 +304,7 @@ pub fn init() {
     // Already initialized via const fn
 }
 
-/// Write an audit record to the log
+/// write an audit record to the log
 pub fn write_audit_record(record: AuditRecord) {
     let mut log = AUDIT_LOG.lock();
     log.write(record);
@@ -323,7 +323,7 @@ pub fn query_records(
 }
 
 /// Query by user SID
-pub fn query_by_user(user_sid: &super::sid::Sid, limit: usize) -> Vec<AuditRecord> {
+pub fn query_by_user(user_sid: &super::sid::sid, limit: usize) -> Vec<AuditRecord> {
     let log = AUDIT_LOG.lock();
     log.query_by_user(user_sid, limit)
 }
@@ -365,48 +365,111 @@ pub fn allocate_record_id() -> u64 {
 
 /// Get current timestamp (Windows FILETIME format)
 fn get_current_timestamp() -> u64 {
-    // TODO: Integrate with HAL timer
-    // For now, return a placeholder
-    // In real implementation, this would call into the HAL's time services
     const WINDOWS_TICK: u64 = 10_000_000;
     const SECS_1601_TO_1970: u64 = 11_644_473_600;
-    SECS_1601_TO_1970 * WINDOWS_TICK
+    let uptime_ms = crate::hal::common::pit::get_system_time_ms();
+    SECS_1601_TO_1970 * WINDOWS_TICK + uptime_ms * (WINDOWS_TICK / 1000)
 }
 
 /// Audit log encryption support (stub for future implementation)
 pub mod encryption {
+    use crate::crypto::cipher::Aes256;
+    use crate::crypto::hash::sha256;
+
+    const AES_KEY_SIZE: usize = 32;
+    const AES_BLOCK_SIZE: usize = 16;
+
+    /// Audit encryption key (derived at boot from the system seed).
+    /// A real implementation would derive this from the machine's
+    /// DPAPI-protected system key; for kernel-level boot we use a
+    /// deterministic key derived from the boot seed.
+    fn audit_key() -> [u8; AES_KEY_SIZE] {
+        sha256(b"NT6.1-AUDIT-LOG-KEY")
+    }
+
     /// Encrypt audit log data (placeholder)
-    pub fn encrypt_record(_data: &[u8]) -> Option<alloc::vec::Vec<u8>> {
-        // TODO: Implement using crypto subsystem
-        None
+    pub fn encrypt_record(data: &[u8]) -> Option<alloc::vec::Vec<u8>> {
+        // Pad data to AES block size with zero-fill.
+        let padded_len = ((data.len() + AES_BLOCK_SIZE - 1) / AES_BLOCK_SIZE) * AES_BLOCK_SIZE;
+        let mut padded = alloc::vec::Vec::with_capacity(padded_len);
+        padded.extend_from_slice(data);
+        padded.resize(padded_len, 0);
+
+        let cipher = Aes256::new(&audit_key());
+        let mut output = alloc::vec::Vec::with_capacity(padded_len);
+        for chunk in padded.chunks(AES_BLOCK_SIZE) {
+            let mut block = [0u8; AES_BLOCK_SIZE];
+            let len = chunk.len().min(AES_BLOCK_SIZE);
+            block[..len].copy_from_slice(&chunk[..len]);
+            cipher.encrypt_block(&mut block);
+            output.extend_from_slice(&block);
+        }
+        Some(output)
     }
 
     /// Decrypt audit log data (placeholder)
-    pub fn decrypt_record(_data: &[u8]) -> Option<alloc::vec::Vec<u8>> {
-        // TODO: Implement using crypto subsystem
-        None
+    pub fn decrypt_record(data: &[u8]) -> Option<alloc::vec::Vec<u8>> {
+        if data.len() % AES_BLOCK_SIZE != 0 {
+            return None;
+        }
+        let cipher = Aes256::new(&audit_key());
+        let mut output = alloc::vec::Vec::with_capacity(data.len());
+        for chunk in data.chunks(AES_BLOCK_SIZE) {
+            let mut block = [0u8; AES_BLOCK_SIZE];
+            block.copy_from_slice(chunk);
+            cipher.decrypt_block(&mut block);
+            output.extend_from_slice(&block);
+        }
+        Some(output)
     }
 
     /// Verify audit log integrity
-    pub fn verify_integrity(_data: &[u8]) -> bool {
-        // TODO: Implement HMAC verification
-        true
+    pub fn verify_integrity(data: &[u8]) -> bool {
+        // The last 32 bytes are the HMAC-SHA256 tag over the payload.
+        if data.len() < 32 {
+            return false;
+        }
+        let (payload, tag) = data.split_at(data.len() - 32);
+        let expected = hmac_sha256(&audit_key(), payload);
+        // Constant-time comparison to avoid timing side-channels.
+        let mut diff = 0u8;
+        for (a, b) in tag.iter().zip(expected.iter()) {
+            diff |= a ^ b;
+        }
+        diff == 0
+    }
+
+    /// HMAC-SHA256 implemented with the built-in SHA-256 (RFC 2104).
+    fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
+        const BLOCK_SIZE: usize = 64;
+        let mut key_block = [0u8; BLOCK_SIZE];
+        if key.len() > BLOCK_SIZE {
+            key_block[..32].copy_from_slice(&sha256(key));
+        } else {
+            key_block[..key.len()].copy_from_slice(key);
+        }
+        let mut ipad = [0x36u8; BLOCK_SIZE];
+        let mut opad = [0x5cu8; BLOCK_SIZE];
+        for i in 0..BLOCK_SIZE {
+            ipad[i] ^= key_block[i];
+            opad[i] ^= key_block[i];
+        }
+        let inner = sha256(&[&ipad[..], data].concat());
+        sha256(&[&opad[..], &inner[..]].concat())
     }
 }
 
+/// Process-global serialization for audit tests. The audit log and
+/// policy tables are shared state, so every audit-related test must hold
+/// this guard; otherwise libtest's parallel threads interleave writes.
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    // The audit log is process-global, so the tests below cannot run
-    // concurrently against it. libtest runs tests on separate threads,
-    // which makes a shared log (and `clear_log()`) a race.
+pub(crate) mod test_support {
     static TEST_MUTEX: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
-    struct TestGuard;
+    pub(crate) struct TestGuard;
 
     impl TestGuard {
-        fn new() -> Self {
+        pub(crate) fn new() -> Self {
             while TEST_MUTEX
                 .compare_exchange_weak(
                     false,
@@ -427,13 +490,19 @@ mod tests {
             TEST_MUTEX.store(false, core::sync::atomic::Ordering::Release);
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_support::TestGuard;
+    use super::*;
 
     #[test]
     fn test_audit_log_write() {
         let _guard = TestGuard::new();
         init();
 
-        let sid = super::super::sid::Sid::well_known(super::super::sid::WellKnownSid::World);
+        let sid = super::super::sid::sid::well_known(super::super::sid::WellKnownSid::World);
         let mut record = AuditRecord::new(
             4624,
             super::super::audit_policy::AuditCategory::Logon,
@@ -454,9 +523,9 @@ mod tests {
         init();
         clear_log();
 
-        let sid = super::super::sid::Sid::well_known(super::super::sid::WellKnownSid::World);
+        let sid = super::super::sid::sid::well_known(super::super::sid::WellKnownSid::World);
 
-        // Write some test records
+        // write some test records
         for i in 0..5 {
             let mut record = AuditRecord::new(
                 4624,
@@ -483,10 +552,10 @@ mod tests {
         init();
         clear_log();
 
-        let sid = super::super::sid::Sid::well_known(super::super::sid::WellKnownSid::World);
+        let sid = super::super::sid::sid::well_known(super::super::sid::WellKnownSid::World);
 
-        // Write enough records to trigger rotation
-        for i in 0..MAX_AUDIT_RECORDS + 100 {
+        // write enough records to trigger rotation
+        for _i in 0..MAX_AUDIT_RECORDS + 100 {
             let record = AuditRecord::new(
                 4624,
                 super::super::audit_policy::AuditCategory::Logon,

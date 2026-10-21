@@ -18,8 +18,8 @@
 //! References: Windows SDK, WRK secobj.c, ReactOS
 
 use super::acl::{AceFlags, AceType, Acl};
-use super::sid::Sid;
-use super::token::{Token, SE_GROUP_ENABLED, SE_GROUP_USE_FOR_DENY_ONLY};
+use super::sid::sid;
+use super::token::{Token, SE_GROUP_USE_FOR_DENY_ONLY};
 
 /// Maximum number of SIDs in an access check.
 pub const MAX_SIDS: usize = 16;
@@ -138,7 +138,7 @@ pub const SEMAPHORE_QUERY_STATE: u32 = 0x0001;
 pub const SEMAPHORE_MODIFY_STATE: u32 = 0x0002;
 pub const SEMAPHORE_ALL_ACCESS: u32 = 0x001F;
 
-/// Mutant (mutex) access rights.
+/// mutant (mutex) access rights.
 pub const MUTANT_QUERY_STATE: u32 = 0x0001;
 pub const MUTANT_ALL_ACCESS: u32 = 0x001F;
 
@@ -171,7 +171,7 @@ pub enum AccessCheckResult {
 /// Check if a SID matches a subject (token).
 /// A SID matches if it equals any of the token's group SIDs
 /// or the token's user SID.
-fn sid_matches_token(sid: &Sid, token: &Token) -> bool {
+fn sid_matches_token(sid: &sid, token: &Token) -> bool {
     // Check user
     if sid.equals(&token.user) {
         return true;
@@ -191,7 +191,7 @@ fn sid_matches_token(sid: &Sid, token: &Token) -> bool {
 }
 
 /// Check if a SID is present in the token (used for access check).
-fn sid_in_token(sid: &Sid, token: &Token) -> bool {
+fn sid_in_token(sid: &sid, token: &Token) -> bool {
     // Check user
     if sid.equals(&token.user) {
         return true;
@@ -220,7 +220,7 @@ fn sid_in_token(sid: &Sid, token: &Token) -> bool {
 pub fn check_access(
     desired_access: u32,
     token: &Token,
-    owner: &Sid,
+    owner: &sid,
     dacl: *const Acl,
     generic_mapping: Option<&GenericMapping>,
 ) -> AccessCheckResult {
@@ -230,7 +230,7 @@ pub fn check_access(
 fn check_access_with_granted(
     mut desired_access: u32,
     token: &Token,
-    _owner: &Sid,
+    _owner: &sid,
     dacl: *const Acl,
     generic_mapping: Option<&GenericMapping>,
 ) -> (AccessCheckResult, u32) {
@@ -255,7 +255,7 @@ fn check_access_with_granted(
     }
 
     if (desired_access & ACCESS_WRITE_OWNER) != 0 {
-        let luid = super::token::Luid {
+        let luid = super::token::luid {
             low_part: privileges::SE_TAKE_OWNERSHIP as u32,
             high_part: 0,
         };
@@ -265,7 +265,7 @@ fn check_access_with_granted(
     }
 
     if (desired_access & ACCESS_SYSTEM_SECURITY) != 0 {
-        let luid = super::token::Luid {
+        let luid = super::token::luid {
             low_part: privileges::SE_SECURITY as u32,
             high_part: 0,
         };
@@ -275,7 +275,7 @@ fn check_access_with_granted(
     }
 
     if (desired_access & ACCESS_READ_CONTROL) != 0 {
-        let luid = super::token::Luid {
+        let luid = super::token::luid {
             low_part: privileges::SE_BACKUP as u32,
             high_part: 0,
         };
@@ -285,7 +285,7 @@ fn check_access_with_granted(
     }
 
     if (desired_access & ACCESS_WRITE_DAC) != 0 {
-        let luid = super::token::Luid {
+        let luid = super::token::luid {
             low_part: privileges::SE_RESTORE as u32,
             high_part: 0,
         };
@@ -303,7 +303,7 @@ fn check_access_with_granted(
         | PROCESS_DUP_HANDLE
         | PROCESS_CREATE_THREAD;
     if (desired_access & SE_DEBUG_ALLOWED_ACCESS) != 0 {
-        let luid = super::token::Luid {
+        let luid = super::token::luid {
             low_part: privileges::SE_DEBUG as u32,
             high_part: 0,
         };
@@ -374,18 +374,18 @@ fn check_access_with_granted(
     (AccessCheckResult::Allowed, granted)
 }
 
-/// Read a SID from ACL data at the given offset.
-fn read_sid_from_acl(data: &[u8]) -> Option<Sid> {
-    Sid::from_bytes(data)
+/// read a SID from ACL data at the given offset.
+fn read_sid_from_acl(data: &[u8]) -> Option<sid> {
+    sid::from_bytes(data)
 }
 
 /// SePrivilegeCheck — check if a token has required privileges.
-pub fn check_privilege(token: &Token, required_privilege: &super::token::Luid) -> bool {
+pub fn check_privilege(token: &Token, required_privilege: &super::token::luid) -> bool {
     token.has_privilege(required_privilege)
 }
 
 /// SeSinglePrivilegeCheck — check a single privilege by LUID.
-pub fn check_single_privilege(token: &Token, luid: &super::token::Luid) -> bool {
+pub fn check_single_privilege(token: &Token, luid: &super::token::luid) -> bool {
     token.has_privilege(luid)
 }
 
@@ -500,7 +500,7 @@ pub enum ObTypeIndex {
     Alias = 13,
     WindowStation = 14,
     Desktop = 15,
-    Type = 16,
+    r#Type = 16,
     ObjectDirectory = 17,
     Key = 18,
     File = 19,
@@ -630,8 +630,8 @@ pub struct SecurityDescriptor {
     pub revision: u8,
     pub sbz1: u8,
     pub control: u16,
-    pub owner: Sid,
-    pub group: Sid,
+    pub owner: sid,
+    pub group: sid,
     pub sacl: *const Acl, // System ACL
     pub dacl: *const Acl, // Discretionary ACL
 }
@@ -660,7 +660,7 @@ impl SecurityDescriptor {
         true
     }
 
-    /// Create a default security descriptor with NULL DACL (allows all).
+    /// create a default security descriptor with NULL DACL (allows all).
     ///
     /// Returns a pointer to a statically allocated NULL DACL security descriptor.
     /// NULL DACL means full access is granted to everyone.
@@ -713,7 +713,7 @@ impl SecurityDescriptor {
 ///
 /// The DACL grants:
 /// - Full access to the token's owner (user)
-/// - Read access to the token's primary group
+/// - read access to the token's primary group
 /// - Standard rights to enabled groups
 fn build_dacl_from_token(token: &super::token::Token) -> *const Acl {
     let acl_ptr = crate::mm::pool::allocate(
@@ -740,7 +740,7 @@ fn build_dacl_from_token(token: &super::token::Token) -> *const Acl {
             return core::ptr::null();
         }
 
-        let system_sid = super::sid::Sid::well_known(super::sid::WellKnownSid::LocalSystem);
+        let system_sid = super::sid::sid::well_known(super::sid::WellKnownSid::LocalSystem);
         if !acl.add_access_allowed(&system_sid, ACCESS_GENERIC_ALL, AceFlags::NONE) {
             crate::mm::pool::free(acl_ptr as *mut u8);
             return core::ptr::null();
@@ -785,7 +785,7 @@ pub fn build_process_security_descriptor(
     }
 }
 
-/// Create a NULL DACL security descriptor that allows all access.
+/// create a NULL DACL security descriptor that allows all access.
 ///
 /// This is used for bootstrap when no security checks are needed.
 pub fn create_null_dacl_sd() -> *const SecurityDescriptor {
@@ -803,13 +803,13 @@ pub fn create_null_dacl_sd() -> *const SecurityDescriptor {
         (*sd_ptr).revision = 1;
         (*sd_ptr).sbz1 = 0;
         (*sd_ptr).control = 0x8004; // SE_DACL_PRESENT | SE_SELF_RELATIVE
-        (*sd_ptr).owner = Sid {
+        (*sd_ptr).owner = sid {
             revision: 1,
             sub_authority_count: 0,
             identifier_authority: [0, 0, 0, 0, 0, 0],
             sub_authority: [0; 8],
         };
-        (*sd_ptr).group = Sid {
+        (*sd_ptr).group = sid {
             revision: 1,
             sub_authority_count: 0,
             identifier_authority: [0, 0, 0, 0, 0, 0],
@@ -835,13 +835,13 @@ mod tests {
     };
     use crate::se::{
         acl::Acl,
-        sid::{Sid, WellKnownSid},
+        sid::{sid, WellKnownSid},
         token::Token,
     };
 
     #[test]
     fn empty_dacl_does_not_grant_standard_or_synchronize_access() {
-        let token = Token::new_primary(Sid::well_known(WellKnownSid::Users));
+        let token = Token::new_primary(sid::well_known(WellKnownSid::Users));
         let acl = Acl::new();
 
         assert_eq!(
@@ -856,7 +856,7 @@ mod tests {
 
     #[test]
     fn maximum_allowed_is_not_treated_as_a_literal_right() {
-        let token = Token::new_primary(Sid::well_known(WellKnownSid::Users));
+        let token = Token::new_primary(sid::well_known(WellKnownSid::Users));
         let acl = Acl::new();
         let sd = SecurityDescriptor {
             revision: 1,
@@ -876,7 +876,7 @@ mod tests {
 
     #[test]
     fn maximum_allowed_on_null_dacl_returns_mapped_access_without_request_bit() {
-        let token = Token::new_primary(Sid::well_known(WellKnownSid::Users));
+        let token = Token::new_primary(sid::well_known(WellKnownSid::Users));
         let (result, granted) = se_access_check(
             ObTypeIndex::File,
             core::ptr::null(),

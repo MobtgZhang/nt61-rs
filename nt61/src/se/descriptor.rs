@@ -2,11 +2,11 @@
 //!
 //! Implements security descriptor creation, validation, and manipulation.
 //! A security descriptor contains:
-//!   - Owner SID
-//!   - Group SID
-//!   - DACL (Discretionary Access Control List)
-//!   - SACL (System Access Control List)
-//!   - Control flags
+//!   - owner SID
+//!   - group SID
+//!   - DACL (Discretionary Access control List)
+//!   - SACL (System Access control List)
+//!   - control flags
 //!
 //! Windows uses two formats:
 //!   - Absolute format: pointers to separate memory blocks
@@ -15,7 +15,7 @@
 //! References: Windows SDK winnt.h, WRK
 
 use super::acl::Acl;
-use super::sid::Sid;
+use super::sid::sid;
 
 pub const SE_OWNER_DEFAULTED: u16 = 0x0001;
 pub const SE_GROUP_DEFAULTED: u16 = 0x0002;
@@ -40,8 +40,8 @@ pub struct SecurityDescriptor {
     pub revision: u8,
     pub sbz1: u8,
     pub control: u16,
-    pub owner: *mut Sid,
-    pub group: *mut Sid,
+    pub owner: *mut sid,
+    pub group: *mut sid,
     pub sacl: *mut Acl,
     pub dacl: *mut Acl,
 }
@@ -69,7 +69,7 @@ impl SecurityDescriptor {
         self.dacl = core::ptr::null_mut();
     }
 
-    pub fn set_owner(&mut self, owner: *mut Sid, defaulted: bool) {
+    pub fn set_owner(&mut self, owner: *mut sid, defaulted: bool) {
         self.owner = owner;
         if defaulted {
             self.control |= SE_OWNER_DEFAULTED;
@@ -78,7 +78,7 @@ impl SecurityDescriptor {
         }
     }
 
-    pub fn set_group(&mut self, group: *mut Sid, defaulted: bool) {
+    pub fn set_group(&mut self, group: *mut sid, defaulted: bool) {
         self.group = group;
         if defaulted {
             self.control |= SE_GROUP_DEFAULTED;
@@ -190,7 +190,7 @@ pub fn valid_security_descriptor(sd: *const SecurityDescriptor) -> bool {
 
 pub fn set_owner_security_descriptor(
     sd: *mut SecurityDescriptor,
-    owner: *mut Sid,
+    owner: *mut sid,
     owner_defaulted: bool,
 ) -> bool {
     if sd.is_null() {
@@ -204,7 +204,7 @@ pub fn set_owner_security_descriptor(
 
 pub fn set_group_security_descriptor(
     sd: *mut SecurityDescriptor,
-    group: *mut Sid,
+    group: *mut sid,
     group_defaulted: bool,
 ) -> bool {
     if sd.is_null() {

@@ -1,21 +1,21 @@
 //! Token Management Operations
 //!
 //! Implements Windows token management APIs:
-//!   - Token creation (NtCreateToken)
-//!   - Token duplication (NtDuplicateToken)
-//!   - Privilege adjustment (NtAdjustPrivilegesToken)
-//!   - Group adjustment (NtAdjustGroupsToken)
+//!   - Token creation (NT_CREATE_TOKEN)
+//!   - Token duplication (NT_DUPLICATE_TOKEN)
+//!   - Privilege adjustment (NT_ADJUST_PRIVILEGES_TOKEN)
+//!   - group adjustment (NT_ADJUST_GROUPS_TOKEN)
 //!   - Token filtering (restricted tokens)
 //!   - Token query/set operations
 //!
 //! References: Windows SDK, WRK
 
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU64, Ordering};
 
-use super::sid::Sid;
+use super::sid::sid;
 use super::token::{
-    ImpersonationLevel, Luid, Token, TokenGroup, TokenPrivilege, TokenTypeEnum, SE_GROUP_ENABLED,
+    luid, ImpersonationLevel, Token, TokenGroup, TokenPrivilege, TokenTypeEnum, SE_GROUP_ENABLED,
     SE_PRIVILEGE_ENABLED, TOKEN_MAX_GROUPS, TOKEN_MAX_PRIVILEGES,
 };
 
@@ -33,7 +33,7 @@ pub const TOKEN_ADJUST_DEFAULT: u32 = 0x0080;
 pub const TOKEN_ADJUST_SESSIONID: u32 = 0x0100;
 
 pub fn se_create_token(
-    user: Sid,
+    user: sid,
     groups: &[TokenGroup],
     privileges: &[TokenPrivilege],
     token_type: TokenTypeEnum,
@@ -72,10 +72,10 @@ pub fn se_create_token(
         token.primary_group = super::sid::SID_USERS;
 
         static NEXT_TOKEN_ID: AtomicU64 = AtomicU64::new(1000);
-        token.token_id = Luid::from_u64(NEXT_TOKEN_ID.fetch_add(1, Ordering::Relaxed));
+        token.token_id = luid::from_u64(NEXT_TOKEN_ID.fetch_add(1, Ordering::Relaxed));
 
         static NEXT_AUTH_ID: AtomicU64 = AtomicU64::new(2000);
-        token.authentication_id = Luid::from_u64(NEXT_AUTH_ID.fetch_add(1, Ordering::Relaxed));
+        token.authentication_id = luid::from_u64(NEXT_AUTH_ID.fetch_add(1, Ordering::Relaxed));
     }
 
     token_ptr
@@ -109,7 +109,7 @@ pub fn se_duplicate_token(
         dst.impersonation_level = impersonation_level;
 
         static NEXT_TOKEN_ID: AtomicU64 = AtomicU64::new(1000);
-        dst.token_id = Luid::from_u64(NEXT_TOKEN_ID.fetch_add(1, Ordering::Relaxed));
+        dst.token_id = luid::from_u64(NEXT_TOKEN_ID.fetch_add(1, Ordering::Relaxed));
 
         dst.authentication_id = src.authentication_id;
 
@@ -121,10 +121,10 @@ pub fn se_duplicate_token(
 
 pub fn se_filter_token(
     existing_token: *const Token,
-    flags: u32,
-    sids_to_disable: &[Sid],
-    privileges_to_delete: &[Luid],
-    restricted_sids: &[Sid],
+    _flags: u32,
+    sids_to_disable: &[sid],
+    privileges_to_delete: &[luid],
+    restricted_sids: &[sid],
 ) -> *mut Token {
     if existing_token.is_null() {
         return core::ptr::null_mut();
@@ -292,16 +292,16 @@ pub fn se_query_information_token(
         let tok = &*token;
 
         match info_class {
-            super::token::TokenUser => {
-                let required = core::mem::size_of::<Sid>();
+            super::token::TOKEN_USER => {
+                let required = core::mem::size_of::<sid>();
                 *return_length = required as u32;
                 if buffer.is_null() || buffer_length < required as u32 {
                     return false;
                 }
-                core::ptr::write(buffer as *mut Sid, tok.user);
+                core::ptr::write(buffer as *mut sid, tok.user);
                 true
             }
-            super::token::TokenGroups => {
+            super::token::TOKEN_GROUPS => {
                 let required = 4 + tok.group_count * core::mem::size_of::<TokenGroup>();
                 *return_length = required as u32;
                 if buffer.is_null() || buffer_length < required as u32 {
@@ -314,7 +314,7 @@ pub fn se_query_information_token(
                 }
                 true
             }
-            super::token::TokenPrivileges => {
+            super::token::TOKEN_PRIVILEGES => {
                 let required = 4 + tok.privilege_count * core::mem::size_of::<TokenPrivilege>();
                 *return_length = required as u32;
                 if buffer.is_null() || buffer_length < required as u32 {
@@ -327,7 +327,7 @@ pub fn se_query_information_token(
                 }
                 true
             }
-            super::token::TokenType => {
+            super::token::TOKEN_TYPE => {
                 let required = core::mem::size_of::<TokenTypeEnum>();
                 *return_length = required as u32;
                 if buffer.is_null() || buffer_length < required as u32 {
@@ -336,7 +336,7 @@ pub fn se_query_information_token(
                 core::ptr::write(buffer as *mut TokenTypeEnum, tok.token_type);
                 true
             }
-            super::token::TokenImpersonationLevel => {
+            super::token::TOKEN_IMPERSONATION_LEVEL => {
                 let required = core::mem::size_of::<ImpersonationLevel>();
                 *return_length = required as u32;
                 if buffer.is_null() || buffer_length < required as u32 {
@@ -345,7 +345,7 @@ pub fn se_query_information_token(
                 core::ptr::write(buffer as *mut ImpersonationLevel, tok.impersonation_level);
                 true
             }
-            super::token::TokenSessionId => {
+            super::token::TOKEN_SESSION_ID => {
                 let required = core::mem::size_of::<u32>();
                 *return_length = required as u32;
                 if buffer.is_null() || buffer_length < required as u32 {
@@ -354,7 +354,7 @@ pub fn se_query_information_token(
                 core::ptr::write(buffer as *mut u32, tok.session_id);
                 true
             }
-            super::token::TokenIntegrityLevel => {
+            super::token::TOKEN_INTEGRITY_LEVEL => {
                 let required = core::mem::size_of::<u32>();
                 *return_length = required as u32;
                 if buffer.is_null() || buffer_length < required as u32 {
@@ -385,14 +385,14 @@ pub fn se_set_information_token(
         let tok = &mut *token;
 
         match info_class {
-            super::token::TokenSessionId => {
+            super::token::TOKEN_SESSION_ID => {
                 if buffer_length < core::mem::size_of::<u32>() as u32 {
                     return false;
                 }
                 tok.session_id = *(buffer as *const u32);
                 true
             }
-            super::token::TokenIntegrityLevel => {
+            super::token::TOKEN_INTEGRITY_LEVEL => {
                 if buffer_length < core::mem::size_of::<u32>() as u32 {
                     return false;
                 }

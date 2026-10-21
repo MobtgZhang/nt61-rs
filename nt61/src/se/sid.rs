@@ -4,7 +4,7 @@
 //! a security principal (user, group, logon session).
 //
 //! Layout (Windows SDK):
-//!   BYTE  Revision
+//!   BYTE  revision
 //!   BYTE  SubAuthorityCount
 //!   CHAR  IdentifierAuthority[6]
 //!   DWORD SubAuthority[SubAuthorityCount]
@@ -12,8 +12,8 @@
 //! Well-known SIDs:
 //!   S-1-0-0        Nobody
 //!   S-1-1-0        Everyone
-//!   S-1-3-0        Creator Owner
-//!   S-1-3-1        Creator Group
+//!   S-1-3-0        Creator owner
+//!   S-1-3-1        Creator group
 //!   S-1-5-1        Dialup
 //!   S-1-5-2        Network
 //!   S-1-5-3        Batch
@@ -33,7 +33,7 @@
 //!   S-1-5-32-544   Administrators
 //!   S-1-5-32-545   Users
 //!   S-1-5-32-546   Guests
-//!   S-1-5-32-547   Power Users
+//!   S-1-5-32-547   power Users
 //!   S-1-5-32-548   Account Operators
 //!   S-1-5-32-549   Server Operators
 //!   S-1-5-32-550   Print Operators
@@ -41,7 +41,6 @@
 //!   S-1-5-32-552   Replicator
 
 use core::fmt;
-use core::slice;
 
 /// SID revision.
 pub const SID_REVISION: u8 = 1;
@@ -54,7 +53,7 @@ pub const SID_STRING_MAX: usize = 30;
 /// A SID structure. Follows the Windows SDK layout exactly.
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
-pub struct Sid {
+pub struct sid {
     pub revision: u8,
     pub sub_authority_count: u8,
     pub identifier_authority: [u8; 6],
@@ -62,8 +61,8 @@ pub struct Sid {
     pub sub_authority: [u32; SID_MAX_SUB_AUTHORITIES],
 }
 
-impl Sid {
-    /// Create a Sid with the given revision and no subauthorities.
+impl sid {
+    /// create a sid with the given revision and no subauthorities.
     pub const fn new() -> Self {
         Self {
             revision: SID_REVISION,
@@ -73,7 +72,7 @@ impl Sid {
         }
     }
 
-    /// Create a Sid from an identifier authority and subauthorities.
+    /// create a sid from an identifier authority and subauthorities.
     pub const fn with_subs(
         authority: [u8; 6],
         sub0: u32,
@@ -93,7 +92,7 @@ impl Sid {
         }
     }
 
-    /// Create a Sid from an identifier authority and 2 subauthorities.
+    /// create a sid from an identifier authority and 2 subauthorities.
     pub const fn with_2subs(authority: [u8; 6], sub0: u32, sub1: u32) -> Self {
         Self {
             revision: SID_REVISION,
@@ -103,7 +102,7 @@ impl Sid {
         }
     }
 
-    /// Create a Sid from an identifier authority and subauthorities array.
+    /// create a sid from an identifier authority and subauthorities array.
     pub const fn with_authority_and_subs_arr(
         authority: [u8; 6],
         count: u8,
@@ -128,7 +127,7 @@ impl Sid {
         }
     }
 
-    /// Create a well-known SID by name.
+    /// create a well-known SID by name.
     pub const fn well_known(name: WellKnownSid) -> Self {
         match name {
             WellKnownSid::Null => {
@@ -394,7 +393,7 @@ impl Sid {
     }
 
     /// Compare two SIDs for equality.
-    pub fn equals(&self, other: &Sid) -> bool {
+    pub fn equals(&self, other: &sid) -> bool {
         if self.revision != other.revision {
             return false;
         }
@@ -427,7 +426,7 @@ impl Sid {
             pos += 1;
         }
 
-        // Revision
+        // revision
         if pos < SID_STRING_MAX {
             pos += write_u64(&mut buf[pos..], self.revision as u64);
         }
@@ -524,7 +523,7 @@ fn write_u64(buf: &mut [u16], mut val: u64) -> usize {
     written
 }
 
-impl fmt::Debug for Sid {
+impl fmt::Debug for sid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Sid(S-")?;
         write!(f, "{}", self.revision)?;
@@ -568,13 +567,13 @@ pub enum WellKnownSid {
 }
 
 /// Pre-allocated well-known SIDs for kernel use.
-pub static SID_NULL: Sid = Sid::well_known(WellKnownSid::Null);
-pub static SID_EVERYONE: Sid = Sid::well_known(WellKnownSid::World);
-pub static SID_AUTHENTICATED_USER: Sid = Sid::well_known(WellKnownSid::AuthenticatedUser);
-pub static SID_LOCAL_SYSTEM: Sid = Sid::well_known(WellKnownSid::LocalSystem);
-pub static SID_ADMINISTRATORS: Sid = Sid::well_known(WellKnownSid::Administrators);
-pub static SID_USERS: Sid = Sid::well_known(WellKnownSid::Users);
-pub static SID_INTERACTIVE: Sid = Sid::well_known(WellKnownSid::Interactive);
+pub static SID_NULL: sid = sid::well_known(WellKnownSid::Null);
+pub static SID_EVERYONE: sid = sid::well_known(WellKnownSid::World);
+pub static SID_AUTHENTICATED_USER: sid = sid::well_known(WellKnownSid::AuthenticatedUser);
+pub static SID_LOCAL_SYSTEM: sid = sid::well_known(WellKnownSid::LocalSystem);
+pub static SID_ADMINISTRATORS: sid = sid::well_known(WellKnownSid::Administrators);
+pub static SID_USERS: sid = sid::well_known(WellKnownSid::Users);
+pub static SID_INTERACTIVE: sid = sid::well_known(WellKnownSid::Interactive);
 
 pub fn init() {
     // crate::kprintln!("    SE/SID: initialized (well-known SIDs loaded)");

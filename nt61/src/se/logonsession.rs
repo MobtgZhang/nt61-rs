@@ -12,11 +12,11 @@
 //! References: Windows Internals, WRK LSA
 
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU64, Ordering};
 use spin::{Lazy, Mutex};
 
-use super::sid::Sid;
-use super::token::Luid;
+use super::sid::sid;
+use super::token::luid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
@@ -37,8 +37,8 @@ pub enum LogonType {
 
 #[derive(Clone, Copy)]
 pub struct LogonSession {
-    pub authentication_id: Luid,
-    pub user_sid: Sid,
+    pub authentication_id: luid,
+    pub user_sid: sid,
     pub logon_type: LogonType,
     pub logon_time: u64,
     pub logon_server: [u8; 32],
@@ -50,8 +50,8 @@ pub struct LogonSession {
 impl LogonSession {
     pub const fn new() -> Self {
         Self {
-            authentication_id: Luid::new(),
-            user_sid: Sid::new(),
+            authentication_id: luid::new(),
+            user_sid: sid::new(),
             logon_type: LogonType::Interactive,
             logon_time: 0,
             logon_server: [0; 32],
@@ -82,8 +82,8 @@ static LOGON_SESSIONS: Lazy<Mutex<LogonSessionTable>> =
 static NEXT_LOGON_ID: AtomicU64 = AtomicU64::new(1000);
 
 pub fn se_create_logon_session(
-    logon_id: *mut Luid,
-    user_sid: &Sid,
+    logon_id: *mut luid,
+    user_sid: &sid,
     logon_type: LogonType,
     session_id: u32,
 ) -> bool {
@@ -106,7 +106,7 @@ pub fn se_create_logon_session(
             None => return false, // No free slots
         };
 
-        let auth_id = Luid::from_u64(NEXT_LOGON_ID.fetch_add(1, Ordering::Relaxed));
+        let auth_id = luid::from_u64(NEXT_LOGON_ID.fetch_add(1, Ordering::Relaxed));
 
         table.sessions[index].authentication_id = auth_id;
         table.sessions[index].user_sid = *user_sid;
@@ -121,7 +121,7 @@ pub fn se_create_logon_session(
     }
 }
 
-pub fn se_delete_logon_session(logon_id: &Luid) -> bool {
+pub fn se_delete_logon_session(logon_id: &luid) -> bool {
     let table = LOGON_SESSIONS.lock();
     for i in 0..MAX_LOGON_SESSIONS {
         if table.sessions[i].active && table.sessions[i].authentication_id.equals(logon_id) {
@@ -131,7 +131,7 @@ pub fn se_delete_logon_session(logon_id: &Luid) -> bool {
     false
 }
 
-pub fn se_lookup_logon_session(logon_id: &Luid) -> Option<LogonSession> {
+pub fn se_lookup_logon_session(logon_id: &luid) -> Option<LogonSession> {
     let table = LOGON_SESSIONS.lock();
     for i in 0..MAX_LOGON_SESSIONS {
         if table.sessions[i].active && table.sessions[i].authentication_id.equals(logon_id) {
@@ -141,7 +141,7 @@ pub fn se_lookup_logon_session(logon_id: &Luid) -> Option<LogonSession> {
     None
 }
 
-pub fn se_mark_logon_session_for_termination(logon_id: &Luid) -> bool {
+pub fn se_mark_logon_session_for_termination(logon_id: &luid) -> bool {
     se_lookup_logon_session(logon_id).is_some()
 }
 
@@ -149,7 +149,7 @@ pub fn se_unregister_logon_session_terminated_routine() -> bool {
     true
 }
 
-pub fn se_query_logon_session_info(logon_id: &Luid) -> Option<(Sid, LogonType, u64, u32)> {
+pub fn se_query_logon_session_info(logon_id: &luid) -> Option<(sid, LogonType, u64, u32)> {
     let session = se_lookup_logon_session(logon_id)?;
     Some((
         session.user_sid,
@@ -159,7 +159,7 @@ pub fn se_query_logon_session_info(logon_id: &Luid) -> Option<(Sid, LogonType, u
     ))
 }
 
-pub fn se_enumerate_logon_sessions() -> Vec<Luid> {
+pub fn se_enumerate_logon_sessions() -> Vec<luid> {
     let mut sessions = Vec::new();
     let table = LOGON_SESSIONS.lock();
     for i in 0..MAX_LOGON_SESSIONS {
@@ -174,9 +174,9 @@ fn get_system_time() -> u64 {
     0
 }
 
-pub fn init_system_logon_session() -> Luid {
-    let system_sid = super::sid::Sid::well_known(super::sid::WellKnownSid::LocalSystem);
-    let mut logon_id = Luid::new();
+pub fn init_system_logon_session() -> luid {
+    let system_sid = super::sid::sid::well_known(super::sid::WellKnownSid::LocalSystem);
+    let mut logon_id = luid::new();
 
     se_create_logon_session(&mut logon_id, &system_sid, LogonType::Service, 0);
 
