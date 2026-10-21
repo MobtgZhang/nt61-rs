@@ -6,8 +6,6 @@
 //! - Section view mapping
 //! - Section message attributes
 
-use core::ptr::null_mut;
-
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct AlpcSection {

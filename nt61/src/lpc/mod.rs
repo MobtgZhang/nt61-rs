@@ -10,7 +10,6 @@
 //!   * `\\Sessions\\N\\Windows\\ApiPort` - per-session variants.
 
 // LPC/ALPC uses NT-driver naming (LPCP_*, PORT_*, ...).
-#![allow(unused_imports)]
 //!   * SMSS uses ALPC to talk to CSRSS, wininit, and the SCM.
 //
 //! The Windows 7 ALPC implementation is a port-based message
@@ -46,11 +45,9 @@
 //! covers the on-the-wire contracts used by SMSS, CSRSS, and the
 //! SCM, and is enough to power the smoke test in this phase.
 
-use core::ptr::null_mut;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use crate::ke::sync::Spinlock;
-use crate::kprintln;
 
 /// Maximum number of ALPC ports the bootstrap registry can hold.
 /// Real NT uses a hash table; 32 is plenty for the bootstrap
@@ -121,7 +118,7 @@ pub enum LpcMessageType {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LpcMessageHeader {
-    /// Length of the message body, in bytes.
+    /// length of the message body, in bytes.
     pub data_length: u32,
     /// Total length on the wire (body + any attached data).
     pub total_length: u32,
@@ -196,7 +193,7 @@ impl LpcMessage {
 pub struct LpcPort {
     /// The global name of the port (UTF-16, NUL-terminated).
     pub name: [u16; MAX_PORT_NAME],
-    /// Length of the name in code units (excluding the NUL).
+    /// length of the name in code units (excluding the NUL).
     pub name_len: usize,
     /// Port type.
     pub port_type: LpcPortType,
@@ -278,6 +275,10 @@ static TOTAL_MESSAGES: AtomicU32 = AtomicU32::new(0);
 
 /// Initialize LPC subsystem.
 pub fn init() {
+    if !(*REGISTRY.lock()).is_null() {
+        return;
+    }
+
     // // kprintln!("    LPC subsystem: initialized (max_ports={}, max_msgs={})", MAX_PORTS, MAX_PORT_MESSAGES);
     // Allocate the registry out of the non-paged pool. A `static`
     // for the registry would land in the BSS / data section of
@@ -315,7 +316,7 @@ pub fn find_port_by_name(name: &[u16]) -> Option<u32> {
     find_port_by_name_in(unsafe { &*reg_ptr }, name)
 }
 
-/// Internal helper: do the actual name scan, given a held
+/// internal helper: do the actual name scan, given a held
 /// reference to the registry. Used by `create_connection_port`
 /// so we don't try to re-acquire the registry lock.
 fn find_port_by_name_in(reg: &LpcRegistry, name: &[u16]) -> Option<u32> {
@@ -369,7 +370,7 @@ fn lock_registry() -> Option<RegGuard> {
     })
 }
 
-/// Create a server-side connection port. The port is registered
+/// create a server-side connection port. The port is registered
 /// globally; clients can connect to it by name. Returns the new
 /// port's slot index, or `None` if the registry is full or a port
 /// with the same name already exists.
@@ -393,7 +394,7 @@ pub fn create_connection_port(name: &[u16], owner_pid: u64) -> Option<u32> {
     // for the rationale).
     let p = &mut reg.ports[idx];
     p.name_len = name.len();
-    // Write the name bytes one at a time through a raw pointer.
+    // write the name bytes one at a time through a raw pointer.
     // Using `p.name.iter_mut().zip(name.iter())` in a for-loop
     // compiles to the same raw-byte writes, but we keep it explicit
     // to guarantee no aggregation.
@@ -544,7 +545,7 @@ pub fn send(port_index: u32, msg: &LpcMessage) -> Option<usize> {
     if (peer_index as usize) >= reg.count as usize {
         return None;
     }
-    // Read the peer's head / pending so we can drop the message
+    // read the peer's head / pending so we can drop the message
     // onto the peer's queue.
     let pending: u32;
     let head: u32;
@@ -647,6 +648,25 @@ pub fn receive(port_index: u32) -> Option<LpcMessage> {
     }
     RECV_COUNT.fetch_add(1, Ordering::SeqCst);
     Some(msg)
+}
+
+/// Poll every server communication port owned by owner_pid and return
+/// the first (port_index, message) that has a pending message.
+pub fn receive_from_owner_server_port(owner_pid: u64) -> Option<(u32, LpcMessage)> {
+    let g = lock_registry()?;
+    let reg: &LpcRegistry = g.reg;
+    for i in 0..reg.count as usize {
+        let p = &reg.ports[i];
+        if p.port_type == LpcPortType::ServerCommunication && p.owner_pid == owner_pid {
+            if p.pending > 0 {
+                let idx = i as u32;
+                drop(g);
+                let msg = receive(idx)?;
+                return Some((idx, msg));
+            }
+        }
+    }
+    None
 }
 
 /// Counters for the smoke test.

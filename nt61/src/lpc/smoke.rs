@@ -20,8 +20,6 @@
 //!    `\\SbApiPort`, `\\SmApiPort`) used by SMSS, CSRSS, and
 //!    the SCM are present after init().
 
-use crate::kprintln;
-
 use super::{
     connect_count, connect_port, create_connection_port, find_port_by_name, port_count,
     LpcMessageHeader, LpcMessageType, LpcPortType, MAX_PORT_NAME,
@@ -301,5 +299,4 @@ pub fn smoke_test() -> bool {
 }
 
 // Silence dead-code warnings.
-#[allow(dead_code)]
 fn _typecheck(_: LpcPortType) {}

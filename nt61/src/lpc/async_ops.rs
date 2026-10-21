@@ -7,7 +7,7 @@
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use super::{LpcMessage, LpcMessageHeader};
+use super::LpcMessage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]

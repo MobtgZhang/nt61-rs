@@ -6,10 +6,7 @@
 //! - Port reference counting
 //! - Port state management
 
-use crate::ke::sync::Spinlock;
-use core::ptr::null_mut;
-
-use super::{LpcPort, LpcPortType, LpcRegistry, MAX_PORTS};
+use super::{LpcPortType, LpcRegistry, MAX_PORTS};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]

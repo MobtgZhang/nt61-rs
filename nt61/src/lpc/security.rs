@@ -11,9 +11,9 @@
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct SecurityDescriptor {
-    /// Owner SID (Security Identifier)
+    /// owner SID (Security Identifier)
     pub owner_sid: u64,
-    /// Group SID
+    /// group SID
     pub group_sid: u64,
     /// Discretionary ACL flags
     pub dacl_flags: u32,

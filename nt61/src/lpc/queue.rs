@@ -105,7 +105,7 @@ impl MessageQueueOps {
 
 pub enum MessageFilter {
     Any,
-    Type(LpcMessageType),
+    r#Type(LpcMessageType),
     ReplyTo(u64),
     FromPid(u64),
 }

@@ -1,7 +1,7 @@
 //! ALPC message attributes
 //!
 //! Windows 7 ALPC supports extended message attributes for:
-//! - Handle passing
+//! - handle passing
 //! - Security context
 //! - View (section) attributes
 //! - Direct user-mode data transfer

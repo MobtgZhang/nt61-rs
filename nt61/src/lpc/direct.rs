@@ -6,7 +6,7 @@
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use super::{LpcMessage, LpcMessageHeader, LpcMessageType};
+use super::LpcMessage;
 
 #[repr(C)]
 pub struct DirectBuffer {

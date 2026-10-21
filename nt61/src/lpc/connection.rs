@@ -7,9 +7,7 @@
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use super::{
-    LpcMessage, LpcMessageHeader, LpcMessageType, LpcPort, LpcPortType, LpcRegistry, MAX_PORTS,
-};
+use super::LpcRegistry;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -110,7 +108,7 @@ pub fn accept_connection_request(
     request_id: u32,
     server_data: &[u8],
     queue: &mut ConnectionQueue,
-    reg: &mut LpcRegistry,
+    _reg: &mut LpcRegistry,
 ) -> Option<(u32, u32)> {
     if (request_id as usize) >= queue.requests.len() {
         return None;
