@@ -1,4 +1,3 @@
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use spin::Mutex;
 
 pub struct SyncArray<T, const N: usize> {

@@ -19,36 +19,24 @@
 //! - ntbtlog.txt format for driver loading
 //! - SOS text mode driver loading messages
 //! - Kernel phase initialization messages
-//! - KdPrint/DbgPrint compatible output
+//! - KdPrint/dbg_print compatible output
 
 extern crate alloc;
-use alloc::string::ToString;
 
 use crate::{arch, drivers, fs, hal, io, ke, lpc, mm, ob, ps, registry, servers};
+use alloc::format;
 
+/// Gate-bypassing boot-progress marker.
+///
 // Import Windows 7 standard logging macros
-#[allow(unused_imports)]
-use crate::boot_err;
-#[allow(unused_imports)]
+use crate::boot_debug_print;
+use crate::boot_debug_println;
 use crate::boot_header;
-#[allow(unused_imports)]
 use crate::boot_milestone;
-#[allow(unused_imports)]
 use crate::boot_ok;
-#[allow(unused_imports)]
 use crate::boot_print;
-#[allow(unused_imports)]
 use crate::boot_println;
-#[allow(unused_imports)]
-use crate::kprintln_info;
-#[allow(unused_imports)]
-use crate::ntbtlog;
-#[allow(unused_imports)]
 use crate::phase_header;
-#[allow(unused_imports)]
-use crate::phase_init;
-#[allow(unused_imports)]
-use crate::sos_load;
 
 // ============================================================================
 // Boot-time contract (re-exported for backward compatibility)
@@ -68,40 +56,18 @@ pub use crate::boot_types::{BootInfo, BootMode, LoadedHive, BOOTINFO_MAX_HIVES};
 // Legacy `gui_log` re-export (kept so external code that imports
 // `crate::kernel_main::gui_log::*` continues to compile).
 //
-// The real implementation now lives in
-// `crate::hal::x86_64::text_console`; new code should import
-// from there directly (or, better, from the unified
-// `crate::hal::text_console` facade) so the boot sequence file
-// stays focused on phase orchestration rather than driver
-// register tables.
-//
-// `gui_log` is x86_64-only (it maps the VGA text buffer); on the
-// other architectures `gui_log` is a unit struct so any legacy
-// import sites keep compiling and get a meaningful panic message
-// at runtime instead of an unresolved-symbol link error.
+// The real implementation is the unified `crate::hal::text_console`
+// facade, so the boot sequence file stays focused on phase
+// orchestration rather than per-platform register details.
 // ============================================================================
-#[cfg(target_arch = "x86_64")]
-pub use crate::hal::x86_64::text_console as gui_log;
-#[cfg(not(target_arch = "x86_64"))]
-pub mod gui_log {
-    //! x86_64-only VGA text-mirror facade.
-    //!
-    //! On non-x86_64 architectures `gui_log` is a stub: it exposes
-    //! the same surface as the unified `crate::hal::text_console`
-    //! facade but routes every call through the log ring rather
-    //! than the (non-existent) VGA buffer. Code that uses
-    //! `gui_log::*` directly continues to compile; the boot
-    //! sequence in `kernel_main` no longer touches it.
-    pub use crate::hal::common::text_console::*;
-}
+pub use crate::hal::text_console as gui_log;
 
 // ============================================================================
 // EARLY SERIAL HELPERS
 //
 // The early serial sink lives in `crate::arch::boot::early_write_str`
-// / `early_write_byte`. They wrap the per-arch UART drivers and (on
-// LoongArch64) the temporary CRMD-clearing trampoline that makes the
-// UART MMIO region reachable before paging is up.
+// / `early_write_byte`. They wrap platform UART drivers behind the
+// boot facade.
 //
 // `kernel_main` only needs the `early_write_str` surface — the byte
 // loop is implemented once in the boot module.
@@ -110,9 +76,8 @@ pub mod gui_log {
 /// Kernel main entry point.
 ///
 /// Called by:
-///   * the bare-metal `nt61-kernel` ELF (C ABI, `rdi = &BootInfo`)
-///   * the UEFI `winload.efi` after `ExitBootServices` (also
-///     `rdi = &BootInfo`, then a long jump)
+///   * the bare-metal kernel entry
+///   * the UEFI winload path after `ExitBootServices`
 ///
 /// This function is the *single source of truth* for the kernel's
 /// init sequence. It follows the Windows 7 (NT 6.1) boot order.
@@ -160,14 +125,12 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
 
     // ====================================================================
     // Initialize the framebuffer from the BootInfo passed by winload.
-    // This must happen BEFORE the first `early_write_str` that we
-    // want to appear on the GUI. From this point on, every
-    // `boot_println!` call mirrors its bytes to the GOP framebuffer,
-    // so the boot trace appears on all three sinks (serial + framebuffer
-    // + the virtual terminal that we will switch to at IDLE).
+    // This must happen BEFORE the first boot_println! that we want
+    // to appear on the GUI. From this point on, every boot_println!
+    // call mirrors its bytes to the GOP framebuffer.
     //
     // On non-x86_64 architectures the framebuffer does not exist;
-    // `adopt_bootinfo_framebuffer` returns `None` and the call falls
+    // adopt_bootinfo_framebuffer returns None and the call falls
     // through to the text-console path.
     // ====================================================================
     boot_header!("NT6.1.7601 Kernel Boot Trace");
@@ -178,37 +141,26 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
         boot_println!("No framebuffer from winload");
     }
 
-    // Now that the LFB is wired (or we know it isn't) we can suppress
-    // the COM1 sink. The early-boot writes have already shown the
-    // banner; from here on the operator only sees the GUI panel.
-    // `boot_println!` keeps working through the LFB path; panic
-    // paths use `with_serial_unmasked` to bypass this gate.
-    crate::hal::serial::set_disabled(true);
-
     // Initialise the platform text console (VGA mirror on x86_64,
-    // log-ring on the other architectures). `init_text_console` is
+    // log-ring on the other architectures). init_text_console is
     // idempotent so calling it here and again from the Safe-Mode
     // path is safe.
     crate::arch::boot::init_text_console();
 
-    // Disable interrupts immediately. UEFI may leave IF=1, and any
-    // spurious IRQ before we have a full IDT will crash the kernel
-    // (e.g. PIC timer firing into a zero IDT entry causes #GP,
-    // which then fires #GP again, etc.). The bootstrap deliberately
-    // never calls `enable_interrupts`; the SMP/IO layer is
-    // responsible for that once the interrupt subsystem is ready.
+    // Disable interrupts immediately. Firmware may leave interrupts
+    // enabled, and a stray IRQ before dispatch vectors are ready can
+    // fault. The bootstrap never enables them; the SMP/IO layer does
+    // so only after interrupt bring-up is complete.
     arch::disable_interrupts();
 
-    // Architecture-specific serial bring-up and boot timer init.
-    boot_println!("Initializing serial port...");
-    crate::arch::boot::init_serial();
-    boot_println!("Serial port initialized");
+    // Install exception/TLB-refill vectors before the memory manager
+    // enables paging. On LoongArch64 the first fetch with CRMD.PG=1
+    // immediately takes a TLB refill, so the refill vector, the
+    // page-walk CSRs and CSR_PGD must be live before `mm::init()`.
+    arch::install_exception_vectors();
 
-    // Initialize boot timer for KdPrint timestamps. The helper is
-    // defined on every architecture; on non-x86_64 it falls back
-    // to the platform's monotonic counter.
-    crate::rtl::windows_log::init_boot_timer();
-
+    // Initialize boot timer for KdPrint timestamps; the HAL supplies
+    // the platform's monotonic counter.
     // CRITICAL-003: Memory manager must be initialised BEFORE
     // `arch::init_hardware()`. This is the NT 6.1 Phase 0 / Phase 1
     // ordering: the page-fault handler installed by `idt::init()`
@@ -231,16 +183,10 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     // the order Windows 7 follows and it must not regress.
     crate::arch::boot::early_write_str(b"CALL_MM_INIT\r\n");
 
-    // ========================================================================
-    // Determine boot mode and configure output channels. The per-arch
-    // boot-display wiring lives in `crate::arch::boot` so the rest of
-    // `kernel_main` doesn't have to know which architectures have a
-    // GOP/bootvid.
-    // ========================================================================
-    let boot_mode = BootMode::from_u32(boot_info.boot_mode);
-    crate::arch::boot::configure_boot_display(boot_mode);
+    unsafe {
+        crate::arch::init_paging();
+    }
 
-    boot_println!("Initializing memory manager...");
     // `mm::BootInfo` is a re-export of `crate::boot_types::BootInfo`
     // (the canonical layout shared with the bootloader), so we can
     // hand the kernel the loader-supplied struct directly. The old
@@ -261,70 +207,89 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
         }
     }
 
+    // Generic AArch64 platforms have no fixed UART/GIC addresses. The
+    // loader supplies a runtime copy of the firmware Device Tree, so
+    // initialize it before architecture bring-up consumes its resources.
+    if boot_info.device_tree_base != 0 && boot_info.device_tree_size != 0 {
+        unsafe {
+            crate::arch::common::device_tree::init(
+                boot_info.device_tree_base,
+                boot_info.device_tree_size,
+            );
+        }
+    } else {
+        crate::arch::common::device_tree::set_hardware(boot_info.device_tree_hardware);
+    }
+
+    // ACPI: winload discovered the RSDP through the EFI
+    // configuration table and passes its physical address in the
+    // boot protocol. Register it before HAL/PCI bring-up so
+    // `find_table` (MCFG, FADT, ...) resolves on every architecture.
+    crate::hal::common::acpi::set_rsdp(boot_info.acpi_rsdp);
+
+    // ====================================================================
+    // Initialize the framebuffer from the BootInfo passed by winload.
+    // The framebuffer and boot display facades use heap-backed console
+    // state, so they must only run after the kernel memory manager is
+    // live. Early boot diagnostics stay on raw UART until this point.
+    // ====================================================================
+    if crate::arch::boot::adopt_bootinfo_framebuffer(boot_info) {
+        crate::arch::boot::early_write_str(b"FRAMEBUFFER READY\r\n");
+    } else {
+        crate::arch::boot::early_write_str(b"NO FRAMEBUFFER\r\n");
+    }
+
+    // From here on the operator sees the GUI panel rather than the
+    // raw COM1 boot trace. Panic paths still bypass this gate.
+    // Release builds hide boot noise from COM1; debug builds keep it
+    // enabled so QEMU validation can observe the full boot sequence.
+    if !cfg!(feature = "log_level_debug") {
+        crate::hal::serial::set_disabled(true);
+    }
+
+    // ========================================================================
+    // Determine boot mode and configure output channels through the
+    // platform boot facade.
+    // ========================================================================
+    let boot_mode = BootMode::from_u32(boot_info.boot_mode);
+    crate::arch::boot::configure_boot_display(boot_mode);
+
+    // Platform serial bring-up. This is deliberately after MM because
+    // the logging/console layers allocate and because early diagnostics
+    // already used the firmware-initialized UART.
+    crate::arch::boot::init_serial();
+    boot_header!("NT6.1.7601 Kernel Boot Trace");
     boot_println!("Memory manager initialized");
 
+    // Initialise the platform text console after the kernel heap is
+    // configured. The console's ring buffer uses heap storage, so it
+    // must not run before `mm::init()` has completed.
+    crate::arch::boot::init_text_console();
+    crate::rtl::windows_log::init_boot_timer();
+
     // ============================================================================
-    // PHASE 1: Hardware initialization (GDT, IDT, PIC, TSS, Syscall MSRs, PIT, HPET)
+    // PHASE 1: Hardware initialization
     // ============================================================================
     //
-    // CRITICAL-010: `pic::init_and_mask_all()` is the first thing
-    // `arch::init_hardware()` does so that any stray IRQ arriving
-    // between IDT load and full driver bring-up is silently
-    // dropped at the PIC rather than raising #GP into an empty IDT
-    // slot. After this phase every IRQ line is masked; only the
-    // per-device drivers (PIT, keyboard, ...) explicitly unmask the
-    // lines they need before `enable_interrupts_once()` is called.
     phase_header!(0, "Hardware Initialization");
 
-    // Mask all 8259 IRQ lines BEFORE the IDT is loaded so any
-    // stray IRQ between IDT load and full driver bring-up is
-    // silently dropped at the PIC rather than raising #GP into
-    // an empty IDT slot. On non-x86_64 the legacy PIC is absent
-    // and the per-arch controller is masked inside
-    // `arch::init_hardware()` instead.
-    boot_print!("Initializing PIC (mask all)... ");
+    boot_debug_print!("Masking boot interrupts... ");
     crate::arch::boot::mask_legacy_pic_irqs();
     boot_println!("OK");
 
-    boot_print!("Initializing GDT, IDT, TSS... ");
+    boot_debug_print!("Initializing processor state... ");
     arch::init_hardware();
-    // CRITICAL-008: `tss::init()` (called from
-    // `arch::init_hardware()`) installs the BSP IST stack
-    // pointers for IST1..IST7. Any per-thread RSP0 update
-    // happens later in `enter_first_user_thread()` via
-    // `tss::set_rsp0()`. `tss::install_ist_stack()` is also
-    // exposed as a public API so SMP bring-up can re-install
-    // IST stacks on a per-CPU basis if needed.
     boot_println!("OK");
 
-    // CRITICAL-013: install the early-boot kernel stack as RSP0.
-    // The IRQ gates are now wired with `IST=0` (see idt.rs) so the
-    // CPU pushes the IRQ iret frame on `TSS.rsp0` directly. If
-    // RSP0 is 0 and a stray IRQ fires during early boot, the
-    // push would target virtual address 0 and trip a #PF / #SS
-    // (the `#SS vector=12 sel=0x0000` we used to see after
-    // `[SYS-RD] done` was exactly this — IST1 was set up correctly
-    // for vectors 32..255 but the cli/sti window around the
-    // post-NTFS-read path was racing with a pending PIT tick).
-    // Snapshotting the live kernel RSP into `TSS.rsp0` before any
-    // potentially-sti-able code path runs eliminates the crash.
-    //
-    // The TSS is an x86_64-only concept (riscv64 / aarch64 /
-    // loongarch64 use EL0/PLV0 transition registers directly via
-    // `arch::<arch>::user_entry::enter` and the per-CPU area); on
-    // those targets the BSP kernel stack is already wired by
-    // `arch::init_hardware()`.
-    #[cfg(target_arch = "x86_64")]
-    crate::arch::x86_64::tss::set_rsp0_during_init();
-    // Print TSS.rsp0 with a tiny custom raw-serial hex printer
-    // rather than `boot_println!("0x{:x}", ...)`. The kernel's
-    // format-args path was triggering a triple-fault at this
-    // exact site before the `-C relocation-model=static` fix
-    // landed; the raw path is a belt-and-suspenders measure.
-    #[cfg(target_arch = "x86_64")]
-    {
-        let rsp0_val: u64 = crate::arch::x86_64::tss::rsp0();
-        let prefix: &[u8] = b"[BOOT] TSS.rsp0 = 0x";
+   boot_debug_print!("Bringing up secondary processors... ");
+   arch::start_smp();
+   boot_println!("OK");
+
+   // Install the early-boot kernel stack before any potentially
+   // interruptible code path runs.
+   arch::init_kernel_stack();
+   if let Some(rsp0_val) = arch::kernel_stack_base() {
+        let prefix: &[u8] = b"[BOOT] KERNEL STACK = 0x";
         for &b in prefix {
             crate::hal::serial::write_char(b);
         }
@@ -342,106 +307,88 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
             crate::hal::serial::write_char(b);
         }
     }
-    boot_print!("Initializing HAL... ");
-    hal::init();
-    boot_println!("OK");
+   boot_debug_print!("Initializing HAL... ");
+   hal::init();
+   boot_println!("OK");
 
     // Bring up the abstract text console *before* any subsequent
-    // `boot_println!` call. On x86_64 this enables the VGA mirror
-    // path in `write_serial`; on aarch64 / riscv64 / loongarch64
-    // it sets up the in-RAM log ring that the SafeBootMode CMD
+    // `boot_println!` call. This enables the graphical mirror path
+    // where available, and otherwise sets up the in-RAM log ring that the SafeBootMode CMD
     // shell reads back into its "log display" pane on entry.
-    // Skipping the call here would leave the ring empty and the
-    // pane would render "no log lines captured yet" instead of
-    // the actual boot trace.
-    crate::hal::text_console::init();
+    // Without this call the log ring stays empty and the pane
+    // would render "no log lines captured yet" instead of the
+    // actual boot trace.
+   crate::hal::text_console::init();
 
-    // ============================================================================
-    // PHASE 2: Kernel Executive (ke)
-    // ============================================================================
-    phase_header!(1, "Kernel Executive");
-    ke::init();
+   // ============================================================================
+   // PHASE 2: Kernel Executive (ke)
+   // ============================================================================
+   phase_header!(1, "Kernel Executive");
+   ke::init();
 
-    // ============================================================================
-    // PHASE 3: Object Manager (ob)
-    // ============================================================================
-    phase_header!(2, "Object Manager");
-    ob::init();
+   // ============================================================================
+   // PHASE 3: Object Manager (ob)
+   // ============================================================================
+   phase_header!(2, "Object Manager");
+   ob::init();
 
-    // ============================================================================
-    // PHASE 4: Registry / Configuration Manager
-    // ============================================================================
-    phase_header!(3, "Registry");
-    registry::init();
+   // ============================================================================
+   // PHASE 4: Registry / Configuration Manager
+   // ============================================================================
+   phase_header!(3, "Registry");
+   registry::init();
 
-    // ============================================================================
-    // PHASE 5: I/O Manager (io)
-    // ============================================================================
-    phase_header!(4, "I/O Manager");
-    io::init();
+   // ============================================================================
+   // PHASE 5: I/O Manager (io)
+   // ============================================================================
+   phase_header!(4, "I/O Manager");
+   io::init();
 
-    // ============================================================================
-    // PHASE 6: File System (fs)
-    // ============================================================================
-    crate::boot_println!("[PHASE5] about to call phase_header!(5)");
-    phase_header!(5, "File System");
-    crate::boot_println!("[PHASE5] phase_header done");
+   // ============================================================================
+   // PHASE 6: File System (fs)
+   // ============================================================================
+   phase_header!(5, "File System");
     // Hand the ESP mirror (captured by winload before
     // ExitBootServices) to the FS layer so the FAT32 driver
     // has a backing store to read from. This must run before
     // `fs::init()` so the mount step sees the RAM disk.
-    crate::boot_println!("[PHASE5] A: before format-args print");
-    let test_val: u64 = 0xDEAD_BEEF_CAFE_BABE;
-    crate::boot_println!("[PHASE5] B: hardcoded value = 0x{:x}", test_val);
-    let bi_base = boot_info.esp_image_base;
-    crate::boot_println!("[PHASE5] C: read boot_info.esp_image_base, no fmt");
-    crate::boot_println!(
-        "[PHASE5] D: calling mount_esp_from_bootinfo (esp_base=0x{:x})",
-        bi_base
-    );
-    crate::boot_println!("[PHASE5] E: after format-args print");
     fs::mount_esp_from_bootinfo(boot_info);
-    crate::boot_println!("[PHASE5] mount_esp_from_bootinfo returned");
     // Also register the System partition mirror (the NTFS
     // partition on the disk, captured by winload's
     // `capture_system_partition`) so the NTFS driver
     // can read the boot sector for mounting.
-    crate::boot_println!(
-        "[PHASE5] calling mount_sys_from_bootinfo (sys_base=0x{:x})",
-        boot_info.sys_image_base
-    );
     fs::mount_sys_from_bootinfo(boot_info);
-    crate::boot_println!("[PHASE5] mount_sys_from_bootinfo returned");
     // Mount the ISO boot RAM disk (combined FAT32 image from ISO)
     // as the X: drive. This is only populated for ISO boot;
     // for disk-booted configurations this is a no-op.
-    crate::boot_println!(
-        "[PHASE5] calling mount_ramdisk_from_bootinfo (ramdisk_base=0x{:x})",
-        boot_info.ramdisk_image_base
-    );
     fs::mount_ramdisk_from_bootinfo(boot_info);
-    crate::boot_println!("[PHASE5] mount_ramdisk_from_bootinfo returned");
-    crate::boot_println!("[PHASE5] calling fs::init");
-    fs::init();
-    crate::boot_println!("[PHASE5] fs::init returned");
+   fs::init();
 
-    // ============================================================================
-    // PHASE 7: LPC / ALPC
-    // ============================================================================
-    phase_header!(6, "LPC/ALPC");
-    lpc::init();
+   // ============================================================================
+   // PHASE 7: LPC / ALPC
+   // ============================================================================
+   phase_header!(6, "LPC/ALPC");
+   lpc::init();
+   crate::rtl::klog::phase_trace_marker(601);
 
-    // ============================================================================
-    // PHASE 8: Driver initialization
-    // ============================================================================
-    phase_header!(7, "Drivers");
-    drivers::init();
+   // ============================================================================
+   // PHASE 8: Driver initialization
+   // ============================================================================
+   phase_header!(7, "Drivers");
+   // SAFETY: boot is single-threaded and this runs before any disk I/O.
+   unsafe {
+       drivers::arch::register_storage_backends();
+   }
+   crate::rtl::klog::phase_trace_marker(701);
+   drivers::init();
+   crate::rtl::klog::phase_trace_marker(702);
 
-    // ============================================================================
-    // PHASE 9: Process / Thread Subsystem (ps)
-    // ============================================================================
-    phase_header!(8, "Process Subsystem");
-    ps::init();
+   // ============================================================================
+   // PHASE 9: Process / Thread Subsystem (ps)
+   // ============================================================================
+   phase_header!(8, "Process Subsystem");
+   ps::init();
+   crate::rtl::klog::phase_trace_marker(801);
 
     // ============================================================================
     // PHASE 9: Reserved — disk ntoskrnl.exe manages subsystem PEs
@@ -458,13 +405,13 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
         9,
         "System Image Loader (reserved - disk ntoskrnl manages this)"
     );
-    load_system_files();
+   load_system_files();
 
-    // ============================================================================
-    // PHASE 10: Create system processes (System process, Idle thread)
-    // ============================================================================
-    phase_header!(10, "System Processes");
-    create_system_processes();
+   // ============================================================================
+   // PHASE 10: create system processes (System process, Idle thread)
+   // ============================================================================
+   phase_header!(10, "System Processes");
+   create_system_processes();
 
     // ============================================================================
     // PHASE 11: Session Manager (smss.exe)
@@ -482,45 +429,54 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     // so the user-mode `cmd.exe` stub's `ipconfig` builtin has a
     // real kernel-side source to print, instead of falling back
     // to the static 127.0.0.1 literal in the SYS_NETCFG_GET handler.
-    #[cfg(target_arch = "x86_64")]
-    {
-        match crate::netstack::ipif::seed_loopback() {
-            Some(idx) => boot_println!("    loopback interface registered (if_index={})", idx),
-            None => boot_println!("    loopback interface registration skipped (table full)"),
-        }
+    match crate::netstack::ipif::seed_loopback() {
+        Some(idx) => boot_println!("    loopback interface registered (if_index={})", idx),
+        None => boot_println!("    loopback interface registration failed: interface table full"),
     }
 
-    start_session_manager();
+   let boot_mode = BootMode::from_u32(boot_info.boot_mode);
+   start_session_manager(boot_mode);
 
-    // ============================================================================
-    // PHASE 12: Run smoke tests
-    // ============================================================================
-    phase_header!(12, "Smoke Tests");
-    run_smoke_test();
+   // ============================================================================
+   // PHASE 12: Run smoke tests
+   // ============================================================================
+   phase_header!(12, "Smoke Tests");
+   run_smoke_test();
 
-    // ============================================================================
-    // PHASE 14: Print IDLE banner
-    // ============================================================================
-    boot_header!("NT6.1.7601 - System Ready");
-    boot_println!("NT6.1.7601 reached IDLE");
-    boot_println!("System ready (FULL BOOT)");
+   // ============================================================================
+   // PHASE 13: End-to-end network verification (QEMU slirp only)
+   // ============================================================================
+   phase_header!(13, "Network E2E");
+   if crate::netstack::e2e_test::run_e2e_test() {
+        boot_println!("    network E2E: all stages passed");
+    } else {
+        boot_println!("    network E2E: some stages failed (see log)");
+   }
 
-    // ============================================================================
-    // PHASE 15: Enter first user thread (Ring 3) or Safe-Mode shell.
+   // ============================================================================
+   // PHASE 14: Print IDLE banner
+   // ============================================================================
+   crate::rtl::klog::phase_trace_marker(14);
+   boot_header!("NT6.1.7601 - System Ready");
+    boot_debug_println!("NT6.1.7601 reached IDLE");
+    boot_print!("System ready (FULL BOOT)\r\n");
+
+   // ============================================================================
+   // PHASE 15: Enter first user thread (Ring 3) or Safe-Mode shell.
     //
     // The boot mode is selected by `bootmgr` and forwarded through
-    // `boot_info.boot_mode`. The reference doc
-    // (`docs/ref_boot_cmd.md`) maps the three valid NT 6.1 boot
-    // configurations as follows:
+    // `boot_info.boot_mode`. The four valid NT 6.1 boot
+    // configurations are:
     //
-    //  * `Normal`         -> full Win7 startup, go to Ring 3.
-    //  * `SafeModeCmd`    -> skip user-mode subsystem init, show the
-    //                         kernel-side CMD shell with a
-    //                         log display + `C:\>` prompt.
-    //  * `SafeModeDebug`  -> like Normal but enable kdcom serial
-    //                         logging, then go to Ring 3 OR drop
-    //                         into the kd> shell — depends on arch.
-    //
+    //  * `Desktop`        -> no log output, boot animation, Ring 3.
+    //                         (future: desktop GUI)
+    //  * `Cmd`            -> no log output, boot animation, Ring 3
+    //                         cmd.exe. (future: CMD GUI window)
+    //  * `DebugCmd`       -> full verbose boot log, no animation,
+    //                         Ring 3 cmd.exe.
+    //  * `SafeMode`       -> full verbose boot log, no animation,
+    //                         user-mode subsystem init stays disabled,
+    //                         enter kernel-side CMD shell (polled I/O).
     // `enter_first_user_thread()` is `-> !` and never returns.
     //
     // CRITICAL: for `SafeModeCmd` we deliberately do NOT call
@@ -531,154 +487,64 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     // returns to garbage, producing a #DF / triple-fault. The
     // Safe-Mode shell therefore runs with interrupts masked and
     // uses POLLED I/O.
-    // ============================================================================
-    let mode = BootMode::from_u32(boot_info.boot_mode);
-    boot_print!("Boot mode: ");
+   // ============================================================================
+   crate::rtl::klog::phase_trace_marker(15);
+   let mode = BootMode::from_u32(boot_info.boot_mode);
+   boot_print!("Boot mode: ");
     match mode {
-        BootMode::Normal => boot_println!("Normal"),
-        BootMode::SafeModeCmd => boot_println!("Safe Mode (CMD)"),
-        BootMode::SafeModeDebug => boot_println!("Safe Mode (Debug)"),
+        BootMode::Desktop => boot_print!("Desktop\r\n"),
+        BootMode::Cmd => boot_print!("Command Prompt\r\n"),
+        BootMode::DebugCmd => boot_print!("Debug CMD\r\n"),
+        BootMode::SafeMode => boot_print!("Safe Mode\r\n"),
     }
 
-    match mode {
-        BootMode::SafeModeCmd => {
-            // Safe Mode with Command Prompt — show the
-            // architecture-independent kernel-side CMD shell.
-            //
-            // On x86_64 the historical NT 6.1 behaviour is to
-            // launch the user-mode `C:\Windows\System32\cmd.exe`
-            // binary as a real Ring 3 process; the kernel reads
-            // that PE directly from the mounted system partition
-            // (FAT32 or NTFS, depending on the build format) —
-            // the on-disk image is the single source of truth.
-            // When the user-mode binary is missing, or on
-            // architectures without a working user-mode ring
-            // transition, we fall back to the unified kernel-side
-            // shell so the operator still sees the canonical
-            // `C:\Windows [Version 6.1.7601]` banner, the
-            // `LOGS` scroll-back pane, and a usable `C:\>`
-            // prompt.
-            boot_println!("Safe Mode (CMD): entering kernel-side command shell");
-
-            // Mask every IRQ so the polling path is the only
-            // source of input. PIT must NOT fire during a
-            // Safe-Mode shell (the boot stack would be
-            // corrupted by a context switch).
+    // Phase 15 - boot-mode dispatch.
+    //
+    // Desktop / Cmd: no log output was shown during the phases
+    // (suppressed by configure_boot_display). Run the boot
+    // animation, clear the screen, and enter Ring 3 cmd.exe.
+    //
+    // DebugCmd: full verbose log was shown, no animation. Enter
+    // Ring 3 cmd.exe directly.
+    //
+    // SafeMode: full verbose log, no animation, user-mode
+    // subsystem init stays disabled (Phase 12 leaves it off), enter the
+    // kernel-side CMD shell with polled I/O.
+   match mode {
+       BootMode::Desktop | BootMode::Cmd => {
+           crate::rtl::klog::phase_trace_marker(151);
+           crate::arch::boot::run_boot_animation();
+           crate::rtl::klog::phase_trace_marker(152);
+           crate::hal::keyboard_input::init();
+           crate::rtl::klog::phase_trace_marker(153);
+           crate::hal::text_console::init();
+           crate::rtl::klog::phase_trace_marker(154);
+           servers::smss::launch_cmd_shell();
+       }
+       BootMode::DebugCmd => {
+           crate::rtl::klog::phase_trace_marker(155);
+           boot_println!("Debug CMD: entering user-mode cmd.exe");
+           crate::hal::keyboard_input::init();
+           crate::rtl::klog::phase_trace_marker(156);
+           crate::hal::text_console::init();
+           crate::rtl::klog::phase_trace_marker(157);
+           servers::smss::launch_cmd_shell();
+       }
+       BootMode::SafeMode => {
+           boot_println!("Safe Mode: entering kernel-side command shell");
             mask_all_irqs_for_safe_mode();
             arch::disable_interrupts();
-
-            // Bring up the platform-specific polled input
-            // backend (PS/2 + USB HID on x86_64, UART FIFO on
-            // the others) — idem­potent across re-entry.
             crate::hal::keyboard_input::init();
-
-            // Make sure the text console (VGA on x86_64, log
-            // ring on the others) is up. The order matters:
-            // init() must run before clear() / put_*, which
-            // they do through `hal::text_console::put_byte`.
             crate::hal::text_console::init();
-
-            // Paint the Safe-Mode (with Command Prompt) console
-            // layout onto the VGA text buffer via `gui_log`.
-            //
-            // Without this explicit `show_safe_mode_console`
-            // call the operator would land on the stale UEFI /
-            // winload "Starting Windows" GOP framebuffer instead
-            // of the kernel's Log + CMD layout — the kernel's
-            // own `boot_println!` lines never overwrite the
-            // pixels that `winload.efi` painted, because the
-            // VGA text buffer at 0xB8000 is *separate* memory
-            // from the GOP LFB that QEMU actually scans out
-            // under `-display gtk`. Painting the title bar
-            // here forces the layout onto the LFB through the
-            // bootvid mirror so the operator immediately sees
-            // the Log pane and the CMD prompt.
-            #[cfg(target_arch = "x86_64")]
-            {
-                crate::hal::x86_64::text_console::show_safe_mode_console();
-            }
-
-            // Previous behaviour: launch a user-mode `cmd.exe`
-            // stub through the Ring 0 → Ring 3 transition and
-            // let it run `autoexec.bat`. The stub then calls
-            // `SYS_EXIT_PROCESS`, which `process_exit()` parks
-            // on `arch::halt()` — the screen freezes on whatever
-            // the user-mode stub painted (often nothing,
-            // because the stub has no VGA-side text path of its
-            // own) and the operator is left looking at the
-            // "Starting Windows" panel the firmware left behind.
-            //
-            // We intentionally do NOT drop directly into the
-            // kernel-side shell here any more. `run_safe_mode_shell`
-            // now owns the dispatch: it paints the visible Log + CMD
-            // pane and *then* tries to take the user-mode subsystem
-            // chain (csrss.exe → wininit.exe → services.exe →
-            // lsass.exe → cmd.exe) up to Ring 3. If that fails it
-            // falls through to the kernel-side shell for backwards
-            // compatibility. The actual print below is a single
-            // status line that ends up on the operator's screen.
-            boot_println!(
-                "[SAFE-CMD] SafeModeCmd: entering visible Log + CMD pane (user-mode priority)"
-            );
+            arch::show_safe_mode_console();
             run_safe_mode_shell(servers::cmd::ShellMode::SafeModeCmd);
-        }
-        BootMode::SafeModeDebug => {
-            // Debug mode: enable KDCOM and/or SAC for serial
-            // console. The same polling discipline as
-            // SafeModeCmd applies, so interrupts stay
-            // disabled.
-            boot_println!("Debug boot — enabling serial debugger...");
-
-            // Initialize the per-arch kernel debugger transport
-            // (legacy 8250 COM1 kdcom on x86_64, kernel-side
-            // kd> shell on the other arches). The abstraction
-            // lives in `crate::arch::boot`.
-            crate::arch::boot::init_kernel_debugger();
-
-            mask_all_irqs_for_safe_mode();
-            arch::disable_interrupts();
-            crate::hal::keyboard_input::init();
-            crate::hal::text_console::init();
-
-            boot_println!("Entering debug shell (kd>)...");
-            run_safe_mode_shell(servers::cmd::ShellMode::SafeModeDebug);
-        }
-        BootMode::Normal => {
-            // Normal boot: Show minimal progress on screen and
-            // hand off to the user-mode subsystem via the
-            // architecture's first-user-thread entry point.
-            boot_println!("Entering first user thread (Ring 3)...");
-            enter_first_user_thread();
-            // enter_first_user_thread is `-> !`; this is just a
-            // safety fallback if it ever returns (which would
-            // mean the user thread exited cleanly back into
-            // kernel context). Wrapped in `allow(unreachable_code)`
-            // because the type system can't model the
-            // architecture-specific divergence between
-            // implementations.
-            #[allow(unreachable_code)]
-            {
-                crate::hal::serial::write_string("[KERNEL] user thread returned, halting\r\n");
-                loop {
-                    crate::arch::halt();
-                }
-            }
         }
     }
 }
 
-/// Disable every maskable IRQ on every architecture, in
-/// preparation for the polled-IO Safe-Mode shell loop.
-///
-/// On x86_64 the legacy 8259 PIC master/slave pair is masked at
-/// the chip level (writes `0xFF/0xFF` to OCW1) so neither IRQ0
-/// (PIT) nor any keyboard / cascade IRQ can fire. Other
-/// interrupt controllers (aarch64's GIC, riscv64's PLIC,
-/// loongarch64's Extended IOC) are masked at the controller
-/// level — the implementations of those masks live in
-/// `arch::<arch>::init` and have already been brought up by
-/// the time we get here. The per-arch masking logic is now
-/// centralised in `crate::arch::boot::mask_all_irqs_for_polled_io`.
+/// Disable every maskable IRQ in preparation for the polled-IO
+/// Safe-Mode shell loop. Masking is delegated to the platform boot
+/// facade so all controller details remain under `arch`.
 fn mask_all_irqs_for_safe_mode() {
     crate::arch::boot::mask_all_irqs_for_polled_io();
 }
@@ -689,17 +555,13 @@ fn mask_all_irqs_for_safe_mode() {
 /// boot lines into the upper pane so the operator can read the
 /// bring-up trace without scrolling the serial log, and then
 /// drops into the unified kernel-side CMD/IDLE shell from
-/// `servers::cmd`. It works on every architecture the kernel
-/// supports: x86_64, aarch64, riscv64, loongarch64.
+/// `servers::cmd`. It works on every platform the kernel supports.
 ///
-/// On x86_64 we *first* try the user-mode subsystem chain
-/// (csrss → wininit → services → lsass → cmd.exe), loaded
-/// directly from the mounted system partition (FAT32, NTFS or
-/// EXT4). Only if that fails (or on non-x86_64 architectures
-/// where the user-mode transition is not yet wired up) do we
+/// The user-mode subsystem chain is tried first. If it fails, or
+/// the user-mode transition is not yet wired up on a target, then we
 /// drop into the kernel-side shell so the operator always
 /// sees a usable `C:\>` prompt.
-fn run_safe_mode_shell(mode: servers::cmd::ShellMode) -> ! {
+pub fn run_safe_mode_shell(mode: servers::cmd::ShellMode) -> ! {
     use crate::hal::text_console::{
         log_line_count, put_line, put_title_bar_bytes, read_log_lines, set_attr, set_cursor,
         write_hr, ATTR_DEFAULT, ATTR_HR, ATTR_TITLE, COLS, ROWS,
@@ -713,6 +575,7 @@ fn run_safe_mode_shell(mode: servers::cmd::ShellMode) -> ! {
     let title_bytes: &[u8] = match mode {
         servers::cmd::ShellMode::SafeModeCmd => b" NT6.1.7601 Safe Mode -- Command Prompt ",
         servers::cmd::ShellMode::SafeModeDebug => b" NT6.1.7601 Safe Mode -- Kernel Debug ",
+        servers::cmd::ShellMode::Ring3 => b" NT6.1.7601 Command Prompt ",
     };
     put_title_bar_bytes(title_bytes, ATTR_TITLE);
 
@@ -726,11 +589,10 @@ fn run_safe_mode_shell(mode: servers::cmd::ShellMode) -> ! {
     put_line(crate::arch::boot::arch_name_line());
 
     // ------------------------------------------------------------------
-    // Log-display pane (rows 4..=22). On non-x86_64 this is the
-    //   *only* screen memory we have, so the pane shows the
-    //   last LOG_RING_LINES scroll-back from the kernel log.
-    //   On x86_64 the VGA buffer itself is the log, so we leave
-    //   the lower rows for the shell to use.
+    // Log-display pane (rows 4..=22). On platforms without a
+    // native text framebuffer this is the only screen memory, so
+    // the pane shows the last scroll-back lines. Native text
+    // platforms leave the lower rows for the shell.
     // ------------------------------------------------------------------
     write_hr(3, ATTR_HR);
     set_cursor(0, 4);
@@ -738,8 +600,7 @@ fn run_safe_mode_shell(mode: servers::cmd::ShellMode) -> ! {
     write_hr(5, ATTR_HR);
 
     if !crate::arch::boot::has_vga_text_console() {
-        // On architectures without a real text framebuffer
-        // (aarch64, riscv64, loongarch64) the log ring lives
+        // On platforms without a real text framebuffer, the log ring lives
         // in `hal::common::text_console`. The
         // `text_console::log_line_count` / `read_log_lines`
         // accessors give us the most-recent boot lines so the
@@ -773,7 +634,7 @@ fn run_safe_mode_shell(mode: servers::cmd::ShellMode) -> ! {
             }
         }
     }
-    // On x86_64 (and any future arch with a real text-mode
+    // On any future platform with a real text-mode
     // framebuffer) the VGA buffer already shows every boot
     // line as it was emitted — there is no scroll-back pane
     // to populate, so the lower rows stay free for shell use.
@@ -792,11 +653,9 @@ fn run_safe_mode_shell(mode: servers::cmd::ShellMode) -> ! {
     set_attr(ATTR_DEFAULT);
 
     // ------------------------------------------------------------------
-    // Try the user-mode subsystem chain *first*. On x86_64 this
-    // launches csrss.exe → wininit.exe → services.exe →
-    // lsass.exe → cmd.exe in order, loading every binary from
-    // the mounted system partition (FAT32/NTFS/EXT4) via the
-    // layered fallback in `arch::boot::try_launch_cmd_exe_arch`.
+    // Try the user-mode subsystem chain first. It loads the
+    // subsystem executables from the mounted system partition
+    // through the platform boot facade.
     //
     // Behaviour:
     //   * On the success path, `try_launch_cmd_exe` reaches
@@ -807,7 +666,7 @@ fn run_safe_mode_shell(mode: servers::cmd::ShellMode) -> ! {
     //     loader faulted, etc.), `try_launch_cmd_exe` returns
     //     `false` and the kernel-side CMD shell below takes over.
     //
-    // We deliberately gate this on `BootMode::SafeModeCmd` so
+    // We deliberately gate this on `BootMode::Cmd` so
     // the kernel-debug `kd>` surface keeps using its own
     // kernel-side loop instead of trying to launch a user-mode
     // cmd.exe.
@@ -875,50 +734,79 @@ fn load_system_files() {
         ));
     }
     boot_ok!("Image database initialized");
+    boot_milestone!("KERNEL", "image DB init done");
 
-    boot_milestone!(
-        "KERNEL",
-        "Skipping host-side PE synthesis (disk ntoskrnl manages this)"
-    );
-
-    // Phase 9 image base addresses. These are intentionally
-    // named with the `_` prefix because Phase 9 host-side PE
-    // synthesis is intentionally skipped now — the real
-    // `ntoskrnl.exe` lives in the on-disk NTFS system image
-    // and is loaded by `winload.efi` before `ExitBootServices`.
-    // The values are kept here so the layout can be restored
-    // verbatim if a host-side debug build ever needs them
-    // again: the table below shows exactly where each NT 6.1
-    // system image is meant to be mapped into the kernel
-    // address space.
-    let _image_bases: [(&str, u64); 5] = [
-        ("hal.dll", kernel_layout::HAL_BASE),
-        ("ntoskrnl.exe", kernel_layout::NTOSKRNL_BASE),
-        ("ntdll.dll", kernel_layout::NTOSKRNL_BASE + 0xA0000),
-        ("kernel32.dll", kernel_layout::NTOSKRNL_BASE + 0x500000),
-        ("smss.exe", kernel_layout::SMSS_BASE),
-    ];
-
-    // Image database handle. Also `_`-prefixed because the
-    // load loop is currently skipped; the database is
-    // initialised above and made ready for future Phase 9
-    // loaders to consume via the `unsafe` deref pattern below.
-    let _db: &mut crate::loader::ImageDatabase = unsafe {
+    let db: &mut crate::loader::ImageDatabase = unsafe {
         (*core::ptr::addr_of_mut!(SYSTEM_IMAGE_DB))
             .as_mut_ptr()
             .as_mut()
             .unwrap()
     };
 
-    // Load each image
-    boot_milestone!("KERNEL", "Skipping image loading (TEMP WORKAROUND)");
+    const SYSTEM_IMAGES: [(&str, &str, u64); 5] = [
+        (
+            "hal.dll",
+            "C:\\Windows\\System32\\hal.dll",
+            kernel_layout::HAL_BASE,
+        ),
+        (
+            "ntoskrnl.exe",
+            "C:\\Windows\\System32\\ntoskrnl.exe",
+            kernel_layout::NTOSKRNL_BASE,
+        ),
+        (
+            "ntdll.dll",
+            "C:\\Windows\\System32\\ntdll.dll",
+            kernel_layout::NTOSKRNL_BASE + 0xA0000,
+        ),
+        (
+            "kernel32.dll",
+            "C:\\Windows\\System32\\kernel32.dll",
+            kernel_layout::NTOSKRNL_BASE + 0x500000,
+        ),
+        (
+            "smss.exe",
+            "C:\\Windows\\System32\\smss.exe",
+            kernel_layout::SMSS_BASE,
+        ),
+    ];
 
-    boot_ok!("System images loaded");
+    let mut loaded_count = 0usize;
+    for (name, path, preferred_base) in SYSTEM_IMAGES {
+        boot_milestone!("KERNEL", name);
+        let raw_pe = crate::servers::smss::read_pe_from_disk(path);
+        let raw_pe = match raw_pe {
+            Some(raw_pe) => raw_pe,
+            None => {
+                boot_println!("    Failed to read system image: {}", name);
+                boot_milestone!("KERNEL", "system image read failed");
+                continue;
+            }
+        };
+        boot_milestone!("KERNEL", "system image read complete");
+        match crate::loader::load_image_full(name, &raw_pe, db, preferred_base) {
+            Some(image) => {
+                boot_ok!(format!(
+                    "Loaded {}: base=0x{:x} entry=0x{:x} size=0x{:x}",
+                    name, image.image_base, image.entry_point, image.image_size
+                ));
+                db.register(&image, &raw_pe);
+                loaded_count += 1;
+                boot_milestone!("KERNEL", "system image load complete");
+            }
+            None => {
+                boot_println!("    Failed to load system image: {}", name);
+                boot_milestone!("KERNEL", "system image load failed");
+            }
+        }
+    }
 
-    // Skip deferred image loading (no all_images available)
-    boot_milestone!("KERNEL", "Skipping deferred images (TEMP WORKAROUND)");
-    boot_println!("Total images: 0 (skipped)");
+    boot_println!("Total images: {}", loaded_count);
     boot_println!("Import database ready for symbol resolution");
+
+    if loaded_count == 0 {
+        boot_println!("    ERROR: no system images were loaded from the system partition");
+    }
 
     SYSTEM_DB_READY.store(true, Ordering::Release);
 }
@@ -929,7 +817,6 @@ fn load_system_files() {
 /// own `smoke.rs` module. This function is the single aggregator
 /// that kernel_main calls after Phase 13 of the boot sequence.
 /// We use the unified testing framework for consistent output.
-#[cfg(target_arch = "x86_64")]
 fn run_smoke_test() {
     use crate::rtl::testing::SmokeAggregator;
 
@@ -991,26 +878,17 @@ fn run_smoke_test() {
     aggregator.record("LIBS", true);
 
     // 11. User Entry (Ring 0 -> Ring 3 transition)
-    // TLE-8: x86_64 user_entry::smoke_test() runs `first_user_enter`
-    //   assembly stub. It's also exercised in production when
+    // TLE-8: the platform user-entry smoke test runs the privilege
+    // transition stub. It is also exercised in production when
     //   `try_launch_cmd_exe()` brings up user-mode `cmd.exe`, so
     //   we can short-circuit here. The whole smoke aggregator is
-    //   already x86_64-only (other targets fall back to a no-op
-    //   `run_smoke_test` below), so no inner `cfg` gate is needed
-    //   here.
-    boot_println!(
-        "  [USER_ENTRY] first_user_enter + call_first_user_enter: linked, callable (TLE-8 SKIP)"
-    );
+    //   platform details are hidden by the smoke-test facade.
+    boot_println!("  [USER_ENTRY] first_user_enter + call_first_user_enter: linked, callable");
     aggregator.record("USER_ENTRY", true);
 
     // Print summary
     aggregator.finish();
 }
-
-/// Stub for non-x86_64 architectures — every smoke test returns
-/// `true` on those targets so Phase 13 is a no-op.
-#[cfg(not(target_arch = "x86_64"))]
-fn run_smoke_test() {}
 
 fn create_system_processes() {
     // Phase 11: System process creation (Windows NT boot sequence)
@@ -1031,14 +909,14 @@ fn create_system_processes() {
         boot_println!("  Phase 11: WARNING: Idle process not found");
     }
 
-    // 2. Create System process (PID 4) - primary kernel-mode process
+    // 2. create System process (PID 4) - primary kernel-mode process
     boot_println!("  Phase 11: Creating System process (PID 4)...");
     let sys_result = ps::process::create_system_process(ps::process::PID_SYSTEM);
     if let Some(sys) = sys_result {
         boot_println!("    System process created successfully (PID 4)");
         sys.set_name(b"System\0");
 
-        // 3. Create System threads for the System process
+        // 3. create System threads for the System process
         boot_println!("  Phase 11: Creating System threads...");
         create_system_threads();
 
@@ -1049,13 +927,13 @@ fn create_system_processes() {
         boot_println!("    Failed to create System process (PID 4)");
     }
 
-    // 5. Create Idle thread for BSP
+    // 5. create Idle thread for BSP
     boot_println!("  Phase 11: Creating Idle thread for BSP...");
     ke::scheduler::create_idle_thread();
     boot_println!("  Phase 11: System processes created: Idle(PID 0), System(PID 4)");
 }
 
-/// Create system threads for the System process (PID 4).
+/// create system threads for the System process (PID 4).
 ///
 /// These are kernel-mode worker threads that perform essential system work:
 /// - MiZeroPageThread: Continuously pre-zeros free pages for fast page fault handling
@@ -1071,12 +949,14 @@ fn create_system_threads() {
     let sys_process = match ps::process::get_by_pid(ps::process::PID_SYSTEM) {
         Some(p) => p,
         None => {
-            boot_println!("    SYS_THREADS: System process not found, skipping thread creation");
+            boot_println!(
+                "    SYS_THREADS: ERROR - System process not found; thread creation aborted"
+            );
             return;
         }
     };
 
-    // Create MiZeroPageThread - Pre-zeros free pages
+    // create MiZeroPageThread - Pre-zeros free pages
     boot_println!("      Creating MiZeroPageThread...");
     match ps::thread::create_thread(sys_process as *mut _, 0x4000) {
         Some(thread) => {
@@ -1097,7 +977,7 @@ fn create_system_threads() {
         }
     }
 
-    // Create MiModifiedPageWriter - Writes dirty pages to pagefile
+    // create MiModifiedPageWriter - Writes dirty pages to pagefile
     boot_println!("      Creating MiModifiedPageWriter...");
     match ps::thread::create_thread(sys_process as *mut _, 0x4000) {
         Some(thread) => {
@@ -1117,7 +997,7 @@ fn create_system_threads() {
         }
     }
 
-    // Create System worker thread for DPC processing
+    // create System worker thread for DPC processing
     boot_println!("      Creating System worker thread...");
     match ps::thread::create_thread(sys_process as *mut _, 0x4000) {
         Some(thread) => {
@@ -1183,81 +1063,66 @@ fn init_system_process_working_set(sys: *mut ps::process::Eprocess) {
 /// In Windows 7:
 /// - Session 0 is the system session (services, lsass)
 /// - Session 1+ are user sessions (interactive logon)
-fn start_session_manager() {
-    // TLE-A1: aarch64 `ps::process::create_user_process` writes
-    //   through the freshly-allocated Eprocess pointer, but the
-    //   underlying pool allocation is on a kernel-virtual address
-    //   that aarch64's page tables haven't mapped yet — far=0 in
-    //   the data-abort we see. We short-circuit the entire
-    //   Session Manager bring-up on non-x86_64 so the boot can
-    //   still reach the IDLE banner; full support is deferred.
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        boot_println!("  Phase 12: SKIP session manager (aarch64/other: TLE-A1)");
+fn start_session_manager(mode: BootMode) {
+    if mode == BootMode::SafeMode {
+        boot_println!("  Phase 12: Safe Mode - user-mode subsystem init disabled");
         return;
     }
-    #[cfg(target_arch = "x86_64")]
-    {
-        boot_println!("  Phase 12: Starting Session Manager (smss.exe)...");
+    boot_println!("  Phase 12: Starting Session Manager (smss.exe)...");
 
-        // 1. Create SMSS process
-        let smss_process = ps::process::create_user_process(
-            b"\\SystemRoot\\System32\\smss.exe\0",
-            ps::process::PID_SMSS,
-            None, // SMSS is a kernel-mode process in NT; we don't dispatch it to Ring 3
+    // 1. create SMSS process
+    let smss_process = ps::process::create_user_process(
+        b"\\SystemRoot\\System32\\smss.exe\0",
+        ps::process::PID_SMSS,
+        None, // SMSS is a kernel-mode process in NT; we don't dispatch it to Ring 3
+    );
+
+    if smss_process.is_some() {
+        boot_println!(
+            "    SMSS process (PID {}) created with initial thread",
+            ps::process::PID_SMSS
         );
 
-        if smss_process.is_some() {
-            boot_println!(
-                "    SMSS process (PID {}) created with initial thread",
-                ps::process::PID_SMSS
-            );
+        // 2. Initialize session management in SMSS
+        crate::servers::smss::init();
 
-            // 2. Initialize session management in SMSS
-            crate::servers::smss::init();
+        // 3. create Session 0 (system session)
+        boot_println!("    Initializing Session 0 (system session)...");
+        servers::smss::create_session_0();
 
-            // 3. Create Session 0 (system session)
-            boot_println!("    Initializing Session 0 (system session)...");
-            servers::smss::create_session_0();
+        // 4. Initialize Win32 subsystem
+        boot_println!("    Initializing Win32 subsystem...");
+        servers::smss::init_win32_subsystem();
 
-            // 4. Initialize Win32 subsystem
-            boot_println!("    Initializing Win32 subsystem...");
-            servers::smss::init_win32_subsystem();
+        // 5. create subsystem processes (Csrss, Winlogon)
+        boot_println!("    Creating subsystem processes (Csrss, Winlogon)...");
+        servers::smss::create_subsystem_processes();
 
-            // 5. Create subsystem processes (Csrss, Winlogon)
-            boot_println!("    Creating subsystem processes (Csrss, Winlogon)...");
-            // servers::smss::create_subsystem_processes();
-            boot_println!("    SKIP create_subsystem_processes (debug)");
+        // 6. Start the complete Windows 7 boot sequence
+        // This launches: csrss.exe (Session 0) -> wininit.exe -> services.exe/lsass.exe
+        boot_println!("    Starting Windows 7 system processes...");
+        servers::smss::start_wininit();
+        servers::smss::start_services();
+        servers::smss::start_lsass();
 
-            // 6. Start the complete Windows 7 boot sequence
-            // This launches: csrss.exe (Session 0) -> wininit.exe -> services.exe/lsass.exe
-            boot_println!("    Starting Windows 7 system processes...");
-            // servers::smss::start_wininit();
-            // servers::smss::start_services();
-            // servers::smss::start_lsass();
-            boot_println!("    SKIP start_wininit/services/lsass (debug)");
-
-            boot_println!("  Phase 12: Session Manager started successfully (with skips)");
-        } else {
-            boot_println!("  Phase 12: Failed to create SMSS process");
-        }
+        boot_println!("  Phase 12: Session Manager started successfully");
+    } else {
+        boot_println!("  Phase 12: Failed to create SMSS process");
     }
 }
 
 // ---------------------------------------------------------------------------
-// `create_user_process_with_pe` has been moved into `crate::arch::boot`
-// alongside `try_launch_cmd_exe` so the per-arch `#[cfg]` gate lives in
-// a single place (`arch::boot`). The implementation is x86_64-only
-// because `loader::load_into_user_address_space` is only defined for
-// that target today — extending it to other architectures is tracked in
-// the long-term "PE loader portability" task.
+// `create_user_process_with_pe` has been moved into `arch::boot`
+// alongside `try_launch_cmd_exe` so platform capability selection
+// remains in one place. Loader portability to all supported targets
+// is tracked in the long-term "PE loader portability" task.
 // ---------------------------------------------------------------------------
 
 /// Build the Safe-Mode `C:\Windows\System32\cmd.exe` image and
 /// transfer control to its entry point in Ring 3 by delegating to
-/// the per-arch facade in `crate::arch::boot`.
+/// the platform boot facade.
 ///
-/// On every architecture where the user-mode hand-off is not
+/// On every platform where the user-mode hand-off is not
 /// implemented the facade returns `false` so the kernel-side CMD
 /// shell (or Safe-Mode debug) can take over.
 pub fn try_launch_cmd_exe() -> bool {
@@ -1266,14 +1131,8 @@ pub fn try_launch_cmd_exe() -> bool {
 
 /// First user thread bring-up.
 ///
-/// Two bring-up modes selected by the cfg-flag below:
-///   * `RING3_PE_MODE` (default) — load the system_image-generated
-///     `smss.exe` (Milestone B) and execute it. This is the more
-///     realistic path because it goes through the PE loader.
-///   * `RING3_STUB_MODE` — load the hand-assembled minimal ring3
-///     stub at `USER_ENTRY_RIP` (Milestone A). This is the
-///     absolute minimum validation that the ring-transition path
-///     works.
+/// Bring up the minimal user process as the canonical fallback for
+/// validating the Ring-0 to Ring-3 transition.
 pub fn enter_first_user_thread() -> ! {
     crate::arch::boot::enter_first_user_thread()
 }
@@ -1281,7 +1140,7 @@ pub fn enter_first_user_thread() -> ! {
 // ---------------------------------------------------------------------------
 // The legacy `enter_first_user_thread` implementation (Milestone A→C) has
 // been moved into `crate::arch::boot`. `kernel_main` keeps the public
-// re-export above so the boot-mode dispatch path (`BootMode::Normal =>
+// re-export above so the boot-mode dispatch path (`BootMode::Desktop =>
 // enter_first_user_thread()`) does not have to know which architecture it
 // runs on.
 // ---------------------------------------------------------------------------

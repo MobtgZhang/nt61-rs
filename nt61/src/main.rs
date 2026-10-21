@@ -1,100 +1,69 @@
-//! NT6.1.7601 Kernel Entry Point (bare-metal ELF / grub multiboot)
-//
-//! `nt61-kernel` is the standalone ELF that grub loads via multiboot.
-//! It is the *same* `kernel_main` that the UEFI winload invokes, but
-//! reached through the bare-metal stub that grub expects.
+//! NT6.1.7601 Kernel Entry Point
 //
 //! The real init sequence lives in `nt61::kernel_main` so that the
 //! UEFI boot path and the multiboot boot path can share it without
 //! any duplicated code.
 
-#![cfg(target_arch = "x86_64")]
 #![no_std]
 #![no_main]
 
 extern crate alloc;
 
-use nt61::kernel_main::{kernel_main, BootInfo};
+use nt61::kernel_main::kernel_main;
 
-// Global allocator — the kernel library uses the standard heap APIs
-// (`Vec`, `String`, etc.) from `alloc`, so any binary that exercises
-// the kernel needs a `#[global_allocator]` to back those allocations.
-// The multiboot `kernel_entry` path uses the same bump allocator the
-// UEFI path uses.
+// Global allocator forwarding to the single kernel heap instance.
 #[global_allocator]
-static ALLOCATOR: nt61::mm::heap::KernelHeap = nt61::mm::heap::KernelHeap::new();
+static ALLOCATOR: nt61::mm::heap::KernelHeapAllocator = nt61::mm::heap::KernelHeapAllocator;
 
-/// Fixed-buffer formatter used by the panic handler.
-//
-/// `PanicInfo` renders as "panicked at <file>:<line>: <message>",
-/// which is the only thing that makes a kernel panic diagnosable. The
-/// handler previously threw the `PanicInfo` away and printed a fixed
-/// string, so a panic left no indication of which check fired.
-struct PanicFormatter {
-    buf: [u8; 256],
-    len: usize,
-}
-
-impl PanicFormatter {
-    const fn new() -> Self {
-        Self {
-            buf: [0; 256],
-            len: 0,
-        }
-    }
-
-    fn as_str(&self) -> &str {
-        core::str::from_utf8(&self.buf[..self.len]).unwrap_or("kernel panic")
-    }
-}
-
-impl core::fmt::Write for PanicFormatter {
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        for byte in s.bytes() {
-            if self.len < self.buf.len() {
-                self.buf[self.len] = byte;
-                self.len += 1;
-            }
-        }
-        Ok(())
-    }
-}
-
-#[panic_handler]
-fn panic_handler(info: &core::panic::PanicInfo) -> ! {
-    let mut formatter = PanicFormatter::new();
-    let _ =
-        core::fmt::Write::write_fmt(&mut formatter, core::format_args!("KERNEL PANIC: {}", info));
-    let rendered = formatter.as_str();
-    nt61::hal::x86_64::serial::write_string(rendered);
-    nt61::hal::x86_64::serial::write_string("\r\n");
-    nt61::drivers::bootvid::bugcheck_screen(0x000000E2, rendered);
-    loop {
-        nt61::arch::halt();
-    }
-}
-
-/// Bare-metal ELF entry. Grub multiboot invokes this with `eax =
-/// 0x2BADB002` and `ebx = &multiboot_info`. We ignore those and
-/// hand a default `BootInfo` to the real `kernel_main`.
+/// Bare-metal ELF entry.
 ///
-/// We name this `kernel_entry` (not `_start`) so the host `cc`
-/// linker wrapper does not conflict with the libc `_start` it
-/// would otherwise pull in from `Scrt1.o`. The real entry point
-/// is registered via the linker option `-e kernel_entry` set in
-/// `build.rs`.
+/// The loader-visible symbol is named `kernel_entry` so it can be
+/// selected independently from the host C runtime entry point.
+///
+/// `bi_ptr` carries the boot-loader-provided `BootInfo` pointer; winload
+/// passes it in both RCX (Win7 `KiSystemStartup` convention) and RDI
+/// (System V first argument), so either ABI reaches the same value.
+/// Passing 0 selects the built-in defaults.
 #[no_mangle]
-pub extern "C" fn kernel_entry() -> ! {
-    kernel_main(&BootInfo::defaults())
+pub extern "C" fn kernel_entry(bi_ptr: usize) -> ! {
+    nt61::arch::boot::kernel_entry(bi_ptr)
 }
+
+/// ELF linker entry. Keeping this symbol explicit means bare-metal
+/// linking works even when external RUSTFLAGS override the Cargo
+/// config's `link-arg=-e kernel_entry`.
+#[unsafe(no_mangle)]
+pub extern "C" fn _start() -> ! {
+    kernel_entry(0)
+}
+
+/// UEFI/PE entry point used when the kernel itself is emitted as
+/// `ntoskrnl.exe`.  This is the same initialization path as the
+/// bare-metal ELF, so winload can load and run the image without a
+/// synthetic handoff trampoline.
+#[unsafe(no_mangle)]
+pub extern "efiapi" fn efi_main(boot_info_ptr: usize, _system_table: usize) -> ! {
+    if boot_info_ptr == 0 {
+        nt61::arch::boot::kernel_entry(0)
+    }
+
+    let boot_info = unsafe { &*(boot_info_ptr as *const nt61::boot_types::BootInfo) };
+    kernel_main(boot_info)
+}
+
+/// Keep the PE entry alive when the image is linked as a bare-metal
+/// ELF: --gc-sections drops no_mangle functions that nothing
+/// references, and the UEFI entry must survive the ELF-to-PE
+/// conversion so winload can also boot the image through efi_main
+/// directly.
+#[used]
+pub static EFI_MAIN_LINK_KEEP: unsafe extern "efiapi" fn(usize, usize) -> ! = efi_main;
 
 // Re-export `kernel_main` so it appears in the symbol table of the
 // bare-metal ELF as well — the UEFI winload never references it
 // directly, but the linker keeps it for debugging / inspection.
-#[allow(dead_code)]
-fn _re_export() {
-    kernel_main(&BootInfo::zeroed());
-}
+#[used]
+static KERNEL_MAIN_LINK_KEEP: extern "C" fn(&nt61::kernel_main::BootInfo) -> ! = kernel_main;
 
 // `core::slice::cmp::SlicePartialEq::equal_same_length` and
 // `core::str::PartialEq::eq` lower to a call to libc's
@@ -151,7 +120,7 @@ pub unsafe extern "C" fn memmove(
 /// same bugcheck path as the panic handler.
 #[no_mangle]
 pub extern "C" fn _Unwind_Resume() -> ! {
-    nt61::hal::x86_64::serial::write_string("KERNEL PANIC: unwind attempted in kernel\r\n");
+    nt61::hal::serial::write_string_always("KERNEL PANIC: unwind attempted in kernel\r\n");
     nt61::drivers::bootvid::bugcheck_screen(0x000000E2, "unwind attempted in kernel");
     loop {
         nt61::arch::halt();

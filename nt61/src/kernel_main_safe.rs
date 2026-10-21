@@ -1,4 +1,4 @@
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
 use spin::{Lazy, Mutex};
 
 pub struct SystemImageDb {

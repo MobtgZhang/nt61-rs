@@ -48,28 +48,18 @@
 //! instead of being silenced at the crate root.
 //
 // Permitted under MIT. See repository LICENSE.
-#![allow(
-    non_snake_case,
-    non_upper_case_globals,
-    non_camel_case_types,
-    static_mut_refs
-)]
-#![allow(dead_code)]
-#![allow(unused_imports)]
-#![allow(unused_variables)]
-#![allow(unused_assignments)]
 //!   3. Kernel executive init
 //!   4. Object manager init
 //!   5. I/O manager init
 //!   6. File system init
 //!   7. LPC init
 //!   8. Process / thread init
-//!   9. Create system processes
+//!   9. create system processes
 //!  10. Start session manager (smss)
 
 // `clippy::not_unsafe_ptr_arg_dereference` insists every public function
 // receiving a raw pointer be marked `unsafe`. The NT kernel exposes many
-// stable public entry points (Nt* / Zw* / IoCallDriver / Ke* / Mm* /
+// stable public entry points (Nt* / Zw* / io_call_driver / Ke* / Mm* /
 // Ps*) that take `*mut` / `*const` arguments without making the function
 // itself `unsafe`, mirroring the Windows API where the documented
 // contract states "caller must hold IRQL/dispatch-level" etc. Adding
@@ -78,7 +68,6 @@
 // keeps the existing convention without false advertising. New code
 // that is genuinely free of pointer invariants should still avoid
 // raw pointers altogether and prefer `&mut` / `&` / `NonNull`.
-#![allow(clippy::not_unsafe_ptr_arg_deref)]
 // `clippy::missing_safety_doc` requires every `unsafe fn` to carry a
 // `# Safety` section. The kernel has hundreds of `unsafe` entry points
 // whose caller contract is documented in plain-English comments above
@@ -87,7 +76,6 @@
 // refactor tracked separately; meanwhile the lint is suppressed
 // crate-wide so the higher-value diagnostics stay visible. New
 // `unsafe fn` items SHOULD add a `# Safety` section once written.
-#![allow(clippy::missing_safety_doc)]
 // `clippy::doc_lazy_continuation` / `clippy::doc_list_item_without_indent`
 // flag legitimate crate-level docs where `//!` paragraphs are
 // indented under a list continuation. The Rust convention for
@@ -96,7 +84,6 @@
 // for the kernel is either to reflow every doc comment or to
 // silence the lint crate-wide. We do the latter — the docs are
 // intentionally formatted as prose under `//!` headers.
-#![allow(clippy::doc_lazy_continuation)]
 // `clippy::result_unit_err` suggests replacing `Result<T, ()>` with
 // `Option<T>`. The NT kernel uses `Result<T, ()>` extensively to
 // match Windows-API convention (NTSTATUS packed into `()` to keep
@@ -104,7 +91,6 @@
 // is propagated separately). Suppressing the lint crate-wide keeps
 // that convention stable; new code that genuinely has no useful
 // payload should still prefer `Option<T>`.
-#![allow(clippy::result_unit_err)]
 #![no_std]
 
 extern crate alloc;
