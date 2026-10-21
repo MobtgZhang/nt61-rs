@@ -143,7 +143,18 @@ pub fn get_all_processes() -> Result<Vec<KernelProcessInfo>, NTSTATUS> {
     Ok(result)
 }
 
-/// Create a new user process
+/// Return the PIDs of all running child processes of `parent_pid`.
+pub fn get_child_pids(parent_pid: u64) -> Vec<u64> {
+    let table = PROCESS_TABLE.lock();
+    table
+        .processes
+        .iter()
+        .filter(|p| p.parent_pid == parent_pid && p.state == ProcessState::Running)
+        .map(|p| p.pid)
+        .collect()
+}
+
+/// create a new user process
 pub fn create_user_process(
     command: &str,
     work_dir: Option<&str>,
@@ -188,6 +199,9 @@ pub fn terminate_process_by_pid(pid: u64, force: bool) -> Result<(), NTSTATUS> {
             proc.state = ProcessState::Terminated;
             proc.exit_code = Some(0);
         }
+
+        drop(table);
+        crate::servers::csrss::notify_process_terminated(pid as u32);
 
         Ok(())
     } else {
@@ -262,13 +276,11 @@ fn extract_process_name(command: &str) -> String {
 }
 
 fn get_current_time() -> u64 {
-    // TODO: Integrate with HAL timer
-    0
+    crate::hal::common::pit::get_system_time_ms()
 }
 
 fn yield_cpu() {
-    // TODO: Integrate with scheduler
-    core::hint::spin_loop();
+    crate::ke::scheduler::yield_();
 }
 
 pub fn init() {

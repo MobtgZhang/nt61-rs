@@ -6,29 +6,22 @@ pub mod cmdline;
 pub mod process;
 pub mod smoke;
 pub mod thread;
-#[cfg(target_arch = "x86_64")]
 pub mod wow64_process;
-#[cfg(target_arch = "x86_64")]
 pub mod wow64_thread;
 
 pub use process::{
     Process, PID_CSRSS, PID_IDLE, PID_LSASS, PID_SERVICES, PID_SMSS, PID_SYSTEM, PID_WINLOGON,
 };
 pub use thread::{Ethread, KThreadState, Kthread, Thread};
-#[cfg(target_arch = "x86_64")]
 pub use wow64_process::{create_wow64_process, EprocessWow64Extension, Wow64VasState};
-#[cfg(target_arch = "x86_64")]
 pub use wow64_thread::{create_wow64_thread, EthreadWow64Extension};
 
 /// Initialize process subsystem
 pub fn init() {
     process::init();
     thread::init();
-    #[cfg(target_arch = "x86_64")]
-    {
-        wow64_process::init();
-        wow64_thread::init();
-    }
+    wow64_process::init();
+    wow64_thread::init();
 }
 
 /// Re-export of the process/thread smoke test. The full

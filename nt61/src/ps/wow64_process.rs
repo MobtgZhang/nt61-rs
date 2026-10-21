@@ -12,9 +12,6 @@
 //! References:
 //!   * geoffchappell.com — WoW64 process creation
 
-#![cfg(target_arch = "x86_64")]
-#![allow(dead_code)]
-
 use crate::libs::wow64::types::*;
 use crate::libs::wow64::wow64vas::WOW64_HEAP_VIRTUAL_ALLOC_BASE;
 use crate::ps::process::{create_user_process, Eprocess};
@@ -44,12 +41,12 @@ pub struct EprocessWow64Extension {
     pub kernel32_base: ULONG32,
     /// Base address of 32-bit user32.dll.
     pub user32_base: ULONG32,
-    /// Last 32-bit error code (NtCurrentTeb()->LastErrorValue).
+    /// Last 32-bit error code (nt_current_teb()->last_error_value).
     pub last_error32: ULONG32,
 }
 
 impl EprocessWow64Extension {
-    /// Create a new Wow64 extension.
+    /// create a new Wow64 extension.
     pub fn new() -> Self {
         Self {
             is_wow64_process: true,
@@ -108,7 +105,7 @@ impl Default for Wow64VasState {
 }
 
 impl Wow64VasState {
-    /// Create a new VAS state.
+    /// create a new VAS state.
     pub fn new() -> Self {
         Self::default()
     }
@@ -129,7 +126,7 @@ impl Wow64VasState {
 // Wow64 Process Creation
 // =============================================================================
 
-/// Create a new Wow64 (32-bit) process.
+/// create a new Wow64 (32-bit) process.
 ///
 /// This function creates a new 32-bit process that will run under
 /// the Wow64 compatibility layer.
@@ -147,7 +144,7 @@ pub fn create_wow64_process(
 ) -> Option<&'static mut Eprocess> {
     // _parent_process is intentionally unused - Wow64 child processes inherit via the loader
 
-    // 1. Create a standard 64-bit process first
+    // 1. create a standard 64-bit process first
     //
     // `create_user_process` only takes a `user_entry_override` (an optional RIP
     // override), so the parent handle is not threaded through here. Wow64
@@ -182,7 +179,7 @@ fn allocate_peb32() -> Option<*mut Peb32> {
     // address space at PEB32_VIRTUAL_ADDRESS
     // For the stub, we use a static allocation
     static mut PEB32_BUFFER: [u8; 0x200] = [0; 0x200];
-    Some(unsafe { PEB32_BUFFER.as_mut_ptr() as *mut Peb32 })
+    Some(unsafe { (*core::ptr::addr_of_mut!(PEB32_BUFFER)).as_mut_ptr() as *mut Peb32 })
 }
 
 /// Initialize PEB32 for a Wow64 process.

@@ -7,7 +7,6 @@ use crate::mm::pfn;
 use crate::mm::pool;
 use crate::mm::vad::{VadEntry, VadFlags, VadProtection, VadTree, VadType};
 use crate::mm::vas;
-use core::ptr::null_mut;
 
 /// User stack base address (Windows 7 x64 layout)
 pub const USER_STACK_BASE: u64 = 0x0000_0030_0000_0000;
@@ -47,7 +46,7 @@ pub struct ProcessAddressSpace {
 }
 
 impl ProcessAddressSpace {
-    /// Create a new process address space
+    /// create a new process address space
     pub fn new() -> Option<Self> {
         // 1. Allocate a new PML4 for the user process
         let pml4_phys = vas::create_user_address_space()?;
@@ -71,7 +70,7 @@ impl ProcessAddressSpace {
             self.pml4_phys,
             self.user_stack_base,
             self.user_stack_size,
-            vas::PTE_RW | vas::PTE_US, // User, Read/Write
+            vas::PTE_RW | vas::PTE_US, // User, read/write
         ) != vas::MmStatus::Ok
         {
             return Err(());
@@ -98,7 +97,7 @@ impl ProcessAddressSpace {
         Ok(())
     }
 
-    /// Map the PEB (Process Environment Block)
+    /// Map the PEB (Process environment Block)
     pub fn map_peb(&mut self) -> Result<(), ()> {
         // Map PEB with RW permissions
         if vas::map_user_pages(
@@ -132,7 +131,7 @@ impl ProcessAddressSpace {
         Ok(())
     }
 
-    /// Map the TEB (Thread Environment Block)
+    /// Map the TEB (Thread environment Block)
     pub fn map_teb(&mut self) -> Result<(), ()> {
         // Map TEB with RW permissions
         if vas::map_user_pages(

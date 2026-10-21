@@ -208,7 +208,7 @@ fn test_thread_state_transitions() -> bool {
     let initial_state = ethread.kthread.state;
     crate::boot_println!("    Thread initial state: {:?}", initial_state);
 
-    // `create_thread` leaves the thread in Initialized; the scheduler moves
+    // `create_thread` leaves the thread in initialized; the scheduler moves
     // it to Ready/Running on the first dispatch.
     matches!(
         initial_state,
@@ -262,10 +262,13 @@ fn test_thread_suspension() -> bool {
     };
 
     // Not testable: the ETHREAD/KTHREAD model has no suspend-count field, and
-    // `ntdll::NtSuspendThread`/`NtResumeThread` return fixed values without
+    // `ntdll::NT_SUSPEND_THREAD`/`NT_RESUME_THREAD` return fixed values without
     // changing thread state. The test only proves the thread can be created;
     // suspend/resume remains unimplemented (see reports/doc5.md).
-    crate::boot_println!("    Thread suspension: not implemented (no suspend_count field)");
+    crate::boot_println!(
+        "    Thread suspension: not implemented (TID={}, no suspend_count field)",
+        ethread.client_id.unique_thread as usize
+    );
 
     true
 }

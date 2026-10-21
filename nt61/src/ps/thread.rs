@@ -44,7 +44,7 @@ pub struct Kthread {
     pub kernel_stack: u64,  // 0x040 (FIXED from 0x030)
     pub thread_lock: u64,   // 0x048
 
-    // === 0x050: Wait Register + APC State Flags ===
+    // === 0x050: Wait Register + APC State flags ===
     pub wait_register: KWaitStatusRegister, // 0x050
     pub alertable: u8,                      // 0x051 (NEW)
     pub apc_state_discount: u8,             // 0x052 (NEW)
@@ -83,7 +83,7 @@ pub struct Kthread {
     pub user_sched_flags: u8, // 0x0B7
     pub thread_flags: i32,    // 0x0B8
 
-    // === 0x0BC: APC Environment ===
+    // === 0x0BC: APC environment ===
     pub apc_environment: u64, // 0x0BC
 
     // === 0x0C4: Priority ===
@@ -104,11 +104,11 @@ pub struct Kthread {
     _pad_aff: u16,          // 0x0EA
     _pad_aff2: u32,         // 0x0EC
 
-    // === 0x0F0: Group Affinity ===
+    // === 0x0F0: group Affinity ===
     pub group_affinity: GroupAffinity, // 0x0F0
 
     // === 0x100: Client ID ===
-    pub client_id: ClientId, // 0x100 (FIXED from 0x0E8)
+    pub client_id: client_id, // 0x100 (FIXED from 0x0E8)
 
     // === 0x110: Timer Banks ===
     pub active_timer_banks_flag: u8, // 0x110
@@ -123,13 +123,13 @@ pub struct Kthread {
     pub base_priority2: i8, // 0x129
     _pad_prio: [u8; 6],     // 0x12A
 
-    // === 0x130: Cross-Thread Flags ===
+    // === 0x130: Cross-Thread flags ===
     pub cross_thread_flags: u32, // 0x130
 
-    // === 0x134: Store Count ===
+    // === 0x134: Store count ===
     pub store_count: i32, // 0x134
 
-    // === 0x138: Group Index ===
+    // === 0x138: group Index ===
     pub group_index: i32, // 0x138
 
     // === 0x13C: Stack Base ===
@@ -253,7 +253,7 @@ pub struct Ethread {
 
     // === 0x398: Client ID ===
     /// Unique process/thread identifier (primary location in ETHREAD)
-    pub client_id: ClientId,
+    pub client_id: client_id,
 
     // === 0x3A8: Threads Process ===
     /// Back-pointer to owning EPROCESS
@@ -263,8 +263,8 @@ pub struct Ethread {
     /// List entry for similar proxy threads
     pub similar_proxy_thread_list_entry: ListEntry,
 
-    // === 0x3C0: Passive Flags ===
-    /// Flags for passive release
+    // === 0x3C0: Passive flags ===
+    /// flags for passive release
     pub passive_flags: u32,
     /// ALPC received message ID
     pub alpc_received_message_id: u32,
@@ -276,7 +276,7 @@ pub struct Ethread {
     // === 0x3E0: Spare ===
     pub spare3e0: u64,
 
-    // === 0x3E8: Rpc Handle ===
+    // === 0x3E8: Rpc handle ===
     /// RPC handle list
     pub rpc_handle: ListEntry,
 
@@ -310,7 +310,7 @@ pub struct Ethread {
     /// ALPC message from sender
     pub alpc_sender_message: [u8; 24],
 
-    // === 0x448: ALPC Waiters Count ===
+    // === 0x448: ALPC Waiters count ===
     /// Semaphore for ALPC waiter count
     pub alpc_waiters_count: KernelSemaphore,
 
@@ -334,7 +334,7 @@ pub struct Ethread {
     /// Thread start address
     pub start_address: u64,
 
-    // === 0x4A0: Create/Exit Times ===
+    // === 0x4A0: create/Exit Times ===
     /// Thread creation time
     pub create_time: i64,
     /// Thread exit time
@@ -360,7 +360,7 @@ pub struct Ethread {
     /// Spinlock for cache manager
     pub cache_manager_spin_lock: u64,
 
-    // === 0x4D8: Coil Count ===
+    // === 0x4D8: Coil count ===
     /// APC coil count
     pub coil_count: i32,
     /// Padding
@@ -383,9 +383,9 @@ pub struct Ethread {
     pub primary_token: u64,
 
     // === 0x500: I/O Counters ===
-    /// Read transfer count
+    /// read transfer count
     pub read_transfer_count: u64,
-    /// Write transfer count
+    /// write transfer count
     pub write_transfer_count: u64,
     /// Other transfer count
     pub other_transfer_count: u64,
@@ -394,6 +394,13 @@ pub struct Ethread {
     /// Pointer to FPU/SSE/AVX state buffer for this thread
     /// Allocated from NonPaged pool, 512 bytes for XSAVE state
     pub fpu_state_ptr: *mut u8,
+
+    /// Kernel pointer to the 32-bit TEB for a WoW64 thread.
+    ///
+    /// This is an extension field below the documented NT 6.1 ETHREAD
+    /// range; native 64-bit threads keep it null. It lets WoW64 thunk
+    /// code resolve `fs:[0x18]` without reading unvalidated user memory.
+    pub wow64_teb32: *mut crate::libs::wow64::types::Teb32,
 }
 
 // Compile-time size validation for Windows 7 x64 compatibility.
@@ -440,7 +447,6 @@ const _: () = assert!(
 // Force the type checker to surface the actual values when assertions
 // fail. Each `false` arm of `if` references a constant that the
 // compiler will print in the diagnostic, revealing the real numbers.
-#[allow(dead_code)]
 const _KTHREAD_SIZE_DEBUG: () = {
     let _ = KTHREAD_SIZE_ACTUAL;
     let _ = ETHREAD_SIZE_ACTUAL;
@@ -451,15 +457,10 @@ const _KTHREAD_SIZE_DEBUG: () = {
 #[doc(hidden)]
 pub mod _layout_dbg {
     use super::*;
-    #[allow(dead_code)]
     pub const KTHREAD_SIZE_ACTUAL_PUB: usize = KTHREAD_SIZE_ACTUAL;
-    #[allow(dead_code)]
     pub const ETHREAD_SIZE_ACTUAL_PUB: usize = ETHREAD_SIZE_ACTUAL;
-    #[allow(dead_code)]
     pub const KTHREAD_APC_OFFSET_PUB: usize = KTHREAD_APC_OFFSET;
-    #[allow(dead_code)]
     pub const KTHREAD_SAVED_APC_OFFSET_PUB: usize = KTHREAD_SAVED_APC_OFFSET;
-    #[allow(dead_code)]
     pub const KTHREAD_CONTEXT_OFFSET_PUB: usize = KTHREAD_CONTEXT_OFFSET;
 }
 
@@ -911,7 +912,7 @@ impl Ethread {
             alpc_completion_list: 0,
             thread_list_entry: ListEntry::new(),
             thread_lock: 0,
-            client_id: ClientId::new(),
+            client_id: client_id::new(),
             threads_process: null_mut(),
             similar_proxy_thread_list_entry: ListEntry::new(),
             passive_flags: 0,
@@ -951,7 +952,18 @@ impl Ethread {
             write_transfer_count: 0,
             other_transfer_count: 0,
             fpu_state_ptr: core::ptr::null_mut(),
+            wow64_teb32: core::ptr::null_mut(),
         }
+    }
+
+    /// Get the 32-bit TEB for a WoW64 thread, or null for native threads.
+    pub fn get_wow64_teb32(&self) -> *mut crate::libs::wow64::types::Teb32 {
+        self.wow64_teb32
+    }
+
+    /// Set the kernel pointer to this thread's 32-bit TEB.
+    pub fn set_wow64_teb32(&mut self, teb32: *mut crate::libs::wow64::types::Teb32) {
+        self.wow64_teb32 = teb32;
     }
 
     /// Get the KTHREAD pointer from ETHREAD
@@ -976,26 +988,26 @@ impl Ethread {
 }
 
 // =============================================================================
-// TEB (Thread Environment Block)
+// TEB (Thread environment Block)
 // =============================================================================
 
-/// TEB (Thread Environment Block)
+/// TEB (Thread environment Block)
 /// Follows Windows 7 layout
 #[repr(C)]
 pub struct Teb {
     /// NT_TIB (must be first)
-    pub nt_tib: NtTib,
-    /// Environment pointer
+    pub nt_tib: nt_tib,
+    /// environment pointer
     pub environment_pointer: *mut (),
     /// Client ID
-    pub client_id: ClientId,
+    pub client_id: client_id,
     /// Active RPC handle
     pub active_rpc_handle: *mut (),
     /// Thread local storage pointer
     pub thread_local_storage_pointer: *mut u8,
     /// Process environment block
     pub process_environment_block: *mut (),
-    /// Environment version
+    /// environment version
     pub environment_version: u64,
     /// User callback stack
     pub user_callback_stack: *mut (),
@@ -1024,9 +1036,9 @@ pub struct Teb {
 impl Teb {
     pub fn new() -> Self {
         Self {
-            nt_tib: NtTib::new(),
+            nt_tib: nt_tib::new(),
             environment_pointer: null_mut(),
-            client_id: ClientId::new(),
+            client_id: client_id::new(),
             active_rpc_handle: null_mut(),
             thread_local_storage_pointer: null_mut(),
             process_environment_block: null_mut(),
@@ -1048,17 +1060,17 @@ impl Teb {
 
 /// NT Thread Information Block
 #[repr(C)]
-pub struct NtTib {
+pub struct nt_tib {
     pub exception_list: *mut (),
     pub stack_base: *mut (),
     pub stack_limit: *mut (),
     pub sub_system_tib: *mut (),
     pub fiber_data: *mut (),
     pub arbitrary_user_pointer: *mut (),
-    pub self_ptr: *mut NtTib,
+    pub self_ptr: *mut nt_tib,
 }
 
-impl NtTib {
+impl nt_tib {
     pub fn new() -> Self {
         Self {
             exception_list: null_mut(),
@@ -1075,12 +1087,12 @@ impl NtTib {
 /// Client ID - unique process/thread identifier
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
-pub struct ClientId {
+pub struct client_id {
     pub unique_process: u64,
     pub unique_thread: u64,
 }
 
-impl ClientId {
+impl client_id {
     pub fn new() -> Self {
         Self {
             unique_process: 0,
@@ -1215,7 +1227,7 @@ pub fn create_thread(process: *mut Eprocess, stack_size: usize) -> Option<&'stat
     unsafe { thread.as_mut() }
 }
 
-/// Create idle thread for a CPU
+/// create idle thread for a CPU
 pub fn create_idle_thread(cpu_id: u32) -> Option<&'static mut Ethread> {
     // // kprintln!("[THREAD] create_idle_thread: entering for CPU {}", cpu_id);
 
@@ -1238,9 +1250,6 @@ pub fn create_idle_thread(cpu_id: u32) -> Option<&'static mut Ethread> {
                 0,             // P2: system process not found
                 0,             // P3: reserved
             );
-            // NOTE: bugcheck_with() returns ! (never returns)
-            #[allow(unreachable_code)]
-            return None;
         }
     };
     // // kprintln!("[THREAD] create_idle_thread: System process found at {:016x}", process as *const _ as u64);
@@ -1351,7 +1360,7 @@ pub struct SystemThreadResult {
     pub success: bool,
 }
 
-/// Create a kernel-mode system thread (PsCreateSystemThread)
+/// create a kernel-mode system thread (PsCreateSystemThread)
 pub fn ps_create_system_thread(start_address: u64, start_context: u64) -> SystemThreadResult {
     let system_process = match crate::ps::process::get_by_pid(crate::ps::process::PID_SYSTEM) {
         Some(p) => p as *mut crate::ps::process::Eprocess,
@@ -1497,7 +1506,6 @@ pub fn ps_terminate_system_thread(ethread: *mut Ethread, _exit_code: u32) {
 }
 
 /// Exit the current system thread (never returns)
-#[allow(dead_code, unreachable_code)]
 pub fn ps_exit_system_thread(exit_code: u32) {
     let ethread = KeGetCurrentEthread();
     ps_terminate_system_thread(ethread, exit_code);
@@ -1929,17 +1937,10 @@ const _: () = {
 // values in the error message. When a layout assertion fails the
 // error points to one of these _AliasN type aliases whose
 // `usize` const generic captures the actual size or offset.
-#[allow(dead_code)]
 type _KthreadSizeActual = [(); KTHREAD_SIZE_ACTUAL];
-#[allow(dead_code)]
 type _EthreadSizeActual = [(); ETHREAD_SIZE_ACTUAL];
-#[allow(dead_code)]
 type _ApcStateSizeActual = [(); APC_STATE_SIZE_ACTUAL];
-#[allow(dead_code)]
 type _KthreadContextSizeActual = [(); KTHREAD_CONTEXT_SIZE_ACTUAL];
-#[allow(dead_code)]
 type _ApcOffsetActual = [(); KTHREAD_APC_OFFSET];
-#[allow(dead_code)]
 type _SavedApcOffsetActual = [(); KTHREAD_SAVED_APC_OFFSET];
-#[allow(dead_code)]
 type _ContextOffsetActual = [(); KTHREAD_CONTEXT_OFFSET];

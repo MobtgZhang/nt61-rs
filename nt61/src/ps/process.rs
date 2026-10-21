@@ -66,7 +66,7 @@ pub struct ExPushLock {
     pub value: AtomicU64,
 }
 
-// Internal helpers to decode/encode the lock state. The owner slot is
+// internal helpers to decode/encode the lock state. The owner slot is
 // large enough to hold any kernel pointer on x64.
 const LOCK_FLAG: u64 = 0x1;
 const WAITERS_FLAG: u64 = 0x2;
@@ -146,7 +146,7 @@ impl ExPushLock {
             // No owner tracking: clear LOCK bit, preserve WAITERS bit
             cur & !LOCK_FLAG
         } else {
-            // Owner tracking: verify current owner, clear LOCK bit, preserve WAITERS bit
+            // owner tracking: verify current owner, clear LOCK bit, preserve WAITERS bit
             let cur_owner = cur & OWNER_MASK;
             if cur_owner == (owner & OWNER_MASK) {
                 cur & !LOCK_FLAG // Preserve WAITERS
@@ -201,7 +201,7 @@ pub struct ExRundownRef {
 }
 
 impl ExRundownRef {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { value: 0 }
     }
 }
@@ -239,7 +239,7 @@ impl Clone for ExFastRef {
 }
 
 impl ExFastRef {
-    /// Create a null fast ref (zero value — both pointer and count are 0).
+    /// create a null fast ref (zero value — both pointer and count are 0).
     pub fn new() -> Self {
         Self {
             value: AtomicU64::new(0),
@@ -253,7 +253,7 @@ impl ExFastRef {
         }
     }
 
-    /// Create from an object pointer with initial embedded reference count of 1.
+    /// create from an object pointer with initial embedded reference count of 1.
     ///
     /// # Safety
     /// - `obj` must be a valid, aligned, non-null pointer.
@@ -499,7 +499,7 @@ pub struct Eprocess {
     pub exception_port: u64,
 
     // === 0x200: Object Table ===
-    /// Handle table pointer
+    /// handle table pointer
     pub object_table: *mut ProcessHandleTable,
 
     // === 0x208: Token ===
@@ -526,7 +526,7 @@ pub struct Eprocess {
     /// Job status flags
     pub job_status: u32,
 
-    // === 0x23C: Job Flags ===
+    // === 0x23C: Job flags ===
     /// Job flags
     pub job_flags: u32,
 
@@ -569,23 +569,23 @@ pub struct Eprocess {
     // === 0x2A0: Spare ===
     pub spare5: u64,
 
-    // === 0x2A8: Default Thread High Group Priority ===
+    // === 0x2A8: Default Thread High group Priority ===
     pub default_thread_high_group_priority: u64,
 
     // === 0x2B0: Token Active Process ===
     pub token_active_process: u32,
     pub spare6: u32,
 
-    // Padding to reach correct Peb offset (0x338 in Windows 7 x64)
+    // Padding to reach correct peb offset (0x338 in Windows 7 x64)
     // token_active_process ends at 0x2B4 (offset 0x2B0 + 4 bytes)
     // spare6 ends at 0x2B8 (offset 0x2B4 + 4 bytes)
-    // Peb must be at 0x338 (with 8-byte alignment)
+    // peb must be at 0x338 (with 8-byte alignment)
     // Padding = 0x338 - 0x2C0 = 0x78 bytes (after spare6 ends at 0x2C0)
     _peb_padding: [u8; 0x78],
 
     // === 0x338: PEB Pointer ===  **FIXED: Correct Windows 7 x64 offset**
-    /// Process Environment Block pointer
-    pub Peb: *mut Peb,
+    /// Process environment Block pointer
+    pub peb: *mut peb,
 
     // === 0x340: Fault Table ===  (shifted from 0x2C0)
     /// Fault table address
@@ -618,7 +618,7 @@ pub struct Eprocess {
     /// Win32 window station
     pub win32_window_station: u64,
 
-    // === 0x380: GDI Handle Table ===  (shifted from 0x300)
+    // === 0x380: GDI handle Table ===  (shifted from 0x300)
     /// GDI handle table
     pub gdi_handle_table: u64,
 
@@ -639,7 +639,7 @@ pub struct Eprocess {
     pub server_silo: u64,
     /// Shell service object
     pub shell_service_object: u64,
-    /// Environment pointer
+    /// environment pointer
     pub environment_pointer: u64,
 
     // === 0x3C0: Spare ===  (shifted from 0x340)
@@ -662,7 +662,7 @@ pub struct Eprocess {
     /// File object
     pub section_object_file: u64,
 
-    // === 0x3F8: Image File Name ===  (shifted from 0x378)
+    // === 0x3F8: Image File name ===  (shifted from 0x378)
     /// Process image file name (15 bytes + null)
     pub image_file_name: [u8; 15],
 
@@ -721,7 +721,7 @@ pub struct Eprocess {
     // === 0x4A0: Spare ===  (shifted from 0x430)
     pub spare17: u64,
 
-    // === 0x4A8: Page Fault Count ===  (shifted from 0x438)
+    // === 0x4A8: Page Fault count ===  (shifted from 0x438)
     /// Page fault counter
     pub page_fault_count: u64,
 
@@ -744,7 +744,7 @@ pub struct Eprocess {
     // === 0x4D4: Spare ===  (shifted from 0x464)
     pub spare20: u64,
 
-    // === 0x4DC: Flags 2 ===  (shifted from 0x46C)
+    // === 0x4DC: flags 2 ===  (shifted from 0x46C)
     pub flags2: u32,
 
     // === 0x4E0: Spare ===  (shifted from 0x470)
@@ -769,7 +769,7 @@ pub struct Eprocess {
 }
 
 // =============================================================================
-// EPROCESS PEB Offset Verification
+// EPROCESS PEB offset Verification
 // =============================================================================
 
 /// PEB offset in EPROCESS - MUST be 0x338 for Windows 7 x64 compatibility
@@ -798,9 +798,8 @@ pub fn get_peb_address(is_sp1: bool) -> u64 {
 }
 
 /// Get the actual PEB offset at runtime (for debugging)
-#[allow(dead_code)]
 pub fn get_peb_offset() -> usize {
-    core::mem::offset_of!(Eprocess, Peb)
+    core::mem::offset_of!(Eprocess, peb)
 }
 
 /// Compile-time assertion: EPROCESS size must be at least 0x4D0 bytes
@@ -905,7 +904,7 @@ impl Eprocess {
             token_active_process: 0,
             spare6: 0,
             _peb_padding: [0; 0x78],
-            Peb: core::ptr::null_mut(),
+            peb: core::ptr::null_mut(),
             fault_table_address: 0,
             fault_table_entry: 0,
             spare7: [0; 7],
@@ -966,7 +965,7 @@ impl Eprocess {
             wow64_flag: 0,
             // 32-bit PEB virtual address (only valid for WoW64 processes)
             wow64_peb32_va: 0,
-            // Last 32-bit error code (TEB32.LastErrorValue)
+            // Last 32-bit error code (TEB32.last_error_value)
             wow64_last_error: 0,
             // Pointer to Wow64 VAS state (for 32-bit address space management)
             wow64_vas_ptr: 0,
@@ -1101,33 +1100,33 @@ const _: () = assert!(
 );
 
 // =============================================================================
-// PEB - Process Environment Block
+// PEB - Process environment Block
 // =============================================================================
 
-/// PEB (Process Environment Block)
+/// PEB (Process environment Block)
 /// Follows Windows 7 layout
 #[repr(C)]
-pub struct Peb {
+pub struct peb {
     pub header: u64,
     pub mutant: *mut (),
     pub image_base_address: u64,
     pub ldr: *mut LdrData,
     pub process_parameters: *mut RtlUserProcessParameters,
+    pub sub_system_data: *mut (),
     pub process_heap: *mut (),
     pub fast_peb_lock: *mut (),
-    pub nt_global_flag: u32,
     pub debug_port: *mut (),
     pub exception_port: *mut (),
-    pub sub_system_data: *mut (),
+    pub nt_global_flag: u32,
     pub value_separator: u32,
-    pub session_id: u32,
     pub active_process_affinity_mask: u64,
     pub count_of_threads: u32,
     pub win32_process_info: *mut (),
+    pub session_id: u32,
 }
 
 // =============================================================================
-// PEB Internal Field Offsets (Windows 7 x64)
+// PEB internal Field Offsets (Windows 7 x64)
 // =============================================================================
 
 /// PEB internal field offsets for compile-time verification
@@ -1135,10 +1134,10 @@ pub const PEB_BEING_DEBUGGED_OFFSET: usize = 0x00; // PEB+0x00 (header byte 0)
 pub const PEB_IMAGE_BASE_ADDRESS: usize = 0x10; // PEB+0x10
 pub const PEB_LDR_OFFSET: usize = 0x18; // PEB+0x18
 pub const PEB_PROCESS_PARAMETERS: usize = 0x20; // PEB+0x20
-pub const PEB_PROCESS_HEAP: usize = 0x28; // PEB+0x28
+pub const PEB_PROCESS_HEAP: usize = 0x30; // PEB+0x30
 pub const PEB_NT_GLOBAL_FLAG: usize = 0x38; // PEB+0x38
 
-impl Peb {
+impl peb {
     pub fn new() -> Self {
         Self {
             header: 0,
@@ -1160,7 +1159,7 @@ impl Peb {
         }
     }
 
-    /// Get BeingDebugged flag from PEB header
+    /// Get being_debugged flag from PEB header
     #[inline]
     pub fn being_debugged(&self) -> bool {
         unsafe { *(self.header as *const u8) != 0 }
@@ -1205,8 +1204,8 @@ impl Eprocess {
     /// Get PEB pointer from EPROCESS
     /// This is compile-time verified via the assert! above
     #[inline]
-    pub fn get_peb(&self) -> *mut Peb {
-        self.Peb
+    pub fn get_peb(&self) -> *mut peb {
+        self.peb
     }
 
     /// Validate that the PEB pointer is in user-space range
@@ -1277,7 +1276,7 @@ impl Eprocess {
 /// Loader data table entry
 #[repr(C)]
 pub struct LdrData {
-    pub Length: u32,
+    pub length: u32,
     pub initialized: u32,
     pub ss_handle: *mut (),
     pub entry_in_load_order: ListEntry,
@@ -1288,7 +1287,7 @@ pub struct LdrData {
 impl LdrData {
     pub fn new() -> Self {
         Self {
-            Length: core::mem::size_of::<LdrData>() as u32,
+            length: core::mem::size_of::<LdrData>() as u32,
             initialized: 0,
             ss_handle: null_mut(),
             entry_in_load_order: ListEntry::new(),
@@ -1298,60 +1297,135 @@ impl LdrData {
     }
 }
 
-/// RTL user process parameters
+/// RTL user process parameters (Windows 7 x64 layout).
 #[repr(C)]
 pub struct RtlUserProcessParameters {
     pub maximum_length: u32,
-    pub initial_flags: u32,
-    pub debug_companion_port: u64,
-    pub debug_debugger_port: u64,
-    pub shell_info: u64,
+    pub length: u32,
+    pub flags: u32,
+    pub debug_flags: u32,
     pub console_handle: u64,
     pub console_flags: u32,
+    _console_flags_pad: u32,
     pub standard_input: u64,
     pub standard_output: u64,
     pub standard_error: u64,
-    pub current_directory: UnicodeString,
+    pub current_directory: CurDir,
     pub dll_path: UnicodeString,
-    pub image_path: UnicodeString,
+    pub image_path_name: UnicodeString,
     pub command_line: UnicodeString,
+    pub environment: u64,
+    pub starting_x: u32,
+    pub starting_y: u32,
+    pub count_x: u32,
+    pub count_y: u32,
+    pub count_chars_x: u32,
+    pub count_chars_y: u32,
+    pub fill_attribute: u32,
+    pub window_flags: u32,
+    pub show_window_flags: u32,
+    pub window_title: UnicodeString,
+    pub desktop_info: UnicodeString,
+    pub shell_info: UnicodeString,
+    pub runtime_data: UnicodeString,
+    pub current_directories: [DriveLetterCurDir; 32],
+    pub environment_size: u32,
+    pub environment_version: u32,
+    pub package_dependency_list: u64,
 }
 
 impl RtlUserProcessParameters {
     pub fn new() -> Self {
         Self {
             maximum_length: core::mem::size_of::<RtlUserProcessParameters>() as u32,
-            initial_flags: 0,
-            debug_companion_port: 0,
-            debug_debugger_port: 0,
-            shell_info: 0,
+            length: core::mem::size_of::<RtlUserProcessParameters>() as u32,
+            flags: 0,
+            debug_flags: 0,
             console_handle: 0,
             console_flags: 0,
+            _console_flags_pad: 0,
             standard_input: 0,
             standard_output: 0,
             standard_error: 0,
-            current_directory: UnicodeString::new(),
+            current_directory: CurDir::new(),
             dll_path: UnicodeString::new(),
-            image_path: UnicodeString::new(),
+            image_path_name: UnicodeString::new(),
             command_line: UnicodeString::new(),
+            environment: 0,
+            starting_x: 0,
+            starting_y: 0,
+            count_x: 0,
+            count_y: 0,
+            count_chars_x: 0,
+            count_chars_y: 0,
+            fill_attribute: 0,
+            window_flags: 0,
+            show_window_flags: 0,
+            window_title: UnicodeString::new(),
+            desktop_info: UnicodeString::new(),
+            shell_info: UnicodeString::new(),
+            runtime_data: UnicodeString::new(),
+            current_directories: [DriveLetterCurDir::new(); 32],
+            environment_size: 0,
+            environment_version: 0,
+            package_dependency_list: 0,
+        }
+    }
+}
+
+/// `RTL_USER_PROCESS_PARAMETERS.CurrentDirectory` (`CURDIR`).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct CurDir {
+    pub dos_path: UnicodeString,
+    pub handle: u64,
+}
+
+impl CurDir {
+    pub const fn new() -> Self {
+        Self {
+            dos_path: UnicodeString::new(),
+            handle: 0,
+        }
+    }
+}
+
+/// Drive-letter current-directory entry.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct DriveLetterCurDir {
+    pub flags: u16,
+    pub length: u16,
+    pub time_stamp: u32,
+    pub dos_path: UnicodeString,
+}
+
+impl DriveLetterCurDir {
+    pub const fn new() -> Self {
+        Self {
+            flags: 0,
+            length: 0,
+            time_stamp: 0,
+            dos_path: UnicodeString::new(),
         }
     }
 }
 
 /// Unicode string
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct UnicodeString {
-    pub Length: u16,
-    pub MaximumLength: u16,
-    pub Buffer: *mut u16,
+    pub length: u16,
+    pub maximum_length: u16,
+    pub buffer: *mut u16,
 }
 
 impl UnicodeString {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
-            Length: 0,
-            MaximumLength: 0,
-            Buffer: core::ptr::null_mut(),
+            length: 0,
+            maximum_length: 0,
+            buffer: core::ptr::null_mut(),
         }
     }
 
@@ -1362,9 +1436,9 @@ impl UnicodeString {
             buffer[i] = c as u16;
         }
         Self {
-            Length: (len * 2) as u16,
-            MaximumLength: ((len + 1) * 2) as u16,
-            Buffer: buffer.as_mut_ptr(),
+            length: (len * 2) as u16,
+            maximum_length: ((len + 1) * 2) as u16,
+            buffer: buffer.as_mut_ptr(),
         }
     }
 }
@@ -1446,21 +1520,24 @@ impl ProcessList {
 // Process Creation Functions
 // =============================================================================
 
-/// Create system process
+/// create system process
 pub fn create_system_process(pid: u64) -> Option<&'static mut Eprocess> {
     // Use pool allocation instead of frame allocation so we get
     // a virtual address (the frame allocator returns physical
     // addresses which need page-table mapping before they can be
     // accessed through a pointer).
     let process_size = core::mem::size_of::<Eprocess>().max(4096);
+    crate::hal::serial::write_string("PS:alloc\r\n");
     let process = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, process_size)
         as *mut Eprocess;
+    crate::hal::serial::write_string("PS:allocated\r\n");
 
     if !process.is_null() {
         unsafe {
             core::ptr::write_bytes(process as *mut u8, 0, process_size);
             (*process).unique_process_id = pid;
             (*process).kprocess_thread_list_head.init();
+            crate::hal::serial::write_string("PS:head\r\n");
 
             // Allocate handle table from pool as well (needs virtual address)
             let ht_size = core::mem::size_of::<ProcessHandleTable>().max(256);
@@ -1471,13 +1548,15 @@ pub fn create_system_process(pid: u64) -> Option<&'static mut Eprocess> {
                 (*ht_ptr).next_slot = 1;
                 (*process).object_table = ht_ptr;
             }
-
+            crate::hal::serial::write_string("PS:handle\r\n");
             // Initialize token for system process (LocalSystem account)
             let system_token = crate::se::token::create_system_token();
+            crate::hal::serial::write_string("PS:created_token\r\n");
             if !system_token.is_null() {
                 (*process).set_token(system_token);
                 // // kprintln!("    [PS] Assigned system token at 0x{:016x} to PID {} (system)", system_token as u64, pid);
             }
+            crate::hal::serial::write_string("PS:token\r\n");
         }
 
         let mut list = PROCESS_LIST.lock();
@@ -1495,7 +1574,7 @@ pub fn create_system_process(pid: u64) -> Option<&'static mut Eprocess> {
     unsafe { process.as_mut() }
 }
 
-/// Create user process
+/// create user process
 pub fn create_user_process(
     image: &[u8],
     pid: u64,
@@ -1589,7 +1668,7 @@ pub fn create_user_process(
         (*process).unique_process_id_full = pid;
         (*process).page_table_pml4 = pml4_phys;
         (*process).pml4_phys = pml4_phys;
-        (*process).Peb = core::ptr::null_mut();
+        (*process).peb = core::ptr::null_mut();
         (*process).object_table = ht_ptr;
         (*process).user_stack_base = crate::mm::vas::USER_STACK_BASE;
         (*process).user_stack_limit =
@@ -1683,10 +1762,9 @@ pub fn create_user_process(
 /// producing further serial output. A full implementation would
 /// unwind the trap frame and switch to the idle thread.
 pub fn process_exit(_exit_code: u32) -> ! {
-    // Write a one-line marker so the serial log makes the
+    // write a one-line marker so the serial log makes the
     // cmd.exe termination visible. The marker uses the canonical
     // "[EXIT]" prefix so the smoke test can grep for it.
-    #[cfg(target_arch = "x86_64")]
     crate::hal::serial::write_string("cmd.exe: process exit (autoexec finished)\r\n");
     // Park the CPU forever. `halt` is privileged; once the kernel
     // raises the IPL or masks interrupts the CPU will simply
@@ -1828,13 +1906,12 @@ pub fn find_thread_in_process(
 /// start_session_manager() in kernel_main.rs during Phase 12.
 /// System process (PID 4) is created by create_system_processes()
 /// in kernel_main.rs during Phase 11.
-#[cfg(target_arch = "x86_64")]
 pub fn init() {
     use crate::hal::serial;
     serial::write_string("PS:init_start\r\n");
     // // kprintln!("  Initializing process subsystem...");
 
-    // 1. Create Idle process (PID 0)
+    // 1. create Idle process (PID 0)
     // The Idle process represents CPU idle time and has no threads to schedule.
     serial::write_string("PS:create_idle_start\r\n");
     let idle = create_system_process(PID_IDLE);
@@ -1858,14 +1935,6 @@ pub fn init() {
 
     serial::write_string("PS:init_done\r\n");
     // // kprintln!("  Process subsystem initialized: {} processes", process_count());
-}
-
-/// Stub for non-x86_64 architectures: process creation is not
-/// actually exercised in this build. Returns 0 to satisfy the
-/// reference taken by `pub fn init` in `ps::init`.
-#[cfg(not(target_arch = "x86_64"))]
-pub fn init() {
-    let _ = create_system_process;
 }
 
 /// Full process creation
@@ -1960,8 +2029,7 @@ pub fn allocate_pid() -> Option<u64> {
 
 /// Release a PID back to the bitmap. Called when a process is
 /// destroyed. Idempotent: releasing an already-free PID is a no-op.
-#[allow(dead_code)]
-fn free_pid(pid: u64) {
+pub fn free_pid(pid: u64) {
     use core::sync::atomic::Ordering;
     if pid < PID_BITMAP_FIRST {
         // System-reserved PIDs are not tracked by the bitmap.
@@ -2074,7 +2142,7 @@ pub fn ps_open_process(
 ///
 /// Special access check: if the caller has SeDebugPrivilege, they can
 /// open any process regardless of DACL. This is the implementation of
-/// NtDebugActiveProcess.
+/// NT_DEBUG_ACTIVE_PROCESS.
 pub fn ps_open_process_for_debug(
     target_pid: u64,
     token_ptr: *const crate::se::token::Token,
@@ -2082,7 +2150,7 @@ pub fn ps_open_process_for_debug(
     // Check for SeDebugPrivilege
     if !token_ptr.is_null() {
         let token = unsafe { &*token_ptr };
-        let debug_luid = crate::se::token::Luid {
+        let debug_luid = crate::se::token::luid {
             low_part: crate::se::seaccess::privileges::SE_DEBUG as u32,
             high_part: 0,
         };
@@ -2120,7 +2188,7 @@ pub fn ps_set_primary_token(
     }
 
     let token = unsafe { &*calling_token };
-    let privilege = crate::se::token::Luid {
+    let privilege = crate::se::token::luid {
         low_part: crate::se::seaccess::privileges::SE_ASSIGN_PRIMARY_TOKEN as u32,
         high_part: 0,
     };

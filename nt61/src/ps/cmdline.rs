@@ -1,4 +1,4 @@
-//! Command-line parsing for NT 6.1 CreateProcessW.
+//! Command-line parsing for NT 6.1 create_process_w.
 //!
 //! Windows command-lines are not a simple split-on-space: the
 //! first argument (the application name) is taken verbatim if
@@ -133,7 +133,7 @@ pub fn parse_command_line(
     count
 }
 
-/// Build a `CreateProcessW`-style command line from a program
+/// Build a `create_process_w`-style command line from a program
 /// name and argv. Quotes the program name and each argument if it
 /// contains whitespace, then joins with spaces.
 pub fn build_command_line(program: &[u8], argv: &[&[u8]], out: &mut [u8]) -> usize {

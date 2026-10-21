@@ -26,8 +26,6 @@
 //! 7. The thread counter is non-zero after a thread is created.
 //! 8. ExFastRef reference counting works correctly.
 
-#[allow(unused_imports)]
-use crate::boot_println;
 use crate::rtl::testing::TestStats;
 use core::sync::atomic::Ordering;
 
@@ -214,7 +212,7 @@ fn step4_create_user_process() -> bool {
         return false;
     }
 
-    // Name was set. Eprocess::image_file_name holds the base name only.
+    // name was set. Eprocess::image_file_name holds the base name only.
     let base_start = image
         .iter()
         .rposition(|&b| b == b'\\')

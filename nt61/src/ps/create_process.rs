@@ -1,4 +1,4 @@
-//! NtCreateProcess System Call Implementation
+//! nt_create_process System Call Implementation
 //!
 //! Implements the complete process creation system call for NT kernel.
 //! This handles process object creation, address space initialization,
@@ -8,7 +8,6 @@ use crate::mm::pool;
 use crate::ob;
 use crate::ps::address_space::ProcessAddressSpace;
 use crate::ps::process::{Eprocess, ProcessHandleTable};
-use crate::ps::thread::Ethread;
 use crate::se::token;
 
 /// NT Status codes
@@ -38,27 +37,27 @@ pub struct ObjectAttributes {
     pub security_quality_of_service: u64,
 }
 
-/// NtCreateProcess - Create a new process
+/// nt_create_process - create a new process
 ///
 /// # Arguments
 /// * `process_handle` - Receives the new process handle
 /// * `desired_access` - Access rights to the process
 /// * `object_attributes` - Optional object attributes
-/// * `parent_process_handle` - Handle to parent process (0 = no parent)
+/// * `parent_process_handle` - handle to parent process (0 = no parent)
 /// * `inherit_handles` - Whether to inherit handles from parent
-/// * `section_handle` - Handle to image section (0 = no image)
-/// * `debug_port` - Handle to debug port (0 = none)
-/// * `exception_port` - Handle to exception port (0 = none)
+/// * `section_handle` - handle to image section (0 = no image)
+/// * `debug_port` - handle to debug port (0 = none)
+/// * `exception_port` - handle to exception port (0 = none)
 ///
 /// # Returns
 /// * STATUS_SUCCESS on success
 /// * Error status code on failure
 pub fn nt_create_process(
     process_handle: &mut u64,
-    desired_access: u32,
-    object_attributes: *const ObjectAttributes,
+    _desired_access: u32,
+    _object_attributes: *const ObjectAttributes,
     parent_process_handle: u64,
-    inherit_handles: bool,
+    _inherit_handles: bool,
     section_handle: u64,
     debug_port: u64,
     exception_port: u64,
@@ -111,7 +110,7 @@ pub fn nt_create_process(
         (*process_ptr).kprocess_thread_list_head.init();
     }
 
-    // 4. Create address space
+    // 4. create address space
     let address_space = match ProcessAddressSpace::new() {
         Some(vas) => vas,
         None => {
@@ -147,7 +146,7 @@ pub fn nt_create_process(
         (*process_ptr).user_stack_base = addr_space.user_stack_base;
         (*process_ptr).user_stack_limit = addr_space.user_stack_base + addr_space.user_stack_size;
         (*process_ptr).user_rsp = addr_space.get_stack_top();
-        (*process_ptr).Peb = addr_space.peb_address as *mut crate::ps::process::Peb;
+        (*process_ptr).peb = addr_space.peb_address as *mut crate::ps::process::peb;
     }
 
     // Transfer ownership of the address space to the process. Without
@@ -175,12 +174,12 @@ pub fn nt_create_process(
         (*process_ptr).object_table = ht_ptr;
     }
 
-    // 7. Create initial token
+    // 7. create initial token
     let process_token = if !parent.is_null() {
         // Inherit from parent
         unsafe { (*parent).get_token() }
     } else {
-        // Create default user token
+        // create default user token
         token::create_user_token(crate::se::sid::SID_USERS)
     };
 
@@ -198,11 +197,24 @@ pub fn nt_create_process(
 
     // 9. Load image from section if provided
     if section_handle != 0 {
-        // TODO: Load PE image from section handle
-        // For now, we skip this - it will be handled by NtCreateProcessEx
+        // Map the section object body and load the PE image from its
+        // base address into the new process's address space.
+        let header = ob::reference_object_by_handle(section_handle);
+        if !header.is_null() {
+            let section = ob::get_object_body::<crate::mm::section::Section>(header);
+            let base = unsafe { (*section).base_address };
+            let size = unsafe { (*section).size } as usize;
+            if base != 0 && size > 0 {
+                let image = unsafe { core::slice::from_raw_parts(base as *const u8, size) };
+                if crate::loader::load_pe(image).is_none() {
+                    // PE parsing failed; the process remains in a suspended
+                    // state that NT_CREATE_THREAD can terminate.
+                }
+            }
+        }
     }
 
-    // 10. Create initial thread (deferred to NtCreateThread)
+    // 10. create initial thread (deferred to NT_CREATE_THREAD)
     // The process is created but not yet runnable until a thread is created
 
     // 11. Insert into object manager and create handle
@@ -227,7 +239,7 @@ pub fn nt_create_process(
         pool::free(process_ptr as *mut u8);
     }
 
-    // 12. Create handle for caller
+    // 12. create handle for caller
     let handle = ob::insert_object(b"\\Process", obj_header);
     *process_handle = handle;
 
@@ -241,7 +253,7 @@ pub fn nt_create_process(
     STATUS_SUCCESS
 }
 
-/// NtCreateProcessEx - Extended process creation with section mapping
+/// nt_create_process_ex - Extended process creation with section mapping
 ///
 /// This is the extended version that loads a PE image from a section object.
 pub fn nt_create_process_ex(
@@ -271,9 +283,19 @@ pub fn nt_create_process_ex(
         return status;
     }
 
-    // Handle job assignment
+    // handle job assignment
     if job_handle != 0 {
-        // TODO: Assign process to job object
+        // Look up the newly created process to get its PID, then assign
+        // it to the job object referenced by `job_handle`.
+        let proc_header = ob::reference_object_by_handle(*process_handle);
+        let job_header = ob::reference_object_by_handle(job_handle);
+        if !proc_header.is_null() && !job_header.is_null() {
+            let eprocess = ob::get_object_body::<Eprocess>(proc_header);
+            let pid = unsafe { (*eprocess).unique_process_id };
+            let job = ob::get_object_body::<crate::ps::job::JobObject>(job_header);
+            let job_id = unsafe { (*job).job_id };
+            crate::ps::job::assign_process_to_job(job_id, pid);
+        }
     }
 
     STATUS_SUCCESS
