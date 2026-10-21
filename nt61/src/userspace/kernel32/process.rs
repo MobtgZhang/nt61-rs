@@ -1,62 +1,48 @@
 //! Process / thread management wrappers (kernel32).
 //!
-//! Thin wrappers over `NtCreateProcess` / `NtCreateThread` /
-//! `NtTerminateProcess`.
+//! Thin wrappers over `NT_TERMINATE_PROCESS` / `NT_CURRENT_PROCESS` /
+//! `NT_CURRENT_THREAD`.  All pseudo-handle semantics follow the real
+//! Windows convention: `-1` = current process, `-2` = current thread.
 
-#![allow(dead_code)]
-
-use crate::libs::ntdll::types::{HANDLE, NTSTATUS};
+use crate::libs::ntdll::types::HANDLE;
 
 pub const THREAD_ALL_ACCESS: u32 = 0x001F_03FF;
 pub const PROCESS_ALL_ACCESS: u32 = 0x001F_0FFF;
 
+/// Pseudo-handle for the calling process (equivalent of `GetCurrentProcess`).
+pub const CURRENT_PROCESS_HANDLE: HANDLE = -1_isize as HANDLE;
+/// Pseudo-handle for the calling thread (equivalent of `GetCurrentThread`).
+pub const CURRENT_THREAD_HANDLE: HANDLE = -2_isize as HANDLE;
+
 #[inline]
 pub fn get_current_process() -> HANDLE {
-    core::ptr::null_mut()
+    CURRENT_PROCESS_HANDLE
 }
 
 #[inline]
 pub fn get_current_thread() -> HANDLE {
-    core::ptr::null_mut()
+    CURRENT_THREAD_HANDLE
 }
 
+/// `ExitProcess` — terminate the calling process via `nt_terminate_process`.
 pub fn exit_process(exit_code: u32) -> ! {
-    // Phase 1: loop forever so the system remains alive.
+    unsafe {
+        crate::libs::ntdll::process::nt_terminate_process(CURRENT_PROCESS_HANDLE, exit_code as i32);
+    }
+    // If the kernel call returns (e.g. the handle table did not resolve
+    // the pseudo-handle), we still need to never return.  Fall into a
+    // safe halt so the system remains alive without spinning the CPU.
     loop {
-        core::hint::black_box(exit_code);
+        crate::arch::halt();
     }
 }
 
+/// `ExitThread` — terminate the calling thread via `nt_terminate_thread`.
 pub fn exit_thread(exit_code: u32) -> ! {
-    exit_process(exit_code)
+    unsafe {
+        crate::libs::ntdll::thread::nt_terminate_thread(CURRENT_THREAD_HANDLE, exit_code);
+    }
+    loop {
+        crate::arch::halt();
+    }
 }
-
-pub fn create_process_a(_app: &str, _cmd: &str) -> Result<HANDLE, NTSTATUS> {
-    Err(-1)
-}
-
-pub fn create_thread(
-    _security: *mut (),
-    _stack_size: usize,
-    _start: extern "system" fn(*mut ()) -> u32,
-    _param: *mut (),
-    _flags: u32,
-    _tid: *mut u32,
-) -> Result<HANDLE, NTSTATUS> {
-    Err(-1)
-}
-
-pub fn terminate_process(_p: HANDLE, _code: u32) -> Result<(), NTSTATUS> {
-    Ok(())
-}
-
-#[inline]
-pub fn get_last_error() -> u32 {
-    0
-}
-#[inline]
-pub fn set_last_error(_: u32) {}
-
-// Touch the imports so they don't get dropped.
-#[allow(dead_code)]
-fn _imports(_: NTSTATUS, _: HANDLE) {}

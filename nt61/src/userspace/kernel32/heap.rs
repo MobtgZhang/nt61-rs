@@ -1,142 +1,210 @@
-//! Heap allocator backing user-mode `Vec` / `String`.
-//!
-//! Phase 1 implements a tiny bump allocator over user-mode virtual
-//! pages; Phase 3 will replace it with the full RtlHeap engine.
-
-#![allow(dead_code)]
+//! Per-process Windows heap backing user-mode allocations.
 
 extern crate alloc;
-use core::alloc::Layout;
-use core::ptr;
 
+use crate::ke::sync::Spinlock;
 use crate::mm::pte;
 use crate::mm::vas;
+use core::alloc::GlobalAlloc;
+use core::alloc::Layout;
+use core::mem::size_of;
+use core::ptr;
 
-/// Process-local heap.
-pub struct UserHeap {
-    pub base: u64,
-    pub cursor: u64,
-    pub brk: u64,
-    pub pages: u32,
+pub const HEAP_BASE: u64 = 0x0000_7FFF_C000_0000;
+pub const HEAP_PAGE_BUDGET: u64 = 0x0200_0000;
+const BLOCK_MAGIC: u32 = 0x4B4F_4C42;
+const HEADER_SIZE: usize = size_of::<BlockHeader>();
+const MIN_BLOCK_SIZE: usize = 32;
+const ALIGNMENT: usize = 16;
+
+#[repr(C)]
+struct BlockHeader {
+    magic: u32,
+    flags: u32,
+    size: usize,
+    next: *mut BlockHeader,
 }
 
-impl UserHeap {
-    pub const fn new() -> Self {
-        Self {
-            base: 0,
-            cursor: 0,
-            brk: 0,
-            pages: 0,
-        }
-    }
+#[derive(Clone, Copy)]
+struct HeapState {
+    base: u64,
+    free_head: *mut BlockHeader,
+    initialized: bool,
 }
 
-static mut HEAP: UserHeap = UserHeap::new();
+static HEAP: Spinlock<HeapState> = Spinlock::new(HeapState {
+    base: 0,
+    free_head: ptr::null_mut(),
+    initialized: false,
+});
 
-/// Heap base — well below the user stack, just above the loader's
-/// 2 MiB reserved region.
-pub const HEAP_BASE: u64 = 0x0000_0000_0100_0000;
-pub const HEAP_PAGE_BUDGET: u64 = 0x0200_0000; // 32 MiB
+pub struct UserHeapAllocator;
 
-/// Establish the per-process heap if it has not been created yet.
 pub fn init_user_heap(pml4: u64) -> u64 {
+    crate::boot_println!("[USERHEAP] init enter pml4=0x{:x}", pml4);
+    if pml4 == 0 {
+        return 0;
+    }
+
+    let mut state = HEAP.lock();
+    crate::boot_println!("[USERHEAP] locked initialized={}", state.initialized);
+    if state.initialized {
+        return state.base;
+    }
+
+    let status = vas::map_user_pages(pml4, HEAP_BASE, HEAP_PAGE_BUDGET, pte::PTE_RW | pte::PTE_US);
+    if status != vas::MmStatus::Ok {
+        crate::boot_println!("[USERHEAP] map failed status={:?}", status);
+        return 0;
+    }
+    crate::boot_println!(
+        "[USERHEAP] map complete pages={}",
+        HEAP_PAGE_BUDGET / 0x1000
+    );
+
+    // Page-table setup must happen on the system root. Attach only after
+    // all user pages exist, so the heap can be initialized through user VAs.
+    vas::refresh_kernel_mappings(pml4);
+    crate::boot_println!("[USERHEAP] kernel mappings refreshed");
+    let previous_root = vas::attach_process(pml4);
+    crate::boot_println!("[USERHEAP] process attached");
+
+    let base = HEAP_BASE;
+    let first_block = (base + HEADER_SIZE as u64) as *mut BlockHeader;
+    let first_size = HEAP_PAGE_BUDGET as usize - HEADER_SIZE;
     unsafe {
-        if HEAP.base != 0 {
-            return HEAP.base;
-        }
-        let r = vas::map_user_pages(pml4, HEAP_BASE, HEAP_PAGE_BUDGET, pte::PTE_RW | pte::PTE_US);
-        if r != vas::MmStatus::Ok {
-            return 0;
-        }
-        HEAP.base = HEAP_BASE;
-        HEAP.cursor = HEAP_BASE + 0x1000;
-        HEAP.brk = HEAP_BASE + HEAP_PAGE_BUDGET;
-        HEAP.base
+        core::ptr::write_bytes(base as *mut u8, 0, HEAP_PAGE_BUDGET as usize);
+        ptr::write(
+            first_block,
+            BlockHeader {
+                magic: BLOCK_MAGIC,
+                flags: 0,
+                size: first_size,
+                next: ptr::null_mut(),
+            },
+        );
     }
+    crate::boot_println!("[USERHEAP] heap zeroed");
+
+    *state = HeapState {
+        base,
+        free_head: first_block,
+        initialized: true,
+    };
+    vas::detach_process(previous_root);
+    crate::boot_println!("[USERHEAP] process detached");
+    base
 }
 
-pub fn alloc_bytes(n: usize) -> *mut u8 {
-    let aligned = (n + 15) & !15;
-    unsafe {
-        if HEAP.cursor + aligned as u64 > HEAP.brk {
-            return ptr::null_mut();
-        }
-        let p = HEAP.cursor as *mut u8;
-        HEAP.cursor += aligned as u64;
-        p
-    }
+fn align_up(value: usize) -> usize {
+    (value + ALIGNMENT - 1) & !(ALIGNMENT - 1)
 }
 
-pub fn free_bytes(_p: *mut u8) { /* Phase 1: bump allocator; no free. */
-}
-
-/// Vector backed by the user heap.
-pub struct HeapVec<T> {
-    ptr: *mut T,
-    len: usize,
-    cap: usize,
-    _marker: core::marker::PhantomData<T>,
-}
-
-impl<T> HeapVec<T> {
-    pub const fn new() -> Self {
-        Self {
-            ptr: ptr::null_mut(),
-            len: 0,
-            cap: 0,
-            _marker: core::marker::PhantomData,
-        }
+pub fn alloc_bytes(size: usize) -> *mut u8 {
+    if size == 0 {
+        return ptr::null_mut();
     }
 
-    /// Pre-allocate capacity for `cap` items. Mirrors `Vec::with_capacity`.
-    pub fn with_capacity(cap: usize) -> Self {
-        if cap == 0 {
-            return Self::new();
-        }
-        let layout = Layout::array::<T>(cap).unwrap();
-        let p = alloc_bytes(layout.size()) as *mut T;
-        Self {
-            ptr: p,
-            len: 0,
-            cap,
-            _marker: core::marker::PhantomData,
-        }
+    let requested = align_up(size + HEADER_SIZE);
+    let mut state = HEAP.lock();
+    if !state.initialized {
+        return ptr::null_mut();
     }
 
-    pub fn push(&mut self, val: T) {
-        if self.len == self.cap {
-            // Phase 1 doubles capacity.
-            let new_cap = if self.cap == 0 { 4 } else { self.cap * 2 };
-            let old_layout = if self.cap == 0 {
-                Layout::from_size_align(0, 1).unwrap()
-            } else {
-                Layout::array::<T>(self.cap).unwrap()
-            };
-            let new_layout = Layout::array::<T>(new_cap).unwrap();
-            unsafe {
-                let new_ptr = alloc_bytes(new_layout.size()) as *mut T;
-                if new_ptr.is_null() {
-                    return;
-                }
-                if !self.ptr.is_null() && self.len > 0 {
-                    ptr::copy_nonoverlapping(self.ptr, new_ptr, self.len);
-                    if old_layout.size() > 0 {
-                        let _ = alloc::alloc::dealloc(self.ptr as *mut u8, old_layout);
-                    }
-                }
-                self.ptr = new_ptr;
-                self.cap = new_cap;
-            }
-        }
+    let mut previous: *mut BlockHeader = ptr::null_mut();
+    let mut current = state.free_head;
+    while !current.is_null() {
         unsafe {
-            ptr::write(self.ptr.add(self.len), val);
-            self.len += 1;
+            let block = &mut *current;
+            if block.magic != BLOCK_MAGIC {
+                return ptr::null_mut();
+            }
+            if block.size >= requested {
+                let remaining = block.size - requested;
+                if remaining >= MIN_BLOCK_SIZE + HEADER_SIZE {
+                    let split = current as usize + requested;
+                    let split_block = split as *mut BlockHeader;
+                    ptr::write(
+                        split_block,
+                        BlockHeader {
+                            magic: BLOCK_MAGIC,
+                            flags: 0,
+                            size: remaining,
+                            next: block.next,
+                        },
+                    );
+                    block.next = split_block;
+                    block.size = requested;
+                }
+                if previous.is_null() {
+                    state.free_head = block.next;
+                } else {
+                    (*previous).next = block.next;
+                }
+
+                block.flags = 1;
+                let data = (current as usize + HEADER_SIZE) as *mut u8;
+                return data;
+            }
+
+            previous = current;
+            current = block.next;
         }
     }
-    pub fn len(&self) -> usize {
-        self.len
+
+    ptr::null_mut()
+}
+
+pub fn free_bytes(pointer: *mut u8) {
+    if pointer.is_null() {
+        return;
     }
-    pub fn as_ptr(&self) -> *const T {
-        self.ptr
+
+    let mut state = HEAP.lock();
+    if !state.initialized {
+        return;
+    }
+
+    let block = unsafe { pointer.sub(HEADER_SIZE) as *mut BlockHeader };
+    unsafe {
+        if (*block).magic != BLOCK_MAGIC || (*block).flags != 1 {
+            return;
+        }
+
+        (*block).flags = 0;
+        let mut previous: *mut BlockHeader = ptr::null_mut();
+        let mut current = state.free_head;
+        while !current.is_null() && (current as usize) < block as usize {
+            previous = current;
+            current = (*current).next;
+        }
+
+        if previous.is_null() {
+            (*block).next = state.free_head;
+            state.free_head = block;
+        } else {
+            (*block).next = (*previous).next;
+            (*previous).next = block;
+        }
+
+        if !(*block).next.is_null() && block as usize + (*block).size == (*block).next as usize {
+            (*block).size += (*(*block).next).size + HEADER_SIZE;
+            (*block).next = (*(*block).next).next;
+        }
+
+        if !previous.is_null() && previous as usize + (*previous).size == block as usize {
+            (*previous).size += (*block).size + HEADER_SIZE;
+            (*previous).next = (*block).next;
+        }
+    }
+}
+
+unsafe impl GlobalAlloc for UserHeapAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        alloc_bytes(layout.size())
+    }
+
+    unsafe fn dealloc(&self, pointer: *mut u8, _layout: Layout) {
+        free_bytes(pointer)
     }
 }

@@ -38,7 +38,7 @@
 //! 2. **`userspace/` never duplicates logic** — it only re-exports
 //!    from `libs::` or `libs::server::`.
 //! 3. **`libs/` is the source of truth for types** — `NTSTATUS`,
-//!    `UNICODE_STRING`, syscall numbers, etc. all live in
+//!    `UnicodeString`, syscall numbers, etc. all live in
 //!    `crate::libs::ntdll::types`.
 //! 4. **`servers/` has the real process logic** — SMSS, CSRSS,
 //!    services, winlogon all have complete implementations there.
@@ -48,18 +48,13 @@
 //!    public API surface that real Windows user-mode code would
 //!    link against.
 
-#![allow(dead_code, unused_imports)]
-
 pub mod minimal_stub;
 
 // Phase 1: PE loader, PEB/TEB structures, initial stack, params.
 // These are kernel-side helpers for building user-mode address spaces.
 pub mod loader;
-#[cfg(target_arch = "x86_64")]
 pub mod peb_teb;
-#[cfg(target_arch = "x86_64")]
 pub mod stack;
-#[cfg(target_arch = "x86_64")]
 pub mod user_params;
 
 // Phase 2: ntdll.dll — wraps crate::libs::ntdll with syscall macros.
@@ -81,3 +76,4 @@ pub mod winlogon;
 pub mod cmd;
 pub mod find;
 pub mod more;
+pub mod synthetic;

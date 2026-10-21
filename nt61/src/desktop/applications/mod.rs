@@ -10,7 +10,6 @@
 //! well-known apps so the boot sequence can pre-launch them.
 
 extern crate alloc;
-use alloc::string::String;
 
 /// Number of well-known applications.
 pub const KNOWN_APP_COUNT: usize = 4;

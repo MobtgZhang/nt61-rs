@@ -1,5 +1,5 @@
 // Auto-generated from cmd.exe PE binary (size=6656 bytes).
-// ImageBase=0x65000000, EntryPoint=RVA 0x1000.
+// ImageBase=0x65000000, entry_point=RVA 0x1000.
 
 /// Raw bytes of the synthetic cmd.exe PE32+ image.
 pub const SYNTHETIC_CMD_EXE_PE: [u8; 6656] = [

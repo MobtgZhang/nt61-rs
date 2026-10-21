@@ -8,8 +8,6 @@
 //! PE32/PE32+ parser, import resolver, and base-relocation engine)
 //! and `crate::mm::vas` (page-table infrastructure).
 
-#![allow(dead_code)]
-
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::libs::ntdll::types::NTSTATUS;
@@ -28,7 +26,7 @@ pub const STATUS_NO_MEMORY: NTSTATUS = 0xC000_0017_u32 as i32;
 pub const PEB_VA: u64 = 0x0000_0000_7FFE_D000;
 
 /// TEB at this fixed address per user thread.
-pub const TEB_VA: u64 = 0x0000_FFFF_FFDF_0000;
+pub const TEB_VA: u64 = 0x0000_7FFF_FFDF_0000;
 
 /// User-mode image default base — matches Windows 7 x64.
 pub const DEFAULT_IMAGE_BASE: u64 = 0x0000_0000_0040_0000;
@@ -36,10 +34,10 @@ pub const DEFAULT_IMAGE_BASE: u64 = 0x0000_0000_0040_0000;
 /// User-stack top. Stack grows down.
 pub const USER_STACK_TOP: u64 = TEB_VA - 0x2000;
 
-/// Where the ProcessParameters block is placed (above the PEB).
+/// Where the process_parameters block is placed (above the PEB).
 pub const PROCESS_PARAMS_VA: u64 = 0x0000_0000_7FFE_D000 + 0x1000;
 
-/// Total reserved ProcessParameters area (must hold params + env
+/// Total reserved process_parameters area (must hold params + env
 /// + command line — keep generous for now).
 pub const PROCESS_PARAMS_SIZE: u64 = 0x4000;
 
@@ -137,7 +135,7 @@ impl UserProgramLoader {
     }
 }
 
-/// Count of user-mode processes successfully loaded.
+/// count of user-mode processes successfully loaded.
 pub static USER_LOAD_COUNT: AtomicU64 = AtomicU64::new(0);
 
 // ---------------------------------------------------------------------------
@@ -165,7 +163,7 @@ const FALLBACK_IMAGE: [u8; 16] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Internal helpers
+// internal helpers
 // ---------------------------------------------------------------------------
 
 /// Map the loaded PE's sections into the user PML4 starting at
@@ -246,7 +244,7 @@ pub fn init_teb_in_pml4(pml4: u64, _peb: u64) -> Result<u64, NTSTATUS> {
 /// startup frame, and return the initial user-mode RSP. The Windows
 /// x64 ABI requires RSP to be 16-byte aligned at the call site.
 pub fn build_user_stack(_pml4: u64, _teb_va: u64, _image_path: &str) -> Result<u64, NTSTATUS> {
-    // The full implementation walks ProcessParameters, env, command
+    // The full implementation walks process_parameters, env, command
     // line, and a small "thread-startup" frame. For Phase 1 we hand
     // back a placeholder 16-byte-aligned address above the TEB.
     Ok(USER_STACK_TOP)

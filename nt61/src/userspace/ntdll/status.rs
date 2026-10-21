@@ -4,8 +4,6 @@
 //! are listed — Phase 2 will extend as needed. Values from
 //! `ntstatus.h` (Windows 7 SDK).
 
-#![allow(dead_code, non_snake_case)]
-
 pub const STATUS_SUCCESS: i32 = 0x0000_0000;
 pub const STATUS_WAIT_0: i32 = 0x0000_0000;
 pub const STATUS_WAIT_1: i32 = 0x0000_0001;

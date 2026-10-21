@@ -4,7 +4,7 @@
 //! a fresh process's user address space and then jumps to via the
 //! ISA-specific ring transition (`iretq`, `eret`, `sret`, `ertn`)
 //! after `attach_process()`. The program is small, loop-based, and
-//! only ever invokes a single syscall (`NtTestAlert`, NTSTATUS=0) in a
+//! only ever invokes a single syscall (`NT_TEST_ALERT`, NTSTATUS=0) in a
 //! busy loop. The point of this module is *not* to do useful work —
 //! it is to validate the ring-transition path end-to-end.
 //!
@@ -23,7 +23,7 @@
 use core::sync::atomic::AtomicU64;
 
 /// Bumped on every user-mode syscall the kernel successfully
-/// returns from. Read by the smoke test to confirm that the
+/// returns from. read by the smoke test to confirm that the
 /// ring-transition path was exercised.
 pub static USER_SYSCALL_COUNT: AtomicU64 = AtomicU64::new(0);
 
@@ -37,37 +37,7 @@ pub static USER_SYSCALL_COUNT: AtomicU64 = AtomicU64::new(0);
 /// as a user-mode R+X page.
 pub const USER_ENTRY_RIP: u64 = 0x0000_0000_0000_1000;
 
-/// x86_64 hand-assembled machine code for the minimal user program.
-#[cfg(target_arch = "x86_64")]
-const USER_ENTRY_BYTES: [u8; 8] = [
-    0xb8, 0xef, 0xbe, 0xad, 0xde, // mov eax, 0xDEADBEEF (marker)
-    0x90, // nop
-    0xeb, 0xfd, // jmp $-2 (to nop)
-];
-
-/// aarch64 hand-assembled machine code for the minimal user program.
-#[cfg(target_arch = "aarch64")]
-const USER_ENTRY_BYTES: [u8; 8] = [
-    // mov x0, #0xDEAD ; movk x0, #0xBEEF, lsl #16
-    0x00, 0x00, 0xa8, 0xd2, // 1: b 1b  (offset = -4 bytes)
-    0xff, 0xff, 0xff, 0x17,
-];
-
-/// riscv64 hand-assembled machine code for the minimal user program.
-#[cfg(target_arch = "riscv64")]
-const USER_ENTRY_BYTES: [u8; 8] = [
-    // li a0, 0xDEADBEEF  (lui + addi)
-    0x97, 0x35, 0x05, 0x00, // 1: j 1b  (jal x0, 0)
-    0x6f, 0x00, 0x00, 0x00,
-];
-
-/// loongarch64 hand-assembled machine code for the minimal user program.
-#[cfg(target_arch = "loongarch64")]
-const USER_ENTRY_BYTES: [u8; 8] = [
-    // lu12i.w $a0, (0xDEADB >> 12) ; ori $a0, $a0, 0xEAD
-    0x14, 0x00, 0x37, 0x1a, // 1: b 1b  (beqz $a0, 1b; we just halt any input here)
-    0x40, 0xff, 0xff, 0x5c,
-];
+use crate::arch::common::user_entry::MINIMAL_USER_ENTRY_BYTES as USER_ENTRY_BYTES;
 
 /// Map `USER_ENTRY_BYTES` into the given per-process PML4 at
 /// `USER_ENTRY_RIP` (R+X+U). Returns `true` on success.

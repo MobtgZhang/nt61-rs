@@ -11,11 +11,8 @@
 //! |  ... (variable)             |
 //! +-----------------------------+
 
-#![cfg(target_arch = "x86_64")]
-
 use crate::libs::ntdll::types::NTSTATUS;
 use crate::mm::vas;
-#[cfg(target_arch = "x86_64")]
 use crate::userspace::peb_teb::RtlUserProcessParameters;
 
 /// Top of the user stack (just below the TEB).
@@ -25,7 +22,7 @@ pub const USER_STACK_SIZE: u64 = 512 * 1024;
 /// Default guard page size at the bottom.
 pub const USER_STACK_GUARD: u64 = 0x1000;
 
-/// Write the canonical user-mode startup frame. Returns the initial
+/// write the canonical user-mode startup frame. Returns the initial
 /// RSP value, properly aligned for the x64 ABI.
 ///
 /// `command_line` and `environment` are copies of the wide-string

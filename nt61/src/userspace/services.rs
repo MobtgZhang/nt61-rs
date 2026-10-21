@@ -1,4 +1,4 @@
-//! services.exe — Service Control Manager (user-mode side)
+//! services.exe — Service control Manager (user-mode side)
 //!
 //! Re-exports from `crate::libs::server::services`, which in turn
 //! re-exports the real implementation from `crate::servers::services`.

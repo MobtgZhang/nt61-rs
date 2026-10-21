@@ -1,8 +1,6 @@
 //! C runtime support — what's needed to bring up `main`-style
 //! programs without dragging in an external CRT.
 
-#![allow(dead_code)]
-
 /// Entry-point shim: simplest possible equivalent of CRTStartup.
 #[no_mangle]
 pub extern "system" fn __crt_startup(
@@ -25,22 +23,10 @@ pub fn _set_app_type(_app_type: i32) {}
 /// Guard check callback list (Phase 3).
 pub fn _guard_check_icall_fptr() {}
 
-/// /GS stack-cookie (also defined in `stack.rs`).
-#[cfg(target_arch = "x86_64")]
 pub fn __security_cookie() -> u64 {
     crate::userspace::stack::__security_cookie()
 }
 
-#[cfg(target_arch = "x86_64")]
 pub fn __security_check_cookie(cookie: u64) {
     crate::userspace::stack::__security_check_cookie(cookie)
 }
-
-// Stubs for non-x86_64 builds.
-#[cfg(not(target_arch = "x86_64"))]
-pub fn __security_cookie() -> u64 {
-    0
-}
-
-#[cfg(not(target_arch = "x86_64"))]
-pub fn __security_check_cookie(_cookie: u64) {}
