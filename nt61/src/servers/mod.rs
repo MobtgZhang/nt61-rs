@@ -23,6 +23,7 @@ pub mod winlogon;
 // non-gated guarantees the same command parser, history, and
 // `LOG_RING_LINES`-backed `LOGS` pane works on every target.
 pub mod cmd;
+pub mod cmd_extensions;
 
 /// Initialize all system servers
 pub fn init() {

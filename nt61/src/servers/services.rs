@@ -1,11 +1,10 @@
-//! Service Control Manager (SCM)
+//! Service control Manager (SCM)
 //
-//! Implements Windows Service Control Manager
+//! Implements Windows Service control Manager
 //! Manages Windows services defined in the registry
 
 // SCM uses the WDK driver naming convention
 // (SERVICE_* types, SERVICE_STATUS, ...).
-#![allow(non_snake_case, non_upper_case_globals, dead_code)]
 
 use crate::ke::sync::Spinlock;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -14,6 +13,9 @@ extern crate alloc;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
+
+/// Backslash character constant for path construction.
+const BS: &str = "\\";
 
 /// Service types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +68,7 @@ pub enum ServiceState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum ServiceControl {
+    Start = 0x00,
     Stop = 0x01,
     Pause = 0x02,
     Continue = 0x03,
@@ -183,12 +186,12 @@ pub fn init() {
     // Register the default services (RpcSs, EventSystem, Themes)
     register_default_services();
 
-    // kprintln!("    Service Control Manager initialized");
+    // kprintln!("    Service control Manager initialized");
 }
 
 /// Start SCM
 pub fn start() {
-    // kprintln!("[SCM] Starting Service Control Manager...");
+    // kprintln!("[SCM] Starting Service control Manager...");
 
     // Phase 1: Initialize
     phase1_init();
@@ -199,7 +202,7 @@ pub fn start() {
     // Phase 3: Start auto-start services
     phase3_start_services();
 
-    // kprintln!("[SCM] Service Control Manager started");
+    // kprintln!("[SCM] Service control Manager started");
 }
 
 /// Phase 1: Initialize SCM
@@ -254,14 +257,14 @@ fn load_services_from_registry() {
             service_name
         );
 
-        // Read Type
+        // read r#type
         let start_type = query_dword(&service_path, "Start").unwrap_or(3); // Default to DemandStart (3)
         let _ = &start_type;
 
-        // Read ErrorControl
+        // read ErrorControl
         let _error_control = query_dword(&service_path, "ErrorControl").unwrap_or(1); // Default to Normal (1)
 
-        // Read ImagePath (optional)
+        // read ImagePath (optional)
         let _image_path = query_string(&service_path, "ImagePath");
 
         // kprintln!("[SCM]   {}: Start={}", service_name, start_type);
@@ -284,7 +287,7 @@ fn phase3_start_services() {
             // kprintln!("[SCM]   Starting service: {}",
             //                 String::from_utf16_lossy(&svc.name).trim_end_matches('\0'));
             // In a real implementation, this would:
-            // 1. Create a process for the service
+            // 1. create a process for the service
             // 2. Call StartService() to begin execution
             // 3. Wait for the service to report running state
         }
@@ -441,56 +444,160 @@ fn register_default_services() {
     // kprintln!("[SCM] Registered {} default services", state.service_count);
 }
 
-/// Start a specific service by name
-#[allow(dead_code)]
-pub fn start_service(service_name: &str) -> bool {
-    let mut state = SCM_STATE.lock();
+/// Maximum recursion depth for dependency resolution.
+const MAX_DEPENDENCY_DEPTH: usize = 8;
 
-    for i in 0..state.service_count {
-        let name_str = String::from_utf16_lossy(&state.services[i].name);
-        let name = name_str.trim_end_matches('\0');
-        if name == service_name {
-            let svc = &mut state.services[i];
-            if svc.status.current_state == ServiceState::Stopped {
-                // kprintln!("[SCM] Starting service: {}", service_name);
-                svc.status.current_state = ServiceState::StartPending;
-                // TODO: Create process and start service
-                svc.status.current_state = ServiceState::Running;
-                svc.status.win32_exit_code = 0;
-                svc.status.service_exit_code = 0;
-                return true;
+/// Win32 error code for ERROR_SERVICE_NEVER_STARTED (1066).
+const ERROR_SERVICE_NEVER_STARTED: u32 = 1066;
+
+/// Record a start failure: transition to Stopped with error codes.
+fn record_start_failure(state: &mut ScmState, idx: usize, ntstatus: u32) {
+    let svc = &mut state.services[idx];
+    svc.status.current_state = ServiceState::Stopped;
+    svc.status.win32_exit_code = ERROR_SERVICE_NEVER_STARTED;
+    svc.status.service_exit_code = ntstatus;
+}
+
+/// Internal: start a service (and its dependencies) while holding the SCM lock.
+fn start_service_index_locked(state: &mut ScmState, idx: usize, depth: usize) -> bool {
+    if depth > MAX_DEPENDENCY_DEPTH {
+        return false;
+    }
+    if idx >= state.service_count {
+        return false;
+    }
+    let svc = &state.services[idx];
+    match svc.status.current_state {
+        ServiceState::Running => return true,
+        ServiceState::StartPending | ServiceState::StopPending => return false,
+        _ => {}
+    }
+
+    let dep_indices: alloc::vec::Vec<usize> = svc
+        .dependencies
+        .iter()
+        .take(svc.dependency_count)
+        .filter_map(|dep| {
+            let dep_name = utf16_to_string(dep);
+            if dep_name.is_empty() {
+                return None;
             }
+            find_service(state, &dep_name)
+        })
+        .collect();
+
+    for dep_idx in dep_indices {
+        let dep_svc = &state.services[dep_idx];
+        if dep_svc.status.current_state == ServiceState::Running {
+            continue;
+        }
+        if dep_svc.start_type == ServiceStartType::BootStart
+            || dep_svc.start_type == ServiceStartType::SystemStart
+        {
+            continue;
+        }
+        if !start_service_index_locked(state, dep_idx, depth + 1) {
             return false;
         }
     }
-    false
+
+    state.services[idx].status.current_state = ServiceState::StartPending;
+    state.services[idx].status.win32_exit_code = 0;
+    state.services[idx].status.service_exit_code = 0;
+
+    let svc_type = state.services[idx].service_type;
+    let is_driver =
+        svc_type == ServiceType::KernelDriver || svc_type == ServiceType::FileSystemDriver;
+
+    if is_driver {
+        let b = '\\';
+        let path = utf16_to_string(&state.services[idx].image_path);
+        let image_path = path.trim_end_matches(b);
+        let pe_path = if image_path.starts_with("%SystemRoot%") {
+            image_path.replacen("%SystemRoot%", "C:\\Windows", 1)
+        } else if image_path.starts_with("\\\\SystemRoot\\\\") {
+            image_path.replacen("\\\\SystemRoot\\\\", "C:\\Windows\\", 1)
+        } else {
+            alloc::string::ToString::to_string(image_path)
+        };
+
+        let pe_loaded = if pe_path.is_empty() {
+            true
+        } else {
+            match crate::servers::smss::read_pe_from_disk(&pe_path) {
+                Some(pe) => {
+                    let data = core::mem::ManuallyDrop::into_inner(pe);
+                    data.len() >= 2 && data[0] == 0x4D && data[1] == 0x5A
+                }
+                None => false,
+            }
+        };
+
+        if !pe_loaded {
+            record_start_failure(state, idx, 0xC000_0135);
+            return false;
+        }
+
+        let name_bytes = {
+            let s = utf16_to_string(&state.services[idx].name);
+            let s = s.trim_end_matches(BS);
+            let bytes = s.as_bytes();
+            let mut buf = [0u8; 64];
+            let len = bytes.len().min(64);
+            buf[..len].copy_from_slice(&bytes[..len]);
+            buf
+        };
+        let driver = crate::io::find_registered_driver(&name_bytes);
+        if driver.is_null() {
+            record_start_failure(state, idx, 0xC000_0135);
+            return false;
+        }
+    } else {
+        let pid = crate::ps::process::allocate_pid();
+        match pid {
+            Some(pid) => {
+                if crate::ps::process::create_system_process(pid).is_some() {
+                    state.services[idx].process_id = pid as u32;
+                } else {
+                    crate::ps::process::free_pid(pid);
+                    record_start_failure(state, idx, 0xC000_0005);
+                    return false;
+                }
+            }
+            None => {
+                record_start_failure(state, idx, 0xC000_0017);
+                return false;
+            }
+        }
+    }
+
+    state.services[idx].status.current_state = ServiceState::Running;
+    true
+}
+
+/// Start a specific service by name
+pub fn start_service(service_name: &str) -> bool {
+    let mut state = SCM_STATE.lock();
+    let idx = match find_service(&state, service_name) {
+        Some(idx) => idx,
+        None => return false,
+    };
+    start_service_index_locked(&mut state, idx, 0)
 }
 
 /// Stop a specific service by name
-#[allow(dead_code)]
 pub fn stop_service(service_name: &str) -> bool {
-    let mut state = SCM_STATE.lock();
-
-    for i in 0..state.service_count {
-        let name_str = String::from_utf16_lossy(&state.services[i].name);
-        let name = name_str.trim_end_matches('\0');
-        if name == service_name {
-            let svc = &mut state.services[i];
-            if svc.status.current_state == ServiceState::Running {
-                // kprintln!("[SCM] Stopping service: {}", service_name);
-                svc.status.current_state = ServiceState::StopPending;
-                // TODO: Send control code to stop service
-                svc.status.current_state = ServiceState::Stopped;
-                return true;
-            }
-            return false;
+    let idx = {
+        let state = SCM_STATE.lock();
+        match find_service(&state, service_name) {
+            Some(idx) => idx,
+            None => return false,
         }
-    }
-    false
+    };
+    control_service(idx, ServiceControl::Stop)
 }
 
 /// Query service status
-#[allow(dead_code)]
 pub fn query_service_status(service_name: &str) -> Option<ServiceStatus> {
     let state = SCM_STATE.lock();
 
@@ -505,7 +612,6 @@ pub fn query_service_status(service_name: &str) -> Option<ServiceStatus> {
 }
 
 /// List all registered services
-#[allow(dead_code)]
 pub fn list_services() -> Vec<(String, ServiceState)> {
     let state = SCM_STATE.lock();
     let mut result = Vec::new();
@@ -520,7 +626,7 @@ pub fn list_services() -> Vec<(String, ServiceState)> {
 }
 
 // ============================================================================
-// Service Control API
+// Service control API
 // ============================================================================
 
 /// Open a service handle (returns service entry index or -1)
@@ -537,62 +643,90 @@ pub fn open_service(service_name: &str) -> Option<usize> {
     None
 }
 
-/// Control a service (start, stop, pause, continue)
+/// control a service (start, stop, pause, continue)
 pub fn control_service(idx: usize, control: ServiceControl) -> bool {
-    let mut state = SCM_STATE.lock();
+    match control {
+        ServiceControl::Stop => control_stop(idx),
+        ServiceControl::Start => {
+            let mut state = SCM_STATE.lock();
+            start_service_index_locked(&mut state, idx, 0)
+        }
+        ServiceControl::Pause => control_pause(idx),
+        ServiceControl::Continue => control_continue(idx),
+        ServiceControl::Interrogate => true,
+        ServiceControl::Shutdown => control_stop(idx),
+        _ => false,
+    }
+}
 
+/// Phase-based stop: validate, notify handler, transition to Stopped.
+fn control_stop(idx: usize) -> bool {
+    let svc_type;
+    let process_id;
+    {
+        let state = SCM_STATE.lock();
+        if idx >= state.service_count {
+            return false;
+        }
+        let svc = &state.services[idx];
+        if svc.status.current_state != ServiceState::Running {
+            return false;
+        }
+        svc_type = svc.service_type;
+        process_id = svc.process_id;
+    }
+
+    let table = HANDLER_TABLE.lock();
+    let handler = table.get(idx).and_then(|s| s.as_ref()).map(|e| e.handler);
+    drop(table);
+    if let Some(handler) = handler {
+        let _result = handler(ServiceControl::Stop as u32);
+    }
+
+    let mut state = SCM_STATE.lock();
     if idx >= state.service_count {
         return false;
     }
-
     let svc = &mut state.services[idx];
-    let current_state = svc.status.current_state;
+    svc.status.current_state = ServiceState::StopPending;
 
-    match control {
-        ServiceControl::Stop => {
-            if current_state == ServiceState::Running {
-                // kprintln!("[SCM] Stopping service: {}",
-                //                     String::from_utf16_lossy(&svc.name).trim_end_matches('\0'));
-                svc.status.current_state = ServiceState::StopPending;
-                svc.status.current_state = ServiceState::Stopped;
-                return true;
-            }
-        }
-        ServiceControl::Pause => {
-            if current_state == ServiceState::Running {
-                // kprintln!("[SCM] Pausing service: {}",
-                //                     String::from_utf16_lossy(&svc.name).trim_end_matches('\0'));
-                svc.status.current_state = ServiceState::PausePending;
-                svc.status.current_state = ServiceState::Paused;
-                return true;
-            }
-        }
-        ServiceControl::Continue => {
-            if current_state == ServiceState::Paused {
-                // kprintln!("[SCM] Continuing service: {}",
-                //                     String::from_utf16_lossy(&svc.name).trim_end_matches('\0'));
-                svc.status.current_state = ServiceState::ContinuePending;
-                svc.status.current_state = ServiceState::Running;
-                return true;
-            }
-        }
-        ServiceControl::Interrogate => {
-            // Just return current status
-            return true;
-        }
-        ServiceControl::Shutdown => {
-            if current_state == ServiceState::Running {
-                // kprintln!("[SCM] Shutting down service: {}",
-                //                     String::from_utf16_lossy(&svc.name).trim_end_matches('\0'));
-                svc.status.current_state = ServiceState::Stopped;
-                return true;
-            }
-        }
-        _ => {
-            // kprintln!("[SCM] Unknown control code: {:?}", control);
-        }
+    let is_driver =
+        svc_type == ServiceType::KernelDriver || svc_type == ServiceType::FileSystemDriver;
+    if is_driver {
+        // Kernel driver unload is managed by the PnP manager.
+    } else if process_id != 0 {
+        crate::ps::process::free_pid(process_id as u64);
+        svc.process_id = 0;
     }
-    false
+
+    svc.status.current_state = ServiceState::Stopped;
+    true
+}
+
+fn control_pause(idx: usize) -> bool {
+    let mut state = SCM_STATE.lock();
+    if idx >= state.service_count {
+        return false;
+    }
+    if state.services[idx].status.current_state != ServiceState::Running {
+        return false;
+    }
+    state.services[idx].status.current_state = ServiceState::PausePending;
+    state.services[idx].status.current_state = ServiceState::Paused;
+    true
+}
+
+fn control_continue(idx: usize) -> bool {
+    let mut state = SCM_STATE.lock();
+    if idx >= state.service_count {
+        return false;
+    }
+    if state.services[idx].status.current_state != ServiceState::Paused {
+        return false;
+    }
+    state.services[idx].status.current_state = ServiceState::ContinuePending;
+    state.services[idx].status.current_state = ServiceState::Running;
+    true
 }
 
 /// Get service configuration
@@ -666,7 +800,7 @@ pub fn unlock_service_database() {
 }
 
 // ============================================================================
-// Service Control Handler (for services running in svchost)
+// Service control Handler (for services running in svchost)
 // ============================================================================
 
 /// Service control handler callback type
@@ -822,6 +956,7 @@ pub fn dispatch_service_control(service_name: &[u16], control: u32) -> u32 {
 /// Convert a control code (raw u32) to a `ServiceControl` value.
 pub fn control_from_code(code: u32) -> Option<ServiceControl> {
     match code {
+        0x00 => Some(ServiceControl::Start),
         0x01 => Some(ServiceControl::Stop),
         0x02 => Some(ServiceControl::Pause),
         0x03 => Some(ServiceControl::Continue),
@@ -950,7 +1085,7 @@ pub fn check_dependencies(service_name: &str) -> bool {
 
 static CONTROL_PIPE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-/// Create the SCM control pipe for a service (`CreateServicePipe`).
+/// create the SCM control pipe for a service (`CreateServicePipe`).
 /// Returns the pipe handle, or `None` when the service is unknown.
 pub fn create_service_pipe(service_name: &str) -> Option<usize> {
     let state = SCM_STATE.lock();

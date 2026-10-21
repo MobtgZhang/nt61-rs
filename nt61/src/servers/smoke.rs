@@ -7,7 +7,7 @@
 //!   * System process (PID 4) - the kernel-mode "System"
 //!   * Idle process (PID 0) - one thread per CPU
 //!   * SMSS (PID 256) - the Session Manager
-//!   * The Service Control Manager (services.exe, PID 1024)
+//!   * The Service control Manager (services.exe, PID 1024)
 //
 //! In the bootstrap these are represented by:
 //!   * `ps::process::create_system_process(PID_SYSTEM)` for the
@@ -89,7 +89,7 @@ fn step3_server_init_surface() -> bool {
 
 /// Step 4: SCM state and default services.
 fn step4_scm_state() -> bool {
-    // kprintln!("    [SERV SMOKE] step 4: Service Control Manager state");
+    // kprintln!("    [SERV SMOKE] step 4: Service control Manager state");
     let state = SCM_STATE.lock();
     if !state.running {
         // kprintln!("    [SERV SMOKE FAIL] SCM is not running");
@@ -278,10 +278,8 @@ pub fn smoke_test() -> bool {
 }
 
 // Silence dead-code warnings for the unused atomic helper.
-#[allow(dead_code)]
 static _UNUSED: AtomicU32 = AtomicU32::new(0);
 
 // Reference ScmState to keep the import live even if a future
 // refactor of SCM removes the in-place lock.
-#[allow(dead_code)]
 fn _typecheck(_: ScmState) {}

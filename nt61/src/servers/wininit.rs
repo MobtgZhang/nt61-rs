@@ -3,7 +3,7 @@
 //! Wininit.exe is the Session 0 initialization process. It is started
 //! by SMSS as the first child and runs forever, providing:
 //
-//!  * the Service Control Manager database and RPC endpoint
+//!  * the Service control Manager database and RPC endpoint
 //!  * the Local Security Authority subsystem process (LSASS)
 //!  * the Windows Logon UI infrastructure
 //

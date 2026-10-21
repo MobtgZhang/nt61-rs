@@ -20,26 +20,13 @@
 
 use crate::fs;
 use crate::fs::fat32;
-use crate::hal::cmos;
+use crate::fs::ntfs;
 use crate::hal::text_console;
 use crate::ke::sync::Spinlock;
 use crate::libs::cmd::bat_parser::{BatError, BatchExecutor, BatchParser};
+use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-
-/// Thin serial-output facade. On every architecture the
-/// canonical write path is `hal::serial::write_char`. Some
-/// backends (aarch64, riscv64) name the same function
-/// `try_get_char` for the read path, but the write path is
-/// always `write_char` (the x86_64 backend also exposes a
-/// `read_char`; the non-x86_64 backends expose `read_char`
-/// too on some — but to keep the cmd.rs self-contained we go
-/// through the unified `hal::keyboard_input` for the read
-/// path).
-#[inline(always)]
-fn write_char(c: u8) {
-    crate::hal::serial::write_char(c);
-}
 
 /// Mirror of the NT 6.1 kernel version string published from
 /// `lib.rs` (`crate::KERNEL_VERSION`). Duplicated as a `&str`
@@ -61,6 +48,14 @@ const MAX_HISTORY: usize = 16;
 
 /// Command history storage
 static CMD_HISTORY: Spinlock<Vec<[u8; CMD_BUFFER_SIZE]>> = Spinlock::new(Vec::new());
+
+/// Working directory shared by Ring-3 command submissions and the
+/// kernel fallback shell. A single shell instance is expected during
+/// bring-up, so one lock-protected instance is sufficient.
+static RING3_CWD: Spinlock<Cwd> = Spinlock::new(Cwd {
+    path: [0; 128],
+    len: 0,
+});
 
 /// Boot mode for the shell.
 ///
@@ -84,6 +79,7 @@ static CMD_HISTORY: Spinlock<Vec<[u8; CMD_BUFFER_SIZE]>> = Spinlock::new(Vec::ne
 ///   they're typing into without losing the rest of the
 ///   behaviour).
 pub enum ShellMode {
+    Ring3,
     SafeModeCmd,
     SafeModeDebug,
 }
@@ -95,11 +91,12 @@ impl ShellMode {
     /// shell uses the prompt defined here.
     pub fn prompt(&self) -> &'static [u8] {
         match self {
+            ShellMode::Ring3 => b">",
             // Match the canonical NT 6.1 Safe-Mode-CMD
             // alternate shell prompt (no newline, no path
             // component — the shell prepends the cwd before
             // this).
-            ShellMode::SafeModeCmd => b"C:\\>",
+            ShellMode::SafeModeCmd => b">",
             // Match the kernel-debugger `kd>` convention.
             ShellMode::SafeModeDebug => b"kd>",
         }
@@ -110,6 +107,22 @@ impl ShellMode {
 struct Cwd {
     path: [u8; 128],
     len: usize,
+}
+
+/// Print the Ring-3 shell prompt from the kernel's current-directory
+/// state. User mode owns no filesystem state, so this prevents the
+/// classic `CD` desynchronisation between a local prompt string and
+/// the kernel command backends.
+pub fn print_ring3_prompt() {
+    let cwd = RING3_CWD.lock();
+    if cwd.len == 0 {
+        drop(cwd);
+        RING3_CWD.lock().set_str(b"C:\\");
+        serial_print(b"C:\\>");
+    } else {
+        serial_print(cwd.as_cstr());
+        serial_print(b">");
+    }
 }
 
 impl Cwd {
@@ -133,20 +146,6 @@ impl Cwd {
 
     fn as_cstr(&self) -> &[u8] {
         &self.path[..self.len]
-    }
-
-    fn push(&mut self, name: &[u8]) {
-        if self.len > 0 && self.path[self.len - 1] != b'\\' {
-            if self.len < 126 {
-                self.path[self.len] = b'\\';
-                self.len += 1;
-            }
-        }
-        for &c in name.iter().take(127 - self.len) {
-            self.path[self.len] = c;
-            self.len += 1;
-        }
-        self.path[self.len] = 0;
     }
 
     fn pop(&mut self) {
@@ -204,21 +203,19 @@ pub fn run_shell(mode: ShellMode) -> ! {
             serial_print(b"Safe Mode with Command Prompt support loaded via the ");
             serial_print(b"kernel-side shell on this architecture.\r\n\r\n");
         }
+        ShellMode::Ring3 => unreachable!("Ring3 is hosted by user-mode cmd.exe"),
     }
 
     // Main command loop
     loop {
-        // Print the canonical NT 6.1 Safe-Mode-CMD prompt
-        // (`C:\>`). The cwd prefix shown by real cmd.exe is
-        // already baked into `prompt_bytes` (it is `b"C:\\>"`),
-        // so we deliberately do **not** prepend `cwd.as_cstr()`
-        // — printing both used to produce the duplicated
-        // `C:\C:\>` prompt that confused operators when the
-        // serial log was captured.
+        // The Windows CMD prompt includes the current directory.
+        // `prompt_bytes` is now just the separator (`>`), so this
+        // produces `C:\>` at the root and `C:\Windows>` elsewhere.
+        serial_print(cwd.as_cstr());
         serial_print(prompt_bytes);
         serial_print(b" ");
 
-        // Read and process command
+        // read and process command
         let cmd = read_command();
 
         if !cmd.is_empty() {
@@ -253,7 +250,7 @@ fn serial_print_u32(mut n: u32) {
     }
 }
 
-/// Read a command from serial input with full line editing support
+/// read a command from serial input with full line editing support
 /// Supports: backspace, arrow keys (history), TAB completion, Ctrl+C
 ///
 /// Input source precedence:
@@ -275,8 +272,7 @@ fn read_command() -> [u8; CMD_BUFFER_SIZE] {
     let mut spin_count: u32 = 0;
     let mut escape_seq: u8 = 0; // 0=none, 1=ESC received, 2='[' received
     let mut history_index: usize = 0; // 0 = not in history mode
-    #[allow(unused_assignments)]
-    let mut history_len: usize = 0;
+    let history_len;
 
     // Get history length once (lock only for reading length)
     {
@@ -285,17 +281,9 @@ fn read_command() -> [u8; CMD_BUFFER_SIZE] {
     }
 
     loop {
-        // Drain any pending USB HID boot-keyboard reports into the
-        // shared keyboard ring buffer. Safe with IF=0. Only present
-        // on x86_64 today; the abstracted keyboard_input
-        // implementation is a no-op on the other archs.
-        #[cfg(target_arch = "x86_64")]
-        {
-            crate::drivers::usb::poll_keyboards();
-            if let Some(c) = crate::hal::keyboard_unified::ps2_poll_char() {
-                crate::hal::keyboard_unified::inject_byte(c);
-            }
-        }
+        // Drain USB HID and PS/2 into the HAL's unified input buffer.
+        // Non-PS/2 platforms implement this as a no-op.
+        crate::hal::keyboard_input::poll();
 
         // Try the platform's primary input first. On x86_64 this
         // is the shared PS/2 + USB HID ring buffer; on the other
@@ -336,21 +324,30 @@ fn read_command() -> [u8; CMD_BUFFER_SIZE] {
                     let input = core::str::from_utf8(&buf[..pos]).unwrap_or("");
 
                     if let Some(completion) = find_completion(input) {
-                        // If already complete and there's more, cycle through options
-                        if completion.len() > pos {
-                            // Clear current input
-                            for _ in 0..pos {
+                        // Replace only the word being completed so the
+                        // command name and any preceding arguments survive.
+                        let word_start = buf[..pos]
+                            .iter()
+                            .rposition(|&byte| byte == b' ')
+                            .map_or(0, |index| index + 1);
+                        let word_len = pos - word_start;
+                        let completion_bytes = completion.as_bytes();
+
+                        if completion_bytes.len() > word_len
+                            || completion_bytes[..word_len.min(completion_bytes.len())]
+                                != buf[word_start..pos]
+                        {
+                            for _ in 0..word_len {
                                 serial_print(b"\x08 \x08");
                             }
-                            // Print completion
-                            let completion_bytes = completion.as_bytes();
-                            for (i, &b) in completion_bytes.iter().enumerate() {
-                                if pos + i < CMD_BUFFER_SIZE - 1 {
-                                    buf[pos + i] = b;
-                                    dual_put_byte(b);
+                            let new_len = word_start + completion_bytes.len();
+                            if new_len < CMD_BUFFER_SIZE {
+                                buf[word_start..new_len].copy_from_slice(completion_bytes);
+                                pos = new_len;
+                                for &byte in completion_bytes {
+                                    dual_put_byte(byte);
                                 }
                             }
-                            pos = core::cmp::min(pos + completion_bytes.len(), CMD_BUFFER_SIZE - 1);
                         }
                     }
                 }
@@ -492,9 +489,9 @@ fn read_command() -> [u8; CMD_BUFFER_SIZE] {
     buf
 }
 
-/// Find a completion for the given input (TAB completion)
-/// Returns the longest common prefix if matches are found
-fn find_completion(input: &str) -> Option<String> {
+/// Find a completion for the given input (TAB completion).
+/// Returns the complete replacement word, matching CMD semantics.
+pub fn find_completion(input: &str) -> Option<String> {
     // Get the word to complete (after last space)
     let word_to_complete = input.split_whitespace().last().unwrap_or("");
     if word_to_complete.is_empty() {
@@ -533,12 +530,7 @@ fn find_completion(input: &str) -> Option<String> {
     }
 
     if matches.len() == 1 {
-        // Single match - return the full completion
-        let match_str = matches[0];
-        if match_str.len() > word_to_complete.len() {
-            return Some(match_str[word_to_complete.len()..].to_string());
-        }
-        return None;
+        return Some(matches[0].to_string());
     } else if matches.len() > 1 {
         // Multiple matches - print them and return common prefix
         serial_print(b"\r\n");
@@ -561,8 +553,8 @@ fn find_completion(input: &str) -> Option<String> {
                     prefix_len -= 1;
                 }
             }
-            if prefix_len < first.len() {
-                return Some(first[prefix_len..].to_string());
+            if prefix_len > 0 {
+                return Some(first[..prefix_len].to_string());
             }
         }
     }
@@ -603,7 +595,7 @@ fn process_command_chain(cmd_str: &str, mode: &ShellMode, cwd: &mut Cwd) -> bool
     let _ = redirect_file;
     let _ = append;
 
-    // Handle command chaining: && || &
+    // handle command chaining: && || &
     // Split by & (but not && or ||)
     let parts = split_command_chain(cmd_part);
 
@@ -637,7 +629,7 @@ fn process_command_chain(cmd_str: &str, mode: &ShellMode, cwd: &mut Cwd) -> bool
         }
     }
 
-    false
+    last_result
 }
 
 /// Chain operator types
@@ -751,14 +743,36 @@ fn execute_single_command(cmd_str: &str, mode: &ShellMode, cwd: &mut Cwd) -> boo
         return false;
     }
 
-    // Get command name
-    let cmd_name = expanded
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .to_uppercase();
+    // Preserve the user-visible spelling of the command name while
+    // dispatching through a canonical form so `dir`, `Dir`, and `DIR`
+    // select the same implementation.
+    let command_name = expanded.split_whitespace().next().unwrap_or("");
+    let cmd_name = command_name.to_uppercase();
 
     if cmd_name.is_empty() {
+        return false;
+    }
+
+    // Keep the Ring-0 shell small and auditable.  The full Windows 7
+    // command surface belongs to the Ring-3 cmd.exe process, not to
+    // this maintenance shell.
+    if !matches!(mode, ShellMode::Ring3)
+        && !matches!(
+            cmd_name.as_str(),
+            "CD" | "CHDIR"
+                | "CLS"
+                | "DIR"
+                | "ECHO"
+                | "EXIT"
+                | "HALT"
+                | "HELP"
+                | "?"
+                | "REBOOT"
+                | "TYPE"
+                | "VER"
+        )
+    {
+        serial_print(b"The command is not supported by the kernel maintenance shell.\r\n");
         return false;
     }
 
@@ -768,7 +782,11 @@ fn execute_single_command(cmd_str: &str, mode: &ShellMode, cwd: &mut Cwd) -> boo
     match cmd_name.as_str() {
         "CD" | "CHDIR" => cmd_cd(args, cwd),
         "DIR" | "LS" => cmd_dir(cwd, args),
-        "CLS" => serial_print(b"\x1B[2J\x1B[H\r\n"),
+        "CLS" => {
+            crate::hal::text_console::clear();
+            crate::drivers::bootvid::vid_clear_black();
+            crate::drivers::bootvid::vid_set_cursor_position(0, 0);
+        }
         "TYPE" | "CAT" => {
             if args.is_empty() {
                 serial_print(b"Syntax: TYPE filename\r\n");
@@ -795,6 +813,9 @@ fn execute_single_command(cmd_str: &str, mode: &ShellMode, cwd: &mut Cwd) -> boo
         "SET" => cmd_set(args),
         // NTFS-specific commands
         "NTFS" => cmd_ntfs_info(),
+        _ if super::cmd_extensions::is_reference_command(cmd_name.as_str()) => {
+            super::cmd_extensions::execute(cmd_name.to_lowercase().as_str(), args, cwd.as_cstr());
+        }
         "KDBG" => {
             if matches!(mode, ShellMode::SafeModeDebug) {
                 cmd_kdbg(args);
@@ -809,7 +830,7 @@ fn execute_single_command(cmd_str: &str, mode: &ShellMode, cwd: &mut Cwd) -> boo
                 return false;
             }
             serial_print(b"'");
-            serial_print(cmd_name.as_bytes());
+            serial_print(command_name.as_bytes());
             serial_print(b"' is not recognized as an internal or external command,\r\n");
             serial_print(b"operable program or batch file.\r\n");
         }
@@ -819,7 +840,7 @@ fn execute_single_command(cmd_str: &str, mode: &ShellMode, cwd: &mut Cwd) -> boo
 }
 
 // ============================================================================
-// Environment Variable Functions
+// environment Variable Functions
 // ============================================================================
 
 /// Expand environment variables in a string (replace %VAR% with value)
@@ -870,7 +891,7 @@ fn get_env_var(name: &str) -> String {
         let name_wide: Vec<u16> = name.encode_utf16().chain(core::iter::once(0)).collect();
         let mut buffer = [0u16; 256];
         let result = unsafe {
-            crate::libs::kernel32::env::GetEnvironmentVariableW(
+            crate::libs::kernel32::env::get_environment_variable_w(
                 name_wide.as_ptr(),
                 buffer.as_mut_ptr(),
                 256,
@@ -890,6 +911,121 @@ fn get_env_var(name: &str) -> String {
 // Command Implementations
 // ============================================================================
 
+/// Convert a shell pathname to a full UTF-16 path while preserving case.
+fn command_path_utf16(path: &str, cwd: &Cwd) -> Vec<u16> {
+    let path = path.trim().trim_matches('"');
+    if path.len() >= 2 && path.as_bytes()[1] == b':' {
+        path.encode_utf16().collect()
+    } else {
+        let mut full_path = cwd.as_cstr().to_vec();
+        if full_path.last() != Some(&b'\\') {
+            full_path.push(b'\\');
+        }
+        full_path.extend_from_slice(path.as_bytes());
+        String::from_utf8(full_path)
+            .unwrap_or_default()
+            .encode_utf16()
+            .collect()
+    }
+}
+
+/// Resolve `.` and `..` in a Win32-style shell path without changing case.
+fn normalize_windows_path(path: &str, cwd: &Cwd) -> Option<Vec<u8>> {
+    let trimmed = path.trim_matches('"');
+    let is_absolute = trimmed.len() >= 2 && trimmed.as_bytes()[1] == b':';
+
+    let mut prefix = if is_absolute {
+        Vec::from(&trimmed.as_bytes()[..2])
+    } else {
+        let cwd_path = cwd.as_cstr();
+        if cwd_path.len() < 2 || cwd_path[1] != b':' {
+            return None;
+        }
+        Vec::from(&cwd_path[..2])
+    };
+    while prefix.last() == Some(&b'\\') || prefix.last() == Some(&b'/') {
+        prefix.pop();
+    }
+
+    let cwd_components = if is_absolute {
+        &[][..]
+    } else {
+        &cwd.as_cstr()[2..]
+    };
+    let mut components = cwd_components
+        .split(|&byte| byte == b'\\' || byte == b'/')
+        .filter(|component| !component.is_empty())
+        .map(|component| component.to_vec())
+        .collect::<Vec<_>>();
+
+    let path_body = if is_absolute { &trimmed[2..] } else { trimmed };
+    for component in path_body.split(['\\', '/']) {
+        match component {
+            "" | "." => {}
+            ".." => {
+                if components.pop().is_none() {
+                    return None;
+                }
+            }
+            _ => components.push(component.as_bytes().to_vec()),
+        }
+    }
+
+    if components.is_empty() {
+        prefix.push(b'\\');
+    } else {
+        for component in components {
+            prefix.push(b'\\');
+            prefix.extend_from_slice(&component);
+        }
+    }
+    Some(prefix)
+}
+
+#[cfg(test)]
+mod path_resolution_tests {
+    use super::{normalize_windows_path, Cwd};
+
+    #[test]
+    fn relative_path_is_joined_without_repeating_current_directory() {
+        let cwd = Cwd::new();
+        assert_eq!(
+            normalize_windows_path("NestedParent", &cwd),
+            Some(b"C:\\NestedParent".to_vec())
+        );
+    }
+
+    #[test]
+    fn parent_path_is_joined_from_current_directory() {
+        let mut cwd = Cwd::new();
+        cwd.set_str(b"C:\\NestedParent");
+        assert_eq!(
+            normalize_windows_path("NestedChild", &cwd),
+            Some(b"C:\\NestedParent\\NestedChild".to_vec())
+        );
+    }
+
+    #[test]
+    fn absolute_path_replaces_current_directory() {
+        let mut cwd = Cwd::new();
+        cwd.set_str(b"C:\\NestedParent");
+        assert_eq!(
+            normalize_windows_path("C:\\NT61_Test", &cwd),
+            Some(b"C:\\NT61_Test".to_vec())
+        );
+    }
+
+    #[test]
+    fn multiple_parent_paths_can_return_to_root() {
+        let mut cwd = Cwd::new();
+        cwd.set_str(b"C:\\NestedParent\\NestedChild");
+        assert_eq!(
+            normalize_windows_path("..\\..", &cwd),
+            Some(b"C:\\".to_vec())
+        );
+    }
+}
+
 fn cmd_cd(args: &str, cwd: &mut Cwd) {
     if args.is_empty() {
         // Show current directory
@@ -898,14 +1034,17 @@ fn cmd_cd(args: &str, cwd: &mut Cwd) {
         return;
     }
 
-    let target = args.as_bytes();
+    let target = args.trim().trim_matches('"');
+    if target.is_empty() {
+        return;
+    }
 
-    // Handle special cases
-    if target == b"." {
+    // handle special cases
+    if target == "." {
         // Stay in current directory
         return;
     }
-    if target == b".." {
+    if target == ".." {
         // Go up one level
         if cwd.len > 3 {
             // Don't go above C:\
@@ -914,9 +1053,31 @@ fn cmd_cd(args: &str, cwd: &mut Cwd) {
         return;
     }
 
-    // For now, just accept the change (real filesystem navigation is complex)
-    // In a full implementation, we would verify the directory exists
-    cwd.push(target);
+    if !ntfs::is_mounted() {
+        serial_print(b"The system cannot find the path specified.\r\n");
+        return;
+    }
+
+    let Some(full_path) = normalize_windows_path(target, cwd) else {
+        serial_print(b"The system cannot find the path specified.\r\n");
+        return;
+    };
+    if full_path == b"C:\\" {
+        cwd.set_str(&full_path);
+        return;
+    }
+    let path_utf16: Vec<u16> = full_path
+        .iter()
+        .map(|&byte| byte as u16)
+        .chain(core::iter::once(0))
+        .collect();
+    let directory = ntfs::open_file(ntfs::get_mounted_fs().unwrap(), &path_utf16, None);
+    if !directory.is_some_and(|handle| handle.is_directory) {
+        serial_print(b"The system cannot find the path specified.\r\n");
+        return;
+    }
+
+    cwd.set_str(&full_path);
 
     // Remove trailing backslash except for root
     while cwd.len > 3 && cwd.path[cwd.len - 1] == b'\\' {
@@ -980,14 +1141,13 @@ mod echo_command_tests {
 }
 
 /// DIR options structure
-struct DirOptions {
-    recursive: bool,  // /S - include subdirectories
-    brief: bool,      // /B - bare format (no header/summary)
-    wide: bool,       // /W - wide format
-    attr_filter: u32, // /A - attribute filter
-    sort_order: u8,   // /O - sort order
-    #[allow(unused)]
-    display_hidden: bool, // Show hidden files
+pub struct DirOptions {
+    recursive: bool,          // /S - include subdirectories
+    brief: bool,              // /B - bare format (no header/summary)
+    wide: bool,               // /W - wide format
+    attr_filter: u32,         // /A - attribute filter
+    sort_order: u8,           // /O - sort order
+    pub display_hidden: bool, // Show hidden files
 }
 
 impl DirOptions {
@@ -997,7 +1157,7 @@ impl DirOptions {
             brief: false,
             wide: false,
             attr_filter: 0xFF, // All attributes by default
-            sort_order: 0,     // Name sort
+            sort_order: 0,     // name sort
             display_hidden: true,
         }
     }
@@ -1041,13 +1201,13 @@ fn parse_dir_options(args: &str) -> (DirOptions, &str) {
 /// Parse attribute filter string (e.g., "D", "R", "H", "A")
 fn parse_attr_filter(attr_str: &str) -> u32 {
     let mut filter = 0u32;
-    // Bit 0: Read-only, Bit 1: Hidden, Bit 2: System, Bit 3: Directory
+    // Bit 0: read-only, Bit 1: Hidden, Bit 2: System, Bit 3: Directory
     // Bit 4: Archive, Bit 5: Device, Bit 6: Normal, Bit 7: Temporary
 
     for c in attr_str.chars() {
         match c {
             'D' | 'd' => filter |= 0x10, // Directory
-            'R' | 'r' => filter |= 0x01, // Read-only
+            'R' | 'r' => filter |= 0x01, // read-only
             'H' | 'h' => filter |= 0x02, // Hidden
             'S' | 's' => filter |= 0x04, // System
             'A' | 'a' => filter |= 0x20, // Archive
@@ -1065,14 +1225,14 @@ fn parse_attr_filter(attr_str: &str) -> u32 {
 
 /// Parse sort order string (e.g., "N", "S", "E", "D")
 fn parse_sort_order(sort_str: &str) -> u8 {
-    // 0: Name, 1: Extension, 2: Size, 3: Date
+    // 0: name, 1: Extension, 2: Size, 3: Date
     // Bit 7: Descending order
 
     let mut order = 0u8;
 
     for c in sort_str.chars() {
         match c {
-            'N' | 'n' => order = 0, // Name
+            'N' | 'n' => order = 0, // name
             'E' | 'e' => order = 1, // Extension
             'S' | 's' => order = 2, // Size
             'D' | 'd' => order = 3, // Date
@@ -1091,8 +1251,19 @@ fn cmd_dir(cwd: &Cwd, args: &str) {
     // Brief format (/B) suppresses headers and summary
     if !options.brief {
         // Print header with volume info
-        serial_print(b" Volume in drive C is EFI\r\n");
-        serial_print(b" Volume Serial Number is 0000-0000\r\n\r\n");
+        serial_print(b" Volume in drive C is NT6.1\r\n");
+        if let Some(volume) = ntfs::get_mounted_fs() {
+            serial_print(
+                format!(
+                    " Volume Serial Number is {:04X}-{:04X}\r\n\r\n",
+                    ((volume.ntfs_data.volume_serial >> 32) & 0xFFFF) as u16,
+                    (volume.ntfs_data.volume_serial & 0xFFFF) as u16
+                )
+                .as_bytes(),
+            );
+        } else {
+            serial_print(b" Volume Serial Number is 0000-0000\r\n\r\n");
+        }
 
         serial_print(b" Directory of ");
         serial_print(cwd.as_cstr());
@@ -1101,8 +1272,8 @@ fn cmd_dir(cwd: &Cwd, args: &str) {
 
     // Print . and ..
     if !options.brief && !options.wide {
-        serial_print(b"06/20/2026  12:00 AM    <DIR>          .\r\n");
-        serial_print(b"06/20/2026  12:00 AM    <DIR>          ..\r\n");
+        serial_print(b"01/01/1601  12:00 AM    <DIR>          .\r\n");
+        serial_print(b"01/01/1601  12:00 AM    <DIR>          ..\r\n");
     } else if options.wide {
         serial_print(b".\r\n");
         serial_print(b"..\r\n");
@@ -1114,15 +1285,53 @@ fn cmd_dir(cwd: &Cwd, args: &str) {
     let mut total_size: u64 = 0;
 
     // Check filesystem and list entries
-    if fs::ntfs::is_mounted() {
-        // Use NTFS filesystem
-        if let Some(_ntfs_fs) = fs::ntfs::get_mounted_fs() {
-            // NTFS directory listing would go here
-            // For now, fall through to built-in listing
-        }
-    }
+    if ntfs::is_mounted() {
+        if let Some(ntfs_fs) = ntfs::get_mounted_fs() {
+            let cwd_bytes = cwd.as_cstr();
+            let cwd_utf16: Vec<u16> = cwd_bytes.iter().map(|byte| *byte as u16).collect();
+            let directory_handle = ntfs::open_file(ntfs_fs, &cwd_utf16, None);
+            let directory_record = directory_handle
+                .map(|handle| handle.mft_record)
+                .unwrap_or(5);
 
-    if fat32::is_mounted() {
+            for entry in ntfs::list_directory(ntfs_fs, directory_record) {
+                let name = String::from_utf16_lossy(&entry.name);
+                if entry.is_directory {
+                    dir_count += 1;
+                    if !options.brief && !options.wide {
+                        serial_print(format_dir_timestamp(entry.modification_time).as_bytes());
+                        serial_print(b"    <DIR>          ");
+                        serial_print(name.as_bytes());
+                        serial_print(b"\r\n");
+                    } else if options.wide {
+                        serial_print(b"<DIR>  ");
+                        serial_print(name.as_bytes());
+                        serial_print(b"  ");
+                    } else {
+                        serial_print(name.as_bytes());
+                        serial_print(b"\r\n");
+                    }
+                } else {
+                    file_count += 1;
+                    total_size += entry.file_size;
+                    if !options.brief && !options.wide {
+                        serial_print(format_dir_timestamp(entry.modification_time).as_bytes());
+                        serial_print(b"         ");
+                        serial_print_str(&format_size(entry.file_size as u32));
+                        serial_print(b" ");
+                        serial_print(name.as_bytes());
+                        serial_print(b"\r\n");
+                    } else if options.wide {
+                        serial_print(name.as_bytes());
+                        serial_print(b"  ");
+                    } else {
+                        serial_print(name.as_bytes());
+                        serial_print(b"\r\n");
+                    }
+                }
+            }
+        }
+    } else if fat32::is_mounted() {
         // Try to read directory entries from FAT32
         if let Some(fs) = fat32::get_mounted_fs() {
             let mut entries = [fat32::FatDirEntry::new(); MAX_DIR_ENTRIES];
@@ -1186,6 +1395,39 @@ fn cmd_dir(cwd: &Cwd, args: &str) {
         serial_print_str(&format_number(dir_count));
         serial_print(b" Dir(s)       64,000,000 bytes free\r\n");
     }
+}
+
+/// Convert an NTFS FILETIME value to the compact date/time form used by
+/// Windows CMD `DIR`. FILETIME is 100-nanosecond ticks since 1601-01-01.
+fn format_dir_timestamp(filetime: u64) -> String {
+    let mut system_time = crate::userspace::kernel32::time::SystemTime::default();
+    let file_time = crate::libs::ntdll::types::LargeInteger {
+        quad_part: filetime as i64,
+    };
+    if crate::userspace::kernel32::time::file_time_to_system_time(&file_time, &mut system_time)
+        .is_err()
+    {
+        return String::from("01/01/1601  12:00 AM");
+    }
+
+    let hour = system_time.w_hour;
+    let hour12 = if hour == 0 {
+        12
+    } else if hour > 12 {
+        hour - 12
+    } else {
+        hour
+    };
+    let meridiem = if hour < 12 { "AM" } else { "PM" };
+    format!(
+        "{:02}/{:02}/{:04}  {:02}:{:02} {}",
+        system_time.w_month,
+        system_time.w_day,
+        system_time.w_year,
+        hour12,
+        system_time.w_minute,
+        meridiem
+    )
 }
 
 /// Print built-in directory listing for Safe Mode
@@ -1315,7 +1557,7 @@ fn cmd_type(path: &str, _cwd: &Cwd) {
                 let size = entry.file_size();
 
                 if size > 0 {
-                    // Read file content
+                    // read file content
                     let read_size = core::cmp::min(size as usize, buffer.len());
                     if let Ok(n) = fat32::read_file(fs, cluster, read_size as u32, &mut buffer) {
                         // Print content as text (limit to readable ASCII)
@@ -1392,17 +1634,15 @@ fn cmd_ver() {
 }
 
 fn cmd_halt() {
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::halt::HalReturnToFirmware(2);
-    #[cfg(not(target_arch = "x86_64"))]
-    crate::arch::halt();
+    crate::hal::common::power::return_to_firmware(
+        crate::hal::common::power::FirmwareAction::Shutdown,
+    );
 }
 
 fn cmd_reboot() {
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::halt::HalReturnToFirmware(1);
-    #[cfg(not(target_arch = "x86_64"))]
-    crate::arch::halt();
+    crate::hal::common::power::return_to_firmware(
+        crate::hal::common::power::FirmwareAction::Reboot,
+    );
 }
 
 fn cmd_date(args: &str) {
@@ -1414,84 +1654,60 @@ fn cmd_date(args: &str) {
     // architectures there is no CMOS, so the command prints
     // a stub date string. The shell still works — only the
     // date/time content differs.
-    #[cfg(target_arch = "x86_64")]
-    {
-        if let Some(time) = cmos::HalQueryRealTimeClock() {
-            if time_only {
-                serial_print(b"06/20/2026\r\n");
-            } else {
-                serial_print(b"Current date: ");
-                print_two_digits(time.month);
-                serial_print(b"/");
-                print_two_digits(time.day);
-                serial_print(b"/");
-                print_four_digits(time.year);
-                serial_print(b"\r\n");
-                serial_print(b"Type date /t to display without prompt.\r\n");
-            }
-        } else {
-            serial_print(b"Could not read RTC.\r\n");
-        }
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    {
+    if let Some(time) = crate::hal::common::cmos::query_real_time_clock() {
         if time_only {
             serial_print(b"06/20/2026\r\n");
         } else {
-            serial_print(b"Current date: 06/20/2026\r\n");
+            serial_print(b"Current date: ");
+            print_two_digits(time.month);
+            serial_print(b"/");
+            print_two_digits(time.day);
+            serial_print(b"/");
+            print_four_digits(time.year);
+            serial_print(b"\r\n");
             serial_print(b"Type date /t to display without prompt.\r\n");
         }
+    } else {
+        serial_print(b"Could not read RTC.\r\n");
     }
 }
 
 fn cmd_time(args: &str) {
     let time_only = args.trim().to_uppercase() == "/T";
 
-    #[cfg(target_arch = "x86_64")]
-    {
-        if let Some(time) = cmos::HalQueryRealTimeClock() {
-            if time_only {
-                print_two_digits(time.hour);
-                serial_print(b":");
-                print_two_digits(time.minute);
-                serial_print(b":");
-                print_two_digits(time.second());
-                serial_print(b"\r\n");
-            } else {
-                serial_print(b"Current time: ");
-                print_two_digits(time.hour);
-                serial_print(b":");
-                print_two_digits(time.minute);
-                serial_print(b":");
-                print_two_digits(time.second());
-                serial_print(b".00\r\n");
-                serial_print(b"Type time /t to display without prompt.\r\n");
-            }
-        } else {
-            serial_print(b"Could not read RTC.\r\n");
-        }
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    {
+    if let Some(time) = crate::hal::common::cmos::query_real_time_clock() {
         if time_only {
-            serial_print(b"00:00:00\r\n");
+            print_two_digits(time.hour);
+            serial_print(b":");
+            print_two_digits(time.minute);
+            serial_print(b":");
+            print_two_digits(time.second());
+            serial_print(b"\r\n");
         } else {
-            serial_print(b"Current time: 00:00:00.00\r\n");
+            serial_print(b"Current time: ");
+            print_two_digits(time.hour);
+            serial_print(b":");
+            print_two_digits(time.minute);
+            serial_print(b":");
+            print_two_digits(time.second());
+            serial_print(b".00\r\n");
             serial_print(b"Type time /t to display without prompt.\r\n");
         }
+    } else {
+        serial_print(b"Could not read RTC.\r\n");
     }
 }
 
 fn print_two_digits(n: u8) {
-    write_char(b'0' + (n / 10) % 10);
-    write_char(b'0' + n % 10);
+    dual_put_byte(b'0' + (n / 10) % 10);
+    dual_put_byte(b'0' + n % 10);
 }
 
 fn print_four_digits(n: u16) {
-    write_char(b'0' + ((n / 1000) % 10) as u8);
-    write_char(b'0' + ((n / 100) % 10) as u8);
-    write_char(b'0' + ((n / 10) % 10) as u8);
-    write_char(b'0' + (n % 10) as u8);
+    dual_put_byte(b'0' + ((n / 1000) % 10) as u8);
+    dual_put_byte(b'0' + ((n / 100) % 10) as u8);
+    dual_put_byte(b'0' + ((n / 10) % 10) as u8);
+    dual_put_byte(b'0' + (n % 10) as u8);
 }
 
 /// Print a 32-bit value as eight ASCII hex digits (cross-architecture
@@ -1503,37 +1719,28 @@ fn write_hex_byte(n: u32) {
     for i in (0..8u32).rev() {
         let nibble = ((n >> (i * 4)) & 0xF) as u8;
         if nibble != 0 || started || i == 0 {
-            write_char(HEX[nibble as usize]);
+            dual_put_byte(HEX[nibble as usize]);
             started = true;
         }
     }
     // Always end with at least one '0' so the caller sees a stable
     // width (matches the legacy serial hex printer for n=0).
     if !started {
-        write_char(b'0');
+        dual_put_byte(b'0');
     }
 }
 
 fn cmd_help() {
     serial_print(b"\r\nCD or CHDIR     Change directory\r\n");
     serial_print(b"CLS             Clear screen\r\n");
-    serial_print(b"COPY            Copy files\r\n");
     serial_print(b"DATE            Display or set date (real RTC)\r\n");
-    serial_print(b"DEL or DELETE   Delete files\r\n");
-    serial_print(b"DIR             List directory contents (real FAT32)\r\n");
-    serial_print(b"ECHO            Display messages or command echo state\r\n");
+    serial_print(b"DIR             List directory contents\r\n");
+    serial_print(b"ECHO            Display messages\r\n");
     serial_print(b"EXIT            Exit command interpreter\r\n");
     serial_print(b"HELP            Show help for commands\r\n");
-    serial_print(b"MD or MKDIR     Create directory\r\n");
-    serial_print(b"MOVE            Move or rename files\r\n");
-    serial_print(b"MOUNTVOL        Lists mount points\r\n");
-    serial_print(b"RD or RMDIR     Remove directory\r\n");
-    serial_print(b"REN or RENAME   Rename files\r\n");
-    serial_print(b"SET             Display or set environment variables\r\n");
     serial_print(b"TIME            Display or set system time (real RTC)\r\n");
-    serial_print(b"TYPE            Display file contents (real FAT32)\r\n");
+    serial_print(b"TYPE            Display file contents\r\n");
     serial_print(b"VER             Display version information\r\n");
-    serial_print(b"VOL             Display volume information\r\n");
     serial_print(b"\r\nSpecial keys:\r\n");
     serial_print(b"  UP/DOWN        Command history\r\n");
     serial_print(b"  TAB            Auto-complete command\r\n");
@@ -1548,12 +1755,23 @@ fn cmd_mountvol() {
 }
 
 fn cmd_vol() {
-    serial_print(b" Volume in drive C is EFI\r\n");
-    serial_print(b" Volume Serial Number is 0000-0000\r\n");
+    serial_print(b" Volume in drive C is NT6.1\r\n");
+    if let Some(volume) = ntfs::get_mounted_fs() {
+        serial_print(
+            format!(
+                " Volume Serial Number is {:04X}-{:04X}\r\n",
+                ((volume.ntfs_data.volume_serial >> 32) & 0xFFFF) as u16,
+                (volume.ntfs_data.volume_serial & 0xFFFF) as u16
+            )
+            .as_bytes(),
+        );
+    } else {
+        serial_print(b" Volume Serial Number is 0000-0000\r\n");
+    }
 
     // Show filesystem status
-    if fat32::is_mounted() {
-        serial_print(b" Filesystem: FAT32 (mounted)\r\n");
+    if ntfs::is_mounted() {
+        serial_print(b" Filesystem: NTFS (mounted)\r\n");
     } else {
         serial_print(b" Filesystem: Unknown (not mounted)\r\n");
     }
@@ -1699,13 +1917,13 @@ fn cmd_copy(args: &str, _cwd: &Cwd) {
             {
                 let to_copy = core::cmp::min(remaining, cluster_size);
 
-                // Read from source
+                // read from source
                 if to_copy > 0 {
                     let mut read_buf = alloc::vec![0u8; to_copy];
                     if fat32::read_file(fs, current_source_cluster, to_copy as u32, &mut read_buf)
                         .is_ok()
                     {
-                        // Write to destination
+                        // write to destination
                         if fat32::write_cluster(fs, current_dest_cluster, &read_buf).is_err() {
                             serial_print(b"        Error writing to destination.\r\n");
                             break;
@@ -1734,7 +1952,7 @@ fn cmd_copy(args: &str, _cwd: &Cwd) {
                 }
             }
 
-            // Create destination file entry
+            // create destination file entry
             if fat32::create_file_in_root(fs, &dest_83, dest_cluster, source_size).is_ok() {
                 serial_print(b"        1 file(s) copied.\r\n");
                 copied_count += 1;
@@ -1805,7 +2023,7 @@ fn cmd_del(args: &str, _cwd: &Cwd) {
 
     // Find the file
     if let Some((_cluster, byte_offset)) = fat32::find_file_in_root_ex(fs, &name_83) {
-        // Read entry to get cluster and size
+        // read entry to get cluster and size
         let sector_size = fs.base.sector_size as usize;
         let sector_index = byte_offset / sector_size;
         let offset_in_sector = byte_offset % sector_size;
@@ -1849,9 +2067,9 @@ fn cmd_del(args: &str, _cwd: &Cwd) {
     }
 }
 
-/// MD/MKDIR command - Create directory
+/// MD/MKDIR command - create directory
 /// Syntax: MD pathname or MKDIR pathname
-fn cmd_mkdir(args: &str, _cwd: &Cwd) {
+fn cmd_mkdir(args: &str, cwd: &Cwd) {
     let path = args.trim();
     if path.is_empty() {
         serial_print(b"Syntax: MD pathname\r\n");
@@ -1861,88 +2079,22 @@ fn cmd_mkdir(args: &str, _cwd: &Cwd) {
     // Remove quotes if present
     let path = path.trim_matches('"');
 
-    // Check if filesystem is available
-    if !fat32::is_mounted() {
+    if !ntfs::is_mounted() {
         serial_print(b"No filesystem mounted. Cannot create directory.\r\n");
         return;
     }
 
-    let fs = match fat32::get_mounted_fs() {
-        Some(f) => f,
-        None => {
-            serial_print(b"No FAT32 filesystem available.\r\n");
-            return;
-        }
-    };
-
-    // Convert directory name to 8.3 format
-    let name_83 = fat32::name_to_83(path);
-
-    // Check if directory already exists
-    if fat32::file_exists_in_root(fs, &name_83) {
-        serial_print(b"Directory already exists: ");
-        serial_print(path.as_bytes());
-        serial_print(b"\r\n");
-        return;
-    }
-
-    serial_print(b"Creating directory: ");
-    serial_print(path.as_bytes());
-    serial_print(b"\r\n");
-
-    // Allocate a cluster for the directory
-    let dir_cluster = match fat32::allocate_cluster(fs, 0) {
-        Ok(c) => c,
-        Err(_) => {
-            serial_print(b"Failed to allocate cluster for directory.\r\n");
-            return;
-        }
-    };
-
-    // Clear the cluster (initialize directory with . and .. entries)
-    let mut dir_data = alloc::vec![0u8; 4096];
-
-    // Create . entry (self reference)
-    dir_data[0] = b'.';
-    dir_data[1..11].copy_from_slice(&[b' '; 10]);
-    dir_data[11] = 0x10; // Directory attribute
-                         // first_cluster_high and first_cluster_low point to this directory
-    let high = (dir_cluster >> 16) as u16;
-    let low = (dir_cluster & 0xFFFF) as u16;
-    dir_data[20] = high as u8;
-    dir_data[21] = (high >> 8) as u8;
-    dir_data[26] = low as u8;
-    dir_data[27] = (low >> 8) as u8;
-
-    // Create .. entry (parent reference - root)
-    dir_data[32..42].copy_from_slice(&[b'.'; 10]);
-    dir_data[43] = 0x10; // Directory attribute
-                         // first_cluster for root directory is 0 (root)
-                         // .. entry points to root (cluster 0 means root in parent)
-    dir_data[52] = 0; // high
-    dir_data[53] = 0;
-    dir_data[58] = 0; // low
-    dir_data[59] = 0;
-
-    // Write directory data
-    if fat32::write_cluster(fs, dir_cluster, &dir_data).is_err() {
-        serial_print(b"Failed to initialize directory cluster.\r\n");
-        let _ = fat32::free_cluster_chain(fs, dir_cluster);
-        return;
-    }
-
-    // Create directory entry in root
-    if fat32::create_dir_in_root(fs, &name_83, dir_cluster).is_ok() {
+    let path_utf16 = command_path_utf16(path, cwd);
+    if ntfs::create_directory(ntfs::get_mounted_fs().unwrap(), &path_utf16).is_ok() {
         serial_print(b"        1 dir(s) created.\r\n");
     } else {
-        serial_print(b"Failed to create directory entry.\r\n");
-        let _ = fat32::free_cluster_chain(fs, dir_cluster);
+        serial_print(b"Directory already exists or the filesystem rejected the request.\r\n");
     }
 }
 
 /// RD/RMDIR command - Remove directory
 /// Syntax: RD [/S] [/Q] pathname
-fn cmd_rmdir(args: &str, _cwd: &Cwd) {
+fn cmd_rmdir(args: &str, cwd: &Cwd) {
     if args.is_empty() {
         serial_print(b"Syntax: RD [/S] [/Q] pathname\r\n");
         return;
@@ -1970,74 +2122,29 @@ fn cmd_rmdir(args: &str, _cwd: &Cwd) {
         return;
     }
 
-    // Check if filesystem is available
-    if !fat32::is_mounted() {
+    if !ntfs::is_mounted() {
         serial_print(b"No filesystem mounted. Cannot remove directory.\r\n");
         return;
     }
 
-    let fs = match fat32::get_mounted_fs() {
-        Some(f) => f,
-        None => {
-            serial_print(b"No FAT32 filesystem available.\r\n");
-            return;
-        }
-    };
-
-    // Convert directory name to 8.3 format
-    let name_83 = fat32::name_to_83(&pathname);
-
-    // Find the directory entry
-    if let Some((cluster, byte_offset)) = fat32::find_file_in_root_ex(fs, &name_83) {
-        // Read entry to get cluster
-        let sector_size = fs.base.sector_size as usize;
-        let sector_index = byte_offset / sector_size;
-        let offset_in_sector = byte_offset % sector_size;
-
-        let mut buffer = [0u8; 512];
-        if fat32::read_cluster_sector(fs, cluster, sector_index as u32, &mut buffer).is_err() {
-            serial_print(b"Error reading directory entry.\r\n");
-            return;
-        }
-
-        // Get cluster from entry
-        let high =
-            u16::from_le_bytes([buffer[offset_in_sector + 20], buffer[offset_in_sector + 21]]);
-        let low =
-            u16::from_le_bytes([buffer[offset_in_sector + 26], buffer[offset_in_sector + 27]]);
-        let dir_cluster = ((high as u32) << 16) | (low as u32);
-
-        if recursive {
-            serial_print(b"Removing directory tree: ");
-        } else {
-            serial_print(b"Removing directory: ");
-        }
-        serial_print(pathname.as_bytes());
-        serial_print(b"\r\n");
-
-        if recursive && !quiet {
-            serial_print(b"Are you sure (Y/N)? ");
-            // For now, assume yes
-            serial_print(b"Y\r\n");
-        }
-
-        // Free the directory cluster
-        if dir_cluster >= 2 {
-            if fat32::free_cluster_chain(fs, dir_cluster).is_err() {
-                serial_print(b"Warning: Error freeing directory clusters.\r\n");
-            }
-        }
-
-        // Mark directory entry as deleted
-        if fat32::delete_file_entry(fs, cluster, byte_offset).is_ok() {
-            serial_print(b"        1 dir(s) removed.\r\n");
-        } else {
-            serial_print(b"Error marking directory as deleted.\r\n");
-        }
+    if recursive {
+        serial_print(b"Removing directory tree: ");
     } else {
-        serial_print(b"Directory not found: ");
-        serial_print(pathname.as_bytes());
-        serial_print(b"\r\n");
+        serial_print(b"Removing directory: ");
+    }
+    serial_print(pathname.as_bytes());
+    serial_print(b"\r\n");
+
+    if recursive && !quiet {
+        serial_print(b"Are you sure (Y/N)? ");
+        serial_print(b"Y\r\n");
+    }
+
+    let path_utf16 = command_path_utf16(pathname.as_str(), cwd);
+    if ntfs::delete_directory(ntfs::get_mounted_fs().unwrap(), &path_utf16).is_ok() {
+        serial_print(b"        1 dir(s) removed.\r\n");
+    } else {
+        serial_print(b"Directory not found or not empty.\r\n");
     }
 }
 
@@ -2206,7 +2313,7 @@ fn cmd_set(args: &str) {
         let value_wide: Vec<u16> = value.encode_utf16().chain(core::iter::once(0)).collect();
 
         let result = unsafe {
-            crate::libs::kernel32::env::SetEnvironmentVariableW(
+            crate::libs::kernel32::env::set_environment_variable_w(
                 name_wide.as_ptr(),
                 value_wide.as_ptr(),
             )
@@ -2286,7 +2393,7 @@ fn cmd_ntfs_info() {
 // Everything else (CR/LF/printable ASCII, TAB, BS) flows through
 // to both sinks so users see prompts and command echo on screen.
 
-/// Write a UTF-8 byte string to both the serial UART and the
+/// write a UTF-8 byte string to both the serial UART and the
 /// platform text console. Stops at the first NUL byte.
 fn serial_print(s: &[u8]) {
     dual_print(s);
@@ -2294,21 +2401,36 @@ fn serial_print(s: &[u8]) {
 
 fn dual_print(s: &[u8]) {
     let len = s.iter().position(|&c| c == 0).unwrap_or(s.len());
-    for &c in &s[..len] {
-        write_char(c);
-        if c != b'\x1b' && c != b'\x00' {
-            text_console::put_byte_vga_only(c);
+    let mut i = 0;
+    while i < len {
+        let c = s[i];
+        if c == b'\x1b' {
+            // Skip the ANSI CSI sequence: ESC [ params final-byte.
+            i += 1;
+            if i < len && s[i] == b'[' {
+                i += 1;
+                while i < len && !(0x40..=0x7E).contains(&s[i]) {
+                    i += 1;
+                }
+                if i < len {
+                    i += 1; // skip the final byte
+                }
+            }
+            continue;
         }
+        if c != b'\x00' {
+            text_console::put_serial_and_console(c);
+        }
+        i += 1;
     }
 }
 
-/// Write one byte to both serial and the platform text console.
+/// write one byte to both serial and the platform text console.
 /// Used by the line-editing path where each key press is
 /// mirrored immediately.
 fn dual_put_byte(c: u8) {
-    write_char(c);
     if c != b'\x1b' && c != b'\x00' {
-        text_console::put_byte_vga_only(c);
+        text_console::put_serial_and_console(c);
     }
 }
 
@@ -2316,10 +2438,8 @@ fn dual_put_byte(c: u8) {
 /// to both sinks. Stops at the first space — matches the previous
 /// behaviour and prevents trailing spaces from being echoed.
 fn serial_print_str(s: &[u8; 16]) {
-    for &c in s.iter() {
-        if c == b' ' {
-            break;
-        }
+    let end = s.iter().rposition(|&c| c != b' ').map_or(0, |pos| pos + 1);
+    for &c in s[..end].iter() {
         dual_put_byte(c);
     }
 }
@@ -2373,7 +2493,7 @@ fn format_number(n: u32) -> [u8; 16] {
 // interactive shell's CWD is a local in `run_shell` and we cannot
 // borrow it across an `&mut dyn BatchExecutor` interface.
 
-/// Internal state shared with the batch parser.
+/// internal state shared with the batch parser.
 struct CmdBatchExecutor {
     cwd: Cwd,
     error_level: u32,
@@ -2382,21 +2502,14 @@ struct CmdBatchExecutor {
 impl CmdBatchExecutor {
     fn new(initial_cwd: &Cwd) -> Self {
         let mut cwd = Cwd::new();
-        // Mirror the parent's CWD by copying the path bytes.
-        for &b in initial_cwd.as_cstr() {
-            if cwd.len < cwd.path.len() - 1 {
-                cwd.path[cwd.len] = b;
-                cwd.len += 1;
-            }
-        }
-        cwd.path[cwd.len] = 0;
+        cwd.set_str(initial_cwd.as_cstr());
         Self {
             cwd,
             error_level: 0,
         }
     }
 
-    /// Read `filename` through the FAT32 driver. This is the
+    /// read `filename` through the FAT32 driver. This is the
     /// canonical path used when the system partition is FAT32
     /// (also used as the legacy fallback for the ESP). The
     /// directory walk uses the 8.3 short-name directory chain
@@ -2425,7 +2538,7 @@ impl CmdBatchExecutor {
         Ok(normalise_batch_text(&buf[..n]))
     }
 
-    /// Read `filename` through the NTFS driver. The Windows
+    /// read `filename` through the NTFS driver. The Windows
     /// path is converted to UTF-16 on the way down because NTFS
     /// stores file names as UTF-16LE and the
     /// `ntfs::open_file` walker expects a UTF-16 slice.
@@ -2498,10 +2611,9 @@ impl CmdBatchExecutor {
         Ok(normalise_batch_text(&buf[..read_total]))
     }
 
-    /// Read `filename` through the ext2/3/4 driver. The
+    /// read `filename` through the ext2/3/4 driver. The
     /// Windows-style path is converted to the POSIX-style
     /// path that `ext2::read_whole_file` expects.
-    #[cfg(target_arch = "x86_64")]
     fn read_file_ext2(&self, filename: &str) -> Result<String, BatError> {
         if !crate::fs::ext2::is_mounted() {
             return Err(BatError::IoError);
@@ -2519,18 +2631,6 @@ impl CmdBatchExecutor {
             }
         };
         Ok(normalise_batch_text(&data))
-    }
-
-    /// Stub for non-x86_64 builds — the ext2 driver ships only
-    /// on x86_64 right now (see `fs::ext2` module declaration).
-    /// Returning `FileNotFound` keeps the BAT executor from
-    /// looping on a missing driver while staying consistent with
-    /// the other read-file backends.
-    #[cfg(not(target_arch = "x86_64"))]
-    fn read_file_ext2(&self, _filename: &str) -> Result<String, BatError> {
-        Err(BatError::FileNotFound(alloc::string::String::from(
-            "ext2 filesystem driver not available on this architecture",
-        )))
     }
 }
 
@@ -2602,7 +2702,7 @@ impl BatchExecutor for CmdBatchExecutor {
         // never touches the kernel shell loop). SafeModeDebug is
         // therefore the right transient mode — it carries the same
         // prompt semantics as the kernel-side shell.
-        let mode = ShellMode::SafeModeDebug;
+        let mode = ShellMode::SafeModeCmd;
         // Drop the error level into a sentinel before dispatch —
         // the inner command may overwrite it via SET ERRORLEVEL, but
         // we propagate the legacy behaviour by clearing on success.
@@ -2807,4 +2907,38 @@ pub fn run_batch_from_user_ptr(user_ptr: *const u8) -> Option<()> {
             None
         }
     }
+}
+
+/// Execute one command line submitted by Ring 3.
+///
+/// The complete line is passed unchanged so diagnostics and paths keep
+/// their original case. Command matching remains case-insensitive in
+/// `execute_single_command`.
+pub fn execute_command_line(command_line: &str) -> bool {
+    let mut cwd = RING3_CWD.lock();
+    if cwd.len == 0 {
+        *cwd = Cwd::new();
+    }
+    process_command_chain(command_line.trim(), &ShellMode::Ring3, &mut cwd)
+}
+
+/// Copy a NUL-terminated UTF-8 command line from user memory and run it.
+pub fn execute_command_from_user_ptr(
+    user_ptr: *const u8,
+    user_length: usize,
+) -> Result<bool, &'static str> {
+    if user_ptr.is_null() {
+        return Err("null command pointer");
+    }
+    let capacity = user_length.min(CMD_BUFFER_SIZE - 1);
+    let mut bytes = alloc::vec::Vec::with_capacity(capacity);
+    for index in 0..capacity {
+        let byte = unsafe { core::ptr::read_volatile(user_ptr.add(index)) };
+        if byte == 0 {
+            break;
+        }
+        bytes.push(byte);
+    }
+    let line = core::str::from_utf8(&bytes).map_err(|_| "command is not valid UTF-8")?;
+    Ok(execute_command_line(line))
 }

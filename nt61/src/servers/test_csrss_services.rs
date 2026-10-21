@@ -13,12 +13,43 @@ mod tests {
     use crate::servers::{csrss, services};
     use alloc::{string::String, vec::Vec};
 
+    // CSRSS and SCM state is process-global; parallel tests calling
+    // `csrss::init()` would reset statistics out from under each other.
+    static CSRSS_TEST_MUTEX: core::sync::atomic::AtomicBool =
+        core::sync::atomic::AtomicBool::new(false);
+
+    struct CsrssTestGuard;
+
+    impl CsrssTestGuard {
+        fn new() -> Self {
+            while CSRSS_TEST_MUTEX
+                .compare_exchange_weak(
+                    false,
+                    true,
+                    core::sync::atomic::Ordering::Acquire,
+                    core::sync::atomic::Ordering::Relaxed,
+                )
+                .is_err()
+            {
+                core::hint::spin_loop();
+            }
+            CsrssTestGuard
+        }
+    }
+
+    impl Drop for CsrssTestGuard {
+        fn drop(&mut self) {
+            CSRSS_TEST_MUTEX.store(false, core::sync::atomic::Ordering::Release);
+        }
+    }
+
     #[test]
     fn test_csrss_session_management() {
+        let _guard = CsrssTestGuard::new();
         // Initialize CSRSS
         csrss::init();
 
-        // Create additional sessions
+        // create additional sessions
         assert!(csrss::create_session(2));
         assert!(csrss::create_session(3));
 
@@ -35,6 +66,7 @@ mod tests {
 
     #[test]
     fn test_csrss_console_management() {
+        let _guard = CsrssTestGuard::new();
         csrss::init();
 
         // Allocate console for a process
@@ -54,6 +86,7 @@ mod tests {
 
     #[test]
     fn test_csrss_process_notification() {
+        let _guard = CsrssTestGuard::new();
         csrss::init();
 
         // Notify of process creation
@@ -70,6 +103,7 @@ mod tests {
 
     #[test]
     fn test_csrss_win32_connection() {
+        let _guard = CsrssTestGuard::new();
         csrss::init();
 
         // A process must already be registered in the CSRSS process list before
@@ -86,6 +120,7 @@ mod tests {
 
     #[test]
     fn test_services_initialization() {
+        let _guard = CsrssTestGuard::new();
         // Initialize SCM
         services::init();
 
@@ -102,6 +137,7 @@ mod tests {
 
     #[test]
     fn test_services_control() {
+        let _guard = CsrssTestGuard::new();
         services::init();
 
         // Open a service
@@ -121,6 +157,7 @@ mod tests {
 
     #[test]
     fn test_services_enumeration() {
+        let _guard = CsrssTestGuard::new();
         services::init();
 
         // Enumerate services by type
@@ -136,6 +173,7 @@ mod tests {
 
     #[test]
     fn test_services_dependency_management() {
+        let _guard = CsrssTestGuard::new();
         services::init();
 
         // Check dependencies for a service
@@ -146,15 +184,17 @@ mod tests {
 
     #[test]
     fn test_services_process_management() {
+        let _guard = CsrssTestGuard::new();
         services::init();
 
-        // Create a control pipe for a service
+        // create a control pipe for a service
         let pipe = services::create_service_pipe("RpcSs");
         assert!(pipe.is_some());
     }
 
     #[test]
     fn test_services_query_info() {
+        let _guard = CsrssTestGuard::new();
         services::init();
 
         // Query detailed service information
@@ -171,6 +211,7 @@ mod tests {
 
     #[test]
     fn test_services_query_all() {
+        let _guard = CsrssTestGuard::new();
         services::init();
 
         // Query all services
@@ -187,6 +228,7 @@ mod tests {
 
     #[test]
     fn test_service_control_handler() {
+        let _guard = CsrssTestGuard::new();
         services::init();
 
         // Register a test service control handler
@@ -220,6 +262,7 @@ mod tests {
 
     #[test]
     fn test_integration_csrss_services() {
+        let _guard = CsrssTestGuard::new();
         // Initialize both subsystems
         csrss::init();
         services::init();

@@ -98,6 +98,26 @@ static CHILD_TABLE: Spinlock<Vec<ChildRecord>> = Spinlock::new(Vec::new());
 
 const CHILD_TABLE_LIMIT: usize = 64;
 
+/// Hook the session layer uses to run a shell command line. The
+/// kernel installs the real cmd.exe dispatcher at listener start-up;
+/// tests install mocks.
+pub type CommandExecutor = fn(&str) -> u32;
+
+static COMMAND_EXECUTOR: Spinlock<Option<CommandExecutor>> = Spinlock::new(None);
+
+/// Install the command-line executor used by SSH shell channels.
+pub fn install_command_executor(executor: CommandExecutor) {
+    *COMMAND_EXECUTOR.lock() = Some(executor);
+}
+
+/// Run a command line through the installed executor. Returns None
+/// when no executor is installed (the channel answers with
+/// CHANNEL_FAILURE in that case).
+pub fn execute_line(line: &str) -> Option<u32> {
+    let executor = *COMMAND_EXECUTOR.lock();
+    executor.map(|run| run(line))
+}
+
 /// Register a new child in the per-sshd table. Returns the
 /// assigned slot index, or `None` if the table is full.
 pub fn register_child(record: ChildRecord) -> Option<usize> {
@@ -119,7 +139,7 @@ pub fn mark_finished(idx: usize, exit_code: u32) {
     }
 }
 
-/// Read a single child's record. Returns `None` for bad indices.
+/// read a single child's record. Returns `None` for bad indices.
 pub fn child_at(idx: usize) -> Option<ChildRecord> {
     let table = CHILD_TABLE.lock();
     table.get(idx).copied()

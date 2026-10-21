@@ -1,14 +1,26 @@
-//! Win32-OpenSSH sshd launcher and bring-up scaffolding.
+//! Win32-OpenSSH-compatible SSH daemon.
 //!
-//! This module ties together the bring-up pieces: read the
-//! `sshd_config`, bind/listen on the configured port/address,
-//! and dispatch each accepted connection to the auth + child
-//! path. The actual KEX/auth/child orchestration lives in
-//! `servers::sshd::session` (added in later stages).
+//! Wire-protocol layers implemented in this module:
+//!   * `protocol` — SSH-2.0 binary packet protocol and wire encoding
+//!     (RFC 4251/4253), with aes256-ctr + hmac-sha2-256 transport.
+//!   * `kex`      — curve25519-sha256 key exchange (RFC 8731) over a
+//!     clean-room X25519 implementation (RFC 7748), ssh-rsa /
+//!     rsa-sha2-256 host signatures, and RFC 4253 section 7.2 key
+//!     derivation.
+//!   * `auth`     — user authentication: password and publickey
+//!     methods (RFC 4252).
+//!   * `session`  — banner exchange, service requests, channel
+//!     open/data/EOF/close and the interactive shell channel
+//!     (RFC 4254), bridged to the kernel command dispatcher.
+//!   * `launcher` — TCP listener on the configured port (default 22)
+//!     built on the netstack socket layer.
 
+pub mod auth;
 pub mod child;
 pub mod config;
+pub mod kex;
 pub mod launcher;
+pub mod protocol;
 pub mod session;
 
 use crate::ke::sync::Spinlock;
@@ -135,7 +147,7 @@ pub fn record_error(msg: String) {
     s.last_error = Some(msg);
 }
 
-/// Read the last error (for diagnostics).
+/// read the last error (for diagnostics).
 pub fn last_error() -> Option<String> {
     SSHD_STATE.lock().last_error.clone()
 }
@@ -144,33 +156,27 @@ pub fn last_error() -> Option<String> {
 mod tests {
     use super::*;
 
+    // The sshd state is process-global, so exercise state transitions in a
+    // single test to prevent Rust's parallel test runner from interleaving
+    // unrelated assertions over the same spinlock-protected value.
     #[test]
-    fn default_port_is_22() {
+    fn sshd_state_lifecycle() {
         assert_eq!(configured_port(), 22);
-    }
 
-    #[test]
-    fn install_config_changes_port() {
         let mut cfg = SshdConfig::default();
         cfg.port = 2222;
         install_config(cfg);
         assert_eq!(configured_port(), 2222);
-    }
 
-    #[test]
-    fn counters_increment() {
         note_accepted();
         note_accepted();
         note_auth_failure();
         note_child_spawned();
         let snap = state_snapshot();
-        assert!(snap.accepted_connections >= 2);
-        assert!(snap.auth_failures >= 1);
-        assert!(snap.child_processes_spawned >= 1);
-    }
+        assert_eq!(snap.accepted_connections, 2);
+        assert_eq!(snap.auth_failures, 1);
+        assert_eq!(snap.child_processes_spawned, 1);
 
-    #[test]
-    fn mark_started_and_stopped() {
         mark_started(42);
         assert!(state_snapshot().running);
         mark_stopped();

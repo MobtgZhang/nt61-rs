@@ -11,9 +11,69 @@
 //! stages; for now this module provides a testable launcher that
 //! can be unit-tested without the bare-metal kernel.
 
+use super::child;
 use super::config::{PermitRoot, SshdConfig};
+use super::session;
 use crate::ke::sync::Spinlock;
-use alloc::string::String;
+use crate::netstack::socket::{self, SockAddr, SocketError, SocketType};
+
+/// Listen backlog for the sshd TCP listener (RFC 4253 does not
+/// mandate a size; 8 matches the socket layer's default).
+pub const LISTEN_BACKLOG: u32 = 8;
+
+/// AF_INET value used by the socket layer.
+const AF_INET: u16 = 2;
+
+/// Bind a TCP listener on the configured Port/ListenAddress and hand
+/// it to the session layer. The command executor used by SSH shell
+/// channels is wired to the kernel cmd dispatcher here.
+pub fn start_listener() -> Result<u32, LauncherError> {
+    child::install_command_executor(|line| {
+        if crate::servers::cmd::execute_command_line(line) {
+            0
+        } else {
+            1
+        }
+    });
+
+    let cfg = super::state_snapshot().config;
+    if validate_config(&cfg).is_err() {
+        return Err(LauncherError::BadAddress);
+    }
+
+    let socket_id = socket::socket_auto(SocketType::Stream).ok_or(LauncherError::BindFailed)?;
+    let addr = SockAddr::new(AF_INET, cfg.port, 0);
+    match socket::bind(socket_id, &addr) {
+        Ok(()) => {}
+        Err(SocketError::AddressInUse) => return Err(LauncherError::BindFailed),
+        Err(_) => return Err(LauncherError::BindFailed),
+    }
+    match socket::listen(socket_id, LISTEN_BACKLOG) {
+        Ok(()) => {}
+        Err(_) => return Err(LauncherError::BindFailed),
+    }
+
+    super::mark_started(socket_id);
+    Ok(socket_id)
+}
+
+/// Accept one pending connection and step all active sessions.
+/// Returns the number of live SSH sessions.
+pub fn poll_once() -> usize {
+    let listen_id = match super::state_snapshot().listening_socket_id {
+        Some(id) => id,
+        None => return 0,
+    };
+    match socket::accept(listen_id) {
+        Ok(peer_socket_id) => {
+            super::note_accepted();
+            session::accept_connection(peer_socket_id);
+        }
+        Err(SocketError::WouldBlock) => {}
+        Err(_) => {}
+    }
+    session::poll_sessions()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LauncherState {
@@ -96,7 +156,7 @@ pub fn config_allows_pubkey(cfg: &SshdConfig, user: &str) -> bool {
     true
 }
 
-/// Read the cached state, reset to `Uninitialised`. Useful in
+/// read the cached state, reset to `Uninitialised`. Useful in
 /// tests so each test starts from a clean slate.
 pub fn reset_for_test() {
     let mut s = LAUNCHER_STATE.lock();
@@ -107,6 +167,7 @@ pub fn reset_for_test() {
 mod tests {
     use super::*;
     use crate::servers::sshd::config::SshdConfig;
+    use alloc::string::String;
 
     fn reset() {
         reset_for_test();
