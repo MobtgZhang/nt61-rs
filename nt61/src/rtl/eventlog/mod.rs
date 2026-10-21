@@ -7,8 +7,6 @@
 //! - `System.evtx`, `Application.evtx`, `Security.evtx`, `Setup.evtx`,
 //!   `ForwardedEvents.evtx` are the standard 5 channels.
 
-#![allow(dead_code)]
-
 extern crate alloc;
 
 pub mod channels;
@@ -85,7 +83,7 @@ pub struct EventRecord {
 }
 
 impl EventRecord {
-    /// Create a new event record with the given source, event ID, and level
+    /// create a new event record with the given source, event ID, and level
     pub fn new(source: &[u8], event_id: u16, level: EventLevel) -> Self {
         let mut src = [0u8; 64];
         let mut src_len: u8 = 0;
@@ -272,19 +270,29 @@ fn system_log_mut() -> Option<&'static mut EventLog> {
     // that `init()` re-writes with a valid `EventLog` value before the
     // `SYSTEM_LOG_INIT` flag is published; reading through `cast_log_init`
     // only happens after the flag has been set, so the cast is sound.
-    unsafe { cast_log_init(&mut SYSTEM_LOG, &SYSTEM_LOG_INIT) }
+    unsafe { cast_log_init(&mut *core::ptr::addr_of_mut!(SYSTEM_LOG), &SYSTEM_LOG_INIT) }
 }
 
 fn application_log_mut() -> Option<&'static mut EventLog> {
-    unsafe { cast_log_init(&mut APPLICATION_LOG, &APPLICATION_LOG_INIT) }
+    unsafe {
+        cast_log_init(
+            &mut *core::ptr::addr_of_mut!(APPLICATION_LOG),
+            &APPLICATION_LOG_INIT,
+        )
+    }
 }
 
 fn security_log_mut() -> Option<&'static mut EventLog> {
-    unsafe { cast_log_init(&mut SECURITY_LOG, &SECURITY_LOG_INIT) }
+    unsafe {
+        cast_log_init(
+            &mut *core::ptr::addr_of_mut!(SECURITY_LOG),
+            &SECURITY_LOG_INIT,
+        )
+    }
 }
 
 fn setup_log_mut() -> Option<&'static mut EventLog> {
-    unsafe { cast_log_init(&mut SETUP_LOG, &SETUP_LOG_INIT) }
+    unsafe { cast_log_init(&mut *core::ptr::addr_of_mut!(SETUP_LOG), &SETUP_LOG_INIT) }
 }
 
 /// Clear every record in a channel (`ClearEventLog`). Record numbering is kept
@@ -340,7 +348,7 @@ pub fn init() {
     }
 }
 
-/// Write an event to the System log
+/// write an event to the System log
 pub fn write_system_event(event_id: u16, level: EventLevel, source: &[u8], description: &str) {
     let mut record = EventRecord::new(source, event_id, level);
     record.set_description(description);
@@ -350,7 +358,7 @@ pub fn write_system_event(event_id: u16, level: EventLevel, source: &[u8], descr
     }
 }
 
-/// Write an event to the Application log
+/// write an event to the Application log
 pub fn write_application_event(event_id: u16, level: EventLevel, source: &[u8], description: &str) {
     let mut record = EventRecord::new(source, event_id, level);
     record.set_description(description);
@@ -360,7 +368,7 @@ pub fn write_application_event(event_id: u16, level: EventLevel, source: &[u8], 
     }
 }
 
-/// Write an event to the Setup log
+/// write an event to the Setup log
 pub fn write_setup_event(event_id: u16, level: EventLevel, source: &[u8], description: &str) {
     let mut record = EventRecord::new(source, event_id, level);
     record.set_description(description);
@@ -370,7 +378,7 @@ pub fn write_setup_event(event_id: u16, level: EventLevel, source: &[u8], descri
     }
 }
 
-/// Write an event to the Security log
+/// write an event to the Security log
 pub fn write_security_event(event_id: u16, level: EventLevel, source: &[u8], description: &str) {
     let mut record = EventRecord::new(source, event_id, level);
     record.set_description(description);

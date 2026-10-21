@@ -162,7 +162,7 @@ unsafe fn channel_mgr() -> &'static mut ChannelManager {
     &mut *ptr
 }
 
-/// Create a new channel
+/// create a new channel
 pub fn create_channel(name: &[u8]) -> Option<ChannelId> {
     unsafe { channel_mgr().create_channel(name) }
 }

@@ -23,8 +23,6 @@
 //! [hh:mm:ss.xxx] [KERNEL] Message
 //! ```
 
-#![allow(dead_code)]
-
 use core::sync::atomic::{AtomicU64, Ordering};
 
 // ============================================================================
@@ -72,7 +70,7 @@ pub fn now() -> BootTimestamp {
 }
 
 // ============================================================================
-// Log Level (Windows DbgPrint Compatible)
+// Log Level (Windows dbg_print Compatible)
 // ============================================================================
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -94,7 +92,7 @@ impl LogLevel {
         }
     }
 
-    /// Map a DbgPrint-style level onto the ordered severity used by
+    /// Map a dbg_print-style level onto the ordered severity used by
     /// `rtl::logging`. `LogLevel::Debug` is `0xFFFFFFFF` in this set, so
     /// comparing it against `logging::LogLevel` directly is meaningless.
     pub fn to_severity(self) -> u8 {
@@ -119,7 +117,7 @@ pub fn write_serial(s: &str) {
 // Format Functions
 // ============================================================================
 
-fn format_timestamp_short(buf: &mut [u8], ms: u64) -> usize {
+pub fn format_timestamp_short(buf: &mut [u8], ms: u64) -> usize {
     let hours = (ms / 3600000) % 24;
     let minutes = (ms / 60000) % 60;
     let seconds = (ms / 1000) % 60;
@@ -165,7 +163,7 @@ fn format_timestamp_short(buf: &mut [u8], ms: u64) -> usize {
 // Public Log Functions
 // ============================================================================
 
-/// Write ntbtlog.txt format driver loading log
+/// write ntbtlog.txt format driver loading log
 /// Format: `YYYY MM DD HH:MM:SS.mmm BOOTLOG_LOADED \SystemRoot\...\file.sys`
 pub fn write_ntbtlog_line(file_path: &str, loaded: bool) {
     let ts = now();
@@ -315,7 +313,7 @@ pub fn write_ntbtlog_line(file_path: &str, loaded: bool) {
     write_serial(s);
 }
 
-/// Write SOS-style driver loading message
+/// write SOS-style driver loading message
 /// Format: `Loading \SystemRoot\system32\file.sys`
 pub fn write_sos_loading(file_path: &str) {
     let mut buf = [0u8; 256];
@@ -352,7 +350,7 @@ pub fn write_sos_loading(file_path: &str) {
     write_serial(s);
 }
 
-/// Write a phase header for the winload (loader) side of the boot chain.
+/// write a phase header for the winload (loader) side of the boot chain.
 ///
 /// Format: `--- Phase LNN ---` where `NN` is the two-digit zero-padded
 /// phase number. This complements [`write_phase_header`] (which uses
@@ -365,6 +363,14 @@ pub fn write_sos_loading(file_path: &str) {
 ///   * `write_loader_phase_header(10)` — `ExitBootServices`
 ///   * `write_loader_phase_header(11)` — `jmp ntoskrnl!KiSystemStartup`
 pub fn write_loader_phase_header(phase: u32) {
+    #[cfg(not(feature = "log_level_debug"))]
+    let _ = phase;
+    #[cfg(feature = "log_level_debug")]
+    write_loader_phase_header_debug(phase);
+}
+
+#[cfg(feature = "log_level_debug")]
+fn write_loader_phase_header_debug(phase: u32) {
     let mut buf = [0u8; 64];
     let mut pos = 0;
 
@@ -417,7 +423,7 @@ pub fn write_loader_phase_header(phase: u32) {
     write_serial(s);
 }
 
-/// Write a phase header for the disk `ntoskrnl.exe!KiSystemStartup`
+/// write a phase header for the disk `ntoskrnl.exe!KiSystemStartup`
 /// handoff path (the host trampoline that runs after winload jumps
 /// into the on-disk kernel stub).
 ///
@@ -427,6 +433,14 @@ pub fn write_loader_phase_header(phase: u32) {
 ///   * `write_kernel_phase_header(0)` — entry into host trampoline
 ///   * `write_kernel_phase_header(6)` — `dispatch_to_smss()`
 pub fn write_kernel_phase_header(phase: u32) {
+    #[cfg(not(feature = "log_level_debug"))]
+    let _ = phase;
+    #[cfg(feature = "log_level_debug")]
+    write_kernel_phase_header_debug(phase);
+}
+
+#[cfg(feature = "log_level_debug")]
+fn write_kernel_phase_header_debug(phase: u32) {
     let mut buf = [0u8; 64];
     let mut pos = 0;
 
@@ -479,9 +493,17 @@ pub fn write_kernel_phase_header(phase: u32) {
     write_serial(s);
 }
 
-/// Write kernel phase initialization header
+/// write kernel phase initialization header
 /// Format: `--- Phase N Initialization ---`
 pub fn write_phase_header(phase: u32) {
+    #[cfg(not(feature = "log_level_debug"))]
+    let _ = phase;
+    #[cfg(feature = "log_level_debug")]
+    write_phase_header_debug(phase);
+}
+
+#[cfg(feature = "log_level_debug")]
+fn write_phase_header_debug(phase: u32) {
     let mut buf = [0u8; 64];
     let mut pos = 0;
 
@@ -568,9 +590,17 @@ pub fn write_phase_header(phase: u32) {
     write_serial(s);
 }
 
-/// Write kernel phase initialization item
+/// write kernel phase initialization item
 /// Format: `    SUBSYSTEM: message`
 pub fn write_phase_item(component: &str, message: &str) {
+    #[cfg(not(feature = "log_level_debug"))]
+    let _ = (component, message);
+    #[cfg(feature = "log_level_debug")]
+    write_phase_item_debug(component, message);
+}
+
+#[cfg(feature = "log_level_debug")]
+fn write_phase_item_debug(component: &str, message: &str) {
     let mut buf = [0u8; 256];
     let mut pos = 0;
 
@@ -618,7 +648,7 @@ pub fn write_phase_item(component: &str, message: &str) {
     write_serial(s);
 }
 
-/// Write KdPrint/DbgPrint format
+/// write KdPrint/dbg_print format
 /// Format: `[hh:mm:ss.xxx] [COMPONENT] Message`
 pub fn write_kdprint(component: &str, message: &str) {
     let mut buf = [0u8; 256];

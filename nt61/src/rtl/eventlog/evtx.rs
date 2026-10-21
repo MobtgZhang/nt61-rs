@@ -13,8 +13,6 @@
 //! +-------------------------+
 //! ```
 
-#![allow(dead_code)]
-
 use alloc::vec::Vec;
 
 use super::{EventChannel, EventRecord};
@@ -42,7 +40,7 @@ fn crc32(data: &[u8]) -> u32 {
     !crc
 }
 
-/// Write the 512-byte EVTX file header
+/// write the 512-byte EVTX file header
 fn write_evtx_header(channel: EventChannel) -> [u8; EVTX_HEADER_SIZE] {
     let mut h = [0u8; EVTX_HEADER_SIZE];
     // Signature "ElfFile\0"
@@ -74,7 +72,7 @@ fn write_evtx_header(channel: EventChannel) -> [u8; EVTX_HEADER_SIZE] {
     h
 }
 
-/// Write a single chunk containing the records (BIN-XML simplified representation)
+/// write a single chunk containing the records (BIN-XML simplified representation)
 fn write_chunk(records: &[EventRecord]) -> [u8; EVTX_CHUNK_SIZE] {
     let mut chunk = [0u8; EVTX_CHUNK_SIZE];
     // Chunk signature "ElfChnk\0"
@@ -196,7 +194,7 @@ fn push_u8(buf: &mut Vec<u8>, v: u8) {
     buf.push(v);
 }
 
-/// Write complete EVTX file
+/// write complete EVTX file
 pub fn write_evtx_file(records: &[EventRecord], channel: EventChannel) -> Vec<u8> {
     let mut file: Vec<u8> = Vec::new();
     let header = write_evtx_header(channel);

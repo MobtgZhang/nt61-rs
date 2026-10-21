@@ -5,7 +5,7 @@
 //! # Behavior
 //!
 //! - Log is written to an internal buffer during boot
-//! - Buffer is cleared at the start of each boot
+//! - buffer is cleared at the start of each boot
 //! - Log can be retrieved as raw bytes for writing to disk
 
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -19,7 +19,7 @@ static mut BOOT_LOG_BUFFER: [u8; MAX_LOG_SIZE] = [0u8; MAX_LOG_SIZE];
 /// Current write position in the log buffer
 static BOOT_LOG_POS: AtomicUsize = AtomicUsize::new(0);
 
-/// Write a line to the boot log
+/// write a line to the boot log
 pub fn write_line(line: &[u8]) {
     // Safety: This function is only called during boot sequence
     // when interrupts are disabled, so there's no concurrent access
@@ -65,7 +65,7 @@ pub fn get_log_len() -> usize {
     BOOT_LOG_POS.load(Ordering::Relaxed)
 }
 
-/// Write formatted boot log entry
+/// write formatted boot log entry
 ///
 /// Format: `YYYY MM DD HH:MM:SS.mmm BOOTLOG_LOADED \SystemRoot\...`
 pub fn write_boot_entry(
@@ -164,7 +164,7 @@ pub fn write_boot_entry(
     write_line(&line[..pos]);
 }
 
-/// Write standard Windows 7 boot log header
+/// write standard Windows 7 boot log header
 pub fn write_header() {
     write_line(b"\r\n");
     write_line(b"Microsoft (R) Windows (R) Boot Log Utility\r\n");
@@ -174,7 +174,7 @@ pub fn write_header() {
     write_line(b"\r\n");
 }
 
-/// Write standard Windows 7 boot log footer
+/// write standard Windows 7 boot log footer
 pub fn write_footer() {
     write_line(b"\r\n");
     write_line(b"Boot Operation Completed.\r\n");
@@ -182,7 +182,7 @@ pub fn write_footer() {
     write_line(b"End of Boot Log\r\n");
 }
 
-/// Write driver loading entry with timestamp
+/// write driver loading entry with timestamp
 pub fn write_driver_entry(loaded: bool, path: &[u8]) {
     // Use current time (placeholder - would use RTC in real implementation)
     write_boot_entry(2026, 6, 30, 9, 0, 0, 0, loaded, path);

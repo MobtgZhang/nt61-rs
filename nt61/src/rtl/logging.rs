@@ -30,8 +30,6 @@
 //! - `log_level_warn`  — enables WARN and all higher levels
 //! - `log_level_error` — enables ERROR only
 
-#![allow(dead_code)]
-
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 // ---------------------------------------------------------------------------
@@ -78,7 +76,7 @@ impl LogLevel {
 }
 
 // ---------------------------------------------------------------------------
-// Subsystem Flags
+// Subsystem flags
 // ---------------------------------------------------------------------------
 
 bitflags::bitflags! {
@@ -429,7 +427,7 @@ pub fn log_write_impl(level: LogLevel, subsystem: &str, cpu: u32, message: &str)
 
     line_buf[pos] = b'[';
     pos += 1;
-    // Write 6-digit seconds
+    // write 6-digit seconds
     let s0 = ((ts_secs / 100000) % 10) as u8;
     let s1 = ((ts_secs / 10000) % 10) as u8;
     let s2 = ((ts_secs / 1000) % 10) as u8;
@@ -450,7 +448,7 @@ pub fn log_write_impl(level: LogLevel, subsystem: &str, cpu: u32, message: &str)
     pos += 1;
     line_buf[pos] = b'.';
     pos += 1;
-    // Write 3-digit milliseconds
+    // write 3-digit milliseconds
     let m0 = ((ts_ms / 100) % 10) as u8;
     let m1 = ((ts_ms / 10) % 10) as u8;
     let m2 = (ts_ms % 10) as u8;
@@ -535,7 +533,7 @@ pub fn should_log(level: LogLevel, subsystem_bits: u32) -> bool {
 
 /// Severity-based filter shared by both level sets.
 ///
-/// `windows_log::LogLevel` is the DbgPrint-style set, where `Debug` is
+/// `windows_log::LogLevel` is the dbg_print-style set, where `Debug` is
 /// `0xFFFFFFFF` rather than an ordered severity, so it cannot be compared
 /// directly against `LogLevel`. Mapping every level to a plain severity
 /// lets the two sets share one filter, which is what makes the `level:`

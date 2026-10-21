@@ -9,8 +9,6 @@
 //! YYYY MM DD HH:MM:SS.mmm BOOTLOG_NOT_LOADED \SystemRoot\System32\drivers\bad.sys
 //! ```
 
-#![allow(dead_code)]
-
 pub mod writer;
 
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -56,7 +54,7 @@ pub struct BootLogEntry {
 }
 
 impl BootLogEntry {
-    /// Create a new boot log entry
+    /// create a new boot log entry
     pub fn new(entry_type: BootEntryType, path: &[u8]) -> Self {
         let mut path_buf = [0u8; 256];
         for (i, &b) in path.iter().take(255).enumerate() {

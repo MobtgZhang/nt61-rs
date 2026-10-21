@@ -24,7 +24,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 /// Test result statistics for a subsystem
 pub struct TestStats {
     /// Subsystem name for output formatting
-    name: &'static str,
+    _name: &'static str,
     /// Total number of tests run
     total: u32,
     /// Number of tests passed
@@ -36,10 +36,10 @@ pub struct TestStats {
 }
 
 impl TestStats {
-    /// Create a new TestStats for a subsystem
+    /// create a new TestStats for a subsystem
     pub fn new(name: &'static str) -> Self {
         Self {
-            name,
+            _name: name,
             total: 0,
             passed: 0,
             failed: 0,
@@ -52,7 +52,11 @@ impl TestStats {
         if !self.started {
             self.started = true;
             crate::boot_println!("========================================");
-            crate::boot_println!("[{} SMOKE] Running {} smoke tests...", self.name, self.name);
+            crate::boot_println!(
+                "[{} SMOKE] Running {} smoke tests...",
+                self._name,
+                self._name
+            );
             crate::boot_println!("========================================");
         }
     }
@@ -71,10 +75,10 @@ impl TestStats {
 
         if result {
             self.passed += 1;
-            crate::boot_println!("  [{} SMOKE]   PASS: {}", self.name, name);
+            crate::boot_println!("  [{} SMOKE]   PASS: {}", self._name, name);
         } else {
             self.failed += 1;
-            crate::boot_println!("  [{} SMOKE]   FAIL: {}", self.name, name);
+            crate::boot_println!("  [{} SMOKE]   FAIL: {}", self._name, name);
         }
 
         result
@@ -88,10 +92,10 @@ impl TestStats {
 
         if result {
             self.passed += 1;
-            crate::boot_println!("  [{} SMOKE]   PASS: {} - {}", self.name, name, details);
+            crate::boot_println!("  [{} SMOKE]   PASS: {} - {}", self._name, name, details);
         } else {
             self.failed += 1;
-            crate::boot_println!("  [{} SMOKE]   FAIL: {} - {}", self.name, name, details);
+            crate::boot_println!("  [{} SMOKE]   FAIL: {} - {}", self._name, name, details);
         }
 
         result
@@ -104,17 +108,17 @@ impl TestStats {
         crate::boot_println!("========================================");
         crate::boot_println!(
             "[{} SMOKE] Results: {}/{} tests passed",
-            self.name,
+            self._name,
             self.passed,
             self.total
         );
 
         if self.failed == 0 {
-            crate::boot_println!("[{} SMOKE] STATUS: ALL TESTS PASSED", self.name);
+            crate::boot_println!("[{} SMOKE] STATUS: ALL TESTS PASSED", self._name);
         } else {
             crate::boot_println!(
                 "[{} SMOKE] STATUS: {}/{} TESTS FAILED",
-                self.name,
+                self._name,
                 self.failed,
                 self.total
             );
@@ -155,7 +159,7 @@ pub struct SmokeAggregator {
 }
 
 impl SmokeAggregator {
-    /// Create a new aggregator
+    /// create a new aggregator
     pub fn new() -> Self {
         Self {
             total: 0,

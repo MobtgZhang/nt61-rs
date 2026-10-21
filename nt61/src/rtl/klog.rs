@@ -16,6 +16,63 @@ use core::sync::atomic::{AtomicBool, Ordering};
 /// the high-throughput `BufferWriter`/`windows_log` path is used.
 pub static LOG_EARLY_READY: AtomicBool = AtomicBool::new(false);
 
+/// Runtime gate for boot log visibility. Set to `false` by
+/// `configure_boot_display()` when the selected `BootMode` is
+/// Desktop or Cmd — those modes show only the boot animation with
+/// no scrolling log output. Panic / BSOD paths bypass this gate
+/// via `boot_print_always!` so critical errors are always visible.
+pub static BOOT_LOG_VISIBLE: AtomicBool = AtomicBool::new(true);
+
+/// Enable or disable boot-time log output at runtime.
+pub fn set_boot_log_visible(visible: bool) {
+    BOOT_LOG_VISIBLE.store(visible, Ordering::Release);
+}
+
+/// True when boot-time log output is currently enabled.
+#[inline]
+pub fn boot_log_visible() -> bool {
+    BOOT_LOG_VISIBLE.load(Ordering::Acquire)
+}
+
+/// Boot diagnostics: emit a raw-UART phase marker that bypasses
+/// every output gate so the boot trace stays observable even when
+/// the per-mode display policy silences `boot_println!`.
+pub fn phase_trace_marker(phase: u32) {
+    #[cfg(feature = "log_level_debug")]
+    {
+        use core::fmt::Write;
+        let mut buffer = [0u8; 16];
+        let mut writer = StackTraceWriter {
+            bytes: &mut buffer,
+            offset: 0,
+        };
+        let _ = write!(writer, "TRACE:{}\r\n", phase);
+        let len = buffer
+            .iter()
+            .position(|&byte| byte == 0)
+            .unwrap_or(buffer.len());
+        let text = unsafe { core::str::from_utf8_unchecked(&buffer[..len]) };
+        crate::hal::serial::write_string(text);
+    }
+}
+
+struct StackTraceWriter<'a> {
+    bytes: &'a mut [u8],
+    offset: usize,
+}
+
+impl core::fmt::Write for StackTraceWriter<'_> {
+    fn write_str(&mut self, text: &str) -> core::fmt::Result {
+        for byte in text.as_bytes() {
+            if self.offset < self.bytes.len() {
+                self.bytes[self.offset] = *byte;
+                self.offset += 1;
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Set while the CPU is inside a trap handler.
 ///
 /// A `#PF` handler must not touch the linear framebuffer or the VGA
@@ -62,7 +119,6 @@ pub fn write_early(s: &str) {
     // so writing to the text console is safe. We use the
     // VGA-only helper so the mirror does NOT loop back through
     // the serial port.
-    #[cfg(target_arch = "x86_64")]
     if crate::hal::text_console::is_ready() {
         crate::hal::text_console::put_byte_vga_only_str(s);
     }
@@ -73,14 +129,7 @@ pub struct KLog;
 
 /// Initialize kernel log - bring up the serial port first.
 pub fn init() {
-    #[cfg(target_arch = "x86_64")]
     crate::hal::serial::init();
-    #[cfg(target_arch = "aarch64")]
-    crate::hal::aarch64::init();
-    #[cfg(target_arch = "riscv64")]
-    crate::hal::riscv64::init();
-    #[cfg(target_arch = "loongarch64")]
-    crate::hal::loongarch64::init();
 }
 
 impl KLog {
@@ -89,7 +138,7 @@ impl KLog {
     }
 }
 
-/// A `Write` adapter that spits bytes to the platform serial port.
+/// A `write` adapter that spits bytes to the platform serial port.
 pub struct SerialWriter;
 
 impl core::fmt::Write for SerialWriter {
@@ -117,53 +166,51 @@ impl core::fmt::Write for SerialWriter {
 ///    CMD shell's log display pane reads from this ring so it has
 ///    content to paint on shell entry.
 pub fn write_serial(s: &str) {
-    // While a trap handler is running, the framebuffer and VGA text
-    // buffer are not safe to touch (see `FAULT_CONTEXT` above), so the
-    // UART is the only sink. Emit unmasked so the trace still reaches
-    // the host even after `set_disabled(true)` has gated normal logging.
-    if in_fault_context() {
-        crate::hal::common::serial_disable::with_serial_unmasked(|| {
-            let _ = crate::hal::serial::write_string(s);
-        });
-        return;
-    }
-
-    // 1. Mirror to the cross-arch LFB (bootvid subsystem).
-    //    This is the GUI-visible sink after the serial gate is
-    //    flipped on. The bootvid LFB path is no-op until the
-    //    framebuffer has been wired (BootInfo.framebuffer_base != 0),
-    //    so the early boot lines go through without any artefacts.
-    write_to_lfb(s);
-
-    // 2. Mirror to the platform text console. The per-arch
-    //    backend's `put_byte` already takes care of writing to
-    //    the UART and to the ring buffer, so calling
-    //    `hal::serial::write_string` directly here would produce
-    //    duplicate serial output on non-x86_64. Routing through
-    //    `text_console::put_string` does this in one place.
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(feature = "log_level_debug"))]
     {
-        use crate::hal::text_console;
-        if text_console::is_ready() {
-            text_console::put_string(s);
-        } else {
-            let _ = crate::hal::serial::write_string(s);
-        }
-        return;
-    }
-
-    // x86_64 path: write to serial first (gated by
-    // `set_disabled`), then mirror to VGA text buffer so the
-    // operator sees the boot trace in both the tail-f serial log
-    // and the on-screen VGA framebuffer. We also mirror into the
-    // cross-arch LFB writer so the GUI panel picks up the boot
-    // trace once `bootvid::init_from_framebuffer` has run.
-    #[cfg(target_arch = "x86_64")]
-    {
-        let _ = crate::hal::serial::write_string(s);
-
-        if crate::hal::text_console::is_ready() {
+        // Release builds still show boot messages on the visible
+        // display (bootvid LFB) even though COM1 is silenced. The
+        // operator must see the boot log on the QEMU `-display gtk`
+        // window; otherwise the screen stays black after
+        // `bootvid::init()` paints it.
+        // The text-console facade is a diagnostic/legacy mirror. The
+        // visible post-GOP console is owned by bootvid; routing through
+        // the facade would also poke the legacy VGA CRTC registers on
+        // x86_64 and can stall a release build. Keep one authoritative
+        // display sink.
+        if crate::drivers::bootvid::lfb_active() {
+            write_to_lfb(s);
+        } else if crate::hal::text_console::is_ready() {
             crate::hal::text_console::put_byte_vga_only_str(s);
+        }
+    }
+    #[cfg(feature = "log_level_debug")]
+    {
+        // While a trap handler is running, the framebuffer and VGA text
+        // buffer are not safe to touch (see `FAULT_CONTEXT` above), so the
+        // UART is the only sink. Emit unmasked so the trace still reaches
+        // the host even after `set_disabled(true)` has gated normal logging.
+        if in_fault_context() {
+            crate::hal::common::serial_disable::with_serial_unmasked(|| {
+                let _ = crate::hal::serial::write_string_always(s);
+            });
+            return;
+        }
+
+        // Choose one operator-visible sink instead of fanning every
+        // boot line to both COM1 and the LFB. The LFB scroll path is
+        // a multi-megabyte pixel move on high-resolution GOP modes;
+        // doing that for every debug line makes headless QEMU runs
+        // look hung. Debug builds keep COM1 alive, while non-debug
+        // builds use the on-screen console.
+        if !crate::hal::common::serial_disable::is_disabled() {
+            let _ = crate::hal::serial::write_string(s);
+        } else {
+            if crate::hal::text_console::is_ready() {
+                crate::hal::text_console::put_byte_vga_only_str(s);
+            } else {
+                write_to_lfb(s);
+            }
         }
     }
 }
@@ -188,7 +235,6 @@ fn write_to_lfb(s: &str) {
 }
 
 /// Print a single character.
-#[allow(dead_code)]
 pub fn putchar(c: char) {
     let mut buf = [0u8; 4];
     let s = c.encode_utf8(&mut buf);
@@ -200,7 +246,7 @@ pub fn puts(s: &str) {
     write_serial(s);
 }
 
-/// A `core::fmt::Write` adapter that writes into a caller-provided stack buffer.
+/// A `core::fmt::write` adapter that writes into a caller-provided stack buffer.
 pub struct BufferWriter<'a> {
     buf: &'a mut [u8],
     pos: usize,
@@ -241,13 +287,12 @@ impl<'a> core::fmt::Write for BufferWriter<'a> {
 macro_rules! kprint {
     ($($arg:tt)*) => {{
         if $crate::rtl::klog::LOG_EARLY_READY.load(core::sync::atomic::Ordering::Acquire) {
-            #[allow(unused_imports)]
             use core::fmt::Write;
             let mut writer = $crate::rtl::klog::SerialWriter;
             let _ = writer.write_fmt(core::format_args!($($arg)*));
         } else {
             // EARLY PATH: format into a 256-byte stack buffer using
-            // a borrowed-slice `core::fmt::Write` adapter (no
+            // a borrowed-slice `core::fmt::write` adapter (no
             // allocations, no `.bss` dependencies, no PLT-trampoline
             // risk) and then ship the result directly to the UART.
             use core::fmt::Write;
@@ -289,8 +334,7 @@ macro_rules! kprintln {
             $crate::rtl::logging::subsystem_to_bits($sub),
         ) {
         if $crate::rtl::klog::LOG_EARLY_READY.load(core::sync::atomic::Ordering::Acquire) {
-            #[allow(unused_imports)]
-            use ::core::fmt::Write;
+            use core::fmt::Write;
             let mut body_buf = [0u8; 256];
             let mut body_writer = $crate::rtl::klog::BufferWriter::new(&mut body_buf);
             let _ = body_writer.write_fmt(::core::format_args!($($arg)*));
@@ -407,8 +451,24 @@ macro_rules! ntbtlog {
 #[macro_export]
 macro_rules! phase_header {
     ($phase:expr, $name:expr) => {{
-        $crate::rtl::windows_log::write_phase_header($phase);
-        $crate::boot_println!("    KERNEL: {}", $name);
+        {
+            let p: u32 = $phase;
+            $crate::rtl::klog::phase_trace_marker(p);
+            let h: u8 = b'0' + ((p / 100) as u8);
+            let tens: u8 = b'0' + (((p / 10) % 10) as u8);
+            let ones: u8 = b'0' + ((p % 10) as u8);
+            let h_s = unsafe { core::str::from_utf8_unchecked(core::slice::from_ref(&h)) };
+            let t_s = unsafe { core::str::from_utf8_unchecked(core::slice::from_ref(&tens)) };
+            let o_s = unsafe { core::str::from_utf8_unchecked(core::slice::from_ref(&ones)) };
+            $crate::hal::serial::write_string("--- Phase ");
+            $crate::hal::serial::write_string(h_s);
+            $crate::hal::serial::write_string(t_s);
+            $crate::hal::serial::write_string(o_s);
+            $crate::hal::serial::write_string(" Initialization ---\r\n");
+            $crate::hal::serial::write_string("    KERNEL: ");
+            $crate::hal::serial::write_string($name);
+            $crate::hal::serial::write_string("\r\n");
+        }
     }};
 }
 
@@ -442,7 +502,7 @@ macro_rules! boot_ok {
 #[macro_export]
 macro_rules! boot_err {
     ($msg:expr) => {{
-        $crate::boot_println!("    FAIL: {}", $msg);
+        $crate::boot_print_always!("    FAIL: {}\r\n", $msg);
     }};
 }
 
@@ -453,17 +513,31 @@ macro_rules! boot_err {
 #[macro_export]
 macro_rules! boot_print {
     ($($arg:tt)*) => {{
-        // Under user-mode libtest, serial-port I/O via `out` instructions
-        // faults (SIGSEGV). The boot trace is only meaningful during the
-        // kernel boot sequence anyway. Tests that need to inspect boot
-        // trace output should compile with `--cfg kernel_boot_smoke` and
-        // run on the kernel itself, not under cargo test.
+        if $crate::rtl::klog::boot_log_visible() {
+            let _ = core::format_args!($($arg)*);
+            #[cfg(feature = "log_level_debug")]
+            {
+                #[cfg(not(test))]
+                {
+                    use core::fmt::Write;
+                    let mut writer = $crate::rtl::klog::SerialWriter;
+                    let _ = writer.write_fmt(core::format_args!($($arg)*));
+                }
+            }
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! boot_print_always {
+    ($($arg:tt)*) => {{
+        if $crate::rtl::klog::boot_log_visible() {
         #[cfg(not(test))]
         {
-            #[allow(unused_imports)]
             use core::fmt::Write;
             let mut writer = $crate::rtl::klog::SerialWriter;
             let _ = writer.write_fmt(core::format_args!($($arg)*));
+        }
         }
     }};
 }
@@ -471,8 +545,40 @@ macro_rules! boot_print {
 #[macro_export]
 macro_rules! boot_println {
     ($($arg:tt)*) => {{
+        {
+            #[cfg(not(feature = "log_level_debug"))]
+            let _ = core::format_args!($($arg)*);
+            #[cfg(feature = "log_level_debug")]
+            {
+                $crate::boot_print!($($arg)*);
+                $crate::boot_print!("\r\n");
+            }
+        }
+    }};
+}
+
+/// Debug-gated boot trace. Compiles to nothing unless the
+/// `log_level_debug` Cargo feature is enabled, so release /
+/// non-debug builds keep the boot display concise while debug
+/// builds retain the full phase-by-phase trace.
+#[macro_export]
+macro_rules! boot_debug_print {
+    ($($arg:tt)*) => {{
+        #[cfg(not(feature = "log_level_debug"))]
+        let _ = core::format_args!($($arg)*);
+        #[cfg(feature = "log_level_debug")]
         $crate::boot_print!($($arg)*);
-        $crate::boot_print!("\r\n");
+    }};
+}
+
+/// Debug-gated boot trace with CRLF. See [`boot_debug_print!`].
+#[macro_export]
+macro_rules! boot_debug_println {
+    ($($arg:tt)*) => {{
+        #[cfg(not(feature = "log_level_debug"))]
+        let _ = core::format_args!($($arg)*);
+        #[cfg(feature = "log_level_debug")]
+        $crate::boot_println!($($arg)*);
     }};
 }
 
@@ -481,8 +587,8 @@ macro_rules! boot_header {
     ($title:expr) => {{
         $crate::boot_println!("");
         $crate::boot_println!("========================================");
-        $crate::boot_println!("  {}", $title);
         $crate::boot_println!("========================================");
+        $crate::boot_print!("{}\r\n", $title);
     }};
 }
 
