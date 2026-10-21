@@ -1,0 +1,9 @@
+[package]
+name = "nt61-fonts"
+version = "0.1.0"
+edition = "2021"
+description = "License-safe TrueType fonts and runtime glyph rasterization"
+publish = false
+
+[dependencies]
+fontdue = { version = "0.9", default-features = false, features = ["hashbrown"] }
