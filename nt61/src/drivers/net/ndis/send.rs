@@ -32,7 +32,7 @@ pub struct SendQueue {
 }
 
 impl SendQueue {
-    /// Create a new send queue
+    /// create a new send queue
     pub fn new(max_depth: usize) -> Self {
         Self {
             entries: Vec::new(),
@@ -85,7 +85,7 @@ pub struct SendQueueManager {
 }
 
 impl SendQueueManager {
-    /// Create a new send queue manager
+    /// create a new send queue manager
     pub fn new(max_depth: usize) -> Self {
         Self {
             queue: Spinlock::new(SendQueue::new(max_depth)),

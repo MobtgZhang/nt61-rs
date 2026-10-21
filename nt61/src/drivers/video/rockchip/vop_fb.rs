@@ -42,7 +42,7 @@ pub struct VopDevice {
 }
 
 impl VopDevice {
-    /// Create a new VOP device
+    /// create a new VOP device
     pub fn new(soc: RockchipSoc) -> Self {
         Self {
             soc,
@@ -58,7 +58,7 @@ impl VopDevice {
         }
     }
 
-    /// Read a MMIO register
+    /// read a MMIO register
     #[inline]
     fn read_reg(&self, offset: u32) -> u32 {
         if self.mmio_base == 0 {
@@ -67,7 +67,7 @@ impl VopDevice {
         unsafe { core::ptr::read_volatile((self.mmio_base + offset as u64) as *const u32) }
     }
 
-    /// Write a MMIO register
+    /// write a MMIO register
     #[inline]
     fn write_reg(&self, offset: u32, value: u32) {
         if self.mmio_base == 0 {
@@ -98,7 +98,7 @@ impl GpuDriver for VopDevice {
     }
 
     fn features(&self) -> GpuFeatures {
-        let soc_features = pci_ids::features_for_soc(self.soc);
+        let _soc_features = pci_ids::features_for_soc(self.soc);
         GpuFeatures {
             has_2d_accel: false,
             has_3d_accel: false,

@@ -33,7 +33,6 @@ pub fn ndis_release_spin_lock(lock: &Spinlock<u32>) {
 }
 
 pub fn smoke_test() -> bool {
-    use crate::kprintln;
     // kprintln!("  [NDIS6 SMOKE] NDIS 6.0 wrapper healthy");
     true
 }

@@ -112,13 +112,13 @@ fn vbe_outw(_port: u16, _val: u16) {}
 // Bochs VBE Hardware Access
 // =====================================================================
 
-/// Read a VBE register (write index to 0x01CE, read from 0x01CF).
+/// read a VBE register (write index to 0x01CE, read from 0x01CF).
 fn vbe_read(reg: u16) -> u16 {
     vbe_outw(VBE_DISPI_IOPORT_INDEX, reg);
     vbe_inw(VBE_DISPI_IOPORT_DATA)
 }
 
-/// Write a VBE register (write index to 0x01CE, write value to 0x01CF).
+/// write a VBE register (write index to 0x01CE, write value to 0x01CF).
 fn vbe_write(reg: u16, val: u16) {
     vbe_outw(VBE_DISPI_IOPORT_INDEX, reg);
     vbe_outw(VBE_DISPI_IOPORT_DATA, val);
@@ -127,7 +127,7 @@ fn vbe_write(reg: u16, val: u16) {
 /// Probe for Bochs VBE hardware by reading the ID register.
 /// Returns the chip ID if detected, or 0 if not present.
 fn detect_bochs_vbe() -> u16 {
-    // Write the VBE ID to the ID register first to "unlock" reads.
+    // write the VBE ID to the ID register first to "unlock" reads.
     vbe_write(vbe_reg::DISPI_INDEX_ID, vbe_val::DISPI_ID);
     let id = vbe_read(vbe_reg::DISPI_INDEX_ID);
 
@@ -498,12 +498,12 @@ pub fn smoke_test() -> bool {
             let test_color: u32 = 0x00FF00FF;
             let fb = state.fb_phys as *mut u32;
 
-            // Write.
+            // write.
             unsafe {
                 core::ptr::write_volatile(fb, test_color);
             }
 
-            // Read.
+            // read.
             let read_val = unsafe { core::ptr::read_volatile(fb) };
 
             // Clear.

@@ -1,10 +1,10 @@
-//! CLFS File Control Block (FCB)
+//! CLFS File control Block (FCB)
 //
 //! The FCB represents one open handle to a CLFS log. Multiple FCBs can
 //! reference the same VCB. The FCB holds per-handle state such as the
 //! client's current position in the log.
 
-use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use super::context::ClfsClientContext;
 use super::record::ClfsLsn;
@@ -37,16 +37,16 @@ impl Default for ClfsOpenMode {
 // FCB Structure
 // ============================================================================
 
-/// File Control Block — represents one open handle to a CLFS log.
+/// File control Block — represents one open handle to a CLFS log.
 ///
-/// Each call to `ClfsCreateLogFile` or `ClfsOpenLogFile` creates one FCB.
+/// Each call to `clfs_create_log_file` or `clfs_open_log_file` creates one FCB.
 /// Multiple FCBs can reference the same VCB (shared log).
 ///
 /// The FCB holds:
 /// - A reference to the VCB (the actual log)
 /// - The client context for this handle
 /// - Current read/write positions (LSNs)
-/// - Handle-specific flags
+/// - handle-specific flags
 pub struct ClfsFcb {
     /// Pointer to the VCB (the underlying log).
     /// This is a raw pointer because we need interior mutability.
@@ -56,7 +56,7 @@ pub struct ClfsFcb {
     client_id: u32,
 
     /// Client context for this handle.
-    client_context: Option<ClfsClientContext>,
+    pub client_context: Option<ClfsClientContext>,
 
     /// Current read LSN — the LSN of the next record to read.
     read_lsn: ClfsLsn,
@@ -67,15 +67,15 @@ pub struct ClfsFcb {
     /// How the log was opened.
     open_mode: ClfsOpenMode,
 
-    /// Handle flags.
-    flags: u32,
+    /// handle flags.
+    pub flags: u32,
 
     /// Sequence number for this handle (for debugging).
     handle_seq: u32,
 }
 
 impl ClfsFcb {
-    /// Create a new FCB for a newly opened log.
+    /// create a new FCB for a newly opened log.
     pub fn new(vcb: *mut ClfsVcb, client_id: u32, mode: ClfsOpenMode) -> Self {
         static HANDLE_SEQ: AtomicU32 = AtomicU32::new(0);
 

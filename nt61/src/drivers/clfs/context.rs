@@ -23,7 +23,7 @@ pub const CLFS_NODE_TYPE_SHARED_SECURITY_CONTEXT: u32 = 0xC1FDF00D;
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct ClfsNodeId {
-    /// Node type (NTC — Node Type Code).
+    /// Node type (NTC — Node r#type Code).
     pub c_type: u32,
     /// Size of the node in bytes.
     pub cb_node: u32,
@@ -101,14 +101,14 @@ pub struct ClfsContainerContext {
     pub usn_current: u32,
     /// Container state.
     pub e_state: ClfsContainerState,
-    /// Offset to the previous container in the chain.
+    /// offset to the previous container in the chain.
     pub cb_prev_offset: u32,
-    /// Offset to the next container in the chain.
+    /// offset to the next container in the chain.
     pub cb_next_offset: u32,
 }
 
 impl ClfsContainerContext {
-    /// Create a new container context for a newly added container.
+    /// create a new container context for a newly added container.
     pub fn new(cid: u32, size: u64) -> Self {
         Self {
             cid_node: ClfsNodeId::container_context(),
@@ -214,12 +214,12 @@ pub struct ClfsClientContext {
     pub lsn_unused2: ClfsLsn,
     /// Current log state for this client.
     pub e_state: ClfsLogState,
-    /// Handle to security context (if security is enabled).
+    /// handle to security context (if security is enabled).
     pub h_security_context: u64,
 }
 
 impl ClfsClientContext {
-    /// Create a new client context for a newly registered client.
+    /// create a new client context for a newly registered client.
     pub fn new(cid: u32) -> Self {
         Self {
             cid_node: ClfsNodeId::client_context(),
@@ -296,7 +296,7 @@ pub struct ClfsLogScanContext {
     pub c_scanned: u32,
     /// Total containers in the log.
     pub c_total: u32,
-    /// Flags controlling scan behavior.
+    /// flags controlling scan behavior.
     pub flags: u32,
     /// Last error code from the scan.
     pub last_error: u32,
@@ -339,7 +339,7 @@ pub struct ClfsContainerInformation {
     pub cid_container: u32,
     /// Container file name (Unicode16).
     pub path: [u16; 260],
-    /// Length of the path in bytes.
+    /// length of the path in bytes.
     pub cb_path: u32,
     /// Container state.
     pub state: u8,

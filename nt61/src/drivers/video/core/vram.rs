@@ -27,7 +27,7 @@ pub enum VramAllocType {
     Cached,
     /// Uncached allocation
     Uncached,
-    /// Write-combined allocation
+    /// write-combined allocation
     WriteCombined,
     /// Command buffer
     CommandBuffer,
@@ -63,11 +63,11 @@ pub enum VramCacheFlags {
     Cached,
     /// Uncached memory
     Uncached,
-    /// Write-combining memory
+    /// write-combining memory
     WriteCombine,
-    /// Write-through cache
+    /// write-through cache
     WriteThrough,
-    /// Write-protected
+    /// write-protected
     WriteProtected,
 }
 
@@ -78,7 +78,7 @@ pub enum VramCacheFlags {
 /// VRAM allocation descriptor
 #[derive(Debug, Clone, Copy)]
 pub struct VramAlloc {
-    /// Offset from VRAM base
+    /// offset from VRAM base
     pub offset: u64,
     /// Size in bytes
     pub size: u64,
@@ -97,7 +97,7 @@ pub struct VramAlloc {
 }
 
 impl VramAlloc {
-    /// Create a new VRAM allocation
+    /// create a new VRAM allocation
     pub fn new(offset: u64, size: u64, alloc_type: VramAllocType) -> Self {
         Self {
             offset,
@@ -165,7 +165,7 @@ pub const VRAM_FB_ALIGNMENT: u64 = 128;
 pub const VRAM_GART_ALIGNMENT: u64 = 4096;
 
 impl VramManager {
-    /// Create a new VRAM manager
+    /// create a new VRAM manager
     ///
     /// # Arguments
     ///
@@ -341,7 +341,7 @@ pub struct GartEntry {
     pub valid: bool,
     /// Cache policy
     pub cache_policy: GartCachePolicy,
-    /// Read-only flag
+    /// read-only flag
     pub read_only: bool,
 }
 
@@ -363,9 +363,9 @@ pub enum GartCachePolicy {
     Default,
     /// Uncached (direct mapping)
     Uncached,
-    /// Write-through
+    /// write-through
     WriteThrough,
-    /// Write-protected
+    /// write-protected
     WriteProtected,
 }
 
@@ -389,7 +389,7 @@ pub struct GartManager {
 }
 
 impl GartManager {
-    /// Create a new GART manager
+    /// create a new GART manager
     ///
     /// # Arguments
     ///
@@ -425,7 +425,7 @@ impl GartManager {
             self.set_entry_used(start_entry + i);
         }
 
-        // Write GART entries
+        // write GART entries
         let entry_offset = (start_entry * self.entry_size) as u64;
         let mut current_phys = phys_addr;
 
@@ -770,7 +770,7 @@ impl GartManager {
         // 1. Set up the GART's page table format to match IOMMU requirements
         // 2. Configure cache coherency attributes
         // 3. Enable IOMMU translation bypass if needed
-        // 4. Write IOMMU-specific GART control bits
+        // 4. write IOMMU-specific GART control bits
         //
         // The exact implementation depends on the IOMMU type:
         // - Intel VT-d: Set translation type, enable cached page tables
@@ -797,9 +797,9 @@ impl GartManager {
         #[cfg(target_arch = "x86_64")]
         {
             // For Intel VT-d:
-            // 1. Read the status register
+            // 1. read the status register
             // 2. Clear the IWC (Invalidate Wait Complete) bit
-            // 3. Write to the global command register to trigger flush
+            // 3. write to the global command register to trigger flush
             // 4. Wait for completion by polling the status register
             //
             // Example Intel VT-d flush sequence:
@@ -808,7 +808,7 @@ impl GartManager {
             // self.write_iommu_reg(0x2020, 0x10); // Trigger flush
             //
             // For AMD-Vi:
-            // 1. Write invalidation command to command buffer
+            // 1. write invalidation command to command buffer
             // 2. Wait for completion
         }
     }
@@ -943,7 +943,7 @@ mod tests {
     #[test]
     fn test_vram_alloc_free_end() {
         let vram = VramManager::new(0, 1024 * 1024, 4096);
-        let alloc1 = vram.allocate(4096).unwrap();
+        let _alloc1 = vram.allocate(4096).unwrap();
         let alloc2 = vram.allocate(4096).unwrap();
         assert_eq!(vram.used(), 8192);
         // Freeing the last allocation should reclaim memory

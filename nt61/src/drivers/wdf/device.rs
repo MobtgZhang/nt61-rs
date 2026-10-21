@@ -14,7 +14,7 @@ pub struct WdfDeviceObjectHeader {
     pub size: u32,
     /// Parent
     pub parent: WdfObjectHandle,
-    /// Attributes
+    /// attributes
     pub attributes: u64,
 }
 
@@ -41,7 +41,7 @@ pub struct WdfDeviceConfig {
 }
 
 impl WdfDeviceConfig {
-    /// Create a new device config
+    /// create a new device config
     pub fn new() -> Self {
         Self::default()
     }
@@ -83,7 +83,7 @@ pub mod util {
     use super::*;
 
     /// Get device property
-    pub fn get_device_property(device: &WdfDevice, property: DeviceProperty) -> Option<Vec<u8>> {
+    pub fn get_device_property(_device: &WdfDevice, property: DeviceProperty) -> Option<Vec<u8>> {
         match property {
             DeviceProperty::DeviceDescription => Some(Vec::new()),
             DeviceProperty::HardwareId => Some(Vec::new()),
@@ -95,9 +95,9 @@ pub mod util {
 
     /// Set device property
     pub fn set_device_property(
-        device: &mut WdfDevice,
-        property: DeviceProperty,
-        value: &[u8],
+        _device: &mut WdfDevice,
+        _property: DeviceProperty,
+        _value: &[u8],
     ) -> Result<(), &'static str> {
         Ok(())
     }
@@ -162,7 +162,7 @@ pub mod forward {
     pub fn complete_with_information(
         request: &mut WdfRequest,
         status: WdfRequestStatus,
-        information: u64,
+        _information: u64,
     ) {
         request.complete(status);
     }
@@ -179,7 +179,6 @@ pub mod forward {
 
 /// WDF IRP handling
 pub mod irp {
-    use super::*;
 
     /// Major IRP function codes
     pub const IRP_MJ_CREATE: u8 = 0x00;
@@ -219,7 +218,7 @@ pub mod irp {
     pub const IRP_MN_QUERY_ID: u8 = 0x19;
     pub const IRP_MN_QUERY_PNP_DEVICE_STATE: u8 = 0x1A;
 
-    /// Minor IRP function codes for Power
+    /// Minor IRP function codes for power
     pub const IRP_MN_QUERY_POWER: u8 = 0x00;
     pub const IRP_MN_SET_POWER: u8 = 0x01;
     pub const IRP_MN_WAIT_WAKE: u8 = 0x06;
@@ -231,17 +230,17 @@ pub mod wdm {
     use super::*;
 
     /// Get associated device object
-    pub fn get_associated_device(request: &WdfRequest) -> Option<WdfDevice> {
+    pub fn get_associated_device(_request: &WdfRequest) -> Option<WdfDevice> {
         Some(WdfDevice::new(&WdfDeviceInit::new()).ok()?)
     }
 
     /// Get device object from request
-    pub fn get_device_object(request: &WdfRequest) -> Option<WdfObjectHandle> {
+    pub fn get_device_object(_request: &WdfRequest) -> Option<WdfObjectHandle> {
         Some(core::ptr::null())
     }
 
     /// Get current IRP stack location
-    pub fn get_current_stack_location(request: &WdfRequest) -> Option<*mut IrpStack> {
+    pub fn get_current_stack_location(_request: &WdfRequest) -> Option<*mut IrpStack> {
         None
     }
 
@@ -262,7 +261,7 @@ pub struct WdfDeviceCollection {
 }
 
 impl WdfDeviceCollection {
-    /// Create a new collection
+    /// create a new collection
     pub fn new() -> Self {
         Self {
             devices: Vec::new(),

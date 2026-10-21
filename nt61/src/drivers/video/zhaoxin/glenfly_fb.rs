@@ -55,7 +55,7 @@ pub struct GlenflyDevice {
 }
 
 impl GlenflyDevice {
-    /// Create a new Glenfly device
+    /// create a new Glenfly device
     pub fn new(pci_dev: &PciDevice, variant: ZhaoxinVariant) -> Self {
         Self {
             pci_dev: *pci_dev,
@@ -74,7 +74,7 @@ impl GlenflyDevice {
         }
     }
 
-    /// Read a MMIO register
+    /// read a MMIO register
     #[inline]
     pub fn read_reg(&self, offset: u32) -> u32 {
         if self.mmio_base == 0 {
@@ -83,7 +83,7 @@ impl GlenflyDevice {
         unsafe { core::ptr::read_volatile((self.mmio_base + offset as u64) as *const u32) }
     }
 
-    /// Write a MMIO register
+    /// write a MMIO register
     #[inline]
     pub fn write_reg(&self, offset: u32, value: u32) {
         if self.mmio_base == 0 {
@@ -146,7 +146,7 @@ impl GpuDriver for GlenflyDevice {
         {
             use crate::hal::common::pci;
 
-            // Read PCI BARs
+            // read PCI BARs
             self.mmio_base = pci::read_bar(&self.pci_dev, 0);
             self.fb_phys = pci::read_bar(&self.pci_dev, 1);
 
@@ -161,10 +161,10 @@ impl GpuDriver for GlenflyDevice {
             // Enable bus mastering
             pci::enable_bus_mastering(&self.pci_dev);
 
-            // Read revision
+            // read revision
             self.revision = self.pci_dev.revision;
 
-            // Read DirectX feature level
+            // read DirectX feature level
             self.dx_feature_level = self.read_reg(GLENFLY_DX_FEATURE_LEVEL);
 
             // Reset DC

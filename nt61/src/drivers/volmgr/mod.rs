@@ -19,9 +19,6 @@
 //! Clean-room implementation. Spec source: Microsoft "Volume
 //! Manager" reference.
 
-#![cfg(target_arch = "x86_64")]
-#![allow(non_snake_case)]
-
 extern crate alloc;
 
 use alloc::string::String;
@@ -29,9 +26,8 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::drivers::partmgr;
-use crate::io::{DeviceObject, DeviceType, DriverObject};
+use crate::io::{DeviceObject, DriverObject};
 use crate::ke::sync::Spinlock;
-use crate::kprintln;
 
 const MAX_VOLUMES: usize = 16;
 
@@ -84,7 +80,7 @@ pub fn init() {
         }
         // Probe the first sector to identify the file system.
         let mut sec = [0u8; 512];
-        let n = crate::drivers::storage::disk::DiskRead(
+        let n = crate::drivers::storage::disk::disk_read(
             p.disk_index,
             p.starting_offset * 512,
             512,
@@ -137,7 +133,7 @@ fn itoa(mut v: u32) -> String {
 
 fn add_volume(name: String, disk: usize, lba: u64, sc: u64, sig: u32, fs: String) {
     unsafe {
-        for slot in VOLUMES.iter_mut() {
+        for slot in (*core::ptr::addr_of_mut!(VOLUMES)).iter_mut() {
             if slot.valid {
                 continue;
             }
@@ -189,7 +185,7 @@ fn detect_fs(sec: &[u8]) -> (u32, String) {
 /// just match on the first volume.
 pub fn first_volume() -> Option<Volume> {
     unsafe {
-        for slot in VOLUMES.iter() {
+        for slot in (*core::ptr::addr_of!(VOLUMES)).iter() {
             if !slot.valid {
                 continue;
             }

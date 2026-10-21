@@ -75,15 +75,15 @@ pub struct HdcpContentStream {
     /// Stream ID
     stream_id: u8,
     /// Stream type
-    stream_type: HdcpStreamType,
+    pub stream_type: HdcpStreamType,
     /// Is encrypted
     encrypted: bool,
     /// Cipher context
-    cipher_context: HdcpCipherContext,
+    pub cipher_context: HdcpCipherContext,
 }
 
 impl HdcpContentStream {
-    /// Create a new content stream
+    /// create a new content stream
     fn new(stream_id: u8, stream_type: HdcpStreamType) -> Self {
         Self {
             stream_id,
@@ -98,15 +98,15 @@ impl HdcpContentStream {
 #[derive(Debug, Clone)]
 pub struct HdcpCipherContext {
     /// Session key
-    session_key: [u8; 16],
+    pub session_key: [u8; 16],
     /// Cipher state
-    state: u64,
+    pub state: u64,
     /// Counter
-    counter: u64,
+    pub counter: u64,
 }
 
 impl HdcpCipherContext {
-    /// Create new cipher context
+    /// create new cipher context
     fn new() -> Self {
         Self {
             session_key: [0u8; 16],
@@ -131,17 +131,17 @@ pub enum HdcpKeyType {
 #[derive(Debug, Clone)]
 pub struct HdcpKeySet {
     /// Key type
-    key_type: HdcpKeyType,
+    pub key_type: HdcpKeyType,
     /// Number of keys
     key_count: usize,
     /// Keys (simplified - actual implementation would have more structure)
-    keys: Vec<[u8; 20]>,
+    pub keys: Vec<[u8; 20]>,
     /// Device private key (for HDCP 2.x)
-    private_key: Option<[u8; 128]>,
+    pub private_key: Option<[u8; 128]>,
 }
 
 impl HdcpKeySet {
-    /// Create HDCP 1.x key set
+    /// create HDCP 1.x key set
     pub fn new_hdcp1(keys: Vec<[u8; 40]>) -> Self {
         Self {
             key_type: HdcpKeyType::Hdcp1,
@@ -158,7 +158,7 @@ impl HdcpKeySet {
         }
     }
 
-    /// Create HDCP 2.x key set
+    /// create HDCP 2.x key set
     pub fn new_hdcp2(keys: Vec<[u8; 20]>, private_key: [u8; 128]) -> Self {
         Self {
             key_type: HdcpKeyType::Hdcp2,
@@ -194,7 +194,7 @@ pub struct HdcpTransmitter {
 }
 
 impl HdcpTransmitter {
-    /// Create a new HDCP transmitter
+    /// create a new HDCP transmitter
     pub fn new(version: HdcpVersion) -> Self {
         Self {
             version,
@@ -264,7 +264,7 @@ impl HdcpTransmitter {
         // Step 2: Send An and Aksv to receiver
         // In real implementation, would send over DDC
 
-        // Step 3: Read Bksv from receiver
+        // Step 3: read Bksv from receiver
         let bksv = self.read_bksv()?;
         self.receiver_id = Some(bksv);
 
@@ -298,7 +298,7 @@ impl HdcpTransmitter {
         let rtpub = self.calculate_public_value(rtx)?;
         log::video_log("hdcp", &alloc::format!("rtx = {:016x}", rtx));
 
-        // Step 2: Read receiver certificate
+        // Step 2: read receiver certificate
         let cert = self.read_receiver_cert()?;
 
         // Step 3: Verify receiver certificate signature
@@ -310,7 +310,7 @@ impl HdcpTransmitter {
         let km = self.calculate_km(rtx, &cert.public_key)?;
 
         // Step 5: Calculate Km' and send
-        let km_prime = self.hmac_sha256(&km, &rtpub, None)?;
+        let _km_prime = self.hmac_sha256(&km, &rtpub, None)?;
         self.km_stored = Some(km);
 
         // Step 6: Calculate Ks
@@ -320,7 +320,7 @@ impl HdcpTransmitter {
         let e_ks = self.encrypt_ks(&km, &ks)?;
 
         // Step 8: Calculate m and send
-        let m = self.hmac_sha256(&km, &e_ks, None)?;
+        let _m = self.hmac_sha256(&km, &e_ks, None)?;
 
         // Step 9: Verify m'
         // Simplified: assume success
@@ -337,14 +337,14 @@ impl HdcpTransmitter {
         Ok(())
     }
 
-    /// Read receiver's Bksv (HDCP 1.x)
+    /// read receiver's Bksv (HDCP 1.x)
     fn read_bksv(&mut self) -> Result<[u8; 5], &'static str> {
         // In real implementation, would read from receiver via DDC
         // Return a dummy value for compilation
         Ok([0x00, 0x01, 0x02, 0x03, 0x04])
     }
 
-    /// Read receiver certificate (HDCP 2.x)
+    /// read receiver certificate (HDCP 2.x)
     fn read_receiver_cert(&mut self) -> Result<ReceiverCert, &'static str> {
         // In real implementation, would read from receiver
         Ok(ReceiverCert {
@@ -489,7 +489,7 @@ impl HdcpTransmitter {
                 &alloc::format!("Stream {} encryption enabled", stream_id),
             );
         } else {
-            // Create new stream
+            // create new stream
             let stream = HdcpContentStream::new(stream_id, HdcpStreamType::Primary);
             self.streams.push(stream);
             if let Some(s) = self.streams.last_mut() {
@@ -526,7 +526,7 @@ impl HdcpTransmitter {
         self.link_check_counter += 1;
 
         // In real implementation, would:
-        // 1. Read V' from receiver (HDCP 1.x)
+        // 1. read V' from receiver (HDCP 1.x)
         // 2. Calculate expected V'
         // 3. Compare values
 
@@ -583,7 +583,7 @@ pub enum HdcpCipherMode {
 }
 
 impl HdcpCipher {
-    /// Create new cipher
+    /// create new cipher
     fn new() -> Self {
         Self {
             mode: HdcpCipherMode::None,
@@ -605,7 +605,7 @@ impl HdcpCipher {
     }
 
     /// Encrypt data
-    fn encrypt(&mut self, data: &[u8], stream_id: u8) -> Vec<u8> {
+    pub fn encrypt(&mut self, data: &[u8], stream_id: u8) -> Vec<u8> {
         if self.session_key.is_none() {
             return data.to_vec();
         }
@@ -625,19 +625,19 @@ impl HdcpCipher {
 /// HDCP 2.x receiver certificate
 #[derive(Debug, Clone)]
 pub struct ReceiverCert {
-    version: u8,
-    reserved: [u8; 3],
-    receiver_id: [u8; 5],
+    pub version: u8,
+    pub reserved: [u8; 3],
+    pub receiver_id: [u8; 5],
     public_key: [u8; 128],
-    reserved2: [u8; 16],
-    signature: [u8; 96],
+    pub reserved2: [u8; 16],
+    pub signature: [u8; 96],
 }
 
 /// HDCP interface for display output
 pub trait HdcpInterface {
-    /// Write to DDC bus
+    /// write to DDC bus
     fn ddc_write(&mut self, addr: u8, data: &[u8]) -> Result<(), &'static str>;
-    /// Read from DDC bus
+    /// read from DDC bus
     fn ddc_read(&mut self, addr: u8, len: usize) -> Result<Vec<u8>, &'static str>;
 }
 
@@ -654,7 +654,7 @@ pub fn init() {
     log::video_log("hdcp", "ready");
 }
 
-/// Create HDCP transmitter
+/// create HDCP transmitter
 pub fn create_transmitter(version: HdcpVersion) -> HdcpTransmitter {
     HdcpTransmitter::new(version)
 }

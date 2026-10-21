@@ -39,7 +39,7 @@ pub struct AdrenoDevice {
 }
 
 impl AdrenoDevice {
-    /// Create a new Adreno device
+    /// create a new Adreno device
     pub fn new(generation: AdrenoGeneration) -> Self {
         Self {
             generation,
@@ -54,7 +54,7 @@ impl AdrenoDevice {
         }
     }
 
-    /// Read a MMIO register
+    /// read a MMIO register
     #[inline]
     fn read_reg(&self, offset: u32) -> u32 {
         if self.mmio_base == 0 {
@@ -63,7 +63,7 @@ impl AdrenoDevice {
         unsafe { core::ptr::read_volatile((self.mmio_base + offset as u64) as *const u32) }
     }
 
-    /// Write a MMIO register
+    /// write a MMIO register
     #[inline]
     fn write_reg(&self, offset: u32, value: u32) {
         if self.mmio_base == 0 {

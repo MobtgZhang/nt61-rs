@@ -22,11 +22,11 @@ pub const RBBM_STATUS2: u32 = 0x00008;
 /// RBBM Status 3 Register
 pub const RBBM_STATUS3: u32 = 0x0000C;
 
-/// RBBM Control Register
+/// RBBM control Register
 pub const RBBM_CONTROL: u32 = 0x00100;
-/// RBBM AHB Control Register
+/// RBBM AHB control Register
 pub const RBBM_AHB_CTL0: u32 = 0x00104;
-/// RBBM AHB Control Register 2
+/// RBBM AHB control Register 2
 pub const RBBM_AHB_CTL1: u32 = 0x00108;
 
 /// RBBM Software Reset Register
@@ -84,11 +84,11 @@ pub const DISPLAY_STATUS: u32 = 0x2000C;
 /// GMU registers
 pub const GMU_OFFSET: u32 = 0x50000;
 
-/// GMU Control Register
+/// GMU control Register
 pub const GMU_CGC: u32 = 0x50000;
 /// GMU Status Register
 pub const GMU_STATUS: u32 = 0x50004;
-/// GMU Power Control Register
+/// GMU power control Register
 pub const GMU_PWR: u32 = 0x50008;
 
 /// GMU status flags

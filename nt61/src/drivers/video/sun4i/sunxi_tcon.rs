@@ -5,15 +5,12 @@
 //! Clean-room implementation based on public specifications.
 
 /// TCON device
-pub struct TconDevice {
-    /// Base address
-    base: u64,
-}
+pub struct TconDevice {}
 
 impl TconDevice {
-    /// Create new TCON device
-    pub fn new(base: u64) -> Self {
-        Self { base }
+    /// create new TCON device
+    pub fn new() -> Self {
+        Self {}
     }
 
     /// Initialize TCON

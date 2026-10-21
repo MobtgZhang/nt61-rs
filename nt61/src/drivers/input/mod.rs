@@ -12,32 +12,24 @@
 
 extern crate alloc;
 
-#[cfg(target_arch = "x86_64")]
 pub mod i8042;
 pub mod usb_hid_kbd;
 pub mod usb_hid_mouse;
+pub mod virtio_input;
 
-#[cfg(target_arch = "x86_64")]
 pub mod smoke;
-
-use crate::kprintln;
 
 pub fn init() {
     // kprintln!("    Input drivers: i8042, USB HID keyboard / mouse");
-    #[cfg(target_arch = "x86_64")]
-    i8042::init();
+    crate::drivers::arch::init_i8042();
     usb_hid_kbd::init();
     usb_hid_mouse::init();
     // kprintln!("    Input stack ready");
 }
 
 pub fn smoke_test() -> bool {
-    #[cfg(target_arch = "x86_64")]
-    {
-        smoke::smoke_test()
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        true
-    }
+    crate::drivers::arch::input_smoke_test(
+        crate::drivers::input::usb_hid_kbd::smoke_test,
+        crate::drivers::input::usb_hid_mouse::smoke_test,
+    )
 }

@@ -73,7 +73,7 @@ pub struct ZhaoxinDevice {
 }
 
 impl ZhaoxinDevice {
-    /// Create a new Zhaoxin device
+    /// create a new Zhaoxin device
     #[cfg(target_arch = "x86_64")]
     pub fn new(pci_dev: &PciDevice) -> Self {
         let variant = pci_ids::variant_from_device_id(pci_dev.vendor_id, pci_dev.device_id);
@@ -110,7 +110,7 @@ impl ZhaoxinDevice {
         }
     }
 
-    /// Read a MMIO register
+    /// read a MMIO register
     #[inline]
     pub fn read_reg(&self, offset: u32) -> u32 {
         if self.mmio_base == 0 {
@@ -119,7 +119,7 @@ impl ZhaoxinDevice {
         unsafe { core::ptr::read_volatile((self.mmio_base + offset as u64) as *const u32) }
     }
 
-    /// Write a MMIO register
+    /// write a MMIO register
     #[inline]
     pub fn write_reg(&self, offset: u32, value: u32) {
         if self.mmio_base == 0 {
@@ -162,7 +162,7 @@ impl GpuDriver for ZhaoxinDevice {
 
     #[cfg(target_arch = "x86_64")]
     fn init(&mut self) -> Result<(), crate::drivers::video::core::gpu_common::GpuError> {
-        // Read PCI BARs
+        // read PCI BARs
         self.mmio_base = pci::read_bar(&self.pci_dev, 0);
         self.fb_phys = pci::read_bar(&self.pci_dev, 1);
 
@@ -179,7 +179,7 @@ impl GpuDriver for ZhaoxinDevice {
         // Enable bus mastering
         pci::enable_bus_mastering(&self.pci_dev);
 
-        // Read revision
+        // read revision
         self.revision = self.pci_dev.revision;
 
         Ok(())

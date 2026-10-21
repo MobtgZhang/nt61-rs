@@ -62,8 +62,7 @@ pub struct LsDcDevice {
 }
 
 impl LsDcDevice {
-    /// Create a new LSDC device
-    #[allow(dead_code)]
+    /// create a new LSDC device
     pub fn new(pci_dev: crate::hal::common::pci::PciDevice, chip: LoongsonChip) -> Self {
         Self {
             pci_dev,
@@ -83,13 +82,13 @@ impl LsDcDevice {
         }
     }
 
-    /// Read a DC register with bounds checking
+    /// read a DC register with bounds checking
     #[inline]
     fn read_reg(&self, offset: u32) -> u32 {
         self.dc_mmio.read_reg(offset)
     }
 
-    /// Write a DC register with bounds checking
+    /// write a DC register with bounds checking
     #[inline]
     fn write_reg(&self, offset: u32, value: u32) {
         let _ = self.dc_mmio.write_reg(offset, value);
@@ -153,7 +152,7 @@ impl GpuDriver for LsDcDevice {
     fn init(&mut self) -> Result<(), gpu_common::GpuError> {
         use crate::drivers::video::core::gpu_common::GpuError;
 
-        // Read PCI BARs
+        // read PCI BARs
         #[cfg(target_arch = "loongarch64")]
         {
             let dc_bar = pci::read_bar(&self.pci_dev, 0);

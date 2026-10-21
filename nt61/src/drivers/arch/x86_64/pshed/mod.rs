@@ -21,11 +21,7 @@
 //! Clean-room implementation. Spec source: Windows Internals 6th ed.,
 //! ch.14 (Hardware Error Architecture), WDK pshed.h.
 
-#![cfg(target_arch = "x86_64")]
-
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-
-use crate::kprintln;
 
 // ---------------------------------------------------------------------------
 // MCA MSR addresses
@@ -38,14 +34,15 @@ const IA32_MCG_STATUS: u32 = 0x017A;
 /// IA32_MCG_CTL — global MCA control (global enable/disable).
 const IA32_MCG_CTL: u32 = 0x017B;
 /// IA32_MCi_CTL — per-bank control (bank 0..N-1).
-/// Addr = 0xC000_0100 + bank * 4 (where N <= 32).
-const IA32_MC0_CTL: u32 = 0xC000_0100;
+/// The first MC bank starts at IA32 MC0_CTL = 0x0400 and uses
+/// consecutive CTL/STATUS/ADDR/MISC MSR addresses per bank.
+const IA32_MC0_CTL: u32 = 0x0400;
 /// IA32_MCi_STATUS — per-bank error status.
-const IA32_MC0_STATUS: u32 = 0xC000_0101;
+const IA32_MC0_STATUS: u32 = 0x0401;
 /// IA32_MCi_ADDR — per-bank error address.
-const IA32_MC0_ADDR: u32 = 0xC000_0102;
+const IA32_MC0_ADDR: u32 = 0x0402;
 /// IA32_MCi_MISC — per-bank misc info.
-const IA32_MC0_MISC: u32 = 0xC000_0103;
+const IA32_MC0_MISC: u32 = 0x0403;
 
 /// MCA error status values.
 pub const MCG_STATUS_RIPV: u64 = 0x00000001; // restart IP valid
@@ -54,7 +51,7 @@ pub const MCG_STATUS_MCIP: u64 = 0x00000004; // machine check in progress
 pub const MCG_STATUS_EI: u64 = 0x00000080; // error overflow
 
 /// MCA error status — valid bit.
-pub const MCi_STATUS_VAL: u64 = 0x80000000_00000000;
+pub const MCI_STATUS_VAL: u64 = 0x80000000_00000000;
 
 /// MCA error types.
 pub const MC_ERROR_TYPE_UC: u64 = 0; // Uncorrected
@@ -110,7 +107,7 @@ fn mca_num_banks() -> u32 {
     (mcg_cap & 0xFF) as u32
 }
 
-/// Read an MSR.
+/// read an MSR.
 fn rdmsr(msr: u32) -> u64 {
     let lo: u32;
     let hi: u32;
@@ -120,7 +117,7 @@ fn rdmsr(msr: u32) -> u64 {
     ((hi as u64) << 32) | (lo as u64)
 }
 
-/// Write an MSR.
+/// write an MSR.
 fn wrmsr(msr: u32, val: u64) {
     let lo = val as u32;
     let hi = (val >> 32) as u32;
@@ -149,9 +146,9 @@ fn mca_init() {
     for bank in 0..num_banks.min(32) {
         let status_msr = IA32_MC0_STATUS + bank * 4;
         let status = rdmsr(status_msr);
-        if (status & MCi_STATUS_VAL) != 0 {
+        if (status & MCI_STATUS_VAL) != 0 {
             // crate::kprintln!("    [PSHED] bank {}: clearing pending error 0x{:016x}", bank, status);
-            // Write 0 to clear
+            // write 0 to clear
             wrmsr(status_msr, 0);
         }
     }
@@ -292,7 +289,7 @@ pub fn pshed_disable_error_source(source_type: ErrorSource) {
 /// Decode an MCA error status register into a human-readable description.
 /// Returns (error_type, valid, uncorrected).
 fn decode_mci_status(status: u64) -> (u64, bool, bool) {
-    let valid = (status & MCi_STATUS_VAL) != 0;
+    let valid = (status & MCI_STATUS_VAL) != 0;
     let uncorrected = (status & 0x0000_0000_8000_0000_u64) != 0;
     let error_type = (status >> 56) & 0xF;
     (error_type, valid, uncorrected)
@@ -328,7 +325,7 @@ pub fn smoke_test() -> bool {
     let num_banks = (mcg_cap & 0xFF) as u32;
     for bank in 0..num_banks.min(8) {
         let status = rdmsr(IA32_MC0_STATUS + bank * 4);
-        if (status & MCi_STATUS_VAL) != 0 {
+        if (status & MCI_STATUS_VAL) != 0 {
             let (etype, _, uncor) = decode_mci_status(status);
             let _ = &etype;
             let _ = &uncor;

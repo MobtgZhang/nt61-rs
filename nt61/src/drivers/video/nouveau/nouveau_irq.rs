@@ -5,15 +5,25 @@
 //! Clean-room implementation based on public specifications.
 
 use crate::drivers::video::nouveau::nouveau_fb::NouveauDevice;
+use crate::ke::sync::Spinlock;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-/// Count of vblank-interrupt enable requests.
+/// Global Nouveau device pointer, set during `nouveau::init()`.
+/// The IRQ handler uses this to access MMIO registers.
+static IRQ_DEVICE: Spinlock<usize> = Spinlock::new(0);
+
+/// Register the device for IRQ handling (called from `nouveau::init()`).
+pub fn set_irq_device(device: &NouveauDevice) {
+    *IRQ_DEVICE.lock() = device as *const NouveauDevice as usize;
+}
+
+/// count of vblank-interrupt enable requests.
 static VBLANK_ENABLES: AtomicU32 = AtomicU32::new(0);
-/// Count of vblank-interrupt disable requests.
+/// count of vblank-interrupt disable requests.
 static VBLANK_DISABLES: AtomicU32 = AtomicU32::new(0);
-/// Count of IRQ status reads.
+/// count of IRQ status reads.
 static IRQ_STATUS_READS: AtomicU32 = AtomicU32::new(0);
-/// Count of IRQ acknowledge calls.
+/// count of IRQ acknowledge calls.
 static IRQ_ACKS: AtomicU32 = AtomicU32::new(0);
 
 /// Interrupt handler for Nouveau GPU
@@ -22,11 +32,36 @@ pub fn nouveau_irq_handler(irq: u8) -> bool {
     // observers can verify the dispatch path is exercised.
     LAST_IRQ.store(irq as u32, Ordering::Relaxed);
     HANDLER_CALLS.fetch_add(1, Ordering::Relaxed);
-    // TODO: Implement proper interrupt handling
-    // - Read interrupt status register
-    // - Handle vblank interrupts
-    // - Handle error interrupts
-    false
+
+    let dev_addr = *IRQ_DEVICE.lock();
+    if dev_addr == 0 {
+        return false;
+    }
+    let device = unsafe { &*(dev_addr as *const NouveauDevice) };
+
+    // Read the interrupt status register (PMC offset 0x100).
+    let status = nouveau_irq_status(device);
+    if status == 0 {
+        return false;
+    }
+
+    let mut handled = false;
+
+    // Bit 24: vblank interrupt
+    if status & (1 << 24) != 0 {
+        nouveau_irq_clear(device, 1 << 24);
+        handled = true;
+    }
+
+    // Any other set bits indicate an error or unhandled source;
+    // acknowledge them to prevent an IRQ storm.
+    let remaining = status & !(1 << 24);
+    if remaining != 0 {
+        nouveau_irq_clear(device, remaining);
+        handled = true;
+    }
+
+    handled
 }
 
 /// Enable vblank interrupt for the given device.
@@ -43,7 +78,7 @@ pub fn nouveau_irq_disable(device: &NouveauDevice) {
     VBLANK_DISABLES.fetch_add(1, Ordering::Relaxed);
 }
 
-/// Read the current interrupt status register.
+/// read the current interrupt status register.
 pub fn nouveau_irq_status(device: &NouveauDevice) -> u32 {
     IRQ_STATUS_READS.fetch_add(1, Ordering::Relaxed);
     device.read_reg(0x000100)

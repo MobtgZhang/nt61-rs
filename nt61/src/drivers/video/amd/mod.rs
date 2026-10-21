@@ -63,7 +63,7 @@ pub struct RadeonDevice {
 }
 
 impl RadeonDevice {
-    /// Create new Radeon device
+    /// create new Radeon device
     pub fn new(pci_dev: &PciDevice, family: AmdFamily) -> Self {
         Self {
             pci_dev: *pci_dev,
@@ -80,13 +80,13 @@ impl RadeonDevice {
         }
     }
 
-    /// Read MMIO register with bounds checking
+    /// read MMIO register with bounds checking
     #[inline]
     fn read_reg(&self, offset: u32) -> u32 {
         self.mmio.read_reg(offset)
     }
 
-    /// Write MMIO register with bounds checking
+    /// write MMIO register with bounds checking
     #[inline]
     fn write_reg(&self, offset: u32, value: u32) {
         let _ = self.mmio.write_reg(offset, value);

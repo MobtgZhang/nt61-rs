@@ -1,23 +1,21 @@
-//! CLFS Volume Control Block (VCB)
+//! CLFS Volume control Block (VCB)
 //
 //! The VCB represents one open CLFS log (one .blf file + its containers).
 //! It is the root data structure for all CLFS operations.
 
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-use crate::rtl::logging::subsystem::CLFS;
-
 use super::context::{ClfsClientContext, ClfsContainerContext, ClfsContainerState};
-use super::format::{BlfMetadata, CLFS_DEFAULT_CONTAINER_SIZE};
+use super::format::BlfMetadata;
 use super::metadata::{ClfsBaseRecordHeader, ClfsControlRecord, ClfsLogState};
 use super::record::ClfsLsn;
 
 // ============================================================================
-// Access Mode Flags
+// Access Mode flags
 // ============================================================================
 
 /// Desired access mode flags for opening a log.
-pub const CLFS_FLAG_CREATE: u32 = 0x0000_0001; // Create new log
+pub const CLFS_FLAG_CREATE: u32 = 0x0000_0001; // create new log
 pub const CLFS_FLAG_OPEN_EXISTING: u32 = 0x0000_0002; // Open existing log
 pub const CLFS_FLAG_FORCE_APPEND: u32 = 0x0000_0004; // Force append mode
 pub const CLFS_FLAG_FORCE_SEQUENCE: u32 = 0x0000_0008; // Force sequential access
@@ -26,7 +24,7 @@ pub const CLFS_FLAG_FORCE_SEQUENCE: u32 = 0x0000_0008; // Force sequential acces
 pub const CLFS_SHARE_READ: u32 = 0x0000_0001;
 pub const CLFS_SHARE_WRITE: u32 = 0x0000_0002;
 
-/// Create disposition flags.
+/// create disposition flags.
 pub const CLFS_CREATE_NEW: u32 = 0x0000_0001;
 pub const CLFS_CREATE_ALWAYS: u32 = 0x0000_0002;
 pub const CLFS_OPEN_EXISTING: u32 = 0x0000_0003;
@@ -37,7 +35,7 @@ pub const CLFS_TRUNCATE_EXISTING: u32 = 0x0000_0005;
 // VCB Structure
 // ============================================================================
 
-/// Volume Control Block — represents one open CLFS log.
+/// Volume control Block — represents one open CLFS log.
 ///
 /// The VCB is the root of the CLFS in-memory data structures. It holds
 /// the log's metadata, all client contexts, all container contexts,
@@ -48,13 +46,13 @@ pub struct ClfsVcb {
 
     /// Log name (Unicode16, null-terminated).
     pub name: [u16; 260],
-    /// Length of the name in bytes.
+    /// length of the name in bytes.
     pub name_len: usize,
 
     /// Current log state.
     pub state: ClfsLogState,
 
-    /// Control record — loaded from the BLF file.
+    /// control record — loaded from the BLF file.
     pub control_record: ClfsControlRecord,
 
     /// Base record — loaded from the BLF file.
@@ -98,7 +96,7 @@ pub struct ClfsVcb {
 }
 
 impl ClfsVcb {
-    /// Create a new VCB with default values.
+    /// create a new VCB with default values.
     pub fn new() -> Self {
         Self {
             ref_count: AtomicU32::new(1),
@@ -209,7 +207,7 @@ impl ClfsVcb {
         self.total_log_size.fetch_add(ctx.size(), Ordering::Relaxed);
 
         // Update base record
-        self.base_record.rg_containers[cid as usize] = cid as u32; // Offset placeholder
+        self.base_record.rg_containers[cid as usize] = cid as u32; // offset placeholder
 
         Some(cid)
     }

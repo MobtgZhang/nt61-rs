@@ -12,7 +12,6 @@
 //! - Error handling and status reporting
 
 use crate::ke::sync::Spinlock;
-use crate::kprintln;
 
 /// Block device identifier
 pub type BlockDeviceId = usize;
@@ -40,9 +39,9 @@ pub struct BlockDevice {
     pub block_size: u32,
     /// Total number of blocks
     pub total_blocks: u64,
-    /// Read callback
+    /// read callback
     pub read_block: Option<BlockReadFn>,
-    /// Write callback
+    /// write callback
     pub write_block: Option<BlockWriteFn>,
     /// Is the device read-only?
     pub read_only: bool,
@@ -51,7 +50,7 @@ pub struct BlockDevice {
 }
 
 impl BlockDevice {
-    /// Create a new block device descriptor.
+    /// create a new block device descriptor.
     pub fn new(id: BlockDeviceId, name: &'static str) -> Self {
         Self {
             id,
@@ -90,7 +89,7 @@ impl BlockDevice {
         self
     }
 
-    /// Read a single block from the device.
+    /// read a single block from the device.
     pub fn read(&self, lba: u64, buffer: &mut [u8]) -> bool {
         if !self.initialized {
             return false;
@@ -105,7 +104,7 @@ impl BlockDevice {
         }
     }
 
-    /// Write a single block to the device.
+    /// write a single block to the device.
     pub fn write(&self, lba: u64, buffer: &[u8]) -> bool {
         if !self.initialized || self.read_only {
             return false;
@@ -217,12 +216,12 @@ pub fn device_count() -> usize {
     table.count
 }
 
-/// Read a block from a device.
+/// read a block from a device.
 ///
 /// # Arguments
 /// * `device_id` - The device to read from
 /// * `lba` - The logical block address to read
-/// * `buffer` - Buffer to store the read data (must be at least BLOCK_SIZE bytes)
+/// * `buffer` - buffer to store the read data (must be at least BLOCK_SIZE bytes)
 ///
 /// # Returns
 /// * `true` on success
@@ -244,7 +243,7 @@ pub fn read_block(device_id: BlockDeviceId, lba: u64, buffer: &mut [u8]) -> bool
     }
 }
 
-/// Write a block to a device.
+/// write a block to a device.
 ///
 /// # Arguments
 /// * `device_id` - The device to write to
@@ -271,7 +270,7 @@ pub fn write_block(device_id: BlockDeviceId, lba: u64, buffer: &[u8]) -> bool {
     }
 }
 
-/// Read multiple consecutive blocks.
+/// read multiple consecutive blocks.
 ///
 /// Returns the number of blocks successfully read.
 pub fn read_blocks(
@@ -302,7 +301,7 @@ pub fn read_blocks(
     read
 }
 
-/// Write multiple consecutive blocks.
+/// write multiple consecutive blocks.
 ///
 /// Returns the number of blocks successfully written.
 pub fn write_blocks(

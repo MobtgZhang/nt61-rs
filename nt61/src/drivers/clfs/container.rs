@@ -9,12 +9,8 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::rtl::logging::subsystem::CLFS;
-
-use super::context::{
-    ClfsContainerContext, ClfsContainerInformation, ClfsContainerState, ClfsLogScanContext,
-};
-use super::format::{CLFS_DEFAULT_CONTAINER_SIZE, CLFS_MAX_CONTAINERS};
+use super::context::{ClfsContainerContext, ClfsContainerInformation, ClfsLogScanContext};
+use super::format::CLFS_DEFAULT_CONTAINER_SIZE;
 use super::io::{ClfsError, ContainerBuffer};
 use super::vcb::ClfsVcb;
 
@@ -42,7 +38,7 @@ pub fn add_container(vcb: &mut ClfsVcb, size: usize, name: &[u8]) -> Result<u32,
     // Allocate a container ID
     let cid = vcb.alloc_container_id().ok_or(ClfsError::LogFileFull)?;
 
-    // Create the container buffer
+    // create the container buffer
     let container = ContainerBuffer::new(cid, actual_size).ok_or(ClfsError::OutOfMemory)?;
 
     // Initialize the container header (sector 0)
@@ -59,7 +55,7 @@ pub fn add_container(vcb: &mut ClfsVcb, size: usize, name: &[u8]) -> Result<u32,
     // Reserved
     header[23..512].fill(0);
 
-    // Write the header to the container
+    // write the header to the container
     let mut mutable_container = container;
     mutable_container.write_sector(0, &mut header)?;
 
@@ -71,7 +67,7 @@ pub fn add_container(vcb: &mut ClfsVcb, size: usize, name: &[u8]) -> Result<u32,
         name
     );
 
-    // Create the container context
+    // create the container context
     let mut ctx = ClfsContainerContext::new(cid, actual_size as u64);
     ctx.cb_container = actual_size as u64;
 

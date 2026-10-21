@@ -17,8 +17,6 @@ pub mod pci_bus;
 pub mod pnp;
 pub mod usb_bus;
 
-use crate::kprintln;
-
 /// Initialise the bus drivers. Walks PCI, ACPI, and the USB root
 /// hubs and registers every populated device.
 ///
@@ -33,15 +31,7 @@ pub fn init() {
     crate::hal::serial::write_string("D:pci_start\r\n");
     pci_bus::init();
     crate::hal::serial::write_string("D:pci_done\r\n");
-    #[cfg(target_arch = "x86_64")]
-    {
-        crate::hal::serial::write_string("D:acpi_start\r\n");
-        acpi_bus::init();
-        crate::hal::serial::write_string("D:acpi_done\r\n");
-        crate::hal::serial::write_string("D:usb_bus_start\r\n");
-        usb_bus::init();
-        crate::hal::serial::write_string("D:usb_bus_done\r\n");
-    }
+    crate::drivers::arch::init_machine_specific_buses();
 }
 
 /// Smoke test for the bus drivers. Re-enumerates PCI and asserts

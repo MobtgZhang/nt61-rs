@@ -5,12 +5,7 @@
 //! Clean-room implementation based on public specifications.
 
 /// Mali GPU device
-pub struct MaliGpu {
-    /// Base address
-    base: u64,
-    /// GPU type
-    gpu_type: MaliGpuType,
-}
+pub struct MaliGpu {}
 
 #[derive(Debug, Clone, Copy)]
 pub enum MaliGpuType {
@@ -29,9 +24,9 @@ pub enum MaliGpuType {
 }
 
 impl MaliGpu {
-    /// Create new Mali GPU device
-    pub fn new(base: u64, gpu_type: MaliGpuType) -> Self {
-        Self { base, gpu_type }
+    /// create new Mali GPU device
+    pub fn new() -> Self {
+        Self {}
     }
 
     /// Initialize GPU

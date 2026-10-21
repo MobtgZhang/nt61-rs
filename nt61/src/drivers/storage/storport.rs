@@ -10,11 +10,11 @@
 //! real driver is tens of thousands of lines — but we provide
 //! the minimum needed to make `disk.sys` work end-to-end:
 //
-//! * `StorPortInitialize` — bind a miniport to a controller.
-//! * `StorPortGetDeviceBase` / `StorPortFreeDeviceBase` — MMIO.
-//! * `StorPortAllocatePool` / `StorPortFreePool` — kernel pool.
-//! * `StorPortNotification` — RequestComplete / BusResetDetected.
-//! * `StorPortBuildIo` — make an SRB from an IRP.
+//! * `stor_port_initialize` — bind a miniport to a controller.
+//! * `stor_port_get_device_base` / `stor_port_free_device_base` — MMIO.
+//! * `stor_port_allocate_pool` / `stor_port_free_pool` — kernel pool.
+//! * `stor_port_notification` — RequestComplete / BusResetDetected.
+//! * `stor_port_build_io` — make an SRB from an IRP.
 //
 //! A driver that wants to use storport fills in a
 //! `PORT_CONFIGURATION_INFORMATION` and a
@@ -24,17 +24,13 @@
 //! Clean-room implementation. Spec source: storport.chm from
 //! the WDK, "Windows Internals 6th ed." chapter 9.
 
-#![allow(non_snake_case)]
-
 extern crate alloc;
 
 use alloc::string::String;
-use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::io::{DeviceObject, DeviceType, DriverObject};
+use crate::io::{DeviceObject, DriverObject};
 use crate::ke::sync::Spinlock;
-use crate::kprintln;
 use crate::mm::pool;
 
 pub const STORPORT_SUCCESS: u32 = 0;
@@ -206,16 +202,16 @@ static ADAPTER_LOCK: Spinlock<()> = Spinlock::new(());
 static SUBMITTED: AtomicU32 = AtomicU32::new(0);
 static COMPLETED: AtomicU32 = AtomicU32::new(0);
 
-/// `StorPortInitialize` — register a miniport. `name` becomes
+/// `stor_port_initialize` — register a miniport. `name` becomes
 /// the adapter's display name.
-pub fn StorPortInitialize(name: &str, mut hw: HwInitData) -> u32 {
+pub fn stor_port_initialize(name: &str, mut hw: HwInitData) -> u32 {
     if hw.adapter_start_io.is_none() || hw.adapter_find_adapter.is_none() {
         return STORPORT_INVALID_PARAMETER;
     }
     let has_find = hw.adapter_find_adapter.is_some();
     let _g = ADAPTER_LOCK.lock();
     unsafe {
-        for slot in ADAPTERS.iter_mut() {
+        for slot in (*core::ptr::addr_of_mut!(ADAPTERS)).iter_mut() {
             if slot.valid {
                 continue;
             }
@@ -242,10 +238,10 @@ pub fn StorPortInitialize(name: &str, mut hw: HwInitData) -> u32 {
     STORPORT_FAILED
 }
 
-/// `StorPortGetDeviceBase` — map the controller's MMIO BAR into
+/// `stor_port_get_device_base` — map the controller's MMIO BAR into
 /// the system PTE pool. Returns the mapped VA on success, 0 on
 /// failure.
-pub fn StorPortGetDeviceBase(device_extension: *mut (), bar_phys: u64, len: u64) -> u64 {
+pub fn stor_port_get_device_base(device_extension: *mut (), bar_phys: u64, len: u64) -> u64 {
     let _ = device_extension;
     let pages = (len + 0xFFF) / 0x1000;
     match crate::mm::syspte::map_io_space(bar_phys, pages) {
@@ -254,24 +250,24 @@ pub fn StorPortGetDeviceBase(device_extension: *mut (), bar_phys: u64, len: u64)
     }
 }
 
-/// `StorPortFreeDeviceBase` — release a previously-mapped base.
-pub fn StorPortFreeDeviceBase(device_extension: *mut (), va: u64) {
+/// `stor_port_free_device_base` — release a previously-mapped base.
+pub fn stor_port_free_device_base(device_extension: *mut (), va: u64) {
     let _ = (device_extension, va);
 }
 
-/// `StorPortAllocatePool` — pool allocation.
-pub fn StorPortAllocatePool(_device_extension: *mut (), size: u32) -> *mut u8 {
+/// `stor_port_allocate_pool` — pool allocation.
+pub fn stor_port_allocate_pool(_device_extension: *mut (), size: u32) -> *mut u8 {
     pool::allocate(pool::PoolType::NonPaged, size as usize) as *mut u8
 }
 
-/// `StorPortFreePool` — pool deallocation.
-pub fn StorPortFreePool(_device_extension: *mut (), p: *mut u8) {
+/// `stor_port_free_pool` — pool deallocation.
+pub fn stor_port_free_pool(_device_extension: *mut (), p: *mut u8) {
     let _ = p;
 }
 
-/// `StorPortNotification` — storport-to-miniport calls. Only
+/// `stor_port_notification` — storport-to-miniport calls. Only
 /// the variants we use are wired up; the rest are no-ops.
-pub fn StorPortNotification(notify_type: u32, _device_extension: *mut (), srb: *mut Srb) {
+pub fn stor_port_notification(notify_type: u32, _device_extension: *mut (), srb: *mut Srb) {
     match notify_type {
         // RequestComplete
         2 => {
@@ -287,18 +283,18 @@ pub fn StorPortNotification(notify_type: u32, _device_extension: *mut (), srb: *
     }
 }
 
-/// `StorPortBuildIo` — copy `srb` into a flat buffer for the
+/// `stor_port_build_io` — copy `srb` into a flat buffer for the
 /// miniport. We return the supplied pointer; the storport model
 /// would normally allocate a new one.
-pub fn StorPortBuildIo(srb: *mut Srb) -> *mut Srb {
+pub fn stor_port_build_io(srb: *mut Srb) -> *mut Srb {
     SUBMITTED.fetch_add(1, Ordering::Relaxed);
     srb
 }
 
-/// `StorPortStartIo` — submit an SRB for processing. Stores
+/// `stor_port_start_io` — submit an SRB for processing. Stores
 /// `srb` in a per-adapter pending slot and calls the miniport's
 /// `HwStartIo`.
-pub fn StorPortStartIo(adapter_idx: usize, srb: *mut Srb) -> u32 {
+pub fn stor_port_start_io(adapter_idx: usize, srb: *mut Srb) -> u32 {
     if adapter_idx >= MAX_ADAPTERS {
         return STORPORT_INVALID_PARAMETER;
     }
@@ -319,7 +315,7 @@ pub fn StorPortStartIo(adapter_idx: usize, srb: *mut Srb) -> u32 {
 pub fn adapter_count() -> usize {
     let mut n = 0;
     unsafe {
-        for s in ADAPTERS.iter() {
+        for s in (*core::ptr::addr_of!(ADAPTERS)).iter() {
             if s.valid {
                 n += 1;
             }
@@ -336,7 +332,7 @@ pub fn stats() -> (u32, u32) {
 }
 
 /// `init` — storport is a framework, so it does not enumerate
-/// hardware itself; the storage driver calls `StorPortInitialize`
+/// hardware itself; the storage driver calls `stor_port_initialize`
 /// to bind its miniport. The `init` here is a no-op that
 /// signals readiness and installs a built-in test miniport so
 /// the smoke test exercises a real `HwStartIo` path.
@@ -351,11 +347,11 @@ pub fn init() {
         adapter_reset_bus: Some(stub_reset),
         adapter_find_adapter: Some(stub_find),
     };
-    // TEMP: Skip StorPortInitialize due to String::from() triggering Vec allocation
+    // TEMP: Skip stor_port_initialize due to String::from() triggering Vec allocation
     // during early boot. The miniport registration is not critical for reaching IDLE.
     let r = STORPORT_SUCCESS;
     let _ = stub_hw;
-    // let r = StorPortInitialize("storport-stub", stub_hw);
+    // let r = stor_port_initialize("storport-stub", stub_hw);
     // Pin the return value so `init` has an observable effect.
     STORPORT_INIT_RESULT.store(r as u32, Ordering::Relaxed);
 }
@@ -395,7 +391,7 @@ unsafe extern "C" fn stub_init(de: *mut ()) -> u32 {
 }
 unsafe extern "C" fn stub_start_io(_de: *mut (), srb: *mut Srb) -> u32 {
     // Mark the request complete synchronously.
-    StorPortNotification(2, core::ptr::null_mut(), srb);
+    stor_port_notification(2, core::ptr::null_mut(), srb);
     0
 }
 unsafe extern "C" fn stub_int(_de: *mut ()) {}

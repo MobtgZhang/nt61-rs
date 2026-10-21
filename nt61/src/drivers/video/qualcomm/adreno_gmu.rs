@@ -5,15 +5,12 @@
 //! Clean-room implementation based on public specifications.
 
 /// GMU (Graphics Management Unit) device
-pub struct GmuDevice {
-    /// Base address
-    base: u64,
-}
+pub struct GmuDevice {}
 
 impl GmuDevice {
-    /// Create new GMU device
-    pub fn new(base: u64) -> Self {
-        Self { base }
+    /// create new GMU device
+    pub fn new() -> Self {
+        Self {}
     }
 
     /// Initialize GMU
@@ -21,12 +18,12 @@ impl GmuDevice {
         Ok(())
     }
 
-    /// Power on GPU
+    /// power on GPU
     pub fn power_on(&mut self) -> Result<(), ()> {
         Ok(())
     }
 
-    /// Power off GPU
+    /// power off GPU
     pub fn power_off(&mut self) -> Result<(), ()> {
         Ok(())
     }

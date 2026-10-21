@@ -28,7 +28,7 @@ pub struct LsDcCrtc {
 }
 
 impl LsDcCrtc {
-    /// Create a new CRT controller
+    /// create a new CRT controller
     pub fn new(dc_base: u64, pipe: CrtcPipe) -> Self {
         Self {
             dc_base,
@@ -95,13 +95,13 @@ impl LsDcCrtc {
         }
     }
 
-    /// Read a register
+    /// read a register
     #[inline]
     fn read_reg(&self, offset: u32) -> u32 {
         unsafe { core::ptr::read_volatile((self.dc_base + offset as u64) as *const u32) }
     }
 
-    /// Write a register
+    /// write a register
     #[inline]
     fn write_reg(&self, offset: u32, value: u32) {
         unsafe { core::ptr::write_volatile((self.dc_base + offset as u64) as *mut u32, value) }
@@ -240,7 +240,7 @@ pub struct DualCrtcManager {
 }
 
 impl DualCrtcManager {
-    /// Create a new dual CRTC manager
+    /// create a new dual CRTC manager
     pub fn new(dc_base: u64) -> Self {
         Self {
             crtc_a: LsDcCrtc::new(dc_base, CrtcPipe::PipeA),

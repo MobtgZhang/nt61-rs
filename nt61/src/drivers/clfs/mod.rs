@@ -24,8 +24,8 @@
 //! - One or more container files — contain log records
 //
 //! The BLF contains 6 metadata sectors:
-//! - Sector 0: Control Record
-//! - Sector 1: Control Record Shadow
+//! - Sector 0: control Record
+//! - Sector 1: control Record Shadow
 //! - Sector 2: Base Record
 //! - Sector 3: Base Record Shadow
 //! - Sector 4: Truncate Record
@@ -33,25 +33,21 @@
 //
 //! # Clean-room implementation. Spec source: Microsoft CLFS reference.
 
-#![allow(non_snake_case, non_upper_case_globals, dead_code)]
-
 extern crate alloc;
 
 use alloc::boxed::Box;
-use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use crate::ke::sync::Spinlock;
-use crate::rtl::logging::subsystem::CLFS;
 
 pub mod container;
 pub mod context; // Client context, container context, node IDs
-pub mod fcb; // File Control Block
+pub mod fcb; // File control Block
 pub mod format; // BLF disk format, block headers, CRC, sector fixup
 pub mod io; // I/O operations, error types
-pub mod metadata; // Control record, base record, truncate record
+pub mod metadata; // control record, base record, truncate record
 pub mod record; // LSN management, record headers
-pub mod vcb; // Volume Control Block // Container management
+pub mod vcb; // Volume control Block // Container management
 
 // ============================================================================
 // Re-exports
@@ -93,7 +89,7 @@ const MAX_RECORD_SIZE: usize = 64 * 1024;
 const MAX_DATA_SIZE: usize = MAX_RECORD_SIZE - 64;
 
 // ============================================================================
-// Internal Structures
+// internal Structures
 // ============================================================================
 
 /// One in-memory log file entry in the handle table.
@@ -129,7 +125,7 @@ impl LogFileEntry {
         self.valid = true;
     }
 
-    fn invalidate(&mut self) {
+    pub fn invalidate(&mut self) {
         self.valid = false;
         self.vcb = None;
     }
@@ -152,7 +148,7 @@ static mut LOG_TABLE: [LogFileEntry; MAX_LOG_FILES] = [
 
 static LOG_LOCK: Spinlock<()> = Spinlock::new(());
 
-/// Next handle to return. Handle encoding: (slot_index << 16) | generation
+/// Next handle to return. handle encoding: (slot_index << 16) | generation
 static NEXT_HANDLE: AtomicU32 = AtomicU32::new(1);
 
 /// Global statistics.
@@ -166,7 +162,7 @@ static LAST_APPEND_LEN: AtomicU64 = AtomicU64::new(0);
 static LAST_RECORD_MAGIC: AtomicU32 = AtomicU32::new(0);
 static LAST_RECORD_LSN: AtomicU64 = AtomicU64::new(0);
 
-/// Return the share-mode bits of the most recent `ClfsCreateLogFile`.
+/// Return the share-mode bits of the most recent `clfs_create_log_file`.
 pub fn last_create_share() -> u32 {
     LAST_CREATE_SHARE.load(Ordering::Relaxed)
 }
@@ -180,7 +176,7 @@ pub fn last_append_diag() -> (u64, u64) {
 }
 
 /// Return `(last_record_magic, last_record_lsn)` from the most recent
-/// `ClfsWriteLogRecord`.
+/// `clfs_write_log_record`.
 pub fn last_record_diag() -> (u32, u64) {
     (
         LAST_RECORD_MAGIC.load(Ordering::Relaxed),
@@ -189,11 +185,11 @@ pub fn last_record_diag() -> (u32, u64) {
 }
 
 // ============================================================================
-// Handle Management
+// handle Management
 // ============================================================================
 
 /// Encode a handle from slot index and generation.
-fn make_handle(slot: usize, generation: u16) -> u32 {
+pub fn make_handle(slot: usize, generation: u16) -> u32 {
     ((slot as u32) << 16) | (generation as u32)
 }
 
@@ -211,7 +207,7 @@ fn decode_handle(handle: u32) -> Option<(usize, u16)> {
 fn validate_handle(handle: u32) -> Option<&'static mut LogFileEntry> {
     let (slot, gen) = decode_handle(handle)?;
     unsafe {
-        let entry = LOG_TABLE.get_unchecked_mut(slot);
+        let entry = (*core::ptr::addr_of_mut!(LOG_TABLE)).get_unchecked_mut(slot);
         if entry.valid && entry.generation == gen {
             Some(entry)
         } else {
@@ -221,10 +217,10 @@ fn validate_handle(handle: u32) -> Option<&'static mut LogFileEntry> {
 }
 
 // ============================================================================
-// Public API: ClfsCreateLogFile
+// Public API: clfs_create_log_file
 // ============================================================================
 
-/// `ClfsCreateLogFile` — create or open a CLFS log file.
+/// `clfs_create_log_file` — create or open a CLFS log file.
 ///
 /// # Arguments
 /// - `name`: Log file name (e.g., `b"\\??\\C:\\logs\\test.clf"` or `b"\\Registry\\TestLog"`)
@@ -237,7 +233,7 @@ fn validate_handle(handle: u32) -> Option<&'static mut LogFileEntry> {
 /// # Notes
 /// This is a simplified version of the real Windows API. The full API
 /// has additional parameters for security descriptors and extended attributes.
-pub fn ClfsCreateLogFile(name: &[u8], _desired_access: u32, share_access: u32) -> u32 {
+pub fn clfs_create_log_file(name: &[u8], _desired_access: u32, share_access: u32) -> u32 {
     let _g = LOG_LOCK.lock();
 
     // Record the share mode for diagnostics so the parameter is not
@@ -246,7 +242,7 @@ pub fn ClfsCreateLogFile(name: &[u8], _desired_access: u32, share_access: u32) -
 
     // Find a free slot
     let slot = unsafe {
-        for (i, entry) in LOG_TABLE.iter_mut().enumerate() {
+        for (i, entry) in (*core::ptr::addr_of_mut!(LOG_TABLE)).iter_mut().enumerate() {
             if !entry.valid {
                 entry.initialize(name);
                 TOTAL_CREATED.fetch_add(1, Ordering::Relaxed);
@@ -270,24 +266,36 @@ pub fn ClfsCreateLogFile(name: &[u8], _desired_access: u32, share_access: u32) -
 }
 
 /// Simple version that opens with default access.
-pub fn ClfsOpenLogFile(name: &[u8]) -> u32 {
-    ClfsCreateLogFile(name, 0, 0)
+pub fn clfs_open_log_file(name: &[u8]) -> u32 {
+    clfs_create_log_file(name, 0, 0)
+}
+
+/// `clfs_close_log_file` — release a log handle slot.
+pub fn clfs_close_log_file(handle: u32) -> bool {
+    let _g = LOG_LOCK.lock();
+    match validate_handle(handle) {
+        Some(entry) => {
+            entry.invalidate();
+            true
+        }
+        None => false,
+    }
 }
 
 // ============================================================================
-// Public API: ClfsWriteLogRecord
+// Public API: clfs_write_log_record
 // ============================================================================
 
-/// `ClfsWriteLogRecord` — append a record to the log.
+/// `clfs_write_log_record` — append a record to the log.
 ///
 /// # Arguments
-/// - `handle`: Log file handle from `ClfsCreateLogFile`
+/// - `handle`: Log file handle from `clfs_create_log_file`
 /// - `client_id`: Client identifier (for multiplexed logs)
 /// - `data`: Record data to write
 ///
 /// # Returns
 /// `STATUS_SUCCESS` (0) on success, error code otherwise.
-pub fn ClfsWriteLogRecord(handle: u32, client_id: u32, data: &[u8]) -> u32 {
+pub fn clfs_write_log_record(handle: u32, client_id: u32, data: &[u8]) -> u32 {
     // Validate data size
     if data.len() > MAX_DATA_SIZE {
         crate::kprintln_info!(
@@ -333,7 +341,7 @@ pub fn ClfsWriteLogRecord(handle: u32, client_id: u32, data: &[u8]) -> u32 {
         ClfsLsn::NULL
     };
 
-    // Create record header
+    // create record header
     let header = ClfsLogRecordHeader::new_data(lsn, previous_lsn, data.len());
     // Cache the header field values so the variable is observed.
     LAST_RECORD_MAGIC.store(header.record_type as u32, Ordering::Relaxed);
@@ -342,7 +350,7 @@ pub fn ClfsWriteLogRecord(handle: u32, client_id: u32, data: &[u8]) -> u32 {
     // In a real implementation, we would:
     // 1. Find the current container
     // 2. Find the current block within the container
-    // 3. Write the record (header + data)
+    // 3. write the record (header + data)
     // 4. Update the block header's record offset table
     // 5. Update the container's current LSN
     //
@@ -365,10 +373,10 @@ pub fn ClfsWriteLogRecord(handle: u32, client_id: u32, data: &[u8]) -> u32 {
 }
 
 // ============================================================================
-// Public API: ClfsReadLogRecord
+// Public API: clfs_read_log_record
 // ============================================================================
 
-/// `ClfsReadLogRecord` — read a record from the log.
+/// `clfs_read_log_record` — read a record from the log.
 ///
 /// # Arguments
 /// - `handle`: Log file handle
@@ -377,7 +385,7 @@ pub fn ClfsWriteLogRecord(handle: u32, client_id: u32, data: &[u8]) -> u32 {
 ///
 /// # Returns
 /// `STATUS_SUCCESS` (0) on success, error code otherwise.
-pub fn ClfsReadLogRecord(handle: u32, lsn: &mut u64, out: &mut [u8]) -> u32 {
+pub fn clfs_read_log_record(handle: u32, lsn: &mut u64, out: &mut [u8]) -> u32 {
     let _g = LOG_LOCK.lock();
 
     let entry = match validate_handle(handle) {
@@ -401,8 +409,8 @@ pub fn ClfsReadLogRecord(handle: u32, lsn: &mut u64, out: &mut [u8]) -> u32 {
 
     // In a real implementation, we would:
     // 1. Seek to the LSN in the log
-    // 2. Read the record header
-    // 3. Read the record data
+    // 2. read the record header
+    // 3. read the record data
     // 4. Return the data in the output buffer
 
     TOTAL_READ.fetch_add(1, Ordering::Relaxed);
@@ -418,17 +426,17 @@ pub fn ClfsReadLogRecord(handle: u32, lsn: &mut u64, out: &mut [u8]) -> u32 {
 }
 
 // ============================================================================
-// Public API: ClfsFlushBuffers
+// Public API: clfs_flush_buffers
 // ============================================================================
 
-/// `ClfsFlushBuffers` — flush all in-memory log records to disk.
+/// `clfs_flush_buffers` — flush all in-memory log records to disk.
 ///
 /// # Arguments
 /// - `handle`: Log file handle
 ///
 /// # Returns
 /// `STATUS_SUCCESS` (0) on success, error code otherwise.
-pub fn ClfsFlushBuffers(handle: u32) -> u32 {
+pub fn clfs_flush_buffers(handle: u32) -> u32 {
     let _g = LOG_LOCK.lock();
 
     let entry = match validate_handle(handle) {
@@ -441,7 +449,7 @@ pub fn ClfsFlushBuffers(handle: u32) -> u32 {
         None => return STATUS_INVALID_HANDLE,
     };
 
-    // Count active records
+    // count active records
     let appended = TOTAL_APPENDED.load(Ordering::Relaxed);
     TOTAL_FLUSHED.fetch_add(appended, Ordering::Relaxed);
 
@@ -457,10 +465,10 @@ pub fn ClfsFlushBuffers(handle: u32) -> u32 {
 }
 
 // ============================================================================
-// Public API: ClfsMgmtQueryLogInformation
+// Public API: clfs_mgmt_query_log_information
 // ============================================================================
 
-/// `ClfsMgmtQueryLogInformation` — query log state and statistics.
+/// `clfs_mgmt_query_log_information` — query log state and statistics.
 ///
 /// # Arguments
 /// - `handle`: Log file handle
@@ -494,7 +502,7 @@ impl Default for ClfsMgmtLogInformation {
     }
 }
 
-pub fn ClfsMgmtQueryLogInformation(handle: u32, info: &mut ClfsMgmtLogInformation) -> u32 {
+pub fn clfs_mgmt_query_log_information(handle: u32, info: &mut ClfsMgmtLogInformation) -> u32 {
     let _g = LOG_LOCK.lock();
 
     let entry = match validate_handle(handle) {
@@ -531,7 +539,7 @@ pub fn ClfsMgmtQueryLogInformation(handle: u32, info: &mut ClfsMgmtLogInformatio
 // Public API: Container Management
 // ============================================================================
 
-/// `ClfsAddLogContainer` — add a container to the log.
+/// `clfs_add_log_container` — add a container to the log.
 ///
 /// # Arguments
 /// - `handle`: Log file handle
@@ -540,7 +548,7 @@ pub fn ClfsMgmtQueryLogInformation(handle: u32, info: &mut ClfsMgmtLogInformatio
 ///
 /// # Returns
 /// Container ID on success, 0 on failure.
-pub fn ClfsAddLogContainer(handle: u32, size: u64, name: &[u8]) -> u32 {
+pub fn clfs_add_log_container(handle: u32, size: u64, name: &[u8]) -> u32 {
     let _g = LOG_LOCK.lock();
 
     let entry = match validate_handle(handle) {
@@ -573,8 +581,8 @@ pub fn ClfsAddLogContainer(handle: u32, size: u64, name: &[u8]) -> u32 {
     }
 }
 
-/// `ClfsRemoveLogContainer` — remove a container from the log.
-pub fn ClfsRemoveLogContainer(handle: u32, container_id: u32, delete_file: bool) -> u32 {
+/// `clfs_remove_log_container` — remove a container from the log.
+pub fn clfs_remove_log_container(handle: u32, container_id: u32, delete_file: bool) -> u32 {
     let _g = LOG_LOCK.lock();
 
     let entry = match validate_handle(handle) {
@@ -607,7 +615,7 @@ pub fn ClfsRemoveLogContainer(handle: u32, container_id: u32, delete_file: bool)
 pub fn log_count() -> usize {
     let mut n = 0;
     unsafe {
-        for entry in LOG_TABLE.iter() {
+        for entry in (*core::ptr::addr_of!(LOG_TABLE)).iter() {
             if entry.valid {
                 n += 1;
             }

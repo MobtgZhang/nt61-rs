@@ -51,9 +51,10 @@
 // Suppressing them here keeps the source readable: a driver
 // that only carries the symbols it actively uses would not
 // be a faithful NT 6.1 driver stub.
-#![allow(unused_imports)]
 
 extern crate alloc;
+
+pub mod arch;
 
 pub mod audio;
 pub mod bus;
@@ -64,35 +65,22 @@ pub mod storage;
 pub mod timer;
 pub mod usb;
 pub mod video;
+pub mod virtio;
 pub mod wdf;
 
 pub mod pe;
-#[cfg(target_arch = "x86_64")]
-pub mod smoke;
-
-#[cfg(target_arch = "x86_64")]
-pub mod loader;
 
 pub mod bootvid;
 pub mod ci;
 pub mod clfs;
 pub mod fileinfo;
 pub mod fltmgr;
-#[cfg(target_arch = "x86_64")]
-pub mod kdcom;
 pub mod ksec;
-#[cfg(target_arch = "x86_64")]
 pub mod partmgr;
 pub mod pcw;
-#[cfg(target_arch = "x86_64")]
-pub mod pshed; // Machine-Check Architecture — x86 only
 pub mod spldr;
-#[cfg(target_arch = "x86_64")]
 pub mod volmgr;
-#[cfg(target_arch = "x86_64")]
 pub mod volsnap;
-
-use crate::kprintln;
 
 /// Initialise the entire driver subsystem. Calls each bus and
 /// functional driver in the order Windows does. Idempotent —
@@ -100,8 +88,6 @@ use crate::kprintln;
 pub fn init() {
     crate::hal::serial::write_string("D:init-enter\r\n");
     // // kprintln!("  Initialising driver subsystem...");
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("D:bus_start\r\n");
     bus::init();
     crate::hal::serial::write_string("D:bus_done\r\n");
     crate::hal::serial::write_string("D:storage_start\r\n");
@@ -136,20 +122,7 @@ pub fn init() {
         let info = crate::hal::common::framebuffer::info();
         bootvid::init_from_framebuffer(info.address, info.width, info.height, info.pitch);
     }
-    #[cfg(target_arch = "x86_64")]
-    {
-        const BOCHS_LFB_BASE: u64 = 0xE000_0000;
-        const BOCHS_LFB_WIDTH: u32 = 1024;
-        const BOCHS_LFB_HEIGHT: u32 = 768;
-        const BOCHS_LFB_PITCH: u32 = BOCHS_LFB_WIDTH * 4; // 32 bpp
-        bootvid::init_from_framebuffer(
-            BOCHS_LFB_BASE,
-            BOCHS_LFB_WIDTH,
-            BOCHS_LFB_HEIGHT,
-            BOCHS_LFB_PITCH,
-        );
-        crate::hal::serial::write_string("D:bootvid_lfb_bound\r\n");
-    }
+    arch::init_machine_specific_drivers();
 
     // Force the bootvid LFB path on for non-x86_64 builds so the
     // bootvid console paints into the LFB instead of falling
@@ -165,8 +138,6 @@ pub fn init() {
     wdf::init();
     crate::hal::serial::write_string("D:wdf_done\r\n");
     crate::hal::serial::write_string("D:pre_kdcom\r\n");
-    #[cfg(target_arch = "x86_64")]
-    kdcom::init();
     crate::hal::serial::write_string("D:post_kdcom\r\n");
     crate::hal::serial::write_string("D:pre_bootvid\r\n");
     // bootvid now has a cross-arch LFB backend driven by the
@@ -181,8 +152,6 @@ pub fn init() {
     // ci::init();  // DISABLED: code-integrity (CI) policy engine not yet wired
     crate::hal::serial::write_string("D:post_ci\r\n");
     crate::hal::serial::write_string("D:pre_pshed\r\n");
-    #[cfg(target_arch = "x86_64")]
-    pshed::init(); // PSHED enable (DR-1): init() is implemented and idempotent
     crate::hal::serial::write_string("D:post_pshed\r\n");
     crate::hal::serial::write_string("D:pre_ksec\r\n");
     // ksec::init();  // DISABLED: kernel security subsystem — depends on full seaccess init
@@ -197,8 +166,6 @@ pub fn init() {
     // volmgr::init();  // DISABLED: depends on partmgr
     crate::hal::serial::write_string("D:post_volmgr\r\n");
     crate::hal::serial::write_string("D:pre_volsnap\r\n");
-    #[cfg(target_arch = "x86_64")]
-    volsnap::init();
     crate::hal::serial::write_string("D:post_volsnap\r\n");
     crate::hal::serial::write_string("D:pre_fltmgr\r\n");
     // fltmgr::init();  // DISABLED: minifilter framework — large surface, leave for later
@@ -219,16 +186,15 @@ pub fn init() {
 /// Aggregator: runs every driver's smoke test and returns `true`
 /// iff every one passes.
 pub fn smoke_test() -> bool {
-    #[cfg(target_arch = "x86_64")]
-    {
-        smoke::smoke_test()
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        true
-    }
+    arch::smoke_test()
 }
 
+pub mod acpi;
 pub mod common;
+pub mod dispatch;
+pub mod keyboard;
 pub mod mouse;
+pub mod ntfs;
+pub mod pci;
+pub mod serial;
 pub mod tcpip;

@@ -11,9 +11,6 @@
 //! revision 1.2. No code is copied from any Microsoft or ReactOS
 //! source file.
 
-use crate::kprintln;
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
-
 // ============================================================================
 // Constants
 // ============================================================================
@@ -115,7 +112,7 @@ pub const TRB_LST: u32 = 1 << 10; // Stream Last
 pub const TRB_HWO: u32 = 1 << 0; // Hardware Owned
 pub const TRB_AER: u32 = 1 << 6; // Accept Event on Error
 
-/// Setup Stage TRB Transfer Type
+/// Setup Stage TRB Transfer r#type
 const SETUP_STAGE_SETUP: u8 = 0;
 
 /// Status Stage TRB Direction
@@ -133,7 +130,7 @@ pub struct XhciTrb {
 }
 
 impl XhciTrb {
-    /// Create a LINK TRB
+    /// create a LINK TRB
     pub fn link(ring_phys: u64, tc: bool) -> Self {
         Self {
             ptr_low: ring_phys as u32,
@@ -143,7 +140,7 @@ impl XhciTrb {
         }
     }
 
-    /// Create a NOOP TRB
+    /// create a NOOP TRB
     pub fn noop() -> Self {
         Self {
             ptr_low: 0,
@@ -153,7 +150,7 @@ impl XhciTrb {
         }
     }
 
-    /// Create a SETUP stage TRB
+    /// create a SETUP stage TRB
     pub fn setup_stage(request_type: u8, request: u8, value: u16, index: u16, length: u16) -> Self {
         let bm = (((request_type as u32) << 24) | ((request as u32) << 16) | ((value as u32) << 0))
             as u32;
@@ -166,7 +163,7 @@ impl XhciTrb {
         }
     }
 
-    /// Create a DATA stage TRB
+    /// create a DATA stage TRB
     pub fn data_stage(ptr: u64, len: u32, dir_in: bool, chain: bool) -> Self {
         let dir_val = if dir_in {
             STATUS_STAGE_IN
@@ -183,7 +180,7 @@ impl XhciTrb {
         }
     }
 
-    /// Create a STATUS stage TRB
+    /// create a STATUS stage TRB
     pub fn status_stage(dir_in: bool, chain: bool) -> Self {
         let dir_val = if dir_in {
             STATUS_STAGE_IN
@@ -199,7 +196,7 @@ impl XhciTrb {
         }
     }
 
-    /// Create a NORMAL TRB
+    /// create a NORMAL TRB
     pub fn normal(ptr: u64, len: u32, td_size: u8, chain: bool, ioc: bool) -> Self {
         Self {
             ptr_low: ptr as u32,
@@ -245,7 +242,7 @@ impl XhciTrb {
 
 /// Command TRB for slot management
 impl XhciTrb {
-    /// Create an ENABLE SLOT command
+    /// create an ENABLE SLOT command
     pub fn enable_slot(slot_type: u8) -> Self {
         Self {
             ptr_low: 0,
@@ -255,7 +252,7 @@ impl XhciTrb {
         }
     }
 
-    /// Create an ADDRESS DEVICE command
+    /// create an ADDRESS DEVICE command
     pub fn address_device(bdf: u32, ctx_base: u64) -> Self {
         Self {
             ptr_low: ctx_base as u32,
@@ -265,7 +262,7 @@ impl XhciTrb {
         }
     }
 
-    /// Create a DISABLE SLOT command
+    /// create a DISABLE SLOT command
     pub fn disable_slot(slot_id: u8) -> Self {
         Self {
             ptr_low: 0,
@@ -440,7 +437,7 @@ static mut XHCI_COUNT: usize = 0;
 /// Register a new xHCI controller. Returns false if all slots are full.
 pub(crate) fn push_xhci(c: XhciController) -> bool {
     unsafe {
-        if XHCI_COUNT < XHCI_CONTROLLERS.len() {
+        if XHCI_COUNT < (*core::ptr::addr_of!(XHCI_CONTROLLERS)).len() {
             XHCI_CONTROLLERS[XHCI_COUNT] = Some(c);
             XHCI_COUNT += 1;
             true
@@ -473,11 +470,11 @@ pub(crate) fn placeholder_controller() -> XhciController {
     }
 }
 
-/// Read-only diagnostic snapshot of a controller. Used by smoke
+/// read-only diagnostic snapshot of a controller. Used by smoke
 /// tests so all fields are exercised by the diagnostic path.
 pub fn diagnostics(controller: usize) -> Option<XhciDiagnostics> {
     unsafe {
-        XHCI_CONTROLLERS
+        (*core::ptr::addr_of!(XHCI_CONTROLLERS))
             .get(controller)
             .and_then(|c| c.as_ref())
             .map(|c| XhciDiagnostics {
@@ -553,13 +550,13 @@ unsafe fn doorbell(base: u64, slot: u8, value: u32) {
     core::ptr::write_volatile((base + (slot as u64) * 4) as *mut u32, value);
 }
 
-/// Read the runtime-register base (64-bit) for the given controller slot.
+/// read the runtime-register base (64-bit) for the given controller slot.
 /// This exercises both `mmio_read64` and the doorbell helpers indirectly
 /// when used during enumeration, and provides a defensive accessor so
 /// smoke tests can verify the controller configuration space is
 /// reachable.
 pub(crate) unsafe fn read_runtime_base(controller: usize) -> u64 {
-    if let Some(Some(c)) = XHCI_CONTROLLERS.get(controller) {
+    if let Some(Some(c)) = (*core::ptr::addr_of!(XHCI_CONTROLLERS)).get(controller) {
         // HCCPARAMS bit 0 reports whether the runtime base fits in
         // a single 32-bit dword or requires a 64-bit pointer; we
         // align with the safe accessor semantics.
@@ -569,7 +566,7 @@ pub(crate) unsafe fn read_runtime_base(controller: usize) -> u64 {
     }
 }
 
-/// Write a 64-bit context pointer for slot `slot` to the DCBAA.
+/// write a 64-bit context pointer for slot `slot` to the DCBAA.
 /// Used by `address_device()` in the real driver; exposes
 /// `mmio_write64` to the external API so the helper does not become
 /// dead-code.
@@ -578,7 +575,7 @@ pub(crate) unsafe fn write_slot_context(
     slot: u8,
     ctx_phys: u64,
 ) -> Result<(), &'static str> {
-    if let Some(Some(c)) = XHCI_CONTROLLERS.get_mut(controller) {
+    if let Some(Some(c)) = (*core::ptr::addr_of_mut!(XHCI_CONTROLLERS)).get_mut(controller) {
         // Per xHCI 1.2 the DCBAA stride is 8 bytes.
         mmio_write64(c.mmio_base, (slot as u32) * 8, ctx_phys);
         Ok(())
@@ -590,7 +587,7 @@ pub(crate) unsafe fn write_slot_context(
 /// Increment the command-event index for the indexed controller.
 /// Used by smoke tests to keep the field alive.
 unsafe fn bump_cmd_event_idx(controller: usize) {
-    if let Some(Some(c)) = XHCI_CONTROLLERS.get_mut(controller) {
+    if let Some(Some(c)) = (*core::ptr::addr_of_mut!(XHCI_CONTROLLERS)).get_mut(controller) {
         c.cmd_event_idx = c.cmd_event_idx.wrapping_add(1);
     }
 }
@@ -611,15 +608,15 @@ pub fn init() {
     // Publish the observed controller count so callers can query the
     // result of `init()` without re-walking the global array. We
     // also retain the local `found` for any future logging hooks.
-    INIT_FOUND_CONTROLLERS.store(found, AtomicOrdering);
+    INIT_FOUND_CONTROLLERS.store(found, ATOMIC_ORDERING);
 
     // Reset cached statistics so the next `stats()` reflects a clean run.
-    TOTAL_COMMANDS_EXECUTED.store(0, AtomicOrdering);
-    TOTAL_TRANSFERS_SUBMITTED.store(0, AtomicOrdering);
+    TOTAL_COMMANDS_EXECUTED.store(0, ATOMIC_ORDERING);
+    TOTAL_TRANSFERS_SUBMITTED.store(0, ATOMIC_ORDERING);
 }
 
 /// Relaxed ordering shorthand used throughout this module.
-const AtomicOrdering: core::sync::atomic::Ordering = core::sync::atomic::Ordering::Relaxed;
+const ATOMIC_ORDERING: core::sync::atomic::Ordering = core::sync::atomic::Ordering::Relaxed;
 
 /// Number of controllers observed by the most recent `init()`.
 static INIT_FOUND_CONTROLLERS: core::sync::atomic::AtomicU32 =
@@ -633,17 +630,17 @@ static TOTAL_TRANSFERS_SUBMITTED: core::sync::atomic::AtomicU32 =
 
 /// Return the number of xHCI controllers observed during `init()`.
 pub fn init_found() -> u32 {
-    INIT_FOUND_CONTROLLERS.load(AtomicOrdering)
+    INIT_FOUND_CONTROLLERS.load(ATOMIC_ORDERING)
 }
 
 /// Return the cumulative command execution count.
 pub fn commands_executed() -> u32 {
-    TOTAL_COMMANDS_EXECUTED.load(AtomicOrdering)
+    TOTAL_COMMANDS_EXECUTED.load(ATOMIC_ORDERING)
 }
 
 /// Return the cumulative transfer submission count.
 pub fn transfers_submitted() -> u32 {
-    TOTAL_TRANSFERS_SUBMITTED.load(AtomicOrdering)
+    TOTAL_TRANSFERS_SUBMITTED.load(ATOMIC_ORDERING)
 }
 
 // ============================================================================
@@ -669,11 +666,11 @@ fn get_port_reg(c: &XhciController, port: u8) -> u32 {
     unsafe { mmio_read32(c.mmio_base + c.cap_length as u64, port_offset) }
 }
 
-/// Read port status-change bits (CSC, PEC, PRC, etc.).
+/// read port status-change bits (CSC, PEC, PRC, etc.).
 /// Returns the set of clearable bits that were set after the last read.
 pub fn clear_port_status_changes(controller: usize, port: u8) -> u32 {
     unsafe {
-        if let Some(Some(c)) = XHCI_CONTROLLERS.get(controller) {
+        if let Some(Some(c)) = (*core::ptr::addr_of!(XHCI_CONTROLLERS)).get(controller) {
             let port_reg_base = 0x400 + (port as u32) * 0x10;
             let op_base = c.mmio_base + c.cap_length as u64;
             let portsc = mmio_read32(op_base, port_reg_base);
@@ -693,7 +690,7 @@ pub fn clear_port_status_changes(controller: usize, port: u8) -> u32 {
 /// Check if port has device connected
 pub fn is_port_connected(controller: usize, port: u8) -> bool {
     unsafe {
-        match XHCI_CONTROLLERS.get(controller) {
+        match (*core::ptr::addr_of!(XHCI_CONTROLLERS)).get(controller) {
             Some(Some(c)) => (get_port_reg(c, port) & PORTSC_CCS) != 0,
             _ => false,
         }
@@ -703,7 +700,7 @@ pub fn is_port_connected(controller: usize, port: u8) -> bool {
 /// Get port speed
 pub fn get_port_speed(controller: usize, port: u8) -> UsbSpeed {
     unsafe {
-        match XHCI_CONTROLLERS.get(controller) {
+        match (*core::ptr::addr_of!(XHCI_CONTROLLERS)).get(controller) {
             Some(Some(c)) => UsbSpeed::from_portsc(get_port_reg(c, port)),
             _ => UsbSpeed::Full,
         }
@@ -713,7 +710,7 @@ pub fn get_port_speed(controller: usize, port: u8) -> UsbSpeed {
 /// Reset a port
 pub fn reset_port(controller: usize, port: u8) -> Result<UsbSpeed, &'static str> {
     unsafe {
-        let c = match XHCI_CONTROLLERS.get_mut(controller) {
+        let c = match (*core::ptr::addr_of_mut!(XHCI_CONTROLLERS)).get_mut(controller) {
             Some(Some(c)) => c,
             _ => return Err("Invalid controller"),
         };
@@ -759,13 +756,13 @@ pub fn reset_port(controller: usize, port: u8) -> Result<UsbSpeed, &'static str>
 /// Execute a command TRB on the command ring
 fn execute_command(c: &mut XhciController, trb: XhciTrb) -> Result<u32, &'static str> {
     // In real implementation, would:
-    // 1. Write TRB to command ring
+    // 1. write TRB to command ring
     // 2. Ring doorbell 0
     // 3. Wait for command completion event
 
     // Increment the cumulative command counter so smoke tests and
     // diagnostics can verify the path was exercised.
-    TOTAL_COMMANDS_EXECUTED.fetch_add(1, AtomicOrdering);
+    TOTAL_COMMANDS_EXECUTED.fetch_add(1, ATOMIC_ORDERING);
     // Stash the controller pointer so external callers can correlate
     // commands back to their originating controller. The real driver
     // would use this to look up the active command ring.
@@ -777,7 +774,7 @@ fn execute_command(c: &mut XhciController, trb: XhciTrb) -> Result<u32, &'static
 /// Enable a device slot
 pub fn enable_slot(slot_type: u8) -> Result<u8, &'static str> {
     unsafe {
-        let c = match XHCI_CONTROLLERS.get_mut(0) {
+        let c = match (*core::ptr::addr_of_mut!(XHCI_CONTROLLERS)).get_mut(0) {
             Some(Some(c)) => c,
             _ => return Err("No controller"),
         };
@@ -798,7 +795,7 @@ pub fn address_device(
     ctx_base: u64,
 ) -> Result<(), &'static str> {
     unsafe {
-        let c = match XHCI_CONTROLLERS.get_mut(0) {
+        let c = match (*core::ptr::addr_of_mut!(XHCI_CONTROLLERS)).get_mut(0) {
             Some(Some(c)) => c,
             _ => return Err("No controller"),
         };
@@ -886,7 +883,7 @@ pub fn control_transfer(
     unsafe {
         doorbell(controller as u64, slot, payload);
     }
-    TOTAL_TRANSFERS_SUBMITTED.fetch_add(1, AtomicOrdering);
+    TOTAL_TRANSFERS_SUBMITTED.fetch_add(1, ATOMIC_ORDERING);
     Ok(buf_addr as u32)
 }
 
@@ -968,7 +965,7 @@ impl Default for UsbDevice {
 
 pub fn smoke_test() -> bool {
     unsafe {
-        for (i, c) in XHCI_CONTROLLERS.iter().enumerate() {
+        for (i, c) in (*core::ptr::addr_of!(XHCI_CONTROLLERS)).iter().enumerate() {
             if let Some(ctrl) = c {
                 if ctrl.initialised {
                     // Check ports. We count connected and enabled ports
@@ -991,7 +988,7 @@ pub fn smoke_test() -> bool {
                     }
                     SUMMARY_PER_CONTROLLER[i].store(
                         (port_total << 16) | (port_connected << 8) | port_enabled,
-                        AtomicOrdering,
+                        ATOMIC_ORDERING,
                     );
                     // Exercise the 64-bit MMIO helper so it's not
                     // eliminated as dead code.
@@ -1028,6 +1025,6 @@ static SUMMARY_PER_CONTROLLER: [core::sync::atomic::AtomicU32; 4] = [
 /// Return `(total, connected, enabled)` for the indexed controller
 /// from the most recent `smoke_test()` call.
 pub fn smoke_summary(controller: usize) -> (u32, u32, u32) {
-    let v = SUMMARY_PER_CONTROLLER[controller].load(AtomicOrdering);
+    let v = SUMMARY_PER_CONTROLLER[controller].load(ATOMIC_ORDERING);
     (((v >> 16) & 0xFF), ((v >> 8) & 0xFF), (v & 0xFF))
 }

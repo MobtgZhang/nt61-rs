@@ -5,8 +5,6 @@
 //! miniport is several hundred lines per driver; we only need
 //! the registration shim for the bootstrap.
 
-use crate::kprintln;
-
 /// Initialize the NDIS miniport layer
 pub fn init() {
     // kprintln!("      NDIS miniport: registration helpers ready");

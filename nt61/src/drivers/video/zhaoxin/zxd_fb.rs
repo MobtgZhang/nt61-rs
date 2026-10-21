@@ -16,7 +16,7 @@ use crate::drivers::video::core::gpu_common::{
 };
 use crate::hal::common::pci::PciDevice;
 
-use super::pci_ids::{self, DisplayFormat, ZhaoxinVariant};
+use super::pci_ids::{self, ZhaoxinVariant};
 use super::zxd_reg::*;
 
 // =====================================================================
@@ -53,7 +53,7 @@ pub struct ZxDDevice {
 }
 
 impl ZxDDevice {
-    /// Create a new ZX-D device
+    /// create a new ZX-D device
     pub fn new(pci_dev: &PciDevice, variant: ZhaoxinVariant) -> Self {
         Self {
             pci_dev: *pci_dev,
@@ -71,7 +71,7 @@ impl ZxDDevice {
         }
     }
 
-    /// Read a MMIO register
+    /// read a MMIO register
     #[inline]
     pub fn read_reg(&self, offset: u32) -> u32 {
         if self.mmio_base == 0 {
@@ -80,7 +80,7 @@ impl ZxDDevice {
         unsafe { core::ptr::read_volatile((self.mmio_base + offset as u64) as *const u32) }
     }
 
-    /// Write a MMIO register
+    /// write a MMIO register
     #[inline]
     pub fn write_reg(&self, offset: u32, value: u32) {
         if self.mmio_base == 0 {
@@ -91,7 +91,7 @@ impl ZxDDevice {
         }
     }
 
-    /// Read a MMIO register with 64-bit address
+    /// read a MMIO register with 64-bit address
     #[inline]
     pub fn read_reg64(&self, offset: u32) -> u64 {
         if self.mmio_base == 0 {
@@ -100,7 +100,7 @@ impl ZxDDevice {
         unsafe { core::ptr::read_volatile((self.mmio_base + offset as u64) as *const u64) }
     }
 
-    /// Write a MMIO register with 64-bit address
+    /// write a MMIO register with 64-bit address
     #[inline]
     pub fn write_reg64(&self, offset: u32, value: u64) {
         if self.mmio_base == 0 {
@@ -169,7 +169,7 @@ impl GpuDriver for ZxDDevice {
         {
             use crate::hal::common::pci;
 
-            // Read PCI BARs
+            // read PCI BARs
             self.mmio_base = pci::read_bar(&self.pci_dev, 0);
             self.fb_phys = pci::read_bar(&self.pci_dev, 1);
 
@@ -184,7 +184,7 @@ impl GpuDriver for ZxDDevice {
             // Enable bus mastering
             pci::enable_bus_mastering(&self.pci_dev);
 
-            // Read revision
+            // read revision
             self.revision = self.pci_dev.revision;
 
             // Reset DC

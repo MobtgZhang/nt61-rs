@@ -9,7 +9,6 @@ use crate::hal::common::pci::{self, PciDevice};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
-#[allow(dead_code)]
 // =====================================================================
 // GPU Vendor IDs
 // =====================================================================
@@ -115,7 +114,7 @@ pub struct GpuDeviceInfo {
 }
 
 impl GpuDeviceInfo {
-    /// Create new GPU device info from PCI device
+    /// create new GPU device info from PCI device
     pub fn from_pci(pci_dev: &PciDevice) -> Self {
         Self {
             vendor_id: pci_dev.vendor_id,
@@ -254,7 +253,7 @@ pub struct DisplayMode {
 }
 
 impl DisplayMode {
-    /// Create a new display mode
+    /// create a new display mode
     pub fn new(width: u32, height: u32, refresh_rate: u32, bpp: u32) -> Self {
         let format = match bpp {
             32 => PixelFormat::Bgra8888,
@@ -310,7 +309,7 @@ pub struct GpuFramebufferInfo {
 }
 
 impl GpuFramebufferInfo {
-    /// Create new framebuffer info
+    /// create new framebuffer info
     pub fn new(address: u64, width: u32, height: u32, pitch: u32, bpp: u32) -> Self {
         let format = match bpp {
             32 => PixelFormat::Bgra8888,
@@ -427,7 +426,7 @@ pub struct DisplayHead {
 }
 
 impl DisplayHead {
-    /// Create a new display head
+    /// create a new display head
     pub fn new(connector: DisplayConnector, mode: DisplayMode) -> Self {
         Self {
             connector,
@@ -733,9 +732,9 @@ pub enum NvidiaArch {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ZhaoxinVariant {
     /// ZX-D (Wudaokou)
-    ZX_D,
+    ZxD,
     /// ZX-E / KX-6000 (Lujiazui)
-    ZX_E,
+    ZxE,
     /// KX-7000 (Shijidadao)
     KX7000,
     /// Glenfly GT-10C0
@@ -1028,7 +1027,7 @@ fn nvidia_arch_from_device_id(device_id: u16) -> NvidiaArch {
 fn zhaoxin_variant_from_device_id(device_id: u16) -> ZhaoxinVariant {
     // ZX-E / KX-6000: 0x0101-0x0108
     if (0x0101..=0x0108).contains(&device_id) {
-        return ZhaoxinVariant::ZX_E;
+        return ZhaoxinVariant::ZxE;
     }
     // KX-7000: likely different range
     if device_id == 0x0B00 || device_id == 0x0B01 {
@@ -1122,7 +1121,7 @@ pub struct GpuDriverRegistry {
 }
 
 impl GpuDriverRegistry {
-    /// Create new registry
+    /// create new registry
     pub fn new() -> Self {
         Self {
             drivers: Vec::new(),

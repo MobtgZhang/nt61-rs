@@ -28,7 +28,7 @@ pub struct I915Framebuffer {
 }
 
 impl I915Framebuffer {
-    /// Create new framebuffer
+    /// create new framebuffer
     pub fn new(mmio_base: u64, fb_phys: u64, fb_size: u64) -> Self {
         Self {
             mmio_base,
@@ -42,13 +42,13 @@ impl I915Framebuffer {
         }
     }
 
-    /// Read register
+    /// read register
     #[inline]
     pub fn read_reg(&self, offset: u32) -> u32 {
         unsafe { core::ptr::read_volatile((self.mmio_base + offset as u64) as *const u32) }
     }
 
-    /// Write register
+    /// write register
     #[inline]
     pub fn write_reg(&self, offset: u32, value: u32) {
         unsafe { core::ptr::write_volatile((self.mmio_base + offset as u64) as *mut u32, value) }
@@ -119,7 +119,7 @@ impl I915Framebuffer {
         // Stride
         self.write_reg(PIPEA_DSPSURFACE_STRIDE, self.pitch);
 
-        // Offset
+        // offset
         self.write_reg(PIPEA_DSPAOFFSET, 0);
 
         // Size

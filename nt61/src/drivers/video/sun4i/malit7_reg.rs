@@ -26,7 +26,7 @@ pub const MALIT7_L20_CTRL: u32 = 0x2000;
 pub const MALIT7_L21_CTRL: u32 = 0x2800;
 pub const MALIT7_L2_STATUS: u32 = 0x2004;
 
-/// Control values
+/// control values
 pub const MALIT7_GP_SOFT_RESET: u32 = 1 << 0;
 pub const MALIT7_PP_SOFT_RESET: u32 = 1 << 0;
 pub const MALIT7_ENABLE: u32 = 1 << 0;

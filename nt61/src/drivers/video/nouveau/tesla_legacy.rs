@@ -217,7 +217,7 @@ pub fn to_gpu_features(features: &TeslaLegacyFeatures) -> GpuFeatures {
 }
 
 // =====================================================================
-// Device Name Lookup
+// Device name Lookup
 // =====================================================================
 
 /// Get device name from device ID
@@ -382,14 +382,14 @@ pub fn init_framebuffer(
     Ok(())
 }
 
-/// Write a register
+/// write a register
 pub fn write_reg(base: u64, offset: u32, value: u32) {
     unsafe {
         core::ptr::write_volatile((base + offset as u64) as *mut u32, value);
     }
 }
 
-/// Read a register
+/// read a register
 pub fn read_reg(base: u64, offset: u32) -> u32 {
     unsafe { core::ptr::read_volatile((base + offset as u64) as *const u32) }
 }

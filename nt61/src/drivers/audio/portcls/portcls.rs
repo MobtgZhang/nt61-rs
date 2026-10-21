@@ -8,13 +8,12 @@
 //! - Port driver interface
 //! - Miniport driver registration
 //! - Audio stream management
-//! - Power management integration
+//! - power management integration
 //
 //! Clean-room implementation based on Windows PortCls documentation
 //! and audio driver architecture.
 
 use crate::ke::sync::Spinlock;
-use crate::kprintln;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -74,7 +73,7 @@ pub struct AudioFormat {
     pub channels: u16,
     /// Valid bits per sample (for 24-bit in 32-bit container)
     pub valid_bits_per_sample: u16,
-    /// Buffer size in bytes
+    /// buffer size in bytes
     pub buffer_size: u32,
 }
 
@@ -122,14 +121,14 @@ pub struct AudioStream {
 }
 
 impl AudioStream {
-    /// Read-only diagnostic snapshot of the stream's DMA region.
+    /// read-only diagnostic snapshot of the stream's DMA region.
     pub fn buffer_diagnostics(&self) -> (u64, u64, usize) {
         (self.buffer_virt, self.buffer_phys, self.buffer_size)
     }
 }
 
 impl AudioStream {
-    /// Create a new audio stream
+    /// create a new audio stream
     fn new(index: u32, format: AudioFormat) -> Self {
         Self {
             index,
@@ -249,12 +248,12 @@ pub struct PortWaveRT {
     streams: Vec<AudioStream>,
     /// Stream counter
     next_stream_id: u32,
-    /// Power state
+    /// power state
     power_state: u32, // 0 = D0, 1 = D1, 2 = D2, 3 = D3
 }
 
 impl PortWaveRT {
-    /// Create a new WaveRT port
+    /// create a new WaveRT port
     pub fn new(description: &'static str) -> Self {
         Self {
             port_type: PortType::WaveRt,
@@ -281,7 +280,7 @@ impl PortWaveRT {
         Ok(())
     }
 
-    /// Create a new stream
+    /// create a new stream
     pub fn create_stream(&mut self, format: AudioFormat) -> Result<u32, &'static str> {
         let stream_id = self.next_stream_id;
         self.next_stream_id += 1;
@@ -387,7 +386,7 @@ impl PortWaveRT {
 
     /// Set device power state
     pub fn set_power_state(&mut self, state: u32) {
-        // kprintln!("  [PortCls] Power state transition: D{} -> D{}", self.power_state, state);
+        // kprintln!("  [PortCls] power state transition: D{} -> D{}", self.power_state, state);
         self.power_state = state;
 
         if state == 0 {
@@ -486,7 +485,7 @@ pub fn get_port(index: usize) -> Option<&'static dyn PortDriver> {
     })
 }
 
-/// Create a WaveRT port with a miniport
+/// create a WaveRT port with a miniport
 pub fn create_wavert_port(description: &'static str, miniport: Box<dyn MiniportWaveRT>) -> usize {
     let mut port = PortWaveRT::new(description);
 
@@ -537,9 +536,9 @@ pub fn get_device_state(port_index: usize) -> Option<DeviceState> {
         .map(|p| p.device_state())
 }
 
-/// Example: Create an HDA audio device
+/// Example: create an HDA audio device
 pub fn create_hda_audio_device(codec_name: &'static str) -> usize {
-    // Create a placeholder miniport
+    // create a placeholder miniport
     struct HdaMiniport {
         description: &'static str,
         format: AudioFormat,
@@ -551,7 +550,7 @@ pub fn create_hda_audio_device(codec_name: &'static str) -> usize {
         }
 
         fn init(&mut self) -> Result<(), &'static str> {
-            // kprintln!("  [HDA Miniport] Initialized");
+            // kprintln!("  [HDA Miniport] initialized");
             Ok(())
         }
 

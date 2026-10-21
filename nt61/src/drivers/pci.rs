@@ -12,28 +12,22 @@
 //! Clean-room implementation. Spec source: PCI Local Bus
 //! Specification 3.0 and Microsoft "PCI Driver" reference.
 
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, AtomicPtr, Ordering};
-
-#[allow(non_snake_case)]
+use core::sync::atomic::{AtomicU32, Ordering};
 
 extern crate alloc;
 
-use alloc::vec::Vec;
-use core::sync::atomic::{AtomicU32, Ordering};
-use crate::io::{DeviceObject, DeviceType, DriverObject};
+use crate::io::{DeviceObject, DriverObject};
 use crate::ke::sync::Spinlock;
 
-pub use crate::drivers::bus::pci_bus::{
-    PciDeviceInfo, BarInfo, find_pci, pci_count,
-};
+pub use crate::drivers::bus::pci_bus::{find_pci, pci_count, BarInfo, PciDeviceInfo};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum PciPowerState {
-    D0 = 0,  // Fully on
-    D1 = 1,  // Light sleep
-    D2 = 2,  // Deeper sleep
-    D3 = 3,  // Off
+    D0 = 0, // Fully on
+    D1 = 1, // Light sleep
+    D2 = 2, // Deeper sleep
+    D3 = 3, // Off
 }
 
 pub struct PciDeviceExtension {
@@ -52,13 +46,24 @@ impl PciDeviceExtension {
             device_object: core::ptr::null_mut(),
             pci_info: PciDeviceInfo {
                 pci: crate::hal::common::pci::PciDevice {
-                    bus: 0, device: 0, function: 0,
-                    vendor_id: 0, device_id: 0,
-                    class_code: 0, subclass: 0, prog_if: 0,
-                    header_type: 0, irq: 0, revision: 0,
+                    bus: 0,
+                    device: 0,
+                    function: 0,
+                    vendor_id: 0,
+                    device_id: 0,
+                    class_code: 0,
+                    subclass: 0,
+                    prog_if: 0,
+                    header_type: 0,
+                    irq: 0,
+                    revision: 0,
                 },
                 bars: [BarInfo {
-                    phys: 0, size: 0, is_io: false, is_64: false, prefetchable: false,
+                    phys: 0,
+                    size: 0,
+                    is_io: false,
+                    is_64: false,
+                    prefetchable: false,
                 }; 6],
                 irq: 0,
                 bus_master: false,
@@ -82,11 +87,11 @@ pub fn init() {
     crate::drivers::bus::pci_bus::init();
 }
 
-pub fn AddDevice(driver: *mut DriverObject, pdo: *mut DeviceObject) -> u32 {
+pub fn add_device(_driver: *mut DriverObject, pdo: *mut DeviceObject) -> u32 {
     let _g = PCI_LOCK.lock();
 
     unsafe {
-        for ext in DEVICE_EXTENSIONS.iter_mut() {
+        for ext in (*core::ptr::addr_of_mut!(DEVICE_EXTENSIONS)).iter_mut() {
             if !ext.valid {
                 ext.valid = true;
                 ext.device_object = pdo;
@@ -125,16 +130,11 @@ pub fn enable_io_space(bus: u8, device: u8, function: u8) -> bool {
     true
 }
 
-pub fn set_power_state(
-    bus: u8,
-    device: u8,
-    function: u8,
-    power_state: PciPowerState,
-) -> bool {
+pub fn set_power_state(bus: u8, device: u8, function: u8, power_state: PciPowerState) -> bool {
     let _g = PCI_LOCK.lock();
 
     unsafe {
-        for ext in DEVICE_EXTENSIONS.iter_mut() {
+        for ext in (*core::ptr::addr_of_mut!(DEVICE_EXTENSIONS)).iter_mut() {
             if ext.valid
                 && ext.pci_info.pci.bus == bus
                 && ext.pci_info.pci.device == device
@@ -153,27 +153,24 @@ pub fn device_count() -> u32 {
     DEVICE_COUNT.load(Ordering::Relaxed)
 }
 
-pub fn DriverEntry(driver: *mut DriverObject) -> u32 {
+pub fn driver_entry(_driver: *mut DriverObject) -> u32 {
     init();
     0 // STATUS_SUCCESS
 }
 
 pub mod dispatch {
     use super::*;
-    use crate::io::{Irp, IoStackLocation};
-    use crate::io::major::*;
-    use crate::io::pnp::*;
-    use crate::io::power::*;
+    use crate::io::Irp;
 
-    pub fn Pnp(device: *mut DeviceObject, irp: *mut Irp) -> u32 {
+    pub fn pnp(_device: *mut DeviceObject, _irp: *mut Irp) -> u32 {
         0 // STATUS_SUCCESS
     }
 
-    pub fn Power(device: *mut DeviceObject, irp: *mut Irp) -> u32 {
+    pub fn power(_device: *mut DeviceObject, _irp: *mut Irp) -> u32 {
         0 // STATUS_SUCCESS
     }
 
-    pub fn DeviceControl(device: *mut DeviceObject, irp: *mut Irp) -> u32 {
+    pub fn device_control(_device: *mut DeviceObject, _irp: *mut Irp) -> u32 {
         0 // STATUS_SUCCESS
     }
 }

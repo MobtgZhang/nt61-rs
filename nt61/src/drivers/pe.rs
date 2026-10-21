@@ -39,7 +39,7 @@ pub struct DriverImage {
 /// driver PEs at runtime any more — there is no `pegen` module
 /// to back this function. Returning an empty list is the safe
 /// placeholder so any leftover caller surfaces immediately at the
-/// I/O manager when its `DriverEntry` list is unexpectedly empty.
+/// I/O manager when its `driver_entry` list is unexpectedly empty.
 pub fn build_all(_machine: u16) -> Vec<DriverImage> {
     Vec::new()
 }

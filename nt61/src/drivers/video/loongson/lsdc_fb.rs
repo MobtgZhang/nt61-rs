@@ -28,7 +28,7 @@ pub struct LsDcFramebuffer {
 }
 
 impl LsDcFramebuffer {
-    /// Create a new framebuffer
+    /// create a new framebuffer
     pub fn new(dc_base: u64, fb_phys: u64, fb_size: u64) -> Self {
         Self {
             dc_base,
@@ -42,13 +42,13 @@ impl LsDcFramebuffer {
         }
     }
 
-    /// Read a DC register
+    /// read a DC register
     #[inline]
     fn read_reg(&self, offset: u32) -> u32 {
         unsafe { core::ptr::read_volatile((self.dc_base + offset as u64) as *const u32) }
     }
 
-    /// Write a DC register
+    /// write a DC register
     #[inline]
     fn write_reg(&self, offset: u32, value: u32) {
         unsafe { core::ptr::write_volatile((self.dc_base + offset as u64) as *mut u32, value) }

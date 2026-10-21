@@ -32,9 +32,8 @@ pub struct EfiFbState {
 }
 
 impl EfiFbState {
-    /// Create and initialize the EFI framebuffer state.
+    /// create and initialize the EFI framebuffer state.
     /// Takes the GOP-provided framebuffer info if available.
-    #[allow(dead_code)]
     pub fn new(fb_address: u64, width: u32, height: u32, stride: u32, bpp: u32) -> Self {
         let initialized_from_gop = fb_address != 0 && width != 0 && height != 0;
 
@@ -60,12 +59,11 @@ impl EfiFbState {
     }
 
     /// Whether we are running on a real GOP framebuffer (not VGA fallback).
-    #[allow(dead_code)]
     pub fn has_gop(&self) -> bool {
         self.initialized_from_gop
     }
 
-    /// Write a test pattern to the framebuffer to verify it's writable.
+    /// write a test pattern to the framebuffer to verify it's writable.
     /// Fills the top-left 8x8 pixel area with a distinctive color (bright magenta).
     fn write_test_pattern(&self) {
         if self.fb_address == 0 {
@@ -86,7 +84,7 @@ impl EfiFbState {
         }
     }
 
-    /// Read back a pixel from the framebuffer to verify it was written.
+    /// read back a pixel from the framebuffer to verify it was written.
     fn verify_pixel(&self, x: u32, y: u32) -> Option<u32> {
         if self.fb_address == 0 {
             return None;
@@ -147,7 +145,7 @@ pub fn init() {
     // Run smoke test if we have a real GOP framebuffer.
     if state.has_gop() {
         state.write_test_pattern();
-        // Read back center pixel of the test pattern.
+        // read back center pixel of the test pattern.
         if let Some(pixel) = state.verify_pixel(4, 4) {
             if pixel == 0x00FF00FF {
                 log::video_ok("efifb", "framebuffer write/read test passed");
@@ -212,12 +210,12 @@ pub fn smoke_test() -> bool {
         return false;
     }
 
-    // Write a distinctive color to pixel (0, 0).
+    // write a distinctive color to pixel (0, 0).
     // For text mode (16 bpp), this writes a 16-bit cell.
     // For graphics mode (32 bpp), this writes an XRGB pixel.
     framebuffer::set_pixel(0, 0, 0x00FF00FF);
 
-    // Read it back.
+    // read it back.
     let info2 = framebuffer::info();
     let fb = info2.address as *const u8;
 

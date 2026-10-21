@@ -34,7 +34,7 @@ impl ClfsLsn {
     /// The first valid LSN for a newly created log.
     pub const FIRST: ClfsLsn = ClfsLsn(1);
 
-    /// Create a new LSN from its three components.
+    /// create a new LSN from its three components.
     ///
     /// - `container_id`: 32-bit container identifier (0-0xFFFFFFFF)
     /// - `block_offset`: Byte offset within container / 512 (0-0x7FFFFF)
@@ -206,7 +206,7 @@ pub struct ClfsLogRecordHeader {
     pub size: u16,
     /// Reserved.
     pub reserved: u16,
-    /// Length of the actual record data (excluding this header).
+    /// length of the actual record data (excluding this header).
     pub record_length: u32,
     /// Byte offset from the start of this record to the previous record's start.
     /// 0 if this is the first record in a container or after truncation.
@@ -222,7 +222,7 @@ pub struct ClfsLogRecordHeader {
 }
 
 impl ClfsLogRecordHeader {
-    /// Create a new record header for a data record.
+    /// create a new record header for a data record.
     pub fn new_data(lsn: ClfsLsn, previous_lsn: ClfsLsn, data_len: usize) -> Self {
         let record_length = data_len as u32;
         // Total size: header + data, sector-aligned
@@ -248,7 +248,7 @@ impl ClfsLogRecordHeader {
         }
     }
 
-    /// Create a new record header for a restart record.
+    /// create a new record header for a restart record.
     pub fn new_restart(lsn: ClfsLsn, restart_size: usize) -> Self {
         let header_plus_data = (CLFS_LOG_RECORD_HEADER_SIZE + restart_size) as u16;
         let size = ((header_plus_data as usize + 511) & !511) as u16;
@@ -340,7 +340,7 @@ impl ClfsLogRecordHeader {
         buf[38..42].copy_from_slice(&self.client_id.to_le_bytes());
     }
 
-    /// Read a record header from a byte buffer.
+    /// read a record header from a byte buffer.
     pub fn read_from(buf: &[u8]) -> Option<Self> {
         if buf.len() < CLFS_LOG_RECORD_HEADER_SIZE {
             return None;
@@ -380,7 +380,7 @@ pub struct LsnAllocator {
 }
 
 impl LsnAllocator {
-    /// Create a new LSN allocator starting at LSN::FIRST.
+    /// create a new LSN allocator starting at LSN::FIRST.
     pub fn new() -> Self {
         Self {
             next_lsn: ClfsLsn::FIRST,

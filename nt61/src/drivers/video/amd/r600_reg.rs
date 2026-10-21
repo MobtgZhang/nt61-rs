@@ -234,7 +234,7 @@ pub const R600_PLL_SLEEP: u32 = 1 << 1;
 pub const R600_PLL_POWER_DOWN: u32 = 1 << 2;
 
 // =====================================================================
-// Power Management
+// power Management
 // =====================================================================
 
 /// Current power state
@@ -246,7 +246,7 @@ pub const R600_CONTROLLER_POWER_STATUS: u32 = 0xF4;
 /// PCIE link training
 pub const R600_PCIE_LC_TRAINING: u32 = 0xF8;
 
-// Power gate bits
+// power gate bits
 /// Memory controller power gate
 pub const R600_PWR_GATE_EN_MEMORY: u32 = 1 << 0;
 /// Display engine power gate
@@ -309,7 +309,7 @@ pub const R600_VGT_DRAW_INDEX: u32 = 0xCFC;
 pub const R600_VGT_PRIMITIVE_TYPE: u32 = 0xD00;
 
 /// Vertex shader parameter cache
-pub const R600_VGT_SHADER_CACHE_INvalidate: u32 = 0xD04;
+pub const R600_VGT_SHADER_CACHE_INVALIDATE: u32 = 0xD04;
 
 // Primitive types
 /// Point list

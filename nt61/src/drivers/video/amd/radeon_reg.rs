@@ -164,7 +164,7 @@ pub const DC_INT_MASK: u32 = 0x1F4;
 pub const RBBM_INT_VBLANK: u32 = 1 << 0;
 
 // =====================================================================
-// Power Management
+// power Management
 // =====================================================================
 
 /// General power mode

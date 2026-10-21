@@ -30,34 +30,28 @@
 
 extern crate alloc;
 
-#[cfg(target_arch = "x86_64")]
 pub mod ahci;
-#[cfg(target_arch = "x86_64")]
 pub mod ata;
-#[cfg(target_arch = "x86_64")]
 pub mod atapi;
-#[cfg(target_arch = "x86_64")]
-pub mod nvme;
-#[cfg(target_arch = "x86_64")]
-pub mod scsi;
-
-#[cfg(target_arch = "x86_64")]
 pub mod ataport;
-#[cfg(target_arch = "x86_64")]
 pub mod disk;
+pub mod nvme;
+pub mod scsi;
 pub mod storport;
 
 pub mod block;
+pub mod io_dispatch;
 pub mod ramdisk;
 
-#[cfg(target_arch = "x86_64")]
 pub mod smoke;
 
 use crate::ke::sync::Spinlock;
-use crate::kprintln;
 
 /// Maximum number of storage devices we can track.
 pub const MAX_STORAGE_DEVICES: usize = 8;
+
+/// Standard 512-byte logical sector size.
+pub const BLOCK_SECTOR_SIZE: u32 = 512;
 
 /// Device type for storage devices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -189,66 +183,18 @@ pub fn device_count() -> usize {
     devices.iter().filter(|d| d.is_some()).count()
 }
 
-/// Read a sector from a registered storage device.
+/// read a sector from a registered storage device.
 /// Returns true on success, false on failure.
 pub fn read_device_sector(device_id: usize, lba: u32, buffer: &mut [u8]) -> bool {
-    let devices = STORAGE_DEVICES.lock();
-    let result = match devices.get(device_id) {
-        Some(&Some(ref device)) if device.present => {
-            let device_type = device.device_type;
-            let controller = device.controller;
-            let port = device.port;
-            drop(devices);
-
-            match device_type {
-                StorageDeviceType::AhciDisk => {
-                    #[cfg(target_arch = "x86_64")]
-                    {
-                        ahci::read_sector(controller, port, lba, buffer)
-                    }
-                    #[cfg(not(target_arch = "x86_64"))]
-                    {
-                        false
-                    }
-                }
-                StorageDeviceType::RamDisk => ramdisk::read(lba as usize, buffer),
-                _ => false,
-            }
-        }
-        _ => false,
-    };
-    result
+    let byte_offset = (lba as u64) * (BLOCK_SECTOR_SIZE as u64);
+    unsafe { io_dispatch::dispatch_read(device_id, byte_offset, buffer) }
 }
 
-/// Write a sector to a registered storage device.
+/// write a sector to a registered storage device.
 /// Returns true on success, false on failure.
 pub fn write_device_sector(device_id: usize, lba: u32, buffer: &[u8]) -> bool {
-    let devices = STORAGE_DEVICES.lock();
-    let result = match devices.get(device_id) {
-        Some(&Some(ref device)) if device.present => {
-            let device_type = device.device_type;
-            let controller = device.controller;
-            let port = device.port;
-            drop(devices);
-
-            match device_type {
-                StorageDeviceType::RamDisk => ramdisk::write(lba as usize, buffer),
-                StorageDeviceType::AhciDisk => {
-                    #[cfg(target_arch = "x86_64")]
-                    {
-                        ahci::write_sector(controller, port, lba, buffer)
-                    }
-                    #[cfg(not(target_arch = "x86_64"))]
-                    {
-                        false
-                    }
-                }
-                _ => false,
-            }
-        }
-        _ => false,
-    };
-    result
+    let byte_offset = (lba as u64) * (BLOCK_SECTOR_SIZE as u64);
+    unsafe { io_dispatch::dispatch_write(device_id, byte_offset, buffer) }
 }
 
 /// Print storage device information.
@@ -279,59 +225,10 @@ pub fn print_devices() {
 /// Initialise the storage stack. Walks PCI for storage class
 /// devices and starts the appropriate miniport.
 pub fn init() {
-    // kprintln!("    Storage drivers: ATA, AHCI, NVMe, SCSI, disk, ataport, storport");
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("S:ata_start\r\n");
-    #[cfg(target_arch = "x86_64")]
-    ata::init();
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("S:ata_done\r\n");
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("S:atapi_start\r\n");
-    #[cfg(target_arch = "x86_64")]
-    atapi::init();
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("S:atapi_done\r\n");
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("S:ahci_start\r\n");
-    #[cfg(target_arch = "x86_64")]
-    ahci::init();
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("S:ahci_done\r\n");
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("S:nvme_start\r\n");
-    #[cfg(target_arch = "x86_64")]
-    nvme::init();
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("S:nvme_done\r\n");
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("S:scsi_start\r\n");
-    #[cfg(target_arch = "x86_64")]
-    scsi::init();
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("S:scsi_done\r\n");
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("S:ataport_start\r\n");
-    #[cfg(target_arch = "x86_64")]
-    ataport::init();
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("S:ataport_done\r\n");
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("S:storport_start\r\n");
+    crate::drivers::arch::init_storage_backends();
     storport::init();
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("S:storport_done\r\n");
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("S:disk_start\r\n");
-    #[cfg(target_arch = "x86_64")]
     disk::init();
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("S:disk_done\r\n");
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("S:ramdisk_start\r\n");
     ramdisk::init();
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("S:ramdisk_done\r\n");
     let (sectors, sector_size) = ramdisk::info();
     if sectors > 0 {
         let mut ramdisk_dev = StorageDevice::new_ramdisk(sectors);
@@ -346,35 +243,19 @@ pub fn init() {
     // Register AHCI disks
     register_ahci_disks();
     // kprintln!("    Storage stack ready");
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("S:print_start\r\n");
     print_devices();
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("S:print_done\r\n");
 }
 
 /// Register all discovered AHCI disks as storage devices.
 fn register_ahci_disks() {
-    #[cfg(target_arch = "x86_64")]
-    {
-        let controller_count = ahci::count();
-        if controller_count > 0 {
-            // kprintln!("[STORAGE] Registering AHCI disks...");
-            // Note: The actual disk registration would happen during AHCI init
-            // For now, we rely on the AHCI module to register disks
-        }
+    let controller_count = ahci::count();
+    if controller_count > 0 {
+        // Actual AHCI disk registration is owned by the architecture backend.
     }
 }
 
 /// Smoke test for the storage stack. Re-runs every miniport's
 /// self-test and aggregates the result.
-#[cfg(target_arch = "x86_64")]
 pub fn smoke_test() -> bool {
     smoke::smoke_test()
-}
-
-/// Stub for non-x86_64 architectures. Always passes.
-#[cfg(not(target_arch = "x86_64"))]
-pub fn smoke_test() -> bool {
-    true
 }

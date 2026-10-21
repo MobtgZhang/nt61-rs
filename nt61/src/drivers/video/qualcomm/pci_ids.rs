@@ -85,7 +85,7 @@ pub const ADRENO_A6XX_IDS: &[u16] = &[
 ];
 
 // =====================================================================
-// Device Name Database
+// Device name Database
 // =====================================================================
 
 /// Get device name from device ID

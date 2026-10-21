@@ -54,7 +54,7 @@ pub struct RadeonCursor {
 }
 
 impl RadeonCursor {
-    /// Create a new cursor for CRTC 0
+    /// create a new cursor for CRTC 0
     ///
     /// # Arguments
     /// * `mmio_base` - The MMIO base address of the AMD device
@@ -70,7 +70,7 @@ impl RadeonCursor {
         }
     }
 
-    /// Create a new cursor for a specific CRTC
+    /// create a new cursor for a specific CRTC
     ///
     /// # Arguments
     /// * `mmio_base` - The MMIO base address
@@ -160,7 +160,7 @@ impl RadeonCursor {
         let cursor_addr: u32 = 0x00010000; // Example cursor surface address
         self.write_reg(AVIVO_D1CUR_ADDR + self.crtc_offset, cursor_addr);
 
-        // Write sprite data to the cursor surface
+        // write sprite data to the cursor surface
         // In real implementation, this would write to VRAM at the cursor address
         let sprite_base = self.mmio_base + 0x10000; // Cursor surface offset
         for (i, &pixel) in data.iter().enumerate() {
@@ -174,7 +174,7 @@ impl RadeonCursor {
     /// Load cursor sprite from VRAM
     ///
     /// # Arguments
-    /// * `vram_offset` - Offset in VRAM where cursor sprite is stored
+    /// * `vram_offset` - offset in VRAM where cursor sprite is stored
     /// * `data` - The sprite data (for verification only)
     pub fn load_sprite_vram(&self, vram_offset: u64, data: &[u32]) {
         let expected_size = self.size_to_pixels(self.size) * self.size_to_pixels(self.size);
@@ -276,7 +276,7 @@ pub struct EvergreenCursor {
 }
 
 impl EvergreenCursor {
-    /// Create a new cursor for Evergreen/Northern Islands
+    /// create a new cursor for Evergreen/Northern Islands
     pub fn new(mmio_base: u64) -> Self {
         Self {
             mmio_base,
@@ -329,7 +329,7 @@ impl EvergreenCursor {
         // Set cursor base address
         self.write_reg(0x6430 + self.crtc_offset, 0);
 
-        // Write sprite data
+        // write sprite data
         let sprite_base = self.mmio_base + 0x10000;
         for (i, &pixel) in data.iter().enumerate() {
             unsafe {
@@ -361,7 +361,7 @@ pub struct SouthernIslandsCursor {
 }
 
 impl SouthernIslandsCursor {
-    /// Create a new cursor for Southern/Sea Islands
+    /// create a new cursor for Southern/Sea Islands
     pub fn new(mmio_base: u64) -> Self {
         Self {
             mmio_base,
@@ -430,7 +430,7 @@ impl SouthernIslandsCursor {
     }
 }
 
-/// Create appropriate cursor based on GPU family
+/// create appropriate cursor based on GPU family
 pub fn create_cursor(mmio_base: u64, _family: AmdFamily) -> RadeonCursor {
     RadeonCursor::new(mmio_base)
 }

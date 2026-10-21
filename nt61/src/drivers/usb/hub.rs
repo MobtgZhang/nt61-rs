@@ -11,8 +11,6 @@
 //! chapter 11 ("Hub specification"). No code is copied from any
 //! Microsoft or ReactOS source file.
 
-use crate::kprintln;
-
 /// USB hub class code.
 pub const CLASS_HUB: u8 = 0x09;
 /// Hub class request: GET_DESCRIPTOR.

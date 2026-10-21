@@ -15,13 +15,9 @@
 //! Clean-room implementation. Spec source: Windows networking
 //! internals (Microsoft Docs, "RAS and DirectAccess").
 
-#![allow(non_snake_case)]
-
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use crate::io::{DeviceObject, DeviceType, DriverObject};
-use crate::ke::sync::Spinlock;
-use crate::kprintln;
 
 const SPLDR_DEVICE_NAME: &str = "\\Device\\spldr";
 

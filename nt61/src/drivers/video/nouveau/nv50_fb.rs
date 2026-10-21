@@ -19,7 +19,7 @@ pub fn nv50_fb_init(dev: &mut NouveauDevice) -> Result<(), GpuError> {
     // Enable PV Baptized block
     dev.write_reg(pv_offset + 0x0000, 1);
 
-    // Configure PFB (Performance and Frame Buffer)
+    // Configure PFB (Performance and Frame buffer)
     let pfb_off = 0x001000;
 
     // Enable PFB

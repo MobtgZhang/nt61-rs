@@ -1,7 +1,7 @@
 //! KMDF (Kernel-Mode Driver Framework) Implementation
 //
 //! A small subset of KMDF's API surface, sufficient for a
-//! driver author to write a `DriverEntry -> WdfDriverCreate ->
+//! driver author to write a `driver_entry -> WdfDriverCreate ->
 //! EvtDeviceAdd` flow. The full KMDF surface is ~1500 entry
 //! points; the bootstrap implements the 6 the drivers below
 //! actually call.
@@ -14,9 +14,6 @@ use core::ptr::null_mut;
 extern crate alloc;
 
 use alloc::string::String;
-use alloc::vec::Vec;
-
-use crate::kprintln;
 
 /// One driver-side object created by `WdfDriverCreate`.
 #[derive(Clone)]
@@ -32,7 +29,7 @@ static mut WDF_DRIVER_COUNT: usize = 0;
 /// object and wires it to the I/O manager's `DriverObject`.
 pub fn wdf_driver_create(name: &str) -> Option<&'static mut WdfDriver> {
     unsafe {
-        if WDF_DRIVER_COUNT >= WDF_DRIVERS.len() {
+        if WDF_DRIVER_COUNT >= (*core::ptr::addr_of!(WDF_DRIVERS)).len() {
             return None;
         }
         let slot = &mut WDF_DRIVERS[WDF_DRIVER_COUNT];

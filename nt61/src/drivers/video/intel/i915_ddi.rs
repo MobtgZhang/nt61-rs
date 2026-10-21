@@ -5,7 +5,6 @@
 //
 //! Clean-room implementation based on Intel Graphics PRM.
 
-use crate::drivers::video::intel::i915_pll;
 use crate::drivers::video::log;
 use alloc::vec::Vec;
 
@@ -130,7 +129,7 @@ pub fn detect_monitor(mmio: u64, port: DdiPort) -> bool {
     }
 }
 
-/// Read SFUSE (Silicon Fuse) strap for port detection
+/// read SFUSE (Silicon Fuse) strap for port detection
 pub fn read_sfuse_strap(mmio: u64) -> u32 {
     // SFUSE register varies by generation
     // On modern platforms it's at 0x20100 or similar
@@ -262,7 +261,7 @@ pub fn disable_port(mmio: u64, port: DdiPort) {
     log::video_log("i915-ddi", &alloc::format!("Port {:?} disabled", port));
 }
 
-/// Read hotplug status
+/// read hotplug status
 pub fn read_hotplug_status(mmio: u64) -> u32 {
     // Hotplug status register location varies by generation
     unsafe { core::ptr::read_volatile((mmio + 0xC4030) as *const u32) }
@@ -318,7 +317,7 @@ pub fn aux_transaction(
     let len_val = ((write_data.len() as u32) << 16) | ((read_len as u32) << 8);
     let addr_val = addr & 0xFFFF;
 
-    // Write command to AUX DATA register (varies by generation)
+    // write command to AUX DATA register (varies by generation)
     unsafe {
         core::ptr::write_volatile(
             (mmio + aux_ctl as u64 + 4) as *mut u32,
@@ -326,7 +325,7 @@ pub fn aux_transaction(
         );
     }
 
-    // Write data if any
+    // write data if any
     for (i, &byte) in write_data.iter().enumerate() {
         unsafe {
             core::ptr::write_volatile(
@@ -351,7 +350,7 @@ pub fn aux_transaction(
             if status & DDI_AUX_CTL_SEND_DONE != 0 {
                 // Check for ACK
                 if status & DDI_AUX_CTL_REPLY_ACK != 0 {
-                    // Read response data
+                    // read response data
                     let mut response = Vec::with_capacity(read_len);
                     for i in 0..read_len.min(16) {
                         let val = core::ptr::read_volatile(
@@ -371,13 +370,13 @@ pub fn aux_transaction(
     Err("AUX timeout")
 }
 
-/// Read DPCD register via AUX
+/// read DPCD register via AUX
 pub fn dpcd_read(mmio: u64, port: DdiPort, addr: u32) -> Result<u8, &'static str> {
     let data = aux_transaction(mmio, port, 0x9, addr, &[], 1)?;
     Ok(data.first().copied().unwrap_or(0))
 }
 
-/// Write DPCD register via AUX
+/// write DPCD register via AUX
 pub fn dpcd_write(mmio: u64, port: DdiPort, addr: u32, value: u8) -> Result<(), &'static str> {
     aux_transaction(mmio, port, 0x8, addr, &[value], 0)?;
     Ok(())

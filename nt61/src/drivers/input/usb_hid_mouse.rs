@@ -10,16 +10,14 @@
 
 use core::sync::atomic::{AtomicBool, AtomicI16, AtomicU8, Ordering};
 
-use crate::kprintln;
-
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-/// Length of a USB HID boot mouse report (buttons + X + Y).
+/// length of a USB HID boot mouse report (buttons + X + Y).
 pub const BOOT_MOUSE_REPORT_LEN: usize = 3;
 
-/// Length of a USB HID boot mouse report with wheel (buttons + X + Y + wheel).
+/// length of a USB HID boot mouse report with wheel (buttons + X + Y + wheel).
 pub const BOOT_MOUSE_REPORT_LEN_WHEEL: usize = 4;
 
 /// Button bits in the button byte.
@@ -46,7 +44,7 @@ pub struct MouseButtons {
 }
 
 impl MouseButtons {
-    /// Create from button byte.
+    /// create from button byte.
     pub fn from_u8(byte: u8) -> Self {
         Self {
             left: (byte & BUTTON_LEFT) != 0,
@@ -102,7 +100,7 @@ pub struct MouseEvent {
 }
 
 impl MouseEvent {
-    /// Create a new mouse event.
+    /// create a new mouse event.
     pub fn new(dx: i16, dy: i16, wheel: i8, buttons: MouseButtons) -> Self {
         let has_movement = dx != 0 || dy != 0 || wheel != 0;
         Self {
@@ -115,7 +113,7 @@ impl MouseEvent {
         }
     }
 
-    /// Create an event with button change flag.
+    /// create an event with button change flag.
     pub fn with_button_change(mut self) -> Self {
         self.has_button_change = true;
         self
@@ -263,7 +261,7 @@ pub fn parse_report(data: &[u8]) -> Option<MouseEvent> {
     None
 }
 
-/// Internal function to process a parsed report.
+/// internal function to process a parsed report.
 fn process_report_internal(report: BootMouseReport) -> MouseEvent {
     // Get last button state
     let last_buttons = MouseButtons::from_u8(LAST_BUTTONS.load(Ordering::Relaxed));

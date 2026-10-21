@@ -1,7 +1,5 @@
 //! Audio Stack Smoke Test Aggregator
 
-use crate::kprintln;
-
 pub fn smoke_test() -> bool {
     // kprintln!("  [AUDIO SMOKE] running audio stack smoke tests...");
     let mut ok = true;

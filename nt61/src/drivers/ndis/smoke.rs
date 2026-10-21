@@ -1,7 +1,5 @@
 //! NDIS Stack Smoke Test Aggregator
 
-use crate::kprintln;
-
 pub fn smoke_test() -> bool {
     // kprintln!("  [NDIS SMOKE] running NDIS stack smoke tests...");
     let mut ok = true;

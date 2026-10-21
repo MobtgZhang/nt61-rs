@@ -64,7 +64,7 @@ pub struct PrimaryPlane {
 }
 
 impl PrimaryPlane {
-    /// Create a new primary plane
+    /// create a new primary plane
     pub fn new(dc_base: u64) -> Self {
         Self {
             dc_base,
@@ -76,13 +76,13 @@ impl PrimaryPlane {
         }
     }
 
-    /// Read a register
+    /// read a register
     #[inline]
     fn read_reg(&self, offset: u32) -> u32 {
         unsafe { core::ptr::read_volatile((self.dc_base + offset as u64) as *const u32) }
     }
 
-    /// Write a register
+    /// write a register
     #[inline]
     fn write_reg(&self, offset: u32, value: u32) {
         unsafe { core::ptr::write_volatile((self.dc_base + offset as u64) as *mut u32, value) }
@@ -202,7 +202,7 @@ pub struct CursorPlane {
 }
 
 impl CursorPlane {
-    /// Create a new cursor plane
+    /// create a new cursor plane
     pub fn new(dc_base: u64) -> Self {
         Self {
             dc_base,
@@ -212,13 +212,13 @@ impl CursorPlane {
         }
     }
 
-    /// Read a register
+    /// read a register
     #[inline]
     fn read_reg(&self, offset: u32) -> u32 {
         unsafe { core::ptr::read_volatile((self.dc_base + offset as u64) as *const u32) }
     }
 
-    /// Write a register
+    /// write a register
     #[inline]
     fn write_reg(&self, offset: u32, value: u32) {
         unsafe { core::ptr::write_volatile((self.dc_base + offset as u64) as *mut u32, value) }
@@ -367,7 +367,7 @@ pub struct PlaneManager {
 }
 
 impl PlaneManager {
-    /// Create a new plane manager
+    /// create a new plane manager
     pub fn new(dc_base: u64) -> Self {
         Self {
             primary: PrimaryPlane::new(dc_base),

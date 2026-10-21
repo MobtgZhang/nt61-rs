@@ -8,39 +8,39 @@
 use crate::drivers::video::core::gpu_common::PixelFormat;
 
 // =====================================================================
-// Power Management Registers
+// power Management Registers
 // =====================================================================
 
-/// Power Well Control Register (Haswell+)
+/// power Well control Register (Haswell+)
 pub const HSW_PWR_WELL_B_REQUEST: u32 = 0x45400;
 
-/// Power Well Status Register (Haswell+)
+/// power Well Status Register (Haswell+)
 pub const HSW_PWR_WELL_B_STATUS: u32 = 0x45404;
 
-/// Power well state: power on
+/// power well state: power on
 pub const HSW_PWR_WELL_STATE_POWER_ON: u32 = 1 << 0;
 
-/// Power well state: request only
+/// power well state: request only
 pub const HSW_PWR_WELL_STATE_REQ_ONLY: u32 = 1 << 1;
 
-/// Power well enable
+/// power well enable
 pub const HSW_PWR_WELL_ENABLE: u32 = 1 << 0;
 
 // =====================================================================
-// Display Control Registers
+// Display control Registers
 // =====================================================================
 
-/// CPU VGA Control Register
+/// CPU VGA control Register
 pub const CPU_VGACNTRL: u32 = 0x4100;
 
 /// CPU VGA control: disable VGA
 pub const CPU_VGACNTRL_DISABLE: u32 = 1 << 31;
 
 // =====================================================================
-// Display A Control (PIPEA)
+// Display A control (PIPEA)
 // =====================================================================
 
-/// Display A Control Register
+/// Display A control Register
 pub const PIPEA_DSPCNTR: u32 = 0x70180;
 
 /// Display A Status Register
@@ -49,7 +49,7 @@ pub const PIPEA_DSPSURFACE: u32 = 0x70184;
 /// Display A Stride Register
 pub const PIPEA_DSPSURFACE_STRIDE: u32 = 0x70188;
 
-/// Display A Offset Register
+/// Display A offset Register
 pub const PIPEA_DSPAOFFSET: u32 = 0x701A4;
 
 /// Display A Size Register
@@ -77,10 +77,10 @@ pub const DISPLAY_FORMAT_XRGB8888: u32 = 0 << 20;
 pub const DISPLAY_FORMAT_RGB565: u32 = 4 << 20;
 
 // =====================================================================
-// Display B Control (PIPEB)
+// Display B control (PIPEB)
 // =====================================================================
 
-/// Display B Control Register
+/// Display B control Register
 pub const PIPEB_DSPCNTR: u32 = 0x71180;
 
 /// Display B Status Register
@@ -90,10 +90,10 @@ pub const PIPEB_DSPSURFACE: u32 = 0x71184;
 pub const PIPEB_DSPSURFACE_STRIDE: u32 = 0x71188;
 
 // =====================================================================
-// Display C Control (PIPEC)
+// Display C control (PIPEC)
 // =====================================================================
 
-/// Display C Control Register
+/// Display C control Register
 pub const PIPEC_DSPCNTR: u32 = 0x72180;
 
 /// Display C Status Register
@@ -154,7 +154,7 @@ pub const PIPEB_V_TOTAL: u32 = 0x7100C;
 // Interrupt Registers
 // =====================================================================
 
-/// Master Interrupt Control Register
+/// Master Interrupt control Register
 pub const GEN6_MASTER_IRQ: u32 = 0x44200;
 
 /// Display Interrupt Enable Register
@@ -182,10 +182,10 @@ pub const DEIIR_PIPEB_VBLANK: u32 = 1 << 1;
 pub const DEIIR_PIPEA_FLIP_DONE: u32 = 1 << 5;
 
 // =====================================================================
-// Power PCODE Mailbox
+// power PCODE Mailbox
 // =====================================================================
 
-/// Power PCODE mailbox register
+/// power PCODE mailbox register
 pub const GEN6_PCODE_MAILBOX: u32 = 0x138124;
 
 /// PCODE status
@@ -205,7 +205,7 @@ pub const PTE_SIZE: u32 = 8;
 // Framebuffer Compression (FBC)
 // =====================================================================
 
-/// FBC Control Register
+/// FBC control Register
 pub const FBC_CONTROL: u32 = 0x212000;
 
 /// FBC Status Register
@@ -221,7 +221,7 @@ pub const FBC_COMPRESSING: u32 = 1 << 0;
 // Sprite Plane Registers (PIPEA)
 // =====================================================================
 
-/// Sprite A Control Register
+/// Sprite A control Register
 pub const SPRITEA_CTL: u32 = 0x72180;
 
 /// Sprite A Position Register
@@ -237,7 +237,7 @@ pub const SPRITEA_ENABLE: u32 = 1 << 31;
 // Cursor Registers
 // =====================================================================
 
-/// Cursor A Control Register
+/// Cursor A control Register
 pub const CURACNTR: u32 = 0x70080;
 
 /// Cursor A Position Register
@@ -246,7 +246,7 @@ pub const CURAPOS: u32 = 0x70084;
 /// Cursor A Base Address Register
 pub const CURABASE: u32 = 0x70088;
 
-/// Cursor B Control Register
+/// Cursor B control Register
 pub const CURBCNTR: u32 = 0x71080;
 
 /// Cursor B Position Register
@@ -274,7 +274,7 @@ pub const CURSOR_SIZE_256: u32 = 3 << 24;
 // Panel Fitting
 // =====================================================================
 
-/// Pipe A PF Control Register
+/// Pipe A PF control Register
 pub const PIPEA_PF_CTL: u32 = 0x70240;
 
 /// Pipe A PF Status Register

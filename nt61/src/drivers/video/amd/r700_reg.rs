@@ -259,7 +259,7 @@ pub const R700_PLL_POWER_DOWN: u32 = 1 << 2;
 pub const R700_PLL_BYPASS_EN: u32 = 1 << 3;
 
 // =====================================================================
-// Power Management (Enhanced)
+// power Management (Enhanced)
 // =====================================================================
 
 /// Current power state
@@ -283,7 +283,7 @@ pub const R700_THERMAL_CTRL_2: u32 = 0x70C;
 /// Thermal temperature
 pub const R700_THERMAL_TEMP: u32 = 0x710;
 
-// Power gate bits
+// power gate bits
 /// Memory controller power gate
 pub const R700_PWR_GATE_EN_MEMORY: u32 = 1 << 0;
 /// Display engine power gate

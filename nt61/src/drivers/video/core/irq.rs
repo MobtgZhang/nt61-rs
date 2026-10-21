@@ -6,7 +6,6 @@
 //
 //! Clean-room implementation based on industry standards.
 
-use crate::drivers::video::core::gpu_common::{GpuError, GpuInterrupt};
 use crate::ke::sync::Spinlock;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -53,7 +52,7 @@ pub struct GpuIrqFlags {
 }
 
 impl GpuIrqFlags {
-    /// Create default flags for vblank (level-triggered, active high)
+    /// create default flags for vblank (level-triggered, active high)
     pub fn vblank() -> Self {
         Self {
             enabled: true,
@@ -112,7 +111,7 @@ pub struct VBlankCounter {
 }
 
 impl VBlankCounter {
-    /// Create a new vblank counter
+    /// create a new vblank counter
     pub fn new() -> Self {
         Self {
             counters: [
@@ -171,7 +170,7 @@ impl Default for VBlankCounter {
 
 /// Trait for GPU interrupt handlers
 pub trait GpuIrqHandler: Send + Sync {
-    /// Handle an interrupt
+    /// handle an interrupt
     ///
     /// Returns true if the interrupt was handled, false otherwise.
     fn handle_irq(&self, head: u32) -> bool;
@@ -205,7 +204,7 @@ pub struct VBlankWaitToken {
 }
 
 impl VBlankWaitToken {
-    /// Create a new wait token
+    /// create a new wait token
     pub fn new(head: u32, target_count: u64) -> Self {
         Self {
             target_count,
@@ -237,7 +236,7 @@ pub struct VBlankWaitQueue {
 }
 
 impl VBlankWaitQueue {
-    /// Create a new wait queue
+    /// create a new wait queue
     pub fn new() -> Self {
         Self {
             waiters: Vec::new(),
@@ -310,7 +309,7 @@ pub struct GpuIrqController {
 }
 
 impl GpuIrqController {
-    /// Create a new IRQ controller
+    /// create a new IRQ controller
     pub fn new(irq: u32) -> Self {
         Self {
             irq: AtomicU32::new(irq),
@@ -347,7 +346,7 @@ impl GpuIrqController {
         self.enabled_heads &= !(1 << head);
     }
 
-    /// Handle an interrupt
+    /// handle an interrupt
     ///
     /// This should be called from the actual IRQ handler.
     pub fn handle_irq(&self) -> bool {
@@ -452,7 +451,7 @@ pub struct GpuSoftirqController {
 }
 
 impl GpuSoftirqController {
-    /// Create a new softirq controller
+    /// create a new softirq controller
     pub fn new() -> Self {
         Self {
             pending: AtomicU64::new(0),

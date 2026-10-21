@@ -5,15 +5,12 @@
 //! Clean-room implementation based on public specifications.
 
 /// HDMI device
-pub struct HdmiDevice {
-    /// Base address
-    base: u64,
-}
+pub struct HdmiDevice {}
 
 impl HdmiDevice {
-    /// Create new HDMI device
-    pub fn new(base: u64) -> Self {
-        Self { base }
+    /// create new HDMI device
+    pub fn new() -> Self {
+        Self {}
     }
 
     /// Initialize HDMI

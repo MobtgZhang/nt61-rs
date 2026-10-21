@@ -12,8 +12,6 @@
 //! driver reference. No code is copied from any Microsoft or
 //! ReactOS source file.
 
-use crate::kprintln;
-
 pub mod miniport;
 pub mod ndis6;
 
@@ -56,7 +54,7 @@ static mut REGISTERED_COUNT: usize = 0;
 /// `NDIS_STATUS_SUCCESS` value (0) on success.
 pub fn ndis_m_register_miniport_driver(driver: MiniportDriver) -> i32 {
     unsafe {
-        if REGISTERED_COUNT >= REGISTERED.len() {
+        if REGISTERED_COUNT >= (*core::ptr::addr_of!(REGISTERED)).len() {
             return status::FAILURE;
         }
         REGISTERED[REGISTERED_COUNT] = Some(driver);

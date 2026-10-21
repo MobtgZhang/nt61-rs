@@ -56,7 +56,7 @@ pub struct Dpc {
 }
 
 impl Dpc {
-    /// Create a new DPC
+    /// create a new DPC
     pub fn new(routine: DpcRoutine, arg: *mut core::ffi::c_void, priority: DpcPriority) -> Self {
         Self {
             routine,
@@ -114,7 +114,7 @@ pub struct DpcQueue {
 }
 
 impl DpcQueue {
-    /// Create a new DPC queue
+    /// create a new DPC queue
     pub fn new() -> Self {
         Self {
             count: AtomicU32::new(0),
@@ -253,7 +253,7 @@ pub struct DpcThread {
 }
 
 impl DpcThread {
-    /// Create a new DPC thread
+    /// create a new DPC thread
     pub fn new() -> Self {
         Self {
             state: DpcThreadState::Idle,
@@ -334,7 +334,7 @@ pub struct DpcManager {
 }
 
 impl DpcManager {
-    /// Create a new DPC manager
+    /// create a new DPC manager
     pub fn new(num_cpus: usize) -> Self {
         let threads = (0..num_cpus).map(|_| DpcThread::new()).collect();
 

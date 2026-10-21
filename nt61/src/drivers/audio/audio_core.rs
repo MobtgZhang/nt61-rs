@@ -8,7 +8,7 @@
 //! - Audio format conversion
 //! - Volume control abstraction
 //! - Stream management
-//! - Buffer management
+//! - buffer management
 
 extern crate alloc;
 use alloc::string::String;
@@ -102,7 +102,7 @@ pub struct AudioFormat {
 }
 
 impl AudioFormat {
-    /// Create a standard PCM format
+    /// create a standard PCM format
     pub fn pcm(channels: u8, sample_rate: u32, bits_per_sample: u8) -> Self {
         Self {
             channels,
@@ -187,20 +187,20 @@ pub enum StreamState {
 /// Audio buffer descriptor
 #[derive(Debug, Clone)]
 pub struct AudioBuffer {
-    /// Buffer data pointer
+    /// buffer data pointer
     pub data: *mut u8,
-    /// Buffer size in bytes
+    /// buffer size in bytes
     pub size: usize,
     /// Number of valid bytes
     pub valid_bytes: usize,
-    /// Buffer position (for circular buffers)
+    /// buffer position (for circular buffers)
     pub position: usize,
     /// Is this buffer complete
     pub complete: bool,
 }
 
 impl AudioBuffer {
-    /// Create a new audio buffer
+    /// create a new audio buffer
     pub fn new(size: usize) -> Option<Self> {
         use crate::mm::pool::{self, PoolType};
         let data = pool::allocate_aligned(PoolType::NonPaged, size, 128);
@@ -267,7 +267,7 @@ pub struct AudioStream {
     pub format: AudioFormat,
     /// Current state
     pub state: StreamState,
-    /// Buffer queue
+    /// buffer queue
     pub buffers: Vec<AudioBuffer>,
     /// Current buffer index
     pub current_buffer: usize,
@@ -282,7 +282,7 @@ pub struct AudioStream {
 static NEXT_STREAM_ID: AtomicU32 = AtomicU32::new(1);
 
 impl AudioStream {
-    /// Create a new audio stream
+    /// create a new audio stream
     pub fn new(device_id: u32, direction: StreamDirection, format: AudioFormat) -> Self {
         Self {
             id: NEXT_STREAM_ID.fetch_add(1, Ordering::Relaxed),
@@ -358,7 +358,7 @@ pub struct VolumeControl {
 }
 
 impl VolumeControl {
-    /// Create a new volume control with default values
+    /// create a new volume control with default values
     pub fn new() -> Self {
         Self {
             master: 75,
@@ -427,7 +427,7 @@ static mut AUDIO_MANAGER: Option<AudioDeviceManager> = None;
 static AUDIO_MANAGER_INIT: AtomicBool = AtomicBool::new(false);
 
 impl AudioDeviceManager {
-    /// Create a new audio device manager
+    /// create a new audio device manager
     fn new() -> Self {
         Self {
             devices: Vec::new(),
@@ -445,7 +445,7 @@ impl AudioDeviceManager {
                 AUDIO_MANAGER = Some(AudioDeviceManager::new());
                 AUDIO_MANAGER_INIT.store(true, Ordering::Release);
             }
-            AUDIO_MANAGER.as_mut().unwrap()
+            (*core::ptr::addr_of_mut!(AUDIO_MANAGER)).as_mut().unwrap()
         }
     }
 
@@ -560,7 +560,7 @@ impl AudioDeviceManager {
         }
     }
 
-    /// Create an audio stream
+    /// create an audio stream
     pub fn create_stream(
         &mut self,
         device_id: u32,
@@ -583,7 +583,7 @@ impl AudioDeviceManager {
         self.streams.iter_mut().find(|s| s.id == id)
     }
 
-    /// Close stream
+    /// close stream
     pub fn close_stream(&mut self, id: u32) {
         self.streams.retain(|s| s.id != id);
     }

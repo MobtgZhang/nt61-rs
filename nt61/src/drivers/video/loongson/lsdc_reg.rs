@@ -10,7 +10,7 @@
 // Controller Base Registers (0x0000-0x00FF)
 // =====================================================================
 
-/// DC Control Register
+/// DC control Register
 ///
 /// Bit 0: DC enable
 /// Bit 1: DC reset
@@ -51,7 +51,7 @@ pub const DC_INT_MASK: u32 = 0x000C;
 /// DC Version Register
 ///
 /// Bits 0-15: Chip version
-/// Bits 16-23: Revision
+/// Bits 16-23: revision
 pub const DC_VERSION: u32 = 0x0010;
 
 // =====================================================================
@@ -86,7 +86,7 @@ pub const FB_FORMAT_XRGB8888: u32 = 0x03;
 // CRT Controller A (Pipeline A) Registers (0x0200-0x02FF)
 // =====================================================================
 
-/// CRTC A Control Register
+/// CRTC A control Register
 pub const CRTC_A_CTRL: u32 = 0x0200;
 
 /// CRTC control: Enable
@@ -161,7 +161,7 @@ pub const CRTC_A_LINE: u32 = 0x0230;
 // CRT Controller B (Pipeline B) Registers (0x0300-0x03FF)
 // =====================================================================
 
-/// CRTC B Control Register
+/// CRTC B control Register
 pub const CRTC_B_CTRL: u32 = 0x0300;
 
 /// CRTC B Horizontal Timing Register
@@ -186,7 +186,7 @@ pub const CRTC_B_LINE: u32 = 0x0330;
 // Plane/Layer Registers (0x0400-0x05FF)
 // =====================================================================
 
-/// Primary Plane Control Register
+/// Primary Plane control Register
 pub const PLANE_PRIMARY_CTRL: u32 = 0x0400;
 
 /// Plane control: Enable
@@ -219,7 +219,7 @@ pub const PLANE_PRIMARY_SIZE: u32 = 0x040C;
 /// Primary Plane Position Register
 pub const PLANE_PRIMARY_POS: u32 = 0x0410;
 
-/// Cursor Plane Control Register
+/// Cursor Plane control Register
 pub const PLANE_CURSOR_CTRL: u32 = 0x0500;
 
 /// Cursor control: Enable

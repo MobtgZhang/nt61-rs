@@ -12,36 +12,34 @@
 
 // UHCI controller registers (USBCMD, USBSTS, FRNUM, ...) are
 // described per the spec but only a subset is wired up yet.
-#![allow(dead_code, non_upper_case_globals)]
 
 use crate::hal::common::pci;
-use crate::kprintln;
 
 /// UHCI PCI class (0x0C, 0x03, 0x00).
 const UHCI_PCI_CLASS: (u8, u8, u8) = (0x0C, 0x03, 0x00);
 
 /// UHCI register offsets.
-const REG_USBCMD: u16 = 0x00;
-const REG_USBSTS: u16 = 0x02;
-const REG_USBINTR: u16 = 0x04;
-const REG_FRNUM: u16 = 0x06;
-const REG_FLBASE: u16 = 0x08;
-const REG_PORTSC1: u16 = 0x10;
-const REG_PORTSC2: u16 = 0x12;
+pub const REG_USBCMD: u16 = 0x00;
+pub const REG_USBSTS: u16 = 0x02;
+pub const REG_USBINTR: u16 = 0x04;
+pub const REG_FRNUM: u16 = 0x06;
+pub const REG_FLBASE: u16 = 0x08;
+pub const REG_PORTSC1: u16 = 0x10;
+pub const REG_PORTSC2: u16 = 0x12;
 
 /// USBCMD bits.
 const USBCMD_RS: u16 = 1 << 0; // Run/Stop
-const USBCMD_HCRESET: u16 = 1 << 1; // Host Controller Reset
+pub const USBCMD_HCRESET: u16 = 1 << 1; // Host Controller Reset
 
 /// USBSTS bits.
-const USBSTS_HCH: u16 = 1 << 0; // Host Controller Halted
+pub const USBSTS_HCH: u16 = 1 << 0; // Host Controller Halted
 
 /// One UHCI controller. We only need the BAR4 address and the
 /// CCSR (Configure Flag) for the smoke test.
 #[derive(Debug, Clone, Copy, Default)]
-struct UhciController {
+pub struct UhciController {
     bar4_phys: u64,
-    ports: u8,
+    pub ports: u8,
     cmd: u16,
     sts: u16,
     initialised: bool,
@@ -52,7 +50,7 @@ static mut UHCI_COUNT: usize = 0;
 
 fn push_uhci(c: UhciController) {
     unsafe {
-        if UHCI_COUNT < UHCI_CONTROLLERS.len() {
+        if UHCI_COUNT < (*core::ptr::addr_of!(UHCI_CONTROLLERS)).len() {
             UHCI_CONTROLLERS[UHCI_COUNT] = Some(c);
             UHCI_COUNT += 1;
         }

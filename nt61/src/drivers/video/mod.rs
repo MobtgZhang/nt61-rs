@@ -103,9 +103,9 @@ pub fn init() {
     log::video_log("video", "initializing basic display drivers");
     #[cfg(target_arch = "x86_64")]
     {
-        crate::hal::x86_64::serial::write_string("V:vga_start\r\n");
+        crate::hal::serial::write_string("V:vga_start\r\n");
         vga::init();
-        crate::hal::x86_64::serial::write_string("V:vga_done\r\n");
+        crate::hal::serial::write_string("V:vga_done\r\n");
 
         // efifb takes ownership of the framebuffer when winload
         // populated the BootInfo with valid GOP data. The previous
@@ -115,45 +115,58 @@ pub fn init() {
         // log "No framebuffer from winload". We now actually
         // invoke the driver and let it pick VGA fallback internally
         // if the GOP mailbox was empty.
-        crate::hal::x86_64::serial::write_string("V:efifb_start\r\n");
+        crate::hal::serial::write_string("V:efifb_start\r\n");
         efifb::init();
-        crate::hal::x86_64::serial::write_string("V:efifb_done\r\n");
+        crate::hal::serial::write_string("V:efifb_done\r\n");
 
-        crate::hal::x86_64::serial::write_string("V:bochs_start\r\n");
-        bochs_vbe::init();
-        crate::hal::x86_64::serial::write_string("V:bochs_done\r\n");
-        crate::hal::x86_64::serial::write_string("V:all_done\r\n");
+        // Only probe Bochs VBE when the GOP framebuffer is NOT
+        // available. On OVMF/QEMU the GOP LFB is already driving
+        // the scanout; calling `bochs_vbe::init()` would reprogram
+        // the VGA controller to a DIFFERENT LFB address, stealing
+        // the display from bootvid and leaving the GUI blank.
+        let has_gop = {
+            let info = crate::hal::x86_64::framebuffer::info();
+            info.address != 0 && !crate::hal::x86_64::framebuffer::is_text_mode()
+        };
+        if has_gop {
+            crate::hal::serial::write_string("V:bochs_skip_gop\r\n");
+        } else {
+            crate::hal::serial::write_string("V:bochs_start\r\n");
+            bochs_vbe::init();
+            crate::hal::serial::write_string("V:bochs_done\r\n");
+        }
+        crate::hal::serial::write_string("V:all_done\r\n");
     }
 
     // GPU drivers - x86_64
     #[cfg(target_arch = "x86_64")]
     {
         #[cfg(target_arch = "x86_64")]
-        crate::hal::x86_64::serial::write_string("V:intel_probe_start\r\n");
+        crate::hal::serial::write_string("V:intel_probe_start\r\n");
         // Intel i915
         if intel::probe() {
             #[cfg(target_arch = "x86_64")]
-            crate::hal::x86_64::serial::write_string("V:intel_found\r\n");
+            crate::hal::serial::write_string("V:intel_found\r\n");
             let _ = intel::init();
             #[cfg(target_arch = "x86_64")]
-            crate::hal::x86_64::serial::write_string("V:intel_done\r\n");
+            crate::hal::serial::write_string("V:intel_done\r\n");
         } else {
             #[cfg(target_arch = "x86_64")]
-            crate::hal::x86_64::serial::write_string("V:intel_none\r\n");
+            crate::hal::serial::write_string("V:intel_none\r\n");
         }
 
         #[cfg(target_arch = "x86_64")]
-        crate::hal::x86_64::serial::write_string("V:amd_probe_start\r\n");
+        crate::hal::serial::write_string("V:amd_probe_start\r\n");
         // AMD Radeon
         if amd::probe() {
             #[cfg(target_arch = "x86_64")]
-            crate::hal::x86_64::serial::write_string("V:amd_found\r\n");
+            crate::hal::serial::write_string("V:amd_found\r\n");
             let _ = amd::init();
             #[cfg(target_arch = "x86_64")]
-            crate::hal::x86_64::serial::write_string("V:amd_done\r\n");
+            crate::hal::serial::write_string("V:amd_done\r\n");
         } else {
             #[cfg(target_arch = "x86_64")]
-            crate::hal::x86_64::serial::write_string("V:amd_none\r\n");
+            crate::hal::serial::write_string("V:amd_none\r\n");
         }
     }
 
@@ -170,31 +183,31 @@ pub fn init() {
     #[cfg(target_arch = "x86_64")]
     {
         #[cfg(target_arch = "x86_64")]
-        crate::hal::x86_64::serial::write_string("V:zhaoxin_probe_start\r\n");
+        crate::hal::serial::write_string("V:zhaoxin_probe_start\r\n");
         // Zhaoxin ZX-D/KX-7000
         if zhaoxin::probe() {
             #[cfg(target_arch = "x86_64")]
-            crate::hal::x86_64::serial::write_string("V:zhaoxin_found\r\n");
+            crate::hal::serial::write_string("V:zhaoxin_found\r\n");
             let _ = zhaoxin::init();
             #[cfg(target_arch = "x86_64")]
-            crate::hal::x86_64::serial::write_string("V:zhaoxin_done\r\n");
+            crate::hal::serial::write_string("V:zhaoxin_done\r\n");
         } else {
             #[cfg(target_arch = "x86_64")]
-            crate::hal::x86_64::serial::write_string("V:zhaoxin_none\r\n");
+            crate::hal::serial::write_string("V:zhaoxin_none\r\n");
         }
 
         #[cfg(target_arch = "x86_64")]
-        crate::hal::x86_64::serial::write_string("V:nouveau_probe_start\r\n");
+        crate::hal::serial::write_string("V:nouveau_probe_start\r\n");
         // NVIDIA Nouveau
         if nouveau::probe() {
             #[cfg(target_arch = "x86_64")]
-            crate::hal::x86_64::serial::write_string("V:nouveau_found\r\n");
+            crate::hal::serial::write_string("V:nouveau_found\r\n");
             let _ = nouveau::init();
             #[cfg(target_arch = "x86_64")]
-            crate::hal::x86_64::serial::write_string("V:nouveau_done\r\n");
+            crate::hal::serial::write_string("V:nouveau_done\r\n");
         } else {
             #[cfg(target_arch = "x86_64")]
-            crate::hal::x86_64::serial::write_string("V:nouveau_none\r\n");
+            crate::hal::serial::write_string("V:nouveau_none\r\n");
         }
     }
 
@@ -232,7 +245,7 @@ pub fn init() {
 
     // USB-C and Thunderbolt display support
     #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("V:usbc_start\r\n");
+    crate::hal::serial::write_string("V:usbc_start\r\n");
     // The global heap (4 MB, see `mm::heap`) is stable by this point
     // and the self-map is installed (see `mm::vas::init`), so `Vec`
     // allocations inside `UsbCManager::new()` are safe. The previous
@@ -240,10 +253,10 @@ pub fn init() {
     // applies.
     let _ = usbc::init();
     #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("V:usbc_done\r\n");
+    crate::hal::serial::write_string("V:usbc_done\r\n");
 
     #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("V:done\r\n");
+    crate::hal::serial::write_string("V:done\r\n");
     log::video_log("video", "Video driver stack initialized");
 }
 /// Run smoke tests on all video drivers

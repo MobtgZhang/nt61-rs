@@ -4,12 +4,14 @@
 
 use super::*;
 
+use crate::drivers::wdf::device::WdfPnpState;
+
 /// Queue configuration
 #[derive(Debug, Clone, Default)]
 pub struct WdfIoQueueConfig {
     /// Dispatch type
     pub dispatch_type: WdfQueueDispatchType,
-    /// Power managed
+    /// power managed
     pub power_managed: bool,
     /// FIFO default
     pub fifo_default: bool,
@@ -18,21 +20,21 @@ pub struct WdfIoQueueConfig {
 }
 
 impl WdfIoQueueConfig {
-    /// Create a new queue config
+    /// create a new queue config
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     /// Set dispatch type
     pub fn set_dispatch_type(&mut self, dispatch: WdfQueueDispatchType) {
         self.dispatch_type = dispatch;
     }
-    
+
     /// Set power managed
     pub fn set_power_managed(&mut self, managed: bool) {
         self.power_managed = managed;
     }
-    
+
     /// Set FIFO default
     pub fn set_fifo_default(&mut self, fifo: bool) {
         self.fifo_default = fifo;
@@ -72,26 +74,26 @@ pub struct WdfIoQueueCallbacks {
 }
 
 impl WdfIoQueueCallbacks {
-    /// Create new callbacks
+    /// create new callbacks
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     /// Set EvtIoDefault callback
     pub fn set_evt_io_default(&mut self, callback: EvtIoDefault) {
         self.evt_io_default = Some(callback);
     }
-    
+
     /// Set EvtIoRead callback
     pub fn set_evt_io_read(&mut self, callback: EvtIoRead) {
         self.evt_io_read = Some(callback);
     }
-    
+
     /// Set EvtIoWrite callback
     pub fn set_evt_io_write(&mut self, callback: EvtIoWrite) {
         self.evt_io_write = Some(callback);
     }
-    
+
     /// Set EvtIoDeviceControl callback
     pub fn set_evt_io_device_control(&mut self, callback: EvtIoDeviceControl) {
         self.evt_io_device_control = Some(callback);
@@ -104,43 +106,45 @@ impl WdfIoQueue {
     pub fn configure_with(&mut self, config: &WdfIoQueueConfig) {
         self.power_managed = config.power_managed;
     }
-    
+
     /// Set callbacks
-    pub fn set_callbacks(&mut self, callbacks: &WdfIoQueueCallbacks) {
+    pub fn set_callbacks(&mut self, _callbacks: &WdfIoQueueCallbacks) {
         // Store callbacks for later use
         // kprintln!("  [WDF] Queue callbacks configured");
     }
-    
+
     /// Start the queue
     pub fn start(&mut self) {
         self.state = WdfQueueState::Normal;
         // kprintln!("  [WDF] Queue started");
     }
-    
+
     /// Stop the queue
     pub fn stop(&mut self) {
         self.state = WdfQueueState::Drain;
         // kprintln!("  [WDF] Queue stopped");
     }
-    
+
     /// Drain the queue
     pub fn drain(&mut self) {
         self.state = WdfQueueState::Drain;
         // kprintln!("  [WDF] Queue draining");
     }
-    
+
     /// Purge the queue
     pub fn purge(&mut self) {
         self.state = WdfQueueState::Purge;
-        self.requests.clear();
+        for request in self.requests.iter_mut() {
+            *request = None;
+        }
         // kprintln!("  [WDF] Queue purged");
     }
-    
+
     /// Get queue state
     pub fn state(&self) -> WdfQueueState {
         self.state
     }
-    
+
     /// Process a request
     pub fn process_request(&self, request: &mut WdfRequest) {
         match request.request_type {
@@ -158,7 +162,7 @@ impl WdfIoQueue {
             }
         }
     }
-    
+
     /// Dispatch request based on dispatch type
     pub fn dispatch(&self, request: &mut WdfRequest) {
         match self.dispatch {
@@ -201,20 +205,20 @@ pub enum WdfRequestMode {
 /// WDF request file object
 pub struct WdfRequestFileObject {
     /// File object handle
-    handle: WdfObjectHandle,
+    pub handle: WdfObjectHandle,
     /// File name
     name: Option<&'static str>,
 }
 
 impl WdfRequestFileObject {
-    /// Create a new file object
+    /// create a new file object
     pub fn new() -> Self {
         Self {
             handle: core::ptr::null(),
             name: None,
         }
     }
-    
+
     /// Get file name
     pub fn get_name(&self) -> Option<&'static str> {
         self.name
@@ -230,15 +234,15 @@ impl Default for WdfRequestFileObject {
 /// WDF I/O target
 pub struct WdfIoTarget {
     /// Target type
-    target_type: WdfIoTargetType,
+    pub target_type: WdfIoTargetType,
     /// Target handle
-    handle: WdfObjectHandle,
+    pub handle: WdfObjectHandle,
     /// State
-    state: WdfIoTargetState,
+    pub state: WdfIoTargetState,
 }
 
 impl WdfIoTarget {
-    /// Create a local I/O target
+    /// create a local I/O target
     pub fn create_local() -> Result<Self, &'static str> {
         Ok(Self {
             target_type: WdfIoTargetType::Local,
@@ -246,9 +250,9 @@ impl WdfIoTarget {
             state: WdfIoTargetState::Open,
         })
     }
-    
+
     /// Open a file target
-    pub fn open_file(filename: &str) -> Result<Self, &'static str> {
+    pub fn open_file(_filename: &str) -> Result<Self, &'static str> {
         // kprintln!("  [WDF] Opening I/O target: {}", filename);
         Ok(Self {
             target_type: WdfIoTargetType::File,
@@ -256,20 +260,20 @@ impl WdfIoTarget {
             state: WdfIoTargetState::Open,
         })
     }
-    
+
     /// Send request synchronously
-    pub fn send(&self, request: &WdfRequest, timeout_ms: u32) -> Result<(), &'static str> {
+    pub fn send(&self, _request: &WdfRequest, _timeout_ms: u32) -> Result<(), &'static str> {
         // kprintln!("  [WDF] Sending request to target");
         Ok(())
     }
-    
+
     /// Format and send request
-    pub fn send_format(&self, request: &WdfRequest) -> Result<(), &'static str> {
+    pub fn send_format(&self, _request: &WdfRequest) -> Result<(), &'static str> {
         // kprintln!("  [WDF] Formatting and sending request");
         Ok(())
     }
-    
-    /// Close the target
+
+    /// close the target
     pub fn close(&self) {
         // kprintln!("  [WDF] Closing I/O target");
     }
@@ -299,7 +303,7 @@ pub struct WdfIoTargetConfig {
     pub allow_hard_errors: bool,
     /// I/O timeout
     pub io_timeout: u64,
-    /// Pnp state
+    /// pnp state
     pub pnp_state: WdfPnpState,
 }
 

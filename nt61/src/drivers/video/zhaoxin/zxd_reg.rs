@@ -9,7 +9,7 @@
 //
 //! Clean-room implementation based on public specifications.
 
-use super::pci_ids::{DisplayFormat, ZhaoxinVariant};
+use super::pci_ids::DisplayFormat;
 
 // =====================================================================
 // Register Base Address
@@ -22,7 +22,7 @@ pub const ZX_DC_BASE: u32 = 0x0000;
 // Display Controller Core Registers (0x0000 - 0x00FF)
 // =====================================================================
 
-/// Display Controller Control Register
+/// Display Controller control Register
 pub const ZX_DC_CTRL: u32 = 0x0000;
 /// Display Controller Status Register
 pub const ZX_DC_STATUS: u32 = 0x0004;
@@ -32,10 +32,10 @@ pub const ZX_DC_INT: u32 = 0x0008;
 pub const ZX_DC_INT_MASK: u32 = 0x000C;
 /// Display Controller Version Register
 pub const ZX_DC_VERSION: u32 = 0x0010;
-/// Display Controller Revision Register
+/// Display Controller revision Register
 pub const ZX_DC_REVISION: u32 = 0x0014;
 
-/// Control register flags
+/// control register flags
 pub const ZX_DC_CTRL_ENABLE: u32 = 1 << 0; // DC enable
 pub const ZX_DC_CTRL_RUN: u32 = 1 << 1; // DC running
 pub const ZX_DC_CTRL_RESET: u32 = 1 << 2; // DC reset
@@ -82,7 +82,7 @@ pub const ZX_FB_FORMAT_ARGB4444: u32 = 0x05; // ARGB 4444
 // CRT Controller A Registers (0x0200 - 0x02FF)
 // =====================================================================
 
-/// CRT Controller A Control Register
+/// CRT Controller A control Register
 pub const ZX_CRTC_A_CTRL: u32 = 0x0200;
 /// CRT Controller A Horizontal Total Register
 pub const ZX_CRTC_A_H_TOTAL: u32 = 0x0210;
@@ -102,7 +102,7 @@ pub const ZX_CRTC_A_V_SYNC: u32 = 0x0228;
 pub const ZX_CRTC_A_V_SYNC_END: u32 = 0x022C;
 /// CRT Controller A Display Address Start Register
 pub const ZX_CRTC_A_ADDR: u32 = 0x0230;
-/// CRT Controller A Display Address Offset Register
+/// CRT Controller A Display Address offset Register
 pub const ZX_CRTC_A_ADDR_OFFSET: u32 = 0x0234;
 
 /// CRT Controller A control flags
@@ -119,7 +119,7 @@ pub const ZX_CRTC_A_CTRL_INTERLACE: u32 = 1 << 8; // Interlaced mode
 // CRT Controller B Registers (0x0300 - 0x03FF)
 // =====================================================================
 
-/// CRT Controller B Control Register
+/// CRT Controller B control Register
 pub const ZX_CRTC_B_CTRL: u32 = 0x0300;
 /// CRT Controller B Horizontal Total Register
 pub const ZX_CRTC_B_H_TOTAL: u32 = 0x0310;
@@ -139,7 +139,7 @@ pub const ZX_CRTC_B_V_SYNC: u32 = 0x0328;
 pub const ZX_CRTC_B_V_SYNC_END: u32 = 0x032C;
 /// CRT Controller B Display Address Start Register
 pub const ZX_CRTC_B_ADDR: u32 = 0x0330;
-/// CRT Controller B Display Address Offset Register
+/// CRT Controller B Display Address offset Register
 pub const ZX_CRTC_B_ADDR_OFFSET: u32 = 0x0334;
 
 /// CRT Controller B control flags (same as A)
@@ -155,7 +155,7 @@ pub const ZX_CRTC_B_CTRL_VSYNC_POS: u32 = ZX_CRTC_A_CTRL_VSYNC_POS;
 // Primary Plane Registers (0x0400 - 0x04FF)
 // =====================================================================
 
-/// Primary Plane Control Register
+/// Primary Plane control Register
 pub const ZX_PLANE_PRIMARY_CTRL: u32 = 0x0400;
 /// Primary Plane Address Register
 pub const ZX_PLANE_PRIMARY_ADDR: u32 = 0x0404;
@@ -178,7 +178,7 @@ pub const ZX_PLANE_CTRL_FORMAT_SHIFT: u32 = 4; // Format field shift
 // Overlay Plane Registers (0x0500 - 0x05FF)
 // =====================================================================
 
-/// Overlay Plane Control Register
+/// Overlay Plane control Register
 pub const ZX_PLANE_OVERLAY_CTRL: u32 = 0x0500;
 /// Overlay Plane Address Register
 pub const ZX_PLANE_OVERLAY_ADDR: u32 = 0x0504;
@@ -201,7 +201,7 @@ pub const ZX_OVERLAY_CTRL_YUV2RGB: u32 = 1 << 8; // YUV to RGB conversion
 // Hardware Cursor Registers (0x0600 - 0x06FF)
 // =====================================================================
 
-/// Hardware Cursor Control Register
+/// Hardware Cursor control Register
 pub const ZX_CURSOR_CTRL: u32 = 0x0600;
 /// Hardware Cursor Address Register
 pub const ZX_CURSOR_ADDR: u32 = 0x0604;
@@ -249,36 +249,36 @@ pub const ZX_DX_CAPS_VIDEO_DECODE: u32 = 1 << 2;
 pub const ZX_DX_CAPS_COMPUTE: u32 = 1 << 3;
 
 // =====================================================================
-// Power Management Registers (0x1100 - 0x11FF)
+// power Management Registers (0x1100 - 0x11FF)
 // =====================================================================
 
-/// Power Management Control Register
+/// power Management control Register
 pub const ZX_PM_CTRL: u32 = 0x1100;
-/// Power Management Status Register
+/// power Management Status Register
 pub const ZX_PM_STATUS: u32 = 0x1104;
-/// Power Management Target Register
+/// power Management Target Register
 pub const ZX_PM_TARGET: u32 = 0x1108;
 
-/// Power states
+/// power states
 pub const ZX_PM_STATE_D0: u32 = 0x00; // Fully on
 pub const ZX_PM_STATE_D1: u32 = 0x01; // Low power
 pub const ZX_PM_STATE_D2: u32 = 0x02; // Standby
 pub const ZX_PM_STATE_D3: u32 = 0x03; // Hot standby
 
-/// Power control flags
+/// power control flags
 pub const ZX_PM_CTRL_AUTO: u32 = 1 << 0; // Auto power management
 pub const ZX_PM_CTRL_CLOCK_GATE: u32 = 1 << 1; // Clock gating
-pub const ZX_PM_CTRL_POWER_OFF: u32 = 1 << 2; // Power off clock domains
+pub const ZX_PM_CTRL_POWER_OFF: u32 = 1 << 2; // power off clock domains
 
 // =====================================================================
 // GPIO and Clock Registers (0x1200 - 0x12FF)
 // =====================================================================
 
-/// Clock Control Register
+/// Clock control Register
 pub const ZX_CLK_CTRL: u32 = 0x1200;
 /// Clock Status Register
 pub const ZX_CLK_STATUS: u32 = 0x1204;
-/// PLL Control Register
+/// PLL control Register
 pub const ZX_PLL_CTRL: u32 = 0x1210;
 /// PLL Status Register
 pub const ZX_PLL_STATUS: u32 = 0x1214;
@@ -428,7 +428,7 @@ pub mod regs {
         pub const CURSOR_ADDR: u32 = ZX_CURSOR_ADDR;
         pub const CURSOR_POS: u32 = ZX_CURSOR_POS;
 
-        /// Power management
+        /// power management
         pub const PM_CTRL: u32 = ZX_PM_CTRL;
         pub const PM_STATUS: u32 = ZX_PM_STATUS;
 

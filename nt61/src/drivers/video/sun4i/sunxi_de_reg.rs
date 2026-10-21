@@ -13,14 +13,14 @@ use super::pci_ids::SunxiSoc;
 // DEBE Core Registers
 // =====================================================================
 
-/// DEBE Control Register
+/// DEBE control Register
 pub const DEBE_CTRL: u32 = 0x0000;
 /// DEBE Status Register
 pub const DEBE_STATUS: u32 = 0x0004;
 /// DEBE Mode Register
 pub const DEBE_MODE: u32 = 0x0008;
 
-/// DEBE Control flags
+/// DEBE control flags
 pub const DEBE_CTRL_ENABLE: u32 = 1 << 0;
 pub const DEBE_CTRL_START: u32 = 1 << 1;
 pub const DEBE_CTRL_MODE_PRIMARY: u32 = 0 << 2;
@@ -60,7 +60,7 @@ pub const DEBE_FORMAT_ARGB4444: u32 = 0x05;
 // Layer Configuration
 // =====================================================================
 
-/// Layer 0 Control Register
+/// Layer 0 control Register
 pub const DEBE_LAYER0_CTRL: u32 = 0x0200;
 /// Layer 0 Address Register
 pub const DEBE_LAYER0_ADDR: u32 = 0x0204;
@@ -73,7 +73,7 @@ pub const DEBE_LAYER0_POS: u32 = 0x0210;
 /// Layer 0 Format Register
 pub const DEBE_LAYER0_FORMAT: u32 = 0x0214;
 
-/// Layer 1 Control Register
+/// Layer 1 control Register
 pub const DEBE_LAYER1_CTRL: u32 = 0x0300;
 /// Layer 1 Address Register
 pub const DEBE_LAYER1_ADDR: u32 = 0x0304;
@@ -96,7 +96,7 @@ pub const DEBE_LAYER_FORMAT_SHIFT: u32 = 4;
 // Color Key and Blending
 // =====================================================================
 
-/// Color Key Control Register
+/// Color Key control Register
 pub const DEBE_COLOR_KEY_CTRL: u32 = 0x0400;
 /// Color Key Value Register
 pub const DEBE_COLOR_KEY_VALUE: u32 = 0x0404;
@@ -132,7 +132,7 @@ pub const DEBE_INT_LINE_FLAG: u32 = 1 << 3;
 // TCON (Timing Controller) Registers
 // =====================================================================
 
-/// TCON Control Register
+/// TCON control Register
 pub const TCON_CTRL: u32 = 0x0000;
 /// TCON Status Register
 pub const TCON_STATUS: u32 = 0x0004;
@@ -160,7 +160,7 @@ pub const TCON_ACT_WIDTH: u32 = 0x0030;
 /// TCON Active Height Register
 pub const TCON_ACT_HEIGHT: u32 = 0x0034;
 
-/// TCON Clock Control Register
+/// TCON Clock control Register
 pub const TCON_CLK_CTRL: u32 = 0x0040;
 /// TCON Interrupt Register
 pub const TCON_INT: u32 = 0x0060;

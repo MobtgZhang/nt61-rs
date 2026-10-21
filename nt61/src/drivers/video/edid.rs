@@ -617,13 +617,13 @@ fn parse_descriptor(buffer: &[u8]) -> EdidDescriptor {
 
 /// Trait for DDC/I2C master implementations
 pub trait DdcMaster {
-    /// Read EDID block from the display
+    /// read EDID block from the display
     fn read_edid_block(&mut self, block: u8, buffer: &mut [u8; 128]) -> Result<(), EdidError>;
 }
 
-/// Read EDID using a platform-specific I2C master
+/// read EDID using a platform-specific I2C master
 pub fn read_edid<M: DdcMaster>(master: &mut M) -> Result<EdidBaseBlock, EdidError> {
-    // Read first EDID block
+    // read first EDID block
     let mut buffer = [0u8; 128];
     master.read_edid_block(0, &mut buffer)?;
 
@@ -736,7 +736,7 @@ mod tests {
         //   buf[9] = ((c2&7)<<5)|c3 = ((13&7)<<5)|21 = (5<<5)|21 = 160+21 = 181 = 0xB5
         0x45, 0xB5, 0x00, 0x00, // Serial number (4 bytes)
         0x00, 0x00, 0x00, 0x00, // Week and Year (2 bytes): Week 1, Year 2003
-        0x01, 0x03, // Version and Revision (2 bytes): 1.3
+        0x01, 0x03, // Version and revision (2 bytes): 1.3
         0x01, 0x03, // Video input (1 byte): Digital 8-bit, RGB 4:4:4
         0x80, // Max horizontal size (1 byte)
         0x00, // Max vertical size (1 byte)

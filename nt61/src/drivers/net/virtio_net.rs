@@ -10,11 +10,9 @@
 //! any Microsoft or ReactOS source file.
 
 use crate::hal::common::pci;
-use crate::hal::common::pit;
 use crate::ke::sync::Spinlock;
-use crate::kprintln;
 use crate::mm::pool::{self, PoolType};
-use core::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU16, AtomicU32, Ordering};
 
 /// virtio-net PCI vendor / device ID.
 const VIRTIO_NET_VID: u16 = 0x1AF4;
@@ -55,7 +53,7 @@ const VIRTIO_NET_F_STATUS: u32 = 16; // Device provides configuration status
 const VIRTIO_NET_RX_QUEUE: u16 = 0; // Receive queue index
 const VIRTIO_NET_TX_QUEUE: u16 = 1; // Transmit queue index
 const DEFAULT_QUEUE_SIZE: u16 = 256; // Number of descriptors per queue
-const BUFFER_SIZE: usize = 2048; // Buffer size for TX/RX
+const BUFFER_SIZE: usize = 2048; // buffer size for TX/RX
 
 /// virtio config space offset
 const CONFIG_MAC: u64 = 0;
@@ -73,7 +71,7 @@ mod tags {
 #[repr(C)]
 struct VirtqDesc {
     pub addr: u64,  // Physical address of buffer
-    pub len: u32,   // Length of buffer
+    pub len: u32,   // length of buffer
     pub flags: u16, // VIRTQ_DESC_F_* flags
     pub next: u16,  // Next descriptor index in chain
 }
@@ -95,7 +93,7 @@ struct VirtqAvail {
 #[repr(C)]
 struct VirtqUsedElem {
     pub id: u32,  // Index of descriptor that was used
-    pub len: u32, // Length of data written
+    pub len: u32, // length of data written
 }
 
 /// Virtqueue used ring header
@@ -468,7 +466,7 @@ impl Default for Nic {
     }
 }
 
-/// Internal NIC state
+/// internal NIC state
 struct NicState {
     sending: bool,
     receiving: bool,
@@ -488,7 +486,7 @@ static mut NIC_COUNT: usize = 0;
 
 /// Get a reference to the global NIC list
 fn get_nics() -> &'static mut [Option<Nic>; 4] {
-    unsafe { &mut NICS }
+    unsafe { &mut *core::ptr::addr_of_mut!(NICS) }
 }
 
 fn push_nic(n: Nic) {
@@ -517,9 +515,7 @@ pub fn get_nic(index: usize) -> Option<&'static Nic> {
 }
 
 pub fn init() {
-    #[cfg(target_arch = "x86_64")]
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("NET:virtio_start\r\n");
+    crate::hal::serial::write_string("NET:virtio_start\r\n");
     let mut found = 0u32;
     for dev in pci::enumerate() {
         if dev.vendor_id == VIRTIO_NET_VID && dev.device_id == VIRTIO_NET_DID {
@@ -549,9 +545,7 @@ pub fn init() {
             }
         }
     }
-    #[cfg(target_arch = "x86_64")]
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("NET:virtio_done\r\n");
+    crate::hal::serial::write_string("NET:virtio_done\r\n");
     // kprintln!("      virtio-net: {} NIC(s) initialised", found);
 }
 
@@ -593,7 +587,7 @@ fn init_nic(n: &mut Nic) -> bool {
             status | STATUS_ACKNOWLEDGE | STATUS_DRIVER,
         );
 
-        // Read device features and negotiate driver features
+        // read device features and negotiate driver features
         let dev_features =
             core::ptr::read_volatile((mmio as *const u64).add((REG_DEVICE_FEATURES / 8) as usize));
         // kprintln!("  [virtio-net] Device features: 0x{:016x}", dev_features);
@@ -624,14 +618,14 @@ fn init_nic(n: &mut Nic) -> bool {
             status | STATUS_FEATURES_OK,
         );
 
-        // Read MAC address from config space
+        // read MAC address from config space
         for i in 0..6 {
             n.mac[i] = core::ptr::read_volatile((mmio as *const u8).add((CONFIG_MAC as usize) + i));
         }
         // kprintln!("  [virtio-net] MAC: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
         //                   n.mac[0], n.mac[1], n.mac[2], n.mac[3], n.mac[4], n.mac[5]);
 
-        // Read link status
+        // read link status
         if driver_features & (1 << VIRTIO_NET_F_STATUS) != 0 {
             let config_status =
                 core::ptr::read_volatile((mmio as *const u16).add((CONFIG_STATUS / 2) as usize));
@@ -789,7 +783,7 @@ pub fn receive(nic_idx: usize, buffer: &mut [u8]) -> Option<usize> {
     // Check for received packets
     let mmio = n.bar0_virt;
     unsafe {
-        // Read ISR status to check for pending interrupts
+        // read ISR status to check for pending interrupts
         let isr = core::ptr::read_volatile((mmio as *const u8).add(REG_ISR_STATUS as usize));
 
         if isr & 0x1 != 0 {
@@ -856,7 +850,7 @@ pub fn get_rx_count(nic_idx: usize) -> u32 {
         .unwrap_or(0)
 }
 
-/// Handle interrupt from virtio-net NIC
+/// handle interrupt from virtio-net NIC
 pub fn interrupt_handler(nic_idx: usize) {
     let nics = get_nics();
     let n = match nics[nic_idx].as_mut() {
@@ -868,7 +862,7 @@ pub fn interrupt_handler(nic_idx: usize) {
 
     let mmio = n.bar0_virt;
     unsafe {
-        // Read and clear ISR status
+        // read and clear ISR status
         let isr = core::ptr::read_volatile((mmio as *const u8).add(REG_ISR_STATUS as usize));
 
         if isr & 0x1 != 0 {

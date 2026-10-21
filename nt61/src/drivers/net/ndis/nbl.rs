@@ -1,4 +1,4 @@
-//! Network Buffer List and Network Buffer structures
+//! Network buffer List and Network buffer structures
 //
 //! NDIS 6.0 uses NET_BUFFER_LIST (NBL) and NET_BUFFER (NB) to represent
 //! network data. Each NBL can contain one or more NBs, and each NB
@@ -63,7 +63,7 @@ pub struct NetBuffer {
     pub next: *mut NetBuffer,           // Next NB in chain
     pub parent_nbl: *mut NetBufferList, // Parent NBL
     pub mdl: *mut Mdl,                 // MDL chain
-    pub data_offset: u32,               // Offset to valid data
+    pub data_offset: u32,               // offset to valid data
     pub data_length: u32,               // Total data length
 }
 
@@ -137,8 +137,8 @@ pub struct NetBufferList {
     pub source_om_index: u32,          // Source OM index
     pub status: i32,                    // Status code
     pub info: [usize; 8],              // Information array
-    pub nbl_count: u32,                // Count of NBLs in this chain
-    pub nb_count: u32,                 // Count of NBs in this chain
+    pub nbl_count: u32,                // count of NBLs in this chain
+    pub nb_count: u32,                 // count of NBs in this chain
 }
 
 impl NetBufferList {

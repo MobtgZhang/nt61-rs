@@ -14,22 +14,19 @@
 extern crate alloc;
 
 pub mod e1000;
-#[cfg(target_arch = "x86_64")]
-pub mod rtl8139;
+/// NDIS miniport adapter context framework. The surrounding NDIS
+/// wrapper modules (interrupt/oid/send) are staged separately and
+/// are not wired into the build yet.
+#[path = "ndis/miniport_adapter.rs"]
+pub mod miniport_adapter;
 pub mod virtio_net;
-
-#[cfg(target_arch = "x86_64")]
-pub mod smoke;
-
-use crate::kprintln;
 
 /// Initialise the network driver stack. Walks PCI for each
 /// supported NIC and registers it.
 pub fn init() {
     // kprintln!("    Network drivers: e1000, rtl8139, virtio-net");
     e1000::init();
-    #[cfg(target_arch = "x86_64")]
-    rtl8139::init();
+    crate::drivers::arch::init_rtl8139();
     virtio_net::init();
     // kprintln!("    Network stack ready");
 }
@@ -37,14 +34,7 @@ pub fn init() {
 /// Smoke test for the network driver stack. Re-runs each NIC's
 /// self-check.
 pub fn smoke_test() -> bool {
-    #[cfg(target_arch = "x86_64")]
-    {
-        smoke::smoke_test()
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        true
-    }
+    crate::drivers::arch::net_smoke_test()
 }
 
 // =============================================================================
@@ -56,10 +46,7 @@ pub fn send_to_nic(nic_type: NicType, nic_idx: usize, data: &[u8]) -> bool {
     match nic_type {
         NicType::VirtioNet => virtio_net::send(nic_idx, data, false),
         NicType::E1000 => e1000::send(nic_idx, data),
-        #[cfg(target_arch = "x86_64")]
-        NicType::Rtl8139 => rtl8139::send(nic_idx, data),
-        #[cfg(not(target_arch = "x86_64"))]
-        NicType::Rtl8139 => false,
+        NicType::Rtl8139 => crate::drivers::arch::send_to_rtl8139(nic_idx, data),
         NicType::Unknown => false,
     }
 }
@@ -69,10 +56,7 @@ pub fn nic_receive(nic_type: NicType, nic_idx: usize, buffer: &mut [u8]) -> Opti
     match nic_type {
         NicType::VirtioNet => virtio_net::receive(nic_idx, buffer),
         NicType::E1000 => e1000::receive(nic_idx, buffer),
-        #[cfg(target_arch = "x86_64")]
-        NicType::Rtl8139 => rtl8139::receive(nic_idx, buffer),
-        #[cfg(not(target_arch = "x86_64"))]
-        NicType::Rtl8139 => None,
+        NicType::Rtl8139 => crate::drivers::arch::receive_from_rtl8139(nic_idx, buffer),
         NicType::Unknown => None,
     }
 }
@@ -88,16 +72,7 @@ pub enum NicType {
 
 /// Get the count of available NICs
 pub fn nic_count() -> usize {
-    virtio_net::count() + e1000::count() + {
-        #[cfg(target_arch = "x86_64")]
-        {
-            rtl8139::count()
-        }
-        #[cfg(not(target_arch = "x86_64"))]
-        {
-            0
-        }
-    }
+    virtio_net::count() + e1000::count() + { crate::drivers::arch::count_rtl8139() }
 }
 
 pub mod tcpip;

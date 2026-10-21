@@ -20,16 +20,12 @@
 //! Clean-room implementation. Spec source: Microsoft "Kernel
 //! Performance Counter" reference and the public pcw.h header.
 
-#![allow(non_snake_case)]
-
 extern crate alloc;
 
-use alloc::string::String;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use crate::ke::sync::Spinlock;
-use crate::kprintln;
 
 const MAX_COUNTER_SETS: usize = 16;
 const MAX_COUNTERS_PER_SET: usize = 8;
@@ -82,16 +78,16 @@ static NEXT_SET_ID: AtomicU32 = AtomicU32::new(1);
 static REGISTERED: AtomicU32 = AtomicU32::new(0);
 static TOTAL_SAMPLES: AtomicU64 = AtomicU64::new(0);
 
-/// `PcwRegister` — register a counter set. The supplied
+/// `pcw_register` — register a counter set. The supplied
 /// `counters` describe each numeric value. Returns the new set
 /// id, or 0 on failure.
-pub fn PcwRegister(name: &str, counters: &[CounterDescriptor]) -> u32 {
+pub fn pcw_register(name: &str, counters: &[CounterDescriptor]) -> u32 {
     if name.is_empty() || counters.is_empty() || counters.len() > MAX_COUNTERS_PER_SET {
         return 0;
     }
     let _g = LOCK.lock();
     unsafe {
-        for slot in SETS.iter_mut() {
+        for slot in (*core::ptr::addr_of_mut!(SETS)).iter_mut() {
             if slot.valid {
                 continue;
             }
@@ -126,11 +122,11 @@ pub fn PcwRegister(name: &str, counters: &[CounterDescriptor]) -> u32 {
     0
 }
 
-/// `PcwUnregister` — remove a counter set.
-pub fn PcwUnregister(set_id: u32) -> bool {
+/// `pcw_unregister` — remove a counter set.
+pub fn pcw_unregister(set_id: u32) -> bool {
     let _g = LOCK.lock();
     unsafe {
-        for slot in SETS.iter_mut() {
+        for slot in (*core::ptr::addr_of_mut!(SETS)).iter_mut() {
             if !slot.valid || slot.set_id != set_id {
                 continue;
             }
@@ -141,13 +137,13 @@ pub fn PcwUnregister(set_id: u32) -> bool {
     false
 }
 
-/// `PcwCounter` — record a value for counter `i` in set
+/// `pcw_counter` — record a value for counter `i` in set
 /// `set_id`. Used by the data source (the driver) to publish
 /// samples.
-pub fn PcwCounter(set_id: u32, counter_index: u32, value: u64) -> bool {
+pub fn pcw_counter(set_id: u32, counter_index: u32, value: u64) -> bool {
     let _g = LOCK.lock();
     unsafe {
-        for slot in SETS.iter_mut() {
+        for slot in (*core::ptr::addr_of_mut!(SETS)).iter_mut() {
             if !slot.valid || slot.set_id != set_id {
                 continue;
             }
@@ -163,14 +159,14 @@ pub fn PcwCounter(set_id: u32, counter_index: u32, value: u64) -> bool {
     false
 }
 
-/// `PcwCollect` — return a snapshot of every counter in every
+/// `pcw_collect` — return a snapshot of every counter in every
 /// set. This is what PDH (user mode) ultimately receives.
 /// Returns vector of (name, set_id, values) tuples.
-pub fn PcwCollect() -> Vec<([u8; 16], usize, u32, [u64; MAX_COUNTERS_PER_SET])> {
+pub fn pcw_collect() -> Vec<([u8; 16], usize, u32, [u64; MAX_COUNTERS_PER_SET])> {
     let mut out = Vec::new();
     let _g = LOCK.lock();
     unsafe {
-        for slot in SETS.iter() {
+        for slot in (*core::ptr::addr_of!(SETS)).iter() {
             if !slot.valid {
                 continue;
             }
@@ -217,7 +213,7 @@ pub fn register_default_sets() {
             type_: 0,
         },
     ];
-    PcwRegister("CPU", &cpu);
+    pcw_register("CPU", &cpu);
     // 2. IO counters.
     let io = [
         CounterDescriptor {
@@ -241,7 +237,7 @@ pub fn register_default_sets() {
             type_: 0,
         },
     ];
-    PcwRegister("IO", &io);
+    pcw_register("IO", &io);
     // 3. Memory counters.
     let mm = [
         CounterDescriptor {
@@ -255,7 +251,7 @@ pub fn register_default_sets() {
             type_: 0,
         },
     ];
-    PcwRegister("Memory", &mm);
+    pcw_register("Memory", &mm);
 }
 
 fn hash_name(s: &str) -> u32 {
@@ -273,14 +269,14 @@ pub fn init() {
     // kprintln!("    [PCW] performance counter window host ready");
 }
 
-/// Simplified smoke test - skip the Vec-based PcwCollect calls.
+/// Simplified smoke test - skip the Vec-based pcw_collect calls.
 pub fn smoke_test() -> bool {
     // kprintln!("  [PCW SMOKE] testing performance counter window...");
     register_default_sets();
-    // Skip PcwCollect which uses Vec - just test counter registration
-    let n1 = PcwCounter(1, 0, 12345); // CPU dpc_time
-    let n2 = PcwCounter(2, 0, 100); // IO reads
-    let n3 = PcwCounter(2, 1, 50); // IO writes
+    // Skip pcw_collect which uses Vec - just test counter registration
+    let n1 = pcw_counter(1, 0, 12345); // CPU dpc_time
+    let n2 = pcw_counter(2, 0, 100); // IO reads
+    let n3 = pcw_counter(2, 1, 50); // IO writes
     if !(n1 && n2 && n3) {
         // kprintln!("  [PCW SMOKE FAIL] counter push");
         return false;

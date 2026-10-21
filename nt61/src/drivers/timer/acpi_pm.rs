@@ -1,4 +1,4 @@
-//! ACPI Power-Management Timer Driver
+//! ACPI power-Management Timer Driver
 //
 //! The ACPI PM timer is a 24- or 32-bit free-running counter
 //! that increments at 3.579545 MHz. The base address is in the
@@ -7,20 +7,19 @@
 //! without an HPET.
 //
 //! Clean-room implementation. Spec source: ACPI 6.0 section
-//! 4.8.2 ("Power Management Timer"). No code is copied from any
+//! 4.8.2 ("power Management Timer"). No code is copied from any
 //! Microsoft or ReactOS source file.
 
 use crate::hal::common::acpi;
-use crate::kprintln;
 
 /// ACPI PM timer frequency (Hz). 3.579545 MHz.
 pub const PM_TIMER_FREQ_HZ: u32 = 3_579_545;
 
 #[derive(Debug, Clone, Copy, Default)]
-struct AcpiPm {
+pub struct AcpiPm {
     port: u16,
     width: u8, // 24 or 32
-    initialised: bool,
+    pub initialised: bool,
 }
 
 static mut PM_TIMER: Option<AcpiPm> = None;
@@ -57,7 +56,7 @@ pub fn init() {
     //               port(), width());
 }
 
-fn width() -> u8 {
+pub fn width() -> u8 {
     unsafe { PM_TIMER.map(|p| p.width).unwrap_or(0) }
 }
 

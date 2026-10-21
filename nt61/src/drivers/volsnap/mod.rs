@@ -21,8 +21,6 @@
 //! Clean-room implementation. Spec source: Microsoft "Volume
 //! Shadow Copy Service" reference.
 
-#![allow(non_snake_case)]
-
 extern crate alloc;
 
 use alloc::string::String;
@@ -30,8 +28,6 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::ke::sync::Spinlock;
-use crate::kprintln;
-use crate::mm::pool;
 
 const MAX_SNAPSHOTS: usize = 8;
 const MAX_DIFF_ENTRIES: usize = 64;
@@ -77,12 +73,12 @@ static LOCK: Spinlock<()> = Spinlock::new(());
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 static TOTAL_SNAPSHOTS: AtomicU64 = AtomicU64::new(0);
 
-/// `VolsnapCreateSnapshot` — take a snapshot of `volume`. The
+/// `volsnap_create_snapshot` — take a snapshot of `volume`. The
 /// returned `u64` is the snapshot id; 0 on failure.
-pub fn VolsnapCreateSnapshot(volume: &str) -> u64 {
+pub fn volsnap_create_snapshot(volume: &str) -> u64 {
     let _g = LOCK.lock();
     unsafe {
-        for slot in SNAPSHOTS.iter_mut() {
+        for slot in (*core::ptr::addr_of_mut!(SNAPSHOTS)).iter_mut() {
             if slot.valid {
                 continue;
             }
@@ -103,12 +99,12 @@ pub fn VolsnapCreateSnapshot(volume: &str) -> u64 {
     0
 }
 
-/// `VolsnapRecordDiff` — record that sector `s` on snapshot `id`
+/// `volsnap_record_diff` — record that sector `s` on snapshot `id`
 /// was modified. Returns true if the diff was recorded.
-pub fn VolsnapRecordDiff(id: u64, sector: u64) -> bool {
+pub fn volsnap_record_diff(id: u64, sector: u64) -> bool {
     let _g = LOCK.lock();
     unsafe {
-        for slot in SNAPSHOTS.iter_mut() {
+        for slot in (*core::ptr::addr_of_mut!(SNAPSHOTS)).iter_mut() {
             if !slot.valid || slot.id != id {
                 continue;
             }
@@ -129,11 +125,11 @@ pub fn VolsnapRecordDiff(id: u64, sector: u64) -> bool {
     false
 }
 
-/// `VolsnapDeleteSnapshot` — free the snapshot.
-pub fn VolsnapDeleteSnapshot(id: u64) -> bool {
+/// `volsnap_delete_snapshot` — free the snapshot.
+pub fn volsnap_delete_snapshot(id: u64) -> bool {
     let _g = LOCK.lock();
     unsafe {
-        for slot in SNAPSHOTS.iter_mut() {
+        for slot in (*core::ptr::addr_of_mut!(SNAPSHOTS)).iter_mut() {
             if !slot.valid || slot.id != id {
                 continue;
             }
@@ -145,13 +141,13 @@ pub fn VolsnapDeleteSnapshot(id: u64) -> bool {
     false
 }
 
-/// `VolsnapQuerySnapshots` — list all live snapshots. Used by
+/// `volsnap_query_snapshots` — list all live snapshots. Used by
 /// mountmgr to publish `\\?\GLOBALROOT\Device\HarddiskVolume
 /// ShadowCopyN` names.
-pub fn VolsnapQuerySnapshots() -> Vec<u64> {
+pub fn volsnap_query_snapshots() -> Vec<u64> {
     let mut out = Vec::new();
     unsafe {
-        for s in SNAPSHOTS.iter() {
+        for s in (*core::ptr::addr_of!(SNAPSHOTS)).iter() {
             if s.valid {
                 out.push(s.id);
             }

@@ -7,13 +7,10 @@
 //! - Standard IOCTL handlers
 //! - Driver object initialization
 
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
-#[allow(non_snake_case)]
 extern crate alloc;
 
 use crate::io::{DeviceObject, DriverObject, Irp};
-use crate::io::{DevicePnPState, DevicePreviousState};
-use crate::io::{DevicePowerState, PowerStateType, SystemPowerState};
+use crate::io::{DevicePowerState, SystemPowerState};
 
 pub mod status {
     pub const SUCCESS: u32 = 0x0000_0000;
@@ -27,23 +24,23 @@ pub mod status {
     pub const TIMEOUT: u32 = 0x0000_0102;
 }
 
-pub fn transition_device_power(device: *mut DeviceObject, target_state: DevicePowerState) -> u32 {
+pub fn transition_device_power(_device: *mut DeviceObject, _target_state: DevicePowerState) -> u32 {
     status::SUCCESS
 }
 
-pub fn transition_system_power(target_state: SystemPowerState) -> u32 {
+pub fn transition_system_power(_target_state: SystemPowerState) -> u32 {
     status::SUCCESS
 }
 
-pub fn default_pnp_handler(device: *mut DeviceObject, irp: *mut Irp) -> u32 {
+pub fn default_pnp_handler(_device: *mut DeviceObject, _irp: *mut Irp) -> u32 {
     status::SUCCESS
 }
 
-pub fn default_power_handler(device: *mut DeviceObject, irp: *mut Irp) -> u32 {
+pub fn default_power_handler(_device: *mut DeviceObject, _irp: *mut Irp) -> u32 {
     status::SUCCESS
 }
 
-pub fn default_device_control_handler(device: *mut DeviceObject, irp: *mut Irp) -> u32 {
+pub fn default_device_control_handler(_device: *mut DeviceObject, _irp: *mut Irp) -> u32 {
     status::NOT_SUPPORTED
 }
 
@@ -92,26 +89,26 @@ impl DeviceCapabilities {
     }
 }
 
-pub fn query_device_power_capabilities(device: *mut DeviceObject) -> DeviceCapabilities {
+pub fn query_device_power_capabilities(_device: *mut DeviceObject) -> DeviceCapabilities {
     DeviceCapabilities::new()
 }
 
-pub fn complete_irp(irp: *mut Irp, status: u32, information: usize) {}
+pub fn complete_irp(_irp: *mut Irp, _status: u32, _information: usize) {}
 
-pub fn forward_irp(device: *mut DeviceObject, irp: *mut Irp) -> u32 {
+pub fn forward_irp(_device: *mut DeviceObject, _irp: *mut Irp) -> u32 {
     status::SUCCESS
 }
 
-pub fn standard_add_device(driver: *mut DriverObject, pdo: *mut DeviceObject) -> u32 {
+pub fn standard_add_device(_driver: *mut DriverObject, _pdo: *mut DeviceObject) -> u32 {
     status::SUCCESS
 }
 
-pub fn standard_unload(driver: *mut DriverObject) {}
+pub fn standard_unload(_driver: *mut DriverObject) {}
 
-pub fn is_device_started(device: *mut DeviceObject) -> bool {
+pub fn is_device_started(_device: *mut DeviceObject) -> bool {
     true
 }
 
-pub fn is_device_powered(device: *mut DeviceObject) -> bool {
+pub fn is_device_powered(_device: *mut DeviceObject) -> bool {
     true
 }

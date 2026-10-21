@@ -7,8 +7,6 @@
 //
 //! kdcom uses the WDK driver naming convention
 //! (KD_PACKET, PACKET_TIMEOUT, COM_PORT, ...).
-#![cfg(target_arch = "x86_64")]
-#![allow(non_snake_case, non_upper_case_globals, dead_code)]
 //
 //! # Wire format
 //
@@ -29,11 +27,11 @@
 //! # Scope
 //
 //! The transport supports:
-//! * `KdInitSystem` — locate and reset the COM port.
-//! * `KdD0Transition` / `KdD3Transition` — power on/off hooks.
-//! * `KdReceivePacket` / `KdSendPacket` — read/write one packet.
-//! * `KdpPrint` / `Kdprompt` — formatted kernel output.
-//! * `KdpCrash` — break into the debugger on bug check.
+//! * `kd_init_system` — locate and reset the COM port.
+//! * `kd_d0_transition` / `kd_d3_transition` — power on/off hooks.
+//! * `kd_receive_packet` / `kd_send_packet` — read/write one packet.
+//! * `kdp_print` / `kdprompt` — formatted kernel output.
+//! * `kdp_crash` — break into the debugger on bug check.
 //
 //! The transport runs entirely on the early serial port; the
 //! transport layer never panics, so a dead debugger can never
@@ -48,40 +46,36 @@
 //! Clean-room implementation. Spec source: "Windows Internals,
 //! 6th ed." (Russinovich) chapter 12 and the public WDK docs.
 
-#![allow(non_snake_case)]
-
-use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-#[cfg(target_arch = "x86_64")]
-use crate::hal::x86_64::io_port::{READ_PORT_UCHAR, WRITE_PORT_UCHAR};
+use crate::hal::x86_64::io_port::{read_port_uchar, write_port_uchar};
 
 const COM1: u16 = 0x3F8;
 const COM2: u16 = 0x2F8;
-const COM3: u16 = 0x3E8;
-const COM4: u16 = 0x2E8;
+pub const COM3: u16 = 0x3E8;
+pub const COM4: u16 = 0x2E8;
 
 /// `init` — initialise the kernel debugger transport. This is a
-/// wrapper around `KdInitSystem` (kept for symmetry with the
-/// other driver init functions; the WDK uses `KdInitSystem`
+/// wrapper around `kd_init_system` (kept for symmetry with the
+/// other driver init functions; the WDK uses `kd_init_system`
 /// directly).
 ///
 /// Note: KDCOM does NOT output readable text to serial when no debugger
 /// is connected. All output goes through the KD protocol layer.
 pub fn init() {
     // Don't output anything here - KDCOM should be silent unless debugger connects
-    // The actual initialization happens in KdInitSystem() which is called
+    // The actual initialization happens in kd_init_system() which is called
     // explicitly when debug mode is enabled
 }
 
 /// 16550 UART register offsets.
 const THR: u16 = 0; // Transmit Holding Register (write)
-const RBR: u16 = 0; // Receive Buffer Register (read)
+const RBR: u16 = 0; // Receive buffer Register (read)
 const DLL: u16 = 0; // Divisor Latch Low (when DLAB=1)
 const DLH: u16 = 1; // Divisor Latch High (when DLAB=1)
 const IER: u16 = 1; // Interrupt Enable Register
-const LCR: u16 = 3; // Line Control Register
-const MCR: u16 = 4; // Modem Control Register
+const LCR: u16 = 3; // Line control Register
+const MCR: u16 = 4; // Modem control Register
 const LSR: u16 = 5; // Line Status Register
 
 const LSR_DR: u8 = 1 << 0; // Data Ready
@@ -101,12 +95,12 @@ const PADDING_BYTE: u8 = 0xFF;
 
 const PACKET_LEADER: [u8; 4] = *b"KDTX";
 const PACKET_TYPE_PACKET: u8 = b'P';
-const PACKET_TYPE_RESET: u8 = b'T';
+pub const PACKET_TYPE_RESET: u8 = b'T';
 
 const MAX_PACKET: usize = 1024;
 const ACK: u8 = 0xAA;
 const NAK: u8 = 0x55;
-const RESEND: u8 = 0xBB;
+pub const RESEND: u8 = 0xBB;
 
 /// One byte of communication statistics.
 #[derive(Debug, Clone, Copy, Default)]
@@ -125,10 +119,10 @@ static INITIALISED: AtomicBool = AtomicBool::new(false);
 static CURRENT_PORT: AtomicU32 = AtomicU32::new(0);
 static BREAK_PENDING: AtomicBool = AtomicBool::new(false);
 
-/// `KdIsConnected` — returns true if the kernel debugger is attached and
+/// `kd_is_connected` — returns true if the kernel debugger is attached and
 /// the serial transport has been successfully initialised. Use this to
-/// check whether KdpPrint output will reach a debugger host.
-pub fn KdIsConnected() -> bool {
+/// check whether kdp_print output will reach a debugger host.
+pub fn kd_is_connected() -> bool {
     INITIALISED.load(Ordering::Acquire)
 }
 static BYTES_SENT: AtomicU32 = AtomicU32::new(0);
@@ -144,20 +138,20 @@ fn port() -> u16 {
     CURRENT_PORT.load(Ordering::Acquire) as u16
 }
 
-fn io_read(r: u16) -> u8 {
-    READ_PORT_UCHAR(port() + r)
+pub fn io_read(r: u16) -> u8 {
+    read_port_uchar(port() + r)
 }
-fn io_write(r: u16, v: u8) {
-    WRITE_PORT_UCHAR(port() + r, v)
+pub fn io_write(r: u16, v: u8) {
+    write_port_uchar(port() + r, v)
 }
 
-/// `KdInitSystem` — find the configured COM port, reset the
+/// `kd_init_system` — find the configured COM port, reset the
 /// 16550, and enable the FIFO. Returns 1 on success (matching
 /// the real kdcom.dll contract).
 ///
 /// IMPORTANT: This function is silent unless a debugger is actually
 /// connected. The KD protocol is used only when WinDbg is listening.
-pub fn KdInitSystem() -> u32 {
+pub fn kd_init_system() -> u32 {
     if INITIALISED.load(Ordering::Acquire) {
         return 1;
     }
@@ -184,48 +178,48 @@ pub fn KdInitSystem() -> u32 {
 
 fn try_open(cand: u16) -> bool {
     // Disable interrupts, enable DLAB.
-    WRITE_PORT_UCHAR(cand + IER, 0);
-    WRITE_PORT_UCHAR(cand + LCR, LCR_DLAB);
+    write_port_uchar(cand + IER, 0);
+    write_port_uchar(cand + LCR, LCR_DLAB);
     // 115200 baud: divisor = 1.
-    WRITE_PORT_UCHAR(cand + DLL, 1);
-    WRITE_PORT_UCHAR(cand + DLH, 0);
+    write_port_uchar(cand + DLL, 1);
+    write_port_uchar(cand + DLH, 0);
     // 8N1, DLAB off.
-    WRITE_PORT_UCHAR(cand + LCR, LCR_8N1);
+    write_port_uchar(cand + LCR, LCR_8N1);
     // Enable loopback to test the UART.
-    WRITE_PORT_UCHAR(
+    write_port_uchar(
         cand + MCR,
         MCR_DTR | MCR_RTS | MCR_OUT1 | MCR_OUT2 | MCR_LOOP,
     );
-    // Read status: if we get something, the chip is alive.
-    let _ = READ_PORT_UCHAR(cand + LSR);
+    // read status: if we get something, the chip is alive.
+    let _ = read_port_uchar(cand + LSR);
     // Disable loopback.
-    WRITE_PORT_UCHAR(cand + MCR, MCR_DTR | MCR_RTS | MCR_OUT1 | MCR_OUT2);
+    write_port_uchar(cand + MCR, MCR_DTR | MCR_RTS | MCR_OUT1 | MCR_OUT2);
     // Quick read drain.
-    let _ = READ_PORT_UCHAR(cand + RBR);
+    let _ = read_port_uchar(cand + RBR);
     true
 }
 
-/// `KdD0Transition` — wake the debugger (D0 = full power).
-pub fn KdD0Transition() -> u32 {
+/// `kd_d0_transition` — wake the debugger (D0 = full power).
+pub fn kd_d0_transition() -> u32 {
     if !INITIALISED.load(Ordering::Acquire) {
         return 0;
     }
-    WRITE_PORT_UCHAR(port() + MCR, MCR_DTR | MCR_RTS | MCR_OUT1 | MCR_OUT2);
+    write_port_uchar(port() + MCR, MCR_DTR | MCR_RTS | MCR_OUT1 | MCR_OUT2);
     1
 }
 
-/// `KdD3Transition` — suspend the debugger (D3 = off).
-pub fn KdD3Transition() -> u32 {
+/// `kd_d3_transition` — suspend the debugger (D3 = off).
+pub fn kd_d3_transition() -> u32 {
     if !INITIALISED.load(Ordering::Acquire) {
         return 0;
     }
-    WRITE_PORT_UCHAR(port() + MCR, 0);
+    write_port_uchar(port() + MCR, 0);
     1
 }
 
-/// `KdpPrint` — write a NUL-terminated string to the debugger
+/// `kdp_print` — write a NUL-terminated string to the debugger
 /// output. Returns the number of bytes actually written.
-pub fn KdpPrint(msg: &[u8]) -> u32 {
+pub fn kdp_print(msg: &[u8]) -> u32 {
     if !INITIALISED.load(Ordering::Acquire) {
         return 0;
     }
@@ -240,25 +234,25 @@ pub fn KdpPrint(msg: &[u8]) -> u32 {
     written
 }
 
-/// `Kdprompt` — write a string and wait for a single key from the
+/// `kdprompt` — write a string and wait for a single key from the
 /// debugger. Returns the byte received, or 0 on timeout.
-pub fn Kdprompt(msg: &[u8]) -> u8 {
+pub fn kdprompt(msg: &[u8]) -> u8 {
     if !INITIALISED.load(Ordering::Acquire) {
         return 0;
     }
-    KdpPrint(msg);
+    kdp_print(msg);
     read_byte(0xFFFF) // ~10s @ 115200
 }
 
-/// `KdpCrash` — enter the kernel debugger on a bug check.
+/// `kdp_crash` — enter the kernel debugger on a bug check.
 /// This outputs to the KD protocol when debugger is connected.
-pub fn KdpCrash(bugcode: u32, parameter_count: u32) {
+pub fn kdp_crash(bugcode: u32, parameter_count: u32) {
     if !INITIALISED.load(Ordering::Acquire) {
         return;
     }
     BREAK_PENDING.store(true, Ordering::Release);
 
-    // Write the bugcheck code as a KD protocol packet.
+    // write the bugcheck code as a KD protocol packet.
     // Using zeroed message buffer since this is a placeholder for the
     // real KD protocol encoded message.
     let mut msg = [0u8; 96];
@@ -300,7 +294,7 @@ pub fn KdpCrash(bugcode: u32, parameter_count: u32) {
     let msg_len = msg.len();
     msg[pos.min(msg_len - 1)..].fill(0u8);
 
-    KdpPrint(&msg);
+    kdp_print(&msg);
 
     // Wait for debugger response
     for _ in 0..0x100000 {
@@ -339,12 +333,12 @@ fn u32_to_dec(mut v: u32) -> [u8; 10] {
 
 fn write_byte(b: u8) {
     for _ in 0..0xFFFFu32 {
-        if (READ_PORT_UCHAR(port() + LSR) & LSR_THRE) != 0 {
+        if (read_port_uchar(port() + LSR) & LSR_THRE) != 0 {
             break;
         }
         core::hint::spin_loop();
     }
-    WRITE_PORT_UCHAR(port() + THR, b);
+    write_port_uchar(port() + THR, b);
     BYTES_SENT.fetch_add(1, Ordering::Relaxed);
 }
 
@@ -359,8 +353,8 @@ fn read_byte(max_wait: u32) -> u8 {
 }
 
 fn try_read_byte() -> Option<u8> {
-    if (READ_PORT_UCHAR(port() + LSR) & LSR_DR) != 0 {
-        let b = READ_PORT_UCHAR(port() + RBR);
+    if (read_port_uchar(port() + LSR) & LSR_DR) != 0 {
+        let b = read_port_uchar(port() + RBR);
         BYTES_RCVD.fetch_add(1, Ordering::Relaxed);
         return Some(b);
     }
@@ -370,7 +364,7 @@ fn try_read_byte() -> Option<u8> {
 /// Send a full packet to the host. Returns true if the host ACK'd
 /// it. A false return means NAK or timeout, and the caller is
 /// expected to retry.
-pub fn KdSendPacket(data: &[u8]) -> bool {
+pub fn kd_send_packet(data: &[u8]) -> bool {
     if !INITIALISED.load(Ordering::Acquire) {
         return false;
     }
@@ -416,7 +410,7 @@ pub fn KdSendPacket(data: &[u8]) -> bool {
 
 /// Try to receive a packet. Returns the number of bytes written
 /// into `buf`, or 0 if no packet was ready.
-pub fn KdReceivePacket(buf: &mut [u8]) -> usize {
+pub fn kd_receive_packet(buf: &mut [u8]) -> usize {
     if !INITIALISED.load(Ordering::Acquire) {
         return 0;
     }
@@ -482,27 +476,26 @@ pub fn kd_stats() -> KdStats {
 pub fn smoke_test() -> bool {
     // This test is disabled by default - KDCOM should be silent unless debugger connects
     // Only run smoke test in explicit debug mode
-    if !KdIsConnected() {
+    if !kd_is_connected() {
         return false; // Not initialized
     }
 
     // Test write of a NUL-terminated string.
     let msg = b"kdcom smoke test\n";
-    let n = KdpPrint(msg);
+    let n = kdp_print(msg);
     if n != msg.len() as u32 {
         return false;
     }
 
     // Test power transitions.
-    KdD0Transition();
-    KdD3Transition();
-    KdD0Transition();
+    kd_d0_transition();
+    kd_d3_transition();
+    kd_d0_transition();
 
     true
 }
 
 // Ensure these FFI markers are not optimised out.
-#[allow(dead_code)]
-unsafe extern "C" fn kdcom_marker_init() -> u32 {
-    KdInitSystem()
+pub unsafe extern "C" fn kdcom_marker_init() -> u32 {
+    kd_init_system()
 }

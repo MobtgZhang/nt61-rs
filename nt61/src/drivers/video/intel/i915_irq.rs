@@ -42,7 +42,7 @@ pub struct I915IrqHandler {
 }
 
 impl I915IrqHandler {
-    /// Create new handler
+    /// create new handler
     pub fn new(mmio_base: u64) -> Self {
         Self {
             mmio_base,
@@ -51,13 +51,13 @@ impl I915IrqHandler {
         }
     }
 
-    /// Read register
+    /// read register
     #[inline]
     fn read_reg(&self, offset: u32) -> u32 {
         unsafe { core::ptr::read_volatile((self.mmio_base + offset as u64) as *const u32) }
     }
 
-    /// Write register
+    /// write register
     #[inline]
     fn write_reg(&self, offset: u32, value: u32) {
         unsafe { core::ptr::write_volatile((self.mmio_base + offset as u64) as *mut u32, value) }
@@ -73,7 +73,7 @@ impl I915IrqHandler {
         self.flip_callback = Some(callback);
     }
 
-    /// Handle interrupt
+    /// handle interrupt
     pub fn handle_irq(&mut self) -> bool {
         let iir = self.read_reg(DEIIR_RENDER);
         if iir == 0 {

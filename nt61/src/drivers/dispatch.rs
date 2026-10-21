@@ -3,11 +3,8 @@
 //! Provides complete IRP dispatch handlers for all major function codes
 //! and standardized patterns for driver development.
 
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, AtomicPtr, Ordering};
-#[allow(non_snake_case)]
-
-use crate::io::{DeviceObject, DriverObject, Irp};
 use super::common::status;
+use crate::io::{DeviceObject, DriverObject, Irp};
 
 pub struct DispatchTable {
     pub create: fn(*mut DeviceObject, *mut Irp) -> u32,
@@ -67,5 +64,4 @@ pub fn default_cleanup(_device: *mut DeviceObject, _irp: *mut Irp) -> u32 {
     status::SUCCESS
 }
 
-pub fn install_dispatch_table(driver: *mut DriverObject, table: &DispatchTable) {
-}
+pub fn install_dispatch_table(_driver: *mut DriverObject, _table: &DispatchTable) {}

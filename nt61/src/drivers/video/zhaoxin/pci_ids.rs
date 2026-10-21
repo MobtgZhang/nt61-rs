@@ -96,7 +96,7 @@ pub const GLENFLY_DEVICE_IDS: &[u16] = &[
 ];
 
 // =====================================================================
-// Device Name Database
+// Device name Database
 // =====================================================================
 
 /// Get device name from device ID

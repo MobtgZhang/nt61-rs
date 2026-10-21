@@ -60,7 +60,7 @@ pub struct I915Cursor {
 }
 
 impl I915Cursor {
-    /// Create a new cursor for the given device
+    /// create a new cursor for the given device
     ///
     /// # Arguments
     /// * `mmio_base` - The MMIO base address of the i915 device
@@ -75,13 +75,13 @@ impl I915Cursor {
         }
     }
 
-    /// Read a cursor register
+    /// read a cursor register
     #[inline]
     fn read_reg(&self, offset: u32) -> u32 {
         unsafe { core::ptr::read_volatile((self.mmio_base + offset as u64) as *const u32) }
     }
 
-    /// Write a cursor register
+    /// write a cursor register
     #[inline]
     fn write_reg(&self, offset: u32, value: u32) {
         unsafe {
@@ -154,7 +154,7 @@ impl I915Cursor {
         // On newer hardware (Skylake+), the sprite is accessed via CURBASE
         self.write_reg(CURABASE, 0);
 
-        // Write sprite data to the cursor sprite area
+        // write sprite data to the cursor sprite area
         // The sprite data area is at MMIO base + 0x80000 to 0x81FFF (64KB)
         let sprite_base = self.mmio_base + 0x80000;
         for (i, &pixel) in data.iter().enumerate() {
@@ -186,7 +186,7 @@ impl I915Cursor {
             "Cursor data size mismatch"
         );
 
-        // Write sprite data to the provided physical address
+        // write sprite data to the provided physical address
         // (In a real implementation, this would be mapped)
         let sprite_base = sprite_phys;
         for (i, &pixel) in data.iter().enumerate() {
@@ -281,7 +281,7 @@ pub struct I915CursorPipeB {
 }
 
 impl I915CursorPipeB {
-    /// Create a new cursor for Pipe B
+    /// create a new cursor for Pipe B
     pub fn new(mmio_base: u64) -> Self {
         Self {
             mmio_base,
@@ -302,7 +302,7 @@ impl I915CursorPipeB {
         }
     }
 
-    /// Read-only accessor for the cached `enabled` flag. Useful for
+    /// read-only accessor for the cached `enabled` flag. Useful for
     /// the boot menu's "cursor on/off" indicator.
     pub fn is_enabled(&self) -> bool {
         self.enabled

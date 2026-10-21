@@ -12,8 +12,7 @@
 //! revision 1.0 + supplement. No code is copied from any
 //! Microsoft or ReactOS source file.
 
-use crate::kprintln;
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 // Helper functions for MMIO access
 unsafe fn mmio_read32(base: u64, offset: u32) -> u32 {
@@ -135,14 +134,14 @@ pub struct EhciQtd {
     pub next_qtd: u32,      // Next qTD pointer
     pub alt_next_qtd: u32,  // Alternate next qTD
     pub token: u32,         // Token (pid, status, bytes)
-    pub buffer_ptr: u32,    // Buffer pointer (low 32 bits)
-    pub buffer_ptr_hi: u32, // Buffer pointer (high 32 bits)
+    pub buffer_ptr: u32,    // buffer pointer (low 32 bits)
+    pub buffer_ptr_hi: u32, // buffer pointer (high 32 bits)
     pub ext_buffer_ptr: u32,
     pub reserved: [u32; 5],
 }
 
 impl EhciQtd {
-    /// Create a new qTD for a control transfer
+    /// create a new qTD for a control transfer
     pub fn new(buf_phys: u64, buf_len: usize, pid: u8) -> Self {
         let total_bytes = (buf_len as u32).min(16 * 1024 * 1024);
         Self {
@@ -182,11 +181,11 @@ pub struct EhciQh {
     pub next_qtd: u32,        // Next qTD pointer
     pub alt_next_qtd: u32,    // Alternate next qTD
     pub token: u32,           // Status token
-    pub buffer_ptr: [u32; 5], // Buffer pointers (page 0-4)
+    pub buffer_ptr: [u32; 5], // buffer pointers (page 0-4)
 }
 
 impl EhciQh {
-    /// Create a new QH for a device endpoint
+    /// create a new QH for a device endpoint
     pub fn new(ep_addr: u8, _ep_type: u8, max_packet: u16, speed: UsbSpeed) -> Self {
         let is_in = (ep_addr & 0x80) != 0;
         let dir_nak = if is_in { 2u32 << 30 } else { 0 };
@@ -304,7 +303,7 @@ static EHCI_ADDRESS_COUNTER: AtomicU8 = AtomicU8::new(1);
 
 fn push_ehci(c: EhciController) {
     unsafe {
-        if EHCI_COUNT < EHCI_CONTROLLERS.len() {
+        if EHCI_COUNT < (*core::ptr::addr_of!(EHCI_CONTROLLERS)).len() {
             EHCI_CONTROLLERS[EHCI_COUNT] = Some(c);
             EHCI_COUNT += 1;
         }
@@ -322,7 +321,7 @@ pub fn init() {
 
     let mut found = 0u32;
     unsafe {
-        for slot in EHCI_CONTROLLERS.iter() {
+        for slot in (*core::ptr::addr_of!(EHCI_CONTROLLERS)).iter() {
             if slot.is_some() {
                 found += 1;
             }
@@ -351,7 +350,7 @@ pub fn init_found() -> u32 {
 /// Get port count for controller
 pub fn get_port_count(controller: usize) -> u8 {
     unsafe {
-        match EHCI_CONTROLLERS.get(controller) {
+        match (*core::ptr::addr_of!(EHCI_CONTROLLERS)).get(controller) {
             Some(Some(c)) => c.n_ports,
             _ => 0,
         }
@@ -361,7 +360,7 @@ pub fn get_port_count(controller: usize) -> u8 {
 /// Get port status for controller
 pub fn get_port_status(controller: usize, port: u8) -> u32 {
     unsafe {
-        match EHCI_CONTROLLERS.get(controller) {
+        match (*core::ptr::addr_of!(EHCI_CONTROLLERS)).get(controller) {
             Some(Some(c)) => {
                 let op_base = c.mmio_base + c.cap_length as u64;
                 let port_reg = OP_PORTSC + (port as u32) * 4;
@@ -380,7 +379,7 @@ pub fn is_port_connected(controller: usize, port: u8) -> bool {
 /// Reset a port and return speed
 pub fn reset_port(controller: usize, port: u8) -> Result<UsbSpeed, &'static str> {
     unsafe {
-        match EHCI_CONTROLLERS.get_mut(controller) {
+        match (*core::ptr::addr_of_mut!(EHCI_CONTROLLERS)).get_mut(controller) {
             Some(Some(c)) => {
                 let op_base = c.mmio_base + c.cap_length as u64;
                 let port_reg = OP_PORTSC + (port as u32) * 4;
@@ -438,7 +437,7 @@ pub struct UsbSetupPacket {
 }
 
 impl UsbSetupPacket {
-    /// Create a GET_DESCRIPTOR request
+    /// create a GET_DESCRIPTOR request
     pub fn get_descriptor(dtype: u8, index: u8, len: u16) -> Self {
         Self {
             request_type: 0x80, // IN, Standard, Device
@@ -449,7 +448,7 @@ impl UsbSetupPacket {
         }
     }
 
-    /// Create a SET_ADDRESS request
+    /// create a SET_ADDRESS request
     pub fn set_address(addr: u8) -> Self {
         Self {
             request_type: 0x00,
@@ -460,7 +459,7 @@ impl UsbSetupPacket {
         }
     }
 
-    /// Create a SET_CONFIGURATION request
+    /// create a SET_CONFIGURATION request
     pub fn set_configuration(config: u8) -> Self {
         Self {
             request_type: 0x00,
@@ -472,7 +471,7 @@ impl UsbSetupPacket {
     }
 }
 
-/// Control transfer result
+/// control transfer result
 #[derive(Debug)]
 pub enum ControlResult {
     Success(u32),
@@ -524,7 +523,7 @@ pub fn smoke_test() -> bool {
         let mut port_enabled = 0u32;
         let mut port_high = 0u32;
 
-        for (i, c) in EHCI_CONTROLLERS.iter().enumerate() {
+        for (i, c) in (*core::ptr::addr_of!(EHCI_CONTROLLERS)).iter().enumerate() {
             if let Some(ctrl) = c {
                 if ctrl.initialised {
                     for p in 0..ctrl.n_ports {
@@ -557,7 +556,7 @@ pub fn smoke_test() -> bool {
         SMOKE_PORT_HIGH.store(port_high, core::sync::atomic::Ordering::Relaxed);
 
         // Touch diagnostics so all struct fields are exercised.
-        for (i, c) in EHCI_CONTROLLERS.iter().enumerate() {
+        for (i, c) in (*core::ptr::addr_of!(EHCI_CONTROLLERS)).iter().enumerate() {
             if let Some(_ctrl) = c {
                 let _ = diagnostics(i);
             }
@@ -584,11 +583,11 @@ pub fn smoke_port_summary() -> (u32, u32, u32, u32) {
     )
 }
 
-/// Diagnostic snapshot for a controller. Read-only, so it does not
+/// Diagnostic snapshot for a controller. read-only, so it does not
 /// mutate any state. Used by smoke tests and other diagnostics.
 pub fn diagnostics(controller: usize) -> Option<EhciDiagnostics> {
     unsafe {
-        EHCI_CONTROLLERS
+        (*core::ptr::addr_of!(EHCI_CONTROLLERS))
             .get(controller)
             .and_then(|c| c.as_ref())
             .map(|c| EhciDiagnostics {
@@ -611,7 +610,7 @@ pub fn diagnostics(controller: usize) -> Option<EhciDiagnostics> {
     }
 }
 
-/// Read-only diagnostic snapshot of a controller.
+/// read-only diagnostic snapshot of a controller.
 #[derive(Debug, Clone, Copy)]
 pub struct EhciDiagnostics {
     pub bar0_phys: u64,

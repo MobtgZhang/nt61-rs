@@ -10,9 +10,9 @@
 
 extern crate alloc;
 
-use alloc::format;
 use alloc::vec::Vec;
 
+use crate::drivers::bus::pci_bus;
 use crate::drivers::video::core::gpu_common::{
     GpuDriver, GpuError, GpuFeatures, GpuFramebufferInfo, PixelFormat,
 };
@@ -50,7 +50,7 @@ pub struct VirtioGpuDevice {
 }
 
 impl VirtioGpuDevice {
-    /// Create a new virtio-gpu device
+    /// create a new virtio-gpu device
     pub fn new(device_id: u32) -> Self {
         Self {
             mmio_base: pci_ids::virtio::VIRTIO_GPU_BASE,
@@ -66,7 +66,7 @@ impl VirtioGpuDevice {
         }
     }
 
-    /// Read a virtio-gpu register
+    /// read a virtio-gpu register
     #[inline]
     fn read_reg(&self, offset: u32) -> u32 {
         if self.mmio_base == 0 {
@@ -75,7 +75,7 @@ impl VirtioGpuDevice {
         unsafe { core::ptr::read_volatile((self.mmio_base + offset as u64) as *const u32) }
     }
 
-    /// Write a virtio-gpu register
+    /// write a virtio-gpu register
     #[inline]
     fn write_reg(&self, offset: u32, value: u32) {
         if self.mmio_base == 0 {
@@ -114,7 +114,7 @@ impl GpuDriver for VirtioGpuDevice {
         // Step 1: Reset the device
         self.reset();
 
-        // Step 2: Read device configuration
+        // Step 2: read device configuration
         self.read_config();
 
         // Step 3: Get framebuffer information from firmware
@@ -247,7 +247,7 @@ impl GpuDriver for VirtioGpuDevice {
 impl VirtioGpuDevice {
     /// Reset the virtio-gpu device
     fn reset(&mut self) {
-        // Write to reset register
+        // write to reset register
         self.write_reg(VIRTIO_GPU_REG_STATUS, VIRTIO_GPU_STATUS_RESET);
 
         // Wait for reset to complete
@@ -261,9 +261,9 @@ impl VirtioGpuDevice {
         }
     }
 
-    /// Read device configuration
+    /// read device configuration
     fn read_config(&mut self) {
-        // Read display configuration
+        // read display configuration
         let width = self.read_reg(VIRTIO_GPU_REG_H);
         let height = self.read_reg(VIRTIO_GPU_REG_W);
 
@@ -360,7 +360,7 @@ impl VirtioGpuDevice {
         }
     }
 
-    /// Create a 2D resource
+    /// create a 2D resource
     pub fn resource_create_2d(
         &mut self,
         resource_id: u32,
@@ -420,7 +420,7 @@ impl VirtioGpuDevice {
     pub fn transfer_to_host_2d(
         &mut self,
         resource_id: u32,
-        offset: u64,
+        _offset: u64,
         x: u32,
         y: u32,
         width: u32,
@@ -463,7 +463,7 @@ impl VirtioGpuDevice {
     pub fn resource_attach_backing(
         &mut self,
         resource_id: u32,
-        entries: &[VirtGpuMemEntry],
+        _entries: &[VirtGpuMemEntry],
     ) -> Result<(), GpuError> {
         self.send_command(VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING, 0);
 
@@ -487,12 +487,12 @@ impl VirtioGpuDevice {
         self.wait_command_complete(100)
     }
 
-    /// Create a 3D context (for VirGL)
+    /// create a 3D context (for VirGL)
     pub fn context_create(
         &mut self,
         context_id: u32,
-        nlen: u32,
-        name: &str,
+        _nlen: u32,
+        _name: &str,
     ) -> Result<(), GpuError> {
         self.send_command(VIRTIO_GPU_CMD_CTX_CREATE, 0);
 
@@ -518,7 +518,7 @@ impl VirtioGpuDevice {
 
     /// Get the scanout count supported by this device
     pub fn get_scanout_count(&self) -> u32 {
-        // Read from device config or default to 1
+        // read from device config or default to 1
         1
     }
 
@@ -631,12 +631,13 @@ pub const VIRTIO_GPU_F_CROSS_DEVICE: u32 = 1 << 1;
 /// Probe for virtio-gpu device
 #[cfg(target_arch = "riscv64")]
 pub fn probe() -> bool {
-    // Check if virtio-gpu is present
-    // In QEMU, virtio-gpu is typically at a known MMIO address
-
-    // For now, always return true to enable development
-    // Real implementation would check PCI/vendor IDs
-    true
+    let gpu_ids = [
+        pci_ids::VIRTIO_GPU_DEVICE_ID,
+        pci_ids::VIRTIO_GPU_VIRGL_DEVICE_ID,
+    ];
+    gpu_ids
+        .iter()
+        .any(|device_id| pci_bus::find_device(pci_ids::VIRTIO_VENDOR_ID, *device_id).is_some())
 }
 
 /// Initialize virtio-gpu device
@@ -764,7 +765,7 @@ pub struct VirtGpuRect {
 pub struct VirtGpuMemEntry {
     /// Physical address
     pub addr: u64,
-    /// Length in bytes
+    /// length in bytes
     pub length: u32,
 }
 
@@ -790,7 +791,7 @@ pub struct VirtGpuResource {
 }
 
 impl VirtGpuResource {
-    /// Create a new resource
+    /// create a new resource
     pub fn new(id: u32, width: u32, height: u32, format: u32) -> Self {
         Self {
             id,
@@ -817,7 +818,7 @@ pub struct VirtGpuResourceManager {
 }
 
 impl VirtGpuResourceManager {
-    /// Create a new resource manager
+    /// create a new resource manager
     pub fn new() -> Self {
         Self {
             resources: Vec::new(),
@@ -825,7 +826,7 @@ impl VirtGpuResourceManager {
         }
     }
 
-    /// Create a new resource
+    /// create a new resource
     pub fn create_resource(&mut self, width: u32, height: u32, format: u32) -> u32 {
         let id = self.next_id;
         self.next_id += 1;

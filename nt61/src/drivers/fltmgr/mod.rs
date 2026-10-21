@@ -6,19 +6,18 @@
 //! fileinfo.sys, WofAdk.sys, ...).
 //
 //! Filter Manager uses the NT driver naming convention
-//! (FLT_REGISTRATION, IRP_MJ_*, FltRegisterFilter, ...).
-#![allow(non_snake_case, non_upper_case_globals, dead_code)]
+//! (FLT_REGISTRATION, IRP_MJ_*, flt_register_filter, ...).
 //
 //! # What we implement
 //
-//! * `FltRegisterFilter` — a minifilter registers a
+//! * `flt_register_filter` — a minifilter registers a
 //!   `FLT_REGISTRATION` with the filter manager, getting back a
 //!   `FLT_FILTER` handle.
-//! * `FltStartFiltering` — turn on the filter; the manager
+//! * `flt_start_filtering` — turn on the filter; the manager
 //!   starts calling its callbacks.
-//! * `FltAttachVolume` / `FltDetachVolume` — bind a filter to a
+//! * `flt_attach_volume` / `flt_detach_volume` — bind a filter to a
 //!   volume (identified by device name).
-//! * `FltSendMessage` — queue an asynchronous message to a
+//! * `flt_send_message` — queue an asynchronous message to a
 //!   user-mode service via fltlib.
 //! * A small set of well-known IRP callbacks: pre/post create,
 //!   pre/post read, pre/post write, pre/post set info.
@@ -28,25 +27,20 @@
 //! ```text
 //!   let mut reg = FLT_REGISTRATION { ... };
 //!   let mut h: *mut FLT_FILTER = core::ptr::null_mut();
-//!   FltRegisterFilter(&reg, &mut h);
-//!   FltStartFiltering(h);
+//!   flt_register_filter(&reg, &mut h);
+//!   flt_start_filtering(h);
 //!   // ... driver code ...
-//!   FltUnregisterFilter(h);
+//!   flt_unregister_filter(h);
 //! ```
 //
 //! Clean-room implementation. Spec source: Microsoft "Filter
 //! Manager" reference and the fltMgr.h header from the WDK.
 
-#![allow(non_snake_case)]
-
 extern crate alloc;
 
-use alloc::string::String;
-use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::ke::sync::Spinlock;
-use crate::kprintln;
 
 const MAX_FILTERS: usize = 16;
 const MAX_ATTACHED_VOLUMES: usize = 32;
@@ -149,9 +143,9 @@ static mut MESSAGES: [FltMessage; MAX_MESSAGES] = [const {
 static FLT_LOCK: Spinlock<()> = Spinlock::new(());
 static REGISTERED: AtomicU32 = AtomicU32::new(0);
 
-/// `FltRegisterFilter` — install a filter in the global
+/// `flt_register_filter` — install a filter in the global
 /// filter table. Returns a non-zero handle (the slot's array index + 1) on success.
-pub fn FltRegisterFilter(name: &str) -> u32 {
+pub fn flt_register_filter(name: &str) -> u32 {
     // kprintln!("    [FLTMGR] A");
     if name.is_empty() {
         return 0;
@@ -160,7 +154,7 @@ pub fn FltRegisterFilter(name: &str) -> u32 {
     let _g = FLT_LOCK.lock();
     // kprintln!("    [FLTMGR] C");
     unsafe {
-        for (idx, slot) in FILTERS.iter_mut().enumerate() {
+        for (idx, slot) in (*core::ptr::addr_of_mut!(FILTERS)).iter_mut().enumerate() {
             if slot.valid {
                 continue;
             }
@@ -190,8 +184,8 @@ pub fn FltRegisterFilter(name: &str) -> u32 {
     0
 }
 
-/// `FltStartFiltering` — start calling the filter's callbacks.
-pub fn FltStartFiltering(h: u32) -> i32 {
+/// `flt_start_filtering` — start calling the filter's callbacks.
+pub fn flt_start_filtering(h: u32) -> i32 {
     // kprintln!("    [FLTMGR] Start A h={}", h);
     if h == 0 {
         return -1;
@@ -200,7 +194,7 @@ pub fn FltStartFiltering(h: u32) -> i32 {
     // kprintln!("    [FLTMGR] Start B");
     unsafe {
         let idx = (h - 1) as usize;
-        if idx >= FILTERS.len() {
+        if idx >= (*core::ptr::addr_of!(FILTERS)).len() {
             return -1;
         }
         let slot = &mut FILTERS[idx];
@@ -213,16 +207,16 @@ pub fn FltStartFiltering(h: u32) -> i32 {
     }
 }
 
-/// `FltUnregisterFilter` — remove the filter and detach from
+/// `flt_unregister_filter` — remove the filter and detach from
 /// all volumes.
-pub fn FltUnregisterFilter(h: u32) -> i32 {
+pub fn flt_unregister_filter(h: u32) -> i32 {
     if h == 0 {
         return -1;
     }
     let _g = FLT_LOCK.lock();
     unsafe {
         let idx = (h - 1) as usize;
-        if idx >= FILTERS.len() {
+        if idx >= (*core::ptr::addr_of!(FILTERS)).len() {
             return -1;
         }
         let slot = &mut FILTERS[idx];
@@ -230,7 +224,7 @@ pub fn FltUnregisterFilter(h: u32) -> i32 {
             return -1;
         }
         // Detach from all volumes that point to this filter.
-        for a in ATTACHED.iter_mut() {
+        for a in (*core::ptr::addr_of_mut!(ATTACHED)).iter_mut() {
             a[0] = 0; // Clear first byte to mark as empty
         }
         slot.valid = false;
@@ -239,10 +233,10 @@ pub fn FltUnregisterFilter(h: u32) -> i32 {
     }
 }
 
-/// `FltAttachVolume` — attach the filter to a volume. The
+/// `flt_attach_volume` — attach the filter to a volume. The
 /// volume is named by its device path (e.g.
 /// `\\Device\\HarddiskVolume1`).
-pub fn FltAttachVolume(h: u32, volume: &str) -> i32 {
+pub fn flt_attach_volume(h: u32, volume: &str) -> i32 {
     // kprintln!("    [FLTMGR] Attach A h={}", h);
     if h == 0 {
         return -1;
@@ -252,7 +246,7 @@ pub fn FltAttachVolume(h: u32, volume: &str) -> i32 {
     unsafe {
         // Find a free attachment slot.
         // kprintln!("    [FLTMGR] Attach C searching...");
-        for slot in ATTACHED.iter_mut() {
+        for slot in (*core::ptr::addr_of_mut!(ATTACHED)).iter_mut() {
             // kprintln!("    [FLTMGR] Attach D slot[0]={}", slot[0]);
             if slot[0] != 0 {
                 continue;
@@ -268,7 +262,7 @@ pub fn FltAttachVolume(h: u32, volume: &str) -> i32 {
             // kprintln!("    [FLTMGR] Attach G");
             // Bump the filter's attached count.
             let idx = (h - 1) as usize;
-            if idx < FILTERS.len() {
+            if idx < (*core::ptr::addr_of!(FILTERS)).len() {
                 let f = &mut FILTERS[idx];
                 if f.valid {
                     f.attached_count += 1;
@@ -284,15 +278,15 @@ pub fn FltAttachVolume(h: u32, volume: &str) -> i32 {
     -1
 }
 
-/// `FltDetachVolume` — detach from a volume.
-pub fn FltDetachVolume(h: u32, volume: &str) -> i32 {
+/// `flt_detach_volume` — detach from a volume.
+pub fn flt_detach_volume(h: u32, volume: &str) -> i32 {
     if h == 0 {
         return -1;
     }
     let _g = FLT_LOCK.lock();
     unsafe {
         let vol_bytes = volume.as_bytes();
-        for slot in ATTACHED.iter_mut() {
+        for slot in (*core::ptr::addr_of_mut!(ATTACHED)).iter_mut() {
             if slot[0] == 0 {
                 continue;
             } // Empty slot
@@ -301,7 +295,7 @@ pub fn FltDetachVolume(h: u32, volume: &str) -> i32 {
             if slot_len == vol_bytes.len() && &slot[..slot_len] == vol_bytes {
                 slot[0] = 0; // Mark as empty
                 let idx = (h - 1) as usize;
-                if idx < FILTERS.len() {
+                if idx < (*core::ptr::addr_of!(FILTERS)).len() {
                     let f = &mut FILTERS[idx];
                     if f.valid && f.attached_count > 0 {
                         f.attached_count -= 1;
@@ -314,16 +308,16 @@ pub fn FltDetachVolume(h: u32, volume: &str) -> i32 {
     -1
 }
 
-/// `FltSendMessage` — queue a message for the user-mode
+/// `flt_send_message` — queue a message for the user-mode
 /// service. `data` is opaque to the manager. The user-mode
-/// filter service can call `FltGetMessage` to drain the queue.
-pub fn FltSendMessage(h: u32, data: &[u8]) -> i32 {
+/// filter service can call `flt_get_message` to drain the queue.
+pub fn flt_send_message(h: u32, data: &[u8]) -> i32 {
     if h == 0 {
         return -1;
     }
     let _g = FLT_LOCK.lock();
     unsafe {
-        for slot in MESSAGES.iter_mut() {
+        for slot in (*core::ptr::addr_of_mut!(MESSAGES)).iter_mut() {
             if slot.valid {
                 continue;
             }
@@ -335,7 +329,7 @@ pub fn FltSendMessage(h: u32, data: &[u8]) -> i32 {
             slot.reply_status = 0;
             // Copy filter name
             let idx = (h - 1) as usize;
-            if idx < FILTERS.len() {
+            if idx < (*core::ptr::addr_of!(FILTERS)).len() {
                 let f = &FILTERS[idx];
                 if f.valid {
                     slot.filter_name_buf[..f.name_len].copy_from_slice(&f.name_buf[..f.name_len]);
@@ -343,7 +337,7 @@ pub fn FltSendMessage(h: u32, data: &[u8]) -> i32 {
                 }
             }
             let idx = (h - 1) as usize;
-            if idx < FILTERS.len() {
+            if idx < (*core::ptr::addr_of!(FILTERS)).len() {
                 let f = &mut FILTERS[idx];
                 if f.valid {
                     f.messages_sent += 1;
@@ -361,13 +355,13 @@ pub fn init() {
     // kprintln!("    [FLTMGR] filter manager ready");
 }
 
-/// `FltGetMessage` — return the next queued message, or null.
+/// `flt_get_message` — return the next queued message, or null.
 /// Returns (filter_name_len, buffer_len) - caller uses global FILTERS/MESSAGES arrays directly.
 /// This avoids heap allocation in the hot path.
-pub fn FltGetMessage() -> Option<(usize, usize)> {
+pub fn flt_get_message() -> Option<(usize, usize)> {
     let _g = FLT_LOCK.lock();
     unsafe {
-        for slot in MESSAGES.iter_mut() {
+        for slot in (*core::ptr::addr_of_mut!(MESSAGES)).iter_mut() {
             if !slot.valid {
                 continue;
             }
@@ -384,13 +378,18 @@ pub fn filter_count() -> u32 {
     REGISTERED.load(Ordering::Relaxed)
 }
 pub fn attached_count() -> usize {
-    unsafe { ATTACHED.iter().filter(|s| s[0] != 0).count() }
+    unsafe {
+        (*core::ptr::addr_of!(ATTACHED))
+            .iter()
+            .filter(|s| s[0] != 0)
+            .count()
+    }
 }
 
 pub fn get_filter(name: &str) -> Option<FltFilter> {
     unsafe {
         let name_bytes = name.as_bytes();
-        for slot in FILTERS.iter() {
+        for slot in (*core::ptr::addr_of!(FILTERS)).iter() {
             if slot.valid && &slot.name_buf[..slot.name_len] == name_bytes {
                 return Some(FltFilter {
                     valid: true,
@@ -417,7 +416,7 @@ pub fn smoke_test() -> bool {
     true
 }
 
-unsafe extern "C" fn stub_pre(_a: *mut (), _b: *mut u8) -> i32 {
+pub unsafe extern "C" fn stub_pre(_a: *mut (), _b: *mut u8) -> i32 {
     0
 }
-unsafe extern "C" fn stub_post(_a: *mut (), _b: *mut u8, _f: u32) {}
+pub unsafe extern "C" fn stub_post(_a: *mut (), _b: *mut u8, _f: u32) {}

@@ -51,9 +51,7 @@ pub use virt_gpu::VirtioGpuDevice;
 // Device Information
 // =====================================================================
 
-use crate::drivers::video::core::gpu_common::{
-    GpuDeviceInfo, GpuDriver, GpuFeatures, GpuFramebufferInfo,
-};
+use crate::drivers::video::core::gpu_common::{GpuDeviceInfo, GpuDriver, GpuFramebufferInfo};
 
 /// Get device name for a RISC-V GPU
 pub fn gpu_name(soc: pci_ids::RiscVSoc) -> &'static str {

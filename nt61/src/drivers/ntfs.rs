@@ -11,16 +11,13 @@
 //! Clean-room implementation. Spec source: "NTFS Documentation"
 //! (Microsoft) and reverse engineering of ntfs.sys behavior.
 
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, AtomicPtr, Ordering};
-
-#[allow(non_snake_case)]
+use core::sync::atomic::{AtomicU32, Ordering};
 
 extern crate alloc;
 
-use alloc::vec::Vec;
-use core::sync::atomic::{AtomicU32, Ordering};
-use crate::io::{DeviceObject, DeviceType, DriverObject};
+use crate::io::{DeviceObject, DriverObject};
 use crate::ke::sync::Spinlock;
+use alloc::vec::Vec;
 
 const MAX_VOLUMES: usize = 8;
 
@@ -62,10 +59,9 @@ static mut VOLUMES: [NtfsVolume; MAX_VOLUMES] = [const { NtfsVolume::new() }; MA
 static VOLUME_LOCK: Spinlock<()> = Spinlock::new(());
 static MOUNT_COUNT: AtomicU32 = AtomicU32::new(0);
 
-pub fn init() {
-}
+pub fn init() {}
 
-pub fn NtfsMount(disk_device_id: usize, drive_letter: Option<char>) -> Option<usize> {
+pub fn ntfs_mount(disk_device_id: usize, drive_letter: Option<char>) -> Option<usize> {
     let _g = VOLUME_LOCK.lock();
 
     let mut boot_sector = [0u8; 512];
@@ -80,13 +76,19 @@ pub fn NtfsMount(disk_device_id: usize, drive_letter: Option<char>) -> Option<us
     let bytes_per_sector = u16::from_le_bytes([boot_sector[0x0B], boot_sector[0x0C]]) as u32;
     let sectors_per_cluster = boot_sector[0x0D] as u32;
     let mft_cluster = u64::from_le_bytes([
-        boot_sector[0x30], boot_sector[0x31], boot_sector[0x32], boot_sector[0x33],
-        boot_sector[0x34], boot_sector[0x35], boot_sector[0x36], boot_sector[0x37],
+        boot_sector[0x30],
+        boot_sector[0x31],
+        boot_sector[0x32],
+        boot_sector[0x33],
+        boot_sector[0x34],
+        boot_sector[0x35],
+        boot_sector[0x36],
+        boot_sector[0x37],
     ]);
     let mft_lba = mft_cluster * (sectors_per_cluster as u64);
 
     unsafe {
-        for (idx, volume) in VOLUMES.iter_mut().enumerate() {
+        for (idx, volume) in (*core::ptr::addr_of_mut!(VOLUMES)).iter_mut().enumerate() {
             if !volume.valid {
                 volume.valid = true;
                 volume.disk_device_id = disk_device_id;
@@ -103,7 +105,7 @@ pub fn NtfsMount(disk_device_id: usize, drive_letter: Option<char>) -> Option<us
     None
 }
 
-pub fn NtfsUnmount(volume_id: usize) -> bool {
+pub fn ntfs_unmount(volume_id: usize) -> bool {
     if volume_id >= MAX_VOLUMES {
         return false;
     }
@@ -121,11 +123,7 @@ pub fn NtfsUnmount(volume_id: usize) -> bool {
 }
 
 /// This is a simplified interface; the full implementation uses the
-pub fn NtfsReadFile(
-    volume_id: usize,
-    file_path: &str,
-    buffer: &mut [u8]
-) -> Option<usize> {
+pub fn ntfs_read_file(volume_id: usize, _file_path: &str, _buffer: &mut [u8]) -> Option<usize> {
     if volume_id >= MAX_VOLUMES {
         return None;
     }
@@ -137,15 +135,18 @@ pub fn NtfsReadFile(
             return None;
         }
 
-        // TODO: Implement proper NTFS filesystem mounting and file handle management
-        None
+        // Delegate to the full NTFS filesystem in `crate::fs::ntfs`.
+        let ntfs = crate::fs::ntfs::get_mounted_fs()?;
+        let path_wide: Vec<u16> = _file_path.encode_utf16().collect();
+        let mut handle = crate::fs::ntfs::open_file(ntfs, &path_wide, None)?;
+        crate::fs::ntfs::read_file(ntfs, &mut handle, _buffer).ok()
     }
 }
 
 pub fn volume_count() -> usize {
     let mut count = 0;
     unsafe {
-        for volume in VOLUMES.iter() {
+        for volume in (*core::ptr::addr_of!(VOLUMES)).iter() {
             if volume.valid {
                 count += 1;
             }
@@ -158,33 +159,32 @@ pub fn mount_count() -> u32 {
     MOUNT_COUNT.load(Ordering::Relaxed)
 }
 
-pub fn DriverEntry(driver: *mut DriverObject) -> u32 {
+pub fn driver_entry(_driver: *mut DriverObject) -> u32 {
     init();
     0 // STATUS_SUCCESS
 }
 
 pub mod dispatch {
     use super::*;
-    use crate::io::{Irp, IoStackLocation};
-    use crate::io::major::*;
+    use crate::io::Irp;
 
-    pub fn Create(device: *mut DeviceObject, irp: *mut Irp) -> u32 {
+    pub fn create(_device: *mut DeviceObject, _irp: *mut Irp) -> u32 {
         0 // STATUS_SUCCESS
     }
 
-    pub fn Close(device: *mut DeviceObject, irp: *mut Irp) -> u32 {
+    pub fn close(_device: *mut DeviceObject, _irp: *mut Irp) -> u32 {
         0 // STATUS_SUCCESS
     }
 
-    pub fn Read(device: *mut DeviceObject, irp: *mut Irp) -> u32 {
+    pub fn read(_device: *mut DeviceObject, _irp: *mut Irp) -> u32 {
         0 // STATUS_SUCCESS
     }
 
-    pub fn Write(device: *mut DeviceObject, irp: *mut Irp) -> u32 {
+    pub fn write(_device: *mut DeviceObject, _irp: *mut Irp) -> u32 {
         0 // STATUS_SUCCESS
     }
 
-    pub fn DeviceControl(device: *mut DeviceObject, irp: *mut Irp) -> u32 {
+    pub fn device_control(_device: *mut DeviceObject, _irp: *mut Irp) -> u32 {
         0 // STATUS_SUCCESS
     }
 }

@@ -260,7 +260,7 @@ pub fn to_gpu_features(features: &RiscVGpuFeatures) -> GpuFeatures {
 }
 
 // =====================================================================
-// Device Name Database
+// Device name Database
 // =====================================================================
 
 /// Device name lookup

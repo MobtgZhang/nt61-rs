@@ -23,40 +23,27 @@ pub mod xhci;
 
 pub mod smoke;
 
-use crate::kprintln;
-
 /// Initialise the USB stack. Each host controller driver
 /// registers itself with the bus layer; the hub and HID drivers
 /// then bind to whichever devices the controllers discover.
 pub fn init() {
     // kprintln!("    USB drivers: UHCI, EHCI, xHCI, hub, HID");
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("USB:before_uhci\r\n");
+    crate::hal::serial::write_string("USB:before_uhci\r\n");
     uhci::init();
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("USB:after_uhci\r\n");
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("USB:before_ehci\r\n");
+    crate::hal::serial::write_string("USB:after_uhci\r\n");
+    crate::hal::serial::write_string("USB:before_ehci\r\n");
     ehci::init();
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("USB:after_ehci\r\n");
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("USB:before_xhci\r\n");
+    crate::hal::serial::write_string("USB:after_ehci\r\n");
+    crate::hal::serial::write_string("USB:before_xhci\r\n");
     xhci::init();
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("USB:after_xhci\r\n");
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("USB:before_hub\r\n");
+    crate::hal::serial::write_string("USB:after_xhci\r\n");
+    crate::hal::serial::write_string("USB:before_hub\r\n");
     hub::init();
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("USB:after_hub\r\n");
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("USB:before_hid\r\n");
+    crate::hal::serial::write_string("USB:after_hub\r\n");
+    crate::hal::serial::write_string("USB:before_hid\r\n");
     hid::init();
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("USB:after_hid\r\n");
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("USB:done\r\n");
+    crate::hal::serial::write_string("USB:after_hid\r\n");
+    crate::hal::serial::write_string("USB:done\r\n");
     // kprintln!("    USB stack ready");
 }
 

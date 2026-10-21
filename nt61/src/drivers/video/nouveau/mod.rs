@@ -55,7 +55,7 @@ pub use nouveau_irq::{
 };
 
 // =====================================================================
-// Power Management
+// power Management
 // =====================================================================
 
 pub mod nouveau_pm;
@@ -69,9 +69,7 @@ pub use nouveau_pm::{
 // Device Information
 // =====================================================================
 
-use crate::drivers::video::core::gpu_common::{
-    GpuDeviceInfo, GpuDriver, GpuFeatures, GpuFramebufferInfo,
-};
+use crate::drivers::video::core::gpu_common::GpuDriver;
 
 /// Get GPU name
 pub fn gpu_name(device_id: u16) -> &'static str {

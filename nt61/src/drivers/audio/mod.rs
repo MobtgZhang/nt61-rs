@@ -14,12 +14,14 @@
 extern crate alloc;
 
 pub mod ac97;
+pub mod capture;
 pub mod intel_hda;
+pub mod mixer;
+pub mod playback;
 pub mod portcls;
+pub mod stream_buffer;
 
 pub mod smoke;
-
-use crate::kprintln;
 
 pub fn init() {
     // kprintln!("    Audio drivers: Intel HDA, AC'97, PortCls");
@@ -44,3 +46,20 @@ pub use portcls::{
 };
 
 pub mod audio_core;
+
+/// Initialise the full audio stack: hardware drivers plus the real
+/// mixer / playback / capture paths.
+pub fn init_full_audio_paths() {
+    // Default mixer format: 48 kHz stereo, matching the AC'97
+    // front DAC baseline and the HDA default output stream.
+    playback::init(2, 48000);
+    capture::init(2, 48000);
+    // Attach whichever hardware backend was found first.
+    if crate::drivers::audio::ac97::count() > 0 {
+        playback::attach_ac97();
+        capture::attach_ac97();
+    } else if crate::drivers::audio::intel_hda::count() > 0 {
+        playback::attach_hda();
+        capture::attach_hda();
+    }
+}

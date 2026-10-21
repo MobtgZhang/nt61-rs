@@ -13,7 +13,7 @@ pub fn gm107_fb_init(dev: &mut NouveauDevice) -> Result<(), GpuError> {
     // Set architecture
     dev.arch = super::pci_ids::NouveauArchitecture::NV110;
 
-    // Configure PFB (Performance and Frame Buffer)
+    // Configure PFB (Performance and Frame buffer)
     let pfb_off = 0x001000;
 
     // Enable PFB

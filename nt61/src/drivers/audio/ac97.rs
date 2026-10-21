@@ -12,9 +12,8 @@
 //! or ReactOS source file.
 
 use crate::hal::common::pci;
-use crate::kprintln;
 use crate::mm::pool::{self, PoolType};
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, Ordering};
 
 /// AC'97 PCI class: multimedia (0x04) / audio (0x01).
 const AC97_PCI_CLASS: (u8, u8) = (0x04, 0x01);
@@ -46,31 +45,31 @@ const MIXER_DATA_REG: u16 = 0x06;
 
 const BM_LVI_OFFSET: u16 = 0x04; // Last Valid Index
 const BM_SR_OFFSET: u16 = 0x06; // Status Register
-const BM_PICB_OFFSET: u16 = 0x08; // Position In Current Buffer
+const BM_PICB_OFFSET: u16 = 0x08; // Position In Current buffer
 
-const BM_CR_OFFSET: u16 = 0x0B; // Control Register
+const BM_CR_OFFSET: u16 = 0x0B; // control Register
 const BM_LAST_VALID_INDEX: u16 = 0x0C;
 
 /// Bus Master Status Register bits
 const SR_DCH: u16 = 1 << 0; // DMA Completed Halt
 
-/// Bus Master Control Register bits
+/// Bus Master control Register bits
 const CR_RUN: u8 = 1 << 0; // Run
 
 const CR_RESET: u8 = 1 << 3; // Reset
 const CR_STREAM: u8 = 1 << 4; // Stream Number (1 for playback)
 
-/// Buffer Descriptor List Entry (8 bytes)
+/// buffer Descriptor List Entry (8 bytes)
 #[repr(C)]
 pub struct BdlEntry {
     /// Physical address of the buffer
     pub buffer_addr: u32,
-    /// Buffer length (in bytes) - bit 31 set for last entry (EOL)
+    /// buffer length (in bytes) - bit 31 set for last entry (EOL)
     pub buffer_len: u32,
 }
 
 impl BdlEntry {
-    /// Create a new BDL entry
+    /// create a new BDL entry
     pub fn new(buffer_addr: u32, buffer_len: u32, eol: bool) -> Self {
         Self {
             buffer_addr,
@@ -116,11 +115,11 @@ pub struct Ac97Stream {
     pub running: bool,
     /// Current position in buffer
     pub position: u32,
-    /// Buffer size
+    /// buffer size
     pub buffer_size: usize,
     /// Current buffer
     pub current_buffer: *mut u8,
-    /// BDL (Buffer Descriptor List)
+    /// BDL (buffer Descriptor List)
     pub bdl: *mut BdlEntry,
     /// BDL physical address
     pub bdl_phys: u64,
@@ -132,7 +131,7 @@ pub struct Ac97Stream {
 }
 
 impl Ac97Stream {
-    /// Create a new AC'97 stream
+    /// create a new AC'97 stream
     pub fn new(base: u64, stream_type: StreamType) -> Self {
         Self {
             base,
@@ -284,7 +283,7 @@ impl Ac97Stream {
         unsafe { core::ptr::read_volatile((mmio + BM_PICB_OFFSET as u64) as *const u32) }
     }
 
-    /// Write samples to the stream
+    /// write samples to the stream
     fn write_samples(&mut self, samples: &[i16], channels: u8) -> usize {
         if !self.initialized || samples.is_empty() {
             return 0;
@@ -304,7 +303,7 @@ impl Ac97Stream {
                 let avail = self.buffer_size - pos;
                 let to_write = avail.min(samples_to_write);
 
-                // Write to buffer
+                // write to buffer
                 core::ptr::copy_nonoverlapping(
                     samples.as_ptr() as *const u8,
                     self.current_buffer.add(pos),
@@ -315,6 +314,38 @@ impl Ac97Stream {
         }
 
         written / bytes_per_sample
+    }
+
+    /// read samples from the capture stream's DMA buffer
+    /// Returns the number of samples read (in interleaved 16-bit samples)
+    fn read_samples(&mut self, samples: &mut [i16], channels: u8) -> usize {
+        if !self.initialized || samples.is_empty() {
+            return 0;
+        }
+
+        let mmio = self.base;
+        let bytes_per_sample = (channels * 2) as usize;
+        let samples_to_read = (samples.len() * 2).min(self.buffer_size);
+        let mut read = 0;
+
+        unsafe {
+            let pos =
+                core::ptr::read_volatile((mmio + BM_PICB_OFFSET as u64) as *const u32) as usize;
+
+            if pos < self.buffer_size {
+                let avail = self.buffer_size - pos;
+                let to_read = avail.min(samples_to_read);
+
+                core::ptr::copy_nonoverlapping(
+                    self.current_buffer.add(pos),
+                    samples.as_mut_ptr() as *mut u8,
+                    to_read,
+                );
+                read = to_read;
+            }
+        }
+
+        read / bytes_per_sample
     }
 
     /// Shutdown the stream
@@ -348,7 +379,7 @@ pub struct Ac97Codec {
     pub vendor_id: u32,
     /// Subsystem ID
     pub subsystem_id: u32,
-    /// Revision ID
+    /// revision ID
     pub revision_id: u32,
     /// Has front panel support
     pub has_front_panel: bool,
@@ -392,7 +423,7 @@ static mut AC97_COUNT: usize = 0;
 
 fn push_ac97(c: Ac97Controller) {
     unsafe {
-        if AC97_COUNT < AC97S.len() {
+        if AC97_COUNT < (*core::ptr::addr_of!(AC97S)).len() {
             AC97S[AC97_COUNT] = Some(c);
             AC97_COUNT += 1;
         }
@@ -482,7 +513,7 @@ fn init_controller(c: &mut Ac97Controller) -> bool {
 
     // Reset the codec via mixer register
     {
-        // Read extended audio ID
+        // read extended audio ID
         let ext_id = read_mixer(c.bar1_virt, MIXER_EXT_AUDIO_ID);
         // kprintln!("  [AC97] Extended Audio ID: 0x{:04x}", ext_id);
 
@@ -542,7 +573,7 @@ fn init_controller(c: &mut Ac97Controller) -> bool {
     true
 }
 
-/// Read from AC'97 mixer register (indexed I/O)
+/// read from AC'97 mixer register (indexed I/O)
 fn read_mixer(mmio: u64, index: u8) -> u16 {
     unsafe {
         core::ptr::write_volatile((mmio + MIXER_INDEX_REG as u64) as *mut u8, index);
@@ -550,7 +581,7 @@ fn read_mixer(mmio: u64, index: u8) -> u16 {
     }
 }
 
-/// Write to AC'97 mixer register (indexed I/O)
+/// write to AC'97 mixer register (indexed I/O)
 fn write_mixer(mmio: u64, index: u8, value: u16) {
     unsafe {
         core::ptr::write_volatile((mmio + MIXER_INDEX_REG as u64) as *mut u8, index);
@@ -588,13 +619,26 @@ pub fn stop_playback() {
     }
 }
 
-/// Write PCM samples to playback stream
+/// write PCM samples to playback stream
 /// Returns the number of samples written
 pub fn write_pcm_samples(samples: &[i16], channels: u8) -> usize {
     unsafe {
         if let Some(ref mut c) = AC97S[0] {
             if let Some(ref mut stream) = c.playback_stream {
                 return stream.write_samples(samples, channels);
+            }
+        }
+    }
+    0
+}
+
+/// read PCM samples from the capture stream
+/// Returns the number of samples read (in interleaved 16-bit samples)
+pub fn read_pcm_samples(samples: &mut [i16], channels: u8) -> usize {
+    unsafe {
+        if let Some(ref mut c) = AC97S[0] {
+            if let Some(ref mut stream) = c.capture_stream {
+                return stream.read_samples(samples, channels);
             }
         }
     }

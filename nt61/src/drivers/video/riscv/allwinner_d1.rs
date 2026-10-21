@@ -50,7 +50,7 @@ pub struct AllwinnerD1Device {
 }
 
 impl AllwinnerD1Device {
-    /// Create a new Allwinner D1 device
+    /// create a new Allwinner D1 device
     pub fn new(soc: RiscVSoc) -> Self {
         Self {
             soc,
@@ -68,7 +68,7 @@ impl AllwinnerD1Device {
         }
     }
 
-    /// Read a DEBE register
+    /// read a DEBE register
     #[inline]
     fn read_debe(&self, offset: u32) -> u32 {
         if self.debe_base == 0 {
@@ -77,7 +77,7 @@ impl AllwinnerD1Device {
         unsafe { core::ptr::read_volatile((self.debe_base + offset as u64) as *const u32) }
     }
 
-    /// Write a DEBE register
+    /// write a DEBE register
     #[inline]
     fn write_debe(&self, offset: u32, value: u32) {
         if self.debe_base == 0 {
@@ -88,16 +88,7 @@ impl AllwinnerD1Device {
         }
     }
 
-    /// Read a TCON register
-    #[inline]
-    fn read_tcon(&self, offset: u32) -> u32 {
-        if self.tcon_base == 0 {
-            return 0;
-        }
-        unsafe { core::ptr::read_volatile((self.tcon_base + offset as u64) as *const u32) }
-    }
-
-    /// Write a TCON register
+    /// write a TCON register
     #[inline]
     fn write_tcon(&self, offset: u32, value: u32) {
         if self.tcon_base == 0 {
@@ -108,7 +99,7 @@ impl AllwinnerD1Device {
         }
     }
 
-    /// Read a G2D register
+    /// read a G2D register
     #[inline]
     fn read_g2d(&self, offset: u32) -> u32 {
         if self.g2d_base == 0 {
@@ -117,7 +108,7 @@ impl AllwinnerD1Device {
         unsafe { core::ptr::read_volatile((self.g2d_base + offset as u64) as *const u32) }
     }
 
-    /// Write a G2D register
+    /// write a G2D register
     #[inline]
     fn write_g2d(&self, offset: u32, value: u32) {
         if self.g2d_base == 0 {

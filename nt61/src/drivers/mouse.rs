@@ -10,14 +10,12 @@
 //! Clean-room implementation. Spec source: Microsoft "Mouse
 //! Class Driver" reference and USB HID 1.11.
 
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU32, Ordering};
 
-#[allow(non_snake_case)]
 extern crate alloc;
 
-use crate::io::{DeviceObject, DeviceType, DriverObject};
+use crate::io::{DeviceObject, DriverObject};
 use crate::ke::sync::Spinlock;
-use core::sync::atomic::AtomicI32;
 
 /// Maximum number of mouse devices.
 const MAX_MICE: usize = 4;
@@ -129,7 +127,7 @@ pub fn post_mouse_event(device_id: usize, dx: i16, dy: i16, dz: i16, buttons: u8
     }
 }
 
-/// Read the next mouse event from the queue.
+/// read the next mouse event from the queue.
 pub fn read_mouse_event(device_id: usize) -> Option<MouseEvent> {
     if device_id >= MAX_MICE {
         return None;
@@ -172,7 +170,7 @@ pub fn get_mouse_position(device_id: usize) -> Option<(i32, i32)> {
 pub fn mouse_count() -> usize {
     let mut count = 0;
     unsafe {
-        for mouse in MICE.iter() {
+        for mouse in (*core::ptr::addr_of!(MICE)).iter() {
             if mouse.valid {
                 count += 1;
             }
@@ -186,7 +184,7 @@ pub fn mouse_event_count() -> u32 {
     MOUSE_EVENT_COUNT.load(Ordering::Relaxed)
 }
 
-pub fn DriverEntry(driver: *mut DriverObject) -> u32 {
+pub fn driver_entry(_driver: *mut DriverObject) -> u32 {
     init();
     0 // STATUS_SUCCESS
 }

@@ -13,8 +13,6 @@
 
 extern crate alloc;
 
-use crate::kprintln;
-
 pub fn init() {
     // kprintln!("    Timer drivers: HPET, ACPI PM (skipped due to PTE bug)");
     // hpet::init() and acpi_pm::init() are disabled because

@@ -22,7 +22,7 @@ pub const MALI450_PP_CMD: u32 = 0x1008;
 pub const MALI450_L2_CTRL: u32 = 0x2000;
 pub const MALI450_L2_STATUS: u32 = 0x2004;
 
-/// Control values
+/// control values
 pub const MALI450_GP_SOFT_RESET: u32 = 1 << 0;
 pub const MALI450_PP_SOFT_RESET: u32 = 1 << 0;
 pub const MALI450_ENABLE: u32 = 1 << 0;

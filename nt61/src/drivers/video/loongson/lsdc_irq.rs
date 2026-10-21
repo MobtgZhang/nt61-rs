@@ -52,7 +52,7 @@ pub struct LsDcIrqHandler {
 }
 
 impl LsDcIrqHandler {
-    /// Create a new interrupt handler
+    /// create a new interrupt handler
     pub fn new(dc_base: u64) -> Self {
         Self {
             dc_base,
@@ -61,13 +61,13 @@ impl LsDcIrqHandler {
         }
     }
 
-    /// Read a register
+    /// read a register
     #[inline]
     fn read_reg(&self, offset: u32) -> u32 {
         unsafe { core::ptr::read_volatile((self.dc_base + offset as u64) as *const u32) }
     }
 
-    /// Write a register
+    /// write a register
     #[inline]
     fn write_reg(&self, offset: u32, value: u32) {
         unsafe { core::ptr::write_volatile((self.dc_base + offset as u64) as *mut u32, value) }
@@ -89,11 +89,11 @@ impl LsDcIrqHandler {
         }
     }
 
-    /// Handle an interrupt
+    /// handle an interrupt
     ///
     /// Returns true if an interrupt was handled.
     pub fn handle_irq(&mut self) -> bool {
-        // Read interrupt status
+        // read interrupt status
         let status = self.read_reg(DC_INT);
         if status == 0 {
             return false;

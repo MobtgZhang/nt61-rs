@@ -4,7 +4,6 @@
 //! Provides a block device backed by memory that can be used when
 //! real disk hardware is not available.
 
-use crate::kprintln;
 use crate::mm::pool;
 
 /// Default sector size (512 bytes)
@@ -28,7 +27,7 @@ pub struct RamDisk {
 unsafe impl Send for RamDisk {}
 
 impl RamDisk {
-    /// Create a new RAM disk with the given number of sectors.
+    /// create a new RAM disk with the given number of sectors.
     pub fn new(sector_count: usize) -> Option<Self> {
         let sector_size = SECTOR_SIZE;
         let total_size = sector_count * sector_size;
@@ -63,7 +62,7 @@ impl RamDisk {
         })
     }
 
-    /// Create a RAM disk with default size, with fallback to smaller sizes.
+    /// create a RAM disk with default size, with fallback to smaller sizes.
     /// Tries progressively larger sizes if allocation succeeds, starting from smallest.
     /// This ensures we use the smallest possible amount of pool memory.
     /// Note: RAM disk is optional for boot - if pool is tight, we skip it entirely.
@@ -103,7 +102,7 @@ impl RamDisk {
         self.sector_count * self.sector_size
     }
 
-    /// Read a single sector.
+    /// read a single sector.
     /// Returns true on success.
     pub fn read_sector(&self, sector: usize, buffer: &mut [u8]) -> bool {
         if sector >= self.sector_count {
@@ -128,7 +127,7 @@ impl RamDisk {
         true
     }
 
-    /// Write a single sector.
+    /// write a single sector.
     /// Returns true on success.
     pub fn write_sector(&mut self, sector: usize, buffer: &[u8]) -> bool {
         if sector >= self.sector_count {
@@ -153,7 +152,7 @@ impl RamDisk {
         true
     }
 
-    /// Read multiple consecutive sectors.
+    /// read multiple consecutive sectors.
     pub fn read_sectors(&self, start_sector: usize, count: usize, buffer: &mut [u8]) -> bool {
         let total_size = count * self.sector_size;
         if start_sector + count > self.sector_count {
@@ -177,7 +176,7 @@ impl RamDisk {
         true
     }
 
-    /// Write multiple consecutive sectors.
+    /// write multiple consecutive sectors.
     pub fn write_sectors(&mut self, start_sector: usize, count: usize, buffer: &[u8]) -> bool {
         let total_size = count * self.sector_size;
         if start_sector + count > self.sector_count {
@@ -242,7 +241,7 @@ pub fn init() {
     // }
 }
 
-/// Read a sector from the global RAM disk.
+/// read a sector from the global RAM disk.
 pub fn read(sector: usize, buffer: &mut [u8]) -> bool {
     let guard = RAM_DISK.lock();
     match &*guard {
@@ -251,7 +250,7 @@ pub fn read(sector: usize, buffer: &mut [u8]) -> bool {
     }
 }
 
-/// Write a sector to the global RAM disk.
+/// write a sector to the global RAM disk.
 pub fn write(sector: usize, buffer: &[u8]) -> bool {
     let mut guard = RAM_DISK.lock();
     match &mut *guard {

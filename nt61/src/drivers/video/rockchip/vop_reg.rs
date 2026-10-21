@@ -13,14 +13,14 @@ use super::pci_ids::RockchipSoc;
 // VOP Core Registers
 // =====================================================================
 
-/// VOP Control Register
+/// VOP control Register
 pub const VOP_CTRL: u32 = 0x0000;
 /// VOP Status Register
 pub const VOP_STATUS: u32 = 0x0004;
 /// VOP Version Register
 pub const VOP_VERSION: u32 = 0x0008;
 
-/// VOP Control flags
+/// VOP control flags
 pub const VOP_CTRL_ENABLE: u32 = 1 << 0;
 pub const VOP_CTRL_START: u32 = 1 << 1;
 pub const VOP_CTRL_DONE: u32 = 1 << 2;
@@ -59,7 +59,7 @@ pub const VOP_FORMAT_YUV422: u32 = 0x11;
 // Window/Plane Configuration
 // =====================================================================
 
-/// Window 0 Control Register
+/// Window 0 control Register
 pub const VOP_WIN0_CTRL: u32 = 0x0200;
 /// Window 0 Address Register
 pub const VOP_WIN0_ADDR: u32 = 0x0204;
@@ -72,7 +72,7 @@ pub const VOP_WIN0_POS: u32 = 0x0214;
 /// Window 0 Format Register
 pub const VOP_WIN0_FORMAT: u32 = 0x0218;
 
-/// Window 1 Control Register
+/// Window 1 control Register
 pub const VOP_WIN1_CTRL: u32 = 0x0300;
 /// Window 1 Address Register
 pub const VOP_WIN1_ADDR: u32 = 0x0304;
@@ -95,7 +95,7 @@ pub const VOP_WIN_CTRL_ALPHA_MODE: u32 = 1 << 25;
 // CRT Controller (CRTC)
 // =====================================================================
 
-/// CRTC Control Register
+/// CRTC control Register
 pub const VOP_CRTC_CTRL: u32 = 0x0300;
 /// CRTC Horizontal Total Register
 pub const VOP_CRTC_H_TOTAL: u32 = 0x0310;
@@ -145,7 +145,7 @@ pub const VOP_INT_LINE_FLAG: u32 = 1 << 3;
 // Alpha Blending
 // =====================================================================
 
-/// Alpha Control Register
+/// Alpha control Register
 pub const VOP_ALPHA_CTRL: u32 = 0x0500;
 /// Alpha Value Register
 pub const VOP_ALPHA_VALUE: u32 = 0x0504;
@@ -158,7 +158,7 @@ pub const VOP_ALPHA_CTRL_MODE: u32 = 1 << 1;
 // Color Key
 // =====================================================================
 
-/// Color Key Control Register
+/// Color Key control Register
 pub const VOP_COLOR_KEY_CTRL: u32 = 0x0600;
 /// Color Key Value Register
 pub const VOP_COLOR_KEY_VALUE: u32 = 0x0604;
@@ -173,7 +173,7 @@ pub const VOP_COLOR_KEY_CTRL_DIR: u32 = 1 << 1;
 // Gamma Correction
 // =====================================================================
 
-/// Gamma Control Register
+/// Gamma control Register
 pub const VOP_GAMMA_CTRL: u32 = 0x0700;
 /// Gamma LUT Address Register
 pub const VOP_GAMMA_LUT_ADDR: u32 = 0x0704;
@@ -217,7 +217,7 @@ pub fn get_max_height(soc: RockchipSoc) -> u32 {
 }
 
 /// Calculate CRTC timing
-pub fn calculate_crtc_timing(width: u32, height: u32, refresh: u32) -> CrtcTiming {
+pub fn calculate_crtc_timing(width: u32, height: u32, _refresh: u32) -> CrtcTiming {
     let h_total = width + 120;
     let h_sync_start = width + 20;
     let h_sync_end = width + 40;

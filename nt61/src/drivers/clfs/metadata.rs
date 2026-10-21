@@ -1,7 +1,7 @@
 //! CLFS Metadata Structures
 //
 //! Defines the metadata records that live in the BLF (Base Log File).
-//! These are the Control Record, Base Record, and Truncate Record,
+//! These are the control Record, Base Record, and Truncate Record,
 //! plus their shadow copies.
 //
 //! Spec source: Microsoft CLFS reference documentation.
@@ -28,7 +28,7 @@ impl ClfsMetadataRecordHeader {
         Self { dump_count }
     }
 
-    /// Create a metadata record header with dump_count = 1.
+    /// create a metadata record header with dump_count = 1.
     pub fn initial() -> Self {
         Self { dump_count: 1 }
     }
@@ -42,7 +42,7 @@ impl ClfsMetadataRecordHeader {
 }
 
 // ============================================================================
-// CLFS Control Record
+// CLFS control Record
 // ============================================================================
 
 /// Extend state — tracks whether a log extension is in progress.
@@ -77,7 +77,7 @@ pub struct ClfsTruncateContext {
     pub b_unused: u8,
     pub lsn_owner_page: u64,      // LSN of owner page
     pub lsn_last_owner_page: u64, // LSN of last owner page
-    pub c_invalid_sector: u32,    // Count of invalid sectors
+    pub c_invalid_sector: u32,    // count of invalid sectors
 }
 
 impl ClfsTruncateContext {
@@ -103,7 +103,7 @@ impl Default for ClfsTruncateContext {
 /// CLFS_CONTROL_RECORD — stores log layout and extend/truncate information.
 /// Written to sectors 0 and 1 of the BLF file.
 ///
-/// The Control Record is the most important metadata structure — it tells
+/// The control Record is the most important metadata structure — it tells
 /// us where all the other metadata lives and what the log's current state is.
 #[derive(Debug, Clone)]
 pub struct ClfsControlRecord {
@@ -140,7 +140,7 @@ impl ClfsControlRecord {
     /// The CLFS magic value.
     pub const MAGIC: u64 = 0xC1F5_C1F5_0000_5F1C;
 
-    /// Create a new control record with default values.
+    /// create a new control record with default values.
     pub fn new() -> Self {
         Self {
             hdr: ClfsMetadataRecordHeader::initial(),
@@ -156,9 +156,9 @@ impl ClfsControlRecord {
             c_blocks: 6,
             c_reserved: 0,
             rg_blocks: [
-                // Sector 0: Control Record
+                // Sector 0: control Record
                 ClfsMetadataBlock::new_control(0, 1),
-                // Sector 1: Control Shadow
+                // Sector 1: control Shadow
                 ClfsMetadataBlock::new_control_shadow(1 * CLFS_SECTOR_SIZE as u32, 1),
                 // Sector 2: General (Base) Record
                 ClfsMetadataBlock::new_general(2 * CLFS_SECTOR_SIZE as u32, 1),
@@ -286,7 +286,7 @@ pub struct ClfsMetadataBlock {
 }
 
 impl ClfsMetadataBlock {
-    /// Create a new metadata block descriptor.
+    /// create a new metadata block descriptor.
     pub fn new(offset: u32, sectors: u16, flags: u16) -> Self {
         Self {
             offset,
@@ -295,32 +295,32 @@ impl ClfsMetadataBlock {
         }
     }
 
-    /// Create a Control Record block descriptor.
+    /// create a control Record block descriptor.
     pub fn new_control(offset: u32, sectors: u16) -> Self {
         Self::new(offset, sectors, CLFS_EXTEND_BLOCK | CLFS_SHADOW_BLOCK)
     }
 
-    /// Create a Control Record Shadow block descriptor.
+    /// create a control Record Shadow block descriptor.
     pub fn new_control_shadow(offset: u32, sectors: u16) -> Self {
         Self::new(offset, sectors, CLFS_SHADOW_BLOCK)
     }
 
-    /// Create a General (Base) Record block descriptor.
+    /// create a General (Base) Record block descriptor.
     pub fn new_general(offset: u32, sectors: u16) -> Self {
         Self::new(offset, sectors, CLFS_EXTEND_BLOCK | CLFS_SHADOW_BLOCK)
     }
 
-    /// Create a General Shadow block descriptor.
+    /// create a General Shadow block descriptor.
     pub fn new_general_shadow(offset: u32, sectors: u16) -> Self {
         Self::new(offset, sectors, CLFS_SHADOW_BLOCK)
     }
 
-    /// Create a Truncate Record block descriptor.
+    /// create a Truncate Record block descriptor.
     pub fn new_truncate(offset: u32, sectors: u16) -> Self {
         Self::new(offset, sectors, CLFS_NORMAL_BLOCK)
     }
 
-    /// Create a Truncate Record Shadow block descriptor.
+    /// create a Truncate Record Shadow block descriptor.
     pub fn new_truncate_shadow(offset: u32, sectors: u16) -> Self {
         Self::new(offset, sectors, CLFS_SHADOW_BLOCK)
     }
@@ -336,7 +336,7 @@ impl ClfsMetadataBlock {
         buf[8..16].fill(0); // Reserved
     }
 
-    /// Read from 16 bytes.
+    /// read from 16 bytes.
     pub fn read_from(buf: &[u8]) -> Option<Self> {
         if buf.len() < 16 {
             return None;
@@ -413,7 +413,7 @@ pub struct ClfsBaseRecordHeader {
     pub cb_free_containers: u32,
     /// Byte count of busy containers.
     pub cb_busy_containers: u32,
-    /// Offset to the symbol table zone.
+    /// offset to the symbol table zone.
     pub cb_symbol_zone: u32,
     /// Sector size — always 512.
     pub cb_sector: u32,
@@ -434,7 +434,7 @@ pub struct ClfsBaseRecordHeader {
 }
 
 impl ClfsBaseRecordHeader {
-    /// Create a new base record with default values.
+    /// create a new base record with default values.
     pub fn new() -> Self {
         Self {
             hdr: ClfsMetadataRecordHeader::initial(),
@@ -558,9 +558,9 @@ impl Default for ClfsBaseRecordHeader {
 pub struct ClfsTruncateRecordHeader {
     /// Metadata record header.
     pub hdr: ClfsMetadataRecordHeader,
-    /// Offset from record start to the CLFS_TRUNCATE_CLIENT_CHANGE array.
+    /// offset from record start to the CLFS_TRUNCATE_CLIENT_CHANGE array.
     pub coff_client_change: u32,
-    /// Offset from record start to the owner page.
+    /// offset from record start to the owner page.
     pub coff_owner_page: u32,
 }
 
@@ -591,7 +591,7 @@ pub struct ClfsTruncateClientChange {
     pub lsn_client: u64,
     /// LSN of the client's restart area.
     pub lsn_restart: u64,
-    /// Length of this change record.
+    /// length of this change record.
     pub c_length: u16,
     /// Previous length.
     pub c_old_length: u16,

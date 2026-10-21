@@ -70,7 +70,7 @@ impl Default for ConnectorStatus {
 /// Display encoder types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EncoderType {
-    /// Internal TMDS encoder
+    /// internal TMDS encoder
     InternalTmds,
     /// External TMDS encoder
     ExternalTmds,
@@ -100,7 +100,7 @@ pub struct Connector {
 }
 
 impl Connector {
-    /// Create a new connector
+    /// create a new connector
     pub fn new(connector_type: ConnectorType) -> Self {
         let encoder = match connector_type {
             ConnectorType::Hdmi => EncoderType::Hdmi,
@@ -159,7 +159,7 @@ pub struct HpdManager {
 }
 
 impl HpdManager {
-    /// Create a new HPD manager
+    /// create a new HPD manager
     pub fn new() -> Self {
         Self {
             enabled: false,
@@ -245,7 +245,7 @@ pub struct EncoderConfig {
 }
 
 impl EncoderConfig {
-    /// Create a new encoder configuration
+    /// create a new encoder configuration
     pub fn new(encoder_type: EncoderType) -> Self {
         Self {
             encoder_type,
@@ -282,7 +282,7 @@ pub struct OutputConfig {
 }
 
 impl OutputConfig {
-    /// Create a new output configuration
+    /// create a new output configuration
     pub fn new(connector: Connector, crtc: u32, width: u32, height: u32) -> Self {
         let mut encoder = EncoderConfig::new(connector.encoder);
         encoder.crtc = crtc;

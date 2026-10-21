@@ -22,11 +22,11 @@ use super::pci_ids::NouveauArchitecture;
 /// NV50 PVPIO register block
 pub const NV50_PVPIO_OFFSET: u32 = 0x000000;
 
-/// NV50 PMC (Performance and Membership Control) registers
+/// NV50 PMC (Performance and Membership control) registers
 pub const NV50_PMC_OFFSET: u32 = 0x000000;
 pub const NV50_PMC_ENABLE: u32 = 0x000148;
 
-/// NV50 PFB (Performance and Frame Buffer) registers
+/// NV50 PFB (Performance and Frame buffer) registers
 pub const NV50_PFB_OFFSET: u32 = 0x001000;
 pub const NV50_PFB_CFG: u32 = 0x001004;
 pub const NV50_PFB_FIFO: u32 = 0x001008;
@@ -64,13 +64,13 @@ pub const NV50_PCRTC_ENABLE_ON: u32 = 1 << 0;
 // NVC0 (Fermi) Register Offsets
 // =====================================================================
 
-/// NVC0 PMC (Performance and Membership Control) registers
+/// NVC0 PMC (Performance and Membership control) registers
 pub const NVC0_PMC_OFFSET: u32 = 0x000000;
 pub const NVC0_PMC_ENABLE: u32 = 0x000648;
 pub const NVC0_PMC_INTR: u32 = 0x000100;
 pub const NVC0_PMC_INTR_EN: u32 = 0x000140;
 
-/// NVC0 PFB (Performance and Frame Buffer) registers
+/// NVC0 PFB (Performance and Frame buffer) registers
 pub const NVC0_PFB_OFFSET: u32 = 0x001000;
 pub const NVC0_PFB_CFG: u32 = 0x001004;
 pub const NVC0_PFB_FIFO: u32 = 0x001008;
@@ -122,7 +122,7 @@ pub const NVD0_PCRTC_OFFSET: u32 = 0x006000;
 pub const NVD0_PDISPLAY_OFFSET: u32 = 0x006400;
 pub const NVD0_PGRAPH_OFFSET: u32 = 0x004000;
 
-/// NVD0 specific PMU (Power Management Unit)
+/// NVD0 specific PMU (power Management Unit)
 pub const NVD0_PMU_OFFSET: u32 = 0x0010A0;
 pub const NVD0_PMU_ENABLE: u32 = 0x0010A0;
 pub const NVD0_PMU_INTR: u32 = 0x0010A4;
@@ -189,7 +189,7 @@ pub const CURSOR_SIZE_64X64: u32 = 0 << 8;
 pub const CURSOR_SIZE_32X32: u32 = 1 << 8;
 
 // =====================================================================
-// PMU/PMM Registers (Power Management)
+// PMU/PMM Registers (power Management)
 // =====================================================================
 
 /// PMU registers
@@ -263,9 +263,9 @@ pub fn get_arch_offset(arch: NouveauArchitecture, block: RegisterBlock) -> u32 {
 /// Register block types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegisterBlock {
-    /// Performance and Membership Control
+    /// Performance and Membership control
     PMC,
-    /// Performance and Frame Buffer
+    /// Performance and Frame buffer
     PFB,
     /// CRT Controller
     PCRTC,

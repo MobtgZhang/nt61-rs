@@ -16,9 +16,6 @@
 //! Clean-room implementation. Spec source: Microsoft "Partition
 //! Manager" reference and the public MBR spec.
 
-#![cfg(target_arch = "x86_64")]
-#![allow(non_snake_case)]
-
 extern crate alloc;
 
 use alloc::string::String;
@@ -26,9 +23,8 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::drivers::storage::disk;
-use crate::io::{DeviceObject, DeviceType, DriverObject};
+use crate::io::{DeviceObject, DriverObject};
 use crate::ke::sync::Spinlock;
-use crate::kprintln;
 
 /// Maximum number of partitions across all disks.
 const MAX_PARTITIONS: usize = 16;
@@ -46,7 +42,7 @@ pub struct Partition {
     pub partition_number: u32,
     /// First LBA.
     pub starting_offset: u64,
-    /// Length in 512-byte sectors.
+    /// length in 512-byte sectors.
     pub sector_count: u64,
     /// MBR partition type byte.
     pub partition_type: u8,
@@ -96,7 +92,7 @@ pub fn init() {
     let _g = LOCK.lock();
     for i in 0..disk::disk_count() {
         let mut mbr = [0u8; 512];
-        if disk::DiskRead(i, 0, 512, &mut mbr) != 512 {
+        if disk::disk_read(i, 0, 512, &mut mbr) != 512 {
             continue;
         }
         if mbr[510..512] != MBR_SIGNATURE {
@@ -161,7 +157,7 @@ fn add_partition(
     boot: u8,
 ) {
     unsafe {
-        for slot in PARTITIONS.iter_mut() {
+        for slot in (*core::ptr::addr_of_mut!(PARTITIONS)).iter_mut() {
             if slot.valid {
                 continue;
             }
@@ -189,7 +185,7 @@ pub fn count() -> u32 {
 /// Look up a partition by its device-object path.
 pub fn find(name: &str) -> Option<Partition> {
     unsafe {
-        for slot in PARTITIONS.iter() {
+        for slot in (*core::ptr::addr_of!(PARTITIONS)).iter() {
             if !slot.valid {
                 continue;
             }
@@ -216,7 +212,7 @@ pub fn find(name: &str) -> Option<Partition> {
 pub fn list_all() -> Vec<Partition> {
     let mut out = Vec::new();
     unsafe {
-        for slot in PARTITIONS.iter() {
+        for slot in (*core::ptr::addr_of!(PARTITIONS)).iter() {
             if !slot.valid {
                 continue;
             }
@@ -247,13 +243,13 @@ pub fn list_for_disk(disk_idx: usize) -> Vec<Partition> {
     out
 }
 
-/// Read `byte_count` bytes from a partition, addressed from the
+/// read `byte_count` bytes from a partition, addressed from the
 /// partition's start (LBA = partition LBA + offset / 512).
 pub fn read(disk_idx: usize, lba: u64, byte_count: usize, buf: &mut [u8]) -> usize {
     if buf.len() < byte_count {
         return 0;
     }
-    disk::DiskRead(disk_idx, lba * 512, byte_count, buf)
+    disk::disk_read(disk_idx, lba * 512, byte_count, buf)
 }
 
 /// Smoke test: enumerate MBR partitions, print them, and read
@@ -269,7 +265,7 @@ pub fn smoke_test() -> bool {
     }
     if let Some(p0) = parts.first() {
         let mut sec = [0u8; 512];
-        let n = disk::DiskRead(p0.disk_index, p0.starting_offset * 512, 512, &mut sec);
+        let n = disk::disk_read(p0.disk_index, p0.starting_offset * 512, 512, &mut sec);
         let _ = &n;
         // kprintln!("  [PARTMGR SMOKE] first sector of {} read: {} bytes (sig {:02x}{:02x})",
         //             p0.name, n, sec[510], sec[511]);

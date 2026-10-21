@@ -23,9 +23,6 @@
 //! Clean-room implementation. Spec source: Microsoft "FileInfo
 //! Minifilter" reference.
 
-#![allow(non_snake_case)]
-#![allow(dead_code)]
-
 extern crate alloc;
 
 use alloc::string::String;
@@ -33,73 +30,67 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::drivers::fltmgr::{
-    FltAttachVolume, FltRegisterFilter, FltRegistration, FltStartFiltering,
+    flt_attach_volume, flt_register_filter, flt_start_filtering, FltRegistration,
 };
-use crate::kprintln;
 
-const MAX_OPEN_RECORDS: usize = 32;
+pub const MAX_OPEN_RECORDS: usize = 32;
 
 /// `init` — register and start the fileinfo minifilter.
 pub fn init() {
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("F:A\r\n");
+    crate::hal::serial::write_string("F:A\r\n");
     // kprintln!("    [FILEINFO] A");
     let _reg = FltRegistration::new();
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("F:B\r\n");
+    crate::hal::serial::write_string("F:B\r\n");
     // kprintln!("    [FILEINFO] B");
-    let h = FltRegisterFilter("fileinfo");
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("F:C\r\n");
+    let h = flt_register_filter("fileinfo");
+    crate::hal::serial::write_string("F:C\r\n");
     // kprintln!("    [FILEINFO] C h={}", h);
     if h == 0 {
         // kprintln!("    [FILEINFO] D FAILED");
         return;
     }
-    if FltStartFiltering(h) != 0 {
+    if flt_start_filtering(h) != 0 {
         // kprintln!("    [FILEINFO] E FAILED");
         return;
     }
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("F:F\r\n");
-    if FltAttachVolume(h, "\\Device\\HarddiskVolume1") != 0 {
+    crate::hal::serial::write_string("F:F\r\n");
+    if flt_attach_volume(h, "\\Device\\HarddiskVolume1") != 0 {
         // kprintln!("    [FILEINFO] F FAILED (ignored)");
     }
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("F:G\r\n");
+    crate::hal::serial::write_string("F:G\r\n");
     // kprintln!("    [FILEINFO] G init complete");
 }
 
 static mut NEXT_ID: AtomicU32 = AtomicU32::new(1);
 
-/// `FileInfoRecordOpen` — record a file open. Returns the id.
-pub fn FileInfoRecordOpen(volume: &str, name: &str) -> u64 {
-    let id = unsafe { NEXT_ID.fetch_add(1, Ordering::Relaxed) } as u64;
+/// `file_info_record_open` — record a file open. Returns the id.
+pub fn file_info_record_open(volume: &str, name: &str) -> u64 {
+    let id = unsafe { (*core::ptr::addr_of!(NEXT_ID)).fetch_add(1, Ordering::Relaxed) } as u64;
     let _ = (volume, name);
     id
 }
 
-/// `FileInfoGetName` — always returns None in the bootstrap.
-pub fn FileInfoGetName(_id: u64) -> Option<(String, String)> {
+/// `file_info_get_name` — always returns None in the bootstrap.
+pub fn file_info_get_name(_id: u64) -> Option<(String, String)> {
     None
 }
 
-/// `FileInfoListOpens` — empty list in the bootstrap.
-pub fn FileInfoListOpens() -> Vec<(u64, String, String)> {
+/// `file_info_list_opens` — empty list in the bootstrap.
+pub fn file_info_list_opens() -> Vec<(u64, String, String)> {
     Vec::new()
 }
 
 pub fn open_count() -> u32 {
-    unsafe { NEXT_ID.load(Ordering::Relaxed) - 1 }
+    unsafe { (*core::ptr::addr_of!(NEXT_ID)).load(Ordering::Relaxed) - 1 }
 }
 
 /// Smoke test: register the minifilter and record three opens.
 pub fn smoke_test() -> bool {
     // kprintln!("  [FILEINFO SMOKE] testing file information minifilter...");
     init();
-    let id1 = FileInfoRecordOpen("HarddiskVolume1", "\\Windows\\System32\\ntoskrnl.exe");
-    let id2 = FileInfoRecordOpen("HarddiskVolume1", "\\Windows\\System32\\config\\SYSTEM");
-    let id3 = FileInfoRecordOpen("HarddiskVolume1", "\\Windows\\System32\\drivers\\disk.sys");
+    let id1 = file_info_record_open("HarddiskVolume1", "\\Windows\\System32\\ntoskrnl.exe");
+    let id2 = file_info_record_open("HarddiskVolume1", "\\Windows\\System32\\config\\SYSTEM");
+    let id3 = file_info_record_open("HarddiskVolume1", "\\Windows\\System32\\drivers\\disk.sys");
     if id1 == 0 || id2 == 0 || id3 == 0 {
         // kprintln!("  [FILEINFO SMOKE FAIL] record");
         return false;

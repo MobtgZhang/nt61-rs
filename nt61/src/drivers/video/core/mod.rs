@@ -6,7 +6,7 @@
 //! - `vram` - VRAM memory management
 //! - `irq` - GPU interrupt handling
 //! - `dpc` - Deferred Procedure Calls
-//! - `power` - Power management
+//! - `power` - power management
 
 extern crate alloc;
 

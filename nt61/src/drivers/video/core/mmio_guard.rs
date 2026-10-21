@@ -23,7 +23,7 @@ pub struct MmioRange {
 }
 
 impl MmioRange {
-    /// Create a new MMIO range.
+    /// create a new MMIO range.
     pub const fn new(base: u64, size: u64) -> Self {
         Self { base, size }
     }
@@ -60,7 +60,7 @@ pub struct MmioGuard {
 }
 
 impl MmioGuard {
-    /// Create a new MMIO guard.
+    /// create a new MMIO guard.
     ///
     /// # Arguments
     /// * `base` - MMIO base address from PCI BAR0 or known hardware mapping
@@ -77,7 +77,7 @@ impl MmioGuard {
         }
     }
 
-    /// Create a new MMIO guard from a PCI BAR value.
+    /// create a new MMIO guard from a PCI BAR value.
     /// The BAR value has low bits masked off (they encode flags).
     ///
     /// # Arguments
@@ -88,7 +88,7 @@ impl MmioGuard {
         Self::new(bar, bar_size_hint)
     }
 
-    /// Read a 32-bit MMIO register.
+    /// read a 32-bit MMIO register.
     ///
     /// Returns `0xDEADBEEFu32` if the offset is out of range.
     /// (This is a distinctive sentinel value for debugging.)
@@ -105,7 +105,7 @@ impl MmioGuard {
         unsafe { core::ptr::read_volatile(addr) }
     }
 
-    /// Read a 32-bit MMIO register, returning None if out of range.
+    /// read a 32-bit MMIO register, returning None if out of range.
     #[inline]
     pub fn read_reg_opt(&self, offset: u32) -> Option<u32> {
         if !self.range.contains_offset(offset) {
@@ -116,7 +116,7 @@ impl MmioGuard {
         Some(unsafe { core::ptr::read_volatile(addr) })
     }
 
-    /// Write a 32-bit MMIO register.
+    /// write a 32-bit MMIO register.
     ///
     /// Returns `false` if the offset is out of range.
     #[inline]
@@ -130,7 +130,7 @@ impl MmioGuard {
         true
     }
 
-    /// Read a 16-bit MMIO register.
+    /// read a 16-bit MMIO register.
     #[inline]
     pub fn read_reg16(&self, offset: u32) -> u16 {
         if !self.range.contains_offset(offset) {
@@ -141,7 +141,7 @@ impl MmioGuard {
         unsafe { core::ptr::read_volatile(addr) }
     }
 
-    /// Write a 16-bit MMIO register.
+    /// write a 16-bit MMIO register.
     #[inline]
     pub fn write_reg16(&self, offset: u32, value: u16) -> bool {
         if !self.range.contains_offset(offset) {
@@ -153,7 +153,7 @@ impl MmioGuard {
         true
     }
 
-    /// Read an 8-bit MMIO register.
+    /// read an 8-bit MMIO register.
     #[inline]
     pub fn read_reg8(&self, offset: u32) -> u8 {
         if !self.range.contains_offset(offset) {
@@ -164,7 +164,7 @@ impl MmioGuard {
         unsafe { core::ptr::read_volatile(addr) }
     }
 
-    /// Write an 8-bit MMIO register.
+    /// write an 8-bit MMIO register.
     #[inline]
     pub fn write_reg8(&self, offset: u32, value: u8) -> bool {
         if !self.range.contains_offset(offset) {
@@ -176,7 +176,7 @@ impl MmioGuard {
         true
     }
 
-    /// Read a 64-bit MMIO register (two consecutive 32-bit reads).
+    /// read a 64-bit MMIO register (two consecutive 32-bit reads).
     #[inline]
     pub fn read_reg64(&self, offset: u32) -> u64 {
         if !self.range.contains_offset(offset) {
@@ -184,7 +184,7 @@ impl MmioGuard {
         }
         let _guard = self.lock.lock();
         let addr = self.range.address(offset) as *const u32;
-        // Read low 32 bits first (little-endian).
+        // read low 32 bits first (little-endian).
         let low = unsafe { core::ptr::read_volatile(addr) };
         let high = unsafe { core::ptr::read_volatile(addr.add(1)) };
         ((high as u64) << 32) | (low as u64)
@@ -325,7 +325,7 @@ mod tests {
     #[test]
     fn test_mmio_guard_16bit_out_of_range() {
         let guard = MmioGuard::new(0x1000, 0x100);
-        // Read out of range should return sentinel
+        // read out of range should return sentinel
         let val = guard.read_reg16(0x200);
         assert_eq!(val, 0xDEAD);
     }
@@ -333,7 +333,7 @@ mod tests {
     #[test]
     fn test_mmio_guard_8bit_out_of_range() {
         let guard = MmioGuard::new(0x1000, 0x100);
-        // Read out of range should return sentinel
+        // read out of range should return sentinel
         let val = guard.read_reg8(0x200);
         assert_eq!(val, 0xDE);
     }
@@ -341,7 +341,7 @@ mod tests {
     #[test]
     fn test_mmio_guard_64bit_out_of_range() {
         let guard = MmioGuard::new(0x1000, 0x100);
-        // Read out of range should return sentinel
+        // read out of range should return sentinel
         let val = guard.read_reg64(0x200);
         assert_eq!(val, 0xDEAD_DEAD_DEAD_DEADu64);
     }
@@ -349,7 +349,7 @@ mod tests {
     #[test]
     fn test_mmio_guard_write_out_of_range() {
         let guard = MmioGuard::new(0x1000, 0x100);
-        // Write out of range should return false
+        // write out of range should return false
         let result = guard.write_reg(0x200, 0x1234);
         assert!(!result);
     }

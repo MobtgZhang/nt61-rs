@@ -210,7 +210,7 @@ pub struct DpAuxChannel {
 }
 
 impl DpAuxChannel {
-    /// Create a new AUX channel
+    /// create a new AUX channel
     pub fn new(base: u64) -> Self {
         Self {
             base,
@@ -220,18 +220,18 @@ impl DpAuxChannel {
         }
     }
 
-    /// Create from PCI BAR1 (typical location on Intel GPUs)
+    /// create from PCI BAR1 (typical location on Intel GPUs)
     pub fn from_pci_bar(bar1: u64) -> Self {
         Self::new(bar1)
     }
 
-    /// Read a 32-bit register
+    /// read a 32-bit register
     #[inline]
     fn read_reg(&self, offset: u16) -> u32 {
         unsafe { core::ptr::read_volatile((self.base + offset as u64) as *const u32) }
     }
 
-    /// Write a 32-bit register
+    /// write a 32-bit register
     #[inline]
     fn write_reg(&self, offset: u16, value: u32) {
         unsafe { core::ptr::write_volatile((self.base + offset as u64) as *mut u32, value) }
@@ -270,7 +270,7 @@ impl DpAuxChannel {
     /// * `read_len` - Number of bytes to read (for read commands)
     ///
     /// # Returns
-    /// * `Ok(data)` - Read data (for read commands) or empty vec (for write)
+    /// * `Ok(data)` - read data (for read commands) or empty vec (for write)
     /// * `Err(error)` - Error code
     pub fn native_transaction(
         &mut self,
@@ -302,12 +302,12 @@ impl DpAuxChannel {
             | ((read_len as u32 - 1) << 20)
             | (addr & 0xFFFF);
 
-        // Write header and data to data register
+        // write header and data to data register
         // Note: In reality, data might need to be written to multiple registers
         // This is a simplified implementation
         self.write_reg(REG_AUX_DATA, header);
 
-        // Write data bytes
+        // write data bytes
         for (i, &byte) in write_data.iter().enumerate() {
             let offset = ((i / 4) as u16) * 4;
             let shift = ((i % 4) as u16) * 8;
@@ -336,7 +336,7 @@ impl DpAuxChannel {
             return Err(AuxError::Timeout);
         }
 
-        // Read response data
+        // read response data
         let mut response = Vec::with_capacity(status.reply_count as usize);
         for i in 0..status.reply_count {
             let offset = ((i / 4) as u16) * 4;
@@ -348,18 +348,18 @@ impl DpAuxChannel {
         Ok(response)
     }
 
-    /// Read DPCD register
+    /// read DPCD register
     pub fn dpcd_read(&mut self, addr: u32) -> Result<u8, AuxError> {
         // Add base offset for DPCD addresses
         let dpcd_addr = addr & 0xFFFF;
 
-        // Read 1 byte
+        // read 1 byte
         let data = self.native_transaction(AuxCommand::NativeRead, dpcd_addr, &[], 1)?;
 
         Ok(data.first().copied().unwrap_or(0))
     }
 
-    /// Write DPCD register
+    /// write DPCD register
     pub fn dpcd_write(&mut self, addr: u32, value: u8) -> Result<(), AuxError> {
         let dpcd_addr = addr & 0xFFFF;
 
@@ -368,7 +368,7 @@ impl DpAuxChannel {
         Ok(())
     }
 
-    /// Read multiple DPCD registers
+    /// read multiple DPCD registers
     pub fn dpcd_read_multi(&mut self, addr: u32, len: usize) -> Result<Vec<u8>, AuxError> {
         let dpcd_addr = addr & 0xFFFF;
 
@@ -378,7 +378,7 @@ impl DpAuxChannel {
         self.native_transaction(AuxCommand::NativeRead, dpcd_addr, &[], read_len)
     }
 
-    /// Write multiple DPCD registers
+    /// write multiple DPCD registers
     pub fn dpcd_write_multi(&mut self, addr: u32, data: &[u8]) -> Result<(), AuxError> {
         let dpcd_addr = addr & 0xFFFF;
 
@@ -390,7 +390,7 @@ impl DpAuxChannel {
         Ok(())
     }
 
-    /// Read EDID through I2C-over-AUX
+    /// read EDID through I2C-over-AUX
     pub fn read_edid(&mut self, block: u8, buffer: &mut [u8; 128]) -> Result<(), AuxError> {
         if buffer.len() < 128 {
             return Err(AuxError::ProtocolError);
@@ -413,13 +413,13 @@ impl DpAuxChannel {
         // Start I2C write transaction
         self.i2c_start(edid_i2c_addr, false)?;
 
-        // Write block number (offset)
+        // write block number (offset)
         self.i2c_write_byte(block)?;
 
         // Repeat start for read
         self.i2c_start(edid_i2c_addr, true)?;
 
-        // Read 128 bytes
+        // read 128 bytes
         for i in 0..128 {
             buffer[i] = self.i2c_read_byte(i < 127)?; // ACK all except last
         }
@@ -454,7 +454,7 @@ impl DpAuxChannel {
         Ok(())
     }
 
-    /// Write a byte during I2C-over-AUX
+    /// write a byte during I2C-over-AUX
     fn i2c_write_byte(&mut self, byte: u8) -> Result<(), AuxError> {
         let response = self.native_transaction(
             AuxCommand::I2cWriteDataStop,
@@ -471,7 +471,7 @@ impl DpAuxChannel {
         Ok(())
     }
 
-    /// Read a byte during I2C-over-AUX
+    /// read a byte during I2C-over-AUX
     fn i2c_read_byte(&mut self, ack: bool) -> Result<u8, AuxError> {
         let cmd = if ack {
             AuxCommand::I2cReadData // Send ACK
@@ -492,7 +492,7 @@ impl DpAuxChannel {
 
     /// Detect connected sinks
     pub fn detect_sinks(&mut self) -> Result<u8, AuxError> {
-        // Read sink count from DPCD
+        // read sink count from DPCD
         let sink_count_reg = self.dpcd_read(dpcd::SINK_COUNT)?;
 
         // Bits 7:4 = device count, bit 0 = CPReady
@@ -683,8 +683,8 @@ pub fn init() {
 
     // In a real implementation, we would:
     // 1. Enumerate PCI devices to find GPU
-    // 2. Read BAR1 for AUX base address
-    // 3. Create AUX channel instance
+    // 2. read BAR1 for AUX base address
+    // 3. create AUX channel instance
 
     // For now, create with default base
     let aux = DpAuxChannel::new(DP_AUX_BASE);
@@ -698,7 +698,7 @@ pub fn init() {
 
 /// Get a mutable reference to the global AUX channel
 pub fn get_aux() -> Option<&'static mut DpAuxChannel> {
-    unsafe { DP_AUX_CHANNEL.as_mut() }
+    unsafe { (*core::ptr::addr_of_mut!(DP_AUX_CHANNEL)).as_mut() }
 }
 
 /// Probe for DisplayPort devices
@@ -716,7 +716,7 @@ pub fn probe() -> bool {
     }
 }
 
-/// Read EDID via DP AUX
+/// read EDID via DP AUX
 pub fn read_edid(block: u8) -> Option<[u8; 128]> {
     let aux = get_aux()?;
 

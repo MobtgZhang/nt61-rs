@@ -23,7 +23,7 @@ pub const GLENFLY_DC_BASE: u32 = 0x0000;
 // Display Controller Core Registers (0x0000 - 0x00FF)
 // =====================================================================
 
-/// Display Controller Control Register
+/// Display Controller control Register
 pub const GLENFLY_DC_CTRL: u32 = 0x0000;
 /// Display Controller Status Register
 pub const GLENFLY_DC_STATUS: u32 = 0x0004;
@@ -33,14 +33,14 @@ pub const GLENFLY_DC_INT: u32 = 0x0008;
 pub const GLENFLY_DC_INT_MASK: u32 = 0x000C;
 /// Display Controller Version Register
 pub const GLENFLY_DC_VERSION: u32 = 0x0010;
-/// Display Controller Revision Register
+/// Display Controller revision Register
 pub const GLENFLY_DC_REVISION: u32 = 0x0014;
 /// Display Controller Feature Register
 pub const GLENFLY_DC_FEATURE: u32 = 0x0018;
 /// Display Controller Capability Register
 pub const GLENFLY_DC_CAPS: u32 = 0x001C;
 
-/// Control register flags
+/// control register flags
 pub const GLENFLY_DC_CTRL_ENABLE: u32 = 1 << 0;
 pub const GLENFLY_DC_CTRL_RUN: u32 = 1 << 1;
 pub const GLENFLY_DC_CTRL_RESET: u32 = 1 << 2;
@@ -103,7 +103,7 @@ pub const GLENFLY_FB_FORMAT_NV12: u32 = 0x12;
 // CRT Controller A Registers (0x0200 - 0x02FF)
 // =====================================================================
 
-/// CRT Controller A Control Register
+/// CRT Controller A control Register
 pub const GLENFLY_CRTC_A_CTRL: u32 = 0x0200;
 /// CRT Controller A Configuration Register
 pub const GLENFLY_CRTC_A_CONFIG: u32 = 0x0204;
@@ -125,7 +125,7 @@ pub const GLENFLY_CRTC_A_V_SYNC: u32 = 0x0228;
 pub const GLENFLY_CRTC_A_V_SYNC_END: u32 = 0x022C;
 /// CRT Controller A Display Address Register
 pub const GLENFLY_CRTC_A_ADDR: u32 = 0x0230;
-/// CRT Controller A Display Address Offset Register
+/// CRT Controller A Display Address offset Register
 pub const GLENFLY_CRTC_A_ADDR_OFFSET: u32 = 0x0234;
 /// CRT Controller A Border Color Register
 pub const GLENFLY_CRTC_A_BORDER_COLOR: u32 = 0x0238;
@@ -145,7 +145,7 @@ pub const GLENFLY_CRTC_A_CTRL_DOUBLE_SCAN: u32 = 1 << 9;
 // CRT Controller B Registers (0x0300 - 0x03FF)
 // =====================================================================
 
-/// CRT Controller B Control Register
+/// CRT Controller B control Register
 pub const GLENFLY_CRTC_B_CTRL: u32 = 0x0300;
 /// CRT Controller B Configuration Register
 pub const GLENFLY_CRTC_B_CONFIG: u32 = 0x0304;
@@ -167,7 +167,7 @@ pub const GLENFLY_CRTC_B_V_SYNC: u32 = 0x0328;
 pub const GLENFLY_CRTC_B_V_SYNC_END: u32 = 0x032C;
 /// CRT Controller B Display Address Register
 pub const GLENFLY_CRTC_B_ADDR: u32 = 0x0330;
-/// CRT Controller B Display Address Offset Register
+/// CRT Controller B Display Address offset Register
 pub const GLENFLY_CRTC_B_ADDR_OFFSET: u32 = 0x0334;
 /// CRT Controller B Border Color Register
 pub const GLENFLY_CRTC_B_BORDER_COLOR: u32 = 0x0338;
@@ -176,7 +176,7 @@ pub const GLENFLY_CRTC_B_BORDER_COLOR: u32 = 0x0338;
 // Primary Plane Registers (0x0400 - 0x04FF)
 // =====================================================================
 
-/// Primary Plane Control Register
+/// Primary Plane control Register
 pub const GLENFLY_PLANE_PRIMARY_CTRL: u32 = 0x0400;
 /// Primary Plane Address Register (64-bit)
 pub const GLENFLY_PLANE_PRIMARY_ADDR: u32 = 0x0404;
@@ -205,7 +205,7 @@ pub const GLENFLY_PLANE_CTRL_SCALE_EN: u32 = 1 << 16;
 // Overlay Plane Registers (0x0500 - 0x05FF)
 // =====================================================================
 
-/// Overlay Plane Control Register
+/// Overlay Plane control Register
 pub const GLENFLY_PLANE_OVERLAY_CTRL: u32 = 0x0500;
 /// Overlay Plane Address Y Register
 pub const GLENFLY_PLANE_OVERLAY_ADDR_Y: u32 = 0x0504;
@@ -237,7 +237,7 @@ pub const GLENFLY_OVERLAY_CTRL_BILINEAR: u32 = 1 << 12;
 // Hardware Cursor Registers (0x0600 - 0x06FF)
 // =====================================================================
 
-/// Hardware Cursor Control Register
+/// Hardware Cursor control Register
 pub const GLENFLY_CURSOR_CTRL: u32 = 0x0600;
 /// Hardware Cursor Palette 0
 pub const GLENFLY_CURSOR_PALETTE0: u32 = 0x0604;
@@ -268,7 +268,7 @@ pub const GLENFLY_CURSOR_CTRL_32BPP: u32 = 2 << 4;
 // 2D Engine Registers (0x0700 - 0x07FF)
 // =====================================================================
 
-/// 2D Engine Control Register
+/// 2D Engine control Register
 pub const GLENFLY_2D_CTRL: u32 = 0x0700;
 /// 2D Engine Status Register
 pub const GLENFLY_2D_STATUS: u32 = 0x0704;
@@ -284,7 +284,7 @@ pub const GLENFLY_2D_DST_PITCH: u32 = 0x0724;
 pub const GLENFLY_2D_ROP: u32 = 0x0730;
 /// 2D Engine Pattern Address Register
 pub const GLENFLY_2D_PATTERN_ADDR: u32 = 0x0740;
-/// 2D Engine Pattern Control Register
+/// 2D Engine Pattern control Register
 pub const GLENFLY_2D_PATTERN_CTRL: u32 = 0x0744;
 /// 2D Engine Clip Rectangle Register
 pub const GLENFLY_2D_CLIP: u32 = 0x0750;
@@ -304,13 +304,13 @@ pub const GLENFLY_2D_STATUS_COMPLETE: u32 = 1 << 1;
 // DirectX / 3D Engine Registers (0x0800 - 0x0FFF)
 // =====================================================================
 
-/// 3D Engine Control Register
+/// 3D Engine control Register
 pub const GLENFLY_3D_CTRL: u32 = 0x0800;
 /// 3D Engine Status Register
 pub const GLENFLY_3D_STATUS: u32 = 0x0804;
-/// 3D Engine Vertex Buffer Address Register
+/// 3D Engine Vertex buffer Address Register
 pub const GLENFLY_3D_VERTEX_BUF: u32 = 0x0810;
-/// 3D Engine Index Buffer Address Register
+/// 3D Engine Index buffer Address Register
 pub const GLENFLY_3D_INDEX_BUF: u32 = 0x0820;
 /// 3D Engine Texture Address Register 0
 pub const GLENFLY_3D_TEX_ADDR0: u32 = 0x0830;
@@ -337,25 +337,25 @@ pub const GLENFLY_DX_CAPS_VIDEO_DECODE: u32 = 1 << 2;
 pub const GLENFLY_DX_CAPS_COMPUTE: u32 = 1 << 3;
 
 // =====================================================================
-// Power Management Registers (0x1000 - 0x10FF)
+// power Management Registers (0x1000 - 0x10FF)
 // =====================================================================
 
-/// Power Management Control Register
+/// power Management control Register
 pub const GLENFLY_PM_CTRL: u32 = 0x1000;
-/// Power Management Status Register
+/// power Management Status Register
 pub const GLENFLY_PM_STATUS: u32 = 0x1004;
-/// Power Management Target Register
+/// power Management Target Register
 pub const GLENFLY_PM_TARGET: u32 = 0x1008;
-/// Power Management D-State Register
+/// power Management D-State Register
 pub const GLENFLY_PM_DSTATE: u32 = 0x100C;
 
-/// Power states
+/// power states
 pub const GLENFLY_PM_STATE_D0: u32 = 0x00;
 pub const GLENFLY_PM_STATE_D1: u32 = 0x01;
 pub const GLENFLY_PM_STATE_D2: u32 = 0x02;
 pub const GLENFLY_PM_STATE_D3: u32 = 0x03;
 
-/// Power control flags
+/// power control flags
 pub const GLENFLY_PM_CTRL_AUTO: u32 = 1 << 0;
 pub const GLENFLY_PM_CTRL_CLOCK_GATE: u32 = 1 << 1;
 pub const GLENFLY_PM_CTRL_POWER_OFF: u32 = 1 << 2;
@@ -368,19 +368,19 @@ pub const GLENFLY_PM_CTRL_2D_OFF: u32 = 1 << 6;
 // Clock and PLL Registers (0x1100 - 0x11FF)
 // =====================================================================
 
-/// Clock Control Register
+/// Clock control Register
 pub const GLENFLY_CLK_CTRL: u32 = 0x1100;
 /// Clock Status Register
 pub const GLENFLY_CLK_STATUS: u32 = 0x1104;
-/// Display PLL Control Register
+/// Display PLL control Register
 pub const GLENFLY_PLL_DISP_CTRL: u32 = 0x1110;
 /// Display PLL Status Register
 pub const GLENFLY_PLL_DISP_STATUS: u32 = 0x1114;
 /// Display PLL Divisor Register
 pub const GLENFLY_PLL_DISP_DIV: u32 = 0x1118;
-/// Core PLL Control Register
+/// Core PLL control Register
 pub const GLENFLY_PLL_CORE_CTRL: u32 = 0x1120;
-/// Memory PLL Control Register
+/// Memory PLL control Register
 pub const GLENFLY_PLL_MEM_CTRL: u32 = 0x1130;
 
 /// Clock control flags

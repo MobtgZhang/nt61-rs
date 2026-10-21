@@ -10,13 +10,11 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
-use crate::kprintln;
-
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-/// Length of a USB HID boot keyboard report.
+/// length of a USB HID boot keyboard report.
 pub const BOOT_KBD_REPORT_LEN: usize = 8;
 
 /// USB HID boot protocol report structure:
@@ -234,7 +232,7 @@ fn vk_to_ascii(vk: u16, modifier: u8) -> Option<u8> {
     let shift = (modifier & (MOD_LSHIFT | MOD_RSHIFT)) != 0;
     let ctrl = (modifier & (MOD_LCTRL | MOD_RCTRL)) != 0;
 
-    // Control characters
+    // control characters
     if ctrl {
         match vk {
             0x41 => return Some(0x01), // Ctrl+A
@@ -329,13 +327,11 @@ fn vk_to_ascii(vk: u16, modifier: u8) -> Option<u8> {
 
 /// Enqueue a character to the system keyboard input queue.
 /// This bridges USB keyboard input to the PS/2 keyboard queue.
-fn enqueue_usb_char(ch: u8) {
-    #[cfg(target_arch = "x86_64")]
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::keyboard::enqueue_char(ch);
+fn enqueue_usb_char(_ch: u8) {
+    crate::drivers::arch::keyboard_enqueue_char(_ch);
 }
 
-/// Handle a single key press event.
+/// handle a single key press event.
 fn handle_key_event(modifier: u8, key_code: u8) {
     let vk = hid_to_vk(key_code);
     if vk == 0 {

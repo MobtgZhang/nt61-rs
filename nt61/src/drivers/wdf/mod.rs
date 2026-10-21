@@ -6,7 +6,6 @@
 //! Clean-room implementation based on WDF architecture documentation.
 
 use crate::ke::sync::Spinlock;
-use crate::kprintln;
 use core::sync::atomic::{AtomicU8, Ordering};
 
 /// Maximum number of devices a WDF driver can manage.
@@ -23,7 +22,7 @@ pub struct WdfDeviceList {
 }
 
 impl WdfDeviceList {
-    /// Create a new empty device list.
+    /// create a new empty device list.
     pub const fn new() -> Self {
         Self {
             devices: [const { None }; MAX_WDF_DEVICES],
@@ -148,12 +147,12 @@ pub struct WdfDevice {
     pub state: WdfDeviceState,
     /// I/O queue
     pub queue: Option<WdfIoQueue>,
-    /// Power state
+    /// power state
     pub power_state: WdfPowerState,
 }
 
 impl WdfDevice {
-    /// Create a new WDF device
+    /// create a new WDF device
     fn new(_init: &WdfDeviceInit) -> Result<Self, &'static str> {
         Ok(Self {
             device_object: core::ptr::null_mut(),
@@ -236,7 +235,7 @@ pub struct WdfIoQueue {
     /// Pending requests (fixed-size array)
     pub requests: [Option<WdfRequest>; 16],
     pub request_count: usize,
-    /// Power managed
+    /// power managed
     pub power_managed: bool,
     /// Queue lock
     pub lock: Spinlock<()>,
@@ -251,8 +250,9 @@ pub enum WdfQueueState {
 }
 
 /// Queue dispatch types
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WdfQueueDispatchType {
+    #[default]
     Sequential,
     Parallel,
     Manual,
@@ -422,7 +422,7 @@ pub fn init() {
     // kprintln!("    WDF: ready");
 }
 
-/// Create the WDF driver object
+/// create the WDF driver object
 pub fn driver_create(
     driver_name: &'static str,
     attributes: WdfDriverAttributes,
@@ -478,7 +478,7 @@ pub fn smoke_test() -> bool {
 
 /// WDF device initialization functions
 impl WdfDeviceInit {
-    /// Create a new device init
+    /// create a new device init
     pub fn new() -> Self {
         Self::default()
     }
@@ -516,7 +516,7 @@ pub fn device_create(init: &mut WdfDeviceInit) -> Result<WdfDevice, &'static str
 
 /// WDF I/O queue operations
 impl WdfIoQueue {
-    /// Create a new I/O queue
+    /// create a new I/O queue
     pub fn new(dispatch: WdfQueueDispatchType) -> Self {
         Self {
             state: WdfQueueState::Normal,
@@ -555,7 +555,7 @@ impl WdfIoQueue {
 
 /// WDF request operations
 impl WdfRequest {
-    /// Create a new request
+    /// create a new request
     pub fn new(request_type: WdfRequestType) -> Self {
         Self {
             request_type,
@@ -628,7 +628,7 @@ pub struct WdfLookaside {
 }
 
 impl WdfLookaside {
-    /// Create a new lookaside list
+    /// create a new lookaside list
     pub fn new(tag: u32, size: usize) -> Self {
         Self {
             tag,
@@ -666,7 +666,7 @@ pub struct WdfTimer {
 }
 
 impl WdfTimer {
-    /// Create a new timer
+    /// create a new timer
     pub fn new(routine: extern "C" fn(), context: u64) -> Self {
         Self {
             due_time: 0,
@@ -700,7 +700,7 @@ pub struct WdfDpc {
 }
 
 impl WdfDpc {
-    /// Create a new DPC
+    /// create a new DPC
     pub fn new(routine: extern "C" fn(*mut WdfDpc, u64), context: u64) -> Self {
         Self {
             routine,
@@ -726,14 +726,14 @@ impl WdfDpc {
 
 /// WDF spinlock
 pub struct WdfSpinlock {
-    /// Internal lock
+    /// internal lock
     lock: Spinlock<()>,
     /// Previous IRQL
     irql: u8,
 }
 
 impl WdfSpinlock {
-    /// Create a new spinlock
+    /// create a new spinlock
     pub fn new() -> Self {
         Self {
             lock: Spinlock::<()>::new(()),
@@ -761,12 +761,12 @@ impl Default for WdfSpinlock {
 
 /// WDF wait lock (can be acquired at passive IRQL)
 pub struct WdfWaitlock {
-    /// Internal lock
+    /// internal lock
     lock: Spinlock<()>,
 }
 
 impl WdfWaitlock {
-    /// Create a new wait lock
+    /// create a new wait lock
     pub fn new() -> Self {
         Self {
             lock: Spinlock::<()>::new(()),
@@ -816,7 +816,7 @@ pub struct WdfChildConfig {
 }
 
 impl WdfChildList {
-    /// Create a new child list
+    /// create a new child list
     pub fn new() -> Self {
         Self {
             children: [const { None }; MAX_WDF_CHILDREN],
@@ -871,7 +871,7 @@ pub mod registry {
         Ok(0) // Return dummy handle
     }
 
-    /// Read a value from registry
+    /// read a value from registry
     pub fn read_value(
         _key: WdfRegistryHandle,
         _name: &str,
@@ -881,7 +881,7 @@ pub mod registry {
         Ok(0)
     }
 
-    /// Write a value to registry
+    /// write a value to registry
     pub fn write_value(
         _key: WdfRegistryHandle,
         _name: &str,
@@ -914,3 +914,4 @@ pub mod companion {
 
 pub mod device;
 pub mod kmdf;
+pub mod queue;

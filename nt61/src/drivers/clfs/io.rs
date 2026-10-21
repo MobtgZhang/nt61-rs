@@ -8,15 +8,11 @@ extern crate alloc;
 
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-use crate::rtl::logging::subsystem::CLFS;
-
-use super::context::ClfsContainerContext;
 use super::format::{
-    self, BlfBlockType, BlfMetadata, ClfsLogBlockHeader, CLFS_LOG_BLOCK_HEADER_SIZE,
-    CLFS_SECTOR_SIZE,
+    self, BlfMetadata, ClfsLogBlockHeader, CLFS_LOG_BLOCK_HEADER_SIZE, CLFS_SECTOR_SIZE,
 };
 use super::metadata::ClfsControlRecord;
-use super::record::{ClfsLogRecordHeader, ClfsLsn, CLFS_LOG_RECORD_HEADER_SIZE};
+use super::record::{ClfsLogRecordHeader, CLFS_LOG_RECORD_HEADER_SIZE};
 use super::vcb::ClfsVcb;
 
 // ============================================================================
@@ -69,7 +65,7 @@ impl Default for ClfsError {
 }
 
 // ============================================================================
-// Container Memory Buffer
+// Container Memory buffer
 // ============================================================================
 
 /// In-memory buffer for a container.
@@ -78,7 +74,7 @@ impl Default for ClfsError {
 pub struct ContainerBuffer {
     /// Container ID.
     pub cid: u32,
-    /// Buffer holding the container data.
+    /// buffer holding the container data.
     pub data: alloc::vec::Vec<u8>,
     /// Current USN for this container.
     pub usn: AtomicU32,
@@ -87,7 +83,7 @@ pub struct ContainerBuffer {
 }
 
 impl ContainerBuffer {
-    /// Create a new container buffer of the given size.
+    /// create a new container buffer of the given size.
     pub fn new(cid: u32, size: usize) -> Option<Self> {
         Some(Self {
             cid,
@@ -97,7 +93,7 @@ impl ContainerBuffer {
         })
     }
 
-    /// Read a sector from the container.
+    /// read a sector from the container.
     pub fn read_sector(&self, offset_sectors: usize, buf: &mut [u8]) -> Result<(), ClfsError> {
         let byte_offset = offset_sectors * CLFS_SECTOR_SIZE;
         if byte_offset + buf.len() > self.data.len() {
@@ -107,7 +103,7 @@ impl ContainerBuffer {
         Ok(())
     }
 
-    /// Write a sector to the container.
+    /// write a sector to the container.
     pub fn write_sector(&mut self, offset_sectors: usize, buf: &[u8]) -> Result<(), ClfsError> {
         let byte_offset = offset_sectors * CLFS_SECTOR_SIZE;
         if byte_offset + buf.len() > self.data.len() {
@@ -118,7 +114,7 @@ impl ContainerBuffer {
         Ok(())
     }
 
-    /// Read multiple bytes from the container.
+    /// read multiple bytes from the container.
     pub fn read(&self, offset: usize, buf: &mut [u8]) -> Result<(), ClfsError> {
         if offset + buf.len() > self.data.len() {
             return Err(ClfsError::BufferTooSmall);
@@ -127,7 +123,7 @@ impl ContainerBuffer {
         Ok(())
     }
 
-    /// Write multiple bytes to the container.
+    /// write multiple bytes to the container.
     pub fn write(&mut self, offset: usize, buf: &[u8]) -> Result<(), ClfsError> {
         if offset + buf.len() > self.data.len() {
             return Err(ClfsError::BufferTooSmall);
@@ -167,12 +163,12 @@ impl ContainerBuffer {
 // Block I/O Operations
 // ============================================================================
 
-/// Read a log block from a container buffer.
+/// read a log block from a container buffer.
 pub fn read_log_block(
     container: &ContainerBuffer,
     block_offset: usize,
 ) -> Result<alloc::vec::Vec<u8>, ClfsError> {
-    // Read the first sector to get the block header
+    // read the first sector to get the block header
     let mut header_sector = [0u8; CLFS_SECTOR_SIZE];
     container.read_sector(block_offset, &mut header_sector)?;
 
@@ -180,7 +176,7 @@ pub fn read_log_block(
     let header = parse_block_header(&header_sector)?;
     let total_size = (header.total_sector_count as usize) * CLFS_SECTOR_SIZE;
 
-    // Read the entire block
+    // read the entire block
     let mut block = alloc::vec![0u8; total_size];
     for i in 0..header.total_sector_count as usize {
         let offset = (block_offset + i) * CLFS_SECTOR_SIZE;
@@ -204,7 +200,7 @@ pub fn read_log_block(
     Ok(block)
 }
 
-/// Write a log block to a container buffer.
+/// write a log block to a container buffer.
 pub fn write_log_block(
     container: &mut ContainerBuffer,
     block_offset: usize,
@@ -217,7 +213,7 @@ pub fn write_log_block(
     LAST_WRITE_USN.store(usn, core::sync::atomic::Ordering::Relaxed);
     WRITE_BLOCKS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
-    // Write each sector
+    // write each sector
     for i in 0..sector_count {
         let src = &block[i * CLFS_SECTOR_SIZE..(i + 1) * CLFS_SECTOR_SIZE];
         let dest_offset = block_offset + i;
@@ -286,7 +282,7 @@ fn parse_block_header(sector: &[u8]) -> Result<ClfsLogBlockHeader, ClfsError> {
 // Record I/O Operations
 // ============================================================================
 
-/// Read a record from a block at the given offset.
+/// read a record from a block at the given offset.
 pub fn read_record_from_block(
     block: &[u8],
     offset: usize,
@@ -305,7 +301,7 @@ pub fn read_record_from_block(
     Ok(header)
 }
 
-/// Read the data portion of a record.
+/// read the data portion of a record.
 pub fn read_record_data(
     block: &[u8],
     header: &ClfsLogRecordHeader,

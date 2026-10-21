@@ -11,7 +11,6 @@
 
 use super::pnp;
 use crate::hal::common::pci::{self, PciDevice};
-use crate::kprintln;
 
 /// Maximum number of BARs the bus driver tracks per device. The
 /// PCI spec allows 6 BARs (0..5).
@@ -93,7 +92,7 @@ static mut PCI_COUNT: usize = 0;
 
 fn push_pci_info(info: PciDeviceInfo) {
     unsafe {
-        if PCI_COUNT < PCI_DEVICES.len() {
+        if PCI_COUNT < (*core::ptr::addr_of!(PCI_DEVICES)).len() {
             PCI_DEVICES[PCI_COUNT] = info;
             PCI_COUNT += 1;
         }
@@ -103,8 +102,20 @@ fn push_pci_info(info: PciDeviceInfo) {
 /// Look up the cached `PciDeviceInfo` for a given bus address.
 pub fn find_pci(bus: u8, device: u8, function: u8) -> Option<PciDeviceInfo> {
     unsafe {
-        for info in PCI_DEVICES.iter().take(PCI_COUNT) {
+        for info in (*core::ptr::addr_of!(PCI_DEVICES)).iter().take(PCI_COUNT) {
             if info.pci.bus == bus && info.pci.device == device && info.pci.function == function {
+                return Some(*info);
+            }
+        }
+    }
+    None
+}
+
+/// Look up the first cached PCI device with matching vendor and device IDs.
+pub fn find_device(vendor_id: u16, device_id: u16) -> Option<PciDeviceInfo> {
+    unsafe {
+        for info in (*core::ptr::addr_of!(PCI_DEVICES)).iter().take(PCI_COUNT) {
+            if info.pci.vendor_id == vendor_id && info.pci.device_id == device_id {
                 return Some(*info);
             }
         }

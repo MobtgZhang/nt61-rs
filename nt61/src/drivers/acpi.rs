@@ -1,6 +1,6 @@
 //! ACPI Driver (acpi.sys)
 //
-//! Implements the ACPI (Advanced Configuration and Power Interface)
+//! Implements the ACPI (Advanced Configuration and power Interface)
 //! driver. acpi.sys is the Windows NT 6.1 driver that manages ACPI
 //! tables, handles power management, enumerates ACPI devices, and
 //! provides interfaces for system power state transitions (S0-S5)
@@ -12,15 +12,12 @@
 //! Clean-room implementation. Spec source: ACPI 6.0 specification
 //! and Microsoft "ACPI Driver" reference.
 
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, AtomicPtr, Ordering};
-
-#[allow(non_snake_case)]
+use core::sync::atomic::{AtomicU32, Ordering};
 
 extern crate alloc;
 
-use core::sync::atomic::{AtomicU32, Ordering};
-use crate::io::{DeviceObject, DeviceType, DriverObject};
-use crate::io::{SystemPowerState, DevicePowerState, PowerStateType};
+use crate::io::{DeviceObject, DriverObject};
+use crate::io::{DevicePowerState, SystemPowerState};
 use crate::ke::sync::Spinlock;
 
 const MAX_ACPI_DEVICES: usize = 32;
@@ -29,7 +26,7 @@ const MAX_ACPI_DEVICES: usize = 32;
 pub struct AcpiDeviceExtension {
     pub valid: bool,
     pub device_object: *mut DeviceObject,
-    pub hardware_id: [u8; 8],  // e.g., "PNP0C01"
+    pub hardware_id: [u8; 8], // e.g., "PNP0C01"
     pub system_power_state: SystemPowerState,
     pub device_power_state: DevicePowerState,
     pub can_wake_system: bool,
@@ -60,15 +57,11 @@ pub fn init() {
     crate::drivers::bus::acpi_bus::init();
 }
 
-pub fn AddDevice(
-    driver: *mut DriverObject,
-    pdo: *mut DeviceObject,
-    hardware_id: &[u8],
-) -> u32 {
+pub fn add_device(_driver: *mut DriverObject, pdo: *mut DeviceObject, hardware_id: &[u8]) -> u32 {
     let _g = ACPI_LOCK.lock();
 
     unsafe {
-        for device in DEVICES.iter_mut() {
+        for device in (*core::ptr::addr_of_mut!(DEVICES)).iter_mut() {
             if !device.valid {
                 device.valid = true;
                 device.device_object = pdo;
@@ -88,11 +81,11 @@ pub fn AddDevice(
     0xC000_0017 // STATUS_NO_MEMORY
 }
 
-pub fn StartDevice(device_object: *mut DeviceObject) -> u32 {
+pub fn start_device(device_object: *mut DeviceObject) -> u32 {
     let _g = ACPI_LOCK.lock();
 
     unsafe {
-        for device in DEVICES.iter_mut() {
+        for device in (*core::ptr::addr_of_mut!(DEVICES)).iter_mut() {
             if device.valid && device.device_object == device_object {
                 device.started = true;
                 return 0; // STATUS_SUCCESS
@@ -103,13 +96,13 @@ pub fn StartDevice(device_object: *mut DeviceObject) -> u32 {
     0xC000_000E // STATUS_NO_SUCH_DEVICE
 }
 
-pub fn SetSystemPowerState(target_state: SystemPowerState) -> u32 {
+pub fn set_system_power_state(target_state: SystemPowerState) -> u32 {
     let _g = ACPI_LOCK.lock();
 
     POWER_TRANSITION_COUNT.fetch_add(1, Ordering::Relaxed);
 
     unsafe {
-        for device in DEVICES.iter_mut() {
+        for device in (*core::ptr::addr_of_mut!(DEVICES)).iter_mut() {
             if device.valid && device.started {
                 device.system_power_state = target_state;
             }
@@ -117,22 +110,14 @@ pub fn SetSystemPowerState(target_state: SystemPowerState) -> u32 {
     }
 
     match target_state {
-        SystemPowerState::S0 => {
-            0
-        }
-        SystemPowerState::S1 | SystemPowerState::S2 | SystemPowerState::S3 => {
-            0
-        }
-        SystemPowerState::S4 => {
-            0
-        }
-        SystemPowerState::S5 => {
-            0
-        }
+        SystemPowerState::S0 => 0,
+        SystemPowerState::S1 | SystemPowerState::S2 | SystemPowerState::S3 => 0,
+        SystemPowerState::S4 => 0,
+        SystemPowerState::S5 => 0,
     }
 }
 
-pub fn SetDevicePowerState(
+pub fn set_device_power_state(
     device_object: *mut DeviceObject,
     target_state: DevicePowerState,
 ) -> u32 {
@@ -141,7 +126,7 @@ pub fn SetDevicePowerState(
     POWER_TRANSITION_COUNT.fetch_add(1, Ordering::Relaxed);
 
     unsafe {
-        for device in DEVICES.iter_mut() {
+        for device in (*core::ptr::addr_of_mut!(DEVICES)).iter_mut() {
             if device.valid && device.device_object == device_object {
                 device.device_power_state = target_state;
                 return 0; // STATUS_SUCCESS
@@ -152,11 +137,11 @@ pub fn SetDevicePowerState(
     0xC000_000E // STATUS_NO_SUCH_DEVICE
 }
 
-pub fn QueryDeviceCapabilities(device_object: *mut DeviceObject) -> Option<AcpiDeviceExtension> {
+pub fn query_device_capabilities(device_object: *mut DeviceObject) -> Option<AcpiDeviceExtension> {
     let _g = ACPI_LOCK.lock();
 
     unsafe {
-        for device in DEVICES.iter() {
+        for device in (*core::ptr::addr_of!(DEVICES)).iter() {
             if device.valid && device.device_object == device_object {
                 return Some(*device);
             }
@@ -174,27 +159,24 @@ pub fn power_transition_count() -> u32 {
     POWER_TRANSITION_COUNT.load(Ordering::Relaxed)
 }
 
-pub fn DriverEntry(driver: *mut DriverObject) -> u32 {
+pub fn driver_entry(_driver: *mut DriverObject) -> u32 {
     init();
     0 // STATUS_SUCCESS
 }
 
 pub mod dispatch {
     use super::*;
-    use crate::io::{Irp, IoStackLocation};
-    use crate::io::major::*;
-    use crate::io::pnp::*;
-    use crate::io::power::*;
+    use crate::io::Irp;
 
-    pub fn Pnp(device: *mut DeviceObject, irp: *mut Irp) -> u32 {
+    pub fn pnp(_device: *mut DeviceObject, _irp: *mut Irp) -> u32 {
         0 // STATUS_SUCCESS
     }
 
-    pub fn Power(device: *mut DeviceObject, irp: *mut Irp) -> u32 {
+    pub fn power(_device: *mut DeviceObject, _irp: *mut Irp) -> u32 {
         0 // STATUS_SUCCESS
     }
 
-    pub fn DeviceControl(device: *mut DeviceObject, irp: *mut Irp) -> u32 {
+    pub fn device_control(_device: *mut DeviceObject, _irp: *mut Irp) -> u32 {
         0 // STATUS_SUCCESS
     }
 }

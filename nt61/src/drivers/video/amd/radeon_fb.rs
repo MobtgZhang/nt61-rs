@@ -27,7 +27,7 @@ pub struct RadeonFramebuffer {
 }
 
 impl RadeonFramebuffer {
-    /// Create new framebuffer
+    /// create new framebuffer
     pub fn new(mmio_base: u64, fb_phys: u64, fb_size: u64) -> Self {
         Self {
             mmio_base,
@@ -41,13 +41,13 @@ impl RadeonFramebuffer {
         }
     }
 
-    /// Read register
+    /// read register
     #[inline]
     fn read_reg(&self, offset: u32) -> u32 {
         unsafe { core::ptr::read_volatile((self.mmio_base + offset as u64) as *const u32) }
     }
 
-    /// Write register
+    /// write register
     #[inline]
     fn write_reg(&self, offset: u32, value: u32) {
         unsafe { core::ptr::write_volatile((self.mmio_base + offset as u64) as *mut u32, value) }

@@ -1,12 +1,9 @@
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-#[allow(non_snake_case)]
-#[allow(dead_code)]
 extern crate alloc;
 
-use crate::io::{self, DeviceObject, DeviceType, DriverObject, IoStackLocation, Irp};
+use crate::io::{self, DeviceObject, DriverObject, IoStackLocation, Irp};
 use crate::ke::sync::Spinlock;
-use alloc::string::String;
 use alloc::vec::Vec;
 
 const MAX_TDI_ADDRESS_OBJECTS: usize = 256;
@@ -15,10 +12,10 @@ const MAX_TDI_CONNECTION_OBJECTS: usize = 512;
 
 const MAX_INTERFACES: usize = 16;
 
-const TCPIP_DEVICE_NAME: &str = "\\Device\\Tcp";
-const UDP_DEVICE_NAME: &str = "\\Device\\Udp";
-const IP_DEVICE_NAME: &str = "\\Device\\Ip";
-const RAWIP_DEVICE_NAME: &str = "\\Device\\RawIp";
+pub const TCPIP_DEVICE_NAME: &str = "\\Device\\Tcp";
+pub const UDP_DEVICE_NAME: &str = "\\Device\\Udp";
+pub const IP_DEVICE_NAME: &str = "\\Device\\Ip";
+pub const RAWIP_DEVICE_NAME: &str = "\\Device\\RawIp";
 
 const IOCTL_TDI_ACCEPT: u32 = 0x00120000;
 const IOCTL_TDI_CONNECT: u32 = 0x00120001;
@@ -526,7 +523,7 @@ pub fn tdi_disassociate_address(conn_id: u32) -> Result<(), i32> {
 pub fn tdi_connect(
     conn_id: u32,
     remote_address: &TdiAddressIp,
-    timeout: Option<u64>,
+    _timeout: Option<u64>,
 ) -> Result<(), i32> {
     let mut conn_objects = TDI_CONNECTION_OBJECTS.lock();
     let conn = conn_objects
@@ -565,8 +562,24 @@ pub fn tdi_connect(
         .tcp_connections_established
         .fetch_add(1, Ordering::Relaxed);
 
-    // TODO: Wait for connection to establish (with timeout)
-    conn.state = TdiConnectionState::Connected;
+    // Wait for the TCP state machine to reach ESTABLISHED, with a
+    // bounded timeout. The TCP stack updates the socket state on each
+    // timer tick, so we poll `tcp::socket_state()`.
+    const CONNECT_TIMEOUT_MS: u64 = 5000;
+    let start = crate::hal::common::pit::get_system_time_ms();
+    loop {
+        core::hint::spin_loop();
+        let socket_state = crate::netstack::tcp::socket_state(tcp_socket_id);
+        if socket_state == crate::netstack::tcp::TcpState::Established {
+            conn.state = TdiConnectionState::Connected;
+            break;
+        }
+        let elapsed = crate::hal::common::pit::get_system_time_ms() - start;
+        if elapsed >= CONNECT_TIMEOUT_MS {
+            conn.state = TdiConnectionState::Disconnected;
+            return Err(-6); // Connection failed
+        }
+    }
 
     Ok(())
 }
@@ -606,7 +619,7 @@ pub fn tdi_accept(addr_id: u32, conn_id: u32) -> Result<(), i32> {
     Ok(())
 }
 
-pub fn tdi_disconnect(conn_id: u32, flags: u32) -> Result<(), i32> {
+pub fn tdi_disconnect(conn_id: u32, _flags: u32) -> Result<(), i32> {
     let mut conn_objects = TDI_CONNECTION_OBJECTS.lock();
     let conn = conn_objects
         .iter_mut()
@@ -627,7 +640,7 @@ pub fn tdi_disconnect(conn_id: u32, flags: u32) -> Result<(), i32> {
     Ok(())
 }
 
-pub fn tdi_send(conn_id: u32, data: &[u8], flags: u32) -> Result<usize, i32> {
+pub fn tdi_send(conn_id: u32, data: &[u8], _flags: u32) -> Result<usize, i32> {
     let mut conn_objects = TDI_CONNECTION_OBJECTS.lock();
     let conn = conn_objects
         .iter_mut()
@@ -651,7 +664,7 @@ pub fn tdi_send(conn_id: u32, data: &[u8], flags: u32) -> Result<usize, i32> {
     Ok(bytes_sent)
 }
 
-pub fn tdi_receive(conn_id: u32, buffer: &mut [u8], flags: u32) -> Result<usize, i32> {
+pub fn tdi_receive(conn_id: u32, buffer: &mut [u8], _flags: u32) -> Result<usize, i32> {
     let mut conn_objects = TDI_CONNECTION_OBJECTS.lock();
     let conn = conn_objects
         .iter_mut()
@@ -874,7 +887,7 @@ pub fn ipv4_output(src_ip: u32, dst_ip: u32, protocol: u8, data: &[u8]) -> bool 
     result
 }
 
-pub unsafe extern "C" fn dispatch_create(device: *mut DeviceObject, irp: *mut Irp) -> i32 {
+pub unsafe extern "C" fn dispatch_create(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if !is_initialized() {
         return 0xC0000001_u32 as i32; // STATUS_UNSUCCESSFUL
     }
@@ -898,7 +911,7 @@ pub unsafe extern "C" fn dispatch_create(device: *mut DeviceObject, irp: *mut Ir
     }
 }
 
-pub unsafe extern "C" fn dispatch_close(device: *mut DeviceObject, irp: *mut Irp) -> i32 {
+pub unsafe extern "C" fn dispatch_close(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     unsafe {
         (*irp).io_status.status = 0; // STATUS_SUCCESS
         (*irp).io_status.information = 0;
@@ -906,7 +919,7 @@ pub unsafe extern "C" fn dispatch_close(device: *mut DeviceObject, irp: *mut Irp
     }
 }
 
-pub unsafe extern "C" fn dispatch_cleanup(device: *mut DeviceObject, irp: *mut Irp) -> i32 {
+pub unsafe extern "C" fn dispatch_cleanup(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     unsafe {
         (*irp).io_status.status = 0;
         (*irp).io_status.information = 0;
@@ -914,7 +927,7 @@ pub unsafe extern "C" fn dispatch_cleanup(device: *mut DeviceObject, irp: *mut I
     }
 }
 
-pub unsafe extern "C" fn dispatch_device_control(device: *mut DeviceObject, irp: *mut Irp) -> i32 {
+pub unsafe extern "C" fn dispatch_device_control(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if !is_initialized() {
         unsafe {
             (*irp).io_status.status = 0xC0000001;
@@ -958,7 +971,7 @@ pub unsafe extern "C" fn dispatch_device_control(device: *mut DeviceObject, irp:
 }
 
 pub unsafe extern "C" fn dispatch_internal_device_control(
-    device: *mut DeviceObject,
+    _device: *mut DeviceObject,
     irp: *mut Irp,
 ) -> i32 {
     if !is_initialized() {
@@ -1340,22 +1353,22 @@ unsafe fn handle_tdi_disassociate_address(irp: *mut Irp, stack: *mut IoStackLoca
     }
 }
 
-unsafe fn handle_tdi_query_information(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
+unsafe fn handle_tdi_query_information(irp: *mut Irp, _stack: *mut IoStackLocation) -> u32 {
     (*irp).io_status.information = 0;
     0 // STATUS_SUCCESS
 }
 
-unsafe fn handle_tdi_set_information(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
+unsafe fn handle_tdi_set_information(irp: *mut Irp, _stack: *mut IoStackLocation) -> u32 {
     (*irp).io_status.information = 0;
     0 // STATUS_SUCCESS
 }
 
-unsafe fn handle_tdi_set_event_handler(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
+unsafe fn handle_tdi_set_event_handler(irp: *mut Irp, _stack: *mut IoStackLocation) -> u32 {
     (*irp).io_status.information = 0;
     0 // STATUS_SUCCESS
 }
 
-unsafe fn handle_tdi_action(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
+unsafe fn handle_tdi_action(irp: *mut Irp, _stack: *mut IoStackLocation) -> u32 {
     (*irp).io_status.information = 0;
     0 // STATUS_SUCCESS
 }
@@ -1376,7 +1389,7 @@ pub fn get_interface_count() -> usize {
     NETWORK_INTERFACES.lock().iter().filter(|i| i.valid).count()
 }
 
-pub fn DriverEntry(driver: *mut DriverObject) -> u32 {
+pub fn driver_entry(driver: *mut DriverObject) -> u32 {
     init();
 
     unsafe {
@@ -1397,7 +1410,7 @@ pub fn DriverEntry(driver: *mut DriverObject) -> u32 {
     0 // STATUS_SUCCESS
 }
 
-pub fn DriverUnload(driver: *mut DriverObject) {
+pub fn driver_unload(_driver: *mut DriverObject) {
     {
         let mut addr_objects = TDI_ADDRESS_OBJECTS.lock();
         addr_objects.clear();

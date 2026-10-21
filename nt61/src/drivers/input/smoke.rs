@@ -1,9 +1,5 @@
 //! Input Stack Smoke Test Aggregator
 
-#![cfg(target_arch = "x86_64")]
-
-use crate::kprintln;
-
 pub fn smoke_test() -> bool {
     // kprintln!("  [INPUT SMOKE] running input stack smoke tests...");
     let mut ok = true;

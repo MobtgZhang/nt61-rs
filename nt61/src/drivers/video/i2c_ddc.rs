@@ -14,7 +14,6 @@
 
 use crate::drivers::video::log;
 use alloc::boxed::Box;
-use alloc::string::ToString;
 use alloc::vec::Vec;
 
 // ============================================================================
@@ -51,10 +50,10 @@ pub trait I2cMaster {
     /// Returns true if the slave acknowledged.
     fn start(&mut self, addr: u8, read: bool) -> bool;
 
-    /// Write a byte and check for acknowledgment.
+    /// write a byte and check for acknowledgment.
     fn write_byte(&mut self, byte: u8) -> bool;
 
-    /// Read a byte and send ACK/NACK.
+    /// read a byte and send ACK/NACK.
     /// - `ack`: true to send ACK (continue reading), false to send NACK (stop)
     fn read_byte(&mut self, ack: bool) -> u8;
 
@@ -72,7 +71,7 @@ pub trait I2cMaster {
 // I2C Helper Functions
 // ============================================================================
 
-/// Read multiple bytes from an I2C slave.
+/// read multiple bytes from an I2C slave.
 pub fn i2c_read_bytes<M: I2cMaster>(master: &mut M, addr: u8, buffer: &mut [u8]) -> bool {
     if !master.start(addr, true) {
         master.stop();
@@ -88,7 +87,7 @@ pub fn i2c_read_bytes<M: I2cMaster>(master: &mut M, addr: u8, buffer: &mut [u8])
     true
 }
 
-/// Write multiple bytes to an I2C slave.
+/// write multiple bytes to an I2C slave.
 pub fn i2c_write_bytes<M: I2cMaster>(master: &mut M, addr: u8, data: &[u8]) -> bool {
     if !master.start(addr, false) {
         master.stop();
@@ -117,7 +116,7 @@ const QEMU_EDID_BLOCK: &[u8] = &[
     0x51, 0x4D, 0x00, 0x00, // QEMU manufacturer code: 'Q', 'M', packed ID
     0x00, 0x00, 0x00, 0x00, // Serial number
     0x01, 0x03, // Week 1, Year 2003
-    0x01, 0x03, // Version 1, Revision 3
+    0x01, 0x03, // Version 1, revision 3
     // Video input: Digital 8-bit, RGB 4:4:4
     0x80, 0x00, 0x00, // Screen size (not specified)
     0x00, 0x00, // Gamma 2.2
@@ -186,7 +185,7 @@ pub struct QemuDdcMaster {
 }
 
 impl QemuDdcMaster {
-    /// Create a new QEMU DDC master.
+    /// create a new QEMU DDC master.
     pub fn new() -> Self {
         Self { extensions: 1 }
     }
@@ -230,6 +229,7 @@ impl crate::drivers::video::edid::DdcMaster for QemuDdcMaster {
 /// These are the index/data port pair for Winbond/Nuvoton super I/O chips,
 /// commonly used for DDC on desktop motherboards.
 const DDC_GPIO_INDEX_PORT: u16 = 0x2E;
+#[cfg(target_arch = "x86_64")]
 const DDC_GPIO_DATA_PORT: u16 = 0x2F;
 
 /// GPIO bit positions in the super-I/O output register (index 0xF0).
@@ -254,7 +254,7 @@ pub struct GpioI2cMaster {
 }
 
 impl GpioI2cMaster {
-    /// Create a new GPIO I2C master.
+    /// create a new GPIO I2C master.
     ///
     /// `base` is the port-mapped GPIO index port (e.g. 0x2E for super I/O).
     /// `has_hardware` determines whether real port I/O is used or simulation mode.
@@ -268,7 +268,7 @@ impl GpioI2cMaster {
         }
     }
 
-    /// Create a GPIO I2C master for Intel IGD (Integrated Graphics).
+    /// create a GPIO I2C master for Intel IGD (Integrated Graphics).
     ///
     /// Uses the standard super-I/O port pair (0x2E/0x2F) as a fallback.
     /// A full implementation would enumerate ACPI GPIO controllers.
@@ -378,13 +378,13 @@ impl GpioI2cMaster {
         self.delay();
     }
 
-    /// Read the current SDA level from the GPIO input register.
+    /// read the current SDA level from the GPIO input register.
     pub fn get_sda(&self) -> bool {
         let in_reg: u8 = 0xF1;
         (self.gpio_read(in_reg) & (1 << DDC_GPIO_SDA_BIT)) != 0
     }
 
-    /// Read the current SCL level from the GPIO input register.
+    /// read the current SCL level from the GPIO input register.
     pub fn get_scl(&self) -> bool {
         let in_reg: u8 = 0xF1;
         (self.gpio_read(in_reg) & (1 << DDC_GPIO_SCL_BIT)) != 0
@@ -424,7 +424,7 @@ impl GpioI2cMaster {
     }
 }
 
-/// Read-only snapshot of the GPIO I2C master state.
+/// read-only snapshot of the GPIO I2C master state.
 pub struct GpioI2cDiagnostics {
     pub base: u16,
     pub scl_high: bool,
@@ -446,7 +446,7 @@ impl I2cMaster for GpioI2cMaster {
             self.set_scl(true);
             self.set_scl(false);
         }
-        // Read ACK from slave.
+        // read ACK from slave.
         self.set_sda(true);
         self.delay();
         self.set_scl(true);
@@ -502,7 +502,7 @@ pub struct DpAuxDdcMaster {
 }
 
 impl DpAuxDdcMaster {
-    /// Create a new DP AUX DDC master.
+    /// create a new DP AUX DDC master.
     pub fn new(aux_base: u64) -> Self {
         Self {
             aux_base,
@@ -562,10 +562,10 @@ impl crate::drivers::video::edid::DdcMaster for DpAuxDdcMaster {
             return Err(crate::drivers::video::edid::EdidError::ReadError);
         }
         // I2C-over-AUX transaction for EDID:
-        // 1. Send I2C START + EDID address (0x50) with Write bit
+        // 1. Send I2C START + EDID address (0x50) with write bit
         // 2. Send block number
-        // 3. Send I2C START + EDID address with Read bit
-        // 4. Read 128 bytes
+        // 3. Send I2C START + EDID address with read bit
+        // 4. read 128 bytes
         // 5. Send I2C STOP
         // For now, fall back to QEMU simulation.
         let mut qemu = QemuDdcMaster::new();
@@ -584,7 +584,7 @@ pub struct EdidReader {
 }
 
 impl EdidReader {
-    /// Create a new EDID reader with the best available DDC master.
+    /// create a new EDID reader with the best available DDC master.
     pub fn new() -> Option<Self> {
         if QemuDdcMaster::is_available() {
             log::video_log("ddc", "Using QEMU EDID simulation");
@@ -595,7 +595,7 @@ impl EdidReader {
         None
     }
 
-    /// Read the full EDID (base block + extensions).
+    /// read the full EDID (base block + extensions).
     pub fn read_full_edid(&mut self) -> Result<Vec<u8>, crate::drivers::video::edid::EdidError> {
         let mut edid_data = Vec::with_capacity(128 * 2);
         let mut block0 = [0u8; 128];

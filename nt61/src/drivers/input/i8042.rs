@@ -9,10 +9,6 @@
 //! reference. No code is copied from any Microsoft or ReactOS
 //! source file.
 
-#![cfg(target_arch = "x86_64")]
-
-use crate::kprintln;
-
 /// 8042 command / data ports.
 const DATA_PORT: u16 = 0x60;
 const CMD_PORT: u16 = 0x64;
@@ -37,26 +33,24 @@ static mut MOUSE_INTERRUPTS_ENABLED: bool = false;
 /// Walk the 8042. Enables both the keyboard and the mouse
 /// interrupt paths.
 pub fn init() {
-    #[cfg(target_arch = "x86_64")]
-    #[cfg(target_arch = "x86_64")]
-    use crate::hal::x86_64::io_port::{READ_PORT_UCHAR, WRITE_PORT_UCHAR};
+    use crate::hal::io_port::{read_port_uchar, write_port_uchar};
     unsafe {
-        // Read the current command byte.
-        WRITE_PORT_UCHAR(CMD_PORT, CMD_READ_CMD_BYTE);
-        let mut cb = READ_PORT_UCHAR(DATA_PORT);
+        // read the current command byte.
+        write_port_uchar(CMD_PORT, CMD_READ_CMD_BYTE);
+        let mut cb = read_port_uchar(DATA_PORT);
         // Make sure the keyboard and mouse are enabled, and that
         // both interrupt paths are wired.
         cb &= !(CB_KBD_DIS | CB_MOUSE_DIS);
         cb |= CB_KBD_INT | CB_MOUSE_INT;
-        WRITE_PORT_UCHAR(CMD_PORT, CMD_WRITE_CMD_BYTE);
-        WRITE_PORT_UCHAR(DATA_PORT, cb);
+        write_port_uchar(CMD_PORT, CMD_WRITE_CMD_BYTE);
+        write_port_uchar(DATA_PORT, cb);
         // Re-enable the keyboard and mouse in case the BIOS left
         // them disabled.
-        WRITE_PORT_UCHAR(CMD_PORT, CMD_ENABLE_KBD);
-        WRITE_PORT_UCHAR(CMD_PORT, CMD_ENABLE_MOUSE);
-        // Read the command byte back and confirm.
-        WRITE_PORT_UCHAR(CMD_PORT, CMD_READ_CMD_BYTE);
-        let cb2 = READ_PORT_UCHAR(DATA_PORT);
+        write_port_uchar(CMD_PORT, CMD_ENABLE_KBD);
+        write_port_uchar(CMD_PORT, CMD_ENABLE_MOUSE);
+        // read the command byte back and confirm.
+        write_port_uchar(CMD_PORT, CMD_READ_CMD_BYTE);
+        let cb2 = read_port_uchar(DATA_PORT);
         KBD_INTERRUPTS_ENABLED = (cb2 & CB_KBD_INT) != 0;
         MOUSE_INTERRUPTS_ENABLED = (cb2 & CB_MOUSE_INT) != 0;
         INITIALISED = true;
@@ -80,4 +74,14 @@ pub fn smoke_test() -> bool {
     //               kbd_interrupts_enabled(),
     //               mouse_interrupts_enabled());
     unsafe { INITIALISED }
+}
+
+/// Architecture-owned controller access path.
+pub fn init_hardware() {
+    init();
+}
+
+/// Architecture-owned controller smoke test.
+pub fn smoke_hardware() -> bool {
+    smoke_test()
 }

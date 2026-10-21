@@ -9,10 +9,10 @@
 //! - USB-C Alt Mode discovery and configuration
 //! - DisplayPort over USB-C (DP Alt Mode)
 //! - Thunderbolt protocol support
-//! - USB Power Delivery (PD) negotiation
+//! - USB power Delivery (PD) negotiation
 //! - USB4/TBT4 discovery and initialization
 //
-//! Clean-room implementation based on USB-C, USB Power Delivery,
+//! Clean-room implementation based on USB-C, USB power Delivery,
 //! DisplayPort, and Thunderbolt specifications.
 
 use crate::drivers::video::log;
@@ -50,11 +50,11 @@ pub enum UsbCDataRole {
 /// USB-C power role
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UsbCPowerRole {
-    /// Power consumer (sink)
+    /// power consumer (sink)
     Sink,
-    /// Power provider (source)
+    /// power provider (source)
     Source,
-    /// Dual Role Power
+    /// Dual Role power
     DualRolePower,
 }
 
@@ -123,7 +123,7 @@ pub struct UsbCPortConfig {
     pub supported_alt_modes: Vec<AltModeType>,
     /// Maximum power delivery (in mW)
     pub max_power_mw: u32,
-    /// Supports USB Power Delivery
+    /// Supports USB power Delivery
     pub supports_pd: bool,
     /// Supports DisplayPort
     pub supports_dp: bool,
@@ -174,7 +174,7 @@ pub struct UsbCConnector {
 }
 
 impl UsbCConnector {
-    /// Create a new USB-C connector
+    /// create a new USB-C connector
     pub fn new(port_id: u32) -> Self {
         Self {
             port_id,
@@ -253,7 +253,7 @@ pub struct DisplayPortOverUsbC {
 }
 
 impl DisplayPortOverUsbC {
-    /// Create a new DP over USB-C config
+    /// create a new DP over USB-C config
     pub fn new(connector: u32) -> Self {
         Self {
             connector,
@@ -412,7 +412,7 @@ pub struct ThunderboltConfig {
 }
 
 impl ThunderboltConfig {
-    /// Create a new Thunderbolt config
+    /// create a new Thunderbolt config
     pub fn new(connector: u32) -> Self {
         Self {
             connector,
@@ -478,10 +478,10 @@ pub enum TbtTunnelStatus {
 }
 
 // =====================================================================
-// USB Power Delivery
+// USB power Delivery
 // =====================================================================
 
-/// USB Power Delivery messages
+/// USB power Delivery messages
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PdMessageType {
     /// Source capabilities
@@ -496,7 +496,7 @@ pub enum PdMessageType {
     Reject,
     /// Ping
     Ping,
-    /// PS_RDY (Power Supply Ready)
+    /// PS_RDY (power Supply Ready)
     PsRdy,
     /// Get Source Caps
     GetSourceCaps,
@@ -504,7 +504,7 @@ pub enum PdMessageType {
     GetSinkCaps,
     /// DR_Swap (Data Role Swap)
     DrSwap,
-    /// PR_Swap (Power Role Swap)
+    /// PR_Swap (power Role Swap)
     PrSwap,
     /// VCONN_Swap
     VconnSwap,
@@ -518,7 +518,7 @@ pub enum PdMessageType {
     DataReset,
 }
 
-/// Power delivery contract
+/// power delivery contract
 #[derive(Debug, Clone)]
 pub struct PdContract {
     /// Selected power profile
@@ -554,7 +554,7 @@ pub enum PdPowerProfile {
     Fixed15V,
     /// USB PD fixed 20V
     Fixed20V,
-    /// USB PD PPS (Programmable Power Supply)
+    /// USB PD PPS (Programmable power Supply)
     Pps,
 }
 
@@ -589,16 +589,16 @@ pub enum PdState {
     CapabilityExchange,
     /// Contract negotiation
     ContractNegotiation,
-    /// Power contract active
+    /// power contract active
     ContractActive,
-    /// Power contract renegotiation
+    /// power contract renegotiation
     ContractRenegotiate,
     /// Error state
     Error,
 }
 
 impl UsbCPortController {
-    /// Create a new USB-C controller
+    /// create a new USB-C controller
     pub fn new(port_id: u32) -> Self {
         Self {
             port_id,
@@ -818,7 +818,7 @@ impl UsbCPortController {
         Ok(())
     }
 
-    /// Start USB Power Delivery negotiation
+    /// Start USB power Delivery negotiation
     pub fn negotiate_power_delivery(&mut self) -> Result<PdContract, &'static str> {
         if !self.connector.config.supports_pd {
             return Err("Power Delivery not supported");
@@ -951,7 +951,7 @@ pub struct UsbCManager {
 }
 
 impl UsbCManager {
-    /// Create a new manager
+    /// create a new manager
     pub fn new() -> Self {
         Self {
             ports: Vec::new(),
@@ -1048,7 +1048,7 @@ static USB_C_MANAGER: Spinlock<Option<UsbCManager>> = Spinlock::new(None);
 pub fn init() {
     #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("USBC:start\r\n");
+    crate::hal::serial::write_string("USBC:start\r\n");
     log::video_log("usbc", "USB-C/Thunderbolt: initializing...");
 
     // The full initialization builds a `Vec<UsbCPortController>`
@@ -1062,13 +1062,13 @@ pub fn init() {
     // is exercised here — this is bootstrap only).
     #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("USBC:stub_init\r\n");
+    crate::hal::serial::write_string("USBC:stub_init\r\n");
     let manager = UsbCManager::new();
 
     *USB_C_MANAGER.lock() = Some(manager);
     #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("USBC:done\r\n");
+    crate::hal::serial::write_string("USBC:done\r\n");
 }
 
 /// Detect and configure all USB-C ports

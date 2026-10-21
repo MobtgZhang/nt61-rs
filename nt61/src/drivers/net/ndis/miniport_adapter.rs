@@ -6,8 +6,9 @@
 //! Clean-room implementation based on NDIS 6.0 specification.
 
 use crate::drivers::net::NicType;
-use crate::mm::pool::{self, PoolType};
 use crate::ke::sync::Spinlock;
+use crate::mm::pool::{self, PoolType};
+use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Pool tags
@@ -33,9 +34,9 @@ pub struct NicCapabilities {
     pub current_mac: [u8; 6],
     pub max_tx_buffers: u32,
     pub max_rx_buffers: u32,
-    pub link_speed: u64,        // in 100 bps units
+    pub link_speed: u64, // in 100 bps units
     pub media_type: MediaType,
-    pub supported_oids: u64,   // bitmask of supported OIDs
+    pub supported_oids: u64, // bitmask of supported OIDs
 }
 
 impl Default for NicCapabilities {
@@ -106,7 +107,7 @@ pub struct MiniportAdapterContext {
 }
 
 impl MiniportAdapterContext {
-    /// Create a new adapter context
+    /// create a new adapter context
     pub fn new(nic_type: NicType, nic_index: usize) -> *mut MiniportAdapterContext {
         let ctx = pool::allocate_tagged(
             PoolType::NonPaged,
@@ -157,13 +158,17 @@ impl MiniportAdapterContext {
     /// Increment TX counter
     pub fn tx_packet(&mut self, bytes: usize) {
         self.stats.tx_packets.fetch_add(1, Ordering::Relaxed);
-        self.stats.tx_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
+        self.stats
+            .tx_bytes
+            .fetch_add(bytes as u64, Ordering::Relaxed);
     }
 
     /// Increment RX counter
     pub fn rx_packet(&mut self, bytes: usize) {
         self.stats.rx_packets.fetch_add(1, Ordering::Relaxed);
-        self.stats.rx_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
+        self.stats
+            .rx_bytes
+            .fetch_add(bytes as u64, Ordering::Relaxed);
     }
 
     /// Increment TX error counter

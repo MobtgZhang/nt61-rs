@@ -20,7 +20,6 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::hal::common::pci::PciDevice;
 use crate::io::{DeviceObject, DeviceType, DriverObject, ListEntry};
-use crate::kprintln;
 use crate::mm::pool;
 
 /// Maximum number of registered PnP device nodes.
@@ -76,7 +75,6 @@ pub mod bus_type {
 /// PnP state. The real PnP state machine is more involved, but
 /// the bootstrap only needs to track the high-level transitions.
 pub mod pnp_state {
-    use super::*;
 
     pub const UNINITIALISED: u32 = 0;
     pub const ENUMERATED: u32 = 1;
@@ -164,7 +162,7 @@ pub struct DriverRegistration {
     /// Called by the PnP manager to start the driver on a new
     /// device. Returns `true` on success.
     pub add_device: fn(node: &mut PnPNode) -> bool,
-    /// Optional `DriverUnload` callback for cleanup.
+    /// Optional `driver_unload` callback for cleanup.
     pub unload: Option<fn(driver: *mut DriverObject)>,
 }
 
@@ -194,7 +192,7 @@ pub fn init() {
             return;
         }
         PNP_INITIALISED = true;
-        for n in DEVICE_NODES.iter_mut() {
+        for n in (*core::ptr::addr_of_mut!(DEVICE_NODES)).iter_mut() {
             n.valid = false;
         }
     }
@@ -204,7 +202,7 @@ pub fn init() {
 /// Register a driver with the PnP manager.
 pub fn register_driver(reg: DriverRegistration) -> bool {
     unsafe {
-        for slot in DRIVER_TABLE.iter_mut() {
+        for slot in (*core::ptr::addr_of_mut!(DRIVER_TABLE)).iter_mut() {
             if slot.is_none() {
                 *slot = Some(reg);
                 return true;
@@ -218,21 +216,21 @@ pub fn register_driver(reg: DriverRegistration) -> bool {
 /// exact `compatible_id`, then prefix of `hw_id`, then wildcard.
 pub fn find_driver(node: &PnPNode) -> Option<&'static DriverRegistration> {
     unsafe {
-        for slot in DRIVER_TABLE.iter() {
+        for slot in (*core::ptr::addr_of!(DRIVER_TABLE)).iter() {
             if let Some(reg) = slot {
                 if name_eq(&reg.name, &node.compatible_id) {
                     return Some(reg);
                 }
             }
         }
-        for slot in DRIVER_TABLE.iter() {
+        for slot in (*core::ptr::addr_of!(DRIVER_TABLE)).iter() {
             if let Some(reg) = slot {
                 if name_starts_with(&node.hw_id, reg.name.as_bytes()) {
                     return Some(reg);
                 }
             }
         }
-        for slot in DRIVER_TABLE.iter() {
+        for slot in (*core::ptr::addr_of!(DRIVER_TABLE)).iter() {
             if let Some(reg) = slot {
                 if reg.name.is_empty() {
                     return Some(reg);
@@ -294,7 +292,10 @@ fn add_node(
     compatible_id: &[u8; MAX_DEVICE_ID_LEN],
 ) -> Option<usize> {
     unsafe {
-        for (i, n) in DEVICE_NODES.iter_mut().enumerate() {
+        for (i, n) in (*core::ptr::addr_of_mut!(DEVICE_NODES))
+            .iter_mut()
+            .enumerate()
+        {
             if n.valid {
                 continue;
             }
@@ -319,7 +320,7 @@ pub fn start_all_pending() -> u32 {
     let mut started: u32 = 0;
     let start = crate::ke::time::get_tick_count();
     unsafe {
-        for n in DEVICE_NODES.iter_mut() {
+        for n in (*core::ptr::addr_of_mut!(DEVICE_NODES)).iter_mut() {
             if !n.valid {
                 continue;
             }
@@ -389,7 +390,7 @@ pub fn remove_device(idx: usize) -> bool {
     }
 }
 
-/// Handle query remove for a device
+/// handle query remove for a device
 pub fn query_remove_device(idx: usize) -> bool {
     unsafe {
         if idx >= MAX_DEVICE_NODES {
@@ -431,7 +432,7 @@ pub fn cancel_remove_device(idx: usize) -> bool {
     }
 }
 
-/// Handle surprise removal for a device
+/// handle surprise removal for a device
 pub fn surprise_remove_device(idx: usize) -> bool {
     unsafe {
         if idx >= MAX_DEVICE_NODES {
@@ -535,7 +536,7 @@ impl Iterator for PnpNodeIterator {
 /// This avoids heap allocation by using a lazy iterator instead of collecting into a Vec.
 pub fn enumerate() -> PnpNodeIterator {
     PnpNodeIterator {
-        nodes: unsafe { &DEVICE_NODES },
+        nodes: unsafe { &*core::ptr::addr_of!(DEVICE_NODES) },
         index: 0,
     }
 }

@@ -5,46 +5,28 @@
 //!   * cng.sys — Cryptographic Next Generation (AES, SHA, RC4, etc.)
 //
 //! CNG/BCrypt uses the Win32-style crypto naming convention
-//! (BCryptOpenAlgorithmProvider, BCRYPT_AES_ALGORITHM, ...).
-#![allow(non_snake_case, non_upper_case_globals, dead_code)]
+//! (bcrypt_open_algorithm_provider, BCRYPT_AES_ALGORITHM, ...).
 //
 //! Key responsibilities:
-//!   * `BCryptOpenAlgorithmProvider` — register crypto algorithms
-//!   * `BCryptGenerateSymmetricKey` — create AES/SHA keys
-//!   * `BCryptEncrypt` / `BCryptDecrypt` — encrypt/decrypt data
-//!   * `BCryptHashData` / `BCryptFinishHash` — hash data incrementally
+//!   * `bcrypt_open_algorithm_provider` — register crypto algorithms
+//!   * `bcrypt_generate_symmetric_key` — create AES/SHA keys
+//!   * `bcrypt_encrypt` / `bcrypt_decrypt` — encrypt/decrypt data
+//!   * `bcrypt_hash_data` / `bcrypt_finish_hash` — hash data incrementally
 //!   * `KsecGatherEntropyData` — gather entropy from hardware sources
 //!   * `KsecRandomBytesGenerate` — generate cryptographically random bytes
 //
 //! Clean-room implementation. Spec source: Windows CNG SDK,
 //! WDK bcrypt.h / ksecdd.h.
 
-use crate::kprintln;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 // ---------------------------------------------------------------------------
 // CPU feature detection helpers
 // ---------------------------------------------------------------------------
 
-/// Check if RDRAND is supported via CPUID.01H:ECX.RDRAND (bit 30).
-#[cfg(target_arch = "x86_64")]
+/// Check whether the platform provides a hardware random source.
 fn check_rdrand_support() -> bool {
-    let result: u32;
-    unsafe {
-        core::arch::asm!(
-            "cpuid",
-            inlateout("eax") 1u32 => _,
-            lateout("ecx") result,
-            lateout("edx") _,
-            options(nostack)
-        );
-    }
-    (result >> 30) & 1 != 0
-}
-
-#[cfg(not(target_arch = "x86_64"))]
-fn check_rdrand_support() -> bool {
-    false
+    crate::arch::hardware_random_u64().is_some()
 }
 
 // ---------------------------------------------------------------------------
@@ -54,76 +36,22 @@ fn check_rdrand_support() -> bool {
 static ENTROPY_COLLECTED: AtomicBool = AtomicBool::new(false);
 static ENTROPY_COUNT: AtomicU32 = AtomicU32::new(0);
 
-/// Read a random byte from the RDRAND instruction (if available).
+/// read a random byte from the RDRAND instruction (if available).
 /// Returns 0 if RDRAND is not available or failed.
-fn rdrand_byte() -> u8 {
-    #[cfg(target_arch = "x86_64")]
-    {
-        let mut result: u8;
-        unsafe {
-            core::arch::asm!(
-                "rdrand al",
-                out("al") result,
-                options(nostack, readonly));
-        }
-        result
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        0
-    }
+pub fn rdrand_byte() -> u8 {
+    crate::arch::hardware_random_u64()
+        .map(|value| value as u8)
+        .unwrap_or(0)
 }
 
-/// Read a random 32-bit value from RDRAND.
-fn rdrand_u32() -> Option<u32> {
-    #[cfg(target_arch = "x86_64")]
-    {
-        let result: u32;
-        let cf: u8;
-        unsafe {
-            core::arch::asm!(
-                "rdrand eax",
-                "setc cl",
-                out("eax") result,
-                out("cl") cf,
-                options(nostack, preserves_flags));
-        }
-        if cf != 0 {
-            Some(result)
-        } else {
-            None
-        }
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        None
-    }
+/// read a random 32-bit value from RDRAND.
+pub fn rdrand_u32() -> Option<u32> {
+    crate::arch::hardware_random_u64().map(|value| value as u32)
 }
 
-/// Read a random 64-bit value from RDRAND.
+/// read a random 64-bit value from RDRAND.
 fn rdrand_u64() -> Option<u64> {
-    #[cfg(target_arch = "x86_64")]
-    {
-        let result: u64;
-        let cf: u8;
-        unsafe {
-            core::arch::asm!(
-                "rdrand rax",
-                "setc cl",
-                out("rax") result,
-                out("cl") cf,
-                options(nostack, preserves_flags));
-        }
-        if cf != 0 {
-            Some(result)
-        } else {
-            None
-        }
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        None
-    }
+    crate::arch::hardware_random_u64()
 }
 
 /// Gather entropy from hardware sources.
@@ -522,7 +450,7 @@ pub fn smoke_test() -> bool {
     // Test BCrypt provider opening
     let aes_handle = bcrypt_open_algorithm_provider("AES");
     if aes_handle == INVALID_HANDLE {
-        // crate::kprintln!("  [KSEC SMOKE FAIL] BCryptOpenAlgorithmProvider returned invalid handle");
+        // crate::kprintln!("  [KSEC SMOKE FAIL] bcrypt_open_algorithm_provider returned invalid handle");
         return false;
     }
 
@@ -536,7 +464,7 @@ pub fn smoke_test() -> bool {
     let test_key = [0x2Bu8; 16];
     let key_handle = bcrypt_generate_symmetric_key(aes_handle, &test_key);
     if key_handle.is_none() {
-        // crate::kprintln!("  [KSEC SMOKE FAIL] BCryptGenerateSymmetricKey failed");
+        // crate::kprintln!("  [KSEC SMOKE FAIL] bcrypt_generate_symmetric_key failed");
         return false;
     }
     // crate::kprintln!("    [KSEC] BCrypt: AES={} SHA256={} key_handle=0x{:016x}",

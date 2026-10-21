@@ -9,8 +9,6 @@
 //! Definition for HID 1.11, section 4.2 ("Protocols"). No code
 //! is copied from any Microsoft or ReactOS source file.
 
-use crate::kprintln;
-
 /// HID class code.
 pub const CLASS_HID: u8 = 0x03;
 /// HID subclass: boot interface.
@@ -221,26 +219,26 @@ pub const BOOT_KEYBOARD_HID_DESCRIPTOR: &[u8] = &[
     0x09, 0x06, // Usage (Keyboard)
     0xA1, 0x01, // Collection (Application)
     0x05, 0x07, //   Usage Page (Key Codes)
-    0x19, 0xE0, //   Usage Minimum (224) - Left Control
+    0x19, 0xE0, //   Usage Minimum (224) - Left control
     0x29, 0xE7, //   Usage Maximum (231) - Right GUI
     0x15, 0x00, //   Logical Minimum (0)
     0x25, 0x01, //   Logical Maximum (1)
     0x75, 0x01, //   Report Size (1)
-    0x95, 0x08, //   Report Count (8)
+    0x95, 0x08, //   Report count (8)
     0x81, 0x02, //   Input (Data, Variable, Absolute) - Modifier byte
-    0x95, 0x01, //   Report Count (1)
+    0x95, 0x01, //   Report count (1)
     0x75, 0x08, //   Report Size (8)
     0x81, 0x01, //   Input (Constant) - Reserved byte
-    0x95, 0x05, //   Report Count (5)
+    0x95, 0x05, //   Report count (5)
     0x75, 0x01, //   Report Size (1)
     0x05, 0x08, //   Usage Page (LEDs)
     0x19, 0x01, //   Usage Minimum (1) - Num Lock
     0x29, 0x05, //   Usage Maximum (5) - Kana
     0x91, 0x02, //   Output (Data, Variable, Absolute) - LED report
-    0x95, 0x01, //   Report Count (1)
+    0x95, 0x01, //   Report count (1)
     0x75, 0x03, //   Report Size (3)
     0x91, 0x01, //   Output (Constant) - LED report padding
-    0x95, 0x06, //   Report Count (6)
+    0x95, 0x06, //   Report count (6)
     0x75, 0x08, //   Report Size (8)
     0x15, 0x00, //   Logical Minimum (0)
     0x25, 0x65, //   Logical Maximum (101)
@@ -263,10 +261,10 @@ pub const BOOT_MOUSE_HID_DESCRIPTOR: &[u8] = &[
     0x29, 0x03, //     Usage Maximum (3) - Button 3
     0x15, 0x00, //     Logical Minimum (0)
     0x25, 0x01, //     Logical Maximum (1)
-    0x95, 0x03, //     Report Count (3)
+    0x95, 0x03, //     Report count (3)
     0x75, 0x01, //     Report Size (1)
     0x81, 0x02, //     Input (Data, Variable, Absolute) - Button bits
-    0x95, 0x01, //     Report Count (1)
+    0x95, 0x01, //     Report count (1)
     0x75, 0x05, //     Report Size (5)
     0x81, 0x01, //     Input (Constant) - Padding
     0x05, 0x01, //     Usage Page (Generic Desktop)
@@ -276,7 +274,7 @@ pub const BOOT_MOUSE_HID_DESCRIPTOR: &[u8] = &[
     0x15, 0x81, //     Logical Minimum (-127)
     0x25, 0x7F, //     Logical Maximum (127)
     0x75, 0x08, //     Report Size (8)
-    0x95, 0x03, //     Report Count (3)
+    0x95, 0x03, //     Report count (3)
     0x81, 0x06, //     Input (Data, Variable, Relative) - X, Y, Wheel
     0xC0, //   End Collection
     0xC0, // End Collection
@@ -304,7 +302,7 @@ pub fn get_report_descriptor(protocol: HidProtocol) -> &'static [u8] {
     }
 }
 
-/// Create a HID descriptor
+/// create a HID descriptor
 pub fn create_hid_descriptor(hid_version: u16, report_desc_length: u16) -> HidDescriptor {
     HidDescriptor {
         desc_length: core::mem::size_of::<HidDescriptor>() as u8,
@@ -371,7 +369,10 @@ static mut USB_KEYBOARDS: [UsbKeyboardState; MAX_USB_KEYBOARDS] = [
 pub fn register_keyboard() -> Option<usize> {
     // SAFETY: single-threaded polling path; no concurrent access.
     unsafe {
-        for (i, slot) in USB_KEYBOARDS.iter_mut().enumerate() {
+        for (i, slot) in (*core::ptr::addr_of_mut!(USB_KEYBOARDS))
+            .iter_mut()
+            .enumerate()
+        {
             if !slot.in_use {
                 slot.in_use = true;
                 slot.prev_report = BootKeyboardReport::default();
@@ -412,7 +413,7 @@ pub fn submit_report(slot: usize, report: BootKeyboardReport) {
 pub fn poll_keyboards() {
     // SAFETY: single-threaded polling path; no concurrent access.
     unsafe {
-        for slot in USB_KEYBOARDS.iter_mut() {
+        for slot in (*core::ptr::addr_of_mut!(USB_KEYBOARDS)).iter_mut() {
             if !slot.in_use {
                 continue;
             }
@@ -426,10 +427,9 @@ pub fn poll_keyboards() {
                 slot.caps_lock = !slot.caps_lock;
             }
 
-            #[cfg(target_arch = "x86_64")]
-            #[cfg(target_arch = "x86_64")]
-            let shift = crate::hal::x86_64::keyboard_unified::hid_shift_state(cur.modifiers);
+            let shift = crate::drivers::arch::hid_shift_state(cur.modifiers);
             let caps = slot.caps_lock;
+            let _ = caps;
 
             // Emit any usage codes present in `cur` that were not
             // in `prev` — these are newly pressed keys.
@@ -438,9 +438,7 @@ pub fn poll_keyboards() {
                     continue;
                 }
                 if !prev.key_codes.contains(&usage) {
-                    #[cfg(target_arch = "x86_64")]
-                    #[cfg(target_arch = "x86_64")]
-                    crate::hal::x86_64::keyboard_unified::hid_emit(usage, shift, caps);
+                    crate::drivers::arch::hid_emit(usage, shift, caps);
                 }
             }
 
@@ -452,7 +450,11 @@ pub fn poll_keyboards() {
 /// True when at least one USB keyboard is registered.
 pub fn has_keyboards() -> bool {
     // SAFETY: single-threaded polling path; no concurrent access.
-    unsafe { USB_KEYBOARDS.iter().any(|s| s.in_use) }
+    unsafe {
+        (*core::ptr::addr_of!(USB_KEYBOARDS))
+            .iter()
+            .any(|s| s.in_use)
+    }
 }
 
 pub fn smoke_test() -> bool {

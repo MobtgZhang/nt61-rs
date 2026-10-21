@@ -5,15 +5,12 @@
 //! Clean-room implementation based on public specifications.
 
 /// MIPI DSI device
-pub struct MipiDsiDevice {
-    /// Base address
-    base: u64,
-}
+pub struct MipiDsiDevice {}
 
 impl MipiDsiDevice {
-    /// Create new MIPI DSI device
-    pub fn new(base: u64) -> Self {
-        Self { base }
+    /// create new MIPI DSI device
+    pub fn new() -> Self {
+        Self {}
     }
 
     /// Initialize MIPI DSI

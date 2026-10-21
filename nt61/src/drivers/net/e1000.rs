@@ -13,9 +13,8 @@
 
 use crate::hal::common::pci;
 use crate::ke::sync::Spinlock;
-use crate::kprintln;
 use crate::mm::pool::{self, PoolType};
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, Ordering};
 
 /// Known e1000 PCI device IDs.
 const E1000_DEVICE_IDS: [u16; 6] = [0x1000, 0x1001, 0x1004, 0x100E, 0x10D3, 0x1533];
@@ -28,12 +27,12 @@ const REG_RCTL: u32 = 0x100;
 const REG_TCTL: u32 = 0x400;
 const REG_RDBAL: u32 = 0x2800; // RX Descriptor Base Low
 const REG_RDBAH: u32 = 0x2804; // RX Descriptor Base High
-const REG_RDLEN: u32 = 0x2808; // RX Descriptor Length
+const REG_RDLEN: u32 = 0x2808; // RX Descriptor length
 const REG_RDH: u32 = 0x2810; // RX Descriptor Head
 const REG_RDT: u32 = 0x2818; // RX Descriptor Tail
 const REG_TDBAL: u32 = 0x3800; // TX Descriptor Base Low
 const REG_TDBAH: u32 = 0x3804; // TX Descriptor Base High
-const REG_TDLEN: u32 = 0x3808; // TX Descriptor Length
+const REG_TDLEN: u32 = 0x3808; // TX Descriptor length
 const REG_TDH: u32 = 0x3810; // TX Descriptor Head
 const REG_TDT: u32 = 0x3818; // TX Descriptor Tail
 
@@ -136,12 +135,12 @@ static mut NIC_COUNT: usize = 0;
 
 /// Get a reference to the global e1000 NIC list
 fn get_nics() -> &'static mut [Option<Nic>; 4] {
-    unsafe { &mut NICS }
+    unsafe { &mut *core::ptr::addr_of_mut!(NICS) }
 }
 
 fn push_nic(n: Nic) {
     unsafe {
-        if NIC_COUNT < NICS.len() {
+        if NIC_COUNT < (*core::ptr::addr_of!(NICS)).len() {
             NICS[NIC_COUNT] = Some(n);
             NIC_COUNT += 1;
         }
@@ -154,9 +153,7 @@ pub fn count() -> usize {
 
 /// Walk PCI for known e1000 device IDs and initialise each.
 pub fn init() {
-    #[cfg(target_arch = "x86_64")]
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("NET:e1000_start\r\n");
+    crate::hal::serial::write_string("NET:e1000_start\r\n");
     let mut found = 0u32;
     for dev in pci::enumerate() {
         if dev.vendor_id == 0x8086 && E1000_DEVICE_IDS.contains(&dev.device_id) {
@@ -168,9 +165,7 @@ pub fn init() {
                         bar0_phys: bar0,
                         ..Default::default()
                     };
-                    #[cfg(target_arch = "x86_64")]
-                    #[cfg(target_arch = "x86_64")]
-                    crate::hal::x86_64::serial::write_string("NET:e1000_init_nic\r\n");
+                    crate::hal::serial::write_string("NET:e1000_init_nic\r\n");
                     if init_nic(&mut n) {
                         found += 1;
                         push_nic(n);
@@ -180,9 +175,7 @@ pub fn init() {
             }
         }
     }
-    #[cfg(target_arch = "x86_64")]
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("NET:e1000_done\r\n");
+    crate::hal::serial::write_string("NET:e1000_done\r\n");
     // kprintln!("      e1000: {} NIC(s) initialised", found);
 }
 
@@ -200,9 +193,7 @@ fn init_nic(n: &mut Nic) -> bool {
     if base == 0 {
         return false;
     }
-    #[cfg(target_arch = "x86_64")]
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("NET:e1000:map_io\r\n");
+    crate::hal::serial::write_string("NET:e1000:map_io\r\n");
     // Map 32 pages (128 KiB) — the e1000 BAR0 register file is at most
     // 128 KiB, and the MAC/Receive Address registers live at offsets
     // up to 0x5400 + 4 (the RAL/RAH pair), so we need more than the
@@ -211,9 +202,7 @@ fn init_nic(n: &mut Nic) -> bool {
         return false;
     };
     n.bar0_virt = mmio as *mut u8;
-    #[cfg(target_arch = "x86_64")]
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_string("NET:e1000:reset\r\n");
+    crate::hal::serial::write_string("NET:e1000:reset\r\n");
 
     unsafe {
         // Issue a software reset and wait for the controller to clear CTRL.RST.
@@ -236,7 +225,7 @@ fn init_nic(n: &mut Nic) -> bool {
             ctrl | CTRL_SLU,
         );
 
-        // Read MAC from the device's Receive Address registers
+        // read MAC from the device's Receive Address registers
         let ral = core::ptr::read_volatile((mmio as *const u32).add(0x5400 / 4));
         let rah = core::ptr::read_volatile((mmio as *const u32).add(0x5404 / 4));
         n.mac[0] = (ral >> 0) as u8;
@@ -248,9 +237,7 @@ fn init_nic(n: &mut Nic) -> bool {
         n.link_up = (core::ptr::read_volatile((mmio as *const u32).add((REG_STATUS / 4) as usize))
             & 2)
             != 0;
-        #[cfg(target_arch = "x86_64")]
-        #[cfg(target_arch = "x86_64")]
-        crate::hal::x86_64::serial::write_string("NET:e1000:mac\r\n");
+        crate::hal::serial::write_string("NET:e1000:mac\r\n");
 
         // kprintln!("  [e1000] MAC: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
         //                   n.mac[0], n.mac[1], n.mac[2], n.mac[3], n.mac[4], n.mac[5]);
@@ -260,16 +247,12 @@ fn init_nic(n: &mut Nic) -> bool {
         let desc_size = 32 * core::mem::size_of::<E1000TxDesc>();
         let aligned_size = (desc_size + 4095) & !4095;
 
-        #[cfg(target_arch = "x86_64")]
-        #[cfg(target_arch = "x86_64")]
-        crate::hal::x86_64::serial::write_string("NET:e1000:alloc_desc\r\n");
+        crate::hal::serial::write_string("NET:e1000:alloc_desc\r\n");
         n.tx_desc = pool::allocate_tagged(PoolType::NonPaged, aligned_size, tags::NETDESC)
             as *mut E1000TxDesc;
         n.rx_desc = pool::allocate_tagged(PoolType::NonPaged, aligned_size, tags::NETDESC)
             as *mut E1000RxDesc;
-        #[cfg(target_arch = "x86_64")]
-        #[cfg(target_arch = "x86_64")]
-        crate::hal::x86_64::serial::write_string("NET:e1000:desc_ok\r\n");
+        crate::hal::serial::write_string("NET:e1000:desc_ok\r\n");
 
         if n.tx_desc.is_null() || n.rx_desc.is_null() {
             // kprintln!("  [e1000] Failed to allocate descriptor rings");
@@ -445,7 +428,7 @@ pub fn receive(nic_idx: usize, buffer: &mut [u8]) -> Option<usize> {
             return None;
         }
 
-        // Read packet length
+        // read packet length
         let len = (*n.rx_desc.add(desc_idx)).length as usize;
         let copy_len = len.min(buffer.len());
 

@@ -15,15 +15,11 @@
 //! Clean-room implementation. Spec source: Microsoft "Keyboard
 //! Class Driver" reference and USB HID 1.11.
 
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, AtomicPtr, Ordering};
-
-#[allow(non_snake_case)]
+use core::sync::atomic::{AtomicU32, Ordering};
 
 extern crate alloc;
 
-use alloc::vec::Vec;
-use core::sync::atomic::{AtomicU32, Ordering};
-use crate::io::{DeviceObject, DeviceType, DriverObject};
+use crate::io::{DeviceObject, DriverObject};
 use crate::ke::sync::Spinlock;
 
 const MAX_KEYBOARDS: usize = 4;
@@ -142,7 +138,7 @@ pub fn read_key_event(device_id: usize) -> Option<KeyEvent> {
 pub fn keyboard_count() -> usize {
     let mut count = 0;
     unsafe {
-        for kbd in KEYBOARDS.iter() {
+        for kbd in (*core::ptr::addr_of!(KEYBOARDS)).iter() {
             if kbd.valid {
                 count += 1;
             }
@@ -155,7 +151,7 @@ pub fn key_event_count() -> u32 {
     KEY_EVENT_COUNT.load(Ordering::Relaxed)
 }
 
-pub fn DriverEntry(driver: *mut DriverObject) -> u32 {
+pub fn driver_entry(_driver: *mut DriverObject) -> u32 {
     init();
     0 // STATUS_SUCCESS
 }

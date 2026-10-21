@@ -10,7 +10,7 @@ use crate::ke::sync::Spinlock;
 
 /// NIC interrupt handler trait
 pub trait NicInterruptHandler: Send + Sync {
-    /// Handle an interrupt from this NIC
+    /// handle an interrupt from this NIC
     /// Returns true if there was work to do
     fn on_interrupt(&mut self) -> bool;
     
@@ -152,7 +152,7 @@ fn process_tx_completion(nic_index: usize) {
     }
 }
 
-/// Handle link status change
+/// handle link status change
 fn handle_link_change(nic_index: usize) {
     use crate::drivers::net;
     
@@ -170,7 +170,7 @@ fn handle_link_change(nic_index: usize) {
     }
 }
 
-/// Handle configuration change
+/// handle configuration change
 fn handle_config_change(nic_index: usize) {
     use crate::drivers::net;
     
@@ -186,7 +186,7 @@ fn handle_config_change(nic_index: usize) {
     }
 }
 
-/// Handle NIC error
+/// handle NIC error
 fn handle_nic_error(nic_index: usize) {
     use crate::drivers::net;
     

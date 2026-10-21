@@ -103,7 +103,7 @@ pub struct OidRequestInfo {
     pub bytes_needed: u32,
 }
 
-/// Handle an OID query request
+/// handle an OID query request
 pub fn query_oid(
     adapter: *mut MiniportAdapterContext,
     oid: u32,
@@ -315,7 +315,7 @@ pub fn query_oid(
     }
 }
 
-/// Handle an OID set request
+/// handle an OID set request
 pub fn set_oid(
     adapter: *mut MiniportAdapterContext,
     oid: u32,

@@ -19,8 +19,8 @@ use crate::drivers::video::core::gpu_common::{
 use crate::hal::common::pci::PciDevice;
 
 use super::nouveau_reg::{
-    self, CrtcTiming, NV110_PFB_ENABLED, NV110_PFB_OFFSET, NVC0_PFB_ENABLED, NVC0_PFB_OFFSET,
-    NVD0_PFB_ENABLED, NVD0_PFB_OFFSET,
+    self, NV110_PFB_ENABLED, NV110_PFB_OFFSET, NVC0_PFB_ENABLED, NVC0_PFB_OFFSET, NVD0_PFB_ENABLED,
+    NVD0_PFB_OFFSET,
 };
 use super::pci_ids::{self, NouveauArchitecture};
 
@@ -60,7 +60,7 @@ pub struct NouveauDevice {
 }
 
 impl NouveauDevice {
-    /// Create a new Nouveau device
+    /// create a new Nouveau device
     #[cfg(target_arch = "x86_64")]
     pub fn new(pci_dev: &PciDevice) -> Self {
         let arch = pci_ids::architecture_from_device_id(pci_dev.device_id);
@@ -100,7 +100,7 @@ impl NouveauDevice {
         }
     }
 
-    /// Read a MMIO register
+    /// read a MMIO register
     #[inline]
     pub fn read_reg(&self, offset: u32) -> u32 {
         if self.mmio_base == 0 {
@@ -109,7 +109,7 @@ impl NouveauDevice {
         unsafe { core::ptr::read_volatile((self.mmio_base + offset as u64) as *const u32) }
     }
 
-    /// Write a MMIO register
+    /// write a MMIO register
     #[inline]
     pub fn write_reg(&self, offset: u32, value: u32) {
         if self.mmio_base == 0 {
@@ -120,7 +120,7 @@ impl NouveauDevice {
         }
     }
 
-    /// Read a MMIO register with 64-bit address
+    /// read a MMIO register with 64-bit address
     #[inline]
     pub fn read_reg64(&self, offset: u32) -> u64 {
         if self.mmio_base == 0 {
@@ -129,7 +129,7 @@ impl NouveauDevice {
         unsafe { core::ptr::read_volatile((self.mmio_base + offset as u64) as *const u64) }
     }
 
-    /// Write a MMIO register with 64-bit address
+    /// write a MMIO register with 64-bit address
     #[inline]
     pub fn write_reg64(&self, offset: u32, value: u64) {
         if self.mmio_base == 0 {
@@ -192,7 +192,7 @@ impl GpuDriver for NouveauDevice {
     fn init(&mut self) -> Result<(), GpuError> {
         use crate::hal::common::pci;
 
-        // Read PCI BARs
+        // read PCI BARs
         self.mmio_base = pci::read_bar(&self.pci_dev, 0);
         self.fb_phys = pci::read_bar(&self.pci_dev, 1);
 
@@ -207,10 +207,10 @@ impl GpuDriver for NouveauDevice {
         // Enable bus mastering
         pci::enable_bus_mastering(&self.pci_dev);
 
-        // Read revision
+        // read revision
         self.revision = self.pci_dev.revision;
 
-        // Read VRAM size from PFB
+        // read VRAM size from PFB
         self.vram_size = pci::read_bar(&self.pci_dev, 1) & !0xF;
 
         Ok(())

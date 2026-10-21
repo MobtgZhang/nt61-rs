@@ -1,4 +1,4 @@
-//! NVIDIA Nouveau Power Management
+//! NVIDIA Nouveau power Management
 //
 //! This module implements power management for NVIDIA GPUs.
 //
@@ -6,7 +6,7 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-/// Power states
+/// power states
 #[derive(Debug, Clone, Copy)]
 pub enum NouveauPowerState {
     /// Full power state

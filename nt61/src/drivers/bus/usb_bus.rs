@@ -12,7 +12,6 @@
 
 use super::pnp;
 use crate::hal::common::pci;
-use crate::kprintln;
 
 /// USB host controller PCI class codes (subclass 0x03, prog-if
 /// varies by controller generation).

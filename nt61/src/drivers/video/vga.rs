@@ -89,7 +89,7 @@ fn vga_outb(_port: u16, _val: u8) {}
 // VGA Presence Detection
 // =====================================================================
 
-/// Read the VGA Miscellaneous Output register to determine display type.
+/// read the VGA Miscellaneous Output register to determine display type.
 fn detect_display_type() -> DisplayType {
     let misc = vga_inb(VGA_MISC_OUTPUT_READ);
     // Bit 7 = 1 → monochrome (0x3B4), bit 7 = 0 → color (0x3D4)
@@ -100,7 +100,7 @@ fn detect_display_type() -> DisplayType {
     }
 }
 
-/// Probe for VGA hardware by reading the Feature Control register
+/// Probe for VGA hardware by reading the Feature control register
 /// at 0x3DA (color) / 0x3BA (mono). This register toggles on read
 /// so we read it just to verify the port is responding.
 fn vga_present() -> bool {
@@ -120,7 +120,7 @@ enum DisplayType {
 // VGA Text Mode Operations
 // =====================================================================
 
-/// Write a character cell (char + attribute) at (x, y).
+/// write a character cell (char + attribute) at (x, y).
 /// Coordinates are 0-indexed.
 fn write_cell(x: u32, y: u32, ch: u8, attr: u8) {
     if x >= VGA_WIDTH || y >= VGA_HEIGHT {
@@ -137,15 +137,15 @@ fn write_cell(x: u32, y: u32, ch: u8, attr: u8) {
     }
 }
 
-/// Read the current cursor position from the CRT Controller.
+/// read the current cursor position from the CRT Controller.
 fn read_cursor_pos() -> (u32, u32) {
     let crtc_idx = VGA_CRTC_INDEX_COLOR;
     let crtc_data = VGA_CRTC_DATA_COLOR;
 
-    // Read high byte
+    // read high byte
     vga_outb(crtc_idx, crtc::CURSOR_LOCATION_HIGH);
     let high = vga_inb(crtc_data) as u32;
-    // Read low byte
+    // read low byte
     vga_outb(crtc_idx, crtc::CURSOR_LOCATION_LOW);
     let low = vga_inb(crtc_data) as u32;
 
@@ -242,7 +242,7 @@ impl VgaState {
         self.fb_virt
     }
 
-    /// Write a string at the current cursor position, handling '\n' and '\r'.
+    /// write a string at the current cursor position, handling '\n' and '\r'.
     /// Scrolls the screen if the cursor goes past the bottom row.
     fn _write_string(&mut self, s: &str, attr: u8) {
         let (mut cx, mut cy) = read_cursor_pos();
@@ -323,7 +323,7 @@ pub fn init() {
         // Clear screen.
         clear_screen(VGA_ATTR_DEFAULT);
 
-        // Write a banner on the first line.
+        // write a banner on the first line.
         let banner = b"NT6.1.7601 VGA text mode ready";
         for (i, &c) in banner.iter().enumerate() {
             write_cell(i as u32, 0, c, 0x1F); // White on blue
@@ -356,7 +356,7 @@ pub fn smoke_test() -> bool {
 
         write_cell(TEST_X_POS, TEST_Y_POS, TEST_X, TEST_ATTR);
 
-        // Read it back.
+        // read it back.
         let offset = ((TEST_Y_POS * VGA_WIDTH + TEST_X_POS) * 2) as u64;
         let vga_virt = (VGA_TEXT_PHYS + offset) as *const u8;
         let read_ch;

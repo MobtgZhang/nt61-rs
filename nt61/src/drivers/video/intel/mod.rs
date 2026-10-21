@@ -64,7 +64,7 @@ pub struct I915Device {
 }
 
 impl I915Device {
-    /// Create a new i915 device
+    /// create a new i915 device
     pub fn new(pci_dev: &PciDevice, generation: IntelGeneration) -> Self {
         Self {
             pci_dev: *pci_dev,
@@ -81,13 +81,13 @@ impl I915Device {
         }
     }
 
-    /// Read a MMIO register with bounds checking
+    /// read a MMIO register with bounds checking
     #[inline]
     fn read_reg(&self, offset: u32) -> u32 {
         self.mmio.read_reg(offset)
     }
 
-    /// Write a MMIO register with bounds checking
+    /// write a MMIO register with bounds checking
     #[inline]
     fn write_reg(&self, offset: u32, value: u32) {
         let _ = self.mmio.write_reg(offset, value);
@@ -106,7 +106,7 @@ impl I915Device {
         // Enable power well 1 (main display power)
         let power = self.read_reg(HSW_PWR_WELL_B_STATUS);
         if power & HSW_PWR_WELL_STATE_REQ_ONLY == 0 {
-            // Power well is off, request it
+            // power well is off, request it
             self.write_reg(HSW_PWR_WELL_B_REQUEST, HSW_PWR_WELL_ENABLE);
             // Wait for power good
             for _ in 0..10000 {
@@ -141,7 +141,7 @@ impl GpuDriver for I915Device {
     fn init(&mut self) -> Result<(), gpu_common::GpuError> {
         #[cfg(target_arch = "x86_64")]
         {
-            // Read PCI BARs
+            // read PCI BARs
             let mmio_bar = pci::read_bar(&self.pci_dev, 0);
             let fb_bar = pci::read_bar(&self.pci_dev, 2);
 

@@ -1,7 +1,5 @@
 //! USB Stack Smoke Test Aggregator
 
-use crate::kprintln;
-
 pub fn smoke_test() -> bool {
     // kprintln!("  [USB SMOKE] running USB stack smoke tests...");
     let mut ok = true;

@@ -6,7 +6,6 @@
 //
 //! Code Integrity uses the WDK driver naming convention
 //! (CiInitialize, IMAGE_POLICY, ...).
-#![allow(non_snake_case, non_upper_case_globals, dead_code)]
 //
 //! Key responsibilities:
 //!   * `CiInitialize` — initialise the CI subsystem
@@ -21,8 +20,6 @@
 //
 //! Clean-room implementation. Spec source: Windows Internals 6th ed.
 //! ch.10 (Code Integrity), WDK documentation.
-
-use crate::kprintln;
 
 /// CI policy flags.
 pub const CI_POLICY_ENABLED: u32 = 0x00000001;
@@ -201,7 +198,7 @@ const PE_SIGNATURE: u32 = 0x00004550; // "PE\0\0"
 
 /// DOS header at the start of a PE file.
 #[repr(C)]
-struct DosHeader {
+pub struct DosHeader {
     pub magic: u16, // 0x00 "MZ"
     pub last_size: u16,
     pub num_pages: u16,
@@ -218,7 +215,7 @@ struct DosHeader {
 }
 
 impl DosHeader {
-    fn is_valid(&self) -> bool {
+    pub fn is_valid(&self) -> bool {
         self.magic == PE_MAGIC
     }
 }
@@ -236,12 +233,12 @@ struct CoffHeader {
 }
 
 /// PE32+ optional header magic.
-const PE32_MAGIC: u16 = 0x020b;
+pub const PE32_MAGIC: u16 = 0x020b;
 const PE32_PLUS_MAGIC: u16 = 0x020b;
 
 /// PE32+ optional header (for x64).
 #[repr(C)]
-struct OptionalHeader {
+pub struct OptionalHeader {
     pub magic: u16,
     pub linker_version: u8,
     pub code_size: u8,
@@ -253,7 +250,7 @@ struct OptionalHeader {
 
 /// Section header.
 #[repr(C)]
-struct SectionHeader {
+pub struct SectionHeader {
     pub name: [u8; 8],
     pub virtual_size: u32,
     pub virtual_addr: u32,
@@ -282,7 +279,7 @@ pub fn compute_pe_hash(image: &[u8]) -> [u8; 32] {
         return hasher.finalize();
     }
 
-    // Read COFF header offset from DOS header
+    // read COFF header offset from DOS header
     let dos_off = u32::from_le_bytes([image[0x3C], image[0x3D], image[0x3E], image[0x3F]]) as usize;
 
     // Check for PE signature
@@ -439,7 +436,7 @@ pub fn validate_pe_image(image: &[u8]) -> u32 {
         return 0xC0000428u32;
     }
 
-    // Read PE offset
+    // read PE offset
     let pe_off = u32::from_le_bytes([image[0x3C], image[0x3D], image[0x3E], image[0x3F]]) as usize;
     if pe_off + 4 > image.len() {
         return 0xC0000428u32;
@@ -456,7 +453,7 @@ pub fn validate_pe_image(image: &[u8]) -> u32 {
         return 0xC0000428u32;
     }
 
-    // Read COFF header
+    // read COFF header
     let coff_off = pe_off + 4;
     if coff_off + 20 > image.len() {
         return 0xC0000428u32;
@@ -475,7 +472,7 @@ pub fn validate_pe_image(image: &[u8]) -> u32 {
 
     // In a full implementation, we'd compare against:
     //   1. Embedded Authenticode signature (WinVerifyTrust)
-    //   2. Catalog database (HKLM\SYSTEM\CurrentControlSet\Control\SecureKernel\Catalog)
+    //   2. Catalog database (HKLM\SYSTEM\CurrentControlSet\control\SecureKernel\Catalog)
     //   3. The CI policy (driver signing enforcement level)
     //
     // For this bootstrap, we always succeed (allow unsigned drivers).

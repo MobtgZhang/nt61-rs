@@ -11,10 +11,9 @@
 //! ReactOS source file.
 
 use crate::hal::common::pci;
-use crate::kprintln;
 use crate::mm::pool::{self, PoolType};
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU16, AtomicU32, Ordering};
 
 /// HDA PCI class: multimedia (0x04) / HDA (0x03).
 const HDA_PCI_CLASS: (u8, u8) = (0x04, 0x03);
@@ -73,7 +72,7 @@ struct CorbEntry {
 }
 
 impl CorbEntry {
-    /// Create a CORB entry for a codec command
+    /// create a CORB entry for a codec command
     /// codec: 0-3 (or 0xF for broadcast)
     /// verb: 12-bit verb command (NID << 8 | verb)
     pub fn new(codec: u8, verb: u16) -> Self {
@@ -104,7 +103,7 @@ impl RirbEntry {
     }
 }
 
-/// Read-only diagnostic snapshot of a CORB engine.
+/// read-only diagnostic snapshot of a CORB engine.
 pub struct CorbDiagnostics {
     pub base_phys: u64,
     pub base_virt: u64,
@@ -115,7 +114,7 @@ pub struct CorbDiagnostics {
 }
 
 impl CorbEngine {
-    /// Read-only diagnostic snapshot for this engine.
+    /// read-only diagnostic snapshot for this engine.
     pub fn diagnostics(&self) -> CorbDiagnostics {
         CorbDiagnostics {
             base_phys: self.base_phys,
@@ -128,15 +127,15 @@ impl CorbEngine {
     }
 }
 
-/// CORB (Command Outbound Ring Buffer) DMA engine
+/// CORB (Command Outbound Ring buffer) DMA engine
 pub struct CorbEngine {
     /// Physical base address
     base_phys: u64,
     /// Virtual base address
     base_virt: *mut u32,
-    /// Write pointer (driver position)
+    /// write pointer (driver position)
     write_ptr: AtomicU16,
-    /// Read pointer (hardware position)
+    /// read pointer (hardware position)
     read_ptr: u16,
     /// Ring size
     size: u16,
@@ -145,7 +144,7 @@ pub struct CorbEngine {
 }
 
 impl CorbEngine {
-    /// Create a new CORB engine
+    /// create a new CORB engine
     pub fn new(base_phys: u64, base_virt: *mut u32, size: u16) -> Self {
         Self {
             base_phys,
@@ -157,11 +156,11 @@ impl CorbEngine {
         }
     }
 
-    /// Write a command to the CORB
+    /// write a command to the CORB
     pub fn write_command(&mut self, codec: u8, verb: u16) {
         let wp = self.write_ptr.load(Ordering::Relaxed);
 
-        // Write the entry
+        // write the entry
         let entry = CorbEntry::new(codec, verb);
         unsafe {
             core::ptr::write_volatile(self.base_virt.add(wp as usize), entry.val);
@@ -190,13 +189,13 @@ impl CorbEngine {
     }
 }
 
-/// RIRB (Response Inbound Ring Buffer) DMA engine
+/// RIRB (Response Inbound Ring buffer) DMA engine
 pub struct RirbEngine {
     /// Physical base address
     base_phys: u64,
     /// Virtual base address
     base_virt: *mut u64,
-    /// Write pointer (hardware position)
+    /// write pointer (hardware position)
     write_ptr: AtomicU16,
     /// Ring size
     size: u16,
@@ -207,7 +206,7 @@ pub struct RirbEngine {
 }
 
 impl RirbEngine {
-    /// Create a new RIRB engine
+    /// create a new RIRB engine
     pub fn new(base_phys: u64, base_virt: *mut u64, size: u16) -> Self {
         Self {
             base_phys,
@@ -219,7 +218,7 @@ impl RirbEngine {
         }
     }
 
-    /// Read a response from the RIRB
+    /// read a response from the RIRB
     pub fn read_response(&mut self) -> Option<(u8, u32)> {
         // Poll for new responses
         // In a real implementation, this would use interrupts
@@ -236,7 +235,7 @@ impl RirbEngine {
                 // Would be signaled by RIRBSTS_RINTR
             } else {
                 // Polling path
-                // Read WP from hardware
+                // read WP from hardware
             }
             core::hint::spin_loop();
         }
@@ -259,7 +258,7 @@ impl RirbEngine {
     }
 }
 
-/// Read-only diagnostic snapshot of a RIRB engine.
+/// read-only diagnostic snapshot of a RIRB engine.
 pub struct RirbDiagnostics {
     pub base_phys: u64,
     pub base_virt: u64,
@@ -270,7 +269,7 @@ pub struct RirbDiagnostics {
 }
 
 impl RirbEngine {
-    /// Read-only diagnostic snapshot for this engine.
+    /// read-only diagnostic snapshot for this engine.
     pub fn diagnostics(&self) -> RirbDiagnostics {
         RirbDiagnostics {
             base_phys: self.base_phys,
@@ -298,7 +297,7 @@ pub struct HdaController {
     pub rirb: Option<RirbEngine>,
 }
 
-/// Read-only diagnostic snapshot of an HDA controller.
+/// read-only diagnostic snapshot of an HDA controller.
 pub struct HdaControllerDiagnostics {
     pub bar0_phys: u64,
     pub bar0_virt: u64,
@@ -314,7 +313,7 @@ pub struct HdaControllerDiagnostics {
 }
 
 impl HdaController {
-    /// Read-only diagnostic snapshot of the controller.
+    /// read-only diagnostic snapshot of the controller.
     pub fn diagnostics(&self) -> HdaControllerDiagnostics {
         HdaControllerDiagnostics {
             bar0_phys: self.bar0_phys,
@@ -424,7 +423,7 @@ pub struct HdaCodec {
     pub vendor_id: u16,
     /// Device ID
     pub device_id: u16,
-    /// Revision ID
+    /// revision ID
     pub revision_id: u8,
     /// Subsystem ID
     pub subsystem_id: u32,
@@ -494,7 +493,7 @@ pub fn last_verb() -> (u32, u8, u16) {
 
 fn push_hda(c: HdaController) {
     unsafe {
-        if HDA_COUNT < HDAS.len() {
+        if HDA_COUNT < (*core::ptr::addr_of!(HDAS)).len() {
             HDAS[HDA_COUNT] = Some(c);
             HDA_COUNT += 1;
         }
@@ -574,7 +573,7 @@ fn init_controller(c: &mut HdaController) -> bool {
     c.bar0_virt = mmio;
 
     unsafe {
-        // Step 1: Read GCAP to determine controller capabilities
+        // Step 1: read GCAP to determine controller capabilities
         c.gcap = core::ptr::read_volatile((mmio + REG_GCAP as u64) as *const u16);
         c.n_streams_out = ((c.gcap >> 12) & 0x0F) as u8;
         c.n_streams_in = ((c.gcap >> 8) & 0x0F) as u8;
@@ -750,7 +749,7 @@ fn detect_codec(mmio: u64, codec_addr: u8) -> bool {
             }
         }
 
-        // Write the command
+        // write the command
         core::ptr::write_volatile((mmio + REG_IC as u64) as *mut u32, cmd);
 
         // Set IRS_VALID
@@ -763,7 +762,7 @@ fn detect_codec(mmio: u64, codec_addr: u8) -> bool {
         for _ in 0..10000 {
             let irs = core::ptr::read_volatile((mmio + REG_IRS as u64) as *const u16);
             if (irs & IRS_VALID) != 0 && (irs & IRS_BUSY) == 0 {
-                // Read response
+                // read response
                 let resp = core::ptr::read_volatile((mmio + REG_IR as u64) as *const u32);
                 if resp != 0xFFFFFFFF && resp != 0 {
                     // Valid response
@@ -798,7 +797,7 @@ fn enumerate_codec(mmio: u64, codec_addr: u8) -> HdaCodec {
         codec.subsystem_id =
             send_immediate_cmd(mmio, codec_addr, verbs::GET_PARAMETER, params::SUBSYSTEM_ID);
 
-        // Get Revision ID
+        // Get revision ID
         codec.revision_id =
             (send_immediate_cmd(mmio, codec_addr, verbs::GET_PARAMETER, params::REVISION_ID) >> 8)
                 as u8;
@@ -818,7 +817,7 @@ fn enumerate_codec(mmio: u64, codec_addr: u8) -> HdaCodec {
 
 /// Send an immediate command and get response
 fn send_immediate_cmd(mmio: u64, codec_addr: u8, verb: u16, param: u8) -> u32 {
-    let cmd = ((codec_addr as u32) << 23) | ((verb | (param as u16)) as u32) | (1u32 << 15); // Read bit
+    let cmd = ((codec_addr as u32) << 23) | ((verb | (param as u16)) as u32) | (1u32 << 15); // read bit
 
     unsafe {
         // Wait for IRS busy to clear
@@ -829,7 +828,7 @@ fn send_immediate_cmd(mmio: u64, codec_addr: u8, verb: u16, param: u8) -> u32 {
             }
         }
 
-        // Write the command
+        // write the command
         core::ptr::write_volatile((mmio + REG_IC as u64) as *mut u32, cmd);
 
         // Set IRS_VALID
@@ -855,7 +854,7 @@ pub fn send_codec_cmd(hda_idx: usize, codec: u8, nid: u8, verb: u16) -> Option<u
     // This would use the CORB/RIRB for queued commands
     // For now, use immediate command as fallback
     unsafe {
-        if hda_idx < HDAS.len() {
+        if hda_idx < (*core::ptr::addr_of!(HDAS)).len() {
             if let Some(ref hda) = HDAS[hda_idx] {
                 return Some(send_immediate_cmd(
                     hda.bar0_virt,
@@ -911,7 +910,7 @@ pub fn smoke_test() -> bool {
 
 /// Stream descriptor register offsets (relative to stream base)
 const SD_OFFSET_STS: u16 = 0x00; // Status
-const SD_OFFSET_PICS: u16 = 0x04; // Pre-fetch Count
+const SD_OFFSET_PICS: u16 = 0x04; // Pre-fetch count
 
 const SD_OFFSET_LVI: u16 = 0x0C; // Last Valid Index
 
@@ -920,7 +919,7 @@ const SD_OFFSET_BDLPU: u16 = 0x28; // BDL Pointer Upper
 
 /// Stream status bits
 
-const SD_STS_BCIS: u8 = 1 << 3; // Buffer Completion Interrupt Status
+const SD_STS_BCIS: u8 = 1 << 3; // buffer Completion Interrupt Status
 const SD_STS_LVBCI: u8 = 1 << 2; // Last Valid BDL Entry Completed
 
 const SD_STS_UNDERRUN: u8 = 1 << 0; // Underrun
@@ -929,19 +928,19 @@ const SD_STS_UNDERRUN: u8 = 1 << 0; // Underrun
 const SD_CTL_STREAM_RUN: u32 = 1 << 0; // Run
 const SD_CTL_STREAM_IOCE: u32 = 1 << 1; // Interrupt on Completion Enable
 
-/// BDL (Buffer Descriptor List) entry
+/// BDL (buffer Descriptor List) entry
 #[repr(C)]
 pub struct BdlEntry {
     /// Physical address of buffer (must be aligned to 128 bytes)
     pub addr: u64,
-    /// Buffer length in bytes (must be a multiple of 128)
+    /// buffer length in bytes (must be a multiple of 128)
     pub len: u32,
     /// BDL entry control
     pub ioc: u32, // Bit 0: Interrupt on Completion
 }
 
 impl BdlEntry {
-    /// Create a new BDL entry
+    /// create a new BDL entry
     pub fn new(addr: u64, len: u32, interrupt: bool) -> Self {
         Self {
             addr,
@@ -1051,7 +1050,7 @@ pub struct HdaStream {
 static LAST_SET_CONVERTER_CALLS: AtomicU32 = AtomicU32::new(0);
 
 impl HdaStream {
-    /// Read-only accessor for the number of times `set_converter`
+    /// read-only accessor for the number of times `set_converter`
     /// was called across the program lifetime.
     pub fn set_converter_calls() -> u32 {
         LAST_SET_CONVERTER_CALLS.load(Ordering::Relaxed)
@@ -1059,7 +1058,7 @@ impl HdaStream {
 }
 
 impl HdaStream {
-    /// Create a new HDA stream
+    /// create a new HDA stream
     pub fn new(mmio: u64, stream_num: u8, stream_type: StreamType) -> Self {
         // Calculate stream base offset
         // Output streams: 0x80, 0xA0, 0xC0, 0xE0
@@ -1143,7 +1142,7 @@ impl HdaStream {
     pub fn set_format(&mut self, format: &HdaFormat) -> Result<(), &'static str> {
         let fmt = format.format_code();
 
-        // Write format to stream registers
+        // write format to stream registers
         // The format register is at offset 0x12 in stream registers
         unsafe {
             core::ptr::write_volatile(
@@ -1235,7 +1234,7 @@ impl HdaStream {
 
         // Enable stream
         let ctrl = SD_CTL_STREAM_RUN | SD_CTL_STREAM_IOCE;
-        // Write to stream control at offset 0x05
+        // write to stream control at offset 0x05
         unsafe {
             core::ptr::write_volatile(
                 (self.mmio + (self.base_offset + 0x05) as u64) as *mut u32,
@@ -1342,7 +1341,7 @@ impl Drop for HdaStream {
     }
 }
 
-/// Create an output (playback) stream
+/// create an output (playback) stream
 pub fn create_output_stream(
     hda_idx: usize,
     stream_num: u8,
@@ -1359,7 +1358,7 @@ pub fn create_output_stream(
     }
 }
 
-/// Create an input (capture) stream
+/// create an input (capture) stream
 pub fn create_input_stream(
     hda_idx: usize,
     stream_num: u8,

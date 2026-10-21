@@ -11,14 +11,12 @@
 //! Clean-room implementation. Spec source: RFC 793 (TCP), RFC 768 (UDP),
 //! RFC 791 (IP), and Microsoft "Network Driver" reference.
 
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU32, Ordering};
 
-#[allow(non_snake_case)]
 extern crate alloc;
 
-use crate::io::{DeviceObject, DeviceType, DriverObject};
+use crate::io::{DeviceObject, DriverObject};
 use crate::ke::sync::Spinlock;
-use alloc::vec::Vec;
 
 const MAX_INTERFACES: usize = 8;
 
@@ -173,7 +171,10 @@ pub fn register_interface(
 ) -> Option<u32> {
     let _g = TCPIP_LOCK.lock();
     unsafe {
-        for (idx, iface) in INTERFACES.iter_mut().enumerate() {
+        for (idx, iface) in (*core::ptr::addr_of_mut!(INTERFACES))
+            .iter_mut()
+            .enumerate()
+        {
             if !iface.valid {
                 iface.valid = true;
                 iface.interface_index = (idx + 1) as u32;
@@ -197,7 +198,10 @@ pub fn tcp_connect(
 ) -> Option<usize> {
     let _g = TCPIP_LOCK.lock();
     unsafe {
-        for (idx, conn) in TCP_CONNECTIONS.iter_mut().enumerate() {
+        for (idx, conn) in (*core::ptr::addr_of_mut!(TCP_CONNECTIONS))
+            .iter_mut()
+            .enumerate()
+        {
             if !conn.valid {
                 conn.valid = true;
                 conn.state = TcpState::SynSent;
@@ -256,7 +260,7 @@ pub fn tcp_send(connection_id: usize, data: &[u8]) -> Option<usize> {
     }
 }
 
-pub fn tcp_recv(connection_id: usize, buffer: &mut [u8]) -> Option<usize> {
+pub fn tcp_recv(connection_id: usize, _buffer: &mut [u8]) -> Option<usize> {
     if connection_id >= MAX_TCP_CONNECTIONS {
         return None;
     }
@@ -275,7 +279,10 @@ pub fn tcp_recv(connection_id: usize, buffer: &mut [u8]) -> Option<usize> {
 pub fn udp_bind(local_addr: [u8; 4], local_port: u16) -> Option<usize> {
     let _g = TCPIP_LOCK.lock();
     unsafe {
-        for (idx, socket) in UDP_SOCKETS.iter_mut().enumerate() {
+        for (idx, socket) in (*core::ptr::addr_of_mut!(UDP_SOCKETS))
+            .iter_mut()
+            .enumerate()
+        {
             if !socket.valid {
                 socket.valid = true;
                 socket.local_addr = local_addr;
@@ -379,7 +386,7 @@ pub fn udp_socket_count() -> u32 {
 pub fn get_interface_stats(interface_index: u32) -> Option<NetworkInterface> {
     let _g = TCPIP_LOCK.lock();
     unsafe {
-        for iface in INTERFACES.iter() {
+        for iface in (*core::ptr::addr_of!(INTERFACES)).iter() {
             if iface.valid && iface.interface_index == interface_index {
                 return Some(*iface);
             }
@@ -388,25 +395,25 @@ pub fn get_interface_stats(interface_index: u32) -> Option<NetworkInterface> {
     None
 }
 
-pub fn DriverEntry(driver: *mut DriverObject) -> u32 {
+pub fn driver_entry(_driver: *mut DriverObject) -> u32 {
     init();
     0 // STATUS_SUCCESS
 }
 
 pub mod dispatch {
     use super::*;
-    use crate::io::major::*;
-    use crate::io::{IoStackLocation, Irp};
 
-    pub fn Create(device: *mut DeviceObject, irp: *mut Irp) -> u32 {
+    use crate::io::Irp;
+
+    pub fn create(_device: *mut DeviceObject, _irp: *mut Irp) -> u32 {
         0 // STATUS_SUCCESS
     }
 
-    pub fn Close(device: *mut DeviceObject, irp: *mut Irp) -> u32 {
+    pub fn close(_device: *mut DeviceObject, _irp: *mut Irp) -> u32 {
         0 // STATUS_SUCCESS
     }
 
-    pub fn DeviceControl(device: *mut DeviceObject, irp: *mut Irp) -> u32 {
+    pub fn device_control(_device: *mut DeviceObject, _irp: *mut Irp) -> u32 {
         0 // STATUS_SUCCESS
     }
 }

@@ -6,25 +6,20 @@
 
 extern crate alloc;
 
-use crate::rtl::logging::subsystem::CLFS;
-
-use super::context::ClfsContainerState;
-use super::format::CLFS_SECTOR_SIZE;
 use super::metadata::{ClfsBaseRecordHeader, ClfsControlRecord};
 use super::record::ClfsLsn;
 use super::STATUS_SUCCESS;
-use super::{container, io, record};
-use super::{log_count, ClfsAddLogContainer, ClfsRemoveLogContainer};
-use super::{ClfsCreateLogFile, ClfsReadLogRecord, ClfsWriteLogRecord};
-use super::{ClfsFlushBuffers, ClfsMgmtLogInformation, ClfsMgmtQueryLogInformation};
+use super::{clfs_add_log_container, clfs_remove_log_container, log_count};
+use super::{clfs_create_log_file, clfs_read_log_record, clfs_write_log_record};
+use super::{clfs_flush_buffers, clfs_mgmt_query_log_information, ClfsMgmtLogInformation};
 
 /// Run the CLFS smoke test.
 ///
 /// This tests the full CLFS lifecycle:
-/// 1. Create a log
+/// 1. create a log
 /// 2. Add containers
-/// 3. Write multiple records
-/// 4. Read records back
+/// 3. write multiple records
+/// 4. read records back
 /// 5. Flush the log
 /// 6. Query log information
 /// 7. Remove containers
@@ -81,16 +76,16 @@ pub fn smoke_test() -> bool {
 // ============================================================================
 
 fn test_log_creation() -> bool {
-    // Create a log
-    let log = ClfsCreateLogFile(b"\\Registry\\TestLog", 0, 0);
+    // create a log
+    let log = clfs_create_log_file(b"\\Registry\\TestLog", 0, 0);
     if log == 0 {
         crate::kprintln_info!("CLFS", "  FAIL: Could not create log");
         return false;
     }
     crate::kprintln_info!("CLFS", "  OK: Log created with handle #{:08x}", log);
 
-    // Create a second log
-    let log2 = ClfsCreateLogFile(b"\\??\\C:\\test.clf", 0, 0);
+    // create a second log
+    let log2 = clfs_create_log_file(b"\\??\\C:\\test.clf", 0, 0);
     if log2 == 0 {
         crate::kprintln_info!("CLFS", "  FAIL: Could not create second log");
         return false;
@@ -109,15 +104,15 @@ fn test_log_creation() -> bool {
 }
 
 fn test_container_management() -> bool {
-    // Create a log
-    let log = ClfsCreateLogFile(b"\\ContainerTest", 0, 0);
+    // create a log
+    let log = clfs_create_log_file(b"\\ContainerTest", 0, 0);
     if log == 0 {
         crate::kprintln_info!("CLFS", "  FAIL: Could not create log for container test");
         return false;
     }
 
     // Add a container (512KB minimum)
-    let cid1 = ClfsAddLogContainer(log, 512 * 1024, b"/data/clfs/container1.blf");
+    let cid1 = clfs_add_log_container(log, 512 * 1024, b"/data/clfs/container1.blf");
     if cid1 == 0 {
         crate::kprintln_info!("CLFS", "  FAIL: Could not add container 1");
         return false;
@@ -125,7 +120,7 @@ fn test_container_management() -> bool {
     crate::kprintln_info!("CLFS", "  OK: Container {} added", cid1);
 
     // Add a second container
-    let cid2 = ClfsAddLogContainer(log, 512 * 1024, b"/data/clfs/container2.blf");
+    let cid2 = clfs_add_log_container(log, 512 * 1024, b"/data/clfs/container2.blf");
     if cid2 == 0 {
         crate::kprintln_info!("CLFS", "  FAIL: Could not add container 2");
         return false;
@@ -133,7 +128,7 @@ fn test_container_management() -> bool {
     crate::kprintln_info!("CLFS", "  OK: Container {} added", cid2);
 
     // Add a third container with larger size
-    let cid3 = ClfsAddLogContainer(log, 1024 * 1024, b"/data/clfs/container3.blf");
+    let cid3 = clfs_add_log_container(log, 1024 * 1024, b"/data/clfs/container3.blf");
     if cid3 == 0 {
         crate::kprintln_info!("CLFS", "  FAIL: Could not add container 3");
         return false;
@@ -141,7 +136,7 @@ fn test_container_management() -> bool {
     crate::kprintln_info!("CLFS", "  OK: Container {} added (1MB)", cid3);
 
     // Remove the second container (not deleting the file)
-    let status = ClfsRemoveLogContainer(log, cid2, false);
+    let status = clfs_remove_log_container(log, cid2, false);
     if status != STATUS_SUCCESS {
         crate::kprintln_info!(
             "CLFS",
@@ -154,7 +149,7 @@ fn test_container_management() -> bool {
     crate::kprintln_info!("CLFS", "  OK: Container {} removed (not deleted)", cid2);
 
     // Try to remove the same container again (should fail)
-    let status2 = ClfsRemoveLogContainer(log, cid2, false);
+    let status2 = clfs_remove_log_container(log, cid2, false);
     if status2 == STATUS_SUCCESS {
         crate::kprintln_info!("CLFS", "  FAIL: Removing same container twice should fail");
         return false;
@@ -165,24 +160,24 @@ fn test_container_management() -> bool {
 }
 
 fn test_record_write() -> bool {
-    // Create a log
-    let log = ClfsCreateLogFile(b"\\RecordWriteTest", 0, 0);
+    // create a log
+    let log = clfs_create_log_file(b"\\RecordWriteTest", 0, 0);
     if log == 0 {
         crate::kprintln_info!("CLFS", "  FAIL: Could not create log");
         return false;
     }
 
     // Add a container
-    let cid = ClfsAddLogContainer(log, 512 * 1024, b"/data/clfs/write_test.blf");
+    let cid = clfs_add_log_container(log, 512 * 1024, b"/data/clfs/write_test.blf");
     if cid == 0 {
         crate::kprintln_info!("CLFS", "  FAIL: Could not add container");
         return false;
     }
 
-    // Write 50 records
+    // write 50 records
     for i in 0..50 {
         let data = make_test_record(i);
-        let status = ClfsWriteLogRecord(log, 0, &data);
+        let status = clfs_write_log_record(log, 0, &data);
         if status != STATUS_SUCCESS {
             crate::kprintln_info!(
                 "CLFS",
@@ -195,9 +190,9 @@ fn test_record_write() -> bool {
     }
     crate::kprintln_info!("CLFS", "  OK: 50 records written");
 
-    // Write a large record (should succeed if under limit)
+    // write a large record (should succeed if under limit)
     let large_data = alloc::vec![0xAB; 1024];
-    let status = ClfsWriteLogRecord(log, 0, &large_data);
+    let status = clfs_write_log_record(log, 0, &large_data);
     if status != STATUS_SUCCESS {
         crate::kprintln_info!(
             "CLFS",
@@ -208,9 +203,9 @@ fn test_record_write() -> bool {
     }
     crate::kprintln_info!("CLFS", "  OK: Large record (1KB) written");
 
-    // Write a record that's too large
+    // write a record that's too large
     let huge_data = alloc::vec![0xCD; 64 * 1024];
-    let status = ClfsWriteLogRecord(log, 0, &huge_data);
+    let status = clfs_write_log_record(log, 0, &huge_data);
     if status == STATUS_SUCCESS {
         crate::kprintln_info!("CLFS", "  FAIL: Oversized record should have been rejected");
         return false;
@@ -221,36 +216,36 @@ fn test_record_write() -> bool {
 }
 
 fn test_record_read() -> bool {
-    // Create a log
-    let log = ClfsCreateLogFile(b"\\RecordReadTest", 0, 0);
+    // create a log
+    let log = clfs_create_log_file(b"\\RecordReadTest", 0, 0);
     if log == 0 {
         crate::kprintln_info!("CLFS", "  FAIL: Could not create log");
         return false;
     }
 
     // Add a container
-    let cid = ClfsAddLogContainer(log, 512 * 1024, b"/data/clfs/read_test.blf");
+    let cid = clfs_add_log_container(log, 512 * 1024, b"/data/clfs/read_test.blf");
     if cid == 0 {
         crate::kprintln_info!("CLFS", "  FAIL: Could not add container");
         return false;
     }
 
-    // Write some records
+    // write some records
     for i in 0..10 {
         let data = make_test_record(i);
-        let status = ClfsWriteLogRecord(log, i as u32, &data);
+        let status = clfs_write_log_record(log, i as u32, &data);
         if status != STATUS_SUCCESS {
             crate::kprintln_info!("CLFS", "  FAIL: Write failed at record {}", i);
             return false;
         }
     }
 
-    // Read records back
+    // read records back
     let mut read_count = 0u32;
     for _ in 0..10 {
         let mut lsn = 0u64;
         let mut buf = [0u8; 256];
-        let status = ClfsReadLogRecord(log, &mut lsn, &mut buf);
+        let status = clfs_read_log_record(log, &mut lsn, &mut buf);
         if status != STATUS_SUCCESS {
             crate::kprintln_info!("CLFS", "  FAIL: Read failed at record {}", read_count);
             return false;
@@ -262,7 +257,7 @@ fn test_record_read() -> bool {
     // Try to read past the end
     let mut lsn = 0u64;
     let mut buf = [0u8; 256];
-    let status = ClfsReadLogRecord(log, &mut lsn, &mut buf);
+    let status = clfs_read_log_record(log, &mut lsn, &mut buf);
     if status == STATUS_SUCCESS {
         crate::kprintln_info!("CLFS", "  FAIL: Read past end should have failed");
         return false;
@@ -322,7 +317,7 @@ fn test_lsn_management() -> bool {
 }
 
 fn test_metadata_structures() -> bool {
-    // Test Control Record
+    // Test control Record
     let ctrl = ClfsControlRecord::new();
     if !ctrl.is_valid() {
         crate::kprintln_info!("CLFS", "  FAIL: Control record validation failed");
@@ -367,28 +362,28 @@ fn test_metadata_structures() -> bool {
 }
 
 fn test_flush() -> bool {
-    // Create a log
-    let log = ClfsCreateLogFile(b"\\FlushTest", 0, 0);
+    // create a log
+    let log = clfs_create_log_file(b"\\FlushTest", 0, 0);
     if log == 0 {
         crate::kprintln_info!("CLFS", "  FAIL: Could not create log");
         return false;
     }
 
     // Add a container
-    let cid = ClfsAddLogContainer(log, 512 * 1024, b"/data/clfs/flush_test.blf");
+    let cid = clfs_add_log_container(log, 512 * 1024, b"/data/clfs/flush_test.blf");
     if cid == 0 {
         crate::kprintln_info!("CLFS", "  FAIL: Could not add container");
         return false;
     }
 
-    // Write some records
+    // write some records
     for i in 0..5 {
         let data = make_test_record(i);
-        let _ = ClfsWriteLogRecord(log, 0, &data);
+        let _ = clfs_write_log_record(log, 0, &data);
     }
 
     // Flush
-    let status = ClfsFlushBuffers(log);
+    let status = clfs_flush_buffers(log);
     if status != STATUS_SUCCESS {
         crate::kprintln_info!("CLFS", "  FAIL: Flush failed: status={}", status);
         return false;
@@ -396,7 +391,7 @@ fn test_flush() -> bool {
     crate::kprintln_info!("CLFS", "  OK: Log flushed successfully");
 
     // Flush again (should be idempotent)
-    let status2 = ClfsFlushBuffers(log);
+    let status2 = clfs_flush_buffers(log);
     if status2 != STATUS_SUCCESS {
         crate::kprintln_info!("CLFS", "  FAIL: Second flush failed");
         return false;
@@ -407,26 +402,26 @@ fn test_flush() -> bool {
 }
 
 fn test_log_query() -> bool {
-    // Create a log
-    let log = ClfsCreateLogFile(b"\\QueryTest", 0, 0);
+    // create a log
+    let log = clfs_create_log_file(b"\\QueryTest", 0, 0);
     if log == 0 {
         crate::kprintln_info!("CLFS", "  FAIL: Could not create log");
         return false;
     }
 
     // Add containers
-    let _cid1 = ClfsAddLogContainer(log, 512 * 1024, b"/data/clfs/query1.blf");
-    let _cid2 = ClfsAddLogContainer(log, 512 * 1024, b"/data/clfs/query2.blf");
+    let _cid1 = clfs_add_log_container(log, 512 * 1024, b"/data/clfs/query1.blf");
+    let _cid2 = clfs_add_log_container(log, 512 * 1024, b"/data/clfs/query2.blf");
 
-    // Write some records
+    // write some records
     for i in 0..10 {
         let data = make_test_record(i);
-        let _ = ClfsWriteLogRecord(log, 0, &data);
+        let _ = clfs_write_log_record(log, 0, &data);
     }
 
     // Query log information
     let mut info = ClfsMgmtLogInformation::default();
-    let status = ClfsMgmtQueryLogInformation(log, &mut info);
+    let status = clfs_mgmt_query_log_information(log, &mut info);
     if status != STATUS_SUCCESS {
         crate::kprintln_info!("CLFS", "  FAIL: Query failed: status={}", status);
         return false;
@@ -457,7 +452,7 @@ fn test_log_query() -> bool {
 // Helper Functions
 // ============================================================================
 
-/// Create a test record with a specific byte pattern.
+/// create a test record with a specific byte pattern.
 fn make_test_record(seq: u32) -> [u8; 64] {
     let mut data = [0u8; 64];
     for (i, byte) in data.iter_mut().enumerate() {
@@ -476,7 +471,7 @@ fn make_test_record(seq: u32) -> [u8; 64] {
 }
 
 /// Verify a test record's byte pattern.
-fn verify_test_record(data: &[u8], expected_seq: u32) -> bool {
+pub fn verify_test_record(data: &[u8], expected_seq: u32) -> bool {
     if data.len() < 8 {
         return false;
     }

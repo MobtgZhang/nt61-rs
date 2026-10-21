@@ -44,7 +44,7 @@ pub struct StarfiveDevice {
 }
 
 impl StarfiveDevice {
-    /// Create a new StarFive device
+    /// create a new StarFive device
     pub fn new(soc: RiscVSoc) -> Self {
         Self {
             soc,
@@ -60,7 +60,7 @@ impl StarfiveDevice {
         }
     }
 
-    /// Read a display controller register
+    /// read a display controller register
     #[inline]
     fn read_reg(&self, offset: u32) -> u32 {
         if self.dc_base == 0 {
@@ -69,7 +69,7 @@ impl StarfiveDevice {
         unsafe { core::ptr::read_volatile((self.dc_base + offset as u64) as *const u32) }
     }
 
-    /// Write a display controller register
+    /// write a display controller register
     #[inline]
     fn write_reg(&self, offset: u32, value: u32) {
         if self.dc_base == 0 {
@@ -315,7 +315,7 @@ impl StarfiveDevice {
 
 /// StarFive JH71x0 display controller register offsets
 
-// Control registers
+// control registers
 /// Display controller control register
 pub const STARFIVE_REG_CTRL: u32 = 0x0000;
 /// Display controller status register
@@ -358,12 +358,12 @@ pub const STARFIVE_REG_VERT_SYNC: u32 = 0x0214;
 /// Pixel format configuration
 pub const STARFIVE_REG_FORMAT: u32 = 0x0300;
 
-// Control register bits
+// control register bits
 /// Enable display controller
 pub const STARFIVE_CTRL_ENABLE: u32 = 1 << 0;
 /// Enable raster
 pub const STARFIVE_CTRL_RASTER_ENABLE: u32 = 1 << 1;
-/// Power on
+/// power on
 pub const STARFIVE_CTRL_POWER_ON: u32 = 1 << 2;
 
 // Interrupt bits

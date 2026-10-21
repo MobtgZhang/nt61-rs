@@ -1,4 +1,4 @@
-//! GPU Power Management
+//! GPU power Management
 //
 //! Provides power management infrastructure for GPU drivers,
 //! including power states, clock management, and thermal throttling.
@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 // =====================================================================
-// Power States (ACPI D-States)
+// power States (ACPI D-States)
 // =====================================================================
 
 /// GPU power states (ACPI D-states)
@@ -140,7 +140,7 @@ pub struct ClockFrequency {
 }
 
 impl ClockFrequency {
-    /// Create a new clock frequency
+    /// create a new clock frequency
     pub fn new(hz: u64, voltage_mv: u32) -> Self {
         Self { hz, voltage_mv }
     }
@@ -172,7 +172,7 @@ pub struct ClockState {
 }
 
 impl ClockState {
-    /// Create a new clock state
+    /// create a new clock state
     pub fn new(domain: ClockDomain) -> Self {
         Self {
             domain,
@@ -228,7 +228,7 @@ pub struct ThermalTripPoint {
 }
 
 impl ThermalTripPoint {
-    /// Create a new trip point
+    /// create a new trip point
     pub fn new(temperature_mc: i32, trip_type: ThermalTripType) -> Self {
         Self {
             temperature_mc,
@@ -287,7 +287,7 @@ impl Default for ThermalStatus {
 }
 
 // =====================================================================
-// Power Management Controller
+// power Management Controller
 // =====================================================================
 
 /// GPU power management controller
@@ -296,7 +296,7 @@ pub struct GpuPowerManager {
     current_state: AtomicU32,
     /// Target power state
     target_state: AtomicU32,
-    /// Power state valid
+    /// power state valid
     state_valid: AtomicBool,
     /// Clocks enabled
     clocks_enabled: AtomicBool,
@@ -313,7 +313,7 @@ pub struct GpuPowerManager {
 }
 
 impl GpuPowerManager {
-    /// Create a new power manager
+    /// create a new power manager
     pub fn new() -> Self {
         Self {
             current_state: AtomicU32::new(GpuPowerState::D0 as u32),
@@ -376,7 +376,7 @@ impl GpuPowerManager {
         }
     }
 
-    /// Power up (D0)
+    /// power up (D0)
     fn power_up(&mut self) -> bool {
         // Enable clocks
         self.enable_clocks();
@@ -392,7 +392,7 @@ impl GpuPowerManager {
         true
     }
 
-    /// Power down (D3)
+    /// power down (D3)
     fn power_down(&mut self) {
         // Disable interrupts
         self.disable_interrupts();
@@ -408,7 +408,7 @@ impl GpuPowerManager {
 
     /// Enter specific state
     fn enter_state(&mut self, state: GpuPowerState) -> bool {
-        // Handle intermediate states (D1, D2)
+        // handle intermediate states (D1, D2)
         // These vary by GPU, but typically:
         // D1: Reduce clock frequency, keep some power
         // D2: Further reduce clocks, reduce power
@@ -542,7 +542,7 @@ pub enum DfsPolicy {
     Performance,
     /// Balanced (default)
     Balanced,
-    /// Power saving
+    /// power saving
     PowerSave,
 }
 
@@ -569,7 +569,7 @@ pub struct DfsController {
 }
 
 impl DfsController {
-    /// Create a new DFS controller
+    /// create a new DFS controller
     pub fn new() -> Self {
         Self {
             policy: DfsPolicy::Balanced,

@@ -10,15 +10,15 @@
 //! # BLF File Layout
 //
 //! The BLF file is sector-aligned (512-byte sectors). It contains:
-//! - Sector 0: Control Record (metadata block type 0x10)
-//! - Sector 1: Control Record Shadow (copy of sector 0)
+//! - Sector 0: control Record (metadata block type 0x10)
+//! - Sector 1: control Record Shadow (copy of sector 0)
 //! - Sector 2: Base Record (metadata block type 0x10)
 //! - Sector 3: Base Record Shadow
 //! - Sector 4: Truncate Record
 //! - Sector 5: Truncate Record Shadow
 //! - Remaining sectors: reserved / future use
 //
-//! Each sector has a 2-byte trailer: [BlockType | Flags, USN]
+//! Each sector has a 2-byte trailer: [BlockType | flags, USN]
 
 // ============================================================================
 // Constants
@@ -46,13 +46,13 @@ pub const CLFS_MAX_CONTAINERS: usize = 1023;
 pub const CLFS_MAX_CLIENTS: usize = 124;
 
 // ============================================================================
-// Sector / Block Flags
+// Sector / Block flags
 // ============================================================================
 
 /// Block type constants stored in the sector signature.
 pub const SECTOR_BLOCK_NONE: u8 = 0x00;
 pub const SECTOR_BLOCK_DATA: u8 = 0x04; // Data block
-pub const SECTOR_BLOCK_OWNER: u8 = 0x08; // Owner page (metadata)
+pub const SECTOR_BLOCK_OWNER: u8 = 0x08; // owner page (metadata)
 pub const SECTOR_BLOCK_BASE: u8 = 0x10; // Base record
 pub const SECTOR_BLOCK_END: u8 = 0x20; // End of record
 pub const SECTOR_BLOCK_BEGIN: u8 = 0x40; // Begin of record
@@ -113,7 +113,7 @@ impl ClfsLogBlockHeader {
         self.major_version == 0x15 && self.minor_version == 0x00
     }
 
-    /// Read the record_offsets field from a packed struct without creating
+    /// read the record_offsets field from a packed struct without creating
     /// a reference to the packed field (which would be UB).
     /// We compute the field offset manually using size_of to avoid UB.
     fn read_record_offsets(&self) -> [u32; 16] {
@@ -146,7 +146,7 @@ impl ClfsLogBlockHeader {
         (self.total_sector_count as usize) * CLFS_SECTOR_SIZE
     }
 
-    /// Create a zeroed header with default CLFS values.
+    /// create a zeroed header with default CLFS values.
     pub fn new() -> Self {
         Self {
             major_version: 0x15,
@@ -314,9 +314,9 @@ impl BlfBlockType {
 /// Represents the 6-block BLF metadata region at the start of a CLFS log.
 #[derive(Debug, Clone)]
 pub struct BlfMetadata {
-    /// Control record (sector 0).
+    /// control record (sector 0).
     pub control: ClfsLogBlockHeader,
-    /// Control shadow (sector 1).
+    /// control shadow (sector 1).
     pub control_shadow: ClfsLogBlockHeader,
     /// General/base record (sector 2).
     pub general: ClfsLogBlockHeader,
@@ -329,7 +329,7 @@ pub struct BlfMetadata {
 }
 
 impl BlfMetadata {
-    /// Create a new zeroed BLF metadata structure.
+    /// create a new zeroed BLF metadata structure.
     pub fn new() -> Self {
         Self {
             control: ClfsLogBlockHeader::new(),
@@ -346,7 +346,7 @@ impl BlfMetadata {
         6 * CLFS_SECTOR_SIZE
     }
 
-    /// Write the metadata blocks to a byte buffer.
+    /// write the metadata blocks to a byte buffer.
     /// The buffer must be at least 6 * 512 = 3072 bytes.
     pub fn write_to(&self, buf: &mut [u8]) {
         let sectors = [
@@ -362,7 +362,7 @@ impl BlfMetadata {
             let offset = i * CLFS_SECTOR_SIZE;
             let sector = &mut buf[offset..offset + CLFS_SECTOR_SIZE];
 
-            // Write header
+            // write header
             let header_bytes = unsafe {
                 core::slice::from_raw_parts(
                     header as *const _ as *const u8,
@@ -371,7 +371,7 @@ impl BlfMetadata {
             };
             sector[..CLFS_LOG_BLOCK_HEADER_SIZE].copy_from_slice(header_bytes);
 
-            // Write sector signature trailer
+            // write sector signature trailer
             let sig = ((block_type.sector_flag() as u16) << 8) | (header.usn as u16);
             sector[510] = (sig & 0xFF) as u8;
             sector[511] = ((sig >> 8) & 0xFF) as u8;
@@ -416,37 +416,37 @@ impl SectorSignature {
 // Utility Functions
 // ============================================================================
 
-/// Read a little-endian u16 from a byte slice.
+/// read a little-endian u16 from a byte slice.
 #[inline]
 pub fn read_u16_le(slice: &[u8]) -> u16 {
     u16::from_le_bytes(slice[..2].try_into().unwrap())
 }
 
-/// Read a little-endian u32 from a byte slice.
+/// read a little-endian u32 from a byte slice.
 #[inline]
 pub fn read_u32_le(slice: &[u8]) -> u32 {
     u32::from_le_bytes(slice[..4].try_into().unwrap())
 }
 
-/// Read a little-endian u64 from a byte slice.
+/// read a little-endian u64 from a byte slice.
 #[inline]
 pub fn read_u64_le(slice: &[u8]) -> u64 {
     u64::from_le_bytes(slice[..8].try_into().unwrap())
 }
 
-/// Write a little-endian u16 to a byte slice.
+/// write a little-endian u16 to a byte slice.
 #[inline]
 pub fn write_u16_le(slice: &mut [u8], val: u16) {
     slice[..2].copy_from_slice(&val.to_le_bytes());
 }
 
-/// Write a little-endian u32 to a byte slice.
+/// write a little-endian u32 to a byte slice.
 #[inline]
 pub fn write_u32_le(slice: &mut [u8], val: u32) {
     slice[..4].copy_from_slice(&val.to_le_bytes());
 }
 
-/// Write a little-endian u64 to a byte slice.
+/// write a little-endian u64 to a byte slice.
 #[inline]
 pub fn write_u64_le(slice: &mut [u8], val: u64) {
     slice[..8].copy_from_slice(&val.to_le_bytes());

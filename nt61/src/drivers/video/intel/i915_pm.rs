@@ -1,21 +1,21 @@
-//! Intel i915 Power Management
+//! Intel i915 power Management
 //
 //! Implements power management for Intel integrated graphics
 
 use crate::drivers::video::intel::i915_reg::*;
 
-/// Power well state
+/// power well state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PowerWellState {
-    /// Power well is on
+    /// power well is on
     On,
-    /// Power well is off (request only)
+    /// power well is off (request only)
     RequestOnly,
     /// Unknown
     Unknown,
 }
 
-/// Power management for i915
+/// power management for i915
 pub struct I915PowerManager {
     /// MMIO base
     mmio_base: u64,
@@ -24,7 +24,7 @@ pub struct I915PowerManager {
 }
 
 impl I915PowerManager {
-    /// Create new power manager
+    /// create new power manager
     pub fn new(mmio_base: u64) -> Self {
         Self {
             mmio_base,
@@ -32,13 +32,13 @@ impl I915PowerManager {
         }
     }
 
-    /// Read register
+    /// read register
     #[inline]
     fn read_reg(&self, offset: u32) -> u32 {
         unsafe { core::ptr::read_volatile((self.mmio_base + offset as u64) as *const u32) }
     }
 
-    /// Write register
+    /// write register
     #[inline]
     fn write_reg(&self, offset: u32, value: u32) {
         unsafe { core::ptr::write_volatile((self.mmio_base + offset as u64) as *mut u32, value) }

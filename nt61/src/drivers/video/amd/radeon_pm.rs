@@ -1,10 +1,10 @@
-//! AMD Radeon Power Management
+//! AMD Radeon power Management
 //
 //! Implements power management for AMD Radeon graphics
 
 use crate::drivers::video::amd::radeon_reg::*;
 
-/// Power state
+/// power state
 #[derive(Debug, Clone, Copy)]
 pub enum PowerState {
     /// D0: Fully on
@@ -17,7 +17,7 @@ pub enum PowerState {
     D3,
 }
 
-/// Power management
+/// power management
 pub struct RadeonPowerManager {
     /// MMIO base
     mmio_base: u64,
@@ -26,7 +26,7 @@ pub struct RadeonPowerManager {
 }
 
 impl RadeonPowerManager {
-    /// Create new power manager
+    /// create new power manager
     pub fn new(mmio_base: u64) -> Self {
         Self {
             mmio_base,
@@ -34,13 +34,13 @@ impl RadeonPowerManager {
         }
     }
 
-    /// Read register
+    /// read register
     #[inline]
     pub fn read_reg(&self, offset: u32) -> u32 {
         unsafe { core::ptr::read_volatile((self.mmio_base + offset as u64) as *const u32) }
     }
 
-    /// Write register
+    /// write register
     #[inline]
     pub fn write_reg(&self, offset: u32, value: u32) {
         unsafe { core::ptr::write_volatile((self.mmio_base + offset as u64) as *mut u32, value) }
@@ -61,14 +61,14 @@ impl RadeonPowerManager {
         self.current_state = state;
     }
 
-    /// Power up (D0)
+    /// power up (D0)
     fn power_up(&mut self) {
         // Enable clocks
         let status = self.read_reg(CG_STATUS);
         let _ = status;
     }
 
-    /// Power down (D3)
+    /// power down (D3)
     fn power_down(&mut self) {
         // Disable clocks
         let _ = self.read_reg(CG_STATUS);

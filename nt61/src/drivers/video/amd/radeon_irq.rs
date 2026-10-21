@@ -13,7 +13,7 @@ pub struct RadeonIrqHandler {
 }
 
 impl RadeonIrqHandler {
-    /// Create new handler
+    /// create new handler
     pub fn new(mmio_base: u64) -> Self {
         Self {
             mmio_base,
@@ -21,13 +21,13 @@ impl RadeonIrqHandler {
         }
     }
 
-    /// Read register
+    /// read register
     #[inline]
     fn read_reg(&self, offset: u32) -> u32 {
         unsafe { core::ptr::read_volatile((self.mmio_base + offset as u64) as *const u32) }
     }
 
-    /// Write register
+    /// write register
     #[inline]
     fn write_reg(&self, offset: u32, value: u32) {
         unsafe { core::ptr::write_volatile((self.mmio_base + offset as u64) as *mut u32, value) }
@@ -38,7 +38,7 @@ impl RadeonIrqHandler {
         self.vblank_callback = Some(callback);
     }
 
-    /// Handle interrupt
+    /// handle interrupt
     pub fn handle_irq(&mut self) -> bool {
         let status = self.read_reg(RBBM_INT_STATUS);
         if status == 0 {

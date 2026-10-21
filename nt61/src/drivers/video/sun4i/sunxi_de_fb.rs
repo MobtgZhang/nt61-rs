@@ -42,7 +42,7 @@ pub struct DebeDevice {
 }
 
 impl DebeDevice {
-    /// Create a new DEBE device
+    /// create a new DEBE device
     pub fn new(soc: SunxiSoc) -> Self {
         Self {
             soc,
@@ -58,7 +58,7 @@ impl DebeDevice {
         }
     }
 
-    /// Read a DEBE register
+    /// read a DEBE register
     #[inline]
     fn read_debe(&self, offset: u32) -> u32 {
         if self.debe_base == 0 {
@@ -67,7 +67,7 @@ impl DebeDevice {
         unsafe { core::ptr::read_volatile((self.debe_base + offset as u64) as *const u32) }
     }
 
-    /// Write a DEBE register
+    /// write a DEBE register
     #[inline]
     fn write_debe(&self, offset: u32, value: u32) {
         if self.debe_base == 0 {
@@ -78,16 +78,7 @@ impl DebeDevice {
         }
     }
 
-    /// Read a TCON register
-    #[inline]
-    fn read_tcon(&self, offset: u32) -> u32 {
-        if self.tcon_base == 0 {
-            return 0;
-        }
-        unsafe { core::ptr::read_volatile((self.tcon_base + offset as u64) as *const u32) }
-    }
-
-    /// Write a TCON register
+    /// write a TCON register
     #[inline]
     fn write_tcon(&self, offset: u32, value: u32) {
         if self.tcon_base == 0 {

@@ -10,7 +10,6 @@
 //! source file.
 
 use super::pnp;
-use crate::kprintln;
 
 /// Standard ACPI device IDs we register. The full list lives in
 /// the official ACPI specification; this is a bootstrap-friendly
