@@ -46,16 +46,11 @@ pub enum TimeSource {
 /// Pick the best available time source. The HAL is the source of
 /// truth on x86_64; we ask it for a HPET / PIT preference.
 fn pick_time_source() -> TimeSource {
-    #[cfg(target_arch = "x86_64")]
-    {
-        if crate::hal::hpet::hpet_freq_hz() > 0 {
-            return TimeSource::Hpet;
-        }
-        if crate::hal::pit::pit_freq_hz() > 0 {
-            return TimeSource::Pit;
-        }
+    match crate::arch::platform_timer() {
+        crate::arch::PlatformTimer::Hpet => TimeSource::Hpet,
+        crate::arch::PlatformTimer::Pit => TimeSource::Pit,
+        crate::arch::PlatformTimer::Generic => TimeSource::Tsc,
     }
-    TimeSource::Tsc
 }
 
 /// Initialize time subsystem.

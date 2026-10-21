@@ -69,8 +69,7 @@ static mut VECTOR_INFO: [VectorInfo; MAX_IDT_VECTORS] = {
     [EMPTY; MAX_IDT_VECTORS]
 };
 
-#[allow(dead_code)]
-static mut VECTOR_INFO_INITIALISED: bool = false;
+pub static mut VECTOR_INFO_INITIALISED: bool = false;
 
 /// Aggregate counters.
 static TOTAL_INTERRUPTS: AtomicU64 = AtomicU64::new(0);
@@ -164,7 +163,7 @@ pub fn record_fire(vector: u8) {
     }
 }
 
-/// Read the global fire counter. Useful for the boot log.
+/// read the global fire counter. Useful for the boot log.
 pub fn total_interrupt_count() -> u64 {
     TOTAL_INTERRUPTS.load(Ordering::Relaxed)
 }

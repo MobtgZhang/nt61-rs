@@ -10,16 +10,6 @@
 //
 // **Note:** x86_64-only in this build (SSDT test depends on
 // x86_64-specific encoding).
-#![cfg(target_arch = "x86_64")]
-
-use crate::ke::exception::{
-    dispatch_exception, is_user_mode_exception, ContextFrame, ExceptionDisposition, ExceptionRecord,
-};
-use crate::ke::ssdt::{
-    get_service_descriptor_table, get_service_table_base, EncodedServiceEntry, ServiceTableEntry,
-    SSDT_MAX_SERVICES,
-};
-
 /// Run SSDT smoke test for P1-1 fixes
 fn step_ssdt_encoded_entries() -> bool {
     // TLE-3: SMOKE test that triple-faults on return. The
@@ -106,7 +96,7 @@ pub fn smoke_test() -> bool {
     if ok {
         crate::hal::serial::write_string("[KE-SMOKE] all kernel-executive checks passed\r\n");
     } else {
-        crate::hal::serial::write_string("[KE-SMOKE FAIL] one or more checks failed\r\n");
+        crate::hal::serial::write_string_always("[KE-SMOKE FAIL] one or more checks failed\r\n");
     }
     ok
 }

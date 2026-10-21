@@ -143,11 +143,11 @@ pub fn record(code: BugCheckCode, p1: u64, p2: u64, p3: u64, p4: u64) -> u32 {
     BUGCHECK_COUNT.fetch_add(1, Ordering::SeqCst) + 1
 }
 
-/// Read the last recorded bugcheck code (0 if none).
+/// read the last recorded bugcheck code (0 if none).
 pub fn last_code() -> u32 {
     LAST_CODE.load(Ordering::SeqCst)
 }
-/// Read the last recorded bugcheck parameter.
+/// read the last recorded bugcheck parameter.
 pub fn last_param(n: usize) -> u64 {
     match n {
         1 => LAST_P1.load(Ordering::SeqCst),
@@ -163,7 +163,6 @@ pub fn bugcheck_count() -> u32 {
 }
 
 /// Trigger bugcheck
-#[allow(dead_code)]
 pub fn bugcheck(code: BugCheckCode) -> ! {
     bugcheck_with(code, 0, 0, 0, 0)
 }
@@ -179,15 +178,25 @@ pub fn bugcheck_with(code: BugCheckCode, p1: u64, p2: u64, p3: u64, p4: u64) -> 
     // `cfg(test)` so the failure path stays observable; the kernel build is
     // unchanged.
     #[cfg(test)]
-    panic!(
-        "bugcheck 0x{:08X} p1=0x{:x} p2=0x{:x} p3=0x{:x} p4=0x{:x}",
-        code.as_u32(),
-        p1,
-        p2,
-        p3,
-        p4
-    );
+    {
+        panic!(
+            "bugcheck 0x{:08X} p1=0x{:x} p2=0x{:x} p3=0x{:x} p4=0x{:x}",
+            code.as_u32(),
+            p1,
+            p2,
+            p3,
+            p4
+        );
+    }
 
+    #[cfg(not(test))]
+    {
+        paint_bugcheck(code, p1, p2, p3, p4);
+    }
+}
+
+#[cfg(not(test))]
+fn paint_bugcheck(code: BugCheckCode, p1: u64, p2: u64, p3: u64, p4: u64) -> ! {
     // Paint the Win7-style BSOD via BOOTVID before we halt.
     // The hex representation of the bugcheck code is also the
     // top-line message; parameters are folded into the secondary

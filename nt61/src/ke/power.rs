@@ -1,10 +1,10 @@
-//! Kernel Power Management
+//! Kernel power Management
 //!
 //! This module implements system-level power management including:
 //! - System power states (S0-S5)
 //! - CPU power states (C-states, P-states)
-//! - Power policy management
-//! - Sleep/Hibernate transitions
+//! - power policy management
+//! - sleep/Hibernate transitions
 
 use crate::io::{PowerActionType, SystemPowerState};
 use crate::kprintln;
@@ -20,7 +20,7 @@ pub enum CpuCState {
     C1 = 1,
     /// C2: Stop-Clock
     C2 = 2,
-    /// C3: Sleep (Deep Sleep)
+    /// C3: sleep (Deep sleep)
     C3 = 3,
 }
 
@@ -31,7 +31,7 @@ pub struct CpuPState {
     pub frequency: u32,
     /// Voltage in mV
     pub voltage: u32,
-    /// Power consumption in mW
+    /// power consumption in mW
     pub power: u32,
     /// Transition latency in microseconds
     pub latency: u32,
@@ -145,16 +145,16 @@ impl Default for SystemPowerPolicy {
     }
 }
 
-/// Power transition context
+/// power transition context
 #[derive(Debug, Clone, Copy)]
 pub struct PowerTransitionContext {
     /// Target system state
     pub target_state: SystemPowerState,
-    /// Power action
+    /// power action
     pub action: PowerActionType,
     /// Transition start time
     pub start_time: u64,
-    /// Flags
+    /// flags
     pub flags: u32,
 }
 
@@ -216,10 +216,10 @@ fn init_cpu_power_management() {
 
         kprintln!(
             "[KE-POWER] CPU power: {} P-states, C1={} C2={} C3={}",
-            CPU_POWER_INFO.p_state_count,
-            CPU_POWER_INFO.c1_supported,
-            CPU_POWER_INFO.c2_supported,
-            CPU_POWER_INFO.c3_supported
+            (*core::ptr::addr_of!(CPU_POWER_INFO)).p_state_count,
+            (*core::ptr::addr_of!(CPU_POWER_INFO)).c1_supported,
+            (*core::ptr::addr_of!(CPU_POWER_INFO)).c2_supported,
+            (*core::ptr::addr_of!(CPU_POWER_INFO)).c3_supported
         );
     }
 }
@@ -291,7 +291,7 @@ pub fn request_power_state_transition(
         return false;
     }
 
-    // Create transition context
+    // create transition context
     let context = PowerTransitionContext {
         target_state,
         action,
@@ -321,7 +321,7 @@ fn is_valid_power_transition(current: SystemPowerState, target: SystemPowerState
 fn perform_power_transition(context: PowerTransitionContext) -> bool {
     let target = context.target_state;
 
-    // Execute ACPI _PTS method (Prepare To Sleep)
+    // Execute ACPI _PTS method (Prepare To sleep)
     if target != SystemPowerState::S0 {
         let _ = crate::hal::common::acpi::execute_acpi_method("_PTS", &[target as u64]);
     }
@@ -395,7 +395,7 @@ fn enter_s2_sleep() -> bool {
     // Notify devices
     notify_devices_power_change(SystemPowerState::S2);
 
-    // Power off CPU
+    // power off CPU
     kprintln!("[KE-POWER] Would power off CPU here");
 
     true
@@ -434,7 +434,7 @@ fn enter_s5_shutdown() -> bool {
 fn save_cpu_state() {
     // Real implementation would save:
     // - General purpose registers
-    // - Control registers
+    // - control registers
     // - FPU/SSE state
     // - MSRs
     kprintln!("[KE-POWER] Saving CPU state");
@@ -461,7 +461,7 @@ fn restore_device_power() {
 /// ACPI shutdown
 fn acpi_shutdown() {
     kprintln!("[KE-POWER] ACPI shutdown");
-    // Real implementation would:, 1. Write to PM1a/PM1b control registers, 2. Execute ACPI _PTS(5) and _S5 methods);;
+    // Real implementation would:, 1. write to PM1a/PM1b control registers, 2. Execute ACPI _PTS(5) and _S5 methods);;
 }
 
 /// Enter CPU C-state
@@ -489,8 +489,7 @@ pub fn enter_cpu_c_state(state: CpuCState) -> bool {
             }
             CpuCState::C1 => {
                 // Execute HLT or MWAIT
-                #[cfg(target_arch = "x86_64")]
-                core::arch::x86_64::_mm_pause();
+                crate::arch::cpu_pause();
             }
             CpuCState::C2 | CpuCState::C3 => {
                 // Would execute deeper sleep instructions
@@ -519,7 +518,7 @@ pub fn set_cpu_p_state(p_state_index: u8) -> bool {
         );
 
         // Real implementation would:
-        // 1. Write to MSRs (x86) or ACPI registers
+        // 1. write to MSRs (x86) or ACPI registers
         // 2. Wait for transition
         // 3. Verify new frequency
 

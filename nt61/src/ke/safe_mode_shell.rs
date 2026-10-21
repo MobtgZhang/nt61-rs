@@ -124,7 +124,7 @@ impl Input {
     }
 }
 
-/// Tiny `core::fmt::Write` adapter on a fixed-size byte
+/// Tiny `core::fmt::write` adapter on a fixed-size byte
 /// buffer. Used to render messages like
 /// "boot-mode=1 (SafeModeCmd)" without pulling in `heapless`.
 struct FmtBuf<const N: usize> {
@@ -318,7 +318,7 @@ fn print_line(s: &str) {
 }
 
 #[derive(Debug)]
-enum CmdError {
+pub enum CmdError {
     Unknown,
     MissingArg,
     BadArg,
@@ -417,7 +417,7 @@ fn dump_log_ring() {
     let attr = buf[0][crate::hal::text_console::COLS];
     let len = buf[0][crate::hal::text_console::COLS + 1] as usize;
     crate::hal::text_console::set_attr(attr);
-    // Render the bytes through the same `core::fmt::Write`
+    // Render the bytes through the same `core::fmt::write`
     // adapter the rest of the dispatcher uses; this gives
     // us a `&str` we can hand to `print_line`.
     let mut s: FmtBuf<{ crate::hal::text_console::COLS }> = FmtBuf::new();
@@ -440,28 +440,6 @@ fn boot_mode_name(m: u32) -> &'static str {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
 fn arch_label() -> &'static str {
-    "x86_64"
-}
-#[cfg(target_arch = "aarch64")]
-fn arch_label() -> &'static str {
-    "aarch64"
-}
-#[cfg(target_arch = "riscv64")]
-fn arch_label() -> &'static str {
-    "riscv64"
-}
-#[cfg(target_arch = "loongarch64")]
-fn arch_label() -> &'static str {
-    "loongarch64"
-}
-#[cfg(not(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "riscv64",
-    target_arch = "loongarch64"
-)))]
-fn arch_label() -> &'static str {
-    "unknown"
+    crate::arch::architecture_name()
 }

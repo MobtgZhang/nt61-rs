@@ -185,22 +185,10 @@ pub const HAL_PRIORITY_TO_IRQL: [u8; 16] =
 /// IRQL -> 8-bit TPR encoding.
 pub fn irql_to_tpr(irql: Irql) -> u8 {
     let level = irql as u8;
-    #[cfg(target_arch = "x86_64")]
-    {
-        // AMD64 documents `IrqlToTpr(Irql) = Irql << 4`, which is only
-        // meaningful for IRQL 0..=15 because CR8 holds 4 priority bits.
-        // Levels above 15 fall back to the HAL table so the mapping stays
-        // defined for the full 32-level range.
-        if level <= 15 {
-            (level << 4) as u8
-        } else {
-            HALP_IRQL_TO_TPR[level as usize]
-        }
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        HALP_IRQL_TO_TPR[level as usize]
-    }
+    // AMD64 documents `IrqlToTpr(Irql) = Irql << 4`, which is only
+    // meaningful for IRQL 0..=15 because CR8 holds 4 priority bits.
+    // Levels above 15 and other architectures use the HAL table.
+    crate::arch::interrupt_priority_encoding(level, HALP_IRQL_TO_TPR[level as usize])
 }
 
 /// 8-bit TPR encoding -> IRQL.
@@ -226,18 +214,8 @@ pub fn irql_to_cr8_priority(irql: Irql) -> u8 {
 /// software counter is the only storage, which is also what keeps unit
 /// tests (running in userspace) from executing a privileged instruction.
 pub fn sync_hard_irql(irql: Irql) -> bool {
-    #[cfg(target_arch = "x86_64")]
-    {
-        if !crate::hal::x86_64::apic::is_ready() {
-            return false;
-        }
-        crate::arch::x86_64::cpu_flags::write_cr8(irql_to_cr8_priority(irql) as u64);
-        true
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        false
-    }
+    let _ = irql;
+    crate::arch::set_interrupt_priority(irql_to_cr8_priority(irql))
 }
 
 /// Current IRQL of the BSP. The bootstrap is single-CPU, so a
@@ -259,7 +237,7 @@ static LOWER_COUNT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU3
 // Per-CPU IRQL Support (SMP)
 // =============================================================================
 
-/// Offset of IRQL field in PerCpuArea structure.
+/// offset of IRQL field in PerCpuArea structure.
 /// Layout:
 ///   0x00: user_rsp (u64)
 ///   0x08: kernel_rsp (u64)
@@ -281,19 +259,16 @@ fn get_current_cpu_irql_ptr() -> *mut u8 {
         // IRQL is at offset 0x28 in PerCpuArea
         unsafe { (area as *mut PerCpuArea as *mut u8).add(PER_CPU_IRQL_OFFSET) }
     } else {
-        unsafe {
-            let ptr = &CURRENT_IRQL as *const AtomicU8 as *mut AtomicU8;
-            ptr as *mut u8
-        }
+        let ptr = core::ptr::addr_of!(CURRENT_IRQL) as *const AtomicU8 as *mut AtomicU8;
+        ptr as *mut u8
     }
 }
 
 /// Initialize IRQL
 pub fn init() {
-    crate::hal::serial::write_string("[ke.irql] enter\r\n");
     // Initialize the global fallback (used during early boot)
     unsafe {
-        CURRENT_IRQL.store(Irql::Passive as u8, Ordering::SeqCst);
+        (*core::ptr::addr_of!(CURRENT_IRQL)).store(Irql::Passive as u8, Ordering::SeqCst);
     }
     MAX_OBSERVED_IRQL.store(0, Ordering::SeqCst);
     RAISE_COUNT.store(0, Ordering::SeqCst);
@@ -556,7 +531,6 @@ mod tests {
         assert_eq!(irql_to_cr8_priority(Irql::HighestLevel), 15);
     }
 
-    #[cfg(target_arch = "x86_64")]
     #[test]
     fn amd64_priority_is_identity_below_16() {
         // IrqlToTpr(Irql) = Irql << 4 on AMD64, and CR8 holds the nibble.

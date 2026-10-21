@@ -231,7 +231,7 @@ pub fn setup_handlers(ethread: *mut crate::ps::thread::Ethread) {
         let teb = (*ethread).kthread.teb;
         if !teb.is_null() {
             // Set up initial exception handler chain
-            // The chain starts with a termination handler that calls RtlUnwind
+            // The chain starts with a termination handler that calls rtl_unwind
             // // kprintln!("[EXCEPTION] Set up exception handlers for thread");
         }
     }
@@ -267,15 +267,11 @@ pub fn dispatch_exception(
         return result;
     }
 
-    // 4. If this is a user-mode exception, send APC to terminate process
+    // 4. If this is a user-mode exception, terminate the process. Windows
+    //    never resumes a user thread after an unhandled exception: doing so
+    //    returns control to a fault that has no handler and repeats forever.
     if is_user_mode_exception(exception_record) {
-        // // kprintln!(
-        // //             "[EXCEPTION] User-mode exception unhandled at 0x{:016x}, code=0x{:08x}",
-        // //             exception_record.exception_address,
-        // //             exception_record.exception_code
-        // //         );
-        // TODO: Send APC to terminate the process
-        return ExceptionDisposition::ContinueSearch;
+        terminate_current_user_process(exception_record.exception_code);
     }
 
     // 5. Kernel-mode exception - trigger bugcheck
@@ -305,6 +301,41 @@ pub(crate) fn is_user_mode_exception(exception_record: &ExceptionRecord) -> bool
     // User mode: not in kernel address space
     // Kernel addresses on x64 Windows typically start at 0xFFFF800000000000
     addr < 0xFFFF800000000000 && addr >= 0x1000
+}
+
+/// Terminate the current process after an unhandled user-mode exception.
+///
+/// This function deliberately never returns. If another ready thread can be
+/// dispatched, the scheduler switches to it; otherwise the faulting CPU parks.
+fn terminate_current_user_process(exception_code: u32) -> ! {
+    let current_thread = crate::arch::common::percpu::get_current_thread();
+    let current_process = if current_thread.is_null() {
+        crate::arch::common::percpu::get_current_process()
+    } else {
+        unsafe { (*current_thread).threads_process }
+    };
+
+    if !current_process.is_null() {
+        unsafe {
+            (*current_process).exit_status = exception_code as i32;
+        }
+    }
+
+    if !current_thread.is_null() {
+        crate::ps::thread::terminate(current_thread, exception_code);
+    }
+
+    if !current_process.is_null() {
+        let pid = unsafe { (*current_process).unique_process_id };
+        let _ = crate::ps::process_mgmt::terminate_process_by_pid(pid, false);
+    }
+
+    crate::arch::common::percpu::set_current_process(core::ptr::null_mut());
+    crate::ke::scheduler::schedule();
+
+    loop {
+        crate::arch::halt();
+    }
 }
 
 /// Try the current thread's registered exception handler
@@ -371,7 +402,7 @@ fn call_exception_handler(
     // In a full implementation, this would:
     // 1. Set up the dispatch context
     // 2. Call the handler with proper parameters
-    // 3. Handle the return value appropriately
+    // 3. handle the return value appropriately
     // For now, return ContinueSearch to continue the search
     ExceptionDisposition::ContinueSearch
 }
@@ -485,7 +516,7 @@ pub fn raise_exception(_code: u32, _address: u64) {
     // // kprintln!("[EXCEPTION] Software exception raised: code=0x{:08x}", code);
 
     // In a real implementation, this would:
-    // 1. Create an exception record
+    // 1. create an exception record
     // 2. Dispatch to the kernel's exception handler
     // 3. Either handle it or unwind
 }
@@ -538,12 +569,7 @@ static KERNEL_EXCEPTION_HANDLERS: Spinlock<Vec<ExceptionRegistration>> = Spinloc
 
 use crate::ke::sync::Spinlock;
 
-// Hardware debug-register accessors moved out of `ke` into
-// `arch::x86_64::debug`. Re-export them here on x86_64 so the rest of
-// the file can keep using `read_dr6()` / `read_dr7()` / `write_dr7()`
-// without sprinkling the arch path everywhere.
-#[cfg(target_arch = "x86_64")]
-pub(crate) use crate::arch::x86_64::debug::{read_dr6, read_dr7};
+pub use crate::arch::common::hardware_exception;
 
 /// Register an exception handler
 pub fn register_handler(handler: ExceptionHandler) {
@@ -613,7 +639,7 @@ pub fn dispatch_exception_full(
 // Access Violation Handler
 // =============================================================================
 
-/// Handle access violation with detailed information
+/// handle access violation with detailed information
 pub fn handle_access_violation(_address: u64, _write: bool, _execute: bool) -> Option<u64> {
     // _address, _write, and _execute are intentionally unused - reserved for future logging
     // // kprintln!(
@@ -635,7 +661,6 @@ pub fn handle_access_violation(_address: u64, _write: bool, _execute: bool) -> O
 // =============================================================================
 
 /// Breakpoint handler (ContextFrame version)
-#[cfg(target_arch = "x86_64")]
 pub fn handle_breakpoint_context(_context: &mut ContextFrame) {
     // _context is intentionally unused - reserved for future logging
     // // kprintln!("[EXCEPTION] Breakpoint at RIP=0x{:016x}", _context.rip);
@@ -1035,7 +1060,7 @@ fn apply_unwind_code(
         UnwindOperationCode::AllocLarge => {
             // Large stack allocation (> 0xFF80 bytes)
             // Format: UNWIND_CODE (2 bytes) + size (4 bytes)
-            // Read 32-bit size from after UNWIND_CODE
+            // read 32-bit size from after UNWIND_CODE
             let size = unsafe { read_alloc_large_size(code) } as u64;
             context.rsp += size;
             // // kprintln!("[UNWIND] AllocLarge: rsp += 0x{:x}", size);
@@ -1055,7 +1080,7 @@ fn apply_unwind_code(
     }
 }
 
-/// Read offset for SaveIntNonVol and SaveFltNonVol operations
+/// read offset for SaveIntNonVol and SaveFltNonVol operations
 /// These have a 1-byte offset following the UNWIND_CODE structure
 ///
 /// # Safety
@@ -1066,7 +1091,7 @@ unsafe fn read_int_nvol_offset(code: &UnwindCode) -> u16 {
     ptr::read(code_ptr) as u16
 }
 
-/// Read size for AllocLarge operation
+/// read size for AllocLarge operation
 /// AllocLarge has a 4-byte size following the UNWIND_CODE structure
 ///
 /// # Safety
@@ -1077,12 +1102,12 @@ unsafe fn read_alloc_large_size(code: &UnwindCode) -> u32 {
     ptr::read_unaligned(code_ptr as *const u32)
 }
 
-/// Read a 16-bit value from the UNWIND_CODE's immediate field
+/// read a 16-bit value from the UNWIND_CODE's immediate field
 fn unwind_code_offset(code: &UnwindCode) -> u8 {
     code.operation_info()
 }
 
-/// Read a 16-bit immediate value following the UNWIND_CODE structure
+/// read a 16-bit immediate value following the UNWIND_CODE structure
 ///
 /// UNWIND_CODE is a packed 2-byte structure. For operations that have
 /// a 16-bit immediate following (AllocLarge, SaveXMM128), we need to
@@ -1097,21 +1122,19 @@ unsafe fn unwind_code_offset_16(code: &UnwindCode) -> u16 {
     core::ptr::read_unaligned(code_ptr as *const u16)
 }
 
-/// Read a 16-bit value from the operation_info field
+/// read a 16-bit value from the operation_info field
 /// For operations like AllocSmall where size is encoded in op_info
-#[allow(dead_code)]
-unsafe fn code_ptr_read_16(_code: &UnwindCode) -> u16 {
+pub unsafe fn code_ptr_read_16(_code: &UnwindCode) -> u16 {
     // _code is intentionally unused - reserved for future implementation
     // For most operations using this, the value is in the code structure
     // This is a fallback for cases where we can't read from memory
     0
 }
 
-/// Read a 32-bit immediate value following the UNWIND_CODE structure
+/// read a 32-bit immediate value following the UNWIND_CODE structure
 ///
 /// For AllocLarge operation, a 32-bit size follows the UNWIND_CODE.
-#[allow(dead_code)]
-unsafe fn code_ptr_read_32(_code: &UnwindCode) -> u32 {
+pub unsafe fn code_ptr_read_32(_code: &UnwindCode) -> u32 {
     // _code is intentionally unused - reserved for future implementation
     // For AllocLarge, we need to read from offset 2 as a 32-bit value
     // This requires the caller to pass proper context
@@ -1119,7 +1142,7 @@ unsafe fn code_ptr_read_32(_code: &UnwindCode) -> u32 {
     0
 }
 
-/// Read a 32-bit value from a specific offset in the unwind info
+/// read a 32-bit value from a specific offset in the unwind info
 /// This is the correct way to read extended data after UNWIND_CODE
 ///
 /// # Safety
@@ -1192,7 +1215,7 @@ pub fn apply_unwind_info(info: &UnwindInfo, context: &mut ContextFrame) -> u64 {
 }
 
 // =============================================================================
-// RtlDispatchException Implementation
+// rtl_dispatch_exception Implementation
 // =============================================================================
 
 /// Exception handler callback function type
@@ -1203,7 +1226,7 @@ pub type ExceptionFilter = extern "C" fn(
     *mut ContextFrame, // DispatcherContext
 ) -> ExceptionDisposition;
 
-/// RtlDispatchException walks the handler chain and calls each handler
+/// rtl_dispatch_exception walks the handler chain and calls each handler
 /// until one handles the exception or the chain is exhausted.
 pub fn rtl_dispatch_exception(
     exception_record: &mut ExceptionRecord,
@@ -1212,7 +1235,7 @@ pub fn rtl_dispatch_exception(
     record_exception();
 
     // // kprintln!(
-    // //         "[EXCEPTION] RtlDispatchException: code=0x{:08x} addr=0x{:016x}",
+    // //         "[EXCEPTION] rtl_dispatch_exception: code=0x{:08x} addr=0x{:016x}",
     // //         exception_record.exception_code,
     // //         exception_record.exception_address
     // //     );
@@ -1363,378 +1386,6 @@ fn call_exception_handler_with_unwind(
 }
 
 // =============================================================================
-// Hardware Exception Handling
-// =============================================================================
-
-/// Debug register definitions
-const DR6_MASK: u64 = 0x0000_0FFF;
-const DR7_MASK: u64 = 0x0000_FFFF;
-
-// Hardware debug-register accessors now live in `arch::x86_64::debug`
-// (`read_dr6` / `read_dr7` / `write_dr7`). They are imported at the
-// top of this module on x86_64 so the rest of the file can use them
-// without sprinkling `arch::x86_64::` everywhere.
-
-/// Handle debug exception (#DB)
-/// Called when a hardware breakpoint or single-step trap is triggered
-#[cfg(target_arch = "x86_64")]
-pub fn handle_debug_exception(
-    tf: &mut crate::arch::common::trap_frame::TrapFrame,
-) -> ExceptionDisposition {
-    let dr6 = read_dr6() & DR6_MASK;
-    // _dr7 is intentionally unused - reserved for future breakpoint processing
-    let _dr7 = read_dr7() & DR7_MASK;
-
-    // // kprintln!(
-    // //         "[EXCEPTION] Debug exception: DR6=0x{:016x} DR7=0x{:016x} RIP=0x{:016x}",
-    // //         dr6, dr7, tf.rip
-    // //     );
-
-    // Check each breakpoint condition
-    let conditions = [
-        (0x01, "B0", dr6 & 0x01 != 0), // Breakpoint 0
-        (0x02, "B1", dr6 & 0x02 != 0), // Breakpoint 1
-        (0x04, "B2", dr6 & 0x04 != 0), // Breakpoint 2
-        (0x08, "B3", dr6 & 0x08 != 0), // Breakpoint 3
-        (0x10, "BD", dr6 & 0x10 != 0), // Debug register access detected
-        (0x20, "BS", dr6 & 0x20 != 0), // Single step
-        (0x40, "BT", dr6 & 0x40 != 0), // Task switch
-    ];
-
-    for (_mask, _name, active) in conditions {
-        if active {
-            // // kprintln!("[EXCEPTION]   {} condition active", name);
-        }
-    }
-
-    let mut record = ExceptionRecord::new(0x80000004, tf.rip);
-
-    // Convert to ContextFrame for dispatch
-    let mut ctx = ContextFrame::new();
-    ctx.rax = tf.rax;
-    ctx.rcx = tf.rcx;
-    ctx.rdx = tf.rdx;
-    ctx.rbx = tf.rbx;
-    ctx.rbp = tf.rbp;
-    ctx.rsi = tf.rsi;
-    ctx.rdi = tf.rdi;
-    ctx.r8 = tf.r8;
-    ctx.r9 = tf.r9;
-    ctx.r10 = tf.r10;
-    ctx.r11 = tf.r11;
-    ctx.r12 = tf.r12;
-    ctx.r13 = tf.r13;
-    ctx.r14 = tf.r14;
-    ctx.r15 = tf.r15;
-    ctx.rip = tf.rip;
-    ctx.rsp = tf.rsp;
-    ctx.efl = tf.rflags as u16;
-
-    rtl_dispatch_exception(&mut record, &mut ctx)
-}
-
-/// Handle breakpoint exception (#BP / INT3)
-/// This is also triggered by the BOUND instruction
-#[cfg(target_arch = "x86_64")]
-pub fn handle_breakpoint_exception(
-    tf: &mut crate::arch::common::trap_frame::TrapFrame,
-) -> ExceptionDisposition {
-    // // kprintln!(
-    // //         "[EXCEPTION] Breakpoint at RIP=0x{:016x}",
-    // //         tf.rip
-    // //     );
-
-    // Step over the INT3 instruction by advancing RIP
-    // INT3 is a 1-byte instruction (0xCC), so we skip it
-    tf.rip += 1;
-
-    // Create exception record
-    let mut record = ExceptionRecord::new(EXCEPTION_BREAKPOINT, tf.rip);
-
-    // Convert to ContextFrame for dispatch
-    let mut ctx = ContextFrame::new();
-    ctx.rax = tf.rax;
-    ctx.rcx = tf.rcx;
-    ctx.rdx = tf.rdx;
-    ctx.rbx = tf.rbx;
-    ctx.rbp = tf.rbp;
-    ctx.rsi = tf.rsi;
-    ctx.rdi = tf.rdi;
-    ctx.r8 = tf.r8;
-    ctx.r9 = tf.r9;
-    ctx.r10 = tf.r10;
-    ctx.r11 = tf.r11;
-    ctx.r12 = tf.r12;
-    ctx.r13 = tf.r13;
-    ctx.r14 = tf.r14;
-    ctx.r15 = tf.r15;
-    ctx.rip = tf.rip;
-    ctx.rsp = tf.rsp;
-    ctx.efl = tf.rflags as u16;
-
-    rtl_dispatch_exception(&mut record, &mut ctx)
-}
-
-/// Handle invalid opcode exception (#UD)
-#[cfg(target_arch = "x86_64")]
-pub fn handle_invalid_opcode(
-    tf: &mut crate::arch::common::trap_frame::TrapFrame,
-) -> ExceptionDisposition {
-    // // kprintln!(
-    // //         "[EXCEPTION] Invalid opcode at RIP=0x{:016x}",
-    // //         tf.rip
-    // //     );
-
-    let mut record = ExceptionRecord::new(EXCEPTION_ILLEGAL_INSTRUCTION, tf.rip);
-
-    // Convert to ContextFrame for dispatch
-    let mut ctx = ContextFrame::new();
-    ctx.rax = tf.rax;
-    ctx.rcx = tf.rcx;
-    ctx.rdx = tf.rdx;
-    ctx.rbx = tf.rbx;
-    ctx.rbp = tf.rbp;
-    ctx.rsi = tf.rsi;
-    ctx.rdi = tf.rdi;
-    ctx.r8 = tf.r8;
-    ctx.r9 = tf.r9;
-    ctx.r10 = tf.r10;
-    ctx.r11 = tf.r11;
-    ctx.r12 = tf.r12;
-    ctx.r13 = tf.r13;
-    ctx.r14 = tf.r14;
-    ctx.r15 = tf.r15;
-    ctx.rip = tf.rip;
-    ctx.rsp = tf.rsp;
-    ctx.efl = tf.rflags as u16;
-
-    rtl_dispatch_exception(&mut record, &mut ctx)
-}
-
-/// Handle privileged instruction exception (#GP)
-#[cfg(target_arch = "x86_64")]
-pub fn handle_privileged_instruction(
-    tf: &mut crate::arch::common::trap_frame::TrapFrame,
-) -> ExceptionDisposition {
-    // // kprintln!(
-    // //         "[EXCEPTION] Privileged instruction at RIP=0x{:016x}",
-    // //         tf.rip
-    // //     );
-
-    let mut record = ExceptionRecord::new(EXCEPTION_PRIVILEGED_INSTRUCTION, tf.rip);
-
-    // Convert to ContextFrame for dispatch
-    let mut ctx = ContextFrame::new();
-    ctx.rax = tf.rax;
-    ctx.rcx = tf.rcx;
-    ctx.rdx = tf.rdx;
-    ctx.rbx = tf.rbx;
-    ctx.rbp = tf.rbp;
-    ctx.rsi = tf.rsi;
-    ctx.rdi = tf.rdi;
-    ctx.r8 = tf.r8;
-    ctx.r9 = tf.r9;
-    ctx.r10 = tf.r10;
-    ctx.r11 = tf.r11;
-    ctx.r12 = tf.r12;
-    ctx.r13 = tf.r13;
-    ctx.r14 = tf.r14;
-    ctx.r15 = tf.r15;
-    ctx.rip = tf.rip;
-    ctx.rsp = tf.rsp;
-    ctx.efl = tf.rflags as u16;
-
-    rtl_dispatch_exception(&mut record, &mut ctx)
-}
-
-/// Handle page fault exception (#PF)
-#[cfg(target_arch = "x86_64")]
-pub fn handle_page_fault(
-    address: u64,
-    _present: bool,
-    write: bool,
-    user: bool,
-    tf: &mut crate::arch::common::trap_frame::TrapFrame,
-) -> ExceptionDisposition {
-    record_exception();
-
-    // // kprintln!(
-    // //         "[EXCEPTION] Page fault: addr=0x{:016x} present={} write={} user={} RIP=0x{:016x}",
-    // //         address, present, write, user, tf.rip
-    // //     );
-
-    // Try to handle via memory manager
-    // In a full implementation, this would:
-    // 1. Check if the address is in a valid VAD region
-    // 2. If guard page, convert to guard page fault
-    // 3. If not present, allocate zero page (demand zero)
-    // 4. If write and COW, copy page
-    // 5. If still can't handle, dispatch exception
-
-    let access_violation_info = [
-        if write { 1u64 } else { 0 },
-        address,
-        if user { 1u64 } else { 0 },
-    ];
-
-    let mut record =
-        ExceptionRecord::with_info(EXCEPTION_ACCESS_VIOLATION, tf.rip, &access_violation_info);
-
-    // Try MM handler first
-    use crate::mm::access_fault::AccessFlags;
-    let flags = AccessFlags {
-        read: true,
-        write,
-        execute: false,
-        user,
-        reserved_bit: false,
-        instruction_fetch: false,
-    };
-    let result = crate::mm::access_fault::handle(address, flags);
-    if matches!(result, crate::mm::access_fault::FaultStatus::Handled) {
-        // // kprintln!("[EXCEPTION] Page fault handled by MM");
-        return ExceptionDisposition::ExceptionHandled;
-    }
-
-    // Convert TrapFrame to ContextFrame for dispatch
-    let mut ctx = ContextFrame::new();
-    ctx.rax = tf.rax;
-    ctx.rcx = tf.rcx;
-    ctx.rdx = tf.rdx;
-    ctx.rbx = tf.rbx;
-    ctx.rbp = tf.rbp;
-    ctx.rsi = tf.rsi;
-    ctx.rdi = tf.rdi;
-    ctx.r8 = tf.r8;
-    ctx.r9 = tf.r9;
-    ctx.r10 = tf.r10;
-    ctx.r11 = tf.r11;
-    ctx.r12 = tf.r12;
-    ctx.r13 = tf.r13;
-    ctx.r14 = tf.r14;
-    ctx.r15 = tf.r15;
-    ctx.rip = tf.rip;
-    ctx.rsp = tf.rsp;
-    ctx.efl = tf.rflags as u16;
-
-    // Fall through to regular exception dispatch
-    rtl_dispatch_exception(&mut record, &mut ctx)
-}
-
-/// Handle divide error (#DE)
-#[cfg(target_arch = "x86_64")]
-pub fn handle_divide_error(
-    tf: &crate::arch::common::trap_frame::TrapFrame,
-) -> ExceptionDisposition {
-    // // kprintln!(
-    // //         "[EXCEPTION] Divide error at RIP=0x{:016x}",
-    // //         tf.rip
-    // //     );
-
-    let mut record = ExceptionRecord::new(EXCEPTION_DIVIDE_BY_ZERO, tf.rip);
-
-    // Convert TrapFrame to ContextFrame for dispatch
-    let mut ctx = ContextFrame::new();
-    ctx.rax = tf.rax;
-    ctx.rcx = tf.rcx;
-    ctx.rdx = tf.rdx;
-    ctx.rbx = tf.rbx;
-    ctx.rbp = tf.rbp;
-    ctx.rsi = tf.rsi;
-    ctx.rdi = tf.rdi;
-    ctx.r8 = tf.r8;
-    ctx.r9 = tf.r9;
-    ctx.r10 = tf.r10;
-    ctx.r11 = tf.r11;
-    ctx.r12 = tf.r12;
-    ctx.r13 = tf.r13;
-    ctx.r14 = tf.r14;
-    ctx.r15 = tf.r15;
-    ctx.rip = tf.rip;
-    ctx.rsp = tf.rsp;
-    ctx.efl = tf.rflags as u16;
-
-    rtl_dispatch_exception(&mut record, &mut ctx)
-}
-
-/// Handle debug exception (#DB)
-#[cfg(target_arch = "x86_64")]
-pub fn handle_debug(tf: &mut crate::arch::common::trap_frame::TrapFrame) -> ExceptionDisposition {
-    // _dr6 and _dr7 are intentionally unused - reserved for future breakpoint processing
-    let _dr6 = read_dr6() & DR6_MASK;
-    let _dr7 = read_dr7() & DR7_MASK;
-
-    // // kprintln!(
-    // //         "[EXCEPTION] Debug exception: DR6=0x{:016x} DR7=0x{:016x} RIP=0x{:016x}",
-    // //         dr6, dr7, tf.rip
-    // //     );
-
-    let mut record = ExceptionRecord::new(EXCEPTION_SINGLE_STEP, tf.rip);
-
-    // Convert TrapFrame to ContextFrame for dispatch
-    let mut ctx = ContextFrame::new();
-    ctx.rax = tf.rax;
-    ctx.rcx = tf.rcx;
-    ctx.rdx = tf.rdx;
-    ctx.rbx = tf.rbx;
-    ctx.rbp = tf.rbp;
-    ctx.rsi = tf.rsi;
-    ctx.rdi = tf.rdi;
-    ctx.r8 = tf.r8;
-    ctx.r9 = tf.r9;
-    ctx.r10 = tf.r10;
-    ctx.r11 = tf.r11;
-    ctx.r12 = tf.r12;
-    ctx.r13 = tf.r13;
-    ctx.r14 = tf.r14;
-    ctx.r15 = tf.r15;
-    ctx.rip = tf.rip;
-    ctx.rsp = tf.rsp;
-    ctx.efl = tf.rflags as u16;
-
-    rtl_dispatch_exception(&mut record, &mut ctx)
-}
-
-/// Handle breakpoint exception (#BP)
-#[cfg(target_arch = "x86_64")]
-pub fn handle_breakpoint(
-    tf: &mut crate::arch::common::trap_frame::TrapFrame,
-) -> ExceptionDisposition {
-    // // kprintln!(
-    // //         "[EXCEPTION] Breakpoint at RIP=0x{:016x}",
-    // //         tf.rip
-    // //     );
-
-    // Step over the INT3 instruction
-    tf.rip += 1;
-
-    let mut record = ExceptionRecord::new(EXCEPTION_BREAKPOINT, tf.rip);
-
-    // Convert TrapFrame to ContextFrame for dispatch
-    let mut ctx = ContextFrame::new();
-    ctx.rax = tf.rax;
-    ctx.rcx = tf.rcx;
-    ctx.rdx = tf.rdx;
-    ctx.rbx = tf.rbx;
-    ctx.rbp = tf.rbp;
-    ctx.rsi = tf.rsi;
-    ctx.rdi = tf.rdi;
-    ctx.r8 = tf.r8;
-    ctx.r9 = tf.r9;
-    ctx.r10 = tf.r10;
-    ctx.r11 = tf.r11;
-    ctx.r12 = tf.r12;
-    ctx.r13 = tf.r13;
-    ctx.r14 = tf.r14;
-    ctx.r15 = tf.r15;
-    ctx.rip = tf.rip;
-    ctx.rsp = tf.rsp;
-    ctx.efl = tf.rflags as u16;
-
-    rtl_dispatch_exception(&mut record, &mut ctx)
-}
-
-// =============================================================================
 // TEB Exception List Integration
 // =============================================================================
 
@@ -1744,7 +1395,7 @@ pub fn get_teb_exception_list(teb_ptr: u64) -> u64 {
     if teb_ptr == 0 {
         return 0;
     }
-    // Read the first 8 bytes (ExceptionList field)
+    // read the first 8 bytes (exception_list field)
     unsafe { core::ptr::read(teb_ptr as *const u64) }
 }
 
@@ -1753,7 +1404,7 @@ pub fn set_teb_exception_list(teb_ptr: u64, exception_list: u64) {
     if teb_ptr == 0 {
         return;
     }
-    // Write to the first 8 bytes (ExceptionList field)
+    // write to the first 8 bytes (exception_list field)
     unsafe { core::ptr::write(teb_ptr as *mut u64, exception_list) };
 }
 
@@ -1766,7 +1417,7 @@ pub fn walk_exception_list(
     let mut current = exception_list;
 
     while current != 0 {
-        // Read the EXCEPTION_REGISTRATION structure
+        // read the EXCEPTION_REGISTRATION structure
         // struct { PVOID Next; PVOID Handler; }
         let next: u64 = unsafe { core::ptr::read(current as *const u64) };
         let handler: u64 = unsafe { core::ptr::read((current + 8) as *const u64) };
@@ -1809,22 +1460,16 @@ pub fn walk_exception_list(
     ExceptionDisposition::ContinueSearch
 }
 
-/// Walk the TEB exception list for the current thread
-///
-/// This function reads the TEB pointer from GS:0x30 (x64),
-/// gets the ExceptionList, and walks it to find exception handlers.
-#[cfg(target_arch = "x86_64")]
 fn walk_teb_exception_list(
     exception_record: &mut ExceptionRecord,
     context_frame: &mut ContextFrame,
 ) -> Option<ExceptionDisposition> {
-    // Get TEB pointer from GS:0x30 on x64. The kernel sets the GS
-    // base to the user-mode TEB before ring-3 entry, so this yields
-    // the SEH-walkable self pointer.
-    let teb = crate::arch::x86_64::debug::read_gs_offset(0x30);
+    let teb = crate::arch::common::percpu::try_get_current()
+        .map(|area| area.current_thread)
+        .filter(|thread| !thread.is_null())
+        .map(|thread| unsafe { (*thread).kthread.teb as u64 })?;
 
     if teb == 0 {
-        // // kprintln!("[EXCEPTION] TEB is null");
         return None;
     }
 
@@ -1832,12 +1477,12 @@ fn walk_teb_exception_list(
     let exception_list = get_teb_exception_list(teb);
 
     if exception_list == 0 || exception_list == 0xFFFFFFFFFFFFFFFF {
-        // // kprintln!("[EXCEPTION] TEB ExceptionList is empty or end marker");
+        // // kprintln!("[EXCEPTION] TEB exception_list is empty or end marker");
         return None;
     }
 
     // // kprintln!(
-    // //         "[EXCEPTION] Walking TEB ExceptionList @ 0x{:016x}",
+    // //         "[EXCEPTION] Walking TEB exception_list @ 0x{:016x}",
     // //         exception_list
     // //     );
 
@@ -1846,16 +1491,6 @@ fn walk_teb_exception_list(
 
     Some(result)
 }
-
-#[cfg(not(target_arch = "x86_64"))]
-#[allow(dead_code)]
-fn walk_teb_exception_list(
-    _exception_record: &mut ExceptionRecord,
-    _context_frame: &mut ContextFrame,
-) -> Option<ExceptionDisposition> {
-    None
-}
-
 // =============================================================================
 // Extended init with handler setup
 // =============================================================================

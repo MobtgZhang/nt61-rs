@@ -1,7 +1,7 @@
 //! DPC (Deferred Procedure Call)
 //
 //! DPCs are how the kernel defers work from DIRQL to DISPATCH_LEVEL.
-//! An ISR can `KeInsertQueueDpc` to ask for a routine to run once
+//! An ISR can `ke_insert_queue_dpc` to ask for a routine to run once
 //! the CPU drops to DISPATCH_LEVEL; the dispatcher's DPC software
 //! interrupt (vector 0xDF on x86) drains the queue.
 //
@@ -199,8 +199,8 @@ pub fn init() {
     // // kprintln!("      DPC vector: 0x{:02x} (software interrupt)", DPC_VECTOR);
 }
 
-/// Initialize a DPC object. This is `KeInitializeDpc` in Windows.
-pub unsafe fn KeInitializeDpc(dpc: *mut Dpc, routine: DpcRoutine, context: *mut u8) {
+/// Initialize a DPC object. This is `ke_initialize_dpc` in Windows.
+pub unsafe fn ke_initialize_dpc(dpc: *mut Dpc, routine: DpcRoutine, context: *mut u8) {
     if dpc.is_null() {
         return;
     }
@@ -215,10 +215,10 @@ pub unsafe fn KeInitializeDpc(dpc: *mut Dpc, routine: DpcRoutine, context: *mut 
     (*dpc).name = "<dpc>";
 }
 
-/// Insert a DPC into the queue. This is `KeInsertQueueDpc` in Windows.
+/// Insert a DPC into the queue. This is `ke_insert_queue_dpc` in Windows.
 ///
 /// Returns true if the DPC was successfully queued.
-pub unsafe fn KeInsertQueueDpc(
+pub unsafe fn ke_insert_queue_dpc(
     dpc: *mut Dpc,
     _system_argument1: *mut u8,
     _system_argument2: *mut u8,
@@ -375,22 +375,23 @@ pub fn smoke_test() -> bool {
     // //         fired, i_after, f_after
     // //     );
 
-    // Test KeInitializeDpc and KeInsertQueueDpc
+    // Test ke_initialize_dpc and ke_insert_queue_dpc
     let mut test_dpc = Dpc::new();
     unsafe {
-        KeInitializeDpc(&mut test_dpc, smoke_dpc_routine, core::ptr::null_mut());
-        let result = KeInsertQueueDpc(&mut test_dpc, core::ptr::null_mut(), core::ptr::null_mut());
+        ke_initialize_dpc(&mut test_dpc, smoke_dpc_routine, core::ptr::null_mut());
+        let result =
+            ke_insert_queue_dpc(&mut test_dpc, core::ptr::null_mut(), core::ptr::null_mut());
         if !result {
-            // // kprintln!("    [DPC SMOKE FAIL] KeInsertQueueDpc returned false");
+            // // kprintln!("    [DPC SMOKE FAIL] ke_insert_queue_dpc returned false");
             return false;
         }
     }
     let fired2 = drain();
     if fired2 != 1 {
-        // // kprintln!("    [DPC SMOKE FAIL] KeInsertQueueDpc drain fired={} (expected 1)", fired2);
+        // // kprintln!("    [DPC SMOKE FAIL] ke_insert_queue_dpc drain fired={} (expected 1)", fired2);
         return false;
     }
-    // // kprintln!("    [DPC SMOKE OK] KeInitializeDpc/KeInsertQueueDpc work");
+    // // kprintln!("    [DPC SMOKE OK] ke_initialize_dpc/ke_insert_queue_dpc work");
 
     true
 }
@@ -508,7 +509,7 @@ pub fn queue_dpc_to_cpu(
     }
 
     // Queue the DPC
-    let result = unsafe { KeInsertQueueDpc(dpc, system_argument1, system_argument2) };
+    let result = unsafe { ke_insert_queue_dpc(dpc, system_argument1, system_argument2) };
 
     if result {
         // // kprintln!("[DPC] Queued DPC to CPU {}", cpu_number);
@@ -517,10 +518,8 @@ pub fn queue_dpc_to_cpu(
         // Interrupt would be issued here. Port to the unified
         // `hal::pic`/`arch::common::ipi` facade when SMP is
         // brought up on non-x86_64 targets.
-        #[cfg(target_arch = "x86_64")]
         if cpu_number != get_current_cpu_number() {
-            // Request IPI to target CPU via APIC's IPI mechanism.
-            // // kprintln!("[DPC] Would send IPI to CPU {}", cpu_number);
+            crate::arch::request_reschedule_ipi(cpu_number);
         }
     }
 

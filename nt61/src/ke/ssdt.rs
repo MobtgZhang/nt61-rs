@@ -33,8 +33,6 @@
 //
 //! Reference: ReactOS/WRK, Geoff Chappell, Vergilius Project
 
-#![cfg(target_arch = "x86_64")]
-
 use crate::ke::shadow_ssdt::SHADOW_MAX_SERVICES;
 
 /// Maximum number of services in the SSDT
@@ -114,7 +112,7 @@ static mut KE_SERVICE_DESCRIPTOR_TABLE: KeServiceDescriptorTable = KeServiceDesc
 /// This table is populated during init() and contains pointers to
 /// both the native and shadow (win32k) service tables.
 pub fn get_service_descriptor_table() -> &'static KeServiceDescriptorTable {
-    unsafe { &KE_SERVICE_DESCRIPTOR_TABLE }
+    unsafe { &*core::ptr::addr_of!(KE_SERVICE_DESCRIPTOR_TABLE) }
 }
 
 /// Service argument count encoding
@@ -142,8 +140,7 @@ pub type SsdtHandler = extern "C" fn() -> u64;
 // External C function for syscall dispatch (linked by loader; not called
 // directly inside the kernel because the dispatch table resolves the call)
 extern "C" {
-    #[allow(unused)]
-    fn syscall_dispatch(syscall_num: u64, tf: *mut ()) -> u64;
+    pub fn syscall_dispatch(syscall_num: u64, tf: *mut ()) -> u64;
 }
 
 // =====================================================================
@@ -161,7 +158,7 @@ extern "C" {
 // ## Windows 7 x64 SSDT Entry Format
 //
 // Each entry in KiServiceTable is a 4-byte encoded value:
-//   - High 28 bits: Offset from KiServiceTable base (divided by 16)
+//   - High 28 bits: offset from KiServiceTable base (divided by 16)
 //   - Low 4 bits: Argument size in bytes
 //
 // Formula: handler_address = KiServiceTableBase + (entry >> 4) * 16
@@ -207,7 +204,7 @@ impl EncodedServiceEntry {
         self.encoded == 0
     }
 
-    /// Create an encoded entry from handler address and table base
+    /// create an encoded entry from handler address and table base
     ///
     /// # Arguments
     /// * `handler` - The absolute address of the service handler
@@ -235,16 +232,14 @@ impl EncodedServiceEntry {
 
 /// KiServiceTable - the main system service table
 /// This is a static array that will be populated during init
-#[allow(unused_mut)]
 static mut KI_SERVICE_TABLE: [ServiceTableEntry; SSDT_MAX_SERVICES] = {
-    let mut arr = [ServiceTableEntry::new(); SSDT_MAX_SERVICES];
+    let arr = [ServiceTableEntry::new(); SSDT_MAX_SERVICES];
     arr
 };
 
 /// Encoded KiServiceTable for Windows-compatible offset calculation
-#[allow(unused_mut)]
 static mut KI_SERVICE_TABLE_ENCODED: [EncodedServiceEntry; SSDT_MAX_SERVICES] = {
-    let mut arr = [EncodedServiceEntry::new(); SSDT_MAX_SERVICES];
+    let arr = [EncodedServiceEntry::new(); SSDT_MAX_SERVICES];
     arr
 };
 
@@ -262,8 +257,8 @@ pub fn init() {
     // // kprintln!("[SSDT] Initializing System Service Dispatch Table...");
     // Initialize KeServiceDescriptorTable with proper pointers
     unsafe {
-        let table_base = KI_SERVICE_TABLE.as_ptr() as u64;
-        let arg_base = KI_ARGUMENT_TABLE.as_ptr();
+        let table_base = (*core::ptr::addr_of!(KI_SERVICE_TABLE)).as_ptr() as u64;
+        let arg_base = (*core::ptr::addr_of!(KI_ARGUMENT_TABLE)).as_ptr();
 
         KE_SERVICE_DESCRIPTOR_TABLE.base = KeServiceDescriptor {
             service_table: table_base as *const (),
@@ -274,10 +269,10 @@ pub fn init() {
 
         // Initialize shadow table (win32k) - will be populated later
         KE_SERVICE_DESCRIPTOR_TABLE.shadow = KeServiceDescriptor {
-            service_table: SHADOW_SERVICE_TABLE.as_ptr() as *const (),
+            service_table: (*core::ptr::addr_of!(SHADOW_SERVICE_TABLE)).as_ptr() as *const (),
             counter_table: core::ptr::null(),
             service_count: SHADOW_MAX_SERVICES as u32,
-            argument_table: SHADOW_ARGUMENT_TABLE.as_ptr(),
+            argument_table: (*core::ptr::addr_of!(SHADOW_ARGUMENT_TABLE)).as_ptr(),
         };
 
         // // kprintln!(
@@ -401,7 +396,7 @@ pub fn get_service_handler_encoded(service_number: u32, table_base: u64) -> Opti
 /// Returns the address of the KiServiceTable static array.
 /// This is needed for computing encoded offsets.
 pub fn get_service_table_base() -> u64 {
-    unsafe { KI_SERVICE_TABLE.as_ptr() as u64 }
+    unsafe { (*core::ptr::addr_of!(KI_SERVICE_TABLE)).as_ptr() as u64 }
 }
 
 // =====================================================================
@@ -413,9 +408,8 @@ pub fn get_service_table_base() -> u64 {
 // from user mode, the service number is in the range 0x1000-0x1FFF.
 
 /// Shadow SSDT (Win32k services)
-#[allow(unused_mut)]
 static mut SHADOW_SERVICE_TABLE: [ServiceTableEntry; SSDT_MAX_SERVICES] = {
-    let mut arr = [ServiceTableEntry::new(); SSDT_MAX_SERVICES];
+    let arr = [ServiceTableEntry::new(); SSDT_MAX_SERVICES];
     arr
 };
 
@@ -491,7 +485,7 @@ pub fn dispatch_service(service_number: u32, trap_frame: *mut ()) -> u64 {
                         None => {
                             // // kprintln!("[SSDT] Unimplemented native service 0x{:03x}",
                             // //                                      get_service_index(service_number));
-                            0xC0000001u32 as u64 // STATUS_NOT_IMPLEMENTED
+                            0xC000001Cu32 as u64 // STATUS_INVALID_SYSTEM_SERVICE
                         }
                     }
                 }
@@ -507,13 +501,13 @@ pub fn dispatch_service(service_number: u32, trap_frame: *mut ()) -> u64 {
                 None => {
                     // // kprintln!("[SSDT] Unimplemented shadow service 0x{:04x}",
                     // //                              service_number);
-                    0xC0000001u32 as u64
+                    0xC000001Cu32 as u64
                 }
             }
         }
         _ => {
             // // kprintln!("[SSDT] Unknown table index {}", table_index);
-            0xC0000001u32 as u64
+            0xC000001Cu32 as u64
         }
     }
 }
@@ -527,13 +521,13 @@ pub fn smoke_test() -> bool {
     // // kprintln!("  [SSDT SMOKE] running SSDT smoke test...");
 
     // Check that the service tables are accessible
-    let table_ptr = unsafe { KI_SERVICE_TABLE.as_ptr() };
+    let table_ptr = unsafe { (*core::ptr::addr_of!(KI_SERVICE_TABLE)).as_ptr() };
     if table_ptr.is_null() {
         // // kprintln!("  [SSDT SMOKE FAIL] KiServiceTable is null");
         return false;
     }
 
-    let arg_ptr = unsafe { KI_ARGUMENT_TABLE.as_ptr() };
+    let arg_ptr = unsafe { (*core::ptr::addr_of!(KI_ARGUMENT_TABLE)).as_ptr() };
     if arg_ptr.is_null() {
         // // kprintln!("  [SSDT SMOKE FAIL] KiArgumentTable is null");
         return false;

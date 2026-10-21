@@ -7,8 +7,6 @@
 //! area: a small set of fixed-vector handlers plus a
 //! dynamically-allocated vector range.
 
-#![allow(non_snake_case)]
-
 use core::sync::atomic::{AtomicU8, Ordering};
 
 /// Fixed IPI vector assignments.
@@ -28,7 +26,7 @@ static mut IPI_HANDLERS: [Option<IpiHandler>; 12] = [None; 12];
 /// Returns None if the table is full.
 pub fn allocate_ipi_vector(handler: IpiHandler) -> Option<u8> {
     unsafe {
-        for i in 0..IPI_HANDLERS.len() {
+        for i in 0..(*core::ptr::addr_of!(IPI_HANDLERS)).len() {
             if IPI_HANDLERS[i].is_none() {
                 IPI_HANDLERS[i] = Some(handler);
                 return Some(IPI_DYNAMIC_BASE + i as u8);
@@ -115,7 +113,7 @@ pub fn init() {
     // static list for the bootstrap; the real implementation
     // would have one per dispatcher object.
     unsafe {
-        WAIT_LIST_HEAD.init();
+        (*core::ptr::addr_of_mut!(WAIT_LIST_HEAD)).init();
     }
 }
 
@@ -233,7 +231,8 @@ pub fn wait_on(object: &DispatcherHeader, timeout_ms: u32) -> WaitResult {
             entry.in_use = true;
             // Insert the thread's wait_list_entry at the tail of
             // the wait list (sentinel-style intrusive list).
-            let head_ptr: *mut crate::ps::process::ListEntry = &mut WAIT_LIST_HEAD;
+            let head_ptr: *mut crate::ps::process::ListEntry =
+                core::ptr::addr_of_mut!(WAIT_LIST_HEAD);
             let e_ptr: *mut crate::ps::process::ListEntry = &mut (*current).kthread.wait_list_entry;
             (*e_ptr).blink = (*head_ptr).blink;
             (*e_ptr).flink = head_ptr;
@@ -265,7 +264,7 @@ pub fn wait_on(object: &DispatcherHeader, timeout_ms: u32) -> WaitResult {
 pub fn wake(object: &DispatcherHeader, all: bool) {
     let _lock = WAIT_LIST_LOCK.lock();
     unsafe {
-        let head_ptr: *mut crate::ps::process::ListEntry = &mut WAIT_LIST_HEAD;
+        let head_ptr: *mut crate::ps::process::ListEntry = core::ptr::addr_of_mut!(WAIT_LIST_HEAD);
         let mut cur: *mut crate::ps::process::ListEntry = (*head_ptr).flink;
         let mut woken: u32 = 0;
         while !cur.is_null() && cur != head_ptr {
@@ -371,7 +370,7 @@ pub fn tick_wait_list() {
     let _lock = WAIT_LIST_LOCK.lock();
     unsafe {
         let now = crate::ke::time::get_tick_count() as u64;
-        let head_ptr: *mut crate::ps::process::ListEntry = &mut WAIT_LIST_HEAD;
+        let head_ptr: *mut crate::ps::process::ListEntry = core::ptr::addr_of_mut!(WAIT_LIST_HEAD);
         let mut cur: *mut crate::ps::process::ListEntry = (*head_ptr).flink;
         while !cur.is_null() && cur != head_ptr {
             let wait_entry_offset = core::mem::offset_of!(Ethread, kthread)

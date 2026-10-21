@@ -90,7 +90,7 @@ unsafe impl<T: ?Sized> Send for Spinlock<T> {}
 unsafe impl<T: ?Sized> Sync for Spinlock<T> {}
 
 impl<T> Spinlock<T> {
-    /// Create a new spinlock wrapping `data`.
+    /// create a new spinlock wrapping `data`.
     pub const fn new(data: T) -> Self {
         Self {
             locked: AtomicU32::new(0),
@@ -109,20 +109,14 @@ impl<T: ?Sized> Spinlock<T> {
     /// When the lock is acquired, interrupts are disabled on this CPU
     /// and will be re-enabled when the guard is dropped.
     pub fn try_lock(&self) -> Option<SpinlockGuard<'_, T>> {
-        if self
-            .locked
+        let irql_guard = IrqlRestore::raise();
+        self.locked
             .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
-            .is_ok()
-        {
-            // Disable interrupts while the lock is held to prevent ISR deadlock
-            let irql_guard = IrqlRestore::raise();
-            Some(SpinlockGuard {
+            .ok()
+            .map(|_| SpinlockGuard {
                 lock: self,
                 _irql_guard: Some(irql_guard),
             })
-        } else {
-            None
-        }
     }
 
     /// Plain acquire/release pair for callers that cannot hold an RAII
@@ -153,6 +147,7 @@ impl<T: ?Sized> Spinlock<T> {
     ///
     /// Uses exponential backoff to reduce bus contention on SMP systems.
     pub fn lock(&self) -> SpinlockGuard<'_, T> {
+        let irql_guard = IrqlRestore::raise();
         let mut spins: u32 = 0;
         loop {
             // Try to acquire the lock first
@@ -161,8 +156,6 @@ impl<T: ?Sized> Spinlock<T> {
                 .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
                 .is_ok()
             {
-                // Successfully acquired the lock - disable interrupts for the duration
-                let irql_guard = IrqlRestore::raise();
                 return SpinlockGuard {
                     lock: self,
                     _irql_guard: Some(irql_guard),
@@ -192,7 +185,7 @@ impl<T: ?Sized> Spinlock<T> {
         }
     }
 
-    /// Read the lock state (true = held). For diagnostics / asserts.
+    /// read the lock state (true = held). For diagnostics / asserts.
     pub fn is_locked(&self) -> bool {
         self.locked.load(Ordering::Relaxed) != 0
     }

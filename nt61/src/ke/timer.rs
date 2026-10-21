@@ -123,7 +123,7 @@ pub fn init() {
 /// while we're inside `timer_array`.
 pub static mut SPURIOUS_INTS: u32 = 0;
 
-/// Create a named timer. The timer is not armed; call
+/// create a named timer. The timer is not armed; call
 /// `arm_ms` / `arm_at` on it before `tick()` will fire it.
 pub fn create_timer(name: &'static str) -> Option<usize> {
     let idx = alloc_slot()?;

@@ -10,7 +10,7 @@
 //
 //! Each thread has two APC queues: one for kernel-mode APCs and
 //! one for user-mode APCs. The kernel queues kernel-mode APCs
-//! directly; the user-mode queue is exposed via `NtQueueApcThread`.
+//! directly; the user-mode queue is exposed via `nt_queue_apc_thread`.
 
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -134,7 +134,7 @@ pub fn init() {
     DEQUEUE_COUNT.store(0, Ordering::SeqCst);
     // // kprintln!("    APC: queues=2 (kernel/user) max_global={}", MAX_GLOBAL_APCS);
     // // kprintln!("    APC: per_thread max={}", MAX_APCS_PER_THREAD);
-    // // kprintln!("    APC: KeInitializeApc/KeInsertQueueApc/KiDeliverApc available");
+    // // kprintln!("    APC: ke_initialize_apc/ke_insert_queue_apc/ki_deliver_apc available");
 }
 
 /// Initialize APC state for a thread.
@@ -145,14 +145,14 @@ pub fn init_thread_apc_state(_apc_state: &mut crate::ps::thread::ApcState) {
 }
 
 // ============================================================================
-// KeInitializeApc / KeInsertQueueApc / KiDeliverApc
+// ke_initialize_apc / ke_insert_queue_apc / ki_deliver_apc
 // ============================================================================
 
-/// Initialize an APC object. This is `KeInitializeApc` in Windows.
+/// Initialize an APC object. This is `ke_initialize_apc` in Windows.
 ///
 /// # Safety
 /// `apc` must point to a valid, aligned, writable APC structure.
-pub unsafe fn KeInitializeApc(
+pub unsafe fn ke_initialize_apc(
     apc: *mut Apc,
     thread: *mut Ethread,
     _environment: ApcEnvironment,
@@ -182,13 +182,13 @@ pub unsafe fn KeInitializeApc(
     };
 }
 
-/// Insert an APC into a thread's queue. This is `KeInsertQueueApc` in Windows.
+/// Insert an APC into a thread's queue. This is `ke_insert_queue_apc` in Windows.
 ///
 /// Returns true if the APC was successfully queued.
 ///
 /// # Safety
-/// `apc` must be a valid APC initialized by `KeInitializeApc`.
-pub unsafe fn KeInsertQueueApc(
+/// `apc` must be a valid APC initialized by `ke_initialize_apc`.
+pub unsafe fn ke_insert_queue_apc(
     apc: *mut Apc,
     system_argument1: *mut u8,
     system_argument2: *mut u8,
@@ -201,13 +201,13 @@ pub unsafe fn KeInsertQueueApc(
     // Check IRQL: must be at APC_LEVEL or lower
     let current_irql = irql::get_current_irql();
     if current_irql > APC_LEVEL {
-        // // kprintln!("[APC] KeInsertQueueApc failed: IRQL too high");
+        // // kprintln!("[APC] ke_insert_queue_apc failed: IRQL too high");
         return false;
     }
 
     // Check if already inserted
     if (*apc).inserted.load(Ordering::Relaxed) {
-        // // kprintln!("[APC] KeInsertQueueApc failed: already inserted");
+        // // kprintln!("[APC] ke_insert_queue_apc failed: already inserted");
         return false;
     }
 
@@ -218,7 +218,7 @@ pub unsafe fn KeInsertQueueApc(
     // Get the thread
     let thread = (*apc).thread;
     if thread.is_null() {
-        // // kprintln!("[APC] KeInsertQueueApc failed: no thread");
+        // // kprintln!("[APC] ke_insert_queue_apc failed: no thread");
         return false;
     }
 
@@ -248,7 +248,7 @@ pub unsafe fn KeInsertQueueApc(
     true
 }
 
-/// Deliver APCs to a thread. This is `KiDeliverApc` in Windows.
+/// Deliver APCs to a thread. This is `ki_deliver_apc` in Windows.
 ///
 /// This function should be called:
 /// - At IRQL = APC_LEVEL
@@ -257,7 +257,7 @@ pub unsafe fn KeInsertQueueApc(
 ///
 /// # Safety
 /// `current_thread` must be a valid pointer to the current ETHREAD.
-pub unsafe fn KiDeliverApc(current_thread: *mut Ethread, delivery_mode: ApcMode) {
+pub unsafe fn ki_deliver_apc(current_thread: *mut Ethread, delivery_mode: ApcMode) {
     if current_thread.is_null() {
         return;
     }
@@ -456,7 +456,7 @@ pub fn queue_thread_apc(
         // doubly-linked list in the ApcState struct (see
         // `ps::thread::apc_list_insert_tail`).  Callers that need to
         // queue a real APC must allocate an Apc object, initialise it
-        // with `KeInitializeApc`, and then call `KeInsertQueueApc`.
+        // with `ke_initialize_apc`, and then call `ke_insert_queue_apc`.
         // This helper is kept as a thin wrapper that allocates an Apc
         // on the fly so the existing call sites keep working.
         let apc_ptr = allocate_apc();
@@ -468,7 +468,7 @@ pub fn queue_thread_apc(
             ApcKind::Kernel => ApcMode::Kernel,
             ApcKind::User => ApcMode::User,
         };
-        KeInitializeApc(
+        ke_initialize_apc(
             apc_ptr,
             thread,
             ApcEnvironment::Kernel,
@@ -478,7 +478,7 @@ pub fn queue_thread_apc(
             mode,
             context,
         );
-        KeInsertQueueApc(apc_ptr, context, core::ptr::null_mut(), 0)
+        ke_insert_queue_apc(apc_ptr, context, core::ptr::null_mut(), 0)
     }
 }
 
@@ -529,8 +529,8 @@ pub fn deliver_thread_apc(thread: *mut Ethread, kind: ApcKind) -> bool {
     }
 }
 
-/// NtQueueApcThread - user-mode API to queue an APC to a thread.
-pub unsafe extern "C" fn NtQueueApcThread(
+/// nt_queue_apc_thread - user-mode API to queue an APC to a thread.
+pub unsafe extern "C" fn nt_queue_apc_thread(
     thread_handle: crate::libs::ntdll::types::HANDLE,
     normal_routine: Option<unsafe extern "C" fn(*mut u8)>,
     normal_context: *mut u8,
@@ -566,7 +566,7 @@ pub unsafe extern "C" fn NtQueueApcThread(
     let rundown_routine: Option<ApcRoutine> = None;
     let normal_routine_fn: Option<ApcRoutine> = normal_routine.map(|f| core::mem::transmute(f));
 
-    KeInitializeApc(
+    ke_initialize_apc(
         apc_ptr,
         thread_ptr,
         ApcEnvironment::User,
@@ -578,24 +578,24 @@ pub unsafe extern "C" fn NtQueueApcThread(
     );
 
     // Insert the APC into the thread's queue
-    if !KeInsertQueueApc(apc_ptr, system_argument1, system_argument2, 0) {
+    if !ke_insert_queue_apc(apc_ptr, system_argument1, system_argument2, 0) {
         free_apc(apc_ptr);
         return crate::libs::ntdll::status::STATUS_UNSUCCESSFUL;
     }
 
-    // // kprintln!("[APC] NtQueueApcThread: queued user APC to thread {:016x}", thread_ptr as u64);
+    // // kprintln!("[APC] nt_queue_apc_thread: queued user APC to thread {:016x}", thread_ptr as u64);
     STATUS_SUCCESS
 }
 
 /// Kernel routine for user APC delivery.
 /// This is called in kernel context before returning to user mode.
-/// Note: KeInitializeApc expects a kernel routine with signature `fn(*mut u8)`
+/// Note: ke_initialize_apc expects a kernel routine with signature `fn(*mut u8)`
 /// so we use a wrapper that just does nothing (the APC is already queued).
 fn user_apc_kernel_routine(_context: *mut u8) {
     // In a full implementation, this would:
     // 1. Queue the user APC to be delivered when the thread returns to user mode
     // 2. Set the user APC pending flag
-    // The actual delivery happens in KiDeliverApc(UserApcMode)
+    // The actual delivery happens in ki_deliver_apc(UserApcMode)
 }
 
 /// Smoke test for the APC subsystem.

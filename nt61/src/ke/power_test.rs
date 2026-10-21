@@ -1,8 +1,8 @@
-//! Power Management Test Suite
+//! power Management Test Suite
 //!
 //! Tests for kernel power management functionality.
 
-use crate::io::{PowerActionType, SystemPowerState};
+use crate::io::SystemPowerState;
 use crate::ke::power::*;
 
 /// Test CPU C-state transitions
@@ -67,7 +67,7 @@ pub fn test_power_policy() -> bool {
     kprintln!("  Max sleep state: {:?}", policy.max_sleep_state);
     kprintln!("  Hibernate enabled: {}", policy.hibernate_enabled);
 
-    // Create a new policy
+    // create a new policy
     let new_policy = SystemPowerPolicy {
         idle_timeout: 600,
         max_sleep_state: SystemPowerState::S3,
@@ -130,7 +130,7 @@ pub fn run_all_tests() -> bool {
     let mut passed = 0;
     let mut failed = 0;
 
-    // Test 1: Power state query
+    // Test 1: power state query
     if test_power_state_query() {
         passed += 1;
     } else {
@@ -151,7 +151,7 @@ pub fn run_all_tests() -> bool {
         failed += 1;
     }
 
-    // Test 4: Power policy
+    // Test 4: power policy
     if test_power_policy() {
         passed += 1;
     } else {

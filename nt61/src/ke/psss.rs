@@ -18,8 +18,6 @@
 //! `psss_tick()` function that runs all three on the BSP
 //! whenever the timer interrupt fires.
 
-#![allow(non_snake_case)]
-
 use crate::ke::dispatch;
 use crate::mm::{working_set, writer, zeropage};
 

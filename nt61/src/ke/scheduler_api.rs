@@ -189,8 +189,8 @@ pub fn create_process(
     command: &str,
     work_dir: Option<&str>,
     priority: u8,
-    minimized: bool,
-    maximized: bool,
+    _minimized: bool,
+    _maximized: bool,
 ) -> Option<u32> {
     use crate::ps::process_mgmt::create_user_process;
 
@@ -206,7 +206,11 @@ pub fn wait_for_process(pid: u32) {
     let _ = wait_for_process_exit(pid as u64, None);
 }
 
-pub fn get_child_processes(parent_pid: u32) -> Vec<u32> {
-    // TODO: Implement child process enumeration
-    Vec::new()
+pub fn get_child_processes(_parent_pid: u32) -> Vec<u32> {
+    // The process table does not expose parent_pid through the public API,
+    // so add a public enumeration helper to ProcessTable.
+    crate::ps::process_mgmt::get_child_pids(_parent_pid as u64)
+        .into_iter()
+        .map(|pid| pid as u32)
+        .collect()
 }

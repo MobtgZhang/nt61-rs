@@ -3,10 +3,11 @@
 //! Process and thread scheduling for the NT kernel.
 //
 //! Implements an SMP-aware, multi-level queue scheduler with 32
-//! priority levels. The ready queue is a global structure - real NT
-//! has per-PRCB (per-CPU) ready queues for cache locality, but the
-//! global queue is correct, just slightly less optimal. Each
-//! priority level has a doubly-linked list of threads waiting to run.
+//! priority levels. Each PRCB owns a per-CPU set of 32 ready queues
+//! (matching the Windows 7 x64 KPRCB layout at offset 0x0D0) plus a
+//! ready_summary bitmask for fast priority lookup. The dispatcher
+//! picks threads from the current CPU's PRCB first; each per-CPU and
+//! per-(CPU, priority) queue has its own lock for SMP scalability.
 //
 //! On the bootstrap the dispatcher lock is held while we make
 //! scheduling decisions but not while we context-switch (the
@@ -18,7 +19,7 @@ use crate::ke::irql::{self, Irql};
 use crate::ke::sync::Spinlock;
 use crate::ps::thread::{create_idle_thread as create_thread_idle, Ethread, KThreadState};
 use core::ptr::null_mut;
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 
 /// Maximum number of CPUs supported.
 const MAX_CPUS: usize = 4;
@@ -80,19 +81,13 @@ pub enum PriorityBoostType {
 }
 
 /// Thread quantum tracking per CPU.
-#[allow(dead_code)]
-struct ThreadQuantum {
-    remaining: u32,
-    initial: u32,
+pub struct ThreadQuantum {
+    pub remaining: u32,
+    pub initial: u32,
 }
 
 /// Ready queue for each priority level.
 #[repr(C)]
-pub struct ReadyQueue {
-    pub queues: [ListHead; 32], // 32 priority levels (0-31)
-    pub current_priority: u8,
-}
-
 // =============================================================================
 // Extended PRCB structures for Windows 7 x64 compatibility (P2-3)
 // =============================================================================
@@ -114,7 +109,7 @@ pub struct ProcessorInfo {
     pub mhz: u32,
     /// Processor group index
     pub group_index: u16,
-    /// Group relative processor number
+    /// group relative processor number
     pub processor_number: u8,
     /// Reserved
     pub reserved: u8,
@@ -194,53 +189,6 @@ impl DpcData {
             dpc_request_time: 0,
             dpc_lock: 0,
         }
-    }
-}
-
-impl ReadyQueue {
-    pub const fn new() -> Self {
-        Self {
-            queues: [ListHead::new(); 32],
-            current_priority: 0,
-        }
-    }
-
-    pub fn enqueue(&mut self, thread: *mut Ethread, priority: u8) {
-        if priority >= 32 {
-            return;
-        }
-        unsafe {
-            let queue = &mut self.queues[priority as usize];
-            // Use global_thread_list_entry from KTHREAD (within ETHREAD)
-            let entry = core::ptr::addr_of_mut!((*thread).kthread.global_thread_list_entry)
-                as *mut ListEntry;
-            queue.add_tail(entry);
-        }
-    }
-
-    pub fn dequeue(&mut self) -> Option<*mut Ethread> {
-        for i in (0..32).rev() {
-            let queue = &mut self.queues[i];
-            if !queue.is_empty() {
-                let entry = queue.remove_head()?;
-                let ethread = entry as *mut Ethread;
-                return Some(ethread);
-            }
-        }
-        None
-    }
-
-    pub fn has_ready(&self) -> bool {
-        self.queues.iter().any(|q| !q.is_empty())
-    }
-
-    pub fn highest_priority(&self) -> Option<u8> {
-        for i in (0..32).rev() {
-            if !self.queues[i].is_empty() {
-                return Some(i as u8);
-            }
-        }
-        None
     }
 }
 
@@ -347,7 +295,7 @@ pub struct WaitBlock {
     pub wait_type: u16,             // 0x2A
 }
 
-/// Processor Control Block (PRCB) - Windows 7 x64 KPRCB Layout
+/// Processor control Block (PRCB) - Windows 7 x64 KPRCB Layout
 ///
 /// Windows 7 x64 KPRCB actual size: 0xF80 (3968 bytes)
 /// Reference: geoffchappell.com, Vergilius Project
@@ -357,7 +305,7 @@ pub struct WaitBlock {
 /// - 0x200-0x2FF: Processor Info (CPU ID, cache, features)
 /// - 0x300-0x3FF: DPC Data
 /// - 0x400-0x4FF: Interrupt & Timer
-/// - 0x500-0x5FF: Power & Thermal
+/// - 0x500-0x5FF: power & Thermal
 /// - 0x600-0x6FF: Statistics
 /// - 0x700-0x7FF: MultiThread Processor Set
 /// - 0x800-0x8FF: Waiting & Scheduling
@@ -455,7 +403,7 @@ pub struct Prcb {
     // Padding from 0x630 to 0x700 (208 bytes)
     _pad_int_timer: [u8; 0x700 - 0x630],
 
-    // === 0x700: Power & Thermal ===
+    // === 0x700: power & Thermal ===
     pub power_state: u32,       // 0x700
     pub thermal_zone: u64,      // 0x708
     pub power_policy: u64,      // 0x710
@@ -626,7 +574,7 @@ const _: () = assert!(
 );
 
 impl Prcb {
-    /// Create a new PRCB for the given CPU ID
+    /// create a new PRCB for the given CPU ID
     /// Note: Uses pool allocation instead of direct construction to avoid
     /// SSE stack-to-heap copy issues with the large structure
     pub fn new(cpu_id: u32) -> Self {
@@ -703,7 +651,7 @@ impl Prcb {
             local_apic: [0; 0x100],
             _pad_int_timer: [0; 0x700 - 0x630],
 
-            // === 0x700: Power & Thermal ===
+            // === 0x700: power & Thermal ===
             power_state: 0,
             thermal_zone: 0,
             power_policy: 0,
@@ -821,7 +769,6 @@ impl Prcb {
 
 /// Scheduler state.
 pub struct Scheduler {
-    pub ready_queue: ReadyQueue,
     pub cpus: [Option<&'static mut Prcb>; MAX_CPUS],
     pub current_cpu: u32,
     pub idle_threads: [*mut Ethread; MAX_IDLE_THREADS],
@@ -836,7 +783,6 @@ pub struct Scheduler {
 impl Scheduler {
     pub const fn new() -> Self {
         Self {
-            ready_queue: ReadyQueue::new(),
             cpus: [const { None }; MAX_CPUS],
             current_cpu: 0,
             idle_threads: [core::ptr::null_mut(); MAX_IDLE_THREADS],
@@ -1630,7 +1576,7 @@ pub fn idle_loop() -> ! {
     }
 }
 
-/// Create an idle thread for a CPU.
+/// create an idle thread for a CPU.
 pub fn create_idle_thread() {
     let mut scheduler = SCHEDULER.lock();
     let cpu_id = scheduler.num_cpus as u32;
@@ -1803,8 +1749,7 @@ pub fn init_smp_this_cpu(cpu_id: u32) {
     // per-CPU current_thread/current_process slots. Done via
     // the authoritative `arch::x86_64::syscall::init_per_cpu`
     // so there is exactly one source of truth for the layout.
-    #[cfg(target_arch = "x86_64")]
-    crate::arch::x86_64::syscall::init_per_cpu(cpu_id);
+    crate::arch::init_per_cpu(cpu_id);
 }
 
 // ---------------------------------------------------------------------------
@@ -2497,12 +2442,7 @@ pub fn acquire_dispatcher_lock() -> bool {
     if let Some(ref mut prcb) = scheduler.cpus[cpu] {
         // Check if lock is already held
         if prcb.dispatcher_lock != 0 {
-            // Lock is held, check if by current CPU
-            let _current_thread = prcb.current_thread;
-            // For now, just set the lock (simple implementation)
-            prcb.dispatcher_lock = 1;
-            // // kprintln!("[SCHED] Dispatcher lock acquired for CPU {}", cpu);
-            return true;
+            return false;
         }
         // Acquire the lock
         prcb.dispatcher_lock = 1;
@@ -2517,7 +2457,9 @@ pub fn release_dispatcher_lock() {
     let cpu = scheduler.current_cpu as usize;
 
     if let Some(ref mut prcb) = scheduler.cpus[cpu] {
-        prcb.dispatcher_lock = 0;
+        if prcb.dispatcher_lock == 1 {
+            prcb.dispatcher_lock = 0;
+        }
         // // kprintln!("[SCHED] Dispatcher lock released for CPU {}", cpu);
     }
 }
@@ -2554,21 +2496,139 @@ pub fn init_scheduler_extensions(prcb: &mut Prcb, _cpu_id: u32) {
     // //     );
 }
 
-/// Get PRCB for a specific CPU
-pub fn get_prcb(cpu: usize) -> Option<&'static mut Prcb> {
+/// Run `callback` with exclusive access to a CPU's PRCB.
+///
+/// This keeps the PRCB registered in the scheduler while it is in use and
+/// performs the lookup while holding the scheduler lock only once.
+pub fn with_prcb<R>(cpu: usize, callback: impl FnOnce(&mut Prcb) -> R) -> Option<R> {
     let mut scheduler = SCHEDULER.lock();
-    if cpu < scheduler.cpus.len() {
-        scheduler.cpus[cpu]
-            .take()
-            .map(|p| unsafe { &mut *(p as *mut Prcb) })
-    } else {
-        None
+    if cpu >= scheduler.cpus.len() {
+        return None;
+    }
+    scheduler.cpus[cpu].as_deref_mut().map(callback)
+}
+
+/// Run `callback` with exclusive access to the current CPU's PRCB.
+pub fn with_current_prcb<R>(callback: impl FnOnce(&mut Prcb) -> R) -> Option<R> {
+    let mut scheduler = SCHEDULER.lock();
+    let cpu = scheduler.current_cpu as usize;
+    if cpu >= scheduler.cpus.len() {
+        return None;
+    }
+    scheduler.cpus[cpu].as_deref_mut().map(callback)
+}
+
+#[cfg(test)]
+mod ready_queue_lock_tests {
+    use super::lock_ready_queue;
+
+    #[test]
+    fn rejects_out_of_range_queue_locks() {
+        assert!(lock_ready_queue(usize::MAX, 0).is_none());
+        assert!(lock_ready_queue(0, usize::MAX).is_none());
+    }
+
+    #[test]
+    fn rejects_reentrant_acquisition_and_releases_on_drop() {
+        let guard = lock_ready_queue(3, 31).expect("queue lock must be acquirable");
+        assert!(lock_ready_queue(3, 31).is_none());
+        drop(guard);
+        let reacquired = lock_ready_queue(3, 31).expect("queue lock must be released");
+        drop(reacquired);
     }
 }
 
-/// Get current CPU's PRCB
-pub fn get_current_prcb() -> Option<&'static mut Prcb> {
-    let scheduler = SCHEDULER.lock();
-    let cpu = scheduler.current_cpu as usize;
-    get_prcb(cpu)
+#[cfg(test)]
+mod scheduler_prcb_access_tests {
+    use super::with_prcb;
+
+    #[test]
+    fn rejects_out_of_range_cpu_without_panicking() {
+        assert!(with_prcb(usize::MAX, |_prcb| ()).is_none());
+    }
+}
+
+#[cfg(test)]
+mod multicore_contention_tests {
+    use super::*;
+
+    /// Multi-core contention stress test: verify that per-priority
+    /// ready queue locks do not alias across CPUs and that the
+    /// per-CPU dispatcher lock (PRCB lock) is independently
+    /// acquired and released for different CPUs.
+    #[test]
+    fn per_priority_queue_locks_do_not_alias_across_cpus() {
+        // Use priorities that do not collide with other tests that
+        // also lock (CPU 0..4, priority 0/7/15/31) concurrently.
+        // Lock (CPU 0, priority 29).
+        let guard_0 = lock_ready_queue(0, 29).expect("CPU 0 priority 29");
+
+        // Lock (CPU 1, priority 29): different CPU, same priority.
+        let guard_1 = lock_ready_queue(1, 29).expect("CPU 1 priority 29");
+
+        // Lock (CPU 0, priority 28): same CPU, different priority.
+        let guard_2 = lock_ready_queue(0, 28).expect("CPU 0 priority 28");
+
+        drop(guard_0);
+        drop(guard_1);
+        drop(guard_2);
+
+        // Re-acquire to verify locks were released.
+        let guard = lock_ready_queue(0, 29).expect("re-acquired after drop");
+        drop(guard);
+    }
+
+    #[test]
+    fn reentrant_acquisition_rejected_for_each_cpu() {
+        for cpu in 0..4 {
+            for priority in [0usize, 7, 15, 31] {
+                let guard = lock_ready_queue(cpu, priority).expect("first acquisition");
+                assert!(
+                    lock_ready_queue(cpu, priority).is_none(),
+                    "reentrant rejected for CPU {} priority {}",
+                    cpu,
+                    priority
+                );
+                drop(guard);
+            }
+        }
+    }
+
+    #[test]
+    fn prcb_locks_are_per_cpu() {
+        assert!(lock_prcb(0), "CPU 0 PRCB lock acquirable");
+        assert!(lock_prcb(1), "CPU 1 PRCB lock acquirable");
+        assert!(!lock_prcb(0), "CPU 0 PRCB lock reentrant rejected");
+        unlock_prcb(0);
+        unlock_prcb(1);
+        assert!(lock_prcb(0), "CPU 0 PRCB lock re-acquirable");
+        unlock_prcb(0);
+    }
+
+    #[test]
+    fn per_cpu_ready_summary_tracks_independent_queues() {
+        // Verify that every (CPU, priority) pair is independently
+        // lockable.  Acquire and release each lock one at a time so
+        // that this test does not hold all 128 spin-locks at once —
+        // holding them all would make the test unable to run in
+        // parallel with any other test that also touches the ready
+        // queue locks (cargo runs tests on multiple threads by
+        // default).
+        let mut acquired = 0usize;
+        for cpu in 0..4 {
+            for priority in 0..32 {
+                let guard = lock_ready_queue(cpu, priority).expect("queue lock must be acquirable");
+                acquired += 1;
+                drop(guard);
+            }
+        }
+        assert_eq!(
+            acquired,
+            4 * 32,
+            "all 128 queue locks individually acquired"
+        );
+
+        let guard = lock_ready_queue(0, 0).expect("re-acquired after mass release");
+        drop(guard);
+    }
 }

@@ -23,11 +23,8 @@ pub mod memdiag;
 pub mod psss;
 pub mod safe_mode_shell;
 pub mod scheduler;
-#[cfg(target_arch = "x86_64")]
 pub mod shadow_ssdt;
-#[cfg(target_arch = "x86_64")]
 pub mod smoke;
-#[cfg(target_arch = "x86_64")]
 pub mod ssdt;
 pub mod sync;
 pub mod time;
@@ -49,11 +46,10 @@ pub fn init() {
     dpc::init();
     sync::init();
     dispatch::init();
-    #[cfg(target_arch = "x86_64")]
-    {
-        ssdt::init();
-        shadow_ssdt::init();
-    }
+    ssdt_common::init();
+    ssdt_common::register_common_syscalls();
+    ssdt::init();
+    shadow_ssdt::init();
     psss::init();
     bugcheck::init();
     exception::init();
@@ -82,13 +78,8 @@ fn post_ke() {
 /// re-export keeps the call site readable as `ke::smoke_test()`
 /// (matching the `mm::smoke_test()` / `ob::smoke_test()` /
 /// `io::smoke_test()` convention used by `kernel_main`).
-#[cfg(target_arch = "x86_64")]
 pub fn smoke_test() -> bool {
     smoke::smoke_test()
-}
-#[cfg(not(target_arch = "x86_64"))]
-pub fn smoke_test() -> bool {
-    true
 }
 
 pub mod power;
