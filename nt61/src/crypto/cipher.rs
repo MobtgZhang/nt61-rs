@@ -386,9 +386,96 @@ impl Cbc<Aes128> {
     }
 }
 
+impl Cbc<Aes256> {
+    /// Create a CBC-mode cipher with AES-256.
+    pub fn new_aes256(key: &[u8; 32], iv: &[u8; 16]) -> Self {
+        Self {
+            cipher: Aes256::new(key),
+            iv: *iv,
+        }
+    }
+
+    pub fn encrypt(&mut self, plaintext: &[u8]) -> Vec<u8> {
+        let mut output = Vec::new();
+        let mut prev = self.iv;
+
+        for chunk in plaintext.chunks(AES_BLOCK_SIZE) {
+            let mut block = [0u8; AES_BLOCK_SIZE];
+            let len = chunk.len().min(AES_BLOCK_SIZE);
+            block[..len].copy_from_slice(&chunk[..len]);
+
+            for i in 0..AES_BLOCK_SIZE {
+                block[i] ^= prev[i];
+            }
+
+            self.cipher.encrypt_block(&mut block);
+            prev = block;
+            output.extend_from_slice(&block);
+        }
+
+        output
+    }
+
+    pub fn decrypt(&mut self, ciphertext: &[u8]) -> Vec<u8> {
+        let mut output = Vec::new();
+        let mut prev = self.iv;
+
+        for chunk in ciphertext.chunks(AES_BLOCK_SIZE) {
+            let mut block = [0u8; AES_BLOCK_SIZE];
+            block.copy_from_slice(chunk);
+            let cipher_block = block;
+
+            self.cipher.decrypt_block(&mut block);
+
+            for i in 0..AES_BLOCK_SIZE {
+                block[i] ^= prev[i];
+            }
+
+            prev = cipher_block;
+            output.extend_from_slice(&block);
+        }
+
+        output
+    }
+}
+
 pub struct Ctr<C> {
     cipher: C,
     counter: [u8; 16],
+}
+
+impl Ctr<Aes256> {
+    /// AES-256-CTR as specified for SSH "aes256-ctr" (RFC 5647): the
+    /// 128-bit big-endian counter block is incremented after every
+    /// 16-byte block.
+    pub fn new_aes256(key: &[u8; 32], nonce: &[u8; 16]) -> Self {
+        Self {
+            cipher: Aes256::new(key),
+            counter: *nonce,
+        }
+    }
+
+    pub fn process(&mut self, data: &mut [u8]) {
+        for chunk in data.chunks_mut(AES_BLOCK_SIZE) {
+            let mut keystream = self.counter;
+            self.cipher.encrypt_block(&mut keystream);
+
+            for (i, byte) in chunk.iter_mut().enumerate() {
+                *byte ^= keystream[i];
+            }
+
+            Self::increment_counter(&mut self.counter);
+        }
+    }
+
+    fn increment_counter(counter: &mut [u8; 16]) {
+        for i in (0..16).rev() {
+            counter[i] = counter[i].wrapping_add(1);
+            if counter[i] != 0 {
+                break;
+            }
+        }
+    }
 }
 
 impl Ctr<Aes128> {
@@ -424,7 +511,7 @@ impl Ctr<Aes128> {
 
 pub struct Gcm {
     cipher: Aes128,
-    h: [u8; 16],
+    pub h: [u8; 16],
     counter: [u8; 16],
 }
 
@@ -442,7 +529,7 @@ impl Gcm {
         Self { cipher, h, counter }
     }
 
-    pub fn encrypt(&mut self, plaintext: &[u8], aad: &[u8]) -> (Vec<u8>, [u8; 16]) {
+    pub fn encrypt(&mut self, plaintext: &[u8], _aad: &[u8]) -> (Vec<u8>, [u8; 16]) {
         let mut ciphertext = Vec::with_capacity(plaintext.len());
         let mut auth_tag = [0u8; 16];
 

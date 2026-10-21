@@ -77,6 +77,7 @@ pub fn aes_decrypt(key: &[u8; AES_KEY_SIZE], ciphertext: &[u8]) -> Result<Vec<u8
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn test_aes_encrypt_decrypt_block() {

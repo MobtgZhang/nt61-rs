@@ -4,7 +4,6 @@
 //! plus additional algorithms for compatibility and testing.
 
 extern crate alloc;
-use alloc::vec::Vec;
 
 pub use crate::crypto::csprng;
 
@@ -17,7 +16,7 @@ pub enum PrngAlgorithm {
 }
 
 pub struct Prng {
-    algorithm: PrngAlgorithm,
+    pub algorithm: PrngAlgorithm,
     state: PrngState,
 }
 
@@ -352,107 +351,30 @@ impl EntropyPool {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
 pub mod hwrng {
     pub fn has_rdrand() -> bool {
-        let cpuid = core::arch::x86_64::__cpuid(1);
-        (cpuid.ecx & (1 << 30)) != 0
+        crate::arch::hardware_random_u64().is_some()
     }
 
     pub fn has_rdseed() -> bool {
-        let cpuid = core::arch::x86_64::__cpuid(7);
-        (cpuid.ebx & (1 << 18)) != 0
+        crate::arch::hardware_random_u64().is_some()
     }
 
     pub fn rdrand_fill(buf: &mut [u8]) -> bool {
-        if !has_rdrand() {
-            return false;
-        }
-
-        for chunk in buf.chunks_mut(8) {
-            let mut value: u64 = 0;
-            let mut success = false;
-
-            for _ in 0..10 {
-                let result: u8;
-                unsafe {
-                    core::arch::asm!(
-                        "rdrand {0}",
-                        "setc {1}",
-                        out(reg) value,
-                        out(reg_byte) result,
-                        options(nomem, nostack)
-                    );
-                }
-                if result != 0 {
-                    success = true;
-                    break;
-                }
-            }
-
-            if !success {
+        let mut cursor = 0;
+        while cursor < buf.len() {
+            let Some(value) = crate::arch::hardware_random_u64() else {
                 return false;
-            }
-
+            };
             let bytes = value.to_le_bytes();
-            let len = chunk.len().min(8);
-            chunk[..len].copy_from_slice(&bytes[..len]);
+            let len = (buf.len() - cursor).min(8);
+            buf[cursor..cursor + len].copy_from_slice(&bytes[..len]);
+            cursor += len;
         }
-
         true
     }
 
     pub fn rdseed_fill(buf: &mut [u8]) -> bool {
-        if !has_rdseed() {
-            return false;
-        }
-
-        for chunk in buf.chunks_mut(8) {
-            let mut value: u64 = 0;
-            let mut success = false;
-
-            for _ in 0..10 {
-                let result: u8;
-                unsafe {
-                    core::arch::asm!(
-                        "rdseed {0}",
-                        "setc {1}",
-                        out(reg) value,
-                        out(reg_byte) result,
-                        options(nomem, nostack)
-                    );
-                }
-                if result != 0 {
-                    success = true;
-                    break;
-                }
-            }
-
-            if !success {
-                return false;
-            }
-
-            let bytes = value.to_le_bytes();
-            let len = chunk.len().min(8);
-            chunk[..len].copy_from_slice(&bytes[..len]);
-        }
-
-        true
-    }
-}
-
-#[cfg(not(target_arch = "x86_64"))]
-pub mod hwrng {
-    pub fn has_rdrand() -> bool {
-        false
-    }
-    pub fn has_rdseed() -> bool {
-        false
-    }
-    pub fn rdrand_fill(_buf: &mut [u8]) -> bool {
-        false
-    }
-    pub fn rdseed_fill(_buf: &mut [u8]) -> bool {
-        false
+        rdrand_fill(buf)
     }
 }

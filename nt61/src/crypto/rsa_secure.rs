@@ -12,7 +12,7 @@ use core::num::NonZeroU32;
 use rand_core::{CryptoRng, Error, RngCore};
 use rsa::sha2::Sha256;
 use rsa::signature::{SignatureEncoding, Signer, Verifier};
-use rsa::{Pkcs1v15Encrypt, Pkcs1v15Sign, RsaPrivateKey, RsaPublicKey};
+use rsa::{Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey};
 
 /// Custom error code reported when the kernel CSPRNG cannot fill a buffer.
 /// Codes at or above `Error::CUSTOM_START` are reserved for user-defined

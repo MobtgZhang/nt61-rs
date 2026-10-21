@@ -4,7 +4,6 @@
 //! `sha2` crate from RustCrypto.
 
 extern crate alloc;
-use alloc::vec::Vec;
 use sha2::{Digest, Sha256, Sha512};
 
 pub fn sha256(data: &[u8]) -> [u8; 32] {

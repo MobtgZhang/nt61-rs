@@ -1,12 +1,12 @@
-//! Kernel CSPRNG (RtlGenRandom / SystemFunction036 compatible).
+//! Kernel CSPRNG (rtl_gen_random / SystemFunction036 compatible).
 //!
 //! OpenSSH pulls randomness from two places:
-//!   1. `BCryptGenRandom` — the CNG provider (Windows 7+).
-//!   2. `RtlGenRandom` / `SystemFunction036` — the legacy helper
+//!   1. `bcrypt_gen_random` — the CNG provider (Windows 7+).
+//!   2. `rtl_gen_random` / `SystemFunction036` — the legacy helper
 //!      exported by `advapi32.dll`.
 //!
 //! Both ask the kernel for a buffer of cryptographically strong
-//! random bytes. NT 6.1's `RtlGenRandom` is documented as
+//! random bytes. NT 6.1's `rtl_gen_random` is documented as
 //! "backed by the kernel CSPRNG which seeds from RDRAND/RDSEED
 //! when available, plus the entropy of interrupt timing and
 //! boot-time pool state." We don't have RDRAND unconditionally
@@ -42,7 +42,7 @@ const MAX_SEED_SOURCES: usize = 8;
 /// the syscall fast path does not take the seed lock.
 static BYTES_SINCE_RESEED: AtomicU64 = AtomicU64::new(0);
 
-/// Cached DRBG output. The hot path `RtlGenRandom` slices from
+/// Cached DRBG output. The hot path `rtl_gen_random` slices from
 /// this vector without re-running the hash.
 static POOL: Spinlock<Pool> = Spinlock::new(Pool::new());
 
@@ -86,39 +86,22 @@ fn collect_entropy() -> [u8; 64] {
     let mut out = [0u8; 64];
     let mut filled = 0usize;
 
-    #[cfg(target_arch = "x86_64")]
-    {
-        while filled < MAX_SEED_SOURCES {
-            let value = crate::arch::x86_64::cpu_flags::rdseed_u64()
-                .or_else(crate::arch::x86_64::cpu_flags::rdrand_u64);
-            let Some(value) = value else { break };
-            out[filled * 8..filled * 8 + 8].copy_from_slice(&value.to_le_bytes());
-            filled += 1;
-        }
+    while filled < MAX_SEED_SOURCES {
+        let value = crate::arch::hardware_random_u64();
+        let Some(value) = value else { break };
+        out[filled * 8..filled * 8 + 8].copy_from_slice(&value.to_le_bytes());
+        filled += 1;
     }
 
     let pit = crate::hal::common::pit::get_system_time_ms();
 
-    #[cfg(target_arch = "x86_64")]
-    let tsc_before: u64 = unsafe { core::arch::x86_64::_rdtsc() };
-    #[cfg(not(target_arch = "x86_64"))]
-    let tsc_before: u64 = 0;
+    let tsc_before: u64 = crate::arch::hardware_counter();
     for _ in 0..2000 {
         core::hint::spin_loop();
     }
-    #[cfg(target_arch = "x86_64")]
-    let tsc_after: u64 = unsafe { core::arch::x86_64::_rdtsc() };
-    #[cfg(not(target_arch = "x86_64"))]
-    let tsc_after: u64 = 0;
+    let tsc_after: u64 = crate::arch::hardware_counter();
 
-    #[cfg(target_arch = "x86_64")]
-    let sp: u64 = {
-        let value: u64;
-        unsafe { core::arch::asm!("mov {}, rsp", out(reg) value) };
-        value
-    };
-    #[cfg(not(target_arch = "x86_64"))]
-    let sp: u64 = 0;
+    let sp: u64 = crate::arch::stack_pointer();
 
     for value in [pit, tsc_after.wrapping_sub(tsc_before), tsc_after, sp] {
         if filled >= MAX_SEED_SOURCES {
@@ -351,10 +334,10 @@ pub fn fill(out: &mut [u8]) -> bool {
     true
 }
 
-/// `RtlGenRandom` / `SystemFunction036` — fills `buffer` with
+/// `rtl_gen_random` / `SystemFunction036` — fills `buffer` with
 /// `length` random bytes. Returns TRUE on success, FALSE on
 /// failure. The buffer must be readable+writeable.
-pub unsafe extern "C" fn RtlGenRandom(buffer: *mut u8, length: u32) -> i32 {
+pub unsafe extern "C" fn rtl_gen_random(buffer: *mut u8, length: u32) -> i32 {
     if buffer.is_null() || length == 0 {
         return 0;
     }

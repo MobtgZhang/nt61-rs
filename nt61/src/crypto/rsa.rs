@@ -13,6 +13,7 @@ pub struct RsaPublicKey {
     pub e: BigUint, // Public exponent
 }
 
+#[derive(Clone)]
 pub struct RsaPrivateKey {
     pub n: BigUint,  // Modulus
     pub e: BigUint,  // Public exponent
@@ -77,7 +78,8 @@ impl RsaPrivateKey {
         };
 
         let m = m2.add(&h.mul(&self.q));
-        m.to_bytes()
+        let recovered = m.to_bytes();
+        pkcs1v15_unpad(&recovered)
     }
 
     pub fn sign_pkcs1v15(&self, digest: &[u8]) -> Vec<u8> {
@@ -155,15 +157,17 @@ fn pkcs1v15_sign_pad(digest: &[u8], key_len: usize) -> Vec<u8> {
 }
 
 fn pkcs1v15_verify_pad(recovered: &[u8], digest: &[u8], _key_len: usize) -> bool {
-    if recovered.len() < digest.len() + 11 {
+    // BigUint::to_bytes() strips the leading 0x00 from the encoded
+    // message (0x00 0x01 PS 0x00 T), so recovered starts at 0x01.
+    if recovered.len() < digest.len() + 10 {
         return false;
     }
 
-    if recovered[0] != 0x00 || recovered[1] != 0x01 {
+    if recovered[0] != 0x01 {
         return false;
     }
 
-    let mut i = 2;
+    let mut i = 1;
     while i < recovered.len() && recovered[i] == 0xff {
         i += 1;
     }
@@ -174,6 +178,19 @@ fn pkcs1v15_verify_pad(recovered: &[u8], digest: &[u8], _key_len: usize) -> bool
 
     i += 1;
     &recovered[i..] == digest
+}
+
+/// Strip PKCS#1 v1.5 encryption padding (RFC 8017 section 7.2):
+/// recovered = [0x02, nonzero padding, 0x00, plaintext].
+fn pkcs1v15_unpad(recovered: &[u8]) -> Vec<u8> {
+    if recovered.len() < 2 || recovered[0] != 0x02 {
+        return Vec::new();
+    }
+    let separator = recovered[1..].iter().position(|&byte| byte == 0x00);
+    match separator {
+        Some(index) => recovered[2 + index..].to_vec(),
+        None => Vec::new(),
+    }
 }
 
 /// PSS encoding (simplified - production would use MGF1).
@@ -199,7 +216,7 @@ fn pss_encode(digest: &[u8], key_len: usize, salt_len: usize) -> Vec<u8> {
     em
 }
 
-fn pss_verify(recovered: &[u8], digest: &[u8], key_len: usize, salt_len: usize) -> bool {
+fn pss_verify(recovered: &[u8], _digest: &[u8], key_len: usize, salt_len: usize) -> bool {
     if recovered.len() != key_len {
         return false;
     }
@@ -300,23 +317,20 @@ impl BigUint {
 
     pub fn sub(&self, other: &Self) -> Self {
         let mut result = vec![0u64; self.limbs.len()];
-        let mut borrow = 0i64;
+        let mut borrow = 0u64;
 
         for i in 0..self.limbs.len() {
-            let a = self.limbs[i] as i64;
             let b = if i < other.limbs.len() {
-                other.limbs[i] as i64
+                other.limbs[i]
             } else {
                 0
             };
-            let diff = a - b - borrow;
-            if diff < 0 {
-                result[i] = (diff + (1i64 << 32) + (1i64 << 32)) as u64;
-                borrow = 1;
-            } else {
-                result[i] = diff as u64;
-                borrow = 0;
-            }
+            // Toolchain-agnostic two-step borrow: subtract the limb and
+            // the accumulated borrow separately, tracking underflow.
+            let (d1, under1) = self.limbs[i].overflowing_sub(b);
+            let (diff, under2) = d1.overflowing_sub(borrow);
+            result[i] = diff;
+            borrow = (under1 || under2) as u64;
         }
 
         while result.last() == Some(&0) && result.len() > 1 {
@@ -349,12 +363,7 @@ impl BigUint {
     }
 
     pub fn mod_op(&self, modulus: &Self) -> Self {
-        // Simplified modulo - production would use Barrett or Montgomery reduction
-        let mut rem = self.clone();
-        while rem.cmp(modulus) >= 0 {
-            rem = rem.sub(modulus);
-        }
-        rem
+        self.div_rem(modulus).1
     }
 
     pub fn mod_exp(&self, exponent: &Self, modulus: &Self) -> Self {
@@ -386,7 +395,9 @@ impl BigUint {
             newt = if temp_t.cmp(&quotient.mul(&newt)) >= 0 {
                 temp_t.sub(&quotient.mul(&newt))
             } else {
-                modulus.sub(&quotient.mul(&newt).sub(&temp_t).mod_op(modulus))
+                modulus
+                    .sub(&quotient.mul(&newt).sub(&temp_t).mod_op(modulus))
+                    .mod_op(modulus)
             };
 
             let temp_r = r;
@@ -398,15 +409,36 @@ impl BigUint {
     }
 
     pub fn div(&self, other: &Self) -> Self {
-        let mut quotient = BigUint::from(0);
-        let mut remainder = self.clone();
+        self.div_rem(other).0
+    }
 
-        while remainder.cmp(other) >= 0 {
-            remainder = remainder.sub(other);
-            quotient = quotient.add(&BigUint::from(1));
+    /// Binary long division (shift-subtract): returns
+    /// (quotient, remainder). Runs in O(bit_len) iterations of O(limb)
+    /// work, so it terminates quickly for RSA-sized operands where the
+    /// previous repeated-subtraction loop did not.
+    pub fn div_rem(&self, other: &Self) -> (Self, Self) {
+        if other.is_zero() {
+            return (BigUint::from(0), self.clone());
         }
-
-        quotient
+        let mut quotient_limbs = vec![0u64; self.limbs.len().max(1)];
+        let mut rem = BigUint::from(0);
+        for i in (0..self.bit_len()).rev() {
+            rem = rem.shl(1);
+            rem.limbs[0] |= self.bit(i) as u64;
+            if rem.cmp(other) >= 0 {
+                rem = rem.sub(other);
+                quotient_limbs[i / 64] |= 1u64 << (i % 64);
+            }
+        }
+        while quotient_limbs.last() == Some(&0) && quotient_limbs.len() > 1 {
+            quotient_limbs.pop();
+        }
+        (
+            BigUint {
+                limbs: quotient_limbs,
+            },
+            rem,
+        )
     }
 
     pub fn shr(&self, bits: u32) -> Self {
@@ -459,6 +491,43 @@ impl BigUint {
 
     pub fn is_zero(&self) -> bool {
         self.limbs.iter().all(|&limb| limb == 0)
+    }
+
+    /// Number of significant bits (index of the highest set bit + 1).
+    fn bit_len(&self) -> usize {
+        for i in (0..self.limbs.len()).rev() {
+            if self.limbs[i] != 0 {
+                return i * 64 + (64 - self.limbs[i].leading_zeros() as usize);
+            }
+        }
+        0
+    }
+
+    fn bit(&self, index: usize) -> bool {
+        self.limbs
+            .get(index / 64)
+            .map_or(false, |limb| (limb >> (index % 64)) & 1 == 1)
+    }
+
+    /// Shift left by one bit position (used by the division loop).
+    fn shl(&self, bits: u32) -> Self {
+        if bits == 0 {
+            return self.clone();
+        }
+        let limb_shift = (bits / 64) as usize;
+        let bit_shift = (bits % 64) as u32;
+        let mut result = vec![0u64; self.limbs.len() + limb_shift + 1];
+        for (i, &limb) in self.limbs.iter().enumerate() {
+            let idx = i + limb_shift;
+            result[idx] |= limb << bit_shift;
+            if bit_shift > 0 && idx + 1 < result.len() {
+                result[idx + 1] |= limb >> (64 - bit_shift);
+            }
+        }
+        while result.last() == Some(&0) && result.len() > 1 {
+            result.pop();
+        }
+        BigUint { limbs: result }
     }
 }
 

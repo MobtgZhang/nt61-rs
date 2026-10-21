@@ -9,7 +9,7 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::ptr;
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 #[repr(transparent)]
 pub struct HCryptProv(pub usize);
@@ -68,18 +68,18 @@ pub mod cipher_mode {
     pub const CRYPT_MODE_CFB: u32 = 4;
 }
 
-struct ProviderContext {
-    prov_type: u32,
-    flags: u32,
-    container: Option<String>,
+pub struct ProviderContext {
+    pub prov_type: u32,
+    pub flags: u32,
+    pub container: Option<String>,
 }
 
-struct HashContext {
-    alg_id: u32,
-    state: HashState,
+pub struct HashContext {
+    pub alg_id: u32,
+    pub state: HashState,
 }
 
-enum HashState {
+pub enum HashState {
     Md5(crate::crypto::hash::Md5),
     Sha1(crate::crypto::hash::Sha1),
     Sha256(crate::crypto::hash::Sha256),
@@ -87,21 +87,21 @@ enum HashState {
     Sha512(crate::crypto::hash::Sha512),
 }
 
-struct KeyContext {
-    alg_id: u32,
-    key_data: Vec<u8>,
-    iv: Vec<u8>,
-    mode: u32,
+pub struct KeyContext {
+    pub alg_id: u32,
+    pub key_data: Vec<u8>,
+    pub iv: Vec<u8>,
+    pub mode: u32,
 }
 
 static PROV_COUNTER: AtomicUsize = AtomicUsize::new(0x4000);
 static HASH_COUNTER: AtomicUsize = AtomicUsize::new(0x5000);
 static KEY_COUNTER: AtomicUsize = AtomicUsize::new(0x6000);
 
-pub unsafe extern "C" fn CryptAcquireContextA(
+pub unsafe extern "C" fn crypt_acquire_context_a(
     prov: *mut usize,
     container: *const u8,
-    provider: *const u8,
+    _provider: *const u8,
     prov_type: u32,
     flags: u32,
 ) -> i32 {
@@ -115,7 +115,7 @@ pub unsafe extern "C" fn CryptAcquireContextA(
         None
     };
 
-    let context = ProviderContext {
+    let _context = ProviderContext {
         prov_type,
         flags,
         container: container_name,
@@ -126,10 +126,10 @@ pub unsafe extern "C" fn CryptAcquireContextA(
     1 // TRUE
 }
 
-pub unsafe extern "C" fn CryptAcquireContextW(
+pub unsafe extern "C" fn crypt_acquire_context_w(
     prov: *mut usize,
     container: *const u16,
-    provider: *const u16,
+    _provider: *const u16,
     prov_type: u32,
     flags: u32,
 ) -> i32 {
@@ -143,7 +143,7 @@ pub unsafe extern "C" fn CryptAcquireContextW(
         None
     };
 
-    let context = ProviderContext {
+    let _context = ProviderContext {
         prov_type,
         flags,
         container: container_name,
@@ -154,7 +154,7 @@ pub unsafe extern "C" fn CryptAcquireContextW(
     1 // TRUE
 }
 
-pub unsafe extern "C" fn CryptReleaseContext(prov: usize, flags: u32) -> i32 {
+pub unsafe extern "C" fn crypt_release_context(prov: usize, _flags: u32) -> i32 {
     if prov == 0 {
         return 0;
     }
@@ -162,11 +162,11 @@ pub unsafe extern "C" fn CryptReleaseContext(prov: usize, flags: u32) -> i32 {
     1 // TRUE
 }
 
-pub unsafe extern "C" fn CryptCreateHash(
+pub unsafe extern "C" fn crypt_create_hash(
     prov: usize,
     alg_id: u32,
-    key: usize,
-    flags: u32,
+    _key: usize,
+    _flags: u32,
     hash: *mut usize,
 ) -> i32 {
     if prov == 0 || hash.is_null() {
@@ -182,34 +182,34 @@ pub unsafe extern "C" fn CryptCreateHash(
         _ => return 0,
     };
 
-    let context = HashContext { alg_id, state };
+    let _context = HashContext { alg_id, state };
 
     *hash = HASH_COUNTER.fetch_add(1, Ordering::SeqCst);
 
     1 // TRUE
 }
 
-pub unsafe extern "C" fn CryptHashData(
+pub unsafe extern "C" fn crypt_hash_data(
     hash: usize,
     data: *const u8,
     data_len: u32,
-    flags: u32,
+    _flags: u32,
 ) -> i32 {
     if hash == 0 || data.is_null() {
         return 0;
     }
 
-    let input = core::slice::from_raw_parts(data, data_len as usize);
+    let _input = core::slice::from_raw_parts(data, data_len as usize);
 
     1 // TRUE
 }
 
-pub unsafe extern "C" fn CryptGetHashParam(
+pub unsafe extern "C" fn crypt_get_hash_param(
     hash: usize,
     param: u32,
     data: *mut u8,
     data_len: *mut u32,
-    flags: u32,
+    _flags: u32,
 ) -> i32 {
     if hash == 0 || data_len.is_null() {
         return 0;
@@ -242,7 +242,7 @@ pub unsafe extern "C" fn CryptGetHashParam(
     }
 }
 
-pub unsafe extern "C" fn CryptDestroyHash(hash: usize) -> i32 {
+pub unsafe extern "C" fn crypt_destroy_hash(hash: usize) -> i32 {
     if hash == 0 {
         return 0;
     }
@@ -250,7 +250,12 @@ pub unsafe extern "C" fn CryptDestroyHash(hash: usize) -> i32 {
     1 // TRUE
 }
 
-pub unsafe extern "C" fn CryptGenKey(prov: usize, alg_id: u32, flags: u32, key: *mut usize) -> i32 {
+pub unsafe extern "C" fn crypt_gen_key(
+    prov: usize,
+    alg_id: u32,
+    _flags: u32,
+    key: *mut usize,
+) -> i32 {
     if prov == 0 || key.is_null() {
         return 0;
     }
@@ -268,7 +273,7 @@ pub unsafe extern "C" fn CryptGenKey(prov: usize, alg_id: u32, flags: u32, key: 
     let mut key_data = vec![0u8; key_len];
     crate::crypto::csprng::fill(&mut key_data);
 
-    let context = KeyContext {
+    let _context = KeyContext {
         alg_id,
         key_data,
         iv: vec![0u8; 16],
@@ -280,30 +285,30 @@ pub unsafe extern "C" fn CryptGenKey(prov: usize, alg_id: u32, flags: u32, key: 
     1 // TRUE
 }
 
-pub unsafe extern "C" fn CryptImportKey(
+pub unsafe extern "C" fn crypt_import_key(
     prov: usize,
     data: *const u8,
     data_len: u32,
-    pub_key: usize,
-    flags: u32,
+    _pub_key: usize,
+    _flags: u32,
     key: *mut usize,
 ) -> i32 {
     if prov == 0 || data.is_null() || key.is_null() {
         return 0;
     }
 
-    let blob = core::slice::from_raw_parts(data, data_len as usize);
+    let _blob = core::slice::from_raw_parts(data, data_len as usize);
 
     *key = KEY_COUNTER.fetch_add(1, Ordering::SeqCst);
 
     1 // TRUE
 }
 
-pub unsafe extern "C" fn CryptExportKey(
+pub unsafe extern "C" fn crypt_export_key(
     key: usize,
-    exp_key: usize,
-    blob_type: u32,
-    flags: u32,
+    _exp_key: usize,
+    _blob_type: u32,
+    _flags: u32,
     data: *mut u8,
     data_len: *mut u32,
 ) -> i32 {
@@ -322,12 +327,12 @@ pub unsafe extern "C" fn CryptExportKey(
     1 // TRUE
 }
 
-pub unsafe extern "C" fn CryptGetKeyParam(
+pub unsafe extern "C" fn crypt_get_key_param(
     key: usize,
     param: u32,
     data: *mut u8,
     data_len: *mut u32,
-    flags: u32,
+    _flags: u32,
 ) -> i32 {
     if key == 0 || data_len.is_null() {
         return 0;
@@ -355,11 +360,11 @@ pub unsafe extern "C" fn CryptGetKeyParam(
     }
 }
 
-pub unsafe extern "C" fn CryptSetKeyParam(
+pub unsafe extern "C" fn crypt_set_key_param(
     key: usize,
-    param: u32,
+    _param: u32,
     data: *const u8,
-    flags: u32,
+    _flags: u32,
 ) -> i32 {
     if key == 0 || data.is_null() {
         return 0;
@@ -368,11 +373,11 @@ pub unsafe extern "C" fn CryptSetKeyParam(
     1 // TRUE
 }
 
-pub unsafe extern "C" fn CryptEncrypt(
+pub unsafe extern "C" fn crypt_encrypt(
     key: usize,
-    hash: usize,
-    is_final: i32,
-    flags: u32,
+    _hash: usize,
+    _is_final: i32,
+    _flags: u32,
     data: *mut u8,
     data_len: *mut u32,
     buffer_len: u32,
@@ -390,11 +395,11 @@ pub unsafe extern "C" fn CryptEncrypt(
     1 // TRUE
 }
 
-pub unsafe extern "C" fn CryptDecrypt(
+pub unsafe extern "C" fn crypt_decrypt(
     key: usize,
-    hash: usize,
-    is_final: i32,
-    flags: u32,
+    _hash: usize,
+    _is_final: i32,
+    _flags: u32,
     data: *mut u8,
     data_len: *mut u32,
 ) -> i32 {
@@ -405,7 +410,7 @@ pub unsafe extern "C" fn CryptDecrypt(
     1 // TRUE
 }
 
-pub unsafe extern "C" fn CryptDestroyKey(key: usize) -> i32 {
+pub unsafe extern "C" fn crypt_destroy_key(key: usize) -> i32 {
     if key == 0 {
         return 0;
     }
@@ -413,7 +418,7 @@ pub unsafe extern "C" fn CryptDestroyKey(key: usize) -> i32 {
     1 // TRUE
 }
 
-pub unsafe extern "C" fn CryptGenRandom(prov: usize, len: u32, buffer: *mut u8) -> i32 {
+pub unsafe extern "C" fn crypt_gen_random(prov: usize, len: u32, buffer: *mut u8) -> i32 {
     if prov == 0 || buffer.is_null() {
         return 0;
     }
@@ -427,11 +432,11 @@ pub unsafe extern "C" fn CryptGenRandom(prov: usize, len: u32, buffer: *mut u8) 
     }
 }
 
-pub unsafe extern "C" fn CryptSignHashA(
+pub unsafe extern "C" fn crypt_sign_hash_a(
     hash: usize,
-    key_spec: u32,
-    description: *const u8,
-    flags: u32,
+    _key_spec: u32,
+    _description: *const u8,
+    _flags: u32,
     signature: *mut u8,
     sig_len: *mut u32,
 ) -> i32 {
@@ -450,13 +455,13 @@ pub unsafe extern "C" fn CryptSignHashA(
     1 // TRUE
 }
 
-pub unsafe extern "C" fn CryptVerifySignatureA(
+pub unsafe extern "C" fn crypt_verify_signature_a(
     hash: usize,
     signature: *const u8,
-    sig_len: u32,
+    _sig_len: u32,
     pub_key: usize,
-    description: *const u8,
-    flags: u32,
+    _description: *const u8,
+    _flags: u32,
 ) -> i32 {
     if hash == 0 || signature.is_null() || pub_key == 0 {
         return 0;
@@ -465,10 +470,10 @@ pub unsafe extern "C" fn CryptVerifySignatureA(
     1 // TRUE
 }
 
-pub unsafe extern "C" fn CryptDuplicateHash(
+pub unsafe extern "C" fn crypt_duplicate_hash(
     hash: usize,
-    reserved: *mut u32,
-    flags: u32,
+    _reserved: *mut u32,
+    _flags: u32,
     new_hash: *mut usize,
 ) -> i32 {
     if hash == 0 || new_hash.is_null() {
@@ -480,10 +485,10 @@ pub unsafe extern "C" fn CryptDuplicateHash(
     1 // TRUE
 }
 
-pub unsafe extern "C" fn CryptDuplicateKey(
+pub unsafe extern "C" fn crypt_duplicate_key(
     key: usize,
-    reserved: *mut u32,
-    flags: u32,
+    _reserved: *mut u32,
+    _flags: u32,
     new_key: *mut usize,
 ) -> i32 {
     if key == 0 || new_key.is_null() {
@@ -495,7 +500,7 @@ pub unsafe extern "C" fn CryptDuplicateKey(
     1 // TRUE
 }
 
-fn get_hash_size_for_handle(handle: usize) -> u32 {
+fn get_hash_size_for_handle(_handle: usize) -> u32 {
     32
 }
 

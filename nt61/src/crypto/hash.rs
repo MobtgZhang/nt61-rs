@@ -4,7 +4,6 @@
 //! Used by CNG providers, TLS/SSL, IPsec, and file integrity checks.
 
 extern crate alloc;
-use alloc::vec::Vec;
 
 #[derive(Clone)]
 pub struct Md5 {
@@ -23,7 +22,7 @@ impl Md5 {
     }
 
     pub fn update(&mut self, data: &[u8]) {
-        let mut offset = (self.count & 63) as usize;
+        let offset = (self.count & 63) as usize;
         self.count += data.len() as u64;
 
         let mut idx = 0;
@@ -33,7 +32,6 @@ impl Md5 {
             self.buffer[offset..offset + copy_len].copy_from_slice(&data[..copy_len]);
             if offset + copy_len == 64 {
                 Self::transform(&mut self.state, &self.buffer);
-                offset = 0;
             }
             idx = copy_len;
         }
@@ -759,7 +757,7 @@ impl Hmac<Sha256> {
         let mut ipad = [0x36u8; 64];
         let mut opad = [0x5cu8; 64];
 
-        let key_to_use = if key.len() > 64 {
+        let _key_to_use = if key.len() > 64 {
             let mut h = Sha256::new();
             h.update(key);
             let digest = h.finalize();
