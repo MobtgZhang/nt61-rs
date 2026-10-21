@@ -1,10 +1,10 @@
-//! Object Type Definitions
+//! Object r#type Definitions
 //
 //! This module defines OBJECT_TYPE and OBJECT_TYPE_INITIALIZER structures
 //! following the Windows NT design. Each object type (Directory, Device,
 //! Driver, Event, etc.) has an OBJECT_TYPE_INITIALIZER that defines:
 //
-//! - Type name and attributes
+//! - r#type name and attributes
 //! - Generic mapping for access rights
 //! - Valid access mask
 //! - Delete, Security, Parse, Open, QueryName, and OkayToClose procedures
@@ -24,7 +24,7 @@ use crate::se::seaccess::GenericMapping;
 pub const MAX_OBJECT_TYPES: usize = 38;
 
 // =============================================================================
-// Object Type Initializer
+// Object r#type Initializer
 // =============================================================================
 
 /// Object type initializer flags
@@ -154,13 +154,13 @@ pub type ObOkayToCloseProcedure =
     unsafe extern "C" fn(process: *mut (), object: *mut (), handle: *mut ()) -> u32;
 
 // =============================================================================
-// Object Type
+// Object r#type
 // =============================================================================
 
 /// OBJECT_TYPE - represents an object type in the NT object manager.
 /// Size: 0xB0 bytes on Windows 7 x64
 #[repr(C)]
-pub struct ObjectType {
+pub struct object_type {
     pub type_index: u8,
     _padding: [u8; 7],
     pub name: [u16; 32], // Unicode type name (64 bytes)
@@ -183,7 +183,7 @@ pub struct ObjectType {
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-impl ObjectType {
+impl object_type {
     pub const fn new() -> Self {
         Self {
             type_index: 0,
@@ -276,7 +276,7 @@ pub const EVENT_GENERIC_MAPPING: GenericMapping = GenericMapping::new(
     0x001F, // EVENT_ALL_ACCESS
 );
 
-/// Mutant (mutex) object generic mapping
+/// mutant (mutex) object generic mapping
 pub const MUTANT_GENERIC_MAPPING: GenericMapping = GenericMapping::new(
     0x0001, // MUTANT_QUERY_STATE
     0x0001, // MUTANT_QUERY_STATE
@@ -333,10 +333,10 @@ pub const SECTION_GENERIC_MAPPING: GenericMapping = GenericMapping::new(
 );
 
 // =============================================================================
-// Object Type Initializers Table
+// Object r#type Initializers Table
 // =============================================================================
 
-/// Type index to name mapping — all 38 slots covered.
+/// r#type index to name mapping — all 38 slots covered.
 /// The "Reserved" slots (12-13, 15-27) are real Windows type indices
 /// that exist in the NT type table but are unused in this kernel.
 pub fn get_type_name(type_index: u8) -> &'static str {
@@ -353,22 +353,22 @@ pub fn get_type_name(type_index: u8) -> &'static str {
         9 => "Section",
         10 => "Mutant",
         11 => "Semaphore",
-        12 => "Reserved12",
-        13 => "Reserved13",
+        12 => "TmEn",
+        13 => "TmTm",
         14 => "Key",
-        15 => "Reserved15",
-        16 => "Reserved16",
-        17 => "Reserved17",
-        18 => "Reserved18",
-        19 => "Reserved19",
-        20 => "Reserved20",
-        21 => "Reserved21",
-        22 => "Reserved22",
-        23 => "Reserved23",
-        24 => "Reserved24",
-        25 => "Reserved25",
-        26 => "Reserved26",
-        27 => "Reserved27",
+        15 => "TmRm",
+        16 => "TmTx",
+        17 => "Desktop",
+        18 => "WindowStation",
+        19 => "Session",
+        20 => "Partition",
+        21 => "Callback",
+        22 => "FilterCommunicationPort",
+        23 => "FilterConnectionPort",
+        24 => "EtwRegistration",
+        25 => "EtwConsumer",
+        26 => "PcwInstance",
+        27 => "PcwProvider",
         28 => "Adapter",
         29 => "Controller",
         30 => "Device",
@@ -384,11 +384,11 @@ pub fn get_type_name(type_index: u8) -> &'static str {
 }
 
 // =============================================================================
-// Object Type Registry
+// Object r#type Registry
 // =============================================================================
 
 /// Global registry of object types
-static mut OB_TYPE_TABLE: [*mut ObjectType; MAX_OBJECT_TYPES] =
+static mut OB_TYPE_TABLE: [*mut object_type; MAX_OBJECT_TYPES] =
     [core::ptr::null_mut(); MAX_OBJECT_TYPES];
 
 /// Pool tag for object types
@@ -397,11 +397,8 @@ const OB_TYPE_POOL_TAG: u32 =
 
 /// Initialize the object type system
 pub fn init_types() {
-    crate::hal::serial::write_string("OB_TYPES:start\r\n");
-
-    // Create type objects for each object type
+    // create type objects for each object type
     unsafe {
-        crate::hal::serial::write_string("OB_TYPES:dir_start\r\n");
         OB_TYPE_TABLE[3] = create_object_type(
             3, // TypeIndex
             "Directory",
@@ -409,8 +406,6 @@ pub fn init_types() {
             0x000F, // DIRECTORY_ALL_ACCESS
             Some(directory_delete_procedure),
         );
-        crate::hal::serial::write_string("OB_TYPES:dir_done\r\n");
-
         // Device type
         OB_TYPE_TABLE[30] = create_object_type(
             30,
@@ -438,7 +433,7 @@ pub fn init_types() {
             None,
         );
 
-        // Mutant type
+        // mutant type
         OB_TYPE_TABLE[10] = create_object_type(
             10,
             "Mutant",
@@ -522,13 +517,8 @@ pub fn init_types() {
             }
         }
         if null_count > 0 {
-            crate::hal::serial::write_string("[OB] WARNING: null slots=");
-            // `write_u32_hex` is currently only implemented on x86_64;
-            // on other architectures we fall back to plain decimal.
-            #[cfg(target_arch = "x86_64")]
+            crate::hal::serial::write_string_always("[OB] WARNING: null slots=");
             crate::hal::serial::write_u32_hex(null_count as u32);
-            #[cfg(not(target_arch = "x86_64"))]
-            crate::hal::serial::write_string("?");
             crate::hal::serial::write_string("\r\n");
         }
     }
@@ -536,20 +526,19 @@ pub fn init_types() {
     crate::hal::serial::write_string("[OB] types initialized\r\n");
 }
 
-/// Create an object type and register it
+/// create an object type and register it
 fn create_object_type(
     type_index: u8,
     name: &str,
     generic_mapping: GenericMapping,
     valid_access: u32,
     delete_procedure: Option<ObDeleteProcedure>,
-) -> *mut ObjectType {
-    let size = core::mem::size_of::<ObjectType>();
+) -> *mut object_type {
+    let size = core::mem::size_of::<object_type>();
 
-    let obj_type = pool::allocate(pool::PoolType::NonPaged, size) as *mut ObjectType;
-
+    let obj_type = pool::allocate(pool::PoolType::NonPaged, size) as *mut object_type;
     if obj_type.is_null() {
-        crate::hal::serial::write_string("[OB] FATAL: alloc failed\r\n");
+        crate::hal::serial::write_string_always("[OB] FATAL: alloc failed\r\n");
         return core::ptr::null_mut();
     }
 
@@ -572,7 +561,7 @@ fn create_object_type(
 }
 
 /// Get object type by type index
-pub fn get_object_type(type_index: u8) -> *mut ObjectType {
+pub fn get_object_type(type_index: u8) -> *mut object_type {
     if type_index as usize >= MAX_OBJECT_TYPES {
         return core::ptr::null_mut();
     }

@@ -4,7 +4,7 @@
 //! Tests cover:
 //! - Object creation and deletion
 //! - Reference counting
-//! - Handle table operations
+//! - handle table operations
 //! - Directory namespace operations
 //! - Security descriptor handling
 //! - Symbolic link resolution
@@ -29,7 +29,7 @@ pub fn run_tests() -> bool {
     stats.test("Reference Decrement", test_reference_decrement);
     stats.test("Reference Zero Deletion", test_reference_zero_deletion);
 
-    // Handle Table Tests
+    // handle Table Tests
     stats.test("Handle Allocation", test_handle_allocation);
     stats.test("Handle Close", test_handle_close);
     stats.test("Handle Lookup", test_handle_lookup);
@@ -40,7 +40,7 @@ pub fn run_tests() -> bool {
     stats.test("Directory Lookup", test_directory_lookup);
     stats.test("Directory Enumeration", test_directory_enumeration);
 
-    // Name Validation Tests
+    // name Validation Tests
     stats.test("Valid Names", test_valid_names);
     stats.test("Invalid Names", test_invalid_names);
     stats.test("Name Length Limits", test_name_length_limits);
@@ -56,7 +56,7 @@ pub fn run_tests() -> bool {
     stats.test("Symlink Resolution", test_symlink_resolution);
     stats.test("Symlink Cycle Detection", test_symlink_cycle_detection);
 
-    // Type System Tests
+    // r#type System Tests
     stats.test("Object Type Query", test_object_type_query);
     stats.test("Type Index Mapping", test_type_index_mapping);
 
@@ -245,7 +245,7 @@ fn test_reference_zero_deletion() -> bool {
 }
 
 // =============================================================================
-// Handle Table Tests
+// handle Table Tests
 // =============================================================================
 
 fn test_handle_allocation() -> bool {
@@ -385,7 +385,7 @@ fn test_directory_enumeration() -> bool {
 }
 
 // =============================================================================
-// Name Validation Tests
+// name Validation Tests
 // =============================================================================
 
 fn test_valid_names() -> bool {
@@ -484,7 +484,7 @@ fn test_security_descriptor_set() -> bool {
         return false;
     }
 
-    // Create a test security descriptor
+    // create a test security descriptor
     let sd = crate::se::seaccess::create_null_dacl_sd();
     if sd.is_null() {
         return false;
@@ -535,9 +535,7 @@ fn test_access_check() -> bool {
     use crate::ps::process::{Eprocess, ProcessHandleTable, HANDLE_TABLE_SIZE};
     use crate::se::acl::{AceFlags, Acl};
     use crate::se::descriptor::SE_DACL_PRESENT;
-    use crate::se::seaccess::{
-        SecurityDescriptor, EVENT_MODIFY_STATE, ACCESS_SYNCHRONIZE,
-    };
+    use crate::se::seaccess::{SecurityDescriptor, ACCESS_SYNCHRONIZE, EVENT_MODIFY_STATE};
     use crate::se::sid::SID_USERS;
     use crate::se::token::Token;
 
@@ -545,7 +543,7 @@ fn test_access_check() -> bool {
     unsafe {
         crate::mm::heap::KERNEL_HEAP.configure(
             core::ptr::addr_of_mut!(TEST_HEAP_STORAGE).cast::<u8>(),
-            TEST_HEAP_STORAGE.len(),
+            (*core::ptr::addr_of!(TEST_HEAP_STORAGE)).len(),
         );
     }
 
@@ -564,18 +562,10 @@ fn test_access_check() -> bool {
     process.set_token(token);
 
     let acl = Box::leak(Box::new(Acl::new()));
-    if !(*acl).add_access_denied(
-        &(*token).user,
-        EVENT_MODIFY_STATE,
-        AceFlags::NONE,
-    ) {
+    if !(*acl).add_access_denied(&(*token).user, EVENT_MODIFY_STATE, AceFlags::NONE) {
         return false;
     }
-    if !(*acl).add_access_allowed(
-        &(*token).user,
-        ACCESS_SYNCHRONIZE,
-        AceFlags::NONE,
-    ) {
+    if !(*acl).add_access_allowed(&(*token).user, ACCESS_SYNCHRONIZE, AceFlags::NONE) {
         return false;
     }
     let descriptor = Box::leak(Box::new(SecurityDescriptor {
@@ -649,7 +639,7 @@ fn test_symlink_creation() -> bool {
 }
 
 fn test_symlink_resolution() -> bool {
-    use super::{create_symbolic_link, insert_object, lookup_object, resolve_symbolic_link};
+    use super::{create_symbolic_link, insert_object, resolve_symbolic_link};
 
     let header = create_symbolic_link(b"\\??", b"TestLink2", b"\\Device");
 
@@ -675,7 +665,7 @@ fn test_symlink_cycle_detection() -> bool {
 }
 
 // =============================================================================
-// Type System Tests
+// r#type System Tests
 // =============================================================================
 
 fn test_object_type_query() -> bool {

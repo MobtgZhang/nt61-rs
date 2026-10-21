@@ -8,7 +8,7 @@
 //! * Object creation / insertion / lookup / reference / dereference
 //!   all behave as expected.
 //! * Per-subsystem counters advance on each operation.
-//! * Name validation rejects bad names.
+//! * name validation rejects bad names.
 //! * Symbolic link cycle detection works.
 //! * Ref-count and handle-count stay synchronised.
 //! * Security-descriptor replacement works.
@@ -16,8 +16,6 @@
 //
 //! Returns `true` iff every step passes.
 
-#[allow(unused_imports)]
-use crate::boot_println;
 use crate::rtl::testing::TestStats;
 use core::sync::atomic::Ordering;
 
@@ -82,7 +80,7 @@ fn test_subdirectories() -> bool {
 fn test_object_creation() -> bool {
     let c_before = create_count();
 
-    // Create objects in \KernelObjects.
+    // create objects in \KernelObjects.
     let sizes = [core::mem::size_of::<u64>(); 3];
     let h0 = create_object(
         b"\\KernelObjects",
@@ -140,7 +138,7 @@ fn test_object_lookup() -> bool {
 
 /// Test reference and dereference operations.
 fn test_reference_counting() -> bool {
-    // Create a test object
+    // create a test object
     let hdr = create_object(
         b"\\KernelObjects",
         b"SmokeRef",
@@ -236,7 +234,7 @@ fn test_object_counters() -> bool {
     let r_before = reference_count();
     let l_before = lookup_count();
 
-    // Create one more object
+    // create one more object
     let hdr = create_object(
         b"\\KernelObjects",
         b"SmokeCounter",

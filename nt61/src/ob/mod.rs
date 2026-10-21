@@ -64,6 +64,13 @@ pub const STATUS_NAME_TOO_LONG: ObStatus = 0xC0000106;
 /// (\Driver, \Device, \BaseNamedObjects, \KernelObjects) without
 /// forcing the data structure to be dynamic yet.
 pub const MAX_DIR_ENTRIES: usize = 256;
+
+/// High-water mark: the largest per-directory entry count ever
+/// observed. Useful for diagnosing whether the fixed-slot limit is
+/// under pressure without adding a dynamic allocation path.
+static DIRECTORY_ENTRY_HIGH_WATER: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
 /// Maximum depth of the directory tree. NT allows arbitrarily deep
 /// paths; 256 leaves headroom for the deepest practical NT path
 /// (\??\C:\Users\<long>\AppData\Roaming\...) before we'd ever
@@ -126,8 +133,8 @@ fn slice_eq(a: &[u8], b: &[u8]) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ObType {
-    /// Type object (0) - the metaclass for object types
-    Type = 0,
+    /// r#type object (0) - the metaclass for object types
+    r#Type = 0,
 
     /// Process object (1) - represents a running program
     Process = 1,
@@ -156,35 +163,59 @@ pub enum ObType {
     /// Section object (9) - shared memory region
     Section = 9,
 
-    /// Mutant object (10) - mutex
+    /// mutant object (10) - mutex
     Mutant = 10,
 
     /// Semaphore object (11)
     Semaphore = 11,
 
-    /// Reserved (12)
-    Reserved12 = 12,
+    /// TmEn (12) - transaction name object
+    TmEn = 12,
 
-    /// Reserved (13)
-    Reserved13 = 13,
+    /// TmTm (13) - transaction manager object
+    TmTm = 13,
 
     /// Key object (14) - registry key
     Key = 14,
 
-    /// Reserved for Windows (15-27)
-    Reserved15 = 15,
-    Reserved16 = 16,
-    Reserved17 = 17,
-    Reserved18 = 18,
-    Reserved19 = 19,
-    Reserved20 = 20,
-    Reserved21 = 21,
-    Reserved22 = 22,
-    Reserved23 = 23,
-    Reserved24 = 24,
-    Reserved25 = 25,
-    Reserved26 = 26,
-    Reserved27 = 27,
+    /// TmRm (15) - resource manager object
+    TmRm = 15,
+
+    /// TmTx (16) - transaction object
+    TmTx = 16,
+
+    /// Desktop (17)
+    Desktop = 17,
+
+    /// WindowStation (18)
+    WindowStation = 18,
+
+    /// Session (19)
+    Session = 19,
+
+    /// Partition (20)
+    Partition = 20,
+
+    /// Callback (21)
+    Callback = 21,
+
+    /// FilterCommunicationPort (22)
+    FilterCommunicationPort = 22,
+
+    /// FilterConnectionPort (23)
+    FilterConnectionPort = 23,
+
+    /// EtwRegistration (24)
+    EtwRegistration = 24,
+
+    /// EtwConsumer (25)
+    EtwConsumer = 25,
+
+    /// PcwInstance (26)
+    PcwInstance = 26,
+
+    /// PcwProvider (27)
+    PcwProvider = 27,
 
     /// Adapter object (28)
     Adapter = 28,
@@ -223,7 +254,7 @@ impl ObType {
         self as u8
     }
 
-    /// Create ObType from a type index
+    /// create ObType from a type index
     pub fn from_type_index(idx: u8) -> Option<Self> {
         match idx {
             0 => Some(ObType::Type),
@@ -238,7 +269,22 @@ impl ObType {
             9 => Some(ObType::Section),
             10 => Some(ObType::Mutant),
             11 => Some(ObType::Semaphore),
+            12 => Some(ObType::TmEn),
+            13 => Some(ObType::TmTm),
             14 => Some(ObType::Key),
+            15 => Some(ObType::TmRm),
+            16 => Some(ObType::TmTx),
+            17 => Some(ObType::Desktop),
+            18 => Some(ObType::WindowStation),
+            19 => Some(ObType::Session),
+            20 => Some(ObType::Partition),
+            21 => Some(ObType::Callback),
+            22 => Some(ObType::FilterCommunicationPort),
+            23 => Some(ObType::FilterConnectionPort),
+            24 => Some(ObType::EtwRegistration),
+            25 => Some(ObType::EtwConsumer),
+            26 => Some(ObType::PcwInstance),
+            27 => Some(ObType::PcwProvider),
             28 => Some(ObType::Adapter),
             29 => Some(ObType::Controller),
             30 => Some(ObType::Device),
@@ -257,12 +303,11 @@ impl ObType {
     ///
     /// # Issue 2.8
     /// The mapping is 1:1 for all defined types (0-37).
-    /// Reserved slots (12-13, 15-27) return `None` because they are
-    /// internal NT slots that do not correspond to named Windows types.
+    /// All 38 slots now map 1:1 to named Windows types.
     ///
     /// | ObType          | Windows Index | Notes                              |
     /// |-----------------|---------------|------------------------------------|
-    /// | Type            | 0             | OBJECT_TYPE typedef                 |
+    /// | r#type            | 0             | OBJECT_TYPE typedef                 |
     /// | Process         | 1             | Eprocess                           |
     /// | Thread          | 2             | Ethread                            |
     /// | Directory       | 3             | ObpDirectoryObjectName             |
@@ -271,7 +316,7 @@ impl ObType {
     /// | Job             | 6             | PspJobType                         |
     /// | Event           | 7/8           | ExEventType[0/1]                   |
     /// | Section         | 9             | MmSectionObjectType                |
-    /// | Mutant          | 10            | ExMutantObjectType                 |
+    /// | mutant          | 10            | ExMutantObjectType                 |
     /// | Semaphore       | 11            | ExSemaphoreObjectType              |
     /// | Key             | 14            | CmKeyObjectType                    |
     /// | Adapter         | 28            | IoAdapterObjectType                |
@@ -284,26 +329,9 @@ impl ObType {
     /// | WmiGuid         | 35            | WmiDataGuidObjectType              |
     /// | PowerRequest    | 36            | PowerRequestType                   |
     /// | W32Object       | 37            | W32Process/W32Thread/etc.         |
-    /// | Reserved*       | —             | No named Windows type              |
     pub fn to_windows_index(self) -> Option<u8> {
         let idx = self.as_type_index();
         match self {
-            // Reserved slots have no named Windows counterpart.
-            ObType::Reserved12
-            | ObType::Reserved13
-            | ObType::Reserved15
-            | ObType::Reserved16
-            | ObType::Reserved17
-            | ObType::Reserved18
-            | ObType::Reserved19
-            | ObType::Reserved20
-            | ObType::Reserved21
-            | ObType::Reserved22
-            | ObType::Reserved23
-            | ObType::Reserved24
-            | ObType::Reserved25
-            | ObType::Reserved26
-            | ObType::Reserved27 => None,
             // All other slots map 1:1.
             _ => Some(idx),
         }
@@ -334,27 +362,27 @@ impl ObType {
             ObType::WmiGuid => "WmiGuid",
             ObType::PowerRequest => "PowerRequest",
             ObType::W32Object => "W32Object",
-            ObType::Reserved12 => "Reserved12",
-            ObType::Reserved13 => "Reserved13",
-            ObType::Reserved15 => "Reserved15",
-            ObType::Reserved16 => "Reserved16",
-            ObType::Reserved17 => "Reserved17",
-            ObType::Reserved18 => "Reserved18",
-            ObType::Reserved19 => "Reserved19",
-            ObType::Reserved20 => "Reserved20",
-            ObType::Reserved21 => "Reserved21",
-            ObType::Reserved22 => "Reserved22",
-            ObType::Reserved23 => "Reserved23",
-            ObType::Reserved24 => "Reserved24",
-            ObType::Reserved25 => "Reserved25",
-            ObType::Reserved26 => "Reserved26",
-            ObType::Reserved27 => "Reserved27",
+            ObType::TmEn => "TmEn",
+            ObType::TmTm => "TmTm",
+            ObType::TmRm => "TmRm",
+            ObType::TmTx => "TmTx",
+            ObType::Desktop => "Desktop",
+            ObType::WindowStation => "WindowStation",
+            ObType::Session => "Session",
+            ObType::Partition => "Partition",
+            ObType::Callback => "Callback",
+            ObType::FilterCommunicationPort => "FilterCommunicationPort",
+            ObType::FilterConnectionPort => "FilterConnectionPort",
+            ObType::EtwRegistration => "EtwRegistration",
+            ObType::EtwConsumer => "EtwConsumer",
+            ObType::PcwInstance => "PcwInstance",
+            ObType::PcwProvider => "PcwProvider",
         }
     }
 
     /// Convert a handle kind index to ObType.
     /// HandleKind index: File=0, Process=1, Thread=2, Section=3,
-    /// Event=4, Mutant=5, Semaphore=6, Timer=7, Key=8
+    /// Event=4, mutant=5, Semaphore=6, Timer=7, Key=8
     pub fn from_handle_kind(kind_index: u32) -> Self {
         match kind_index {
             0 => ObType::Key, // Legacy mapping
@@ -410,7 +438,7 @@ impl ObType {
 /// Used for debugging and diagnostics.
 ///
 /// Windows 7 x64 TypeIndex values:
-/// 0 = Type
+/// 0 = r#type
 /// 1 = Process
 /// 2 = Thread
 /// 3 = Directory
@@ -420,11 +448,24 @@ impl ObType {
 /// 7 = Event (Notification)
 /// 8 = Event (Synchronization)
 /// 9 = Section
-/// 10 = Mutant
+/// 10 = mutant
 /// 11 = Semaphore
-/// 12-13 = Reserved
+/// 12 = TmEn
+/// 13 = TmTm
 /// 14 = Key
-/// 15-27 = Reserved
+/// 15 = TmRm
+/// 16 = TmTx
+/// 17 = Desktop
+/// 18 = WindowStation
+/// 19 = Session
+/// 20 = Partition
+/// 21 = Callback
+/// 22 = FilterCommunicationPort
+/// 23 = FilterConnectionPort
+/// 24 = EtwRegistration
+/// 25 = EtwConsumer
+/// 26 = PcwInstance
+/// 27 = PcwProvider
 /// 28 = Adapter
 /// 29 = Controller
 /// 30 = Device
@@ -448,22 +489,22 @@ static OB_TYPE_INDEX_TABLE: [&str; 38] = [
     "Section",      // 9
     "Mutant",       // 10
     "Semaphore",    // 11
-    "Reserved",     // 12
-    "Reserved",     // 13
+    "TmEn",         // 12
+    "TmTm",         // 13
     "Key",          // 14
-    "Reserved15",   // 15
-    "Reserved16",   // 16
-    "Reserved17",   // 17
-    "Reserved18",   // 18
-    "Reserved19",   // 19
-    "Reserved20",   // 20
-    "Reserved21",   // 21
-    "Reserved22",   // 22
-    "Reserved23",   // 23
-    "Reserved24",   // 24
-    "Reserved25",   // 25
-    "Reserved26",   // 26
-    "Reserved27",   // 27
+    "TmRm",         // 15
+    "TmTx",         // 16
+    "Desktop",      // 17
+    "WindowStation",// 18
+    "Session",      // 19
+    "Partition",    // 20
+    "Callback",     // 21
+    "FilterCommunicationPort", // 22
+    "FilterConnectionPort",    // 23
+    "EtwRegistration",         // 24
+    "EtwConsumer",             // 25
+    "PcwInstance",             // 26
+    "PcwProvider",             // 27
     "Adapter",      // 28
     "Controller",   // 29
     "Device",       // 30
@@ -547,7 +588,7 @@ pub struct ObjectHeader {
     _type_padding: [u8; 7],
     /// Reference count. The object is freed when this hits zero.
     pub ref_count: AtomicU32,
-    /// Handle count (number of outstanding handles to this
+    /// handle count (number of outstanding handles to this
     /// object). The handle-table slot count.
     pub handle_count: AtomicU32,
     /// Pointer to the directory this object lives in. `null_mut()`
@@ -712,6 +753,7 @@ pub fn insert_object_into_process(
             return 0;
         }
         let slot = (*parent).num_entries as usize;
+        DIRECTORY_ENTRY_HIGH_WATER.fetch_max(slot + 1, core::sync::atomic::Ordering::Relaxed);
         (*parent).entries[slot] = header;
         (*parent).valid[slot] = 1;
         (*parent).num_entries += 1;
@@ -829,9 +871,7 @@ static LOOKUP_COUNT: AtomicU64 = AtomicU64::new(0);
 /// register their device/driver objects via the standard
 /// `create_directory` / `create_object` API.
 pub fn init() {
-    crate::hal::serial::write_string("OB:start\r\n");
-
-    // 1. Type table: 12 ObjectTypes, each ~200B on the stack of
+    // 1. r#type table: 12 ObjectTypes, each ~200B on the stack of
     //    `init_types` (about 2.4 KB total). 512 KB stack is enough.
     crate::ob::types::init_types();
 
@@ -878,7 +918,6 @@ pub fn init() {
     REFERENCE_COUNT.store(0, Ordering::SeqCst);
     DEREFERENCE_COUNT.store(0, Ordering::SeqCst);
     LOOKUP_COUNT.store(0, Ordering::SeqCst);
-    crate::hal::serial::write_string("OB:end\r\n");
 }
 
 /// Allocate a new directory object. The header is allocated from
@@ -929,7 +968,7 @@ fn allocate_object_header(ob_type: ObType, body_size: usize) -> *mut ObjectHeade
 }
 
 // =============================================================================
-// Name validation (Step 1e / Issue 3.2)
+// name validation (Step 1e / Issue 3.2)
 // =============================================================================
 
 /// Validate a candidate object name against Windows-style name rules.
@@ -1150,7 +1189,7 @@ pub fn lookup_object(path: &[u8]) -> *mut ObjectHeader {
     null_mut()
 }
 
-/// Create a new directory at `path`. The parent directories must
+/// create a new directory at `path`. The parent directories must
 /// already exist. Returns the body pointer or `null_mut()` on
 /// failure.
 pub fn create_directory(path: &[u8]) -> *mut Directory {
@@ -1228,7 +1267,7 @@ fn lookup_directory_non_locking(path: &[u8]) -> Option<*mut Directory> {
     }
 }
 
-/// Create a new object header of `ob_type` named `name`. The parent
+/// create a new object header of `ob_type` named `name`. The parent
 /// directory is looked up and the name is checked for duplicates.
 /// The body is left zeroed. Returns the header on success, or
 /// `null_mut()` on failure.
@@ -1356,7 +1395,7 @@ pub fn lookup_handle_in_process(
     }
 }
 
-/// Close a handle in a specific process's handle table.
+/// close a handle in a specific process's handle table.
 ///
 /// # W-B fix
 /// `handle_count` is `AtomicU32`; updates use `fetch_sub`.
@@ -1415,7 +1454,7 @@ pub fn get_object_body<T>(header: *mut ObjectHeader) -> *mut T {
 // Object deletion
 // =============================================================================
 
-/// Internal delete that assumes the caller holds `OB_DELETE_LOCK`.
+/// internal delete that assumes the caller holds `OB_DELETE_LOCK`.
 /// Atomically checks the DELETING flag and, if not already deleting,
 /// performs the full teardown: unlinks from directory, clears handle table,
 /// calls type delete procedure, frees security descriptor, frees pool allocation.
@@ -1655,7 +1694,7 @@ pub fn reference_object_by_handle_in_process(
 /// holding a valid handle can operate on any object.
 //
 /// Kernel-mode callers (`process` null) skip the check: this mirrors
-/// `ObReferenceObjectByHandle` with `AccessMode == KernelMode`. For a
+/// `ObReferenceObjectByHandle` with `access_mode == KernelMode`. For a
 /// user-mode caller the DACL check is mandatory, and a denial releases
 /// the reference taken by the lookup before returning null.
 pub fn reference_object_by_handle_with_access(
@@ -1689,7 +1728,7 @@ pub fn reference_object_by_handle_with_access(
     header
 }
 
-/// Close a handle in the global kernel handle table.
+/// close a handle in the global kernel handle table.
 /// Returns true on success.
 ///
 /// # Issue 2.1 / W-C
@@ -1726,25 +1765,6 @@ pub fn close_handle_global(handle: u64) -> bool {
         decrement_handle_count(header);
     }
     true
-}
-
-/// Create an object with the given type, name, and parent path.
-/// Returns the object header pointer or null on failure.
-/// The object is NOT yet inserted into the directory.
-pub fn create_object_ex(
-    parent_path: &[u8],
-    name: &[u8],
-    ob_type: ObType,
-    body_size: usize,
-) -> *mut ObjectHeader {
-    create_object(parent_path, name, ob_type, body_size)
-}
-
-/// Insert an object header into the namespace directory and allocate
-/// a handle. Returns the handle (1-based) or 0 on failure.
-/// Does NOT take a process parameter - uses global kernel table only.
-pub fn insert_object_ex(parent_path: &[u8], header: *mut ObjectHeader) -> u64 {
-    insert_object(parent_path, header)
 }
 
 /// Counters (for the smoke test).
@@ -1838,8 +1858,15 @@ pub fn open_object_with_access(
     // 3. Get the object's security descriptor
     let security_descriptor = get_object_security_descriptor(header);
     if security_descriptor.is_null() {
-        // No security descriptor, allow access (bootstrap mode)
-        return Ok(header);
+        // No security descriptor: deny access by default.
+        // Real Windows NT semantics: objects without a security descriptor
+        // are not accessible unless the object type grants a default SD.
+        // Kernel-mode object types (Directory, Device, Driver, etc.) receive
+        // a static NULL-DACL SD from `get_object_security_descriptor`, so
+        // they are unaffected. Only non-kernel object types without an
+        // explicitly-assigned SD reach this path.
+        dereference_object(header);
+        return Err(crate::ps::process::STATUS_ACCESS_DENIED);
     }
 
     // 4. Get object type for generic mapping
@@ -1912,13 +1939,13 @@ static mut OB_DEFAULT_KERNEL_SD: crate::se::seaccess::SecurityDescriptor =
         revision: 1,
         sbz1: 0,
         control: 0x8004, // SE_DACL_PRESENT | SE_SELF_RELATIVE
-        owner: crate::se::sid::Sid {
+        owner: crate::se::sid::sid {
             revision: 1,
             sub_authority_count: 1,
             identifier_authority: [0, 0, 0, 0, 0, 5], // SECURITY_NT_AUTHORITY
             sub_authority: [0x00000020, 0, 0, 0, 0, 0, 0, 0], // SECURITY_LOCAL_SYSTEM_RID
         },
-        group: crate::se::sid::Sid {
+        group: crate::se::sid::sid {
             revision: 1,
             sub_authority_count: 1,
             identifier_authority: [0, 0, 0, 0, 0, 5],
@@ -1936,7 +1963,7 @@ fn ob_type_needs_default_sd(type_index: u8) -> bool {
 
 /// Get the static default security descriptor for kernel objects.
 fn ob_default_security_descriptor() -> *const crate::se::seaccess::SecurityDescriptor {
-    unsafe { &OB_DEFAULT_KERNEL_SD as *const _ }
+    core::ptr::addr_of!(OB_DEFAULT_KERNEL_SD) as *const _
 }
 
 /// Get the security descriptor for an object.
@@ -1945,8 +1972,8 @@ fn ob_default_security_descriptor() -> *const crate::se::seaccess::SecurityDescr
 /// 1. If the object has a stored (non-null) SD → return it.
 /// 2. If the object is a kernel-mode type (Directory, Device, Driver, etc.)
 ///    → return the static default NULL-DACL SD.
-/// 3. Otherwise → return null (access denied by default in production;
-///    currently in bootstrap mode the caller treats null as allowed).
+/// 3. Otherwise → return null (access denied by default — callers must
+///    reject objects without an SD).
 fn get_object_security_descriptor(
     header: *mut ObjectHeader,
 ) -> *const crate::se::seaccess::SecurityDescriptor {
@@ -1967,8 +1994,6 @@ fn get_object_security_descriptor(
         ob_default_security_descriptor()
     } else {
         // Non-kernel object with no SD: deny by default.
-        // (In bootstrap mode callers may still allow, but at least we
-        // signal that no default-allow policy applies.)
         core::ptr::null()
     }
 }
@@ -2048,7 +2073,7 @@ pub fn ob_query_security_descriptor(
 pub struct SymbolicLinkBody {
     /// Target path (null-terminated UTF-8)
     pub target: [u8; 256],
-    /// Length of target string
+    /// length of target string
     pub target_length: u32,
 }
 
@@ -2166,13 +2191,13 @@ unsafe fn resolve_symbolic_link_safe(start: *mut ObjectHeader) -> *mut ObjectHea
     }
 }
 
-/// Create a symbolic link object
+/// create a symbolic link object
 pub fn create_symbolic_link(parent_path: &[u8], name: &[u8], target: &[u8]) -> *mut ObjectHeader {
-    // Create the symbolic link body
+    // create the symbolic link body
     let mut body = SymbolicLinkBody::new();
     body.set_target(target);
 
-    // Create object header
+    // create object header
     let header = create_object(
         parent_path,
         name,
@@ -2185,7 +2210,7 @@ pub fn create_symbolic_link(parent_path: &[u8], name: &[u8], target: &[u8]) -> *
             let body_ptr = (*header).body as *mut SymbolicLinkBody;
             core::ptr::write(body_ptr, body);
 
-            // Create a default security descriptor
+            // create a default security descriptor
             let sd = crate::se::seaccess::create_null_dacl_sd();
             if !sd.is_null() {
                 (*header).security_descriptor = sd as *mut crate::se::seaccess::SecurityDescriptor;
@@ -2215,7 +2240,7 @@ pub fn init_symbolic_links() {
 }
 
 // =============================================================================
-// Object Attributes Support
+// Object attributes Support
 // =============================================================================
 
 /// Object attributes flags
