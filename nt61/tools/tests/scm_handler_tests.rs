@@ -7,26 +7,14 @@
 #[cfg(test)]
 mod tests {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    #[allow(dead_code)]
     enum ServiceState {
         Stopped = 0x01,
         StartPending = 0x02,
-        StopPending = 0x03,
-        Running = 0x04,
-        ContinuePending = 0x05,
-        PausePending = 0x06,
-        Paused = 0x07,
     }
 
     #[derive(Clone, Copy)]
-    #[allow(dead_code)]
     struct ServiceStatus {
         current_state: ServiceState,
-        controls_accepted: u32,
-        win32_exit_code: u32,
-        service_exit_code: u32,
-        checkpoint: u32,
-        wait_hint: u32,
     }
 
     #[derive(Clone, Copy)]
@@ -59,11 +47,6 @@ mod tests {
     fn service_status_default_is_stopped() {
         let st = ServiceStatus {
             current_state: ServiceState::Stopped,
-            controls_accepted: 0,
-            win32_exit_code: 0,
-            service_exit_code: 0,
-            checkpoint: 0,
-            wait_hint: 0,
         };
         assert_eq!(st.current_state, ServiceState::Stopped);
     }
@@ -90,11 +73,6 @@ mod tests {
             name_len: 4,
             last_status: ServiceStatus {
                 current_state: ServiceState::StartPending,
-                controls_accepted: 0,
-                win32_exit_code: 0,
-                service_exit_code: 0,
-                checkpoint: 0,
-                wait_hint: 0,
             },
         };
         table[0] = Some(e);

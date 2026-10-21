@@ -39,10 +39,7 @@ mod tests {
                 .cmp(&a.prefix_len())
                 .then(a.metric.cmp(&b.metric))
         });
-        sorted
-            .into_iter()
-            .find(|r| r.matches(dest))
-            .copied()
+        sorted.into_iter().find(|r| r.matches(dest)).copied()
     }
 
     fn ipv4_is_loopback(ip: u32) -> bool {
@@ -120,7 +117,10 @@ mod tests {
             },
         ];
         let r = route_lookup(&routes, 0x0A000203).unwrap();
-        assert_eq!(r.netmask, 0xFFFFFFFF, "must pick /32 host route, not default");
+        assert_eq!(
+            r.netmask, 0xFFFFFFFF,
+            "must pick /32 host route, not default"
+        );
     }
 
     #[test]

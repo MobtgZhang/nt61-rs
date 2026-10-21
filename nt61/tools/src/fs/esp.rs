@@ -17,12 +17,10 @@
 //! non-x86_64 architectures (which OVMF boots from the removable-media
 //! path on QEMU).
 
-
-
-use std::path::{Path, PathBuf};
 use crate::error::Result;
-use crate::logger as log;
 use crate::hive_gen;
+use crate::logger as log;
+use std::path::{Path, PathBuf};
 
 // =====================================================================
 // ESP Directory Structure (FAT32 boot partition layout)
@@ -45,11 +43,7 @@ use crate::hive_gen;
 //   \EFI\Microsoft\Boot\Fonts\
 // =====================================================================
 
-const ESP_STRUCTURE: &[&str] = &[
-    "EFI/BOOT",
-    "EFI/Microsoft/Boot",
-    "EFI/Microsoft/Boot/Fonts",
-];
+const ESP_STRUCTURE: &[&str] = &["EFI/BOOT", "EFI/Microsoft/Boot", "EFI/Microsoft/Boot/Fonts"];
 
 // =====================================================================
 // ESP Builder
@@ -99,11 +93,7 @@ impl EspBuilder {
     }
 
     /// Register an extra file to copy into the ESP.
-    pub fn add_esp_file<P: AsRef<Path>>(
-        mut self,
-        relative_path: &str,
-        source: P,
-    ) -> Result<Self> {
+    pub fn add_esp_file<P: AsRef<Path>>(mut self, relative_path: &str, source: P) -> Result<Self> {
         self.esp_files
             .push((relative_path.to_string(), source.as_ref().to_path_buf()));
         Ok(self)
@@ -139,7 +129,9 @@ impl EspBuilder {
             ));
             crate::fs::copy::copy_file(src, &canonical)?;
 
-            let fallback = self.output_dir.join(format!("EFI/BOOT/BOOT{}.EFI", self.arch));
+            let fallback = self
+                .output_dir
+                .join(format!("EFI/BOOT/BOOT{}.EFI", self.arch));
             log::info(&format!(
                 "Copying boot manager (firmware fallback): {} -> {}",
                 src.display(),
@@ -278,64 +270,3 @@ impl EspBuilder {
 // =====================================================================
 // Helpers
 // =====================================================================
-
-/// Pad a REGF hive to `target` bytes. Adds any needed HBIN headers
-/// for the new pages, updates the header's `blocks` field (offset 0x28),
-/// and recomputes the header checksum so the file remains valid for
-/// `hivex_open` and friends.
-#[allow(dead_code)]
-fn pad_bcd(data: Vec<u8>, target: usize) -> Vec<u8> {
-    if data.len() >= target {
-        return data;
-    }
-    
-    let old_len = data.len();
-    let old_hbins = (old_len.saturating_sub(0x1000)) / 4096;
-    let new_total_hbins = (target - 0x1000) / 4096;
-
-    // Save ENTIRE existing HBIN data (header + cells + free blocks)
-    let mut saved_hbins: Vec<Vec<u8>> = Vec::new();
-    for i in 0..old_hbins {
-        let hbin_start = 0x1000 + i * 4096;
-        let hbin_end = (hbin_start + 4096).min(old_len);
-        let hbin_data = data[hbin_start..hbin_end].to_vec();
-        saved_hbins.push(hbin_data);
-    }
-
-    // Allocate new buffer
-    let mut new_data = vec![0u8; target];
-    
-    // Copy header (0x0000 to 0x1000)
-    new_data[0..0x1000.min(old_len)].copy_from_slice(&data[0..0x1000.min(old_len)]);
-    
-    // Restore saved HBIN data
-    for i in 0..saved_hbins.len() {
-        let hbin_start = 0x1000 + i * 4096;
-        new_data[hbin_start..hbin_start + saved_hbins[i].len()].copy_from_slice(&saved_hbins[i]);
-    }
-    
-    // Write HBIN headers for NEW pages only (existing ones are already correct)
-    for i in old_hbins..new_total_hbins {
-        let hbin_off = 0x1000 + i * 4096;
-        new_data[hbin_off..hbin_off+4].copy_from_slice(b"hbin");
-        new_data[hbin_off+4..hbin_off+8].copy_from_slice(&(i as u32 * 4096).to_le_bytes());
-        new_data[hbin_off+8..hbin_off+12].copy_from_slice(&4096u32.to_le_bytes());
-        // Write free block
-        let free_off = hbin_off + 4096 - 32;
-        new_data[free_off..free_off+4].copy_from_slice(&4064u32.to_le_bytes());
-    }
-    
-    // Update blocks field
-    let blocks: u32 = (new_total_hbins * 4096) as u32;
-    new_data[0x28..0x2C].copy_from_slice(&blocks.to_le_bytes());
-    
-    // Compute checksum
-    let mut sum: u32 = 0;
-    for i in (0..0x1FC).step_by(4) {
-        let val = u32::from_le_bytes([new_data[i], new_data[i+1], new_data[i+2], new_data[i+3]]);
-        sum ^= val;
-    }
-    new_data[0x1FC..0x200].copy_from_slice(&sum.to_le_bytes());
-    
-    new_data
-}

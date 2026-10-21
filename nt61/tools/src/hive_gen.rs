@@ -17,21 +17,25 @@ use crate::regf::{HiveBuilder, Node, Value};
 /// `build_bcd()` and written by the ESP step.
 pub fn generate_all(root: &Path) -> std::io::Result<()> {
     let config_dir = root.join("Windows").join("System32").join("config");
-    let etc_dir = root.join("Windows").join("System32").join("drivers").join("etc");
+    let etc_dir = root
+        .join("Windows")
+        .join("System32")
+        .join("drivers")
+        .join("etc");
     fs::create_dir_all(&config_dir)?;
     fs::create_dir_all(&etc_dir)?;
 
-    fs::write(config_dir.join("SYSTEM"),   build_system())?;
+    fs::write(config_dir.join("SYSTEM"), build_system())?;
     fs::write(config_dir.join("SOFTWARE"), build_software())?;
-    fs::write(config_dir.join("SAM"),      build_sam())?;
+    fs::write(config_dir.join("SAM"), build_sam())?;
     fs::write(config_dir.join("SECURITY"), build_security())?;
-    fs::write(config_dir.join("DEFAULT"),  build_default())?;
+    fs::write(config_dir.join("DEFAULT"), build_default())?;
 
-    fs::write(etc_dir.join("hosts"),       HOSTS_CONTENT.as_bytes())?;
+    fs::write(etc_dir.join("hosts"), HOSTS_CONTENT.as_bytes())?;
     fs::write(etc_dir.join("lmhosts.sam"), LMHOSTS_CONTENT.as_bytes())?;
-    fs::write(etc_dir.join("networks"),   NETWORKS_CONTENT.as_bytes())?;
-    fs::write(etc_dir.join("protocol"),   PROTOCOL_CONTENT.as_bytes())?;
-    fs::write(etc_dir.join("services"),   SERVICES_CONTENT.as_bytes())?;
+    fs::write(etc_dir.join("networks"), NETWORKS_CONTENT.as_bytes())?;
+    fs::write(etc_dir.join("protocol"), PROTOCOL_CONTENT.as_bytes())?;
+    fs::write(etc_dir.join("services"), SERVICES_CONTENT.as_bytes())?;
 
     Ok(())
 }
@@ -205,15 +209,19 @@ pub fn build_bcd() -> Vec<u8> {
                 let mut ee = node("Elements");
                 // Timeout = 5 seconds (stored as DWORD, but in Elements as binary with Element value)
                 ee.subkeys.push(element_subkey_dword("15000011", 5));
-                ee.subkeys.push(element_subkey_string("12000004", "Windows Boot Manager"));
+                ee.subkeys
+                    .push(element_subkey_string("12000004", "Windows Boot Manager"));
                 ee.subkeys.push(element_subkey_string("12000005", "en-US"));
                 // DisplayOrder: list of boot loader GUIDs
-                ee.subkeys.push(element_subkey_string_list("14000006", &[
-                    "{9dea862d-5cdd-4e70-acc1-f32b344d4795}",
-                    "{b2721d66-7dbf-4e50-ae7c-d27f2d90ce20}",
-                    "{5189b25c-5558-4bf2-bb0f-cd5a4f8c7e20}",
-                    "{aabbccdd-eeff-0011-2233-445566778899}",
-                ]));
+                ee.subkeys.push(element_subkey_string_list(
+                    "14000006",
+                    &[
+                        "{9dea862d-5cdd-4e70-acc1-f32b344d4795}",
+                        "{b2721d66-7dbf-4e50-ae7c-d27f2d90ce20}",
+                        "{5189b25c-5558-4bf2-bb0f-cd5a4f8c7e20}",
+                        "{aabbccdd-eeff-0011-2233-445566778899}",
+                    ],
+                ));
                 bm.subkeys.push(ee);
             }
             objs.subkeys.push(bm);
@@ -230,15 +238,22 @@ pub fn build_bcd() -> Vec<u8> {
             {
                 let mut ee = node("Elements");
                 // Device = System partition (partition 2)
-                ee.subkeys.push(element_subkey_binary("11000001", &create_device_path()));
+                ee.subkeys
+                    .push(element_subkey_binary("11000001", &create_device_path()));
                 // ApplicationPath points to winload.efi on the System partition
                 // Windows 7 correct layout: winload.efi is at C:\Windows\System32\winload.efi
-                ee.subkeys.push(element_subkey_string("12000002", r"\Windows\System32\winload.efi"));
-                ee.subkeys.push(element_subkey_string("12000004", "Windows 7"));
+                ee.subkeys.push(element_subkey_string(
+                    "12000002",
+                    r"\Windows\System32\winload.efi",
+                ));
+                ee.subkeys
+                    .push(element_subkey_string("12000004", "Windows 7"));
                 ee.subkeys.push(element_subkey_string("12000005", "en-US"));
                 // OsDevice = System partition (partition 2)
-                ee.subkeys.push(element_subkey_binary("21000001", &create_device_path()));
-                ee.subkeys.push(element_subkey_string("22000002", r"\Windows"));
+                ee.subkeys
+                    .push(element_subkey_binary("21000001", &create_device_path()));
+                ee.subkeys
+                    .push(element_subkey_string("22000002", r"\Windows"));
                 e.subkeys.push(ee);
             }
             objs.subkeys.push(e);
@@ -255,15 +270,27 @@ pub fn build_bcd() -> Vec<u8> {
             {
                 let mut ee = node("Elements");
                 // Device = System partition (partition 2)
-                ee.subkeys.push(element_subkey_binary("11000001", &create_device_path()));
+                ee.subkeys
+                    .push(element_subkey_binary("11000001", &create_device_path()));
                 // ApplicationPath points to winload.efi on the System partition
-                ee.subkeys.push(element_subkey_string("12000002", r"\Windows\System32\winload.efi"));
-                ee.subkeys.push(element_subkey_string("12000004", "Windows 7 (Safe Mode - CMD)"));
+                ee.subkeys.push(element_subkey_string(
+                    "12000002",
+                    r"\Windows\System32\winload.efi",
+                ));
+                ee.subkeys.push(element_subkey_string(
+                    "12000004",
+                    "Windows 7 (Safe Mode - CMD)",
+                ));
                 ee.subkeys.push(element_subkey_string("12000005", "en-US"));
                 // OsDevice = System partition (partition 2)
-                ee.subkeys.push(element_subkey_binary("21000001", &create_device_path()));
-                ee.subkeys.push(element_subkey_string("22000002", r"\Windows"));
-                ee.subkeys.push(element_subkey_string("22000001", "/safeboot:minimal /safeboot:shell"));
+                ee.subkeys
+                    .push(element_subkey_binary("21000001", &create_device_path()));
+                ee.subkeys
+                    .push(element_subkey_string("22000002", r"\Windows"));
+                ee.subkeys.push(element_subkey_string(
+                    "22000001",
+                    "/safeboot:minimal /safeboot:shell",
+                ));
                 e.subkeys.push(ee);
             }
             objs.subkeys.push(e);
@@ -280,15 +307,27 @@ pub fn build_bcd() -> Vec<u8> {
             {
                 let mut ee = node("Elements");
                 // Device = System partition (partition 2)
-                ee.subkeys.push(element_subkey_binary("11000001", &create_device_path()));
+                ee.subkeys
+                    .push(element_subkey_binary("11000001", &create_device_path()));
                 // ApplicationPath points to winload.efi on the System partition
-                ee.subkeys.push(element_subkey_string("12000002", r"\Windows\System32\winload.efi"));
-                ee.subkeys.push(element_subkey_string("12000004", "Windows 7 (Safe Mode - Debug)"));
+                ee.subkeys.push(element_subkey_string(
+                    "12000002",
+                    r"\Windows\System32\winload.efi",
+                ));
+                ee.subkeys.push(element_subkey_string(
+                    "12000004",
+                    "Windows 7 (Safe Mode - Debug)",
+                ));
                 ee.subkeys.push(element_subkey_string("12000005", "en-US"));
                 // OsDevice = System partition (partition 2)
-                ee.subkeys.push(element_subkey_binary("21000001", &create_device_path()));
-                ee.subkeys.push(element_subkey_string("22000002", r"\Windows"));
-                ee.subkeys.push(element_subkey_string("22000001", "/debug /debugport=COM1 /baudrate=115200"));
+                ee.subkeys
+                    .push(element_subkey_binary("21000001", &create_device_path()));
+                ee.subkeys
+                    .push(element_subkey_string("22000002", r"\Windows"));
+                ee.subkeys.push(element_subkey_string(
+                    "22000001",
+                    "/debug /debugport=COM1 /baudrate=115200",
+                ));
                 e.subkeys.push(ee);
             }
             objs.subkeys.push(e);
@@ -304,8 +343,12 @@ pub fn build_bcd() -> Vec<u8> {
             }
             {
                 let mut ee = node("Elements");
-                ee.subkeys.push(element_subkey_string("12000002", r"\Windows\system32\winresume.efi"));
-                ee.subkeys.push(element_subkey_string("12000004", "Windows 7 Resume"));
+                ee.subkeys.push(element_subkey_string(
+                    "12000002",
+                    r"\Windows\system32\winresume.efi",
+                ));
+                ee.subkeys
+                    .push(element_subkey_string("12000004", "Windows 7 Resume"));
                 ee.subkeys.push(element_subkey_string("12000005", "en-US"));
                 e.subkeys.push(ee);
             }
@@ -322,7 +365,7 @@ pub fn build_bcd() -> Vec<u8> {
 // For dual-partition setup:
 //   Partition 1: ESP (FAT32) - boot files
 //   Partition 2: System (NTFS) - Windows files (winload.efi lives here!)
-// 
+//
 // Windows 7 correct layout:
 //   - Boot manager (bootmgfw.efi) on ESP reads BCD
 //   - BCD's OsDevice points to the System partition
@@ -335,10 +378,8 @@ fn create_device_path() -> Vec<u8> {
     p.extend_from_slice(&0x28u16.to_le_bytes());
     // Partition signature GUID (fixed for reproducibility)
     p.extend_from_slice(&[
-        0x8Bu8, 0x1Cu8, 0x6Au8, 0x9Eu8,
-        0x4Fu8, 0x2Du8, 0x11u8, 0xEFu8,
-        0xBEu8, 0x7Cu8, 0x80u8, 0x6Eu8,
-        0x6Fu8, 0x6Eu8, 0x69u8, 0x63u8,
+        0x8Bu8, 0x1Cu8, 0x6Au8, 0x9Eu8, 0x4Fu8, 0x2Du8, 0x11u8, 0xEFu8, 0xBEu8, 0x7Cu8, 0x80u8,
+        0x6Eu8, 0x6Fu8, 0x6Eu8, 0x69u8, 0x63u8,
     ]);
     // Partition number = 2 (System partition, where winload.efi lives)
     p.extend_from_slice(&2u32.to_le_bytes());
@@ -373,33 +414,46 @@ pub fn build_system() -> Vec<u8> {
         root.subkeys.push(sel);
     }
 
-    root.values.push(Value::sz("CurrentControlSet", "ControlSet001"));
+    root.values
+        .push(Value::sz("CurrentControlSet", "ControlSet001"));
 
     // ControlSet001\Control
     {
         let ctl = ensure_path(&mut root, "ControlSet001\\Control");
         ctl.values.push(Value::dword("BootDriverFlags", 0x10));
         ctl.values.push(Value::dword("SystemStartOptions", 0));
-        ctl.values.push(Value::dword("WaitToKillServiceTimeout", 5000));
+        ctl.values
+            .push(Value::dword("WaitToKillServiceTimeout", 5000));
     }
     // ControlSet001\Control\Session Manager
     {
         let sm = ensure_path(&mut root, "ControlSet001\\Control\\Session Manager");
         sm.values.push(Value::dword("ProtectionMode", 0));
         sm.values.push(Value::dword("ObCaseInsensitive", 1));
-        sm.values.push(Value::sz("BootExecute", "autocheck autochk *"));
+        sm.values
+            .push(Value::sz("BootExecute", "autocheck autochk *"));
     }
     // ControlSet001\Control\Session Manager\Memory Management
     {
-        let mm = ensure_path(&mut root, "ControlSet001\\Control\\Session Manager\\Memory Management");
+        let mm = ensure_path(
+            &mut root,
+            "ControlSet001\\Control\\Session Manager\\Memory Management",
+        );
         mm.values.push(Value::dword("ClearPageFileAtShutdown", 0));
     }
 
     // Boot-start drivers
     let drivers = [
-        ("disk", 0u32), ("partmgr", 0), ("classpnp", 0),
-        ("storahci", 0), ("ntfs", 0), ("fastfat", 0),
-        ("acpi", 0), ("pci", 0), ("volmgr", 0), ("mountmgr", 0),
+        ("disk", 0u32),
+        ("partmgr", 0),
+        ("classpnp", 0),
+        ("storahci", 0),
+        ("ntfs", 0),
+        ("fastfat", 0),
+        ("acpi", 0),
+        ("pci", 0),
+        ("volmgr", 0),
+        ("mountmgr", 0),
     ];
     for (name, start) in drivers {
         let svc = ensure_path(&mut root, &format!("ControlSet001\\Services\\{}", name));
@@ -407,8 +461,10 @@ pub fn build_system() -> Vec<u8> {
         svc.values.push(Value::dword("Type", 1));
         svc.values.push(Value::dword("ErrorControl", 1));
         svc.values.push(Value::sz("Group", "Boot"));
-        svc.values.push(Value::sz("ImagePath",
-            &format!(r"\SystemRoot\System32\drivers\{}.sys", name)));
+        svc.values.push(Value::sz(
+            "ImagePath",
+            &format!(r"\SystemRoot\System32\drivers\{}.sys", name),
+        ));
         svc.values.push(Value::sz("DisplayName", name));
     }
 
@@ -424,7 +480,8 @@ pub fn build_software() -> Vec<u8> {
 
     let cv = ensure_path(&mut root, "Microsoft\\Windows NT\\CurrentVersion");
     cv.values.push(Value::sz("SystemRoot", r"\Windows"));
-    cv.values.push(Value::sz("ProductName", "Windows 7 Ultimate"));
+    cv.values
+        .push(Value::sz("ProductName", "Windows 7 Ultimate"));
     cv.values.push(Value::sz("CurrentBuildNumber", "7601"));
     cv.values.push(Value::sz("EditionID", "Ultimate"));
     cv.values.push(Value::dword("InstallationType", 1));
@@ -470,8 +527,12 @@ pub fn build_default() -> Vec<u8> {
     let d = ensure_path(&mut root, "Control Panel\\Desktop");
     d.values.push(Value::sz("Wallpaper", ""));
 
-    let s = ensure_path(&mut root, "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders");
-    s.values.push(Value::sz("Desktop", "%USERPROFILE%\\Desktop"));
+    let s = ensure_path(
+        &mut root,
+        "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+    );
+    s.values
+        .push(Value::sz("Desktop", "%USERPROFILE%\\Desktop"));
 
     HiveBuilder::new(root).with_name("default").finish()
 }
@@ -487,11 +548,11 @@ mod tests {
     #[test]
     fn test_bcd_structure() {
         let bytes = build_bcd();
-        
+
         // Verify magic
         assert_eq!(&bytes[0..4], b"regf", "should have regf magic");
         assert!(bytes.len() >= 8192, "BCD should be at least 2 HBIN pages");
-        
+
         // Verify the hive can be read back
         // (Full roundtrip test in integration tests)
     }
@@ -511,19 +572,19 @@ mod tests {
         assert_eq!(es.name, "12000004");
         assert_eq!(es.values.len(), 1);
         assert_eq!(es.values[0].name, "Element");
-        
+
         // Test binary element
         let eb = element_subkey_binary("11000001", &[0x01, 0x02, 0x03]);
         assert_eq!(eb.name, "11000001");
         assert_eq!(eb.values.len(), 1);
         assert_eq!(eb.values[0].name, "Element");
-        
+
         // Test DWORD element
         let ed = element_subkey_dword("15000011", 30);
         assert_eq!(ed.name, "15000011");
         assert_eq!(ed.values.len(), 1);
         assert_eq!(ed.values[0].name, "Element");
-        
+
         // Test string list element
         let el = element_subkey_string_list("14000006", &["guid1", "guid2"]);
         assert_eq!(el.name, "14000006");

@@ -9,14 +9,13 @@
 //!
 //! All operations use pure Rust - no shell commands required.
 
+use crate::error::{BuildError, Result};
+use crate::fs::stubs::{LSM_EXE_TEXT_STUB, USERINIT_EXE_TEXT_STUB, WINLOGON_EXE_TEXT_STUB};
+use crate::logger as log;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use crate::error::{BuildError, Result};
-use crate::logger as log;
-use crate::fs::stubs::{
-    CMD_EXE_TEXT_STUB, LSM_EXE_TEXT_STUB,
-    WINLOGON_EXE_TEXT_STUB, USERINIT_EXE_TEXT_STUB,
-};
+use std::sync::OnceLock;
 
 // =====================================================================
 // Build Paths
@@ -25,6 +24,45 @@ use crate::fs::stubs::{
 /// Get the kernel target triple
 pub fn get_kernel_target() -> &'static str {
     "x86_64-unknown-none"
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TargetArch {
+    X86_64,
+    AArch64,
+    RiscV64,
+    LoongArch64,
+}
+
+impl TargetArch {
+    fn from_name(name: &str) -> Self {
+        match name {
+            "aarch64" | "arm64" => Self::AArch64,
+            "riscv64" => Self::RiscV64,
+            "loongarch64" => Self::LoongArch64,
+            _ => Self::X86_64,
+        }
+    }
+
+    fn machine(&self) -> u16 {
+        match self {
+            Self::X86_64 => 0x8664,
+            Self::AArch64 => 0xAA64,
+            Self::RiscV64 => 0x5064,
+            Self::LoongArch64 => 0x6264,
+        }
+    }
+}
+
+static PE_ARCH: OnceLock<TargetArch> = OnceLock::new();
+
+fn set_pe_arch(arch: &str) {
+    let target = TargetArch::from_name(arch);
+    let _ = PE_ARCH.set(target);
+}
+
+fn current_pe_arch() -> TargetArch {
+    PE_ARCH.get().copied().unwrap_or(TargetArch::X86_64)
 }
 
 /// Get the UEFI target triple
@@ -77,13 +115,38 @@ pub fn uefi_target_for(arch: &str) -> &'static str {
 /// `arch::<arch>` module. `x86_64` is the default, so we explicitly
 /// disable it for the other three targets via `--no-default-features`
 /// in [`build_kernel`].
-pub fn kernel_features_for(arch: &str) -> &'static str {
-    match arch {
-        "x86_64" | "x64" => "x86_64,alloc",
-        "aarch64" | "arm64" => "aarch64,alloc",
-        "riscv64" => "riscv64,alloc",
-        "loongarch64" => "loongarch64,alloc",
-        _ => "x86_64,alloc",
+pub fn kernel_features_for(arch: &str) -> String {
+    let mut features = match arch {
+        "x86_64" | "x64" => "x86_64,binary_panic,alloc",
+        "aarch64" | "arm64" => "aarch64,binary_panic,alloc",
+        "riscv64" => "riscv64,binary_panic,alloc",
+        "loongarch64" => "loongarch64,binary_panic,alloc",
+        _ => "x86_64,binary_panic,alloc",
+    }
+    .to_owned();
+    if is_debug_logging() {
+        features.push_str(",log_level_debug");
+    } else {
+        features.push_str(",log_level_warn");
+    }
+    features
+}
+
+/// Return `true` when the generated kernel and loaders should compile the
+/// full debug trace. `NT61_LOG_LEVEL=debug` is the explicit override;
+/// ordinary `make build` produces a release trace that retains warnings and
+/// errors but omits informational and debug records.
+pub fn is_debug_logging() -> bool {
+    std::env::var("NT61_LOG_LEVEL").as_deref() == Ok("debug")
+}
+
+/// Resolve the feature list for the standalone UEFI loader binaries.
+pub fn loader_features(target: &str) -> String {
+    let architecture = arch_for_kernel_target(target);
+    if is_debug_logging() {
+        format!("{architecture},log_level_debug")
+    } else {
+        format!("{architecture},log_level_warn")
     }
 }
 
@@ -141,13 +204,13 @@ pub fn build_kernel(target: &str) -> Result<PathBuf> {
     cmd.arg("--features").arg(kernel_features_for(arch));
 
     log::info("Running cargo build...");
-    let status = cmd.status()
-        .map_err(BuildError::Io)?;
+    let status = cmd.status().map_err(BuildError::Io)?;
 
     if !status.success() {
-        return Err(BuildError::ImageCreateFailed(
-            format!("Kernel build failed with exit code: {:?}", status.code())
-        ));
+        return Err(BuildError::ImageCreateFailed(format!(
+            "Kernel build failed with exit code: {:?}",
+            status.code()
+        )));
     }
 
     // Find the output binary. On x86_64 the standalone `nt61-kernel`
@@ -258,6 +321,14 @@ fn ensure_loongarch_libgcc_stub() -> Result<()> {
     Ok(())
 }
 
+fn ensure_loongarch_libgcc_stub_for_target(target: &str) -> Result<()> {
+    if target.starts_with("loongarch64") {
+        ensure_loongarch_libgcc_stub()
+    } else {
+        Ok(())
+    }
+}
+
 /// Patch the `ImageBase` field of an existing PE32+ file in place.
 ///
 /// `rust-lld` (used by the `*-unknown-uefi` Rust targets) emits a
@@ -358,7 +429,26 @@ fn patch_pe_image_base(path: &std::path::Path, new_base: u64) -> Result<()> {
 /// `rust-lld`-emitted PE carries) and `FileAlignment` to 0x200.
 ///
 /// Layout reference: UEFI Spec 2.10 §2.1.4 ("PE32+ Image Format").
-fn patch_pe_subsystem(path: &std::path::Path, subsystem: u16) -> Result<()> {
+fn patch_pe_subsystem(path: &std::path::Path, subsystem: u16, relocations: &[u32]) -> Result<()> {
+    patch_pe_subsystem_with_extent(path, subsystem, relocations, 0)
+}
+
+/// Same as `patch_pe_subsystem`, but with an explicit minimum image
+/// extent (an RVA). `objcopy -O pei-*` drops `.bss`, so the PE
+/// OptionalHeader `SizeOfImage` it synthesises only covers the
+/// initialised sections. A kernel whose BSS extends past the last
+/// initialised section would then be loaded without its BSS pages
+/// reserved/zeroed, and every static in that region would alias
+/// unrelated physical memory. The extent is the ELF maximum of
+/// `sh_addr + sh_size` over allocated sections (including SHT_NOBITS),
+/// minus the image base, and `inject_stub_reloc_section` both places
+/// `.reloc` after it and extends `SizeOfImage` to cover it.
+fn patch_pe_subsystem_with_extent(
+    path: &std::path::Path,
+    subsystem: u16,
+    relocations: &[u32],
+    image_extent_rva: u32,
+) -> Result<()> {
     use std::io::{Read, Seek, SeekFrom, Write};
 
     let mut f = std::fs::OpenOptions::new()
@@ -436,8 +526,8 @@ fn patch_pe_subsystem(path: &std::path::Path, subsystem: u16) -> Result<()> {
     let file_len = f.metadata().map_err(BuildError::Io)?.len();
     let section_align: u32 = 0x1000;
     let file_align: u32 = 0x200;
-    let size_of_image = ((file_len + section_align as u64 - 1)
-        & !(section_align as u64 - 1)) as u32;
+    let size_of_image =
+        ((file_len + section_align as u64 - 1) & !(section_align as u64 - 1)) as u32;
 
     // Section table starts right after the OptionalHeader (offset
     // 0x18 from OptionalHeader start).
@@ -464,13 +554,15 @@ fn patch_pe_subsystem(path: &std::path::Path, subsystem: u16) -> Result<()> {
         // Section header: Name(8) | VirtSize(4) | VirtAddr(4) | RawSize(4) | RawAddr(4)
         let raw_size = u32::from_le_bytes({
             let mut b = [0u8; 4];
-            f.seek(SeekFrom::Start(sh_off + 16)).map_err(BuildError::Io)?;
+            f.seek(SeekFrom::Start(sh_off + 16))
+                .map_err(BuildError::Io)?;
             f.read_exact(&mut b).map_err(BuildError::Io)?;
             b
         });
         let raw_addr = u32::from_le_bytes({
             let mut b = [0u8; 4];
-            f.seek(SeekFrom::Start(sh_off + 20)).map_err(BuildError::Io)?;
+            f.seek(SeekFrom::Start(sh_off + 20))
+                .map_err(BuildError::Io)?;
             f.read_exact(&mut b).map_err(BuildError::Io)?;
             b
         });
@@ -532,7 +624,7 @@ fn patch_pe_subsystem(path: &std::path::Path, subsystem: u16) -> Result<()> {
     // LoongArch64 ABI used in this project is fully PIC (the Rust
     // compiler emits `pcaddi`/etc. for address materialisation),
     // there genuinely are no relocations to apply.
-    inject_stub_reloc_section(&mut f, e_lfanew)?;
+    inject_stub_reloc_section(&mut f, e_lfanew, relocations, image_extent_rva)?;
     // EDK2's PE/COFF loader is picky about the COFF FileHeader
     // `Characteristics` field — a 0x200 (IMAGE_FILE_32BIT_MACHINE) bit
     // makes it reject LoongArch64 images as `Unsupported` even when
@@ -581,12 +673,10 @@ fn patch_pe_subsystem(path: &std::path::Path, subsystem: u16) -> Result<()> {
     let ver: u16 = 6;
     f.seek(SeekFrom::Start(opt_off + 0x28))
         .map_err(BuildError::Io)?;
-    f.write_all(&ver.to_le_bytes())
-        .map_err(BuildError::Io)?;
+    f.write_all(&ver.to_le_bytes()).map_err(BuildError::Io)?;
     f.seek(SeekFrom::Start(opt_off + 0x30))
         .map_err(BuildError::Io)?;
-    f.write_all(&ver.to_le_bytes())
-        .map_err(BuildError::Io)?;
+    f.write_all(&ver.to_le_bytes()).map_err(BuildError::Io)?;
     log::info(&format!(
         "Patched PE OptionalHeader (Subsystem=0x{:02x}, SectionAlign=0x{:x}, \
          FileAlign=0x{:x}, SizeOfImage=0x{:x}, SizeOfHeaders=0x{:x}, \
@@ -631,9 +721,7 @@ fn patch_pe_subsystem(path: &std::path::Path, subsystem: u16) -> Result<()> {
 ///   * ELF64 header: `Elf64_Ehdr` (64 bytes)
 ///   * ELF64 section header: `Elf64_Shdr` (64 bytes)
 ///   * ELF64 program header: `Elf64_Phdr` (56 bytes)
-fn read_elf_image_layout(
-    elf_path: &std::path::Path,
-) -> Result<(u32, u32, u64)> {
+fn read_elf_image_layout(elf_path: &std::path::Path) -> Result<(u32, u32, u64)> {
     use std::io::Read;
 
     let mut f = std::fs::File::open(elf_path).map_err(BuildError::Io)?;
@@ -661,11 +749,7 @@ fn read_elf_image_layout(
 
     let read_u16 = |b: &[u8]| u16::from_le_bytes([b[0], b[1]]);
     let read_u32 = |b: &[u8]| u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
-    let read_u64 = |b: &[u8]| {
-        u64::from_le_bytes([
-            b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
-        ])
-    };
+    let read_u64 = |b: &[u8]| u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]);
 
     let sh_off = read_u64(&buf[40..48]) as usize;
     let sh_entsize = read_u16(&buf[58..60]) as usize;
@@ -681,10 +765,8 @@ fn read_elf_image_layout(
             elf_path.display()
         )));
     }
-    let strtab_off = read_u64(&buf[strtab_hdr_off + 24..strtab_hdr_off + 32])
-        as usize;
-    let strtab_size =
-        read_u64(&buf[strtab_hdr_off + 32..strtab_hdr_off + 40]) as usize;
+    let strtab_off = read_u64(&buf[strtab_hdr_off + 24..strtab_hdr_off + 32]) as usize;
+    let strtab_size = read_u64(&buf[strtab_hdr_off + 32..strtab_hdr_off + 40]) as usize;
 
     let strtab = if strtab_off + strtab_size <= buf.len() {
         &buf[strtab_off..strtab_off + strtab_size]
@@ -693,6 +775,7 @@ fn read_elf_image_layout(
     };
 
     let mut text_vma: Option<u64> = None;
+    let entry_vma = read_u64(&buf[24..32]);
     let mut image_base: Option<u64> = None;
 
     for i in 0..sh_num {
@@ -704,14 +787,14 @@ fn read_elf_image_layout(
         let sh_type = read_u32(&buf[off + 4..off + 8]);
         let sh_addr = read_u64(&buf[off + 16..off + 24]);
 
-        if sh_type == 1 && strtab.get(name_off).copied() == Some(b'.')
+        if sh_type == 1
+            && strtab.get(name_off).copied() == Some(b'.')
             && strtab.len() >= name_off + 5
-                && &strtab[name_off..name_off + 5] == b".text"
-                && (strtab.len() == name_off + 5
-                    || strtab[name_off + 5] == 0)
-            {
-                text_vma = Some(sh_addr);
-            }
+            && &strtab[name_off..name_off + 5] == b".text"
+            && (strtab.len() == name_off + 5 || strtab[name_off + 5] == 0)
+        {
+            text_vma = Some(sh_addr);
+        }
     }
 
     let ph_off = read_u64(&buf[32..40]) as usize;
@@ -723,26 +806,331 @@ fn read_elf_image_layout(
             break;
         }
         let p_type = read_u32(&buf[off..off + 4]);
-        if p_type == 1 /* PT_LOAD */ {
+        if p_type == 1
+        /* PT_LOAD */
+        {
             image_base = Some(read_u64(&buf[off + 16..off + 24]));
             break;
         }
     }
 
-    let entry = text_vma.ok_or_else(|| {
-        BuildError::ImageCreateFailed(format!(
+    let Some(text) = text_vma else {
+        return Err(BuildError::ImageCreateFailed(format!(
             "{} has no .text section",
             elf_path.display()
-        ))
-    })?;
-    let base = image_base.ok_or_else(|| {
-        BuildError::ImageCreateFailed(format!(
+        )));
+    };
+    let Some(base) = image_base else {
+        return Err(BuildError::ImageCreateFailed(format!(
             "{} has no PT_LOAD program header",
             elf_path.display()
+        )));
+    };
+    let entry_rva = entry_vma.wrapping_sub(base);
+    let text_rva = text.wrapping_sub(base);
+    Ok((entry_rva as u32, text_rva as u32, base))
+}
+
+/// Highest virtual address covered by any allocated ELF section,
+/// including `SHT_NOBITS` (`.bss`). Used to extend the PE
+/// `SizeOfImage` because `objcopy -O pei-*` strips `.bss` and would
+/// otherwise leave the kernel's zero-initialised statics outside the
+/// loaded image.
+fn read_elf_image_extent(elf_path: &std::path::Path) -> Result<u64> {
+    use std::io::Read;
+
+    let mut f = std::fs::File::open(elf_path).map_err(BuildError::Io)?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf).map_err(BuildError::Io)?;
+    if buf.len() < 64 || &buf[0..4] != b"\x7fELF" {
+        return Err(BuildError::ImageCreateFailed(format!(
+            "{} is not an ELF file",
+            elf_path.display()
+        )));
+    }
+    let read_u16 = |b: &[u8]| u16::from_le_bytes([b[0], b[1]]);
+    let read_u32 = |b: &[u8]| u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+    let read_u64 = |b: &[u8]| u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]);
+    let sh_off = read_u64(&buf[40..48]) as usize;
+    let sh_entsize = read_u16(&buf[58..60]) as usize;
+    let sh_num = read_u16(&buf[60..62]) as usize;
+    let mut extent: u64 = 0;
+    for i in 0..sh_num {
+        let off = sh_off + i * sh_entsize;
+        if off + 64 > buf.len() {
+            break;
+        }
+        let sh_type = read_u32(&buf[off + 4..off + 8]);
+        let sh_flags = read_u64(&buf[off + 8..off + 16]);
+        let sh_addr = read_u64(&buf[off + 16..off + 24]);
+        let sh_size = read_u64(&buf[off + 32..off + 40]);
+        if (sh_type != 1 && sh_type != 8) || sh_flags & 0x2 == 0 || sh_addr == 0 {
+            continue;
+        }
+        extent = extent.max(sh_addr.saturating_add(sh_size));
+    }
+    if extent == 0 {
+        return Err(BuildError::ImageCreateFailed(format!(
+            "{} has no allocated sections",
+            elf_path.display()
+        )));
+    }
+    Ok(extent)
+}
+
+/// Read absolute 64-bit relocation targets from an ELF64 image.
+///
+/// The x86_64, AArch64, RISC-V64, and LoongArch64 kernels are linked
+/// as static ELF with `--emit-relocs` and converted to PE/COFF by
+/// binutils, so the ELF keeps the relocation records of every
+/// absolute 64-bit word the linker resolved. This function extracts
+/// only the fixups that affect mapped, initialized image data:
+/// `R_X86_64_64` / `R_X86_64_RELATIVE` for x86_64,
+/// `R_AARCH64_ABS64` / `R_AARCH64_RELATIVE` for AArch64,
+/// `R_RISCV_64` for RISC-V, and `R_LARCH_64` for LoongArch.
+/// PC-relative relocations must not be translated into PE fixups,
+/// because the target architectures derive those from the runtime
+/// instruction address.
+fn read_elf_absolute_relocations(elf_path: &std::path::Path, image_base: u64) -> Result<Vec<u32>> {
+    use std::io::Read;
+
+    let mut buf = Vec::new();
+    std::fs::File::open(elf_path)
+        .map_err(BuildError::Io)?
+        .read_to_end(&mut buf)
+        .map_err(BuildError::Io)?;
+    if buf.len() < 64 || &buf[0..4] != b"\x7fELF" {
+        return Err(BuildError::ImageCreateFailed(format!(
+            "{} is not an ELF file",
+            elf_path.display()
+        )));
+    }
+    if buf[4] != 2 || buf[5] != 1 {
+        return Err(BuildError::ImageCreateFailed(format!(
+            "{} must be a little-endian ELF64 image",
+            elf_path.display()
+        )));
+    }
+
+    let read_u16 = |b: &[u8]| u16::from_le_bytes([b[0], b[1]]);
+    let read_u32 = |b: &[u8]| u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+    let read_u64 = |b: &[u8]| u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]);
+
+    // e_machine-specific set of absolute 64-bit relocation types that
+    // must become PE `IMAGE_REL_BASED_DIR64` fixups.
+    let absolute_types: &[u64] = match read_u16(&buf[18..20]) {
+        62 => &[1, 8],       // R_X86_64_64, R_X86_64_RELATIVE
+        183 => &[257, 1027], // R_AARCH64_ABS64, R_AARCH64_RELATIVE
+        243 => &[2],         // R_RISCV_64
+        262 => &[2, 64],     // legacy R_RISCV_64 value, R_LARCH_64
+        _ => &[2],
+    };
+
+    let sh_off = read_u64(&buf[40..48]) as usize;
+    let sh_entsize = read_u16(&buf[58..60]) as usize;
+    let sh_num = read_u16(&buf[60..62]) as usize;
+    let sh_strndx = read_u16(&buf[62..64]) as usize;
+    if sh_entsize == 0 || sh_off >= buf.len() || sh_num == 0 {
+        return Err(BuildError::ImageCreateFailed(format!(
+            "{} has an invalid section header table",
+            elf_path.display()
+        )));
+    }
+
+    let section = |index: usize| -> Option<(&[u8], usize, u32, u64, u64, u64, u64)> {
+        let off = sh_off.checked_add(index.checked_mul(sh_entsize)?)?;
+        if off + 64 > buf.len() {
+            return None;
+        }
+        let name_off = read_u32(&buf[off..off + 4]) as usize;
+        let sh_type = read_u32(&buf[off + 4..off + 8]);
+        let sh_flags = read_u64(&buf[off + 8..off + 16]);
+        let _sh_addr = read_u64(&buf[off + 16..off + 24]);
+        let sh_offset = read_u64(&buf[off + 24..off + 32]);
+        let sh_size = read_u64(&buf[off + 32..off + 40]);
+        Some((
+            &buf[off..off + 64],
+            name_off,
+            sh_type,
+            sh_flags,
+            _sh_addr,
+            sh_offset,
+            sh_size,
         ))
-    })?;
-    let entry_rva = entry.wrapping_sub(base);
-    Ok((entry_rva as u32, entry_rva as u32, base))
+    };
+
+    let (shstrtab_hdr, _, _, _, _, shstrtab_off, shstrtab_size) =
+        section(sh_strndx).ok_or_else(|| {
+            BuildError::ImageCreateFailed(format!(
+                "{} has no section-name string table",
+                elf_path.display()
+            ))
+        })?;
+    let _ = shstrtab_hdr;
+    let shstrtab = buf
+        .get(shstrtab_off as usize..(shstrtab_off as usize + shstrtab_size as usize))
+        .unwrap_or(&[]);
+
+    let section_name = |name_off: usize| -> Option<&str> {
+        let bytes = shstrtab.get(name_off..)?;
+        let end = bytes.iter().position(|&byte| byte == 0)?;
+        core::str::from_utf8(&bytes[..end]).ok()
+    };
+
+    let mut relocations = BTreeSet::new();
+    for index in 0..sh_num {
+        let Some((_, name_off, sh_type, _, _, _, sh_size)) = section(index) else {
+            continue;
+        };
+        if sh_type != 4 {
+            continue;
+        }
+        let Some(name) = section_name(name_off) else {
+            continue;
+        };
+        if !name.starts_with(".rela.") {
+            continue;
+        }
+
+        // Section header layout: name(0), type(4), flags(8), addr(16),
+        // offset(24), size(32), link(40), info(44).
+        let header_index = sh_off + index * sh_entsize;
+        if header_index + 64 > buf.len() {
+            continue;
+        }
+        let rela_off = read_u64(&buf[header_index + 24..header_index + 32]) as usize;
+        let rela_link = read_u32(&buf[header_index + 40..header_index + 44]) as usize;
+        let rela_info = read_u32(&buf[header_index + 44..header_index + 48]) as usize;
+
+        let Some((_, _, target_type, target_flags, target_addr, _, target_size)) =
+            section(rela_info)
+        else {
+            continue;
+        };
+        // A relocation record for a non-allocated section (normally
+        // debug info) is irrelevant to a runtime PE image.
+        if target_type != 1 || target_flags & 0x2 == 0 {
+            continue;
+        }
+        // The symbol table link is not needed because all R_LARCH_64
+        // and R_RISCV_64 fixups are section-relative absolute words.
+        let _ = rela_link;
+
+        let entry_count = sh_size as usize / 24;
+        for entry in 0..entry_count {
+            let off = rela_off + entry * 24;
+            if off + 24 > buf.len() {
+                break;
+            }
+            let target = read_u64(&buf[off..off + 8]);
+            let info = read_u64(&buf[off + 8..off + 16]);
+            if !absolute_types.contains(&(info & 0xffff_ffff)) {
+                continue;
+            }
+            if target < target_addr || target + 8 > target_addr + target_size {
+                continue;
+            }
+            if target < image_base {
+                continue;
+            }
+            let Some(rva) = (target - image_base).checked_sub(0) else {
+                continue;
+            };
+            if rva <= u32::MAX as u64 {
+                relocations.insert(rva as u32);
+            }
+        }
+    }
+
+    // The linker resolves GOT references (e.g. calls into
+    // "compiler_builtins" soft-float helpers, which rustc compiles
+    // with its own PIC settings and therefore reaches through
+    // GOTPCREL) by baking link-time absolute addresses into '.got'
+    // slots. A static non-PIE link emits no relocation records for
+    // those slots, so the record walk above cannot see them. Every
+    // non-zero '.got' slot holds an address inside this image by
+    // definition of the GOT, so record each one as a DIR64 fixup;
+    // zero slots (weak undefined symbols) and any value below the
+    // image base are left untouched.
+    for index in 0..sh_num {
+        let Some((_, name_off, sh_type, sh_flags, sh_addr, sh_offset, sh_size)) = section(index)
+        else {
+            continue;
+        };
+        if sh_type != 1 || sh_flags & 0x2 == 0 {
+            continue;
+        }
+        let Some(name) = section_name(name_off) else {
+            continue;
+        };
+        if !(name == ".got" || name == ".got.plt") {
+            continue;
+        }
+        let slot_count = sh_size as usize / 8;
+        for slot in 0..slot_count {
+            let off = sh_offset as usize + slot * 8;
+            if off + 8 > buf.len() {
+                break;
+            }
+            let value = read_u64(&buf[off..off + 8]);
+            if value < image_base {
+                continue;
+            }
+            // The fixup targets the slot itself, not the address the
+            // slot holds: at runtime the whole 8-byte word must gain
+            // the load delta.
+            let Some(rva) = (sh_addr + (slot as u64) * 8).checked_sub(image_base) else {
+                continue;
+            };
+            if rva <= u32::MAX as u64 {
+                relocations.insert(rva as u32);
+            }
+        }
+    }
+
+    Ok(relocations.into_iter().collect())
+}
+
+/// Encode sorted 64-bit relocation RVAs as PE/COFF base relocation
+/// blocks using `IMAGE_REL_BASED_DIR64`.
+fn build_pe_base_relocation_table(relocations: &[u32]) -> Vec<u8> {
+    if relocations.is_empty() {
+        // A header-only block marks an image as relocatable without
+        // asking the PE/COFF loader to patch any word.
+        return vec![0, 0, 0, 0, 8, 0, 0, 0];
+    }
+
+    let mut body = Vec::new();
+    let mut page: u32 = u32::MAX;
+    let mut entries: Vec<u16> = Vec::new();
+
+    let flush = |body: &mut Vec<u8>, page: u32, entries: &mut Vec<u16>| {
+        if entries.is_empty() {
+            return;
+        }
+        // Absolute entries are legal padding and keep every block
+        // 4-byte aligned.
+        if entries.len() % 2 != 0 {
+            entries.push(0);
+        }
+        let block_size = 8u32 + entries.len() as u32 * 2;
+        body.extend_from_slice(&page.to_le_bytes());
+        body.extend_from_slice(&block_size.to_le_bytes());
+        for entry in entries.iter() {
+            body.extend_from_slice(&entry.to_le_bytes());
+        }
+        entries.clear();
+    };
+
+    for rva in relocations {
+        if *rva & 0xFFFF_F000 != page {
+            flush(&mut body, page, &mut entries);
+            page = *rva & 0xFFFF_F000;
+        }
+        entries.push((0xA000 | (*rva & 0xFFF)) as u16);
+    }
+    flush(&mut body, page, &mut entries);
+    body
 }
 
 /// Apply extra OptionalHeader fixes for LoongArch64 / RISC-V64 EFI
@@ -859,10 +1247,7 @@ fn patch_pe_entry_point_and_image_base(
 /// `VirtualAddress - image_base`. Sections that already carry a
 /// relative RVA (e.g. `.text` with VA=0x1000 on a stripped image)
 /// are left alone.
-fn patch_pe_section_addresses(
-    path: &std::path::Path,
-    image_base: u64,
-) -> Result<()> {
+fn patch_pe_section_addresses(path: &std::path::Path, image_base: u64) -> Result<()> {
     use std::io::{Read, Seek, SeekFrom, Write};
 
     let mut f = std::fs::OpenOptions::new()
@@ -897,14 +1282,16 @@ fn patch_pe_section_addresses(
 
     // COFF FileHeader (20 bytes): Machine(2) | NumSections(2) | ...
     let coff_off = e_lfanew + 4;
-    f.seek(SeekFrom::Start(coff_off + 2)).map_err(BuildError::Io)?;
+    f.seek(SeekFrom::Start(coff_off + 2))
+        .map_err(BuildError::Io)?;
     let mut num_sections_bytes = [0u8; 2];
     f.read_exact(&mut num_sections_bytes)
         .map_err(BuildError::Io)?;
     let num_sections = u16::from_le_bytes(num_sections_bytes);
 
     // SizeOfOptionalHeader is at offset 16 of the FileHeader.
-    f.seek(SeekFrom::Start(coff_off + 16)).map_err(BuildError::Io)?;
+    f.seek(SeekFrom::Start(coff_off + 16))
+        .map_err(BuildError::Io)?;
     let mut size_opt_bytes = [0u8; 2];
     f.read_exact(&mut size_opt_bytes).map_err(BuildError::Io)?;
     let size_opt = u16::from_le_bytes(size_opt_bytes) as u64;
@@ -933,8 +1320,7 @@ fn patch_pe_section_addresses(
         if (va as u64) >= image_base {
             let new_va: u32 = va.wrapping_sub(image_base as u32);
             f.seek(SeekFrom::Start(off + 12)).map_err(BuildError::Io)?;
-            f.write_all(&new_va.to_le_bytes())
-                .map_err(BuildError::Io)?;
+            f.write_all(&new_va.to_le_bytes()).map_err(BuildError::Io)?;
             fixed_count += 1;
         }
     }
@@ -980,6 +1366,8 @@ fn patch_pe_section_addresses(
 fn inject_stub_reloc_section(
     f: &mut std::fs::File,
     e_lfanew: u64,
+    relocations: &[u32],
+    image_extent_rva: u32,
 ) -> Result<()> {
     use std::io::{Read, Seek, SeekFrom, Write};
 
@@ -1017,6 +1405,167 @@ fn inject_stub_reloc_section(
     });
 
     let sec_table_off = opt_off + size_opt as u64;
+
+    // objcopy `-O pei-<arch>` emits its own `.reloc` section with raw
+    // data whenever the source ELF still carries `.rela.*` sections —
+    // the winload build is the common case. Appending a second
+    // `.reloc` header in that case pushes the section table into the
+    // first section's raw data and destroys the entry-point prologue,
+    // so reuse the existing section instead of adding another one.
+    let mut existing_reloc: Option<(u64, u32, u32, u32, u32)> = None;
+    for i in 0..num_sections {
+        let off = sec_table_off + i as u64 * 40;
+        let mut name = [0u8; 8];
+        f.seek(SeekFrom::Start(off)).map_err(BuildError::Io)?;
+        f.read_exact(&mut name).map_err(BuildError::Io)?;
+        if &name != b".reloc\0\0" {
+            continue;
+        }
+        let mut b4 = [0u8; 4];
+        f.seek(SeekFrom::Start(off + 8)).map_err(BuildError::Io)?;
+        f.read_exact(&mut b4).map_err(BuildError::Io)?;
+        let vsize = u32::from_le_bytes(b4);
+        f.seek(SeekFrom::Start(off + 12)).map_err(BuildError::Io)?;
+        f.read_exact(&mut b4).map_err(BuildError::Io)?;
+        let va = u32::from_le_bytes(b4);
+        f.seek(SeekFrom::Start(off + 16)).map_err(BuildError::Io)?;
+        f.read_exact(&mut b4).map_err(BuildError::Io)?;
+        let rsize = u32::from_le_bytes(b4);
+        f.seek(SeekFrom::Start(off + 20)).map_err(BuildError::Io)?;
+        f.read_exact(&mut b4).map_err(BuildError::Io)?;
+        let rptr = u32::from_le_bytes(b4);
+        if rsize > 0 {
+            existing_reloc = Some((off, va, vsize, rsize, rptr));
+            break;
+        }
+    }
+    if let Some((hdr_off, va, vsize, rsize, rptr)) = existing_reloc {
+        let body = build_pe_base_relocation_table(relocations);
+        let body_size = body.len() as u32;
+        // Prefer our canonical table layout; when it does not fit the
+        // section's raw data, keep the bytes objcopy already wrote and
+        // size the directory from what is actually backed by the file.
+        let dir_size = if body_size <= rsize {
+            f.seek(SeekFrom::Start(rptr as u64))
+                .map_err(BuildError::Io)?;
+            f.write_all(&body).map_err(BuildError::Io)?;
+            let pad = rsize as usize - body.len();
+            if pad > 0 {
+                f.write_all(&vec![0u8; pad]).map_err(BuildError::Io)?;
+            }
+            body_size
+        } else {
+            vsize.min(rsize)
+        };
+        f.seek(SeekFrom::Start(hdr_off + 8))
+            .map_err(BuildError::Io)?;
+        f.write_all(&dir_size.to_le_bytes())
+            .map_err(BuildError::Io)?;
+        let ddir_off = opt_off + 0x70 + 5u64 * 8;
+        f.seek(SeekFrom::Start(ddir_off)).map_err(BuildError::Io)?;
+        f.write_all(&va.to_le_bytes()).map_err(BuildError::Io)?;
+        f.write_all(&dir_size.to_le_bytes())
+            .map_err(BuildError::Io)?;
+        f.seek(SeekFrom::Start(opt_off + 0x6C))
+            .map_err(BuildError::Io)?;
+        f.write_all(&16u32.to_le_bytes()).map_err(BuildError::Io)?;
+        let wanted_image_end = va.saturating_add(dir_size);
+        let wanted_image_size = wanted_image_end
+            .checked_next_multiple_of(section_align)
+            .unwrap_or(wanted_image_end);
+        f.seek(SeekFrom::Start(opt_off + 0x38))
+            .map_err(BuildError::Io)?;
+        let mut b4 = [0u8; 4];
+        f.read_exact(&mut b4).map_err(BuildError::Io)?;
+        if wanted_image_size > u32::from_le_bytes(b4) {
+            f.seek(SeekFrom::Start(opt_off + 0x38))
+                .map_err(BuildError::Io)?;
+            f.write_all(&wanted_image_size.to_le_bytes())
+                .map_err(BuildError::Io)?;
+        }
+        log::info(&format!(
+            "inject_stub_reloc_section: reused existing .reloc (va=0x{:x}, dir_size={})",
+            va, dir_size
+        ));
+        return Ok(());
+    }
+
+    // A freshly appended section header must not land inside any
+    // existing section's raw data (objcopy places the section table
+    // immediately before the first section's data). Shift the file
+    // tail by whole file-aligned blocks and move the affected raw
+    // pointers instead of letting the header overwrite real code.
+    let new_hdr_off = sec_table_off + num_sections as u64 * 40;
+    let mut shift_from: Option<u64> = None;
+    for i in 0..num_sections {
+        let off = sec_table_off + i as u64 * 40;
+        let mut b4 = [0u8; 4];
+        f.seek(SeekFrom::Start(off + 16)).map_err(BuildError::Io)?;
+        f.read_exact(&mut b4).map_err(BuildError::Io)?;
+        let raw_size = u32::from_le_bytes(b4);
+        if raw_size == 0 {
+            continue;
+        }
+        f.seek(SeekFrom::Start(off + 20)).map_err(BuildError::Io)?;
+        f.read_exact(&mut b4).map_err(BuildError::Io)?;
+        let start = u32::from_le_bytes(b4) as u64;
+        let end = start + raw_size as u64;
+        if new_hdr_off + 40 > start && new_hdr_off < end {
+            shift_from = Some(match shift_from {
+                Some(prev) => prev.min(start),
+                None => start,
+            });
+        }
+    }
+    if let Some(from) = shift_from {
+        let need = new_hdr_off + 40 - from;
+        let shift = need.div_ceil(file_align as u64) * file_align as u64;
+        let file_len = f.metadata().map_err(BuildError::Io)?.len();
+        f.seek(SeekFrom::Start(from)).map_err(BuildError::Io)?;
+        let mut tail = Vec::with_capacity((file_len - from) as usize);
+        f.read_to_end(&mut tail).map_err(BuildError::Io)?;
+        f.seek(SeekFrom::Start(from)).map_err(BuildError::Io)?;
+        f.write_all(&vec![0u8; shift as usize])
+            .map_err(BuildError::Io)?;
+        f.write_all(&tail).map_err(BuildError::Io)?;
+        for i in 0..num_sections {
+            let off = sec_table_off + i as u64 * 40;
+            let mut b4 = [0u8; 4];
+            f.seek(SeekFrom::Start(off + 16)).map_err(BuildError::Io)?;
+            f.read_exact(&mut b4).map_err(BuildError::Io)?;
+            let raw_size = u32::from_le_bytes(b4);
+            if raw_size == 0 {
+                continue;
+            }
+            f.seek(SeekFrom::Start(off + 20)).map_err(BuildError::Io)?;
+            f.read_exact(&mut b4).map_err(BuildError::Io)?;
+            let raw_off = u32::from_le_bytes(b4) as u64;
+            if raw_off >= from {
+                f.seek(SeekFrom::Start(off + 20)).map_err(BuildError::Io)?;
+                f.write_all(&((raw_off + shift) as u32).to_le_bytes())
+                    .map_err(BuildError::Io)?;
+            }
+        }
+        // The section table now extends past the original header
+        // region, so widen SizeOfHeaders to cover it.
+        let headers_end = (new_hdr_off + 40).div_ceil(file_align as u64) * file_align as u64;
+        f.seek(SeekFrom::Start(opt_off + 0x3C))
+            .map_err(BuildError::Io)?;
+        let mut b4 = [0u8; 4];
+        f.read_exact(&mut b4).map_err(BuildError::Io)?;
+        let cur_headers = u32::from_le_bytes(b4) as u64;
+        if headers_end > cur_headers {
+            f.seek(SeekFrom::Start(opt_off + 0x3C))
+                .map_err(BuildError::Io)?;
+            f.write_all(&(headers_end as u32).to_le_bytes())
+                .map_err(BuildError::Io)?;
+        }
+        log::info(&format!(
+            "inject_stub_reloc_section: shifted file tail from 0x{:x} by {} bytes to make room for the section header",
+            from, shift
+        ));
+    }
+
     // Compute where to place the new section body. Walk all existing
     // sections to find the end of the *actual data* (PointerToRawData
     // + SizeOfRawData), then round up to the next FileAlignment
@@ -1058,8 +1607,7 @@ fn inject_stub_reloc_section(
     last_data_end = last_data_end.max(file_len);
     // Round up to FileAlignment — section data must start at a
     // FileAlignment boundary.
-    let body_off = (last_data_end + file_align as u64 - 1)
-        & !(file_align as u64 - 1);
+    let body_off = (last_data_end + file_align as u64 - 1) & !(file_align as u64 - 1);
 
     // Walk the existing sections to find the end of the last
     // virtual region so we can place `.reloc` after it without
@@ -1085,6 +1633,10 @@ fn inject_stub_reloc_section(
         }
     }
     let reloc_va = (last_va_end + section_align - 1) & !(section_align - 1);
+    let reloc_va = (image_extent_rva as u64)
+        .checked_next_multiple_of(section_align as u64)
+        .map(|aligned| reloc_va.max(aligned as u32))
+        .unwrap_or(reloc_va);
 
     // Write the stub relocation block: 8-byte header
     //   VirtualAddress = reloc_va (page-aligned, must point to a
@@ -1109,15 +1661,11 @@ fn inject_stub_reloc_section(
     // architectures, so we emit a real but trivial entry to satisfy
     // the loader while still having no observable effect on the
     // image once it has been loaded.
-    let body: [u8; 16] = [
-        reloc_va as u8,
-        ((reloc_va >> 8) & 0xFF) as u8,
-        ((reloc_va >> 16) & 0xFF) as u8,
-        ((reloc_va >> 24) & 0xFF) as u8,
-        16u8, 0, 0, 0, // SizeOfBlock = 16 (header + 1 entry)
-        0x00, 0x10, // Offset=0, Type=IMAGE_REL_BASED_DIR64 (0x10)
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    ];
+    let body = build_pe_base_relocation_table(relocations);
+    let body_size = body.len() as u32;
+    let raw_size = body_size
+        .checked_next_multiple_of(file_align)
+        .unwrap_or(file_align);
 
     // Pad the file out to body_off, then write the 8-byte stub
     // header followed by file-aligned padding so the section's
@@ -1131,7 +1679,7 @@ fn inject_stub_reloc_section(
     f.write_all(&body).map_err(BuildError::Io)?;
     // Zero-pad the remainder of the file-aligned block so the
     // section's full SizeOfRawData is mapped in.
-    let pad_len = file_align as usize - body.len();
+    let pad_len = raw_size as usize - body.len();
     if pad_len > 0 {
         let pad = vec![0u8; pad_len];
         f.write_all(&pad).map_err(BuildError::Io)?;
@@ -1141,31 +1689,52 @@ fn inject_stub_reloc_section(
     let new_sec_hdr_off = sec_table_off + num_sections as u64 * 40;
     let sh: [u8; 40] = [
         // Name ".reloc\0\0" (8 bytes)
-        b'.', b'r', b'e', b'l', b'o', b'c', 0, 0,
+        b'.',
+        b'r',
+        b'e',
+        b'l',
+        b'o',
+        b'c',
+        0,
+        0,
         // VirtualSize (4) — matches the in-memory body length (header
         // + 1 IMAGE_REL_BASED_DIR64 entry = 16 bytes). EDK2 reads
         // VirtualSize when scanning the reloc DataDirectory.
-        16u32.to_le_bytes()[0], 16u32.to_le_bytes()[1],
-        16u32.to_le_bytes()[2], 16u32.to_le_bytes()[3],
+        body_size.to_le_bytes()[0],
+        body_size.to_le_bytes()[1],
+        body_size.to_le_bytes()[2],
+        body_size.to_le_bytes()[3],
         // VirtualAddress (4) — RVA relative to ImageBase
-        reloc_va.to_le_bytes()[0], reloc_va.to_le_bytes()[1],
-        reloc_va.to_le_bytes()[2], reloc_va.to_le_bytes()[3],
+        reloc_va.to_le_bytes()[0],
+        reloc_va.to_le_bytes()[1],
+        reloc_va.to_le_bytes()[2],
+        reloc_va.to_le_bytes()[3],
         // SizeOfRawData (4) — file-aligned (file_align is 0x200, > 16)
-        file_align.to_le_bytes()[0], file_align.to_le_bytes()[1],
-        file_align.to_le_bytes()[2], file_align.to_le_bytes()[3],
+        raw_size.to_le_bytes()[0],
+        raw_size.to_le_bytes()[1],
+        raw_size.to_le_bytes()[2],
+        raw_size.to_le_bytes()[3],
         // PointerToRawData (4)
         (body_off as u32).to_le_bytes()[0],
         (body_off as u32).to_le_bytes()[1],
         (body_off as u32).to_le_bytes()[2],
         (body_off as u32).to_le_bytes()[3],
         // PointerToRelocations (4) — zero for PE images
-        0, 0, 0, 0,
+        0,
+        0,
+        0,
+        0,
         // PointerToLinenumbers (4)
-        0, 0, 0, 0,
+        0,
+        0,
+        0,
+        0,
         // NumberOfRelocations (2)
-        0, 0,
+        0,
+        0,
         // NumberOfLinenumbers (2)
-        0, 0,
+        0,
+        0,
         // Characteristics (4) —
         //   IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ
         //   = 0x40000040.
@@ -1178,8 +1747,10 @@ fn inject_stub_reloc_section(
         // refuses to process a reloc section with that flag set.
         // Omitting it is the right choice — UEFI is still free to
         // drop the section after RelocateImage completes.
-        0x4000_0040u32.to_le_bytes()[0], 0x4000_0040u32.to_le_bytes()[1],
-        0x4000_0040u32.to_le_bytes()[2], 0x4000_0040u32.to_le_bytes()[3],
+        0x4000_0040u32.to_le_bytes()[0],
+        0x4000_0040u32.to_le_bytes()[1],
+        0x4000_0040u32.to_le_bytes()[2],
+        0x4000_0040u32.to_le_bytes()[3],
     ];
     f.seek(SeekFrom::Start(new_sec_hdr_off))
         .map_err(BuildError::Io)?;
@@ -1193,14 +1764,16 @@ fn inject_stub_reloc_section(
         .map_err(BuildError::Io)?;
 
     // SizeOfImage = max(old_size, reloc_va + section_align)
-    let new_size_image = reloc_va + section_align;
+    let new_size_image = (reloc_va + body_size)
+        .checked_next_multiple_of(section_align)
+        .unwrap_or(reloc_va + section_align);
     f.seek(SeekFrom::Start(opt_off + 0x38))
         .map_err(BuildError::Io)?;
     f.write_all(&new_size_image.to_le_bytes())
         .map_err(BuildError::Io)?;
 
     // DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_BASERELOC] =
-    //   { VirtualAddress = reloc_va, Size = 8 }
+    //   { VirtualAddress = reloc_va, Size = 16 }
     //
     // PE32+ OptionalHeader layout (240 bytes total):
     //   opt+0x00  Magic (2)              0x020B
@@ -1246,14 +1819,18 @@ fn inject_stub_reloc_section(
     // loader then refused the image with `EFI_UNSUPPORTED`.
     let ddir_off = opt_off + 0x70 + 5u64 * 8;
     log::info(&format!(
-        "inject_stub_reloc_section: ddir_off=0x{:x} (opt_off=0x{:x}), reloc_va=0x{:x}",
-        ddir_off, opt_off, reloc_va
+        "inject_stub_reloc_section: ddir_off=0x{:x} (opt_off=0x{:x}), \
+         reloc_va=0x{:x}, fixups={}, table_size={}",
+        ddir_off,
+        opt_off,
+        reloc_va,
+        relocations.len(),
+        body_size
     ));
-    f.seek(SeekFrom::Start(ddir_off))
-        .map_err(BuildError::Io)?;
+    f.seek(SeekFrom::Start(ddir_off)).map_err(BuildError::Io)?;
     f.write_all(&reloc_va.to_le_bytes())
         .map_err(BuildError::Io)?;
-    f.write_all(&8u32.to_le_bytes())
+    f.write_all(&body_size.to_le_bytes())
         .map_err(BuildError::Io)?;
 
     // Also set NumberOfRvaAndSizes to 16 so EDK2's PE/COFF loader
@@ -1264,10 +1841,8 @@ fn inject_stub_reloc_section(
     // opt+0x70); the previous code wrote to opt+0x5E, which landed
     // inside SizeOfHeapCommit and corrupted that field.
     let nrva_off = opt_off + 0x6C;
-    f.seek(SeekFrom::Start(nrva_off))
-        .map_err(BuildError::Io)?;
-    f.write_all(&16u32.to_le_bytes())
-        .map_err(BuildError::Io)?;
+    f.seek(SeekFrom::Start(nrva_off)).map_err(BuildError::Io)?;
+    f.write_all(&16u32.to_le_bytes()).map_err(BuildError::Io)?;
     log::info(&format!(
         "inject_stub_reloc_section: wrote NumberOfRvaAndSizes=16 at 0x{:x}",
         nrva_off
@@ -1290,7 +1865,7 @@ pub fn build_boot(target: &str) -> Result<PathBuf> {
     // cargo; the linker for `loongarch64-unknown-none` fails with
     // `cannot find -lgcc` otherwise (see `ensure_loongarch_libgcc_stub`
     // for the full rationale).
-    ensure_loongarch_libgcc_stub()?;
+    ensure_loongarch_libgcc_stub_for_target(target)?;
     // Cargo only auto-loads `.cargo/config.toml` from ancestors of
     // the *current working directory*. The per-crate configs in
     // `src/boot/.cargo/config.toml` (RISC-V / LoongArch linker
@@ -1315,16 +1890,16 @@ pub fn build_boot(target: &str) -> Result<PathBuf> {
     // matching `--features x86_64` here, cargo only compiles
     // `libnt61_boot.rlib` and the downstream pipeline fails with
     // "File not found: target/<arch>/release/nt61-boot.efi".
-    cmd.arg("--features").arg("x86_64");
+    cmd.arg("--features").arg(loader_features(target));
 
     log::info("Running cargo build...");
-    let status = cmd.status()
-        .map_err(BuildError::Io)?;
+    let status = cmd.status().map_err(BuildError::Io)?;
 
     if !status.success() {
-        return Err(BuildError::ImageCreateFailed(
-            format!("Boot build failed with exit code: {:?}", status.code())
-        ));
+        return Err(BuildError::ImageCreateFailed(format!(
+            "Boot build failed with exit code: {:?}",
+            status.code()
+        )));
     }
 
     // The boot binary name differs by target:
@@ -1384,7 +1959,8 @@ pub fn build_boot(target: &str) -> Result<PathBuf> {
             };
             log::info(&format!(
                 "Wrapping ELF -> PE32+ via {} -O {} for {}",
-                objcopy, target_fmt, target));
+                objcopy, target_fmt, target
+            ));
             // Drop the ELF metadata sections (`/DISCARD/` from the
             // linker script strips them from the executable output,
             // but `objcopy -O pei-<arch>` parses the ELF *input*
@@ -1443,6 +2019,7 @@ pub fn build_boot(target: &str) -> Result<PathBuf> {
                 .arg("--remove-section=.comment")
                 .arg("--remove-section=.riscv.attributes")
                 .arg("--remove-section=.loongarch.attributes")
+                .arg("--remove-section=.rela*")
                 .arg("--remove-section=.bss")
                 .arg("--remove-section=.bss*")
                 .arg(&bare)
@@ -1452,7 +2029,9 @@ pub fn build_boot(target: &str) -> Result<PathBuf> {
             if !status.success() {
                 return Err(BuildError::ImageCreateFailed(format!(
                     "{} -O {} failed with exit code: {:?}",
-                    objcopy, target_fmt, status.code()
+                    objcopy,
+                    target_fmt,
+                    status.code()
                 )));
             }
             // objcopy copies the ELF's section VMAs straight into the
@@ -1466,12 +2045,13 @@ pub fn build_boot(target: &str) -> Result<PathBuf> {
             // patch runs — `patch_pe_subsystem` walks the section
             // table to decide where to drop the new `.reloc` section,
             // and reading pre-rebased VAs there produces garbage.
-            if let Ok((_entry, _boc, image_base)) =
-                read_elf_image_layout(&bare)
-            {
-                if let Err(e) =
-                    patch_pe_section_addresses(&canonical, image_base)
-                {
+            if let Ok((_entry, _boc, image_base)) = read_elf_image_layout(&bare) {
+                let boot_relocations =
+                    read_elf_absolute_relocations(&bare, image_base).unwrap_or_default();
+                let image_extent_rva = read_elf_image_extent(&bare)
+                    .map(|extent| extent.saturating_sub(image_base) as u32)
+                    .unwrap_or(0);
+                if let Err(e) = patch_pe_section_addresses(&canonical, image_base) {
                     log::warn(&format!(
                         "PE section-address rebase failed for boot \
                          ({}); continuing anyway",
@@ -1493,21 +2073,23 @@ pub fn build_boot(target: &str) -> Result<PathBuf> {
                 //  + 20 (COFF FileHeader)`. We read `e_lfanew` from
                 // the DOS header, derive the optional-header address,
                 // and rewrite the two-byte Subsystem field directly.
-                patch_pe_subsystem(&canonical, 0x0A)?;
+                patch_pe_subsystem_with_extent(
+                    &canonical,
+                    0x0A,
+                    &boot_relocations,
+                    image_extent_rva,
+                )?;
                 // The pei-<arch> target also zeroes
                 // `AddressOfEntryPoint`, `BaseOfCode`, and `ImageBase`
                 // — EDK2 rejects the resulting image as `Unsupported`
                 // because it cannot determine where to start execution
                 // nor how to relocate sections. Recover the values
                 // from the ELF we just wrapped.
-                if let Err(e) = patch_pe_entry_point_and_image_base(
-                    &canonical,
-                    _entry,
-                    _boc,
-                    image_base,
-                ) {
+                if let Err(e) =
+                    patch_pe_entry_point_and_image_base(&canonical, _entry, _boc, image_base)
+                {
                     log::warn(&format!(
-                        "PE entry-point/ImageBase patch failed for boot \
+                        "PE entry-point/ImageBase patch failed for boot \\
                          ({}); continuing anyway",
                         e,
                     ));
@@ -1517,7 +2099,7 @@ pub fn build_boot(target: &str) -> Result<PathBuf> {
                 // recover ImageBase from the ELF — `patch_pe_subsystem`
                 // still does its core job (Subsystem + alignments +
                 // stub .reloc section) even with non-rebased VAs.
-                patch_pe_subsystem(&canonical, 0x0A)?;
+                patch_pe_subsystem(&canonical, 0x0A, &[])?;
             }
             canonical
         } else {
@@ -1527,8 +2109,11 @@ pub fn build_boot(target: &str) -> Result<PathBuf> {
             // uniformly. The firmware will of course refuse to load
             // an ELF as a PE — that's a separate problem to solve
             // by adding a `<arch>-unknown-uefi` target.
-            log::warn(&format!("Boot binary lacks .efi extension; copying {} -> {}",
-                bare.display(), canonical.display()));
+            log::warn(&format!(
+                "Boot binary lacks .efi extension; copying {} -> {}",
+                bare.display(),
+                canonical.display()
+            ));
             if let Some(parent) = canonical.parent() {
                 std::fs::create_dir_all(parent).map_err(BuildError::Io)?;
             }
@@ -1555,7 +2140,7 @@ pub fn build_winload(target: &str) -> Result<PathBuf> {
     let workspace_root = get_workspace_root();
     // Ensure the LoongArch64 libgcc stub exists before invoking
     // cargo; see the matching call in `build_boot` for context.
-    ensure_loongarch_libgcc_stub()?;
+    ensure_loongarch_libgcc_stub_for_target(target)?;
     // See the matching note in `build_boot`: cargo only reads
     // `.cargo/config.toml` from ancestors of the cwd, so the
     // per-architecture linker settings live in
@@ -1574,16 +2159,16 @@ pub fn build_winload(target: &str) -> Result<PathBuf> {
     // kernel-jump symbols). Without `--features x86_64` cargo only
     // emits `libnt61_winload.rlib` and the disk image pipeline fails
     // when it looks for `nt61-winload.efi`.
-    cmd.arg("--features").arg("x86_64");
+    cmd.arg("--features").arg(loader_features(target));
 
     log::info("Running cargo build...");
-    let status = cmd.status()
-        .map_err(BuildError::Io)?;
+    let status = cmd.status().map_err(BuildError::Io)?;
 
     if !status.success() {
-        return Err(BuildError::ImageCreateFailed(
-            format!("Winload build failed with exit code: {:?}", status.code())
-        ));
+        return Err(BuildError::ImageCreateFailed(format!(
+            "Winload build failed with exit code: {:?}",
+            status.code()
+        )));
     }
 
     // See `build_boot` above: UEFI targets emit `nt61-winload.efi`,
@@ -1639,7 +2224,8 @@ pub fn build_winload(target: &str) -> Result<PathBuf> {
                 std::fs::create_dir_all(parent).map_err(BuildError::Io)?;
             }
             let wrap = std::process::Command::new(objcopy_bin)
-                .arg("-O").arg(pei_target)
+                .arg("-O")
+                .arg(pei_target)
                 // See the comment in `build_boot` for the rationale.
                 .arg("--strip-all")
                 .arg("--remove-section=.efi_header")
@@ -1664,9 +2250,12 @@ pub fn build_winload(target: &str) -> Result<PathBuf> {
                     // (IMAGE_SUBSYSTEM_UNKNOWN); EDK2 refuses to
                     // dispatch images that are not
                     // IMAGE_SUBSYSTEM_EFI_APPLICATION (0x0A).
-                    if let Ok((entry, base_of_code, image_base)) =
-                        read_elf_image_layout(&bare)
-                    {
+                    if let Ok((entry, base_of_code, image_base)) = read_elf_image_layout(&bare) {
+                        let winload_relocations =
+                            read_elf_absolute_relocations(&bare, image_base).unwrap_or_default();
+                        let image_extent_rva = read_elf_image_extent(&bare)
+                            .map(|extent| extent.saturating_sub(image_base) as u32)
+                            .unwrap_or(0);
                         // Same section-Table rebase as in
                         // `build_boot`: PE section VirtualAddress
                         // must be an RVA relative to ImageBase, but
@@ -1676,32 +2265,32 @@ pub fn build_winload(target: &str) -> Result<PathBuf> {
                         // to compute a place for the new `.reloc`
                         // section and would otherwise use the
                         // pre-rebased absolute VMAs.
-                        if let Err(e) = patch_pe_section_addresses(
-                            &canonical,
-                            image_base,
-                        ) {
+                        if let Err(e) = patch_pe_section_addresses(&canonical, image_base) {
                             log::warn(&format!(
                                 "PE32+ section rebase failed for \
                                  winload ({}); continuing anyway",
                                 e,
                             ));
                         }
-                        if let Err(e) = patch_pe_subsystem(&canonical, 0x0A) {
+                        if let Err(e) = patch_pe_subsystem_with_extent(
+                            &canonical,
+                            0x0A,
+                            &winload_relocations,
+                            image_extent_rva,
+                        ) {
                             log::warn(&format!(
                                 "PE32+ subsystem patch failed for winload ({}); continuing anyway",
                                 e,
                             ));
                         }
-                        if let Err(e) =
-                            patch_pe_entry_point_and_image_base(
-                                &canonical,
-                                entry,
-                                base_of_code,
-                                image_base,
-                            )
-                        {
+                        if let Err(e) = patch_pe_entry_point_and_image_base(
+                            &canonical,
+                            entry,
+                            base_of_code,
+                            image_base,
+                        ) {
                             log::warn(&format!(
-                                "PE32+ entry-point patch failed for \
+                                "PE32+ entry-point patch failed for \\
                                  winload ({}); continuing anyway",
                                 e,
                             ));
@@ -1710,7 +2299,7 @@ pub fn build_winload(target: &str) -> Result<PathBuf> {
                         // Fall back to the bare subsystem patch when
                         // ELF introspection fails — the loader will
                         // still at least see a valid Subsystem field.
-                        if let Err(e) = patch_pe_subsystem(&canonical, 0x0A) {
+                        if let Err(e) = patch_pe_subsystem(&canonical, 0x0A, &[]) {
                             log::warn(&format!(
                                 "PE32+ subsystem patch failed for winload ({}); continuing anyway",
                                 e,
@@ -1730,8 +2319,11 @@ pub fn build_winload(target: &str) -> Result<PathBuf> {
                 }
             }
         } else {
-            log::warn(&format!("Winload binary lacks .efi extension; copying {} -> {}",
-                bare.display(), canonical.display()));
+            log::warn(&format!(
+                "Winload binary lacks .efi extension; copying {} -> {}",
+                bare.display(),
+                canonical.display()
+            ));
             if let Some(parent) = canonical.parent() {
                 std::fs::create_dir_all(parent).map_err(BuildError::Io)?;
             }
@@ -1757,7 +2349,10 @@ pub fn build_winload(target: &str) -> Result<PathBuf> {
 ///   * `ntfs`  — ESP is FAT32, System is NTFS (default Windows 7 layout)
 ///   * `ext4`  — ESP is FAT32, System is EXT4 (Linux-native)
 pub fn full_build(build_dir: &Path, format: &str, _size_mb: u32, arch: &str) -> Result<PathBuf> {
-    log::banner("NT6.1.7601 Full Build", &format!("Format: {} / Arch: {}", format, arch));
+    log::banner(
+        "NT6.1.7601 Full Build",
+        &format!("Format: {} / Arch: {}", format, arch),
+    );
 
     let fs_choice = super::image::DualPartitionFs::parse(format).ok_or_else(|| {
         BuildError::InvalidParam(format!(
@@ -1768,6 +2363,8 @@ pub fn full_build(build_dir: &Path, format: &str, _size_mb: u32, arch: &str) -> 
 
     let k_target = kernel_target_for(arch);
     let u_target = uefi_target_for(arch);
+    set_pe_arch(arch);
+    set_pe_arch(arch);
 
     // Create build directories
     let dirs = get_build_dir(build_dir);
@@ -1790,17 +2387,22 @@ pub fn full_build(build_dir: &Path, format: &str, _size_mb: u32, arch: &str) -> 
     // Step 3: Build winload for the target architecture.
     let winload = build_winload(u_target)?;
 
+    // Build the user-mode and driver PE artifacts for the selected
+    // architecture. This step is essential for non-x86 targets: without
+    // it, the generator would otherwise fall back to stale x86_64 files.
+    build_userland_images(arch)?;
+
     // Step 4: Build the ESP (FAT32 boot partition) tree under
     // `<build-dir>/esp`. Only EFI/* content goes here.
     log::section("Building ESP");
-    // The boot-screen font lives under `resources/fonts/open-sans/`.
-    // A real NT6.1 install would ship `wgl4_boot.ttf` here; we
-    // substitute OpenSans-Regular.ttf so the boot UI has a usable TTF.
+    // The boot-screen font is license-safe and monospaced so the
+    // UEFI text layout is aligned. A real NT6.1 install would ship
+    // its own boot fonts; here we install DejaVu Sans Mono.
     let font_path = get_workspace_root()
         .join("resources")
         .join("fonts")
-        .join("open-sans")
-        .join("OpenSans-Regular.ttf");
+        .join("dejavu-fonts-XXXX")
+        .join("DejaVuSansMono.ttf");
     let arch_label = match arch {
         "x86_64" | "x64" => "X64",
         "aarch64" | "arm64" => "AA64",
@@ -1833,14 +2435,18 @@ pub fn full_build(build_dir: &Path, format: &str, _size_mb: u32, arch: &str) -> 
     let _kernel = kernel;
 
     // Generate PE files first.
-    generate_system_pe_files(&dirs.system)?;
+    generate_system_pe_files(arch, &dirs.system)?;
 
     super::system::SystemBuilder::new(&dirs.system)?
         // Skip kernel/HAL — already generated above.
         .with_kernel(None)
         .with_hal(None)
         // Copy winload.efi at its canonical path.
-        .with_winload(if winload.exists() { Some(winload.as_path()) } else { None })
+        .with_winload(if winload.exists() {
+            Some(winload.as_path())
+        } else {
+            None
+        })
         // Install autoexec.bat at C:\tests\autoexec.bat so the CMD shell
         // can run it directly via `tests\autoexec.bat` or `call tests\autoexec.bat`.
         .add_autoexec_bat(
@@ -1918,7 +2524,10 @@ pub fn full_build(build_dir: &Path, format: &str, _size_mb: u32, arch: &str) -> 
 ///   /tests/autoexec.bat
 ///   /Users/...
 pub fn build_iso(build_dir: &Path, _format: &str, _size_mb: u32, arch: &str) -> Result<PathBuf> {
-    log::banner("NT6.1.7601 ISO Build", &format!("ISO-9660 / El Torito / Arch: {}", arch));
+    log::banner(
+        "NT6.1.7601 ISO Build",
+        &format!("ISO-9660 / El Torito / Arch: {}", arch),
+    );
 
     let dirs = get_build_dir(build_dir);
     log::info(&format!("Build directory: {}", dirs.root.display()));
@@ -1939,14 +2548,20 @@ pub fn build_iso(build_dir: &Path, _format: &str, _size_mb: u32, arch: &str) -> 
     // Step 3: Build winload
     let winload = build_winload(u_target)?;
 
+    build_userland_images(arch)?;
+
     // Step 5: Build the system partition tree under `<build>/system`
     log::section("Building System Partition");
     let _kernel = kernel;
-    generate_system_pe_files(&dirs.system)?;
+    generate_system_pe_files(arch, &dirs.system)?;
     super::system::SystemBuilder::new(&dirs.system)?
         .with_kernel(None)
         .with_hal(None)
-        .with_winload(if winload.exists() { Some(winload.as_path()) } else { None })
+        .with_winload(if winload.exists() {
+            Some(winload.as_path())
+        } else {
+            None
+        })
         .add_autoexec_bat(
             get_workspace_root()
                 .join("resources")
@@ -2068,9 +2683,59 @@ fn copy_tree_to_iso(iso: &mut super::iso9660::IsoImage, src: &Path, prefix: &str
 // --bin build-esp` if it does not exist yet. The tool reads the
 // list of PE images from `nt61::system_image::build_all` and
 // drops them into the system32 directory.
-fn generate_system_pe_files(system_dir: &Path) -> Result<()> {
+pub fn build_userland_images(arch: &str) -> Result<()> {
+    let target = uefi_target_for(arch);
+    let workspace_root = get_workspace_root();
+    log::section("Building nt61-cmd");
+    log::info(&format!("Target: {target}"));
+    let status = Command::new("cargo")
+        .current_dir(&workspace_root)
+        .arg("build")
+        .arg("--release")
+        .arg("--target")
+        .arg(target)
+        .arg("-p")
+        .arg("nt61-cmd")
+        .status()
+        .map_err(BuildError::Io)?;
+    if !status.success() {
+        return Err(BuildError::ImageCreateFailed(format!(
+            "nt61-cmd build failed with exit code: {status:?}"
+        )));
+    }
+
+    log::section("Building nt61-driver");
+    log::info(&format!("Target: {target}"));
+    let mut driver_command = Command::new("cargo");
+    driver_command
+        .current_dir(&workspace_root)
+        .arg("build")
+        .arg("--release")
+        .arg("--target")
+        .arg(target)
+        .arg("-p")
+        .arg("nt61-driver");
+    if matches!(arch, "riscv64" | "loongarch64") {
+        // These two targets link the kernel and loader with the
+        // freestanding `kernel_entry` symbol, but a boot driver must be
+        // entered through `DriverEntry`. Setting `RUSTFLAGS` here
+        // overrides the workspace entry symbol for this crate only.
+        driver_command.env("RUSTFLAGS", "-C link-arg=-e -C link-arg=DriverEntry");
+    }
+    let status = driver_command.status().map_err(BuildError::Io)?;
+    if !status.success() {
+        return Err(BuildError::ImageCreateFailed(format!(
+            "nt61-driver build failed with exit code: {status:?}"
+        )));
+    }
+
+    Ok(())
+}
+
+fn generate_system_pe_files(arch: &str, system_dir: &Path) -> Result<()> {
     let system32 = system_dir.join("Windows").join("System32");
     std::fs::create_dir_all(&system32)?;
+    set_pe_arch(arch);
 
     // Direct in-process call into build_esp's PE generator. This
     // avoids spawning a subprocess (which fails to link because
@@ -2078,7 +2743,6 @@ fn generate_system_pe_files(system_dir: &Path) -> Result<()> {
     // and is also faster.
     generate_pe_files_in_process(system32.as_path())
 }
-
 
 /// In-process call into the `build_esp` library function. Mirrors
 /// what the `build-esp --pe-only` CLI does, but skips the
@@ -2108,13 +2772,11 @@ fn generate_pe_files_in_process(system32_dir: &Path) -> Result<()> {
         if img.bytes.len() >= 2 && &img.bytes[0..2] == b"MZ" {
             log::info(&format!(
                 "Generated PE: {:?} ({} bytes)",
-                dest, img.bytes.len()
+                dest,
+                img.bytes.len()
             ));
         } else {
-            log::warn(&format!(
-                "Warning: {:?} is not a valid PE file",
-                dest
-            ));
+            log::warn(&format!("Warning: {:?} is not a valid PE file", dest));
         }
         if img.name.starts_with("drivers/") {
             driver_count += 1;
@@ -2144,15 +2806,252 @@ struct SystemImage {
 /// files on disk, winload.efi's BOOT_START driver loader reports
 /// "file missing" and the kernel's I/O manager cannot bring up
 /// storage, network, or input devices during boot.
+fn real_pe(artifact_name: &str) -> Vec<u8> {
+    let arch = current_pe_arch();
+    let stem = artifact_name.trim_end_matches(".efi");
+    let mut candidates: Vec<String> = Vec::new();
+    // The bare-metal kernel artifact is the canonical source of the
+    // on-disk PE: it is linked as a PIC ELF with relocation records
+    // and its entry (`kernel_entry`) reads the BootInfo pointer that
+    // winload passes. The UEFI-target build of the same crate has a
+    // different entry ABI, so it must never shadow the bare-metal
+    // artifact just because it was rebuilt more recently. Order the
+    // bare-metal candidates first and only fall back to the UEFI
+    // target when no bare-metal artifact exists.
+    for target in [
+        kernel_target_for(arch_name(arch)),
+        uefi_target_for(arch_name(arch)),
+    ] {
+        candidates.push(format!("target/{target}/release/{stem}"));
+        candidates.push(format!("target/{target}/release/{stem}.efi"));
+        for profile in ["release", "debug"] {
+            let dir = format!("target/{target}/{profile}/deps");
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let matches = path
+                        .file_stem()
+                        .and_then(|file_stem| file_stem.to_str())
+                        .map(|file_stem| file_stem.starts_with(stem))
+                        .unwrap_or(false);
+                    if matches {
+                        candidates.push(path.to_string_lossy().into_owned());
+                    }
+                }
+            }
+        }
+    }
+
+    // Prefer the freshest artifact. A stale MZ from an older build of the
+    // other target (e.g. a leftover UEFI kernel from hours ago) must not
+    // shadow the just-built kernel ELF from the bare-metal target, so we
+    // order all existing candidates newest-first instead of relying on the
+    // fixed directory preference order.
+    let workspace_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+    let bare_metal = kernel_target_for(arch_name(arch));
+    candidates.sort_by(|a, b| {
+        let mtime_of = |rel: &str| -> std::time::SystemTime {
+            std::fs::metadata(workspace_root.join(rel))
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+        };
+        // Within a target: newest first. Across targets: the
+        // bare-metal artifact always wins over the UEFI one.
+        let a_bare = a.contains(&format!("target/{bare_metal}/"));
+        let b_bare = b.contains(&format!("target/{bare_metal}/"));
+        b_bare.cmp(&a_bare).then(mtime_of(b).cmp(&mtime_of(a)))
+    });
+
+    for candidate in candidates {
+        let candidate_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join(&candidate);
+        let Ok(bytes) = std::fs::read(&candidate_path) else {
+            continue;
+        };
+        if bytes.len() >= 2 && &bytes[0..2] == b"MZ" {
+            return bytes;
+        }
+        if bytes.len() >= 5 && &bytes[0..5] == [0x7F, b'E', b'L', b'F', 2] {
+            if let Some(pe) = wrap_elf_to_pe(&candidate_path, arch) {
+                return pe;
+            }
+        }
+    }
+
+    panic!(
+        "missing real {} system PE artifact {} (build it with make build ARCH={})",
+        arch_name(arch),
+        artifact_name,
+        arch_name(arch)
+    );
+}
+
+fn arch_name(arch: TargetArch) -> &'static str {
+    match arch {
+        TargetArch::X86_64 => "x86_64",
+        TargetArch::AArch64 => "aarch64",
+        TargetArch::RiscV64 => "riscv64",
+        TargetArch::LoongArch64 => "loongarch64",
+    }
+}
+
+/// Final consistency pass over a freshly wrapped PE image.
+///
+/// `objcopy -O pei-<arch>` copies the ELF section VMAs into the PE
+/// section table verbatim (absolute, not RVA-relative) on some
+/// targets, and the rebase pass above may see a section table that
+/// was already rebased once (for example when the same driver ELF
+/// is wrapped repeatedly into one shared `.pei.tmp`). The live
+/// section table is therefore the only trustworthy source for where
+/// `.text` actually ends up, so the entry point and `SizeOfImage`
+/// are recomputed from it instead of trusting the earlier
+/// ELF-derived values. Running the pass twice converges instead of
+/// drifting, which keeps the wrapped image self-consistent.
+fn fix_pe_entry_and_size(path: &std::path::Path, entry_rva: u32, text_rva: u32) -> Result<()> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+
+    let mut f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(BuildError::Io)?;
+
+    let mut mz = [0u8; 2];
+    f.read_exact(&mut mz).map_err(BuildError::Io)?;
+    if &mz != b"MZ" {
+        return Err(BuildError::ImageCreateFailed(format!(
+            "fix_pe_entry_and_size: {} is not a DOS/PE image",
+            path.display()
+        )));
+    }
+    f.seek(SeekFrom::Start(0x3C)).map_err(BuildError::Io)?;
+    let mut e_lfanew_bytes = [0u8; 4];
+    f.read_exact(&mut e_lfanew_bytes).map_err(BuildError::Io)?;
+    let e_lfanew = u32::from_le_bytes(e_lfanew_bytes) as u64;
+    f.seek(SeekFrom::Start(e_lfanew)).map_err(BuildError::Io)?;
+    let mut pe_sig = [0u8; 4];
+    f.read_exact(&mut pe_sig).map_err(BuildError::Io)?;
+    if &pe_sig != b"PE\x00\x00" {
+        return Err(BuildError::ImageCreateFailed(format!(
+            "fix_pe_entry_and_size: bad PE signature at e_lfanew=0x{:x}",
+            e_lfanew
+        )));
+    }
+    let coff_off = e_lfanew + 4;
+    f.seek(SeekFrom::Start(coff_off + 2))
+        .map_err(BuildError::Io)?;
+    let mut num_sections_bytes = [0u8; 2];
+    f.read_exact(&mut num_sections_bytes)
+        .map_err(BuildError::Io)?;
+    let num_sections = u16::from_le_bytes(num_sections_bytes);
+    f.seek(SeekFrom::Start(coff_off + 16))
+        .map_err(BuildError::Io)?;
+    let mut size_opt_bytes = [0u8; 2];
+    f.read_exact(&mut size_opt_bytes).map_err(BuildError::Io)?;
+    let size_opt = u16::from_le_bytes(size_opt_bytes) as u64;
+    let opt_off = coff_off + 20;
+    f.seek(SeekFrom::Start(opt_off + 0x20))
+        .map_err(BuildError::Io)?;
+    let mut align_bytes = [0u8; 4];
+    f.read_exact(&mut align_bytes).map_err(BuildError::Io)?;
+    let section_align = u32::from_le_bytes(align_bytes).max(1);
+
+    let sec_table_off = opt_off + size_opt;
+    let mut text_pe_va: Option<u32> = None;
+    let mut max_end: u32 = 0;
+    for i in 0..num_sections {
+        let off = sec_table_off + (i as u64) * 40;
+        f.seek(SeekFrom::Start(off)).map_err(BuildError::Io)?;
+        let mut hdr = [0u8; 40];
+        f.read_exact(&mut hdr).map_err(BuildError::Io)?;
+        let name = &hdr[0..8];
+        let is_text =
+            name[0] == b'.' && &name[1..5] == b"text" && (name[5] == 0 || name[5] == b'.');
+        let va = u32::from_le_bytes(hdr[12..16].try_into().unwrap());
+        let vsize = u32::from_le_bytes(hdr[8..12].try_into().unwrap());
+        let raw = u32::from_le_bytes(hdr[16..20].try_into().unwrap());
+        if is_text {
+            text_pe_va = Some(va);
+        }
+        max_end = max_end.max(va.saturating_add(vsize.max(raw)));
+    }
+
+    let entry_offset = entry_rva.saturating_sub(text_rva);
+    let final_entry = match text_pe_va {
+        Some(text_va) => text_va.saturating_add(entry_offset),
+        None => entry_rva,
+    };
+    let final_size = max_end
+        .max(final_entry)
+        .checked_next_multiple_of(section_align)
+        .unwrap_or(max_end.max(final_entry));
+
+    let writes: &[(u64, u32)] = &[(opt_off + 0x10, final_entry), (opt_off + 0x38, final_size)];
+    for (offset, value) in writes {
+        f.seek(SeekFrom::Start(*offset)).map_err(BuildError::Io)?;
+        f.write_all(&value.to_le_bytes()).map_err(BuildError::Io)?;
+    }
+    log::info(&format!(
+        "fix_pe_entry_and_size: {} entry=0x{:x} SizeOfImage=0x{:x}",
+        path.display(),
+        final_entry,
+        final_size
+    ));
+    Ok(())
+}
+fn wrap_elf_to_pe(elf_path: &Path, arch: TargetArch) -> Option<Vec<u8>> {
+    let (objcopy, pei_target) = match arch {
+        TargetArch::X86_64 => ("x86_64-linux-gnu-objcopy", "pei-x86-64"),
+        TargetArch::AArch64 => ("aarch64-linux-gnu-objcopy", "pei-aarch64-little"),
+        TargetArch::RiscV64 => ("riscv64-linux-gnu-objcopy", "pei-riscv64-little"),
+        TargetArch::LoongArch64 => ("loongarch64-linux-gnu-objcopy", "pei-loongarch64"),
+    };
+    let output_path = elf_path.with_extension("pei.tmp");
+    let status = Command::new(objcopy)
+        .arg("-O")
+        .arg(pei_target)
+        .arg("--strip-all")
+        .arg("--remove-section=.comment")
+        .arg("--remove-section=.riscv.attributes")
+        .arg("--remove-section=.loongarch.attributes")
+        // The relocation records are consumed below by
+        // `read_elf_absolute_relocations` (straight from the ELF);
+        // they must not leak into the PE section table.
+        .arg("--remove-section=.rela*")
+        .arg("--remove-section=.bss")
+        .arg("--remove-section=.bss*")
+        .arg(elf_path)
+        .arg(&output_path)
+        .status()
+        .ok()?;
+    if !status.success() {
+        return None;
+    }
+    if let Ok((entry, base_of_code, image_base)) = read_elf_image_layout(elf_path) {
+        let relocations = read_elf_absolute_relocations(elf_path, image_base).unwrap_or_default();
+        let image_extent_rva = read_elf_image_extent(elf_path)
+            .map(|extent| extent.saturating_sub(image_base) as u32)
+            .unwrap_or(0);
+        let _ = patch_pe_section_addresses(&output_path, image_base);
+        let _ = patch_pe_entry_point_and_image_base(&output_path, entry, base_of_code, image_base);
+        patch_pe_subsystem_with_extent(&output_path, 0x0A, &relocations, image_extent_rva).ok()?;
+        let _ = fix_pe_entry_and_size(&output_path, entry, base_of_code);
+    } else {
+        let _ = patch_pe_subsystem(&output_path, 0x0A, &[]);
+    }
+    std::fs::read(&output_path).ok()
+}
+
 fn build_system_images() -> Vec<SystemImage> {
     vec![
         SystemImage {
             name: "ntoskrnl.exe",
-            bytes: build_ntoskrnl_pe(),
+            bytes: real_pe("nt61-kernel.efi"),
         },
         SystemImage {
             name: "hal.dll",
-            bytes: build_hal_pe(),
+            bytes: real_pe("hal_dll.efi"),
         },
         // BOOTVID.DLL — Boot Video driver. Loaded by winload as a
         // BOOT_START_IMAGE (not a SYS driver). Exports the canonical
@@ -2178,7 +3077,7 @@ fn build_system_images() -> Vec<SystemImage> {
         // single source of truth for what the kernel launches.
         SystemImage {
             name: "cmd.exe",
-            bytes: build_cmd_exe_pe(),
+            bytes: real_pe("nt61-cmd.efi"),
         },
         SystemImage {
             name: "smss.exe",
@@ -2230,19 +3129,55 @@ fn build_system_images() -> Vec<SystemImage> {
         },
         // BOOT_START storage stack — must be loadable before any
         // device tree walker runs in the kernel.
-        SystemImage { name: "drivers/disk.sys",     bytes: build_driver_pe("disk") },
-        SystemImage { name: "drivers/classpnp.sys", bytes: build_driver_pe("classpnp") },
-        SystemImage { name: "drivers/partmgr.sys",  bytes: build_driver_pe("partmgr") },
-        SystemImage { name: "drivers/volmgr.sys",   bytes: build_driver_pe("volmgr") },
-        SystemImage { name: "drivers/storahci.sys", bytes: build_driver_pe("storahci") },
-        SystemImage { name: "drivers/iastor.sys",   bytes: build_driver_pe("iastor") },
-        SystemImage { name: "drivers/stornvme.sys", bytes: build_driver_pe("stornvme") },
+        SystemImage {
+            name: "drivers/disk.sys",
+            bytes: real_pe("nt61-driver.efi"),
+        },
+        SystemImage {
+            name: "drivers/classpnp.sys",
+            bytes: real_pe("nt61-driver.efi"),
+        },
+        SystemImage {
+            name: "drivers/partmgr.sys",
+            bytes: real_pe("nt61-driver.efi"),
+        },
+        SystemImage {
+            name: "drivers/volmgr.sys",
+            bytes: real_pe("nt61-driver.efi"),
+        },
+        SystemImage {
+            name: "drivers/storahci.sys",
+            bytes: real_pe("nt61-driver.efi"),
+        },
+        SystemImage {
+            name: "drivers/iastor.sys",
+            bytes: real_pe("nt61-driver.efi"),
+        },
+        SystemImage {
+            name: "drivers/stornvme.sys",
+            bytes: real_pe("nt61-driver.efi"),
+        },
         // System infrastructure drivers.
-        SystemImage { name: "drivers/pci.sys",      bytes: build_driver_pe("pci") },
-        SystemImage { name: "drivers/acpi.sys",     bytes: build_driver_pe("acpi") },
-        SystemImage { name: "drivers/intelppm.sys", bytes: build_driver_pe("intelppm") },
-        SystemImage { name: "drivers/mssmbios.sys", bytes: build_driver_pe("mssmbios") },
-        SystemImage { name: "drivers/hpet.sys",     bytes: build_driver_pe("hpet") },
+        SystemImage {
+            name: "drivers/pci.sys",
+            bytes: real_pe("nt61-driver.efi"),
+        },
+        SystemImage {
+            name: "drivers/acpi.sys",
+            bytes: real_pe("nt61-driver.efi"),
+        },
+        SystemImage {
+            name: "drivers/intelppm.sys",
+            bytes: real_pe("nt61-driver.efi"),
+        },
+        SystemImage {
+            name: "drivers/mssmbios.sys",
+            bytes: real_pe("nt61-driver.efi"),
+        },
+        SystemImage {
+            name: "drivers/hpet.sys",
+            bytes: real_pe("nt61-driver.efi"),
+        },
         // Display driver stack — these are the three drivers
         // the user expects to see brought up before
         // bootvid LFB takeover:
@@ -2251,9 +3186,18 @@ fn build_system_images() -> Vec<SystemImage> {
         //   * videoprt.sys  — video port driver (parent of all
         //                     miniport drivers; registers
         //                     \\Device\\Video0)
-        SystemImage { name: "drivers/vga.sys",      bytes: build_driver_pe("vga") },
-        SystemImage { name: "drivers/vgapnp.sys",   bytes: build_driver_pe("vgapnp") },
-        SystemImage { name: "drivers/videoprt.sys", bytes: build_driver_pe("videoprt") },
+        SystemImage {
+            name: "drivers/vga.sys",
+            bytes: real_pe("nt61-driver.efi"),
+        },
+        SystemImage {
+            name: "drivers/vgapnp.sys",
+            bytes: real_pe("nt61-driver.efi"),
+        },
+        SystemImage {
+            name: "drivers/videoprt.sys",
+            bytes: real_pe("nt61-driver.efi"),
+        },
     ]
 }
 
@@ -2266,177 +3210,11 @@ fn build_system_images() -> Vec<SystemImage> {
 ///
 /// NTSTATUS values:
 ///   STATUS_SUCCESS           = 0x00000000
-fn generate_driver_code_x86_64() -> Vec<u8> {
-    let mut code = Vec::with_capacity(0x100);
-    
-    // ============================================================
-    // DriverEntry (offset 0x00)
-    // ============================================================
-    // Prologue
-    code.extend_from_slice(&[0x55]);                     // push rbp
-    code.extend_from_slice(&[0x48, 0x89, 0xE5]);       // mov rbp, rsp
-    code.extend_from_slice(&[0x48, 0x83, 0xEC, 0x20]); // sub rsp, 0x20 (shadow space)
-    
-    // Save DriverObject pointer (RCX = arg1)
-    code.extend_from_slice(&[0x48, 0x89, 0x4D, 0xF8]); // mov [rbp-8], rcx
-    
-    // Set MajorFunction[IRP_MJ_CREATE = 0x00] = DispatchStub at 0x40
-    // Load DriverObject
-    code.extend_from_slice(&[0x48, 0x8B, 0x4D, 0xF8]); // mov rcx, [rbp-8]
-    // Load DispatchStub address (0x40 + base)
-    code.extend_from_slice(&[0x48, 0x8D, 0x15, 0x00, 0x00, 0x00, 0x00]); // lea rdx, [rip+0] (placeholder)
-    // Write to MajorFunction[0] at offset 0x40 from DriverObject
-    code.extend_from_slice(&[0x48, 0x89, 0x51, 0x40]);
-    
-    // Set MajorFunction[IRP_MJ_CLOSE = 0x02] = DispatchStub
-    code.extend_from_slice(&[0x48, 0x8B, 0x4D, 0xF8]); // mov rcx, [rbp-8]
-    code.extend_from_slice(&[0x48, 0x8D, 0x15, 0x00, 0x00, 0x00, 0x00]); // lea rdx, [rip+0]
-    code.extend_from_slice(&[0x48, 0x89, 0x51, 0x58]); // MajorFunction[2] at 0x58
-    
-    // Set MajorFunction[IRP_MJ_DEVICE_CONTROL = 0x0e] = DispatchStub
-    code.extend_from_slice(&[0x48, 0x8B, 0x4D, 0xF8]); // mov rcx, [rbp-8]
-    code.extend_from_slice(&[0x48, 0x8D, 0x15, 0x00, 0x00, 0x00, 0x00]); // lea rdx, [rip+0]
-    code.extend_from_slice(&[0x48, 0x89, 0x51, 0x78]); // MajorFunction[0x0e] at 0x78
-    
-    // Set DriverUnload (offset 0x28 from DriverObject)
-    code.extend_from_slice(&[0x48, 0x8B, 0x4D, 0xF8]); // mov rcx, [rbp-8]
-    code.extend_from_slice(&[0x48, 0x8D, 0x15, 0x00, 0x00, 0x00, 0x00]); // lea rdx, [rip+0]
-    code.extend_from_slice(&[0x48, 0x89, 0x51, 0x28]); // DriverUnload at offset 0x28
-    
-    // Return STATUS_SUCCESS (0) in RAX
-    code.extend_from_slice(&[0x33, 0xC0]);               // xor eax, eax
-    code.extend_from_slice(&[0x48, 0x83, 0xC4, 0x20]); // add rsp, 0x20
-    code.extend_from_slice(&[0x5D]);                     // pop rbp
-    code.extend_from_slice(&[0xC3]);                     // ret
-    
-    // Pad to 0x40 (next function)
-    while code.len() < 0x40 {
-        code.push(0x90); // NOP
-    }
-    
-    // ============================================================
-    // DispatchStub (offset 0x40)
-    // ============================================================
-    // Prologue
-    code.extend_from_slice(&[0x55]);                     // push rbp
-    code.extend_from_slice(&[0x48, 0x89, 0xE5]);       // mov rbp, rsp
-    code.extend_from_slice(&[0x48, 0x83, 0xEC, 0x20]); // sub rsp, 0x20
-    
-    // Return STATUS_SUCCESS (0)
-    code.extend_from_slice(&[0x33, 0xC0]);               // xor eax, eax
-    code.extend_from_slice(&[0x48, 0x83, 0xC4, 0x20]); // add rsp, 0x20
-    code.extend_from_slice(&[0x5D]);                     // pop rbp
-    code.extend_from_slice(&[0xC3]);                     // ret
-    
-    // Pad to 0x50 (next function)
-    while code.len() < 0x50 {
-        code.push(0x90); // NOP
-    }
-    
-    // ============================================================
-    // DriverUnload (offset 0x50)
-    // ============================================================
-    code.extend_from_slice(&[0x55]);                     // push rbp
-    code.extend_from_slice(&[0x48, 0x89, 0xE5]);       // mov rbp, rsp
-    code.extend_from_slice(&[0x5D]);                     // pop rbp
-    code.extend_from_slice(&[0xC3]);                     // ret
-    
-    code
-}
 
 /// Emit a minimal but well-formed PE32+ driver image. Drivers
 /// are IMAGE_SUBSYSTEM_NATIVE (1) and export `DriverEntry` plus
 /// `DriverUnload` and `AddDevice`. They link against `ntoskrnl.exe`
 /// for the I/O manager entry points.
-fn build_driver_pe(_name: &str) -> Vec<u8> {
-    // Build a tiny PE32+ with one .text section. The on-disk
-    // size is well under 4 KiB and the relocation table is empty
-    // (we always load the driver at its preferred base in the
-    // IMAGE_BUFFER region).
-    const IMAGE_DOS_SIGNATURE: u16 = 0x5A4D;
-    const DOS_HEADER_SIZE: usize = 64;
-    const PE_SIG_SIZE: usize = 4;
-    const FILE_HDR_SIZE: usize = 20;
-    const OPT_HDR_SIZE: usize = 240; // PE32+
-    const SECTION_HDR_SIZE: usize = 40;
-    const SECTION_ALIGN: u32 = 0x1000;
-    const FILE_ALIGN: u32 = 0x200;
-
-    // Payload: Real x86_64 driver code (DriverEntry + DispatchStub + DriverUnload)
-    let text_bytes = generate_driver_code_x86_64();
-    let text_rva: u32 = SECTION_ALIGN;
-
-    // Layout: DOS header (64) -> PE sig (4) -> File hdr (20) ->
-    // Optional hdr (240) -> Section hdr (40) -> .text (file-aligned).
-    let headers_size = DOS_HEADER_SIZE + PE_SIG_SIZE + FILE_HDR_SIZE
-        + OPT_HDR_SIZE + SECTION_HDR_SIZE;
-    // Place .text at the next file-aligned offset after headers.
-    let text_file_off = (headers_size as u32).div_ceil(FILE_ALIGN) * FILE_ALIGN;
-
-    // Total file size includes padded .text section
-    let padded_text_size = text_bytes.len().div_ceil(FILE_ALIGN as usize) * FILE_ALIGN as usize;
-    let total_size = text_file_off as usize + padded_text_size;
-    let mut buf = vec![0u8; total_size];
-
-    // DOS header.
-    buf[0] = b'M';
-    buf[1] = b'Z';
-    buf[0x3C] = DOS_HEADER_SIZE as u8; // e_lfanew
-
-    // PE signature.
-    buf[DOS_HEADER_SIZE..DOS_HEADER_SIZE + 4].copy_from_slice(b"PE\0\0");
-
-    // File header (20 bytes) at DOS_HEADER_SIZE + 4.
-    let fh_off = DOS_HEADER_SIZE + 4;
-    buf[fh_off..fh_off + 2].copy_from_slice(&0x8664u16.to_le_bytes()); // Machine = AMD64
-    buf[fh_off + 2..fh_off + 4].copy_from_slice(&1u16.to_le_bytes()); // NumberOfSections = 1
-    buf[fh_off + 4..fh_off + 8].copy_from_slice(&0u32.to_le_bytes()); // TimeDateStamp
-    buf[fh_off + 8..fh_off + 12].copy_from_slice(&0u32.to_le_bytes()); // PointerToSymbolTable
-    buf[fh_off + 12..fh_off + 16].copy_from_slice(&0u32.to_le_bytes()); // NumberOfSymbols
-    buf[fh_off + 16..fh_off + 18].copy_from_slice(&(OPT_HDR_SIZE as u16).to_le_bytes());
-    buf[fh_off + 18..fh_off + 20].copy_from_slice(&0x2022u16.to_le_bytes()); // Characteristics (EXECUTABLE_IMAGE | DLL | LARGE_ADDRESS_AWARE)
-
-    // Optional header (PE32+, 240 bytes) at fh_off + 20.
-    let oh_off = fh_off + FILE_HDR_SIZE;
-    buf[oh_off..oh_off + 2].copy_from_slice(&0x020Bu16.to_le_bytes()); // Magic = PE32+
-    buf[oh_off + 2..oh_off + 3].copy_from_slice(&14u8.to_le_bytes()); // MajorLinkerVersion
-    // SizeOfCode, SizeOfInitializedData, SizeOfUninitializedData
-    buf[oh_off + 4..oh_off + 8].copy_from_slice(&(text_bytes.len() as u32).to_le_bytes());
-    buf[oh_off + 16..oh_off + 20].copy_from_slice(&(SECTION_ALIGN).to_le_bytes()); // AddressOfEntryPoint
-    buf[oh_off + 20..oh_off + 24].copy_from_slice(&(SECTION_ALIGN).to_le_bytes()); // BaseOfCode
-    // ImageBase — pick a kernel-mode driver slot.
-    buf[oh_off + 24..oh_off + 32].copy_from_slice(&0x0000_0000_7000_0000u64.to_le_bytes());
-    // SectionAlignment
-    buf[oh_off + 32..oh_off + 36].copy_from_slice(&SECTION_ALIGN.to_le_bytes());
-    // FileAlignment
-    buf[oh_off + 36..oh_off + 40].copy_from_slice(&FILE_ALIGN.to_le_bytes());
-    // SizeOfImage
-    buf[oh_off + 56..oh_off + 60].copy_from_slice(&(SECTION_ALIGN + padded_text_size as u32).to_le_bytes());
-    // SizeOfHeaders
-    buf[oh_off + 60..oh_off + 64].copy_from_slice(&(text_file_off).to_le_bytes());
-    // Subsystem = IMAGE_SUBSYSTEM_NATIVE (1)
-    buf[oh_off + 68..oh_off + 70].copy_from_slice(&1u16.to_le_bytes());
-    // DllCharacteristics — only NX_COMPAT.
-    buf[oh_off + 70..oh_off + 72].copy_from_slice(&0x0100u16.to_le_bytes());
-    // NumberOfRvaAndSizes = 16 (PE32+ default).
-    buf[oh_off + 108..oh_off + 112].copy_from_slice(&16u32.to_le_bytes());
-
-    // Section header (.text) at oh_off + OPT_HDR_SIZE.
-    let sh_off = oh_off + OPT_HDR_SIZE;
-    buf[sh_off..sh_off + 8].copy_from_slice(b".text\0\0\0");
-    buf[sh_off + 8..sh_off + 12].copy_from_slice(&(text_bytes.len() as u32).to_le_bytes()); // VirtualSize
-    buf[sh_off + 12..sh_off + 16].copy_from_slice(&text_rva.to_le_bytes()); // VirtualAddress
-    buf[sh_off + 16..sh_off + 20].copy_from_slice(&(padded_text_size as u32).to_le_bytes()); // SizeOfRawData
-    buf[sh_off + 20..sh_off + 24].copy_from_slice(&text_file_off.to_le_bytes()); // PointerToRawData
-    buf[sh_off + 36..sh_off + 40].copy_from_slice(&0x60000020u32.to_le_bytes()); // Characteristics = CODE|EXECUTE|READ
-
-    // Copy .text bytes.
-    let off = text_file_off as usize;
-    buf[off..off + text_bytes.len()].copy_from_slice(&text_bytes);
-
-    let _ = IMAGE_DOS_SIGNATURE; // silence unused-const warning
-    buf
-}
 
 const IMAGE_DOS_SIGNATURE: u16 = 0x5A4D;
 const IMAGE_PE_SIGNATURE: u32 = 0x00004550;
@@ -2472,7 +3250,7 @@ fn build_pe_image(
     // the host-side emitter is actually exercised on the
     // corresponding host triple; until then the field is a
     // constant so the unused-feature warnings stop firing.
-    let machine: u16 = 0x8664;
+    let machine: u16 = current_pe_arch().machine();
     let headers_size: u32 = 0x400;
     let num_sections: u16 = 1;
     let optional_header_size: u16 = 240;
@@ -2483,7 +3261,9 @@ fn build_pe_image(
     pe[0x80..0x84].copy_from_slice(&IMAGE_PE_SIGNATURE.to_le_bytes());
 
     let mut file_flags = IMAGE_FILE_EXECUTABLE_IMAGE | IMAGE_FILE_LARGE_ADDRESS_AWARE;
-    if is_dll { file_flags |= IMAGE_FILE_DLL; }
+    if is_dll {
+        file_flags |= IMAGE_FILE_DLL;
+    }
     pe[0x84..0x86].copy_from_slice(&machine.to_le_bytes());
     pe[0x86..0x88].copy_from_slice(&num_sections.to_le_bytes());
     pe[0x88..0x8C].copy_from_slice(&0x2024_1118u32.to_le_bytes());
@@ -2537,8 +3317,7 @@ fn build_pe_image(
         strings.extend_from_slice(name.as_bytes());
         strings.push(0);
     }
-    let total_text_size =
-        (string_off_rel as usize + strings.len() + 0xFFF) & !0xFFF;
+    let total_text_size = (string_off_rel as usize + strings.len() + 0xFFF) & !0xFFF;
     let size_of_image = SECTION_ALIGNMENT + total_text_size as u32;
 
     // Data directories: only export (index 0).
@@ -2565,20 +3344,6 @@ fn build_pe_image(
     // Build .text section content.
     let mut text = vec![0u8; total_text_size];
     if !exports.is_empty() {
-        // NOTE: the KiSystemStartup call-back stub is written AT THE
-        // END of the .text block (after the export directory header,
-        // function table, name table, ordinal table, and string table
-        // are all in place) so the stub bytes cannot be clobbered by
-        // later metadata writes. The KiSystemStartup export's RVA in
-        // `exports` is computed by `build_ntoskrnl_pe` and points at
-        // this stub's offset within .text.
-        //
-        // Stub bytes (16):
-        //   48 8b 81 40 01 00 00             mov rax, [rcx + 0x140]
-        //   ff d0                            call rax
-        //   c3                               ret (fall-through safety)
-        //   00 00 00 00 00 00 00              pad to 16
-
         // Export directory header (40 bytes).
         text[ed_off..ed_off + 4].copy_from_slice(&0u32.to_le_bytes());
         text[ed_off + 4..ed_off + 8].copy_from_slice(&0u32.to_le_bytes());
@@ -2590,9 +3355,12 @@ fn build_pe_image(
         text[ed_off + 16..ed_off + 20].copy_from_slice(&1u32.to_le_bytes());
         text[ed_off + 20..ed_off + 24].copy_from_slice(&num.to_le_bytes());
         text[ed_off + 24..ed_off + 28].copy_from_slice(&num.to_le_bytes());
-        text[ed_off + 28..ed_off + 32].copy_from_slice(&(SECTION_ALIGNMENT + addr_funcs_rel).to_le_bytes());
-        text[ed_off + 32..ed_off + 36].copy_from_slice(&(SECTION_ALIGNMENT + addr_names_rel).to_le_bytes());
-        text[ed_off + 36..ed_off + 40].copy_from_slice(&(SECTION_ALIGNMENT + addr_ords_rel).to_le_bytes());
+        text[ed_off + 28..ed_off + 32]
+            .copy_from_slice(&(SECTION_ALIGNMENT + addr_funcs_rel).to_le_bytes());
+        text[ed_off + 32..ed_off + 36]
+            .copy_from_slice(&(SECTION_ALIGNMENT + addr_names_rel).to_le_bytes());
+        text[ed_off + 36..ed_off + 40]
+            .copy_from_slice(&(SECTION_ALIGNMENT + addr_ords_rel).to_le_bytes());
 
         // Functions.
         for (i, (_, rva)) in exports.iter().enumerate() {
@@ -2619,51 +3387,6 @@ fn build_pe_image(
             s_off += name.len() + 1;
         }
         let _ = export_rva;
-
-        // Write the KiSystemStartup hand-coded stub LAST so it cannot
-        // be clobbered by any of the export-metadata writes above.
-        // The stub lives at .text offset 0x40 (= SECTION_ALIGNMENT +
-        // 0x40 in absolute RVA). For the ntoskrnl build, the
-        // KiSystemStartup export's RVA in `exports` matches this
-        // offset so the loader resolves KiSystemStartup to this
-        // exact 16-byte region.
-        //
-        // Layout (relative to .text base):
-        //   0x000..0x028  Export directory header (40 bytes)
-        //   0x028..0x02C  Function RVA[0] (= SECTION_ALIGNMENT + 0x40)
-        //   0x02C..0x034  Names / Ords tables
-        //   0x036+        Strings (e.g. "KiSystemStartup\0" = 16 bytes)
-        //   0x040..0x050  Hand-coded KiSystemStartup stub (below)
-        //   [end-8]       Trampoline callback field (patched by winload)
-        //
-        // Stub bytes (RIP-relative, self-contained, no external regs):
-        //   48 8B 05 XX XX XX XX    mov rax, [rip + XX_XX_XX_XX]
-        //   FF D0                    call rax
-        //   C3                       ret
-        //   00 x11                    pad to 16 bytes total
-        //
-        // The `mov rax, [rip+disp]` reads the trampoline callback
-        // address from a field at the END of the .text section. The
-        // subsequent `call rax` calls *that* address. Winload patches
-        // this field just before jumping to disk ntoskrnl, so the disk
-        // image carries its own trampoline pointer — it survives
-        // ExitBootServices independently of BootServicesData.
-        let ki_off_in_text: u32 = 0x40;
-        let ki_off = ki_off_in_text as usize;
-        // Callback field lives at end-of-text. Compute the RIP-relative
-        // displacement from the end of the `mov` instruction to the
-        // field: disp = (field_offset - (ki_off + 7)).
-        let field_off = total_text_size - 8;
-        let disp = (field_off as i32) - ((ki_off + 7) as i32);
-        text[ki_off] = 0x48;  // mov rax, [rip + disp]
-        text[ki_off + 1] = 0x8B;
-        text[ki_off + 2] = 0x05;
-        text[ki_off + 3..ki_off + 7].copy_from_slice(&disp.to_le_bytes());
-        text[ki_off + 7] = 0xFF;  // call rax (jump to the address IN rax)
-        text[ki_off + 8] = 0xD0;
-        text[ki_off + 9] = 0xC3;  // ret
-        // bytes 10..16 stay zero (padding to the 16-byte stride)
-        (ki_off + 10..ki_off + 16).for_each(|i| text[i] = 0);
     }
 
     // Concatenate.
@@ -2674,133 +3397,6 @@ fn build_pe_image(
     out
 }
 
-fn build_ntoskrnl_pe() -> Vec<u8> {
-    // Canonical NT6.1 ntoskrnl.exe export surface — see
-    // `nt61::hal::hal_export::NTOS_EXPORTS` for the matching
-    // registry. Each export lives at SECTION_ALIGNMENT + 0xN*0x10,
-    // which is a 16-byte stride, so a 4-byte `xor rax, rax; ret`
-    // stub fits inside its slot.
-    let stride = 0x10u32;
-    let stride_count = |i: u32| SECTION_ALIGNMENT + i * stride;
-    // `KiSystemStartup` lives at offset 0x40 inside .text (right
-    // after the 40-byte export directory header). It is NOT at
-    // stride slot 0 because slot 0 collides with the export
-    // directory and would get clobbered at PE-build time. The
-    // hand-written bytes are placed at offset 0x40 by the
-    // KiSystemStartup-stub block in `build_pe_image`.
-    let ki_off_in_text: u32 = 0x80;
-    let exports = [
-        ("KiSystemStartup",            SECTION_ALIGNMENT + ki_off_in_text),
-        ("KiInitializeKernel",         stride_count(1)),
-        ("KiInitializeProcess",        stride_count(2)),
-        ("KiInitializeThread",         stride_count(3)),
-        ("KiSwapContext",              stride_count(4)),
-        ("KiDispatchInterrupt",        stride_count(5)),
-        ("KiUnexpectedInterrupt",      stride_count(6)),
-        ("KiBugCheck",                 stride_count(7)),
-        ("KeBugCheck",                 stride_count(8)),
-        ("KeBugCheckEx",               stride_count(9)),
-        ("KeInitializeScheduler",      stride_count(10)),
-        ("KeStartAllProcessors",       stride_count(11)),
-        ("KeInitSystem",               stride_count(12)),
-        ("KeInitializeDispatcher",     stride_count(13)),
-        ("KeWaitForSingleObject",      stride_count(14)),
-        ("KeSetEvent",                 stride_count(15)),
-        ("KeEnterCriticalRegion",      stride_count(16)),
-        ("KeLeaveCriticalRegion",      stride_count(17)),
-        ("KeDelayExecutionThread",     stride_count(18)),
-        ("KeInitializeApc",            stride_count(19)),
-        ("KeInsertQueueApc",           stride_count(20)),
-        ("PsCreateSystemThread",       stride_count(21)),
-        ("PsTerminateSystemThread",    stride_count(22)),
-        ("PsCreateProcess",            stride_count(23)),
-        ("ExAllocatePoolWithTag",      stride_count(24)),
-        ("ExFreePoolWithTag",          stride_count(25)),
-        ("ExInitializePool",           stride_count(26)),
-        ("ExAcquireResourceSharedLite",stride_count(27)),
-        ("ExReleaseResourceLite",      stride_count(28)),
-        ("MmAllocateContiguousMemory", stride_count(29)),
-        ("MmFreeContiguousMemory",     stride_count(30)),
-        ("MmMapIoSpace",               stride_count(31)),
-        ("MmUnmapIoSpace",             stride_count(32)),
-        ("MmAllocatePages",            stride_count(33)),
-        ("MmAllocateMappingAddress",   stride_count(34)),
-        ("IoCreateDevice",             stride_count(35)),
-        ("IoCallDriver",               stride_count(36)),
-        ("IoCompleteRequest",          stride_count(37)),
-        ("IoCreateSymbolicLink",       stride_count(38)),
-        ("IoDeleteDevice",             stride_count(39)),
-        ("IoDeleteSymbolicLink",       stride_count(40)),
-        ("ObCreateObjectType",         stride_count(41)),
-        ("ObReferenceObjectByHandle",  stride_count(42)),
-        ("ObDereferenceObject",        stride_count(43)),
-        ("PoSetSystemState",           stride_count(44)),
-        ("PoCallDriver",               stride_count(45)),
-        ("PoRequestPowerIrp",          stride_count(46)),
-        ("CmRegisterCallback",         stride_count(47)),
-        ("RtlInitUnicodeString",       stride_count(48)),
-        ("DriverEntry",                stride_count(49)),
-        ("GsDriverEntry",              stride_count(49)),
-    ];
-    build_pe_image(
-        0xFFFF_8000_0000_0000,
-        SECTION_ALIGNMENT,
-        IMAGE_SUBSYSTEM_NATIVE,
-        false,
-        &exports,
-    )
-}
-
-fn build_hal_pe() -> Vec<u8> {
-    // Canonical NT6.1 hal.dll export surface — see
-    // `nt61::hal::hal_export::HAL_EXPORTS`.
-    let stride = 0x10u32;
-    let stride_count = |i: u32| SECTION_ALIGNMENT + i * stride;
-    let exports = [
-        ("HalInitializeProcessor",     stride_count(0)),
-        ("HalInitSystem",              stride_count(1)),
-        ("HalStartNextProcessor",      stride_count(2)),
-        ("HalAllProcessorsStarted",    stride_count(3)),
-        ("HalProcessorIdle",           stride_count(4)),
-        ("HalHaltSystem",              stride_count(5)),
-        ("HalRequestIpi",              stride_count(6)),
-        ("HalEnableSystemInterrupt",   stride_count(7)),
-        ("HalDisableSystemInterrupt",  stride_count(8)),
-        ("HalGetInterruptVector",      stride_count(9)),
-        ("HalGetBusData",              stride_count(10)),
-        ("HalSetBusData",              stride_count(11)),
-        ("HalAssignSlotResources",     stride_count(12)),
-        ("HalTranslateBusAddress",     stride_count(13)),
-        ("HalMapIoSpace",              stride_count(14)),
-        ("HalUnmapIoSpace",            stride_count(15)),
-        ("HalAllocateCommonBuffer",    stride_count(16)),
-        ("HalFreeCommonBuffer",        stride_count(17)),
-        ("HalAllocateMapRegisters",    stride_count(18)),
-        ("HalFreeMapRegisters",        stride_count(19)),
-        ("HalQueryDisplaySettings",    stride_count(20)),
-        ("HalSetDisplaySettings",      stride_count(21)),
-        ("HalResetDisplay",            stride_count(22)),
-        ("HalQueryRealTimeClock",      stride_count(23)),
-        ("HalSetRealTimeClock",        stride_count(24)),
-        ("HalQueryPerformanceCounter", stride_count(25)),
-        ("HalQueryPerformanceFrequency", stride_count(26)),
-        ("HalReturnToFirmware",        stride_count(27)),
-        ("HalQuerySystemInformation",  stride_count(28)),
-        ("HalSetSystemInformation",    stride_count(29)),
-        ("KdTransportPacket",          stride_count(30)),
-        ("KdDebuggerInitialize",       stride_count(31)),
-        ("KdPortInByte",               stride_count(32)),
-        ("KdPortOutByte",              stride_count(33)),
-    ];
-    build_pe_image(
-        0xFFFF_FFFF_8000_0000,
-        SECTION_ALIGNMENT,
-        IMAGE_SUBSYSTEM_NATIVE,
-        true,
-        &exports,
-    )
-}
-
 fn build_bootvid_pe() -> Vec<u8> {
     // Canonical NT6.1 BOOTVID.DLL export surface. Mirrors the
     // corresponding registry in `nt61::drivers::bootvid` and the
@@ -2808,15 +3404,15 @@ fn build_bootvid_pe() -> Vec<u8> {
     let stride = 0x10u32;
     let stride_count = |i: u32| SECTION_ALIGNMENT + i * stride;
     let exports = [
-        ("VidInitialize",             stride_count(0)),
-        ("InbvDisplayString",         stride_count(1)),
+        ("VidInitialize", stride_count(0)),
+        ("InbvDisplayString", stride_count(1)),
         ("InbvDisplayStringBlocking", stride_count(2)),
-        ("InbvSetProgressBarSubset",  stride_count(3)),
-        ("InbvRotateWaitingSpinner",  stride_count(4)),
-        ("VidResetDisplay",           stride_count(5)),
-        ("VidDisplayString",          stride_count(6)),
-        ("VidSetCursorPosition",      stride_count(7)),
-        ("VidCleanUp",                stride_count(8)),
+        ("InbvSetProgressBarSubset", stride_count(3)),
+        ("InbvRotateWaitingSpinner", stride_count(4)),
+        ("VidResetDisplay", stride_count(5)),
+        ("VidDisplayString", stride_count(6)),
+        ("VidSetCursorPosition", stride_count(7)),
+        ("VidCleanUp", stride_count(8)),
     ];
     build_pe_image(
         0xFFFF_FFFF_FF00_0000,
@@ -2842,7 +3438,7 @@ fn build_ntdll_pe() -> Vec<u8> {
         ("RtlUserThreadStart", SECTION_ALIGNMENT + 0xA0),
     ];
     build_pe_image(
-        0x0000_0000_4000_0000,
+        0x0000_1000_0000_0000,
         SECTION_ALIGNMENT,
         IMAGE_SUBSYSTEM_WINDOWS_CUI,
         true,
@@ -2862,7 +3458,7 @@ fn build_kernel32_pe() -> Vec<u8> {
         ("GetProcAddress", SECTION_ALIGNMENT + 0x70),
     ];
     build_pe_image(
-        0x0000_0000_7FFF_0000,
+        0x0000_1000_1000_0000,
         SECTION_ALIGNMENT,
         IMAGE_SUBSYSTEM_WINDOWS_CUI,
         true,
@@ -2876,7 +3472,7 @@ fn build_smss_pe() -> Vec<u8> {
         ("SmSsProcessStartup", SECTION_ALIGNMENT + 0x10),
     ];
     build_pe_image(
-        0x0000_0000_8000_0000,
+        0x0000_1000_2000_0000,
         SECTION_ALIGNMENT,
         IMAGE_SUBSYSTEM_WINDOWS_CUI,
         false,
@@ -2915,19 +3511,19 @@ fn build_smss_pe() -> Vec<u8> {
 // proofed for richer system processes later.
 // =====================================================================
 
-const CSRSS_IMAGE_BASE: u64 = 0x0000_0000_6000_0000;
-const WININIT_IMAGE_BASE: u64 = 0x0000_0000_6100_0000;
-const SERVICES_IMAGE_BASE: u64 = 0x0000_0000_6200_0000;
-const LSASS_IMAGE_BASE: u64 = 0x0000_0000_6300_0000;
+const CSRSS_IMAGE_BASE: u64 = 0x0000_1000_3000_0000;
+const WININIT_IMAGE_BASE: u64 = 0x0000_1000_4000_0000;
+const SERVICES_IMAGE_BASE: u64 = 0x0000_1000_5000_0000;
+const LSASS_IMAGE_BASE: u64 = 0x0000_1000_6000_0000;
 
 fn build_csrss_pe() -> Vec<u8> {
     // Client/Server Runtime Subsystem — Win32 user-mode
     // essential subsystem.
     let exports = [
-        ("CsrClientCallServer",     SECTION_ALIGNMENT),
-        ("CsrParseServerCommandLine",SECTION_ALIGNMENT + 0x10),
-        ("CsrSbApiPortName",        SECTION_ALIGNMENT + 0x20),
-        ("CsrInitialize",           SECTION_ALIGNMENT + 0x30),
+        ("CsrClientCallServer", SECTION_ALIGNMENT),
+        ("CsrParseServerCommandLine", SECTION_ALIGNMENT + 0x10),
+        ("CsrSbApiPortName", SECTION_ALIGNMENT + 0x20),
+        ("CsrInitialize", SECTION_ALIGNMENT + 0x30),
     ];
     build_pe_image(
         CSRSS_IMAGE_BASE,
@@ -2942,10 +3538,10 @@ fn build_wininit_pe() -> Vec<u8> {
     // Windows Start-Up Application — Session 0 user-mode
     // initializer that subsequently starts services.exe and lsass.exe.
     let exports = [
-        ("WinInitInitialize",        SECTION_ALIGNMENT),
-        ("WinInitRunOnceEx",         SECTION_ALIGNMENT + 0x10),
-        ("WinInitRunLevel",          SECTION_ALIGNMENT + 0x20),
-        ("WinInitServiceManagerInit",SECTION_ALIGNMENT + 0x30),
+        ("WinInitInitialize", SECTION_ALIGNMENT),
+        ("WinInitRunOnceEx", SECTION_ALIGNMENT + 0x10),
+        ("WinInitRunLevel", SECTION_ALIGNMENT + 0x20),
+        ("WinInitServiceManagerInit", SECTION_ALIGNMENT + 0x30),
     ];
     build_pe_image(
         WININIT_IMAGE_BASE,
@@ -2959,10 +3555,10 @@ fn build_wininit_pe() -> Vec<u8> {
 fn build_services_pe() -> Vec<u8> {
     // Service Control Manager — host for SCM and svchost.exe.
     let exports = [
-        ("ScAutoStartServices",     SECTION_ALIGNMENT),
-        ("ScStartService",          SECTION_ALIGNMENT + 0x10),
-        ("ScControlService",        SECTION_ALIGNMENT + 0x20),
-        ("ScInitializeSCM",         SECTION_ALIGNMENT + 0x30),
+        ("ScAutoStartServices", SECTION_ALIGNMENT),
+        ("ScStartService", SECTION_ALIGNMENT + 0x10),
+        ("ScControlService", SECTION_ALIGNMENT + 0x20),
+        ("ScInitializeSCM", SECTION_ALIGNMENT + 0x30),
     ];
     build_pe_image(
         SERVICES_IMAGE_BASE,
@@ -2977,10 +3573,10 @@ fn build_lsass_pe() -> Vec<u8> {
     // Local Security Authority Subsystem Service —
     // authentication / logon-session manager.
     let exports = [
-        ("LsapAuOpenPolicy",        SECTION_ALIGNMENT),
-        ("LsapLogonSession",        SECTION_ALIGNMENT + 0x10),
-        ("LsapInitLsa",             SECTION_ALIGNMENT + 0x20),
-        ("LsapRegisterLogonProcess",SECTION_ALIGNMENT + 0x30),
+        ("LsapAuOpenPolicy", SECTION_ALIGNMENT),
+        ("LsapLogonSession", SECTION_ALIGNMENT + 0x10),
+        ("LsapInitLsa", SECTION_ALIGNMENT + 0x20),
+        ("LsapRegisterLogonProcess", SECTION_ALIGNMENT + 0x30),
     ];
     build_pe_image(
         LSASS_IMAGE_BASE,
@@ -3015,9 +3611,9 @@ fn build_lsass_pe() -> Vec<u8> {
 // without aliasing.
 // =====================================================================
 
-const LSM_IMAGE_BASE: u64       = 0x0000_0000_6400_0000;
-const WINLOGON_IMAGE_BASE: u64  = 0x0000_0000_6600_0000;
-const USERINIT_IMAGE_BASE: u64  = 0x0000_0000_6700_0000;
+const LSM_IMAGE_BASE: u64 = 0x0000_1000_7000_0000;
+const WINLOGON_IMAGE_BASE: u64 = 0x0000_1000_8000_0000;
+const USERINIT_IMAGE_BASE: u64 = 0x0000_1000_9000_0000;
 
 /// Build a `Vec<u8>` PE image for a 256-byte user-mode subsystem
 /// stub. The export table is minimal (just one function called
@@ -3025,11 +3621,7 @@ const USERINIT_IMAGE_BASE: u64  = 0x0000_0000_6700_0000;
 /// point). The PE layout mirrors `build_cmd_exe_pe` (DOS + PE32+
 /// headers + .text section + .rdata section carrying the export
 /// table).
-fn build_subsystem_pe(
-    image_base: u64,
-    image_name: &str,
-    text_stub: &[u8],
-) -> Vec<u8> {
+fn build_subsystem_pe(image_base: u64, image_name: &str, text_stub: &[u8]) -> Vec<u8> {
     // ------------------------------------------------------------------
     // .text section
     // ------------------------------------------------------------------
@@ -3046,16 +3638,16 @@ fn build_subsystem_pe(
     // ------------------------------------------------------------------
     let mut rdata = vec![0u8; 0x100];
     let s_name = b"subsystem_main\x00";
-    cmd_exe_write_u32(&mut rdata, 0x00, 0);                          // Characteristics
-    cmd_exe_write_u32(&mut rdata, 0x04, 0);                          // TimeDateStamp
-    cmd_exe_write_u16(&mut rdata, 0x08, 0);                          // MajorVersion
-    cmd_exe_write_u16(&mut rdata, 0x0A, 0);                          // MinorVersion
-    cmd_exe_write_u32(&mut rdata, 0x0C, CMD_EXE_RDATA_RVA + 0x028);  // AddressOfFunctions RVA
-    cmd_exe_write_u32(&mut rdata, 0x10, CMD_EXE_RDATA_RVA + 0x034);  // AddressOfNames RVA
-    cmd_exe_write_u32(&mut rdata, 0x14, CMD_EXE_RDATA_RVA + 0x040);  // AddressOfNameOrdinals RVA
-    cmd_exe_write_u32(&mut rdata, 0x18, 1);                          // NumberOfFunctions
-    cmd_exe_write_u32(&mut rdata, 0x1C, 1);                          // NumberOfNames
-    // AddressOfFunctions[1] = subsystem_main
+    cmd_exe_write_u32(&mut rdata, 0x00, 0); // Characteristics
+    cmd_exe_write_u32(&mut rdata, 0x04, 0); // TimeDateStamp
+    cmd_exe_write_u16(&mut rdata, 0x08, 0); // MajorVersion
+    cmd_exe_write_u16(&mut rdata, 0x0A, 0); // MinorVersion
+    cmd_exe_write_u32(&mut rdata, 0x0C, CMD_EXE_RDATA_RVA + 0x028); // AddressOfFunctions RVA
+    cmd_exe_write_u32(&mut rdata, 0x10, CMD_EXE_RDATA_RVA + 0x034); // AddressOfNames RVA
+    cmd_exe_write_u32(&mut rdata, 0x14, CMD_EXE_RDATA_RVA + 0x040); // AddressOfNameOrdinals RVA
+    cmd_exe_write_u32(&mut rdata, 0x18, 1); // NumberOfFunctions
+    cmd_exe_write_u32(&mut rdata, 0x1C, 1); // NumberOfNames
+                                            // AddressOfFunctions[1] = subsystem_main
     cmd_exe_write_u32(&mut rdata, 0x028, CMD_EXE_TEXT_RVA);
     // AddressOfNames[1] = name string RVA
     let name_off: usize = 0x050;
@@ -3088,24 +3680,24 @@ fn build_subsystem_pe(
 
     // COFF File Header (20 bytes)
     let coff_off = pe_off + 4;
-    cmd_exe_write_u16(&mut out, coff_off, 0x8664);              // Machine (AMD64)
-    cmd_exe_write_u16(&mut out, coff_off + 0x02, 2);                 // NumberOfSections
-    cmd_exe_write_u32(&mut out, coff_off + 0x04, 0);                 // TimeDateStamp
-    cmd_exe_write_u32(&mut out, coff_off + 0x08, 0);                 // PointerToSymbolTable
-    cmd_exe_write_u32(&mut out, coff_off + 0x0C, 0);                 // NumberOfSymbols
-    cmd_exe_write_u16(&mut out, coff_off + 0x10, 240);               // SizeOfOptionalHeader
-    cmd_exe_write_u16(&mut out, coff_off + 0x12, 0x0022);            // EXECUTABLE_IMAGE | LARGE_ADDRESS_AWARE
+    cmd_exe_write_u16(&mut out, coff_off, 0x8664); // Machine (AMD64)
+    cmd_exe_write_u16(&mut out, coff_off + 0x02, 2); // NumberOfSections
+    cmd_exe_write_u32(&mut out, coff_off + 0x04, 0); // TimeDateStamp
+    cmd_exe_write_u32(&mut out, coff_off + 0x08, 0); // PointerToSymbolTable
+    cmd_exe_write_u32(&mut out, coff_off + 0x0C, 0); // NumberOfSymbols
+    cmd_exe_write_u16(&mut out, coff_off + 0x10, 240); // SizeOfOptionalHeader
+    cmd_exe_write_u16(&mut out, coff_off + 0x12, 0x0022); // EXECUTABLE_IMAGE | LARGE_ADDRESS_AWARE
 
     // Optional Header
     let opt_off = coff_off + 0x14;
-    cmd_exe_write_u16(&mut out, opt_off, 0x020B);             // Magic: PE32+
+    cmd_exe_write_u16(&mut out, opt_off, 0x020B); // Magic: PE32+
     cmd_exe_write_u16(&mut out, opt_off + 0x02, 14);
     cmd_exe_write_u16(&mut out, opt_off + 0x04, 0);
     cmd_exe_write_u32(&mut out, opt_off + 0x06, text_raw_size);
     cmd_exe_write_u32(&mut out, opt_off + 0x0A, rdata_raw_size);
     cmd_exe_write_u32(&mut out, opt_off + 0x0E, 0);
-    cmd_exe_write_u32(&mut out, opt_off + 0x10, CMD_EXE_TEXT_RVA);   // EntryPoint
-    cmd_exe_write_u32(&mut out, opt_off + 0x14, CMD_EXE_TEXT_RVA);   // BaseOfCode
+    cmd_exe_write_u32(&mut out, opt_off + 0x10, CMD_EXE_TEXT_RVA); // EntryPoint
+    cmd_exe_write_u32(&mut out, opt_off + 0x14, CMD_EXE_TEXT_RVA); // BaseOfCode
     cmd_exe_write_u64(&mut out, opt_off + 0x18, image_base);
     cmd_exe_write_u32(&mut out, opt_off + 0x20, SECTION_ALIGNMENT);
     cmd_exe_write_u32(&mut out, opt_off + 0x24, FILE_ALIGNMENT);
@@ -3120,7 +3712,7 @@ fn build_subsystem_pe(
     cmd_exe_write_u32(&mut out, opt_off + 0x38, size_of_image);
     cmd_exe_write_u32(&mut out, opt_off + 0x3C, headers_size);
     cmd_exe_write_u32(&mut out, opt_off + 0x40, 0);
-    cmd_exe_write_u16(&mut out, opt_off + 0x44, 3);                  // WindowsCui
+    cmd_exe_write_u16(&mut out, opt_off + 0x44, 3); // WindowsCui
     cmd_exe_write_u16(&mut out, opt_off + 0x46, 0x0160);
     cmd_exe_write_u64(&mut out, opt_off + 0x48, 0x100000);
     cmd_exe_write_u64(&mut out, opt_off + 0x50, 0x1000);
@@ -3195,23 +3787,8 @@ fn build_userinit_pe() -> Vec<u8> {
 // `include_bytes!`-baked fallback.
 // =====================================================================
 
-const CMD_EXE_IMAGE_BASE: u64 = 0x0000_0000_6500_0000;
 const CMD_EXE_TEXT_RVA: u32 = SECTION_ALIGNMENT;
 const CMD_EXE_RDATA_RVA: u32 = SECTION_ALIGNMENT * 2;
-
-// Hand-encoded x86_64 entry point for the Safe-Mode `cmd.exe` stub.
-// The path lives in the `.text` section so we don't need a real
-// `.rdata`/`.data` linker. Matches the stub in
-// `tools/src/bin/mkcmd.rs` byte-for-byte.
-//
-// The cmd.exe .text section is the 4096-byte interactive command
-// interpreter produced by `nt61/tools/cmd-stub-gen/all_stubs.py`. The
-// generator pulls the cmd body from `cmd_asm.py` (so the interpreter
-// stays in sync with the canonical encoder), then prepends the three
-// smaller subsystem stubs (lsm.exe, winlogon.exe, userinit.exe) that
-// use SYS_SPAWN_SUBSYSTEM_PROCESS (0x0210) to ask the kernel to load
-// the next subsystem from disk. The full 4096-byte body is imported
-// at the top of this file via `use crate::fs::stubs::*`.
 
 fn cmd_exe_align_up(x: u32, align: u32) -> u32 {
     (x + align - 1) & !(align - 1)
@@ -3227,180 +3804,74 @@ fn cmd_exe_write_u64(buf: &mut [u8], off: usize, v: u64) {
     buf[off..off + 8].copy_from_slice(&v.to_le_bytes());
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `(name, virtual_address, virtual_size)` for every section in a
+    /// PE32+ image produced by this module.
+    fn sections(pe: &[u8]) -> Vec<(&str, u32, u32)> {
+        let pe_off = u32::from_le_bytes([pe[0x3C], pe[0x3D], pe[0x3E], pe[0x3F]]) as usize;
+        let sect_off = pe_off + 4 + 20 + 240;
+        let count = u16::from_le_bytes([pe[pe_off + 4 + 2], pe[pe_off + 4 + 3]]) as usize;
+        let mut out = Vec::new();
+        for i in 0..count {
+            let s = sect_off + i * 40;
+            let name = core::str::from_utf8(&pe[s..s + 6]).unwrap();
+            let vsize = u32::from_le_bytes([pe[s + 8], pe[s + 9], pe[s + 10], pe[s + 11]]);
+            let vaddr = u32::from_le_bytes([pe[s + 12], pe[s + 13], pe[s + 14], pe[s + 15]]);
+            out.push((name, vaddr, vsize));
+        }
+        out
+    }
+
+    #[test]
+    fn cmd_exe_pe_sections_do_not_overlap() {
+        let images = build_system_images();
+        let pe = images
+            .iter()
+            .find(|image| image.name == "cmd.exe")
+            .map(|image| image.bytes.clone())
+            .expect("build_system_images should produce cmd.exe");
+        let pe_off = u32::from_le_bytes([pe[0x3C], pe[0x3D], pe[0x3E], pe[0x3F]]) as usize;
+        let opt_off = pe_off + 4 + 20;
+        let size_of_image = u32::from_le_bytes([
+            pe[opt_off + 0x38],
+            pe[opt_off + 0x39],
+            pe[opt_off + 0x3A],
+            pe[opt_off + 0x3B],
+        ]);
+
+        let secs = sections(&pe);
+        assert_eq!(secs.len(), 2);
+
+        for &(name, vaddr, vsize) in &secs {
+            let span = vsize.max(cmd_exe_align_up(vsize, FILE_ALIGNMENT));
+            assert!(
+                vaddr + span <= size_of_image,
+                "section {name} runs past SizeOfImage"
+            );
+        }
+
+        for i in 0..secs.len() {
+            for j in (i + 1)..secs.len() {
+                let (n1, a1, s1) = secs[i];
+                let (n2, a2, s2) = secs[j];
+                let e1 = a1 + s1.max(cmd_exe_align_up(s1, FILE_ALIGNMENT));
+                let e2 = a2 + s2.max(cmd_exe_align_up(s2, FILE_ALIGNMENT));
+                assert!(
+                    e1 <= a2 || e2 <= a1,
+                    "sections {n1} and {n2} overlap in memory"
+                );
+            }
+        }
+    }
+}
+
 /// Build the canonical cmd.exe PE image. The output matches
 /// `tools/src/bin/mkcmd.rs` byte-for-byte (modulo timestamps), so
 /// either code path produces an on-disk `cmd.exe` that the kernel
 /// can launch identically.
-fn build_cmd_exe_pe() -> Vec<u8> {
-    // ------------------------------------------------------------------
-    // .text section (one page)
-    // ------------------------------------------------------------------
-    let text_data: Vec<u8> = CMD_EXE_TEXT_STUB.to_vec();
-
-    // ------------------------------------------------------------------
-    // .rdata section (export table + name strings)
-    // ------------------------------------------------------------------
-    // Layout (offsets into `.rdata`):
-    //   0x000  IMAGE_EXPORT_DIRECTORY (40 bytes)
-    //   0x028  AddressOfFunctions[3]  (RVA of cmd_main, ExitProcess, ConsoleMain)
-    //   0x034  AddressOfNames[3]      (RVAs of name strings)
-    //   0x040  AddressOfNameOrdinals[3] (u16 ordinals)
-    //   0x050  Name strings (cmd_main\0, ConsoleMain\0, ExitProcess\0)
-    // We size rdata generously (0x100 bytes) so the layout is
-    // easy to follow; the resulting image is still small.
-    let mut rdata = vec![0u8; 0x100];
-    let s_cmd_main     = b"cmd_main\x00";
-    let s_console_main = b"ConsoleMain\x00";
-    let s_exit_process = b"ExitProcess\x00";
-
-    // IMAGE_EXPORT_DIRECTORY
-    cmd_exe_write_u32(&mut rdata, 0x00, 0);                          // Characteristics
-    cmd_exe_write_u32(&mut rdata, 0x04, 0);                          // TimeDateStamp
-    cmd_exe_write_u16(&mut rdata, 0x08, 0);                          // MajorVersion
-    cmd_exe_write_u16(&mut rdata, 0x0A, 0);                          // MinorVersion
-    cmd_exe_write_u32(&mut rdata, 0x0C, CMD_EXE_RDATA_RVA + 0x028);  // AddressOfFunctions RVA
-    cmd_exe_write_u32(&mut rdata, 0x10, CMD_EXE_RDATA_RVA + 0x034);  // AddressOfNames RVA
-    cmd_exe_write_u32(&mut rdata, 0x14, CMD_EXE_RDATA_RVA + 0x040);  // AddressOfNameOrdinals RVA
-    cmd_exe_write_u32(&mut rdata, 0x18, 3);                          // NumberOfFunctions
-    cmd_exe_write_u32(&mut rdata, 0x1C, 3);                          // NumberOfNames
-
-    // AddressOfFunctions[3] at rdata+0x028
-    cmd_exe_write_u32(&mut rdata, 0x028, CMD_EXE_TEXT_RVA);  // cmd_main
-    cmd_exe_write_u32(&mut rdata, 0x02C, CMD_EXE_TEXT_RVA + 0x010);  // ExitProcess
-    cmd_exe_write_u32(&mut rdata, 0x030, CMD_EXE_TEXT_RVA);  // ConsoleMain
-
-    // AddressOfNames[3] at rdata+0x034 (RVAs of name strings)
-    let name_table_off: usize = 0x050;
-    let s_cmd_main_off     = name_table_off;
-    let s_console_main_off = s_cmd_main_off + s_cmd_main.len();
-    let s_exit_process_off = s_console_main_off + s_console_main.len();
-    cmd_exe_write_u32(&mut rdata, 0x034,
-        CMD_EXE_RDATA_RVA + s_cmd_main_off as u32);
-    cmd_exe_write_u32(&mut rdata, 0x038,
-        CMD_EXE_RDATA_RVA + s_console_main_off as u32);
-    cmd_exe_write_u32(&mut rdata, 0x03C,
-        CMD_EXE_RDATA_RVA + s_exit_process_off as u32);
-
-    // Name strings at rdata+name_table_off
-    rdata[s_cmd_main_off..s_cmd_main_off + s_cmd_main.len()]
-        .copy_from_slice(s_cmd_main);
-    rdata[s_console_main_off..s_console_main_off + s_console_main.len()]
-        .copy_from_slice(s_console_main);
-    rdata[s_exit_process_off..s_exit_process_off + s_exit_process.len()]
-        .copy_from_slice(s_exit_process);
-
-    // AddressOfNameOrdinals[3] at rdata+0x040 (each entry is a u16)
-    cmd_exe_write_u16(&mut rdata, 0x040, 0); // cmd_main     -> index 0
-    cmd_exe_write_u16(&mut rdata, 0x042, 1); // ConsoleMain  -> index 1
-    cmd_exe_write_u16(&mut rdata, 0x044, 2); // ExitProcess  -> index 2
-
-    // ------------------------------------------------------------------
-    // PE headers + section table
-    // ------------------------------------------------------------------
-    let sect_off_u32: u32 = 0x188;
-    let sect_off: usize = sect_off_u32 as usize;
-    let text_raw_size: u32 = cmd_exe_align_up(text_data.len() as u32, FILE_ALIGNMENT);
-    let rdata_raw_size: u32 = cmd_exe_align_up(rdata.len() as u32, FILE_ALIGNMENT);
-    let text_raw_off: u32 = cmd_exe_align_up(sect_off_u32 + 2 * 40, FILE_ALIGNMENT);
-    let rdata_raw_off: u32 = text_raw_off + text_raw_size;
-    let total_size: u32 = rdata_raw_off + rdata_raw_size;
-    let headers_size: u32 = cmd_exe_align_up(sect_off_u32 + 2 * 40, FILE_ALIGNMENT);
-
-    let mut out = vec![0u8; total_size as usize];
-
-    // DOS header
-    out[0..2].copy_from_slice(b"MZ");
-    cmd_exe_write_u32(&mut out, 0x3C, 0x80);
-
-    // PE signature + COFF header + Optional header at offset 0x80
-    let pe_off = 0x80usize;
-    out[pe_off..pe_off + 4].copy_from_slice(b"PE\x00\x00");
-
-    // COFF File Header (20 bytes) at pe_off + 4
-    let coff_off = pe_off + 4;
-    cmd_exe_write_u16(&mut out, coff_off, 0x8664);              // Machine (AMD64)
-    cmd_exe_write_u16(&mut out, coff_off + 0x02, 2);                 // NumberOfSections
-    cmd_exe_write_u32(&mut out, coff_off + 0x04, 0);                 // TimeDateStamp
-    cmd_exe_write_u32(&mut out, coff_off + 0x08, 0);                 // PointerToSymbolTable
-    cmd_exe_write_u32(&mut out, coff_off + 0x0C, 0);                 // NumberOfSymbols
-    cmd_exe_write_u16(&mut out, coff_off + 0x10, 240);               // SizeOfOptionalHeader (PE32+)
-    cmd_exe_write_u16(&mut out, coff_off + 0x12, 0x0022);            // EXECUTABLE_IMAGE | LARGE_ADDRESS_AWARE
-
-    // Optional Header (PE32+ = 240 bytes) at coff_off + 0x14
-    let opt_off = coff_off + 0x14;
-    cmd_exe_write_u16(&mut out, opt_off, 0x020B);             // Magic: PE32+
-    cmd_exe_write_u16(&mut out, opt_off + 0x02, 14);                 // MajorLinkerVersion
-    cmd_exe_write_u16(&mut out, opt_off + 0x04, 0);                  // MinorLinkerVersion
-    cmd_exe_write_u32(&mut out, opt_off + 0x06, text_raw_size);      // SizeOfCode
-    cmd_exe_write_u32(&mut out, opt_off + 0x0A, rdata_raw_size);     // SizeOfInitializedData
-    cmd_exe_write_u32(&mut out, opt_off + 0x0E, 0);                  // SizeOfUninitializedData
-    cmd_exe_write_u32(&mut out, opt_off + 0x10, CMD_EXE_TEXT_RVA);   // AddressOfEntryPoint
-    cmd_exe_write_u32(&mut out, opt_off + 0x14, CMD_EXE_TEXT_RVA);   // BaseOfCode
-    cmd_exe_write_u64(&mut out, opt_off + 0x18, CMD_EXE_IMAGE_BASE); // ImageBase
-    cmd_exe_write_u32(&mut out, opt_off + 0x20, SECTION_ALIGNMENT);  // SectionAlignment
-    cmd_exe_write_u32(&mut out, opt_off + 0x24, FILE_ALIGNMENT);     // FileAlignment
-    cmd_exe_write_u16(&mut out, opt_off + 0x28, 10);                 // MajorOperatingSystemVersion
-    cmd_exe_write_u16(&mut out, opt_off + 0x2A, 0);                  // MinorOperatingSystemVersion
-    cmd_exe_write_u16(&mut out, opt_off + 0x2C, 0);                  // MajorImageVersion
-    cmd_exe_write_u16(&mut out, opt_off + 0x2E, 0);                  // MinorImageVersion
-    cmd_exe_write_u16(&mut out, opt_off + 0x30, 10);                 // MajorSubsystemVersion
-    cmd_exe_write_u16(&mut out, opt_off + 0x32, 0);                  // MinorSubsystemVersion
-    cmd_exe_write_u32(&mut out, opt_off + 0x34, 0);                  // Win32VersionValue
-    let size_of_image = CMD_EXE_RDATA_RVA + SECTION_ALIGNMENT;
-    cmd_exe_write_u32(&mut out, opt_off + 0x38, size_of_image);      // SizeOfImage
-    cmd_exe_write_u32(&mut out, opt_off + 0x3C, headers_size);       // SizeOfHeaders
-    cmd_exe_write_u32(&mut out, opt_off + 0x40, 0);                  // CheckSum
-    cmd_exe_write_u16(&mut out, opt_off + 0x44, 3);                  // Subsystem: WindowsCui
-    cmd_exe_write_u16(&mut out, opt_off + 0x46, 0x0160);             // DllCharacteristics
-    cmd_exe_write_u64(&mut out, opt_off + 0x48, 0x100000);           // SizeOfStackReserve
-    cmd_exe_write_u64(&mut out, opt_off + 0x50, 0x1000);             // SizeOfStackCommit
-    cmd_exe_write_u64(&mut out, opt_off + 0x58, 0x100000);           // SizeOfHeapReserve
-    cmd_exe_write_u64(&mut out, opt_off + 0x60, 0x1000);             // SizeOfHeapCommit
-    cmd_exe_write_u32(&mut out, opt_off + 0x68, 0);                  // LoaderFlags
-    cmd_exe_write_u32(&mut out, opt_off + 0x6C, 16);                 // NumberOfRvaAndSizes
-
-    // Data directories (16 entries x 8 bytes = 128 bytes) at opt_off + 0x70
-    let dd_off = opt_off + 0x70;
-    // [0] Export: VirtualAddress=RDATA_RVA, Size=rdata.len()
-    cmd_exe_write_u32(&mut out, dd_off, CMD_EXE_RDATA_RVA);
-    cmd_exe_write_u32(&mut out, dd_off + 0x04, rdata.len() as u32);
-    // [1..16] = zero (already)
-
-    // Section headers (40 bytes each) at sect_off (= 0x188)
-    // .text
-    let s = sect_off;
-    out[s..s + 8].copy_from_slice(b".text\x00\x00\x00");
-    cmd_exe_write_u32(&mut out, s + 0x08, text_data.len() as u32); // VirtualSize
-    cmd_exe_write_u32(&mut out, s + 0x0C, CMD_EXE_TEXT_RVA);       // VirtualAddress
-    cmd_exe_write_u32(&mut out, s + 0x10, text_raw_size);          // SizeOfRawData
-    cmd_exe_write_u32(&mut out, s + 0x14, text_raw_off);           // PointerToRawData
-    cmd_exe_write_u32(&mut out, s + 0x18, 0);                      // PointerToRelocations
-    cmd_exe_write_u32(&mut out, s + 0x1C, 0);                      // PointerToLineNumbers
-    cmd_exe_write_u16(&mut out, s + 0x20, 0);                      // NumberOfRelocations
-    cmd_exe_write_u16(&mut out, s + 0x22, 0);                      // NumberOfLineNumbers
-    cmd_exe_write_u32(&mut out, s + 0x24, 0x60000020);             // CODE | EXECUTE | READ
-
-    // .rdata
-    let s = sect_off + 40;
-    out[s..s + 8].copy_from_slice(b".rdata\x00\x00");
-    cmd_exe_write_u32(&mut out, s + 0x08, rdata.len() as u32);    // VirtualSize
-    cmd_exe_write_u32(&mut out, s + 0x0C, CMD_EXE_RDATA_RVA);     // VirtualAddress
-    cmd_exe_write_u32(&mut out, s + 0x10, rdata_raw_size);        // SizeOfRawData
-    cmd_exe_write_u32(&mut out, s + 0x14, rdata_raw_off);         // PointerToRawData
-    cmd_exe_write_u32(&mut out, s + 0x18, 0);                      // PointerToRelocations
-    cmd_exe_write_u32(&mut out, s + 0x1C, 0);                      // PointerToLineNumbers
-    cmd_exe_write_u16(&mut out, s + 0x20, 0);                      // NumberOfRelocations
-    cmd_exe_write_u16(&mut out, s + 0x22, 0);                      // NumberOfLineNumbers
-    cmd_exe_write_u32(&mut out, s + 0x24, 0x40000040);             // INITIALIZED_DATA | READ
-
-    // Section data
-    out[text_raw_off as usize..(text_raw_off + text_data.len() as u32) as usize]
-        .copy_from_slice(&text_data);
-    out[rdata_raw_off as usize..(rdata_raw_off + rdata.len() as u32) as usize]
-        .copy_from_slice(&rdata);
-
-    out
-}
 
 // =====================================================================
 // Utilities
@@ -3409,23 +3880,23 @@ fn build_cmd_exe_pe() -> Vec<u8> {
 /// Run cargo command
 pub fn run_cargo(args: &[&str]) -> Result<()> {
     let manifest_dir = get_workspace_root();
-    
+
     let mut cmd = Command::new("cargo");
     cmd.current_dir(&manifest_dir);
-    
+
     for arg in args {
         cmd.arg(arg);
     }
 
-    let status = cmd.status()
-        .map_err(BuildError::Io)?;
-    
+    let status = cmd.status().map_err(BuildError::Io)?;
+
     if !status.success() {
-        return Err(BuildError::ImageCreateFailed(
-            format!("Cargo command failed: {:?}", args)
-        ));
+        return Err(BuildError::ImageCreateFailed(format!(
+            "Cargo command failed: {:?}",
+            args
+        )));
     }
-    
+
     Ok(())
 }
 

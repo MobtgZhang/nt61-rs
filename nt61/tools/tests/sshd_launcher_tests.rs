@@ -19,15 +19,27 @@ pub enum LauncherError {
 }
 
 pub fn validate_port(port: u16) -> Result<(), LauncherError> {
-    if port == 0 { Err(LauncherError::BadPort) } else { Ok(()) }
+    if port == 0 {
+        Err(LauncherError::BadPort)
+    } else {
+        Ok(())
+    }
 }
 
 pub fn validate_listen_address(addr: &str) -> Result<(), LauncherError> {
-    if addr.trim().is_empty() { Err(LauncherError::BadAddress) } else { Ok(()) }
+    if addr.trim().is_empty() {
+        Err(LauncherError::BadAddress)
+    } else {
+        Ok(())
+    }
 }
 
 pub fn validate_host_key(path: &str) -> Result<(), LauncherError> {
-    if path.trim().is_empty() { Err(LauncherError::BadAddress) } else { Ok(()) }
+    if path.trim().is_empty() {
+        Err(LauncherError::BadAddress)
+    } else {
+        Ok(())
+    }
 }
 
 /// Run the state-machine transition under the given (current, next)
@@ -37,12 +49,12 @@ pub fn can_transition(from: LauncherState, to: LauncherState) -> bool {
     matches!(
         (from, to),
         (LauncherState::Uninitialised, LauncherState::ConfigLoaded)
-        | (LauncherState::ConfigLoaded, LauncherState::ListenerBound)
-        | (LauncherState::ListenerBound, LauncherState::Accepting)
-        | (LauncherState::Uninitialised, LauncherState::Stopped)
-        | (LauncherState::ConfigLoaded, LauncherState::Stopped)
-        | (LauncherState::ListenerBound, LauncherState::Stopped)
-        | (LauncherState::Accepting, LauncherState::Stopped)
+            | (LauncherState::ConfigLoaded, LauncherState::ListenerBound)
+            | (LauncherState::ListenerBound, LauncherState::Accepting)
+            | (LauncherState::Uninitialised, LauncherState::Stopped)
+            | (LauncherState::ConfigLoaded, LauncherState::Stopped)
+            | (LauncherState::ListenerBound, LauncherState::Stopped)
+            | (LauncherState::Accepting, LauncherState::Stopped)
     )
 }
 
@@ -59,17 +71,25 @@ mod tests {
             LauncherState::Accepting,
         ];
         for w in path.windows(2) {
-            assert!(can_transition(w[0], w[1]),
-                "transition {:?} -> {:?} must be allowed", w[0], w[1]);
+            assert!(
+                can_transition(w[0], w[1]),
+                "transition {:?} -> {:?} must be allowed",
+                w[0],
+                w[1]
+            );
         }
     }
 
     #[test]
     fn cannot_skip_steps() {
-        assert!(!can_transition(LauncherState::Uninitialised,
-            LauncherState::Accepting));
-        assert!(!can_transition(LauncherState::ConfigLoaded,
-            LauncherState::Accepting));
+        assert!(!can_transition(
+            LauncherState::Uninitialised,
+            LauncherState::Accepting
+        ));
+        assert!(!can_transition(
+            LauncherState::ConfigLoaded,
+            LauncherState::Accepting
+        ));
     }
 
     #[test]
@@ -80,17 +100,24 @@ mod tests {
             LauncherState::ListenerBound,
             LauncherState::Accepting,
         ] {
-            assert!(can_transition(s, LauncherState::Stopped),
-                "{:?} -> Stopped must be allowed", s);
+            assert!(
+                can_transition(s, LauncherState::Stopped),
+                "{:?} -> Stopped must be allowed",
+                s
+            );
         }
     }
 
     #[test]
     fn cannot_go_backwards() {
-        assert!(!can_transition(LauncherState::Accepting,
-            LauncherState::ListenerBound));
-        assert!(!can_transition(LauncherState::Stopped,
-            LauncherState::Uninitialised));
+        assert!(!can_transition(
+            LauncherState::Accepting,
+            LauncherState::ListenerBound
+        ));
+        assert!(!can_transition(
+            LauncherState::Stopped,
+            LauncherState::Uninitialised
+        ));
     }
 
     #[test]

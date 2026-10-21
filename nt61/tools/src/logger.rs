@@ -58,13 +58,14 @@ pub fn debug(msg: &str) {
     }
 }
 
-/// Print a verbose debug message with details.
-#[allow(dead_code)]
-pub fn debug_verbose(msg: &str, details: &str) {
-    if is_verbose() {
-        println!("{}debug:{} {}", BLUE, RESET, msg);
-        println!("         {}", details);
-    }
+/// Format and print a debug message (only in verbose mode).
+#[macro_export]
+macro_rules! debug {
+    ($format:literal $(, $value:expr)* $(,)?) => {
+        if $crate::logger::is_verbose() {
+            $crate::logger::debug(&format!($format $(, $value)*));
+        }
+    };
 }
 
 /// Print a banner.
@@ -84,9 +85,22 @@ pub fn summary(total_steps: usize, failed_steps: usize) {
     println!();
     println!("{}", "-".repeat(40));
     if failed_steps == 0 {
-        println!("{}Build completed successfully!{} ({}/{} steps)", GREEN, RESET, total_steps - failed_steps, total_steps);
+        println!(
+            "{}Build completed successfully!{} ({}/{} steps)",
+            GREEN,
+            RESET,
+            total_steps - failed_steps,
+            total_steps
+        );
     } else {
-        println!("{}Build completed with {} errors{} ({}/{} steps)", RED, failed_steps, RESET, total_steps - failed_steps, total_steps);
+        println!(
+            "{}Build completed with {} errors{} ({}/{} steps)",
+            RED,
+            failed_steps,
+            RESET,
+            total_steps - failed_steps,
+            total_steps
+        );
     }
     println!("{}", "-".repeat(40));
 }

@@ -28,7 +28,11 @@ impl SessionState {
     }
 
     pub fn transition(self, next: SessionState) -> Option<SessionState> {
-        if self.can_transition_to(next) { Some(next) } else { None }
+        if self.can_transition_to(next) {
+            Some(next)
+        } else {
+            None
+        }
     }
 }
 
@@ -53,8 +57,12 @@ mod tests {
             SessionState::Closed,
         ];
         for w in path.windows(2) {
-            assert!(w[0].can_transition_to(w[1]),
-                "happy-path transition {:?} -> {:?} blocked", w[0], w[1]);
+            assert!(
+                w[0].can_transition_to(w[1]),
+                "happy-path transition {:?} -> {:?} blocked",
+                w[0],
+                w[1]
+            );
         }
     }
 
@@ -74,8 +82,11 @@ mod tests {
             SessionState::KexInit,
             SessionState::BannerExchanged,
         ] {
-            assert!(!w.can_transition_to(SessionState::TcpAccepted),
-                "backward {:?} -> TcpAccepted should be blocked", w);
+            assert!(
+                !w.can_transition_to(SessionState::TcpAccepted),
+                "backward {:?} -> TcpAccepted should be blocked",
+                w
+            );
         }
     }
 
@@ -87,8 +98,11 @@ mod tests {
             SessionState::Encrypted,
             SessionState::ChildSpawned,
         ] {
-            assert!(s.can_transition_to(SessionState::Closed),
-                "{:?} -> Closed must be allowed", s);
+            assert!(
+                s.can_transition_to(SessionState::Closed),
+                "{:?} -> Closed must be allowed",
+                s
+            );
         }
     }
 
@@ -100,20 +114,28 @@ mod tests {
             SessionState::Authenticated,
             SessionState::ChildSpawned,
         ] {
-            assert!(!SessionState::Closed.can_transition_to(s),
-                "from Closed, must not transition to {:?}", s);
+            assert!(
+                !SessionState::Closed.can_transition_to(s),
+                "from Closed, must not transition to {:?}",
+                s
+            );
         }
     }
 
     #[test]
     fn transition_returns_some_on_valid() {
-        assert_eq!(SessionState::New.transition(SessionState::TcpAccepted),
-            Some(SessionState::TcpAccepted));
+        assert_eq!(
+            SessionState::New.transition(SessionState::TcpAccepted),
+            Some(SessionState::TcpAccepted)
+        );
     }
 
     #[test]
     fn transition_returns_none_on_invalid() {
-        assert_eq!(SessionState::TcpAccepted.transition(SessionState::New), None);
+        assert_eq!(
+            SessionState::TcpAccepted.transition(SessionState::New),
+            None
+        );
         assert_eq!(SessionState::Encrypted.transition(SessionState::New), None);
     }
 }

@@ -20,10 +20,18 @@ pub struct DirEntry {
 
 impl DirEntry {
     pub fn file(name: impl Into<String>, size: u64) -> Self {
-        Self { name: name.into(), is_dir: false, size }
+        Self {
+            name: name.into(),
+            is_dir: false,
+            size,
+        }
     }
     pub fn dir(name: impl Into<String>) -> Self {
-        Self { name: name.into(), is_dir: true, size: 0 }
+        Self {
+            name: name.into(),
+            is_dir: true,
+            size: 0,
+        }
     }
 }
 

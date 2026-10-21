@@ -25,7 +25,10 @@ mod tests {
 
         // QCOW2 v2/v3 stores the version at offset 4 in big-endian.
         let version = u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
-        assert!(version >= 2 && version <= 3, "QCOW2 version should be 2 or 3");
+        assert!(
+            version >= 2 && version <= 3,
+            "QCOW2 version should be 2 or 3"
+        );
     }
 
     /// Test QCOW2 backing file offset initialization
@@ -36,8 +39,7 @@ mod tests {
 
         // Backing file offset is u64 big-endian at offset 8.
         let backing_offset = u64::from_be_bytes([
-            data[8], data[9], data[10], data[11],
-            data[12], data[13], data[14], data[15]
+            data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15],
         ]);
         assert_eq!(backing_offset, 0, "New image should have no backing file");
     }
@@ -51,9 +53,15 @@ mod tests {
         // Cluster size is u32 big-endian at offset 20, but it
         // is the log2 of the cluster size (cluster_bits).
         let cluster_bits = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
-        assert!(cluster_bits >= 9 && cluster_bits <= 21, "cluster_bits should be 9..=21");
+        assert!(
+            cluster_bits >= 9 && cluster_bits <= 21,
+            "cluster_bits should be 9..=21"
+        );
         let cluster_size = 1u32 << cluster_bits;
-        assert!(cluster_size.is_power_of_two(), "Cluster size should be power of 2");
+        assert!(
+            cluster_size.is_power_of_two(),
+            "Cluster size should be power of 2"
+        );
         assert!(cluster_size >= 512, "Cluster size should be at least 512");
     }
 
@@ -61,14 +69,16 @@ mod tests {
     #[test]
     fn qcow2_create_different_sizes() {
         let sizes = [
-            1024,           // 1 KB
-            1024 * 1024,    // 1 MB
+            1024,             // 1 KB
+            1024 * 1024,      // 1 MB
             64 * 1024 * 1024, // 64 MB
         ];
 
         for size in sizes {
             let mut image = Qcow2Image::create(size).expect(&format!("qcow2 create size {}", size));
-            let data = image.finalize().expect(&format!("qcow2 finalize size {}", size));
+            let data = image
+                .finalize()
+                .expect(&format!("qcow2 finalize size {}", size));
             assert!(!data.is_empty(), "Finalized image should not be empty");
         }
     }
@@ -103,10 +113,12 @@ mod tests {
 
         // Image size is u64 big-endian at offset 24-31.
         let stored_size = u64::from_be_bytes([
-            data[24], data[25], data[26], data[27],
-            data[28], data[29], data[30], data[31]
+            data[24], data[25], data[26], data[27], data[28], data[29], data[30], data[31],
         ]);
-        assert_eq!(stored_size, expected_size, "Stored size should match created size");
+        assert_eq!(
+            stored_size, expected_size,
+            "Stored size should match created size"
+        );
     }
 
     /// Test refcount table and refcount block initialization
@@ -156,7 +168,10 @@ mod fat32_tests {
         const VALID_BPS: &[u16] = &[512, 1024, 2048, 4096];
 
         for bps in VALID_BPS {
-            assert!(*bps >= 512 && *bps <= 4096, "Bytes per sector should be 512-4096");
+            assert!(
+                *bps >= 512 && *bps <= 4096,
+                "Bytes per sector should be 512-4096"
+            );
         }
     }
 
@@ -212,7 +227,13 @@ mod ntfs_tests {
         let sectors_per_cluster: u64 = 8;
         let cluster_size = sector_size * sectors_per_cluster;
 
-        assert!(cluster_size.is_power_of_two(), "Cluster size should be power of 2");
-        assert!(cluster_size >= 512 && cluster_size <= 65536, "Cluster size should be 512-64KB");
+        assert!(
+            cluster_size.is_power_of_two(),
+            "Cluster size should be power of 2"
+        );
+        assert!(
+            cluster_size >= 512 && cluster_size <= 65536,
+            "Cluster size should be 512-64KB"
+        );
     }
 }

@@ -181,13 +181,6 @@ pub fn mov_r15_rsi(b: &mut Buf) {
     b.u8(0x89);
     b.u8(0xf7);
 }
-pub fn mov_rdi_r14(b: &mut Buf) {
-    // 4C 89 F7 : mov rdi, r14
-    b.u8(0x4c);
-    b.u8(0x89);
-    b.u8(0xf7);
-}
-
 /// `mov rdi, r15` — copy r15 (the user-mode `cmd.exe` line-buffer
 /// base) into rdi before calling dispatch_command. The
 /// dispatcher's epilogue expects `rdi` to point at the input
@@ -207,12 +200,6 @@ pub fn mov_rsi_r13(b: &mut Buf) {
     b.u8(0x89);
     b.u8(0xee);
 }
-pub fn mov_rsi_r15(b: &mut Buf) {
-    // 4C 89 FE : mov rsi, r15
-    b.u8(0x4c);
-    b.u8(0x89);
-    b.u8(0xfe);
-}
 pub fn mov_r15_rsp(b: &mut Buf) {
     // 49 89 E7 : mov r15, rsp
     b.u8(0x49);
@@ -230,141 +217,21 @@ pub fn sub_rsp_imm32(b: &mut Buf, imm: u32) {
     b.u32(imm);
 }
 
-/// `add rsp, imm32` — restore stack after a `sub_rsp_imm32`.
-pub fn add_rsp_imm32(b: &mut Buf, imm: u32) {
-    // 48 81 C4 imm32
-    b.u8(0x48);
-    b.u8(0x81);
-    b.u8(0xc4);
-    b.u32(imm);
-}
-
-/// `mov r10, rsp` — used by SYS_GET_RTC / SYS_NETCFG_GET so the
-/// kernel-side syscall handler can copy its result buffer into the
-/// just-reserved stack frame.
-pub fn mov_r10_rsp(b: &mut Buf) {
-    // 49 89 E2 : mov r10, rsp
-    b.u8(0x49);
+/// `mov r10, r14` — pass the Ring-3 line pointer as syscall arg0.
+pub fn mov_r10_r14(b: &mut Buf) {
+    b.u8(0x4d);
     b.u8(0x89);
-    b.u8(0xe2);
+    b.u8(0xf2);
 }
 
-/// `mov al, byte [rsp+disp8]` — load one byte from the freshly
-/// filled-in stack buffer used by SYS_GET_RTC.
-pub fn mov_al_byte_rsp_disp8(b: &mut Buf, disp: u8) {
-    // 8A 44 24 disp8
-    b.u8(0x8a);
-    b.u8(0x44);
-    b.u8(0x24);
-    b.u8(disp);
-}
-
-/// `mov r10d, eax` — copy the result of a decimal conversion
-/// (`eax & 0xFF`) into the syscall arg slot.
-pub fn movzx_r10d_eax(b: &mut Buf) {
-    // 41 89 C2 : mov r10d, eax
-    b.u8(0x41);
+/// `mov rdx, r13` — pass the Ring-3 line length as syscall arg1.
+pub fn mov_rdx_r15(b: &mut Buf) {
+    // REX.W + REX.R: move R15 (second operand bit 3) to RDX.
+    b.u8(0x4c);
     b.u8(0x89);
-    b.u8(0xc2);
+    b.u8(0xfa);
 }
 
-/// `movzx eax, dl` — zero-extend the low byte of rdx into eax so
-/// a subsequent `div ecx` treats it as a positive dividend.
-pub fn movzx_eax_dl(b: &mut Buf) {
-    // 0F B6 C2 : movzx eax, dl
-    b.u8(0x0f);
-    b.u8(0xb6);
-    b.u8(0xc2);
-}
-
-/// `add al, imm8` — used by the decimal-digit emitter to convert
-/// a 0..9 value into its ASCII counterpart.
-pub fn add_al_imm8(b: &mut Buf, imm: u8) {
-    // 04 imm8
-    b.u8(0x04);
-    b.u8(imm);
-}
-
-/// `add dl, imm8` — same as `add_al_imm8` but for the units digit.
-pub fn add_dl_imm8(b: &mut Buf, imm: u8) {
-    // 80 C2 imm8
-    b.u8(0x80);
-    b.u8(0xc2);
-    b.u8(imm);
-}
-
-/// `mov ecx, imm32` — divisor for the `div ecx` instruction used
-/// by the decimal-digit emitter.
-pub fn mov_ecx_imm32(b: &mut Buf, imm: u32) {
-    // B9 imm32
-    b.u8(0xb9);
-    b.u32(imm);
-}
-
-/// `xor edx, edx` — clear the high half of edx:eax before a
-/// `div ecx` so the dividend is just the byte we want to split.
-pub fn xor_edx_edx(b: &mut Buf) {
-    // 31 D2
-    b.u8(0x31);
-    b.u8(0xd2);
-}
-
-/// `div ecx` — quotient in eax, remainder in edx.
-pub fn div_ecx(b: &mut Buf) {
-    // F7 F9
-    b.u8(0xf7);
-    b.u8(0xf9);
-}
-
-/// `push rcx` — preserve rcx across a SYS_PUTCHAR call (syscall
-/// clobbers rcx).
-pub fn push_rcx(b: &mut Buf) {
-    // 51
-    b.u8(0x51);
-}
-
-/// `pop rcx`
-pub fn pop_rcx(b: &mut Buf) {
-    // 59
-    b.u8(0x59);
-}
-
-/// `push rdx` — preserve rdx across a SYS_PUTCHAR call (used by
-/// the decimal-digit emitter, which needs the remainder to survive
-/// the first PUTCHAR).
-pub fn push_rdx(b: &mut Buf) {
-    // 52
-    b.u8(0x52);
-}
-
-/// `pop rdx`
-pub fn pop_rdx(b: &mut Buf) {
-    // 5A
-    b.u8(0x5a);
-}
-
-/// `mov dl, imm8` — emit one separator byte (e.g. ':' or '-' or '.')
-/// for the time/date/ipconfig printers.
-pub fn mov_dl_imm8(b: &mut Buf, imm: u8) {
-    // B2 imm8
-    b.u8(0xb2);
-    b.u8(imm);
-}
-
-pub fn add_rdi_imm8(b: &mut Buf, imm: u8) {
-    // 48 83 C7 imm8
-    b.u8(0x48);
-    b.u8(0x83);
-    b.u8(0xc7);
-    b.u8(imm);
-}
-pub fn sub_rsi_imm8(b: &mut Buf, imm: u8) {
-    // 48 83 EE imm8
-    b.u8(0x48);
-    b.u8(0x83);
-    b.u8(0xee);
-    b.u8(imm);
-}
 pub fn inc_r13(b: &mut Buf) {
     // 49 FF C5
     b.u8(0x49);
@@ -432,13 +299,6 @@ pub fn jne32(b: &mut Buf) -> usize {
     b.u32(0);
     off
 }
-pub fn jl32(b: &mut Buf) -> usize {
-    b.u8(0x0f);
-    b.u8(0x8c);
-    let off = b.pos();
-    b.u32(0);
-    off
-}
 pub fn jle32(b: &mut Buf) -> usize {
     b.u8(0x0f);
     b.u8(0x8e);
@@ -460,36 +320,6 @@ pub fn cmp_dl_imm8(b: &mut Buf, imm: u8) {
     // 80 FA imm8
     b.u8(0x80);
     b.u8(0xfa);
-    b.u8(imm);
-}
-
-/// `cmp byte [r14+0], imm8` — used by the dispatch table for the first
-/// character of the entered command.
-pub fn cmp_byte_r14_0_imm8(b: &mut Buf, imm: u8) {
-    // 41 80 3E imm8
-    b.u8(0x41);
-    b.u8(0x80);
-    b.u8(0x3e);
-    b.u8(imm);
-}
-
-/// `cmp byte [r14+1], imm8`
-pub fn cmp_byte_r14_1_imm8(b: &mut Buf, imm: u8) {
-    // 41 80 7E 01 imm8
-    b.u8(0x41);
-    b.u8(0x80);
-    b.u8(0x7e);
-    b.u8(0x01);
-    b.u8(imm);
-}
-
-/// `cmp byte [r14+disp8], imm8`
-pub fn cmp_byte_r14_n_imm8(b: &mut Buf, n: u8, imm: u8) {
-    // 41 80 7E n imm8
-    b.u8(0x41);
-    b.u8(0x80);
-    b.u8(0x7e);
-    b.u8(n);
     b.u8(imm);
 }
 

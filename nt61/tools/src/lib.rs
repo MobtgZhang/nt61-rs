@@ -3,22 +3,21 @@
 //! This library provides utilities for building NT6.1.7601 disk images,
 //! including support for FAT32, EXT4, NTFS, ISO9660, and QCOW2 formats.
 
-pub mod regf;
-pub mod hive_gen;
 pub mod error;
-pub mod logger;
 pub mod fs;
+pub mod hive_gen;
+pub mod logger;
+pub mod regf;
 
 // Re-export commonly used types
 pub use error::{BuildError, Result};
 pub use fs::{
-    Fat32Image, Ext4Image, NtfsImage, IsoImage, Qcow2Image,
-    ImageFormat,
-    create_dir_all, remove_dir_all, copy_file, copy_dir_recursive,
+    copy_dir_recursive, copy_file, create_dir_all, remove_dir_all, Ext4Image, Fat32Image,
+    ImageFormat, IsoImage, NtfsImage, Qcow2Image,
 };
 
 // Re-export build functions
-pub use fs::build::{full_build, build_kernel, build_boot, build_winload};
+pub use fs::build::{build_boot, build_kernel, build_winload, full_build};
 
 // Conditional kernel support
 #[cfg(feature = "with-nt61")]

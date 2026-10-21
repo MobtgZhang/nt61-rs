@@ -2,9 +2,9 @@
 //!
 //! Replaces shell `rm` and `rm -r` commands with pure Rust implementation.
 
+use crate::error::{BuildError, Result};
 use std::fs;
 use std::path::Path;
-use crate::error::{BuildError, Result};
 
 /// Remove a file.
 ///
@@ -106,7 +106,7 @@ mod tests {
         let file = temp.path().join("test.txt");
         fs::write(&file, b"test").unwrap();
         assert!(file.exists());
-        
+
         remove_file(&file).unwrap();
         assert!(!file.exists());
     }
@@ -114,7 +114,7 @@ mod tests {
     #[test]
     fn test_remove_path() {
         let temp = TempDir::new().unwrap();
-        
+
         // Test removing file
         let file = temp.path().join("file.txt");
         fs::write(&file, b"test").unwrap();

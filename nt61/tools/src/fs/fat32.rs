@@ -67,14 +67,12 @@ pub const FAT_SIZE_SECTORS: u32 = 1280;
 
 /// GPT partition type for EFI System Partition
 pub const PARTITION_TYPE_EFI: [u8; 16] = [
-    0x28, 0x73, 0x9A, 0xC6, 0x8B, 0x14, 0x28, 0x4F,
-    0xB9, 0x18, 0x60, 0xDA, 0x0B, 0x27, 0xCC, 0xE2,
+    0x28, 0x73, 0x9A, 0xC6, 0x8B, 0x14, 0x28, 0x4F, 0xB9, 0x18, 0x60, 0xDA, 0x0B, 0x27, 0xCC, 0xE2,
 ];
 
 /// GPT partition type for Linux filesystem
 pub const PARTITION_TYPE_LINUX: [u8; 16] = [
-    0x0F, 0x0D, 0xC5, 0x3D, 0x4F, 0x0E, 0xDE, 0x4F,
-    0x8E, 0x66, 0x04, 0x20, 0xC9, 0x18, 0xE3, 0x3F,
+    0x0F, 0x0D, 0xC5, 0x3D, 0x4F, 0x0E, 0xDE, 0x4F, 0x8E, 0x66, 0x04, 0x20, 0xC9, 0x18, 0xE3, 0x3F,
 ];
 
 // =====================================================================
@@ -149,17 +147,6 @@ pub struct Fat32Bpb {
 // =====================================================================
 // Helper Functions
 // =====================================================================
-
-/// Pad data to cluster boundary
-fn pad_to_cluster(data: &[u8], cluster_size: u32) -> Vec<u8> {
-    let rem = data.len() as u32 % cluster_size;
-    if rem == 0 {
-        return data.to_vec();
-    }
-    let mut out = data.to_vec();
-    out.resize((data.len() as u32 + cluster_size - rem) as usize, 0);
-    out
-}
 
 /// Calculate checksum for 8.3 filename
 fn checksum_83(name: &[u8; 11]) -> u8 {
@@ -286,7 +273,9 @@ fn parse_dir_static<'a>(
             lfn_buf.splice(0..0, chars);
             continue;
         }
-        let name_raw: &[u8; 11] = entry[0..11].try_into().expect("entry[0..11] is exactly 11 bytes");
+        let name_raw: &[u8; 11] = entry[0..11]
+            .try_into()
+            .expect("entry[0..11] is exactly 11 bytes");
         let cluster_no = (u16::from_le_bytes([entry[20], entry[21]]) as u32) << 16
             | u16::from_le_bytes([entry[26], entry[27]]) as u32;
         let size = u32::from_le_bytes([entry[28], entry[29], entry[30], entry[31]]);
@@ -304,8 +293,19 @@ fn parse_dir_static<'a>(
             name.pop();
         }
         if attr & 0x10 != 0 {
-            let sub = parse_dir_static(data, data_start, spc, cluster_size, fat_start, cluster_no, read_cluster)?;
-            children.push(FsNode::Dir { name, children: sub });
+            let sub = parse_dir_static(
+                data,
+                data_start,
+                spc,
+                cluster_size,
+                fat_start,
+                cluster_no,
+                read_cluster,
+            )?;
+            children.push(FsNode::Dir {
+                name,
+                children: sub,
+            });
         } else {
             let data_bytes = if cluster_no >= 2 {
                 let mut acc = Vec::new();
@@ -345,14 +345,16 @@ fn parse_dir_static<'a>(
             } else {
                 Vec::new()
             };
-            children.push(FsNode::File { name, data: data_bytes });
+            children.push(FsNode::File {
+                name,
+                data: data_bytes,
+            });
         }
     }
     Ok(children)
 }
 
 impl Fat32DirEntry {
-
     /// Create a new file directory entry
     pub fn new_file(name: &str, cluster: u32, size: u32) -> Self {
         Self {
@@ -517,7 +519,12 @@ impl ClusterAlloc {
     /// Allocate a new cluster
     pub fn alloc(&mut self) -> Option<u32> {
         for i in self.next_free..self.max_clusters {
-            let entry = u32::from_le_bytes([self.fat[i * 4], self.fat[i * 4 + 1], self.fat[i * 4 + 2], self.fat[i * 4 + 3]]);
+            let entry = u32::from_le_bytes([
+                self.fat[i * 4],
+                self.fat[i * 4 + 1],
+                self.fat[i * 4 + 2],
+                self.fat[i * 4 + 3],
+            ]);
             if entry == 0 {
                 self.fat[i * 4..i * 4 + 4].copy_from_slice(&0x0FFFFFFFu32.to_le_bytes());
                 self.next_free = i + 1;
@@ -545,7 +552,11 @@ impl Default for ClusterAlloc {
         fat[0..4].copy_from_slice(&0x0FFFFFF8u32.to_le_bytes());
         fat[4..8].copy_from_slice(&0x0FFFFFFFu32.to_le_bytes());
         let max_clusters = (fat_bytes / 4).min(0x0FFF_FFF0);
-        Self { fat, max_clusters, next_free: 2 }
+        Self {
+            fat,
+            max_clusters,
+            next_free: 2,
+        }
     }
 }
 
@@ -565,14 +576,20 @@ pub enum FsNode {
 impl FsNode {
     /// Create a file node
     pub fn file(name: &str, data: Vec<u8>) -> Self {
-        FsNode::File { name: name.to_string(), data }
+        FsNode::File {
+            name: name.to_string(),
+            data,
+        }
     }
 
     /// Create a directory node
     pub fn dir(name: &str, children: Vec<FsNode>) -> Self {
-        FsNode::Dir { name: name.to_string(), children }
+        FsNode::Dir {
+            name: name.to_string(),
+            children,
+        }
     }
-    
+
     /// Get mutable children reference for directory nodes
     pub fn dir_children_mut(&mut self) -> Option<&mut Vec<FsNode>> {
         match self {
@@ -596,7 +613,7 @@ pub struct Fat32ImageBuilder {
 
 impl Fat32ImageBuilder {
     /// Create a new FAT32 image builder
-    /// 
+    ///
     /// `partition_offset` specifies where the FAT32 partition starts within the image buffer.
     /// For a standalone FAT32 image, this is 0. For a GPT-embedded partition, this should
     /// be the partition's starting LBA * 512.
@@ -635,8 +652,7 @@ impl Fat32ImageBuilder {
         }
         let cluster_size = SECTOR_SIZE * SECTS_PER_CLUSTER as u32;
         // Round up to the number of whole clusters required.
-        let num_clusters =
-            (data.len() as u32).div_ceil(cluster_size);
+        let num_clusters = (data.len() as u32).div_ceil(cluster_size);
         let first = match self.alloc.alloc() {
             Some(c) => c,
             None => panic!("out of clusters"),
@@ -648,14 +664,12 @@ impl Fat32ImageBuilder {
                 None => panic!("out of clusters"),
             };
             // Chain prev -> next in the FAT.
-            self.alloc.get_fat_mut()
-                [prev as usize * 4..prev as usize * 4 + 4]
+            self.alloc.get_fat_mut()[prev as usize * 4..prev as usize * 4 + 4]
                 .copy_from_slice(&next.to_le_bytes());
             prev = next;
         }
         // Mark the last cluster in the chain as end-of-chain.
-        self.alloc.get_fat_mut()
-            [prev as usize * 4..prev as usize * 4 + 4]
+        self.alloc.get_fat_mut()[prev as usize * 4..prev as usize * 4 + 4]
             .copy_from_slice(&0x0FFFFFFFu32.to_le_bytes());
 
         // Write the data, one cluster at a time.
@@ -688,21 +702,16 @@ impl Fat32ImageBuilder {
 
     /// Write directory data to a cluster
     fn write_dir(&mut self, data: &[u8]) -> u32 {
-        let cluster = self.alloc.alloc().expect("out of clusters");
-        eprintln!("[DEBUG] Fat32ImageBuilder::write_dir: allocated cluster={}", cluster);
-        let padded = pad_to_cluster(data, SECTOR_SIZE);
-        let off = self.cluster_offset(cluster);
-        eprintln!("[DEBUG] Fat32ImageBuilder::write_dir: writing {} bytes to offset={}", padded.len(), off);
-        let end_off = off + padded.len();
-        if end_off > self.img.len() {
-            panic!("write_dir: buffer overflow! off=0x{:x} end=0x{:x} len=0x{:x}", off, end_off, self.img.len());
-        }
-        self.img[off..end_off].copy_from_slice(&padded);
-        cluster
+        let directory_data = if data.is_empty() {
+            vec![0u8; SECTOR_SIZE as usize]
+        } else {
+            data.to_vec()
+        };
+        self.write_data(&directory_data)
     }
 
     /// Generate SFN for long filenames
-    /// 
+    ///
     /// The algorithm must be kept in sync with the LFN generation logic in
     /// add_dir_entry and add_file_entry.
     pub fn make_sfn(&mut self, name: &str) -> [u8; 11] {
@@ -711,20 +720,24 @@ impl Fat32ImageBuilder {
         } else {
             (name, None)
         };
-        
+
         // Filter to valid SFN characters (must match add_dir_entry/add_file_entry)
-        let filtered_base: String = base.chars()
+        let filtered_base: String = base
+            .chars()
             .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-' || *c == '~')
             .collect();
-        let filtered_ext: Option<String> = ext.map(|e| e.chars()
-            .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
-            .collect());
-        
+        let filtered_ext: Option<String> = ext.map(|e| {
+            e.chars()
+                .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+                .collect()
+        });
+
         // Check if we need LFN (same logic as in add_dir_entry)
-        let needs_lfn = filtered_base.len() > 8 || filtered_ext.as_ref().map(|e| e.len() > 3).unwrap_or(false);
-        
+        let needs_lfn =
+            filtered_base.len() > 8 || filtered_ext.as_ref().map(|e| e.len() > 3).unwrap_or(false);
+
         let mut sfn = [b' '; 11];
-        
+
         if !needs_lfn {
             // Short name: use full filtered base + extension
             let base_bytes = filtered_base.to_uppercase().into_bytes();
@@ -738,15 +751,15 @@ impl Fat32ImageBuilder {
             sfn[6..6 + suffix.len()].copy_from_slice(suffix.as_bytes());
             self.sfn_counter += 1;
         }
-        
+
         if let Some(e) = filtered_ext {
             let ext_bytes = e.to_uppercase().into_bytes();
             sfn[8..8 + ext_bytes.len()].copy_from_slice(&ext_bytes);
         }
-        
+
         sfn
     }
-    
+
     /// Compute 8.3 checksum (used for LFN validation)
     pub fn compute_sfn_checksum(sfn: &[u8; 11]) -> u8 {
         checksum_83(sfn)
@@ -767,7 +780,14 @@ impl Fat32ImageBuilder {
     ///
     /// `kind` distinguishes directory entries (ATTR=0x10) from file entries
     /// (ATTR=0x20) so the SFN slot uses the right attribute byte.
-    fn emit_named_entry(&mut self, buf: &mut Vec<u8>, name: &str, cluster: u32, size: u32, kind: EntryKind) {
+    fn emit_named_entry(
+        &mut self,
+        buf: &mut Vec<u8>,
+        name: &str,
+        cluster: u32,
+        size: u32,
+        kind: EntryKind,
+    ) {
         // Decide whether LFN is required (mirrors make_sfn: anything whose
         // 8.3 representation can't fit in 8+3 needs an LFN slot).
         let needs_lfn = self.requires_lfn(name);
@@ -786,10 +806,10 @@ impl Fat32ImageBuilder {
             // See: https://elm-chan.org/docs/fat_e.html (LDIR_Ord table).
             for i in 0..lfn_count as usize {
                 let seq = lfn_count - i as u8; // 1 = first/closest-to-SFN
-                // Per FAT spec, the 0x40 bit is set on the LFN entry whose
-                // sequence number equals the *total* LFN count (i.e. the
-                // LAST piece of the long name). The seq=1 entry (FIRST 13
-                // characters) does NOT carry the 0x40 bit.
+                                               // Per FAT spec, the 0x40 bit is set on the LFN entry whose
+                                               // sequence number equals the *total* LFN count (i.e. the
+                                               // LAST piece of the long name). The seq=1 entry (FIRST 13
+                                               // characters) does NOT carry the 0x40 bit.
                 let is_last_piece = seq == lfn_count;
                 // Each LFN slot covers 13 UTF-16 chars. Slot N (1-based,
                 // starting at the SFN side) holds chars (N-1)*13..N*13.
@@ -831,49 +851,36 @@ impl Fat32ImageBuilder {
         filtered_base.len() > 8 || filtered_ext.as_ref().map(|e| e.len() > 3).unwrap_or(false)
     }
 
-    /// Process a filesystem node - writes files and returns cluster info
-    #[allow(dead_code)]
-    fn process_node(&mut self, node: &FsNode) -> (u32, bool) {
-        match node {
-            FsNode::File { name: _, data } => (self.write_data(data), false),
-            FsNode::Dir { name: _, children: _ } => {
-                // Don't recursively write here - that will be done by build_directory
-                // Just return 0 as placeholder
-                (0, true)
-            }
-        }
-    }
-    
     /// Build the filesystem with the given root children
     pub fn build(&mut self, children: Vec<FsNode>) {
-        eprintln!("[DEBUG] Fat32ImageBuilder::build: children count={}", children.len());
-        eprintln!("[DEBUG] Fat32ImageBuilder::build: partition_offset={}", self.partition_offset);
         // Build root directory with parent = 0 (root's parent is itself)
         let root_cluster = self.build_dir(children, 0);
-        eprintln!("[DEBUG] Fat32ImageBuilder::build: root_cluster={}", root_cluster);
         self.root_cluster = root_cluster;
-        
+
         // NOTE: Do NOT patch "." and ".." for the root directory here.
         // The root directory's "." and ".." both point to the root itself.
         // The build_dir function already handles this correctly when parent_cluster=0
         // because patch_dotdot is called with the same cluster for both.
-        
+
         self.write_boot_sector(root_cluster);
-        eprintln!("[DEBUG] Fat32ImageBuilder::build: done");
     }
-    
+
     /// Build a directory and its subdirectories recursively
     /// Returns the cluster number of this directory
     fn build_dir(&mut self, children: Vec<FsNode>, parent_cluster: u32) -> u32 {
         // First, build all subdirectories
         let mut subdir_entries: Vec<(String, u32)> = Vec::new();
         for child in &children {
-            if let FsNode::Dir { name, children: grandchildren } = child {
+            if let FsNode::Dir {
+                name,
+                children: grandchildren,
+            } = child
+            {
                 let subdir_cluster = self.build_dir(grandchildren.clone(), 0);
                 subdir_entries.push((name.clone(), subdir_cluster));
             }
         }
-        
+
         // Write files and collect their clusters
         let mut file_entries: Vec<(String, u32, u32)> = Vec::new(); // (name, cluster, size)
         for child in &children {
@@ -882,35 +889,35 @@ impl Fat32ImageBuilder {
                 file_entries.push((name.clone(), cluster, data.len() as u32));
             }
         }
-        
+
         // Build directory buffer
         let mut dir_buf = Vec::new();
         dir_buf.extend_from_slice(&Fat32DirEntry::new_dir(".", 0).to_bytes());
         dir_buf.extend_from_slice(&Fat32DirEntry::new_dir("..", 0).to_bytes());
-        
+
         // Add subdirectory entries
         for (name, cluster) in &subdir_entries {
             self.add_dir_entry(&mut dir_buf, name, *cluster);
         }
-        
+
         // Add file entries with correct clusters
         for (name, cluster, size) in &file_entries {
             self.add_file_entry(&mut dir_buf, name, *cluster, *size);
         }
-        
+
         let cluster = self.write_dir(&dir_buf);
-        
+
         // Patch "." and ".." - this directory's parent
         self.patch_dotdot(cluster, parent_cluster);
-        
+
         // Patch all subdirectories' ".." to point to us
         for (_, subdir_cluster) in &subdir_entries {
             self.patch_dotdot(*subdir_cluster, cluster);
         }
-        
+
         cluster
     }
-    
+
     /// Patch "." and ".." entries of a directory
     fn patch_dotdot(&mut self, dir_cluster: u32, parent_cluster: u32) {
         let off = self.cluster_offset(dir_cluster);
@@ -918,7 +925,7 @@ impl Fat32ImageBuilder {
         let cl_hi = ((dir_cluster >> 16) & 0xFFFF) as u16;
         let pcl_lo = (parent_cluster & 0xFFFF) as u16;
         let pcl_hi = ((parent_cluster >> 16) & 0xFFFF) as u16;
-        
+
         // "." entry
         self.img[off + 20..off + 22].copy_from_slice(&cl_hi.to_le_bytes());
         self.img[off + 26..off + 28].copy_from_slice(&cl_lo.to_le_bytes());
@@ -929,8 +936,6 @@ impl Fat32ImageBuilder {
 
     /// Write the FAT32 boot sector
     fn write_boot_sector(&mut self, root_cluster: u32) {
-        eprintln!("[DEBUG] Fat32ImageBuilder::write_boot_sector: root_cluster={}", root_cluster);
-        eprintln!("[DEBUG] Fat32ImageBuilder::write_boot_sector: partition_offset={}", self.partition_offset);
         // FAT32 BPB layout (from Microsoft's FAT spec, rev 1.03):
         //   0x00  3   Jump boot code (0xEB 0x3C 0x90)
         //   0x03  8   OEM name ("FAT32   ")
@@ -964,10 +969,13 @@ impl Fat32ImageBuilder {
         // The partition_offset only affects hidd_sec and cluster offset calculations.
         let sector = &mut self.img[0..512];
         sector.fill(0);
-        sector[0] = 0xEB; sector[1] = 0x3C; sector[2] = 0x90;
+        sector[0] = 0xEB;
+        sector[1] = 0x3C;
+        sector[2] = 0x90;
         sector[3..11].copy_from_slice(b"FAT32   ");
         // Bytes per sector = 512 (little-endian 0x0200).
-        sector[11] = 0x00; sector[12] = 0x02;
+        sector[11] = 0x00;
+        sector[12] = 0x02;
         sector[13] = SECTS_PER_CLUSTER;
         sector[14] = (RESERVED_SECTORS & 0xFF) as u8;
         sector[15] = ((RESERVED_SECTORS >> 8) & 0xFF) as u8;
@@ -1017,8 +1025,10 @@ impl Fat32ImageBuilder {
         sector[46] = ((root_cluster >> 16) & 0xFF) as u8;
         sector[47] = ((root_cluster >> 24) & 0xFF) as u8;
         // BPB_FSInfo (0x30) = sector 1; BPB_BkBootSec (0x32) = sector 6.
-        sector[48] = 1; sector[49] = 0;
-        sector[50] = 6; sector[51] = 0;
+        sector[48] = 1;
+        sector[49] = 0;
+        sector[50] = 6;
+        sector[51] = 0;
         // BPB_Reserved (0x34..0x40) left zero.
         // BS_DrvNum (0x40) = 0x80 (first HDD).
         sector[64] = 0x80;
@@ -1026,7 +1036,10 @@ impl Fat32ImageBuilder {
         // BS_BootSig (0x42) = 0x29.
         sector[66] = 0x29;
         // BS_VolID (0x43) = 0x35363131 (placeholder serial).
-        sector[67] = 0x35; sector[68] = 0x36; sector[69] = 0x31; sector[70] = 0x31;
+        sector[67] = 0x35;
+        sector[68] = 0x36;
+        sector[69] = 0x31;
+        sector[70] = 0x31;
         // BS_VolLab (0x47) = "NO LABEL   ".
         sector[71..82].copy_from_slice(b"NO LABEL   ");
         // BS_FilSysType (0x52) = "FAT32   ".
@@ -1051,7 +1064,7 @@ impl Fat32ImageBuilder {
     }
 
     /// Write FSInfo sector (sector 1)
-    /// 
+    ///
     /// FSInfo contains free cluster count and next free cluster hint.
     /// Offset layout:
     ///   0x000: 4 bytes - "RRaA" signature
@@ -1061,36 +1074,35 @@ impl Fat32ImageBuilder {
     ///   0x1F4: 12 bytes - reserved (0)
     ///   0x200: 4 bytes - "rrAA" signature (trailer)
     fn write_fsinfo(&mut self) {
-        let fsinfo_off = SECTOR_SIZE as usize;  // Sector 1
+        let fsinfo_off = SECTOR_SIZE as usize; // Sector 1
         let sector = &mut self.img[fsinfo_off..fsinfo_off + SECTOR_SIZE as usize];
         sector.fill(0);
-        
+
         // FSInfo signature "RRaA" at offset 0
         sector[0..4].copy_from_slice(b"RRaA");
-        
+
         // Reserved (offset 0x1E8 = 488)
         // Free cluster count at offset 0x1EC = 492 (0xFFFFFFFF = unknown)
         sector[492..496].copy_from_slice(&0xFFFFFFFFu32.to_le_bytes());
         // Next free cluster at offset 0x1F0 = 496 (0xFFFFFFFF = unknown)
         sector[496..500].copy_from_slice(&0xFFFFFFFFu32.to_le_bytes());
-        
+
         // Reserved (offset 0x1F4 = 500)
         // Trailer signature "rrAa" at offset 0x1FC (508)
         sector[508..512].copy_from_slice(b"rrAa");
     }
 
     /// Write backup boot sector (sector 6)
-    /// 
+    ///
     /// FAT32 requires a backup copy of the boot sector at sector 6.
     /// We copy the boot sector we just wrote (sector 0) to sector 6.
     fn write_backup_boot_sector(&mut self) {
-        let backup_off = (6 * SECTOR_SIZE) as usize;  // Sector 6
-        // Copy the boot sector to backup location
-        // First borrow immutably to read, then borrow mutably to write
+        let backup_off = (6 * SECTOR_SIZE) as usize; // Sector 6
+                                                     // Copy the boot sector to backup location
+                                                     // First borrow immutably to read, then borrow mutably to write
         let boot_sector_data: [u8; 512] = self.img[0..512].try_into().unwrap();
         self.img[backup_off..backup_off + 512].copy_from_slice(&boot_sector_data);
     }
-
 
     /// Get the image data
     pub fn into_image(self) -> Vec<u8> {
@@ -1140,7 +1152,11 @@ impl Fat32Image {
             ));
         }
         let fat_type = &bs[82..90];
-        if fat_type != b"FAT32   " && fat_type != b"FAT16   " && fat_type != b"FAT12   " && fat_type != b"FAT     " {
+        if fat_type != b"FAT32   "
+            && fat_type != b"FAT16   "
+            && fat_type != b"FAT12   "
+            && fat_type != b"FAT     "
+        {
             return Err(BuildError::InvalidFormat(format!(
                 "not a FAT image (type tag = {:?})",
                 std::str::from_utf8(fat_type).unwrap_or("?")
@@ -1177,7 +1193,10 @@ impl Fat32Image {
             &read_cluster,
         )?;
         let size_mb = (data.len() / (1024 * 1024)) as u32;
-        Ok(Self { root_children, size_mb: size_mb.max(1) })
+        Ok(Self {
+            root_children,
+            size_mb: size_mb.max(1),
+        })
     }
 
     /// Remove a path from the in-memory image (file or directory).
@@ -1202,7 +1221,9 @@ impl Fat32Image {
             return children.len() != before;
         }
         let dir_name = parts[depth];
-        if let Some(idx) = children.iter().position(|c| matches!(c, FsNode::Dir { name, .. } if name.eq_ignore_ascii_case(dir_name))) {
+        if let Some(idx) = children.iter().position(
+            |c| matches!(c, FsNode::Dir { name, .. } if name.eq_ignore_ascii_case(dir_name)),
+        ) {
             if let FsNode::Dir { children: c, .. } = &mut children[idx] {
                 return Self::remove_recursive(c, parts, depth + 1);
             }
@@ -1215,15 +1236,21 @@ impl Fat32Image {
         let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
         let mut cur: &Vec<FsNode> = &self.root_children;
         for p in &parts {
-            match cur.iter().find(|c| matches!(c, FsNode::Dir { name, .. } if name.eq_ignore_ascii_case(p))) {
+            match cur
+                .iter()
+                .find(|c| matches!(c, FsNode::Dir { name, .. } if name.eq_ignore_ascii_case(p)))
+            {
                 Some(FsNode::Dir { children, .. }) => cur = children,
                 _ => return Ok(Vec::new()),
             }
         }
-        Ok(cur.iter().map(|c| match c {
-            FsNode::File { name, .. } => (name.clone(), false),
-            FsNode::Dir { name, .. } => (name.clone(), true),
-        }).collect())
+        Ok(cur
+            .iter()
+            .map(|c| match c {
+                FsNode::File { name, .. } => (name.clone(), false),
+                FsNode::Dir { name, .. } => (name.clone(), true),
+            })
+            .collect())
     }
 
     /// Read a file's bytes from the in-memory image. Returns MissingFile if
@@ -1237,12 +1264,18 @@ impl Fat32Image {
         let dir_parts = &parts[..parts.len() - 1];
         let mut cur: &Vec<FsNode> = &self.root_children;
         for p in dir_parts {
-            match cur.iter().find(|c| matches!(c, FsNode::Dir { name, .. } if name.eq_ignore_ascii_case(p))) {
+            match cur
+                .iter()
+                .find(|c| matches!(c, FsNode::Dir { name, .. } if name.eq_ignore_ascii_case(p)))
+            {
                 Some(FsNode::Dir { children, .. }) => cur = children,
                 _ => return Err(BuildError::MissingFile(path.into())),
             }
         }
-        match cur.iter().find(|c| matches!(c, FsNode::File { name, .. } if name.eq_ignore_ascii_case(filename))) {
+        match cur
+            .iter()
+            .find(|c| matches!(c, FsNode::File { name, .. } if name.eq_ignore_ascii_case(filename)))
+        {
             Some(FsNode::File { data, .. }) => Ok(data.clone()),
             _ => Err(BuildError::MissingFile(path.into())),
         }
@@ -1260,7 +1293,7 @@ impl Fat32Image {
             return;
         }
         let name = parts[depth];
-        
+
         // Find directory with the current name
         let mut dir_idx: Option<usize> = None;
         for (i, c) in children.iter().enumerate() {
@@ -1271,29 +1304,28 @@ impl Fat32Image {
                 }
             }
         }
-        
+
         if let Some(idx) = dir_idx {
             // Directory exists - recurse into it
-            if let FsNode::Dir { children: ref mut sub_children, .. } = &mut children[idx] {
+            if let FsNode::Dir {
+                children: ref mut sub_children,
+                ..
+            } = &mut children[idx]
+            {
                 Self::create_dir_recursive(sub_children, parts, depth + 1);
             }
         } else {
-            // Directory doesn't exist - create all remaining directories.
-            // Every nested FsNode is a leaf placeholder with an empty
-            // children vector; the inner `if` previously produced identical
-            // Vec::new() on both branches, so collapse to a single value.
-            for i in depth..parts.len() {
-                let mut new_children = Vec::new();
-                for name in parts.iter().skip(i + 1) {
-                    new_children.push(FsNode::Dir {
-                        name: name.to_string(),
-                        children: Vec::new(),
-                    });
-                }
-                children.push(FsNode::Dir {
-                    name: parts[i].to_string(),
-                    children: new_children,
-                });
+            children.push(FsNode::Dir {
+                name: name.to_string(),
+                children: Vec::new(),
+            });
+            let last_idx = children.len() - 1;
+            if let FsNode::Dir {
+                children: sub_children,
+                ..
+            } = &mut children[last_idx]
+            {
+                Self::create_dir_recursive(sub_children, parts, depth + 1);
             }
         }
     }
@@ -1304,27 +1336,32 @@ impl Fat32Image {
         if parts.is_empty() {
             return Err(BuildError::InvalidParam("Empty path".to_string()));
         }
-        
+
         let filename = parts.last().unwrap();
         let dir_parts = &parts[..parts.len() - 1];
-        
+
         Self::write_file_recursive(&mut self.root_children, dir_parts, filename, data.to_vec());
         Ok(self)
     }
 
-    fn write_file_recursive(children: &mut Vec<FsNode>, dir_parts: &[&str], filename: &str, data: Vec<u8>) {
+    fn write_file_recursive(
+        children: &mut Vec<FsNode>,
+        dir_parts: &[&str],
+        filename: &str,
+        data: Vec<u8>,
+    ) {
         if dir_parts.is_empty() {
             children.push(FsNode::file(filename, data));
         } else {
             let dir_name = dir_parts[0];
             let remaining = &dir_parts[1..];
-            
+
             // Find existing directory or create it (case-sensitive)
             let dir_idx = children.iter().position(|c| match c {
                 FsNode::Dir { name, .. } => name == dir_name,
                 _ => false,
             });
-            
+
             match dir_idx {
                 Some(idx) => {
                     // Directory exists, recurse
@@ -1362,7 +1399,7 @@ impl Fat32Image {
     }
 
     /// Build the FAT32 image and return the raw bytes
-    /// 
+    ///
     /// For a standalone FAT32 image, `partition_offset` should be 0.
     /// For a GPT-embedded partition, it should be the partition's starting LBA * 512.
     pub fn finalize(&mut self) -> Result<Vec<u8>> {
@@ -1375,12 +1412,9 @@ impl Fat32Image {
     /// Build the FAT32 image with a specific partition offset.
     /// This is useful when embedding FAT32 within a GPT partition.
     pub fn finalize_with_offset(&mut self, partition_offset: usize) -> Result<Vec<u8>> {
-        eprintln!("[DEBUG] Fat32Image::finalize_with_offset: partition_offset={}", partition_offset);
-        eprintln!("[DEBUG] Fat32Image::finalize_with_offset: root_children count={}", self.root_children.len());
         let mut builder = Fat32ImageBuilder::new(self.size_mb, partition_offset);
         builder.build(std::mem::take(&mut self.root_children));
         let img = builder.into_image();
-        eprintln!("[DEBUG] Fat32Image::finalize_with_offset: image size={}", img.len());
         Ok(img)
     }
 
@@ -1391,14 +1425,19 @@ impl Fat32Image {
 }
 
 impl FsBackend for Fat32Image {
-    fn kind(&self) -> &'static str { "fat32" }
+    fn kind(&self) -> &'static str {
+        "fat32"
+    }
 
     fn list_dir(&self, path: &str) -> Result<Vec<DirEntry>> {
         // Find the matching directory node.
         let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
         let mut cur: &Vec<FsNode> = &self.root_children;
         for p in &parts {
-            match cur.iter().find(|c| matches!(c, FsNode::Dir { name, .. } if name.eq_ignore_ascii_case(p))) {
+            match cur
+                .iter()
+                .find(|c| matches!(c, FsNode::Dir { name, .. } if name.eq_ignore_ascii_case(p)))
+            {
                 Some(FsNode::Dir { children, .. }) => cur = children,
                 _ => return Ok(Vec::new()),
             }
@@ -1406,7 +1445,9 @@ impl FsBackend for Fat32Image {
         let mut out = Vec::new();
         for n in cur {
             match n {
-                FsNode::File { name, data } => out.push(DirEntry::file(name.clone(), data.len() as u64)),
+                FsNode::File { name, data } => {
+                    out.push(DirEntry::file(name.clone(), data.len() as u64))
+                }
                 FsNode::Dir { name, .. } => out.push(DirEntry::dir(name.clone())),
             }
         }
@@ -1455,7 +1496,9 @@ pub fn write_gpt_header(img: &mut [u8], disk_size: u64, esp_lba: u64, esp_size: 
     // CRC32 of header (will be 0 for now)
     img[16..20].copy_from_slice(&0u32.to_le_bytes());
     // Reserved
-    for i in 0..4 { img[20 + i] = 0; }
+    for i in 0..4 {
+        img[20 + i] = 0;
+    }
     // My LBA (1)
     img[24..32].copy_from_slice(&1u64.to_le_bytes());
     // Alternate LBA
@@ -1519,12 +1562,51 @@ mod tests {
         let mut img = Fat32Image::new(64);
         img.create_dir("EFI").unwrap();
         img.create_dir("EFI/Boot").unwrap();
-        img.write_file("EFI/Boot/BOOTX64.EFI", b"boot data").unwrap();
+        img.write_file("EFI/Boot/BOOTX64.EFI", b"boot data")
+            .unwrap();
 
         let data = img.finalize().unwrap();
         assert!(data.len() > 0);
         assert_eq!(data[510], 0x55);
         assert_eq!(data[511], 0xAA);
+    }
+
+    #[test]
+    fn creates_nested_directories_without_siblings() {
+        let mut img = Fat32Image::new(64);
+        img.create_dir("Windows").unwrap();
+        img.create_dir("Windows/System32").unwrap();
+        img.create_dir("Windows/System32/config").unwrap();
+        img.write_file("Windows/System32/winload.efi", b"winload")
+            .unwrap();
+        assert_eq!(
+            img.list_dir("")
+                .unwrap()
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Windows"]
+        );
+        assert_eq!(
+            img.list_dir("Windows")
+                .unwrap()
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["System32"]
+        );
+        assert_eq!(
+            img.list_dir("Windows/System32")
+                .unwrap()
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["config", "winload.efi"]
+        );
+        assert_eq!(
+            img.read_file("Windows/System32/winload.efi").unwrap(),
+            b"winload"
+        );
     }
 
     #[test]
@@ -1535,7 +1617,17 @@ mod tests {
         assert_eq!(&b[0..3], b"EFI");
         assert_eq!(b[11], 0x10);
         // clus_hi (bytes 20-21) must be 0, clus_lo (bytes 26-27) must be 4
-        assert_eq!(&b[20..22], &[0, 0], "clus_hi should be 0, got {:02x?}", &b[20..22]);
-        assert_eq!(&b[26..28], &[4, 0], "clus_lo should be 4, got {:02x?}", &b[26..28]);
+        assert_eq!(
+            &b[20..22],
+            &[0, 0],
+            "clus_hi should be 0, got {:02x?}",
+            &b[20..22]
+        );
+        assert_eq!(
+            &b[26..28],
+            &[4, 0],
+            "clus_lo should be 4, got {:02x?}",
+            &b[26..28]
+        );
     }
 }

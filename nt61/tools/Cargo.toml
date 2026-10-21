@@ -21,6 +21,11 @@ name = "pe-test"
 path = "src/pe_test.rs"
 required-features = ["with-nt61"]
 
+[[bin]]
+name = "load-pe"
+path = "src/bin/load_pe.rs"
+required-features = ["with-nt61"]
+
 # hive-gen 需要 nt61
 [[bin]]
 name = "hive-gen"
@@ -58,4 +63,4 @@ tempfile = "3.8"
 [features]
 default = []
 testing = ["tempfile"]
-with-nt61 = ["nt61", "tempfile"]
+with-nt61 = ["nt61", "nt61?/binary_panic", "tempfile"]

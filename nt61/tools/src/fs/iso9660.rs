@@ -24,7 +24,6 @@
 use crate::error::{BuildError, Result};
 use crate::fs::backend::{DirEntry, FsBackend};
 
-
 // =====================================================================
 // Constants
 // =====================================================================
@@ -68,95 +67,95 @@ pub const EL_TORITO_TERMINATOR: u8 = 0xFF;
 #[repr(C, packed)]
 #[derive(Debug, Clone)]
 pub struct Iso9660Pvd {
-    pub type_code: u8,               // Volume descriptor type (0x01 for PVD)
-    pub identifier: [u8; 5],        // "CD001"
-    pub version: u8,                // Version (0x01)
-    pub unused1: u8,               // Unused
-    pub system_id: [u8; 32],      // System identifier
-    pub volume_id: [u8; 32],      // Volume identifier
-    pub unused2: [u8; 8],         // Unused
-    pub volume_space_size: [u8; 8], // Volume space size (LBA)
-    pub unused3: [u8; 32],        // Unused
-    pub volume_set_size: [u8; 4],  // Volume set size
-    pub volume_seq_number: [u8; 4], // Volume sequence number
-    pub logical_block_size: [u8; 4], // Logical block size (2048)
-    pub path_table_size: [u8; 8],  // Path table size
+    pub type_code: u8,                          // Volume descriptor type (0x01 for PVD)
+    pub identifier: [u8; 5],                    // "CD001"
+    pub version: u8,                            // Version (0x01)
+    pub unused1: u8,                            // Unused
+    pub system_id: [u8; 32],                    // System identifier
+    pub volume_id: [u8; 32],                    // Volume identifier
+    pub unused2: [u8; 8],                       // Unused
+    pub volume_space_size: [u8; 8],             // Volume space size (LBA)
+    pub unused3: [u8; 32],                      // Unused
+    pub volume_set_size: [u8; 4],               // Volume set size
+    pub volume_seq_number: [u8; 4],             // Volume sequence number
+    pub logical_block_size: [u8; 4],            // Logical block size (2048)
+    pub path_table_size: [u8; 8],               // Path table size
     pub location_of_type_l_path_table: [u8; 4], // LBA of type L path table
     pub location_of_optional_type_l_path_table: [u8; 4],
     pub location_of_type_m_path_table: [u8; 4],
     pub location_of_optional_type_m_path_table: [u8; 4],
-    pub root_directory_record: [u8; 34], // Root directory record
+    pub root_directory_record: [u8; 34],  // Root directory record
     pub volume_set_identifier: [u8; 128], // Volume set identifier
     pub publisher_identifier: [u8; 128],  // Publisher identifier
-    pub preparer_identifier: [u8; 128],  // Data preparer identifier
+    pub preparer_identifier: [u8; 128],   // Data preparer identifier
     pub application_identifier: [u8; 128], // Application identifier
     pub copyright_file_identifier: [u8; 37], // Copyright file identifier
     pub abstract_file_identifier: [u8; 37], // Abstract file identifier
     pub bibliographic_file_identifier: [u8; 37], // Bibliographic file identifier
-    pub volume_creation_date: [u8; 17],  // Volume creation date
+    pub volume_creation_date: [u8; 17],   // Volume creation date
     pub volume_modification_date: [u8; 17], // Volume modification date
     pub volume_expiration_date: [u8; 17], // Volume expiration date
-    pub volume_effective_date: [u8; 17], // Volume effective date
-    pub file_structure_version: u8,   // File structure version (0x01)
-    pub unused4: u8,                // Unused
-    pub application_used: [u8; 512], // Application specific
-    pub reserved: [u8; 653],       // Reserved
+    pub volume_effective_date: [u8; 17],  // Volume effective date
+    pub file_structure_version: u8,       // File structure version (0x01)
+    pub unused4: u8,                      // Unused
+    pub application_used: [u8; 512],      // Application specific
+    pub reserved: [u8; 653],              // Reserved
 }
 
 /// ISO 9660 Directory Record
 #[repr(C, packed)]
 #[derive(Debug, Clone)]
 pub struct Iso9660DirRecord {
-    pub record_length: u8,          // Directory record length
+    pub record_length: u8,             // Directory record length
     pub extended_attribute_length: u8, // Extended attribute record length
-    pub location: [u8; 8],         // Location of extent (LBA)
-    pub data_length: [u8; 8],      // Data length
-    pub recording_date_time: [u8; 7], // Recording date and time
-    pub file_flags: u8,            // File flags
-    pub file_unit_size: u8,        // File unit size
-    pub interleave_gap_size: u8,   // Interleave gap size
-    pub volume_seq_number: [u8; 4], // Volume sequence number
-    pub file_identifier_length: u8, // Length of file identifier
-    pub file_identifier: [u8; 0],  // File identifier (variable)
+    pub location: [u8; 8],             // Location of extent (LBA)
+    pub data_length: [u8; 8],          // Data length
+    pub recording_date_time: [u8; 7],  // Recording date and time
+    pub file_flags: u8,                // File flags
+    pub file_unit_size: u8,            // File unit size
+    pub interleave_gap_size: u8,       // Interleave gap size
+    pub volume_seq_number: [u8; 4],    // Volume sequence number
+    pub file_identifier_length: u8,    // Length of file identifier
+    pub file_identifier: [u8; 0],      // File identifier (variable)
 }
 
 /// El Torito Boot Record Volume Descriptor
 #[repr(C, packed)]
 #[derive(Debug, Clone)]
 pub struct ElToritoBootRecord {
-    pub type_code: u8,               // Boot record type (0x00)
-    pub identifier: [u8; 5],        // "CD001"
-    pub version: u8,                // Version (0x01)
+    pub type_code: u8,                    // Boot record type (0x00)
+    pub identifier: [u8; 5],              // "CD001"
+    pub version: u8,                      // Version (0x01)
     pub boot_system_identifier: [u8; 32], // "EL TORITO SPECIFICATION"
-    pub unused: u8,                 // Unused
-    pub boot_catalog_lba: [u8; 4], // Boot catalog LBA
-    pub unused2: [u8; 1973],       // Unused
+    pub unused: u8,                       // Unused
+    pub boot_catalog_lba: [u8; 4],        // Boot catalog LBA
+    pub unused2: [u8; 1973],              // Unused
 }
 
 /// El Torito Validation Entry (offset 0 of boot catalog, 32 bytes)
 #[repr(C, packed)]
 #[derive(Debug, Clone)]
 pub struct ElToritoValidationEntry {
-    pub header_id: u8,            // Header ID (must be 0x01)
-    pub platform_id: u8,          // Platform ID (0x00=80x86, 0xEF=EFI)
-    pub reserved1: [u8; 2],       // Reserved (2 bytes)
-    pub id_string: [u8; 24],      // ID string
-    pub checksum: u16,            // Checksum (sum of u16s ending at 0)
-    pub signature: u16,           // 0xAA55
+    pub header_id: u8,       // Header ID (must be 0x01)
+    pub platform_id: u8,     // Platform ID (0x00=80x86, 0xEF=EFI)
+    pub reserved1: [u8; 2],  // Reserved (2 bytes)
+    pub id_string: [u8; 24], // ID string
+    pub checksum: u16,       // Checksum (sum of u16s ending at 0)
+    pub signature: u16,      // 0xAA55
 }
 
 /// El Torito Initial/Default Entry
 #[repr(C, packed)]
 #[derive(Debug, Clone)]
 pub struct ElToritoBootEntry {
-    pub boot_indicator: u8,        // 0x88 = bootable
-    pub boot_media_type: u8,       // Boot media type
-    pub load_segment: u16,         // Load segment
-    pub system_type: u8,          // System type (0x00 = same as HDD)
-    pub unused1: u8,              // Unused
-    pub sector_count: u16,         // Number of sectors to load
-    pub virtual_disk_lba: u32,     // LBA of virtual disk (stored LE in struct)
-    pub unused2: [u8; 20],        // Unused
+    pub boot_indicator: u8,    // 0x88 = bootable
+    pub boot_media_type: u8,   // Boot media type
+    pub load_segment: u16,     // Load segment
+    pub system_type: u8,       // System type (0x00 = same as HDD)
+    pub unused1: u8,           // Unused
+    pub sector_count: u16,     // Number of sectors to load
+    pub virtual_disk_lba: u32, // LBA of virtual disk (stored LE in struct)
+    pub unused2: [u8; 20],     // Unused
 }
 
 // =====================================================================
@@ -175,10 +174,20 @@ pub struct IsoFileEntry {
 
 impl IsoFileEntry {
     pub fn new(path: &str, data: Vec<u8>, lba: u32) -> Self {
-        Self { path: path.to_string(), data, lba, is_dir: false }
+        Self {
+            path: path.to_string(),
+            data,
+            lba,
+            is_dir: false,
+        }
     }
     pub fn new_dir(path: &str, lba: u32) -> Self {
-        Self { path: path.to_string(), data: Vec::new(), lba, is_dir: true }
+        Self {
+            path: path.to_string(),
+            data: Vec::new(),
+            lba,
+            is_dir: true,
+        }
     }
 }
 
@@ -210,16 +219,22 @@ impl IsoImage {
     ///   decoded as ASCII fallback).
     pub fn from_bytes(data: &[u8]) -> Result<Self> {
         if data.len() < ISO_SECTOR_SIZE * 18 {
-            return Err(BuildError::IsoError("image smaller than minimum ISO 9660 layout".into()));
+            return Err(BuildError::IsoError(
+                "image smaller than minimum ISO 9660 layout".into(),
+            ));
         }
         // Find PVD (type 0x01) by scanning volume descriptors from LBA 16.
         let mut pvd_lba: usize = 16;
         let mut found_pvd = false;
         for lba in 16usize..32 {
             let off = lba * ISO_SECTOR_SIZE;
-            if off + ISO_SECTOR_SIZE > data.len() { break; }
+            if off + ISO_SECTOR_SIZE > data.len() {
+                break;
+            }
             let s = &data[off..off + ISO_SECTOR_SIZE];
-            if &s[1..6] != b"CD001" { continue; }
+            if &s[1..6] != b"CD001" {
+                continue;
+            }
             let t = s[0];
             if t == 0x01 {
                 pvd_lba = lba;
@@ -238,7 +253,8 @@ impl IsoImage {
         let root_dir_off = pvd_off + 156;
         let root_dir = &data[root_dir_off..root_dir_off + 34];
         let root_lba = u32::from_be_bytes([root_dir[2], root_dir[3], root_dir[4], root_dir[5]]);
-        let root_size = u32::from_be_bytes([root_dir[10], root_dir[11], root_dir[12], root_dir[13]]);
+        let root_size =
+            u32::from_be_bytes([root_dir[10], root_dir[11], root_dir[12], root_dir[13]]);
         // Volume ID at offset 40 of PVD, 32 bytes d-characters.
         let vol_id_bytes = &pvd[40..72];
         let volume_id = vol_id_bytes
@@ -255,7 +271,11 @@ impl IsoImage {
 
         Ok(Self {
             files,
-            volume_id: if volume_id.is_empty() { "NT6.1.7601".to_string() } else { volume_id },
+            volume_id: if volume_id.is_empty() {
+                "NT6.1.7601".to_string()
+            } else {
+                volume_id
+            },
             boot_catalog: None,
             boot_catalog_lba: 0,
             data_start_lba: 19,
@@ -322,7 +342,9 @@ impl IsoImage {
                 while sp + 3 <= sua_end {
                     let sig = &dir[sp..sp + 2];
                     let len = dir[sp + 2] as usize;
-                    if len == 0 || sp + len > sua_end { break; }
+                    if len == 0 || sp + len > sua_end {
+                        break;
+                    }
                     if sig == *b"NM" && len >= 5 {
                         let flags = dir[sp + 3];
                         if flags & 0x01 == 0 {
@@ -343,7 +365,9 @@ impl IsoImage {
                 n
             } else {
                 // Strip trailing version ";1" if present.
-                let s = std::str::from_utf8(name_raw).unwrap_or("").trim_end_matches(';');
+                let s = std::str::from_utf8(name_raw)
+                    .unwrap_or("")
+                    .trim_end_matches(';');
                 s.to_string()
             };
             if basename.is_empty() {
@@ -351,7 +375,11 @@ impl IsoImage {
                 continue;
             }
 
-            let full_path = if prefix.is_empty() { basename.clone() } else { format!("{}/{}", prefix, basename) };
+            let full_path = if prefix.is_empty() {
+                basename.clone()
+            } else {
+                format!("{}/{}", prefix, basename)
+            };
 
             if is_dir {
                 Self::walk_iso_dir(data, file_lba, file_size, &full_path, files)?;
@@ -359,10 +387,18 @@ impl IsoImage {
                 let off = (file_lba as usize) * ISO_SECTOR_SIZE;
                 let end = off + file_size as usize;
                 if end > data.len() {
-                    return Err(BuildError::IsoError(format!("file {} past end of image", full_path)));
+                    return Err(BuildError::IsoError(format!(
+                        "file {} past end of image",
+                        full_path
+                    )));
                 }
                 let content = data[off..end].to_vec();
-                files.push(IsoFileEntry { path: full_path, data: content, lba: file_lba, is_dir: false });
+                files.push(IsoFileEntry {
+                    path: full_path,
+                    data: content,
+                    lba: file_lba,
+                    is_dir: false,
+                });
             }
 
             p += rec_len;
@@ -395,7 +431,11 @@ impl IsoImage {
     pub fn list_dir_path(&self, path: &str) -> Result<Vec<DirEntry>> {
         let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
         let prefix = parts.join("/");
-        let prefix_with_slash = if prefix.is_empty() { String::new() } else { format!("{}/", prefix) };
+        let prefix_with_slash = if prefix.is_empty() {
+            String::new()
+        } else {
+            format!("{}/", prefix)
+        };
         let mut out = Vec::new();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         for e in &self.files {
@@ -405,7 +445,9 @@ impl IsoImage {
             } else {
                 ep == &prefix || ep.starts_with(&prefix_with_slash)
             };
-            if !inside { continue; }
+            if !inside {
+                continue;
+            }
             let rel = if prefix.is_empty() {
                 ep.as_str()
             } else if ep == &prefix {
@@ -413,7 +455,9 @@ impl IsoImage {
             } else {
                 &ep[prefix_with_slash.len()..]
             };
-            if rel.contains('/') { continue; }
+            if rel.contains('/') {
+                continue;
+            }
             if seen.insert(rel.to_string()) {
                 // Determine if it's a "directory" — ISO 9660 dirs are virtual,
                 // represented by the existence of files below them. We treat
@@ -456,7 +500,8 @@ impl IsoImage {
             existing.lba = lba;
             return Ok(());
         }
-        self.files.push(IsoFileEntry::new(&normalized, data.to_vec(), lba));
+        self.files
+            .push(IsoFileEntry::new(&normalized, data.to_vec(), lba));
         Ok(())
     }
 
@@ -468,11 +513,12 @@ impl IsoImage {
 
     pub fn remove_path_iso(&mut self, path: &str) -> Result<()> {
         let normalized = path.trim_start_matches('/');
-        if normalized.is_empty() { return Ok(()); }
+        if normalized.is_empty() {
+            return Ok(());
+        }
         let prefix_with_slash = format!("{}/", normalized);
-        self.files.retain(|e| {
-            !(e.path == normalized || e.path.starts_with(&prefix_with_slash))
-        });
+        self.files
+            .retain(|e| !(e.path == normalized || e.path.starts_with(&prefix_with_slash)));
         Ok(())
     }
 
@@ -501,28 +547,36 @@ impl IsoImage {
     pub fn add_boot_catalog(&mut self, _boot_image: &[u8]) -> Result<&mut Self> {
         // Look up the LBA of the boot manager (BOOTX64.EFI) in the ISO.
         // This is the PE executable that UEFI will load and execute.
-        let boot_image_lba = self.files.iter()
+        let boot_image_lba = self
+            .files
+            .iter()
             .find(|e| e.path == "/EFI/BOOT/BOOTX64.EFI")
             .map(|e| e.lba)
             .unwrap_or(19); // fallback
 
         // Sector count: number of 512-byte sectors to load.
         // Must cover the entire bootx64.efi file.
-        let sector_count = self.files.iter()
+        let sector_count = self
+            .files
+            .iter()
             .find(|e| e.path == "/EFI/BOOT/BOOTX64.EFI")
             .map(|e| e.data.len().div_ceil(512) as u16)
             .unwrap_or(1);
 
-        eprintln!("[DEBUG ISO] add_boot_catalog: boot_image_lba={} (0x{:X}), files count={}",
-            boot_image_lba, boot_image_lba, self.files.len());
+        crate::debug!(
+            "[DEBUG ISO] add_boot_catalog: boot_image_lba={} (0x{:X}), files count={}",
+            boot_image_lba,
+            boot_image_lba,
+            self.files.len()
+        );
         for (i, f) in self.files.iter().enumerate() {
-            eprintln!("[DEBUG ISO]   file[{}]: path={}, lba={}", i, f.path, f.lba);
+            crate::debug!("[DEBUG ISO]   file[{}]: path={}, lba={}", i, f.path, f.lba);
         }
 
         // Build boot catalog
         let mut catalog = Vec::new();
         let mut validation = ElToritoValidationEntry {
-            header_id: 0x01, // MUST be 0x01 per El Torito spec
+            header_id: 0x01,   // MUST be 0x01 per El Torito spec
             platform_id: 0xEF, // EFI firmware (UEFI)
             reserved1: [0; 2],
             id_string: *b"NT6.1.7601 BOOT LOADER  ",
@@ -543,11 +597,11 @@ impl IsoImage {
         }
         sum += validation.signature as u32;
         validation.checksum = (sum.wrapping_neg() & 0xFFFF) as u16;
-        
+
         // Write validation entry
         let val_bytes = validation.as_bytes();
         catalog.extend_from_slice(&val_bytes);
-        
+
         // Default boot entry
         let boot_entry = ElToritoBootEntry {
             boot_indicator: EL_TORITO_BOOT_INDICATOR,
@@ -559,21 +613,24 @@ impl IsoImage {
             virtual_disk_lba: boot_image_lba,
             unused2: [0; 20],
         };
-        
+
         // Write boot entry
         let boot_bytes = boot_entry.as_bytes();
-        eprintln!("[DEBUG ISO]   boot_entry bytes: {:02X?}", &boot_bytes[8..12]);
+        crate::debug!(
+            "[DEBUG ISO]   boot_entry bytes: {:02X?}",
+            &boot_bytes[8..12]
+        );
         catalog.extend_from_slice(&boot_bytes);
-        
+
         // Section header (for extension)
         catalog.extend_from_slice(&[0x91, 0x00, 0x00, 0x00]);
         catalog.extend_from_slice(b"FLOPPY EMULATION BOOT CATALOG");
         catalog.resize(2048, 0);
-        
+
         self.boot_catalog = Some(catalog);
         // PVD at sector 16, Boot Record at sector 17, Boot Catalog at sector 18.
         self.boot_catalog_lba = 18;
-        
+
         Ok(self)
     }
 
@@ -584,7 +641,7 @@ impl IsoImage {
     /// underscore silences the unused-parameter lint.
     fn build_pvd(&self, _root_lba: u32) -> Vec<u8> {
         let mut pvd = Vec::with_capacity(2048);
-        
+
         // Type code
         pvd.push(PVD_TYPE);
         // Identifier
@@ -593,19 +650,19 @@ impl IsoImage {
         pvd.push(0x01);
         // Unused
         pvd.push(0);
-        
+
         // System identifier (32 bytes)
         let mut sys_id = [0x20; 32];
         let sys_id_bytes = SYSTEM_ID;
         sys_id[..sys_id_bytes.len()].copy_from_slice(sys_id_bytes);
         pvd.extend_from_slice(&sys_id);
-        
+
         // Volume identifier (32 bytes)
         let mut vol_id = [0x20; 32];
         let vol_id_bytes = self.volume_id.as_bytes();
         vol_id[..vol_id_bytes.len()].copy_from_slice(vol_id_bytes);
         pvd.extend_from_slice(&vol_id);
-        
+
         // Unused
         pvd.extend_from_slice(&[0u8; 8]);
 
@@ -634,7 +691,7 @@ impl IsoImage {
         // We'll fill in the real path table size below — for now use a
         // placeholder (10) and rewrite later via raw byte fixup.
         let path_table_size_pos = pvd.len();
-        pvd.extend_from_slice(&10u32.to_le_bytes());  // placeholder
+        pvd.extend_from_slice(&10u32.to_le_bytes()); // placeholder
         pvd.extend_from_slice(&10u32.to_be_bytes());
 
         // Location of type L path table (BP 140-143): LE u32
@@ -657,40 +714,54 @@ impl IsoImage {
         let actual_pts = path_table_l.len() as u32;
         // Overwrite BP 132-135 (LE) and BP 136-139 (BE)
         let off = path_table_size_pos + 16 * ISO_SECTOR_SIZE; // file offset
-        // Offsets within sector 16
+                                                              // Offsets within sector 16
         let bp = path_table_size_pos;
         let _ = off;
         pvd[bp..bp + 4].copy_from_slice(&actual_pts.to_le_bytes());
         pvd[bp + 4..bp + 8].copy_from_slice(&actual_pts.to_be_bytes());
-        
+
         // Volume set identifier (128 bytes)
         pvd.extend_from_slice(VOLUME_SET_ID);
-        while pvd.len() < 280 { pvd.push(0x20); }
-        
+        while pvd.len() < 280 {
+            pvd.push(0x20);
+        }
+
         // Publisher identifier (128 bytes)
         pvd.extend_from_slice(b"NT6.1.7601 TEAM           ");
-        while pvd.len() < 408 { pvd.push(0x20); }
-        
+        while pvd.len() < 408 {
+            pvd.push(0x20);
+        }
+
         // Data preparer identifier (128 bytes)
         pvd.extend_from_slice(b"RUST BUILD TOOL          ");
-        while pvd.len() < 536 { pvd.push(0x20); }
-        
+        while pvd.len() < 536 {
+            pvd.push(0x20);
+        }
+
         // Application identifier (128 bytes)
         pvd.extend_from_slice(b"NT6.1.7601 BUILD TOOL    ");
-        while pvd.len() < 664 { pvd.push(0x20); }
-        
+        while pvd.len() < 664 {
+            pvd.push(0x20);
+        }
+
         // Copyright file identifier (37 bytes)
         pvd.extend_from_slice(b";Generated by NT6.1.7601 Build Tool");
-        while pvd.len() < 701 { pvd.push(0x20); }
-        
+        while pvd.len() < 701 {
+            pvd.push(0x20);
+        }
+
         // Abstract file identifier (37 bytes)
         pvd.extend_from_slice(b"NT6.1.7601 ISO 9660 IMAGE ");
-        while pvd.len() < 738 { pvd.push(0x20); }
-        
+        while pvd.len() < 738 {
+            pvd.push(0x20);
+        }
+
         // Bibliographic file identifier (37 bytes)
         pvd.push(0x20);
-        while pvd.len() < 775 { pvd.push(0x20); }
-        
+        while pvd.len() < 775 {
+            pvd.push(0x20);
+        }
+
         // Volume creation date (17 bytes)
         let mut date = [0x30; 17];
         date[0..4].copy_from_slice(b"2026");
@@ -708,28 +779,32 @@ impl IsoImage {
         date[15] = 0x30;
         date[16] = 0x30;
         pvd.extend_from_slice(&date);
-        
+
         // Volume modification date
         pvd.extend_from_slice(&date);
-        
+
         // Volume expiration date
         pvd.extend_from_slice(&[0x30; 17]);
-        
+
         // Volume effective date
         pvd.extend_from_slice(&date);
-        
+
         // File structure version
         pvd.push(0x01);
         // Unused
         pvd.push(0);
-        
+
         // Application used (512 bytes)
         pvd.extend_from_slice(b"NT6.1.7601 ISO 9660 IMAGE GENERATOR");
-        while pvd.len() < 1177 { pvd.push(0); }
-        
+        while pvd.len() < 1177 {
+            pvd.push(0);
+        }
+
         // Reserved (653 bytes)
-        while pvd.len() < 2048 { pvd.push(0); }
-        
+        while pvd.len() < 2048 {
+            pvd.push(0);
+        }
+
         pvd
     }
 
@@ -759,7 +834,7 @@ impl IsoImage {
         record[18..25].copy_from_slice(&[0x26, 0x06, 0x20, 0x26, 0x14, 0x10, 0x00]);
         // File flags
         record[25] = 0x02; // Directory
-        // File unit size
+                           // File unit size
         record[26] = 0;
         // Interleave gap size
         record[27] = 0;
@@ -768,7 +843,7 @@ impl IsoImage {
         record[29] = 0; // LE high
         record[30] = 0; // BE high
         record[31] = 1; // BE low
-        // File identifier length
+                        // File identifier length
         record[32] = 1;
         // File identifier
         record[33] = 0;
@@ -824,24 +899,28 @@ impl IsoImage {
         let mut path_table_m = Vec::new();
         for dir in &dirs {
             let lba = dir_lba(dir);
-            let name_bytes = if dir.is_empty() { b"\0".to_vec() } else { dir.as_bytes().to_vec() };
+            let name_bytes = if dir.is_empty() {
+                b"\0".to_vec()
+            } else {
+                dir.as_bytes().to_vec()
+            };
             let name_len = name_bytes.len() as u8;
 
             // Type L (little-endian) entry
             let mut entry_l = Vec::new();
-            entry_l.push(name_len);                                    // Length of directory identifier
-            entry_l.push(0);                                           // Extended attribute record length
-            entry_l.extend_from_slice(&lba.to_le_bytes());             // Location (LBA) LE
-            entry_l.extend_from_slice(&1u16.to_le_bytes());            // Parent directory number LE
+            entry_l.push(name_len); // Length of directory identifier
+            entry_l.push(0); // Extended attribute record length
+            entry_l.extend_from_slice(&lba.to_le_bytes()); // Location (LBA) LE
+            entry_l.extend_from_slice(&1u16.to_le_bytes()); // Parent directory number LE
             path_table_l.extend_from_slice(&entry_l);
             path_table_l.extend_from_slice(&name_bytes);
 
             // Type M (big-endian) entry
             let mut entry_m = Vec::new();
-            entry_m.push(name_len);                                    // Length of directory identifier
-            entry_m.push(0);                                           // Extended attribute record length
-            entry_m.extend_from_slice(&lba.to_be_bytes());             // Location (LBA) BE
-            entry_m.extend_from_slice(&1u16.to_be_bytes());            // Parent directory number BE
+            entry_m.push(name_len); // Length of directory identifier
+            entry_m.push(0); // Extended attribute record length
+            entry_m.extend_from_slice(&lba.to_be_bytes()); // Location (LBA) BE
+            entry_m.extend_from_slice(&1u16.to_be_bytes()); // Parent directory number BE
             path_table_m.extend_from_slice(&entry_m);
             path_table_m.extend_from_slice(&name_bytes);
         }
@@ -885,45 +964,6 @@ impl IsoImage {
         reserved + file_sectors + 1 + unique_dirs.len() as u32
     }
 
-    /// Pack a word (16-bit) into a 4-byte dual (LE + BE) buffer.
-    ///
-    /// ISO 9660 numeric fields that fit in 16 bits are stored as
-    /// little-endian followed by big-endian: 4 bytes total.
-    /// `pack_word(0x0100)` returns `[0x00, 0x01, 0x01, 0x00]`.
-    /// Kept available for symmetry with `pack_dword`; the build path
-    /// currently inlines the dual-byte pattern at every call site
-    /// for visibility, so this helper is unused but ready for the
-    /// day we collapse them back together.
-    #[allow(dead_code)]
-    fn pack_word(val: u16) -> [u8; 4] {
-        let mut bytes = [0u8; 4];
-        bytes[0] = (val & 0xFF) as u8;
-        bytes[1] = ((val >> 8) & 0xFF) as u8;
-        bytes[2] = ((val >> 8) & 0xFF) as u8;
-        bytes[3] = (val & 0xFF) as u8;
-        bytes
-    }
-
-    /// Pack a dword (32-bit) into an 8-byte dual (LE + BE) buffer.
-    ///
-    /// ISO 9660 32-bit numeric fields use the dual-byte-order
-    /// pattern (both-endian) — the value is encoded in LE in the
-    /// first 4 bytes and in BE in the next 4. See `pack_word` for
-    /// the rationale on why this is currently unused.
-    #[allow(dead_code)]
-    fn pack_dword(val: u32) -> [u8; 8] {
-        let mut bytes = [0u8; 8];
-        bytes[0] = (val & 0xFF) as u8;
-        bytes[1] = ((val >> 8) & 0xFF) as u8;
-        bytes[2] = ((val >> 16) & 0xFF) as u8;
-        bytes[3] = ((val >> 24) & 0xFF) as u8;
-        bytes[4] = ((val >> 24) & 0xFF) as u8;
-        bytes[5] = ((val >> 16) & 0xFF) as u8;
-        bytes[6] = ((val >> 8) & 0xFF) as u8;
-        bytes[7] = (val & 0xFF) as u8;
-        bytes
-    }
-
     /// Finalize the ISO image
     pub fn finalize(&mut self) -> Result<Vec<u8>> {
         // Compute root_dir_lba before writing.
@@ -946,7 +986,8 @@ impl IsoImage {
         //   subdir_lbas["Windows"]          = sector for /Windows
         //   subdir_lbas["Windows/System32"] = sector for /Windows/System32
         // Each subdirectory gets exactly one 2048-byte sector.
-        let mut subdir_lbas: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        let mut subdir_lbas: std::collections::HashMap<String, u32> =
+            std::collections::HashMap::new();
         let mut next_lba = root_dir_lba + 1;
         // Collect unique first-level AND second-level directory paths.
         let mut unique_dirs: Vec<String> = Vec::new();
@@ -982,8 +1023,10 @@ impl IsoImage {
         // Write Type L path table at sector 10 (referenced by PVD)
         // and Type M (big-endian) at sector 11.
         let (path_table_l, path_table_m) = self.build_path_tables();
-        image[10 * ISO_SECTOR_SIZE..10 * ISO_SECTOR_SIZE + path_table_l.len()].copy_from_slice(&path_table_l);
-        image[11 * ISO_SECTOR_SIZE..11 * ISO_SECTOR_SIZE + path_table_m.len()].copy_from_slice(&path_table_m);
+        image[10 * ISO_SECTOR_SIZE..10 * ISO_SECTOR_SIZE + path_table_l.len()]
+            .copy_from_slice(&path_table_l);
+        image[11 * ISO_SECTOR_SIZE..11 * ISO_SECTOR_SIZE + path_table_m.len()]
+            .copy_from_slice(&path_table_m);
 
         // Write PVD at sector 16 (must be first so it's found quickly)
         let pvd = self.build_pvd(root_dir_lba);
@@ -1002,11 +1045,17 @@ impl IsoImage {
 
         // Write Boot Catalog at sector 18
         if let Some(ref catalog) = self.boot_catalog {
-            eprintln!("[DEBUG ISO] finalize: writing catalog {} bytes at sector 18", catalog.len());
-            eprintln!("[DEBUG ISO] finalize: catalog[32..44]: {:02X?}", &catalog[32..44]);
+            crate::debug!(
+                "[DEBUG ISO] finalize: writing catalog {} bytes at sector 18",
+                catalog.len()
+            );
+            crate::debug!(
+                "[DEBUG ISO] finalize: catalog[32..44]: {:02X?}",
+                &catalog[32..44]
+            );
             image[18 * ISO_SECTOR_SIZE..18 * ISO_SECTOR_SIZE + 2048].copy_from_slice(catalog);
         } else {
-            eprintln!("[DEBUG ISO] finalize: NO BOOT CATALOG!");
+            crate::debug!("[DEBUG ISO] finalize: NO BOOT CATALOG!");
         }
 
         // Write files
@@ -1065,7 +1114,10 @@ impl IsoImage {
         dot[14..18].copy_from_slice(&root_size.to_be_bytes());
         dot[18..25].copy_from_slice(&[0x26, 0x06, 0x20, 0x26, 0x14, 0x10, 0x00]);
         dot[25] = 0x02; // directory
-        dot[28] = 1; dot[29] = 0; dot[30] = 0; dot[31] = 1;
+        dot[28] = 1;
+        dot[29] = 0;
+        dot[30] = 0;
+        dot[31] = 1;
         dot[32] = 1;
         dot[33] = 0;
         data.extend_from_slice(&dot);
@@ -1080,7 +1132,10 @@ impl IsoImage {
         dotdot[14..18].copy_from_slice(&root_size.to_be_bytes());
         dotdot[18..25].copy_from_slice(&[0x26, 0x06, 0x20, 0x26, 0x14, 0x10, 0x00]);
         dotdot[25] = 0x02;
-        dotdot[28] = 1; dotdot[29] = 0; dotdot[30] = 0; dotdot[31] = 1;
+        dotdot[28] = 1;
+        dotdot[29] = 0;
+        dotdot[30] = 0;
+        dotdot[31] = 1;
         dotdot[32] = 1;
         dotdot[33] = 0;
         data.extend_from_slice(&dotdot);
@@ -1153,7 +1208,10 @@ impl IsoImage {
         dot[14..18].copy_from_slice(&dir_size.to_be_bytes());
         dot[18..25].copy_from_slice(&[0x26, 0x06, 0x20, 0x26, 0x14, 0x10, 0x00]);
         dot[25] = 0x02; // directory
-        dot[28] = 1; dot[29] = 0; dot[30] = 0; dot[31] = 1;
+        dot[28] = 1;
+        dot[29] = 0;
+        dot[30] = 0;
+        dot[31] = 1;
         dot[32] = 1;
         dot[33] = 0;
         data.extend_from_slice(&dot);
@@ -1168,14 +1226,18 @@ impl IsoImage {
         dotdot[14..18].copy_from_slice(&dir_size.to_be_bytes());
         dotdot[18..25].copy_from_slice(&[0x26, 0x06, 0x20, 0x26, 0x14, 0x10, 0x00]);
         dotdot[25] = 0x02;
-        dotdot[28] = 1; dotdot[29] = 0; dotdot[30] = 0; dotdot[31] = 1;
+        dotdot[28] = 1;
+        dotdot[29] = 0;
+        dotdot[30] = 0;
+        dotdot[31] = 1;
         dotdot[32] = 1;
         dotdot[33] = 0;
         data.extend_from_slice(&dotdot);
 
         let prefix = format!("/{}/", dir_name);
         let mut sub_subdirs: Vec<String> = Vec::new();
-        let mut seen_sub_subdirs: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut seen_sub_subdirs: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         let mut direct_files: Vec<&IsoFileEntry> = Vec::new();
 
         for entry in &self.files {
@@ -1208,7 +1270,12 @@ impl IsoImage {
 
         // Emit direct file entries.
         for f in &direct_files {
-            let name = f.path.trim_start_matches('/').rsplit('/').next().unwrap_or("");
+            let name = f
+                .path
+                .trim_start_matches('/')
+                .rsplit('/')
+                .next()
+                .unwrap_or("");
             let entry = Self::make_dir_record(name, f.lba, f.data.len() as u32, false);
             data.extend_from_slice(&entry);
         }
@@ -1230,7 +1297,7 @@ impl IsoImage {
         let mut record = vec![0u8; record_len as usize];
         record[0] = record_len;
         record[1] = 0; // extended attribute length
-        // Location of extent — both byte orders
+                       // Location of extent — both byte orders
         record[2..6].copy_from_slice(&lba.to_le_bytes());
         record[6..10].copy_from_slice(&lba.to_be_bytes());
         // Data length — both byte orders
@@ -1249,7 +1316,7 @@ impl IsoImage {
         record[29] = 0; // LE high
         record[30] = 0; // BE high
         record[31] = 1; // BE low
-        // File identifier length
+                        // File identifier length
         record[32] = name_len as u8;
         // File identifier
         record[33..33 + name_len].copy_from_slice(&name_bytes[..name_len]);
@@ -1308,7 +1375,7 @@ mod tests {
     fn test_iso_creation() {
         let mut image = IsoImage::new();
         image.add_file("/test.txt", b"Hello, ISO!").unwrap();
-        
+
         let data = image.finalize().unwrap();
         assert!(data.len() > 0);
     }
@@ -1316,9 +1383,11 @@ mod tests {
     #[test]
     fn test_iso_with_boot() {
         let mut image = IsoImage::new();
-        image.add_file("/EFI/BOOT/BOOTX64.EFI", b"Boot data").unwrap();
+        image
+            .add_file("/EFI/BOOT/BOOTX64.EFI", b"Boot data")
+            .unwrap();
         image.add_boot_catalog(b"Boot catalog").unwrap();
-        
+
         let data = image.finalize().unwrap();
         assert!(data.len() > 0);
     }
@@ -1329,7 +1398,9 @@ mod tests {
 // =====================================================================
 
 impl FsBackend for IsoImage {
-    fn kind(&self) -> &'static str { "iso9660" }
+    fn kind(&self) -> &'static str {
+        "iso9660"
+    }
 
     fn list_dir(&self, path: &str) -> Result<Vec<DirEntry>> {
         IsoImage::list_dir_path(self, path)

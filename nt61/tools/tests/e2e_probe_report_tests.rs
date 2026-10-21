@@ -45,7 +45,8 @@ pub struct ProbeReport {
 impl ProbeReport {
     pub fn record(&mut self, r: ProbeResult) {
         if !r.passed {
-            *self.failures_by_category
+            *self
+                .failures_by_category
                 .entry(format!("{:?}", r.category))
                 .or_insert(0) += 1;
         }

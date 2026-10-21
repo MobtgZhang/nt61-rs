@@ -1,9 +1,8 @@
 //! Partition table parsing for the build tool.
 //!
-//! Walks the GPT (and falls back to MBR when no GPT signature is present) to
-//! expose a 1-indexed list of partitions. The CLI uses this list to resolve
-//! `-p <n>` to a byte range inside the disk image, then hands that slice to
-//! the FAT32 image reader.
+//! Walks GPT images to expose a 1-indexed list of partitions. The CLI uses
+//! this list to resolve `-p <n>` to a byte range inside the disk image, then
+//! hands that slice to the filesystem image reader.
 
 use crate::error::{BuildError, Result};
 
@@ -22,15 +21,17 @@ pub struct PartitionInfo {
     pub gpt_name: Option<String>,
 }
 
-/// Enumerate partitions. Tries GPT first, then MBR.
+/// Enumerate GPT partitions.
 pub fn list_partitions(data: &[u8]) -> Result<Vec<PartitionInfo>> {
     if data.len() < 512 {
-        return Err(BuildError::InvalidFormat("image smaller than MBR".into()));
+        return Err(BuildError::InvalidFormat("image smaller than GPT".into()));
     }
     if let Some(list) = try_gpt(data) {
         return Ok(list);
     }
-    try_mbr(data)
+    Err(BuildError::InvalidFormat(
+        "no valid GPT partition table found".into(),
+    ))
 }
 
 // =====================================================================
@@ -81,14 +82,16 @@ fn try_gpt(data: &[u8]) -> Option<Vec<PartitionInfo>> {
     } else {
         // GPT header is at LBA 2 (sector 2).
         let off = 2 * 512;
-        if data.len() < off + 92 { return None; }
+        if data.len() < off + 92 {
+            return None;
+        }
         &data[off..off + 92]
     };
     if &hdr[0..8] != b"EFI PART" {
         return None;
     }
 
-    eprintln!("[DEBUG try_gpt] GPT header found at LBA 1");
+    crate::debug!("[DEBUG try_gpt] GPT header found at LBA 1");
     // GPT partition entry array location.
     // Some GPT headers claim a non-standard partition entry LBA (e.g., sector 2),
     // so we validate the claimed location against the actual disk layout.
@@ -97,7 +100,12 @@ fn try_gpt(data: &[u8]) -> Option<Vec<PartitionInfo>> {
     let part_entry_lba_claimed = u64::from_le_bytes(hdr[72..80].try_into().unwrap());
     let num_parts = u32::from_le_bytes(hdr[80..84].try_into().unwrap()) as usize;
     let part_entry_size = u32::from_le_bytes(hdr[84..88].try_into().unwrap()) as usize;
-    eprintln!("[DEBUG try_gpt] claimed_entry_lba={}, num_parts={}, part_entry_size={}", part_entry_lba_claimed, num_parts, part_entry_size);
+    crate::debug!(
+        "[DEBUG try_gpt] claimed_entry_lba={}, num_parts={}, part_entry_size={}",
+        part_entry_lba_claimed,
+        num_parts,
+        part_entry_size
+    );
     if part_entry_size < 128 {
         return None;
     }
@@ -115,32 +123,53 @@ fn try_gpt(data: &[u8]) -> Option<Vec<PartitionInfo>> {
     let sector_size = 512u64;
 
     let has_valid_partition_entries = |sector_off: usize| -> bool {
-        if sector_off + part_entry_size > data.len() { return false; }
+        if sector_off + part_entry_size > data.len() {
+            return false;
+        }
         let entry = &data[sector_off..sector_off + part_entry_size];
         // Reject sectors that start with GPT/NTFS signatures.
-        if sector_off + 4 <= data.len() && &data[sector_off..sector_off + 4] == b"FILE" { return false; }
-        if sector_off + 8 <= data.len() && &data[sector_off..sector_off + 8] == b"EFI PART" { return false; }
+        if sector_off + 4 <= data.len() && &data[sector_off..sector_off + 4] == b"FILE" {
+            return false;
+        }
+        if sector_off + 8 <= data.len() && &data[sector_off..sector_off + 8] == b"EFI PART" {
+            return false;
+        }
         // Must have a non-zero type GUID.
-        if entry[0..16].iter().all(|b| *b == 0) { return false; }
+        if entry[0..16].iter().all(|b| *b == 0) {
+            return false;
+        }
         // Must have non-zero first_lba and first_lba <= last_lba.
-        let first_lba = u64::from_le_bytes([entry[32], entry[33], entry[34], entry[35], entry[36], entry[37], entry[38], entry[39]]);
-        let last_lba = u64::from_le_bytes([entry[40], entry[41], entry[42], entry[43], entry[44], entry[45], entry[46], entry[47]]);
-        if first_lba == 0 || last_lba < first_lba { return false; }
+        let first_lba = u64::from_le_bytes([
+            entry[32], entry[33], entry[34], entry[35], entry[36], entry[37], entry[38], entry[39],
+        ]);
+        let last_lba = u64::from_le_bytes([
+            entry[40], entry[41], entry[42], entry[43], entry[44], entry[45], entry[46], entry[47],
+        ]);
+        if first_lba == 0 || last_lba < first_lba {
+            return false;
+        }
         true
     };
 
     // Try the claimed LBA; if that sector doesn't have valid entries, fall back
     // to the canonical UEFI partition entry LBA (34).
     let part_start = if has_valid_partition_entries(claimed_start) {
-        eprintln!("[DEBUG try_gpt] using claimed LBA {} (offset {})", part_entry_lba_claimed, claimed_start);
+        crate::debug!(
+            "[DEBUG try_gpt] using claimed LBA {} (offset {})",
+            part_entry_lba_claimed,
+            claimed_start
+        );
         claimed_start
     } else {
         let canonical = 34usize * 512;
         if has_valid_partition_entries(canonical) {
-            eprintln!("[DEBUG try_gpt] using canonical LBA 34 (offset {})", canonical);
+            crate::debug!(
+                "[DEBUG try_gpt] using canonical LBA 34 (offset {})",
+                canonical
+            );
             canonical
         } else {
-            eprintln!("[DEBUG try_gpt] no valid partition entry sectors found");
+            crate::debug!("[DEBUG try_gpt] no valid partition entry sectors found");
             return None;
         }
     };
@@ -181,10 +210,15 @@ fn try_gpt(data: &[u8]) -> Option<Vec<PartitionInfo>> {
 }
 
 fn debug_print_partitions(parts: &[PartitionInfo]) {
-    eprintln!("[DEBUG try_gpt] found {} partitions:", parts.len());
+    crate::debug!("[DEBUG try_gpt] found {} partitions:", parts.len());
     for p in parts {
-        eprintln!("[DEBUG try_gpt]   partition {}: name={:?} offset={} size={}MB",
-            p.index, p.gpt_name, p.byte_offset, p.byte_size / 1024 / 1024);
+        crate::debug!(
+            "[DEBUG try_gpt]   partition {}: name={:?} offset={} size={}MB",
+            p.index,
+            p.gpt_name,
+            p.byte_offset,
+            p.byte_size / 1024 / 1024
+        );
     }
 }
 
@@ -198,43 +232,4 @@ fn utf16le_to_string(bytes: &[u8]) -> Option<String> {
         .take_while(|u| *u != 0)
         .collect();
     String::from_utf16(&units).ok()
-}
-
-// =====================================================================
-// MBR
-// =====================================================================
-
-fn try_mbr(data: &[u8]) -> Result<Vec<PartitionInfo>> {
-    if data.len() < 512 {
-        return Err(BuildError::InvalidFormat("image smaller than MBR".into()));
-    }
-    if data[510] != 0x55 || data[511] != 0xAA {
-        return Err(BuildError::InvalidFormat(
-            "no valid MBR signature (0x55AA)".into(),
-        ));
-    }
-    let mut out = Vec::new();
-    let mut idx = 1u32;
-    for i in 0..4 {
-        let off = 446 + i * 16;
-        let entry = &data[off..off + 16];
-        let type_byte = entry[4];
-        if type_byte == 0 {
-            continue;
-        }
-        let first_lba = u32::from_le_bytes(entry[8..12].try_into().unwrap()) as u64;
-        let size_lba = u32::from_le_bytes(entry[12..16].try_into().unwrap()) as u64;
-        if size_lba == 0 {
-            continue;
-        }
-        out.push(PartitionInfo {
-            index: idx,
-            byte_offset: first_lba * 512,
-            byte_size: size_lba * 512,
-            gpt_type: None,
-            gpt_name: None,
-        });
-        idx += 1;
-    }
-    Ok(out)
 }

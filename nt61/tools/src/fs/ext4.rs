@@ -65,160 +65,160 @@ pub struct Ext4SuperBlock {
     s_r_blocks_count_lo: u32,      // Reserved blocks count low
     s_free_blocks_count_lo: u32,   // Free blocks count low
     s_free_inodes_count: u32,      // Free inodes count
-    s_first_data_block: u32,        // First data block
+    s_first_data_block: u32,       // First data block
     s_log_block_size: u32,         // Block size = 1024 << s_log_block_size
     s_log_cluster_size: u32,       // Fragment size
     s_blocks_per_group: u32,       // Blocks per group
-    s_clusters_per_group: u32,      // Fragments per group
+    s_clusters_per_group: u32,     // Fragments per group
     s_inodes_per_group: u32,       // Inodes per group
     s_mtime: u32,                  // Mount time
     s_wtime: u32,                  // Write time
-    s_mnt_count: u16,             // Mount count
-    s_max_mnt_count: u16,         // Maximal mount count
-    s_magic: u16,                 // Magic signature (0xEF53)
+    s_mnt_count: u16,              // Mount count
+    s_max_mnt_count: u16,          // Maximal mount count
+    s_magic: u16,                  // Magic signature (0xEF53)
     s_state: u16,                  // File system state
     s_errors: u16,                 // Behaviour when detecting errors
     s_minor_rev_level: u16,        // Minor revision level
-    s_lastcheck: u32,             // time of last check
+    s_lastcheck: u32,              // time of last check
     s_checkinterval: u32,          // max. time between checks
-    s_creator_os: u32,            // OS
-    s_rev_level: u32,             // Revision level
-    s_def_resuid: u16,            // Default uid for reserved blocks
-    s_def_resgid: u16,            // Default gid for reserved blocks
-    s_first_ino: u32,             // First non-reserved inode
-    s_inode_size: u16,            // inode size
+    s_creator_os: u32,             // OS
+    s_rev_level: u32,              // Revision level
+    s_def_resuid: u16,             // Default uid for reserved blocks
+    s_def_resgid: u16,             // Default gid for reserved blocks
+    s_first_ino: u32,              // First non-reserved inode
+    s_inode_size: u16,             // inode size
     s_block_group_nr: u16,         // block group # of this superblock
     s_features_compat: u32,        // compatible feature set
     s_features_incompat: u32,      // incompatible feature set
     s_features_ro_compat: u32,     // readonly-compatible feature set
-    s_uuid: [u8; 16],            // 128-bit uuid for volume
-    s_volume_name: [u8; 16],      // volume name
-    s_last_mounted: [u8; 64],    // directory where last mounted
+    s_uuid: [u8; 16],              // 128-bit uuid for volume
+    s_volume_name: [u8; 16],       // volume name
+    s_last_mounted: [u8; 64],      // directory where last mounted
     s_algorithm_usage_bitmap: u32, // For compression
-    s_prealloc_blocks: u8,        // # of blocks to try to preallocate
-    s_prealloc_dir_blocks: u8,    // # of blocks to preallocate for dirs
+    s_prealloc_blocks: u8,         // # of blocks to try to preallocate
+    s_prealloc_dir_blocks: u8,     // # of blocks to preallocate for dirs
     s_reserved_gdt_blocks: u16,    // Per group desc for online growth
-    s_journal_uuid: [u8; 16],     // uuid of journal superblock
-    s_journal_inum: u32,          // inode number of journal file
-    s_journal_dev: u32,           // device number of journal file
-    s_last_orphan: u32,           // start of list of inodes to delete
-    s_hash_seed: [u32; 4],       // HTREE hash seed
-    s_def_hash_version: u8,       // Default hash version
+    s_journal_uuid: [u8; 16],      // uuid of journal superblock
+    s_journal_inum: u32,           // inode number of journal file
+    s_journal_dev: u32,            // device number of journal file
+    s_last_orphan: u32,            // start of list of inodes to delete
+    s_hash_seed: [u32; 4],         // HTREE hash seed
+    s_def_hash_version: u8,        // Default hash version
     s_reserved_char_pad: u8,
     s_reserved_word_pad: u16,
     s_default_mount_opts: u32,
-    s_first_meta_bg: u32,         // First metablock group
-    s_mkfs_time: u32,             // When the filesystem was created
-    s_journal_blocks: [u32; 17],  // Backup of the journal inode
-    s_blocks_count_hi: u32,       // Blocks count high
-    s_r_blocks_count_hi: u32,     // Reserved blocks count high
-    s_free_blocks_count_hi: u32,   // Free blocks count high
-    s_min_extra_isize: u16,       // All inodes have at least this size
-    s_want_extra_isize: u16,      // New inodes should reserve this size
-    s_flags: u32,                 // Miscellaneous flags
-    s_raid_stride: u16,           // RAID stride
-    s_mmp_update_interval: u16,   // # seconds to wait in MMP checking
-    s_raid_stripe_width: u32,     // Blocks on all data disks
-    s_log_groups_per_flex: u8,    // FLEX_BG block group exponent
+    s_first_meta_bg: u32,        // First metablock group
+    s_mkfs_time: u32,            // When the filesystem was created
+    s_journal_blocks: [u32; 17], // Backup of the journal inode
+    s_blocks_count_hi: u32,      // Blocks count high
+    s_r_blocks_count_hi: u32,    // Reserved blocks count high
+    s_free_blocks_count_hi: u32, // Free blocks count high
+    s_min_extra_isize: u16,      // All inodes have at least this size
+    s_want_extra_isize: u16,     // New inodes should reserve this size
+    s_flags: u32,                // Miscellaneous flags
+    s_raid_stride: u16,          // RAID stride
+    s_mmp_update_interval: u16,  // # seconds to wait in MMP checking
+    s_raid_stripe_width: u32,    // Blocks on all data disks
+    s_log_groups_per_flex: u8,   // FLEX_BG block group exponent
     s_reserved_char: u8,
     s_reserved_pad: u16,
-    s_kbytes_written: u64,         // Number of KiB written
-    s_snapshot_inum: u32,         // Inode number of active snapshot
-    s_snapshot_id: u32,           // Sequential ID of active snapshot
+    s_kbytes_written: u64,          // Number of KiB written
+    s_snapshot_inum: u32,           // Inode number of active snapshot
+    s_snapshot_id: u32,             // Sequential ID of active snapshot
     s_snapshot_r_blocks_count: u64, // Reserved blocks for active snapshot
-    s_snapshot_list: u32,         // Inode number of snapshot list
-    s_error_count: u32,           // Number of reported errors
-    s_first_error_time: u32,      // First error time
-    s_first_error_ino: u32,       // Inode involved in first error
-    s_first_error_block: u64,     // Block involved in first error
-    s_first_error_func: [u8; 32], // Function involved in first error
-    s_first_error_line: u32,      // Line number involved in first error
-    s_last_error_time: u32,       // Most recent error time
-    s_last_error_ino: u32,        // Most recent error inode
-    s_last_error_line: u32,       // Most recent error line
-    s_last_error_block: u64,       // Most recent error block
-    s_last_error_func: [u8; 32],  // Function involved in most recent error
+    s_snapshot_list: u32,           // Inode number of snapshot list
+    s_error_count: u32,             // Number of reported errors
+    s_first_error_time: u32,        // First error time
+    s_first_error_ino: u32,         // Inode involved in first error
+    s_first_error_block: u64,       // Block involved in first error
+    s_first_error_func: [u8; 32],   // Function involved in first error
+    s_first_error_line: u32,        // Line number involved in first error
+    s_last_error_time: u32,         // Most recent error time
+    s_last_error_ino: u32,          // Most recent error inode
+    s_last_error_line: u32,         // Most recent error line
+    s_last_error_block: u64,        // Most recent error block
+    s_last_error_func: [u8; 32],    // Function involved in most recent error
     s_mount_opts: [u8; 64],
-    s_usr_quota_inum: u32,        // Inode number of user quota file
-    s_grp_quota_inum: u32,        // Inode number of group quota file
-    s_overhead_blocks: u32,        // Overhead blocks/snapshot
-    s_backup_bgs: [u32; 2],       // Block groups containing superblock backups
-    s_encrypt_algos: [u8; 4],     // Encryption algorithms in use
-    s_reserved: [u8; 10],        // Padding to end of block
+    s_usr_quota_inum: u32,    // Inode number of user quota file
+    s_grp_quota_inum: u32,    // Inode number of group quota file
+    s_overhead_blocks: u32,   // Overhead blocks/snapshot
+    s_backup_bgs: [u32; 2],   // Block groups containing superblock backups
+    s_encrypt_algos: [u8; 4], // Encryption algorithms in use
+    s_reserved: [u8; 10],     // Padding to end of block
 }
 
 /// EXT4 Inode (standard size is 128 or 256 bytes)
 #[repr(C, packed)]
 #[derive(Debug, Clone)]
 pub struct Ext4Inode {
-    i_mode: u16,                  // File mode
-    i_uid: u16,                   // Low 16 bits of Owner Uid
-    i_size_lo: u32,               // Size low 32 bits
-    i_atime: u32,                 // Access time
-    i_ctime: u32,                 // Inode Change time
-    i_mtime: u32,                 // Modification time
-    i_dtime: u32,                 // Deletion Time
-    i_gid: u16,                   // Low 16 bits of Gid
-    i_links_count: u16,            // Links count
-    i_blocks_lo: u32,              // Blocks count (512 bytes per block)
-    i_flags: u32,                  // File flags
-    osd1: u32,                     // OS dependent 1
-    i_block: [u32; 15],          // Pointers to blocks (60 bytes: 12 direct + 3 indirect, or extent header+entries)
-    i_generation: u32,             // File version (for NFS)
-    i_file_acl: u32,               // File ACL
-    i_size_high: u32,             // Size high 32 bits
-    i_obso_faddr: u32,            // Obsoleted fragment address
-    osd2: [u8; 12],               // OS dependent 2
-    i_extra_isize: u16,           // Extra inode size
-    i_checksum_hi: u16,           // Inode checksum high
-    i_ctime_extra: u32,           // Extra change time
-    i_mtime_extra: u32,           // Extra modification time
-    i_atime_extra: u32,           // Extra access time
-    i_crtime: u32,                // File creation time
-    i_crtime_extra: u32,          // Extra file creation time
-    i_version_hi: u32,             // Version high 32 bits
+    i_mode: u16,         // File mode
+    i_uid: u16,          // Low 16 bits of Owner Uid
+    i_size_lo: u32,      // Size low 32 bits
+    i_atime: u32,        // Access time
+    i_ctime: u32,        // Inode Change time
+    i_mtime: u32,        // Modification time
+    i_dtime: u32,        // Deletion Time
+    i_gid: u16,          // Low 16 bits of Gid
+    i_links_count: u16,  // Links count
+    i_blocks_lo: u32,    // Blocks count (512 bytes per block)
+    i_flags: u32,        // File flags
+    osd1: u32,           // OS dependent 1
+    i_block: [u32; 15], // Pointers to blocks (60 bytes: 12 direct + 3 indirect, or extent header+entries)
+    i_generation: u32,  // File version (for NFS)
+    i_file_acl: u32,    // File ACL
+    i_size_high: u32,   // Size high 32 bits
+    i_obso_faddr: u32,  // Obsoleted fragment address
+    osd2: [u8; 12],     // OS dependent 2
+    i_extra_isize: u16, // Extra inode size
+    i_checksum_hi: u16, // Inode checksum high
+    i_ctime_extra: u32, // Extra change time
+    i_mtime_extra: u32, // Extra modification time
+    i_atime_extra: u32, // Extra access time
+    i_crtime: u32,      // File creation time
+    i_crtime_extra: u32, // Extra file creation time
+    i_version_hi: u32,  // Version high 32 bits
 }
 
 /// EXT4 Extent Header
 #[repr(C, packed)]
 #[derive(Debug, Clone)]
 pub struct Ext4ExtentHeader {
-    eh_magic: u16,                 // Magic number (0xF30A)
-    eh_entries: u16,               // Number of valid entries
-    eh_max: u16,                  // Capacity of store entries
-    eh_depth: u16,                // Current depth
-    eh_generation: u32,           // Generation of tree
+    eh_magic: u16,      // Magic number (0xF30A)
+    eh_entries: u16,    // Number of valid entries
+    eh_max: u16,        // Capacity of store entries
+    eh_depth: u16,      // Current depth
+    eh_generation: u32, // Generation of tree
 }
 
 /// EXT4 Extent Index (for internal nodes)
 #[repr(C, packed)]
 #[derive(Debug, Clone)]
 pub struct Ext4ExtentIdx {
-    ei_leaf_lo: u32,               // Lower 32-bits of block number
-    ei_leaf_hi: u16,              // Upper 16-bits of block number
-    ei_unused: u16,               // Unused
-    ei_block: u32,                // This mapping covers this logical block
+    ei_leaf_lo: u32, // Lower 32-bits of block number
+    ei_leaf_hi: u16, // Upper 16-bits of block number
+    ei_unused: u16,  // Unused
+    ei_block: u32,   // This mapping covers this logical block
 }
 
 /// EXT4 Extent (for leaf nodes)
 #[repr(C, packed)]
 #[derive(Debug, Clone)]
 pub struct Ext4Extent {
-    ee_block: u16,                 // First logical block covered
-    ee_len: u16,                  // Number of blocks covered
-    ee_start_hi: u16,            // Upper 16-bits of physical block
-    ee_start_lo: u32,             // Lower 32-bits of physical block
+    ee_block: u16,    // First logical block covered
+    ee_len: u16,      // Number of blocks covered
+    ee_start_hi: u16, // Upper 16-bits of physical block
+    ee_start_lo: u32, // Lower 32-bits of physical block
 }
 
 /// EXT4 Directory Entry (variable size)
 #[repr(C, packed)]
 #[derive(Debug, Clone)]
 pub struct Ext4DirEntry {
-    d_inode: u32,                  // Inode number (0 = unused)
-    d_rec_len: u16,              // Directory entry length
-    d_name_len: u16,             // Filename length
-    d_type: u8,                   // File type
-    d_name: [u8; 0],            // Filename (variable length)
+    d_inode: u32,    // Inode number (0 = unused)
+    d_rec_len: u16,  // Directory entry length
+    d_name_len: u16, // Filename length
+    d_type: u8,      // File type
+    d_name: [u8; 0], // Filename (variable length)
 }
 
 // =====================================================================
@@ -277,9 +277,6 @@ pub struct Ext4Image {
     /// by `from_bytes`. The first call to a builder method (create_dir /
     /// write_file) clears it because the user has switched to "builder mode".
     pub(crate) parsed_root: Vec<FileEntry>,
-    /// Parsed superblock, if any. Used by `finalize` to preserve layout.
-    #[allow(dead_code)]
-    pub(crate) parsed_superblock: Option<Ext4SuperBlock>,
 }
 
 impl Ext4Image {
@@ -291,9 +288,10 @@ impl Ext4Image {
     pub fn new(size_mb: u32, block_size: u32) -> Result<Self> {
         // Validate block size
         if block_size != 1024 && block_size != 2048 && block_size != 4096 {
-            return Err(BuildError::Ext4Error(
-                format!("Invalid block size: {}. Must be 1024, 2048, or 4096", block_size)
-            ));
+            return Err(BuildError::Ext4Error(format!(
+                "Invalid block size: {}. Must be 1024, 2048, or 4096",
+                block_size
+            )));
         }
 
         let total_blocks = (size_mb as u64) * 1024 * 1024 / (block_size as u64);
@@ -313,7 +311,6 @@ impl Ext4Image {
             files: Vec::new(),
             dirs: Vec::new(),
             parsed_root: Vec::new(),
-            parsed_superblock: None,
         })
     }
 
@@ -332,7 +329,9 @@ impl Ext4Image {
     /// recovery, and `EXT4_INLINE_DATA_FL` outside the small-file path.
     pub fn from_bytes(data: &[u8]) -> Result<Self> {
         if data.len() < 4096 {
-            return Err(BuildError::Ext4Error("image smaller than EXT4 superblock region".into()));
+            return Err(BuildError::Ext4Error(
+                "image smaller than EXT4 superblock region".into(),
+            ));
         }
         // Superblock at offset 1024, length 256.
         let sb_off = 1024;
@@ -340,27 +339,35 @@ impl Ext4Image {
         let magic = u16::from_le_bytes([sb_bytes[56], sb_bytes[57]]);
         if magic != EXT4_SUPERBLOCK_MAGIC {
             return Err(BuildError::Ext4Error(format!(
-                "not an EXT4 superblock (magic=0x{:X})", magic
+                "not an EXT4 superblock (magic=0x{:X})",
+                magic
             )));
         }
-        let s_log_block_size = u32::from_le_bytes([sb_bytes[24], sb_bytes[25], sb_bytes[26], sb_bytes[27]]);
+        let s_log_block_size =
+            u32::from_le_bytes([sb_bytes[24], sb_bytes[25], sb_bytes[26], sb_bytes[27]]);
         let block_size: u32 = 1024u32 << s_log_block_size;
         if block_size != 1024 && block_size != 2048 && block_size != 4096 {
             return Err(BuildError::Ext4Error(format!(
-                "unsupported block size: {}", block_size
+                "unsupported block size: {}",
+                block_size
             )));
         }
         let inode_size = u16::from_le_bytes([sb_bytes[88], sb_bytes[89]]);
         if inode_size < 128 {
             return Err(BuildError::Ext4Error(format!(
-                "inode size too small: {}", inode_size
+                "inode size too small: {}",
+                inode_size
             )));
         }
-        let blocks_per_group = u32::from_le_bytes([sb_bytes[32], sb_bytes[33], sb_bytes[34], sb_bytes[35]]);
-        let inodes_per_group = u32::from_le_bytes([sb_bytes[40], sb_bytes[41], sb_bytes[42], sb_bytes[43]]);
-        let total_blocks = u32::from_le_bytes([sb_bytes[4], sb_bytes[5], sb_bytes[6], sb_bytes[7]]) as u64;
+        let blocks_per_group =
+            u32::from_le_bytes([sb_bytes[32], sb_bytes[33], sb_bytes[34], sb_bytes[35]]);
+        let inodes_per_group =
+            u32::from_le_bytes([sb_bytes[40], sb_bytes[41], sb_bytes[42], sb_bytes[43]]);
+        let total_blocks =
+            u32::from_le_bytes([sb_bytes[4], sb_bytes[5], sb_bytes[6], sb_bytes[7]]) as u64;
         let inodes_count = u32::from_le_bytes([sb_bytes[0], sb_bytes[1], sb_bytes[2], sb_bytes[3]]);
-        let first_data_block = u32::from_le_bytes([sb_bytes[20], sb_bytes[21], sb_bytes[22], sb_bytes[23]]);
+        let first_data_block =
+            u32::from_le_bytes([sb_bytes[20], sb_bytes[21], sb_bytes[22], sb_bytes[23]]);
 
         // Block group descriptor table location:
         // - 1024-byte blocks: superblock at block 1, BGDT at block 2
@@ -368,7 +375,11 @@ impl Ext4Image {
         // - 4096-byte blocks: superblock at byte 1024 of block 0, BGDT at block 1
         // In practice: BGDT at block first_data_block + 1 (for non-1024 blocks)
         // and at block first_data_block + 2 for 1024 blocks.
-        let bgdt_block = if block_size == 1024 { first_data_block + 2 } else { first_data_block + 1 };
+        let bgdt_block = if block_size == 1024 {
+            first_data_block + 2
+        } else {
+            first_data_block + 1
+        };
         let bgdt_off = (bgdt_block as usize) * (block_size as usize);
         if bgdt_off + 32 > data.len() {
             return Err(BuildError::Ext4Error("BGDT past end of image".into()));
@@ -423,16 +434,31 @@ impl Ext4Image {
             let i_file_acl = u32::from_le_bytes([b[104], b[105], b[106], b[107]]);
             let i_size_high = u32::from_le_bytes([b[108], b[109], b[110], b[111]]);
             Some(Ext4Inode {
-                i_mode, i_uid, i_size_lo, i_size_high,
-                i_atime, i_ctime, i_mtime, i_dtime,
-                i_gid, i_links_count, i_blocks_lo,
-                i_flags, osd1: 0, i_block,
-                i_generation, i_file_acl,
+                i_mode,
+                i_uid,
+                i_size_lo,
+                i_size_high,
+                i_atime,
+                i_ctime,
+                i_mtime,
+                i_dtime,
+                i_gid,
+                i_links_count,
+                i_blocks_lo,
+                i_flags,
+                osd1: 0,
+                i_block,
+                i_generation,
+                i_file_acl,
                 i_obso_faddr: 0,
                 osd2: [0; 12],
-                i_extra_isize: 32, i_checksum_hi: 0,
-                i_ctime_extra: 0, i_mtime_extra: 0,
-                i_atime_extra: 0, i_crtime: 0, i_crtime_extra: 0,
+                i_extra_isize: 32,
+                i_checksum_hi: 0,
+                i_ctime_extra: 0,
+                i_mtime_extra: 0,
+                i_atime_extra: 0,
+                i_crtime: 0,
+                i_crtime_extra: 0,
                 i_version_hi: 0,
             })
         };
@@ -448,10 +474,14 @@ impl Ext4Image {
                 let _ = logical;
                 let blk_bytes = (len as usize) * (block_size as usize);
                 let file_off = (phys as usize) * (block_size as usize);
-                if file_off + blk_bytes > data.len() { break; }
+                if file_off + blk_bytes > data.len() {
+                    break;
+                }
                 let take = blk_bytes.min((size as usize).saturating_sub(out.len()));
                 out.extend_from_slice(&data[file_off..file_off + take]);
-                if out.len() >= size as usize { break; }
+                if out.len() >= size as usize {
+                    break;
+                }
             }
             out.truncate(size as usize);
             out
@@ -467,100 +497,16 @@ impl Ext4Image {
         let mut visited = std::collections::HashSet::new();
         visited.insert(0);
         let mut root = parse_inode_recursive(
-            data, block_size, 2, 0,
-            &read_inode, &read_data, &mut visited,
+            data,
+            block_size,
+            2,
+            0,
+            &read_inode,
+            &read_data,
+            &mut visited,
         )?;
         root.name = String::new();
         let parsed_root = root.children;
-        // Build superblock for finalize reuse.
-        let sb = Ext4SuperBlock {
-            s_inodes_count: inodes_count,
-            s_blocks_count_lo: total_blocks as u32,
-            s_r_blocks_count_lo: 0,
-            s_free_blocks_count_lo: 0,
-            s_free_inodes_count: 0,
-            s_first_data_block: first_data_block,
-            s_log_block_size,
-            s_log_cluster_size: s_log_block_size,
-            s_blocks_per_group: blocks_per_group,
-            s_clusters_per_group: blocks_per_group,
-            s_inodes_per_group: inodes_per_group,
-            s_mtime: 0,
-            s_wtime: 0,
-            s_mnt_count: 0,
-            s_max_mnt_count: 0xFFFF,
-            s_magic: EXT4_SUPERBLOCK_MAGIC,
-            s_state: 1,
-            s_errors: 0,
-            s_minor_rev_level: 0,
-            s_lastcheck: 0,
-            s_checkinterval: 0,
-            s_creator_os: 0,
-            s_rev_level: 1,
-            s_def_resuid: 0,
-            s_def_resgid: 0,
-            s_first_ino: 11,
-            s_inode_size: inode_size,
-            s_block_group_nr: 0,
-            s_features_compat: 0,
-            s_features_incompat: EXT3_FEATURE_INCOMPAT_FILETYPE,
-            s_features_ro_compat: 0,
-            s_uuid: [0; 16],
-            s_volume_name: [0; 16],
-            s_last_mounted: [0; 64],
-            s_algorithm_usage_bitmap: 0,
-            s_prealloc_blocks: 0,
-            s_prealloc_dir_blocks: 0,
-            s_reserved_gdt_blocks: 0,
-            s_journal_uuid: [0; 16],
-            s_journal_inum: 0,
-            s_journal_dev: 0,
-            s_last_orphan: 0,
-            s_hash_seed: [0; 4],
-            s_def_hash_version: 0,
-            s_reserved_char_pad: 0,
-            s_reserved_word_pad: 0,
-            s_default_mount_opts: 0,
-            s_first_meta_bg: 0,
-            s_mkfs_time: 0,
-            s_journal_blocks: [0; 17],
-            s_blocks_count_hi: 0,
-            s_r_blocks_count_hi: 0,
-            s_free_blocks_count_hi: 0,
-            s_min_extra_isize: 32,
-            s_want_extra_isize: 32,
-            s_flags: 0,
-            s_raid_stride: 0,
-            s_mmp_update_interval: 0,
-            s_raid_stripe_width: 0,
-            s_log_groups_per_flex: 0,
-            s_reserved_char: 0,
-            s_reserved_pad: 0,
-            s_kbytes_written: 0,
-            s_snapshot_inum: 0,
-            s_snapshot_id: 0,
-            s_snapshot_r_blocks_count: 0,
-            s_snapshot_list: 0,
-            s_error_count: 0,
-            s_first_error_time: 0,
-            s_first_error_ino: 0,
-            s_first_error_block: 0,
-            s_first_error_func: [0; 32],
-            s_first_error_line: 0,
-            s_last_error_time: 0,
-            s_last_error_ino: 0,
-            s_last_error_line: 0,
-            s_last_error_block: 0,
-            s_last_error_func: [0; 32],
-            s_mount_opts: [0; 64],
-            s_usr_quota_inum: 0,
-            s_grp_quota_inum: 0,
-            s_overhead_blocks: 0,
-            s_backup_bgs: [0; 2],
-            s_encrypt_algos: [0; 4],
-            s_reserved: [0; 10],
-        };
-
         Ok(Self {
             size_mb: (data.len() / (1024 * 1024)) as u32,
             block_size,
@@ -573,7 +519,6 @@ impl Ext4Image {
             files: Vec::new(),
             dirs: Vec::new(),
             parsed_root,
-            parsed_superblock: Some(sb),
         })
     }
 
@@ -609,31 +554,6 @@ impl Ext4Image {
         cur
     }
 
-    #[allow(dead_code)]
-    fn find_parsed_mut<'a>(&'a mut self, parts: &[&str]) -> Option<&'a mut FileEntry> {
-        // We can't return a mutable reference to a sub-tree through &mut self
-        // and a slice of the sub-tree. Workaround: walk recursively.
-        fn walk<'b>(level: &'b mut [FileEntry], parts: &[&str]) -> Option<&'b mut FileEntry> {
-            if parts.is_empty() {
-                return None;
-            }
-            let head = parts[0];
-            let tail = &parts[1..];
-            for e in level.iter_mut() {
-                if e.name == head {
-                    if tail.is_empty() {
-                        return Some(e);
-                    }
-                    if e.is_dir {
-                        return walk(&mut e.children, tail);
-                    }
-                }
-            }
-            None
-        }
-        walk(&mut self.parsed_root, parts)
-    }
-
     /// List immediate children of `path`.
     pub fn list_dir_path(&self, path: &str) -> Result<Vec<DirEntry>> {
         let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
@@ -647,13 +567,16 @@ impl Ext4Image {
                 None => return Ok(Vec::new()),
             }
         };
-        Ok(children.iter().map(|c| {
-            if c.is_dir {
-                DirEntry::dir(c.name.clone())
-            } else {
-                DirEntry::file(c.name.clone(), c.data.len() as u64)
-            }
-        }).collect())
+        Ok(children
+            .iter()
+            .map(|c| {
+                if c.is_dir {
+                    DirEntry::dir(c.name.clone())
+                } else {
+                    DirEntry::file(c.name.clone(), c.data.len() as u64)
+                }
+            })
+            .collect())
     }
 
     pub fn read_file_path(&self, path: &str) -> Result<Vec<u8>> {
@@ -702,12 +625,16 @@ impl Ext4Image {
 
     pub fn mkdir_path(&mut self, path: &str) -> Result<()> {
         let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-        if parts.is_empty() { return Ok(()); }
+        if parts.is_empty() {
+            return Ok(());
+        }
         let mut level: &mut Vec<FileEntry> = &mut self.parsed_root;
         for d in &parts {
             let pos = level.iter().position(|e| e.is_dir && e.name == *d);
             match pos {
-                Some(idx) => { level = &mut level[idx].children; }
+                Some(idx) => {
+                    level = &mut level[idx].children;
+                }
                 None => {
                     level.push(FileEntry::new_dir(d, Vec::new()));
                     let last = level.len() - 1;
@@ -720,7 +647,9 @@ impl Ext4Image {
 
     pub fn remove_path_ext4(&mut self, path: &str) -> Result<()> {
         let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-        if parts.is_empty() { return Ok(()); }
+        if parts.is_empty() {
+            return Ok(());
+        }
         let (target, parent_parts) = parts.split_last().unwrap();
         fn walk_remove(level: &mut Vec<FileEntry>, target: &str, parent_parts: &[&str]) -> bool {
             if parent_parts.is_empty() {
@@ -753,7 +682,7 @@ impl Ext4Image {
     /// Build the superblock
     fn build_superblock(&self) -> Ext4SuperBlock {
         let block_group_count = calc_bg_count(self.total_blocks, self.blocks_per_group);
-        
+
         Ext4SuperBlock {
             s_inodes_count: self.inodes_per_group * block_group_count,
             s_blocks_count_lo: self.total_blocks as u32,
@@ -784,8 +713,12 @@ impl Ext4Image {
             s_inode_size: self.inode_size,
             s_block_group_nr: 0,
             s_features_compat: 0,
-            s_features_incompat: EXT3_FEATURE_INCOMPAT_FILETYPE | EXT4_FEATURE_INCOMPAT_FLEX_BG | EXT4_FEATURE_INCOMPAT_64BIT,
-            s_features_ro_compat: EXT4_FEATURE_RO_COMPAT_GDT_CSUM | EXT4_FEATURE_RO_COMPAT_DIR_NLINK | EXT4_FEATURE_RO_COMPAT_SPARSESUPER2,
+            s_features_incompat: EXT3_FEATURE_INCOMPAT_FILETYPE
+                | EXT4_FEATURE_INCOMPAT_FLEX_BG
+                | EXT4_FEATURE_INCOMPAT_64BIT,
+            s_features_ro_compat: EXT4_FEATURE_RO_COMPAT_GDT_CSUM
+                | EXT4_FEATURE_RO_COMPAT_DIR_NLINK
+                | EXT4_FEATURE_RO_COMPAT_SPARSESUPER2,
             s_uuid: [0; 16],
             s_volume_name: [0; 16],
             s_last_mounted: [0; 64],
@@ -843,80 +776,6 @@ impl Ext4Image {
         }
     }
 
-    /// Build an inode for a file or directory
-    #[allow(dead_code)]
-    fn build_inode(&self, is_dir: bool, data: &[u8]) -> Ext4Inode {
-        let mut inode = Ext4Inode {
-            i_mode: if is_dir { 0x41ED } else { 0x81A4 }, // Directory/Regular with permissions
-            i_uid: 0,
-            i_size_lo: data.len() as u32,
-            i_atime: 0,
-            i_ctime: 0,
-            i_mtime: 0,
-            i_dtime: 0,
-            i_gid: 0,
-            i_links_count: if is_dir { 2 } else { 1 },
-            i_blocks_lo: (data.len() as u32).div_ceil(512),
-            i_flags: 0,
-            osd1: 0,
-            i_block: [0; 15],
-            i_generation: 0,
-            i_file_acl: 0,
-            i_size_high: 0,
-            i_obso_faddr: 0,
-            osd2: [0; 12],
-            i_extra_isize: 32,
-            i_checksum_hi: 0,
-            i_ctime_extra: 0,
-            i_mtime_extra: 0,
-            i_atime_extra: 0,
-            i_crtime: 0,
-            i_crtime_extra: 0,
-            i_version_hi: 0,
-        };
-
-        // Use extents for file data
-        if !data.is_empty() {
-            // For simplicity, we use inline data approach via i_block
-            // In a full implementation, we'd allocate blocks and use extents
-            let extent_header = Ext4ExtentHeader {
-                eh_magic: 0xF30A,
-                eh_entries: 1,
-                eh_max: 4,
-                eh_depth: 0,
-                eh_generation: 0,
-            };
-            
-            // Copy extent header bytes to i_block as u32s
-            let header_bytes = extent_header.as_bytes();
-            for (i, chunk) in header_bytes.chunks(4).enumerate() {
-                let mut val = 0u32;
-                for (j, &b) in chunk.iter().enumerate() {
-                    val |= (b as u32) << (j * 8);
-                }
-                inode.i_block[i] = val;
-            }
-            
-            // Copy extent bytes to i_block
-            let extent = Ext4Extent {
-                ee_block: 0,
-                ee_len: data.len().div_ceil(self.block_size as usize) as u16,
-                ee_start_hi: 0,
-                ee_start_lo: 12, // Data starts at block 12
-            };
-            let extent_bytes = extent.as_bytes();
-            for (i, chunk) in extent_bytes.chunks(4).enumerate() {
-                let mut val = 0u32;
-                for (j, &b) in chunk.iter().enumerate() {
-                    val |= (b as u32) << (j * 8);
-                }
-                inode.i_block[3 + i] = val;
-            }
-        }
-
-        inode
-    }
-
     /// Finalize the image and return raw bytes.
     ///
     /// Builds a minimal EXT4 image that the existing in-tree EXT4 reader
@@ -945,14 +804,14 @@ impl Ext4Image {
         if self.parsed_root.is_empty() && (!self.files.is_empty() || !self.dirs.is_empty()) {
             let mut sorted_paths: Vec<(String, Vec<u8>)> = self.files.clone();
             sorted_paths.sort_by(|a, b| a.0.cmp(&b.0));
-            for (path, data) in sorted_paths {
-                let _ = Ext4Image::write_file_path(self, &path, &data);
+            for (path, data) in sorted_paths.iter() {
+                let _ = Ext4Image::write_file_path(self, path, data);
             }
             let mut sorted_dirs: Vec<String> = self.dirs.clone();
             sorted_dirs.sort();
             sorted_dirs.dedup();
-            for d in sorted_dirs {
-                let _ = Ext4Image::mkdir_path(self, &d);
+            for d in sorted_dirs.iter() {
+                let _ = Ext4Image::mkdir_path(self, d);
             }
         }
 
@@ -991,7 +850,11 @@ impl Ext4Image {
             let mut alloc = Ext4Alloc {
                 ino,
                 is_dir: entry.is_dir,
-                data: if entry.is_dir { Vec::new() } else { entry.data.clone() },
+                data: if entry.is_dir {
+                    Vec::new()
+                } else {
+                    entry.data.clone()
+                },
                 children: Vec::new(),
                 dir_block: Vec::new(),
                 patches: Vec::new(),
@@ -1017,7 +880,11 @@ impl Ext4Image {
         let inode_table_start: u32 = 4;
         let mut data_block: u32 = inode_table_start + inode_table_blocks as u32;
         for alloc in allocs.iter_mut() {
-            let data = if alloc.is_dir { &alloc.dir_block } else { &alloc.data };
+            let data = if alloc.is_dir {
+                &alloc.dir_block
+            } else {
+                &alloc.data
+            };
             if data.is_empty() {
                 alloc.first_block = 0;
                 alloc.blocks_in_file = 0;
@@ -1036,8 +903,7 @@ impl Ext4Image {
             for (slot, &child_idx) in children.iter().enumerate() {
                 let child_ino = allocs[child_idx].ino;
                 let (off, _) = allocs[alloc_idx].patches[slot];
-                allocs[alloc_idx].dir_block[off..off + 4]
-                    .copy_from_slice(&child_ino.to_le_bytes());
+                allocs[alloc_idx].dir_block[off..off + 4].copy_from_slice(&child_ino.to_le_bytes());
                 allocs[alloc_idx].patches[slot] = (off, child_ino);
             }
         }
@@ -1073,13 +939,23 @@ impl Ext4Image {
         for alloc in &allocs {
             let local = (alloc.ino - 1) as usize;
             let off = local * 256;
-            if off + 256 > inode_table.len() { continue; }
+            if off + 256 > inode_table.len() {
+                continue;
+            }
             let content = if alloc.is_dir {
-                build_inode_bytes_dir(0o755, alloc.dir_block.len() as u32,
-                    alloc.first_block, alloc.blocks_in_file)
+                build_inode_bytes_dir(
+                    0o755,
+                    alloc.dir_block.len() as u32,
+                    alloc.first_block,
+                    alloc.blocks_in_file,
+                )
             } else {
-                build_inode_bytes_file(0o644, alloc.data.len() as u32,
-                    alloc.first_block, alloc.blocks_in_file)
+                build_inode_bytes_file(
+                    0o644,
+                    alloc.data.len() as u32,
+                    alloc.first_block,
+                    alloc.blocks_in_file,
+                )
             };
             inode_table[off..off + content.len().min(256)]
                 .copy_from_slice(&content[..content.len().min(256)]);
@@ -1099,8 +975,14 @@ impl Ext4Image {
         let it_off = (inode_table_start as usize) * bs;
         image[it_off..it_off + inode_table.len()].copy_from_slice(&inode_table);
         for alloc in &allocs {
-            let data = if alloc.is_dir { &alloc.dir_block } else { &alloc.data };
-            if data.is_empty() { continue; }
+            let data = if alloc.is_dir {
+                &alloc.dir_block
+            } else {
+                &alloc.data
+            };
+            if data.is_empty() {
+                continue;
+            }
             let off = (alloc.first_block as usize) * bs;
             image[off..off + data.len()].copy_from_slice(data);
         }
@@ -1146,7 +1028,8 @@ fn parse_inode_recursive(
     if !visited.insert(ino) {
         return Err(BuildError::Ext4Error(format!("cycle at inode {}", ino)));
     }
-    let inode = read_inode(ino).ok_or_else(|| BuildError::Ext4Error(format!("inode {} not found", ino)))?;
+    let inode =
+        read_inode(ino).ok_or_else(|| BuildError::Ext4Error(format!("inode {} not found", ino)))?;
     let is_dir = (inode.i_mode & 0xF000) == 0x4000;
     let is_symlink = (inode.i_mode & 0xF000) == 0xA000;
     let is_reg = (inode.i_mode & 0xF000) == 0x8000;
@@ -1197,7 +1080,9 @@ fn parse_inode_recursive(
             let d = &dir_data[off..];
             let inode_num = u32::from_le_bytes([d[0], d[1], d[2], d[3]]);
             let rec_len = u16::from_le_bytes([d[4], d[5]]) as usize;
-            if rec_len == 0 || rec_len > dir_data.len() - off { break; }
+            if rec_len == 0 || rec_len > dir_data.len() - off {
+                break;
+            }
             let name_len = d[6] as usize;
             let _file_type = d[7];
             if inode_num != 0 && name_len > 0 && name_len + 8 <= rec_len {
@@ -1207,8 +1092,13 @@ fn parse_inode_recursive(
                 if name != "." && name != ".." {
                     // Recurse.
                     match parse_inode_recursive(
-                        data, bs, inode_num, depth + 1,
-                        read_inode, read_data, visited,
+                        data,
+                        bs,
+                        inode_num,
+                        depth + 1,
+                        read_inode,
+                        read_data,
+                        visited,
                     ) {
                         Ok(mut child) => {
                             child.name = name;
@@ -1238,12 +1128,18 @@ fn parse_inode_recursive(
 /// generator never emits that layout.
 fn walk_extents(data: &[u8], bs: u32, i_block: &[u32; 15]) -> Vec<(u32, u32, u16)> {
     let mut out = Vec::new();
-    if i_block[0] == 0 { return out; }
+    if i_block[0] == 0 {
+        return out;
+    }
     let hdr_off = (i_block[0] as usize) * (bs as usize);
-    if hdr_off + 12 > data.len() { return out; }
+    if hdr_off + 12 > data.len() {
+        return out;
+    }
     let hdr = &data[hdr_off..hdr_off + 12];
     let eh_magic = u16::from_le_bytes([hdr[0], hdr[1]]);
-    if eh_magic != 0xF30A { return out; }
+    if eh_magic != 0xF30A {
+        return out;
+    }
     let eh_entries = u16::from_le_bytes([hdr[2], hdr[3]]);
     let eh_max = u16::from_le_bytes([hdr[4], hdr[5]]);
     let eh_depth = u16::from_le_bytes([hdr[6], hdr[7]]);
@@ -1251,42 +1147,66 @@ fn walk_extents(data: &[u8], bs: u32, i_block: &[u32; 15]) -> Vec<(u32, u32, u16
         // All entries are leaf extents.
         for i in 0..eh_entries as usize {
             let idx = 3 + i;
-            if idx + 2 >= 15 { break; }
+            if idx + 2 >= 15 {
+                break;
+            }
             let word1 = i_block[idx];
             let word2 = i_block[idx + 1];
             let ee_block = word1 & 0xFFFF;
             let ee_len = ((word1 >> 16) & 0xFFFF) as u16;
             let ee_start = ((word2 & 0xFFFF) << 16) | (word2 >> 16);
-            if ee_len == 0 { break; }
+            if ee_len == 0 {
+                break;
+            }
             out.push((ee_block, ee_start, ee_len));
         }
     } else {
         // Each entry is an Ext4ExtentIdx pointing to an L2 block.
         for i in 0..eh_entries as usize {
             let idx = 3 + i;
-            if idx + 2 >= 15 { break; }
+            if idx + 2 >= 15 {
+                break;
+            }
             let word = i_block[idx];
             let ei_block = word & 0xFFFF;
             let ei_leaf_lo = word >> 16;
             let ei_leaf_hi = i_block[idx + 1];
             let leaf_block = (ei_leaf_hi << 16) | ei_leaf_lo;
             let leaf_off = (leaf_block as usize) * (bs as usize);
-            if leaf_off + 12 > data.len() { continue; }
+            if leaf_off + 12 > data.len() {
+                continue;
+            }
             // Parse leaf extent header at leaf_off.
             let leaf_hdr = &data[leaf_off..leaf_off + 12];
             let lh_magic = u16::from_le_bytes([leaf_hdr[0], leaf_hdr[1]]);
-            if lh_magic != 0xF30A { continue; }
+            if lh_magic != 0xF30A {
+                continue;
+            }
             let lh_entries = u16::from_le_bytes([leaf_hdr[2], leaf_hdr[3]]);
             for j in 0..lh_entries as usize {
                 let e_off = leaf_off + 12 + j * 12;
-                if e_off + 12 > data.len() { break; }
-                let e_word1 = u32::from_le_bytes([data[e_off], data[e_off + 1], data[e_off + 2], data[e_off + 3]]);
-                let e_word2 = u32::from_le_bytes([data[e_off + 4], data[e_off + 5], data[e_off + 6], data[e_off + 7]]);
+                if e_off + 12 > data.len() {
+                    break;
+                }
+                let e_word1 = u32::from_le_bytes([
+                    data[e_off],
+                    data[e_off + 1],
+                    data[e_off + 2],
+                    data[e_off + 3],
+                ]);
+                let e_word2 = u32::from_le_bytes([
+                    data[e_off + 4],
+                    data[e_off + 5],
+                    data[e_off + 6],
+                    data[e_off + 7],
+                ]);
                 let ee_block = e_word1 & 0xFFFF;
                 let ee_len = ((e_word1 >> 16) & 0xFFFF) as u16;
                 let ee_start = ((e_word2 & 0xFFFF) << 16) | (e_word2 >> 16);
                 let logical = ei_block + ee_block;
-                if ee_len == 0 { break; }
+                if ee_len == 0 {
+                    break;
+                }
                 out.push((logical, ee_start, ee_len));
             }
         }
@@ -1303,7 +1223,13 @@ fn walk_extents(data: &[u8], bs: u32, i_block: &[u32; 15]) -> Vec<(u32, u32, u16
 /// Produce the bytes for a directory entry. The entry's total length is
 /// `rec_len` (rounded up to 4). Pass `inode=0` to leave a placeholder
 /// for later patching.
-fn dir_entry_bytes(inode: u32, file_type: u8, rec_len: u16, name: &str, name_len: usize) -> Vec<u8> {
+fn dir_entry_bytes(
+    inode: u32,
+    file_type: u8,
+    rec_len: u16,
+    name: &str,
+    name_len: usize,
+) -> Vec<u8> {
     let mut e = Vec::with_capacity(rec_len as usize);
     e.extend_from_slice(&inode.to_le_bytes());
     e.extend_from_slice(&rec_len.to_le_bytes());
@@ -1402,7 +1328,11 @@ fn build_dir_block(
     buf.extend_from_slice(&dir_entry_bytes(self_ino, EXT4_FT_DIR, 12, ".", 1));
     buf.extend_from_slice(&dir_entry_bytes(parent_ino, EXT4_FT_DIR, 12, "..", 2));
     for c in children {
-        let ft = if c.is_dir { EXT4_FT_DIR } else { EXT4_FT_REG_FILE };
+        let ft = if c.is_dir {
+            EXT4_FT_DIR
+        } else {
+            EXT4_FT_REG_FILE
+        };
         let name = c.name.clone();
         let actual_rec_len = 8 + name.len();
         let rec_len = actual_rec_len.div_ceil(4) * 4;
@@ -1411,7 +1341,9 @@ fn build_dir_block(
         patches.push((entry_off, 0));
     }
     let pad_to = buf.len().div_ceil(4) * 4;
-    if pad_to > buf.len() { buf.resize(pad_to, 0); }
+    if pad_to > buf.len() {
+        buf.resize(pad_to, 0);
+    }
     (buf, patches)
 }
 
@@ -1461,67 +1393,14 @@ impl Ext4SuperBlock {
     }
 }
 
-impl Ext4Inode {
-    #[allow(dead_code)]
-    fn as_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(self.i_size_lo as usize);
-        bytes.extend_from_slice(&self.i_mode.to_le_bytes());
-        bytes.extend_from_slice(&self.i_uid.to_le_bytes());
-        bytes.extend_from_slice(&self.i_size_lo.to_le_bytes());
-        bytes.extend_from_slice(&self.i_atime.to_le_bytes());
-        bytes.extend_from_slice(&self.i_ctime.to_le_bytes());
-        bytes.extend_from_slice(&self.i_mtime.to_le_bytes());
-        bytes.extend_from_slice(&self.i_dtime.to_le_bytes());
-        bytes.extend_from_slice(&self.i_gid.to_le_bytes());
-        bytes.extend_from_slice(&self.i_links_count.to_le_bytes());
-        bytes.extend_from_slice(&self.i_blocks_lo.to_le_bytes());
-        bytes.extend_from_slice(&self.i_flags.to_le_bytes());
-        bytes.extend_from_slice(&self.osd1.to_le_bytes());
-        // Copy i_block array element by element to avoid alignment issues with packed struct
-        let i_block_copy = self.i_block;
-        for b in i_block_copy {
-            bytes.extend_from_slice(&b.to_le_bytes());
-        }
-        bytes.extend_from_slice(&self.i_generation.to_le_bytes());
-        bytes.extend_from_slice(&self.i_file_acl.to_le_bytes());
-        bytes.extend_from_slice(&self.i_size_high.to_le_bytes());
-        bytes.resize(256, 0);
-        bytes
-    }
-}
-
-impl Ext4ExtentHeader {
-    #[allow(dead_code)]
-    fn as_bytes(&self) -> [u8; 12] {
-        let mut bytes = [0u8; 12];
-        bytes[0..2].copy_from_slice(&self.eh_magic.to_le_bytes());
-        bytes[2..4].copy_from_slice(&self.eh_entries.to_le_bytes());
-        bytes[4..6].copy_from_slice(&self.eh_max.to_le_bytes());
-        bytes[6..8].copy_from_slice(&self.eh_depth.to_le_bytes());
-        bytes[8..12].copy_from_slice(&self.eh_generation.to_le_bytes());
-        bytes
-    }
-}
-
-impl Ext4Extent {
-    #[allow(dead_code)]
-    fn as_bytes(&self) -> [u8; 12] {
-        let mut bytes = [0u8; 12];
-        bytes[0..2].copy_from_slice(&self.ee_block.to_le_bytes());
-        bytes[2..4].copy_from_slice(&self.ee_len.to_le_bytes());
-        bytes[4..6].copy_from_slice(&self.ee_start_hi.to_le_bytes());
-        bytes[6..10].copy_from_slice(&self.ee_start_lo.to_le_bytes());
-        bytes[10..12].copy_from_slice(&0u16.to_le_bytes()); // Unused
-        bytes
-    }
-}
-
 // =====================================================================
 // FsBackend implementation
 // =====================================================================
 
 impl FsBackend for Ext4Image {
-    fn kind(&self) -> &'static str { "ext4" }
+    fn kind(&self) -> &'static str {
+        "ext4"
+    }
 
     fn list_dir(&self, path: &str) -> Result<Vec<DirEntry>> {
         Ext4Image::list_dir_path(self, path)
@@ -1564,7 +1443,8 @@ impl FsBackend for Ext4Image {
         }
         let clean = path.trim_start_matches('/');
         self.files.retain(|(p, _)| p != clean);
-        self.dirs.retain(|d| d != clean && !d.starts_with(&format!("{}/", clean)));
+        self.dirs
+            .retain(|d| d != clean && !d.starts_with(&format!("{}/", clean)));
         Ext4Image::remove_path_ext4(self, path)
     }
     fn finalize(&mut self) -> Result<Vec<u8>> {
@@ -1591,7 +1471,11 @@ fn flatten_tree(
     dirs: &mut Vec<String>,
 ) {
     for e in entries {
-        let path = if prefix.is_empty() { e.name.clone() } else { format!("{}/{}", prefix, e.name) };
+        let path = if prefix.is_empty() {
+            e.name.clone()
+        } else {
+            format!("{}/{}", prefix, e.name)
+        };
         if e.is_dir {
             dirs.push(path.clone());
             flatten_tree(&e.children, &path, files, dirs);
@@ -1614,7 +1498,7 @@ mod tests {
         let mut image = Ext4Image::new(64, 4096).unwrap();
         image.create_dir("/test").unwrap();
         image.write_file("/test/file.txt", b"hello").unwrap();
-        
+
         let data = image.finalize().unwrap();
         assert!(data.len() > 0);
     }

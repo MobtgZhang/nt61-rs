@@ -5,7 +5,7 @@
 use clap::Parser;
 use nt61_tools::hive_gen;
 use std::fs::{self, File};
-use std::io::{Write, Seek, SeekFrom};
+use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 const ESP_TEMPLATE: &str = r#"NT6.1.7601 EFI System Partition
@@ -128,34 +128,34 @@ pub fn create_directories(build_dir: &Path, arch: Arch) -> std::io::Result<EspPa
     //   system/      <- OS volume files
     //   images/      <- disk images
     // Note: arch_dir is NOT added - build_dir already includes arch
-    
+
     // EFI System Partition files
     let esp_dir = build_dir.join("esp");
     let efi_dir = esp_dir.join("EFI");
     let boot_dir = efi_dir.join("Boot");
     let ms_boot_dir = efi_dir.join("Microsoft").join("Boot");
     let fonts_dir = ms_boot_dir.join("Fonts");
-    
+
     // OS volume files (Windows System32, etc.)
     let system_dir = build_dir.join("system");
     let windows_dir = system_dir.join("Windows").join("System32");
-    
+
     // Disk images
     let images_dir = build_dir.join("images");
-    
+
     // Create all directories
     fs::create_dir_all(&boot_dir)?;
     fs::create_dir_all(&ms_boot_dir)?;
     fs::create_dir_all(&fonts_dir)?;
     fs::create_dir_all(&windows_dir)?;
     fs::create_dir_all(&images_dir)?;
-    
+
     Ok(EspPaths {
         efi_dir,
         boot_dir,
         ms_boot_dir,
         fonts_dir,
-        root_dir: system_dir,  // OS volume root
+        root_dir: system_dir, // OS volume root
         windows_dir,
         images_dir,
     })
@@ -178,21 +178,21 @@ pub fn copy_boot_manager(paths: &EspPaths, arch: Arch, source: &Path) -> std::io
         eprintln!("Warning: Boot manager not found at {:?}", source);
         return Ok(());
     }
-    
+
     let boot_target = paths.boot_dir.join(arch.boot_file());
     if boot_target.exists() {
         fs::remove_file(&boot_target)?;
     }
     println!("  Copying: {:?}", &boot_target);
     fs::copy(source, &boot_target)?;
-    
+
     let bootmgfw = paths.ms_boot_dir.join("bootmgfw.efi");
     if bootmgfw.exists() {
         fs::remove_file(&bootmgfw)?;
     }
     println!("  Copying: {:?}", &bootmgfw);
     fs::copy(source, &bootmgfw)?;
-    
+
     let bootmgr = paths.ms_boot_dir.join("bootmgr.efi");
     if bootmgr.exists() {
         fs::remove_file(&bootmgr)?;
@@ -283,22 +283,48 @@ pub fn generate_os_volume_files(paths: &EspPaths) -> std::io::Result<()> {
     fs::create_dir_all(&config_dir)?;
     fs::create_dir_all(&etc_dir)?;
 
-    fs::write(config_dir.join("SYSTEM"),   crate::hive_gen::build_system())?;
-    fs::write(config_dir.join("SOFTWARE"), crate::hive_gen::build_software())?;
-    fs::write(config_dir.join("SAM"),      crate::hive_gen::build_sam())?;
-    fs::write(config_dir.join("SECURITY"), crate::hive_gen::build_security())?;
-    fs::write(config_dir.join("DEFAULT"),  crate::hive_gen::build_default())?;
-    
-    // etc/ files
-    fs::write(etc_dir.join("hosts"),        crate::hive_gen::HOSTS_CONTENT.as_bytes())?;
-    fs::write(etc_dir.join("lmhosts.sam"), crate::hive_gen::LMHOSTS_CONTENT.as_bytes())?;
-    fs::write(etc_dir.join("networks"),    crate::hive_gen::NETWORKS_CONTENT.as_bytes())?;
-    fs::write(etc_dir.join("protocol"),    crate::hive_gen::PROTOCOL_CONTENT.as_bytes())?;
-    fs::write(etc_dir.join("services"),     crate::hive_gen::SERVICES_CONTENT.as_bytes())?;
+    fs::write(config_dir.join("SYSTEM"), crate::hive_gen::build_system())?;
+    fs::write(
+        config_dir.join("SOFTWARE"),
+        crate::hive_gen::build_software(),
+    )?;
+    fs::write(config_dir.join("SAM"), crate::hive_gen::build_sam())?;
+    fs::write(
+        config_dir.join("SECURITY"),
+        crate::hive_gen::build_security(),
+    )?;
+    fs::write(config_dir.join("DEFAULT"), crate::hive_gen::build_default())?;
 
-    println!("  Wrote SYSTEM, SOFTWARE, SAM, SECURITY, DEFAULT to {:?}",
-        config_dir);
-    println!("  Wrote hosts, lmhosts.sam, networks, protocol, services to {:?}", etc_dir);
+    // etc/ files
+    fs::write(
+        etc_dir.join("hosts"),
+        crate::hive_gen::HOSTS_CONTENT.as_bytes(),
+    )?;
+    fs::write(
+        etc_dir.join("lmhosts.sam"),
+        crate::hive_gen::LMHOSTS_CONTENT.as_bytes(),
+    )?;
+    fs::write(
+        etc_dir.join("networks"),
+        crate::hive_gen::NETWORKS_CONTENT.as_bytes(),
+    )?;
+    fs::write(
+        etc_dir.join("protocol"),
+        crate::hive_gen::PROTOCOL_CONTENT.as_bytes(),
+    )?;
+    fs::write(
+        etc_dir.join("services"),
+        crate::hive_gen::SERVICES_CONTENT.as_bytes(),
+    )?;
+
+    println!(
+        "  Wrote SYSTEM, SOFTWARE, SAM, SECURITY, DEFAULT to {:?}",
+        config_dir
+    );
+    println!(
+        "  Wrote hosts, lmhosts.sam, networks, protocol, services to {:?}",
+        etc_dir
+    );
     Ok(())
 }
 
@@ -332,7 +358,7 @@ pub fn generate_pe_files_to(system32_dir: &Path, arch: Arch) -> std::io::Result<
         if rel.starts_with("C:\\") || rel.starts_with("C:/") {
             if let Some(idx) = rel.find(|c| c == '\\' || c == '/') {
                 // skip the "C:" drive letter and the leading slash
-                rel = &rel[idx+1..];
+                rel = &rel[idx + 1..];
             }
         }
         // Convert all backslashes to native separators (Path::join handles it).
@@ -351,7 +377,12 @@ pub fn generate_pe_files_to(system32_dir: &Path, arch: Arch) -> std::io::Result<
 
         // Validate: every PE file must start with "MZ"
         if image.bytes.len() >= 2 && &image.bytes[0..2] == b"MZ" {
-            println!("  Generated PE: {:?} ({} bytes, machine=0x{:x})", dest_path, image.bytes.len(), machine);
+            println!(
+                "  Generated PE: {:?} ({} bytes, machine=0x{:x})",
+                dest_path,
+                image.bytes.len(),
+                machine
+            );
         } else {
             eprintln!("  Warning: {:?} is not a valid PE file", dest_path);
         }
@@ -359,7 +390,12 @@ pub fn generate_pe_files_to(system32_dir: &Path, arch: Arch) -> std::io::Result<
         total_size += image.bytes.len();
     }
 
-    println!("  Total PE files: {} ({} bytes, machine=0x{:x})", images.len(), total_size, machine);
+    println!(
+        "  Total PE files: {} ({} bytes, machine=0x{:x})",
+        images.len(),
+        total_size,
+        machine
+    );
     Ok(())
 }
 
@@ -379,9 +415,9 @@ fn pad_bcd_to_standard_size(mut data: Vec<u8>) -> Vec<u8> {
         data.truncate(BCD_STANDARD_SIZE);
         return data;
     }
-    
+
     let new_size = BCD_STANDARD_SIZE;
-    
+
     // Resize to target size (zero-fills new space)
     data.resize(new_size, 0);
 
@@ -412,23 +448,20 @@ fn pad_bcd_to_standard_size(mut data: Vec<u8>) -> Vec<u8> {
 /// Copy font files to ESP Fonts directory
 pub fn copy_fonts(paths: &EspPaths) -> std::io::Result<()> {
     let fonts_dir = &paths.fonts_dir;
-    
-    // Source directory for fonts (OpenSans - Windows-style font)
-    let source_fonts = Path::new("resources/fonts/open-sans");
-    
-    // Font files to copy (OpenSans Regular for Windows Boot Manager style)
-    let font_files = [
-        ("OpenSans-Regular.ttf", "OpenSans-Regular.ttf"),
-    ];
-    
+
+    // Source directory for fonts (DejaVu Sans Mono - monospaced)
+    let source_fonts = Path::new("resources/fonts/dejavu-fonts-XXXX");
+
+    let font_files = [("DejaVuSansMono.ttf", "wgl4_boot.ttf")];
+
     // Create Fonts directory if needed
     fs::create_dir_all(fonts_dir)?;
-    
+
     // Copy each font file
     for (src_name, dst_name) in &font_files {
         let source = source_fonts.join(src_name);
         let dest = fonts_dir.join(dst_name);
-        
+
         if source.exists() {
             println!("  Copying font: {:?}", &dest);
             fs::copy(&source, &dest)?;
@@ -436,8 +469,12 @@ pub fn copy_fonts(paths: &EspPaths) -> std::io::Result<()> {
             eprintln!("  Warning: Font not found: {:?}", &source);
         }
     }
-    
-    println!("  Copied {} font files to {:?}", font_files.len(), fonts_dir);
+
+    println!(
+        "  Copied {} font files to {:?}",
+        font_files.len(),
+        fonts_dir
+    );
     Ok(())
 }
 
@@ -478,89 +515,89 @@ fn create_bootvars_data(timeout: u32) -> Vec<u8> {
 pub fn create_esp_image(paths: &EspPaths, arch: Arch) -> std::io::Result<PathBuf> {
     let img_path = paths.images_dir.join(format!("esp-{}.img", arch.as_str()));
     let size_mb = 64;
-    
+
     println!("  Creating FAT32 disk image: {:?}", &img_path);
     println!("    Size: {} MB", size_mb);
-    
+
     // Create raw image file
     let mut file = File::create(&img_path)?;
-    
+
     // Write GPT header
     let mut gpt = vec![0u8; 1024]; // Protective MBR (512) + GPT header (92) + padding
-    
+
     // Protective MBR (first 512 bytes)
     gpt[510] = 0x55;
     gpt[511] = 0xAA;
-    
+
     // GPT signature
     gpt[512..520].copy_from_slice(b"EFI PART");
-    
+
     // GPT revision (1.0)
     gpt[520..524].copy_from_slice(&0x00010000u32.to_le_bytes());
-    
+
     // Header size (92 bytes)
     gpt[524..528].copy_from_slice(&92u32.to_le_bytes());
-    
+
     // CRC32 of header (placeholder)
     gpt[528..532].copy_from_slice(&0u32.to_le_bytes());
-    
+
     // Reserved
     gpt[532..540].copy_from_slice(&0u64.to_le_bytes());
-    
+
     // Current LBA (1)
     gpt[540..548].copy_from_slice(&1u64.to_le_bytes());
-    
+
     // Backup LBA (will be at end)
     let total_sectors = (size_mb * 1024 * 1024) / 512;
     let backup_lba: u64 = total_sectors - 1;
     gpt[548..556].copy_from_slice(&backup_lba.to_le_bytes());
-    
+
     // First usable LBA (34 - after GPT header and partition table)
     gpt[556..564].copy_from_slice(&34u64.to_le_bytes());
-    
+
     // Last usable LBA
     gpt[564..572].copy_from_slice(&(total_sectors - 34).to_le_bytes());
-    
+
     // Disk GUID (random)
     let guid = uuid::Uuid::new_v4();
     gpt[572..588].copy_from_slice(guid.as_bytes());
-    
+
     // Partition entry LBA (2)
     gpt[588..596].copy_from_slice(&2u64.to_le_bytes());
-    
+
     // Number of partition entries (128)
     gpt[596..600].copy_from_slice(&128u32.to_le_bytes());
-    
+
     // Size of partition entry (128 bytes)
     gpt[600..604].copy_from_slice(&128u32.to_le_bytes());
-    
+
     // CRC32 of partition entries (placeholder)
     gpt[604..608].copy_from_slice(&0u32.to_le_bytes());
-    
+
     // Write protective MBR + GPT header
     file.write_all(&gpt)?;
-    
+
     // Partition entry (128 bytes, starting at LBA 2)
     let mut partition_entry = vec![0u8; 128];
-    
+
     // Partition type GUID (EFI System Partition)
     let esp_type = uuid::Uuid::parse_str("C12A7328-F81F-11D2-BA4B-00A0C93EC93B").unwrap();
     partition_entry[0..16].copy_from_slice(esp_type.as_bytes());
-    
+
     // Unique partition GUID
     let part_guid = uuid::Uuid::new_v4();
     partition_entry[16..32].copy_from_slice(part_guid.as_bytes());
-    
+
     // Starting LBA (34)
     partition_entry[32..40].copy_from_slice(&34u64.to_le_bytes());
-    
+
     // Ending LBA (use most of the disk)
     let end_lba: u64 = total_sectors - 34;
     partition_entry[40..48].copy_from_slice(&end_lba.to_le_bytes());
-    
+
     // Attributes (EF00 for ESP)
     partition_entry[48..56].copy_from_slice(&0xEF00u64.to_le_bytes());
-    
+
     // Partition name
     let name = "EFI System Partition";
     for (i, c) in name.encode_utf16().enumerate() {
@@ -569,14 +606,14 @@ pub fn create_esp_image(paths: &EspPaths, arch: Arch) -> std::io::Result<PathBuf
             partition_entry[56 + i + 1] = (c >> 8) as u8;
         }
     }
-    
+
     file.write_all(&partition_entry)?;
-    
+
     // Write partition entries again at backup location
     let backup_lba: u64 = total_sectors - 33;
     file.seek(SeekFrom::End(-512))?;
     file.write_all(&partition_entry)?;
-    
+
     // Write GPT header backup
     file.seek(SeekFrom::End(-1024))?;
     let mut gpt_backup = gpt.clone();
@@ -584,10 +621,10 @@ pub fn create_esp_image(paths: &EspPaths, arch: Arch) -> std::io::Result<PathBuf
     gpt_backup[556..564].copy_from_slice(&backup_lba.to_le_bytes()); // Backup LBA
     gpt_backup[588..596].copy_from_slice(&backup_lba.to_le_bytes()); // Partition LBA
     file.write_all(&gpt_backup)?;
-    
+
     println!("    Created GPT partitioned image (FAT32 needs to be formatted with mkfs.fat)");
     println!("    Run: mkfs.fat -F 32 {} to format", img_path.display());
-    
+
     Ok(img_path)
 }
 
@@ -598,12 +635,12 @@ pub fn build_esp(config: &BuildConfig) -> std::io::Result<()> {
     println!("Architecture: {}", config.arch.as_str());
     println!("Build directory: {}", config.build_dir);
     println!();
-    
+
     let build_dir = Path::new(&config.build_dir);
-    
+
     println!("Creating directory structure...");
     let paths = create_directories(build_dir, config.arch)?;
-    
+
     if let Some(ref boot_path) = config.boot_efi_path {
         println!("Copying boot manager...");
         let boot_source = Path::new(boot_path);
@@ -611,7 +648,7 @@ pub fn build_esp(config: &BuildConfig) -> std::io::Result<()> {
     } else {
         println!("No boot manager specified, skipping...");
     }
-    
+
     println!("Generating BCD store...");
     generate_bcd(&paths, config.timeout)?;
 
@@ -627,48 +664,48 @@ pub fn build_esp(config: &BuildConfig) -> std::io::Result<()> {
 
     println!("Setting up font directory...");
     copy_fonts(&paths)?;
-    
+
     println!("Creating MEMTEST placeholder...");
     create_memtest_placeholder(&paths)?;
-    
+
     println!("Creating BOOTVARS...");
     create_bootvars(&paths, config.timeout)?;
-    
+
     // Note: No loader.cfg - all config is in BCD
-    
+
     if config.create_image {
         println!("Creating ESP disk image...");
         create_esp_image(&paths, config.arch)?;
     }
-    
+
     println!();
     println!("ESP build complete!");
     println!("  EFI:  {}", paths.efi_dir.display());
     println!("  ROOT: {}", paths.root_dir.display());
     println!("  Images: {}", paths.images_dir.display());
-    
+
     Ok(())
 }
 
 pub fn print_tree(dir: &Path, prefix: &str, is_last: bool) -> std::io::Result<()> {
     let entries: Vec<_> = fs::read_dir(dir)?.collect();
     let total = entries.len();
-    
+
     for (i, entry) in entries.into_iter().enumerate() {
         let entry = entry?;
         let path = entry.path();
         let name = path.file_name().unwrap().to_string_lossy();
         let is_last_entry = i == total - 1;
-        
+
         print!("{}{}", prefix, if is_last_entry { "`-- " } else { "|-- " });
         println!("{}", name);
-        
+
         if path.is_dir() {
             let new_prefix = format!("{}{}", prefix, if is_last_entry { "    " } else { "|   " });
             print_tree(&path, &new_prefix, is_last_entry)?;
         }
     }
-    
+
     Ok(())
 }
 
@@ -680,7 +717,7 @@ fn main() {
             clap::Arg::new("pe-only")
                 .long("pe-only")
                 .value_name("DIR")
-                .help("Generate only the PE files into <DIR> (system32 dir) and exit")
+                .help("Generate only the PE files into <DIR> (system32 dir) and exit"),
         )
         .arg(
             clap::Arg::new("arch")
@@ -688,7 +725,7 @@ fn main() {
                 .long("arch")
                 .value_name("ARCH")
                 .default_value("x64")
-                .help("Target architecture: x64, arm64, arm, riscv64, loongarch64")
+                .help("Target architecture: x64, arm64, arm, riscv64, loongarch64"),
         )
         .arg(
             clap::Arg::new("build-dir")
@@ -696,20 +733,20 @@ fn main() {
                 .long("output")
                 .value_name("DIR")
                 .default_value("build")
-                .help("Output directory")
+                .help("Output directory"),
         )
         .arg(
             clap::Arg::new("boot-efi")
                 .short('b')
                 .long("boot-efi")
                 .value_name("PATH")
-                .help("Path to boot manager EFI file")
+                .help("Path to boot manager EFI file"),
         )
         .arg(
             clap::Arg::new("winload-efi")
                 .long("winload-efi")
                 .value_name("PATH")
-                .help("Path to winload.efi (OS Loader) EFI file")
+                .help("Path to winload.efi (OS Loader) EFI file"),
         )
         .arg(
             clap::Arg::new("timeout")
@@ -717,28 +754,37 @@ fn main() {
                 .long("timeout")
                 .value_name("SECONDS")
                 .default_value("30")
-                .help("Boot timeout in seconds")
+                .help("Boot timeout in seconds"),
         )
         .arg(
             clap::Arg::new("create-image")
                 .short('i')
                 .long("create-image")
-                .help("Create FAT32 disk image")
+                .help("Create FAT32 disk image"),
         )
         .arg(
             clap::Arg::new("tree")
                 .long("tree")
-                .help("Print directory tree after build")
+                .help("Print directory tree after build"),
         )
         .get_matches();
-    
+
     let config = BuildConfig {
-        arch: Arch::from(matches.get_one::<String>("arch").map(|s| s.as_str()).unwrap_or("x64")),
-        build_dir: matches.get_one::<String>("build-dir").cloned().unwrap_or_else(|| "build".to_string()),
+        arch: Arch::from(
+            matches
+                .get_one::<String>("arch")
+                .map(|s| s.as_str())
+                .unwrap_or("x64"),
+        ),
+        build_dir: matches
+            .get_one::<String>("build-dir")
+            .cloned()
+            .unwrap_or_else(|| "build".to_string()),
         boot_efi_path: matches.get_one::<String>("boot-efi").cloned(),
         winload_efi_path: matches.get_one::<String>("winload-efi").cloned(),
         kernel_path: None,
-        timeout: matches.get_one::<String>("timeout")
+        timeout: matches
+            .get_one::<String>("timeout")
             .and_then(|s| s.parse().ok())
             .unwrap_or(30),
         create_image: matches.contains_id("create-image"),

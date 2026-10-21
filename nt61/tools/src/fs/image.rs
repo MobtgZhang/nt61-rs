@@ -2,18 +2,18 @@
 //!
 //! This module provides a unified interface for creating disk images in various formats.
 
-use std::path::Path;
 use crate::error::{BuildError, Result};
-use crate::logger as log;
 use crate::fs::backend::FsBackend;
+use crate::logger as log;
+use std::path::Path;
 
 // Re-export image builders
-pub use super::fat32::Fat32Image;
 pub use super::ext4::Ext4Image;
-pub use super::ntfs::NtfsImage;
+pub use super::fat32::Fat32Image;
 pub use super::iso9660::IsoImage;
-pub use super::qcow2::Qcow2Image;
+pub use super::ntfs::NtfsImage;
 pub use super::partition::PartitionInfo;
+pub use super::qcow2::Qcow2Image;
 
 // =====================================================================
 // Image Format Enum
@@ -152,15 +152,12 @@ pub fn format_image(output: &Path, fs: &str, size_mb: u32) -> Result<()> {
 
 /// Style of partition table to write around a raw filesystem image.
 ///
-/// `None` keeps the legacy behavior: the image file *is* the filesystem, no
-/// MBR/GPT header. `Mbr` writes a single protective-MBR sector at the start of
-/// the file and moves the filesystem to sector 1. `Gpt` writes a full
-/// GPT: LBA0 = protective MBR, LBA1 = header, LBA2..33 = partition entries
-/// (with a single entry pointing at LBA 34), LBA 34+ = filesystem.
+/// `None` keeps the raw behavior: the image file *is* the filesystem, no
+/// partition table. `Gpt` writes a full GPT: LBA0 = protective MBR, LBA1 =
+/// header, LBA2..33 = partition entries, LBA 34+ = filesystem.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PartitionTable {
     None,
-    Mbr,
     Gpt,
 }
 
@@ -197,34 +194,32 @@ pub fn create_image_with_pt(
     // (MBR). GPT partition type is chosen per FS.
     let sector_size = 512u64;
     let (first_usable_lba, partition_type_guid) = match partition_table {
-        PartitionTable::Mbr => (1, [0u8; 16]),
         PartitionTable::Gpt => {
             let ty = match fmt {
                 // Standard ESP GUID: C12A7328-F81F-11D2-BA4B-00A0C93EC93B
                 // Stored as little-endian for first 3 fields
                 ImageFormat::Fat32 => [
-                    0x28, 0x73, 0x2A, 0xC1,  // d1 = 0xC12A7328
-                    0x1F, 0xF8,                 // d2 = 0xF81F
-                    0xD2, 0x11,                 // d3 = 0x11D2
-                    0x4B, 0xBA,                 // d4 = 0xBA4B
-                    0x00, 0xA0, 0xC9, 0x3E, 0xC9, 0x3B,  // d5 = 00A0C93EC93B
+                    0x28, 0x73, 0x2A, 0xC1, // d1 = 0xC12A7328
+                    0x1F, 0xF8, // d2 = 0xF81F
+                    0xD2, 0x11, // d3 = 0x11D2
+                    0x4B, 0xBA, // d4 = 0xBA4B
+                    0x00, 0xA0, 0xC9, 0x3E, 0xC9, 0x3B, // d5 = 00A0C93EC93B
                 ], // EFI System Partition (correct GUID)
                 ImageFormat::Ntfs => [
-                    0xA0, 0x88, 0x2D, 0x83, 0xEB, 0xD1, 0xCD, 0x41,
-                    0xB7, 0x96, 0x21, 0xE3, 0x66, 0x65, 0xFF, 0xCC,
+                    0xA0, 0x88, 0x2D, 0x83, 0xEB, 0xD1, 0xCD, 0x41, 0xB7, 0x96, 0x21, 0xE3, 0x66,
+                    0x65, 0xFF, 0xCC,
                 ], // Windows basic data
                 ImageFormat::Ext4 => [
-                    0xAF, 0x3D, 0xC6, 0x0F, 0x83, 0x84, 0x72, 0x47,
-                    0x8E, 0x79, 0x3D, 0x69, 0xD8, 0x47, 0x7D, 0xE4,
+                    0xAF, 0x3D, 0xC6, 0x0F, 0x83, 0x84, 0x72, 0x47, 0x8E, 0x79, 0x3D, 0x69, 0xD8,
+                    0x47, 0x7D, 0xE4,
                 ], // Linux filesystem
                 _ => unreachable!(),
             };
-            // Use 50 as first usable LBA. UEFI spec reserves LBA 2-33 for GPT
-            // partition entries (16 sectors × 128 bytes each), but the canonical
-            // layout places entries at LBA 34. We write entries at LBA 34, so
-            // FAT32/NTFS data must start after the entries array. LBA 50 gives
-            // us 16 sectors (8192 bytes) of breathing room after the GPT entries.
-            (50, ty)
+            // The GPT entry array occupies 32 sectors at LBA 34. The first
+            // partition therefore starts at LBA 2048, the UEFI/GPT alignment
+            // convention and the only value that cannot overlap the primary
+            // table.
+            (2048, ty)
         }
         PartitionTable::None => unreachable!(),
     };
@@ -278,7 +273,6 @@ pub fn create_image_with_pt(
     // Note: hidd_sec is now set correctly by finalize_with_offset() in the Fat32ImageBuilder
 
     match partition_table {
-        PartitionTable::Mbr => write_mbr(&mut out, first_usable_lba, fs_sectors, partition_type_for_mbr(fmt)),
         PartitionTable::Gpt => write_gpt(
             &mut out,
             total_sectors,
@@ -291,25 +285,6 @@ pub fn create_image_with_pt(
 
     write_image(output, &out)?;
     Ok(())
-}
-
-fn partition_type_for_mbr(fmt: ImageFormat) -> u8 {
-    match fmt {
-        ImageFormat::Fat32 => 0x0B,
-        ImageFormat::Ntfs => 0x07,
-        ImageFormat::Ext4 => 0x83,
-        _ => 0x83,
-    }
-}
-
-fn write_mbr(buf: &mut [u8], first_lba: u64, fs_sectors: u64, type_byte: u8) {
-    buf[510] = 0x55;
-    buf[511] = 0xAA;
-    let entry_off = 446;
-    buf[entry_off] = 0x80; // bootable
-    buf[entry_off + 4] = type_byte;
-    buf[entry_off + 8..entry_off + 12].copy_from_slice(&(first_lba as u32).to_le_bytes());
-    buf[entry_off + 12..entry_off + 16].copy_from_slice(&(fs_sectors as u32).to_le_bytes());
 }
 
 fn write_gpt(
@@ -379,6 +354,8 @@ fn write_gpt(
     let num_entries: usize = 128;
     let entry_size: usize = 128;
     let entries_total = num_entries * entry_size;
+    let entries_total_sectors = (entries_total / 512) as u64;
+    let backup_entries_lba = alt_lba - entries_total_sectors;
     let part_crc = crc32(&buf[pent..pent + entries_total]);
     buf[hdr + 88..hdr + 92].copy_from_slice(&part_crc.to_le_bytes());
 
@@ -396,12 +373,16 @@ fn write_gpt(
     // patch the two LBAs before writing it back into the backup slot.
     // -----------------------------------------------------------------
     let backup_hdr = (alt_lba as usize) * 512;
-    if backup_hdr + 92 <= buf.len() {
+    let backup_entries = (backup_entries_lba as usize) * 512;
+    if backup_hdr + 92 <= buf.len() && backup_entries + entries_total <= backup_hdr {
+        let (primary, backup) = buf.split_at_mut(backup_entries);
+        backup[0..entries_total].copy_from_slice(&primary[pent..pent + entries_total]);
         // Snapshot the primary header (clone) so we can release the
         // borrow of `buf` before taking a mutable borrow for writing.
         let mut backup_bytes = buf[hdr..hdr + 92].to_vec();
         backup_bytes[24..32].copy_from_slice(&alt_lba.to_le_bytes());
         backup_bytes[32..40].copy_from_slice(&1u64.to_le_bytes());
+        backup_bytes[72..80].copy_from_slice(&backup_entries_lba.to_le_bytes());
         // Recompute the header CRC with the CRC field treated as zero.
         backup_bytes[16..20].copy_from_slice(&0u32.to_le_bytes());
         let backup_crc = crc32(&backup_bytes);
@@ -417,7 +398,11 @@ fn crc32(data: &[u8]) -> u32 {
     for n in 0..256u32 {
         let mut c = n;
         for _ in 0..8 {
-            c = if c & 1 != 0 { 0xEDB88320 ^ (c >> 1) } else { c >> 1 };
+            c = if c & 1 != 0 {
+                0xEDB88320 ^ (c >> 1)
+            } else {
+                c >> 1
+            };
         }
         table[n as usize] = c;
     }
@@ -448,10 +433,7 @@ pub fn list_partitions(image_path: &Path) -> Result<Vec<PartitionInfo>> {
 /// For QCOW2 containers the inner FS is detected by reading the first few
 /// sectors of the container and parsing any GPT/MBR partition table that is
 /// present, then opening the chosen partition as a nested FS.
-pub fn open_for_modify(
-    image_path: &Path,
-    partition: Option<u32>,
-) -> Result<OpenedImage> {
+pub fn open_for_modify(image_path: &Path, partition: Option<u32>) -> Result<OpenedImage> {
     open_for_modify_with(image_path, partition, None)
 }
 
@@ -464,7 +446,13 @@ pub fn open_for_modify_with(
     format: Option<&str>,
 ) -> Result<OpenedImage> {
     let raw = std::fs::read(image_path).map_err(BuildError::Io)?;
-    eprintln!("[DEBUG open_for_modify] image={}, partition={:?}, format={:?}, raw.len()={}", image_path.display(), partition, format, raw.len());
+    crate::debug!(
+        "[DEBUG open_for_modify] image={}, partition={:?}, format={:?}, raw.len()={}",
+        image_path.display(),
+        partition,
+        format,
+        raw.len()
+    );
 
     // QCOW2 container — open it, read the partition table out of LBA 0+1,
     // then recurse with the selected partition's bytes.
@@ -485,9 +473,18 @@ fn open_bytes_for_modify(
 ) -> Result<OpenedImage> {
     if let Some(idx) = partition {
         let parts = crate::fs::partition::list_partitions(raw)?;
-        eprintln!("[DEBUG open_bytes] partition={:?}, parts.len()={}", idx, parts.len());
+        crate::debug!(
+            "[DEBUG open_bytes] partition={:?}, parts.len()={}",
+            idx,
+            parts.len()
+        );
         for p in &parts {
-            eprintln!("[DEBUG open_bytes]   part {}: offset={}, size={}", p.index, p.byte_offset, p.byte_size);
+            crate::debug!(
+                "[DEBUG open_bytes]   part {}: offset={}, size={}",
+                p.index,
+                p.byte_offset,
+                p.byte_size
+            );
         }
         let p = parts
             .into_iter()
@@ -572,10 +569,9 @@ fn open_qcow2_for_modify(
             .find(|p| p.index == idx)
             .ok_or_else(|| BuildError::InvalidParam(format!("partition {} not found", idx)))?
     } else {
-        parts
-            .into_iter()
-            .next()
-            .ok_or_else(|| BuildError::InvalidParam("no partition table found inside qcow2".into()))?
+        parts.into_iter().next().ok_or_else(|| {
+            BuildError::InvalidParam("no partition table found inside qcow2".into())
+        })?
     };
     let part_byte_start = chosen.byte_offset as u64;
     let part_byte_end = part_byte_start + chosen.byte_size;
@@ -605,25 +601,32 @@ fn open_qcow2_for_modify(
 /// Returns the first that succeeds. All four auto-detectors do at most a few
 /// byte comparisons, so this is O(1).
 fn detect_and_open_fs(bytes: &[u8], what: &str) -> Result<Box<dyn FsBackend>> {
-    eprintln!("[DEBUG detect_and_open_fs] bytes.len()={}, what={}", bytes.len(), what);
-    eprintln!("[DEBUG detect_and_open_fs] first 11 bytes: {:?}", &bytes[..11.min(bytes.len())]);
+    crate::debug!(
+        "[DEBUG detect_and_open_fs] bytes.len()={}, what={}",
+        bytes.len(),
+        what
+    );
+    crate::debug!(
+        "[DEBUG detect_and_open_fs] first 11 bytes: {:?}",
+        &bytes[..11.min(bytes.len())]
+    );
     if let Ok(img) = Fat32Image::from_bytes(bytes) {
-        eprintln!("[DEBUG detect_and_open_fs] matched FAT32");
+        crate::debug!("[DEBUG detect_and_open_fs] matched FAT32");
         return Ok(Box::new(img));
     }
     if let Ok(img) = NtfsImage::from_bytes(bytes) {
-        eprintln!("[DEBUG detect_and_open_fs] matched NTFS");
+        crate::debug!("[DEBUG detect_and_open_fs] matched NTFS");
         return Ok(Box::new(img));
     }
     if let Ok(img) = Ext4Image::from_bytes(bytes) {
-        eprintln!("[DEBUG detect_and_open_fs] matched EXT4");
+        crate::debug!("[DEBUG detect_and_open_fs] matched EXT4");
         return Ok(Box::new(img));
     }
     if let Ok(img) = IsoImage::from_bytes(bytes) {
-        eprintln!("[DEBUG detect_and_open_fs] matched ISO");
+        crate::debug!("[DEBUG detect_and_open_fs] matched ISO");
         return Ok(Box::new(img));
     }
-    eprintln!("[DEBUG detect_and_open_fs] no match");
+    crate::debug!("[DEBUG detect_and_open_fs] no match");
     Err(BuildError::InvalidFormat(format!(
         "{} is not a recognised filesystem (tried FAT32/NTFS/EXT4/ISO9660)",
         what
@@ -632,10 +635,7 @@ fn detect_and_open_fs(bytes: &[u8], what: &str) -> Result<Box<dyn FsBackend>> {
 
 /// Same as [`detect_and_open_fs`] but lets the caller force a specific backend.
 /// Used when the user passes `--format-fs` to override the auto-detection.
-pub fn open_with_format(
-    bytes: &[u8],
-    format: Option<&str>,
-) -> Result<Box<dyn FsBackend>> {
+pub fn open_with_format(bytes: &[u8], format: Option<&str>) -> Result<Box<dyn FsBackend>> {
     match format {
         Some("fat32") => Ok(Box::new(Fat32Image::from_bytes(bytes)?)),
         Some("ntfs") => Ok(Box::new(NtfsImage::from_bytes(bytes)?)),
@@ -760,7 +760,10 @@ impl OpenedImage {
             let mut buf = [0u8; 512];
             buf[..chunk.len()].copy_from_slice(chunk);
             // Try to write; if the cluster is not pre-allocated, skip this sector.
-            if qcow.write_sector((sector_start + i as u32) as u64, &buf).is_err() {
+            if qcow
+                .write_sector((sector_start + i as u32) as u64, &buf)
+                .is_err()
+            {
                 // Allocation failed (cluster beyond virtual size) — skip this sector.
                 // This is acceptable for sparse images where not all sectors are written.
             }
@@ -780,10 +783,9 @@ impl OpenedImage {
     /// Like `write_back` but writes to the original path the image was opened
     /// from. Errors if `open_for_modify` wasn't used.
     pub fn commit(self) -> Result<()> {
-        let p = self
-            .original_path
-            .clone()
-            .ok_or_else(|| BuildError::InvalidParam("no original path recorded for this OpenedImage".into()))?;
+        let p = self.original_path.clone().ok_or_else(|| {
+            BuildError::InvalidParam("no original path recorded for this OpenedImage".into())
+        })?;
         self.write_back(&p)
     }
 }
@@ -819,10 +821,7 @@ impl PartitionRole {
     /// Path prefixes that are *allowed* on this partition.
     fn allowed_prefixes(&self) -> &'static [&'static str] {
         match self {
-            PartitionRole::Esp => &[
-                "EFI/Boot/",
-                "EFI/Microsoft/Boot/",
-            ],
+            PartitionRole::Esp => &["EFI/Boot/", "EFI/Microsoft/Boot/"],
             PartitionRole::System => &[
                 "Windows/",
                 "Program Files/",
@@ -1086,11 +1085,9 @@ fn write_image(path: &Path, data: &[u8]) -> Result<()> {
         super::dir::create_dir_all(parent)?;
     }
 
-    let mut file = File::create(path)
-        .map_err(BuildError::Io)?;
+    let mut file = File::create(path).map_err(BuildError::Io)?;
 
-    file.write_all(data)
-        .map_err(BuildError::Io)?;
+    file.write_all(data).map_err(BuildError::Io)?;
 
     Ok(())
 }
@@ -1103,25 +1100,23 @@ fn write_image(path: &Path, data: &[u8]) -> Result<()> {
 /// Standard ESP GUID: C12A7328-F81F-11D2-BA4B-00A0C93EC93B
 /// Stored as little-endian for first 3 fields
 const ESP_TYPE_GUID: [u8; 16] = [
-    0x28, 0x73, 0x2A, 0xC1,  // d1 = 0xC12A7328
-    0x1F, 0xF8,               // d2 = 0xF81F
-    0xD2, 0x11,               // d3 = 0x11D2
-    0xBA, 0x4B,               // d4 = 0xBA4B
-    0x00, 0xA0, 0xC9, 0x3E, 0xC9, 0x3B,  // d5 = 00A0C93EC93B
+    0x28, 0x73, 0x2A, 0xC1, // d1 = 0xC12A7328
+    0x1F, 0xF8, // d2 = 0xF81F
+    0xD2, 0x11, // d3 = 0x11D2
+    0xBA, 0x4B, // d4 = 0xBA4B
+    0x00, 0xA0, 0xC9, 0x3E, 0xC9, 0x3B, // d5 = 00A0C93EC93B
 ];
 
 /// GUID for Windows Basic Data Partition (System partition)
 /// Standard: EBD0A0A2-B9E5-4487-80C6-B72699C7
 const SYSTEM_TYPE_GUID: [u8; 16] = [
-    0xA2, 0xA0, 0xD0, 0xEB, 0xE5, 0xB9, 0x33, 0x44,
-    0x87, 0xC0, 0x68, 0xB6, 0xB7, 0x26, 0x99, 0xC7,
+    0xA2, 0xA0, 0xD0, 0xEB, 0xE5, 0xB9, 0x33, 0x44, 0x87, 0xC0, 0x68, 0xB6, 0xB7, 0x26, 0x99, 0xC7,
 ];
 
 /// GUID for Linux filesystem data partition
 /// Standard: 0FC63DAF-8483-4772-8E79-3D69D8477DE4
 const LINUX_FS_TYPE_GUID: [u8; 16] = [
-    0xAF, 0x3D, 0xC6, 0x0F, 0x83, 0x84, 0x72, 0x47,
-    0x8E, 0x79, 0x3D, 0x69, 0xD8, 0x47, 0x7D, 0xE4,
+    0xAF, 0x3D, 0xC6, 0x0F, 0x83, 0x84, 0x72, 0x47, 0x8E, 0x79, 0x3D, 0x69, 0xD8, 0x47, 0x7D, 0xE4,
 ];
 
 /// Filesystem choice for the dual-partition image's partitions.
@@ -1131,8 +1126,7 @@ const LINUX_FS_TYPE_GUID: [u8; 16] = [
 /// Windows 7 install — BCD's `OsDevice` ends up pointing at an NTFS
 /// volume, and the kernel's `cmd.exe` path becomes a real PE on a real
 /// NTFS volume) or EXT4 (Linux-native system partition).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DualPartitionFs {
     /// Both ESP and System partitions are FAT32 (legacy layout).
     Fat32All,
@@ -1142,7 +1136,6 @@ pub enum DualPartitionFs {
     /// ESP is FAT32 (mandatory), System partition is EXT4 (Linux-native).
     Fat32EspExt4System,
 }
-
 
 impl DualPartitionFs {
     /// Parse a filesystem choice string (e.g. "fat32", "ntfs", "ext4")
@@ -1209,24 +1202,28 @@ pub fn create_dual_partition_image_with_fs(
 
     // First, calculate partition sizes to determine LBA layout
 
-    // ESP starts at LBA 50. The GPT partition entry array is written at LBA 34
-    // by write_dual_gpt (partition_entry_lba=34 in the GPT header). We must
-    // not place partition data at LBA 34 or it will overwrite the GPT entries.
-    // UEFI spec allows partition entries at any LBA, but we follow Microsoft's
-    // convention of LBA 34. LBA 50 gives us 16 sectors (8KB) after the 16-sector
-    // GPT entry array (LBA 34-49) and before the next aligned boundary.
-    let esp_start_lba = 50u64;
+    // The GPT entry array occupies 32 sectors at LBA 34. Starting the first
+    // partition at LBA 2048 is the UEFI/GPT alignment convention and leaves
+    // no possibility of the primary table overlapping partition data.
+    let esp_start_lba = 2048u64;
     let esp_sectors = ((esp_size_mb as u64) * 1024 * 1024) / sector_size;
     let esp_last_lba = esp_start_lba + esp_sectors - 1;
 
     // System partition starts after ESP
     let sys_start_lba = esp_last_lba + 1;
-    eprintln!("[DEBUG create_dual] esp_start_lba={}, esp_sectors={}, esp_last_lba={}, sys_start_lba={}",
-        esp_start_lba, esp_sectors, esp_last_lba, sys_start_lba);
+    crate::debug!(
+        "[DEBUG create_dual] esp_start_lba={}, esp_sectors={}, esp_last_lba={}, sys_start_lba={}",
+        esp_start_lba,
+        esp_sectors,
+        esp_last_lba,
+        sys_start_lba
+    );
     let sys_sectors = ((system_size_mb as u64) * 1024 * 1024) / sector_size;
     let sys_last_lba = sys_start_lba + sys_sectors - 1;
 
-    let total_sectors = sys_last_lba + 1;
+    // The backup GPT header occupies the final LBA, so it must not overlap the
+    // last sector of the system partition.
+    let total_sectors = sys_last_lba + 2;
 
     // Create ESP partition image with partition offset. The ESP is
     // always FAT32 (UEFI requirement).
@@ -1273,8 +1270,18 @@ pub fn create_dual_partition_image_with_fs(
     // Allocate buffer and copy partition data
     let total_bytes = (total_sectors * sector_size) as usize;
     let sys_off = (sys_start_lba * sector_size) as usize;
-    eprintln!("[DEBUG create_dual] total_bytes={}, sys_off={}, sys_bytes.len()={}", total_bytes, sys_off, sys_bytes.len());
-    eprintln!("[DEBUG create_dual] sys copy range: {} to {} (within {}?)", sys_off, sys_off + sys_bytes.len(), total_bytes);
+    crate::debug!(
+        "[DEBUG create_dual] total_bytes={}, sys_off={}, sys_bytes.len()={}",
+        total_bytes,
+        sys_off,
+        sys_bytes.len()
+    );
+    crate::debug!(
+        "[DEBUG create_dual] sys copy range: {} to {} (within {}?)",
+        sys_off,
+        sys_off + sys_bytes.len(),
+        total_bytes
+    );
     let mut buf = vec![0u8; total_bytes];
 
     // Copy ESP partition data
@@ -1294,7 +1301,7 @@ pub fn create_dual_partition_image_with_fs(
         DualPartitionFs::Fat32EspExt4System => &LINUX_FS_TYPE_GUID,
         _ => &SYSTEM_TYPE_GUID,
     };
-    eprintln!("[DEBUG create_dual] writing GPT: total_sectors={}, esp_start={}, esp_last={}, sys_start={}, sys_last={}",
+    crate::debug!("[DEBUG create_dual] writing GPT: total_sectors={}, esp_start={}, esp_last={}, sys_start={}, sys_last={}",
         total_sectors, esp_start_lba, esp_last_lba, sys_start_lba, sys_last_lba);
     write_dual_gpt(
         &mut buf,
@@ -1366,14 +1373,14 @@ fn write_dual_gpt(
     buf[pent1 + 32..pent1 + 40].copy_from_slice(&esp_start.to_le_bytes()); // First LBA
     buf[pent1 + 40..pent1 + 48].copy_from_slice(&esp_end.to_le_bytes()); // Last LBA
     buf[pent1 + 48..pent1 + 56].copy_from_slice(&0u64.to_le_bytes()); // Attributes
-    // Name: "EFI System Partition" (UTF-16LE)
+                                                                      // Name: "EFI System Partition" (UTF-16LE)
     let esp_name = "EFI System Partition";
     for (i, c) in esp_name.encode_utf16().enumerate() {
         let off = pent1 + 56 + i * 2;
         buf[off..off + 2].copy_from_slice(&c.to_le_bytes());
     }
 
-    eprintln!("[DEBUG write_dual_gpt] esp_start={}, esp_end={}, sys_start={}, sys_end={}, partition_entry_lba={}",
+    crate::debug!("[DEBUG write_dual_gpt] esp_start={}, esp_end={}, sys_start={}, sys_end={}, partition_entry_lba={}",
         esp_start, esp_end, sys_start, sys_end, partition_entry_lba);
     // GPT Partition Entry 2: System (second partition entry, at offset 128 from first entry)
     let pent2 = pent1 + 128; // Second partition entry (128 bytes after first entry)
@@ -1383,7 +1390,7 @@ fn write_dual_gpt(
     buf[pent2 + 32..pent2 + 40].copy_from_slice(&sys_start.to_le_bytes()); // First LBA
     buf[pent2 + 40..pent2 + 48].copy_from_slice(&sys_end.to_le_bytes()); // Last LBA
     buf[pent2 + 48..pent2 + 56].copy_from_slice(&0u64.to_le_bytes()); // Attributes
-    // Name: "System" (UTF-16LE)
+                                                                      // Name: "System" (UTF-16LE)
     let sys_name = "System";
     for (i, c) in sys_name.encode_utf16().enumerate() {
         let off = pent2 + 56 + i * 2;
@@ -1403,12 +1410,20 @@ fn write_dual_gpt(
     let hdr_crc = crc32(&hdr_bytes);
     buf[hdr + 16..hdr + 20].copy_from_slice(&hdr_crc.to_le_bytes());
 
-    // Backup GPT Header at last LBA
+    // Backup GPT Header at last LBA. The backup entry array immediately
+    // precedes the backup header, exactly as the UEFI specification defines.
     let backup_hdr = ((total_sectors - 1) as usize) * 512;
-    if backup_hdr + 92 <= buf.len() {
+    let entries_total_sectors = (entries_total / 512) as u64;
+    let backup_entries_lba = total_sectors - 1 - entries_total_sectors;
+    let backup_entries = (backup_entries_lba as usize) * 512;
+    if backup_hdr + 92 <= buf.len() && backup_entries + entries_total <= backup_hdr {
+        let (primary, backup) = buf.split_at_mut(backup_entries);
+        backup[0..entries_total].copy_from_slice(&primary[pent1..pent1 + entries_total]);
+
         let mut backup_bytes = buf[hdr..hdr + 92].to_vec();
         backup_bytes[24..32].copy_from_slice(&(total_sectors - 1).to_le_bytes()); // My LBA = last
         backup_bytes[32..40].copy_from_slice(&1u64.to_le_bytes()); // Alternate LBA = 1
+        backup_bytes[72..80].copy_from_slice(&backup_entries_lba.to_le_bytes());
         backup_bytes[16..20].copy_from_slice(&0u32.to_le_bytes()); // CRC = 0 for calc
         let backup_crc = crc32(&backup_bytes);
         backup_bytes[16..20].copy_from_slice(&backup_crc.to_le_bytes());

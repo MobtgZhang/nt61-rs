@@ -30,9 +30,9 @@
 //! the HAL, the OS loader, the registry hives, and the driver store).
 //! Everything else is left for the runtime to materialise.
 
-use std::path::{Path, PathBuf};
 use crate::error::Result;
 use crate::logger as log;
+use std::path::{Path, PathBuf};
 
 // =====================================================================
 // Windows 7 system partition layout (relative to volume root)
@@ -124,11 +124,7 @@ impl SystemBuilder {
     }
 
     /// Register an arbitrary file at an explicit volume-relative path.
-    pub fn add_file<P: AsRef<Path>>(
-        mut self,
-        relative_path: &str,
-        source: P,
-    ) -> Self {
+    pub fn add_file<P: AsRef<Path>>(mut self, relative_path: &str, source: P) -> Self {
         self.extra_files
             .push((relative_path.to_string(), source.as_ref().to_path_buf()));
         self
@@ -213,7 +209,9 @@ impl SystemBuilder {
                 log::warn(&format!("Driver not found: {}", src.display()));
                 continue;
             }
-            let Some(name) = src.file_name() else { continue };
+            let Some(name) = src.file_name() else {
+                continue;
+            };
             let dest = drv_dir.join(name);
             log::info(&format!(
                 "Copying driver: {} -> {}",
@@ -236,11 +234,7 @@ impl SystemBuilder {
             if let Some(parent) = dest.parent() {
                 crate::fs::dir::create_dir_all(parent)?;
             }
-            log::info(&format!(
-                "Copying: {} -> {}",
-                src.display(),
-                dest.display()
-            ));
+            log::info(&format!("Copying: {} -> {}", src.display(), dest.display()));
             crate::fs::copy::copy_file(src, &dest)?;
         }
         Ok(())

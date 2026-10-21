@@ -99,7 +99,9 @@ pub fn parse(text: &str) -> SshdConfig {
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
-        let Some((k, v)) = split(trimmed) else { continue };
+        let Some((k, v)) = split(trimmed) else {
+            continue;
+        };
         match k.to_ascii_lowercase().as_str() {
             "port" => {
                 if let Some(p) = first_word(v).and_then(|x| x.parse::<u16>().ok()) {
@@ -107,7 +109,9 @@ pub fn parse(text: &str) -> SshdConfig {
                 }
             }
             "listenaddress" => {
-                if let Some(p) = first_word(v) { cfg.listen_address = p.to_string(); }
+                if let Some(p) = first_word(v) {
+                    cfg.listen_address = p.to_string();
+                }
             }
             "hostkey" => {
                 cfg.host_key = path_value(v).to_string();
@@ -131,7 +135,9 @@ pub fn parse(text: &str) -> SshdConfig {
                 cfg.challenge_response_authentication = parse_bool(v);
             }
             "authorizedkeysfile" => {
-                if let Some(p) = first_word(v) { cfg.authorized_keys_file = p.to_string(); }
+                if let Some(p) = first_word(v) {
+                    cfg.authorized_keys_file = p.to_string();
+                }
             }
             "subsystem" => {
                 let mut it = v.splitn(2, char::is_whitespace);
@@ -144,17 +150,22 @@ pub fn parse(text: &str) -> SshdConfig {
             "usedns" => cfg.use_dns = parse_bool(v),
             "logingracetime" => {
                 if let Some(p) = first_word(v).and_then(|x| {
-                    x.strip_suffix('s').and_then(|y| y.parse::<u32>().ok())
+                    x.strip_suffix('s')
+                        .and_then(|y| y.parse::<u32>().ok())
                         .or_else(|| x.parse::<u32>().ok())
                 }) {
                     cfg.login_grace_time = p;
                 }
             }
             "maxauthtries" => {
-                if let Some(p) = parse_u32(v) { cfg.max_auth_tries = p; }
+                if let Some(p) = parse_u32(v) {
+                    cfg.max_auth_tries = p;
+                }
             }
             "clientaliveinterval" => {
-                if let Some(p) = parse_u32(v) { cfg.client_alive_interval = p; }
+                if let Some(p) = parse_u32(v) {
+                    cfg.client_alive_interval = p;
+                }
             }
             _ => {}
         }
@@ -189,9 +200,14 @@ ClientAliveInterval 30
         let cfg = parse(BASIC);
         assert_eq!(cfg.port, 2222);
         assert_eq!(cfg.listen_address, "0.0.0.0");
-        assert_eq!(cfg.host_key, "C:\\Program Files\\OpenSSH\\ssh_host_ed25519_key");
-        assert_eq!(cfg.pid_file.as_deref(),
-            Some("C:\\Program Files\\OpenSSH\\sshd.pid"));
+        assert_eq!(
+            cfg.host_key,
+            "C:\\Program Files\\OpenSSH\\ssh_host_ed25519_key"
+        );
+        assert_eq!(
+            cfg.pid_file.as_deref(),
+            Some("C:\\Program Files\\OpenSSH\\sshd.pid")
+        );
         assert_eq!(cfg.permit_root_login, PermitRoot::ProhibitPassword);
         assert!(cfg.pubkey_authentication);
         assert!(!cfg.password_authentication);

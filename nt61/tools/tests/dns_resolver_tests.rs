@@ -103,9 +103,7 @@ mod tests {
                 return None;
             }
             if rtype == qtype && rdlen == 4 && qtype == 1 {
-                let ip = u32::from_be_bytes([
-                    buf[off], buf[off + 1], buf[off + 2], buf[off + 3],
-                ]);
+                let ip = u32::from_be_bytes([buf[off], buf[off + 1], buf[off + 2], buf[off + 3]]);
                 return Some(ip);
             }
             off += rdlen;
@@ -170,13 +168,16 @@ mod tests {
         r.extend_from_slice(&0u16.to_be_bytes());
         r.extend_from_slice(&0u16.to_be_bytes());
         // Question: "example.com" A IN
-        r.push(7); r.extend_from_slice(b"example");
-        r.push(3); r.extend_from_slice(b"com");
+        r.push(7);
+        r.extend_from_slice(b"example");
+        r.push(3);
+        r.extend_from_slice(b"com");
         r.push(0);
         r.extend_from_slice(&1u16.to_be_bytes()); // QTYPE=A
         r.extend_from_slice(&1u16.to_be_bytes()); // QCLASS=IN
-        // Answer: example.com A 60s 10.0.2.3
-        r.push(0xC0); r.push(12); // pointer to offset 12 ("example.com")
+                                                  // Answer: example.com A 60s 10.0.2.3
+        r.push(0xC0);
+        r.push(12); // pointer to offset 12 ("example.com")
         r.extend_from_slice(&1u16.to_be_bytes()); // TYPE=A
         r.extend_from_slice(&1u16.to_be_bytes()); // CLASS=IN
         r.extend_from_slice(&60u32.to_be_bytes()); // TTL
@@ -196,7 +197,8 @@ mod tests {
         r.extend_from_slice(&0u16.to_be_bytes());
         r.extend_from_slice(&0u16.to_be_bytes());
         // Question
-        r.push(3); r.extend_from_slice(b"foo");
+        r.push(3);
+        r.extend_from_slice(b"foo");
         r.push(0);
         r.extend_from_slice(&1u16.to_be_bytes());
         r.extend_from_slice(&1u16.to_be_bytes());

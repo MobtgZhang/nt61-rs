@@ -33,12 +33,12 @@
 //! `-L <n>` is the recursion depth for `--directory`.
 
 mod error;
-mod logger;
 pub mod fs;
+mod logger;
 use nt61_tools::hive_gen;
 
-use std::path::{Path, PathBuf};
 use clap::{Arg, ArgAction, ArgMatches, Command};
+use std::path::{Path, PathBuf};
 
 /// Build tool version
 const VERSION: &str = "0.1.0";
@@ -199,9 +199,9 @@ fn build_cli() -> Command {
                 .long("partition-table")
                 .short('i')
                 .value_name("STYLE")
-                .value_parser(["gpt", "mbr", "none"])
+                .value_parser(["gpt", "none"])
                 .default_value("none")
-                .help("Partition table style to write around the filesystem (gpt | mbr | none). Default none = raw single-FS image."),
+                .help("Partition table style to write around the filesystem (gpt | none). Default none = raw single-FS image."),
         )
         // ---- cp / mv / rm / mkdir / directory -------------------------
         .arg(
@@ -363,20 +363,22 @@ fn build_system(build_dir: &Path, _m: &ArgMatches) -> error::Result<()> {
 fn build_esp(build_dir: &Path, arch: &str, m: &ArgMatches) -> error::Result<()> {
     let out = build_dir.join("esp");
     // Try to find nt61-boot.efi in the expected locations
-    let boot_efi = locate_built(m, "boot", "nt61-boot.efi")
-        .or_else(|| {
-            // Fallback: look in the UEFI target directory
-            let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-            let target_dir = manifest_dir.parent().unwrap().join("target/x86_64-unknown-uefi/release/nt61-boot.efi");
-            if target_dir.exists() {
-                Some(target_dir)
-            } else {
-                None
-            }
-        });
+    let boot_efi = locate_built(m, "boot", "nt61-boot.efi").or_else(|| {
+        // Fallback: look in the UEFI target directory
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let target_dir = manifest_dir
+            .parent()
+            .unwrap()
+            .join("target/x86_64-unknown-uefi/release/nt61-boot.efi");
+        if target_dir.exists() {
+            Some(target_dir)
+        } else {
+            None
+        }
+    });
     let font = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .map(|p| p.join("resources/fonts/open-sans/OpenSans-Regular.ttf"));
+        .map(|p| p.join("resources/fonts/dejavu-fonts-XXXX/DejaVuSansMono.ttf"));
     // NOTE: AUTOEXEC.BAT is intentionally placed in the *system*
     // partition only (C:\autoexec.bat), not the ESP. Per Windows
     // conventions the ESP is reserved for boot-time files; placing
@@ -433,7 +435,12 @@ fn run_format(m: &ArgMatches) -> error::Result<()> {
         .map_err(|_| error::BuildError::InvalidParam("--size-mb must be a number".into()))?;
     let path = PathBuf::from(&img);
     fs::image::format_image(&path, &fs_name, size_mb)?;
-    logger::success(&format!("Formatted {} ({}, {} MB)", path.display(), fs_name, size_mb));
+    logger::success(&format!(
+        "Formatted {} ({}, {} MB)",
+        path.display(),
+        fs_name,
+        size_mb
+    ));
     Ok(())
 }
 
@@ -448,7 +455,10 @@ fn run_create(fmt: &str, m: &ArgMatches) -> error::Result<()> {
         .unwrap()
         .parse()
         .map_err(|_| error::BuildError::InvalidParam("--size-mb must be a number".into()))?;
-    let pt_style = m.get_one::<String>("partition-table").cloned().unwrap_or_else(|| "none".to_string());
+    let pt_style = m
+        .get_one::<String>("partition-table")
+        .cloned()
+        .unwrap_or_else(|| "none".to_string());
     let path = PathBuf::from(&img);
 
     // --create targets the *container* format (img / iso / qcow2). The
@@ -488,11 +498,10 @@ fn run_create(fmt: &str, m: &ArgMatches) -> error::Result<()> {
 
     let pt = match pt_style.as_str() {
         "gpt" => fs::image::PartitionTable::Gpt,
-        "mbr" => fs::image::PartitionTable::Mbr,
         "none" => fs::image::PartitionTable::None,
         other => {
             return Err(error::BuildError::InvalidParam(format!(
-                "unknown partition table style: {} (expected gpt | mbr | none)",
+                "unknown partition table style: {} (expected gpt | none)",
                 other
             )));
         }
@@ -539,7 +548,8 @@ fn run_copy(is_move: bool, m: &ArgMatches) -> error::Result<()> {
             // image -> host
             copy_image_to_host(img, inner, dst_path, partition, m.get_flag("recursive"))?;
             if is_move {
-                let mut opened = fs::image::open_for_modify(Path::new(img), parse_partition(partition))?;
+                let mut opened =
+                    fs::image::open_for_modify(Path::new(img), parse_partition(partition))?;
                 opened.backend().remove(inner)?;
                 opened.write_back(Path::new(img))?;
             }
@@ -555,7 +565,8 @@ fn run_copy(is_move: bool, m: &ArgMatches) -> error::Result<()> {
             copy_host_to_image(&tmp, img_b, inner_b, None, m.get_flag("recursive"))?;
             std::fs::remove_file(&tmp).ok();
             if is_move {
-                let mut opened = fs::image::open_for_modify(Path::new(img_a), parse_partition(partition))?;
+                let mut opened =
+                    fs::image::open_for_modify(Path::new(img_a), parse_partition(partition))?;
                 opened.backend().remove(inner_a)?;
                 opened.write_back(Path::new(img_a))?;
             }
@@ -775,16 +786,16 @@ fn run_inject_raw(m: &ArgMatches) -> error::Result<()> {
     // does a full round-trip on write_back). Instead we read the
     // whole file, locate the NTFS partition, splice, write back.
     let image_path = std::path::PathBuf::from(&image);
-    eprintln!("[DEBUG inject-raw] image={:?}", image_path);
+    nt61_tools::debug!("[DEBUG inject-raw] image={:?}", image_path);
     let mut raw = std::fs::read(&image_path).map_err(|e| {
         error::BuildError::Io(std::io::Error::new(
             e.kind(),
             format!("reading {:?}: {}", image_path, e),
         ))
     })?;
-    eprintln!("[DEBUG inject-raw] raw len={}", raw.len());
+    nt61_tools::debug!("[DEBUG inject-raw] raw len={}", raw.len());
     let partition_offset = locate_ntfs_partition_offset(&raw, partition_arg)?;
-    eprintln!("[DEBUG inject-raw] partition_offset={}", partition_offset);
+    nt61_tools::debug!("[DEBUG inject-raw] partition_offset={}", partition_offset);
     let part_end = raw.len();
     let mut part: Vec<u8> = raw[partition_offset..part_end].to_vec();
 
@@ -824,10 +835,7 @@ fn locate_ntfs_partition_offset(raw: &[u8], partition_arg: Option<&str>) -> erro
         })?;
         let list = fs::partition::list_partitions(raw)?;
         let pi = list.into_iter().find(|p| p.index == n).ok_or_else(|| {
-            error::BuildError::InvalidParam(format!(
-                "no partition with index {} in image",
-                n
-            ))
+            error::BuildError::InvalidParam(format!("no partition with index {} in image", n))
         })?;
         offset = Some(pi.byte_offset);
     }
@@ -865,7 +873,6 @@ fn locate_ntfs_partition_offset(raw: &[u8], partition_arg: Option<&str>) -> erro
 
 // =====================================================================
 
-
 fn run_rm(m: &ArgMatches) -> error::Result<()> {
     let src = require_string(m, "src", "--src")?;
     let spec = PathSpec::parse(&src);
@@ -880,7 +887,8 @@ fn run_rm(m: &ArgMatches) -> error::Result<()> {
             logger::success(&format!("rm: {}", p.display()));
         }
         PathSpec::Image(img, inner) => {
-            let mut opened = fs::image::open_for_modify(Path::new(&img), parse_partition(partition))?;
+            let mut opened =
+                fs::image::open_for_modify(Path::new(&img), parse_partition(partition))?;
             opened.backend().remove(&inner)?;
             opened.write_back(Path::new(&img))?;
             logger::success(&format!("rm: {}:{}", img, inner));
@@ -902,7 +910,11 @@ fn run_directory(m: &ArgMatches) -> error::Result<()> {
         .max(1);
     let part_arg = m.get_one::<String>("partition").map(|s| s.as_str());
     let partition = parse_partition(part_arg);
-    eprintln!("[DEBUG run_directory] dir={:?}, partition={:?}", dir, partition);
+    nt61_tools::debug!(
+        "[DEBUG run_directory] dir={:?}, partition={:?}",
+        dir,
+        partition
+    );
 
     // If --image is given, --dir is always an inner image path.
     if m.contains_id("image") {
@@ -924,10 +936,16 @@ fn run_directory(m: &ArgMatches) -> error::Result<()> {
             dir_str
         };
 
-        eprintln!("[DEBUG run_directory] using --image={}", img);
-        eprintln!("[DEBUG run_directory] calling open_for_modify with partition={:?}", partition);
+        nt61_tools::debug!("[DEBUG run_directory] using --image={}", img);
+        nt61_tools::debug!(
+            "[DEBUG run_directory] calling open_for_modify with partition={:?}",
+            partition
+        );
         let mut opened = fs::image::open_for_modify(std::path::Path::new(img), partition)?;
-        eprintln!("[DEBUG run_directory] open succeeded, listing {}", inner_path);
+        nt61_tools::debug!(
+            "[DEBUG run_directory] open succeeded, listing {}",
+            inner_path
+        );
         let backend = opened.backend();
         list_recurse(backend, inner_path, 0, depth);
         return Ok(());
@@ -986,9 +1004,9 @@ fn list_recurse(fs_tree: &dyn fs::backend::FsBackend, path: &str, cur_depth: u32
 // =====================================================================
 
 fn require_string(m: &ArgMatches, key: &str, hint: &str) -> error::Result<String> {
-    m.get_one::<String>(key)
-        .cloned()
-        .ok_or_else(|| error::BuildError::InvalidParam(format!("missing required argument {}", hint)))
+    m.get_one::<String>(key).cloned().ok_or_else(|| {
+        error::BuildError::InvalidParam(format!("missing required argument {}", hint))
+    })
 }
 
 fn parse_partition(s: Option<&str>) -> Option<u32> {

@@ -64,14 +64,32 @@ impl fmt::Display for BuildError {
             BuildError::HiveError(msg) => write!(f, "Registry hive error: {}", msg),
             BuildError::PeError(msg) => write!(f, "PE file error: {}", msg),
             BuildError::CrcError { expected, found } => {
-                write!(f, "CRC mismatch: expected 0x{:08X}, found 0x{:08X}", expected, found)
+                write!(
+                    f,
+                    "CRC mismatch: expected 0x{:08X}, found 0x{:08X}",
+                    expected, found
+                )
             }
             BuildError::InvalidParam(msg) => write!(f, "Invalid parameter: {}", msg),
-            BuildError::OutOfSpace { requested, available } => {
-                write!(f, "Out of space: requested {} bytes, {} available", requested, available)
+            BuildError::OutOfSpace {
+                requested,
+                available,
+            } => {
+                write!(
+                    f,
+                    "Out of space: requested {} bytes, {} available",
+                    requested, available
+                )
             }
-            BuildError::TooLarge { requested, available } => {
-                write!(f, "Payload too large: {} bytes requested, only {} available", requested, available)
+            BuildError::TooLarge {
+                requested,
+                available,
+            } => {
+                write!(
+                    f,
+                    "Payload too large: {} bytes requested, only {} available",
+                    requested, available
+                )
             }
             BuildError::NotImplemented(feature) => {
                 write!(f, "Feature not implemented: {}", feature)
@@ -104,21 +122,3 @@ impl From<io::Error> for BuildError {
 
 /// Result type alias for build tool operations.
 pub type Result<T> = std::result::Result<T, BuildError>;
-
-/// Helper function to convert an optional error message to a BuildError.
-#[allow(dead_code)]
-pub fn invalid_format(msg: impl Into<String>) -> BuildError {
-    BuildError::InvalidFormat(msg.into())
-}
-
-/// Helper function to create a missing file error.
-#[allow(dead_code)]
-pub fn missing_file(path: impl Into<String>) -> BuildError {
-    BuildError::MissingFile(path.into())
-}
-
-/// Helper function to create an image creation error.
-#[allow(dead_code)]
-pub fn image_failed(msg: impl Into<String>) -> BuildError {
-    BuildError::ImageCreateFailed(msg.into())
-}

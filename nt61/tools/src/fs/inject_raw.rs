@@ -53,6 +53,7 @@
 //!   caller can use a different parent or extend the disk.
 
 use crate::error::{BuildError, Result};
+use crate::fs::ntfs::{ATTR_TYPE_INDEX_ROOT, FILE_NAME_MINIMUM_LENGTH};
 use std::collections::HashMap;
 
 /// One new file to inject into the parent directory.
@@ -97,22 +98,12 @@ pub struct InjectReport {
 
 /// NTFS BPB summary used by the in-place editor.
 ///
-/// Fields are public-readonly via `pub` getters. The Bpb is the
-/// authoritative snapshot of the on-disk BPB the editor captured
-/// when the image was first opened; downstream phases may consult
-/// it to size their buffers / decide alignment. The current
-/// injection pipeline only needs `mft_cluster` and the geometry
-/// fields are kept for future cluster-level writing, so we silence
-/// the unused-field lint rather than deleting the data.
+/// The Bpb is the authoritative snapshot of the on-disk BPB fields
+/// required by the in-place injection pipeline.
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
 pub struct Bpb {
-    bytes_per_sector: u32,
-    sectors_per_cluster: u32,
     cluster_size: u32,
-    total_sectors: u64,
     mft_cluster: u64,
-    mft_mirror_cluster: u64,
     mft_record_size: u32,
 }
 
@@ -149,9 +140,6 @@ fn parse_bpb(part: &[u8]) -> Result<Bpb> {
     let mft_cluster = u64::from_le_bytes([
         bs[48], bs[49], bs[50], bs[51], bs[52], bs[53], bs[54], bs[55],
     ]);
-    let mft_mirror_cluster = u64::from_le_bytes([
-        bs[56], bs[57], bs[58], bs[59], bs[60], bs[61], bs[62], bs[63],
-    ]);
     let clusters_per_mft_raw = bs[64] as i8;
     let mft_record_size: u32 = if clusters_per_mft_raw < 0 {
         1u32 << (-clusters_per_mft_raw as u32)
@@ -161,12 +149,8 @@ fn parse_bpb(part: &[u8]) -> Result<Bpb> {
         (clusters_per_mft_raw as u32) * cluster_size
     };
     Ok(Bpb {
-        bytes_per_sector,
-        sectors_per_cluster,
         cluster_size,
-        total_sectors,
         mft_cluster,
-        mft_mirror_cluster,
         mft_record_size,
     })
 }
@@ -179,9 +163,11 @@ fn read_mft_record(part: &[u8], bpb: &Bpb, record_num: u64) -> Result<Vec<u8>> {
         .checked_mul(bpb.cluster_size as usize)
         .ok_or_else(|| BuildError::NtfsError("MFT offset overflow".into()))?;
     let rec_off = mft_byte_off
-        .checked_add((record_num as usize).checked_mul(bpb.mft_record_size as usize).ok_or_else(|| {
-            BuildError::NtfsError("record offset overflow".into())
-        })?)
+        .checked_add(
+            (record_num as usize)
+                .checked_mul(bpb.mft_record_size as usize)
+                .ok_or_else(|| BuildError::NtfsError("record offset overflow".into()))?,
+        )
         .ok_or_else(|| BuildError::NtfsError("record offset overflow".into()))?;
     let end = rec_off + bpb.mft_record_size as usize;
     if end > part.len() {
@@ -220,9 +206,7 @@ fn apply_fixups(mut rec: Vec<u8>) -> Result<Vec<u8>> {
         // at the sector end and the actual bytes in the fixup
         // array. To apply, verify the placeholder is intact, then
         // replace the sector end with the actual bytes.
-        let placeholder = u16::from_le_bytes([
-            rec[sector_end], rec[sector_end + 1],
-        ]);
+        let placeholder = u16::from_le_bytes([rec[sector_end], rec[sector_end + 1]]);
         if placeholder != fixup_value {
             return Err(BuildError::NtfsError(format!(
                 "fixup placeholder mismatch at sector {}: sector_end={:#x} expected={:#x}",
@@ -243,11 +227,7 @@ fn apply_fixups(mut rec: Vec<u8>) -> Result<Vec<u8>> {
 /// Returns the record number on success. Walks the tree one level at
 /// a time, reading each directory's `$INDEX_ROOT` and matching the
 /// requested name (case-insensitive).
-pub fn resolve_path_to_record(
-    part: &[u8],
-    bpb: &Bpb,
-    path: &str,
-) -> Result<u64> {
+pub fn resolve_path_to_record(part: &[u8], bpb: &Bpb, path: &str) -> Result<u64> {
     let normalized = path.replace('/', "\\");
     let mut parts: Vec<&str> = normalized.split('\\').filter(|s| !s.is_empty()).collect();
     let mut current: u64 = 5; // root directory is MFT record 5
@@ -271,15 +251,16 @@ fn find_child_in_index_root(rec: &[u8], name: &str, mft_record_size: u32) -> Res
     let mut off = u16::from_le_bytes([rec[0x14], rec[0x15]]) as usize;
     let end = mft_record_size as usize;
     while off + 16 <= end {
-        let attr_type = u32::from_le_bytes([
-            rec[off], rec[off + 1], rec[off + 2], rec[off + 3],
-        ]);
-        if attr_type == 0xFFFFFFFF { break; }
-        let attr_len = u32::from_le_bytes([
-            rec[off + 4], rec[off + 5], rec[off + 6], rec[off + 7],
-        ]) as usize;
-        if attr_len < 24 || attr_len > end.saturating_sub(off) { break; }
-        if attr_type == 0x90 {
+        let attr_type = u32::from_le_bytes([rec[off], rec[off + 1], rec[off + 2], rec[off + 3]]);
+        if attr_type == 0xFFFFFFFF {
+            break;
+        }
+        let attr_len =
+            u32::from_le_bytes([rec[off + 4], rec[off + 5], rec[off + 6], rec[off + 7]]) as usize;
+        if attr_len < 24 || attr_len > end.saturating_sub(off) {
+            break;
+        }
+        if attr_type == ATTR_TYPE_INDEX_ROOT {
             // $INDEX_ROOT: 0x10 attr header, 0x10 INDEX_ROOT header,
             // 0x10 INDEX_HEADER, then entries.
             let non_resident = rec[off + 8];
@@ -293,40 +274,56 @@ fn find_child_in_index_root(rec: &[u8], name: &str, mft_record_size: u32) -> Res
             }
             let value_off = u16::from_le_bytes([rec[off + 0x14], rec[off + 0x15]]) as usize;
             let value_size = u32::from_le_bytes([
-                rec[off + 0x10], rec[off + 0x11], rec[off + 0x12], rec[off + 0x13],
+                rec[off + 0x10],
+                rec[off + 0x11],
+                rec[off + 0x12],
+                rec[off + 0x13],
             ]) as usize;
             let root_off = off + value_off;
-            eprintln!("[DEBUG find_child] attr_off=0x{:x} value_off=0x{:x} value_size=0x{:x} root_off=0x{:x}", off, value_off, value_size, root_off);
+            crate::debug!("[DEBUG find_child] attr_off=0x{:x} value_off=0x{:x} value_size=0x{:x} root_off=0x{:x}", off, value_off, value_size, root_off);
             // INDEX_ROOT header is 16 bytes; first 4 bytes are the
             // attribute type indexed (4 = $FILE_NAME), then 4 bytes
             // collation rule, 4 bytes index allocation entry size,
             // 4 bytes clusters per index record.
             let header_off = root_off + 16;
             let total_entries = u32::from_le_bytes([
-                rec[header_off + 4], rec[header_off + 5],
-                rec[header_off + 6], rec[header_off + 7],
+                rec[header_off + 4],
+                rec[header_off + 5],
+                rec[header_off + 6],
+                rec[header_off + 7],
             ]) as usize;
             let allocated = u32::from_le_bytes([
-                rec[header_off + 8], rec[header_off + 9],
-                rec[header_off + 10], rec[header_off + 11],
+                rec[header_off + 8],
+                rec[header_off + 9],
+                rec[header_off + 10],
+                rec[header_off + 11],
             ]) as usize;
-            eprintln!("[DEBUG find_child] header_off=0x{:x} total_entries=0x{:x} allocated=0x{:x}", header_off, total_entries, allocated);
+            crate::debug!(
+                "[DEBUG find_child] header_off=0x{:x} total_entries=0x{:x} allocated=0x{:x}",
+                header_off,
+                total_entries,
+                allocated
+            );
             // Walk entries; each starts at header_off + 16.
             let mut entry_off = header_off + 16;
-            eprintln!("[DEBUG find_child] entry_off=0x{:x} value_end=0x{:x}", entry_off, root_off + value_size);
+            crate::debug!(
+                "[DEBUG find_child] entry_off=0x{:x} value_end=0x{:x}",
+                entry_off,
+                root_off + value_size
+            );
             while entry_off + 16 <= root_off + value_size {
-                let entry_len = u16::from_le_bytes([
-                    rec[entry_off + 8], rec[entry_off + 9],
-                ]) as usize;
-                if entry_len == 0 || entry_off + entry_len > root_off + value_size { break; }
-                if entry_len >= 24 && &rec[entry_off..entry_off + 4] != b"\0\0\0\0" {
-                    // The build-tool writes a full 24-byte FILE_NAME
-                    // attribute header after the 16-byte INDEX_ENTRY
-                    // header. So the FILE_NAME value starts at
-                    // `entry_off + 16 + 24 = entry_off + 0x28`. See
-                    // fs/ntfs/mod.rs:1523 in the kernel for the same
-                    // layout.
-                    let fn_off = entry_off + 0x28;
+                let entry_len =
+                    u16::from_le_bytes([rec[entry_off + 8], rec[entry_off + 9]]) as usize;
+                if entry_len == 0 || entry_off + entry_len > root_off + value_size {
+                    break;
+                }
+                let key_len =
+                    u16::from_le_bytes([rec[entry_off + 10], rec[entry_off + 11]]) as usize;
+                if entry_len >= 24 && key_len as usize >= FILE_NAME_MINIMUM_LENGTH {
+                    // INDEX_ENTRY keys contain the FILE_NAME value
+                    // directly; there is no nested attribute-record
+                    // header.
+                    let fn_off = entry_off + 0x10;
                     let name_len = rec.get(fn_off + 0x40).copied().unwrap_or(0) as usize;
                     let name_start = fn_off + 0x42;
                     if name_len > 0 && name_start + name_len * 2 <= entry_off + entry_len {
@@ -339,16 +336,24 @@ fn find_child_in_index_root(rec: &[u8], name: &str, mft_record_size: u32) -> Res
                             utf16.push(cu);
                         }
                         if let Ok(s) = String::from_utf16(&utf16) {
-                            eprintln!("[DEBUG find_child] entry: name={:?} (looking for {:?})", s, name);
+                            crate::debug!(
+                                "[DEBUG find_child] entry: name={:?} (looking for {:?})",
+                                s,
+                                name
+                            );
                             if s.eq_ignore_ascii_case(name) {
                                 // Found. MFT reference at entry_off
                                 // (first 8 bytes, low 48 bits are the
                                 // record number).
                                 let mft_ref = u64::from_le_bytes([
-                                    rec[entry_off], rec[entry_off + 1],
-                                    rec[entry_off + 2], rec[entry_off + 3],
-                                    rec[entry_off + 4], rec[entry_off + 5],
-                                    rec[entry_off + 6], rec[entry_off + 7],
+                                    rec[entry_off],
+                                    rec[entry_off + 1],
+                                    rec[entry_off + 2],
+                                    rec[entry_off + 3],
+                                    rec[entry_off + 4],
+                                    rec[entry_off + 5],
+                                    rec[entry_off + 6],
+                                    rec[entry_off + 7],
                                 ]);
                                 return Ok(mft_ref & 0x0000_FFFF_FFFF_FFFF);
                             }
@@ -361,7 +366,9 @@ fn find_child_in_index_root(rec: &[u8], name: &str, mft_record_size: u32) -> Res
         }
         off += attr_len;
     }
-    Err(BuildError::NtfsError("directory record has no $INDEX_ROOT".into()))
+    Err(BuildError::NtfsError(
+        "directory record has no $INDEX_ROOT".into(),
+    ))
 }
 
 /// Append `files` to `parent_dir` inside the existing NTFS image in
@@ -379,7 +386,9 @@ pub fn inject_raw(
 ) -> Result<InjectReport> {
     // Verify partition is large enough to hold the BPB.
     if part.len() < 512 {
-        return Err(BuildError::NtfsError("partition smaller than one sector".into()));
+        return Err(BuildError::NtfsError(
+            "partition smaller than one sector".into(),
+        ));
     }
 
     // Validate all input files fit in resident $DATA.
@@ -407,10 +416,10 @@ pub fn inject_raw(
 
     // Find parent's $INDEX_ROOT attribute so we know its
     // total_size budget and its offset to insert new entries.
-    let index_root_info = locate_index_root(&parent_raw, bpb.mft_record_size)?
-        .ok_or_else(|| BuildError::NtfsError(
-            "parent directory has no $INDEX_ROOT attribute".into(),
-        ))?;
+    let index_root_info =
+        locate_index_root(&parent_raw, bpb.mft_record_size)?.ok_or_else(|| {
+            BuildError::NtfsError("parent directory has no $INDEX_ROOT attribute".into())
+        })?;
 
     // For each input file, build a brand-new MFT record with:
     //   - $STANDARD_INFORMATION (fixed bytes)
@@ -434,15 +443,16 @@ pub fn inject_raw(
         // in place rather than allocating a new MFT slot.
         match find_child_in_index_root(&parent_raw, &f.name, bpb.mft_record_size) {
             Ok(existing_rec) => {
-                let mut existing =
-                    apply_fixups(read_mft_record(part, &bpb, existing_rec)?)?;
+                let mut existing = apply_fixups(read_mft_record(part, &bpb, existing_rec)?)?;
                 overwrite_resident_data_inplace(&mut existing, &f.data)?;
                 let with_fixup = reapply_fixups(existing, bpb.mft_record_size)?;
                 let off = (bpb.mft_cluster as usize)
                     .checked_mul(bpb.cluster_size as usize)
-                    .and_then(|x| x.checked_add(
-                        (existing_rec as usize).checked_mul(bpb.mft_record_size as usize)?,
-                    ))
+                    .and_then(|x| {
+                        x.checked_add(
+                            (existing_rec as usize).checked_mul(bpb.mft_record_size as usize)?,
+                        )
+                    })
                     .ok_or_else(|| BuildError::NtfsError("MFT offset overflow".into()))?;
                 if off + with_fixup.len() > part.len() {
                     return Err(BuildError::NtfsError("reused record past EOF".into()));
@@ -468,7 +478,11 @@ pub fn inject_raw(
     // Check that all new index entries fit in the existing
     // $INDEX_ROOT. We compute the available headroom from the
     // difference between `allocated_size` and current bytes used.
-    let used_after = index_root_info.bytes_used + new_index_entries.iter().map(|e| align8(e.len())).sum::<usize>();
+    let used_after = index_root_info.bytes_used
+        + new_index_entries
+            .iter()
+            .map(|e| align8(e.len()))
+            .sum::<usize>();
     if used_after > index_root_info.allocated_size {
         return Err(BuildError::NtfsError(format!(
             "$INDEX_ROOT does not have headroom for {} new entries (need {} bytes, have {})",
@@ -544,7 +558,9 @@ fn next_free_record(part: &[u8], bpb: &Bpb) -> Result<u32> {
     let max_records = mft_total_bytes / bpb.mft_record_size as usize;
     for rec_idx in 0..max_records {
         let off = mft_start_byte + rec_idx * bpb.mft_record_size as usize;
-        if off + 4 > part.len() { break; }
+        if off + 4 > part.len() {
+            break;
+        }
         if &part[off..off + 4] != b"FILE" {
             // First 4 bytes are zero → uninitialised record slot.
             return Ok(rec_idx as u32);
@@ -581,20 +597,26 @@ fn locate_index_root(rec: &[u8], mft_record_size: u32) -> Result<Option<IndexRoo
     let mut off = u16::from_le_bytes([rec[0x14], rec[0x15]]) as usize;
     let end = mft_record_size as usize;
     while off + 16 <= end {
-        let attr_type = u32::from_le_bytes([
-            rec[off], rec[off + 1], rec[off + 2], rec[off + 3],
-        ]);
-        if attr_type == 0xFFFFFFFF { break; }
-        let attr_len = u32::from_le_bytes([
-            rec[off + 4], rec[off + 5], rec[off + 6], rec[off + 7],
-        ]) as usize;
-        if attr_len < 24 || attr_len > end.saturating_sub(off) { break; }
+        let attr_type = u32::from_le_bytes([rec[off], rec[off + 1], rec[off + 2], rec[off + 3]]);
+        if attr_type == 0xFFFFFFFF {
+            break;
+        }
+        let attr_len =
+            u32::from_le_bytes([rec[off + 4], rec[off + 5], rec[off + 6], rec[off + 7]]) as usize;
+        if attr_len < 24 || attr_len > end.saturating_sub(off) {
+            break;
+        }
         if attr_type == 0x90 {
             let non_resident = rec[off + 8];
-            if non_resident != 0 { return Ok(None); }
+            if non_resident != 0 {
+                return Ok(None);
+            }
             let value_off = u16::from_le_bytes([rec[off + 0x14], rec[off + 0x15]]) as usize;
             let value_size = u32::from_le_bytes([
-                rec[off + 0x10], rec[off + 0x11], rec[off + 0x12], rec[off + 0x13],
+                rec[off + 0x10],
+                rec[off + 0x11],
+                rec[off + 0x12],
+                rec[off + 0x13],
             ]) as usize;
             let value_start = off + value_off;
             // INDEX_ROOT value layout:
@@ -609,12 +631,16 @@ fn locate_index_root(rec: &[u8], mft_record_size: u32) -> Result<Option<IndexRoo
             //     +0x0C: u32 flags
             let header_start = value_start + 16;
             let total_size = u32::from_le_bytes([
-                rec[header_start + 4], rec[header_start + 5],
-                rec[header_start + 6], rec[header_start + 7],
+                rec[header_start + 4],
+                rec[header_start + 5],
+                rec[header_start + 6],
+                rec[header_start + 7],
             ]) as usize;
             let allocated_size = u32::from_le_bytes([
-                rec[header_start + 8], rec[header_start + 9],
-                rec[header_start + 10], rec[header_start + 11],
+                rec[header_start + 8],
+                rec[header_start + 9],
+                rec[header_start + 10],
+                rec[header_start + 11],
             ]) as usize;
             // Compute the actual bytes_used by walking the entries
             // until we hit the END marker. This is more reliable
@@ -625,13 +651,11 @@ fn locate_index_root(rec: &[u8], mft_record_size: u32) -> Result<Option<IndexRoo
             let mut cursor = entries_start;
             let value_end = value_start + value_size;
             while cursor + 16 <= value_end {
-                let entry_size = u16::from_le_bytes([
-                    rec[cursor + 8], rec[cursor + 9],
-                ]) as usize;
-                if entry_size == 0 { break; }
-                let entry_flags = u16::from_le_bytes([
-                    rec[cursor + 12], rec[cursor + 13],
-                ]);
+                let entry_size = u16::from_le_bytes([rec[cursor + 8], rec[cursor + 9]]) as usize;
+                if entry_size == 0 {
+                    break;
+                }
+                let entry_flags = u16::from_le_bytes([rec[cursor + 12], rec[cursor + 13]]);
                 if entry_size == 12 && (entry_flags & 0x0002) != 0 {
                     // END marker; stop.
                     break;
@@ -647,7 +671,11 @@ fn locate_index_root(rec: &[u8], mft_record_size: u32) -> Result<Option<IndexRoo
                 value_off: value_start,
                 value_size,
                 allocated_size,
-                bytes_used: if actual_used > 0 { actual_used } else { total_size },
+                bytes_used: if actual_used > 0 {
+                    actual_used
+                } else {
+                    total_size
+                },
             }));
         }
         off += attr_len;
@@ -755,8 +783,7 @@ fn build_resident_file_record(
     // original sector-tail bytes stored at the next slots, and the
     // on-disk sector tail overwritten with the fixup value.
     let fixup_value: u16 = 0xBEEF;
-    rec[fixup_off as usize..fixup_off as usize + 2]
-        .copy_from_slice(&fixup_value.to_le_bytes());
+    rec[fixup_off as usize..fixup_off as usize + 2].copy_from_slice(&fixup_value.to_le_bytes());
     for i in 1..num_sectors {
         let sector_end = i * 512 - 2;
         let stored_off = fixup_off as usize + 2 + (i - 1) * 2;
@@ -786,7 +813,9 @@ fn reapply_fixups(mut rec: Vec<u8>, mft_record_size: u32) -> Result<Vec<u8>> {
     for i in 1..max_sectors {
         let sector_end = i * 512 - 2;
         let stored_off = fixup_off + 2 + (i - 1) * 2;
-        if stored_off + 2 > rec.len() { break; }
+        if stored_off + 2 > rec.len() {
+            break;
+        }
         let orig = [rec[sector_end], rec[sector_end + 1]];
         rec[stored_off..stored_off + 2].copy_from_slice(&orig);
         rec[sector_end..sector_end + 2].copy_from_slice(&fixup_value.to_le_bytes());
@@ -839,14 +868,12 @@ fn build_file_name_value(parent_record: u64, utf16: &[u16]) -> Vec<u8> {
 /// unsigned short compare) in NTFS. We sort the new entries in
 /// `splice_index_root` after building each one.
 fn build_index_entry(record_num: u32, parent_record: u64, name: &str) -> Result<Vec<u8>> {
-    let file_name_value = build_file_name_value(parent_record, &name.encode_utf16().collect::<Vec<u16>>());
-    // The build-tool's on-disk layout for an INDEX_ENTRY's key is
-    // a full FILE_NAME *attribute* (24-byte header + value), not
-    // just the bare value. This matches the kernel's parser in
-    // fs/ntfs/mod.rs which reads `attr_type`/`attr_length` from
-    // the 24-byte header.
-    let file_name_attr = build_file_name_attr(ATTR_TYPE_FILE_NAME, &file_name_value);
-    let entry_data_len = 16 + file_name_attr.len(); // 16-byte INDEX_ENTRY header + FILE_NAME attribute
+    let file_name_value =
+        build_file_name_value(parent_record, &name.encode_utf16().collect::<Vec<u16>>());
+    // INDEX_ENTRY keys contain the FILE_NAME value directly.  NTFS does
+    // not embed an attribute-record header in the index key.
+    let file_name_key = file_name_value;
+    let entry_data_len = 16 + file_name_key.len();
     let total_len = align8(entry_data_len);
 
     let mut e = vec![0u8; total_len];
@@ -855,50 +882,14 @@ fn build_index_entry(record_num: u32, parent_record: u64, name: &str) -> Result<
     e[0..8].copy_from_slice(&mft_ref.to_le_bytes());
     // entry_length (including itself).
     e[8..10].copy_from_slice(&(total_len as u16).to_le_bytes());
-    // entry_data_length (16 + file_name_attr.len()).
-    e[10..12].copy_from_slice(&((16 + file_name_attr.len()) as u16).to_le_bytes());
+    // entry_data_length (16 + file_name_key.len()).
+    e[10..12].copy_from_slice(&((16 + file_name_key.len()) as u16).to_le_bytes());
     // flags (no children = 0 for files; directories would set bit 1).
     e[12..16].copy_from_slice(&0u32.to_le_bytes());
-    // FILE_NAME attribute follows.
-    e[16..16 + file_name_attr.len()].copy_from_slice(&file_name_attr);
+    // FILE_NAME key follows.
+    e[16..16 + file_name_key.len()].copy_from_slice(&file_name_key);
     Ok(e)
 }
-
-/// Build the on-disk 24-byte resident attribute header for a
-/// FILE_NAME attribute. The header is appended to a FILE_NAME value
-/// in INDEX_ENTRY keys (and also used as the header of the
-/// $FILE_NAME attribute in MFT records).
-fn build_file_name_attr(attr_type: u32, value: &[u8]) -> Vec<u8> {
-    let mut h = Vec::with_capacity(24 + value.len());
-    h.extend_from_slice(&attr_type.to_le_bytes());
-    // Total length: 24-byte header + value bytes, rounded up to
-    // 8-byte boundary.
-    let total = align8(24 + value.len());
-    h.extend_from_slice(&(total as u32).to_le_bytes());
-    // Non-resident flag = 0 (resident).
-    h.push(0);
-    h.push(0);
-    // Name length (N) and name offset (0x18).
-    h.push(0);
-    h.push(0);
-    // Flags.
-    h.extend_from_slice(&0u16.to_le_bytes());
-    // Attribute ID.
-    h.extend_from_slice(&0u16.to_le_bytes());
-    // Value length and value offset.
-    h.extend_from_slice(&(value.len() as u32).to_le_bytes());
-    h.extend_from_slice(&0x18u16.to_le_bytes());
-    // Flags (resident).
-    h.extend_from_slice(&0u16.to_le_bytes());
-    // Padding to 24 bytes.
-    h.resize(24, 0);
-    // Value bytes.
-    h.extend_from_slice(value);
-    h
-}
-
-/// `$FILE_NAME` attribute type (0x30) — passed to `build_file_name_attr`.
-const ATTR_TYPE_FILE_NAME: u32 = 0x30;
 
 /// Align to 8-byte boundary (NTFS attribute alignment).
 fn align8(n: usize) -> usize {
@@ -916,7 +907,9 @@ fn align8(n: usize) -> usize {
 /// monotonically newer than whatever was there before.
 fn overwrite_resident_data_inplace(rec: &mut Vec<u8>, new_data: &[u8]) -> Result<()> {
     if rec.len() < 48 {
-        return Err(BuildError::NtfsError("record too small for in-place update".into()));
+        return Err(BuildError::NtfsError(
+            "record too small for in-place update".into(),
+        ));
     }
     let mut off = u16::from_le_bytes([rec[0x14], rec[0x15]]) as usize;
     let end = rec.len();
@@ -926,14 +919,18 @@ fn overwrite_resident_data_inplace(rec: &mut Vec<u8>, new_data: &[u8]) -> Result
         if attr_type == 0xFFFFFFFF {
             break;
         }
-        let attr_len = u32::from_le_bytes([rec[off + 4], rec[off + 5], rec[off + 6], rec[off + 7]]) as usize;
+        let attr_len =
+            u32::from_le_bytes([rec[off + 4], rec[off + 5], rec[off + 6], rec[off + 7]]) as usize;
         if attr_len < 24 || attr_len > end.saturating_sub(off) {
             break;
         }
         if attr_type == 0x80 && rec[off + 8] == 0 {
             // Resident $DATA.
             let value_size = u32::from_le_bytes([
-                rec[off + 0x10], rec[off + 0x11], rec[off + 0x12], rec[off + 0x13],
+                rec[off + 0x10],
+                rec[off + 0x11],
+                rec[off + 0x12],
+                rec[off + 0x13],
             ]) as usize;
             let value_off = u16::from_le_bytes([rec[off + 0x14], rec[off + 0x15]]) as usize;
             let value_start = off + value_off;
@@ -980,7 +977,8 @@ fn bump_standard_info_timestamps(rec: &mut [u8]) {
         if attr_type == 0xFFFFFFFF {
             break;
         }
-        let attr_len = u32::from_le_bytes([rec[off + 4], rec[off + 5], rec[off + 6], rec[off + 7]]) as usize;
+        let attr_len =
+            u32::from_le_bytes([rec[off + 4], rec[off + 5], rec[off + 6], rec[off + 7]]) as usize;
         if attr_len < 24 || attr_len > end.saturating_sub(off) {
             break;
         }
@@ -1020,21 +1018,19 @@ fn splice_index_root(
     // surgical append is sufficient for correctness in the next
     // boot because the kernel walks linearly.
     let header_start = info.value_off + 16; // start of INDEX_HEADER
-    // Compute current "end of entries" position by walking past
-    // each real entry. The END marker (12 bytes with LAST_ENTRY
-    // flag) marks the end of the entries list — we splice new
-    // entries just before it.
+                                            // Compute current "end of entries" position by walking past
+                                            // each real entry. The END marker (12 bytes with LAST_ENTRY
+                                            // flag) marks the end of the entries list — we splice new
+                                            // entries just before it.
     let entries_start = header_start + 16;
     let value_end = info.value_off + info.value_size;
     let mut cursor = entries_start;
     while cursor + 16 <= value_end {
-        let entry_size = u16::from_le_bytes([
-            out[cursor + 8], out[cursor + 9],
-        ]) as usize;
-        if entry_size == 0 { break; }
-        let entry_flags = u16::from_le_bytes([
-            out[cursor + 12], out[cursor + 13],
-        ]);
+        let entry_size = u16::from_le_bytes([out[cursor + 8], out[cursor + 9]]) as usize;
+        if entry_size == 0 {
+            break;
+        }
+        let entry_flags = u16::from_le_bytes([out[cursor + 12], out[cursor + 13]]);
         if entry_size == 12 && (entry_flags & 0x0002) != 0 {
             // END marker: stop here, splice in front of it.
             break;
@@ -1055,8 +1051,10 @@ fn splice_index_root(
     let new_value_size = 16usize + 16 + new_total; // INDEX_ROOT + INDEX_HEADER + entries + END marker
     let new_attr_len = align8(24 + new_value_size);
     let current_attr_len = u32::from_le_bytes([
-        out[info.attr_off + 4], out[info.attr_off + 5],
-        out[info.attr_off + 6], out[info.attr_off + 7],
+        out[info.attr_off + 4],
+        out[info.attr_off + 5],
+        out[info.attr_off + 6],
+        out[info.attr_off + 7],
     ]) as usize;
     if new_attr_len > current_attr_len {
         // We need to grow into trailing space. Verify the old
@@ -1066,8 +1064,10 @@ fn splice_index_root(
         let mut scan_start = old_end;
         if scan_start + 4 <= out.len() {
             let end_marker = u32::from_le_bytes([
-                out[scan_start], out[scan_start + 1],
-                out[scan_start + 2], out[scan_start + 3],
+                out[scan_start],
+                out[scan_start + 1],
+                out[scan_start + 2],
+                out[scan_start + 3],
             ]);
             if end_marker == 0xFFFFFFFF {
                 scan_start += 4;
@@ -1077,13 +1077,15 @@ fn splice_index_root(
         if scan_end > out.len() {
             return Err(BuildError::NtfsError(format!(
                 "$INDEX_ROOT grow past record end: {} > {}",
-                scan_end, out.len()
+                scan_end,
+                out.len()
             )));
         }
         if !out[scan_start..scan_end].iter().all(|&b| b == 0) {
             return Err(BuildError::NtfsError(format!(
                 "$INDEX_ROOT grow hits non-zero bytes at offset 0x{:x} (need {} free bytes)",
-                scan_start, scan_end - scan_start
+                scan_start,
+                scan_end - scan_start
             )));
         }
     }
@@ -1127,8 +1129,7 @@ fn splice_index_root(
         // Write a fresh END marker just after the new attribute.
         let end_marker_off = info.attr_off + new_attr_len_final;
         if end_marker_off + 4 <= out.len() {
-            out[end_marker_off..end_marker_off + 4]
-                .copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+            out[end_marker_off..end_marker_off + 4].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
         }
         // Update attr_len.
         out[info.attr_off + 4..info.attr_off + 8]
@@ -1143,7 +1144,6 @@ fn splice_index_root(
 // for things we may need later.
 // =====================================================================
 
-#[allow(dead_code)]
 fn _unused_helper_map() -> HashMap<&'static str, &'static str> {
     HashMap::new()
 }

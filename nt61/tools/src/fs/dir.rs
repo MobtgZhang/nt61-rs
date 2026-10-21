@@ -2,9 +2,9 @@
 //!
 //! Replaces shell `mkdir` command with pure Rust implementation.
 
+use crate::error::Result;
 use std::fs;
 use std::path::Path;
-use crate::error::Result;
 
 /// Check if a directory exists.
 pub fn dir_exists(path: &Path) -> bool {

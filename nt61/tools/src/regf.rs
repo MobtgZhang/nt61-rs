@@ -303,7 +303,7 @@ impl NodePlan {
         let name_bytes = encode_name(&node.name);
         let nk_size = align8(NK_FIXED_SIZE + name_bytes.len());
         let nk_offset = fit_in_hbin(*cursor, nk_size);
-        
+
         // Update hbin_ends for the HBIN where nk was placed
         let nk_hbin_idx = (nk_offset - REGF_HDR_SIZE) / HBIN_SIZE;
         *cursor = nk_offset + nk_size;
@@ -313,29 +313,27 @@ impl NodePlan {
         hbin_ends[nk_hbin_idx] = *cursor;
 
         // --- lh index (only if we have subkeys) ---
-        let (lh_offset, lh_size, lh_entries, sub_plans) =
-            if !node.subkeys.is_empty() {
-                let size =
-                    align8(CELL_HDR_SIZE + 2 + node.subkeys.len() * LH_ENTRY_SIZE);
-                let off = fit_in_hbin(*cursor, size);
-                *cursor = off + size;
-                let lh_hbin_idx = (off - REGF_HDR_SIZE) / HBIN_SIZE;
-                while hbin_ends.len() <= lh_hbin_idx {
-                    hbin_ends.push(*cursor);
-                }
-                hbin_ends[lh_hbin_idx] = *cursor;
+        let (lh_offset, lh_size, lh_entries, sub_plans) = if !node.subkeys.is_empty() {
+            let size = align8(CELL_HDR_SIZE + 2 + node.subkeys.len() * LH_ENTRY_SIZE);
+            let off = fit_in_hbin(*cursor, size);
+            *cursor = off + size;
+            let lh_hbin_idx = (off - REGF_HDR_SIZE) / HBIN_SIZE;
+            while hbin_ends.len() <= lh_hbin_idx {
+                hbin_ends.push(*cursor);
+            }
+            hbin_ends[lh_hbin_idx] = *cursor;
 
-                let mut child_nk_offsets = Vec::with_capacity(node.subkeys.len());
-                let mut sub_plans = Vec::with_capacity(node.subkeys.len());
-                for sub in &node.subkeys {
-                    let sub_plan = NodePlan::plan_node(sub, cursor, hbin_ends);
-                    child_nk_offsets.push(sub_plan.nk_offset);
-                    sub_plans.push(sub_plan);
-                }
-                (Some(off), size, child_nk_offsets, sub_plans)
-            } else {
-                (None, 0, Vec::new(), Vec::new())
-            };
+            let mut child_nk_offsets = Vec::with_capacity(node.subkeys.len());
+            let mut sub_plans = Vec::with_capacity(node.subkeys.len());
+            for sub in &node.subkeys {
+                let sub_plan = NodePlan::plan_node(sub, cursor, hbin_ends);
+                child_nk_offsets.push(sub_plan.nk_offset);
+                sub_plans.push(sub_plan);
+            }
+            (Some(off), size, child_nk_offsets, sub_plans)
+        } else {
+            (None, 0, Vec::new(), Vec::new())
+        };
 
         // --- value cells ---
         let (vallist_offset, vallist_size, vk_plans) = if !node.values.is_empty() {
@@ -409,7 +407,9 @@ impl NodePlan {
         assert!(
             self.nk_offset + self.nk_size <= out.len(),
             "emit_node: nk out of bounds: off=0x{:X} size=0x{:X} len=0x{:X}",
-            self.nk_offset, self.nk_size, out.len()
+            self.nk_offset,
+            self.nk_size,
+            out.len()
         );
 
         // Safety check for lh
@@ -423,10 +423,7 @@ impl NodePlan {
         // Safety check for vl
         if let Some(vl_off) = self.vallist_offset {
             let vl_size = 4 + node.values.len() * 4;
-            assert!(
-                vl_off + vl_size <= out.len(),
-                "emit_node: vl out of bounds"
-            );
+            assert!(vl_off + vl_size <= out.len(), "emit_node: vl out of bounds");
         }
 
         // Safety check for vk cells
@@ -441,8 +438,7 @@ impl NodePlan {
         let name_bytes = encode_name(&node.name);
 
         // seg_len (negative = in-use)
-        out[nk_file..nk_file + 4]
-            .copy_from_slice(&(-(self.nk_size as i32)).to_le_bytes());
+        out[nk_file..nk_file + 4].copy_from_slice(&(-(self.nk_size as i32)).to_le_bytes());
         out[nk_file + 4..nk_file + 6].copy_from_slice(ID_NK);
 
         // flags (offset 0x06)
@@ -464,12 +460,10 @@ impl NodePlan {
         } else {
             to_hbin_rel(parent_abs_off)
         };
-        out[nk_file + 20..nk_file + 24]
-            .copy_from_slice(&parent_hbin_rel.to_le_bytes());
+        out[nk_file + 20..nk_file + 24].copy_from_slice(&parent_hbin_rel.to_le_bytes());
 
         // nr_subkeys (offset 0x18, 4 bytes)
-        out[nk_file + 24..nk_file + 28]
-            .copy_from_slice(&(node.subkeys.len() as u32).to_le_bytes());
+        out[nk_file + 24..nk_file + 28].copy_from_slice(&(node.subkeys.len() as u32).to_le_bytes());
 
         // nr_subkeys_volatile (offset 0x1C, 4 bytes)
         out[nk_file + 28..nk_file + 32].copy_from_slice(&0u32.to_le_bytes());
@@ -482,12 +476,10 @@ impl NodePlan {
         out[nk_file + 32..nk_file + 36].copy_from_slice(&lf_off.to_le_bytes());
 
         // subkey_lf_volatile (offset 0x24, 0xffffffff)
-        out[nk_file + 36..nk_file + 40]
-            .copy_from_slice(&0xffffffffu32.to_le_bytes());
+        out[nk_file + 36..nk_file + 40].copy_from_slice(&0xffffffffu32.to_le_bytes());
 
         // nr_values (offset 0x28, 4 bytes)
-        out[nk_file + 40..nk_file + 44]
-            .copy_from_slice(&(node.values.len() as u32).to_le_bytes());
+        out[nk_file + 40..nk_file + 44].copy_from_slice(&(node.values.len() as u32).to_le_bytes());
 
         // vallist offset (offset 0x2C, HBIN-relative, or 0xffffffff)
         let vl_off = self
@@ -497,11 +489,9 @@ impl NodePlan {
         out[nk_file + 44..nk_file + 48].copy_from_slice(&vl_off.to_le_bytes());
 
         // sk_offset (offset 0x30, 0xffffffff)
-        out[nk_file + 48..nk_file + 52]
-            .copy_from_slice(&0xffffffffu32.to_le_bytes());
+        out[nk_file + 48..nk_file + 52].copy_from_slice(&0xffffffffu32.to_le_bytes());
         // classname_offset (offset 0x34, 0xffffffff)
-        out[nk_file + 52..nk_file + 56]
-            .copy_from_slice(&0xffffffffu32.to_le_bytes());
+        out[nk_file + 52..nk_file + 56].copy_from_slice(&0xffffffffu32.to_le_bytes());
 
         // max subkey name length (offset 0x38, 2 bytes)
         let max_sub_len = node
@@ -527,43 +517,33 @@ impl NodePlan {
         out[nk_file + 64..nk_file + 68].copy_from_slice(&max_vk_len.to_le_bytes());
 
         // max vk data length (offset 0x44, 4 bytes)
-        let max_vk_data = node
-            .values
-            .iter()
-            .map(|v| v.data.len())
-            .max()
-            .unwrap_or(0) as u32;
-        out[nk_file + 68..nk_file + 72]
-            .copy_from_slice(&max_vk_data.to_le_bytes());
+        let max_vk_data = node.values.iter().map(|v| v.data.len()).max().unwrap_or(0) as u32;
+        out[nk_file + 68..nk_file + 72].copy_from_slice(&max_vk_data.to_le_bytes());
 
         // unknown6 (offset 0x48, 4 bytes)
         out[nk_file + 72..nk_file + 76].copy_from_slice(&0u32.to_le_bytes());
 
         // name length (offset 0x4C, 2 bytes)
-        out[nk_file + 76..nk_file + 78]
-            .copy_from_slice(&(name_bytes.len() as u16).to_le_bytes());
+        out[nk_file + 76..nk_file + 78].copy_from_slice(&(name_bytes.len() as u16).to_le_bytes());
 
         // classname length (offset 0x4E, 2 bytes)
         out[nk_file + 78..nk_file + 80].copy_from_slice(&0u16.to_le_bytes());
 
         // name (offset 0x50, Latin-1 bytes, no NUL terminator)
-        out[nk_file + 80..nk_file + 80 + name_bytes.len()]
-            .copy_from_slice(&name_bytes);
+        out[nk_file + 80..nk_file + 80 + name_bytes.len()].copy_from_slice(&name_bytes);
 
         // ---- lh cell ----
         if let Some(lh_off) = self.lh_offset {
             let lf_file = lh_off;
             // seg_len (negative)
-            out[lf_file..lf_file + 4]
-                .copy_from_slice(&(-(self.lh_size as i32)).to_le_bytes());
+            out[lf_file..lf_file + 4].copy_from_slice(&(-(self.lh_size as i32)).to_le_bytes());
             out[lf_file + 4..lf_file + 6].copy_from_slice(ID_LH);
             out[lf_file + 6..lf_file + 8]
                 .copy_from_slice(&(node.subkeys.len() as u16).to_le_bytes());
             // entries: child nk offset (HBIN-relative) + hash (u32, always 0)
             for (i, &child_abs) in self.lh_entries.iter().enumerate() {
                 let e_off = lf_file + 8 + i * LH_ENTRY_SIZE;
-                out[e_off..e_off + 4]
-                    .copy_from_slice(&to_hbin_rel(child_abs as u32).to_le_bytes());
+                out[e_off..e_off + 4].copy_from_slice(&to_hbin_rel(child_abs as u32).to_le_bytes());
                 out[e_off + 4..e_off + 8].copy_from_slice(&0u32.to_le_bytes());
             }
         }
@@ -572,7 +552,9 @@ impl NodePlan {
         if let Some(vl_off) = self.vallist_offset {
             let vl_file = vl_off;
             // seg_len (negative for in-use cells)
-            let vl_size = self.vallist_size.unwrap_or(align8(4 + node.values.len() * 4));
+            let vl_size = self
+                .vallist_size
+                .unwrap_or(align8(4 + node.values.len() * 4));
             out[vl_file..vl_file + 4].copy_from_slice(&(-(vl_size as i32)).to_le_bytes());
             // array of vk offsets (HBIN-relative)
             for (i, vk_plan) in self.vk_plans.iter().enumerate() {
@@ -587,40 +569,29 @@ impl NodePlan {
             let v = &node.values[i];
             let vk_file = vk_plan.offset;
             let name_bytes = encode_name(&v.name);
-            
+
             // Use aligned size for seg_len (cursor advances by aligned size)
             let vk_size = vk_plan.size;
 
             // seg_len (negative)
-            out[vk_file..vk_file + 4]
-                .copy_from_slice(&(-(vk_size as i32)).to_le_bytes());
+            out[vk_file..vk_file + 4].copy_from_slice(&(-(vk_size as i32)).to_le_bytes());
             out[vk_file + 4..vk_file + 6].copy_from_slice(ID_VK);
 
             // name length (bytes)
-            out[vk_file + 6..vk_file + 8]
-                .copy_from_slice(&(name_bytes.len() as u16).to_le_bytes());
+            out[vk_file + 6..vk_file + 8].copy_from_slice(&(name_bytes.len() as u16).to_le_bytes());
 
-            // name bytes
-            out[vk_file + 8..vk_file + 8 + name_bytes.len()]
-                .copy_from_slice(&name_bytes);
-
-            let name_len = name_bytes.len();
-
-            // data length
+            // data length at fixed offset 0x08
             let data_len_raw: u32 = if v.data.len() > 4 {
                 v.data.len() as u32
             } else {
                 (v.data.len() as u32) | 0x8000_0000
             };
-            out[vk_file + 8 + name_len..vk_file + 12 + name_len]
-                .copy_from_slice(&data_len_raw.to_le_bytes());
+            out[vk_file + 0x08..vk_file + 0x0C].copy_from_slice(&data_len_raw.to_le_bytes());
 
-            // data offset
+            // data offset at fixed offset 0x0C
             let data_off_val: u32 = if let Some(d_off) = vk_plan.data_offset {
-                // HBIN-relative offset of the data block (past its seg_len header)
                 to_hbin_rel((d_off + 4) as u32)
             } else {
-                // inline data: lower 4 bytes of the data
                 let mut buf = [0u8; 4];
                 for (j, &b) in v.data.iter().enumerate() {
                     if j < 4 {
@@ -629,27 +600,24 @@ impl NodePlan {
                 }
                 u32::from_le_bytes(buf)
             };
-            out[vk_file + 12 + name_len..vk_file + 16 + name_len]
-                .copy_from_slice(&data_off_val.to_le_bytes());
+            out[vk_file + 0x0C..vk_file + 0x10].copy_from_slice(&data_off_val.to_le_bytes());
 
-            // data type
-            out[vk_file + 16 + name_len..vk_file + 20 + name_len]
-                .copy_from_slice(&v.data_type.to_le_bytes());
+            // data type at fixed offset 0x10
+            out[vk_file + 0x10..vk_file + 0x14].copy_from_slice(&v.data_type.to_le_bytes());
 
-            // flags: bit 0 = 1 for ASCII/Latin-1 name, 0 for UTF-16LE
-            let vk_flags: u16 = if v.name.is_empty()
-                || is_ascii_str(&v.name)
-            {
+            // flags at fixed offset 0x14: bit 0 = 1 for ASCII name
+            let vk_flags: u16 = if v.name.is_empty() || is_ascii_str(&v.name) {
                 1
             } else {
                 0
             };
-            out[vk_file + 20 + name_len..vk_file + 22 + name_len]
-                .copy_from_slice(&vk_flags.to_le_bytes());
+            out[vk_file + 0x14..vk_file + 0x16].copy_from_slice(&vk_flags.to_le_bytes());
 
-            // padding
-            out[vk_file + 22 + name_len..vk_file + 24 + name_len]
-                .copy_from_slice(&0u16.to_le_bytes());
+            // padding at fixed offset 0x16
+            out[vk_file + 0x16..vk_file + 0x18].copy_from_slice(&0u16.to_le_bytes());
+
+            // name bytes at fixed offset 0x18
+            out[vk_file + 0x18..vk_file + 0x18 + name_bytes.len()].copy_from_slice(&name_bytes);
 
             // ---- data block ----
             if let Some(d_off) = vk_plan.data_offset {
@@ -701,12 +669,10 @@ fn write_regf_header(out: &mut [u8], name: &str, total_hbins: usize) {
     out[0x20..0x24].copy_from_slice(&1u32.to_le_bytes());
 
     // root_cell_offset at 0x24 (HBIN-relative = HBIN_HDR_SIZE = 0x20)
-    out[0x24..0x28]
-        .copy_from_slice(&(HBIN_HDR_SIZE as u32).to_le_bytes());
+    out[0x24..0x28].copy_from_slice(&(HBIN_HDR_SIZE as u32).to_le_bytes());
 
     // blocks at 0x28: total data size (total_hbins * HBIN_SIZE)
-    out[0x28..0x2C]
-        .copy_from_slice(&(total_hbins as u32 * HBIN_SIZE as u32).to_le_bytes());
+    out[0x28..0x2C].copy_from_slice(&(total_hbins as u32 * HBIN_SIZE as u32).to_le_bytes());
 
     // unknown7 at 0x2C (1)
     out[0x2C..0x30].copy_from_slice(&1u32.to_le_bytes());
@@ -792,7 +758,7 @@ fn patch_free_blocks(out: &mut [u8], total_hbins: usize, hbin_ends: &[usize]) {
 
         // Get the end of cells for this HBIN
         let cell_end = hbin_ends.get(i).copied().unwrap_or(page_start);
-        
+
         // Free space starts right after the last cell (no extra alignment needed)
         let free_start = cell_end.min(page_end);
 
@@ -861,7 +827,6 @@ impl HiveBuilder {
 // Convenience
 // =====================================================================
 
-#[allow(dead_code)]
 pub fn dump(bytes: &[u8]) -> String {
     let mut s = String::new();
     if bytes.len() < REGF_HDR_SIZE {
@@ -885,8 +850,7 @@ pub fn dump(bytes: &[u8]) -> String {
                 bytes[cell + 3],
             ]);
             let abs_len = seg_len.unsigned_abs() as usize;
-            let id = std::str::from_utf8(&bytes[cell + 4..cell + 6])
-                .unwrap_or("??");
+            let id = std::str::from_utf8(&bytes[cell + 4..cell + 6]).unwrap_or("??");
             s.push_str(&format!(
                 "  cell @ 0x{:x} len={} id={:?}\n",
                 cell, abs_len, id
@@ -918,21 +882,11 @@ mod tests {
         let bytes = HiveBuilder::new(root).with_name("test.hive").finish();
 
         assert_eq!(&bytes[0..4], b"regf", "magic should be 'regf'");
-        assert!(
-            bytes.len() >= 2 * HBIN_SIZE,
-            "must be >= 2 HBINs"
-        );
-        assert_eq!(
-            bytes.len() % HBIN_SIZE,
-            0,
-            "must be HBIN-aligned"
-        );
+        assert!(bytes.len() >= 2 * HBIN_SIZE, "must be >= 2 HBINs");
+        assert_eq!(bytes.len() % HBIN_SIZE, 0, "must be HBIN-aligned");
 
         // First HBIN header
-        assert_eq!(
-            &bytes[REGF_HDR_SIZE..REGF_HDR_SIZE + 4],
-            b"hbin"
-        );
+        assert_eq!(&bytes[REGF_HDR_SIZE..REGF_HDR_SIZE + 4], b"hbin");
 
         // First nk cell
         let nk_off = REGF_HDR_SIZE + HBIN_HDR_SIZE;
@@ -970,7 +924,11 @@ mod tests {
 
         // blocks field must equal (file_size - 4096)
         let blocks = u32::from_le_bytes([bytes[0x28], bytes[0x29], bytes[0x2A], bytes[0x2B]]);
-        assert_eq!(blocks as usize, bytes.len() - 4096, "blocks should match hbin total");
+        assert_eq!(
+            blocks as usize,
+            bytes.len() - 4096,
+            "blocks should match hbin total"
+        );
     }
 
     /// Roundtrip smoke test: generate a BCD hive, then re-parse it via
@@ -989,30 +947,49 @@ mod tests {
         // Manually walk the hive structure with the same logic as bcd_registry.rs
         // and count the BCD objects under \Objects.
         let hbin_base: usize = 0x1000;
-        let root_off_raw = u32::from_le_bytes([bytes[0x24], bytes[0x25], bytes[0x26], bytes[0x27]]) as usize;
+        let root_off_raw =
+            u32::from_le_bytes([bytes[0x24], bytes[0x25], bytes[0x26], bytes[0x27]]) as usize;
         let root_off = hbin_base + root_off_raw;
 
         // Read root nk: seg_len(4) + sig(2) + flags(2) + ts(8) + access(4) + parent(4)
         //             + nr_subkeys(4) + nr_vol(4) + subkey_lf(4) + vol_lf(4)
         //             + nr_values(4) + vallist(4) + sk(4) + classname(4) ...
-        let seg_len_root = i32::from_le_bytes([bytes[root_off], bytes[root_off+1], bytes[root_off+2], bytes[root_off+3]]);
-        assert!(seg_len_root < 0, "root nk should be allocated");
-        assert_eq!(&bytes[root_off+4..root_off+6], b"nk");
-        let root_nr_subkeys = u32::from_le_bytes([
-            bytes[root_off + 0x18], bytes[root_off + 0x19],
-            bytes[root_off + 0x1A], bytes[root_off + 0x1B],
+        let seg_len_root = i32::from_le_bytes([
+            bytes[root_off],
+            bytes[root_off + 1],
+            bytes[root_off + 2],
+            bytes[root_off + 3],
         ]);
-        assert!(root_nr_subkeys >= 2, "root should have Description and Objects (got {})", root_nr_subkeys);
+        assert!(seg_len_root < 0, "root nk should be allocated");
+        assert_eq!(&bytes[root_off + 4..root_off + 6], b"nk");
+        let root_nr_subkeys = u32::from_le_bytes([
+            bytes[root_off + 0x18],
+            bytes[root_off + 0x19],
+            bytes[root_off + 0x1A],
+            bytes[root_off + 0x1B],
+        ]);
+        assert!(
+            root_nr_subkeys >= 2,
+            "root should have Description and Objects (got {})",
+            root_nr_subkeys
+        );
 
         // Walk into lh to find subkeys of root
         let lf_rel = u32::from_le_bytes([
-            bytes[root_off + 0x20], bytes[root_off + 0x21],
-            bytes[root_off + 0x22], bytes[root_off + 0x23],
+            bytes[root_off + 0x20],
+            bytes[root_off + 0x21],
+            bytes[root_off + 0x22],
+            bytes[root_off + 0x23],
         ]) as usize;
         let lf_off = hbin_base + lf_rel;
-        let lh_seg = i32::from_le_bytes([bytes[lf_off], bytes[lf_off+1], bytes[lf_off+2], bytes[lf_off+3]]);
+        let lh_seg = i32::from_le_bytes([
+            bytes[lf_off],
+            bytes[lf_off + 1],
+            bytes[lf_off + 2],
+            bytes[lf_off + 3],
+        ]);
         assert!(lh_seg < 0, "lh cell should be allocated");
-        let lh_nr = u16::from_le_bytes([bytes[lf_off+6], bytes[lf_off+7]]) as usize;
+        let lh_nr = u16::from_le_bytes([bytes[lf_off + 6], bytes[lf_off + 7]]) as usize;
         assert_eq!(lh_nr as u32, root_nr_subkeys);
 
         // Find the "Objects" subkey
@@ -1020,10 +997,14 @@ mod tests {
         for i in 0..lh_nr {
             let e_off = lf_off + 8 + i * 8;
             let nk_rel = u32::from_le_bytes([
-                bytes[e_off], bytes[e_off+1], bytes[e_off+2], bytes[e_off+3],
+                bytes[e_off],
+                bytes[e_off + 1],
+                bytes[e_off + 2],
+                bytes[e_off + 3],
             ]) as usize;
             let nk_off = hbin_base + nk_rel;
-            let nk_name_len = u16::from_le_bytes([bytes[nk_off+0x4C], bytes[nk_off+0x4D]]) as usize;
+            let nk_name_len =
+                u16::from_le_bytes([bytes[nk_off + 0x4C], bytes[nk_off + 0x4D]]) as usize;
             let nk_name = &bytes[nk_off + 0x50..nk_off + 0x50 + nk_name_len];
             if nk_name == b"Objects" {
                 objects_off = Some(nk_off);
@@ -1034,9 +1015,15 @@ mod tests {
 
         // Verify Objects has subkeys (the BCD objects)
         let objs_nr_subkeys = u32::from_le_bytes([
-            bytes[objects_off + 0x18], bytes[objects_off + 0x19],
-            bytes[objects_off + 0x1A], bytes[objects_off + 0x1B],
+            bytes[objects_off + 0x18],
+            bytes[objects_off + 0x19],
+            bytes[objects_off + 0x1A],
+            bytes[objects_off + 0x1B],
         ]);
-        assert!(objs_nr_subkeys >= 4, "Objects should have at least 4 BCD objects (got {})", objs_nr_subkeys);
+        assert!(
+            objs_nr_subkeys >= 4,
+            "Objects should have at least 4 BCD objects (got {})",
+            objs_nr_subkeys
+        );
     }
 }

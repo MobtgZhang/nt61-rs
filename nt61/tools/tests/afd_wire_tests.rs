@@ -9,12 +9,10 @@
 mod tests {
     /// 16-byte AFD address mirroring `netstack::afd::AfdAddress`.
     #[derive(Debug, Clone, Copy, Default)]
-    #[allow(dead_code)]
     struct AfdAddress {
         family: u16,
         port: u16,
         addr: [u8; 4],
-        zeros: [u8; 8],
     }
 
     fn decode_addr(input: &[u8]) -> Option<AfdAddress> {
@@ -25,7 +23,6 @@ mod tests {
             family: u16::from_le_bytes([input[0], input[1]]),
             port: u16::from_be_bytes([input[2], input[3]]),
             addr: [input[4], input[5], input[6], input[7]],
-            zeros: [0; 8],
         })
     }
 
@@ -78,12 +75,22 @@ mod tests {
         // Sanity: all values are in the 0x000120xx range that
         // NT 6.1's msafd.h reserves for AFD.
         for code in [
-            IOCTL_AFD_BIND, IOCTL_AFD_LISTEN, IOCTL_AFD_ACCEPT,
-            IOCTL_AFD_CONNECT, IOCTL_AFD_SEND, IOCTL_AFD_RECV,
-            IOCTL_AFD_SELECT, IOCTL_AFD_GET_NAME, IOCTL_AFD_SHUTDOWN,
+            IOCTL_AFD_BIND,
+            IOCTL_AFD_LISTEN,
+            IOCTL_AFD_ACCEPT,
+            IOCTL_AFD_CONNECT,
+            IOCTL_AFD_SEND,
+            IOCTL_AFD_RECV,
+            IOCTL_AFD_SELECT,
+            IOCTL_AFD_GET_NAME,
+            IOCTL_AFD_SHUTDOWN,
         ] {
-            assert_eq!(code >> 16, 0x0001,
-                "AFD IOCTL {:#x} outside the 0x0001xxxx range", code);
+            assert_eq!(
+                code >> 16,
+                0x0001,
+                "AFD IOCTL {:#x} outside the 0x0001xxxx range",
+                code
+            );
         }
     }
 }

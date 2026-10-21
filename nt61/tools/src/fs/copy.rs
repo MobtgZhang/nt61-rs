@@ -2,10 +2,10 @@
 //!
 //! Replaces shell `cp` and `cp -r` commands with pure Rust implementation.
 
+use crate::error::{BuildError, Result};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
-use crate::error::{BuildError, Result};
 
 /// Copy a single file from source to destination.
 ///
@@ -32,26 +32,24 @@ pub fn copy_file(src: &Path, dst: &Path) -> Result<u64> {
         super::dir::create_dir_all(parent)?;
     }
 
-    let mut src_file = fs::File::open(src)
-        .map_err(BuildError::Io)?;
-    
-    let mut dst_file = fs::File::create(dst)
-        .map_err(BuildError::Io)?;
+    let mut src_file = fs::File::open(src).map_err(BuildError::Io)?;
+
+    let mut dst_file = fs::File::create(dst).map_err(BuildError::Io)?;
 
     let mut buffer = [0u8; 8192];
     let mut total: u64 = 0;
 
     loop {
-        let bytes_read = src_file.read(&mut buffer)
-            .map_err(BuildError::Io)?;
-        
+        let bytes_read = src_file.read(&mut buffer).map_err(BuildError::Io)?;
+
         if bytes_read == 0 {
             break;
         }
 
-        dst_file.write_all(&buffer[..bytes_read])
+        dst_file
+            .write_all(&buffer[..bytes_read])
             .map_err(BuildError::Io)?;
-        
+
         total += bytes_read as u64;
     }
 
@@ -150,7 +148,7 @@ mod tests {
 
         fs::write(&src, b"Hello, World!").unwrap();
         let bytes = copy_file(&src, &dst).unwrap();
-        
+
         assert_eq!(bytes, 13);
         assert_eq!(fs::read(&dst).unwrap(), b"Hello, World!");
     }

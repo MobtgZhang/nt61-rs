@@ -29,12 +29,14 @@ fn qcow2_header_magic_is_correct() {
 fn qcow2_open_empty_file_errors_not_panic() {
     let empty: Vec<u8> = Vec::new();
     let res = Qcow2Image::open(&empty);
-    assert!(res.is_err(), "open() on empty bytes should error, not panic");
+    assert!(
+        res.is_err(),
+        "open() on empty bytes should error, not panic"
+    );
 }
 
 /// Verify the FsBackend trait compiles as a trait object — this is a
 /// compile-time check that the trait stays object-safe.
-#[allow(dead_code)]
 fn _assert_trait_object_safety(b: Box<dyn FsBackend>) {
     let _ = b.list_dir("/");
     let _ = b.read_file("/x");

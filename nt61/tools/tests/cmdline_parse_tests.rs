@@ -27,7 +27,13 @@
 /// `out[out_offset..]`. Returns the new `i` and writes the bytes
 /// count. Returns `0` as the bytes-written count if the argument
 /// is empty.
-fn tokenize_one(cmdline: &[u8], mut i: usize, end: usize, out: &mut [u8], out_offset: usize) -> (usize, usize) {
+fn tokenize_one(
+    cmdline: &[u8],
+    mut i: usize,
+    end: usize,
+    out: &mut [u8],
+    out_offset: usize,
+) -> (usize, usize) {
     let mut pos = out_offset;
     while i < end {
         let c = cmdline[i];
@@ -43,17 +49,26 @@ fn tokenize_one(cmdline: &[u8], mut i: usize, end: usize, out: &mut [u8], out_of
                 // backslashes + literal quote.
                 let keep = n / 2;
                 for _ in 0..keep {
-                    if pos < out.len() { out[pos] = b'\\'; pos += 1; }
+                    if pos < out.len() {
+                        out[pos] = b'\\';
+                        pos += 1;
+                    }
                 }
                 if (n % 2) == 1 {
-                    if pos < out.len() { out[pos] = b'"'; pos += 1; }
+                    if pos < out.len() {
+                        out[pos] = b'"';
+                        pos += 1;
+                    }
                     i += 1;
                 }
                 continue;
             }
             // Lone backslashes — emit them all.
             for _ in 0..n {
-                if pos < out.len() { out[pos] = b'\\'; pos += 1; }
+                if pos < out.len() {
+                    out[pos] = b'\\';
+                    pos += 1;
+                }
             }
             continue;
         }
@@ -62,7 +77,10 @@ fn tokenize_one(cmdline: &[u8], mut i: usize, end: usize, out: &mut [u8], out_of
             i += 1;
             continue;
         }
-        if pos < out.len() { out[pos] = c; pos += 1; }
+        if pos < out.len() {
+            out[pos] = c;
+            pos += 1;
+        }
         i += 1;
     }
     (i, pos - out_offset)
@@ -73,7 +91,12 @@ fn tokenize_one(cmdline: &[u8], mut i: usize, end: usize, out: &mut [u8], out_of
 /// `cmdline`). The caller must provide a scratch buffer large
 /// enough to hold the longest argument; 1 KiB is more than
 /// enough for a normal command line.
-pub fn parse_command_line(cmdline: &[u8], out: &mut [(usize, usize)], out_buffer: &mut [u8], max: usize) -> usize {
+pub fn parse_command_line(
+    cmdline: &[u8],
+    out: &mut [(usize, usize)],
+    out_buffer: &mut [u8],
+    max: usize,
+) -> usize {
     let mut count = 0usize;
     let mut buf_cursor = 0usize;
     let mut i = 0usize;
@@ -85,7 +108,9 @@ pub fn parse_command_line(cmdline: &[u8], out: &mut [(usize, usize)], out_buffer
         while i < n && (cmdline[i] == b' ' || cmdline[i] == b'\t') {
             i += 1;
         }
-        if i >= n { break; }
+        if i >= n {
+            break;
+        }
         let start = i;
         let mut in_quotes = false;
         let mut end = i;
@@ -123,7 +148,9 @@ mod tests {
 
     fn collect<'a>(cmd: &'a [u8], out: &mut [(usize, usize)], buf: &'a mut [u8]) -> Vec<&'a [u8]> {
         let n = parse(cmd, out, buf, 8);
-        (0..n).map(|i| &buf[out[i].0..out[i].0 + out[i].1]).collect()
+        (0..n)
+            .map(|i| &buf[out[i].0..out[i].0 + out[i].1])
+            .collect()
     }
 
     #[test]
@@ -154,7 +181,10 @@ mod tests {
         let mut out = [(0usize, 0usize); 8];
         let mut buf = [0u8; 256];
         let args = collect(b"cmd /c \"echo hello world\"", &mut out, &mut buf);
-        assert_eq!(args, vec![&b"cmd"[..], &b"/c"[..], &b"echo hello world"[..]]);
+        assert_eq!(
+            args,
+            vec![&b"cmd"[..], &b"/c"[..], &b"echo hello world"[..]]
+        );
     }
 
     #[test]
@@ -223,20 +253,38 @@ pub fn build_command_line(program: &[u8], argv: &[&[u8]], out: &mut [u8]) -> usi
         let arg = pieces[p];
         let needs_quote = arg.iter().any(|c| *c == b' ' || *c == b'\t' || *c == b'"');
         if wrote_any {
-            if pos < out.len() { out[pos] = b' '; pos += 1; }
+            if pos < out.len() {
+                out[pos] = b' ';
+                pos += 1;
+            }
         }
         if needs_quote {
-            if pos < out.len() { out[pos] = b'"'; pos += 1; }
+            if pos < out.len() {
+                out[pos] = b'"';
+                pos += 1;
+            }
             for c in arg {
                 if *c == b'"' {
-                    if pos < out.len() { out[pos] = b'\\'; pos += 1; }
+                    if pos < out.len() {
+                        out[pos] = b'\\';
+                        pos += 1;
+                    }
                 }
-                if pos < out.len() { out[pos] = *c; pos += 1; }
+                if pos < out.len() {
+                    out[pos] = *c;
+                    pos += 1;
+                }
             }
-            if pos < out.len() { out[pos] = b'"'; pos += 1; }
+            if pos < out.len() {
+                out[pos] = b'"';
+                pos += 1;
+            }
         } else {
             for c in arg {
-                if pos < out.len() { out[pos] = *c; pos += 1; }
+                if pos < out.len() {
+                    out[pos] = *c;
+                    pos += 1;
+                }
             }
         }
         wrote_any = true;
