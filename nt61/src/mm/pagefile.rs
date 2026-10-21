@@ -16,8 +16,6 @@
 //! 2. NTFS: `pagefile.sys` is created with dynamic cluster allocation
 //! 3. Both: Use block layer for sector-level I/O
 
-#![allow(non_snake_case)]
-
 use core::fmt;
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -474,7 +472,7 @@ pub fn set_initialized() {
 // Page I/O Functions
 // =============================================================================
 
-/// Write a page to the pagefile.
+/// write a page to the pagefile.
 ///
 /// This function writes a physical page frame to the specified
 /// pagefile at the given offset. Used by the modified page writer.
@@ -508,7 +506,7 @@ pub fn write_page_to_disk(pfn: u64, pagefile_no: u32, offset: u32) -> bool {
             start_sector
         );
 
-        // Write 8 sectors (4096 bytes) to disk
+        // write 8 sectors (4096 bytes) to disk
         let mut buffer = [0u8; 512];
         let mut success = true;
 
@@ -522,7 +520,7 @@ pub fn write_page_to_disk(pfn: u64, pagefile_no: u32, offset: u32) -> bool {
                 }
             }
 
-            // Write to disk via block device
+            // write to disk via block device
             if !crate::drivers::storage::block::write_block(
                 pf.disk_meta.device_id,
                 start_sector + (i as u64),
@@ -571,7 +569,7 @@ pub fn write_page_to_disk(pfn: u64, pagefile_no: u32, offset: u32) -> bool {
     }
 }
 
-/// Read a page from the pagefile.
+/// read a page from the pagefile.
 ///
 /// This function reads a page from the specified pagefile at
 /// the given offset and returns the PFN of the page containing
@@ -615,12 +613,12 @@ pub fn read_page_from_disk(pagefile_no: u32, offset: u32) -> Option<u64> {
             start_sector
         );
 
-        // Read 8 sectors (4096 bytes) from disk
+        // read 8 sectors (4096 bytes) from disk
         let mut buffer = [0u8; 512];
         let mut success = true;
 
         for i in 0..8 {
-            // Read from disk via block device
+            // read from disk via block device
             if !crate::drivers::storage::block::read_block(
                 pf.disk_meta.device_id,
                 start_sector + (i as u64),

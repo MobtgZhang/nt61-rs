@@ -1,4 +1,4 @@
-//! Copy-on-Write (COW)
+//! Copy-on-write (COW)
 //
 //! NT-style COW for sections and forked pages. The flow:
 //
@@ -14,8 +14,6 @@
 //
 //! The prototype PTE for a section is the canonical source of truth;
 //! per-process PTEs are checked against it.
-
-#![allow(non_snake_case)]
 
 use crate::mm::pfn;
 use crate::mm::pte::MMPTE;
@@ -47,8 +45,8 @@ fn get_pte_ptr(va: u64) -> Option<*mut MMPTE> {
     if !pde.is_hardware() || pde.large() {
         return None;
     }
-    let Pt_phys = pde.hardware_page_frame();
-    let pte_ptr = unsafe { (Pt_phys as *mut MMPTE).add(pt_idx) };
+    let pt_phys = pde.hardware_page_frame();
+    let pte_ptr = unsafe { (pt_phys as *mut MMPTE).add(pt_idx) };
     Some(pte_ptr)
 }
 

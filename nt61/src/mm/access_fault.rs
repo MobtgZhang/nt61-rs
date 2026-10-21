@@ -22,8 +22,6 @@
 //! The trap handler then turns that into a status code in the
 //! saved `rax` and dispatches to the user-mode exception dispatcher.
 
-#![allow(non_snake_case)]
-
 use crate::ke::scheduler;
 use crate::mm::cow;
 use crate::mm::pagefile;
@@ -319,38 +317,8 @@ fn resolve_hardware(pte: MMPTE, va: u64, pte_ptr: *mut MMPTE, access: AccessFlag
     //
     // x86_64 only — on aarch64 / riscv64 / loongarch64 TLB flush
     // is handled by each arch's `tlb_flush_all` helper.
-    #[cfg(target_arch = "x86_64")]
-    {
-        let cur_cr3: u64;
-        unsafe {
-            core::arch::asm!("mov {x}, cr3", x = out(reg) cur_cr3, options(nostack, preserves_flags));
-        }
-        unsafe {
-            core::arch::asm!("mov cr3, {}", in(reg) cur_cr3, options(nostack, preserves_flags));
-        }
-    }
-    // MFENCE to ensure the CR3 write commits before the invlpg.
-    // x86_64-only mnemonic: aarch64 uses `dmb ish`, riscv64 uses
-    // `fence` and loongarch64 uses `dbar 0`. Each arch's TLB flush
-    // helper performs the right barrier before its reload.
-    #[cfg(target_arch = "x86_64")]
-    unsafe {
-        core::arch::asm!("mfence", options(nostack, preserves_flags));
-    }
-    let cur_cr3_for_log: u64 = {
-        #[cfg(target_arch = "x86_64")]
-        {
-            let v: u64;
-            unsafe {
-                core::arch::asm!("mov {x}, cr3", x = out(reg) v, options(nostack, preserves_flags));
-            }
-            v
-        }
-        #[cfg(not(target_arch = "x86_64"))]
-        {
-            0u64
-        }
-    };
+    crate::arch::flush_tlb();
+    let cur_cr3_for_log: u64 = crate::arch::read_current_page_root();
     crate::boot_println!(
         "[PF] resolve_hardware: PTE=0x{:x} A={} D={} access.r={} access.w={} access.x={} -> Handled (CR3=0x{:x}, current_root=0x{:x})",
         pte.raw(),
@@ -362,14 +330,7 @@ fn resolve_hardware(pte: MMPTE, va: u64, pte_ptr: *mut MMPTE, access: AccessFlag
     // Flush the TLB entry for this VA. Without this, the CPU can keep
     // using a stale cached translation (e.g. "page not present" from
     // a prior probe) and re-fault on iretq.
-    #[cfg(target_arch = "x86_64")]
-    unsafe {
-        core::arch::asm!(
-            "invlpg [{va}]",
-            va = in(reg) va,
-            options(nostack, preserves_flags),
-        );
-    }
+    crate::arch::invalidate_tlb(va);
     FaultStatus::Handled
 }
 
@@ -485,13 +446,13 @@ fn resolve_demand_zero_inner(
         pte_bits |= 1u64 << 63;
     } // NX
       //     // // // kprintln!("[DEMAND_ZERO_INNER] pte_bits=0x{:x}", pte_bits);
-      // Read current PTE value before write
+      // read current PTE value before write
     let _pte_before = unsafe { (*pte_ptr).raw() };
     //     // // // kprintln!("[DEMAND_ZERO_INNER] pte_before=0x{:016x}", _pte_before);
     unsafe {
         (*pte_ptr).set_hardware(pa, pte_bits);
     }
-    // Read PTE value after write
+    // read PTE value after write
     let pte_after = unsafe { (*pte_ptr).raw() };
     //     // // // kprintln!("[DEMAND_ZERO_INNER] pte_after=0x{:016x}", pte_after);
     let _ = va;

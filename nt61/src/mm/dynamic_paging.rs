@@ -6,19 +6,13 @@
 //!
 //! # Memory Layout
 //!
-//! On x86_64 with 48-bit virtual addresses:
+//! For 48-bit virtual address layouts:
 //! - User space: 0x0000_0000_0000_0000 to 0x0000_7FFF_FFFF_FFFF (128TB)
 //! - Kernel space: 0xFFFF_8000_0000_0000 to 0xFFFF_FFFF_FFFF_FFFF (128TB)
 //!
 //! The kernel maps physical memory into the upper half of the address space.
 //! This module supports dynamic extension of these mappings.
 //!
-//! This file contains x86_64-specific inline assembly (`mov cr3`, `invlpg`).
-//! Other architectures should not compile this module; the `mm` mod.rs
-//! includes it under a `cfg(target_arch = "x86_64")` gate.
-#![cfg(target_arch = "x86_64")]
-#![allow(non_snake_case)]
-
 extern crate alloc;
 use alloc::vec::Vec;
 
@@ -75,7 +69,7 @@ pub struct MemoryRegion {
 }
 
 impl MemoryRegion {
-    /// Create a new memory region
+    /// create a new memory region
     pub fn new(phys_base: u64, size: u64, usable: bool) -> Self {
         Self {
             phys_base,
@@ -100,19 +94,17 @@ impl MemoryRegion {
 /// This allocator dynamically creates page table pages as needed when
 /// mapping new memory regions. It avoids pre-allocating large amounts
 /// of page tables by creating them on-demand.
-#[allow(unused)]
 pub struct DynamicPageTable {
     /// Base address of the PML4 (physical)
     pml4_phys: u64,
     /// Base address of the PML4 (virtual)
     pml4_virt: u64,
     /// Number of allocated page table pages
-    #[allow(unused)]
     allocated_tables: u64,
 }
 
 impl DynamicPageTable {
-    /// Create a new dynamic page table allocator
+    /// create a new dynamic page table allocator
     pub fn new(pml4_phys: u64, pml4_virt: u64) -> Self {
         Self {
             pml4_phys,
@@ -223,14 +215,10 @@ pub unsafe fn unmap_virtual(pml4: *mut u64, virt: u64, size: u64) -> Result<(), 
     Ok(())
 }
 
-/// Get the current CR3 value (physical address of PML4)
+/// Get the current kernel page root (physical address)
 #[inline]
 pub fn get_cr3() -> u64 {
-    let cr3: u64;
-    unsafe {
-        core::arch::asm!("mov {0}, cr3", out(reg) cr3, options(nostack, preserves_flags));
-    }
-    cr3
+    crate::arch::read_current_page_root()
 }
 
 /// Set the CR3 register (load new page table)
@@ -241,13 +229,13 @@ pub fn get_cr3() -> u64 {
 /// must have valid mappings for the current code execution.
 #[inline]
 pub unsafe fn set_cr3(pml4_phys: u64) {
-    core::arch::asm!("mov cr3, {0}", in(reg) pml4_phys, options(nostack, preserves_flags));
+    crate::arch::load_page_root(pml4_phys >> 12);
 }
 
 /// Invalidate a single TLB entry
 #[inline]
 pub unsafe fn invlpg(virt: u64) {
-    core::arch::asm!("invlpg [{0}]", in(reg) virt, options(nostack, preserves_flags));
+    crate::arch::invalidate_tlb(virt);
 }
 
 /// Invalidate the entire TLB
@@ -258,7 +246,7 @@ pub unsafe fn invlpg_all() {
     let cr3_val = get_cr3();
     let _ = &cr3_val;
     let _ = &cr3_val;
-    set_cr3(cr3_val);
+    crate::arch::flush_tlb();
 }
 
 /// Memory statistics
@@ -277,7 +265,7 @@ pub struct MemoryStats {
 }
 
 impl MemoryStats {
-    /// Create new memory statistics
+    /// create new memory statistics
     pub fn new() -> Self {
         Self::default()
     }
@@ -320,7 +308,7 @@ pub fn parse_uefi_memory_map(map_addr: u64, map_size: u64, entry_size: u64) -> V
     }
 
     // UEFI memory descriptor structure:
-    // Type (u32), PhysicalStart (u64), VirtualStart (u64), NumberOfPages (u64), Attribute (u64)
+    // r#type (u32), PhysicalStart (u64), VirtualStart (u64), NumberOfPages (u64), Attribute (u64)
 
     let entries = map_size as usize / entry_size as usize;
 

@@ -26,21 +26,6 @@
 //! separately-allocated region for the kernel image itself, the
 //! kernel heap, and the kernel stack per CPU.
 
-// Architecture-specific paging helpers live in the per-arch submodules.
-// We do a cfg-gated re-export so call-sites do not have to repeat the
-// cfg attribute everywhere.
-#[cfg(target_arch = "x86_64")]
-use crate::arch::x86_64::paging as paging_impl;
-
-#[cfg(target_arch = "aarch64")]
-use crate::arch::aarch64::paging as paging_impl;
-
-#[cfg(target_arch = "riscv64")]
-use crate::arch::riscv64::paging as paging_impl;
-
-#[cfg(target_arch = "loongarch64")]
-use crate::arch::loongarch64::paging as paging_impl;
-
 use crate::ke::sync::Spinlock;
 
 pub use self::MemFlags as PageFlags;
@@ -177,10 +162,9 @@ pub fn init() {
     // The low-level paging bring-up is per-arch; today only x86_64
     // exposes a callable `init()`. Other targets do their paging
     // setup in `arch::<arch>::init_hardware()` before this point.
-    #[cfg(target_arch = "x86_64")]
     unsafe {
-        paging_impl::init()
-    };
+        crate::arch::init_paging();
+    }
 }
 
 /// Allocate a region of virtual address space. Returns the base
@@ -238,7 +222,7 @@ pub fn commit(base: u64, size: u64) -> Result<u64, ()> {
         };
         let pa = crate::mm::pte::pfn_to_phys(pfn_no);
         let bits: u64 = (MemFlags::READ | MemFlags::WRITE).bits() as u64;
-        paging_impl::map_page(va, pa, bits);
+        crate::arch::map_page(va, pa, bits);
     }
     Ok(base)
 }
@@ -248,7 +232,7 @@ pub fn free(base: u64, size: u64) -> Result<(), ()> {
     let aligned_size = (size + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
     for i in 0..(aligned_size / PAGE_SIZE) {
         let va = base + i * PAGE_SIZE;
-        if let Some(phys) = paging_impl::unmap_page(va) {
+        if let Some(phys) = crate::arch::unmap_page(va) {
             crate::mm::pfn::free_pfn(crate::mm::pfn::phys_to_pfn(phys));
         }
     }
@@ -260,7 +244,7 @@ pub fn decommit(base: u64, size: u64) -> Result<(), ()> {
     let aligned_size = (size + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
     for i in 0..(aligned_size / PAGE_SIZE) {
         let va = base + i * PAGE_SIZE;
-        paging_impl::unmap_page(va);
+        crate::arch::unmap_page(va);
     }
     Ok(())
 }
@@ -280,17 +264,17 @@ pub fn query(base: u64) -> Option<MemoryRegion> {
 
 /// Map a single page.
 pub fn map_page(va: u64, pa: u64, flags: MemFlags) {
-    paging_impl::map_page(va, pa, flags.bits() as u64);
+    crate::arch::map_page(va, pa, flags.bits() as u64);
 }
 
 /// Unmap a single page.
 pub fn unmap_page(va: u64) -> Option<u64> {
-    paging_impl::unmap_page(va)
+    crate::arch::unmap_page(va)
 }
 
 /// Translate a virtual address to a physical one.
 pub fn virt_to_phys(virt: u64) -> Option<u64> {
-    paging_impl::translate_virt(virt)
+    crate::arch::translate_virt(virt)
 }
 
 /// Get kernel virtual base.
@@ -307,8 +291,36 @@ pub fn get_user_base() -> u64 {
 pub fn direct_map_phys(phys: u64, size: u64) -> Result<u64, ()> {
     let aligned_size = (size + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
     let page_count = aligned_size / PAGE_SIZE;
-    // Use the system PTE pool for the direct map so we don't burn
-    // our kernel virtual space.
-    let va = crate::mm::syspte::map_io_space(phys, page_count).ok_or(())?;
-    Ok(va)
+    // Use the hyperspace temporary-mapping window for direct
+    // physical access. It is deliberately independent of the system
+    // PTE allocator, because installing that allocator's page tables
+    // may itself need to zero or inspect a newly allocated page.
+    if page_count == 0 || page_count > crate::mm::hyperspace::HYPERSPACE_ENTRIES {
+        return Err(());
+    }
+    let mut va = None;
+    for offset in 0..page_count {
+        let pfn = (phys + offset * PAGE_SIZE) >> PAGE_SHIFT;
+        let mapped = crate::mm::hyperspace::map_hyperspace(pfn);
+        if mapped == 0 {
+            if let Some(start) = va {
+                for rollback in 0..offset {
+                    crate::mm::hyperspace::unmap_hyperspace(start + rollback * PAGE_SIZE);
+                }
+            }
+            return Err(());
+        }
+        if va.is_none() {
+            va = Some(mapped);
+        }
+    }
+    va.ok_or(())
+}
+
+/// Release a direct mapping created by `direct_map_phys`.
+pub fn direct_unmap_va(va: u64, size: u64) {
+    let aligned_size = (size + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
+    for offset in 0..(aligned_size / PAGE_SIZE) {
+        crate::mm::hyperspace::unmap_hyperspace(va + offset * PAGE_SIZE);
+    }
 }

@@ -159,9 +159,9 @@ impl BuddyAllocator {
         // both (the dynamic path always passes enough; the
         // static path passes a single static BSS that is sized
         // for the static coverage limit).
-        let fi_size = self.num_frames as usize * core::mem::size_of::<FrameInfo>();
-        let bn_size = self.num_frames as usize * core::mem::size_of::<BuddyNode>();
-        if fi_size + bn_size > frame_table_size {
+        let required_size = self.num_frames as usize
+            * (core::mem::size_of::<FrameInfo>() + core::mem::size_of::<BuddyNode>());
+        if required_size > frame_table_size {
             // The caller passed too small a buffer. Clamp
             // num_frames so we don't write past the end of the
             // buffer. The caller is expected to detect this
@@ -171,6 +171,12 @@ impl BuddyAllocator {
             self.num_frames = max_frames as u64;
             // kprintln bypassed — use the unified serial facade.
             crate::hal::serial::write_string("AI0_CLAMP\r\n");
+        }
+        let fi_size = self.num_frames as usize * core::mem::size_of::<FrameInfo>();
+        let bn_size = self.num_frames as usize * core::mem::size_of::<BuddyNode>();
+        if fi_size + bn_size > frame_table_size {
+            crate::hal::serial::write_string("AI0_LAYOUT_ERROR\r\n");
+            return;
         }
         self.frame_infos = frame_table as *mut FrameInfo;
         self.buddy_nodes = unsafe { frame_table.add(fi_size) as *mut BuddyNode };
@@ -209,75 +215,26 @@ impl BuddyAllocator {
             lock.head = 0;
             lock.count = total;
         }
-        // Bottom-up coalesce. For each order k from 0..MAX-1, walk
-        // the order-k free list and merge buddy pairs into
-        // order-(k+1). This builds the largest possible blocks at
-        // the highest orders, which lets `allocate` satisfy
-        // large contiguous requests.
-        // kprintln bypassed: skip verbose log
-        for k in 0..(MAX_BUDDY_ORDER - 1) {
-            let mut merged_total: u32 = 0;
-            // At most num_frames / 2^(k+1) pairs can possibly merge at this order.
-            let max_merges_at_order: u32 = (self.num_frames as u32) >> (k + 1);
-            // Safety net: cap attempts so a buggy walk cannot spin forever.
-            let max_attempts: u32 = max_merges_at_order.saturating_mul(2).max(64);
-            let mut attempts: u32 = 0;
-            loop {
-                attempts += 1;
-                if attempts > max_attempts {
-                    break;
-                }
-                let result: Option<u32> = {
-                    let mut lock = self.free_lists[k].lock();
-                    let num = self.num_frames as u32;
-                    let mut cur = lock.head;
-                    let mut merged_base_opt: Option<u32> = None;
-                    while cur != FREE_LIST_END {
-                        let buddy = cur ^ (1u32 << k);
-                        if buddy < num {
-                            // Walk the list and see if `buddy` is on it.
-                            let mut found = false;
-                            let mut probe = lock.head;
-                            for _ in 0..lock.count {
-                                if probe == buddy {
-                                    found = true;
-                                    break;
-                                }
-                                let next = unsafe { (*self.buddy_nodes.add(probe as usize)).next };
-                                if next == FREE_LIST_END {
-                                    break;
-                                }
-                                probe = next;
-                            }
-                            if found {
-                                remove_node(&mut lock, cur, self.buddy_nodes);
-                                remove_node(&mut lock, buddy, self.buddy_nodes);
-                                merged_base_opt = Some(cur & !(1u32 << k));
-                            }
-                        }
-                        if merged_base_opt.is_some() {
-                            break;
-                        }
-                        let next = unsafe { (*self.buddy_nodes.add(cur as usize)).next };
-                        if next == FREE_LIST_END {
-                            break;
-                        }
-                        cur = next;
-                    }
-                    merged_base_opt
-                };
-                let merged_base = match result {
-                    Some(b) => b,
-                    None => break,
-                };
-                {
-                    let mut lock = self.free_lists[k + 1].lock();
-                    push_head(&mut lock, merged_base, self.buddy_nodes);
-                }
-                merged_total += 1;
-                if merged_total >= max_merges_at_order {
-                    break;
-                }
+        // Seed each order with the blocks that remain after maximal
+        // coalescing. For N frames, the block count at order k is
+        // floor(N / 2^k) - 2 * floor(N / 2^(k+1)). This directly
+        // reproduces the same buddy tree as pairwise merging while
+        // avoiding an O(num_frames * MAX_BUDDY_ORDER) scan on large RAM.
+        let total_frames = self.num_frames;
+        for k in 0..MAX_BUDDY_ORDER {
+            let shift = 1u64 << k;
+            let larger_shift = shift << 1;
+            let block_count =
+                (total_frames / shift) - 2 * (total_frames / larger_shift);
+            if block_count == 0 {
+                continue;
+            }
+
+            let first_block = (total_frames / larger_shift) * larger_shift;
+            let mut lock = self.free_lists[k].lock();
+            for block_index in 0..block_count {
+                let frame = first_block + block_index * shift;
+                push_head(&mut lock, frame as u32, self.buddy_nodes);
             }
         }
 
@@ -470,7 +427,7 @@ static FREE_PAGES: AtomicU64 = AtomicU64::new(0);
 ///   num_frames * (sizeof(FrameInfo) + sizeof(BuddyNode))
 /// bytes.  At 32768 frames and 8 + 12 = 20 bytes per frame, that's
 /// ~2.4 MiB of BSS — still well within winload.efi's 5 MiB BSS region.
-const FRAME_TABLE_ENTRIES: usize = 32768; // 128 MiB of RAM
+const FRAME_TABLE_ENTRIES: usize = 65536; // 256 MiB of RAM
 const FRAME_TABLE_BYTES: usize =
     FRAME_TABLE_ENTRIES * (core::mem::size_of::<FrameInfo>() + core::mem::size_of::<BuddyNode>());
 
@@ -509,7 +466,7 @@ pub fn init() {
 /// fits comfortably inside this window.  The dynamic phase-2 init can
 /// re-configure the buddy over a larger range once the dynamic
 /// bookkeeping tables have been allocated.
-pub const BOOTSTRAP_REGION: u64 = 64 * 1024 * 1024; // 64 MiB
+pub const BOOTSTRAP_REGION: u64 = 256 * 1024 * 1024; // 256 MiB
 
 /// Initialise the frame allocator for an arbitrary physical
 /// memory range. Supports the 2 GiB – 192 GiB range that
@@ -556,19 +513,20 @@ fn legacy_init(region_base: u64, region_size: u64) {
         // dynamic tables so the next phase (a future, larger
         // re-init) can use them without re-allocating.
         let region_frames = ((region_size / 4096) as usize)
-            .min(FRAME_TABLE.len() / core::mem::size_of::<FrameInfo>());
+            .min((*core::ptr::addr_of!(FRAME_TABLE)).len() / core::mem::size_of::<FrameInfo>());
         DYN_BASE_PHYS = region_base;
         DYN_LEN = region_frames;
         // The static FRAME_TABLE is laid out as bytes; the dynamic
         // tables are typed. We point them at the static buffer so
         // the page database and other subsystems can still walk
         // them by the typed pointer.
-        DYN_FRAME_INFOS = FRAME_TABLE.as_mut_ptr() as *mut FrameInfo;
+        DYN_FRAME_INFOS = (*core::ptr::addr_of_mut!(FRAME_TABLE)).as_mut_ptr() as *mut FrameInfo;
         DYN_FRAME_INFOS_PHYS = region_base; // virt == phys for kernel BSS
-        DYN_BUDDY_NODES = (FRAME_TABLE.as_mut_ptr() as *mut BuddyNode).wrapping_add(region_frames);
+        DYN_BUDDY_NODES = ((*core::ptr::addr_of_mut!(FRAME_TABLE)).as_mut_ptr() as *mut BuddyNode)
+            .wrapping_add(region_frames);
         DYN_BUDDY_NODES_PHYS =
             region_base + (region_frames as u64) * core::mem::size_of::<FrameInfo>() as u64;
-        let table_ptr = FRAME_TABLE.as_mut_ptr() as *mut u8;
+        let table_ptr = (*core::ptr::addr_of_mut!(FRAME_TABLE)).as_mut_ptr() as *mut u8;
         let _ = table_ptr; // keep tbl ptr alive for the legacy fallback
         let _ = DYN_BUDDY_NODES_PHYS;
 
@@ -582,7 +540,7 @@ fn legacy_init(region_base: u64, region_size: u64) {
         TOTAL_PAGES.store(alloc.total_count(), Ordering::SeqCst);
         FREE_PAGES.store(alloc.free_count(), Ordering::SeqCst);
     }
-    crate::hal::serial::write_string("FRAME_INIT_DONE_LEGACY\r\n");
+    crate::boot_debug_println!("FRAME_INIT_DONE_LEGACY");
 }
 
 /// Allocate a single physical frame.
@@ -601,6 +559,17 @@ pub fn allocate_pages(count: u64) -> Option<u64> {
     let result = alloc.allocate(count);
     if let Some(addr) = result {
         FREE_PAGES.fetch_sub(count, Ordering::SeqCst);
+        // Keep the PFN allocator in sync: every frame this buddy hands
+        // out is a live page the PFN database must never treat as free.
+        // Without this reservation the PFN allocator can later hand the
+        // same frame to a different consumer, letting it overwrite live
+        // page tables or the PFN database itself (PFN_LIST_CORRUPT).
+        if crate::mm::pfn::frame_sync_is_initialized() {
+            let pfn_base = addr / 4096;
+            for offset in 0..count {
+                crate::mm::pfn::frame_sync_reserve(pfn_base + offset);
+            }
+        }
         Some(addr)
     } else {
         None
@@ -612,6 +581,36 @@ pub fn free_pages(phys_addr: u64, count: u64) {
     let mut alloc = BUDDY_ALLOCATOR.lock();
     alloc.free(phys_addr, count);
     FREE_PAGES.fetch_add(count, Ordering::SeqCst);
+    // Mirror the allocation-side reservation into the PFN database so
+    // a freed buddy block becomes allocatable through the PFN allocator
+    // again instead of leaking as permanently Active.
+    if crate::mm::pfn::frame_sync_is_initialized() {
+        let pfn_base = phys_addr / 4096;
+        for offset in 0..count {
+            crate::mm::pfn::frame_sync_release(pfn_base + offset);
+        }
+    }
+}
+
+/// Invoke `cb` with the physical address of every frame the buddy
+/// allocator considers allocated (any non-free flag). The PFN
+/// database uses this at initialization time to reserve the frames
+/// that were handed out before the PFN allocator came online (page
+/// tables, the PFN database storage itself, and the frame
+/// bookkeeping tables).
+pub fn for_each_allocated_frame(mut cb: impl FnMut(u64)) {
+    let buddy = BUDDY_ALLOCATOR.lock();
+    if !buddy.initialised {
+        return;
+    }
+    unsafe {
+        for idx in 0..buddy.num_frames {
+            let info = &*buddy.frame_infos.add(idx as usize);
+            if info.flags != FRAME_FREE {
+                cb(buddy.base_address + idx * 4096);
+            }
+        }
+    }
 }
 
 /// Allocate from a specific zone.

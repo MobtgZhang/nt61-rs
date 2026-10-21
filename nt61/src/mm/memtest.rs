@@ -3,8 +3,6 @@
 //! Implements memory testing algorithms for the Windows Memory Diagnostic Tool.
 //! Tests physical memory using various patterns to detect faulty RAM.
 
-#![allow(dead_code)]
-
 /// Memory test signature
 pub const MEMTEST_SIGNATURE: u32 = 0x4D_5445_53; // "MTES"
 
@@ -85,7 +83,7 @@ pub struct MemTestContext {
 }
 
 impl MemTestContext {
-    /// Create a new test context
+    /// create a new test context
     pub fn new(data: &'static mut MemTestResults) -> Self {
         Self { data }
     }
@@ -120,7 +118,7 @@ impl MemTestContext {
         let end = self.data.test_end_addr;
         let inv_pattern = !pattern;
 
-        // Phase 1: Write pattern
+        // Phase 1: write pattern
         unsafe {
             let mut ptr = start as *mut u64;
             while (ptr as u64) < end {
@@ -142,7 +140,7 @@ impl MemTestContext {
             }
         }
 
-        // Phase 3: Write inverse
+        // Phase 3: write inverse
         unsafe {
             let mut ptr = start as *mut u64;
             while (ptr as u64) < end {

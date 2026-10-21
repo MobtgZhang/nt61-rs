@@ -9,8 +9,6 @@
 //! The thread is woken by an event when free pages are available
 //! or when the zeroed list drops below the target level.
 
-#![allow(non_snake_case)]
-
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 

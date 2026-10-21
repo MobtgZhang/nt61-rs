@@ -28,7 +28,6 @@ fn free_address(address: usize) {
     vas::free_user_va(address as u64);
 }
 
-
 #[repr(C)]
 pub struct Section {
     pub size: u64,
@@ -107,7 +106,6 @@ pub struct Subsection {
     pub starting_pte_index: u32,
 }
 
-
 const MAX_SECTIONS: usize = 256;
 static SECTION_TABLE: Spinlock<[Option<*mut Section>; MAX_SECTIONS]> =
     Spinlock::new([None; MAX_SECTIONS]);
@@ -139,7 +137,6 @@ fn free_section_slot(index: usize) {
     }
 }
 
-
 pub fn create_section(
     size: u64,
     max_protection: u32,
@@ -170,7 +167,7 @@ pub fn create_section(
     ) as *mut ControlArea;
 
     if control_area_ptr.is_null() {
-        unsafe { pool::free(section_ptr as *mut u8); }
+        pool::free(section_ptr as *mut u8);
         return Err(0xC000_0017u32 as i32);
     }
 
@@ -188,10 +185,8 @@ pub fn create_section(
     ) as *mut Segment;
 
     if segment_ptr.is_null() {
-        unsafe {
-            pool::free(control_area_ptr as *mut u8);
-            pool::free(section_ptr as *mut u8);
-        }
+        pool::free(control_area_ptr as *mut u8);
+        pool::free(section_ptr as *mut u8);
         return Err(0xC000_0017u32 as i32);
     }
 
@@ -206,11 +201,9 @@ pub fn create_section(
     match alloc_section_slot(section_ptr) {
         Some(index) => Ok(index),
         None => {
-            unsafe {
-                pool::free(segment_ptr as *mut u8);
-                pool::free(control_area_ptr as *mut u8);
-                pool::free(section_ptr as *mut u8);
-            }
+            pool::free(segment_ptr as *mut u8);
+            pool::free(control_area_ptr as *mut u8);
+            pool::free(section_ptr as *mut u8);
             Err(0xC000_0017u32 as i32)
         }
     }
@@ -245,13 +238,12 @@ pub fn destroy_section(section_index: usize) -> Result<(), i32> {
     Ok(())
 }
 
-
 pub fn map_view(
     section_index: usize,
     base_address_hint: u64,
     view_size: u64,
     section_offset: u64,
-    protection: u32,
+    _protection: u32,
 ) -> Result<u64, i32> {
     let section_ptr = match get_section(section_index) {
         Some(ptr) => ptr,
@@ -277,20 +269,23 @@ pub fn map_view(
 
         let base_address = allocate_address(
             actual_size as usize,
-            if base_address_hint != 0 { Some(base_address_hint as usize) } else { None },
-        ).ok_or(0xC000_0017u32 as i32)?; // STATUS_NO_MEMORY
+            if base_address_hint != 0 {
+                Some(base_address_hint as usize)
+            } else {
+                None
+            },
+        )
+        .ok_or(0xC000_0017u32 as i32)?; // STATUS_NO_MEMORY
 
         if !section.control_area.is_null() {
             (*section.control_area).number_of_mapped_views += 1;
         }
-
 
         Ok(base_address as u64)
     }
 }
 
 pub fn unmap_view(base_address: u64) -> Result<(), i32> {
-
     if base_address == 0 {
         return Err(0xC000_000Du32 as i32); // STATUS_INVALID_PARAMETER
     }
@@ -299,7 +294,6 @@ pub fn unmap_view(base_address: u64) -> Result<(), i32> {
 
     Ok(())
 }
-
 
 pub fn get_section_size(section_index: usize) -> Option<u64> {
     let section_ptr = get_section(section_index)?;
@@ -322,6 +316,4 @@ pub fn get_mapped_views(section_index: usize) -> Option<u32> {
     }
 }
 
-
-pub fn init() {
-}
+pub fn init() {}

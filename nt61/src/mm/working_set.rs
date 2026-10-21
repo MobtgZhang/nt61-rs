@@ -19,10 +19,8 @@
 //! - `trim_working_set()`: Evict pages from working set when memory pressure
 //! - `age_working_set()`: Track page access patterns for LRU
 //! - `lock_working_set()` / `unlock_working_set()`: Pin pages in memory
-//! - `MmTrimProcessWorkingSet()`: syscall-level trim interface
+//! - `mm_trim_process_working_set()`: syscall-level trim interface
 //! - `query_working_set_ex()`: Extended working set information
-
-#![allow(non_snake_case)]
 
 use alloc::vec::Vec;
 use core::sync::atomic::AtomicU64;
@@ -311,7 +309,7 @@ pub fn age_working_set(pml4_phys: u64) -> WorkingSetAgingStats {
 /// Per-process working-set aging statistics returned by
 /// `age_working_set`. PSSS reads this when computing the
 /// `WorkingSetInformationEx` snapshot it returns to user-mode
-/// callers via `NtQuerySystemInformation`.
+/// callers via `NT_QUERY_SYSTEM_INFORMATION`.
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct WorkingSetAgingStats {
@@ -345,7 +343,7 @@ pub fn init() {
     WS_AGING_INTERVAL_ATOMIC.store(WS_AGING_INTERVAL, Ordering::Release);
 }
 
-/// Internal atomic mirror of `WS_AGING_INTERVAL` so non-Rust-mutex
+/// internal atomic mirror of `WS_AGING_INTERVAL` so non-Rust-mutex
 /// callers (DPC, ISR) can read the current value cheaply.
 static WS_AGING_INTERVAL_ATOMIC: AtomicU64 = AtomicU64::new(WS_AGING_INTERVAL);
 
@@ -676,13 +674,13 @@ pub fn query_working_set_ex(pml4_phys: u64) -> Vec<WorkingSetEntryEx> {
 }
 
 // =============================================================================
-// MmTrimProcessWorkingSet
+// mm_trim_process_working_set
 // =============================================================================
 
 /// Trim the process working set.
-pub fn MmTrimProcessWorkingSet(_process_handle: u64, _min_size: i64) -> i32 {
+pub fn mm_trim_process_working_set(_process_handle: u64, _min_size: i64) -> i32 {
     // _process_handle and _min_size are intentionally unused - reserved for future logging
-    // [DISABLED] // // kprintln!("[WS] MmTrimProcessWorkingSet: handle={:#x}, min={}", _process_handle, _min_size);
+    // [DISABLED] // // kprintln!("[WS] mm_trim_process_working_set: handle={:#x}, min={}", _process_handle, _min_size);
 
     let pml4 = crate::mm::vas::current_root();
     if pml4 == 0 {
@@ -704,7 +702,7 @@ pub fn MmTrimProcessWorkingSet(_process_handle: u64, _min_size: i64) -> i32 {
 
     // Suppress unused variable warnings
     let _ = total_trimmed;
-    // [DISABLED] // // kprintln!("[WS] MmTrimProcessWorkingSet: trimmed {} pages", total_trimmed);
+    // [DISABLED] // // kprintln!("[WS] mm_trim_process_working_set: trimmed {} pages", total_trimmed);
     0
 }
 

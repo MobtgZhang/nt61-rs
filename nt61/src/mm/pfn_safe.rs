@@ -1,12 +1,11 @@
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicU64, AtomicUsize, Ordering};
 
-use core::sync::atomic::{AtomicI32, AtomicI64, AtomicU8};
 use spin::{Lazy, Mutex};
 
 const PFN_BOOTSTRAP_SIZE: usize = 2 * 1024 * 1024;
 
-struct PfnStorage {
-    bootstrap: [u8; PFN_BOOTSTRAP_SIZE],
+pub struct PfnStorage {
+    pub bootstrap: [u8; PFN_BOOTSTRAP_SIZE],
     ptr: AtomicPtr<u8>,
     phys: AtomicU64,
     used: AtomicUsize,
@@ -32,7 +31,7 @@ impl PfnStorage {
         self.ptr.store(ptr, Ordering::Release);
     }
 
-    fn get_phys(&self) -> u64 {
+    pub fn get_phys(&self) -> u64 {
         self.phys.load(Ordering::Acquire)
     }
 

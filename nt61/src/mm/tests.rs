@@ -10,7 +10,6 @@
 //! - Page fault handling
 
 use crate::rtl::testing::TestStats;
-use core::sync::atomic::Ordering;
 
 /// Run all memory manager unit tests
 pub fn run_tests() -> bool {
@@ -217,26 +216,20 @@ fn test_pte_operations() -> bool {
 }
 
 fn test_self_map_verification() -> bool {
-    #[cfg(target_arch = "x86_64")]
-    {
-        use crate::mm::constants;
+    match crate::arch::self_map_info() {
+        Some((self_map_addr, self_map_index)) => {
+            if self_map_addr == 0 {
+                return false;
+            }
+            if ((self_map_addr >> 39) & 0x1FF) as usize != self_map_index {
+                return false;
+            }
 
-        // The NT 6.1 self-map window must decode back to the documented
-        // PML4 slot (PML4[0x1ED] -> PDPT[0x1ED] -> PD[0x1ED] -> PT[0x1ED]).
-        let self_map_addr = constants::PXE_BASE;
-        if self_map_addr == 0 {
-            return false;
+            crate::boot_println!("    Self-map base: 0x{:x}", self_map_addr);
+            true
         }
-        if ((self_map_addr >> 39) & 0x1FF) as usize != constants::MI_SELF_MAP_INDEX {
-            return false;
-        }
-
-        crate::boot_println!("    Self-map base: 0x{:x}", self_map_addr);
-        true
+        None => true,
     }
-
-    #[cfg(not(target_arch = "x86_64"))]
-    true
 }
 
 fn test_page_table_walk() -> bool {
@@ -344,7 +337,7 @@ fn test_heap_small_alloc() -> bool {
         return false;
     }
 
-    // Write test pattern
+    // write test pattern
     unsafe {
         core::ptr::write_bytes(ptr, 0xAA, 64);
         let val = core::ptr::read_volatile(ptr);

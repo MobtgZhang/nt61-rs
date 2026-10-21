@@ -15,8 +15,6 @@
 //! `BalanceSetManager` is the same thread that runs zero-page
 //! work, so we just expose a `tick()` function.
 
-#![allow(non_snake_case)]
-
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::mm::pfn;
@@ -130,12 +128,11 @@ static MPW_MAPPED_TOTAL_WRITTEN: AtomicU64 = AtomicU64::new(0);
 /// MiMappedPageWriter state
 pub struct MiMappedPageWriter {
     /// Running flag (kept for future use; currently MPW_MAPPED_RUNNING static is used)
-    #[allow(unused)]
-    running: AtomicBool,
+    pub running: AtomicBool,
 }
 
 impl MiMappedPageWriter {
-    /// Create a new mapped page writer instance.
+    /// create a new mapped page writer instance.
     pub const fn new() -> Self {
         Self {
             running: AtomicBool::new(true),

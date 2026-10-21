@@ -4,8 +4,6 @@
 //! This test suite verifies the key subsystems are functioning correctly
 //! without requiring full boot to user mode.
 
-#[allow(unused_imports)]
-use crate::boot_println;
 use crate::rtl::testing::TestStats;
 
 /// Run the end-to-end Phase 1 memory manager smoke test.
@@ -76,7 +74,7 @@ fn test_kernel_heap() -> bool {
         return false;
     }
 
-    // Write and read back
+    // write and read back
     unsafe {
         core::ptr::write_bytes(ptr, 0xAA, 64);
         let val = core::ptr::read_volatile(ptr);
@@ -140,7 +138,7 @@ fn test_vad_tree() -> bool {
     let mut tree = VadTree::new();
     crate::boot_println!("    [VAD] tree constructed");
 
-    // Create a VAD entry. `starting_vpn` and `ending_vpn` are PFNs
+    // create a VAD entry. `starting_vpn` and `ending_vpn` are PFNs
     // (page frame numbers), not byte addresses. PFN 0x1000 maps to
     // byte address `0x1000 << 12 = 0x100_0000` (16 MiB), and PFN
     // 0x2000 maps to `0x200_0000` (32 MiB).

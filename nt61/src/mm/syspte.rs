@@ -1,7 +1,6 @@
 //! System PTE pool (`MiReserveSystemPtes` / `MiReleaseSystemPtes`)
 //!
-//! x86_64-only implementation. Uses `arch::x86_64::paging` directly.
-//! Non-x86_64 architectures compile in `syspte_stub.rs` instead.
+//! Cross-architecture implementation, backed by the unified paging facade.
 //!
 //! Windows 7 reserves a contiguous VA region whose page-table
 //! entries are the *system* PTE pool. Kernel subsystems that need a
@@ -17,13 +16,9 @@
 //! `MiMapIoSpace` / `MiUnmapIoSpace` are convenience wrappers that
 //! map a contiguous physical range into the system PTE region.
 
-#![cfg(target_arch = "x86_64")]
-#![allow(non_snake_case)]
-
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::ke::sync::Spinlock;
-use crate::mm::vas::pte_address_of;
 
 const SYSTEM_PTE_BASE: u64 = 0xFFFF_F900_0000_0000;
 const SYSTEM_PTE_END: u64 = 0xFFFF_F9A0_0000_0000;
@@ -50,9 +45,9 @@ pub fn reserve_system_ptes(count: u64) -> Option<u64> {
     let _g = SYSTEM_PTE_LOCK.lock();
     // Round up to a multiple of the region size.
     let regions = (count + SYSTEM_PTE_REGION_PAGES - 1) / SYSTEM_PTE_REGION_PAGES;
-    if regions > 8 {
+    if regions > 512 {
         return None;
-    } // sanity
+    }
     for bit in 0..SYSTEM_PTE_REGION_COUNT as usize {
         let word = bit / 64;
         let mask = 1u64 << (bit % 64);
@@ -83,7 +78,7 @@ pub fn release_system_ptes(va: u64) {
     // doesn't cover the SYSTEM_PTE region (PML4[0x1F2]).
     for i in 0..SYSTEM_PTE_REGION_PAGES {
         let va_i = va + i * 4096;
-        crate::arch::x86_64::paging::unmap_page(va_i);
+        crate::arch::unmap_page(va_i);
     }
 
     // Release bitmap
@@ -113,16 +108,16 @@ pub fn map_io_space(pa: u64, count: u64) -> Option<u64> {
     for i in 0..count {
         let va_i = va + i * 4096;
         let pa_i = pa + i * 4096;
-        // Flags: P=1, R/W=1, U=1 (kernel still accesses via supervisor
+        // flags: P=1, R/W=1, U=1 (kernel still accesses via supervisor
         // bit is fine; U=1 keeps the PTE consistent with other kernel
         // mappings and is what the AHCI/e1000 drivers expect). PCD/PWT
         // are clear (uncached is unnecessary for MMIO behind an iATU;
         // the controller's own caches handle coherency).
         const FLAGS: u64 = 0x1 | 0x2 | 0x4;
-        if !crate::arch::x86_64::paging::map_page(va_i, pa_i, FLAGS) {
+        if !crate::arch::map_page(va_i, pa_i, FLAGS) {
             // Roll back what we've mapped so far.
             for j in 0..i {
-                crate::arch::x86_64::paging::unmap_page(va + j * 4096);
+                crate::arch::unmap_page(va + j * 4096);
             }
             release_system_ptes(va);
             return None;
@@ -135,12 +130,7 @@ pub fn map_io_space(pa: u64, count: u64) -> Option<u64> {
 pub fn unmap_io_space(va: u64, count: u64) {
     for i in 0..count {
         let va_i = va + i * 4096;
-        let pte = pte_address_of(va_i);
-        if !pte.is_null() {
-            unsafe {
-                (*pte).clear();
-            }
-        }
+        crate::arch::unmap_page(va_i);
     }
     release_system_ptes(va);
 }

@@ -41,7 +41,7 @@ struct FreeBlock {
 }
 
 impl FreeBlock {
-    /// Create a new free block at the given address.
+    /// create a new free block at the given address.
     ///
     /// # Safety
     /// Caller must ensure `addr` points to writable memory of at
@@ -52,6 +52,26 @@ impl FreeBlock {
         (*block).next = ptr::null_mut();
         block
     }
+}
+
+/// Metadata stored immediately before the user-visible allocation.
+///
+/// The free-list header is overwritten while a block is allocated, so
+/// it cannot be used to recover the allocation size on `dealloc()`.
+/// Keeping an independent header makes every free block self-describing
+/// and allows allocations smaller than `size_of::<FreeBlock>()`.
+#[repr(C)]
+struct AllocationHeader {
+    /// Magic value used to detect invalid or corrupted frees.
+    magic: usize,
+    /// Size of the allocation block, excluding alignment padding that
+    /// may precede this header but including the header itself.
+    block_size: usize,
+}
+
+impl AllocationHeader {
+    const MAGIC: usize = 0x4e_54_36_31_48_45_41_50;
+    const SIZE: usize = core::mem::size_of::<AllocationHeader>();
 }
 
 /// NT-style kernel heap control block. The fields mirror what
@@ -303,7 +323,12 @@ impl KernelHeap {
     /// Returns Some(ptr) if a suitable block is found, None otherwise.
     unsafe fn alloc_from_free_list(&self, layout: Layout) -> Option<*mut u8> {
         let head_ref: &mut *mut FreeBlock = &mut *self.free_list_head.get();
-        let needed_size = layout.size();
+        let allocation_size = Self::align_up(layout.size(), 8);
+        let alignment = layout.align().max(8);
+        // `align_up()` can add up to `alignment - 1` bytes before the
+        // allocation header. Reserve that worst case up front so every
+        // block selected by best-fit is guaranteed to be large enough.
+        let needed_size = AllocationHeader::SIZE + allocation_size + alignment.saturating_sub(1);
 
         // Best-fit: walk the intrusive list, find the smallest
         // block that still satisfies the request.
@@ -338,12 +363,15 @@ impl KernelHeap {
 
         let block_addr = best as usize;
         let block_size = best_size;
-        let aligned_addr = Self::align_up(block_addr, layout.align().max(8));
+        let aligned_addr = Self::align_up(block_addr + AllocationHeader::SIZE, alignment);
+        let header_addr = aligned_addr - AllocationHeader::SIZE;
+        let block_end = block_addr + block_size;
 
-        // If there's leftover space at the beginning, return it to
-        // the free list.
-        let leftover = aligned_addr - block_addr;
-        if leftover > 0 && leftover >= core::mem::size_of::<FreeBlock>() {
+        // If there is enough leading padding, return it to the free
+        // list. Smaller gaps are intentionally abandoned; they cannot
+        // hold a free-list header without overlapping the allocation.
+        let leftover = header_addr - block_addr;
+        if leftover >= core::mem::size_of::<FreeBlock>() {
             let new_free_addr = block_addr;
             let new_free_size = leftover;
             // SAFETY: caller of alloc_from_free_list already holds
@@ -351,17 +379,20 @@ impl KernelHeap {
             self.add_to_free_list(new_free_addr as *mut FreeBlock, new_free_size);
         }
 
-        // If there's leftover space at the end, return it to the
-        // free list as well.
-        let user_ptr = aligned_addr as *mut u8;
-        let used_size = aligned_addr + needed_size - block_addr;
-        let remaining = block_size - used_size;
-        if remaining > 0 && remaining >= core::mem::size_of::<FreeBlock>() {
-            let remaining_addr = aligned_addr + needed_size;
-            self.add_to_free_list(remaining_addr as *mut FreeBlock, remaining);
+        let used_size = aligned_addr + allocation_size - header_addr;
+        let remaining = block_end - (header_addr + used_size);
+        if remaining >= core::mem::size_of::<FreeBlock>() {
+            let remaining_addr = Self::align_up(aligned_addr + allocation_size, 8);
+            let remaining_size = block_end - remaining_addr;
+            if remaining_size >= core::mem::size_of::<FreeBlock>() {
+                self.add_to_free_list(remaining_addr as *mut FreeBlock, remaining_size);
+            }
         }
 
-        Some(user_ptr)
+        let header = header_addr as *mut AllocationHeader;
+        (*header).magic = AllocationHeader::MAGIC;
+        (*header).block_size = used_size;
+        Some(aligned_addr as *mut u8)
     }
 }
 
@@ -373,6 +404,23 @@ impl Default for KernelHeap {
 
 /// Global heap instance.
 pub static KERNEL_HEAP: KernelHeap = KernelHeap::new();
+
+/// Allocator handle that forwards to the single kernel heap instance.
+///
+/// Binaries must declare their own global allocator static, but that
+/// declaration must not create a second heap. This wrapper keeps the
+/// configured `KERNEL_HEAP` as the sole storage.
+pub struct KernelHeapAllocator;
+
+unsafe impl GlobalAlloc for KernelHeapAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        KERNEL_HEAP.alloc(layout)
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        KERNEL_HEAP.dealloc(ptr, layout)
+    }
+}
 
 unsafe impl GlobalAlloc for KernelHeap {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
@@ -411,8 +459,9 @@ unsafe impl GlobalAlloc for KernelHeap {
         let mut iters = 0;
         loop {
             let cur = self.next.load(Ordering::Relaxed);
-            let aligned = Self::align_up(cur, layout.align().max(8));
-            let new_next = aligned + layout.size();
+            let aligned = Self::align_up(cur + AllocationHeader::SIZE, layout.align().max(8));
+            let allocation_size = Self::align_up(layout.size(), 8);
+            let new_next = Self::align_up(aligned + allocation_size, 8);
             if new_next > base + size {
                 stats.failed_allocations += 1;
                 return core::ptr::null_mut();
@@ -428,21 +477,35 @@ unsafe impl GlobalAlloc for KernelHeap {
                 if stats.current_allocated > stats.peak_allocated {
                     stats.peak_allocated = stats.current_allocated;
                 }
+                let header = (aligned - AllocationHeader::SIZE) as *mut AllocationHeader;
+                (*header).magic = AllocationHeader::MAGIC;
+                (*header).block_size = new_next - (aligned - AllocationHeader::SIZE);
                 return aligned as *mut u8;
             }
             iters += 1;
             if iters > 1000000 {
                 stats.failed_allocations += 1;
+                crate::boot_print_always!("TRACE-HEAP: CAS retry exhausted\r\n");
                 return core::ptr::null_mut();
             }
         }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        if !ptr.is_null() && self.is_in_heap_range(ptr, layout.size()) {
+        if !ptr.is_null() && ptr as usize >= AllocationHeader::SIZE {
+            let header = (ptr as usize - AllocationHeader::SIZE) as *mut AllocationHeader;
+            let magic = (*header).magic;
+            let block_size = (*header).block_size;
+            let block_ptr = header as *mut FreeBlock;
+            if magic != AllocationHeader::MAGIC
+                || block_size < core::mem::size_of::<FreeBlock>()
+                || !self.is_in_heap_range(block_ptr as *mut u8, block_size)
+            {
+                return;
+            }
             let lock_ref = &*self.heap_lock.get();
             let _guard = lock_ref.lock();
-            self.add_to_free_list(ptr as *mut FreeBlock, layout.size());
+            self.add_to_free_list(block_ptr, block_size);
             let stats = &mut *self.stats.get();
             stats.total_frees += 1;
             stats.current_allocated = stats.current_allocated.saturating_sub(layout.size());
@@ -484,25 +547,27 @@ pub fn init() {
 
     let (phys, pages) = match frame::allocate_pages(HEAP_PAGES_LARGE) {
         Some(p) => {
-            crate::hal::serial::write_string("[heap] allocated 32MB at phys=");
+            crate::hal::serial::write_string_always("[heap] allocated 32MB at phys=");
             crate::hal::serial::write_hex_u64(p as u64);
             crate::hal::serial::write_string("\r\n");
             (p, HEAP_PAGES_LARGE)
         }
         None => {
-            crate::hal::serial::write_string("[heap] 32MB FAILED, trying 16MB\r\n");
+            crate::hal::serial::write_string_always("[heap] 32MB FAILED, trying 16MB\r\n");
             match frame::allocate_pages(HEAP_PAGES_MEDIUM) {
                 Some(p) => {
-                    crate::hal::serial::write_string("[heap] allocated 16MB at phys=");
+                    crate::hal::serial::write_string_always("[heap] allocated 16MB at phys=");
                     crate::hal::serial::write_hex_u64(p as u64);
                     crate::hal::serial::write_string("\r\n");
                     (p, HEAP_PAGES_MEDIUM)
                 }
                 None => {
-                    crate::hal::serial::write_string("[heap] 16MB FAILED, trying 8MB\r\n");
+                    crate::hal::serial::write_string_always("[heap] 16MB FAILED, trying 8MB\r\n");
                     match frame::allocate_pages(HEAP_PAGES_SMALL) {
                         Some(p) => {
-                            crate::hal::serial::write_string("[heap] allocated 8MB at phys=");
+                            crate::hal::serial::write_string_always(
+                                "[heap] allocated 8MB at phys=",
+                            );
                             crate::hal::serial::write_hex_u64(p as u64);
                             crate::hal::serial::write_string("\r\n");
                             (p, HEAP_PAGES_SMALL)
@@ -521,7 +586,7 @@ pub fn init() {
 
     let base = phys as *mut u8;
     let size = (pages * 4096) as usize;
-    crate::hal::serial::write_string("[heap] about to configure base=");
+    crate::hal::serial::write_string_always("[heap] about to configure base=");
     crate::hal::serial::write_hex_u64(base as u64);
     crate::hal::serial::write_string(" size=");
     crate::hal::serial::write_hex_u64(size as u64);
@@ -531,7 +596,7 @@ pub fn init() {
     if crate::mm::heap::KERNEL_HEAP.configured_region().is_some() {
         crate::hal::serial::write_string("[heap] configure VERIFIED OK\r\n");
     } else {
-        crate::hal::serial::write_string("[heap] configure FAILED TO VERIFY\r\n");
+        crate::hal::serial::write_string_always("[heap] configure FAILED TO VERIFY\r\n");
     }
 }
 

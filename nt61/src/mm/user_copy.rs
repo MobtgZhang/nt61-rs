@@ -21,8 +21,8 @@
 //! the failure into the appropriate NTSTATUS / Win32 error.
 
 use crate::libs::ntdll::status::STATUS_ACCESS_VIOLATION;
+use crate::libs::ntdll::types::UnicodeString;
 use crate::mm::constants::{KERNEL_BASE, USER_BASE, USER_LIMIT};
-use crate::mm::vm;
 
 /// True iff `va..va+len` lies entirely inside the user address range
 /// and does not overflow.
@@ -100,7 +100,7 @@ pub fn copy_from_user(dst: &mut [u8], src: u64) -> Result<(), i32> {
         return Ok(());
     }
     probe_user_read(src, len)?;
-    let _guard = crate::arch::x86_64::cpu_flags::SmapGuard::open();
+    let _guard = crate::arch::common::user_memory::SmapGuard::open();
     unsafe {
         core::ptr::copy_nonoverlapping(src as *const u8, dst.as_mut_ptr(), len);
     }
@@ -115,7 +115,7 @@ pub fn copy_to_user(dst: u64, src: &[u8]) -> Result<(), i32> {
         return Ok(());
     }
     probe_user_write(dst, len)?;
-    let _guard = crate::arch::x86_64::cpu_flags::SmapGuard::open();
+    let _guard = crate::arch::common::user_memory::SmapGuard::open();
     unsafe {
         core::ptr::copy_nonoverlapping(src.as_ptr(), dst as *mut u8, len);
     }
@@ -130,12 +130,66 @@ pub fn read_user<T: Copy>(src: u64, dst: &mut T) -> Result<(), i32> {
     copy_from_user(bytes, src)
 }
 
-/// Write a single `T` from `src` into user space.
+/// write a single `T` from `src` into user space.
 pub fn write_user<T: Copy>(dst: u64, src: &T) -> Result<(), i32> {
     let bytes = unsafe {
         core::slice::from_raw_parts(src as *const T as *const u8, core::mem::size_of::<T>())
     };
     copy_to_user(dst, bytes)
+}
+
+/// Read one fixed-size `Copy` object from user space.
+pub fn read_user_object<T: Copy>(src: u64) -> Result<T, i32> {
+    let mut value = core::mem::MaybeUninit::<T>::uninit();
+    let bytes = unsafe {
+        core::slice::from_raw_parts_mut(value.as_mut_ptr() as *mut u8, core::mem::size_of::<T>())
+    };
+    copy_from_user(bytes, src)?;
+    Ok(unsafe { value.assume_init() })
+}
+
+/// Write one fixed-size `Copy` object to user space.
+pub fn write_user_object<T: Copy>(dst: u64, value: &T) -> Result<(), i32> {
+    let bytes = unsafe {
+        core::slice::from_raw_parts(value as *const T as *const u8, core::mem::size_of::<T>())
+    };
+    copy_to_user(dst, bytes)
+}
+
+/// Read a counted UTF-16 string header and its buffer from user space.
+///
+/// `max_bytes` limits the trusted `length` field before any buffer read.
+pub fn read_user_unicode_string(src: u64, max_bytes: usize) -> Result<alloc::vec::Vec<u16>, i32> {
+    let header: UnicodeString = read_user_object(src)?;
+    if header.length == 0 || header.length % 2 != 0 {
+        return Err(STATUS_ACCESS_VIOLATION);
+    }
+    if header.length as usize > max_bytes || header.buffer.is_null() {
+        return Err(STATUS_ACCESS_VIOLATION);
+    }
+
+    let chars = header.length as usize / 2;
+    let mut value = alloc::vec![0u16; chars];
+    let bytes = unsafe {
+        core::slice::from_raw_parts_mut(value.as_mut_ptr() as *mut u8, header.length as usize)
+    };
+    copy_from_user(bytes, header.buffer as u64)?;
+    Ok(value)
+}
+
+/// Read a counted UTF-16 array directly from user memory.
+pub fn read_user_utf16(src: u64, char_count: u64) -> Result<alloc::vec::Vec<u16>, i32> {
+    if char_count == 0 {
+        return Ok(alloc::vec![]);
+    }
+    let byte_count = (char_count as usize)
+        .checked_mul(2)
+        .ok_or(STATUS_ACCESS_VIOLATION)?;
+    let mut value = alloc::vec![0u16; char_count as usize];
+    let bytes =
+        unsafe { core::slice::from_raw_parts_mut(value.as_mut_ptr() as *mut u8, byte_count) };
+    copy_from_user(bytes, src)?;
+    Ok(value)
 }
 
 /// Walk the four-level table and return the leaf entry covering `va`.

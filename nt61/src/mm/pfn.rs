@@ -36,8 +36,6 @@
 //! The free / zeroed / standby / modified lists are protected by
 //! `PFN_LOCK` (the outermost lock in the system per NT conventions).
 
-#![allow(non_snake_case)]
-
 use core::ptr;
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -134,7 +132,7 @@ pub struct LIST_ENTRY {
 pub struct MMPFN {
     pub u1: LIST_ENTRY,
     pub u2: PfnShortFlags,
-    /// Owner PTE or related PTE depending on state.
+    /// owner PTE or related PTE depending on state.
     pub u3: PfnU3,
     /// Original PTE (saved when a Hardware PTE is demoted to
     /// prototype / software / transition).
@@ -256,8 +254,7 @@ impl MMPFN {
 // Database
 // ---------------------------------------------------------------------------
 
-#[allow(dead_code)]
-const PFN_LIST_MAX: usize = 16;
+pub const PFN_LIST_MAX: usize = 16;
 
 /// All the lists the PFN state machine knows about.
 const PFNL_FREE: usize = 0;
@@ -757,6 +754,12 @@ impl PfnDatabase {
 
 pub static PFN_DB: Spinlock<PfnDatabase> = Spinlock::new(PfnDatabase::new());
 
+/// Report whether the physical page allocator is ready.
+pub fn is_initialized() -> bool {
+    let db = PFN_DB.lock();
+    db.initialized
+}
+
 /// Static BSS storage used as a bootstrap fallback. Holds 128K PFNs
 /// (~2 MiB), enough to track the first 512 MiB of RAM during early boot
 /// when the buddy allocator hasn't been fully initialized yet.
@@ -789,6 +792,18 @@ pub fn init(base_pfn: PfnNumber, pfn_count: PfnNumber) {
         // Try to allocate the full-size storage from the buddy.
         let pages = (bytes_needed + 4095) / 4096;
         if let Some(phys) = crate::mm::frame::allocate_pages(pages as u64) {
+            if !crate::arch::identity_map_region(phys, (pages * 4096) as u64) {
+                crate::hal::serial::write_string_always(
+                    "[FATAL] pfn::init: storage map failed\r\n",
+                );
+                crate::ke::bugcheck::bugcheck_with(
+                    crate::ke::bugcheck::BugCheckCode::PfnListCorrupt,
+                    bytes_needed as u64,
+                    phys,
+                    pfn_count,
+                    core::mem::size_of::<MMPFN>() as u64,
+                );
+            }
             // The PFN DB storage lives in kernel-VA space via the
             // recursive self-map, so we can access it through its
             // physical address directly.
@@ -797,25 +812,25 @@ pub fn init(base_pfn: PfnNumber, pfn_count: PfnNumber) {
             PFN_STORAGE_USED = pages * 4096;
             PFN_STORAGE_CAPACITY = pages * 4096;
             crate::hal::serial::write_string("[mm] pfn::init: dynamic storage OK\r\n");
-        } else if bytes_needed <= PFN_STORAGE_BOOTSTRAP.len() {
+        } else if bytes_needed <= (*core::ptr::addr_of!(PFN_STORAGE_BOOTSTRAP)).len() {
             // Fall back to the static buffer (cap is 8K PFNs,
             // about 32 MiB of RAM). The buddy is so out of memory
             // that we can't even allocate the proper tables.
             crate::hal::serial::write_string("[mm] pfn::init: using static storage\r\n");
-            PFN_STORAGE_PTR = PFN_STORAGE_BOOTSTRAP.as_mut_ptr();
+            PFN_STORAGE_PTR = (*core::ptr::addr_of_mut!(PFN_STORAGE_BOOTSTRAP)).as_mut_ptr();
             PFN_STORAGE_USED = bytes_needed;
-            PFN_STORAGE_CAPACITY = PFN_STORAGE_BOOTSTRAP.len();
+            PFN_STORAGE_CAPACITY = (*core::ptr::addr_of!(PFN_STORAGE_BOOTSTRAP)).len();
         } else {
             // CRITICAL ERROR: Cannot allocate PFN database storage.
             // Without full PFN tracking, memory management is compromised.
             // System cannot safely continue - trigger bugcheck.
-            crate::hal::serial::write_string("[FATAL] pfn::init: no storage\r\n");
+            crate::hal::serial::write_string_always("[FATAL] pfn::init: no storage\r\n");
             // Trigger PFN_LIST_CORRUPT (bug check 0x4E).
             // This indicates critical memory management data structures are corrupted.
             crate::ke::bugcheck::bugcheck_with(
                 crate::ke::bugcheck::BugCheckCode::PfnListCorrupt,
-                bytes_needed as u64,                  // P1: bytes needed
-                PFN_STORAGE_BOOTSTRAP.len() as u64,   // P2: bootstrap capacity
+                bytes_needed as u64, // P1: bytes needed
+                (*core::ptr::addr_of!(PFN_STORAGE_BOOTSTRAP)).len() as u64, // P2: bootstrap capacity
                 pfn_count,                            // P3: requested PFN count
                 core::mem::size_of::<MMPFN>() as u64, // P4: sizeof(MMPFN)
             );
@@ -951,6 +966,32 @@ pub fn free_pfn(pfn: PfnNumber) {
     crate::boot_println!("[PFN] free_pfn: pfn=0x{:x}", pfn);
     let mut db = PFN_DB.lock();
     db.add_to_free(pfn);
+}
+
+/// Shim for `frame::allocate_pages` / `frame::free_pages`: reports
+/// whether the PFN database is online so the frame allocator knows
+/// whether mirror reservations are meaningful.
+#[doc(hidden)]
+pub fn frame_sync_is_initialized() -> bool {
+    is_initialized()
+}
+
+/// Shim for `frame::allocate_pages`: reserves a frame the buddy
+/// allocator has just handed out so the PFN allocator will never
+/// return it to a second consumer.
+#[doc(hidden)]
+pub fn frame_sync_reserve(pfn: PfnNumber) -> bool {
+    reserve_pfn(pfn)
+}
+
+/// Shim for `frame::free_pages`: releases a frame back into the PFN
+/// free list when the buddy allocator frees the block.
+#[doc(hidden)]
+pub fn frame_sync_release(pfn: PfnNumber) {
+    let mut db = PFN_DB.lock();
+    if db.entry(pfn).is_some() {
+        db.add_to_free(pfn);
+    }
 }
 
 /// Reserve a PFN so it will never be returned by `allocate_pfn` /

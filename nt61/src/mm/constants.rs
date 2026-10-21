@@ -65,7 +65,7 @@ pub const KERNEL_IMAGE_BASE: u64 = 0xFFFF8000_0000_0000;
 
 /// User space base. Low 64KB is left unused for NULL pointer
 /// compatibility and DOS compatibility.
-pub const USER_BASE: u64 = 0x0000_0000_0001_0000;
+pub const USER_BASE: u64 = 0x0000_1000_0000_0000;
 
 /// User space upper limit (canonical form, Windows 7 x64 default).
 pub const USER_LIMIT: u64 = 0x0000_7FFF_FFFF_FFFF;
@@ -73,7 +73,7 @@ pub const USER_LIMIT: u64 = 0x0000_7FFF_FFFF_FFFF;
 /// Default user-mode image base. Standard Windows 7 x64 uses
 /// 0x00400000, but this implementation uses 0x00100000 for
 /// Phase 0 simplicity.
-pub const USER_IMAGE_BASE: u64 = 0x0000_0000_0010_0000;
+pub const USER_IMAGE_BASE: u64 = 0x0000_1000_0000_0000;
 
 /// Default user entry point (first bytes of mapped image).
 pub const USER_ENTRY_RIP: u64 = 0x0000_0000_0010_1000;
@@ -89,12 +89,12 @@ pub const USER_STACK_TOP: u64 = USER_STACK_BASE + USER_STACK_SIZE;
 
 /// User entry point for ring transition stub (canonical high address
 /// to avoid collision with kernel identity map).
-pub const USER_ENTRY_BASE: u64 = 0xFFFF_8000_0000_1000;
+pub const USER_ENTRY_BASE: u64 = 0x0000_1000_0000_0000;
 
-/// TEB (Thread Environment Block) base address.
+/// TEB (Thread environment Block) base address.
 /// Windows 7 x64 places the first thread's TEB at
-/// 0x0000_FFFF_FFDF_0000.
-pub const TEB_BASE: u64 = 0x0000_FFFF_FFDF_0000;
+/// 0x0000_7FFF_FFDF_0000.
+pub const TEB_BASE: u64 = 0x0000_7FFF_FFDF_0000;
 
 /// TEB size (8KB per TEB in Windows 7 x64).
 pub const TEB_SIZE: u64 = 0x2000;
@@ -105,6 +105,9 @@ pub const TEB_SIZE: u64 = 0x2000;
 
 /// PML4 index for the self-map slot (NT 6.1 convention).
 pub const MI_SELF_MAP_INDEX: usize = 0x1ED;
+
+/// PML4 index backing the NT 6.1 hyperspace window.
+pub const MI_HYPERSPACE_INDEX: usize = 0x1EE;
 
 /// Self-map addresses derived from the PML4 index.
 /// PXE_BASE = 0xFFFFF6FB7DBED000
@@ -219,13 +222,13 @@ pub const USER_RFLAGS_IRQ: u64 = 0x202;
 /// PTE Present bit.
 pub const PTE_P: u64 = 1 << 0;
 
-/// PTE Read/Write bit.
+/// PTE read/write bit.
 pub const PTE_RW: u64 = 1 << 1;
 
 /// PTE User/Supervisor bit.
 pub const PTE_US: u64 = 1 << 2;
 
-/// PTE Page Level Write-Through.
+/// PTE Page Level write-Through.
 pub const PTE_PWT: u64 = 1 << 3;
 
 /// PTE Page Level Cache Disable.

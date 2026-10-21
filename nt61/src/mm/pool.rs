@@ -30,6 +30,9 @@ use core::sync::atomic::{AtomicU64, Ordering};
 /// MEMORY subsystem logs at the requested level, and as one line per
 /// decision instead of a pre/post breadcrumb pair.
 pub fn trace(level: LogLevel, args: core::fmt::Arguments<'_>) {
+    if level == LogLevel::Debug {
+        return;
+    }
     if !crate::rtl::logging::should_log(level, log_subsystem::MEMORY) {
         return;
     }
@@ -38,10 +41,11 @@ pub fn trace(level: LogLevel, args: core::fmt::Arguments<'_>) {
     let mut writer = crate::rtl::klog::BufferWriter::new(&mut buf);
     let _ = writer.write_fmt(args);
     let len = writer.pos();
+    let cpu = crate::rtl::logging::current_cpu();
     crate::rtl::logging::log_write_impl(
         level,
         "MEMORY",
-        crate::rtl::logging::current_cpu(),
+        cpu,
         core::str::from_utf8(&buf[..len]).unwrap_or("<bad log utf8>"),
     );
 }
@@ -334,7 +338,6 @@ fn alloc_raw(total_size: usize, pool_type: PoolType, tag: u32) -> *mut u8 {
     d.total_bytes += (PoolHeader::HEADER_SIZE + padded) as u64;
     d.total_allocs.fetch_add(1, Ordering::Relaxed);
     drop(d);
-
     // SAFETY: Zero the user region with byte writes to avoid any SIMD
     // alignment issues. The user is expected to populate the struct
     // with field-by-field assignments, not with `core::ptr::write`
@@ -670,7 +673,7 @@ impl PoolState {
 /// Pool state with free lists (lazily initialized)
 static POOL_STATE: Spinlock<Option<PoolState>> = Spinlock::new(None);
 
-/// Internal helper to ensure pool state is initialized.
+/// internal helper to ensure pool state is initialized.
 /// Must be called without holding any locks to avoid deadlock.
 fn ensure_pool_state_initialized() {
     // Check without lock first (fast path)
@@ -774,7 +777,7 @@ pub fn allocate_from_freelist(pool_type: PoolType, size: usize) -> Option<*mut u
 pub fn free_to_freelist(ptr: *mut u8, total_size: usize, pool_type: PoolType) {
     ensure_pool_state_initialized();
     with_pool_state_mut(|state| {
-        // Create a free block from the freed memory
+        // create a free block from the freed memory
         let block_ptr = ptr as *mut FreeBlock;
         unsafe {
             (*block_ptr) = FreeBlock::new(total_size, pool_type);
@@ -872,7 +875,6 @@ fn bump_coalesce_count(pool_type: PoolType) {
 }
 
 /// Get pool statistics (deprecated — see get_stats above).
-#[allow(dead_code)]
 const _POOL_STATS_PLACEHOLDER: () = ();
 
 #[cfg(test)]
@@ -887,8 +889,7 @@ mod tests {
         const TEST_HEAP_LEN: usize = 64 * 1024;
         static mut TEST_HEAP: [u8; TEST_HEAP_LEN] = [0u8; TEST_HEAP_LEN];
         let len = TEST_HEAP_LEN;
-        crate::mm::heap::KERNEL_HEAP
-            .configure(core::ptr::addr_of_mut!(TEST_HEAP) as *mut u8, len);
+        crate::mm::heap::KERNEL_HEAP.configure(core::ptr::addr_of_mut!(TEST_HEAP) as *mut u8, len);
     }
 
     #[test]

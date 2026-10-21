@@ -514,7 +514,7 @@ fn pageout_single(candidate: &PageoutCandidate) -> bool {
         }
     };
 
-    // Write the page to the pagefile
+    // write the page to the pagefile
     let wrote_ok = pagefile::write_page_to_disk(pfn, pagefile_no, offset);
     // Use the standalone helper too so it isn't reported as
     // "never used"; it doubles as a self-test on the pagefile-backed
@@ -532,7 +532,7 @@ fn pageout_single(candidate: &PageoutCandidate) -> bool {
 
 /// Page in a page from the pagefile.
 pub fn pagein(pfn: u64, pagefile_no: u32, offset: u32) -> bool {
-    // Read the page from the pagefile
+    // read the page from the pagefile
     let new_pfn = match pagefile::read_page_from_disk(pagefile_no, offset) {
         Some(p) => p,
         None => {

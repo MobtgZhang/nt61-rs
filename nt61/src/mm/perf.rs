@@ -69,7 +69,7 @@ pub struct PerfCounters {
 }
 
 impl PerfCounters {
-    /// Create a new performance counter structure with all counters initialized to 0
+    /// create a new performance counter structure with all counters initialized to 0
     pub const fn new() -> Self {
         Self {
             // PFN counters

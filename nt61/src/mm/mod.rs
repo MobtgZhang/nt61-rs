@@ -31,8 +31,6 @@
 //!   * `hiber` — hibernate support
 //!   * `memtest` — memory test engine
 
-#![allow(non_snake_case)]
-
 /// Print a u64 in decimal via the unified serial facade. Used by
 /// early-boot debug breadcrumbs inside `init()` where the `kprintln!`
 /// buffered writer is not yet safe to call.
@@ -58,7 +56,6 @@ pub(crate) fn write_decimal_u64(mut x: u64) {
 pub mod access_fault;
 pub mod constants;
 pub mod cow;
-#[cfg(target_arch = "x86_64")]
 pub mod dynamic_paging;
 pub mod hiber; // Hibernate support - S3/S4 power states
 pub mod hyperspace;
@@ -68,10 +65,6 @@ pub mod pager; // Pager subsystem - memory pressure detection and pageout
 pub mod pfn;
 pub mod pte;
 pub mod smoke;
-#[cfg(target_arch = "x86_64")]
-pub mod syspte;
-#[cfg(not(target_arch = "x86_64"))]
-#[path = "syspte_stub.rs"]
 pub mod syspte;
 pub mod vas;
 pub mod working_set;
@@ -217,8 +210,7 @@ pub fn init(boot_info: &BootInfo) {
     // The whole init is wrapped in a single `kprintln!` banner so
     // failures show up immediately in the serial log.
 
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::serial::write_string("MM1\r\n");
+    crate::boot_debug_println!("MM1");
 
     // Direct UART output for diagnostic messages — bypasses kprintln
     // (which itself triggers a page fault if any of its static state
@@ -258,6 +250,8 @@ pub fn init(boot_info: &BootInfo) {
         // identity-mapped physical memory that we can read.
         unsafe {
             let mut best_size: u64 = 0;
+            let mut best_high_base: u64 = 0;
+            let mut best_high_size: u64 = 0;
             for i in 0..count {
                 let p = base_ptr.add(i * desc_size) as *const MemoryDescriptor;
                 let entry = core::ptr::read_unaligned(p);
@@ -272,39 +266,57 @@ pub fn init(boot_info: &BootInfo) {
                     continue;
                 }
                 // Sanity-check the range: the base must be page-
-                // aligned.  On x86_64 the kernel relies on an
-                // identity mapping below 4 GiB to bootstrap the
-                // PFN database without an MMU walk, so anything
-                // above 4 GiB is skipped.  On aarch64 / riscv64
-                // QEMU's `virt` machine all RAM is above 4 GiB
-                // (typically `0x40000000+`), so the cap doesn't
-                // apply there.
-                #[cfg(target_arch = "x86_64")]
-                if entry.base_address >= 0x1_0000_0000 {
-                    continue;
-                }
+                // aligned. Regions inside the bootstrap identity
+                // window are preferred; regions above the window are
+                // tracked as a fallback because
+                // `ensure_low_identity_map` maps arbitrary physical
+                // ranges on demand (its PML4/PDPT/PD walk is not
+                // bounded by the 4 GiB bootstrap window).
                 if entry.base_address & 0xFFF != 0 {
                     continue;
                 }
-                if entry.length > best_size {
-                    best_size = entry.length;
-                    chosen_base = entry.base_address;
-                    chosen_size = entry.length;
+                match crate::arch::identity_mapping_limit() {
+                    Some(limit) if entry.base_address >= limit => {
+                        if entry.length > best_high_size {
+                            best_high_size = entry.length;
+                            best_high_base = entry.base_address;
+                        }
+                    }
+                    _ => {
+                        if entry.length > best_size {
+                            best_size = entry.length;
+                            chosen_base = entry.base_address;
+                            chosen_size = entry.length;
+                        }
+                    }
                 }
             }
             if best_size == 0 {
-                // No usable entries at all — fall back.
-                crate::hal::serial::write_string("[mm] No usable memory in map, falling back\r\n");
-                chosen_base = BOOT_RAM_BASE;
-                chosen_size = 16 * 1024 * 1024;
+                if best_high_size > 0 {
+                    // No region inside the bootstrap window: use the
+                    // largest region above it. `ensure_low_identity_map`
+                    // maps the range on demand, so the PFN database can
+                    // live in high memory.
+                    crate::hal::serial::write_string(
+                        "[mm] No low-memory region; using high memory for bootstrap\r\n",
+                    );
+                    chosen_base = best_high_base;
+                    chosen_size = best_high_size;
+                } else {
+                    // No usable entries at all — fall back.
+                    crate::hal::serial::write_string(
+                        "[mm] No usable memory in map, falling back\r\n",
+                    );
+                    chosen_base = BOOT_RAM_BASE;
+                    chosen_size = 16 * 1024 * 1024;
+                }
             }
         }
     }
 
     // Cap the chosen region to the static-bookkeeping bootstrap
-    // limit.  FRAME_TABLE_ENTRIES = 16384 frames = 64 MiB of RAM.
-    // The dynamic phase-2 init path can re-init the buddy over the
-    // full range using dynamic tables allocated from this window.
+    // limit.  FRAME_TABLE_ENTRIES = 65536 frames = 256 MiB of RAM.
+    // The PFN database is allocated dynamically from this window.
     if chosen_size > frame::BOOTSTRAP_REGION {
         chosen_size = frame::BOOTSTRAP_REGION;
     }
@@ -321,7 +333,7 @@ pub fn init(boot_info: &BootInfo) {
     // for it. The buddy's static 64 MiB region is also what the
     // heap and pool are sized against, so keeping chosen_size
     // small keeps the bookkeeping in the BSS FRAME_TABLE.
-    const BOOTSTRAP_RAM: u64 = 64 * 1024 * 1024;
+    const BOOTSTRAP_RAM: u64 = 256 * 1024 * 1024;
     if chosen_size > BOOTSTRAP_RAM {
         chosen_size = BOOTSTRAP_RAM;
     }
@@ -333,19 +345,7 @@ pub fn init(boot_info: &BootInfo) {
     // bootstrap window. `frame::init` will clamp `num_frames`
     // to FRAME_TABLE_ENTRIES (128 MiB) and emit `AI0_CLAMP`;
     // PFN DB storage is allocated out of the buddy separately.
-    #[cfg(target_arch = "x86_64")]
-    {
-        let cr3_phys: u64 = {
-            let v: u64;
-            unsafe {
-                core::arch::asm!(
-                    "mov {}, cr3",
-                    out(reg) v,
-                    options(nostack, preserves_flags)
-                );
-            }
-            v & !0xFFFu64
-        };
+    if let Some(cr3_phys) = crate::arch::kernel_page_root() {
         let cr3_pfn_end = (cr3_phys >> 12) + 1;
         let chosen_end_pfn = (chosen_base / 4096) + (chosen_size / 4096);
         if cr3_pfn_end > chosen_end_pfn {
@@ -366,19 +366,19 @@ pub fn init(boot_info: &BootInfo) {
         // Print the chosen region. The hex formatting and decimal
         // MB count stay local; the serial output goes through the
         // unified facade.
-        crate::hal::serial::write_string("[mm] region=");
+        crate::hal::serial::write_string_always("[mm] region=");
         let hex = b"0123456789abcdef";
         for shift in (0..16u32).rev() {
             let c = hex[((chosen_base >> (shift * 4)) & 0xF) as usize];
             let arr = [c];
             if let Ok(s) = core::str::from_utf8(&arr) {
-                crate::hal::serial::write_string(s);
+                crate::hal::serial::write_string_always(s);
             }
         }
-        crate::hal::serial::write_string(" size=");
+        crate::hal::serial::write_string_always(" size=");
         let size_mb = chosen_size / (1024 * 1024);
         write_decimal_u64(size_mb);
-        crate::hal::serial::write_string("M\r\n");
+        crate::hal::serial::write_string_always("M\r\n");
     }
 
     // ------------------------------------------------------------------
@@ -407,6 +407,31 @@ pub fn init(boot_info: &BootInfo) {
 
     crate::hal::serial::write_string("MM3 frame_init_done\r\n");
 
+    // The kernel heap owns a contiguous run of physical pages before the
+    // PFN allocator is initialized. Allocating it first lets `pfn::init`
+    // reserve those pages immediately after seeding the database; otherwise
+    // the PFN allocator can hand the same page to user mappings and zero
+    // over live kernel-pool objects such as EPROCESS.
+    crate::hal::serial::write_string("[mm] heap::init/about\r\n");
+    heap::init();
+    crate::hal::serial::write_string("[mm] heap::init done\r\n");
+
+    // Map the heap immediately after its contiguous run is configured.
+    // On AArch64/RISC-V/LoongArch this is required before any heap-backed
+    // allocator can be touched; deferring the map until after `pfn::init`
+    // makes the PFN database initialization fault on its first allocation.
+    if let Some((base, size)) = heap::KERNEL_HEAP.configured_region() {
+        let mapped = crate::arch::identity_map_region(base as u64, size as u64);
+        if !mapped {
+            crate::hal::serial::write_string(
+                "[mm] WARN: identity_map_region returned false; \
+                 heap pool operations may fault on non-x86_64 targets\r\n",
+            );
+        } else {
+            crate::hal::serial::write_string("[mm] identity-map ok\r\n");
+        }
+    }
+
     // CRITICAL FIX: Initialize PFN database BEFORE vas::init().
     // `vas::init` calls `pfn::allocate_pfn()` to get pages for the
     // self-map page-table chain, so PFN DB must come up first.
@@ -414,6 +439,37 @@ pub fn init(boot_info: &BootInfo) {
     let base_pfn = chosen_base / 4096;
     let pfn_count = chosen_size / 4096;
     pfn::init(base_pfn, pfn_count);
+
+    if let Some((base, size)) = heap::KERNEL_HEAP.configured_region() {
+        let heap_base_pfn = (base as u64).div_ceil(4096);
+        let heap_end_pfn = (base as u64 + size as u64) / 4096;
+        for pfn in heap_base_pfn..heap_end_pfn {
+            if !crate::mm::pfn::reserve_pfn(pfn) {
+                crate::hal::serial::write_string("[mm] WARN: heap pfn not reserved: ");
+                crate::hal::serial::write_hex_u64(pfn);
+                crate::hal::serial::write_string("\r\n");
+            }
+        }
+    }
+
+    // Reserve every frame the buddy allocator has already handed out
+    // (page tables, the PFN database storage itself, the frame
+    // bookkeeping tables). `seed_free` marked the full tracked range
+    // free; without this sweep the PFN allocator can hand out a live
+    // bootstrap page and let its new contents overwrite the PFN
+    // database (observed as PFN_LIST_CORRUPT / STOP 0xE2 on riscv64
+    // during the first `identity_map_region` after `vas::init`).
+    {
+        let mut reserved = 0u64;
+        crate::mm::frame::for_each_allocated_frame(|pa| {
+            if crate::mm::pfn::reserve_pfn(pa / 4096) {
+                reserved += 1;
+            }
+        });
+        crate::hal::serial::write_string("[mm] reserved buddy frames: 0x");
+        crate::hal::serial::write_hex_u64(reserved);
+        crate::hal::serial::write_string("\r\n");
+    }
 
     crate::hal::serial::write_string("MM3b pfn_init_done\r\n");
 
@@ -431,51 +487,6 @@ pub fn init(boot_info: &BootInfo) {
     crate::hal::serial::write_string("MM6 syspte_hyperspace_done\r\n");
 
     // ------------------------------------------------------------------
-    // 6. Kernel heap and kernel pool.
-    //    `heap::init` and `pool::init` use direct serial output
-    //    (not kprintln) on the failure / fallback path so they
-    //    are safe to call from the early boot context.
-    // ------------------------------------------------------------------
-    crate::hal::serial::write_string("[mm] heap::init/about\r\n");
-    heap::init();
-    crate::hal::serial::write_string("[mm] heap::init done\r\n");
-
-    // ------------------------------------------------------------------
-    // 6a. Identity-map the heap region into the kernel's translation
-    //     tables. Required on architectures where the firmware does
-    //     not leave a 1:1 map of all RAM in place after
-    //     `ExitBootServices` — primarily aarch64 / riscv64 /
-    //     loongarch64 QEMU `virt` machines where all RAM lives above
-    //     4 GiB. Without this map, the first `GlobalAlloc::alloc`
-    //     call (and consequently `pool::allocate`, `ob::init`, ...)
-    //     dereferences a pointer that does not resolve under the
-    //     kernel's page tables, raising a synchronous data-abort /
-    //     load-page-fault before any pool code runs.
-    //
-    //     `arch::identity_map_region` is a no-op on x86_64 because
-    //     the firmware already identity-maps the low memory region.
-    // ------------------------------------------------------------------
-    if let Some((base, size)) = heap::KERNEL_HEAP.configured_region() {
-        crate::hal::serial::write_string("[mm] identity-mapping kernel heap region\r\n");
-        // Hex-formatted base + size sentinels so we can see in the
-        // serial log whether the region we are about to map covers
-        // every page the kernel heap will hand back to callers.
-        crate::hal::serial::write_string("[mm] heap-base=");
-        crate::hal::serial::write_hex_u64(base as u64);
-        crate::hal::serial::write_string(" size=");
-        crate::hal::serial::write_hex_u64(size as u64);
-        crate::hal::serial::write_string("\r\n");
-        let mapped = crate::arch::identity_map_region(base as u64, size as u64);
-        if !mapped {
-            crate::hal::serial::write_string(
-                "[mm] WARN: identity_map_region returned false; \
-                 heap pool operations may fault on non-x86_64 targets\r\n",
-            );
-        } else {
-            crate::hal::serial::write_string("[mm] identity-map ok\r\n");
-        }
-    }
-
     pool::init();
     crate::hal::serial::write_string("MM7 heap_pool_done\r\n");
 
@@ -524,7 +535,7 @@ pub fn is_initialized() -> bool {
 #[cold]
 #[inline(never)]
 pub fn fatal_alloc<T>(tag: &'static str) -> *mut T {
-    crate::hal::serial::write_string("[MM-FATAL] OOM at ");
+    crate::hal::serial::write_string_always("[MM-FATAL] OOM at ");
     crate::hal::serial::write_string(tag);
     crate::hal::serial::write_string("\r\n");
     crate::arch::halt_loop();
@@ -625,6 +636,5 @@ pub mod frame_safe;
 pub mod init_state;
 pub mod page_cache;
 pub mod pfn_safe;
-pub mod syspte_stub;
+pub mod section;
 pub mod tests;
-pub mod vad_complete;

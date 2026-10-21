@@ -103,7 +103,7 @@ pub fn require_state(required: u8, operation: &str) {
 #[cold]
 #[inline(never)]
 fn require_state_failed(current: u8, required: u8, operation: &str) -> ! {
-    crate::hal::serial::write_string("\r\n[MM-FATAL] INITIALIZATION ORDER VIOLATION\r\n");
+    crate::hal::serial::write_string_always("\r\n[MM-FATAL] INITIALIZATION ORDER VIOLATION\r\n");
     crate::hal::serial::write_string("Operation: ");
     crate::hal::serial::write_string(operation);
     crate::hal::serial::write_string("\r\nCurrent state: ");
@@ -154,7 +154,7 @@ pub fn enter_state(new_state: u8, operation: &str) {
 #[cold]
 #[inline(never)]
 fn enter_state_failed(prev: u8, new: u8, operation: &str) -> ! {
-    crate::hal::serial::write_string("\r\n[MM-FATAL] INITIALIZATION STATE SKIP\r\n");
+    crate::hal::serial::write_string_always("\r\n[MM-FATAL] INITIALIZATION STATE SKIP\r\n");
     crate::hal::serial::write_string("Operation: ");
     crate::hal::serial::write_string(operation);
     crate::hal::serial::write_string("\r\nPrevious state: ");
@@ -180,7 +180,7 @@ fn enter_state_failed(prev: u8, new: u8, operation: &str) -> ! {
 #[cold]
 #[inline(never)]
 fn enter_state_invalid(new: u8, operation: &str) -> ! {
-    crate::hal::serial::write_string("\r\n[MM-FATAL] INVALID INITIALIZATION STATE\r\n");
+    crate::hal::serial::write_string_always("\r\n[MM-FATAL] INVALID INITIALIZATION STATE\r\n");
     crate::hal::serial::write_string("Operation: ");
     crate::hal::serial::write_string(operation);
     crate::hal::serial::write_string("\r\nInvalid state value: ");

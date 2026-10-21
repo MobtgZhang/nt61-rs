@@ -145,35 +145,6 @@ impl VadEntry {
         self.ending_vpn = end >> 12;
     }
 
-    /// Compute the height of the subtree rooted at this node.
-    #[allow(unused)]
-    fn height(node: *mut VadEntry) -> i32 {
-        if node.is_null() {
-            return 0;
-        }
-        unsafe {
-            let left_h = Self::height((*node).left);
-            let _ = &left_h;
-            let _ = &left_h;
-            let right_h = Self::height((*node).right);
-            let _ = &right_h;
-            let _ = &right_h;
-            1 + core::cmp::max(left_h, right_h)
-        }
-    }
-
-    /// Compute the balance factor: height(left) - height(right).
-    #[allow(unused)]
-    fn balance(&self) -> i32 {
-        let left_h = Self::height(self.left);
-        let _ = &left_h;
-        let _ = &left_h;
-        let right_h = Self::height(self.right);
-        let _ = &right_h;
-        let _ = &right_h;
-        left_h - right_h
-    }
-
     pub fn start_addr(&self) -> u64 {
         self.starting_vpn << 12
     }
@@ -746,7 +717,7 @@ impl VadTree {
         Ok(())
     }
 
-    /// Internal remove: handles the actual BST removal logic.
+    /// internal remove: handles the actual BST removal logic.
     /// Returns the node from which rebalancing should start, or null if none needed.
     fn remove_node_locked(&self, node: *mut VadEntry) -> *mut VadEntry {
         // SAFETY: caller must hold `self.lock`.

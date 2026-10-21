@@ -21,8 +21,6 @@
 //! Each interpretation lives in its own struct (or a packed union),
 //! and helpers translate between them.
 
-#![allow(non_snake_case)]
-
 use core::ptr;
 
 /// A page table entry — 8 bytes, matches the on-disk / in-memory
@@ -203,7 +201,7 @@ impl MMPTE {
     }
 
     // -----------------------------------------------------------------
-    // Copy-on-Write helper
+    // Copy-on-write helper
     // -----------------------------------------------------------------
     pub fn set_copy_on_write(&mut self) {
         // Use software bit 9 to flag this hardware PTE as COW.
@@ -448,11 +446,11 @@ mod tests {
 pub mod hw {
     /// Present — page is resident in physical memory.
     pub const PTE_P: u64 = 1 << 0;
-    /// Read/Write — page is writable (cleared = read-only).
+    /// read/write — page is writable (cleared = read-only).
     pub const PTE_RW: u64 = 1 << 1;
     /// User/Supervisor — page accessible from Ring 3 (cleared = Ring 0).
     pub const PTE_US: u64 = 1 << 2;
-    /// Page-level Write-Through.
+    /// Page-level write-Through.
     pub const PTE_PWT: u64 = 1 << 3;
     /// Page-level Cache Disable.
     pub const PTE_PCD: u64 = 1 << 4;
