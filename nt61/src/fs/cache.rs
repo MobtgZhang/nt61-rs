@@ -2,8 +2,8 @@
 //!
 //! Complete cache system with:
 //! - Page cache with LRU/LFU eviction
-//! - Read-ahead (sequential, random, adaptive)
-//! - Write-back with delayed flush
+//! - read-ahead (sequential, random, adaptive)
+//! - write-back with delayed flush
 //! - Multi-process consistency
 //! - Memory-mapped file support
 //!
@@ -11,6 +11,7 @@
 
 extern crate alloc;
 
+use crate::drivers::storage::disk;
 use crate::ke::sync::Spinlock;
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
@@ -21,12 +22,12 @@ pub const CACHE_BLOCK_SIZE: usize = 4096;
 pub const CACHE_VIEW_SIZE: usize = 256 * 1024;
 pub const MAX_CACHE_BLOCKS: usize = 16384; // 64 MB cache
 
-/// Read-ahead configuration
+/// read-ahead configuration
 pub const READAHEAD_MIN: usize = 4; // Minimum read-ahead pages
 pub const READAHEAD_MAX: usize = 32; // Maximum read-ahead pages
 pub const SEQUENTIAL_THRESHOLD: u32 = 3; // Accesses to trigger sequential readahead
 
-/// Write-back configuration
+/// write-back configuration
 pub const WRITEBACK_INTERVAL: u64 = 5000; // ms
 pub const DIRTY_THRESHOLD_SOFT: usize = 60; // %
 pub const DIRTY_THRESHOLD_HARD: usize = 80; // %
@@ -36,9 +37,9 @@ pub const DIRTY_THRESHOLD_HARD: usize = 80; // %
 pub enum CoherencyMode {
     /// No coherency (single process)
     None,
-    /// Write-through (immediate consistency)
+    /// write-through (immediate consistency)
     WriteThrough,
-    /// Write-back with invalidation (eventual consistency)
+    /// write-back with invalidation (eventual consistency)
     WriteBackInvalidate,
 }
 
@@ -115,7 +116,7 @@ impl CacheBlock {
     }
 }
 
-/// Read-ahead state tracker per file
+/// read-ahead state tracker per file
 #[derive(Debug, Clone)]
 struct ReadAheadState {
     last_block: u64,
@@ -237,15 +238,17 @@ impl CacheStatistics {
 pub struct CacheManager {
     blocks: Vec<CacheBlock>,
     hash_table: BTreeMap<(u64, u64), usize>,
+    /// Cached data for each block
+    data: Vec<[u8; CACHE_BLOCK_SIZE]>,
     lru_head: usize,
     lru_tail: usize,
     blocks_used: usize,
     stats: CacheStatistics,
 
-    // Read-ahead state
+    // read-ahead state
     readahead_state: HashMap<u64, ReadAheadState>,
 
-    // Write-back state
+    // write-back state
     dirty_queue: VecDeque<usize>,
     last_writeback: AtomicU64,
     writeback_enabled: AtomicBool,
@@ -264,10 +267,15 @@ impl CacheManager {
         for _ in 0..MAX_CACHE_BLOCKS {
             blocks.push(CacheBlock::new());
         }
+        let mut data = Vec::with_capacity(MAX_CACHE_BLOCKS);
+        for _ in 0..MAX_CACHE_BLOCKS {
+            data.push([0u8; CACHE_BLOCK_SIZE]);
+        }
 
         Self {
             blocks,
             hash_table: BTreeMap::new(),
+            data,
             lru_head: usize::MAX,
             lru_tail: usize::MAX,
             blocks_used: 0,
@@ -401,7 +409,11 @@ impl CacheManager {
             let file_id = block.file_id;
             let block_number = block.block_number;
 
-            // TODO: Actual disk write
+            // Write the dirty block to the backing disk. `file_id` is
+            // the physical block number used by the storage layer.
+            let disk_offset = block_number * CACHE_BLOCK_SIZE as u64;
+            let data: &[u8] = &self.data[block_idx];
+            disk::disk_write(0, disk_offset, CACHE_BLOCK_SIZE, data);
 
             block.state = CacheBlockState::Clean;
             self.stats.dirty_blocks.fetch_sub(1, Ordering::Relaxed);
@@ -444,7 +456,19 @@ impl CacheManager {
                 // Allocate and initiate read
                 if let Some(_idx) = self.allocate(file_id, block_num) {
                     self.stats.reads.fetch_add(1, Ordering::Relaxed);
-                    // TODO: Initiate async read
+                    // Read the block from disk into the pre-allocated
+                    // cache block. The cache manager runs in kernel
+                    // context so a synchronous read is acceptable.
+                    let mut buf = [0u8; CACHE_BLOCK_SIZE];
+                    let bytes = disk::disk_read(
+                        0,
+                        block_num * CACHE_BLOCK_SIZE as u64,
+                        CACHE_BLOCK_SIZE,
+                        &mut buf,
+                    );
+                    if bytes > 0 {
+                        self.data[_idx][..bytes].copy_from_slice(&buf[..bytes]);
+                    }
                 } else {
                     self.stats.readahead_misses.fetch_add(1, Ordering::Relaxed);
                 }
@@ -629,12 +653,23 @@ pub fn cc_read(file_id: u64, offset: u64, buffer: &mut [u8]) -> Result<usize, ()
         } else {
             let idx = cache.allocate(file_id, block_number).ok_or(())?;
             cache.stats.reads.fetch_add(1, Ordering::Relaxed);
-            // TODO: Read block from disk
+            // Read the block from disk into the newly allocated cache block.
+            let mut buf = [0u8; CACHE_BLOCK_SIZE];
+            let bytes = disk::disk_read(
+                0,
+                block_number * CACHE_BLOCK_SIZE as u64,
+                CACHE_BLOCK_SIZE,
+                &mut buf,
+            );
+            if bytes > 0 {
+                cache.data[idx][..bytes].copy_from_slice(&buf[..bytes]);
+            }
             idx
         };
 
-        // TODO: Actually copy from cached data
-        let _ = block_idx;
+        // Copy from the cached data to the caller's output buffer.
+        buffer[bytes_read..bytes_read + to_copy]
+            .copy_from_slice(&cache.data[block_idx][block_offset..block_offset + to_copy]);
 
         bytes_read += to_copy;
         current_offset += to_copy as u64;
@@ -665,7 +700,9 @@ pub fn cc_write(file_id: u64, offset: u64, buffer: &[u8]) -> Result<usize, ()> {
             cache.allocate(file_id, block_number).ok_or(())?
         };
 
-        // TODO: Actually copy to cached data
+        // Copy the caller's data into the cached block.
+        cache.data[block_idx][block_offset..block_offset + to_copy]
+            .copy_from_slice(&buffer[bytes_written..bytes_written + to_copy]);
         cache.mark_dirty(block_idx);
         cache.stats.writes.fetch_add(1, Ordering::Relaxed);
 

@@ -106,7 +106,7 @@ pub struct JournalDescriptorHeader {
 }
 
 impl JournalSuperBlock {
-    /// Create a new journal superblock
+    /// create a new journal superblock
     pub fn new() -> Self {
         Self {
             header: JournalHeader::new(JBD2_DESCRIPTOR_BLOCK),
@@ -136,7 +136,7 @@ impl JournalSuperBlock {
 }
 
 impl JournalHeader {
-    /// Create a new journal header
+    /// create a new journal header
     pub fn new(block_type: u32) -> Self {
         Self {
             magic: JBD2_MAGIC_NUMBER,
@@ -191,7 +191,7 @@ pub struct JournalState {
 }
 
 impl JournalState {
-    /// Create a new journal state
+    /// create a new journal state
     pub fn new(sb: Ext2SuperBlock, journal_inode: u32) -> Self {
         Self {
             sb,
@@ -219,7 +219,7 @@ pub fn open_journal(device: *mut (), sb: &Ext2SuperBlock) -> Option<JournalSuper
         return None;
     }
 
-    // Read journal inode
+    // read journal inode
     let inode = read_inode(device, sb, journal_inode)?;
 
     if inode.is_deleted() {
@@ -227,11 +227,11 @@ pub fn open_journal(device: *mut (), sb: &Ext2SuperBlock) -> Option<JournalSuper
         return None;
     }
 
-    // Read journal superblock from the journal inode
+    // read journal superblock from the journal inode
     let mut buffer = vec![0u8; JOURNAL_BLOCK_SIZE];
     let _offset = 0usize;
 
-    // Read first block of journal
+    // read first block of journal
     let lba = super::inode::logical_to_lba(device, sb, &inode, 0)?;
     if super::superblock::read_sector(device, lba, &mut buffer).is_err() {
         // kprintln!("[EXT3] Failed to read journal superblock");
@@ -271,13 +271,13 @@ pub fn replay_journal(device: *mut (), sb: &Ext2SuperBlock) -> Result<usize, ()>
     let end_block = j_sb.first_block + j_sb.max_blocks;
 
     while current_block < end_block {
-        // Read journal block
+        // read journal block
         let mut buffer = vec![0u8; JOURNAL_BLOCK_SIZE];
 
         // For internal journals, read from journal inode
         // (simplified - assumes block 0 corresponds to journal block)
         if current_block >= j_sb.first_block && current_block < j_sb.first_block + 1 {
-            // Read journal inode and get block 0
+            // read journal inode and get block 0
             let inode = match read_inode(device, sb, sb.journal_inode) {
                 Some(i) => i,
                 None => break,
@@ -309,8 +309,8 @@ pub fn replay_journal(device: *mut (), sb: &Ext2SuperBlock) -> Result<usize, ()>
                 // kprintln!("[EXT3] Replaying descriptor block, seq={}", header.sequence);
 
                 // In a full implementation, we would:
-                // 1. Read the data blocks referenced
-                // 2. Write them to the actual filesystem
+                // 1. read the data blocks referenced
+                // 2. write them to the actual filesystem
                 // 3. Wait for commit block
                 replayed_count += 1;
             }
@@ -351,7 +351,7 @@ pub fn journal_needs_recovery(sb: &Ext2SuperBlock) -> bool {
 pub fn clear_recovery_flag(_sb: &mut Ext2SuperBlock) {
     // In a full implementation, we would:
     // 1. Modify the superblock
-    // 2. Write it back to disk
+    // 2. write it back to disk
     // This is simplified for now
 }
 
@@ -373,10 +373,10 @@ pub fn journal_commit_transaction(
     _transaction_id: u32,
 ) -> Result<(), ()> {
     // In a full implementation, we would:
-    // 1. Write all modified blocks to journal
-    // 2. Write commit block
+    // 1. write all modified blocks to journal
+    // 2. write commit block
     // 3. Wait for write completion
-    // 4. Write blocks to actual filesystem
+    // 4. write blocks to actual filesystem
     // 5. Update superblock
     Ok(())
 }
@@ -403,7 +403,7 @@ pub fn find_last_transaction(device: *mut (), sb: &Ext2SuperBlock) -> Option<u32
     let mut last_valid_seq: Option<u32> = None;
 
     while current_block > j_sb.first_block {
-        // Read block
+        // read block
         let inode = match read_inode(device, sb, sb.journal_inode) {
             Some(i) => i,
             None => break,
@@ -440,7 +440,7 @@ pub fn find_last_transaction(device: *mut (), sb: &Ext2SuperBlock) -> Option<u32
 
 /// Get the journal sequence number for recovery
 pub fn get_journal_sequence(sb: &Ext2SuperBlock) -> Option<u32> {
-    // Read journal superblock
+    // read journal superblock
     // Return the journal sequence number
     if !sb.has_journal() {
         return None;

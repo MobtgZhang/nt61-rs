@@ -36,7 +36,7 @@ pub mod well_known_sids {
     pub const RESTRICTED_CODE: SecurityId = 6;
 }
 
-/// ACE (Access Control Entry) types.
+/// ACE (Access control Entry) types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum AceType {
@@ -114,13 +114,13 @@ pub mod file_access {
 pub struct NtfsSecurityDescriptor {
     /// Security ID
     pub id: SecurityId,
-    /// Owner SID
+    /// owner SID
     pub owner: [u8; 64],
-    /// Owner SID size
+    /// owner SID size
     pub owner_size: u32,
-    /// Group SID
+    /// group SID
     pub group: [u8; 64],
-    /// Group SID size
+    /// group SID size
     pub group_size: u32,
     /// DACL data
     pub dacl: [u8; 512],
@@ -135,7 +135,7 @@ pub struct NtfsSecurityDescriptor {
 }
 
 impl NtfsSecurityDescriptor {
-    /// Create a new security descriptor with default permissions.
+    /// create a new security descriptor with default permissions.
     pub fn new_default() -> Self {
         Self {
             id: 0,
@@ -151,7 +151,7 @@ impl NtfsSecurityDescriptor {
         }
     }
 
-    /// Create a security descriptor for well-known SIDs.
+    /// create a security descriptor for well-known SIDs.
     pub fn new_well_known(id: SecurityId) -> Self {
         let mut sd = Self::new_default();
         sd.id = id;
@@ -160,7 +160,7 @@ impl NtfsSecurityDescriptor {
             well_known_sids::SYSTEM => {
                 // SYSTEM SID: S-1-5-18
                 sd.owner_size = 12;
-                sd.owner[0] = 0x01; // Revision
+                sd.owner[0] = 0x01; // revision
                 sd.owner[1] = 0x02; // SubAuthorityCount
                 sd.owner[2..8].copy_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x05]); // NT AUTHORITY
                 sd.owner[8] = 0x12; // SYSTEM RID
@@ -197,13 +197,13 @@ impl NtfsSecurityDescriptor {
         let mut dacl = [0u8; 512];
 
         // ACL Header
-        dacl[0] = 0x05; // Revision (ACL_REVISION)
-        dacl[1] = 0x02; // Sbz1
+        dacl[0] = 0x05; // revision (ACL_REVISION)
+        dacl[1] = 0x02; // sbz1
         dacl[2] = 0x14; // ACL size (little endian)
         dacl[3] = 0x00;
         dacl[4] = 0x02; // ACE count
         dacl[5] = 0x00;
-        dacl[6] = 0x00; // Sbz2
+        dacl[6] = 0x00; // sbz2
         dacl[7] = 0x00;
 
         // ACE 1: SYSTEM - full access (ACCESS_ALLOWED_ACE)
@@ -220,7 +220,7 @@ impl NtfsSecurityDescriptor {
 
         // SID for SYSTEM (S-1-5-18)
         let sid1_offset = ace1_offset + 8;
-        dacl[sid1_offset] = 0x01; // Revision
+        dacl[sid1_offset] = 0x01; // revision
         dacl[sid1_offset + 1] = 0x02; // SubAuthorityCount
                                       // IdentifierAuthority (NT AUTHORITY)
         dacl[sid1_offset + 2] = 0x00;
@@ -249,7 +249,7 @@ impl NtfsSecurityDescriptor {
 
         // SID for Everyone (S-1-1-0)
         let sid2_offset = ace2_offset + 8;
-        dacl[sid2_offset] = 0x01; // Revision
+        dacl[sid2_offset] = 0x01; // revision
         dacl[sid2_offset + 1] = 0x01; // SubAuthorityCount
                                       // IdentifierAuthority (WORLD)
         dacl[sid2_offset + 2] = 0x00;
@@ -393,7 +393,7 @@ pub struct SecurityDescriptorCache {
 }
 
 impl SecurityDescriptorCache {
-    /// Create a new empty cache.
+    /// create a new empty cache.
     pub fn new() -> Self {
         Self {
             entries: [const { None }; MAX_SECURITY_DESCRIPTORS],
@@ -447,12 +447,12 @@ static mut SECURITY_CACHE: SecurityDescriptorCache = SecurityDescriptorCache {
 
 /// Get a security descriptor from the cache.
 pub fn get_security_descriptor(id: SecurityId) -> Option<&'static NtfsSecurityDescriptor> {
-    unsafe { SECURITY_CACHE.lookup(id) }
+    unsafe { (*core::ptr::addr_of!(SECURITY_CACHE)).lookup(id) }
 }
 
 /// Add a security descriptor to the cache.
 pub fn add_security_descriptor(desc: NtfsSecurityDescriptor) {
-    unsafe { SECURITY_CACHE.add(desc) }
+    unsafe { (*core::ptr::addr_of_mut!(SECURITY_CACHE)).add(desc) }
 }
 
 /// Get default security descriptor for a new file.
@@ -493,10 +493,10 @@ fn build_descriptor_from_ntfs(
 }
 
 // =============================================================================
-// Security Descriptor Inheritance
+// Security Descriptor inheritance
 // =============================================================================
 
-/// Flags for security descriptor inheritance.
+/// flags for security descriptor inheritance.
 #[derive(Clone, Copy)]
 pub struct SecurityInheritance {
     pub bits: u32,
@@ -557,7 +557,7 @@ pub fn inherit_security(
     }
 }
 
-/// Create a default security descriptor for a new object.
+/// create a default security descriptor for a new object.
 ///
 /// Returns a default DACL based on the process token.
 /// This is used when there is no parent security to inherit from.
@@ -671,13 +671,13 @@ pub fn check_file_access(security_id: SecurityId, desired_access: u32) -> bool {
     }
 }
 
-/// Read security descriptor from the $Secure system file.
+/// read security descriptor from the $Secure system file.
 ///
 /// This function would read and parse the $SDS stream to extract
 /// a security descriptor given its ID.
 ///
 /// In a full implementation, this would:
-/// 1. Read the $SII index to find the security ID
+/// 1. read the $SII index to find the security ID
 /// 2. Use that offset to read the full descriptor from $SDS
 /// 3. Parse and return the NtfsSecurityDescriptor
 ///

@@ -8,10 +8,10 @@
 //! - Lazy writer (background flush)
 //! - Cache coherency and consistency
 //! - Pinned and mapped cache views
-//! - Write-through and write-back modes
+//! - write-through and write-back modes
 
+use crate::drivers::storage::disk;
 use crate::ke::sync::Spinlock;
-use crate::mm::page_cache::{EvictionPolicy, PageKey};
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -20,7 +20,7 @@ use hashbrown::HashMap;
 /// View size for cache mapping (256 KB)
 pub const CACHE_VIEW_SIZE: usize = 256 * 1024;
 
-/// Buffer size (4 KB)
+/// buffer size (4 KB)
 pub const BUFFER_SIZE: usize = 4096;
 
 /// Maximum buffers in pool
@@ -32,16 +32,16 @@ pub const LAZY_WRITER_INTERVAL: u64 = 1000;
 /// Dirty page threshold for forced flush (percentage)
 pub const DIRTY_THRESHOLD: usize = 80;
 
-/// Write mode
+/// write mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WriteMode {
-    /// Write-through: immediate disk write
+    /// write-through: immediate disk write
     WriteThrough,
-    /// Write-back: delayed disk write
+    /// write-back: delayed disk write
     WriteBack,
 }
 
-/// Buffer state
+/// buffer state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum BufferState {
@@ -55,13 +55,13 @@ pub enum BufferState {
 /// Cache buffer
 #[derive(Debug)]
 pub struct CacheBuffer {
-    /// Buffer ID
+    /// buffer ID
     pub id: usize,
     /// File identifier
     pub file_id: u64,
-    /// Offset in file
+    /// offset in file
     pub offset: u64,
-    /// Buffer size
+    /// buffer size
     pub size: usize,
     /// Current state
     pub state: BufferState,
@@ -107,7 +107,7 @@ impl CacheBuffer {
     }
 }
 
-/// Buffer pool for cache management
+/// buffer pool for cache management
 pub struct BufferPool {
     /// All buffers
     buffers: Vec<CacheBuffer>,
@@ -115,8 +115,10 @@ pub struct BufferPool {
     free_list: VecDeque<usize>,
     /// Dirty buffer list
     dirty_list: Vec<usize>,
-    /// Buffer lookup map
+    /// buffer lookup map
     buffer_map: HashMap<(u64, u64), usize>,
+    /// Backing storage for each buffer's cached data
+    pub data: Vec<[u8; BUFFER_SIZE]>,
     /// Statistics
     allocations: AtomicU64,
     deallocations: AtomicU64,
@@ -126,9 +128,13 @@ impl BufferPool {
     pub fn new() -> Self {
         let mut buffers = Vec::new();
         let mut free_list = VecDeque::new();
+        let mut data = Vec::new();
 
         for i in 0..MAX_BUFFERS {
             buffers.push(CacheBuffer::new(i));
+            // MAX_BUFFERS * BUFFER_SIZE = 32 MB, which is the design
+            // target from the header comment.
+            data.push([0u8; BUFFER_SIZE]);
             free_list.push_back(i);
         }
 
@@ -137,6 +143,7 @@ impl BufferPool {
             free_list,
             dirty_list: Vec::new(),
             buffer_map: HashMap::new(),
+            data,
             allocations: AtomicU64::new(0),
             deallocations: AtomicU64::new(0),
         }
@@ -325,11 +332,11 @@ impl LazyWriter {
 
 /// Cache Manager
 pub struct CacheManager {
-    /// Buffer pool
+    /// buffer pool
     buffer_pool: BufferPool,
     /// Cache views
     views: HashMap<u64, Vec<CacheView>>,
-    /// Write mode
+    /// write mode
     write_mode: WriteMode,
     /// Lazy writer
     lazy_writer: LazyWriter,
@@ -356,7 +363,7 @@ impl CacheManager {
         }
     }
 
-    /// Read data from cache
+    /// read data from cache
     pub fn read(
         &mut self,
         file_id: u64,
@@ -382,14 +389,24 @@ impl CacheManager {
                 None => {
                     self.cache_misses.fetch_add(1, Ordering::Relaxed);
                     let id = self.buffer_pool.allocate(file_id, buffer_offset)?;
-                    // TODO: Read from disk
+                    // Read the backing block from the system disk into the
+                    // newly allocated cache buffer. `file_id` encodes the
+                    // physical block number used by the storage layer.
+                    let mut buf = [0u8; BUFFER_SIZE];
+                    let bytes = disk::disk_read(0, buffer_offset, BUFFER_SIZE, &mut buf);
+                    if bytes > 0 {
+                        self.buffer_pool.data[id][..bytes].copy_from_slice(&buf[..bytes]);
+                        self.buffer_pool.buffers[id].size = bytes;
+                    }
                     id
                 }
             };
 
-            // TODO: Copy from buffer to output
-            // For now, just simulate
+            // Copy from the cached buffer to the caller's output.
             self.buffer_pool.buffers[buffer_id].last_access = get_timestamp();
+            let src =
+                &self.buffer_pool.data[buffer_id][offset_in_buffer..offset_in_buffer + to_read];
+            buffer[bytes_read..bytes_read + to_read].copy_from_slice(src);
 
             bytes_read += to_read;
             current_offset += to_read as u64;
@@ -401,7 +418,7 @@ impl CacheManager {
         Ok(bytes_read)
     }
 
-    /// Write data to cache
+    /// write data to cache
     pub fn write(
         &mut self,
         file_id: u64,
@@ -422,7 +439,11 @@ impl CacheManager {
             // Allocate or get buffer
             let buffer_id = self.buffer_pool.allocate(file_id, buffer_offset)?;
 
-            // TODO: Copy data to buffer
+            // Copy the caller's data into the cache buffer.
+            self.buffer_pool.data[buffer_id][offset_in_buffer..offset_in_buffer + to_write]
+                .copy_from_slice(&buffer[bytes_written..bytes_written + to_write]);
+            self.buffer_pool.buffers[buffer_id].size =
+                (self.buffer_pool.buffers[buffer_id].size).max(offset_in_buffer + to_write);
 
             // Mark as dirty unless write-through
             match self.write_mode {
@@ -461,7 +482,11 @@ impl CacheManager {
 
         buffer.state = BufferState::IoInProgress;
 
-        // TODO: Actual disk write
+        // Write the dirty buffer to the backing disk. `file_id` encodes
+        // the physical block number used by the storage layer.
+        let disk_offset = self.buffer_pool.buffers[buffer_id].offset;
+        let bytes: &[u8] = &self.buffer_pool.data[buffer_id];
+        disk::disk_write(0, disk_offset, bytes.len(), bytes);
 
         self.buffer_pool.clear_dirty(buffer_id);
         self.flush_count.fetch_add(1, Ordering::Relaxed);
@@ -534,13 +559,22 @@ impl CacheManager {
             }
 
             // Allocate and initiate read
-            if let Ok(_id) = self.buffer_pool.allocate(file_id, ra_offset) {
-                // TODO: Initiate async read
+            if let Ok(id) = self.buffer_pool.allocate(file_id, ra_offset) {
+                // Read the block from disk into the pre-allocated buffer.
+                // The cache manager runs in kernel context so a synchronous
+                // read is acceptable for read-ahead; the next `read()` call
+                // will find the data already cached.
+                let mut ra_buf = [0u8; BUFFER_SIZE];
+                let ra_bytes = disk::disk_read(0, ra_offset, BUFFER_SIZE, &mut ra_buf);
+                if ra_bytes > 0 {
+                    self.buffer_pool.data[id][..ra_bytes].copy_from_slice(&ra_buf[..ra_bytes]);
+                    self.buffer_pool.buffers[id].size = ra_bytes;
+                }
             }
         }
     }
 
-    /// Create a cache view
+    /// create a cache view
     pub fn create_view(
         &mut self,
         file_id: u64,
@@ -703,7 +737,7 @@ pub fn init(write_mode: WriteMode) {
     *cm = Some(CacheManager::new(write_mode));
 }
 
-/// Read from cache
+/// read from cache
 pub fn cc_read(file_id: u64, offset: u64, buffer: &mut [u8]) -> Result<usize, &'static str> {
     let mut cm = CACHE_MANAGER.lock();
     cm.as_mut()
@@ -711,7 +745,7 @@ pub fn cc_read(file_id: u64, offset: u64, buffer: &mut [u8]) -> Result<usize, &'
         .read(file_id, offset, buffer)
 }
 
-/// Write to cache
+/// write to cache
 pub fn cc_write(file_id: u64, offset: u64, buffer: &[u8]) -> Result<usize, &'static str> {
     let mut cm = CACHE_MANAGER.lock();
     cm.as_mut()

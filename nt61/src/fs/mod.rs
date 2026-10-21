@@ -5,11 +5,9 @@
 
 // FS module uses NT-driver naming (FCB, VCB, IRP_MJ_*, ...).
 
-#[cfg(target_arch = "x86_64")]
 pub mod ext2; // ext2/ext3/ext4 filesystem support
 pub mod fat32;
 pub mod ntfs;
-#[cfg(target_arch = "x86_64")]
 pub mod refs; // ReFS (Resilient File System) support
 pub mod smoke;
 pub mod vfs;
@@ -163,7 +161,7 @@ pub enum FsError {
     // I/O errors
     /// End of file
     EndOfFile = 0xC0000011,
-    /// Buffer overflow
+    /// buffer overflow
     BufferOverflow = 0xC0000035,
     /// Data error (CRC check failed)
     DataError = 0xC000003E,
@@ -208,7 +206,7 @@ impl FsError {
         *self as u32
     }
 
-    /// Create error from NT status code.
+    /// create error from NT status code.
     pub fn from_status(status: u32) -> Self {
         match status {
             0 => FsError::Success,
@@ -396,17 +394,17 @@ pub struct ObjectType {
 /// Unicode string (NT-compatible layout)
 #[repr(C)]
 pub struct UnicodeString {
-    pub Length: u16,
-    pub MaximumLength: u16,
-    pub Buffer: *mut u16,
+    pub length: u16,
+    pub maximum_length: u16,
+    pub buffer: *mut u16,
 }
 
 impl UnicodeString {
     pub fn new() -> Self {
         Self {
-            Length: 0,
-            MaximumLength: 0,
-            Buffer: core::ptr::null_mut(),
+            length: 0,
+            maximum_length: 0,
+            buffer: core::ptr::null_mut(),
         }
     }
 }
@@ -422,7 +420,7 @@ pub struct DispatcherHeader {
 }
 
 impl DispatcherHeader {
-    /// Create a new dispatcher header.
+    /// create a new dispatcher header.
     /// `object_type` is stored in the type field for object type identification.
     pub fn new(object_type: u8) -> Self {
         Self {
@@ -488,7 +486,7 @@ pub fn mount(
         // pattern that emits a non-temporal SSE store on the
         // compiler's behalf. The pool backs onto heap memory which
         // can be UC-typed (MTRR set by the firmware), and UC memory
-        // does not behave like Write-Back memory: non-temporal
+        // does not behave like write-Back memory: non-temporal
         // stores are silently dropped. Field-by-field assignment
         // compiles down to a sequence of normal scalar stores.
         unsafe {
@@ -532,11 +530,8 @@ pub fn init() {
     // Register EXT2/EXT3/EXT4 driver (shares infrastructure with ext2).
     // ext2 / ext3 / ext4 are gated to x86_64 because the AHCI
     // controller used by them is x86_64-only in this build.
-    #[cfg(target_arch = "x86_64")]
-    {
-        crate::boot_println!("[FS-INIT] registering EXT2");
-        ext2::register_driver();
-    }
+    crate::boot_println!("[FS-INIT] registering EXT2");
+    ext2::register_driver();
 
     // Bring up the VFS layer (creates the root VfsNode).
     crate::boot_println!("[FS-INIT] calling vfs::init");
@@ -691,7 +686,7 @@ pub fn sys_partition_sector_size() -> &'static Spinlock<usize> {
 }
 
 /// Pointer that the dispatcher sets to whichever partition mirror
-/// is currently being mounted. Read by `fat32::read_sector` so that
+/// is currently being mounted. read by `fat32::read_sector` so that
 /// the FAT32 driver can mount either the ESP (Z:) or the System
 /// partition (C:) when the install picked FAT32 for both. NTFS has
 /// its own sys-ramdisk path, EXT2 has its own RAM_DISK, so this
@@ -702,6 +697,50 @@ static ACTIVE_PARTITION_RAMDISK: Spinlock<Option<*const u8>> = Spinlock::new(Non
 /// mirror end. Set whenever `set_active_partition_ramdisk` is
 /// called.
 static ACTIVE_PARTITION_SIZE: Spinlock<usize> = Spinlock::new(0);
+
+/// Per-mount mirror identity. A mount passes this explicitly to the
+/// filesystem driver so sector I/O cannot observe another thread's
+/// partition.
+#[derive(Clone, Copy)]
+pub struct MountContext {
+    pub base: *const u8,
+    pub size: usize,
+}
+
+impl MountContext {
+    pub const fn new(base: *const u8, size: usize) -> Self {
+        Self { base, size }
+    }
+}
+
+/// Allocate a driver-visible context. The returned pointer is stored in
+/// `FileSystem::device`; it remains valid for the lifetime of the mount.
+pub fn allocate_mount_context(context: MountContext) -> *mut MountContext {
+    let ptr = crate::mm::pool::allocate(
+        crate::mm::pool::PoolType::NonPaged,
+        core::mem::size_of::<MountContext>(),
+    ) as *mut MountContext;
+    if !ptr.is_null() {
+        unsafe {
+            (*ptr).base = context.base;
+            (*ptr).size = context.size;
+        }
+    }
+    ptr
+}
+
+/// Decode the per-mount context stored by a filesystem driver.
+pub unsafe fn mount_context_from_device(device: *mut ()) -> Option<&'static MountContext> {
+    if device.is_null() {
+        return None;
+    }
+    let context = &*(device as *const MountContext);
+    if context.base.is_null() || context.size == 0 {
+        None
+    } else {
+        Some(context)
+    }
+}
 
 /// Set the "active partition" pointer consulted by the FAT32
 /// driver's `read_sector`. The dispatcher sets this before
@@ -727,7 +766,7 @@ pub fn set_active_partition_ramdisk(base: Option<*const u8>) {
     };
     *ACTIVE_PARTITION_SIZE.lock() = size.unwrap_or(0);
 }
-/// Read the active partition pointer.
+/// read the active partition pointer.
 pub fn active_partition_ramdisk() -> Option<*const u8> {
     ACTIVE_PARTITION_RAMDISK.lock().clone()
 }
@@ -735,7 +774,7 @@ pub fn active_partition_ramdisk() -> Option<*const u8> {
 pub fn set_active_partition_size(size: usize) {
     *ACTIVE_PARTITION_SIZE.lock() = size;
 }
-/// Read the active partition size.
+/// read the active partition size.
 pub fn active_partition_size() -> Option<usize> {
     let v = *ACTIVE_PARTITION_SIZE.lock();
     if v == 0 {
@@ -745,7 +784,7 @@ pub fn active_partition_size() -> Option<usize> {
     }
 }
 
-/// Read a contiguous range of bytes from the ESP mirror.
+/// read a contiguous range of bytes from the ESP mirror.
 /// `offset` is relative to the start of the partition; `buf` is
 /// the destination slice. Truncates silently if the request
 /// runs past the end of the mirror.
@@ -804,11 +843,10 @@ pub fn esp_ramdisk_read(offset: u64, buf: &mut [u8]) -> usize {
     n
 }
 
-/// Read a contiguous range of bytes from the System partition
+/// read a contiguous range of bytes from the System partition
 /// mirror. Same semantics as `esp_ramdisk_read`. Returns 0 when
 /// the mirror is not registered.
 pub fn sys_ramdisk_read(offset: u64, buf: &mut [u8]) -> usize {
-    crate::hal::serial::write_string("[SYS-RD] entered\n");
     let guard = SYS_RAMDISK.lock();
     let disk = match guard.as_ref() {
         Some(d) => d,
@@ -820,7 +858,6 @@ pub fn sys_ramdisk_read(offset: u64, buf: &mut [u8]) -> usize {
     }
     let avail = disk.size - off;
     let n = core::cmp::min(buf.len(), avail);
-    crate::hal::serial::write_string("[SYS-RD] copy\n");
     // SAFETY: same as `esp_ramdisk_read`. The winload-side
     // capture is allocated in `EfiBootServicesData` so the buffer
     // is identity-mapped for the kernel.
@@ -834,7 +871,6 @@ pub fn sys_ramdisk_read(offset: u64, buf: &mut [u8]) -> usize {
             core::ptr::write_volatile(buf.as_mut_ptr().add(i), b);
         }
     }
-    crate::hal::serial::write_string("[SYS-RD] done\n");
     n
 }
 
@@ -852,7 +888,7 @@ pub fn sys_ramdisk_block_size() -> u32 {
     guard.as_ref().map(|d| d.block_size).unwrap_or(0)
 }
 
-/// Read a sector from the System partition mirror (used by the
+/// read a sector from the System partition mirror (used by the
 /// polled CMD shell's BAT executor so it can read files that
 /// live on `C:\`, e.g. `tests\autoexec.bat`). `sector` is
 /// partition-relative. Returns `Err(())` when the mirror is not
@@ -869,12 +905,37 @@ pub fn sys_ramdisk_read_sector(sector: u64, buffer: &mut [u8]) -> Result<(), ()>
     }
 }
 
+/// Write a sector to the System partition mirror.
+///
+/// The in-memory mirror is the only writable view of the NTFS system
+/// partition during early boot. Sector-level writes keep the MFT and
+/// directory indexes coherent because every mutation is applied to the
+/// same buffer that the reader uses.
+pub fn sys_ramdisk_write_sector(sector: u64, buffer: &[u8]) -> Result<(), ()> {
+    if buffer.len() < 512 {
+        return Err(());
+    }
+    let mut guard = SYS_RAMDISK.lock();
+    let disk = guard.as_mut().ok_or(())?;
+    let offset = (sector as usize).checked_mul(512).ok_or(())?;
+    if offset + buffer.len() > disk.size {
+        return Err(());
+    }
+    unsafe {
+        let destination = disk.base.add(offset) as *mut u8;
+        for (index, byte) in buffer.iter().enumerate() {
+            core::ptr::write_volatile(destination.add(index), *byte);
+        }
+    }
+    Ok(())
+}
+
 /// Return `true` when the System partition mirror is mounted.
 pub fn sys_ramdisk_is_mounted() -> bool {
     SYS_RAMDISK.lock().is_some()
 }
 
-/// Read bytes from the ISO boot RAM disk (combined FAT32 image from ISO).
+/// read bytes from the ISO boot RAM disk (combined FAT32 image from ISO).
 /// Used by the FAT32 driver to access the ISO-embedded nt61.img.
 pub fn ramdisk_image_read(offset: u64, buf: &mut [u8]) -> usize {
     let guard = RAMDISK_IMAGE.lock();
@@ -896,7 +957,7 @@ pub fn ramdisk_image_read(offset: u64, buf: &mut [u8]) -> usize {
     n
 }
 
-/// Read a 512-byte sector from the ISO boot RAM disk.
+/// read a 512-byte sector from the ISO boot RAM disk.
 pub fn ramdisk_image_read_sector(sector: u64, buffer: &mut [u8]) -> Result<(), ()> {
     if buffer.len() < 512 {
         return Err(());
@@ -942,7 +1003,7 @@ pub fn mount_esp_from_bootinfo(boot_info: &crate::boot_types::BootInfo) {
     if boot_info.sys_image_base != 0 && boot_info.sys_image_size != 0 {
         crate::mm::vas::ensure_low_identity_map(boot_info.sys_image_base, boot_info.sys_image_size);
     }
-    // Read-back probe: dereference one byte at the ESP image base
+    // read-back probe: dereference one byte at the ESP image base
     // before handing the pointer to `esp_ramdisk_read`. If this
     // succeeds the identity-map is live; if it #PFs the kernel
     // panic happens here with a diagnostic on the serial log.
@@ -1068,7 +1129,7 @@ pub enum FsType {
 }
 
 impl FsType {
-    fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             FsType::Fat32 => "FAT32",
             FsType::Ntfs => "NTFS",
@@ -1080,7 +1141,7 @@ impl FsType {
     }
 }
 
-/// Read the boot sector of a partition mirror and identify which
+/// read the boot sector of a partition mirror and identify which
 /// filesystem driver should own it.
 ///
 /// * FAT32/NTFS share the 0x55AA signature at offset 510; they
@@ -1115,7 +1176,7 @@ pub fn detect_fs_type(base_ptr: *const u8) -> FsType {
         let magic = u16::from_le_bytes([sector[0x438], sector[0x439]]);
         if magic == 0xEF53 {
             // Distinguish ext4 from ext2/3 by reading `s_feature_incompat`.
-            // Offset of incompatible feature flags inside the superblock:
+            // offset of incompatible feature flags inside the superblock:
             //   s_inodes_count @ 0x00 (4)
             //   s_blocks_count @ 0x04 (4)
             //   ... (see ext2/superblock.rs)
@@ -1148,6 +1209,7 @@ pub fn detect_fs_type(base_ptr: *const u8) -> FsType {
 /// type. Returns `true` if a driver claimed the partition.
 fn mount_partition_detected(drive_letter: u16, base_ptr: *const u8, ramdisk: PartRamdisk) -> bool {
     let fs_type = detect_fs_type(base_ptr);
+    let _ = ramdisk;
     crate::boot_println!(
         "[MOUNT] drive={}: detected {} (base=0x{:x})",
         drive_letter as u8 as char,
@@ -1157,14 +1219,12 @@ fn mount_partition_detected(drive_letter: u16, base_ptr: *const u8, ramdisk: Par
     match fs_type {
         FsType::Fat32 => {
             let path = [drive_letter, 0];
-            // FAT32::read_sector consults `ACTIVE_PARTITION_RAMDISK`,
-            // so we set it here to the partition we're about to
-            // mount (Z:→ESP, C:→System). Restored to ESP on the
-            // way out so legacy call sites still see the ESP.
-            let prev = active_partition_ramdisk();
-            set_active_partition_ramdisk(Some(base_ptr));
-            let res = fat32::mount(core::ptr::null_mut(), &path);
-            set_active_partition_ramdisk(prev);
+            let size = match ramdisk {
+                PartRamdisk::System => *sys_partition_size().lock(),
+                PartRamdisk::Esp => esp_mirror_size().unwrap_or(0),
+            };
+            let context = MountContext::new(base_ptr, size);
+            let res = fat32::mount(core::ptr::null_mut(), &path, Some(context));
             match res {
                 Some(_fs) => {
                     crate::boot_println!(
@@ -1184,13 +1244,12 @@ fn mount_partition_detected(drive_letter: u16, base_ptr: *const u8, ramdisk: Par
         }
         FsType::Ntfs => {
             let path = [drive_letter, 0];
-            // NTFS::read_sector consults `ACTIVE_PARTITION_RAMDISK`,
-            // so we set it here to the partition we're about to mount.
-            // Restored to previous value on the way out.
-            let prev = active_partition_ramdisk();
-            set_active_partition_ramdisk(Some(base_ptr));
-            let res = crate::fs::ntfs::mount(core::ptr::null_mut(), &path);
-            set_active_partition_ramdisk(prev);
+            let size = match ramdisk {
+                PartRamdisk::System => *sys_partition_size().lock(),
+                PartRamdisk::Esp => esp_mirror_size().unwrap_or(0),
+            };
+            let context = MountContext::new(base_ptr, size);
+            let res = crate::fs::ntfs::mount(core::ptr::null_mut(), &path, Some(context));
             match res {
                 Some(_fs) => {
                     crate::boot_println!(
@@ -1208,7 +1267,6 @@ fn mount_partition_detected(drive_letter: u16, base_ptr: *const u8, ramdisk: Par
                 }
             }
         }
-        #[cfg(target_arch = "x86_64")]
         FsType::Ext2 | FsType::Ext3 | FsType::Ext4 => {
             // EXT2/3/4 driver reads via `drivers::storage::ramdisk::read`,
             // which expects the system partition mirror to be installed
@@ -1246,7 +1304,12 @@ fn mount_partition_detected(drive_letter: u16, base_ptr: *const u8, ramdisk: Par
             }
             // ext2::mount's first argument is the device pointer; the
             // driver ignores it and goes through `drivers::storage::ramdisk`.
-            match crate::fs::ext2::mount(core::ptr::null_mut(), 0) {
+            let size = match ramdisk {
+                PartRamdisk::System => *sys_partition_size().lock(),
+                PartRamdisk::Esp => esp_mirror_size().unwrap_or(0),
+            };
+            let context = MountContext::new(base_ptr, size);
+            match crate::fs::ext2::mount(core::ptr::null_mut(), 0, Some(context)) {
                 Some(_fs) => {
                     crate::boot_println!(
                         "[MOUNT] drive={}: {} mounted",
@@ -1264,18 +1327,6 @@ fn mount_partition_detected(drive_letter: u16, base_ptr: *const u8, ramdisk: Par
                     false
                 }
             }
-        }
-        // On non-x86_64 builds the ext2 driver is not part of the
-        // kernel image. The Match above is `#[cfg(target_arch)]`-gated
-        // so the FsType::Ext* variants aren't even compiled; this
-        // wildcard arm keeps the match exhaustive when they are absent.
-        #[cfg(not(target_arch = "x86_64"))]
-        FsType::Ext2 | FsType::Ext3 | FsType::Ext4 => {
-            crate::boot_println!(
-                "[MOUNT] drive={}: EXT filesystem driver not built on this arch",
-                drive_letter as u8 as char
-            );
-            false
         }
         FsType::Unknown => {
             crate::boot_println!(

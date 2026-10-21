@@ -4,7 +4,7 @@
 //! This module provides the file system driver interface and main entry points.
 //
 //! ## Features
-//! - Read-only support for basic ReFS volumes
+//! - read-only support for basic ReFS volumes
 //! - Superblock parsing and validation
 //! - B+ tree navigation for metadata
 //! - CRC32C integrity verification
@@ -23,6 +23,7 @@ extern crate alloc;
 use crate::fs::{FileSystem, FileSystemType};
 use alloc::string::{String, ToString};
 use alloc::vec;
+use alloc::vec::Vec;
 use core::ptr::null_mut;
 
 // Submodules
@@ -43,6 +44,10 @@ pub use superblock::{RefsSuperBlock, REFS_SIGNATURE};
 // File System Instance
 // ============================================================================
 
+/// Clusters at the start of the volume reserved for the superblock and
+/// on-disk metadata trees. The CoW allocator never hands them out.
+pub const REFS_METADATA_RESERVED_CLUSTERS: u64 = 4096;
+
 /// ReFS file system instance
 pub struct RefsFileSystem {
     /// Base file system structure
@@ -59,10 +64,12 @@ pub struct RefsFileSystem {
     pub has_integrity: bool,
     /// Is read-only mount?
     pub read_only: bool,
+    /// Free-cluster allocation bitmap (one bit per cluster).
+    pub free_cluster_bitmap: Vec<u8>,
 }
 
 impl RefsFileSystem {
-    /// Create a new ReFS filesystem structure
+    /// create a new ReFS filesystem structure
     pub fn new() -> Self {
         Self {
             base: FileSystem {
@@ -81,6 +88,7 @@ impl RefsFileSystem {
             object_table: ObjectIdTable::new(),
             has_integrity: false,
             read_only: true,
+            free_cluster_bitmap: Vec::new(),
         }
     }
 
@@ -132,7 +140,7 @@ pub struct RefsHandle {
 }
 
 impl RefsHandle {
-    /// Create a new file handle
+    /// create a new file handle
     pub fn new(object_id: u64, file_size: u64, is_directory: bool) -> Self {
         Self {
             object_id,
@@ -159,7 +167,7 @@ impl RefsHandle {
 // Device I/O
 // ============================================================================
 
-/// Read a sector from the device
+/// read a sector from the device
 pub fn read_sector(_device: *mut (), lba: u64, buffer: &mut [u8]) -> Result<(), ()> {
     if buffer.len() < 512 {
         return Err(());
@@ -177,7 +185,7 @@ pub fn read_sector(_device: *mut (), lba: u64, buffer: &mut [u8]) -> Result<(), 
     Err(())
 }
 
-/// Read multiple sectors from the device
+/// read multiple sectors from the device
 pub fn read_sectors(device: *mut (), lba: u64, count: u32, buffer: &mut [u8]) -> Result<(), ()> {
     let sector_size = 512usize;
     let needed = (count as usize) * sector_size;
@@ -202,6 +210,43 @@ pub fn read_sectors(device: *mut (), lba: u64, count: u32, buffer: &mut [u8]) ->
     Ok(())
 }
 
+/// Write one 512-byte sector to the device.
+pub fn write_sector(_device: *mut (), lba: u64, buffer: &[u8]) -> Result<(), ()> {
+    if buffer.len() < 512 {
+        return Err(());
+    }
+    let sector_num = lba as usize;
+    if crate::drivers::storage::ramdisk::write(sector_num, buffer) {
+        return Ok(());
+    }
+    if crate::drivers::storage::ahci::write_sector(0, 0, lba as u32, buffer) {
+        return Ok(());
+    }
+    Err(())
+}
+
+/// Write multiple sectors to the device.
+pub fn write_sectors(device: *mut (), lba: u64, count: u32, buffer: &[u8]) -> Result<(), ()> {
+    let sector_size = 512usize;
+    let needed = (count as usize) * sector_size;
+    if buffer.len() < needed {
+        return Err(());
+    }
+    for i in 0..count as usize {
+        let offset = (lba + (i as u64)) * (sector_size as u64);
+        if write_sector(
+            device,
+            offset,
+            &buffer[i * sector_size..(i + 1) * sector_size],
+        )
+        .is_err()
+        {
+            return Err(());
+        }
+    }
+    Ok(())
+}
+
 // ============================================================================
 // Mount/Unmount Operations
 // ============================================================================
@@ -210,7 +255,7 @@ pub fn read_sectors(device: *mut (), lba: u64, count: u32, buffer: &mut [u8]) ->
 pub fn mount(device: *mut ()) -> Option<&'static mut RefsFileSystem> {
     // kprintln!("[REFS] Mounting ReFS filesystem...");
 
-    // Read superblock
+    // read superblock
     let sb = match superblock::read_superblock(device) {
         Some(s) => s,
         None => {
@@ -225,7 +270,7 @@ pub fn mount(device: *mut ()) -> Option<&'static mut RefsFileSystem> {
         return None;
     }
 
-    // Create filesystem instance
+    // create filesystem instance
     let fs_ptr = crate::mm::pool::allocate(
         crate::mm::pool::PoolType::NonPaged,
         core::mem::size_of::<RefsFileSystem>(),
@@ -257,6 +302,22 @@ pub fn mount(device: *mut ()) -> Option<&'static mut RefsFileSystem> {
 
         // Initialize object ID table
         (*fs_ptr).object_table = ObjectIdTable::from_btree(object_table_lba);
+
+        // Allocate the free-cluster bitmap. The superblock and metadata
+        // regions at the start of the volume are marked allocated so the
+        // CoW allocator never hands them out; a real ReFS driver reads
+        // the persisted allocation bitmap from disk. For the bootstrap
+        // path the remaining clusters start free so that CoW allocation
+        // can proceed on a freshly formatted volume.
+        let bitmap_len = ((total_clusters + 7) / 8) as usize;
+        (*fs_ptr).free_cluster_bitmap = vec![0u8; bitmap_len];
+        let reserved = total_clusters.min(REFS_METADATA_RESERVED_CLUSTERS);
+        let fs = &mut *fs_ptr;
+        for cluster in 0..reserved {
+            let byte = (cluster / 8) as usize;
+            let bit = (cluster % 8) as u32;
+            fs.free_cluster_bitmap[byte] |= 1 << bit;
+        }
     }
 
     let fs = unsafe { &*fs_ptr };
@@ -296,7 +357,7 @@ pub fn open_by_object_id(fs: &RefsFileSystem, object_id: u64) -> Option<RefsHand
     Some(RefsHandle::new(object_id, 0, false))
 }
 
-/// Read from a file handle
+/// read from a file handle
 pub fn read_file(fs: &RefsFileSystem, handle: &mut RefsHandle, buffer: &mut [u8]) -> usize {
     if handle.at_eof() {
         return 0;
@@ -309,9 +370,13 @@ pub fn read_file(fs: &RefsFileSystem, handle: &mut RefsHandle, buffer: &mut [u8]
     let current_cluster = handle.current_position / cluster_size;
     let offset_in_cluster = handle.current_position % cluster_size;
 
-    // Find the chunk for this cluster
-    if let Some(lba) = chunk::vcn_to_lba(&[], &fs.superblock, current_cluster) {
-        // Read from the cluster
+    // Find the chunk for this cluster in the handle's chunk table.
+    if let Some(descriptor) = handle.chunk_table.descriptors.get(current_cluster as usize) {
+        if descriptor.is_hole() {
+            return 0;
+        }
+        let lba = descriptor.lcn_to_lba(&fs.superblock);
+        // read from the cluster
         let mut cluster_data = vec![0u8; cluster_size as usize];
         let sectors_per_cluster = (cluster_size / fs.sector_size as u64) as u32;
         if read_sectors(fs.base.device, lba, sectors_per_cluster, &mut cluster_data).is_ok() {
@@ -326,6 +391,115 @@ pub fn read_file(fs: &RefsFileSystem, handle: &mut RefsHandle, buffer: &mut [u8]
     }
 
     0
+}
+
+/// Write data to a file using copy-on-write semantics.
+///
+/// Each cluster written is allocated fresh (CoW): the new data plus its
+/// integrity checksum are written to a new LCN, the chunk descriptor is
+/// updated to point at the new cluster, and the old cluster is freed.
+/// Returns the number of bytes written.
+pub fn write_file(fs: &mut RefsFileSystem, handle: &mut RefsHandle, buffer: &[u8]) -> usize {
+    if buffer.is_empty() {
+        return 0;
+    }
+    if fs.read_only {
+        return 0;
+    }
+
+    let cluster_size = fs.cluster_size as u64;
+    let sectors_per_cluster = (cluster_size / fs.sector_size as u64) as u32;
+    let mut bytes_written = 0usize;
+
+    while bytes_written < buffer.len() {
+        let vcn = handle.current_position / cluster_size;
+        let offset_in_cluster = handle.current_position % cluster_size;
+        let to_write = core::cmp::min(
+            buffer.len() - bytes_written,
+            (cluster_size - offset_in_cluster) as usize,
+        );
+
+        // Allocate a new cluster for the CoW copy.
+        let descriptor =
+            chunk::allocate_chunk(&fs.superblock, &mut fs.free_cluster_bitmap, 1).ok_or(());
+        let descriptor = match descriptor {
+            Ok(value) => value,
+            Err(()) => break,
+        };
+
+        // Read the old cluster if the write is partial.
+        let mut cluster_data = vec![0u8; cluster_size as usize];
+        if offset_in_cluster > 0 || to_write < cluster_size as usize {
+            if let Some(old_descriptor) = handle.chunk_table.descriptors.get(vcn as usize) {
+                let old_lba = old_descriptor.lcn_to_lba(&fs.superblock);
+                let _ = read_sectors(
+                    fs.base.device,
+                    old_lba,
+                    sectors_per_cluster,
+                    &mut cluster_data,
+                );
+            }
+        }
+        cluster_data[offset_in_cluster as usize..offset_in_cluster as usize + to_write]
+            .copy_from_slice(&buffer[bytes_written..bytes_written + to_write]);
+
+        // Write the new cluster with its integrity checksum. The write
+        // replaces the whole cluster, so the checksum always covers the
+        // final on-disk contents.
+        let new_lba = descriptor.lcn_to_lba(&fs.superblock);
+        if write_sectors(fs.base.device, new_lba, sectors_per_cluster, &cluster_data).is_err() {
+            // Roll the allocation back so the cluster is not leaked.
+            let _ = chunk::free_chunk(&fs.superblock, &mut fs.free_cluster_bitmap, &descriptor);
+            break;
+        }
+        let checksum = integrity::compute_chunk_checksum(&cluster_data);
+        let new_descriptor = RefsChunkDescriptor {
+            checksum,
+            ..descriptor
+        };
+
+        // Free the previous physical copy only after the new copy is
+        // durably on disk (true copy-on-write ordering).
+        if let Some(old_descriptor) = handle.chunk_table.descriptors.get(vcn as usize) {
+            if old_descriptor.lcn != 0 {
+                let _ =
+                    chunk::free_chunk(&fs.superblock, &mut fs.free_cluster_bitmap, old_descriptor);
+            }
+        }
+        if handle.chunk_table.descriptors.len() <= vcn as usize {
+            handle
+                .chunk_table
+                .descriptors
+                .resize(vcn as usize + 1, RefsChunkDescriptor::EMPTY);
+        }
+        handle.chunk_table.descriptors[vcn as usize] = new_descriptor;
+
+        handle.current_position += to_write as u64;
+        bytes_written += to_write;
+        if handle.current_position > handle.file_size {
+            handle.file_size = handle.current_position;
+        }
+    }
+
+    bytes_written
+}
+
+/// Create a new file entry in the object ID table.
+pub fn create_file(fs: &mut RefsFileSystem, file_size: u64) -> Option<RefsHandle> {
+    if fs.read_only {
+        return None;
+    }
+    let object_id = object::create_object_id(&mut fs.object_table, 0, 0);
+    Some(RefsHandle::new(object_id, file_size, false))
+}
+
+/// Create a new directory entry in the object ID table.
+pub fn create_directory(fs: &mut RefsFileSystem) -> Option<RefsHandle> {
+    if fs.read_only {
+        return None;
+    }
+    let object_id = object::create_object_id(&mut fs.object_table, 0, 0);
+    Some(RefsHandle::new(object_id, 0, true))
 }
 
 // ============================================================================

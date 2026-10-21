@@ -164,7 +164,7 @@ impl StandardInformation {
 // Non-resident $DATA attribute compression-unit inspection
 // =============================================================================
 
-/// Read the `compression_unit` field from the non-resident $DATA
+/// read the `compression_unit` field from the non-resident $DATA
 /// attribute header. Returns 0 (= no compression) when the field is
 /// zero; a non-zero value of `2^N` clusters indicates LZNT1
 /// compression units. The field lives at offset +0x3A relative to
@@ -227,7 +227,7 @@ impl DataAttrHeader {
 // Compressed read path
 // =============================================================================
 
-/// Read a range from a compressed non-resident $DATA attribute.
+/// read a range from a compressed non-resident $DATA attribute.
 ///
 /// `data_attr` is the *payload* of the $DATA attribute (i.e. the
 /// non-resident header followed by the mapping pairs).
@@ -302,7 +302,7 @@ pub fn read_compressed_data_attr<F: FnMut(u64, &mut [u8]) -> bool>(
         let (compressed_unit, read) = match lcn {
             Some(unit_lcn) => {
                 let mut buf: Vec<u8> = alloc::vec![0u8; unit_size];
-                // Read cluster-by-cluster via the callback.
+                // read cluster-by-cluster via the callback.
                 let mut read_total = 0usize;
                 let mut ok = true;
                 for c in 0..unit_clusters as u64 {

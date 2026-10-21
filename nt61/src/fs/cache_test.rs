@@ -72,7 +72,6 @@ pub fn test_cache_statistics() -> bool {
         }
     };
 
-    let initial_reads = stats.reads.load(core::sync::atomic::Ordering::Relaxed);
     let initial_writes = stats.writes.load(core::sync::atomic::Ordering::Relaxed);
 
     // Perform some operations
@@ -136,7 +135,7 @@ pub fn test_cache_eviction() -> bool {
 pub fn test_writeback_flush() -> bool {
     crate::boot_println!("[CACHE-TEST] Testing write-back and flush...");
 
-    // Write some data
+    // write some data
     let test_data = [0x55u8; 1024];
     for i in 0..10 {
         let _ = cc_write(20, i * 1024, &test_data);

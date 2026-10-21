@@ -368,6 +368,5 @@ pub fn notify_file_renamed(
 }
 
 fn current_time() -> u64 {
-    // TODO: Use actual timer
-    0
+    crate::hal::common::pit::get_system_time_ms()
 }

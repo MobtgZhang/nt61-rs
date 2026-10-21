@@ -11,7 +11,6 @@
 //! - HSM (Hierarchical Storage Management) stubs
 //! - SIS (Single Instance Storage) links
 
-use alloc::string::String;
 use alloc::vec::Vec;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

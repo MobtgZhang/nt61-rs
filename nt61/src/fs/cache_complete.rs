@@ -2,9 +2,9 @@
 //!
 //! LRU-based file system cache with dirty page tracking
 
+use crate::drivers::storage::disk;
 use crate::ke::sync::Spinlock;
 use alloc::collections::VecDeque;
-use alloc::vec;
 use alloc::vec::Vec;
 use hashbrown::HashMap;
 
@@ -24,7 +24,7 @@ pub struct FileCacheKey {
 }
 
 pub struct CacheEntry {
-    key: FileCacheKey,
+    pub key: FileCacheKey,
     data: Vec<u8>,
     dirty: bool,
     access_count: u32,
@@ -163,9 +163,14 @@ impl FileCache {
         false
     }
 
-    fn write_to_disk(&self, _key: &FileCacheKey, _data: &[u8]) -> Result<(), &'static str> {
-        // TODO: Call actual filesystem write
-        Ok(())
+    fn write_to_disk(&self, key: &FileCacheKey, data: &[u8]) -> Result<(), &'static str> {
+        let disk_index = key.volume_id.min(0) as usize;
+        let written = disk::disk_write(disk_index, key.offset, data.len(), data);
+        if written == data.len() {
+            Ok(())
+        } else {
+            Err("Partial or failed disk write")
+        }
     }
 
     pub fn get_stats(&self) -> &CacheStats {
@@ -206,13 +211,13 @@ pub fn cache_flush() -> Result<usize, &'static str> {
 }
 
 fn get_timestamp() -> u64 {
-    // TODO: Integrate with HAL timer
-    0
+    crate::hal::common::pit::get_system_time_ms()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn test_cache_read_write() {
@@ -252,6 +257,9 @@ mod tests {
 
     #[test]
     fn test_cache_flush() {
+        unsafe {
+            crate::drivers::storage::disk::test_support::register_test_backend();
+        }
         let mut cache = FileCache::new(1);
 
         let key = FileCacheKey {

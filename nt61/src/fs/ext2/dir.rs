@@ -7,7 +7,7 @@
 //! Each directory entry contains:
 //! - Inode number (0 for unused entries)
 //! - Record length (total size of this entry)
-//! - Name length
+//! - name length
 //! - File type (ext2/3 only if FILETYPE feature set)
 //! - File name (variable length, padded to 4-byte boundary)
 //
@@ -67,7 +67,7 @@ pub struct Ext2DirEntry {
     pub inode: u32,
     /// Total size of this entry (includes name + padding)
     pub rec_len: u16,
-    /// Name length in bytes
+    /// name length in bytes
     pub name_len: u16,
     /// File type (only present if FILETYPE feature set)
     pub file_type: u8,
@@ -98,7 +98,7 @@ impl Ext2DirEntry {
     }
 
     // ========================================================================
-    // Name Access
+    // name Access
     // ========================================================================
 
     /// Get the file name as a byte slice
@@ -127,7 +127,7 @@ impl Ext2DirEntry {
     }
 
     // ========================================================================
-    // Type Access
+    // r#type Access
     // ========================================================================
 
     /// Get the file type
@@ -202,7 +202,7 @@ impl Ext2DirEntryInfo {
 // Directory Reading
 // ============================================================================
 
-/// Read and parse directory entries from a directory inode
+/// read and parse directory entries from a directory inode
 pub fn read_directory(
     device: *mut (),
     sb: &Ext2SuperBlock,
@@ -219,7 +219,7 @@ pub fn read_directory(
     // Calculate number of blocks
     let block_count = (file_size + block_size - 1) / block_size;
 
-    // Read all blocks
+    // read all blocks
     let mut buffer = vec![0u8; block_count * block_size];
     let mut offset = 0usize;
 
@@ -251,7 +251,7 @@ fn parse_directory_entries(buffer: &[u8], has_filetype: bool, entries: &mut Vec<
     let mut offset = 0usize;
 
     while offset + entry_size <= buffer.len() {
-        // Read entry header
+        // read entry header
         let inode = u32::from_le_bytes(buffer[offset..offset + 4].try_into().unwrap());
         let rec_len = u16::from_le_bytes(buffer[offset + 4..offset + 6].try_into().unwrap());
         let name_len = u16::from_le_bytes(buffer[offset + 6..offset + 8].try_into().unwrap());
@@ -305,7 +305,7 @@ pub fn find_entry_in_dir(
     parent_inode_num: u32,
     name: &[u8],
 ) -> Option<Ext2DirEntry> {
-    // Read parent inode
+    // read parent inode
     let parent_inode = read_inode(device, sb, parent_inode_num)?;
 
     if !parent_inode.is_dir() {
@@ -322,7 +322,7 @@ pub fn find_entry_in_dir(
     // Calculate number of blocks
     let block_count = (file_size + block_size - 1) / block_size;
 
-    // Read all blocks
+    // read all blocks
     let mut buffer = vec![0u8; block_count * block_size];
     let mut offset = 0usize;
 
@@ -356,7 +356,7 @@ fn find_entry_in_buffer(buffer: &[u8], name: &[u8], has_filetype: bool) -> Optio
     let mut offset = 0usize;
 
     while offset + entry_size <= buffer.len() {
-        // Read entry header
+        // read entry header
         let inode = u32::from_le_bytes(buffer[offset..offset + 4].try_into().unwrap());
         let rec_len = u16::from_le_bytes(buffer[offset + 4..offset + 6].try_into().unwrap());
         let name_len = u16::from_le_bytes(buffer[offset + 6..offset + 8].try_into().unwrap());
@@ -421,7 +421,7 @@ pub fn list_directory(
     sb: &Ext2SuperBlock,
     inode_num: u32,
 ) -> Option<Vec<Ext2DirEntryInfo>> {
-    // Read inode
+    // read inode
     let inode = read_inode(device, sb, inode_num)?;
 
     if !inode.is_dir() {
@@ -494,7 +494,7 @@ pub fn path_lookup_from(
             continue;
         }
 
-        // Handle ".." specially
+        // handle ".." specially
         if component == b".." {
             let inode = read_inode(device, sb, current_inode)?;
             if inode.is_dir() {
@@ -552,7 +552,7 @@ pub fn calculate_entry_size(name_len: usize, has_filetype: bool) -> u16 {
     (((total + 3) / 4) * 4) as u16
 }
 
-/// Create a directory entry
+/// create a directory entry
 pub fn create_dir_entry(inode_num: u32, name: &[u8], file_type: u8, has_filetype: bool) -> Vec<u8> {
     let rec_len = calculate_entry_size(name.len(), has_filetype) as u16;
     let name_len = name.len() as u16;

@@ -240,7 +240,7 @@ pub fn read_compressed_file(
 
 pub fn write_compressed_file(
     data: &[u8],
-    offset: u64,
+    _offset: u64,
     compressed_output: &mut Vec<u8>,
 ) -> Result<usize, ()> {
     let mut temp = vec![0u8; data.len() * 2]; // Pessimistic size estimate

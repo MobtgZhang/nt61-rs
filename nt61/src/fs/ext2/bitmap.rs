@@ -37,7 +37,7 @@ pub const BITS_PER_U32: usize = 32;
 // Bitmap Block Operations
 // ============================================================================
 
-/// Read a block bitmap from disk
+/// read a block bitmap from disk
 pub fn read_block_bitmap(device: *mut (), sb: &Ext2SuperBlock, group_num: u32) -> Option<Vec<u8>> {
     // Get group descriptor
     let group_desc = read_group_descriptor(device, sb, group_num)?;
@@ -57,7 +57,7 @@ pub fn read_block_bitmap(device: *mut (), sb: &Ext2SuperBlock, group_num: u32) -
     Some(bitmap)
 }
 
-/// Read an inode bitmap from disk
+/// read an inode bitmap from disk
 pub fn read_inode_bitmap(device: *mut (), sb: &Ext2SuperBlock, group_num: u32) -> Option<Vec<u8>> {
     // Get group descriptor
     let group_desc = read_group_descriptor(device, sb, group_num)?;
@@ -129,12 +129,12 @@ pub fn find_first_zero(bitmap: &[u8], max_bits: usize) -> Option<usize> {
     None
 }
 
-/// Count the number of set bits in a bitmap
+/// count the number of set bits in a bitmap
 pub fn count_bits(bitmap: &[u8]) -> usize {
     bitmap.iter().map(|&byte| byte.count_ones() as usize).sum()
 }
 
-/// Count the number of free bits in a bitmap
+/// count the number of free bits in a bitmap
 pub fn count_free_bits(bitmap: &[u8], max_bits: usize) -> usize {
     let total_bits = bitmap.len() * 8;
     let effective_bits = core::cmp::min(total_bits, max_bits);
@@ -146,7 +146,7 @@ pub fn count_free_bits(bitmap: &[u8], max_bits: usize) -> usize {
         0
     };
     effective_bits.saturating_sub(used_bits.saturating_sub(if total_bits > max_bits {
-        // Count set bits in the extra region
+        // count set bits in the extra region
         let extra_bytes = (total_bits - max_bits + 7) / 8;
         let start = bitmap.len() - extra_bytes;
         bitmap[start..]
@@ -185,7 +185,7 @@ pub fn allocate_block_in_group(
             // Found a free block
             set_bit(&mut bitmap, block_index);
 
-            // Write bitmap back
+            // write bitmap back
             let block_bitmap = group_desc.get_block_bitmap_block();
             let lba = block_bitmap * (sb.get_block_size() / 512) as u64;
             if super::superblock::write_sector(device, lba, &bitmap).is_err() {
@@ -226,7 +226,7 @@ pub fn free_block(device: *mut (), sb: &Ext2SuperBlock, block_num: u64) -> Resul
     let group_num = ((block_num - sb.first_data_block as u64) / blocks_per_group) as u32;
     let block_index = ((block_num - sb.first_data_block as u64) % blocks_per_group) as usize;
 
-    // Read bitmap
+    // read bitmap
     let mut bitmap = match read_block_bitmap(device, sb, group_num) {
         Some(b) => b,
         None => return Err(()),
@@ -239,7 +239,7 @@ pub fn free_block(device: *mut (), sb: &Ext2SuperBlock, block_num: u64) -> Resul
     }
     clear_bit(&mut bitmap, block_index);
 
-    // Write bitmap back
+    // write bitmap back
     let group_desc = match read_group_descriptor(device, sb, group_num) {
         Some(gd) => gd,
         None => return Err(()),
@@ -300,7 +300,7 @@ pub fn allocate_inode_in_group(
             // Found a free inode
             set_bit(&mut bitmap, inode_index);
 
-            // Write bitmap back
+            // write bitmap back
             let group_desc = match read_group_descriptor(device, sb, group_num) {
                 Some(gd) => gd,
                 None => return None,
@@ -369,7 +369,7 @@ pub fn free_inode(device: *mut (), sb: &Ext2SuperBlock, inode_num: u32) -> Resul
     let group_num = (inode_num - 1) / inodes_per_group;
     let inode_index = ((inode_num - 1) % inodes_per_group) as usize;
 
-    // Read bitmap
+    // read bitmap
     let mut bitmap = match read_inode_bitmap(device, sb, group_num) {
         Some(b) => b,
         None => return Err(()),
@@ -382,7 +382,7 @@ pub fn free_inode(device: *mut (), sb: &Ext2SuperBlock, inode_num: u32) -> Resul
     }
     clear_bit(&mut bitmap, inode_index);
 
-    // Write bitmap back
+    // write bitmap back
     let group_desc = match read_group_descriptor(device, sb, group_num) {
         Some(gd) => gd,
         None => return Err(()),
@@ -414,10 +414,10 @@ pub fn is_inode_allocated(device: *mut (), sb: &Ext2SuperBlock, inode_num: u32) 
 }
 
 // ============================================================================
-// Bitmap Write Functions
+// Bitmap write Functions
 // ============================================================================
 
-/// Write a block bitmap to disk
+/// write a block bitmap to disk
 pub fn write_block_bitmap(
     device: *mut (),
     sb: &Ext2SuperBlock,
@@ -433,7 +433,7 @@ pub fn write_block_bitmap(
     super::superblock::write_sector(device, lba, bitmap)
 }
 
-/// Write an inode bitmap to disk
+/// write an inode bitmap to disk
 pub fn write_inode_bitmap(
     device: *mut (),
     sb: &Ext2SuperBlock,

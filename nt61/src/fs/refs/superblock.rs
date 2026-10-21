@@ -45,7 +45,7 @@ pub const REFS_MIN_VERSION: u32 = 0x0001;
 pub const REFS_MAX_VERSION: u32 = 0x0003;
 
 // ============================================================================
-// Superblock Flags
+// Superblock flags
 // ============================================================================
 
 /// Volume flags
@@ -152,7 +152,7 @@ impl RefsSuperBlock {
     }
 
     // ========================================================================
-    // Flags
+    // flags
     // ========================================================================
 
     /// Check if the volume is read-only
@@ -311,7 +311,7 @@ impl RefsSuperBlock {
         //             self.version_lower & 0xFFFF,
         //             (self.version_upper >> 16) & 0xFFFF,
         //             self.version_upper & 0xFFFF);
-        // kprintln!("  Flags:           0x{:08x}", self.flags);
+        // kprintln!("  flags:           0x{:08x}", self.flags);
         // kprintln!("  Sector size:     {} bytes", self.get_sector_size());
         // kprintln!("  Cluster size:    {} bytes", self.get_cluster_size());
         // kprintln!("  Total clusters:  {}", self.total_clusters);
@@ -333,10 +333,10 @@ impl RefsSuperBlock {
 }
 
 // ============================================================================
-// Superblock Read Functions
+// Superblock read Functions
 // ============================================================================
 
-/// Read the superblock from a device
+/// read the superblock from a device
 pub fn read_superblock(device: *mut ()) -> Option<RefsSuperBlock> {
     let mut buffer = vec![0u8; SUPERBLOCK_SIZE];
 
@@ -417,10 +417,10 @@ pub fn verify_superblock_checksum(sb: &RefsSuperBlock) -> bool {
 }
 
 // ============================================================================
-// Device Read Helper
+// Device read Helper
 // ============================================================================
 
-/// Read sectors from device
+/// read sectors from device
 fn read_sectors(_device: *mut (), offset: u64, count: u32, buffer: &mut [u8]) -> Result<(), ()> {
     let sector_size = 512usize;
     let needed = (count as usize) * sector_size;
@@ -456,7 +456,7 @@ fn read_sectors(_device: *mut (), offset: u64, count: u32, buffer: &mut [u8]) ->
     Ok(())
 }
 
-/// Read the Object Identifier Table
+/// read the Object Identifier Table
 pub fn read_object_id_table_lba(_sb: &RefsSuperBlock) -> u64 {
     // The Object ID table is typically at a fixed offset
     // This is a placeholder - real implementation would parse internal structures

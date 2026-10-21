@@ -41,9 +41,10 @@ pub const REFS_CHUNK_ALLOCATION_UNIT: u64 = 0x400; // 1024 clusters = 64MB
 
 /// ReFS Chunk Descriptor (16 bytes)
 /// Describes a contiguous range of clusters allocated to a file.
+#[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct RefsChunkDescriptor {
-    /// Flags (hole, metadata, etc.)
+    /// flags (hole, metadata, etc.)
     pub flags: u64,
     /// Logical Cluster Number (physical location)
     pub lcn: u64,
@@ -56,6 +57,15 @@ pub struct RefsChunkDescriptor {
 }
 
 impl RefsChunkDescriptor {
+    /// A zeroed descriptor representing an unallocated (hole) VCN slot.
+    pub const EMPTY: Self = Self {
+        flags: REFS_CHUNK_FLAG_HOLE,
+        lcn: 0,
+        vcn_length: 1,
+        checksum: 0,
+        reserved: 0,
+    };
+
     // ========================================================================
     // Validation
     // ========================================================================
@@ -154,15 +164,19 @@ impl ChunkTableEntry {
 pub struct ChunkTable {
     /// Entries sorted by starting VCN
     pub entries: Vec<ChunkTableEntry>,
+    /// Chunk descriptors indexed by VCN slot; a hole descriptor marks an
+    /// unallocated VCN.
+    pub descriptors: Vec<RefsChunkDescriptor>,
     /// Total number of chunks
     pub chunk_count: u32,
 }
 
 impl ChunkTable {
-    /// Create a new empty chunk table
+    /// create a new empty chunk table
     pub fn new() -> Self {
         Self {
             entries: Vec::new(),
+            descriptors: Vec::new(),
             chunk_count: 0,
         }
     }
@@ -278,46 +292,69 @@ pub fn find_largest_free_region(
     }
 }
 
-/// Allocate a chunk
-pub fn allocate_chunk(_sb: &RefsSuperBlock, _length: u64) -> Option<RefsChunkDescriptor> {
-    // In a real implementation, we would:
-    // 1. Scan the allocation bitmap
-    // 2. Find a contiguous free region
-    // 3. Mark it as allocated
-    // 4. Return the chunk descriptor
-
-    // Simplified: return a synthetic chunk
-    static mut NEXT_LCN: u64 = 4096;
-
-    unsafe {
-        let lcn = NEXT_LCN;
-        NEXT_LCN += _length;
-
-        if lcn + _length > _sb.get_total_clusters() {
-            return None;
-        }
-
-        Some(RefsChunkDescriptor {
-            flags: REFS_CHUNK_FLAG_NONE,
-            lcn,
-            vcn_length: _length,
-            checksum: 0,
-            reserved: 0,
-        })
+/// Allocate a chunk from the volume free-cluster bitmap.
+pub fn allocate_chunk(
+    sb: &RefsSuperBlock,
+    bitmap: &mut [u8],
+    length: u64,
+) -> Option<RefsChunkDescriptor> {
+    let total_clusters = sb.get_total_clusters();
+    if length == 0 || length > total_clusters {
+        return None;
     }
+    let bitmap_len = ((total_clusters + 7) / 8) as usize;
+    if bitmap.len() < bitmap_len {
+        return None;
+    }
+    let mut run_start: u64 = 0;
+    let mut run_length: u64 = 0;
+    for cluster in 0..total_clusters {
+        let byte_index = (cluster / 8) as usize;
+        let bit_index = (cluster % 8) as u32;
+        let occupied = (bitmap[byte_index] >> bit_index) & 1 == 1;
+        if occupied {
+            run_start = cluster + 1;
+            run_length = 0;
+        } else {
+            if run_length == 0 {
+                run_start = cluster;
+            }
+            run_length += 1;
+            if run_length >= length {
+                for allocated in run_start..run_start + length {
+                    let byte = (allocated / 8) as usize;
+                    let bit = (allocated % 8) as u32;
+                    bitmap[byte] |= 1 << bit;
+                }
+                return Some(RefsChunkDescriptor {
+                    flags: REFS_CHUNK_FLAG_NONE,
+                    lcn: run_start,
+                    vcn_length: length,
+                    checksum: 0,
+                    reserved: 0,
+                });
+            }
+        }
+    }
+    None
 }
 
-/// Free a chunk
-pub fn free_chunk(_sb: &RefsSuperBlock, chunk: &RefsChunkDescriptor) -> Result<(), ()> {
-    // In a real implementation, we would:
-    // 1. Mark the clusters as free in the allocation bitmap
-    // 2. Update any allocation tables
-
+/// Free a chunk by clearing its bits in the allocation bitmap.
+pub fn free_chunk(
+    _sb: &RefsSuperBlock,
+    bitmap: &mut [u8],
+    chunk: &RefsChunkDescriptor,
+) -> Result<(), ()> {
     if chunk.is_hole() {
-        // Can't free a hole
         return Err(());
     }
-
+    for cluster in chunk.lcn..chunk.lcn + chunk.vcn_length {
+        let byte = (cluster / 8) as usize;
+        let bit = (cluster % 8) as u32;
+        if byte < bitmap.len() {
+            bitmap[byte] &= !(1 << bit);
+        }
+    }
     Ok(())
 }
 
@@ -342,6 +379,7 @@ pub fn build_chunk_table(_sb: &RefsSuperBlock, chunks: &[RefsChunkDescriptor]) -
     }
 
     table.chunk_count = chunks.len() as u32;
+    table.descriptors = chunks.to_vec();
     table
 }
 
@@ -378,15 +416,15 @@ const REFS_DEFAULT_CLUSTER_SIZE: u32 = 65536;
 /// Print chunk information
 pub fn debug_print_chunk(chunk: &RefsChunkDescriptor, _sb: &RefsSuperBlock) {
     // kprintln!("  Chunk:");
-    // kprintln!("    Flags:  0x{:016x}", chunk.flags);
+    // kprintln!("    flags:  0x{:016x}", chunk.flags);
     // kprintln!("    LCN:    {}", chunk.lcn);
     // kprintln!("    VCNs:   {}", chunk.vcn_length);
     // kprintln!("    Size:   {} bytes", chunk.get_byte_length(sb));
 
     if chunk.is_hole() {
-        // kprintln!("    Type:   HOLE");
+        // kprintln!("    r#type:   HOLE");
     } else {
-        // kprintln!("    Type:   DATA");
+        // kprintln!("    r#type:   DATA");
     }
 }
 

@@ -16,26 +16,42 @@ use alloc::vec::Vec;
 
 pub const EXT_SUPER_MAGIC: u16 = 0xEF53;
 
-pub fn mount(_disk_index: usize, _starting_lba: u64) -> Result<(), ()> {
-    // TODO: Read superblock and mount EXT filesystem
-    Ok(())
+pub fn mount(_disk_index: usize, starting_lba: u64) -> Result<(), ()> {
+    super::mount_first(core::ptr::null_mut(), starting_lba)
+        .map(|_| ())
+        .ok_or(())
 }
 
 pub fn unmount() {
-    // TODO: Unmount and flush buffers
+    if let Some(fs) = super::get_mounted_fs() {
+        super::unmount(fs as *const _ as *mut super::Ext2FileSystem);
+    }
+    super::clear_mounted_fs();
 }
 
 pub fn is_mounted() -> bool {
-    // TODO: Check mount state
-    false
+    super::is_mounted()
 }
 
 pub fn read_file(_path: &str) -> Result<Vec<u8>, ()> {
-    Err(())
+    let fs = super::get_mounted_fs().ok_or(())?;
+    super::read_whole_file(fs, _path).map_err(|_| ())
 }
 
 pub fn list_directory(_path: &str) -> Result<Vec<ExtEntry>, ()> {
-    Err(())
+    let fs = super::get_mounted_fs().ok_or(())?;
+    let path = super::win_path_to_ext2(_path);
+    let inode = super::resolve_path(fs, path.as_bytes()).ok_or(())?;
+    let entries = super::list_directory(fs, inode).ok_or(())?;
+    Ok(entries
+        .into_iter()
+        .map(|entry| ExtEntry {
+            name: entry.name.clone(),
+            is_directory: entry.is_dir(),
+            inode: entry.inode,
+            size: 0,
+        })
+        .collect())
 }
 
 pub struct ExtEntry {
@@ -46,7 +62,14 @@ pub struct ExtEntry {
 }
 
 pub fn get_volume_label() -> Result<String, ()> {
-    Ok(String::from("EXT_VOLUME"))
+    let fs = super::get_mounted_fs().ok_or(())?;
+    let label_end = fs
+        .superblock
+        .volume_name
+        .iter()
+        .position(|&byte| byte == 0)
+        .unwrap_or(fs.superblock.volume_name.len());
+    Ok(String::from_utf8_lossy(&fs.superblock.volume_name[..label_end]).into_owned())
 }
 
 pub struct ExtStats {
@@ -58,5 +81,12 @@ pub struct ExtStats {
 }
 
 pub fn get_stats() -> Option<ExtStats> {
-    None
+    let fs = super::get_mounted_fs()?;
+    Some(ExtStats {
+        total_blocks: fs.superblock.get_total_blocks(),
+        free_blocks: u64::from(fs.superblock.free_blocks),
+        total_inodes: u64::from(fs.superblock.inodes_count),
+        free_inodes: u64::from(fs.superblock.free_inodes),
+        block_size: fs.block_size,
+    })
 }

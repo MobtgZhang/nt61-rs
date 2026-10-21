@@ -43,7 +43,7 @@ pub struct ObjectIdKey {
 }
 
 impl ObjectIdKey {
-    /// Create a new object ID key
+    /// create a new object ID key
     pub fn new(object_id: u64, sub_sequence: u64) -> Self {
         Self {
             object_id,
@@ -73,12 +73,12 @@ pub struct ObjectIdValue {
     pub record_lba: u64,
     /// Record size
     pub record_size: u32,
-    /// Flags
+    /// flags
     pub flags: u32,
 }
 
 impl ObjectIdValue {
-    /// Create a new object ID value
+    /// create a new object ID value
     pub fn new(record_lba: u64, record_size: u32) -> Self {
         Self {
             record_lba,
@@ -103,7 +103,7 @@ pub struct ObjectIdTable {
 }
 
 impl ObjectIdTable {
-    /// Create a new empty object ID table
+    /// create a new empty object ID table
     pub fn new() -> Self {
         Self {
             root_lba: 0,
@@ -112,7 +112,7 @@ impl ObjectIdTable {
         }
     }
 
-    /// Create from a B+ tree
+    /// create from a B+ tree
     pub fn from_btree(root_lba: u64) -> Self {
         let mut table = Self::new();
         table.root_lba = root_lba;
@@ -160,7 +160,7 @@ pub struct ObjectIdEntry {
 }
 
 impl ObjectIdEntry {
-    /// Create a new entry
+    /// create a new entry
     pub fn new(key: ObjectIdKey, value: ObjectIdValue) -> Self {
         Self { key, value }
     }
@@ -180,7 +180,7 @@ impl ObjectIdEntry {
 // Object ID Operations
 // ============================================================================
 
-/// Create a new object ID
+/// create a new object ID
 pub fn create_object_id(table: &mut ObjectIdTable, record_lba: u64, record_size: u32) -> u64 {
     // Find the highest existing object ID
     let mut max_id = REFS_FIRST_USER_OBJECT_ID;
@@ -305,7 +305,7 @@ pub struct ObjectLookupResult {
 }
 
 impl ObjectLookupResult {
-    /// Create a new result
+    /// create a new result
     pub fn new(object_id: u64, sub_sequence: u64, record_lba: u64, record_size: u32) -> Self {
         Self {
             object_id,
@@ -351,7 +351,7 @@ pub struct ObjectIdIterator<'a> {
 }
 
 impl<'a> ObjectIdIterator<'a> {
-    /// Create a new iterator
+    /// create a new iterator
     pub fn new(table: &'a ObjectIdTable) -> Self {
         Self { table, index: 0 }
     }

@@ -147,7 +147,7 @@ pub enum OpenMode {
     Execute = 4,
 }
 
-/// Create options
+/// create options
 #[derive(Debug, Clone, Copy)]
 pub enum CreateOption {
     None = 0,
@@ -199,7 +199,7 @@ pub struct PathIterator<'a> {
 }
 
 impl<'a> PathIterator<'a> {
-    /// Create a new path iterator
+    /// create a new path iterator
     pub fn new(path: &'a [u16]) -> Self {
         Self { path, position: 0 }
     }
@@ -365,7 +365,7 @@ pub fn resolve_path(path: &[u16]) -> Option<&'static mut VfsNode> {
     Some(current)
 }
 
-/// Internal helper to find child without holding locks twice
+/// internal helper to find child without holding locks twice
 fn find_child_internal(parent: &VfsNode, name: &[u16]) -> Option<&'static mut VfsNode> {
     let root = ROOT_DIR.lock();
 
@@ -382,7 +382,7 @@ fn find_child_internal(parent: &VfsNode, name: &[u16]) -> Option<&'static mut Vf
 
             let node_name = &(*node_ptr).name;
             let node_name_slice =
-                core::slice::from_raw_parts(node_name.Buffer, node_name.Length as usize / 2);
+                core::slice::from_raw_parts(node_name.buffer, node_name.length as usize / 2);
 
             if compare_name_insensitive(node_name_slice, name) {
                 return Some(&mut *node_ptr);
@@ -405,7 +405,7 @@ pub fn get_root() -> Option<&'static mut VfsNode> {
     None
 }
 
-/// Create VFS node
+/// create VFS node
 pub fn create_node(node_type: VfsNodeType, name: &[u16]) -> Option<&'static mut VfsNode> {
     let mut root = ROOT_DIR.lock();
 
@@ -428,9 +428,9 @@ pub fn create_node(node_type: VfsNodeType, name: &[u16]) -> Option<&'static mut 
             (*node).file_object = core::ptr::null_mut();
             (*node).vcb = core::ptr::null_mut();
             (*node).parent = core::ptr::null_mut();
-            (*node).name.Buffer = name.as_ptr() as *mut u16;
-            (*node).name.Length = (name.len() * 2) as u16;
-            (*node).name.MaximumLength = (name.len() * 2) as u16;
+            (*node).name.buffer = name.as_ptr() as *mut u16;
+            (*node).name.length = (name.len() * 2) as u16;
+            (*node).name.maximum_length = (name.len() * 2) as u16;
             (*node).byte_offset = 0;
             (*node).allocation_size = 0;
         }
@@ -495,11 +495,11 @@ pub fn lookup_child(parent: *mut VfsNode, name: &[u16]) -> Option<&'static mut V
             if (*node_ptr).parent == parent {
                 // Compare names using UnicodeString comparison
                 let node_name = &(*node_ptr).name;
-                if node_name.Length == (name.len() * 2) as u16 {
+                if node_name.length == (name.len() * 2) as u16 {
                     // Compare the name buffers
                     let node_name_slice = core::slice::from_raw_parts(
-                        node_name.Buffer,
-                        node_name.Length as usize / 2,
+                        node_name.buffer,
+                        node_name.length as usize / 2,
                     );
                     if node_name_slice == name {
                         // Found matching child
@@ -526,9 +526,9 @@ pub fn find_by_name(name: &[u16]) -> Option<&'static mut VfsNode> {
 
         unsafe {
             let node_name = &(*node_ptr).name;
-            if node_name.Length == (name.len() * 2) as u16 {
+            if node_name.length == (name.len() * 2) as u16 {
                 let node_name_slice =
-                    core::slice::from_raw_parts(node_name.Buffer, node_name.Length as usize / 2);
+                    core::slice::from_raw_parts(node_name.buffer, node_name.length as usize / 2);
                 if node_name_slice == name {
                     return Some(&mut *node_ptr);
                 }
@@ -569,7 +569,7 @@ pub fn get_children(parent: *mut VfsNode, buffer: &mut [usize]) -> usize {
     count
 }
 
-/// Create a volume mount point
+/// create a volume mount point
 pub fn create_volume(name: &[u16]) -> Option<&'static mut VfsNode> {
     let mut root = ROOT_DIR.lock();
 
@@ -579,9 +579,9 @@ pub fn create_volume(name: &[u16]) -> Option<&'static mut VfsNode> {
         if !vol_ptr.is_null() {
             unsafe {
                 let vol_name = &(*vol_ptr).name;
-                if vol_name.Length == (name.len() * 2) as u16 {
+                if vol_name.length == (name.len() * 2) as u16 {
                     let vol_name_slice =
-                        core::slice::from_raw_parts(vol_name.Buffer, vol_name.Length as usize / 2);
+                        core::slice::from_raw_parts(vol_name.buffer, vol_name.length as usize / 2);
                     if vol_name_slice == name {
                         return Some(&mut *vol_ptr);
                     }
@@ -604,9 +604,9 @@ pub fn create_volume(name: &[u16]) -> Option<&'static mut VfsNode> {
             (*node_ptr).file_object = core::ptr::null_mut();
             (*node_ptr).vcb = core::ptr::null_mut();
             (*node_ptr).parent = core::ptr::null_mut(); // Volumes have no parent
-            (*node_ptr).name.Buffer = name.as_ptr() as *mut u16;
-            (*node_ptr).name.Length = (name.len() * 2) as u16;
-            (*node_ptr).name.MaximumLength = (name.len() * 2) as u16;
+            (*node_ptr).name.buffer = name.as_ptr() as *mut u16;
+            (*node_ptr).name.length = (name.len() * 2) as u16;
+            (*node_ptr).name.maximum_length = (name.len() * 2) as u16;
             (*node_ptr).byte_offset = 0;
             (*node_ptr).allocation_size = 0;
         }
@@ -631,7 +631,7 @@ pub fn create_volume(name: &[u16]) -> Option<&'static mut VfsNode> {
     None
 }
 
-/// Create file
+/// create file
 /// Creates a new file node under the specified parent directory.
 /// The `create_option` parameter specifies behavior when the file already exists:
 /// - FileSupersede: Replace existing file
@@ -652,7 +652,7 @@ pub fn create_file(
             if let Some(node) = existing {
                 delete_node(node);
             }
-            // Create new file
+            // create new file
             let node = create_node(VfsNodeType::File, name)?;
             unsafe {
                 (*node).parent = parent;
@@ -722,7 +722,7 @@ pub fn create_file(
     }
 }
 
-/// Create directory
+/// create directory
 pub fn create_directory(parent: *mut VfsNode, name: &[u16]) -> Option<&'static mut VfsNode> {
     let node = create_node(VfsNodeType::Directory, name)?;
 
@@ -769,17 +769,13 @@ impl SectorResult {
     }
 }
 
-/// Read sectors from a file.
+/// read sectors from a file.
 /// `file_ctx` is the filesystem-specific file context (e.g., cluster number).
 /// `buffer` is the destination buffer physical address.
 /// `byte_offset` is the byte offset within the file.
 /// Returns the number of bytes read or an error.
-pub fn read_file_sectors(
-    file_ctx: u64,
-    buffer: u64,
-    length: u32,
-    byte_offset: u64,
-) -> SectorResult {
+pub fn read_file_sectors_into(file_ctx: u64, buffer: &mut [u8], byte_offset: u64) -> SectorResult {
+    let length = buffer.len() as u32;
     // Route to RAM disk for bootstrap filesystem operations
     if file_ctx != 0 {
         // file_ctx contains the sector number to read from
@@ -787,21 +783,11 @@ pub fn read_file_sectors(
 
         // Allocate temporary buffer on stack for small reads, use provided buffer for larger
         let mut temp_buf = [0u8; 512];
-        let buf_ptr = if buffer != 0 {
-            buffer as *mut u8
-        } else {
-            temp_buf.as_mut_ptr()
-        };
-
-        // Read from RAM disk
+        // read from RAM disk
         if crate::drivers::storage::ramdisk::read(sector, &mut temp_buf) {
             // Copy data to destination buffer
-            if buffer != 0 {
-                let bytes_to_copy = core::cmp::min(length as usize, 512);
-                unsafe {
-                    core::ptr::copy_nonoverlapping(temp_buf.as_ptr(), buf_ptr, bytes_to_copy);
-                }
-            }
+            let bytes_to_copy = core::cmp::min(length as usize, 512);
+            buffer[..bytes_to_copy].copy_from_slice(&temp_buf[..bytes_to_copy]);
             SectorResult::success(core::cmp::min(length as usize, 512))
         } else {
             SectorResult::error(0xC000000D) // STATUS_DATA_ERROR
@@ -814,15 +800,8 @@ pub fn read_file_sectors(
 
         let mut temp_buf = [0u8; 512];
         if crate::drivers::storage::ramdisk::read(sector, &mut temp_buf) {
-            if buffer != 0 {
-                unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        temp_buf.as_ptr().add(offset_in_sector),
-                        buffer as *mut u8,
-                        bytes_to_read,
-                    );
-                }
-            }
+            buffer[..bytes_to_read]
+                .copy_from_slice(&temp_buf[offset_in_sector..offset_in_sector + bytes_to_read]);
             SectorResult::success(bytes_to_read)
         } else {
             SectorResult::error(0xC000000D) // STATUS_DATA_ERROR
@@ -830,18 +809,14 @@ pub fn read_file_sectors(
     }
 }
 
-/// Write sectors to a file.
+/// write sectors to a file.
 /// `file_ctx` is the filesystem-specific file context.
 /// `buffer` is the source buffer physical address.
 /// `byte_offset` is the byte offset within the file.
 /// Returns the number of bytes written or an error.
-pub fn write_file_sectors(
-    file_ctx: u64,
-    buffer: u64,
-    length: u32,
-    byte_offset: u64,
-) -> SectorResult {
-    if buffer == 0 || length == 0 {
+pub fn write_file_sectors_from(file_ctx: u64, buffer: &[u8], byte_offset: u64) -> SectorResult {
+    let length = buffer.len() as u32;
+    if length == 0 {
         return SectorResult::error(0xC000000D); // STATUS_DATA_ERROR
     }
 
@@ -852,16 +827,14 @@ pub fn write_file_sectors(
 
         // For single sector writes, we need to copy data
         if length >= 512 {
-            // Read-modify-write for proper sector update
+            // read-modify-write for proper sector update
             let mut temp_buf = [0u8; 512];
             let _ = crate::drivers::storage::ramdisk::read(sector, &mut temp_buf);
 
             // Copy user data
-            unsafe {
-                core::ptr::copy_nonoverlapping(buffer as *const u8, temp_buf.as_mut_ptr(), 512);
-            }
+            temp_buf.copy_from_slice(&buffer[..512]);
 
-            // Write back
+            // write back
             if crate::drivers::storage::ramdisk::write(sector, &temp_buf) {
                 SectorResult::success(512)
             } else {
@@ -873,15 +846,9 @@ pub fn write_file_sectors(
             let _ = crate::drivers::storage::ramdisk::read(sector, &mut temp_buf);
 
             // Copy partial data
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    buffer as *const u8,
-                    temp_buf.as_mut_ptr(),
-                    length as usize,
-                );
-            }
+            temp_buf[..length as usize].copy_from_slice(&buffer[..length as usize]);
 
-            // Write back
+            // write back
             if crate::drivers::storage::ramdisk::write(sector, &temp_buf) {
                 SectorResult::success(length as usize)
             } else {
@@ -889,25 +856,20 @@ pub fn write_file_sectors(
             }
         }
     } else {
-        // Write at byte_offset within the RAM disk
+        // write at byte_offset within the RAM disk
         let sector = (byte_offset / 512) as usize;
         let offset_in_sector = (byte_offset % 512) as usize;
         let bytes_to_write = core::cmp::min(length as usize, 512 - offset_in_sector);
 
-        // Read-modify-write
+        // read-modify-write
         let mut temp_buf = [0u8; 512];
         let _ = crate::drivers::storage::ramdisk::read(sector, &mut temp_buf);
 
         // Copy partial data
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                buffer as *const u8,
-                temp_buf.as_mut_ptr().add(offset_in_sector),
-                bytes_to_write,
-            );
-        }
+        temp_buf[offset_in_sector..offset_in_sector + bytes_to_write]
+            .copy_from_slice(&buffer[..bytes_to_write]);
 
-        // Write back
+        // write back
         if crate::drivers::storage::ramdisk::write(sector, &temp_buf) {
             SectorResult::success(bytes_to_write)
         } else {
@@ -923,38 +885,28 @@ fn path_to_utf16(path: &str) -> alloc::vec::Vec<u16> {
     path.encode_utf16().collect()
 }
 
-/// Read up to `buffer.len()` bytes of a VFS file into `buffer`.
+/// read up to `buffer.len()` bytes of a VFS file into `buffer`.
 pub fn vfs_read(path: &str, buffer: &mut [u8]) -> Result<usize, ()> {
     let wide = path_to_utf16(path);
     let node = lookup_path(&wide).ok_or(())?;
     if node.node_type != VfsNodeType::File {
         return Err(());
     }
-    let result = read_file_sectors(
-        0,
-        buffer.as_mut_ptr() as u64,
-        buffer.len() as u32,
-        node.byte_offset as u64,
-    );
+    let result = read_file_sectors_into(0, buffer, node.byte_offset as u64);
     if result.status != 0 {
         return Err(());
     }
     Ok(result.bytes_read)
 }
 
-/// Write `bytes` to a VFS file.
+/// write `bytes` to a VFS file.
 pub fn vfs_write(path: &str, bytes: &[u8]) -> Result<usize, ()> {
     let wide = path_to_utf16(path);
     let node = lookup_path(&wide).ok_or(())?;
     if node.node_type != VfsNodeType::File {
         return Err(());
     }
-    let result = write_file_sectors(
-        0,
-        bytes.as_ptr() as u64,
-        bytes.len() as u32,
-        node.byte_offset as u64,
-    );
+    let result = write_file_sectors_from(0, bytes, node.byte_offset as u64);
     if result.status != 0 {
         return Err(());
     }
@@ -967,7 +919,7 @@ pub fn init() {
     // Initialize RAM disk
     crate::drivers::storage::ramdisk::init();
 
-    // Create root directory
+    // create root directory
     let mut root = ROOT_DIR.lock();
 
     // Allocate VfsNode from pool
@@ -990,9 +942,9 @@ pub fn init() {
             (*node_ptr).file_object = core::ptr::null_mut();
             (*node_ptr).vcb = core::ptr::null_mut();
             (*node_ptr).parent = core::ptr::null_mut();
-            (*node_ptr).name.Length = 0;
-            (*node_ptr).name.MaximumLength = 0;
-            (*node_ptr).name.Buffer = core::ptr::null_mut();
+            (*node_ptr).name.length = 0;
+            (*node_ptr).name.maximum_length = 0;
+            (*node_ptr).name.buffer = core::ptr::null_mut();
             (*node_ptr).byte_offset = 0;
             (*node_ptr).allocation_size = 0;
         }

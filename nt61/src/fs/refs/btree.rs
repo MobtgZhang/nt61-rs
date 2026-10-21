@@ -63,7 +63,7 @@ pub struct RefsBtreePageHeader {
     pub page_count: u16,
     /// Number of keys in this page
     pub key_count: u16,
-    /// Length of each value (0 if variable)
+    /// length of each value (0 if variable)
     pub value_length: u16,
     /// Reserved
     pub reserved: [u8; 4],
@@ -141,7 +141,7 @@ pub struct RefsBtreeKey {
 }
 
 impl RefsBtreeKey {
-    /// Create a new key
+    /// create a new key
     pub fn new(object_id: u64, sub_sequence: u64, code: u64) -> Self {
         Self {
             object_id,
@@ -164,7 +164,7 @@ pub struct RefsBtreeValue {
 }
 
 impl RefsBtreeValue {
-    /// Create a new value
+    /// create a new value
     pub fn new(data: Vec<u8>) -> Self {
         Self { data }
     }
@@ -196,7 +196,7 @@ pub struct RefsBtreePage {
 }
 
 impl RefsBtreePage {
-    /// Create a new empty page
+    /// create a new empty page
     pub fn new() -> Self {
         Self {
             header: RefsBtreePageHeader {
@@ -244,7 +244,7 @@ pub struct RefsBtree {
 }
 
 impl RefsBtree {
-    /// Create a new B+ tree
+    /// create a new B+ tree
     pub fn new(page_size: usize) -> Self {
         Self {
             root: RefsBtreePage::new(),
@@ -285,7 +285,7 @@ pub fn parse_page(buffer: &[u8], lba: u64) -> Option<RefsBtreePage> {
         return None;
     }
 
-    // Read header
+    // read header
     let magic = u32::from_le_bytes(buffer[0..4].try_into().ok()?);
     let flags = buffer[4];
     let height = buffer[5];
@@ -471,7 +471,7 @@ impl RefsBtreeKey {
         bytes
     }
 
-    /// Create key from bytes
+    /// create key from bytes
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         if bytes.len() < 24 {
             return None;
@@ -519,7 +519,7 @@ pub fn insert_key(
     // In a real implementation, we would:
     // 1. Find the correct position
     // 2. Insert the key and value
-    // 3. Handle page splitting if needed
+    // 3. handle page splitting if needed
 
     Err(())
 }
@@ -529,7 +529,7 @@ pub fn delete_key(_page: &mut RefsBtreePage, _key: &RefsBtreeKey) -> Result<(), 
     // In a real implementation, we would:
     // 1. Find the key
     // 2. Remove it from the page
-    // 3. Handle page merging if needed
+    // 3. handle page merging if needed
 
     Err(())
 }
@@ -547,7 +547,7 @@ pub struct BtreeIterator<'a> {
 }
 
 impl<'a> BtreeIterator<'a> {
-    /// Create a new iterator
+    /// create a new iterator
     pub fn new(page: &'a RefsBtreePage) -> Self {
         Self {
             page: Some(page),
@@ -598,14 +598,14 @@ impl<'a> Iterator for BtreeIterator<'a> {
 pub fn debug_print_page(page: &RefsBtreePage) {
     // kprintln!("[REFS] B+ Tree Page:");
     // kprintln!("  Magic:     0x{:08x}", page.header.magic);
-    // kprintln!("  Flags:     0x{:02x}", page.header.flags);
+    // kprintln!("  flags:     0x{:02x}", page.header.flags);
     // kprintln!("  Height:    {}", page.header.height);
     // kprintln!("  Key count: {}", page.header.key_count);
     // kprintln!("  LBA:       {}", page.lba);
 
     if page.header.is_leaf() {
-        // kprintln!("  Type:      LEAF");
+        // kprintln!("  r#type:      LEAF");
     } else {
-        // kprintln!("  Type:      INDEX");
+        // kprintln!("  r#type:      INDEX");
     }
 }

@@ -12,7 +12,7 @@
 //! ## Implementation
 //
 //! This module provides functions to:
-//! - Create pagefile.sys with the requested size
+//! - create pagefile.sys with the requested size
 //! - Open existing pagefile.sys
 //! - Extend pagefile.sys dynamically
 
@@ -146,7 +146,7 @@ pub fn open_or_create(
         return Some(handle);
     }
 
-    // Create new pagefile
+    // create new pagefile
     kprintln_info!("NTFS", "Creating new pagefile.sys...");
     create_pagefile(ntfs_data, device_id, size_clusters, size_bytes)
 }
@@ -157,7 +157,7 @@ fn find_pagefile(
     ntfs_data: &crate::fs::ntfs::NtfsData,
     _device_id: usize,
 ) -> Option<NtfsPagefileHandle> {
-    // Read MFT record 5 (root directory)
+    // read MFT record 5 (root directory)
     let _record = crate::fs::ntfs::read_mft_record(ntfs_data, 5)?;
 
     // Pagefile search in NTFS - simplified for now
@@ -171,7 +171,7 @@ fn find_pagefile(
     None
 }
 
-/// Create a new pagefile.sys.
+/// create a new pagefile.sys.
 ///
 fn create_pagefile(
     ntfs_data: &crate::fs::ntfs::NtfsData,
@@ -201,7 +201,7 @@ fn create_pagefile(
         start_cluster
     );
 
-    // Create MFT record for the pagefile
+    // create MFT record for the pagefile
     if !create_pagefile_record(
         ntfs_data,
         device_id,
@@ -318,7 +318,7 @@ fn allocate_clusters(
     _count: u64,
 ) -> Option<u64> {
     // In a real implementation, we would:
-    // 1. Read the volume bitmap
+    // 1. read the volume bitmap
     // 2. Find free clusters
     // 3. Mark them as used
     // 4. Return the first cluster
@@ -349,7 +349,7 @@ fn find_free_cluster_after(
     Some(after)
 }
 
-/// Create MFT record for the pagefile.
+/// create MFT record for the pagefile.
 ///
 fn create_pagefile_record(
     ntfs_data: &crate::fs::ntfs::NtfsData,
@@ -364,13 +364,13 @@ fn create_pagefile_record(
 
     // MFT record header
     record[0..4].copy_from_slice(b"FILE"); // Signature
-    record[0x16..0x18].copy_from_slice(&1u16.to_le_bytes()); // Flags: IN_USE
+    record[0x16..0x18].copy_from_slice(&1u16.to_le_bytes()); // flags: IN_USE
 
     // Calculate sectors for the record
     let sectors_per_record = record_size / 512;
     let record_start_sector = ntfs_data.mft_start + (record_num as u64 * sectors_per_record as u64);
 
-    // Write the record
+    // write the record
     for i in 0..sectors_per_record {
         let sector = record_start_sector + i as u64;
         let offset = i * 512;
@@ -390,7 +390,7 @@ fn create_pagefile_record(
     true
 }
 
-/// Read from the pagefile.
+/// read from the pagefile.
 ///
 pub fn read_pagefile_data(
     _ntfs_data: &crate::fs::ntfs::NtfsData,
@@ -421,7 +421,7 @@ pub fn read_pagefile_data(
     true
 }
 
-/// Write to the pagefile.
+/// write to the pagefile.
 ///
 pub fn write_pagefile_data(
     _ntfs_data: &crate::fs::ntfs::NtfsData,
@@ -437,7 +437,7 @@ pub fn write_pagefile_data(
         let mut sector_buf = [0u8; 512];
         let sector_offset = bytes_written % 512;
 
-        // Read existing sector if not at sector boundary
+        // read existing sector if not at sector boundary
         if sector_offset != 0 || bytes_written + 512 > buffer.len() {
             let _ = block::read_block(
                 device_id,

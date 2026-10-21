@@ -22,20 +22,16 @@
 //! # Mounting
 //! We expose two entry points: `mount` reads the boot sector and
 //! registers a `Fat32FileSystem`; `Fat32FileSystem::read_file` reads
-//! the bytes of a file by walking the cluster chain. Write support is
+//! the bytes of a file by walking the cluster chain. write support is
 //! out of scope for the bootstrap.
 
 extern crate alloc;
 
 use crate::boot_println; // re-exported from rtl/klog.rs
-#[cfg(target_arch = "x86_64")]
 use crate::drivers::storage::ahci;
-#[cfg(target_arch = "x86_64")]
-use crate::drivers::storage::ataport::AtaPortInitialize;
+use crate::drivers::storage::ataport::ata_port_initialize;
 use crate::fs::{FileSystem, FileSystemDriver, FileSystemType};
 use crate::ke::sync::Spinlock;
-use crate::kprintln_info;
-use crate::kprintln_warn;
 use alloc::vec::Vec;
 use core::ptr::null_mut;
 
@@ -268,8 +264,8 @@ pub fn clear_mounted_fs() {
     }
 }
 
-/// Read a sector from the backing device using AHCI.
-pub fn read_sector(_device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<(), ()> {
+/// read a sector from the backing device using AHCI.
+pub fn read_sector(device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<(), ()> {
     if buffer.len() < 512 {
         return Err(());
     }
@@ -283,11 +279,12 @@ pub fn read_sector(_device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<(
     // Fallback: the ESP mirror registered by winload. This is the
     // historical path — kept so legacy call sites that don't go
     // through `mount_partition_detected` still see the ESP.
-    if let Some(base) = crate::fs::active_partition_ramdisk() {
+    if let Some(context) = unsafe { crate::fs::mount_context_from_device(device) } {
+        let base = context.base;
         let off = (sector as usize) * 512;
         // Check if the read is within the ESP/System mirror bounds
         // to prevent stack faults when reading beyond the partition.
-        let max_size = crate::fs::active_partition_size().unwrap_or(usize::MAX);
+        let max_size = context.size;
         if off + 512 > max_size {
             crate::boot_println!(
                 "[FAT32] read_sector: out of bounds (off=0x{:x} max=0x{:x} sector={})",
@@ -320,7 +317,6 @@ pub fn read_sector(_device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<(
     }
 
     // x86_64-only fallback to AHCI/ATA drivers.
-    #[cfg(target_arch = "x86_64")]
     {
         let partition_offset = *FAT32_PARTITION_OFFSET.lock();
         let absolute_sector = partition_offset + sector;
@@ -332,7 +328,7 @@ pub fn read_sector(_device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<(
         }
 
         // Fallback: Try ATA/ATAPI
-        crate::drivers::storage::ataport::AtaPortInitialize(0);
+        crate::drivers::storage::ataport::ata_port_initialize(0);
         let mut words = [0u16; 256];
         if crate::drivers::storage::ataport::read_sector(0, absolute_sector as u32, &mut words) {
             // Convert u16 array to u8 array (little-endian)
@@ -347,7 +343,7 @@ pub fn read_sector(_device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<(
     Err(())
 }
 
-/// Write a sector to the backing device.
+/// write a sector to the backing device.
 pub fn write_sector(_device: *mut (), sector: u64, buffer: &[u8]) -> Result<(), ()> {
     if buffer.len() < 512 {
         return Err(());
@@ -359,7 +355,6 @@ pub fn write_sector(_device: *mut (), sector: u64, buffer: &[u8]) -> Result<(), 
     }
 
     // x86_64-only fallback to AHCI/ATA drivers.
-    #[cfg(target_arch = "x86_64")]
     {
         let partition_offset = get_partition_offset();
         let absolute_sector = partition_offset + sector;
@@ -370,7 +365,7 @@ pub fn write_sector(_device: *mut (), sector: u64, buffer: &[u8]) -> Result<(), 
         }
 
         // Fallback: Try ATA/ATAPI
-        AtaPortInitialize(0);
+        ata_port_initialize(0);
         let mut words = [0u16; 256];
         // Convert u8 buffer to u16 words (little-endian)
         for i in 0..256 {
@@ -397,7 +392,7 @@ pub fn update_fat_entry(fs: &Fat32FileSystem, cluster: u32, value: u32) -> Resul
     let fat_sector = fat_start + (entry_offset / sector_size);
     let offset_in_sector = (entry_offset % sector_size) as usize;
 
-    // Read FAT sector
+    // read FAT sector
     let mut sector_buf = [0u8; 512];
     if read_sector(fs.base.device, fat_sector, &mut sector_buf).is_err() {
         // kprintln!("[FAT32] update_fat_entry: failed to read FAT sector {}", fat_sector);
@@ -410,7 +405,7 @@ pub fn update_fat_entry(fs: &Fat32FileSystem, cluster: u32, value: u32) -> Resul
         return Err(());
     }
 
-    // Read current value (preserve high 4 bits for FAT32)
+    // read current value (preserve high 4 bits for FAT32)
     let old_value = u32::from_le_bytes([
         sector_buf[offset_in_sector],
         sector_buf[offset_in_sector + 1],
@@ -424,7 +419,7 @@ pub fn update_fat_entry(fs: &Fat32FileSystem, cluster: u32, value: u32) -> Resul
     // Update the FAT entry
     sector_buf[offset_in_sector..offset_in_sector + 4].copy_from_slice(&new_value.to_le_bytes());
 
-    // Write FAT sector back
+    // write FAT sector back
     if write_sector(fs.base.device, fat_sector, &sector_buf).is_err() {
         // kprintln!("[FAT32] update_fat_entry: failed to write FAT sector {}", fat_sector);
         return Err(());
@@ -509,7 +504,7 @@ pub fn free_cluster_chain(fs: &Fat32FileSystem, start_cluster: u32) -> Result<()
     Ok(())
 }
 
-/// Write data to a file given its starting cluster.
+/// write data to a file given its starting cluster.
 /// This handles cluster allocation and FAT table updates.
 pub fn write_file(
     fs: &Fat32FileSystem,
@@ -561,13 +556,13 @@ pub fn write_file(
 
     // If writing at the start of a cluster and data fits, write entire cluster
     if byte_offset_in_cluster == 0 && data.len() >= cluster_size {
-        // Write full cluster(s)
+        // write full cluster(s)
         let mut bytes_written = 0;
         let mut current = current_cluster;
         let mut clusters_needed = (data.len() + cluster_size - 1) / cluster_size;
 
         while clusters_needed > 0 && bytes_written < data.len() {
-            // Write one cluster
+            // write one cluster
             for s in 0..sectors_per_cluster {
                 let mut sector_buf = [0u8; 512];
                 let src_offset = bytes_written + (s as usize) * 512;
@@ -606,7 +601,7 @@ pub fn write_file(
         let sector_in_cluster = (byte_offset_in_cluster / 512) as usize;
         let sector_offset = (byte_offset_in_cluster % 512) as usize;
 
-        // Read existing sector
+        // read existing sector
         let sector_num = first_sector + sector_in_cluster as u64;
         if read_sector(fs.base.device, sector_num, &mut sector_buf).is_err() {
             return Err(());
@@ -616,7 +611,7 @@ pub fn write_file(
         let copy_len = core::cmp::min(data.len(), 512 - sector_offset);
         sector_buf[sector_offset..sector_offset + copy_len].copy_from_slice(&data[..copy_len]);
 
-        // Write sector back
+        // write sector back
         if write_sector(fs.base.device, sector_num, &sector_buf).is_err() {
             return Err(());
         }
@@ -639,8 +634,16 @@ pub const FAT32_FREE: u32 = 0x0000_0000;
 /// for "the in-memory filesystem image handed to us by the UEFI
 /// stub" - the real implementation would call into the storage
 /// stack to issue a read.
-pub fn mount(device: *mut (), _path: &[u16]) -> Option<&'static mut Fat32FileSystem> {
+pub fn mount(
+    device: *mut (),
+    _path: &[u16],
+    partition: Option<crate::fs::MountContext>,
+) -> Option<&'static mut Fat32FileSystem> {
     crate::boot_println!("[FAT32] mount: entering");
+    let device = match partition {
+        Some(context) => crate::fs::allocate_mount_context(context) as *mut (),
+        None => device,
+    };
     let mut buffer = [0u8; 512];
     crate::boot_println!("[FAT32] mount: about to read_sector 0");
     if read_sector(device, 0, &mut buffer).is_err() {
@@ -801,9 +804,7 @@ pub fn register_driver() {
         unmount: Some(unmount_fs),
     };
     // kprintln!("    FAT32 driver registered");
-    unsafe {
-        crate::fs::register(&mut FAT32_DRIVER);
-    }
+    crate::fs::register(core::ptr::addr_of_mut!(FAT32_DRIVER));
 }
 
 /// `FileSystemDriver::mount` returns `*mut FileSystem` but the
@@ -811,7 +812,7 @@ pub fn register_driver() {
 /// Wrap that mismatch in a trampoline that translates the
 /// `Option<&mut>` into a `*mut FileSystem`.
 fn mount_trampoline(device: *mut (), path: &[u16]) -> *mut FileSystem {
-    match mount(device, path) {
+    match mount(device, path, None) {
         Some(fs) => fs as *mut Fat32FileSystem as *mut FileSystem,
         None => core::ptr::null_mut(),
     }
@@ -824,7 +825,7 @@ fn unmount_fs(fs: *mut FileSystem) {
     unmount(fs as *mut Fat32FileSystem);
 }
 
-/// Read a file's bytes by walking its cluster chain. The file is
+/// read a file's bytes by walking its cluster chain. The file is
 /// identified by its starting cluster (taken from a directory entry
 /// search) and its size.
 pub fn read_file(
@@ -864,7 +865,7 @@ pub fn read_file(
         if to_copy == 0 {
             break;
         }
-        // Read one cluster's worth of sectors.
+        // read one cluster's worth of sectors.
         for s in 0..(fs.base.cluster_size / fs.base.sector_size) {
             let mut sector = [0u8; 512];
             let rs = read_sector(fs.base.device, first_sector + s as u64, &mut sector);
@@ -1028,7 +1029,7 @@ pub fn list_directory_cluster(
 
     // Follow the FAT chain
     while current_cluster >= 2 && current_cluster < FAT32_EOC {
-        // Read this cluster
+        // read this cluster
         match read_cluster_data(fs, current_cluster, &mut buffer) {
             Ok(_) => {
                 // Parse directory entries in this cluster
@@ -1104,7 +1105,7 @@ pub fn list_directory_cluster(
     count
 }
 
-/// Read a cluster's worth of data.
+/// read a cluster's worth of data.
 pub fn read_cluster_sector(
     fs: &Fat32FileSystem,
     cluster: u32,
@@ -1123,7 +1124,7 @@ pub fn read_cluster_sector(
     read_sector(fs.base.device, sector_num, buffer)
 }
 
-/// Read a FAT entry for a given cluster number.
+/// read a FAT entry for a given cluster number.
 /// Returns the next cluster in the chain, or FAT32_EOC if end of chain or error.
 pub fn read_fat_entry(fs: &Fat32FileSystem, cluster: u32) -> u32 {
     let fat_start = fs.fat_data.fat_start_sector;
@@ -1157,7 +1158,7 @@ pub fn read_fat_entry(fs: &Fat32FileSystem, cluster: u32) -> u32 {
     decode_fat_entry(value)
 }
 
-/// Read an entire cluster's worth of data.
+/// read an entire cluster's worth of data.
 fn read_cluster_data(fs: &Fat32FileSystem, cluster: u32, buffer: &mut [u8]) -> Result<usize, ()> {
     let cluster_size = fs.base.cluster_size as usize;
     if buffer.len() < cluster_size {
@@ -1219,7 +1220,7 @@ fn convert_83_name(name_bytes: &[u8; 11], is_directory: bool) -> [u8; 13] {
 /// Long filename entries are stored in reverse order. Each entry is 32 bytes:
 /// - Byte 0: Sequence number (with last-entry and deleted flags)
 /// - Bytes 1-10: First 5 UTF-16 characters (offset 0, 2, 4, 6, 8)
-/// - Byte 11: Attributes (always 0x0F for long name entries)
+/// - Byte 11: attributes (always 0x0F for long name entries)
 /// - Byte 12: Reserved (checksum)
 /// - Bytes 13-20: Next 4 UTF-16 characters (offset 12, 14, 16, 18)
 /// - Byte 21: Reserved
@@ -1349,7 +1350,7 @@ pub fn verify_long_name_checksum(short_name: &[u8; 11], checksum: u8) -> bool {
     calc_long_name_checksum(short_name) == checksum
 }
 
-/// Read directory entries from the root directory
+/// read directory entries from the root directory
 pub fn list_root_directory(fs: &Fat32FileSystem, entries: &mut [FatDirEntry]) -> usize {
     let cluster_size = fs.base.cluster_size as usize;
     let sector_size = fs.base.sector_size as usize;
@@ -1415,10 +1416,10 @@ pub fn list_root_directory(fs: &Fat32FileSystem, entries: &mut [FatDirEntry]) ->
 }
 
 // ============================================================================
-// File/Directory Write Operations
+// File/Directory write Operations
 // ============================================================================
 
-/// Write data to a specific sector in a cluster
+/// write data to a specific sector in a cluster
 pub fn write_cluster_sector(
     fs: &Fat32FileSystem,
     cluster: u32,
@@ -1433,7 +1434,7 @@ pub fn write_cluster_sector(
     write_sector(fs.base.device, sector_num, data)
 }
 
-/// Write an entire cluster's worth of data
+/// write an entire cluster's worth of data
 pub fn write_cluster(fs: &Fat32FileSystem, cluster: u32, data: &[u8]) -> Result<usize, ()> {
     let cluster_size = fs.base.cluster_size as usize;
     if data.len() < cluster_size {
@@ -1537,7 +1538,7 @@ pub fn update_dir_entry(
     let sector_index = byte_offset / sector_size;
     let offset_in_sector = byte_offset % sector_size;
 
-    // Read the sector
+    // read the sector
     let mut buffer = [0u8; 512];
     if read_cluster_sector(fs, cluster, sector_index as u32, &mut buffer).is_err() {
         return Err(());
@@ -1550,7 +1551,7 @@ pub fn update_dir_entry(
         buffer[offset_in_sector + i] = unsafe { *entry_ptr.add(i) };
     }
 
-    // Write back
+    // write back
     write_cluster_sector(fs, cluster, sector_index as u32, &buffer)
 }
 
@@ -1561,7 +1562,7 @@ pub fn delete_file_entry(fs: &Fat32FileSystem, cluster: u32, byte_offset: usize)
     let sector_index = byte_offset / sector_size;
     let offset_in_sector = byte_offset % sector_size;
 
-    // Read the sector
+    // read the sector
     let mut buffer = [0u8; 512];
     if read_cluster_sector(fs, cluster, sector_index as u32, &mut buffer).is_err() {
         return Err(());
@@ -1570,11 +1571,11 @@ pub fn delete_file_entry(fs: &Fat32FileSystem, cluster: u32, byte_offset: usize)
     // Mark as deleted
     buffer[offset_in_sector] = 0xE5;
 
-    // Write back
+    // write back
     write_cluster_sector(fs, cluster, sector_index as u32, &buffer)
 }
 
-/// Create a new file in the root directory
+/// create a new file in the root directory
 pub fn create_file_in_root(
     fs: &Fat32FileSystem,
     name: &[u8; 11],
@@ -1584,7 +1585,7 @@ pub fn create_file_in_root(
     // Find a free slot
     let (cluster, byte_offset) = find_free_dir_slot(fs).ok_or(())?;
 
-    // Create the directory entry
+    // create the directory entry
     let entry = FatDirectoryEntry {
         name: *name,
         attributes: 0x20, // Archive
@@ -1603,7 +1604,7 @@ pub fn create_file_in_root(
     update_dir_entry(fs, cluster, byte_offset, &entry)
 }
 
-/// Create a new directory in the root directory
+/// create a new directory in the root directory
 pub fn create_dir_in_root(
     fs: &Fat32FileSystem,
     name: &[u8; 11],
@@ -1612,7 +1613,7 @@ pub fn create_dir_in_root(
     // Find a free slot
     let (cluster, byte_offset) = find_free_dir_slot(fs).ok_or(())?;
 
-    // Create the directory entry
+    // create the directory entry
     let entry = FatDirectoryEntry {
         name: *name,
         attributes: 0x10, // Directory
@@ -1635,7 +1636,7 @@ pub fn create_dir_in_root(
 pub fn name_to_83(name: &str) -> [u8; 11] {
     let mut result = [b' '; 11];
 
-    // Handle path with backslash
+    // handle path with backslash
     let name_only = if let Some(pos) = name.rfind('\\') {
         &name[pos + 1..]
     } else if let Some(pos) = name.rfind('/') {
@@ -1674,7 +1675,7 @@ pub fn rename_file_in_root(
     new_name: &[u8; 11],
 ) -> Result<(), ()> {
     if let Some((cluster, byte_offset)) = find_file_in_root_ex(fs, old_name) {
-        // Read current entry
+        // read current entry
         let _cluster_size = fs.base.cluster_size as usize;
         let sector_size = fs.base.sector_size as usize;
         let sector_index = byte_offset / sector_size;
@@ -1690,7 +1691,7 @@ pub fn rename_file_in_root(
             buffer[offset_in_sector + i] = new_name[i];
         }
 
-        // Write back
+        // write back
         write_cluster_sector(fs, cluster, sector_index as u32, &buffer)
     } else {
         Err(())

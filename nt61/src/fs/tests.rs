@@ -17,7 +17,6 @@
 extern crate alloc;
 
 use crate::rtl::testing::TestStats;
-use alloc::vec;
 use alloc::vec::Vec;
 
 fn utf16_path(path: &str) -> Vec<u16> {
@@ -477,8 +476,6 @@ fn test_file_delete() -> bool {
 }
 
 fn test_file_rename() -> bool {
-    use crate::fs::vfs;
-
     // The VFS has no rename entry point; renaming is performed by rewriting
     // the $FILE_NAME attribute on NTFS (`fs::ntfs`) or the directory entry on
     // FAT32 (`fs::fat32::rename_file_in_root`). Only the FAT32 path exists, so

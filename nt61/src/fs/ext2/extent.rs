@@ -13,7 +13,7 @@
 //! Each extent covers a contiguous range of logical blocks:
 //!   - Logical block number (where this extent starts)
 //!   - Physical block number (where the data is stored)
-//!   - Length (number of blocks in this extent)
+//!   - length (number of blocks in this extent)
 
 extern crate alloc;
 
@@ -63,7 +63,7 @@ pub struct Ext4ExtentHeader {
 }
 
 impl Ext4ExtentHeader {
-    /// Create a new extent header
+    /// create a new extent header
     pub fn new(depth: u16, max_entries: u16) -> Self {
         Self {
             magic: EXT4_EXTENT_MAGIC,
@@ -110,7 +110,7 @@ pub struct Ext4Extent {
 }
 
 impl Ext4Extent {
-    /// Create a new extent
+    /// create a new extent
     pub fn new(logical: u32, physical: u64, len: u32) -> Self {
         Self {
             ee_block: logical,
@@ -169,7 +169,7 @@ pub struct Ext4ExtentIdx {
 }
 
 impl Ext4ExtentIdx {
-    /// Create a new extent index
+    /// create a new extent index
     pub fn new(logical: u32, child_block: u64) -> Self {
         Self {
             ei_block: logical,
@@ -211,7 +211,7 @@ impl ExtentTree {
             return None;
         }
 
-        // Read the extent header block
+        // read the extent header block
         let mut buffer = vec![0u8; block_size as usize];
         let sector = first_block as u64 * (block_size / 512) as u64;
 
@@ -371,12 +371,12 @@ pub fn format_index_header(entries: u16, max_entries: u16, depth: u16) -> Ext4Ex
     }
 }
 
-/// Create an extent entry
+/// create an extent entry
 pub fn create_extent(logical: u32, physical: u64, len: u32) -> Ext4Extent {
     Ext4Extent::new(logical, physical, len)
 }
 
-/// Create an extent index entry
+/// create an extent index entry
 pub fn create_extent_idx(logical: u32, child_block: u64) -> Ext4ExtentIdx {
     Ext4ExtentIdx::new(logical, child_block)
 }

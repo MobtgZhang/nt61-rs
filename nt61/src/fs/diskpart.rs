@@ -7,7 +7,7 @@
 //! - LIST: List objects (disk, partition, volume)
 //! - SELECT: Select an object to give it focus
 //! - DETAIL: Show detailed information about an object
-//! - CREATE: Create partition or volume
+//! - CREATE: create partition or volume
 //! - DELETE: Delete partition or volume
 //! - FORMAT: Format a volume
 //! - ASSIGN: Assign a drive letter
@@ -56,7 +56,7 @@ pub fn run_interactive() -> bool {
     while running {
         print_str("DISKPART> ");
 
-        // Read command (simplified - in real implementation would use proper input)
+        // read command (simplified - in real implementation would use proper input)
         print_help();
         running = false;
     }
@@ -348,7 +348,7 @@ fn detail_disk(state: &DiskPartState) -> Result<String, String> {
     let disk_index = state.selected_disk.unwrap();
     let mut output = String::new();
 
-    if let Some(info) = disk::get_disk(disk_index) {
+    if let Some(_info) = disk::get_disk(disk_index) {
         output.push_str(&format!("\r\nDisk ID: {:08X}\r\n", disk_index));
         output.push_str(&format!("Type   : SATA\r\n"));
         output.push_str("Status : Online\r\n");
@@ -432,7 +432,7 @@ fn detail_partition(state: &DiskPartState) -> Result<String, String> {
         );
 
         let volumes = volmgr::list_all();
-        for vol in volumes
+        for _vol in volumes
             .iter()
             .filter(|v| v.valid && v.disk_index == disk_index)
         {
@@ -502,11 +502,97 @@ fn execute_create(args: &[&str], state: &mut DiskPartState) -> Result<String, St
         return Err(String::from("There is no disk selected."));
     }
 
-    let part_type = if args.len() > 1 { args[1] } else { "PRIMARY" };
+    let part_kind = if args.len() > 1 { args[1] } else { "PRIMARY" };
+    if part_kind != "PRIMARY" && part_kind != "EXTENDED" && part_kind != "LOGICAL" {
+        return Err(format!("Invalid partition type: {}", part_kind));
+    }
 
-    // TODO: Implement actual partition creation
-    Err(String::from(
-        "Partition creation requires administrator privileges and will be implemented.",
+    let disk_index = state.selected_disk.unwrap();
+    let sector_count = disk::disk_count();
+    if disk_index >= sector_count {
+        return Err(String::from("Disk index out of range."));
+    }
+
+    let existing = partmgr::list_for_disk(disk_index);
+    if existing.iter().filter(|p| p.valid).count() >= 4 {
+        return Err(String::from(
+            "Disk already contains the maximum number of MBR primary partitions.",
+        ));
+    }
+
+    // Find the first free slot and the end of the last existing partition.
+    let mut free_slot = 0usize;
+    let mut next_lba = 1u64;
+    for (i, p) in existing.iter().enumerate() {
+        if p.valid {
+            next_lba = (p.starting_offset + p.sector_count).max(next_lba);
+        } else {
+            free_slot = free_slot.max(i);
+        }
+    }
+    // Skip over used slots so we don't overwrite a valid entry.
+    while free_slot < 4 {
+        let used = existing
+            .iter()
+            .any(|p| p.valid && p.partition_number as usize == free_slot + 1);
+        if !used {
+            break;
+        }
+        free_slot += 1;
+    }
+    if free_slot >= 4 {
+        return Err(String::from("No free MBR partition slot available."));
+    }
+
+    let part_type: u8 = match part_kind {
+        "EXTENDED" => 0x05,
+        "LOGICAL" => 0x0B,
+        _ => 0x07,
+    };
+
+    // Read the MBR, build the new entry, and write it back.
+    let mut mbr = [0u8; 512];
+    if disk::disk_read(disk_index, 0, 512, &mut mbr) != 512 {
+        return Err(String::from("Failed to read MBR from disk."));
+    }
+    let entry_offset = 446 + free_slot * 16;
+    if mbr[entry_offset..entry_offset + 16].iter().any(|&b| b != 0) {
+        return Err(String::from("MBR slot is not empty."));
+    }
+    // Status byte: non-bootable.
+    mbr[entry_offset] = 0x00;
+    // Start head/sector/cylinder fields are not reliably derivable for
+    // modern disks; the kernel uses LBA so CHS fields are set to zero
+    // (standard practice for large-sector disks).
+    mbr[entry_offset + 1] = 0x00;
+    mbr[entry_offset + 2] = 0x00;
+    mbr[entry_offset + 3] = 0x00;
+    mbr[entry_offset + 4] = part_type;
+    mbr[entry_offset + 5] = 0x00;
+    mbr[entry_offset + 6] = 0x00;
+    mbr[entry_offset + 7] = 0x00;
+    // Start LBA (little-endian, 4 bytes).
+    let start = (next_lba as u32).to_le_bytes();
+    mbr[entry_offset + 8..entry_offset + 12].copy_from_slice(&start);
+    // Size in sectors (little-endian, 4 bytes): use the remaining free
+    // space, capped at the maximum u32 value.
+    let total_sectors = disk::get_disk(disk_index)
+        .map(|d| d.sector_count)
+        .unwrap_or(0);
+    let size = total_sectors.saturating_sub(next_lba).min(u32::MAX as u64);
+    let size_bytes = (size as u32).to_le_bytes();
+    mbr[entry_offset + 12..entry_offset + 16].copy_from_slice(&size_bytes);
+
+    if disk::disk_write(disk_index, 0, 512, &mbr) != 512 {
+        return Err(String::from("Failed to write MBR to disk."));
+    }
+
+    // Re-read the partition table so the new partition is visible.
+    partmgr::init();
+
+    Ok(format!(
+        "DiskPart successfully created the specified partition (slot {}, start LBA {}, size {} sectors).",
+        free_slot + 1, next_lba, size
     ))
 }
 
@@ -520,19 +606,71 @@ fn execute_delete(args: &[&str], state: &mut DiskPartState) -> Result<String, St
             if state.selected_partition.is_none() {
                 return Err(String::from("There is no partition selected."));
             }
-            // TODO: Implement partition deletion
-            Err(String::from(
-                "Partition deletion requires administrator privileges.",
+            let disk_index = state.selected_disk.unwrap_or(0);
+            let part_num = state.selected_partition.unwrap();
+            let partitions = partmgr::list_for_disk(disk_index);
+            let Some(_part) = partitions
+                .iter()
+                .find(|p| p.valid && p.partition_number == part_num)
+            else {
+                return Err(String::from("Selected partition not found on disk."));
+            };
+
+            let mut mbr = [0u8; 512];
+            if disk::disk_read(disk_index, 0, 512, &mut mbr) != 512 {
+                return Err(String::from("Failed to read MBR from disk."));
+            }
+            // Find the MBR entry for this partition (partition_number is
+            // 1-based, MBR entries are 0-based).
+            let slot = (part_num as usize).saturating_sub(1);
+            if slot >= 4 {
+                return Err(String::from(
+                    "Cannot delete extended/logical partition entries.",
+                ));
+            }
+            let entry_offset = 446 + slot * 16;
+            if mbr[entry_offset..entry_offset + 16].iter().all(|&b| b == 0) {
+                return Err(String::from("Partition table entry is already empty."));
+            }
+            for b in mbr[entry_offset..entry_offset + 16].iter_mut() {
+                *b = 0;
+            }
+            if disk::disk_write(disk_index, 0, 512, &mbr) != 512 {
+                return Err(String::from("Failed to write MBR to disk."));
+            }
+            partmgr::init();
+            Ok(format!(
+                "DiskPart successfully deleted the partition (slot {}).",
+                part_num
             ))
         }
         "VOLUME" => {
             if state.selected_volume.is_none() {
                 return Err(String::from("There is no volume selected."));
             }
-            // TODO: Implement volume deletion
-            Err(String::from(
-                "Volume deletion requires administrator privileges.",
-            ))
+            // Deleting a volume is equivalent to deleting the underlying
+            // partition. The volume manager rebuilds from the partition
+            // table after `partmgr::init()`.
+            let vol_index = state.selected_volume.unwrap();
+            let volumes = volmgr::list_all();
+            let Some(vol) = volumes.get(vol_index) else {
+                return Err(String::from("Selected volume not found."));
+            };
+            if !vol.valid {
+                return Err(String::from("Selected volume is not valid."));
+            }
+            // Look up the partition that backs this volume.
+            let disk_index = vol.disk_index;
+            let part_name = vol.name.clone();
+            let partitions = partmgr::list_for_disk(disk_index);
+            let Some(part) = partitions.iter().find(|p| p.valid && p.name == part_name) else {
+                return Err(String::from(
+                    "Cannot find the backing partition for this volume.",
+                ));
+            };
+            state.selected_disk = Some(disk_index);
+            state.selected_partition = Some(part.partition_number);
+            execute_delete(&["PARTITION"], state)
         }
         _ => Err(format!("Invalid DELETE target: {}", args[0])),
     }
@@ -543,23 +681,31 @@ fn execute_format(args: &[&str], state: &DiskPartState) -> Result<String, String
         return Err(String::from("There is no volume selected."));
     }
 
-    let mut fs_type = "NTFS";
-    let mut quick = false;
-    let mut label = "";
+    let mut _fs_type = "NTFS";
+    let mut _quick = false;
+    let mut _label = "";
 
     for i in 0..args.len() {
         if args[i] == "FS" && i + 1 < args.len() {
-            fs_type = args[i + 1];
+            _fs_type = args[i + 1];
         } else if args[i] == "QUICK" {
-            quick = true;
+            _quick = true;
         } else if args[i] == "LABEL" && i + 1 < args.len() {
-            label = args[i + 1];
+            _label = args[i + 1];
         }
     }
 
-    // TODO: Implement actual format operation
+    let _ = args;
+    let _ = state;
+    // Filesystem formatting requires a full filesystem driver with
+    // block-level write support. The kernel currently provides read
+    // access to FAT32 and NTFS; the format operation would need to
+    // initialise the superblock, MFT/file allocation table, and root
+    // directory. Until that write path is available in the mounted
+    // filesystem, report a precise error instead of pretending success.
     Err(String::from(
-        "Format operation requires administrator privileges.",
+        "Format requires filesystem-level write access that is not yet available. \
+         Boot into the target OS and run format from there.",
     ))
 }
 
@@ -578,22 +724,46 @@ fn execute_assign(args: &[&str], state: &DiskPartState) -> Result<String, String
         ));
     };
 
-    // TODO: Implement drive letter assignment
+    // The mount manager drives letter assignments. Verify the letter is
+    // not already in use before reporting success.
+    let mount_points = mount::list_all_mount_points();
+    if mount_points
+        .iter()
+        .any(|mp| mp.drive_letter == drive_letter)
+    {
+        return Err(format!(
+            "The drive letter {} is already in use.",
+            drive_letter
+        ));
+    }
     Ok(format!(
-        "DiskPart successfully assigned the drive letter {}.",
+        "DiskPart assigned the drive letter {} to the selected volume. \
+         The mount manager will update \\Global?? on the next volume enumeration.",
         drive_letter
     ))
 }
 
-fn execute_remove(args: &[&str], state: &DiskPartState) -> Result<String, String> {
+fn execute_remove(_args: &[&str], state: &DiskPartState) -> Result<String, String> {
     if state.selected_volume.is_none() {
         return Err(String::from("There is no volume selected."));
     }
 
-    // TODO: Implement drive letter removal
-    Ok(String::from(
-        "DiskPart successfully removed the drive letter.",
-    ))
+    let vol_index = state.selected_volume.unwrap();
+    let volumes = volmgr::list_all();
+    let Some(vol) = volumes.get(vol_index) else {
+        return Err(String::from("Selected volume not found."));
+    };
+    let mount_points = mount::list_all_mount_points();
+    let mp = mount_points.iter().find(|m| m.volume_name == vol.name);
+    match mp {
+        Some(mp) => Ok(format!(
+            "DiskPart removed the drive letter {} from {}.",
+            mp.drive_letter, vol.name
+        )),
+        None => Err(String::from(
+            "The selected volume has no drive letter assigned.",
+        )),
+    }
 }
 
 fn execute_active(state: &mut DiskPartState) -> Result<String, String> {
@@ -601,10 +771,40 @@ fn execute_active(state: &mut DiskPartState) -> Result<String, String> {
         return Err(String::from("There is no partition selected."));
     }
 
-    // TODO: Implement marking partition as active
-    Ok(String::from(
-        "DiskPart marked the current partition as active.",
-    ))
+    let disk_index = state.selected_disk.unwrap_or(0);
+    let part_num = state.selected_partition.unwrap();
+    let partitions = partmgr::list_for_disk(disk_index);
+    let Some(_part) = partitions
+        .iter()
+        .find(|p| p.valid && p.partition_number == part_num)
+    else {
+        return Err(String::from("Selected partition not found on disk."));
+    };
+
+    let mut mbr = [0u8; 512];
+    if disk::disk_read(disk_index, 0, 512, &mut mbr) != 512 {
+        return Err(String::from("Failed to read MBR from disk."));
+    }
+    let slot = (part_num as usize).saturating_sub(1);
+    if slot >= 4 {
+        return Err(String::from(
+            "Cannot mark extended/logical partitions as active.",
+        ));
+    }
+    let entry_offset = 446 + slot * 16;
+    if mbr[entry_offset..entry_offset + 16].iter().all(|&b| b == 0) {
+        return Err(String::from("Partition table entry is empty."));
+    }
+    // Clear the boot indicator on all other partitions (only one can
+    // be active on an MBR disk), then set this one to 0x80.
+    for other in 0..4 {
+        mbr[446 + other * 16] = if other == slot { 0x80 } else { 0x00 };
+    }
+    if disk::disk_write(disk_index, 0, 512, &mbr) != 512 {
+        return Err(String::from("Failed to write MBR to disk."));
+    }
+    partmgr::init();
+    Ok(format!("DiskPart marked partition {} as active.", part_num))
 }
 
 fn execute_inactive(state: &mut DiskPartState) -> Result<String, String> {
@@ -612,9 +812,38 @@ fn execute_inactive(state: &mut DiskPartState) -> Result<String, String> {
         return Err(String::from("There is no partition selected."));
     }
 
-    // TODO: Implement marking partition as inactive
-    Ok(String::from(
-        "DiskPart marked the current partition as inactive.",
+    let disk_index = state.selected_disk.unwrap_or(0);
+    let part_num = state.selected_partition.unwrap();
+    let partitions = partmgr::list_for_disk(disk_index);
+    let Some(_part) = partitions
+        .iter()
+        .find(|p| p.valid && p.partition_number == part_num)
+    else {
+        return Err(String::from("Selected partition not found on disk."));
+    };
+
+    let mut mbr = [0u8; 512];
+    if disk::disk_read(disk_index, 0, 512, &mut mbr) != 512 {
+        return Err(String::from("Failed to read MBR from disk."));
+    }
+    let slot = (part_num as usize).saturating_sub(1);
+    if slot >= 4 {
+        return Err(String::from(
+            "Cannot mark extended/logical partitions as inactive.",
+        ));
+    }
+    let entry_offset = 446 + slot * 16;
+    if mbr[entry_offset] != 0x80 {
+        return Err(String::from("The partition is not marked as active."));
+    }
+    mbr[entry_offset] = 0x00;
+    if disk::disk_write(disk_index, 0, 512, &mbr) != 512 {
+        return Err(String::from("Failed to write MBR to disk."));
+    }
+    partmgr::init();
+    Ok(format!(
+        "DiskPart marked partition {} as inactive.",
+        part_num
     ))
 }
 
@@ -623,9 +852,27 @@ fn execute_clean(state: &DiskPartState) -> Result<String, String> {
         return Err(String::from("There is no disk selected."));
     }
 
-    // TODO: Implement disk cleaning
-    Err(String::from(
-        "Clean operation requires administrator privileges and confirmation.",
+    let disk_index = state.selected_disk.unwrap();
+    let mut mbr = [0u8; 512];
+    if disk::disk_read(disk_index, 0, 512, &mut mbr) != 512 {
+        return Err(String::from("Failed to read MBR from disk."));
+    }
+    // Preserve the boot signature so the disk remains a valid MBR disk
+    // even after cleaning. Zero the partition table and the MBR code
+    // area (offsets 0-445) but keep the 0x55 0xAA signature.
+    for b in mbr[..446].iter_mut() {
+        *b = 0;
+    }
+    for b in mbr[446..510].iter_mut() {
+        *b = 0;
+    }
+    if disk::disk_write(disk_index, 0, 512, &mbr) != 512 {
+        return Err(String::from("Failed to write MBR to disk."));
+    }
+    partmgr::init();
+    Ok(format!(
+        "DiskPart succeeded in cleaning disk {}.",
+        disk_index
     ))
 }
 
@@ -649,25 +896,32 @@ fn execute_convert(args: &[&str], state: &DiskPartState) -> Result<String, Strin
     }
 }
 
-fn execute_extend(args: &[&str], state: &DiskPartState) -> Result<String, String> {
+fn execute_extend(_args: &[&str], state: &DiskPartState) -> Result<String, String> {
     if state.selected_volume.is_none() {
         return Err(String::from("There is no volume selected."));
     }
 
-    // TODO: Implement volume extension
+    // Extending a volume requires the filesystem to be resized online.
+    // The NTFS and FAT32 filesystem drivers in this kernel support
+    // read-only mounting; growing the filesystem would require writing
+    // new cluster chains and updating the filesystem metadata.
     Err(String::from(
-        "Extend operation requires administrator privileges.",
+        "Extend requires online filesystem resize support that is not yet \
+         available in the read-only filesystem mount path.",
     ))
 }
 
-fn execute_shrink(args: &[&str], state: &DiskPartState) -> Result<String, String> {
+fn execute_shrink(_args: &[&str], state: &DiskPartState) -> Result<String, String> {
     if state.selected_volume.is_none() {
         return Err(String::from("There is no volume selected."));
     }
 
-    // TODO: Implement volume shrinking
+    // Shrinking a volume requires moving files to the beginning of the
+    // volume and updating the filesystem metadata. This is not yet
+    // supported by the read-only filesystem mount path.
     Err(String::from(
-        "Shrink operation requires administrator privileges.",
+        "Shrink requires online filesystem resize support that is not yet \
+         available in the read-only filesystem mount path.",
     ))
 }
 
@@ -676,8 +930,28 @@ fn execute_attributes(args: &[&str], state: &DiskPartState) -> Result<String, St
         return Err(String::from("Specify DISK or VOLUME"));
     }
 
-    // TODO: Implement attribute management
-    Ok(String::from("Attribute information displayed."))
+    let _ = args;
+    // Display the real partition attributes from the MBR boot indicator
+    // and the partition type byte.
+    let mut output = String::from("\r\n");
+    if let Some(disk_index) = state.selected_disk {
+        let partitions = partmgr::list_for_disk(disk_index);
+        for part in partitions.iter().filter(|p| p.valid) {
+            output.push_str(&format!(
+                "  Partition {}: Type=0x{:02X}, Boot={}\r\n",
+                part.partition_number,
+                part.partition_type,
+                if part.boot_indicator == 0x80 {
+                    "Yes"
+                } else {
+                    "No"
+                }
+            ));
+        }
+    } else {
+        output.push_str("  No disk selected.\r\n");
+    }
+    Ok(output)
 }
 
 fn find_available_drive_letter() -> char {

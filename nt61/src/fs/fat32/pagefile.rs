@@ -12,9 +12,9 @@
 //! ## Implementation
 //
 //! This module provides functions to:
-//! - Create pagefile.sys with the requested size
+//! - create pagefile.sys with the requested size
 //! - Open existing pagefile.sys
-//! - Read/write pagefile sectors
+//! - read/write pagefile sectors
 
 use crate::drivers::storage::block;
 use crate::kprintln_error;
@@ -128,7 +128,7 @@ pub fn open_or_create(
         return Some(handle);
     }
 
-    // Create new pagefile
+    // create new pagefile
     kprintln_info!("FAT32", "Creating new pagefile.sys...");
     create_pagefile(
         fs_start_sector,
@@ -151,11 +151,11 @@ fn find_pagefile(
     data_start_sector: u64,
     device_id: usize,
 ) -> Option<Fat32PagefileHandle> {
-    // Read root directory
+    // read root directory
     let root_cluster = 2u32; // FAT32 root directory starts at cluster 2
     let mut buffer = alloc::vec![0u8; 4096];
 
-    // Read first cluster of root directory
+    // read first cluster of root directory
     if !read_cluster(
         device_id,
         data_start_sector,
@@ -255,7 +255,7 @@ fn find_pagefile(
     None
 }
 
-/// Create a new pagefile.sys.
+/// create a new pagefile.sys.
 ///
 fn create_pagefile(
     fs_start_sector: u64,
@@ -290,7 +290,7 @@ fn create_pagefile(
         return None;
     }
 
-    // Create directory entry
+    // create directory entry
     if !create_pagefile_entry(
         device_id,
         fs_start_sector,
@@ -334,7 +334,7 @@ fn find_free_clusters(device_id: usize, fat_start_sector: u64, count: u32) -> Op
     let mut chain_start: u32 = 0;
 
     loop {
-        // Read FAT entry
+        // read FAT entry
         let entry = read_fat_entry(device_id, fat_start_sector, current_cluster)?;
 
         if entry == 0 {
@@ -393,7 +393,7 @@ fn find_free_clusters(device_id: usize, fat_start_sector: u64, count: u32) -> Op
     None
 }
 
-/// Count available free clusters starting from a position.
+/// count available free clusters starting from a position.
 ///
 fn count_available_clusters(device_id: usize, fat_start_sector: u64, start: u32) -> Option<u32> {
     let mut count: u32 = 0;
@@ -417,7 +417,7 @@ fn count_available_clusters(device_id: usize, fat_start_sector: u64, start: u32)
     Some(count)
 }
 
-/// Read a FAT entry for a cluster.
+/// read a FAT entry for a cluster.
 ///
 fn read_fat_entry(device_id: usize, fat_start_sector: u64, cluster: u32) -> Option<u32> {
     let mut buffer = [0u8; 512];
@@ -476,7 +476,7 @@ fn mark_clusters_used(
     true
 }
 
-/// Write a FAT entry for a cluster.
+/// write a FAT entry for a cluster.
 ///
 fn write_fat_entry(device_id: usize, fat_start_sector: u64, cluster: u32, value: u32) -> bool {
     let mut buffer = [0u8; 512];
@@ -486,7 +486,7 @@ fn write_fat_entry(device_id: usize, fat_start_sector: u64, cluster: u32, value:
     let fat_sector = fat_start_sector + (entry_offset / 512);
     let offset_in_sector = (entry_offset % 512) as usize;
 
-    // Read current sector
+    // read current sector
     if !block::read_block(device_id, fat_sector, &mut buffer) {
         return false;
     }
@@ -507,7 +507,7 @@ fn write_fat_entry(device_id: usize, fat_start_sector: u64, cluster: u32, value:
     buffer[offset_in_sector + 2] = ((new_value >> 16) & 0xFF) as u8;
     buffer[offset_in_sector + 3] = ((new_value >> 24) & 0xFF) as u8;
 
-    // Write sector back
+    // write sector back
     if !block::write_block(device_id, fat_sector, &buffer) {
         return false;
     }
@@ -530,7 +530,7 @@ fn write_fat_entry(device_id: usize, fat_start_sector: u64, cluster: u32, value:
     true
 }
 
-/// Create the pagefile.sys directory entry in the root directory.
+/// create the pagefile.sys directory entry in the root directory.
 ///
 fn create_pagefile_entry(
     device_id: usize,
@@ -541,7 +541,7 @@ fn create_pagefile_entry(
 ) -> bool {
     let mut buffer = alloc::vec![0u8; 4096];
 
-    // Read root directory cluster
+    // read root directory cluster
     let root_cluster = 2u32;
     if !read_cluster(device_id, data_start_sector, root_cluster, 8, &mut buffer) {
         kprintln_error!("FAT32", "Failed to read root directory");
@@ -582,7 +582,7 @@ fn create_pagefile_entry(
         }
     };
 
-    // Create directory entry for PAGEFILE.SYS
+    // create directory entry for PAGEFILE.SYS
     let entry = &mut buffer[offset..offset + entry_size];
 
     // Filename: "PAGEFILE SYS"
@@ -598,7 +598,7 @@ fn create_pagefile_entry(
     entry[9] = b'S';
     entry[10] = b'Y';
 
-    // Attributes: Hidden + System
+    // attributes: Hidden + System
     entry[11] = 0x02 | 0x04; // HIDDEN | SYSTEM
 
     // Reserved
@@ -642,12 +642,12 @@ fn create_pagefile_entry(
     entry[30] = ((size_u32 >> 16) & 0xFF) as u8;
     entry[31] = ((size_u32 >> 24) & 0xFF) as u8;
 
-    // Write the entry back
+    // write the entry back
     let sector = offset / 512;
     let sector_offset = offset % 512;
     let mut sector_buffer = [0u8; 512];
 
-    // Read the sector first
+    // read the sector first
     let sector_lba = data_start_sector + sector as u64;
     if !block::read_block(device_id, sector_lba, &mut sector_buffer) {
         return false;
@@ -657,7 +657,7 @@ fn create_pagefile_entry(
     sector_buffer[sector_offset..sector_offset + entry_size]
         .copy_from_slice(&buffer[offset..offset + entry_size]);
 
-    // Write back
+    // write back
     if !block::write_block(device_id, sector_lba, &sector_buffer) {
         return false;
     }
@@ -666,7 +666,7 @@ fn create_pagefile_entry(
     true
 }
 
-/// Read a cluster from the filesystem.
+/// read a cluster from the filesystem.
 ///
 fn read_cluster(
     device_id: usize,
@@ -694,7 +694,7 @@ fn read_cluster(
     true
 }
 
-/// Write a cluster to the filesystem.
+/// write a cluster to the filesystem.
 ///
 /// Low-level primitive for writing a single cluster (sectors_per_cluster
 /// sectors) at the location computed from the FAT32 data area layout.
@@ -725,7 +725,7 @@ pub fn write_cluster(
     true
 }
 
-/// Read from the pagefile at a given offset.
+/// read from the pagefile at a given offset.
 ///
 pub fn read_pagefile_sectors(
     device_id: usize,
@@ -753,7 +753,7 @@ pub fn read_pagefile_sectors(
     true
 }
 
-/// Write to the pagefile at a given offset.
+/// write to the pagefile at a given offset.
 ///
 pub fn write_pagefile_sectors(
     device_id: usize,

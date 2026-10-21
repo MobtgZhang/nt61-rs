@@ -359,7 +359,7 @@ fn step6_vfs_create_lookup() -> bool {
     // get here, but call it defensively so the test is robust.)
     vfs::init();
 
-    // Create a file node and a directory node, both under the
+    // create a file node and a directory node, both under the
     // root.
     let root = match vfs::get_root() {
         Some(r) => r,
@@ -409,7 +409,7 @@ fn step6_vfs_create_lookup() -> bool {
         return false;
     }
     // Names match.
-    let dir_name_len = (dir_node.name.Length as usize) / 2;
+    let dir_name_len = (dir_node.name.length as usize) / 2;
     if dir_name_len != dir_name.len() {
         // // kprintln!(
         // //             "    [FS SMOKE FAIL] dir_node.name length = {} (expected {})",
@@ -418,7 +418,7 @@ fn step6_vfs_create_lookup() -> bool {
         // //         );
         return false;
     }
-    let file_name_len = (file_node.name.Length as usize) / 2;
+    let file_name_len = (file_node.name.length as usize) / 2;
     if file_name_len != file_name.len() {
         // // kprintln!(
         // //             "    [FS SMOKE FAIL] file_node.name length = {} (expected {})",
@@ -488,13 +488,13 @@ pub fn smoke_test() -> bool {
     let _registry = &FILE_SYSTEMS;
 
     let mut ok = true;
-    let mut step_id = 0;
+    let mut _step_id = 0;
     macro_rules! step {
         ($name:literal, $body:expr) => {{
-            step_id += 1;
+            _step_id += 1;
             let r = $body;
             if !r {
-                crate::boot_println!("    [FS SMOKE] step {} ({}) FAILED", step_id, $name);
+                crate::boot_println!("    [FS SMOKE] step {} ({}) FAILED", _step_id, $name);
             }
             ok &= r;
         }};

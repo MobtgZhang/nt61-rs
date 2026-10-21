@@ -27,8 +27,8 @@ pub const EXT2_SUPER_MAGIC: u16 = 0xEF53;
 pub const SUPERBLOCK_OFFSET: u64 = 1024;
 
 /// ext2 revision levels
-pub const EXT2_GOOD_OLD_REV: u32 = 0; // Revision 0
-pub const EXT2_CURRENT_REV: u32 = 1; // Revision 1 with dynamic inode size
+pub const EXT2_GOOD_OLD_REV: u32 = 0; // revision 0
+pub const EXT2_CURRENT_REV: u32 = 1; // revision 1 with dynamic inode size
 
 /// Feature compatibility flags - Compatible features can be ignored safely
 pub const EXT2_FEATURE_COMPAT_DIR_PREALLOC: u32 = 0x0001;
@@ -55,7 +55,7 @@ pub const EXT2_FEATURE_INCOMPAT_LARGEDIR: u32 = 0x4000; // >2GB directories
 pub const EXT2_FEATURE_INCOMPAT_INLINE_DATA: u32 = 0x8000; // ext4 inline data
 pub const EXT2_FEATURE_INCOMPAT_ENCRYPT: u32 = 0x10000; // ext4 encryption
 
-/// Read-only compatible features - Can be mounted read-only if not supported
+/// read-only compatible features - Can be mounted read-only if not supported
 pub const EXT2_FEATURE_RO_COMPAT_SPARSE_SUPER: u32 = 0x0001;
 pub const EXT2_FEATURE_RO_COMPAT_LARGE_FILE: u32 = 0x0002;
 pub const EXT2_FEATURE_RO_COMPAT_BTREE_DIR: u32 = 0x0004;
@@ -144,7 +144,7 @@ pub struct Ext2SuperBlock {
     pub checkinterval: u32,
     /// Creator OS ID
     pub creator_os: u32,
-    /// Revision level (0=old, 1=dynamic)
+    /// revision level (0=old, 1=dynamic)
     pub rev_level: u32,
     /// Default uid for reserved blocks
     pub def_resuid: u16,
@@ -160,7 +160,7 @@ pub struct Ext2SuperBlock {
     pub compatible_features: u32,
     /// Incompatible feature flags
     pub incompatible_features: u32,
-    /// Read-only compatible feature flags
+    /// read-only compatible feature flags
     pub ro_compatible_features: u32,
     /// UUID (128-bit)
     pub uuid: [u8; 16],
@@ -375,7 +375,7 @@ impl Ext2SuperBlock {
     }
 
     // ========================================================================
-    // Block Group Calculation Methods
+    // Block group Calculation Methods
     // ========================================================================
 
     /// Get the block group number for a given block number
@@ -503,12 +503,12 @@ impl Ext2SuperBlock {
 }
 
 // ============================================================================
-// Superblock Read Functions
+// Superblock read Functions
 // ============================================================================
 
-/// Read the superblock from a device at the given offset
+/// read the superblock from a device at the given offset
 /// Returns the superblock if successful, None otherwise
-/// Read the ext2/3/4 superblock at the standard partition-relative
+/// read the ext2/3/4 superblock at the standard partition-relative
 /// offset (byte 1024, sector 2). `offset` is added on top of that
 /// when the caller wants to probe a non-zero partition start. For
 /// the typical "mount this partition" case the caller passes 0
@@ -521,7 +521,7 @@ impl Ext2SuperBlock {
 pub fn read_superblock(device: *mut (), offset: u64) -> Option<Ext2SuperBlock> {
     let mut buffer = [0u8; 1024];
     // The ext superblock is always at byte 1024 of the partition.
-    // Read the two adjacent 512-byte sectors (2 and 3) into our 1024
+    // read the two adjacent 512-byte sectors (2 and 3) into our 1024
     // byte buffer. `offset` is added on top so callers can still
     // probe alternate locations if they want.
     let sb_byte_offset = SUPERBLOCK_OFFSET + offset;
@@ -652,11 +652,11 @@ impl Ext2FeatureSupport {
 }
 
 // ============================================================================
-// Device Read/Write Helper
+// Device read/write Helper
 // ============================================================================
 
-/// Read a sector from the device (helper function)
-pub fn read_sector(_device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<(), ()> {
+/// read a sector from the device (helper function)
+pub fn read_sector(device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<(), ()> {
     if buffer.len() < 512 {
         return Err(());
     }
@@ -664,9 +664,10 @@ pub fn read_sector(_device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<(
     // Prefer the *active* partition mirror, when one is set by
     // the dispatcher in `fs::mod`. This is what lets EXT2 mount
     // and read from the system partition properly.
-    if let Some(base) = crate::fs::active_partition_ramdisk() {
+    if let Some(context) = unsafe { crate::fs::mount_context_from_device(device) } {
+        let base = context.base;
         let off = (sector as usize) * 512;
-        let max_size = crate::fs::active_partition_size().unwrap_or(usize::MAX);
+        let max_size = context.size;
         if off + 512 > max_size {
             return Err(());
         }
@@ -692,17 +693,14 @@ pub fn read_sector(_device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<(
         Ok(())
     } else {
         // Try AHCI
-        #[cfg(target_arch = "x86_64")]
-        {
-            if crate::drivers::storage::ahci::read_sector(0, 0, sector as u32, buffer) {
-                return Ok(());
-            }
+        if crate::drivers::storage::ahci::read_sector(0, 0, sector as u32, buffer) {
+            return Ok(());
         }
         Err(())
     }
 }
 
-/// Read multiple sectors from device
+/// read multiple sectors from device
 pub fn read_sectors(
     device: *mut (),
     start_sector: u64,
@@ -741,7 +739,7 @@ pub fn read_sectors(
     Ok(())
 }
 
-/// Write a sector to the device
+/// write a sector to the device
 pub fn write_sector(_device: *mut (), sector: u64, buffer: &[u8]) -> Result<(), ()> {
     if buffer.len() < 512 {
         return Err(());
@@ -752,12 +750,9 @@ pub fn write_sector(_device: *mut (), sector: u64, buffer: &[u8]) -> Result<(), 
     if crate::drivers::storage::ramdisk::write(sector_num, buffer) {
         Ok(())
     } else {
-        // Try AHCI
-        #[cfg(target_arch = "x86_64")]
-        {
-            if crate::drivers::storage::ahci::write_sector(0, 0, sector as u32, buffer) {
-                return Ok(());
-            }
+        // Try AHCI through the architecture-neutral storage facade.
+        if crate::drivers::storage::ahci::write_sector(0, 0, sector as u32, buffer) {
+            return Ok(());
         }
         Err(())
     }
@@ -772,7 +767,7 @@ impl Ext2SuperBlock {
     pub fn debug_print(&self) {
         // kprintln!("[EXT2] Superblock Information:");
         // kprintln!("  Magic:              0x{:04x}", self.magic);
-        // kprintln!("  Revision:           {}.{}",
+        // kprintln!("  revision:           {}.{}",
         //             if self.is_dynamic_rev() { 1 } else { 0 },
         //             self.minor_rev_level);
         // kprintln!("  Filesystem type:    {}", self.get_fs_type_string());
@@ -790,7 +785,7 @@ impl Ext2SuperBlock {
         // kprintln!("  Mount count:      {}/{}", self.mnt_count, self.max_mnt_count);
         // kprintln!("  Compatible:       0x{:08x}", self.compatible_features);
         // kprintln!("  Incompatible:     0x{:08x}", self.incompatible_features);
-        // kprintln!("  Read-only compat:  0x{:08x}", self.ro_compatible_features);
+        // kprintln!("  read-only compat:  0x{:08x}", self.ro_compatible_features);
 
         if self.has_journal() {
             // kprintln!("  Journal inode:     {}", self.journal_inode);

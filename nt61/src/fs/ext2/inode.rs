@@ -6,7 +6,7 @@
 //! ## Inode Structure
 //! Each file or directory is represented by an inode containing:
 //! - File type and permissions (mode)
-//! - Owner and group IDs
+//! - owner and group IDs
 //! - File size (up to 4GB for old format, larger with INLINE_DATA)
 //! - Timestamps (access, modify, change)
 //! - Direct, indirect, and double/triple indirect block pointers
@@ -103,19 +103,19 @@ pub const EXT2_S_IFDIR: u16 = 0x4000;
 pub const S_IFSOCK: u16 = 0xC000;
 
 /// Permission bits
-pub const EXT2_S_IRUSR: u16 = 0x0100; // Owner read
-pub const EXT2_S_IWUSR: u16 = 0x0080; // Owner write
-pub const EXT2_S_IXUSR: u16 = 0x0040; // Owner execute
-pub const EXT2_S_IRGRP: u16 = 0x0020; // Group read
-pub const EXT2_S_IWGRP: u16 = 0x0010; // Group write
-pub const EXT2_S_IXGRP: u16 = 0x0008; // Group execute
+pub const EXT2_S_IRUSR: u16 = 0x0100; // owner read
+pub const EXT2_S_IWUSR: u16 = 0x0080; // owner write
+pub const EXT2_S_IXUSR: u16 = 0x0040; // owner execute
+pub const EXT2_S_IRGRP: u16 = 0x0020; // group read
+pub const EXT2_S_IWGRP: u16 = 0x0010; // group write
+pub const EXT2_S_IXGRP: u16 = 0x0008; // group execute
 pub const EXT2_S_IROTH: u16 = 0x0004; // Others read
 pub const EXT2_S_IWOTH: u16 = 0x0002; // Others write
 pub const EXT2_S_IXOTH: u16 = 0x0001; // Others execute
 
 /// Common permission combinations
-pub const EXT2_S_IRWXU: u16 = 0x01C0; // Owner: rwx
-pub const EXT2_S_IRWXG: u16 = 0x0038; // Group: rwx
+pub const EXT2_S_IRWXU: u16 = 0x01C0; // owner: rwx
+pub const EXT2_S_IRWXG: u16 = 0x0038; // group: rwx
 pub const EXT2_S_IRWXO: u16 = 0x0007; // Others: rwx
 
 // ============================================================================
@@ -173,7 +173,7 @@ pub struct Ext2Inode {
     pub fsize: u8,
     /// User permissions (upper bits of uid)
     pub uid_high: u16,
-    /// Group permissions (upper bits of gid)
+    /// group permissions (upper bits of gid)
     pub gid_high: u16,
     /// Reserved for future use
     pub reserved: u32,
@@ -183,7 +183,7 @@ pub struct Ext2Inode {
 
 impl Ext2Inode {
     // ========================================================================
-    // File Type Checking
+    // File r#type Checking
     // ========================================================================
 
     /// Check if this is a regular file
@@ -399,7 +399,7 @@ pub fn inode_table_offset(sb: &Ext2SuperBlock, inode_num: u32) -> u64 {
     let _gdt_block = SUPERBLOCK_OFFSET / block_size + 1;
     let gdt_size = super::group::calculate_gdt_size(sb) as u64;
 
-    // Group starts at first_data_block + group * blocks_per_group
+    // group starts at first_data_block + group * blocks_per_group
     let group_start = (sb.first_data_block as u64) + (group * sb.blocks_per_group as u64);
 
     // Inode table starts at the first block after GDT
@@ -413,7 +413,7 @@ pub fn inode_table_offset(sb: &Ext2SuperBlock, inode_num: u32) -> u64 {
     (inode_table_block * block_size + byte_offset) / 512
 }
 
-/// Read an inode from disk
+/// read an inode from disk
 pub fn read_inode(device: *mut (), sb: &Ext2SuperBlock, inode_num: u32) -> Option<Ext2Inode> {
     if inode_num == 0 || inode_num > sb.inodes_count {
         // kprintln!("[EXT2] Invalid inode number: {}", inode_num);
@@ -426,7 +426,7 @@ pub fn read_inode(device: *mut (), sb: &Ext2SuperBlock, inode_num: u32) -> Optio
     // Calculate which group this inode is in
     let group = ((inode_num - 1) as usize / inodes_per_group) as u32;
 
-    // Read group descriptor to get inode table location
+    // read group descriptor to get inode table location
     let group_desc = read_group_descriptor(device, sb, group)?;
 
     // Calculate byte offset within inode table
@@ -439,7 +439,7 @@ pub fn read_inode(device: *mut (), sb: &Ext2SuperBlock, inode_num: u32) -> Optio
     let block_offset = byte_offset % block_size;
     let block_num = inode_table_start + byte_offset / block_size;
 
-    // Read the block containing this inode
+    // read the block containing this inode
     let mut buffer = vec![0u8; block_size];
     let sector = block_num * (block_size / 512);
 
@@ -453,7 +453,7 @@ pub fn read_inode(device: *mut (), sb: &Ext2SuperBlock, inode_num: u32) -> Optio
     Some(unsafe { core::ptr::read_unaligned(inode_ptr) })
 }
 
-/// Write an inode to disk
+/// write an inode to disk
 pub fn write_inode(
     device: *mut (),
     sb: &Ext2SuperBlock,
@@ -470,7 +470,7 @@ pub fn write_inode(
     // Calculate which group this inode is in
     let group = ((inode_num - 1) as usize / inodes_per_group) as u32;
 
-    // Read group descriptor to get inode table location
+    // read group descriptor to get inode table location
     let group_desc = match read_group_descriptor(device, sb, group) {
         Some(gd) => gd,
         None => return Err(()),
@@ -486,7 +486,7 @@ pub fn write_inode(
     let block_offset = byte_offset % block_size;
     let block_num = inode_table_start + byte_offset / block_size;
 
-    // Read-modify-write the block
+    // read-modify-write the block
     let mut buffer = vec![0u8; block_size];
     let sector = block_num * (block_size / 512);
 
@@ -503,7 +503,7 @@ pub fn write_inode(
         );
     }
 
-    // Write back
+    // write back
     if super::superblock::write_sector(device, sector as u64, &buffer).is_err() {
         return Err(());
     }
@@ -551,7 +551,7 @@ pub fn logical_to_lba(
             return None;
         }
 
-        // Read indirect block
+        // read indirect block
         let mut indirect_buffer = vec![0u8; block_size as usize];
         let indirect_sector = single_indirect as u64 * (block_size / 512) as u64;
         if super::superblock::read_sector(device, indirect_sector, &mut indirect_buffer).is_err() {
@@ -578,7 +578,7 @@ pub fn logical_to_lba(
             return None;
         }
 
-        // Read first level indirect block
+        // read first level indirect block
         let mut double_buffer = vec![0u8; block_size as usize];
         let double_sector = double_indirect as u64 * (block_size / 512) as u64;
         if super::superblock::read_sector(device, double_sector, &mut double_buffer).is_err() {
@@ -592,7 +592,7 @@ pub fn logical_to_lba(
             return None;
         }
 
-        // Read second level indirect block
+        // read second level indirect block
         let mut indirect_buffer = vec![0u8; block_size as usize];
         let indirect_sector = indirect_block as u64 * (block_size / 512) as u64;
         if super::superblock::read_sector(device, indirect_sector, &mut indirect_buffer).is_err() {
@@ -629,7 +629,7 @@ fn extent_lookup(
     // We need to read the first block which contains the extent header
     let extent_block_num = inode.get_direct_block(0)?;
 
-    // Read the extent header block
+    // read the extent header block
     let extent_sector = extent_block_num as u64 * (block_size / 512) as u64;
     let mut extent_data = vec![0u8; block_size];
 
@@ -718,7 +718,7 @@ fn find_in_extent_node(
     None
 }
 
-/// Read data from a file at a given offset
+/// read data from a file at a given offset
 pub fn read_file_data(
     device: *mut (),
     sb: &Ext2SuperBlock,
@@ -747,7 +747,7 @@ pub fn read_file_data(
             None => break,
         };
 
-        // Read one block
+        // read one block
         let mut block_data = vec![0u8; block_size as usize];
         if super::superblock::read_sector(device, lba, &mut block_data).is_err() {
             break;

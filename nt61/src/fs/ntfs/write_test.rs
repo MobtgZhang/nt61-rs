@@ -1,14 +1,11 @@
-//! NTFS Write Support Test Module
+//! NTFS write Support Test Module
 //!
 //! This module provides tests for the NTFS write functionality including:
-//! - Write sector operations
-//! - Write clusters operations
+//! - write sector operations
+//! - write clusters operations
 //! - MFT record updates
 //! - File data writes
 //! - Journal integration
-
-use alloc::vec;
-use alloc::vec::Vec;
 
 #[cfg(test)]
 mod tests {
@@ -38,7 +35,7 @@ mod tests {
 
     #[test]
     fn test_prepare_fixup() {
-        // Create a mock MFT record
+        // create a mock MFT record
         let mut record = vec![0u8; 1024];
 
         // Set up header
@@ -73,7 +70,7 @@ mod tests {
 
     #[test]
     fn test_apply_fixup() {
-        // Create a mock MFT record with fixup
+        // create a mock MFT record with fixup
         let mut record = vec![0u8; 1024];
 
         record[0..4].copy_from_slice(b"FILE");
@@ -103,7 +100,10 @@ mod tests {
     }
 }
 
-/// Integration test helper: Create a simple test file
+/// Integration test helper: create a simple test file
+#[cfg(test)]
+use alloc::{vec, vec::Vec};
+
 #[cfg(test)]
 pub fn create_test_file() -> Vec<u8> {
     let mut data = vec![0u8; 4096];

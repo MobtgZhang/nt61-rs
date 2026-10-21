@@ -1,15 +1,15 @@
-//! ext2 Block Group Management
+//! ext2 Block group Management
 //
 //! Implements block group descriptor reading and management.
 //! Block group descriptors are stored in the block immediately following
 //! the superblock.
 //
-//! ## Block Group Descriptor Table
+//! ## Block group Descriptor Table
 //! The block group descriptor table (GDT) contains one 32-byte (or 64-byte)
 //! descriptor for each block group. It starts at the first block after
 //! the superblock.
 //
-//! ## Block Group Descriptor
+//! ## Block group Descriptor
 //! Each descriptor contains:
 //! - Block bitmap block number
 //! - Inode bitmap block number
@@ -24,7 +24,7 @@ use alloc::vec::Vec;
 use super::superblock::{Ext2SuperBlock, SUPERBLOCK_OFFSET};
 
 // ============================================================================
-// Block Group Descriptor Constants
+// Block group Descriptor Constants
 // ============================================================================
 
 /// Size of a block group descriptor (old format)
@@ -37,10 +37,10 @@ pub const EXT2_BGDESC_SIZE_NEW: usize = 64;
 pub const EXT2_PRIMARY_SUPER_BGDNUM: u32 = 0;
 
 // ============================================================================
-// Block Group Descriptor Structure
+// Block group Descriptor Structure
 // ============================================================================
 
-/// ext2 Block Group Descriptor (32 bytes for old format)
+/// ext2 Block group Descriptor (32 bytes for old format)
 /// Contains information about a specific block group.
 #[repr(C)]
 pub struct Ext2GroupDesc {
@@ -62,7 +62,7 @@ pub struct Ext2GroupDesc {
     pub reserved: [u32; 3],
 }
 
-/// ext2 Block Group Descriptor with 64-bit support
+/// ext2 Block group Descriptor with 64-bit support
 /// Used when the filesystem has 64-bit feature flag set.
 #[repr(C)]
 pub struct Ext2GroupDesc64 {
@@ -99,7 +99,7 @@ impl Ext2GroupDesc {
     }
 
     // ========================================================================
-    // Count Access
+    // count Access
     // ========================================================================
 
     /// Get the number of free blocks in this group
@@ -143,7 +143,7 @@ impl Ext2GroupDesc {
 }
 
 // ============================================================================
-// Block Group Table
+// Block group Table
 // ============================================================================
 
 /// A cached view of the block group descriptor table
@@ -157,7 +157,7 @@ pub struct Ext2GroupDescTable {
 }
 
 impl Ext2GroupDescTable {
-    /// Create a new empty group descriptor table
+    /// create a new empty group descriptor table
     pub fn new() -> Self {
         Self {
             descriptors: Vec::new(),
@@ -186,7 +186,7 @@ impl Ext2GroupDescTable {
 }
 
 // ============================================================================
-// Group Descriptor Table Functions
+// group Descriptor Table Functions
 // ============================================================================
 
 /// Calculate the size of the group descriptor table
@@ -214,7 +214,7 @@ pub fn get_gdt_start_block(sb: &Ext2SuperBlock) -> u64 {
     superblock_block + 1
 }
 
-/// Read the entire group descriptor table from disk
+/// read the entire group descriptor table from disk
 pub fn read_group_desc_table(device: *mut (), sb: &Ext2SuperBlock) -> Option<Ext2GroupDescTable> {
     let group_count = sb.get_group_count();
     let block_size = sb.get_block_size() as usize;
@@ -230,7 +230,7 @@ pub fn read_group_desc_table(device: *mut (), sb: &Ext2SuperBlock) -> Option<Ext
     let total_size = (group_count as usize) * desc_size;
     let blocks_needed = (total_size + block_size - 1) / block_size;
 
-    // Read the GDT
+    // read the GDT
     let gdt_start = get_gdt_start_block(sb);
     let mut buffer = vec![0u8; blocks_needed * block_size];
 
@@ -260,7 +260,7 @@ pub fn read_group_desc_table(device: *mut (), sb: &Ext2SuperBlock) -> Option<Ext
     })
 }
 
-/// Read a single group descriptor
+/// read a single group descriptor
 pub fn read_group_descriptor(
     device: *mut (),
     sb: &Ext2SuperBlock,
@@ -268,7 +268,7 @@ pub fn read_group_descriptor(
 ) -> Option<Ext2GroupDesc> {
     let group_count = sb.get_group_count();
     if group_num >= group_count {
-        // kprintln!("[EXT2] Group number {} out of range (max {})", group_num, group_count);
+        // kprintln!("[EXT2] group number {} out of range (max {})", group_num, group_count);
         return None;
     }
 
@@ -286,7 +286,7 @@ pub fn read_group_descriptor(
     let block_offset = desc_offset % block_size;
     let block_num = desc_offset / block_size;
 
-    // Read the block
+    // read the block
     let mut buffer = vec![0u8; block_size];
     let sector = (gdt_start + block_num as u64) * (block_size / 512) as u64;
 
@@ -302,7 +302,7 @@ pub fn read_group_descriptor(
 }
 
 // ============================================================================
-// Block Group Utility Functions
+// Block group Utility Functions
 // ============================================================================
 
 /// Get the first block of a block group
@@ -332,7 +332,7 @@ pub fn group_inode_table_start(_sb: &Ext2SuperBlock, _group: u32) -> u64 {
 
 /// Check if a block group has a backup superblock
 /// According to the sparse super feature, backups exist at:
-/// - Group 0 always
+/// - group 0 always
 /// - Groups 1, 3, 5, 7 (powers of 2 - 1) for sparse_super
 pub fn has_backup_superblock(sb: &Ext2SuperBlock, group: u32) -> bool {
     if group == 0 {
@@ -369,7 +369,7 @@ pub fn backup_gdt_block(sb: &Ext2SuperBlock, group: u32) -> u64 {
 }
 
 // ============================================================================
-// Block Group Calculations
+// Block group Calculations
 // ============================================================================
 
 /// Calculate which block group contains a given block

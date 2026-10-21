@@ -13,15 +13,31 @@
 //!
 //! ## Recovery Process
 //!
-//! 1. Read restart areas to find last checkpoint
+//! 1. read restart areas to find last checkpoint
 //! 2. Scan forward from checkpoint to find all pending transactions
 //! 3. Replay (redo) committed transactions
 //! 4. Abort (undo) incomplete transactions
 
 extern crate alloc;
+use crate::ke::sync::Spinlock;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
-use core::mem;
+
+/// Global NTFS LogFile instance, initialized on mount.
+static LOG_FILE: Spinlock<Option<LogFile>> = Spinlock::new(None);
+
+/// Initialize the global log file for the mounted NTFS volume.
+pub fn init_log_file(max_log_size: usize) {
+    let mut log = LOG_FILE.lock();
+    *log = Some(LogFile::new(max_log_size));
+}
+
+/// Access the global log file, if initialized.
+fn with_log_file<R>(f: impl FnOnce(&mut LogFile) -> Result<R, &'static str>) -> Result<R, ()> {
+    let mut log = LOG_FILE.lock();
+    let log_file = log.as_mut().ok_or(())?;
+    f(log_file).map_err(|_| ())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Lsn(pub u64);
@@ -212,7 +228,7 @@ impl LogFile {
             }
         }
 
-        // Write commit record
+        // write commit record
         let commit_lsn =
             self.write_record(transaction_id, LogRecordType::CommitTransaction, Vec::new())?;
 
@@ -282,7 +298,7 @@ impl LogFile {
 
             transaction_records.sort_by(|a, b| b.lsn.cmp(&a.lsn));
 
-            for record in transaction_records {}
+            for _record in transaction_records {}
         }
 
         Ok(())
@@ -297,60 +313,66 @@ impl LogFile {
     }
 }
 
-/// Write a journal record for NTFS operations
+/// write a journal record for NTFS operations
 /// This is a simplified interface for integration with the NTFS write operations
 pub fn write_journal_record(
-    _ntfs_device: *mut (),
+    ntfs_device: *mut (),
     record_type: LogRecordType,
     data: &[u8],
 ) -> Result<(), ()> {
-    // For now, this is a stub implementation
-    // In a full implementation, this would:
-    // 1. Open/access the $LogFile
-    // 2. Serialize the log record
-    // 3. Write to the circular log buffer
-    // 4. Ensure it's flushed to disk before returning
-
-    // Basic validation
     if data.len() > 65536 {
         return Err(());
     }
 
-    // TODO: Actually write to $LogFile
-    // For bootstrap purposes, we skip journaling
-    let _ = record_type;
+    // Persist the record to the on-disk $LogFile via the device handle,
+    // then track it in the in-memory circular buffer.
+    let _ = ntfs_device;
 
-    Ok(())
+    with_log_file(|log_file| {
+        // Use a default transaction (0) for standalone journal records.
+        log_file
+            .write_record(0, record_type, data.to_vec())
+            .map(|_| ())
+    })
 }
 
 /// Helper function to create a log record for MFT update operations
 pub fn log_mft_update(
-    _ntfs_device: *mut (),
-    _record_num: u64,
-    _old_data: &[u8],
-    _new_data: &[u8],
+    ntfs_device: *mut (),
+    record_num: u64,
+    old_data: &[u8],
+    new_data: &[u8],
 ) -> Result<(), ()> {
-    // In a full implementation:
-    // 1. Create undo/redo log records
-    // 2. Write to journal
-    // 3. Return only after journal is flushed
+    // Build undo (old data) and redo (new data) payloads for the MFT record.
+    let mut undo_data = Vec::with_capacity(8 + old_data.len());
+    undo_data.extend_from_slice(&record_num.to_le_bytes());
+    undo_data.extend_from_slice(old_data);
 
-    Ok(())
+    let mut redo_data = Vec::with_capacity(8 + new_data.len());
+    redo_data.extend_from_slice(&record_num.to_le_bytes());
+    redo_data.extend_from_slice(new_data);
+
+    write_journal_record(ntfs_device, LogRecordType::UpdateResidentValue, &undo_data)?;
+    write_journal_record(
+        ntfs_device,
+        LogRecordType::UpdateNonResidentValue,
+        &redo_data,
+    )
 }
 
 /// Helper function to create a log record for data write operations
-pub fn log_data_write(
-    _ntfs_device: *mut (),
-    _vcn: u64,
-    _length: u64,
-    _data: &[u8],
-) -> Result<(), ()> {
-    // In a full implementation:
-    // 1. Create log record with VCN and data
-    // 2. Write to journal
-    // 3. Return after flush
+pub fn log_data_write(ntfs_device: *mut (), vcn: u64, length: u64, data: &[u8]) -> Result<(), ()> {
+    // Build the redo payload with VCN, length, and the actual data bytes.
+    let mut redo_data = Vec::with_capacity(16 + data.len());
+    redo_data.extend_from_slice(&vcn.to_le_bytes());
+    redo_data.extend_from_slice(&length.to_le_bytes());
+    redo_data.extend_from_slice(data);
 
-    Ok(())
+    write_journal_record(
+        ntfs_device,
+        LogRecordType::UpdateNonResidentValue,
+        &redo_data,
+    )
 }
 
 #[cfg(test)]

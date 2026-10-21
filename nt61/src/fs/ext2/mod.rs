@@ -69,7 +69,7 @@ pub struct Ext2FileSystem {
 }
 
 impl Ext2FileSystem {
-    /// Create a new ext2 filesystem structure
+    /// create a new ext2 filesystem structure
     pub fn new() -> Self {
         Self {
             base: FileSystem {
@@ -131,7 +131,7 @@ pub struct Ext2Handle {
 }
 
 impl Ext2Handle {
-    /// Create a new file handle
+    /// create a new file handle
     pub fn new(inode_num: u32, inode: &Ext2Inode, sb: &Ext2SuperBlock) -> Self {
         Self {
             inode_num,
@@ -157,23 +157,23 @@ impl Ext2Handle {
 // Device I/O
 // ============================================================================
 
-/// Read a sector from the device
-pub fn read_sector(_device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<(), ()> {
+/// read a sector from the device
+pub fn read_sector(device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<(), ()> {
     if buffer.len() < 512 {
         return Err(());
     }
 
     // CRITICAL: Mask IRQ0 (PIT timer) during disk reads to prevent IRQ interference.
     // NTFS driver does this and never unmask - we follow the same pattern.
-    #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::pic::mask_irq(0);
+    crate::arch::mask_irq0();
 
     // Prefer the *active* partition mirror, when one is set by
     // the dispatcher in `fs::mod`. This is what lets EXT2 mount
     // and read from the system partition properly.
-    let result = if let Some(base) = crate::fs::active_partition_ramdisk() {
+    let result = if let Some(context) = unsafe { crate::fs::mount_context_from_device(device) } {
+        let base = context.base;
         let off = (sector as usize) * 512;
-        let max_size = crate::fs::active_partition_size().unwrap_or(usize::MAX);
+        let max_size = context.size;
         if off + 512 > max_size {
             Err(())
         } else {
@@ -203,16 +203,9 @@ pub fn read_sector(_device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<(
             Ok(())
         } else {
             // Try AHCI
-            #[cfg(target_arch = "x86_64")]
-            {
-                if crate::drivers::storage::ahci::read_sector(0, 0, sector as u32, buffer) {
-                    Ok(())
-                } else {
-                    Err(())
-                }
-            }
-            #[cfg(not(target_arch = "x86_64"))]
-            {
+            if crate::drivers::storage::ahci::read_sector(0, 0, sector as u32, buffer) {
+                Ok(())
+            } else {
                 Err(())
             }
         }
@@ -221,7 +214,7 @@ pub fn read_sector(_device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<(
     result
 }
 
-/// Write a sector to the device
+/// write a sector to the device
 pub fn write_sector(_device: *mut (), sector: u64, buffer: &[u8]) -> Result<(), ()> {
     if buffer.len() < 512 {
         return Err(());
@@ -234,14 +227,11 @@ pub fn write_sector(_device: *mut (), sector: u64, buffer: &[u8]) -> Result<(), 
     }
 
     // Try AHCI
-    #[cfg(target_arch = "x86_64")]
-    {
-        // AHCI write needs mutable buffer - create a copy
-        let mut buf = [0u8; 512];
-        buf.copy_from_slice(&buffer[..512]);
-        if crate::drivers::storage::ahci::write_sector(0, 0, sector as u32, &mut buf) {
-            return Ok(());
-        }
+    // AHCI write needs mutable buffer - create a copy
+    let mut buf = [0u8; 512];
+    buf.copy_from_slice(&buffer[..512]);
+    if crate::drivers::storage::ahci::write_sector(0, 0, sector as u32, &mut buf) {
+        return Ok(());
     }
 
     Err(())
@@ -252,10 +242,18 @@ pub fn write_sector(_device: *mut (), sector: u64, buffer: &[u8]) -> Result<(), 
 // ============================================================================
 
 /// Mount an ext2/ext3/ext4 filesystem
-pub fn mount(device: *mut (), offset: u64) -> Option<&'static mut Ext2FileSystem> {
+pub fn mount(
+    device: *mut (),
+    offset: u64,
+    partition: Option<crate::fs::MountContext>,
+) -> Option<&'static mut Ext2FileSystem> {
     // kprintln!("[EXT2] Mounting ext2/ext3/ext4 filesystem...");
 
-    // Read superblock
+    // read superblock
+    let device = match partition {
+        Some(context) => crate::fs::allocate_mount_context(context) as *mut (),
+        None => device,
+    };
     let sb = match superblock::read_superblock(device, offset) {
         Some(s) => s,
         None => {
@@ -270,7 +268,7 @@ pub fn mount(device: *mut (), offset: u64) -> Option<&'static mut Ext2FileSystem
         return None;
     }
 
-    // Create filesystem instance
+    // create filesystem instance
     let fs_ptr = crate::mm::pool::allocate(
         crate::mm::pool::PoolType::NonPaged,
         core::mem::size_of::<Ext2FileSystem>(),
@@ -342,7 +340,7 @@ pub fn unmount(_fs: *mut Ext2FileSystem) {
         // kprintln!("[EXT2] Filesystem unmounted");
         // In a full implementation, we would:
         // 1. Sync all buffers
-        // 2. Write superblock
+        // 2. write superblock
         // 3. Free resources
     }
 }
@@ -356,7 +354,7 @@ pub fn open_file(fs: &Ext2FileSystem, path: &[u8]) -> Option<Ext2Handle> {
     // Look up the path
     let inode_num = dir::path_lookup(fs.base.device, &fs.superblock, path)?;
 
-    // Read the inode
+    // read the inode
     let inode = inode::read_inode(fs.base.device, &fs.superblock, inode_num)?;
 
     Some(Ext2Handle::new(inode_num, &inode, &fs.superblock))
@@ -368,7 +366,7 @@ pub fn open_by_inode(fs: &Ext2FileSystem, inode_num: u32) -> Option<Ext2Handle> 
     Some(Ext2Handle::new(inode_num, &inode, &fs.superblock))
 }
 
-/// Read from a file handle
+/// read from a file handle
 pub fn read_file(fs: &Ext2FileSystem, handle: &mut Ext2Handle, buffer: &mut [u8]) -> usize {
     if handle.at_eof() {
         return 0;
@@ -388,7 +386,7 @@ pub fn read_file(fs: &Ext2FileSystem, handle: &mut Ext2Handle, buffer: &mut [u8]
     bytes_read
 }
 
-/// Read from a file at a specific offset
+/// read from a file at a specific offset
 pub fn read_file_at(
     fs: &Ext2FileSystem,
     inode_num: u32,
@@ -437,7 +435,7 @@ pub fn get_entry(fs: &Ext2FileSystem, path: &[u8]) -> Option<dir::Ext2DirEntryIn
     entries.into_iter().find(|e| e.name.as_bytes() == name)
 }
 
-/// Read an entire file by path. Returns the raw bytes or an error message.
+/// read an entire file by path. Returns the raw bytes or an error message.
 /// The `path` is converted internally from Windows-style ("C:\Windows\file")
 /// to ext2-style ("/Windows/file").
 pub fn read_whole_file(
@@ -453,7 +451,7 @@ pub fn read_whole_file(
         None => return Err("ext2: path_lookup failed"),
     };
 
-    // Read inode
+    // read inode
     let inode = match inode::read_inode(fs.base.device, &fs.superblock, inode_num) {
         Some(i) => i,
         None => return Err("ext2: read_inode failed"),
@@ -525,6 +523,13 @@ pub fn is_mounted() -> bool {
     !unsafe { EXT2_MOUNTED_FS.is_null() }
 }
 
+/// Clear the global mount state after the filesystem resources are released.
+pub fn clear_mounted_fs() {
+    unsafe {
+        EXT2_MOUNTED_FS = core::ptr::null_mut();
+    }
+}
+
 /// Convert a Windows-style path ("C:\Windows\file") to an ext2-style
 /// path ("/Windows/file"). Strips the leading drive prefix if present.
 fn win_path_to_ext2(path: &str) -> alloc::string::String {
@@ -545,7 +550,7 @@ pub fn mount_first(device: *mut (), offset: u64) -> Option<&'static mut Ext2File
             return Some(&mut *EXT2_MOUNTED_FS);
         }
 
-        let fs = mount(device, offset)?;
+        let fs = mount(device, offset, None)?;
         EXT2_MOUNTED_FS = fs as *const _ as *mut Ext2FileSystem;
         Some(&mut *EXT2_MOUNTED_FS)
     }
