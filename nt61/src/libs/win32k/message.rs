@@ -4,9 +4,6 @@
 //! Messages are posted to a per-thread message queue and retrieved
 //! by GetMessage/PeekMessage.
 
-#![allow(non_snake_case)]
-
-use crate::kprintln;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
@@ -32,7 +29,7 @@ pub struct MessageQueue {
     messages: VecDeque<Msg>,
     quit_flag: AtomicBool,
     exit_code: AtomicI32,
-    /// Paint rectangles pending WM_PAINT
+    /// Paint rectangles pending WmPaint
     paint_rects: Vec<crate::libs::win32k::window::Rect>,
     /// Current message being processed
     current_msg: Option<Msg>,
@@ -74,7 +71,7 @@ impl MessageQueue {
     pub fn post_quit(&mut self, exit_code: i32) {
         self.quit_flag.store(true, Ordering::SeqCst);
         self.exit_code.store(exit_code, Ordering::SeqCst);
-        // Signal that a message (WM_QUIT) is available
+        // Signal that a message (WmQuit) is available
         self.has_messages.store(true, Ordering::SeqCst);
     }
 
@@ -138,7 +135,7 @@ impl MessageQueue {
             if self.quit_flag.load(Ordering::SeqCst) {
                 return Some(Msg {
                     hwnd: 0,
-                    message: 0x0012, // WM_QUIT
+                    message: 0x0012, // WmQuit
                     wparam: self.exit_code.load(Ordering::SeqCst) as u64,
                     lparam: 0,
                     time: 0,
@@ -231,12 +228,12 @@ impl MessageQueue {
     }
 
     /// Translate keyboard message.
-    /// Converts WM_KEYDOWN to WM_CHAR if appropriate.
+    /// Converts WmKeydown to WmChar if appropriate.
     /// Handles extended keys, shift state, and special characters.
     pub fn translate_message(msg: &Msg) -> Option<Msg> {
         match msg.message {
             0x0100 => {
-                // WM_KEYDOWN
+                // WmKeydown
                 let vk = msg.wparam as u32;
                 let _ = &vk;
                 let _ = &vk;
@@ -254,7 +251,7 @@ impl MessageQueue {
                 let _ = &repeat_count;
                 let _ = &repeat_count;
                 if repeat_count > 1 {
-                    // Don't translate repeated keys to WM_CHAR
+                    // Don't translate repeated keys to WmChar
                     return None;
                 }
 
@@ -404,7 +401,7 @@ impl MessageQueue {
                 if ch != 0 {
                     return Some(Msg {
                         hwnd: msg.hwnd,
-                        message: 0x0102, // WM_CHAR
+                        message: 0x0102, // WmChar
                         wparam: ch as u64,
                         lparam: msg.lparam,
                         time: msg.time,
@@ -413,12 +410,12 @@ impl MessageQueue {
                     });
                 }
             }
-            0x0101 => { // WM_KEYUP
-                 // WM_CHAR is not generated on key up in Windows
+            0x0101 => { // WmKeyup
+                 // WmChar is not generated on key up in Windows
             }
             0x0104 => {
-                // WM_SYSKEYDOWN (Alt key combinations)
-                // Handle system key combinations
+                // WmSyskeydown (Alt key combinations)
+                // handle system key combinations
                 let vk = msg.wparam as u32;
                 let _ = &vk;
                 let _ = &vk;
@@ -533,90 +530,89 @@ pub fn get_exit_code() -> i32 {
 /// Default window procedure handler.
 /// Processes messages that most windows handle by default.
 pub fn default_wndproc(hwnd: u64, msg: u32, wparam: u64, lparam: i64) -> i64 {
-    use crate::libs::win32k::window::WindowMessage;
     let _ = (hwnd, wparam, lparam);
 
     match msg {
         0x0001 => {
-            // WM_CREATE
-            // kprintln!("[wndproc] WM_CREATE hwnd={:#x}", hwnd);
+            // WmCreate
+            // kprintln!("[wndproc] WmCreate hwnd={:#x}", hwnd);
             0 // Continue creation
         }
         0x0002 => {
-            // WM_DESTROY
-            // kprintln!("[wndproc] WM_DESTROY hwnd={:#x}", hwnd);
+            // WmDestroy
+            // kprintln!("[wndproc] WmDestroy hwnd={:#x}", hwnd);
             post_quit_message(0);
             0
         }
         0x000F => {
-            // WM_PAINT
-            // kprintln!("[wndproc] WM_PAINT hwnd={:#x}", hwnd);
-            // InvalidateRect was already called, so just validate
+            // WmPaint
+            // kprintln!("[wndproc] WmPaint hwnd={:#x}", hwnd);
+            // invalidate_rect was already called, so just validate
             0
         }
         0x0014 => {
-            // WM_ERASEBKGND
+            // WmErasebkgnd
             // Return 1 to indicate background will be erased
             1
         }
         0x0005 => {
-            // WM_SIZE
+            // WmSize
             let width = lparam as u32;
             let _ = &width;
             let _ = &width;
             let height = (lparam >> 32) as u32;
             let _ = &height;
             let _ = &height;
-            // kprintln!("[wndproc] WM_SIZE hwnd={:#x} {}x{}", hwnd, width, height);
+            // kprintln!("[wndproc] WmSize hwnd={:#x} {}x{}", hwnd, width, height);
             0
         }
         0x0003 => {
-            // WM_MOVE
+            // WmMove
             let x = lparam as u32;
             let _ = &x;
             let _ = &x;
             let y = (lparam >> 32) as u32;
             let _ = &y;
             let _ = &y;
-            // kprintln!("[wndproc] WM_MOVE hwnd={:#x} ({},{})", hwnd, x, y);
+            // kprintln!("[wndproc] WmMove hwnd={:#x} ({},{})", hwnd, x, y);
             0
         }
         0x0010 => {
-            // WM_CLOSE
-            // kprintln!("[wndproc] WM_CLOSE hwnd={:#x}", hwnd);
+            // WmClose
+            // kprintln!("[wndproc] WmClose hwnd={:#x}", hwnd);
             // Default: destroy the window
             crate::libs::win32k::window::destroy_window_internal(hwnd);
             0
         }
         0x0100 => {
-            // WM_KEYDOWN
-            // kprintln!("[wndproc] WM_KEYDOWN hwnd={:#x} vk={:#x}", hwnd, wparam);
+            // WmKeydown
+            // kprintln!("[wndproc] WmKeydown hwnd={:#x} vk={:#x}", hwnd, wparam);
             0
         }
         0x0101 => {
-            // WM_KEYUP
-            // kprintln!("[wndproc] WM_KEYUP hwnd={:#x} vk={:#x}", hwnd, wparam);
+            // WmKeyup
+            // kprintln!("[wndproc] WmKeyup hwnd={:#x} vk={:#x}", hwnd, wparam);
             0
         }
         0x0200 => {
-            // WM_MOUSEMOVE
+            // WmMousemove
             let x = (lparam as i32) & 0xFFFF;
             let _ = &x;
             let _ = &x;
             let y = ((lparam >> 16) as i32) & 0xFFFF;
             let _ = &y;
             let _ = &y;
-            // kprintln!("[wndproc] WM_MOUSEMOVE hwnd={:#x} ({},{})", hwnd, x, y);
+            // kprintln!("[wndproc] WmMousemove hwnd={:#x} ({},{})", hwnd, x, y);
             0
         }
         0x0201 => {
-            // WM_LBUTTONDOWN
-            // kprintln!("[wndproc] WM_LBUTTONDOWN hwnd={:#x}", hwnd);
+            // WmLbuttondown
+            // kprintln!("[wndproc] WmLbuttondown hwnd={:#x}", hwnd);
             0
         }
         0x0202 => {
-            // WM_LBUTTONUP
-            // kprintln!("[wndproc] WM_LBUTTONUP hwnd={:#x}", hwnd);
+            // WmLbuttonup
+            // kprintln!("[wndproc] WmLbuttonup hwnd={:#x}", hwnd);
             0
         }
         _ => {

@@ -1,7 +1,3 @@
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
-
-use core::sync::atomic::{AtomicI32, AtomicI64, AtomicU8};
-
 use super::types::*;
 use spin::{Lazy, Mutex};
 

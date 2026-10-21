@@ -71,7 +71,7 @@ pub unsafe extern "C" fn RpcServerUseProtseqW(
     protseq: *const u16,
     max_calls: u32,
     security_descriptor: *mut core::ffi::c_void,
-) -> RPC_STATUS {
+) -> RpcStatus {
     if protseq.is_null() {
         return RPC_S_INVALID_STRING_BINDING;
     }
@@ -107,7 +107,7 @@ pub unsafe extern "C" fn RpcServerUseProtseqEpW(
     max_calls: u32,
     endpoint: *const u16,
     security_descriptor: *mut core::ffi::c_void,
-) -> RPC_STATUS {
+) -> RpcStatus {
     let status = RpcServerUseProtseqW(protseq, max_calls, security_descriptor);
     if status != RPC_S_OK {
         return status;
@@ -180,7 +180,7 @@ pub unsafe extern "C" fn RpcServerUseProtseqEpW(
 pub unsafe extern "C" fn RpcServerUseAllProtseqs(
     max_calls: u32,
     security_descriptor: *mut core::ffi::c_void,
-) -> RPC_STATUS {
+) -> RpcStatus {
     let ncalrpc = [
         b'n' as u16,
         b'c' as u16,
@@ -219,19 +219,19 @@ pub unsafe extern "C" fn RpcServerUseAllProtseqs(
 #[no_mangle]
 pub unsafe extern "C" fn RpcServerUseAllProtseqsIf(
     max_calls: u32,
-    if_spec: RPC_IF_HANDLE,
+    if_spec: RpcIfHandle,
     security_descriptor: *mut core::ffi::c_void,
-) -> RPC_STATUS {
+) -> RpcStatus {
     let _ = if_spec; // Interface spec not used in simple implementation
     RpcServerUseAllProtseqs(max_calls, security_descriptor)
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn RpcServerRegisterIf(
-    if_spec: RPC_IF_HANDLE,
+    if_spec: RpcIfHandle,
     mgr_type_uuid: *const UUID,
     mgr_epv: *mut core::ffi::c_void,
-) -> RPC_STATUS {
+) -> RpcStatus {
     if if_spec.is_null() {
         return RPC_S_INVALID_BINDING;
     }
@@ -264,14 +264,14 @@ pub unsafe extern "C" fn RpcServerRegisterIf(
 
 #[no_mangle]
 pub unsafe extern "C" fn RpcServerRegisterIf2(
-    if_spec: RPC_IF_HANDLE,
+    if_spec: RpcIfHandle,
     mgr_type_uuid: *const UUID,
     mgr_epv: *mut core::ffi::c_void,
     flags: u32,
     max_calls: u32,
     max_rpc_size: u32,
     if_callback: *mut core::ffi::c_void,
-) -> RPC_STATUS {
+) -> RpcStatus {
     if if_spec.is_null() {
         return RPC_S_INVALID_BINDING;
     }
@@ -308,10 +308,10 @@ pub unsafe extern "C" fn RpcServerRegisterIf2(
 
 #[no_mangle]
 pub unsafe extern "C" fn RpcServerUnregisterIf(
-    if_spec: RPC_IF_HANDLE,
+    if_spec: RpcIfHandle,
     mgr_type_uuid: *const UUID,
     wait_for_calls_to_complete: u32,
-) -> RPC_STATUS {
+) -> RpcStatus {
     let mut state = SERVER_STATE.lock();
 
     let mut found = false;
@@ -361,7 +361,7 @@ pub unsafe extern "C" fn RpcServerListen(
     min_call_threads: u32,
     max_calls: u32,
     dont_wait: u32,
-) -> RPC_STATUS {
+) -> RpcStatus {
     let mut state = SERVER_STATE.lock();
 
     if state.is_listening {
@@ -389,7 +389,7 @@ pub unsafe extern "C" fn RpcServerListen(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn RpcMgmtStopServerListening(binding: RPC_BINDING_HANDLE) -> RPC_STATUS {
+pub unsafe extern "C" fn RpcMgmtStopServerListening(binding: RpcBindingHandle) -> RpcStatus {
     let _ = binding; // Binding not used for local server
 
     let mut state = SERVER_STATE.lock();
@@ -404,7 +404,7 @@ pub unsafe extern "C" fn RpcMgmtStopServerListening(binding: RPC_BINDING_HANDLE)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn RpcMgmtWaitServerListen() -> RPC_STATUS {
+pub unsafe extern "C" fn RpcMgmtWaitServerListen() -> RpcStatus {
     let state = SERVER_STATE.lock();
 
     if state.is_listening {
@@ -415,7 +415,7 @@ pub unsafe extern "C" fn RpcMgmtWaitServerListen() -> RPC_STATUS {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn RpcMgmtIsServerListening(binding: RPC_BINDING_HANDLE) -> RPC_STATUS {
+pub unsafe extern "C" fn RpcMgmtIsServerListening(binding: RpcBindingHandle) -> RpcStatus {
     let _ = binding; // Binding not used for local server
 
     let state = SERVER_STATE.lock();
@@ -430,7 +430,7 @@ pub unsafe extern "C" fn RpcMgmtIsServerListening(binding: RPC_BINDING_HANDLE) -
 #[no_mangle]
 pub unsafe extern "C" fn RpcServerInqBindings(
     binding_vector: *mut *mut RPC_BINDING_VECTOR,
-) -> RPC_STATUS {
+) -> RpcStatus {
     if binding_vector.is_null() {
         return RPC_S_INVALID_BINDING;
     }
@@ -442,7 +442,7 @@ pub unsafe extern "C" fn RpcServerInqBindings(
     }
 
     let size = core::mem::size_of::<RPC_BINDING_VECTOR>()
-        + (state.protseq_count - 1) * core::mem::size_of::<RPC_BINDING_HANDLE>();
+        + (state.protseq_count - 1) * core::mem::size_of::<RpcBindingHandle>();
 
     let vector = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, size)
         as *mut RPC_BINDING_VECTOR;
@@ -472,7 +472,7 @@ pub unsafe extern "C" fn RpcServerInqBindings(
             (*bind_internal).lpc_port_index = state.lpc_ports[i];
 
             let bindings_ptr = (*vector).binding_h.as_mut_ptr();
-            *bindings_ptr.add(i) = bind_internal as RPC_BINDING_HANDLE;
+            *bindings_ptr.add(i) = bind_internal as RpcBindingHandle;
         }
     }
 
@@ -482,11 +482,11 @@ pub unsafe extern "C" fn RpcServerInqBindings(
 
 #[no_mangle]
 pub unsafe extern "C" fn RpcEpRegister(
-    if_spec: RPC_IF_HANDLE,
+    if_spec: RpcIfHandle,
     binding_vector: *mut RPC_BINDING_VECTOR,
     uuid_vector: *mut core::ffi::c_void,
     annotation: *const u16,
-) -> RPC_STATUS {
+) -> RpcStatus {
     if if_spec.is_null() || binding_vector.is_null() {
         return RPC_S_INVALID_BINDING;
     }
@@ -499,10 +499,10 @@ pub unsafe extern "C" fn RpcEpRegister(
 
 #[no_mangle]
 pub unsafe extern "C" fn RpcEpUnregister(
-    if_spec: RPC_IF_HANDLE,
+    if_spec: RpcIfHandle,
     binding_vector: *mut RPC_BINDING_VECTOR,
     uuid_vector: *mut core::ffi::c_void,
-) -> RPC_STATUS {
+) -> RpcStatus {
     if if_spec.is_null() || binding_vector.is_null() {
         return RPC_S_INVALID_BINDING;
     }

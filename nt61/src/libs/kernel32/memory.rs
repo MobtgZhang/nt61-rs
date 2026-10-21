@@ -1,16 +1,16 @@
 //! kernel32 — memory management
 //
-//! `VirtualAlloc`, `VirtualFree`, `VirtualProtect`,
-//! `VirtualQuery`, `HeapAlloc`, `HeapFree`, `HeapReAlloc`,
-//! `HeapSize`, `GetProcessHeap`, `HeapCreate`,
-//! `HeapDestroy`. Thin wrappers around the ntdll heap
-//! (Rtl*Heap) and virtual memory (NtAllocateVirtualMemory)
+//! `virtual_alloc`, `virtual_free`, `virtual_protect`,
+//! `virtual_query`, `heap_alloc`, `heap_free`, `heap_re_alloc`,
+//! `heap_size`, `get_process_heap`, `heap_create`,
+//! `heap_destroy`. Thin wrappers around the ntdll heap
+//! (Rtl*Heap) and virtual memory (NT_ALLOCATE_VIRTUAL_MEMORY)
 //! primitives.
 
-use super::error::{GetLastError, SetLastError};
+use super::error::set_last_error;
 use super::types::{BOOL, DWORD, FALSE, HANDLE, HANDLE_CURRENT_PROCESS, LPCVOID, LPVOID, TRUE};
 use crate::libs::ntdll::heap as ntdll_heap;
-use crate::libs::ntdll::status::{STATUS_INVALID_PARAMETER, STATUS_SUCCESS};
+use crate::libs::ntdll::status::STATUS_SUCCESS;
 use crate::libs::ntdll::virtual_mem as ntdll_vm;
 use core::ptr;
 
@@ -35,8 +35,8 @@ pub mod vmem {
     pub const PAGE_NOCACHE: u32 = 0x0200;
 }
 
-/// `VirtualAlloc`.
-pub unsafe extern "C" fn VirtualAlloc(
+/// `virtual_alloc`.
+pub unsafe extern "C" fn virtual_alloc(
     address: LPVOID,
     size: usize,
     allocation_type: DWORD,
@@ -45,7 +45,7 @@ pub unsafe extern "C" fn VirtualAlloc(
     if address.is_null() {
         let mut base: *mut u8 = ptr::null_mut();
         let mut s = size;
-        let status = ntdll_vm::NtAllocateVirtualMemory(
+        let status = ntdll_vm::nt_allocate_virtual_memory(
             HANDLE_CURRENT_PROCESS,
             &mut base as *mut _ as *mut _,
             0,
@@ -54,7 +54,7 @@ pub unsafe extern "C" fn VirtualAlloc(
             protect,
         );
         if status != STATUS_SUCCESS {
-            SetLastError(8);
+            set_last_error(8);
             return ptr::null_mut();
         }
         return base as LPVOID;
@@ -63,11 +63,11 @@ pub unsafe extern "C" fn VirtualAlloc(
     address
 }
 
-/// `VirtualFree`.
-pub unsafe extern "C" fn VirtualFree(address: LPVOID, size: usize, free_type: DWORD) -> BOOL {
+/// `virtual_free`.
+pub unsafe extern "C" fn virtual_free(address: LPVOID, size: usize, free_type: DWORD) -> BOOL {
     let mut base = address as *mut u8;
     let mut s = size;
-    let status = ntdll_vm::NtFreeVirtualMemory(
+    let status = ntdll_vm::nt_free_virtual_memory(
         HANDLE_CURRENT_PROCESS,
         &mut base as *mut _ as *mut _,
         &mut s,
@@ -76,13 +76,13 @@ pub unsafe extern "C" fn VirtualFree(address: LPVOID, size: usize, free_type: DW
     if status == STATUS_SUCCESS {
         TRUE
     } else {
-        SetLastError(87);
+        set_last_error(87);
         FALSE
     }
 }
 
-/// `VirtualProtect`.
-pub unsafe extern "C" fn VirtualProtect(
+/// `virtual_protect`.
+pub unsafe extern "C" fn virtual_protect(
     address: LPVOID,
     _size: usize,
     new_protect: DWORD,
@@ -90,7 +90,7 @@ pub unsafe extern "C" fn VirtualProtect(
 ) -> BOOL {
     let mut base = address as *mut u8;
     let mut s = 0x1000;
-    let status = ntdll_vm::NtProtectVirtualMemory(
+    let status = ntdll_vm::nt_protect_virtual_memory(
         HANDLE_CURRENT_PROCESS,
         &mut base as *mut _ as *mut _,
         &mut s,
@@ -100,7 +100,7 @@ pub unsafe extern "C" fn VirtualProtect(
     if status == STATUS_SUCCESS {
         TRUE
     } else {
-        SetLastError(87);
+        set_last_error(87);
         FALSE
     }
 }
@@ -120,18 +120,18 @@ pub struct MemoryBasicInformation {
     pub _pad2: u32,
 }
 
-/// `VirtualQuery`.
-pub unsafe extern "C" fn VirtualQuery(
+/// `virtual_query`.
+pub unsafe extern "C" fn virtual_query(
     address: LPCVOID,
     buffer: *mut MemoryBasicInformation,
     length: usize,
 ) -> usize {
     if buffer.is_null() {
-        SetLastError(87);
+        set_last_error(87);
         return 0;
     }
     if length < core::mem::size_of::<MemoryBasicInformation>() {
-        SetLastError(122);
+        set_last_error(122);
         return 0;
     }
     let mbi = &mut *buffer;
@@ -156,13 +156,13 @@ pub mod heap_flags {
     pub const HEAP_REALLOC_IN_PLACE_ONLY: u32 = 0x0000_0010;
 }
 
-/// `HeapCreate`.
-pub unsafe extern "C" fn HeapCreate(
+/// `heap_create`.
+pub unsafe extern "C" fn heap_create(
     options: DWORD,
     _initial_size: usize,
     _maximum_size: usize,
 ) -> HANDLE {
-    ntdll_heap::RtlCreateHeap(
+    ntdll_heap::rtl_create_heap(
         options,
         ptr::null_mut(),
         0,
@@ -172,9 +172,9 @@ pub unsafe extern "C" fn HeapCreate(
     )
 }
 
-/// `HeapDestroy`.
-pub unsafe extern "C" fn HeapDestroy(heap: HANDLE) -> BOOL {
-    let result = ntdll_heap::RtlDestroyHeap(heap);
+/// `heap_destroy`.
+pub unsafe extern "C" fn heap_destroy(heap: HANDLE) -> BOOL {
+    let result = ntdll_heap::rtl_destroy_heap(heap);
     if result.is_null() {
         TRUE
     } else {
@@ -182,70 +182,70 @@ pub unsafe extern "C" fn HeapDestroy(heap: HANDLE) -> BOOL {
     }
 }
 
-/// `GetProcessHeap`.
-pub unsafe extern "C" fn GetProcessHeap() -> HANDLE {
-    ntdll_heap::RtlGetProcessHeap()
+/// `get_process_heap`.
+pub unsafe extern "C" fn get_process_heap() -> HANDLE {
+    ntdll_heap::rtl_get_process_heap()
 }
 
-/// `HeapAlloc`.
-pub unsafe extern "C" fn HeapAlloc(heap: HANDLE, flags: DWORD, bytes: usize) -> LPVOID {
-    ntdll_heap::RtlAllocateHeap(heap, flags, bytes)
+/// `heap_alloc`.
+pub unsafe extern "C" fn heap_alloc(heap: HANDLE, flags: DWORD, bytes: usize) -> LPVOID {
+    ntdll_heap::rtl_allocate_heap(heap, flags, bytes)
 }
 
-/// `HeapReAlloc`.
-pub unsafe extern "C" fn HeapReAlloc(
+/// `heap_re_alloc`.
+pub unsafe extern "C" fn heap_re_alloc(
     heap: HANDLE,
     flags: DWORD,
     memory: LPVOID,
     bytes: usize,
 ) -> LPVOID {
-    ntdll_heap::RtlReAllocateHeap(heap, flags, memory, bytes)
+    ntdll_heap::rtl_re_allocate_heap(heap, flags, memory, bytes)
 }
 
-/// `HeapFree`.
-pub unsafe extern "C" fn HeapFree(heap: HANDLE, flags: DWORD, memory: LPVOID) -> BOOL {
-    if ntdll_heap::RtlFreeHeap(heap, flags, memory) == 1 {
+/// `heap_free`.
+pub unsafe extern "C" fn heap_free(heap: HANDLE, flags: DWORD, memory: LPVOID) -> BOOL {
+    if ntdll_heap::rtl_free_heap(heap, flags, memory) == 1 {
         TRUE
     } else {
         FALSE
     }
 }
 
-/// `HeapSize`.
-pub unsafe extern "C" fn HeapSize(heap: HANDLE, flags: DWORD, memory: LPVOID) -> usize {
-    ntdll_heap::RtlSizeHeap(heap, flags, memory)
+/// `heap_size`.
+pub unsafe extern "C" fn heap_size(heap: HANDLE, flags: DWORD, memory: LPVOID) -> usize {
+    ntdll_heap::rtl_size_heap(heap, flags, memory)
 }
 
-/// `GlobalAlloc` — wraps `HeapAlloc` of the process heap.
-/// Flags we honour:
+/// `global_alloc` — wraps `heap_alloc` of the process heap.
+/// flags we honour:
 ///   0x0040 = GMEM_ZEROINIT
 ///   0x001C = GMEM_MOVEABLE | GMEM_DISCARDABLE | GMEM_DDESHARE
-pub unsafe extern "C" fn GlobalAlloc(flags: DWORD, bytes: usize) -> HANDLE {
-    let h = GetProcessHeap();
+pub unsafe extern "C" fn global_alloc(flags: DWORD, bytes: usize) -> HANDLE {
+    let h = get_process_heap();
     let mut f = 0;
     if flags & 0x0040 != 0 {
         f |= ntdll_heap::HEAP_ZERO_MEMORY;
     }
-    let p = ntdll_heap::RtlAllocateHeap(h, f, bytes);
+    let p = ntdll_heap::rtl_allocate_heap(h, f, bytes);
     if p.is_null() {
         return ptr::null_mut();
     }
     p
 }
 
-/// `GlobalFree`.
-pub unsafe extern "C" fn GlobalFree(memory: HANDLE) -> HANDLE {
-    if HeapFree(GetProcessHeap(), 0, memory) != 0 {
+/// `global_free`.
+pub unsafe extern "C" fn global_free(memory: HANDLE) -> HANDLE {
+    if heap_free(get_process_heap(), 0, memory) != 0 {
         ptr::null_mut()
     } else {
         memory
     }
 }
 
-/// `LocalAlloc` — same as GlobalAlloc in modern Windows.
-pub unsafe extern "C" fn LocalAlloc(flags: DWORD, bytes: usize) -> HANDLE {
-    GlobalAlloc(flags, bytes)
+/// `local_alloc` — same as global_alloc in modern Windows.
+pub unsafe extern "C" fn local_alloc(flags: DWORD, bytes: usize) -> HANDLE {
+    global_alloc(flags, bytes)
 }
-pub unsafe extern "C" fn LocalFree(memory: HANDLE) -> HANDLE {
-    GlobalFree(memory)
+pub unsafe extern "C" fn local_free(memory: HANDLE) -> HANDLE {
+    global_free(memory)
 }

@@ -21,9 +21,6 @@
 //!   * geoffchappell.com — WoW64 system service dispatching
 //!   * ReactOS wow64 implementation
 
-#![allow(dead_code)]
-#![cfg(target_arch = "x86_64")]
-
 use crate::libs::wow64::types::*;
 use core::mem::size_of;
 
@@ -43,7 +40,7 @@ pub struct SyscallContext {
 }
 
 impl SyscallContext {
-    /// Create a new syscall context.
+    /// create a new syscall context.
     pub fn new(args32: *const u32, arg_count: usize) -> Self {
         Self {
             args32,
@@ -52,7 +49,7 @@ impl SyscallContext {
         }
     }
 
-    /// Read the next 32-bit argument as u32.
+    /// read the next 32-bit argument as u32.
 
     pub fn next_u32(&mut self) -> u32 {
         if self.current_arg >= self.arg_count {
@@ -63,17 +60,17 @@ impl SyscallContext {
         val
     }
 
-    /// Read the next argument as a sign-extended 64-bit value.
+    /// read the next argument as a sign-extended 64-bit value.
     pub fn next_i64(&mut self) -> i64 {
         self.next_u32() as i32 as i64
     }
 
-    /// Read the next argument as a zero-extended 64-bit value.
+    /// read the next argument as a zero-extended 64-bit value.
     pub fn next_u64(&mut self) -> u64 {
         self.next_u32() as u64
     }
 
-    /// Read the next argument as a 32-bit pointer, extended to 64-bit.
+    /// read the next argument as a 32-bit pointer, extended to 64-bit.
     pub fn next_ptr(&mut self) -> u64 {
         let ptr32 = self.next_u32();
         if ptr32 == 0 {
@@ -83,7 +80,7 @@ impl SyscallContext {
         }
     }
 
-    /// Read a specific argument by index.
+    /// read a specific argument by index.
     pub fn get_u32(&self, index: usize) -> u32 {
         if index >= self.arg_count {
             return 0;
@@ -132,7 +129,7 @@ pub fn validate_wow64_pointer(ptr32: ULONG32) -> bool {
     ptr32 >= WOW64_USER_SPACE_START && ptr32 <= WOW64_MAX_USER_ADDRESS
 }
 
-/// Convert a 32-bit UNICODE_STRING to 64-bit.
+/// Convert a 32-bit UnicodeString to 64-bit.
 pub fn convert_unicode_string_32_to_64(str32: *const UnicodeString32) -> Option<(u16, u16, u64)> {
     if str32.is_null() {
         return None;
@@ -140,7 +137,7 @@ pub fn convert_unicode_string_32_to_64(str32: *const UnicodeString32) -> Option<
 
     unsafe {
         let s = &*str32;
-        Some((s.Length, s.MaximumLength, s.Buffer as u64))
+        Some((s.length, s.maximum_length, s.buffer as u64))
     }
 }
 
@@ -170,9 +167,9 @@ pub fn convert_object_attributes_32_to_64(oa32_ptr: ULONG32) -> Option<ObjectAtt
 
     // In a real implementation, we would:
     // 1. Validate the pointer
-    // 2. Read the 32-bit structure from user space
+    // 2. read the 32-bit structure from user space
     // 3. Convert each field
-    // 4. Handle the nested UNICODE_STRING pointer
+    // 4. handle the nested UnicodeString pointer
 
     // For now, return a placeholder
     Some(ObjectAttributes64 {
@@ -364,7 +361,7 @@ impl Context64 {
 // System Call Dispatchers
 // =============================================================================
 
-/// Dispatch NtAllocateVirtualMemory (32-bit → 64-bit).
+/// Dispatch NT_ALLOCATE_VIRTUAL_MEMORY (32-bit → 64-bit).
 pub fn dispatch_nt_allocate_virtual_memory(ctx: &mut SyscallContext) -> ULONG32 {
     let _process_handle = ctx.next_u32();
     let base_address_ptr = ctx.next_u32();
@@ -378,17 +375,33 @@ pub fn dispatch_nt_allocate_virtual_memory(ctx: &mut SyscallContext) -> ULONG32 
         return STATUS_INVALID_PARAMETER;
     }
 
-    // In a real implementation:
-    // 1. Read base_address and region_size from user space
-    // 2. Call NtAllocateVirtualMemory with 64-bit parameters
-    // 3. Write results back to 32-bit user space
-    // 4. Return NTSTATUS
-
-    let _ = (allocation_type, protect);
-    STATUS_NOT_IMPLEMENTED
+    let handle64 = _process_handle as usize as *mut core::ffi::c_void;
+    let mut base = match crate::mm::user_copy::read_user_object::<u32>(base_address_ptr as u64) {
+        Ok(value) => value as usize,
+        Err(status) => return status as u32,
+    };
+    let mut size = match crate::mm::user_copy::read_user_object::<u32>(region_size_ptr as u64) {
+        Ok(value) => value as usize,
+        Err(status) => return status as u32,
+    };
+    let status = unsafe {
+        crate::libs::ntdll::virtual_mem::nt_allocate_virtual_memory(
+            handle64,
+            &mut base as *mut usize as *mut crate::libs::ntdll::types::PVOID,
+            0,
+            &mut size,
+            allocation_type,
+            protect,
+        )
+    };
+    if status >= 0 {
+        let _ = crate::mm::user_copy::write_user_object(base_address_ptr as u64, &(base as u32));
+        let _ = crate::mm::user_copy::write_user_object(region_size_ptr as u64, &(size as u32));
+    }
+    status as u32
 }
 
-/// Dispatch NtFreeVirtualMemory (32-bit → 64-bit).
+/// Dispatch NT_FREE_VIRTUAL_MEMORY (32-bit → 64-bit).
 pub fn dispatch_nt_free_virtual_memory(ctx: &mut SyscallContext) -> ULONG32 {
     let _process_handle = ctx.next_u32();
     let base_address_ptr = ctx.next_u32();
@@ -399,11 +412,31 @@ pub fn dispatch_nt_free_virtual_memory(ctx: &mut SyscallContext) -> ULONG32 {
         return STATUS_INVALID_PARAMETER;
     }
 
-    let _ = free_type;
-    STATUS_NOT_IMPLEMENTED
+    let handle64 = _process_handle as usize as *mut core::ffi::c_void;
+    let mut base = match crate::mm::user_copy::read_user_object::<u32>(base_address_ptr as u64) {
+        Ok(value) => value as usize,
+        Err(status) => return status as u32,
+    };
+    let mut size = match crate::mm::user_copy::read_user_object::<u32>(region_size_ptr as u64) {
+        Ok(value) => value as usize,
+        Err(status) => return status as u32,
+    };
+    let status = unsafe {
+        crate::libs::ntdll::virtual_mem::nt_free_virtual_memory(
+            handle64,
+            &mut base as *mut usize as *mut crate::libs::ntdll::types::PVOID,
+            &mut size,
+            free_type,
+        )
+    };
+    if status >= 0 {
+        let _ = crate::mm::user_copy::write_user_object(base_address_ptr as u64, &(base as u32));
+        let _ = crate::mm::user_copy::write_user_object(region_size_ptr as u64, &(size as u32));
+    }
+    status as u32
 }
 
-/// Dispatch NtQueryVirtualMemory (32-bit → 64-bit).
+/// Dispatch NT_QUERY_VIRTUAL_MEMORY (32-bit → 64-bit).
 pub fn dispatch_nt_query_virtual_memory(ctx: &mut SyscallContext) -> ULONG32 {
     let _process_handle = ctx.next_u32();
     let base_address = ctx.next_u32();
@@ -416,11 +449,29 @@ pub fn dispatch_nt_query_virtual_memory(ctx: &mut SyscallContext) -> ULONG32 {
         return STATUS_INVALID_PARAMETER;
     }
 
-    let _ = (base_address, info_class, info_length, return_length_ptr);
-    STATUS_NOT_IMPLEMENTED
+    let handle64 = _process_handle as usize as *mut core::ffi::c_void;
+    let base64 = base_address as usize as *mut core::ffi::c_void;
+    let info64 = info_ptr as usize as *mut core::ffi::c_void;
+    let mut ret_len: usize = 0;
+    let status = unsafe {
+        crate::libs::ntdll::virtual_mem::nt_query_virtual_memory(
+            handle64,
+            base64,
+            info_class,
+            info64,
+            info_length as usize,
+            &mut ret_len,
+        )
+    };
+    if status >= 0 && return_length_ptr != 0 {
+        unsafe {
+            *(return_length_ptr as *mut u32) = ret_len as u32;
+        }
+    }
+    status as u32
 }
 
-/// Dispatch NtCreateFile (32-bit → 64-bit).
+/// Dispatch NT_CREATE_FILE (32-bit → 64-bit).
 pub fn dispatch_nt_create_file(ctx: &mut SyscallContext) -> ULONG32 {
     let file_handle_ptr = ctx.next_u32();
     let desired_access = ctx.next_u32();
@@ -431,28 +482,50 @@ pub fn dispatch_nt_create_file(ctx: &mut SyscallContext) -> ULONG32 {
     let share_access = ctx.next_u32();
     let create_disposition = ctx.next_u32();
     let create_options = ctx.next_u32();
-    let ea_buffer = ctx.next_u32();
+    let _ea_buffer = ctx.next_u32();
     let ea_length = ctx.next_u32();
 
     if !validate_wow64_pointer(file_handle_ptr) || !validate_wow64_pointer(io_status_block_ptr) {
         return STATUS_INVALID_PARAMETER;
     }
 
-    let _ = (
-        desired_access,
-        object_attributes_ptr,
-        allocation_size_ptr,
-        file_attributes,
-        share_access,
-        create_disposition,
-        create_options,
-        ea_buffer,
-        ea_length,
-    );
-    STATUS_NOT_IMPLEMENTED
+    let handle_ptr = file_handle_ptr as *mut u32;
+    let mut handle64: crate::libs::ntdll::types::HANDLE = core::ptr::null_mut();
+    let oa_ptr = if object_attributes_ptr != 0 {
+        object_attributes_ptr as usize as *mut crate::libs::ntdll::types::ObjectAttributes
+    } else {
+        core::ptr::null_mut()
+    };
+    let iosb_ptr = io_status_block_ptr as usize as *mut crate::libs::ntdll::types::IoStatusBlock;
+    let alloc_ptr = if allocation_size_ptr != 0 {
+        allocation_size_ptr as usize as *mut i64
+    } else {
+        core::ptr::null_mut()
+    };
+    let status = unsafe {
+        crate::libs::ntdll::file::nt_create_file(
+            &mut handle64,
+            desired_access,
+            oa_ptr,
+            iosb_ptr,
+            alloc_ptr,
+            file_attributes,
+            share_access,
+            create_disposition,
+            create_options,
+            core::ptr::null_mut(),
+            ea_length,
+        )
+    };
+    if status >= 0 {
+        unsafe {
+            *handle_ptr = handle64 as usize as u32;
+        }
+    }
+    status as u32
 }
 
-/// Dispatch NtReadFile (32-bit → 64-bit).
+/// Dispatch NT_READ_FILE (32-bit → 64-bit).
 pub fn dispatch_nt_read_file(ctx: &mut SyscallContext) -> ULONG32 {
     let file_handle = ctx.next_u32();
     let _event = ctx.next_u32();
@@ -464,7 +537,7 @@ pub fn dispatch_nt_read_file(ctx: &mut SyscallContext) -> ULONG32 {
     let byte_offset_ptr = ctx.next_u32();
     let _key = ctx.next_u32();
 
-    // `NtReadFile` resolves the object handle before probing the caller
+    // `NT_READ_FILE` resolves the object handle before probing the caller
     // buffers, so an invalid handle reports `STATUS_INVALID_HANDLE` rather
     // than `STATUS_INVALID_PARAMETER`.
     if !crate::libs::wow64::handle::is_real_handle(file_handle) {
@@ -475,11 +548,31 @@ pub fn dispatch_nt_read_file(ctx: &mut SyscallContext) -> ULONG32 {
         return STATUS_INVALID_PARAMETER;
     }
 
-    let _ = (length, byte_offset_ptr);
-    STATUS_NOT_IMPLEMENTED
+    let handle64 = file_handle as usize as *mut core::ffi::c_void;
+    let iosb_ptr = io_status_block_ptr as usize as *mut crate::libs::ntdll::types::IoStatusBlock;
+    let buffer64 = buffer_ptr as usize as *mut core::ffi::c_void;
+    let offset_ptr = if byte_offset_ptr != 0 {
+        byte_offset_ptr as usize as *mut i64
+    } else {
+        core::ptr::null_mut()
+    };
+    let status = unsafe {
+        crate::libs::ntdll::file::nt_read_file(
+            handle64,
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+            iosb_ptr,
+            buffer64,
+            length,
+            offset_ptr,
+            core::ptr::null_mut(),
+        )
+    };
+    status as u32
 }
 
-/// Dispatch NtWriteFile (32-bit → 64-bit).
+/// Dispatch NT_WRITE_FILE (32-bit → 64-bit).
 pub fn dispatch_nt_write_file(ctx: &mut SyscallContext) -> ULONG32 {
     let file_handle = ctx.next_u32();
     let _event = ctx.next_u32();
@@ -491,7 +584,7 @@ pub fn dispatch_nt_write_file(ctx: &mut SyscallContext) -> ULONG32 {
     let byte_offset_ptr = ctx.next_u32();
     let _key = ctx.next_u32();
 
-    // Same ordering as `NtWriteFile`: handle lookup precedes parameter probes.
+    // Same ordering as `NT_WRITE_FILE`: handle lookup precedes parameter probes.
     if !crate::libs::wow64::handle::is_real_handle(file_handle) {
         return STATUS_INVALID_HANDLE;
     }
@@ -500,8 +593,28 @@ pub fn dispatch_nt_write_file(ctx: &mut SyscallContext) -> ULONG32 {
         return STATUS_INVALID_PARAMETER;
     }
 
-    let _ = (length, byte_offset_ptr);
-    STATUS_NOT_IMPLEMENTED
+    let handle64 = file_handle as usize as *mut core::ffi::c_void;
+    let iosb_ptr = io_status_block_ptr as usize as *mut crate::libs::ntdll::types::IoStatusBlock;
+    let buffer64 = buffer_ptr as usize as *mut core::ffi::c_void;
+    let offset_ptr = if byte_offset_ptr != 0 {
+        byte_offset_ptr as usize as *mut i64
+    } else {
+        core::ptr::null_mut()
+    };
+    let status = unsafe {
+        crate::libs::ntdll::file::nt_write_file(
+            handle64,
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+            iosb_ptr,
+            buffer64,
+            length,
+            offset_ptr,
+            core::ptr::null_mut(),
+        )
+    };
+    status as u32
 }
 
 // =============================================================================

@@ -6,7 +6,7 @@
 
 use crate::libs::msvcrt::types::*;
 
-pub fn open_file(_filename: *const c_char, _flags: u32) -> usize {
+pub fn open_file(_filename: *const CChar, _flags: u32) -> usize {
     0 // Return 0 to indicate failure
 }
 
@@ -28,10 +28,10 @@ pub fn seek_file(_handle: usize, _position: usize) -> Result<(), ()> {
     Err(()) // Not implemented
 }
 
-pub fn delete_file(_filename: *const c_char) -> Result<(), ()> {
+pub fn delete_file(_filename: *const CChar) -> Result<(), ()> {
     Err(()) // Not implemented
 }
 
-pub fn rename_file(_old: *const c_char, _new: *const c_char) -> Result<(), ()> {
+pub fn rename_file(_old: *const CChar, _new: *const CChar) -> Result<(), ()> {
     Err(()) // Not implemented
 }

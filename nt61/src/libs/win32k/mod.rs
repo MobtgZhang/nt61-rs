@@ -9,9 +9,6 @@
 //! This is the bridge between the user-mode Win32 API (kernel32, gdi32, user32)
 //! and the kernel graphics subsystem.
 //
-//! **Note:** Win32k is x86_64-only in this build.
-#![cfg(target_arch = "x86_64")]
-
 //! ## Architecture
 //
 //! ```text
@@ -33,7 +30,7 @@
 //! | Component | Format | Example |
 //! |-----------|--------|---------|
 //! | Win32k module | `[win32k]` | `[win32k] CreateWindow: hwnd=0x100` |
-//! | GDI sub-system | `[win32k GDI]` | `[win32k GDI] CreatePen: ...` |
+//! | GDI sub-system | `[win32k GDI]` | `[win32k GDI] create_pen: ...` |
 //! | USER sub-system | `[win32k USER]` | `[win32k USER] CreateWindow: ...` |
 //! | Message queue | `[msgq]` | `[msgq] PostMessage: msg=0x0100` |
 //
@@ -46,14 +43,13 @@
 //! - `objects.rs` - GDI object management (pens, brushes, fonts, bitmaps, regions)
 //! - `dc.rs` - Device Context management
 //! - `surface.rs` - Surface/bitmap management
-//! - `gdi_ops.rs` - GDI operations (BitBlt, FillRect, etc.)
+//! - `gdi_ops.rs` - GDI operations (bit_blt, fill_rect, etc.)
 //! - `text.rs` - Text rendering with fonts
 //! - `region.rs` - Region and clipping operations
 //! - `syscall.rs` - Shadow SSDT syscall handlers
 
 extern crate alloc;
 
-use crate::kprintln;
 use alloc::vec::Vec;
 
 // Submodules
@@ -67,6 +63,7 @@ pub mod region;
 pub mod surface;
 pub mod syscall;
 pub mod text;
+pub mod user_state;
 pub mod window;
 
 /// win32k.sys version
@@ -411,7 +408,7 @@ pub fn init() {
     // kprintln!("      Stock GDI objects initialized");
 
     // Initialize display driver
-    surface::DrvEnableDriver();
+    surface::drv_enable_driver();
     // kprintln!("      Display driver enabled");
 
     // Initialize window management
@@ -450,805 +447,805 @@ pub fn register_services() {
     // NOTE: We use indices masked by 0xFFF since dispatch_shadow_service extracts low 12 bits
     unsafe {
         // DC functions (using service index = syscall_number & 0xFFF)
-        shadow_ssdt::register_shadow_service(0x000, syscall::nt_gdi_get_dc as *const (), 8); // NtGdiGetDC - hdc=arg0
-        shadow_ssdt::register_shadow_service(0x001, syscall::nt_user_peek_message as *const (), 16); // NtUserPeekMessage
+        shadow_ssdt::register_shadow_service(0x000, syscall::nt_gdi_get_dc as *const (), 8); // NT_GDI_GET_DC - hdc=arg0
+        shadow_ssdt::register_shadow_service(0x001, syscall::nt_user_peek_message as *const (), 16); // NT_USER_PEEK_MESSAGE
         shadow_ssdt::register_shadow_service(
             0x002,
             syscall::nt_user_call_one_param as *const (),
             8,
-        ); // NtUserCallOneParam
-        shadow_ssdt::register_shadow_service(0x003, syscall::nt_user_get_key_state as *const (), 8); // NtUserGetKeyState
+        ); // NT_USER_CALL_ONE_PARAM
+        shadow_ssdt::register_shadow_service(0x003, syscall::nt_user_get_key_state as *const (), 8); // NT_USER_GET_KEY_STATE
         shadow_ssdt::register_shadow_service(
             0x004,
             syscall::nt_user_invalidate_rect as *const (),
             12,
-        ); // NtUserInvalidateRect
-        shadow_ssdt::register_shadow_service(0x005, syscall::nt_user_call_no_param as *const (), 4); // NtUserCallNoParam
-        shadow_ssdt::register_shadow_service(0x006, syscall::nt_user_get_message as *const (), 16); // NtUserGetMessage
-        shadow_ssdt::register_shadow_service(0x007, syscall::nt_user_message_call as *const (), 24); // NtUserMessageCall
-        shadow_ssdt::register_shadow_service(0x008, syscall::nt_gdi_bit_blt as *const (), 48); // NtGdiBitBlt
-        shadow_ssdt::register_shadow_service(0x009, syscall::nt_gdi_get_char_set as *const (), 4); // NtGdiGetCharSet
-        shadow_ssdt::register_shadow_service(0x00a, syscall::nt_user_get_dc as *const (), 8); // NtUserGetDC
-        shadow_ssdt::register_shadow_service(0x00b, syscall::nt_gdi_select_object as *const (), 8); // NtGdiSelectBitmap
-        shadow_ssdt::register_shadow_service(0x00c, syscall::nt_user_wait_message as *const (), 4); // NtUserWaitMessage
+        ); // NT_USER_INVALIDATE_RECT
+        shadow_ssdt::register_shadow_service(0x005, syscall::nt_user_call_no_param as *const (), 4); // NT_USER_CALL_NO_PARAM
+        shadow_ssdt::register_shadow_service(0x006, syscall::nt_user_get_message as *const (), 16); // NT_USER_GET_MESSAGE
+        shadow_ssdt::register_shadow_service(0x007, syscall::nt_user_message_call as *const (), 24); // NT_USER_MESSAGE_CALL
+        shadow_ssdt::register_shadow_service(0x008, syscall::nt_gdi_bit_blt as *const (), 48); // NT_GDI_BIT_BLT
+        shadow_ssdt::register_shadow_service(0x009, syscall::nt_gdi_get_char_set as *const (), 4); // NT_GDI_GET_CHAR_SET
+        shadow_ssdt::register_shadow_service(0x00a, syscall::nt_user_get_dc as *const (), 8); // NT_USER_GET_DC
+        shadow_ssdt::register_shadow_service(0x00b, syscall::nt_gdi_select_object as *const (), 8); // NT_GDI_SELECT_BITMAP
+        shadow_ssdt::register_shadow_service(0x00c, syscall::nt_user_wait_message as *const (), 4); // NT_USER_WAIT_MESSAGE
         shadow_ssdt::register_shadow_service(
             0x00d,
             syscall::nt_user_translate_message as *const (),
             8,
-        ); // NtUserTranslateMessage
-        shadow_ssdt::register_shadow_service(0x00e, syscall::nt_user_get_prop as *const (), 8); // NtUserGetProp
-        shadow_ssdt::register_shadow_service(0x00f, syscall::nt_user_post_message as *const (), 16); // NtUserPostMessage
+        ); // NT_USER_TRANSLATE_MESSAGE
+        shadow_ssdt::register_shadow_service(0x00e, syscall::nt_user_get_prop as *const (), 8); // NT_USER_GET_PROP
+        shadow_ssdt::register_shadow_service(0x00f, syscall::nt_user_post_message as *const (), 16); // NT_USER_POST_MESSAGE
 
         // More DC functions
-        shadow_ssdt::register_shadow_service(0x01a, syscall::nt_user_set_cursor as *const (), 8); // NtUserSetCursor
-        shadow_ssdt::register_shadow_service(0x01b, syscall::nt_user_kill_timer as *const (), 8); // NtUserKillTimer
-        shadow_ssdt::register_shadow_service(0x023, syscall::nt_gdi_delete_object as *const (), 4); // NtGdiDeleteObjectApp
+        shadow_ssdt::register_shadow_service(0x01a, syscall::nt_user_set_cursor as *const (), 8); // NT_USER_SET_CURSOR
+        shadow_ssdt::register_shadow_service(0x01b, syscall::nt_user_kill_timer as *const (), 8); // NT_USER_KILL_TIMER
+        shadow_ssdt::register_shadow_service(0x023, syscall::nt_gdi_delete_object as *const (), 4); // NT_GDI_DELETE_OBJECT_APP
         shadow_ssdt::register_shadow_service(
             0x024,
             syscall::nt_user_set_window_pos as *const (),
             32,
-        ); // NtUserSetWindowPos
-        shadow_ssdt::register_shadow_service(0x025, syscall::nt_user_show_caret as *const (), 4); // NtUserShowCaret
+        ); // NT_USER_SET_WINDOW_POS
+        shadow_ssdt::register_shadow_service(0x025, syscall::nt_user_show_caret as *const (), 4); // NT_USER_SHOW_CARET
         shadow_ssdt::register_shadow_service(
             0x026,
             syscall::nt_user_end_defer_window_pos_ex as *const (),
             8,
-        ); // NtUserEndDeferWindowPosEx
+        ); // NT_USER_END_DEFER_WINDOW_POS_EX
 
         // Drawing functions
-        shadow_ssdt::register_shadow_service(0x031, syscall::nt_gdi_stretch_blt as *const (), 44); // NtGdiStretchBlt
-        shadow_ssdt::register_shadow_service(0x032, syscall::nt_user_create_caret as *const (), 16); // NtUserCreateCaret
-        shadow_ssdt::register_shadow_service(0x034, syscall::nt_gdi_combine_rgn as *const (), 16); // NtGdiCombineRgn
-        shadow_ssdt::register_shadow_service(0x035, syscall::nt_gdi_get_dc_object as *const (), 8); // NtGdiGetDCObject
+        shadow_ssdt::register_shadow_service(0x031, syscall::nt_gdi_stretch_blt as *const (), 44); // NT_GDI_STRETCH_BLT
+        shadow_ssdt::register_shadow_service(0x032, syscall::nt_user_create_caret as *const (), 16); // NT_USER_CREATE_CARET
+        shadow_ssdt::register_shadow_service(0x034, syscall::nt_gdi_combine_rgn as *const (), 16); // NT_GDI_COMBINE_RGN
+        shadow_ssdt::register_shadow_service(0x035, syscall::nt_gdi_get_dc_object as *const (), 8); // NT_GDI_GET_DCOBJECT
         shadow_ssdt::register_shadow_service(
             0x036,
             syscall::nt_user_dispatch_message as *const (),
             8,
-        ); // NtUserDispatchMessage
+        ); // NT_USER_DISPATCH_MESSAGE
         shadow_ssdt::register_shadow_service(
             0x037,
             syscall::nt_user_register_window_message as *const (),
             8,
-        ); // NtUserRegisterWindowMessage
-        shadow_ssdt::register_shadow_service(0x038, syscall::nt_gdi_ext_text_out as *const (), 32); // NtGdiExtTextOutW
-        shadow_ssdt::register_shadow_service(0x039, syscall::nt_gdi_select_font as *const (), 8); // NtGdiSelectFont
-        shadow_ssdt::register_shadow_service(0x03a, syscall::nt_gdi_restore_dc as *const (), 8); // NtGdiRestoreDC
-        shadow_ssdt::register_shadow_service(0x03b, syscall::nt_gdi_save_dc as *const (), 4); // NtGdiSaveDC
+        ); // NT_USER_REGISTER_WINDOW_MESSAGE
+        shadow_ssdt::register_shadow_service(0x038, syscall::nt_gdi_ext_text_out as *const (), 32); // NT_GDI_EXT_TEXT_OUT_W
+        shadow_ssdt::register_shadow_service(0x039, syscall::nt_gdi_select_font as *const (), 8); // NT_GDI_SELECT_FONT
+        shadow_ssdt::register_shadow_service(0x03a, syscall::nt_gdi_restore_dc as *const (), 8); // NT_GDI_RESTORE_DC
+        shadow_ssdt::register_shadow_service(0x03b, syscall::nt_gdi_save_dc as *const (), 4); // NT_GDI_SAVE_DC
         shadow_ssdt::register_shadow_service(
             0x03c,
             syscall::nt_user_get_foreground_window as *const (),
             4,
-        ); // NtUserGetForegroundWindow
-        shadow_ssdt::register_shadow_service(0x03f, syscall::nt_gdi_get_dc_dword as *const (), 12); // NtGdiGetDCDword
-        shadow_ssdt::register_shadow_service(0x041, syscall::nt_gdi_line_to as *const (), 12); // NtGdiLineTo
+        ); // NT_USER_GET_FOREGROUND_WINDOW
+        shadow_ssdt::register_shadow_service(0x03f, syscall::nt_gdi_get_dc_dword as *const (), 12); // NT_GDI_GET_DCDWORD
+        shadow_ssdt::register_shadow_service(0x041, syscall::nt_gdi_line_to as *const (), 12); // NT_GDI_LINE_TO
         shadow_ssdt::register_shadow_service(
             0x042,
             syscall::nt_user_system_parameters_info as *const (),
             16,
-        ); // NtUserSystemParametersInfo
+        ); // NT_USER_SYSTEM_PARAMETERS_INFO
         shadow_ssdt::register_shadow_service(
             0x043,
             syscall::nt_gdi_get_app_clip_box as *const (),
             8,
-        ); // NtGdiGetAppClipBox
+        ); // NT_GDI_GET_APP_CLIP_BOX
         shadow_ssdt::register_shadow_service(
             0x044,
             syscall::nt_user_get_async_key_state as *const (),
             8,
-        ); // NtUserGetAsyncKeyState
+        ); // NT_USER_GET_ASYNC_KEY_STATE
 
         // More GDI/USER functions
-        shadow_ssdt::register_shadow_service(0x047, syscall::nt_gdi_do_palette as *const (), 20); // NtGdiDoPalette
-        shadow_ssdt::register_shadow_service(0x049, syscall::nt_user_set_capture as *const (), 8); // NtUserSetCapture
+        shadow_ssdt::register_shadow_service(0x047, syscall::nt_gdi_do_palette as *const (), 20); // NT_GDI_DO_PALETTE
+        shadow_ssdt::register_shadow_service(0x049, syscall::nt_user_set_capture as *const (), 8); // NT_USER_SET_CAPTURE
         shadow_ssdt::register_shadow_service(
             0x04b,
             syscall::nt_gdi_create_compatible_bitmap as *const (),
             16,
-        ); // NtGdiCreateCompatibleBitmap
-        shadow_ssdt::register_shadow_service(0x04c, syscall::nt_user_set_prop as *const (), 12); // NtUserSetProp
+        ); // NT_GDI_CREATE_COMPATIBLE_BITMAP
+        shadow_ssdt::register_shadow_service(0x04c, syscall::nt_user_set_prop as *const (), 12); // NT_USER_SET_PROP
         shadow_ssdt::register_shadow_service(
             0x04d,
             syscall::nt_gdi_get_text_charset_info as *const (),
             12,
-        ); // NtGdiGetTextCharsetInfo
-        shadow_ssdt::register_shadow_service(0x04e, syscall::nt_user_sb_get_parms as *const (), 8); // NtUserSBGetParms
-        shadow_ssdt::register_shadow_service(0x04f, syscall::nt_user_get_icon_info as *const (), 8); // NtUserGetIconInfo
+        ); // NT_GDI_GET_TEXT_CHARSET_INFO
+        shadow_ssdt::register_shadow_service(0x04e, syscall::nt_user_sb_get_parms as *const (), 8); // NT_USER_SBGET_PARMS
+        shadow_ssdt::register_shadow_service(0x04f, syscall::nt_user_get_icon_info as *const (), 8); // NT_USER_GET_ICON_INFO
         shadow_ssdt::register_shadow_service(
             0x050,
             syscall::nt_user_exclude_update_rgn as *const (),
             12,
-        ); // NtUserExcludeUpdateRgn
-        shadow_ssdt::register_shadow_service(0x051, syscall::nt_user_set_focus as *const (), 8); // NtUserSetFocus
+        ); // NT_USER_EXCLUDE_UPDATE_RGN
+        shadow_ssdt::register_shadow_service(0x051, syscall::nt_user_set_focus as *const (), 8); // NT_USER_SET_FOCUS
         shadow_ssdt::register_shadow_service(
             0x052,
             syscall::nt_gdi_ext_get_object_w as *const (),
             12,
-        ); // NtGdiExtGetObjectW
+        ); // NT_GDI_EXT_GET_OBJECT_W
         shadow_ssdt::register_shadow_service(
             0x053,
             syscall::nt_user_defer_window_pos as *const (),
             32,
-        ); // NtUserDeferWindowPos
+        ); // NT_USER_DEFER_WINDOW_POS
         shadow_ssdt::register_shadow_service(
             0x054,
             syscall::nt_user_get_update_rect as *const (),
             12,
-        ); // NtUserGetUpdateRect
+        ); // NT_USER_GET_UPDATE_RECT
         shadow_ssdt::register_shadow_service(
             0x055,
             syscall::nt_gdi_create_compatible_dc as *const (),
             8,
-        ); // NtGdiCreateCompatibleDC
+        ); // NT_GDI_CREATE_COMPATIBLE_DC
         shadow_ssdt::register_shadow_service(
             0x056,
             syscall::nt_user_get_clipboard_sequence_number as *const (),
             4,
-        ); // NtUserGetClipboardSequenceNumber
-        shadow_ssdt::register_shadow_service(0x057, syscall::nt_gdi_create_pen as *const (), 16); // NtGdiCreatePen
-        shadow_ssdt::register_shadow_service(0x058, syscall::nt_user_show_window as *const (), 8); // NtUserShowWindow
+        ); // NT_USER_GET_CLIPBOARD_SEQUENCE_NUMBER
+        shadow_ssdt::register_shadow_service(0x057, syscall::nt_gdi_create_pen as *const (), 16); // NT_GDI_CREATE_PEN
+        shadow_ssdt::register_shadow_service(0x058, syscall::nt_user_show_window as *const (), 8); // NT_USER_SHOW_WINDOW
         shadow_ssdt::register_shadow_service(
             0x059,
             syscall::nt_user_get_keyboard_layout_list as *const (),
             8,
-        ); // NtUserGetKeyboardLayoutList
-        shadow_ssdt::register_shadow_service(0x05a, syscall::nt_gdi_pat_blt as *const (), 32); // NtGdiPatBlt
+        ); // NT_USER_GET_KEYBOARD_LAYOUT_LIST
+        shadow_ssdt::register_shadow_service(0x05a, syscall::nt_gdi_pat_blt as *const (), 32); // NT_GDI_PAT_BLT
         shadow_ssdt::register_shadow_service(
             0x05b,
             syscall::nt_user_map_virtual_key_ex as *const (),
             16,
-        ); // NtUserMapVirtualKeyEx
+        ); // NT_USER_MAP_VIRTUAL_KEY_EX
         shadow_ssdt::register_shadow_service(
             0x05c,
             syscall::nt_user_set_window_long as *const (),
             16,
-        ); // NtUserSetWindowLong
-        shadow_ssdt::register_shadow_service(0x05d, syscall::nt_gdi_hfont_create as *const (), 16); // NtGdiHfontCreate
-        shadow_ssdt::register_shadow_service(0x05e, syscall::nt_user_move_window as *const (), 24); // NtUserMoveWindow
+        ); // NT_USER_SET_WINDOW_LONG
+        shadow_ssdt::register_shadow_service(0x05d, syscall::nt_gdi_hfont_create as *const (), 16); // NT_GDI_HFONT_CREATE
+        shadow_ssdt::register_shadow_service(0x05e, syscall::nt_user_move_window as *const (), 24); // NT_USER_MOVE_WINDOW
         shadow_ssdt::register_shadow_service(
             0x05f,
             syscall::nt_user_post_thread_message as *const (),
             16,
-        ); // NtUserPostThreadMessage
-        shadow_ssdt::register_shadow_service(0x060, syscall::nt_user_draw_icon_ex as *const (), 40); // NtUserDrawIconEx
+        ); // NT_USER_POST_THREAD_MESSAGE
+        shadow_ssdt::register_shadow_service(0x060, syscall::nt_user_draw_icon_ex as *const (), 40); // NT_USER_DRAW_ICON_EX
         shadow_ssdt::register_shadow_service(
             0x061,
             syscall::nt_user_get_system_menu as *const (),
             8,
-        ); // NtUserGetSystemMenu
-        shadow_ssdt::register_shadow_service(0x062, syscall::nt_gdi_draw_stream as *const (), 24); // NtGdiDrawStream
+        ); // NT_USER_GET_SYSTEM_MENU
+        shadow_ssdt::register_shadow_service(0x062, syscall::nt_gdi_draw_stream as *const (), 24); // NT_GDI_DRAW_STREAM
         shadow_ssdt::register_shadow_service(
             0x063,
             syscall::nt_user_internal_get_window_text as *const (),
             12,
-        ); // NtUserInternalGetWindowText
-        shadow_ssdt::register_shadow_service(0x064, syscall::nt_user_get_window_dc as *const (), 8); // NtUserGetWindowDC
-        shadow_ssdt::register_shadow_service(0x066, syscall::nt_gdi_invert_rgn as *const (), 12); // NtGdiInvertRgn
-        shadow_ssdt::register_shadow_service(0x067, syscall::nt_gdi_get_rgn_box as *const (), 8); // NtGdiGetRgnBox
-        shadow_ssdt::register_shadow_service(0x069, syscall::nt_gdi_mask_blt as *const (), 44); // NtGdiMaskBlt
+        ); // NT_USER_INTERNAL_GET_WINDOW_TEXT
+        shadow_ssdt::register_shadow_service(0x064, syscall::nt_user_get_window_dc as *const (), 8); // NT_USER_GET_WINDOW_DC
+        shadow_ssdt::register_shadow_service(0x066, syscall::nt_gdi_invert_rgn as *const (), 12); // NT_GDI_INVERT_RGN
+        shadow_ssdt::register_shadow_service(0x067, syscall::nt_gdi_get_rgn_box as *const (), 8); // NT_GDI_GET_RGN_BOX
+        shadow_ssdt::register_shadow_service(0x069, syscall::nt_gdi_mask_blt as *const (), 44); // NT_GDI_MASK_BLT
         shadow_ssdt::register_shadow_service(
             0x06a,
             syscall::nt_gdi_get_width_table as *const (),
             20,
-        ); // NtGdiGetWidthTable
-        shadow_ssdt::register_shadow_service(0x06b, syscall::nt_user_scroll_dc as *const (), 28); // NtUserScrollDC
+        ); // NT_GDI_GET_WIDTH_TABLE
+        shadow_ssdt::register_shadow_service(0x06b, syscall::nt_user_scroll_dc as *const (), 28); // NT_USER_SCROLL_DC
         shadow_ssdt::register_shadow_service(
             0x06c,
             syscall::nt_user_get_object_information as *const (),
             16,
-        ); // NtUserGetObjectInformation
-        shadow_ssdt::register_shadow_service(0x06d, syscall::nt_gdi_create_bitmap as *const (), 16); // NtGdiCreateBitmap
+        ); // NT_USER_GET_OBJECT_INFORMATION
+        shadow_ssdt::register_shadow_service(0x06d, syscall::nt_gdi_create_bitmap as *const (), 16); // NT_GDI_CREATE_BITMAP
         shadow_ssdt::register_shadow_service(
             0x06e,
             syscall::nt_user_find_window_ex as *const (),
             24,
-        ); // NtUserFindWindowEx
-        shadow_ssdt::register_shadow_service(0x06f, syscall::nt_gdi_poly_pat_blt as *const (), 24); // NtGdiPolyPatBlt
+        ); // NT_USER_FIND_WINDOW_EX
+        shadow_ssdt::register_shadow_service(0x06f, syscall::nt_gdi_poly_pat_blt as *const (), 24); // NT_GDI_POLY_PAT_BLT
         shadow_ssdt::register_shadow_service(
             0x070,
             syscall::nt_user_unhook_windows_hook_ex as *const (),
             8,
-        ); // NtUserUnhookWindowsHookEx
+        ); // NT_USER_UNHOOK_WINDOWS_HOOK_EX
         shadow_ssdt::register_shadow_service(
             0x071,
             syscall::nt_gdi_get_nearest_color as *const (),
             12,
-        ); // NtGdiGetNearestColor
+        ); // NT_GDI_GET_NEAREST_COLOR
         shadow_ssdt::register_shadow_service(
             0x072,
             syscall::nt_gdi_transform_points as *const (),
             20,
-        ); // NtGdiTransformPoints
-        shadow_ssdt::register_shadow_service(0x073, syscall::nt_gdi_get_dc_point as *const (), 8); // NtGdiGetDCPoint
+        ); // NT_GDI_TRANSFORM_POINTS
+        shadow_ssdt::register_shadow_service(0x073, syscall::nt_gdi_get_dc_point as *const (), 8); // NT_GDI_GET_DCPOINT
         shadow_ssdt::register_shadow_service(
             0x074,
             syscall::nt_gdi_create_dib_brush as *const (),
             20,
-        ); // NtGdiCreateDIBBrush
+        ); // NT_GDI_CREATE_DIBBRUSH
         shadow_ssdt::register_shadow_service(
             0x075,
             syscall::nt_gdi_get_text_metrics_w as *const (),
             8,
-        ); // NtGdiGetTextMetricsW
+        ); // NT_GDI_GET_TEXT_METRICS_W
         shadow_ssdt::register_shadow_service(
             0x076,
             syscall::nt_user_create_window_ex as *const (),
             44,
-        ); // NtUserCreateWindowEx
-        shadow_ssdt::register_shadow_service(0x077, syscall::nt_user_set_parent as *const (), 12); // NtUserSetParent
+        ); // NT_USER_CREATE_WINDOW_EX
+        shadow_ssdt::register_shadow_service(0x077, syscall::nt_user_set_parent as *const (), 12); // NT_USER_SET_PARENT
         shadow_ssdt::register_shadow_service(
             0x078,
             syscall::nt_user_get_keyboard_state as *const (),
             8,
-        ); // NtUserGetKeyboardState
+        ); // NT_USER_GET_KEYBOARD_STATE
         shadow_ssdt::register_shadow_service(
             0x079,
             syscall::nt_user_to_unicode_ex as *const (),
             24,
-        ); // NtUserToUnicodeEx
+        ); // NT_USER_TO_UNICODE_EX
         shadow_ssdt::register_shadow_service(
             0x07a,
             syscall::nt_user_get_control_brush as *const (),
             12,
-        ); // NtUserGetControlBrush
+        ); // NT_USER_GET_CONTROL_BRUSH
         shadow_ssdt::register_shadow_service(
             0x07b,
             syscall::nt_user_get_class_name as *const (),
             12,
-        ); // NtUserGetClassName
-        shadow_ssdt::register_shadow_service(0x07c, syscall::nt_gdi_alpha_blend as *const (), 40); // NtGdiAlphaBlend
-        shadow_ssdt::register_shadow_service(0x07d, syscall::nt_gdi_dd_blt as *const (), 48); // NtGdiDdBlt
-        shadow_ssdt::register_shadow_service(0x07e, syscall::nt_gdi_offset_rgn as *const (), 8); // NtGdiOffsetRgn
-        shadow_ssdt::register_shadow_service(0x07f, syscall::nt_user_def_set_text as *const (), 12); // NtUserDefSetText
+        ); // NT_USER_GET_CLASS_NAME
+        shadow_ssdt::register_shadow_service(0x07c, syscall::nt_gdi_alpha_blend as *const (), 40); // NT_GDI_ALPHA_BLEND
+        shadow_ssdt::register_shadow_service(0x07d, syscall::nt_gdi_dd_blt as *const (), 48); // NT_GDI_DD_BLT
+        shadow_ssdt::register_shadow_service(0x07e, syscall::nt_gdi_offset_rgn as *const (), 8); // NT_GDI_OFFSET_RGN
+        shadow_ssdt::register_shadow_service(0x07f, syscall::nt_user_def_set_text as *const (), 12); // NT_USER_DEF_SET_TEXT
         shadow_ssdt::register_shadow_service(
             0x080,
             syscall::nt_gdi_get_text_face_w as *const (),
             12,
-        ); // NtGdiGetTextFaceW
+        ); // NT_GDI_GET_TEXT_FACE_W
         shadow_ssdt::register_shadow_service(
             0x081,
             syscall::nt_gdi_stretch_dibits_internal as *const (),
             44,
-        ); // NtGdiStretchDIBitsInternal
-        shadow_ssdt::register_shadow_service(0x082, syscall::nt_user_send_input as *const (), 16); // NtUserSendInput
+        ); // NT_GDI_STRETCH_DIBITS_INTERNAL
+        shadow_ssdt::register_shadow_service(0x082, syscall::nt_user_send_input as *const (), 16); // NT_USER_SEND_INPUT
         shadow_ssdt::register_shadow_service(
             0x083,
             syscall::nt_user_get_thread_desktop as *const (),
             8,
-        ); // NtUserGetThreadDesktop
+        ); // NT_USER_GET_THREAD_DESKTOP
         shadow_ssdt::register_shadow_service(
             0x084,
             syscall::nt_gdi_create_rect_rgn as *const (),
             20,
-        ); // NtGdiCreateRectRgn
+        ); // NT_GDI_CREATE_RECT_RGN
         shadow_ssdt::register_shadow_service(
             0x085,
             syscall::nt_gdi_get_dibits_internal as *const (),
             28,
-        ); // NtGdiGetDIBitsInternal
+        ); // NT_GDI_GET_DIBITS_INTERNAL
         shadow_ssdt::register_shadow_service(
             0x086,
             syscall::nt_user_get_update_rgn as *const (),
             12,
-        ); // NtUserGetUpdateRgn
+        ); // NT_USER_GET_UPDATE_RGN
         shadow_ssdt::register_shadow_service(
             0x087,
             syscall::nt_gdi_delete_client_obj as *const (),
             4,
-        ); // NtGdiDeleteClientObj
+        ); // NT_GDI_DELETE_CLIENT_OBJ
         shadow_ssdt::register_shadow_service(
             0x088,
             syscall::nt_user_get_icon_size as *const (),
             16,
-        ); // NtUserGetIconSize
-        shadow_ssdt::register_shadow_service(0x089, syscall::nt_user_fill_window as *const (), 16); // NtUserFillWindow
+        ); // NT_USER_GET_ICON_SIZE
+        shadow_ssdt::register_shadow_service(0x089, syscall::nt_user_fill_window as *const (), 16); // NT_USER_FILL_WINDOW
         shadow_ssdt::register_shadow_service(
             0x08a,
             syscall::nt_gdi_ext_create_region as *const (),
             20,
-        ); // NtGdiExtCreateRegion
+        ); // NT_GDI_EXT_CREATE_REGION
         shadow_ssdt::register_shadow_service(
             0x08b,
             syscall::nt_gdi_compute_xform_coefficients as *const (),
             8,
-        ); // NtGdiComputeXformCoefficients
+        ); // NT_GDI_COMPUTE_XFORM_COEFFICIENTS
         shadow_ssdt::register_shadow_service(
             0x08c,
             syscall::nt_user_set_windows_hook_ex as *const (),
             24,
-        ); // NtUserSetWindowsHookEx
+        ); // NT_USER_SET_WINDOWS_HOOK_EX
         shadow_ssdt::register_shadow_service(
             0x08d,
             syscall::nt_user_notify_process_create as *const (),
             16,
-        ); // NtUserNotifyProcessCreate
+        ); // NT_USER_NOTIFY_PROCESS_CREATE
         shadow_ssdt::register_shadow_service(
             0x08e,
             syscall::nt_gdi_unrealize_object as *const (),
             4,
-        ); // NtGdiUnrealizeObject
+        ); // NT_GDI_UNREALIZE_OBJECT
         shadow_ssdt::register_shadow_service(
             0x08f,
             syscall::nt_user_get_title_bar_info as *const (),
             8,
-        ); // NtUserGetTitleBarInfo
-        shadow_ssdt::register_shadow_service(0x090, syscall::nt_gdi_rectangle as *const (), 24); // NtGdiRectangle
+        ); // NT_USER_GET_TITLE_BAR_INFO
+        shadow_ssdt::register_shadow_service(0x090, syscall::nt_gdi_rectangle as *const (), 24); // NT_GDI_RECTANGLE
         shadow_ssdt::register_shadow_service(
             0x091,
             syscall::nt_user_set_thread_desktop as *const (),
             8,
-        ); // NtUserSetThreadDesktop
-        shadow_ssdt::register_shadow_service(0x092, syscall::nt_user_get_dcex as *const (), 16); // NtUserGetDCEx
+        ); // NT_USER_SET_THREAD_DESKTOP
+        shadow_ssdt::register_shadow_service(0x092, syscall::nt_user_get_dcex as *const (), 16); // NT_USER_GET_DCEX
         shadow_ssdt::register_shadow_service(
             0x093,
             syscall::nt_user_get_scroll_bar_info as *const (),
             8,
-        ); // NtUserGetScrollBarInfo
+        ); // NT_USER_GET_SCROLL_BAR_INFO
         shadow_ssdt::register_shadow_service(
             0x094,
             syscall::nt_gdi_get_text_extent as *const (),
             16,
-        ); // NtGdiGetTextExtent
+        ); // NT_GDI_GET_TEXT_EXTENT
         shadow_ssdt::register_shadow_service(
             0x095,
             syscall::nt_user_set_window_fnid as *const (),
             8,
-        ); // NtUserSetWindowFNID
-        shadow_ssdt::register_shadow_service(0x096, syscall::nt_gdi_set_layout as *const (), 8); // NtGdiSetLayout
+        ); // NT_USER_SET_WINDOW_FNID
+        shadow_ssdt::register_shadow_service(0x096, syscall::nt_gdi_set_layout as *const (), 8); // NT_GDI_SET_LAYOUT
         shadow_ssdt::register_shadow_service(
             0x097,
             syscall::nt_user_calc_menu_bar as *const (),
             20,
-        ); // NtUserCalcMenuBar
+        ); // NT_USER_CALC_MENU_BAR
         shadow_ssdt::register_shadow_service(
             0x098,
             syscall::nt_user_thunked_menu_item_info as *const (),
             24,
-        ); // NtUserThunkedMenuItemInfo
+        ); // NT_USER_THUNKED_MENU_ITEM_INFO
         shadow_ssdt::register_shadow_service(
             0x099,
             syscall::nt_gdi_exclude_clip_rect as *const (),
             24,
-        ); // NtGdiExcludeClipRect
+        ); // NT_GDI_EXCLUDE_CLIP_RECT
         shadow_ssdt::register_shadow_service(
             0x09a,
             syscall::nt_gdi_create_dib_section as *const (),
             28,
-        ); // NtGdiCreateDIBSection
+        ); // NT_GDI_CREATE_DIBSECTION
         shadow_ssdt::register_shadow_service(
             0x09b,
             syscall::nt_gdi_get_dc_for_bitmap as *const (),
             4,
-        ); // NtGdiGetDCforBitmap
+        ); // NT_GDI_GET_DCFOR_BITMAP
         shadow_ssdt::register_shadow_service(
             0x09c,
             syscall::nt_user_destroy_cursor as *const (),
             8,
-        ); // NtUserDestroyCursor
+        ); // NT_USER_DESTROY_CURSOR
         shadow_ssdt::register_shadow_service(
             0x09d,
             syscall::nt_user_destroy_window as *const (),
             4,
-        ); // NtUserDestroyWindow
+        ); // NT_USER_DESTROY_WINDOW
         shadow_ssdt::register_shadow_service(
             0x09e,
             syscall::nt_user_call_hwnd_param as *const (),
             12,
-        ); // NtUserCallHwndParam
+        ); // NT_USER_CALL_HWND_PARAM
         shadow_ssdt::register_shadow_service(
             0x09f,
             syscall::nt_gdi_create_dibitmap_internal as *const (),
             24,
-        ); // NtGdiCreateDIBitmapInternal
+        ); // NT_GDI_CREATE_DIBITMAP_INTERNAL
         shadow_ssdt::register_shadow_service(
             0x0a0,
             syscall::nt_user_open_window_station as *const (),
             12,
-        ); // NtUserOpenWindowStation
+        ); // NT_USER_OPEN_WINDOW_STATION
         shadow_ssdt::register_shadow_service(
             0x0a1,
             syscall::nt_gdi_dd_delete_surface_object as *const (),
             4,
-        ); // NtGdiDdDeleteSurfaceObject
+        ); // NT_GDI_DD_DELETE_SURFACE_OBJECT
         shadow_ssdt::register_shadow_service(
             0x0a2,
             syscall::nt_gdi_dd_can_create_surface as *const (),
             8,
-        ); // NtGdiDdCanCreateSurface
+        ); // NT_GDI_DD_CAN_CREATE_SURFACE
         shadow_ssdt::register_shadow_service(
             0x0a3,
             syscall::nt_gdi_dd_create_surface as *const (),
             32,
-        ); // NtGdiDdCreateSurface
+        ); // NT_GDI_DD_CREATE_SURFACE
         shadow_ssdt::register_shadow_service(
             0x0a4,
             syscall::nt_user_set_cursor_icon_data as *const (),
             24,
-        ); // NtUserSetCursorIconData
+        ); // NT_USER_SET_CURSOR_ICON_DATA
         shadow_ssdt::register_shadow_service(
             0x0a5,
             syscall::nt_gdi_dd_destroy_surface as *const (),
             4,
-        ); // NtGdiDdDestroySurface
-        shadow_ssdt::register_shadow_service(0x0a6, syscall::nt_user_close_desktop as *const (), 8); // NtUserCloseDesktop
-        shadow_ssdt::register_shadow_service(0x0a7, syscall::nt_user_open_desktop as *const (), 28); // NtUserOpenDesktop
+        ); // NT_GDI_DD_DESTROY_SURFACE
+        shadow_ssdt::register_shadow_service(0x0a6, syscall::nt_user_close_desktop as *const (), 8); // NT_USER_CLOSE_DESKTOP
+        shadow_ssdt::register_shadow_service(0x0a7, syscall::nt_user_open_desktop as *const (), 28); // NT_USER_OPEN_DESKTOP
         shadow_ssdt::register_shadow_service(
             0x0a8,
             syscall::nt_user_set_process_window_station as *const (),
             8,
-        ); // NtUserSetProcessWindowStation
-        shadow_ssdt::register_shadow_service(0x0a9, syscall::nt_user_get_atom_name as *const (), 8); // NtUserGetAtomName
+        ); // NT_USER_SET_PROCESS_WINDOW_STATION
+        shadow_ssdt::register_shadow_service(0x0a9, syscall::nt_user_get_atom_name as *const (), 8); // NT_USER_GET_ATOM_NAME
         shadow_ssdt::register_shadow_service(
             0x0aa,
             syscall::nt_gdi_dd_reset_visrgn as *const (),
             4,
-        ); // NtGdiDdResetVisrgn
+        ); // NT_GDI_DD_RESET_VISRGN
         shadow_ssdt::register_shadow_service(
             0x0ab,
             syscall::nt_gdi_ext_create_pen as *const (),
             32,
-        ); // NtGdiExtCreatePen
+        ); // NT_GDI_EXT_CREATE_PEN
         shadow_ssdt::register_shadow_service(
             0x0ac,
             syscall::nt_gdi_create_palette_internal as *const (),
             8,
-        ); // NtGdiCreatePaletteInternal
-        shadow_ssdt::register_shadow_service(0x0ad, syscall::nt_gdi_set_brush_org as *const (), 8); // NtGdiSetBrushOrg
+        ); // NT_GDI_CREATE_PALETTE_INTERNAL
+        shadow_ssdt::register_shadow_service(0x0ad, syscall::nt_gdi_set_brush_org as *const (), 8); // NT_GDI_SET_BRUSH_ORG
         shadow_ssdt::register_shadow_service(
             0x0ae,
             syscall::nt_user_build_name_list as *const (),
             12,
-        ); // NtUserBuildNameList
-        shadow_ssdt::register_shadow_service(0x0af, syscall::nt_gdi_set_pixel as *const (), 16); // NtGdiSetPixel
+        ); // NT_USER_BUILD_NAME_LIST
+        shadow_ssdt::register_shadow_service(0x0af, syscall::nt_gdi_set_pixel as *const (), 16); // NT_GDI_SET_PIXEL
         shadow_ssdt::register_shadow_service(
             0x0b0,
             syscall::nt_user_register_class_ex_wow as *const (),
             32,
-        ); // NtUserRegisterClassExWOW
+        ); // NT_USER_REGISTER_CLASS_EX_WOW
         shadow_ssdt::register_shadow_service(
             0x0b1,
             syscall::nt_gdi_create_pattern_brush_internal as *const (),
             16,
-        ); // NtGdiCreatePatternBrushInternal
-        shadow_ssdt::register_shadow_service(0x0b2, syscall::nt_user_get_ancestor as *const (), 8); // NtUserGetAncestor
+        ); // NT_GDI_CREATE_PATTERN_BRUSH_INTERNAL
+        shadow_ssdt::register_shadow_service(0x0b2, syscall::nt_user_get_ancestor as *const (), 8); // NT_USER_GET_ANCESTOR
         shadow_ssdt::register_shadow_service(
             0x0b3,
             syscall::nt_gdi_get_outline_text_metrics_internal_w as *const (),
             12,
-        ); // NtGdiGetOutlineTextMetricsInternalW
+        ); // NT_GDI_GET_OUTLINE_TEXT_METRICS_INTERNAL_W
         shadow_ssdt::register_shadow_service(
             0x0b4,
             syscall::nt_gdi_set_bitmap_bits as *const (),
             12,
-        ); // NtGdiSetBitmapBits
+        ); // NT_GDI_SET_BITMAP_BITS
         shadow_ssdt::register_shadow_service(
             0x0b5,
             syscall::nt_user_close_window_station as *const (),
             8,
-        ); // NtUserCloseWindowStation
+        ); // NT_USER_CLOSE_WINDOW_STATION
         shadow_ssdt::register_shadow_service(
             0x0b6,
             syscall::nt_user_get_double_click_time as *const (),
             4,
-        ); // NtUserGetDoubleClickTime
+        ); // NT_USER_GET_DOUBLE_CLICK_TIME
         shadow_ssdt::register_shadow_service(
             0x0b7,
             syscall::nt_user_enable_scroll_bar as *const (),
             12,
-        ); // NtUserEnableScrollBar
+        ); // NT_USER_ENABLE_SCROLL_BAR
         shadow_ssdt::register_shadow_service(
             0x0b8,
             syscall::nt_gdi_create_solid_brush as *const (),
             4,
-        ); // NtGdiCreateSolidBrush
+        ); // NT_GDI_CREATE_SOLID_BRUSH
         shadow_ssdt::register_shadow_service(
             0x0b9,
             syscall::nt_user_get_class_info_ex as *const (),
             16,
-        ); // NtUserGetClassInfoEx
+        ); // NT_USER_GET_CLASS_INFO_EX
         shadow_ssdt::register_shadow_service(
             0x0ba,
             syscall::nt_gdi_create_client_obj as *const (),
             8,
-        ); // NtGdiCreateClientObj
+        ); // NT_GDI_CREATE_CLIENT_OBJ
         shadow_ssdt::register_shadow_service(
             0x0bb,
             syscall::nt_user_unregister_class as *const (),
             12,
-        ); // NtUserUnregisterClass
-        shadow_ssdt::register_shadow_service(0x0bc, syscall::nt_user_delete_menu as *const (), 8); // NtUserDeleteMenu
-        shadow_ssdt::register_shadow_service(0x0bd, syscall::nt_gdi_rect_in_region as *const (), 8); // NtGdiRectInRegion
+        ); // NT_USER_UNREGISTER_CLASS
+        shadow_ssdt::register_shadow_service(0x0bc, syscall::nt_user_delete_menu as *const (), 8); // NT_USER_DELETE_MENU
+        shadow_ssdt::register_shadow_service(0x0bd, syscall::nt_gdi_rect_in_region as *const (), 8); // NT_GDI_RECT_IN_REGION
         shadow_ssdt::register_shadow_service(
             0x0be,
             syscall::nt_user_scroll_window_ex as *const (),
             32,
-        ); // NtUserScrollWindowEx
-        shadow_ssdt::register_shadow_service(0x0bf, syscall::nt_gdi_get_pixel as *const (), 12); // NtGdiGetPixel
+        ); // NT_USER_SCROLL_WINDOW_EX
+        shadow_ssdt::register_shadow_service(0x0bf, syscall::nt_gdi_get_pixel as *const (), 12); // NT_GDI_GET_PIXEL
         shadow_ssdt::register_shadow_service(
             0x0c0,
             syscall::nt_user_set_class_long as *const (),
             12,
-        ); // NtUserSetClassLong
+        ); // NT_USER_SET_CLASS_LONG
         shadow_ssdt::register_shadow_service(
             0x0c1,
             syscall::nt_user_get_menu_bar_info as *const (),
             12,
-        ); // NtUserGetMenuBarInfo
+        ); // NT_USER_GET_MENU_BAR_INFO
 
         // Additional USER functions
         shadow_ssdt::register_shadow_service(
             0x0c8,
             syscall::nt_user_invalidate_rgn as *const (),
             12,
-        ); // NtUserInvalidateRgn
+        ); // NT_USER_INVALIDATE_RGN
         shadow_ssdt::register_shadow_service(
             0x0c9,
             syscall::nt_user_get_clipboard_owner as *const (),
             4,
-        ); // NtUserGetClipboardOwner
+        ); // NT_USER_GET_CLIPBOARD_OWNER
         shadow_ssdt::register_shadow_service(
             0x0ca,
             syscall::nt_user_set_window_rgn as *const (),
             12,
-        ); // NtUserSetWindowRgn
+        ); // NT_USER_SET_WINDOW_RGN
         shadow_ssdt::register_shadow_service(
             0x0cb,
             syscall::nt_user_bit_blt_sys_bmp as *const (),
             24,
-        ); // NtUserBitBltSysBmp
-        shadow_ssdt::register_shadow_service(0x0cd, syscall::nt_user_validate_rect as *const (), 8); // NtUserValidateRect
+        ); // NT_USER_BIT_BLT_SYS_BMP
+        shadow_ssdt::register_shadow_service(0x0cd, syscall::nt_user_validate_rect as *const (), 8); // NT_USER_VALIDATE_RECT
         shadow_ssdt::register_shadow_service(
             0x0ce,
             syscall::nt_user_close_clipboard as *const (),
             4,
-        ); // NtUserCloseClipboard
+        ); // NT_USER_CLOSE_CLIPBOARD
         shadow_ssdt::register_shadow_service(
             0x0cf,
             syscall::nt_user_open_clipboard as *const (),
             8,
-        ); // NtUserOpenClipboard
+        ); // NT_USER_OPEN_CLIPBOARD
         shadow_ssdt::register_shadow_service(
             0x0d1,
             syscall::nt_user_set_clipboard_data as *const (),
             12,
-        ); // NtUserSetClipboardData
+        ); // NT_USER_SET_CLIPBOARD_DATA
         shadow_ssdt::register_shadow_service(
             0x0d2,
             syscall::nt_user_enable_menu_item as *const (),
             12,
-        ); // NtUserEnableMenuItem
+        ); // NT_USER_ENABLE_MENU_ITEM
         shadow_ssdt::register_shadow_service(
             0x0d3,
             syscall::nt_user_alter_window_style as *const (),
             16,
-        ); // NtUserAlterWindowStyle
+        ); // NT_USER_ALTER_WINDOW_STYLE
         shadow_ssdt::register_shadow_service(
             0x0d5,
             syscall::nt_user_get_window_placement as *const (),
             8,
-        ); // NtUserGetWindowPlacement
+        ); // NT_USER_GET_WINDOW_PLACEMENT
         shadow_ssdt::register_shadow_service(
             0x0d8,
             syscall::nt_user_get_open_clipboard_window as *const (),
             4,
-        ); // NtUserGetOpenClipboardWindow
+        ); // NT_USER_GET_OPEN_CLIPBOARD_WINDOW
         shadow_ssdt::register_shadow_service(
             0x0d9,
             syscall::nt_user_set_thread_state as *const (),
             8,
-        ); // NtUserSetThreadState
+        ); // NT_USER_SET_THREAD_STATE
         shadow_ssdt::register_shadow_service(
             0x0da,
             syscall::nt_user_track_mouse_event as *const (),
             16,
-        ); // NtUserTrackMouseEvent
-        shadow_ssdt::register_shadow_service(0x0dd, syscall::nt_user_destroy_menu as *const (), 4); // NtUserDestroyMenu
+        ); // NT_USER_TRACK_MOUSE_EVENT
+        shadow_ssdt::register_shadow_service(0x0dd, syscall::nt_user_destroy_menu as *const (), 4); // NT_USER_DESTROY_MENU
         shadow_ssdt::register_shadow_service(
             0x0df,
             syscall::nt_user_console_control as *const (),
             16,
-        ); // NtUserConsoleControl
+        ); // NT_USER_CONSOLE_CONTROL
         shadow_ssdt::register_shadow_service(
             0x0e0,
             syscall::nt_user_set_active_window as *const (),
             8,
-        ); // NtUserSetActiveWindow
+        ); // NT_USER_SET_ACTIVE_WINDOW
         shadow_ssdt::register_shadow_service(
             0x0e1,
             syscall::nt_user_set_information_thread as *const (),
             16,
-        ); // NtUserSetInformationThread
+        ); // NT_USER_SET_INFORMATION_THREAD
         shadow_ssdt::register_shadow_service(
             0x0e2,
             syscall::nt_user_set_window_placement as *const (),
             8,
-        ); // NtUserSetWindowPlacement
+        ); // NT_USER_SET_WINDOW_PLACEMENT
         shadow_ssdt::register_shadow_service(
             0x0e3,
             syscall::nt_user_get_control_color as *const (),
             12,
-        ); // NtUserGetControlColor
+        ); // NT_USER_GET_CONTROL_COLOR
         shadow_ssdt::register_shadow_service(
             0x0e8,
             syscall::nt_user_set_window_word as *const (),
             12,
-        ); // NtUserSetWindowWord
+        ); // NT_USER_SET_WINDOW_WORD
         shadow_ssdt::register_shadow_service(
             0x0e9,
             syscall::nt_user_get_clipboard_format_name as *const (),
             12,
-        ); // NtUserGetClipboardFormatName
+        ); // NT_USER_GET_CLIPBOARD_FORMAT_NAME
         shadow_ssdt::register_shadow_service(
             0x0ea,
             syscall::nt_user_real_internal_get_message as *const (),
             24,
-        ); // NtUserRealInternalGetMessage
+        ); // NT_USER_REAL_INTERNAL_GET_MESSAGE
         shadow_ssdt::register_shadow_service(
             0x0eb,
             syscall::nt_user_create_local_mem_handle as *const (),
             12,
-        ); // NtUserCreateLocalMemHandle
+        ); // NT_USER_CREATE_LOCAL_MEM_HANDLE
         shadow_ssdt::register_shadow_service(
             0x0ec,
             syscall::nt_user_attach_thread_input as *const (),
             12,
-        ); // NtUserAttachThreadInput
+        ); // NT_USER_ATTACH_THREAD_INPUT
         shadow_ssdt::register_shadow_service(
             0x0ee,
             syscall::nt_user_paint_menu_bar as *const (),
             20,
-        ); // NtUserPaintMenuBar
+        ); // NT_USER_PAINT_MENU_BAR
         shadow_ssdt::register_shadow_service(
             0x0ef,
             syscall::nt_user_set_keyboard_state as *const (),
             8,
-        ); // NtUserSetKeyboardState
+        ); // NT_USER_SET_KEYBOARD_STATE
         shadow_ssdt::register_shadow_service(
             0x0f1,
             syscall::nt_user_create_accelerator_table as *const (),
             8,
-        ); // NtUserCreateAcceleratorTable
+        ); // NT_USER_CREATE_ACCELERATOR_TABLE
         shadow_ssdt::register_shadow_service(
             0x0f2,
             syscall::nt_user_get_cursor_frame_info as *const (),
             12,
-        ); // NtUserGetCursorFrameInfo
+        ); // NT_USER_GET_CURSOR_FRAME_INFO
         shadow_ssdt::register_shadow_service(
             0x0f3,
             syscall::nt_user_get_alt_tab_info as *const (),
             16,
-        ); // NtUserGetAltTabInfo
+        ); // NT_USER_GET_ALT_TAB_INFO
         shadow_ssdt::register_shadow_service(
             0x0f4,
             syscall::nt_user_get_caret_blink_time as *const (),
             4,
-        ); // NtUserGetCaretBlinkTime
+        ); // NT_USER_GET_CARET_BLINK_TIME
         shadow_ssdt::register_shadow_service(
             0x0f6,
             syscall::nt_user_process_connect as *const (),
             16,
-        ); // NtUserProcessConnect
+        ); // NT_USER_PROCESS_CONNECT
         shadow_ssdt::register_shadow_service(
             0x0f7,
             syscall::nt_user_enum_display_devices as *const (),
             16,
-        ); // NtUserEnumDisplayDevices
+        ); // NT_USER_ENUM_DISPLAY_DEVICES
         shadow_ssdt::register_shadow_service(
             0x0f8,
             syscall::nt_user_empty_clipboard as *const (),
             4,
-        ); // NtUserEmptyClipboard
+        ); // NT_USER_EMPTY_CLIPBOARD
         shadow_ssdt::register_shadow_service(
             0x0f9,
             syscall::nt_user_get_clipboard_data as *const (),
             8,
-        ); // NtUserGetClipboardData
-        shadow_ssdt::register_shadow_service(0x0fa, syscall::nt_user_remove_menu as *const (), 8); // NtUserRemoveMenu
+        ); // NT_USER_GET_CLIPBOARD_DATA
+        shadow_ssdt::register_shadow_service(0x0fa, syscall::nt_user_remove_menu as *const (), 8); // NT_USER_REMOVE_MENU
         shadow_ssdt::register_shadow_service(
             0x0fd,
             syscall::nt_user_convert_mem_handle as *const (),
             8,
-        ); // NtUserConvertMemHandle
+        ); // NT_USER_CONVERT_MEM_HANDLE
         shadow_ssdt::register_shadow_service(
             0x0fe,
             syscall::nt_user_destroy_accelerator_table as *const (),
             4,
-        ); // NtUserDestroyAcceleratorTable
+        ); // NT_USER_DESTROY_ACCELERATOR_TABLE
         shadow_ssdt::register_shadow_service(
             0x0ff,
             syscall::nt_user_get_gui_thread_info as *const (),
             8,
-        ); // NtUserGetGUIThreadInfo
+        ); // NT_USER_GET_GUITHREAD_INFO
 
         // Additional USER syscalls (0x1100-0x11FF)
         shadow_ssdt::register_shadow_service(
             0x101,
             syscall::nt_user_set_windows_hook_aw as *const (),
             16,
-        ); // NtUserSetWindowsHookAW
+        ); // NT_USER_SET_WINDOWS_HOOK_AW
         shadow_ssdt::register_shadow_service(
             0x102,
             syscall::nt_user_set_menu_default_item as *const (),
             8,
-        ); // NtUserSetMenuDefaultItem
+        ); // NT_USER_SET_MENU_DEFAULT_ITEM
         shadow_ssdt::register_shadow_service(
             0x103,
             syscall::nt_user_check_menu_item as *const (),
             12,
-        ); // NtUserCheckMenuItem
+        ); // NT_USER_CHECK_MENU_ITEM
         shadow_ssdt::register_shadow_service(
             0x104,
             syscall::nt_user_set_win_event_hook as *const (),
             24,
-        ); // NtUserSetWinEventHook
+        ); // NT_USER_SET_WIN_EVENT_HOOK
         shadow_ssdt::register_shadow_service(
             0x105,
             syscall::nt_user_unhook_win_event as *const (),
             4,
-        ); // NtUserUnhookWinEvent
+        ); // NT_USER_UNHOOK_WIN_EVENT
         shadow_ssdt::register_shadow_service(
             0x106,
             syscall::nt_user_lock_window_update as *const (),
             4,
-        ); // NtUserLockWindowUpdate
+        ); // NT_USER_LOCK_WINDOW_UPDATE
         shadow_ssdt::register_shadow_service(
             0x107,
             syscall::nt_user_set_system_menu as *const (),
             8,
-        ); // NtUserSetSystemMenu
+        ); // NT_USER_SET_SYSTEM_MENU
         shadow_ssdt::register_shadow_service(
             0x108,
             syscall::nt_user_thunked_menu_info as *const (),
             8,
-        ); // NtUserThunkedMenuInfo
-        shadow_ssdt::register_shadow_service(0x10c, syscall::nt_user_call_hwnd as *const (), 8); // NtUserCallHwnd
+        ); // NT_USER_THUNKED_MENU_INFO
+        shadow_ssdt::register_shadow_service(0x10c, syscall::nt_user_call_hwnd as *const (), 8); // NT_USER_CALL_HWND
         shadow_ssdt::register_shadow_service(
             0x10d,
             syscall::nt_user_dde_initialize as *const (),
             12,
-        ); // NtUserDdeInitialize
+        ); // NT_USER_DDE_INITIALIZE
         shadow_ssdt::register_shadow_service(
             0x10e,
             syscall::nt_user_modify_user_startup_info_flags as *const (),
             8,
-        ); // NtUserModifyUserStartupInfoFlags
+        ); // NT_USER_MODIFY_USER_STARTUP_INFO_FLAGS
         shadow_ssdt::register_shadow_service(
             0x10f,
             syscall::nt_user_count_clipboard_formats as *const (),
             4,
-        ); // NtUserCountClipboardFormats
+        ); // NT_USER_COUNT_CLIPBOARD_FORMATS
         shadow_ssdt::register_shadow_service(
             0x114,
             syscall::nt_user_enum_display_settings as *const (),
             16,
-        ); // NtUserEnumDisplaySettings
-        shadow_ssdt::register_shadow_service(0x115, syscall::nt_user_paint_desktop as *const (), 4); // NtUserPaintDesktop
+        ); // NT_USER_ENUM_DISPLAY_SETTINGS
+        shadow_ssdt::register_shadow_service(0x115, syscall::nt_user_paint_desktop as *const (), 4); // NT_USER_PAINT_DESKTOP
         shadow_ssdt::register_shadow_service(
             0x119,
             syscall::nt_user_change_clipboard_chain as *const (),
             8,
-        ); // NtUserChangeClipboardChain
+        ); // NT_USER_CHANGE_CLIPBOARD_CHAIN
         shadow_ssdt::register_shadow_service(
             0x11a,
             syscall::nt_user_set_clipboard_viewer as *const (),
             8,
-        ); // NtUserSetClipboardViewer
+        ); // NT_USER_SET_CLIPBOARD_VIEWER
         shadow_ssdt::register_shadow_service(
             0x11b,
             syscall::nt_user_show_window_async as *const (),
             8,
-        ); // NtUserShowWindowAsync
+        ); // NT_USER_SHOW_WINDOW_ASYNC
 
         // Additional GDI syscalls (0x1200-0x12FF)
         shadow_ssdt::register_shadow_service(
             0x11c,
             syscall::nt_user_activate_keyboard_layout as *const (),
             12,
-        ); // NtUserActivateKeyboardLayout
+        ); // NT_USER_ACTIVATE_KEYBOARD_LAYOUT
         shadow_ssdt::register_shadow_service(
             0x11f,
             syscall::nt_user_initialize_client_pfn_arrays as *const (),
             16,
-        ); // NtUserInitializeClientPfnArrays
+        ); // NT_USER_INITIALIZE_CLIENT_PFN_ARRAYS
     }
 
     // kprintln!("[win32k] Shadow SSDT services registered successfully");
@@ -1258,14 +1255,14 @@ pub fn register_services() {
 // GDI Functions
 // =============================================================================
 
-/// Create a device context
+/// create a device context
 pub fn create_dc() -> Option<DCState> {
     let mut dc = DCState::new();
     dc.dc_type = GdiHandleType::DC;
     Some(dc)
 }
 
-/// Create a compatible DC
+/// create a compatible DC
 pub fn create_compatible_dc() -> Option<DCState> {
     let mut dc = DCState::new();
     dc.dc_type = GdiHandleType::EnhancedMetafileDC;
@@ -1309,7 +1306,7 @@ pub fn free_gdi_handle(handle: u64) -> bool {
 // Bitmap Functions
 // =============================================================================
 
-/// Create a bitmap
+/// create a bitmap
 pub fn create_bitmap_info(width: i32, height: i32, bit_count: u16) -> BitmapInfoHeader {
     let _ = (&width, &height, &bit_count);
 
@@ -1331,11 +1328,11 @@ pub enum PenStyle {
     DashDotDot = 4,
 }
 
-/// Create a pen
+/// create a pen
 pub fn create_pen(style: PenStyle, width: i32, color: u32) -> bool {
     let _ = (&style, &width, &color);
 
-    // kprintln!("[win32k] CreatePen style={:?} width={} color=0x{:08x}", style, width, color);
+    // kprintln!("[win32k] create_pen style={:?} width={} color=0x{:08x}", style, width, color);
     true
 }
 
@@ -1365,19 +1362,19 @@ pub enum HatchStyle {
     DiagonalCross = 5,
 }
 
-/// Create a solid brush
+/// create a solid brush
 pub fn create_solid_brush(color: u32) -> bool {
     let _ = (&color,);
 
-    // kprintln!("[win32k] CreateSolidBrush color=0x{:08x}", color);
+    // kprintln!("[win32k] create_solid_brush color=0x{:08x}", color);
     true
 }
 
-/// Create a hatched brush
+/// create a hatched brush
 pub fn create_hatch_brush(style: HatchStyle, color: u32) -> bool {
     let _ = (&style, &color);
 
-    // kprintln!("[win32k] CreateHatchBrush style={:?} color=0x{:08x}", style, color);
+    // kprintln!("[win32k] create_hatch_brush style={:?} color=0x{:08x}", style, color);
     true
 }
 
@@ -1481,7 +1478,7 @@ pub fn eng_bit_blt(
     true
 }
 
-/// Create a bitmap info structure
+/// create a bitmap info structure
 pub fn create_bitmap(width: i32, height: i32, bit_count: u16) -> Option<BitmapInfoHeader> {
     let _ = (&width, &height, &bit_count);
 
@@ -1495,7 +1492,7 @@ pub fn create_bitmap(width: i32, height: i32, bit_count: u16) -> Option<BitmapIn
 // USER Functions
 // =============================================================================
 
-/// Create a window
+/// create a window
 pub fn create_window(
     class_name: &[u16],
     title: &[u16],
@@ -1544,9 +1541,9 @@ pub fn smoke_test() -> bool {
     let comp_dc = create_compatible_dc();
     let _ = &comp_dc;
     if comp_dc.is_some() {
-        // kprintln!("      [OK] CreateCompatibleDC");
+        // kprintln!("      [OK] create_compatible_dc");
     } else {
-        // kprintln!("      [FAIL] CreateCompatibleDC");
+        // kprintln!("      [FAIL] create_compatible_dc");
         all_ok = false;
     }
 
@@ -1622,7 +1619,7 @@ pub fn smoke_test() -> bool {
 
     // Test hatch brush
     let _ = create_hatch_brush(HatchStyle::Cross, 0x00FF00);
-    // kprintln!("      [OK] CreateHatchBrush");
+    // kprintln!("      [OK] create_hatch_brush");
 
     // kprintln!("    [win32k SMOKE] Testing USER subsystem...");
 
@@ -1695,7 +1692,7 @@ pub fn draw_line(dc: u64, x1: i32, y1: i32, x2: i32, y2: i32, color: u32) {
     // For actual rendering, we would need the DC's associated surface
     // For now, use Bresenham line drawing directly
     // kprintln!(
-    //         "[win32k] EngLine: DC=0x{:x} ({},{}) -> ({},{}) color=0x{:x}",
+    //         "[win32k] eng_line: DC=0x{:x} ({},{}) -> ({},{}) color=0x{:x}",
     //         dc, x1, y1, x2, y2, color
     //     );
     // If surface is associated with DC, draw on it
@@ -1752,13 +1749,13 @@ pub fn bit_blt(
     // For actual rendering, we would look up the DC's surface
     // This is a simplified version for kernel boot testing
     // kprintln!(
-    //         "[win32k] BitBlt: dst=0x{:x} ({},{}) {}x{} <- src=0x{:x} ({},{}) rop=0x{:08x}",
+    //         "[win32k] bit_blt: dst=0x{:x} ({},{}) {}x{} <- src=0x{:x} ({},{}) rop=0x{:08x}",
     //         dst_dc, dst_x, dst_y, width, height, src_dc, src_x, src_y, rop
     //     );
     true
 }
 
-/// BitBlt with surface pointers (internal use)
+/// bit_blt with surface pointers (internal use)
 pub fn bit_blt_surfaces(
     dst_surface: &EngSurface,
     dst_x: i32,
@@ -1916,7 +1913,7 @@ pub fn clear_surface(surface: &EngSurface, color: u32) {
             core::ptr::write_unaligned(surface.bits.add(i) as *mut u32, color);
             i += 4;
         }
-        // Handle remaining bytes
+        // handle remaining bytes
         while i < size {
             core::ptr::write(surface.bits.add(i), color_bytes[i % 4]);
             i += 1;
@@ -2006,7 +2003,7 @@ pub fn apply_rop(pixel: u32, color: u32, rop: u32) -> u32 {
     }
 }
 
-/// Perform BitBlt with ROP support
+/// Perform bit_blt with ROP support
 pub fn bit_blt_with_rop(
     dst_surface: &EngSurface,
     dst_x: i32,
@@ -2491,7 +2488,7 @@ pub fn draw_arc_vertical(surface: &EngSurface, x: i32, y1: i32, y2: i32, color: 
 }
 
 /// Fill a triangle (simple scanline fill)
-fn fill_triangle(
+pub fn fill_triangle(
     surface: &EngSurface,
     x1: i32,
     y1: i32,
@@ -2718,105 +2715,93 @@ pub fn set_pixel(dc: u64, x: i32, y: i32, color: u32) -> u32 {
 // They follow the Windows x64 calling convention and receive
 // arguments via registers/stack as passed by the syscall dispatcher.
 
-#[cfg(target_arch = "x86_64")]
-use crate::arch::common::trap_frame::TrapFrame;
+use crate::arch::common::syscall_frame::SyscallFrame;
 
-/// GDI: GetDC handler
-#[cfg(target_arch = "x86_64")]
-extern "C" fn gdi_get_dc_handler(tf: *mut TrapFrame) -> u64 {
-    let _ = (&tf,);
+/// GDI: get_dc handler
+pub extern "C" fn gdi_get_dc_handler(frame: &SyscallFrame) -> u64 {
+    let _ = (&frame,);
 
-    // kprintln!("[win32k] NtGdiGetDC called");
+    // kprintln!("[win32k] NT_GDI_GET_DC called");
     0 // Return NULL DC for now
 }
 
-/// GDI: ReleaseDC handler
-#[cfg(target_arch = "x86_64")]
-extern "C" fn gdi_release_dc_handler(tf: *mut TrapFrame) -> u64 {
-    let _ = (&tf,);
+/// GDI: release_dc handler
+pub extern "C" fn gdi_release_dc_handler(frame: &SyscallFrame) -> u64 {
+    let _ = (&frame,);
 
-    // kprintln!("[win32k] NtGdiReleaseDC called");
+    // kprintln!("[win32k] NT_GDI_RELEASE_DC called");
     1 // Return TRUE
 }
 
-/// GDI: DeleteObject handler
-#[cfg(target_arch = "x86_64")]
-extern "C" fn gdi_delete_object_handler(tf: *mut TrapFrame) -> u64 {
-    let _ = (&tf,);
+/// GDI: delete_object handler
+pub extern "C" fn gdi_delete_object_handler(frame: &SyscallFrame) -> u64 {
+    let _ = (&frame,);
 
-    // kprintln!("[win32k] NtGdiDeleteObject called");
+    // kprintln!("[win32k] NT_GDI_DELETE_OBJECT called");
     1 // Return TRUE
 }
 
-/// GDI: BitBlt handler
-#[cfg(target_arch = "x86_64")]
-extern "C" fn gdi_bit_blt_handler(tf: *mut TrapFrame) -> u64 {
-    let _ = (&tf,);
+/// GDI: bit_blt handler
+pub extern "C" fn gdi_bit_blt_handler(frame: &SyscallFrame) -> u64 {
+    let _ = (&frame,);
 
-    // kprintln!("[win32k] NtGdiBitBlt called");
+    // kprintln!("[win32k] NT_GDI_BIT_BLT called");
     1 // Return TRUE
 }
 
 /// GDI: Rectangle handler
-#[cfg(target_arch = "x86_64")]
-extern "C" fn gdi_rectangle_handler(tf: *mut TrapFrame) -> u64 {
-    let _ = (&tf,);
+pub extern "C" fn gdi_rectangle_handler(frame: &SyscallFrame) -> u64 {
+    let _ = (&frame,);
 
-    // kprintln!("[win32k] NtGdiRectangle called");
+    // kprintln!("[win32k] NT_GDI_RECTANGLE called");
     1 // Return TRUE
 }
 
 /// USER: CreateWindow handler
-#[cfg(target_arch = "x86_64")]
-extern "C" fn user_create_window_handler(tf: *mut TrapFrame) -> u64 {
-    let _ = (&tf,);
+pub extern "C" fn user_create_window_handler(frame: &SyscallFrame) -> u64 {
+    let _ = (&frame,);
 
     // kprintln!("[win32k] NtUserCreateWindow called");
     0 // Return NULL HWND for now
 }
 
-/// USER: DestroyWindow handler
-#[cfg(target_arch = "x86_64")]
-extern "C" fn user_destroy_window_handler(tf: *mut TrapFrame) -> u64 {
-    let _ = (&tf,);
+/// USER: destroy_window handler
+pub extern "C" fn user_destroy_window_handler(frame: &SyscallFrame) -> u64 {
+    let _ = (&frame,);
 
-    // kprintln!("[win32k] NtUserDestroyWindow called");
+    // kprintln!("[win32k] NT_USER_DESTROY_WINDOW called");
     1 // Return TRUE
 }
 
-/// USER: ShowWindow handler
-#[cfg(target_arch = "x86_64")]
-extern "C" fn user_show_window_handler(tf: *mut TrapFrame) -> u64 {
-    let _ = (&tf,);
+/// USER: show_window handler
+pub extern "C" fn user_show_window_handler(frame: &SyscallFrame) -> u64 {
+    let _ = (&frame,);
 
-    // kprintln!("[win32k] NtUserShowWindow called");
+    // kprintln!("[win32k] NT_USER_SHOW_WINDOW called");
     1 // Return TRUE
 }
 
 /// USER: SetWindowPos handler
-#[cfg(target_arch = "x86_64")]
-extern "C" fn user_set_window_pos_handler(tf: *mut TrapFrame) -> u64 {
-    let _ = (&tf,);
+pub extern "C" fn user_set_window_pos_handler(frame: &SyscallFrame) -> u64 {
+    let _ = (&frame,);
 
-    // kprintln!("[win32k] NtUserSetWindowPos called");
+    // kprintln!("[win32k] NT_USER_SET_WINDOW_POS called");
     1 // Return TRUE
 }
 
 /// USER: GetMessage handler
-#[cfg(target_arch = "x86_64")]
-extern "C" fn user_get_message_handler(tf: *mut TrapFrame) -> u64 {
-    let _ = (&tf,);
+pub extern "C" fn user_get_message_handler(frame: &SyscallFrame) -> u64 {
+    let _ = (&frame,);
 
-    // kprintln!("[win32k] NtUserGetMessage called");
-    0 // Return WM_QUIT = 0
+    // kprintln!("[win32k] NT_USER_GET_MESSAGE called");
+    0 // Return WmQuit = 0
 }
 
 /// USER: PostMessage handler
-#[cfg(target_arch = "x86_64")]
-extern "C" fn user_post_message_handler(tf: *mut TrapFrame) -> u64 {
-    let _ = (&tf,);
+pub extern "C" fn user_post_message_handler(frame: &SyscallFrame) -> u64 {
+    let _ = (&frame,);
 
-    // kprintln!("[win32k] NtUserPostMessage called");
+    // kprintln!("[win32k] NT_USER_POST_MESSAGE called");
     1 // Return TRUE
 }
 
@@ -2926,7 +2911,7 @@ impl Menu {
 use core::sync::atomic::{AtomicU64, Ordering};
 static MENU_NEXT_HANDLE: AtomicU64 = AtomicU64::new(0x00010000);
 use core::sync::atomic::AtomicUsize;
-static MENU_COUNT: AtomicUsize = AtomicUsize::new(0);
+pub static MENU_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// Allocate a menu handle
 pub fn allocate_menu_handle() -> u64 {
@@ -3250,7 +3235,7 @@ pub fn allocate_timer_id() -> u32 {
     TIMER_NEXT_ID.fetch_add(1, Ordering::SeqCst)
 }
 
-/// Create a timer
+/// create a timer
 pub fn create_timer(hwnd: u64, n_id_event: u32, u_elapse: u32, timer_proc: u64) -> Option<u32> {
     let _ = (&hwnd, &n_id_event, &u_elapse, &timer_proc);
 
@@ -3335,7 +3320,7 @@ pub fn timer_dpc_callback(context: *mut u8) {
     let _ = &timer_id;
     if let Some(timer) = get_timer(timer_id) {
         if timer.hwnd != 0 && timer.timer_proc != 0 {
-            // Send WM_TIMER message
+            // Send WmTimer message
             // kprintln!("[win32k] Timer callback: id={}, hwnd={:#x}", timer_id, timer.hwnd);
             // In a full implementation, this would queue a message to the window
         }

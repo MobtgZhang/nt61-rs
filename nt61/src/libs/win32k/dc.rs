@@ -36,14 +36,13 @@
 
 extern crate alloc;
 
-use crate::kprintln;
 use alloc::vec::Vec;
 
 /// DC type flags
 const DC_TYPE_WINDOW: u32 = 0x00000001;
 const DC_TYPE_MEMORY: u32 = 0x00000002;
-const DC_TYPE_METAFILE: u32 = 0x00000004;
-const DC_TYPE_PRINTER: u32 = 0x00000008;
+pub const DC_TYPE_METAFILE: u32 = 0x00000004;
+pub const DC_TYPE_PRINTER: u32 = 0x00000008;
 const DC_TYPE_DISPLAY: u32 = DC_TYPE_WINDOW;
 
 /// Mapping modes
@@ -96,6 +95,29 @@ pub struct PointL {
     pub y: i32,
 }
 
+/// 2x3 coordinate transform used by GDI world transforms.
+#[derive(Clone, Copy, Debug)]
+#[repr(C)]
+pub struct Xform {
+    pub m11: f32,
+    pub m12: f32,
+    pub m21: f32,
+    pub m22: f32,
+    pub dx: f32,
+    pub dy: f32,
+}
+
+impl Xform {
+    pub const IDENTITY: Self = Self {
+        m11: 1.0,
+        m12: 0.0,
+        m21: 0.0,
+        m22: 1.0,
+        dx: 0.0,
+        dy: 0.0,
+    };
+}
+
 impl PointL {
     pub fn new(x: i32, y: i32) -> Self {
         Self { x, y }
@@ -137,6 +159,8 @@ pub struct SavedDcState {
     pub window_ext: SizeL,
     pub viewport_org: PointL,
     pub window_org: PointL,
+    pub world_transform: Xform,
+    pub world_transform_valid: bool,
 }
 
 impl Default for SavedDcState {
@@ -159,6 +183,8 @@ impl Default for SavedDcState {
             window_ext: SizeL::new(1, 1),
             viewport_org: PointL::new(0, 0),
             window_org: PointL::new(0, 0),
+            world_transform: Xform::IDENTITY,
+            world_transform_valid: false,
         }
     }
 }
@@ -166,7 +192,7 @@ impl Default for SavedDcState {
 /// DC object
 #[repr(C)]
 pub struct DcObject {
-    // Handle header
+    // handle header
     pub type_: u8,
     pub uses: u8,
     pub flags: u8,
@@ -210,6 +236,8 @@ pub struct DcObject {
     pub window_ext: SizeL,
     pub viewport_org: PointL,
     pub window_org: PointL,
+    pub world_transform: Xform,
+    pub world_transform_valid: bool,
 
     // DC bounds
     pub bounds: crate::libs::win32k::objects::Rect,
@@ -246,6 +274,8 @@ impl DcObject {
             window_ext: SizeL::new(1, 1),
             viewport_org: PointL::new(0, 0),
             window_org: PointL::new(0, 0),
+            world_transform: Xform::IDENTITY,
+            world_transform_valid: false,
             bounds: crate::libs::win32k::objects::Rect::new(0, 0, 0, 0),
             saved_states: Vec::new(),
         }
@@ -271,6 +301,8 @@ impl DcObject {
             window_ext: self.window_ext,
             viewport_org: self.viewport_org,
             window_org: self.window_org,
+            world_transform: self.world_transform,
+            world_transform_valid: self.world_transform_valid,
         };
         let _ = &state;
         self.saved_states.push(state);
@@ -296,6 +328,8 @@ impl DcObject {
             self.window_ext = state.window_ext;
             self.viewport_org = state.viewport_org;
             self.window_org = state.window_org;
+            self.world_transform = state.world_transform;
+            self.world_transform_valid = state.world_transform_valid;
             true
         } else {
             false
@@ -304,7 +338,7 @@ impl DcObject {
 }
 
 // =============================================================================
-// DC Handle Table
+// DC handle Table
 // =============================================================================
 
 /// DC handle table
@@ -321,7 +355,7 @@ impl DcHandleTable {
         }
     }
 
-    /// Create a new DC
+    /// create a new DC
     pub fn create(&mut self, dc_type: u32, surface: u64) -> u64 {
         let dc = crate::mm::pool::allocate(
             crate::mm::pool::PoolType::NonPaged,
@@ -435,8 +469,8 @@ pub fn get_dc_table() -> &'static mut DcHandleTable {
 // DC Creation Functions
 // =============================================================================
 
-/// Create a display DC (screen DC)
-pub fn GreCreateDisplayDC() -> u64 {
+/// create a display DC (screen DC)
+pub fn gre_create_display_dc() -> u64 {
     // Get primary surface
     let surface = crate::libs::win32k::surface::get_primary_surface() as u64;
     let _ = &surface;
@@ -447,8 +481,8 @@ pub fn GreCreateDisplayDC() -> u64 {
     table.create(DC_TYPE_DISPLAY | DC_TYPE_WINDOW, surface)
 }
 
-/// Create a memory DC
-pub fn GreCreateCompatibleDC(source_dc: u64) -> u64 {
+/// create a memory DC
+pub fn gre_create_compatible_dc(source_dc: u64) -> u64 {
     let source_surface = if source_dc != 0 {
         let table = get_dc_table();
         let _ = &table;
@@ -470,7 +504,7 @@ pub fn GreCreateCompatibleDC(source_dc: u64) -> u64 {
 }
 
 /// Delete a DC
-pub fn GreDeleteDC(dc_handle: u64) -> bool {
+pub fn gre_delete_dc(dc_handle: u64) -> bool {
     let table = get_dc_table();
     let _ = &table;
     let _ = &table;
@@ -478,13 +512,13 @@ pub fn GreDeleteDC(dc_handle: u64) -> bool {
 }
 
 /// Get DC for a bitmap (creates a DC with the bitmap selected)
-pub fn GreGetDCForBitmap(bitmap_handle: u64) -> u64 {
+pub fn gre_get_dcfor_bitmap(bitmap_handle: u64) -> u64 {
     let _ = bitmap_handle;
     let table = get_dc_table();
     let _ = &table;
     let _ = &table;
 
-    // Create a memory DC compatible with the primary surface
+    // create a memory DC compatible with the primary surface
     let mem_dc = table.create(DC_TYPE_MEMORY, 0);
     let _ = &mem_dc;
     let _ = &mem_dc;
@@ -505,7 +539,7 @@ pub fn get_dc(dc_handle: u64) -> Option<&'static mut DcObject> {
 // =============================================================================
 
 /// Set text color
-pub fn GreSetTextColor(dc_handle: u64, color: u32) -> u32 {
+pub fn gre_set_text_color(dc_handle: u64, color: u32) -> u32 {
     let table = get_dc_table();
     let _ = &table;
     let _ = &table;
@@ -521,7 +555,7 @@ pub fn GreSetTextColor(dc_handle: u64, color: u32) -> u32 {
 }
 
 /// Get text color
-pub fn GreGetTextColor(dc_handle: u64) -> u32 {
+pub fn gre_get_text_color(dc_handle: u64) -> u32 {
     let table = get_dc_table();
     let _ = &table;
     let _ = &table;
@@ -533,7 +567,7 @@ pub fn GreGetTextColor(dc_handle: u64) -> u32 {
 }
 
 /// Set background color
-pub fn GreSetBkColor(dc_handle: u64, color: u32) -> u32 {
+pub fn gre_set_bk_color(dc_handle: u64, color: u32) -> u32 {
     let table = get_dc_table();
     let _ = &table;
     let _ = &table;
@@ -549,7 +583,7 @@ pub fn GreSetBkColor(dc_handle: u64, color: u32) -> u32 {
 }
 
 /// Get background color
-pub fn GreGetBkColor(dc_handle: u64) -> u32 {
+pub fn gre_get_bk_color(dc_handle: u64) -> u32 {
     let table = get_dc_table();
     let _ = &table;
     let _ = &table;
@@ -561,7 +595,7 @@ pub fn GreGetBkColor(dc_handle: u64) -> u32 {
 }
 
 /// Set background mode
-pub fn GreSetBkMode(dc_handle: u64, mode: i32) -> i32 {
+pub fn gre_set_bk_mode(dc_handle: u64, mode: i32) -> i32 {
     let table = get_dc_table();
     let _ = &table;
     let _ = &table;
@@ -577,7 +611,7 @@ pub fn GreSetBkMode(dc_handle: u64, mode: i32) -> i32 {
 }
 
 /// Get background mode
-pub fn GreGetBkMode(dc_handle: u64) -> i32 {
+pub fn gre_get_bk_mode(dc_handle: u64) -> i32 {
     let table = get_dc_table();
     let _ = &table;
     let _ = &table;
@@ -589,7 +623,7 @@ pub fn GreGetBkMode(dc_handle: u64) -> i32 {
 }
 
 /// Set ROP mode
-pub fn GreSetROP2(dc_handle: u64, mode: i32) -> i32 {
+pub fn gre_set_rop2(dc_handle: u64, mode: i32) -> i32 {
     let table = get_dc_table();
     let _ = &table;
     let _ = &table;
@@ -605,7 +639,7 @@ pub fn GreSetROP2(dc_handle: u64, mode: i32) -> i32 {
 }
 
 /// Get ROP mode
-pub fn GreGetROP2(dc_handle: u64) -> i32 {
+pub fn gre_get_rop2(dc_handle: u64) -> i32 {
     let table = get_dc_table();
     let _ = &table;
     let _ = &table;
@@ -617,7 +651,7 @@ pub fn GreGetROP2(dc_handle: u64) -> i32 {
 }
 
 /// Set text alignment
-pub fn GreSetTextAlign(dc_handle: u64, align: i32) -> i32 {
+pub fn gre_set_text_align(dc_handle: u64, align: i32) -> i32 {
     let table = get_dc_table();
     let _ = &table;
     let _ = &table;
@@ -633,7 +667,7 @@ pub fn GreSetTextAlign(dc_handle: u64, align: i32) -> i32 {
 }
 
 /// Get text alignment
-pub fn GreGetTextAlign(dc_handle: u64) -> i32 {
+pub fn gre_get_text_align(dc_handle: u64) -> i32 {
     let table = get_dc_table();
     let _ = &table;
     let _ = &table;
@@ -645,11 +679,11 @@ pub fn GreGetTextAlign(dc_handle: u64) -> i32 {
 }
 
 // =============================================================================
-// SelectObject
+// select_object
 // =============================================================================
 
 /// Select an object into a DC
-pub fn GreSelectObject(dc_handle: u64, object_handle: u64) -> u64 {
+pub fn gre_select_object(dc_handle: u64, object_handle: u64) -> u64 {
     let table = get_dc_table();
     let _ = &table;
     let _ = &table;
@@ -694,9 +728,9 @@ pub fn GreSelectObject(dc_handle: u64, object_handle: u64) -> u64 {
         };
 
         // Increment reference count for new object
-        crate::libs::win32k::objects::GdiSelectObject(object_handle);
+        crate::libs::win32k::objects::gdi_select_object(object_handle);
 
-        // kprintln!("[win32k] GreSelectObject: dc=0x{:08x}, obj=0x{:016x}, old=0x{:016x}",
+        // kprintln!("[win32k] gre_select_object: dc=0x{:08x}, obj=0x{:016x}, old=0x{:016x}",
         //                   dc_handle, object_handle, old_handle);
 
         old_handle
@@ -706,7 +740,7 @@ pub fn GreSelectObject(dc_handle: u64, object_handle: u64) -> u64 {
 }
 
 /// Get current pen
-pub fn GreGetCurrentPen(dc_handle: u64) -> u64 {
+pub fn gre_get_current_pen(dc_handle: u64) -> u64 {
     let table = get_dc_table();
     let _ = &table;
     let _ = &table;
@@ -718,7 +752,7 @@ pub fn GreGetCurrentPen(dc_handle: u64) -> u64 {
 }
 
 /// Get current brush
-pub fn GreGetCurrentBrush(dc_handle: u64) -> u64 {
+pub fn gre_get_current_brush(dc_handle: u64) -> u64 {
     let table = get_dc_table();
     let _ = &table;
     let _ = &table;
@@ -730,7 +764,7 @@ pub fn GreGetCurrentBrush(dc_handle: u64) -> u64 {
 }
 
 /// Get current font
-pub fn GreGetCurrentFont(dc_handle: u64) -> u64 {
+pub fn gre_get_current_font(dc_handle: u64) -> u64 {
     let table = get_dc_table();
     let _ = &table;
     let _ = &table;
@@ -742,11 +776,11 @@ pub fn GreGetCurrentFont(dc_handle: u64) -> u64 {
 }
 
 // =============================================================================
-// SaveDC / RestoreDC
+// save_dc / restore_dc
 // =============================================================================
 
 /// Save DC state
-pub fn GreSaveDC(dc_handle: u64) -> i32 {
+pub fn gre_save_dc(dc_handle: u64) -> i32 {
     let table = get_dc_table();
     let _ = &table;
     let _ = &table;
@@ -755,7 +789,7 @@ pub fn GreSaveDC(dc_handle: u64) -> i32 {
         let count = dc.saved_states.len() as i32;
         let _ = &count;
         let _ = &count;
-        // kprintln!("[win32k] GreSaveDC: dc=0x{:08x}, saved_count={}", dc_handle, count);
+        // kprintln!("[win32k] gre_save_dc: dc=0x{:08x}, saved_count={}", dc_handle, count);
         count
     } else {
         0
@@ -763,7 +797,7 @@ pub fn GreSaveDC(dc_handle: u64) -> i32 {
 }
 
 /// Restore DC state
-pub fn GreRestoreDC(dc_handle: u64, saved_state: i32) -> bool {
+pub fn gre_restore_dc(dc_handle: u64, saved_state: i32) -> bool {
     let table = get_dc_table();
     let _ = &table;
     let _ = &table;
@@ -786,7 +820,7 @@ pub fn GreRestoreDC(dc_handle: u64, saved_state: i32) -> bool {
 // =============================================================================
 
 /// Set mapping mode
-pub fn GreSetMapMode(dc_handle: u64, mode: i32) -> i32 {
+pub fn gre_set_map_mode(dc_handle: u64, mode: i32) -> i32 {
     let table = get_dc_table();
     let _ = &table;
     let _ = &table;
@@ -821,7 +855,7 @@ pub fn GreSetMapMode(dc_handle: u64, mode: i32) -> i32 {
             _ => {}
         }
 
-        // kprintln!("[win32k] GreSetMapMode: dc=0x{:08x}, mode={}", dc_handle, mode);
+        // kprintln!("[win32k] gre_set_map_mode: dc=0x{:08x}, mode={}", dc_handle, mode);
         old
     } else {
         MM_TEXT
@@ -829,7 +863,7 @@ pub fn GreSetMapMode(dc_handle: u64, mode: i32) -> i32 {
 }
 
 /// Get mapping mode
-pub fn GreGetMapMode(dc_handle: u64) -> i32 {
+pub fn gre_get_map_mode(dc_handle: u64) -> i32 {
     let table = get_dc_table();
     let _ = &table;
     let _ = &table;
@@ -841,7 +875,12 @@ pub fn GreGetMapMode(dc_handle: u64) -> i32 {
 }
 
 /// Set viewport extent
-pub fn GreSetViewportExtEx(dc_handle: u64, cx: i32, cy: i32, old_size: Option<&mut SizeL>) -> bool {
+pub fn gre_set_viewport_ext_ex(
+    dc_handle: u64,
+    cx: i32,
+    cy: i32,
+    old_size: Option<&mut SizeL>,
+) -> bool {
     let table = get_dc_table();
     let _ = &table;
     let _ = &table;
@@ -857,7 +896,12 @@ pub fn GreSetViewportExtEx(dc_handle: u64, cx: i32, cy: i32, old_size: Option<&m
 }
 
 /// Set window extent
-pub fn GreSetWindowExtEx(dc_handle: u64, cx: i32, cy: i32, old_size: Option<&mut SizeL>) -> bool {
+pub fn gre_set_window_ext_ex(
+    dc_handle: u64,
+    cx: i32,
+    cy: i32,
+    old_size: Option<&mut SizeL>,
+) -> bool {
     let table = get_dc_table();
     let _ = &table;
     let _ = &table;
@@ -873,7 +917,7 @@ pub fn GreSetWindowExtEx(dc_handle: u64, cx: i32, cy: i32, old_size: Option<&mut
 }
 
 /// Set viewport origin
-pub fn GreSetViewportOrgEx(
+pub fn gre_set_viewport_org_ex(
     dc_handle: u64,
     x: i32,
     y: i32,
@@ -898,7 +942,7 @@ pub fn GreSetViewportOrgEx(
 // =============================================================================
 
 /// Get DC bounds
-pub fn GreGetDCBounds(dc_handle: u64) -> crate::libs::win32k::objects::Rect {
+pub fn gre_get_dcbounds(dc_handle: u64) -> crate::libs::win32k::objects::Rect {
     let table = get_dc_table();
     let _ = &table;
     let _ = &table;
@@ -910,7 +954,7 @@ pub fn GreGetDCBounds(dc_handle: u64) -> crate::libs::win32k::objects::Rect {
 }
 
 /// Set DC bounds
-pub fn GreSetDCBounds(dc_handle: u64, bounds: &crate::libs::win32k::objects::Rect) {
+pub fn gre_set_dcbounds(dc_handle: u64, bounds: &crate::libs::win32k::objects::Rect) {
     let table = get_dc_table();
     let _ = &table;
     let _ = &table;

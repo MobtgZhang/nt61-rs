@@ -3,8 +3,6 @@
 //! GDI types. The handle types are all `*mut c_void` so
 //! the stubs can use placeholder addresses.
 
-#![allow(non_camel_case_types)]
-
 pub type BOOL = i32;
 pub const TRUE: BOOL = 1;
 pub const FALSE: BOOL = 0;

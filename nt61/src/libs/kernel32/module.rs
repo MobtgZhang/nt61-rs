@@ -1,12 +1,12 @@
 //! kernel32 — module loading
 //
-//! `GetModuleHandleW`, `GetProcAddress`, `LoadLibraryW`,
-//! `FreeLibrary`, `GetModuleFileNameW`, `EnumProcessModules`.
-//! Wraps `ntdll!Ldr*`.
+//! `get_module_handle_w`, `get_proc_address`, `load_library_w`,
+//! `free_library`, `get_module_file_name_w`, `enum_process_modules`.
+//! Wraps `ntdll!ldr*`.
 
 extern crate alloc;
 
-use super::error::{GetLastError, SetLastError};
+use super::error::set_last_error;
 use super::types::{BOOL, DWORD, FALSE, HANDLE, HMODULE, LPCSTR, LPCWSTR, TRUE};
 use crate::libs::ntdll::ldr as ntdll_ldr;
 use crate::libs::ntdll::status::{STATUS_NOT_FOUND, STATUS_SUCCESS};
@@ -44,9 +44,9 @@ fn build_us(name: &str) -> UnicodeString {
     }
     buf[i] = 0;
     UnicodeString {
-        Length: (i * 2) as u16,
-        MaximumLength: ((i + 1) * 2) as u16,
-        Buffer: buf.as_mut_ptr(),
+        length: (i * 2) as u16,
+        maximum_length: ((i + 1) * 2) as u16,
+        buffer: buf.as_mut_ptr(),
     }
 }
 
@@ -58,12 +58,12 @@ fn map_status(s: i32) -> u32 {
         STATUS_NOT_FOUND => 126, // ERROR_MOD_NOT_FOUND
         _ => 0xDEAD_BEEF,
     };
-    SetLastError(code);
+    set_last_error(code);
     code
 }
 
-/// `GetModuleHandleW`.
-pub unsafe extern "C" fn GetModuleHandleW(module_name: LPCWSTR) -> HMODULE {
+/// `get_module_handle_w`.
+pub unsafe extern "C" fn get_module_handle_w(module_name: LPCWSTR) -> HMODULE {
     if module_name.is_null() {
         // Return the address of the calling image's base.
         return crate::loader::get_self_image_base() as HMODULE;
@@ -71,13 +71,13 @@ pub unsafe extern "C" fn GetModuleHandleW(module_name: LPCWSTR) -> HMODULE {
     let name = match wide_to_string(module_name) {
         Some(s) => s,
         None => {
-            SetLastError(123);
+            set_last_error(123);
             return ptr::null_mut();
         }
     };
     let mut us = build_us(&name);
     let mut h: HANDLE = ptr::null_mut();
-    let status = ntdll_ldr::LdrGetDllHandle(0, ptr::null_mut(), &mut us, &mut h);
+    let status = ntdll_ldr::ldr_get_dll_handle(0, ptr::null_mut(), &mut us, &mut h);
     if status != STATUS_SUCCESS {
         map_status(status);
         return ptr::null_mut();
@@ -85,13 +85,13 @@ pub unsafe extern "C" fn GetModuleHandleW(module_name: LPCWSTR) -> HMODULE {
     h as HMODULE
 }
 
-/// `GetProcAddress`.
+/// `get_proc_address`.
 ///
 /// Returns a raw `FARPROC`. When the symbol cannot be resolved we
 /// return a non-null sentinel function whose only behaviour is to
 /// raise STATUS_ENTRYPOINT_NOT_FOUND via the `set_last_error` path;
 /// Windows callers are expected to compare the result against NULL
-/// via `GetProcAddress(..., NULL)` checks, but the WIN32 API
+/// via `get_proc_address(..., NULL)` checks, but the WIN32 API
 /// historically returned NULL itself. To stay source-compatible
 /// with both styles we return a real function pointer whose address
 /// is the canonical "no entrypoint" sentinel — the wrapping
@@ -99,7 +99,7 @@ pub unsafe extern "C" fn GetModuleHandleW(module_name: LPCWSTR) -> HMODULE {
 /// can't use `Option<FARPROC>` because the WIN32 ABI uses a bare
 /// function pointer; transmute-from-null is UB so we explicitly
 /// manufacture a non-null sentinel.
-pub unsafe extern "C" fn GetProcAddress(
+pub unsafe extern "C" fn get_proc_address(
     module: HMODULE,
     proc_name: LPCSTR,
 ) -> super::types::FARPROC {
@@ -112,10 +112,10 @@ pub unsafe extern "C" fn GetProcAddress(
         0
     }
     if module.is_null() || proc_name.is_null() {
-        SetLastError(87);
+        set_last_error(87);
         return no_entrypoint as super::types::FARPROC;
     }
-    // Read the name.
+    // read the name.
     let mut len = 0;
     while *proc_name.add(len) != 0 {
         len += 1;
@@ -125,7 +125,7 @@ pub unsafe extern "C" fn GetProcAddress(
     let mut us = build_us(&name_str);
     let mut p = ptr::null_mut::<core::ffi::c_void>();
     let status =
-        ntdll_ldr::LdrGetProcedureAddress(module as *mut core::ffi::c_void, &mut us, 0, &mut p);
+        ntdll_ldr::ldr_get_procedure_address(module as *mut core::ffi::c_void, &mut us, 0, &mut p);
     if status != STATUS_SUCCESS {
         map_status(status);
         return no_entrypoint as super::types::FARPROC;
@@ -133,22 +133,22 @@ pub unsafe extern "C" fn GetProcAddress(
     core::mem::transmute(p)
 }
 
-/// `LoadLibraryW`.
-pub unsafe extern "C" fn LoadLibraryW(file_name: LPCWSTR) -> HMODULE {
+/// `load_library_w`.
+pub unsafe extern "C" fn load_library_w(file_name: LPCWSTR) -> HMODULE {
     if file_name.is_null() {
-        SetLastError(87);
+        set_last_error(87);
         return ptr::null_mut();
     }
     let name = match wide_to_string(file_name) {
         Some(s) => s,
         None => {
-            SetLastError(123);
+            set_last_error(123);
             return ptr::null_mut();
         }
     };
     let mut us = build_us(&name);
     let mut h: HANDLE = ptr::null_mut();
-    let status = ntdll_ldr::LdrLoadDll(0, ptr::null_mut(), &mut us, &mut h);
+    let status = ntdll_ldr::ldr_load_dll(0, ptr::null_mut(), &mut us, &mut h);
     if status != STATUS_SUCCESS {
         map_status(status);
         return ptr::null_mut();
@@ -156,10 +156,10 @@ pub unsafe extern "C" fn LoadLibraryW(file_name: LPCWSTR) -> HMODULE {
     h as HMODULE
 }
 
-/// `FreeLibrary` — unloads the module. The bootstrap does
+/// `free_library` — unloads the module. The bootstrap does
 /// not really unload anything; we just remove the LDR entry.
-pub unsafe extern "C" fn FreeLibrary(module: HMODULE) -> BOOL {
-    let status = ntdll_ldr::LdrUnloadDll(module as HANDLE);
+pub unsafe extern "C" fn free_library(module: HMODULE) -> BOOL {
+    let status = ntdll_ldr::ldr_unload_dll(module as HANDLE);
     if status == STATUS_SUCCESS {
         TRUE
     } else {
@@ -168,8 +168,8 @@ pub unsafe extern "C" fn FreeLibrary(module: HMODULE) -> BOOL {
     }
 }
 
-/// `GetModuleFileNameW`.
-pub unsafe extern "C" fn GetModuleFileNameW(
+/// `get_module_file_name_w`.
+pub unsafe extern "C" fn get_module_file_name_w(
     module: HMODULE,
     buffer: *mut u16,
     buffer_size: DWORD,
@@ -213,9 +213,9 @@ pub unsafe extern "C" fn GetModuleFileNameW(
     copy as DWORD
 }
 
-/// `EnumProcessModules` — we only have one loaded module
+/// `enum_process_modules` — we only have one loaded module
 /// (the calling process image).
-pub unsafe extern "C" fn EnumProcessModules(
+pub unsafe extern "C" fn enum_process_modules(
     process: HANDLE,
     modules: *mut HMODULE,
     buffer_size: DWORD,
@@ -223,11 +223,11 @@ pub unsafe extern "C" fn EnumProcessModules(
 ) -> BOOL {
     let _ = process;
     if modules.is_null() {
-        SetLastError(87);
+        set_last_error(87);
         return FALSE;
     }
     if buffer_size < 8 {
-        SetLastError(122);
+        set_last_error(122);
         return FALSE;
     }
     let p = crate::loader::get_self_image_base() as HMODULE;
@@ -238,24 +238,24 @@ pub unsafe extern "C" fn EnumProcessModules(
     TRUE
 }
 
-/// `GetCurrentProcess` — pseudo-handle.
-pub extern "C" fn GetCurrentProcess() -> HANDLE {
+/// `get_current_process` — pseudo-handle.
+pub extern "C" fn get_current_process() -> HANDLE {
     super::types::HANDLE_CURRENT_PROCESS
 }
 
-/// `GetCurrentThread` — pseudo-handle.
-pub extern "C" fn GetCurrentThread() -> HANDLE {
+/// `get_current_thread` — pseudo-handle.
+pub extern "C" fn get_current_thread() -> HANDLE {
     super::types::HANDLE_CURRENT_THREAD
 }
 
-/// `GetCurrentProcessId` — return the kernel's idea of
+/// `get_current_process_id` — return the kernel's idea of
 /// the current PID.
-pub extern "C" fn GetCurrentProcessId() -> DWORD {
+pub extern "C" fn get_current_process_id() -> DWORD {
     crate::ps::process::PID_SYSTEM as u32
 }
 
-/// `GetCurrentThreadId` — return the kernel's idea of the
+/// `get_current_thread_id` — return the kernel's idea of the
 /// current TID.
-pub extern "C" fn GetCurrentThreadId() -> DWORD {
+pub extern "C" fn get_current_thread_id() -> DWORD {
     crate::ps::process::PID_SYSTEM.wrapping_add(1) as u32
 }

@@ -11,18 +11,14 @@
 //! - Window messages: Communication between windows and the system
 //! - Desktop/WindowStation: Organize windows in a hierarchy
 
-#![allow(non_snake_case)]
-
-use crate::kprintln;
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 /// Maximum number of windows in the system.
-const MAX_WINDOWS: usize = 4096;
+pub const MAX_WINDOWS: usize = 4096;
 
 /// Maximum number of window classes.
-const MAX_WINDOW_CLASSES: usize = 256;
+pub const MAX_WINDOW_CLASSES: usize = 256;
 
 /// Window style flags as a bitmask wrapper.
 /// These are bitmask values matching Windows WS_* constants.
@@ -109,136 +105,136 @@ impl WindowStyleEx {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum WindowMessage {
-    WM_CREATE = 0x0001,
-    WM_DESTROY = 0x0002,
-    WM_MOVE = 0x0003,
-    WM_SIZE = 0x0005,
-    WM_ACTIVATE = 0x0006,
-    WM_SETFOCUS = 0x0007,
-    WM_KILLFOCUS = 0x0008,
-    WM_ENABLE = 0x000A,
-    WM_SETREDRAW = 0x000B,
-    WM_SETTEXT = 0x000C,
-    WM_GETTEXT = 0x000D,
-    WM_GETTEXTLENGTH = 0x000E,
-    WM_PAINT = 0x000F,
-    WM_CLOSE = 0x0010,
-    WM_QUERYENDSESSION = 0x0011,
-    WM_QUIT = 0x0012,
-    WM_QUERYOPEN = 0x0013,
-    WM_ERASEBKGND = 0x0014,
-    WM_SYSCOLORCHANGE = 0x0015,
-    WM_SHOWWINDOW = 0x0018,
-    WM_WININICHANGE = 0x001A,
-    WM_SETCURSOR = 0x0020,
-    WM_MOUSEACTIVATE = 0x0021,
-    WM_CHILDACTIVATE = 0x0022,
-    WM_QUEUESYNC = 0x0023,
-    WM_GETMINMAXINFO = 0x0024,
-    WM_PAINTICON = 0x0026,
-    WM_ICONERASEBKGND = 0x0027,
-    WM_SPOOLER_STATUS = 0x002A,
-    WM_DRAWITEM = 0x002B,
-    WM_MEASUREITEM = 0x002C,
-    WM_DELETEITEM = 0x002D,
-    WM_VKEYTOITEM = 0x002E,
-    WM_CHARTOITEM = 0x002F,
-    WM_SETFONT = 0x0030,
-    WM_GETFONT = 0x0031,
-    WM_SETHOTKEY = 0x0032,
-    WM_GETHOTKEY = 0x0033,
-    WM_QUERYDRAGICON = 0x0037,
-    WM_COMPAREITEM = 0x0039,
-    WM_GETOBJECT = 0x003D,
-    WM_COMPACTING = 0x0041,
-    WM_WINDOWPOSCHANGING = 0x0046,
-    WM_WINDOWPOSCHANGED = 0x0047,
-    WM_COPYDATA = 0x004A,
-    WM_CANCELJOURNAL = 0x004B,
-    WM_CANCELMODE = 0x001F,
-    WM_NOTIFY = 0x004E,
-    WM_INPUTLANGCHANGEREQUEST = 0x0050,
-    WM_INPUTLANGCHANGE = 0x0051,
-    WM_TCARD = 0x0052,
-    WM_HELP = 0x0053,
-    WM_USERCHANGED = 0x0054,
-    WM_NOTIFYFORMAT = 0x0055,
-    WM_CONTEXTMENU = 0x007B,
-    WM_STYLECHANGING = 0x007C,
-    WM_STYLECHANGED = 0x007D,
-    WM_DISPLAYCHANGE = 0x007E,
-    WM_GETICON = 0x007F,
-    WM_SETICON = 0x0080,
-    WM_NCCREATE = 0x0081,
-    WM_NCDESTROY = 0x0082,
-    WM_NCCALCSIZE = 0x0083,
-    WM_NCHITTEST = 0x0084,
-    WM_NCPAINT = 0x0085,
-    WM_NCACTIVATE = 0x0086,
-    WM_GETDLGCODE = 0x0087,
-    WM_SYNCPAINT = 0x0088,
-    WM_NCMOUSEMOVE = 0x00A0,
-    WM_NCLBUTTONDOWN = 0x00A1,
-    WM_NCLBUTTONUP = 0x00A2,
-    WM_NCLBUTTONDBLCLK = 0x00A3,
-    WM_NCRBUTTONDOWN = 0x00A4,
-    WM_NCRBUTTONUP = 0x00A5,
-    WM_NCRBUTTONDBLCLK = 0x00A6,
-    WM_NCMBUTTONDOWN = 0x00A7,
-    WM_NCMBUTTONUP = 0x00A8,
-    WM_NCMBUTTONDBLCLK = 0x00A9,
-    WM_KEYDOWN = 0x0100,
-    WM_KEYUP = 0x0101,
-    WM_CHAR = 0x0102,
-    WM_DEADCHAR = 0x0103,
-    WM_SYSKEYDOWN = 0x0104,
-    WM_SYSKEYUP = 0x0105,
-    WM_SYSCHAR = 0x0106,
-    WM_SYSDEADCHAR = 0x0107,
-    WM_KEYLAST = 0x0108,
-    WM_INITDIALOG = 0x0110,
-    WM_COMMAND = 0x0111,
-    WM_SYSCOMMAND = 0x0112,
-    WM_TIMER = 0x0113,
-    WM_HSCROLL = 0x0114,
-    WM_VSCROLL = 0x0115,
-    WM_INITMENU = 0x0116,
-    WM_INITMENUPOPUP = 0x0117,
-    WM_MENUSELECT = 0x011F,
-    WM_MENUCHAR = 0x0120,
-    WM_ENTERIDLE = 0x0121,
-    WM_MENURBUTTONUP = 0x0122,
-    WM_MENUDRAG = 0x0123,
-    WM_MENUGETOBJECT = 0x0124,
-    WM_UNINITMENUPOPUP = 0x0125,
-    WM_MENUCOMMAND = 0x0126,
-    WM_CHANGEUISTATE = 0x0127,
-    WM_UPDATEUISTATE = 0x0128,
-    WM_QUERYUISTATE = 0x0129,
-    WM_CTLCOLORMSGBOX = 0x0132,
-    WM_CTLCOLOREDIT = 0x0133,
-    WM_CTLCOLORLISTBOX = 0x0134,
-    WM_CTLCOLORBTN = 0x0135,
-    WM_CTLCOLORDLG = 0x0136,
-    WM_CTLCOLORSCROLLBAR = 0x0137,
-    WM_CTLCOLORSTATIC = 0x0138,
-    WM_MOUSEMOVE = 0x0200,
-    WM_LBUTTONDOWN = 0x0201,
-    WM_LBUTTONUP = 0x0202,
-    WM_LBUTTONDBLCLK = 0x0203,
-    WM_RBUTTONDOWN = 0x0204,
-    WM_RBUTTONUP = 0x0205,
-    WM_RBUTTONDBLCLK = 0x0206,
-    WM_MBUTTONDOWN = 0x0207,
-    WM_MBUTTONUP = 0x0208,
-    WM_MBUTTONDBLCLK = 0x0209,
-    WM_MOUSEWHEEL = 0x020A,
-    WM_XBUTTONDOWN = 0x020B,
-    WM_XBUTTONUP = 0x020C,
-    WM_XBUTTONDBLCLK = 0x020D,
-    WM_MOUSEHOVER = 0x02A1,
-    WM_MOUSELEAVE = 0x02A3,
-    WM_MOUSEHWHEEL = 0x020E,
+    WmCreate = 0x0001,
+    WmDestroy = 0x0002,
+    WmMove = 0x0003,
+    WmSize = 0x0005,
+    WmActivate = 0x0006,
+    WmSetfocus = 0x0007,
+    WmKillfocus = 0x0008,
+    WmEnable = 0x000A,
+    WmSetredraw = 0x000B,
+    WmSettext = 0x000C,
+    WmGettext = 0x000D,
+    WmGettextlength = 0x000E,
+    WmPaint = 0x000F,
+    WmClose = 0x0010,
+    WmQueryendsession = 0x0011,
+    WmQuit = 0x0012,
+    WmQueryopen = 0x0013,
+    WmErasebkgnd = 0x0014,
+    WmSyscolorchange = 0x0015,
+    WmShowwindow = 0x0018,
+    WmWininichange = 0x001A,
+    WmSetcursor = 0x0020,
+    WmMouseactivate = 0x0021,
+    WmChildactivate = 0x0022,
+    WmQueuesync = 0x0023,
+    WmGetminmaxinfo = 0x0024,
+    WmPainticon = 0x0026,
+    WmIconerasebkgnd = 0x0027,
+    WmSpoolerStatus = 0x002A,
+    WmDrawitem = 0x002B,
+    WmMeasureitem = 0x002C,
+    WmDeleteitem = 0x002D,
+    WmVkeytoitem = 0x002E,
+    WmChartoitem = 0x002F,
+    WmSetfont = 0x0030,
+    WmGetfont = 0x0031,
+    WmSethotkey = 0x0032,
+    WmGethotkey = 0x0033,
+    WmQuerydragicon = 0x0037,
+    WmCompareitem = 0x0039,
+    WmGetobject = 0x003D,
+    WmCompacting = 0x0041,
+    WmWindowposchanging = 0x0046,
+    WmWindowposchanged = 0x0047,
+    WmCopydata = 0x004A,
+    WmCanceljournal = 0x004B,
+    WmCancelmode = 0x001F,
+    WmNotify = 0x004E,
+    WmInputlangchangerequest = 0x0050,
+    WmInputlangchange = 0x0051,
+    WmTcard = 0x0052,
+    WmHelp = 0x0053,
+    WmUserchanged = 0x0054,
+    WmNotifyformat = 0x0055,
+    WmContextmenu = 0x007B,
+    WmStylechanging = 0x007C,
+    WmStylechanged = 0x007D,
+    WmDisplaychange = 0x007E,
+    WmGeticon = 0x007F,
+    WmSeticon = 0x0080,
+    WmNccreate = 0x0081,
+    WmNcdestroy = 0x0082,
+    WmNccalcsize = 0x0083,
+    WmNchittest = 0x0084,
+    WmNcpaint = 0x0085,
+    WmNcactivate = 0x0086,
+    WmGetdlgcode = 0x0087,
+    WmSyncpaint = 0x0088,
+    WmNcmousemove = 0x00A0,
+    WmNclbuttondown = 0x00A1,
+    WmNclbuttonup = 0x00A2,
+    WmNclbuttondblclk = 0x00A3,
+    WmNcrbuttondown = 0x00A4,
+    WmNcrbuttonup = 0x00A5,
+    WmNcrbuttondblclk = 0x00A6,
+    WmNcmbuttondown = 0x00A7,
+    WmNcmbuttonup = 0x00A8,
+    WmNcmbuttondblclk = 0x00A9,
+    WmKeydown = 0x0100,
+    WmKeyup = 0x0101,
+    WmChar = 0x0102,
+    WmDeadchar = 0x0103,
+    WmSyskeydown = 0x0104,
+    WmSyskeyup = 0x0105,
+    WmSyschar = 0x0106,
+    WmSysdeadchar = 0x0107,
+    WmKeylast = 0x0108,
+    WmInitdialog = 0x0110,
+    WmCommand = 0x0111,
+    WmSyscommand = 0x0112,
+    WmTimer = 0x0113,
+    WmHscroll = 0x0114,
+    WmVscroll = 0x0115,
+    WmInitmenu = 0x0116,
+    WmInitmenupopup = 0x0117,
+    WmMenuselect = 0x011F,
+    WmMenuchar = 0x0120,
+    WmEnteridle = 0x0121,
+    WmMenurbuttonup = 0x0122,
+    WmMenudrag = 0x0123,
+    WmMenugetobject = 0x0124,
+    WmUninitmenupopup = 0x0125,
+    WmMenucommand = 0x0126,
+    WmChangeuistate = 0x0127,
+    WmUpdateuistate = 0x0128,
+    WmQueryuistate = 0x0129,
+    WmCtlcolormsgbox = 0x0132,
+    WmCtlcoloredit = 0x0133,
+    WmCtlcolorlistbox = 0x0134,
+    WmCtlcolorbtn = 0x0135,
+    WmCtlcolordlg = 0x0136,
+    WmCtlcolorscrollbar = 0x0137,
+    WmCtlcolorstatic = 0x0138,
+    WmMousemove = 0x0200,
+    WmLbuttondown = 0x0201,
+    WmLbuttonup = 0x0202,
+    WmLbuttondblclk = 0x0203,
+    WmRbuttondown = 0x0204,
+    WmRbuttonup = 0x0205,
+    WmRbuttondblclk = 0x0206,
+    WmMbuttondown = 0x0207,
+    WmMbuttonup = 0x0208,
+    WmMbuttondblclk = 0x0209,
+    WmMousewheel = 0x020A,
+    WmXbuttondown = 0x020B,
+    WmXbuttonup = 0x020C,
+    WmXbuttondblclk = 0x020D,
+    WmMousehover = 0x02A1,
+    WmMouseleave = 0x02A3,
+    WmMousehwheel = 0x020E,
 }
 
 /// Window rectangle - uses shared Rect from objects.rs
@@ -279,6 +275,7 @@ pub struct WindowObject {
     pub dirty_rects: Vec<Rect>,
     pub wndproc: u64,
     pub user_data: u64,
+    pub control_id: u32,
 }
 
 impl WindowObject {
@@ -311,6 +308,7 @@ impl WindowObject {
             dirty_rects: Vec::new(),
             wndproc: 0,
             user_data: 0,
+            control_id: 0,
         }
     }
 
@@ -349,13 +347,13 @@ pub struct WindowManager {
     hwnd_index: Vec<(u64, usize)>,
     next_hwnd: AtomicU64,
     window_count: AtomicUsize,
-    classes: Vec<Option<WindowClass>>,
-    next_class_atom: AtomicU64,
+    pub classes: Vec<Option<WindowClass>>,
+    pub next_class_atom: AtomicU64,
     foreground_window: AtomicU64,
     active_window: AtomicU64,
     capture_window: AtomicU64,
     focus_window: AtomicU64,
-    desktop_window: AtomicU64,
+    pub desktop_window: AtomicU64,
 }
 
 impl WindowManager {
@@ -387,7 +385,7 @@ impl WindowManager {
         }
     }
 
-    /// Create a new window.
+    /// create a new window.
     pub fn create_window(
         &mut self,
         class_name: &[u16],
@@ -400,6 +398,7 @@ impl WindowManager {
         height: i32,
         parent: Option<u64>,
         wndproc: u64,
+        control_id: u32,
     ) -> Option<u64> {
         let hwnd = self.alloc_hwnd()?;
         let _ = &hwnd;
@@ -421,6 +420,7 @@ impl WindowManager {
         window.set_rect(x, y, width, height);
         window.parent = parent;
         window.wndproc = wndproc;
+        window.control_id = control_id;
         window.visible = style & 0x10000000 != 0;
         window.enabled = style & 0x08000000 == 0;
 
@@ -510,8 +510,8 @@ impl WindowManager {
             }
         }
 
-        // Step 4: Send WM_DESTROY message before removal
-        self.post_message(hwnd, WindowMessage::WM_DESTROY as u32, 0, 0);
+        // Step 4: Send WmDestroy message before removal
+        self.post_message(hwnd, WindowMessage::WmDestroy as u32, 0, 0);
 
         // Step 5: Remove from index
         self.hwnd_index.retain(|(h, _)| *h != hwnd);
@@ -520,7 +520,7 @@ impl WindowManager {
         self.windows[window_index] = None;
         self.window_count.fetch_sub(1, Ordering::Relaxed);
 
-        // kprintln!("[win32k] DestroyWindow: hwnd={:#x}", hwnd);
+        // kprintln!("[win32k] destroy_window: hwnd={:#x}", hwnd);
         true
     }
 
@@ -534,13 +534,13 @@ impl WindowManager {
             window.dirty = true;
 
             if show && !was_visible {
-                self.post_message(hwnd, WindowMessage::WM_SHOWWINDOW as u32, 1, 0);
-                self.post_message(hwnd, WindowMessage::WM_PAINT as u32, 0, 0);
+                self.post_message(hwnd, WindowMessage::WmShowwindow as u32, 1, 0);
+                self.post_message(hwnd, WindowMessage::WmPaint as u32, 0, 0);
             } else if !show && was_visible {
-                self.post_message(hwnd, WindowMessage::WM_SHOWWINDOW as u32, 0, 0);
+                self.post_message(hwnd, WindowMessage::WmShowwindow as u32, 0, 0);
             }
 
-            // kprintln!("[win32k] ShowWindow: hwnd={:#x}, show={}", hwnd, show);
+            // kprintln!("[win32k] show_window: hwnd={:#x}, show={}", hwnd, show);
             true
         } else {
             false
@@ -556,14 +556,14 @@ impl WindowManager {
             window.set_rect(x, y, width, height);
 
             if window.visible {
-                self.post_message(hwnd, WindowMessage::WM_MOVE as u32, x as u64, y as i64);
+                self.post_message(hwnd, WindowMessage::WmMove as u32, x as u64, y as i64);
                 self.post_message(
                     hwnd,
-                    WindowMessage::WM_SIZE as u32,
+                    WindowMessage::WmSize as u32,
                     width as u64,
                     height as i64,
                 );
-                self.post_message(hwnd, WindowMessage::WM_PAINT as u32, 0, 0);
+                self.post_message(hwnd, WindowMessage::WmPaint as u32, 0, 0);
             }
 
             // kprintln!("[win32k] SetWindowPos: hwnd={:#x}, ({},{}) {}x{}",
@@ -618,7 +618,7 @@ impl WindowManager {
         }
     }
 
-    /// Update a window (send WM_PAINT).
+    /// Update a window (send WmPaint).
     pub fn update_window(&mut self, hwnd: u64) -> bool {
         // Check if window needs update and get state
         let should_update = {
@@ -637,7 +637,7 @@ impl WindowManager {
                 window.dirty_rects.clear();
             }
             // Post the message after clearing state
-            self.post_message(hwnd, WindowMessage::WM_PAINT as u32, 0, 0);
+            self.post_message(hwnd, WindowMessage::WmPaint as u32, 0, 0);
             true
         } else {
             false
@@ -652,7 +652,7 @@ impl WindowManager {
         if let Some(window) = self.get_window_mut(hwnd) {
             window.foreground = true;
         }
-        // kprintln!("[win32k] SetForegroundWindow: hwnd={:#x}", hwnd);
+        // kprintln!("[win32k] set_foreground_window: hwnd={:#x}", hwnd);
         Some(old)
     }
 
@@ -681,12 +681,12 @@ impl WindowManager {
         let _ = &old;
         let _ = &old;
         if old != hwnd {
-            // Send WM_KILLFOCUS to old window
+            // Send WmKillfocus to old window
             if old != 0 {
-                self.post_message(old, WindowMessage::WM_KILLFOCUS as u32, hwnd, 0);
+                self.post_message(old, WindowMessage::WmKillfocus as u32, hwnd, 0);
             }
-            // Send WM_SETFOCUS to new window
-            self.post_message(hwnd, WindowMessage::WM_SETFOCUS as u32, 0, 0);
+            // Send WmSetfocus to new window
+            self.post_message(hwnd, WindowMessage::WmSetfocus as u32, 0, 0);
         }
         // kprintln!("[win32k] SetFocus: hwnd={:#x}", hwnd);
         Some(old)
@@ -712,7 +712,7 @@ impl WindowManager {
         let _ = &old;
         let _ = &old;
         if old != 0 {
-            self.post_message(old, WindowMessage::WM_CANCELMODE as u32, 0, 0);
+            self.post_message(old, WindowMessage::WmCancelmode as u32, 0, 0);
         }
         // kprintln!("[win32k] ReleaseCapture");
     }
@@ -732,9 +732,9 @@ impl WindowManager {
             self.post_message(
                 hwnd,
                 if enable {
-                    WindowMessage::WM_ENABLE as u32
+                    WindowMessage::WmEnable as u32
                 } else {
-                    WindowMessage::WM_ENABLE as u32
+                    WindowMessage::WmEnable as u32
                 },
                 1,
                 0,
@@ -766,7 +766,7 @@ pub fn init() {
     // kprintln!("[win32k] Window manager initialized");
 }
 
-/// Create a new window.
+/// create a new window.
 pub fn create_window_internal(
     class_name: &[u16],
     title: &[u16],
@@ -778,10 +778,11 @@ pub fn create_window_internal(
     height: i32,
     parent: Option<u64>,
     wndproc: u64,
+    control_id: u32,
 ) -> Option<u64> {
     let mut wm = WINDOW_MANAGER.lock();
     wm.create_window(
-        class_name, title, style, ex_style, x, y, width, height, parent, wndproc,
+        class_name, title, style, ex_style, x, y, width, height, parent, wndproc, control_id,
     )
 }
 

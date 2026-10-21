@@ -11,7 +11,7 @@ use super::file::{alloc_handle, lookup_handle, HandleKind};
 use super::status::{
     STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER, STATUS_SUCCESS, STATUS_TIMER_NOT_CANCELED,
 };
-use super::types::{LargeInteger, HANDLE, LARGE_INTEGER, NTSTATUS, PVOID};
+use super::types::{LargeInteger, HANDLE, NTSTATUS, PVOID};
 use crate::ke::sync::Spinlock;
 use core::ptr;
 
@@ -50,7 +50,7 @@ impl TimerState {
 const MAX_TIMERS: usize = 64;
 static TIMER_STATES: Spinlock<[Option<TimerState>; MAX_TIMERS]> = Spinlock::new([None; MAX_TIMERS]);
 
-pub unsafe extern "C" fn NtCreateTimer(
+pub unsafe extern "C" fn nt_create_timer(
     timer_handle: *mut HANDLE,
     desired_access: u32,
     object_attributes: *mut super::types::ObjectAttributes,
@@ -88,7 +88,7 @@ pub unsafe extern "C" fn NtCreateTimer(
     STATUS_SUCCESS
 }
 
-pub unsafe extern "C" fn NtOpenTimer(
+pub unsafe extern "C" fn nt_open_timer(
     timer_handle: *mut HANDLE,
     desired_access: u32,
     object_attributes: *mut super::types::ObjectAttributes,
@@ -105,9 +105,9 @@ pub unsafe extern "C" fn NtOpenTimer(
 pub type TimerApcRoutine =
     unsafe extern "C" fn(timer_context: PVOID, timer_low_value: u32, timer_high_value: i32);
 
-pub unsafe extern "C" fn NtSetTimer(
+pub unsafe extern "C" fn nt_set_timer(
     timer_handle: HANDLE,
-    due_time: *const LARGE_INTEGER,
+    due_time: *const LargeInteger,
     timer_apc_routine: PVOID,
     timer_context: PVOID,
     resume: u8,
@@ -150,7 +150,7 @@ pub unsafe extern "C" fn NtSetTimer(
     STATUS_SUCCESS
 }
 
-pub unsafe extern "C" fn NtCancelTimer(timer_handle: HANDLE, current_state: *mut u8) -> NTSTATUS {
+pub unsafe extern "C" fn nt_cancel_timer(timer_handle: HANDLE, current_state: *mut u8) -> NTSTATUS {
     if timer_handle.is_null() {
         return STATUS_INVALID_HANDLE;
     }
@@ -199,11 +199,11 @@ pub enum TimerInformationClass {
 
 #[repr(C)]
 pub struct TimerBasicInformation {
-    pub remaining_time: LARGE_INTEGER,
+    pub remaining_time: LargeInteger,
     pub timer_state: u8,
 }
 
-pub unsafe extern "C" fn NtQueryTimer(
+pub unsafe extern "C" fn nt_query_timer(
     timer_handle: HANDLE,
     timer_information_class: u32,
     timer_information: PVOID,

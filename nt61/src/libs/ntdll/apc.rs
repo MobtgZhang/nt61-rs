@@ -4,7 +4,7 @@
 //! APCs are callbacks executed in the context of a specific thread.
 //!
 //! APC Types:
-//! - User APC: Queued by NtQueueApcThread, executed when thread is alertable
+//! - User APC: Queued by nt_queue_apc_thread, executed when thread is alertable
 //! - Special User APC: Higher priority, for kernel use
 //!
 //! Note: This is separate from ke/apc.rs which handles kernel-mode APCs.
@@ -22,14 +22,14 @@ use core::ptr;
 pub type ApcRoutine = unsafe extern "C" fn(apc_context: PVOID);
 
 #[derive(Clone, Copy)]
-struct ApcEntry {
+pub struct ApcEntry {
     routine: ApcRoutine,
     context: PVOID,
-    thread_id: u64,
+    pub thread_id: u64,
 }
 
 impl ApcEntry {
-    const fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             routine: dummy_apc_routine,
             context: ptr::null_mut(),
@@ -38,7 +38,7 @@ impl ApcEntry {
     }
 }
 
-unsafe extern "C" fn dummy_apc_routine(_context: PVOID) {}
+pub unsafe extern "C" fn dummy_apc_routine(_context: PVOID) {}
 
 const MAX_APCS_PER_THREAD: usize = 32;
 
@@ -78,7 +78,7 @@ const MAX_THREADS: usize = 256;
 static APC_QUEUES: Spinlock<[ThreadApcQueue; MAX_THREADS]> =
     Spinlock::new([ThreadApcQueue::new(); MAX_THREADS]);
 
-pub unsafe extern "C" fn NtQueueApcThread(
+pub unsafe extern "C" fn nt_queue_apc_thread(
     thread_handle: HANDLE,
     apc_routine: ApcRoutine,
     apc_context: PVOID,
@@ -138,7 +138,7 @@ pub fn has_pending_apcs() -> bool {
     queues[queue_idx].count > 0
 }
 
-pub unsafe extern "C" fn NtTestAlert() -> NTSTATUS {
+pub unsafe extern "C" fn nt_test_alert() -> NTSTATUS {
     if has_pending_apcs() {
         deliver_pending_apcs();
         super::status::STATUS_ALERTED
@@ -147,7 +147,7 @@ pub unsafe extern "C" fn NtTestAlert() -> NTSTATUS {
     }
 }
 
-pub unsafe extern "C" fn NtAlertThread(thread_handle: HANDLE) -> NTSTATUS {
+pub unsafe extern "C" fn nt_alert_thread(thread_handle: HANDLE) -> NTSTATUS {
     if thread_handle.is_null() {
         return STATUS_INVALID_HANDLE;
     }
@@ -162,7 +162,7 @@ pub unsafe extern "C" fn NtAlertThread(thread_handle: HANDLE) -> NTSTATUS {
     STATUS_SUCCESS
 }
 
-pub unsafe extern "C" fn NtAlertResumeThread(
+pub unsafe extern "C" fn nt_alert_resume_thread(
     thread_handle: HANDLE,
     previous_suspend_count: *mut u32,
 ) -> NTSTATUS {

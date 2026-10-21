@@ -1,15 +1,15 @@
 //! kernel32 — Console Input Functions
 //!
 //! Complete console input support for Windows 7:
-//! - ReadConsoleW
-//! - GetConsoleScreenBufferInfo
-//! - SetConsoleCursorPosition
-//! - GetConsoleMode / SetConsoleMode
+//! - read_console_w
+//! - get_console_screen_buffer_info
+//! - set_console_cursor_position
+//! - get_console_mode / set_console_mode
 //!
 //! References:
 //!   * MSDN Library "Windows 7" — Console Functions
 
-use super::error::SetLastError;
+use super::error::set_last_error;
 use super::types::{BOOL, DWORD, FALSE, HANDLE, TRUE};
 use crate::ke::sync::Spinlock;
 use core::ptr;
@@ -39,14 +39,14 @@ pub struct CONSOLE_SCREEN_BUFFER_INFO {
     pub dw_maximum_window_size: COORD,
 }
 
-struct ConsoleState {
+pub struct ConsoleState {
     cursor_x: i16,
     cursor_y: i16,
     width: i16,
     height: i16,
     attributes: u16,
     input_mode: DWORD,
-    output_mode: DWORD,
+    pub output_mode: DWORD,
 }
 
 impl ConsoleState {
@@ -82,7 +82,7 @@ static CONSOLE_INPUT_BUFFER: Spinlock<[u16; CONSOLE_INPUT_BUFFER_SIZE]> =
     Spinlock::new([0; CONSOLE_INPUT_BUFFER_SIZE]);
 static CONSOLE_INPUT_LENGTH: Spinlock<usize> = Spinlock::new(0);
 
-pub unsafe extern "C" fn ReadConsoleW(
+pub unsafe extern "C" fn read_console_w(
     console_input: HANDLE,
     buffer: *mut u16,
     number_of_chars_to_read: DWORD,
@@ -90,7 +90,7 @@ pub unsafe extern "C" fn ReadConsoleW(
     input_control: *const u8,
 ) -> BOOL {
     if console_input.is_null() || buffer.is_null() {
-        SetLastError(6); // ERROR_INVALID_HANDLE
+        set_last_error(6); // ERROR_INVALID_HANDLE
         return FALSE;
     }
 
@@ -132,12 +132,12 @@ pub unsafe fn _simulate_console_input(text: &str) {
     }
 }
 
-pub unsafe extern "C" fn GetConsoleScreenBufferInfo(
+pub unsafe extern "C" fn get_console_screen_buffer_info(
     console_output: HANDLE,
     console_screen_buffer_info: *mut CONSOLE_SCREEN_BUFFER_INFO,
 ) -> BOOL {
     if console_output.is_null() || console_screen_buffer_info.is_null() {
-        SetLastError(6);
+        set_last_error(6);
         return FALSE;
     }
 
@@ -167,12 +167,12 @@ pub unsafe extern "C" fn GetConsoleScreenBufferInfo(
     TRUE
 }
 
-pub unsafe extern "C" fn SetConsoleCursorPosition(
+pub unsafe extern "C" fn set_console_cursor_position(
     console_output: HANDLE,
     cursor_position: COORD,
 ) -> BOOL {
     if console_output.is_null() {
-        SetLastError(6);
+        set_last_error(6);
         return FALSE;
     }
 
@@ -183,7 +183,7 @@ pub unsafe extern "C" fn SetConsoleCursorPosition(
         || cursor_position.y < 0
         || cursor_position.y >= state.height
     {
-        SetLastError(87); // ERROR_INVALID_PARAMETER
+        set_last_error(87); // ERROR_INVALID_PARAMETER
         return FALSE;
     }
 
@@ -193,9 +193,9 @@ pub unsafe extern "C" fn SetConsoleCursorPosition(
     TRUE
 }
 
-pub unsafe extern "C" fn GetConsoleMode(console_handle: HANDLE, mode: *mut DWORD) -> BOOL {
+pub unsafe extern "C" fn get_console_mode(console_handle: HANDLE, mode: *mut DWORD) -> BOOL {
     if console_handle.is_null() || mode.is_null() {
-        SetLastError(6);
+        set_last_error(6);
         return FALSE;
     }
 
@@ -206,9 +206,9 @@ pub unsafe extern "C" fn GetConsoleMode(console_handle: HANDLE, mode: *mut DWORD
     TRUE
 }
 
-pub unsafe extern "C" fn SetConsoleMode(console_handle: HANDLE, mode: DWORD) -> BOOL {
+pub unsafe extern "C" fn set_console_mode(console_handle: HANDLE, mode: DWORD) -> BOOL {
     if console_handle.is_null() {
-        SetLastError(6);
+        set_last_error(6);
         return FALSE;
     }
 
@@ -225,12 +225,12 @@ pub struct CONSOLE_CURSOR_INFO {
     pub b_visible: BOOL,
 }
 
-pub unsafe extern "C" fn GetConsoleCursorInfo(
+pub unsafe extern "C" fn get_console_cursor_info(
     console_output: HANDLE,
     console_cursor_info: *mut CONSOLE_CURSOR_INFO,
 ) -> BOOL {
     if console_output.is_null() || console_cursor_info.is_null() {
-        SetLastError(6);
+        set_last_error(6);
         return FALSE;
     }
 
@@ -241,12 +241,12 @@ pub unsafe extern "C" fn GetConsoleCursorInfo(
     TRUE
 }
 
-pub unsafe extern "C" fn SetConsoleCursorInfo(
+pub unsafe extern "C" fn set_console_cursor_info(
     console_output: HANDLE,
     console_cursor_info: *const CONSOLE_CURSOR_INFO,
 ) -> BOOL {
     if console_output.is_null() || console_cursor_info.is_null() {
-        SetLastError(6);
+        set_last_error(6);
         return FALSE;
     }
 
@@ -255,9 +255,12 @@ pub unsafe extern "C" fn SetConsoleCursorInfo(
     TRUE
 }
 
-pub unsafe extern "C" fn SetConsoleTextAttribute(console_output: HANDLE, attributes: u16) -> BOOL {
+pub unsafe extern "C" fn set_console_text_attribute(
+    console_output: HANDLE,
+    attributes: u16,
+) -> BOOL {
     if console_output.is_null() {
-        SetLastError(6);
+        set_last_error(6);
         return FALSE;
     }
 

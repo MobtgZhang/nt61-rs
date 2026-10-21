@@ -1,21 +1,18 @@
-//! advapi32 — Credential Management APIs
+//! advapi32 — credential Management APIs
 //
-//! Implements Windows Credential Manager functions:
-//! - CredWriteW — Write a credential to storage
-//! - CredReadW — Read a credential from storage
+//! Implements Windows credential Manager functions:
+//! - CredWriteW — write a credential to storage
+//! - CredReadW — read a credential from storage
 //! - CredDeleteW — Delete a credential
 //! - CredEnumerateW — Enumerate stored credentials
 //! - CredFree — Free credential memory
 //! - CredGetSessionTypes — Get session credential types
 
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU64, Ordering};
 
-#[allow(non_snake_case, non_upper_case_globals, dead_code)]
 use super::types::*;
-use crate::libs::ntdll::types::{DWORD, HANDLE, PCWSTR, PVOID, PWSTR};
-use alloc::boxed::Box;
-use alloc::vec::Vec;
-use core::ptr::{null, null_mut};
+use crate::libs::ntdll::types::{DWORD, PCWSTR, PVOID, PWSTR};
+use core::ptr::null_mut;
 
 const MAX_CREDENTIALS: usize = 256;
 
@@ -42,8 +39,8 @@ impl StoredCredential {
             target_name: [0; 256],
             comment: [0; 256],
             last_written: FILETIME {
-                dwLowDateTime: 0,
-                dwHighDateTime: 0,
+                dw_low_date_time: 0,
+                dw_high_date_time: 0,
             },
             credential_blob: [0; 512],
             credential_blob_size: 0,
@@ -96,34 +93,37 @@ fn get_current_filetime() -> FILETIME {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
     FILETIME {
-        dwLowDateTime: (counter & 0xFFFFFFFF) as DWORD,
-        dwHighDateTime: (counter >> 32) as DWORD,
+        dw_low_date_time: (counter & 0xFFFFFFFF) as DWORD,
+        dw_high_date_time: (counter >> 32) as DWORD,
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn CredWriteW(Credential: PCREDENTIALW, Flags: DWORD) -> LONG {
-    if Credential.is_null() {
+pub unsafe extern "C" fn CredWriteW(credential: PCREDENTIALW, _flags: DWORD) -> LONG {
+    if credential.is_null() {
         return 0; // FALSE
     }
 
-    let cred = &*Credential;
+    let cred = &*credential;
 
-    if cred.TargetName.is_null() {
+    if cred.target_name.is_null() {
         return 0; // FALSE
     }
 
     let mut slot_index = None;
 
-    for (i, stored) in CREDENTIAL_STORE.iter_mut().enumerate() {
-        if stored.in_use && wide_str_equal(&stored.target_name, cred.TargetName) {
+    for (i, stored) in (*core::ptr::addr_of_mut!(CREDENTIAL_STORE))
+        .iter_mut()
+        .enumerate()
+    {
+        if stored.in_use && wide_str_equal(&stored.target_name, cred.target_name) {
             slot_index = Some(i);
             break;
         }
     }
 
     if slot_index.is_none() {
-        for (i, stored) in CREDENTIAL_STORE.iter().enumerate() {
+        for (i, stored) in (*core::ptr::addr_of!(CREDENTIAL_STORE)).iter().enumerate() {
             if !stored.in_use {
                 slot_index = Some(i);
                 break;
@@ -137,21 +137,21 @@ pub unsafe extern "C" fn CredWriteW(Credential: PCREDENTIALW, Flags: DWORD) -> L
     };
 
     let stored = &mut CREDENTIAL_STORE[index];
-    stored.flags = cred.Flags;
-    stored.cred_type = cred.Type;
-    copy_wide_to_buffer(&mut stored.target_name, cred.TargetName);
-    copy_wide_to_buffer(&mut stored.comment, cred.Comment);
+    stored.flags = cred.flags;
+    stored.cred_type = cred.r#type;
+    copy_wide_to_buffer(&mut stored.target_name, cred.target_name);
+    copy_wide_to_buffer(&mut stored.comment, cred.comment);
     stored.last_written = get_current_filetime();
-    stored.persist = cred.Persist;
-    copy_wide_to_buffer(&mut stored.target_alias, cred.TargetAlias);
-    copy_wide_to_buffer(&mut stored.user_name, cred.UserName);
+    stored.persist = cred.persist;
+    copy_wide_to_buffer(&mut stored.target_alias, cred.target_alias);
+    copy_wide_to_buffer(&mut stored.user_name, cred.user_name);
 
-    if !cred.CredentialBlob.is_null() && cred.CredentialBlobSize > 0 {
+    if !cred.credential_blob.is_null() && cred.credential_blob_size > 0 {
         let copy_size = core::cmp::min(
-            cred.CredentialBlobSize as usize,
+            cred.credential_blob_size as usize,
             stored.credential_blob.len(),
         );
-        let blob_slice = core::slice::from_raw_parts(cred.CredentialBlob, copy_size);
+        let blob_slice = core::slice::from_raw_parts(cred.credential_blob, copy_size);
         stored.credential_blob[..copy_size].copy_from_slice(blob_slice);
         stored.credential_blob_size = copy_size as DWORD;
     } else {
@@ -165,62 +165,62 @@ pub unsafe extern "C" fn CredWriteW(Credential: PCREDENTIALW, Flags: DWORD) -> L
 
 #[no_mangle]
 pub unsafe extern "C" fn CredReadW(
-    TargetName: PCWSTR,
-    Type: DWORD,
-    Flags: DWORD,
-    Credential: *mut PCREDENTIALW,
+    target_name: PCWSTR,
+    r#type: DWORD,
+    _flags: DWORD,
+    credential: *mut PCREDENTIALW,
 ) -> LONG {
-    if TargetName.is_null() || Credential.is_null() {
+    if target_name.is_null() || credential.is_null() {
         return 0; // FALSE
     }
 
-    for stored in CREDENTIAL_STORE.iter() {
+    for stored in (*core::ptr::addr_of!(CREDENTIAL_STORE)).iter() {
         if !stored.in_use {
             continue;
         }
 
-        if stored.cred_type != Type {
+        if stored.cred_type != r#type {
             continue;
         }
 
-        if !wide_str_equal(&stored.target_name, TargetName) {
+        if !wide_str_equal(&stored.target_name, target_name) {
             continue;
         }
 
-        // Note: In real implementation, this would use LocalAlloc
+        // Note: In real implementation, this would use local_alloc
         // For kernel stub, we'll use a static buffer
         static mut CRED_BUFFER: CREDENTIALW = CREDENTIALW {
-            Flags: 0,
-            Type: 0,
-            TargetName: null_mut(),
-            Comment: null_mut(),
-            LastWritten: FILETIME {
-                dwLowDateTime: 0,
-                dwHighDateTime: 0,
+            flags: 0,
+            r#type: 0,
+            target_name: null_mut(),
+            comment: null_mut(),
+            last_written: FILETIME {
+                dw_low_date_time: 0,
+                dw_high_date_time: 0,
             },
-            CredentialBlobSize: 0,
-            CredentialBlob: null_mut(),
-            Persist: 0,
-            AttributeCount: 0,
-            Attributes: null_mut(),
-            TargetAlias: null_mut(),
-            UserName: null_mut(),
+            credential_blob_size: 0,
+            credential_blob: null_mut(),
+            persist: 0,
+            attribute_count: 0,
+            attributes: null_mut(),
+            target_alias: null_mut(),
+            user_name: null_mut(),
         };
 
-        CRED_BUFFER.Flags = stored.flags;
-        CRED_BUFFER.Type = stored.cred_type;
-        CRED_BUFFER.TargetName = stored.target_name.as_ptr() as PWSTR;
-        CRED_BUFFER.Comment = stored.comment.as_ptr() as PWSTR;
-        CRED_BUFFER.LastWritten = stored.last_written;
-        CRED_BUFFER.CredentialBlobSize = stored.credential_blob_size;
-        CRED_BUFFER.CredentialBlob = stored.credential_blob.as_ptr() as *mut BYTE;
-        CRED_BUFFER.Persist = stored.persist;
-        CRED_BUFFER.AttributeCount = 0;
-        CRED_BUFFER.Attributes = null_mut();
-        CRED_BUFFER.TargetAlias = stored.target_alias.as_ptr() as PWSTR;
-        CRED_BUFFER.UserName = stored.user_name.as_ptr() as PWSTR;
+        CRED_BUFFER.flags = stored.flags;
+        CRED_BUFFER.r#type = stored.cred_type;
+        CRED_BUFFER.target_name = stored.target_name.as_ptr() as PWSTR;
+        CRED_BUFFER.comment = stored.comment.as_ptr() as PWSTR;
+        CRED_BUFFER.last_written = stored.last_written;
+        CRED_BUFFER.credential_blob_size = stored.credential_blob_size;
+        CRED_BUFFER.credential_blob = stored.credential_blob.as_ptr() as *mut BYTE;
+        CRED_BUFFER.persist = stored.persist;
+        CRED_BUFFER.attribute_count = 0;
+        CRED_BUFFER.attributes = null_mut();
+        CRED_BUFFER.target_alias = stored.target_alias.as_ptr() as PWSTR;
+        CRED_BUFFER.user_name = stored.user_name.as_ptr() as PWSTR;
 
-        *Credential = &CRED_BUFFER as *const _ as *mut _;
+        *credential = core::ptr::addr_of!(CRED_BUFFER) as *const _ as *mut _;
         return 1; // TRUE
     }
 
@@ -228,21 +228,21 @@ pub unsafe extern "C" fn CredReadW(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn CredDeleteW(TargetName: PCWSTR, Type: DWORD, Flags: DWORD) -> LONG {
-    if TargetName.is_null() {
+pub unsafe extern "C" fn CredDeleteW(target_name: PCWSTR, r#type: DWORD, _flags: DWORD) -> LONG {
+    if target_name.is_null() {
         return 0; // FALSE
     }
 
-    for stored in CREDENTIAL_STORE.iter_mut() {
+    for stored in (*core::ptr::addr_of_mut!(CREDENTIAL_STORE)).iter_mut() {
         if !stored.in_use {
             continue;
         }
 
-        if stored.cred_type != Type {
+        if stored.cred_type != r#type {
             continue;
         }
 
-        if !wide_str_equal(&stored.target_name, TargetName) {
+        if !wide_str_equal(&stored.target_name, target_name) {
             continue;
         }
 
@@ -255,66 +255,66 @@ pub unsafe extern "C" fn CredDeleteW(TargetName: PCWSTR, Type: DWORD, Flags: DWO
 
 #[no_mangle]
 pub unsafe extern "C" fn CredEnumerateW(
-    Filter: PCWSTR,
-    Flags: DWORD,
-    Count: *mut DWORD,
-    Credentials: *mut *mut PCREDENTIALW,
+    _filter: PCWSTR,
+    _flags: DWORD,
+    count: *mut DWORD,
+    credentials: *mut *mut PCREDENTIALW,
 ) -> LONG {
-    if Count.is_null() || Credentials.is_null() {
+    if count.is_null() || credentials.is_null() {
         return 0; // FALSE
     }
 
-    let mut count = 0;
-    for stored in CREDENTIAL_STORE.iter() {
+    let mut used_count = 0;
+    for stored in (*core::ptr::addr_of!(CREDENTIAL_STORE)).iter() {
         if stored.in_use {
-            count += 1;
+            used_count += 1;
         }
     }
 
-    *Count = count;
+    *count = used_count;
 
-    if count == 0 {
-        *Credentials = null_mut();
+    if used_count == 0 {
+        *credentials = null_mut();
         return 1; // TRUE
     }
 
-    *Count = 0;
-    *Credentials = null_mut();
+    *count = 0;
+    *credentials = null_mut();
 
     1 // TRUE
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn CredFree(Buffer: PVOID) {
+pub unsafe extern "C" fn CredFree(_buffer: PVOID) {
     // For kernel stub, we use static buffers so nothing to free
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn CredGetSessionTypes(
-    MaximumPersistCount: DWORD,
-    MaximumPersist: *mut DWORD,
+    maximum_persist_count: DWORD,
+    maximum_persist: *mut DWORD,
 ) -> LONG {
-    if MaximumPersist.is_null() {
+    if maximum_persist.is_null() {
         return 0; // FALSE
     }
 
-    if MaximumPersistCount >= 1 {
-        *MaximumPersist.add(0) = CRED_PERSIST_SESSION;
+    if maximum_persist_count >= 1 {
+        *maximum_persist.add(0) = CRED_PERSIST_SESSION;
     }
-    if MaximumPersistCount >= 2 {
-        *MaximumPersist.add(1) = CRED_PERSIST_LOCAL_MACHINE;
+    if maximum_persist_count >= 2 {
+        *maximum_persist.add(1) = CRED_PERSIST_LOCAL_MACHINE;
     }
 
     1 // TRUE
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn CredIsMarshaledCredentialW(MarshaledCredential: PCWSTR) -> LONG {
-    if MarshaledCredential.is_null() {
+pub unsafe extern "C" fn CredIsMarshaledCredentialW(marshaled_credential: PCWSTR) -> LONG {
+    if marshaled_credential.is_null() {
         return 0; // FALSE
     }
 
-    if *MarshaledCredential == '@' as u16 && *MarshaledCredential.add(1) == '@' as u16 {
+    if *marshaled_credential == '@' as u16 && *marshaled_credential.add(1) == '@' as u16 {
         1 // TRUE
     } else {
         0 // FALSE
@@ -323,11 +323,11 @@ pub unsafe extern "C" fn CredIsMarshaledCredentialW(MarshaledCredential: PCWSTR)
 
 #[no_mangle]
 pub unsafe extern "C" fn CredUnmarshalCredentialW(
-    MarshaledCredential: PCWSTR,
-    CredType: *mut DWORD,
-    Credential: *mut PVOID,
+    marshaled_credential: PCWSTR,
+    cred_type: *mut DWORD,
+    credential: *mut PVOID,
 ) -> LONG {
-    if MarshaledCredential.is_null() || CredType.is_null() || Credential.is_null() {
+    if marshaled_credential.is_null() || cred_type.is_null() || credential.is_null() {
         return 0; // FALSE
     }
 
@@ -336,11 +336,11 @@ pub unsafe extern "C" fn CredUnmarshalCredentialW(
 
 #[no_mangle]
 pub unsafe extern "C" fn CredMarshalCredentialW(
-    CredType: DWORD,
-    Credential: PVOID,
-    MarshaledCredential: *mut PWSTR,
+    _cred_type: DWORD,
+    credential: PVOID,
+    marshaled_credential: *mut PWSTR,
 ) -> LONG {
-    if Credential.is_null() || MarshaledCredential.is_null() {
+    if credential.is_null() || marshaled_credential.is_null() {
         return 0; // FALSE
     }
 
@@ -349,11 +349,11 @@ pub unsafe extern "C" fn CredMarshalCredentialW(
 
 #[no_mangle]
 pub unsafe extern "C" fn CredGetTargetInfoW(
-    TargetName: PCWSTR,
-    Flags: DWORD,
-    TargetInfo: *mut PVOID,
+    target_name: PCWSTR,
+    _flags: DWORD,
+    target_info: *mut PVOID,
 ) -> LONG {
-    if TargetName.is_null() || TargetInfo.is_null() {
+    if target_name.is_null() || target_info.is_null() {
         return 0; // FALSE
     }
 
@@ -362,29 +362,29 @@ pub unsafe extern "C" fn CredGetTargetInfoW(
 
 #[no_mangle]
 pub unsafe extern "C" fn CredRenameW(
-    OldTargetName: PCWSTR,
-    NewTargetName: PCWSTR,
-    Type: DWORD,
-    Flags: DWORD,
+    old_target_name: PCWSTR,
+    new_target_name: PCWSTR,
+    r#type: DWORD,
+    _flags: DWORD,
 ) -> LONG {
-    if OldTargetName.is_null() || NewTargetName.is_null() {
+    if old_target_name.is_null() || new_target_name.is_null() {
         return 0; // FALSE
     }
 
-    for stored in CREDENTIAL_STORE.iter_mut() {
+    for stored in (*core::ptr::addr_of_mut!(CREDENTIAL_STORE)).iter_mut() {
         if !stored.in_use {
             continue;
         }
 
-        if stored.cred_type != Type {
+        if stored.cred_type != r#type {
             continue;
         }
 
-        if !wide_str_equal(&stored.target_name, OldTargetName) {
+        if !wide_str_equal(&stored.target_name, old_target_name) {
             continue;
         }
 
-        copy_wide_to_buffer(&mut stored.target_name, NewTargetName);
+        copy_wide_to_buffer(&mut stored.target_name, new_target_name);
         return 1; // TRUE
     }
 
@@ -393,41 +393,41 @@ pub unsafe extern "C" fn CredRenameW(
 
 #[no_mangle]
 pub unsafe extern "C" fn CredFindBestCredentialW(
-    TargetName: PCWSTR,
-    Type: DWORD,
-    Flags: DWORD,
-    Credential: *mut PCREDENTIALW,
+    target_name: PCWSTR,
+    r#type: DWORD,
+    flags: DWORD,
+    credential: *mut PCREDENTIALW,
 ) -> LONG {
     // For simple implementation, just use CredReadW
-    CredReadW(TargetName, Type, Flags, Credential)
+    CredReadW(target_name, r#type, flags, credential)
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn CredProtectW(
-    fAsSelf: LONG,
-    pszCredentials: PWSTR,
-    cchCredentials: DWORD,
-    pszProtectedCredentials: PWSTR,
-    pcchMaxChars: *mut DWORD,
-    ProtectionType: *mut DWORD,
+    _f_as_self: LONG,
+    psz_credentials: PWSTR,
+    cch_credentials: DWORD,
+    psz_protected_credentials: PWSTR,
+    pcch_max_chars: *mut DWORD,
+    protection_type: *mut DWORD,
 ) -> LONG {
-    if pszCredentials.is_null() || pcchMaxChars.is_null() {
+    if psz_credentials.is_null() || pcch_max_chars.is_null() {
         return 0; // FALSE
     }
 
-    if !pszProtectedCredentials.is_null() {
-        let copy_len = core::cmp::min(cchCredentials as usize, *pcchMaxChars as usize);
+    if !psz_protected_credentials.is_null() {
+        let copy_len = core::cmp::min(cch_credentials as usize, *pcch_max_chars as usize);
         for i in 0..copy_len {
-            *pszProtectedCredentials.add(i) = *pszCredentials.add(i);
+            *psz_protected_credentials.add(i) = *psz_credentials.add(i);
         }
-        if copy_len < *pcchMaxChars as usize {
-            *pszProtectedCredentials.add(copy_len) = 0;
+        if copy_len < *pcch_max_chars as usize {
+            *psz_protected_credentials.add(copy_len) = 0;
         }
     }
 
-    *pcchMaxChars = cchCredentials;
-    if !ProtectionType.is_null() {
-        *ProtectionType = 1; // CredProtected
+    *pcch_max_chars = cch_credentials;
+    if !protection_type.is_null() {
+        *protection_type = 1; // CredProtected
     }
 
     1 // TRUE
@@ -435,27 +435,27 @@ pub unsafe extern "C" fn CredProtectW(
 
 #[no_mangle]
 pub unsafe extern "C" fn CredUnprotectW(
-    fAsSelf: LONG,
-    pszProtectedCredentials: PWSTR,
-    cchProtectedCredentials: DWORD,
-    pszCredentials: PWSTR,
-    pcchMaxChars: *mut DWORD,
+    _f_as_self: LONG,
+    psz_protected_credentials: PWSTR,
+    cch_protected_credentials: DWORD,
+    psz_credentials: PWSTR,
+    pcch_max_chars: *mut DWORD,
 ) -> LONG {
-    if pszProtectedCredentials.is_null() || pcchMaxChars.is_null() {
+    if psz_protected_credentials.is_null() || pcch_max_chars.is_null() {
         return 0; // FALSE
     }
 
-    if !pszCredentials.is_null() {
-        let copy_len = core::cmp::min(cchProtectedCredentials as usize, *pcchMaxChars as usize);
+    if !psz_credentials.is_null() {
+        let copy_len = core::cmp::min(cch_protected_credentials as usize, *pcch_max_chars as usize);
         for i in 0..copy_len {
-            *pszCredentials.add(i) = *pszProtectedCredentials.add(i);
+            *psz_credentials.add(i) = *psz_protected_credentials.add(i);
         }
-        if copy_len < *pcchMaxChars as usize {
-            *pszCredentials.add(copy_len) = 0;
+        if copy_len < *pcch_max_chars as usize {
+            *psz_credentials.add(copy_len) = 0;
         }
     }
 
-    *pcchMaxChars = cchProtectedCredentials;
+    *pcch_max_chars = cch_protected_credentials;
 
     1 // TRUE
 }

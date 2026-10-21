@@ -1,41 +1,41 @@
 //! kernel32 — error handling
 //
-//! `GetLastError` / `SetLastError` and `FormatMessageW`. Each
+//! `get_last_error` / `set_last_error` and `format_message_w`. Each
 //! thread has its own last-error value (TLS slot). The
 //! bootstrap stores the value in a single global since the
 //! user-mode side of this kernel never executes.
 
-use super::types::{BOOL, DWORD, FALSE, TRUE};
+use super::types::{BOOL, DWORD, TRUE};
 use crate::ke::sync::Spinlock;
 use alloc::string::String;
 use core::ptr;
 
 extern crate alloc;
 
-const TLS_OUT_OF_INDEXES: u32 = 0xFFFFFFFF;
+pub const TLS_OUT_OF_INDEXES: u32 = 0xFFFFFFFF;
 
 /// Thread-local last error value. The bootstrap uses a
 /// single global; a per-CPU value would be the right answer
 /// once the scheduler is up.
 static LAST_ERROR: Spinlock<u32> = Spinlock::new(0);
 
-/// `GetLastError`.
-pub extern "C" fn GetLastError() -> DWORD {
+/// `get_last_error`.
+pub extern "C" fn get_last_error() -> DWORD {
     *LAST_ERROR.lock()
 }
 
-/// `SetLastError`.
-pub extern "C" fn SetLastError(code: DWORD) {
+/// `set_last_error`.
+pub extern "C" fn set_last_error(code: DWORD) {
     *LAST_ERROR.lock() = code;
 }
 
-/// `FormatMessageW` — render an error code to a localised
+/// `format_message_w` — render an error code to a localised
 /// string. The bootstrap ignores the localisation flags and
 /// returns a hard-coded English message for a small set of
 /// common errors. Unsupported codes return
 /// `ERROR_RESOURCE_NOT_AVAILABLE` after writing an empty
 /// string to the output buffer.
-pub unsafe extern "C" fn FormatMessageW(
+pub unsafe extern "C" fn format_message_w(
     flags: DWORD,
     source: usize,
     message_id: DWORD,
@@ -93,9 +93,9 @@ pub unsafe extern "C" fn FormatMessageW(
     copy as DWORD
 }
 
-/// `FormatMessageA` — UTF-8 variant. We transcode the same
+/// `format_message_a` — UTF-8 variant. We transcode the same
 /// English messages to ANSI for the smoke test.
-pub unsafe extern "C" fn FormatMessageA(
+pub unsafe extern "C" fn format_message_a(
     flags: DWORD,
     source: usize,
     message_id: DWORD,
@@ -104,7 +104,7 @@ pub unsafe extern "C" fn FormatMessageA(
     buffer_size: DWORD,
     arguments: *const usize,
 ) -> DWORD {
-    let wide = FormatMessageW(
+    let wide = format_message_w(
         flags,
         source,
         message_id,
@@ -124,28 +124,28 @@ pub unsafe extern "C" fn FormatMessageA(
     wide
 }
 
-/// `TlsAlloc` / `TlsFree` / `TlsGetValue` / `TlsSetValue` —
+/// `tls_alloc` / `tls_free` / `tls_get_value` / `tls_set_value` —
 /// thread local storage. The bootstrap returns a fixed slot.
-pub extern "C" fn TlsAlloc() -> DWORD {
+pub extern "C" fn tls_alloc() -> DWORD {
     0
 }
-pub extern "C" fn TlsFree(_index: DWORD) -> BOOL {
+pub extern "C" fn tls_free(_index: DWORD) -> BOOL {
     TRUE
 }
-pub extern "C" fn TlsGetValue(_index: DWORD) -> usize {
+pub extern "C" fn tls_get_value(_index: DWORD) -> usize {
     0
 }
-pub extern "C" fn TlsSetValue(_index: DWORD, _value: usize) -> BOOL {
+pub extern "C" fn tls_set_value(_index: DWORD, _value: usize) -> BOOL {
     TRUE
 }
 
-/// `GetLastError` again, the last-error accessor is its
+/// `get_last_error` again, the last-error accessor is its
 /// own sub-module so the smoke test can verify the
 /// value is sticky.
 
-/// `OutputDebugStringW` — emit a string to the kernel
+/// `output_debug_string_w` — emit a string to the kernel
 /// debugger (we route to `kprintln!`).
-pub unsafe extern "C" fn OutputDebugStringW(message: *const u16) {
+pub unsafe extern "C" fn output_debug_string_w(message: *const u16) {
     if message.is_null() {
         return;
     }
@@ -164,7 +164,7 @@ pub unsafe extern "C" fn OutputDebugStringW(message: *const u16) {
     // crate::kprintln!("[ODS] {}", buf);
 }
 
-fn u16_w(s: &str) -> alloc::vec::Vec<u16> {
+pub fn u16_w(s: &str) -> alloc::vec::Vec<u16> {
     let mut v = alloc::vec::Vec::with_capacity(s.len() + 1);
     for c in s.encode_utf16() {
         v.push(c);

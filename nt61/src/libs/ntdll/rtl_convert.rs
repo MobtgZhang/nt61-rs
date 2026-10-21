@@ -7,10 +7,9 @@
 
 use super::status::{STATUS_BUFFER_TOO_SMALL, STATUS_INVALID_PARAMETER, STATUS_SUCCESS};
 use super::string::BOOLEAN;
-use super::types::{UnicodeString, ULONG};
-use core::ptr;
+use super::types::UnicodeString;
 
-pub unsafe extern "C" fn RtlHashUnicodeString(
+pub unsafe extern "C" fn rtl_hash_unicode_string(
     string: *const UnicodeString,
     case_insensitive: BOOLEAN,
     hash_algorithm: u32,
@@ -23,7 +22,7 @@ pub unsafe extern "C" fn RtlHashUnicodeString(
     }
 
     let s = &*string;
-    if s.Buffer.is_null() {
+    if s.buffer.is_null() {
         *hash_value = 0;
         return STATUS_SUCCESS;
     }
@@ -36,7 +35,7 @@ pub unsafe extern "C" fn RtlHashUnicodeString(
     };
 
     for i in 0..len {
-        let mut ch = *s.Buffer.add(i);
+        let mut ch = *s.buffer.add(i);
         if case_insensitive != 0 && ch >= b'a' as u16 && ch <= b'z' as u16 {
             ch -= 0x20; // Convert to uppercase
         }
@@ -60,7 +59,7 @@ pub unsafe extern "C" fn RtlHashUnicodeString(
     STATUS_SUCCESS
 }
 
-pub unsafe extern "C" fn RtlIntegerToUnicodeString(
+pub unsafe extern "C" fn rtl_integer_to_unicode_string(
     value: u32,
     base: u32,
     string: *mut UnicodeString,
@@ -72,7 +71,7 @@ pub unsafe extern "C" fn RtlIntegerToUnicodeString(
     }
 
     let s = &mut *string;
-    if s.Buffer.is_null() || s.MaximumLength < 2 {
+    if s.buffer.is_null() || s.maximum_length < 2 {
         return STATUS_BUFFER_TOO_SMALL;
     }
 
@@ -98,20 +97,20 @@ pub unsafe extern "C" fn RtlIntegerToUnicodeString(
     }
 
     let needed = (count + 1) * 2;
-    if (s.MaximumLength as usize) < needed {
+    if (s.maximum_length as usize) < needed {
         return STATUS_BUFFER_TOO_SMALL;
     }
 
     for i in 0..count {
-        *s.Buffer.add(i) = digits[count - 1 - i];
+        *s.buffer.add(i) = digits[count - 1 - i];
     }
-    *s.Buffer.add(count) = 0;
-    s.Length = (count * 2) as u16;
+    *s.buffer.add(count) = 0;
+    s.length = (count * 2) as u16;
 
     STATUS_SUCCESS
 }
 
-pub unsafe extern "C" fn RtlUnicodeStringToInteger(
+pub unsafe extern "C" fn rtl_unicode_string_to_integer(
     string: *const UnicodeString,
     base: u32,
     value: *mut u32,
@@ -123,7 +122,7 @@ pub unsafe extern "C" fn RtlUnicodeStringToInteger(
     let s = &*string;
     *value = 0;
 
-    if s.Buffer.is_null() || s.Length == 0 {
+    if s.buffer.is_null() || s.length == 0 {
         return STATUS_SUCCESS;
     }
 
@@ -132,7 +131,7 @@ pub unsafe extern "C" fn RtlUnicodeStringToInteger(
     let mut result = 0u32;
     let mut actual_base = base;
 
-    while idx < len && (*s.Buffer.add(idx) == b' ' as u16 || *s.Buffer.add(idx) == b'\t' as u16) {
+    while idx < len && (*s.buffer.add(idx) == b' ' as u16 || *s.buffer.add(idx) == b'\t' as u16) {
         idx += 1;
     }
 
@@ -141,8 +140,8 @@ pub unsafe extern "C" fn RtlUnicodeStringToInteger(
     }
 
     if actual_base == 0 {
-        if idx + 1 < len && *s.Buffer.add(idx) == b'0' as u16 {
-            let next = *s.Buffer.add(idx + 1);
+        if idx + 1 < len && *s.buffer.add(idx) == b'0' as u16 {
+            let next = *s.buffer.add(idx + 1);
             if next == b'x' as u16 || next == b'X' as u16 {
                 actual_base = 16;
                 idx += 2;
@@ -160,7 +159,7 @@ pub unsafe extern "C" fn RtlUnicodeStringToInteger(
     }
 
     while idx < len {
-        let ch = *s.Buffer.add(idx);
+        let ch = *s.buffer.add(idx);
         let digit = if ch >= b'0' as u16 && ch <= b'9' as u16 {
             (ch - b'0' as u16) as u32
         } else if ch >= b'A' as u16 && ch <= b'Z' as u16 {
@@ -183,7 +182,7 @@ pub unsafe extern "C" fn RtlUnicodeStringToInteger(
     STATUS_SUCCESS
 }
 
-pub unsafe extern "C" fn RtlInt64ToUnicodeString(
+pub unsafe extern "C" fn rtl_int64_to_unicode_string(
     value: u64,
     base: u32,
     string: *mut UnicodeString,
@@ -193,7 +192,7 @@ pub unsafe extern "C" fn RtlInt64ToUnicodeString(
     }
 
     let s = &mut *string;
-    if s.Buffer.is_null() || s.MaximumLength < 2 {
+    if s.buffer.is_null() || s.maximum_length < 2 {
         return STATUS_BUFFER_TOO_SMALL;
     }
 
@@ -219,20 +218,20 @@ pub unsafe extern "C" fn RtlInt64ToUnicodeString(
     }
 
     let needed = (count + 1) * 2;
-    if (s.MaximumLength as usize) < needed {
+    if (s.maximum_length as usize) < needed {
         return STATUS_BUFFER_TOO_SMALL;
     }
 
     for i in 0..count {
-        *s.Buffer.add(i) = digits[count - 1 - i];
+        *s.buffer.add(i) = digits[count - 1 - i];
     }
-    *s.Buffer.add(count) = 0;
-    s.Length = (count * 2) as u16;
+    *s.buffer.add(count) = 0;
+    s.length = (count * 2) as u16;
 
     STATUS_SUCCESS
 }
 
-pub unsafe extern "C" fn RtlTimeToSecondsSince1970(
+pub unsafe extern "C" fn rtl_time_to_seconds_since1970(
     time: *const i64,
     elapsed_seconds: *mut u32,
 ) -> i32 {
@@ -252,7 +251,10 @@ pub unsafe extern "C" fn RtlTimeToSecondsSince1970(
     STATUS_SUCCESS
 }
 
-pub unsafe extern "C" fn RtlSecondsSince1970ToTime(elapsed_seconds: u32, time: *mut i64) -> i32 {
+pub unsafe extern "C" fn rtl_seconds_since1970_to_time(
+    elapsed_seconds: u32,
+    time: *mut i64,
+) -> i32 {
     if time.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
@@ -273,7 +275,7 @@ pub struct OsVersionInfoW {
     pub service_pack: [u16; 128],
 }
 
-pub unsafe extern "C" fn RtlGetVersion(version_info: *mut OsVersionInfoW) -> i32 {
+pub unsafe extern "C" fn rtl_get_version(version_info: *mut OsVersionInfoW) -> i32 {
     if version_info.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
@@ -288,7 +290,11 @@ pub unsafe extern "C" fn RtlGetVersion(version_info: *mut OsVersionInfoW) -> i32
     STATUS_SUCCESS
 }
 
-pub unsafe extern "C" fn RtlGetNtVersionNumbers(major: *mut u32, minor: *mut u32, build: *mut u32) {
+pub unsafe extern "C" fn rtl_get_nt_version_numbers(
+    major: *mut u32,
+    minor: *mut u32,
+    build: *mut u32,
+) {
     if !major.is_null() {
         *major = 6;
     }

@@ -7,10 +7,6 @@
 //! Clean-room implementation. Spec source: Windows Services documentation,
 //! "Windows Internals 6th ed." ch. 10.
 
-#![allow(non_snake_case, non_upper_case_globals, dead_code)]
-
-use crate::kprintln;
-
 /// Initialize the sechost stub.
 pub fn init() {
     // crate::kprintln!("    SECHOST: init");
@@ -18,5 +14,9 @@ pub fn init() {
     // crate::kprintln!("      RPC:  ready (SvcMgr entry points)");
 }
 
+pub mod acl;
 pub mod event;
+pub mod security;
+pub mod service;
+pub mod token;
 pub mod types;

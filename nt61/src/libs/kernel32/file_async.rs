@@ -1,13 +1,13 @@
 //! kernel32 — Asynchronous I/O Support
 //!
 //! Windows 7 OVERLAPPED I/O for asynchronous file operations.
-//! Allows non-blocking ReadFile/WriteFile with completion notification.
+//! Allows non-blocking read_file/write_file with completion notification.
 //!
 //! References:
 //!   * MSDN Library "Windows 7" — Synchronization and Overlapped I/O
 //!   * Windows Internals 7th Ed. - Chapter 11
 
-use super::error::SetLastError;
+use super::error::set_last_error;
 use super::types::{BOOL, DWORD, FALSE, HANDLE, TRUE};
 use crate::ke::sync::Spinlock;
 use core::ptr;
@@ -38,17 +38,17 @@ const IO_STATUS_SUCCESS: usize = 0x00000000;
 const IO_STATUS_ERROR: usize = 0xFFFFFFFF;
 
 #[derive(Copy, Clone)]
-struct AsyncIoState {
+pub struct AsyncIoState {
     handle: HANDLE,
-    buffer: *mut u8,
-    bytes_requested: u32,
-    bytes_transferred: u32,
-    status: usize,
+    pub buffer: *mut u8,
+    pub bytes_requested: u32,
+    pub bytes_transferred: u32,
+    pub status: usize,
     overlapped: *mut OVERLAPPED,
 }
 
 impl AsyncIoState {
-    const fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             handle: ptr::null_mut(),
             buffer: ptr::null_mut(),
@@ -64,7 +64,7 @@ const MAX_ASYNC_OPS: usize = 64;
 static ASYNC_IO_TABLE: Spinlock<[Option<AsyncIoState>; MAX_ASYNC_OPS]> =
     Spinlock::new([None; MAX_ASYNC_OPS]);
 
-pub unsafe extern "C" fn ReadFile(
+pub unsafe extern "C" fn read_file(
     h_file: HANDLE,
     buffer: *mut u8,
     number_of_bytes_to_read: DWORD,
@@ -72,12 +72,12 @@ pub unsafe extern "C" fn ReadFile(
     overlapped: *mut OVERLAPPED,
 ) -> BOOL {
     if h_file.is_null() || buffer.is_null() {
-        SetLastError(87); // ERROR_INVALID_PARAMETER
+        set_last_error(87); // ERROR_INVALID_PARAMETER
         return FALSE;
     }
 
     if overlapped.is_null() {
-        return super::file::ReadFile(
+        return super::file::read_file(
             h_file,
             buffer,
             number_of_bytes_to_read,
@@ -94,7 +94,7 @@ pub unsafe extern "C" fn ReadFile(
     let slot = match table.iter_mut().find(|s| s.is_none()) {
         Some(s) => s,
         None => {
-            SetLastError(1450); // ERROR_NO_SYSTEM_RESOURCES
+            set_last_error(1450); // ERROR_NO_SYSTEM_RESOURCES
             return FALSE;
         }
     };
@@ -110,7 +110,7 @@ pub unsafe extern "C" fn ReadFile(
 
     drop(table);
 
-    let bytes_read = super::file::ReadFile(
+    let bytes_read = super::file::read_file(
         h_file,
         buffer,
         number_of_bytes_to_read,
@@ -127,7 +127,7 @@ pub unsafe extern "C" fn ReadFile(
         };
 
         if !ovl.h_event.is_null() {
-            crate::libs::ntdll::sync::NtSetEvent(ovl.h_event, ptr::null_mut());
+            crate::libs::ntdll::sync::nt_set_event(ovl.h_event, ptr::null_mut());
         }
 
         let mut table = ASYNC_IO_TABLE.lock();
@@ -143,11 +143,11 @@ pub unsafe extern "C" fn ReadFile(
         ovl.internal = IO_STATUS_ERROR;
     }
 
-    SetLastError(997); // ERROR_IO_PENDING
+    set_last_error(997); // ERROR_IO_PENDING
     FALSE // Asynchronous operations return FALSE with ERROR_IO_PENDING
 }
 
-pub unsafe extern "C" fn WriteFile(
+pub unsafe extern "C" fn write_file(
     h_file: HANDLE,
     buffer: *const u8,
     number_of_bytes_to_write: DWORD,
@@ -155,12 +155,12 @@ pub unsafe extern "C" fn WriteFile(
     overlapped: *mut OVERLAPPED,
 ) -> BOOL {
     if h_file.is_null() || buffer.is_null() {
-        SetLastError(87);
+        set_last_error(87);
         return FALSE;
     }
 
     if overlapped.is_null() {
-        return super::file::WriteFile(
+        return super::file::write_file(
             h_file,
             buffer,
             number_of_bytes_to_write,
@@ -177,7 +177,7 @@ pub unsafe extern "C" fn WriteFile(
     let slot = match table.iter_mut().find(|s| s.is_none()) {
         Some(s) => s,
         None => {
-            SetLastError(1450);
+            set_last_error(1450);
             return FALSE;
         }
     };
@@ -193,7 +193,7 @@ pub unsafe extern "C" fn WriteFile(
 
     drop(table);
 
-    let bytes_written = super::file::WriteFile(
+    let bytes_written = super::file::write_file(
         h_file,
         buffer,
         number_of_bytes_to_write,
@@ -210,7 +210,7 @@ pub unsafe extern "C" fn WriteFile(
         };
 
         if !ovl.h_event.is_null() {
-            crate::libs::ntdll::sync::NtSetEvent(ovl.h_event, ptr::null_mut());
+            crate::libs::ntdll::sync::nt_set_event(ovl.h_event, ptr::null_mut());
         }
 
         let mut table = ASYNC_IO_TABLE.lock();
@@ -226,18 +226,18 @@ pub unsafe extern "C" fn WriteFile(
         ovl.internal = IO_STATUS_ERROR;
     }
 
-    SetLastError(997); // ERROR_IO_PENDING
+    set_last_error(997); // ERROR_IO_PENDING
     FALSE
 }
 
-pub unsafe extern "C" fn GetOverlappedResult(
+pub unsafe extern "C" fn get_overlapped_result(
     h_file: HANDLE,
     overlapped: *mut OVERLAPPED,
     number_of_bytes_transferred: *mut DWORD,
     wait: BOOL,
 ) -> BOOL {
     if h_file.is_null() || overlapped.is_null() || number_of_bytes_transferred.is_null() {
-        SetLastError(87);
+        set_last_error(87);
         return FALSE;
     }
 
@@ -257,17 +257,17 @@ pub unsafe extern "C" fn GetOverlappedResult(
             TRUE
         }
         IO_STATUS_PENDING => {
-            SetLastError(996); // ERROR_IO_INCOMPLETE
+            set_last_error(996); // ERROR_IO_INCOMPLETE
             FALSE
         }
         _ => {
-            SetLastError(31); // ERROR_GEN_FAILURE
+            set_last_error(31); // ERROR_GEN_FAILURE
             FALSE
         }
     }
 }
 
-pub unsafe extern "C" fn HasOverlappedIoCompleted(overlapped: *const OVERLAPPED) -> BOOL {
+pub unsafe extern "C" fn has_overlapped_io_completed(overlapped: *const OVERLAPPED) -> BOOL {
     if overlapped.is_null() {
         return FALSE;
     }
@@ -280,9 +280,9 @@ pub unsafe extern "C" fn HasOverlappedIoCompleted(overlapped: *const OVERLAPPED)
     }
 }
 
-pub unsafe extern "C" fn CancelIo(h_file: HANDLE) -> BOOL {
+pub unsafe extern "C" fn cancel_io(h_file: HANDLE) -> BOOL {
     if h_file.is_null() {
-        SetLastError(6); // ERROR_INVALID_HANDLE
+        set_last_error(6); // ERROR_INVALID_HANDLE
         return FALSE;
     }
 
@@ -304,19 +304,19 @@ pub unsafe extern "C" fn CancelIo(h_file: HANDLE) -> BOOL {
     if canceled {
         TRUE
     } else {
-        SetLastError(1168); // ERROR_NOT_FOUND
+        set_last_error(1168); // ERROR_NOT_FOUND
         FALSE
     }
 }
 
-pub unsafe extern "C" fn CancelIoEx(h_file: HANDLE, overlapped: *mut OVERLAPPED) -> BOOL {
+pub unsafe extern "C" fn cancel_io_ex(h_file: HANDLE, overlapped: *mut OVERLAPPED) -> BOOL {
     if h_file.is_null() {
-        SetLastError(6);
+        set_last_error(6);
         return FALSE;
     }
 
     if overlapped.is_null() {
-        return CancelIo(h_file);
+        return cancel_io(h_file);
     }
 
     let mut table = ASYNC_IO_TABLE.lock();
@@ -331,6 +331,6 @@ pub unsafe extern "C" fn CancelIoEx(h_file: HANDLE, overlapped: *mut OVERLAPPED)
         }
     }
 
-    SetLastError(1168);
+    set_last_error(1168);
     FALSE
 }

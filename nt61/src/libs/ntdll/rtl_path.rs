@@ -1,6 +1,6 @@
 //! ntdll — Rtl* path APIs
 //
-//! The `RtlGetFullPathName_U`, `RtlDosPathNameToNtPathName_U`,
+//! The `rtl_get_full_path_name_u`, `rtl_dos_path_name_to_nt_path_name_u`,
 //! etc. family. The full path machinery is large; this module
 //! implements the commonly-used subset using in-place buffer
 //! copies, suitable for the smoke test (round-trip the path
@@ -8,18 +8,14 @@
 //
 //! References: MSDN Library "Windows 7" — Rtl* path.
 
-use super::file::wide_to_string;
-use super::status::{STATUS_BUFFER_TOO_SMALL, STATUS_INVALID_PARAMETER, STATUS_SUCCESS};
 use super::types::{UnicodeString, PVOID};
-use alloc::string::String;
-use core::ptr;
 
 extern crate alloc;
 
-/// `RtlGetFullPathName_U` — given a relative path, return the
+/// `rtl_get_full_path_name_u` — given a relative path, return the
 /// full path. We prepend `C:\` if the input does not have a
 /// drive letter.
-pub unsafe extern "C" fn RtlGetFullPathName_U(
+pub unsafe extern "C" fn rtl_get_full_path_name_u(
     file_name: *const u16,
     buffer_length: u32,
     buffer: *mut u16,
@@ -64,10 +60,10 @@ pub unsafe extern "C" fn RtlGetFullPathName_U(
     total as u32
 }
 
-/// `RtlDosPathNameToNtPathName_U` — convert a DOS path to the
+/// `rtl_dos_path_name_to_nt_path_name_u` — convert a DOS path to the
 /// NT `\` form. The standard transform is to prepend
 /// `\??\C:\` to a drive-letter path.
-pub unsafe extern "C" fn RtlDosPathNameToNtPathName_U(
+pub unsafe extern "C" fn rtl_dos_path_name_to_nt_path_name_u(
     dos_name: *const u16,
     nt_name: *mut UnicodeString,
     file_part: *mut *mut u16,
@@ -87,7 +83,7 @@ pub unsafe extern "C" fn RtlDosPathNameToNtPathName_U(
     // We need 4 extra characters for the `\??\` prefix.
     let total_chars = in_len + 4;
     let total_bytes = (total_chars + 1) * 2;
-    let buf = super::heap::RtlAllocateHeap(
+    let buf = super::heap::rtl_allocate_heap(
         core::ptr::null_mut(),
         super::heap::HEAP_ZERO_MEMORY,
         total_bytes,
@@ -103,9 +99,9 @@ pub unsafe extern "C" fn RtlDosPathNameToNtPathName_U(
         *buf.add(4 + i) = *dos_name.add(i);
     }
     *buf.add(total_chars) = 0;
-    (*nt_name).Buffer = buf;
-    (*nt_name).Length = (total_chars * 2) as u16;
-    (*nt_name).MaximumLength = total_bytes as u16;
+    (*nt_name).buffer = buf;
+    (*nt_name).length = (total_chars * 2) as u16;
+    (*nt_name).maximum_length = total_bytes as u16;
     if !file_part.is_null() {
         // Find the last `\` in the source path.
         let mut last = 0;
@@ -123,18 +119,18 @@ pub unsafe extern "C" fn RtlDosPathNameToNtPathName_U(
     1
 }
 
-/// `RtlNtPathNameToDosPathName` — inverse of the above. The
+/// `rtl_nt_path_name_to_dos_path_name` — inverse of the above. The
 /// SDK function modifies the input buffer in place and
 /// returns a `BOOLEAN`.
-pub unsafe extern "C" fn RtlNtPathNameToDosPathName(
+pub unsafe extern "C" fn rtl_nt_path_name_to_dos_path_name(
     _path: *mut UnicodeString,
     _file_part: *mut *mut u16,
 ) -> u8 {
     1
 }
 
-/// `RtlPrefixString` — string-prefix test.
-pub unsafe extern "C" fn RtlPrefixString(
+/// `rtl_prefix_string` — string-prefix test.
+pub unsafe extern "C" fn rtl_prefix_string(
     string1: *const UnicodeString,
     string2: *const UnicodeString,
     case_insensitive: u8,
@@ -144,17 +140,17 @@ pub unsafe extern "C" fn RtlPrefixString(
     }
     let a = &*string1;
     let b = &*string2;
-    if a.Length > b.Length {
+    if a.length > b.length {
         return 0;
     }
-    for i in 0..(a.Length as usize / 2) {
+    for i in 0..(a.length as usize / 2) {
         let (ca, cb) = if case_insensitive != 0 {
             (
-                super::string::RtlUpcaseUnicodeChar(*a.Buffer.add(i)),
-                super::string::RtlUpcaseUnicodeChar(*b.Buffer.add(i)),
+                super::string::rtl_upcase_unicode_char(*a.buffer.add(i)),
+                super::string::rtl_upcase_unicode_char(*b.buffer.add(i)),
             )
         } else {
-            (*a.Buffer.add(i), *b.Buffer.add(i))
+            (*a.buffer.add(i), *b.buffer.add(i))
         };
         if ca != cb {
             return 0;
@@ -163,9 +159,9 @@ pub unsafe extern "C" fn RtlPrefixString(
     1
 }
 
-/// `RtlCreateUnicodeString` — initialise a `UnicodeString`
+/// `rtl_create_unicode_string` — initialise a `UnicodeString`
 /// pointing at a fresh heap-allocated copy of `source`.
-pub unsafe extern "C" fn RtlCreateUnicodeString(
+pub unsafe extern "C" fn rtl_create_unicode_string(
     unicode_string: *mut UnicodeString,
     source: *const u16,
 ) -> u8 {
@@ -177,7 +173,7 @@ pub unsafe extern "C" fn RtlCreateUnicodeString(
         len += 1;
     }
     let bytes = (len + 1) * 2;
-    let buf = super::heap::RtlAllocateHeap(core::ptr::null_mut(), 0, bytes) as *mut u16;
+    let buf = super::heap::rtl_allocate_heap(core::ptr::null_mut(), 0, bytes) as *mut u16;
     if buf.is_null() {
         return 0;
     }
@@ -185,8 +181,8 @@ pub unsafe extern "C" fn RtlCreateUnicodeString(
         *buf.add(i) = *source.add(i);
     }
     *buf.add(len) = 0;
-    (*unicode_string).Buffer = buf;
-    (*unicode_string).Length = (len * 2) as u16;
-    (*unicode_string).MaximumLength = bytes as u16;
+    (*unicode_string).buffer = buf;
+    (*unicode_string).length = (len * 2) as u16;
+    (*unicode_string).maximum_length = bytes as u16;
     1
 }

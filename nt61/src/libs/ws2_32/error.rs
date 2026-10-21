@@ -2,8 +2,6 @@
 //!
 //! Comprehensive list of Windows Sockets error codes and helper functions.
 
-#![allow(dead_code)]
-
 use core::sync::atomic::{AtomicI32, Ordering};
 
 static WSA_LAST_ERROR: AtomicI32 = AtomicI32::new(0);

@@ -1,14 +1,12 @@
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
-
-use core::sync::atomic::{AtomicI32, AtomicI64, AtomicU8};
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 use super::types::*;
 use core::ptr;
 
-static STRTOK_NEXT: AtomicPtr<c_char> = AtomicPtr::new(ptr::null_mut());
+static STRTOK_NEXT: AtomicPtr<CChar> = AtomicPtr::new(ptr::null_mut());
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn strtok(str: *mut c_char, delim: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn strtok(str: *mut CChar, delim: *const CChar) -> *mut CChar {
     if str.is_null() {
         let saved = STRTOK_NEXT.load(Ordering::Relaxed);
         if saved.is_null() {
@@ -28,10 +26,10 @@ pub unsafe extern "C" fn strtok(str: *mut c_char, delim: *const c_char) -> *mut 
 
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strtok_r(
-    str: *mut c_char,
-    delim: *const c_char,
-    saveptr: *mut *mut c_char,
-) -> *mut c_char {
+    str: *mut CChar,
+    delim: *const CChar,
+    saveptr: *mut *mut CChar,
+) -> *mut CChar {
     if delim.is_null() || saveptr.is_null() {
         return ptr::null_mut();
     }
@@ -66,7 +64,7 @@ pub unsafe extern "C" fn strtok_r(
     token_start
 }
 
-unsafe fn is_delimiter(c: c_char, delim: *const c_char) -> bool {
+unsafe fn is_delimiter(c: CChar, delim: *const CChar) -> bool {
     let mut d = delim;
     while *d != 0 {
         if *d == c {

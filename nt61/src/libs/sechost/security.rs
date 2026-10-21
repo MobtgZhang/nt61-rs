@@ -9,130 +9,118 @@
 //!   * Windows Internals 6th Edition, Chapter 7
 //!   * ReactOS 0.3.x aclapi.h
 
-#![allow(non_snake_case, dead_code)]
-
 use super::types::*;
-use crate::libs::kernel32::types::{DWORD, BOOL, HANDLE, TRUE, FALSE, LPCWSTR, LPWSTR};
-use crate::libs::ntdll::types::{PVOID, NTSTATUS, ULONG};
+use crate::libs::kernel32::types::{DWORD, HANDLE, LPWSTR};
+use crate::libs::ntdll::types::{PVOID, ULONG};
 use core::ptr;
 
 #[no_mangle]
 pub unsafe extern "C" fn SetNamedSecurityInfoW(
-    pObjectName: LPWSTR,
-    ObjectType: SE_OBJECT_TYPE,
-    SecurityInfo: SECURITY_INFORMATION,
-    psidOwner: PSID,
-    psidGroup: PSID,
-    pDacl: PACL,
-    pSacl: PACL,
+    p_object_name: LPWSTR,
+    object_type: SeObjectType,
+    security_info: SecurityInformation,
+    psid_owner: PSID,
+    psid_group: PSID,
+    p_dacl: PACL,
+    p_sacl: PACL,
 ) -> DWORD {
-    if pObjectName.is_null() {
+    if p_object_name.is_null() {
         return ERROR_INVALID_PARAMETER;
     }
 
-    match ObjectType {
-        SE_FILE_OBJECT |
-        SE_SERVICE |
-        SE_PRINTER |
-        SE_REGISTRY_KEY |
-        SE_LMSHARE |
-        SE_KERNEL_OBJECT |
-        SE_WINDOW_OBJECT |
-        SE_DS_OBJECT |
-        SE_DS_OBJECT_ALL |
-        SE_PROVIDER_DEFINED_OBJECT |
-        SE_WMIGUID_OBJECT |
-        SE_REGISTRY_WOW64_32KEY => {}
+    match object_type {
+        SE_FILE_OBJECT
+        | SE_SERVICE
+        | SE_PRINTER
+        | SE_REGISTRY_KEY
+        | SE_LMSHARE
+        | SE_KERNEL_OBJECT
+        | SE_WINDOW_OBJECT
+        | SE_DS_OBJECT
+        | SE_DS_OBJECT_ALL
+        | SE_PROVIDER_DEFINED_OBJECT
+        | SE_WMIGUID_OBJECT
+        | SE_REGISTRY_WOW64_32KEY => {}
         _ => {
             return ERROR_INVALID_PARAMETER;
         }
     }
 
-    if SecurityInfo == 0 {
+    if security_info == 0 {
         return ERROR_INVALID_PARAMETER;
     }
 
-    if (SecurityInfo & OWNER_SECURITY_INFORMATION) != 0 && psidOwner.is_null() {
+    if (security_info & OWNER_SECURITY_INFORMATION) != 0 && psid_owner.is_null() {
         return ERROR_INVALID_PARAMETER;
     }
-    if (SecurityInfo & GROUP_SECURITY_INFORMATION) != 0 && psidGroup.is_null() {
+    if (security_info & GROUP_SECURITY_INFORMATION) != 0 && psid_group.is_null() {
         return ERROR_INVALID_PARAMETER;
     }
-    if (SecurityInfo & DACL_SECURITY_INFORMATION) != 0 && pDacl.is_null() {
-    }
-    if (SecurityInfo & SACL_SECURITY_INFORMATION) != 0 && pSacl.is_null() {
-    }
+    if (security_info & DACL_SECURITY_INFORMATION) != 0 && p_dacl.is_null() {}
+    if (security_info & SACL_SECURITY_INFORMATION) != 0 && p_sacl.is_null() {}
 
-    match ObjectType {
-        SE_FILE_OBJECT => {
-            ERROR_SUCCESS
-        }
-        SE_REGISTRY_KEY => {
-            ERROR_SUCCESS
-        }
-        SE_SERVICE => {
-            ERROR_SUCCESS
-        }
-        _ => {
-            ERROR_SUCCESS
-        }
+    match object_type {
+        SE_FILE_OBJECT => ERROR_SUCCESS,
+        SE_REGISTRY_KEY => ERROR_SUCCESS,
+        SE_SERVICE => ERROR_SUCCESS,
+        _ => ERROR_SUCCESS,
     }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn GetNamedSecurityInfoW(
-    pObjectName: LPWSTR,
-    ObjectType: SE_OBJECT_TYPE,
-    SecurityInfo: SECURITY_INFORMATION,
-    ppsidOwner: *mut PSID,
-    ppsidGroup: *mut PSID,
-    ppDacl: *mut PACL,
-    ppSacl: *mut PACL,
-    ppSecurityDescriptor: *mut PVOID,
+    p_object_name: LPWSTR,
+    object_type: SeObjectType,
+    security_info: SecurityInformation,
+    ppsid_owner: *mut PSID,
+    ppsid_group: *mut PSID,
+    pp_dacl: *mut PACL,
+    pp_sacl: *mut PACL,
+    pp_security_descriptor: *mut PVOID,
 ) -> DWORD {
-    if pObjectName.is_null() {
+    if p_object_name.is_null() {
         return ERROR_INVALID_PARAMETER;
     }
 
-    match ObjectType {
-        SE_FILE_OBJECT |
-        SE_SERVICE |
-        SE_PRINTER |
-        SE_REGISTRY_KEY |
-        SE_LMSHARE |
-        SE_KERNEL_OBJECT |
-        SE_WINDOW_OBJECT |
-        SE_DS_OBJECT |
-        SE_DS_OBJECT_ALL |
-        SE_PROVIDER_DEFINED_OBJECT |
-        SE_WMIGUID_OBJECT |
-        SE_REGISTRY_WOW64_32KEY => {}
+    match object_type {
+        SE_FILE_OBJECT
+        | SE_SERVICE
+        | SE_PRINTER
+        | SE_REGISTRY_KEY
+        | SE_LMSHARE
+        | SE_KERNEL_OBJECT
+        | SE_WINDOW_OBJECT
+        | SE_DS_OBJECT
+        | SE_DS_OBJECT_ALL
+        | SE_PROVIDER_DEFINED_OBJECT
+        | SE_WMIGUID_OBJECT
+        | SE_REGISTRY_WOW64_32KEY => {}
         _ => {
             return ERROR_INVALID_PARAMETER;
         }
     }
 
-    if SecurityInfo == 0 {
+    if security_info == 0 {
         return ERROR_INVALID_PARAMETER;
     }
 
-    if ppSecurityDescriptor.is_null() {
+    if pp_security_descriptor.is_null() {
         return ERROR_INVALID_PARAMETER;
     }
 
-    if !ppsidOwner.is_null() {
-        *ppsidOwner = ptr::null_mut();
+    if !ppsid_owner.is_null() {
+        *ppsid_owner = ptr::null_mut();
     }
-    if !ppsidGroup.is_null() {
-        *ppsidGroup = ptr::null_mut();
+    if !ppsid_group.is_null() {
+        *ppsid_group = ptr::null_mut();
     }
-    if !ppDacl.is_null() {
-        *ppDacl = ptr::null_mut();
+    if !pp_dacl.is_null() {
+        *pp_dacl = ptr::null_mut();
     }
-    if !ppSacl.is_null() {
-        *ppSacl = ptr::null_mut();
+    if !pp_sacl.is_null() {
+        *pp_sacl = ptr::null_mut();
     }
-    *ppSecurityDescriptor = ptr::null_mut();
+    *pp_security_descriptor = ptr::null_mut();
 
     ERROR_SUCCESS
 }
@@ -140,18 +128,18 @@ pub unsafe extern "C" fn GetNamedSecurityInfoW(
 #[no_mangle]
 pub unsafe extern "C" fn SetSecurityInfo(
     handle: HANDLE,
-    ObjectType: SE_OBJECT_TYPE,
-    SecurityInfo: SECURITY_INFORMATION,
-    psidOwner: PSID,
-    psidGroup: PSID,
-    pDacl: PACL,
-    pSacl: PACL,
+    _object_type: SeObjectType,
+    security_info: SecurityInformation,
+    _psid_owner: PSID,
+    _psid_group: PSID,
+    _p_dacl: PACL,
+    _p_sacl: PACL,
 ) -> DWORD {
     if handle.is_null() || handle == INVALID_HANDLE_VALUE {
         return ERROR_INVALID_HANDLE;
     }
 
-    if SecurityInfo == 0 {
+    if security_info == 0 {
         return ERROR_INVALID_PARAMETER;
     }
 
@@ -161,60 +149,59 @@ pub unsafe extern "C" fn SetSecurityInfo(
 #[no_mangle]
 pub unsafe extern "C" fn GetSecurityInfo(
     handle: HANDLE,
-    ObjectType: SE_OBJECT_TYPE,
-    SecurityInfo: SECURITY_INFORMATION,
-    ppsidOwner: *mut PSID,
-    ppsidGroup: *mut PSID,
-    ppDacl: *mut PACL,
-    ppSacl: *mut PACL,
-    ppSecurityDescriptor: *mut PVOID,
+    _object_type: SeObjectType,
+    _security_info: SecurityInformation,
+    ppsid_owner: *mut PSID,
+    ppsid_group: *mut PSID,
+    pp_dacl: *mut PACL,
+    pp_sacl: *mut PACL,
+    pp_security_descriptor: *mut PVOID,
 ) -> DWORD {
     if handle.is_null() || handle == INVALID_HANDLE_VALUE {
         return ERROR_INVALID_HANDLE;
     }
 
-    if ppSecurityDescriptor.is_null() {
+    if pp_security_descriptor.is_null() {
         return ERROR_INVALID_PARAMETER;
     }
 
-    if !ppsidOwner.is_null() {
-        *ppsidOwner = ptr::null_mut();
+    if !ppsid_owner.is_null() {
+        *ppsid_owner = ptr::null_mut();
     }
-    if !ppsidGroup.is_null() {
-        *ppsidGroup = ptr::null_mut();
+    if !ppsid_group.is_null() {
+        *ppsid_group = ptr::null_mut();
     }
-    if !ppDacl.is_null() {
-        *ppDacl = ptr::null_mut();
+    if !pp_dacl.is_null() {
+        *pp_dacl = ptr::null_mut();
     }
-    if !ppSacl.is_null() {
-        *ppSacl = ptr::null_mut();
+    if !pp_sacl.is_null() {
+        *pp_sacl = ptr::null_mut();
     }
-    *ppSecurityDescriptor = ptr::null_mut();
+    *pp_security_descriptor = ptr::null_mut();
 
     ERROR_SUCCESS
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn BuildSecurityDescriptorW(
-    pOwner: *mut TRUSTEE_W,
-    pGroup: *mut TRUSTEE_W,
-    cCountOfAccessEntries: ULONG,
-    pListOfAccessEntries: *mut EXPLICIT_ACCESS_W,
-    cCountOfAuditEntries: ULONG,
-    pListOfAuditEntries: *mut EXPLICIT_ACCESS_W,
-    pOldSD: PVOID,
-    pSizeNewSD: *mut ULONG,
-    pNewSD: *mut PVOID,
+    _p_owner: *mut TRUSTEE_W,
+    _p_group: *mut TRUSTEE_W,
+    _c_count_of_access_entries: ULONG,
+    _p_list_of_access_entries: *mut EXPLICIT_ACCESS_W,
+    _c_count_of_audit_entries: ULONG,
+    _p_list_of_audit_entries: *mut EXPLICIT_ACCESS_W,
+    _p_old_sd: PVOID,
+    p_size_new_sd: *mut ULONG,
+    p_new_sd: *mut PVOID,
 ) -> DWORD {
-    if pSizeNewSD.is_null() || pNewSD.is_null() {
+    if p_size_new_sd.is_null() || p_new_sd.is_null() {
         return ERROR_INVALID_PARAMETER;
     }
 
-    *pSizeNewSD = 0;
-    *pNewSD = ptr::null_mut();
+    *p_size_new_sd = 0;
+    *p_new_sd = ptr::null_mut();
 
     ERROR_SUCCESS
 }
 
-pub fn init() {
-}
+pub fn init() {}

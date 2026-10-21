@@ -13,7 +13,7 @@
 
 use super::types::{BOOL, FALSE, TRUE};
 use crate::ke::sync::Spinlock;
-use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU64, Ordering};
 
 #[repr(C)]
 pub struct SRWLOCK {
@@ -29,19 +29,19 @@ impl SRWLOCK {
 }
 
 const SRW_LOCKED: u64 = 0x01;
-const SRW_WAITING: u64 = 0x02;
-const SRW_WAKING: u64 = 0x04;
+pub const SRW_WAITING: u64 = 0x02;
+pub const SRW_WAKING: u64 = 0x04;
 const SRW_MULTIPLE_SHARED: u64 = 0x08;
 const SRW_MASK: u64 = 0x0F;
 
-pub unsafe extern "C" fn InitializeSRWLock(srw_lock: *mut SRWLOCK) {
+pub unsafe extern "C" fn initialize_srwlock(srw_lock: *mut SRWLOCK) {
     if srw_lock.is_null() {
         return;
     }
     (*srw_lock).ptr.store(0, Ordering::Release);
 }
 
-pub unsafe extern "C" fn AcquireSRWLockExclusive(srw_lock: *mut SRWLOCK) {
+pub unsafe extern "C" fn acquire_srwlock_exclusive(srw_lock: *mut SRWLOCK) {
     if srw_lock.is_null() {
         return;
     }
@@ -84,7 +84,7 @@ pub unsafe extern "C" fn AcquireSRWLockExclusive(srw_lock: *mut SRWLOCK) {
     }
 }
 
-pub unsafe extern "C" fn TryAcquireSRWLockExclusive(srw_lock: *mut SRWLOCK) -> BOOL {
+pub unsafe extern "C" fn try_acquire_srwlock_exclusive(srw_lock: *mut SRWLOCK) -> BOOL {
     if srw_lock.is_null() {
         return FALSE;
     }
@@ -107,7 +107,7 @@ pub unsafe extern "C" fn TryAcquireSRWLockExclusive(srw_lock: *mut SRWLOCK) -> B
     }
 }
 
-pub unsafe extern "C" fn ReleaseSRWLockExclusive(srw_lock: *mut SRWLOCK) {
+pub unsafe extern "C" fn release_srwlock_exclusive(srw_lock: *mut SRWLOCK) {
     if srw_lock.is_null() {
         return;
     }
@@ -120,7 +120,7 @@ pub unsafe extern "C" fn ReleaseSRWLockExclusive(srw_lock: *mut SRWLOCK) {
     lock.store(new_state, Ordering::Release);
 }
 
-pub unsafe extern "C" fn AcquireSRWLockShared(srw_lock: *mut SRWLOCK) {
+pub unsafe extern "C" fn acquire_srwlock_shared(srw_lock: *mut SRWLOCK) {
     if srw_lock.is_null() {
         return;
     }
@@ -150,7 +150,7 @@ pub unsafe extern "C" fn AcquireSRWLockShared(srw_lock: *mut SRWLOCK) {
     }
 }
 
-pub unsafe extern "C" fn TryAcquireSRWLockShared(srw_lock: *mut SRWLOCK) -> BOOL {
+pub unsafe extern "C" fn try_acquire_srwlock_shared(srw_lock: *mut SRWLOCK) -> BOOL {
     if srw_lock.is_null() {
         return FALSE;
     }
@@ -176,7 +176,7 @@ pub unsafe extern "C" fn TryAcquireSRWLockShared(srw_lock: *mut SRWLOCK) -> BOOL
     }
 }
 
-pub unsafe extern "C" fn ReleaseSRWLockShared(srw_lock: *mut SRWLOCK) {
+pub unsafe extern "C" fn release_srwlock_shared(srw_lock: *mut SRWLOCK) {
     if srw_lock.is_null() {
         return;
     }
@@ -248,14 +248,16 @@ impl CVWaiters {
 
 static CV_WAITER_TABLE: Spinlock<[CVWaiters; MAX_CVS]> = Spinlock::new([CVWaiters::new(); MAX_CVS]);
 
-pub unsafe extern "C" fn InitializeConditionVariable(condition_variable: *mut CONDITION_VARIABLE) {
+pub unsafe extern "C" fn initialize_condition_variable(
+    condition_variable: *mut CONDITION_VARIABLE,
+) {
     if condition_variable.is_null() {
         return;
     }
     (*condition_variable).ptr.store(0, Ordering::Release);
 }
 
-pub unsafe extern "C" fn SleepConditionVariableCS(
+pub unsafe extern "C" fn sleep_condition_variable_cs(
     condition_variable: *mut CONDITION_VARIABLE,
     critical_section: *mut super::sync::CriticalSection,
     milliseconds: u32,
@@ -288,7 +290,7 @@ pub unsafe extern "C" fn SleepConditionVariableCS(
         slot.count += 1;
     }
 
-    super::sync::LeaveCriticalSection(critical_section);
+    super::sync::leave_critical_section(critical_section);
 
     let start = crate::ke::time::get_tick_count() as u64;
     let timeout_ticks = if milliseconds == 0xFFFFFFFF {
@@ -347,17 +349,17 @@ pub unsafe extern "C" fn SleepConditionVariableCS(
         }
     }
 
-    super::sync::EnterCriticalSection(critical_section);
+    super::sync::enter_critical_section(critical_section);
 
     if signaled {
         TRUE
     } else {
-        super::error::SetLastError(1460); // ERROR_TIMEOUT
+        super::error::set_last_error(1460); // ERROR_TIMEOUT
         FALSE
     }
 }
 
-pub unsafe extern "C" fn SleepConditionVariableSRW(
+pub unsafe extern "C" fn sleep_condition_variable_srw(
     condition_variable: *mut CONDITION_VARIABLE,
     srw_lock: *mut SRWLOCK,
     milliseconds: u32,
@@ -393,9 +395,9 @@ pub unsafe extern "C" fn SleepConditionVariableSRW(
     }
 
     if shared {
-        ReleaseSRWLockShared(srw_lock);
+        release_srwlock_shared(srw_lock);
     } else {
-        ReleaseSRWLockExclusive(srw_lock);
+        release_srwlock_exclusive(srw_lock);
     }
 
     let start = crate::ke::time::get_tick_count() as u64;
@@ -456,20 +458,20 @@ pub unsafe extern "C" fn SleepConditionVariableSRW(
     }
 
     if shared {
-        AcquireSRWLockShared(srw_lock);
+        acquire_srwlock_shared(srw_lock);
     } else {
-        AcquireSRWLockExclusive(srw_lock);
+        acquire_srwlock_exclusive(srw_lock);
     }
 
     if signaled {
         TRUE
     } else {
-        super::error::SetLastError(1460);
+        super::error::set_last_error(1460);
         FALSE
     }
 }
 
-pub unsafe extern "C" fn WakeConditionVariable(condition_variable: *mut CONDITION_VARIABLE) {
+pub unsafe extern "C" fn wake_condition_variable(condition_variable: *mut CONDITION_VARIABLE) {
     if condition_variable.is_null() {
         return;
     }
@@ -492,7 +494,7 @@ pub unsafe extern "C" fn WakeConditionVariable(condition_variable: *mut CONDITIO
     }
 }
 
-pub unsafe extern "C" fn WakeAllConditionVariable(condition_variable: *mut CONDITION_VARIABLE) {
+pub unsafe extern "C" fn wake_all_condition_variable(condition_variable: *mut CONDITION_VARIABLE) {
     if condition_variable.is_null() {
         return;
     }

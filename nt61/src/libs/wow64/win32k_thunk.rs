@@ -2,27 +2,26 @@
 //! going to the 64-bit win32k.sys kernel driver.
 //
 //! In WoW64, when a 32-bit application calls a Win32 API function (like
-//! CreateWindow, SendMessage, GetDC), the call path is:
+//! CreateWindow, SendMessage, get_dc), the call path is:
 //
 //! ```
 //! 32-bit App -> user32.dll (32-bit) -> wow64win.dll (32-bit)
-//!     -> Wow64Win32kSyscall -> 64-bit win32k.sys
+//!     -> wow64_win32k_syscall -> 64-bit win32k.sys
 //!     -> Return to 32-bit app
 //! ```
 //
 //! Key functions:
-//!   * Wow64Win32kInitializeThunk - Initialize the thunk
-//!   * Wow64Win32kSyscall - Make a syscall to win32k.sys
-//!   * Wow64Win32kCallbackReturn - Return from a callback
+//!   * wow64_win32k_initialize_thunk - Initialize the thunk
+//!   * wow64_win32k_syscall - Make a syscall to win32k.sys
+//!   * wow64_win32k_callback_return - Return from a callback
 //
 //! References:
 //!   * geoffchappell.com — Win32k syscalls in WoW64
 //!   * ReactOS `win32ss/gdi/gdi32/objects/thunk.c`
 
-#![cfg(target_arch = "x86_64")]
-#![allow(non_camel_case_types)]
-
-use super::types::{STATUS_INVALID_PARAMETER, STATUS_NOT_IMPLEMENTED, STATUS_SUCCESS, ULONG32};
+use super::types::{
+    STATUS_INVALID_PARAMETER, STATUS_INVALID_SYSTEM_SERVICE, STATUS_SUCCESS, ULONG32,
+};
 
 pub use super::win32k_gdi32;
 pub use super::win32k_user32;
@@ -39,42 +38,42 @@ pub const IMAGE_SUBSYSTEM_WINDOWS_CUI: u16 = 3;
 pub mod syscall_numbers {
     use super::ULONG32;
 
-    pub const NtUserCreateWindowEx: ULONG32 = 0x0001;
-    pub const NtUserDestroyWindow: ULONG32 = 0x0002;
-    pub const NtUserShowWindow: ULONG32 = 0x0003;
-    pub const NtUserMoveWindow: ULONG32 = 0x0004;
-    pub const NtUserSetWindowPos: ULONG32 = 0x0005;
-    pub const NtUserGetMessage: ULONG32 = 0x0006;
-    pub const NtUserPeekMessage: ULONG32 = 0x0007;
-    pub const NtUserPostMessage: ULONG32 = 0x0008;
-    pub const NtUserSendMessage: ULONG32 = 0x0009;
-    pub const NtUserReplyMessage: ULONG32 = 0x000A;
-    pub const NtUserRegisterClassEx: ULONG32 = 0x000B;
-    pub const NtUserGetClassName: ULONG32 = 0x000C;
-    pub const NtUserSetCapture: ULONG32 = 0x000D;
-    pub const NtUserReleaseCapture: ULONG32 = 0x000E;
-    pub const NtUserGetForegroundWindow: ULONG32 = 0x000F;
-    pub const NtUserSetForegroundWindow: ULONG32 = 0x0010;
-    pub const NtUserGetActiveWindow: ULONG32 = 0x0011;
-    pub const NtUserSetActiveWindow: ULONG32 = 0x0012;
+    pub const NT_USER_CREATE_WINDOW_EX: ULONG32 = 0x0001;
+    pub const NT_USER_DESTROY_WINDOW: ULONG32 = 0x0002;
+    pub const NT_USER_SHOW_WINDOW: ULONG32 = 0x0003;
+    pub const NT_USER_MOVE_WINDOW: ULONG32 = 0x0004;
+    pub const NT_USER_SET_WINDOW_POS: ULONG32 = 0x0005;
+    pub const NT_USER_GET_MESSAGE: ULONG32 = 0x0006;
+    pub const NT_USER_PEEK_MESSAGE: ULONG32 = 0x0007;
+    pub const NT_USER_POST_MESSAGE: ULONG32 = 0x0008;
+    pub const NT_USER_SEND_MESSAGE: ULONG32 = 0x0009;
+    pub const NT_USER_REPLY_MESSAGE: ULONG32 = 0x000A;
+    pub const NT_USER_REGISTER_CLASS_EX: ULONG32 = 0x000B;
+    pub const NT_USER_GET_CLASS_NAME: ULONG32 = 0x000C;
+    pub const NT_USER_SET_CAPTURE: ULONG32 = 0x000D;
+    pub const NT_USER_RELEASE_CAPTURE: ULONG32 = 0x000E;
+    pub const NT_USER_GET_FOREGROUND_WINDOW: ULONG32 = 0x000F;
+    pub const NT_USER_SET_FOREGROUND_WINDOW: ULONG32 = 0x0010;
+    pub const NT_USER_GET_ACTIVE_WINDOW: ULONG32 = 0x0011;
+    pub const NT_USER_SET_ACTIVE_WINDOW: ULONG32 = 0x0012;
 
-    pub const NtGdiGetDC: ULONG32 = 0x0100;
-    pub const NtGdiReleaseDC: ULONG32 = 0x0101;
-    pub const NtGdiCreateCompatibleDC: ULONG32 = 0x0102;
-    pub const NtGdiDeleteDC: ULONG32 = 0x0103;
-    pub const NtGdiSelectObject: ULONG32 = 0x0104;
-    pub const NtGdiDeleteObject: ULONG32 = 0x0105;
-    pub const NtGdiTextOut: ULONG32 = 0x0106;
-    pub const NtGdiBitBlt: ULONG32 = 0x0107;
-    pub const NtGdiPatBlt: ULONG32 = 0x0108;
-    pub const NtGdiCreatePen: ULONG32 = 0x0109;
-    pub const NtGdiCreateBrush: ULONG32 = 0x010A;
-    pub const NtGdiCreateCompatibleBitmap: ULONG32 = 0x010B;
-    pub const NtGdiGetObject: ULONG32 = 0x010C;
-    pub const NtGdiExtTextOut: ULONG32 = 0x010D;
-    pub const NtGdiDrawText: ULONG32 = 0x010E;
-    pub const NtGdiGetPixel: ULONG32 = 0x010F;
-    pub const NtGdiSetPixel: ULONG32 = 0x0110;
+    pub const NT_GDI_GET_DC: ULONG32 = 0x0100;
+    pub const NT_GDI_RELEASE_DC: ULONG32 = 0x0101;
+    pub const NT_GDI_CREATE_COMPATIBLE_DC: ULONG32 = 0x0102;
+    pub const NT_GDI_DELETE_DC: ULONG32 = 0x0103;
+    pub const NT_GDI_SELECT_OBJECT: ULONG32 = 0x0104;
+    pub const NT_GDI_DELETE_OBJECT: ULONG32 = 0x0105;
+    pub const NT_GDI_TEXT_OUT: ULONG32 = 0x0106;
+    pub const NT_GDI_BIT_BLT: ULONG32 = 0x0107;
+    pub const NT_GDI_PAT_BLT: ULONG32 = 0x0108;
+    pub const NT_GDI_CREATE_PEN: ULONG32 = 0x0109;
+    pub const NT_GDI_CREATE_BRUSH: ULONG32 = 0x010A;
+    pub const NT_GDI_CREATE_COMPATIBLE_BITMAP: ULONG32 = 0x010B;
+    pub const NT_GDI_GET_OBJECT: ULONG32 = 0x010C;
+    pub const NT_GDI_EXT_TEXT_OUT: ULONG32 = 0x010D;
+    pub const NT_GDI_DRAW_TEXT: ULONG32 = 0x010E;
+    pub const NT_GDI_GET_PIXEL: ULONG32 = 0x010F;
+    pub const NT_GDI_SET_PIXEL: ULONG32 = 0x0110;
 }
 
 #[repr(C)]
@@ -98,7 +97,7 @@ impl Win32kSyscallEntry {
 static WIN32K_SYSCALL_TABLE: [Option<Win32kSyscallEntry>; MAX_WIN32K_SERVICES] =
     [None; MAX_WIN32K_SERVICES];
 
-pub unsafe extern "C" fn Wow64Win32kInitializeThunk(
+pub unsafe extern "C" fn wow64_win32k_initialize_thunk(
     callback_info: *const Wow64CallbackInfo,
 ) -> ULONG32 {
     crate::wow64_klog!(
@@ -125,7 +124,7 @@ pub struct Wow64CallbackInfo {
     pub spare: ULONG32,
 }
 
-pub unsafe extern "C" fn Wow64Win32kSyscall(
+pub unsafe extern "C" fn wow64_win32k_syscall(
     syscall_id: ULONG32,
     params: *const ULONG32,
 ) -> ULONG32 {
@@ -148,7 +147,7 @@ pub unsafe extern "C" fn Wow64Win32kSyscall(
     let entry = &WIN32K_SYSCALL_TABLE[table_idx];
     if entry.is_none() {
         crate::wow64_klog!("Unregistered syscall: {}", syscall_id);
-        return STATUS_NOT_IMPLEMENTED as ULONG32;
+        return STATUS_INVALID_SYSTEM_SERVICE as ULONG32;
     }
 
     let entry = entry.as_ref().unwrap();
@@ -162,74 +161,74 @@ pub unsafe extern "C" fn Wow64Win32kSyscall(
 }
 
 /// window procedures or hook callbacks), this function is used to
-pub unsafe extern "C" fn Wow64Win32kCallbackReturn(buffer: *const u8, buffer_length: ULONG32) -> ! {
+pub unsafe extern "C" fn wow64_win32k_callback_return(
+    buffer: *const u8,
+    buffer_length: ULONG32,
+) -> ! {
     crate::wow64_klog!(
         "Wow64Win32kCallbackReturn buffer=0x{:016x} length={}",
         buffer as u64,
         buffer_length
     );
 
-    loop {
-        core::arch::asm!("hlt");
-        core::hint::black_box(());
-    }
+    crate::arch::halt_loop()
 }
 
 fn init_win32k_table() {
     crate::wow64_klog!("Initializing Win32k syscall table");
 
     register_win32k_syscall(
-        syscall_numbers::NtUserCreateWindowEx as usize,
-        Win32kSyscallEntry::new(syscall_numbers::NtUserCreateWindowEx, 12),
+        syscall_numbers::NT_USER_CREATE_WINDOW_EX as usize,
+        Win32kSyscallEntry::new(syscall_numbers::NT_USER_CREATE_WINDOW_EX, 12),
     );
     register_win32k_syscall(
-        syscall_numbers::NtUserDestroyWindow as usize,
-        Win32kSyscallEntry::new(syscall_numbers::NtUserDestroyWindow, 1),
+        syscall_numbers::NT_USER_DESTROY_WINDOW as usize,
+        Win32kSyscallEntry::new(syscall_numbers::NT_USER_DESTROY_WINDOW, 1),
     );
     register_win32k_syscall(
-        syscall_numbers::NtUserShowWindow as usize,
-        Win32kSyscallEntry::new(syscall_numbers::NtUserShowWindow, 2),
+        syscall_numbers::NT_USER_SHOW_WINDOW as usize,
+        Win32kSyscallEntry::new(syscall_numbers::NT_USER_SHOW_WINDOW, 2),
     );
     register_win32k_syscall(
-        syscall_numbers::NtUserGetMessage as usize,
-        Win32kSyscallEntry::new(syscall_numbers::NtUserGetMessage, 4),
+        syscall_numbers::NT_USER_GET_MESSAGE as usize,
+        Win32kSyscallEntry::new(syscall_numbers::NT_USER_GET_MESSAGE, 4),
     );
     register_win32k_syscall(
-        syscall_numbers::NtUserPeekMessage as usize,
-        Win32kSyscallEntry::new(syscall_numbers::NtUserPeekMessage, 4),
+        syscall_numbers::NT_USER_PEEK_MESSAGE as usize,
+        Win32kSyscallEntry::new(syscall_numbers::NT_USER_PEEK_MESSAGE, 4),
     );
     register_win32k_syscall(
-        syscall_numbers::NtUserPostMessage as usize,
-        Win32kSyscallEntry::new(syscall_numbers::NtUserPostMessage, 4),
+        syscall_numbers::NT_USER_POST_MESSAGE as usize,
+        Win32kSyscallEntry::new(syscall_numbers::NT_USER_POST_MESSAGE, 4),
     );
     register_win32k_syscall(
-        syscall_numbers::NtUserSendMessage as usize,
-        Win32kSyscallEntry::new(syscall_numbers::NtUserSendMessage, 4),
+        syscall_numbers::NT_USER_SEND_MESSAGE as usize,
+        Win32kSyscallEntry::new(syscall_numbers::NT_USER_SEND_MESSAGE, 4),
     );
 
     register_win32k_syscall(
-        syscall_numbers::NtGdiGetDC as usize,
-        Win32kSyscallEntry::new(syscall_numbers::NtGdiGetDC, 1),
+        syscall_numbers::NT_GDI_GET_DC as usize,
+        Win32kSyscallEntry::new(syscall_numbers::NT_GDI_GET_DC, 1),
     );
     register_win32k_syscall(
-        syscall_numbers::NtGdiReleaseDC as usize,
-        Win32kSyscallEntry::new(syscall_numbers::NtGdiReleaseDC, 2),
+        syscall_numbers::NT_GDI_RELEASE_DC as usize,
+        Win32kSyscallEntry::new(syscall_numbers::NT_GDI_RELEASE_DC, 2),
     );
     register_win32k_syscall(
-        syscall_numbers::NtGdiSelectObject as usize,
-        Win32kSyscallEntry::new(syscall_numbers::NtGdiSelectObject, 2),
+        syscall_numbers::NT_GDI_SELECT_OBJECT as usize,
+        Win32kSyscallEntry::new(syscall_numbers::NT_GDI_SELECT_OBJECT, 2),
     );
     register_win32k_syscall(
-        syscall_numbers::NtGdiDeleteObject as usize,
-        Win32kSyscallEntry::new(syscall_numbers::NtGdiDeleteObject, 1),
+        syscall_numbers::NT_GDI_DELETE_OBJECT as usize,
+        Win32kSyscallEntry::new(syscall_numbers::NT_GDI_DELETE_OBJECT, 1),
     );
     register_win32k_syscall(
-        syscall_numbers::NtGdiTextOut as usize,
-        Win32kSyscallEntry::new(syscall_numbers::NtGdiTextOut, 5),
+        syscall_numbers::NT_GDI_TEXT_OUT as usize,
+        Win32kSyscallEntry::new(syscall_numbers::NT_GDI_TEXT_OUT, 5),
     );
     register_win32k_syscall(
-        syscall_numbers::NtGdiBitBlt as usize,
-        Win32kSyscallEntry::new(syscall_numbers::NtGdiBitBlt, 9),
+        syscall_numbers::NT_GDI_BIT_BLT as usize,
+        Win32kSyscallEntry::new(syscall_numbers::NT_GDI_BIT_BLT, 9),
     );
 
     crate::wow64_klog!("Win32k syscall table initialized");

@@ -18,15 +18,12 @@
 //!   * `handle`   — HANDLE32 → kernel object resolvers.
 //!   * `types`    — 32↔64 conversion helpers, PEB32/TEB32 structures
 //!   * `wow64vas` — 32-bit virtual address space manager
-//!   * `thunk`    — Wow64PrepareForException, Wow64ApcRoutine
+//!   * `thunk`    — wow64_prepare_for_exception, wow64_apc_routine
 //!   * `ssd`      — system service dispatch table
 //!   * `syscall_thunk` — 32-bit syscall dispatch
 //!   * `mem_thunk`    — memory API thunks
 //!   * `ps_thunk`     — process/thread info thunks
 //!   * `apc_exc_thunk`— APC and exception thunks
-
-#![cfg(target_arch = "x86_64")]
-#![allow(non_snake_case, non_upper_case_globals)]
 
 extern crate alloc;
 

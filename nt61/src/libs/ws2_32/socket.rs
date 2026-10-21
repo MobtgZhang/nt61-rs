@@ -4,19 +4,17 @@
 //! accept, connect, send, recv, sendto, recvfrom, closesocket, shutdown,
 //! and socket options (setsockopt, getsockopt, ioctlsocket).
 
-#![allow(non_snake_case)]
-
-use super::types::*;
 use super::error::*;
-use crate::netstack::{socket, afd};
+use super::types::*;
 use crate::ke::sync::Spinlock;
+use crate::netstack::{afd, socket};
 use alloc::vec::Vec;
 
-struct SocketEntry {
+pub struct SocketEntry {
     kernel_socket_id: u32,
     afd_handle: u64,
     socket_type: i32,
-    protocol: i32,
+    pub protocol: i32,
     nonblocking: bool,
 }
 
@@ -112,19 +110,17 @@ pub fn socket(af: i32, socket_type: i32, protocol: i32) -> usize {
     };
 
     match socket::socket(sock_type, proto) {
-        Some(kernel_id) => {
-            match alloc_socket_handle(kernel_id, socket_type, protocol) {
-                Some(handle) => {
-                    set_last_error(0);
-                    handle
-                }
-                None => {
-                    socket::close(kernel_id).ok();
-                    set_last_error(WSAENOBUFS);
-                    INVALID_SOCKET
-                }
+        Some(kernel_id) => match alloc_socket_handle(kernel_id, socket_type, protocol) {
+            Some(handle) => {
+                set_last_error(0);
+                handle
             }
-        }
+            None => {
+                socket::close(kernel_id).ok();
+                set_last_error(WSAENOBUFS);
+                INVALID_SOCKET
+            }
+        },
         None => {
             set_last_error(WSAENOBUFS);
             INVALID_SOCKET
@@ -204,31 +200,29 @@ pub fn accept(s: usize, addr: *mut sockaddr, addrlen: *mut i32) -> usize {
     };
 
     match socket::accept(kernel_id) {
-        Ok(peer_id) => {
-            match alloc_socket_handle(peer_id, SOCK_STREAM, IPPROTO_TCP) {
-                Some(handle) => {
-                    if !addr.is_null() && !addrlen.is_null() {
-                        if let Some(peer_addr) = socket::get_remote_addr(peer_id) {
-                            unsafe {
-                                let addr_in = &mut *(addr as *mut sockaddr_in);
-                                addr_in.sin_family = peer_addr.family;
-                                addr_in.sin_port = peer_addr.port;
-                                addr_in.sin_addr.s_addr = peer_addr.ip();
-                                addr_in.sin_zero = [0; 8];
-                                *addrlen = core::mem::size_of::<sockaddr_in>() as i32;
-                            }
+        Ok(peer_id) => match alloc_socket_handle(peer_id, SOCK_STREAM, IPPROTO_TCP) {
+            Some(handle) => {
+                if !addr.is_null() && !addrlen.is_null() {
+                    if let Some(peer_addr) = socket::get_remote_addr(peer_id) {
+                        unsafe {
+                            let addr_in = &mut *(addr as *mut sockaddr_in);
+                            addr_in.sin_family = peer_addr.family;
+                            addr_in.sin_port = peer_addr.port;
+                            addr_in.sin_addr.s_addr = peer_addr.ip();
+                            addr_in.sin_zero = [0; 8];
+                            *addrlen = core::mem::size_of::<sockaddr_in>() as i32;
                         }
                     }
-                    set_last_error(0);
-                    handle
                 }
-                None => {
-                    socket::close(peer_id).ok();
-                    set_last_error(WSAENOBUFS);
-                    INVALID_SOCKET
-                }
+                set_last_error(0);
+                handle
             }
-        }
+            None => {
+                socket::close(peer_id).ok();
+                set_last_error(WSAENOBUFS);
+                INVALID_SOCKET
+            }
+        },
         Err(socket::SocketError::WouldBlock) => {
             set_last_error(WSAEWOULDBLOCK);
             INVALID_SOCKET
@@ -279,7 +273,7 @@ pub fn connect(s: usize, name: *const sockaddr, namelen: i32) -> i32 {
     }
 }
 
-pub fn send(s: usize, buf: *const u8, len: i32, flags: i32) -> i32 {
+pub fn send(s: usize, buf: *const u8, len: i32, _flags: i32) -> i32 {
     if buf.is_null() || len < 0 {
         set_last_error(WSAEFAULT);
         return SOCKET_ERROR;
@@ -311,7 +305,7 @@ pub fn send(s: usize, buf: *const u8, len: i32, flags: i32) -> i32 {
     }
 }
 
-pub fn recv(s: usize, buf: *mut u8, len: i32, flags: i32) -> i32 {
+pub fn recv(s: usize, buf: *mut u8, len: i32, _flags: i32) -> i32 {
     if buf.is_null() || len < 0 {
         set_last_error(WSAEFAULT);
         return SOCKET_ERROR;
@@ -343,8 +337,14 @@ pub fn recv(s: usize, buf: *mut u8, len: i32, flags: i32) -> i32 {
     }
 }
 
-pub fn sendto(s: usize, buf: *const u8, len: i32, flags: i32,
-              to: *const sockaddr, tolen: i32) -> i32 {
+pub fn sendto(
+    s: usize,
+    buf: *const u8,
+    len: i32,
+    flags: i32,
+    to: *const sockaddr,
+    tolen: i32,
+) -> i32 {
     // For connected sockets or when to is NULL, just use send()
     if to.is_null() {
         return send(s, buf, len, flags);
@@ -358,8 +358,14 @@ pub fn sendto(s: usize, buf: *const u8, len: i32, flags: i32,
     send(s, buf, len, flags)
 }
 
-pub fn recvfrom(s: usize, buf: *mut u8, len: i32, flags: i32,
-                from: *mut sockaddr, fromlen: *mut i32) -> i32 {
+pub fn recvfrom(
+    s: usize,
+    buf: *mut u8,
+    len: i32,
+    _flags: i32,
+    from: *mut sockaddr,
+    fromlen: *mut i32,
+) -> i32 {
     if buf.is_null() || len < 0 {
         set_last_error(WSAEFAULT);
         return SOCKET_ERROR;
@@ -426,7 +432,7 @@ pub fn closesocket(s: usize) -> i32 {
 }
 
 pub fn shutdown(s: usize, how: i32) -> i32 {
-    let kernel_id = match get_kernel_socket_id(s) {
+    let _kernel_id = match get_kernel_socket_id(s) {
         Some(id) => id,
         None => {
             set_last_error(WSAENOTSOCK);
@@ -446,9 +452,8 @@ pub fn shutdown(s: usize, how: i32) -> i32 {
     }
 }
 
-pub fn setsockopt(s: usize, level: i32, optname: i32,
-                  optval: *const u8, optlen: i32) -> i32 {
-    let kernel_id = match get_kernel_socket_id(s) {
+pub fn setsockopt(s: usize, level: i32, optname: i32, optval: *const u8, optlen: i32) -> i32 {
+    let _kernel_id = match get_kernel_socket_id(s) {
         Some(id) => id,
         None => {
             set_last_error(WSAENOTSOCK);
@@ -462,13 +467,13 @@ pub fn setsockopt(s: usize, level: i32, optname: i32,
     }
 
     match (level, optname) {
-        (SOL_SOCKET, SO_REUSEADDR) |
-        (SOL_SOCKET, SO_KEEPALIVE) |
-        (SOL_SOCKET, SO_BROADCAST) |
-        (SOL_SOCKET, SO_SNDBUF) |
-        (SOL_SOCKET, SO_RCVBUF) |
-        (SOL_SOCKET, SO_SNDTIMEO) |
-        (SOL_SOCKET, SO_RCVTIMEO) => {
+        (SOL_SOCKET, SO_REUSEADDR)
+        | (SOL_SOCKET, SO_KEEPALIVE)
+        | (SOL_SOCKET, SO_BROADCAST)
+        | (SOL_SOCKET, SO_SNDBUF)
+        | (SOL_SOCKET, SO_RCVBUF)
+        | (SOL_SOCKET, SO_SNDTIMEO)
+        | (SOL_SOCKET, SO_RCVTIMEO) => {
             set_last_error(0);
             0
         }
@@ -483,9 +488,8 @@ pub fn setsockopt(s: usize, level: i32, optname: i32,
     }
 }
 
-pub fn getsockopt(s: usize, level: i32, optname: i32,
-                  optval: *mut u8, optlen: *mut i32) -> i32 {
-    let kernel_id = match get_kernel_socket_id(s) {
+pub fn getsockopt(s: usize, level: i32, optname: i32, optval: *mut u8, optlen: *mut i32) -> i32 {
+    let _kernel_id = match get_kernel_socket_id(s) {
         Some(id) => id,
         None => {
             set_last_error(WSAENOTSOCK);
@@ -533,7 +537,7 @@ pub fn getsockopt(s: usize, level: i32, optname: i32,
 }
 
 pub fn ioctlsocket(s: usize, cmd: i32, argp: *mut u32) -> i32 {
-    let kernel_id = match get_kernel_socket_id(s) {
+    let _kernel_id = match get_kernel_socket_id(s) {
         Some(id) => id,
         None => {
             set_last_error(WSAENOTSOCK);
@@ -554,7 +558,9 @@ pub fn ioctlsocket(s: usize, cmd: i32, argp: *mut u32) -> i32 {
             0
         }
         FIONREAD => {
-            unsafe { *argp = 0; }
+            unsafe {
+                *argp = 0;
+            }
             set_last_error(0);
             0
         }
@@ -565,8 +571,13 @@ pub fn ioctlsocket(s: usize, cmd: i32, argp: *mut u32) -> i32 {
     }
 }
 
-pub fn select(nfds: i32, readfds: *mut fd_set, writefds: *mut fd_set,
-              exceptfds: *mut fd_set, timeout: *const timeval) -> i32 {
+pub fn select(
+    _nfds: i32,
+    readfds: *mut fd_set,
+    writefds: *mut fd_set,
+    exceptfds: *mut fd_set,
+    _timeout: *const timeval,
+) -> i32 {
     let mut total = 0;
 
     if !readfds.is_null() {
@@ -578,7 +589,10 @@ pub fn select(nfds: i32, readfds: *mut fd_set, writefds: *mut fd_set,
             let s = read_set.fd_array[i];
             if let Some(kernel_id) = get_kernel_socket_id(s) {
                 if let Some(state) = socket::get_state(kernel_id) {
-                    if matches!(state, socket::SocketState::Connected | socket::SocketState::Listening) {
+                    if matches!(
+                        state,
+                        socket::SocketState::Connected | socket::SocketState::Listening
+                    ) {
                         ready_sockets[ready_count] = s;
                         ready_count += 1;
                     }
@@ -618,7 +632,9 @@ pub fn select(nfds: i32, readfds: *mut fd_set, writefds: *mut fd_set,
     }
 
     if !exceptfds.is_null() {
-        unsafe { (*exceptfds).fd_count = 0; }
+        unsafe {
+            (*exceptfds).fd_count = 0;
+        }
     }
 
     set_last_error(0);

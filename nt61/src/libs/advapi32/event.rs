@@ -3,34 +3,31 @@
 //! Implements Windows Event Log functions:
 //! - RegisterEventSourceW — Register an event source
 //! - DeregisterEventSource — Unregister an event source
-//! - ReportEventW — Write an event to the event log
+//! - ReportEventW — write an event to the event log
 //! - OpenEventLogW — Open an event log for reading
-//! - CloseEventLog — Close an event log handle
-//! - ReadEventLogW — Read events from the log
+//! - CloseEventLog — close an event log handle
+//! - ReadEventLogW — read events from the log
 //! - ClearEventLogW — Clear an event log
 
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::AtomicUsize;
 
-#[allow(non_snake_case, non_upper_case_globals, dead_code)]
 use super::types::*;
-use crate::libs::ntdll::types::{BYTE, DWORD, HANDLE, PCWSTR, PVOID, PWSTR, WORD};
-use alloc::vec::Vec;
-use core::ptr::{null, null_mut};
+use crate::libs::ntdll::types::{DWORD, HANDLE, PCWSTR, PVOID, WORD};
 
 const MAX_EVENT_ENTRIES: usize = 1024;
 
 #[derive(Copy, Clone)]
-struct EventLogEntry {
-    event_type: WORD,
-    event_category: WORD,
-    event_id: DWORD,
-    user_sid: Option<[u8; 28]>,
-    num_strings: WORD,
-    data_size: WORD,
-    source: [u16; 64],
-    computer: [u16; 64],
-    strings: [[u16; 256]; 8],
-    data: [u8; 256],
+pub struct EventLogEntry {
+    pub event_type: WORD,
+    pub event_category: WORD,
+    pub event_id: DWORD,
+    pub user_sid: Option<[u8; 28]>,
+    pub num_strings: WORD,
+    pub data_size: WORD,
+    pub source: [u16; 64],
+    pub computer: [u16; 64],
+    pub strings: [[u16; 256]; 8],
+    pub data: [u8; 256],
     in_use: bool,
 }
 
@@ -54,10 +51,10 @@ impl EventLogEntry {
 
 static mut EVENT_LOG: [EventLogEntry; MAX_EVENT_ENTRIES] =
     [EventLogEntry::new(); MAX_EVENT_ENTRIES];
-static EVENT_LOG_COUNT: AtomicUsize = AtomicUsize::new(0);
+pub static EVENT_LOG_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Copy, Clone)]
-struct EventSourceHandle {
+pub struct EventSourceHandle {
     source_name: [u16; 64],
     access: DWORD,
     is_source: bool,
@@ -75,13 +72,16 @@ static mut EVENT_HANDLES: [EventSourceHandle; MAX_EVENT_HANDLES] = [EventSourceH
     in_use: false,
 }; MAX_EVENT_HANDLES];
 
-fn alloc_event_handle(
+pub fn alloc_event_handle(
     source_name: &[u16],
     is_source: bool,
     access: DWORD,
-) -> Option<HANDLE_EVENTLOG> {
+) -> Option<HandleEventlog> {
     unsafe {
-        for (i, entry) in EVENT_HANDLES.iter_mut().enumerate() {
+        for (i, entry) in (*core::ptr::addr_of_mut!(EVENT_HANDLES))
+            .iter_mut()
+            .enumerate()
+        {
             if !entry.in_use {
                 let copy_len = core::cmp::min(source_name.len(), entry.source_name.len() - 1);
                 entry.source_name[..copy_len].copy_from_slice(&source_name[..copy_len]);
@@ -90,14 +90,14 @@ fn alloc_event_handle(
                 entry.access = access;
                 entry.read_position = 0;
                 entry.in_use = true;
-                return Some((0x4000 + i * 4) as HANDLE_EVENTLOG);
+                return Some((0x4000 + i * 4) as HandleEventlog);
             }
         }
     }
     None
 }
 
-fn free_event_handle(handle: HANDLE_EVENTLOG) -> bool {
+pub fn free_event_handle(handle: HandleEventlog) -> bool {
     let index = ((handle as usize) - 0x4000) / 4;
     unsafe {
         if index < MAX_EVENT_HANDLES && EVENT_HANDLES[index].in_use {
@@ -108,7 +108,7 @@ fn free_event_handle(handle: HANDLE_EVENTLOG) -> bool {
     false
 }
 
-fn get_event_handle(handle: HANDLE_EVENTLOG) -> Option<&'static mut EventSourceHandle> {
+fn get_event_handle(handle: HandleEventlog) -> Option<&'static mut EventSourceHandle> {
     let index = ((handle as usize) - 0x4000) / 4;
     unsafe {
         if index < MAX_EVENT_HANDLES && EVENT_HANDLES[index].in_use {
@@ -118,7 +118,7 @@ fn get_event_handle(handle: HANDLE_EVENTLOG) -> Option<&'static mut EventSourceH
     None
 }
 
-unsafe fn copy_wide_to_buffer(dest: &mut [u16], src: PCWSTR) {
+pub unsafe fn copy_wide_to_buffer(dest: &mut [u16], src: PCWSTR) {
     if src.is_null() {
         dest[0] = 0;
         return;
@@ -136,15 +136,15 @@ unsafe fn copy_wide_to_buffer(dest: &mut [u16], src: PCWSTR) {
 
 #[no_mangle]
 pub unsafe extern "C" fn ReadEventLogW(
-    hEventLog: HANDLE_EVENTLOG,
-    dwReadFlags: DWORD,
-    dwRecordOffset: DWORD,
-    lpBuffer: PVOID,
-    nNumberOfBytesToRead: DWORD,
-    pnBytesRead: *mut DWORD,
-    pnMinNumberOfBytesNeeded: *mut DWORD,
+    h_event_log: HandleEventlog,
+    _dw_read_flags: DWORD,
+    _dw_record_offset: DWORD,
+    _lp_buffer: PVOID,
+    _n_number_of_bytes_to_read: DWORD,
+    pn_bytes_read: *mut DWORD,
+    pn_min_number_of_bytes_needed: *mut DWORD,
 ) -> LONG {
-    let handle_entry = match get_event_handle(hEventLog) {
+    let handle_entry = match get_event_handle(h_event_log) {
         Some(h) => h,
         None => return 0, // FALSE
     };
@@ -153,12 +153,12 @@ pub unsafe extern "C" fn ReadEventLogW(
         return 0; // Cannot read from event source
     }
 
-    if !pnBytesRead.is_null() {
-        *pnBytesRead = 0;
+    if !pn_bytes_read.is_null() {
+        *pn_bytes_read = 0;
     }
 
-    if !pnMinNumberOfBytesNeeded.is_null() {
-        *pnMinNumberOfBytesNeeded = 0;
+    if !pn_min_number_of_bytes_needed.is_null() {
+        *pn_min_number_of_bytes_needed = 0;
     }
 
     0 // FALSE
@@ -166,55 +166,55 @@ pub unsafe extern "C" fn ReadEventLogW(
 
 #[no_mangle]
 pub unsafe extern "C" fn GetNumberOfEventLogRecords(
-    hEventLog: HANDLE_EVENTLOG,
-    NumberOfRecords: *mut DWORD,
+    h_event_log: HandleEventlog,
+    number_of_records: *mut DWORD,
 ) -> LONG {
-    if NumberOfRecords.is_null() {
+    if number_of_records.is_null() {
         return 0; // FALSE
     }
 
-    if get_event_handle(hEventLog).is_none() {
+    if get_event_handle(h_event_log).is_none() {
         return 0; // FALSE
     }
 
     let mut count = 0;
-    for entry in EVENT_LOG.iter() {
+    for entry in (*core::ptr::addr_of!(EVENT_LOG)).iter() {
         if entry.in_use {
             count += 1;
         }
     }
 
-    *NumberOfRecords = count;
+    *number_of_records = count;
     1 // TRUE
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn GetOldestEventLogRecord(
-    hEventLog: HANDLE_EVENTLOG,
-    OldestRecord: *mut DWORD,
+    h_event_log: HandleEventlog,
+    oldest_record: *mut DWORD,
 ) -> LONG {
-    if OldestRecord.is_null() {
+    if oldest_record.is_null() {
         return 0; // FALSE
     }
 
-    if get_event_handle(hEventLog).is_none() {
+    if get_event_handle(h_event_log).is_none() {
         return 0; // FALSE
     }
 
-    *OldestRecord = 0;
+    *oldest_record = 0;
     1 // TRUE
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn BackupEventLogW(
-    hEventLog: HANDLE_EVENTLOG,
-    lpBackupFileName: PCWSTR,
+    h_event_log: HandleEventlog,
+    lp_backup_file_name: PCWSTR,
 ) -> LONG {
-    if lpBackupFileName.is_null() {
+    if lp_backup_file_name.is_null() {
         return 0; // FALSE
     }
 
-    if get_event_handle(hEventLog).is_none() {
+    if get_event_handle(h_event_log).is_none() {
         return 0; // FALSE
     }
 
@@ -222,8 +222,11 @@ pub unsafe extern "C" fn BackupEventLogW(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn NotifyChangeEventLog(hEventLog: HANDLE_EVENTLOG, hEvent: HANDLE) -> LONG {
-    if get_event_handle(hEventLog).is_none() {
+pub unsafe extern "C" fn NotifyChangeEventLog(
+    h_event_log: HandleEventlog,
+    _h_event: HANDLE,
+) -> LONG {
+    if get_event_handle(h_event_log).is_none() {
         return 0; // FALSE
     }
 

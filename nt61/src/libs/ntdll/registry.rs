@@ -62,7 +62,7 @@ pub struct RegValue {
 }
 
 impl RegValue {
-    /// Create a new RegValue with bounds checking.
+    /// create a new RegValue with bounds checking.
     ///
     /// If `name.len() > MAX_VALUE_NAME_LEN` or `data.len() > MAX_VALUE_DATA_SIZE`,
     /// returns `None` instead of silently truncating. Callers should validate
@@ -91,7 +91,7 @@ impl RegValue {
         Some(result)
     }
 
-    /// Create a new RegValue with truncation (for internal use where
+    /// create a new RegValue with truncation (for internal use where
     /// the caller has already validated or knowingly accepts truncation).
     ///
     /// This is a fallback for scenarios where truncation is acceptable
@@ -153,10 +153,21 @@ impl RegistryKey {
 static REGISTRY_ROOT: spin::Spinlock<Option<*mut RegistryKey>> = spin::Spinlock::new(None);
 
 /// Key handle table — 256 slots, each holding an optional entry.
-/// Handle = slot_index + 1 (1-based, so 0 is an invalid handle).
+/// handle = slot_index + 1 (1-based, so 0 is an invalid handle).
 /// Used by all Nt*Key functions to resolve HANDLE -> *mut RegistryKey.
 static KEY_HANDLE_TABLE: spin::Spinlock<[Option<KeyHandleEntry>; MAX_KEY_HANDLES]> =
     spin::Spinlock::new([const { None }; MAX_KEY_HANDLES]);
+
+const MAX_KEY_NOTIFICATIONS: usize = 32;
+
+struct RegistryNotification {
+    key_ptr: *mut RegistryKey,
+    event_handle: HANDLE,
+    watch_tree: bool,
+}
+
+static KEY_NOTIFICATIONS: spin::Spinlock<[Option<RegistryNotification>; MAX_KEY_NOTIFICATIONS]> =
+    spin::Spinlock::new([const { None }; MAX_KEY_NOTIFICATIONS]);
 
 /// Round-robin pointer for handle allocation. After a full scan fails,
 /// the next allocation starts from this position to avoid always scanning
@@ -264,11 +275,42 @@ fn allocate_handle_slot(key: *mut RegistryKey) -> Option<usize> {
     None
 }
 
-/// Deallocate a handle slot. Called by NtRegCloseKey.
-fn deallocate_handle_slot(slot_index: usize) {
+/// Deallocate a handle slot. Called by nt_reg_close_key.
+pub fn deallocate_handle_slot(slot_index: usize) {
     if slot_index < MAX_KEY_HANDLES {
         let mut handle_table = KEY_HANDLE_TABLE.lock();
         handle_table[slot_index] = None;
+    }
+}
+
+fn registry_key_is_descendant_or_same(key: *mut RegistryKey, ancestor: *mut RegistryKey) -> bool {
+    if key.is_null() || ancestor.is_null() {
+        return false;
+    }
+    let mut current = key;
+    while !current.is_null() {
+        if current == ancestor {
+            return true;
+        }
+        current = unsafe { (*current).parent };
+    }
+    false
+}
+
+fn notify_registry_change(changed_key: *mut RegistryKey) {
+    let mut notifications = KEY_NOTIFICATIONS.lock();
+    for slot in notifications.iter_mut() {
+        let Some(notification) = slot else { continue };
+        let matches = notification.watch_tree
+            && registry_key_is_descendant_or_same(changed_key, notification.key_ptr)
+            || (!notification.watch_tree && changed_key == notification.key_ptr);
+        if matches {
+            let event_handle = notification.event_handle;
+            unsafe {
+                let _ = crate::libs::ntdll::sync::nt_set_event(event_handle, core::ptr::null_mut());
+            }
+            *slot = None;
+        }
     }
 }
 
@@ -309,7 +351,7 @@ pub fn init() {
     }
 }
 
-/// Create a subkey under the given parent.
+/// create a subkey under the given parent.
 pub fn create_subkey(parent: *mut RegistryKey, name: &[u16]) -> Option<*mut RegistryKey> {
     let key_ptr = crate::mm::pool::allocate(
         crate::mm::pool::PoolType::NonPaged,
@@ -474,10 +516,10 @@ pub fn get_value(key: *mut RegistryKey, name: &[u16]) -> Option<(ValueType, usiz
 // ntdll Registry API Functions
 // ============================================================================
 
-/// NtCreateKey — creates or opens a registry key and returns a handle.
+/// nt_create_key — creates or opens a registry key and returns a handle.
 ///
-/// Handle semantics: slot_index + 1 (1-based), so 0 is invalid.
-pub unsafe extern "C" fn NtCreateKey(
+/// handle semantics: slot_index + 1 (1-based), so 0 is invalid.
+pub unsafe extern "C" fn nt_create_key(
     key_handle: *mut HANDLE,
     _desired_access: u32,
     object_attributes: *mut ObjectAttributes,
@@ -495,7 +537,7 @@ pub unsafe extern "C" fn NtCreateKey(
 
     let path = if !object_attributes.is_null() && !(*object_attributes).object_name.is_null() {
         let name = &*(*object_attributes).object_name;
-        core::slice::from_raw_parts(name.Buffer, name.Length as usize / 2)
+        core::slice::from_raw_parts(name.buffer, name.length as usize / 2)
     } else {
         return STATUS_OBJECT_NAME_NOT_FOUND;
     };
@@ -531,7 +573,7 @@ pub unsafe extern "C" fn NtCreateKey(
             if let Some(found_key) = found {
                 current = found_key;
             } else {
-                // Create missing subkey.
+                // create missing subkey.
                 let new_key = match create_subkey(current, component) {
                     Some(k) => k,
                     None => return STATUS_OBJECT_NAME_NOT_FOUND,
@@ -572,8 +614,8 @@ pub unsafe extern "C" fn NtCreateKey(
     STATUS_SUCCESS
 }
 
-/// NtOpenKey — opens an existing registry key.
-pub unsafe extern "C" fn NtOpenKey(
+/// nt_open_key — opens an existing registry key.
+pub unsafe extern "C" fn nt_open_key(
     key_handle: *mut HANDLE,
     desired_access: u32,
     object_attributes: *mut ObjectAttributes,
@@ -586,7 +628,7 @@ pub unsafe extern "C" fn NtOpenKey(
 
     let path = if !object_attributes.is_null() && !(*object_attributes).object_name.is_null() {
         let name = &*(*object_attributes).object_name;
-        core::slice::from_raw_parts(name.Buffer, name.Length as usize / 2)
+        core::slice::from_raw_parts(name.buffer, name.length as usize / 2)
     } else {
         return STATUS_OBJECT_NAME_NOT_FOUND;
     };
@@ -642,10 +684,10 @@ pub unsafe extern "C" fn NtOpenKey(
     STATUS_SUCCESS
 }
 
-/// NtSetValueKey — sets a value on an open key.
+/// nt_set_value_key — sets a value on an open key.
 ///
 /// SECURITY: Validates data_size against MAX_VALUE_DATA_SIZE before copying.
-pub unsafe extern "C" fn NtSetValueKey(
+pub unsafe extern "C" fn nt_set_value_key(
     key_handle: HANDLE,
     value_name: *mut UnicodeString,
     title_index: u32,
@@ -655,7 +697,7 @@ pub unsafe extern "C" fn NtSetValueKey(
 ) -> NTSTATUS {
     let _ = title_index;
 
-    // Handle = slot_index + 1. Validate range first.
+    // handle = slot_index + 1. Validate range first.
     let handle_idx = (key_handle as usize).saturating_sub(1);
     if handle_idx >= MAX_KEY_HANDLES {
         return STATUS_INVALID_PARAMETER;
@@ -673,7 +715,7 @@ pub unsafe extern "C" fn NtSetValueKey(
     // Extract value name.
     let name = if !value_name.is_null() {
         let name = &*value_name;
-        core::slice::from_raw_parts(name.Buffer, name.Length as usize / 2)
+        core::slice::from_raw_parts(name.buffer, name.length as usize / 2)
     } else {
         return STATUS_INVALID_PARAMETER;
     };
@@ -720,14 +762,15 @@ pub unsafe extern "C" fn NtSetValueKey(
     );
 
     if set_value(key, name, vtype, data_slice) {
+        notify_registry_change(key);
         STATUS_SUCCESS
     } else {
         STATUS_INVALID_PARAMETER
     }
 }
 
-/// NtQueryValueKey — queries a value's type and size.
-pub unsafe extern "C" fn NtQueryValueKey(
+/// nt_query_value_key — queries a value's type and size.
+pub unsafe extern "C" fn nt_query_value_key(
     key_handle: HANDLE,
     value_name: *mut UnicodeString,
     key_value_information_class: u32,
@@ -755,7 +798,7 @@ pub unsafe extern "C" fn NtQueryValueKey(
 
     let name = if !value_name.is_null() {
         let name = &*value_name;
-        core::slice::from_raw_parts(name.Buffer, name.Length as usize / 2)
+        core::slice::from_raw_parts(name.buffer, name.length as usize / 2)
     } else {
         return STATUS_OBJECT_NAME_NOT_FOUND;
     };
@@ -779,16 +822,16 @@ pub unsafe extern "C" fn NtQueryValueKey(
     }
 }
 
-/// NtDeleteKey — registry keys cannot be deleted via this API.
-pub unsafe extern "C" fn NtDeleteKey(_key_handle: HANDLE) -> NTSTATUS {
+/// nt_delete_key — registry keys cannot be deleted via this API.
+pub unsafe extern "C" fn nt_delete_key(_key_handle: HANDLE) -> NTSTATUS {
     // STATUS_CANNOT_DELETE
     const STATUS_CANNOT_DELETE: NTSTATUS = -1073741791;
     kprintln!(subsystem: "REG", "    [REG] NtDeleteKey: not supported");
     STATUS_CANNOT_DELETE
 }
 
-/// NtDeleteValueKey — deletes a named value from a key.
-pub unsafe extern "C" fn NtDeleteValueKey(
+/// nt_delete_value_key — deletes a named value from a key.
+pub unsafe extern "C" fn nt_delete_value_key(
     key_handle: HANDLE,
     value_name: *mut UnicodeString,
 ) -> NTSTATUS {
@@ -833,11 +876,11 @@ pub unsafe extern "C" fn NtDeleteValueKey(
 
     // Extract ValueName UTF-16 string.
     let name_ustr = unsafe { &*value_name };
-    if name_ustr.Length == 0 || name_ustr.Buffer.is_null() {
+    if name_ustr.length == 0 || name_ustr.buffer.is_null() {
         kprintln!(subsystem: "REG", "    [REG] NtDeleteValueKey: empty ValueName");
         return STATUS_OBJECT_NAME_NOT_FOUND;
     }
-    let name_len_u16 = (name_ustr.Length as usize) / 2;
+    let name_len_u16 = (name_ustr.length as usize) / 2;
     // SECURITY: Refuse names longer than MAX_VALUE_NAME_LEN.
     if name_len_u16 > MAX_VALUE_NAME_LEN {
         kprintln!(
@@ -848,7 +891,7 @@ pub unsafe extern "C" fn NtDeleteValueKey(
         );
         return STATUS_OBJECT_NAME_NOT_FOUND;
     }
-    let name_slice = core::slice::from_raw_parts(name_ustr.Buffer, name_len_u16);
+    let name_slice = core::slice::from_raw_parts(name_ustr.buffer, name_len_u16);
 
     unsafe {
         let key_ref = &mut *key;
@@ -890,6 +933,7 @@ pub unsafe extern "C" fn NtDeleteValueKey(
                     key_ref.values[idx] = None;
                 }
                 key_ref.value_count -= 1;
+                notify_registry_change(key);
                 kprintln!(
                     subsystem: "REG",
                     "    [REG] NtDeleteValueKey: deleted value at idx={}, count={}",
@@ -960,8 +1004,8 @@ const KEY_NODE_INFORMATION_SIZE: usize = 28;
 const KEY_VALUE_BASIC_INFORMATION_SIZE: usize = 12;
 const KEY_VALUE_FULL_INFORMATION_SIZE: usize = 20;
 
-/// NtQueryKey — query information about a registry key.
-pub unsafe extern "C" fn NtQueryKey(
+/// nt_query_key — query information about a registry key.
+pub unsafe extern "C" fn nt_query_key(
     key_handle: HANDLE,
     key_information_class: u32,
     key_information: PVOID,
@@ -1059,8 +1103,8 @@ pub unsafe extern "C" fn NtQueryKey(
     }
 }
 
-/// NtEnumerateKey — enumerate subkeys of a registry key.
-pub unsafe extern "C" fn NtEnumerateKey(
+/// nt_enumerate_key — enumerate subkeys of a registry key.
+pub unsafe extern "C" fn nt_enumerate_key(
     key_handle: HANDLE,
     index: u32,
     key_information_class: u32,
@@ -1175,8 +1219,8 @@ pub unsafe extern "C" fn NtEnumerateKey(
     }
 }
 
-/// NtEnumerateValueKey — enumerate values of a registry key.
-pub unsafe extern "C" fn NtEnumerateValueKey(
+/// nt_enumerate_value_key — enumerate values of a registry key.
+pub unsafe extern "C" fn nt_enumerate_value_key(
     key_handle: HANDLE,
     index: u32,
     key_value_information_class: u32,
@@ -1310,10 +1354,10 @@ pub unsafe extern "C" fn NtEnumerateValueKey(
                 return STATUS_BUFFER_TOO_SMALL;
             }
 
-            // Write KeyValuePartialInformation structure
+            // write KeyValuePartialInformation structure
             let info_ptr = key_value_information as *mut u8;
             core::ptr::write_unaligned(info_ptr as *mut u32, 0); // TitleIndex
-            core::ptr::write_unaligned((info_ptr as *mut u32).add(1), value.value_type as u32); // Type
+            core::ptr::write_unaligned((info_ptr as *mut u32).add(1), value.value_type as u32); // r#type
             core::ptr::write_unaligned((info_ptr as *mut u32).add(2), value.data_size); // DataSize
             core::ptr::write_unaligned((info_ptr as *mut u64).add(1), 0); // Data (aligned)
 
@@ -1327,8 +1371,8 @@ pub unsafe extern "C" fn NtEnumerateValueKey(
     }
 }
 
-/// NtRegCloseKey — close a registry key handle.
-pub unsafe extern "C" fn NtRegCloseKey(key_handle: HANDLE) -> NTSTATUS {
+/// nt_reg_close_key — close a registry key handle.
+pub unsafe extern "C" fn nt_reg_close_key(key_handle: HANDLE) -> NTSTATUS {
     use crate::libs::ntdll::status::STATUS_INVALID_HANDLE;
 
     let handle_idx = (key_handle as usize).saturating_sub(1);
@@ -1351,11 +1395,66 @@ pub unsafe extern "C" fn NtRegCloseKey(key_handle: HANDLE) -> NTSTATUS {
     }
 }
 
+/// nt_flush_key — flush pending changes for a key.
+///
+/// The kernel registry cache in this build is written through on every
+/// `nt_set_value_key`/`nt_delete_value_key` call, so there is nothing pending
+/// to flush. The handle is still validated to match the real API's
+/// error behaviour.
+pub unsafe extern "C" fn nt_flush_key(key_handle: HANDLE) -> NTSTATUS {
+    let handle_idx = (key_handle as usize).saturating_sub(1);
+    if handle_idx >= MAX_KEY_HANDLES || KEY_HANDLE_TABLE.lock()[handle_idx].is_none() {
+        return STATUS_INVALID_HANDLE;
+    }
+    STATUS_SUCCESS
+}
+
+/// nt_notify_change_key — register (or wait for) key change notifications.
+///
+/// Synchronous requests report success. Asynchronous requests register the
+/// supplied event; value mutations signal it and remove the notification.
+pub unsafe extern "C" fn nt_notify_change_key(
+    key_handle: HANDLE,
+    event_handle: HANDLE,
+    _apc_routine: PVOID,
+    _apc_context: PVOID,
+    _completion_list: PVOID,
+    _completion_filter: u32,
+    watch_tree: u32,
+    _buffer: PVOID,
+    _buffer_size: u32,
+    asynchronous: u32,
+) -> NTSTATUS {
+    let handle_idx = (key_handle as usize).saturating_sub(1);
+    if handle_idx >= MAX_KEY_HANDLES || KEY_HANDLE_TABLE.lock()[handle_idx].is_none() {
+        return STATUS_INVALID_HANDLE;
+    }
+
+    if asynchronous == 0 {
+        return STATUS_SUCCESS;
+    }
+
+    let mut notifications = KEY_NOTIFICATIONS.lock();
+    if let Some(free_slot) = notifications.iter().position(|slot| slot.is_none()) {
+        let key_ptr = KEY_HANDLE_TABLE.lock()[handle_idx]
+            .as_ref()
+            .map(|entry| entry.key_ptr)
+            .unwrap_or(core::ptr::null_mut());
+        notifications[free_slot] = Some(RegistryNotification {
+            key_ptr,
+            event_handle,
+            watch_tree: watch_tree != 0,
+        });
+        return 0x40000003_u32 as i32;
+    }
+    STATUS_SUCCESS
+}
+
 /// Initialize default registry keys (SYSTEM, SOFTWARE, HARDWARE, SAM, SECURITY).
 pub fn init_default_keys() {
     let root = REGISTRY_ROOT.lock();
     if let Some(root_key) = *root {
-        // Create SYSTEM hive key.
+        // create SYSTEM hive key.
         let sys_path = [
             b'S' as u16,
             b'Y' as u16,
@@ -1366,7 +1465,7 @@ pub fn init_default_keys() {
         ];
         let _ = create_subkey(root_key, &sys_path);
 
-        // Create SOFTWARE hive key with a version value.
+        // create SOFTWARE hive key with a version value.
         let soft_path = [
             b'S' as u16,
             b'O' as u16,
@@ -1379,7 +1478,7 @@ pub fn init_default_keys() {
         ];
         let _ = create_subkey(root_key, &soft_path);
 
-        // Create HARDWARE hive key.
+        // create HARDWARE hive key.
         let hw_path = [
             b'H' as u16,
             b'A' as u16,
@@ -1392,11 +1491,11 @@ pub fn init_default_keys() {
         ];
         let _ = create_subkey(root_key, &hw_path);
 
-        // Create SAM hive key.
+        // create SAM hive key.
         let sam_path = [b'S' as u16, b'A' as u16, b'M' as u16];
         let _ = create_subkey(root_key, &sam_path);
 
-        // Create SECURITY hive key.
+        // create SECURITY hive key.
         let sec_path = [
             b'S' as u16,
             b'E' as u16,

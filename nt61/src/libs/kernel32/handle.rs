@@ -1,31 +1,31 @@
 //! kernel32 — handle management
 //
-//! `CloseHandle`, `DuplicateHandle`, `IsValidHandle`,
-//! `GetHandleInformation`, `SetHandleInformation`. Wraps
-//! `ntdll!NtClose` with a slight layer that ignores
+//! `close_handle`, `duplicate_handle`, `is_valid_handle`,
+//! `get_handle_information`, `set_handle_information`. Wraps
+//! `ntdll!NT_CLOSE` with a slight layer that ignores
 //! `HANDLE_CURRENT_PROCESS` / `HANDLE_CURRENT_THREAD`
 //! (the pseudo-handles).
 
 use super::types::{
     BOOL, DWORD, FALSE, HANDLE, HANDLE_CURRENT_PROCESS, HANDLE_CURRENT_THREAD, TRUE,
 };
-use crate::libs::ntdll::file::NtClose;
+use crate::libs::ntdll::file::nt_close;
 
-/// `CloseHandle`.
-pub unsafe extern "C" fn CloseHandle(handle: HANDLE) -> BOOL {
+/// `close_handle`.
+pub unsafe extern "C" fn close_handle(handle: HANDLE) -> BOOL {
     if handle == HANDLE_CURRENT_PROCESS || handle == HANDLE_CURRENT_THREAD {
         return TRUE;
     }
-    if NtClose(handle) == 0 {
+    if nt_close(handle) == 0 {
         TRUE
     } else {
         FALSE
     }
 }
 
-/// `DuplicateHandle` — the bootstrap always fails this
+/// `duplicate_handle` — the bootstrap always fails this
 /// because we do not own a real handle table.
-pub unsafe extern "C" fn DuplicateHandle(
+pub unsafe extern "C" fn duplicate_handle(
     _source_process: HANDLE,
     _source: HANDLE,
     _target_process: HANDLE,
@@ -40,9 +40,9 @@ pub unsafe extern "C" fn DuplicateHandle(
     FALSE
 }
 
-/// `IsValidHandle` — true if the handle is non-null and
+/// `is_valid_handle` — true if the handle is non-null and
 /// not a pseudo-handle.
-pub unsafe extern "C" fn IsValidHandle(handle: HANDLE) -> BOOL {
+pub unsafe extern "C" fn is_valid_handle(handle: HANDLE) -> BOOL {
     if handle.is_null() {
         return FALSE;
     }
@@ -52,16 +52,16 @@ pub unsafe extern "C" fn IsValidHandle(handle: HANDLE) -> BOOL {
     1
 }
 
-/// `GetHandleInformation` / `SetHandleInformation` — accept
+/// `get_handle_information` / `set_handle_information` — accept
 /// the call and return TRUE.
-pub unsafe extern "C" fn GetHandleInformation(_handle: HANDLE, flags: *mut DWORD) -> BOOL {
+pub unsafe extern "C" fn get_handle_information(_handle: HANDLE, flags: *mut DWORD) -> BOOL {
     if !flags.is_null() {
         *flags = 0;
     }
     TRUE
 }
 
-pub unsafe extern "C" fn SetHandleInformation(
+pub unsafe extern "C" fn set_handle_information(
     _handle: HANDLE,
     _mask: DWORD,
     _flags: DWORD,

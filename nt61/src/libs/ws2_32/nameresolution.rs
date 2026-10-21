@@ -1,16 +1,13 @@
-//! Name resolution functions
+//! name resolution functions
 //!
 //! Implements getaddrinfo, freeaddrinfo, getnameinfo, gethostbyname,
 //! gethostbyaddr, and related DNS resolution functions.
-
-#![allow(non_snake_case)]
 
 use super::error::*;
 use super::types::*;
 use crate::netstack::dns;
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
-use alloc::vec::Vec;
 
 pub fn getaddrinfo(
     nodename: *const u8,
@@ -136,7 +133,7 @@ pub fn getnameinfo(
     hostlen: u32,
     serv: *mut u8,
     servlen: u32,
-    flags: i32,
+    _flags: i32,
 ) -> i32 {
     if sa.is_null() || salen < core::mem::size_of::<sockaddr_in>() as i32 {
         set_last_error(WSAEFAULT);
@@ -250,12 +247,12 @@ pub fn gethostbyaddr(addr: *const u8, len: i32, addr_type: i32) -> *mut hostent 
     Box::into_raw(h)
 }
 
-pub fn getservbyname(name: *const u8, proto: *const u8) -> *mut servent {
+pub fn getservbyname(_name: *const u8, _proto: *const u8) -> *mut servent {
     set_last_error(WSANO_DATA);
     core::ptr::null_mut()
 }
 
-pub fn getservbyport(port: i32, proto: *const u8) -> *mut servent {
+pub fn getservbyport(_port: i32, _proto: *const u8) -> *mut servent {
     set_last_error(WSANO_DATA);
     core::ptr::null_mut()
 }
@@ -280,19 +277,22 @@ unsafe fn cstr_to_string(ptr: *const u8) -> String {
     String::from_utf8_lossy(slice).to_string()
 }
 
-pub fn WSAAddressToStringA(
-    lpsaAddress: *const sockaddr,
-    dwAddressLength: u32,
-    lpProtocolInfo: *const WSAPROTOCOL_INFOW,
-    lpszAddressString: *mut u8,
-    lpdwAddressStringLength: *mut u32,
+pub fn wsaaddress_to_string_a(
+    lpsa_address: *const sockaddr,
+    _dw_address_length: u32,
+    _lp_protocol_info: *const WSAPROTOCOL_INFOW,
+    lpsz_address_string: *mut u8,
+    lpdw_address_string_length: *mut u32,
 ) -> i32 {
-    if lpsaAddress.is_null() || lpszAddressString.is_null() || lpdwAddressStringLength.is_null() {
+    if lpsa_address.is_null()
+        || lpsz_address_string.is_null()
+        || lpdw_address_string_length.is_null()
+    {
         set_last_error(WSAEFAULT);
         return SOCKET_ERROR;
     }
 
-    let addr_in = unsafe { &*(lpsaAddress as *const sockaddr_in) };
+    let addr_in = unsafe { &*(lpsa_address as *const sockaddr_in) };
 
     if addr_in.sin_family != AF_INET {
         set_last_error(WSAEAFNOSUPPORT);
@@ -314,45 +314,45 @@ pub fn WSAAddressToStringA(
     let required = bytes.len() + 1;
 
     unsafe {
-        if *lpdwAddressStringLength < required as u32 {
-            *lpdwAddressStringLength = required as u32;
+        if *lpdw_address_string_length < required as u32 {
+            *lpdw_address_string_length = required as u32;
             set_last_error(WSAEFAULT);
             return SOCKET_ERROR;
         }
 
-        core::ptr::copy_nonoverlapping(bytes.as_ptr(), lpszAddressString, bytes.len());
-        *lpszAddressString.add(bytes.len()) = 0;
-        *lpdwAddressStringLength = required as u32;
+        core::ptr::copy_nonoverlapping(bytes.as_ptr(), lpsz_address_string, bytes.len());
+        *lpsz_address_string.add(bytes.len()) = 0;
+        *lpdw_address_string_length = required as u32;
     }
 
     set_last_error(0);
     0
 }
 
-pub fn WSAStringToAddressA(
-    AddressString: *const u8,
-    AddressFamily: i32,
-    lpProtocolInfo: *const WSAPROTOCOL_INFOW,
-    lpAddress: *mut sockaddr,
-    lpAddressLength: *mut i32,
+pub fn wsastring_to_address_a(
+    address_string: *const u8,
+    address_family: i32,
+    _lp_protocol_info: *const WSAPROTOCOL_INFOW,
+    lp_address: *mut sockaddr,
+    lp_address_length: *mut i32,
 ) -> i32 {
-    if AddressString.is_null() || lpAddress.is_null() || lpAddressLength.is_null() {
+    if address_string.is_null() || lp_address.is_null() || lp_address_length.is_null() {
         set_last_error(WSAEFAULT);
         return SOCKET_ERROR;
     }
 
-    if AddressFamily != AF_INET as i32 {
+    if address_family != AF_INET as i32 {
         set_last_error(WSAEAFNOSUPPORT);
         return SOCKET_ERROR;
     }
 
     unsafe {
-        if *lpAddressLength < core::mem::size_of::<sockaddr_in>() as i32 {
+        if *lp_address_length < core::mem::size_of::<sockaddr_in>() as i32 {
             set_last_error(WSAEFAULT);
             return SOCKET_ERROR;
         }
 
-        let addr_string = cstr_to_string(AddressString);
+        let addr_string = cstr_to_string(address_string);
 
         let (ip_str, port) = if let Some(colon_pos) = addr_string.rfind(':') {
             let (ip, port_str) = addr_string.split_at(colon_pos);
@@ -370,13 +370,13 @@ pub fn WSAStringToAddressA(
             }
         };
 
-        let addr_in = &mut *(lpAddress as *mut sockaddr_in);
+        let addr_in = &mut *(lp_address as *mut sockaddr_in);
         addr_in.sin_family = AF_INET;
         addr_in.sin_port = port.to_be();
         addr_in.sin_addr.s_addr = ip;
         addr_in.sin_zero = [0; 8];
 
-        *lpAddressLength = core::mem::size_of::<sockaddr_in>() as i32;
+        *lp_address_length = core::mem::size_of::<sockaddr_in>() as i32;
     }
 
     set_last_error(0);
@@ -396,28 +396,28 @@ pub fn inet_addr(cp: *const u8) -> u32 {
     }
 }
 
-pub fn inet_ntoa(addr: in_addr) -> *const u8 {
+pub fn inet_ntoa(_addr: in_addr) -> *const u8 {
     // Applications should use inet_ntop instead
     core::ptr::null()
 }
 
-pub fn inet_pton(Family: i32, pszAddrString: *const u8, pAddrBuf: *mut u8) -> i32 {
-    if pszAddrString.is_null() || pAddrBuf.is_null() {
+pub fn inet_pton(family: i32, psz_addr_string: *const u8, p_addr_buf: *mut u8) -> i32 {
+    if psz_addr_string.is_null() || p_addr_buf.is_null() {
         set_last_error(WSAEFAULT);
         return -1;
     }
 
-    if Family != AF_INET as i32 {
+    if family != AF_INET as i32 {
         set_last_error(WSAEAFNOSUPPORT);
         return -1;
     }
 
-    let addr_string = unsafe { cstr_to_string(pszAddrString) };
+    let addr_string = unsafe { cstr_to_string(psz_addr_string) };
 
     match dns::parse_ipv4_literal(&addr_string) {
         Some(ip) => {
             unsafe {
-                *(pAddrBuf as *mut u32) = ip;
+                *(p_addr_buf as *mut u32) = ip;
             }
             1 // Success
         }
@@ -426,22 +426,22 @@ pub fn inet_pton(Family: i32, pszAddrString: *const u8, pAddrBuf: *mut u8) -> i3
 }
 
 pub fn inet_ntop(
-    Family: i32,
-    pAddr: *const u8,
-    pStringBuf: *mut u8,
-    StringBufSize: usize,
+    family: i32,
+    p_addr: *const u8,
+    p_string_buf: *mut u8,
+    string_buf_size: usize,
 ) -> *const u8 {
-    if pAddr.is_null() || pStringBuf.is_null() || StringBufSize == 0 {
+    if p_addr.is_null() || p_string_buf.is_null() || string_buf_size == 0 {
         set_last_error(WSAEFAULT);
         return core::ptr::null();
     }
 
-    if Family != AF_INET as i32 {
+    if family != AF_INET as i32 {
         set_last_error(WSAEAFNOSUPPORT);
         return core::ptr::null();
     }
 
-    let ip = unsafe { *(pAddr as *const u32) };
+    let ip = unsafe { *(p_addr as *const u32) };
     let ip_string = alloc::format!(
         "{}.{}.{}.{}",
         (ip >> 24) & 0xFF,
@@ -451,16 +451,16 @@ pub fn inet_ntop(
     );
 
     let bytes = ip_string.as_bytes();
-    if bytes.len() >= StringBufSize {
+    if bytes.len() >= string_buf_size {
         set_last_error(WSAEFAULT);
         return core::ptr::null();
     }
 
     unsafe {
-        core::ptr::copy_nonoverlapping(bytes.as_ptr(), pStringBuf, bytes.len());
-        *pStringBuf.add(bytes.len()) = 0;
+        core::ptr::copy_nonoverlapping(bytes.as_ptr(), p_string_buf, bytes.len());
+        *p_string_buf.add(bytes.len()) = 0;
     }
 
     set_last_error(0);
-    pStringBuf as *const u8
+    p_string_buf as *const u8
 }

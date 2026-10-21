@@ -2,14 +2,14 @@
 //!
 //! Implements UUID creation, string conversion, and comparison operations.
 
-use super::types::{RPC_STATUS, RPC_S_INVALID_STRING_UUID, RPC_S_OK, RPC_S_OUT_OF_MEMORY, UUID};
+use super::types::{RpcStatus, RPC_S_INVALID_STRING_UUID, RPC_S_OK, RPC_S_OUT_OF_MEMORY, UUID};
 use core::sync::atomic::{AtomicU64, Ordering};
 
 static UUID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 /// In a real system, this would use cryptographic random sources.
 #[no_mangle]
-pub unsafe extern "C" fn UuidCreate(uuid: *mut UUID) -> RPC_STATUS {
+pub unsafe extern "C" fn UuidCreate(uuid: *mut UUID) -> RpcStatus {
     if uuid.is_null() {
         return RPC_S_OUT_OF_MEMORY;
     }
@@ -33,10 +33,7 @@ pub unsafe extern "C" fn UuidCreate(uuid: *mut UUID) -> RPC_STATUS {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn UuidToStringW(
-    uuid: *const UUID,
-    string_uuid: *mut *mut u16,
-) -> RPC_STATUS {
+pub unsafe extern "C" fn UuidToStringW(uuid: *const UUID, string_uuid: *mut *mut u16) -> RpcStatus {
     if uuid.is_null() || string_uuid.is_null() {
         return RPC_S_OUT_OF_MEMORY;
     }
@@ -106,7 +103,7 @@ fn parse_hex_digit(c: u16) -> Option<u8> {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn UuidFromStringW(string_uuid: *const u16, uuid: *mut UUID) -> RPC_STATUS {
+pub unsafe extern "C" fn UuidFromStringW(string_uuid: *const u16, uuid: *mut UUID) -> RpcStatus {
     if string_uuid.is_null() || uuid.is_null() {
         return RPC_S_INVALID_STRING_UUID;
     }
@@ -195,7 +192,7 @@ pub unsafe extern "C" fn UuidFromStringW(string_uuid: *const u16, uuid: *mut UUI
 pub unsafe extern "C" fn UuidCompare(
     uuid1: *const UUID,
     uuid2: *const UUID,
-    status: *mut RPC_STATUS,
+    status: *mut RpcStatus,
 ) -> i32 {
     if !status.is_null() {
         *status = RPC_S_OK;
@@ -247,7 +244,7 @@ pub unsafe extern "C" fn UuidCompare(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn UuidIsNil(uuid: *const UUID, status: *mut RPC_STATUS) -> i32 {
+pub unsafe extern "C" fn UuidIsNil(uuid: *const UUID, status: *mut RpcStatus) -> i32 {
     if !status.is_null() {
         *status = RPC_S_OK;
     }
@@ -269,7 +266,7 @@ pub unsafe extern "C" fn UuidIsNil(uuid: *const UUID, status: *mut RPC_STATUS) -
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn UuidCreateNil(uuid: *mut UUID) -> RPC_STATUS {
+pub unsafe extern "C" fn UuidCreateNil(uuid: *mut UUID) -> RpcStatus {
     if uuid.is_null() {
         return RPC_S_OUT_OF_MEMORY;
     }
@@ -286,7 +283,7 @@ pub unsafe extern "C" fn UuidCreateNil(uuid: *mut UUID) -> RPC_STATUS {
 pub unsafe extern "C" fn UuidEqual(
     uuid1: *const UUID,
     uuid2: *const UUID,
-    status: *mut RPC_STATUS,
+    status: *mut RpcStatus,
 ) -> i32 {
     let cmp = UuidCompare(uuid1, uuid2, status);
     if cmp == 0 {

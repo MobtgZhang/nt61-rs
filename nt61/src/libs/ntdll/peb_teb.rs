@@ -1,6 +1,6 @@
 //! ntdll — PEB / TEB data structures
 //
-//! The Process Environment Block (PEB) and Thread Environment
+//! The Process environment Block (PEB) and Thread environment
 //! Block (TEB) are user-mode data structures created by the
 //! kernel at process / thread creation. The Windows 7 layout
 //! is the reference; the structures here mirror the SDK
@@ -9,16 +9,16 @@
 //! In this kernel the structures are never actually used by
 //! user-mode code (no ring 3), so the implementation only
 //! stores the layout and provides the access helpers
-//! (`NtCurrentTeb`, `RtlGetCurrentPeb`, ...).
+//! (`nt_current_teb`, `rtl_get_current_peb`, ...).
 //
 //! References: MSDN Library "Windows 7" — PEB and TEB.
 
-use super::types::{HANDLE, NTSTATUS, PVOID};
+use super::types::{HANDLE, PVOID};
 
-/// `PEB` (Process Environment Block), 64-bit Windows 7 layout.
+/// `PEB` (Process environment Block), 64-bit Windows 7 layout.
 #[repr(C)]
 #[derive(Default)]
-pub struct Peb {
+pub struct peb {
     pub inherited_address_space: u8,
     pub being_debugged: u8,
     pub bit_field: u8,
@@ -65,7 +65,7 @@ pub struct Peb {
 /// TEB on x64.
 #[repr(C)]
 #[derive(Default)]
-pub struct NtTib {
+pub struct nt_tib {
     pub exception_list: PVOID,
     pub stack_base: PVOID,
     pub stack_limit: PVOID,
@@ -75,16 +75,16 @@ pub struct NtTib {
     pub self_: PVOID,
 }
 
-/// `TEB` (Thread Environment Block).
+/// `TEB` (Thread environment Block).
 #[repr(C)]
 #[derive(Default)]
 pub struct Teb {
-    pub nt_tib: NtTib,
+    pub nt_tib: nt_tib,
     pub environment_pointer: PVOID,
     pub client_id: [PVOID; 2],
     pub active_rpc_handle: PVOID,
     pub thread_local_storage_pointer: PVOID,
-    pub peb: *mut Peb,
+    pub peb: *mut peb,
     pub last_error_value: u32,
     pub count_of_owned_critical_sections: u32,
     pub csr_client_thread: PVOID,
@@ -109,25 +109,25 @@ pub struct Teb {
     pub _pad5: [PVOID; 8],
 }
 
-/// `RtlGetCurrentPeb` — return the PEB pointer of the current
+/// `rtl_get_current_peb` — return the PEB pointer of the current
 /// process. In a real kernel this reads the `gs` segment. The
 /// bootstrap returns NULL.
-pub unsafe extern "C" fn RtlGetCurrentPeb() -> *mut Peb {
+pub unsafe extern "C" fn rtl_get_current_peb() -> *mut peb {
     core::ptr::null_mut()
 }
 
-/// `RtlGetThreadErrorMode` / `RtlSetThreadErrorMode` — return 0
+/// `rtl_get_thread_error_mode` / `rtl_set_thread_error_mode` — return 0
 /// (default error mode).
-pub unsafe extern "C" fn RtlGetThreadErrorMode() -> u32 {
+pub unsafe extern "C" fn rtl_get_thread_error_mode() -> u32 {
     0
 }
-pub unsafe extern "C" fn RtlSetThreadErrorMode(_mode: u32, _old_mode: *mut u32) -> i32 {
+pub unsafe extern "C" fn rtl_set_thread_error_mode(_mode: u32, _old_mode: *mut u32) -> i32 {
     0
 }
 
-/// `PebGetVersion` — return the OS version. We report
+/// `peb_get_version` — return the OS version. We report
 /// `6.1.7601` (Windows 7 SP1 build 7601).
-pub unsafe extern "C" fn PebGetVersion(major: *mut u32, minor: *mut u32, build: *mut u32) -> u32 {
+pub unsafe extern "C" fn peb_get_version(major: *mut u32, minor: *mut u32, build: *mut u32) -> u32 {
     if !major.is_null() {
         *major = 6;
     }
@@ -140,10 +140,10 @@ pub unsafe extern "C" fn PebGetVersion(major: *mut u32, minor: *mut u32, build: 
     0
 }
 
-/// `RtlExitUserThread` — exit the current thread. Maps to
-/// `NtTerminateThread` with the supplied status.
-pub unsafe extern "C" fn RtlExitUserThread(exit_status: u32) -> ! {
-    super::thread::NtTerminateThread(-1isize as HANDLE, exit_status);
+/// `rtl_exit_user_thread` — exit the current thread. Maps to
+/// `NT_TERMINATE_THREAD` with the supplied status.
+pub unsafe extern "C" fn rtl_exit_user_thread(exit_status: u32) -> ! {
+    super::thread::nt_terminate_thread(-1isize as HANDLE, exit_status);
     loop {
         core::hint::spin_loop();
     }

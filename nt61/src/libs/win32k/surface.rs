@@ -3,9 +3,6 @@
 //! Implements surface (bitmap) creation, destruction, and management.
 //! Surfaces are the backing store for GDI rendering operations.
 //
-// **Note:** x86_64-only in this build.
-#![cfg(target_arch = "x86_64")]
-
 //! ## Windows 7 Surface Architecture
 //
 //! A surface is a rectangular region of memory containing pixel data.
@@ -18,7 +15,6 @@
 
 extern crate alloc;
 
-use crate::kprintln;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
@@ -52,14 +48,14 @@ pub struct GdiSurface {
     pub bits: *mut u8,
     /// Surface flags
     pub flags: u32,
-    /// Owner process ID
+    /// owner process ID
     pub owner_pid: u32,
     /// Reference count
     pub ref_count: u32,
 }
 
 impl GdiSurface {
-    /// Create a new surface
+    /// create a new surface
     pub fn new(width: i32, height: i32, format: u32) -> Option<Self> {
         if width <= 0 || height == 0 {
             return None;
@@ -97,7 +93,7 @@ impl GdiSurface {
         let _ = &bits;
 
         if bits.is_null() && total_bytes > 0 {
-            // kprintln!("[win32k] EngCreateSurface: failed to allocate {} bytes", total_bytes);
+            // kprintln!("[win32k] eng_create_surface: failed to allocate {} bytes", total_bytes);
             return None;
         }
 
@@ -182,7 +178,7 @@ impl GdiSurface {
                     core::ptr::write_unaligned(self.bits.add(i) as *mut u32, color);
                     i += 4;
                 }
-                // Handle remaining bytes
+                // handle remaining bytes
                 while i < size {
                     core::ptr::write(self.bits.add(i), color_bytes[i % 4]);
                     i += 1;
@@ -221,7 +217,7 @@ impl SurfaceTable {
         }
     }
 
-    /// Create and register a new surface
+    /// create and register a new surface
     pub fn create(&mut self, width: i32, height: i32, format: u32) -> Option<*mut GdiSurface> {
         let surface = match GdiSurface::new(width, height, format) {
             Some(s) => s,
@@ -239,7 +235,7 @@ impl SurfaceTable {
 
         self.entries.push(Some(boxed));
 
-        // kprintln!("[win32k] EngCreateSurface: {}x{} format={} -> {:p}",
+        // kprintln!("[win32k] eng_create_surface: {}x{} format={} -> {:p}",
         //                   width, height, format, ptr);
 
         Some(ptr)
@@ -270,7 +266,7 @@ impl SurfaceTable {
                 let _ = &surface_ptr;
                 if surface_ptr == ptr {
                     self.entries[i] = None;
-                    // kprintln!("[win32k] EngDeleteSurface: {:p}", ptr);
+                    // kprintln!("[win32k] eng_delete_surface: {:p}", ptr);
                     return true;
                 }
             }
@@ -315,9 +311,7 @@ fn get_surface_table() -> &'static mut SurfaceTable {
 
 /// Initialize the primary (screen) surface from framebuffer
 pub fn init_primary_surface() {
-    #[cfg(target_arch = "x86_64")]
-    #[cfg(target_arch = "x86_64")]
-    let fb_info = crate::hal::x86_64::framebuffer::info();
+    let fb_info = crate::hal::common::framebuffer::info();
     let _ = &fb_info;
     let _ = &fb_info;
 
@@ -360,8 +354,8 @@ pub fn get_primary_surface() -> *mut GdiSurface {
     }
 }
 
-/// Create a new surface (bitmap)
-pub fn EngCreateSurface(width: i32, height: i32, format: u32) -> *mut GdiSurface {
+/// create a new surface (bitmap)
+pub fn eng_create_surface(width: i32, height: i32, format: u32) -> *mut GdiSurface {
     let table = get_surface_table();
     let _ = &table;
     let _ = &table;
@@ -371,14 +365,14 @@ pub fn EngCreateSurface(width: i32, height: i32, format: u32) -> *mut GdiSurface
 }
 
 /// Delete a surface
-pub fn EngDeleteSurface(surface: *mut GdiSurface) -> bool {
+pub fn eng_delete_surface(surface: *mut GdiSurface) -> bool {
     if surface.is_null() {
         return false;
     }
 
     // Check if it's the primary surface
     if surface == get_primary_surface() {
-        // kprintln!("[win32k] EngDeleteSurface: cannot delete primary surface");
+        // kprintln!("[win32k] eng_delete_surface: cannot delete primary surface");
         return false;
     }
 
@@ -394,7 +388,7 @@ pub fn EngDeleteSurface(surface: *mut GdiSurface) -> bool {
 // =============================================================================
 
 /// Lock a surface for direct pixel access
-pub fn EngLockSurface(surface: *mut GdiSurface) -> *mut GdiSurface {
+pub fn eng_lock_surface(surface: *mut GdiSurface) -> *mut GdiSurface {
     if surface.is_null() {
         return core::ptr::null_mut();
     }
@@ -402,7 +396,7 @@ pub fn EngLockSurface(surface: *mut GdiSurface) -> *mut GdiSurface {
 }
 
 /// Unlock a surface
-pub fn EngUnlockSurface(surface: *mut GdiSurface) {
+pub fn eng_unlock_surface(surface: *mut GdiSurface) {
     let _ = surface;
     // No-op for our implementation
 }
@@ -412,7 +406,7 @@ pub fn EngUnlockSurface(surface: *mut GdiSurface) {
 // =============================================================================
 
 /// Copy from source surface to destination
-pub fn EngCopyBits(
+pub fn eng_copy_bits(
     dst: *mut GdiSurface,
     src: *mut GdiSurface,
     dst_x: i32,
@@ -459,7 +453,7 @@ pub fn EngCopyBits(
 }
 
 /// Fill a rectangle on a surface
-pub fn EngFillRectangle(
+pub fn eng_fill_rectangle(
     surface: *mut GdiSurface,
     left: i32,
     top: i32,
@@ -523,7 +517,7 @@ pub fn EngFillRectangle(
 }
 
 /// Draw a line on a surface using Bresenham's algorithm
-pub fn EngLine(surface: *mut GdiSurface, x1: i32, y1: i32, x2: i32, y2: i32, color: u32) -> bool {
+pub fn eng_line(surface: *mut GdiSurface, x1: i32, y1: i32, x2: i32, y2: i32, color: u32) -> bool {
     if surface.is_null() {
         return false;
     }
@@ -597,15 +591,15 @@ pub fn EngLine(surface: *mut GdiSurface, x1: i32, y1: i32, x2: i32, y2: i32, col
 // Display Driver Interface (DDI)
 // =============================================================================
 
-/// DrvEnableDriver - Enable the display driver
-pub fn DrvEnableDriver() -> bool {
-    // kprintln!("[win32k] DrvEnableDriver: enabling display driver");
+/// drv_enable_driver - Enable the display driver
+pub fn drv_enable_driver() -> bool {
+    // kprintln!("[win32k] drv_enable_driver: enabling display driver");
     true
 }
 
-/// DrvDisableDriver - Disable the display driver
-pub fn DrvDisableDriver() {
-    // kprintln!("[win32k] DrvDisableDriver: disabling display driver");
+/// drv_disable_driver - Disable the display driver
+pub fn drv_disable_driver() {
+    // kprintln!("[win32k] drv_disable_driver: disabling display driver");
 }
 
 // =============================================================================

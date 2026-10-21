@@ -8,9 +8,9 @@ pub fn read_rtc_timestamp() -> i64 {
     1704067200
 }
 
-/// Read Time Stamp Counter
+/// read Time Stamp Counter
 pub fn rdtsc() -> u64 {
-    unsafe { core::arch::x86_64::_rdtsc() }
+    crate::arch::common::counter::read_counter()
 }
 
 /// Get TSC frequency in Hz
@@ -19,7 +19,7 @@ pub fn tsc_frequency() -> u64 {
     2_400_000_000
 }
 
-/// Sleep for milliseconds
+/// sleep for milliseconds
 pub fn sleep(milliseconds: u64) {
     // Busy wait loop (not ideal, but works for stub)
     let start = rdtsc();

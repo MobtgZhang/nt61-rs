@@ -8,10 +8,8 @@
 //! `ws2_32` "exports" in this module are stubs that the
 //! `kernel32` and `loader` layers can be wired to when SSH
 //! bring-up reaches that point. The host-side tests cover the
-//! state machine (WSAStartup / WSACleanup / WSAGetLastError)
+//! state machine (wsastartup / wsacleanup / wsaget_last_error)
 //! without touching the kernel.
-
-#![allow(non_snake_case, dead_code)]
 
 /// Per-DLL WSADATA version we report. NT 6.1 returns 0x0202
 /// (Winsock 2.2). The high byte is the major version, the low
@@ -20,7 +18,7 @@ pub const WSADESCRIPTION_LEN: usize = 256;
 pub const WSASYS_STATUS_LEN: usize = 128;
 pub const WSA_VERSION: u16 = 0x0202;
 
-/// WSADATA structure passed to WSAStartup. The shape matches
+/// WSADATA structure passed to wsastartup. The shape matches
 /// Microsoft's documentation; we only need the version fields
 /// for the OpenSSH probes.
 #[repr(C)]
@@ -50,11 +48,11 @@ impl Default for WSAData {
 }
 
 /// Per-thread last-error code. Winsock maintains its own
-/// `WSAGetLastError` separate from `GetLastError`.
+/// `wsaget_last_error` separate from `get_last_error`.
 
-/// WSAStartup: caller must request 0x0202 (or 0x0002). Returns
+/// wsastartup: caller must request 0x0202 (or 0x0002). Returns
 /// 0 on success, nonzero SOCKET_ERROR otherwise.
-pub fn WSAStartup(version: u16, wsadata: &mut WSAData) -> i32 {
+pub fn wsastartup(version: u16, wsadata: &mut WSAData) -> i32 {
     if (version & 0xFF) > (WSA_VERSION & 0xFF) {
         error::set_last_error(error::WSAVERNOTSUPPORTED);
         return -1;
@@ -68,19 +66,19 @@ pub fn WSAStartup(version: u16, wsadata: &mut WSAData) -> i32 {
     0
 }
 
-/// WSACleanup: terminate the per-process Winsock usage.
-pub fn WSACleanup() -> i32 {
+/// wsacleanup: terminate the per-process Winsock usage.
+pub fn wsacleanup() -> i32 {
     error::set_last_error(0);
     0
 }
 
-/// WSAGetLastError: returns the per-thread last error.
-pub fn WSAGetLastError() -> i32 {
+/// wsaget_last_error: returns the per-thread last error.
+pub fn wsaget_last_error() -> i32 {
     error::get_last_error()
 }
 
-/// WSASetLastError: stores a per-thread last error.
-pub fn WSASetLastError(code: i32) {
+/// wsaset_last_error: stores a per-thread last error.
+pub fn wsaset_last_error(code: i32) {
     error::set_last_error(code);
 }
 
@@ -119,10 +117,10 @@ mod tests {
     #[test]
     fn wsa_startup_accepts_2_2() {
         let mut wsadata = WSAData::default();
-        assert_eq!(WSAStartup(0x0202, &mut wsadata), 0);
+        assert_eq!(wsastartup(0x0202, &mut wsadata), 0);
         assert_eq!(wsadata.w_version, 0x0202);
         assert_eq!(wsadata.w_high_version, WSA_VERSION);
-        assert_eq!(WSAGetLastError(), 0);
+        assert_eq!(wsaget_last_error(), 0);
     }
 
     #[test]
@@ -130,16 +128,16 @@ mod tests {
         let mut wsadata = WSAData::default();
         // OpenSSH always asks for 0x0202; 0x0203 is higher than
         // what we support and must return SOCKET_ERROR.
-        assert_eq!(WSAStartup(0x0203, &mut wsadata), -1);
-        assert_eq!(WSAGetLastError(), error::WSAVERNOTSUPPORTED);
+        assert_eq!(wsastartup(0x0203, &mut wsadata), -1);
+        assert_eq!(wsaget_last_error(), error::WSAVERNOTSUPPORTED);
     }
 
     #[test]
     fn wsa_set_then_get_last_error() {
-        WSASetLastError(error::WSAEWOULDBLOCK);
-        assert_eq!(WSAGetLastError(), error::WSAEWOULDBLOCK);
-        WSACleanup();
-        assert_eq!(WSAGetLastError(), 0);
+        wsaset_last_error(error::WSAEWOULDBLOCK);
+        assert_eq!(wsaget_last_error(), error::WSAEWOULDBLOCK);
+        wsacleanup();
+        assert_eq!(wsaget_last_error(), 0);
     }
 
     #[test]
@@ -160,5 +158,7 @@ mod tests {
     }
 }
 
+pub mod async_ops;
 pub mod nameresolution;
+pub mod socket;
 pub mod types;

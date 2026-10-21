@@ -5,36 +5,33 @@
 //!   * Microsoft Windows SDK
 //!   * ReactOS gdi32 implementation
 
-#![allow(non_camel_case_types)]
-#![allow(dead_code)]
-
 use crate::libs::wow64::types::*;
 use crate::libs::wow64win::syscall_numbers;
-use crate::libs::wow64win::Wow64Win32kSyscall;
+use crate::libs::wow64win::wow64_win32k_syscall;
 
 // =============================================================================
-// Handle Types
+// handle Types
 // =============================================================================
 
-/// 32-bit HDC (Device Context Handle).
+/// 32-bit HDC (Device Context handle).
 pub type HDC32 = ULONG32;
-/// 32-bit HPEN (Pen Handle).
+/// 32-bit HPEN (Pen handle).
 pub type HPEN32 = ULONG32;
-/// 32-bit HBRUSH (Brush Handle).
+/// 32-bit HBRUSH (Brush handle).
 pub type HBRUSH32 = ULONG32;
-/// 32-bit HBITMAP (Bitmap Handle).
+/// 32-bit HBITMAP (Bitmap handle).
 pub type HBITMAP32 = ULONG32;
-/// 32-bit HRGN (Region Handle).
+/// 32-bit HRGN (Region handle).
 pub type HRGN32 = ULONG32;
-/// 32-bit HPALETTE (Palette Handle).
+/// 32-bit HPALETTE (Palette handle).
 pub type HPALETTE32 = ULONG32;
-/// 32-bit HFONT (Font Handle).
+/// 32-bit HFONT (Font handle).
 pub type HFONT32 = ULONG32;
-/// 32-bit HICON (Icon Handle).
+/// 32-bit HICON (Icon handle).
 pub type HICON32 = ULONG32;
-/// 32-bit HCURSOR (Cursor Handle).
+/// 32-bit HCURSOR (Cursor handle).
 pub type HCURSOR32 = ULONG32;
-/// 32-bit HANDLE (Generic Handle).
+/// 32-bit HANDLE (Generic handle).
 pub type HANDLE32 = ULONG32;
 /// 32-bit BOOL.
 pub type BOOL32 = i32;
@@ -43,7 +40,7 @@ pub type BOOL32 = i32;
 // Raster Operation Codes
 // =============================================================================
 
-/// Ternary raster operation codes for BitBlt.
+/// Ternary raster operation codes for bit_blt.
 pub mod rop {
     use super::ULONG32;
     pub const SRCCOPY: ULONG32 = 0x00CC0020;
@@ -139,7 +136,7 @@ pub mod brush_style {
 // Stock Objects
 // =============================================================================
 
-/// Stock objects for GetStockObject.
+/// Stock objects for get_stock_object.
 pub mod stock_object {
     use super::ULONG32;
     pub const WHITE_BRUSH: ULONG32 = 0;
@@ -161,80 +158,83 @@ pub mod stock_object {
 }
 
 // =============================================================================
-// CreateCompatibleDC
+// create_compatible_dc
 // =============================================================================
 
 /// Creates a memory device context compatible with the specified device.
 ///
 /// # Returns
 /// * DC handle or NULL
-pub unsafe extern "C" fn Wow64CreateCompatibleDC(hdc: HDC32) -> HDC32 {
+pub unsafe extern "C" fn wow64_create_compatible_dc(hdc: HDC32) -> HDC32 {
     // log via wow64_klog!; using wow64_klog! instead
 
     let params: [ULONG32; 1] = [hdc];
-    let result = Wow64Win32kSyscall(syscall_numbers::NtGdiCreateCompatibleDC, params.as_ptr());
+    let result = wow64_win32k_syscall(
+        syscall_numbers::NT_GDI_CREATE_COMPATIBLE_DC,
+        params.as_ptr(),
+    );
 
     result
 }
 
 // =============================================================================
-// DeleteDC
+// delete_dc
 // =============================================================================
 
 /// Deletes the specified device context.
 ///
 /// # Returns
 /// * TRUE if successful, FALSE otherwise
-pub unsafe extern "C" fn Wow64DeleteDC(hdc: HDC32) -> BOOL32 {
+pub unsafe extern "C" fn wow64_delete_dc(hdc: HDC32) -> BOOL32 {
     // log via wow64_klog!; using wow64_klog! instead
 
     let params: [ULONG32; 1] = [hdc];
-    let result = Wow64Win32kSyscall(syscall_numbers::NtGdiDeleteDC, params.as_ptr());
+    let result = wow64_win32k_syscall(syscall_numbers::NT_GDI_DELETE_DC, params.as_ptr());
 
     result as BOOL32
 }
 
 // =============================================================================
-// SelectObject
+// select_object
 // =============================================================================
 
 /// Selects an object into the specified device context.
 ///
 /// # Returns
-/// * Handle to the previously selected object or NULL on error
-pub unsafe extern "C" fn Wow64SelectObject(hdc: HDC32, h_object: HANDLE32) -> HANDLE32 {
+/// * handle to the previously selected object or NULL on error
+pub unsafe extern "C" fn wow64_select_object(hdc: HDC32, h_object: HANDLE32) -> HANDLE32 {
     let params: [ULONG32; 2] = [hdc, h_object];
-    let result = Wow64Win32kSyscall(syscall_numbers::NtGdiSelectObject, params.as_ptr());
+    let result = wow64_win32k_syscall(syscall_numbers::NT_GDI_SELECT_OBJECT, params.as_ptr());
 
     result
 }
 
 // =============================================================================
-// DeleteObject
+// delete_object
 // =============================================================================
 
 /// Deletes a logical pen, brush, font, bitmap, region, or palette.
 ///
 /// # Returns
 /// * TRUE if successful, FALSE otherwise
-pub unsafe extern "C" fn Wow64DeleteObject(h_object: HANDLE32) -> BOOL32 {
+pub unsafe extern "C" fn wow64_delete_object(h_object: HANDLE32) -> BOOL32 {
     // log via wow64_klog!; using wow64_klog! instead
 
     let params: [ULONG32; 1] = [h_object];
-    let result = Wow64Win32kSyscall(syscall_numbers::NtGdiDeleteObject, params.as_ptr());
+    let result = wow64_win32k_syscall(syscall_numbers::NT_GDI_DELETE_OBJECT, params.as_ptr());
 
     result as BOOL32
 }
 
 // =============================================================================
-// CreatePen
+// create_pen
 // =============================================================================
 
 /// Creates a logical pen with the specified style, width, and color.
 ///
 /// # Returns
-/// * Handle to a pen or NULL on error
-pub unsafe extern "C" fn Wow64CreatePen(
+/// * handle to a pen or NULL on error
+pub unsafe extern "C" fn wow64_create_pen(
     _style: ULONG32,
     _width: ULONG32,
     _color: ULONG32,
@@ -245,14 +245,14 @@ pub unsafe extern "C" fn Wow64CreatePen(
 }
 
 // =============================================================================
-// CreateSolidBrush
+// create_solid_brush
 // =============================================================================
 
 /// Creates a logical brush with the specified solid color.
 ///
 /// # Returns
-/// * Handle to a brush or NULL on error
-pub unsafe extern "C" fn Wow64CreateSolidBrush(_color: ULONG32) -> HBRUSH32 {
+/// * handle to a brush or NULL on error
+pub unsafe extern "C" fn wow64_create_solid_brush(_color: ULONG32) -> HBRUSH32 {
     // log via wow64_klog!; using wow64_klog! instead
 
     // In a real implementation, this would call win32k.sys
@@ -267,8 +267,8 @@ pub unsafe extern "C" fn Wow64CreateSolidBrush(_color: ULONG32) -> HBRUSH32 {
 /// Creates a bitmap compatible with the specified device.
 ///
 /// # Returns
-/// * Handle to a bitmap or NULL on error
-pub unsafe extern "C" fn Wow64CreateCompatibleBitmap(
+/// * handle to a bitmap or NULL on error
+pub unsafe extern "C" fn wow64_create_compatible_bitmap(
     _hdc: HDC32,
     _width: i32,
     _height: i32,
@@ -286,7 +286,7 @@ pub unsafe extern "C" fn Wow64CreateCompatibleBitmap(
 ///
 /// # Returns
 /// * Number of bytes retrieved or 0 on error
-pub unsafe extern "C" fn Wow64GetObject(
+pub unsafe extern "C" fn wow64_get_object(
     _h_object: HANDLE32,
     _buffer_size: ULONG32,
     _buffer: ULONG32,
@@ -297,14 +297,14 @@ pub unsafe extern "C" fn Wow64GetObject(
 }
 
 // =============================================================================
-// TextOutW
+// text_out_w
 // =============================================================================
 
 /// Writes a string of characters at the specified location.
 ///
 /// # Returns
 /// * TRUE if successful, FALSE otherwise
-pub unsafe extern "C" fn Wow64TextOutW(
+pub unsafe extern "C" fn wow64_text_out_w(
     hdc: HDC32,
     x: i32,
     y: i32,
@@ -312,7 +312,7 @@ pub unsafe extern "C" fn Wow64TextOutW(
     length: i32,
 ) -> BOOL32 {
     let params: [ULONG32; 5] = [hdc, x as ULONG32, y as ULONG32, text, length as ULONG32];
-    let result = Wow64Win32kSyscall(syscall_numbers::NtGdiTextOut, params.as_ptr());
+    let result = wow64_win32k_syscall(syscall_numbers::NT_GDI_TEXT_OUT, params.as_ptr());
 
     result as BOOL32
 }
@@ -325,7 +325,7 @@ pub unsafe extern "C" fn Wow64TextOutW(
 ///
 /// # Returns
 /// * TRUE if successful, FALSE otherwise
-pub unsafe extern "C" fn Wow64ExtTextOutW(
+pub unsafe extern "C" fn wow64_ext_text_out_w(
     _hdc: HDC32,
     _x: i32,
     _y: i32,
@@ -341,14 +341,14 @@ pub unsafe extern "C" fn Wow64ExtTextOutW(
 }
 
 // =============================================================================
-// BitBlt
+// bit_blt
 // =============================================================================
 
 /// Performs a bit-block transfer (copy) between device contexts.
 ///
 /// # Returns
 /// * TRUE if successful, FALSE otherwise
-pub unsafe extern "C" fn Wow64BitBlt(
+pub unsafe extern "C" fn wow64_bit_blt(
     hdc_dest: HDC32,
     x_dest: i32,
     y_dest: i32,
@@ -370,20 +370,20 @@ pub unsafe extern "C" fn Wow64BitBlt(
         y_src as ULONG32,
         rop,
     ];
-    let result = Wow64Win32kSyscall(syscall_numbers::NtGdiBitBlt, params.as_ptr());
+    let result = wow64_win32k_syscall(syscall_numbers::NT_GDI_BIT_BLT, params.as_ptr());
 
     result as BOOL32
 }
 
 // =============================================================================
-// PatBlt
+// pat_blt
 // =============================================================================
 
 /// Updates the current pen, brush, and bitmap pattern.
 ///
 /// # Returns
 /// * TRUE if successful, FALSE otherwise
-pub unsafe extern "C" fn Wow64PatBlt(
+pub unsafe extern "C" fn wow64_pat_blt(
     hdc: HDC32,
     x: i32,
     y: i32,
@@ -399,20 +399,20 @@ pub unsafe extern "C" fn Wow64PatBlt(
         height as ULONG32,
         rop,
     ];
-    let result = Wow64Win32kSyscall(syscall_numbers::NtGdiPatBlt, params.as_ptr());
+    let result = wow64_win32k_syscall(syscall_numbers::NT_GDI_PAT_BLT, params.as_ptr());
 
     result as BOOL32
 }
 
 // =============================================================================
-// GetStockObject
+// get_stock_object
 // =============================================================================
 
 /// Retrieves a handle to one of the predefined stock objects.
 ///
 /// # Returns
-/// * Handle to the requested object or NULL on error
-pub unsafe extern "C" fn Wow64GetStockObject(object: i32) -> HANDLE32 {
+/// * handle to the requested object or NULL on error
+pub unsafe extern "C" fn wow64_get_stock_object(object: i32) -> HANDLE32 {
     // log via wow64_klog!; using wow64_klog! instead
 
     // Return predefined stock objects
@@ -432,15 +432,15 @@ pub unsafe extern "C" fn Wow64GetStockObject(object: i32) -> HANDLE32 {
 }
 
 // =============================================================================
-// FillRect
+// fill_rect
 // =============================================================================
 
 /// Fills a rectangle using the specified brush.
 ///
 /// # Returns
 /// * Non-zero if successful, 0 otherwise
-pub unsafe extern "C" fn Wow64FillRect(_hdc: HDC32, _rect: ULONG32, _brush: HBRUSH32) -> i32 {
-    // In a real implementation, this would use PatBlt or similar
+pub unsafe extern "C" fn wow64_fill_rect(_hdc: HDC32, _rect: ULONG32, _brush: HBRUSH32) -> i32 {
+    // In a real implementation, this would use pat_blt or similar
     // For stub, return 1
     1
 }
@@ -453,7 +453,7 @@ pub unsafe extern "C" fn Wow64FillRect(_hdc: HDC32, _rect: ULONG32, _brush: HBRU
 ///
 /// # Returns
 /// * Color of the pixel or CLR_INVALID on error
-pub unsafe extern "C" fn Wow64GetPixel(_hdc: HDC32, _x: i32, _y: i32) -> ULONG32 {
+pub unsafe extern "C" fn wow64_get_pixel(_hdc: HDC32, _x: i32, _y: i32) -> ULONG32 {
     // In a real implementation, this would call win32k.sys
     // For stub, return 0 (black)
     0
@@ -467,7 +467,12 @@ pub unsafe extern "C" fn Wow64GetPixel(_hdc: HDC32, _x: i32, _y: i32) -> ULONG32
 ///
 /// # Returns
 /// * Color of the pixel before it was set or CLR_INVALID on error
-pub unsafe extern "C" fn Wow64SetPixel(_hdc: HDC32, _x: i32, _y: i32, _color: ULONG32) -> ULONG32 {
+pub unsafe extern "C" fn wow64_set_pixel(
+    _hdc: HDC32,
+    _x: i32,
+    _y: i32,
+    _color: ULONG32,
+) -> ULONG32 {
     // In a real implementation, this would call win32k.sys
     // For stub, return CLR_INVALID (0xFFFFFFFF)
     0xFFFFFFFF

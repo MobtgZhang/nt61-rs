@@ -8,7 +8,7 @@
 //! `nt_status_to_dos_error` implements the RtlNtStatusToDosError
 //! mapping defined by the NT 6.1 SDK (a fixed table with ~400
 //! rows). The DLL stubs use this when they need to convert
-//! NTSTATUS → Win32 `GetLastError` value for the kernel32 layer.
+//! NTSTATUS → Win32 `get_last_error` value for the kernel32 layer.
 
 use super::types::NTSTATUS;
 
@@ -43,7 +43,7 @@ pub fn status_is_error(s: NTSTATUS) -> bool {
 
 pub const STATUS_SUCCESS: NTSTATUS = 0x00000000;
 // Informational severity (0x8000001A): enumeration reached the end of the
-// list. Reported by NtQueryDirectoryFile when no entry matches.
+// list. Reported by NT_QUERY_DIRECTORY_FILE when no entry matches.
 pub const STATUS_NO_MORE_FILES: NTSTATUS = 0x8000001A_u32 as i32;
 pub const STATUS_PENDING: NTSTATUS = 0x00000103;
 pub const STATUS_TIMEOUT: NTSTATUS = 0x00000102;
@@ -125,6 +125,8 @@ pub const STATUS_INVALID_INFO_CLASS: NTSTATUS = 0xC0000003_u32 as i32;
 pub const STATUS_MUTEX_NOT_OWNED: NTSTATUS = 0xC0000055_u32 as i32;
 pub const STATUS_FILE_IS_A_DIRECTORY: NTSTATUS = 0xC00000BA_u32 as i32;
 pub const STATUS_CANNOT_DELETE: NTSTATUS = 0xC0000139_u32 as i32;
+pub const STATUS_NO_TOKEN: NTSTATUS = 0xC0000120_u32 as i32;
+pub const STATUS_UNHANDLED_EXCEPTION: NTSTATUS = 0xC0000144_u32 as i32;
 
 // ---------------------------------------------------------------------------
 // Win32 error codes (subset; same values as error.rs in kernel32)

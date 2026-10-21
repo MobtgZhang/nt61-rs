@@ -8,12 +8,12 @@
 //! References: MSDN Library "Windows 7" — RTL_CRITICAL_SECTION.
 
 use super::status::{STATUS_INVALID_PARAMETER, STATUS_SUCCESS};
-use super::sync::{NtCreateEvent, NtSetEvent, NtWaitForSingleObject};
+use super::sync::{nt_create_event, nt_set_event, nt_wait_for_single_object_kernel};
 use super::types::{ObjectAttributes, RtlCriticalSection, HANDLE, NTSTATUS};
 use core::ptr;
 use core::sync::atomic::{AtomicI32, Ordering};
 
-pub unsafe extern "C" fn RtlInitializeCriticalSection(
+pub unsafe extern "C" fn rtl_initialize_critical_section(
     critical_section: *mut RtlCriticalSection,
 ) -> NTSTATUS {
     if critical_section.is_null() {
@@ -29,18 +29,18 @@ pub unsafe extern "C" fn RtlInitializeCriticalSection(
     STATUS_SUCCESS
 }
 
-pub unsafe extern "C" fn RtlInitializeCriticalSectionAndSpinCount(
+pub unsafe extern "C" fn rtl_initialize_critical_section_and_spin_count(
     critical_section: *mut RtlCriticalSection,
     spin_count: u32,
 ) -> NTSTATUS {
-    let status = RtlInitializeCriticalSection(critical_section);
+    let status = rtl_initialize_critical_section(critical_section);
     if status == STATUS_SUCCESS {
         (*critical_section).spin_count = spin_count as usize;
     }
     status
 }
 
-pub unsafe extern "C" fn RtlEnterCriticalSection(
+pub unsafe extern "C" fn rtl_enter_critical_section(
     critical_section: *mut RtlCriticalSection,
 ) -> NTSTATUS {
     if critical_section.is_null() {
@@ -66,12 +66,12 @@ pub unsafe extern "C" fn RtlEnterCriticalSection(
     if cs.lock_semaphore.is_null() {
         let mut oa = ObjectAttributes::new();
         let mut event: HANDLE = ptr::null_mut();
-        NtCreateEvent(&mut event, 0, &mut oa, 1, 0);
+        nt_create_event(&mut event, 0, &mut oa, 1, 0);
         cs.lock_semaphore = event;
     }
 
     if !cs.lock_semaphore.is_null() {
-        NtWaitForSingleObject(cs.lock_semaphore, 0, ptr::null_mut());
+        nt_wait_for_single_object_kernel(cs.lock_semaphore, 0, None);
     }
 
     cs.owning_thread = current_thread;
@@ -79,7 +79,7 @@ pub unsafe extern "C" fn RtlEnterCriticalSection(
     STATUS_SUCCESS
 }
 
-pub unsafe extern "C" fn RtlTryEnterCriticalSection(
+pub unsafe extern "C" fn rtl_try_enter_critical_section(
     critical_section: *mut RtlCriticalSection,
 ) -> u32 {
     if critical_section.is_null() {
@@ -108,7 +108,7 @@ pub unsafe extern "C" fn RtlTryEnterCriticalSection(
     }
 }
 
-pub unsafe extern "C" fn RtlLeaveCriticalSection(
+pub unsafe extern "C" fn rtl_leave_critical_section(
     critical_section: *mut RtlCriticalSection,
 ) -> NTSTATUS {
     if critical_section.is_null() {
@@ -128,13 +128,13 @@ pub unsafe extern "C" fn RtlLeaveCriticalSection(
     let old_count = (*lock_ptr).fetch_sub(1, Ordering::Release);
 
     if old_count > 0 && !cs.lock_semaphore.is_null() {
-        NtSetEvent(cs.lock_semaphore, ptr::null_mut());
+        nt_set_event(cs.lock_semaphore, ptr::null_mut());
     }
 
     STATUS_SUCCESS
 }
 
-pub unsafe extern "C" fn RtlDeleteCriticalSection(
+pub unsafe extern "C" fn rtl_delete_critical_section(
     critical_section: *mut RtlCriticalSection,
 ) -> NTSTATUS {
     if critical_section.is_null() {
@@ -153,7 +153,7 @@ pub unsafe extern "C" fn RtlDeleteCriticalSection(
     STATUS_SUCCESS
 }
 
-pub unsafe extern "C" fn RtlSetCriticalSectionSpinCount(
+pub unsafe extern "C" fn rtl_set_critical_section_spin_count(
     critical_section: *mut RtlCriticalSection,
     spin_count: u32,
 ) -> u32 {

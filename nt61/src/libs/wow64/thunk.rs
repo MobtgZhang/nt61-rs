@@ -28,9 +28,9 @@ pub fn register_services() {
     crate::wow64_klog!("Registered {} WoW64 services", t.len());
 }
 
-/// `Wow64PrepareForException` — Handle exception in WoW64 context.
+/// `wow64_prepare_for_exception` — handle exception in WoW64 context.
 /// Returns 0 on success, error code on failure.
-pub unsafe extern "C" fn Wow64PrepareForException(
+pub unsafe extern "C" fn wow64_prepare_for_exception(
     exception_record: *const core::ffi::c_void,
     context: *mut core::ffi::c_void,
 ) -> i32 {
@@ -43,17 +43,17 @@ pub unsafe extern "C" fn Wow64PrepareForException(
     super::apc_exc_thunk::wow64_prepare_for_exception(exception_record, context)
 }
 
-/// `Wow64ApcRoutine` — APC delivery thunk for 32-bit threads.
+/// `wow64_apc_routine` — APC delivery thunk for 32-bit threads.
 /// This is called when a kernel APC needs to be delivered to a 32-bit thread.
-pub unsafe extern "C" fn Wow64ApcRoutine(apc: *mut core::ffi::c_void) {
+pub unsafe extern "C" fn wow64_apc_routine(apc: *mut core::ffi::c_void) {
     crate::wow64_klog!("Wow64ApcRoutine apc={:p}", apc);
     // Forward to the APC thunk layer
     super::apc_exc_thunk::wow64_apc_routine(apc);
 }
 
-/// `Wow64LdrpInitialize` — Initialize the 32-bit loader.
+/// `wow64_ldrp_initialize` — Initialize the 32-bit loader.
 /// This sets up the 32-bit ntdll and prepares for module loading.
-pub unsafe extern "C" fn Wow64LdrpInitialize(
+pub unsafe extern "C" fn wow64_ldrp_initialize(
     context: *mut core::ffi::c_void,
     entry: *mut core::ffi::c_void,
     param: *mut core::ffi::c_void,
@@ -68,9 +68,9 @@ pub unsafe extern "C" fn Wow64LdrpInitialize(
     super::apc_exc_thunk::wow64_ldrp_initialize(context, entry, param)
 }
 
-/// `Wow64SystemServiceEx` — System call dispatcher for WoW64.
+/// `wow64_system_service_ex` — System call dispatcher for WoW64.
 /// Translates 32-bit system calls to 64-bit and back.
-pub unsafe extern "C" fn Wow64SystemServiceEx(
+pub unsafe extern "C" fn wow64_system_service_ex(
     service_table: u32,
     service_number: u32,
     args: *mut u32,
@@ -85,9 +85,9 @@ pub unsafe extern "C" fn Wow64SystemServiceEx(
     super::ssd::dispatch_service(service_number, args)
 }
 
-/// `Wow64AllocateVirtualMemory32` — Allocate virtual memory in
+/// `wow64_allocate_virtual_memory32` — Allocate virtual memory in
 /// 32-bit address space.
-pub unsafe extern "C" fn Wow64AllocateVirtualMemory32(
+pub unsafe extern "C" fn wow64_allocate_virtual_memory32(
     process_handle: u32,
     base_address: u32,
     zero_bits: u32,
@@ -111,8 +111,8 @@ pub unsafe extern "C" fn Wow64AllocateVirtualMemory32(
     )
 }
 
-/// `Wow64FreeVirtualMemory32` — Free virtual memory in 32-bit address space.
-pub unsafe extern "C" fn Wow64FreeVirtualMemory32(
+/// `wow64_free_virtual_memory32` — Free virtual memory in 32-bit address space.
+pub unsafe extern "C" fn wow64_free_virtual_memory32(
     process_handle: u32,
     base_address: u32,
     region_size: u32,
@@ -134,8 +134,8 @@ pub unsafe extern "C" fn Wow64FreeVirtualMemory32(
     )
 }
 
-/// `Wow64ReadVirtualMemory32` — Read memory from a 32-bit process.
-pub unsafe extern "C" fn Wow64ReadVirtualMemory32(
+/// `wow64_read_virtual_memory32` — read memory from a 32-bit process.
+pub unsafe extern "C" fn wow64_read_virtual_memory32(
     process_handle: u32,
     base_address: u32,
     buffer: u32,
@@ -152,8 +152,8 @@ pub unsafe extern "C" fn Wow64ReadVirtualMemory32(
     super::mem_thunk::wow64_read_virtual_memory(process_handle, base_address, buffer, size)
 }
 
-/// `Wow64WriteVirtualMemory32` — Write memory to a 32-bit process.
-pub unsafe extern "C" fn Wow64WriteVirtualMemory32(
+/// `wow64_write_virtual_memory32` — write memory to a 32-bit process.
+pub unsafe extern "C" fn wow64_write_virtual_memory32(
     process_handle: u32,
     base_address: u32,
     buffer: u32,
@@ -170,8 +170,8 @@ pub unsafe extern "C" fn Wow64WriteVirtualMemory32(
     super::mem_thunk::wow64_write_virtual_memory(process_handle, base_address, buffer, size)
 }
 
-/// `Wow64QueryInformationProcess` — Query process information for WoW64 process.
-pub unsafe extern "C" fn Wow64QueryInformationProcess(
+/// `wow64_query_information_process` — Query process information for WoW64 process.
+pub unsafe extern "C" fn wow64_query_information_process(
     process_handle: u32,
     information_class: u32,
     buffer: u32,
@@ -193,8 +193,8 @@ pub unsafe extern "C" fn Wow64QueryInformationProcess(
     )
 }
 
-/// `Wow64SetInformationThread` — Set thread information for WoW64 thread.
-pub unsafe extern "C" fn Wow64SetInformationThread(
+/// `wow64_set_information_thread` — Set thread information for WoW64 thread.
+pub unsafe extern "C" fn wow64_set_information_thread(
     thread_handle: u32,
     information_class: u32,
     buffer: u32,

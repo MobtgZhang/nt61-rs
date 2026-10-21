@@ -12,8 +12,6 @@
 //!   * geoffchappell.com — wow64 system service dispatching
 //!   * ReactOS `win32ss/gdi/gdi32/objects/thunk.c`
 
-#![allow(dead_code)]
-
 use crate::libs::wow64::types::*;
 
 // 32-bit NTSTATUS (Win32 unsigned representation). The ntdll status
@@ -21,13 +19,13 @@ use crate::libs::wow64::types::*;
 // surface we re-export the same numeric value as `u32` so it can be
 // returned from `extern "C"` thunks whose ABI is unsigned 32-bit
 // (`ULONG32` / `NTSTATUS32`).
-const STATUS_SUCCESS_32: ULONG32 = 0x00000000;
-const STATUS_NOT_IMPLEMENTED_32: ULONG32 = 0xC0000002;
+pub const STATUS_SUCCESS_32: ULONG32 = 0x00000000;
+const STATUS_INVALID_SYSTEM_SERVICE_32: ULONG32 = 0xC000001C;
 const STATUS_INVALID_PARAMETER_32: ULONG32 = 0xC000000D;
-const STATUS_NO_MEMORY_32: ULONG32 = 0xC0000017;
-const STATUS_INVALID_HANDLE_32: ULONG32 = 0xC0000008;
-const STATUS_UNSUCCESSFUL_32: ULONG32 = 0xC0000001;
-const STATUS_ACCESS_DENIED_32: ULONG32 = 0xC0000022;
+pub const STATUS_NO_MEMORY_32: ULONG32 = 0xC0000017;
+pub const STATUS_INVALID_HANDLE_32: ULONG32 = 0xC0000008;
+pub const STATUS_UNSUCCESSFUL_32: ULONG32 = 0xC0000001;
+pub const STATUS_ACCESS_DENIED_32: ULONG32 = 0xC0000022;
 
 // =============================================================================
 // Service Number Constants
@@ -143,7 +141,7 @@ pub struct Wow64ServiceDescriptor {
 }
 
 impl Wow64ServiceDescriptor {
-    /// Create a new service descriptor.
+    /// create a new service descriptor.
     pub fn new(service_table: ULONG32, service_limit: ULONG32, arguments_table: ULONG32) -> Self {
         Self {
             service_table,
@@ -184,12 +182,12 @@ pub struct ServiceEntry {
 }
 
 impl ServiceEntry {
-    /// Create a new service entry.
+    /// create a new service entry.
     pub const fn new(handler: Option<ServiceHandler>, arg_size: u8) -> Self {
         Self { handler, arg_size }
     }
 
-    /// Create an empty service entry.
+    /// create an empty service entry.
     pub const fn empty() -> Self {
         Self {
             handler: None,
@@ -485,7 +483,7 @@ pub fn update_shadow_service_handler(service_number: ULONG32, handler: ServiceHa
 
 /// Stub handler for unregistered services.
 unsafe extern "C" fn stub_handler(_args: *const u32) -> ULONG32 {
-    STATUS_NOT_IMPLEMENTED_32
+    STATUS_INVALID_SYSTEM_SERVICE_32
 }
 
 // =============================================================================
@@ -516,7 +514,7 @@ pub unsafe fn dispatch_service(service_number: ULONG32, args: *const u32) -> ULO
                 Some(handler) => handler(args),
                 None => {
                     crate::wow64_klog!("[SSD] Unregistered base svc 0x{:03x}", svc_idx);
-                    STATUS_NOT_IMPLEMENTED_32
+                    STATUS_INVALID_SYSTEM_SERVICE_32
                 }
             }
         }
@@ -530,7 +528,7 @@ pub unsafe fn dispatch_service(service_number: ULONG32, args: *const u32) -> ULO
                 Some(handler) => handler(args),
                 None => {
                     crate::wow64_klog!("[SSD] Unregistered shadow svc 0x{:03x}", svc_idx);
-                    STATUS_NOT_IMPLEMENTED_32
+                    STATUS_INVALID_SYSTEM_SERVICE_32
                 }
             }
         }

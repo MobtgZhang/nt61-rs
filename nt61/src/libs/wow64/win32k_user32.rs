@@ -7,11 +7,8 @@
 //!   * Microsoft Windows SDK
 //!   * ReactOS user32 implementation
 
-#![allow(non_camel_case_types)]
-#![allow(dead_code)]
-
 use super::types::*;
-use super::win32k_thunk::{syscall_numbers, Msg32, Wow64Win32kCallbackReturn, Wow64Win32kSyscall};
+use super::win32k_thunk::{syscall_numbers, wow64_win32k_syscall, Msg32};
 
 pub type HWND32 = ULONG32;
 pub type HINSTANCE32 = ULONG32;
@@ -197,7 +194,7 @@ pub mod messages {
     pub const WM_MOUSELEAVE: ULONG32 = 0x02A3;
 }
 
-pub unsafe extern "C" fn Wow64CreateWindowExW(
+pub unsafe extern "C" fn wow64_create_window_ex_w(
     ex_style: ULONG32,
     class_name: ULONG32,
     window_name: ULONG32,
@@ -226,26 +223,26 @@ pub unsafe extern "C" fn Wow64CreateWindowExW(
         param,
     ];
 
-    let result = Wow64Win32kSyscall(syscall_numbers::NtUserCreateWindowEx, params.as_ptr());
+    let result = wow64_win32k_syscall(syscall_numbers::NT_USER_CREATE_WINDOW_EX, params.as_ptr());
 
     result
 }
 
-pub unsafe extern "C" fn Wow64DestroyWindow(hwnd: HWND32) -> BOOL32 {
+pub unsafe extern "C" fn wow64_destroy_window(hwnd: HWND32) -> BOOL32 {
     let params: [ULONG32; 1] = [hwnd];
-    let result = Wow64Win32kSyscall(syscall_numbers::NtUserDestroyWindow, params.as_ptr());
+    let result = wow64_win32k_syscall(syscall_numbers::NT_USER_DESTROY_WINDOW, params.as_ptr());
 
     result as BOOL32
 }
 
-pub unsafe extern "C" fn Wow64ShowWindow(hwnd: HWND32, cmd_show: ULONG32) -> BOOL32 {
+pub unsafe extern "C" fn wow64_show_window(hwnd: HWND32, cmd_show: ULONG32) -> BOOL32 {
     let params: [ULONG32; 2] = [hwnd, cmd_show];
-    let result = Wow64Win32kSyscall(syscall_numbers::NtUserShowWindow, params.as_ptr());
+    let result = wow64_win32k_syscall(syscall_numbers::NT_USER_SHOW_WINDOW, params.as_ptr());
 
     result as BOOL32
 }
 
-pub unsafe extern "C" fn Wow64GetMessageW(
+pub unsafe extern "C" fn wow64_get_message_w(
     msg: *mut Msg32,
     _hwnd: HWND32,
     _msg_filter_min: ULONG32,
@@ -258,7 +255,7 @@ pub unsafe extern "C" fn Wow64GetMessageW(
     0
 }
 
-pub unsafe extern "C" fn Wow64PeekMessageW(
+pub unsafe extern "C" fn wow64_peek_message_w(
     _msg: *mut Msg32,
     _hwnd: HWND32,
     _msg_filter_min: ULONG32,
@@ -268,48 +265,48 @@ pub unsafe extern "C" fn Wow64PeekMessageW(
     0
 }
 
-pub unsafe extern "C" fn Wow64TranslateMessage(_msg: *const Msg32) -> BOOL32 {
+pub unsafe extern "C" fn wow64_translate_message(_msg: *const Msg32) -> BOOL32 {
     0
 }
 
-pub unsafe extern "C" fn Wow64DispatchMessageW(_msg: *const Msg32) -> LRESULT32 {
+pub unsafe extern "C" fn wow64_dispatch_message_w(_msg: *const Msg32) -> LRESULT32 {
     0
 }
 
-pub unsafe extern "C" fn Wow64PostMessageW(
+pub unsafe extern "C" fn wow64_post_message_w(
     hwnd: HWND32,
     msg: ULONG32,
     wparam: WPARAM32,
     lparam: LPARAM32,
 ) -> BOOL32 {
     let params: [ULONG32; 4] = [hwnd, msg, wparam, lparam];
-    let result = Wow64Win32kSyscall(syscall_numbers::NtUserPostMessage, params.as_ptr());
+    let result = wow64_win32k_syscall(syscall_numbers::NT_USER_POST_MESSAGE, params.as_ptr());
 
     result as BOOL32
 }
 
-pub unsafe extern "C" fn Wow64SendMessageW(
+pub unsafe extern "C" fn wow64_send_message_w(
     hwnd: HWND32,
     msg: ULONG32,
     wparam: WPARAM32,
     lparam: LPARAM32,
 ) -> LRESULT32 {
     let params: [ULONG32; 4] = [hwnd, msg, wparam, lparam];
-    let result = Wow64Win32kSyscall(syscall_numbers::NtUserSendMessage, params.as_ptr());
+    let result = wow64_win32k_syscall(syscall_numbers::NT_USER_SEND_MESSAGE, params.as_ptr());
 
     result as LRESULT32
 }
 
-pub unsafe extern "C" fn Wow64GetDC(hwnd: HWND32) -> HDC32 {
+pub unsafe extern "C" fn wow64_get_dc(hwnd: HWND32) -> HDC32 {
     let params: [ULONG32; 1] = [hwnd];
-    let result = Wow64Win32kSyscall(syscall_numbers::NtGdiGetDC, params.as_ptr());
+    let result = wow64_win32k_syscall(syscall_numbers::NT_GDI_GET_DC, params.as_ptr());
 
     result
 }
 
-pub unsafe extern "C" fn Wow64ReleaseDC(hwnd: HWND32, hdc: HDC32) -> i32 {
+pub unsafe extern "C" fn wow64_release_dc(hwnd: HWND32, hdc: HDC32) -> i32 {
     let params: [ULONG32; 2] = [hwnd, hdc];
-    let result = Wow64Win32kSyscall(syscall_numbers::NtGdiReleaseDC, params.as_ptr());
+    let result = wow64_win32k_syscall(syscall_numbers::NT_GDI_RELEASE_DC, params.as_ptr());
 
     result as i32
 }

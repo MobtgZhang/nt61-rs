@@ -1,15 +1,24 @@
 //! gdi32 — paint operations
-
-#![cfg(target_arch = "x86_64")]
+//!
+//! `pat_blt` / `fill_rect` / `frame_rect` / `bit_blt` /
+//! `stretch_blt` all end up here. The real work happens
+//! inside `libs::win32k::eng_*` — we forward the request
+//! against the primary surface (the only surface the
+//! bootstrap currently owns) and apply the raster-op
+//! mask with `win32k::apply_rop`.
+//!
+//! The DC handle we receive is a gdi32 handle. If it
+//! refers to a registered `DC` object, we honour the
+//! `bk_color` and `rop` fields. Otherwise (NULL HDC,
+//! or a stock handle) we fall back to a black-on-white
+//! `SRCCOPY` operation against the primary surface.
 
 extern crate alloc;
 
 use super::types::{Rect, BOOL, HBRUSH, HDC, HRGN, HWND};
-#[cfg(target_arch = "x86_64")]
-use crate::libs::win32k::{clear_surface, draw_line_on_surface, fill_rect_on_surface};
-use core::ptr;
+use super::with_dc;
 
-/// Ternary raster-operation codes (subset).
+/// Ternary raster-operation codes (subset of Windows 7).
 pub mod rop {
     pub const SRCCOPY: u32 = 0x00CC_0020;
     pub const SRCPAINT: u32 = 0x00EE_0086;
@@ -28,87 +37,233 @@ pub mod rop {
     pub const WHITENESS: u32 = 0x00FF_0062;
 }
 
-/// `PatBlt` — perform a pattern block transfer (fill operation)
-/// In this stub implementation, we simulate the fill operation
-pub extern "C" fn PatBlt(dc: HDC, x: i32, y: i32, w: i32, h: i32, rop: u32) -> BOOL {
-    use crate::libs::win32k::apply_rop;
-    use crate::libs::win32k::RasterOp;
-
-    // For now, just return success
-    // A full implementation would:
-    // 1. Look up the DC's surface
-    // 2. Fill the rectangle with the current brush pattern
-    // 3. Apply the ROP operation
-    let _ = (dc, x, y, w, h);
-    match rop {
-        rop::BLACKNESS => {
-            // Would fill with black
-        }
-        rop::WHITENESS => {
-            // Would fill with white
-        }
-        _ => {
-            // PATCOPY and similar operations would use current brush
-        }
-    }
-    1
+#[inline]
+fn primary_surface() -> *mut crate::libs::win32k::surface::GdiSurface {
+    crate::libs::win32k::surface::get_primary_surface()
 }
 
-/// `FillRect` — fill a rectangle with a brush
-pub unsafe extern "C" fn FillRect(dc: HDC, rect: *const Rect, _brush: HBRUSH) -> i32 {
+/// Read a pixel from the primary surface. Returns 0 if
+/// the surface is uninitialised or the coordinate is
+/// out of range.
+#[inline]
+fn read_pixel(surf: *mut crate::libs::win32k::surface::GdiSurface, x: i32, y: i32) -> u32 {
+    if surf.is_null() {
+        return 0;
+    }
+    unsafe { (*surf).get_pixel(x, y).unwrap_or(0) }
+}
+
+/// Write a pixel to the primary surface. Returns false
+/// if the surface is uninitialised or the coordinate
+/// is out of range.
+#[inline]
+fn write_pixel(
+    surf: *mut crate::libs::win32k::surface::GdiSurface,
+    x: i32,
+    y: i32,
+    color: u32,
+) -> bool {
+    if surf.is_null() {
+        return false;
+    }
+    unsafe { (*surf).set_pixel(x, y, color) }
+}
+
+#[inline]
+fn dc_rop(dc: HDC) -> u32 {
+    let mut r = 0x00CC_0020u32; // SRCCOPY default.
+    let _ = with_dc(dc as u64, |d| {
+        r = d.rop;
+    });
+    r
+}
+
+/// `pat_blt` — fill / raster-op the rectangle
+/// `(x, y, w, h)` on the surface backing `dc`. Returns
+/// 1 on success, 0 on failure.
+pub extern "C" fn pat_blt(dc: HDC, x: i32, y: i32, w: i32, h: i32, rop: u32) -> BOOL {
+    if w == 0 || h == 0 {
+        return 1;
+    }
+    let surf = primary_surface();
+    if surf.is_null() {
+        return 0;
+    }
+    let rop_eff = if rop == 0 { dc_rop(dc) } else { rop };
+    let colour = match rop_eff {
+        rop::BLACKNESS => 0x0000_0000,
+        rop::WHITENESS => 0x00FF_FFFF,
+        rop::DSTINVERT => {
+            // Invert the destination in place.
+            for yi in 0..h {
+                for xi in 0..w {
+                    let px = read_pixel(surf, x + xi, y + yi);
+                    write_pixel(
+                        surf,
+                        x + xi,
+                        y + yi,
+                        crate::libs::win32k::apply_rop(px, 0, rop::DSTINVERT),
+                    );
+                }
+            }
+            return 1;
+        }
+        _ => 0x00FF_FFFF, // SRCCOPY / PATCOPY default to white.
+    };
+    crate::libs::win32k::surface::eng_fill_rectangle(surf, x, y, x + w, y + h, colour) as BOOL
+}
+
+/// `fill_rect` — fill the rectangle with the brush
+/// referenced by `_brush`. If the brush is a real
+/// gdi32 brush we recover its colour from the table;
+/// otherwise we fall back to the DC background colour.
+pub unsafe extern "C" fn fill_rect(dc: HDC, rect: *const Rect, brush: HBRUSH) -> i32 {
     if rect.is_null() {
         return 0;
     }
-
-    // A full implementation would look up the brush color
-    // For now, just return success
     let r = &*rect;
-    let _ = (dc, r);
-    1
+    let surf = primary_surface();
+    if surf.is_null() {
+        return 0;
+    }
+    // Recover the brush colour.
+    let mut colour: u32 = 0x00FF_FFFF;
+    if !brush.is_null() {
+        if let Some(obj) = super::lookup_object(brush as u64) {
+            if let super::GdiObjectPayload::Brush(b) = obj.payload {
+                if b.is_null {
+                    return 1; // Null brush: transparent fill.
+                }
+                colour = b.color;
+            }
+        } else if (brush as u64) >= super::pen_brush::STOCK_HANDLE_BASE {
+            let idx = (brush as u64 - super::pen_brush::STOCK_HANDLE_BASE) as i32;
+            colour = super::pen_brush::stock_brush_color(idx);
+        }
+    } else {
+        // Use the DC background colour.
+        let _ = with_dc(dc as u64, |d| {
+            colour = d.bk_color;
+        });
+    }
+    if crate::libs::win32k::surface::eng_fill_rectangle(
+        surf, r.left, r.top, r.right, r.bottom, colour,
+    ) {
+        1
+    } else {
+        0
+    }
 }
 
-/// `FrameRect` — draw a border around a rectangle
-pub unsafe extern "C" fn FrameRect(dc: HDC, rect: *const Rect, _brush: HBRUSH) -> i32 {
+/// `frame_rect` — draw a 1-pixel border around `rect`
+/// with the brush colour.
+pub unsafe extern "C" fn frame_rect(dc: HDC, rect: *const Rect, brush: HBRUSH) -> i32 {
     if rect.is_null() {
         return 0;
     }
-
-    // A full implementation would:
-    // 1. Look up the brush color
-    // 2. Draw 4 lines around the rectangle border
     let r = &*rect;
-    let _ = (dc, r);
+    if r.left > r.right || r.top > r.bottom {
+        return 0;
+    }
+    let mut colour: u32 = 0x0000_0000;
+    if !brush.is_null() {
+        if let Some(obj) = super::lookup_object(brush as u64) {
+            if let super::GdiObjectPayload::Brush(b) = obj.payload {
+                colour = b.color;
+            }
+        } else if (brush as u64) >= super::pen_brush::STOCK_HANDLE_BASE {
+            let idx = (brush as u64 - super::pen_brush::STOCK_HANDLE_BASE) as i32;
+            colour = super::pen_brush::stock_brush_color(idx);
+        }
+    }
+    let surf = primary_surface();
+    if surf.is_null() {
+        return 0;
+    }
+    // Top + bottom edges.
+    let _ = crate::libs::win32k::surface::eng_fill_rectangle(
+        surf,
+        r.left,
+        r.top,
+        r.right,
+        r.top + 1,
+        colour,
+    );
+    let _ = crate::libs::win32k::surface::eng_fill_rectangle(
+        surf,
+        r.left,
+        r.bottom.saturating_sub(1),
+        r.right,
+        r.bottom,
+        colour,
+    );
+    // Left + right edges.
+    let _ = crate::libs::win32k::surface::eng_fill_rectangle(
+        surf,
+        r.left,
+        r.top,
+        r.left + 1,
+        r.bottom,
+        colour,
+    );
+    let _ = crate::libs::win32k::surface::eng_fill_rectangle(
+        surf,
+        r.right.saturating_sub(1),
+        r.top,
+        r.right,
+        r.bottom,
+        colour,
+    );
+    let _ = dc;
     1
 }
 
-/// `InvalidateRect` — mark a region as needing to be redrawn
-pub unsafe extern "C" fn InvalidateRect(hwnd: HWND, rect: *const Rect, _erase: BOOL) -> BOOL {
-    // Add to update region
-    let _ = (hwnd, rect);
-    1
+/// `invalidate_rect` — mark a region as needing
+/// repainting. Forwarded to the win32k paint scheduler.
+pub unsafe extern "C" fn invalidate_rect(hwnd: HWND, rect: *const Rect, erase: BOOL) -> BOOL {
+    // win32k::paint::invalidate_rect takes an
+    // `Option<win32k::Rect>`; a null pointer means
+    // "the whole window".
+    let win_rect: Option<crate::libs::win32k::Rect> = if rect.is_null() {
+        None
+    } else {
+        Some(*(rect as *const crate::libs::win32k::Rect))
+    };
+    crate::libs::win32k::paint::invalidate_rect(hwnd as u64, win_rect, erase != 0) as BOOL
 }
 
-/// `InvalidateRgn` — mark a region as needing to be redrawn
-pub unsafe extern "C" fn InvalidateRgn(hwnd: HWND, rgn: HRGN, _erase: BOOL) -> BOOL {
-    let _ = (hwnd, rgn);
-    1
+/// `invalidate_rgn` — same as `invalidate_rect` but
+/// for a region handle. The region table in win32k
+/// does not currently distinguish shapes, so we map
+/// the region to the full window rect.
+pub unsafe extern "C" fn invalidate_rgn(hwnd: HWND, rgn: HRGN, erase: BOOL) -> BOOL {
+    let _ = rgn;
+    crate::libs::win32k::paint::invalidate_rect(hwnd as u64, None, erase != 0) as BOOL
 }
 
-/// `ValidateRect` — mark a region as valid (no longer needing redraw)
-pub unsafe extern "C" fn ValidateRect(hwnd: HWND, rect: *const Rect) -> BOOL {
-    let _ = (hwnd, rect);
-    1
+/// `validate_rect` — mark a region as valid.
+pub unsafe extern "C" fn validate_rect(hwnd: HWND, rect: *const Rect) -> BOOL {
+    let win_rect: Option<crate::libs::win32k::Rect> = if rect.is_null() {
+        None
+    } else {
+        Some(*(rect as *const crate::libs::win32k::Rect))
+    };
+    crate::libs::win32k::paint::validate_rect(hwnd as u64, win_rect) as BOOL
 }
 
-/// `UpdateWindow` — send WM_PAINT to a window
-pub unsafe extern "C" fn UpdateWindow(hwnd: HWND) -> BOOL {
-    // Would trigger WM_PAINT message processing
-    let _ = hwnd;
-    1
+/// `update_window` — request immediate repaint. We
+/// forward to `win32k::paint::update_window`; the
+/// scheduler decides whether to actually walk the
+/// window list.
+pub unsafe extern "C" fn update_window(hwnd: HWND) -> BOOL {
+    crate::libs::win32k::paint::update_window(hwnd as u64) as BOOL
 }
 
-/// `BitBlt` — block transfer between device contexts
-pub extern "C" fn BitBlt(
+/// `bit_blt` — block transfer from `hdc_src` to
+/// `hdc_dest`. Only same-surface blits are supported
+/// in the bootstrap; cross-DC blits collapse to a
+/// `SRCCOPY` no-op.
+pub extern "C" fn bit_blt(
     hdc_dest: HDC,
     x_dest: i32,
     y_dest: i32,
@@ -119,18 +274,27 @@ pub extern "C" fn BitBlt(
     y_src: i32,
     rop: u32,
 ) -> BOOL {
-    // A full implementation would:
-    // 1. Look up both DC's surfaces
-    // 2. Copy the pixels from source to destination
-    // 3. Apply the ROP operation
-    let _ = (
-        hdc_dest, x_dest, y_dest, width, height, hdc_src, x_src, y_src, rop,
-    );
+    let _ = (hdc_dest, hdc_src);
+    if width == 0 || height == 0 {
+        return 1;
+    }
+    let surf = primary_surface();
+    if surf.is_null() {
+        return 0;
+    }
+    let _ = rop;
+    for y in 0..height {
+        for x in 0..width {
+            let px = read_pixel(surf, x_src + x, y_src + y);
+            write_pixel(surf, x_dest + x, y_dest + y, px);
+        }
+    }
     1
 }
 
-/// `StretchBlt` — block transfer with scaling
-pub extern "C" fn StretchBlt(
+/// `stretch_blt` — scaled blit. Bootstrap implementation
+/// performs a nearest-neighbour resize.
+pub extern "C" fn stretch_blt(
     hdc_dest: HDC,
     x_dest: i32,
     y_dest: i32,
@@ -143,23 +307,29 @@ pub extern "C" fn StretchBlt(
     height_src: i32,
     rop: u32,
 ) -> BOOL {
-    let _ = (
-        hdc_dest,
-        x_dest,
-        y_dest,
-        width_dest,
-        height_dest,
-        hdc_src,
-        x_src,
-        y_src,
-        width_src,
-        height_src,
-        rop,
-    );
+    let _ = (hdc_dest, hdc_src, rop);
+    if width_dest == 0 || height_dest == 0 || width_src == 0 || height_src == 0 {
+        return 1;
+    }
+    let surf = primary_surface();
+    if surf.is_null() {
+        return 0;
+    }
+    for dy in 0..height_dest {
+        let sy = y_src + (dy * height_src) / height_dest;
+        for dx in 0..width_dest {
+            let sx = x_src + (dx * width_src) / width_dest;
+            let px = read_pixel(surf, sx, sy);
+            write_pixel(surf, x_dest + dx, y_dest + dy, px);
+        }
+    }
     1
 }
 
-/// `PatBlt` with actual surface (internal use)
+/// `pat_blt_surface` — internal helper used by
+/// `tests` to fill a known `EngSurface` with a
+/// solid colour, honouring BLACKNESS / WHITENESS /
+/// the default PATCOPY semantics.
 pub fn pat_blt_surface(
     surface: &crate::libs::win32k::EngSurface,
     x: i32,

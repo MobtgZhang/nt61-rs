@@ -4,13 +4,13 @@
 //! This is a proper implementation with metadata tracking for each allocation.
 
 use super::types::*;
-use core::alloc::{GlobalAlloc, Layout};
+use core::alloc::Layout;
 use core::ptr;
 
 extern crate alloc;
 use alloc::alloc::{alloc, alloc_zeroed, dealloc, realloc as alloc_realloc};
 
-fn set_errno(value: errno_t) {
+fn set_errno(value: ErrnoT) {
     unsafe { super::tls_errno_safe::_set_errno(value) };
 }
 
@@ -35,7 +35,7 @@ unsafe fn get_user_ptr(header: *mut AllocHeader) -> *mut c_void {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn malloc(size: size_t) -> *mut c_void {
+pub unsafe extern "C" fn malloc(size: SizeT) -> *mut c_void {
     if size == 0 {
         return ptr::null_mut();
     }
@@ -87,7 +87,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn calloc(count: size_t, size: size_t) -> *mut c_void {
+pub unsafe extern "C" fn calloc(count: SizeT, size: SizeT) -> *mut c_void {
     let total_size = match count.checked_mul(size) {
         Some(s) => s,
         None => {
@@ -124,7 +124,7 @@ pub unsafe extern "C" fn calloc(count: size_t, size: size_t) -> *mut c_void {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_void {
+pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: SizeT) -> *mut c_void {
     if ptr.is_null() {
         return malloc(new_size);
     }
@@ -169,7 +169,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn _aligned_malloc(size: size_t, alignment: size_t) -> *mut c_void {
+pub unsafe extern "C" fn _aligned_malloc(size: SizeT, alignment: SizeT) -> *mut c_void {
     if size == 0 || alignment == 0 || !alignment.is_power_of_two() {
         set_errno(EINVAL);
         return ptr::null_mut();
@@ -211,8 +211,8 @@ pub unsafe extern "C" fn _aligned_free(ptr: *mut c_void) {
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _aligned_realloc(
     ptr: *mut c_void,
-    new_size: size_t,
-    alignment: size_t,
+    new_size: SizeT,
+    alignment: SizeT,
 ) -> *mut c_void {
     if alignment == 0 || !alignment.is_power_of_two() {
         set_errno(EINVAL);
@@ -280,26 +280,26 @@ pub unsafe extern "C" fn _aligned_realloc(
 
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _malloc_dbg(
-    size: size_t,
-    _block_type: c_int,
-    _filename: *const c_char,
-    _line: c_int,
+    size: SizeT,
+    _block_type: CInt,
+    _filename: *const CChar,
+    _line: CInt,
 ) -> *mut c_void {
     malloc(size)
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn _free_dbg(ptr: *mut c_void, _block_type: c_int) {
+pub unsafe extern "C" fn _free_dbg(ptr: *mut c_void, _block_type: CInt) {
     free(ptr);
 }
 
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _calloc_dbg(
-    count: size_t,
-    size: size_t,
-    _block_type: c_int,
-    _filename: *const c_char,
-    _line: c_int,
+    count: SizeT,
+    size: SizeT,
+    _block_type: CInt,
+    _filename: *const CChar,
+    _line: CInt,
 ) -> *mut c_void {
     calloc(count, size)
 }
@@ -307,21 +307,21 @@ pub unsafe extern "C" fn _calloc_dbg(
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _realloc_dbg(
     ptr: *mut c_void,
-    new_size: size_t,
-    _block_type: c_int,
-    _filename: *const c_char,
-    _line: c_int,
+    new_size: SizeT,
+    _block_type: CInt,
+    _filename: *const CChar,
+    _line: CInt,
 ) -> *mut c_void {
     realloc(ptr, new_size)
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn _expand(ptr: *mut c_void, new_size: size_t) -> *mut c_void {
+pub unsafe extern "C" fn _expand(_ptr: *mut c_void, _new_size: SizeT) -> *mut c_void {
     ptr::null_mut()
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn _msize(ptr: *mut c_void) -> size_t {
+pub unsafe extern "C" fn _msize(ptr: *mut c_void) -> SizeT {
     if ptr.is_null() {
         return 0;
     }
@@ -336,12 +336,12 @@ pub unsafe extern "C" fn _msize(ptr: *mut c_void) -> size_t {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn _heapchk() -> c_int {
+pub unsafe extern "C" fn _heapchk() -> CInt {
     0
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn _heapmin() -> c_int {
+pub unsafe extern "C" fn _heapmin() -> CInt {
     0
 }
 

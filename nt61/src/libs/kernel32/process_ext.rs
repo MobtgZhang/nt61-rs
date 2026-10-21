@@ -1,8 +1,8 @@
 //! kernel32 — Enhanced Process Creation
 //!
-//! Complete CreateProcessW implementation with proper:
+//! Complete create_process_w implementation with proper:
 //! - Command line parsing
-//! - Environment variable handling
+//! - environment variable handling
 //! - Standard I/O redirection
 //! - STARTUPINFO processing
 //!
@@ -12,7 +12,7 @@
 
 extern crate alloc;
 
-use super::error::SetLastError;
+use super::error::set_last_error;
 use super::types::{BOOL, DWORD, FALSE, HANDLE, TRUE};
 use alloc::string::String;
 use alloc::string::ToString;
@@ -119,7 +119,7 @@ unsafe fn wide_to_string(p: *const u16) -> Option<String> {
     Some(out)
 }
 
-fn build_environment_block(env: &[(String, String)]) -> Vec<u16> {
+pub fn build_environment_block(env: &[(String, String)]) -> Vec<u16> {
     let mut block = Vec::new();
 
     for (key, value) in env {
@@ -138,7 +138,7 @@ fn build_environment_block(env: &[(String, String)]) -> Vec<u16> {
     block
 }
 
-pub unsafe extern "C" fn CreateProcessW(
+pub unsafe extern "C" fn create_process_w(
     application_name: *const u16,
     command_line: *mut u16,
     process_attributes: *const u8,
@@ -151,7 +151,7 @@ pub unsafe extern "C" fn CreateProcessW(
     process_information: *mut PROCESS_INFORMATION,
 ) -> BOOL {
     if startup_info.is_null() || process_information.is_null() {
-        SetLastError(87); // ERROR_INVALID_PARAMETER
+        set_last_error(87); // ERROR_INVALID_PARAMETER
         return FALSE;
     }
 
@@ -172,12 +172,12 @@ pub unsafe extern "C" fn CreateProcessW(
     } else if let Some(ref cmd) = cmd_line_str {
         let args = parse_command_line(cmd);
         if args.is_empty() {
-            SetLastError(2); // ERROR_FILE_NOT_FOUND
+            set_last_error(2); // ERROR_FILE_NOT_FOUND
             return FALSE;
         }
         args[0].clone()
     } else {
-        SetLastError(87);
+        set_last_error(87);
         return FALSE;
     };
 
@@ -243,17 +243,17 @@ pub unsafe extern "C" fn CreateProcessW(
         idx += 1;
     }
 
-    let us = crate::libs::ntdll::types::UnicodeString {
-        Length: (idx * 2) as u16,
-        MaximumLength: 520,
-        Buffer: image_name_buf.as_mut_ptr(),
+    let _us = crate::libs::ntdll::types::UnicodeString {
+        length: (idx * 2) as u16,
+        maximum_length: 520,
+        buffer: image_name_buf.as_mut_ptr(),
     };
 
-    let status = crate::libs::ntdll::process::NtCreateProcess(
+    let status = crate::libs::ntdll::process::nt_create_process(
         &mut proc_handle,
         0x001F0FFF, // PROCESS_ALL_ACCESS
         ptr::null_mut(),
-        crate::libs::ntdll::process::NtCurrentProcess(),
+        crate::libs::ntdll::process::nt_current_process(),
         inherit_handles as u8,
         ptr::null_mut(),
         ptr::null_mut(),
@@ -261,11 +261,11 @@ pub unsafe extern "C" fn CreateProcessW(
     );
 
     if status != crate::libs::ntdll::status::STATUS_SUCCESS {
-        SetLastError(5); // ERROR_ACCESS_DENIED
+        set_last_error(5); // ERROR_ACCESS_DENIED
         return FALSE;
     }
 
-    let status = crate::libs::ntdll::thread::NtCreateThread(
+    let status = crate::libs::ntdll::thread::nt_create_thread(
         &mut thread_handle,
         0x001F03FF, // THREAD_ALL_ACCESS
         ptr::null_mut(),
@@ -278,8 +278,8 @@ pub unsafe extern "C" fn CreateProcessW(
     );
 
     if status != crate::libs::ntdll::status::STATUS_SUCCESS {
-        crate::libs::ntdll::file::NtClose(proc_handle);
-        SetLastError(5);
+        crate::libs::ntdll::file::nt_close(proc_handle);
+        set_last_error(5);
         return FALSE;
     }
 
@@ -292,7 +292,7 @@ pub unsafe extern "C" fn CreateProcessW(
     pi.h_thread = thread_handle;
     // The handle table records the object each handle refers to, so the real
     // client ids are available here; returning fixed values made every
-    // CreateProcessW caller see the same process/thread.
+    // create_process_w caller see the same process/thread.
     pi.dw_process_id = match crate::libs::ntdll::file::lookup_handle(proc_handle) {
         Some(entry) if entry.kind == crate::libs::ntdll::file::HandleKind::Process => {
             entry.target as DWORD
@@ -309,7 +309,7 @@ pub unsafe extern "C" fn CreateProcessW(
     TRUE
 }
 
-pub unsafe extern "C" fn GetStartupInfoW(startup_info: *mut STARTUPINFOW) {
+pub unsafe extern "C" fn get_startup_info_w(startup_info: *mut STARTUPINFOW) {
     if startup_info.is_null() {
         return;
     }
@@ -331,12 +331,12 @@ pub unsafe extern "C" fn GetStartupInfoW(startup_info: *mut STARTUPINFOW) {
     si.w_show_window = 1; // SW_SHOWNORMAL
     si.cb_reserved2 = 0;
     si.lp_reserved2 = ptr::null_mut();
-    si.h_std_input = super::console::GetStdHandle(super::console::STD_INPUT_HANDLE);
-    si.h_std_output = super::console::GetStdHandle(super::console::STD_OUTPUT_HANDLE);
-    si.h_std_error = super::console::GetStdHandle(super::console::STD_ERROR_HANDLE);
+    si.h_std_input = super::console::get_std_handle(super::console::STD_INPUT_HANDLE);
+    si.h_std_output = super::console::get_std_handle(super::console::STD_OUTPUT_HANDLE);
+    si.h_std_error = super::console::get_std_handle(super::console::STD_ERROR_HANDLE);
 }
 
-pub unsafe extern "C" fn GetProcessTimes(
+pub unsafe extern "C" fn get_process_times(
     process: HANDLE,
     creation_time: *mut super::thread::FileTime,
     exit_time: *mut super::thread::FileTime,
@@ -344,7 +344,7 @@ pub unsafe extern "C" fn GetProcessTimes(
     user_time: *mut super::thread::FileTime,
 ) -> BOOL {
     if process.is_null() {
-        SetLastError(6); // ERROR_INVALID_HANDLE
+        set_last_error(6); // ERROR_INVALID_HANDLE
         return FALSE;
     }
 
@@ -364,19 +364,19 @@ pub unsafe extern "C" fn GetProcessTimes(
     TRUE
 }
 
-pub unsafe extern "C" fn CommandLineToArgvW(
+pub unsafe extern "C" fn command_line_to_argv_w(
     cmd_line: *const u16,
     num_args: *mut i32,
 ) -> *mut *mut u16 {
     if cmd_line.is_null() || num_args.is_null() {
-        SetLastError(87);
+        set_last_error(87);
         return ptr::null_mut();
     }
 
     let cmd_str = match wide_to_string(cmd_line) {
         Some(s) => s,
         None => {
-            SetLastError(87);
+            set_last_error(87);
             return ptr::null_mut();
         }
     };
@@ -384,6 +384,6 @@ pub unsafe extern "C" fn CommandLineToArgvW(
     let args = parse_command_line(&cmd_str);
     *num_args = args.len() as i32;
 
-    // In a real implementation, use LocalAlloc
+    // In a real implementation, use local_alloc
     ptr::null_mut()
 }

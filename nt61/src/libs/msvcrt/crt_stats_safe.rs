@@ -1,6 +1,4 @@
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
-
-use core::sync::atomic::{AtomicI32, AtomicI64, AtomicU8};
+use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 #[derive(Debug)]
 pub struct CrtStats {
@@ -45,18 +43,19 @@ impl CrtStats {
 
 pub static CRT_STATS: CrtStats = CrtStats::new();
 
-#[cfg_attr(not(test), no_mangle)]
-pub static __security_cookie: AtomicUsize = AtomicUsize::new(0xBB40E64E);
-#[cfg_attr(not(test), no_mangle)]
-pub static __security_cookie_complement: AtomicUsize = AtomicUsize::new(!0xBB40E64E);
+#[export_name = "__security_cookie"]
+pub static __SECURITY_COOKIE: AtomicUsize = AtomicUsize::new(0xBB40E64E);
+
+#[export_name = "__security_cookie_complement"]
+pub static __SECURITY_COOKIE_COMPLEMENT: AtomicUsize = AtomicUsize::new(!0xBB40E64E);
 
 pub fn init_security_cookie() {
     // In a real implementation, this would use hardware RNG
     let cookie = 0xBB40E64E ^ (crate::ke::time::get_system_time() as usize);
-    __security_cookie.store(cookie, Ordering::Relaxed);
-    __security_cookie_complement.store(!cookie, Ordering::Relaxed);
+    __SECURITY_COOKIE.store(cookie, Ordering::Relaxed);
+    __SECURITY_COOKIE_COMPLEMENT.store(!cookie, Ordering::Relaxed);
 }
 
 pub fn check_security_cookie(cookie: usize) -> bool {
-    cookie == __security_cookie.load(Ordering::Relaxed)
+    cookie == __SECURITY_COOKIE.load(Ordering::Relaxed)
 }

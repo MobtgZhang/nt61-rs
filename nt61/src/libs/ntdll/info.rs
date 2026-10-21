@@ -1,4 +1,4 @@
-//! ntdll — NtQuerySystemInformation / NtSetSystemInformation
+//! ntdll — nt_query_system_information / nt_set_system_information
 //
 //! Returns mostly stubs: the kernel reports fixed values
 //! (single processor, 4 GiB of RAM, ...) so that the kernel32
@@ -15,8 +15,7 @@
 //! `ntdll.dll` system information APIs.
 
 use super::status::{STATUS_INVALID_INFO_CLASS, STATUS_INVALID_PARAMETER, STATUS_SUCCESS};
-use super::types::{NTSTATUS, PVOID, SIZE_T};
-use core::ptr;
+use super::types::{NTSTATUS, PVOID};
 
 /// `SYSTEM_BASIC_INFORMATION` (44 bytes on x64).
 #[repr(C)]
@@ -60,8 +59,8 @@ pub struct SystemTimeOfDayInformation {
     pub current_time_cycles: u64,
 }
 
-/// `NtQuerySystemInformation`.
-pub unsafe extern "C" fn NtQuerySystemInformation(
+/// `nt_query_system_information`.
+pub unsafe extern "C" fn nt_query_system_information(
     system_information_class: u32,
     system_information: PVOID,
     system_information_length: u32,
@@ -140,10 +139,10 @@ pub unsafe extern "C" fn NtQuerySystemInformation(
     }
 }
 
-/// `NtSetSystemInformation` — most classes are read-only; the
+/// `nt_set_system_information` — most classes are read-only; the
 /// only writable one is `SystemLoadGdiDriverInformation`
 /// (class 26), which we don't implement.
-pub unsafe extern "C" fn NtSetSystemInformation(
+pub unsafe extern "C" fn nt_set_system_information(
     _system_information_class: u32,
     _system_information: PVOID,
     _system_information_length: u32,
@@ -151,13 +150,13 @@ pub unsafe extern "C" fn NtSetSystemInformation(
     STATUS_INVALID_INFO_CLASS
 }
 
-/// `RtlGetNativeSystemInformation` — alias kept for compat
+/// `rtl_get_native_system_information` — alias kept for compat
 /// with very old applications.
-pub unsafe extern "C" fn RtlGetNativeSystemInformation(
+pub unsafe extern "C" fn rtl_get_native_system_information(
     info_class: u32,
     info: PVOID,
     length: u32,
     return_length: *mut u32,
 ) -> NTSTATUS {
-    NtQuerySystemInformation(info_class, info, length, return_length)
+    nt_query_system_information(info_class, info, length, return_length)
 }

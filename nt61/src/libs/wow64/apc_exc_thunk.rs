@@ -10,15 +10,13 @@
 //!   * geoffchappell.com — wow64 exception handling
 //!   * ReactOS `dll/win32/kernel32/client/thread.c`
 
-#![cfg(target_arch = "x86_64")]
-
 use crate::libs::wow64::types::*;
 
 // =============================================================================
-// Wow64ApcRoutine — APC Delivery to 32-bit Threads
+// wow64_apc_routine — APC Delivery to 32-bit Threads
 // =============================================================================
 
-/// `Wow64ApcRoutine` — APC routine that runs in a 32-bit thread context.
+/// `wow64_apc_routine` — APC routine that runs in a 32-bit thread context.
 ///
 /// When the kernel wants to deliver an APC to a 32-bit thread, it calls this
 /// routine. The APC needs to be executed in 32-bit mode with the correct
@@ -31,7 +29,7 @@ use crate::libs::wow64::types::*;
 ///
 /// # Safety
 /// This function manipulates thread state and stack.
-pub unsafe extern "C" fn Wow64ApcRoutine(
+pub unsafe extern "C" fn wow64_apc_routine_impl(
     apc: *mut Kapc32,
     thread: u64, // ETHREAD kernel pointer
     frame: u64,  // 32-bit frame pointer
@@ -75,10 +73,10 @@ pub unsafe extern "C" fn Wow64ApcRoutine(
     }
 }
 
-/// `Wow64ApcKernelRoutine` — Kernel-mode APC routine.
+/// `wow64_apc_kernel_routine` — Kernel-mode APC routine.
 ///
 /// This is called when a kernel-mode APC needs to be delivered to a 32-bit thread.
-pub unsafe extern "C" fn Wow64ApcKernelRoutine(apc: *mut Kapc32, thread: u64, frame: u64) {
+pub unsafe extern "C" fn wow64_apc_kernel_routine(apc: *mut Kapc32, thread: u64, frame: u64) {
     crate::wow64_klog!(
         "Wow64ApcKernelRoutine apc=0x{:016x} thread=0x{:016x} frame=0x{:016x}",
         apc as u64,
@@ -99,10 +97,10 @@ pub unsafe extern "C" fn Wow64ApcKernelRoutine(apc: *mut Kapc32, thread: u64, fr
     }
 }
 
-/// `Wow64ApcRundownRoutine` — APC rundown routine.
+/// `wow64_apc_rundown_routine` — APC rundown routine.
 ///
 /// Called when a thread is being terminated while APCs are queued.
-pub unsafe extern "C" fn Wow64ApcRundownRoutine(apc: *mut Kapc32) {
+pub unsafe extern "C" fn wow64_apc_rundown_routine(apc: *mut Kapc32) {
     crate::wow64_klog!("Wow64ApcRundownRoutine apc=0x{:016x}", apc as u64);
 
     if !apc.is_null() {
@@ -117,10 +115,10 @@ pub unsafe extern "C" fn Wow64ApcRundownRoutine(apc: *mut Kapc32) {
 }
 
 // =============================================================================
-// Wow64PrepareForException
+// wow64_prepare_for_exception
 // =============================================================================
 
-/// `Wow64PrepareForException` — Prepare a 32-bit thread for exception handling.
+/// `wow64_prepare_for_exception` — Prepare a 32-bit thread for exception handling.
 ///
 /// This is called when an exception occurs and needs to be handled by 32-bit
 /// code. It sets up the 32-bit exception handling context.
@@ -133,7 +131,7 @@ pub unsafe extern "C" fn Wow64ApcRundownRoutine(apc: *mut Kapc32) {
 /// # Returns
 /// * 0 = Exception is continuable
 /// * 1 = Exception is non-continuable
-pub unsafe extern "C" fn Wow64PrepareForException(
+pub unsafe extern "C" fn wow64_prepare_for_exception_impl(
     exception_code: ULONG32,
     exception_flags: ULONG32,
     exception_address: ULONG32,
@@ -155,10 +153,10 @@ pub unsafe extern "C" fn Wow64PrepareForException(
 }
 
 // =============================================================================
-// Wow64RaiseException / Wow64DispatchException
+// wow64_raise_exception / wow64_dispatch_exception
 // =============================================================================
 
-/// `Wow64RaiseException` — Raise a 32-bit exception.
+/// `wow64_raise_exception` — Raise a 32-bit exception.
 ///
 /// Called from the 32-bit exception handling code to raise an exception
 /// that will be handled by the 64-bit kernel.
@@ -170,7 +168,7 @@ pub unsafe extern "C" fn Wow64PrepareForException(
 ///
 /// # Returns
 /// * NTSTATUS
-pub unsafe extern "C" fn Wow64RaiseException(
+pub unsafe extern "C" fn wow64_raise_exception(
     exception_record: *const ExceptionRecord32,
     context: *mut Context32,
     exception_frame: ULONG32,
@@ -207,7 +205,7 @@ pub unsafe extern "C" fn Wow64RaiseException(
     STATUS_SUCCESS
 }
 
-/// `Wow64DispatchException` — Dispatch a 32-bit exception.
+/// `wow64_dispatch_exception` — Dispatch a 32-bit exception.
 ///
 /// This is the main exception dispatching routine for 32-bit exceptions.
 ///
@@ -218,7 +216,7 @@ pub unsafe extern "C" fn Wow64RaiseException(
 ///
 /// # Returns
 /// * NTSTATUS
-pub unsafe extern "C" fn Wow64DispatchException(
+pub unsafe extern "C" fn wow64_dispatch_exception(
     exception_record: *const ExceptionRecord32,
     context: *mut Context32,
     exception_frame: ULONG32,
@@ -250,7 +248,7 @@ pub unsafe extern "C" fn Wow64DispatchException(
     // 1. Build a 64-bit exception record from 32-bit data
     // 2. Build a 64-bit context from 32-bit context
     // 3. Walk the 32-bit exception handling chain
-    // 4. If no handler found, call Wow64RaiseException
+    // 4. If no handler found, call wow64_raise_exception
     // 5. If handler found, set up the 32-bit continuation context
 
     let _ = (exception_code, exception_address, number_parameters);
@@ -261,18 +259,18 @@ pub unsafe extern "C" fn Wow64DispatchException(
 // Wow64 Callback Return
 // =============================================================================
 
-/// `Wow64CallbackReturn` — Return from a callback into 32-bit code.
+/// `wow64_callback_return` — Return from a callback into 32-bit code.
 ///
 /// When the kernel needs to callback into 32-bit code (e.g., for APCs or
 /// window messages), it uses this function to return control.
 ///
 /// # Arguments
 /// * `buffer` - Pointer to result buffer
-/// * `buffer_length` - Length of result buffer
+/// * `buffer_length` - length of result buffer
 ///
 /// # Returns
 /// * Does not return; transfers control back to 32-bit code
-pub unsafe extern "C" fn Wow64CallbackReturn(buffer: *const u8, buffer_length: ULONG32) -> ! {
+pub unsafe extern "C" fn wow64_callback_return(buffer: *const u8, buffer_length: ULONG32) -> ! {
     crate::wow64_klog!(
         "Wow64CallbackReturn buffer=0x{:016x} length={}",
         buffer as u64,
@@ -285,10 +283,7 @@ pub unsafe extern "C" fn Wow64CallbackReturn(buffer: *const u8, buffer_length: U
     // 3. Execute iretq/syscall to return to 32-bit code
 
     // For stub, just halt
-    loop {
-        core::arch::asm!("hlt");
-        core::hint::black_box(());
-    }
+    crate::arch::halt_loop();
 }
 
 // =============================================================================
@@ -376,7 +371,7 @@ pub fn init() {
 // Public Entry Points (for thunk.rs forwarding)
 // =============================================================================
 
-/// `wow64_prepare_for_exception` — Handle exception in WoW64 context.
+/// `wow64_prepare_for_exception` — handle exception in WoW64 context.
 pub unsafe extern "C" fn wow64_prepare_for_exception(
     exception_record: *const core::ffi::c_void,
     context: *mut core::ffi::c_void,

@@ -1,13 +1,41 @@
 //! ntdll — Additional Nt* system calls
 //
-//! Extended system call wrappers: NtQueryObject, NtSetInformationObject,
-//! NtQueryDirectoryFile, NtQueryVolumeInformationFile, NtDeviceIoControlFile.
+//! Extended system call wrappers: nt_query_object, nt_set_information_object,
+//! nt_query_directory_file, nt_query_volume_information_file, nt_device_io_control_file.
 
-use super::status::{
-    STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER, STATUS_NOT_IMPLEMENTED, STATUS_SUCCESS,
-};
-use super::types::{IoStatusBlock, ObjectAttributes, UnicodeString, HANDLE, NTSTATUS, PVOID};
-use core::ptr;
+use super::status::{STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER, STATUS_SUCCESS};
+use super::types::{IoStatusBlock, UnicodeString, HANDLE, NTSTATUS, PVOID};
+use crate::mm::user_copy::{probe_user_read, probe_user_write, write_user_object};
+
+fn write_io_status(
+    io_status_block: *mut IoStatusBlock,
+    status: NTSTATUS,
+    information: usize,
+) -> NTSTATUS {
+    let iosb = IoStatusBlock {
+        status,
+        information,
+    };
+    if write_user_object(io_status_block as u64, &iosb).is_err() {
+        return crate::libs::ntdll::status::STATUS_ACCESS_VIOLATION;
+    }
+    status
+}
+
+fn check_user_buffer(pointer: PVOID, length: u32, require_write: bool) -> NTSTATUS {
+    if pointer.is_null() || length == 0 {
+        return STATUS_SUCCESS;
+    }
+    let result = if require_write {
+        probe_user_write(pointer as u64, length as usize)
+    } else {
+        probe_user_read(pointer as u64, length as usize)
+    };
+    if result.is_err() {
+        return crate::libs::ntdll::status::STATUS_ACCESS_VIOLATION;
+    }
+    STATUS_SUCCESS
+}
 
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,7 +47,7 @@ pub enum ObjectInformationClass {
     ObjectHandleFlagInformation = 4,
 }
 
-pub unsafe extern "C" fn NtQueryObject(
+pub unsafe extern "C" fn nt_query_object(
     handle: HANDLE,
     object_information_class: u32,
     object_information: PVOID,
@@ -28,6 +56,22 @@ pub unsafe extern "C" fn NtQueryObject(
 ) -> NTSTATUS {
     if handle.is_null() {
         return STATUS_INVALID_HANDLE;
+    }
+
+    if !object_information.is_null()
+        && object_information_length > 0
+        && probe_user_write(
+            object_information as u64,
+            object_information_length as usize,
+        )
+        .is_err()
+    {
+        return crate::libs::ntdll::status::STATUS_ACCESS_VIOLATION;
+    }
+    if !return_length.is_null()
+        && probe_user_write(return_length as u64, core::mem::size_of::<u32>()).is_err()
+    {
+        return crate::libs::ntdll::status::STATUS_ACCESS_VIOLATION;
     }
 
     let _ = (
@@ -43,7 +87,7 @@ pub unsafe extern "C" fn NtQueryObject(
     STATUS_SUCCESS
 }
 
-pub unsafe extern "C" fn NtSetInformationObject(
+pub unsafe extern "C" fn nt_set_information_object(
     handle: HANDLE,
     object_information_class: u32,
     object_information: PVOID,
@@ -51,6 +95,17 @@ pub unsafe extern "C" fn NtSetInformationObject(
 ) -> NTSTATUS {
     if handle.is_null() {
         return STATUS_INVALID_HANDLE;
+    }
+
+    if !object_information.is_null()
+        && object_information_length > 0
+        && probe_user_read(
+            object_information as u64,
+            object_information_length as usize,
+        )
+        .is_err()
+    {
+        return crate::libs::ntdll::status::STATUS_ACCESS_VIOLATION;
     }
 
     let _ = (
@@ -61,7 +116,7 @@ pub unsafe extern "C" fn NtSetInformationObject(
     STATUS_SUCCESS
 }
 
-pub unsafe extern "C" fn NtQueryDirectoryFile(
+pub unsafe extern "C" fn nt_query_directory_file(
     file_handle: HANDLE,
     event: HANDLE,
     apc_routine: PVOID,
@@ -78,6 +133,15 @@ pub unsafe extern "C" fn NtQueryDirectoryFile(
         return STATUS_INVALID_PARAMETER;
     }
 
+    if check_user_buffer(file_information, length, true) != STATUS_SUCCESS {
+        return check_user_buffer(file_information, length, true);
+    }
+    if !file_name.is_null()
+        && probe_user_read(file_name as u64, core::mem::size_of::<UnicodeString>()).is_err()
+    {
+        return crate::libs::ntdll::status::STATUS_ACCESS_VIOLATION;
+    }
+
     let _ = (event, apc_routine, apc_context, file_information, length);
     let _ = (
         file_information_class,
@@ -86,10 +150,7 @@ pub unsafe extern "C" fn NtQueryDirectoryFile(
         restart_scan,
     );
 
-    (*io_status_block).status = STATUS_SUCCESS;
-    (*io_status_block).information = 0;
-
-    super::status::STATUS_NO_MORE_FILES
+    write_io_status(io_status_block, super::status::STATUS_NO_MORE_FILES, 0)
 }
 
 #[repr(u32)]
@@ -107,7 +168,7 @@ pub enum FsInformationClass {
     FileFsVolumeFlagsInformation = 10,
 }
 
-pub unsafe extern "C" fn NtQueryVolumeInformationFile(
+pub unsafe extern "C" fn nt_query_volume_information_file(
     file_handle: HANDLE,
     io_status_block: *mut IoStatusBlock,
     fs_information: PVOID,
@@ -118,15 +179,16 @@ pub unsafe extern "C" fn NtQueryVolumeInformationFile(
         return STATUS_INVALID_PARAMETER;
     }
 
+    if check_user_buffer(fs_information, length, true) != STATUS_SUCCESS {
+        return check_user_buffer(fs_information, length, true);
+    }
+
     let _ = (fs_information, length, fs_information_class);
 
-    (*io_status_block).status = STATUS_SUCCESS;
-    (*io_status_block).information = 0;
-
-    STATUS_SUCCESS
+    write_io_status(io_status_block, STATUS_SUCCESS, 0)
 }
 
-pub unsafe extern "C" fn NtSetVolumeInformationFile(
+pub unsafe extern "C" fn nt_set_volume_information_file(
     file_handle: HANDLE,
     io_status_block: *mut IoStatusBlock,
     fs_information: PVOID,
@@ -137,15 +199,16 @@ pub unsafe extern "C" fn NtSetVolumeInformationFile(
         return STATUS_INVALID_PARAMETER;
     }
 
+    if check_user_buffer(fs_information, length, false) != STATUS_SUCCESS {
+        return check_user_buffer(fs_information, length, false);
+    }
+
     let _ = (fs_information, length, fs_information_class);
 
-    (*io_status_block).status = STATUS_SUCCESS;
-    (*io_status_block).information = 0;
-
-    STATUS_SUCCESS
+    write_io_status(io_status_block, STATUS_SUCCESS, 0)
 }
 
-pub unsafe extern "C" fn NtDeviceIoControlFile(
+pub unsafe extern "C" fn nt_device_io_control_file(
     file_handle: HANDLE,
     event: HANDLE,
     apc_routine: PVOID,
@@ -161,6 +224,13 @@ pub unsafe extern "C" fn NtDeviceIoControlFile(
         return STATUS_INVALID_PARAMETER;
     }
 
+    if check_user_buffer(input_buffer, input_buffer_length, false) != STATUS_SUCCESS {
+        return check_user_buffer(input_buffer, input_buffer_length, false);
+    }
+    if check_user_buffer(output_buffer, output_buffer_length, true) != STATUS_SUCCESS {
+        return check_user_buffer(output_buffer, output_buffer_length, true);
+    }
+
     let _ = (event, apc_routine, apc_context, io_control_code);
     let _ = (
         input_buffer,
@@ -169,13 +239,10 @@ pub unsafe extern "C" fn NtDeviceIoControlFile(
         output_buffer_length,
     );
 
-    (*io_status_block).status = STATUS_SUCCESS;
-    (*io_status_block).information = 0;
-
-    STATUS_SUCCESS
+    write_io_status(io_status_block, STATUS_SUCCESS, 0)
 }
 
-pub unsafe extern "C" fn NtFsControlFile(
+pub unsafe extern "C" fn nt_fs_control_file(
     file_handle: HANDLE,
     event: HANDLE,
     apc_routine: PVOID,
@@ -191,6 +258,13 @@ pub unsafe extern "C" fn NtFsControlFile(
         return STATUS_INVALID_PARAMETER;
     }
 
+    if check_user_buffer(input_buffer, input_buffer_length, false) != STATUS_SUCCESS {
+        return check_user_buffer(input_buffer, input_buffer_length, false);
+    }
+    if check_user_buffer(output_buffer, output_buffer_length, true) != STATUS_SUCCESS {
+        return check_user_buffer(output_buffer, output_buffer_length, true);
+    }
+
     let _ = (event, apc_routine, apc_context, fs_control_code);
     let _ = (
         input_buffer,
@@ -199,13 +273,10 @@ pub unsafe extern "C" fn NtFsControlFile(
         output_buffer_length,
     );
 
-    (*io_status_block).status = STATUS_SUCCESS;
-    (*io_status_block).information = 0;
-
-    STATUS_SUCCESS
+    write_io_status(io_status_block, STATUS_SUCCESS, 0)
 }
 
-pub unsafe extern "C" fn NtLockFile(
+pub unsafe extern "C" fn nt_lock_file(
     file_handle: HANDLE,
     event: HANDLE,
     apc_routine: PVOID,
@@ -221,16 +292,22 @@ pub unsafe extern "C" fn NtLockFile(
         return STATUS_INVALID_PARAMETER;
     }
 
+    if !byte_offset.is_null()
+        && probe_user_write(byte_offset as u64, core::mem::size_of::<i64>()).is_err()
+    {
+        return crate::libs::ntdll::status::STATUS_ACCESS_VIOLATION;
+    }
+    if !length.is_null() && probe_user_write(length as u64, core::mem::size_of::<i64>()).is_err() {
+        return crate::libs::ntdll::status::STATUS_ACCESS_VIOLATION;
+    }
+
     let _ = (event, apc_routine, apc_context, byte_offset, length);
     let _ = (key, fail_immediately, exclusive_lock);
 
-    (*io_status_block).status = STATUS_SUCCESS;
-    (*io_status_block).information = 0;
-
-    STATUS_SUCCESS
+    write_io_status(io_status_block, STATUS_SUCCESS, 0)
 }
 
-pub unsafe extern "C" fn NtUnlockFile(
+pub unsafe extern "C" fn nt_unlock_file(
     file_handle: HANDLE,
     io_status_block: *mut IoStatusBlock,
     byte_offset: *mut i64,
@@ -241,15 +318,21 @@ pub unsafe extern "C" fn NtUnlockFile(
         return STATUS_INVALID_PARAMETER;
     }
 
+    if !byte_offset.is_null()
+        && probe_user_write(byte_offset as u64, core::mem::size_of::<i64>()).is_err()
+    {
+        return crate::libs::ntdll::status::STATUS_ACCESS_VIOLATION;
+    }
+    if !length.is_null() && probe_user_write(length as u64, core::mem::size_of::<i64>()).is_err() {
+        return crate::libs::ntdll::status::STATUS_ACCESS_VIOLATION;
+    }
+
     let _ = (byte_offset, length, key);
 
-    (*io_status_block).status = STATUS_SUCCESS;
-    (*io_status_block).information = 0;
-
-    STATUS_SUCCESS
+    write_io_status(io_status_block, STATUS_SUCCESS, 0)
 }
 
-pub unsafe extern "C" fn NtNotifyChangeDirectoryFile(
+pub unsafe extern "C" fn nt_notify_change_directory_file(
     file_handle: HANDLE,
     event: HANDLE,
     apc_routine: PVOID,
@@ -264,13 +347,16 @@ pub unsafe extern "C" fn NtNotifyChangeDirectoryFile(
         return STATUS_INVALID_PARAMETER;
     }
 
+    if check_user_buffer(buffer, length, true) != STATUS_SUCCESS {
+        return check_user_buffer(buffer, length, true);
+    }
+
     let _ = (event, apc_routine, apc_context, buffer, length);
     let _ = (completion_filter, watch_tree);
 
-    (*io_status_block).status = STATUS_SUCCESS;
-    (*io_status_block).information = 0;
+    write_io_status(io_status_block, STATUS_SUCCESS, 0);
 
-    // P1-10 FIX: NtNotifyChangeDirectoryFile signals a
+    // P1-10 FIX: nt_notify_change_directory_file signals a
     // directory-change event. The bootstrap doesn't yet wire
     // a real change-notification subsystem (see `fs::notify`),
     // so we report "success with 0 bytes" instead of
@@ -279,7 +365,7 @@ pub unsafe extern "C" fn NtNotifyChangeDirectoryFile(
     STATUS_SUCCESS
 }
 
-pub unsafe extern "C" fn NtQueryEaFile(
+pub unsafe extern "C" fn nt_query_ea_file(
     file_handle: HANDLE,
     io_status_block: *mut IoStatusBlock,
     buffer: PVOID,
@@ -294,16 +380,25 @@ pub unsafe extern "C" fn NtQueryEaFile(
         return STATUS_INVALID_PARAMETER;
     }
 
+    if check_user_buffer(buffer, length, true) != STATUS_SUCCESS {
+        return check_user_buffer(buffer, length, true);
+    }
+    if check_user_buffer(ea_list, ea_list_length, false) != STATUS_SUCCESS {
+        return check_user_buffer(ea_list, ea_list_length, false);
+    }
+    if !ea_index.is_null()
+        && probe_user_write(ea_index as u64, core::mem::size_of::<u32>()).is_err()
+    {
+        return crate::libs::ntdll::status::STATUS_ACCESS_VIOLATION;
+    }
+
     let _ = (buffer, length, return_single_entry, ea_list, ea_list_length);
     let _ = (ea_index, restart_scan);
 
-    (*io_status_block).status = STATUS_SUCCESS;
-    (*io_status_block).information = 0;
-
-    STATUS_SUCCESS
+    write_io_status(io_status_block, STATUS_SUCCESS, 0)
 }
 
-pub unsafe extern "C" fn NtSetEaFile(
+pub unsafe extern "C" fn nt_set_ea_file(
     file_handle: HANDLE,
     io_status_block: *mut IoStatusBlock,
     buffer: PVOID,
@@ -313,10 +408,11 @@ pub unsafe extern "C" fn NtSetEaFile(
         return STATUS_INVALID_PARAMETER;
     }
 
+    if check_user_buffer(buffer, length, false) != STATUS_SUCCESS {
+        return check_user_buffer(buffer, length, false);
+    }
+
     let _ = (buffer, length);
 
-    (*io_status_block).status = STATUS_SUCCESS;
-    (*io_status_block).information = 0;
-
-    STATUS_SUCCESS
+    write_io_status(io_status_block, STATUS_SUCCESS, 0)
 }

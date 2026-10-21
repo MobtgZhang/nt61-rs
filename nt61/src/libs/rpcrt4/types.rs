@@ -4,74 +4,74 @@
 
 use core::ptr::null_mut;
 
-pub type RPC_STATUS = u32;
+pub type RpcStatus = u32;
 
-pub const RPC_S_OK: RPC_STATUS = 0;
-pub const RPC_S_INVALID_BINDING: RPC_STATUS = 0x6A6;
-pub const RPC_S_WRONG_KIND_OF_BINDING: RPC_STATUS = 0x6A7;
-pub const RPC_S_INVALID_STRING_BINDING: RPC_STATUS = 0x6A4;
-pub const RPC_S_STRING_TOO_LONG: RPC_STATUS = 0x6B4;
-pub const RPC_S_INVALID_STRING_UUID: RPC_STATUS = 0x6A8;
-pub const RPC_S_PROTSEQ_NOT_SUPPORTED: RPC_STATUS = 0x6A7;
-pub const RPC_S_OUT_OF_MEMORY: RPC_STATUS = 0x6BC;
-pub const RPC_S_OUT_OF_RESOURCES: RPC_STATUS = 0x6B9;
-pub const RPC_S_SERVER_UNAVAILABLE: RPC_STATUS = 0x6BA;
-pub const RPC_S_SERVER_TOO_BUSY: RPC_STATUS = 0x6BB;
-pub const RPC_S_INVALID_NETWORK_OPTIONS: RPC_STATUS = 0x6AC;
-pub const RPC_S_NO_CALL_ACTIVE: RPC_STATUS = 0x6BD;
-pub const RPC_S_CALL_FAILED: RPC_STATUS = 0x6BE;
-pub const RPC_S_CALL_FAILED_DNE: RPC_STATUS = 0x6BF;
-pub const RPC_S_PROTOCOL_ERROR: RPC_STATUS = 0x6C0;
-pub const RPC_S_UNSUPPORTED_TYPE: RPC_STATUS = 0x6C2;
-pub const RPC_S_INVALID_TAG: RPC_STATUS = 0x6C5;
-pub const RPC_S_INVALID_BOUND: RPC_STATUS = 0x6C6;
-pub const RPC_S_NO_ENTRY_NAME: RPC_STATUS = 0x6C7;
-pub const RPC_S_INVALID_NAME_SYNTAX: RPC_STATUS = 0x6C8;
-pub const RPC_S_UNSUPPORTED_NAME_SYNTAX: RPC_STATUS = 0x6C9;
-pub const RPC_S_UUID_NO_ADDRESS: RPC_STATUS = 0x6CB;
-pub const RPC_S_DUPLICATE_ENDPOINT: RPC_STATUS = 0x6CC;
-pub const RPC_S_UNKNOWN_AUTHN_TYPE: RPC_STATUS = 0x6CD;
-pub const RPC_S_MAX_CALLS_TOO_SMALL: RPC_STATUS = 0x6CE;
-pub const RPC_S_STRING_TOO_SHORT: RPC_STATUS = 0x6CF;
-pub const RPC_S_PROTSEQ_NOT_FOUND: RPC_STATUS = 0x6D0;
-pub const RPC_S_PROCNUM_OUT_OF_RANGE: RPC_STATUS = 0x6D1;
-pub const RPC_S_BINDING_HAS_NO_AUTH: RPC_STATUS = 0x6D2;
-pub const RPC_S_UNKNOWN_AUTHN_SERVICE: RPC_STATUS = 0x6D3;
-pub const RPC_S_UNKNOWN_AUTHN_LEVEL: RPC_STATUS = 0x6D4;
-pub const RPC_S_INVALID_AUTH_IDENTITY: RPC_STATUS = 0x6D5;
-pub const RPC_S_UNKNOWN_AUTHZ_SERVICE: RPC_STATUS = 0x6D6;
-pub const RPC_S_NOTHING_TO_EXPORT: RPC_STATUS = 0x6DA;
-pub const RPC_S_INCOMPLETE_NAME: RPC_STATUS = 0x6DB;
-pub const RPC_S_INVALID_VERS_OPTION: RPC_STATUS = 0x6DC;
-pub const RPC_S_NO_MORE_MEMBERS: RPC_STATUS = 0x6DD;
-pub const RPC_S_NOT_ALL_OBJS_UNEXPORTED: RPC_STATUS = 0x6DE;
-pub const RPC_S_INTERFACE_NOT_FOUND: RPC_STATUS = 0x6DF;
-pub const RPC_S_ENTRY_ALREADY_EXISTS: RPC_STATUS = 0x6E0;
-pub const RPC_S_ENTRY_NOT_FOUND: RPC_STATUS = 0x6E1;
-pub const RPC_S_NAME_SERVICE_UNAVAILABLE: RPC_STATUS = 0x6E2;
-pub const RPC_S_INVALID_NAF_ID: RPC_STATUS = 0x6E3;
-pub const RPC_S_CANNOT_SUPPORT: RPC_STATUS = 0x6E4;
-pub const RPC_S_NO_CONTEXT_AVAILABLE: RPC_STATUS = 0x6E5;
-pub const RPC_S_INTERNAL_ERROR: RPC_STATUS = 0x6E6;
-pub const RPC_S_ZERO_DIVIDE: RPC_STATUS = 0x6E7;
-pub const RPC_S_ADDRESS_ERROR: RPC_STATUS = 0x6E8;
-pub const RPC_S_FP_DIV_ZERO: RPC_STATUS = 0x6E9;
-pub const RPC_S_FP_UNDERFLOW: RPC_STATUS = 0x6EA;
-pub const RPC_S_FP_OVERFLOW: RPC_STATUS = 0x6EB;
-pub const RPC_S_ALREADY_LISTENING: RPC_STATUS = 0x6F3;
-pub const RPC_S_NO_PROTSEQS_REGISTERED: RPC_STATUS = 0x6F4;
-pub const RPC_S_NOT_LISTENING: RPC_STATUS = 0x6F5;
-pub const RPC_S_UNKNOWN_MGR_TYPE: RPC_STATUS = 0x6F6;
-pub const RPC_S_UNKNOWN_IF: RPC_STATUS = 0x6F7;
-pub const RPC_S_NO_BINDINGS: RPC_STATUS = 0x6F8;
-pub const RPC_S_NO_PROTSEQS: RPC_STATUS = 0x6F9;
-pub const RPC_S_CANT_CREATE_ENDPOINT: RPC_STATUS = 0x6FA;
-pub const RPC_S_OUT_OF_THREADS: RPC_STATUS = 0x6FB;
-pub const RPC_S_INVALID_TIMEOUT: RPC_STATUS = 0x6FD;
+pub const RPC_S_OK: RpcStatus = 0;
+pub const RPC_S_INVALID_BINDING: RpcStatus = 0x6A6;
+pub const RPC_S_WRONG_KIND_OF_BINDING: RpcStatus = 0x6A7;
+pub const RPC_S_INVALID_STRING_BINDING: RpcStatus = 0x6A4;
+pub const RPC_S_STRING_TOO_LONG: RpcStatus = 0x6B4;
+pub const RPC_S_INVALID_STRING_UUID: RpcStatus = 0x6A8;
+pub const RPC_S_PROTSEQ_NOT_SUPPORTED: RpcStatus = 0x6A7;
+pub const RPC_S_OUT_OF_MEMORY: RpcStatus = 0x6BC;
+pub const RPC_S_OUT_OF_RESOURCES: RpcStatus = 0x6B9;
+pub const RPC_S_SERVER_UNAVAILABLE: RpcStatus = 0x6BA;
+pub const RPC_S_SERVER_TOO_BUSY: RpcStatus = 0x6BB;
+pub const RPC_S_INVALID_NETWORK_OPTIONS: RpcStatus = 0x6AC;
+pub const RPC_S_NO_CALL_ACTIVE: RpcStatus = 0x6BD;
+pub const RPC_S_CALL_FAILED: RpcStatus = 0x6BE;
+pub const RPC_S_CALL_FAILED_DNE: RpcStatus = 0x6BF;
+pub const RPC_S_PROTOCOL_ERROR: RpcStatus = 0x6C0;
+pub const RPC_S_UNSUPPORTED_TYPE: RpcStatus = 0x6C2;
+pub const RPC_S_INVALID_TAG: RpcStatus = 0x6C5;
+pub const RPC_S_INVALID_BOUND: RpcStatus = 0x6C6;
+pub const RPC_S_NO_ENTRY_NAME: RpcStatus = 0x6C7;
+pub const RPC_S_INVALID_NAME_SYNTAX: RpcStatus = 0x6C8;
+pub const RPC_S_UNSUPPORTED_NAME_SYNTAX: RpcStatus = 0x6C9;
+pub const RPC_S_UUID_NO_ADDRESS: RpcStatus = 0x6CB;
+pub const RPC_S_DUPLICATE_ENDPOINT: RpcStatus = 0x6CC;
+pub const RPC_S_UNKNOWN_AUTHN_TYPE: RpcStatus = 0x6CD;
+pub const RPC_S_MAX_CALLS_TOO_SMALL: RpcStatus = 0x6CE;
+pub const RPC_S_STRING_TOO_SHORT: RpcStatus = 0x6CF;
+pub const RPC_S_PROTSEQ_NOT_FOUND: RpcStatus = 0x6D0;
+pub const RPC_S_PROCNUM_OUT_OF_RANGE: RpcStatus = 0x6D1;
+pub const RPC_S_BINDING_HAS_NO_AUTH: RpcStatus = 0x6D2;
+pub const RPC_S_UNKNOWN_AUTHN_SERVICE: RpcStatus = 0x6D3;
+pub const RPC_S_UNKNOWN_AUTHN_LEVEL: RpcStatus = 0x6D4;
+pub const RPC_S_INVALID_AUTH_IDENTITY: RpcStatus = 0x6D5;
+pub const RPC_S_UNKNOWN_AUTHZ_SERVICE: RpcStatus = 0x6D6;
+pub const RPC_S_NOTHING_TO_EXPORT: RpcStatus = 0x6DA;
+pub const RPC_S_INCOMPLETE_NAME: RpcStatus = 0x6DB;
+pub const RPC_S_INVALID_VERS_OPTION: RpcStatus = 0x6DC;
+pub const RPC_S_NO_MORE_MEMBERS: RpcStatus = 0x6DD;
+pub const RPC_S_NOT_ALL_OBJS_UNEXPORTED: RpcStatus = 0x6DE;
+pub const RPC_S_INTERFACE_NOT_FOUND: RpcStatus = 0x6DF;
+pub const RPC_S_ENTRY_ALREADY_EXISTS: RpcStatus = 0x6E0;
+pub const RPC_S_ENTRY_NOT_FOUND: RpcStatus = 0x6E1;
+pub const RPC_S_NAME_SERVICE_UNAVAILABLE: RpcStatus = 0x6E2;
+pub const RPC_S_INVALID_NAF_ID: RpcStatus = 0x6E3;
+pub const RPC_S_CANNOT_SUPPORT: RpcStatus = 0x6E4;
+pub const RPC_S_NO_CONTEXT_AVAILABLE: RpcStatus = 0x6E5;
+pub const RPC_S_INTERNAL_ERROR: RpcStatus = 0x6E6;
+pub const RPC_S_ZERO_DIVIDE: RpcStatus = 0x6E7;
+pub const RPC_S_ADDRESS_ERROR: RpcStatus = 0x6E8;
+pub const RPC_S_FP_DIV_ZERO: RpcStatus = 0x6E9;
+pub const RPC_S_FP_UNDERFLOW: RpcStatus = 0x6EA;
+pub const RPC_S_FP_OVERFLOW: RpcStatus = 0x6EB;
+pub const RPC_S_ALREADY_LISTENING: RpcStatus = 0x6F3;
+pub const RPC_S_NO_PROTSEQS_REGISTERED: RpcStatus = 0x6F4;
+pub const RPC_S_NOT_LISTENING: RpcStatus = 0x6F5;
+pub const RPC_S_UNKNOWN_MGR_TYPE: RpcStatus = 0x6F6;
+pub const RPC_S_UNKNOWN_IF: RpcStatus = 0x6F7;
+pub const RPC_S_NO_BINDINGS: RpcStatus = 0x6F8;
+pub const RPC_S_NO_PROTSEQS: RpcStatus = 0x6F9;
+pub const RPC_S_CANT_CREATE_ENDPOINT: RpcStatus = 0x6FA;
+pub const RPC_S_OUT_OF_THREADS: RpcStatus = 0x6FB;
+pub const RPC_S_INVALID_TIMEOUT: RpcStatus = 0x6FD;
 
-pub type RPC_BINDING_HANDLE = *mut core::ffi::c_void;
+pub type RpcBindingHandle = *mut core::ffi::c_void;
 
-pub type RPC_IF_HANDLE = *mut core::ffi::c_void;
+pub type RpcIfHandle = *mut core::ffi::c_void;
 
 pub const RPC_C_AUTHN_LEVEL_DEFAULT: u32 = 0;
 pub const RPC_C_AUTHN_LEVEL_NONE: u32 = 1;
@@ -150,7 +150,7 @@ pub struct RPC_PROTSEQ_VECTOR {
 #[repr(C)]
 pub struct RPC_BINDING_VECTOR {
     pub count: u32,
-    pub binding_h: [RPC_BINDING_HANDLE; 1],
+    pub binding_h: [RpcBindingHandle; 1],
 }
 
 #[repr(C)]
@@ -202,7 +202,7 @@ impl RpcBindingInternal {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct RpcServerInterface {
-    pub if_spec: RPC_IF_HANDLE,
+    pub if_spec: RpcIfHandle,
     pub mgr_type_uuid: UUID,
     pub mgr_epv: *mut core::ffi::c_void,
     pub flags: u32,

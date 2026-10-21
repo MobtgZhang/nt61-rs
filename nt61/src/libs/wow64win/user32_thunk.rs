@@ -5,39 +5,34 @@
 //!   * Microsoft Windows SDK
 //!   * ReactOS user32 implementation
 
-#![allow(non_camel_case_types)]
-#![allow(dead_code)]
-
 use crate::libs::wow64::types::*;
-use crate::libs::wow64win::{
-    syscall_numbers, Msg32, Wow64Win32kCallbackReturn, Wow64Win32kSyscall,
-};
+use crate::libs::wow64win::{syscall_numbers, wow64_win32k_syscall, Msg32};
 
 // =============================================================================
-// Handle Types
+// handle Types
 // =============================================================================
 
-/// 32-bit HWND (Window Handle).
+/// 32-bit HWND (Window handle).
 pub type HWND32 = ULONG32;
-/// 32-bit HINSTANCE (Instance Handle).
+/// 32-bit HINSTANCE (Instance handle).
 pub type HINSTANCE32 = ULONG32;
-/// 32-bit HMODULE (Module Handle).
+/// 32-bit HMODULE (Module handle).
 pub type HMODULE32 = ULONG32;
-/// 32-bit HANDLE (Generic Handle).
+/// 32-bit HANDLE (Generic handle).
 pub type HANDLE32 = ULONG32;
-/// 32-bit HMENU (Menu Handle).
+/// 32-bit HMENU (Menu handle).
 pub type HMENU32 = ULONG32;
-/// 32-bit HCURSOR (Cursor Handle).
+/// 32-bit HCURSOR (Cursor handle).
 pub type HCURSOR32 = ULONG32;
-/// 32-bit HICON (Icon Handle).
+/// 32-bit HICON (Icon handle).
 pub type HICON32 = ULONG32;
-/// 32-bit HBRUSH (Brush Handle).
+/// 32-bit HBRUSH (Brush handle).
 pub type HBRUSH32 = ULONG32;
-/// 32-bit HDC (Device Context Handle).
+/// 32-bit HDC (Device Context handle).
 pub type HDC32 = ULONG32;
-/// 32-bit HPEN (Pen Handle).
+/// 32-bit HPEN (Pen handle).
 pub type HPEN32 = ULONG32;
-/// 32-bit HBITMAP (Bitmap Handle).
+/// 32-bit HBITMAP (Bitmap handle).
 pub type HBITMAP32 = ULONG32;
 
 /// 32-bit BOOL.
@@ -95,7 +90,7 @@ pub mod window_style_ex {
 // Show Window Commands
 // =============================================================================
 
-/// ShowWindow commands.
+/// show_window commands.
 pub mod show_window {
     use super::ULONG32;
     pub const SW_HIDE: ULONG32 = 0;
@@ -233,10 +228,10 @@ pub mod messages {
 }
 
 // =============================================================================
-// CreateWindowExW
+// create_window_ex_w
 // =============================================================================
 
-/// Create a window with extended styles (Unicode version).
+/// create a window with extended styles (Unicode version).
 ///
 /// # Arguments
 /// * `ex_style` - Extended window style
@@ -252,7 +247,7 @@ pub mod messages {
 ///
 /// # Returns
 /// * Window handle or NULL
-pub unsafe extern "C" fn Wow64CreateWindowExW(
+pub unsafe extern "C" fn wow64_create_window_ex_w(
     ex_style: ULONG32,
     class_name: ULONG32,
     window_name: ULONG32,
@@ -283,53 +278,53 @@ pub unsafe extern "C" fn Wow64CreateWindowExW(
     ];
 
     // Make Win32k syscall
-    let result = Wow64Win32kSyscall(syscall_numbers::NtUserCreateWindowEx, params.as_ptr());
+    let result = wow64_win32k_syscall(syscall_numbers::NT_USER_CREATE_WINDOW_EX, params.as_ptr());
 
     // log via wow64_klog!; using wow64_klog! instead
     result
 }
 
 // =============================================================================
-// DestroyWindow
+// destroy_window
 // =============================================================================
 
 /// Destroy a window.
 ///
 /// # Returns
 /// * TRUE on success, FALSE on failure
-pub unsafe extern "C" fn Wow64DestroyWindow(hwnd: HWND32) -> BOOL32 {
+pub unsafe extern "C" fn wow64_destroy_window(hwnd: HWND32) -> BOOL32 {
     // log via wow64_klog!; using wow64_klog! instead
 
     let params: [ULONG32; 1] = [hwnd];
-    let result = Wow64Win32kSyscall(syscall_numbers::NtUserDestroyWindow, params.as_ptr());
+    let result = wow64_win32k_syscall(syscall_numbers::NT_USER_DESTROY_WINDOW, params.as_ptr());
 
     result as BOOL32
 }
 
 // =============================================================================
-// ShowWindow
+// show_window
 // =============================================================================
 
 /// Set the specified window's show state.
 ///
 /// # Returns
 /// * TRUE if the window was previously visible, FALSE otherwise
-pub unsafe extern "C" fn Wow64ShowWindow(hwnd: HWND32, cmd_show: ULONG32) -> BOOL32 {
+pub unsafe extern "C" fn wow64_show_window(hwnd: HWND32, cmd_show: ULONG32) -> BOOL32 {
     let params: [ULONG32; 2] = [hwnd, cmd_show];
-    let result = Wow64Win32kSyscall(syscall_numbers::NtUserShowWindow, params.as_ptr());
+    let result = wow64_win32k_syscall(syscall_numbers::NT_USER_SHOW_WINDOW, params.as_ptr());
 
     result as BOOL32
 }
 
 // =============================================================================
-// GetMessageW
+// get_message_w
 // =============================================================================
 
 /// Retrieves a message from the message queue.
 ///
 /// # Returns
 /// * FALSE if WM_QUIT is received, TRUE otherwise
-pub unsafe extern "C" fn Wow64GetMessageW(
+pub unsafe extern "C" fn wow64_get_message_w(
     msg: *mut Msg32,
     _hwnd: HWND32,
     _msg_filter_min: ULONG32,
@@ -349,14 +344,14 @@ pub unsafe extern "C" fn Wow64GetMessageW(
 }
 
 // =============================================================================
-// PeekMessageW
+// peek_message_w
 // =============================================================================
 
 /// Checks the message queue for messages.
 ///
 /// # Returns
 /// * TRUE if a message is available, FALSE otherwise
-pub unsafe extern "C" fn Wow64PeekMessageW(
+pub unsafe extern "C" fn wow64_peek_message_w(
     _msg: *mut Msg32,
     _hwnd: HWND32,
     _msg_filter_min: ULONG32,
@@ -367,14 +362,14 @@ pub unsafe extern "C" fn Wow64PeekMessageW(
 }
 
 // =============================================================================
-// TranslateMessage
+// translate_message
 // =============================================================================
 
 /// Translates virtual-key messages into character messages.
 ///
 /// # Returns
 /// * TRUE if the message was translated, FALSE otherwise
-pub unsafe extern "C" fn Wow64TranslateMessage(_msg: *const Msg32) -> BOOL32 {
+pub unsafe extern "C" fn wow64_translate_message(_msg: *const Msg32) -> BOOL32 {
     // log via wow64_klog!; using wow64_klog! instead
 
     // This is typically handled by the message loop
@@ -382,14 +377,14 @@ pub unsafe extern "C" fn Wow64TranslateMessage(_msg: *const Msg32) -> BOOL32 {
 }
 
 // =============================================================================
-// DispatchMessageW
+// dispatch_message_w
 // =============================================================================
 
 /// Dispatches a message to the window procedure.
 ///
 /// # Returns
 /// * The result of the window procedure
-pub unsafe extern "C" fn Wow64DispatchMessageW(_msg: *const Msg32) -> LRESULT32 {
+pub unsafe extern "C" fn wow64_dispatch_message_w(_msg: *const Msg32) -> LRESULT32 {
     // log via wow64_klog!; using wow64_klog! instead
 
     // In a real implementation, call the window procedure
@@ -397,58 +392,58 @@ pub unsafe extern "C" fn Wow64DispatchMessageW(_msg: *const Msg32) -> LRESULT32 
 }
 
 // =============================================================================
-// PostMessageW
+// post_message_w
 // =============================================================================
 
 /// Places a message in the message queue and returns without waiting.
 ///
 /// # Returns
 /// * TRUE if successful, FALSE otherwise
-pub unsafe extern "C" fn Wow64PostMessageW(
+pub unsafe extern "C" fn wow64_post_message_w(
     hwnd: HWND32,
     msg: ULONG32,
     wparam: WPARAM32,
     lparam: LPARAM32,
 ) -> BOOL32 {
     let params: [ULONG32; 4] = [hwnd, msg, wparam, lparam];
-    let result = Wow64Win32kSyscall(syscall_numbers::NtUserPostMessage, params.as_ptr());
+    let result = wow64_win32k_syscall(syscall_numbers::NT_USER_POST_MESSAGE, params.as_ptr());
 
     result as BOOL32
 }
 
 // =============================================================================
-// SendMessageW
+// send_message_w
 // =============================================================================
 
 /// Sends a message to the window procedure and waits for a result.
 ///
 /// # Returns
 /// * The result of the window procedure
-pub unsafe extern "C" fn Wow64SendMessageW(
+pub unsafe extern "C" fn wow64_send_message_w(
     hwnd: HWND32,
     msg: ULONG32,
     wparam: WPARAM32,
     lparam: LPARAM32,
 ) -> LRESULT32 {
     let params: [ULONG32; 4] = [hwnd, msg, wparam, lparam];
-    let result = Wow64Win32kSyscall(syscall_numbers::NtUserSendMessage, params.as_ptr());
+    let result = wow64_win32k_syscall(syscall_numbers::NT_USER_SEND_MESSAGE, params.as_ptr());
 
     result as LRESULT32
 }
 
 // =============================================================================
-// GetDC / ReleaseDC
+// get_dc / release_dc
 // =============================================================================
 
 /// Retrieves the device context for the entire window.
 ///
 /// # Returns
 /// * DC handle or NULL
-pub unsafe extern "C" fn Wow64GetDC(hwnd: HWND32) -> HDC32 {
+pub unsafe extern "C" fn wow64_get_dc(hwnd: HWND32) -> HDC32 {
     // log via wow64_klog!; using wow64_klog! instead
 
     let params: [ULONG32; 1] = [hwnd];
-    let result = Wow64Win32kSyscall(syscall_numbers::NtGdiGetDC, params.as_ptr());
+    let result = wow64_win32k_syscall(syscall_numbers::NT_GDI_GET_DC, params.as_ptr());
 
     result
 }
@@ -457,9 +452,9 @@ pub unsafe extern "C" fn Wow64GetDC(hwnd: HWND32) -> HDC32 {
 ///
 /// # Returns
 /// * 1 if successful, 0 otherwise
-pub unsafe extern "C" fn Wow64ReleaseDC(hwnd: HWND32, hdc: HDC32) -> i32 {
+pub unsafe extern "C" fn wow64_release_dc(hwnd: HWND32, hdc: HDC32) -> i32 {
     let params: [ULONG32; 2] = [hwnd, hdc];
-    let result = Wow64Win32kSyscall(syscall_numbers::NtGdiReleaseDC, params.as_ptr());
+    let result = wow64_win32k_syscall(syscall_numbers::NT_GDI_RELEASE_DC, params.as_ptr());
 
     result as i32
 }

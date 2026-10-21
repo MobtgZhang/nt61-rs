@@ -1,8 +1,8 @@
 //! kernel32 — time APIs
 //
-//! `GetSystemTime`, `GetLocalTime`, `GetTickCount`,
-//! `GetTickCount64`, `QueryPerformanceCounter`,
-//! `QueryPerformanceFrequency`, `GetSystemTimeAsFileTime`.
+//! `get_system_time`, `get_local_time`, `get_tick_count`,
+//! `get_tick_count64`, `query_performance_counter`,
+//! `query_performance_frequency`, `get_system_time_as_file_time`.
 //! All values are sourced from the kernel's time source.
 
 use super::types::DWORD;
@@ -31,8 +31,8 @@ pub struct FileTime {
 
 const EPOCH_DIFF_100NS: u64 = 116_444_736_000_000_000;
 
-/// `GetSystemTime`.
-pub unsafe extern "C" fn GetSystemTime(out: *mut SystemTime) {
+/// `get_system_time`.
+pub unsafe extern "C" fn get_system_time(out: *mut SystemTime) {
     if out.is_null() {
         return;
     }
@@ -42,14 +42,14 @@ pub unsafe extern "C" fn GetSystemTime(out: *mut SystemTime) {
     fill_system_time(out, s, ns);
 }
 
-/// `GetLocalTime` — same as `GetSystemTime` since we
+/// `get_local_time` — same as `get_system_time` since we
 /// have no concept of time zones.
-pub unsafe extern "C" fn GetLocalTime(out: *mut SystemTime) {
-    GetSystemTime(out);
+pub unsafe extern "C" fn get_local_time(out: *mut SystemTime) {
+    get_system_time(out);
 }
 
-/// `GetSystemTimeAsFileTime`.
-pub unsafe extern "C" fn GetSystemTimeAsFileTime(out: *mut FileTime) {
+/// `get_system_time_as_file_time`.
+pub unsafe extern "C" fn get_system_time_as_file_time(out: *mut FileTime) {
     if out.is_null() {
         return;
     }
@@ -59,20 +59,20 @@ pub unsafe extern "C" fn GetSystemTimeAsFileTime(out: *mut FileTime) {
     (*out).high = (ft >> 32) as u32;
 }
 
-/// `GetTickCount` — milliseconds since boot, lower 32 bits.
-pub extern "C" fn GetTickCount() -> DWORD {
+/// `get_tick_count` — milliseconds since boot, lower 32 bits.
+pub extern "C" fn get_tick_count() -> DWORD {
     let t = crate::ke::time::get_tick_count();
     t
 }
 
-/// `GetTickCount64` — milliseconds since boot, full 64 bits.
-pub extern "C" fn GetTickCount64() -> u64 {
+/// `get_tick_count64` — milliseconds since boot, full 64 bits.
+pub extern "C" fn get_tick_count64() -> u64 {
     let t = crate::ke::time::get_system_time();
     t
 }
 
-/// `QueryPerformanceCounter`.
-pub unsafe extern "C" fn QueryPerformanceCounter(counter: *mut i64) -> i32 {
+/// `query_performance_counter`.
+pub unsafe extern "C" fn query_performance_counter(counter: *mut i64) -> i32 {
     if counter.is_null() {
         return 0;
     }
@@ -80,8 +80,8 @@ pub unsafe extern "C" fn QueryPerformanceCounter(counter: *mut i64) -> i32 {
     1
 }
 
-/// `QueryPerformanceFrequency` — 1 MHz.
-pub unsafe extern "C" fn QueryPerformanceFrequency(freq: *mut i64) -> i32 {
+/// `query_performance_frequency` — 1 MHz.
+pub unsafe extern "C" fn query_performance_frequency(freq: *mut i64) -> i32 {
     if freq.is_null() {
         return 0;
     }
@@ -89,14 +89,14 @@ pub unsafe extern "C" fn QueryPerformanceFrequency(freq: *mut i64) -> i32 {
     1
 }
 
-/// `Sleep` — yield the current thread.
-pub extern "C" fn Sleep(_ms: DWORD) {
+/// `sleep` — yield the current thread.
+pub extern "C" fn sleep(_ms: DWORD) {
     // The bootstrap scheduler does not implement a real
     // sleep loop. The user-mode side never runs anyway.
 }
 
-/// `SleepEx` — same as `Sleep` plus the alertable flag.
-pub extern "C" fn SleepEx(_ms: DWORD, _alertable: i32) -> DWORD {
+/// `sleep_ex` — same as `sleep` plus the alertable flag.
+pub extern "C" fn sleep_ex(_ms: DWORD, _alertable: i32) -> DWORD {
     0
 }
 

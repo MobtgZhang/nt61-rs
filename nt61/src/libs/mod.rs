@@ -26,11 +26,8 @@
 // table but not called by the boot log. Suppressing the lints
 // at the crate root is the right call — the alternative would
 // be hundreds of `#[allow(unused_imports)]` on every stub file.
-#![allow(unused_imports, dead_code)]
 
 extern crate alloc;
-
-use crate::kprintln;
 
 pub mod advapi32;
 pub mod cmd;
@@ -42,9 +39,7 @@ pub mod rpcrt4;
 pub mod sechost;
 pub mod server;
 pub mod user32;
-#[cfg(target_arch = "x86_64")]
 pub mod win32k;
-#[cfg(target_arch = "x86_64")]
 pub mod wow64;
 pub mod wow64win;
 pub mod ws2_32;
@@ -62,12 +57,9 @@ pub fn init() {
     rpcrt4::init();
     user32::init();
     gdi32::init();
-    #[cfg(target_arch = "x86_64")]
-    {
-        win32k::init();
-        wow64::init();
-        wow64win::init();
-    }
+    win32k::init();
+    wow64::init();
+    wow64win::init();
     sechost::init();
     server::init();
     // kprintln!("    Library stubs: initialised");
@@ -76,12 +68,5 @@ pub fn init() {
 /// Aggregator smoke test. Walks every stub in turn and
 /// reports a single boolean result.
 pub fn smoke_test() -> bool {
-    #[cfg(target_arch = "x86_64")]
-    {
-        smoke::smoke_test()
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        true
-    }
+    smoke::smoke_test()
 }

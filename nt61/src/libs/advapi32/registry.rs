@@ -3,23 +3,26 @@
 //! Implements the Win32 registry API (RegOpenKeyEx, RegCreateKeyEx,
 //! RegQueryValueEx, RegSetValueEx, RegDeleteKey, RegCloseKey, etc.).
 //!
-//! These functions wrap the native NT registry API (NtCreateKey,
-//! NtOpenKey, NtQueryValueKey, NtSetValueKey) exposed by ntdll.
+//! These functions wrap the native NT registry API (NT_CREATE_KEY,
+//! NT_OPEN_KEY, NT_QUERY_VALUE_KEY, NT_SET_VALUE_KEY) exposed by ntdll.
 
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, AtomicPtr, Ordering};
-
-#[allow(non_snake_case, non_upper_case_globals, dead_code)]
-
-use super::types::{DWORD, HKEY, LONG, REGSAM, LPCWSTR, LPWSTR, LPDWORD, LPBYTE, LPCBYTE, BYTE, FILETIME};
-use super::types::{ERROR_SUCCESS, ERROR_INVALID_PARAMETER, ERROR_INVALID_HANDLE, ERROR_NOT_ENOUGH_MEMORY, ERROR_MORE_DATA, ERROR_NO_MORE_ITEMS};
-use super::types::{REG_CREATED_NEW_KEY, REG_OPENED_EXISTING_KEY, KEY_ALL_ACCESS, nt_status_to_win32, is_predefined_key};
-use crate::libs::ntdll::types::{HANDLE, PVOID, ULONG, PWSTR, PCWSTR, UnicodeString, ObjectAttributes};
-use crate::libs::ntdll::status::{STATUS_SUCCESS, STATUS_BUFFER_OVERFLOW, STATUS_BUFFER_TOO_SMALL, STATUS_NO_MORE_ENTRIES};
-use crate::libs::ntdll::types::NTSTATUS;
-use crate::libs::ntdll::file::NtClose;
-use core::ptr::{null_mut, null};
-use core::slice;
-
+use super::types::{
+    is_predefined_key, nt_status_to_win32, KEY_ALL_ACCESS, REG_CREATED_NEW_KEY,
+    REG_OPENED_EXISTING_KEY,
+};
+use super::types::{BYTE, DWORD, FILETIME, HKEY, LONG};
+use super::types::{
+    ERROR_INVALID_HANDLE, ERROR_INVALID_PARAMETER, ERROR_MORE_DATA, ERROR_NOT_ENOUGH_MEMORY,
+    ERROR_NO_MORE_ITEMS, ERROR_SUCCESS,
+};
+use crate::libs::ntdll::file::nt_close;
+use crate::libs::ntdll::status::{
+    STATUS_BUFFER_OVERFLOW, STATUS_BUFFER_TOO_SMALL, STATUS_NO_MORE_ENTRIES,
+};
+use crate::libs::ntdll::types::{
+    ObjectAttributes, UnicodeString, HANDLE, PCWSTR, PVOID, PWSTR, ULONG,
+};
+use core::ptr::null_mut;
 
 const MAX_REG_HANDLES: usize = 256;
 
@@ -38,7 +41,10 @@ static mut REG_HANDLES: [RegHandle; MAX_REG_HANDLES] = [RegHandle {
 
 fn alloc_reg_handle(nt_handle: HANDLE, access: DWORD) -> Option<HKEY> {
     unsafe {
-        for (i, entry) in REG_HANDLES.iter_mut().enumerate() {
+        for (i, entry) in (*core::ptr::addr_of_mut!(REG_HANDLES))
+            .iter_mut()
+            .enumerate()
+        {
             if !entry.in_use {
                 entry.nt_handle = nt_handle;
                 entry.access = access;
@@ -80,7 +86,6 @@ fn get_nt_handle(key: HKEY) -> Option<HANDLE> {
     None
 }
 
-
 unsafe fn wide_str_to_unicode_string(s: PCWSTR) -> Option<UnicodeString> {
     if s.is_null() {
         return None;
@@ -94,13 +99,13 @@ unsafe fn wide_str_to_unicode_string(s: PCWSTR) -> Option<UnicodeString> {
     }
 
     Some(UnicodeString {
-        Length: (len * 2) as u16,
-        MaximumLength: ((len + 1) * 2) as u16,
-        Buffer: s as PWSTR,
+        length: (len * 2) as u16,
+        maximum_length: ((len + 1) * 2) as u16,
+        buffer: s as PWSTR,
     })
 }
 
-unsafe fn copy_wide_string(dest: PWSTR, src: PCWSTR, max_chars: usize) -> usize {
+pub unsafe fn copy_wide_string(dest: PWSTR, src: PCWSTR, max_chars: usize) -> usize {
     let mut count = 0;
     let mut s = src;
     let mut d = dest;
@@ -116,29 +121,28 @@ unsafe fn copy_wide_string(dest: PWSTR, src: PCWSTR, max_chars: usize) -> usize 
     count
 }
 
-
 #[no_mangle]
 pub unsafe extern "C" fn RegCreateKeyExW(
-    hKey: HKEY,
-    lpSubKey: PCWSTR,
-    Reserved: DWORD,
-    lpClass: PWSTR,
-    dwOptions: DWORD,
-    samDesired: DWORD,
-    lpSecurityAttributes: PVOID,
-    phkResult: *mut HKEY,
-    lpdwDisposition: *mut DWORD,
+    h_key: HKEY,
+    lp_sub_key: PCWSTR,
+    _reserved: DWORD,
+    _lp_class: PWSTR,
+    dw_options: DWORD,
+    sam_desired: DWORD,
+    _lp_security_attributes: PVOID,
+    phk_result: *mut HKEY,
+    lpdw_disposition: *mut DWORD,
 ) -> LONG {
-    if phkResult.is_null() {
+    if phk_result.is_null() {
         return ERROR_INVALID_PARAMETER as LONG;
     }
 
-    let base_handle = match get_nt_handle(hKey) {
+    let base_handle = match get_nt_handle(h_key) {
         Some(h) => h,
         None => return ERROR_INVALID_HANDLE as LONG,
     };
 
-    let subkey_unicode = match wide_str_to_unicode_string(lpSubKey) {
+    let subkey_unicode = match wide_str_to_unicode_string(lp_sub_key) {
         Some(s) => s,
         None => return ERROR_INVALID_PARAMETER as LONG,
     };
@@ -150,30 +154,38 @@ pub unsafe extern "C" fn RegCreateKeyExW(
     let mut nt_handle: HANDLE = null_mut();
     let mut disposition: ULONG = 0;
 
-    let status = crate::libs::ntdll::registry::NtCreateKey(
+    let status = crate::libs::ntdll::registry::nt_create_key(
         &mut nt_handle,
-        samDesired,
+        sam_desired,
         &mut obj_attr,
         0,
         null_mut(),
-        dwOptions,
-        if lpdwDisposition.is_null() { null_mut() } else { &mut disposition },
+        dw_options,
+        if lpdw_disposition.is_null() {
+            null_mut()
+        } else {
+            &mut disposition
+        },
     );
 
     if status < 0 {
         return nt_status_to_win32(status) as LONG;
     }
 
-    match alloc_reg_handle(nt_handle, samDesired) {
+    match alloc_reg_handle(nt_handle, sam_desired) {
         Some(handle) => {
-            *phkResult = handle;
-            if !lpdwDisposition.is_null() {
-                *lpdwDisposition = if disposition == 0 { REG_CREATED_NEW_KEY } else { REG_OPENED_EXISTING_KEY };
+            *phk_result = handle;
+            if !lpdw_disposition.is_null() {
+                *lpdw_disposition = if disposition == 0 {
+                    REG_CREATED_NEW_KEY
+                } else {
+                    REG_OPENED_EXISTING_KEY
+                };
             }
             ERROR_SUCCESS as LONG
         }
         None => {
-            NtClose(nt_handle);
+            nt_close(nt_handle);
             ERROR_NOT_ENOUGH_MEMORY as LONG
         }
     }
@@ -181,27 +193,27 @@ pub unsafe extern "C" fn RegCreateKeyExW(
 
 #[no_mangle]
 pub unsafe extern "C" fn RegOpenKeyExW(
-    hKey: HKEY,
-    lpSubKey: PCWSTR,
-    ulOptions: DWORD,
-    samDesired: DWORD,
-    phkResult: *mut HKEY,
+    h_key: HKEY,
+    lp_sub_key: PCWSTR,
+    _ul_options: DWORD,
+    sam_desired: DWORD,
+    phk_result: *mut HKEY,
 ) -> LONG {
-    if phkResult.is_null() {
+    if phk_result.is_null() {
         return ERROR_INVALID_PARAMETER as LONG;
     }
 
-    if lpSubKey.is_null() || *lpSubKey == 0 {
-        *phkResult = hKey;
+    if lp_sub_key.is_null() || *lp_sub_key == 0 {
+        *phk_result = h_key;
         return ERROR_SUCCESS as LONG;
     }
 
-    let base_handle = match get_nt_handle(hKey) {
+    let base_handle = match get_nt_handle(h_key) {
         Some(h) => h,
         None => return ERROR_INVALID_HANDLE as LONG,
     };
 
-    let subkey_unicode = match wide_str_to_unicode_string(lpSubKey) {
+    let subkey_unicode = match wide_str_to_unicode_string(lp_sub_key) {
         Some(s) => s,
         None => return ERROR_INVALID_PARAMETER as LONG,
     };
@@ -211,38 +223,35 @@ pub unsafe extern "C" fn RegOpenKeyExW(
     obj_attr.object_name = &subkey_unicode as *const _ as *mut _;
 
     let mut nt_handle: HANDLE = null_mut();
-    let status = crate::libs::ntdll::registry::NtOpenKey(
-        &mut nt_handle,
-        samDesired,
-        &mut obj_attr,
-    );
+    let status =
+        crate::libs::ntdll::registry::nt_open_key(&mut nt_handle, sam_desired, &mut obj_attr);
 
     if status < 0 {
         return nt_status_to_win32(status) as LONG;
     }
 
-    match alloc_reg_handle(nt_handle, samDesired) {
+    match alloc_reg_handle(nt_handle, sam_desired) {
         Some(handle) => {
-            *phkResult = handle;
+            *phk_result = handle;
             ERROR_SUCCESS as LONG
         }
         None => {
-            NtClose(nt_handle);
+            nt_close(nt_handle);
             ERROR_NOT_ENOUGH_MEMORY as LONG
         }
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn RegCloseKey(hKey: HKEY) -> LONG {
-    if is_predefined_key(hKey) {
+pub unsafe extern "C" fn RegCloseKey(h_key: HKEY) -> LONG {
+    if is_predefined_key(h_key) {
         return ERROR_SUCCESS as LONG;
     }
 
-    match get_nt_handle(hKey) {
+    match get_nt_handle(h_key) {
         Some(nt_handle) => {
-            let status = NtClose(nt_handle);
-            free_reg_handle(hKey);
+            let status = nt_close(nt_handle);
+            free_reg_handle(h_key);
             if status < 0 {
                 nt_status_to_win32(status) as LONG
             } else {
@@ -255,37 +264,37 @@ pub unsafe extern "C" fn RegCloseKey(hKey: HKEY) -> LONG {
 
 #[no_mangle]
 pub unsafe extern "C" fn RegQueryValueExW(
-    hKey: HKEY,
-    lpValueName: PCWSTR,
-    lpReserved: *mut DWORD,
-    lpType: *mut DWORD,
-    lpData: *mut BYTE,
-    lpcbData: *mut DWORD,
+    h_key: HKEY,
+    lp_value_name: PCWSTR,
+    _lp_reserved: *mut DWORD,
+    _lp_type: *mut DWORD,
+    lp_data: *mut BYTE,
+    lpcb_data: *mut DWORD,
 ) -> LONG {
-    let nt_handle = match get_nt_handle(hKey) {
+    let nt_handle = match get_nt_handle(h_key) {
         Some(h) => h,
         None => return ERROR_INVALID_HANDLE as LONG,
     };
 
-    let mut value_unicode = match wide_str_to_unicode_string(lpValueName) {
+    let mut value_unicode = match wide_str_to_unicode_string(lp_value_name) {
         Some(s) => s,
         None => return ERROR_INVALID_PARAMETER as LONG,
     };
 
     let mut result_length: ULONG = 0;
-    let buffer_size = if lpcbData.is_null() { 0 } else { *lpcbData };
+    let buffer_size = if lpcb_data.is_null() { 0 } else { *lpcb_data };
 
-    let status = crate::libs::ntdll::registry::NtQueryValueKey(
+    let status = crate::libs::ntdll::registry::nt_query_value_key(
         nt_handle,
         &mut value_unicode,
         1, // KeyValuePartialInformation
-        lpData as PVOID,
+        lp_data as PVOID,
         buffer_size,
         &mut result_length,
     );
 
-    if !lpcbData.is_null() {
-        *lpcbData = result_length;
+    if !lpcb_data.is_null() {
+        *lpcb_data = result_length;
     }
 
     if status == STATUS_BUFFER_OVERFLOW || status == STATUS_BUFFER_TOO_SMALL {
@@ -301,30 +310,30 @@ pub unsafe extern "C" fn RegQueryValueExW(
 
 #[no_mangle]
 pub unsafe extern "C" fn RegSetValueExW(
-    hKey: HKEY,
-    lpValueName: PCWSTR,
-    Reserved: DWORD,
-    dwType: DWORD,
-    lpData: *const BYTE,
-    cbData: DWORD,
+    h_key: HKEY,
+    lp_value_name: PCWSTR,
+    _reserved: DWORD,
+    dw_type: DWORD,
+    lp_data: *const BYTE,
+    cb_data: DWORD,
 ) -> LONG {
-    let nt_handle = match get_nt_handle(hKey) {
+    let nt_handle = match get_nt_handle(h_key) {
         Some(h) => h,
         None => return ERROR_INVALID_HANDLE as LONG,
     };
 
-    let mut value_unicode = match wide_str_to_unicode_string(lpValueName) {
+    let mut value_unicode = match wide_str_to_unicode_string(lp_value_name) {
         Some(s) => s,
         None => return ERROR_INVALID_PARAMETER as LONG,
     };
 
-    let status = crate::libs::ntdll::registry::NtSetValueKey(
+    let status = crate::libs::ntdll::registry::nt_set_value_key(
         nt_handle,
         &mut value_unicode,
         0,
-        dwType,
-        lpData as PVOID,
-        cbData,
+        dw_type,
+        lp_data as PVOID,
+        cb_data,
     );
 
     if status < 0 {
@@ -335,12 +344,9 @@ pub unsafe extern "C" fn RegSetValueExW(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn RegDeleteKeyW(
-    hKey: HKEY,
-    lpSubKey: PCWSTR,
-) -> LONG {
+pub unsafe extern "C" fn RegDeleteKeyW(h_key: HKEY, lp_sub_key: PCWSTR) -> LONG {
     let mut subkey_handle: HKEY = null_mut();
-    let result = RegOpenKeyExW(hKey, lpSubKey, 0, KEY_ALL_ACCESS, &mut subkey_handle);
+    let result = RegOpenKeyExW(h_key, lp_sub_key, 0, KEY_ALL_ACCESS, &mut subkey_handle);
 
     if result != ERROR_SUCCESS as LONG {
         return result;
@@ -354,7 +360,7 @@ pub unsafe extern "C" fn RegDeleteKeyW(
         }
     };
 
-    let status = crate::libs::ntdll::registry::NtDeleteKey(nt_handle);
+    let status = crate::libs::ntdll::registry::nt_delete_key(nt_handle);
     RegCloseKey(subkey_handle);
 
     if status < 0 {
@@ -365,21 +371,18 @@ pub unsafe extern "C" fn RegDeleteKeyW(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn RegDeleteValueW(
-    hKey: HKEY,
-    lpValueName: PCWSTR,
-) -> LONG {
-    let nt_handle = match get_nt_handle(hKey) {
+pub unsafe extern "C" fn RegDeleteValueW(h_key: HKEY, lp_value_name: PCWSTR) -> LONG {
+    let nt_handle = match get_nt_handle(h_key) {
         Some(h) => h,
         None => return ERROR_INVALID_HANDLE as LONG,
     };
 
-    let mut value_unicode = match wide_str_to_unicode_string(lpValueName) {
+    let mut value_unicode = match wide_str_to_unicode_string(lp_value_name) {
         Some(s) => s,
         None => return ERROR_INVALID_PARAMETER as LONG,
     };
 
-    let status = crate::libs::ntdll::registry::NtDeleteValueKey(nt_handle, &mut value_unicode);
+    let status = crate::libs::ntdll::registry::nt_delete_value_key(nt_handle, &mut value_unicode);
 
     if status < 0 {
         nt_status_to_win32(status) as LONG
@@ -390,20 +393,20 @@ pub unsafe extern "C" fn RegDeleteValueW(
 
 #[no_mangle]
 pub unsafe extern "C" fn RegEnumKeyExW(
-    hKey: HKEY,
-    dwIndex: DWORD,
-    lpName: PWSTR,
-    lpcchName: *mut DWORD,
-    lpReserved: *mut DWORD,
-    lpClass: PWSTR,
-    lpcchClass: *mut DWORD,
-    lpftLastWriteTime: *mut FILETIME,
+    h_key: HKEY,
+    dw_index: DWORD,
+    lp_name: PWSTR,
+    lpcch_name: *mut DWORD,
+    _lp_reserved: *mut DWORD,
+    _lp_class: PWSTR,
+    _lpcch_class: *mut DWORD,
+    _lpft_last_write_time: *mut FILETIME,
 ) -> LONG {
-    if lpName.is_null() || lpcchName.is_null() {
+    if lp_name.is_null() || lpcch_name.is_null() {
         return ERROR_INVALID_PARAMETER as LONG;
     }
 
-    let nt_handle = match get_nt_handle(hKey) {
+    let nt_handle = match get_nt_handle(h_key) {
         Some(h) => h,
         None => return ERROR_INVALID_HANDLE as LONG,
     };
@@ -411,9 +414,9 @@ pub unsafe extern "C" fn RegEnumKeyExW(
     let mut buffer = [0u8; 512];
     let mut result_length: ULONG = 0;
 
-    let status = crate::libs::ntdll::registry::NtEnumerateKey(
+    let status = crate::libs::ntdll::registry::nt_enumerate_key(
         nt_handle,
-        dwIndex,
+        dw_index,
         1, // KeyBasicInformation
         buffer.as_mut_ptr() as PVOID,
         buffer.len() as ULONG,
@@ -433,20 +436,20 @@ pub unsafe extern "C" fn RegEnumKeyExW(
 
 #[no_mangle]
 pub unsafe extern "C" fn RegEnumValueW(
-    hKey: HKEY,
-    dwIndex: DWORD,
-    lpValueName: PWSTR,
-    lpcchValueName: *mut DWORD,
-    lpReserved: *mut DWORD,
-    lpType: *mut DWORD,
-    lpData: *mut BYTE,
-    lpcbData: *mut DWORD,
+    h_key: HKEY,
+    dw_index: DWORD,
+    lp_value_name: PWSTR,
+    lpcch_value_name: *mut DWORD,
+    _lp_reserved: *mut DWORD,
+    _lp_type: *mut DWORD,
+    _lp_data: *mut BYTE,
+    _lpcb_data: *mut DWORD,
 ) -> LONG {
-    if lpValueName.is_null() || lpcchValueName.is_null() {
+    if lp_value_name.is_null() || lpcch_value_name.is_null() {
         return ERROR_INVALID_PARAMETER as LONG;
     }
 
-    let nt_handle = match get_nt_handle(hKey) {
+    let nt_handle = match get_nt_handle(h_key) {
         Some(h) => h,
         None => return ERROR_INVALID_HANDLE as LONG,
     };
@@ -454,9 +457,9 @@ pub unsafe extern "C" fn RegEnumValueW(
     let mut buffer = [0u8; 512];
     let mut result_length: ULONG = 0;
 
-    let status = crate::libs::ntdll::registry::NtEnumerateValueKey(
+    let status = crate::libs::ntdll::registry::nt_enumerate_value_key(
         nt_handle,
-        dwIndex,
+        dw_index,
         1, // KeyValuePartialInformation
         buffer.as_mut_ptr() as PVOID,
         buffer.len() as ULONG,
@@ -475,13 +478,13 @@ pub unsafe extern "C" fn RegEnumValueW(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn RegFlushKey(hKey: HKEY) -> LONG {
-    let nt_handle = match get_nt_handle(hKey) {
+pub unsafe extern "C" fn RegFlushKey(h_key: HKEY) -> LONG {
+    let nt_handle = match get_nt_handle(h_key) {
         Some(h) => h,
         None => return ERROR_INVALID_HANDLE as LONG,
     };
 
-    let status = crate::libs::ntdll::registry::NtFlushKey(nt_handle);
+    let status = crate::libs::ntdll::registry::nt_flush_key(nt_handle);
 
     if status < 0 {
         nt_status_to_win32(status) as LONG
@@ -492,28 +495,28 @@ pub unsafe extern "C" fn RegFlushKey(hKey: HKEY) -> LONG {
 
 #[no_mangle]
 pub unsafe extern "C" fn RegNotifyChangeKeyValue(
-    hKey: HKEY,
-    bWatchSubtree: LONG,
-    dwNotifyFilter: DWORD,
-    hEvent: HANDLE,
-    fAsynchronous: LONG,
+    h_key: HKEY,
+    b_watch_subtree: LONG,
+    dw_notify_filter: DWORD,
+    h_event: HANDLE,
+    f_asynchronous: LONG,
 ) -> LONG {
-    let nt_handle = match get_nt_handle(hKey) {
+    let nt_handle = match get_nt_handle(h_key) {
         Some(h) => h,
         None => return ERROR_INVALID_HANDLE as LONG,
     };
 
-    let status = crate::libs::ntdll::registry::NtNotifyChangeKey(
+    let status = crate::libs::ntdll::registry::nt_notify_change_key(
         nt_handle,
-        hEvent,
+        h_event,
         null_mut(),
         null_mut(),
         null_mut(),
-        dwNotifyFilter,
-        if bWatchSubtree != 0 { 1 } else { 0 },
+        dw_notify_filter,
+        if b_watch_subtree != 0 { 1 } else { 0 },
         null_mut(),
         0,
-        if fAsynchronous != 0 { 1 } else { 0 },
+        if f_asynchronous != 0 { 1 } else { 0 },
     );
 
     if status < 0 {

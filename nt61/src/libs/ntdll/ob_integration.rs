@@ -152,7 +152,7 @@ pub fn ob_reference_object_body<T>(handle: u64) -> *mut T {
     ob::get_object_body::<T>(header)
 }
 
-/// Create a new object in ob's namespace and register a handle.
+/// create a new object in ob's namespace and register a handle.
 /// Returns the handle or 0 on failure.
 pub fn ob_create_and_register(
     parent_path: &[u8],
@@ -160,7 +160,7 @@ pub fn ob_create_and_register(
     ob_type: ob::ObType,
     body_size: usize,
 ) -> u64 {
-    // Create the object header (body is allocated after header)
+    // create the object header (body is allocated after header)
     let header = ob::create_object(parent_path, name, ob_type, body_size);
     if header.is_null() {
         return 0;
@@ -181,8 +181,8 @@ pub fn init() {}
 use super::status::STATUS_SUCCESS;
 use super::types::{HANDLE, NTSTATUS};
 
-/// NtCreateDirectoryObject - Creates a directory object
-pub unsafe extern "C" fn NtCreateDirectoryObject(
+/// nt_create_directory_object - Creates a directory object
+pub unsafe extern "C" fn nt_create_directory_object(
     directory_handle: *mut HANDLE,
     _desired_access: u32,
     _object_attributes: *mut super::types::ObjectAttributes,
@@ -197,8 +197,8 @@ pub unsafe extern "C" fn NtCreateDirectoryObject(
     STATUS_SUCCESS
 }
 
-/// NtOpenDirectoryObject - Opens a directory object
-pub unsafe extern "C" fn NtOpenDirectoryObject(
+/// nt_open_directory_object - Opens a directory object
+pub unsafe extern "C" fn nt_open_directory_object(
     directory_handle: *mut HANDLE,
     _desired_access: u32,
     _object_attributes: *mut super::types::ObjectAttributes,
@@ -212,8 +212,8 @@ pub unsafe extern "C" fn NtOpenDirectoryObject(
     STATUS_SUCCESS
 }
 
-/// NtQueryDirectoryObject - Query information about a directory object
-pub unsafe extern "C" fn NtQueryDirectoryObject(
+/// nt_query_directory_object - Query information about a directory object
+pub unsafe extern "C" fn nt_query_directory_object(
     directory_handle: HANDLE,
     buffer: *mut u8,
     length: u32,
@@ -238,8 +238,8 @@ pub unsafe extern "C" fn NtQueryDirectoryObject(
     STATUS_SUCCESS
 }
 
-/// NtOpenProcessToken - Opens the token of a process
-pub unsafe extern "C" fn NtOpenProcessToken(
+/// nt_open_process_token - Opens the token of a process
+pub unsafe extern "C" fn nt_open_process_token(
     _process_handle: HANDLE,
     _desired_access: u32,
     token_handle: *mut HANDLE,
@@ -247,12 +247,20 @@ pub unsafe extern "C" fn NtOpenProcessToken(
     if token_handle.is_null() {
         return STATUS_SUCCESS;
     }
+    if crate::mm::user_copy::probe_user_write(token_handle as u64, core::mem::size_of::<HANDLE>())
+        .is_err()
+    {
+        return crate::libs::ntdll::status::STATUS_ACCESS_VIOLATION;
+    }
 
     // In a full implementation, this would:
     // 1. Get the process from the handle
     // 2. Get the token from the process
-    // 3. Create a new handle for the token
+    // 3. create a new handle for the token
     // For now, return a dummy handle
-    *token_handle = 0 as HANDLE;
+    let token_handle_value = 0 as HANDLE;
+    if crate::mm::user_copy::write_user_object(token_handle as u64, &token_handle_value).is_err() {
+        return crate::libs::ntdll::status::STATUS_ACCESS_VIOLATION;
+    }
     STATUS_SUCCESS
 }

@@ -2,8 +2,7 @@
 
 extern crate alloc;
 
-use super::types::{BOOL, DWORD, FALSE, LPCWSTR, TRUE};
-use crate::ke::sync::Spinlock;
+use super::types::{BOOL, FALSE, TRUE};
 
 /// System metrics. The bootstrap reports a deterministic
 /// 1024x768 screen.
@@ -105,8 +104,8 @@ pub mod sm {
     pub const SM_CMETRICS: i32 = 97;
 }
 
-/// `GetSystemMetrics` — return deterministic values.
-pub extern "C" fn GetSystemMetrics(index: i32) -> i32 {
+/// `get_system_metrics` — return deterministic values.
+pub extern "C" fn get_system_metrics(index: i32) -> i32 {
     match index {
         sm::SM_CXSCREEN => 1024,
         sm::SM_CYSCREEN => 768,
@@ -157,18 +156,18 @@ pub extern "C" fn GetSystemMetrics(index: i32) -> i32 {
     }
 }
 
-/// `GetAsyncKeyState` — return 0 (key not pressed) for
+/// `get_async_key_state` — return 0 (key not pressed) for
 /// every key.
-pub extern "C" fn GetAsyncKeyState(_vk: i32) -> i16 {
+pub extern "C" fn get_async_key_state(_vk: i32) -> i16 {
     0
 }
-/// `GetKeyState` — return 0.
-pub extern "C" fn GetKeyState(_vk: i32) -> i16 {
+/// `get_key_state` — return 0.
+pub extern "C" fn get_key_state(_vk: i32) -> i16 {
     0
 }
-/// `GetKeyboardState` — fill the buffer with zeros and
+/// `get_keyboard_state` — fill the buffer with zeros and
 /// return non-zero.
-pub unsafe extern "C" fn GetKeyboardState(buf: *mut u8) -> BOOL {
+pub unsafe extern "C" fn get_keyboard_state(buf: *mut u8) -> BOOL {
     if buf.is_null() {
         return FALSE;
     }
@@ -177,8 +176,8 @@ pub unsafe extern "C" fn GetKeyboardState(buf: *mut u8) -> BOOL {
     }
     TRUE
 }
-/// `GetCursorPos` — return 0,0.
-pub unsafe extern "C" fn GetCursorPos(p: *mut i32) -> BOOL {
+/// `get_cursor_pos` — return 0,0.
+pub unsafe extern "C" fn get_cursor_pos(p: *mut i32) -> BOOL {
     if p.is_null() {
         return FALSE;
     }
@@ -186,23 +185,23 @@ pub unsafe extern "C" fn GetCursorPos(p: *mut i32) -> BOOL {
     *p.add(1) = 0;
     TRUE
 }
-/// `SetCursorPos` — placeholder.
-pub extern "C" fn SetCursorPos(_x: i32, _y: i32) -> BOOL {
+/// `set_cursor_pos` — placeholder.
+pub extern "C" fn set_cursor_pos(_x: i32, _y: i32) -> BOOL {
     TRUE
 }
-/// `GetDoubleClickTime` — return 500 ms.
-pub extern "C" fn GetDoubleClickTime() -> u32 {
+/// `get_double_click_time` — return 500 ms.
+pub extern "C" fn get_double_click_time() -> u32 {
     500
 }
-/// `GetMessageExtraInfo` — return 0.
-pub extern "C" fn GetMessageExtraInfo() -> usize {
+/// `get_message_extra_info` — return 0.
+pub extern "C" fn get_message_extra_info() -> usize {
     0
 }
-/// `MapVirtualKeyW` — return 0 (no mapping).
-pub extern "C" fn MapVirtualKeyW(_code: u32, _map: u32) -> u32 {
+/// `map_virtual_key_w` — return 0 (no mapping).
+pub extern "C" fn map_virtual_key_w(_code: u32, _map: u32) -> u32 {
     0
 }
-/// `GetKeyboardLayout` — return 0x0409 (English US).
-pub extern "C" fn GetKeyboardLayout(_id: u32) -> *mut core::ffi::c_void {
+/// `get_keyboard_layout` — return 0x0409 (English US).
+pub extern "C" fn get_keyboard_layout(_id: u32) -> *mut core::ffi::c_void {
     0x0409 as *mut core::ffi::c_void
 }

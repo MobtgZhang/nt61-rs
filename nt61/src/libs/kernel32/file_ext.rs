@@ -2,8 +2,6 @@
 //!
 //! Replaces unsafe static mut FIND_HANDLES with synchronized access
 
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
-
 use super::types::*;
 use spin::{Lazy, Mutex};
 

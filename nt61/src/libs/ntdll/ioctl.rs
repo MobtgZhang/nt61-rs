@@ -1,7 +1,7 @@
-//! `NtDeviceIoControlFile` — general-purpose IOCTL dispatcher.
+//! `nt_device_io_control_file` — general-purpose IOCTL dispatcher.
 //!
 //! All AFD operations on the kernel boundary are issued via
-//! `NtDeviceIoControlFile`. The syscall entry routes the
+//! `nt_device_io_control_file`. The syscall entry routes the
 //! IOCTL code + input/output buffers to a registered dispatcher
 //! based on the handle's `kind`. This keeps the file syscalls
 //! focused on `File`/`Pipe` and lets AFD evolve independently.
@@ -12,9 +12,9 @@ use super::types::{IoStatusBlock, HANDLE, PVOID, ULONG};
 use crate::mm::user_copy;
 use core::ptr;
 
-/// `NtDeviceIoControlFile(file, event, apc, apc_ctx, iosb,
+/// `nt_device_io_control_file(file, event, apc, apc_ctx, iosb,
 /// ioctl, input, input_len, output, output_len)`
-pub unsafe extern "C" fn NtDeviceIoControlFile(
+pub unsafe extern "C" fn nt_device_io_control_file(
     file_handle: HANDLE,
     _event: HANDLE,
     _apc: PVOID,
@@ -108,7 +108,7 @@ pub unsafe extern "C" fn NtDeviceIoControlFile(
 const STATUS_ACCESS_VIOLATION_VALUE: i32 = 0xC0000005_u32 as i32;
 
 /// Allocate an AFD endpoint and register it with the handle
-/// table so the caller can issue `NtDeviceIoControlFile` against
+/// table so the caller can issue `nt_device_io_control_file` against
 /// it. Returns the NT HANDLE on success.
 pub fn create_afd_handle(socket_id: u32) -> HANDLE {
     let handle = crate::netstack::afd::create(socket_id);

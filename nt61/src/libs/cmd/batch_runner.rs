@@ -3,8 +3,6 @@
 //! Handles batch file (.bat/.cmd) execution for the CMD shell.
 //! This module provides utilities for running batch scripts from FAT32.
 
-#![cfg(target_arch = "x86_64")]
-
 /// Trait for outputting text during batch file execution
 pub trait Output {
     fn put_str(&mut self, s: &[u8]);

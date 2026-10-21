@@ -3,7 +3,7 @@
 //! Provides proper thread-local errno storage
 
 use super::types::*;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::AtomicBool;
 use spin::Mutex;
 
 pub const EPERM: i32 = 1;
@@ -54,9 +54,9 @@ struct ThreadErrno {
     doserrno_val: u32,
 }
 
-struct TlsErrnoTable {
+pub struct TlsErrnoTable {
     entries: [Mutex<ThreadErrno>; MAX_THREADS],
-    initialized: AtomicBool,
+    pub initialized: AtomicBool,
 }
 
 impl TlsErrnoTable {
@@ -92,23 +92,23 @@ fn get_current_tid() -> usize {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn __errno_location() -> *mut c_int {
+pub unsafe extern "C" fn __errno_location() -> *mut CInt {
     let tid = get_current_tid();
     let entry = TLS_ERRNO.get_entry(tid);
     let mut locked = entry.lock();
-    &mut locked.errno_val as *mut c_int
+    &mut locked.errno_val as *mut CInt
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn __doserrno() -> *mut c_ulong {
+pub unsafe extern "C" fn __doserrno() -> *mut CUlong {
     let tid = get_current_tid();
     let entry = TLS_ERRNO.get_entry(tid);
     let mut locked = entry.lock();
-    &mut locked.doserrno_val as *mut c_ulong as *mut c_ulong
+    &mut locked.doserrno_val as *mut CUlong as *mut CUlong
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn _get_errno(value: *mut c_int) -> errno_t {
+pub unsafe extern "C" fn _get_errno(value: *mut CInt) -> ErrnoT {
     if value.is_null() {
         return EINVAL;
     }
@@ -121,7 +121,7 @@ pub unsafe extern "C" fn _get_errno(value: *mut c_int) -> errno_t {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn _set_errno(value: c_int) -> errno_t {
+pub unsafe extern "C" fn _set_errno(value: CInt) -> ErrnoT {
     let tid = get_current_tid();
     let entry = TLS_ERRNO.get_entry(tid);
     let mut locked = entry.lock();
@@ -130,7 +130,7 @@ pub unsafe extern "C" fn _set_errno(value: c_int) -> errno_t {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn _get_doserrno(value: *mut c_ulong) -> errno_t {
+pub unsafe extern "C" fn _get_doserrno(value: *mut CUlong) -> ErrnoT {
     if value.is_null() {
         return EINVAL;
     }
@@ -143,7 +143,7 @@ pub unsafe extern "C" fn _get_doserrno(value: *mut c_ulong) -> errno_t {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn _set_doserrno(value: c_ulong) -> errno_t {
+pub unsafe extern "C" fn _set_doserrno(value: CUlong) -> ErrnoT {
     let tid = get_current_tid();
     let entry = TLS_ERRNO.get_entry(tid);
     let mut locked = entry.lock();
@@ -152,8 +152,8 @@ pub unsafe extern "C" fn _set_doserrno(value: c_ulong) -> errno_t {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn strerror(errnum: c_int) -> *const c_char {
-    static BUFFER: Mutex<[c_char; 64]> = Mutex::new([0; 64]);
+pub unsafe extern "C" fn strerror(errnum: CInt) -> *const CChar {
+    static BUFFER: Mutex<[CChar; 64]> = Mutex::new([0; 64]);
 
     let mut buf = BUFFER.lock();
     let msg: &[u8] = match errnum {
@@ -204,19 +204,19 @@ pub unsafe extern "C" fn strerror(errnum: c_int) -> *const c_char {
         if i >= 64 {
             break;
         }
-        buf[i] = byte as c_char;
+        buf[i] = byte as CChar;
     }
 
     buf.as_ptr()
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn _errno() -> *mut c_int {
+pub unsafe extern "C" fn _errno() -> *mut CInt {
     __errno_location()
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn _doserrno() -> *mut c_ulong {
+pub unsafe extern "C" fn _doserrno() -> *mut CUlong {
     __doserrno()
 }
 
@@ -233,10 +233,10 @@ pub unsafe extern "C" fn __tls_cleanup_thread(thread_id: usize) {
 
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strerror_s(
-    buffer: *mut c_char,
-    size_in_bytes: size_t,
-    errnum: c_int,
-) -> errno_t {
+    buffer: *mut CChar,
+    size_in_bytes: SizeT,
+    errnum: CInt,
+) -> ErrnoT {
     if buffer.is_null() || size_in_bytes == 0 {
         return EINVAL;
     }
@@ -258,16 +258,16 @@ pub unsafe extern "C" fn strerror_s(
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn perror(s: *const c_char) {
+pub unsafe extern "C" fn perror(s: *const CChar) {
     let errnum = *_errno();
     let stderr = super::stdio_safe::__get_stderr();
 
     if !s.is_null() && *s != 0 {
         super::stdio::fputs(s, stderr);
-        super::stdio::fputs(b": \0".as_ptr() as *const c_char, stderr);
+        super::stdio::fputs(b": \0".as_ptr() as *const CChar, stderr);
     }
 
     let msg = strerror(errnum);
-    super::stdio::fputs(msg as *const c_char, stderr);
-    super::stdio::fputc(b'\n' as c_int, stderr);
+    super::stdio::fputs(msg as *const CChar, stderr);
+    super::stdio::fputc(b'\n' as CInt, stderr);
 }

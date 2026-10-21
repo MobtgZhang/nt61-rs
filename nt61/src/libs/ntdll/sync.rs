@@ -1,8 +1,8 @@
 //! ntdll — Nt* synchronisation primitives
 //
-//! `NtCreateEvent`, `NtCreateMutant`, `NtCreateSemaphore`,
-//! `NtWaitForSingleObject`, `NtWaitForMultipleObjects`,
-//! `NtDelayExecution`. All objects are tracked in the kernel
+//! `nt_create_event`, `nt_create_mutant`, `nt_create_semaphore`,
+//! `nt_wait_for_single_object`, `nt_wait_for_multiple_objects`,
+//! `nt_delay_execution`. All objects are tracked in the kernel
 //! handle table; `NtWait*` calls the kernel dispatcher.
 //
 //! References: MSDN Library "Windows 7" — `ntdll.dll` sync
@@ -10,39 +10,20 @@
 
 use super::file::{alloc_handle, free_handle, lookup_handle, HandleKind};
 use super::status::{
-    STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER, STATUS_NOT_IMPLEMENTED, STATUS_SUCCESS,
-    STATUS_TIMEOUT,
+    STATUS_ACCESS_VIOLATION, STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER, STATUS_SUCCESS,
 };
-use super::types::{HANDLE, NTSTATUS, PVOID};
-use core::ptr;
+use super::types::{HANDLE, NTSTATUS};
+use crate::mm::user_copy::{copy_from_user, read_user_object};
 
 /// Event state tracking for proper kernel event integration.
 pub(crate) struct EventState {
-    pub event_type: u32, // 0 = Notification, 1 = Synchronization
     pub signaled: bool,
-    pub manual_reset: bool,
-}
-
-/// Mutex state tracking.
-pub(crate) struct MutexState {
-    pub initial_owner: bool,
-    pub owned: bool,
-    pub owned_by_tid: u64,
-    pub recursion_count: u32,
-}
-
-/// Semaphore state tracking.
-pub(crate) struct SemaphoreState {
-    pub current_count: u32,
-    pub maximum_count: u32,
 }
 
 /// Decode event state from handle target.
 fn decode_event_state(target: u64) -> EventState {
     EventState {
-        event_type: ((target >> 32) & 0xFF) as u32,
         signaled: (target & 0x01) != 0,
-        manual_reset: ((target >> 8) & 0x01) != 0,
     }
 }
 
@@ -54,8 +35,8 @@ fn encode_event_state(event_type: u32, signaled: bool, manual_reset: bool) -> u6
     et | mr | sig
 }
 
-/// `NtCreateEvent`.
-pub unsafe extern "C" fn NtCreateEvent(
+/// `nt_create_event`.
+pub unsafe extern "C" fn nt_create_event(
     event_handle: *mut HANDLE,
     desired_access: u32,
     object_attributes: *mut super::types::ObjectAttributes,
@@ -82,11 +63,11 @@ pub unsafe extern "C" fn NtCreateEvent(
     STATUS_SUCCESS
 }
 
-/// `NtSetEvent` / `NtResetEvent` / `NtPulseEvent`.
+/// `nt_set_event` / `nt_reset_event` / `nt_pulse_event`.
 ///
-/// NtSetEvent sets the event to the signaled state and releases
+/// nt_set_event sets the event to the signaled state and releases
 /// any waiting threads. Returns the previous state.
-pub unsafe extern "C" fn NtSetEvent(event_handle: HANDLE, previous_state: *mut u32) -> NTSTATUS {
+pub unsafe extern "C" fn nt_set_event(event_handle: HANDLE, previous_state: *mut u32) -> NTSTATUS {
     use super::status::STATUS_INVALID_HANDLE;
 
     if event_handle.is_null() {
@@ -113,8 +94,11 @@ pub unsafe extern "C" fn NtSetEvent(event_handle: HANDLE, previous_state: *mut u
     STATUS_INVALID_HANDLE
 }
 
-/// NtResetEvent sets the event to the non-signaled state.
-pub unsafe extern "C" fn NtResetEvent(event_handle: HANDLE, previous_state: *mut u32) -> NTSTATUS {
+/// nt_reset_event sets the event to the non-signaled state.
+pub unsafe extern "C" fn nt_reset_event(
+    event_handle: HANDLE,
+    previous_state: *mut u32,
+) -> NTSTATUS {
     use super::status::STATUS_INVALID_HANDLE;
 
     if event_handle.is_null() {
@@ -137,8 +121,8 @@ pub unsafe extern "C" fn NtResetEvent(event_handle: HANDLE, previous_state: *mut
     STATUS_INVALID_HANDLE
 }
 
-/// NtClearEvent clears the event to non-signaled state (same as ResetEvent).
-pub unsafe extern "C" fn NtClearEvent(event_handle: HANDLE) -> NTSTATUS {
+/// nt_clear_event clears the event to non-signaled state (same as reset_event).
+pub unsafe extern "C" fn nt_clear_event(event_handle: HANDLE) -> NTSTATUS {
     use super::status::STATUS_INVALID_HANDLE;
 
     if event_handle.is_null() {
@@ -153,9 +137,12 @@ pub unsafe extern "C" fn NtClearEvent(event_handle: HANDLE) -> NTSTATUS {
     STATUS_INVALID_HANDLE
 }
 
-/// NtPulseEvent sets the event to signaled state, releases waiting threads,
+/// nt_pulse_event sets the event to signaled state, releases waiting threads,
 /// then resets to non-signaled. For auto-reset events, only one thread is released.
-pub unsafe extern "C" fn NtPulseEvent(event_handle: HANDLE, previous_state: *mut u32) -> NTSTATUS {
+pub unsafe extern "C" fn nt_pulse_event(
+    event_handle: HANDLE,
+    previous_state: *mut u32,
+) -> NTSTATUS {
     use super::status::STATUS_INVALID_HANDLE;
 
     if event_handle.is_null() {
@@ -179,9 +166,9 @@ pub unsafe extern "C" fn NtPulseEvent(event_handle: HANDLE, previous_state: *mut
     STATUS_INVALID_HANDLE
 }
 
-/// `NtCreateMutant` (mutex).
+/// `nt_create_mutant` (mutex).
 /// A mutex can be created with or without initial ownership.
-pub unsafe extern "C" fn NtCreateMutant(
+pub unsafe extern "C" fn nt_create_mutant(
     mutant_handle: *mut HANDLE,
     desired_access: u32,
     object_attributes: *mut super::types::ObjectAttributes,
@@ -216,10 +203,10 @@ pub unsafe extern "C" fn NtCreateMutant(
     STATUS_SUCCESS
 }
 
-/// `NtReleaseMutant`.
+/// `nt_release_mutant`.
 /// Releases ownership of the mutex. If the thread doesn't own the mutex,
 /// returns an error.
-pub unsafe extern "C" fn NtReleaseMutant(
+pub unsafe extern "C" fn nt_release_mutant(
     mutant_handle: HANDLE,
     previous_count: *mut u32,
 ) -> NTSTATUS {
@@ -260,8 +247,8 @@ pub unsafe extern "C" fn NtReleaseMutant(
     STATUS_INVALID_HANDLE
 }
 
-/// `NtCreateSemaphore`.
-pub unsafe extern "C" fn NtCreateSemaphore(
+/// `nt_create_semaphore`.
+pub unsafe extern "C" fn nt_create_semaphore(
     semaphore_handle: *mut HANDLE,
     desired_access: u32,
     object_attributes: *mut super::types::ObjectAttributes,
@@ -283,8 +270,8 @@ pub unsafe extern "C" fn NtCreateSemaphore(
     STATUS_SUCCESS
 }
 
-/// `NtReleaseSemaphore`.
-pub unsafe extern "C" fn NtReleaseSemaphore(
+/// `nt_release_semaphore`.
+pub unsafe extern "C" fn nt_release_semaphore(
     semaphore_handle: HANDLE,
     release_count: u32,
     previous_count: *mut u32,
@@ -298,8 +285,8 @@ pub unsafe extern "C" fn NtReleaseSemaphore(
     STATUS_SUCCESS
 }
 
-/// `NtCreateTimer`.
-pub unsafe extern "C" fn NtCreateTimer(
+/// `nt_create_timer`.
+pub unsafe extern "C" fn nt_create_timer(
     timer_handle: *mut HANDLE,
     desired_access: u32,
     object_attributes: *mut super::types::ObjectAttributes,
@@ -317,21 +304,21 @@ pub unsafe extern "C" fn NtCreateTimer(
     STATUS_SUCCESS
 }
 
-/// `NtSetTimer` - Sets a timer to expire at a specified time.
+/// `nt_set_timer` - Sets a timer to expire at a specified time.
 ///
 /// Timer types:
 /// - 0: NotificationTimer
 /// - 1: SynchronizationTimer
 ///
 /// # Arguments
-/// * `timer_handle` - Handle to the timer object
+/// * `timer_handle` - handle to the timer object
 /// * `due_time` - Absolute or relative time (in 100ns units)
 /// * `period` - Timer period in milliseconds (0 for one-shot)
 /// * `callback` - APC callback routine (optional)
 /// * `arg` - Callback argument
 /// * `resume` - If TRUE, alerts the system to resume from sleep/hibernation
 /// * `handle` - Optionally receives the timer handle
-pub unsafe extern "C" fn NtSetTimer(
+pub unsafe extern "C" fn nt_set_timer(
     timer_handle: HANDLE,
     due_time: *const i64,
     _period: u32,
@@ -356,12 +343,15 @@ pub unsafe extern "C" fn NtSetTimer(
     STATUS_SUCCESS
 }
 
-/// `NtCancelTimer` - Cancels a timer.
+/// `nt_cancel_timer` - Cancels a timer.
 ///
 /// # Arguments
-/// * `timer_handle` - Handle to the timer object
+/// * `timer_handle` - handle to the timer object
 /// * `set_handle` - If provided, receives the previous state
-pub unsafe extern "C" fn NtCancelTimer(timer_handle: HANDLE, _set_handle: *mut HANDLE) -> NTSTATUS {
+pub unsafe extern "C" fn nt_cancel_timer(
+    timer_handle: HANDLE,
+    _set_handle: *mut HANDLE,
+) -> NTSTATUS {
     if timer_handle.is_null() {
         return STATUS_INVALID_HANDLE;
     }
@@ -374,16 +364,39 @@ pub unsafe extern "C" fn NtCancelTimer(timer_handle: HANDLE, _set_handle: *mut H
     STATUS_SUCCESS
 }
 
-/// `NtWaitForSingleObject` — waits for an object to become signaled.
+/// `nt_wait_for_single_object` — waits for an object to become signaled.
 /// Returns `STATUS_SUCCESS` (0), `STATUS_TIMEOUT`, or `STATUS_INVALID_HANDLE`.
 ///
 /// The timeout is specified in 100-nanosecond intervals:
 /// - If negative, it's a relative time (time remaining)
 /// - If positive, it's an absolute time (system time when to timeout)
-pub unsafe extern "C" fn NtWaitForSingleObject(
+pub unsafe extern "C" fn nt_wait_for_single_object(
     handle: HANDLE,
     alertable: u8,
     timeout: *mut i64,
+) -> NTSTATUS {
+    if handle.is_null() {
+        return STATUS_INVALID_HANDLE;
+    }
+
+    let raw_timeout = if timeout.is_null() {
+        None
+    } else {
+        match read_user_object::<i64>(timeout as u64) {
+            Ok(raw) => Some(raw),
+            Err(STATUS_ACCESS_VIOLATION) => return STATUS_ACCESS_VIOLATION,
+            Err(status) => return status,
+        }
+    };
+
+    nt_wait_for_single_object_kernel(handle, alertable, raw_timeout)
+}
+
+/// Trusted-kernel entry point for `nt_wait_for_single_object`.
+pub fn nt_wait_for_single_object_kernel(
+    handle: HANDLE,
+    alertable: u8,
+    timeout: Option<i64>,
 ) -> NTSTATUS {
     use super::status::STATUS_TIMEOUT;
 
@@ -391,20 +404,10 @@ pub unsafe extern "C" fn NtWaitForSingleObject(
         return STATUS_INVALID_HANDLE;
     }
 
-    // Parse timeout
-    let timeout_ms = if timeout.is_null() {
-        // No timeout specified - wait indefinitely
-        u32::MAX
-    } else {
-        let raw = *timeout;
-        if raw < 0 {
-            // Relative time: convert 100ns units to milliseconds
-            ((-raw) / 10_000) as u32
-        } else {
-            // Absolute time: would need system time comparison
-            // For bootstrap, treat as no timeout
-            u32::MAX
-        }
+    let timeout_ms = match timeout {
+        None => u32::MAX,
+        Some(raw) if raw < 0 => ((-raw) / 10_000) as u32,
+        Some(_) => u32::MAX,
     };
 
     // Look up the handle
@@ -427,42 +430,77 @@ pub unsafe extern "C" fn NtWaitForSingleObject(
     STATUS_INVALID_HANDLE
 }
 
-/// `NtWaitForMultipleObjects`.
-pub unsafe extern "C" fn NtWaitForMultipleObjects(
+/// `nt_wait_for_multiple_objects`.
+pub unsafe extern "C" fn nt_wait_for_multiple_objects(
     count: u32,
     handles: *mut HANDLE,
     wait_type: u32,
     alertable: u8,
     timeout: *mut i64,
 ) -> NTSTATUS {
+    if handles.is_null() || count == 0 {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    let mut handle_array = [HANDLE::default(); 64];
+    if count as usize > handle_array.len() {
+        return STATUS_INVALID_PARAMETER;
+    }
+    let bytes = core::slice::from_raw_parts_mut(
+        handle_array.as_mut_ptr() as *mut u8,
+        count as usize * core::mem::size_of::<HANDLE>(),
+    );
+    if let Err(status) = copy_from_user(bytes, handles as u64) {
+        return status;
+    }
+
+    let raw_timeout = if timeout.is_null() {
+        None
+    } else {
+        match read_user_object::<i64>(timeout as u64) {
+            Ok(raw) => Some(raw),
+            Err(status) => return status,
+        }
+    };
+
+    nt_wait_for_multiple_objects_kernel(
+        count,
+        &handle_array[..count as usize],
+        wait_type,
+        alertable,
+        raw_timeout,
+    )
+}
+
+/// Trusted-kernel entry point for `nt_wait_for_multiple_objects`.
+pub fn nt_wait_for_multiple_objects_kernel(
+    count: u32,
+    handles: &[HANDLE],
+    wait_type: u32,
+    alertable: u8,
+    timeout: Option<i64>,
+) -> NTSTATUS {
     use super::status::STATUS_TIMEOUT;
 
-    if handles.is_null() || count == 0 {
+    if handles.len() != count as usize || count == 0 || count as usize > 64 {
         return STATUS_INVALID_PARAMETER;
     }
 
     let _ = wait_type;
     let _ = alertable;
 
-    // Parse timeout
-    let timeout_ms = if timeout.is_null() {
+    let timeout_ms = if timeout.is_none() {
         u32::MAX
     } else {
-        let raw = unsafe { *timeout };
-        if raw < 0 {
-            ((-raw) / 10_000) as u32
-        } else {
-            u32::MAX
-        }
+        let raw = timeout.unwrap_or_default();
+        ((-raw) / 10_000) as u32
     };
 
-    // Validate all handles first
-    for i in 0..count as isize {
-        let h = unsafe { *handles.add(i as usize) };
-        if h.is_null() {
+    for &handle in handles {
+        if handle.is_null() {
             return STATUS_INVALID_HANDLE;
         }
-        if lookup_handle(h).is_none() {
+        if lookup_handle(handle).is_none() {
             return STATUS_INVALID_HANDLE;
         }
     }
@@ -476,19 +514,28 @@ pub unsafe extern "C" fn NtWaitForMultipleObjects(
     STATUS_SUCCESS
 }
 
-/// `NtDelayExecution` — convert a relative `i64` (in 100ns
+/// `nt_delay_execution` — convert a relative `i64` (in 100ns
 /// units, negative == relative) to a millisecond sleep.
 ///
 /// On success, returns `STATUS_SUCCESS`. If the alertable flag is set,
 /// the wait can be interrupted by an APC.
-pub extern "C" fn NtDelayExecution(_alertable: u8, interval: *mut i64) -> NTSTATUS {
-    use super::status::STATUS_INVALID_PARAMETER;
-
+pub extern "C" fn nt_delay_execution(_alertable: u8, interval: *mut i64) -> NTSTATUS {
     if interval.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
 
-    let raw = unsafe { *interval };
+    let raw = match read_user_object::<i64>(interval as u64) {
+        Ok(raw) => raw,
+        Err(status) => return status,
+    };
+
+    nt_delay_execution_kernel(_alertable, raw)
+}
+
+/// Trusted-kernel entry point for `nt_delay_execution`.
+pub fn nt_delay_execution_kernel(alertable: u8, interval: i64) -> NTSTATUS {
+    let _ = alertable;
+    let raw = interval;
 
     // Negative = relative time, Positive = absolute time
     if raw >= 0 {
@@ -512,8 +559,8 @@ pub extern "C" fn NtDelayExecution(_alertable: u8, interval: *mut i64) -> NTSTAT
     STATUS_SUCCESS
 }
 
-/// `NtClose` re-export for kernel32.
-pub unsafe extern "C" fn NtCloseSync(h: HANDLE) -> NTSTATUS {
+/// `NT_CLOSE` re-export for kernel32.
+pub unsafe extern "C" fn nt_close_sync(h: HANDLE) -> NTSTATUS {
     if free_handle(h) {
         STATUS_SUCCESS
     } else {

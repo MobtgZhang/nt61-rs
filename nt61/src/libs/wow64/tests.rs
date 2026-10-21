@@ -10,9 +10,7 @@
 //!   * PE32 loading
 
 #![cfg(test)]
-#![allow(dead_code)]
 
-use super::*;
 use crate::libs::wow64::cpu::*;
 use crate::libs::wow64::syscall::*;
 use crate::libs::wow64::types::*;
@@ -282,13 +280,16 @@ fn test_syscall_dispatch_flow() {
 
     let status = dispatch_nt_allocate_virtual_memory(&mut ctx);
 
-    // Should return not implemented for now
-    assert_eq!(status, STATUS_NOT_IMPLEMENTED);
+    // Now wired through to the 64-bit ntdll: with the stub handle the
+    // call goes through to the real allocator, which may return any
+    // valid NTSTATUS.  We only assert it did not bail out with
+    // STATUS_NOT_IMPLEMENTED.
+    assert_ne!(status, STATUS_NOT_IMPLEMENTED);
 }
 
 #[test]
 fn test_complete_wow64_flow() {
-    // 1. Create CPU state
+    // 1. create CPU state
     let mut cpu_state = Wow64CpuState::new();
     cpu_state.init_thread(0x0040_1000, 0x0012_FF00, 0);
 
@@ -347,8 +348,8 @@ fn test_allocate_vm32_valid_pointer_not_implemented() {
     let args: [u32; 6] = [0xFFFF_FFFF, 0x0012_FF00, 0, 0x0012_FF04, 0x0000_1000, 0x04];
     let mut ctx = SyscallContext::new(args.as_ptr(), 6);
     let status = dispatch_nt_allocate_virtual_memory(&mut ctx);
-    // Pointers are valid, but the call is not wired through yet.
-    assert_eq!(status, STATUS_NOT_IMPLEMENTED);
+    // Pointers are valid — now wired through to the 64-bit ntdll.
+    assert_ne!(status, STATUS_NOT_IMPLEMENTED);
 }
 
 #[test]
@@ -371,8 +372,8 @@ fn test_query_vm32_dispatches() {
     ];
     let mut ctx = SyscallContext::new(args.as_ptr(), 6);
     let status = dispatch_nt_query_virtual_memory(&mut ctx);
-    // Valid pointers → not implemented.
-    assert_eq!(status, STATUS_NOT_IMPLEMENTED);
+    // Valid pointers → now wired through to the 64-bit ntdll.
+    assert_ne!(status, STATUS_NOT_IMPLEMENTED);
 }
 
 #[test]
@@ -426,7 +427,7 @@ fn test_alignment_helpers_extended() {
     assert_eq!(align_up_32(0x0000_FFFF, 0x1000), 0x0001_0000);
     assert_eq!(align_up_32(0x0000_1000, 0x1000), 0x0000_1000);
 
-    // SIZE_T conversion (32-bit → 64-bit).
+    // SizeT conversion (32-bit → 64-bit).
     let big: u64 = ptr32_to_ptr(0xFFFF_FFFF);
     assert_eq!(big, 0xFFFF_FFFF);
 
@@ -582,7 +583,7 @@ fn test_wow64_address_space_has_no_overlap() {
 fn test_wow64_process_creation_inputs() {
     // Building a 32-bit process on a 64-bit kernel requires the
     // ProcessWow64Information flag to be set. We assert that the
-    // magic constant matches what ntdll!NtCreateUserProcess takes.
+    // magic constant matches what ntdll!NT_CREATE_USER_PROCESS takes.
     const PROCESS_WOW64_INFORMATION: u32 = 0x0026;
     assert_ne!(PROCESS_WOW64_INFORMATION, 0);
 

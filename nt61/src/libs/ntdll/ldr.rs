@@ -1,10 +1,10 @@
 //! ntdll — LDR (loader) APIs
 //
-//! The `Ldr*` functions in ntdll wrap the kernel PE loader for
-//! user-mode callers. `LdrLoadDll` reads a DLL from disk, maps
+//! The `ldr*` functions in ntdll wrap the kernel PE loader for
+//! user-mode callers. `ldr_load_dll` reads a DLL from disk, maps
 //! its sections, resolves imports, and registers the result in
-//! the in-memory `ImageDatabase`. `LdrGetDllHandle` finds an
-//! already-loaded DLL by name. `LdrGetProcedureAddress` resolves
+//! the in-memory `ImageDatabase`. `ldr_get_dll_handle` finds an
+//! already-loaded DLL by name. `ldr_get_procedure_address` resolves
 //! an export.
 //
 //! Because no user-mode code actually executes in this kernel,
@@ -21,10 +21,8 @@ use super::status::{
 };
 use super::types::{UnicodeString, HANDLE, NTSTATUS, PVOID};
 use crate::ke::sync::Spinlock;
-use crate::kprintln;
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::ptr;
 
 extern crate alloc;
 
@@ -55,7 +53,7 @@ pub fn init_with_image_db(db: &'static mut crate::loader::ImageDatabase) {
     unsafe {
         KERNEL_IMAGE_DB = Some(db);
     }
-    // kprintln!("    [LDR] LdrLoadDll integration: initialized");
+    // kprintln!("    [LDR] ldr_load_dll integration: initialized");
 }
 
 /// Find a loaded DLL by name
@@ -69,7 +67,7 @@ pub fn find_dll(name: &str) -> Option<LdrEntry> {
     None
 }
 
-/// `LdrLoadDll` — load a DLL into the process. `DllPath` is
+/// `ldr_load_dll` — load a DLL into the process. `dll_path` is
 /// optional (NULL means use the default search order);
 /// `DllFileName` is the file name (e.g. `kernel32.dll`).
 /// On success, `*DllHandle` receives a handle to the loaded
@@ -79,12 +77,12 @@ pub fn find_dll(name: &str) -> Option<LdrEntry> {
 /// 1. Check if DLL is already loaded (LDR list)
 /// 2. Search the DLL path for the file
 /// 3. Map the PE file into memory
-/// 4. Resolve imports (recursive LdrLoadDll for dependencies)
+/// 4. Resolve imports (recursive ldr_load_dll for dependencies)
 /// 5. Apply relocations
 /// 6. Execute TLS callbacks
 /// 7. Call DllMain(DLL_PROCESS_ATTACH)
 /// 8. Add to LDR list
-pub unsafe extern "C" fn LdrLoadDll(
+pub unsafe extern "C" fn ldr_load_dll(
     _dll_characteristics: u32,
     _dll_path: *mut UnicodeString,
     dll_file_name: *mut UnicodeString,
@@ -114,7 +112,7 @@ pub unsafe extern "C" fn LdrLoadDll(
 
     // Try to load from the kernel's ImageDatabase
     let (base, size, entry_point, loaded_ptr) =
-        if let Some(ref mut db) = unsafe { KERNEL_IMAGE_DB.as_mut() } {
+        if let Some(ref mut db) = unsafe { (*core::ptr::addr_of_mut!(KERNEL_IMAGE_DB)).as_mut() } {
             // Look up in the kernel's image database
             if let Some(img_base) = db.find_image_base(&name) {
                 // Image is registered - get its info
@@ -151,14 +149,14 @@ pub unsafe extern "C" fn LdrLoadDll(
         });
     }
 
-    // kprintln!("    [LDR] LdrLoadDll({}) -> base=0x{:016x}", name, base);
+    // kprintln!("    [LDR] ldr_load_dll({}) -> base=0x{:016x}", name, base);
 
     *dll_handle = base as HANDLE;
     STATUS_SUCCESS
 }
 
-/// `LdrGetDllHandle` — find an already-loaded DLL by name.
-pub unsafe extern "C" fn LdrGetDllHandle(
+/// `ldr_get_dll_handle` — find an already-loaded DLL by name.
+pub unsafe extern "C" fn ldr_get_dll_handle(
     _dll_characteristics: u32,
     _dll_path: *mut UnicodeString,
     dll_file_name: *mut UnicodeString,
@@ -181,9 +179,9 @@ pub unsafe extern "C" fn LdrGetDllHandle(
     STATUS_NOT_FOUND
 }
 
-/// `LdrGetProcedureAddress` — find an exported function by
+/// `ldr_get_procedure_address` — find an exported function by
 /// name or ordinal.
-pub unsafe extern "C" fn LdrGetProcedureAddress(
+pub unsafe extern "C" fn ldr_get_procedure_address(
     dll_handle: HANDLE,
     function_name: *mut UnicodeString,
     ordinal: u32,
@@ -217,9 +215,9 @@ pub unsafe extern "C" fn LdrGetProcedureAddress(
     STATUS_NOT_FOUND
 }
 
-/// `LdrEnumerateLoadedModules` — invoke `Callback` for every
+/// `ldr_enumerate_loaded_modules` — invoke `Callback` for every
 /// loaded DLL. We use a thread-safe iterator over the LDR list.
-pub unsafe extern "C" fn LdrEnumerateLoadedModules(
+pub unsafe extern "C" fn ldr_enumerate_loaded_modules(
     _flags: u32,
     _callback: PVOID,
     _context: PVOID,
@@ -230,9 +228,9 @@ pub unsafe extern "C" fn LdrEnumerateLoadedModules(
     STATUS_SUCCESS
 }
 
-/// `LdrUnloadDll` — release a DLL. The bootstrap never frees
+/// `ldr_unload_dll` — release a DLL. The bootstrap never frees
 /// user DLLs; we just remove the entry from the LDR list.
-pub unsafe extern "C" fn LdrUnloadDll(dll_handle: HANDLE) -> NTSTATUS {
+pub unsafe extern "C" fn ldr_unload_dll(dll_handle: HANDLE) -> NTSTATUS {
     if dll_handle.is_null() {
         return STATUS_INVALID_HANDLE;
     }
@@ -246,9 +244,9 @@ pub unsafe extern "C" fn LdrUnloadDll(dll_handle: HANDLE) -> NTSTATUS {
     }
 }
 
-/// `LdrGetDllDirectory` / `LdrSetDllDirectory` — we always
+/// `ldr_get_dll_directory` / `ldr_set_dll_directory` — we always
 /// return `C:\Windows\System32`.
-pub unsafe extern "C" fn LdrGetDllDirectory(buffer: PVOID, buffer_length: u32) -> u32 {
+pub unsafe extern "C" fn ldr_get_dll_directory(buffer: PVOID, buffer_length: u32) -> u32 {
     if !buffer.is_null() && buffer_length >= 22 {
         let path: [u16; 21] = [
             b'C' as u16,
@@ -278,7 +276,7 @@ pub unsafe extern "C" fn LdrGetDllDirectory(buffer: PVOID, buffer_length: u32) -
     22 // length in bytes
 }
 
-pub unsafe extern "C" fn LdrSetDllDirectory(_path: *mut UnicodeString) -> NTSTATUS {
+pub unsafe extern "C" fn ldr_set_dll_directory(_path: *mut UnicodeString) -> NTSTATUS {
     STATUS_SUCCESS
 }
 

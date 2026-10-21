@@ -8,9 +8,6 @@
 //! needed for ntdll integration and basic functionality.
 
 // advapi32 uses Win32 naming (RegOpenKeyExW, LSA_*, ...).
-#![allow(non_snake_case, non_upper_case_globals, dead_code)]
-
-use crate::kprintln;
 
 /// Initialize the advapi32 stub.
 pub fn init() {
@@ -23,5 +20,7 @@ pub fn init() {
 
 pub mod cred;
 pub mod event;
+pub mod registry;
+pub mod security;
 pub mod service;
 pub mod types;

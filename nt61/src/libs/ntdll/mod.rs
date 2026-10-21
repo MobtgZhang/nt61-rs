@@ -15,19 +15,18 @@
 // conventions (`Nt*`/`Rtl*` for functions, `STATUS_*` for
 // NTSTATUS codes). Those names ARE the API, so we cannot
 // rename them to satisfy Rust's style lints.
-#![allow(non_snake_case, non_upper_case_globals, dead_code)]
 //
 //! Submodules
-//!   * `types` — public NT types (UNICODE_STRING, ...)
+//!   * `types` — public NT types (UnicodeString, ...)
 //!   * `status` — NTSTATUS codes + RtlNtStatusToDosError
 //!   * `string` — Rtl*UnicodeString / Rtl*AnsiString
-//!   * `heap`   — RtlAllocateHeap / RtlFreeHeap / ...
-//!   * `file`   — NtCreateFile / NtReadFile / ...
+//!   * `heap`   — rtl_allocate_heap / rtl_free_heap / ...
+//!   * `file`   — NT_CREATE_FILE / NT_READ_FILE / ...
 //!   * `process`, `thread`, `section`, `sync`,
 //!     `virtual_mem`, `info` — the rest of the Native API
-//!   * `ldr`    — LdrLoadDll / LdrGetDllHandle / ...
-//!   * `peb_teb`— PEB / TEB structures + RtlGetCurrentPeb
-//!   * `debug`  — DbgPrint / DbgPrintEx
+//!   * `ldr`    — ldr_load_dll / ldr_get_dll_handle / ...
+//!   * `peb_teb`— PEB / TEB structures + rtl_get_current_peb
+//!   * `debug`  — dbg_print / dbg_print_ex
 //!   * `rtl_acl`, `rtl_path` — smaller RTL utilities
 //
 //! References (for layout / signatures only):
@@ -63,21 +62,21 @@ pub fn init() {
     // crate::kprintln!("    NTDLL: init");
     // crate::kprintln!("      types:    ready");
     // crate::kprintln!("      status:   ready");
-    // crate::kprintln!("      string:   ready (RtlInitUnicodeString etc.)");
-    // crate::kprintln!("      heap:     ready (RtlAllocateHeap etc.)");
-    // crate::kprintln!("      file:     ready (NtCreateFile etc.)");
-    // crate::kprintln!("      process:  ready (NtCreateProcess etc.)");
-    // crate::kprintln!("      thread:   ready (NtCreateThread etc.)");
-    // crate::kprintln!("      section:  ready (NtCreateSection etc.)");
-    // crate::kprintln!("      sync:     ready (NtWaitForSingleObject etc.)");
-    // crate::kprintln!("      vm:       ready (NtAllocateVirtualMemory etc.)");
-    // crate::kprintln!("      info:     ready (NtQuerySystemInformation etc.)");
-    // crate::kprintln!("      ldr:      ready (LdrLoadDll etc.)");
-    // crate::kprintln!("      peb/teb:  ready (RtlGetCurrentPeb etc.)");
-    // crate::kprintln!("      debug:    ready (DbgPrint etc.)");
-    // crate::kprintln!("      rtl_acl:  ready (RtlCreateAcl etc.)");
-    // crate::kprintln!("      rtl_path: ready (RtlGetFullPathName_U etc.)");
-    // crate::kprintln!("      registry: ready (NtCreateKey etc.)");
+    // crate::kprintln!("      string:   ready (rtl_init_unicode_string etc.)");
+    // crate::kprintln!("      heap:     ready (rtl_allocate_heap etc.)");
+    // crate::kprintln!("      file:     ready (NT_CREATE_FILE etc.)");
+    // crate::kprintln!("      process:  ready (NT_CREATE_PROCESS etc.)");
+    // crate::kprintln!("      thread:   ready (NT_CREATE_THREAD etc.)");
+    // crate::kprintln!("      section:  ready (NT_CREATE_SECTION etc.)");
+    // crate::kprintln!("      sync:     ready (NT_WAIT_FOR_SINGLE_OBJECT etc.)");
+    // crate::kprintln!("      vm:       ready (NT_ALLOCATE_VIRTUAL_MEMORY etc.)");
+    // crate::kprintln!("      info:     ready (NT_QUERY_SYSTEM_INFORMATION etc.)");
+    // crate::kprintln!("      ldr:      ready (ldr_load_dll etc.)");
+    // crate::kprintln!("      peb/teb:  ready (rtl_get_current_peb etc.)");
+    // crate::kprintln!("      debug:    ready (dbg_print etc.)");
+    // crate::kprintln!("      rtl_acl:  ready (rtl_create_acl etc.)");
+    // crate::kprintln!("      rtl_path: ready (rtl_get_full_path_name_u etc.)");
+    // crate::kprintln!("      registry: ready (NT_CREATE_KEY etc.)");
     // crate::kprintln!("      ob_integration: ready (ob handle bridge)");
     registry::init();
     registry::init_default_keys();
@@ -90,6 +89,7 @@ pub fn smoke_test() -> bool {
 }
 
 pub mod apc;
+pub mod exception;
 pub mod heap_safe;
 pub mod nt_extended;
 pub mod rtl_bitmap;
@@ -97,6 +97,7 @@ pub mod rtl_convert;
 pub mod rtl_critical;
 pub mod rtl_memory;
 pub mod rtl_string_ext;
+pub mod security;
 pub mod timer;
 pub mod tls;
 pub mod wait;

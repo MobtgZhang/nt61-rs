@@ -26,11 +26,7 @@
 //!   * AMD64 Architecture Programmer's Manual, Vol. 2
 //!   * Windows Internals 7th Edition, Part 1, Chapter 3
 
-#![cfg(target_arch = "x86_64")]
-#![allow(dead_code)]
-
 use crate::libs::wow64::types::*;
-use core::arch::asm;
 
 // =============================================================================
 // CPU State Management
@@ -48,12 +44,12 @@ pub struct Wow64CpuState {
     pub mode: CpuMode,
     /// Segment descriptors.
     pub segments: SegmentState,
-    /// Flags and control bits.
+    /// flags and control bits.
     pub flags: CpuFlags,
 }
 
 impl Wow64CpuState {
-    /// Create a new WoW64 CPU state.
+    /// create a new WoW64 CPU state.
 
     pub fn new() -> Self {
         Self {
@@ -397,52 +393,24 @@ pub fn set_segment_base(cpu_state: &mut Wow64CpuState, segment: SegmentRegister,
 // MSR (Model-Specific Register) Operations
 // =============================================================================
 
-/// Read FS.base MSR.
+/// read FS.base MSR.
 pub fn read_fs_base() -> u64 {
-    let value: u64;
-    unsafe {
-        asm!(
-            "rdfsbase {0}",
-            out(reg) value,
-            options(nomem, nostack)
-        );
-    }
-    value
+    crate::arch::read_fs_base()
 }
 
-/// Write FS.base MSR.
+/// write FS.base MSR.
 pub fn write_fs_base(value: u64) {
-    unsafe {
-        asm!(
-            "wrfsbase {0}",
-            in(reg) value,
-            options(nomem, nostack)
-        );
-    }
+    crate::arch::write_fs_base(value);
 }
 
-/// Read GS.base MSR.
+/// read GS.base MSR.
 pub fn read_gs_base() -> u64 {
-    let value: u64;
-    unsafe {
-        asm!(
-            "rdgsbase {0}",
-            out(reg) value,
-            options(nomem, nostack)
-        );
-    }
-    value
+    crate::arch::read_gs_base()
 }
 
-/// Write GS.base MSR.
+/// write GS.base MSR.
 pub fn write_gs_base(value: u64) {
-    unsafe {
-        asm!(
-            "wrgsbase {0}",
-            in(reg) value,
-            options(nomem, nostack)
-        );
-    }
+    crate::arch::write_gs_base(value);
 }
 
 // =============================================================================
@@ -524,8 +492,7 @@ pub fn emulate_sysexit(cpu_state: &mut Wow64CpuState) -> Result<(), CpuError> {
 
 /// Check if the CPU supports WoW64 execution.
 pub fn cpu_supports_wow64() -> bool {
-    // On x86_64, we always support WoW64 (32-bit compatibility mode)
-    cfg!(target_arch = "x86_64")
+    crate::arch::supports_wow64()
 }
 
 /// Check if the CPU supports FSGSBASE instructions.

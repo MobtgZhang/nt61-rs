@@ -2,11 +2,10 @@
 //!
 //! Stub implementations for process-related operations
 
-use crate::kprintln;
 use crate::libs::msvcrt::types::*;
 use alloc::string::String;
 
-pub fn exit_process(status: c_int) -> ! {
+pub fn exit_process(status: CInt) -> ! {
     crate::kprintln!("Process exiting with status: {}", status);
     loop {
         core::hint::spin_loop();
@@ -20,15 +19,15 @@ pub fn terminate_process(status: u32) -> ! {
     }
 }
 
-pub fn get_environment_variable(_name: *const c_char) -> Option<String> {
+pub fn get_environment_variable(_name: *const CChar) -> Option<String> {
     None // No environment variables in stub
 }
 
-pub fn set_environment_variable(_name: *const c_char, _value: *const c_char) -> bool {
+pub fn set_environment_variable(_name: *const CChar, _value: *const CChar) -> bool {
     false // Not implemented
 }
 
-pub fn execute_command(_command: *const c_char) -> Result<c_int, ()> {
+pub fn execute_command(_command: *const CChar) -> Result<CInt, ()> {
     Err(()) // Not implemented
 }
 
@@ -44,7 +43,7 @@ pub fn get_current_directory() -> Option<String> {
     Some(String::from("/"))
 }
 
-pub fn change_directory(_path: *const c_char) -> Result<(), ()> {
+pub fn change_directory(_path: *const CChar) -> Result<(), ()> {
     Err(()) // Not implemented
 }
 

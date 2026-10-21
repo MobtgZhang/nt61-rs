@@ -8,10 +8,7 @@
 //! Microsoft Visual Studio headers.
 
 // msvcrt uses C-runtime naming (printf, malloc, ...). The Win32
-// surface uses Win32 naming (errno_t, _vsnprintf_l, ...).
-#![allow(non_snake_case, non_upper_case_globals, dead_code)]
-
-use crate::kprintln;
+// surface uses Win32 naming (ErrnoT, _vsnprintf_l, ...).
 
 /// Initialize the CRT stub.
 pub fn init() {

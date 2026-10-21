@@ -8,11 +8,8 @@
 //!   * Windows Internals 6th Edition, Chapter 10
 //!   * ReactOS 0.3.x winbase.h
 
-#![allow(non_snake_case, dead_code)]
-
 use super::types::*;
 use crate::libs::kernel32::types::{BOOL, DWORD, FALSE, HANDLE, LPCWSTR, LPVOID, TRUE, WORD};
-use crate::libs::ntdll::types::{NTSTATUS, PVOID};
 use core::ptr;
 use spin::{Lazy, Mutex};
 
@@ -37,18 +34,18 @@ static EVENT_LOG_HANDLES: Lazy<Mutex<[EventLogHandle; 32]>> = Lazy::new(|| {
 
 #[no_mangle]
 pub unsafe extern "C" fn RegisterEventSourceW(
-    lpUNCServerName: LPCWSTR,
-    lpSourceName: LPCWSTR,
-) -> EVENT_SOURCE_HANDLE {
-    if lpSourceName.is_null() {
-        crate::libs::kernel32::error::SetLastError(ERROR_INVALID_PARAMETER);
+    lp_uncserver_name: LPCWSTR,
+    lp_source_name: LPCWSTR,
+) -> EventSourceHandle {
+    if lp_source_name.is_null() {
+        crate::libs::kernel32::error::set_last_error(ERROR_INVALID_PARAMETER);
         return ptr::null_mut();
     }
 
     let mut handles = EVENT_LOG_HANDLES.lock();
     for i in 0..handles.len() {
         if !handles[i].is_valid {
-            let mut src_ptr = lpSourceName;
+            let mut src_ptr = lp_source_name;
             let mut j = 0;
             while j < 255 && !src_ptr.is_null() && *src_ptr != 0 {
                 handles[i].source_name[j] = *src_ptr;
@@ -57,8 +54,8 @@ pub unsafe extern "C" fn RegisterEventSourceW(
             }
             handles[i].source_name[j] = 0;
 
-            if !lpUNCServerName.is_null() {
-                let mut srv_ptr = lpUNCServerName;
+            if !lp_uncserver_name.is_null() {
+                let mut srv_ptr = lp_uncserver_name;
                 let mut k = 0;
                 while k < 255 && !srv_ptr.is_null() && *srv_ptr != 0 {
                     handles[i].server_name[k] = *srv_ptr;
@@ -70,25 +67,25 @@ pub unsafe extern "C" fn RegisterEventSourceW(
 
             handles[i].is_valid = true;
 
-            return (i + 1) as EVENT_SOURCE_HANDLE;
+            return (i + 1) as EventSourceHandle;
         }
     }
 
-    crate::libs::kernel32::error::SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+    crate::libs::kernel32::error::set_last_error(ERROR_NOT_ENOUGH_MEMORY);
     ptr::null_mut()
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn DeregisterEventSource(hEventLog: EVENT_SOURCE_HANDLE) -> BOOL {
-    if hEventLog.is_null() {
-        crate::libs::kernel32::error::SetLastError(ERROR_INVALID_HANDLE);
+pub unsafe extern "C" fn DeregisterEventSource(h_event_log: EventSourceHandle) -> BOOL {
+    if h_event_log.is_null() {
+        crate::libs::kernel32::error::set_last_error(ERROR_INVALID_HANDLE);
         return FALSE;
     }
 
-    let index = (hEventLog as usize).wrapping_sub(1);
+    let index = (h_event_log as usize).wrapping_sub(1);
     let mut handles = EVENT_LOG_HANDLES.lock();
     if index >= handles.len() || !handles[index].is_valid {
-        crate::libs::kernel32::error::SetLastError(ERROR_INVALID_HANDLE);
+        crate::libs::kernel32::error::set_last_error(ERROR_INVALID_HANDLE);
         return FALSE;
     }
 
@@ -101,29 +98,29 @@ pub unsafe extern "C" fn DeregisterEventSource(hEventLog: EVENT_SOURCE_HANDLE) -
 
 #[no_mangle]
 pub unsafe extern "C" fn ReportEventW(
-    hEventLog: EVENT_SOURCE_HANDLE,
-    wType: WORD,
-    wCategory: WORD,
-    dwEventID: DWORD,
-    lpUserSid: PSID,
-    wNumStrings: WORD,
-    dwDataSize: DWORD,
-    lpStrings: *const LPCWSTR,
-    lpRawData: LPVOID,
+    h_event_log: EventSourceHandle,
+    w_type: WORD,
+    _w_category: WORD,
+    dw_event_id: DWORD,
+    _lp_user_sid: PSID,
+    w_num_strings: WORD,
+    _dw_data_size: DWORD,
+    lp_strings: *const LPCWSTR,
+    _lp_raw_data: LPVOID,
 ) -> BOOL {
-    if hEventLog.is_null() {
-        crate::libs::kernel32::error::SetLastError(ERROR_INVALID_HANDLE);
+    if h_event_log.is_null() {
+        crate::libs::kernel32::error::set_last_error(ERROR_INVALID_HANDLE);
         return FALSE;
     }
 
-    let index = (hEventLog as usize).wrapping_sub(1);
+    let index = (h_event_log as usize).wrapping_sub(1);
     let handles = EVENT_LOG_HANDLES.lock();
     if index >= handles.len() || !handles[index].is_valid {
-        crate::libs::kernel32::error::SetLastError(ERROR_INVALID_HANDLE);
+        crate::libs::kernel32::error::set_last_error(ERROR_INVALID_HANDLE);
         return FALSE;
     }
 
-    match wType {
+    match w_type {
         EVENTLOG_SUCCESS
         | EVENTLOG_ERROR_TYPE
         | EVENTLOG_WARNING_TYPE
@@ -131,30 +128,30 @@ pub unsafe extern "C" fn ReportEventW(
         | EVENTLOG_AUDIT_SUCCESS
         | EVENTLOG_AUDIT_FAILURE => {}
         _ => {
-            crate::libs::kernel32::error::SetLastError(ERROR_INVALID_PARAMETER);
+            crate::libs::kernel32::error::set_last_error(ERROR_INVALID_PARAMETER);
             return FALSE;
         }
     }
 
-    if wNumStrings > MAX_EVENT_STRINGS as u16 {
-        crate::libs::kernel32::error::SetLastError(ERROR_INVALID_PARAMETER);
+    if w_num_strings > MAX_EVENT_STRINGS as u16 {
+        crate::libs::kernel32::error::set_last_error(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
 
-    if wNumStrings > 0 && lpStrings.is_null() {
-        crate::libs::kernel32::error::SetLastError(ERROR_INVALID_PARAMETER);
+    if w_num_strings > 0 && lp_strings.is_null() {
+        crate::libs::kernel32::error::set_last_error(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
 
-    let level = match wType {
+    let level = match w_type {
         EVENTLOG_ERROR_TYPE => crate::rtl::eventlog::EventLevel::Error,
         EVENTLOG_WARNING_TYPE | EVENTLOG_AUDIT_FAILURE => crate::rtl::eventlog::EventLevel::Warning,
         _ => crate::rtl::eventlog::EventLevel::Information,
     };
 
     let mut desc = alloc::string::String::new();
-    for i in 0..wNumStrings as usize {
-        let slot = lpStrings.add(i);
+    for i in 0..w_num_strings as usize {
+        let slot = lp_strings.add(i);
         if slot.is_null() {
             continue;
         }
@@ -163,7 +160,7 @@ pub unsafe extern "C" fn ReportEventW(
             desc.push(char::from_u32(*p as u32).unwrap_or('\u{FFFD}'));
             p = p.add(1);
         }
-        if i + 1 < wNumStrings as usize {
+        if i + 1 < w_num_strings as usize {
             desc.push(' ');
         }
     }
@@ -178,16 +175,16 @@ pub unsafe extern "C" fn ReportEventW(
 
     // Audit events belong to the Security channel; everything a normal
     // event source reports goes to the Application channel.
-    if matches!(wType, EVENTLOG_AUDIT_SUCCESS | EVENTLOG_AUDIT_FAILURE) {
+    if matches!(w_type, EVENTLOG_AUDIT_SUCCESS | EVENTLOG_AUDIT_FAILURE) {
         crate::rtl::eventlog::write_security_event(
-            dwEventID as u16,
+            dw_event_id as u16,
             level,
             source.as_bytes(),
             &desc,
         );
     } else {
         crate::rtl::eventlog::write_application_event(
-            dwEventID as u16,
+            dw_event_id as u16,
             level,
             source.as_bytes(),
             &desc,
@@ -198,27 +195,27 @@ pub unsafe extern "C" fn ReportEventW(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ClearEventLogW(hEventLog: HANDLE, lpBackupFileName: LPCWSTR) -> BOOL {
-    if hEventLog.is_null() {
-        crate::libs::kernel32::error::SetLastError(ERROR_INVALID_HANDLE);
+pub unsafe extern "C" fn ClearEventLogW(h_event_log: HANDLE, lp_backup_file_name: LPCWSTR) -> BOOL {
+    if h_event_log.is_null() {
+        crate::libs::kernel32::error::set_last_error(ERROR_INVALID_HANDLE);
         return FALSE;
     }
 
-    if !lpBackupFileName.is_null() {}
+    if !lp_backup_file_name.is_null() {}
 
     // A source registered through `RegisterEventSourceW` reports to the
     // Application channel; audit sources report to the Security channel.
-    let index = (hEventLog as usize).wrapping_sub(1);
+    let index = (h_event_log as usize).wrapping_sub(1);
     let channel = {
         let handles = EVENT_LOG_HANDLES.lock();
         if index >= handles.len() || !handles[index].is_valid {
-            crate::libs::kernel32::error::SetLastError(ERROR_INVALID_HANDLE);
+            crate::libs::kernel32::error::set_last_error(ERROR_INVALID_HANDLE);
             return FALSE;
         }
         crate::rtl::eventlog::EventChannel::Application
     };
     if !crate::rtl::eventlog::clear_channel(channel) {
-        crate::libs::kernel32::error::SetLastError(ERROR_ACCESS_DENIED);
+        crate::libs::kernel32::error::set_last_error(ERROR_ACCESS_DENIED);
         return FALSE;
     }
 
@@ -226,19 +223,22 @@ pub unsafe extern "C" fn ClearEventLogW(hEventLog: HANDLE, lpBackupFileName: LPC
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn OpenEventLogW(lpUNCServerName: LPCWSTR, lpSourceName: LPCWSTR) -> HANDLE {
-    if lpSourceName.is_null() {
-        crate::libs::kernel32::error::SetLastError(ERROR_INVALID_PARAMETER);
+pub unsafe extern "C" fn OpenEventLogW(
+    lp_uncserver_name: LPCWSTR,
+    lp_source_name: LPCWSTR,
+) -> HANDLE {
+    if lp_source_name.is_null() {
+        crate::libs::kernel32::error::set_last_error(ERROR_INVALID_PARAMETER);
         return ptr::null_mut();
     }
 
     // For stub, reuse RegisterEventSourceW logic
-    RegisterEventSourceW(lpUNCServerName, lpSourceName) as HANDLE
+    RegisterEventSourceW(lp_uncserver_name, lp_source_name) as HANDLE
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn CloseEventLog(hEventLog: HANDLE) -> BOOL {
-    DeregisterEventSource(hEventLog as EVENT_SOURCE_HANDLE)
+pub unsafe extern "C" fn CloseEventLog(h_event_log: HANDLE) -> BOOL {
+    DeregisterEventSource(h_event_log as EventSourceHandle)
 }
 
 pub fn init() {}
@@ -247,8 +247,40 @@ pub fn init() {}
 mod tests {
     use super::*;
 
+    // The event log channels are process-global. Both tests below write
+    // through `ReportEventW` and assert exact channel counts, so they must
+    // not run concurrently.
+    static EVENTLOG_TEST_MUTEX: core::sync::atomic::AtomicBool =
+        core::sync::atomic::AtomicBool::new(false);
+
+    struct EventlogTestGuard;
+
+    impl EventlogTestGuard {
+        fn new() -> Self {
+            while EVENTLOG_TEST_MUTEX
+                .compare_exchange_weak(
+                    false,
+                    true,
+                    core::sync::atomic::Ordering::Acquire,
+                    core::sync::atomic::Ordering::Relaxed,
+                )
+                .is_err()
+            {
+                core::hint::spin_loop();
+            }
+            EventlogTestGuard
+        }
+    }
+
+    impl Drop for EventlogTestGuard {
+        fn drop(&mut self) {
+            EVENTLOG_TEST_MUTEX.store(false, core::sync::atomic::Ordering::Release);
+        }
+    }
+
     #[test]
     fn report_event_writes_to_the_application_channel() {
+        let _guard = EventlogTestGuard::new();
         crate::rtl::eventlog::init();
 
         static SOURCE: [u16; 11] = [
@@ -317,6 +349,7 @@ mod tests {
 
     #[test]
     fn audit_events_go_to_the_security_channel() {
+        let _guard = EventlogTestGuard::new();
         crate::rtl::eventlog::init();
 
         static SOURCE: [u16; 7] = [

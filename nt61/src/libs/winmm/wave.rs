@@ -86,7 +86,7 @@ pub struct WaveFormatEx {
 }
 
 impl WaveFormatEx {
-    /// Create a PCM format
+    /// create a PCM format
     pub fn pcm(channels: u16, sample_rate: u32, bits_per_sample: u16) -> Self {
         let block_align = (channels * bits_per_sample) / 8;
         let avg_bytes_per_sec = sample_rate * block_align as u32;
@@ -128,13 +128,13 @@ impl WaveFormatEx {
 pub struct WaveHdr {
     /// Pointer to wave data
     pub data: *mut u8,
-    /// Length of data in bytes
+    /// length of data in bytes
     pub buffer_length: u32,
     /// Bytes actually recorded/played
     pub bytes_recorded: u32,
     /// User data
     pub user_data: usize,
-    /// Flags (WHDR_*)
+    /// flags (WHDR_*)
     pub flags: u32,
     /// Number of times to loop
     pub loops: u32,
@@ -145,7 +145,7 @@ pub struct WaveHdr {
 }
 
 impl WaveHdr {
-    /// Create a new wave header
+    /// create a new wave header
     pub fn new(data: *mut u8, length: u32) -> Self {
         Self {
             data,
@@ -197,7 +197,7 @@ pub struct WaveOutCaps {
 }
 
 impl WaveOutCaps {
-    /// Create capabilities for a device
+    /// create capabilities for a device
     pub fn new(name: &str, channels: u16, formats: u32) -> Self {
         let mut product_name = [0u8; 32];
         let name_bytes = name.as_bytes();
@@ -237,7 +237,7 @@ pub struct WaveInCaps {
 }
 
 impl WaveInCaps {
-    /// Create capabilities for a device
+    /// create capabilities for a device
     pub fn new(name: &str, channels: u16, formats: u32) -> Self {
         let mut product_name = [0u8; 32];
         let name_bytes = name.as_bytes();
@@ -258,7 +258,7 @@ impl WaveInCaps {
 
 /// Wave output device handle
 pub struct WaveOutHandle {
-    /// Handle ID
+    /// handle ID
     pub id: u32,
     /// Device ID
     pub device_id: u32,
@@ -278,7 +278,7 @@ pub struct WaveOutHandle {
 
 /// Wave input device handle
 pub struct WaveInHandle {
-    /// Handle ID
+    /// handle ID
     pub id: u32,
     /// Device ID
     pub device_id: u32,
@@ -300,7 +300,7 @@ pub struct WaveDeviceManager {
     in_handles: Vec<WaveInHandle>,
     /// Next handle ID
     next_handle_id: u32,
-    /// Initialized flag
+    /// initialized flag
     initialized: bool,
 }
 
@@ -308,7 +308,7 @@ static mut WAVE_MANAGER: Option<WaveDeviceManager> = None;
 static WAVE_MANAGER_INIT: AtomicBool = AtomicBool::new(false);
 
 impl WaveDeviceManager {
-    /// Create a new wave device manager
+    /// create a new wave device manager
     fn new() -> Self {
         Self {
             out_handles: Vec::new(),
@@ -425,12 +425,12 @@ pub fn wave_out_open(
         playback_devices[device_id as usize].id
     };
 
-    // Create audio stream
+    // create audio stream
     let core_format = format.to_core_format();
     let stream_id = manager.create_stream(device_id_actual, StreamDirection::Output, core_format)
         .ok_or(MMSYSERR_NOMEM)?;
 
-    // Create wave handle
+    // create wave handle
     let wave_manager = WaveDeviceManager::instance();
     let handle_id = wave_manager.alloc_handle_id();
 
@@ -450,7 +450,7 @@ pub fn wave_out_open(
     Ok(handle_id)
 }
 
-/// Close wave output device
+/// close wave output device
 pub fn wave_out_close(handle: u32) -> u32 {
     let wave_manager = WaveDeviceManager::instance();
 
@@ -460,7 +460,7 @@ pub fn wave_out_close(handle: u32) -> u32 {
             let _ = wave_out_reset(handle);
         }
 
-        // Close the stream
+        // close the stream
         let audio_manager = AudioDeviceManager::instance();
         audio_manager.close_stream(out_handle.stream_id);
 
@@ -513,7 +513,7 @@ pub fn wave_out_unprepare_header(handle: u32, header: *mut WaveHdr) -> u32 {
     MMSYSERR_NOERROR
 }
 
-/// Write data to wave output device
+/// write data to wave output device
 pub fn wave_out_write(handle: u32, header: *mut WaveHdr) -> u32 {
     if header.is_null() {
         return MMSYSERR_INVALPARAM;
@@ -545,7 +545,7 @@ pub fn wave_out_write(handle: u32, header: *mut WaveHdr) -> u32 {
             crate::drivers::audio::start_playback();
         }
 
-        // Write data to audio driver
+        // write data to audio driver
         let data_slice = core::slice::from_raw_parts(
             (*header).data,
             (*header).buffer_length as usize,
@@ -744,12 +744,12 @@ pub fn wave_in_open(
         capture_devices[device_id as usize].id
     };
 
-    // Create audio stream
+    // create audio stream
     let core_format = format.to_core_format();
     let stream_id = manager.create_stream(device_id_actual, StreamDirection::Input, core_format)
         .ok_or(MMSYSERR_NOMEM)?;
 
-    // Create wave handle
+    // create wave handle
     let wave_manager = WaveDeviceManager::instance();
     let handle_id = wave_manager.alloc_handle_id();
 
@@ -767,7 +767,7 @@ pub fn wave_in_open(
     Ok(handle_id)
 }
 
-/// Close wave input device
+/// close wave input device
 pub fn wave_in_close(handle: u32) -> u32 {
     let wave_manager = WaveDeviceManager::instance();
 
@@ -777,7 +777,7 @@ pub fn wave_in_close(handle: u32) -> u32 {
             let _ = wave_in_reset(handle);
         }
 
-        // Close the stream
+        // close the stream
         let audio_manager = AudioDeviceManager::instance();
         audio_manager.close_stream(in_handle.stream_id);
 

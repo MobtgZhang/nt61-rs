@@ -1,4 +1,4 @@
-//! services — Service Control Manager (re-export from servers::services)
+//! services — Service control Manager (re-export from servers::services)
 pub use crate::servers::services::enumerate_services;
 pub use crate::servers::services::enumerate_services_by_state;
 pub use crate::servers::services::init;

@@ -6,24 +6,23 @@
 //! only — no user-mode code actually runs.
 
 // The Win32 surface intentionally uses Windows naming
-// conventions (`CreateFileW`, `GetLastError`, `HANDLE`, etc.).
+// conventions (`create_file_w`, `get_last_error`, `HANDLE`, etc.).
 // Those names ARE the API; renaming them would break the
 // Win32 ABI compatibility that this module is meant to model.
-#![allow(non_snake_case, non_upper_case_globals, dead_code)]
 //
 //! Submodules
 //!   * `types`   — handle / module / instance newtypes
-//!   * `error`   — GetLastError / SetLastError / FormatMessage
+//!   * `error`   — get_last_error / set_last_error / FormatMessage
 //!   * `env`     — environment variables, current directory
-//!   * `time`    — GetSystemTime / GetTickCount / Sleep
-//!   * `handle`  — CloseHandle / DuplicateHandle
-//!   * `file`    — CreateFileW / ReadFile / WriteFile
-//!   * `module`  — LoadLibraryW / GetProcAddress / GetModuleHandleW
-//!   * `memory`  — VirtualAlloc / HeapAlloc / HeapFree
-//!   * `sync`    — CreateEventW / WaitForSingleObject
-//!   * `process` — CreateProcessW / ExitProcess / OpenProcess
-//!   * `thread`  — CreateThread / Sleep / GetCurrentThreadId
-//!   * `console` — WriteConsoleW / AllocConsole
+//!   * `time`    — get_system_time / get_tick_count / sleep
+//!   * `handle`  — close_handle / duplicate_handle
+//!   * `file`    — create_file_w / read_file / write_file
+//!   * `module`  — load_library_w / get_proc_address / get_module_handle_w
+//!   * `memory`  — virtual_alloc / heap_alloc / heap_free
+//!   * `sync`    — create_event_w / wait_for_single_object
+//!   * `process` — create_process_w / exit_process / open_process
+//!   * `thread`  — create_thread / sleep / get_current_thread_id
+//!   * `console` — write_console_w / alloc_console
 //
 //! References (for layout / signatures only):
 //!   * Microsoft Windows 7 SDK winbase.h / winuser.h
@@ -50,17 +49,17 @@ pub mod types;
 pub fn init() {
     // crate::kprintln!("    KERNEL32: init");
     // crate::kprintln!("      types:   ready");
-    // crate::kprintln!("      error:   ready (GetLastError/SetLastError)");
-    // crate::kprintln!("      env:     ready (GetEnvironmentVariableW)");
-    // crate::kprintln!("      time:    ready (GetSystemTime/GetTickCount)");
-    // crate::kprintln!("      handle:  ready (CloseHandle)");
-    // crate::kprintln!("      file:    ready (CreateFileW/ReadFile/WriteFile)");
-    // crate::kprintln!("      module:  ready (LoadLibraryW/GetProcAddress)");
-    // crate::kprintln!("      memory:  ready (VirtualAlloc/HeapAlloc)");
-    // crate::kprintln!("      sync:    ready (CreateEventW/WaitForSingleObject)");
-    // crate::kprintln!("      process: ready (CreateProcessW)");
-    // crate::kprintln!("      thread:  ready (CreateThread/Sleep)");
-    // crate::kprintln!("      console: ready (WriteConsoleW/AllocConsole)");
+    // crate::kprintln!("      error:   ready (get_last_error/set_last_error)");
+    // crate::kprintln!("      env:     ready (get_environment_variable_w)");
+    // crate::kprintln!("      time:    ready (get_system_time/get_tick_count)");
+    // crate::kprintln!("      handle:  ready (close_handle)");
+    // crate::kprintln!("      file:    ready (create_file_w/read_file/write_file)");
+    // crate::kprintln!("      module:  ready (load_library_w/get_proc_address)");
+    // crate::kprintln!("      memory:  ready (virtual_alloc/heap_alloc)");
+    // crate::kprintln!("      sync:    ready (create_event_w/wait_for_single_object)");
+    // crate::kprintln!("      process: ready (create_process_w)");
+    // crate::kprintln!("      thread:  ready (create_thread/sleep)");
+    // crate::kprintln!("      console: ready (write_console_w/alloc_console)");
 }
 
 /// Re-export of the kernel32 smoke test aggregator.

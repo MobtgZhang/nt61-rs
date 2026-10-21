@@ -1,4 +1,4 @@
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 use core::ptr;
 
@@ -17,7 +17,7 @@ pub fn get_process_heap() -> *mut Heap {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn RtlGetProcessHeap() -> *mut Heap {
+pub unsafe extern "C" fn rtl_get_process_heap() -> *mut Heap {
     get_process_heap()
 }
 

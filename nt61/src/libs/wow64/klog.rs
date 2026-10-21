@@ -1,13 +1,13 @@
 //! Wow64-local lightweight logging macro.
 //
-//! The wow64 layer suffers from the same `core::fmt::Write`-style
+//! The wow64 layer suffers from the same `core::fmt::write`-style
 //! crash as the rest of the kernel: `LOG_EARLY_READY` may be
 //! `false` for some startup paths, and pulling in the buffered
 //! `BufferWriter` along with `memcpy` would crash the Wow64 path
 //! before the per-process PEB32 is reachable. To keep the wow64
 //! modules warning-free we route every wow64 log statement through a thin
 //! wrapper that talks to the kernel's per-arch serial port
-//! directly. The wrapper never touches `core::fmt::Write` over
+//! directly. The wrapper never touches `core::fmt::write` over
 //! a stack buffer (which would pull in `copy_from_slice`), only
 //! enough string concatenation to combine the user-supplied
 //! parts into the 256-byte scratch buffer, then hands the bytes
@@ -25,13 +25,12 @@ pub const WOW64_LOG_PREFIX: &str = "[WOW64] ";
 #[macro_export]
 macro_rules! wow64_klog {
     ($($arg:tt)*) => {{
-        #[allow(unused_imports)]
         use core::fmt::Write;
 
         // 256 bytes is plenty for a single log line. The buffer is
         // stack-allocated; we do not use the kernel's `BufferWriter`
         // here because at the wow64 call sites we may run before
-        // `core::fmt::Write` over a borrowed slice is reliable.
+        // `core::fmt::write` over a borrowed slice is reliable.
         struct FmtWriter<'a> {
             buf: &'a mut [u8],
             pos: usize,
@@ -73,21 +72,6 @@ macro_rules! wow64_klog {
         // the per-arch serial helper, falling back to a no-op if no
         // architecture matches (which only happens during unit
         // tests).
-        #[cfg(target_arch = "x86_64")]
-        #[cfg(target_arch = "x86_64")]
-        { let _ = $crate::hal::x86_64::serial::write_string(msg); }
-        #[cfg(target_arch = "aarch64")]
-        { let _ = $crate::hal::aarch64::serial::write_string(msg); }
-        #[cfg(target_arch = "riscv64")]
-        { let _ = $crate::hal::riscv64::serial::write_string(msg); }
-        #[cfg(target_arch = "loongarch64")]
-        { let _ = $crate::hal::loongarch64::serial::write_string(msg); }
-        #[cfg(not(any(
-            target_arch = "x86_64",
-            target_arch = "aarch64",
-            target_arch = "riscv64",
-            target_arch = "loongarch64"
-        )))]
-        { let _ = msg; }
+        let _ = $crate::hal::serial::write_string(msg);
     }};
 }

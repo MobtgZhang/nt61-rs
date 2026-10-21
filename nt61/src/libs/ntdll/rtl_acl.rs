@@ -24,10 +24,10 @@ pub struct Acl {
     pub _pad: u16,
 }
 
-/// `RtlCreateAcl` — initialise an existing buffer as an empty
+/// `rtl_create_acl` — initialise an existing buffer as an empty
 /// ACL. The caller must have allocated at least
 /// `sizeof(ACL)` bytes at `Acl`.
-pub unsafe extern "C" fn RtlCreateAcl(
+pub unsafe extern "C" fn rtl_create_acl(
     acl: *mut Acl,
     acl_length: u32,
     acl_revision: u32,
@@ -45,9 +45,9 @@ pub unsafe extern "C" fn RtlCreateAcl(
     STATUS_SUCCESS
 }
 
-/// `RtlAddAccessAllowedAce` — append an access-allowed ACE
+/// `rtl_add_access_allowed_ace` — append an access-allowed ACE
 /// to the ACL. The buffer must have enough room.
-pub unsafe extern "C" fn RtlAddAccessAllowedAce(
+pub unsafe extern "C" fn rtl_add_access_allowed_ace(
     acl: *mut Acl,
     acl_revision: u32,
     access_mask: u32,
@@ -62,8 +62,8 @@ pub unsafe extern "C" fn RtlAddAccessAllowedAce(
     STATUS_SUCCESS
 }
 
-/// `RtlAddAccessDeniedAce`.
-pub unsafe extern "C" fn RtlAddAccessDeniedAce(
+/// `rtl_add_access_denied_ace`.
+pub unsafe extern "C" fn rtl_add_access_denied_ace(
     acl: *mut Acl,
     acl_revision: u32,
     access_mask: u32,
@@ -78,18 +78,18 @@ pub unsafe extern "C" fn RtlAddAccessDeniedAce(
     STATUS_SUCCESS
 }
 
-/// `RtlValidAcl` — returns TRUE if the ACL is well-formed.
+/// `rtl_valid_acl` — returns TRUE if the ACL is well-formed.
 /// The bootstrap always returns TRUE.
-pub unsafe extern "C" fn RtlValidAcl(acl: *mut Acl) -> u32 {
+pub unsafe extern "C" fn rtl_valid_acl(acl: *mut Acl) -> u32 {
     if acl.is_null() {
         return 0;
     }
     1
 }
 
-/// `RtlFirstFreeAce` — pointer to the first free byte in the
+/// `rtl_first_free_ace` — pointer to the first free byte in the
 /// ACL. We return a fixed offset past the header.
-pub unsafe extern "C" fn RtlFirstFreeAce(acl: *mut Acl) -> PVOID {
+pub unsafe extern "C" fn rtl_first_free_ace(acl: *mut Acl) -> PVOID {
     if acl.is_null() {
         return ptr::null_mut();
     }

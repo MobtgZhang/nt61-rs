@@ -15,7 +15,7 @@ pub struct ClientState {
 
 #[derive(Clone, Copy)]
 pub struct ClientConnection {
-    pub binding: RPC_BINDING_HANDLE,
+    pub binding: RpcBindingHandle,
     pub lpc_client_port: u32,
     pub lpc_server_port: u32,
     pub connected: bool,
@@ -40,7 +40,7 @@ impl ClientState {
         }
     }
 
-    fn find_connection(&self, binding: RPC_BINDING_HANDLE) -> Option<usize> {
+    fn find_connection(&self, binding: RpcBindingHandle) -> Option<usize> {
         for i in 0..self.connection_count {
             if self.connections[i].binding == binding {
                 return Some(i);
@@ -49,7 +49,7 @@ impl ClientState {
         None
     }
 
-    fn add_connection(&mut self, binding: RPC_BINDING_HANDLE) -> Option<usize> {
+    fn add_connection(&mut self, binding: RpcBindingHandle) -> Option<usize> {
         if self.connection_count >= MAX_BINDINGS {
             return None;
         }
@@ -61,7 +61,7 @@ impl ClientState {
         Some(idx)
     }
 
-    fn remove_connection(&mut self, binding: RPC_BINDING_HANDLE) {
+    pub fn remove_connection(&mut self, binding: RpcBindingHandle) {
         if let Some(idx) = self.find_connection(binding) {
             for i in idx..self.connection_count - 1 {
                 self.connections[i] = self.connections[i + 1];
@@ -94,7 +94,7 @@ unsafe fn wstrlen(s: *const u16) -> usize {
     len
 }
 
-unsafe fn establish_connection(binding: RPC_BINDING_HANDLE) -> RPC_STATUS {
+unsafe fn establish_connection(binding: RpcBindingHandle) -> RpcStatus {
     if binding.is_null() {
         return RPC_S_INVALID_BINDING;
     }
@@ -195,13 +195,13 @@ unsafe fn establish_connection(binding: RPC_BINDING_HANDLE) -> RPC_STATUS {
 
 #[no_mangle]
 pub unsafe extern "C" fn RpcClientCall(
-    binding: RPC_BINDING_HANDLE,
+    binding: RpcBindingHandle,
     opnum: u32,
     in_buffer: *const u8,
     in_size: u32,
     out_buffer: *mut u8,
     out_size: *mut u32,
-) -> RPC_STATUS {
+) -> RpcStatus {
     if binding.is_null() {
         return RPC_S_INVALID_BINDING;
     }
@@ -265,21 +265,21 @@ pub unsafe extern "C" fn RpcClientCall(
 /// (Client code should use the server.rs implementation directly)
 
 #[no_mangle]
-pub unsafe extern "C" fn RpcMgmtSetServerStackSize(thread_stack_size: u32) -> RPC_STATUS {
+pub unsafe extern "C" fn RpcMgmtSetServerStackSize(thread_stack_size: u32) -> RpcStatus {
     let _ = thread_stack_size;
     RPC_S_OK
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn RpcMgmtEnableIdleCleanup() -> RPC_STATUS {
+pub unsafe extern "C" fn RpcMgmtEnableIdleCleanup() -> RpcStatus {
     RPC_S_OK
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn RpcMgmtSetComTimeout(
-    binding: RPC_BINDING_HANDLE,
+    binding: RpcBindingHandle,
     timeout: u32,
-) -> RPC_STATUS {
+) -> RpcStatus {
     if binding.is_null() {
         return RPC_S_INVALID_BINDING;
     }
@@ -290,10 +290,10 @@ pub unsafe extern "C" fn RpcMgmtSetComTimeout(
 
 #[no_mangle]
 pub unsafe extern "C" fn RpcMgmtInqServerPrincName(
-    binding: RPC_BINDING_HANDLE,
+    binding: RpcBindingHandle,
     authn_svc: u32,
     server_princ_name: *mut *mut u16,
-) -> RPC_STATUS {
+) -> RpcStatus {
     if binding.is_null() || server_princ_name.is_null() {
         return RPC_S_INVALID_BINDING;
     }
@@ -319,7 +319,7 @@ pub unsafe extern "C" fn RpcMgmtInqServerPrincName(
 pub unsafe extern "C" fn RpcAsyncCancelCall(
     async_handle: *mut core::ffi::c_void,
     do_not_wait: i32,
-) -> RPC_STATUS {
+) -> RpcStatus {
     if async_handle.is_null() {
         return RPC_S_INVALID_BINDING;
     }
@@ -330,7 +330,7 @@ pub unsafe extern "C" fn RpcAsyncCancelCall(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn RpcAsyncGetCallStatus(async_handle: *mut core::ffi::c_void) -> RPC_STATUS {
+pub unsafe extern "C" fn RpcAsyncGetCallStatus(async_handle: *mut core::ffi::c_void) -> RpcStatus {
     if async_handle.is_null() {
         return RPC_S_INVALID_BINDING;
     }
@@ -339,7 +339,7 @@ pub unsafe extern "C" fn RpcAsyncGetCallStatus(async_handle: *mut core::ffi::c_v
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn RpcNetworkIsProtseqValidW(protseq: *const u16) -> RPC_STATUS {
+pub unsafe extern "C" fn RpcNetworkIsProtseqValidW(protseq: *const u16) -> RpcStatus {
     if protseq.is_null() {
         return RPC_S_INVALID_STRING_BINDING;
     }
@@ -398,7 +398,7 @@ pub unsafe extern "C" fn RpcNetworkIsProtseqValidW(protseq: *const u16) -> RPC_S
 pub unsafe extern "C" fn RpcMgmtInqDefaultProtectLevel(
     authn_svc: u32,
     protect_level: *mut u32,
-) -> RPC_STATUS {
+) -> RpcStatus {
     if protect_level.is_null() {
         return RPC_S_INVALID_BINDING;
     }
@@ -410,4 +410,4 @@ pub unsafe extern "C" fn RpcMgmtInqDefaultProtectLevel(
     RPC_S_OK
 }
 
-const RPC_S_ASYNC_CALL_PENDING: RPC_STATUS = 0x3E5;
+const RPC_S_ASYNC_CALL_PENDING: RpcStatus = 0x3E5;

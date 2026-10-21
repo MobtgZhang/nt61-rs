@@ -4,11 +4,8 @@
 //! conjunction. The boot log shows one PASS/FAIL line per
 //! module so a failure is easy to localise.
 
-#![cfg(target_arch = "x86_64")]
-
 extern crate alloc;
 
-use crate::kprintln;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 static TEST_COUNTER: AtomicU32 = AtomicU32::new(0);

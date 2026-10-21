@@ -4,12 +4,12 @@
 //! 32-bit virtual memory operations to their 64-bit equivalents.
 //
 //! The key functions are:
-//!   * Wow64AllocateVirtualMemory32
-//!   * Wow64FreeVirtualMemory32
-//!   * Wow64ProtectVirtualMemory32
-//!   * Wow64QueryVirtualMemory32
-//!   * Wow64ReadVirtualMemory32
-//!   * Wow64WriteVirtualMemory32
+//!   * wow64_allocate_virtual_memory32
+//!   * wow64_free_virtual_memory32
+//!   * wow64_protect_virtual_memory32
+//!   * wow64_query_virtual_memory32
+//!   * wow64_read_virtual_memory32
+//!   * wow64_write_virtual_memory32
 //
 //! References:
 //!   * geoffchappell.com — wow64 memory management
@@ -18,16 +18,16 @@ use crate::libs::wow64::types::*;
 use crate::libs::wow64::wow64vas;
 
 // =============================================================================
-// Wow64AllocateVirtualMemory32
+// wow64_allocate_virtual_memory32
 // =============================================================================
 
 /// Allocate virtual memory in a 32-bit process.
 ///
-/// This is the Wow64 equivalent of NtAllocateVirtualMemory for 32-bit
+/// This is the Wow64 equivalent of NT_ALLOCATE_VIRTUAL_MEMORY for 32-bit
 /// processes. It allocates memory in the lower 4GB address space.
 ///
 /// # Arguments
-/// * `process_handle` - Handle to the target process (can be NtCurrentProcess)
+/// * `process_handle` - handle to the target process (can be nt_current_process)
 /// * `base_address` - Pointer to base address (input/output)
 /// * `zero_bits` - Zero bits for address hint
 /// * `region_size` - Pointer to region size (input/output)
@@ -39,9 +39,9 @@ use crate::libs::wow64::wow64vas;
 ///
 /// # Safety
 /// This function manipulates process address spaces.
-pub unsafe extern "C" fn Wow64AllocateVirtualMemory32(
+pub unsafe extern "C" fn wow64_allocate_virtual_memory32(
     process_handle: HANDLE32,
-    base_address: ULONG32_PTR,
+    base_address: Ulong32Ptr,
     zero_bits: ULONG32,
     region_size: ULONG32,
     allocation_type: ULONG32,
@@ -93,7 +93,7 @@ pub unsafe extern "C" fn Wow64AllocateVirtualMemory32(
                 allocated_size
             );
 
-            // Write results back
+            // write results back
             // In real implementation: write to base_address and region_size pointers
             let _ = (allocated_base, allocated_size);
             STATUS_SUCCESS
@@ -103,23 +103,23 @@ pub unsafe extern "C" fn Wow64AllocateVirtualMemory32(
 }
 
 // =============================================================================
-// Wow64FreeVirtualMemory32
+// wow64_free_virtual_memory32
 // =============================================================================
 
 /// Free virtual memory in a 32-bit process.
 ///
 /// # Arguments
-/// * `process_handle` - Handle to the target process
+/// * `process_handle` - handle to the target process
 /// * `base_address` - Base address to free
 /// * `region_size` - Pointer to region size (output)
 /// * `free_type` - MEM_DECOMMIT or MEM_RELEASE
 ///
 /// # Returns
 /// * NTSTATUS
-pub unsafe extern "C" fn Wow64FreeVirtualMemory32(
+pub unsafe extern "C" fn wow64_free_virtual_memory32(
     process_handle: HANDLE32,
     base_address: ULONG32,
-    region_size: ULONG32_PTR,
+    region_size: Ulong32Ptr,
     free_type: ULONG32,
 ) -> ULONG32 {
     crate::wow64_klog!(
@@ -146,7 +146,7 @@ pub unsafe extern "C" fn Wow64FreeVirtualMemory32(
 
     // Free through the Wow64 VAS
     if wow64vas::free(base_address, region_size) {
-        // Write actual freed size back
+        // write actual freed size back
         // In real implementation: write to region_size pointer
         STATUS_SUCCESS
     } else {
@@ -155,13 +155,13 @@ pub unsafe extern "C" fn Wow64FreeVirtualMemory32(
 }
 
 // =============================================================================
-// Wow64ProtectVirtualMemory32
+// wow64_protect_virtual_memory32
 // =============================================================================
 
 /// Change the protection on a region of memory.
 ///
 /// # Arguments
-/// * `process_handle` - Handle to the target process
+/// * `process_handle` - handle to the target process
 /// * `base_address` - Pointer to base address (input/output)
 /// * `region_size` - Pointer to region size (input/output)
 /// * `new_protect` - New protection value
@@ -169,12 +169,12 @@ pub unsafe extern "C" fn Wow64FreeVirtualMemory32(
 ///
 /// # Returns
 /// * NTSTATUS
-pub unsafe extern "C" fn Wow64ProtectVirtualMemory32(
+pub unsafe extern "C" fn wow64_protect_virtual_memory32(
     process_handle: HANDLE32,
-    base_address: ULONG32_PTR,
-    region_size: ULONG32_PTR,
+    base_address: Ulong32Ptr,
+    region_size: Ulong32Ptr,
     new_protect: ULONG32,
-    old_protect: ULONG32_PTR,
+    old_protect: Ulong32Ptr,
 ) -> ULONG32 {
     crate::wow64_klog!(
         "Wow64ProtectVirtualMemory32 handle=0x{:08x} base_ptr=0x{:08x} \
@@ -201,22 +201,22 @@ pub unsafe extern "C" fn Wow64ProtectVirtualMemory32(
         return STATUS_INVALID_PARAMETER;
     }
 
-    // In real implementation: call 64-bit NtProtectVirtualMemory
+    // In real implementation: call 64-bit NT_PROTECT_VIRTUAL_MEMORY
     // and translate the result
 
     STATUS_SUCCESS
 }
 
 // =============================================================================
-// Wow64QueryVirtualMemory32
+// wow64_query_virtual_memory32
 // =============================================================================
 
 /// Query information about a region of virtual memory.
 ///
 /// # Arguments
-/// * `process_handle` - Handle to the target process
+/// * `process_handle` - handle to the target process
 /// * `base_address` - Base address to query
-/// * `memory_info_class` - Type of information to query
+/// * `memory_info_class` - r#type of information to query
 /// * `buffer` - Output buffer
 /// * `buffer_size` - Size of output buffer
 /// * `return_length` - Actual size needed (output)
@@ -229,13 +229,13 @@ pub unsafe extern "C" fn Wow64ProtectVirtualMemory32(
 /// * 1 - MemoryWorkingSetList
 /// * 2 - MemorySectionName
 /// * etc.
-pub unsafe extern "C" fn Wow64QueryVirtualMemory32(
+pub unsafe extern "C" fn wow64_query_virtual_memory32(
     process_handle: HANDLE32,
     base_address: ULONG32,
     memory_info_class: ULONG32,
     buffer: ULONG32,
     buffer_size: ULONG32,
-    return_length: ULONG32_PTR,
+    return_length: Ulong32Ptr,
 ) -> ULONG32 {
     crate::wow64_klog!(
         "Wow64QueryVirtualMemory32 handle=0x{:08x} addr=0x{:08x} \
@@ -287,13 +287,13 @@ pub unsafe extern "C" fn Wow64QueryVirtualMemory32(
 }
 
 // =============================================================================
-// Wow64ReadVirtualMemory32
+// wow64_read_virtual_memory32
 // =============================================================================
 
-/// Read memory from another process.
+/// read memory from another process.
 ///
 /// # Arguments
-/// * `process_handle` - Handle to the source process
+/// * `process_handle` - handle to the source process
 /// * `base_address` - Address to read from
 /// * `buffer` - Local buffer to read into (32-bit address)
 /// * `size` - Number of bytes to read
@@ -301,12 +301,12 @@ pub unsafe extern "C" fn Wow64QueryVirtualMemory32(
 ///
 /// # Returns
 /// * NTSTATUS
-pub unsafe extern "C" fn Wow64ReadVirtualMemory32(
+pub unsafe extern "C" fn wow64_read_virtual_memory32(
     process_handle: HANDLE32,
     base_address: ULONG32,
     buffer: ULONG32,
     size: ULONG32,
-    number_of_bytes_read: ULONG32_PTR,
+    number_of_bytes_read: Ulong32Ptr,
 ) -> ULONG32 {
     crate::wow64_klog!(
         "Wow64ReadVirtualMemory32 handle=0x{:08x} from=0x{:08x} \
@@ -340,13 +340,13 @@ pub unsafe extern "C" fn Wow64ReadVirtualMemory32(
 }
 
 // =============================================================================
-// Wow64WriteVirtualMemory32
+// wow64_write_virtual_memory32
 // =============================================================================
 
-/// Write memory to another process.
+/// write memory to another process.
 ///
 /// # Arguments
-/// * `process_handle` - Handle to the target process
+/// * `process_handle` - handle to the target process
 /// * `base_address` - Address to write to
 /// * `buffer` - Local buffer to write from (32-bit address)
 /// * `size` - Number of bytes to write
@@ -354,12 +354,12 @@ pub unsafe extern "C" fn Wow64ReadVirtualMemory32(
 ///
 /// # Returns
 /// * NTSTATUS
-pub unsafe extern "C" fn Wow64WriteVirtualMemory32(
+pub unsafe extern "C" fn wow64_write_virtual_memory32(
     process_handle: HANDLE32,
     base_address: ULONG32,
     buffer: ULONG32,
     size: ULONG32,
-    number_of_bytes_written: ULONG32_PTR,
+    number_of_bytes_written: Ulong32Ptr,
 ) -> ULONG32 {
     crate::wow64_klog!(
         "Wow64WriteVirtualMemory32 handle=0x{:08x} to=0x{:08x} \
@@ -428,7 +428,7 @@ pub fn init() {
 // Public Entry Points (for thunk.rs forwarding)
 // =============================================================================
 
-/// `wow64_allocate_virtual_memory` — wrapper for Wow64AllocateVirtualMemory32.
+/// `wow64_allocate_virtual_memory` — wrapper for wow64_allocate_virtual_memory32.
 pub unsafe extern "C" fn wow64_allocate_virtual_memory(
     process_handle: u32,
     base_address: u32,
@@ -443,7 +443,7 @@ pub unsafe extern "C" fn wow64_allocate_virtual_memory(
         allocation_type, protect
     );
     // Forward to the actual implementation
-    Wow64AllocateVirtualMemory32(
+    wow64_allocate_virtual_memory32(
         process_handle,
         base_address,
         zero_bits,
@@ -453,7 +453,7 @@ pub unsafe extern "C" fn wow64_allocate_virtual_memory(
     )
 }
 
-/// `wow64_free_virtual_memory` — wrapper for Wow64FreeVirtualMemory32.
+/// `wow64_free_virtual_memory` — wrapper for wow64_free_virtual_memory32.
 pub unsafe extern "C" fn wow64_free_virtual_memory(
     process_handle: u32,
     base_address: u32,
@@ -468,10 +468,10 @@ pub unsafe extern "C" fn wow64_free_virtual_memory(
         free_type
     );
     // Forward to the actual implementation
-    Wow64FreeVirtualMemory32(process_handle, base_address, region_size, free_type)
+    wow64_free_virtual_memory32(process_handle, base_address, region_size, free_type)
 }
 
-/// `wow64_read_virtual_memory` — wrapper for Wow64ReadVirtualMemory32.
+/// `wow64_read_virtual_memory` — wrapper for wow64_read_virtual_memory32.
 pub unsafe extern "C" fn wow64_read_virtual_memory(
     process_handle: u32,
     base_address: u32,
@@ -486,7 +486,7 @@ pub unsafe extern "C" fn wow64_read_virtual_memory(
         size
     );
     // Forward to the actual implementation
-    Wow64ReadVirtualMemory32(
+    wow64_read_virtual_memory32(
         process_handle,
         base_address,
         buffer,
@@ -495,7 +495,7 @@ pub unsafe extern "C" fn wow64_read_virtual_memory(
     )
 }
 
-/// `wow64_write_virtual_memory` — wrapper for Wow64WriteVirtualMemory32.
+/// `wow64_write_virtual_memory` — wrapper for wow64_write_virtual_memory32.
 pub unsafe extern "C" fn wow64_write_virtual_memory(
     process_handle: u32,
     base_address: u32,
@@ -510,7 +510,7 @@ pub unsafe extern "C" fn wow64_write_virtual_memory(
         size
     );
     // Forward to the actual implementation
-    Wow64WriteVirtualMemory32(
+    wow64_write_virtual_memory32(
         process_handle,
         base_address,
         buffer,

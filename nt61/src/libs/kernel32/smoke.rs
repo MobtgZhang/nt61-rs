@@ -8,7 +8,6 @@
 // See the same comment in `libs/ntdll/smoke.rs` — every
 // submodule is imported up-front so adding a new public
 // function only requires wiring it into the test list.
-#![allow(unused_imports, dead_code)]
 
 extern crate alloc;
 
@@ -23,10 +22,7 @@ use super::process;
 use super::sync;
 use super::thread;
 use super::time;
-use super::types::{FALSE, HANDLE, TRUE};
-use crate::libs::ntdll::file as ntdll_file;
-use crate::libs::ntdll::status::STATUS_SUCCESS;
-use crate::libs::ntdll::types::{IoStatusBlock, ObjectAttributes, UnicodeString};
+use super::types::FALSE;
 use alloc::format;
 use core::ptr;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -40,29 +36,29 @@ fn report(_label: &str, ok: bool) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// 1. GetLastError / SetLastError
+// 1. get_last_error / set_last_error
 // ---------------------------------------------------------------------------
 
 fn test_get_set_last_error() -> bool {
-    let prev = error::GetLastError();
-    error::SetLastError(42);
-    if error::GetLastError() != 42 {
+    let prev = error::get_last_error();
+    error::set_last_error(42);
+    if error::get_last_error() != 42 {
         return report("GetLastError/SetLastError", false);
     }
-    error::SetLastError(prev);
+    error::set_last_error(prev);
     report("GetLastError/SetLastError", true)
 }
 
 // ---------------------------------------------------------------------------
-// 2. GetTickCount / GetSystemTime / GetTickCount64
+// 2. get_tick_count / get_system_time / get_tick_count64
 // ---------------------------------------------------------------------------
 
-fn test_time() -> bool {
-    let _t1 = time::GetTickCount();
-    let _t2 = time::GetTickCount64();
+pub fn test_time() -> bool {
+    let _t1 = time::get_tick_count();
+    let _t2 = time::get_tick_count64();
     let mut st = time::SystemTime::default();
     unsafe {
-        time::GetSystemTime(&mut st);
+        time::get_system_time(&mut st);
     }
     if st.year < 2000 || st.year > 2100 {
         return report(format!("GetSystemTime(year={})", st.year).as_str(), false);
@@ -74,18 +70,18 @@ fn test_time() -> bool {
 // 3. GetCurrentDirectory / GetSystemDirectory / GetWindowsDirectory
 // ---------------------------------------------------------------------------
 
-fn test_directories() -> bool {
+pub fn test_directories() -> bool {
     unsafe {
         let mut buf = [0u16; 64];
-        let len = env::GetCurrentDirectoryW(buf.len() as u32, buf.as_mut_ptr());
+        let len = env::get_current_directory_w(buf.len() as u32, buf.as_mut_ptr());
         if len == 0 || buf[0] != b'C' as u16 {
             return report("GetCurrentDirectoryW", false);
         }
-        let len2 = env::GetSystemDirectoryW(buf.as_mut_ptr(), buf.len() as u32);
+        let len2 = env::get_system_directory_w(buf.as_mut_ptr(), buf.len() as u32);
         if len2 == 0 {
             return report("GetSystemDirectoryW", false);
         }
-        let len3 = env::GetWindowsDirectoryW(buf.as_mut_ptr(), buf.len() as u32);
+        let len3 = env::get_windows_directory_w(buf.as_mut_ptr(), buf.len() as u32);
         if len3 == 0 {
             return report("GetWindowsDirectoryW", false);
         }
@@ -97,14 +93,14 @@ fn test_directories() -> bool {
 // 4. GetModuleHandle(NULL) / GetModuleFileName
 // ---------------------------------------------------------------------------
 
-fn test_module_self() -> bool {
+pub fn test_module_self() -> bool {
     unsafe {
-        let h = module::GetModuleHandleW(ptr::null());
+        let h = module::get_module_handle_w(ptr::null());
         if h.is_null() {
             return report("GetModuleHandleW(NULL)", false);
         }
         let mut buf = [0u16; 64];
-        let n = module::GetModuleFileNameW(h, buf.as_mut_ptr(), buf.len() as u32);
+        let n = module::get_module_file_name_w(h, buf.as_mut_ptr(), buf.len() as u32);
         if n == 0 {
             return report("GetModuleFileNameW", false);
         }
@@ -113,10 +109,10 @@ fn test_module_self() -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// 5. LoadLibrary / GetProcAddress / FreeLibrary
+// 5. LoadLibrary / get_proc_address / free_library
 // ---------------------------------------------------------------------------
 
-fn test_load_getproc_free() -> bool {
+pub fn test_load_getproc_free() -> bool {
     unsafe {
         let name: [u16; 11] = [
             b'n' as u16,
@@ -131,16 +127,16 @@ fn test_load_getproc_free() -> bool {
             0,
             0,
         ];
-        let h = module::LoadLibraryW(name.as_ptr());
+        let h = module::load_library_w(name.as_ptr());
         if h.is_null() {
             return report("LoadLibraryW(ntdll.dll)", false);
         }
         let name: [i8; 5] = [b'N' as i8, b't' as i8, b'C' as i8, b'l' as i8, 0];
-        let proc = module::GetProcAddress(h, name.as_ptr());
+        let proc = module::get_proc_address(h, name.as_ptr());
         if proc as usize == 0 {
             return report("GetProcAddress", false);
         }
-        if module::FreeLibrary(h) == FALSE {
+        if module::free_library(h) == FALSE {
             return report("FreeLibrary", false);
         }
     }
@@ -148,16 +144,16 @@ fn test_load_getproc_free() -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// 6. VirtualAlloc / VirtualFree
+// 6. virtual_alloc / virtual_free
 // ---------------------------------------------------------------------------
 
-fn test_virtual_alloc_free() -> bool {
+pub fn test_virtual_alloc_free() -> bool {
     unsafe {
-        let p = memory::VirtualAlloc(ptr::null_mut(), 0x1000, 0x3000, 0x04);
+        let p = memory::virtual_alloc(ptr::null_mut(), 0x1000, 0x3000, 0x04);
         if p.is_null() {
             return report("VirtualAlloc", false);
         }
-        if memory::VirtualFree(p, 0, 0x8000) == FALSE {
+        if memory::virtual_free(p, 0, 0x8000) == FALSE {
             return report("VirtualFree", false);
         }
     }
@@ -165,27 +161,27 @@ fn test_virtual_alloc_free() -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// 7. HeapCreate / HeapAlloc / HeapFree / HeapSize
+// 7. heap_create / heap_alloc / heap_free / heap_size
 // ---------------------------------------------------------------------------
 
-fn test_heap_round_trip() -> bool {
+pub fn test_heap_round_trip() -> bool {
     unsafe {
-        let h = memory::HeapCreate(0, 0, 0);
+        let h = memory::heap_create(0, 0, 0);
         if h.is_null() {
             return report("HeapCreate", false);
         }
-        let p = memory::HeapAlloc(h, 0x08, 100);
+        let p = memory::heap_alloc(h, 0x08, 100);
         if p.is_null() {
             return report("HeapAlloc", false);
         }
-        let s = memory::HeapSize(h, 0, p);
+        let s = memory::heap_size(h, 0, p);
         if s < 100 {
             return report(format!("HeapSize({})", s).as_str(), false);
         }
-        if memory::HeapFree(h, 0, p) == FALSE {
+        if memory::heap_free(h, 0, p) == FALSE {
             return report("HeapFree", false);
         }
-        if memory::HeapDestroy(h) == FALSE {
+        if memory::heap_destroy(h) == FALSE {
             return report("HeapDestroy", false);
         }
     }
@@ -196,19 +192,19 @@ fn test_heap_round_trip() -> bool {
 // 8. CreateEvent / Set / Reset
 // ---------------------------------------------------------------------------
 
-fn test_event() -> bool {
+pub fn test_event() -> bool {
     unsafe {
-        let h = sync::CreateEventW(ptr::null(), 0, 0, ptr::null());
+        let h = sync::create_event_w(ptr::null(), 0, 0, ptr::null());
         if h.is_null() {
             return report("CreateEventW", false);
         }
-        if sync::SetEvent(h) == FALSE {
+        if sync::set_event(h) == FALSE {
             return report("SetEvent", false);
         }
-        if sync::ResetEvent(h) == FALSE {
+        if sync::reset_event(h) == FALSE {
             return report("ResetEvent", false);
         }
-        handle::CloseHandle(h);
+        handle::close_handle(h);
     }
     report("CreateEvent/Set/Reset", true)
 }
@@ -217,16 +213,16 @@ fn test_event() -> bool {
 // 9. CreateMutex / Release
 // ---------------------------------------------------------------------------
 
-fn test_mutex() -> bool {
+pub fn test_mutex() -> bool {
     unsafe {
-        let h = sync::CreateMutexW(ptr::null(), 0, ptr::null());
+        let h = sync::create_mutex_w(ptr::null(), 0, ptr::null());
         if h.is_null() {
             return report("CreateMutexW", false);
         }
-        if sync::ReleaseMutex(h) == FALSE {
+        if sync::release_mutex(h) == FALSE {
             return report("ReleaseMutex", false);
         }
-        handle::CloseHandle(h);
+        handle::close_handle(h);
     }
     report("CreateMutex/ReleaseMutex", true)
 }
@@ -235,47 +231,47 @@ fn test_mutex() -> bool {
 // 10. CreateSemaphore / Release
 // ---------------------------------------------------------------------------
 
-fn test_semaphore() -> bool {
+pub fn test_semaphore() -> bool {
     unsafe {
-        let h = sync::CreateSemaphoreW(ptr::null(), 1, 10, ptr::null());
+        let h = sync::create_semaphore_w(ptr::null(), 1, 10, ptr::null());
         if h.is_null() {
             return report("CreateSemaphoreW", false);
         }
         let mut prev = 0u32;
-        if sync::ReleaseSemaphore(h, 1, &mut prev) == FALSE {
+        if sync::release_semaphore(h, 1, &mut prev) == FALSE {
             return report("ReleaseSemaphore", false);
         }
-        handle::CloseHandle(h);
+        handle::close_handle(h);
     }
     report("CreateSemaphore/Release", true)
 }
 
 // ---------------------------------------------------------------------------
-// 11. WaitForSingleObject
+// 11. wait_for_single_object
 // ---------------------------------------------------------------------------
 
-fn test_wait() -> bool {
+pub fn test_wait() -> bool {
     unsafe {
-        let h = sync::CreateEventW(ptr::null(), 0, 1, ptr::null());
+        let h = sync::create_event_w(ptr::null(), 0, 1, ptr::null());
         if h.is_null() {
             return report("CreateEventW (wait)", false);
         }
-        let r = sync::WaitForSingleObject(h, 0);
+        let r = sync::wait_for_single_object(h, 0);
         if r != 0 {
             return report(format!("WaitForSingleObject={}", r).as_str(), false);
         }
-        handle::CloseHandle(h);
+        handle::close_handle(h);
     }
     report("WaitForSingleObject", true)
 }
 
 // ---------------------------------------------------------------------------
-// 12. CreateThread / GetCurrentThreadId / Sleep
+// 12. create_thread / get_current_thread_id / sleep
 // ---------------------------------------------------------------------------
 
-fn test_thread() -> bool {
+pub fn test_thread() -> bool {
     unsafe {
-        let h = thread::CreateThread(
+        let h = thread::create_thread(
             ptr::null(),
             0,
             dummy_thread,
@@ -286,12 +282,12 @@ fn test_thread() -> bool {
         if h.is_null() {
             return report("CreateThread", false);
         }
-        let id = thread::GetCurrentThreadId();
+        let id = thread::get_current_thread_id();
         if id == 0 {
             return report("GetCurrentThreadId", false);
         }
-        thread::Sleep(0);
-        if thread::TerminateThread(h, 0) == FALSE {
+        thread::sleep(0);
+        if thread::terminate_thread(h, 0) == FALSE {
             return report("TerminateThread", false);
         }
     }
@@ -303,15 +299,15 @@ extern "C" fn dummy_thread(_param: *mut u8) -> u32 {
 }
 
 // ---------------------------------------------------------------------------
-// 13. CreateProcessW
+// 13. create_process_w
 // ---------------------------------------------------------------------------
 
-fn test_create_process() -> bool {
+pub fn test_create_process() -> bool {
     unsafe {
         let name: [u16; 5] = [b'C' as u16, b':' as u16, b'\\' as u16, b'x' as u16, 0];
         let si = process::StartupInfoW::default();
         let mut pi = process::ProcessInformation::default();
-        if process::CreateProcessW(
+        if process::create_process_w(
             name.as_ptr(),
             ptr::null_mut(),
             ptr::null(),
@@ -326,33 +322,33 @@ fn test_create_process() -> bool {
         {
             return report("CreateProcessW", false);
         }
-        handle::CloseHandle(pi.h_process);
+        handle::close_handle(pi.h_process);
     }
     report("CreateProcessW", true)
 }
 
 // ---------------------------------------------------------------------------
-// 14. GetCurrentProcess / GetCurrentProcessId
+// 14. get_current_process / get_current_process_id
 // ---------------------------------------------------------------------------
 
-fn test_get_current_process() -> bool {
-    if process::GetCurrentProcess() == ptr::null_mut() {
+pub fn test_get_current_process() -> bool {
+    if process::get_current_process() == ptr::null_mut() {
         return report("GetCurrentProcess", false);
     }
-    if process::GetCurrentProcessId() == 0 {
+    if process::get_current_process_id() == 0 {
         return report("GetCurrentProcessId", false);
     }
     report("GetCurrentProcess/Id", true)
 }
 
 // ---------------------------------------------------------------------------
-// 15. CreateFileW / ReadFile / WriteFile
+// 15. create_file_w / read_file / write_file
 // ---------------------------------------------------------------------------
 
-fn test_file_io() -> bool {
+pub fn test_file_io() -> bool {
     unsafe {
         let name: [u16; 5] = [b'C' as u16, b':' as u16, b'\\' as u16, b'x' as u16, 0];
-        let h = file::CreateFileW(
+        let h = file::create_file_w(
             name.as_ptr(),
             0xC0000000,
             7,
@@ -366,7 +362,7 @@ fn test_file_io() -> bool {
         }
         let buf = [0u8; 16];
         let mut written = 0u32;
-        if file::WriteFile(h, buf.as_ptr(), buf.len() as u32, &mut written, ptr::null()) == FALSE {
+        if file::write_file(h, buf.as_ptr(), buf.len() as u32, &mut written, ptr::null()) == FALSE {
             return report("WriteFile", false);
         }
         if written != buf.len() as u32 {
@@ -374,7 +370,7 @@ fn test_file_io() -> bool {
         }
         let mut read_buf = [0u8; 16];
         let mut read = 0u32;
-        if file::ReadFile(
+        if file::read_file(
             h,
             read_buf.as_mut_ptr(),
             read_buf.len() as u32,
@@ -384,18 +380,18 @@ fn test_file_io() -> bool {
         {
             return report("ReadFile", false);
         }
-        handle::CloseHandle(h);
+        handle::close_handle(h);
     }
     report("CreateFile/Read/Write", true)
 }
 
 // ---------------------------------------------------------------------------
-// 16. WriteConsoleW
+// 16. write_console_w
 // ---------------------------------------------------------------------------
 
-fn test_console() -> bool {
+pub fn test_console() -> bool {
     unsafe {
-        let h = console::GetStdHandle(0xFFFF_FFF5);
+        let h = console::get_std_handle(0xFFFF_FFF5);
         if h.is_null() {
             return report("GetStdHandle(STD_OUTPUT)", false);
         }
@@ -407,7 +403,7 @@ fn test_console() -> bool {
             b'o' as u16,
         ];
         let mut written = 0u32;
-        if console::WriteConsoleW(h, msg.as_ptr(), msg.len() as u32, &mut written, ptr::null())
+        if console::write_console_w(h, msg.as_ptr(), msg.len() as u32, &mut written, ptr::null())
             == FALSE
         {
             return report("WriteConsoleW", false);
@@ -420,13 +416,13 @@ fn test_console() -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// 17. InitializeCriticalSection
+// 17. initialize_critical_section
 // ---------------------------------------------------------------------------
 
-fn test_critical_section() -> bool {
+pub fn test_critical_section() -> bool {
     use super::sync::{
-        CriticalSection, DeleteCriticalSection, EnterCriticalSection, InitializeCriticalSection,
-        LeaveCriticalSection,
+        delete_critical_section, enter_critical_section, initialize_critical_section,
+        leave_critical_section, CriticalSection,
     };
     unsafe {
         let mut cs = CriticalSection {
@@ -436,27 +432,27 @@ fn test_critical_section() -> bool {
             magic: 0,
             spin: crate::ke::sync::Spinlock::new(()),
         };
-        InitializeCriticalSection(&mut cs);
-        EnterCriticalSection(&mut cs);
-        LeaveCriticalSection(&mut cs);
-        DeleteCriticalSection(&mut cs);
+        initialize_critical_section(&mut cs);
+        enter_critical_section(&mut cs);
+        leave_critical_section(&mut cs);
+        delete_critical_section(&mut cs);
     }
     report("CriticalSection round-trip", true)
 }
 
 // ---------------------------------------------------------------------------
-// 18. Environment variable
+// 18. environment variable
 // ---------------------------------------------------------------------------
 
-fn test_env_var() -> bool {
+pub fn test_env_var() -> bool {
     unsafe {
         let name: [u16; 5] = [b'P' as u16, b'A' as u16, b'T' as u16, b'H' as u16, 0];
         let val: [u16; 5] = [b'C' as u16, b':' as u16, b'\\' as u16, b'\\' as u16, 0];
-        if env::SetEnvironmentVariableW(name.as_ptr(), val.as_ptr()) == FALSE {
+        if env::set_environment_variable_w(name.as_ptr(), val.as_ptr()) == FALSE {
             return report("SetEnvironmentVariableW", false);
         }
         let mut buf = [0u16; 32];
-        let n = env::GetEnvironmentVariableW(name.as_ptr(), buf.as_mut_ptr(), buf.len() as u32);
+        let n = env::get_environment_variable_w(name.as_ptr(), buf.as_mut_ptr(), buf.len() as u32);
         if n == 0 {
             return report("GetEnvironmentVariableW", false);
         }
@@ -468,10 +464,11 @@ fn test_env_var() -> bool {
 // 19. FormatMessage
 // ---------------------------------------------------------------------------
 
-fn test_format_message() -> bool {
+pub fn test_format_message() -> bool {
     unsafe {
         let mut buf = [0u16; 64];
-        let n = error::FormatMessageW(0, 0, 2, 0, buf.as_mut_ptr(), buf.len() as u32, ptr::null());
+        let n =
+            error::format_message_w(0, 0, 2, 0, buf.as_mut_ptr(), buf.len() as u32, ptr::null());
         if n == 0 {
             return report("FormatMessageW", false);
         }

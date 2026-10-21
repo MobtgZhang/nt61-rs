@@ -8,17 +8,15 @@
 //!   * Windows Internals 6th Edition
 //!   * ReactOS 0.3.x winsvc.h
 
-#![allow(non_snake_case, non_upper_case_globals, dead_code)]
-
-use crate::libs::kernel32::types::{BOOL, DWORD, HANDLE, LPCWSTR, LPDWORD, LPVOID, LPWSTR};
-use crate::libs::ntdll::types::{BYTE, NTSTATUS, PVOID, WORD};
+use crate::libs::kernel32::types::{BOOL, DWORD, HANDLE, LPWSTR};
+use crate::libs::ntdll::types::{BYTE, PVOID, WORD};
 
 // Re-export types for public use
 pub use crate::libs::kernel32::types::INVALID_HANDLE_VALUE;
 pub use crate::libs::kernel32::types::LPVOID as LPVOID_RE;
 
-pub type SC_ENUM_TYPE = DWORD;
-pub const SC_ENUM_PROCESS_INFO: SC_ENUM_TYPE = 0;
+pub type ScEnumType = DWORD;
+pub const SC_ENUM_PROCESS_INFO: ScEnumType = 0;
 
 pub const SC_MANAGER_ALL_ACCESS: DWORD = 0xF003F;
 pub const SC_MANAGER_CONNECT: DWORD = 0x0001;
@@ -70,60 +68,60 @@ pub const SERVICE_PAUSED: DWORD = 0x00000007;
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
 pub struct SERVICE_STATUS_PROCESS {
-    pub dwServiceType: DWORD,
-    pub dwCurrentState: DWORD,
-    pub dwControlsAccepted: DWORD,
-    pub dwWin32ExitCode: DWORD,
-    pub dwServiceSpecificExitCode: DWORD,
-    pub dwCheckPoint: DWORD,
-    pub dwWaitHint: DWORD,
-    pub dwProcessId: DWORD,
-    pub dwServiceFlags: DWORD,
+    pub dw_service_type: DWORD,
+    pub dw_current_state: DWORD,
+    pub dw_controls_accepted: DWORD,
+    pub dw_win32_exit_code: DWORD,
+    pub dw_service_specific_exit_code: DWORD,
+    pub dw_check_point: DWORD,
+    pub dw_wait_hint: DWORD,
+    pub dw_process_id: DWORD,
+    pub dw_service_flags: DWORD,
 }
 
 #[repr(C)]
 pub struct SERVICE_DESCRIPTIONW {
-    pub lpDescription: LPWSTR,
+    pub lp_description: LPWSTR,
 }
 
 #[repr(C)]
 pub struct SERVICE_DELAYED_AUTO_START_INFO {
-    pub fDelayedAutostart: BOOL,
+    pub f_delayed_autostart: BOOL,
 }
 
-pub type SE_OBJECT_TYPE = DWORD;
-pub const SE_UNKNOWN_OBJECT_TYPE: SE_OBJECT_TYPE = 0;
-pub const SE_FILE_OBJECT: SE_OBJECT_TYPE = 1;
-pub const SE_SERVICE: SE_OBJECT_TYPE = 2;
-pub const SE_PRINTER: SE_OBJECT_TYPE = 3;
-pub const SE_REGISTRY_KEY: SE_OBJECT_TYPE = 4;
-pub const SE_LMSHARE: SE_OBJECT_TYPE = 5;
-pub const SE_KERNEL_OBJECT: SE_OBJECT_TYPE = 6;
-pub const SE_WINDOW_OBJECT: SE_OBJECT_TYPE = 7;
-pub const SE_DS_OBJECT: SE_OBJECT_TYPE = 8;
-pub const SE_DS_OBJECT_ALL: SE_OBJECT_TYPE = 9;
-pub const SE_PROVIDER_DEFINED_OBJECT: SE_OBJECT_TYPE = 10;
-pub const SE_WMIGUID_OBJECT: SE_OBJECT_TYPE = 11;
-pub const SE_REGISTRY_WOW64_32KEY: SE_OBJECT_TYPE = 12;
+pub type SeObjectType = DWORD;
+pub const SE_UNKNOWN_OBJECT_TYPE: SeObjectType = 0;
+pub const SE_FILE_OBJECT: SeObjectType = 1;
+pub const SE_SERVICE: SeObjectType = 2;
+pub const SE_PRINTER: SeObjectType = 3;
+pub const SE_REGISTRY_KEY: SeObjectType = 4;
+pub const SE_LMSHARE: SeObjectType = 5;
+pub const SE_KERNEL_OBJECT: SeObjectType = 6;
+pub const SE_WINDOW_OBJECT: SeObjectType = 7;
+pub const SE_DS_OBJECT: SeObjectType = 8;
+pub const SE_DS_OBJECT_ALL: SeObjectType = 9;
+pub const SE_PROVIDER_DEFINED_OBJECT: SeObjectType = 10;
+pub const SE_WMIGUID_OBJECT: SeObjectType = 11;
+pub const SE_REGISTRY_WOW64_32KEY: SeObjectType = 12;
 
-pub type SECURITY_INFORMATION = DWORD;
-pub const OWNER_SECURITY_INFORMATION: SECURITY_INFORMATION = 0x00000001;
-pub const GROUP_SECURITY_INFORMATION: SECURITY_INFORMATION = 0x00000002;
-pub const DACL_SECURITY_INFORMATION: SECURITY_INFORMATION = 0x00000004;
-pub const SACL_SECURITY_INFORMATION: SECURITY_INFORMATION = 0x00000008;
-pub const LABEL_SECURITY_INFORMATION: SECURITY_INFORMATION = 0x00000010;
-pub const PROTECTED_DACL_SECURITY_INFORMATION: SECURITY_INFORMATION = 0x80000000;
-pub const PROTECTED_SACL_SECURITY_INFORMATION: SECURITY_INFORMATION = 0x40000000;
-pub const UNPROTECTED_DACL_SECURITY_INFORMATION: SECURITY_INFORMATION = 0x20000000;
-pub const UNPROTECTED_SACL_SECURITY_INFORMATION: SECURITY_INFORMATION = 0x10000000;
+pub type SecurityInformation = DWORD;
+pub const OWNER_SECURITY_INFORMATION: SecurityInformation = 0x00000001;
+pub const GROUP_SECURITY_INFORMATION: SecurityInformation = 0x00000002;
+pub const DACL_SECURITY_INFORMATION: SecurityInformation = 0x00000004;
+pub const SACL_SECURITY_INFORMATION: SecurityInformation = 0x00000008;
+pub const LABEL_SECURITY_INFORMATION: SecurityInformation = 0x00000010;
+pub const PROTECTED_DACL_SECURITY_INFORMATION: SecurityInformation = 0x80000000;
+pub const PROTECTED_SACL_SECURITY_INFORMATION: SecurityInformation = 0x40000000;
+pub const UNPROTECTED_DACL_SECURITY_INFORMATION: SecurityInformation = 0x20000000;
+pub const UNPROTECTED_SACL_SECURITY_INFORMATION: SecurityInformation = 0x10000000;
 
 #[repr(C)]
 pub struct TRUSTEE_W {
-    pub pMultipleTrustee: *mut TRUSTEE_W,
-    pub MultipleTrusteeOperation: DWORD,
-    pub TrusteeForm: DWORD,
-    pub TrusteeType: DWORD,
-    pub ptstrName: LPWSTR,
+    pub p_multiple_trustee: *mut TRUSTEE_W,
+    pub multiple_trustee_operation: DWORD,
+    pub trustee_form: DWORD,
+    pub trustee_type: DWORD,
+    pub ptstr_name: LPWSTR,
 }
 
 pub const TRUSTEE_IS_SID: DWORD = 0;
@@ -144,10 +142,10 @@ pub const TRUSTEE_IS_COMPUTER: DWORD = 8;
 
 #[repr(C)]
 pub struct EXPLICIT_ACCESS_W {
-    pub grfAccessPermissions: DWORD,
-    pub grfAccessMode: DWORD,
-    pub grfInheritance: DWORD,
-    pub Trustee: TRUSTEE_W,
+    pub grf_access_permissions: DWORD,
+    pub grf_access_mode: DWORD,
+    pub grf_inheritance: DWORD,
+    pub trustee: TRUSTEE_W,
 }
 
 pub const NOT_USED_ACCESS: DWORD = 0;
@@ -162,11 +160,11 @@ pub type PACL = *mut ACL;
 
 #[repr(C)]
 pub struct ACL {
-    pub AclRevision: BYTE,
-    pub Sbz1: BYTE,
-    pub AclSize: WORD,
-    pub AceCount: WORD,
-    pub Sbz2: WORD,
+    pub acl_revision: BYTE,
+    pub sbz1: BYTE,
+    pub acl_size: WORD,
+    pub ace_count: WORD,
+    pub sbz2: WORD,
 }
 
 pub type PSID = PVOID;
@@ -178,7 +176,7 @@ pub const EVENTLOG_INFORMATION_TYPE: WORD = 0x0004;
 pub const EVENTLOG_AUDIT_SUCCESS: WORD = 0x0008;
 pub const EVENTLOG_AUDIT_FAILURE: WORD = 0x0010;
 
-pub type EVENT_SOURCE_HANDLE = HANDLE;
+pub type EventSourceHandle = HANDLE;
 
 pub const ERROR_SUCCESS: DWORD = 0;
 pub const ERROR_INVALID_HANDLE: DWORD = 6;

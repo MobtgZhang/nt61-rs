@@ -7,16 +7,16 @@ use super::types::*;
 use core::ptr;
 
 #[inline]
-fn to_lower_wchar(c: wchar_t) -> wchar_t {
-    if c >= 'A' as wchar_t && c <= 'Z' as wchar_t {
-        c + ('a' as wchar_t - 'A' as wchar_t)
+fn to_lower_wchar(c: WcharT) -> WcharT {
+    if c >= 'A' as WcharT && c <= 'Z' as WcharT {
+        c + ('a' as WcharT - 'A' as WcharT)
     } else {
         c
     }
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn wcslen(s: *const wchar_t) -> size_t {
+pub unsafe extern "C" fn wcslen(s: *const WcharT) -> SizeT {
     if s.is_null() {
         return 0;
     }
@@ -29,7 +29,7 @@ pub unsafe extern "C" fn wcslen(s: *const wchar_t) -> size_t {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn wcscpy(dest: *mut wchar_t, src: *const wchar_t) -> *mut wchar_t {
+pub unsafe extern "C" fn wcscpy(dest: *mut WcharT, src: *const WcharT) -> *mut WcharT {
     if dest.is_null() || src.is_null() {
         return dest;
     }
@@ -47,11 +47,7 @@ pub unsafe extern "C" fn wcscpy(dest: *mut wchar_t, src: *const wchar_t) -> *mut
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn wcsncpy(
-    dest: *mut wchar_t,
-    src: *const wchar_t,
-    n: size_t,
-) -> *mut wchar_t {
+pub unsafe extern "C" fn wcsncpy(dest: *mut WcharT, src: *const WcharT, n: SizeT) -> *mut WcharT {
     if dest.is_null() || src.is_null() || n == 0 {
         return dest;
     }
@@ -74,7 +70,7 @@ pub unsafe extern "C" fn wcsncpy(
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn wcscat(dest: *mut wchar_t, src: *const wchar_t) -> *mut wchar_t {
+pub unsafe extern "C" fn wcscat(dest: *mut WcharT, src: *const WcharT) -> *mut WcharT {
     if dest.is_null() || src.is_null() {
         return dest;
     }
@@ -85,11 +81,7 @@ pub unsafe extern "C" fn wcscat(dest: *mut wchar_t, src: *const wchar_t) -> *mut
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn wcsncat(
-    dest: *mut wchar_t,
-    src: *const wchar_t,
-    n: size_t,
-) -> *mut wchar_t {
+pub unsafe extern "C" fn wcsncat(dest: *mut WcharT, src: *const WcharT, n: SizeT) -> *mut WcharT {
     if dest.is_null() || src.is_null() || n == 0 {
         return dest;
     }
@@ -107,7 +99,7 @@ pub unsafe extern "C" fn wcsncat(
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn wcscmp(s1: *const wchar_t, s2: *const wchar_t) -> c_int {
+pub unsafe extern "C" fn wcscmp(s1: *const WcharT, s2: *const WcharT) -> CInt {
     if s1.is_null() || s2.is_null() {
         return 0;
     }
@@ -118,7 +110,7 @@ pub unsafe extern "C" fn wcscmp(s1: *const wchar_t, s2: *const wchar_t) -> c_int
         let c2 = *s2.add(i);
 
         if c1 != c2 {
-            return (c1 as c_int) - (c2 as c_int);
+            return (c1 as CInt) - (c2 as CInt);
         }
 
         if c1 == 0 {
@@ -129,7 +121,7 @@ pub unsafe extern "C" fn wcscmp(s1: *const wchar_t, s2: *const wchar_t) -> c_int
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn wcsncmp(s1: *const wchar_t, s2: *const wchar_t, n: size_t) -> c_int {
+pub unsafe extern "C" fn wcsncmp(s1: *const WcharT, s2: *const WcharT, n: SizeT) -> CInt {
     if s1.is_null() || s2.is_null() || n == 0 {
         return 0;
     }
@@ -139,7 +131,7 @@ pub unsafe extern "C" fn wcsncmp(s1: *const wchar_t, s2: *const wchar_t, n: size
         let c2 = *s2.add(i);
 
         if c1 != c2 {
-            return (c1 as c_int) - (c2 as c_int);
+            return (c1 as CInt) - (c2 as CInt);
         }
 
         if c1 == 0 {
@@ -150,7 +142,7 @@ pub unsafe extern "C" fn wcsncmp(s1: *const wchar_t, s2: *const wchar_t, n: size
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn wcschr(s: *const wchar_t, c: wchar_t) -> *mut wchar_t {
+pub unsafe extern "C" fn wcschr(s: *const WcharT, c: WcharT) -> *mut WcharT {
     if s.is_null() {
         return ptr::null_mut();
     }
@@ -159,7 +151,7 @@ pub unsafe extern "C" fn wcschr(s: *const wchar_t, c: wchar_t) -> *mut wchar_t {
     loop {
         let ch = *s.add(i);
         if ch == c {
-            return s.add(i) as *mut wchar_t;
+            return s.add(i) as *mut WcharT;
         }
         if ch == 0 {
             break;
@@ -170,7 +162,7 @@ pub unsafe extern "C" fn wcschr(s: *const wchar_t, c: wchar_t) -> *mut wchar_t {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn wcsrchr(s: *const wchar_t, c: wchar_t) -> *mut wchar_t {
+pub unsafe extern "C" fn wcsrchr(s: *const WcharT, c: WcharT) -> *mut WcharT {
     if s.is_null() {
         return ptr::null_mut();
     }
@@ -178,21 +170,21 @@ pub unsafe extern "C" fn wcsrchr(s: *const wchar_t, c: wchar_t) -> *mut wchar_t 
     let len = wcslen(s);
     for i in (0..=len).rev() {
         if *s.add(i) == c {
-            return s.add(i) as *mut wchar_t;
+            return s.add(i) as *mut WcharT;
         }
     }
     ptr::null_mut()
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn wcsstr(haystack: *const wchar_t, needle: *const wchar_t) -> *mut wchar_t {
+pub unsafe extern "C" fn wcsstr(haystack: *const WcharT, needle: *const WcharT) -> *mut WcharT {
     if haystack.is_null() || needle.is_null() {
         return ptr::null_mut();
     }
 
     let needle_len = wcslen(needle);
     if needle_len == 0 {
-        return haystack as *mut wchar_t;
+        return haystack as *mut WcharT;
     }
 
     let haystack_len = wcslen(haystack);
@@ -202,20 +194,20 @@ pub unsafe extern "C" fn wcsstr(haystack: *const wchar_t, needle: *const wchar_t
 
     for i in 0..=(haystack_len - needle_len) {
         if wcsncmp(haystack.add(i), needle, needle_len) == 0 {
-            return haystack.add(i) as *mut wchar_t;
+            return haystack.add(i) as *mut WcharT;
         }
     }
     ptr::null_mut()
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn wcsdup(s: *const wchar_t) -> *mut wchar_t {
+pub unsafe extern "C" fn wcsdup(s: *const WcharT) -> *mut WcharT {
     if s.is_null() {
         return ptr::null_mut();
     }
 
     let len = wcslen(s);
-    let new_str = crate::libs::msvcrt::memory::malloc((len + 1) * 2) as *mut wchar_t;
+    let new_str = crate::libs::msvcrt::memory::malloc((len + 1) * 2) as *mut WcharT;
     if !new_str.is_null() {
         wcscpy(new_str, s);
     }
@@ -223,7 +215,7 @@ pub unsafe extern "C" fn wcsdup(s: *const wchar_t) -> *mut wchar_t {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn _wcsicmp(s1: *const wchar_t, s2: *const wchar_t) -> c_int {
+pub unsafe extern "C" fn _wcsicmp(s1: *const WcharT, s2: *const WcharT) -> CInt {
     if s1.is_null() || s2.is_null() {
         return 0;
     }
@@ -234,7 +226,7 @@ pub unsafe extern "C" fn _wcsicmp(s1: *const wchar_t, s2: *const wchar_t) -> c_i
         let c2 = to_lower_wchar(*s2.add(i));
 
         if c1 != c2 {
-            return (c1 as c_int) - (c2 as c_int);
+            return (c1 as CInt) - (c2 as CInt);
         }
 
         if c1 == 0 {
@@ -245,7 +237,7 @@ pub unsafe extern "C" fn _wcsicmp(s1: *const wchar_t, s2: *const wchar_t) -> c_i
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn _wcsnicmp(s1: *const wchar_t, s2: *const wchar_t, n: size_t) -> c_int {
+pub unsafe extern "C" fn _wcsnicmp(s1: *const WcharT, s2: *const WcharT, n: SizeT) -> CInt {
     if s1.is_null() || s2.is_null() || n == 0 {
         return 0;
     }
@@ -255,7 +247,7 @@ pub unsafe extern "C" fn _wcsnicmp(s1: *const wchar_t, s2: *const wchar_t, n: si
         let c2 = to_lower_wchar(*s2.add(i));
 
         if c1 != c2 {
-            return (c1 as c_int) - (c2 as c_int);
+            return (c1 as CInt) - (c2 as CInt);
         }
 
         if c1 == 0 {
@@ -266,12 +258,12 @@ pub unsafe extern "C" fn _wcsnicmp(s1: *const wchar_t, s2: *const wchar_t, n: si
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn mbstowcs(dest: *mut wchar_t, src: *const c_char, n: size_t) -> size_t {
+pub unsafe extern "C" fn mbstowcs(dest: *mut WcharT, src: *const CChar, n: SizeT) -> SizeT {
     if src.is_null() {
         return 0;
     }
 
-    let src_len = strlen(src);
+    let src_len = msvcrt_strlen_c(src);
     let convert_len = if dest.is_null() {
         src_len
     } else {
@@ -284,7 +276,7 @@ pub unsafe extern "C" fn mbstowcs(dest: *mut wchar_t, src: *const c_char, n: siz
 
     if !dest.is_null() {
         for i in 0..convert_len {
-            *dest.add(i) = (*src.add(i) as u8) as wchar_t;
+            *dest.add(i) = (*src.add(i) as u8) as WcharT;
         }
         if convert_len < n {
             *dest.add(convert_len) = 0;
@@ -295,7 +287,7 @@ pub unsafe extern "C" fn mbstowcs(dest: *mut wchar_t, src: *const c_char, n: siz
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn wcstombs(dest: *mut c_char, src: *const wchar_t, n: size_t) -> size_t {
+pub unsafe extern "C" fn wcstombs(dest: *mut CChar, src: *const WcharT, n: SizeT) -> SizeT {
     if src.is_null() {
         return 0;
     }
@@ -315,9 +307,9 @@ pub unsafe extern "C" fn wcstombs(dest: *mut c_char, src: *const wchar_t, n: siz
         for i in 0..convert_len {
             let wc = *src.add(i);
             *dest.add(i) = if wc <= 0xFF {
-                wc as c_char
+                wc as CChar
             } else {
-                b'?' as c_char
+                b'?' as CChar
             };
         }
         if convert_len < n {
@@ -329,7 +321,7 @@ pub unsafe extern "C" fn wcstombs(dest: *mut c_char, src: *const wchar_t, n: siz
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn mbtowc(pwc: *mut wchar_t, s: *const c_char, n: size_t) -> c_int {
+pub unsafe extern "C" fn mbtowc(pwc: *mut WcharT, s: *const CChar, n: SizeT) -> CInt {
     if s.is_null() {
         return 0; // Not state-dependent
     }
@@ -340,7 +332,7 @@ pub unsafe extern "C" fn mbtowc(pwc: *mut wchar_t, s: *const c_char, n: size_t) 
 
     let c = *s as u8;
     if !pwc.is_null() {
-        *pwc = c as wchar_t;
+        *pwc = c as WcharT;
     }
 
     if c == 0 {
@@ -351,26 +343,26 @@ pub unsafe extern "C" fn mbtowc(pwc: *mut wchar_t, s: *const c_char, n: size_t) 
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn wctomb(s: *mut c_char, wc: wchar_t) -> c_int {
+pub unsafe extern "C" fn wctomb(s: *mut CChar, wc: WcharT) -> CInt {
     if s.is_null() {
         return 0; // Not state-dependent
     }
 
     if wc <= 0xFF {
-        *s = wc as c_char;
+        *s = wc as CChar;
         1
     } else {
-        *s = b'?' as c_char;
+        *s = b'?' as CChar;
         1
     }
 }
 
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn wcscpy_s(
-    dest: *mut wchar_t,
-    dest_size: size_t,
-    src: *const wchar_t,
-) -> errno_t {
+    dest: *mut WcharT,
+    dest_size: SizeT,
+    src: *const WcharT,
+) -> ErrnoT {
     if dest.is_null() || src.is_null() || dest_size == 0 {
         return EINVAL;
     }
@@ -387,10 +379,10 @@ pub unsafe extern "C" fn wcscpy_s(
 
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn wcscat_s(
-    dest: *mut wchar_t,
-    dest_size: size_t,
-    src: *const wchar_t,
-) -> errno_t {
+    dest: *mut WcharT,
+    dest_size: SizeT,
+    src: *const WcharT,
+) -> ErrnoT {
     if dest.is_null() || src.is_null() || dest_size == 0 {
         return EINVAL;
     }
@@ -407,13 +399,13 @@ pub unsafe extern "C" fn wcscat_s(
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn fputwc(wc: wchar_t, stream: *mut FILE) -> wchar_t {
+pub unsafe extern "C" fn fputwc(wc: WcharT, stream: *mut FILE) -> WcharT {
     if stream.is_null() {
         return 0xFFFF; // WEOF
     }
 
     let c = (wc & 0xFF) as u8;
-    if crate::libs::msvcrt::stdio::fputc(c as c_int, stream) == EOF {
+    if crate::libs::msvcrt::stdio::fputc(c as CInt, stream) == EOF {
         0xFFFF
     } else {
         wc
@@ -421,7 +413,7 @@ pub unsafe extern "C" fn fputwc(wc: wchar_t, stream: *mut FILE) -> wchar_t {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn fgetwc(stream: *mut FILE) -> wchar_t {
+pub unsafe extern "C" fn fgetwc(stream: *mut FILE) -> WcharT {
     if stream.is_null() {
         return 0xFFFF; // WEOF
     }
@@ -430,12 +422,12 @@ pub unsafe extern "C" fn fgetwc(stream: *mut FILE) -> wchar_t {
     if c == EOF {
         0xFFFF
     } else {
-        (c as u8) as wchar_t
+        (c as u8) as WcharT
     }
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn fputws(ws: *const wchar_t, stream: *mut FILE) -> c_int {
+pub unsafe extern "C" fn fputws(ws: *const WcharT, stream: *mut FILE) -> CInt {
     if ws.is_null() || stream.is_null() {
         return EOF;
     }
@@ -450,7 +442,7 @@ pub unsafe extern "C" fn fputws(ws: *const wchar_t, stream: *mut FILE) -> c_int 
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn fgetws(ws: *mut wchar_t, n: c_int, stream: *mut FILE) -> *mut wchar_t {
+pub unsafe extern "C" fn fgetws(ws: *mut WcharT, n: CInt, stream: *mut FILE) -> *mut WcharT {
     if ws.is_null() || stream.is_null() || n <= 0 {
         return ptr::null_mut();
     }
@@ -468,7 +460,7 @@ pub unsafe extern "C" fn fgetws(ws: *mut wchar_t, n: c_int, stream: *mut FILE) -
         *ws.add(i) = wc;
         i += 1;
 
-        if wc == b'\n' as wchar_t {
+        if wc == b'\n' as WcharT {
             break;
         }
     }

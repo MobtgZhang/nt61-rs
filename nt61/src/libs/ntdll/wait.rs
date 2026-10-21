@@ -15,15 +15,11 @@
 //!   * ReactOS ke/wait.c
 //!   * WRK base/ntos/ex/synch.c
 
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
-
 use super::file::{lookup_handle, HandleKind};
 use super::status::{
-    STATUS_ABANDONED, STATUS_ABANDONED_WAIT_0, STATUS_ALERTED, STATUS_INVALID_HANDLE,
-    STATUS_INVALID_PARAMETER, STATUS_SUCCESS, STATUS_TIMEOUT, STATUS_USER_APC, STATUS_WAIT_0,
-    STATUS_WAIT_1, STATUS_WAIT_2,
+    STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER, STATUS_TIMEOUT, STATUS_WAIT_0,
 };
-use super::types::{HANDLE, NTSTATUS, PVOID};
+use super::types::{HANDLE, NTSTATUS};
 use crate::ke::sync::Spinlock;
 use core::ptr;
 
@@ -139,7 +135,7 @@ fn auto_reset_object(handle: HANDLE) {
     let _ = handle;
 }
 
-fn wait_for_single_object_internal(handle: HANDLE, timeout_ms: u64, alertable: bool) -> NTSTATUS {
+fn wait_for_single_object_internal(handle: HANDLE, timeout_ms: u64, _alertable: bool) -> NTSTATUS {
     let (signaled, auto_reset) = is_object_signaled(handle);
     if signaled {
         if auto_reset {
@@ -175,17 +171,17 @@ fn wait_for_single_object_internal(handle: HANDLE, timeout_ms: u64, alertable: b
 
 fn wait_for_multiple_objects_internal(
     count: u32,
-    handles: *const HANDLE,
+    handles: &[HANDLE],
     wait_type: u32,
     timeout_ms: u64,
-    alertable: bool,
+    _alertable: bool,
 ) -> NTSTATUS {
-    if handles.is_null() || count == 0 || count as usize > MAXIMUM_WAIT_OBJECTS {
+    if handles.len() != count as usize || count == 0 || count as usize > MAXIMUM_WAIT_OBJECTS {
         return STATUS_INVALID_PARAMETER;
     }
 
     let wait_all = wait_type != 0;
-    let handle_slice = unsafe { core::slice::from_raw_parts(handles, count as usize) };
+    let handle_slice = handles;
 
     if wait_all {
         let mut all_signaled = true;
@@ -258,52 +254,41 @@ fn wait_for_multiple_objects_internal(
 
 // Public Wait Functions (used by sync.rs)
 
-pub fn nt_wait_for_single_object(handle: HANDLE, alertable: u8, timeout: *const i64) -> NTSTATUS {
+pub fn nt_wait_for_single_object_kernel(
+    handle: HANDLE,
+    alertable: u8,
+    timeout: Option<i64>,
+) -> NTSTATUS {
     if handle.is_null() {
         return STATUS_INVALID_HANDLE;
     }
 
-    let timeout_ms = if timeout.is_null() {
-        u64::MAX // Infinite
-    } else {
-        let raw = unsafe { *timeout };
-        if raw == 0 {
-            0 // No wait
-        } else if raw < 0 {
-            let ns100 = (-raw) as u64;
-            ns100 / 10_000 // Convert to milliseconds
-        } else {
-            // Absolute timeout - not commonly used
-            u64::MAX
-        }
+    let timeout_ms = match timeout {
+        None => u64::MAX,
+        Some(0) => 0,
+        Some(raw) if raw < 0 => raw.unsigned_abs() / 10_000,
+        Some(_) => u64::MAX,
     };
 
     wait_for_single_object_internal(handle, timeout_ms, alertable != 0)
 }
 
-pub fn nt_wait_for_multiple_objects(
+pub fn nt_wait_for_multiple_objects_kernel(
     count: u32,
-    handles: *const HANDLE,
+    handles: &[HANDLE],
     wait_type: u32,
     alertable: u8,
-    timeout: *const i64,
+    timeout: Option<i64>,
 ) -> NTSTATUS {
-    if handles.is_null() || count == 0 {
+    if handles.len() != count as usize || count == 0 {
         return STATUS_INVALID_PARAMETER;
     }
 
-    let timeout_ms = if timeout.is_null() {
-        u64::MAX
-    } else {
-        let raw = unsafe { *timeout };
-        if raw == 0 {
-            0
-        } else if raw < 0 {
-            let ns100 = (-raw) as u64;
-            ns100 / 10_000
-        } else {
-            u64::MAX
-        }
+    let timeout_ms = match timeout {
+        None => u64::MAX,
+        Some(0) => 0,
+        Some(raw) if raw < 0 => raw.unsigned_abs() / 10_000,
+        Some(_) => u64::MAX,
     };
 
     wait_for_multiple_objects_internal(count, handles, wait_type, timeout_ms, alertable != 0)

@@ -1,7 +1,4 @@
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use spin::{Lazy, Mutex};
-
-use core::sync::atomic::{AtomicI32, AtomicI64, AtomicU8};
 
 use super::types::*;
 use core::ptr;
@@ -12,7 +9,7 @@ use alloc::string::String;
 
 struct ProgramNameStorage {
     name: Option<Box<String>>,
-    ptr: *mut c_char,
+    ptr: *mut CChar,
 }
 
 unsafe impl Send for ProgramNameStorage {}
@@ -34,7 +31,7 @@ static CMDLINE: Lazy<Mutex<ProgramNameStorage>> = Lazy::new(|| {
 
 const ATEXIT_MAX: usize = 128;
 
-struct ExitHandlers {
+pub struct ExitHandlers {
     handlers: [Option<extern "C" fn()>; ATEXIT_MAX],
     count: usize,
 }
@@ -46,14 +43,14 @@ static ATEXIT_HANDLERS: Lazy<Mutex<ExitHandlers>> = Lazy::new(|| {
     })
 });
 
-static AT_QUICK_EXIT_HANDLERS: Lazy<Mutex<ExitHandlers>> = Lazy::new(|| {
+pub static AT_QUICK_EXIT_HANDLERS: Lazy<Mutex<ExitHandlers>> = Lazy::new(|| {
     Mutex::new(ExitHandlers {
         handlers: [None; ATEXIT_MAX],
         count: 0,
     })
 });
 
-type SignalHandler = extern "C" fn(c_int);
+type SignalHandler = extern "C" fn(CInt);
 
 struct SignalHandlers {
     handlers: [SignalHandler; 32],
@@ -62,7 +59,7 @@ struct SignalHandlers {
 unsafe impl Send for SignalHandlers {}
 unsafe impl Sync for SignalHandlers {}
 
-extern "C" fn default_signal_handler(_sig: c_int) {}
+extern "C" fn default_signal_handler(_sig: CInt) {}
 
 static SIGNAL_HANDLERS: Lazy<Mutex<SignalHandlers>> = Lazy::new(|| {
     Mutex::new(SignalHandlers {
@@ -71,7 +68,7 @@ static SIGNAL_HANDLERS: Lazy<Mutex<SignalHandlers>> = Lazy::new(|| {
 });
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn atexit(func: extern "C" fn()) -> c_int {
+pub unsafe extern "C" fn atexit(func: extern "C" fn()) -> CInt {
     let mut handlers = ATEXIT_HANDLERS.lock();
     if handlers.count >= ATEXIT_MAX {
         return -1;
@@ -83,7 +80,7 @@ pub unsafe extern "C" fn atexit(func: extern "C" fn()) -> c_int {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn signal(sig: c_int, handler: SignalHandler) -> SignalHandler {
+pub unsafe extern "C" fn signal(sig: CInt, handler: SignalHandler) -> SignalHandler {
     if sig < 0 || sig >= 32 {
         return default_signal_handler;
     }
@@ -94,24 +91,24 @@ pub unsafe extern "C" fn signal(sig: c_int, handler: SignalHandler) -> SignalHan
     old_handler
 }
 
-pub unsafe fn get_program_name_safe() -> *mut c_char {
+pub unsafe fn get_program_name_safe() -> *mut CChar {
     let mut storage = PROGRAM_NAME.lock();
 
     if storage.ptr.is_null() {
         let name_string = Box::new(super::ps_stubs::get_program_name());
-        storage.ptr = name_string.as_ptr() as *mut c_char;
+        storage.ptr = name_string.as_ptr() as *mut CChar;
         storage.name = Some(name_string);
     }
 
     storage.ptr
 }
 
-pub unsafe fn get_cmdline_safe() -> *mut c_char {
+pub unsafe fn get_cmdline_safe() -> *mut CChar {
     let mut storage = CMDLINE.lock();
 
     if storage.ptr.is_null() {
         let cmdline_string = Box::new(super::ps_stubs::get_command_line());
-        storage.ptr = cmdline_string.as_ptr() as *mut c_char;
+        storage.ptr = cmdline_string.as_ptr() as *mut CChar;
         storage.name = Some(cmdline_string);
     }
 

@@ -3,10 +3,9 @@
 //! Complete implementation of printf-style format string parsing
 
 use super::types::*;
-use core::ptr;
 
 #[derive(Default)]
-struct FormatFlags {
+pub struct FormatFlags {
     left_justify: bool, // '-'
     force_sign: bool,   // '+'
     space_sign: bool,   // ' '
@@ -14,16 +13,16 @@ struct FormatFlags {
     zero_pad: bool,     // '0'
 }
 
-struct FormatSpec {
+pub struct FormatSpec {
     flags: FormatFlags,
     width: Option<usize>,
     precision: Option<usize>,
-    length: LengthModifier,
+    pub length: LengthModifier,
     specifier: char,
 }
 
 #[derive(Copy, Clone, PartialEq)]
-enum LengthModifier {
+pub enum LengthModifier {
     None,
     Char,       // hh
     Short,      // h
@@ -41,15 +40,15 @@ impl Default for LengthModifier {
     }
 }
 
-unsafe fn parse_format_spec(format: *const c_char, pos: &mut usize) -> Option<FormatSpec> {
-    let start = *pos;
+pub unsafe fn parse_format_spec(format: *const CChar, pos: &mut usize) -> Option<FormatSpec> {
+    let _start = *pos;
 
-    if *format.add(*pos) != b'%' as c_char {
+    if *format.add(*pos) != b'%' as CChar {
         return None;
     }
     *pos += 1;
 
-    if *format.add(*pos) == b'%' as c_char {
+    if *format.add(*pos) == b'%' as CChar {
         *pos += 1;
         return None; // Special case: literal %
     }
@@ -74,7 +73,7 @@ unsafe fn parse_format_spec(format: *const c_char, pos: &mut usize) -> Option<Fo
         *pos += 1;
     }
 
-    if *format.add(*pos) == b'*' as c_char {
+    if *format.add(*pos) == b'*' as CChar {
         spec.width = Some(usize::MAX); // Marker for dynamic width
         *pos += 1;
     } else if (*format.add(*pos) as u8).is_ascii_digit() {
@@ -86,9 +85,9 @@ unsafe fn parse_format_spec(format: *const c_char, pos: &mut usize) -> Option<Fo
         spec.width = Some(width);
     }
 
-    if *format.add(*pos) == b'.' as c_char {
+    if *format.add(*pos) == b'.' as CChar {
         *pos += 1;
-        if *format.add(*pos) == b'*' as c_char {
+        if *format.add(*pos) == b'*' as CChar {
             spec.precision = Some(usize::MAX); // Marker for dynamic precision
             *pos += 1;
         } else {
@@ -104,7 +103,7 @@ unsafe fn parse_format_spec(format: *const c_char, pos: &mut usize) -> Option<Fo
     spec.length = match *format.add(*pos) as u8 {
         b'h' => {
             *pos += 1;
-            if *format.add(*pos) == b'h' as c_char {
+            if *format.add(*pos) == b'h' as CChar {
                 *pos += 1;
                 LengthModifier::Char
             } else {
@@ -113,7 +112,7 @@ unsafe fn parse_format_spec(format: *const c_char, pos: &mut usize) -> Option<Fo
         }
         b'l' => {
             *pos += 1;
-            if *format.add(*pos) == b'l' as c_char {
+            if *format.add(*pos) == b'l' as CChar {
                 *pos += 1;
                 LengthModifier::LongLong
             } else {
@@ -149,7 +148,7 @@ unsafe fn parse_format_spec(format: *const c_char, pos: &mut usize) -> Option<Fo
     }
 }
 
-fn format_int_with_spec(
+pub fn format_int_with_spec(
     value: i64,
     base: u32,
     uppercase: bool,
@@ -266,7 +265,7 @@ fn format_int_with_spec(
     pos
 }
 
-fn format_uint_with_spec(
+pub fn format_uint_with_spec(
     value: u64,
     base: u32,
     uppercase: bool,
@@ -364,7 +363,7 @@ fn format_uint_with_spec(
     pos
 }
 
-unsafe fn format_string_with_spec(s: *const c_char, spec: &FormatSpec, buf: &mut [u8]) -> usize {
+pub unsafe fn format_string_with_spec(s: *const CChar, spec: &FormatSpec, buf: &mut [u8]) -> usize {
     if s.is_null() {
         let null_str = b"(null)";
         let len = null_str.len();
@@ -408,7 +407,7 @@ unsafe fn format_string_with_spec(s: *const c_char, spec: &FormatSpec, buf: &mut
     pos
 }
 
-fn format_float_with_spec(
+pub fn format_float_with_spec(
     value: f64,
     spec: &FormatSpec,
     buf: &mut [u8],

@@ -29,11 +29,11 @@ pub type PVOID = *mut c_void;
 /// Const pointer to void.
 pub type PCVOID = *const c_void;
 
-/// Unsigned size_t (`SIZE_T`).
-pub type SIZE_T = usize;
+/// Unsigned SizeT (`SizeT`).
+pub type SizeT = usize;
 
-/// Signed size_t (`SSIZE_T`).
-pub type SSIZE_T = isize;
+/// Signed SizeT (`SsizeT`).
+pub type SsizeT = isize;
 
 /// Unsigned 8-bit byte.
 pub type BYTE = u8;
@@ -77,48 +77,44 @@ pub type PSTR = *mut CCHAR;
 /// Const ANSI string pointer (`PCSTR`).
 pub type PCSTR = *const CCHAR;
 
-/// `UNICODE_STRING` — counted UTF-16 string. The `Buffer` is
-/// either `MaximumLength / 2` UTF-16 code units long, or — for
-/// an empty string — `Buffer` may be `null_mut()` and `Length`
+/// `UnicodeString` — counted UTF-16 string. The `buffer` is
+/// either `maximum_length / 2` UTF-16 code units long, or — for
+/// an empty string — `buffer` may be `null_mut()` and `length`
 /// zero.
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct UnicodeString {
-    pub Length: u16,
-    pub MaximumLength: u16,
-    pub Buffer: PWSTR,
+    pub length: u16,
+    pub maximum_length: u16,
+    pub buffer: PWSTR,
 }
 
 /// Alias for `UnicodeString` matching the original NT type casing.
-pub type UNICODE_STRING = UnicodeString;
-
-/// `LARGE_INTEGER` is defined later in this file (single `QuadPart`
+/// `LargeInteger` is defined later in this file (single `quad_part`
 /// representation) — see the second definition below. We provide an
 /// alias here so callers can use either spelling.
-pub type LARGE_INTEGER = LargeInteger;
-
 impl UnicodeString {
     pub const fn new() -> Self {
         Self {
-            Length: 0,
-            MaximumLength: 0,
-            Buffer: core::ptr::null_mut(),
+            length: 0,
+            maximum_length: 0,
+            buffer: core::ptr::null_mut(),
         }
     }
 
     pub fn from_slice(s: &[u16]) -> Self {
         Self {
-            Length: (s.len() * 2) as u16,
-            MaximumLength: ((s.len() + 1) * 2) as u16,
-            Buffer: s.as_ptr() as *mut WCHAR,
+            length: (s.len() * 2) as u16,
+            maximum_length: ((s.len() + 1) * 2) as u16,
+            buffer: s.as_ptr() as *mut WCHAR,
         }
     }
 
     pub fn from_str(s: &str) -> Self {
-        // `Buffer` must outlive this call. Pointing it at a stack-local array
+        // `buffer` must outlive this call. Pointing it at a stack-local array
         // left the caller holding a dangling pointer once the frame unwound, so
         // the buffer is allocated through the RTL string routine; the documented
-        // way to release it is `RtlFreeUnicodeString`.
+        // way to release it is `rtl_free_unicode_string`.
         let units = s
             .chars()
             .map(|c| if (c as u32) > 0xFFFF { 2 } else { 1 })
@@ -148,29 +144,29 @@ impl UnicodeString {
         }
         unsafe { buffer.add(i).write(0) };
         Self {
-            Length: (i * 2) as u16,
-            MaximumLength: ((i + 1) * 2) as u16,
-            Buffer: buffer,
+            length: (i * 2) as u16,
+            maximum_length: ((i + 1) * 2) as u16,
+            buffer: buffer,
         }
     }
 
-    /// Length in characters (not bytes).
+    /// length in characters (not bytes).
     pub fn char_len(&self) -> usize {
-        (self.Length / 2) as usize
+        (self.length / 2) as usize
     }
 
     pub fn as_slice(&self) -> &[u16] {
-        if self.Buffer.is_null() || self.Length == 0 {
+        if self.buffer.is_null() || self.length == 0 {
             &[]
         } else {
-            unsafe { core::slice::from_raw_parts(self.Buffer, self.char_len()) }
+            unsafe { core::slice::from_raw_parts(self.buffer, self.char_len()) }
         }
     }
 }
 
 impl core::fmt::Debug for UnicodeString {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if self.Buffer.is_null() {
+        if self.buffer.is_null() {
             write!(f, "<null>")
         } else {
             let s = self.as_slice();
@@ -193,24 +189,24 @@ impl core::fmt::Debug for UnicodeString {
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct AnsiString {
-    pub Length: u16,
-    pub MaximumLength: u16,
-    pub Buffer: PSTR,
+    pub length: u16,
+    pub maximum_length: u16,
+    pub buffer: PSTR,
 }
 
 impl AnsiString {
     pub const fn new() -> Self {
         Self {
-            Length: 0,
-            MaximumLength: 0,
-            Buffer: core::ptr::null_mut(),
+            length: 0,
+            maximum_length: 0,
+            buffer: core::ptr::null_mut(),
         }
     }
 }
 
-/// `LARGE_INTEGER` — 64-bit signed integer, union'd with a
-/// `(LowPart, HighPart)` pair on 32-bit and a single `QuadPart`
-/// on 64-bit. We always use `QuadPart`.
+/// `LargeInteger` — 64-bit signed integer, union'd with a
+/// `(low_part, high_part)` pair on 32-bit and a single `quad_part`
+/// on 64-bit. We always use `quad_part`.
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct LargeInteger {
@@ -223,7 +219,7 @@ impl LargeInteger {
     }
 }
 
-/// `ULARGE_INTEGER` — unsigned counterpart of `LARGE_INTEGER`.
+/// `ULARGE_INTEGER` — unsigned counterpart of `LargeInteger`.
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct ULargeInteger {
@@ -260,7 +256,7 @@ impl IoStatusBlock {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ObjectAttributes {
-    pub Length: u32,
+    pub length: u32,
     pub root_directory: HANDLE,
     pub object_name: *mut UnicodeString,
     pub attributes: u32,
@@ -271,7 +267,7 @@ pub struct ObjectAttributes {
 impl ObjectAttributes {
     pub const fn new() -> Self {
         Self {
-            Length: core::mem::size_of::<Self>() as u32,
+            length: core::mem::size_of::<Self>() as u32,
             root_directory: core::ptr::null_mut(),
             object_name: core::ptr::null_mut(),
             attributes: 0,
@@ -291,12 +287,12 @@ impl ObjectAttributes {
 /// `CLIENT_ID` — (ProcessId, ThreadId) pair used by NtOpen*.
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
-pub struct ClientId {
+pub struct client_id {
     pub unique_process: HANDLE,
     pub unique_thread: HANDLE,
 }
 
-impl ClientId {
+impl client_id {
     pub const fn new() -> Self {
         Self {
             unique_process: core::ptr::null_mut(),
@@ -332,8 +328,8 @@ impl ListEntry {
     }
 }
 
-/// File information class for `NtQueryInformationFile` /
-/// `NtSetInformationFile`. Values are the NT 6.1 SDK.
+/// File information class for `NT_QUERY_INFORMATION_FILE` /
+/// `NT_SET_INFORMATION_FILE`. Values are the NT 6.1 SDK.
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileInformationClass {
@@ -428,7 +424,7 @@ impl FileInformationClass {
 }
 
 // ---------------------------------------------------------------------------
-// FILE_*_DIRECTORY_INFORMATION structures used by NtQueryDirectoryFile.
+// FILE_*_DIRECTORY_INFORMATION structures used by NT_QUERY_DIRECTORY_FILE.
 //
 // All three structures start with the same 0x40-byte header
 // (next_entry_offset, file_index, four i64 timestamps, end_of_file,
@@ -664,7 +660,7 @@ pub enum EventType {
     SynchronizationEvent = 1,
 }
 
-/// `TIMER_TYPE` — used by `NtCreateTimer`.
+/// `TIMER_TYPE` — used by `NT_CREATE_TIMER`.
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimerType {
@@ -672,7 +668,7 @@ pub enum TimerType {
     SynchronizationTimer = 1,
 }
 
-/// `WAIT_TYPE` — what `NtWaitForMultipleObjects` does.
+/// `WAIT_TYPE` — what `NT_WAIT_FOR_MULTIPLE_OBJECTS` does.
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WaitType {
@@ -701,7 +697,7 @@ pub mod file_disposition {
     pub const FILE_OVERWRITE_IF: u32 = 0x0000_0005;
 }
 
-/// `CreateFileW` -> `NtCreateFile` desired access mapping helpers.
+/// `create_file_w` -> `NT_CREATE_FILE` desired access mapping helpers.
 pub mod file_access {
     pub const FILE_READ_DATA: u32 = 0x0001;
     pub const FILE_WRITE_DATA: u32 = 0x0002;
@@ -844,25 +840,25 @@ pub struct PsAttribute {
     pub return_length: *mut usize,
 }
 
-/// `PS_ATTRIBUTE_LIST` - Variable-length attribute list for NtCreateUserProcess.
+/// `PS_ATTRIBUTE_LIST` - Variable-length attribute list for NT_CREATE_USER_PROCESS.
 /// This is a header only; actual attributes follow immediately after.
 #[repr(C)]
 pub struct PsAttributeList {
     pub total_length: usize,
 }
 
-/// `THREAD_BASIC_INFORMATION` - Thread information returned by NtQueryInformationThread.
+/// `THREAD_BASIC_INFORMATION` - Thread information returned by NT_QUERY_INFORMATION_THREAD.
 #[repr(C)]
 pub struct ThreadBasicInformation {
     pub exit_status: NTSTATUS,
     pub teb_base_address: PVOID,
-    pub client_id: ClientId,
+    pub client_id: client_id,
     pub affinity_mask: usize,
     pub priority: i32,
     pub base_priority: i32,
 }
 
-/// `PROCESS_BASIC_INFORMATION` - Process information returned by NtQueryInformationProcess.
+/// `PROCESS_BASIC_INFORMATION` - Process information returned by NT_QUERY_INFORMATION_PROCESS.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ProcessBasicInformation {

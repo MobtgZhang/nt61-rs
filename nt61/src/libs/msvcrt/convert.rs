@@ -6,7 +6,7 @@ use super::types::*;
 use core::ptr;
 
 #[cfg_attr(not(test), no_mangle)]
-pub extern "C" fn isalpha(c: c_int) -> c_int {
+pub extern "C" fn isalpha(c: CInt) -> CInt {
     let ch = c as u8;
     if (ch >= b'a' && ch <= b'z') || (ch >= b'A' && ch <= b'Z') {
         1
@@ -16,7 +16,7 @@ pub extern "C" fn isalpha(c: c_int) -> c_int {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub extern "C" fn isdigit(c: c_int) -> c_int {
+pub extern "C" fn isdigit(c: CInt) -> CInt {
     let ch = c as u8;
     if ch >= b'0' && ch <= b'9' {
         1
@@ -26,7 +26,7 @@ pub extern "C" fn isdigit(c: c_int) -> c_int {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub extern "C" fn isalnum(c: c_int) -> c_int {
+pub extern "C" fn isalnum(c: CInt) -> CInt {
     if isalpha(c) != 0 || isdigit(c) != 0 {
         1
     } else {
@@ -35,7 +35,7 @@ pub extern "C" fn isalnum(c: c_int) -> c_int {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub extern "C" fn isspace(c: c_int) -> c_int {
+pub extern "C" fn isspace(c: CInt) -> CInt {
     let ch = c as u8;
     if ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r' || ch == b'\x0b' || ch == b'\x0c' {
         1
@@ -45,7 +45,7 @@ pub extern "C" fn isspace(c: c_int) -> c_int {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub extern "C" fn isupper(c: c_int) -> c_int {
+pub extern "C" fn isupper(c: CInt) -> CInt {
     let ch = c as u8;
     if ch >= b'A' && ch <= b'Z' {
         1
@@ -55,7 +55,7 @@ pub extern "C" fn isupper(c: c_int) -> c_int {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub extern "C" fn islower(c: c_int) -> c_int {
+pub extern "C" fn islower(c: CInt) -> CInt {
     let ch = c as u8;
     if ch >= b'a' && ch <= b'z' {
         1
@@ -65,7 +65,7 @@ pub extern "C" fn islower(c: c_int) -> c_int {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub extern "C" fn isxdigit(c: c_int) -> c_int {
+pub extern "C" fn isxdigit(c: CInt) -> CInt {
     let ch = c as u8;
     if (ch >= b'0' && ch <= b'9') || (ch >= b'a' && ch <= b'f') || (ch >= b'A' && ch <= b'F') {
         1
@@ -75,7 +75,7 @@ pub extern "C" fn isxdigit(c: c_int) -> c_int {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub extern "C" fn isprint(c: c_int) -> c_int {
+pub extern "C" fn isprint(c: CInt) -> CInt {
     let ch = c as u8;
     if ch >= 32 && ch <= 126 {
         1
@@ -85,7 +85,7 @@ pub extern "C" fn isprint(c: c_int) -> c_int {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub extern "C" fn isgraph(c: c_int) -> c_int {
+pub extern "C" fn isgraph(c: CInt) -> CInt {
     let ch = c as u8;
     if ch >= 33 && ch <= 126 {
         1
@@ -95,7 +95,7 @@ pub extern "C" fn isgraph(c: c_int) -> c_int {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub extern "C" fn iscntrl(c: c_int) -> c_int {
+pub extern "C" fn iscntrl(c: CInt) -> CInt {
     let ch = c as u8;
     if ch < 32 || ch == 127 {
         1
@@ -105,7 +105,7 @@ pub extern "C" fn iscntrl(c: c_int) -> c_int {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub extern "C" fn ispunct(c: c_int) -> c_int {
+pub extern "C" fn ispunct(c: CInt) -> CInt {
     if isgraph(c) != 0 && isalnum(c) == 0 {
         1
     } else {
@@ -114,58 +114,58 @@ pub extern "C" fn ispunct(c: c_int) -> c_int {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub extern "C" fn tolower(c: c_int) -> c_int {
+pub extern "C" fn tolower(c: CInt) -> CInt {
     let ch = c as u8;
     if ch >= b'A' && ch <= b'Z' {
-        (ch - b'A' + b'a') as c_int
+        (ch - b'A' + b'a') as CInt
     } else {
         c
     }
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub extern "C" fn toupper(c: c_int) -> c_int {
+pub extern "C" fn toupper(c: CInt) -> CInt {
     let ch = c as u8;
     if ch >= b'a' && ch <= b'z' {
-        (ch - b'a' + b'A') as c_int
+        (ch - b'a' + b'A') as CInt
     } else {
         c
     }
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub extern "C" fn _tolower(c: c_int) -> c_int {
+pub extern "C" fn _tolower(c: CInt) -> CInt {
     tolower(c)
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub extern "C" fn _toupper(c: c_int) -> c_int {
+pub extern "C" fn _toupper(c: CInt) -> CInt {
     toupper(c)
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn atoi(s: *const c_char) -> c_int {
+pub unsafe extern "C" fn atoi(s: *const CChar) -> CInt {
     if s.is_null() {
         return 0;
     }
 
-    let mut result: c_int = 0;
-    let mut sign: c_int = 1;
+    let mut result: CInt = 0;
+    let mut sign: CInt = 1;
     let mut i = 0;
 
-    while isspace(*s.add(i) as c_int) != 0 {
+    while isspace(*s.add(i) as CInt) != 0 {
         i += 1;
     }
 
-    if *s.add(i) == b'-' as c_char {
+    if *s.add(i) == b'-' as CChar {
         sign = -1;
         i += 1;
-    } else if *s.add(i) == b'+' as c_char {
+    } else if *s.add(i) == b'+' as CChar {
         i += 1;
     }
 
-    while isdigit(*s.add(i) as c_int) != 0 {
-        let digit = (*s.add(i) as u8 - b'0') as c_int;
+    while isdigit(*s.add(i) as CInt) != 0 {
+        let digit = (*s.add(i) as u8 - b'0') as CInt;
         result = result.wrapping_mul(10).wrapping_add(digit);
         i += 1;
     }
@@ -174,28 +174,28 @@ pub unsafe extern "C" fn atoi(s: *const c_char) -> c_int {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn atol(s: *const c_char) -> c_long {
+pub unsafe extern "C" fn atol(s: *const CChar) -> CLong {
     if s.is_null() {
         return 0;
     }
 
-    let mut result: c_long = 0;
-    let mut sign: c_long = 1;
+    let mut result: CLong = 0;
+    let mut sign: CLong = 1;
     let mut i = 0;
 
-    while isspace(*s.add(i) as c_int) != 0 {
+    while isspace(*s.add(i) as CInt) != 0 {
         i += 1;
     }
 
-    if *s.add(i) == b'-' as c_char {
+    if *s.add(i) == b'-' as CChar {
         sign = -1;
         i += 1;
-    } else if *s.add(i) == b'+' as c_char {
+    } else if *s.add(i) == b'+' as CChar {
         i += 1;
     }
 
-    while isdigit(*s.add(i) as c_int) != 0 {
-        let digit = (*s.add(i) as u8 - b'0') as c_long;
+    while isdigit(*s.add(i) as CInt) != 0 {
+        let digit = (*s.add(i) as u8 - b'0') as CLong;
         result = result.wrapping_mul(10).wrapping_add(digit);
         i += 1;
     }
@@ -204,28 +204,28 @@ pub unsafe extern "C" fn atol(s: *const c_char) -> c_long {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn atoll(s: *const c_char) -> c_longlong {
+pub unsafe extern "C" fn atoll(s: *const CChar) -> CLonglong {
     if s.is_null() {
         return 0;
     }
 
-    let mut result: c_longlong = 0;
-    let mut sign: c_longlong = 1;
+    let mut result: CLonglong = 0;
+    let mut sign: CLonglong = 1;
     let mut i = 0;
 
-    while isspace(*s.add(i) as c_int) != 0 {
+    while isspace(*s.add(i) as CInt) != 0 {
         i += 1;
     }
 
-    if *s.add(i) == b'-' as c_char {
+    if *s.add(i) == b'-' as CChar {
         sign = -1;
         i += 1;
-    } else if *s.add(i) == b'+' as c_char {
+    } else if *s.add(i) == b'+' as CChar {
         i += 1;
     }
 
-    while isdigit(*s.add(i) as c_int) != 0 {
-        let digit = (*s.add(i) as u8 - b'0') as c_longlong;
+    while isdigit(*s.add(i) as CInt) != 0 {
+        let digit = (*s.add(i) as u8 - b'0') as CLonglong;
         result = result.wrapping_mul(10).wrapping_add(digit);
         i += 1;
     }
@@ -234,34 +234,34 @@ pub unsafe extern "C" fn atoll(s: *const c_char) -> c_longlong {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn atof(s: *const c_char) -> c_double {
+pub unsafe extern "C" fn atof(s: *const CChar) -> CDouble {
     strtod(s, ptr::null_mut())
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn strtol(s: *const c_char, endptr: *mut *mut c_char, base: c_int) -> c_long {
+pub unsafe extern "C" fn strtol(s: *const CChar, endptr: *mut *mut CChar, base: CInt) -> CLong {
     if s.is_null() || base < 0 || base == 1 || base > 36 {
         return 0;
     }
 
-    let mut result: c_long = 0;
-    let mut sign: c_long = 1;
+    let mut result: CLong = 0;
+    let mut sign: CLong = 1;
     let mut i = 0;
 
-    while isspace(*s.add(i) as c_int) != 0 {
+    while isspace(*s.add(i) as CInt) != 0 {
         i += 1;
     }
 
-    if *s.add(i) == b'-' as c_char {
+    if *s.add(i) == b'-' as CChar {
         sign = -1;
         i += 1;
-    } else if *s.add(i) == b'+' as c_char {
+    } else if *s.add(i) == b'+' as CChar {
         i += 1;
     }
 
     let actual_base = if base == 0 {
-        if *s.add(i) == b'0' as c_char {
-            if *s.add(i + 1) == b'x' as c_char || *s.add(i + 1) == b'X' as c_char {
+        if *s.add(i) == b'0' as CChar {
+            if *s.add(i + 1) == b'x' as CChar || *s.add(i + 1) == b'X' as CChar {
                 i += 2;
                 16
             } else {
@@ -271,8 +271,8 @@ pub unsafe extern "C" fn strtol(s: *const c_char, endptr: *mut *mut c_char, base
             10
         }
     } else {
-        if base == 16 && *s.add(i) == b'0' as c_char {
-            if *s.add(i + 1) == b'x' as c_char || *s.add(i + 1) == b'X' as c_char {
+        if base == 16 && *s.add(i) == b'0' as CChar {
+            if *s.add(i + 1) == b'x' as CChar || *s.add(i + 1) == b'X' as CChar {
                 i += 2;
             }
         }
@@ -284,11 +284,11 @@ pub unsafe extern "C" fn strtol(s: *const c_char, endptr: *mut *mut c_char, base
     loop {
         let ch = *s.add(i) as u8;
         let digit = if ch >= b'0' && ch <= b'9' {
-            (ch - b'0') as c_int
+            (ch - b'0') as CInt
         } else if ch >= b'a' && ch <= b'z' {
-            (ch - b'a' + 10) as c_int
+            (ch - b'a' + 10) as CInt
         } else if ch >= b'A' && ch <= b'Z' {
-            (ch - b'A' + 10) as c_int
+            (ch - b'A' + 10) as CInt
         } else {
             break;
         };
@@ -298,16 +298,16 @@ pub unsafe extern "C" fn strtol(s: *const c_char, endptr: *mut *mut c_char, base
         }
 
         result = result
-            .wrapping_mul(actual_base as c_long)
-            .wrapping_add(digit as c_long);
+            .wrapping_mul(actual_base as CLong)
+            .wrapping_add(digit as CLong);
         i += 1;
     }
 
     if !endptr.is_null() {
         if i == start_i {
-            *endptr = s as *mut c_char;
+            *endptr = s as *mut CChar;
         } else {
-            *endptr = s.add(i) as *mut c_char;
+            *endptr = s.add(i) as *mut CChar;
         }
     }
 
@@ -315,42 +315,38 @@ pub unsafe extern "C" fn strtol(s: *const c_char, endptr: *mut *mut c_char, base
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn strtoul(
-    s: *const c_char,
-    endptr: *mut *mut c_char,
-    base: c_int,
-) -> c_ulong {
-    strtol(s, endptr, base) as c_ulong
+pub unsafe extern "C" fn strtoul(s: *const CChar, endptr: *mut *mut CChar, base: CInt) -> CUlong {
+    strtol(s, endptr, base) as CUlong
 }
 
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strtoll(
-    s: *const c_char,
-    endptr: *mut *mut c_char,
-    base: c_int,
-) -> c_longlong {
+    s: *const CChar,
+    endptr: *mut *mut CChar,
+    base: CInt,
+) -> CLonglong {
     if s.is_null() || base < 0 || base == 1 || base > 36 {
         return 0;
     }
 
-    let mut result: c_longlong = 0;
-    let mut sign: c_longlong = 1;
+    let mut result: CLonglong = 0;
+    let mut sign: CLonglong = 1;
     let mut i = 0;
 
-    while isspace(*s.add(i) as c_int) != 0 {
+    while isspace(*s.add(i) as CInt) != 0 {
         i += 1;
     }
 
-    if *s.add(i) == b'-' as c_char {
+    if *s.add(i) == b'-' as CChar {
         sign = -1;
         i += 1;
-    } else if *s.add(i) == b'+' as c_char {
+    } else if *s.add(i) == b'+' as CChar {
         i += 1;
     }
 
     let actual_base = if base == 0 {
-        if *s.add(i) == b'0' as c_char {
-            if *s.add(i + 1) == b'x' as c_char || *s.add(i + 1) == b'X' as c_char {
+        if *s.add(i) == b'0' as CChar {
+            if *s.add(i + 1) == b'x' as CChar || *s.add(i + 1) == b'X' as CChar {
                 i += 2;
                 16
             } else {
@@ -368,11 +364,11 @@ pub unsafe extern "C" fn strtoll(
     loop {
         let ch = *s.add(i) as u8;
         let digit = if ch >= b'0' && ch <= b'9' {
-            (ch - b'0') as c_int
+            (ch - b'0') as CInt
         } else if ch >= b'a' && ch <= b'z' {
-            (ch - b'a' + 10) as c_int
+            (ch - b'a' + 10) as CInt
         } else if ch >= b'A' && ch <= b'Z' {
-            (ch - b'A' + 10) as c_int
+            (ch - b'A' + 10) as CInt
         } else {
             break;
         };
@@ -382,16 +378,16 @@ pub unsafe extern "C" fn strtoll(
         }
 
         result = result
-            .wrapping_mul(actual_base as c_longlong)
-            .wrapping_add(digit as c_longlong);
+            .wrapping_mul(actual_base as CLonglong)
+            .wrapping_add(digit as CLonglong);
         i += 1;
     }
 
     if !endptr.is_null() {
         if i == start_i {
-            *endptr = s as *mut c_char;
+            *endptr = s as *mut CChar;
         } else {
-            *endptr = s.add(i) as *mut c_char;
+            *endptr = s.add(i) as *mut CChar;
         }
     }
 
@@ -400,49 +396,49 @@ pub unsafe extern "C" fn strtoll(
 
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strtoull(
-    s: *const c_char,
-    endptr: *mut *mut c_char,
-    base: c_int,
-) -> c_ulonglong {
-    strtoll(s, endptr, base) as c_ulonglong
+    s: *const CChar,
+    endptr: *mut *mut CChar,
+    base: CInt,
+) -> CUlonglong {
+    strtoll(s, endptr, base) as CUlonglong
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn strtod(s: *const c_char, endptr: *mut *mut c_char) -> c_double {
+pub unsafe extern "C" fn strtod(s: *const CChar, endptr: *mut *mut CChar) -> CDouble {
     if s.is_null() {
         return 0.0;
     }
 
-    let mut result: c_double = 0.0;
-    let mut sign: c_double = 1.0;
+    let mut result: CDouble = 0.0;
+    let mut sign: CDouble = 1.0;
     let mut i = 0;
 
-    while isspace(*s.add(i) as c_int) != 0 {
+    while isspace(*s.add(i) as CInt) != 0 {
         i += 1;
     }
 
-    if *s.add(i) == b'-' as c_char {
+    if *s.add(i) == b'-' as CChar {
         sign = -1.0;
         i += 1;
-    } else if *s.add(i) == b'+' as c_char {
+    } else if *s.add(i) == b'+' as CChar {
         i += 1;
     }
 
     let start_i = i;
 
-    while isdigit(*s.add(i) as c_int) != 0 {
-        let digit = (*s.add(i) as u8 - b'0') as c_double;
+    while isdigit(*s.add(i) as CInt) != 0 {
+        let digit = (*s.add(i) as u8 - b'0') as CDouble;
         result = result * 10.0 + digit;
         i += 1;
     }
 
-    if *s.add(i) == b'.' as c_char {
+    if *s.add(i) == b'.' as CChar {
         i += 1;
         let mut fraction = 0.0;
         let mut divisor = 1.0;
 
-        while isdigit(*s.add(i) as c_int) != 0 {
-            let digit = (*s.add(i) as u8 - b'0') as c_double;
+        while isdigit(*s.add(i) as CInt) != 0 {
+            let digit = (*s.add(i) as u8 - b'0') as CDouble;
             fraction = fraction * 10.0 + digit;
             divisor *= 10.0;
             i += 1;
@@ -451,33 +447,33 @@ pub unsafe extern "C" fn strtod(s: *const c_char, endptr: *mut *mut c_char) -> c
         result += fraction / divisor;
     }
 
-    if *s.add(i) == b'e' as c_char || *s.add(i) == b'E' as c_char {
+    if *s.add(i) == b'e' as CChar || *s.add(i) == b'E' as CChar {
         i += 1;
         let mut exp_sign = 1;
         let mut exponent = 0;
 
-        if *s.add(i) == b'-' as c_char {
+        if *s.add(i) == b'-' as CChar {
             exp_sign = -1;
             i += 1;
-        } else if *s.add(i) == b'+' as c_char {
+        } else if *s.add(i) == b'+' as CChar {
             i += 1;
         }
 
-        while isdigit(*s.add(i) as c_int) != 0 {
+        while isdigit(*s.add(i) as CInt) != 0 {
             let digit = (*s.add(i) as u8 - b'0') as i32;
             exponent = exponent * 10 + digit;
             i += 1;
         }
 
-        let exp_value = crate::libs::msvcrt::math::pow(10.0, (exponent * exp_sign) as c_double);
+        let exp_value = crate::libs::msvcrt::math::pow(10.0, (exponent * exp_sign) as CDouble);
         result *= exp_value;
     }
 
     if !endptr.is_null() {
         if i == start_i {
-            *endptr = s as *mut c_char;
+            *endptr = s as *mut CChar;
         } else {
-            *endptr = s.add(i) as *mut c_char;
+            *endptr = s.add(i) as *mut CChar;
         }
     }
 
@@ -485,12 +481,12 @@ pub unsafe extern "C" fn strtod(s: *const c_char, endptr: *mut *mut c_char) -> c
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn strtof(s: *const c_char, endptr: *mut *mut c_char) -> c_float {
-    strtod(s, endptr) as c_float
+pub unsafe extern "C" fn strtof(s: *const CChar, endptr: *mut *mut CChar) -> CFloat {
+    strtod(s, endptr) as CFloat
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn itoa(value: c_int, str: *mut c_char, base: c_int) -> *mut c_char {
+pub unsafe extern "C" fn itoa(value: CInt, str: *mut CChar, base: CInt) -> *mut CChar {
     if str.is_null() || base < 2 || base > 36 {
         return ptr::null_mut();
     }
@@ -503,19 +499,19 @@ pub unsafe extern "C" fn itoa(value: c_int, str: *mut c_char, base: c_int) -> *m
         num = -num;
     }
 
-    let mut temp: [c_char; 33] = [0; 33];
+    let mut temp: [CChar; 33] = [0; 33];
     let mut temp_i = 0;
 
     if num == 0 {
-        temp[temp_i] = b'0' as c_char;
+        temp[temp_i] = b'0' as CChar;
         temp_i += 1;
     } else {
         while num != 0 {
             let digit = (num % base) as u8;
             temp[temp_i] = if digit < 10 {
-                (b'0' + digit) as c_char
+                (b'0' + digit) as CChar
             } else {
-                (b'a' + digit - 10) as c_char
+                (b'a' + digit - 10) as CChar
             };
             num /= base;
             temp_i += 1;
@@ -523,7 +519,7 @@ pub unsafe extern "C" fn itoa(value: c_int, str: *mut c_char, base: c_int) -> *m
     }
 
     if negative {
-        *str.add(i) = b'-' as c_char;
+        *str.add(i) = b'-' as CChar;
         i += 1;
     }
 
@@ -537,22 +533,17 @@ pub unsafe extern "C" fn itoa(value: c_int, str: *mut c_char, base: c_int) -> *m
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn _itoa(value: c_int, str: *mut c_char, base: c_int) -> *mut c_char {
+pub unsafe extern "C" fn _itoa(value: CInt, str: *mut CChar, base: CInt) -> *mut CChar {
     itoa(value, str, base)
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn _ltoa(value: c_long, str: *mut c_char, base: c_int) -> *mut c_char {
-    itoa(value as c_int, str, base)
+pub unsafe extern "C" fn _ltoa(value: CLong, str: *mut CChar, base: CInt) -> *mut CChar {
+    itoa(value as CInt, str, base)
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn _itoa_s(
-    value: c_int,
-    str: *mut c_char,
-    size: size_t,
-    base: c_int,
-) -> errno_t {
+pub unsafe extern "C" fn _itoa_s(value: CInt, str: *mut CChar, size: SizeT, base: CInt) -> ErrnoT {
     if str.is_null() || size == 0 || base < 2 || base > 36 {
         return EINVAL;
     }
@@ -566,25 +557,16 @@ pub unsafe extern "C" fn _itoa_s(
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn _ltoa_s(
-    value: c_long,
-    str: *mut c_char,
-    size: size_t,
-    base: c_int,
-) -> errno_t {
-    _itoa_s(value as c_int, str, size, base)
+pub unsafe extern "C" fn _ltoa_s(value: CLong, str: *mut CChar, size: SizeT, base: CInt) -> ErrnoT {
+    _itoa_s(value as CInt, str, size, base)
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn _i64toa(value: c_longlong, str: *mut c_char, base: c_int) -> *mut c_char {
-    itoa(value as c_int, str, base)
+pub unsafe extern "C" fn _i64toa(value: CLonglong, str: *mut CChar, base: CInt) -> *mut CChar {
+    itoa(value as CInt, str, base)
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn _ui64toa(
-    value: c_ulonglong,
-    str: *mut c_char,
-    base: c_int,
-) -> *mut c_char {
-    itoa(value as c_int, str, base)
+pub unsafe extern "C" fn _ui64toa(value: CUlonglong, str: *mut CChar, base: CInt) -> *mut CChar {
+    itoa(value as CInt, str, base)
 }

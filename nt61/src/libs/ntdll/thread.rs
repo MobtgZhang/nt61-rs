@@ -1,9 +1,9 @@
 //! ntdll — Nt* thread APIs
 //
-//! `NtCreateThread`, `NtOpenThread`, `NtTerminateThread`,
-//! `NtQueryInformationThread`, `NtYieldExecution`. The
+//! `nt_create_thread`, `nt_open_thread`, `nt_terminate_thread`,
+//! `nt_query_information_thread`, `nt_yield_execution`. The
 //! underlying thread objects live in `ps::thread`; we wrap them
-//! in the ntdll handle table so kernel32's GetThreadId etc.
+//! in the ntdll handle table so kernel32's get_thread_id etc.
 //! can find them.
 //
 //! References: MSDN Library "Windows 7" — `ntdll.dll` thread
@@ -11,14 +11,13 @@
 
 use super::file::{alloc_handle, lookup_handle, HandleKind};
 use super::status::{
-    STATUS_INVALID_HANDLE, STATUS_INVALID_INFO_CLASS, STATUS_INVALID_PARAMETER,
-    STATUS_NOT_IMPLEMENTED, STATUS_NO_MEMORY, STATUS_SUCCESS,
+    STATUS_INVALID_HANDLE, STATUS_INVALID_INFO_CLASS, STATUS_INVALID_PARAMETER, STATUS_NO_MEMORY,
+    STATUS_SUCCESS,
 };
-use super::types::{ClientId, HANDLE, NTSTATUS, PVOID};
-use crate::ps::thread as pst;
-use core::ptr;
+use super::types::{client_id, HANDLE, NTSTATUS, PVOID};
+use crate::mm::user_copy::{copy_from_user, copy_to_user};
 
-/// Thread context structure for NtGetContextThread/NtSetContextThread
+/// Thread context structure for nt_get_context_thread/nt_set_context_thread
 #[repr(C)]
 #[derive(Default)]
 pub struct Context {
@@ -47,7 +46,7 @@ pub struct Context {
     pub r13: u64,
     pub r14: u64,
     pub r15: u64,
-    /// Control registers
+    /// control registers
     pub rsp: u64,
     pub rip: u64,
     /// Debug registers
@@ -87,14 +86,24 @@ pub const CONTEXT_DEBUG_REGISTERS: u32 = 0x00010010;
 pub const CONTEXT_XSTATE: u32 = 0x00010040;
 pub const CONTEXT_FULL: u32 = 0x00010007;
 
-/// `NtCreateThread` — create a thread inside an existing
+/// `nt_create_thread` — create a thread inside an existing
 /// process.
-pub unsafe extern "C" fn NtCreateThread(
+/// nt_current_thread — pseudo-handle for the calling thread.
+///
+/// Windows exposes the calling thread to Nt* APIs through the
+/// documented pseudo-handle value `(HANDLE)-2`. Returning it here keeps
+/// the advapi32 impersonation helpers (`SetThreadToken`, `RevertToSelf`)
+/// consistent with the real ntdll contract.
+pub unsafe extern "C" fn nt_current_thread() -> HANDLE {
+    0xFFFF_FFFF_FFFF_FFFEu64 as HANDLE
+}
+
+pub unsafe extern "C" fn nt_create_thread(
     thread_handle: *mut HANDLE,
     desired_access: u32,
     object_attributes: *mut super::types::ObjectAttributes,
     process_handle: HANDLE,
-    client_id: *mut ClientId,
+    client_id: *mut client_id,
     start_context: PVOID,
     start_routine: PVOID,
     stack_committed: usize,
@@ -139,7 +148,7 @@ pub unsafe extern "C" fn NtCreateThread(
         None => return STATUS_INVALID_HANDLE,
     };
 
-    // Create the thread using kernel thread module
+    // create the thread using kernel thread module
     let thread_ptr = match crate::ps::thread::create_thread(process, stack_size) {
         Some(t) => t,
         None => return STATUS_NO_MEMORY,
@@ -184,15 +193,14 @@ pub unsafe extern "C" fn NtCreateThread(
     STATUS_SUCCESS
 }
 
-/// `NtOpenThread` — open a thread by `CLIENT_ID`.
-pub unsafe extern "C" fn NtOpenThread(
+/// `nt_open_thread` — open a thread by `CLIENT_ID`.
+pub unsafe extern "C" fn nt_open_thread(
     thread_handle: *mut HANDLE,
     desired_access: u32,
     object_attributes: *mut super::types::ObjectAttributes,
-    client_id: *mut ClientId,
+    client_id: *mut client_id,
 ) -> NTSTATUS {
     use super::status::{STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER, STATUS_SUCCESS};
-    use core::ptr;
 
     if thread_handle.is_null() || client_id.is_null() {
         return STATUS_INVALID_PARAMETER;
@@ -231,11 +239,10 @@ pub unsafe extern "C" fn NtOpenThread(
     }
 }
 
-/// `NtTerminateThread` — terminate the specified thread.
-/// If ThreadHandle is NULL, terminates the current thread.
-pub unsafe extern "C" fn NtTerminateThread(thread_handle: HANDLE, exit_status: u32) -> NTSTATUS {
+/// `nt_terminate_thread` — terminate the specified thread.
+/// If thread_handle is NULL, terminates the current thread.
+pub unsafe extern "C" fn nt_terminate_thread(thread_handle: HANDLE, exit_status: u32) -> NTSTATUS {
     use super::status::{STATUS_INVALID_HANDLE, STATUS_SUCCESS};
-    use core::ptr;
 
     // If thread_handle is NULL, terminate current thread
     let thread_ptr = if thread_handle.is_null() {
@@ -267,10 +274,10 @@ pub unsafe extern "C" fn NtTerminateThread(thread_handle: HANDLE, exit_status: u
     STATUS_SUCCESS
 }
 
-/// `NtSuspendThread` / `NtResumeThread` — counters the NT
+/// `nt_suspend_thread` / `nt_resume_thread` — counters the NT
 /// kernel exposes on every thread. We return 1 (the previous
 /// count) for both.
-pub unsafe extern "C" fn NtSuspendThread(
+pub unsafe extern "C" fn nt_suspend_thread(
     thread_handle: HANDLE,
     previous_suspend_count: *mut u32,
 ) -> NTSTATUS {
@@ -283,7 +290,7 @@ pub unsafe extern "C" fn NtSuspendThread(
     STATUS_SUCCESS
 }
 
-pub unsafe extern "C" fn NtResumeThread(
+pub unsafe extern "C" fn nt_resume_thread(
     thread_handle: HANDLE,
     previous_suspend_count: *mut u32,
 ) -> NTSTATUS {
@@ -296,9 +303,9 @@ pub unsafe extern "C" fn NtResumeThread(
     STATUS_SUCCESS
 }
 
-/// `NtQueryInformationThread` — supports
+/// `nt_query_information_thread` — supports
 /// `ThreadBasicInformation` (size 28) and a few others.
-pub unsafe extern "C" fn NtQueryInformationThread(
+pub unsafe extern "C" fn nt_query_information_thread(
     thread_handle: HANDLE,
     thread_information_class: u32,
     thread_information: PVOID,
@@ -310,13 +317,16 @@ pub unsafe extern "C" fn NtQueryInformationThread(
     }
     match thread_information_class {
         0 => {
-            // ThreadBasicInformation: ExitStatus, TebAddress, ClientId, ...
+            // ThreadBasicInformation: ExitStatus, TebAddress, client_id, ...
             if thread_information_length < 28 {
                 return super::status::STATUS_BUFFER_TOO_SMALL;
             }
-            core::ptr::write_bytes(thread_information, 0, 28);
-            if !return_length.is_null() {
-                *return_length = 28;
+            let output = [0u8; 28];
+            if copy_to_user(thread_information as u64, &output).is_err() {
+                return super::status::STATUS_ACCESS_VIOLATION;
+            }
+            if write_return_length(return_length, 28).is_err() {
+                return super::status::STATUS_ACCESS_VIOLATION;
             }
             STATUS_SUCCESS
         }
@@ -325,57 +335,50 @@ pub unsafe extern "C" fn NtQueryInformationThread(
             if thread_information_length < 32 {
                 return super::status::STATUS_BUFFER_TOO_SMALL;
             }
-            core::ptr::write_bytes(thread_information, 0, 32);
-            if !return_length.is_null() {
-                *return_length = 32;
+            let output = [0u8; 32];
+            if copy_to_user(thread_information as u64, &output).is_err() {
+                return super::status::STATUS_ACCESS_VIOLATION;
+            }
+            if write_return_length(return_length, 32).is_err() {
+                return super::status::STATUS_ACCESS_VIOLATION;
             }
             STATUS_SUCCESS
         }
         _ => {
-            if !return_length.is_null() {
-                *return_length = 0;
+            if write_return_length(return_length, 0).is_err() {
+                return super::status::STATUS_ACCESS_VIOLATION;
             }
             STATUS_INVALID_INFO_CLASS
         }
     }
 }
 
-/// `NtYieldExecution` — yield the timeslice of the current
+fn write_return_length(return_length: *mut u32, length: usize) -> Result<(), i32> {
+    if return_length.is_null() {
+        return Ok(());
+    }
+    copy_to_user(return_length as u64, &(length as u32).to_le_bytes())
+}
+
+/// `nt_yield_execution` — yield the timeslice of the current
 /// thread. Routed to the kernel scheduler.
-pub extern "C" fn NtYieldExecution() -> NTSTATUS {
+pub extern "C" fn nt_yield_execution() -> NTSTATUS {
     crate::ke::scheduler::yield_();
     STATUS_SUCCESS
 }
 
-/// `NtCurrentTeb` — returns the TEB pointer for the current
+/// `nt_current_teb` — returns the TEB pointer for the current
 /// thread. Useful for the kernel32 layer.
 ///
 /// On x86_64, the TEB is stored at GS:0, which points to the
-/// current Thread Environment Block.
-#[cfg(target_arch = "x86_64")]
-pub extern "C" fn NtCurrentTeb() -> PVOID {
-    // Read the TEB pointer from the per-cpu area
-    // The kernel sets up GS base to point to the per-cpu TEB data
-    let teb_ptr: u64;
-    unsafe {
-        core::arch::asm!(
-            // On x86_64, GS:0 points to the TEB
-            "mov {}, gs:0x60",  // 0x60 is the TebBaseAddress in the TEB
-            out(reg) teb_ptr,
-            options(nostack, preserves_flags),
-        );
-    }
-    teb_ptr as PVOID
+/// current Thread environment Block.
+pub extern "C" fn nt_current_teb() -> PVOID {
+    crate::arch::current_teb().unwrap_or(0) as PVOID
 }
 
-#[cfg(not(target_arch = "x86_64"))]
-pub extern "C" fn NtCurrentTeb() -> PVOID {
-    core::ptr::null_mut()
-}
-
-/// `NtCreateThreadEx` — create a thread with extended parameters.
+/// `nt_create_thread_ex` — create a thread with extended parameters.
 /// This is the preferred way to create threads in Windows 7+.
-pub unsafe extern "C" fn NtCreateThreadEx(
+pub unsafe extern "C" fn nt_create_thread_ex(
     thread_handle: *mut HANDLE,
     _desired_access: u32,
     object_attributes: *mut super::types::ObjectAttributes,
@@ -426,7 +429,7 @@ pub unsafe extern "C" fn NtCreateThreadEx(
         None => return STATUS_INVALID_HANDLE,
     };
 
-    // Create the thread using kernel thread module
+    // create the thread using kernel thread module
     let thread_ptr = match crate::ps::thread::create_thread(process, stack_size) {
         Some(t) => t,
         None => return STATUS_NO_MEMORY,
@@ -452,8 +455,8 @@ pub unsafe extern "C" fn NtCreateThreadEx(
     STATUS_SUCCESS
 }
 
-/// `NtGetContextThread` — get the register context of a thread.
-pub unsafe extern "C" fn NtGetContextThread(
+/// `nt_get_context_thread` — get the register context of a thread.
+pub unsafe extern "C" fn nt_get_context_thread(
     thread_handle: HANDLE,
     context: *mut Context,
 ) -> NTSTATUS {
@@ -479,7 +482,16 @@ pub unsafe extern "C" fn NtGetContextThread(
     };
 
     // Fill in the context structure
-    let ctx = &mut *context;
+    let mut ctx = Context::default();
+    let ctx_bytes = unsafe {
+        core::slice::from_raw_parts_mut(
+            &mut ctx as *mut Context as *mut u8,
+            core::mem::size_of::<Context>(),
+        )
+    };
+    if copy_from_user(ctx_bytes, context as u64).is_err() {
+        return super::status::STATUS_ACCESS_VIOLATION;
+    }
 
     // Check what context flags are requested
     let flags = ctx.context_flags;
@@ -500,6 +512,17 @@ pub unsafe extern "C" fn NtGetContextThread(
         ctx.rbp = (*thread).kthread.context.rbp;
     }
 
+    if copy_to_user(context as u64, unsafe {
+        core::slice::from_raw_parts(
+            &ctx as *const Context as *const u8,
+            core::mem::size_of::<Context>(),
+        )
+    })
+    .is_err()
+    {
+        return super::status::STATUS_ACCESS_VIOLATION;
+    }
+
     // Note: previous versions of this stub issued a self-assignment of
     // `ctx.context_flags` here — a no-op that clippy flags. The flag is
     // already populated above by the `InitializeContext` prologue and
@@ -509,8 +532,8 @@ pub unsafe extern "C" fn NtGetContextThread(
     STATUS_SUCCESS
 }
 
-/// `NtSetContextThread` — set the register context of a thread.
-pub unsafe extern "C" fn NtSetContextThread(
+/// `nt_set_context_thread` — set the register context of a thread.
+pub unsafe extern "C" fn nt_set_context_thread(
     thread_handle: HANDLE,
     context: *const Context,
 ) -> NTSTATUS {
@@ -535,7 +558,16 @@ pub unsafe extern "C" fn NtSetContextThread(
         None => return STATUS_INVALID_HANDLE,
     };
 
-    let ctx = &*context;
+    let mut ctx = Context::default();
+    let ctx_bytes = unsafe {
+        core::slice::from_raw_parts_mut(
+            &mut ctx as *mut Context as *mut u8,
+            core::mem::size_of::<Context>(),
+        )
+    };
+    if copy_from_user(ctx_bytes, context as u64).is_err() {
+        return super::status::STATUS_ACCESS_VIOLATION;
+    }
 
     // Check what context flags are being set
     let flags = ctx.context_flags;
@@ -559,9 +591,9 @@ pub unsafe extern "C" fn NtSetContextThread(
     STATUS_SUCCESS
 }
 
-/// `NtQueueApcThread` — queue an Asynchronous Procedure Call to a thread.
+/// `nt_queue_apc_thread` — queue an Asynchronous Procedure Call to a thread.
 /// This is a simplified implementation that just validates the parameters.
-pub unsafe extern "C" fn NtQueueApcThread(
+pub unsafe extern "C" fn nt_queue_apc_thread(
     thread_handle: HANDLE,
     apc_routine: PVOID,
     apc_argument1: PVOID,
@@ -590,13 +622,13 @@ pub unsafe extern "C" fn NtQueueApcThread(
     // 2. Add it to the thread's APC queue
     // 3. Signal the thread if it's waiting
     // For now, just validate and return success
-    // crate::kprintln!("[APC] NtQueueApcThread queued to routine @ 0x{:016x}", apc_routine as u64);
+    // crate::kprintln!("[APC] nt_queue_apc_thread queued to routine @ 0x{:016x}", apc_routine as u64);
 
     STATUS_SUCCESS
 }
 
-/// `NtSetInformationThread` — set thread information.
-pub unsafe extern "C" fn NtSetInformationThread(
+/// `nt_set_information_thread` — set thread information.
+pub unsafe extern "C" fn nt_set_information_thread(
     thread_handle: HANDLE,
     thread_information_class: u32,
     thread_information: PVOID,

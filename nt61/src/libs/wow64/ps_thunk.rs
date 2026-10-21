@@ -4,12 +4,12 @@
 //! translate 32-bit process/thread queries to their 64-bit equivalents.
 //
 //! The key functions are:
-//!   * Wow64QueryInformationProcess
-//!   * Wow64SetInformationProcess
-//!   * Wow64QueryInformationThread
-//!   * Wow64SetInformationThread
-//!   * Wow64GetContextThread
-//!   * Wow64SetContextThread
+//!   * wow64_query_information_process
+//!   * wow64_set_information_process
+//!   * wow64_query_information_thread
+//!   * wow64_set_information_thread
+//!   * wow64_get_context_thread
+//!   * wow64_set_context_thread
 //
 //! References:
 //!   * geoffchappell.com — wow64 process/thread information
@@ -17,26 +17,26 @@
 use crate::libs::wow64::types::*;
 
 // =============================================================================
-// Wow64QueryInformationProcess
+// wow64_query_information_process
 // =============================================================================
 
 /// Query information about a process (32-bit).
 ///
 /// # Arguments
-/// * `process_handle` - Handle to the process
-/// * `information_class` - Type of information to query
+/// * `process_handle` - handle to the process
+/// * `information_class` - r#type of information to query
 /// * `buffer` - Output buffer (32-bit pointer)
 /// * `buffer_size` - Size of output buffer
 /// * `return_length` - Actual size needed (output)
 ///
 /// # Returns
 /// * NTSTATUS
-pub unsafe extern "C" fn Wow64QueryInformationProcess(
+pub unsafe extern "C" fn wow64_query_information_process_impl(
     process_handle: HANDLE32,
     information_class: ULONG32,
     buffer: ULONG32,
     buffer_size: ULONG32,
-    return_length: ULONG32_PTR,
+    return_length: Ulong32Ptr,
 ) -> ULONG32 {
     crate::wow64_klog!(
         "Wow64QueryInformationProcess handle=0x{:08x} class={} \
@@ -80,37 +80,183 @@ pub unsafe extern "C" fn Wow64QueryInformationProcess(
                 // - AffinityMask (4 bytes)
                 // - BasePriority (4 bytes)
                 // - UniqueProcessId (4 bytes)
-                // - InheritedFromUniqueProcessId (4 bytes)
+                // - inherited_from_unique_process_id (4 bytes)
                 STATUS_SUCCESS
             }
         }
 
         // ProcessImageFileName - Return process image path
         27 => {
-            // Return UNICODE_STRING32 for the image path
-            STATUS_NOT_IMPLEMENTED
+            // Return UNICODE_STRING32 for the image path.  We call the
+            // 64-bit NtQueryInformationProcess with class 27 and
+            // translate the UNICODE_STRING to its 32-bit layout.
+            let handle64 = process_handle as usize as *mut core::ffi::c_void;
+            let mut buf64 = [0u8; 260]; // max image path in 64-bit layout
+            let mut ret_len: u32 = 0;
+            let status = crate::libs::ntdll::process::nt_query_information_process(
+                handle64,
+                27,
+                buf64.as_mut_ptr() as *mut core::ffi::c_void,
+                buf64.len() as u32,
+                &mut ret_len,
+            );
+            if status >= 0 && buffer != 0 && buffer_size >= 4 {
+                // Write a UNICODE_STRING32 pointing at the buffer.
+                let us_ptr = buffer as *mut u32;
+                let len = (ret_len as u32).min(520);
+                *us_ptr.add(0) = len; // Length
+                *us_ptr.add(1) = len; // MaximumLength
+                *us_ptr.add(2) = 0; // Buffer32 (point to buffer+12)
+                                    // Copy the raw string bytes after the 12-byte header.
+                let dst = (buffer + 12) as *mut u8;
+                for (i, b) in buf64.iter().take(ret_len as usize).enumerate() {
+                    *dst.add(i) = *b;
+                }
+                STATUS_SUCCESS
+            } else {
+                status as u32
+            }
         }
 
         // ProcessDebugPortHandle - Return debug port
-        7 => STATUS_NOT_IMPLEMENTED,
+        7 => {
+            let handle64 = process_handle as usize as *mut core::ffi::c_void;
+            let mut buf = 0u64;
+            let mut ret_len: u32 = 0;
+            let status = crate::libs::ntdll::process::nt_query_information_process(
+                handle64,
+                7,
+                &mut buf as *mut u64 as *mut core::ffi::c_void,
+                core::mem::size_of::<u64>() as u32,
+                &mut ret_len,
+            );
+            if status >= 0 && buffer != 0 && buffer_size >= 4 {
+                *(buffer as *mut u32) = buf as u32;
+                STATUS_SUCCESS
+            } else {
+                status as u32
+            }
+        }
 
         // ProcessDebugObjectHandle - Return debug object
-        30 => STATUS_NOT_IMPLEMENTED,
+        30 => {
+            let handle64 = process_handle as usize as *mut core::ffi::c_void;
+            let mut buf = 0u64;
+            let mut ret_len: u32 = 0;
+            let status = crate::libs::ntdll::process::nt_query_information_process(
+                handle64,
+                30,
+                &mut buf as *mut u64 as *mut core::ffi::c_void,
+                core::mem::size_of::<u64>() as u32,
+                &mut ret_len,
+            );
+            if status >= 0 && buffer != 0 && buffer_size >= 4 {
+                *(buffer as *mut u32) = buf as u32;
+                STATUS_SUCCESS
+            } else {
+                status as u32
+            }
+        }
 
         // ProcessDebugFlags - Return debug flags
-        31 => STATUS_NOT_IMPLEMENTED,
+        31 => {
+            let handle64 = process_handle as usize as *mut core::ffi::c_void;
+            let mut buf = 0u32;
+            let mut ret_len: u32 = 0;
+            let status = crate::libs::ntdll::process::nt_query_information_process(
+                handle64,
+                31,
+                &mut buf as *mut u32 as *mut core::ffi::c_void,
+                core::mem::size_of::<u32>() as u32,
+                &mut ret_len,
+            );
+            if status >= 0 && buffer != 0 && buffer_size >= 4 {
+                *(buffer as *mut u32) = buf;
+                STATUS_SUCCESS
+            } else {
+                status as u32
+            }
+        }
 
         // ProcessDefaultHardErrorMode - Return default hard error mode
-        12 => STATUS_NOT_IMPLEMENTED,
+        12 => {
+            let handle64 = process_handle as usize as *mut core::ffi::c_void;
+            let mut buf = 0u32;
+            let mut ret_len: u32 = 0;
+            let status = crate::libs::ntdll::process::nt_query_information_process(
+                handle64,
+                12,
+                &mut buf as *mut u32 as *mut core::ffi::c_void,
+                core::mem::size_of::<u32>() as u32,
+                &mut ret_len,
+            );
+            if status >= 0 && buffer != 0 && buffer_size >= 4 {
+                *(buffer as *mut u32) = buf;
+                STATUS_SUCCESS
+            } else {
+                status as u32
+            }
+        }
 
         // ProcessIoPriority - Return I/O priority
-        18 => STATUS_NOT_IMPLEMENTED,
+        18 => {
+            let handle64 = process_handle as usize as *mut core::ffi::c_void;
+            let mut buf = 0u32;
+            let mut ret_len: u32 = 0;
+            let status = crate::libs::ntdll::process::nt_query_information_process(
+                handle64,
+                18,
+                &mut buf as *mut u32 as *mut core::ffi::c_void,
+                core::mem::size_of::<u32>() as u32,
+                &mut ret_len,
+            );
+            if status >= 0 && buffer != 0 && buffer_size >= 4 {
+                *(buffer as *mut u32) = buf;
+                STATUS_SUCCESS
+            } else {
+                status as u32
+            }
+        }
 
         // ProcessAffinityMask - Return affinity mask
-        20 => STATUS_NOT_IMPLEMENTED,
+        20 => {
+            let handle64 = process_handle as usize as *mut core::ffi::c_void;
+            let mut buf = 0u64;
+            let mut ret_len: u32 = 0;
+            let status = crate::libs::ntdll::process::nt_query_information_process(
+                handle64,
+                20,
+                &mut buf as *mut u64 as *mut core::ffi::c_void,
+                core::mem::size_of::<u64>() as u32,
+                &mut ret_len,
+            );
+            if status >= 0 && buffer != 0 && buffer_size >= 4 {
+                *(buffer as *mut u32) = buf as u32;
+                STATUS_SUCCESS
+            } else {
+                status as u32
+            }
+        }
 
         // ProcessPriorityClass - Return priority class
-        21 => STATUS_NOT_IMPLEMENTED,
+        21 => {
+            let handle64 = process_handle as usize as *mut core::ffi::c_void;
+            let mut buf = 0u8;
+            let mut ret_len: u32 = 0;
+            let status = crate::libs::ntdll::process::nt_query_information_process(
+                handle64,
+                21,
+                &mut buf as *mut u8 as *mut core::ffi::c_void,
+                core::mem::size_of::<u8>() as u32,
+                &mut ret_len,
+            );
+            if status >= 0 && buffer != 0 && buffer_size >= 4 {
+                *(buffer as *mut u32) = buf as u32;
+                STATUS_SUCCESS
+            } else {
+                status as u32
+            }
+        }
 
         _ => {
             crate::wow64_klog!("Unknown process information class {}", information_class);
@@ -120,20 +266,20 @@ pub unsafe extern "C" fn Wow64QueryInformationProcess(
 }
 
 // =============================================================================
-// Wow64SetInformationProcess
+// wow64_set_information_process
 // =============================================================================
 
 /// Set information about a process (32-bit).
 ///
 /// # Arguments
-/// * `process_handle` - Handle to the process
-/// * `information_class` - Type of information to set
+/// * `process_handle` - handle to the process
+/// * `information_class` - r#type of information to set
 /// * `buffer` - Input buffer (32-bit pointer)
 /// * `buffer_size` - Size of input buffer
 ///
 /// # Returns
 /// * NTSTATUS
-pub unsafe extern "C" fn Wow64SetInformationProcess(
+pub unsafe extern "C" fn wow64_set_information_process(
     process_handle: HANDLE32,
     information_class: ULONG32,
     buffer: ULONG32,
@@ -156,13 +302,53 @@ pub unsafe extern "C" fn Wow64SetInformationProcess(
 
     match information_class {
         // ProcessDefaultHardErrorMode - Set default hard error mode
-        12 => STATUS_NOT_IMPLEMENTED,
+        12 => {
+            let handle64 = process_handle as usize as *mut core::ffi::c_void;
+            let buf64 = buffer as usize as *mut core::ffi::c_void;
+            let status = crate::libs::ntdll::process::nt_set_information_process(
+                handle64,
+                12,
+                buf64,
+                buffer_size,
+            );
+            status as u32
+        }
         // ProcessIoPriority - Set I/O priority
-        18 => STATUS_NOT_IMPLEMENTED,
+        18 => {
+            let handle64 = process_handle as usize as *mut core::ffi::c_void;
+            let buf64 = buffer as usize as *mut core::ffi::c_void;
+            let status = crate::libs::ntdll::process::nt_set_information_process(
+                handle64,
+                18,
+                buf64,
+                buffer_size,
+            );
+            status as u32
+        }
         // ProcessAffinityMask - Set affinity mask
-        20 => STATUS_NOT_IMPLEMENTED,
+        20 => {
+            let handle64 = process_handle as usize as *mut core::ffi::c_void;
+            let buf64 = buffer as usize as *mut core::ffi::c_void;
+            let status = crate::libs::ntdll::process::nt_set_information_process(
+                handle64,
+                20,
+                buf64,
+                buffer_size,
+            );
+            status as u32
+        }
         // ProcessPriorityClass - Set priority class
-        21 => STATUS_NOT_IMPLEMENTED,
+        21 => {
+            let handle64 = process_handle as usize as *mut core::ffi::c_void;
+            let buf64 = buffer as usize as *mut core::ffi::c_void;
+            let status = crate::libs::ntdll::process::nt_set_information_process(
+                handle64,
+                21,
+                buf64,
+                buffer_size,
+            );
+            status as u32
+        }
         _ => {
             crate::wow64_klog!(
                 "Unknown process set information class {}",
@@ -174,26 +360,26 @@ pub unsafe extern "C" fn Wow64SetInformationProcess(
 }
 
 // =============================================================================
-// Wow64QueryInformationThread
+// wow64_query_information_thread
 // =============================================================================
 
 /// Query information about a thread (32-bit).
 ///
 /// # Arguments
-/// * `thread_handle` - Handle to the thread
-/// * `information_class` - Type of information to query
+/// * `thread_handle` - handle to the thread
+/// * `information_class` - r#type of information to query
 /// * `buffer` - Output buffer (32-bit pointer)
 /// * `buffer_size` - Size of output buffer
 /// * `return_length` - Actual size needed (output)
 ///
 /// # Returns
 /// * NTSTATUS
-pub unsafe extern "C" fn Wow64QueryInformationThread(
+pub unsafe extern "C" fn wow64_query_information_thread(
     thread_handle: HANDLE32,
     information_class: ULONG32,
     buffer: ULONG32,
     buffer_size: ULONG32,
-    return_length: ULONG32_PTR,
+    return_length: Ulong32Ptr,
 ) -> ULONG32 {
     crate::wow64_klog!(
         "Wow64QueryInformationThread handle=0x{:08x} class={} \
@@ -214,7 +400,7 @@ pub unsafe extern "C" fn Wow64QueryInformationThread(
             // Return THREAD_BASIC_INFORMATION32
             // - ExitStatus (4 bytes)
             // - TebBaseAddress (4 bytes, 32-bit TEB)
-            // - ClientId (8 bytes)
+            // - client_id (8 bytes)
             // - AffinityMask (4 bytes)
             // - Priority (4 bytes)
             // - BasePriority (4 bytes)
@@ -226,13 +412,73 @@ pub unsafe extern "C" fn Wow64QueryInformationThread(
         }
 
         // ThreadTimes - Return thread timing info
-        1 => STATUS_NOT_IMPLEMENTED,
+        1 => {
+            let handle64 = thread_handle as usize as *mut core::ffi::c_void;
+            let buf64 = buffer as usize as *mut core::ffi::c_void;
+            let mut ret_len: u32 = 0;
+            let status = crate::libs::ntdll::thread::nt_query_information_thread(
+                handle64,
+                1,
+                buf64,
+                buffer_size,
+                &mut ret_len,
+            );
+            if status >= 0 && return_length != 0 {
+                *(return_length as *mut u32) = ret_len;
+            }
+            status as u32
+        }
         // ThreadPriority - Return thread priority
-        2 => STATUS_NOT_IMPLEMENTED,
+        2 => {
+            let handle64 = thread_handle as usize as *mut core::ffi::c_void;
+            let buf64 = buffer as usize as *mut core::ffi::c_void;
+            let mut ret_len: u32 = 0;
+            let status = crate::libs::ntdll::thread::nt_query_information_thread(
+                handle64,
+                2,
+                buf64,
+                buffer_size,
+                &mut ret_len,
+            );
+            if status >= 0 && return_length != 0 {
+                *(return_length as *mut u32) = ret_len;
+            }
+            status as u32
+        }
         // ThreadBasePriority - Return base priority
-        3 => STATUS_NOT_IMPLEMENTED,
+        3 => {
+            let handle64 = thread_handle as usize as *mut core::ffi::c_void;
+            let buf64 = buffer as usize as *mut core::ffi::c_void;
+            let mut ret_len: u32 = 0;
+            let status = crate::libs::ntdll::thread::nt_query_information_thread(
+                handle64,
+                3,
+                buf64,
+                buffer_size,
+                &mut ret_len,
+            );
+            if status >= 0 && return_length != 0 {
+                *(return_length as *mut u32) = ret_len;
+            }
+            status as u32
+        }
         // ThreadAffinityMask - Return affinity mask
-        4 => STATUS_NOT_IMPLEMENTED,
+        4 => {
+            let handle64 = thread_handle as usize as *mut core::ffi::c_void;
+            let buf64 = buffer as usize as *mut core::ffi::c_void;
+            let mut ret_len: u32 = 0;
+            let status = crate::libs::ntdll::thread::nt_query_information_thread(
+                handle64,
+                4,
+                buf64,
+                buffer_size,
+                &mut ret_len,
+            );
+            if status >= 0 && return_length != 0 {
+                *(return_length as *mut u32) = ret_len;
+            }
+            status as u32
+        }
 
         // ThreadWow64State - Return Wow64 thread state
         11 => {
@@ -249,7 +495,22 @@ pub unsafe extern "C" fn Wow64QueryInformationThread(
         }
 
         // ThreadIsTerminated - Check if thread is terminated
-        12 => STATUS_NOT_IMPLEMENTED,
+        12 => {
+            let handle64 = thread_handle as usize as *mut core::ffi::c_void;
+            let buf64 = buffer as usize as *mut core::ffi::c_void;
+            let mut ret_len: u32 = 0;
+            let status = crate::libs::ntdll::thread::nt_query_information_thread(
+                handle64,
+                12,
+                buf64,
+                buffer_size,
+                &mut ret_len,
+            );
+            if status >= 0 && return_length != 0 {
+                *(return_length as *mut u32) = ret_len;
+            }
+            status as u32
+        }
 
         _ => {
             crate::wow64_klog!("Unknown thread information class {}", information_class);
@@ -259,20 +520,20 @@ pub unsafe extern "C" fn Wow64QueryInformationThread(
 }
 
 // =============================================================================
-// Wow64SetInformationThread
+// wow64_set_information_thread
 // =============================================================================
 
 /// Set information about a thread (32-bit).
 ///
 /// # Arguments
-/// * `thread_handle` - Handle to the thread
-/// * `information_class` - Type of information to set
+/// * `thread_handle` - handle to the thread
+/// * `information_class` - r#type of information to set
 /// * `buffer` - Input buffer (32-bit pointer)
 /// * `buffer_size` - Size of input buffer
 ///
 /// # Returns
 /// * NTSTATUS
-pub unsafe extern "C" fn Wow64SetInformationThread(
+pub unsafe extern "C" fn wow64_set_information_thread_impl(
     thread_handle: HANDLE32,
     information_class: ULONG32,
     buffer: ULONG32,
@@ -295,13 +556,53 @@ pub unsafe extern "C" fn Wow64SetInformationThread(
 
     match information_class {
         // ThreadPriority - Set thread priority
-        2 => STATUS_NOT_IMPLEMENTED,
+        2 => {
+            let handle64 = thread_handle as usize as *mut core::ffi::c_void;
+            let buf64 = buffer as usize as *mut core::ffi::c_void;
+            let status = crate::libs::ntdll::thread::nt_set_information_thread(
+                handle64,
+                2,
+                buf64,
+                buffer_size,
+            );
+            status as u32
+        }
         // ThreadBasePriority - Set base priority
-        3 => STATUS_NOT_IMPLEMENTED,
+        3 => {
+            let handle64 = thread_handle as usize as *mut core::ffi::c_void;
+            let buf64 = buffer as usize as *mut core::ffi::c_void;
+            let status = crate::libs::ntdll::thread::nt_set_information_thread(
+                handle64,
+                3,
+                buf64,
+                buffer_size,
+            );
+            status as u32
+        }
         // ThreadAffinityMask - Set affinity mask
-        4 => STATUS_NOT_IMPLEMENTED,
+        4 => {
+            let handle64 = thread_handle as usize as *mut core::ffi::c_void;
+            let buf64 = buffer as usize as *mut core::ffi::c_void;
+            let status = crate::libs::ntdll::thread::nt_set_information_thread(
+                handle64,
+                4,
+                buf64,
+                buffer_size,
+            );
+            status as u32
+        }
         // ThreadImpersonationToken - Set impersonation token
-        5 => STATUS_NOT_IMPLEMENTED,
+        5 => {
+            let handle64 = thread_handle as usize as *mut core::ffi::c_void;
+            let buf64 = buffer as usize as *mut core::ffi::c_void;
+            let status = crate::libs::ntdll::thread::nt_set_information_thread(
+                handle64,
+                5,
+                buf64,
+                buffer_size,
+            );
+            status as u32
+        }
         _ => {
             crate::wow64_klog!("Unknown thread set information class {}", information_class);
             STATUS_INVALID_PARAMETER
@@ -310,19 +611,19 @@ pub unsafe extern "C" fn Wow64SetInformationThread(
 }
 
 // =============================================================================
-// Wow64GetContextThread
+// wow64_get_context_thread
 // =============================================================================
 
 /// Get the context of a thread (32-bit).
 ///
 /// # Arguments
-/// * `thread_handle` - Handle to the thread
+/// * `thread_handle` - handle to the thread
 /// * `context` - Context buffer (32-bit pointer to CONTEXT32)
 /// * `context_size` - Size of context buffer
 ///
 /// # Returns
 /// * NTSTATUS
-pub unsafe extern "C" fn Wow64GetContextThread(
+pub unsafe extern "C" fn wow64_get_context_thread(
     thread_handle: HANDLE32,
     context: ULONG32,
     context_size: ULONG32,
@@ -384,13 +685,13 @@ pub unsafe extern "C" fn Wow64GetContextThread(
 }
 
 // =============================================================================
-// Wow64SetContextThread
+// wow64_set_context_thread
 // =============================================================================
 
 /// Set the context of a thread (32-bit).
 ///
 /// # Arguments
-/// * `thread_handle` - Handle to the thread
+/// * `thread_handle` - handle to the thread
 /// * `context` - Context buffer (32-bit pointer to CONTEXT32)
 /// * `context_size` - Size of context buffer
 ///
@@ -400,7 +701,7 @@ pub unsafe extern "C" fn Wow64GetContextThread(
 /// # Safety
 /// This function modifies thread state and can cause undefined behavior
 /// if used incorrectly.
-pub unsafe extern "C" fn Wow64SetContextThread(
+pub unsafe extern "C" fn wow64_set_context_thread(
     thread_handle: HANDLE32,
     context: ULONG32,
     context_size: ULONG32,
@@ -495,7 +796,7 @@ pub fn init() {
 // Public Entry Points (for thunk.rs forwarding)
 // =============================================================================
 
-/// `wow64_query_information_process` — wrapper for Wow64QueryInformationProcess.
+/// `wow64_query_information_process` — wrapper for wow64_query_information_process.
 pub unsafe extern "C" fn wow64_query_information_process(
     process_handle: u32,
     information_class: u32,
@@ -510,7 +811,7 @@ pub unsafe extern "C" fn wow64_query_information_process(
         buffer_size
     );
     // Forward to the actual implementation
-    Wow64QueryInformationProcess(
+    wow64_query_information_process_impl(
         process_handle,
         information_class,
         buffer,
@@ -519,7 +820,7 @@ pub unsafe extern "C" fn wow64_query_information_process(
     )
 }
 
-/// `wow64_set_information_thread` — wrapper for Wow64SetInformationThread.
+/// `wow64_set_information_thread` — wrapper for wow64_set_information_thread.
 pub unsafe extern "C" fn wow64_set_information_thread(
     thread_handle: u32,
     information_class: u32,
@@ -534,5 +835,5 @@ pub unsafe extern "C" fn wow64_set_information_thread(
         buffer_size
     );
     // Forward to the actual implementation
-    Wow64SetInformationThread(thread_handle, information_class, buffer, buffer_size)
+    wow64_set_information_thread_impl(thread_handle, information_class, buffer, buffer_size)
 }

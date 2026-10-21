@@ -3,10 +3,6 @@
 //! This module defines the Windows Sockets 2.0 types and constants
 //! that match the Microsoft Winsock 2 API specification for NT 6.1.
 
-#![allow(non_camel_case_types, non_snake_case, dead_code)]
-
-use core::mem;
-
 pub const AF_UNSPEC: u16 = 0;
 pub const AF_INET: u16 = 2;
 pub const AF_INET6: u16 = 23;
@@ -204,19 +200,19 @@ pub struct WSABUF {
 
 #[repr(C)]
 pub struct WSAOVERLAPPED {
-    pub Internal: usize,
-    pub InternalHigh: usize,
-    pub Offset: u32,
-    pub OffsetHigh: u32,
-    pub hEvent: usize,
+    pub internal: usize,
+    pub internal_high: usize,
+    pub offset: u32,
+    pub offset_high: u32,
+    pub h_event: usize,
 }
 
-pub type LPWSAOVERLAPPED_COMPLETION_ROUTINE = Option<
+pub type LpwsaoverlappedCompletionRoutine = Option<
     unsafe extern "C" fn(
-        dwError: u32,
-        cbTransferred: u32,
-        lpOverlapped: *mut WSAOVERLAPPED,
-        dwFlags: u32,
+        dw_error: u32,
+        cb_transferred: u32,
+        lp_overlapped: *mut WSAOVERLAPPED,
+        dw_flags: u32,
     ),
 >;
 
@@ -253,8 +249,8 @@ pub struct hostent {
 
 #[repr(C)]
 pub struct WSANETWORKEVENTS {
-    pub lNetworkEvents: i32,
-    pub iErrorCode: [i32; 10],
+    pub l_network_events: i32,
+    pub i_error_code: [i32; 10],
 }
 
 pub const FD_READ: i32 = 0x01;
@@ -285,49 +281,49 @@ pub const POLLNVAL: i16 = 0x0004;
 
 #[repr(C)]
 pub struct WSAPROTOCOL_INFOW {
-    pub dwServiceFlags1: u32,
-    pub dwServiceFlags2: u32,
-    pub dwServiceFlags3: u32,
-    pub dwServiceFlags4: u32,
-    pub dwProviderFlags: u32,
-    pub ProviderId: [u8; 16], // GUID
-    pub dwCatalogEntryId: u32,
-    pub ProtocolChain: WSAPROTOCOLCHAIN,
-    pub iVersion: i32,
-    pub iAddressFamily: i32,
-    pub iMaxSockAddr: i32,
-    pub iMinSockAddr: i32,
-    pub iSocketType: i32,
-    pub iProtocol: i32,
-    pub iProtocolMaxOffset: i32,
-    pub iNetworkByteOrder: i32,
-    pub iSecurityScheme: i32,
-    pub dwMessageSize: u32,
-    pub dwProviderReserved: u32,
-    pub szProtocol: [u16; 256],
+    pub dw_service_flags1: u32,
+    pub dw_service_flags2: u32,
+    pub dw_service_flags3: u32,
+    pub dw_service_flags4: u32,
+    pub dw_provider_flags: u32,
+    pub provider_id: [u8; 16], // GUID
+    pub dw_catalog_entry_id: u32,
+    pub protocol_chain: WSAPROTOCOLCHAIN,
+    pub i_version: i32,
+    pub i_address_family: i32,
+    pub i_max_sock_addr: i32,
+    pub i_min_sock_addr: i32,
+    pub i_socket_type: i32,
+    pub i_protocol: i32,
+    pub i_protocol_max_offset: i32,
+    pub i_network_byte_order: i32,
+    pub i_security_scheme: i32,
+    pub dw_message_size: u32,
+    pub dw_provider_reserved: u32,
+    pub sz_protocol: [u16; 256],
 }
 
 #[repr(C)]
 pub struct WSAPROTOCOLCHAIN {
-    pub ChainLen: i32,
-    pub ChainEntries: [u32; 7],
+    pub chain_len: i32,
+    pub chain_entries: [u32; 7],
 }
 
 #[repr(C)]
 pub struct QOS {
-    pub SendingFlowspec: FLOWSPEC,
-    pub ReceivingFlowspec: FLOWSPEC,
-    pub ProviderSpecific: WSABUF,
+    pub sending_flowspec: FLOWSPEC,
+    pub receiving_flowspec: FLOWSPEC,
+    pub provider_specific: WSABUF,
 }
 
 #[repr(C)]
 pub struct FLOWSPEC {
-    pub TokenRate: u32,
-    pub TokenBucketSize: u32,
-    pub PeakBandwidth: u32,
-    pub Latency: u32,
-    pub DelayVariation: u32,
-    pub ServiceType: u32,
-    pub MaxSduSize: u32,
-    pub MinimumPolicedSize: u32,
+    pub token_rate: u32,
+    pub token_bucket_size: u32,
+    pub peak_bandwidth: u32,
+    pub latency: u32,
+    pub delay_variation: u32,
+    pub service_type: u32,
+    pub max_sdu_size: u32,
+    pub minimum_policed_size: u32,
 }

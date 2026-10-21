@@ -26,7 +26,7 @@ pub type WORD = u16;
 pub type BYTE = u8;
 
 /// Pseudo-handles that are not really allocated by the
-/// handle table. `GetCurrentProcess()` and `GetCurrentThread()`
+/// handle table. `get_current_process()` and `get_current_thread()`
 /// return these.
 pub const HANDLE_CURRENT_PROCESS: HANDLE = -1isize as HANDLE;
 pub const HANDLE_CURRENT_THREAD: HANDLE = -2isize as HANDLE;
@@ -56,12 +56,12 @@ pub const FALSE: BOOL = 0;
 pub type FARPROC = unsafe extern "C" fn() -> isize;
 pub type PROC = FARPROC;
 
-/// `UINT_PTR` / `ULONG_PTR` / `LONG_PTR` — pointer-sized
+/// `UintPtr` / `UlongPtr` / `LongPtr` — pointer-sized
 /// integers.
-pub type UINT_PTR = usize;
-pub type ULONG_PTR = usize;
-pub type LONG_PTR = isize;
-pub type DWORD_PTR = usize;
+pub type UintPtr = usize;
+pub type UlongPtr = usize;
+pub type LongPtr = isize;
+pub type DwordPtr = usize;
 
 /// `ATOM` — atom (used by `GlobalAddAtom` / ...).
 pub type ATOM = u16;

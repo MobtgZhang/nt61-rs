@@ -3,10 +3,6 @@
 //! Common types, constants, and structures used throughout advapi32.dll.
 //! Provides Win32 API types for registry, security, services, and credentials.
 
-#![allow(non_snake_case, non_upper_case_globals, dead_code)]
-
-use crate::libs::ntdll::types::WCHAR;
-
 // Re-export basic types from ntdll for public use
 pub use crate::libs::ntdll::types::{BYTE, DWORD, HANDLE, LONG, PCWSTR, PVOID, PWSTR, ULONG, WORD};
 
@@ -95,7 +91,7 @@ pub const HKEY_CURRENT_CONFIG: HKEY = 0x80000005 as HKEY;
 pub const HKEY_DYN_DATA: HKEY = 0x80000006 as HKEY;
 
 pub type PSID = PVOID;
-pub type PSID_NAME_USE = *mut SID_NAME_USE;
+pub type PsidNameUse = *mut SID_NAME_USE;
 
 /// SID name use enumeration
 #[repr(C)]
@@ -114,25 +110,25 @@ pub enum SID_NAME_USE {
 
 #[repr(C)]
 pub struct ACL {
-    pub AclRevision: BYTE,
-    pub Sbz1: BYTE,
-    pub AclSize: WORD,
-    pub AceCount: WORD,
-    pub Sbz2: WORD,
+    pub acl_revision: BYTE,
+    pub sbz1: BYTE,
+    pub acl_size: WORD,
+    pub ace_count: WORD,
+    pub sbz2: WORD,
 }
 
 #[repr(C)]
 pub struct SECURITY_DESCRIPTOR {
-    pub Revision: BYTE,
-    pub Sbz1: BYTE,
-    pub Control: WORD,
-    pub Owner: PSID,
-    pub Group: PSID,
-    pub Sacl: *mut ACL,
-    pub Dacl: *mut ACL,
+    pub revision: BYTE,
+    pub sbz1: BYTE,
+    pub control: WORD,
+    pub owner: PSID,
+    pub group: PSID,
+    pub sacl: *mut ACL,
+    pub dacl: *mut ACL,
 }
 
-pub type PSECURITY_DESCRIPTOR = *mut SECURITY_DESCRIPTOR;
+pub type PsecurityDescriptor = *mut SECURITY_DESCRIPTOR;
 
 pub const OWNER_SECURITY_INFORMATION: DWORD = 0x00000001;
 pub const GROUP_SECURITY_INFORMATION: DWORD = 0x00000002;
@@ -144,7 +140,7 @@ pub const PROTECTED_SACL_SECURITY_INFORMATION: DWORD = 0x40000000;
 pub const UNPROTECTED_DACL_SECURITY_INFORMATION: DWORD = 0x20000000;
 pub const UNPROTECTED_SACL_SECURITY_INFORMATION: DWORD = 0x10000000;
 
-pub type SC_HANDLE = HANDLE;
+pub type ScHandle = HANDLE;
 
 pub const SERVICE_KERNEL_DRIVER: DWORD = 0x00000001;
 pub const SERVICE_FILE_SYSTEM_DRIVER: DWORD = 0x00000002;
@@ -200,18 +196,18 @@ pub const SC_MANAGER_MODIFY_BOOT_CONFIG: DWORD = 0x0020;
 
 #[repr(C)]
 pub struct SERVICE_STATUS {
-    pub dwServiceType: DWORD,
-    pub dwCurrentState: DWORD,
-    pub dwControlsAccepted: DWORD,
-    pub dwWin32ExitCode: DWORD,
-    pub dwServiceSpecificExitCode: DWORD,
-    pub dwCheckPoint: DWORD,
-    pub dwWaitHint: DWORD,
+    pub dw_service_type: DWORD,
+    pub dw_current_state: DWORD,
+    pub dw_controls_accepted: DWORD,
+    pub dw_win32_exit_code: DWORD,
+    pub dw_service_specific_exit_code: DWORD,
+    pub dw_check_point: DWORD,
+    pub dw_wait_hint: DWORD,
 }
 
-pub type LPSERVICE_STATUS = *mut SERVICE_STATUS;
+pub type LpserviceStatus = *mut SERVICE_STATUS;
 
-pub type HANDLE_EVENTLOG = HANDLE;
+pub type HandleEventlog = HANDLE;
 
 pub const EVENTLOG_SUCCESS: WORD = 0x0000;
 pub const EVENTLOG_ERROR_TYPE: WORD = 0x0001;
@@ -233,18 +229,18 @@ pub const CRED_PERSIST_ENTERPRISE: DWORD = 3;
 
 #[repr(C)]
 pub struct CREDENTIALW {
-    pub Flags: DWORD,
-    pub Type: DWORD,
-    pub TargetName: PWSTR,
-    pub Comment: PWSTR,
-    pub LastWritten: FILETIME,
-    pub CredentialBlobSize: DWORD,
-    pub CredentialBlob: *mut BYTE,
-    pub Persist: DWORD,
-    pub AttributeCount: DWORD,
-    pub Attributes: PVOID,
-    pub TargetAlias: PWSTR,
-    pub UserName: PWSTR,
+    pub flags: DWORD,
+    pub r#type: DWORD,
+    pub target_name: PWSTR,
+    pub comment: PWSTR,
+    pub last_written: FILETIME,
+    pub credential_blob_size: DWORD,
+    pub credential_blob: *mut BYTE,
+    pub persist: DWORD,
+    pub attribute_count: DWORD,
+    pub attributes: PVOID,
+    pub target_alias: PWSTR,
+    pub user_name: PWSTR,
 }
 
 pub type PCREDENTIALW = *mut CREDENTIALW;
@@ -252,21 +248,21 @@ pub type PCREDENTIALW = *mut CREDENTIALW;
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct FILETIME {
-    pub dwLowDateTime: DWORD,
-    pub dwHighDateTime: DWORD,
+    pub dw_low_date_time: DWORD,
+    pub dw_high_date_time: DWORD,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct LUID {
-    pub LowPart: DWORD,
-    pub HighPart: LONG,
+    pub low_part: DWORD,
+    pub high_part: LONG,
 }
 
 #[repr(C)]
 pub struct LUID_AND_ATTRIBUTES {
-    pub Luid: LUID,
-    pub Attributes: DWORD,
+    pub luid: LUID,
+    pub attributes: DWORD,
 }
 
 pub const TOKEN_QUERY: DWORD = 0x0008;

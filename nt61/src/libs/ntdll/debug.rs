@@ -1,17 +1,17 @@
-//! ntdll - kernel debugger support (DbgPrint)
+//! ntdll - kernel debugger support (dbg_print)
 //
-//! `DbgPrint` / `DbgPrintEx` write a formatted message to the
+//! `dbg_print` / `dbg_print_ex` write a formatted message to the
 //! kernel debugger (kd). They route to the kernel logging system
 //! which dispatches to serial and optionally to KdCom.
 //
-//! References: MSDN Library "Windows 7" - DbgPrint / DbgPrintEx
+//! References: MSDN Library "Windows 7" - dbg_print / dbg_print_ex
 //! in `ntddk.h` / `wdbgexts.h`. The DPFLTR_* component IDs are
 //! from `wdm.h`.
 
 use super::types::PVOID;
 
 /// DPFLTR_* component IDs from wdm.h / ntddk.h.
-/// Used by DbgPrintEx to identify the calling component.
+/// Used by dbg_print_ex to identify the calling component.
 pub const DPFLTR_DEFAULT: u32 = 0;
 pub const DPFLTR_SYSTEM: u32 = 1;
 pub const DPFLTR_SMSS: u32 = 5;
@@ -190,7 +190,7 @@ fn component_to_subsystem_name(component: u32) -> &'static str {
     }
 }
 
-/// Read a NUL-terminated string from a pointer.
+/// read a NUL-terminated string from a pointer.
 fn read_c_string(ptr: *const u8) -> Option<&'static str> {
     if ptr.is_null() {
         return None;
@@ -212,12 +212,12 @@ fn format_message(msg: &str) -> [u8; 512] {
     buf
 }
 
-/// `DbgPrint` - send a formatted message to the kernel debugger.
+/// `dbg_print` - send a formatted message to the kernel debugger.
 /// In the Windows API this is variadic; we accept a NUL-terminated
 /// format string pointer. Since we can't parse C format strings,
 /// we emit the raw string as-is.
 /// Returns 1 on success, 0 on failure.
-pub unsafe extern "C" fn DbgPrint(format: PVOID) -> u32 {
+pub unsafe extern "C" fn dbg_print(format: PVOID) -> u32 {
     let msg = match read_c_string(format as *const u8) {
         Some(s) => s,
         None => {
@@ -227,7 +227,7 @@ pub unsafe extern "C" fn DbgPrint(format: PVOID) -> u32 {
     };
 
     // Route through the kernel logging system
-    // DbgPrint uses the DEFAULT component
+    // dbg_print uses the DEFAULT component
     if crate::rtl::logging::should_log(
         crate::rtl::logging::LogLevel::Info,
         crate::rtl::logging::subsystem::DBG,
@@ -240,11 +240,11 @@ pub unsafe extern "C" fn DbgPrint(format: PVOID) -> u32 {
     1
 }
 
-/// `DbgPrintEx` - same as DbgPrint but with component/level filtering.
+/// `dbg_print_ex` - same as dbg_print but with component/level filtering.
 /// Messages are only printed if `level <= the configured debug level
 /// for the specified component`.
 /// Returns 1 on success, 0 on failure.
-pub unsafe extern "C" fn DbgPrintEx(component: u32, level: u32, format: PVOID) -> u32 {
+pub unsafe extern "C" fn dbg_print_ex(component: u32, level: u32, format: PVOID) -> u32 {
     let masked_component = component & KDPFLTR_MASK;
     let default_level = get_component_default_level(masked_component);
 
@@ -278,10 +278,10 @@ pub unsafe extern "C" fn DbgPrintEx(component: u32, level: u32, format: PVOID) -
     1
 }
 
-/// `vDbgPrintEx` - takes a va_list for format arguments.
+/// `v_dbg_print_ex` - takes a va_list for format arguments.
 /// Since we cannot parse C format strings, we emit the raw format
 /// string as a placeholder. Returns 0.
-pub unsafe extern "C" fn vDbgPrintEx(
+pub unsafe extern "C" fn v_dbg_print_ex(
     _component: u32,
     _level: u32,
     format: PVOID,
@@ -305,8 +305,8 @@ pub unsafe extern "C" fn vDbgPrintEx(
     1
 }
 
-/// `vDbgPrintExWithPrefix` - same as vDbgPrintEx but with a prefix string.
-pub unsafe extern "C" fn vDbgPrintExWithPrefix(
+/// `v_dbg_print_ex_with_prefix` - same as v_dbg_print_ex but with a prefix string.
+pub unsafe extern "C" fn v_dbg_print_ex_with_prefix(
     _prefix: PVOID,
     _component: u32,
     _level: u32,
@@ -316,14 +316,14 @@ pub unsafe extern "C" fn vDbgPrintExWithPrefix(
     0
 }
 
-/// `DbgBreakPoint` - trigger a breakpoint exception.
+/// `dbg_break_point` - trigger a breakpoint exception.
 /// In kernel mode, this causes a INT3 which would normally be caught
 /// by a kernel debugger. In our environment, we just log and continue.
-pub fn DbgBreakPoint() {
+pub fn dbg_break_point() {
     crate::kprintln_info!("DBG", "[DBG] BreakPoint triggered");
 }
 
-/// `DbgPrintHex` - helper to print a hex value. Used during development.
-pub fn DbgPrintHex(label: &str, value: u64) {
+/// `dbg_print_hex` - helper to print a hex value. Used during development.
+pub fn dbg_print_hex(label: &str, value: u64) {
     crate::kprintln_info!("DBG", "[DBG] {} = 0x{:016x}", label, value);
 }

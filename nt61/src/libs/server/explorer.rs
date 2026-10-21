@@ -7,7 +7,6 @@
 extern crate alloc;
 
 use crate::ke::sync::Spinlock;
-use crate::kprintln;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 static SHELL_STARTED: AtomicBool = AtomicBool::new(false);

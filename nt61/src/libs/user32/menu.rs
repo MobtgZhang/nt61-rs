@@ -8,8 +8,17 @@
 
 use super::types::*;
 use crate::ke::sync::Spinlock;
+use crate::libs::gdi32::types::HBITMAP;
 use core::ptr;
 
+/// Rectangle (left, top, right, bottom).
+#[derive(Debug, Clone, Copy)]
+pub struct RECT {
+    pub left: i32,
+    pub top: i32,
+    pub right: i32,
+    pub bottom: i32,
+}
 
 #[repr(C)]
 pub struct MENUITEMINFOW {
@@ -27,11 +36,12 @@ pub struct MENUITEMINFOW {
     pub hbmp_item: HBITMAP,
 }
 
-struct MenuItem {
+#[derive(Clone, Copy)]
+pub struct MenuItem {
     id: u32,
     text: [u16; 256],
     flags: u32,
-    submenu: HMENU,
+    pub submenu: HMENU,
 }
 
 impl MenuItem {
@@ -45,6 +55,7 @@ impl MenuItem {
     }
 }
 
+#[derive(Clone, Copy)]
 struct Menu {
     items: [MenuItem; 64],
     count: usize,
@@ -62,11 +73,9 @@ impl Menu {
 }
 
 const MAX_MENUS: usize = 256;
-static MENU_TABLE: Spinlock<[Option<Menu>; MAX_MENUS]> =
-    Spinlock::new([None; MAX_MENUS]);
+static MENU_TABLE: Spinlock<[Option<Menu>; MAX_MENUS]> = Spinlock::new([None; MAX_MENUS]);
 
-
-pub unsafe extern "C" fn CreateMenu() -> HMENU {
+pub unsafe extern "C" fn create_menu() -> HMENU {
     let mut table = MENU_TABLE.lock();
 
     for (i, slot) in table.iter_mut().enumerate() {
@@ -81,7 +90,7 @@ pub unsafe extern "C" fn CreateMenu() -> HMENU {
     ptr::null_mut()
 }
 
-pub unsafe extern "C" fn CreatePopupMenu() -> HMENU {
+pub unsafe extern "C" fn create_popup_menu() -> HMENU {
     let mut table = MENU_TABLE.lock();
 
     for (i, slot) in table.iter_mut().enumerate() {
@@ -96,7 +105,7 @@ pub unsafe extern "C" fn CreatePopupMenu() -> HMENU {
     ptr::null_mut()
 }
 
-pub unsafe extern "C" fn DestroyMenu(h_menu: HMENU) -> i32 {
+pub unsafe extern "C" fn destroy_menu(h_menu: HMENU) -> i32 {
     if h_menu.is_null() {
         return 0;
     }
@@ -111,8 +120,7 @@ pub unsafe extern "C" fn DestroyMenu(h_menu: HMENU) -> i32 {
     1
 }
 
-
-pub unsafe extern "C" fn AppendMenuW(
+pub unsafe extern "C" fn append_menu_w(
     h_menu: HMENU,
     u_flags: u32,
     u_id_new_item: usize,
@@ -153,7 +161,7 @@ pub unsafe extern "C" fn AppendMenuW(
     0
 }
 
-pub unsafe extern "C" fn InsertMenuW(
+pub unsafe extern "C" fn insert_menu_w(
     h_menu: HMENU,
     u_position: u32,
     u_flags: u32,
@@ -212,11 +220,7 @@ pub unsafe extern "C" fn InsertMenuW(
     0
 }
 
-pub unsafe extern "C" fn DeleteMenu(
-    h_menu: HMENU,
-    u_position: u32,
-    u_flags: u32,
-) -> i32 {
+pub unsafe extern "C" fn delete_menu(h_menu: HMENU, u_position: u32, u_flags: u32) -> i32 {
     if h_menu.is_null() {
         return 0;
     }
@@ -251,8 +255,7 @@ pub unsafe extern "C" fn DeleteMenu(
     0
 }
 
-
-pub unsafe extern "C" fn GetMenuItemInfoW(
+pub unsafe extern "C" fn get_menu_item_info_w(
     h_menu: HMENU,
     u_item: u32,
     f_by_position: i32,
@@ -266,7 +269,7 @@ pub unsafe extern "C" fn GetMenuItemInfoW(
     0
 }
 
-pub unsafe extern "C" fn SetMenuItemInfoW(
+pub unsafe extern "C" fn set_menu_item_info_w(
     h_menu: HMENU,
     u_item: u32,
     f_by_position: i32,
@@ -280,15 +283,14 @@ pub unsafe extern "C" fn SetMenuItemInfoW(
     1
 }
 
-
-pub unsafe extern "C" fn TrackPopupMenu(
+pub unsafe extern "C" fn track_popup_menu(
     h_menu: HMENU,
     u_flags: u32,
     x: i32,
     y: i32,
     n_reserved: i32,
     h_wnd: HWND,
-    prc_rect: *const super::window::RECT,
+    prc_rect: *const RECT,
 ) -> i32 {
     if h_menu.is_null() || h_wnd.is_null() {
         return 0;
@@ -297,7 +299,6 @@ pub unsafe extern "C" fn TrackPopupMenu(
     let _ = (u_flags, x, y, n_reserved, prc_rect);
     0
 }
-
 
 pub mod mf {
     pub const MF_INSERT: u32 = 0x0000;

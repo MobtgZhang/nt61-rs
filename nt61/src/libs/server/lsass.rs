@@ -6,7 +6,6 @@
 extern crate alloc;
 
 use crate::ke::sync::Spinlock;
-use crate::kprintln;
 
 static SYSTEM_TOKEN: Spinlock<u64> = Spinlock::new(0);
 static SESSION0_TOKEN: Spinlock<u64> = Spinlock::new(0);

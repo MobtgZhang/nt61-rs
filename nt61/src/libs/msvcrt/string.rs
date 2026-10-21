@@ -4,11 +4,10 @@
 
 use super::types::*;
 use core::ptr;
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 // for internal use.
 
-pub unsafe extern "C" fn memcpy(dest: *mut c_void, src: *const c_void, n: size_t) -> *mut c_void {
+pub unsafe extern "C" fn memcpy(dest: *mut c_void, src: *const c_void, n: SizeT) -> *mut c_void {
     if dest.is_null() || src.is_null() || n == 0 {
         return dest;
     }
@@ -16,7 +15,7 @@ pub unsafe extern "C" fn memcpy(dest: *mut c_void, src: *const c_void, n: size_t
     dest
 }
 
-pub unsafe extern "C" fn memmove(dest: *mut c_void, src: *const c_void, n: size_t) -> *mut c_void {
+pub unsafe extern "C" fn memmove(dest: *mut c_void, src: *const c_void, n: SizeT) -> *mut c_void {
     if dest.is_null() || src.is_null() || n == 0 {
         return dest;
     }
@@ -24,7 +23,7 @@ pub unsafe extern "C" fn memmove(dest: *mut c_void, src: *const c_void, n: size_
     dest
 }
 
-pub unsafe extern "C" fn memset(s: *mut c_void, c: c_int, n: size_t) -> *mut c_void {
+pub unsafe extern "C" fn memset(s: *mut c_void, c: CInt, n: SizeT) -> *mut c_void {
     if s.is_null() || n == 0 {
         return s;
     }
@@ -33,7 +32,7 @@ pub unsafe extern "C" fn memset(s: *mut c_void, c: c_int, n: size_t) -> *mut c_v
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: size_t) -> c_int {
+pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: SizeT) -> CInt {
     if s1.is_null() || s2.is_null() {
         return 0;
     }
@@ -45,14 +44,14 @@ pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: size_t)
         let a = *p1.add(i);
         let b = *p2.add(i);
         if a != b {
-            return (a as c_int) - (b as c_int);
+            return (a as CInt) - (b as CInt);
         }
     }
     0
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: size_t) -> *mut c_void {
+pub unsafe extern "C" fn memchr(s: *const c_void, c: CInt, n: SizeT) -> *mut c_void {
     if s.is_null() {
         return ptr::null_mut();
     }
@@ -68,8 +67,7 @@ pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: size_t) -> *mut c
     ptr::null_mut()
 }
 
-#[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn strlen(s: *const c_char) -> size_t {
+pub unsafe extern "C" fn msvcrt_strlen_c(s: *const CChar) -> SizeT {
     if s.is_null() {
         return 0;
     }
@@ -82,7 +80,12 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> size_t {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn strcpy(dest: *mut c_char, src: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn msvcrt_strlen(s: *const u8) -> SizeT {
+    msvcrt_strlen_c(s.cast::<CChar>())
+}
+
+#[cfg_attr(not(test), no_mangle)]
+pub unsafe extern "C" fn strcpy(dest: *mut CChar, src: *const CChar) -> *mut CChar {
     if dest.is_null() || src.is_null() {
         return dest;
     }
@@ -100,7 +103,7 @@ pub unsafe extern "C" fn strcpy(dest: *mut c_char, src: *const c_char) -> *mut c
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn strncpy(dest: *mut c_char, src: *const c_char, n: size_t) -> *mut c_char {
+pub unsafe extern "C" fn strncpy(dest: *mut CChar, src: *const CChar, n: SizeT) -> *mut CChar {
     if dest.is_null() || src.is_null() || n == 0 {
         return dest;
     }
@@ -123,23 +126,23 @@ pub unsafe extern "C" fn strncpy(dest: *mut c_char, src: *const c_char, n: size_
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn strcat(dest: *mut c_char, src: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn strcat(dest: *mut CChar, src: *const CChar) -> *mut CChar {
     if dest.is_null() || src.is_null() {
         return dest;
     }
 
-    let dest_len = strlen(dest);
+    let dest_len = msvcrt_strlen_c(dest);
     strcpy(dest.add(dest_len), src);
     dest
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn strncat(dest: *mut c_char, src: *const c_char, n: size_t) -> *mut c_char {
+pub unsafe extern "C" fn strncat(dest: *mut CChar, src: *const CChar, n: SizeT) -> *mut CChar {
     if dest.is_null() || src.is_null() || n == 0 {
         return dest;
     }
 
-    let dest_len = strlen(dest);
+    let dest_len = msvcrt_strlen_c(dest);
     let dest_end = dest.add(dest_len);
 
     let mut i = 0;
@@ -152,7 +155,7 @@ pub unsafe extern "C" fn strncat(dest: *mut c_char, src: *const c_char, n: size_
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int {
+pub unsafe extern "C" fn strcmp(s1: *const CChar, s2: *const CChar) -> CInt {
     if s1.is_null() || s2.is_null() {
         return 0;
     }
@@ -163,7 +166,7 @@ pub unsafe extern "C" fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int {
         let c2 = *s2.add(i) as u8;
 
         if c1 != c2 {
-            return (c1 as c_int) - (c2 as c_int);
+            return (c1 as CInt) - (c2 as CInt);
         }
 
         if c1 == 0 {
@@ -174,7 +177,7 @@ pub unsafe extern "C" fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn strncmp(s1: *const c_char, s2: *const c_char, n: size_t) -> c_int {
+pub unsafe extern "C" fn strncmp(s1: *const CChar, s2: *const CChar, n: SizeT) -> CInt {
     if s1.is_null() || s2.is_null() || n == 0 {
         return 0;
     }
@@ -184,7 +187,7 @@ pub unsafe extern "C" fn strncmp(s1: *const c_char, s2: *const c_char, n: size_t
         let c2 = *s2.add(i) as u8;
 
         if c1 != c2 {
-            return (c1 as c_int) - (c2 as c_int);
+            return (c1 as CInt) - (c2 as CInt);
         }
 
         if c1 == 0 {
@@ -195,18 +198,18 @@ pub unsafe extern "C" fn strncmp(s1: *const c_char, s2: *const c_char, n: size_t
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn strchr(s: *const c_char, c: c_int) -> *mut c_char {
+pub unsafe extern "C" fn strchr(s: *const CChar, c: CInt) -> *mut CChar {
     if s.is_null() {
         return ptr::null_mut();
     }
 
-    let target = c as c_char;
+    let target = c as CChar;
     let mut i = 0;
 
     loop {
         let ch = *s.add(i);
         if ch == target {
-            return s.add(i) as *mut c_char;
+            return s.add(i) as *mut CChar;
         }
         if ch == 0 {
             break;
@@ -217,54 +220,54 @@ pub unsafe extern "C" fn strchr(s: *const c_char, c: c_int) -> *mut c_char {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn strrchr(s: *const c_char, c: c_int) -> *mut c_char {
+pub unsafe extern "C" fn strrchr(s: *const CChar, c: CInt) -> *mut CChar {
     if s.is_null() {
         return ptr::null_mut();
     }
 
-    let target = c as c_char;
-    let len = strlen(s);
+    let target = c as CChar;
+    let len = msvcrt_strlen_c(s);
 
     for i in (0..=len).rev() {
         if *s.add(i) == target {
-            return s.add(i) as *mut c_char;
+            return s.add(i) as *mut CChar;
         }
     }
     ptr::null_mut()
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn strstr(haystack: *const c_char, needle: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn strstr(haystack: *const CChar, needle: *const CChar) -> *mut CChar {
     if haystack.is_null() || needle.is_null() {
         return ptr::null_mut();
     }
 
-    let needle_len = strlen(needle);
+    let needle_len = msvcrt_strlen_c(needle);
     if needle_len == 0 {
-        return haystack as *mut c_char;
+        return haystack as *mut CChar;
     }
 
-    let haystack_len = strlen(haystack);
+    let haystack_len = msvcrt_strlen_c(haystack);
     if needle_len > haystack_len {
         return ptr::null_mut();
     }
 
     for i in 0..=(haystack_len - needle_len) {
         if strncmp(haystack.add(i), needle, needle_len) == 0 {
-            return haystack.add(i) as *mut c_char;
+            return haystack.add(i) as *mut CChar;
         }
     }
     ptr::null_mut()
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn strdup(s: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn strdup(s: *const CChar) -> *mut CChar {
     if s.is_null() {
         return ptr::null_mut();
     }
 
-    let len = strlen(s);
-    let new_str = crate::libs::msvcrt::memory::malloc(len + 1) as *mut c_char;
+    let len = msvcrt_strlen_c(s);
+    let new_str = crate::libs::msvcrt::memory::malloc(len + 1) as *mut CChar;
     if !new_str.is_null() {
         strcpy(new_str, s);
     }
@@ -272,7 +275,7 @@ pub unsafe extern "C" fn strdup(s: *const c_char) -> *mut c_char {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn _stricmp(s1: *const c_char, s2: *const c_char) -> c_int {
+pub unsafe extern "C" fn _stricmp(s1: *const CChar, s2: *const CChar) -> CInt {
     if s1.is_null() || s2.is_null() {
         return 0;
     }
@@ -283,7 +286,7 @@ pub unsafe extern "C" fn _stricmp(s1: *const c_char, s2: *const c_char) -> c_int
         let c2 = (*s2.add(i) as u8).to_ascii_lowercase();
 
         if c1 != c2 {
-            return (c1 as c_int) - (c2 as c_int);
+            return (c1 as CInt) - (c2 as CInt);
         }
 
         if c1 == 0 {
@@ -294,7 +297,7 @@ pub unsafe extern "C" fn _stricmp(s1: *const c_char, s2: *const c_char) -> c_int
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn _strnicmp(s1: *const c_char, s2: *const c_char, n: size_t) -> c_int {
+pub unsafe extern "C" fn _strnicmp(s1: *const CChar, s2: *const CChar, n: SizeT) -> CInt {
     if s1.is_null() || s2.is_null() || n == 0 {
         return 0;
     }
@@ -304,7 +307,7 @@ pub unsafe extern "C" fn _strnicmp(s1: *const c_char, s2: *const c_char, n: size
         let c2 = (*s2.add(i) as u8).to_ascii_lowercase();
 
         if c1 != c2 {
-            return (c1 as c_int) - (c2 as c_int);
+            return (c1 as CInt) - (c2 as CInt);
         }
 
         if c1 == 0 {
@@ -315,16 +318,12 @@ pub unsafe extern "C" fn _strnicmp(s1: *const c_char, s2: *const c_char, n: size
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn strcpy_s(
-    dest: *mut c_char,
-    dest_size: size_t,
-    src: *const c_char,
-) -> errno_t {
+pub unsafe extern "C" fn strcpy_s(dest: *mut CChar, dest_size: SizeT, src: *const CChar) -> ErrnoT {
     if dest.is_null() || src.is_null() || dest_size == 0 {
         return EINVAL;
     }
 
-    let src_len = strlen(src);
+    let src_len = msvcrt_strlen_c(src);
     if src_len >= dest_size {
         *dest = 0;
         return ERANGE;
@@ -335,17 +334,13 @@ pub unsafe extern "C" fn strcpy_s(
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn strcat_s(
-    dest: *mut c_char,
-    dest_size: size_t,
-    src: *const c_char,
-) -> errno_t {
+pub unsafe extern "C" fn strcat_s(dest: *mut CChar, dest_size: SizeT, src: *const CChar) -> ErrnoT {
     if dest.is_null() || src.is_null() || dest_size == 0 {
         return EINVAL;
     }
 
-    let dest_len = strlen(dest);
-    let src_len = strlen(src);
+    let dest_len = msvcrt_strlen_c(dest);
+    let src_len = msvcrt_strlen_c(src);
 
     if dest_len + src_len >= dest_size {
         return ERANGE;

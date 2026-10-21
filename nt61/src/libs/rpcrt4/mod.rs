@@ -7,10 +7,7 @@
 //! Clean-room implementation. Spec source: Windows RPC documentation,
 //! "Windows Internals 6th ed." ch. 3.
 
-// RPC runtime names (RpcBindingFromStringBindingW, RPC_STATUS, ...).
-#![allow(non_snake_case, non_upper_case_globals, dead_code)]
-
-use crate::kprintln;
+// RPC runtime names (RpcBindingFromStringBindingW, RpcStatus, ...).
 
 /// RPC status codes.
 pub const RPC_S_OK: u32 = 0;
@@ -27,6 +24,7 @@ pub fn init() {
 
 pub mod binding;
 pub mod client;
+pub mod security;
 pub mod server;
 pub mod types;
 pub mod uuid;

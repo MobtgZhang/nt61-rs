@@ -1,18 +1,18 @@
 //! kernel32 — thread management
 //
-//! `CreateThread`, `GetCurrentThread`, `GetCurrentThreadId`,
-//! `ExitThread`, `TerminateThread`, `GetThreadId`,
-//! `Sleep`, `SleepEx`, `SwitchToThread`, `ResumeThread`,
-//! `SuspendThread`.
+//! `create_thread`, `get_current_thread`, `get_current_thread_id`,
+//! `exit_thread`, `terminate_thread`, `get_thread_id`,
+//! `sleep`, `sleep_ex`, `switch_to_thread`, `resume_thread`,
+//! `suspend_thread`.
 
-use super::error::{GetLastError, SetLastError};
+use super::error::set_last_error;
 use super::types::{BOOL, DWORD, FALSE, HANDLE, HANDLE_CURRENT_THREAD, TRUE};
-use crate::libs::ntdll::status::{STATUS_INVALID_HANDLE, STATUS_SUCCESS};
+use crate::libs::ntdll::status::STATUS_SUCCESS;
 use crate::libs::ntdll::thread as ntdll_thread;
 use core::ptr;
 
-/// `CreateThread`.
-pub unsafe extern "C" fn CreateThread(
+/// `create_thread`.
+pub unsafe extern "C" fn create_thread(
     _security: *const u8,
     stack_size: usize,
     start_routine: extern "C" fn(*mut u8) -> u32,
@@ -23,7 +23,7 @@ pub unsafe extern "C" fn CreateThread(
     let _ = (stack_size, start_routine, parameter, creation_flags);
     let mut h: HANDLE = ptr::null_mut();
     let mut oa = crate::libs::ntdll::types::ObjectAttributes::new();
-    let status = ntdll_thread::NtCreateThread(
+    let status = ntdll_thread::nt_create_thread(
         &mut h,
         0,
         &mut oa,
@@ -35,7 +35,7 @@ pub unsafe extern "C" fn CreateThread(
         0,
     );
     if status != STATUS_SUCCESS {
-        SetLastError(8);
+        set_last_error(8);
         return ptr::null_mut();
     }
     if !thread_id.is_null() {
@@ -44,84 +44,84 @@ pub unsafe extern "C" fn CreateThread(
     h
 }
 
-/// `GetCurrentThread` / `GetCurrentThreadId` / `GetThreadId`.
-pub extern "C" fn GetCurrentThread() -> HANDLE {
+/// `get_current_thread` / `get_current_thread_id` / `get_thread_id`.
+pub extern "C" fn get_current_thread() -> HANDLE {
     HANDLE_CURRENT_THREAD
 }
-pub extern "C" fn GetCurrentThreadId() -> DWORD {
+pub extern "C" fn get_current_thread_id() -> DWORD {
     crate::ps::process::PID_SYSTEM.wrapping_add(1) as u32
 }
-pub extern "C" fn GetThreadId(thread: HANDLE) -> DWORD {
+pub extern "C" fn get_thread_id(thread: HANDLE) -> DWORD {
     if thread.is_null() {
         return 0;
     }
     crate::ps::process::PID_SYSTEM.wrapping_add(1) as u32
 }
 
-/// `ExitThread` — terminate the current thread.
-pub unsafe extern "C" fn ExitThread(exit_code: DWORD) -> ! {
-    ntdll_thread::NtTerminateThread(HANDLE_CURRENT_THREAD, exit_code);
+/// `exit_thread` — terminate the current thread.
+pub unsafe extern "C" fn exit_thread(exit_code: DWORD) -> ! {
+    ntdll_thread::nt_terminate_thread(HANDLE_CURRENT_THREAD, exit_code);
     loop {
         core::hint::spin_loop();
     }
 }
 
-/// `TerminateThread`.
-pub unsafe extern "C" fn TerminateThread(thread: HANDLE, exit_code: DWORD) -> BOOL {
-    if ntdll_thread::NtTerminateThread(thread, exit_code) == STATUS_SUCCESS {
+/// `terminate_thread`.
+pub unsafe extern "C" fn terminate_thread(thread: HANDLE, exit_code: DWORD) -> BOOL {
+    if ntdll_thread::nt_terminate_thread(thread, exit_code) == STATUS_SUCCESS {
         TRUE
     } else {
-        SetLastError(6);
+        set_last_error(6);
         FALSE
     }
 }
 
-/// `SuspendThread` / `ResumeThread`.
-pub unsafe extern "C" fn SuspendThread(thread: HANDLE) -> DWORD {
+/// `suspend_thread` / `resume_thread`.
+pub unsafe extern "C" fn suspend_thread(thread: HANDLE) -> DWORD {
     let mut prev = 0u32;
-    if ntdll_thread::NtSuspendThread(thread, &mut prev) != STATUS_SUCCESS {
-        SetLastError(6);
+    if ntdll_thread::nt_suspend_thread(thread, &mut prev) != STATUS_SUCCESS {
+        set_last_error(6);
         return -1i32 as u32;
     }
     prev
 }
-pub unsafe extern "C" fn ResumeThread(thread: HANDLE) -> DWORD {
+pub unsafe extern "C" fn resume_thread(thread: HANDLE) -> DWORD {
     let mut prev = 0u32;
-    if ntdll_thread::NtResumeThread(thread, &mut prev) != STATUS_SUCCESS {
-        SetLastError(6);
+    if ntdll_thread::nt_resume_thread(thread, &mut prev) != STATUS_SUCCESS {
+        set_last_error(6);
         return -1i32 as u32;
     }
     prev
 }
 
-/// `Sleep` — forward to ntdll. The bootstrap ignores the
+/// `sleep` — forward to ntdll. The bootstrap ignores the
 /// actual delay.
-pub extern "C" fn Sleep(milliseconds: DWORD) {
-    let mut interval: i64 = -(milliseconds as i64) * 10_000;
-    let _ = crate::libs::ntdll::sync::NtDelayExecution(0, &mut interval);
+pub extern "C" fn sleep(milliseconds: DWORD) {
+    let interval: i64 = -(milliseconds as i64) * 10_000;
+    let _ = crate::libs::ntdll::sync::nt_delay_execution_kernel(0, interval);
 }
 
-/// `SleepEx` — same.
-pub extern "C" fn SleepEx(milliseconds: DWORD, _alertable: BOOL) -> DWORD {
-    Sleep(milliseconds);
+/// `sleep_ex` — same.
+pub extern "C" fn sleep_ex(milliseconds: DWORD, _alertable: BOOL) -> DWORD {
+    sleep(milliseconds);
     0
 }
 
-/// `SwitchToThread` — yield to the scheduler.
-pub extern "C" fn SwitchToThread() -> BOOL {
+/// `switch_to_thread` — yield to the scheduler.
+pub extern "C" fn switch_to_thread() -> BOOL {
     crate::ke::scheduler::yield_();
     TRUE
 }
 
-/// `GetThreadPriority` / `SetThreadPriority` — accept the call.
-pub unsafe extern "C" fn GetThreadPriority(_thread: HANDLE) -> i32 {
+/// `get_thread_priority` / `set_thread_priority` — accept the call.
+pub unsafe extern "C" fn get_thread_priority(_thread: HANDLE) -> i32 {
     0
 }
-pub unsafe extern "C" fn SetThreadPriority(_thread: HANDLE, _priority: i32) -> BOOL {
+pub unsafe extern "C" fn set_thread_priority(_thread: HANDLE, _priority: i32) -> BOOL {
     TRUE
 }
 
-/// `GetThreadTimes`.
+/// `get_thread_times`.
 #[repr(C)]
 #[derive(Default)]
 pub struct FileTime {
@@ -129,7 +129,7 @@ pub struct FileTime {
     pub high: u32,
 }
 
-pub unsafe extern "C" fn GetThreadTimes(
+pub unsafe extern "C" fn get_thread_times(
     _thread: HANDLE,
     creation: *mut FileTime,
     exit: *mut FileTime,

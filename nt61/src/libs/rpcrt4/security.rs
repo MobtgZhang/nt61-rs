@@ -2,21 +2,20 @@
 //!
 //! Implements authentication, authorization, and impersonation operations.
 
-use core::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, AtomicBool, AtomicPtr, Ordering};
 use super::types::*;
 use core::ptr::null_mut;
 
-static CURRENT_IMPERSONATION_CONTEXT: AtomicPtr< core::ffi::c_void = null_mut();
+static mut CURRENT_IMPERSONATION_CONTEXT: *mut core::ffi::c_void = null_mut();
 
 #[no_mangle]
 pub unsafe extern "C" fn RpcBindingSetAuthInfoW(
-    binding: RPC_BINDING_HANDLE,
+    binding: RpcBindingHandle,
     server_princ_name: *const u16,
     authn_level: u32,
     authn_svc: u32,
     auth_identity: *mut core::ffi::c_void,
     authz_svc: u32,
-) -> RPC_STATUS {
+) -> RpcStatus {
     if binding.is_null() {
         return RPC_S_INVALID_BINDING;
     }
@@ -64,14 +63,14 @@ pub unsafe extern "C" fn RpcBindingSetAuthInfoW(
 
 #[no_mangle]
 pub unsafe extern "C" fn RpcBindingSetAuthInfoExW(
-    binding: RPC_BINDING_HANDLE,
+    binding: RpcBindingHandle,
     server_princ_name: *const u16,
     authn_level: u32,
     authn_svc: u32,
     auth_identity: *mut core::ffi::c_void,
     authz_svc: u32,
     security_qos: *mut core::ffi::c_void,
-) -> RPC_STATUS {
+) -> RpcStatus {
     let _ = security_qos;
 
     RpcBindingSetAuthInfoW(
@@ -86,13 +85,13 @@ pub unsafe extern "C" fn RpcBindingSetAuthInfoExW(
 
 #[no_mangle]
 pub unsafe extern "C" fn RpcBindingInqAuthInfoW(
-    binding: RPC_BINDING_HANDLE,
+    binding: RpcBindingHandle,
     server_princ_name: *mut *mut u16,
     authn_level: *mut u32,
     authn_svc: *mut u32,
     auth_identity: *mut *mut core::ffi::c_void,
     authz_svc: *mut u32,
-) -> RPC_STATUS {
+) -> RpcStatus {
     if binding.is_null() {
         return RPC_S_INVALID_BINDING;
     }
@@ -116,10 +115,7 @@ pub unsafe extern "C" fn RpcBindingInqAuthInfoW(
     }
 
     if !server_princ_name.is_null() {
-        let buffer = crate::mm::pool::allocate(
-            crate::mm::pool::PoolType::NonPaged,
-            2,
-        ) as *mut u16;
+        let buffer = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, 2) as *mut u16;
 
         if buffer.is_null() {
             return RPC_S_OUT_OF_MEMORY;
@@ -134,7 +130,7 @@ pub unsafe extern "C" fn RpcBindingInqAuthInfoW(
 
 #[no_mangle]
 pub unsafe extern "C" fn RpcBindingInqAuthInfoExW(
-    binding: RPC_BINDING_HANDLE,
+    binding: RpcBindingHandle,
     server_princ_name: *mut *mut u16,
     authn_level: *mut u32,
     authn_svc: *mut u32,
@@ -142,7 +138,7 @@ pub unsafe extern "C" fn RpcBindingInqAuthInfoExW(
     authz_svc: *mut u32,
     rpc_qos_version: u32,
     security_qos: *mut core::ffi::c_void,
-) -> RPC_STATUS {
+) -> RpcStatus {
     let _ = rpc_qos_version;
     let _ = security_qos;
 
@@ -157,10 +153,7 @@ pub unsafe extern "C" fn RpcBindingInqAuthInfoExW(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn RpcImpersonateClient(
-    binding_handle: RPC_BINDING_HANDLE,
-) -> RPC_STATUS {
-
+pub unsafe extern "C" fn RpcImpersonateClient(binding_handle: RpcBindingHandle) -> RpcStatus {
     if !binding_handle.is_null() {
         CURRENT_IMPERSONATION_CONTEXT = binding_handle as *mut core::ffi::c_void;
     }
@@ -169,15 +162,13 @@ pub unsafe extern "C" fn RpcImpersonateClient(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn RpcRevertToSelf() -> RPC_STATUS {
+pub unsafe extern "C" fn RpcRevertToSelf() -> RpcStatus {
     CURRENT_IMPERSONATION_CONTEXT = null_mut();
     RPC_S_OK
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn RpcRevertToSelfEx(
-    binding_handle: RPC_BINDING_HANDLE,
-) -> RPC_STATUS {
+pub unsafe extern "C" fn RpcRevertToSelfEx(binding_handle: RpcBindingHandle) -> RpcStatus {
     if !binding_handle.is_null() {
         if CURRENT_IMPERSONATION_CONTEXT == binding_handle as *mut core::ffi::c_void {
             CURRENT_IMPERSONATION_CONTEXT = null_mut();
@@ -188,13 +179,13 @@ pub unsafe extern "C" fn RpcRevertToSelfEx(
 
 #[no_mangle]
 pub unsafe extern "C" fn RpcBindingInqAuthClientW(
-    client_binding: RPC_BINDING_HANDLE,
+    client_binding: RpcBindingHandle,
     privs: *mut *mut core::ffi::c_void,
     server_princ_name: *mut *mut u16,
     authn_level: *mut u32,
     authn_svc: *mut u32,
     authz_svc: *mut u32,
-) -> RPC_STATUS {
+) -> RpcStatus {
     if client_binding.is_null() {
         return RPC_S_INVALID_BINDING;
     }
@@ -218,10 +209,7 @@ pub unsafe extern "C" fn RpcBindingInqAuthClientW(
     }
 
     if !server_princ_name.is_null() {
-        let buffer = crate::mm::pool::allocate(
-            crate::mm::pool::PoolType::NonPaged,
-            2,
-        ) as *mut u16;
+        let buffer = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, 2) as *mut u16;
 
         if buffer.is_null() {
             return RPC_S_OUT_OF_MEMORY;
@@ -236,15 +224,15 @@ pub unsafe extern "C" fn RpcBindingInqAuthClientW(
 
 #[no_mangle]
 pub unsafe extern "C" fn RpcBindingInqAuthClientExW(
-    client_binding: RPC_BINDING_HANDLE,
+    client_binding: RpcBindingHandle,
     privs: *mut *mut core::ffi::c_void,
     server_princ_name: *mut *mut u16,
     authn_level: *mut u32,
     authn_svc: *mut u32,
     authz_svc: *mut u32,
     flags: u32,
-) -> RPC_STATUS {
-    let _ = flags; // Flags ignored
+) -> RpcStatus {
+    let _ = flags; // flags ignored
 
     RpcBindingInqAuthClientW(
         client_binding,
@@ -258,10 +246,10 @@ pub unsafe extern "C" fn RpcBindingInqAuthClientExW(
 
 #[no_mangle]
 pub unsafe extern "C" fn RpcBindingSetOption(
-    binding: RPC_BINDING_HANDLE,
+    binding: RpcBindingHandle,
     option: u32,
     option_value: usize,
-) -> RPC_STATUS {
+) -> RpcStatus {
     if binding.is_null() {
         return RPC_S_INVALID_BINDING;
     }
@@ -274,10 +262,10 @@ pub unsafe extern "C" fn RpcBindingSetOption(
 
 #[no_mangle]
 pub unsafe extern "C" fn RpcBindingInqOption(
-    binding: RPC_BINDING_HANDLE,
+    binding: RpcBindingHandle,
     option: u32,
     option_value: *mut usize,
-) -> RPC_STATUS {
+) -> RpcStatus {
     if binding.is_null() || option_value.is_null() {
         return RPC_S_INVALID_BINDING;
     }
@@ -294,7 +282,7 @@ pub unsafe extern "C" fn RpcServerRegisterAuthInfoW(
     authn_svc: u32,
     get_key_fn: *mut core::ffi::c_void,
     arg: *mut core::ffi::c_void,
-) -> RPC_STATUS {
+) -> RpcStatus {
     match authn_svc {
         RPC_C_AUTHN_NONE
         | RPC_C_AUTHN_DCE_PRIVATE
@@ -318,17 +306,14 @@ pub unsafe extern "C" fn RpcServerRegisterAuthInfoW(
 pub unsafe extern "C" fn RpcServerInqDefaultPrincNameW(
     authn_svc: u32,
     princ_name: *mut *mut u16,
-) -> RPC_STATUS {
+) -> RpcStatus {
     if princ_name.is_null() {
         return RPC_S_INVALID_BINDING;
     }
 
     let _ = authn_svc;
 
-    let buffer = crate::mm::pool::allocate(
-        crate::mm::pool::PoolType::NonPaged,
-        2,
-    ) as *mut u16;
+    let buffer = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, 2) as *mut u16;
 
     if buffer.is_null() {
         return RPC_S_OUT_OF_MEMORY;
@@ -340,16 +325,16 @@ pub unsafe extern "C" fn RpcServerInqDefaultPrincNameW(
     RPC_S_OK
 }
 
-pub type RPC_IF_CALLBACK_FN = unsafe extern "C" fn(
+pub type RpcIfCallbackFn = unsafe extern "C" fn(
     interface_uuid: *mut core::ffi::c_void,
     context: *mut core::ffi::c_void,
-) -> RPC_STATUS;
+) -> RpcStatus;
 
 #[no_mangle]
 pub unsafe extern "C" fn RpcServerRegisterIfCallback(
-    if_spec: RPC_IF_HANDLE,
-    callback_fn: RPC_IF_CALLBACK_FN,
-) -> RPC_STATUS {
+    if_spec: RpcIfHandle,
+    callback_fn: RpcIfCallbackFn,
+) -> RpcStatus {
     if if_spec.is_null() {
         return RPC_S_INVALID_BINDING;
     }
@@ -361,7 +346,7 @@ pub unsafe extern "C" fn RpcServerRegisterIfCallback(
 
 #[no_mangle]
 pub unsafe extern "C" fn RpcGetAuthorizationContextForClient(
-    client_binding: RPC_BINDING_HANDLE,
+    client_binding: RpcBindingHandle,
     impersonation_on_return: i32,
     reserved1: *mut core::ffi::c_void,
     expiration_time: *mut i64,
@@ -369,7 +354,7 @@ pub unsafe extern "C" fn RpcGetAuthorizationContextForClient(
     reserved3: u32,
     reserved4: *mut *mut core::ffi::c_void,
     authz_context_handle: *mut *mut core::ffi::c_void,
-) -> RPC_STATUS {
+) -> RpcStatus {
     if client_binding.is_null() || authz_context_handle.is_null() {
         return RPC_S_INVALID_BINDING;
     }

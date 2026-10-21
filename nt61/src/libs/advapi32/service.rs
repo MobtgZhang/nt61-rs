@@ -1,8 +1,8 @@
-//! advapi32 — Service Control Manager APIs
+//! advapi32 — Service control Manager APIs
 //
-//! Implements Windows Service Control Manager (SCM) functions:
+//! Implements Windows Service control Manager (SCM) functions:
 //! - OpenSCManagerW — Connect to the SCM
-//! - CreateServiceW — Create a new service
+//! - CreateServiceW — create a new service
 //! - OpenServiceW — Open an existing service
 //! - StartServiceW — Start a service
 //! - ControlService — Send control codes to a service
@@ -11,14 +11,9 @@
 //! - ChangeServiceConfigW — Modify service configuration
 //! - EnumServicesStatusW — Enumerate services
 
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
-
-#[allow(non_snake_case, non_upper_case_globals, dead_code)]
 use super::types::*;
-use crate::libs::ntdll::types::{DWORD, HANDLE, PCWSTR, PVOID, PWSTR};
-use alloc::string::String;
-use alloc::vec::Vec;
-use core::ptr::{null, null_mut};
+use crate::libs::ntdll::types::{DWORD, PCWSTR, PVOID};
+use core::ptr::null_mut;
 
 const MAX_SERVICES: usize = 128;
 
@@ -76,21 +71,24 @@ static mut SCM_HANDLES: [ScmHandle; MAX_SCM_HANDLES] = [ScmHandle {
     in_use: false,
 }; MAX_SCM_HANDLES];
 
-fn alloc_scm_handle(access: DWORD, service_index: Option<usize>) -> Option<SC_HANDLE> {
+fn alloc_scm_handle(access: DWORD, service_index: Option<usize>) -> Option<ScHandle> {
     unsafe {
-        for (i, entry) in SCM_HANDLES.iter_mut().enumerate() {
+        for (i, entry) in (*core::ptr::addr_of_mut!(SCM_HANDLES))
+            .iter_mut()
+            .enumerate()
+        {
             if !entry.in_use {
                 entry.access = access;
                 entry.service_index = service_index;
                 entry.in_use = true;
-                return Some((0x2000 + i * 4) as SC_HANDLE);
+                return Some((0x2000 + i * 4) as ScHandle);
             }
         }
     }
     None
 }
 
-fn free_scm_handle(handle: SC_HANDLE) -> bool {
+fn free_scm_handle(handle: ScHandle) -> bool {
     let index = ((handle as usize) - 0x2000) / 4;
     unsafe {
         if index < MAX_SCM_HANDLES && SCM_HANDLES[index].in_use {
@@ -101,7 +99,7 @@ fn free_scm_handle(handle: SC_HANDLE) -> bool {
     false
 }
 
-fn get_scm_handle(handle: SC_HANDLE) -> Option<&'static ScmHandle> {
+fn get_scm_handle(handle: ScHandle) -> Option<&'static ScmHandle> {
     let index = ((handle as usize) - 0x2000) / 4;
     unsafe {
         if index < MAX_SCM_HANDLES && SCM_HANDLES[index].in_use {
@@ -116,7 +114,7 @@ unsafe fn find_service(name: PCWSTR) -> Option<usize> {
         return None;
     }
 
-    for (i, service) in SERVICE_TABLE.iter().enumerate() {
+    for (i, service) in (*core::ptr::addr_of!(SERVICE_TABLE)).iter().enumerate() {
         if !service.in_use {
             continue;
         }
@@ -145,7 +143,10 @@ unsafe fn find_service(name: PCWSTR) -> Option<usize> {
 }
 
 unsafe fn alloc_service() -> Option<usize> {
-    for (i, service) in SERVICE_TABLE.iter_mut().enumerate() {
+    for (i, service) in (*core::ptr::addr_of_mut!(SERVICE_TABLE))
+        .iter_mut()
+        .enumerate()
+    {
         if !service.in_use {
             service.in_use = true;
             return Some(i);
@@ -172,19 +173,19 @@ unsafe fn copy_to_buffer(dest: &mut [u16], src: PCWSTR) {
 
 #[no_mangle]
 pub unsafe extern "C" fn OpenSCManagerW(
-    lpMachineName: PCWSTR,
-    lpDatabaseName: PCWSTR,
-    dwDesiredAccess: DWORD,
-) -> SC_HANDLE {
-    match alloc_scm_handle(dwDesiredAccess, None) {
+    _lp_machine_name: PCWSTR,
+    _lp_database_name: PCWSTR,
+    dw_desired_access: DWORD,
+) -> ScHandle {
+    match alloc_scm_handle(dw_desired_access, None) {
         Some(handle) => handle,
         None => null_mut(),
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn CloseServiceHandle(hSCObject: SC_HANDLE) -> LONG {
-    if free_scm_handle(hSCObject) {
+pub unsafe extern "C" fn CloseServiceHandle(h_scobject: ScHandle) -> LONG {
+    if free_scm_handle(h_scobject) {
         1 // TRUE
     } else {
         0 // FALSE
@@ -193,29 +194,29 @@ pub unsafe extern "C" fn CloseServiceHandle(hSCObject: SC_HANDLE) -> LONG {
 
 #[no_mangle]
 pub unsafe extern "C" fn CreateServiceW(
-    hSCManager: SC_HANDLE,
-    lpServiceName: PCWSTR,
-    lpDisplayName: PCWSTR,
-    dwDesiredAccess: DWORD,
-    dwServiceType: DWORD,
-    dwStartType: DWORD,
-    dwErrorControl: DWORD,
-    lpBinaryPathName: PCWSTR,
-    lpLoadOrderGroup: PCWSTR,
-    lpdwTagId: *mut DWORD,
-    lpDependencies: PCWSTR,
-    lpServiceStartName: PCWSTR,
-    lpPassword: PCWSTR,
-) -> SC_HANDLE {
-    if get_scm_handle(hSCManager).is_none() {
+    h_scmanager: ScHandle,
+    lp_service_name: PCWSTR,
+    lp_display_name: PCWSTR,
+    dw_desired_access: DWORD,
+    dw_service_type: DWORD,
+    dw_start_type: DWORD,
+    dw_error_control: DWORD,
+    lp_binary_path_name: PCWSTR,
+    _lp_load_order_group: PCWSTR,
+    _lpdw_tag_id: *mut DWORD,
+    _lp_dependencies: PCWSTR,
+    _lp_service_start_name: PCWSTR,
+    _lp_password: PCWSTR,
+) -> ScHandle {
+    if get_scm_handle(h_scmanager).is_none() {
         return null_mut();
     }
 
-    if lpServiceName.is_null() || lpBinaryPathName.is_null() {
+    if lp_service_name.is_null() || lp_binary_path_name.is_null() {
         return null_mut();
     }
 
-    if find_service(lpServiceName).is_some() {
+    if find_service(lp_service_name).is_some() {
         return null_mut();
     }
 
@@ -225,23 +226,23 @@ pub unsafe extern "C" fn CreateServiceW(
     };
 
     let service = &mut SERVICE_TABLE[service_index];
-    copy_to_buffer(&mut service.name, lpServiceName);
+    copy_to_buffer(&mut service.name, lp_service_name);
     copy_to_buffer(
         &mut service.display_name,
-        if lpDisplayName.is_null() {
-            lpServiceName
+        if lp_display_name.is_null() {
+            lp_service_name
         } else {
-            lpDisplayName
+            lp_display_name
         },
     );
-    copy_to_buffer(&mut service.binary_path, lpBinaryPathName);
-    service.service_type = dwServiceType;
-    service.start_type = dwStartType;
-    service.error_control = dwErrorControl;
+    copy_to_buffer(&mut service.binary_path, lp_binary_path_name);
+    service.service_type = dw_service_type;
+    service.start_type = dw_start_type;
+    service.error_control = dw_error_control;
     service.current_state = SERVICE_STOPPED;
     service.controls_accepted = SERVICE_CONTROL_STOP;
 
-    match alloc_scm_handle(dwDesiredAccess, Some(service_index)) {
+    match alloc_scm_handle(dw_desired_access, Some(service_index)) {
         Some(handle) => handle,
         None => {
             service.in_use = false;
@@ -252,20 +253,20 @@ pub unsafe extern "C" fn CreateServiceW(
 
 #[no_mangle]
 pub unsafe extern "C" fn OpenServiceW(
-    hSCManager: SC_HANDLE,
-    lpServiceName: PCWSTR,
-    dwDesiredAccess: DWORD,
-) -> SC_HANDLE {
-    if get_scm_handle(hSCManager).is_none() {
+    h_scmanager: ScHandle,
+    lp_service_name: PCWSTR,
+    dw_desired_access: DWORD,
+) -> ScHandle {
+    if get_scm_handle(h_scmanager).is_none() {
         return null_mut();
     }
 
-    let service_index = match find_service(lpServiceName) {
+    let service_index = match find_service(lp_service_name) {
         Some(idx) => idx,
         None => return null_mut(),
     };
 
-    match alloc_scm_handle(dwDesiredAccess, Some(service_index)) {
+    match alloc_scm_handle(dw_desired_access, Some(service_index)) {
         Some(handle) => handle,
         None => null_mut(),
     }
@@ -273,11 +274,11 @@ pub unsafe extern "C" fn OpenServiceW(
 
 #[no_mangle]
 pub unsafe extern "C" fn StartServiceW(
-    hService: SC_HANDLE,
-    dwNumServiceArgs: DWORD,
-    lpServiceArgVectors: *mut PCWSTR,
+    h_service: ScHandle,
+    _dw_num_service_args: DWORD,
+    _lp_service_arg_vectors: *mut PCWSTR,
 ) -> LONG {
-    let handle_entry = match get_scm_handle(hService) {
+    let handle_entry = match get_scm_handle(h_service) {
         Some(h) => h,
         None => return 0, // FALSE
     };
@@ -301,11 +302,11 @@ pub unsafe extern "C" fn StartServiceW(
 
 #[no_mangle]
 pub unsafe extern "C" fn ControlService(
-    hService: SC_HANDLE,
-    dwControl: DWORD,
-    lpServiceStatus: LPSERVICE_STATUS,
+    h_service: ScHandle,
+    dw_control: DWORD,
+    lp_service_status: LpserviceStatus,
 ) -> LONG {
-    let handle_entry = match get_scm_handle(hService) {
+    let handle_entry = match get_scm_handle(h_service) {
         Some(h) => h,
         None => return 0, // FALSE
     };
@@ -317,7 +318,7 @@ pub unsafe extern "C" fn ControlService(
 
     let service = &mut SERVICE_TABLE[service_index];
 
-    match dwControl {
+    match dw_control {
         SERVICE_CONTROL_STOP => {
             service.current_state = SERVICE_STOP_PENDING;
             service.checkpoint = 0;
@@ -340,14 +341,14 @@ pub unsafe extern "C" fn ControlService(
         _ => {}
     }
 
-    if !lpServiceStatus.is_null() {
-        (*lpServiceStatus).dwServiceType = service.service_type;
-        (*lpServiceStatus).dwCurrentState = service.current_state;
-        (*lpServiceStatus).dwControlsAccepted = service.controls_accepted;
-        (*lpServiceStatus).dwWin32ExitCode = service.win32_exit_code;
-        (*lpServiceStatus).dwServiceSpecificExitCode = service.service_exit_code;
-        (*lpServiceStatus).dwCheckPoint = service.checkpoint;
-        (*lpServiceStatus).dwWaitHint = service.wait_hint;
+    if !lp_service_status.is_null() {
+        (*lp_service_status).dw_service_type = service.service_type;
+        (*lp_service_status).dw_current_state = service.current_state;
+        (*lp_service_status).dw_controls_accepted = service.controls_accepted;
+        (*lp_service_status).dw_win32_exit_code = service.win32_exit_code;
+        (*lp_service_status).dw_service_specific_exit_code = service.service_exit_code;
+        (*lp_service_status).dw_check_point = service.checkpoint;
+        (*lp_service_status).dw_wait_hint = service.wait_hint;
     }
 
     1 // TRUE
@@ -355,14 +356,14 @@ pub unsafe extern "C" fn ControlService(
 
 #[no_mangle]
 pub unsafe extern "C" fn QueryServiceStatus(
-    hService: SC_HANDLE,
-    lpServiceStatus: LPSERVICE_STATUS,
+    h_service: ScHandle,
+    lp_service_status: LpserviceStatus,
 ) -> LONG {
-    if lpServiceStatus.is_null() {
+    if lp_service_status.is_null() {
         return 0; // FALSE
     }
 
-    let handle_entry = match get_scm_handle(hService) {
+    let handle_entry = match get_scm_handle(h_service) {
         Some(h) => h,
         None => return 0,
     };
@@ -373,20 +374,20 @@ pub unsafe extern "C" fn QueryServiceStatus(
     };
 
     let service = &SERVICE_TABLE[service_index];
-    (*lpServiceStatus).dwServiceType = service.service_type;
-    (*lpServiceStatus).dwCurrentState = service.current_state;
-    (*lpServiceStatus).dwControlsAccepted = service.controls_accepted;
-    (*lpServiceStatus).dwWin32ExitCode = service.win32_exit_code;
-    (*lpServiceStatus).dwServiceSpecificExitCode = service.service_exit_code;
-    (*lpServiceStatus).dwCheckPoint = service.checkpoint;
-    (*lpServiceStatus).dwWaitHint = service.wait_hint;
+    (*lp_service_status).dw_service_type = service.service_type;
+    (*lp_service_status).dw_current_state = service.current_state;
+    (*lp_service_status).dw_controls_accepted = service.controls_accepted;
+    (*lp_service_status).dw_win32_exit_code = service.win32_exit_code;
+    (*lp_service_status).dw_service_specific_exit_code = service.service_exit_code;
+    (*lp_service_status).dw_check_point = service.checkpoint;
+    (*lp_service_status).dw_wait_hint = service.wait_hint;
 
     1 // TRUE
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn DeleteService(hService: SC_HANDLE) -> LONG {
-    let handle_entry = match get_scm_handle(hService) {
+pub unsafe extern "C" fn DeleteService(h_service: ScHandle) -> LONG {
+    let handle_entry = match get_scm_handle(h_service) {
         Some(h) => h,
         None => return 0, // FALSE
     };
@@ -408,19 +409,19 @@ pub unsafe extern "C" fn DeleteService(hService: SC_HANDLE) -> LONG {
 
 #[no_mangle]
 pub unsafe extern "C" fn ChangeServiceConfigW(
-    hService: SC_HANDLE,
-    dwServiceType: DWORD,
-    dwStartType: DWORD,
-    dwErrorControl: DWORD,
-    lpBinaryPathName: PCWSTR,
-    lpLoadOrderGroup: PCWSTR,
-    lpdwTagId: *mut DWORD,
-    lpDependencies: PCWSTR,
-    lpServiceStartName: PCWSTR,
-    lpPassword: PCWSTR,
-    lpDisplayName: PCWSTR,
+    h_service: ScHandle,
+    dw_service_type: DWORD,
+    dw_start_type: DWORD,
+    dw_error_control: DWORD,
+    lp_binary_path_name: PCWSTR,
+    _lp_load_order_group: PCWSTR,
+    _lpdw_tag_id: *mut DWORD,
+    _lp_dependencies: PCWSTR,
+    _lp_service_start_name: PCWSTR,
+    _lp_password: PCWSTR,
+    lp_display_name: PCWSTR,
 ) -> LONG {
-    let handle_entry = match get_scm_handle(hService) {
+    let handle_entry = match get_scm_handle(h_service) {
         Some(h) => h,
         None => return 0, // FALSE
     };
@@ -432,20 +433,20 @@ pub unsafe extern "C" fn ChangeServiceConfigW(
 
     let service = &mut SERVICE_TABLE[service_index];
 
-    if dwServiceType != 0xFFFFFFFF {
-        service.service_type = dwServiceType;
+    if dw_service_type != 0xFFFFFFFF {
+        service.service_type = dw_service_type;
     }
-    if dwStartType != 0xFFFFFFFF {
-        service.start_type = dwStartType;
+    if dw_start_type != 0xFFFFFFFF {
+        service.start_type = dw_start_type;
     }
-    if dwErrorControl != 0xFFFFFFFF {
-        service.error_control = dwErrorControl;
+    if dw_error_control != 0xFFFFFFFF {
+        service.error_control = dw_error_control;
     }
-    if !lpBinaryPathName.is_null() {
-        copy_to_buffer(&mut service.binary_path, lpBinaryPathName);
+    if !lp_binary_path_name.is_null() {
+        copy_to_buffer(&mut service.binary_path, lp_binary_path_name);
     }
-    if !lpDisplayName.is_null() {
-        copy_to_buffer(&mut service.display_name, lpDisplayName);
+    if !lp_display_name.is_null() {
+        copy_to_buffer(&mut service.display_name, lp_display_name);
     }
 
     1 // TRUE
@@ -453,30 +454,30 @@ pub unsafe extern "C" fn ChangeServiceConfigW(
 
 #[no_mangle]
 pub unsafe extern "C" fn EnumServicesStatusW(
-    hSCManager: SC_HANDLE,
-    dwServiceType: DWORD,
-    dwServiceState: DWORD,
-    lpServices: PVOID,
-    cbBufSize: DWORD,
-    pcbBytesNeeded: *mut DWORD,
-    lpServicesReturned: *mut DWORD,
-    lpResumeHandle: *mut DWORD,
+    h_scmanager: ScHandle,
+    dw_service_type: DWORD,
+    dw_service_state: DWORD,
+    _lp_services: PVOID,
+    _cb_buf_size: DWORD,
+    pcb_bytes_needed: *mut DWORD,
+    lp_services_returned: *mut DWORD,
+    _lp_resume_handle: *mut DWORD,
 ) -> LONG {
-    if get_scm_handle(hSCManager).is_none() {
+    if get_scm_handle(h_scmanager).is_none() {
         return 0; // FALSE
     }
 
     let mut count = 0;
-    for service in SERVICE_TABLE.iter() {
+    for service in (*core::ptr::addr_of!(SERVICE_TABLE)).iter() {
         if !service.in_use {
             continue;
         }
 
-        if dwServiceType != 0 && (service.service_type & dwServiceType) == 0 {
+        if dw_service_type != 0 && (service.service_type & dw_service_type) == 0 {
             continue;
         }
 
-        match dwServiceState {
+        match dw_service_state {
             1 => {
                 if service.current_state != SERVICE_STOPPED {
                     continue;
@@ -493,12 +494,12 @@ pub unsafe extern "C" fn EnumServicesStatusW(
         count += 1;
     }
 
-    if !lpServicesReturned.is_null() {
-        *lpServicesReturned = count;
+    if !lp_services_returned.is_null() {
+        *lp_services_returned = count;
     }
 
-    if !pcbBytesNeeded.is_null() {
-        *pcbBytesNeeded = count * 256; // Approximate size
+    if !pcb_bytes_needed.is_null() {
+        *pcb_bytes_needed = count * 256; // Approximate size
     }
 
     1 // TRUE
@@ -506,47 +507,47 @@ pub unsafe extern "C" fn EnumServicesStatusW(
 
 #[no_mangle]
 pub unsafe extern "C" fn QueryServiceConfigW(
-    hService: SC_HANDLE,
-    lpServiceConfig: PVOID,
-    cbBufSize: DWORD,
-    pcbBytesNeeded: *mut DWORD,
+    h_service: ScHandle,
+    _lp_service_config: PVOID,
+    _cb_buf_size: DWORD,
+    pcb_bytes_needed: *mut DWORD,
 ) -> LONG {
-    let handle_entry = match get_scm_handle(hService) {
+    let handle_entry = match get_scm_handle(h_service) {
         Some(h) => h,
         None => return 0, // FALSE
     };
 
-    let service_index = match handle_entry.service_index {
+    let _service_index = match handle_entry.service_index {
         Some(idx) => idx,
         None => return 0,
     };
 
-    if !pcbBytesNeeded.is_null() {
-        *pcbBytesNeeded = 512; // Approximate size
+    if !pcb_bytes_needed.is_null() {
+        *pcb_bytes_needed = 512; // Approximate size
     }
 
     1 // TRUE
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn StartServiceCtrlDispatcherW(lpServiceStartTable: PVOID) -> LONG {
+pub unsafe extern "C" fn StartServiceCtrlDispatcherW(_lp_service_start_table: PVOID) -> LONG {
     1 // TRUE
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn RegisterServiceCtrlHandlerW(
-    lpServiceName: PCWSTR,
-    lpHandlerProc: PVOID,
-) -> SC_HANDLE {
-    0x3000 as SC_HANDLE
+    _lp_service_name: PCWSTR,
+    _lp_handler_proc: PVOID,
+) -> ScHandle {
+    0x3000 as ScHandle
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn SetServiceStatus(
-    hServiceStatus: SC_HANDLE,
-    lpServiceStatus: LPSERVICE_STATUS,
+    _h_service_status: ScHandle,
+    lp_service_status: LpserviceStatus,
 ) -> LONG {
-    if lpServiceStatus.is_null() {
+    if lp_service_status.is_null() {
         return 0; // FALSE
     }
 

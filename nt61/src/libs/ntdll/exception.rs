@@ -1,10 +1,10 @@
 //! ntdll — Exception handling support (NT 6.1.7601)
 //
 //! Implements the structured exception handling (SEH) framework for x64:
-//! - RtlUnwind / RtlUnwindEx — stack unwinding
-//! - RtlDispatchException — exception dispatcher
-//! - RtlRaiseException — raise exceptions
-//! - RtlCaptureContext / RtlRestoreContext — context manipulation
+//! - rtl_unwind / rtl_unwind_ex — stack unwinding
+//! - rtl_dispatch_exception — exception dispatcher
+//! - rtl_raise_exception — raise exceptions
+//! - rtl_capture_context / rtl_restore_context — context manipulation
 //! - Vectored Exception Handler (VEH) support
 //!
 //! Windows 7 x64 uses table-based exception handling (not frame-based SEH).
@@ -16,19 +16,15 @@
 //!   * x64 Exception Handling (MSDN)
 //!   * ReactOS ntdll/rtl/exception.c
 
-use super::types::{HANDLE, NTSTATUS, PVOID};
 use super::status::{
-    STATUS_INVALID_PARAMETER, STATUS_SUCCESS, STATUS_UNHANDLED_EXCEPTION,
-    STATUS_INVALID_DISPOSITION, STATUS_NONCONTINUABLE_EXCEPTION,
-    STATUS_UNWIND,
+    STATUS_INVALID_PARAMETER, STATUS_SUCCESS, STATUS_UNHANDLED_EXCEPTION, STATUS_UNWIND,
 };
+use super::types::{NTSTATUS, PVOID};
 use crate::ke::sync::Spinlock;
 use core::ptr;
-use core::sync::atomic::{AtomicU32, Ordering};
 
 extern crate alloc;
 use alloc::vec::Vec;
-
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -144,9 +140,11 @@ pub const CONTEXT_SEGMENTS: u32 = CONTEXT_AMD64 | 0x04;
 pub const CONTEXT_FLOATING_POINT: u32 = CONTEXT_AMD64 | 0x08;
 pub const CONTEXT_DEBUG_REGISTERS: u32 = CONTEXT_AMD64 | 0x10;
 pub const CONTEXT_FULL: u32 = CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_FLOATING_POINT;
-pub const CONTEXT_ALL: u32 = CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_SEGMENTS
-    | CONTEXT_FLOATING_POINT | CONTEXT_DEBUG_REGISTERS;
-
+pub const CONTEXT_ALL: u32 = CONTEXT_CONTROL
+    | CONTEXT_INTEGER
+    | CONTEXT_SEGMENTS
+    | CONTEXT_FLOATING_POINT
+    | CONTEXT_DEBUG_REGISTERS;
 
 pub const EXCEPTION_ACCESS_VIOLATION: u32 = 0xC0000005;
 pub const EXCEPTION_DATATYPE_MISALIGNMENT: u32 = 0x80000002;
@@ -171,7 +169,6 @@ pub const EXCEPTION_INVALID_DISPOSITION: u32 = 0xC0000026;
 pub const EXCEPTION_GUARD_PAGE: u32 = 0x80000001;
 pub const EXCEPTION_INVALID_HANDLE: u32 = 0xC0000008;
 
-
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExceptionDisposition {
@@ -180,7 +177,6 @@ pub enum ExceptionDisposition {
     ExceptionNestedException = 2,
     ExceptionCollidedUnwind = 3,
 }
-
 
 const MAX_VEH_HANDLERS: usize = 64;
 
@@ -192,9 +188,9 @@ pub struct ExceptionPointers {
     pub context_record: *mut Context,
 }
 
-struct VehEntry {
+pub struct VehEntry {
     handler: VectoredHandlerFn,
-    first: bool, // true = first-chance, false = last-chance
+    pub first: bool, // true = first-chance, false = last-chance
 }
 
 static VEH_HANDLERS: Spinlock<Vec<VehEntry>> = Spinlock::new(Vec::new());
@@ -203,7 +199,7 @@ pub const EXCEPTION_EXECUTE_HANDLER: i32 = 1;
 pub const EXCEPTION_CONTINUE_SEARCH: i32 = 0;
 pub const EXCEPTION_CONTINUE_EXECUTION: i32 = -1;
 
-pub unsafe extern "C" fn RtlAddVectoredExceptionHandler(
+pub unsafe extern "C" fn rtl_add_vectored_exception_handler(
     first_handler: u32,
     handler: VectoredHandlerFn,
 ) -> PVOID {
@@ -226,8 +222,8 @@ pub unsafe extern "C" fn RtlAddVectoredExceptionHandler(
     handler as PVOID
 }
 
-pub unsafe extern "C" fn RtlRemoveVectoredExceptionHandler(handle: PVOID) -> u32 {
-    let handler_fn: VectoredHandlerFn = core::mem::transmute(handle);
+pub unsafe extern "C" fn rtl_remove_vectored_exception_handler(handle: PVOID) -> u32 {
+    let _handler_fn: VectoredHandlerFn = core::mem::transmute(handle);
     let mut list = VEH_HANDLERS.lock();
 
     if let Some(pos) = list.iter().position(|e| e.handler as PVOID == handle) {
@@ -257,8 +253,7 @@ fn call_vectored_handlers(
     false // No handler handled it
 }
 
-
-pub unsafe extern "C" fn RtlDispatchException(
+pub unsafe extern "C" fn rtl_dispatch_exception(
     exception_record: *mut ExceptionRecord,
     context_record: *mut Context,
 ) -> u8 {
@@ -274,42 +269,43 @@ pub unsafe extern "C" fn RtlDispatchException(
         return 1; // Handled
     }
 
-
     0 // Unhandled
 }
 
-pub unsafe extern "C" fn RtlRaiseException(exception_record: *mut ExceptionRecord) -> NTSTATUS {
+pub unsafe extern "C" fn rtl_raise_exception(exception_record: *mut ExceptionRecord) -> NTSTATUS {
     if exception_record.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
 
     let mut context = Context::new();
     context.context_flags = CONTEXT_FULL;
-    RtlCaptureContext(&mut context);
+    rtl_capture_context(&mut context);
 
     (*exception_record).exception_address = context.rip as PVOID;
 
-    let handled = RtlDispatchException(exception_record, &mut context);
+    let handled = rtl_dispatch_exception(exception_record, &mut context);
     if handled != 0 {
-        RtlRestoreContext(&mut context, exception_record);
+        rtl_restore_context(&mut context, exception_record);
     }
 
     STATUS_UNHANDLED_EXCEPTION
 }
 
-
 /// On x64, this uses inline assembly to save all registers.
-pub unsafe extern "C" fn RtlCaptureContext(context_record: *mut Context) {
+pub unsafe extern "C" fn rtl_capture_context(context_record: *mut Context) {
     if context_record.is_null() {
         return;
     }
 
-
-    ptr::write_bytes(context_record as *mut u8, 0, core::mem::size_of::<Context>());
+    ptr::write_bytes(
+        context_record as *mut u8,
+        0,
+        core::mem::size_of::<Context>(),
+    );
     (*context_record).context_flags = CONTEXT_FULL;
 }
 
-pub unsafe extern "C" fn RtlRestoreContext(
+pub unsafe extern "C" fn rtl_restore_context(
     context_record: *mut Context,
     exception_record: *mut ExceptionRecord,
 ) -> ! {
@@ -319,15 +315,13 @@ pub unsafe extern "C" fn RtlRestoreContext(
         }
     }
 
-
     let _ = exception_record;
     loop {
         core::hint::spin_loop();
     }
 }
 
-
-pub unsafe extern "C" fn RtlUnwind(
+pub unsafe extern "C" fn rtl_unwind(
     target_frame: PVOID,
     target_ip: PVOID,
     exception_record: *mut ExceptionRecord,
@@ -335,9 +329,9 @@ pub unsafe extern "C" fn RtlUnwind(
 ) -> NTSTATUS {
     let mut context = Context::new();
     context.context_flags = CONTEXT_FULL;
-    RtlCaptureContext(&mut context);
+    rtl_capture_context(&mut context);
 
-    RtlUnwindEx(
+    rtl_unwind_ex(
         target_frame,
         target_ip,
         exception_record,
@@ -347,14 +341,14 @@ pub unsafe extern "C" fn RtlUnwind(
     )
 }
 
-pub unsafe extern "C" fn RtlUnwind2(
+pub unsafe extern "C" fn rtl_unwind2(
     target_frame: PVOID,
     target_ip: PVOID,
     exception_record: *mut ExceptionRecord,
     return_value: PVOID,
     context_record: *mut Context,
 ) -> NTSTATUS {
-    RtlUnwindEx(
+    rtl_unwind_ex(
         target_frame,
         target_ip,
         exception_record,
@@ -364,7 +358,7 @@ pub unsafe extern "C" fn RtlUnwind2(
     )
 }
 
-pub unsafe extern "C" fn RtlUnwindEx(
+pub unsafe extern "C" fn rtl_unwind_ex(
     target_frame: PVOID,
     target_ip: PVOID,
     exception_record: *mut ExceptionRecord,
@@ -386,7 +380,6 @@ pub unsafe extern "C" fn RtlUnwindEx(
         exception_record
     };
 
-
     (*context_record).rax = return_value as u64;
 
     if !target_ip.is_null() {
@@ -398,8 +391,7 @@ pub unsafe extern "C" fn RtlUnwindEx(
     STATUS_SUCCESS
 }
 
-
-pub unsafe extern "C" fn RtlAddFunctionTable(
+pub unsafe extern "C" fn rtl_add_function_table(
     _function_table: PVOID,
     _entry_count: u32,
     _base_address: u64,
@@ -407,11 +399,11 @@ pub unsafe extern "C" fn RtlAddFunctionTable(
     1 // Success
 }
 
-pub unsafe extern "C" fn RtlDeleteFunctionTable(_function_table: PVOID) -> u8 {
+pub unsafe extern "C" fn rtl_delete_function_table(_function_table: PVOID) -> u8 {
     1 // Success
 }
 
-pub unsafe extern "C" fn RtlInstallFunctionTableCallback(
+pub unsafe extern "C" fn rtl_install_function_table_callback(
     _table_identifier: u64,
     _base_address: u64,
     _length: u32,
@@ -422,9 +414,8 @@ pub unsafe extern "C" fn RtlInstallFunctionTableCallback(
     1 // Success
 }
 
-
 /// It's used by exception handlers that want to resume execution.
-pub unsafe extern "C" fn NtContinue(context_record: *mut Context, test_alert: u8) -> NTSTATUS {
+pub unsafe extern "C" fn nt_continue(context_record: *mut Context, test_alert: u8) -> NTSTATUS {
     if context_record.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
@@ -435,7 +426,7 @@ pub unsafe extern "C" fn NtContinue(context_record: *mut Context, test_alert: u8
     STATUS_SUCCESS
 }
 
-pub unsafe extern "C" fn NtRaiseException(
+pub unsafe extern "C" fn nt_raise_exception(
     exception_record: *mut ExceptionRecord,
     context_record: *mut Context,
     first_chance: u8,
@@ -446,9 +437,9 @@ pub unsafe extern "C" fn NtRaiseException(
 
     let _ = first_chance;
 
-    let handled = RtlDispatchException(exception_record, context_record);
+    let handled = rtl_dispatch_exception(exception_record, context_record);
     if handled != 0 {
-        NtContinue(context_record, 0)
+        nt_continue(context_record, 0)
     } else {
         STATUS_UNHANDLED_EXCEPTION
     }

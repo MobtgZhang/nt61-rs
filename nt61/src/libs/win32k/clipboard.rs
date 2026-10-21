@@ -33,7 +33,7 @@ pub struct ClipboardData {
 pub struct ClipboardState {
     /// Whether clipboard is currently open
     pub is_open: AtomicBool,
-    /// Owner window handle
+    /// owner window handle
     pub owner: AtomicU64,
     /// Sequence number for clipboard changes
     pub sequence: AtomicU64,
@@ -87,7 +87,7 @@ pub fn open_clipboard(owner: u64) -> bool {
     true
 }
 
-/// Close the clipboard
+/// close the clipboard
 pub fn close_clipboard() -> bool {
     if !CLIPBOARD.is_open.load(Ordering::SeqCst) {
         return false;

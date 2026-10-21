@@ -9,9 +9,6 @@
 //!   * Vergilius Project - Windows kernel structure references
 //!   * ReactOS 0.3.x WoW64 implementation
 
-#![allow(non_camel_case_types)]
-#![allow(dead_code)]
-
 use core::ptr::null_mut;
 
 // =============================================================================
@@ -23,7 +20,7 @@ pub type USHORT16 = u16;
 /// 32-bit ULONG.
 pub type ULONG32 = u32;
 /// 32-bit pointer (just an address).
-pub type ULONG32_PTR = u32;
+pub type Ulong32Ptr = u32;
 /// 32-bit DWORD.
 pub type DWORD = u32;
 /// 32-bit WORD.
@@ -90,6 +87,7 @@ pub const STATUS_UNSUCCESSFUL: ULONG32 = 0xC0000001;
 pub const STATUS_BUFFER_TOO_SMALL: ULONG32 = 0xC0000023;
 pub const STATUS_INFO_LENGTH_MISMATCH: ULONG32 = 0xC0000004;
 pub const STATUS_NOT_IMPLEMENTED: ULONG32 = 0xC0000002;
+pub const STATUS_INVALID_SYSTEM_SERVICE: ULONG32 = 0xC000001C;
 
 // =============================================================================
 // 32-bit List Entry (LIST_ENTRY32)
@@ -107,7 +105,7 @@ pub struct ListEntry32 {
 }
 
 impl ListEntry32 {
-    /// Create a new empty (self-anchored) list entry.
+    /// create a new empty (self-anchored) list entry.
     pub fn new() -> Self {
         Self { flink: 0, blink: 0 }
     }
@@ -163,31 +161,31 @@ impl ClientId32 {
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
 pub struct UnicodeString32 {
-    /// Length in bytes (not characters).
-    pub Length: u16,
+    /// length in bytes (not characters).
+    pub length: u16,
     /// Maximum length in bytes.
-    pub MaximumLength: u16,
+    pub maximum_length: u16,
     /// Pointer to buffer (32-bit).
-    pub Buffer: ULONG32,
+    pub buffer: ULONG32,
 }
 
 impl UnicodeString32 {
     pub fn new() -> Self {
         Self {
-            Length: 0,
-            MaximumLength: 0,
-            Buffer: 0,
+            length: 0,
+            maximum_length: 0,
+            buffer: 0,
         }
     }
 
     /// Get length as usize.
     pub fn len(&self) -> usize {
-        self.Length as usize
+        self.length as usize
     }
 
     /// Check if string is empty.
     pub fn is_empty(&self) -> bool {
-        self.Length == 0
+        self.length == 0
     }
 }
 
@@ -345,7 +343,7 @@ const _: () = assert!(
 #[repr(C)]
 #[derive(Clone)]
 pub struct FpuSaveArea32 {
-    /// Control word.
+    /// control word.
     pub control_word: u32, // 0x00
     /// Status word.
     pub status_word: u32, // 0x04
@@ -424,7 +422,7 @@ pub struct Wow64MemoryBasicInformation32 {
     pub state: ULONG32,
     /// Protect (PAGE_READ, PAGE_WRITE, etc).
     pub protect: ULONG32,
-    /// Type (MEM_PRIVATE, MEM_MAPPED, MEM_IMAGE).
+    /// r#type (MEM_PRIVATE, MEM_MAPPED, MEM_IMAGE).
     pub memory_type: ULONG32,
 }
 
@@ -488,7 +486,7 @@ pub struct LdrDataTableEntry32 {
     pub full_dll_name: UnicodeString32, // +0x24
     /// Base DLL name (UNICODE_STRING32).
     pub base_dll_name: UnicodeString32, // +0x2C
-    /// Flags (LDRP_*).
+    /// flags (LDRP_*).
     pub flags: ULONG32, // +0x34
     /// Load count (obsolete but still used).
     pub load_count: u16, // +0x38
@@ -536,7 +534,7 @@ pub struct SectionInfo32 {
 // 32-bit PEB (PEB32)
 // =============================================================================
 
-/// PEB32 - Process Environment Block for 32-bit process on x64 Windows.
+/// PEB32 - Process environment Block for 32-bit process on x64 Windows.
 /// Size: 0x1E8 bytes (488 bytes)
 /// Reference: geoffchappell.com, Vergilius Project
 ///
@@ -553,9 +551,9 @@ pub struct Peb32 {
     pub _tib_client_id_1: [u8; 8], // +0x04
 
     // === PEB Header ===
-    /// BeingDebugged flag.
+    /// being_debugged flag.
     pub being_debugged: u8, // +0x002
-    /// Bit field (SpareBool, ImageBaseAddress, etc).
+    /// Bit field (SpareBool, image_base_address, etc).
     pub bit_field: u8, // +0x003
     /// Spare byte.
     pub spare0: u8, // +0x004
@@ -736,7 +734,7 @@ pub struct Peb32 {
     pub spare_u32_48: ULONG32, // +0x134
     pub spare_u32_49: ULONG32, // +0x138
 
-    // === Instrumentation ===
+    // === instrumentation ===
     /// Spare.
     pub spare_u32_50: ULONG32, // +0x13C
     /// Spare.
@@ -819,7 +817,7 @@ impl Peb32 {
 // 32-bit TEB (TEB32)
 // =============================================================================
 
-/// TEB32 - Thread Environment Block for 32-bit thread on x64 Windows.
+/// TEB32 - Thread environment Block for 32-bit thread on x64 Windows.
 /// Size: 0x1000 bytes (one page, 4096 bytes)
 /// Reference: geoffchappell.com
 ///
@@ -844,7 +842,7 @@ pub struct Teb32 {
     pub self_: ULONG32, // +0x18
 
     // === TEB Fields ===
-    /// Environment pointer.
+    /// environment pointer.
     pub environment_pointer: ULONG32, // +0x1C
     /// Client ID (PID, TID).
     pub client_id: ClientId32, // +0x20
@@ -856,7 +854,7 @@ pub struct Teb32 {
     pub process_environment_block: ULONG32, // +0x30
     /// Last error code.
     pub last_error_value: ULONG32, // +0x34
-    /// Count of owned critical sections.
+    /// count of owned critical sections.
     pub count_of_owned_critical_sections: ULONG32, // +0x38
     /// CSR client thread info.
     pub csr_client_thread: ULONG32, // +0x3C
@@ -1301,10 +1299,14 @@ const _: () = assert!(
 
 impl Teb32 {
     /// Get the current TEB32 pointer.
-    /// On x86 this reads fs:[0x18].
-    /// On x64 this must be obtained through the Wow64 layer.
+    /// Native WoW64 code reads `fs:[0x18]`; kernel-side thunk code resolves
+    /// the same TEB through the current ETHREAD's WoW64 extension.
     pub unsafe fn get_current() -> *mut Teb32 {
-        null_mut() // TODO: Implement through Wow64Pcrb or similar
+        let thread = crate::ps::thread::get_current_ethread();
+        if thread.is_null() {
+            return null_mut();
+        }
+        (*thread).get_wow64_teb32()
     }
 
     /// Get PEB32 pointer from TEB32.
@@ -1368,7 +1370,7 @@ pub mod exception_flags {
 #[repr(C)]
 #[derive(Default)]
 pub struct Kapc32 {
-    /// Type (must be ApcObject).
+    /// r#type (must be ApcObject).
     pub type_: u16, // +0x00
     /// Size.
     pub size: u16, // +0x02
@@ -1467,7 +1469,7 @@ pub enum ThreadInformationClass32 {
 }
 
 // =============================================================================
-// Wow64 Function Result Type
+// Wow64 Function Result r#type
 // =============================================================================
 
 /// Result type for Wow64 operations.

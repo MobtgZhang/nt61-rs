@@ -6,25 +6,24 @@ use super::types::*;
 use core::ptr;
 
 extern crate alloc;
-use alloc::boxed::Box;
 use alloc::vec::Vec;
 
-pub const _IOFBF: c_int = 0; // Full buffering
-pub const _IOLBF: c_int = 1; // Line buffering
-pub const _IONBF: c_int = 2; // No buffering
+pub const _IOFBF: CInt = 0; // Full buffering
+pub const _IOLBF: CInt = 1; // Line buffering
+pub const _IONBF: CInt = 2; // No buffering
 
 pub const DEFAULT_BUFFER_SIZE: usize = 8192;
 
 pub struct FileBuffer {
     data: Vec<u8>,
-    mode: c_int,
+    mode: CInt,
     read_pos: usize,
     write_pos: usize,
     dirty: bool,
 }
 
 impl FileBuffer {
-    pub fn new(size: usize, mode: c_int) -> Self {
+    pub fn new(size: usize, mode: CInt) -> Self {
         FileBuffer {
             data: Vec::with_capacity(size),
             mode,
@@ -124,7 +123,7 @@ pub unsafe fn flush_write_buffer(file: *mut FILE) -> Result<(), ()> {
         return Err(());
     }
 
-    let f = &mut *file;
+    let _f = &mut *file;
 
     // Get buffer from file (stored in unused field - would need proper FILE structure extension)
 
@@ -136,24 +135,24 @@ pub unsafe fn fill_read_buffer(file: *mut FILE) -> Result<usize, ()> {
         return Err(());
     }
 
-    let f = &mut *file;
+    let _f = &mut *file;
 
     Ok(0)
 }
 
 pub unsafe fn buffered_fread(
     ptr: *mut c_void,
-    size: size_t,
-    count: size_t,
+    size: SizeT,
+    count: SizeT,
     stream: *mut FILE,
-) -> size_t {
+) -> SizeT {
     if ptr.is_null() || stream.is_null() || size == 0 || count == 0 {
         return 0;
     }
 
     let total_size = size * count;
     let dest = core::slice::from_raw_parts_mut(ptr as *mut u8, total_size);
-    let mut bytes_read = 0;
+    let bytes_read;
 
     match super::io_stubs::read_file((*stream).handle, dest) {
         Ok(n) => {
@@ -171,10 +170,10 @@ pub unsafe fn buffered_fread(
 
 pub unsafe fn buffered_fwrite(
     ptr: *const c_void,
-    size: size_t,
-    count: size_t,
+    size: SizeT,
+    count: SizeT,
     stream: *mut FILE,
-) -> size_t {
+) -> SizeT {
     if ptr.is_null() || stream.is_null() || size == 0 || count == 0 {
         return 0;
     }
@@ -205,10 +204,10 @@ pub unsafe fn buffered_fwrite(
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn setvbuf(
     stream: *mut FILE,
-    buf: *mut c_char,
-    mode: c_int,
-    size: size_t,
-) -> c_int {
+    _buf: *mut CChar,
+    mode: CInt,
+    _size: SizeT,
+) -> CInt {
     if stream.is_null() {
         return -1;
     }
@@ -221,7 +220,7 @@ pub unsafe extern "C" fn setvbuf(
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn setbuf(stream: *mut FILE, buf: *mut c_char) {
+pub unsafe extern "C" fn setbuf(stream: *mut FILE, buf: *mut CChar) {
     if buf.is_null() {
         setvbuf(stream, ptr::null_mut(), _IONBF, 0);
     } else {
@@ -252,7 +251,7 @@ pub unsafe fn write_behind(file: *mut FILE) -> Result<(), ()> {
     Ok(())
 }
 
-pub unsafe fn set_direct_io(file: *mut FILE, enable: bool) -> Result<(), ()> {
+pub unsafe fn set_direct_io(file: *mut FILE, _enable: bool) -> Result<(), ()> {
     if file.is_null() {
         return Err(());
     }
@@ -267,7 +266,7 @@ pub struct MappedFile {
 }
 
 impl MappedFile {
-    pub unsafe fn new(file: *mut FILE, writable: bool) -> Result<Self, ()> {
+    pub unsafe fn new(file: *mut FILE, _writable: bool) -> Result<Self, ()> {
         if file.is_null() {
             return Err(());
         }

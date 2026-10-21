@@ -5,7 +5,6 @@
 //
 //! References: MSDN Library "Windows 7" — RTL Bitmap.
 
-use super::types::PVOID;
 use core::ptr;
 
 #[repr(C)]
@@ -23,7 +22,7 @@ impl RtlBitmap {
     }
 }
 
-pub unsafe extern "C" fn RtlInitializeBitMap(
+pub unsafe extern "C" fn rtl_initialize_bit_map(
     bitmap_header: *mut RtlBitmap,
     bitmap_buffer: *mut u32,
     size_of_bit_map: u32,
@@ -35,7 +34,7 @@ pub unsafe extern "C" fn RtlInitializeBitMap(
     (*bitmap_header).buffer = bitmap_buffer;
 }
 
-pub unsafe extern "C" fn RtlSetBit(bitmap_header: *mut RtlBitmap, bit_number: u32) {
+pub unsafe extern "C" fn rtl_set_bit(bitmap_header: *mut RtlBitmap, bit_number: u32) {
     if bitmap_header.is_null() {
         return;
     }
@@ -48,7 +47,7 @@ pub unsafe extern "C" fn RtlSetBit(bitmap_header: *mut RtlBitmap, bit_number: u3
     *bm.buffer.add(dword_index as usize) |= 1u32 << bit_index;
 }
 
-pub unsafe extern "C" fn RtlClearBit(bitmap_header: *mut RtlBitmap, bit_number: u32) {
+pub unsafe extern "C" fn rtl_clear_bit(bitmap_header: *mut RtlBitmap, bit_number: u32) {
     if bitmap_header.is_null() {
         return;
     }
@@ -61,7 +60,7 @@ pub unsafe extern "C" fn RtlClearBit(bitmap_header: *mut RtlBitmap, bit_number: 
     *bm.buffer.add(dword_index as usize) &= !(1u32 << bit_index);
 }
 
-pub unsafe extern "C" fn RtlTestBit(bitmap_header: *mut RtlBitmap, bit_number: u32) -> u8 {
+pub unsafe extern "C" fn rtl_test_bit(bitmap_header: *mut RtlBitmap, bit_number: u32) -> u8 {
     if bitmap_header.is_null() {
         return 0;
     }
@@ -78,7 +77,7 @@ pub unsafe extern "C" fn RtlTestBit(bitmap_header: *mut RtlBitmap, bit_number: u
     }
 }
 
-pub unsafe extern "C" fn RtlClearAllBits(bitmap_header: *mut RtlBitmap) {
+pub unsafe extern "C" fn rtl_clear_all_bits(bitmap_header: *mut RtlBitmap) {
     if bitmap_header.is_null() {
         return;
     }
@@ -87,7 +86,7 @@ pub unsafe extern "C" fn RtlClearAllBits(bitmap_header: *mut RtlBitmap) {
     ptr::write_bytes(bm.buffer, 0, dword_count as usize);
 }
 
-pub unsafe extern "C" fn RtlSetAllBits(bitmap_header: *mut RtlBitmap) {
+pub unsafe extern "C" fn rtl_set_all_bits(bitmap_header: *mut RtlBitmap) {
     if bitmap_header.is_null() {
         return;
     }
@@ -96,7 +95,7 @@ pub unsafe extern "C" fn RtlSetAllBits(bitmap_header: *mut RtlBitmap) {
     ptr::write_bytes(bm.buffer, 0xFF, dword_count as usize);
 }
 
-pub unsafe extern "C" fn RtlFindClearBits(
+pub unsafe extern "C" fn rtl_find_clear_bits(
     bitmap_header: *mut RtlBitmap,
     number_to_find: u32,
     hint_index: u32,
@@ -111,7 +110,7 @@ pub unsafe extern "C" fn RtlFindClearBits(
     let mut start_pos = 0xFFFF_FFFF;
 
     for i in start..bm.size_of_bit_map {
-        if RtlTestBit(bitmap_header, i) == 0 {
+        if rtl_test_bit(bitmap_header, i) == 0 {
             if count == 0 {
                 start_pos = i;
             }
@@ -126,7 +125,7 @@ pub unsafe extern "C" fn RtlFindClearBits(
     }
 
     for i in 0..start {
-        if RtlTestBit(bitmap_header, i) == 0 {
+        if rtl_test_bit(bitmap_header, i) == 0 {
             if count == 0 {
                 start_pos = i;
             }
@@ -143,7 +142,7 @@ pub unsafe extern "C" fn RtlFindClearBits(
     0xFFFF_FFFF
 }
 
-pub unsafe extern "C" fn RtlFindSetBits(
+pub unsafe extern "C" fn rtl_find_set_bits(
     bitmap_header: *mut RtlBitmap,
     number_to_find: u32,
     hint_index: u32,
@@ -158,7 +157,7 @@ pub unsafe extern "C" fn RtlFindSetBits(
     let mut start_pos = 0xFFFF_FFFF;
 
     for i in start..bm.size_of_bit_map {
-        if RtlTestBit(bitmap_header, i) != 0 {
+        if rtl_test_bit(bitmap_header, i) != 0 {
             if count == 0 {
                 start_pos = i;
             }
@@ -175,7 +174,7 @@ pub unsafe extern "C" fn RtlFindSetBits(
     0xFFFF_FFFF
 }
 
-pub unsafe extern "C" fn RtlSetBits(
+pub unsafe extern "C" fn rtl_set_bits(
     bitmap_header: *mut RtlBitmap,
     starting_index: u32,
     number_to_set: u32,
@@ -184,11 +183,11 @@ pub unsafe extern "C" fn RtlSetBits(
         return;
     }
     for i in 0..number_to_set {
-        RtlSetBit(bitmap_header, starting_index + i);
+        rtl_set_bit(bitmap_header, starting_index + i);
     }
 }
 
-pub unsafe extern "C" fn RtlClearBits(
+pub unsafe extern "C" fn rtl_clear_bits(
     bitmap_header: *mut RtlBitmap,
     starting_index: u32,
     number_to_clear: u32,
@@ -197,28 +196,28 @@ pub unsafe extern "C" fn RtlClearBits(
         return;
     }
     for i in 0..number_to_clear {
-        RtlClearBit(bitmap_header, starting_index + i);
+        rtl_clear_bit(bitmap_header, starting_index + i);
     }
 }
 
-pub unsafe extern "C" fn RtlNumberOfSetBits(bitmap_header: *mut RtlBitmap) -> u32 {
+pub unsafe extern "C" fn rtl_number_of_set_bits(bitmap_header: *mut RtlBitmap) -> u32 {
     if bitmap_header.is_null() {
         return 0;
     }
     let bm = &*bitmap_header;
     let mut count = 0u32;
     for i in 0..bm.size_of_bit_map {
-        if RtlTestBit(bitmap_header, i) != 0 {
+        if rtl_test_bit(bitmap_header, i) != 0 {
             count += 1;
         }
     }
     count
 }
 
-pub unsafe extern "C" fn RtlNumberOfClearBits(bitmap_header: *mut RtlBitmap) -> u32 {
+pub unsafe extern "C" fn rtl_number_of_clear_bits(bitmap_header: *mut RtlBitmap) -> u32 {
     if bitmap_header.is_null() {
         return 0;
     }
     let bm = &*bitmap_header;
-    bm.size_of_bit_map - RtlNumberOfSetBits(bitmap_header)
+    bm.size_of_bit_map - rtl_number_of_set_bits(bitmap_header)
 }

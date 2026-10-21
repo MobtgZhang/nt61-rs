@@ -1,15 +1,13 @@
 //! GDI Operations
 //
-//! Implements core GDI drawing operations: BitBlt, PatBlt, rectangle drawing,
+//! Implements core GDI drawing operations: bit_blt, pat_blt, rectangle drawing,
 //! ellipse drawing, polygon filling, and raster operations (ROP).
 //
 //! Reference: ReactOS win32ss/gdi/gdi32_objects
 
 extern crate alloc;
 
-use crate::kprintln;
 use crate::libs::win32k::dc::DcObject;
-use crate::libs::win32k::objects::{GdiBrush, GdiPen, Rect};
 use crate::libs::win32k::surface::{GdiSurface, PIXEL_FORMAT_32BPP, PIXEL_FORMAT_32BPP_ARGB};
 use alloc::vec::Vec;
 
@@ -87,7 +85,7 @@ pub fn rop_srcinvert(dest: u32, src: u32, pat: u32) -> u32 {
 }
 
 // =============================================================================
-// BitBlt (Block Transfer)
+// bit_blt (Block Transfer)
 // =============================================================================
 
 /// Get DC's surface
@@ -99,8 +97,8 @@ fn get_dc_surface(dc: &DcObject) -> *mut GdiSurface {
     }
 }
 
-/// BitBlt - Block Transfer
-pub fn GreBitBlt(
+/// bit_blt - Block Transfer
+pub fn gre_bit_blt(
     dst_dc: &mut DcObject,
     dst_x: i32,
     dst_y: i32,
@@ -145,7 +143,7 @@ pub fn GreBitBlt(
         return false;
     }
 
-    // Handle operations without source
+    // handle operations without source
     match rop {
         BLACKNESS => {
             return fill_rect_solid(dst_surface, dst_x, dst_y, width, height, 0x00000000);
@@ -159,7 +157,7 @@ pub fn GreBitBlt(
         PATCOPY => {
             // Get pattern (brush) from DC
             let color = if dst_dc.brush != 0 {
-                crate::libs::win32k::objects::GdiGetBrushColor(dst_dc.brush)
+                crate::libs::win32k::objects::gdi_get_brush_color(dst_dc.brush)
             } else {
                 0
             };
@@ -193,7 +191,7 @@ pub fn GreBitBlt(
     false
 }
 
-/// Fast copy BitBlt
+/// Fast copy bit_blt
 fn bitblt_copy(
     dst: *mut GdiSurface,
     dst_x: i32,
@@ -282,7 +280,7 @@ fn bitblt_copy(
     true
 }
 
-/// Generic BitBlt with ROP
+/// Generic bit_blt with ROP
 fn bitblt_generic(
     dst: *mut GdiSurface,
     dst_x: i32,
@@ -373,11 +371,11 @@ fn bitblt_generic(
 }
 
 // =============================================================================
-// PatBlt (Pattern Blt)
+// pat_blt (Pattern Blt)
 // =============================================================================
 
-/// PatBlt - Pattern Block Transfer
-pub fn GrePatBlt(
+/// pat_blt - Pattern Block Transfer
+pub fn gre_pat_blt(
     dc: &mut DcObject,
     left: i32,
     top: i32,
@@ -394,7 +392,7 @@ pub fn GrePatBlt(
 
     // Get brush color
     let color = if dc.brush != 0 {
-        crate::libs::win32k::objects::GdiGetBrushColor(dc.brush)
+        crate::libs::win32k::objects::gdi_get_brush_color(dc.brush)
     } else {
         0
     };
@@ -541,8 +539,8 @@ fn invert_rect(surface: *mut GdiSurface, x: i32, y: i32, width: i32, height: i32
     true
 }
 
-/// GreRectangle - Draw rectangle outline
-pub fn GreRectangle(dc: &mut DcObject, left: i32, top: i32, right: i32, bottom: i32) -> bool {
+/// gre_rectangle - Draw rectangle outline
+pub fn gre_rectangle(dc: &mut DcObject, left: i32, top: i32, right: i32, bottom: i32) -> bool {
     let surface = get_dc_surface(dc);
     let _ = &surface;
     let _ = &surface;
@@ -551,7 +549,7 @@ pub fn GreRectangle(dc: &mut DcObject, left: i32, top: i32, right: i32, bottom: 
     }
 
     let pen_color = if dc.pen != 0 {
-        crate::libs::win32k::objects::GdiGetPenColor(dc.pen)
+        crate::libs::win32k::objects::gdi_get_pen_color(dc.pen)
     } else {
         0
     };
@@ -574,7 +572,7 @@ pub fn GreRectangle(dc: &mut DcObject, left: i32, top: i32, right: i32, bottom: 
 
     // Fill with brush if present
     if dc.brush != 0 {
-        let brush_color = crate::libs::win32k::objects::GdiGetBrushColor(dc.brush);
+        let brush_color = crate::libs::win32k::objects::gdi_get_brush_color(dc.brush);
         let _ = &brush_color;
         let _ = &brush_color;
         fill_rect_solid(
@@ -587,14 +585,14 @@ pub fn GreRectangle(dc: &mut DcObject, left: i32, top: i32, right: i32, bottom: 
         );
     }
 
-    // kprintln!("[win32k] GreRectangle: ({},{})-({},{}) pen=0x{:x} brush=0x{:x}",
+    // kprintln!("[win32k] gre_rectangle: ({},{})-({},{}) pen=0x{:x} brush=0x{:x}",
     //               left, top, right, bottom, dc.pen, dc.brush);
 
     true
 }
 
-/// GreRoundRect - Draw rounded rectangle
-pub fn GreRoundRect(
+/// gre_round_rect - Draw rounded rectangle
+pub fn gre_round_rect(
     dc: &mut DcObject,
     left: i32,
     top: i32,
@@ -606,7 +604,7 @@ pub fn GreRoundRect(
     let _ = (width, height);
     // For simplicity, just draw a regular rectangle
     // Full implementation would draw arcs at corners
-    GreRectangle(dc, left, top, right, bottom)
+    gre_rectangle(dc, left, top, right, bottom)
 }
 
 // =============================================================================
@@ -786,8 +784,8 @@ pub fn draw_line_width(
     true
 }
 
-/// GreLineTo - Draw line to point using pen width
-pub fn GreLineTo(dc: &mut DcObject, end_x: i32, end_y: i32) -> bool {
+/// gre_line_to - Draw line to point using pen width
+pub fn gre_line_to(dc: &mut DcObject, end_x: i32, end_y: i32) -> bool {
     let surface = get_dc_surface(dc);
     let _ = &surface;
     let _ = &surface;
@@ -796,7 +794,7 @@ pub fn GreLineTo(dc: &mut DcObject, end_x: i32, end_y: i32) -> bool {
     }
 
     let pen_color = if dc.pen != 0 {
-        crate::libs::win32k::objects::GdiGetPenColor(dc.pen)
+        crate::libs::win32k::objects::gdi_get_pen_color(dc.pen)
     } else {
         0
     };
@@ -805,7 +803,7 @@ pub fn GreLineTo(dc: &mut DcObject, end_x: i32, end_y: i32) -> bool {
 
     // Get pen width from pen object
     let pen_width = if dc.pen != 0 {
-        crate::libs::win32k::objects::GdiGetPenWidth(dc.pen)
+        crate::libs::win32k::objects::gdi_get_pen_width(dc.pen)
     } else {
         1
     };
@@ -828,19 +826,19 @@ pub fn GreLineTo(dc: &mut DcObject, end_x: i32, end_y: i32) -> bool {
         draw_line(surface, start_x, start_y, end_x, end_y, pen_color);
     }
 
-    // kprintln!("[win32k] GreLineTo: ({},{})-({},{}), pen_width={}",
+    // kprintln!("[win32k] gre_line_to: ({},{})-({},{}), pen_width={}",
     //               start_x, start_y, end_x, end_y, pen_width);
 
     true
 }
 
-/// GreMoveTo - Set current position (stub)
-pub fn GreMoveTo(dc: &mut DcObject, x: i32, y: i32) {
+/// gre_move_to - Set current position (stub)
+pub fn gre_move_to(dc: &mut DcObject, x: i32, y: i32) {
     let _ = dc;
     let _ = x;
     let _ = y;
     // Would store current position in DC
-    // kprintln!("[win32k] GreMoveTo: ({},{})", x, y);
+    // kprintln!("[win32k] gre_move_to: ({},{})", x, y);
 }
 
 // =============================================================================
@@ -955,8 +953,8 @@ fn draw_pixel_symmetric(surf: &GdiSurface, cx: i32, cy: i32, x: i32, y: i32, col
     }
 }
 
-/// GreEllipse - Draw ellipse
-pub fn GreEllipse(dc: &mut DcObject, left: i32, top: i32, right: i32, bottom: i32) -> bool {
+/// gre_ellipse - Draw ellipse
+pub fn gre_ellipse(dc: &mut DcObject, left: i32, top: i32, right: i32, bottom: i32) -> bool {
     let surface = get_dc_surface(dc);
     let _ = &surface;
     let _ = &surface;
@@ -979,7 +977,7 @@ pub fn GreEllipse(dc: &mut DcObject, left: i32, top: i32, right: i32, bottom: i3
     let _ = &ry;
 
     let pen_color = if dc.pen != 0 {
-        crate::libs::win32k::objects::GdiGetPenColor(dc.pen)
+        crate::libs::win32k::objects::gdi_get_pen_color(dc.pen)
     } else {
         0
     };
@@ -991,13 +989,13 @@ pub fn GreEllipse(dc: &mut DcObject, left: i32, top: i32, right: i32, bottom: i3
 
     // Fill with brush
     if dc.brush != 0 {
-        let brush_color = crate::libs::win32k::objects::GdiGetBrushColor(dc.brush);
+        let brush_color = crate::libs::win32k::objects::gdi_get_brush_color(dc.brush);
         let _ = &brush_color;
         let _ = &brush_color;
         fill_ellipse(surface, cx, cy, rx - 1, ry - 1, brush_color);
     }
 
-    // kprintln!("[win32k] GreEllipse: ({},{})-({},{})", left, top, right, bottom);
+    // kprintln!("[win32k] gre_ellipse: ({},{})-({},{})", left, top, right, bottom);
 
     true
 }
@@ -1059,8 +1057,8 @@ fn fill_ellipse(surface: *mut GdiSurface, cx: i32, cy: i32, rx: i32, ry: i32, co
 // Polygon Operations
 // =============================================================================
 
-/// GrePolygon - Draw and fill polygon
-pub fn GrePolygon(dc: &mut DcObject, points: &[(i32, i32)]) -> bool {
+/// gre_polygon - Draw and fill polygon
+pub fn gre_polygon(dc: &mut DcObject, points: &[(i32, i32)]) -> bool {
     if points.len() < 3 {
         return false;
     }
@@ -1074,7 +1072,7 @@ pub fn GrePolygon(dc: &mut DcObject, points: &[(i32, i32)]) -> bool {
     }
 
     let pen_color = if dc.pen != 0 {
-        crate::libs::win32k::objects::GdiGetPenColor(dc.pen)
+        crate::libs::win32k::objects::gdi_get_pen_color(dc.pen)
     } else {
         0
     };
@@ -1094,7 +1092,7 @@ pub fn GrePolygon(dc: &mut DcObject, points: &[(i32, i32)]) -> bool {
 
     // Fill using scanline algorithm
     if dc.brush != 0 {
-        let brush_color = crate::libs::win32k::objects::GdiGetBrushColor(dc.brush);
+        let brush_color = crate::libs::win32k::objects::gdi_get_brush_color(dc.brush);
         let _ = &brush_color;
         let _ = &brush_color;
         fill_polygon(surface, points, brush_color);
@@ -1176,8 +1174,8 @@ fn fill_polygon(surface: *mut GdiSurface, points: &[(i32, i32)], color: u32) {
 // Polyline
 // =============================================================================
 
-/// GrePolyline - Draw connected lines
-pub fn GrePolyline(dc: &mut DcObject, points: &[(i32, i32)]) -> bool {
+/// gre_polyline - Draw connected lines
+pub fn gre_polyline(dc: &mut DcObject, points: &[(i32, i32)]) -> bool {
     if points.len() < 2 {
         return false;
     }
@@ -1191,7 +1189,7 @@ pub fn GrePolyline(dc: &mut DcObject, points: &[(i32, i32)]) -> bool {
     }
 
     let pen_color = if dc.pen != 0 {
-        crate::libs::win32k::objects::GdiGetPenColor(dc.pen)
+        crate::libs::win32k::objects::gdi_get_pen_color(dc.pen)
     } else {
         0
     };
@@ -1216,8 +1214,8 @@ pub fn GrePolyline(dc: &mut DcObject, points: &[(i32, i32)]) -> bool {
 // Pixel Operations
 // =============================================================================
 
-/// GreGetPixel - Get pixel color
-pub fn GreGetPixel(dc: &DcObject, x: i32, y: i32) -> u32 {
+/// gre_get_pixel - Get pixel color
+pub fn gre_get_pixel(dc: &DcObject, x: i32, y: i32) -> u32 {
     let surface = get_dc_surface(dc);
     let _ = &surface;
     let _ = &surface;
@@ -1244,8 +1242,8 @@ pub fn GreGetPixel(dc: &DcObject, x: i32, y: i32) -> u32 {
     unsafe { core::ptr::read_unaligned(surf.bits.offset(offset) as *const u32) }
 }
 
-/// GreSetPixel - Set pixel color
-pub fn GreSetPixel(dc: &mut DcObject, x: i32, y: i32, color: u32) -> bool {
+/// gre_set_pixel - Set pixel color
+pub fn gre_set_pixel(dc: &mut DcObject, x: i32, y: i32, color: u32) -> bool {
     let surface = get_dc_surface(dc);
     let _ = &surface;
     let _ = &surface;
@@ -1281,7 +1279,7 @@ pub fn GreSetPixel(dc: &mut DcObject, x: i32, y: i32, color: u32) -> bool {
 // =============================================================================
 
 /// Fill rectangle with horizontal gradient
-pub fn GreGradientFillHorizontal(
+pub fn gre_gradient_fill_horizontal(
     surface: *mut GdiSurface,
     left: i32,
     top: i32,
@@ -1331,7 +1329,7 @@ pub fn GreGradientFillHorizontal(
 }
 
 /// Fill rectangle with vertical gradient
-pub fn GreGradientFillVertical(
+pub fn gre_gradient_fill_vertical(
     surface: *mut GdiSurface,
     left: i32,
     top: i32,

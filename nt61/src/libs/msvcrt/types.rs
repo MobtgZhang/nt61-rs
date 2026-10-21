@@ -5,46 +5,46 @@
 pub use core::ffi::c_void;
 
 // Standard C types
-pub type c_char = i8;
-pub type c_uchar = u8;
-pub type c_short = i16;
-pub type c_ushort = u16;
-pub type c_int = i32;
-pub type c_uint = u32;
-pub type c_long = i32;
-pub type c_ulong = u32;
-pub type c_longlong = i64;
-pub type c_ulonglong = u64;
-pub type c_float = f32;
-pub type c_double = f64;
+pub type CChar = i8;
+pub type CUchar = u8;
+pub type CShort = i16;
+pub type CUshort = u16;
+pub type CInt = i32;
+pub type CUint = u32;
+pub type CLong = i32;
+pub type CUlong = u32;
+pub type CLonglong = i64;
+pub type CUlonglong = u64;
+pub type CFloat = f32;
+pub type CDouble = f64;
 
-pub type size_t = usize;
-pub type ssize_t = isize;
-pub type ptrdiff_t = isize;
-pub type intptr_t = isize;
-pub type uintptr_t = usize;
+pub type SizeT = usize;
+pub type SsizeT = isize;
+pub type PtrdiffT = isize;
+pub type IntptrT = isize;
+pub type UintptrT = usize;
 
-pub type wchar_t = u16;
-pub type errno_t = c_int;
-pub type time_t = i64;
-pub type clock_t = i64;
+pub type WcharT = u16;
+pub type ErrnoT = CInt;
+pub type TimeT = i64;
+pub type ClockT = i64;
 
 // File types
-pub const EOF: c_int = -1;
-pub const SEEK_SET: c_int = 0;
-pub const SEEK_CUR: c_int = 1;
-pub const SEEK_END: c_int = 2;
+pub const EOF: CInt = -1;
+pub const SEEK_SET: CInt = 0;
+pub const SEEK_CUR: CInt = 1;
+pub const SEEK_END: CInt = 2;
 
 pub const BUFSIZ: usize = 512;
 pub const FILENAME_MAX: usize = 260;
 pub const FOPEN_MAX: usize = 20;
 
 // Error codes
-pub const EINVAL: c_int = 22;
-pub const ENOMEM: c_int = 12;
-pub const ERANGE: c_int = 34;
-pub const EBADF: c_int = 9;
-pub const EIO: c_int = 5;
+pub const EINVAL: CInt = 22;
+pub const ENOMEM: CInt = 12;
+pub const ERANGE: CInt = 34;
+pub const EBADF: CInt = 9;
+pub const EIO: CInt = 5;
 
 // Math constants
 pub const HUGE_VAL: f64 = f64::INFINITY;
@@ -83,23 +83,23 @@ impl FILE {
 }
 
 // FILE flags
-pub const _IOFBF: c_int = 0; // Full buffering
-pub const _IOLBF: c_int = 1; // Line buffering
-pub const _IONBF: c_int = 2; // No buffering
+pub const _IOFBF: CInt = 0; // Full buffering
+pub const _IOLBF: CInt = 1; // Line buffering
+pub const _IONBF: CInt = 2; // No buffering
 
 /// Time structure
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct tm {
-    pub tm_sec: c_int,   // seconds after the minute [0, 60]
-    pub tm_min: c_int,   // minutes after the hour [0, 59]
-    pub tm_hour: c_int,  // hours since midnight [0, 23]
-    pub tm_mday: c_int,  // day of the month [1, 31]
-    pub tm_mon: c_int,   // months since January [0, 11]
-    pub tm_year: c_int,  // years since 1900
-    pub tm_wday: c_int,  // days since Sunday [0, 6]
-    pub tm_yday: c_int,  // days since January 1 [0, 365]
-    pub tm_isdst: c_int, // Daylight Saving Time flag
+    pub tm_sec: CInt,   // seconds after the minute [0, 60]
+    pub tm_min: CInt,   // minutes after the hour [0, 59]
+    pub tm_hour: CInt,  // hours since midnight [0, 23]
+    pub tm_mday: CInt,  // day of the month [1, 31]
+    pub tm_mon: CInt,   // months since January [0, 11]
+    pub tm_year: CInt,  // years since 1900
+    pub tm_wday: CInt,  // days since Sunday [0, 6]
+    pub tm_yday: CInt,  // days since January 1 [0, 365]
+    pub tm_isdst: CInt, // Daylight Saving Time flag
 }
 
 impl tm {
@@ -121,14 +121,14 @@ impl tm {
 /// Division result structures
 #[repr(C)]
 pub struct div_t {
-    pub quot: c_int,
-    pub rem: c_int,
+    pub quot: CInt,
+    pub rem: CInt,
 }
 
 #[repr(C)]
 pub struct ldiv_t {
-    pub quot: c_long,
-    pub rem: c_long,
+    pub quot: CLong,
+    pub rem: CLong,
 }
 
 /// Memory allocation alignment

@@ -9,21 +9,18 @@
 //!   * MSDN Library "Windows 7" — system processes
 //!   * ReactOS 0.3.x `base/system/smss`, `csrss`, `wininit`, etc.
 
-#![allow(non_snake_case, non_upper_case_globals, dead_code)]
 //
 //! Modules:
 //!   * `smss`     — Session Manager
 //!   * `csrss`    — Client/Server Runtime Subsystem
 //!   * `wininit`  — Boot-time init helper
 //!   * `winlogon` — Logon manager
-//!   * `services` — Service Control Manager
+//!   * `services` — Service control Manager
 //!   * `lsass`    — Local Security Authority Subsystem
 //!   * `explorer` — User shell
 //!   * `cmd`      — Command interpreter
 
 extern crate alloc;
-
-use crate::kprintln;
 
 pub mod cmd;
 pub mod csrss;

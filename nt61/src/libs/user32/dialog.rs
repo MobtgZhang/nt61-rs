@@ -7,7 +7,7 @@
 //!   * MSDN Library "Windows 7" — Dialog Boxes
 
 use super::types::*;
-use super::window::CreateWindowExW;
+use super::window::create_window_ex_w;
 use crate::ke::sync::Spinlock;
 use core::ptr;
 
@@ -56,7 +56,7 @@ static DIALOG_TABLE: Spinlock<[DialogState; MAX_DIALOGS]> =
 
 pub type DLGPROC = Option<unsafe extern "C" fn(HWND, u32, usize, isize) -> isize>;
 
-pub unsafe extern "C" fn DialogBoxParamW(
+pub unsafe extern "C" fn dialog_box_param_w(
     h_instance: HINSTANCE,
     lp_template_name: *const u16,
     h_wnd_parent: HWND,
@@ -67,11 +67,11 @@ pub unsafe extern "C" fn DialogBoxParamW(
         return -1;
     }
 
-    let hwnd = CreateWindowExW(
+    let hwnd = create_window_ex_w(
         0,
-        b"#32770\0".as_ptr() as *const u16, // Dialog class
+        super::class::DIALOG_CLASS_NAME.as_ptr(),
         ptr::null(),
-        0x80000000 | 0x00C00000, // WS_POPUP | WS_CAPTION
+        super::window::ws::WS_POPUP | super::window::ws::WS_CAPTION,
         100,
         100,
         300,
@@ -112,7 +112,7 @@ pub unsafe extern "C" fn DialogBoxParamW(
     result
 }
 
-pub unsafe extern "C" fn DialogBoxIndirectParamW(
+pub unsafe extern "C" fn dialog_box_indirect_param_w(
     h_instance: HINSTANCE,
     h_dialog_template: *const DLGTEMPLATE,
     h_wnd_parent: HWND,
@@ -129,7 +129,7 @@ pub unsafe extern "C" fn DialogBoxIndirectParamW(
     0
 }
 
-pub unsafe extern "C" fn CreateDialogParamW(
+pub unsafe extern "C" fn create_dialog_param_w(
     h_instance: HINSTANCE,
     lp_template_name: *const u16,
     h_wnd_parent: HWND,
@@ -140,11 +140,11 @@ pub unsafe extern "C" fn CreateDialogParamW(
         return ptr::null_mut();
     }
 
-    let hwnd = CreateWindowExW(
+    let hwnd = create_window_ex_w(
         0,
-        b"#32770\0".as_ptr() as *const u16,
+        super::class::DIALOG_CLASS_NAME.as_ptr(),
         ptr::null(),
-        0x80000000 | 0x00C00000,
+        super::window::ws::WS_POPUP | super::window::ws::WS_CAPTION,
         100,
         100,
         300,
@@ -175,7 +175,7 @@ pub unsafe extern "C" fn CreateDialogParamW(
     hwnd
 }
 
-pub unsafe extern "C" fn CreateDialogIndirectParamW(
+pub unsafe extern "C" fn create_dialog_indirect_param_w(
     h_instance: HINSTANCE,
     lp_template: *const DLGTEMPLATE,
     h_wnd_parent: HWND,
@@ -190,7 +190,7 @@ pub unsafe extern "C" fn CreateDialogIndirectParamW(
     ptr::null_mut()
 }
 
-pub unsafe extern "C" fn EndDialog(h_dlg: HWND, n_result: isize) -> i32 {
+pub unsafe extern "C" fn end_dialog(h_dlg: HWND, n_result: isize) -> i32 {
     if h_dlg.is_null() {
         return 0;
     }
@@ -207,7 +207,7 @@ pub unsafe extern "C" fn EndDialog(h_dlg: HWND, n_result: isize) -> i32 {
     1
 }
 
-pub unsafe extern "C" fn GetDlgItem(h_dlg: HWND, n_id_dlg_item: i32) -> HWND {
+pub unsafe extern "C" fn get_dlg_item(h_dlg: HWND, n_id_dlg_item: i32) -> HWND {
     if h_dlg.is_null() {
         return ptr::null_mut();
     }
@@ -216,7 +216,7 @@ pub unsafe extern "C" fn GetDlgItem(h_dlg: HWND, n_id_dlg_item: i32) -> HWND {
     ptr::null_mut()
 }
 
-pub unsafe extern "C" fn GetDlgItemInt(
+pub unsafe extern "C" fn get_dlg_item_int(
     h_dlg: HWND,
     n_id_dlg_item: i32,
     lp_translated: *mut i32,
@@ -235,7 +235,7 @@ pub unsafe extern "C" fn GetDlgItemInt(
     0
 }
 
-pub unsafe extern "C" fn SetDlgItemInt(
+pub unsafe extern "C" fn set_dlg_item_int(
     h_dlg: HWND,
     n_id_dlg_item: i32,
     u_value: u32,
@@ -249,7 +249,7 @@ pub unsafe extern "C" fn SetDlgItemInt(
     1
 }
 
-pub unsafe extern "C" fn GetDlgItemTextW(
+pub unsafe extern "C" fn get_dlg_item_text_w(
     h_dlg: HWND,
     n_id_dlg_item: i32,
     lp_string: *mut u16,
@@ -265,7 +265,7 @@ pub unsafe extern "C" fn GetDlgItemTextW(
     0
 }
 
-pub unsafe extern "C" fn SetDlgItemTextW(
+pub unsafe extern "C" fn set_dlg_item_text_w(
     h_dlg: HWND,
     n_id_dlg_item: i32,
     lp_string: *const u16,
@@ -278,7 +278,7 @@ pub unsafe extern "C" fn SetDlgItemTextW(
     1
 }
 
-pub unsafe extern "C" fn CheckDlgButton(h_dlg: HWND, n_id_button: i32, u_check: u32) -> i32 {
+pub unsafe extern "C" fn check_dlg_button(h_dlg: HWND, n_id_button: i32, u_check: u32) -> i32 {
     if h_dlg.is_null() {
         return 0;
     }
@@ -287,7 +287,7 @@ pub unsafe extern "C" fn CheckDlgButton(h_dlg: HWND, n_id_button: i32, u_check: 
     1
 }
 
-pub unsafe extern "C" fn IsDlgButtonChecked(h_dlg: HWND, n_id_button: i32) -> u32 {
+pub unsafe extern "C" fn is_dlg_button_checked(h_dlg: HWND, n_id_button: i32) -> u32 {
     if h_dlg.is_null() {
         return 0;
     }
@@ -305,4 +305,97 @@ pub mod dm {
 pub mod wm {
     pub const WM_INITDIALOG: u32 = 0x0110;
     pub const WM_COMMAND: u32 = 0x0111;
+}
+
+/// MessageBoxW button sets, icons, default buttons and modality
+/// (winuser.h MB_*), kept as masks so `kind` can be decoded.
+pub mod mb {
+    pub const MB_KIND_MASK: u32 = 0x0000_000F;
+    pub const MB_ICON_MASK: u32 = 0x0000_00F0;
+    pub const MB_DEFBUTTON_MASK: u32 = 0x0000_0300;
+    pub const MB_MODALITY_MASK: u32 = 0x0000_3000;
+
+    pub const MB_OK: u32 = 0x0000_0000;
+    pub const MB_OKCANCEL: u32 = 0x0000_0001;
+    pub const MB_ABORTRETRYIGNORE: u32 = 0x0000_0002;
+    pub const MB_YESNOCANCEL: u32 = 0x0000_0003;
+    pub const MB_YESNO: u32 = 0x0000_0004;
+    pub const MB_RETRYCANCEL: u32 = 0x0000_0005;
+    pub const MB_CANCELTRYCONTINUE: u32 = 0x0000_0006;
+
+    pub const MB_ICONERROR: u32 = 0x0000_0010;
+    pub const MB_ICONQUESTION: u32 = 0x0000_0020;
+    pub const MB_ICONWARNING: u32 = 0x0000_0030;
+    pub const MB_ICONINFORMATION: u32 = 0x0000_0040;
+
+    pub const MB_DEFBUTTON1: u32 = 0x0000_0000;
+    pub const MB_DEFBUTTON2: u32 = 0x0000_0100;
+    pub const MB_DEFBUTTON3: u32 = 0x0000_0200;
+    pub const MB_DEFBUTTON4: u32 = 0x0000_0300;
+
+    pub const MB_APPLMODAL: u32 = 0x0000_0000;
+    pub const MB_SYSTEMMODAL: u32 = 0x0000_1000;
+    pub const MB_TASKMODAL: u32 = 0x0000_2000;
+}
+
+/// MessageBoxW return codes (winuser.h ID*).
+pub mod id {
+    pub const IDOK: i32 = 1;
+    pub const IDCANCEL: i32 = 2;
+    pub const IDABORT: i32 = 3;
+    pub const IDRETRY: i32 = 4;
+    pub const IDIGNORE: i32 = 5;
+    pub const IDYES: i32 = 6;
+    pub const IDNO: i32 = 7;
+    pub const IDCLOSE: i32 = 8;
+    pub const IDTRYAGAIN: i32 = 10;
+    pub const IDCONTINUE: i32 = 11;
+}
+
+/// Decoded MessageBoxW parameters — the four flag groups
+/// winuser.h packs into the `uType` argument.
+#[derive(Debug, Clone, Copy)]
+pub struct MessageBoxParams {
+    pub buttons: u32,
+    pub icon: u32,
+    pub default_button: u32,
+    pub modality: u32,
+}
+
+impl MessageBoxParams {
+    /// Decode the packed `uType` value of MessageBoxW.
+    pub const fn from_type(kind: UINT) -> Self {
+        Self {
+            buttons: kind & mb::MB_KIND_MASK,
+            icon: kind & mb::MB_ICON_MASK,
+            default_button: kind & mb::MB_DEFBUTTON_MASK,
+            modality: kind & mb::MB_MODALITY_MASK,
+        }
+    }
+}
+
+/// MessageBoxW — there is no windowing surface yet, so the box
+/// is rendered into the boot log with its full decoded
+/// parameter set and dismissed with IDOK, the default result of
+/// an MB_OK box.
+pub unsafe extern "C" fn message_box_w(
+    h_wnd: HWND,
+    lp_text: LPCWSTR,
+    lp_caption: LPCWSTR,
+    u_type: UINT,
+) -> i32 {
+    let _ = h_wnd;
+    let params = MessageBoxParams::from_type(u_type);
+    let text = super::wstr::to_utf8_lossy(&super::wstr::units_of(lp_text));
+    let caption = super::wstr::to_utf8_lossy(&super::wstr::units_of(lp_caption));
+    crate::kprintln!(
+        "[user32] MessageBoxW caption=\"{}\" text=\"{}\" buttons={:#06x} icon={:#06x} default={:#06x} modality={:#06x} -> IDOK",
+        caption,
+        text,
+        params.buttons,
+        params.icon,
+        params.default_button,
+        params.modality
+    );
+    id::IDOK
 }

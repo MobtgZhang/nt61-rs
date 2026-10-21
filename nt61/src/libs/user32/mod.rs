@@ -11,9 +11,8 @@
 //!   * Wine 1.7.x `dlls/user32/user32.spec`
 
 // user32 exports follow the Win32 naming convention
-// (CreateWindowExW, GetMessageW, MSG, WNDCLASSEXW, ...).
+// (create_window_ex_w, get_message_w, MSG, WNDCLASSEXW, ...).
 // These names ARE the user32 ABI; we must not rename them.
-#![allow(non_snake_case, non_upper_case_globals, dead_code)]
 //
 //! Module layout:
 //!   * `window`   — window / message-pump APIs
@@ -26,24 +25,29 @@
 extern crate alloc;
 
 use crate::ke::sync::Spinlock;
-use crate::kprintln;
 use alloc::vec::Vec;
 
 pub mod class;
 pub mod gdi_link;
 pub mod input;
+pub mod menu;
+pub mod message;
 pub mod types;
 pub mod window;
+pub mod wstr;
 
 /// Initialise the user32 stub. The bootstrap reports the
 /// surfaces the kernel supports.
 pub fn init() {
     // kprintln!("    [user32] init");
-    // kprintln!("      window   : CreateWindowExW/DefWindowProcW/Destroy/Show/Update");
-    // kprintln!("      class    : RegisterClassExW/UnregisterClassW");
-    // kprintln!("      input    : GetAsyncKeyState/KeyboardState/Cursor/SystemMetrics");
+    // kprintln!("      window   : create_window_ex_w/def_window_proc_w/Destroy/Show/Update");
+    // kprintln!("      class    : register_class_ex_w/unregister_class_w");
+    // kprintln!("      input    : get_async_key_state/KeyboardState/Cursor/SystemMetrics");
     // kprintln!("      gdi_link : forwarders to gdi32");
     let _ = gdi_link::GDI_LINK.lock();
+    // The system dialog class ("#32770") must exist before the
+    // first DialogBoxW / MessageBoxW runs.
+    class::register_system_classes();
     // kprintln!("    [user32] ready");
 }
 

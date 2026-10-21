@@ -34,18 +34,18 @@ fn test_service_table_populated() -> bool {
 }
 
 fn test_prepare_for_exception() -> bool {
-    let r = unsafe { thunk::Wow64PrepareForException(core::ptr::null(), core::ptr::null_mut()) };
+    let r = unsafe { thunk::wow64_prepare_for_exception(core::ptr::null(), core::ptr::null_mut()) };
     r == 0
 }
 
 fn test_apc_routine() -> bool {
-    unsafe { thunk::Wow64ApcRoutine(core::ptr::null_mut()) }
+    unsafe { thunk::wow64_apc_routine(core::ptr::null_mut()) }
     true
 }
 
 fn test_ldrp_initialize() -> bool {
     let r = unsafe {
-        thunk::Wow64LdrpInitialize(
+        thunk::wow64_ldrp_initialize(
             core::ptr::null_mut(),
             core::ptr::null_mut(),
             core::ptr::null_mut(),
@@ -55,13 +55,13 @@ fn test_ldrp_initialize() -> bool {
 }
 
 fn test_system_service_ex() -> bool {
-    let r = unsafe { thunk::Wow64SystemServiceEx(0, 0, core::ptr::null_mut()) };
+    let r = unsafe { thunk::wow64_system_service_ex(0, 0, core::ptr::null_mut()) };
     r == 0
 }
 
 fn test_allocate_vm32() -> bool {
     // Test with the new signature: (process_handle, base_address, zero_bits, region_size, allocation_type, protect)
-    let r = unsafe { thunk::Wow64AllocateVirtualMemory32(0, 0x1000, 0, 0x2000, 0x1000, 4) };
+    let r = unsafe { thunk::wow64_allocate_virtual_memory32(0, 0x1000, 0, 0x2000, 0x1000, 4) };
     // Should return the requested base address
     r == 0x1000 || r == 0x00010000 // Either requested or default allocation address
 }

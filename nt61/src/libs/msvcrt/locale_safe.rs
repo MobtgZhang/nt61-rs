@@ -1,47 +1,46 @@
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::AtomicBool;
 use spin::{Lazy, Mutex};
 
 use super::types::*;
 use core::ptr;
 
 extern crate alloc;
-use alloc::string::String;
 
 #[repr(C)]
 pub struct lconv {
-    pub decimal_point: *mut c_char,
-    pub thousands_sep: *mut c_char,
-    pub grouping: *mut c_char,
-    pub int_curr_symbol: *mut c_char,
-    pub currency_symbol: *mut c_char,
-    pub mon_decimal_point: *mut c_char,
-    pub mon_thousands_sep: *mut c_char,
-    pub mon_grouping: *mut c_char,
-    pub positive_sign: *mut c_char,
-    pub negative_sign: *mut c_char,
-    pub int_frac_digits: c_char,
-    pub frac_digits: c_char,
-    pub p_cs_precedes: c_char,
-    pub p_sep_by_space: c_char,
-    pub n_cs_precedes: c_char,
-    pub n_sep_by_space: c_char,
-    pub p_sign_posn: c_char,
-    pub n_sign_posn: c_char,
+    pub decimal_point: *mut CChar,
+    pub thousands_sep: *mut CChar,
+    pub grouping: *mut CChar,
+    pub int_curr_symbol: *mut CChar,
+    pub currency_symbol: *mut CChar,
+    pub mon_decimal_point: *mut CChar,
+    pub mon_thousands_sep: *mut CChar,
+    pub mon_grouping: *mut CChar,
+    pub positive_sign: *mut CChar,
+    pub negative_sign: *mut CChar,
+    pub int_frac_digits: CChar,
+    pub frac_digits: CChar,
+    pub p_cs_precedes: CChar,
+    pub p_sep_by_space: CChar,
+    pub n_cs_precedes: CChar,
+    pub n_sep_by_space: CChar,
+    pub p_sign_posn: CChar,
+    pub n_sign_posn: CChar,
 }
 
 // The locale data is only reachable through the mutex-guarded static that
 // owns it, so the pointer fields can be shared across threads.
 unsafe impl Send for lconv {}
 
-struct LocaleData {
-    current_locale: [c_char; 32],
+pub struct LocaleData {
+    current_locale: [CChar; 32],
     locale_conv: lconv,
-    decimal_point_str: [c_char; 2],
-    thousands_sep_str: [c_char; 2],
-    empty_str: [c_char; 1],
-    currency_str: [c_char; 2],
-    plus_str: [c_char; 2],
-    minus_str: [c_char; 2],
+    decimal_point_str: [CChar; 2],
+    pub thousands_sep_str: [CChar; 2],
+    empty_str: [CChar; 1],
+    pub currency_str: [CChar; 2],
+    pub plus_str: [CChar; 2],
+    pub minus_str: [CChar; 2],
 }
 
 impl LocaleData {
@@ -68,12 +67,12 @@ impl LocaleData {
                 p_sign_posn: 127,
                 n_sign_posn: 127,
             },
-            decimal_point_str: [b'.' as c_char, 0],
-            thousands_sep_str: [b',' as c_char, 0],
+            decimal_point_str: [b'.' as CChar, 0],
+            thousands_sep_str: [b',' as CChar, 0],
             empty_str: [0],
-            currency_str: [b'$' as c_char, 0],
-            plus_str: [b'+' as c_char, 0],
-            minus_str: [b'-' as c_char, 0],
+            currency_str: [b'$' as CChar, 0],
+            plus_str: [b'+' as CChar, 0],
+            minus_str: [b'-' as CChar, 0],
         }
     }
 }
@@ -86,12 +85,12 @@ static LOCALE_DATA: Lazy<Mutex<LocaleData>> = Lazy::new(|| {
     Mutex::new(data)
 });
 
-static LOCALE_INITIALIZED: AtomicBool = AtomicBool::new(false);
+pub static LOCALE_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 unsafe fn init_c_locale_internal(data: &mut LocaleData) {
     let c_locale = b"C\0";
     for i in 0..c_locale.len() {
-        data.current_locale[i] = c_locale[i] as c_char;
+        data.current_locale[i] = c_locale[i] as CChar;
     }
 
     data.locale_conv.decimal_point = data.decimal_point_str.as_mut_ptr();
@@ -106,25 +105,25 @@ unsafe fn init_c_locale_internal(data: &mut LocaleData) {
     data.locale_conv.negative_sign = data.empty_str.as_mut_ptr();
 }
 
-pub const LC_ALL: c_int = 0;
-pub const LC_COLLATE: c_int = 1;
-pub const LC_CTYPE: c_int = 2;
-pub const LC_MONETARY: c_int = 3;
-pub const LC_NUMERIC: c_int = 4;
-pub const LC_TIME: c_int = 5;
+pub const LC_ALL: CInt = 0;
+pub const LC_COLLATE: CInt = 1;
+pub const LC_CTYPE: CInt = 2;
+pub const LC_MONETARY: CInt = 3;
+pub const LC_NUMERIC: CInt = 4;
+pub const LC_TIME: CInt = 5;
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn setlocale(_category: CInt, locale: *const CChar) -> *mut CChar {
     if locale.is_null() {
         let data = LOCALE_DATA.lock();
-        return data.current_locale.as_ptr() as *mut c_char;
+        return data.current_locale.as_ptr() as *mut CChar;
     }
 
     let mut data = LOCALE_DATA.lock();
 
-    if *locale == 0 || (*locale == b'C' as c_char && *locale.add(1) == 0) {
+    if *locale == 0 || (*locale == b'C' as CChar && *locale.add(1) == 0) {
         init_c_locale_internal(&mut data);
-        return data.current_locale.as_ptr() as *mut c_char;
+        return data.current_locale.as_ptr() as *mut CChar;
     }
 
     ptr::null_mut()
@@ -137,12 +136,12 @@ pub unsafe extern "C" fn localeconv() -> *mut lconv {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn _wsetlocale(category: c_int, locale: *const wchar_t) -> *mut wchar_t {
-    static mut WIDE_LOCALE: Mutex<[wchar_t; 32]> = Mutex::new([0; 32]);
+pub unsafe extern "C" fn _wsetlocale(_category: CInt, locale: *const WcharT) -> *mut WcharT {
+    static mut WIDE_LOCALE: Mutex<[WcharT; 32]> = Mutex::new([0; 32]);
 
     if locale.is_null() {
-        let mut wlocale = WIDE_LOCALE.lock();
-        wlocale[0] = b'C' as wchar_t;
+        let mut wlocale = (*core::ptr::addr_of!(WIDE_LOCALE)).lock();
+        wlocale[0] = b'C' as WcharT;
         wlocale[1] = 0;
         return wlocale.as_mut_ptr();
     }

@@ -11,7 +11,6 @@ use super::types::*;
 use crate::ke::sync::Spinlock;
 use core::ptr;
 
-
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct MSG {
@@ -43,73 +42,82 @@ pub struct POINT {
     pub y: i32,
 }
 
-
-#[derive(Clone, Copy)]
-struct MessageEntry {
-    msg: MSG,
-    in_use: bool,
-}
-
-impl MessageEntry {
-    const fn new() -> Self {
-        Self {
-            msg: MSG::new(),
-            in_use: false,
-        }
-    }
-}
-
 const MAX_MESSAGES: usize = 128;
 
+/// How many spin iterations the message pump waits between queue
+/// polls while no matching message is queued.
+const SPIN_WAIT_ITERATIONS: u32 = 1000;
+
+#[derive(Clone, Copy)]
 struct MessageQueue {
-    messages: [MessageEntry; MAX_MESSAGES],
-    count: usize,
-    read_pos: usize,
+    /// Ring of queued messages; `head` is the next message to
+    /// deliver and `len` the number of occupied slots.
+    slots: [MSG; MAX_MESSAGES],
+    head: usize,
+    len: usize,
 }
 
 impl MessageQueue {
     const fn new() -> Self {
         Self {
-            messages: [MessageEntry::new(); MAX_MESSAGES],
-            count: 0,
-            read_pos: 0,
+            slots: [MSG::new(); MAX_MESSAGES],
+            head: 0,
+            len: 0,
         }
     }
 
     fn post(&mut self, msg: MSG) -> bool {
-        if self.count >= MAX_MESSAGES {
+        if self.len == MAX_MESSAGES {
             return false;
         }
-
-        for entry in self.messages.iter_mut() {
-            if !entry.in_use {
-                entry.msg = msg;
-                entry.in_use = true;
-                self.count += 1;
-                return true;
-            }
-        }
-        false
+        let tail = (self.head + self.len) % MAX_MESSAGES;
+        self.slots[tail] = msg;
+        self.len += 1;
+        true
     }
 
-    fn peek(&mut self, remove: bool) -> Option<MSG> {
-        if self.count == 0 {
-            return None;
-        }
-
-        for i in 0..MAX_MESSAGES {
-            let idx = (self.read_pos + i) % MAX_MESSAGES;
-            if self.messages[idx].in_use {
-                let msg = self.messages[idx].msg;
-                if remove {
-                    self.messages[idx].in_use = false;
-                    self.count -= 1;
-                    self.read_pos = (idx + 1) % MAX_MESSAGES;
-                }
-                return Some(msg);
+    /// First queued message that matches the window and message
+    /// range filter, in FIFO order. Messages that do not match
+    /// stay queued, mirroring GetMessageW semantics. With
+    /// `remove` the matching message is taken off the queue.
+    fn next_matching(
+        &mut self,
+        h_wnd: HWND,
+        filter_min: u32,
+        filter_max: u32,
+        remove: bool,
+    ) -> Option<MSG> {
+        for i in 0..self.len {
+            let idx = (self.head + i) % MAX_MESSAGES;
+            let msg = self.slots[idx];
+            if !h_wnd.is_null() && msg.hwnd != h_wnd {
+                continue;
             }
+            if filter_min != 0 || filter_max != 0 {
+                if msg.message < filter_min || msg.message > filter_max {
+                    continue;
+                }
+            }
+            if remove {
+                let tail = (self.head + self.len) % MAX_MESSAGES;
+                let mut current = idx;
+                loop {
+                    let next = (current + 1) % MAX_MESSAGES;
+                    if next == tail {
+                        break;
+                    }
+                    self.slots[current] = self.slots[next];
+                    current = next;
+                }
+                self.len -= 1;
+            }
+            return Some(msg);
         }
         None
+    }
+
+    fn count(&self) -> usize {
+        self.len
     }
 }
 
@@ -121,8 +129,11 @@ fn get_current_thread_id() -> usize {
     1
 }
 
+fn current_thread_slot() -> usize {
+    get_current_thread_id() % MAX_THREADS
+}
 
-pub unsafe extern "C" fn GetMessageW(
+pub unsafe extern "C" fn get_message_w(
     lp_msg: *mut MSG,
     h_wnd: HWND,
     w_msg_filter_min: u32,
@@ -132,53 +143,44 @@ pub unsafe extern "C" fn GetMessageW(
         return -1;
     }
 
-    let tid = get_current_thread_id();
-    let slot = tid % MAX_THREADS;
-
     loop {
-        let mut queues = MESSAGE_QUEUES.lock();
-        if let Some(msg) = queues[slot].peek(true) {
-            if !h_wnd.is_null() && msg.hwnd != h_wnd {
-                continue;
-            }
-
-            if w_msg_filter_min != 0 || w_msg_filter_max != 0 {
-                if msg.message < w_msg_filter_min || msg.message > w_msg_filter_max {
-                    continue;
-                }
-            }
-
+        let next = {
+            let mut queues = MESSAGE_QUEUES.lock();
+            queues[current_thread_slot()].next_matching(
+                h_wnd,
+                w_msg_filter_min,
+                w_msg_filter_max,
+                true,
+            )
+        };
+        if let Some(msg) = next {
             *lp_msg = msg;
-
-            if msg.message == 0x0012 {
+            if msg.message == wm::WM_QUIT {
                 return 0;
             }
-
             return 1;
         }
-        drop(queues);
 
-        for _ in 0..1000 {
+        for _ in 0..SPIN_WAIT_ITERATIONS {
             core::hint::spin_loop();
         }
     }
 }
 
-pub unsafe extern "C" fn GetMessageA(
+pub unsafe extern "C" fn get_message_a(
     lp_msg: *mut MSG,
     h_wnd: HWND,
     w_msg_filter_min: u32,
     w_msg_filter_max: u32,
 ) -> i32 {
-    GetMessageW(lp_msg, h_wnd, w_msg_filter_min, w_msg_filter_max)
+    get_message_w(lp_msg, h_wnd, w_msg_filter_min, w_msg_filter_max)
 }
-
 
 pub const PM_NOREMOVE: u32 = 0x0000;
 pub const PM_REMOVE: u32 = 0x0001;
 pub const PM_NOYIELD: u32 = 0x0002;
 
-pub unsafe extern "C" fn PeekMessageW(
+pub unsafe extern "C" fn peek_message_w(
     lp_msg: *mut MSG,
     h_wnd: HWND,
     w_msg_filter_min: u32,
@@ -189,148 +191,149 @@ pub unsafe extern "C" fn PeekMessageW(
         return 0;
     }
 
-    let tid = get_current_thread_id();
-    let slot = tid % MAX_THREADS;
     let remove = (w_remove_msg & PM_REMOVE) != 0;
 
     let mut queues = MESSAGE_QUEUES.lock();
-    if let Some(msg) = queues[slot].peek(remove) {
-        if !h_wnd.is_null() && msg.hwnd != h_wnd {
-            return 0;
+    match queues[current_thread_slot()].next_matching(
+        h_wnd,
+        w_msg_filter_min,
+        w_msg_filter_max,
+        remove,
+    ) {
+        Some(msg) => {
+            *lp_msg = msg;
+            1
         }
-
-        if w_msg_filter_min != 0 || w_msg_filter_max != 0 {
-            if msg.message < w_msg_filter_min || msg.message > w_msg_filter_max {
-                return 0;
-            }
-        }
-
-        *lp_msg = msg;
-        return 1;
+        None => 0,
     }
-
-    0
 }
 
-pub unsafe extern "C" fn PeekMessageA(
+pub unsafe extern "C" fn peek_message_a(
     lp_msg: *mut MSG,
     h_wnd: HWND,
     w_msg_filter_min: u32,
     w_msg_filter_max: u32,
     w_remove_msg: u32,
 ) -> i32 {
-    PeekMessageW(lp_msg, h_wnd, w_msg_filter_min, w_msg_filter_max, w_remove_msg)
+    peek_message_w(
+        lp_msg,
+        h_wnd,
+        w_msg_filter_min,
+        w_msg_filter_max,
+        w_remove_msg,
+    )
 }
 
-
-pub unsafe extern "C" fn PostMessageW(
+pub unsafe extern "C" fn post_message_w(
     h_wnd: HWND,
     msg: u32,
     w_param: usize,
     l_param: isize,
 ) -> i32 {
-    let tid = get_current_thread_id();
-    let slot = tid % MAX_THREADS;
-
     let message = MSG {
         hwnd: h_wnd,
         message: msg,
         wparam: w_param,
         lparam: l_param,
-        time: 0, // Should be GetTickCount()
+        time: crate::ke::time::get_tick_count(),
         pt: POINT { x: 0, y: 0 },
     };
 
     let mut queues = MESSAGE_QUEUES.lock();
-    if queues[slot].post(message) {
+    if queues[current_thread_slot()].post(message) {
         1
     } else {
         0
     }
 }
 
-pub unsafe extern "C" fn PostMessageA(
+pub unsafe extern "C" fn post_message_a(
     h_wnd: HWND,
     msg: u32,
     w_param: usize,
     l_param: isize,
 ) -> i32 {
-    PostMessageW(h_wnd, msg, w_param, l_param)
+    post_message_w(h_wnd, msg, w_param, l_param)
 }
 
-pub unsafe extern "C" fn SendMessageW(
+pub unsafe extern "C" fn send_message_w(
     h_wnd: HWND,
     msg: u32,
     w_param: usize,
     l_param: isize,
 ) -> isize {
-
-    PostMessageW(h_wnd, msg, w_param, l_param);
-    0
+    // SendMessageW is synchronous: the procedure runs before the
+    // call returns and its result is the return value.
+    super::window::call_window_procedure(h_wnd, msg, w_param, l_param)
 }
 
-pub unsafe extern "C" fn SendMessageA(
+pub unsafe extern "C" fn send_message_a(
     h_wnd: HWND,
     msg: u32,
     w_param: usize,
     l_param: isize,
 ) -> isize {
-    SendMessageW(h_wnd, msg, w_param, l_param)
+    send_message_w(h_wnd, msg, w_param, l_param)
 }
 
-
-pub unsafe extern "C" fn DispatchMessageW(lp_msg: *const MSG) -> isize {
+pub unsafe extern "C" fn dispatch_message_w(lp_msg: *const MSG) -> isize {
     if lp_msg.is_null() {
         return 0;
     }
 
     let msg = &*lp_msg;
-
-
-    let _ = msg;
-    0
+    super::window::call_window_procedure(msg.hwnd, msg.message, msg.wparam, msg.lparam)
 }
 
-pub unsafe extern "C" fn DispatchMessageA(lp_msg: *const MSG) -> isize {
-    DispatchMessageW(lp_msg)
+pub unsafe extern "C" fn dispatch_message_a(lp_msg: *const MSG) -> isize {
+    dispatch_message_w(lp_msg)
 }
 
-pub unsafe extern "C" fn TranslateMessage(lp_msg: *const MSG) -> i32 {
+pub unsafe extern "C" fn translate_message(lp_msg: *const MSG) -> i32 {
     if lp_msg.is_null() {
         return 0;
     }
 
     let msg = &*lp_msg;
-
-
-    let _ = msg;
-    0
+    let is_keydown = msg.message == wm::WM_KEYDOWN || msg.message == wm::WM_SYSKEYDOWN;
+    if !is_keydown {
+        return 0;
+    }
+    if !VK_TRANSLATABLE_RANGE.contains(&msg.wparam) {
+        return 0;
+    }
+    let char_message = if msg.message == wm::WM_SYSKEYDOWN {
+        wm::WM_SYSCHAR
+    } else {
+        wm::WM_CHAR
+    };
+    post_message_w(msg.hwnd, char_message, msg.wparam, msg.lparam);
+    1
 }
 
-
-pub unsafe extern "C" fn PostQuitMessage(n_exit_code: i32) {
-    PostMessageW(ptr::null_mut(), 0x0012, n_exit_code as usize, 0);
+pub unsafe extern "C" fn post_quit_message(n_exit_code: i32) {
+    post_message_w(ptr::null_mut(), 0x0012, n_exit_code as usize, 0);
 }
 
-
-pub unsafe extern "C" fn WaitMessage() -> i32 {
-    let tid = get_current_thread_id();
-    let slot = tid % MAX_THREADS;
-
+pub unsafe extern "C" fn wait_message() -> i32 {
     loop {
         {
             let queues = MESSAGE_QUEUES.lock();
-            if queues[slot].count > 0 {
+            if queues[current_thread_slot()].count() > 0 {
                 return 1;
             }
         }
 
-        for _ in 0..1000 {
+        for _ in 0..SPIN_WAIT_ITERATIONS {
             core::hint::spin_loop();
         }
     }
 }
 
+/// VK code range the default layout translates straight to a
+/// character: VK_SPACE (0x20) through VK_Z (0x5A); the digit
+/// keys 0x30..0x39 sit inside.
+const VK_TRANSLATABLE_RANGE: core::ops::RangeInclusive<WPARAM> = 0x20..=0x5A;
 
 pub mod wm {
     pub const WM_NULL: u32 = 0x0000;

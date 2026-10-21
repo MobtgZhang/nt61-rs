@@ -3,18 +3,17 @@
 //! Complete implementation of scanf-style format string parsing
 
 use super::types::*;
-use core::ptr;
 
 #[derive(Default)]
-struct ScanfSpec {
-    suppress: bool,       // '*' - don't assign
-    width: Option<usize>, // max field width
-    length: LengthModifier,
-    specifier: char,
+pub struct ScanfSpec {
+    pub suppress: bool,       // '*' - don't assign
+    pub width: Option<usize>, // max field width
+    pub length: LengthModifier,
+    pub specifier: char,
 }
 
 #[derive(Copy, Clone, PartialEq)]
-enum LengthModifier {
+pub enum LengthModifier {
     None,
     Char,       // hh
     Short,      // h
@@ -32,7 +31,7 @@ impl Default for LengthModifier {
     }
 }
 
-unsafe fn skip_whitespace(input: *const c_char, pos: &mut usize) {
+pub unsafe fn skip_whitespace(input: *const CChar, pos: &mut usize) {
     while *input.add(*pos) != 0 {
         let ch = *input.add(*pos) as u8;
         if ch != b' ' && ch != b'\t' && ch != b'\n' && ch != b'\r' {
@@ -42,20 +41,20 @@ unsafe fn skip_whitespace(input: *const c_char, pos: &mut usize) {
     }
 }
 
-unsafe fn parse_scanf_spec(format: *const c_char, pos: &mut usize) -> Option<ScanfSpec> {
-    if *format.add(*pos) != b'%' as c_char {
+pub unsafe fn parse_scanf_spec(format: *const CChar, pos: &mut usize) -> Option<ScanfSpec> {
+    if *format.add(*pos) != b'%' as CChar {
         return None;
     }
     *pos += 1;
 
-    if *format.add(*pos) == b'%' as c_char {
+    if *format.add(*pos) == b'%' as CChar {
         *pos += 1;
         return None;
     }
 
     let mut spec = ScanfSpec::default();
 
-    if *format.add(*pos) == b'*' as c_char {
+    if *format.add(*pos) == b'*' as CChar {
         spec.suppress = true;
         *pos += 1;
     }
@@ -72,7 +71,7 @@ unsafe fn parse_scanf_spec(format: *const c_char, pos: &mut usize) -> Option<Sca
     spec.length = match *format.add(*pos) as u8 {
         b'h' => {
             *pos += 1;
-            if *format.add(*pos) == b'h' as c_char {
+            if *format.add(*pos) == b'h' as CChar {
                 *pos += 1;
                 LengthModifier::Char
             } else {
@@ -81,7 +80,7 @@ unsafe fn parse_scanf_spec(format: *const c_char, pos: &mut usize) -> Option<Sca
         }
         b'l' => {
             *pos += 1;
-            if *format.add(*pos) == b'l' as c_char {
+            if *format.add(*pos) == b'l' as CChar {
                 *pos += 1;
                 LengthModifier::LongLong
             } else {
@@ -117,8 +116,8 @@ unsafe fn parse_scanf_spec(format: *const c_char, pos: &mut usize) -> Option<Sca
     }
 }
 
-unsafe fn scan_integer(
-    input: *const c_char,
+pub unsafe fn scan_integer(
+    input: *const CChar,
     pos: &mut usize,
     base: u32,
     width: Option<usize>,
@@ -129,16 +128,16 @@ unsafe fn scan_integer(
     skip_whitespace(input, pos);
 
     let mut negative = false;
-    if *input.add(*pos) == b'-' as c_char {
+    if *input.add(*pos) == b'-' as CChar {
         negative = true;
         *pos += 1;
-    } else if *input.add(*pos) == b'+' as c_char {
+    } else if *input.add(*pos) == b'+' as CChar {
         *pos += 1;
     }
 
     let mut actual_base = base;
     if base == 0 || base == 16 {
-        if *input.add(*pos) == b'0' as c_char {
+        if *input.add(*pos) == b'0' as CChar {
             *pos += 1;
             if (*input.add(*pos) as u8 == b'x' || *input.add(*pos) as u8 == b'X') && base != 8 {
                 *pos += 1;
@@ -185,8 +184,8 @@ unsafe fn scan_integer(
     Some(result)
 }
 
-unsafe fn scan_unsigned(
-    input: *const c_char,
+pub unsafe fn scan_unsigned(
+    input: *const CChar,
     pos: &mut usize,
     base: u32,
     width: Option<usize>,
@@ -198,7 +197,7 @@ unsafe fn scan_unsigned(
 
     let mut actual_base = base;
     if base == 0 || base == 16 {
-        if *input.add(*pos) == b'0' as c_char {
+        if *input.add(*pos) == b'0' as CChar {
             *pos += 1;
             if (*input.add(*pos) as u8 == b'x' || *input.add(*pos) as u8 == b'X') && base != 8 {
                 *pos += 1;
@@ -239,17 +238,21 @@ unsafe fn scan_unsigned(
     Some(value)
 }
 
-unsafe fn scan_float(input: *const c_char, pos: &mut usize, width: Option<usize>) -> Option<f64> {
+pub unsafe fn scan_float(
+    input: *const CChar,
+    pos: &mut usize,
+    width: Option<usize>,
+) -> Option<f64> {
     let start = *pos;
     let max_width = width.unwrap_or(usize::MAX);
 
     skip_whitespace(input, pos);
 
     let mut negative = false;
-    if *input.add(*pos) == b'-' as c_char {
+    if *input.add(*pos) == b'-' as CChar {
         negative = true;
         *pos += 1;
-    } else if *input.add(*pos) == b'+' as c_char {
+    } else if *input.add(*pos) == b'+' as CChar {
         *pos += 1;
     }
 
@@ -287,7 +290,7 @@ unsafe fn scan_float(input: *const c_char, pos: &mut usize, width: Option<usize>
         }
     }
 
-    if *input.add(*pos) == b'.' as c_char && (*pos - start) < max_width {
+    if *input.add(*pos) == b'.' as CChar && (*pos - start) < max_width {
         *pos += 1;
         let mut fraction = 0.1;
         while *input.add(*pos) != 0 && (*pos - start) < max_width {
@@ -312,10 +315,10 @@ unsafe fn scan_float(input: *const c_char, pos: &mut usize, width: Option<usize>
     {
         *pos += 1;
         let mut exp_negative = false;
-        if *input.add(*pos) == b'-' as c_char {
+        if *input.add(*pos) == b'-' as CChar {
             exp_negative = true;
             *pos += 1;
-        } else if *input.add(*pos) == b'+' as c_char {
+        } else if *input.add(*pos) == b'+' as CChar {
             *pos += 1;
         }
 
@@ -349,10 +352,10 @@ unsafe fn scan_float(input: *const c_char, pos: &mut usize, width: Option<usize>
     Some(if negative { -value } else { value })
 }
 
-unsafe fn scan_string(
-    input: *const c_char,
+pub unsafe fn scan_string(
+    input: *const CChar,
     pos: &mut usize,
-    dest: *mut c_char,
+    dest: *mut CChar,
     width: Option<usize>,
 ) -> bool {
     let max_width = width.unwrap_or(usize::MAX);
@@ -365,7 +368,7 @@ unsafe fn scan_string(
         if ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r' {
             break;
         }
-        *dest.add(count) = ch as c_char;
+        *dest.add(count) = ch as CChar;
         count += 1;
         *pos += 1;
     }
@@ -378,10 +381,10 @@ unsafe fn scan_string(
     true
 }
 
-unsafe fn scan_char(
-    input: *const c_char,
+pub unsafe fn scan_char(
+    input: *const CChar,
     pos: &mut usize,
-    dest: *mut c_char,
+    dest: *mut CChar,
     width: Option<usize>,
 ) -> bool {
     let count = width.unwrap_or(1);

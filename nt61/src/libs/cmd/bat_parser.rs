@@ -89,19 +89,19 @@ pub struct BatchParser {
     error_level: i32,
     /// Whether batch file is running
     running: bool,
-    /// Internal variables for SETLOCAL/ENDLOCAL support
+    /// internal variables for SETLOCAL/ENDLOCAL support
     variables: Vec<(String, String)>,
 }
 
 /// FOR loop context
-struct ForContext {
-    variable: String,
-    items: Vec<String>,
-    current_index: usize,
-    command: String,
+pub struct ForContext {
+    pub variable: String,
+    pub items: Vec<String>,
+    pub current_index: usize,
+    pub command: String,
 }
 
-/// Environment snapshot for SETLOCAL/ENDLOCAL
+/// environment snapshot for SETLOCAL/ENDLOCAL
 #[derive(Clone)]
 struct EnvSnapshot {
     variables: Vec<(String, String)>,
@@ -109,7 +109,7 @@ struct EnvSnapshot {
 }
 
 impl BatchParser {
-    /// Create a new batch parser
+    /// create a new batch parser
     pub fn new() -> Self {
         Self {
             lines: Vec::new(),
@@ -142,7 +142,7 @@ impl BatchParser {
         self.echo = true;
         self.running = true;
 
-        // Read the batch file content
+        // read the batch file content
         let content = executor.read_file(filename)?;
         crate::boot_println!("[BAT] loaded {} bytes from {}", content.len(), filename);
         // Preprocess: remove comments, handle special lines
@@ -266,7 +266,7 @@ impl BatchParser {
                         executor.echo_line(&expanded);
                     }
 
-                    // Handle batch SET VAR=value commands inline (don't
+                    // handle batch SET VAR=value commands inline (don't
                     // hand them to the executor). Returning here would
                     // *exit the whole batch*, so we guard with a
                     // local flag and `continue` the outer loop.
@@ -362,7 +362,7 @@ impl BatchParser {
                 continue;
             }
 
-            // Handle labels (`:FOO` or `::FOO`). Both forms are valid
+            // handle labels (`:FOO` or `::FOO`). Both forms are valid
             // goto targets in real Windows CMD; `::FOO` is a
             // comment-shaped label, but GOTO can still land on it.
             // We push the raw line so `collect_labels` sees it, and
@@ -383,12 +383,12 @@ impl BatchParser {
                 }
             }
 
-            // Handle REM comments
+            // handle REM comments
             if trimmed.to_uppercase().starts_with("REM ") || trimmed.to_uppercase() == "REM" {
                 continue;
             }
 
-            // Handle @ prefix (suppress echo for this line only).
+            // handle @ prefix (suppress echo for this line only).
             // Special-case `@echo off` / `@echo on` because `@echo`
             // would otherwise be parsed as a regular command.
             if trimmed.starts_with('@') {
@@ -406,13 +406,13 @@ impl BatchParser {
                 continue;
             }
 
-            // Handle ECHO OFF (suppress subsequent echo)
+            // handle ECHO OFF (suppress subsequent echo)
             if trimmed.to_uppercase() == "ECHO OFF" {
                 self.echo = false;
                 continue;
             }
 
-            // Handle ECHO ON
+            // handle ECHO ON
             if trimmed.to_uppercase() == "ECHO ON" {
                 self.echo = true;
                 self.lines.push(trimmed);
@@ -509,7 +509,7 @@ impl BatchParser {
                 // without doing arithmetic on the out-vector's
                 // indices.
                 let mut lowered: alloc::vec::Vec<alloc::string::String> = alloc::vec::Vec::new();
-                let then_body_end = else_pos.unwrap_or(close_pos);
+                let _then_body_end = else_pos.unwrap_or(close_pos);
                 // 1. `IF cond GOTO :then_label`
                 lowered.push(alloc::format!("IF {} GOTO :{}", cond, then_label));
                 // 2. Skip-past: `GOTO :else_label` (ELSE form) or
@@ -817,7 +817,7 @@ impl BatchParser {
 
     /// Classify IF statement
     fn classify_if(&self, line: &str) -> LineType {
-        let upper = line.to_uppercase();
+        let _upper = line.to_uppercase();
         // Strip leading "IF ".
         let body = if let Some(rest) = line.trim_start().strip_prefix("IF ") {
             rest.to_string()
@@ -972,7 +972,7 @@ impl BatchParser {
         }
     }
 
-    /// Handle GOTO command
+    /// handle GOTO command
     fn handle_goto(&mut self, label: &str) -> Result<(), BatError> {
         // Strip ALL leading colons — real CMD accepts `:FOO`, `::FOO`,
         // etc. when reading the GOTO target.
@@ -1135,7 +1135,7 @@ impl BatchParser {
         Ok(true)
     }
 
-    /// Handle FOR loop
+    /// handle FOR loop
     fn handle_for(
         &mut self,
         variable: &str,
@@ -1194,7 +1194,7 @@ impl BatchParser {
         items
     }
 
-    /// Handle CALL command
+    /// handle CALL command
     fn handle_call(
         &mut self,
         target: &str,
@@ -1287,7 +1287,7 @@ impl BatchParser {
     /// (`+ - * /` plus `%` for modulo and `(` `)` for grouping).
     /// Operator-assignment shorthands such as `VAR-=1` are expanded
     /// by the caller before this sees them.
-    fn eval_arithmetic(&self, expr: &str) -> String {
+    pub fn eval_arithmetic(&self, expr: &str) -> String {
         let expanded = self.expand_variables(expr);
         match eval_int_expr(&expanded) {
             Some(v) => v.to_string(),
@@ -1315,25 +1315,19 @@ impl BatchParser {
                         continue;
                     }
 
-                    // Handle special variables
+                    // handle special variables
                     let value = match var_name.to_uppercase().as_str() {
                         "DATE" => {
                             // Get real date from RTC
-                            #[cfg(target_arch = "x86_64")]
-                            if let Some(time) = crate::hal::cmos::HalQueryRealTimeClock() {
+                            if let Some(time) = crate::hal::common::cmos::query_real_time_clock() {
                                 alloc::format!("{:02}/{:02}/{}", time.month, time.day, time.year)
                             } else {
-                                "Unknown".to_string()
-                            }
-                            #[cfg(not(target_arch = "x86_64"))]
-                            {
                                 "Unknown".to_string()
                             }
                         }
                         "TIME" => {
                             // Get real time from RTC
-                            #[cfg(target_arch = "x86_64")]
-                            if let Some(time) = crate::hal::cmos::HalQueryRealTimeClock() {
+                            if let Some(time) = crate::hal::common::cmos::query_real_time_clock() {
                                 if time.hour >= 12 {
                                     let h = if time.hour == 12 { 12 } else { time.hour - 12 };
                                     alloc::format!(
@@ -1354,25 +1348,16 @@ impl BatchParser {
                             } else {
                                 "Unknown".to_string()
                             }
-                            #[cfg(not(target_arch = "x86_64"))]
-                            {
-                                "Unknown".to_string()
-                            }
                         }
                         "RANDOM" => {
                             // Generate a pseudo-random value based on time
-                            #[cfg(target_arch = "x86_64")]
-                            if let Some(time) = crate::hal::cmos::HalQueryRealTimeClock() {
+                            if let Some(time) = crate::hal::common::cmos::query_real_time_clock() {
                                 let seed = (time.hour as u32 * 3600
                                     + time.minute as u32 * 60
                                     + time.second() as u32)
                                     % 32768;
                                 format!("{}", seed)
                             } else {
-                                "12345".to_string()
-                            }
-                            #[cfg(not(target_arch = "x86_64"))]
-                            {
                                 "12345".to_string()
                             }
                         }
@@ -1415,7 +1400,7 @@ impl BatchParser {
 
 /// Trait for batch file command execution
 pub trait BatchExecutor {
-    /// Read a batch file's contents
+    /// read a batch file's contents
     fn read_file(&self, filename: &str) -> Result<String, BatError>;
 
     /// Execute a command, return error level

@@ -7,7 +7,7 @@ use super::status::{STATUS_INVALID_PARAMETER, STATUS_SUCCESS};
 use super::string::BOOLEAN;
 use super::types::UnicodeString;
 
-pub unsafe extern "C" fn RtlPrefixUnicodeString(
+pub unsafe extern "C" fn rtl_prefix_unicode_string(
     string1: *const UnicodeString,
     string2: *const UnicodeString,
     case_insensitive: BOOLEAN,
@@ -26,8 +26,8 @@ pub unsafe extern "C" fn RtlPrefixUnicodeString(
     }
 
     for i in 0..len1 {
-        let mut c1 = *s1.Buffer.add(i);
-        let mut c2 = *s2.Buffer.add(i);
+        let mut c1 = *s1.buffer.add(i);
+        let mut c2 = *s2.buffer.add(i);
 
         if case_insensitive != 0 {
             if c1 >= b'a' as u16 && c1 <= b'z' as u16 {
@@ -46,7 +46,7 @@ pub unsafe extern "C" fn RtlPrefixUnicodeString(
     1
 }
 
-pub unsafe extern "C" fn RtlSuffixUnicodeString(
+pub unsafe extern "C" fn rtl_suffix_unicode_string(
     string1: *const UnicodeString,
     string2: *const UnicodeString,
     case_insensitive: BOOLEAN,
@@ -67,8 +67,8 @@ pub unsafe extern "C" fn RtlSuffixUnicodeString(
     let offset = len2 - len1;
 
     for i in 0..len1 {
-        let mut c1 = *s1.Buffer.add(i);
-        let mut c2 = *s2.Buffer.add(offset + i);
+        let mut c1 = *s1.buffer.add(i);
+        let mut c2 = *s2.buffer.add(offset + i);
 
         if case_insensitive != 0 {
             if c1 >= b'a' as u16 && c1 <= b'z' as u16 {
@@ -87,7 +87,7 @@ pub unsafe extern "C" fn RtlSuffixUnicodeString(
     1
 }
 
-pub unsafe extern "C" fn RtlFindCharInUnicodeString(
+pub unsafe extern "C" fn rtl_find_char_in_unicode_string(
     flags: u32,
     string_to_search: *const UnicodeString,
     char_set: *const UnicodeString,
@@ -113,9 +113,9 @@ pub unsafe extern "C" fn RtlFindCharInUnicodeString(
 
     if find_first {
         for i in 0..search_len {
-            let sc = *search.Buffer.add(i);
+            let sc = *search.buffer.add(i);
             for j in 0..chars_len {
-                if sc == *chars.Buffer.add(j) {
+                if sc == *chars.buffer.add(j) {
                     *non_inclusive_index = (i * 2) as u16;
                     return STATUS_SUCCESS;
                 }
@@ -123,9 +123,9 @@ pub unsafe extern "C" fn RtlFindCharInUnicodeString(
         }
     } else {
         for i in (0..search_len).rev() {
-            let sc = *search.Buffer.add(i);
+            let sc = *search.buffer.add(i);
             for j in 0..chars_len {
-                if sc == *chars.Buffer.add(j) {
+                if sc == *chars.buffer.add(j) {
                     *non_inclusive_index = (i * 2) as u16;
                     return STATUS_SUCCESS;
                 }
@@ -136,7 +136,7 @@ pub unsafe extern "C" fn RtlFindCharInUnicodeString(
     STATUS_NOT_FOUND
 }
 
-pub unsafe extern "C" fn RtlIsTextUnicode(
+pub unsafe extern "C" fn rtl_is_text_unicode(
     buffer: *const u8,
     size: u32,
     result: *mut u32,
@@ -194,7 +194,7 @@ pub struct Guid {
     pub data4: [u8; 8],
 }
 
-pub unsafe extern "C" fn RtlGUIDFromString(
+pub unsafe extern "C" fn rtl_guidfrom_string(
     guid_string: *const UnicodeString,
     guid: *mut Guid,
 ) -> i32 {
@@ -209,7 +209,7 @@ pub unsafe extern "C" fn RtlGUIDFromString(
     STATUS_SUCCESS
 }
 
-pub unsafe extern "C" fn RtlStringFromGUID(
+pub unsafe extern "C" fn rtl_string_from_guid(
     guid: *const Guid,
     guid_string: *mut UnicodeString,
 ) -> i32 {
@@ -218,15 +218,15 @@ pub unsafe extern "C" fn RtlStringFromGUID(
     }
 
     let s = &mut *guid_string;
-    if !s.Buffer.is_null() && s.MaximumLength >= 2 {
-        *s.Buffer = 0;
-        s.Length = 0;
+    if !s.buffer.is_null() && s.maximum_length >= 2 {
+        *s.buffer = 0;
+        s.length = 0;
     }
 
     STATUS_SUCCESS
 }
 
-pub unsafe extern "C" fn RtlCharToInteger(string: *const i8, base: u32, value: *mut u32) -> i32 {
+pub unsafe extern "C" fn rtl_char_to_integer(string: *const i8, base: u32, value: *mut u32) -> i32 {
     if string.is_null() || value.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
@@ -252,7 +252,7 @@ pub unsafe extern "C" fn RtlCharToInteger(string: *const i8, base: u32, value: *
     STATUS_SUCCESS
 }
 
-pub unsafe extern "C" fn RtlUpperChar(character: i8) -> i8 {
+pub unsafe extern "C" fn rtl_upper_char(character: i8) -> i8 {
     let ch = character as u8;
     if ch >= b'a' && ch <= b'z' {
         (ch - 0x20) as i8
@@ -261,7 +261,7 @@ pub unsafe extern "C" fn RtlUpperChar(character: i8) -> i8 {
     }
 }
 
-pub unsafe extern "C" fn RtlLowerChar(character: i8) -> i8 {
+pub unsafe extern "C" fn rtl_lower_char(character: i8) -> i8 {
     let ch = character as u8;
     if ch >= b'A' && ch <= b'Z' {
         (ch + 0x20) as i8

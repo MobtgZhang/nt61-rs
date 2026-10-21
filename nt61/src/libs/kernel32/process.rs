@@ -1,18 +1,18 @@
 //! kernel32 — process management
 //
-//! `CreateProcessW`, `ExitProcess`, `TerminateProcess`,
-//! `GetCurrentProcess`, `GetCurrentProcessId`,
-//! `GetExitCodeProcess`, `WaitForSingleObject`,
-//! `GetProcessId`.
+//! `create_process_w`, `exit_process`, `terminate_process`,
+//! `get_current_process`, `get_current_process_id`,
+//! `get_exit_code_process`, `wait_for_single_object`,
+//! `get_process_id`.
 
 extern crate alloc;
 
-use super::error::SetLastError;
+use super::error::set_last_error;
 use super::types::{BOOL, DWORD, FALSE, HANDLE, HANDLE_CURRENT_PROCESS, LPSTR, TRUE};
 use crate::libs::ntdll::process as ntdll_process;
 use crate::libs::ntdll::status::STATUS_SUCCESS;
 use crate::libs::ntdll::sync as ntdll_sync;
-use crate::libs::ntdll::types::{ClientId, ObjectAttributes};
+use crate::libs::ntdll::types::{client_id, ObjectAttributes};
 use alloc::string::String;
 use core::ptr;
 
@@ -91,8 +91,8 @@ unsafe fn wide_to_string(p: *const u16) -> Option<String> {
     Some(out)
 }
 
-/// `CreateProcessW`.
-pub unsafe extern "C" fn CreateProcessW(
+/// `create_process_w`.
+pub unsafe extern "C" fn create_process_w(
     application_name: *const u16,
     command_line: *mut u16,
     _process_attrs: *const u8,
@@ -110,20 +110,20 @@ pub unsafe extern "C" fn CreateProcessW(
         application_name
     };
     if name_ptr.is_null() {
-        SetLastError(87);
+        set_last_error(87);
         return FALSE;
     }
     let _name = match wide_to_string(name_ptr) {
         Some(s) => s,
         None => {
-            SetLastError(123);
+            set_last_error(123);
             return FALSE;
         }
     };
     let _ = (inherit_handles, creation_flags, startup_info);
     let mut h: HANDLE = ptr::null_mut();
     let mut oa = ObjectAttributes::new();
-    let status = ntdll_process::NtCreateProcess(
+    let status = ntdll_process::nt_create_process(
         &mut h,
         0,
         &mut oa,
@@ -134,7 +134,7 @@ pub unsafe extern "C" fn CreateProcessW(
         ptr::null_mut(),
     );
     if status != STATUS_SUCCESS {
-        SetLastError(50);
+        set_last_error(50);
         return FALSE;
     }
     if !process_info.is_null() {
@@ -146,86 +146,83 @@ pub unsafe extern "C" fn CreateProcessW(
     TRUE
 }
 
-/// `ExitProcess` — terminate the current process with the
+/// `exit_process` — terminate the current process with the
 /// supplied exit code.
-pub unsafe extern "C" fn ExitProcess(exit_code: u32) -> ! {
-    ntdll_process::NtTerminateProcess(HANDLE_CURRENT_PROCESS, exit_code as i32);
+pub unsafe extern "C" fn exit_process(exit_code: u32) -> ! {
+    ntdll_process::nt_terminate_process(HANDLE_CURRENT_PROCESS, exit_code as i32);
     loop {
         core::hint::spin_loop();
     }
 }
 
-/// `TerminateProcess`.
-pub unsafe extern "C" fn TerminateProcess(process: HANDLE, exit_code: u32) -> BOOL {
-    if ntdll_process::NtTerminateProcess(process, exit_code as i32) == STATUS_SUCCESS {
+/// `terminate_process`.
+pub unsafe extern "C" fn terminate_process(process: HANDLE, exit_code: u32) -> BOOL {
+    if ntdll_process::nt_terminate_process(process, exit_code as i32) == STATUS_SUCCESS {
         TRUE
     } else {
-        SetLastError(6);
+        set_last_error(6);
         FALSE
     }
 }
 
-/// `GetCurrentProcess` / `GetCurrentProcessId`.
-pub extern "C" fn GetCurrentProcess() -> HANDLE {
+/// `get_current_process` / `get_current_process_id`.
+pub extern "C" fn get_current_process() -> HANDLE {
     HANDLE_CURRENT_PROCESS
 }
-pub extern "C" fn GetCurrentProcessId() -> DWORD {
+pub extern "C" fn get_current_process_id() -> DWORD {
     crate::ps::process::PID_SYSTEM as u32
 }
-pub extern "C" fn GetProcessId(process: HANDLE) -> DWORD {
+pub extern "C" fn get_process_id(process: HANDLE) -> DWORD {
     if process.is_null() {
         return 0;
     }
     crate::ps::process::PID_SYSTEM as u32
 }
 
-/// `GetExitCodeProcess` — we always report `STILL_ACTIVE`.
-pub unsafe extern "C" fn GetExitCodeProcess(_process: HANDLE, exit_code: *mut DWORD) -> BOOL {
+/// `get_exit_code_process` — we always report `STILL_ACTIVE`.
+pub unsafe extern "C" fn get_exit_code_process(_process: HANDLE, exit_code: *mut DWORD) -> BOOL {
     if exit_code.is_null() {
-        SetLastError(87);
+        set_last_error(87);
         return FALSE;
     }
     *exit_code = 259; // STILL_ACTIVE
     TRUE
 }
 
-/// `OpenProcess`.
-pub unsafe extern "C" fn OpenProcess(
+/// `open_process`.
+pub unsafe extern "C" fn open_process(
     _desired_access: DWORD,
     _inherit_handle: BOOL,
     process_id: DWORD,
 ) -> HANDLE {
     if process_id == 0 {
-        SetLastError(87);
+        set_last_error(87);
         return ptr::null_mut();
     }
     let mut h: HANDLE = ptr::null_mut();
     let mut oa = ObjectAttributes::new();
-    let mut cid = ClientId::new();
+    let mut cid = client_id::new();
     cid.unique_process = process_id as HANDLE;
-    let status = ntdll_process::NtOpenProcess(&mut h, 0, &mut oa, &mut cid);
+    let status = ntdll_process::nt_open_process(&mut h, 0, &mut oa, &mut cid);
     if status != STATUS_SUCCESS {
-        SetLastError(87);
+        set_last_error(87);
         return ptr::null_mut();
     }
     h
 }
 
-/// `WaitForSingleObject` re-exported for process wait.
+/// `wait_for_single_object` re-exported for process wait.
 ///
 /// `ms` is part of the Win32 ABI but the stub does not sleep
-/// (it just round-trips to `NtWaitForSingleObject`). The
+/// (it just round-trips to `NT_WAIT_FOR_SINGLE_OBJECT`). The
 /// parameter is left in the signature for ABI compatibility;
 /// the next phase will plumb it into the kernel scheduler.
-pub unsafe extern "C" fn WaitForSingleObject(
-    handle: HANDLE,
-    #[allow(unused_variables)] ms: DWORD,
-) -> DWORD {
+pub unsafe extern "C" fn wait_for_single_object(handle: HANDLE, _ms: DWORD) -> DWORD {
     if handle.is_null() {
-        SetLastError(6);
+        set_last_error(6);
         return 0xFFFF_FFFF;
     }
-    let status = ntdll_sync::NtWaitForSingleObject(handle, 0, ptr::null_mut());
+    let status = ntdll_sync::nt_wait_for_single_object_kernel(handle, 0, None);
     if status == STATUS_SUCCESS {
         0
     } else {

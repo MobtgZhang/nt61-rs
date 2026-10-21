@@ -85,7 +85,7 @@ impl Default for Wow64VasState {
 }
 
 impl Wow64VasState {
-    /// Create a new VAS state.
+    /// create a new VAS state.
     pub const fn new() -> Self {
         // Start after the system DLL region.
         Self {
@@ -336,7 +336,7 @@ pub fn allocate_stack(size: u32) -> Option<u32> {
     })
 }
 
-/// Read memory from a 32-bit process.
+/// read memory from a 32-bit process.
 ///
 /// This is used by the kernel to read from a Wow64 process's address space.
 pub fn read_memory(
@@ -362,7 +362,7 @@ pub fn read_memory(
     Ok(size)
 }
 
-/// Write memory to a 32-bit process.
+/// write memory to a 32-bit process.
 ///
 /// This is used by the kernel to write to a Wow64 process's address space.
 pub fn write_memory(

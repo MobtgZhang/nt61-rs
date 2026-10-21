@@ -7,13 +7,12 @@ use core::ptr;
 use spin::{Lazy, Mutex};
 
 extern crate alloc;
-use alloc::vec::Vec;
 
-const FILE_POOL_SIZE: usize = 64;
+pub const FILE_POOL_SIZE: usize = 64;
 
-struct FilePool {
-    files: [FILE; FILE_POOL_SIZE],
-    initialized: bool,
+pub struct FilePool {
+    pub files: [FILE; FILE_POOL_SIZE],
+    pub initialized: bool,
 }
 
 impl FilePool {
@@ -25,21 +24,21 @@ impl FilePool {
     }
 }
 
-static FILE_POOL: Lazy<Mutex<FilePool>> = Lazy::new(|| Mutex::new(FilePool::new()));
+pub static FILE_POOL: Lazy<Mutex<FilePool>> = Lazy::new(|| Mutex::new(FilePool::new()));
 
-static STDIN: Lazy<Mutex<FILE>> = Lazy::new(|| {
+pub static STDIN: Lazy<Mutex<FILE>> = Lazy::new(|| {
     let mut file = FILE::new();
     file.handle = 0;
     Mutex::new(file)
 });
 
-static STDOUT: Lazy<Mutex<FILE>> = Lazy::new(|| {
+pub static STDOUT: Lazy<Mutex<FILE>> = Lazy::new(|| {
     let mut file = FILE::new();
     file.handle = 1;
     Mutex::new(file)
 });
 
-static STDERR: Lazy<Mutex<FILE>> = Lazy::new(|| {
+pub static STDERR: Lazy<Mutex<FILE>> = Lazy::new(|| {
     let mut file = FILE::new();
     file.handle = 2;
     Mutex::new(file)

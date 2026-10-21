@@ -1,16 +1,15 @@
 //! kernel32 — console APIs
 //
-//! `GetStdHandle`, `WriteConsoleW`, `ReadConsoleW`,
-//! `GetConsoleScreenBufferInfo`, `SetConsoleTextAttribute`,
-//! `AllocConsole`, `FreeConsole`. The console is a thin
+//! `get_std_handle`, `write_console_w`, `read_console_w`,
+//! `get_console_screen_buffer_info`, `set_console_text_attribute`,
+//! `alloc_console`, `free_console`. The console is a thin
 //! wrapper around the kernel's `kprintln!` so the smoke
 //! test can verify that messages go somewhere.
 
 extern crate alloc;
 
-use super::error::{GetLastError, SetLastError};
+use super::error::set_last_error;
 use super::types::{BOOL, DWORD, FALSE, HANDLE, TRUE};
-use alloc::string::String;
 use core::ptr;
 use core::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
 
@@ -22,21 +21,21 @@ static MOCK_STDIN: AtomicPtr<u8> = AtomicPtr::new(ptr::null_mut());
 static MOCK_STDOUT: AtomicPtr<u8> = AtomicPtr::new(ptr::null_mut());
 static MOCK_STDERR: AtomicPtr<u8> = AtomicPtr::new(ptr::null_mut());
 
-/// `GetStdHandle`.
-pub unsafe extern "C" fn GetStdHandle(n_std_handle: DWORD) -> HANDLE {
+/// `get_std_handle`.
+pub unsafe extern "C" fn get_std_handle(n_std_handle: DWORD) -> HANDLE {
     match n_std_handle {
         0xFFFF_FFF6 => MOCK_STDIN.load(Ordering::Acquire) as HANDLE,
         0xFFFF_FFF5 => MOCK_STDOUT.load(Ordering::Acquire) as HANDLE,
         0xFFFF_FFF4 => MOCK_STDERR.load(Ordering::Acquire) as HANDLE,
         _ => {
-            SetLastError(6);
+            set_last_error(6);
             ptr::null_mut()
         }
     }
 }
 
-/// `SetStdHandle`.
-pub unsafe extern "C" fn SetStdHandle(n_std_handle: DWORD, h: HANDLE) -> BOOL {
+/// `set_std_handle`.
+pub unsafe extern "C" fn set_std_handle(n_std_handle: DWORD, h: HANDLE) -> BOOL {
     let p = h as *mut u8;
     match n_std_handle {
         0xFFFF_FFF6 => {
@@ -49,7 +48,7 @@ pub unsafe extern "C" fn SetStdHandle(n_std_handle: DWORD, h: HANDLE) -> BOOL {
             MOCK_STDERR.store(p, Ordering::Release);
         }
         _ => {
-            SetLastError(6);
+            set_last_error(6);
             return FALSE;
         }
     }
@@ -58,7 +57,7 @@ pub unsafe extern "C" fn SetStdHandle(n_std_handle: DWORD, h: HANDLE) -> BOOL {
 
 static CONSOLE_ATTR: AtomicU32 = AtomicU32::new(0x07);
 
-/// `GetConsoleScreenBufferInfo` — fill a `CONSOLE_SCREEN_BUFFER_INFO`.
+/// `get_console_screen_buffer_info` — fill a `CONSOLE_SCREEN_BUFFER_INFO`.
 #[repr(C)]
 #[derive(Default)]
 pub struct Coord {
@@ -85,12 +84,12 @@ pub struct ConsoleScreenBufferInfo {
     pub maximum_window_size: Coord,
 }
 
-pub unsafe extern "C" fn GetConsoleScreenBufferInfo(
+pub unsafe extern "C" fn get_console_screen_buffer_info(
     _console: HANDLE,
     info: *mut ConsoleScreenBufferInfo,
 ) -> BOOL {
     if info.is_null() {
-        SetLastError(87);
+        set_last_error(87);
         return FALSE;
     }
     let i = &mut *info;
@@ -107,14 +106,14 @@ pub unsafe extern "C" fn GetConsoleScreenBufferInfo(
     TRUE
 }
 
-/// `SetConsoleTextAttribute`.
-pub unsafe extern "C" fn SetConsoleTextAttribute(_console: HANDLE, attributes: u16) -> BOOL {
+/// `set_console_text_attribute`.
+pub unsafe extern "C" fn set_console_text_attribute(_console: HANDLE, attributes: u16) -> BOOL {
     CONSOLE_ATTR.store(attributes as u32, Ordering::Relaxed);
     TRUE
 }
 
-/// `WriteConsoleW`.
-pub unsafe extern "C" fn WriteConsoleW(
+/// `write_console_w`.
+pub unsafe extern "C" fn write_console_w(
     _console: HANDLE,
     buffer: *const u16,
     chars_to_write: DWORD,
@@ -122,7 +121,7 @@ pub unsafe extern "C" fn WriteConsoleW(
     _reserved: *const u8,
 ) -> BOOL {
     if buffer.is_null() {
-        SetLastError(87);
+        set_last_error(87);
         return FALSE;
     }
     let slice = core::slice::from_raw_parts(buffer, chars_to_write as usize);
@@ -140,9 +139,9 @@ pub unsafe extern "C" fn WriteConsoleW(
     TRUE
 }
 
-/// `ReadConsoleW` — read from a fake input buffer. The
+/// `read_console_w` — read from a fake input buffer. The
 /// bootstrap never has real input; we return zero bytes.
-pub unsafe extern "C" fn ReadConsoleW(
+pub unsafe extern "C" fn read_console_w(
     _console: HANDLE,
     _buffer: *mut u16,
     _chars_to_read: DWORD,
@@ -155,11 +154,11 @@ pub unsafe extern "C" fn ReadConsoleW(
     TRUE
 }
 
-/// `AllocConsole` / `FreeConsole` — always succeed in the
+/// `alloc_console` / `free_console` — always succeed in the
 /// bootstrap. The real kernel creates a console object.
-pub extern "C" fn AllocConsole() -> BOOL {
+pub extern "C" fn alloc_console() -> BOOL {
     TRUE
 }
-pub extern "C" fn FreeConsole() -> BOOL {
+pub extern "C" fn free_console() -> BOOL {
     TRUE
 }

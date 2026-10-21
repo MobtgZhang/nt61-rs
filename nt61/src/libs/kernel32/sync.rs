@@ -1,28 +1,28 @@
 //! kernel32 — synchronisation primitives
 //
-//! `WaitForSingleObject`, `WaitForMultipleObjects`,
-//! `CreateEventW`, `SetEvent`, `ResetEvent`, `PulseEvent`,
-//! `CreateMutexW`, `ReleaseMutex`, `CreateSemaphoreW`,
-//! `ReleaseSemaphore`, `InitializeCriticalSection`,
-//! `EnterCriticalSection`, `LeaveCriticalSection`,
-//! `DeleteCriticalSection`. The user-mode side of this
+//! `wait_for_single_object`, `wait_for_multiple_objects`,
+//! `create_event_w`, `set_event`, `reset_event`, `pulse_event`,
+//! `create_mutex_w`, `release_mutex`, `create_semaphore_w`,
+//! `release_semaphore`, `initialize_critical_section`,
+//! `enter_critical_section`, `leave_critical_section`,
+//! `delete_critical_section`. The user-mode side of this
 //! kernel is never executed, so we accept the calls and
 //! forward to ntdll.
 
-use super::error::{GetLastError, SetLastError};
+use super::error::set_last_error;
 use super::types::{BOOL, DWORD, FALSE, HANDLE, LPCWSTR, TRUE};
 use crate::ke::sync::Spinlock;
 use crate::libs::ntdll::status::{STATUS_INVALID_HANDLE, STATUS_SUCCESS};
 use crate::libs::ntdll::sync as ntdll_sync;
 use core::ptr;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::AtomicU32;
 
 // ---------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------
 
-/// `CreateEventW`.
-pub unsafe extern "C" fn CreateEventW(
+/// `create_event_w`.
+pub unsafe extern "C" fn create_event_w(
     _security_attributes: *const u8,
     manual_reset: BOOL,
     initial_state: BOOL,
@@ -31,31 +31,31 @@ pub unsafe extern "C" fn CreateEventW(
     let mut oa = crate::libs::ntdll::types::ObjectAttributes::new();
     let event_type = if manual_reset != 0 { 0 } else { 1 };
     let mut h: HANDLE = ptr::null_mut();
-    let status = ntdll_sync::NtCreateEvent(&mut h, 0, &mut oa, event_type, initial_state as u8);
+    let status = ntdll_sync::nt_create_event(&mut h, 0, &mut oa, event_type, initial_state as u8);
     if status != STATUS_SUCCESS {
-        SetLastError(8);
+        set_last_error(8);
         return ptr::null_mut();
     }
     h
 }
 
-/// `SetEvent` / `ResetEvent` / `PulseEvent`.
-pub unsafe extern "C" fn SetEvent(event: HANDLE) -> BOOL {
-    if ntdll_sync::NtSetEvent(event, ptr::null_mut()) == STATUS_SUCCESS {
+/// `set_event` / `reset_event` / `pulse_event`.
+pub unsafe extern "C" fn set_event(event: HANDLE) -> BOOL {
+    if ntdll_sync::nt_set_event(event, ptr::null_mut()) == STATUS_SUCCESS {
         TRUE
     } else {
         FALSE
     }
 }
-pub unsafe extern "C" fn ResetEvent(event: HANDLE) -> BOOL {
-    if ntdll_sync::NtResetEvent(event, ptr::null_mut()) == STATUS_SUCCESS {
+pub unsafe extern "C" fn reset_event(event: HANDLE) -> BOOL {
+    if ntdll_sync::nt_reset_event(event, ptr::null_mut()) == STATUS_SUCCESS {
         TRUE
     } else {
         FALSE
     }
 }
-pub unsafe extern "C" fn PulseEvent(event: HANDLE) -> BOOL {
-    if ntdll_sync::NtPulseEvent(event, ptr::null_mut()) == STATUS_SUCCESS {
+pub unsafe extern "C" fn pulse_event(event: HANDLE) -> BOOL {
+    if ntdll_sync::nt_pulse_event(event, ptr::null_mut()) == STATUS_SUCCESS {
         TRUE
     } else {
         FALSE
@@ -66,25 +66,25 @@ pub unsafe extern "C" fn PulseEvent(event: HANDLE) -> BOOL {
 // Mutexes
 // ---------------------------------------------------------------------------
 
-/// `CreateMutexW`.
-pub unsafe extern "C" fn CreateMutexW(
+/// `create_mutex_w`.
+pub unsafe extern "C" fn create_mutex_w(
     _security: *const u8,
     initial_owner: BOOL,
     _name: LPCWSTR,
 ) -> HANDLE {
     let mut oa = crate::libs::ntdll::types::ObjectAttributes::new();
     let mut h: HANDLE = ptr::null_mut();
-    let status = ntdll_sync::NtCreateMutant(&mut h, 0, &mut oa, initial_owner as u8);
+    let status = ntdll_sync::nt_create_mutant(&mut h, 0, &mut oa, initial_owner as u8);
     if status != STATUS_SUCCESS {
-        SetLastError(8);
+        set_last_error(8);
         return ptr::null_mut();
     }
     h
 }
 
-/// `ReleaseMutex`.
-pub unsafe extern "C" fn ReleaseMutex(mutex: HANDLE) -> BOOL {
-    if ntdll_sync::NtReleaseMutant(mutex, ptr::null_mut()) == STATUS_SUCCESS {
+/// `release_mutex`.
+pub unsafe extern "C" fn release_mutex(mutex: HANDLE) -> BOOL {
+    if ntdll_sync::nt_release_mutant(mutex, ptr::null_mut()) == STATUS_SUCCESS {
         TRUE
     } else {
         FALSE
@@ -95,8 +95,8 @@ pub unsafe extern "C" fn ReleaseMutex(mutex: HANDLE) -> BOOL {
 // Semaphores
 // ---------------------------------------------------------------------------
 
-/// `CreateSemaphoreW`.
-pub unsafe extern "C" fn CreateSemaphoreW(
+/// `create_semaphore_w`.
+pub unsafe extern "C" fn create_semaphore_w(
     _security: *const u8,
     initial_count: DWORD,
     maximum_count: DWORD,
@@ -104,21 +104,22 @@ pub unsafe extern "C" fn CreateSemaphoreW(
 ) -> HANDLE {
     let mut oa = crate::libs::ntdll::types::ObjectAttributes::new();
     let mut h: HANDLE = ptr::null_mut();
-    let status = ntdll_sync::NtCreateSemaphore(&mut h, 0, &mut oa, initial_count, maximum_count);
+    let status = ntdll_sync::nt_create_semaphore(&mut h, 0, &mut oa, initial_count, maximum_count);
     if status != STATUS_SUCCESS {
-        SetLastError(8);
+        set_last_error(8);
         return ptr::null_mut();
     }
     h
 }
 
-/// `ReleaseSemaphore`.
-pub unsafe extern "C" fn ReleaseSemaphore(
+/// `release_semaphore`.
+pub unsafe extern "C" fn release_semaphore(
     semaphore: HANDLE,
     release_count: DWORD,
     previous_count: *mut DWORD,
 ) -> BOOL {
-    if ntdll_sync::NtReleaseSemaphore(semaphore, release_count, previous_count) == STATUS_SUCCESS {
+    if ntdll_sync::nt_release_semaphore(semaphore, release_count, previous_count) == STATUS_SUCCESS
+    {
         TRUE
     } else {
         FALSE
@@ -130,46 +131,46 @@ pub unsafe extern "C" fn ReleaseSemaphore(
 // ---------------------------------------------------------------------------
 
 const WAIT_OBJECT_0: DWORD = 0;
-const WAIT_ABANDONED: DWORD = 0x80;
+pub const WAIT_ABANDONED: DWORD = 0x80;
 const WAIT_TIMEOUT: DWORD = 0x102;
 const WAIT_FAILED: DWORD = 0xFFFF_FFFF;
-const INFINITE: DWORD = 0xFFFF_FFFF;
+pub const INFINITE: DWORD = 0xFFFF_FFFF;
 
-/// `WaitForSingleObject`.
-pub unsafe extern "C" fn WaitForSingleObject(handle: HANDLE, _milliseconds: DWORD) -> DWORD {
+/// `wait_for_single_object`.
+pub unsafe extern "C" fn wait_for_single_object(handle: HANDLE, _milliseconds: DWORD) -> DWORD {
     if handle.is_null() {
-        SetLastError(6);
+        set_last_error(6);
         return WAIT_FAILED;
     }
-    let status = ntdll_sync::NtWaitForSingleObject(handle, 0, ptr::null_mut());
+    let status = ntdll_sync::nt_wait_for_single_object_kernel(handle, 0, None);
     if status == STATUS_SUCCESS {
         WAIT_OBJECT_0
     } else if status == STATUS_INVALID_HANDLE {
-        SetLastError(6);
+        set_last_error(6);
         WAIT_FAILED
     } else {
         WAIT_TIMEOUT
     }
 }
 
-/// `WaitForMultipleObjects`.
-pub unsafe extern "C" fn WaitForMultipleObjects(
+/// `wait_for_multiple_objects`.
+pub unsafe extern "C" fn wait_for_multiple_objects(
     count: DWORD,
     handles: *const HANDLE,
     wait_all: BOOL,
     _milliseconds: DWORD,
 ) -> DWORD {
     if count == 0 || count > 64 || handles.is_null() {
-        SetLastError(87);
+        set_last_error(87);
         return WAIT_FAILED;
     }
     let wait_type = if wait_all != 0 { 0 } else { 1 };
-    let status = ntdll_sync::NtWaitForMultipleObjects(
+    let status = ntdll_sync::nt_wait_for_multiple_objects_kernel(
         count,
-        handles as *mut _,
+        unsafe { core::slice::from_raw_parts(handles, count as usize) },
         wait_type,
         0,
-        ptr::null_mut(),
+        None,
     );
     if status == STATUS_SUCCESS {
         WAIT_OBJECT_0
@@ -194,8 +195,8 @@ pub struct CriticalSection {
     pub spin: Spinlock<()>,
 }
 
-/// `InitializeCriticalSection`.
-pub unsafe extern "C" fn InitializeCriticalSection(cs: *mut CriticalSection) {
+/// `initialize_critical_section`.
+pub unsafe extern "C" fn initialize_critical_section(cs: *mut CriticalSection) {
     if cs.is_null() {
         return;
     }
@@ -206,8 +207,8 @@ pub unsafe extern "C" fn InitializeCriticalSection(cs: *mut CriticalSection) {
     (*cs).spin = Spinlock::new(());
 }
 
-/// `EnterCriticalSection`.
-pub unsafe extern "C" fn EnterCriticalSection(cs: *mut CriticalSection) {
+/// `enter_critical_section`.
+pub unsafe extern "C" fn enter_critical_section(cs: *mut CriticalSection) {
     if cs.is_null() {
         return;
     }
@@ -216,8 +217,8 @@ pub unsafe extern "C" fn EnterCriticalSection(cs: *mut CriticalSection) {
     (*cs).owning_thread = 1;
 }
 
-/// `LeaveCriticalSection`.
-pub unsafe extern "C" fn LeaveCriticalSection(cs: *mut CriticalSection) {
+/// `leave_critical_section`.
+pub unsafe extern "C" fn leave_critical_section(cs: *mut CriticalSection) {
     if cs.is_null() {
         return;
     }
@@ -229,24 +230,24 @@ pub unsafe extern "C" fn LeaveCriticalSection(cs: *mut CriticalSection) {
     }
 }
 
-/// `DeleteCriticalSection`.
-pub unsafe extern "C" fn DeleteCriticalSection(cs: *mut CriticalSection) {
+/// `delete_critical_section`.
+pub unsafe extern "C" fn delete_critical_section(cs: *mut CriticalSection) {
     if cs.is_null() {
         return;
     }
     (*cs).magic = 0;
 }
 
-/// `InitializeCriticalSectionAndSpinCount` / `SetCriticalSectionSpinCount`.
-pub unsafe extern "C" fn InitializeCriticalSectionAndSpinCount(
+/// `initialize_critical_section_and_spin_count` / `set_critical_section_spin_count`.
+pub unsafe extern "C" fn initialize_critical_section_and_spin_count(
     cs: *mut CriticalSection,
     _spins: DWORD,
 ) -> BOOL {
-    InitializeCriticalSection(cs);
+    initialize_critical_section(cs);
     TRUE
 }
 
-pub unsafe extern "C" fn SetCriticalSectionSpinCount(
+pub unsafe extern "C" fn set_critical_section_spin_count(
     _cs: *mut CriticalSection,
     _spins: DWORD,
 ) -> DWORD {

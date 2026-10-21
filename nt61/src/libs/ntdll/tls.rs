@@ -1,12 +1,10 @@
 //! ntdll — Thread Local Storage (TLS) support
 //
 //! Implements the TLS allocation and access functions:
-//! RtlAllocateThreadLocalStorageIndex, RtlFreeThreadLocalStorageIndex,
-//! TlsGetValue, TlsSetValue.
+//! rtl_allocate_thread_local_storage_index, rtl_free_thread_local_storage_index,
+//! tls_get_value, tls_set_value.
 //
 //! References: MSDN Library "Windows 7" — Thread Local Storage.
-
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use super::status::{STATUS_INVALID_PARAMETER, STATUS_NO_MEMORY, STATUS_SUCCESS};
 use super::types::{NTSTATUS, PVOID};
@@ -33,7 +31,7 @@ static TLS_LOCK: Spinlock<TlsState> = Spinlock::new(TlsState {
 
 /// Per-thread TLS storage.
 ///
-/// `TlsGetValue`/`TlsSetValue` are per-thread by definition (Win32 DDI:
+/// `tls_get_value`/`tls_set_value` are per-thread by definition (Win32 DDI:
 /// "the value is stored in the calling thread's TLS array"), so the table
 /// must be keyed by the calling thread rather than shared process-wide.
 /// Expansion slots are allocated lazily, matching the Windows behaviour
@@ -53,7 +51,7 @@ fn current_thread_id() -> usize {
     }
 }
 
-pub unsafe extern "C" fn TlsAlloc() -> u32 {
+pub unsafe extern "C" fn tls_alloc() -> u32 {
     let mut state = TLS_LOCK.lock();
 
     for i in state.next_free..TLS_TOTAL_SLOTS {
@@ -75,11 +73,11 @@ pub unsafe extern "C" fn TlsAlloc() -> u32 {
     0xFFFF_FFFF // TLS_OUT_OF_INDEXES
 }
 
-pub unsafe extern "C" fn RtlAllocateThreadLocalStorageIndex(index: *mut u32) -> NTSTATUS {
+pub unsafe extern "C" fn rtl_allocate_thread_local_storage_index(index: *mut u32) -> NTSTATUS {
     if index.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
-    let idx = TlsAlloc();
+    let idx = tls_alloc();
     if idx == 0xFFFF_FFFF {
         return STATUS_NO_MEMORY;
     }
@@ -87,7 +85,7 @@ pub unsafe extern "C" fn RtlAllocateThreadLocalStorageIndex(index: *mut u32) -> 
     STATUS_SUCCESS
 }
 
-pub unsafe extern "C" fn TlsFree(index: u32) -> u32 {
+pub unsafe extern "C" fn tls_free(index: u32) -> u32 {
     if index as usize >= TLS_TOTAL_SLOTS {
         return 0;
     }
@@ -102,15 +100,15 @@ pub unsafe extern "C" fn TlsFree(index: u32) -> u32 {
     1
 }
 
-pub unsafe extern "C" fn RtlFreeThreadLocalStorageIndex(index: u32) -> NTSTATUS {
-    if TlsFree(index) != 0 {
+pub unsafe extern "C" fn rtl_free_thread_local_storage_index(index: u32) -> NTSTATUS {
+    if tls_free(index) != 0 {
         STATUS_SUCCESS
     } else {
         STATUS_INVALID_PARAMETER
     }
 }
 
-pub unsafe extern "C" fn TlsGetValue(index: u32) -> PVOID {
+pub unsafe extern "C" fn tls_get_value(index: u32) -> PVOID {
     if index as usize >= TLS_TOTAL_SLOTS {
         return ptr::null_mut();
     }
@@ -129,7 +127,7 @@ pub unsafe extern "C" fn TlsGetValue(index: u32) -> PVOID {
     }
 }
 
-pub unsafe extern "C" fn TlsSetValue(index: u32, value: PVOID) -> u32 {
+pub unsafe extern "C" fn tls_set_value(index: u32, value: PVOID) -> u32 {
     if index as usize >= TLS_TOTAL_SLOTS {
         return 0;
     }
@@ -160,10 +158,10 @@ pub unsafe extern "C" fn TlsSetValue(index: u32, value: PVOID) -> u32 {
     1
 }
 
-pub unsafe extern "C" fn RtlFlsAlloc(_callback: PVOID, index: *mut u32) -> NTSTATUS {
-    RtlAllocateThreadLocalStorageIndex(index)
+pub unsafe extern "C" fn rtl_fls_alloc(_callback: PVOID, index: *mut u32) -> NTSTATUS {
+    rtl_allocate_thread_local_storage_index(index)
 }
 
-pub unsafe extern "C" fn RtlFlsFree(index: u32) -> NTSTATUS {
-    RtlFreeThreadLocalStorageIndex(index)
+pub unsafe extern "C" fn rtl_fls_free(index: u32) -> NTSTATUS {
+    rtl_free_thread_local_storage_index(index)
 }

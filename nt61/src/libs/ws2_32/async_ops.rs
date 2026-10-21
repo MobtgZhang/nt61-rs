@@ -1,14 +1,12 @@
 //! Async and overlapped I/O operations
 //!
-//! Implements WSASend, WSARecv, WSASendTo, WSARecvFrom, WSAConnect,
-//! WSAAccept, WSAPoll, WSAEventSelect, WSAWaitForMultipleEvents,
+//! Implements wsasend, wsarecv, wsasend_to, wsarecv_from, wsaconnect,
+//! wsaaccept, wsapoll, wsaevent_select, wsawait_for_multiple_events,
 //! and event/overlapped structures.
 
-#![allow(non_snake_case)]
-
-use super::types::*;
 use super::error::*;
-use super::socket::{send, recv, accept, connect};
+use super::socket::{accept, connect, recv, send};
+use super::types::*;
 use crate::ke::sync::Spinlock;
 use alloc::vec::Vec;
 
@@ -16,7 +14,7 @@ pub type WSAEVENT = usize;
 
 static EVENT_TABLE: Spinlock<Vec<bool>> = Spinlock::new(Vec::new());
 
-pub fn WSACreateEvent() -> WSAEVENT {
+pub fn wsacreate_event() -> WSAEVENT {
     let mut table = EVENT_TABLE.lock();
 
     for (idx, entry) in table.iter_mut().enumerate() {
@@ -30,14 +28,14 @@ pub fn WSACreateEvent() -> WSAEVENT {
     table.len() as WSAEVENT
 }
 
-pub fn WSACloseEvent(hEvent: WSAEVENT) -> bool {
-    if hEvent == 0 {
+pub fn wsaclose_event(h_event: WSAEVENT) -> bool {
+    if h_event == 0 {
         set_last_error(WSAEINVAL);
         return false;
     }
 
     let mut table = EVENT_TABLE.lock();
-    let idx = (hEvent - 1) as usize;
+    let idx = (h_event - 1) as usize;
 
     if idx < table.len() && table[idx] {
         table[idx] = false;
@@ -49,8 +47,8 @@ pub fn WSACloseEvent(hEvent: WSAEVENT) -> bool {
     }
 }
 
-pub fn WSASetEvent(hEvent: WSAEVENT) -> bool {
-    if hEvent == 0 {
+pub fn wsaset_event(h_event: WSAEVENT) -> bool {
+    if h_event == 0 {
         set_last_error(WSAEINVAL);
         return false;
     }
@@ -59,8 +57,8 @@ pub fn WSASetEvent(hEvent: WSAEVENT) -> bool {
     true
 }
 
-pub fn WSAResetEvent(hEvent: WSAEVENT) -> bool {
-    if hEvent == 0 {
+pub fn wsareset_event(h_event: WSAEVENT) -> bool {
+    if h_event == 0 {
         set_last_error(WSAEINVAL);
         return false;
     }
@@ -69,19 +67,19 @@ pub fn WSAResetEvent(hEvent: WSAEVENT) -> bool {
     true
 }
 
-pub fn WSAWaitForMultipleEvents(
-    cEvents: u32,
-    lphEvents: *const WSAEVENT,
-    fWaitAll: bool,
-    dwTimeout: u32,
-    fAlertable: bool,
+pub fn wsawait_for_multiple_events(
+    c_events: u32,
+    lph_events: *const WSAEVENT,
+    _f_wait_all: bool,
+    dw_timeout: u32,
+    _f_alertable: bool,
 ) -> u32 {
-    if lphEvents.is_null() || cEvents == 0 || cEvents > 64 {
+    if lph_events.is_null() || c_events == 0 || c_events > 64 {
         set_last_error(WSAEINVAL);
         return 0xFFFFFFFF; // WSA_WAIT_FAILED
     }
 
-    if dwTimeout == 0 {
+    if dw_timeout == 0 {
         set_last_error(WSAETIMEDOUT);
         return 0x00000102; // WSA_WAIT_TIMEOUT
     }
@@ -90,7 +88,7 @@ pub fn WSAWaitForMultipleEvents(
     0 // WSA_WAIT_EVENT_0
 }
 
-pub fn WSAEventSelect(s: usize, hEventObject: WSAEVENT, lNetworkEvents: i32) -> i32 {
+pub fn wsaevent_select(s: usize, _h_event_object: WSAEVENT, _l_network_events: i32) -> i32 {
     if s == 0 || s == INVALID_SOCKET {
         set_last_error(WSAENOTSOCK);
         return SOCKET_ERROR;
@@ -100,25 +98,25 @@ pub fn WSAEventSelect(s: usize, hEventObject: WSAEVENT, lNetworkEvents: i32) -> 
     0
 }
 
-pub fn WSAEnumNetworkEvents(
+pub fn wsaenum_network_events(
     s: usize,
-    hEventObject: WSAEVENT,
-    lpNetworkEvents: *mut WSANETWORKEVENTS,
+    _h_event_object: WSAEVENT,
+    lp_network_events: *mut WSANETWORKEVENTS,
 ) -> i32 {
     if s == 0 || s == INVALID_SOCKET {
         set_last_error(WSAENOTSOCK);
         return SOCKET_ERROR;
     }
 
-    if lpNetworkEvents.is_null() {
+    if lp_network_events.is_null() {
         set_last_error(WSAEFAULT);
         return SOCKET_ERROR;
     }
 
     unsafe {
-        (*lpNetworkEvents).lNetworkEvents = 0;
+        (*lp_network_events).l_network_events = 0;
         for i in 0..10 {
-            (*lpNetworkEvents).iErrorCode[i] = 0;
+            (*lp_network_events).i_error_code[i] = 0;
         }
     }
 
@@ -126,24 +124,24 @@ pub fn WSAEnumNetworkEvents(
     0
 }
 
-pub fn WSASend(
+pub fn wsasend(
     s: usize,
-    lpBuffers: *const WSABUF,
-    dwBufferCount: u32,
-    lpNumberOfBytesSent: *mut u32,
-    dwFlags: u32,
-    lpOverlapped: *mut WSAOVERLAPPED,
-    lpCompletionRoutine: LPWSAOVERLAPPED_COMPLETION_ROUTINE,
+    lp_buffers: *const WSABUF,
+    dw_buffer_count: u32,
+    lp_number_of_bytes_sent: *mut u32,
+    _dw_flags: u32,
+    _lp_overlapped: *mut WSAOVERLAPPED,
+    _lp_completion_routine: LpwsaoverlappedCompletionRoutine,
 ) -> i32 {
-    if lpBuffers.is_null() || dwBufferCount == 0 {
+    if lp_buffers.is_null() || dw_buffer_count == 0 {
         set_last_error(WSAEFAULT);
         return SOCKET_ERROR;
     }
 
     let mut total_sent = 0u32;
 
-    for i in 0..dwBufferCount {
-        let buf = unsafe { &*lpBuffers.add(i as usize) };
+    for i in 0..dw_buffer_count {
+        let buf = unsafe { &*lp_buffers.add(i as usize) };
         let result = send(s, buf.buf, buf.len as i32, 0);
 
         if result == SOCKET_ERROR {
@@ -153,117 +151,123 @@ pub fn WSASend(
         total_sent += result as u32;
     }
 
-    if !lpNumberOfBytesSent.is_null() {
-        unsafe { *lpNumberOfBytesSent = total_sent; }
+    if !lp_number_of_bytes_sent.is_null() {
+        unsafe {
+            *lp_number_of_bytes_sent = total_sent;
+        }
     }
 
     set_last_error(0);
     0
 }
 
-pub fn WSARecv(
+pub fn wsarecv(
     s: usize,
-    lpBuffers: *mut WSABUF,
-    dwBufferCount: u32,
-    lpNumberOfBytesRecvd: *mut u32,
-    lpFlags: *mut u32,
-    lpOverlapped: *mut WSAOVERLAPPED,
-    lpCompletionRoutine: LPWSAOVERLAPPED_COMPLETION_ROUTINE,
+    lp_buffers: *mut WSABUF,
+    dw_buffer_count: u32,
+    lp_number_of_bytes_recvd: *mut u32,
+    lp_flags: *mut u32,
+    _lp_overlapped: *mut WSAOVERLAPPED,
+    _lp_completion_routine: LpwsaoverlappedCompletionRoutine,
 ) -> i32 {
-    if lpBuffers.is_null() || dwBufferCount == 0 {
+    if lp_buffers.is_null() || dw_buffer_count == 0 {
         set_last_error(WSAEFAULT);
         return SOCKET_ERROR;
     }
 
-    let buf = unsafe { &*lpBuffers };
+    let buf = unsafe { &*lp_buffers };
     let result = recv(s, buf.buf, buf.len as i32, 0);
 
     if result == SOCKET_ERROR {
         return SOCKET_ERROR;
     }
 
-    if !lpNumberOfBytesRecvd.is_null() {
-        unsafe { *lpNumberOfBytesRecvd = result as u32; }
+    if !lp_number_of_bytes_recvd.is_null() {
+        unsafe {
+            *lp_number_of_bytes_recvd = result as u32;
+        }
     }
 
-    if !lpFlags.is_null() {
-        unsafe { *lpFlags = 0; }
+    if !lp_flags.is_null() {
+        unsafe {
+            *lp_flags = 0;
+        }
     }
 
     set_last_error(0);
     0
 }
 
-pub fn WSASendTo(
+pub fn wsasend_to(
     s: usize,
-    lpBuffers: *const WSABUF,
-    dwBufferCount: u32,
-    lpNumberOfBytesSent: *mut u32,
-    dwFlags: u32,
-    lpTo: *const sockaddr,
-    iToLen: i32,
-    lpOverlapped: *mut WSAOVERLAPPED,
-    lpCompletionRoutine: LPWSAOVERLAPPED_COMPLETION_ROUTINE,
+    lp_buffers: *const WSABUF,
+    dw_buffer_count: u32,
+    lp_number_of_bytes_sent: *mut u32,
+    dw_flags: u32,
+    _lp_to: *const sockaddr,
+    _i_to_len: i32,
+    lp_overlapped: *mut WSAOVERLAPPED,
+    lp_completion_routine: LpwsaoverlappedCompletionRoutine,
 ) -> i32 {
-    // Simplified: use WSASend
-    WSASend(
+    // Simplified: use wsasend
+    wsasend(
         s,
-        lpBuffers,
-        dwBufferCount,
-        lpNumberOfBytesSent,
-        dwFlags,
-        lpOverlapped,
-        lpCompletionRoutine,
+        lp_buffers,
+        dw_buffer_count,
+        lp_number_of_bytes_sent,
+        dw_flags,
+        lp_overlapped,
+        lp_completion_routine,
     )
 }
 
-pub fn WSARecvFrom(
+pub fn wsarecv_from(
     s: usize,
-    lpBuffers: *mut WSABUF,
-    dwBufferCount: u32,
-    lpNumberOfBytesRecvd: *mut u32,
-    lpFlags: *mut u32,
-    lpFrom: *mut sockaddr,
-    lpFromlen: *mut i32,
-    lpOverlapped: *mut WSAOVERLAPPED,
-    lpCompletionRoutine: LPWSAOVERLAPPED_COMPLETION_ROUTINE,
+    lp_buffers: *mut WSABUF,
+    dw_buffer_count: u32,
+    lp_number_of_bytes_recvd: *mut u32,
+    lp_flags: *mut u32,
+    _lp_from: *mut sockaddr,
+    _lp_fromlen: *mut i32,
+    lp_overlapped: *mut WSAOVERLAPPED,
+    lp_completion_routine: LpwsaoverlappedCompletionRoutine,
 ) -> i32 {
-    // Simplified: use WSARecv
-    WSARecv(
+    // Simplified: use wsarecv
+    wsarecv(
         s,
-        lpBuffers,
-        dwBufferCount,
-        lpNumberOfBytesRecvd,
-        lpFlags,
-        lpOverlapped,
-        lpCompletionRoutine,
+        lp_buffers,
+        dw_buffer_count,
+        lp_number_of_bytes_recvd,
+        lp_flags,
+        lp_overlapped,
+        lp_completion_routine,
     )
 }
 
-pub fn WSAConnect(
+pub fn wsaconnect(
     s: usize,
     name: *const sockaddr,
     namelen: i32,
-    lpCallerData: *const WSABUF,
-    lpCalleeData: *mut WSABUF,
-    lpSQOS: *const QOS,
-    lpGQOS: *const QOS,
+    _lp_caller_data: *const WSABUF,
+    _lp_callee_data: *mut WSABUF,
+    _lp_sqos: *const QOS,
+    _lp_gqos: *const QOS,
 ) -> i32 {
     connect(s, name, namelen)
 }
 
-pub fn WSAAccept(
+pub fn wsaaccept(
     s: usize,
     addr: *mut sockaddr,
     addrlen: *mut i32,
-    lpfnCondition: *const u8, // callback
-    dwCallbackData: usize,
+    _lpfn_condition: *const u8, // callback
+    _dw_callback_data: usize,
 ) -> usize {
     accept(s, addr, addrlen)
 }
 
-pub fn WSAPoll(fdArray: *mut WSAPOLLFD, fds: u32, timeout: i32) -> i32 {
-    if fdArray.is_null() || fds == 0 {
+pub fn wsapoll(fd_array: *mut WSAPOLLFD, fds: u32, _timeout: i32) -> i32 {
+    if fd_array.is_null() || fds == 0 {
         set_last_error(WSAEINVAL);
         return SOCKET_ERROR;
     }
@@ -271,7 +275,7 @@ pub fn WSAPoll(fdArray: *mut WSAPOLLFD, fds: u32, timeout: i32) -> i32 {
     let mut ready_count = 0;
 
     for i in 0..fds {
-        let pollfd = unsafe { &mut *fdArray.add(i as usize) };
+        let pollfd = unsafe { &mut *fd_array.add(i as usize) };
 
         if pollfd.fd != 0 && pollfd.fd != INVALID_SOCKET {
             pollfd.revents = pollfd.events;
@@ -287,50 +291,52 @@ pub fn WSAPoll(fdArray: *mut WSAPOLLFD, fds: u32, timeout: i32) -> i32 {
     ready_count
 }
 
-pub fn WSASocket(
+pub fn wsasocket(
     af: i32,
     socket_type: i32,
     protocol: i32,
-    lpProtocolInfo: *const WSAPROTOCOL_INFOW,
-    g: u32,
-    dwFlags: u32,
+    _lp_protocol_info: *const WSAPROTOCOL_INFOW,
+    _g: u32,
+    _dw_flags: u32,
 ) -> usize {
     super::socket::socket(af, socket_type, protocol)
 }
 
-pub fn WSADuplicateSocketA(
-    s: usize,
-    dwProcessId: u32,
-    lpProtocolInfo: *mut WSAPROTOCOL_INFOW,
+pub fn wsaduplicate_socket_a(
+    _s: usize,
+    _dw_process_id: u32,
+    _lp_protocol_info: *mut WSAPROTOCOL_INFOW,
 ) -> i32 {
     set_last_error(WSAEOPNOTSUPP);
     SOCKET_ERROR
 }
 
-pub fn WSAIoctl(
+pub fn wsaioctl(
     s: usize,
-    dwIoControlCode: u32,
-    lpvInBuffer: *const u8,
-    cbInBuffer: u32,
-    lpvOutBuffer: *mut u8,
-    cbOutBuffer: u32,
-    lpcbBytesReturned: *mut u32,
-    lpOverlapped: *mut WSAOVERLAPPED,
-    lpCompletionRoutine: LPWSAOVERLAPPED_COMPLETION_ROUTINE,
+    dw_io_control_code: u32,
+    _lpv_in_buffer: *const u8,
+    _cb_in_buffer: u32,
+    lpv_out_buffer: *mut u8,
+    cb_out_buffer: u32,
+    lpcb_bytes_returned: *mut u32,
+    _lp_overlapped: *mut WSAOVERLAPPED,
+    _lp_completion_routine: LpwsaoverlappedCompletionRoutine,
 ) -> i32 {
     if s == 0 || s == INVALID_SOCKET {
         set_last_error(WSAENOTSOCK);
         return SOCKET_ERROR;
     }
 
-    match dwIoControlCode {
+    match dw_io_control_code {
         SIO_GET_EXTENSION_FUNCTION_POINTER => {
-            if !lpvOutBuffer.is_null() && cbOutBuffer >= 8 {
+            if !lpv_out_buffer.is_null() && cb_out_buffer >= 8 {
                 unsafe {
-                    *(lpvOutBuffer as *mut u64) = 0;
+                    *(lpv_out_buffer as *mut u64) = 0;
                 }
-                if !lpcbBytesReturned.is_null() {
-                    unsafe { *lpcbBytesReturned = 8; }
+                if !lpcb_bytes_returned.is_null() {
+                    unsafe {
+                        *lpcb_bytes_returned = 8;
+                    }
                 }
                 set_last_error(0);
                 0
@@ -346,50 +352,52 @@ pub fn WSAIoctl(
     }
 }
 
-pub fn WSAGetOverlappedResult(
-    s: usize,
-    lpOverlapped: *const WSAOVERLAPPED,
-    lpcbTransfer: *mut u32,
-    fWait: bool,
-    lpdwFlags: *mut u32,
+pub fn wsaget_overlapped_result(
+    _s: usize,
+    lp_overlapped: *const WSAOVERLAPPED,
+    lpcb_transfer: *mut u32,
+    _f_wait: bool,
+    lpdw_flags: *mut u32,
 ) -> bool {
-    if lpOverlapped.is_null() || lpcbTransfer.is_null() {
+    if lp_overlapped.is_null() || lpcb_transfer.is_null() {
         set_last_error(WSAEFAULT);
         return false;
     }
 
     unsafe {
-        *lpcbTransfer = (*lpOverlapped).InternalHigh as u32;
+        *lpcb_transfer = (*lp_overlapped).internal_high as u32;
     }
 
-    if !lpdwFlags.is_null() {
-        unsafe { *lpdwFlags = 0; }
+    if !lpdw_flags.is_null() {
+        unsafe {
+            *lpdw_flags = 0;
+        }
     }
 
     set_last_error(0);
     true
 }
 
-pub fn WSACancelBlockingCall() -> i32 {
+pub fn wsacancel_blocking_call() -> i32 {
     set_last_error(WSAEOPNOTSUPP);
     SOCKET_ERROR
 }
 
-pub fn WSAIsBlocking() -> bool {
+pub fn wsais_blocking() -> bool {
     false
 }
 
-pub fn WSASetBlockingHook(lpBlockFunc: *const u8) -> *const u8 {
+pub fn wsaset_blocking_hook(_lp_block_func: *const u8) -> *const u8 {
     set_last_error(WSAEOPNOTSUPP);
     core::ptr::null()
 }
 
-pub fn WSAUnhookBlockingHook() -> i32 {
+pub fn wsaunhook_blocking_hook() -> i32 {
     set_last_error(WSAEOPNOTSUPP);
     SOCKET_ERROR
 }
 
-pub fn WSAAsyncSelect(s: usize, hWnd: usize, wMsg: u32, lEvent: i32) -> i32 {
+pub fn wsaasync_select(s: usize, _h_wnd: usize, _w_msg: u32, _l_event: i32) -> i32 {
     if s == 0 || s == INVALID_SOCKET {
         set_last_error(WSAENOTSOCK);
         return SOCKET_ERROR;
@@ -399,33 +407,33 @@ pub fn WSAAsyncSelect(s: usize, hWnd: usize, wMsg: u32, lEvent: i32) -> i32 {
     0
 }
 
-pub fn WSAAsyncGetHostByName(
-    hWnd: usize,
-    wMsg: u32,
-    name: *const u8,
-    buf: *mut u8,
-    buflen: i32,
+pub fn wsaasync_get_host_by_name(
+    _h_wnd: usize,
+    _w_msg: u32,
+    _name: *const u8,
+    _buf: *mut u8,
+    _buflen: i32,
 ) -> usize {
     // Not supported (use getaddrinfo instead)
     set_last_error(WSAEOPNOTSUPP);
     0
 }
 
-pub fn WSAAsyncGetHostByAddr(
-    hWnd: usize,
-    wMsg: u32,
-    addr: *const u8,
-    len: i32,
-    addr_type: i32,
-    buf: *mut u8,
-    buflen: i32,
+pub fn wsaasync_get_host_by_addr(
+    _h_wnd: usize,
+    _w_msg: u32,
+    _addr: *const u8,
+    _len: i32,
+    _addr_type: i32,
+    _buf: *mut u8,
+    _buflen: i32,
 ) -> usize {
     // Not supported (use getnameinfo instead)
     set_last_error(WSAEOPNOTSUPP);
     0
 }
 
-pub fn WSACancelAsyncRequest(hAsyncTaskHandle: usize) -> i32 {
+pub fn wsacancel_async_request(_h_async_task_handle: usize) -> i32 {
     set_last_error(WSAEINVAL);
     SOCKET_ERROR
 }

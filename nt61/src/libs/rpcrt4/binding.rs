@@ -66,7 +66,7 @@ impl BindingRegistry {
     }
 }
 
-unsafe fn wstrcmp(s1: *const u16, s2: *const u16) -> bool {
+pub unsafe fn wstrcmp(s1: *const u16, s2: *const u16) -> bool {
     let mut i = 0;
     loop {
         let c1 = *s1.add(i);
@@ -81,7 +81,7 @@ unsafe fn wstrcmp(s1: *const u16, s2: *const u16) -> bool {
     }
 }
 
-unsafe fn wstrcpy(dst: *mut u16, src: *const u16, max_len: usize) -> usize {
+pub unsafe fn wstrcpy(dst: *mut u16, src: *const u16, max_len: usize) -> usize {
     let mut len = 0;
     while len < max_len - 1 {
         let c = *src.add(len);
@@ -111,7 +111,7 @@ pub unsafe extern "C" fn RpcStringBindingComposeW(
     endpoint: *const u16,
     options: *const u16,
     string_binding: *mut *mut u16,
-) -> RPC_STATUS {
+) -> RpcStatus {
     if string_binding.is_null() {
         return RPC_S_INVALID_STRING_BINDING;
     }
@@ -210,8 +210,8 @@ pub unsafe extern "C" fn RpcStringBindingComposeW(
 #[no_mangle]
 pub unsafe extern "C" fn RpcBindingFromStringBindingW(
     string_binding: *const u16,
-    binding: *mut RPC_BINDING_HANDLE,
-) -> RPC_STATUS {
+    binding: *mut RpcBindingHandle,
+) -> RpcStatus {
     if string_binding.is_null() || binding.is_null() {
         return RPC_S_INVALID_STRING_BINDING;
     }
@@ -342,15 +342,15 @@ pub unsafe extern "C" fn RpcBindingFromStringBindingW(
         return RPC_S_OUT_OF_RESOURCES;
     }
 
-    *binding = bind_internal as RPC_BINDING_HANDLE;
+    *binding = bind_internal as RpcBindingHandle;
     RPC_S_OK
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn RpcBindingToStringBindingW(
-    binding: RPC_BINDING_HANDLE,
+    binding: RpcBindingHandle,
     string_binding: *mut *mut u16,
-) -> RPC_STATUS {
+) -> RpcStatus {
     if binding.is_null() || string_binding.is_null() {
         return RPC_S_INVALID_BINDING;
     }
@@ -374,7 +374,7 @@ pub unsafe extern "C" fn RpcBindingToStringBindingW(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn RpcBindingFree(binding: *mut RPC_BINDING_HANDLE) -> RPC_STATUS {
+pub unsafe extern "C" fn RpcBindingFree(binding: *mut RpcBindingHandle) -> RpcStatus {
     if binding.is_null() || (*binding).is_null() {
         return RPC_S_INVALID_BINDING;
     }
@@ -398,9 +398,9 @@ pub unsafe extern "C" fn RpcBindingFree(binding: *mut RPC_BINDING_HANDLE) -> RPC
 
 #[no_mangle]
 pub unsafe extern "C" fn RpcBindingCopy(
-    source_binding: RPC_BINDING_HANDLE,
-    dest_binding: *mut RPC_BINDING_HANDLE,
-) -> RPC_STATUS {
+    source_binding: RpcBindingHandle,
+    dest_binding: *mut RpcBindingHandle,
+) -> RpcStatus {
     if source_binding.is_null() || dest_binding.is_null() {
         return RPC_S_INVALID_BINDING;
     }
@@ -420,7 +420,7 @@ pub unsafe extern "C" fn RpcBindingCopy(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn RpcBindingReset(binding: RPC_BINDING_HANDLE) -> RPC_STATUS {
+pub unsafe extern "C" fn RpcBindingReset(binding: RpcBindingHandle) -> RpcStatus {
     if binding.is_null() {
         return RPC_S_INVALID_BINDING;
     }
@@ -440,9 +440,9 @@ pub unsafe extern "C" fn RpcBindingReset(binding: RPC_BINDING_HANDLE) -> RPC_STA
 
 #[no_mangle]
 pub unsafe extern "C" fn RpcBindingSetObject(
-    binding: RPC_BINDING_HANDLE,
+    binding: RpcBindingHandle,
     object_uuid: *const UUID,
-) -> RPC_STATUS {
+) -> RpcStatus {
     if binding.is_null() {
         return RPC_S_INVALID_BINDING;
     }
@@ -466,9 +466,9 @@ pub unsafe extern "C" fn RpcBindingSetObject(
 
 #[no_mangle]
 pub unsafe extern "C" fn RpcBindingInqObject(
-    binding: RPC_BINDING_HANDLE,
+    binding: RpcBindingHandle,
     object_uuid: *mut UUID,
-) -> RPC_STATUS {
+) -> RpcStatus {
     if binding.is_null() || object_uuid.is_null() {
         return RPC_S_INVALID_BINDING;
     }

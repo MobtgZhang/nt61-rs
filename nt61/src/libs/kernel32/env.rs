@@ -1,17 +1,15 @@
 //! kernel32 — environment, paths, command line
 //
-//! `GetEnvironmentVariableW`, `SetEnvironmentVariableW`,
-//! `GetCurrentDirectoryW`, `SetCurrentDirectoryW`,
-//! `GetCommandLineW`. The bootstrap holds a fixed
+//! `get_environment_variable_w`, `set_environment_variable_w`,
+//! `get_current_directory_w`, `set_current_directory_w`,
+//! `get_command_line_w`. The bootstrap holds a fixed
 //! environment; the calls are accepted and return the
 //! canonical `C:\Windows\System32` for directory queries.
 
-use super::error::GetLastError;
-use super::error::SetLastError;
+use super::error::set_last_error;
 use super::types::DWORD;
 use crate::ke::sync::Spinlock;
 use alloc::string::String;
-use alloc::vec::Vec;
 use core::ptr;
 
 extern crate alloc;
@@ -110,8 +108,8 @@ const COMMAND_LINE: &[u16] = &[
     0,
 ];
 
-/// `GetEnvironmentVariableW`.
-pub unsafe extern "C" fn GetEnvironmentVariableW(
+/// `get_environment_variable_w`.
+pub unsafe extern "C" fn get_environment_variable_w(
     name: *const u16,
     buffer: *mut u16,
     buffer_size: DWORD,
@@ -146,16 +144,16 @@ pub unsafe extern "C" fn GetEnvironmentVariableW(
     0
 }
 
-/// `SetEnvironmentVariableW`.
-pub unsafe extern "C" fn SetEnvironmentVariableW(name: *const u16, value: *const u16) -> BOOL {
+/// `set_environment_variable_w`.
+pub unsafe extern "C" fn set_environment_variable_w(name: *const u16, value: *const u16) -> BOOL {
     if name.is_null() {
-        SetLastError(87);
+        set_last_error(87);
         return 0;
     }
     let n = match wide_to_string(name) {
         Some(s) => s,
         None => {
-            SetLastError(87);
+            set_last_error(87);
             return 0;
         }
     };
@@ -185,12 +183,12 @@ pub unsafe extern "C" fn SetEnvironmentVariableW(name: *const u16, value: *const
             return 1;
         }
     }
-    SetLastError(8); // ERROR_NOT_ENOUGH_MEMORY
+    set_last_error(8); // ERROR_NOT_ENOUGH_MEMORY
     0
 }
 
-/// `GetCurrentDirectoryW`.
-pub unsafe extern "C" fn GetCurrentDirectoryW(buffer_length: DWORD, buffer: *mut u16) -> DWORD {
+/// `get_current_directory_w`.
+pub unsafe extern "C" fn get_current_directory_w(buffer_length: DWORD, buffer: *mut u16) -> DWORD {
     let len = (DEFAULT_DIR.len() as DWORD) - 1; // exclude NUL
     if (buffer_length as usize) < (DEFAULT_DIR.len()) {
         return len + 1;
@@ -201,19 +199,19 @@ pub unsafe extern "C" fn GetCurrentDirectoryW(buffer_length: DWORD, buffer: *mut
     len
 }
 
-/// `SetCurrentDirectoryW` — accept the call and ignore the
+/// `set_current_directory_w` — accept the call and ignore the
 /// directory (the bootstrap has no real current directory).
-pub unsafe extern "C" fn SetCurrentDirectoryW(_path: *const u16) -> BOOL {
+pub unsafe extern "C" fn set_current_directory_w(_path: *const u16) -> BOOL {
     1
 }
 
-/// `GetCommandLineW` — return the static command line.
-pub unsafe extern "C" fn GetCommandLineW() -> *const u16 {
+/// `get_command_line_w` — return the static command line.
+pub unsafe extern "C" fn get_command_line_w() -> *const u16 {
     COMMAND_LINE.as_ptr()
 }
 
-/// `GetSystemDirectoryW` / `GetWindowsDirectoryW`.
-pub unsafe extern "C" fn GetSystemDirectoryW(buffer: *mut u16, buffer_size: DWORD) -> DWORD {
+/// `get_system_directory_w` / `get_windows_directory_w`.
+pub unsafe extern "C" fn get_system_directory_w(buffer: *mut u16, buffer_size: DWORD) -> DWORD {
     if buffer.is_null() || buffer_size < 40 {
         return 40;
     }
@@ -222,14 +220,14 @@ pub unsafe extern "C" fn GetSystemDirectoryW(buffer: *mut u16, buffer_size: DWOR
     p.len() as DWORD
 }
 
-pub unsafe extern "C" fn GetWindowsDirectoryW(buffer: *mut u16, buffer_size: DWORD) -> DWORD {
-    GetSystemDirectoryW(buffer, buffer_size)
+pub unsafe extern "C" fn get_windows_directory_w(buffer: *mut u16, buffer_size: DWORD) -> DWORD {
+    get_system_directory_w(buffer, buffer_size)
 }
 
-/// `ExpandEnvironmentStringsW` — substitute `%FOO%` with the
+/// `expand_environment_strings_w` — substitute `%FOO%` with the
 /// matching environment variable. We only do exact matches
 /// and a single pass.
-pub unsafe extern "C" fn ExpandEnvironmentStringsW(
+pub unsafe extern "C" fn expand_environment_strings_w(
     source: *const u16,
     destination: *mut u16,
     destination_size: DWORD,

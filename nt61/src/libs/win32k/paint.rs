@@ -1,12 +1,7 @@
-//! WM_PAINT and Coordinate System for win32k.sys
+//! WmPaint and Coordinate System for win32k.sys
 //
 //! Implements the painting subsystem including BeginPaint, EndPaint,
-//! InvalidateRect, and coordinate transformations.
-
-#![allow(non_snake_case)]
-
-use crate::kprintln;
-use core::sync::atomic::AtomicU64;
+//! invalidate_rect, and coordinate transformations.
 
 // =============================================================================
 // Coordinate Systems
@@ -30,19 +25,19 @@ impl POINT {
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct PAINTSTRUCT {
-    /// Handle to the device context
+    /// handle to the device context
     pub hdc: u64,
     /// Whether the background needs erasing
-    pub fErase: bool,
+    pub f_erase: bool,
     /// Rectangle that needs updating
-    pub rcPaint_left: i32,
-    pub rcPaint_top: i32,
-    pub rcPaint_right: i32,
-    pub rcPaint_bottom: i32,
+    pub rc_paint_left: i32,
+    pub rc_paint_top: i32,
+    pub rc_paint_right: i32,
+    pub rc_paint_bottom: i32,
     /// Reserved
-    pub fRestore: bool,
-    pub fIncUpdate: bool,
-    pub rgbReserved: [u8; 32],
+    pub f_restore: bool,
+    pub f_inc_update: bool,
+    pub rgb_reserved: [u8; 32],
 }
 
 /// Update region flags as a bitmask wrapper.
@@ -311,7 +306,7 @@ pub fn begin_paint(hwnd: u64) -> Option<BeginPaintResult> {
     // kprintln!("[win32k] BeginPaint: hwnd={:#x}", hwnd);
 
     // Get the window's DC
-    let hdc = crate::libs::win32k::dc::GreCreateDisplayDC();
+    let hdc = crate::libs::win32k::dc::gre_create_display_dc();
     let _ = &hdc;
     let _ = &hdc;
     if hdc == 0 {
@@ -329,14 +324,14 @@ pub fn begin_paint(hwnd: u64) -> Option<BeginPaintResult> {
 
     let paint_struct = PAINTSTRUCT {
         hdc,
-        fErase: true, // Assume background needs erasing
-        rcPaint_left: client_rect.left,
-        rcPaint_top: client_rect.top,
-        rcPaint_right: client_rect.right,
-        rcPaint_bottom: client_rect.bottom,
-        fRestore: false,
-        fIncUpdate: false,
-        rgbReserved: [0; 32],
+        f_erase: true, // Assume background needs erasing
+        rc_paint_left: client_rect.left,
+        rc_paint_top: client_rect.top,
+        rc_paint_right: client_rect.right,
+        rc_paint_bottom: client_rect.bottom,
+        f_restore: false,
+        f_inc_update: false,
+        rgb_reserved: [0; 32],
     };
     let _ = &paint_struct;
 
@@ -352,7 +347,7 @@ pub fn end_paint(hwnd: u64, hdc: u64) -> bool {
     // kprintln!("[win32k] EndPaint: hwnd={:#x}, hdc={:#x}", hwnd, hdc);
 
     // Release the DC
-    let _ = crate::libs::win32k::dc::GreDeleteDC(hdc);
+    let _ = crate::libs::win32k::dc::gre_delete_dc(hdc);
 
     // Mark update region as validated
     let mut wm = crate::libs::win32k::window::WINDOW_MANAGER.lock();
@@ -365,17 +360,17 @@ pub fn end_paint(hwnd: u64, hdc: u64) -> bool {
 }
 
 // =============================================================================
-// InvalidateRect / ValidateRect
+// invalidate_rect / validate_rect
 // =============================================================================
 
-/// InvalidateRect - Add a rectangle to the update region.
-/// Causes WM_PAINT to be posted.
+/// invalidate_rect - Add a rectangle to the update region.
+/// Causes WmPaint to be posted.
 pub fn invalidate_rect(
     hwnd: u64,
     rect: Option<crate::libs::win32k::window::Rect>,
     erase: bool,
 ) -> bool {
-    // kprintln!("[win32k] InvalidateRect: hwnd={:#x}, rect={:?}, erase={}",
+    // kprintln!("[win32k] invalidate_rect: hwnd={:#x}, rect={:?}, erase={}",
     //         hwnd, rect, erase);
 
     // Add the rectangle to the window's dirty list
@@ -383,19 +378,19 @@ pub fn invalidate_rect(
 
     // If erase is requested, mark for background erase
     if erase {
-        // Would set a flag to erase background in WM_PAINT
+        // Would set a flag to erase background in WmPaint
     }
 
-    // Post WM_PAINT if not already posted
+    // Post WmPaint if not already posted
     crate::libs::win32k::message::post_message(hwnd, 0x000F, 0, 0);
 
     true
 }
 
-/// ValidateRect - Remove a rectangle from the update region.
-/// Prevents WM_PAINT from being generated for this area.
+/// validate_rect - Remove a rectangle from the update region.
+/// Prevents WmPaint from being generated for this area.
 pub fn validate_rect(hwnd: u64, rect: Option<crate::libs::win32k::window::Rect>) -> bool {
-    // kprintln!("[win32k] ValidateRect: hwnd={:#x}, rect={:?}", hwnd, rect);
+    // kprintln!("[win32k] validate_rect: hwnd={:#x}, rect={:?}", hwnd, rect);
 
     // In a full implementation, this would remove the rect from the update region
     // For now, just mark the window as not dirty
@@ -412,18 +407,18 @@ pub fn validate_rect(hwnd: u64, rect: Option<crate::libs::win32k::window::Rect>)
 }
 
 // =============================================================================
-// RedrawWindow / UpdateWindow
+// RedrawWindow / update_window
 // =============================================================================
 
-/// UpdateWindow - Send WM_PAINT directly to a window.
-/// Unlike InvalidateRect, this sends WM_PAINT immediately.
+/// update_window - Send WmPaint directly to a window.
+/// Unlike invalidate_rect, this sends WmPaint immediately.
 pub fn update_window(hwnd: u64) -> bool {
-    // kprintln!("[win32k] UpdateWindow: hwnd={:#x}", hwnd);
+    // kprintln!("[win32k] update_window: hwnd={:#x}", hwnd);
     crate::libs::win32k::window::update_window_internal(hwnd)
 }
 
 /// RedrawWindow - Redraw all or part of a window.
-/// More powerful than InvalidateRect.
+/// More powerful than invalidate_rect.
 pub fn redraw_window(
     hwnd: u64,
     rect: Option<crate::libs::win32k::window::Rect>,
@@ -451,7 +446,7 @@ pub fn redraw_window(
     }
 
     if flags.contains(UpdateRegionFlags::RDW_ERASENOW) {
-        // Would send WM_ERASEBKGND
+        // Would send WmErasebkgnd
     }
 
     true
@@ -516,13 +511,13 @@ pub fn map_window_points(hwnd_src: u64, hwnd_dst: u64, points: &mut [POINT]) -> 
 }
 
 // =============================================================================
-// FillRect helper
+// fill_rect helper
 // =============================================================================
 
 /// Fill a rectangle with a brush.
-/// Common helper used by WM_ERASEBKGND and other handlers.
+/// Common helper used by WmErasebkgnd and other handlers.
 pub fn fill_rect(hdc: u64, rect: &Rect, hbr: u64) -> i32 {
-    // kprintln!("[win32k] FillRect: hdc={:#x}, rect={:?}, hbr={:#x}",
+    // kprintln!("[win32k] fill_rect: hdc={:#x}, rect={:?}, hbr={:#x}",
     //         hdc, rect, hbr);
 
     // Get the brush color/style
@@ -533,7 +528,7 @@ pub fn fill_rect(hdc: u64, rect: &Rect, hbr: u64) -> i32 {
 
     // Fill the rectangle
     if let Some(mut dc) = crate::libs::win32k::dc::get_dc(hdc) {
-        let _ = crate::libs::win32k::gdi_ops::GreRectangle(
+        let _ = crate::libs::win32k::gdi_ops::gre_rectangle(
             &mut dc,
             rect.left,
             rect.top,

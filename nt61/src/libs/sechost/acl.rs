@@ -1,4 +1,4 @@
-//! sechost.dll — Access Control List Operations
+//! sechost.dll — Access control List Operations
 //
 //! ACL manipulation functions moved from advapi32 to sechost in Windows 7.
 //! These functions build and parse access control lists.
@@ -8,31 +8,29 @@
 //!   * Windows Internals 6th Edition, Chapter 7
 //!   * ReactOS 0.3.x aclapi.h
 
-#![allow(non_snake_case, dead_code)]
-
 use super::types::*;
-use crate::libs::kernel32::types::{DWORD, BOOL, TRUE, FALSE, LPWSTR};
-use crate::libs::ntdll::types::{PVOID, NTSTATUS, ULONG};
+use crate::libs::kernel32::types::{DWORD, LPWSTR};
+use crate::libs::ntdll::types::ULONG;
 use core::ptr;
 
 #[no_mangle]
 pub unsafe extern "C" fn SetEntriesInAclW(
-    cCountOfExplicitEntries: ULONG,
-    pListOfExplicitEntries: *mut EXPLICIT_ACCESS_W,
-    OldAcl: PACL,
-    NewAcl: *mut PACL,
+    c_count_of_explicit_entries: ULONG,
+    p_list_of_explicit_entries: *mut EXPLICIT_ACCESS_W,
+    old_acl: PACL,
+    new_acl: *mut PACL,
 ) -> DWORD {
-    if NewAcl.is_null() {
+    if new_acl.is_null() {
         return ERROR_INVALID_PARAMETER;
     }
 
-    *NewAcl = ptr::null_mut();
+    *new_acl = ptr::null_mut();
 
-    if cCountOfExplicitEntries == 0 && OldAcl.is_null() {
+    if c_count_of_explicit_entries == 0 && old_acl.is_null() {
         return ERROR_SUCCESS;
     }
 
-    if cCountOfExplicitEntries > 0 && pListOfExplicitEntries.is_null() {
+    if c_count_of_explicit_entries > 0 && p_list_of_explicit_entries.is_null() {
         return ERROR_INVALID_PARAMETER;
     }
 
@@ -42,22 +40,22 @@ pub unsafe extern "C" fn SetEntriesInAclW(
 #[no_mangle]
 pub unsafe extern "C" fn GetExplicitEntriesFromAclW(
     pacl: PACL,
-    pcCountOfExplicitEntries: *mut ULONG,
-    pListOfExplicitEntries: *mut *mut EXPLICIT_ACCESS_W,
+    pc_count_of_explicit_entries: *mut ULONG,
+    p_list_of_explicit_entries: *mut *mut EXPLICIT_ACCESS_W,
 ) -> DWORD {
-    if pcCountOfExplicitEntries.is_null() || pListOfExplicitEntries.is_null() {
+    if pc_count_of_explicit_entries.is_null() || p_list_of_explicit_entries.is_null() {
         return ERROR_INVALID_PARAMETER;
     }
 
-    *pcCountOfExplicitEntries = 0;
-    *pListOfExplicitEntries = ptr::null_mut();
+    *pc_count_of_explicit_entries = 0;
+    *p_list_of_explicit_entries = ptr::null_mut();
 
     if pacl.is_null() {
         return ERROR_SUCCESS;
     }
 
     let acl = &*pacl;
-    if acl.AceCount == 0 {
+    if acl.ace_count == 0 {
         return ERROR_SUCCESS;
     }
 
@@ -67,17 +65,17 @@ pub unsafe extern "C" fn GetExplicitEntriesFromAclW(
 #[no_mangle]
 pub unsafe extern "C" fn GetEffectiveRightsFromAclW(
     pacl: PACL,
-    pTrustee: *mut TRUSTEE_W,
-    pAccessRights: *mut DWORD,
+    p_trustee: *mut TRUSTEE_W,
+    p_access_rights: *mut DWORD,
 ) -> DWORD {
-    if pTrustee.is_null() || pAccessRights.is_null() {
+    if p_trustee.is_null() || p_access_rights.is_null() {
         return ERROR_INVALID_PARAMETER;
     }
 
-    *pAccessRights = 0;
+    *p_access_rights = 0;
 
     if pacl.is_null() {
-        *pAccessRights = 0xFFFFFFFF; // GENERIC_ALL
+        *p_access_rights = 0xFFFFFFFF; // GENERIC_ALL
         return ERROR_SUCCESS;
     }
 
@@ -87,18 +85,19 @@ pub unsafe extern "C" fn GetEffectiveRightsFromAclW(
 #[no_mangle]
 pub unsafe extern "C" fn GetAuditedPermissionsFromAclW(
     pacl: PACL,
-    pTrustee: *mut TRUSTEE_W,
-    pSuccessfulAuditedRights: *mut DWORD,
-    pFailedAuditRights: *mut DWORD,
+    p_trustee: *mut TRUSTEE_W,
+    p_successful_audited_rights: *mut DWORD,
+    p_failed_audit_rights: *mut DWORD,
 ) -> DWORD {
-    if pTrustee.is_null() ||
-       pSuccessfulAuditedRights.is_null() ||
-       pFailedAuditRights.is_null() {
+    if p_trustee.is_null()
+        || p_successful_audited_rights.is_null()
+        || p_failed_audit_rights.is_null()
+    {
         return ERROR_INVALID_PARAMETER;
     }
 
-    *pSuccessfulAuditedRights = 0;
-    *pFailedAuditRights = 0;
+    *p_successful_audited_rights = 0;
+    *p_failed_audit_rights = 0;
 
     if pacl.is_null() {
         return ERROR_SUCCESS;
@@ -109,60 +108,53 @@ pub unsafe extern "C" fn GetAuditedPermissionsFromAclW(
 
 #[no_mangle]
 pub unsafe extern "C" fn BuildExplicitAccessWithNameW(
-    pExplicitAccess: *mut EXPLICIT_ACCESS_W,
-    pTrusteeName: LPWSTR,
-    AccessPermissions: DWORD,
-    AccessMode: DWORD,
-    Inheritance: DWORD,
+    p_explicit_access: *mut EXPLICIT_ACCESS_W,
+    p_trustee_name: LPWSTR,
+    access_permissions: DWORD,
+    access_mode: DWORD,
+    inheritance: DWORD,
 ) {
-    if pExplicitAccess.is_null() {
+    if p_explicit_access.is_null() {
         return;
     }
 
-    let ea = &mut *pExplicitAccess;
-    ea.grfAccessPermissions = AccessPermissions;
-    ea.grfAccessMode = AccessMode;
-    ea.grfInheritance = Inheritance;
-    ea.Trustee.pMultipleTrustee = ptr::null_mut();
-    ea.Trustee.MultipleTrusteeOperation = 0; // NO_MULTIPLE_TRUSTEE
-    ea.Trustee.TrusteeForm = TRUSTEE_IS_NAME;
-    ea.Trustee.TrusteeType = TRUSTEE_IS_UNKNOWN;
-    ea.Trustee.ptstrName = pTrusteeName;
+    let ea = &mut *p_explicit_access;
+    ea.grf_access_permissions = access_permissions;
+    ea.grf_access_mode = access_mode;
+    ea.grf_inheritance = inheritance;
+    ea.trustee.p_multiple_trustee = ptr::null_mut();
+    ea.trustee.multiple_trustee_operation = 0; // NO_MULTIPLE_TRUSTEE
+    ea.trustee.trustee_form = TRUSTEE_IS_NAME;
+    ea.trustee.trustee_type = TRUSTEE_IS_UNKNOWN;
+    ea.trustee.ptstr_name = p_trustee_name;
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn BuildTrusteeWithNameW(
-    pTrustee: *mut TRUSTEE_W,
-    pName: LPWSTR,
-) {
-    if pTrustee.is_null() {
+pub unsafe extern "C" fn BuildTrusteeWithNameW(p_trustee: *mut TRUSTEE_W, p_name: LPWSTR) {
+    if p_trustee.is_null() {
         return;
     }
 
-    let trustee = &mut *pTrustee;
-    trustee.pMultipleTrustee = ptr::null_mut();
-    trustee.MultipleTrusteeOperation = 0; // NO_MULTIPLE_TRUSTEE
-    trustee.TrusteeForm = TRUSTEE_IS_NAME;
-    trustee.TrusteeType = TRUSTEE_IS_UNKNOWN;
-    trustee.ptstrName = pName;
+    let trustee = &mut *p_trustee;
+    trustee.p_multiple_trustee = ptr::null_mut();
+    trustee.multiple_trustee_operation = 0; // NO_MULTIPLE_TRUSTEE
+    trustee.trustee_form = TRUSTEE_IS_NAME;
+    trustee.trustee_type = TRUSTEE_IS_UNKNOWN;
+    trustee.ptstr_name = p_name;
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn BuildTrusteeWithSidW(
-    pTrustee: *mut TRUSTEE_W,
-    pSid: PSID,
-) {
-    if pTrustee.is_null() {
+pub unsafe extern "C" fn BuildTrusteeWithSidW(p_trustee: *mut TRUSTEE_W, p_sid: PSID) {
+    if p_trustee.is_null() {
         return;
     }
 
-    let trustee = &mut *pTrustee;
-    trustee.pMultipleTrustee = ptr::null_mut();
-    trustee.MultipleTrusteeOperation = 0; // NO_MULTIPLE_TRUSTEE
-    trustee.TrusteeForm = TRUSTEE_IS_SID;
-    trustee.TrusteeType = TRUSTEE_IS_UNKNOWN;
-    trustee.ptstrName = pSid as LPWSTR;
+    let trustee = &mut *p_trustee;
+    trustee.p_multiple_trustee = ptr::null_mut();
+    trustee.multiple_trustee_operation = 0; // NO_MULTIPLE_TRUSTEE
+    trustee.trustee_form = TRUSTEE_IS_SID;
+    trustee.trustee_type = TRUSTEE_IS_UNKNOWN;
+    trustee.ptstr_name = p_sid as LPWSTR;
 }
 
-pub fn init() {
-}
+pub fn init() {}

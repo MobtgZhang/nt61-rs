@@ -11,12 +11,8 @@
 
 extern crate alloc;
 
-use crate::kprintln;
-use crate::libs::win32k::dc::{
-    DcObject, TA_BASELINE, TA_BOTTOM, TA_CENTER, TA_LEFT, TA_RIGHT, TA_TOP,
-};
-use crate::libs::win32k::objects::GdiFont;
-use crate::libs::win32k::surface::{GdiSurface, PIXEL_FORMAT_32BPP_ARGB};
+use crate::libs::win32k::dc::{DcObject, TA_RIGHT};
+use crate::libs::win32k::surface::GdiSurface;
 use alloc::vec::Vec;
 
 // =============================================================================
@@ -72,9 +68,9 @@ impl TEXTMETRICW {
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct ABC {
-    pub abcA: i32, // Left side bearing
-    pub abcB: u32, // Width of character
-    pub abcC: i32, // Right side bearing
+    pub abc_a: i32, // Left side bearing
+    pub abc_b: u32, // Width of character
+    pub abc_c: i32, // Right side bearing
 }
 
 /// LOGFONT structure (Windows)
@@ -273,7 +269,7 @@ fn set_pixel(surface: *mut GdiSurface, x: i32, y: i32, color: u32) -> bool {
 }
 
 /// Get pixel from surface
-fn get_pixel(surface: *mut GdiSurface, x: i32, y: i32) -> u32 {
+pub fn get_pixel(surface: *mut GdiSurface, x: i32, y: i32) -> u32 {
     if surface.is_null() {
         return 0;
     }
@@ -427,8 +423,8 @@ pub fn calc_text_extent(text: &[u8], font_height: i32) -> (i32, i32) {
 // Gre TextOut - Text Output
 // =============================================================================
 
-/// GreTextOut - Draw text string
-pub fn GreTextOut(dc: &mut DcObject, x: i32, y: i32, text: &[u8]) -> bool {
+/// gre_text_out - Draw text string
+pub fn gre_text_out(dc: &mut DcObject, x: i32, y: i32, text: &[u8]) -> bool {
     let surface = get_dc_surface(dc);
     let _ = &surface;
     let _ = &surface;
@@ -464,13 +460,13 @@ pub fn GreTextOut(dc: &mut DcObject, x: i32, y: i32, text: &[u8]) -> bool {
         }
     }
 
-    // kprintln!("[win32k] GreTextOut: {} chars at ({},{})", text.len(), x, y);
+    // kprintln!("[win32k] gre_text_out: {} chars at ({},{})", text.len(), x, y);
 
     true
 }
 
-/// GreExtTextOut - Extended text output
-pub fn GreExtTextOut(
+/// gre_ext_text_out - Extended text output
+pub fn gre_ext_text_out(
     dc: &mut DcObject,
     x: i32,
     y: i32,
@@ -506,7 +502,7 @@ pub fn GreExtTextOut(
 
     let mut cursor_x = x;
 
-    // Handle text alignment
+    // handle text alignment
     match dc.text_align & TA_RIGHT {
         0 => {} // TA_LEFT
         _ => {
@@ -538,7 +534,7 @@ pub fn GreExtTextOut(
         }
     }
 
-    // kprintln!("[win32k] GreExtTextOut: {} chars at ({},{})", text.len(), x, y);
+    // kprintln!("[win32k] gre_ext_text_out: {} chars at ({},{})", text.len(), x, y);
 
     true
 }
@@ -548,7 +544,7 @@ pub fn GreExtTextOut(
 // =============================================================================
 
 /// Get text metrics for the current font
-pub fn GreGetTextMetrics(dc: &DcObject, tm: &mut TEXTMETRICW) -> bool {
+pub fn gre_get_text_metrics(dc: &DcObject, tm: &mut TEXTMETRICW) -> bool {
     let _ = dc;
     // Fill with default values for system font
     tm.tm_height = 16;
@@ -572,14 +568,14 @@ pub fn GreGetTextMetrics(dc: &DcObject, tm: &mut TEXTMETRICW) -> bool {
 }
 
 /// Get character widths (ABC widths)
-pub fn GreGetCharABCWidths(dc: &DcObject, first: u16, last: u16, widths: &mut [ABC]) -> bool {
+pub fn gre_get_char_abcwidths(dc: &DcObject, first: u16, last: u16, widths: &mut [ABC]) -> bool {
     let _ = dc;
     for (i, ch) in (first..=last).enumerate() {
         if i < widths.len() {
             widths[i] = ABC {
-                abcA: 0,
-                abcB: get_char_width_8x8(ch as u8) as u32,
-                abcC: 0,
+                abc_a: 0,
+                abc_b: get_char_width_8x8(ch as u8) as u32,
+                abc_c: 0,
             };
         }
     }
@@ -587,7 +583,7 @@ pub fn GreGetCharABCWidths(dc: &DcObject, first: u16, last: u16, widths: &mut [A
 }
 
 /// Get character widths as integers
-pub fn GreGetCharWidth32(dc: &DcObject, first: u16, last: u16, widths: &mut [i32]) -> bool {
+pub fn gre_get_char_width32(dc: &DcObject, first: u16, last: u16, widths: &mut [i32]) -> bool {
     let _ = dc;
     for (i, ch) in (first..=last).enumerate() {
         if i < widths.len() {
@@ -602,7 +598,7 @@ pub fn GreGetCharWidth32(dc: &DcObject, first: u16, last: u16, widths: &mut [i32
 // =============================================================================
 
 /// Get text extent (string dimensions)
-pub fn GreGetTextExtentPoint(
+pub fn gre_get_text_extent_point(
     dc: &DcObject,
     text: &[u8],
     extent: &mut crate::libs::win32k::dc::SizeL,
@@ -615,7 +611,7 @@ pub fn GreGetTextExtentPoint(
 }
 
 /// Get text extent with character widths
-pub fn GreGetTextExtentPoint32(
+pub fn gre_get_text_extent_point32(
     dc: &DcObject,
     text: &[u8],
     extent: &mut crate::libs::win32k::dc::SizeL,
@@ -632,17 +628,17 @@ pub fn GreGetTextExtentPoint32(
 // =============================================================================
 
 /// Select a font into DC
-pub fn GreSelectFont(dc: &mut DcObject, font_handle: u64) -> u64 {
+pub fn gre_select_font(dc: &mut DcObject, font_handle: u64) -> u64 {
     let old_font = dc.font;
     let _ = &old_font;
     let _ = &old_font;
     dc.font = font_handle;
-    // kprintln!("[win32k] GreSelectFont: old=0x{:016x}, new=0x{:016x}", old_font, font_handle);
+    // kprintln!("[win32k] gre_select_font: old=0x{:016x}, new=0x{:016x}", old_font, font_handle);
     old_font
 }
 
 /// Get current font from DC
-pub fn GreGetCurrentFont(dc: &DcObject) -> u64 {
+pub fn gre_get_current_font(dc: &DcObject) -> u64 {
     dc.font
 }
 
@@ -650,9 +646,9 @@ pub fn GreGetCurrentFont(dc: &DcObject) -> u64 {
 // Font Creation
 // =============================================================================
 
-/// Create a font from LOGFONT
-pub fn GreCreateFontIndirect(lf: &LOGFONTW) -> u64 {
-    crate::libs::win32k::objects::GdiCreateFont(
+/// create a font from LOGFONT
+pub fn gre_create_font_indirect(lf: &LOGFONTW) -> u64 {
+    crate::libs::win32k::objects::gdi_create_font(
         lf.lf_height,
         lf.lf_width,
         lf.lf_weight,
@@ -666,7 +662,7 @@ pub fn GreCreateFontIndirect(lf: &LOGFONTW) -> u64 {
 // =============================================================================
 
 /// Calculate string width
-pub fn GreTabbedTextOut(
+pub fn gre_tabbed_text_out(
     dc: &mut DcObject,
     x: i32,
     y: i32,
