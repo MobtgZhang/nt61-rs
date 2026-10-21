@@ -7,8 +7,9 @@ authors = ["NT6.1.7601 Team"]
 publish = false
 
 [dependencies]
-uefi = { version = "0.37.0", features = ["alloc", "logger", "global_allocator", "panic_handler"] }
+uefi = { version = "0.37.0", features = ["alloc", "logger", "global_allocator"] }
 uefi-raw = "0.14.0"
+nt61-bootfs = { path = "../bootfs" }
 
 # The OS Loader (`winload.efi`) needs the same architecture
 # features as `kernel_main` because the kernel-jump trampolines
@@ -18,21 +19,30 @@ uefi-raw = "0.14.0"
 # `kernel_main` uses `Vec` / `String` for the registry hive /
 # boot-driver descriptors it consumes from `BootInfo`.
 [target.'cfg(target_arch = "x86_64")'.dependencies]
-nt61 = { path = "../..", default-features = false, features = ["x86_64", "alloc"] }
+nt61 = { path = "../..", default-features = false, features = ["x86_64", "binary_panic", "alloc"] }
+
+[target.'cfg(target_arch = "aarch64")'.dependencies]
+nt61 = { path = "../..", default-features = false, features = ["aarch64", "binary_panic", "alloc"] }
+
+[target.'cfg(target_arch = "riscv64")'.dependencies]
+nt61 = { path = "../..", default-features = false, features = ["riscv64", "binary_panic", "alloc"] }
+
+[target.'cfg(target_arch = "loongarch64")'.dependencies]
+nt61 = { path = "../..", default-features = false, features = ["loongarch64", "binary_panic", "alloc"] }
 
 [[bin]]
 name = "nt61-winload"
 path = "src/main.rs"
-required-features = ["x86_64"]
 
 [features]
-# winload.efi is currently an x86_64-only UEFI binary. Other
-# architectures are stubbed at the `arch` module level but the
-# `os_loader_run` body still references x86_64-only symbols
-# (extern "win64" trampolines, the kernel-jump dispatcher, the
-# ntoskrnl handoff trampoline). Once the other-architecture
-# `kernel_entry` / `jump_to_ntoskrnl_kisystemstartup` shims land
-# the `required-features` above can be removed.
+# winload.efi is currently enabled for the target supported by the
+# loader trampolines. As additional target shims land, the required
+# feature set above can be expanded.
 x86_64 = []
+aarch64 = []
+riscv64 = []
+loongarch64 = []
+log_level_warn = []
+log_level_debug = ["log_level_warn", "nt61/log_level_debug"]
 
 # Profile settings are inherited from the workspace root.

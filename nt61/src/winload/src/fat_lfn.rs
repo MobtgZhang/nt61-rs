@@ -24,8 +24,6 @@
 // exported so cross-arch callers can opt in without `Cargo.toml`
 // feature changes.
 
-#![allow(dead_code)]
-
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -164,7 +162,7 @@ fn cstr16_to_string(cstr: &uefi::CStr16) -> String {
     result
 }
 
-/// Create a CString16 from a &str, ensuring it's valid for UEFI APIs.
+/// create a CString16 from a &str, ensuring it's valid for UEFI APIs.
 fn make_cstring16(s: &str) -> Option<CString16> {
     if s.contains('\0') {
         return None;

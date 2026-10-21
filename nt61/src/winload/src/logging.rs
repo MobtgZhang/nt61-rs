@@ -16,10 +16,8 @@ macro_rules! boot_phase_header {
 
 /// Boot loader header
 ///
-/// The architecture tag is selected at build time via `cfg(target_arch)` so
-/// `x86_64`, `aarch64`, `riscv64`, and `loongarch64` each emit their own
-/// banner. There is no hard-coded `x86_64` string in the macro body — see
-/// the per-arch branches below.
+/// The architecture tag comes from the loader architecture facade so the
+/// banner remains correct without embedding target selection in this module.
 #[macro_export]
 macro_rules! boot_loader_header {
     () => {
@@ -27,10 +25,7 @@ macro_rules! boot_loader_header {
         uefi::println!("===============================================");
         uefi::println!("  Windows OS Loader  (winload.efi)");
         uefi::println!("  Build:  6.1.7601  (NT 6.1)");
-        uefi::println!(
-            "  Arch:   {}",
-            $crate::logging::arch_label_str()
-        );
+        uefi::println!("  Arch:   {}", $crate::logging::arch_label_str());
         uefi::println!("===============================================");
         uefi::println!("");
     };
@@ -38,31 +33,10 @@ macro_rules! boot_loader_header {
 
 /// Return the architecture tag for boot banners.
 ///
-/// Equivalent to `cfg!(target_arch = "...")`, but evaluated inside
-/// `winload.efi`'s own crate so the boot banner is always correct
-/// regardless of the build target. Using `cfg!` inside the macro
-/// above would also work, but exposing a runtime-callable helper
-/// keeps the dependency direction clean (the macro calls into the
-/// crate's public API rather than into the `cfg` machinery
-/// directly).
+/// Thin alias retained for the boot-header macro.
 #[inline]
 pub fn arch_label_str() -> &'static str {
-    #[cfg(target_arch = "x86_64")]
-    {
-        "x86_64"
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        "aarch64"
-    }
-    #[cfg(target_arch = "riscv64")]
-    {
-        "riscv64"
-    }
-    #[cfg(target_arch = "loongarch64")]
-    {
-        "loongarch64"
-    }
+    crate::arch::architecture_name()
 }
 
 /// Kernel transfer header

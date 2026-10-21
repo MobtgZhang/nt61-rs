@@ -20,11 +20,32 @@
 
 use nt61::kernel_main::kernel_main;
 
+const CRMD_DA: u64 = 1 << 3;
+const CRMD_PG: u64 = 1 << 4;
+
 /// Switch to the kernel stack and jump to `kernel_main`. Never
 /// returns.
 #[cfg(target_arch = "loongarch64")]
 #[inline(never)]
 pub unsafe extern "C" fn call_kernel_main(stack_top: u64, bi_ptr: u64) -> ! {
+    write_com1_marker(b"[TRAMPOLINE-LOONGARCH]\r\n");
+    // The firmware page table does not cover every physical page used by
+    // the kernel's early allocator. Turn translation off before handing
+    // control to the kernel; the kernel installs its own PGDH-rooted
+    // tables and enables paging only after mapping the bootstrap memory.
+    let mut crmd: u64;
+    core::arch::asm!(
+        "csrrd {0}, 0x0",
+        out(reg) crmd,
+        options(nostack)
+    );
+    crmd &= !CRMD_PG;
+    crmd |= CRMD_DA;
+    core::arch::asm!(
+        "csrwr {0}, 0x0",
+        in(reg) crmd,
+        options(nostack)
+    );
     // LoongArch64 QEMU/EDK2 firmware leaves paging enabled with
     // page tables that only map the kernel image range above
     // `0x80000000`. The LS7A MMIO region around `0x1FE0_0000`
@@ -55,24 +76,51 @@ pub unsafe extern "C" fn call_kernel_main(stack_top: u64, bi_ptr: u64) -> ! {
     // argument, unused on entry — `kernel_main` only takes one).
     core::arch::asm!(
         "move  $s0, $a0",               // save stack_top in $s0
-        "csrrd $a0, 0x0",               // read CRMD
-        "bstrins.d $a0, $zero, 0x4, 0x4", // clear PG bit
-        "csrwr $a0, 0x0",               // write CRMD (PG=0)
-        "move  $sp, $s0",               // $sp = stack_top
-        "move  $a0, $a1",               // $a0 = bi_ptr (kernel 1st arg)
-        // Tail-call `kernel_main` via a register indirection so
-        // the call graph reaches the kernel entry. We pass the
-        // function pointer through a register because LLVM's
-        // loongarch assembler rejects `jirl $ra, <sym>, 0` when
-        // the function pointer is bound to a function item
-        // directly.
-        "jirl  $ra, $a2, 0",
+        "nop",
         // Operand bindings. `$a2` is chosen for `kernel_main`
         // because it is caller-saved and not used by the prologue
         // above.
         in("$a0") stack_top,
         in("$a1") bi_ptr,
         in("$a2") kernel_main as *const () as u64,
+    );
+
+    core::arch::asm!(
+        "move  $sp, $s0",               // $sp = stack_top
+        "move  $a0, $a1",               // $a0 = bi_ptr (kernel 1st arg)
+        "jirl  $ra, $a2, 0",
+        in("$s0") stack_top,
+        in("$a1") bi_ptr,
+        in("$a2") kernel_main as *const () as u64,
         options(noreturn),
     );
+}
+
+pub fn install_kernel_handoff() -> u64 {
+    0
+}
+
+pub unsafe fn launch_kernel(stack_top: u64, bi_ptr: u64, _ntoskrnl_base: u64) -> ! {
+    call_kernel_main(stack_top, bi_ptr)
+}
+
+pub fn write_debug_marker(_bytes: &[u8]) {}
+
+const UART0_BASE: u64 = 0x1FE0_01E0;
+const UART_THR: u64 = 0;
+const UART_LSR: u64 = 5;
+const UART_LSR_THR_EMPTY: u8 = 0x20;
+
+pub fn write_com1_marker(bytes: &[u8]) {
+    for byte in bytes {
+        unsafe {
+            while core::ptr::read_volatile((UART0_BASE + UART_LSR) as *const u8)
+                & UART_LSR_THR_EMPTY
+                == 0
+            {
+                core::hint::spin_loop();
+            }
+            core::ptr::write_volatile((UART0_BASE + UART_THR) as *mut u8, *byte);
+        }
+    }
 }

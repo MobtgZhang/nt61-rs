@@ -46,7 +46,7 @@ pub unsafe extern "C" fn call_kernel_main(stack_top: u64, bi_ptr: u64) -> ! {
         // passes a valid `&BootInfo` pointer.
         unsafe { kernel_main(&*(bi_ptr as *const nt61::kernel_main::BootInfo)) }
     }
-    let km_addr: u64 = km_shim as usize as u64;
+    let km_addr: u64 = km_shim as *const () as usize as u64;
     core::arch::asm!(
         // 1. Install the kernel stack *before* we touch `x0` so an
         //    incoming IRQ cannot observe a half-converted state.
@@ -64,4 +64,28 @@ pub unsafe extern "C" fn call_kernel_main(stack_top: u64, bi_ptr: u64) -> ! {
         km = in(reg) km_addr,
         options(noreturn),
     );
+}
+
+/// Install any loader-published kernel callback. AArch64 currently uses
+/// the native Rust entry point, so no PE callback slot is required.
+pub fn install_kernel_handoff() -> u64 {
+    0
+}
+
+/// Launch the kernel after ExitBootServices using the unified entry.
+pub unsafe fn launch_kernel(stack_top: u64, bi_ptr: u64, _ntoskrnl_base: u64) -> ! {
+    call_kernel_main(stack_top, bi_ptr)
+}
+
+/// Write an architecture-local early diagnostic marker.
+pub fn write_debug_marker(_bytes: &[u8]) {}
+
+const PL011_DATA_REGISTER: u64 = 0x0900_0000;
+
+pub fn write_com1_marker(bytes: &[u8]) {
+    for byte in bytes {
+        unsafe {
+            core::ptr::write_volatile(PL011_DATA_REGISTER as *mut u8, *byte);
+        }
+    }
 }

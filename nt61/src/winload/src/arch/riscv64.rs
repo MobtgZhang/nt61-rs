@@ -24,12 +24,17 @@ use nt61::kernel_main::kernel_main;
 #[inline(never)]
 pub unsafe extern "C" fn call_kernel_main(stack_top: u64, bi_ptr: u64) -> ! {
     core::arch::asm!(
-        // 1. Install the kernel stack *before* we touch `a0`.
+        // 1. Clear firmware-owned per-CPU/thread pointers. The kernel's
+        //    bootstrap per-CPU ABI expects `tp = 0`; OpenSBI often leaves
+        //    `tp` pointed at PMP-protected memory.
+        "mv tp, zero",
+        "mv gp, zero",
+        // 2. Install the kernel stack *before* we touch `a0`.
         "mv sp, {sp}",
-        // 2. Place the BootInfo pointer in `a0` (RISC-V LP64D
+        // 3. Place the BootInfo pointer in `a0` (RISC-V LP64D
         //    first integer argument register).
         "mv a0, {bi}",
-        // 3. Branch to the kernel symbol and link so the
+        // 4. Branch to the kernel symbol and link so the
         //    kernel's RA is the trampoline return PC. The
         //    kernel is `-> !`, so RA is unused, but having
         //    it set correctly aids any debug trace path that
@@ -48,4 +53,24 @@ pub unsafe extern "C" fn call_kernel_main(stack_top: u64, bi_ptr: u64) -> ! {
         km = in(reg) kernel_main as *const () as usize,
         options(noreturn),
     );
+}
+
+pub fn install_kernel_handoff() -> u64 {
+    0
+}
+
+pub unsafe fn launch_kernel(stack_top: u64, bi_ptr: u64, _ntoskrnl_base: u64) -> ! {
+    call_kernel_main(stack_top, bi_ptr)
+}
+
+pub fn write_debug_marker(_bytes: &[u8]) {}
+
+const UART_DATA_REGISTER: u64 = 0x1000_0000;
+
+pub fn write_com1_marker(bytes: &[u8]) {
+    for byte in bytes {
+        unsafe {
+            core::ptr::write_volatile(UART_DATA_REGISTER as *mut u8, *byte);
+        }
+    }
 }

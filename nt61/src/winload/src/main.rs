@@ -7,8 +7,8 @@
 //
 //!   1. Load ntoskrnl.exe  (PE parse, allocate pages, copy sections)
 //!   2. Load hal.dll       (PE parse, map into kernel address space)
-//!   3. Load SYSTEM hive  (stub: read file, hand to kernel)
-//!   4. Load BOOT_START drivers  (stub: list files, log results)
+//!   3. Load SYSTEM hive  (read file, hand to kernel)
+//!   4. Load BOOT_START drivers  (enumerate, parse, invoke DriverEntry)
 //!   5. Collect UEFI memory map, ACPI RSDP, SMP info
 //!   6. Call ExitBootServices
 //!   7. Jump to kernel_main with a fully-populated BootInfo
@@ -19,7 +19,6 @@
 
 #![no_std]
 #![no_main]
-
 // ============================================================================
 // Module-wide lint configuration for the OS Loader.
 // ============================================================================
@@ -29,10 +28,8 @@
 // enumeration, ACPI / SMP / framebuffer capture, ISO ramdisk mirroring,
 // and the per-phase progress helpers all live next to `os_loader_run` so
 // that the loader is implemented in one place. `os_loader_run` itself is
-// currently a "fast boot" stub that bypasses the per-phase helpers and
-// hands control to the kernel with a minimal BootInfo — every scaffolded
-// helper therefore reports `dead_code`, `unused_variables`, or
-// `unused_imports` warnings on every clean build.
+// drives the full per-phase loading pipeline (PE parse, section copy,
+// relocation, hive loading, BOOT_START driver enumeration).
 //
 // We don't want to fix each warning by hand only to reintroduce the
 // scaffold code on the next phase-in (e.g. when winload learns to walk
@@ -43,27 +40,74 @@
 // a freshly introduced unused function in scope) still fail the build.
 //
 // Permitted under MIT. See repository LICENSE.
-#![allow(dead_code)]
-#![allow(unused_imports)]
-#![allow(unused_variables)]
-#![allow(unused_assignments)]
-
 extern crate alloc;
+
+#[cfg(feature = "log_level_debug")]
+struct UartWriter;
+
+#[cfg(feature = "log_level_debug")]
+impl core::fmt::Write for UartWriter {
+    fn write_str(&mut self, text: &str) -> core::fmt::Result {
+        for byte in text.as_bytes() {
+            crate::arch::current::write_com1_marker(core::slice::from_ref(byte));
+        }
+        Ok(())
+    }
+}
+
+#[macro_export]
+macro_rules! debug_println {
+    ($fmt:expr $(, $arg:expr)* $(,)?) => {{
+        #[cfg(feature = "log_level_debug")]
+        {
+            use core::fmt::Write as _;
+            let mut writer = $crate::UartWriter;
+            let _ = core::write!(writer, "{}\r\n", format_args!($fmt, $($arg),*));
+        }
+        #[cfg(not(feature = "log_level_debug"))]
+        {
+            // Borrow every argument so call sites do not trip the
+            // unused-variable lint in non-debug builds. The borrows
+            // are dropped immediately and nothing is formatted.
+            let _ = (&$fmt, $(&$arg),*);
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! debug_print {
+    ($fmt:expr $(, $arg:expr)* $(,)?) => {{
+        #[cfg(not(feature = "log_level_debug"))]
+        if false {
+            uefi::print!($fmt, $($arg),*);
+        }
+        #[cfg(feature = "log_level_debug")]
+        uefi::print!($fmt, $($arg),*);
+    }};
+}
 use alloc::vec::Vec;
 
 mod arch;
-mod bcd_mailbox_read;
+mod ext4_boot;
+mod fat32_boot;
 mod fat_lfn;
 mod gop_display;
 pub mod logging;
 pub mod ntfs_boot;
+mod pe;
+mod verify;
 
+use nt61::boot_types::{DeviceRange, DeviceTreeHardware};
 use nt61::kernel_main::{BootInfo, BOOTINFO_MAX_HIVES};
-use nt61::loader;
 use uefi::boot::{allocate_pages, AllocateType, MemoryType};
-use uefi::CStr16;
+use uefi::mem::memory_map::MemoryAttribute;
+use uefi::proto::media::file::FileInfo;
 use uefi::proto::media::file::{Directory, File, FileAttribute, FileMode};
 use uefi::proto::media::fs::SimpleFileSystem;
+use uefi::proto::security::MemoryProtection;
+use uefi::proto::unsafe_protocol;
+use uefi::runtime::VariableVendor;
+use uefi::CStr16;
 
 // =====================================================================
 // Boot-time trace ring — *not* a GlobalAlloc, just a manual log
@@ -80,188 +124,8 @@ use uefi::proto::media::fs::SimpleFileSystem;
 // of the "page-table" / pool / box allocations performed while loading
 // ntoskrnl.exe, hal.dll, the SYSTEM hive, and the boot drivers.
 
-use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use uefi::table;
-
 /// UEFI page size — 4 KiB for every spec-compliant firmware.
 const _PAGE_SIZE: usize = 4096;
-
-const TRACE_RING: usize = 96;
-
-const T_LOG:    u32 = 0; // generic log line (msg[0..16] = ascii prefix)
-const T_PAGE_A: u32 = 1; // allocate_pages requested/result
-const T_POOL_A: u32 = 2; // allocate_pool  requested/result
-const T_POOL_D: u32 = 3; // free_pool      result
-const T_PAGE_D: u32 = 4; // free_pages     result
-const T_OPEN:   u32 = 5; // open_esp_file called
-const T_VEC_D:  u32 = 6; // Vec<u8> dropped (size, returned ptr)
-const T_BOX_D:  u32 = 7; // Box dropped (size, returned ptr)
-const T_STR_D:  u32 = 8; // String dropped (size, returned ptr)
-
-// `TraceEntry` / `TraceRing` were the original types holding the
-// `AtomicU64` array that LTO kept eliding on `x86_64-unknown-uefi`.
-// They are now unused; the ring lives in three plain `static mut`
-// slots (`TRACE_BUF` / `TRACE_HEAD` / `TRACE_SEQ`) which `#[used]`
-// + explicit `.data` placement guarantee the link-time optimizer
-// cannot drop. See the comment below on `TRACE_BUF` for the full
-// rationale. Touching the type definitions here keeps the diff
-// minimal; if you want to remove them entirely later, the
-// `#[used]` + inline-asm helpers are the only surface that matters.
-
-#[derive(Clone, Copy)]
-struct TraceEntry {
-    kind: u32,
-    a: u64,
-    b: u64,
-    c: u64,
-    d: u64,
-}
-
-struct TraceRing {
-    buf: [AtomicU64; TRACE_RING * 4],
-    head: AtomicU32,
-    seq: AtomicU32,
-}
-
-unsafe impl Sync for TraceRing {}
-
-// Plain `static mut` slots backing the trace ring. We deliberately
-// do **not** use `core::sync::atomic::AtomicU64::new(0)` here:
-// on `x86_64-unknown-uefi`, the LTO pass was eliding the
-// `AtomicU64::new(0)` wrapper construction, and on top of that the
-// PE `.data` segment is mapped read-only by OVMF — so the very
-// first `fetch_add` on `TRACE.head` faults on a #PF and freezes
-// the loader before it can print another `[LOADER]` line. Other
-// `static mut` cells in this file (e.g. `CACHED_SFS_PTR`) work
-// because the linker's LTO pass leaves the zero-init image alone,
-// and because the LLD/PE loader puts those non-`#[used]`-tagged
-// scalars in a writable region; the constant data initialised
-// via `[const { AtomicU64::new(0) }; N]` did not survive. Three
-// `#[used]`-tagged plain `u32` / `[u64; N]` slots + inline-asm
-// helpers (`atomic_add_u32`, `atomic_store_u64`) below give us
-// the same semantics without depending on the unstable API.
-#[used]
-#[cfg(target_arch = "x86_64")]
-static mut TRACE_BUF: [u64; TRACE_RING * 4] = [0u64; TRACE_RING * 4];
-#[used]
-#[cfg(target_arch = "x86_64")]
-static mut TRACE_HEAD: u32 = 0;
-#[used]
-#[cfg(target_arch = "x86_64")]
-static mut TRACE_SEQ: u32 = 0;
-
-/// Atomic fetch-add on a `u32` slot, implemented inline so we don't
-/// need `core::sync::atomic::AtomicU32` (whose `const fn new(0)`
-/// wrapper was being elided by LTO on `x86_64-unknown-uefi`).
-#[inline]
-#[cfg(target_arch = "x86_64")]
-unsafe fn atomic_add_u32(slot: *mut u32, delta: u32) -> u32 {
-    let prev: u32;
-    // SAFETY: caller guarantees the slot is uniquely accessible.
-    // `xadd` returns the *previous* value in the second operand and
-    // stores the sum back into memory. We pass `delta` as the new
-    // value to fold and read `prev` back from the same register.
-    unsafe {
-        core::arch::asm!(
-            "xadd [{ptr}], {val:e}",
-            ptr = in(reg) slot,
-            val = inout(reg) delta => prev,
-            options(preserves_flags),
-        );
-    }
-    prev
-}
-
-/// Atomic store of a `u64` with `Release` semantics, implemented
-/// inline via `xchg` so we don't need an `AtomicU64::store`.
-#[inline]
-#[cfg(target_arch = "x86_64")]
-unsafe fn atomic_store_u64(slot: *mut u64, val: u64) {
-    // SAFETY: caller guarantees exclusive access to `slot`.
-    unsafe {
-        core::arch::asm!(
-            "xchg [{ptr}], {val:r}",
-            ptr = in(reg) slot,
-            val = in(reg) val,
-            options(preserves_flags),
-        );
-    }
-}
-
-/// Atomic load of a `u32` with `Acquire` semantics. Implemented via a
-/// compiler barrier + ordinary load because `dump_trace` is the only
-/// reader and runs after we're done writing.
-#[inline]
-#[cfg(target_arch = "x86_64")]
-unsafe fn atomic_load_u32(slot: *const u32) -> u32 {
-    let val: u32;
-    // SAFETY: caller guarantees the slot is accessible.
-    unsafe {
-        core::arch::asm!(
-            "mov {val:e}, [{ptr}]",
-            ptr = in(reg) slot,
-            val = out(reg) val,
-            options(preserves_flags),
-        );
-    }
-    val
-}
-
-#[inline]
-#[cfg(target_arch = "x86_64")]
-fn push(kind: u32, a: u64, b: u64, c: u64, d: u64) {
-    // SAFETY: TRACE_BUF / TRACE_HEAD / TRACE_SEQ are written only
-    // here and only read by `dump_trace`. The loader is single-threaded
-    // for the entire duration, so the `fetch_add`-equivalent on
-    // TRACE_HEAD does not race.
-    unsafe {
-        let seq = atomic_add_u32(core::ptr::addr_of_mut!(TRACE_SEQ), 1);
-        let head = atomic_add_u32(core::ptr::addr_of_mut!(TRACE_HEAD), 1);
-        let idx = (head as usize) % TRACE_RING;
-        let base = idx * 4;
-        let buf_ptr = core::ptr::addr_of_mut!(TRACE_BUF) as *mut u64;
-        atomic_store_u64(
-            buf_ptr.add(base + 0),
-            (((kind as u64) & 0xFFFF_FFFF) << 32) | (seq as u64),
-        );
-        atomic_store_u64(buf_ptr.add(base + 1), a);
-        atomic_store_u64(buf_ptr.add(base + 2), b);
-        atomic_store_u64(
-            buf_ptr.add(base + 3),
-            (((c as u64) & 0xFFFF_FFFF) << 32) | (d as u64),
-        );
-    }
-}
-
-fn push_log(_prefix: &str) {}
-fn push_page_alloc(_req_pages: u32, _ret_ptr: u64) {}
-fn push_page_free(_req_ptr: u64, _req_pages: u32) {}
-fn push_pool_alloc(_req_size: u32, _ret_ptr: u64) {}
-fn push_pool_free(_ptr: u64) {}
-fn push_vec_drop(_size: u32, _ptr: u64) {}
-fn push_box_drop(_size: u32, _ptr: u64) {}
-fn push_str_drop(_size: u32, _ptr: u64) {}
-fn push_open(_path: &str) {}
-
-fn dump_trace() {
-    // The trace ring is currently disabled (see comment on `push_log`
-    // et al. — every push helper is a no-op while we work around the
-    // `x86_64-unknown-uefi` read-only `.data` / LTO-elision bug). We
-    // still print the "last N events" header so the bring-up log
-    // shape matches the boot manager's expectations; once the
-    // ring is moved to a boot-services-allocated buffer this can be
-    // restored.
-    uefi::println!("[TRACE] last 0 events: (ring disabled)");
-}
-
-/// Returns true if UEFI boot services are still active.
-fn boot_services_active() -> bool {
-    let Some(st) = table::system_table_raw() else {
-        return false;
-    };
-    let st = unsafe { st.as_ref() };
-    !st.boot_services.is_null()
-}
 
 // =====================================================================
 // Constants
@@ -321,9 +185,6 @@ const KERNEL_IMAGE_PATHS: [&str; 2] = [
     "\\Windows\\System32\\hal.dll",
 ];
 
-/// Path of the SYSTEM registry hive.
-const SYSTEM_HIVE_PATH: &str = "\\Windows\\System32\\config\\SYSTEM";
-
 // =====================================================================
 // Persistent boot data
 // =====================================================================
@@ -337,9 +198,87 @@ struct MemoryMapEntry {
     reserved: u32,
 }
 
+/// Read a complete system file into heap memory.
+///
+/// The NTFS path already returns a complete stream. For FAT/SFS paths,
+/// `FileInfo` supplies the exact file size before allocation, which
+/// avoids the subtle truncation that previously made only the first
+/// 32 KiB of a several-MiB kernel PE available to the loader.
+/// Raw FAT32 reader (nt61_bootfs): last-resort path when the cached
+/// SimpleFileSystem handle cannot serve the file.
+fn fat32_system_fallback(path: &str) -> Option<Vec<u8>> {
+    if path.len() >= 8 && &path[1..8] == "Windows" {
+        return crate::fat32_boot::read_fat32_system_file(path);
+    }
+    None
+}
+
+fn open_system_file_data(path: &str) -> Option<Vec<u8>> {
+    let is_system = path.len() >= 8 && &path[1..8] == "Windows";
+    if is_system {
+        if let Some(data) = crate::ntfs_boot::read_ntfs_system_file(path) {
+            return Some(data);
+        }
+        // EXT4 System partition: UEFI SimpleFileSystem only speaks
+        // FAT, so EXT4 volumes are resolved by the in-tree reader.
+        if let Some(data) = crate::ext4_boot::read_ext4_system_file(path) {
+            return Some(data);
+        }
+        #[cfg(feature = "log_level_debug")]
+        crate::ext4_boot::log_ext4_layout();
+    }
+
+    let cached_ptr = unsafe { core::ptr::addr_of!(CACHED_SYSTEM_SFS_PTR).read_volatile() };
+    if cached_ptr == 0 {
+        return fat32_system_fallback(path);
+    }
+    use uefi::boot::open_protocol_exclusive;
+    use uefi::proto::media::fs::SimpleFileSystem;
+    use uefi::Handle;
+    let handle = unsafe { Handle::from_ptr(cached_ptr as *mut core::ffi::c_void) }?;
+    let mut sfs = open_protocol_exclusive::<SimpleFileSystem>(handle).ok()?;
+    let mut current_dir = sfs.open_volume().ok()?;
+
+    let bytes = path.as_bytes();
+    let start = if bytes.first() == Some(&b'\\') { 1 } else { 0 };
+    let mut idx = start;
+    while idx < bytes.len() {
+        let end = bytes[idx..]
+            .iter()
+            .position(|byte| *byte == b'\\')
+            .map(|offset| idx + offset)
+            .unwrap_or(bytes.len());
+        let component = core::str::from_utf8(&bytes[idx..end]).ok()?;
+        if end == bytes.len() {
+            let mut file = open_file_component(&mut current_dir, component)?;
+            let mut info_buffer = [0u8; 512];
+            let info = file.get_info::<FileInfo>(&mut info_buffer).ok()?;
+            let file_size = usize::try_from(info.file_size()).ok()?;
+            if file_size > MAX_PE_FILE_SIZE {
+                return None;
+            }
+            let mut data = Vec::new();
+            data.resize(file_size, 0u8);
+            let bytes_read = file.read(&mut data).ok()?;
+            if bytes_read != file_size {
+                return None;
+            }
+            return Some(data);
+        }
+        current_dir = open_dir_component(&mut current_dir, component)?;
+        idx = end + 1;
+    }
+    fat32_system_fallback(path)
+}
+
 impl MemoryMapEntry {
     fn new(base: u64, length: u64, memory_type: u32) -> Self {
-        Self { base, length, memory_type, reserved: 0 }
+        Self {
+            base,
+            length,
+            memory_type,
+            reserved: 0,
+        }
     }
 }
 
@@ -385,13 +324,6 @@ struct PersistentBootData {
     /// to `ExitBootServices(image_handle, map_key)`. Zero before
     /// `collect_memory_map` runs.
     map_key: usize,
-    /// Framebuffer/GOP information
-    framebuffer_base: u64,
-    framebuffer_size: u64,
-    framebuffer_width: u32,
-    framebuffer_height: u32,
-    framebuffer_stride: u32,
-    framebuffer_format: u32,
     /// Physical address of the ESP mirror (set by `capture_esp_partition`).
     /// The buffer is allocated as `EfiBootServicesData` so it
     /// survives `ExitBootServices`.
@@ -406,8 +338,8 @@ struct PersistentBootData {
     /// Total number of LBA blocks in the ESP partition.
     esp_partition_sectors: u64,
     /// UEFI media_id of the ESP BlockIO protocol. `capture_system_partition`
-    /// uses this to skip the ESP handle when picking the system partition
-    /// (the previous "skip FAT-family" heuristic broke the FAT32-only
+    /// uses this to exclude the ESP handle when picking the system partition
+    /// (the previous FAT-family exclusion heuristic broke the FAT32-only
     /// layout where system and ESP are both FAT32 and indistinguishable
     /// by their OEM ID alone).
     esp_media_id: u32,
@@ -438,31 +370,104 @@ struct PersistentBootData {
     ramdisk_block_size: u32,
     /// Pad to keep the struct aligned.
     _reserved6: u32,
+    device_tree_base: u64,
+    device_tree_size: u32,
+    device_tree_hardware: DeviceTreeHardware,
 }
 
 impl PersistentBootData {
     const fn new() -> Self {
         Self {
             // Use array repeat syntax for cleaner initialization
-            memory_map: [MemoryMapEntry { base: 0, length: 0, memory_type: 0, reserved: 0 }; EXTENDED_MEMORY_MAP_SIZE],
+            memory_map: [MemoryMapEntry {
+                base: 0,
+                length: 0,
+                memory_type: 0,
+                reserved: 0,
+            }; EXTENDED_MEMORY_MAP_SIZE],
             memory_map_count: 0,
             smp_cpu_count: SMP_CPU_COUNT,
             acpi_rsdp: 0,
             system_hive: HiveInfo::zeroed(),
             boot_drivers: [
-                DriverLoadRecord { name: [0u8; 32], loaded: false, base: 0, size: 0 },
-                DriverLoadRecord { name: [0u8; 32], loaded: false, base: 0, size: 0 },
-                DriverLoadRecord { name: [0u8; 32], loaded: false, base: 0, size: 0 },
-                DriverLoadRecord { name: [0u8; 32], loaded: false, base: 0, size: 0 },
-                DriverLoadRecord { name: [0u8; 32], loaded: false, base: 0, size: 0 },
-                DriverLoadRecord { name: [0u8; 32], loaded: false, base: 0, size: 0 },
-                DriverLoadRecord { name: [0u8; 32], loaded: false, base: 0, size: 0 },
-                DriverLoadRecord { name: [0u8; 32], loaded: false, base: 0, size: 0 },
-                DriverLoadRecord { name: [0u8; 32], loaded: false, base: 0, size: 0 },
-                DriverLoadRecord { name: [0u8; 32], loaded: false, base: 0, size: 0 },
-                DriverLoadRecord { name: [0u8; 32], loaded: false, base: 0, size: 0 },
-                DriverLoadRecord { name: [0u8; 32], loaded: false, base: 0, size: 0 },
-                DriverLoadRecord { name: [0u8; 32], loaded: false, base: 0, size: 0 },
+                DriverLoadRecord {
+                    name: [0u8; 32],
+                    loaded: false,
+                    base: 0,
+                    size: 0,
+                },
+                DriverLoadRecord {
+                    name: [0u8; 32],
+                    loaded: false,
+                    base: 0,
+                    size: 0,
+                },
+                DriverLoadRecord {
+                    name: [0u8; 32],
+                    loaded: false,
+                    base: 0,
+                    size: 0,
+                },
+                DriverLoadRecord {
+                    name: [0u8; 32],
+                    loaded: false,
+                    base: 0,
+                    size: 0,
+                },
+                DriverLoadRecord {
+                    name: [0u8; 32],
+                    loaded: false,
+                    base: 0,
+                    size: 0,
+                },
+                DriverLoadRecord {
+                    name: [0u8; 32],
+                    loaded: false,
+                    base: 0,
+                    size: 0,
+                },
+                DriverLoadRecord {
+                    name: [0u8; 32],
+                    loaded: false,
+                    base: 0,
+                    size: 0,
+                },
+                DriverLoadRecord {
+                    name: [0u8; 32],
+                    loaded: false,
+                    base: 0,
+                    size: 0,
+                },
+                DriverLoadRecord {
+                    name: [0u8; 32],
+                    loaded: false,
+                    base: 0,
+                    size: 0,
+                },
+                DriverLoadRecord {
+                    name: [0u8; 32],
+                    loaded: false,
+                    base: 0,
+                    size: 0,
+                },
+                DriverLoadRecord {
+                    name: [0u8; 32],
+                    loaded: false,
+                    base: 0,
+                    size: 0,
+                },
+                DriverLoadRecord {
+                    name: [0u8; 32],
+                    loaded: false,
+                    base: 0,
+                    size: 0,
+                },
+                DriverLoadRecord {
+                    name: [0u8; 32],
+                    loaded: false,
+                    base: 0,
+                    size: 0,
+                },
             ],
             memory_map_size_bytes: 0,
             descriptor_size: 0,
@@ -470,12 +475,6 @@ impl PersistentBootData {
             // passed to `ExitBootServices(image_handle, map_key)`.
             // Zero before `collect_memory_map` runs.
             map_key: 0,
-            framebuffer_base: 0,
-            framebuffer_size: 0,
-            framebuffer_width: 0,
-            framebuffer_height: 0,
-            framebuffer_stride: 0,
-            framebuffer_format: 0,
             esp_image_base: 0,
             esp_image_size: 0,
             esp_block_size: 0,
@@ -491,6 +490,14 @@ impl PersistentBootData {
             ramdisk_image_size: 0,
             ramdisk_block_size: 0,
             _reserved6: 0,
+            device_tree_base: 0,
+            device_tree_size: 0,
+            device_tree_hardware: DeviceTreeHardware {
+                uart: None,
+                gicd: None,
+                gicc: None,
+                pci_ecam: None,
+            },
         }
     }
 }
@@ -502,6 +509,336 @@ static mut PERSISTENT: PersistentBootData = PersistentBootData::new();
 // SAFETY: written once in os_loader_run before the kernel is entered.
 // The kernel reads this as the pointer to BootInfo.
 static mut KERNEL_BOOT_INFO_PTR: u64 = 0;
+
+#[repr(C)]
+#[derive(Clone, Copy, Eq, PartialEq)]
+struct EfiGuid([u8; 16]);
+
+#[repr(C)]
+struct EfiConfigurationTable {
+    vendor_guid: EfiGuid,
+    vendor_table: *mut core::ffi::c_void,
+}
+
+#[repr(C)]
+struct EfiSystemTable {
+    header: [u8; 24],
+    firmware_vendor: *const u16,
+    firmware_revision: u32,
+    _reserved: u32,
+    console_in_handle: usize,
+    console_in: *const core::ffi::c_void,
+    console_out_handle: usize,
+    console_out: *const core::ffi::c_void,
+    standard_error_handle: usize,
+    standard_error: *const core::ffi::c_void,
+    runtime_services: *const core::ffi::c_void,
+    boot_services: *const core::ffi::c_void,
+    number_of_table_entries: usize,
+    configuration_table: *const EfiConfigurationTable,
+}
+
+const EFI_DTB_TABLE_GUID: EfiGuid = EfiGuid([
+    0xd5, 0x21, 0xb6, 0xb1, 0x9c, 0xf1, 0xa5, 0x41, 0x83, 0x0b, 0xd9, 0x15, 0x2c, 0x69, 0xaa, 0xe0,
+]);
+
+const EFI_FB_MAILBOX_TABLE_GUID: EfiGuid = EfiGuid([
+    0x9d, 0x0f, 0x7e, 0x8a, 0x8d, 0x21, 0x4f, 0x7f, 0x98, 0x7f, 0x3c, 0x9d, 0x0c, 0x5f, 0x4b, 0x61,
+]);
+
+/// ACPI 2.0+ RSDP table GUID (all UEFI firmwares install this).
+const EFI_ACPI_20_TABLE_GUID: EfiGuid = EfiGuid([
+    0xc8, 0xe8, 0x68, 0x88, 0xa5, 0x1c, 0xbd, 0x4b, 0xa0, 0x24, 0x69, 0xa0, 0xc9, 0x9c, 0x02, 0x91,
+]);
+
+/// ACPI 1.0 RSDP table GUID (fallback for ancient firmwares).
+const EFI_ACPI_TABLE_GUID: EfiGuid = EfiGuid([
+    0x32, 0x2d, 0x9d, 0xeb, 0x88, 0x2d, 0xd8, 0x11, 0x9a, 0x41, 0x00, 0x90, 0x27, 0x3f, 0xc1, 0x4d,
+]);
+
+/// FDT Client protocol exposed by EDK2 on generic ARM64 virtual machines.
+#[repr(C)]
+#[unsafe_protocol("e11faca0-4710-4c8e-a7a2-01baa2591b4c")]
+struct FdtClientProtocol {
+    get_node_property: usize,
+    set_node_property: usize,
+    find_compatible_node: usize,
+    find_next_compatible_node: usize,
+    find_compatible_node_property: usize,
+    find_compatible_node_reg: FdtClientFindCompatibleNodeReg,
+}
+
+type FdtClientFindCompatibleNodeReg = unsafe extern "efiapi" fn(
+    this: *const FdtClientProtocol,
+    compatible: *const u8,
+    reg: *mut *const u8,
+    address_cells: *mut usize,
+    size_cells: *mut usize,
+    reg_size: *mut u32,
+) -> uefi::Status;
+
+/// Read up to four `reg` ranges from a Device Tree property.
+fn read_reg_ranges(value: &[u8], address_cells: usize, size_cells: usize) -> [DeviceRange; 4] {
+    let mut ranges = [DeviceRange::default(); 4];
+    let Some(address_stride) = address_cells.checked_mul(4) else {
+        return ranges;
+    };
+    let Some(size_stride) = size_cells.checked_mul(4) else {
+        return ranges;
+    };
+    let Some(range_stride) = address_stride.checked_add(size_stride) else {
+        return ranges;
+    };
+    if range_stride == 0 {
+        return ranges;
+    }
+    for (index, range) in ranges.iter_mut().enumerate() {
+        let start = match index.checked_mul(range_stride) {
+            Some(start) => start,
+            None => break,
+        };
+        let address_end = match start.checked_add(address_stride) {
+            Some(end) => end,
+            None => break,
+        };
+        let range_end = match address_end.checked_add(size_stride) {
+            Some(end) => end,
+            None => break,
+        };
+        if value.len() < range_end {
+            break;
+        }
+        *range = DeviceRange {
+            base: read_big_endian_u64(&value[start..address_end]),
+            size: read_big_endian_u64(&value[address_end..range_end]),
+        };
+    }
+    ranges
+}
+
+fn read_big_endian_u64(bytes: &[u8]) -> u64 {
+    let read_be = |bytes: &[u8]| -> u64 {
+        let mut result = 0u64;
+        for byte in bytes.iter().take(8) {
+            result = result.wrapping_shl(8) | u64::from(*byte);
+        }
+        result
+    };
+    read_be(bytes)
+}
+
+/// Query one compatible node's first `reg` range through the EDK2 protocol.
+fn query_fdt_client_reg(client: &FdtClientProtocol, compatible: &[u8]) -> Option<DeviceRange> {
+    let mut reg = core::ptr::null::<u8>();
+    let mut address_cells = 0usize;
+    let mut size_cells = 0usize;
+    let mut reg_size = 0u32;
+    let status = unsafe {
+        (client.find_compatible_node_reg)(
+            client,
+            compatible.as_ptr(),
+            &mut reg,
+            &mut address_cells,
+            &mut size_cells,
+            &mut reg_size,
+        )
+    };
+    if !status.is_success() || reg.is_null() {
+        debug_println!(
+            "[LOADER] FDT reg query '{}' failed: status={:?} reg_null={}",
+            core::str::from_utf8(compatible).unwrap_or("???"),
+            status,
+            reg.is_null()
+        );
+        return None;
+    }
+    let value = unsafe { core::slice::from_raw_parts(reg, reg_size as usize) };
+    let ranges = read_reg_ranges(value, address_cells, size_cells);
+    debug_println!(
+        "[LOADER] FDT reg query '{}': cells={}/{} bytes={} base={:#x} size={:#x}",
+        core::str::from_utf8(compatible).unwrap_or("???"),
+        address_cells,
+        size_cells,
+        reg_size,
+        ranges[0].base,
+        ranges[0].size
+    );
+    ranges.first().copied()
+}
+
+fn query_fdt_client_gic(client: &FdtClientProtocol) -> (Option<DeviceRange>, Option<DeviceRange>) {
+    let mut reg = core::ptr::null::<u8>();
+    let mut address_cells = 0usize;
+    let mut size_cells = 0usize;
+    let mut reg_size = 0u32;
+    let mut ranges = [DeviceRange::default(); 4];
+    for compatible in [
+        b"arm,gic-400\0".as_slice(),
+        b"arm,cortex-a15-gic\0".as_slice(),
+    ] {
+        let status = unsafe {
+            (client.find_compatible_node_reg)(
+                client,
+                compatible.as_ptr(),
+                &mut reg,
+                &mut address_cells,
+                &mut size_cells,
+                &mut reg_size,
+            )
+        };
+        if status.is_success() && !reg.is_null() {
+            let value = unsafe { core::slice::from_raw_parts(reg, reg_size as usize) };
+            ranges = read_reg_ranges(value, address_cells, size_cells);
+            break;
+        }
+    }
+    (ranges.first().copied(), ranges.get(1).copied())
+}
+
+/// Build an architecture-neutral hardware description from the EDK2 FDT
+/// Client protocol. This avoids hard-coded QEMU `virt` addresses on generic
+/// ARM64 systems.
+fn capture_device_tree_hardware() -> DeviceTreeHardware {
+    let Ok(handle) = uefi::boot::get_handle_for_protocol::<FdtClientProtocol>() else {
+        return DeviceTreeHardware::default();
+    };
+    let Ok(client) = (unsafe {
+        uefi::boot::open_protocol::<FdtClientProtocol>(
+            uefi::boot::OpenProtocolParams {
+                handle,
+                agent: uefi::boot::image_handle(),
+                controller: None,
+            },
+            uefi::boot::OpenProtocolAttributes::GetProtocol,
+        )
+    }) else {
+        return DeviceTreeHardware::default();
+    };
+    let mut hardware = DeviceTreeHardware::default();
+    // The FDT client protocol consumes NUL-terminated C strings;
+    // Rust byte literals must carry the terminator explicitly.
+    hardware.uart = query_fdt_client_reg(&client, b"arm,pl011\0");
+    let (gicd, gicc) = query_fdt_client_gic(&client);
+    hardware.gicd = gicd;
+    hardware.gicc = gicc;
+    hardware.pci_ecam = query_fdt_client_reg(&client, b"pci-host-ecam-generic\0");
+    hardware
+}
+
+/// Locate the UEFI DTB table, copy it into runtime-surviving memory, and
+/// record its exact address/size for `BootInfo`. The firmware-owned DTB is
+/// not guaranteed to remain valid after `ExitBootServices`, so winload owns
+/// the copy just like the Windows memory map and hive buffers.
+fn capture_device_tree() {
+    let Some(system_table) = uefi::table::system_table_raw() else {
+        debug_println!("[LOADER] [WARN] DTB capture: system table unavailable");
+        return;
+    };
+    let hardware = capture_device_tree_hardware();
+    let persistent_probe = unsafe { &mut *core::ptr::addr_of_mut!(PERSISTENT) };
+    persistent_probe.device_tree_hardware = hardware;
+    if hardware.uart.is_some() {
+        debug_println!("[LOADER] FDT hardware captured through FDT client protocol");
+    }
+    let table = unsafe { &*(system_table.as_ptr() as *const EfiSystemTable) };
+    let entries = unsafe {
+        core::slice::from_raw_parts(table.configuration_table, table.number_of_table_entries)
+    };
+    let Some(entry) = entries
+        .iter()
+        .find(|entry| entry.vendor_guid == EFI_DTB_TABLE_GUID)
+    else {
+        if hardware.uart.is_none() {
+            debug_println!("[LOADER] DTB capture unavailable: no FDT client or DTB table");
+        }
+        return;
+    };
+    let source = entry.vendor_table as *const u8;
+    if source.is_null() {
+        debug_println!("[LOADER] [WARN] DTB capture: null vendor table");
+        return;
+    }
+    let magic = u32::from_be_bytes(unsafe {
+        [
+            source.read_volatile(),
+            source.add(1).read_volatile(),
+            source.add(2).read_volatile(),
+            source.add(3).read_volatile(),
+        ]
+    });
+    if magic != 0xd00d_feed {
+        debug_println!("[LOADER] [WARN] DTB capture: invalid magic 0x{:08x}", magic);
+        return;
+    }
+    let total_size = u32::from_be_bytes(unsafe {
+        [
+            source.add(4).read_volatile(),
+            source.add(5).read_volatile(),
+            source.add(6).read_volatile(),
+            source.add(7).read_volatile(),
+        ]
+    });
+    if total_size == 0 || total_size > 8 * 1024 * 1024 {
+        debug_println!("[LOADER] [WARN] DTB capture: invalid size {}", total_size);
+        return;
+    }
+    let page_count = (total_size as usize + 0xfff) / 0x1000;
+    let Ok(mut destination) = uefi::boot::allocate_pages(
+        uefi::boot::AllocateType::AnyPages,
+        uefi::boot::MemoryType::RUNTIME_SERVICES_DATA,
+        page_count,
+    ) else {
+        debug_println!("[LOADER] [WARN] DTB capture: allocation failed");
+        return;
+    };
+    unsafe {
+        core::ptr::copy_nonoverlapping(source, destination.as_mut(), total_size as usize);
+    }
+    let persistent = unsafe { &mut *core::ptr::addr_of_mut!(PERSISTENT) };
+    persistent.device_tree_base = destination.as_ptr() as u64;
+    persistent.device_tree_size = total_size;
+    debug_println!(
+        "[LOADER] DTB captured: base=0x{:x} size={}",
+        persistent.device_tree_base,
+        persistent.device_tree_size
+    );
+}
+
+/// Locate the ACPI RSDP through the EFI configuration table and
+/// record its address for the kernel. UEFI exposes the RSDP
+/// pointer under the ACPI 2.0 GUID (every modern firmware,
+/// including EDK2, installs it) with the ACPI 1.0 GUID as a
+/// fallback. The kernel consumes `BootInfo.acpi_rsdp` during
+/// Phase 1 to resolve MCFG / FADT / MADT through `find_table`.
+fn capture_acpi_rsdp() {
+    let Some(system_table) = uefi::table::system_table_raw() else {
+        debug_println!("[LOADER] [WARN] ACPI capture: system table unavailable");
+        return;
+    };
+    let table = unsafe { &*(system_table.as_ptr() as *const EfiSystemTable) };
+    let entries = unsafe {
+        core::slice::from_raw_parts(table.configuration_table, table.number_of_table_entries)
+    };
+    let rsdp = entries
+        .iter()
+        .find(|entry| entry.vendor_guid == EFI_ACPI_20_TABLE_GUID)
+        .or_else(|| {
+            entries
+                .iter()
+                .find(|entry| entry.vendor_guid == EFI_ACPI_TABLE_GUID)
+        })
+        .map(|entry| entry.vendor_table as u64);
+    match rsdp {
+        Some(rsdp_phys) if rsdp_phys != 0 => {
+            let persistent = unsafe { &mut *core::ptr::addr_of_mut!(PERSISTENT) };
+            persistent.acpi_rsdp = rsdp_phys;
+            debug_println!("[LOADER] ACPI RSDP captured: 0x{:x}", rsdp_phys);
+        }
+        _ => {
+            debug_println!("[LOADER] [WARN] ACPI capture: no RSDP in configuration table");
+        }
+    }
+}
 
 // Static to hold the BootInfo struct itself (must be in memory, not register).
 static mut KERNEL_BOOT_INFO: BootInfo = BootInfo {
@@ -558,18 +895,15 @@ static mut KERNEL_BOOT_INFO: BootInfo = BootInfo {
     bootvid_image_base: 0,
     bootvid_image_size: 0,
     ntoskrnl_handoff_callback: 0,
+    device_tree_base: 0,
+    device_tree_size: 0,
+    device_tree_hardware: DeviceTreeHardware {
+        uart: None,
+        gicd: None,
+        gicc: None,
+        pci_ecam: None,
+    },
 };
-
-// =====================================================================
-// Errors
-// =====================================================================
-
-#[derive(Debug)]
-enum LoaderError {
-    FileNotFound,
-    PeParseFailed,
-    MemoryAllocationFailed,
-}
 
 // =====================================================================
 // DOS header helper
@@ -602,10 +936,6 @@ struct DosHeader {
 // Helpers
 // =====================================================================
 
-fn kprintln(msg: &str) {
-    uefi::println!("  [LOAD] {}", msg);
-}
-
 // We cache the first SimpleFileSystem handle found on the ESP at
 // efi_main entry and reuse it for every subsequent file read. This
 // avoids re-locating handles, which on some OVMF versions hangs
@@ -637,17 +967,33 @@ fn cache_esp_sfs_handle() {
         if SFS_HANDLE_READY {
             return;
         }
+        // Prefer the device handle winload itself was loaded from
+        // (EFI_LOADED_IMAGE_PROTOCOL). When bootmgfw chain-loads us this
+        // is the authoritative ESP and avoids guessing between handles.
+        if let Some(device) = chain_loaded_device_handle() {
+            if device_has_simple_filesystem(device) {
+                CACHED_SFS_PTR = device.as_ptr() as usize;
+                SFS_HANDLE_READY = true;
+                debug_println!(
+                    "[DBG] cache_esp_sfs_handle: using chain-loaded device 0x{:x}",
+                    device.as_ptr() as u64,
+                );
+                return;
+            }
+        }
         if let Ok(handles) = uefi::boot::find_handles::<SimpleFileSystem>() {
             if let Some(h) = handles.first() {
                 CACHED_SFS_PTR = h.as_ptr() as usize;
                 SFS_HANDLE_READY = true;
-                uefi::println!("[DBG] cache_esp_sfs_handle: cached SFS handle at 0x{:x}",
-                    core::ptr::addr_of!(CACHED_SFS_PTR).read_volatile());
+                debug_println!(
+                    "[DBG] cache_esp_sfs_handle: cached SFS handle at 0x{:x}",
+                    core::ptr::addr_of!(CACHED_SFS_PTR).read_volatile()
+                );
             } else {
-                uefi::println!("[DBG] cache_esp_sfs_handle: no SFS handles found");
+                debug_println!("[DBG] cache_esp_sfs_handle: no SFS handles found");
             }
         } else {
-            uefi::println!("[DBG] cache_esp_sfs_handle: find_handles failed");
+            debug_println!("[DBG] cache_esp_sfs_handle: find_handles failed");
         }
     }
 }
@@ -671,7 +1017,7 @@ fn cache_system_sfs_handle() {
             return;
         }
         if let Ok(handles) = uefi::boot::find_handles::<SimpleFileSystem>() {
-            // Skip the first handle (ESP) and use the second if available
+            // Ignore the first handle (ESP) and use the second if available
             if handles.len() > 1 {
                 if let Some(h) = handles.get(1) {
                     CACHED_SYSTEM_SFS_PTR = h.as_ptr() as usize;
@@ -696,17 +1042,21 @@ fn cache_system_sfs_handle() {
                         core::mem::forget(sp);
                     }
                     SYSTEM_SFS_HANDLE_READY = true;
-                    uefi::println!("[DBG] cache_system_sfs_handle: cached SFS handle at 0x{:x} (partition 2)",
-                        core::ptr::addr_of!(CACHED_SYSTEM_SFS_PTR).read_volatile());
+                    debug_println!(
+                        "[DBG] cache_system_sfs_handle: cached SFS handle at 0x{:x} (partition 2)",
+                        core::ptr::addr_of!(CACHED_SYSTEM_SFS_PTR).read_volatile()
+                    );
                     return;
                 }
             }
             // Only one partition available - fall back to ESP
-            uefi::println!("[DBG] cache_system_sfs_handle: only 1 partition found, using ESP for all files");
+            debug_println!(
+                "[DBG] cache_system_sfs_handle: only 1 partition found, using ESP for all files"
+            );
             CACHED_SYSTEM_SFS_PTR = CACHED_SFS_PTR;
             SYSTEM_SFS_HANDLE_READY = true;
         } else {
-            uefi::println!("[DBG] cache_system_sfs_handle: find_handles failed");
+            debug_println!("[DBG] cache_system_sfs_handle: find_handles failed");
         }
     }
 }
@@ -765,8 +1115,12 @@ fn open_dir_component(current_dir: &mut Directory, part: &str) -> Option<Directo
     let mut buf: [u16; 64] = [0; 64];
     let mut i = 0;
     for c in part.encode_utf16() {
-        if c > 0x7FFF { return None; }
-        if i >= buf.len() - 1 { return None; }
+        if c > 0x7FFF {
+            return None;
+        }
+        if i >= buf.len() - 1 {
+            return None;
+        }
         buf[i] = c;
         i += 1;
     }
@@ -780,13 +1134,17 @@ fn open_dir_component(current_dir: &mut Directory, part: &str) -> Option<Directo
     }
 
     if let Some(lookup) = fat_lfn::find_entry_by_name(current_dir, part) {
-        if let Ok(entry) = current_dir.open(lookup.lfn.as_ref(), FileMode::Read, FileAttribute::empty()) {
+        if let Ok(entry) =
+            current_dir.open(lookup.lfn.as_ref(), FileMode::Read, FileAttribute::empty())
+        {
             if let Some(dir) = entry.into_directory() {
                 return Some(dir);
             }
         }
         for sfn in &lookup.sfn_candidates {
-            if let Ok(entry) = current_dir.open(sfn.as_ref(), FileMode::Read, FileAttribute::empty()) {
+            if let Ok(entry) =
+                current_dir.open(sfn.as_ref(), FileMode::Read, FileAttribute::empty())
+            {
                 if let Some(dir) = entry.into_directory() {
                     return Some(dir);
                 }
@@ -798,20 +1156,27 @@ fn open_dir_component(current_dir: &mut Directory, part: &str) -> Option<Directo
 }
 
 /// Open a file component by name using the same silent fallback strategy.
-fn open_file_component(current_dir: &mut Directory, file_name: &str) -> Option<uefi::proto::media::file::RegularFile> {
+fn open_file_component(
+    current_dir: &mut Directory,
+    file_name: &str,
+) -> Option<uefi::proto::media::file::RegularFile> {
     // Build a stack-based UTF-16 path. This avoids allocating via the
     // Rust global allocator / boot::allocate_pool on every call.
     // Each driver name is < 32 chars, so a stack buffer is plenty.
     let mut buf: [u16; 64] = [0; 64];
     let mut i = 0;
     for c in file_name.encode_utf16() {
-        if c > 0x7FFF { return None; } // UCS-2 only
-        if i >= buf.len() - 1 { return None; }
+        if c > 0x7FFF {
+            return None;
+        } // UCS-2 only
+        if i >= buf.len() - 1 {
+            return None;
+        }
         buf[i] = c;
         i += 1;
     }
     buf[i] = 0; // NUL terminator
-    // SAFETY: buf is NUL-terminated and contains only valid UCS-2.
+                // SAFETY: buf is NUL-terminated and contains only valid UCS-2.
     let cfile = unsafe { CStr16::from_u16_with_nul_unchecked(&buf) };
 
     if let Ok(file) = current_dir.open(cfile, FileMode::Read, FileAttribute::empty()) {
@@ -872,7 +1237,7 @@ fn open_esp_file_into(path: &str, dst_buf: &mut [u8]) -> Option<usize> {
                     Ok(n) => n,
                     Err(_) => return None,
                 };
-                uefi::println!("[DBG] open_esp_file_into: read {} bytes from {}", n, path);
+                debug_println!("[DBG] open_esp_file_into: read {} bytes from {}", n, path);
                 return Some(n);
             }
             return None;
@@ -906,7 +1271,7 @@ fn open_system_file_into(path: &str, dst_buf: &mut [u8]) -> Option<usize> {
     // files regardless of whether the partition is also visible
     // as an SFS volume.
     if is_system {
-        uefi::println!(
+        debug_println!(
             "[WINLOAD] System partition is NTFS; routing '{}' directly to NTFS reader",
             path
         );
@@ -914,14 +1279,16 @@ fn open_system_file_into(path: &str, dst_buf: &mut [u8]) -> Option<usize> {
             Some(data) => {
                 let copy_len = core::cmp::min(data.len(), dst_buf.len());
                 dst_buf[..copy_len].copy_from_slice(&data[..copy_len]);
-                uefi::println!(
+                debug_println!(
                     "[DBG] open_system_file_into(NTFS): read {} bytes (truncated to {}) from {}",
-                    data.len(), copy_len, path
+                    data.len(),
+                    copy_len,
+                    path
                 );
                 return Some(copy_len);
             }
             None => {
-                uefi::println!(
+                debug_println!(
                     "[DBG] open_system_file_into(NTFS): NTFS direct read for '{}' failed; trying SFS",
                     path
                 );
@@ -977,7 +1344,11 @@ fn open_system_file_into(path: &str, dst_buf: &mut [u8]) -> Option<usize> {
                     Ok(n) => n,
                     Err(_) => return None,
                 };
-                uefi::println!("[DBG] open_system_file_into: read {} bytes from {}", n, path);
+                debug_println!(
+                    "[DBG] open_system_file_into: read {} bytes from {}",
+                    n,
+                    path
+                );
                 return Some(n);
             }
             return None;
@@ -1025,7 +1396,7 @@ fn open_esp_file_into_fallback(path: &str, dst_buf: &mut [u8]) -> Option<usize> 
         if is_last {
             if let Some(mut f) = open_file_component(&mut current_dir, component_str) {
                 let n = f.read(dst_buf).ok()?;
-                uefi::println!("[DBG] open_esp_file_into: read {} bytes from {}", n, path);
+                debug_println!("[DBG] open_esp_file_into: read {} bytes from {}", n, path);
                 return Some(n);
             }
             return None;
@@ -1079,18 +1450,26 @@ fn parse_pe32plus(image: &[u8]) -> Option<(u64, u64, u64, bool)> {
         return None;
     }
     let image_base = u64::from_le_bytes([
-        image[opt_off + 0x18], image[opt_off + 0x19],
-        image[opt_off + 0x1A], image[opt_off + 0x1B],
-        image[opt_off + 0x1C], image[opt_off + 0x1D],
-        image[opt_off + 0x1E], image[opt_off + 0x1F],
+        image[opt_off + 0x18],
+        image[opt_off + 0x19],
+        image[opt_off + 0x1A],
+        image[opt_off + 0x1B],
+        image[opt_off + 0x1C],
+        image[opt_off + 0x1D],
+        image[opt_off + 0x1E],
+        image[opt_off + 0x1F],
     ]);
     let size_of_image = u32::from_le_bytes([
-        image[opt_off + 0x38], image[opt_off + 0x39],
-        image[opt_off + 0x3A], image[opt_off + 0x3B],
+        image[opt_off + 0x38],
+        image[opt_off + 0x39],
+        image[opt_off + 0x3A],
+        image[opt_off + 0x3B],
     ]) as u64;
     let entry_rva = u32::from_le_bytes([
-        image[opt_off + 0x10], image[opt_off + 0x11],
-        image[opt_off + 0x12], image[opt_off + 0x13],
+        image[opt_off + 0x10],
+        image[opt_off + 0x11],
+        image[opt_off + 0x12],
+        image[opt_off + 0x13],
     ]) as u64;
     Some((image_base, size_of_image, entry_rva, is_dll))
 }
@@ -1104,15 +1483,36 @@ fn copy_pe_sections(image: &[u8], dest: u64) -> usize {
     // COFF header starts at e_lfanew + 4.
     let num_sections_off = e_lfanew + 4 + 2;
     let opt_size_off = e_lfanew + 4 + 16;
-    let num_sections = u16::from_le_bytes([
-        image[num_sections_off], image[num_sections_off + 1],
-    ]) as usize;
-    let opt_size = u16::from_le_bytes([
-        image[opt_size_off], image[opt_size_off + 1],
-    ]);
+    let num_sections =
+        u16::from_le_bytes([image[num_sections_off], image[num_sections_off + 1]]) as usize;
+    let opt_size = u16::from_le_bytes([image[opt_size_off], image[opt_size_off + 1]]);
     let sections_off = opt_off + opt_size as usize;
-    uefi::println!("[C0] opt_off={:#x} opt_size={:#x} sections_off={:#x} num_sections={}", opt_off, opt_size, sections_off, num_sections);
+    debug_println!(
+        "[C0] opt_off={:#x} opt_size={:#x} sections_off={:#x} num_sections={}",
+        opt_off,
+        opt_size,
+        sections_off,
+        num_sections
+    );
     let dest_ptr = dest as *mut u8;
+    // Copy the PE headers into the mapped image. Relocation processing
+    // reads the optional header and relocation directory from the
+    // runtime layout, and a complete image should preserve its headers
+    // just as a real Windows PE loader does.
+    let size_of_headers_off = opt_off + 0x3C;
+    if size_of_headers_off + 4 <= image.len() {
+        let headers_len = u32::from_le_bytes([
+            image[size_of_headers_off],
+            image[size_of_headers_off + 1],
+            image[size_of_headers_off + 2],
+            image[size_of_headers_off + 3],
+        ]) as usize;
+        if headers_len <= image.len() {
+            unsafe {
+                core::ptr::copy_nonoverlapping(image.as_ptr(), dest_ptr, headers_len);
+            }
+        }
+    }
     let mut copied = 0;
     for i in 0..num_sections {
         let sh_off = sections_off + i * 40;
@@ -1120,20 +1520,28 @@ fn copy_pe_sections(image: &[u8], dest: u64) -> usize {
             break;
         }
         let virtual_size = u32::from_le_bytes([
-            image[sh_off + 8], image[sh_off + 9],
-            image[sh_off + 10], image[sh_off + 11],
+            image[sh_off + 8],
+            image[sh_off + 9],
+            image[sh_off + 10],
+            image[sh_off + 11],
         ]);
         let virtual_addr = u32::from_le_bytes([
-            image[sh_off + 12], image[sh_off + 13],
-            image[sh_off + 14], image[sh_off + 15],
+            image[sh_off + 12],
+            image[sh_off + 13],
+            image[sh_off + 14],
+            image[sh_off + 15],
         ]);
         let raw_size = u32::from_le_bytes([
-            image[sh_off + 16], image[sh_off + 17],
-            image[sh_off + 18], image[sh_off + 19],
+            image[sh_off + 16],
+            image[sh_off + 17],
+            image[sh_off + 18],
+            image[sh_off + 19],
         ]);
         let raw_ptr = u32::from_le_bytes([
-            image[sh_off + 20], image[sh_off + 21],
-            image[sh_off + 22], image[sh_off + 23],
+            image[sh_off + 20],
+            image[sh_off + 21],
+            image[sh_off + 22],
+            image[sh_off + 23],
         ]);
         if virtual_size == 0 || raw_size == 0 {
             continue;
@@ -1207,7 +1615,7 @@ const MAX_PE_FILE_SIZE: usize = 8 * 1024 * 1024;
 /// field (IMAGE_FILE_DLL == 0x2000): when set, the image is a
 /// BOOT_START_IMAGE (BOOTVID.DLL, hal.dll, ntdll.dll, ...) that
 /// only exports a symbol surface and has *no* DriverEntry at the
-/// PE's AddressOfEntryPoint — the loader must skip the
+/// PE's AddressOfEntryPoint — the loader must bypass the
 /// DriverEntry call for DLLs or it will jump into whatever bytes
 /// the build tool happened to put at .text RVA 0 (usually the
 /// export-directory header), which on real builds is `00 00 00
@@ -1216,60 +1624,44 @@ const MAX_PE_FILE_SIZE: usize = 8 * 1024 * 1024;
 /// reboots, which is the symptom that prompted this flag.
 #[inline(never)]
 fn read_pe_file_from_disk(path: &str) -> Option<(Vec<u8>, u64, u32, bool)> {
-    uefi::println!("[R0] enter");
+    debug_println!("[R0] enter");
 
-    // The uefi global allocator exhibited flakiness under QEMU
-    // after the first boot::allocate_pages call in earlier
-    // revisions, so we carve the read buffer out of the shared
-    // IMAGE_BUFFER region that was already allocated at startup.
-    const BUFFER_SIZE: usize = 8 * 4096; // 32 KiB = 8 pages
-    let ptr = ensure_image_buffer_chunk(BUFFER_SIZE / 4096)?;
-    uefi::println!("[R1] alloc ok");
-    let buffer = unsafe { core::slice::from_raw_parts_mut(ptr as *mut u8, BUFFER_SIZE) };
-    uefi::println!("[R1.5] buffer ok at {:#x}", ptr);
-
-    let size = match open_system_file_into(path, buffer) {
-        Some(n) => n,
-        None => {
-            uefi::println!("[R2f] open None");
-            return None;
-        }
-    };
-    uefi::println!("[R2] read ok");
-    if size == 0 || size < 0x40 || &buffer[..2] != b"MZ" || size > MAX_PE_FILE_SIZE {
-        uefi::println!("[R2x] bad file");
+    uefi::println!("[WINLOAD] PE read begin {}", path);
+    let raw = open_system_file_data(path)?;
+    let size = raw.len();
+    uefi::println!("[WINLOAD] PE read bytes {} size={}", path, size);
+    debug_println!("[R2] read ok");
+    if size == 0 || size < 0x40 || &raw[..2] != b"MZ" || size > MAX_PE_FILE_SIZE {
+        debug_println!("[R2x] bad file");
         return None;
     }
 
-    uefi::println!("[R3] about to parse");
-    let (_image_base, size_of_image, entry_point, is_dll) = match parse_pe32plus(&buffer[..size]) {
+    // Integrity gate: SHA-256 sidecar, PE CheckSum and the optional
+    // RSA signature are all checked here, before any parsing or
+    // mapping happens.
+    if let Err(err) = crate::verify::verify_image(path, &raw) {
+        debug_println!("[R2v] verify failed: {}", err);
+        uefi::println!("[WINLOAD] {} integrity check failed: {}", path, err);
+        return None;
+    }
+    debug_println!("[R2v] verify ok");
+
+    debug_println!("[R3] about to parse");
+    uefi::println!("[WINLOAD] PE parse begin {}", path);
+    let (_image_base, size_of_image, entry_point, is_dll) = match parse_pe32plus(&raw[..size]) {
         Some(p) => p,
         None => {
-            uefi::println!("[R3f] parse None");
+            debug_println!("[R3f] parse None");
             return None;
         }
     };
-    uefi::println!("[R4] parsed (is_dll={})", is_dll);
+    debug_println!("[R4] parsed (is_dll={})", is_dll);
+    uefi::println!("[WINLOAD] PE parse end {} image={}", path, size_of_image);
     if size_of_image == 0 {
         return None;
     }
 
-    // Build the Vec via a tight loop of push() so we never rely on
-    // the global allocator's memcpy path. Reserve the exact capacity
-    // up front so we have at most one `alloc_pool` call.
-    uefi::println!("[R4b] reserved");
-    let mut v: Vec<u8> = Vec::new();
-    v.reserve(size);
-    let mut i = 0;
-    while i < size {
-        v.push(buffer[i]);
-        i += 1;
-    }
-    uefi::println!("[R5] vec ok");
-    // Emit a vec-drop trace event so the `push_vec_drop` helper is
-    // exercised whenever the loader reads a PE file. The caller
-    // owns the Vec and the trace fires on drop.
-    push_vec_drop(size as u32, v.as_ptr() as u64);
+    let v = raw;
     Some((v, size_of_image, entry_point as u32, is_dll))
 }
 
@@ -1284,12 +1676,13 @@ fn ensure_image_buffer() -> Option<()> {
         let pages = IMAGE_BUFFER_SIZE / 0x1000;
         let ptr = uefi::boot::allocate_pages(
             uefi::boot::AllocateType::AnyPages,
-            uefi::boot::MemoryType::BOOT_SERVICES_DATA,
+            uefi::boot::MemoryType::LOADER_CODE,
             pages,
         )
         .ok()?;
         IMAGE_BUFFER_BASE = ptr.as_ptr() as u64;
         IMAGE_BUFFER_NEXT = IMAGE_BUFFER_BASE;
+        clear_execute_protect(IMAGE_BUFFER_BASE, IMAGE_BUFFER_SIZE as u64);
         Some(())
     }
 }
@@ -1321,29 +1714,48 @@ fn ensure_image_buffer_chunk(pages: usize) -> Option<u64> {
 /// internal System Table pointer). Reserving one contiguous region
 /// at startup keeps every image inside a known, stable address
 /// range that the boot services cannot accidentally re-use.
-const IMAGE_BUFFER_SIZE: usize = 4 * 1024 * 1024; // 4 MiB = 1024 pages (was 2 MiB; BOOTVID.DLL is 13th entry)
+const IMAGE_BUFFER_SIZE: usize = 32 * 1024 * 1024;
 static mut IMAGE_BUFFER_BASE: u64 = 0;
 static mut IMAGE_BUFFER_NEXT: u64 = 0;
 
-fn allocate_and_map_image(
-    image_base: u64,
-    size_of_image: u64,
-    raw_bytes: &[u8],
-) -> Option<u64> {
-    push_page_free(0, 0);
+/// Remove firmware NX protection from a manually loaded image region.
+///
+/// Some AArch64 firmware keeps UEFI allocations non-executable until a
+/// loader explicitly clears `EXECUTE_PROTECT`. Calling this helper after
+/// allocation makes the behavior deterministic on protected firmware while
+/// remaining harmless on firmware that already maps code pages executable.
+fn clear_execute_protect(base: u64, size: u64) {
+    if base == 0 || size == 0 {
+        return;
+    }
+
+    let Ok(handle) = uefi::boot::get_handle_for_protocol::<MemoryProtection>() else {
+        return;
+    };
+    let Ok(mut protocol) = uefi::boot::open_protocol_exclusive::<MemoryProtection>(handle) else {
+        return;
+    };
+
+    if let Some(protection) = protocol.get_mut() {
+        let region = base..base.checked_add(size).unwrap_or(u64::MAX);
+        let _ = protection.clear_memory_attributes(region, MemoryAttribute::EXECUTE_PROTECT);
+    }
+}
+
+fn allocate_and_map_image(image_base: u64, size_of_image: u64, raw_bytes: &[u8]) -> Option<u64> {
     if size_of_image == 0 {
         return None;
     }
     let pages = ((size_of_image + 0xFFF) / 0x1000) as usize;
     let dest_addr = ensure_image_buffer_chunk(pages)?;
-    uefi::println!("[A2] alloc ok at {:#x}", dest_addr);
+    debug_println!("[A2] alloc ok at {:#x}", dest_addr);
 
     // Zero the destination first so any padding between sections
     // is deterministic.
     unsafe {
         core::ptr::write_bytes(dest_addr as *mut u8, 0u8, pages * 0x1000);
     }
-    uefi::println!("[A3] zero ok");
+    debug_println!("[A3] zero ok");
 
     // Copy each section into its virtual address.
     let copied = copy_pe_sections(raw_bytes, dest_addr);
@@ -1354,39 +1766,61 @@ fn allocate_and_map_image(
     Some(dest_addr)
 }
 
+/// Parse the just-copied image, log its section permission layout and
+/// apply per-section EXECUTE_PROTECT / READ_ONLY through the UEFI
+/// Memory Attribute protocol. Must run *after* relocations have been
+/// applied so relocation writes to read-only sections are not blocked.
+fn finalize_image_protection(path: &str, load_addr: u64, raw: &[u8]) {
+    if let Some(info) = crate::pe::parse_image_layout(raw) {
+        crate::pe::log_image_layout(path, &info);
+        crate::pe::apply_section_permissions(load_addr, &info);
+    }
+}
+
 /// Apply base relocations in-place: when the image was loaded at a
 /// different address than its preferred base, every absolute pointer
 /// in the image needs to be biased by the slide delta.
-fn apply_relocations_in_place(raw_bytes: &[u8], load_addr: u64) -> usize {
-    // The optional header magic lives at opt_off = e_lfanew + 4 + 20.
-    // Without a length check first, a malformed PE would let us
-    // index past the file buffer entirely.
-    if raw_bytes.len() < 64 {
+fn apply_relocations_in_place(load_addr: u64, mapped_size: u64) -> usize {
+    // Relocations operate on the mapped image, not on the on-disk file.
+    // A PE's relocation directory is described by RVA, while the raw
+    // file uses section alignment; translating those RVAs separately
+    // for every section is both fragile and unnecessary once the image
+    // has been copied to its runtime layout.
+    let mapped_bytes = unsafe {
+        core::slice::from_raw_parts_mut(
+            load_addr as *mut u8,
+            usize::try_from(mapped_size).unwrap_or(0),
+        )
+    };
+    if mapped_size < 64 {
         return 0;
     }
-    let dos = raw_bytes.as_ptr() as *const DosHeader;
+    let dos = mapped_bytes.as_ptr() as *const DosHeader;
     let e_lfanew = unsafe { (*dos).e_lfanew } as usize;
-    if e_lfanew + 4 + 20 + 2 > raw_bytes.len() {
+    if e_lfanew + 4 + 20 + 2 > mapped_bytes.len() {
         return 0;
     }
     let opt_off = e_lfanew + 4 + 20;
 
     // Find the original image base from the optional header.
-    let opt_magic = u16::from_le_bytes([
-        raw_bytes[opt_off],
-        raw_bytes[opt_off + 1],
-    ]);
+    let opt_magic = u16::from_le_bytes([mapped_bytes[opt_off], mapped_bytes[opt_off + 1]]);
     let orig_base: u64 = if opt_magic == 0x20B {
         u64::from_le_bytes([
-            raw_bytes[opt_off + 0x18], raw_bytes[opt_off + 0x19],
-            raw_bytes[opt_off + 0x1A], raw_bytes[opt_off + 0x1B],
-            raw_bytes[opt_off + 0x1C], raw_bytes[opt_off + 0x1D],
-            raw_bytes[opt_off + 0x1E], raw_bytes[opt_off + 0x1F],
+            mapped_bytes[opt_off + 0x18],
+            mapped_bytes[opt_off + 0x19],
+            mapped_bytes[opt_off + 0x1A],
+            mapped_bytes[opt_off + 0x1B],
+            mapped_bytes[opt_off + 0x1C],
+            mapped_bytes[opt_off + 0x1D],
+            mapped_bytes[opt_off + 0x1E],
+            mapped_bytes[opt_off + 0x1F],
         ])
     } else if opt_magic == 0x10B {
         u32::from_le_bytes([
-            raw_bytes[opt_off + 0x1C], raw_bytes[opt_off + 0x1D],
-            raw_bytes[opt_off + 0x1E], raw_bytes[opt_off + 0x1F],
+            mapped_bytes[opt_off + 0x1C],
+            mapped_bytes[opt_off + 0x1D],
+            mapped_bytes[opt_off + 0x1E],
+            mapped_bytes[opt_off + 0x1F],
         ]) as u64
     } else {
         return 0;
@@ -1400,24 +1834,32 @@ fn apply_relocations_in_place(raw_bytes: &[u8], load_addr: u64) -> usize {
     // Walk the .reloc data directory.
     let reloc_rva: u32 = if opt_magic == 0x20B {
         u32::from_le_bytes([
-            raw_bytes[opt_off + 0x98], raw_bytes[opt_off + 0x99],
-            raw_bytes[opt_off + 0x9A], raw_bytes[opt_off + 0x9B],
+            mapped_bytes[opt_off + 0x98],
+            mapped_bytes[opt_off + 0x99],
+            mapped_bytes[opt_off + 0x9A],
+            mapped_bytes[opt_off + 0x9B],
         ])
     } else {
         u32::from_le_bytes([
-            raw_bytes[opt_off + 0x88], raw_bytes[opt_off + 0x89],
-            raw_bytes[opt_off + 0x8A], raw_bytes[opt_off + 0x8B],
+            mapped_bytes[opt_off + 0x88],
+            mapped_bytes[opt_off + 0x89],
+            mapped_bytes[opt_off + 0x8A],
+            mapped_bytes[opt_off + 0x8B],
         ])
     };
     let reloc_size: u32 = if opt_magic == 0x20B {
         u32::from_le_bytes([
-            raw_bytes[opt_off + 0x9C], raw_bytes[opt_off + 0x9D],
-            raw_bytes[opt_off + 0x9E], raw_bytes[opt_off + 0x9F],
+            mapped_bytes[opt_off + 0x9C],
+            mapped_bytes[opt_off + 0x9D],
+            mapped_bytes[opt_off + 0x9E],
+            mapped_bytes[opt_off + 0x9F],
         ])
     } else {
         u32::from_le_bytes([
-            raw_bytes[opt_off + 0x8C], raw_bytes[opt_off + 0x8D],
-            raw_bytes[opt_off + 0x8E], raw_bytes[opt_off + 0x8F],
+            mapped_bytes[opt_off + 0x8C],
+            mapped_bytes[opt_off + 0x8D],
+            mapped_bytes[opt_off + 0x8E],
+            mapped_bytes[opt_off + 0x8F],
         ])
     };
     if reloc_rva == 0 || reloc_size == 0 {
@@ -1430,7 +1872,10 @@ fn apply_relocations_in_place(raw_bytes: &[u8], load_addr: u64) -> usize {
     // using a junk delta.
     let reloc_rva_us = reloc_rva as usize;
     let reloc_size_us = reloc_size as usize;
-    if reloc_rva_us.checked_add(reloc_size_us).map_or(true, |e| e > raw_bytes.len()) {
+    if reloc_rva_us
+        .checked_add(reloc_size_us)
+        .map_or(true, |e| e > mapped_bytes.len())
+    {
         return 0;
     }
 
@@ -1439,16 +1884,16 @@ fn apply_relocations_in_place(raw_bytes: &[u8], load_addr: u64) -> usize {
     let mut count: usize = 0;
     while off + 8 <= reloc_size_us {
         let page_rva = u32::from_le_bytes([
-            raw_bytes[(reloc_rva as usize) + off],
-            raw_bytes[(reloc_rva as usize) + off + 1],
-            raw_bytes[(reloc_rva as usize) + off + 2],
-            raw_bytes[(reloc_rva as usize) + off + 3],
+            mapped_bytes[reloc_rva_us + off],
+            mapped_bytes[reloc_rva_us + off + 1],
+            mapped_bytes[reloc_rva_us + off + 2],
+            mapped_bytes[reloc_rva_us + off + 3],
         ]) as usize;
         let block_size = u32::from_le_bytes([
-            raw_bytes[(reloc_rva as usize) + off + 4],
-            raw_bytes[(reloc_rva as usize) + off + 5],
-            raw_bytes[(reloc_rva as usize) + off + 6],
-            raw_bytes[(reloc_rva as usize) + off + 7],
+            mapped_bytes[reloc_rva_us + off + 4],
+            mapped_bytes[reloc_rva_us + off + 5],
+            mapped_bytes[reloc_rva_us + off + 6],
+            mapped_bytes[reloc_rva_us + off + 7],
         ]) as usize;
         if block_size < 8 || off + block_size > reloc_size_us {
             break;
@@ -1458,8 +1903,8 @@ fn apply_relocations_in_place(raw_bytes: &[u8], load_addr: u64) -> usize {
         while i < entries {
             let eo = off + 8 + i * 2;
             let entry = u16::from_le_bytes([
-                raw_bytes[(reloc_rva as usize) + eo],
-                raw_bytes[(reloc_rva as usize) + eo + 1],
+                mapped_bytes[reloc_rva_us + eo],
+                mapped_bytes[reloc_rva_us + eo + 1],
             ]);
             let typ = entry >> 12;
             let ofs = (entry & 0x0FFF) as usize;
@@ -1467,13 +1912,15 @@ fn apply_relocations_in_place(raw_bytes: &[u8], load_addr: u64) -> usize {
             unsafe {
                 match typ {
                     0 => {} // IMAGE_REL_BASED_ABSOLUTE
-                    3 => { // HIGHLOW (PE32)
+                    3 => {
+                        // HIGHLOW (PE32)
                         let p = base.add(target) as *mut u32;
                         let v = core::ptr::read_unaligned(p);
                         core::ptr::write_unaligned(p, v.wrapping_add(delta as i32 as u32));
                         count += 1;
                     }
-                    10 => { // DIR64 (PE32+)
+                    10 => {
+                        // DIR64 (PE32+)
                         let p = base.add(target) as *mut u64;
                         let v = core::ptr::read_unaligned(p);
                         core::ptr::write_unaligned(p, v.wrapping_add(delta as u64));
@@ -1488,243 +1935,6 @@ fn apply_relocations_in_place(raw_bytes: &[u8], load_addr: u64) -> usize {
     }
     count
 }
-
-/// Walk the import directory and patch the IAT in-place with
-/// resolved addresses looked up in `image_db`. Returns the number
-/// of imports resolved.
-fn resolve_imports_in_place(
-    raw_bytes: &[u8],
-    load_addr: u64,
-    image_db: &mut loader::ImageDatabase,
-) -> usize {
-    let dos = raw_bytes.as_ptr() as *const DosHeader;
-    let e_lfanew = unsafe { (*dos).e_lfanew } as usize;
-    let opt_off = e_lfanew + 4 + 20;
-    let opt_magic = u16::from_le_bytes([
-        raw_bytes[opt_off],
-        raw_bytes[opt_off + 1],
-    ]);
-    let import_rva: u32 = if opt_magic == 0x20B {
-        u32::from_le_bytes([
-            raw_bytes[opt_off + 0x90], raw_bytes[opt_off + 0x91],
-            raw_bytes[opt_off + 0x92], raw_bytes[opt_off + 0x93],
-        ])
-    } else {
-        u32::from_le_bytes([
-            raw_bytes[opt_off + 0x80], raw_bytes[opt_off + 0x81],
-            raw_bytes[opt_off + 0x82], raw_bytes[opt_off + 0x83],
-        ])
-    };
-    if import_rva == 0 {
-        return 0;
-    }
-    let mut count = 0usize;
-    let base = load_addr as *mut u8;
-    let mut desc_off = import_rva as usize;
-    loop {
-        // IMAGE_IMPORT_DESCRIPTOR (20 bytes): orig_first_thunk,
-        // time_date_stamp, forwarder_chain, name (RVA),
-        // first_thunk (RVA).
-        let lo = u32::from_le_bytes([
-            raw_bytes[desc_off],
-            raw_bytes[desc_off + 1],
-            raw_bytes[desc_off + 2],
-            raw_bytes[desc_off + 3],
-        ]);
-        let name_rva = u32::from_le_bytes([
-            raw_bytes[desc_off + 12],
-            raw_bytes[desc_off + 13],
-            raw_bytes[desc_off + 14],
-            raw_bytes[desc_off + 15],
-        ]);
-        let ft_rva = u32::from_le_bytes([
-            raw_bytes[desc_off + 16],
-            raw_bytes[desc_off + 17],
-            raw_bytes[desc_off + 18],
-            raw_bytes[desc_off + 19],
-        ]);
-        if lo == 0 && name_rva == 0 && ft_rva == 0 {
-            break;
-        }
-        // Read DLL name (null-terminated ASCII).
-        let mut dll_name = [0u8; 64];
-        let mut k = 0usize;
-        while k < dll_name.len() {
-            let b = raw_bytes[(name_rva as usize) + k];
-            if b == 0 { break; }
-            dll_name[k] = b;
-            k += 1;
-        }
-        let dll_str = match core::str::from_utf8(&dll_name[..k]) {
-            Ok(s) => s,
-            Err(_) => { desc_off += 20; continue; }
-        };
-
-        // Walk the IAT entries.
-        let mut iat_off = ft_rva as usize;
-        loop {
-            let ent = u64::from_le_bytes([
-                raw_bytes[iat_off],
-                raw_bytes[iat_off + 1],
-                raw_bytes[iat_off + 2],
-                raw_bytes[iat_off + 3],
-                raw_bytes[iat_off + 4],
-                raw_bytes[iat_off + 5],
-                raw_bytes[iat_off + 6],
-                raw_bytes[iat_off + 7],
-            ]);
-            if ent == 0 { break; }
-
-            // If bit 63 is set, this is an ordinal import — we
-            // can't resolve those without the real loader.
-            let is_ordinal = (ent >> 63) & 1 == 1;
-            if is_ordinal {
-                // Leave a sentinel (0) so the caller can detect.
-                unsafe {
-                    let p = base.add(iat_off) as *mut u64;
-                    core::ptr::write_unaligned(p, 0);
-                }
-                iat_off += 8;
-                continue;
-            }
-
-            // Read the import name from the hint/name entry
-            // (RVA, two-byte hint, ASCII name, NUL).
-            let hint_rva = ent as u32 as usize;
-            if hint_rva + 2 > raw_bytes.len() { break; }
-            let mut fn_name = [0u8; 128];
-            let mut m = 0usize;
-            while m < fn_name.len() {
-                let b = raw_bytes[hint_rva + 2 + m];
-                if b == 0 { break; }
-                fn_name[m] = b;
-                m += 1;
-            }
-            let fn_str = core::str::from_utf8(&fn_name[..m]).unwrap_or("");
-
-            // Look up the symbol in the database.
-            let resolved = image_db.lookup(dll_str, fn_str).unwrap_or(0);
-            unsafe {
-                let p = base.add(iat_off) as *mut u64;
-                core::ptr::write_unaligned(p, resolved);
-            }
-            count += 1;
-            iat_off += 8;
-        }
-        desc_off += 20;
-    }
-    count
-}
-
-/// Load a system PE image from disk into a runtime memory region
-/// and register it in `image_db`. The caller passes the image name
-/// for logging and the database to register against.
-fn load_system_image(
-    path: &str,
-    image_db: &mut loader::ImageDatabase,
-) -> Result<(u64, u64, u64), LoaderError> {
-    let _ = image_db;
-    // 1. Read the PE file into a temporary buffer.
-    let (raw, size_of_image, _entry_rva, _is_dll) =
-        read_pe_file_from_disk(path).ok_or(LoaderError::FileNotFound)?;
-
-    // 2. Parse PE metadata.
-    let (image_base, _, _, _) = parse_pe32plus(&raw).ok_or(LoaderError::PeParseFailed)?;
-    if size_of_image == 0 {
-        return Err(LoaderError::PeParseFailed);
-    }
-
-    // 3. Allocate runtime memory and copy the sections.
-    let load_addr = allocate_and_map_image(image_base, size_of_image, &raw)
-        .ok_or(LoaderError::MemoryAllocationFailed)?;
-
-    // 4. Apply base relocations if we landed at a different address
-    //    than the preferred base.
-    let reloc_count = apply_relocations_in_place(&raw, load_addr);
-
-    // 5. Register the image in the database *before* resolving
-    //    imports so cross-DLL lookups work (ntoskrnl.exe can find
-    //    hal.dll exports when its IAT is patched).
-    let loaded = loader::load_image_full(path, &raw, image_db, load_addr)
-        .ok_or(LoaderError::PeParseFailed)?;
-    let entry_point = loaded.entry_point;
-    let size_of_image_loaded = loaded.image_size;
-    drop(loaded);
-
-    // 6. Resolve the import table against the database. Because we
-    //    always load hal.dll before ntoskrnl.exe, ntoskrnl's HAL
-    //    imports get real addresses.
-    let imports_resolved = resolve_imports_in_place(&raw, load_addr, image_db);
-
-    uefi::println!(
-        "[LOAD] {}: loaded at 0x{:016x} size=0x{:x} relocs={} imports={}",
-        path, load_addr, size_of_image_loaded, reloc_count, imports_resolved
-    );
-    Ok((load_addr, size_of_image_loaded, entry_point))
-}
-
-fn load_ntoskrnl(image_db: &mut loader::ImageDatabase) -> Result<(u64, u64), LoaderError> {
-    let ntoskrnl_path = "\\Windows\\System32\\ntoskrnl.exe";
-    uefi::println!("[LOAD] Loading ntoskrnl");
-    // Delegate to `load_system_image` so the unified loader entry
-    // point stays "live" and the import-resolution path is exercised
-    // for the kernel image.
-    let (load_addr, size_of_image, _entry_point) =
-        load_system_image(ntoskrnl_path, image_db)?;
-    uefi::println!("[LOAD] load ok");
-    let _ = load_addr;
-    let _ = size_of_image;
-    Ok((load_addr, size_of_image))
-}
-
-// =====================================================================
-// Phase 2 — Load hal.dll
-// =====================================================================
-//
-// On real hardware winload reads the on-disk hal.dll, parses
-// the PE header, allocates pages, and copies the sections. The
-// resulting image is then registered in the loader's in-memory
-// image database so that ntoskrnl.exe's import table (and any
-// driver that imports hal.dll) can resolve its symbols through
-// `loader::ImageDatabase::lookup`.
-//
-// On the OVMF QEMU target used in CI we currently cannot read
-// files from the ESP, so the on-disk path returns `None`. We
-// keep the in-memory database hook intact so that once a real
-// file-read implementation lands, hal.dll is registered
-// automatically.
-
-#[inline(never)]
-fn load_hal(image_db: &mut loader::ImageDatabase) -> Result<(), LoaderError> {
-    push_open("\\Windows\\System32\\hal.dll");
-    let hal_path = "\\Windows\\System32\\hal.dll";
-    uefi::println!("[LOAD] Loading hal.dll");
-
-    let (raw, size_of_image, entry_point, _is_dll) =
-        read_pe_file_from_disk(hal_path)
-            .ok_or(LoaderError::FileNotFound)?;
-    uefi::println!("[LOAD] read ok");
-
-    let (image_base, _, _, _) = parse_pe32plus(&raw).ok_or(LoaderError::PeParseFailed)?;
-
-    let load_addr = allocate_and_map_image(image_base, size_of_image, &raw)
-        .ok_or(LoaderError::MemoryAllocationFailed)?;
-    uefi::println!("[LOAD] load ok");
-
-    // Apply base relocations if we were loaded at a different
-    // address than the preferred base. The kernel imports HAL
-    // symbols with absolute pointers, so a slide here is fatal
-    // (every hal!HalRequestIpi / HalInitializeProcessor call would
-    // branch into the void).
-    let relocs = apply_relocations_in_place(&raw, load_addr);
-    uefi::println!("[LOAD] hal.dll: applied {} base relocations", relocs);
-
-    let _ = entry_point;
-    let _ = image_db;
-    Ok(())
-}
-
-// (placeholder — the real duplicate function was renamed; see above)
 
 // =====================================================================
 // Phase 3 — Load SYSTEM registry hive
@@ -1741,9 +1951,10 @@ fn load_hal(image_db: &mut loader::ImageDatabase) -> Result<(), LoaderError> {
 // `system_image::build_hives` on the host side. The detailed
 // implementation is in `build_loaded_hive_list` below.
 fn load_system_hive() {
-    push_pool_alloc(0, 0);
-    uefi::println!("[LOAD] Phase 3: SYSTEM hive loading is performed in Phase 8 (build_loaded_hive_list)");
-    uefi::println!("[LOAD] Phase 3: reserve hive region + read each hive from disk");
+    debug_println!(
+        "[LOAD] Phase 3: SYSTEM hive loading is performed in Phase 8 (build_loaded_hive_list)"
+    );
+    debug_println!("[LOAD] Phase 3: reserve hive region + read each hive from disk");
     // Allocate the boot-service-data region that will hold the
     // raw hive bytes plus the records array. This must happen
     // before Phase 8 reads the individual hive files.
@@ -1776,24 +1987,26 @@ fn load_system_hive() {
 // print `[NTOSKRNL-HOST] K03: no on-disk ntoskrnl image in BootInfo`
 // and the boot halts in `jump_to_ntoskrnl_kisystemstartup`. There is
 // no in-binary fallback (the `system_image` pipeline is gone).
-fn load_kernel_images() -> (u64, u64, u64, u64) {
+fn load_kernel_images() -> (u64, u64, u64, u64, u64) {
     // (ntoskrnl_base, ntoskrnl_size, hal_base, hal_size)
-    uefi::println!("[WINLOAD] L03: loading ntoskrnl.exe + hal.dll from NTFS system partition");
+    debug_println!("[WINLOAD] L03: loading ntoskrnl.exe + hal.dll from NTFS system partition");
     let mut ntoskrnl_base: u64 = 0;
     let mut ntoskrnl_size: u64 = 0;
     let mut hal_base: u64 = 0;
     let mut hal_size: u64 = 0;
+    let mut kernel_entry_rva: u64 = 0;
 
     for path in &KERNEL_IMAGE_PATHS {
-        let (raw, size_of_image, _ep, _is_dll) = match read_pe_file_from_disk(path) {
+        let (raw, size_of_image, entry_point_rva, _is_dll) = match read_pe_file_from_disk(path) {
             Some(t) => t,
             None => {
-                uefi::println!("[WINLOAD] L03: {} not found on NTFS system partition", path);
+                debug_println!("[WINLOAD] L03: {} not found on NTFS system partition", path);
                 continue;
             }
         };
+        uefi::println!("[WINLOAD] driver read returned {}", path);
         if size_of_image == 0 || raw.len() < 0x40 || &raw[..2] != b"MZ" {
-            uefi::println!("[WINLOAD] L03: {}: empty or not a PE", path);
+            debug_println!("[WINLOAD] L03: {}: empty or not a PE", path);
             continue;
         }
         // allocate_and_map_image returns the runtime base inside
@@ -1801,24 +2014,29 @@ fn load_kernel_images() -> (u64, u64, u64, u64) {
         let dest = match allocate_and_map_image(0, size_of_image, &raw) {
             Some(p) => p,
             None => {
-                uefi::println!("[WINLOAD] L03: {}: allocate_and_map_image failed", path);
+                debug_println!("[WINLOAD] L03: {}: allocate_and_map_image failed", path);
                 continue;
             }
         };
-        let _ = apply_relocations_in_place(&raw, dest);
+        let _ = apply_relocations_in_place(dest, size_of_image);
+        finalize_image_protection(*path, dest, &raw);
         if path.ends_with("ntoskrnl.exe") {
             ntoskrnl_base = dest;
             ntoskrnl_size = size_of_image;
-            uefi::println!(
+            kernel_entry_rva = entry_point_rva as u64;
+            debug_println!(
                 "[WINLOAD] L03: ntoskrnl.exe loaded at 0x{:x} size={} entry=0x{:x}",
-                dest, size_of_image, _ep
+                dest,
+                size_of_image,
+                entry_point_rva
             );
         } else if path.ends_with("hal.dll") {
             hal_base = dest;
             hal_size = size_of_image;
-            uefi::println!(
-                "[WINLOAD] L03: hal.dll loaded at 0x{:x} size={} exports=stub",
-                dest, size_of_image
+            debug_println!(
+                "[WINLOAD] L03: hal.dll loaded at 0x{:x} size={} exports=real",
+                dest,
+                size_of_image
             );
         }
     }
@@ -1833,7 +2051,13 @@ fn load_kernel_images() -> (u64, u64, u64, u64) {
         bi.hal_image_base = hal_base;
         bi.hal_image_size = hal_size;
     }
-    (ntoskrnl_base, ntoskrnl_size, hal_base, hal_size)
+    (
+        ntoskrnl_base,
+        ntoskrnl_size,
+        hal_base,
+        hal_size,
+        kernel_entry_rva,
+    )
 }
 
 /// Look up the BOOTVID.DLL slot from `PERSISTENT.boot_drivers[]` and
@@ -1851,12 +2075,13 @@ fn publish_bootvid_into_boot_info() {
         if rec.loaded {
             bi.bootvid_image_base = rec.base;
             bi.bootvid_image_size = rec.size;
-            uefi::println!(
+            debug_println!(
                 "[WINLOAD] L05: BOOTVID.DLL @ 0x{:x} size={} (from PERSISTENT)",
-                rec.base, rec.size
+                rec.base,
+                rec.size
             );
         } else {
-            uefi::println!("[WINLOAD] L05: BOOTVID.DLL not loaded; bootvid_image_base=0");
+            debug_println!("[WINLOAD] L05: BOOTVID.DLL not loaded; bootvid_image_base=0");
         }
     }
 }
@@ -1879,8 +2104,7 @@ fn publish_bootvid_into_boot_info() {
 
 #[inline(never)]
 fn load_boot_drivers() {
-    uefi::println!("[LOAD] Phase 4: loading BOOT_START drivers");
-    push_log("WL:drv#");
+    debug_println!("[LOAD] Phase 4: loading BOOT_START drivers");
     let count_total = BOOT_DRIVER_PATHS.len();
     let mut loaded_count: u32 = 0;
     let mut any_failure: bool = false;
@@ -1888,31 +2112,33 @@ fn load_boot_drivers() {
     let pd = unsafe { &mut *core::ptr::addr_of_mut!(PERSISTENT) };
 
     for (i, path) in BOOT_DRIVER_PATHS.iter().enumerate() {
-        if i >= MAX_BOOT_DRIVERS { break; }
+        if i >= MAX_BOOT_DRIVERS {
+            break;
+        }
 
-        // Step 1: Read the driver PE file into a Vec.
-        // read_pe_file_from_disk already parses the PE, so the
-        // returned size_of_image is authoritative. The 4th tuple
-        // element is the IMAGE_FILE_DLL flag: when set we treat the
-        // image as a BOOT_START_IMAGE (no DriverEntry, exports only)
-        // and skip the DriverEntry call below.
-        let (raw, size_of_image, _ep, is_dll) = match read_pe_file_from_disk(path) {
+        uefi::println!(
+            "[WINLOAD] load driver {}/{}: {}",
+            i + 1,
+            BOOT_DRIVER_PATHS.len(),
+            path
+        );
+        let (raw, size_of_image, entry_point_rva, _is_dll) = match read_pe_file_from_disk(path) {
             Some(t) => t,
             None => {
-                uefi::println!("[WARN] boot driver {}: file missing or read failed", path);
+                debug_println!("[WARN] boot driver {}: file missing or read failed", path);
                 any_failure = true;
                 continue;
             }
         };
 
         if raw.len() < 0x40 || &raw[0..2] != b"MZ" {
-            uefi::println!("[WARN] boot driver {}: file empty or not PE", path);
+            debug_println!("[WARN] boot driver {}: file empty or not PE", path);
             any_failure = true;
             continue;
         }
 
         if size_of_image == 0 {
-            uefi::println!("[WARN] boot driver {}: size_of_image == 0", path);
+            debug_println!("[WARN] boot driver {}: size_of_image == 0", path);
             any_failure = true;
             continue;
         }
@@ -1920,8 +2146,11 @@ fn load_boot_drivers() {
         // Step 2: Allocate via the shared IMAGE_BUFFER.
         // image_base is not used by allocate_and_map_image (it always
         // serves the IMAGE_BUFFER region), so we pass 0.
+        uefi::println!("[WINLOAD] driver map begin {}", path);
         if let Some(dest_addr) = allocate_and_map_image(0, size_of_image, &raw) {
-            let relocs = apply_relocations_in_place(&raw, dest_addr);
+            uefi::println!("[WINLOAD] driver map end {}", path);
+            let relocs = apply_relocations_in_place(dest_addr, size_of_image);
+            finalize_image_protection(*path, dest_addr, &raw);
             // Manual byte-by-byte copy that does NOT go through
             // `copy_from_slice`. We've observed #GP crashes in the
             // generic memmove path when both the source and
@@ -1949,9 +2178,12 @@ fn load_boot_drivers() {
             rec.loaded = true;
             rec.base = dest_addr;
             rec.size = size_of_image;
-            uefi::println!(
+            debug_println!(
                 "[LOAD] boot driver {}: base=0x{:016x} size=0x{:x} relocs={}",
-                path, dest_addr, size_of_image, relocs
+                path,
+                dest_addr,
+                size_of_image,
+                relocs
             );
             let driver_basename: &str = match path.rfind('\\') {
                 Some(idx) => &path[idx + 1..],
@@ -1975,10 +2207,12 @@ fn load_boot_drivers() {
                 .map(|ext| ext.eq_ignore_ascii_case("dll"))
                 .unwrap_or(false);
             if is_dll_image {
-                uefi::println!(
+                debug_println!(
                     "[LOAD] BOOT_START_IMAGE: {} -> loaded at 0x{:016x} size=0x{:x} \
                      (no DriverEntry, exports only)",
-                    driver_basename, dest_addr, size_of_image
+                    driver_basename,
+                    dest_addr,
+                    size_of_image
                 );
                 rec.base = dest_addr;
                 rec.size = size_of_image;
@@ -1992,7 +2226,7 @@ fn load_boot_drivers() {
             // Report the DriverEntry return value (STATUS_SUCCESS = 0)
             // so the operator can see the driver registration was
             // effective.
-            let entry_addr: u64 = dest_addr + 0x1000;
+            let entry_addr: u64 = dest_addr + entry_point_rva as u64;
 
             // ------------------------------------------------------------------
             // Real DriverEntry invocation.
@@ -2013,13 +2247,11 @@ fn load_boot_drivers() {
             // ------------------------------------------------------------------
             // SAFETY: We only call this on the BSP during boot; the
             // returned NTSTATUS is in `rax` immediately after the call.
-            let driver_object_buf: *mut u8 = match uefi::boot::allocate_pool(
-                uefi::boot::MemoryType::LOADER_DATA,
-                0x100,
-            ) {
-                Ok(p) => p.as_ptr(),
-                Err(_) => core::ptr::null_mut(),
-            };
+            let driver_object_buf: *mut u8 =
+                match uefi::boot::allocate_pool(uefi::boot::MemoryType::LOADER_DATA, 0x100) {
+                    Ok(p) => p.as_ptr(),
+                    Err(_) => core::ptr::null_mut(),
+                };
             let mut driver_entry_status: i32 = 0xC000_0001u32 as i32; // STATUS_UNSUCCESSFUL
             let mut mj_create_written: bool = false;
             let mut unload_written: bool = false;
@@ -2027,7 +2259,9 @@ fn load_boot_drivers() {
                 // Zero out the DriverObject (0x100 bytes covers the
                 // full layout incl. the MajorFunction[] tail).
                 for k in 0..0x100usize {
-                    unsafe { core::ptr::write_volatile(driver_object_buf.add(k), 0u8); }
+                    unsafe {
+                        core::ptr::write_volatile(driver_object_buf.add(k), 0u8);
+                    }
                 }
                 // Build the registry path: \\Registry\\Machine\\System\\
                 //   CurrentControlSet\\Services\\<basename>
@@ -2041,7 +2275,9 @@ fn load_boot_drivers() {
                     idx += 1;
                 }
                 for &b in driver_basename.as_bytes() {
-                    if idx >= reg_path_utf16.len() - 1 { break; }
+                    if idx >= reg_path_utf16.len() - 1 {
+                        break;
+                    }
                     reg_path_utf16[idx] = b as u16;
                     idx += 1;
                 }
@@ -2053,21 +2289,21 @@ fn load_boot_drivers() {
                 // wrapper (the stub bodies don't dereference the
                 // Length/MaximumLength fields).
                 unsafe {
-                    let f: extern "win64" fn(*mut u8, *const u16) -> i32 =
+                    let f: extern "C" fn(*mut u8, *const u16) -> i32 =
                         core::mem::transmute(entry_addr as *const ());
                     driver_entry_status = f(driver_object_buf, reg_path_utf16.as_ptr());
                 }
 
                 // The driver body writes MajorFunction[IRP_MJ_CREATE]
-                // (offset 0x40) and DriverUnload (offset 0x28) into
-                // the DriverObject. We check whether the writes
-                // actually happened.
+                // and DriverUnload into the DriverObject using the
+                // kernel's actual layout. We check whether the writes
+                // happened before continuing the boot chain.
                 mj_create_written = unsafe {
-                    let p = driver_object_buf.add(0x40) as *const u64;
+                    let p = driver_object_buf.add(0x60) as *const u64;
                     core::ptr::read_volatile(p) != 0
                 };
                 unload_written = unsafe {
-                    let p = driver_object_buf.add(0x28) as *const u64;
+                    let p = driver_object_buf.add(0x58) as *const u64;
                     core::ptr::read_volatile(p) != 0
                 };
                 // Free the DriverObject allocation - the driver
@@ -2080,7 +2316,7 @@ fn load_boot_drivers() {
                 }
             }
 
-            uefi::println!(
+            debug_println!(
                 "[WINLOAD] step: DriverEntry for {} -> NTSTATUS=0x{:x} (entry=0x{:x})",
                 path,
                 driver_entry_status as u32,
@@ -2098,44 +2334,45 @@ fn load_boot_drivers() {
                 // Map each driver to its intended target device name
                 // (per `nt61-multi-fs-fallback-strategy` plan).
                 let target_device = match driver_basename {
-                    "disk.sys"      => "\\Device\\Harddisk0",
-                    "partmgr.sys"   => "\\Device\\Partition0",
-                    "volmgr.sys"    => "\\Device\\VolumeManager",
-                    "pci.sys"       => "\\Device\\Pci",
-                    "acpi.sys"      => "\\Device\\ACPI_HAL",
-                    "mssmbios.sys"  => "\\Device\\Mssmbios",
-                    "hpet.sys"      => "\\Device\\Hpet",
+                    "disk.sys" => "\\Device\\Harddisk0",
+                    "partmgr.sys" => "\\Device\\Partition0",
+                    "volmgr.sys" => "\\Device\\VolumeManager",
+                    "pci.sys" => "\\Device\\Pci",
+                    "acpi.sys" => "\\Device\\ACPI_HAL",
+                    "mssmbios.sys" => "\\Device\\Mssmbios",
+                    "hpet.sys" => "\\Device\\Hpet",
                     _ => "(none — class/bus driver)",
                 };
-                uefi::println!(
+                debug_println!(
                     "[DRIVER] {}: DriverEntry at 0x{:x} -> STATUS_SUCCESS, target={}",
                     path,
                     entry_addr,
                     target_device
                 );
             } else {
-                uefi::println!(
+                debug_println!(
                     "[DRIVER] {}: DriverEntry did not populate dispatch table (mj_create={}, unload={})",
                     path, mj_create_written, unload_written
                 );
             }
-            uefi::println!(
+            debug_println!(
                 "[WINLOAD] step: DriverObject registered: {:<30} @ 0x{:016x} size=0x{:x} entry=0x{:x} status=0x{:x}",
                 driver_basename, dest_addr, size_of_image, entry_addr, driver_entry_status as u32
             );
             loaded_count += 1;
         } else {
-            uefi::println!("[WARN] boot driver {}: image allocate failed", path);
+            debug_println!("[WARN] boot driver {}: image allocate failed", path);
             any_failure = true;
         }
     }
 
-    uefi::println!(
+    debug_println!(
         "[LOAD] Phase 4: {} of {} BOOT_START drivers loaded",
-        loaded_count, count_total
+        loaded_count,
+        count_total
     );
     if any_failure {
-        uefi::println!("[LOAD] Phase 4: (driver missing/error is non-fatal — boot continues)");
+        debug_println!("[LOAD] Phase 4: (driver missing/error is non-fatal — boot continues)");
     }
 }
 
@@ -2163,14 +2400,6 @@ use uefi_raw::table::boot::MemoryDescriptor;
 struct MemMapBuf([u8; 32 * 1024]);
 static mut MEM_MAP_BUF: MemMapBuf = MemMapBuf([0u8; 32 * 1024]);
 
-/// One-shot wrapper that calls the raw `GetMemoryMap` boot
-/// service and copies the first `max_entries` descriptors into
-/// `out`. Returns the number of descriptors written.
-fn raw_get_memory_map(out: &mut [MemoryMapEntry], descriptor_buf: &mut [u8]) -> usize {
-    let (count, _key) = raw_get_memory_map_with_key(out, descriptor_buf);
-    count
-}
-
 /// Variant of `raw_get_memory_map` that also returns the
 /// `map_key` UEFI hands back. The key is required to be passed
 /// to `ExitBootServices` for it to detect that the memory map
@@ -2182,12 +2411,11 @@ fn raw_get_memory_map_with_key(
     // SAFETY: the system table is set once in `efi_main` and is
     // valid for the entire boot. Boot services are still active
     // here, so the boot-services table pointer is valid.
-    let st = uefi::table::system_table_raw()
-        .expect("system table not set");
+    let st = uefi::table::system_table_raw().expect("system table not set");
     let st = unsafe { st.as_ref() };
     let bt_ptr = st.boot_services;
     if bt_ptr.is_null() {
-        uefi::println!("  [LOAD] GetMemoryMap: boot_services is null");
+        debug_println!("  [LOAD] GetMemoryMap: boot_services is null");
         return (0, 0);
     }
     let bt = unsafe { &*bt_ptr };
@@ -2206,11 +2434,11 @@ fn raw_get_memory_map_with_key(
         )
     };
     if !status.is_success() {
-        uefi::println!("  [LOAD] GetMemoryMap raw failed");
+        debug_println!("  [LOAD] GetMemoryMap raw failed");
         return (0, 0);
     }
     if desc_size == 0 {
-        uefi::println!("  [LOAD] GetMemoryMap returned desc_size=0");
+        debug_println!("  [LOAD] GetMemoryMap returned desc_size=0");
         return (0, 0);
     }
     let count = map_size / desc_size;
@@ -2234,7 +2462,6 @@ fn raw_get_memory_map_with_key(
 }
 
 fn collect_memory_map() {
-    push_page_alloc(0, 0);
     // SAFETY: `PERSISTENT` and `MEM_MAP_BUF` are only touched from
     // the BSP before any reader is scheduled, so this is single-
     // threaded.
@@ -2251,7 +2478,8 @@ fn collect_memory_map() {
         );
         pd.map_key = key;
         if n == 0 {
-            // Fall back to the stub map so the kernel still boots.
+            // Fall back to a conservative static map so the kernel still
+            // boots on firmware that fails `GetMemoryMap` during boot.
             let entries: [MemoryMapEntry; 6] = [
                 MemoryMapEntry::new(0, 0x100000, 1),
                 MemoryMapEntry::new(0x100000, 0xF00000, 4),
@@ -2264,53 +2492,17 @@ fn collect_memory_map() {
                 pd.memory_map[i] = *e;
             }
             pd.memory_map_count = entries.len();
-            uefi::println!("  [LOAD] Memory map: {} entries (stub fallback)", entries.len());
+            debug_println!(
+                "  [LOAD] Memory map: {} entries (stub fallback)",
+                entries.len()
+            );
         } else {
             pd.memory_map_count = n;
-            uefi::println!("  [LOAD] Memory map: {} entries (real UEFI GetMemoryMap)", n);
+            debug_println!(
+                "  [LOAD] Memory map: {} entries (real UEFI GetMemoryMap)",
+                n
+            );
         }
-    }
-}
-
-
-fn collect_acpi_info() {
-    push_box_drop(0, 0);
-    let mut rsdp: u64 = 0;
-    uefi::system::with_config_table(|entries| {
-        for entry in entries {
-            if entry.guid == uefi::table::cfg::ConfigTableEntry::ACPI2_GUID {
-                rsdp = entry.address as u64;
-            }
-        }
-    });
-    unsafe { PERSISTENT.acpi_rsdp = rsdp; }
-    // AVOID alloc::format! — see collect_memory_map for rationale.
-    if rsdp != 0 {
-        uefi::println!("  [LOAD] ACPI RSDP: 0x{:016x} (from UEFI system table)", rsdp);
-    } else {
-        uefi::println!("  [LOAD] ACPI RSDP: not found (kernel ACPI init will skip)");
-    }
-}
-
-fn collect_smp_info() {
-    push_pool_free(0);
-    // SAFETY: `PERSISTENT` is only accessed from the BSP during early boot,
-    // before any other CPUs are started.
-    unsafe {
-        // SKIP nt61::hal::common::acpi::parse_madt() in winload context:
-        // that parser walks the XSDT via `mm::syspte::map_io_space`, which
-        // requires the kernel's MM to already be initialized. From inside
-        // winload.efi (where kernel page tables do not yet exist) those
-        // mappings would page-fault. Instead, the kernel will re-parse
-        // the MADT after the page tables come online; here we just stash
-        // the RSDP physical address and fall back to a single CPU.
-        if PERSISTENT.acpi_rsdp != 0 {
-            nt61::hal::common::acpi::set_rsdp(PERSISTENT.acpi_rsdp);
-            uefi::println!("  [LOAD] SMP info: MADT parse deferred to kernel (winload has no MM)");
-        } else {
-            uefi::println!("  [LOAD] SMP info: ACPI not available, using fallback ({})", SMP_CPU_COUNT);
-        }
-        PERSISTENT.smp_cpu_count = SMP_CPU_COUNT;
     }
 }
 
@@ -2328,37 +2520,6 @@ struct FramebufferInfo {
     height: u32,
     stride: u32,
     format: u32,
-}
-
-impl FramebufferInfo {
-    fn new() -> Self {
-        Self {
-            base: 0,
-            size: 0,
-            width: 0,
-            height: 0,
-            stride: 0,
-            format: 0, // 0 = Unknown, 1 = PixelBlueGreenRedReserved8BitPerColor (BGRA)
-        }
-    }
-}
-
-/// Collect framebuffer information from the GOP protocol.
-/// This information is needed by the kernel to continue using the graphics
-/// output after ExitBootServices.
-///
-/// We first check the framebuffer mailbox published by the boot
-/// manager at PA 0x10_200 — this is the only reliable source because
-/// UEFI does not allow the boot manager to keep the GOP handle open
-/// AND winload to open it again at the same time (`ACCESS_DENIED`).
-/// If the mailbox is missing or corrupt we fall back to opening GOP
-/// directly.
-fn collect_framebuffer_info() -> FramebufferInfo {
-    push_str_drop(0, 0);
-    if let Some(fb_info) = read_fb_mailbox() {
-        return fb_info;
-    }
-    collect_framebuffer_info_from_gop()
 }
 
 // =====================================================================
@@ -2402,7 +2563,6 @@ const ESP_BLOCKS_PER_CHUNK: usize = 64; // 64 * 512 = 32 KiB per read
 /// error) the fields stay zero and the kernel falls back to the
 /// built-in stub listing.
 fn capture_esp_partition() {
-    push_open("\\\\ESP\\\\");
     use uefi::boot::OpenProtocolAttributes;
     use uefi::boot::OpenProtocolParams;
     use uefi::proto::media::block::BlockIO;
@@ -2410,19 +2570,19 @@ fn capture_esp_partition() {
     let pd = unsafe { &mut *core::ptr::addr_of_mut!(PERSISTENT) };
 
     // Find the SimpleFileSystem handle we have been using.
-    uefi::println!("[LOADER] ESP capture: find_handles<SimpleFileSystem>");
+    debug_println!("[LOADER] ESP capture: find_handles<SimpleFileSystem>");
     let handles = match uefi::boot::find_handles::<uefi::proto::media::fs::SimpleFileSystem>() {
         Ok(h) => {
-            uefi::println!("[LOADER] ESP capture: find_handles OK (n={})", h.len());
+            debug_println!("[LOADER] ESP capture: find_handles OK (n={})", h.len());
             h
         }
         Err(e) => {
-            uefi::println!("[LOADER] [WARN] ESP capture: no SFS handles: {:?}", e);
+            debug_println!("[LOADER] [WARN] ESP capture: no SFS handles: {:?}", e);
             return;
         }
     };
     if handles.is_empty() {
-        uefi::println!("[LOADER] [WARN] ESP capture: empty SFS handle list");
+        debug_println!("[LOADER] [WARN] ESP capture: empty SFS handle list");
         // Try the fallback file reader so future code paths can
         // still locate files even when SFS enumeration fails.
         let mut fallback_buf = [0u8; 512];
@@ -2432,7 +2592,7 @@ fn capture_esp_partition() {
     let esp_handle = handles[0];
 
     // Open BlockIO on the same handle.
-    uefi::println!("[LOADER] ESP capture: open_protocol<BlockIO>");
+    debug_println!("[LOADER] ESP capture: open_protocol<BlockIO>");
     let sp = unsafe {
         uefi::boot::open_protocol::<BlockIO>(
             OpenProtocolParams {
@@ -2446,14 +2606,14 @@ fn capture_esp_partition() {
     let block_io = match sp {
         Ok(s) => s,
         Err(e) => {
-            uefi::println!("[LOADER] [WARN] ESP capture: BlockIO open failed: {:?}", e);
+            debug_println!("[LOADER] [WARN] ESP capture: BlockIO open failed: {:?}", e);
             return;
         }
     };
     let block_io_ref = match block_io.get() {
         Some(b) => b,
         None => {
-            uefi::println!("[LOADER] [WARN] ESP capture: BlockIO interface is null");
+            debug_println!("[LOADER] [WARN] ESP capture: BlockIO interface is null");
             core::mem::forget(block_io);
             return;
         }
@@ -2468,7 +2628,7 @@ fn capture_esp_partition() {
     let mirror_bytes = core::cmp::min(ESP_MIRROR_BYTES as u64, partition_bytes) as usize;
     let blocks_to_read = mirror_bytes / block_size;
 
-    uefi::println!(
+    debug_println!(
         "[LOADER] ESP: block_size={} total_blocks={} partition={} MiB -> capturing {} MiB ({} blocks)",
         block_size,
         total_blocks,
@@ -2480,8 +2640,11 @@ fn capture_esp_partition() {
     // Allocate the mirror buffer in EfiBootServicesData so it
     // survives ExitBootServices.
     let pages = (mirror_bytes + 0xFFF) / 0x1000;
-    uefi::println!("[LOADER] ESP capture: allocating {} pages ({} MiB)",
-        pages, mirror_bytes / (1024 * 1024));
+    debug_println!(
+        "[LOADER] ESP capture: allocating {} pages ({} MiB)",
+        pages,
+        mirror_bytes / (1024 * 1024)
+    );
     let buffer = match uefi::boot::allocate_pages(
         uefi::boot::AllocateType::AnyPages,
         uefi::boot::MemoryType::BOOT_SERVICES_DATA,
@@ -2489,13 +2652,16 @@ fn capture_esp_partition() {
     ) {
         Ok(p) => p,
         Err(e) => {
-            uefi::println!("[LOADER] [WARN] ESP capture: allocate_pages failed: {:?}", e);
+            debug_println!(
+                "[LOADER] [WARN] ESP capture: allocate_pages failed: {:?}",
+                e
+            );
             core::mem::forget(block_io);
             return;
         }
     };
     let buffer_ptr = buffer.as_ptr() as *mut u8;
-    uefi::println!("[LOADER] ESP capture: buffer @ 0x{:x}", buffer_ptr as u64);
+    debug_println!("[LOADER] ESP capture: buffer @ 0x{:x}", buffer_ptr as u64);
 
     // Stream the partition into the buffer in `ESP_BLOCKS_PER_CHUNK`
     // LBA chunks. Using a smaller chunk reduces the pressure on
@@ -2513,13 +2679,10 @@ fn capture_esp_partition() {
         );
         let byte_offset = chunk * ESP_BLOCKS_PER_CHUNK * block_size;
         let slice = unsafe {
-            core::slice::from_raw_parts_mut(
-                buffer_ptr.add(byte_offset),
-                blocks_here * block_size,
-            )
+            core::slice::from_raw_parts_mut(buffer_ptr.add(byte_offset), blocks_here * block_size)
         };
         if let Err(e) = block_io_ref.read_blocks(media_id, lba_start, slice) {
-            uefi::println!(
+            debug_println!(
                 "[LOADER] [WARN] ESP capture: read_blocks LBA {} failed: {:?}",
                 lba_start,
                 e
@@ -2531,7 +2694,7 @@ fn capture_esp_partition() {
         }
         total_ok = lba_start + blocks_here as u64;
     }
-    uefi::println!(
+    debug_println!(
         "[LOADER] ESP capture: {} MiB read ({} blocks), first_err={:?}",
         (total_ok as usize) * block_size / (1024 * 1024),
         total_ok,
@@ -2555,7 +2718,11 @@ fn capture_esp_partition() {
     // ESP and the system partition have different sizes (which is
     // true on every standard install we test).
     pd.esp_partition_blocks = total_blocks;
-    uefi::println!("[LOADER] ESP capture: media_id=0x{:x} blocks={}", media_id, total_blocks);
+    debug_println!(
+        "[LOADER] ESP capture: media_id=0x{:x} blocks={}",
+        media_id,
+        total_blocks
+    );
 
     // Intentionally do NOT call `core::mem::forget` on `block_io`
     // — we are still before `ExitBootServices`, and the firmware
@@ -2575,9 +2742,14 @@ fn capture_esp_partition() {
 // `C:\tests\autoexec.bat` that live on the system partition.
 
 /// Same per-chunk chunking policy as the ESP capture. The system
-/// partition is 256 MiB on our reference disk, but we cap the
-/// mirror at 8 MiB for the early-boot memory footprint.
-const SYS_MIRROR_BYTES: usize = 8 * 1024 * 1024;
+/// partition is 256 MiB on our reference disk and the mirror must
+/// cover the *whole* partition: the NTFS build tool allocates
+/// non-resident file data in clusters starting ~1 MiB into the
+/// volume and keeps going for every user file, so a truncated
+/// mirror makes any file whose clusters land past the cap fail
+/// reads with an out-of-bounds error in the kernel-side NTFS
+/// driver (observed as a silent failure to load cmd.exe).
+const SYS_MIRROR_BYTES: usize = 256 * 1024 * 1024;
 
 /// Snapshot the system partition into a contiguous physical
 /// buffer. Same lifecycle as `capture_esp_partition`: the buffer
@@ -2585,7 +2757,6 @@ const SYS_MIRROR_BYTES: usize = 8 * 1024 * 1024;
 /// `ExitBootServices`, and the address/size/block_size fields
 /// end up in PERSISTENT -> BootInfo.
 fn capture_system_partition() {
-    push_open("\\\\SYS\\\\");
     use uefi::boot::OpenProtocolAttributes;
     use uefi::boot::OpenProtocolParams;
     use uefi::proto::media::block::BlockIO;
@@ -2600,7 +2771,7 @@ fn capture_system_partition() {
     let block_handles = match uefi::boot::find_handles::<BlockIO>() {
         Ok(h) => h,
         Err(e) => {
-            uefi::println!("[LOADER] [WARN] SYS capture: no BlockIO handles: {:?}", e);
+            debug_println!("[LOADER] [WARN] SYS capture: no BlockIO handles: {:?}", e);
             return;
         }
     };
@@ -2612,14 +2783,14 @@ fn capture_system_partition() {
     // partition on the system disk and asks the kernel to mount
     // each one according to its own filesystem type.
     // Identify the system partition. The previous heuristic was
-    // "skip FAT-family partitions" — that worked for the
+    // "ignore FAT-family partitions" — that worked for the
     // (ESP=FAT32, sys=NTFS) layout but broke the (ESP=FAT32,
     // sys=FAT32) layout because both partitions had FAT OEM IDs
-    // and the loop never picked a sys_handle. Now we skip by ESP
+    // and the loop never picked a sys_handle. Now we match by ESP
     // BlockIO media_id (recorded by capture_esp_partition) and
     // pick the first logical partition with a different
     // media_id. The "is_logical_partition" / 512-byte block-size
-    // filters are kept so we still skip the whole-disk BlockIO
+    // filters are kept so we still exclude the whole-disk BlockIO
     // handle and any CD/DVD.
     let esp_media_id = pd.esp_media_id;
     let esp_partition_blocks = pd.esp_partition_blocks;
@@ -2648,7 +2819,7 @@ fn capture_system_partition() {
             }
         };
         let media = block_io_ref.media();
-        // Skip whole-disk BlockIO handle.
+        // Exclude whole-disk BlockIO handle.
         if !media.is_logical_partition() {
             core::mem::forget(block_io);
             continue;
@@ -2657,7 +2828,7 @@ fn capture_system_partition() {
             core::mem::forget(block_io);
             continue;
         }
-        // Skip the ESP itself — distinguishes system from ESP even
+        // Exclude the ESP itself — distinguishes system from ESP even
         // when both are FAT32. media_id is unreliable on
         // QEMU/OVMF (it is 0 for every partition), so we also
         // compare the partition block count. Two partitions with
@@ -2675,7 +2846,9 @@ fn capture_system_partition() {
         }
         let mut buf = [0u8; 512];
         let lba_offset = 0u64;
-        let read_ok = block_io_ref.read_blocks(this_media_id, lba_offset, &mut buf).is_ok();
+        let read_ok = block_io_ref
+            .read_blocks(this_media_id, lba_offset, &mut buf)
+            .is_ok();
         // Leak the block_io so the protocol stays open across read_blocks.
         core::mem::forget(block_io);
         if !read_ok {
@@ -2697,14 +2870,14 @@ fn capture_system_partition() {
     let sys_handle = match sys_handle {
         Some(h) => h,
         None => {
-            uefi::println!(
+            debug_println!(
                 "[LOADER] [WARN] SYS capture: no non-ESP partition handle found among {} BlockIO devices",
                 block_handles.len()
             );
             return;
         }
     };
-    uefi::println!(
+    debug_println!(
         "[LOADER] SYS capture: found non-ESP partition handle ({} BlockIO devices scanned)",
         block_handles.len()
     );
@@ -2721,14 +2894,14 @@ fn capture_system_partition() {
     let block_io = match sp {
         Ok(s) => s,
         Err(e) => {
-            uefi::println!("[LOADER] [WARN] SYS capture: BlockIO open failed: {:?}", e);
+            debug_println!("[LOADER] [WARN] SYS capture: BlockIO open failed: {:?}", e);
             return;
         }
     };
     let block_io_ref = match block_io.get() {
         Some(b) => b,
         None => {
-            uefi::println!("[LOADER] [WARN] SYS capture: BlockIO interface is null");
+            debug_println!("[LOADER] [WARN] SYS capture: BlockIO interface is null");
             core::mem::forget(block_io);
             return;
         }
@@ -2743,7 +2916,7 @@ fn capture_system_partition() {
     let mirror_bytes = core::cmp::min(SYS_MIRROR_BYTES as u64, partition_bytes) as usize;
     let blocks_to_read = mirror_bytes / block_size;
 
-    uefi::println!(
+    debug_println!(
         "[LOADER] SYS: block_size={} total_blocks={} partition={} MiB -> capturing {} MiB ({} blocks)",
         block_size,
         total_blocks,
@@ -2760,7 +2933,10 @@ fn capture_system_partition() {
     ) {
         Ok(p) => p,
         Err(e) => {
-            uefi::println!("[LOADER] [WARN] SYS capture: allocate_pages failed: {:?}", e);
+            debug_println!(
+                "[LOADER] [WARN] SYS capture: allocate_pages failed: {:?}",
+                e
+            );
             core::mem::forget(block_io);
             return;
         }
@@ -2778,13 +2954,10 @@ fn capture_system_partition() {
         );
         let byte_offset = chunk * ESP_BLOCKS_PER_CHUNK * block_size;
         let slice = unsafe {
-            core::slice::from_raw_parts_mut(
-                buffer_ptr.add(byte_offset),
-                blocks_here * block_size,
-            )
+            core::slice::from_raw_parts_mut(buffer_ptr.add(byte_offset), blocks_here * block_size)
         };
         if let Err(e) = block_io_ref.read_blocks(media_id, lba_start, slice) {
-            uefi::println!(
+            debug_println!(
                 "[LOADER] [WARN] SYS capture: read_blocks LBA {} failed: {:?}",
                 lba_start,
                 e
@@ -2796,7 +2969,7 @@ fn capture_system_partition() {
         }
         total_ok = lba_start + blocks_here as u64;
     }
-    uefi::println!(
+    debug_println!(
         "[LOADER] SYS capture: {} MiB read ({} blocks), first_err={:?}",
         (total_ok as usize) * block_size / (1024 * 1024),
         total_ok,
@@ -2834,13 +3007,12 @@ const ISO_SYS_SIZE: usize = 256 * 1024 * 1024;
 /// Read `nt61.img` from the ISO's SimpleFileSystem and split it into
 /// ESP and System RAM disk buffers. Publishes via PERSISTENT.
 fn capture_iso_ramdisk() {
-    push_open("\\\\ISO\\\\");
     let pd = unsafe { &mut *core::ptr::addr_of_mut!(PERSISTENT) };
 
     // The combined FAT32 image (ESP + System) is at most 320 MB.
     let cached_ptr = unsafe { core::ptr::addr_of!(CACHED_SFS_PTR).read_volatile() };
     if cached_ptr == 0 {
-        uefi::println!("[LOADER] ISO ramdisk: no SFS handle cached — skipping");
+        debug_println!("[LOADER] ISO ramdisk: no SFS handle cached — not available");
         return;
     }
 
@@ -2853,21 +3025,24 @@ fn capture_iso_ramdisk() {
     let handle = match unsafe { Handle::from_ptr(cached_ptr as *mut core::ffi::c_void) } {
         Some(h) => h,
         None => {
-            uefi::println!("[LOADER] ISO ramdisk: invalid handle — skipping");
+            debug_println!("[LOADER] ISO ramdisk: invalid handle — ignored");
             return;
         }
     };
     let mut sfs = match open_protocol_exclusive::<SimpleFileSystem>(handle) {
         Ok(s) => s,
         Err(e) => {
-            uefi::println!("[LOADER] ISO ramdisk: open_protocol failed: {:?} — skipping", e);
+            debug_println!(
+                "[LOADER] ISO ramdisk: open_protocol failed: {:?} — ignored",
+                e
+            );
             return;
         }
     };
     let mut root = match sfs.open_volume() {
         Ok(v) => v,
         Err(_) => {
-            uefi::println!("[LOADER] ISO ramdisk: open_volume failed — skipping");
+            debug_println!("[LOADER] ISO ramdisk: open_volume failed — ignored");
             return;
         }
     };
@@ -2885,19 +3060,21 @@ fn capture_iso_ramdisk() {
     ) {
         Ok(h) => h,
         Err(_) => {
-            uefi::println!("[LOADER] ISO ramdisk: nt61.img not present — skipping (disk boot)");
+            debug_println!("[LOADER] ISO ramdisk: nt61.img not present — absent (disk boot)");
             return;
         }
     };
     let mut probe_file = match probe_handle.into_regular_file() {
         Some(f) => f,
         None => {
-            uefi::println!("[LOADER] ISO ramdisk: nt61.img is not a regular file — skipping");
+            debug_println!("[LOADER] ISO ramdisk: nt61.img is not a regular file — ignored");
             return;
         }
     };
-    uefi::println!("[LOADER] ISO ramdisk: nt61.img present ({} MiB allocation follows)",
-                   (ISO_ESP_SIZE + ISO_SYS_SIZE) / (1024 * 1024));
+    debug_println!(
+        "[LOADER] ISO ramdisk: nt61.img present ({} MiB allocation follows)",
+        (ISO_ESP_SIZE + ISO_SYS_SIZE) / (1024 * 1024)
+    );
 
     // The combined FAT32 image (ESP + System) is at most 320 MB.
     let total_combined_size = ISO_ESP_SIZE + ISO_SYS_SIZE;
@@ -2911,7 +3088,7 @@ fn capture_iso_ramdisk() {
     ) {
         Ok(p) => p,
         Err(e) => {
-            uefi::println!(
+            debug_println!(
                 "[LOADER] [WARN] ISO ramdisk: combined image allocate_pages failed: {:?}",
                 e
             );
@@ -2923,19 +3100,16 @@ fn capture_iso_ramdisk() {
     // Read the file we already probed (probe_file). It holds an open
     // reference to \EFI\Microsoft\Boot\nt61.img. We don't need to
     // navigate the directory tree again — the probe already did it.
-    let n = match probe_file.read(unsafe {
-        core::slice::from_raw_parts_mut(combined_ptr, total_combined_size)
-    }) {
+    let n = match probe_file
+        .read(unsafe { core::slice::from_raw_parts_mut(combined_ptr, total_combined_size) })
+    {
         Ok(n) => n,
         Err(e) => {
-            uefi::println!("[LOADER] [WARN] ISO ramdisk: read failed: {:?}", e);
+            debug_println!("[LOADER] [WARN] ISO ramdisk: read failed: {:?}", e);
             return;
         }
     };
-    uefi::println!(
-        "[LOADER] ISO ramdisk: read {} bytes from nt61.img",
-        n
-    );
+    debug_println!("[LOADER] ISO ramdisk: read {} bytes from nt61.img", n);
 
     // 2. Allocate ESP buffer and copy the first 64 MB.
     let esp_pages = (ISO_ESP_SIZE + 0xFFF) / 0x1000;
@@ -2946,7 +3120,7 @@ fn capture_iso_ramdisk() {
     ) {
         Ok(p) => p,
         Err(e) => {
-            uefi::println!(
+            debug_println!(
                 "[LOADER] [WARN] ISO ramdisk: ESP allocate_pages failed: {:?}",
                 e
             );
@@ -2960,7 +3134,7 @@ fn capture_iso_ramdisk() {
     pd.esp_image_base = esp_ptr as u64;
     pd.esp_image_size = ISO_ESP_SIZE as u64;
     pd.esp_block_size = 512;
-    uefi::println!(
+    debug_println!(
         "[LOADER] ISO ramdisk: ESP {} MB @ 0x{:x}",
         ISO_ESP_SIZE / (1024 * 1024),
         esp_ptr as u64
@@ -2975,7 +3149,7 @@ fn capture_iso_ramdisk() {
     ) {
         Ok(p) => p,
         Err(e) => {
-            uefi::println!(
+            debug_println!(
                 "[LOADER] [WARN] ISO ramdisk: SYS allocate_pages failed: {:?}",
                 e
             );
@@ -2989,7 +3163,7 @@ fn capture_iso_ramdisk() {
     pd.sys_image_base = sys_ptr as u64;
     pd.sys_image_size = ISO_SYS_SIZE as u64;
     pd.sys_block_size = 512;
-    uefi::println!(
+    debug_println!(
         "[LOADER] ISO ramdisk: SYS {} MB @ 0x{:x}",
         ISO_SYS_SIZE / (1024 * 1024),
         sys_ptr as u64
@@ -3006,7 +3180,7 @@ fn capture_iso_ramdisk() {
     ) {
         Ok(p) => p,
         Err(e) => {
-            uefi::println!(
+            debug_println!(
                 "[LOADER] [WARN] ISO ramdisk: ramdisk allocate_pages failed: {:?}",
                 e
             );
@@ -3020,121 +3194,203 @@ fn capture_iso_ramdisk() {
     pd.ramdisk_image_base = ramdisk_ptr as u64;
     pd.ramdisk_image_size = ramdisk_size as u64;
     pd.ramdisk_block_size = 512;
-    uefi::println!(
+    debug_println!(
         "[LOADER] ISO ramdisk: combined {} bytes @ 0x{:x} (X: drive)",
         ramdisk_size,
         ramdisk_ptr as u64
     );
 }
 
-/// Physical address of the framebuffer hand-off mailbox published
-/// by the boot manager. Matches the constant in
-/// `boot/src/main.rs`.
-const FB_MAILBOX_PHYS: u64 = 0x10_200;
+/// Vendor GUID for the framebuffer hand-off variable. It must match
+/// the boot manager's writer.
+const FB_VARIABLE_VENDOR: VariableVendor =
+    VariableVendor(uefi::guid!("9d0f7e8a-8d21-4f7f-987f-3c9d0c5f4b61"));
+const FB_VARIABLE_NAME: &CStr16 = uefi::cstr16!("NT61FB");
 
-/// Read the framebuffer hand-off mailbox. Returns `None` if the
+/// Read the framebuffer hand-off variable. Returns `None` if the
 /// signature is wrong or the values look uninitialised.
 fn read_fb_mailbox() -> Option<FramebufferInfo> {
-    let p = FB_MAILBOX_PHYS as *const u8;
-    unsafe {
-        let sig = [
-            core::ptr::read_volatile(p),
-            core::ptr::read_volatile(p.add(1)),
-            core::ptr::read_volatile(p.add(2)),
-            core::ptr::read_volatile(p.add(3)),
-        ];
-        if sig != *b"FBHM" {
-            uefi::println!("  [LOAD] Framebuffer mailbox missing (got {:02x?})", sig);
-            return None;
-        }
-        let ver = core::ptr::read_volatile(p.add(4) as *const u32);
-        let base = core::ptr::read_volatile(p.add(8) as *const u64);
-        let size = core::ptr::read_volatile(p.add(16) as *const u64);
-        let width = core::ptr::read_volatile(p.add(24) as *const u32);
-        let height = core::ptr::read_volatile(p.add(28) as *const u32);
-        let stride = core::ptr::read_volatile(p.add(32) as *const u32);
-        let format = core::ptr::read_volatile(p.add(36) as *const u32);
+    if let Some(fb) = read_fb_mailbox_from_config_table() {
+        return Some(fb);
+    }
 
-        if base == 0 || width == 0 || height == 0 {
-            uefi::println!("  [LOAD] Framebuffer mailbox invalid (zeros)");
-            return None;
-        }
-        uefi::println!(
-            "  [LOAD] Framebuffer mailbox v{}: base=0x{:x} {}x{} stride={} format={}",
-            ver, base, width, height, stride, format
+    let mut payload = [0u8; 40];
+    let (value, _attributes) =
+        match uefi::runtime::get_variable(FB_VARIABLE_NAME, &FB_VARIABLE_VENDOR, &mut payload) {
+            Ok(result) => result,
+            Err(error) => {
+                debug_println!(
+                    "  [LOAD] Framebuffer variable unavailable: {:?}",
+                    error.status()
+                );
+                return None;
+            }
+        };
+    if value.len() != 40 || &value[0..4] != b"FBHM" {
+        debug_println!(
+            "  [LOAD] Framebuffer variable invalid (len={})",
+            value.len()
         );
-        Some(FramebufferInfo {
-            base, size, width, height, stride, format,
-        })
+        return None;
+    }
+
+    let base = u64::from_le_bytes(value[8..16].try_into().unwrap());
+    let size = u64::from_le_bytes(value[16..24].try_into().unwrap());
+    let width = u32::from_le_bytes(value[24..28].try_into().unwrap());
+    let height = u32::from_le_bytes(value[28..32].try_into().unwrap());
+    let stride = u32::from_le_bytes(value[32..36].try_into().unwrap());
+    let format = u32::from_le_bytes(value[36..40].try_into().unwrap());
+
+    if base == 0 || width == 0 || height == 0 {
+        debug_println!("  [LOAD] Framebuffer variable invalid (zeros)");
+        return None;
+    }
+    debug_println!(
+        "  [LOAD] Framebuffer variable v1: base=0x{:x} {}x{} stride={} format={}",
+        base,
+        width,
+        height,
+        stride,
+        format
+    );
+    Some(FramebufferInfo {
+        base,
+        size,
+        width,
+        height,
+        stride,
+        format,
+    })
+}
+
+/// Read the BCD mailbox that the boot manager wrote before
+/// chain-loading winload. Returns the 16-byte selected entry GUID,
+/// or `None` when the mailbox is absent (e.g. direct kernel load
+/// without a boot manager).
+fn read_bcd_mailbox() -> Option<[u8; 16]> {
+    // Try the UEFI Configuration Table first (aarch64/riscv64/
+    // loongarch64 — stricter memory protections).
+    if let Some(guid) = read_bcd_mailbox_from_config_table() {
+        return Some(guid);
+    }
+
+    // Fall back to the fixed low-memory address (x86_64).
+    if !cfg!(target_arch = "x86_64") {
+        return None;
+    }
+    let mailbox = 0x10_100usize as *const u8;
+    let payload = unsafe { core::slice::from_raw_parts(mailbox, 0x1C + 16) };
+    if &payload[0..4] != b"BCDE" {
+        return None;
+    }
+    let guid: [u8; 16] = payload[0x0C..0x1C].try_into().ok()?;
+    debug_println!(
+        "[LOAD] BCD mailbox (fixed): guid={:02x}{:02x}{:02x}{:02x}...",
+        guid[0],
+        guid[1],
+        guid[2],
+        guid[3]
+    );
+    Some(guid)
+}
+
+/// Read the BCD mailbox through the UEFI Configuration Table.
+/// The boot manager installs the mailbox physical address under the
+/// same GUID the framebuffer mailbox uses for non-x86_64 archs.
+fn read_bcd_mailbox_from_config_table() -> Option<[u8; 16]> {
+    let Some(system_table) = uefi::table::system_table_raw() else {
+        return None;
+    };
+    let table = unsafe { &*(system_table.as_ptr() as *const EfiSystemTable) };
+    let entries = unsafe {
+        core::slice::from_raw_parts(table.configuration_table, table.number_of_table_entries)
+    };
+    // The BCD mailbox uses the same config-table GUID mechanism
+    // as the framebuffer mailbox on non-x86_64 architectures.
+    // We scan for a table entry whose payload starts with "BCDE".
+    for entry in entries {
+        let mailbox = entry.vendor_table as *const u8;
+        if mailbox.is_null() {
+            continue;
+        }
+        let header = unsafe { core::slice::from_raw_parts(mailbox, 4) };
+        if header != b"BCDE" {
+            continue;
+        }
+        let payload = unsafe { core::slice::from_raw_parts(mailbox, 0x1C + 16) };
+        let guid: [u8; 16] = payload[0x0C..0x1C].try_into().ok()?;
+        debug_println!(
+            "[LOAD] BCD mailbox (config table): guid={:02x}{:02x}{:02x}{:02x}...",
+            guid[0],
+            guid[1],
+            guid[2],
+            guid[3]
+        );
+        return Some(guid);
+    }
+    None
+}
+
+/// Map a BCD entry GUID (as written by the boot manager) to the
+/// kernel `BootMode` enum. Falls back to `Desktop` for unknown
+/// GUIDs, matching the default boot entry.
+fn bcd_guid_to_boot_mode(guid: &[u8; 16]) -> nt61::boot_types::BootMode {
+    // Match on the first 4 bytes — the well-known GUID prefixes.
+    match &guid[0..4] {
+        [0xB2, 0x72, 0x1D, 0x66] => nt61::boot_types::BootMode::Cmd,
+        [0x51, 0x89, 0xB2, 0x5C] => nt61::boot_types::BootMode::DebugCmd,
+        [0xA3, 0x4C, 0x8E, 0xD1] => nt61::boot_types::BootMode::SafeMode,
+        _ => nt61::boot_types::BootMode::Desktop,
     }
 }
 
-/// Fallback path: open the GOP protocol directly. This is used
-/// only when the bootmgr-published mailbox is unavailable (for
-/// example when winload is loaded directly, not via the bootmgr).
-fn collect_framebuffer_info_from_gop() -> FramebufferInfo {
-    use uefi::proto::console::gop::GraphicsOutput;
-
-    let handles = match uefi::boot::find_handles::<GraphicsOutput>() {
-        Ok(h) => h,
-        Err(_) => {
-            uefi::println!("  [LOAD] GOP: no GraphicsOutput handles found");
-            return FramebufferInfo::new();
-        }
+/// Read the framebuffer hand-off through the UEFI Configuration Table.
+/// Boot managers on generic ARM64/RISC-V/LoongArch firmware install this
+/// table entry after opening the GOP, avoiding runtime variable services.
+fn read_fb_mailbox_from_config_table() -> Option<FramebufferInfo> {
+    let Some(system_table) = uefi::table::system_table_raw() else {
+        return None;
     };
-
-    if handles.is_empty() {
-        uefi::println!("  [LOAD] GOP: no GraphicsOutput handles found");
-        return FramebufferInfo::new();
+    let table = unsafe { &*(system_table.as_ptr() as *const EfiSystemTable) };
+    let entries = unsafe {
+        core::slice::from_raw_parts(table.configuration_table, table.number_of_table_entries)
+    };
+    let entry = entries
+        .iter()
+        .find(|entry| entry.vendor_guid == EFI_FB_MAILBOX_TABLE_GUID)?;
+    let mailbox = entry.vendor_table as *const u8;
+    if mailbox.is_null() {
+        return None;
     }
-
-    // Open the first GOP handle
-    let mut gop = match uefi::boot::open_protocol_exclusive::<GraphicsOutput>(handles[0]) {
-        Ok(g) => g,
-        Err(e) => {
-            uefi::println!("  [LOAD] GOP: open_protocol_exclusive failed: {:?}", e);
-            return FramebufferInfo::new();
-        }
-    };
-
-    // Get current mode info
-    let info = gop.current_mode_info();
-    let (width, height) = info.resolution();
-    let stride = info.stride() * 4; // 4 bytes per pixel for BGRA
-    let mut fb = gop.frame_buffer();
-    let fb_ptr = fb.as_mut_ptr();
-    let fb_size = fb.size();
-
-    // Determine pixel format
-    // PixelBlueGreenRedReserved8BitPerColor = 1 (BGRA)
-    // PixelBitMask = 2
-    // PixelBltOnly = 3
-    // PixelFormatMax = 4
-    let format: u32 = match info.pixel_format() {
-        uefi::proto::console::gop::PixelFormat::Bgr => 1, // BGRA
-        uefi::proto::console::gop::PixelFormat::Rgb => 2, // RGBA
-        _ => 0,
-    };
-
-    let fb_info = FramebufferInfo {
-        base: fb_ptr as u64,
-        size: fb_size as u64,
-        width: width as u32,
-        height: height as u32,
-        stride: stride as u32,
+    let payload = unsafe { core::slice::from_raw_parts(mailbox, 40) };
+    if &payload[0..4] != b"FBHM" {
+        return None;
+    }
+    let base = u64::from_le_bytes(payload[8..16].try_into().ok()?);
+    let size = u64::from_le_bytes(payload[16..24].try_into().ok()?);
+    let width = u32::from_le_bytes(payload[24..28].try_into().ok()?);
+    let height = u32::from_le_bytes(payload[28..32].try_into().ok()?);
+    let stride = u32::from_le_bytes(payload[32..36].try_into().ok()?);
+    let format = u32::from_le_bytes(payload[36..40].try_into().ok()?);
+    if base == 0 || width == 0 || height == 0 {
+        return None;
+    }
+    debug_println!(
+        "[LOAD] framebuffer config table: base=0x{:x} {}x{} stride={} format={}",
+        base,
+        width,
+        height,
+        stride,
+        format
+    );
+    Some(FramebufferInfo {
+        base,
+        size,
+        width,
+        height,
+        stride,
         format,
-    };
-
-    uefi::println!(
-        "  [LOAD] GOP Framebuffer: base=0x{:016x} size={} bytes",
-        fb_info.base, fb_info.size
-    );
-    uefi::println!(
-        "  [LOAD] GOP Mode: {}x{} stride={} format={}",
-        fb_info.width, fb_info.height, fb_info.stride, fb_info.format
-    );
-
-    fb_info
+    })
 }
 
 // =====================================================================
@@ -3145,9 +3401,7 @@ fn build_boot_info(kernel_pa: u64, kernel_size: u64) -> BootInfo {
     let pd = unsafe { &*core::ptr::addr_of!(PERSISTENT) };
 
     // Count loaded boot drivers
-    let boot_driver_count = pd.boot_drivers.iter()
-        .filter(|r| r.loaded)
-        .count() as u32;
+    let boot_driver_count = pd.boot_drivers.iter().filter(|r| r.loaded).count() as u32;
 
     BootInfo {
         magic: BootInfo::MAGIC,
@@ -3165,7 +3419,7 @@ fn build_boot_info(kernel_pa: u64, kernel_size: u64) -> BootInfo {
         smp_info: pd.smp_cpu_count as u64,
         hives: 0,
         hive_count: 0,
-        boot_mode: nt61::boot_types::BootMode::Normal as u32,
+        boot_mode: nt61::boot_types::BootMode::Desktop as u32,
         esp_disk_start: pd.esp_partition_lba,
         esp_disk_sectors: pd.esp_partition_sectors,
         boot_driver_count,
@@ -3203,6 +3457,9 @@ fn build_boot_info(kernel_pa: u64, kernel_size: u64) -> BootInfo {
         bootvid_image_base: 0,
         bootvid_image_size: 0,
         ntoskrnl_handoff_callback: 0,
+        device_tree_base: pd.device_tree_base,
+        device_tree_size: pd.device_tree_size,
+        device_tree_hardware: pd.device_tree_hardware,
     }
 }
 
@@ -3216,8 +3473,6 @@ fn build_boot_info(kernel_pa: u64, kernel_size: u64) -> BootInfo {
 // aarch64 / riscv64 / loongarch64 match Rust's `extern "C"` directly,
 // so their trampolines only have to install the kernel stack and
 // branch to the kernel symbol.
-
-use crate::arch::call_kernel_main_from_loader;
 
 // =====================================================================
 // Build LoadedHiveList in low memory (Workstream C.2/C.3)
@@ -3233,20 +3488,18 @@ use crate::arch::call_kernel_main_from_loader;
 //
 // Permitted under MIT. See repository LICENSE.
 
-#[allow(dead_code)] // Phase-3 workstream: re-enabled when os_loader_run advances.
 const HIVE_PATHS: &[(&str, &str)] = &[
-    ("System",   r"\Windows\System32\config\SYSTEM"),
+    ("System", r"\Windows\System32\config\SYSTEM"),
     ("Software", r"\Windows\System32\config\SOFTWARE"),
     ("Security", r"\Windows\System32\config\SECURITY"),
-    ("SAM",      r"\Windows\System32\config\SAM"),
-    ("Default",  r"\Windows\System32\config\DEFAULT"),
+    ("SAM", r"\Windows\System32\config\SAM"),
+    ("Default", r"\Windows\System32\config\DEFAULT"),
 ];
 
 /// Allocate a single contiguous `BOOT_SERVICES_DATA` region for
 /// the hive bytes and the records array. Both live in the same
 /// region so we only need one `allocate_pages` call. The region
 /// is page-aligned and survives `ExitBootServices`.
-#[allow(dead_code)] // Phase-3 workstream.
 fn allocate_hive_region() {
     let bytes = HIVE_REGION_SIZE;
     let pages = (bytes + 0xFFF) / 0x1000;
@@ -3264,7 +3517,7 @@ fn allocate_hive_region() {
     let ptr = match result {
         Ok(p) => p.as_ptr() as u64,
         Err(e) => {
-            uefi::println!(
+            debug_println!(
                 "[HIVE] allocate_pages failed: {:?} — hive loading disabled",
                 e
             );
@@ -3276,13 +3529,17 @@ fn allocate_hive_region() {
         HIVE_RECORDS_PTR = ptr + (ESP_FILE_BUF_SIZE * HIVE_BUF_COUNT) as u64;
     }
     if ptr != 0 {
-        uefi::println!(
+        debug_println!(
             "  [HIVE] region allocated: 0x{:x} ({} bytes / {} pages), records at 0x{:x}",
-            ptr, bytes, pages, unsafe { HIVE_RECORDS_PTR }
+            ptr,
+            bytes,
+            pages,
+            unsafe { HIVE_RECORDS_PTR }
         );
-        uefi::println!(
+        debug_println!(
             "  [HIVE] HIVE_REGION_SIZE constant = {}, ESP_FILE_BUF_SIZE*HIVE_BUF_COUNT = {}",
-            HIVE_REGION_SIZE, ESP_FILE_BUF_SIZE * HIVE_BUF_COUNT
+            HIVE_REGION_SIZE,
+            ESP_FILE_BUF_SIZE * HIVE_BUF_COUNT
         );
     }
 }
@@ -3328,60 +3585,67 @@ fn allocate_hive_region() {
 /// via the `#[repr(C)]` struct layout. We hard-code the constant
 /// because `core::mem::size_of` is not a `const fn` and the value
 /// may otherwise fold to zero under LTO.
-#[allow(dead_code)] // Phase-3 workstream: layout mirrors the kernel's LoadedHive.
 const RECORD_STRUCT_BYTES: usize = 56;
-#[allow(dead_code)] // Phase-3 workstream.
 const RECORDS_BYTES: usize = RECORD_STRUCT_BYTES * 8;
 
 // Field offsets within one record. Keep in sync with the
 // `#[repr(C)] LoadedHive` declaration in `nt61/src/registry/cm.rs`.
-#[allow(dead_code)] // Phase-3 workstream.
-const OFF_NAME:     usize = 0;
-#[allow(dead_code)] // Phase-3 workstream.
+const OFF_NAME: usize = 0;
 const OFF_NAME_LEN: usize = 32;
-#[allow(dead_code)] // Phase-3 workstream.
-const OFF_PTR:      usize = 40;
-#[allow(dead_code)] // Phase-3 workstream.
-const OFF_LEN:      usize = 48;
+const OFF_PTR: usize = 40;
+const OFF_LEN: usize = 48;
 
-#[allow(dead_code)] // Phase-3 workstream.
 fn build_loaded_hive_list() -> (u64, u32) {
     let region_ptr = unsafe { HIVE_REGION_PTR };
     if region_ptr == 0 {
-        uefi::println!("  [HIVE] skipped: no region");
+        debug_println!("  [HIVE] not loaded: no region");
         return (0, 0);
     }
     let records_ptr = unsafe { HIVE_RECORDS_PTR };
     if records_ptr == 0 {
-        uefi::println!("  [HIVE] skipped: no records buffer");
+        debug_println!("  [HIVE] not loaded: no records buffer");
         return (0, 0);
     }
     let max = HIVE_PATHS.len().min(BOOTINFO_MAX_HIVES);
-    uefi::println!("  [HIVE] build: region=0x{:x} records=0x{:x} max={}", region_ptr, records_ptr, max);
+    debug_println!(
+        "  [HIVE] build: region=0x{:x} records=0x{:x} max={}",
+        region_ptr,
+        records_ptr,
+        max
+    );
     let mut count: usize = 0;
     for (i, (name, path)) in HIVE_PATHS.iter().take(max).enumerate() {
         // SAFETY: HIVE_REGION_PTR was set by allocate_hive_region
         // and is valid for the whole boot.
         let slot_base = unsafe { (region_ptr as *mut u8).add(i * ESP_FILE_BUF_SIZE) };
-        uefi::println!("  [HIVE] about to try slot {} for {} ({})", i, name, path);
+        debug_println!("  [HIVE] about to try slot {} for {} ({})", i, name, path);
         // SAFETY: the slot is a fresh page-aligned region, so a
         // mutable slice over its full size is valid.
-        let slot: &mut [u8] = unsafe {
-            core::slice::from_raw_parts_mut(slot_base, ESP_FILE_BUF_SIZE)
-        };
+        let slot: &mut [u8] =
+            unsafe { core::slice::from_raw_parts_mut(slot_base, ESP_FILE_BUF_SIZE) };
         // Determine which partition to read from based on the path.
         // Registry hives (SYSTEM, SOFTWARE, etc.) are on the System partition.
         // BCD is on the ESP partition.
         let is_on_esp = path.starts_with("\\EFI\\") || path.starts_with("\\\\EFI\\\\");
         let open_result = if is_on_esp {
-            uefi::println!("  [HIVE] slot {} reading from ESP partition: {}", i, path);
+            debug_println!("  [HIVE] slot {} reading from ESP partition: {}", i, path);
             open_esp_file_into(path, slot)
         } else {
-            uefi::println!("  [HIVE] slot {} reading from System partition: {}", i, path);
+            debug_println!(
+                "  [HIVE] slot {} reading from System partition: {}",
+                i,
+                path
+            );
             open_system_file_into(path, slot)
         };
         if let Some(len) = open_result {
-            uefi::println!("  [HIVE] slot {} loaded {} bytes for {} at slot_base=0x{:x}", i, len, name, slot_base as u64);
+            debug_println!(
+                "  [HIVE] slot {} loaded {} bytes for {} at slot_base=0x{:x}",
+                i,
+                len,
+                name,
+                slot_base as u64
+            );
             // Write a `LoadedHive` record into the records array.
             // We write each field explicitly with `ptr::write` /
             // `write_volatile` instead of relying on struct-store
@@ -3396,7 +3660,12 @@ fn build_loaded_hive_list() -> (u64, u32) {
             // u64 is 8-byte aligned. We mirror that layout
             // here so the offsets line up exactly.
             let rec_ptr = unsafe { (records_ptr as *mut u8).add(i * RECORD_STRUCT_BYTES) };
-            uefi::println!("  [HIVE] slot {} rec_ptr=0x{:x} slot_base=0x{:x}", i, rec_ptr as u64, slot_base as u64);
+            debug_println!(
+                "  [HIVE] slot {} rec_ptr=0x{:x} slot_base=0x{:x}",
+                i,
+                rec_ptr as u64,
+                slot_base as u64
+            );
             unsafe {
                 // name[0..32]: write the short ASCII name into the
                 // first N bytes of the record.
@@ -3418,37 +3687,42 @@ fn build_loaded_hive_list() -> (u64, u32) {
                 let p_ptr = rec_ptr.add(OFF_PTR) as *mut u64;
                 let hive_pa: u64 = slot_base as u64;
                 core::ptr::write_volatile(p_ptr, hive_pa);
-                uefi::println!("  [HIVE] slot {} wrote ptr=0x{:x} at rec+{}", i, hive_pa, OFF_PTR);
+                debug_println!(
+                    "  [HIVE] slot {} wrote ptr=0x{:x} at rec+{}",
+                    i,
+                    hive_pa,
+                    OFF_PTR
+                );
                 // Read back immediately to confirm
                 let verify: u64 = core::ptr::read_volatile(p_ptr);
-                uefi::println!("  [HIVE] slot {} ptr readback=0x{:x}", i, verify);
+                debug_println!("  [HIVE] slot {} ptr readback=0x{:x}", i, verify);
                 // len at offset 48
                 let p_len = rec_ptr.add(OFF_LEN) as *mut u32;
                 core::ptr::write_volatile(p_len, len as u32);
-                uefi::println!("  [HIVE] slot {} wrote len={} at rec+{}", i, len, OFF_LEN);
+                debug_println!("  [HIVE] slot {} wrote len={} at rec+{}", i, len, OFF_LEN);
             }
             // Read back and dump the first 56 bytes of this record
             // so we can confirm what actually got written (and
             // catch any LTO-induced miscompilation).
             unsafe {
-                uefi::println!("  [HIVE] slot {} record dump:", i);
+                debug_println!("  [HIVE] slot {} record dump:", i);
                 let mut off = 0usize;
                 while off < RECORD_STRUCT_BYTES {
                     let b = core::ptr::read_volatile(rec_ptr.add(off));
                     if off % 16 == 0 {
-                        uefi::print!("    {:04x}:", off);
+                        crate::debug_print!("    {:04x}:", off);
                     }
-                    uefi::print!(" {:02x}", b);
+                    crate::debug_print!(" {:02x}", b);
                     if off % 16 == 15 {
-                        uefi::println!("");
+                        debug_println!("");
                     }
                     off += 1;
                 }
-                uefi::println!("");
+                debug_println!("");
             }
             count += 1;
         } else {
-            uefi::println!("  [HIVE] {} ({}): missing or unreadable", name, path);
+            debug_println!("  [HIVE] {} ({}): missing or unreadable", name, path);
         }
     }
     (records_ptr, count as u32)
@@ -3458,29 +3732,21 @@ fn build_loaded_hive_list() -> (u64, u32) {
 // OS Loader main
 // =====================================================================
 
-/// Total number of distinct progress points in `os_loader_run`.
-/// This is the bottom-line value that drives the GOP progress bar.
-#[allow(dead_code)] // Phase-0/1 workstream: re-enabled once gop_panel_init is called by os_loader_run.
-const WINLOAD_TOTAL_PHASES: u32 = 11;
-
 /// Re-open the GOP and call `body` with `&mut GraphicsOutput`,
 /// then mark a winload progress segment. Used by the per-phase
 /// helper `mark_winload_phase` below.
 ///
 /// `phase` is 0-indexed; `WINLOAD_TOTAL_PHASES - 1` means
 /// "almost full bar before ExitBootServices".
-#[allow(dead_code)] // Phase-0/1 workstream.
-fn with_gop<F: FnOnce(&mut uefi::proto::console::gop::GraphicsOutput)>(
-    phase: u32,
-    body: F,
-) {
+fn with_gop<F: FnOnce(&mut uefi::proto::console::gop::GraphicsOutput)>(phase: u32, body: F) {
     let handles = match uefi::boot::find_handles::<uefi::proto::console::gop::GraphicsOutput>() {
         Ok(h) if !h.is_empty() => h,
         _ => return,
     };
     let mut gop = match uefi::boot::open_protocol_exclusive::<
         uefi::proto::console::gop::GraphicsOutput,
-    >(handles[0]) {
+    >(handles[0])
+    {
         Ok(g) => g,
         Err(_) => return,
     };
@@ -3489,21 +3755,26 @@ fn with_gop<F: FnOnce(&mut uefi::proto::console::gop::GraphicsOutput)>(
 }
 
 /// Phase 0a: paint the initial "Windows is loading..." panel.
-#[allow(dead_code)] // Phase-0/1 workstream.
 fn gop_panel_init() {
     with_gop(0, |gop| {
+        uefi::println!("[WINLOAD] gop body entered");
         let _ = gop.blt(uefi::proto::console::gop::BltOp::VideoFill {
             color: uefi::proto::console::gop::BltPixel::new(0xD8, 0x98, 0x70),
             dest: (0, 0),
-            dims: (gop.current_mode_info().resolution().0,
-                   gop.current_mode_info().resolution().1),
+            dims: (
+                gop.current_mode_info().resolution().0,
+                gop.current_mode_info().resolution().1,
+            ),
         });
+        uefi::println!("[WINLOAD] gop fill done");
         let mode = gop.current_mode_info();
         let (_w, _h) = mode.resolution();
         gop_display::draw_text_centered_global(
             "Windows is loading...",
             (_h as u32) / 2 - 16,
-            0xFF, 0xFF, 0xFF,
+            0xFF,
+            0xFF,
+            0xFF,
             gop,
         );
         gop_display::draw_progress_border_global(gop);
@@ -3511,21 +3782,27 @@ fn gop_panel_init() {
 }
 
 /// Helper that updates the loader-wide progress bar.
-#[allow(dead_code)] // Phase-0/1 workstream.
 fn mark_winload_phase(phase: u32) {
-    with_gop(phase, |_gop| { /* nothing extra: mark_phase handled in with_gop */ });
+    with_gop(
+        phase,
+        |_gop| { /* nothing extra: mark_phase handled in with_gop */ },
+    );
 }
 
 /// OS Loader main — marked #[inline(never)] to prevent LTO from optimizing away the call.
 #[inline(never)]
 fn os_loader_run() -> ! {
+    uefi::println!("[WINLOAD] os_loader_run pre-header");
     boot_loader_header!();
-    dump_trace();
+    gop_panel_init();
+    uefi::println!("[WINLOAD] os_loader_run entered");
 
     // =====================================================================
     // Phase L00 — Loader entry
     // =====================================================================
-    uefi::println!("--- Phase L00 ---");
+    debug_println!("--- Phase L00 ---");
+    mark_winload_phase(0);
+    uefi::println!("[WINLOAD] before memory map");
 
     // Collect the UEFI memory map before we fill in the
     // BootInfo. On architectures where the firmware reports RAM
@@ -3540,8 +3817,13 @@ fn os_loader_run() -> ! {
     // It ALSO saves `map_key` into `PERSISTENT.map_key` so the
     // eventual `ExitBootServices` call (Phase L10) can pass it
     // back to the firmware.
-    uefi::println!("--- Phase L02 ---");
+    debug_println!("--- Phase L02 ---");
+    mark_winload_phase(1);
+    capture_device_tree();
+    capture_acpi_rsdp();
+    uefi::println!("[WINLOAD] before collect_memory_map");
     collect_memory_map();
+    uefi::println!("[WINLOAD] after collect_memory_map");
 
     // Publish the BootInfo address into the kernel-imported slot so
     // the kernel's `KERNEL_BOOT_INFO_PTR` is set to a live value
@@ -3550,7 +3832,7 @@ fn os_loader_run() -> ! {
         KERNEL_BOOT_INFO_PTR = core::ptr::addr_of!(KERNEL_BOOT_INFO) as u64;
     }
 
-    uefi::println!("[LOADER] os_loader_run entered");
+    debug_println!("[LOADER] os_loader_run entered");
 
     // =================================================================
     // Phase L01 — Capture partition snapshots
@@ -3574,20 +3856,30 @@ fn os_loader_run() -> ! {
     // bring-up log shows exactly how far the loader got before
     // any hang in the kernel-side mount code.
     // =================================================================
-    uefi::println!("--- Phase L01 ---");
-    uefi::println!("[LOADER] capture: phase 0 begin (ESP / SYS / ISO)");
+    debug_println!("--- Phase L01 ---");
+    mark_winload_phase(2);
+    debug_println!("[LOADER] capture: phase 0 begin (ESP / SYS / ISO)");
+    uefi::println!("[WINLOAD] capture ESP begin");
     capture_esp_partition();
-    uefi::println!("[LOADER] capture: ESP done (esp_image_base=0x{:x}, size={})",
+    uefi::println!("[WINLOAD] capture ESP end");
+    debug_println!(
+        "[LOADER] capture: ESP done (esp_image_base=0x{:x}, size={})",
         unsafe { (*core::ptr::addr_of!(PERSISTENT)).esp_image_base },
         unsafe { (*core::ptr::addr_of!(PERSISTENT)).esp_image_size }
     );
+    uefi::println!("[WINLOAD] capture SYS begin");
     capture_system_partition();
-    uefi::println!("[LOADER] capture: SYS done (sys_image_base=0x{:x}, size={})",
+    uefi::println!("[WINLOAD] capture SYS end");
+    debug_println!(
+        "[LOADER] capture: SYS done (sys_image_base=0x{:x}, size={})",
         unsafe { (*core::ptr::addr_of!(PERSISTENT)).sys_image_base },
         unsafe { (*core::ptr::addr_of!(PERSISTENT)).sys_image_size }
     );
+    uefi::println!("[WINLOAD] capture ISO begin");
     capture_iso_ramdisk();
-    uefi::println!("[LOADER] capture: ISO done (ramdisk_image_base=0x{:x}, size={})",
+    uefi::println!("[WINLOAD] capture ISO end");
+    debug_println!(
+        "[LOADER] capture: ISO done (ramdisk_image_base=0x{:x}, size={})",
         unsafe { (*core::ptr::addr_of!(PERSISTENT)).ramdisk_image_base },
         unsafe { (*core::ptr::addr_of!(PERSISTENT)).ramdisk_image_size }
     );
@@ -3598,17 +3890,30 @@ fn os_loader_run() -> ! {
     // the drivers live in the kernel's boot-time identity-mapped
     // window and the kernel needs them in place by the time it
     // runs `PsCreateSystemThread` for `smss.exe`.
-    uefi::println!("--- Phase L03 ---");
-    let (ntoskrnl_base_l03, ntoskrnl_size_l03, hal_base_l03, hal_size_l03) = load_kernel_images();
-    uefi::println!("[LOADER] L03: ntoskrnl base=0x{:x} size={} hal base=0x{:x} size={}",
-        ntoskrnl_base_l03, ntoskrnl_size_l03, hal_base_l03, hal_size_l03);
+    debug_println!("--- Phase L03 ---");
+    mark_winload_phase(3);
+    uefi::println!("[WINLOAD] load kernel begin");
+    let (ntoskrnl_base_l03, ntoskrnl_size_l03, hal_base_l03, hal_size_l03, kernel_entry_rva_l03) =
+        load_kernel_images();
+    uefi::println!("[WINLOAD] load kernel end");
+    debug_println!(
+        "[LOADER] L03: ntoskrnl base=0x{:x} size={} hal base=0x{:x} size={}",
+        ntoskrnl_base_l03,
+        ntoskrnl_size_l03,
+        hal_base_l03,
+        hal_size_l03
+    );
 
-    uefi::println!("--- Phase L06 ---");
-    uefi::println!("[LOADER] Phase 4: invoking load_boot_drivers()");
+    debug_println!("--- Phase L06 ---");
+    mark_winload_phase(4);
+    debug_println!("[LOADER] Phase 4: invoking load_boot_drivers()");
+    uefi::println!("[WINLOAD] load drivers begin");
     load_boot_drivers();
-    uefi::println!("[LOADER] Phase 4: load_boot_drivers() returned");
+    uefi::println!("[WINLOAD] load drivers end");
+    debug_println!("[LOADER] Phase 4: load_boot_drivers() returned");
 
-    uefi::println!("--- Phase L05 ---");
+    debug_println!("--- Phase L05 ---");
+    mark_winload_phase(5);
     publish_bootvid_into_boot_info();
 
     // Read the framebuffer mailbox so the GUI side of the boot
@@ -3623,9 +3928,13 @@ fn os_loader_run() -> ! {
     // and re-applied *after* `build_boot_info` so the kernel receives
     // a fully populated BootInfo (esp/sys/ramdisk + framebuffer).
     let fb_capture: Option<FramebufferInfo> = if let Some(fb) = read_fb_mailbox() {
-        uefi::println!(
+        debug_println!(
             "[LOADER] framebuffer mailbox: {}x{} stride={} @ 0x{:x} ({} KiB)",
-            fb.width, fb.height, fb.stride, fb.base, fb.size / 1024
+            fb.width,
+            fb.height,
+            fb.stride,
+            fb.base,
+            fb.size / 1024
         );
         Some(fb)
     } else {
@@ -3656,11 +3965,17 @@ fn os_loader_run() -> ! {
     unsafe {
         let bi = &mut *core::ptr::addr_of_mut!(KERNEL_BOOT_INFO);
         *bi = bi_value;
-        // boot_mode = 1 (SafeModeCmd) to launch cmd.exe directly.
-        // The canonical field layout comes from `build_boot_info`,
-        // but we deliberately pin the mode to SafeModeCmd for the
-        // bring-up so the kernel reaches the cmd.exe hand-off path.
-        bi.boot_mode = nt61::boot_types::BootMode::SafeModeCmd as u32;
+        // Read the BCD mailbox that the boot manager wrote and map
+        // the selected entry GUID to the kernel `BootMode`. This
+        // replaces the previous hard-coded `Desktop` — the four
+        // boot menu entries (Desktop / CMD / Debug CMD / Safe Mode)
+        // now propagate correctly to the kernel.
+        let selected_mode = match read_bcd_mailbox() {
+            Some(guid) => bcd_guid_to_boot_mode(&guid),
+            None => nt61::boot_types::BootMode::Desktop,
+        };
+        debug_println!("[LOAD] boot mode from BCD mailbox: {:?}", selected_mode);
+        bi.boot_mode = selected_mode as u32;
 
         // Re-apply the framebuffer mailbox captured above. This must
         // come *after* `*bi = bi_value` or those fields would have
@@ -3689,29 +4004,24 @@ fn os_loader_run() -> ! {
 
     // Phase L07 — SYSTEM registry hive (mark loaded; the bytes
     // themselves are pulled by the kernel's cm::init through the
-    // boot_info pointer). The mark ensures the cm layer skips its
+    // boot_info pointer). The mark ensures the cm layer bypasses its
     // "hive missing" fatal and proceeds straight into parsing.
-    uefi::println!("--- Phase L07 ---");
+    debug_println!("--- Phase L07 ---");
+    mark_winload_phase(6);
     load_system_hive();
-    uefi::println!("[LOADER] L07: SYSTEM hive entry marked in PERSISTENT");
+    debug_println!("[LOADER] L07: SYSTEM hive entry marked in PERSISTENT");
 
     // Phase L08 — fill BootInfo with kernel/driver/hive counts.
-    uefi::println!("--- Phase L08 ---");
+    debug_println!("--- Phase L08 ---");
+    mark_winload_phase(7);
+    let (hive_ptr, hive_count) = build_loaded_hive_list();
     unsafe {
         let bi = &mut *core::ptr::addr_of_mut!(KERNEL_BOOT_INFO);
         bi.boot_driver_count = MAX_BOOT_DRIVERS as u32;
-        bi.hive_count = 1;
-        // `bi.hives` is the physical address of the first LoadedHive
-        // entry. We point it at a static empty descriptor — the
-        // kernel's `cm::init` only reads the bytes when
-        // `hive_count > 0` and `hives != 0`; since the descriptor
-        // is empty it logs "no hives loaded" and falls back to the
-        // default registry. The on-disk hive bytes themselves are
-        // pulled by the kernel via the standard NTFS read path.
-        static EMPTY_HIVE: nt61::boot_types::LoadedHive = nt61::boot_types::LoadedHive::empty();
-        bi.hives = core::ptr::addr_of!(EMPTY_HIVE) as u64;
+        bi.hive_count = hive_count;
+        bi.hives = hive_ptr;
     }
-    uefi::println!(
+    debug_println!(
         "[LOADER] L08: BootInfo: ntoskrnl=0x{:x}/{} hal=0x{:x}/{} bootvid=0x{:x}/{} hives={} drivers={}",
         unsafe { (*core::ptr::addr_of!(KERNEL_BOOT_INFO)).ntoskrnl_image_base },
         unsafe { (*core::ptr::addr_of!(KERNEL_BOOT_INFO)).ntoskrnl_image_size },
@@ -3731,11 +4041,11 @@ fn os_loader_run() -> ! {
         stack_pages,
     ) {
         Ok(p) => {
-            uefi::println!("[LOADER] allocated stack at 0x{:x}", p.as_ptr() as u64);
+            debug_println!("[LOADER] allocated stack at 0x{:x}", p.as_ptr() as u64);
             p.as_ptr() as u64
         }
         Err(e) => {
-            uefi::println!("[LOADER] stack alloc failed: {:?}", e);
+            debug_println!("[LOADER] stack alloc failed: {:?}", e);
             // Use UEFI stack region near 0x7FB40000
             0x7FB40000u64
         }
@@ -3743,9 +4053,11 @@ fn os_loader_run() -> ! {
     let stack_top = stack_base + (stack_pages * 4096) as u64;
     let bi_ptr = core::ptr::addr_of!(KERNEL_BOOT_INFO) as u64;
 
-    uefi::println!(
+    debug_println!(
         "[LOADER] jumping to kernel, bi_ptr=0x{:x} sp=0x{:x} boot_mode={}",
-        bi_ptr, stack_top, unsafe { (*core::ptr::addr_of!(KERNEL_BOOT_INFO)).boot_mode }
+        bi_ptr,
+        stack_top,
+        unsafe { (*core::ptr::addr_of!(KERNEL_BOOT_INFO)).boot_mode }
     );
 
     // One last sanity check: log whether the ESP / SYS / ISO RAM-disk
@@ -3758,16 +4070,21 @@ fn os_loader_run() -> ! {
     // the field state here for early diagnosis.
     unsafe {
         let bi = &*core::ptr::addr_of!(KERNEL_BOOT_INFO);
-        uefi::println!(
+        debug_println!(
             "[LOADER] BootInfo: esp=0x{:x}/{} sys=0x{:x}/{} ramdisk=0x{:x}/{} fb=0x{:x}/{}x{}",
-            bi.esp_image_base, bi.esp_image_size,
-            bi.sys_image_base, bi.sys_image_size,
-            bi.ramdisk_image_base, bi.ramdisk_image_size,
-            bi.framebuffer_base, bi.framebuffer_width, bi.framebuffer_height
+            bi.esp_image_base,
+            bi.esp_image_size,
+            bi.sys_image_base,
+            bi.sys_image_size,
+            bi.ramdisk_image_base,
+            bi.ramdisk_image_size,
+            bi.framebuffer_base,
+            bi.framebuffer_width,
+            bi.framebuffer_height
         );
     }
 
-    uefi::println!("[WINLOAD]   transferring control to kernel_main (post-ExitBootServices)");
+    debug_println!("[WINLOAD]   transferring control to kernel_main (post-ExitBootServices)");
 
     // =====================================================================
     // Phase L09 — install host trampoline pointer
@@ -3781,9 +4098,10 @@ fn os_loader_run() -> ! {
     //
     // We install the pointer *now* (before ExitBootServices) so the
     // value is definitely visible by the time we reach Phase L11.
-    uefi::println!("--- Phase L09 ---");
-    let trampoline_addr = nt61::arch::x86_64::ntoskrnl_handoff::install_handoff_pointer();
-    uefi::println!(
+    debug_println!("--- Phase L09 ---");
+    mark_winload_phase(8);
+    let trampoline_addr = arch::current::install_kernel_handoff();
+    debug_println!(
         "[WINLOAD] L09: trampoline address = 0x{:x}",
         trampoline_addr
     );
@@ -3802,7 +4120,7 @@ fn os_loader_run() -> ! {
         let bi = &mut *core::ptr::addr_of_mut!(KERNEL_BOOT_INFO);
         bi.ntoskrnl_handoff_callback = trampoline_addr;
     }
-    uefi::println!(
+    debug_println!(
         "[WINLOAD] L09: BootInfo.ntoskrnl_handoff_callback = 0x{:x}",
         trampoline_addr
     );
@@ -3815,7 +4133,8 @@ fn os_loader_run() -> ! {
     // memory map + map_key captured in Phase L02 must be passed to
     // the firmware here, otherwise ExitBootServices returns
     // EFI_INVALID_PARAMETER.
-    uefi::println!("--- Phase L10 ---");
+    debug_println!("--- Phase L10 ---");
+    mark_winload_phase(9);
     // QEMU/OVMF frequently rejects the first ExitBootServices call
     // with INVALID_PARAMETER because some background firmware work
     // between our collect_memory_map() at L02 and now changed the
@@ -3827,7 +4146,7 @@ fn os_loader_run() -> ! {
     // jump, so a missed ExitBootServices just means BS_DATA / RT_DATA
     // types remain addressable in the EFI memory map — harmless.
     let map_key = unsafe { (*core::ptr::addr_of!(PERSISTENT)).map_key };
-    uefi::println!(
+    debug_println!(
         "[WINLOAD] L10: ExitBootServices(image_handle, map_key=0x{:x}) — best effort",
         map_key
     );
@@ -3837,28 +4156,29 @@ fn os_loader_run() -> ! {
     // table function (which is the raw `extern "efiapi"` pointer
     // pulled out of the system table below) takes that raw
     // pointer, so we unwrap it.
-    let handle_ptr: *mut core::ffi::c_void =
-        uefi::boot::image_handle().as_ptr();
+    let handle_ptr: *mut core::ffi::c_void = uefi::boot::image_handle().as_ptr();
     unsafe {
-        let st = uefi::table::system_table_raw()
-            .expect("system table not set");
+        let st = uefi::table::system_table_raw().expect("system table not set");
         let st_ref = st.as_ref();
         if let Some(bs_ptr) = st_ref.boot_services.as_ref() {
             let status = (bs_ptr.exit_boot_services)(handle_ptr, map_key);
-            uefi::println!(
+            debug_println!(
                 "[WINLOAD] L10: ExitBootServices: status={:?} map_key=0x{:x}",
-                status, map_key
+                status,
+                map_key
             );
             if status.is_success() {
-                uefi::println!("[WINLOAD] L10: boot services terminated successfully");
+                debug_println!("[WINLOAD] L10: boot services terminated successfully");
             } else {
-                uefi::println!(
+                debug_println!(
                     "[WINLOAD] L10: WARN: ExitBootServices returned {:?}; continuing anyway",
                     status
                 );
             }
         } else {
-            uefi::println!("[WINLOAD] L10: boot_services pointer null; skipping ExitBootServices");
+            debug_println!(
+                "[WINLOAD] L10: boot_services pointer null; ExitBootServices not called"
+            );
         }
     }
 
@@ -3871,10 +4191,18 @@ fn os_loader_run() -> ! {
     // keeps the disk image self-contained: the callback survives
     // ExitBootServices because it lives inside the loaded PE, not in
     // the fragile BootServicesData region.
-    uefi::println!("--- Phase L11 ---");
-    let entry_rva = crate::arch::x86_64::kernel_entry::KI_SYSTEM_STARTUP_RVA;
-    let ki_va = ntoskrnl_base_l03 + entry_rva;
+    debug_println!("--- Phase L11 ---");
+    mark_winload_phase(10);
+    let ki_va = ntoskrnl_base_l03 + kernel_entry_rva_l03;
     uefi::println!(
+        "[WINLOAD] L11: ntoskrnl_base=0x{:x} entry_rva=0x{:x} ki_va=0x{:x} stack=0x{:x} bi=0x{:x}",
+        ntoskrnl_base_l03,
+        kernel_entry_rva_l03,
+        ki_va,
+        stack_top,
+        core::ptr::addr_of!(KERNEL_BOOT_INFO) as u64
+    );
+    debug_println!(
         "[WINLOAD] L11: jumping to disk ntoskrnl.exe at 0x{:x} entry=0x{:x} stack_top=0x{:x}",
         ntoskrnl_base_l03,
         ki_va,
@@ -3883,29 +4211,11 @@ fn os_loader_run() -> ! {
     // Patch the callback field at end-of-.text with the host trampoline
     // address. The disk stub's `lea rax, [rip + disp]` points here.
     unsafe {
-        let handoff_cb = (*core::ptr::addr_of!(KERNEL_BOOT_INFO)).ntoskrnl_handoff_callback;
-        use crate::arch::x86_64::kernel_entry as ke;
-        // The callback field is the last 8 bytes of the .text section.
-        // .text base VA = image_base + TEXT_BASE_RVA
-        let text_base_va = ntoskrnl_base_l03 + ke::TEXT_BASE_RVA;
-        let field_va = text_base_va + ke::TEXT_SIZE - 8;
-        (field_va as *mut u64).write_volatile(handoff_cb);
-        uefi::println!("[WINLOAD] L11: patched callback field at 0x{:x} = 0x{:x}", field_va, handoff_cb);
-        let stub_bytes = core::slice::from_raw_parts(ki_va as *const u8, 16);
-        uefi::println!("[WINLOAD] L11: KiSystemStartup stub = {:02x?}", stub_bytes);
-    }
-    unsafe {
-        let _trampoline: unsafe extern "C" fn(u64, u64, u64) -> ! =
-            crate::arch::x86_64::jump_to_ntoskrnl_kisystemstartup;
-        crate::arch::x86_64::jump_to_ntoskrnl_kisystemstartup(
+        arch::current::launch_kernel(
             stack_top,
             core::ptr::addr_of!(KERNEL_BOOT_INFO) as u64,
             ki_va,
         );
-    }
-    #[allow(unreachable_code)]
-    loop {
-        unsafe { core::arch::asm!("hlt", options(noreturn)); }
     }
 }
 
@@ -3915,12 +4225,143 @@ fn os_loader_run() -> ! {
 // The linker script groups .text.efi_main sections and uses ENTRY(efi_main).
 // Put efi_main in its own section so it gets placed at the very start.
 
+/// Firmware-supplied image handle, captured at `efi_main` entry. Used
+/// to open the EFI_LOADED_IMAGE_PROTOCOL for chain-loaded launches.
+static mut WINLOAD_IMAGE_HANDLE: u64 = 0;
+
+/// Pool buffer holding our own PE bytes, served through the
+/// EFI_LOAD_FILE_PROTOCOL below.
+static mut LOAD_FILE_IMAGE_BASE: u64 = 0;
+static mut LOAD_FILE_IMAGE_SIZE: u64 = 0;
+
+static mut WINLOAD_LOAD_FILE_PROTOCOL: uefi_raw::protocol::media::LoadFileProtocol =
+    uefi_raw::protocol::media::LoadFileProtocol {
+        load_file: winload_load_file_callback,
+    };
+
+/// EFI_LOAD_FILE_PROTOCOL callback: serves the winload.efi image bytes
+/// so bootmgfw (or the firmware BDS) can chain-load this loader via
+/// LoadFile resolution instead of raw block reads.
+extern "efiapi" fn winload_load_file_callback(
+    _this: *mut uefi_raw::protocol::media::LoadFileProtocol,
+    _file_path: *const uefi_raw::protocol::device_path::DevicePathProtocol,
+    _boot_policy: uefi_raw::Boolean,
+    buffer_size: *mut usize,
+    buffer: *mut core::ffi::c_void,
+) -> uefi::Status {
+    let (base, size) = unsafe { (LOAD_FILE_IMAGE_BASE, LOAD_FILE_IMAGE_SIZE) };
+    if base == 0 || size == 0 {
+        return uefi::Status::UNSUPPORTED;
+    }
+    unsafe {
+        let requested = &mut *buffer_size;
+        if buffer.is_null() || *requested < size as usize {
+            *requested = size as usize;
+            return uefi::Status::BUFFER_TOO_SMALL;
+        }
+        core::ptr::copy_nonoverlapping(base as *const u8, buffer.cast::<u8>(), size as usize);
+    }
+    uefi::Status::SUCCESS
+}
+
+/// Capture our own PE image bytes into a boot-services pool buffer and
+/// install the EFI_LOAD_FILE_PROTOCOL on a fresh handle. Returns the
+/// new handle on success. Safe to skip: the direct-launch path does
+/// not depend on the protocol.
+unsafe fn install_load_file_protocol() -> Option<uefi::Handle> {
+    const SELF_PATHS: [&str; 2] = [
+        "\\EFI\\Microsoft\\Boot\\winload.efi",
+        "\\Windows\\System32\\winload.efi",
+    ];
+    let mut image: Option<Vec<u8>> = None;
+    for path in SELF_PATHS {
+        if let Some(data) = open_system_file_data(path) {
+            image = Some(data);
+            break;
+        }
+    }
+    let image = image?;
+    let pool = uefi::boot::allocate_pool(uefi::boot::MemoryType::LOADER_DATA, image.len()).ok()?;
+    core::ptr::copy_nonoverlapping(image.as_ptr(), pool.as_ptr(), image.len());
+    LOAD_FILE_IMAGE_BASE = pool.as_ptr() as u64;
+    LOAD_FILE_IMAGE_SIZE = image.len() as u64;
+    let handle = uefi::boot::install_protocol_interface(
+        None,
+        &uefi_raw::protocol::media::LoadFileProtocol::GUID,
+        core::ptr::addr_of!(WINLOAD_LOAD_FILE_PROTOCOL).cast(),
+    )
+    .ok()?;
+    debug_println!(
+        "[WINLOAD] EFI_LOAD_FILE_PROTOCOL installed on handle 0x{:x}",
+        handle.as_ptr() as u64
+    );
+    Some(handle)
+}
+
+/// The device handle winload.efi itself was loaded from, obtained via
+/// the EFI_LOADED_IMAGE_PROTOCOL. When bootmgfw chain-loads this
+/// loader, this is the authoritative ESP handle; no BlockIO scan
+/// needed.
+fn chain_loaded_device_handle() -> Option<uefi::Handle> {
+    let raw = unsafe { WINLOAD_IMAGE_HANDLE };
+    if raw == 0 {
+        return None;
+    }
+    let image = unsafe { uefi::Handle::from_ptr(raw as *mut core::ffi::c_void)? };
+    use uefi::boot::OpenProtocolAttributes;
+    use uefi::boot::OpenProtocolParams;
+    use uefi::proto::loaded_image::LoadedImage;
+    let loaded = unsafe {
+        uefi::boot::open_protocol::<LoadedImage>(
+            OpenProtocolParams {
+                handle: image,
+                agent: image,
+                controller: None,
+            },
+            OpenProtocolAttributes::GetProtocol,
+        )
+    }
+    .ok()?;
+    let device = loaded.get().and_then(|img| img.device());
+    drop(loaded);
+    device
+}
+
+/// True when `handle` exposes the SimpleFileSystem protocol.
+fn device_has_simple_filesystem(handle: uefi::Handle) -> bool {
+    use uefi::boot::OpenProtocolAttributes;
+    use uefi::boot::OpenProtocolParams;
+    use uefi::proto::media::fs::SimpleFileSystem;
+    match unsafe {
+        uefi::boot::open_protocol::<SimpleFileSystem>(
+            OpenProtocolParams {
+                handle,
+                agent: uefi::boot::image_handle(),
+                controller: None,
+            },
+            OpenProtocolAttributes::GetProtocol,
+        )
+    } {
+        Ok(scoped) => {
+            let ok = scoped.get().is_some();
+            drop(scoped);
+            ok
+        }
+        Err(_) => false,
+    }
+}
+
 #[link_section = ".text.efi_main"]
 #[no_mangle]
-extern "efiapi" fn efi_main(
-    _image: uefi::Handle,
-    _st: *const core::ffi::c_void,
-) -> uefi::Status {
+extern "efiapi" fn efi_main(_image: uefi::Handle, _st: *const core::ffi::c_void) -> uefi::Status {
+    crate::arch::current::write_com1_marker(b"[WINLOAD] entered\r\n");
+
+    // Capture the firmware image handle for LoadedImage-based device
+    // discovery before anything else touches it.
+    unsafe {
+        WINLOAD_IMAGE_HANDLE = _image.as_ptr() as u64;
+    }
+
     // Set up UEFI globals — this MUST be done before calling any uefi crate functions.
     // SAFETY: image_handle and system_table are valid per UEFI calling convention.
     unsafe {
@@ -3928,43 +4369,32 @@ extern "efiapi" fn efi_main(
         uefi::table::set_system_table(_st.cast());
     }
 
-    // DIAG: output WINL> to serial port so we can confirm
-    // efi_main is actually being entered by the boot manager.
-    unsafe {
-        core::arch::asm!(
-            "mov dx, 0x3f8",
-            "mov al, 0x57", // 'W'
-            "out dx, al",
-            "mov al, 0x49", // 'I'
-            "out dx, al",
-            "mov al, 0x4e", // 'N'
-            "out dx, al",
-            "mov al, 0x4c", // 'L'
-            "out dx, al",
-            "mov al, 0x3e", // '>'
-            "out dx, al",
-            "mov al, 0x0a", // '\n'
-            "out dx, al",
-            options(nostack, preserves_flags),
-        );
-    }
+    arch::current::write_debug_marker(b"WINL>\r\n");
 
+    debug_println!("[WINLOAD] before helpers init");
     if let Err(_e) = uefi::helpers::init() {
         // ignored
     }
+    debug_println!("[WINLOAD] after helpers init");
 
     // Cache the ESP / System SimpleFileSystem handles BEFORE any other
     // boot-services activity.
+    debug_println!("[WINLOAD] before cache_esp_sfs_handle");
     cache_esp_sfs_handle();
+    debug_println!("[WINLOAD] after cache_esp_sfs_handle");
+    debug_println!("[WINLOAD] before cache_system_sfs_handle");
     cache_system_sfs_handle();
+    debug_println!("[WINLOAD] after cache_system_sfs_handle");
+
+    // Expose winload.efi through the EFI_LOAD_FILE_PROTOCOL so bootmgfw
+    // can chain-load us through the standard UEFI resolution path.
+    unsafe {
+        let _ = install_load_file_protocol();
+    }
 
     // Run the OS Loader — on success this never returns.
     os_loader_run();
 
     // NOTREACHED — os_loader_run is `!`. But if we somehow get here (e.g.,
     // the kernel panic loop exits), hang to prevent bootmgr from loading ntoskrnl.exe.
-    #[allow(unreachable_code)]
-    loop {
-        unsafe { core::arch::asm!("hlt", options(noreturn)); }
-    }
 }
