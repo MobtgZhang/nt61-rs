@@ -14,7 +14,7 @@ pub fn smoke_test() -> bool {
 
     // Test 1: TCP/IP initialization
     if !test_tcpip_init() {
-        crate::hal::serial::write_string("[NetStack] FAIL: TCP/IP initialization test\r\n");
+        crate::hal::serial::write_string_always("[NetStack] FAIL: TCP/IP initialization test\r\n");
         pass = false;
     } else {
         crate::hal::serial::write_string("[NetStack] PASS: TCP/IP initialization test\r\n");
@@ -22,7 +22,7 @@ pub fn smoke_test() -> bool {
 
     // Test 2: Socket creation
     if !test_socket_creation() {
-        crate::hal::serial::write_string("[NetStack] FAIL: Socket creation test\r\n");
+        crate::hal::serial::write_string_always("[NetStack] FAIL: Socket creation test\r\n");
         pass = false;
     } else {
         crate::hal::serial::write_string("[NetStack] PASS: Socket creation test\r\n");
@@ -30,7 +30,7 @@ pub fn smoke_test() -> bool {
 
     // Test 3: Routing table
     if !test_routing_table() {
-        crate::hal::serial::write_string("[NetStack] FAIL: Routing table test\r\n");
+        crate::hal::serial::write_string_always("[NetStack] FAIL: Routing table test\r\n");
         pass = false;
     } else {
         crate::hal::serial::write_string("[NetStack] PASS: Routing table test\r\n");
@@ -38,7 +38,7 @@ pub fn smoke_test() -> bool {
 
     // Test 4: Packet processing
     if !test_packet_processing() {
-        crate::hal::serial::write_string("[NetStack] FAIL: Packet processing test\r\n");
+        crate::hal::serial::write_string_always("[NetStack] FAIL: Packet processing test\r\n");
         pass = false;
     } else {
         crate::hal::serial::write_string("[NetStack] PASS: Packet processing test\r\n");
@@ -47,7 +47,7 @@ pub fn smoke_test() -> bool {
     if pass {
         crate::hal::serial::write_string("[NetStack] All smoke tests PASSED\r\n");
     } else {
-        crate::hal::serial::write_string("[NetStack] Some smoke tests FAILED\r\n");
+        crate::hal::serial::write_string_always("[NetStack] Some smoke tests FAILED\r\n");
     }
 
     pass
@@ -69,9 +69,9 @@ fn test_tcpip_init() -> bool {
 fn test_socket_creation() -> bool {
     // Test creating different socket types
     // In a full implementation, we would:
-    // 1. Create TCP socket
-    // 2. Create UDP socket
-    // 3. Create RAW socket
+    // 1. create TCP socket
+    // 2. create UDP socket
+    // 3. create RAW socket
     // 4. Verify socket structures
 
     true
@@ -93,7 +93,7 @@ fn test_routing_table() -> bool {
 fn test_packet_processing() -> bool {
     // Test basic packet handling
     // In a full implementation, we would:
-    // 1. Create a test packet
+    // 1. create a test packet
     // 2. Process through IP layer
     // 3. Process through TCP/UDP layer
     // 4. Verify packet parsing
@@ -102,43 +102,37 @@ fn test_packet_processing() -> bool {
 }
 
 /// Test DNS resolution
-#[allow(dead_code)]
-fn test_dns_resolution() -> bool {
+pub fn test_dns_resolution() -> bool {
     // Test DNS query and response handling
     true
 }
 
 /// Test DHCP client
-#[allow(dead_code)]
-fn test_dhcp_client() -> bool {
+pub fn test_dhcp_client() -> bool {
     // Test DHCP discover/offer/request/ack cycle
     true
 }
 
 /// Test ARP operations
-#[allow(dead_code)]
-fn test_arp_operations() -> bool {
+pub fn test_arp_operations() -> bool {
     // Test ARP request/reply handling
     true
 }
 
 /// Test TCP connection lifecycle
-#[allow(dead_code)]
-fn test_tcp_connection() -> bool {
+pub fn test_tcp_connection() -> bool {
     // Test TCP three-way handshake and teardown
     true
 }
 
 /// Test AFD (Winsock) interface
-#[allow(dead_code)]
-fn test_afd_interface() -> bool {
+pub fn test_afd_interface() -> bool {
     // Test Ancillary Function Driver (Winsock support)
     true
 }
 
 /// Test NAT operations
-#[allow(dead_code)]
-fn test_nat() -> bool {
+pub fn test_nat() -> bool {
     // Test Network Address Translation
     true
 }

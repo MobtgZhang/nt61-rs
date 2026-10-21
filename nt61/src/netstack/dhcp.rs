@@ -780,6 +780,14 @@ impl DhcpClient {
         self.build_request(chaddr, self.lease.ip_address, self.lease.server_id)
     }
 
+    /// Build a DHCPREQUEST for the IP offered by the server.
+    /// Must be called after `process_message` returned `true` for an
+    /// Offer (i.e. state == `Requesting`), when `offered_ip` and
+    /// `offered_server` are populated.
+    pub fn build_request_from_offer(&self, chaddr: &[u8; 6]) -> Vec<u8> {
+        self.build_request(chaddr, self.offered_ip, self.offered_server)
+    }
+
     pub fn get_state(&self) -> DhcpState {
         self.state
     }

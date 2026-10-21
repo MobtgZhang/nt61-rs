@@ -43,7 +43,7 @@ pub fn run_tests() -> bool {
     stats.test("UDP Receive", test_udp_receive);
     stats.test("UDP Bind", test_udp_bind);
 
-    // Congestion Control Tests
+    // Congestion control Tests
     stats.test("TCP Slow Start", test_tcp_slow_start);
     stats.test("TCP Congestion Avoidance", test_tcp_congestion_avoidance);
     stats.test("TCP Fast Retransmit", test_tcp_fast_retransmit);
@@ -149,7 +149,7 @@ fn test_tcp_accept() -> bool {
         }
     }
 
-        let _ = socket::close(listen_socket);
+    let _ = socket::close(listen_socket);
     true
 }
 
@@ -327,7 +327,7 @@ fn test_udp_bind() -> bool {
 }
 
 // =============================================================================
-// Congestion Control Tests
+// Congestion control Tests
 // =============================================================================
 
 fn test_tcp_slow_start() -> bool {

@@ -1,6 +1,6 @@
 //! TCP Protocol Implementation
 //
-//! Handles Transmission Control Protocol for reliable, ordered data delivery.
+//! Handles Transmission control Protocol for reliable, ordered data delivery.
 //
 //! Clean-room implementation based on RFC 793, 1122, 9293.
 
@@ -132,7 +132,7 @@ impl TcpHeader {
         })
     }
 
-    /// Write to bytes
+    /// write to bytes
     pub fn to_bytes(&self, data: &mut [u8]) {
         if data.len() < TCP_HDR_SIZE {
             return;
@@ -264,7 +264,7 @@ impl TcpControlBlock {
         self.rto = rto_calc.max(1000).min(60000);
     }
 
-    /// Handle duplicate ACK for fast retransmit
+    /// handle duplicate ACK for fast retransmit
     pub fn on_duplicate_ack(&mut self) {
         self.dup_acks += 1;
 
@@ -291,7 +291,7 @@ impl TcpControlBlock {
         }
     }
 
-    /// Handle ACK during slow start
+    /// handle ACK during slow start
     pub fn on_ack_slow_start(&mut self, acked_bytes: u32) {
         // RFC 5681 §4.1: during slow start cwnd grows by one segment per
         // ACK (bounded by the amount of data the ACK actually covers).
@@ -305,7 +305,7 @@ impl TcpControlBlock {
         }
     }
 
-    /// Handle ACK during congestion avoidance
+    /// handle ACK during congestion avoidance
     pub fn on_ack_congestion_avoidance(&mut self, acked_bytes: u32) {
         // RFC 5681 §4.2: linear increase, one segment per RTT, i.e.
         // cwnd += MSS * acked_bytes / cwnd.
@@ -316,7 +316,7 @@ impl TcpControlBlock {
         self.cwnd = self.cwnd.saturating_add(increment);
     }
 
-    /// Handle successful ACK
+    /// handle successful ACK
     pub fn on_ack(&mut self, ack_num: u32) {
         // Update duplicate ACK counter
         if seq_after(ack_num, self.snd_una) {
@@ -350,7 +350,7 @@ impl TcpControlBlock {
         self.snd_una = ack_num;
     }
 
-    /// Handle timeout - triple duplicate ACK scenario
+    /// handle timeout - triple duplicate ACK scenario
     pub fn on_timeout(&mut self) {
         // Save RTT measurement for next connection
         let saved_rto = self.rto;
@@ -680,7 +680,7 @@ pub fn tcp_input(src_ip: u32, dst_ip: u32, data: &[u8]) {
             // Check if it's a SYN for a listening socket
             if flags & tcp_flags::SYN != 0 {
                 if let Some(idx) = find_listener(dst_ip, header.dst_port) {
-                    // Create new connection for listening socket
+                    // create new connection for listening socket
                     let mut connections = TCP_CONNECTIONS.lock();
                     // Capture the listening socket id while we still
                     // hold a borrow on the listener TCB so the new
@@ -727,7 +727,7 @@ pub fn tcp_input(src_ip: u32, dst_ip: u32, data: &[u8]) {
     }
 }
 
-/// Handle TCP segment based on state. Returns true iff this segment
+/// handle TCP segment based on state. Returns true iff this segment
 /// caused the TCB to transition into the Established state from
 /// SynReceived (i.e. completed the passive 3-way handshake). The
 /// caller is responsible for enqueuing the TCB onto the listening
@@ -779,7 +779,7 @@ fn handle_tcp_segment(
                 tcb.rcv_nxt += payload_len as u32;
             }
 
-            // Handle ACK
+            // handle ACK
             if flags & tcp_flags::ACK != 0 {
                 // Use new congestion control ACK handler
                 tcb.on_ack(header.ack);
@@ -790,7 +790,7 @@ fn handle_tcp_segment(
                 // This is a duplicate ACK - handled in on_ack
             }
 
-            // Handle FIN
+            // handle FIN
             if flags & tcp_flags::FIN != 0 {
                 tcb.rcv_nxt += 1;
                 tcb.state = TcpState::CloseWait;
@@ -861,7 +861,7 @@ fn generate_isn() -> u32 {
     (z ^ (z >> 31)) as u32
 }
 
-/// Create a TCP listening endpoint. The returned socket_id is
+/// create a TCP listening endpoint. The returned socket_id is
 /// referenced by incoming child TCBs through their
 /// `listen_socket_id` field; `socket::listen` callers use the same
 /// id when invoking `socket::enqueue_accept`.
@@ -932,7 +932,17 @@ pub fn connect(local_ip: u32, local_port: Port, remote_ip: u32, remote_port: Por
     Some(socket_id)
 }
 
-/// Close a TCP connection
+/// Return the current TCP state for the given socket ID.
+pub fn socket_state(socket_id: u32) -> TcpState {
+    let connections = TCP_CONNECTIONS.lock();
+    connections
+        .iter()
+        .find(|tcb| tcb.socket_id == socket_id)
+        .map(|tcb| tcb.state)
+        .unwrap_or(TcpState::Closed)
+}
+
+/// close a TCP connection
 pub fn close(socket_id: u32) -> bool {
     let mut connections = TCP_CONNECTIONS.lock();
 
@@ -1119,7 +1129,7 @@ pub fn check_retransmit_timers() {
             tcb.last_send_time = pit::get_system_time_ms() as u64;
             tcb.in_retransmit = true;
 
-            // Handle timeout
+            // handle timeout
             tcb.on_timeout();
         }
     }

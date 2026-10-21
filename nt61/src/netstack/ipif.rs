@@ -8,7 +8,7 @@ use crate::ke::sync::Spinlock;
 use alloc::vec::Vec;
 
 /// Maximum number of IP interfaces
-const MAX_IP_INTERFACES: usize = 8;
+const MAX_IP_INTERFACES: usize = 32;
 /// Maximum number of routing table entries
 const MAX_ROUTE_ENTRIES: usize = 32;
 
@@ -35,7 +35,7 @@ pub struct IpInterface {
 }
 
 impl IpInterface {
-    /// Create a new IP interface
+    /// create a new IP interface
     pub fn new(if_index: u32, address: u32, netmask: u32, gateway: u32, eth_if: u32) -> Self {
         Self {
             if_index,
@@ -86,7 +86,7 @@ pub struct RouteEntry {
 }
 
 impl RouteEntry {
-    /// Create a new route entry
+    /// create a new route entry
     pub fn new(dest: u32, netmask: u32, gateway: u32, if_index: u32, metric: u32) -> Self {
         Self {
             dest,

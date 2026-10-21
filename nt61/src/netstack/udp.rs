@@ -22,7 +22,7 @@ pub struct UdpHeader {
     pub src_port: u16,
     /// Destination port (network byte order)
     pub dst_port: u16,
-    /// Length (network byte order)
+    /// length (network byte order)
     pub length: u16,
     /// Checksum (network byte order)
     pub checksum: u16,
@@ -43,7 +43,7 @@ impl UdpHeader {
         })
     }
 
-    /// Write to bytes
+    /// write to bytes
     pub fn to_bytes(&self, data: &mut [u8]) {
         if data.len() < UDP_HDR_SIZE {
             return;
@@ -178,7 +178,7 @@ fn calculate_checksum(src_ip: u32, dst_ip: u32, udp_data: &[u8]) -> u16 {
     }
 }
 
-/// Create a UDP socket and bind to a local port
+/// create a UDP socket and bind to a local port
 pub fn create_socket(local_port: Port, local_ip: u32) -> Option<usize> {
     let mut sockets = UDP_SOCKETS.lock();
 
@@ -377,7 +377,7 @@ pub fn socket_count() -> usize {
     UDP_SOCKETS.lock().len()
 }
 
-/// Close a socket
+/// close a socket
 pub fn close_socket(socket_idx: usize) {
     let mut sockets = UDP_SOCKETS.lock();
     if socket_idx < sockets.len() {

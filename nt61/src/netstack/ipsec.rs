@@ -96,11 +96,11 @@ pub enum PolicyAction {
     Discard,
 }
 
-struct IpsecDatabase {
+pub struct IpsecDatabase {
     sa_out: Vec<SecurityAssociation>,
     sa_in: Vec<SecurityAssociation>,
     spd: Vec<SecurityPolicy>,
-    next_spi: u32,
+    pub next_spi: u32,
     next_policy_id: u32,
 }
 

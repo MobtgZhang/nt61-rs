@@ -63,7 +63,7 @@ impl ArpHeader {
         })
     }
 
-    /// Write to bytes
+    /// write to bytes
     pub fn to_bytes(&self, data: &mut [u8]) {
         if data.len() < 28 {
             return;
@@ -179,6 +179,15 @@ pub fn cache_cleanup() {
     let mut cache = ARP_CACHE.lock();
     let now = ARP_CLOCK.load(Ordering::Relaxed);
     cache.retain(|e| e.static_entry || now - e.timestamp < ARP_CACHE_TIMEOUT);
+}
+
+/// Return a snapshot of the current ARP cache.
+pub fn cache_entries() -> alloc::vec::Vec<(u32, [u8; 6], bool)> {
+    ARP_CACHE
+        .lock()
+        .iter()
+        .map(|entry| (entry.ip, entry.mac, entry.static_entry))
+        .collect()
 }
 
 /// Process an incoming ARP packet

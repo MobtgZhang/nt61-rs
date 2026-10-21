@@ -116,6 +116,8 @@ pub struct Socket {
     /// Backlog hint from the most recent `listen()` call. Used to
     /// cap the length of `accept_queue`.
     pub listen_backlog: u32,
+    pub shutdown_receive: bool,
+    pub shutdown_send: bool,
 }
 
 impl Socket {
@@ -134,6 +136,8 @@ impl Socket {
             bind_port: 0,
             accept_queue: Vec::new(),
             listen_backlog: 0,
+            shutdown_receive: false,
+            shutdown_send: false,
         }
     }
 }
@@ -243,7 +247,7 @@ pub fn listen(socket_id: u32, backlog: u32) -> Result<(), SocketError> {
         (ip, port)
     };
 
-    // Create the underlying TCP listen TCB so incoming SYNs are
+    // create the underlying TCP listen TCB so incoming SYNs are
     // matched and child TCBs carry our socket id through
     // listen_socket_id.
     if tcp::listen(local_ip, local_port).is_none() {
@@ -530,6 +534,40 @@ pub fn close(socket_id: u32) -> Result<(), SocketError> {
     }
 
     Ok(())
+}
+
+pub fn shutdown(socket_id: u32, how: u8) -> Result<(), SocketError> {
+    let mut sockets = SOCKETS.lock();
+    let socket = sockets
+        .iter_mut()
+        .find(|socket| socket.id == socket_id)
+        .ok_or(SocketError::InvalidSocket)?;
+
+    match how {
+        0 => socket.shutdown_receive = true,
+        1 => socket.shutdown_send = true,
+        2 => {
+            socket.shutdown_receive = true;
+            socket.shutdown_send = true;
+        }
+        _ => return Err(SocketError::InvalidArgument),
+    }
+
+    if socket.shutdown_receive && socket.shutdown_send {
+        socket.state = SocketState::Closing;
+    }
+    Ok(())
+}
+
+pub fn is_read_ready(socket_id: u32) -> bool {
+    let sockets = SOCKETS.lock();
+    let Some(socket) = sockets.iter().find(|socket| socket.id == socket_id) else {
+        return false;
+    };
+
+    !socket.shutdown_receive
+        && (matches!(socket.state, SocketState::Listening) && !socket.accept_queue.is_empty()
+            || matches!(socket.socket_type, SocketType::Dgram) && !socket.rx_buf.is_empty())
 }
 
 pub fn get_state(socket_id: u32) -> Option<SocketState> {

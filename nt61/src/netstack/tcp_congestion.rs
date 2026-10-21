@@ -1,4 +1,4 @@
-//! TCP Congestion Control — CUBIC + Reno
+//! TCP Congestion control — CUBIC + Reno
 //!
 //! Implements two congestion-control algorithms behind a common
 //! `CongestionControl` interface:
@@ -437,33 +437,7 @@ fn seq_lt(a: u32, b: u32) -> bool {
 // =============================================================================
 
 fn now_ms() -> u64 {
-    // The PIT is the canonical millisecond clock for the kernel
-    // (see hal::x86_64::pit). When the HAL isn't booted (unit
-    // tests under `cargo test`) the call traps, so we fall back to
-    // a hand-rolled monotonic counter.
-    #[cfg(target_arch = "x86_64")]
-    {
-        if pit_initialised() {
-            return crate::hal::x86_64::pit::get_system_time_ms();
-        }
-    }
-    // Fallback: a static atomic counter that we increment on
-    // every call. Not perfect, but monotonic enough for unit tests.
-    use core::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    COUNTER.fetch_add(1, Ordering::Relaxed)
-}
-
-#[cfg(target_arch = "x86_64")]
-fn pit_initialised() -> bool {
-    // The PIT module exposes the global divisor word we set during
-    // `init()`.  If it is non-zero the timer is running.
-    crate::hal::x86_64::pit::pit_freq_hz() != 0
-}
-
-#[cfg(not(target_arch = "x86_64"))]
-fn pit_initialised() -> bool {
-    false
+    crate::hal::common::pit::get_system_time_ms()
 }
 
 #[cfg(test)]
@@ -535,7 +509,7 @@ mod tests {
     }
 }
 
-fn max(a: u32, b: u32) -> u32 {
+pub fn max(a: u32, b: u32) -> u32 {
     if a > b {
         a
     } else {

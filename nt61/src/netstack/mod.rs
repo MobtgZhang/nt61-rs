@@ -9,6 +9,7 @@ pub mod afd;
 pub mod arp;
 pub mod dhcp;
 pub mod dns;
+pub mod e2e_test;
 pub mod eth;
 pub mod ethif;
 pub mod icmp;
@@ -105,6 +106,7 @@ pub mod nat;
 pub mod routing;
 pub mod smoke;
 pub mod tcp_congestion;
+#[cfg(test)]
 pub mod tcp_test;
 pub mod tcp_timer;
 pub mod tests;

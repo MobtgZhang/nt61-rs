@@ -261,8 +261,7 @@ impl NeighborCache {
 }
 
 fn get_timestamp() -> u64 {
-    // TODO: Integrate with HAL timer
-    0
+    crate::hal::common::pit::get_system_time_ms()
 }
 
 #[cfg(test)]

@@ -144,7 +144,9 @@ pub fn format_ip(ip: u32) -> alloc::string::String {
 }
 
 pub fn get_routing_table() -> alloc::vec::Vec<RouteEntry> {
-    alloc::vec::Vec::new()
+    get_all_routes()
 }
 
-pub fn clear_routing_table() {}
+pub fn clear_routing_table() {
+    ROUTING_TABLE.lock().clear();
+}

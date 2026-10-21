@@ -17,7 +17,7 @@ pub enum TcpTimerType {
     TimeWait,
     /// Delayed ACK timer
     DelayedAck,
-    /// Persist timer (zero window probe)
+    /// persist timer (zero window probe)
     Persist,
 }
 

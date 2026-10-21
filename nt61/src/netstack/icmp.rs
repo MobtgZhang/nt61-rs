@@ -1,6 +1,6 @@
 //! ICMP Protocol Implementation
 //
-//! Handles Internet Control Message Protocol for IPv4.
+//! Handles Internet control Message Protocol for IPv4.
 //
 //! Clean-room implementation based on RFC 792.
 
@@ -55,7 +55,7 @@ pub enum DestinationUnreachableCode {
 /// ICMP header structure
 #[repr(C)]
 pub struct IcmpHeader {
-    /// Type
+    /// r#type
     pub icmp_type: u8,
     /// Code
     pub code: u8,
@@ -80,7 +80,7 @@ impl IcmpHeader {
         })
     }
 
-    /// Write to bytes
+    /// write to bytes
     pub fn to_bytes(&self, data: &mut [u8]) {
         if data.len() < 8 {
             return;
@@ -243,7 +243,7 @@ pub fn icmp_input(src_ip: u32, data: &[u8]) {
     }
 }
 
-/// Handle ICMP echo request
+/// handle ICMP echo request
 fn handle_echo_request(src_ip: u32, header: IcmpHeader, data: &[u8]) {
     let identifier = u16::from_be_bytes([header.rest[0], header.rest[1]]);
     let sequence = u16::from_be_bytes([header.rest[2], header.rest[3]]);
@@ -259,7 +259,7 @@ fn handle_echo_request(src_ip: u32, header: IcmpHeader, data: &[u8]) {
     send_echo_reply(src_ip, dst_ip, identifier, sequence, data);
 }
 
-/// Handle ICMP echo reply
+/// handle ICMP echo reply
 fn handle_echo_reply(header: IcmpHeader, data: &[u8]) {
     let identifier = u16::from_be_bytes([header.rest[0], header.rest[1]]);
     let sequence = u16::from_be_bytes([header.rest[2], header.rest[3]]);
@@ -272,11 +272,11 @@ fn handle_echo_reply(header: IcmpHeader, data: &[u8]) {
     stats.echo_reply_out += 1;
 }
 
-/// Handle ICMP destination unreachable
+/// handle ICMP destination unreachable
 fn handle_dest_unreachable(header: IcmpHeader, data: &[u8]) {
     let code = header.code;
 
-    // Handle ICMP destination unreachable codes
+    // handle ICMP destination unreachable codes
     match code {
         3 => { /* Port unreachable - UDP should be notified */ }
         1 => { /* Host unreachable */ }

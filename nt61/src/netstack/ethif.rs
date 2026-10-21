@@ -38,7 +38,7 @@ pub struct EthInterface {
 }
 
 impl EthInterface {
-    /// Create a new Ethernet interface
+    /// create a new Ethernet interface
     pub fn new(
         if_index: u32,
         name: &[u8],
@@ -127,11 +127,10 @@ pub fn init() {
     }
 
     // Register RTL8139 interfaces
-    #[cfg(target_arch = "x86_64")]
     {
-        let rtl_count = net::rtl8139::count();
+        let rtl_count = crate::drivers::arch::count_rtl8139();
         for i in 0..rtl_count {
-            if let Some(mac) = net::rtl8139::get_mac(i) {
+            if let Some(mac) = crate::drivers::arch::receive_rtl8139_mac(i) {
                 let name = format!("rtl8139{}\0", i);
                 let eth_if = EthInterface::new(if_index, name.as_bytes(), mac, NicType::Rtl8139, i);
                 interfaces.push(eth_if);

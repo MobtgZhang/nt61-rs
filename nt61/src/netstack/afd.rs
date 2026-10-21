@@ -3,7 +3,7 @@
 //! AFD is the user-mode-facing kernel endpoint that exposes
 //! sockets as NT handles. Win32 user-mode code (specifically
 //! `ws2_32.dll` / `msafd.dll`) talks to AFD via
-//! `NtCreateFile` + `NtDeviceIoControlFile`.
+//! `NT_CREATE_FILE` + `NT_DEVICE_IO_CONTROL_FILE`.
 //!
 //! AFD is the *only* path that user-mode Winsock uses. There is
 //! no "BSD socket handle" anymore at the kernel boundary —
@@ -25,11 +25,10 @@
 //!
 //! The handle table in `libs::ntdll::file` already tracks
 //! handles; we add a new `HandleKind::Afd` so the file I/O
-//! dispatch routes `NtDeviceIoControlFile` here.
+//! dispatch routes `NT_DEVICE_IO_CONTROL_FILE` here.
 
 use crate::ke::sync::Spinlock;
 use crate::netstack::socket;
-use crate::netstack::tcp;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -190,9 +189,20 @@ pub fn dispatch(handle: u64, ioctl: u32, input: &[u8], output: &mut [u8]) -> i32
         IOCTL_AFD_SELECT => afd_select(ep, output),
         IOCTL_AFD_GET_NAME => afd_get_name(ep, input, output),
         IOCTL_AFD_SHUTDOWN => afd_shutdown(ep, input),
+        IOCTL_AFD_EVENT_SELECT => {
+            // The current endpoint model has no asynchronous event
+            // queue. Winsock still expects the registration itself to
+            // succeed, so validate the input and record readiness as
+            // successful until the event subsystem is integrated.
+            if input.len() < 4 {
+                crate::libs::ntdll::status::STATUS_INVALID_PARAMETER
+            } else {
+                crate::libs::ntdll::status::STATUS_SUCCESS
+            }
+        }
         _ => {
-            crate::boot_println!("[AFD] unknown IOCTL {:#x}", ioctl);
-            -2 // STATUS_NOT_IMPLEMENTED
+            crate::boot_debug_println!("[AFD] unknown IOCTL {:#x}", ioctl);
+            crate::libs::ntdll::status::STATUS_INVALID_DEVICE_REQUEST
         }
     }
 }
@@ -239,7 +249,7 @@ fn afd_listen(socket_id: u32, input: &[u8]) -> i32 {
 fn afd_accept(socket_id: u32, _input: &[u8], output: &mut [u8]) -> i32 {
     // Try to dequeue a child TCB. If none ready, return
     // STATUS_CANT_WAIT (-3) so msafd falls back to
-    // NtWaitForSingleObject against the endpoint's event.
+    // NT_WAIT_FOR_SINGLE_OBJECT against the endpoint's event.
     match socket::accept(socket_id) {
         Ok(peer_socket_id) => {
             if output.len() >= 16 {
@@ -315,23 +325,11 @@ fn afd_select(socket_id: u32, output: &mut [u8]) -> i32 {
     if matches!(state, socket::SocketState::Listening) {
         flags |= 0x01; // read-ready (accept queued)
     }
-    if let Some(true) = socket_has_pending_data(socket_id) {
+    if socket::is_read_ready(socket_id) {
         flags |= 0x01;
     }
     output[0..4].copy_from_slice(&flags.to_le_bytes());
     0
-}
-
-fn socket_has_pending_data(socket_id: u32) -> Option<bool> {
-    // The internal TCB exposes RX buffer length via the
-    // TCP receive path. We approximate by attempting a non-blocking
-    // peek: if recv returns WouldBlock, no data is pending.
-    let mut tmp = [0u8; 1];
-    match socket::recv(socket_id, &mut tmp) {
-        Ok(0) => Some(false),
-        Ok(_) => Some(true),
-        Err(_) => Some(false),
-    }
 }
 
 fn afd_get_name(socket_id: u32, input: &[u8], output: &mut [u8]) -> i32 {
@@ -357,10 +355,10 @@ fn afd_get_name(socket_id: u32, input: &[u8], output: &mut [u8]) -> i32 {
 
 fn afd_shutdown(socket_id: u32, input: &[u8]) -> i32 {
     let how = input.first().copied().unwrap_or(0);
-    let _ = (socket_id, how);
-    // We don't model half-close at this layer in the kernel
-    // socket; the TCP layer handles FIN via close().
-    0
+    match socket::shutdown(socket_id, how) {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
 }
 
 /// Look up the BSD socket id for an AFD handle.
@@ -390,7 +388,6 @@ pub fn dispatch_for_test(handle: u64, ioctl: u32, input: &[u8], output: &mut [u8
 /// Touch constants so dead-code analysis doesn't complain
 /// about IOCTL definitions that are only used by the host
 /// tests.
-#[allow(dead_code)]
 fn _touch_constants() -> Vec<u32> {
     vec![
         IOCTL_AFD_BIND,

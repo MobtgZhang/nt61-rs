@@ -42,13 +42,13 @@ impl Protocol {
 pub struct Ipv4Header {
     /// Version (4) and IHL (5) - network byte order
     pub version_ihl: u8,
-    /// Type of Service
+    /// r#type of Service
     pub tos: u8,
     /// Total length (network byte order)
     pub total_length: u16,
     /// Identification (network byte order)
     pub identification: u16,
-    /// Flags (3 bits) and Fragment Offset (13 bits) - network byte order
+    /// flags (3 bits) and Fragment offset (13 bits) - network byte order
     pub flags_offset: u16,
     /// Time To Live
     pub ttl: u8,
@@ -164,7 +164,7 @@ impl Ipv4Header {
         Some(header)
     }
 
-    /// Write to bytes
+    /// write to bytes
     pub fn to_bytes(&self, data: &mut [u8]) {
         if data.len() < IPV4_HDR_SIZE {
             return;
@@ -289,7 +289,7 @@ fn is_icmp_error(payload: &[u8]) -> bool {
 }
 
 /// Deliver a complete datagram to the upper-layer protocol.
-fn dispatch_datagram(header: &Ipv4Header, payload: &[u8], nic_type: NicType, nic_index: usize) {
+fn dispatch_datagram(header: &Ipv4Header, payload: &[u8], _nic_type: NicType, _nic_index: usize) {
     match Protocol::from_u8(header.protocol) {
         Some(Protocol::Icmp) => crate::netstack::icmp::icmp_input(header.src_ip, payload),
         Some(Protocol::Tcp) => {

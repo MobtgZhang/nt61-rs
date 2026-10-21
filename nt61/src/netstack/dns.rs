@@ -340,7 +340,6 @@ pub fn getaddrinfo(host: &str, family: u16) -> Result<u32, DnsError> {
 
 // Silence dead-code warnings when the resolver is wired in but
 // not yet called by anything in this commit.
-#[allow(dead_code)]
 fn _suppress_unused_warnings() -> (ipv4::Protocol, u32) {
     (ipv4::Protocol::Udp, DNS_PORT as u32)
 }

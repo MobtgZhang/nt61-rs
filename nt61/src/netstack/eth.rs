@@ -44,7 +44,7 @@ impl EthernetHeader {
         })
     }
 
-    /// Write the header to a byte slice
+    /// write the header to a byte slice
     pub fn to_bytes(&self, data: &mut [u8]) {
         if data.len() < ETHER_HDR_SIZE {
             return;

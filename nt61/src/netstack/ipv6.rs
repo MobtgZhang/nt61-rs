@@ -443,7 +443,7 @@ pub fn ipv6_input(data: &[u8]) {
 
     drop(stats);
 
-    // Handle extension headers (simplified - just skip for now)
+    // handle extension headers (simplified - just skip for now)
     let mut offset = IPV6_HEADER_SIZE;
     let mut next_header = header.next_header;
 
@@ -459,7 +459,7 @@ pub fn ipv6_input(data: &[u8]) {
         offset += (ext_len + 1) * 8;
     }
 
-    // Handle fragmentation
+    // handle fragmentation
     if next_header == ExtensionHeaderType::Fragment as u8 {
         // Simplified: just skip fragment header
         if offset + 8 > payload.len() {
@@ -530,13 +530,13 @@ fn icmpv6_input(ipv6_header: &IPv6Header, header_offset: usize, data: &[u8]) {
         }
         Icmpv6Type::EchoReply => {
             stats.echo_replies += 1;
-            // Handle echo reply
+            // handle echo reply
         }
         _ => {}
     }
 }
 
-/// Handle Router Solicitation
+/// handle Router Solicitation
 fn handle_router_solicitation(src: &[u8; 16]) {
     use crate::hal::common::pit;
 
@@ -566,7 +566,7 @@ fn handle_router_solicitation(src: &[u8; 16]) {
     }
 }
 
-/// Handle Router Advertisement
+/// handle Router Advertisement
 fn handle_router_advertisement(data: &[u8]) {
     // Update statistics
     let mut stats = IPV6_STATS.lock();
@@ -620,7 +620,7 @@ fn handle_router_advertisement(data: &[u8]) {
     }
 }
 
-/// Handle Neighbor Solicitation
+/// handle Neighbor Solicitation
 fn handle_neighbor_solicitation(src: &[u8; 16], dst: &[u8; 16], data: &[u8]) {
     use crate::hal::common::pit;
 
@@ -652,7 +652,7 @@ fn handle_neighbor_solicitation(src: &[u8; 16], dst: &[u8; 16], data: &[u8]) {
     let _unused_dst = dst; // Would be used to check if this is for us
 }
 
-/// Handle Neighbor Advertisement
+/// handle Neighbor Advertisement
 fn handle_neighbor_advertisement(_src: &[u8; 16], data: &[u8]) {
     if data.len() < 24 {
         return;

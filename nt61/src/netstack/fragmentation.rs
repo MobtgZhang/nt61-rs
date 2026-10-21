@@ -21,18 +21,18 @@ const FRAGMENT_TIMEOUT_MS: u64 = 60_000;
 const MAX_REASSEMBLY_BUFFERS: usize = 32;
 
 #[derive(Debug, Clone)]
-struct Fragment {
-    offset: usize,
+pub struct Fragment {
+    pub offset: usize,
     data: Vec<u8>,
-    timestamp: u64,
+    pub timestamp: u64,
 }
 
 #[derive(Debug)]
-struct ReassemblyBuffer {
-    src_ip: u32,
-    dst_ip: u32,
-    protocol: u8,
-    identification: u16,
+pub struct ReassemblyBuffer {
+    pub src_ip: u32,
+    pub dst_ip: u32,
+    pub protocol: u8,
+    pub identification: u16,
     fragments: BTreeMap<usize, Fragment>,
     total_length: Option<usize>,
     first_arrival: u64,
@@ -146,7 +146,7 @@ pub fn init() {
     *FRAGMENT_STATS.lock() = FragmentStats::new();
 }
 
-pub fn fragment_packet(payload: &[u8], mtu: usize, identification: u16) -> Vec<Vec<u8>> {
+pub fn fragment_packet(payload: &[u8], mtu: usize, _identification: u16) -> Vec<Vec<u8>> {
     let ip_header_size = 20; // Minimum IPv4 header size
     let max_fragment_size = ((mtu - ip_header_size) / 8) * 8; // Must be multiple of 8
 
@@ -160,7 +160,7 @@ pub fn fragment_packet(payload: &[u8], mtu: usize, identification: u16) -> Vec<V
     while offset < payload.len() {
         let remaining = payload.len() - offset;
         let fragment_size = remaining.min(max_fragment_size);
-        let is_last = offset + fragment_size >= payload.len();
+        let _is_last = offset + fragment_size >= payload.len();
 
         let fragment = payload[offset..offset + fragment_size].to_vec();
         fragments.push(fragment);
