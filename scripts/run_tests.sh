@@ -14,6 +14,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 NT61_DIR="$PROJECT_ROOT/nt61"
+NT61_ROOT="$PROJECT_ROOT"
 
 # Colors for output
 RED='\033[0;31m'
@@ -41,6 +42,15 @@ log_section() {
     echo -e "${CYAN}========================================${NC}"
 }
 
+run_arch_boundary_check() {
+    log_section "Checking Architecture Boundaries"
+
+    python3 "$NT61_ROOT/scripts/check_arch_boundaries.py" || {
+        log_error "Architecture-boundary check failed"
+        exit 1
+    }
+}
+
 # Check prerequisites
 check_prerequisites() {
     log_info "Checking prerequisites..."
@@ -65,6 +75,8 @@ check_prerequisites() {
 # Run host-side tests
 run_host_tests() {
     log_section "Running Host-Side Tests"
+
+    run_arch_boundary_check
 
     cd "$NT61_DIR"
 
@@ -115,7 +127,7 @@ run_qemu_tests() {
     timeout 120 qemu-system-x86_64 \
         -machine q35 \
         -m 8G \
-        -smp 2 \
+        -smp 4 \
         -drive "if=pflash,format=raw,unit=0,readonly=on,file=$OVMF_CODE" \
         -drive "if=pflash,format=raw,unit=1,file=/usr/share/OVMF/OVMF_VARS_4M.ms.fd,if=none,id=ovmf_vars" \
         -drive "format=raw,file=build/images/disk.img" \
@@ -165,6 +177,9 @@ run_fmt_check() {
 # Main
 main() {
     case "${1:-all}" in
+        arch)
+            run_arch_boundary_check
+            ;;
         host)
             check_prerequisites host
             run_host_tests
@@ -190,6 +205,7 @@ main() {
             echo "Usage: $0 {host|pe|qemu|fmt|all}"
             echo ""
             echo "Commands:"
+            echo "  arch    - Check architecture-code boundaries only"
             echo "  host    - Run host-side unit tests only"
             echo "  pe      - Run PE validation tests only"
             echo "  qemu    - Run QEMU smoke tests only"
