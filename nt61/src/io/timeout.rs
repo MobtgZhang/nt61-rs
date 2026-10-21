@@ -8,7 +8,6 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 use super::Irp;
 use crate::ke::sync::Spinlock;
-use crate::libs::ntdll::status::*;
 
 struct TimeoutEntry {
     irp: *mut Irp,

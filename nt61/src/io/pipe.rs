@@ -11,7 +11,7 @@
 //!   - Anonymous pipes are modeled as a pair of file handles
 //!     (read end + write end), stored in a kernel ring buffer.
 //!     Blocking read/write is implemented on top of
-//!     ke::sync::Spinlock + EventState so NtWaitForSingleObject
+//!     ke::sync::Spinlock + EventState so NT_WAIT_FOR_SINGLE_OBJECT
 //!     works against the read end.
 //!   - Named pipes start anonymous; the path component is stored
 //!     but no filesystem entry is created yet (server-side
@@ -44,10 +44,10 @@ pub(crate) struct PipeState {
     pub write_open: bool,
     pub read_open: bool,
     /// Signalled whenever a byte is written to the buffer (for
-    /// the read end to wake NtReadFile/NtWaitForSingleObject).
+    /// the read end to wake NT_READ_FILE/NT_WAIT_FOR_SINGLE_OBJECT).
     pub read_event_target: u64,
     /// Signalled whenever the buffer is no longer full (for the
-    /// write end to wake NtWriteFile).
+    /// write end to wake NT_WRITE_FILE).
     pub write_event_target: u64,
 }
 
@@ -91,7 +91,7 @@ fn with_pipe<R>(idx: usize, f: impl FnOnce(&mut PipeState) -> R) -> Option<R> {
     pipes.get_mut(idx).and_then(|s| s.as_mut().map(f))
 }
 
-/// Create an anonymous pipe. Returns (slot_idx, read_end_id, write_end_id)
+/// create an anonymous pipe. Returns (slot_idx, read_end_id, write_end_id)
 /// where each id is a kernel-side pipe handle (not an NT HANDLE
 /// yet — wrappers below add that).
 pub fn create_anonymous() -> Option<(usize, u64, u64)> {
@@ -133,7 +133,7 @@ pub fn slot_for_id(pipe_id: u64) -> Option<(usize, bool)> {
     Some((idx, is_write))
 }
 
-/// Read up to `buf.len()` bytes from the pipe. Returns the number
+/// read up to `buf.len()` bytes from the pipe. Returns the number
 /// of bytes actually read (0 means EOF / pipe closed with no data).
 pub fn read(idx: usize, buf: &mut [u8]) -> usize {
     let mut pipes = PIPES.lock();
@@ -155,7 +155,7 @@ pub fn read(idx: usize, buf: &mut [u8]) -> usize {
     take
 }
 
-/// Write `data` into the pipe. Returns the number of bytes
+/// write `data` into the pipe. Returns the number of bytes
 /// accepted (may be less than `data.len()` if the buffer is full).
 pub fn write(idx: usize, data: &[u8]) -> usize {
     let mut pipes = PIPES.lock();
@@ -178,7 +178,7 @@ pub fn write(idx: usize, data: &[u8]) -> usize {
     take
 }
 
-/// Close one end of the pipe. Closing the read end wakes any
+/// close one end of the pipe. Closing the read end wakes any
 /// blocked writers (with EOF); closing the write end wakes any
 /// blocked readers (with EOF if no data buffered).
 pub fn close_end(idx: usize, is_read: bool) {
@@ -201,7 +201,7 @@ pub fn close_end(idx: usize, is_read: bool) {
 }
 
 /// Return the event-target encoded for the read or write end so
-/// NtWaitForSingleObject can be wired to the pipe.
+/// NT_WAIT_FOR_SINGLE_OBJECT can be wired to the pipe.
 pub fn event_target(idx: usize, is_read: bool) -> u64 {
     with_pipe(idx, |s| {
         if is_read {
@@ -220,12 +220,12 @@ pub fn debug_pipe_count() -> usize {
 
 /// Convenience wrapper for the cmd.exe inherited-stdout path:
 /// create a pair, register both with the handle table so user
-/// code can talk to them via NtWriteFile / NtReadFile, and return
+/// code can talk to them via NT_WRITE_FILE / NT_READ_FILE, and return
 /// the read and write NT HANDLEs.
 pub fn create_anonymous_handles() -> Option<(u64, u64)> {
     let (_slot, read_id, write_id) = create_anonymous()?;
     // Translate to NT handle table indices via ntdll::file so
-    // NtReadFile/NtWriteFile can route through the pipe layer.
+    // NT_READ_FILE/NT_WRITE_FILE can route through the pipe layer.
     let read_handle = crate::libs::ntdll::file::alloc_pipe_handle(read_id);
     let write_handle = crate::libs::ntdll::file::alloc_pipe_handle(write_id);
     if read_handle.is_null() || write_handle.is_null() {
@@ -244,7 +244,6 @@ pub fn debug_handle_name() -> String {
 /// Stash an arbitrary host-side identifier (e.g. an NT HANDLE
 /// value) into a new pipe slot so the handle table can look it
 /// up by id. Returns the slot index.
-#[allow(dead_code)]
 pub fn register_external_pipe(host_id: u64) -> Option<usize> {
     let id = NEXT_PIPE_ID.fetch_add(2, Ordering::Relaxed);
     if id == host_id {

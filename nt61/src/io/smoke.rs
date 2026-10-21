@@ -7,8 +7,6 @@
 //! 4. An IRP can be allocated, written, and completed.
 //! 5. The I/O stats counters advance as expected.
 
-use crate::rtl::logging::subsystem::IO;
-
 use super::major;
 use super::{
     allocate_driver, allocate_irp, attach_device, complete_irp, create_device, io_stats,
@@ -68,7 +66,7 @@ pub fn smoke_test() -> bool {
         return false;
     }
 
-    // Write a stack location into the IRP's current stack.
+    // write a stack location into the IRP's current stack.
     unsafe {
         let sl = (*irp).current_stack;
         if !sl.is_null() {

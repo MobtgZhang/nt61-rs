@@ -45,7 +45,7 @@ pub struct DynamicIrpPool {
     free_list: Vec<(*mut Irp, usize)>,
     allocated_count: usize,
     peak_usage: usize,
-    initial_size: usize,
+    pub initial_size: usize,
     max_size: usize,
     grow_increment: usize,
     stats: IrpPoolStats,
@@ -237,11 +237,10 @@ mod tests {
         if crate::mm::heap::KERNEL_HEAP.configured_region().is_some() {
             return;
         }
-        static mut TEST_HEAP: [u8; 64 * 1024] = [0u8; 64 * 1024];
-        unsafe {
-            let base = core::ptr::addr_of_mut!(TEST_HEAP) as *mut u8;
-            crate::mm::heap::KERNEL_HEAP.configure(base, TEST_HEAP.len());
-        }
+        const TEST_HEAP_LEN: usize = 64 * 1024;
+        static mut TEST_HEAP: [u8; TEST_HEAP_LEN] = [0u8; TEST_HEAP_LEN];
+        let base = core::ptr::addr_of_mut!(TEST_HEAP) as *mut u8;
+        crate::mm::heap::KERNEL_HEAP.configure(base, TEST_HEAP_LEN);
     }
 
     #[test]

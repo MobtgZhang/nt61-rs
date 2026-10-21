@@ -1,7 +1,7 @@
-//! File System Control (FSCTL) Support
+//! File System control (FSCTL) Support
 //!
 //! FSCTLs are specialized I/O control codes for file system operations.
-//! They are sent via NtFsControlFile and are handled by file system drivers.
+//! They are sent via NT_FS_CONTROL_FILE and are handled by file system drivers.
 //!
 //! Common FSCTLs include:
 //! - FSCTL_LOCK_VOLUME
@@ -100,7 +100,7 @@ pub unsafe fn handle_lock_volume(_device: *mut DeviceObject, irp: *mut Irp) -> i
 
     (*irp).io_status.status = STATUS_SUCCESS as u32;
     (*irp).io_status.information = 0;
-    super::IoCompleteRequest(irp, 0);
+    super::io_complete_request(irp, 0);
     STATUS_SUCCESS as i32
 }
 
@@ -111,7 +111,7 @@ pub unsafe fn handle_unlock_volume(_device: *mut DeviceObject, irp: *mut Irp) ->
 
     (*irp).io_status.status = STATUS_SUCCESS as u32;
     (*irp).io_status.information = 0;
-    super::IoCompleteRequest(irp, 0);
+    super::io_complete_request(irp, 0);
     STATUS_SUCCESS as i32
 }
 
@@ -122,7 +122,7 @@ pub unsafe fn handle_dismount_volume(_device: *mut DeviceObject, irp: *mut Irp) 
 
     (*irp).io_status.status = STATUS_SUCCESS as u32;
     (*irp).io_status.information = 0;
-    super::IoCompleteRequest(irp, 0);
+    super::io_complete_request(irp, 0);
     STATUS_SUCCESS as i32
 }
 
@@ -133,7 +133,7 @@ pub unsafe fn handle_is_volume_mounted(_device: *mut DeviceObject, irp: *mut Irp
 
     (*irp).io_status.status = STATUS_SUCCESS as u32;
     (*irp).io_status.information = 0;
-    super::IoCompleteRequest(irp, 0);
+    super::io_complete_request(irp, 0);
     STATUS_SUCCESS as i32
 }
 
@@ -147,7 +147,7 @@ pub unsafe fn dispatch_fsctl(device: *mut DeviceObject, irp: *mut Irp, fsctl_cod
             if !irp.is_null() {
                 (*irp).io_status.status = STATUS_INVALID_DEVICE_REQUEST as u32;
                 (*irp).io_status.information = 0;
-                super::IoCompleteRequest(irp, 0);
+                super::io_complete_request(irp, 0);
             }
             STATUS_INVALID_DEVICE_REQUEST as i32
         }

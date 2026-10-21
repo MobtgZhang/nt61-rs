@@ -2,17 +2,16 @@
 //!
 //! Implements the NT driver loading subsystem, including:
 //! - Driver image loading from disk
-//! - Driver initialization (DriverEntry)
+//! - Driver initialization (driver_entry)
 //! - Service start types (BOOT_START, SYSTEM_START, AUTO_START)
 //! - Driver database management
 //! - Driver unload support
 
-use alloc::string::String;
 use alloc::vec::Vec;
 use core::ptr::null_mut;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use super::{DeviceObject, DriverObject, UnicodeString};
+use super::DriverObject;
 use crate::ke::sync::Spinlock;
 use crate::libs::ntdll::status::*;
 use crate::mm::pool;

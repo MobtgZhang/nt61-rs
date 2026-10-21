@@ -23,7 +23,6 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 use super::Irp;
 use crate::ke::sync::Spinlock;
-use crate::libs::ntdll::status::*;
 
 pub type CancelRoutine = unsafe extern "C" fn(irp: *mut Irp);
 
@@ -117,7 +116,7 @@ impl CancelSafeQueue {
             unsafe {
                 (*irp).io_status.status = status as u32;
                 (*irp).io_status.information = 0;
-                super::IoCompleteRequest(irp, 0);
+                super::io_complete_request(irp, 0);
             }
         }
     }
@@ -136,7 +135,7 @@ pub unsafe extern "C" fn cancel_queued_irp(irp: *mut Irp) {
     (*irp).io_status.status = STATUS_CANCELLED as u32;
     (*irp).io_status.information = 0;
 
-    super::IoCompleteRequest(irp, 0);
+    super::io_complete_request(irp, 0);
 }
 
 pub const STATUS_CANCELLED: i32 = 0xC0000120_u32 as i32;
@@ -156,11 +155,10 @@ mod tests {
         if crate::mm::heap::KERNEL_HEAP.configured_region().is_some() {
             return;
         }
-        static mut TEST_HEAP: [u8; 64 * 1024] = [0u8; 64 * 1024];
-        unsafe {
-            let base = core::ptr::addr_of_mut!(TEST_HEAP) as *mut u8;
-            crate::mm::heap::KERNEL_HEAP.configure(base, TEST_HEAP.len());
-        }
+        const TEST_HEAP_LEN: usize = 64 * 1024;
+        static mut TEST_HEAP: [u8; TEST_HEAP_LEN] = [0u8; TEST_HEAP_LEN];
+        let base = core::ptr::addr_of_mut!(TEST_HEAP) as *mut u8;
+        crate::mm::heap::KERNEL_HEAP.configure(base, TEST_HEAP_LEN);
     }
 
     #[test]

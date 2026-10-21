@@ -14,7 +14,6 @@
 //!    the original virtual addresses. Fast but dangerous (page faults,
 //!    security issues). Only for trusted drivers.
 
-use alloc::vec::Vec;
 use core::ptr::null_mut;
 
 use crate::libs::ntdll::status::*;

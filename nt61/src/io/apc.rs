@@ -10,18 +10,14 @@
 //! - **Special Kernel APC**: High-priority APCs that interrupt even kernel mode.
 //!
 //! # I/O Completion APC Flow
-//! 1. User calls NtReadFile/NtWriteFile with an APC routine.
+//! 1. User calls NT_READ_FILE/NT_WRITE_FILE with an APC routine.
 //! 2. I/O manager creates an IRP and dispatches it.
-//! 3. When the IRP completes, IoCompleteRequest queues an APC.
+//! 3. When the IRP completes, io_complete_request queues an APC.
 //! 4. The APC is delivered when the thread returns to user mode.
 
 use alloc::vec::Vec;
-use core::ptr::null_mut;
-use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::ke::sync::Spinlock;
-use crate::libs::ntdll::status::*;
-use crate::mm::pool;
 
 pub type ApcRoutine =
     unsafe extern "C" fn(apc_context: *mut (), io_status_block: *mut IoStatusBlock, reserved: u32);

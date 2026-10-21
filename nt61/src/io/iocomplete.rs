@@ -8,19 +8,19 @@
 //
 //! # Windows NT IOCP Semantics
 //
-//! An IOCP is created with `IoCreateCompletionPort`. A file object
-//! is associated with the port via `NtSetIoCompletion`. When an
+//! An IOCP is created with `io_create_completion_port`. A file object
+//! is associated with the port via `nt_set_io_completion`. When an
 //! asynchronous I/O operation completes, the driver calls
-//! `IoCompleteRequest` which queues a completion packet to the
+//! `io_complete_request` which queues a completion packet to the
 //! associated IOCP. A thread waiting on the port via
-//! `NtRemoveIoCompletion` dequeues packets.
+//! `nt_remove_io_completion` dequeues packets.
 //
 //! # Key Types
 //
 //! - `IoCompletion` — the completion port itself
 //! - `IoCompletionPacket` — a single queued completion notification
 //! - `IoCompletionKey` — identifies which file/handle the completion belongs to
-//! - `NtSetIoCompletion` / `NtRemoveIoCompletion` — the kernel API
+//! - `nt_set_io_completion` / `nt_remove_io_completion` — the kernel API
 
 extern crate alloc;
 
@@ -28,8 +28,6 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::ke::sync::Spinlock;
-use crate::kprintln;
-use crate::mm::pool;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -65,7 +63,7 @@ pub struct IoCompletionPacket {
 }
 
 impl IoCompletionPacket {
-    /// Create a new completion packet.
+    /// create a new completion packet.
     pub fn new(
         completion_key: usize,
         apc_context: *mut (),
@@ -82,7 +80,7 @@ impl IoCompletionPacket {
         }
     }
 
-    /// Create a completion packet with a buffer.
+    /// create a completion packet with a buffer.
     pub fn with_buffer(
         completion_key: usize,
         apc_context: *mut (),
@@ -107,7 +105,6 @@ impl IoCompletionPacket {
 // ---------------------------------------------------------------------------
 
 /// A complete IoCompletionPacket definition (fixing the typo).
-type IoCompletionPacketDef = IoCompletionPacket;
 
 /// A reference-counted I/O Completion Port.
 ///
@@ -128,7 +125,7 @@ pub struct IoCompletion {
 }
 
 impl IoCompletion {
-    /// Create a new completion port with the given key.
+    /// create a new completion port with the given key.
     pub fn new(key: usize) -> Self {
         static NEXT_PORT: AtomicU64 = AtomicU64::new(0);
         let port_number = NEXT_PORT.fetch_add(1, Ordering::Relaxed) as u32;
@@ -226,9 +223,9 @@ impl core::fmt::Debug for IoCompletion {
 
 static COMPLETION_PORTS: Spinlock<Vec<Option<IoCompletion>>> = Spinlock::new(Vec::new());
 
-/// Create a new I/O Completion Port.
+/// create a new I/O Completion Port.
 /// Returns the port handle (index into the global table).
-pub fn IoCreateCompletionPort(key: usize) -> Option<usize> {
+pub fn io_create_completion_port(key: usize) -> Option<usize> {
     let mut ports = COMPLETION_PORTS.lock();
 
     // `IoCompletion` is not `Clone` (it owns a `Spinlock`), so the table
@@ -259,7 +256,7 @@ pub fn IoCreateCompletionPort(key: usize) -> Option<usize> {
 /// held.
 ///
 /// Handing out `&'static IoCompletion` was unsound: the slot is an `Option`
-/// inside a growable `Vec`, so `IoCloseCompletionPort` (or a reallocation) can
+/// inside a growable `Vec`, so `io_close_completion_port` (or a reallocation) can
 /// invalidate the reference while a caller still holds it. The reference must
 /// not outlive the lock that owns the table.
 pub fn with_port<F, R>(handle: usize, f: F) -> Option<R>
@@ -277,8 +274,8 @@ pub fn port_exists(handle: usize) -> bool {
     matches!(ports.get(handle), Some(Some(_)))
 }
 
-/// Close a completion port.
-pub fn IoCloseCompletionPort(handle: usize) -> bool {
+/// close a completion port.
+pub fn io_close_completion_port(handle: usize) -> bool {
     let mut ports = COMPLETION_PORTS.lock();
     if let Some(slot) = ports.get_mut(handle) {
         if slot.is_some() {
@@ -294,12 +291,12 @@ pub fn IoCloseCompletionPort(handle: usize) -> bool {
 // Kernel API (Nt* and Io* functions)
 // ---------------------------------------------------------------------------
 
-/// `NtSetIoCompletion` — insert a completion packet into a port.
+/// `nt_set_io_completion` — insert a completion packet into a port.
 /// This is called by drivers when an asynchronous I/O operation
 /// completes.
 ///
 /// # Arguments
-/// * `port_handle` — handle returned by `IoCreateCompletionPort`
+/// * `port_handle` — handle returned by `io_create_completion_port`
 /// * `completion_key` — identifies the file/handle that completed
 /// * `status` — NTSTATUS of the operation
 /// * `information` — byte count for read/write, or 0
@@ -307,7 +304,7 @@ pub fn IoCloseCompletionPort(handle: usize) -> bool {
 /// # Returns
 /// * `0` — success
 /// * `0xC0000001` — STATUS_UNSUCCESSFUL (invalid handle)
-pub fn NtSetIoCompletion(
+pub fn nt_set_io_completion(
     port_handle: usize,
     completion_key: usize,
     status: u32,
@@ -318,23 +315,23 @@ pub fn NtSetIoCompletion(
     let depth = match with_port(port_handle, |p| p.enqueue(packet)) {
         Some(d) => d,
         None => {
-            // // kprintln!("[IOCP] NtSetIoCompletion: invalid port handle {}", port_handle);
+            // // kprintln!("[IOCP] nt_set_io_completion: invalid port handle {}", port_handle);
             return 0xC0000001; // STATUS_UNSUCCESSFUL
         }
     };
     let _ = depth;
     // // kprintln!(
-    // //         "[IOCP] NtSetIoCompletion port={} key=0x{:x} status=0x{:08x} info={} depth={}",
+    // //         "[IOCP] nt_set_io_completion port={} key=0x{:x} status=0x{:08x} info={} depth={}",
     // //         port_handle, completion_key, status, information, depth
     // //     );
     0 // STATUS_SUCCESS
 }
 
-/// `NtRemoveIoCompletion` — wait for and remove a completion packet.
+/// `nt_remove_io_completion` — wait for and remove a completion packet.
 /// This is called by threads that want to process completed I/O.
 ///
 /// # Arguments
-/// * `port_handle` — handle returned by `IoCreateCompletionPort`
+/// * `port_handle` — handle returned by `io_create_completion_port`
 /// * `timeout_ms` — timeout in milliseconds (0 = no wait)
 ///
 /// # Returns
@@ -348,7 +345,7 @@ pub struct IoCompletionResult {
     pub apc_context: *mut (),
 }
 
-pub fn NtRemoveIoCompletion(port_handle: usize, timeout_ms: u32) -> Option<IoCompletionResult> {
+pub fn nt_remove_io_completion(port_handle: usize, timeout_ms: u32) -> Option<IoCompletionResult> {
     if !port_exists(port_handle) {
         return None;
     }
@@ -391,7 +388,7 @@ pub fn NtRemoveIoCompletion(port_handle: usize, timeout_ms: u32) -> Option<IoCom
 /// In a full implementation, this would associate a file handle
 /// with the port so that I/O completions on that file are routed
 /// to the port. Here we just register the file's completion key.
-pub fn IoBindIoCompletion(port_handle: usize, file_key: usize) -> bool {
+pub fn io_bind_io_completion(port_handle: usize, file_key: usize) -> bool {
     let _ = file_key;
     port_exists(port_handle)
 }
@@ -404,35 +401,35 @@ pub fn IoBindIoCompletion(port_handle: usize, file_key: usize) -> bool {
 pub fn smoke_test() -> bool {
     // // kprintln!("  [IOCP SMOKE] testing IOCP subsystem...");
 
-    // 1. Create a port
-    let port = IoCreateCompletionPort(0xDEADBEEF);
+    // 1. create a port
+    let port = io_create_completion_port(0xDEADBEEF);
     if port.is_none() {
-        // // kprintln!("  [IOCP SMOKE FAIL] IoCreateCompletionPort returned None");
+        // // kprintln!("  [IOCP SMOKE FAIL] io_create_completion_port returned None");
         return false;
     }
     let port_handle = port.unwrap();
     // // kprintln!("    port handle = {}", port_handle);
 
-    // 2. Enqueue some packets via NtSetIoCompletion
-    let status = NtSetIoCompletion(port_handle, 0x1111, 0, 512);
+    // 2. Enqueue some packets via nt_set_io_completion
+    let status = nt_set_io_completion(port_handle, 0x1111, 0, 512);
     if status != 0 {
-        // // kprintln!("  [IOCP SMOKE FAIL] NtSetIoCompletion failed: 0x{:08x}", status);
+        // // kprintln!("  [IOCP SMOKE FAIL] nt_set_io_completion failed: 0x{:08x}", status);
         return false;
     }
 
-    let status = NtSetIoCompletion(port_handle, 0x2222, 0, 256);
+    let status = nt_set_io_completion(port_handle, 0x2222, 0, 256);
     if status != 0 {
-        // // kprintln!("  [IOCP SMOKE FAIL] NtSetIoCompletion failed: 0x{:08x}", status);
+        // // kprintln!("  [IOCP SMOKE FAIL] nt_set_io_completion failed: 0x{:08x}", status);
         return false;
     }
 
-    // 3. Dequeue via NtRemoveIoCompletion
-    let result = NtRemoveIoCompletion(port_handle, 0);
+    // 3. Dequeue via nt_remove_io_completion
+    let result = nt_remove_io_completion(port_handle, 0);
     if result.is_none() {
-        // // kprintln!("  [IOCP SMOKE FAIL] NtRemoveIoCompletion timed out");
+        // // kprintln!("  [IOCP SMOKE FAIL] nt_remove_io_completion timed out");
         return false;
     }
-    let result = result.unwrap();
+    let _result = result.unwrap();
     // // kprintln!(
     // //         "    packet: key=0x{:x} status=0x{:08x} info={}",
     // //         result.completion_key, result.status, result.information
@@ -447,22 +444,22 @@ pub fn smoke_test() -> bool {
     }
 
     // 5. Dequeue remaining packet
-    let result = NtRemoveIoCompletion(port_handle, 0);
+    let result = nt_remove_io_completion(port_handle, 0);
     if result.is_none() {
-        // // kprintln!("  [IOCP SMOKE FAIL] second NtRemoveIoCompletion timed out");
+        // // kprintln!("  [IOCP SMOKE FAIL] second nt_remove_io_completion timed out");
         return false;
     }
 
     // 6. Verify empty queue
-    let result = NtRemoveIoCompletion(port_handle, 0);
+    let result = nt_remove_io_completion(port_handle, 0);
     if result.is_some() {
         // // kprintln!("  [IOCP SMOKE FAIL] unexpected third packet");
         return false;
     }
 
-    // 7. Close the port
-    if !IoCloseCompletionPort(port_handle) {
-        // // kprintln!("  [IOCP SMOKE FAIL] IoCloseCompletionPort failed");
+    // 7. close the port
+    if !io_close_completion_port(port_handle) {
+        // // kprintln!("  [IOCP SMOKE FAIL] io_close_completion_port failed");
         return false;
     }
 
@@ -480,7 +477,7 @@ mod tests {
     // keeps the reference inside the lock, which is what these tests pin down.
     #[test]
     fn port_reference_does_not_outlive_the_lock() {
-        let handle = IoCreateCompletionPort(0x1234).expect("no free completion port slot");
+        let handle = io_create_completion_port(0x1234).expect("no free completion port slot");
         assert!(port_exists(handle));
         assert_eq!(with_port(handle, |p| p.key()), Some(0x1234));
 
@@ -493,10 +490,10 @@ mod tests {
         assert_eq!(popped.unwrap().information, 7);
         assert_eq!(with_port(handle, |p| p.depth()), Some(0));
 
-        assert!(IoCloseCompletionPort(handle));
+        assert!(io_close_completion_port(handle));
         assert!(!port_exists(handle));
         assert_eq!(with_port(handle, |p| p.key()), None);
-        assert!(!IoCloseCompletionPort(handle));
+        assert!(!io_close_completion_port(handle));
     }
 
     #[test]

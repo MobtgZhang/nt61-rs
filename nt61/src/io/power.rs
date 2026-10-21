@@ -1,11 +1,16 @@
-//! I/O Power Management
+//! I/O power Management
 //!
 //! This module implements device power management for the I/O system.
 //! It provides support for device power states (D0-D3) and power IRPs.
 
+use crate::io::{DeviceObject, DevicePowerState, Irp};
 use core::sync::atomic::{AtomicU32, Ordering};
-use crate::io::{DeviceObject, DevicePowerState, Irp, power_irp};
 
+/// power IRP minor function codes (IRP_MN_*).
+pub const IRP_MN_WAIT_WAKE: u8 = 0x00;
+pub const IRP_MN_POWER_SEQUENCE: u8 = 0x01;
+pub const IRP_MN_SET_POWER: u8 = 0x02;
+pub const IRP_MN_QUERY_POWER: u8 = 0x03;
 
 /// Device power state capabilities
 #[derive(Debug, Clone, Copy)]
@@ -23,7 +28,6 @@ pub struct DevicePowerCapabilities {
     /// Device can wake from D3
     pub wake_from_d3: bool,
     /// Device power state mappings for system states
-
     pub device_state: [DevicePowerState; 6],
 }
 
@@ -48,17 +52,16 @@ impl Default for DevicePowerCapabilities {
     }
 }
 
-/// Power IRP context
+/// power IRP context
 #[derive(Debug, Clone, Copy)]
 pub struct PowerIrpContext {
     /// System power state (if system power IRP)
     pub system_state: Option<crate::io::SystemPowerState>,
     /// Device power state (if device power IRP)
     pub device_state: Option<DevicePowerState>,
-    /// Power action type
+    /// power action type
     pub power_action: crate::io::PowerActionType,
     /// IRP minor function
-
     pub minor_function: u8,
 }
 
@@ -72,7 +75,6 @@ pub fn init() {
 }
 
 /// Request a device power state change
-
 use crate::kprintln;
 pub fn request_device_power_state(
     device: *mut DeviceObject,
@@ -89,8 +91,11 @@ pub fn request_device_power_state(
             return true; // Already in target state
         }
 
-        kprintln!("[IO-POWER] Device power transition: {:?} -> {:?}", current_state, target_state);
-
+        kprintln!(
+            "[IO-POWER] Device power transition: {:?} -> {:?}",
+            current_state,
+            target_state
+        );
 
         // Validate transition
         if !is_valid_device_power_transition(current_state, target_state) {
@@ -118,24 +123,24 @@ pub fn request_device_power_state(
 }
 
 /// Check if a device power transition is valid
-fn is_valid_device_power_transition(
-    current: DevicePowerState,
-    target: DevicePowerState,
-) -> bool {
+fn is_valid_device_power_transition(current: DevicePowerState, target: DevicePowerState) -> bool {
     // All transitions are valid in our simplified model
     // Real implementation would check device capabilities
     let _ = (current, target);
     true
 }
 
-/// Power up a device to D0
+/// power up a device to D0
 fn power_up_device(device: *mut DeviceObject) {
     if device.is_null() {
         return;
     }
 
     unsafe {
-        kprintln!("[IO-POWER] Powering up device (type={:?})", (*device).device_type);
+        kprintln!(
+            "[IO-POWER] Powering up device (type={:?})",
+            (*device).device_type
+        );
 
         // Real implementation would:
         // 1. Restore device context
@@ -145,14 +150,18 @@ fn power_up_device(device: *mut DeviceObject) {
     }
 }
 
-/// Power down a device to Dx
+/// power down a device to Dx
 fn power_down_device(device: *mut DeviceObject, level: u8) {
     if device.is_null() {
         return;
     }
 
     unsafe {
-        kprintln!("[IO-POWER] Powering down device to D{} (type={:?})", level, (*device).device_type);
+        kprintln!(
+            "[IO-POWER] Powering down device to D{} (type={:?})",
+            level,
+            (*device).device_type
+        );
 
         // Real implementation would:
         // 1. Stop device I/O
@@ -163,9 +172,7 @@ fn power_down_device(device: *mut DeviceObject, level: u8) {
 }
 
 /// Query device power capabilities
-pub fn query_device_power_capabilities(
-    device: *mut DeviceObject,
-) -> DevicePowerCapabilities {
+pub fn query_device_power_capabilities(device: *mut DeviceObject) -> DevicePowerCapabilities {
     if device.is_null() {
         return DevicePowerCapabilities::default();
     }
@@ -190,31 +197,34 @@ pub fn process_power_irp(device: *mut DeviceObject, irp: *mut Irp) -> i32 {
         let minor = (*stack).minor_function;
 
         match minor {
-            power_irp::IRP_MN_WAIT_WAKE => {
+            IRP_MN_WAIT_WAKE => {
                 kprintln!("[IO-POWER] IRP_MN_WAIT_WAKE");
                 handle_wait_wake(device, irp)
             }
-            power_irp::IRP_MN_POWER_SEQUENCE => {
+            IRP_MN_POWER_SEQUENCE => {
                 kprintln!("[IO-POWER] IRP_MN_POWER_SEQUENCE");
                 handle_power_sequence(device, irp)
             }
-            power_irp::IRP_MN_SET_POWER => {
+            IRP_MN_SET_POWER => {
                 kprintln!("[IO-POWER] IRP_MN_SET_POWER");
                 handle_set_power(device, irp)
             }
-            power_irp::IRP_MN_QUERY_POWER => {
+            IRP_MN_QUERY_POWER => {
                 kprintln!("[IO-POWER] IRP_MN_QUERY_POWER");
                 handle_query_power(device, irp)
             }
             _ => {
-                kprintln!("[IO-POWER] Unknown power IRP minor function: 0x{:02x}", minor);
+                kprintln!(
+                    "[IO-POWER] Unknown power IRP minor function: 0x{:02x}",
+                    minor
+                );
                 -1 // STATUS_NOT_IMPLEMENTED
             }
         }
     }
 }
 
-/// Handle IRP_MN_WAIT_WAKE
+/// handle IRP_MN_WAIT_WAKE
 fn handle_wait_wake(_device: *mut DeviceObject, _irp: *mut Irp) -> i32 {
     // Real implementation would:
     // 1. Enable wake signaling
@@ -222,14 +232,14 @@ fn handle_wait_wake(_device: *mut DeviceObject, _irp: *mut Irp) -> i32 {
     0 // STATUS_SUCCESS
 }
 
-/// Handle IRP_MN_POWER_SEQUENCE
+/// handle IRP_MN_POWER_SEQUENCE
 fn handle_power_sequence(_device: *mut DeviceObject, _irp: *mut Irp) -> i32 {
     // Real implementation would:
     // 1. Return power sequence values
     0 // STATUS_SUCCESS
 }
 
-/// Handle IRP_MN_SET_POWER
+/// handle IRP_MN_SET_POWER
 fn handle_set_power(device: *mut DeviceObject, _irp: *mut Irp) -> i32 {
     // Real implementation would:
     // 1. Parse the power state from IRP parameters
@@ -245,7 +255,7 @@ fn handle_set_power(device: *mut DeviceObject, _irp: *mut Irp) -> i32 {
     0 // STATUS_SUCCESS
 }
 
-/// Handle IRP_MN_QUERY_POWER
+/// handle IRP_MN_QUERY_POWER
 fn handle_query_power(_device: *mut DeviceObject, _irp: *mut Irp) -> i32 {
     // Real implementation would:
     // 1. Check if the device can enter the requested state
@@ -258,7 +268,7 @@ pub fn get_power_stats() -> u32 {
     POWER_STATS.load(Ordering::Relaxed)
 }
 
-/// Power policy for a device
+/// power policy for a device
 #[derive(Debug, Clone, Copy)]
 pub struct DevicePowerPolicy {
     /// Idle timeout in seconds
@@ -283,10 +293,7 @@ impl Default for DevicePowerPolicy {
 }
 
 /// Set device power policy
-pub fn set_device_power_policy(
-    _device: *mut DeviceObject,
-    _policy: DevicePowerPolicy,
-) -> bool {
+pub fn set_device_power_policy(_device: *mut DeviceObject, _policy: DevicePowerPolicy) -> bool {
     // Real implementation would:
     // 1. Validate policy
     // 2. Store policy in device extension

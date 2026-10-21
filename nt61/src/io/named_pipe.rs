@@ -4,7 +4,7 @@
 //! listener) calls `CreateNamedPipeW` to create the first instance
 //! of a pipe name. Subsequent `CreateNamedPipeW` calls on the same
 //! name create additional instances. Clients connect with
-//! `CreateFileW("\\.\pipe\<name>")` (or via NT path).
+//! `create_file_w("\\.\pipe\<name>")` (or via NT path).
 //!
 //! We don't actually need a filesystem entry — we just keep a
 //! table of pipe names → slot indices. The actual byte transport
@@ -58,7 +58,7 @@ struct NamedPipeEntry {
 
 static NAMED_PIPES: Spinlock<Vec<NamedPipeEntry>> = Spinlock::new(Vec::new());
 
-/// Create the first instance of a named pipe. Returns
+/// create the first instance of a named pipe. Returns
 /// `Some((read_id, write_id))` on success, `None` if the table is
 /// full or `max_instances` was reached.
 ///
@@ -121,7 +121,7 @@ pub fn count_names() -> usize {
 }
 
 /// Drop all instances of a named pipe. The server uses this when
-/// shutting down (e.g. `CloseHandle` on the last instance).
+/// shutting down (e.g. `close_handle` on the last instance).
 pub fn close_pipe(name: &str) -> bool {
     let mut table = NAMED_PIPES.lock();
     let pos = match table.iter().position(|e| e.name == name) {
@@ -130,7 +130,7 @@ pub fn close_pipe(name: &str) -> bool {
     };
     let entry = table.remove(pos);
     for inst in entry.instances.iter() {
-        // Close both ends of the underlying anonymous pipe.
+        // close both ends of the underlying anonymous pipe.
         pipe::close_end(inst.slot, true);
         pipe::close_end(inst.slot, false);
     }

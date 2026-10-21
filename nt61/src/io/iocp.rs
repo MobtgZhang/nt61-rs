@@ -86,7 +86,7 @@ pub struct IoCompletionPort {
 }
 
 impl IoCompletionPort {
-    /// Create a new I/O Completion Port
+    /// create a new I/O Completion Port
     ///
     /// # Task 6.2: IOCP creation
     pub fn new(port_id: u64, max_concurrent_threads: u32) -> Self {
@@ -129,7 +129,6 @@ impl IoCompletionPort {
         queue.push_back(packet);
         self.packets_posted.fetch_add(1, Ordering::Relaxed);
 
-        // TODO: Wake up waiting threads
         STATUS_SUCCESS
     }
 
@@ -146,7 +145,15 @@ impl IoCompletionPort {
         // Check concurrency limit
         if self.max_concurrent_threads > 0 && active >= self.max_concurrent_threads {
             self.active_threads.fetch_sub(1, Ordering::Relaxed);
-            // TODO: Wait until a thread becomes available
+            // Spin-yield until a worker thread slot frees up.
+            loop {
+                core::hint::spin_loop();
+                crate::ke::scheduler::yield_();
+                if self.active_threads.load(Ordering::Relaxed) < self.max_concurrent_threads {
+                    break;
+                }
+            }
+            self.active_threads.fetch_add(1, Ordering::Relaxed);
         }
 
         // Try to get a packet
@@ -166,8 +173,26 @@ impl IoCompletionPort {
             if timeout_ms == 0 {
                 Err(STATUS_TIMEOUT)
             } else {
-                // TODO: Wait for timeout_ms or until a packet arrives
-                Err(STATUS_TIMEOUT)
+                // Spin-wait with timeout until a packet arrives.
+                let start = crate::hal::common::pit::get_system_time_ms();
+                loop {
+                    core::hint::spin_loop();
+                    crate::ke::scheduler::yield_();
+
+                    let result = {
+                        let mut queue = self.queue.lock();
+                        queue.pop_front()
+                    };
+                    if let Some(packet) = result {
+                        self.packets_retrieved.fetch_add(1, Ordering::Relaxed);
+                        return Ok(packet);
+                    }
+
+                    let elapsed = crate::hal::common::pit::get_system_time_ms() - start;
+                    if elapsed >= timeout_ms as u64 {
+                        return Err(STATUS_TIMEOUT);
+                    }
+                }
             }
         }
     }
@@ -203,7 +228,7 @@ pub fn init() {
     crate::hal::serial::write_string("[IOCP] I/O Completion Ports initialized\r\n");
 }
 
-/// Create a new I/O Completion Port
+/// create a new I/O Completion Port
 ///
 /// # Task 6.2: IOCP creation
 pub fn create_io_completion_port(max_concurrent_threads: u32) -> Result<u64, u32> {
@@ -223,7 +248,7 @@ pub fn create_io_completion_port(max_concurrent_threads: u32) -> Result<u64, u32
     Err(STATUS_INSUFFICIENT_RESOURCES)
 }
 
-/// Close an I/O Completion Port
+/// close an I/O Completion Port
 ///
 /// # Task 6.2: IOCP destruction
 pub fn close_io_completion_port(port_id: u64) -> u32 {

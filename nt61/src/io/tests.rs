@@ -9,13 +9,12 @@
 //! - Device queue (list-head) initialisation
 //!
 //! Every test below exercises APIs that actually exist in `crate::io`
-//! (`allocate_irp`, `IoCallDriver`, `create_device`, `allocate_driver`,
+//! (`allocate_irp`, `io_call_driver`, `create_device`, `allocate_driver`,
 //! `register_driver`). Earlier revisions referenced non-existent modules
 //! (`io::irp`, `io::device`, `io::driver`, `io::queue`); those were
 //! rewritten against the real surface.
 
 use crate::rtl::testing::TestStats;
-use core::ptr::null_mut;
 
 #[cfg(test)]
 mod tests {
@@ -27,11 +26,10 @@ mod tests {
         if crate::mm::heap::KERNEL_HEAP.configured_region().is_some() {
             return;
         }
-        static mut TEST_HEAP: [u8; 128 * 1024] = [0u8; 128 * 1024];
-        unsafe {
-            let base = core::ptr::addr_of_mut!(TEST_HEAP) as *mut u8;
-            crate::mm::heap::KERNEL_HEAP.configure(base, TEST_HEAP.len());
-        }
+        const TEST_HEAP_LEN: usize = 128 * 1024;
+        static mut TEST_HEAP: [u8; TEST_HEAP_LEN] = [0u8; TEST_HEAP_LEN];
+        let base = core::ptr::addr_of_mut!(TEST_HEAP) as *mut u8;
+        crate::mm::heap::KERNEL_HEAP.configure(base, TEST_HEAP_LEN);
     }
 
     #[test]
@@ -49,13 +47,13 @@ mod tests {
 
         unsafe {
             let name = (*device).device_name;
-            assert!(!name.Buffer.is_null());
-            assert_eq!(name.Length, 18 * 2);
-            assert_eq!(name.MaximumLength, 19 * 2);
+            assert!(!name.buffer.is_null());
+            assert_eq!(name.length, 18 * 2);
+            assert_eq!(name.maximum_length, 19 * 2);
             for (i, expected) in b"\\Device\\TestDevice".iter().enumerate() {
-                assert_eq!(name.Buffer.add(i).read(), *expected as u16);
+                assert_eq!(name.buffer.add(i).read(), *expected as u16);
             }
-            assert_eq!(name.Buffer.add(18).read(), 0);
+            assert_eq!(name.buffer.add(18).read(), 0);
         }
     }
 
@@ -68,14 +66,14 @@ mod tests {
         unsafe {
             let name = (*driver).driver_name;
             assert!(
-                !name.Buffer.is_null(),
+                !name.buffer.is_null(),
                 "UnicodeString lengths set without a buffer"
             );
-            assert_eq!(name.Length, 24 * 2);
+            assert_eq!(name.length, 24 * 2);
             for (i, expected) in b"\\Driver\\TestDriverBuffer".iter().enumerate() {
-                assert_eq!(name.Buffer.add(i).read(), *expected as u16);
+                assert_eq!(name.buffer.add(i).read(), *expected as u16);
             }
-            assert_eq!(name.Buffer.add(24).read(), 0);
+            assert_eq!(name.buffer.add(24).read(), 0);
         }
     }
 }
@@ -325,7 +323,7 @@ fn test_driver_creation() -> bool {
     }
 
     unsafe {
-        if (*driver_ptr).driver_name.Length as usize != driver_name.len() {
+        if (*driver_ptr).driver_name.length as usize != driver_name.len() {
             return false;
         }
         crate::boot_println!("    Created driver at {:p}", driver_ptr);
@@ -372,7 +370,7 @@ fn test_driver_dispatch() -> bool {
         (*driver_ptr).major_functions[crate::io::major::IRP_MJ_CREATE as usize] =
             Some(test_dispatch);
 
-        // Create IRP and dispatch
+        // create IRP and dispatch
         let irp_ptr = crate::io::allocate_irp(1);
         if irp_ptr.is_null() {
             return false;
@@ -395,7 +393,7 @@ fn test_driver_dispatch() -> bool {
         }
         (*stack).major_function = crate::io::major::IRP_MJ_CREATE;
 
-        let status = crate::io::IoCallDriver(device_ptr, irp_ptr);
+        let status = crate::io::io_call_driver(device_ptr, irp_ptr);
         crate::boot_println!("    Dispatch returned: 0x{:x}", status);
 
         if status != 0 {

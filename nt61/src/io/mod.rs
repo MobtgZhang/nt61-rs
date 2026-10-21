@@ -14,14 +14,12 @@
 //! completes it.
 
 // I/O manager uses NT-driver naming (IRP, IRP_MJ_*, IO_*, ...).
-#![allow(unused_imports)]
 
 use alloc::vec::Vec;
 use core::ptr::null_mut;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::ke::sync::Spinlock;
-use crate::kprintln;
 use crate::mm::pool;
 
 pub mod named_pipe;
@@ -37,21 +35,44 @@ pub const MAX_DRIVERS: usize = 32;
 /// Maximum devices per driver.
 pub const MAX_DEVICES: usize = 64;
 /// Maximum VPBs (mounted volumes).
-pub const MAX_VPBs: usize = 16;
+pub const MAX_VPBS: usize = 16;
 /// Maximum IRPs we can hold in the bootstrap pool.
 pub const MAX_IRP_POOL: usize = 128;
 
 /// I/O function codes.
+///
+/// Values are the real NT 6.1 major function codes (wdm.h IRP_MJ_* family);
+/// every driver indexes DriverObject::major_functions with these constants,
+/// so the table size must stay at 28.
 pub mod major {
     pub const IRP_MJ_CREATE: u8 = 0x00;
-    pub const IRP_MJ_CLOSE: u8 = 0x01;
+    pub const IRP_MJ_CREATE_NAMED_PIPE: u8 = 0x01;
+    pub const IRP_MJ_CLOSE: u8 = 0x02;
     pub const IRP_MJ_READ: u8 = 0x03;
     pub const IRP_MJ_WRITE: u8 = 0x04;
+    pub const IRP_MJ_QUERY_INFORMATION: u8 = 0x05;
+    pub const IRP_MJ_SET_INFORMATION: u8 = 0x06;
+    pub const IRP_MJ_QUERY_EA: u8 = 0x07;
+    pub const IRP_MJ_SET_EA: u8 = 0x08;
+    pub const IRP_MJ_FLUSH_BUFFERS: u8 = 0x09;
+    pub const IRP_MJ_QUERY_VOLUME_INFORMATION: u8 = 0x0A;
+    pub const IRP_MJ_SET_VOLUME_INFORMATION: u8 = 0x0B;
+    pub const IRP_MJ_DIRECTORY_CONTROL: u8 = 0x0C;
+    pub const IRP_MJ_FILE_SYSTEM_CONTROL: u8 = 0x0D;
     pub const IRP_MJ_DEVICE_CONTROL: u8 = 0x0E;
-    pub const IRP_MJ_PNP: u8 = 0x0F;
-    pub const IRP_MJ_POWER: u8 = 0x10;
-    pub const IRP_MJ_INTERNAL_DEVICE_CONTROL: u8 = 0x12;
+    pub const IRP_MJ_INTERNAL_DEVICE_CONTROL: u8 = 0x0F;
+    pub const IRP_MJ_SHUTDOWN: u8 = 0x10;
+    pub const IRP_MJ_LOCK_CONTROL: u8 = 0x11;
     pub const IRP_MJ_CLEANUP: u8 = 0x12;
+    pub const IRP_MJ_CREATE_MAILSLOT: u8 = 0x13;
+    pub const IRP_MJ_QUERY_SECURITY: u8 = 0x14;
+    pub const IRP_MJ_SET_SECURITY: u8 = 0x15;
+    pub const IRP_MJ_POWER: u8 = 0x16;
+    pub const IRP_MJ_SYSTEM_CONTROL: u8 = 0x17;
+    pub const IRP_MJ_DEVICE_CHANGE: u8 = 0x18;
+    pub const IRP_MJ_QUERY_QUOTA: u8 = 0x19;
+    pub const IRP_MJ_SET_QUOTA: u8 = 0x1A;
+    pub const IRP_MJ_PNP: u8 = 0x1B;
 }
 
 /// PnP minor function codes (IRP_MN_*).
@@ -76,16 +97,11 @@ pub mod pnp {
     pub const IRP_MN_QUERY_LEGACY_BUS_INFORMATION: u8 = 0x19;
 }
 
-/// Power IRP minor function codes (IRP_MN_*).
+/// power IRP minor function codes (IRP_MN_*).
 /// These are the minor function codes used in IRP_MJ_POWER IRPs.
-pub mod power {
-    pub const IRP_MN_WAIT_WAKE: u8 = 0x00;
-    pub const IRP_MN_POWER_SEQUENCE: u8 = 0x01;
-    pub const IRP_MN_SET_POWER: u8 = 0x02;
-    pub const IRP_MN_QUERY_POWER: u8 = 0x03;
-}
+pub mod power;
 
-/// Power state types.
+/// power state types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum PowerStateType {
@@ -98,7 +114,7 @@ pub enum PowerStateType {
 #[repr(u32)]
 pub enum SystemPowerState {
     S0 = 0, // Working
-    S1 = 1, // Sleep
+    S1 = 1, // sleep
     S2 = 2, // Deeper sleep
     S3 = 3, // Suspend to RAM
     S4 = 4, // Hibernate
@@ -115,7 +131,7 @@ pub enum DevicePowerState {
     D3 = 3, // Deepest sleep (hot removed)
 }
 
-/// Power action types.
+/// power action types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum PowerActionType {
@@ -215,8 +231,7 @@ static DRIVER_LIST: Spinlock<[Option<DriverEntry>; MAX_DRIVERS]> =
     Spinlock::new([const { None }; MAX_DRIVERS]);
 
 /// VPB (Volume Parameter Block) table.
-#[allow(unused)]
-static VPB_TABLE: Spinlock<[Option<Vpb>; MAX_VPBs]> = Spinlock::new([const { None }; MAX_VPBs]);
+pub static VPB_TABLE: Spinlock<[Option<Vpb>; MAX_VPBS]> = Spinlock::new([const { None }; MAX_VPBS]);
 
 /// I/O manager signature tag for sanity checks.
 pub const IO_MANAGER_TAG: u32 =
@@ -321,12 +336,23 @@ pub struct DeviceIoControlParameters {
     pub type3_input_buffer: *mut (),
 }
 
+/// wdm.h Parameters.Read / Parameters.Write for IRP_MJ_READ and
+/// IRP_MJ_WRITE stack locations.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ReadWriteParameters {
+    pub byte_offset: u64,
+    pub byte_count: u32,
+    pub key: u32,
+}
+
 /// wdm.h `_IO_STACK_LOCATION.Parameters`: a union of per-major-function
 /// parameter blocks. Only the members used by the I/O manager are modelled.
 #[repr(C)]
 pub union IoParameters {
     pub as_u64: u64,
     pub device_io_control: DeviceIoControlParameters,
+    pub read_write: ReadWriteParameters,
 }
 
 #[repr(C)]
@@ -381,17 +407,17 @@ impl FileObject {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct UnicodeString {
-    pub Length: u16,
-    pub MaximumLength: u16,
-    pub Buffer: *mut u16,
+    pub length: u16,
+    pub maximum_length: u16,
+    pub buffer: *mut u16,
 }
 
 impl UnicodeString {
     pub const fn new() -> Self {
         Self {
-            Length: 0,
-            MaximumLength: 0,
-            Buffer: null_mut(),
+            length: 0,
+            maximum_length: 0,
+            buffer: null_mut(),
         }
     }
 }
@@ -427,6 +453,9 @@ pub struct DeviceObject {
     pub device_power_state: DevicePowerState,
     /// Device power flags.
     pub power_flags: u32,
+    /// Driver-defined device extension (wdm.h DeviceObject.DeviceExtension):
+    /// opaque per-device context owned by the functional driver.
+    pub device_extension: *mut (),
 }
 
 impl DeviceObject {
@@ -453,6 +482,7 @@ impl DeviceObject {
             previous_pnp_state: DevicePreviousState::NotStarted,
             device_power_state: DevicePowerState::D0,
             power_flags: 0,
+            device_extension: null_mut(),
         }
     }
 
@@ -522,10 +552,9 @@ impl DriverObject {
     }
 }
 
-/// Internal driver entry in the global list.
-struct DriverEntry {
-    #[allow(unused)]
-    name: [u8; 32],
+/// internal driver entry in the global list.
+pub struct DriverEntry {
+    pub name: [u8; 32],
     driver: *mut DriverObject,
     next: *mut DriverEntry,
 }
@@ -565,11 +594,10 @@ impl Vpb {
     }
 }
 
-/// Internal VPB table entry wrapper (used only as a storage slot marker).
-#[allow(unused)]
-struct VpbEntry {
-    vpb: Vpb,
-    mounted: bool,
+/// internal VPB table entry wrapper (used only as a storage slot marker).
+pub struct VpbEntry {
+    pub vpb: Vpb,
+    pub mounted: bool,
 }
 
 /// VPB flags
@@ -670,38 +698,13 @@ pub fn is_vpb_mounted(vpb: *mut Vpb) -> bool {
 // Public API
 // ---------------------------------------------------------------------------
 
-/// IoCallDriver - Pass an IRP to the next lower driver
-pub fn IoCallDriver(device: *mut DeviceObject, irp: *mut Irp) -> i32 {
-    if device.is_null() || irp.is_null() {
-        return STATUS_INVALID_PARAMETER as i32;
-    }
-
-    unsafe {
-        // Get the current stack location
-        let stack = (*irp).current_stack;
-        if stack.is_null() {
-            return STATUS_INVALID_PARAMETER as i32;
-        }
-
-        let major = (*stack).major_function;
-        let driver = (*device).driver_object;
-
-        if !driver.is_null() {
-            // Call the driver's major function
-            if let Some(handler) = (*driver).major_functions[major as usize] {
-                return handler(device, irp);
-            }
-        }
-
-        // No handler found - complete with error
-        (*irp).io_status.status = STATUS_NO_SUCH_DEVICE as u32;
-        IoCompleteRequest(irp, 0);
-    }
-    0
+/// io_call_driver - Pass an IRP to the next lower driver
+pub fn io_call_driver(device: *mut DeviceObject, irp: *mut Irp) -> i32 {
+    unsafe { dispatch::dispatch_irp(device, irp) }
 }
 
-/// IoCompleteRequest - Complete an IRP
-pub fn IoCompleteRequest(irp: *mut Irp, priority_boost: i32) {
+/// io_complete_request - Complete an IRP
+pub fn io_complete_request(irp: *mut Irp, priority_boost: i32) {
     let _ = priority_boost;
     if irp.is_null() {
         return;
@@ -793,7 +796,7 @@ pub fn complete_irp(irp: *mut Irp, status: i32, information: usize) {
 /// Allocate a driver object from the non-paged pool.
 pub fn allocate_driver(name: &[u8]) -> *mut DriverObject {
     // `UnicodeString` is a length plus a pointer: setting only the lengths left
-    // `Buffer` null, so any reader of `driver_name.Buffer` dereferenced a null
+    // `buffer` null, so any reader of `driver_name.buffer` dereferenced a null
     // pointer. Store the name in the same pool block as the object, matching
     // `create_device`.
     let name_units = match core::str::from_utf8(name) {
@@ -822,9 +825,9 @@ pub fn allocate_driver(name: &[u8]) -> *mut DriverObject {
             }
         }
         core::ptr::write(name_buffer.add(written), 0);
-        d.driver_name.Length = (written * 2) as u16;
-        d.driver_name.MaximumLength = ((written + 1) * 2) as u16;
-        d.driver_name.Buffer = name_buffer;
+        d.driver_name.length = (written * 2) as u16;
+        d.driver_name.maximum_length = ((written + 1) * 2) as u16;
+        d.driver_name.buffer = name_buffer;
     }
     raw
 }
@@ -840,7 +843,7 @@ pub fn register_driver(driver: *mut DriverObject) -> bool {
             unsafe {
                 // Field-by-field write to avoid the UC-memory
                 // non-temporal-store fault that hits a 48-byte
-                // Option<DriverEntry> copy.
+                // Option<driver_entry> copy.
                 let s = &mut list[i];
                 // discriminant: Some(1)
                 let raw = s as *mut Option<DriverEntry> as *mut u8;
@@ -848,13 +851,24 @@ pub fn register_driver(driver: *mut DriverObject) -> bool {
                 let de = s.as_mut().unwrap();
                 de.driver = driver;
                 de.next = core::ptr::null_mut();
-                // de.name is already zero (Option::None with zeroed bytes)
+                // Extract the driver name from the UnicodeString now (while
+                // we have the driver pointer) and store it in de.name.
+                let name_buf = (*driver).driver_name.buffer;
+                let name_len_units = ((*driver).driver_name.length as usize) / 2;
+                for j in 0..de.name.len() {
+                    if j < name_len_units {
+                        let ch = core::ptr::read_volatile(name_buf.add(j));
+                        de.name[j] = ch as u8;
+                    } else {
+                        de.name[j] = 0;
+                    }
+                }
             }
 
             // Get driver name from the driver object (extract from UnicodeString)
             let driver_name_storage = unsafe {
-                let name_ptr = (*driver).driver_name.Buffer;
-                let name_len = (*driver).driver_name.Length as usize;
+                let name_ptr = (*driver).driver_name.buffer;
+                let name_len = (*driver).driver_name.length as usize;
                 let mut name = [0u8; 64];
                 let mut name_len_out = 0usize;
                 if !name_ptr.is_null() && name_len > 0 {
@@ -887,13 +901,34 @@ pub fn register_driver(driver: *mut DriverObject) -> bool {
     false
 }
 
+/// Look up a registered driver by its ASCII name. Returns a pointer to
+/// the DriverObject, or null if no driver with that name is registered.
+pub fn find_registered_driver(name: &[u8]) -> *mut DriverObject {
+    let list = DRIVER_LIST.lock();
+    for i in 0..MAX_DRIVERS {
+        if let Some(entry) = &list[i] {
+            let mut match_len = 0usize;
+            for j in 0..entry.name.len() {
+                if entry.name[j] == 0 {
+                    break;
+                }
+                match_len = j + 1;
+            }
+            if match_len == name.len() && entry.name[..match_len] == *name {
+                return entry.driver;
+            }
+        }
+    }
+    core::ptr::null_mut()
+}
+
 /// Register a driver object in the object manager namespace at \Driver\<name>
 fn register_driver_in_object_manager(driver: *mut DriverObject, driver_name: &[u8]) {
     if driver.is_null() || driver_name.is_empty() {
         return;
     }
 
-    // Create an object header for the driver
+    // create an object header for the driver
     let header = crate::ob::create_object(
         b"\\Driver",
         driver_name,
@@ -906,7 +941,7 @@ fn register_driver_in_object_manager(driver: *mut DriverObject, driver_name: &[u
             // Set the body pointer to our driver object
             (*header).body = driver as *mut ();
 
-            // Create a default security descriptor (NULL DACL = allow all)
+            // create a default security descriptor (NULL DACL = allow all)
             let sd = crate::se::seaccess::create_null_dacl_sd();
             if !sd.is_null() {
                 (*header).security_descriptor = sd as *mut crate::se::seaccess::SecurityDescriptor;
@@ -926,7 +961,7 @@ fn register_driver_in_object_manager(driver: *mut DriverObject, driver_name: &[u
     }
 }
 
-/// Create a device object and attach it to a driver.
+/// create a device object and attach it to a driver.
 /// This also registers the device in the object manager namespace.
 pub fn create_device(
     driver: *mut DriverObject,
@@ -965,9 +1000,9 @@ pub fn create_device(
         }
         core::ptr::write(name_buffer.add(written), 0);
         (*raw).device_name = UnicodeString {
-            Length: (written * 2) as u16,
-            MaximumLength: ((written + 1) * 2) as u16,
-            Buffer: name_buffer,
+            length: (written * 2) as u16,
+            maximum_length: ((written + 1) * 2) as u16,
+            buffer: name_buffer,
         };
 
         // Link into the driver's device list.
@@ -997,7 +1032,7 @@ fn register_device_in_object_manager(device: *mut DeviceObject, device_name: &[u
         device_name
     };
 
-    // Create an object header for the device
+    // create an object header for the device
     let header = crate::ob::create_object(
         b"\\Device",
         name,
@@ -1010,7 +1045,7 @@ fn register_device_in_object_manager(device: *mut DeviceObject, device_name: &[u
             // Set the body pointer to our device object
             (*header).body = device as *mut ();
 
-            // Create a default security descriptor (NULL DACL = allow all)
+            // create a default security descriptor (NULL DACL = allow all)
             let sd = crate::se::seaccess::create_null_dacl_sd();
             if !sd.is_null() {
                 (*header).security_descriptor = sd as *mut crate::se::seaccess::SecurityDescriptor;
@@ -1087,8 +1122,7 @@ pub fn init() {
         s.reads = 0;
         s.writes = 0;
     }
-
-    // Create NULL device driver for bootstrap
+    // create NULL device driver for bootstrap
     let null_driver = allocate_driver(b"\\Driver\\Null");
     if !null_driver.is_null() {
         unsafe {
@@ -1101,7 +1135,7 @@ pub fn init() {
             (*null_driver).major_functions[major::IRP_MJ_WRITE as usize] =
                 Some(null_write_dispatch);
 
-            // Create the NULL device
+            // create the NULL device
             let null_device = create_device(null_driver, DeviceType::Null, b"\\Device\\Null");
             if !null_device.is_null() {
                 // // kprintln!("      NULL device created");
@@ -1110,7 +1144,7 @@ pub fn init() {
         register_driver(null_driver);
     }
 
-    // Create filesystem device driver (placeholder for FAT32/NTFS)
+    // create filesystem device driver (placeholder for FAT32/NTFS)
     let fs_driver = allocate_driver(b"\\FileSystem\\Ntfs");
     if !fs_driver.is_null() {
         unsafe {
@@ -1126,7 +1160,7 @@ pub fn init() {
             (*fs_driver).major_functions[major::IRP_MJ_PNP as usize] = Some(fs_pnp_dispatch);
             (*fs_driver).major_functions[major::IRP_MJ_POWER as usize] = Some(fs_power_dispatch);
 
-            // Create the filesystem device
+            // create the filesystem device
             let fs_device = create_device(fs_driver, DeviceType::FileSystem, b"\\Device\\Fs");
             if !fs_device.is_null() {
                 // // kprintln!("      Filesystem device created");
@@ -1138,7 +1172,7 @@ pub fn init() {
     // // kprintln!("    I/O Manager: initialized");
     // // kprintln!(
     // //         "      drivers_max={} devices_max={} vpb_max={} irp_pool={}",
-    // //         MAX_DRIVERS, MAX_DEVICES, MAX_VPBs, MAX_IRP_POOL
+    // //         MAX_DRIVERS, MAX_DEVICES, MAX_VPBS, MAX_IRP_POOL
     // //     );
 }
 
@@ -1147,10 +1181,8 @@ pub fn init() {
 // ---------------------------------------------------------------------------
 
 use crate::libs::ntdll::status::{
-    STATUS_ACCESS_DENIED, STATUS_END_OF_FILE, STATUS_INVALID_DEVICE_REQUEST,
-    STATUS_INVALID_PARAMETER, STATUS_NOT_IMPLEMENTED, STATUS_NO_MEMORY, STATUS_NO_SUCH_DEVICE,
-    STATUS_OBJECT_NAME_INVALID, STATUS_OBJECT_NAME_NOT_FOUND, STATUS_OBJECT_PATH_NOT_FOUND,
-    STATUS_SUCCESS,
+    STATUS_END_OF_FILE, STATUS_INVALID_DEVICE_REQUEST, STATUS_INVALID_PARAMETER,
+    STATUS_NOT_IMPLEMENTED, STATUS_NO_MEMORY, STATUS_SUCCESS,
 };
 
 /// Default NULL device dispatch for IRP_MJ_CREATE
@@ -1159,7 +1191,7 @@ unsafe extern "C" fn null_create_dispatch(_device: *mut DeviceObject, irp: *mut 
         (*irp).io_status.status = STATUS_SUCCESS as u32;
         (*irp).io_status.information = 0;
     }
-    IoCompleteRequest(irp, 0);
+    io_complete_request(irp, 0);
     STATUS_SUCCESS
 }
 
@@ -1169,7 +1201,7 @@ unsafe extern "C" fn null_close_dispatch(_device: *mut DeviceObject, irp: *mut I
         (*irp).io_status.status = STATUS_SUCCESS as u32;
         (*irp).io_status.information = 0;
     }
-    IoCompleteRequest(irp, 0);
+    io_complete_request(irp, 0);
     STATUS_SUCCESS
 }
 
@@ -1180,7 +1212,7 @@ unsafe extern "C" fn null_read_dispatch(_device: *mut DeviceObject, irp: *mut Ir
         (*irp).io_status.status = STATUS_END_OF_FILE as u32;
         (*irp).io_status.information = 0;
     }
-    IoCompleteRequest(irp, 0);
+    io_complete_request(irp, 0);
     STATUS_END_OF_FILE
 }
 
@@ -1192,7 +1224,7 @@ unsafe extern "C" fn null_write_dispatch(_device: *mut DeviceObject, irp: *mut I
         // Information = bytes written (we report 0 for NULL)
         (*irp).io_status.information = 0;
     }
-    IoCompleteRequest(irp, 0);
+    io_complete_request(irp, 0);
     STATUS_SUCCESS
 }
 
@@ -1209,14 +1241,14 @@ unsafe extern "C" fn fs_create_dispatch(device: *mut DeviceObject, irp: *mut Irp
 
     let stack = (*irp).current_stack;
 
-    // Create a file object for this open
+    // create a file object for this open
     let file_obj_ptr = pool::allocate(pool::PoolType::NonPaged, core::mem::size_of::<FileObject>())
         as *mut FileObject;
 
     if file_obj_ptr.is_null() {
         (*irp).io_status.status = STATUS_NO_MEMORY as u32;
         (*irp).io_status.information = 0;
-        IoCompleteRequest(irp, 0);
+        io_complete_request(irp, 0);
         return STATUS_NO_MEMORY as i32;
     }
 
@@ -1235,7 +1267,7 @@ unsafe extern "C" fn fs_create_dispatch(device: *mut DeviceObject, irp: *mut Irp
 
     (*irp).io_status.status = STATUS_SUCCESS as u32;
     (*irp).io_status.information = 0;
-    IoCompleteRequest(irp, 0);
+    io_complete_request(irp, 0);
     STATUS_SUCCESS as i32
 }
 
@@ -1256,7 +1288,7 @@ unsafe extern "C" fn fs_read_dispatch(_device: *mut DeviceObject, irp: *mut Irp)
     if file_obj.is_null() {
         (*irp).io_status.status = STATUS_INVALID_PARAMETER as u32;
         (*irp).io_status.information = 0;
-        IoCompleteRequest(irp, 0);
+        io_complete_request(irp, 0);
         return STATUS_INVALID_PARAMETER as i32;
     }
 
@@ -1271,17 +1303,13 @@ unsafe extern "C" fn fs_read_dispatch(_device: *mut DeviceObject, irp: *mut Irp)
     if buffer.is_null() || length == 0 {
         (*irp).io_status.status = STATUS_SUCCESS as u32;
         (*irp).io_status.information = 0;
-        IoCompleteRequest(irp, 0);
+        io_complete_request(irp, 0);
         return STATUS_SUCCESS as i32;
     }
 
     // Use VFS to read from RAM disk
-    let result = crate::fs::vfs::read_file_sectors(
-        0, // Use byte_offset-based reading
-        buffer as u64,
-        length,
-        byte_offset,
-    );
+    let mut kernel_buffer = core::slice::from_raw_parts_mut(buffer, length as usize);
+    let result = crate::fs::vfs::read_file_sectors_into(0, &mut kernel_buffer, byte_offset);
 
     // Update file position if read succeeded
     if result.status == 0 {
@@ -1297,7 +1325,7 @@ unsafe extern "C" fn fs_read_dispatch(_device: *mut DeviceObject, irp: *mut Irp)
 
     (*irp).io_status.status = result.status;
     (*irp).io_status.information = result.bytes_read;
-    IoCompleteRequest(irp, 0);
+    io_complete_request(irp, 0);
     result.status as i32
 }
 
@@ -1318,7 +1346,7 @@ unsafe extern "C" fn fs_write_dispatch(_device: *mut DeviceObject, irp: *mut Irp
     if file_obj.is_null() {
         (*irp).io_status.status = STATUS_INVALID_PARAMETER as u32;
         (*irp).io_status.information = 0;
-        IoCompleteRequest(irp, 0);
+        io_complete_request(irp, 0);
         return STATUS_INVALID_PARAMETER as i32;
     }
 
@@ -1333,17 +1361,13 @@ unsafe extern "C" fn fs_write_dispatch(_device: *mut DeviceObject, irp: *mut Irp
     if buffer.is_null() || length == 0 {
         (*irp).io_status.status = STATUS_SUCCESS as u32;
         (*irp).io_status.information = 0;
-        IoCompleteRequest(irp, 0);
+        io_complete_request(irp, 0);
         return STATUS_SUCCESS as i32;
     }
 
     // Use VFS to write to RAM disk
-    let result = crate::fs::vfs::write_file_sectors(
-        0, // Use byte_offset-based writing
-        buffer as u64,
-        length,
-        byte_offset,
-    );
+    let kernel_buffer = core::slice::from_raw_parts(buffer, length as usize);
+    let result = crate::fs::vfs::write_file_sectors_from(0, kernel_buffer, byte_offset);
 
     // Update file position if write succeeded
     if result.status == 0 {
@@ -1359,7 +1383,7 @@ unsafe extern "C" fn fs_write_dispatch(_device: *mut DeviceObject, irp: *mut Irp
 
     (*irp).io_status.status = result.status;
     (*irp).io_status.information = result.bytes_written;
-    IoCompleteRequest(irp, 0);
+    io_complete_request(irp, 0);
     result.status as i32
 }
 
@@ -1370,7 +1394,7 @@ unsafe extern "C" fn fs_close_dispatch(_device: *mut DeviceObject, irp: *mut Irp
         (*irp).io_status.status = STATUS_SUCCESS as u32;
         (*irp).io_status.information = 0;
     }
-    IoCompleteRequest(irp, 0);
+    io_complete_request(irp, 0);
     STATUS_SUCCESS as i32
 }
 
@@ -1381,7 +1405,7 @@ unsafe extern "C" fn fs_cleanup_dispatch(_device: *mut DeviceObject, irp: *mut I
         (*irp).io_status.status = STATUS_SUCCESS as u32;
         (*irp).io_status.information = 0;
     }
-    IoCompleteRequest(irp, 0);
+    io_complete_request(irp, 0);
     STATUS_SUCCESS as i32
 }
 
@@ -1393,7 +1417,7 @@ unsafe extern "C" fn fs_device_control_dispatch(_device: *mut DeviceObject, irp:
         (*irp).io_status.status = STATUS_INVALID_DEVICE_REQUEST as u32;
         (*irp).io_status.information = 0;
     }
-    IoCompleteRequest(irp, 0);
+    io_complete_request(irp, 0);
     STATUS_INVALID_DEVICE_REQUEST as i32
 }
 
@@ -1432,7 +1456,7 @@ unsafe extern "C" fn fs_pnp_dispatch(_device: *mut DeviceObject, irp: *mut Irp) 
         }
         (*irp).io_status.information = 0;
     }
-    IoCompleteRequest(irp, 0);
+    io_complete_request(irp, 0);
     STATUS_SUCCESS as i32
 }
 
@@ -1446,33 +1470,33 @@ unsafe extern "C" fn fs_power_dispatch(_device: *mut DeviceObject, irp: *mut Irp
             match minor {
                 power::IRP_MN_WAIT_WAKE => {
                     // Wait/Wake - device can wake the system
-                    // // kprintln!("[I/O] Power: IRP_MN_WAIT_WAKE");
+                    // // kprintln!("[I/O] power: IRP_MN_WAIT_WAKE");
                     (*irp).io_status.status = STATUS_SUCCESS as u32;
                 }
                 power::IRP_MN_POWER_SEQUENCE => {
-                    // Power Sequence - query power sequence counters
-                    // // kprintln!("[I/O] Power: IRP_MN_POWER_SEQUENCE");
+                    // power Sequence - query power sequence counters
+                    // // kprintln!("[I/O] power: IRP_MN_POWER_SEQUENCE");
                     (*irp).io_status.status = STATUS_SUCCESS as u32;
                 }
                 power::IRP_MN_SET_POWER => {
-                    // Set Power - transition device to new power state
-                    // // kprintln!("[I/O] Power: IRP_MN_SET_POWER");
+                    // Set power - transition device to new power state
+                    // // kprintln!("[I/O] power: IRP_MN_SET_POWER");
                     (*irp).io_status.status = STATUS_SUCCESS as u32;
                 }
                 power::IRP_MN_QUERY_POWER => {
-                    // Query Power - check if device can enter new power state
-                    // // kprintln!("[I/O] Power: IRP_MN_QUERY_POWER");
+                    // Query power - check if device can enter new power state
+                    // // kprintln!("[I/O] power: IRP_MN_QUERY_POWER");
                     (*irp).io_status.status = STATUS_SUCCESS as u32;
                 }
                 _ => {
-                    // // kprintln!("[I/O] Power: unknown minor function 0x{:02x}", minor);
+                    // // kprintln!("[I/O] power: unknown minor function 0x{:02x}", minor);
                     (*irp).io_status.status = STATUS_NOT_IMPLEMENTED as u32;
                 }
             }
         }
         (*irp).io_status.information = 0;
     }
-    IoCompleteRequest(irp, 0);
+    io_complete_request(irp, 0);
     STATUS_SUCCESS as i32
 }
 
@@ -1574,7 +1598,7 @@ pub fn pnp_query_device_relations(device: *mut DeviceObject) -> u32 {
     0
 }
 
-/// Handle device removal.
+/// handle device removal.
 /// Transitions the device to the appropriate removal state.
 pub fn pnp_remove_device(device: *mut DeviceObject) -> bool {
     if device.is_null() {
@@ -1611,7 +1635,7 @@ pub fn pnp_remove_device(device: *mut DeviceObject) -> bool {
     }
 }
 
-/// Handle surprise removal of a device.
+/// handle surprise removal of a device.
 pub fn pnp_surprise_removal(device: *mut DeviceObject) -> bool {
     if device.is_null() {
         return false;
@@ -1706,7 +1730,7 @@ pub struct DeviceStack {
 }
 
 impl DeviceStack {
-    /// Create a new device stack with a base device.
+    /// create a new device stack with a base device.
     pub fn new(base_device: *mut DeviceObject) -> Option<Self> {
         if base_device.is_null() {
             return None;
@@ -1901,7 +1925,7 @@ pub struct FastIoDispatch {
 }
 
 impl FastIoDispatch {
-    /// Create a new FastIoDispatch with all fields set to None.
+    /// create a new FastIoDispatch with all fields set to None.
     pub fn new() -> Self {
         Self {
             size: core::mem::size_of::<Self>() as u32,
@@ -1909,7 +1933,7 @@ impl FastIoDispatch {
         }
     }
 
-    /// Create a FastIoDispatch with basic read/write handlers populated.
+    /// create a FastIoDispatch with basic read/write handlers populated.
     /// This provides a reasonable default for file system drivers.
     pub fn with_basic_handlers() -> Self {
         Self {
@@ -2052,13 +2076,13 @@ pub const IRP_LOOKASIDE_LIST: u32 = 0x00000040;
 /// Provides a type-safe way to set up major function handlers.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DriverDispatchTable {
-    /// Create/Open
+    /// create/Open
     pub create: Option<unsafe extern "C" fn(*mut DeviceObject, *mut Irp) -> i32>,
-    /// Close
+    /// close
     pub close: Option<unsafe extern "C" fn(*mut DeviceObject, *mut Irp) -> i32>,
-    /// Read
+    /// read
     pub read: Option<unsafe extern "C" fn(*mut DeviceObject, *mut Irp) -> i32>,
-    /// Write
+    /// write
     pub write: Option<unsafe extern "C" fn(*mut DeviceObject, *mut Irp) -> i32>,
     /// Query Information (file)
     pub query_information: Option<unsafe extern "C" fn(*mut DeviceObject, *mut Irp) -> i32>,
@@ -2074,28 +2098,28 @@ pub struct DriverDispatchTable {
     pub query_volume_information: Option<unsafe extern "C" fn(*mut DeviceObject, *mut Irp) -> i32>,
     /// Set Volume Information
     pub set_volume_information: Option<unsafe extern "C" fn(*mut DeviceObject, *mut Irp) -> i32>,
-    /// Directory Control
+    /// Directory control
     pub directory_control: Option<unsafe extern "C" fn(*mut DeviceObject, *mut Irp) -> i32>,
-    /// File System Control
+    /// File System control
     pub file_system_control: Option<unsafe extern "C" fn(*mut DeviceObject, *mut Irp) -> i32>,
-    /// Device I/O Control
+    /// Device I/O control
     pub device_control: Option<unsafe extern "C" fn(*mut DeviceObject, *mut Irp) -> i32>,
-    /// Internal Device Control
+    /// internal Device control
     pub internal_device_control: Option<unsafe extern "C" fn(*mut DeviceObject, *mut Irp) -> i32>,
     /// Cleanup
     pub cleanup: Option<unsafe extern "C" fn(*mut DeviceObject, *mut Irp) -> i32>,
-    /// Close for maintenance
+    /// close for maintenance
     pub close_mc: Option<unsafe extern "C" fn(*mut DeviceObject, *mut Irp) -> i32>,
     /// Plug and Play
     pub pnp: Option<unsafe extern "C" fn(*mut DeviceObject, *mut Irp) -> i32>,
-    /// Power
+    /// power
     pub power: Option<unsafe extern "C" fn(*mut DeviceObject, *mut Irp) -> i32>,
     /// Others (schema/locked pages)
     pub others: Option<unsafe extern "C" fn(*mut DeviceObject, *mut Irp) -> i32>,
 }
 
 impl DriverDispatchTable {
-    /// Create a new dispatch table with all handlers set to None.
+    /// create a new dispatch table with all handlers set to None.
     pub fn new() -> Self {
         Self::default()
     }
