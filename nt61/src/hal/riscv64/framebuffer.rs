@@ -138,7 +138,7 @@ pub fn is_initialized() -> bool {
 // Pixel Operations
 // =====================================================================
 
-/// Write a single pixel at (x, y).
+/// write a single pixel at (x, y).
 ///
 /// Coordinates are clipped to framebuffer bounds.
 /// Color packing depends on active bpp:
@@ -217,7 +217,7 @@ pub fn clear(color: u32) {
 pub fn scroll_up(lines: u32) {
     let w = FB_WIDTH.load(Ordering::Relaxed);
     let h = FB_HEIGHT.load(Ordering::Relaxed);
-    let pitch = FB_PITCH.load(Ordering::Relaxed) as usize;
+    let _pitch = FB_PITCH.load(Ordering::Relaxed) as usize;
     let bpp = FB_BPP.load(Ordering::Relaxed) as usize;
     let addr = FB_ADDR.load(Ordering::Relaxed) as usize;
     let bytes_per_row = (w as usize) * (bpp / 8);
@@ -250,23 +250,6 @@ pub fn scroll_up(lines: u32) {
 /// Set the text-mode attribute byte.
 pub fn set_text_attribute(fg: u8, bg: u8) {
     FB_ATTR.store((bg << 4) | (fg & 0x0F), Ordering::Relaxed);
-}
-
-/// Write a text cell at (x, y) in text mode.
-fn text_cell(x: u32, y: u32, ch: u8, attr: u8) {
-    let w = FB_WIDTH.load(Ordering::Relaxed);
-    let h = FB_HEIGHT.load(Ordering::Relaxed);
-    if x >= w || y >= h {
-        return;
-    }
-    let pitch = FB_PITCH.load(Ordering::Relaxed) as usize;
-    let addr = FB_ADDR.load(Ordering::Relaxed) as usize;
-    let off = y as usize * pitch + (x as usize) * 2;
-    let p = (addr + off) as *mut u8;
-    unsafe {
-        ptr::write_volatile(p, ch);
-        ptr::write_volatile(p.add(1), attr);
-    }
 }
 
 // =====================================================================
@@ -317,7 +300,7 @@ pub fn put_char(c: u8) {
     let h = FB_HEIGHT.load(Ordering::Relaxed) / 8;
     let cx = FB_CURSOR_X.load(Ordering::Relaxed);
     let cy = FB_CURSOR_Y.load(Ordering::Relaxed);
-    let attr = FB_ATTR.load(Ordering::Relaxed);
+    let _attr = FB_ATTR.load(Ordering::Relaxed);
 
     match c {
         b'\n' => {
@@ -392,7 +375,7 @@ pub fn bugcheck_screen(title: &str, message: &str) {
 /// configuration for QEMU virt machine.
 pub fn probe_from_device_tree() -> Option<FramebufferInfo> {
     // In a real implementation, this would:
-    // 1. Read the device tree from memory
+    // 1. read the device tree from memory
     // 2. Find the /chosen node
     // 3. Look for stdout-path or framebuffer node
     // 4. Parse the framebuffer address, width, height, stride

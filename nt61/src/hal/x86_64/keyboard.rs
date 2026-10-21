@@ -3,8 +3,8 @@
 //! A 8042-compatible controller driving either a single PS/2
 //! keyboard or a PS/2 keyboard + mouse pair. We use the legacy
 //! 0x60/0x64 I/O port pair, decode set-1 scancodes into a 256-byte
-//! ASCII ring buffer, and offer `HalDisplayString` /
-//! `HalQueryDisplayString` which mirror the `hal.dll` exports of
+//! ASCII ring buffer, and offer `hal_display_string` /
+//! `hal_query_display_string` which mirror the `hal.dll` exports of
 //! the same name.
 //
 //! The set-1 decode table is the same as Windows 6.1's
@@ -17,7 +17,7 @@
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 
 #[cfg(target_arch = "x86_64")]
-use crate::hal::x86_64::io_port::{READ_PORT_UCHAR, WRITE_PORT_UCHAR};
+use crate::hal::x86_64::io_port::{read_port_uchar, write_port_uchar};
 
 const KBD_DATA_PORT: u16 = 0x60;
 const KBD_STATUS_PORT: u16 = 0x64;
@@ -25,21 +25,17 @@ const KBD_COMMAND_PORT: u16 = 0x64;
 
 const STATUS_OUTPUT_FULL: u8 = 1 << 0;
 const STATUS_INPUT_FULL: u8 = 1 << 1;
-#[allow(dead_code)]
-const STATUS_AUX_OUTPUT_FULL: u8 = 1 << 5;
+pub const STATUS_AUX_OUTPUT_FULL: u8 = 1 << 5;
 const STATUS_TIMEOUT: u8 = 1 << 6;
 const STATUS_PARITY: u8 = 1 << 7;
 
 const CMD_READ_CMDBYTE: u8 = 0x20;
 const CMD_WRITE_CMDBYTE: u8 = 0x60;
-#[allow(dead_code)]
 const CMD_DISABLE_AUX: u8 = 0xA7;
-#[allow(dead_code)]
-const CMD_ENABLE_AUX: u8 = 0xA8;
+pub const CMD_ENABLE_AUX: u8 = 0xA8;
 const CMD_DISABLE_KBD: u8 = 0xAD;
 const CMD_ENABLE_KBD: u8 = 0xAE;
-#[allow(dead_code)]
-const CMD_RESET_CPU: u8 = 0xFE;
+pub const CMD_RESET_CPU: u8 = 0xFE;
 
 const BUF_SIZE: usize = 256;
 
@@ -50,11 +46,12 @@ static SHIFT_DOWN: AtomicBool = AtomicBool::new(false);
 static CTRL_DOWN: AtomicBool = AtomicBool::new(false);
 static ALT_DOWN: AtomicBool = AtomicBool::new(false);
 static CAPS_LOCK: AtomicBool = AtomicBool::new(false);
+static EXTENDED_PREFIX: AtomicBool = AtomicBool::new(false);
 
-/// Read the controller status port.
+/// read the controller status port.
 #[inline]
 fn status() -> u8 {
-    READ_PORT_UCHAR(KBD_STATUS_PORT)
+    read_port_uchar(KBD_STATUS_PORT)
 }
 
 /// Block until the controller's input buffer is empty. We need
@@ -78,7 +75,7 @@ fn wait_output_full() -> Option<u8> {
             if s & (STATUS_PARITY | STATUS_TIMEOUT) != 0 {
                 return None;
             }
-            return Some(READ_PORT_UCHAR(KBD_DATA_PORT));
+            return Some(read_port_uchar(KBD_DATA_PORT));
         }
         core::hint::spin_loop();
     }
@@ -87,26 +84,25 @@ fn wait_output_full() -> Option<u8> {
 
 fn send_command(cmd: u8) {
     wait_input_empty();
-    WRITE_PORT_UCHAR(KBD_COMMAND_PORT, cmd);
+    write_port_uchar(KBD_COMMAND_PORT, cmd);
 }
 
-#[allow(dead_code)]
 fn send_data(data: u8) {
     wait_input_empty();
-    WRITE_PORT_UCHAR(KBD_DATA_PORT, data);
+    write_port_uchar(KBD_DATA_PORT, data);
 }
 
-/// Read the controller's command byte.
+/// read the controller's command byte.
 fn read_command_byte() -> u8 {
     send_command(CMD_READ_CMDBYTE);
     wait_output_full().unwrap_or(0)
 }
 
-/// Write the controller's command byte.
+/// write the controller's command byte.
 fn write_command_byte(value: u8) {
     send_command(CMD_WRITE_CMDBYTE);
     wait_input_empty();
-    WRITE_PORT_UCHAR(KBD_DATA_PORT, value);
+    write_port_uchar(KBD_DATA_PORT, value);
 }
 
 fn push_byte(b: u8) {
@@ -120,7 +116,7 @@ fn push_byte(b: u8) {
     HEAD.store(next, Ordering::Relaxed);
 }
 
-/// Read a single decoded ASCII byte from the buffer. Returns
+/// read a single decoded ASCII byte from the buffer. Returns
 /// -1 if the buffer is empty.
 pub fn getc() -> i16 {
     let tail = TAIL.load(Ordering::Relaxed);
@@ -140,14 +136,14 @@ pub fn enqueue_char(c: u8) {
     push_byte(c);
 }
 
-/// Read one raw scancode byte from the controller. Returns -1
+/// read one raw scancode byte from the controller. Returns -1
 /// if no scancode is pending. The low 7 bits are the make code;
 /// bit 7 indicates a release.
 pub fn read_scancode() -> i16 {
     if status() & STATUS_OUTPUT_FULL == 0 {
         return -1;
     }
-    READ_PORT_UCHAR(KBD_DATA_PORT) as i16
+    read_port_uchar(KBD_DATA_PORT) as i16
 }
 
 /// Convert a set-1 make code to a single ASCII byte. Returns
@@ -257,6 +253,65 @@ pub fn scancode_to_ascii(sc: u8, shift: bool, caps: bool) -> Option<u8> {
     Some(ascii)
 }
 
+/// Process one raw Set-1 scancode byte (after 8042 translation).
+///
+/// This is the single shared decoder used by both the IRQ handler
+/// and the polled path. It maintains the shared modifier state and
+/// pushes decoded ASCII (or ANSI escape sequences for arrow keys)
+/// into the ring buffer.
+pub fn process_scancode(sc: u8) {
+    let release = (sc & 0x80) != 0;
+    let code = (sc & 0x7F) as u8;
+
+    // Handle the 0xE0 extended prefix (arrow keys, navigation).
+    if EXTENDED_PREFIX.load(Ordering::Relaxed) {
+        EXTENDED_PREFIX.store(false, Ordering::Relaxed);
+        if release {
+            return;
+        }
+        match code {
+            0x48 => push_ansi_escape(b'A'),
+            0x50 => push_ansi_escape(b'B'),
+            0x4B => push_ansi_escape(b'D'),
+            0x4D => push_ansi_escape(b'C'),
+            _ => {}
+        }
+        return;
+    }
+
+    if code == 0xE0 {
+        EXTENDED_PREFIX.store(true, Ordering::Relaxed);
+        return;
+    }
+
+    match code {
+        0x2A | 0x36 => SHIFT_DOWN.store(!release, Ordering::Relaxed),
+        0x1D => CTRL_DOWN.store(!release, Ordering::Relaxed),
+        0x38 => ALT_DOWN.store(!release, Ordering::Relaxed),
+        0x3A => {
+            if !release {
+                CAPS_LOCK.store(!CAPS_LOCK.load(Ordering::Relaxed), Ordering::Relaxed);
+            }
+        }
+        _ => {
+            if !release {
+                let shift = SHIFT_DOWN.load(Ordering::Relaxed);
+                let caps = CAPS_LOCK.load(Ordering::Relaxed);
+                if let Some(c) = scancode_to_ascii(code, shift, caps) {
+                    push_byte(if c == b'\n' { b'\r' } else { c });
+                }
+            }
+        }
+    }
+}
+
+/// Push an ANSI escape sequence for an arrow key into the buffer.
+fn push_ansi_escape(direction: u8) {
+    push_byte(0x1B);
+    push_byte(b'[');
+    push_byte(direction);
+}
+
 /// IRQ1 handler. Drains the controller and pushes decodable
 /// bytes into the ring buffer. Wired into the IDT by
 /// `arch::x86_64::dispatch`.
@@ -266,29 +321,8 @@ pub extern "C" fn irq_handler() {
         if sc < 0 {
             break;
         }
-        let release = (sc & 0x80) != 0;
-        let code = (sc & 0x7F) as u8;
-        match code {
-            0x2A | 0x36 => SHIFT_DOWN.store(!release, Ordering::Relaxed),
-            0x1D => CTRL_DOWN.store(!release, Ordering::Relaxed),
-            0x38 => ALT_DOWN.store(!release, Ordering::Relaxed),
-            0x3A => {
-                if !release {
-                    CAPS_LOCK.store(!CAPS_LOCK.load(Ordering::Relaxed), Ordering::Relaxed);
-                }
-            }
-            _ => {
-                if !release {
-                    let shift = SHIFT_DOWN.load(Ordering::Relaxed);
-                    let caps = CAPS_LOCK.load(Ordering::Relaxed);
-                    if let Some(c) = scancode_to_ascii(code, shift, caps) {
-                        push_byte(c);
-                    }
-                }
-            }
-        }
+        process_scancode(sc as u8);
     }
-    // Send EOI on the PIC (IRQ1 = master PIC line 1).
     #[cfg(target_arch = "x86_64")]
     crate::hal::x86_64::pic::send_eoi(1);
 }
@@ -308,7 +342,7 @@ pub extern "C" fn irq_handler() {
 /// the keyboard is in a known, clean state for polling I/O.
 pub fn full_reset_for_poll() {
     #[cfg(target_arch = "x86_64")]
-    use crate::hal::x86_64::io_port::READ_PORT_UCHAR;
+    use crate::hal::x86_64::io_port::read_port_uchar;
     use core::sync::atomic::Ordering;
 
     // Reset static state
@@ -318,6 +352,7 @@ pub fn full_reset_for_poll() {
     CTRL_DOWN.store(false, Ordering::SeqCst);
     ALT_DOWN.store(false, Ordering::SeqCst);
     CAPS_LOCK.store(false, Ordering::SeqCst);
+    EXTENDED_PREFIX.store(false, Ordering::SeqCst);
 
     // Step 1: Disable keyboard and mouse
     send_command(CMD_DISABLE_KBD);
@@ -328,7 +363,7 @@ pub fn full_reset_for_poll() {
         if status() & STATUS_OUTPUT_FULL == 0 {
             break;
         }
-        let _ = READ_PORT_UCHAR(KBD_DATA_PORT);
+        let _ = read_port_uchar(KBD_DATA_PORT);
     }
 
     // Step 3: Send keyboard reset command (0xFF)
@@ -340,7 +375,7 @@ pub fn full_reset_for_poll() {
     for _ in 0..10000 {
         let s = status();
         if s & STATUS_OUTPUT_FULL != 0 {
-            let b = READ_PORT_UCHAR(KBD_DATA_PORT);
+            let b = read_port_uchar(KBD_DATA_PORT);
             if b == 0xFA {
                 got_ack = true;
                 break;
@@ -359,7 +394,7 @@ pub fn full_reset_for_poll() {
     for _ in 0..10000 {
         let s = status();
         if s & STATUS_OUTPUT_FULL != 0 {
-            let b = READ_PORT_UCHAR(KBD_DATA_PORT);
+            let b = read_port_uchar(KBD_DATA_PORT);
             if b == 0xAA {
                 // BAT success: keyboard is healthy and self-test passed.
                 break;
@@ -379,21 +414,28 @@ pub fn full_reset_for_poll() {
     let cb = read_command_byte();
     // Clear bit 0: disable keyboard interrupt
     // Clear bit 1: disable mouse interrupt
-    // KEEP bit 6: translate mode enabled (Set 3 -> Set 1 conversion)
-    // Keep bit 4 (system flag) as-is
-    let new_cb = cb & !(0x01 | 0x02);
+    // Force translation mode on. QEMU resets the controller with
+    // whatever translation state firmware selected; a closed bit 6
+    // exposes raw Set 2 codes that the Set 1 decoder cannot accept.
+    let new_cb = (cb & !(0x01 | 0x02)) | 0x40;
     write_command_byte(new_cb);
 
     // Step 6: Enable keyboard, keep mouse disabled
     send_command(CMD_ENABLE_KBD);
     send_command(CMD_DISABLE_AUX);
+    // NOTE: We do NOT call select_scan_code_set1() here. The 8042
+    // translation mode (bit 6 of the command byte, forced above)
+    // already converts the keyboard device's default Set-2 scan
+    // codes into Set-1. If we also told the device to emit Set-1
+    // the controller would try to "translate" Set-1 codes as if
+    // they were Set-2, producing the garbled input the shell saw.
 
     // Final buffer flush
     for _ in 0..64 {
         if status() & STATUS_OUTPUT_FULL == 0 {
             break;
         }
-        let _ = READ_PORT_UCHAR(KBD_DATA_PORT);
+        let _ = read_port_uchar(KBD_DATA_PORT);
     }
 }
 
@@ -415,6 +457,7 @@ pub fn safe_init_for_poll() {
     CTRL_DOWN.store(false, Ordering::SeqCst);
     ALT_DOWN.store(false, Ordering::SeqCst);
     CAPS_LOCK.store(false, Ordering::SeqCst);
+    EXTENDED_PREFIX.store(false, Ordering::SeqCst);
 
     // Disable both devices so we can write the command byte safely.
     send_command(CMD_DISABLE_KBD);
@@ -425,30 +468,31 @@ pub fn safe_init_for_poll() {
         if status() & STATUS_OUTPUT_FULL == 0 {
             break;
         }
-        let _ = READ_PORT_UCHAR(KBD_DATA_PORT);
+        let _ = read_port_uchar(KBD_DATA_PORT);
     }
 
-    // Read current command byte and modify it.
+    // read current command byte and modify it.
     let mut cb = read_command_byte();
     // Clear bits:
     //   bit 0: disable keyboard interrupt (0 = no IRQ)
     //   bit 1: disable mouse interrupt (0 = no IRQ)
-    // KEEP bit 6: translate mode (Set 3 -> Set 1 conversion) is REQUIRED
-    //   so that scancode_to_ascii() can decode the codes correctly.
-    // We keep bit 4 (system flag) and bits 5,7 as-is.
-    cb = cb & !(0x01 | 0x02);
+    // Force translation mode on so the keyboard driver always sees
+    // Set 1 make/release codes, independent of firmware state.
+    cb = (cb & !(0x01 | 0x02)) | 0x40;
     write_command_byte(cb);
 
     // Enable keyboard, keep mouse disabled.
     send_command(CMD_ENABLE_KBD);
     send_command(CMD_DISABLE_AUX);
+    // NOTE: No select_scan_code_set1() here either — same
+    // double-translation reasoning as full_reset_for_poll().
 
     // Final flush of any bytes that appeared during configuration.
     for _ in 0..32 {
         if status() & STATUS_OUTPUT_FULL == 0 {
             break;
         }
-        let _ = READ_PORT_UCHAR(KBD_DATA_PORT);
+        let _ = read_port_uchar(KBD_DATA_PORT);
     }
 }
 
@@ -462,6 +506,7 @@ pub fn init() {
     CTRL_DOWN.store(false, Ordering::SeqCst);
     ALT_DOWN.store(false, Ordering::SeqCst);
     CAPS_LOCK.store(false, Ordering::SeqCst);
+    EXTENDED_PREFIX.store(false, Ordering::SeqCst);
 
     // Disable both devices so we can write the command byte
     // without race.
@@ -473,18 +518,20 @@ pub fn init() {
         if status() & STATUS_OUTPUT_FULL == 0 {
             break;
         }
-        let _ = READ_PORT_UCHAR(KBD_DATA_PORT);
+        let _ = read_port_uchar(KBD_DATA_PORT);
     }
 
     let mut cb = read_command_byte();
-    // Clear bits: enable-keyboard-IRQ (bit 0), enable-mouse-IRQ
-    // (bit 1), translate (bit 6), mouse clock disable — we leave
-    // bit 4 (system flag) alone. Re-enable keyboard IRQ.
-    cb = (cb & !(0x40 | 0x20 | 0x10)) | 0x01;
+    // Enable keyboard IRQ while preserving the Set 2 to Set 1
+    // translation required by `scancode_to_ascii()`.
+    cb = (cb & !(0x20 | 0x10)) | (0x40 | 0x01);
     write_command_byte(cb);
 
     send_command(CMD_ENABLE_KBD);
     send_command(CMD_DISABLE_AUX);
+    // NOTE: No select_scan_code_set1() here — the 8042 translation
+    // mode handles Set-2 → Set-1 conversion; the device must stay
+    // in its default Set-2 mode.
 }
 
 /// Enable the keyboard's IRQ line on the master PIC (IRQ1 → vector
@@ -517,7 +564,7 @@ pub fn enable_irq() {
         if status() & STATUS_OUTPUT_FULL == 0 {
             break;
         }
-        let _ = READ_PORT_UCHAR(KBD_DATA_PORT);
+        let _ = read_port_uchar(KBD_DATA_PORT);
     }
     // Unmask IRQ1 (master PIC line 1). IRQ2 (cascade, already
     // masked) and IRQ12 (mouse, masked) stay disabled so we don't
@@ -558,19 +605,19 @@ pub fn disable_irq() {
         if status() & STATUS_OUTPUT_FULL == 0 {
             break;
         }
-        let _ = READ_PORT_UCHAR(KBD_DATA_PORT);
+        let _ = read_port_uchar(KBD_DATA_PORT);
     }
 }
 
 /// Print a single character to the kernel log. The `hal.dll`
-/// `HalDisplayString` export writes to the bootstrap display; on
+/// `hal_display_string` export writes to the bootstrap display; on
 /// the PC that means the Bochs/QEMU debug-port (0xE9) plus the
 /// serial port.
-pub fn HalDisplayString(s: &str) {
+pub fn hal_display_string(s: &str) {
     // 0xE9 debug port: Bochs and QEMU -debugcon log this byte to
     // the host console.
     for b in s.bytes() {
-        WRITE_PORT_UCHAR(0xE9, b);
+        write_port_uchar(0xE9, b);
     }
     // Mirror to the serial port so headless serial consoles see
     // the same output.
@@ -578,10 +625,10 @@ pub fn HalDisplayString(s: &str) {
     crate::hal::x86_64::serial::write_string(s);
 }
 
-/// Copy the last character we wrote (HalDisplayString is one-way
+/// Copy the last character we wrote (hal_display_string is one-way
 /// on real hardware, so this is a debug-only stub). Returns the
 /// number of bytes copied.
-pub fn HalQueryDisplayString(buf: &mut [u8]) -> usize {
+pub fn hal_query_display_string(buf: &mut [u8]) -> usize {
     if buf.is_empty() {
         return 0;
     }

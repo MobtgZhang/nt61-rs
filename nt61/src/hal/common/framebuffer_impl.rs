@@ -14,8 +14,6 @@
 //! is stored as 16 rows of 8 bits, MSB-first (matches the standard VGA
 //! ROM font).
 
-#![allow(dead_code)]
-
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 /// Framebuffer description produced by the bootloader (or by QEMU
@@ -155,7 +153,7 @@ pub fn set_text_attribute(fg: u8, bg: u8) {
     FB_ATTR.store((bg << 4) | (fg & 0x0F), Ordering::Relaxed);
 }
 
-/// Write a single pixel. Coordinates outside the framebuffer are
+/// write a single pixel. Coordinates outside the framebuffer are
 /// silently clipped. No-op if the framebuffer isn't active.
 pub fn set_pixel(x: u32, y: u32, color: u32) {
     if !FB_ACTIVE.load(Ordering::Relaxed) {

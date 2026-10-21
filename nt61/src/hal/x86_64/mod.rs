@@ -16,19 +16,19 @@
 //! | [serial]           | UART I/O (`init`, `write_char`, `write_string`)          |
 //! | [pic]              | 8259A PIC + `HalEnable/DisableSystemInterrupt`           |
 //! | [apic]             | LAPIC / I/O APIC + IPIs                                  |
-//! | [pit]              | 8253/8254 PIT + `HalMakeBeep`                            |
-//! | [hpet]             | HPET + `HalQueryPerformanceCounter/Frequency`            |
-//! | [keyboard]         | 8042 PS/2 + scancode decode + `HalDisplayString`         |
+//! | [pit]              | 8253/8254 PIT + `hal_make_beep`                            |
+//! | [hpet]             | HPET + `hal_query_performance_counter/Frequency`            |
+//! | [keyboard]         | 8042 PS/2 + scancode decode + `hal_display_string`         |
 //! | [framebuffer]      | LFB / VGA text + bugcheck screen                         |
 //! | [text_console]     | 80×25 VGA text console + `gui_print!` / `gui_println!`   |
 //! | [io_port]          | `READ_PORT_*` / `WRITE_PORT_*` inline helpers            |
-//! | [cmos]             | CMOS RTC + `HalQueryRealTimeClock/SetRealTimeClock`      |
-//! | [dma]              | 8237 DMA + `HalGetAdapter/AllocateCommonBuffer`          |
-//! | [halt]             | `HalReturnToFirmware` + reboot / shutdown paths         |
+//! | [cmos]             | CMOS RTC + `hal_query_real_time_clock/SetRealTimeClock`      |
+//! | [dma]              | 8237 DMA + `hal_get_adapter/AllocateCommonBuffer`          |
+//! | [halt]             | `hal_return_to_firmware` + reboot / shutdown paths         |
 //
 //! # Public init API
 //
-//! The Windows 6.1 `hal.dll` exposes a `HalInitSystem(LoaderBlock)`
+//! The Windows 6.1 `hal.dll` exposes a `hal_init_system(LoaderBlock)`
 //! entry point called by the OS Loader after the kernel and
 //! `hal.dll` are mapped. We mirror that signature here so
 //! `winload` and the bare-metal stub can both call it.
@@ -116,7 +116,7 @@ pub fn mark_serial_initialized() {
 
 /// Bootstrap init. Idempotent — every call after the first is a
 /// no-op. This matches the Windows 6.1 `hal.dll` behaviour
-/// where `HalInitSystem` may be called more than once.
+/// where `hal_init_system` may be called more than once.
 ///
 /// # Important
 ///
@@ -149,7 +149,7 @@ pub fn init() {
     }
 
     // The remaining steps are only safe in a clean-slate
-    // environment (e.g. when `HalInitSystem` is invoked from
+    // environment (e.g. when `hal_init_system` is invoked from
     // winload on a freshly built image, before the kernel's
     // arch bootstrap has run). In the bare-metal stub path
     // `arch::x86_64::init_hardware()` is the one that owns
@@ -194,7 +194,7 @@ pub fn init() {
     }
 }
 
-/// `HalInitSystem` — the public entry point of the Windows
+/// `hal_init_system` — the public entry point of the Windows
 /// `hal.dll`. `loader_block` is a pointer to the OS Loader's
 /// parameter block; we accept it as `*const u8` for type
 /// neutrality and ignore it for now (the real `hal.dll` reads
@@ -202,16 +202,16 @@ pub fn init() {
 ///
 /// Returns 0 on success, NTSTATUS-style negative values on
 /// failure.
-pub fn HalInitSystem(_loader_block: *const u8) -> i32 {
+pub fn hal_init_system(_loader_block: *const u8) -> i32 {
     init();
     0
 }
 
-/// `HalInitializeProcessor` — per-CPU initialisation called by
+/// `hal_initialize_processor` — per-CPU initialisation called by
 /// the kernel when bringing up application processors. We only
 /// initialise the BSP today; the AP entry point lives in
 /// `arch::x86_64::smp`.
-pub fn HalInitializeProcessor(cpu_id: u32, alloc_ist: bool) -> i32 {
+pub fn hal_initialize_processor(cpu_id: u32, alloc_ist: bool) -> i32 {
     let _ = cpu_id;
     let _ = alloc_ist;
     0

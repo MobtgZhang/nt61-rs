@@ -2,8 +2,8 @@
 //
 //! The PC's CMOS memory bank is the legacy location of the wall-clock
 //! time, configuration data, and a small non-volatile storage area.
-//! Windows 6.1's `hal.dll` exports `HalQueryRealTimeClock` and
-//! `HalSetRealTimeClock`; this module provides those, plus helpers to
+//! Windows 6.1's `hal.dll` exports `hal_query_real_time_clock` and
+//! `hal_set_real_time_clock`; this module provides those, plus helpers to
 //! read and write raw CMOS registers.
 //
 //! # Programming model
@@ -25,7 +25,7 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(target_arch = "x86_64")]
-use crate::hal::x86_64::io_port::{READ_PORT_UCHAR, WRITE_PORT_UCHAR};
+use crate::hal::x86_64::io_port::{read_port_uchar, write_port_uchar};
 
 /// I/O ports used to access the CMOS/RTC bank.
 const CMOS_INDEX_PORT: u16 = 0x70;
@@ -53,8 +53,6 @@ pub mod reg {
 mod status_b {
     pub const HOUR_FORMAT_24: u8 = 0x02;
     pub const BINARY_MODE: u8 = 0x04;
-    #[allow(dead_code)]
-    pub const UPDATE_IN_PROGRESS: u8 = 0x80;
 }
 
 /// Status Register A bit 7 — "update in progress" (UIP).
@@ -138,16 +136,16 @@ fn wait_for_update_complete() {
 }
 
 fn read_register_raw(reg: u8) -> u8 {
-    WRITE_PORT_UCHAR(CMOS_INDEX_PORT, NMI_DISABLE_BIT | (reg & 0x7F));
-    let value = READ_PORT_UCHAR(CMOS_DATA_PORT);
-    WRITE_PORT_UCHAR(CMOS_INDEX_PORT, reg & 0x7F); // re-enable NMI
+    write_port_uchar(CMOS_INDEX_PORT, NMI_DISABLE_BIT | (reg & 0x7F));
+    let value = read_port_uchar(CMOS_DATA_PORT);
+    write_port_uchar(CMOS_INDEX_PORT, reg & 0x7F); // re-enable NMI
     value
 }
 
 fn write_register_raw(reg: u8, value: u8) {
-    WRITE_PORT_UCHAR(CMOS_INDEX_PORT, NMI_DISABLE_BIT | (reg & 0x7F));
-    WRITE_PORT_UCHAR(CMOS_DATA_PORT, value);
-    WRITE_PORT_UCHAR(CMOS_INDEX_PORT, reg & 0x7F); // re-enable NMI
+    write_port_uchar(CMOS_INDEX_PORT, NMI_DISABLE_BIT | (reg & 0x7F));
+    write_port_uchar(CMOS_DATA_PORT, value);
+    write_port_uchar(CMOS_INDEX_PORT, reg & 0x7F); // re-enable NMI
 }
 
 /// Convert a BCD-encoded value to binary. The high nibble is tens,
@@ -161,7 +159,7 @@ fn bin_to_bcd(b: u8) -> u8 {
     ((b / 10) << 4) | (b % 10)
 }
 
-/// Read a CMOS register with the spinlock held. `reg` must be 0..0x7F.
+/// read a CMOS register with the spinlock held. `reg` must be 0..0x7F.
 pub fn read_register(reg: u8) -> u8 {
     if !try_lock() {
         return 0xFF;
@@ -171,7 +169,7 @@ pub fn read_register(reg: u8) -> u8 {
     v
 }
 
-/// Write a CMOS register with the spinlock held.
+/// write a CMOS register with the spinlock held.
 pub fn write_register(reg: u8, value: u8) {
     if !try_lock() {
         return;
@@ -180,9 +178,9 @@ pub fn write_register(reg: u8, value: u8) {
     unlock();
 }
 
-/// Read the current wall-clock time. Returns `None` if the CMOS is
+/// read the current wall-clock time. Returns `None` if the CMOS is
 /// inaccessible (boot-time probe failure).
-pub fn HalQueryRealTimeClock() -> Option<TimeFields> {
+pub fn hal_query_real_time_clock() -> Option<TimeFields> {
     if !try_lock() {
         return None;
     }
@@ -195,7 +193,7 @@ pub fn HalQueryRealTimeClock() -> Option<TimeFields> {
     let binary_mode = (status_b & status_b::BINARY_MODE) != 0;
     let hour_24 = (status_b & status_b::HOUR_FORMAT_24) != 0;
 
-    // Read each field. Status B is read once before the read loop.
+    // read each field. Status B is read once before the read loop.
     let mut second = read_register_raw(reg::SECONDS);
     let mut minute = read_register_raw(reg::MINUTES);
     let mut hour = read_register_raw(reg::HOURS);
@@ -257,7 +255,7 @@ pub fn HalQueryRealTimeClock() -> Option<TimeFields> {
 /// This routine disables the RTC update cycle in Status B, writes
 /// the new fields, and re-enables updates. It also performs a
 /// pre-write read of Status B to keep the other bits intact.
-pub fn HalSetRealTimeClock(time: &TimeFields) -> bool {
+pub fn hal_set_real_time_clock(time: &TimeFields) -> bool {
     if !try_lock() {
         return false;
     }

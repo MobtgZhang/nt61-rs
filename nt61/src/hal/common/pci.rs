@@ -10,11 +10,10 @@
 //!   config space is accessible. This is the standard method
 //!   on PCIe systems (q35/QEMU, real hardware).
 //! - **Legacy CF8/CFC**: Fallback for pre-PCIe systems.
-//!   Type 1 configuration cycles via I/O ports 0xCF8/0xCFC.
+//!   r#type 1 configuration cycles via I/O ports 0xCF8/0xCFC.
 
 // HAL PCI helpers follow the WDK naming convention
 // (`PCI_COMMON_HEADER`, `HalGetBusData`, ...).
-#![allow(non_snake_case, non_upper_case_globals, dead_code)]
 //
 //! On OVMF/q35, the MCFG table maps bus 0 at 0xE0000000 and
 //! enumerating 64 buses covers all PCIe traffic.
@@ -25,7 +24,7 @@
 use core::sync::atomic::{AtomicU64, Ordering};
 
 // use crate::kprintln;
-use crate::hal::common::acpi::get_mcfg_base;
+use crate::hal::common::acpi::get_mcfg_info;
 
 // =====================================================================
 // Configuration access method
@@ -38,15 +37,33 @@ static PCI_ECAM_BASE: AtomicU64 = AtomicU64::new(0);
 /// Attempts ECAM (via MCFG ACPI table) first; falls back to
 /// legacy CF8/CFC (address 0).
 pub fn setup_config_method() {
-    let mcfg_base = get_mcfg_base();
-    if mcfg_base != 0 {
-        // q35 exposes bus 0 in the first MCFG entry.
-        // With 1 MiB per bus, 64 buses give 64 MiB coverage.
-        PCI_ECAM_BASE.store(mcfg_base, Ordering::Release);
-    //         // // kprintln!("  [PCI] ECAM base=0x{:016x} (64-bus window)", mcfg_base);
+    // ECAM window: (physical base, byte size). Sourced from MCFG
+    // when the firmware installs ACPI tables, or from the device
+    // tree `pci-host-ecam-generic` node otherwise (generic UEFI
+    // firmwares such as ArmVirtQemu nightly ship DTB-only).
+    let (ecam_base, ecam_size) = if let Some((mcfg_base, start_bus, end_bus)) = get_mcfg_info() {
+        // ECAM provides 1 MiB of config space per bus (32 devices ×
+        // 8 functions × 4096 bytes).
+        let bus_count = u64::from(end_bus.saturating_sub(start_bus)) + 1;
+        (mcfg_base, (bus_count << 20).min(256 << 20))
+    } else if let Some(ecam) = crate::arch::common::device_tree::hardware().pci_ecam {
+        (ecam.base, ecam.size)
     } else {
         //         // // kprintln!("  [PCI] MCFG not found — using legacy CF8/CFC");
+        return;
+    };
+    // Map the whole ECAM window into the kernel address space: on
+    // non-x86 targets there is no firmware identity map, and
+    // reading an unmapped ECAM window would fault.
+    if !crate::arch::identity_map_region(ecam_base, ecam_size) {
+        crate::boot_debug_println!(
+            "[PCI] ECAM identity map FAILED base=0x{:x} size={}",
+            ecam_base,
+            ecam_size
+        );
+        return;
     }
+    PCI_ECAM_BASE.store(ecam_base, Ordering::Release);
 }
 
 /// Returns true if ECAM is available.
@@ -54,45 +71,100 @@ fn use_ecam() -> bool {
     PCI_ECAM_BASE.load(Ordering::Acquire) != 0
 }
 
+/// ECAM window base when ECAM configuration access is active.
+/// Transport layers that walk the ECAM window directly (virtio-pci)
+/// need the same base the configuration helpers use.
+pub fn ecam_base() -> Option<u64> {
+    match PCI_ECAM_BASE.load(Ordering::Acquire) {
+        0 => None,
+        base => Some(base),
+    }
+}
+
+/// Enable memory-space and bus-master decoding for one function so
+/// that BAR MMIO reads succeed before a driver touches the device.
+pub fn enable_memory_bus_master(bus: u8, device: u8, function: u8) {
+    let cmd = read_config_word(bus, device, function, 0x04);
+    write_config_word(bus, device, function, 0x04, cmd | 0x02 | 0x04);
+}
+
 // =====================================================================
 // ECAM helpers
 // =====================================================================
 //
 // ECAM address formula:
-//   address = base + (bus * 4096 * 32) + (dev * 4096) + (func * 512) + offset
+// The layout follows the PCIe ECAM standard the host firmware
+// implements:
+// - Standard ECAM (PCI Express Base spec, pci-host-ecam-generic
+//   in Linux, QEMU riscv64 virt GPEx): one 4096-byte window per
+//   function, 32 KiB per device (8 functions), 1 MiB per bus:
+//     address = base + (bus << 20) + (dev << 15) + (func << 12) + offset
+// - Compressed ECAM (LoongArch LS7A host bridge, QEMU loongarch64
+//   virt): 4096 bytes per device window split into 512-byte function
+//   slots, 128 KiB per bus:
+//     address = base + (bus << 17) + (dev << 12) + (func << 9) + offset
 //
-// This gives 4096 bytes per function (enough for all config registers),
-// 4096 bytes per device (32 functions), 128 KiB per bus.
+// The stride set is a compile-time per-arch property because the host
+// bridge (and therefore the firmware table describing it) differs per
+// machine; hal.dll is the one place allowed to encode it (mirrors
+// Windows hal!HalTranslateBusAddress).
+
+/// ECAM window strides (bytes): bus, device, function.
+struct EcamLayout {
+    bus: u64,
+    device: u64,
+    function: u64,
+}
+
+#[cfg(target_arch = "riscv64")]
+const ECAM_LAYOUT: EcamLayout = EcamLayout {
+    bus: 1 << 20,
+    device: 8 << 12,
+    function: 1 << 12,
+};
+#[cfg(not(target_arch = "riscv64"))]
+const ECAM_LAYOUT: EcamLayout = EcamLayout {
+    bus: 1 << 17,
+    device: 1 << 12,
+    function: 1 << 9,
+};
 
 /// Compute the ECAM MMIO address for a config register.
 fn ecam_address(bus: u8, dev: u8, func: u8, offset: u8) -> u64 {
     let base = PCI_ECAM_BASE.load(Ordering::Acquire);
-    base + ((bus as u64) * 4096u64 * 32u64)
-        + ((dev as u64) * 4096u64)
-        + ((func as u64) * 512u64)
+    base + ((bus as u64) * ECAM_LAYOUT.bus)
+        + ((dev as u64) * ECAM_LAYOUT.device)
+        + ((func as u64) * ECAM_LAYOUT.function)
         + ((offset as u64) & !0x03u64)
 }
 
-/// Read 32-bit from MMIO (aligned).
+/// Public wrapper so drivers can compute the same ECAM slot
+/// address as `read_config_*` without duplicating the stride
+/// arithmetic.
+pub fn ecam_address_for(bus: u8, dev: u8, func: u8) -> u64 {
+    ecam_address(bus, dev, func, 0)
+}
+
+/// read 32-bit from MMIO (aligned).
 fn mmio_read32(addr: u64) -> u32 {
     record_ecam_addr(addr);
     unsafe { core::ptr::read_volatile(addr as *const u32) }
 }
 
-/// Write 32-bit to MMIO (aligned).
+/// write 32-bit to MMIO (aligned).
 fn mmio_write32(addr: u64, value: u32) {
     unsafe {
         core::ptr::write_volatile(addr as *mut u32, value);
     }
 }
 
-/// Read a 32-bit value via ECAM MMIO.
+/// read a 32-bit value via ECAM MMIO.
 fn ecam_read32(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
     let addr = ecam_address(bus, dev, func, offset);
     mmio_read32(addr)
 }
 
-/// Write a 32-bit value via ECAM MMIO.
+/// write a 32-bit value via ECAM MMIO.
 fn ecam_write32(bus: u8, dev: u8, func: u8, offset: u8, value: u32) {
     let addr = ecam_address(bus, dev, func, offset);
     mmio_write32(addr, value);
@@ -104,13 +176,14 @@ fn ecam_write32(bus: u8, dev: u8, func: u8, offset: u8, value: u32) {
 
 #[cfg(target_arch = "x86_64")]
 #[cfg(target_arch = "x86_64")]
-use crate::hal::x86_64::io_port::{READ_PORT_ULONG, WRITE_PORT_ULONG};
+use crate::hal::x86_64::io_port::{read_port_ulong, write_port_ulong};
 
-/// PCI configuration space address / data ports (Type 1).
+/// PCI configuration space address / data ports (r#type 1).
 pub const PCI_CONFIG_ADDRESS: u16 = 0xCF8;
 pub const PCI_CONFIG_DATA: u16 = 0xCFC;
 
-/// Encode bus/device/function/offset into a Type 1 config address.
+/// Encode bus/device/function/offset into a r#type 1 config address.
+#[cfg(target_arch = "x86_64")]
 fn legacy_addr(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
     (1u32 << 31)
         | ((bus as u32) << 16)
@@ -119,11 +192,11 @@ fn legacy_addr(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
         | ((offset & 0xFC) as u32)
 }
 
-/// Read 32-bit via legacy CF8/CFC.
+/// read 32-bit via legacy CF8/CFC.
 #[cfg(target_arch = "x86_64")]
 fn legacy_read32(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
-    WRITE_PORT_ULONG(PCI_CONFIG_ADDRESS, legacy_addr(bus, dev, func, offset));
-    let value = READ_PORT_ULONG(PCI_CONFIG_DATA);
+    write_port_ulong(PCI_CONFIG_ADDRESS, legacy_addr(bus, dev, func, offset));
+    let value = read_port_ulong(PCI_CONFIG_DATA);
     let shift = (offset & 0x03) * 8;
     if shift != 0 {
         value >> shift
@@ -132,19 +205,19 @@ fn legacy_read32(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
     }
 }
 
-/// Write 32-bit via legacy CF8/CFC.
+/// write 32-bit via legacy CF8/CFC.
 #[cfg(target_arch = "x86_64")]
 fn legacy_write32(bus: u8, dev: u8, func: u8, offset: u8, value: u32) {
     let addr = legacy_addr(bus, dev, func, offset);
-    WRITE_PORT_ULONG(PCI_CONFIG_ADDRESS, addr);
-    WRITE_PORT_ULONG(PCI_CONFIG_DATA, value);
+    write_port_ulong(PCI_CONFIG_ADDRESS, addr);
+    write_port_ulong(PCI_CONFIG_DATA, value);
 }
 
 // =====================================================================
 // Public API — config access
 // =====================================================================
 
-/// Read a 32-bit value from PCI configuration space.
+/// read a 32-bit value from PCI configuration space.
 /// Uses ECAM if available, legacy CF8/CFC otherwise.
 pub fn read_config_dword(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
     if use_ecam() {
@@ -161,7 +234,7 @@ pub fn read_config_dword(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
     }
 }
 
-/// Write a 32-bit value to PCI configuration space.
+/// write a 32-bit value to PCI configuration space.
 pub fn write_config_dword(bus: u8, dev: u8, func: u8, offset: u8, value: u32) {
     if use_ecam() {
         ecam_write32(bus, dev, func, offset, value)
@@ -177,7 +250,74 @@ pub fn write_config_dword(bus: u8, dev: u8, func: u8, offset: u8, value: u32) {
     }
 }
 
-/// Read a 16-bit value from PCI configuration space.
+/// Decoded PCI base address register.
+pub struct BarInfo {
+    /// Base address (memory BARs: physical MMIO; I/O BARs: port no).
+    pub base: u64,
+    /// Decoded BAR size in bytes (0 when the BAR is not writable).
+    pub size: u64,
+    /// True when the BAR decodes I/O port space.
+    pub io: bool,
+}
+
+/// Read one base address register and decode its size.
+///
+/// Decoding writes all-ones into the BAR and restores the original
+/// value afterwards, so the firmware-assigned address survives the
+/// probe (the same dance Linux `pci_size()` performs inside
+/// `pci_read_bases`). 64-bit memory BARs consume the following dword
+/// as the high half of the address; dropping it would decode a base
+/// of 0 for every window assigned above 4 GiB.
+pub fn probe_bar(bus: u8, dev: u8, func: u8, index: u8) -> Option<BarInfo> {
+    if index > 5 {
+        return None;
+    }
+    let off = 0x10 + index * 4;
+    let low = read_config_dword(bus, dev, func, off);
+    if low == 0 || low == 0xFFFF_FFFF {
+        return None;
+    }
+    let io = low & 0x1 != 0;
+    let is_64 = !io && (low & 0x4 != 0);
+    let low_mask = if io { 0x3 } else { 0xF };
+
+    // Save the firmware-assigned high dword before the probe so the
+    // restore below puts back the real address, not the probed one.
+    let mut high_orig = 0u32;
+    if is_64 {
+        high_orig = read_config_dword(bus, dev, func, off + 1);
+    }
+
+    // Probe the writable bits (and the high dword of 64-bit BARs).
+    write_config_dword(bus, dev, func, off, 0xFFFF_FFFF);
+    let probed_low = read_config_dword(bus, dev, func, off);
+    let mut probed_high = 0u32;
+    if is_64 {
+        let high_off = off + 1;
+        write_config_dword(bus, dev, func, high_off, 0xFFFF_FFFF);
+        probed_high = read_config_dword(bus, dev, func, high_off);
+        write_config_dword(bus, dev, func, high_off, high_orig);
+    }
+    // Restore the firmware-assigned addresses.
+    write_config_dword(bus, dev, func, off, low);
+
+    if probed_low == 0 {
+        // Nothing writable: size unknown, report the address only.
+        let base = u64::from(low & !(low_mask as u32));
+        return Some(BarInfo { base, size: 0, io });
+    }
+    let size_mask = (u64::from(probed_high) << 32) | u64::from(probed_low & !(low_mask as u32));
+    // Complement-of-mask plus one yields the BAR size (the same
+    // arithmetic Linux pci_size performs on the readback mask).
+    let size = size_mask.wrapping_neg();
+    let mut base = u64::from(low & !(low_mask as u32));
+    if is_64 {
+        base |= u64::from(high_orig) << 32;
+    }
+    Some(BarInfo { base, size, io })
+}
+
+/// read a 16-bit value from PCI configuration space.
 pub fn read_config_word(bus: u8, dev: u8, func: u8, offset: u8) -> u16 {
     let aligned = offset & !0x03;
     let shift = (offset & 0x02) * 8;
@@ -185,7 +325,7 @@ pub fn read_config_word(bus: u8, dev: u8, func: u8, offset: u8) -> u16 {
     ((dword >> shift) & 0xFFFF) as u16
 }
 
-/// Write a 16-bit value to PCI configuration space.
+/// write a 16-bit value to PCI configuration space.
 pub fn write_config_word(bus: u8, dev: u8, func: u8, offset: u8, value: u16) {
     let aligned = offset & !0x03;
     let shift = (offset & 0x02) * 8;
@@ -200,7 +340,7 @@ pub fn write_config_word(bus: u8, dev: u8, func: u8, offset: u8, value: u16) {
     );
 }
 
-/// Read an 8-bit value from PCI configuration space.
+/// read an 8-bit value from PCI configuration space.
 pub fn read_config_byte(bus: u8, dev: u8, func: u8, offset: u8) -> u8 {
     let aligned = offset & !0x03;
     let shift = (offset & 0x03) * 8;
@@ -208,7 +348,7 @@ pub fn read_config_byte(bus: u8, dev: u8, func: u8, offset: u8) -> u8 {
     ((dword >> shift) & 0xFF) as u8
 }
 
-/// Write an 8-bit value to PCI configuration space.
+/// write an 8-bit value to PCI configuration space.
 pub fn write_config_byte(bus: u8, dev: u8, func: u8, offset: u8, value: u8) {
     let aligned = offset & !0x03;
     let shift = (offset & 0x03) * 8;
@@ -260,7 +400,7 @@ impl PciDevice {
 // =====================================================================
 
 const MAX_PCI_DEVICES: usize = 64;
-const MAX_BUSES: usize = 64;
+pub const MAX_BUSES: usize = 64;
 
 /// PciDevice cache. We use a struct that includes a `valid` flag
 /// rather than `Option<PciDevice>` so the array is a plain
@@ -299,7 +439,7 @@ static mut PCI_LAST_BUS: u8 = 0;
 static mut PCI_LAST_DEV: u8 = 0;
 static mut PCI_LAST_FUNC: u8 = 0;
 static mut PCI_LAST_REG: u8 = 0;
-static mut PCI_LAST_VALUE: u32 = 0;
+pub static mut PCI_LAST_VALUE: u32 = 0;
 static mut PCI_LAST_ECAM_ADDR: u64 = 0;
 
 fn record_config_read(bus: u8, dev: u8, func: u8, reg: u8) {
@@ -412,11 +552,17 @@ pub fn enumerate() -> &'static [PciDevice] {
     if unsafe { PCI_CACHE_VALID } {
         return unsafe {
             core::slice::from_raw_parts(
-                PCI_DEVICE_CACHE.as_ptr() as *const PciDevice,
+                (*core::ptr::addr_of!(PCI_DEVICE_CACHE)).as_ptr() as *const PciDevice,
                 PCI_CACHE_COUNT,
             )
         };
     }
+
+    // Lazy configuration-method bring-up. Some HALs (aarch64,
+    // riscv64, loongarch64) reach enumeration through the
+    // virtio/drivers path without calling `init` first; without
+    // this, ECAM reads on those targets return all-zero garbage.
+    setup_config_method();
 
     //     // // kprintln!("  [PCI] starting enumeration... (scanning bus 0)");
     enumerate_recursive();
@@ -426,7 +572,10 @@ pub fn enumerate() -> &'static [PciDevice] {
     unsafe {
         PCI_CACHE_COUNT = count;
         PCI_CACHE_VALID = true;
-        core::slice::from_raw_parts(PCI_DEVICE_CACHE.as_ptr() as *const PciDevice, count)
+        core::slice::from_raw_parts(
+            (*core::ptr::addr_of!(PCI_DEVICE_CACHE)).as_ptr() as *const PciDevice,
+            count,
+        )
     }
 }
 
@@ -449,7 +598,7 @@ pub fn get_device(bus: u8, device: u8, function: u8) -> Option<PciDevice> {
 // BAR access
 // =====================================================================
 
-/// Read a BAR (Base Address Register).
+/// read a BAR (Base Address Register).
 pub fn read_bar(dev: &PciDevice, index: u8) -> u64 {
     if index >= 6 {
         return 0;

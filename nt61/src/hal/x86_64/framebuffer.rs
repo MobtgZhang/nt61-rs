@@ -122,13 +122,26 @@ pub fn init_from_bootinfo(
         // Set default attribute to 0x07 (light grey on black) so
         // bootvid's cursor paint uses the standard colour.
         crate::hal::common::framebuffer::set_attr(0x07);
-        return FramebufferInfo {
+        let info = FramebufferInfo {
             address: common_info.address,
             width: common_info.width,
             height: common_info.height,
             bpp: common_info.bpp,
             pitch: common_info.pitch,
         };
+        // Also publish the same info into the per-arch atomics so
+        // `efifb::get_bootinfo_framebuffer()` (which reads the
+        // x86_64 `info()`) sees the real GOP parameters instead of
+        // falling back to VGA text mode.
+        FB_ADDR.store(info.address, Ordering::Release);
+        FB_WIDTH.store(info.width, Ordering::Release);
+        FB_HEIGHT.store(info.height, Ordering::Release);
+        FB_PITCH.store(info.pitch, Ordering::Release);
+        FB_BPP.store(info.bpp, Ordering::Release);
+        FB_MODE_TEXT.store(0, Ordering::Release);
+        FB_CURSOR_X.store(0, Ordering::Release);
+        FB_CURSOR_Y.store(0, Ordering::Release);
+        return info;
     }
     // Only adopt the GOP-provided framebuffer if winload actually
     // published one. A zero `base` means winload failed to find
@@ -173,13 +186,20 @@ pub fn info() -> FramebufferInfo {
     }
 }
 
+/// True when the framebuffer module fell back to legacy VGA text
+/// mode (no GOP LFB available). Used by the video driver init to
+/// decide whether it is safe to reprogram the VGA controller.
+pub fn is_text_mode() -> bool {
+    FB_MODE_TEXT.load(Ordering::Acquire) != 0
+}
+
 /// Set the text-mode attribute byte (foreground in low nibble,
 /// background in high nibble).
 pub fn set_text_attribute(fg: u8, bg: u8) {
     FB_ATTR.store((bg << 4) | (fg & 0x0F), Ordering::Relaxed);
 }
 
-/// Write a single pixel. Coordinates are clipped to the
+/// write a single pixel. Coordinates are clipped to the
 /// framebuffer bounds. Colour packing depends on the active
 /// `bpp`:
 ///   16 bpp: RGB565
@@ -232,8 +252,6 @@ pub fn clear(color: u32) {
 
 /// Scroll the visible area up by `lines` rows.
 pub fn scroll_up(lines: u32) {
-    // TEMP DIAGNOSTIC (remove before delivery).
-    crate::hal::x86_64::serial::write_char('T' as u8);
     let w = FB_WIDTH.load(Ordering::Relaxed);
     let h = FB_HEIGHT.load(Ordering::Relaxed);
     let pitch = FB_PITCH.load(Ordering::Relaxed) as usize;
@@ -260,7 +278,7 @@ pub fn scroll_up(lines: u32) {
     let _ = pitch;
 }
 
-/// Write a 16-bit `u16` cell at (x, y) in text mode.
+/// write a 16-bit `u16` cell at (x, y) in text mode.
 fn text_cell(x: u32, y: u32, ch: u8, attr: u8) {
     let w = FB_WIDTH.load(Ordering::Relaxed);
     let h = FB_HEIGHT.load(Ordering::Relaxed);

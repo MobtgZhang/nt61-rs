@@ -35,12 +35,14 @@ use crate::arch::aarch64::soc;
 const GICV2_DIST_BASE: u64 = 0x0800_0000;
 const GICV2_CPU_BASE: u64 = 0x0801_0000;
 
+/// PL011 serial receive line on the QEMU 'virt' GICv2 layout: the
+/// UART hangs off SPI 33 (ISENABLER word 1, bit 1).
+const UART_IRQ: u32 = 33;
+
 /// GICv3 register layout. Distributor shared registers sit at the
 /// base; per-CPU redistributors live at offsets dictated by the
 /// firmware. QEMU `virt` exposes the redistributor base at 0x080A_0000
 /// for the boot CPU and increments by 0x20000 per CPU.
-const GICV3_RDIST_BASE: u64 = 0x080A_0000;
-const GICV3_RDIST_STRIDE: u64 = 0x20000;
 
 /// Distributor registers (GICv2 / GICv3).
 mod gicd {
@@ -48,7 +50,6 @@ mod gicd {
     pub const TYPER: usize = 0x004;
     pub const IGROUPR: usize = 0x080; // base + 4 * (n / 32)
     pub const ISENABLER: usize = 0x100; // base + 4 * (n / 32)
-    pub const ICENABLER: usize = 0x180;
     pub const IPRIORITYR: usize = 0x400;
     pub const ITARGETSR: usize = 0x800;
 }
@@ -100,6 +101,12 @@ pub fn init(dist_base: u64, cpu_base: u64) {
         }
     }
     crate::hal::serial::write_string("hal_apic:done\r\n");
+
+    // Unmask the PL011 receive interrupt in the peripheral. The GIC
+    // line was enabled in 'init_gicv2' and 'dispatch_irq' drains the
+    // UART FIFO into the unified keyboard ring, so the armed line can
+    // no longer storm.
+    crate::hal::common::keyboard_unified::enable_serial_rx_irq();
 }
 
 fn init_gicv2() {
@@ -107,7 +114,7 @@ fn init_gicv2() {
         // Disable the distributor while we configure.
         write_volatile((GICV2_DIST_BASE + gicd::CTLR as u64) as *mut u32, 0);
 
-        // Read the IRQ count from the TYPER register and mask every SPI.
+        // read the IRQ count from the TYPER register and mask every SPI.
         let typer = read_volatile((GICV2_DIST_BASE + gicd::TYPER as u64) as *mut u32);
         let _n_spis = ((typer & 0x1F) + 1) * 32;
 
@@ -133,6 +140,14 @@ fn init_gicv2() {
         // CPU interface: enable group 0 (0x1), set priority mask to 0xF0.
         write_volatile((GICV2_CPU_BASE + gicc::CTLR as u64) as *mut u32, 0x1);
         write_volatile((GICV2_CPU_BASE + gicc::PMR as u64) as *mut u32, 0xF0);
+
+        // Enable the serial receive line. The GIC masks every SPI at
+        // reset, so without this the armed PL011 interrupt can never
+        // fire.
+        const SPI_BASE: u32 = 32;
+        let spi = UART_IRQ - SPI_BASE;
+        let isenabler = GICV2_DIST_BASE + gicd::ISENABLER as u64 + ((spi / 32) as u64 * 4);
+        write_volatile(isenabler as *mut u32, 1 << (spi % 32));
     }
 }
 
@@ -197,8 +212,11 @@ static IRQ_COUNT: AtomicU32 = AtomicU32::new(0);
 /// that the path is exercised.
 pub fn dispatch_irq(irq: u64) {
     IRQ_COUNT.fetch_add(1, Ordering::Relaxed);
-    // Real dispatch happens here: notify HAL & scheduler.
-    let _ = irq;
+    // Route the serial receive line into the unified keyboard ring;
+    // other lines were acknowledged by the caller and are dropped.
+    if irq == UART_IRQ as u64 {
+        crate::hal::common::keyboard_unified::serial_rx_irq();
+    }
 }
 
 /// Acknowledge-elapsed IRQ count (for smoke tests).

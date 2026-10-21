@@ -1,4 +1,4 @@
-//! ISA DMA Controller (8237) and Common Buffer Allocation
+//! ISA DMA Controller (8237) and Common buffer Allocation
 //
 //! Two cascaded 8237 DMA controllers provide 8 channels of
 //! bus-master DMA on legacy PC hardware. Channels 0..3 are 8-bit,
@@ -6,8 +6,8 @@
 //! controller.
 //
 //! `hal.dll` exposes the relevant surface as
-//! `HalGetAdapter`, `HalAllocateCommonBuffer`,
-//! `HalFreeCommonBuffer`, and `HalReadDmaCounter`. We provide
+//! `hal_get_adapter`, `hal_allocate_common_buffer`,
+//! `hal_free_common_buffer`, and `hal_read_dma_counter`. We provide
 //! the same names; the implementation is minimal but real — it
 //! programs the 8237 and allocates physically-contiguous memory
 //! from `mm::pool`.
@@ -17,7 +17,7 @@
 use core::sync::atomic::{AtomicU8, Ordering};
 
 #[cfg(target_arch = "x86_64")]
-use crate::hal::x86_64::io_port::{READ_PORT_UCHAR, WRITE_PORT_UCHAR};
+use crate::hal::x86_64::io_port::{read_port_uchar, write_port_uchar};
 
 // =====================================================================
 // 8237 ports (master 0x00..0x0F, slave 0xC0..0xDF)
@@ -28,34 +28,16 @@ mod ports {
     pub const DMA1_COUNT: [u16; 8] = [0x01, 0x03, 0x05, 0x07, 0xC2, 0xC6, 0xCA, 0xCE];
     pub const DMA1_PAGE: [u16; 8] = [0x87, 0x83, 0x81, 0x82, 0x8F, 0x8B, 0x89, 0x8A];
 
-    #[allow(dead_code)]
-    pub const DMA1_CMD: u16 = 0x08;
-    #[allow(dead_code)]
-    pub const DMA1_STATUS: u16 = 0x08;
     pub const DMA1_MASK: u16 = 0x0A;
     pub const DMA1_MODE: u16 = 0x0B;
     pub const DMA1_FLIPFLOP: u16 = 0x0C;
-    #[allow(dead_code)]
-    pub const DMA1_TEMP: u16 = 0x0D;
-    #[allow(dead_code)]
-    pub const DMA1_MASTER_CLEAR: u16 = 0x0D;
-    #[allow(dead_code)]
-    pub const DMA1_CLEAR_MASK: u16 = 0x0E;
-    #[allow(dead_code)]
-    pub const DMA1_MASK_ALL: u16 = 0x0F;
 }
 
 // Mode register bits.
-#[allow(dead_code)]
 mod mode_bits {
-    pub const VERIFY: u8 = 0;
     pub const WRITE: u8 = 0x04;
     pub const READ: u8 = 0x08;
-    pub const AUTO_INIT: u8 = 0x10;
-    pub const DOWN: u8 = 0x20;
     pub const SINGLE: u8 = 0x40;
-    pub const BLOCK: u8 = 0x80;
-    pub const CASCADE: u8 = 0xC0;
 }
 
 static DMA1_MASK_STATE: AtomicU8 = AtomicU8::new(0);
@@ -70,7 +52,7 @@ fn mask_set(channel: u8) {
     let prev = state.load(Ordering::Relaxed);
     let new = prev | (1 << (channel & 0x03));
     state.store(new, Ordering::Relaxed);
-    WRITE_PORT_UCHAR(port, 0x04 | (channel & 0x03));
+    write_port_uchar(port, 0x04 | (channel & 0x03));
 }
 
 fn mask_clear(channel: u8) {
@@ -82,11 +64,11 @@ fn mask_clear(channel: u8) {
     let prev = state.load(Ordering::Relaxed);
     let new = prev & !(1 << (channel & 0x03));
     state.store(new, Ordering::Relaxed);
-    WRITE_PORT_UCHAR(ports::DMA1_MASK, channel & 0x03);
+    write_port_uchar(ports::DMA1_MASK, channel & 0x03);
 }
 
 fn reset_flipflop() {
-    WRITE_PORT_UCHAR(ports::DMA1_FLIPFLOP, 0xFF);
+    write_port_uchar(ports::DMA1_FLIPFLOP, 0xFF);
 }
 
 fn program_channel(channel: u8, mode: u8, addr: u32, count: u16) {
@@ -112,31 +94,31 @@ fn program_channel(channel: u8, mode: u8, addr: u32, count: u16) {
         let a = (addr >> 1) & 0xFFFF;
         (a as u8, (a >> 8) as u8, ((addr >> 16) & 0xFF) as u8)
     };
-    WRITE_PORT_UCHAR(addr_port, lo);
-    WRITE_PORT_UCHAR(addr_port, hi);
-    WRITE_PORT_UCHAR(page_port, page);
+    write_port_uchar(addr_port, lo);
+    write_port_uchar(addr_port, hi);
+    write_port_uchar(page_port, page);
     let count_val = if channel < 4 {
         count - 1
     } else {
         (count >> 1) - 1
     };
-    WRITE_PORT_UCHAR(count_port, (count_val & 0xFF) as u8);
-    WRITE_PORT_UCHAR(count_port, ((count_val >> 8) & 0xFF) as u8);
-    WRITE_PORT_UCHAR(ports::DMA1_MODE, mode | (channel & 0x03));
+    write_port_uchar(count_port, (count_val & 0xFF) as u8);
+    write_port_uchar(count_port, ((count_val >> 8) & 0xFF) as u8);
+    write_port_uchar(ports::DMA1_MODE, mode | (channel & 0x03));
     mask_clear(channel);
 }
 
-/// Read the current count of `channel` (0..7). The value is the
+/// read the current count of `channel` (0..7). The value is the
 /// "remaining" count, with a bias of 1 — the user code adds 1 to
 /// recover the original count.
-pub fn HalReadDmaCounter(channel: u8) -> u8 {
+pub fn hal_read_dma_counter(channel: u8) -> u8 {
     if channel >= 8 {
         return 0;
     }
     reset_flipflop();
     let port = ports::DMA1_COUNT[channel as usize];
-    let lo = READ_PORT_UCHAR(port);
-    let hi = READ_PORT_UCHAR(port);
+    let lo = read_port_uchar(port);
+    let hi = read_port_uchar(port);
     let raw = ((hi as u16) << 8) | (lo as u16);
     let count = if channel < 4 { raw + 1 } else { (raw + 1) << 1 };
     (count & 0xFF) as u8
@@ -148,9 +130,9 @@ pub fn HalReadDmaCounter(channel: u8) -> u8 {
 
 /// Small bump allocator for DMA common buffers. The pool is
 /// primed with frames from `mm::pool` and handed out
-/// whole-page. We never run a free list — `HalFreeCommonBuffer`
+/// whole-page. We never run a free list — `hal_free_common_buffer`
 /// is supported but only for buffers previously allocated with
-/// `HalAllocateCommonBuffer`.
+/// `hal_allocate_common_buffer`.
 const MAX_BUFFERS: usize = 32;
 
 #[derive(Copy, Clone)]
@@ -168,7 +150,7 @@ static mut BUFFERS: [CommonBuffer; MAX_BUFFERS] = [CommonBuffer {
     in_use: false,
 }; MAX_BUFFERS];
 
-/// Adapter object returned by `HalGetAdapter`. The fields mirror
+/// Adapter object returned by `hal_get_adapter`. The fields mirror
 /// the `DEVICE_DESCRIPTION` that real Windows uses.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AdapterInfo {
@@ -181,7 +163,7 @@ pub struct AdapterInfo {
 /// Return an `AdapterInfo` for the legacy ISA DMA adapter. The
 /// real `hal.dll` would return a separate object per PCI device;
 /// we only model the ISA case here.
-pub fn HalGetAdapter(interface_type: u32, bus_number: u32) -> Option<AdapterInfo> {
+pub fn hal_get_adapter(interface_type: u32, bus_number: u32) -> Option<AdapterInfo> {
     // ISA / EISA use the 8237. PCIBus would normally use bus-
     // master DMA; we return None so the caller falls back to
     // PIO if the device does not support bus mastering.
@@ -200,13 +182,13 @@ pub fn HalGetAdapter(interface_type: u32, bus_number: u32) -> Option<AdapterInfo
 /// be DMA'd into / out of by `adapter`. The kernel pool is the
 /// backing store; the returned pointer is identity-mapped (i.e.
 /// the same value in kernel virtual and physical address space).
-pub fn HalAllocateCommonBuffer(adapter: &AdapterInfo, len: usize) -> Option<(u64, u64)> {
+pub fn hal_allocate_common_buffer(adapter: &AdapterInfo, len: usize) -> Option<(u64, u64)> {
     if len == 0 {
         return None;
     }
     let aligned = (len + 4095) & !4095;
     unsafe {
-        for slot in BUFFERS.iter_mut() {
+        for slot in (*core::ptr::addr_of_mut!(BUFFERS)).iter_mut() {
             if slot.in_use {
                 continue;
             }
@@ -231,10 +213,10 @@ pub fn HalAllocateCommonBuffer(adapter: &AdapterInfo, len: usize) -> Option<(u64
     None
 }
 
-/// Free a buffer previously allocated by `HalAllocateCommonBuffer`.
-pub fn HalFreeCommonBuffer(_adapter: &AdapterInfo, phys: u64, virt: u64, size: usize) -> bool {
+/// Free a buffer previously allocated by `hal_allocate_common_buffer`.
+pub fn hal_free_common_buffer(_adapter: &AdapterInfo, phys: u64, virt: u64, size: usize) -> bool {
     unsafe {
-        for slot in BUFFERS.iter_mut() {
+        for slot in (*core::ptr::addr_of_mut!(BUFFERS)).iter_mut() {
             if slot.in_use && slot.phys == phys && slot.virt == virt && slot.size == size {
                 slot.in_use = false;
                 return true;
@@ -276,7 +258,6 @@ pub fn program_dma_write(channel: u8, buffer: u64, count: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     fn address_split_8bit() {

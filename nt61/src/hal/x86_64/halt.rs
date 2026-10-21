@@ -1,6 +1,6 @@
 //! Firmware Return / Reboot / Shutdown
 //
-//! Implements the `hal.dll` `HalReturnToFirmware` export plus a
+//! Implements the `hal.dll` `hal_return_to_firmware` export plus a
 //! hand-rolled `bugcheck_screen` helper that draws the NT-style
 //! blue screen of death on whatever display the framebuffer
 //! module was initialised with.
@@ -12,13 +12,12 @@
 #![cfg(target_arch = "x86_64")]
 
 use core::arch::asm;
-use core::ptr;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(target_arch = "x86_64")]
 use crate::hal::x86_64::framebuffer;
 #[cfg(target_arch = "x86_64")]
-use crate::hal::x86_64::io_port::{WRITE_PORT_UCHAR, WRITE_PORT_USHORT};
+use crate::hal::x86_64::io_port::{write_port_uchar, write_port_ushort};
 
 /// Firmware action codes. The values match those defined in the
 /// WDK `FIRMWARE_REENTRY` enumeration.
@@ -36,8 +35,7 @@ const ACPI_PM1A_CNT: u16 = 0x604; // fallback if no FADT
 const ACPI_PM1A_CNT_LEGACY: u16 = 0xB004; // legacy QEMU / Bochs PM port
 const ACPI_SLP_TYP_S5: u16 = 5 << 10;
 const ACPI_SLP_EN: u16 = 1 << 13;
-#[allow(dead_code)]
-const RESET_VECTOR_IO_PORT: u16 = 0x64;
+pub const RESET_VECTOR_IO_PORT: u16 = 0x64;
 const PCI_RESET_PORT: u16 = 0xCF9;
 const PCI_RESET_VALUE: u8 = 0x06; // reset CPU + system
 
@@ -47,12 +45,12 @@ const PCI_RESET_VALUE: u8 = 0x06; // reset CPU + system
 static PM1A_CNT: AtomicU64 = AtomicU64::new(ACPI_PM1A_CNT as u64);
 
 /// Set the ACPI PM1a control register address. Called by
-/// `HalInitSystem` after parsing the FADT.
+/// `hal_init_system` after parsing the FADT.
 pub fn set_pm1a_cnt(phys: u64) {
     PM1A_CNT.store(phys, Ordering::Release);
 }
 
-/// Write a 16-bit value to the ACPI PM1a control register. On
+/// write a 16-bit value to the ACPI PM1a control register. On
 /// x86 the fixed PM1a_CNT (0x604) is an I/O port, not a
 /// memory-mapped register, so the write must use `out dx, ax`.
 fn pm1a_write(value: u16) {
@@ -60,12 +58,12 @@ fn pm1a_write(value: u16) {
     if phys == 0 {
         return;
     }
-    WRITE_PORT_USHORT(phys as u16, value);
+    write_port_ushort(phys as u16, value);
 }
 
 /// Reboot the system via the keyboard controller.
 pub fn reboot_via_kbc() -> ! {
-    WRITE_PORT_UCHAR(KBD_STATUS_PORT, KBD_RESET_CPU);
+    write_port_uchar(KBD_STATUS_PORT, KBD_RESET_CPU);
     // If the KBC did not cooperate, fall through to PCI reset.
     reboot_via_pci()
 }
@@ -73,7 +71,7 @@ pub fn reboot_via_kbc() -> ! {
 /// Reboot the system via the PCI reset port (0xCF9). Available
 /// on most modern motherboards.
 pub fn reboot_via_pci() -> ! {
-    WRITE_PORT_UCHAR(PCI_RESET_PORT, PCI_RESET_VALUE);
+    write_port_uchar(PCI_RESET_PORT, PCI_RESET_VALUE);
     // Last resort: triple fault. Force #DF by setting the IDT
     // pointer to a NULL/0 limit, then `int 0`.
     unsafe {
@@ -97,7 +95,7 @@ pub fn reboot_via_pci() -> ! {
 pub fn shutdown_via_acpi() -> ! {
     pm1a_write(ACPI_SLP_TYP_S5 | ACPI_SLP_EN);
     pm1a_write(ACPI_SLP_EN);
-    WRITE_PORT_USHORT(ACPI_PM1A_CNT_LEGACY, ACPI_SLP_EN);
+    write_port_ushort(ACPI_PM1A_CNT_LEGACY, ACPI_SLP_EN);
     // On real hardware the system powers off here. If the
     // firmware does not honour any of the requests we still want
     // to halt the kernel without taking the system down further.
@@ -113,10 +111,10 @@ pub fn halt() -> ! {
     }
 }
 
-/// Top-level `HalReturnToFirmware` entry. The argument is one of
+/// Top-level `hal_return_to_firmware` entry. The argument is one of
 /// the `firmware_action` constants; other values are coerced to
 /// `HAL_HALT`.
-pub fn HalReturnToFirmware(action: u32) -> ! {
+pub fn hal_return_to_firmware(action: u32) -> ! {
     match action as u8 {
         firmware_action::HAL_REBOOT => reboot_via_kbc(),
         firmware_action::HAL_SHUTDOWN => shutdown_via_acpi(),

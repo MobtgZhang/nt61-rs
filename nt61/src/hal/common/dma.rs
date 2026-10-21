@@ -5,15 +5,17 @@
 
 #[cfg(target_arch = "x86_64")]
 #[cfg(target_arch = "x86_64")]
-pub use crate::hal::x86_64::dma::{AdapterInfo, HalAllocateCommonBuffer, HalFreeCommonBuffer};
+pub use crate::hal::x86_64::dma::{
+    hal_allocate_common_buffer, hal_free_common_buffer, AdapterInfo,
+};
 
 #[cfg(not(target_arch = "x86_64"))]
 pub struct AdapterInfo;
 
 #[cfg(not(target_arch = "x86_64"))]
-pub fn HalAllocateCommonBuffer(_adapter: &AdapterInfo, _size: usize) -> Option<(*mut u8, u64)> {
+pub fn hal_allocate_common_buffer(_adapter: &AdapterInfo, _size: usize) -> Option<(*mut u8, u64)> {
     None
 }
 
 #[cfg(not(target_arch = "x86_64"))]
-pub fn HalFreeCommonBuffer(_adapter: &AdapterInfo, _size: usize, _phys: u64, _virt: *mut u8) {}
+pub fn hal_free_common_buffer(_adapter: &AdapterInfo, _size: usize, _phys: u64, _virt: *mut u8) {}

@@ -5,7 +5,7 @@
 //! HPET table to discover the MMIO base, map it through
 //! `mm::syspte::map_io_space`, and expose a high-resolution
 //! performance counter that maps directly to the
-//! `QueryPerformanceCounter` / `QueryPerformanceFrequency` Win32
+//! `query_performance_counter` / `query_performance_frequency` Win32
 //! API.
 
 #![cfg(target_arch = "x86_64")]
@@ -116,12 +116,12 @@ pub fn hpet_period_fs() -> u64 {
     HPET_PERIOD_FS.load(Ordering::Acquire)
 }
 
-/// Read the 32-bit low half of the HPET main counter.
+/// read the 32-bit low half of the HPET main counter.
 pub fn counter_lo() -> u32 {
     hpet_reg(HPET_REG_COUNTER)
 }
 
-/// Read the 64-bit HPET main counter. The HPET counter is 64-bit
+/// read the 64-bit HPET main counter. The HPET counter is 64-bit
 /// wide but most hardware exposes it as a 32-bit register that
 /// must be read twice with the high-32 read first to avoid
 /// tearing.
@@ -142,15 +142,15 @@ pub fn counter() -> u64 {
     }
 }
 
-/// Equivalent of Win32 `QueryPerformanceFrequency`. Returns the
+/// Equivalent of Win32 `query_performance_frequency`. Returns the
 /// counter rate in Hz.
-pub fn HalQueryPerformanceFrequency() -> i64 {
+pub fn hal_query_performance_frequency() -> i64 {
     hpet_freq_hz() as i64
 }
 
-/// Equivalent of Win32 `QueryPerformanceCounter`. Returns the
+/// Equivalent of Win32 `query_performance_counter`. Returns the
 /// current counter value.
-pub fn HalQueryPerformanceCounter() -> i64 {
+pub fn hal_query_performance_counter() -> i64 {
     counter() as i64
 }
 
@@ -187,7 +187,6 @@ pub fn program_timer0(delay_ticks: u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     fn period_to_hz() {

@@ -81,7 +81,12 @@ pub fn read_byte() -> u8 {
     }
 }
 
-/// Read one byte if the underlying backend exposes a
+/// Drain platform-specific keyboard sources into the unified buffer.
+pub fn poll() {
+    backend::poll();
+}
+
+/// read one byte if the underlying backend exposes a
 /// non-blocking `data_available` style primitive. Some callers
 /// want a coarse "is anything pending?" check without spinning
 /// forever — this is a one-shot poll, not a loop.

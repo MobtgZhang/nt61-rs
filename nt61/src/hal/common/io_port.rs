@@ -8,29 +8,29 @@ pub use crate::hal::x86_64::io_port::*;
 
 #[cfg(not(target_arch = "x86_64"))]
 mod stub {
-    /// Read a byte from an I/O port. No-op on non-x86_64.
-    pub fn READ_PORT_UCHAR(_port: u16) -> u8 {
+    /// read a byte from an I/O port. No-op on non-x86_64.
+    pub fn read_port_uchar(_port: u16) -> u8 {
         0
     }
 
-    /// Write a byte to an I/O port. No-op on non-x86_64.
-    pub fn WRITE_PORT_UCHAR(_port: u16, _value: u8) {}
+    /// write a byte to an I/O port. No-op on non-x86_64.
+    pub fn write_port_uchar(_port: u16, _value: u8) {}
 
-    /// Read a word (16-bit) from an I/O port. No-op on non-x86_64.
-    pub fn READ_PORT_USHORT(_port: u16) -> u16 {
+    /// read a word (16-bit) from an I/O port. No-op on non-x86_64.
+    pub fn read_port_ushort(_port: u16) -> u16 {
         0
     }
 
-    /// Write a word (16-bit) to an I/O port. No-op on non-x86_64.
-    pub fn WRITE_PORT_USHORT(_port: u16, _value: u16) {}
+    /// write a word (16-bit) to an I/O port. No-op on non-x86_64.
+    pub fn write_port_ushort(_port: u16, _value: u16) {}
 
-    /// Read a long (32-bit) from an I/O port. No-op on non-x86_64.
-    pub fn READ_PORT_ULONG(_port: u16) -> u32 {
+    /// read a long (32-bit) from an I/O port. No-op on non-x86_64.
+    pub fn read_port_ulong(_port: u16) -> u32 {
         0
     }
 
-    /// Write a long (32-bit) to an I/O port. No-op on non-x86_64.
-    pub fn WRITE_PORT_ULONG(_port: u16, _value: u32) {}
+    /// write a long (32-bit) to an I/O port. No-op on non-x86_64.
+    pub fn write_port_ulong(_port: u16, _value: u32) {}
 }
 
 #[cfg(not(target_arch = "x86_64"))]

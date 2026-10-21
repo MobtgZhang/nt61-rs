@@ -15,7 +15,7 @@
 //! # I/O APIC
 //
 //! The I/O APIC MMIO base is firmware-supplied. We accept it as
-//! an argument to `init_io_apic`; the caller (`HalInitSystem`)
+//! an argument to `init_io_apic`; the caller (`hal_init_system`)
 //! obtains it from the ACPI MADT.
 
 #![cfg(target_arch = "x86_64")]
@@ -66,6 +66,10 @@ pub mod svr {
     pub const FOCUS_CPU_OFF: u32 = 1 << 9;
     /// Vector 0xFF is the standard BSP spurious vector.
     pub const SPURIOUS_VECTOR_MASK: u32 = 0xFF;
+    /// The four low bits of the spurious vector are forced to
+    /// 1111b by the hardware (IA-32 SDM 10.9.4), so a programmed
+    /// vector such as 9 is coerced to 15.
+    pub const SPURIOUS_VECTOR_LOW_BITS: u32 = 0x0F;
 }
 
 pub mod timer_lvt {
@@ -119,7 +123,7 @@ pub enum ApicTimerMode {
 }
 
 // =====================================================================
-// Internal state
+// internal state
 // =====================================================================
 
 const LAPIC_BASE: u64 = 0xFEE0_0000;
@@ -128,6 +132,59 @@ static LAPIC_VA: AtomicU64 = AtomicU64::new(0);
 static IOAPIC_VA: AtomicU64 = AtomicU64::new(0);
 static IOAPIC_BASE_PFN: AtomicU32 = AtomicU32::new(0);
 static TIMER_TICKS_PER_SEC: AtomicU32 = AtomicU32::new(0);
+/// Count of spurious LAPIC interrupts observed. A spurious
+/// interrupt arrives at the spurious vector without a matching
+/// ISR entry and must NOT be EOI'd.
+static SPURIOUS_COUNT: AtomicU32 = AtomicU32::new(0);
+
+/// Spurious-interrupt vector programmed into the SVR. Vector
+/// 0xFF is the standard choice; the low four bits are forced to
+/// 1111b by the hardware, so 0x0F is the coerced fallback every
+/// AP can also report.
+pub const SPURIOUS_VECTOR: u8 = 0xFF;
+
+/// The vector actually delivered when the SVR was programmed
+/// with a vector whose low bits were overwritten (e.g. 9 -> 15).
+pub const SPURIOUS_VECTOR_FALLBACK: u8 = 0x0F;
+
+/// True when `vector` is the LAPIC spurious vector (either the
+/// programmed 0xFF form or the coerced 0x0F form). Call this
+/// BEFORE `eoi()` in the exception dispatcher: a spurious
+/// interrupt must not be acknowledged.
+#[inline]
+pub fn is_spurious_vector(vector: u8) -> bool {
+    vector == SPURIOUS_VECTOR || vector == SPURIOUS_VECTOR_FALLBACK
+}
+
+/// Count and handle a spurious LAPIC interrupt. Returns `true`
+/// when `vector` was spurious (the caller must skip the EOI
+/// and any device handler), `false` otherwise.
+#[inline]
+pub fn handle_spurious(vector: u8) -> bool {
+    if is_spurious_vector(vector) {
+        SPURIOUS_COUNT.fetch_add(1, Ordering::Relaxed);
+        true
+    } else {
+        false
+    }
+}
+
+/// Number of spurious LAPIC interrupts observed so far.
+#[inline]
+pub fn spurious_count() -> u32 {
+    SPURIOUS_COUNT.load(Ordering::Relaxed)
+}
+
+/// Reprogram the SVR with `vector` as the spurious vector. Per
+/// the IA-32 SDM the hardware forces bits[3:0] to 1111b, so the
+/// value actually accepted is `vector | 0x0F` — programming 9
+/// therefore ends up as 15, which is why the dispatcher treats
+/// both 0xFF and 0x0F as spurious.
+pub fn set_spurious_vector(vector: u8) {
+    let svr = read_lapic(lapic_reg::SVR);
+    let coerced = (vector as u32) | svr::SPURIOUS_VECTOR_LOW_BITS;
+    write_lapic(lapic_reg::SVR, svr | svr::ENABLE | coerced);
+}
 
 // =====================================================================
 // Register access helpers
@@ -168,7 +225,7 @@ pub fn is_ready() -> bool {
     lapic_va() != 0
 }
 
-/// Write the LAPIC task-priority register.
+/// write the LAPIC task-priority register.
 ///
 /// `tpr` is the 8-bit TPR encoding (priority in the high nibble), i.e. the
 /// value produced by the documented `IrqlToTpr()` mapping. No-op when the
@@ -181,7 +238,7 @@ pub fn set_tpr(tpr: u8) {
     write_lapic(lapic_reg::TPR, (tpr & 0xFF) as u32);
 }
 
-/// Read the LAPIC task-priority register (0 when not mapped).
+/// read the LAPIC task-priority register (0 when not mapped).
 #[inline]
 pub fn get_tpr() -> u32 {
     if lapic_va() == 0 {
@@ -249,8 +306,7 @@ fn rdmsr(msr: u32) -> u64 {
 }
 
 #[inline]
-#[allow(dead_code)]
-fn wrmsr(msr: u32, val: u64) {
+pub fn wrmsr(msr: u32, val: u64) {
     let lo = val as u32;
     let hi = (val >> 32) as u32;
     unsafe {
@@ -265,7 +321,7 @@ fn wrmsr(msr: u32, val: u64) {
 /// Enable the Local APIC and software-set spurious vector 0xFF.
 /// The LAPIC is mapped at the canonical 0xFEE0_0000 address.
 pub fn init() -> bool {
-    // Read the LAPIC base from IA32_APIC_BASE (MSR 0x1B). The low
+    // read the LAPIC base from IA32_APIC_BASE (MSR 0x1B). The low
     // 12 bits are reserved; the actual base sits at bits 12..36.
     let apic_base_msr = rdmsr(0x1B);
     let phys_base = apic_base_msr & 0x0000_0FFF_FFFF_F000;
@@ -274,11 +330,7 @@ pub fn init() -> bool {
     LAPIC_VA.store(va, Ordering::Release);
 
     // Software enable + spurious vector 0xFF.
-    let svr = read_lapic(lapic_reg::SVR);
-    write_lapic(
-        lapic_reg::SVR,
-        svr | svr::ENABLE | svr::SPURIOUS_VECTOR_MASK,
-    );
+    set_spurious_vector(SPURIOUS_VECTOR);
 
     // Accept all interrupts: TPR = 0.
     write_lapic(lapic_reg::TPR, 0);
@@ -323,11 +375,7 @@ pub fn init_smp() {
     LAPIC_VA.store(va, Ordering::Release);
 
     // Software enable + spurious vector 0xFF.
-    let svr = read_lapic(lapic_reg::SVR);
-    write_lapic(
-        lapic_reg::SVR,
-        svr | svr::ENABLE | svr::SPURIOUS_VECTOR_MASK,
-    );
+    set_spurious_vector(SPURIOUS_VECTOR);
 
     // Accept all interrupts: TPR = 0.
     write_lapic(lapic_reg::TPR, 0);
@@ -346,12 +394,12 @@ pub fn eoi() {
     write_lapic(lapic_reg::EOI, 0);
 }
 
-/// Read the LAPIC ID.
+/// read the LAPIC ID.
 pub fn lapic_id() -> u32 {
     (read_lapic(lapic_reg::ID) >> 24) & 0xFF
 }
 
-/// Read the LAPIC version register.
+/// read the LAPIC version register.
 pub fn lapic_version() -> u32 {
     read_lapic(lapic_reg::VERSION)
 }
@@ -361,7 +409,7 @@ pub fn max_lvt_entry() -> u8 {
     ((read_lapic(lapic_reg::VERSION) >> 16) & 0xFF) as u8
 }
 
-/// Read the current LAPIC timer count.
+/// read the current LAPIC timer count.
 pub fn timer_current() -> u32 {
     read_lapic(lapic_reg::TIMER_CURRENT)
 }
@@ -408,7 +456,7 @@ pub fn stop_timer() {
 /// Returns the initial count that the caller can plug into
 /// `TIMER_INITIAL` to get a 1 kHz periodic tick.
 pub fn calibrate_timer_1khz() -> u32 {
-    // We assume the PIT is already initialised to ~1 kHz. Count
+    // We assume the PIT is already initialised to ~1 kHz. count
     // the LAPIC timer down for 1 ms; the value we read back is
     // the bus-frequency-dependent initial count.
     init_timer(ApicTimerMode::OneShot, u32::MAX);
@@ -477,7 +525,7 @@ pub fn init_io_apic(phys_base: u64) -> bool {
     true
 }
 
-/// Read the I/O APIC's 4-bit ID register. Real hardware IDs are
+/// read the I/O APIC's 4-bit ID register. Real hardware IDs are
 /// 0..15; the value 0x0F is documented as "no I/O APIC present".
 pub fn ioapic_id() -> u8 {
     (read_ioapic(0x00) >> 24) as u8
@@ -527,5 +575,20 @@ mod tests {
         let v = svr::ENABLE | svr::SPURIOUS_VECTOR_MASK;
         assert_eq!(v & svr::ENABLE, svr::ENABLE);
         assert_eq!(v & 0xFF, 0xFF);
+    }
+
+    #[test]
+    fn spurious_vector_classification() {
+        // The programmed 0xFF form and the hardware-coerced 0x0F
+        // form are both spurious; ordinary device vectors are not.
+        assert!(is_spurious_vector(SPURIOUS_VECTOR));
+        assert!(is_spurious_vector(SPURIOUS_VECTOR_FALLBACK));
+        assert!(!is_spurious_vector(0x20));
+        assert!(!is_spurious_vector(0x09));
+
+        // SVR coercion: the low four bits are forced to 1111b, so
+        // a legacy vector 9 program ends up delivering vector 15.
+        let coerced = (0x09u32) | svr::SPURIOUS_VECTOR_LOW_BITS;
+        assert_eq!(coerced, SPURIOUS_VECTOR_FALLBACK as u32);
     }
 }

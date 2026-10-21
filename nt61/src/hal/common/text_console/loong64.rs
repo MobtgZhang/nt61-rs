@@ -103,12 +103,20 @@ unsafe fn commit_line() {
     dst.bytes[..len].copy_from_slice(&CUR_BYTES[..len]);
     dst.len = CUR_LEN;
     dst.attr = CUR_ATTR;
-    NEXT.store((slot + 1) % super::LOG_RING_LINES, Ordering::Release);
+    // Wrap at the ACTIVE window, not the compile-time capacity,
+    // so log_ring_set_lines takes effect on the next write.
+    NEXT.store((slot + 1) % super::log_ring_lines(), Ordering::Release);
     LINE_COUNT.fetch_add(1, Ordering::Release);
     CUR_LEN = 0;
 }
 
 pub fn clear() {
+    // Paint the LFB black and home the bootvid cursor so the
+    // GUI-visible sink matches the serial terminal after the
+    // clear.
+    if crate::hal::common::framebuffer::is_active() {
+        crate::drivers::bootvid::vid_clear_black();
+    }
     // ANSI: ESC [ 2 J   clear entire screen
     //        ESC [ H     move cursor to (0, 0)
     crate::arch::loongarch64::serial::write_string("\x1b[2J\x1b[H\r\n[screen cleared]\r\n");
@@ -119,6 +127,14 @@ pub fn clear() {
 }
 
 pub fn set_cursor(x: u8, y: u8) {
+    // Position the LFB cursor. bootvid addresses the framebuffer
+    // in pixels; the text facade works in glyph cells, so the
+    // shared cell-metric constants convert cell -> pixel here.
+    if crate::hal::common::framebuffer::is_active() {
+        let x_px = (x as u32) * super::FONT_CELL_WIDTH_PX;
+        let y_px = (y as u32) * super::FONT_LINE_HEIGHT_PX;
+        crate::drivers::bootvid::vid_set_cursor_position(x_px as u16, y_px as u16);
+    }
     // ANSI: ESC [ <row> ; <col> H
     let mut buf = [0u8; 16];
     let s = format_ansi_cup(&mut buf, x as u32 + 1, y as u32 + 1);
@@ -182,7 +198,7 @@ pub fn log_line_count() -> usize {
 }
 
 pub fn read_log_lines(buf: &mut [[u8; super::COLS + 2]]) -> usize {
-    let n = buf.len().min(super::LOG_RING_LINES);
+    let n = buf.len().min(super::log_ring_lines());
     let next = NEXT.load(Ordering::Acquire);
     unsafe {
         for i in 0..n {

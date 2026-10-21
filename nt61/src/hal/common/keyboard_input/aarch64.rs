@@ -21,17 +21,17 @@ pub fn init() {
     // need to flag the abstract interface as ready so the
     // shell loop starts polling.
     super::READY.store(true, Ordering::Release);
+    crate::drivers::input::virtio_input::init();
 }
 
 pub fn try_read_byte() -> Option<u8> {
-    crate::hal::aarch64::serial::try_get_char()
+    crate::hal::common::keyboard_unified::try_read_byte()
 }
 
 pub fn peek() -> bool {
-    // The PL011 has a status register but `try_get_char`
-    // already does the right thing. Callers that want a
-    // non-blocking probe can use `try_read_byte().is_some()`;
-    // `peek` here is a no-op that always returns false so the
-    // shell loop can spin without stalling.
-    false
+    crate::hal::common::keyboard_unified::peek()
+}
+
+pub fn poll() {
+    crate::hal::common::keyboard_unified::poll();
 }

@@ -5,17 +5,17 @@
 //! the master, 8..15 on the slave.
 //
 //! The functions here match the surface area of the original
-//! Windows `hal.dll` PIC exports (`HalEnableSystemInterrupt`,
-//! `HalDisableSystemInterrupt`, `HalGetInterruptVector`) plus the
+//! Windows `hal.dll` PIC exports (`hal_enable_system_interrupt`,
+//! `hal_disable_system_interrupt`, `hal_get_interrupt_vector`) plus the
 //! lower-level helpers used by the kernel's interrupt dispatcher.
 
 #![cfg(target_arch = "x86_64")]
 
 use core::arch::asm;
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 
 #[cfg(target_arch = "x86_64")]
-use crate::hal::x86_64::io_port::{READ_PORT_UCHAR, WRITE_PORT_UCHAR};
+use crate::hal::x86_64::io_port::{read_port_uchar, write_port_uchar};
 
 /// Master PIC command / data ports.
 const PIC1_CMD: u16 = 0x20;
@@ -33,6 +33,20 @@ const ICW4_8086: u8 = 0x01;
 const OCW2_EOI: u8 = 0x20;
 const OCW3_READ_IRR: u8 = 0x0A;
 const OCW3_READ_ISR: u8 = 0x0B;
+/// Spurious IRQs on the classic 8259A are documented for the
+/// real-time clock line on the master (IRQ7 fires spuriously for
+/// edge noise) and the slave cascade; the canonical case is IRQ 7.
+const SPURIOUS_IRQ_CANONICAL: u8 = 7;
+
+/// Count of spurious PIC IRQs observed (IRQ raised but the ISR
+/// bit was never set). Spurious IRQs must NOT be EOI'd.
+static SPURIOUS_IRQ_COUNT: AtomicU32 = AtomicU32::new(0);
+
+/// Number of spurious PIC IRQs observed so far.
+#[inline]
+pub fn spurious_irq_count() -> u32 {
+    SPURIOUS_IRQ_COUNT.load(Ordering::Relaxed)
+}
 
 /// Currently programmed vector base for the master PIC.
 static PIC1_BASE: AtomicU8 = AtomicU8::new(0x20);
@@ -93,38 +107,38 @@ pub fn init_and_mask_all() {
 /// location.
 pub fn i8259_init_with_offsets(offset1: u8, offset2: u8) -> bool {
     // Save the existing mask so we can restore it after init.
-    let saved_mask1 = READ_PORT_UCHAR(PIC1_DATA);
-    let saved_mask2 = READ_PORT_UCHAR(PIC2_DATA);
+    let saved_mask1 = read_port_uchar(PIC1_DATA);
+    let saved_mask2 = read_port_uchar(PIC2_DATA);
 
     // ICW1 — start init, expect ICW4.
-    WRITE_PORT_UCHAR(PIC1_CMD, ICW1_INIT | ICW1_ICW4);
+    write_port_uchar(PIC1_CMD, ICW1_INIT | ICW1_ICW4);
     io_wait();
-    WRITE_PORT_UCHAR(PIC2_CMD, ICW1_INIT | ICW1_ICW4);
+    write_port_uchar(PIC2_CMD, ICW1_INIT | ICW1_ICW4);
     io_wait();
 
     // ICW2 — vector base.
-    WRITE_PORT_UCHAR(PIC1_DATA, offset1);
+    write_port_uchar(PIC1_DATA, offset1);
     io_wait();
-    WRITE_PORT_UCHAR(PIC2_DATA, offset2);
+    write_port_uchar(PIC2_DATA, offset2);
     io_wait();
 
     // ICW3 — wiring. Master has slave on IRQ2 (bit 2); slave is
     // cascaded into IRQ2 (value 2).
-    WRITE_PORT_UCHAR(PIC1_DATA, 0x04);
+    write_port_uchar(PIC1_DATA, 0x04);
     io_wait();
-    WRITE_PORT_UCHAR(PIC2_DATA, 0x02);
+    write_port_uchar(PIC2_DATA, 0x02);
     io_wait();
 
     // ICW4 — 8086 mode.
-    WRITE_PORT_UCHAR(PIC1_DATA, ICW4_8086);
+    write_port_uchar(PIC1_DATA, ICW4_8086);
     io_wait();
-    WRITE_PORT_UCHAR(PIC2_DATA, ICW4_8086);
+    write_port_uchar(PIC2_DATA, ICW4_8086);
     io_wait();
 
     // Mask all IRQs by default; the caller is expected to
     // selectively unmask the ones it wants.
-    WRITE_PORT_UCHAR(PIC1_DATA, 0xFF);
-    WRITE_PORT_UCHAR(PIC2_DATA, 0xFF);
+    write_port_uchar(PIC1_DATA, 0xFF);
+    write_port_uchar(PIC2_DATA, 0xFF);
 
     PIC1_BASE.store(offset1, Ordering::Release);
     PIC2_BASE.store(offset2, Ordering::Release);
@@ -156,8 +170,8 @@ pub fn unmask_irq(irq: u8) {
     } else {
         (PIC2_DATA, irq - 8)
     };
-    let new_mask = READ_PORT_UCHAR(port) & !(1 << bit);
-    WRITE_PORT_UCHAR(port, new_mask);
+    let new_mask = read_port_uchar(port) & !(1 << bit);
+    write_port_uchar(port, new_mask);
 }
 
 /// Mask the IRQ so it cannot fire.
@@ -167,61 +181,84 @@ pub fn mask_irq(irq: u8) {
     } else {
         (PIC2_DATA, irq - 8)
     };
-    let new_mask = READ_PORT_UCHAR(port) | (1 << bit);
-    WRITE_PORT_UCHAR(port, new_mask);
+    let new_mask = read_port_uchar(port) | (1 << bit);
+    write_port_uchar(port, new_mask);
 }
 
-/// Dispatch a PIC IRQ. Sends EOI and calls the registered handler.
+/// True when `irq` is a spurious PIC interrupt: the line was
+/// raised (visible in the IRR) but the ISR bit was never set,
+/// which is exactly the 8259A edge-noise signature described in
+/// the datasheet (canonical case: IRQ 7 on the master). Spurious
+/// IRQs must NOT be EOI'd — sending EOI would corrupt the
+/// in-service stack for the IRQ that really was in service.
+pub fn is_spurious_irq(irq: u8) -> bool {
+    let isr = read_isr();
+    let bit = 1u16 << irq;
+    (isr & bit) == 0
+}
+
+/// Dispatch a PIC IRQ. Detects the spurious case first (no EOI,
+/// count only); for a real IRQ sends EOI and calls the
+/// registered handler.
 pub fn irq_dispatch(irq: u8) {
-    send_eoi(irq);
+    if is_spurious_irq(irq) {
+        SPURIOUS_IRQ_COUNT.fetch_add(1, Ordering::Relaxed);
+        // Deliberately no EOI: the 8259A was never told this IRQ
+        // entered service, so acknowledging it would pop the ISR
+        // stack entry of whichever lower-priority line is really
+        // being serviced (classic IRQ7 phantom-interrupt bug).
+        let _ = SPURIOUS_IRQ_CANONICAL;
+        return;
+    }
     let _ = irq;
+    send_eoi(irq);
 }
 
-/// Read the In-Service Register. The ISR has a 1 set for every
+/// read the In-Service Register. The ISR has a 1 set for every
 /// IRQ currently being serviced (between INT and EOI).
 pub fn read_isr() -> u16 {
     unsafe {
         asm!("out dx, al", in("dx") PIC1_CMD, in("al") OCW3_READ_ISR,
              options(nomem, nostack));
     }
-    let lo = READ_PORT_UCHAR(PIC1_CMD) as u16;
+    let lo = read_port_uchar(PIC1_CMD) as u16;
     unsafe {
         asm!("out dx, al", in("dx") PIC2_CMD, in("al") OCW3_READ_ISR,
              options(nomem, nostack));
     }
-    let hi = READ_PORT_UCHAR(PIC2_CMD) as u16;
+    let hi = read_port_uchar(PIC2_CMD) as u16;
     (hi << 8) | lo
 }
 
-/// Read the Interrupt Request Register. The IRR has a 1 set for
+/// read the Interrupt Request Register. The IRR has a 1 set for
 /// every IRQ that has been signalled but not yet acknowledged.
 pub fn read_irr() -> u16 {
     unsafe {
         asm!("out dx, al", in("dx") PIC1_CMD, in("al") OCW3_READ_IRR,
              options(nomem, nostack));
     }
-    let lo = READ_PORT_UCHAR(PIC1_CMD) as u16;
+    let lo = read_port_uchar(PIC1_CMD) as u16;
     unsafe {
         asm!("out dx, al", in("dx") PIC2_CMD, in("al") OCW3_READ_IRR,
              options(nomem, nostack));
     }
-    let hi = READ_PORT_UCHAR(PIC2_CMD) as u16;
+    let hi = read_port_uchar(PIC2_CMD) as u16;
     (hi << 8) | lo
 }
 
-/// Read the current PIC mask. Bit n corresponds to IRQ n; 1 means
+/// read the current PIC mask. Bit n corresponds to IRQ n; 1 means
 /// masked.
 pub fn read_mask() -> u16 {
-    let lo = READ_PORT_UCHAR(PIC1_DATA) as u16;
-    let hi = READ_PORT_UCHAR(PIC2_DATA) as u16;
+    let lo = read_port_uchar(PIC1_DATA) as u16;
+    let hi = read_port_uchar(PIC2_DATA) as u16;
     (hi << 8) | lo
 }
 
-/// Write a complete mask. Bit n corresponds to IRQ n; 1 means
+/// write a complete mask. Bit n corresponds to IRQ n; 1 means
 /// masked.
 pub fn write_mask(mask: u16) {
-    WRITE_PORT_UCHAR(PIC1_DATA, (mask & 0xFF) as u8);
-    WRITE_PORT_UCHAR(PIC2_DATA, ((mask >> 8) & 0xFF) as u8);
+    write_port_uchar(PIC1_DATA, (mask & 0xFF) as u8);
+    write_port_uchar(PIC2_DATA, ((mask >> 8) & 0xFF) as u8);
 }
 
 // =====================================================================
@@ -229,7 +266,7 @@ pub fn write_mask(mask: u16) {
 // =====================================================================
 
 /// Bus / interface type as defined in `hal.dll` `KdGetInterruptVector`
-/// and `HalGetInterruptVector` semantics.
+/// and `hal_get_interrupt_vector` semantics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum InterfaceType {
@@ -252,7 +289,7 @@ pub enum InterfaceType {
     MaximumInterfaceType = 16,
 }
 
-/// Vector / IRQL pair returned by `HalGetInterruptVector`. We use
+/// Vector / IRQL pair returned by `hal_get_interrupt_vector`. We use
 /// the same structure as the real `hal.dll`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct HalInterruptVector {
@@ -265,7 +302,7 @@ pub struct HalInterruptVector {
 /// processor affinity. For the legacy PIC, the vector is
 /// `pic_base + irq`, the IRQL is `irq` (matching the APIC TPR
 /// range), and the affinity is `0xFFFFFFFF` (any processor).
-pub fn HalGetInterruptVector(
+pub fn hal_get_interrupt_vector(
     interface_type: InterfaceType,
     _bus_number: u32,
     bus_interrupt_level: u32,
@@ -291,8 +328,8 @@ pub fn HalGetInterruptVector(
 /// at, and `vector` is the IDT vector that the line is wired to.
 /// The vector argument is informational — the PIC already knows
 /// which vector it raises for which IRQ — but the real
-/// `HalEnableSystemInterrupt` validates that the vector matches.
-pub fn HalEnableSystemInterrupt(irq: u8, irql: u8, vector: u32) -> i32 {
+/// `hal_enable_system_interrupt` validates that the vector matches.
+pub fn hal_enable_system_interrupt(irq: u8, irql: u8, vector: u32) -> i32 {
     if irq >= 16 {
         return -1;
     }
@@ -312,7 +349,7 @@ pub fn HalEnableSystemInterrupt(irq: u8, irql: u8, vector: u32) -> i32 {
 
 /// Disable an ISA-style system interrupt. `irq` is the system IRQ
 /// number. Returns 0 on success, -1 if the IRQ is out of range.
-pub fn HalDisableSystemInterrupt(irq: u8) -> i32 {
+pub fn hal_disable_system_interrupt(irq: u8) -> i32 {
     if irq >= 16 {
         return -1;
     }
@@ -330,7 +367,7 @@ mod tests {
     fn vector_translation() {
         // Without calling i8259_init we just use the defaults
         // baked into the statics.
-        let v = HalGetInterruptVector(InterfaceType::Isa, 0, 1, 0);
+        let v = hal_get_interrupt_vector(InterfaceType::Isa, 0, 1, 0);
         assert_eq!(v.vector, 0x21);
         assert_eq!(v.irql, 1);
     }

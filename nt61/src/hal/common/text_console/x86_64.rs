@@ -19,9 +19,6 @@ pub use crate::hal::x86_64::text_console::{clear, init, put_byte, set_attr, set_
 // kernel that previously referenced
 // `crate::hal::x86_64::text_console::*` through the unified
 // facade continue to work without modification.
-pub use crate::hal::x86_64::text_console::{
-    is_ready, put_byte_vga_only, put_byte_vga_only_str, put_rstr,
-};
 
 /// x86_64 has a real text framebuffer (the 0xB8000 buffer plus
 /// its bootvid LFB mirror), so the log IS the screen and there

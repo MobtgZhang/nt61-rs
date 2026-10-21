@@ -69,7 +69,7 @@ pub fn init_port(port: u16) {
     outb(port + UART_REG_MCR, 0x0F);
 }
 
-/// Write character to serial port. Honours the global
+/// write character to serial port. Honours the global
 /// `hal::common::serial_disable` gate; once `set_disabled(true)`
 /// has been called by `kernel_main` the byte is silently dropped
 /// so the GUI is the only operator-visible sink.
@@ -81,7 +81,7 @@ pub fn write_char(c: u8) {
     write_char_port(COM1_PORT, c);
 }
 
-/// Write character to specific port. Bypasses the global gate
+/// write character to specific port. Bypasses the global gate
 /// because the caller has already chosen a specific port (often
 /// COM2 for SAC, where suppression would defeat the purpose).
 pub fn write_char_port(port: u16, c: u8) {
@@ -92,16 +92,37 @@ pub fn write_char_port(port: u16, c: u8) {
     outb(port + UART_REG_DATA, c);
 }
 
-/// Write string to serial port. Honours the gate; the macro-level
+/// write string to serial port. Honours the gate; the macro-level
 /// `boot_println!` family uses `with_serial_unmasked` to escape
 /// suppression for panic paths.
 #[inline(never)]
 pub fn write_string(s: &str) {
-    if crate::hal::common::serial_disable::is_disabled() {
-        return;
+    #[cfg(not(feature = "log_level_debug"))]
+    {
+        let _ = s;
     }
-    for c in s.bytes() {
-        write_char_port(COM1_PORT, c);
+    #[cfg(feature = "log_level_debug")]
+    {
+        if !crate::hal::common::serial_disable::is_disabled() {
+            for c in s.bytes() {
+                write_char_port(COM1_PORT, c);
+            }
+        }
+    }
+}
+
+/// Writes diagnostic strings even in non-debug builds. Reserved for
+/// warnings, errors, and panic paths that must remain operator-visible.
+pub fn write_string_always(s: &str) {
+    #[cfg(test)]
+    {
+        let _ = s;
+    }
+    #[cfg(not(test))]
+    {
+        for c in s.bytes() {
+            write_char_port(COM1_PORT, c);
+        }
     }
 }
 
@@ -112,6 +133,10 @@ pub fn write_string(s: &str) {
 /// log output is uniform across the kernel.
 #[inline(never)]
 pub fn write_hex_u64(v: u64) {
+    if !log_level_debug() {
+        return;
+    }
+
     write_string("0x");
     // Print in 16 nibbles, MSB-first. We can't use
     // `format!` here (no `alloc`), so emit nibble by nibble.
@@ -126,28 +151,40 @@ pub fn write_hex_u64(v: u64) {
     }
 }
 
+fn log_level_debug() -> bool {
+    cfg!(feature = "log_level_debug")
+}
+
 /// Alias for write_string (used by legacy code)
 #[inline(always)]
 pub fn serial_puts(s: &str) {
     write_string(s);
 }
 
-/// Write string with newline
+/// write string with newline
 pub fn write_line(s: &str) {
     write_string(s);
     write_string("\r\n");
 }
 
-/// Write a 64-bit value as 16 hex digits with no leading "0x".
+/// write a 64-bit value as 16 hex digits with no leading "0x".
 pub fn write_u64_hex(val: u64) {
+    if !log_level_debug() {
+        return;
+    }
+
     let hex = b"0123456789ABCDEF";
     for i in (0..16).rev() {
         write_char(hex[((val >> (i * 4)) & 0xF) as usize]);
     }
 }
 
-/// Write a usize value as hex digits (adapts to pointer size).
+/// write a usize value as hex digits (adapts to pointer size).
 pub fn write_usize_hex(val: usize) {
+    if !log_level_debug() {
+        return;
+    }
+
     let hex = b"0123456789ABCDEF";
     let bits = core::mem::size_of::<usize>() * 8;
     for i in (0..bits / 4).rev() {
@@ -155,20 +192,24 @@ pub fn write_usize_hex(val: usize) {
     }
 }
 
-/// Write a 32-bit value as 8 hex digits with no leading "0x".
+/// write a 32-bit value as 8 hex digits with no leading "0x".
 pub fn write_u32_hex(val: u32) {
+    if !log_level_debug() {
+        return;
+    }
+
     let hex = b"0123456789ABCDEF";
     for i in (0..8).rev() {
         write_char(hex[((val >> (i * 4)) & 0xF) as usize]);
     }
 }
 
-/// Read character from serial port (non-blocking)
+/// read character from serial port (non-blocking)
 pub fn read_char() -> Option<u8> {
     read_char_port(COM1_PORT)
 }
 
-/// Read character from specific port
+/// read character from specific port
 pub fn read_char_port(port: u16) -> Option<u8> {
     if (inb(port + UART_REG_LSR) & LSR_DATA_READY) != 0 {
         Some(inb(port + UART_REG_DATA))

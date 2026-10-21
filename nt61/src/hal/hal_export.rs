@@ -14,7 +14,6 @@
 //! `hal_export_names` / `ntos_export_names` compiles. New code
 //! should NOT take a dependency on those constants — they will be
 //! removed in a follow-up cleanup.
-#![allow(dead_code, unused_imports)]
 
 /// Empty placeholder list. The canonical lists live in
 /// `tools/src/fs/build.rs`.

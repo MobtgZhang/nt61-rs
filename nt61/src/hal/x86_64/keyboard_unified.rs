@@ -37,85 +37,40 @@
 #![cfg(target_arch = "x86_64")]
 
 #[cfg(target_arch = "x86_64")]
-use crate::hal::x86_64::io_port::READ_PORT_UCHAR;
+use crate::hal::x86_64::io_port::read_port_uchar;
 
 const KBD_STATUS_PORT: u16 = 0x64;
 const KBD_DATA_PORT: u16 = 0x60;
 const STATUS_OUTPUT_FULL: u8 = 1 << 0;
 const STATUS_AUX_OUTPUT_FULL: u8 = 1 << 5;
 
-/// Polled PS/2 keyboard modifier state. The polled path inside the
-/// CMD shell does not touch the IRQ-driven path used by Ring-3 user
-/// code, so we own a private copy of the modifier bits.
-static mut POLLED_SHIFT: bool = false;
-static mut POLLED_CAPS: bool = false;
-
-/// Read one decoded ASCII byte from the PS/2 controller using
+/// read one decoded ASCII byte from the PS/2 controller using
 /// polled I/O. Returns `None` if no key is pending or the key is
 /// a modifier / function key.
 pub fn ps2_poll_char() -> Option<u8> {
-    let status = READ_PORT_UCHAR(KBD_STATUS_PORT);
+    let status = read_port_uchar(KBD_STATUS_PORT);
 
     // Drain mouse bytes first so they never interleave with
     // keyboard bytes in the return path.
     if status & STATUS_AUX_OUTPUT_FULL != 0 {
-        let _ = READ_PORT_UCHAR(KBD_DATA_PORT);
+        let _ = read_port_uchar(KBD_DATA_PORT);
     }
 
     if status & STATUS_OUTPUT_FULL == 0 {
         return None;
     }
 
-    let sc = READ_PORT_UCHAR(KBD_DATA_PORT);
+    let sc = read_port_uchar(KBD_DATA_PORT);
 
-    // SAFETY: single-threaded polling path; no concurrent access.
-    unsafe {
-        match sc {
-            0x2A | 0x36 => {
-                POLLED_SHIFT = true;
-                return None;
-            }
-            0xAA | 0xB6 => {
-                POLLED_SHIFT = false;
-                return None;
-            }
-            0x3A => {
-                POLLED_CAPS = !POLLED_CAPS;
-                return None;
-            }
-            0xE0 => {
-                // Drain the second byte of an extended scancode.
-                let mut waited = 0u32;
-                loop {
-                    let s = READ_PORT_UCHAR(KBD_STATUS_PORT);
-                    if s & STATUS_OUTPUT_FULL != 0 {
-                        let _ = READ_PORT_UCHAR(KBD_DATA_PORT);
-                        break;
-                    }
-                    waited += 1;
-                    if waited > 100000 {
-                        break;
-                    }
-                    core::hint::spin_loop();
-                }
-                return None;
-            }
-            _ => {}
-        }
+    // Decode through the shared scancode processor (same modifier
+    // state as the IRQ handler) so both paths stay in sync.
+    crate::hal::x86_64::keyboard::process_scancode(sc);
 
-        // Drop release codes for non-modifier keys.
-        if sc >= 0x80 {
-            return None;
-        }
-
-        let shift = POLLED_SHIFT;
-        let caps = POLLED_CAPS;
-        #[cfg(target_arch = "x86_64")]
-        if let Some(c) = crate::hal::x86_64::keyboard::scancode_to_ascii(sc, shift, caps) {
-            return Some(if c == b'\n' { b'\r' } else { c });
-        }
-    }
-
+    // The decoded character (if any) was pushed to the ring buffer
+    // by process_scancode(). Peek to check if something was pushed
+    // — we don't have a peek primitive, so we just return None and
+    // let the caller's try_read_byte()/getc() pick it up from the
+    // ring buffer on the next call.
     None
 }
 

@@ -38,7 +38,7 @@
 //! # Public macros
 //
 //! [`gui_print!`] / [`gui_println!`] and the [`CursorWriter`]
-//! `core::fmt::Write` adapter live next to the module so the
+//! `core::fmt::write` adapter live next to the module so the
 //! macro paths resolve cleanly. They are re-exported at the crate
 //! root via the `#[macro_export]` definitions in `kernel_main.rs`
 //! (which still defines the bootstrap entry points) and at this
@@ -131,8 +131,8 @@ pub fn init() {
     //    pixels, reset the cursor to (0,0), and let the putchar
     //    mirror in `put_byte_vga` keep both surfaces in sync.
     bootvid::force_lfb_console();
-    bootvid::VidClearBlack();
-    bootvid::VidSetCursorPosition(0, 0);
+    bootvid::vid_clear_black();
+    bootvid::vid_set_cursor_position(0, 0);
 
     // 3. Mark the text console ready. `text_console::put_byte`
     //    will now route through `put_byte_vga`, which mirrors to
@@ -165,9 +165,9 @@ pub fn init() {
 /// (CRTC 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x13) are
 /// computed from constants so the same sequence works for
 /// any 9-pixel-wide, 16-pixel-tall cell variant.
-unsafe fn program_vga_mode3() {
+pub unsafe fn program_vga_mode3() {
     #[cfg(target_arch = "x86_64")]
-    use crate::hal::x86_64::io_port::{READ_PORT_UCHAR, WRITE_PORT_UCHAR};
+    use crate::hal::x86_64::io_port::{read_port_uchar, write_port_uchar};
 
     // ----- Misc Output Register -----
     // 0x67 = colour I/O (0x3Dx), enable video RAM, clock
@@ -242,24 +242,24 @@ unsafe fn program_vga_mode3() {
 
     // First, do a synchronous reset of the sequencer so
     // we can change the clocking mode without glitches.
-    WRITE_PORT_UCHAR(0x3C4, SEQ_RESET);
-    WRITE_PORT_UCHAR(0x3C5, 0x00); // reset (no planes running)
-    WRITE_PORT_UCHAR(0x3C4, SEQ_CLOCKING_MODE);
-    WRITE_PORT_UCHAR(0x3C5, 0x01); // 8-dot char clock, no load
-    WRITE_PORT_UCHAR(0x3C4, SEQ_MAP_MASK);
-    WRITE_PORT_UCHAR(0x3C5, 0x03); // enable planes 0 and 1
-    WRITE_PORT_UCHAR(0x3C4, SEQ_CHAR_MAP_SELECT);
-    WRITE_PORT_UCHAR(0x3C5, 0x00); // map 0 at offset 0
-    WRITE_PORT_UCHAR(0x3C4, SEQ_MEM_MODE);
-    WRITE_PORT_UCHAR(0x3C5, 0x03); // sequential addressing
-    WRITE_PORT_UCHAR(0x3C4, SEQ_RESET);
-    WRITE_PORT_UCHAR(0x3C5, 0x03); // release reset, run planes 0/1
+    write_port_uchar(0x3C4, SEQ_RESET);
+    write_port_uchar(0x3C5, 0x00); // reset (no planes running)
+    write_port_uchar(0x3C4, SEQ_CLOCKING_MODE);
+    write_port_uchar(0x3C5, 0x01); // 8-dot char clock, no load
+    write_port_uchar(0x3C4, SEQ_MAP_MASK);
+    write_port_uchar(0x3C5, 0x03); // enable planes 0 and 1
+    write_port_uchar(0x3C4, SEQ_CHAR_MAP_SELECT);
+    write_port_uchar(0x3C5, 0x00); // map 0 at offset 0
+    write_port_uchar(0x3C4, SEQ_MEM_MODE);
+    write_port_uchar(0x3C5, 0x03); // sequential addressing
+    write_port_uchar(0x3C4, SEQ_RESET);
+    write_port_uchar(0x3C5, 0x03); // release reset, run planes 0/1
 
     // Now write the CRTC registers. We must unlock the
     // CRTC first by writing to index 0x11 with bit 7
     // clear; otherwise registers 0x00-0x07 are protected.
-    WRITE_PORT_UCHAR(0x3D4, 0x11);
-    WRITE_PORT_UCHAR(0x3D5, 0x0E); // unlock, end retrace at 0x8E
+    write_port_uchar(0x3D4, 0x11);
+    write_port_uchar(0x3D5, 0x0E); // unlock, end retrace at 0x8E
     const CRTC_REGS: [(u8, u8); 25] = [
         (CRTC_H_TOTAL, 0x5F),
         (CRTC_H_DISPLAY_END, 0x4F),
@@ -288,8 +288,8 @@ unsafe fn program_vga_mode3() {
         (CRTC_LINE_COMPARE, 0xFF),
     ];
     for &(idx, val) in CRTC_REGS.iter() {
-        WRITE_PORT_UCHAR(0x3D4, idx);
-        WRITE_PORT_UCHAR(0x3D5, val);
+        write_port_uchar(0x3D4, idx);
+        write_port_uchar(0x3D5, val);
     }
 
     // Attribute Controller flip-flop starts in index mode.
@@ -301,7 +301,7 @@ unsafe fn program_vga_mode3() {
     //     (BG=0, GR=15) ordering;
     //   - then write 0x10..0x13 to set the mode / mask
     //     / overscan / plane-enable bits.
-    let _ = READ_PORT_UCHAR(0x3DA); // side-effect: reset AC FF to index mode
+    let _ = read_port_uchar(0x3DA); // side-effect: reset AC FF to index mode
 
     // 16 attribute palette entries, IBM default 16-colour set
     const ATTR_PALETTE: [u8; 16] = [
@@ -309,28 +309,28 @@ unsafe fn program_vga_mode3() {
         0x3F,
     ];
     for i in 0..16u8 {
-        WRITE_PORT_UCHAR(0x3C0, i);
-        WRITE_PORT_UCHAR(0x3C0, ATTR_PALETTE[i as usize]);
+        write_port_uchar(0x3C0, i);
+        write_port_uchar(0x3C0, ATTR_PALETTE[i as usize]);
     }
-    // Mode Control: text-mode attribute, blink disabled,
+    // Mode control: text-mode attribute, blink disabled,
     // 8-bit video path, internal palette.
-    WRITE_PORT_UCHAR(0x3C0, ATTR_MODE_CONTROL);
-    WRITE_PORT_UCHAR(0x3C0, 0x0C);
+    write_port_uchar(0x3C0, ATTR_MODE_CONTROL);
+    write_port_uchar(0x3C0, 0x0C);
     // Overscan colour: black border.
-    WRITE_PORT_UCHAR(0x3C0, ATTR_OVERSCAN_COLOR);
-    WRITE_PORT_UCHAR(0x3C0, 0x00);
+    write_port_uchar(0x3C0, ATTR_OVERSCAN_COLOR);
+    write_port_uchar(0x3C0, 0x00);
     // Colour Plane Enable: enable all 4 planes (text mode
     // uses planes 0 and 1; this is the BIOS default).
-    WRITE_PORT_UCHAR(0x3C0, ATTR_COLOR_PLANE_ENABLE);
-    WRITE_PORT_UCHAR(0x3C0, 0x0F);
+    write_port_uchar(0x3C0, ATTR_COLOR_PLANE_ENABLE);
+    write_port_uchar(0x3C0, 0x0F);
     // Horizontal panning = 0.
-    WRITE_PORT_UCHAR(0x3C0, ATTR_H_PEL_PANNING);
-    WRITE_PORT_UCHAR(0x3C0, 0x00);
+    write_port_uchar(0x3C0, ATTR_H_PEL_PANNING);
+    write_port_uchar(0x3C0, 0x00);
     // Re-enable the video output by writing the video
     // enable bit (bit 5) to 0x3C0. The standard way is to
     // write index 0x20 to 0x3C0, which sets the video
     // enable bit in the Attribute Controller.
-    WRITE_PORT_UCHAR(0x3C0, 0x20);
+    write_port_uchar(0x3C0, 0x20);
 
     // Graphics Controller: text mode 0 (mode reg = 0),
     // write mode 0, read mode 0, no rotation, host
@@ -347,8 +347,8 @@ unsafe fn program_vga_mode3() {
         (GFX_BIT_MASK, 0xFF),
     ];
     for &(idx, val) in GFX_REGS.iter() {
-        WRITE_PORT_UCHAR(0x3CE, idx);
-        WRITE_PORT_UCHAR(0x3CF, val);
+        write_port_uchar(0x3CE, idx);
+        write_port_uchar(0x3CF, val);
     }
 
     // Finally write the Misc Output Register. This is the
@@ -357,7 +357,7 @@ unsafe fn program_vga_mode3() {
     // VGA-compatible card. Until this is written the
     // controller stays in whatever mode the GOP / UEFI
     // left it in.
-    WRITE_PORT_UCHAR(0x3C2, MISC_OUTPUT);
+    write_port_uchar(0x3C2, MISC_OUTPUT);
 }
 
 /// Clear the 80×25 text window to spaces and park the
@@ -385,7 +385,7 @@ fn clear_vga_only() {
     }
 }
 
-/// Write a single byte to BOTH the serial port and the VGA
+/// write a single byte to BOTH the serial port and the VGA
 /// text console. Handles '\n', '\r', '\t' and backspace
 /// specially. When the cursor falls off the bottom row, the
 /// whole window scrolls up by one row.
@@ -410,20 +410,15 @@ pub fn put_byte_vga_only(b: u8) {
     put_byte_vga(b);
 }
 
-/// Write a single byte to the VGA text buffer at 0xB8000
+/// write a single byte to the VGA text buffer at 0xB8000
 /// AND mirror it to the bootvid LFB so the QEMU `-display
 /// gtk` window (which keeps scanning the GOP LFB) also
 /// shows the same content. Performs Linux-style scrolling
 /// when the cursor reaches the bottom row.
 fn put_byte_vga(b: u8) {
-    // Read the current cursor position via a single IN
+    // read the current cursor position via a single IN
     // instruction pair against the CRT controller registers.
     let (mut x, mut y) = unsafe { read_cursor() };
-    // TEMP DIAGNOSTIC (remove before delivery).
-    if b == b'\n' {
-        crate::hal::x86_64::serial::write_char('V' as u8);
-    }
-
     match b {
         b'\n' => {
             // LF — move down one row, scroll if needed
@@ -501,7 +496,7 @@ fn put_byte_vga(b: u8) {
     bootvid::put_byte_to_active_console(b);
 }
 
-/// Write a byte string to all sinks.
+/// write a byte string to all sinks.
 pub fn put_str(s: &[u8]) {
     for &b in s {
         put_byte(b);
@@ -548,7 +543,7 @@ pub fn set_attr(attr: u8) {
 
 // ---------- Low-level helpers (private to this module) ----------
 
-/// Write one 16-bit cell (char + attr) at (x, y).
+/// write one 16-bit cell (char + attr) at (x, y).
 unsafe fn write_cell(x: usize, y: usize, ch: u8) {
     let off = (y * VGA_COLS + x) * 2;
     let p = (VGA_TEXT_BASE as *mut u8).add(off);
@@ -557,7 +552,7 @@ unsafe fn write_cell(x: usize, y: usize, ch: u8) {
     core::ptr::write_volatile(p.add(1), attr);
 }
 
-/// Read the current cursor position from the legacy CRT
+/// read the current cursor position from the legacy CRT
 /// controller. Returns (col, row).
 unsafe fn read_cursor() -> (u16, u16) {
     // Index register 0x3D4 holds the register selector; data
@@ -621,7 +616,7 @@ pub fn set_cursor(x: u8, y: u8) {
     }
 }
 
-/// Write one 16-bit cell (char + attr) at (x, y) without
+/// write one 16-bit cell (char + attr) at (x, y) without
 /// touching the cursor, AND mirror the same glyph into the
 /// bootvid LFB at the corresponding (x, y). Used by
 /// `show_safe_mode_console` so the operator sees the title
@@ -629,7 +624,7 @@ pub fn set_cursor(x: u8, y: u8) {
 /// QEMU `-display gtk` window (which scans the GOP LFB
 /// rather than the 0xB8000 text RAM).
 unsafe fn write_cell_attr(x: usize, y: usize, ch: u8, attr: u8) {
-    // 1) Write to the 0xB8000 cell directly. This makes the
+    // 1) write to the 0xB8000 cell directly. This makes the
     //    VGA text console show the right glyph in the right
     //    colour.
     let off = (y * VGA_COLS + x) * 2;
@@ -659,11 +654,11 @@ unsafe fn write_cell_attr(x: usize, y: usize, ch: u8, attr: u8) {
         let py: u32 = y as u32 * 12;
 
         crate::drivers::bootvid::set_attr(attr);
-        crate::drivers::bootvid::VidSetCursorPosition(px as u16, py as u16);
+        crate::drivers::bootvid::vid_set_cursor_position(px as u16, py as u16);
         crate::drivers::bootvid::put_byte_to_active_console(ch);
 
         crate::drivers::bootvid::set_attr(prev_attr);
-        crate::drivers::bootvid::VidSetCursorPosition(prev_x, prev_y);
+        crate::drivers::bootvid::vid_set_cursor_position(prev_x, prev_y);
     }
 }
 
@@ -782,7 +777,7 @@ pub fn show_safe_mode_console() {
     // keeps scanning out whatever the bootvid putchar painted
     // last, so we nudge it to make sure the freshly-painted
     // cells become visible right away.
-    crate::drivers::bootvid::VidSetCursorPosition(0, (VGA_ROWS - 1) as u16);
+    crate::drivers::bootvid::vid_set_cursor_position(0, (VGA_ROWS - 1) as u16);
 }
 
 /// Shift every row up by one and blank the new bottom row.
@@ -791,8 +786,6 @@ pub fn show_safe_mode_console() {
 /// is the ring).
 fn scroll_up() {
     let attr = ATTR.load(Ordering::Relaxed);
-    // TEMP DIAGNOSTIC (remove before delivery).
-    crate::hal::x86_64::serial::write_char('S' as u8);
     unsafe {
         let p = VGA_TEXT_BASE as *mut u8;
         // Copy rows 1..25 → rows 0..24
@@ -808,7 +801,7 @@ fn scroll_up() {
 }
 
 // ----------------------------------------------------------------------------
-// `gui_print!` / `gui_println!` macros + `core::fmt::Write` adapter.
+// `gui_print!` / `gui_println!` macros + `core::fmt::write` adapter.
 // ----------------------------------------------------------------------------
 //
 // These used to live in `kernel_main.rs` next to the inline `gui_log`
@@ -818,7 +811,7 @@ fn scroll_up() {
 // `#[macro_export]` so existing `gui_print!(...)` calls keep
 // compiling without a `use` statement.
 
-/// Tiny `core::fmt::Write` adapter that records how many bytes
+/// Tiny `core::fmt::write` adapter that records how many bytes
 /// were emitted so we know how much of the stack buffer to send
 /// to the sinks.
 pub struct CursorWriter<'a> {

@@ -9,7 +9,7 @@
 //! architecture-specific implementation.
 //
 //! `hal_init_system(loader_block)` mirrors the Windows 6.1
-//! `hal.dll` `HalInitSystem` entry. The OS Loader calls it
+//! `hal.dll` `hal_init_system` entry. The OS Loader calls it
 //! after the kernel and `hal.dll` are mapped.
 
 pub mod common;
@@ -103,7 +103,13 @@ pub mod keyboard {
 }
 
 pub mod keyboard_unified {
-    //! Unified PS/2 + USB-HID ring buffer.
+    //! Unified keyboard input ring.
+    //!
+    //! x86_64 routes to the PS/2 + USB-HID implementation;
+    //! aarch64 / riscv64 / loongarch64 route to the cross-arch
+    //! serial (PL011 / NS16550A / 8250) + virtio-input ring.
+    #[cfg(not(target_arch = "x86_64"))]
+    pub use crate::hal::common::keyboard_unified::*;
     #[cfg(target_arch = "x86_64")]
     pub use crate::hal::x86_64::keyboard_unified::*;
 }
@@ -157,7 +163,7 @@ pub fn init() {
     }
 }
 
-/// `HalInitSystem` — the public `hal.dll` entry point. `loader_block`
+/// `hal_init_system` — the public `hal.dll` entry point. `loader_block`
 /// is a pointer to the OS Loader's parameter block; the value is
 /// opaque to us. Returns 0 on success, NTSTATUS-style negative on
 /// failure.
@@ -165,7 +171,7 @@ pub fn hal_init_system(loader_block: *const u8) -> i32 {
     #[cfg(target_arch = "x86_64")]
     {
         #[cfg(target_arch = "x86_64")]
-        crate::hal::x86_64::HalInitSystem(loader_block)
+        crate::hal::x86_64::hal_init_system(loader_block)
     }
     #[cfg(target_arch = "aarch64")]
     {
@@ -187,12 +193,12 @@ pub fn hal_init_system(loader_block: *const u8) -> i32 {
     }
 }
 
-/// `HalInitializeProcessor` — per-CPU entry. Returns 0 on success.
+/// `hal_initialize_processor` — per-CPU entry. Returns 0 on success.
 pub fn hal_initialize_processor(cpu_id: u32, alloc_ist: bool) -> i32 {
     #[cfg(target_arch = "x86_64")]
     {
         #[cfg(target_arch = "x86_64")]
-        crate::hal::x86_64::HalInitializeProcessor(cpu_id, alloc_ist)
+        crate::hal::x86_64::hal_initialize_processor(cpu_id, alloc_ist)
     }
     #[cfg(any(
         target_arch = "aarch64",

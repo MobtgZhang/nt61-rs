@@ -34,6 +34,13 @@ pub fn try_read_byte() -> Option<u8> {
     }
 }
 
+pub fn poll() {
+    crate::drivers::usb::poll_keyboards();
+    if let Some(byte) = crate::hal::keyboard_unified::ps2_poll_char() {
+        crate::hal::keyboard_unified::inject_byte(byte);
+    }
+}
+
 /// Coarse "is anything pending?" poll. The PS/2 driver
 /// maintains a 16-byte ring buffer; we can't peek without
 /// consuming the byte (the existing `getc` API doesn't have

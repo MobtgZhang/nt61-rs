@@ -37,7 +37,6 @@ pub fn init() {
 }
 
 /// Print character
-#[allow(dead_code)]
 pub fn put_char(_c: char) {
     // Print to console
 }

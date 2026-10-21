@@ -1,7 +1,7 @@
 //! LoongArch64 Hardware Abstraction Layer
 //
 //! LoongArch HAL. The QEMU 'virt' machine for LoongArch maps a
-//! 7a1000 UART at 0x1FE0_0000; this driver targets that UART.
+//! 7a1000 UART at 0x1FE0_01E0; this driver targets that UART.
 
 pub mod serial;
 

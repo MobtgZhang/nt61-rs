@@ -3,7 +3,7 @@
 //! Three counters, six modes. The kernel uses channel 0 in mode 2
 //! (rate generator) as the legacy timer interrupt source. Channel
 //! 2 is connected to the PC speaker; we drive that for
-//! `HalMakeBeep`.
+//! `hal_make_beep`.
 
 #![cfg(target_arch = "x86_64")]
 
@@ -11,7 +11,7 @@ use core::arch::asm;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 #[cfg(target_arch = "x86_64")]
-use crate::hal::x86_64::io_port::{READ_PORT_UCHAR, WRITE_PORT_UCHAR};
+use crate::hal::x86_64::io_port::{read_port_uchar, write_port_uchar};
 
 /// PIT input frequency. The 8253/8254 is fed by a 1.19318 MHz
 /// crystal on every PC since the original IBM PC.
@@ -125,19 +125,19 @@ pub fn init(hz: u32) -> bool {
     false
 }
 
-/// Read the current programmed frequency in Hz.
+/// read the current programmed frequency in Hz.
 pub fn pit_freq_hz() -> u32 {
     PIT_HZ.load(Ordering::Acquire)
 }
 
-/// Read the 16-bit counter value of channel 0. The PIT
+/// read the 16-bit counter value of channel 0. The PIT
 /// "read-back" command latches the value, so we issue the latch
 /// command first and then read lo/hi.
 pub fn pit_counter() -> u16 {
     // Latch channel 0.
-    WRITE_PORT_UCHAR(PIT_COMMAND, mode::SEL_CHAN0 | mode::ACCESS_LATCH);
-    let lo = READ_PORT_UCHAR(PIT_CHANNEL0);
-    let hi = READ_PORT_UCHAR(PIT_CHANNEL0);
+    write_port_uchar(PIT_COMMAND, mode::SEL_CHAN0 | mode::ACCESS_LATCH);
+    let lo = read_port_uchar(PIT_CHANNEL0);
+    let hi = read_port_uchar(PIT_CHANNEL0);
     ((hi as u16) << 8) | (lo as u16)
 }
 
@@ -147,30 +147,30 @@ fn pit2_program(freq: u32) -> u16 {
     let freq = freq.max(1) as u64;
     let divisor = (PIT_FREQUENCY / freq).max(1) as u16;
     let cmd = mode::SEL_CHAN2 | mode::ACCESS_LOHI | mode::MODE_3 | mode::BINARY;
-    WRITE_PORT_UCHAR(PIT_COMMAND, cmd);
-    WRITE_PORT_UCHAR(PIT_CHANNEL2, (divisor & 0xFF) as u8);
+    write_port_uchar(PIT_COMMAND, cmd);
+    write_port_uchar(PIT_CHANNEL2, (divisor & 0xFF) as u8);
     io_wait();
-    WRITE_PORT_UCHAR(PIT_CHANNEL2, ((divisor >> 8) & 0xFF) as u8);
+    write_port_uchar(PIT_CHANNEL2, ((divisor >> 8) & 0xFF) as u8);
     io_wait();
     divisor
 }
 
 /// Make the PC speaker emit a tone at `frequency` Hz for
 /// `duration` milliseconds. Matches the surface of
-/// `hal.dll`'s `HalMakeBeep(frequency, duration)` export.
+/// `hal.dll`'s `hal_make_beep(frequency, duration)` export.
 ///
 /// Returns `true` if the tone was scheduled, `false` if the
 /// supplied arguments were out of range.
-pub fn HalMakeBeep(frequency: u32, duration: u32) -> bool {
+pub fn hal_make_beep(frequency: u32, duration: u32) -> bool {
     if frequency < 20 || frequency > 20_000 {
         return false;
     }
     pit2_program(frequency);
 
-    // Read the current value of port 0x61, set bits 0 and 1 to
+    // read the current value of port 0x61, set bits 0 and 1 to
     // enable the speaker gate and the timer channel 2 output.
-    let prev = READ_PORT_UCHAR(PORT_B_SYS);
-    WRITE_PORT_UCHAR(PORT_B_SYS, prev | 0x03);
+    let prev = read_port_uchar(PORT_B_SYS);
+    write_port_uchar(PORT_B_SYS, prev | 0x03);
     // Busy-wait the duration. We use a calibrated spin because
     // the kernel has no millisecond-resolution scheduler yet.
     let hz = pit_freq_hz().max(18) as u64;
@@ -179,7 +179,7 @@ pub fn HalMakeBeep(frequency: u32, duration: u32) -> bool {
         core::hint::spin_loop();
     }
     // Disable the speaker.
-    WRITE_PORT_UCHAR(PORT_B_SYS, prev & !0x03);
+    write_port_uchar(PORT_B_SYS, prev & !0x03);
     true
 }
 
@@ -192,8 +192,8 @@ pub fn init_masked(hz: u32) -> bool {
         return false;
     }
     // Mask IRQ0 at the master PIC. 0x21 bit 0 = 1 disables IRQ0.
-    let mask = READ_PORT_UCHAR(0x21);
-    WRITE_PORT_UCHAR(0x21, mask | 0x01);
+    let mask = read_port_uchar(0x21);
+    write_port_uchar(0x21, mask | 0x01);
     true
 }
 

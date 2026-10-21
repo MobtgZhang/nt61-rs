@@ -1,4 +1,4 @@
-//! ACPI (Advanced Configuration and Power Interface) Table Support
+//! ACPI (Advanced Configuration and power Interface) Table Support
 //
 //! Provides the surface area of the `hal.dll` ACPI exports:
 //! parsing the RSDP, walking the XSDT, looking up tables by
@@ -16,7 +16,7 @@ use core::ptr;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(target_arch = "x86_64")]
-use crate::hal::x86_64::io_port::READ_PORT_UCHAR;
+use crate::hal::x86_64::io_port::read_port_uchar;
 // use crate::kprintln;
 
 /// Standard ACPI RSDP signature (the 8-byte string "RSD PTR ").
@@ -41,8 +41,7 @@ pub struct AcpiTableHeader {
 /// RSDP (revision 1, 20 bytes).
 #[repr(C, packed)]
 #[derive(Clone, Copy, Default)]
-#[allow(dead_code)]
-struct Rsdp1 {
+pub struct Rsdp1 {
     signature: [u8; 8],
     checksum: u8,
     oem_id: [u8; 6],
@@ -53,8 +52,7 @@ struct Rsdp1 {
 /// RSDP (revision 2+, 36 bytes).
 #[repr(C, packed)]
 #[derive(Clone, Copy, Default)]
-#[allow(dead_code)]
-struct Rsdp2 {
+pub struct Rsdp2 {
     signature: [u8; 8],
     checksum: u8,
     oem_id: [u8; 6],
@@ -70,11 +68,15 @@ struct Rsdp2 {
 /// The kernel sets this from the BootInfo during Phase 5.
 static RSDP_PHYS: AtomicU64 = AtomicU64::new(0);
 
-/// Initialise the ACPI subsystem. `rsdp_phys` is the physical
-/// address of the RSDP structure; 0 disables ACPI table access.
-pub fn init() {
-    RSDP_PHYS.store(0, Ordering::Release);
-}
+/// Initialise the ACPI subsystem.
+///
+/// The RSDP itself arrives through the boot protocol
+/// (`set_rsdp` from `BootInfo.acpi_rsdp`, discovered by winload
+/// in the EFI configuration table) and is registered before HAL
+/// bring-up. Re-initialisation must not drop it, so this is a
+/// deliberate no-op that only exists to keep the HAL init order
+/// explicit.
+pub fn init() {}
 
 pub fn set_rsdp(rsdp_phys: u64) {
     RSDP_PHYS.store(rsdp_phys, Ordering::Release);
@@ -134,7 +136,7 @@ pub fn find_table(signature: &[u8; 4]) -> Option<*const AcpiTableHeader> {
     );
     let rsdp_va = map_acpi(rsdp_phys)? as *const u8;
     unsafe {
-        // Read signature (8 bytes).
+        // read signature (8 bytes).
         let mut sig = [0u8; 8];
         for i in 0..8 {
             sig[i] = ptr::read_volatile(rsdp_va.add(i));
@@ -147,7 +149,7 @@ pub fn find_table(signature: &[u8; 4]) -> Option<*const AcpiTableHeader> {
                 return None;
             }
         }
-        // Read revision.
+        // read revision.
         let revision = ptr::read_volatile(rsdp_va.add(15));
         acpi_debug!("    [acpi] find_table: RSDP revision={}", revision);
         if revision >= 2 {
@@ -180,12 +182,10 @@ unsafe fn read_u32(p: *const u8) -> u32 {
     b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
 }
 
-#[allow(dead_code)]
-unsafe fn read_u64(p: *const u8) -> u64 {
+pub unsafe fn read_u64(p: *const u8) -> u64 {
     (read_u32(p.add(4)) as u64) << 32 | (read_u32(p) as u64)
 }
 
-#[allow(dead_code)]
 fn find_in_xsdt(xsdt_phys: u64, signature: &[u8; 4]) -> Option<*const AcpiTableHeader> {
     acpi_debug!("    [acpi] find_in_xsdt: xsdt_phys=0x{:016x}", xsdt_phys);
     let va = map_acpi(xsdt_phys)? as *const u8;
@@ -346,21 +346,21 @@ pub fn validate_rsdp(rsdp_phys: u64) -> bool {
     }
 }
 
-/// Read a CMOS byte. Re-exported here so callers don't have to
+/// read a CMOS byte. Re-exported here so callers don't have to
 /// pull in the `hal::x86_64::cmos` module.
-/// Read a byte from the CMOS register file. Stub on non-x86_64 —
+/// read a byte from the CMOS register file. Stub on non-x86_64 —
 /// LoongArch / ARM64 / RISC-V64 use ACPI for time-keeping instead.
 #[cfg(target_arch = "x86_64")]
 pub fn read_cmos(reg: u8) -> u8 {
     let addr = 0x70u16;
     let data = 0x71u16;
-    crate::hal::x86_64::io_port::WRITE_PORT_UCHAR(addr, 0x80 | (reg & 0x7F));
-    let v = READ_PORT_UCHAR(data);
-    crate::hal::x86_64::io_port::WRITE_PORT_UCHAR(addr, reg & 0x7F);
+    crate::hal::x86_64::io_port::write_port_uchar(addr, 0x80 | (reg & 0x7F));
+    let v = read_port_uchar(data);
+    crate::hal::x86_64::io_port::write_port_uchar(addr, reg & 0x7F);
     v
 }
 
-/// Read a byte from the CMOS register file. Non-x86_64 stub returning 0.
+/// read a byte from the CMOS register file. Non-x86_64 stub returning 0.
 #[cfg(not(target_arch = "x86_64"))]
 pub fn read_cmos(_reg: u8) -> u8 {
     0
@@ -378,7 +378,7 @@ pub fn read_cmos(_reg: u8) -> u8 {
 // Reference: ACPI 6.0, Section 5.2.7.
 
 /// MCFG structure: one entry describing one PCI segment / host bridge.
-/// Offset 44 + i*16 in the MCFG table body.
+/// offset 44 + i*16 in the MCFG table body.
 #[repr(C, packed)]
 #[derive(Clone, Copy, Default)]
 pub struct McfgEntry {
@@ -391,22 +391,31 @@ pub struct McfgEntry {
 
 /// Returns the base MMIO address of the PCIe ECAM region from the
 /// MCFG table. Returns 0 if MCFG is not available.
-pub fn get_mcfg_base() -> u64 {
+/// Returns the first MCFG entry: (ECAM base, start bus, end bus).
+/// Returns `None` if MCFG is not available.
+pub fn get_mcfg_info() -> Option<(u64, u8, u8)> {
     let sig: [u8; 4] = *b"MCFG";
     let hdr = match find_table(&sig) {
         Some(h) => h,
-        None => return 0,
+        None => return None,
     };
     unsafe {
         // MCFG header (44 bytes) + variable entries (16 bytes each).
         let len = read_u32((hdr as *const u8).add(4));
         if len < 44 {
-            return 0;
+            return None;
         }
         // First entry is always at offset 44 (after AcpiTableHeader + 8 reserved bytes).
         let entry_ptr = (hdr as *const u8).add(44) as *const McfgEntry;
-        core::ptr::read_unaligned(entry_ptr).base_address
+        let entry = core::ptr::read_unaligned(entry_ptr);
+        Some((entry.base_address, entry.start_bus, entry.end_bus))
     }
+}
+
+/// Returns the base MMIO address of the PCIe ECAM region from the
+/// MCFG table. Returns 0 if MCFG is not available.
+pub fn get_mcfg_base() -> u64 {
+    get_mcfg_info().map(|(base, _, _)| base).unwrap_or(0)
 }
 
 // ---------------------------------------------------------------------------
@@ -687,7 +696,7 @@ pub fn parse_madt() -> bool {
 /// Return a reference to the cached MADT info (or default if parse failed).
 /// Returns a reference to avoid needing Copy trait on MadtInfo.
 pub fn madt_info() -> &'static MadtInfo {
-    unsafe { &MADT_INFO }
+    unsafe { &*core::ptr::addr_of!(MADT_INFO) }
 }
 
 #[cfg(test)]
@@ -750,7 +759,7 @@ mod fadt_off {
     pub const RESET_REGISTER_ADDRESS: usize = 116 + 4;
     pub const RESET_VALUE: usize = 128;
     pub const MINOR_REVISION: usize = 131;
-    // Generic Address Structure: SpaceId, BitWidth, Offset, Count, Address(8).
+    // Generic Address Structure: SpaceId, BitWidth, offset, count, Address(8).
     pub const XPM1A_EVENT_BLOCK: usize = 148 + 4;
     pub const XPM1B_EVENT_BLOCK: usize = 160 + 4;
     pub const XPM1A_CONTROL_BLOCK: usize = 172 + 4;
@@ -761,7 +770,7 @@ mod fadt_off {
     pub const XGPE1_BLOCK: usize = 232 + 4;
 }
 
-/// FADT flag bits (ACPICA `actbl.h`, "Masks for the FADT Flags field").
+/// FADT flag bits (ACPICA `actbl.h`, "Masks for the FADT flags field").
 pub mod fadt_flags {
     pub const WBINVD: u32 = 1 << 0;
     pub const WBINVD_FLUSH: u32 = 1 << 1;
@@ -868,7 +877,7 @@ pub fn parse_fadt() -> Option<FadtInfo> {
     let table = header as *const u8;
     let revision = read_u8(table, fadt_off::REVISION);
     let length = fadt_read_u32(table, fadt_off::LENGTH);
-    // Revision 1 tables end at the Flags field; anything older/shorter is
+    // revision 1 tables end at the flags field; anything older/shorter is
     // not usable for power management.
     if length < (fadt_off::FLAGS + 4) as u32 {
         return None;
@@ -938,4 +947,174 @@ pub fn parse_fadt() -> Option<FadtInfo> {
 /// "method not executed" rather than as a successful evaluation.
 pub fn execute_acpi_method(_path: &str, _args: &[u64]) -> Option<u64> {
     None
+}
+
+// ---------------------------------------------------------------------------
+// SRAT (System Resource Affinity Table, signature "SRAT")
+// ---------------------------------------------------------------------------
+
+pub const SRAT_ENTRY_PROCESSOR: u8 = 0;
+pub const SRAT_ENTRY_MEMORY: u8 = 1;
+pub const MAX_SRAT_MEMORY_ENTRIES: usize = 32;
+
+#[derive(Clone, Copy, Default)]
+pub struct SratMemory {
+    pub proximity_domain: u32,
+    pub base_address: u64,
+    pub length: u64,
+    pub flags: u32,
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct SratProcessor {
+    pub proximity_domain: u32,
+    pub apic_id: u32,
+    pub flags: u32,
+}
+
+#[derive(Clone, Copy)]
+pub struct SratInfo {
+    pub processor_count: usize,
+    pub processors: [SratProcessor; MAX_MADT_LAPICS],
+    pub memory_count: usize,
+    pub memory: [SratMemory; MAX_SRAT_MEMORY_ENTRIES],
+}
+
+static mut SRAT_INFO: SratInfo = SratInfo {
+    processor_count: 0,
+    processors: [SratProcessor {
+        proximity_domain: 0,
+        apic_id: 0,
+        flags: 0,
+    }; MAX_MADT_LAPICS],
+    memory_count: 0,
+    memory: [SratMemory {
+        proximity_domain: 0,
+        base_address: 0,
+        length: 0,
+        flags: 0,
+    }; MAX_SRAT_MEMORY_ENTRIES],
+};
+
+pub fn parse_srat() -> bool {
+    let header = match find_table(b"SRAT") {
+        Some(h) => h,
+        None => return false,
+    };
+    let table = header as *const u8;
+    let length = fadt_read_u32(table, 4);
+    if length < 48 {
+        return false;
+    }
+    let mut offset = 40usize;
+    let info = unsafe { &mut *core::ptr::addr_of_mut!(SRAT_INFO) };
+    info.processor_count = 0;
+    info.memory_count = 0;
+    while offset + 2 <= length as usize {
+        let entry_va = unsafe { table.add(offset) };
+        let entry_type = unsafe { ptr::read_volatile(entry_va) };
+        let entry_len = unsafe { ptr::read_volatile(entry_va.add(1)) } as usize;
+        if entry_len < 2 || offset + entry_len > length as usize {
+            break;
+        }
+        match entry_type {
+            SRAT_ENTRY_PROCESSOR => {
+                if entry_len >= 16 && info.processor_count < MAX_MADT_LAPICS {
+                    let proximity = fadt_read_u32(entry_va, 2);
+                    let apic_id = fadt_read_u32(entry_va, 6);
+                    let flags = fadt_read_u32(entry_va, 14);
+                    if flags & 1 != 0 {
+                        info.processors[info.processor_count] = SratProcessor {
+                            proximity_domain: proximity,
+                            apic_id,
+                            flags,
+                        };
+                        info.processor_count += 1;
+                    }
+                }
+            }
+            SRAT_ENTRY_MEMORY => {
+                if entry_len >= 32 && info.memory_count < MAX_SRAT_MEMORY_ENTRIES {
+                    let proximity = fadt_read_u32(entry_va, 2);
+                    let base = fadt_read_u64(entry_va, 10);
+                    let len = fadt_read_u64(entry_va, 18);
+                    let flags = fadt_read_u32(entry_va, 30);
+                    if flags & 1 != 0 {
+                        info.memory[info.memory_count] = SratMemory {
+                            proximity_domain: proximity,
+                            base_address: base,
+                            length: len,
+                            flags,
+                        };
+                        info.memory_count += 1;
+                    }
+                }
+            }
+            _ => {}
+        }
+        offset += entry_len;
+    }
+    true
+}
+
+pub fn srat_info() -> &'static SratInfo {
+    unsafe { &*core::ptr::addr_of!(SRAT_INFO) }
+}
+
+// ---------------------------------------------------------------------------
+// SLIT (System Locality Information Table, signature "SLIT")
+// ---------------------------------------------------------------------------
+
+pub const MAX_SLIT_DOMAINS: usize = 64;
+
+#[derive(Clone, Copy)]
+pub struct SlitInfo {
+    pub domain_count: usize,
+    pub distances: [[u8; MAX_SLIT_DOMAINS]; MAX_SLIT_DOMAINS],
+}
+
+impl Default for SlitInfo {
+    fn default() -> Self {
+        Self {
+            domain_count: 0,
+            distances: [[255; MAX_SLIT_DOMAINS]; MAX_SLIT_DOMAINS],
+        }
+    }
+}
+
+static mut SLIT_INFO: SlitInfo = SlitInfo {
+    domain_count: 0,
+    distances: [[255; MAX_SLIT_DOMAINS]; MAX_SLIT_DOMAINS],
+};
+
+pub fn parse_slit() -> bool {
+    let header = match find_table(b"SLIT") {
+        Some(h) => h,
+        None => return false,
+    };
+    let table = header as *const u8;
+    let length = fadt_read_u32(table, 4);
+    if length < 48 {
+        return false;
+    }
+    let domains = fadt_read_u64(table, 36) as usize;
+    if domains == 0 || domains > MAX_SLIT_DOMAINS {
+        return false;
+    }
+    let dist_off = 44usize;
+    if dist_off + domains * domains > length as usize {
+        return false;
+    }
+    let info = unsafe { &mut *core::ptr::addr_of_mut!(SLIT_INFO) };
+    info.domain_count = domains;
+    for i in 0..domains {
+        for j in 0..domains {
+            info.distances[i][j] = read_u8(table, dist_off + i * domains + j);
+        }
+    }
+    true
+}
+
+pub fn slit_info() -> &'static SlitInfo {
+    unsafe { &*core::ptr::addr_of!(SLIT_INFO) }
 }

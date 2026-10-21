@@ -10,12 +10,17 @@ use core::sync::atomic::Ordering;
 
 pub fn init() {
     super::READY.store(true, Ordering::Release);
+    crate::drivers::input::virtio_input::init();
 }
 
 pub fn try_read_byte() -> Option<u8> {
-    crate::hal::riscv64::serial::try_get_char()
+    crate::hal::common::keyboard_unified::try_read_byte()
 }
 
 pub fn peek() -> bool {
-    false
+    crate::hal::common::keyboard_unified::peek()
+}
+
+pub fn poll() {
+    crate::hal::common::keyboard_unified::poll();
 }
