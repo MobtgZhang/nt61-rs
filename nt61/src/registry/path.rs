@@ -104,7 +104,7 @@ impl ParsedPath {
         // 支持以下格式:
         //   \Registry\Machine\System\CurrentControlSet\Services\foo
         //   \Registry\Machine\SOFTWARE\Microsoft\Windows
-        //   \Registry\User\.DEFAULT\Volatile Environment
+        //   \Registry\User\.DEFAULT\Volatile environment
         //   System\CurrentControlSet\Services (bare path, defaults to System hive)
         //   SOFTWARE\Microsoft (bare path, defaults to Software hive)
 

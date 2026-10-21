@@ -6,13 +6,11 @@
 extern crate alloc;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
-use alloc::string::ToString;
-use alloc::vec;
 use alloc::vec::Vec;
 
 use super::cell_allocator::{CellAllocator, CellFlags};
 use super::flush::{FlushFlags, FlushManager};
-use super::hive::{Hive, HiveError, KeyNode, Value, ValueType};
+use super::hive::{Hive, HiveError, Value, ValueType};
 use super::quota::QuotaManager;
 use super::security::SecurityDescriptor;
 
@@ -328,6 +326,8 @@ pub struct HiveManagerStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
+    use alloc::vec;
 
     #[test]
     fn test_writable_hive() {
@@ -364,7 +364,7 @@ mod tests {
 
     #[test]
     fn test_hive_manager() {
-        let mut manager = HiveManager::new();
+        let manager = HiveManager::new();
 
         let stats = manager.stats();
         assert_eq!(stats.loaded_hives, 0);

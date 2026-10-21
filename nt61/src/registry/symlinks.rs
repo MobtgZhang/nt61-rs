@@ -7,12 +7,10 @@ extern crate alloc;
 use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::String;
-use alloc::string::ToString;
-use alloc::vec;
 use alloc::vec::Vec;
 
 use super::hive::HiveError;
-use super::path::{Hive, ParsedPath};
+use super::path::ParsedPath;
 
 pub const MAX_SYMLINK_DEPTH: usize = 32;
 
@@ -265,6 +263,7 @@ pub fn validate_symlink_target(target_path: &str) -> Result<(), HiveError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
 
     #[test]
     fn test_symlink_creation() {

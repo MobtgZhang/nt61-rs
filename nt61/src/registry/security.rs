@@ -4,7 +4,6 @@
 //! Windows Security Descriptor format with DACL/SACL support.
 
 extern crate alloc;
-use alloc::format;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt;
@@ -425,10 +424,10 @@ impl Acl {
 
         let mut bytes = Vec::with_capacity(size as usize);
         bytes.push(self.revision);
-        bytes.push(0); // Sbz1
+        bytes.push(0); // sbz1
         bytes.extend_from_slice(&size.to_le_bytes());
         bytes.extend_from_slice(&(self.aces.len() as u16).to_le_bytes());
-        bytes.extend_from_slice(&[0, 0]); // Sbz2
+        bytes.extend_from_slice(&[0, 0]); // sbz2
         bytes.extend_from_slice(&ace_bytes);
         bytes
     }
@@ -494,8 +493,8 @@ impl SecurityDescriptor {
 
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = vec![0u8; 20]; // Header size
-        bytes[0] = 1; // Revision
-        bytes[1] = 0; // Sbz1
+        bytes[0] = 1; // revision
+        bytes[1] = 0; // sbz1
 
         let control = self.control.to_flags() | SecurityControl::SELF_RELATIVE;
         bytes[2..4].copy_from_slice(&control.to_le_bytes());
@@ -582,6 +581,7 @@ pub fn check_access(sd: &SecurityDescriptor, sid: &Sid, requested_access: u32) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::format;
 
     #[test]
     fn test_sid_parsing() {
@@ -606,7 +606,7 @@ mod tests {
         let sd = SecurityDescriptor::default_key_sd();
         let bytes = sd.to_bytes();
 
-        assert_eq!(bytes[0], 1); // Revision
+        assert_eq!(bytes[0], 1); // revision
         assert_eq!(bytes.len() > 20, true);
     }
 }

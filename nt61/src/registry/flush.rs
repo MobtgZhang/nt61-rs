@@ -4,7 +4,6 @@
 //! Ensures registry changes are written to disk safely with crash recovery.
 
 extern crate alloc;
-use alloc::vec;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -361,6 +360,7 @@ impl Default for WriteAheadLog {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn test_sync_state() {

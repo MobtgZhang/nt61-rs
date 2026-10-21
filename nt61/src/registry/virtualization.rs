@@ -12,7 +12,6 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use super::hive::HiveError;
-use super::path::{Hive, ParsedPath};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VirtualizationFlags {

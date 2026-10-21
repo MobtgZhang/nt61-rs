@@ -5,7 +5,6 @@
 
 extern crate alloc;
 use alloc::sync::Arc;
-use alloc::vec;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -264,6 +263,7 @@ impl NotifyContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn test_filter_flags() {
@@ -294,7 +294,7 @@ mod tests {
 
     #[test]
     fn test_subtree_notification() {
-        let manager = NotificationManager::new();
+        let _manager = NotificationManager::new();
 
         let filter = NotifyFilter::from_flags(NotifyFilter::CHANGE_NAME, true);
         let request = NotifyRequest::new(1, 0x1000, filter);
