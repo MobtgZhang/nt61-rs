@@ -31,7 +31,7 @@ rustflags = [
 [target.aarch64-unknown-uefi]
 linker = "rust-lld"
 rustflags = [
-    "-C", "link-arg=--entry=efi_main",
+    "-C", "link-arg=/entry:efi_main",
     "-C", "panic=abort",
 ]
 
@@ -41,11 +41,12 @@ rustflags = [
     # Use the per-package linker script (BASE_ADDRESS=0x90000000) so the
     # loader can satisfy the image at its preferred base without
     # applying relocations — see `linker-la64.ld` for the rationale.
-    "-C", "link-arg=-T/home/mobtgzhang/github2/nt61-rs/nt61/src/winload/linker-la64.ld",
+    "-C", "link-arg=-Tsrc/boot/linker-la64.ld",
     "-C", "link-arg=--entry=efi_main",
+    "-C", "link-arg=--emit-relocs",
     "-C", "link-arg=-no-gc-sections",
     "-C", "link-arg=-nostdlib",
-    "-C", "link-arg=-L/home/mobtgzhang/github2/nt61-rs/nt61/tools/loongarch64/lib",
+    "-C", "link-arg=-Ltools/loongarch64/lib",
     "-C", "panic=abort",
 ]  
 
@@ -63,8 +64,9 @@ rustflags = [
 [target.riscv64gc-unknown-none-elf]
 linker = "riscv64-linux-gnu-ld"
 rustflags = [
-    "-C", "link-arg=-T/home/mobtgzhang/github2/nt61-rs/nt61/src/boot/linker-rv64.ld",
+    "-C", "link-arg=-Tsrc/boot/linker-rv64.ld",
     "-C", "link-arg=--entry=efi_main",
+    "-C", "link-arg=--emit-relocs",
     "-C", "link-arg=-no-gc-sections",
     # Add the cross GCC's library directory so the linker can
     # locate `libgcc.a` (referenced as `-lgcc` by rustc when

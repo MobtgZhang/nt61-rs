@@ -41,6 +41,11 @@ EDK2_FW_DIR ?= $(SCRIPT_DIR)/../scripts/firmware
 # OVMF (x86_64 system package — non-secure by default)
 OVMF_CODE := /usr/share/OVMF/OVMF_CODE_4M.fd
 OVMF_VARS_TEMPLATE := /usr/share/OVMF/OVMF_VARS_4M.ms.fd
+
+# Normal `make run` is quiet. Set NT61_LOG_LEVEL=debug only when tracing.
+NT61_LOG_LEVEL ?= warn
+export NT61_LOG_LEVEL
+SYSTEM_PE_LOG_FEATURE = $(if $(filter debug,$(NT61_LOG_LEVEL)),log_level_debug,log_level_warn)
 # `=` (not `:=`) — must be re-evaluated so a per-target `ARCH=loongarch64`
 # assignment redirects EDK2/OVMF firmware VARS / pflash / disk.img into the
 # per-arch IMAGES_DIR instead of accidentally re-using the default-arch one.
@@ -140,11 +145,17 @@ all: build
 build:
 	$(BUILD_TOOL) --build all --build-dir $(BLD) --format-flag $(FORMAT) --size-mb 64 --arch $(ARCH)
 
+
 # ============================================================
 # Per-filesystem build targets
 # ============================================================
 build-ntfs:
 	$(BUILD_TOOL) --build all --build-dir $(BLD) --format-flag ntfs --size-mb 64 --arch $(ARCH)
+
+system-pe:
+	cargo build --release -p nt61 --target x86_64-unknown-uefi --features "x86_64,binary_panic,alloc,$(SYSTEM_PE_LOG_FEATURE)"
+	cargo build --release -p nt61-cmd --target x86_64-unknown-uefi
+	cargo build --release -p nt61-driver --target x86_64-unknown-uefi
 
 build-fat32: FORMAT=fat32
 build-fat32:
@@ -161,8 +172,41 @@ build-iso:
 # ============================================================
 # Arch-format specific build targets
 # ============================================================
-build-$(ARCH)-$(FORMAT):
-	$(BUILD_TOOL) --build all --build-dir $(BLD) --format-flag $(FORMAT) --size-mb 64 --arch $(ARCH)
+build-x86_64-ntfs:
+	$(BUILD_TOOL) --build all --build-dir $(BUILD_DIR)/x86_64/ntfs --format-flag ntfs --size-mb 64 --arch x86_64
+
+build-x86_64-fat32:
+	$(BUILD_TOOL) --build all --build-dir $(BUILD_DIR)/x86_64/fat32 --format-flag fat32 --size-mb 64 --arch x86_64
+
+build-x86_64-ext4:
+	$(BUILD_TOOL) --build all --build-dir $(BUILD_DIR)/x86_64/ext4 --format-flag ext4 --size-mb 64 --arch x86_64
+
+build-aarch64-ntfs:
+	$(BUILD_TOOL) --build all --build-dir $(BUILD_DIR)/aarch64/ntfs --format-flag ntfs --size-mb 64 --arch aarch64
+
+build-aarch64-fat32:
+	$(BUILD_TOOL) --build all --build-dir $(BUILD_DIR)/aarch64/fat32 --format-flag fat32 --size-mb 64 --arch aarch64
+
+build-aarch64-ext4:
+	$(BUILD_TOOL) --build all --build-dir $(BUILD_DIR)/aarch64/ext4 --format-flag ext4 --size-mb 64 --arch aarch64
+
+build-riscv64-ntfs:
+	$(BUILD_TOOL) --build all --build-dir $(BUILD_DIR)/riscv64/ntfs --format-flag ntfs --size-mb 64 --arch riscv64
+
+build-riscv64-fat32:
+	$(BUILD_TOOL) --build all --build-dir $(BUILD_DIR)/riscv64/fat32 --format-flag fat32 --size-mb 64 --arch riscv64
+
+build-riscv64-ext4:
+	$(BUILD_TOOL) --build all --build-dir $(BUILD_DIR)/riscv64/ext4 --format-flag ext4 --size-mb 64 --arch riscv64
+
+build-loongarch64-ntfs:
+	$(BUILD_TOOL) --build all --build-dir $(BUILD_DIR)/loongarch64/ntfs --format-flag ntfs --size-mb 64 --arch loongarch64
+
+build-loongarch64-fat32:
+	$(BUILD_TOOL) --build all --build-dir $(BUILD_DIR)/loongarch64/fat32 --format-flag fat32 --size-mb 64 --arch loongarch64
+
+build-loongarch64-ext4:
+	$(BUILD_TOOL) --build all --build-dir $(BUILD_DIR)/loongarch64/ext4 --format-flag ext4 --size-mb 64 --arch loongarch64
 
 # ============================================================
 # Firmware setup macros (per architecture)
@@ -336,7 +380,7 @@ endef
 
 define _run_x86_64
 	@echo "Starting QEMU (x86_64/$(FORMAT))..."
-	$(QEMU_X86) -machine q35 -m 8G -smp 2 \
+	$(QEMU_X86) -machine q35 -m 8G -smp 4 \
 		-drive if=pflash,format=raw,unit=0,readonly=on,file=$(QEMU_FW_CODE) \
 		-drive if=pflash,format=raw,unit=1,file=$(EDK2_OVMF_VARS) \
 		$(if $(filter iso,$(FORMAT)),-cdrom $(ISO_IMG),-drive format=raw,file=$(DISK_IMG)) \
@@ -346,11 +390,11 @@ endef
 
 define _run_aarch64
 	@echo "Starting QEMU (aarch64/$(FORMAT)) with EDK2 Nightly UEFI..."
-	$(QEMU_AARCH64) -machine virt -m 8G -smp 2 $(QEMU_CPU_aarch64) \
+	$(QEMU_AARCH64) -machine virt -m 8G -smp 4 $(QEMU_CPU_aarch64) \
 		-drive if=pflash,format=raw,unit=0,readonly=on,file=$(EDK2_AARCH64_EFI_PADDED) \
 		-drive if=pflash,format=raw,unit=1,file=$(EDK2_AARCH64_VARS) \
 		$(DISK_FLAGS) \
-		-device virtio-gpu-pci -device virtio-keyboard-pci \
+		-device ramfb -device virtio-keyboard-pci \
 		-boot order=c -net none \
 		-serial file:$(SERIAL_LOG) -display gtk
 endef
@@ -367,21 +411,23 @@ define _run_riscv64
 	# `virtio-blk-device` instead of `virtio-blk-pci` is rejected
 	# by the RISC-V BDS because the EDK2 RiscVVirt build does
 	# not ship a virtio-mmio driver — only the PCI transport.
-	$(QEMU_RISCV64) -machine virt -m 8G -smp 2 $(QEMU_CPU_riscv64) \
-		-drive if=pflash,format=raw,unit=0,readonly=on,file=$(EDK2_RISCV64_VIRT_PADDED) \
+	$(QEMU_RISCV64) -machine virt -m 8G -smp 4 $(QEMU_CPU_riscv64) \
+		-bios /usr/share/qemu/opensbi-riscv64-generic-fw_dynamic.bin \
+		-drive if=pflash,format=raw,unit=0,file=$(EDK2_RISCV64_VIRT_PADDED) \
 		-drive if=pflash,format=raw,unit=1,file=$(EDK2_OVMF_VARS) \
 		-drive if=none,file=$(DISK_IMG),format=raw,id=hd0 \
-		-device $(DISK_DEV_PCI),drive=hd0 \
+		-device $(DISK_DEV_PCI),drive=hd0 -device ramfb \
+		-device virtio-keyboard-pci \
 		-net none \
 		-serial file:$(SERIAL_LOG) -display gtk
 endef
 
 define _run_loongarch64
 	@echo "Starting QEMU (loongarch64/$(FORMAT)) with EDK2 Nightly UEFI..."
-	$(QEMU_LOONGARCH64) -machine virt -m 8G -smp 2 $(QEMU_CPU_loongarch64) \
+	$(QEMU_LOONGARCH64) -machine virt -m 8G -smp 4 $(QEMU_CPU_loongarch64) \
 		-pflash $(EDK2_LOONGARCH64_EFI) \
 		-pflash $(EDK2_LOONGARCH64_VARS) \
-		$(DISK_FLAGS) \
+		$(DISK_FLAGS) -device ramfb -device virtio-keyboard-pci \
 		-boot order=c -net none \
 		-serial file:$(SERIAL_LOG) -display gtk
 endef
@@ -397,29 +443,14 @@ endef
 #   make run-serial ARCH=loongarch64 FORMAT=ext4
 #   make run-serial ARCH=x86_64 FORMAT=iso
 
-run: ARCH ?= x86_64
-run: FORMAT ?= ntfs
-run: SERIAL_LOG=$(IMAGES_DIR)/serial_$(ARCH)_$(FORMAT).log
-run: build-$(ARCH)-$(FORMAT)
-	@mkdir -p $(IMAGES_DIR)
-	$(call _setup_firmware_$(ARCH))
-	$(call _run_$(ARCH))
+run:
+	$(MAKE) run-$(ARCH)-$(FORMAT)
 
-run-serial: ARCH ?= x86_64
-run-serial: FORMAT ?= ntfs
-run-serial: SERIAL_LOG=$(IMAGES_DIR)/serial_$(ARCH)_$(FORMAT).log
-run-serial: build-$(ARCH)-$(FORMAT)
-	@mkdir -p $(IMAGES_DIR)
-	$(call _setup_firmware_$(ARCH))
-	$(call _run_$(ARCH))
+run-serial:
+	$(MAKE) run-$(ARCH)-$(FORMAT)-serial
 
-run-gtk: ARCH ?= x86_64
-run-gtk: FORMAT ?= ntfs
-run-gtk: SERIAL_LOG=$(IMAGES_DIR)/serial_$(ARCH)_$(FORMAT).log
-run-gtk: build-$(ARCH)-$(FORMAT)
-	@mkdir -p $(IMAGES_DIR)
-	$(call _setup_firmware_$(ARCH))
-	$(call _run_$(ARCH))
+run-gtk:
+	$(MAKE) run-$(ARCH)-$(FORMAT)-serial
 
 # ============================================================
 # Per-arch quick-run targets (NTFS default)
@@ -428,34 +459,26 @@ run-gtk: build-$(ARCH)-$(FORMAT)
 run-x86_64: ARCH=x86_64
 run-x86_64: FORMAT=ntfs
 run-x86_64: SERIAL_LOG=$(IMAGES_DIR)/serial_$(ARCH)_$(FORMAT).log
-run-x86_64: build-$(FORMAT)
-	@mkdir -p $(IMAGES_DIR)
-	$(call _setup_firmware_x86_64)
-	$(call _run_x86_64)
+run-x86_64:
+	$(MAKE) run-x86_64-$(FORMAT)
 
 run-aarch64: ARCH=aarch64
 run-aarch64: FORMAT=ntfs
 run-aarch64: SERIAL_LOG=$(IMAGES_DIR)/serial_$(ARCH)_$(FORMAT).log
-run-aarch64: build-$(FORMAT)
-	@mkdir -p $(IMAGES_DIR)
-	$(call _setup_firmware_aarch64)
-	$(call _run_aarch64)
+run-aarch64:
+	$(MAKE) run-aarch64-$(FORMAT)
 
 run-riscv64: ARCH=riscv64
 run-riscv64: FORMAT=ntfs
 run-riscv64: SERIAL_LOG=$(IMAGES_DIR)/serial_$(ARCH)_$(FORMAT).log
-run-riscv64: build-$(FORMAT)
-	@mkdir -p $(IMAGES_DIR)
-	$(call _setup_firmware_riscv64)
-	$(call _run_riscv64)
+run-riscv64:
+	$(MAKE) run-riscv64-$(FORMAT)
 
 run-loongarch64: ARCH=loongarch64
 run-loongarch64: FORMAT=ntfs
 run-loongarch64: SERIAL_LOG=$(IMAGES_DIR)/serial_$(ARCH)_$(FORMAT).log
-run-loongarch64: build-$(FORMAT)
-	@mkdir -p $(IMAGES_DIR)
-	$(call _setup_firmware_loongarch64)
-	$(call _run_loongarch64)
+run-loongarch64:
+	$(MAKE) run-loongarch64-$(FORMAT)
 
 # ============================================================
 # All 16 arch x format combinations (serial log)
@@ -465,57 +488,73 @@ run-loongarch64: build-$(FORMAT)
 run-x86_64-ntfs: ARCH=x86_64
 run-x86_64-ntfs: FORMAT=ntfs
 run-x86_64-ntfs: SERIAL_LOG=$(IMAGES_DIR)/serial_x86_64_ntfs.log
-run-x86_64-ntfs: build-ntfs
+run-x86_64-ntfs: build-x86_64-ntfs
+	@mkdir -p $(IMAGES_DIR)
+	$(call _setup_firmware_x86_64)
 	$(call _run_x86_64)
 
 run-x86_64-fat32: ARCH=x86_64
 run-x86_64-fat32: FORMAT=fat32
 run-x86_64-fat32: SERIAL_LOG=$(IMAGES_DIR)/serial_x86_64_fat32.log
-run-x86_64-fat32: build-fat32
+run-x86_64-fat32: build-x86_64-fat32
+	@mkdir -p $(IMAGES_DIR)
+	$(call _setup_firmware_x86_64)
 	$(call _run_x86_64)
 
 run-x86_64-ext4: ARCH=x86_64
 run-x86_64-ext4: FORMAT=ext4
 run-x86_64-ext4: SERIAL_LOG=$(IMAGES_DIR)/serial_x86_64_ext4.log
-run-x86_64-ext4: build-ext4
+run-x86_64-ext4: build-x86_64-ext4
+	@mkdir -p $(IMAGES_DIR)
+	$(call _setup_firmware_x86_64)
 	$(call _run_x86_64)
 
 run-x86_64-iso: ARCH=x86_64
 run-x86_64-iso: FORMAT=iso
 run-x86_64-iso: SERIAL_LOG=$(IMAGES_DIR)/serial_x86_64_iso.log
-run-x86_64-iso: build-iso
+run-x86_64-iso: build-x86_64-iso
+	@mkdir -p $(IMAGES_DIR)
+	$(call _setup_firmware_x86_64)
 	$(call _run_x86_64)
 
 # aarch64
 run-aarch64-ntfs: ARCH=aarch64
 run-aarch64-ntfs: FORMAT=ntfs
 run-aarch64-ntfs: SERIAL_LOG=$(IMAGES_DIR)/serial_aarch64_ntfs.log
-run-aarch64-ntfs: build-ntfs
+run-aarch64-ntfs: build-aarch64-ntfs
+	@mkdir -p $(IMAGES_DIR)
+	$(call _setup_firmware_aarch64)
 	$(call _run_aarch64)
 
 run-aarch64-fat32: ARCH=aarch64
 run-aarch64-fat32: FORMAT=fat32
 run-aarch64-fat32: SERIAL_LOG=$(IMAGES_DIR)/serial_aarch64_fat32.log
-run-aarch64-fat32: build-fat32
+run-aarch64-fat32: build-aarch64-fat32
+	@mkdir -p $(IMAGES_DIR)
+	$(call _setup_firmware_aarch64)
 	$(call _run_aarch64)
 
 run-aarch64-ext4: ARCH=aarch64
 run-aarch64-ext4: FORMAT=ext4
 run-aarch64-ext4: SERIAL_LOG=$(IMAGES_DIR)/serial_aarch64_ext4.log
-run-aarch64-ext4: build-ext4
+run-aarch64-ext4: build-aarch64-ext4
+	@mkdir -p $(IMAGES_DIR)
+	$(call _setup_firmware_aarch64)
 	$(call _run_aarch64)
 
 run-aarch64-iso: ARCH=aarch64
 run-aarch64-iso: FORMAT=iso
 run-aarch64-iso: SERIAL_LOG=$(IMAGES_DIR)/serial_aarch64_iso.log
-run-aarch64-iso: build-iso
+run-aarch64-iso: build-aarch64-iso
+	@mkdir -p $(IMAGES_DIR)
+	$(call _setup_firmware_aarch64)
 	$(call _run_aarch64)
 
 # riscv64
 run-riscv64-ntfs: ARCH=riscv64
 run-riscv64-ntfs: FORMAT=ntfs
 run-riscv64-ntfs: SERIAL_LOG=$(IMAGES_DIR)/serial_riscv64_ntfs.log
-run-riscv64-ntfs: build-ntfs
+run-riscv64-ntfs: build-riscv64-ntfs
 	@mkdir -p $(IMAGES_DIR)
 	$(call _setup_firmware_riscv64)
 	$(call _run_riscv64)
@@ -523,7 +562,7 @@ run-riscv64-ntfs: build-ntfs
 run-riscv64-fat32: ARCH=riscv64
 run-riscv64-fat32: FORMAT=fat32
 run-riscv64-fat32: SERIAL_LOG=$(IMAGES_DIR)/serial_riscv64_fat32.log
-run-riscv64-fat32: build-fat32
+run-riscv64-fat32: build-riscv64-fat32
 	@mkdir -p $(IMAGES_DIR)
 	$(call _setup_firmware_riscv64)
 	$(call _run_riscv64)
@@ -531,7 +570,7 @@ run-riscv64-fat32: build-fat32
 run-riscv64-ext4: ARCH=riscv64
 run-riscv64-ext4: FORMAT=ext4
 run-riscv64-ext4: SERIAL_LOG=$(IMAGES_DIR)/serial_riscv64_ext4.log
-run-riscv64-ext4: build-ext4
+run-riscv64-ext4: build-riscv64-ext4
 	@mkdir -p $(IMAGES_DIR)
 	$(call _setup_firmware_riscv64)
 	$(call _run_riscv64)
@@ -539,7 +578,7 @@ run-riscv64-ext4: build-ext4
 run-riscv64-iso: ARCH=riscv64
 run-riscv64-iso: FORMAT=iso
 run-riscv64-iso: SERIAL_LOG=$(IMAGES_DIR)/serial_riscv64_iso.log
-run-riscv64-iso: build-iso
+run-riscv64-iso: build-riscv64-iso
 	@mkdir -p $(IMAGES_DIR)
 	$(call _setup_firmware_riscv64)
 	$(call _run_riscv64)
@@ -548,25 +587,33 @@ run-riscv64-iso: build-iso
 run-loongarch64-ntfs: ARCH=loongarch64
 run-loongarch64-ntfs: FORMAT=ntfs
 run-loongarch64-ntfs: SERIAL_LOG=$(IMAGES_DIR)/serial_loongarch64_ntfs.log
-run-loongarch64-ntfs: build-ntfs
+run-loongarch64-ntfs: build-loongarch64-ntfs
+	@mkdir -p $(IMAGES_DIR)
+	$(call _setup_firmware_loongarch64)
 	$(call _run_loongarch64)
 
 run-loongarch64-fat32: ARCH=loongarch64
 run-loongarch64-fat32: FORMAT=fat32
 run-loongarch64-fat32: SERIAL_LOG=$(IMAGES_DIR)/serial_loongarch64_fat32.log
-run-loongarch64-fat32: build-fat32
+run-loongarch64-fat32: build-loongarch64-fat32
+	@mkdir -p $(IMAGES_DIR)
+	$(call _setup_firmware_loongarch64)
 	$(call _run_loongarch64)
 
 run-loongarch64-ext4: ARCH=loongarch64
 run-loongarch64-ext4: FORMAT=ext4
 run-loongarch64-ext4: SERIAL_LOG=$(IMAGES_DIR)/serial_loongarch64_ext4.log
-run-loongarch64-ext4: build-ext4
+run-loongarch64-ext4: build-loongarch64-ext4
+	@mkdir -p $(IMAGES_DIR)
+	$(call _setup_firmware_loongarch64)
 	$(call _run_loongarch64)
 
 run-loongarch64-iso: ARCH=loongarch64
 run-loongarch64-iso: FORMAT=iso
 run-loongarch64-iso: SERIAL_LOG=$(IMAGES_DIR)/serial_loongarch64_iso.log
-run-loongarch64-iso: build-iso
+run-loongarch64-iso: build-loongarch64-iso
+	@mkdir -p $(IMAGES_DIR)
+	$(call _setup_firmware_loongarch64)
 	$(call _run_loongarch64)
 
 # ============================================================
@@ -591,11 +638,11 @@ TIMEOUT ?= 80
 run-x86_64-ntfs-serial: ARCH=x86_64
 run-x86_64-ntfs-serial: FORMAT=ntfs
 run-x86_64-ntfs-serial: SERIAL_LOG=$(IMAGES_DIR)/serial_x86_64_ntfs.log
-run-x86_64-ntfs-serial: build-ntfs
+run-x86_64-ntfs-serial: build-x86_64-ntfs
 	@mkdir -p $(IMAGES_DIR)
 	$(call _setup_firmware_x86_64)
 	@echo "Launching QEMU (x86_64/ntfs) with GTK + serial log..."
-	@timeout $(TIMEOUT)s $(QEMU_X86) -machine q35 -m 8G -smp 2 \
+	@timeout $(TIMEOUT)s $(QEMU_X86) -machine q35 -m 8G -smp 4 \
 		-drive if=pflash,format=raw,unit=0,readonly=on,file=$(QEMU_FW_CODE) \
 		-drive if=pflash,format=raw,unit=1,file=$(EDK2_OVMF_VARS) \
 		-drive format=raw,file=$(DISK_IMG) \
@@ -605,11 +652,11 @@ run-x86_64-ntfs-serial: build-ntfs
 run-x86_64-fat32-serial: ARCH=x86_64
 run-x86_64-fat32-serial: FORMAT=fat32
 run-x86_64-fat32-serial: SERIAL_LOG=$(IMAGES_DIR)/serial_x86_64_fat32.log
-run-x86_64-fat32-serial: build-fat32
+run-x86_64-fat32-serial: build-x86_64-fat32
 	@mkdir -p $(IMAGES_DIR)
 	$(call _setup_firmware_x86_64)
 	@echo "Launching QEMU (x86_64/fat32) with GTK + serial log..."
-	@timeout $(TIMEOUT)s $(QEMU_X86) -machine q35 -m 8G -smp 2 \
+	@timeout $(TIMEOUT)s $(QEMU_X86) -machine q35 -m 8G -smp 4 \
 		-drive if=pflash,format=raw,unit=0,readonly=on,file=$(QEMU_FW_CODE) \
 		-drive if=pflash,format=raw,unit=1,file=$(EDK2_OVMF_VARS) \
 		-drive format=raw,file=$(DISK_IMG) \
@@ -619,16 +666,36 @@ run-x86_64-fat32-serial: build-fat32
 run-x86_64-ext4-serial: ARCH=x86_64
 run-x86_64-ext4-serial: FORMAT=ext4
 run-x86_64-ext4-serial: SERIAL_LOG=$(IMAGES_DIR)/serial_x86_64_ext4.log
-run-x86_64-ext4-serial: build-ext4
+run-x86_64-ext4-serial: build-x86_64-ext4
 	@mkdir -p $(IMAGES_DIR)
 	$(call _setup_firmware_x86_64)
 	@echo "Launching QEMU (x86_64/ext4) with GTK + serial log..."
-	@timeout $(TIMEOUT)s $(QEMU_X86) -machine q35 -m 8G -smp 2 \
+	@timeout $(TIMEOUT)s $(QEMU_X86) -machine q35 -m 8G -smp 4 \
 		-drive if=pflash,format=raw,unit=0,readonly=on,file=$(QEMU_FW_CODE) \
 		-drive if=pflash,format=raw,unit=1,file=$(EDK2_OVMF_VARS) \
 		-drive format=raw,file=$(DISK_IMG) \
 		-boot c -net none \
 		-serial file:$(SERIAL_LOG) -display gtk || true
+
+# Network end-to-end verification: boots the x86_64 kernel with QEMU
+# user networking (slirp). The kernel runs `netstack::e2e_test::
+# run_e2e_test()` at Phase 13, exercising DHCP / ARP / TCP / DNS.
+run-x86_64-net: ARCH=x86_64
+run-x86_64-net: FORMAT=ntfs
+run-x86_64-net: SERIAL_LOG=$(IMAGES_DIR)/serial_x86_64_net.log
+run-x86_64-net: build-x86_64-ntfs
+	@mkdir -p $(IMAGES_DIR)
+	$(call _setup_firmware_x86_64)
+	@echo "Launching QEMU (x86_64/net E2E) headless with slirp..."
+	@timeout 60s $(QEMU_X86) -machine q35 -m 4G -smp 4 \
+		-drive if=pflash,format=raw,unit=0,readonly=on,file=$(QEMU_FW_CODE) \
+		-drive if=pflash,format=raw,unit=1,file=$(EDK2_OVMF_VARS) \
+		-drive format=raw,file=$(DISK_IMG) \
+		-boot c \
+		-netdev user,id=n0 \
+		-device virtio-net-pci,netdev=n0 \
+		-serial file:$(SERIAL_LOG) -display none || true
+	@echo "Serial log: $(SERIAL_LOG)"
 
 # ------------------------------------------------------------
 # aarch64, riscv64, loongarch64 — single macro per arch.
@@ -652,31 +719,35 @@ run-x86_64-ext4-serial: build-ext4
 # because that platform only exposes a virtio-pci bus.
 # ------------------------------------------------------------
 define _run_aarch64_serial
-	@timeout $(TIMEOUT)s $(QEMU_AARCH64) -machine virt -m 8G -smp 2 $(QEMU_CPU_aarch64) \
+	@timeout $(TIMEOUT)s $(QEMU_AARCH64) -machine virt -m 8G -smp 4 $(QEMU_CPU_aarch64) \
 		-drive if=pflash,format=raw,unit=0,readonly=on,file=$(EDK2_AARCH64_EFI_PADDED) \
 		-drive if=pflash,format=raw,unit=1,file=$(EDK2_AARCH64_VARS) \
 		-drive if=none,file=$(DISK_IMG),format=raw,id=hd0 \
 		-device $(DISK_DEV_PCI),drive=hd0 \
+		-device ramfb -device virtio-keyboard-pci \
 		-boot order=c -net none \
 		-serial file:$(SERIAL_LOG) -display gtk || true
 endef
 
 define _run_riscv64_serial
-	@timeout $(TIMEOUT)s $(QEMU_RISCV64) -machine virt -m 8G -smp 2 $(QEMU_CPU_riscv64) \
-		-drive if=pflash,format=raw,unit=0,readonly=on,file=$(EDK2_RISCV64_VIRT_PADDED) \
+	@timeout $(TIMEOUT)s $(QEMU_RISCV64) -machine virt -m 8G -smp 4 $(QEMU_CPU_riscv64) \
+		-bios /usr/share/qemu/opensbi-riscv64-generic-fw_dynamic.bin \
+		-drive if=pflash,format=raw,unit=0,file=$(EDK2_RISCV64_VIRT_PADDED) \
 		-drive if=pflash,format=raw,unit=1,file=$(EDK2_OVMF_VARS) \
 		-drive if=none,file=$(DISK_IMG),format=raw,id=hd0 \
 		-device $(DISK_DEV_PCI),drive=hd0 \
+		-device ramfb -device virtio-keyboard-pci \
 		-boot order=c -net none \
 		-serial file:$(SERIAL_LOG) -display gtk || true
 endef
 
 define _run_loongarch64_serial
-	@timeout $(TIMEOUT)s $(QEMU_LOONGARCH64) -machine virt -m 8G -smp 2 $(QEMU_CPU_loongarch64) \
+	@timeout $(TIMEOUT)s $(QEMU_LOONGARCH64) -machine virt -m 8G -smp 4 $(QEMU_CPU_loongarch64) \
 		-drive if=pflash,format=raw,unit=0,readonly=on,file=$(EDK2_LOONGARCH64_EFI) \
 		-drive if=pflash,format=raw,unit=1,file=$(EDK2_LOONGARCH64_VARS) \
 		-drive if=none,file=$(DISK_IMG),format=raw,id=hd0 \
 		-device $(DISK_DEV_PCI),drive=hd0 \
+		-device ramfb -device virtio-keyboard-pci \
 		-boot order=c -net none \
 		-serial file:$(SERIAL_LOG) -display gtk || true
 endef
@@ -685,7 +756,7 @@ endef
 run-aarch64-ntfs-serial: ARCH=aarch64
 run-aarch64-ntfs-serial: FORMAT=ntfs
 run-aarch64-ntfs-serial: SERIAL_LOG=$(IMAGES_DIR)/serial_aarch64_ntfs.log
-run-aarch64-ntfs-serial: build-ntfs
+run-aarch64-ntfs-serial: build-aarch64-ntfs
 	@mkdir -p $(IMAGES_DIR)
 	$(call _setup_firmware_aarch64)
 	@echo "Launching QEMU (aarch64/ntfs) with GTK + serial log..."
@@ -694,7 +765,7 @@ run-aarch64-ntfs-serial: build-ntfs
 run-aarch64-fat32-serial: ARCH=aarch64
 run-aarch64-fat32-serial: FORMAT=fat32
 run-aarch64-fat32-serial: SERIAL_LOG=$(IMAGES_DIR)/serial_aarch64_fat32.log
-run-aarch64-fat32-serial: build-fat32
+run-aarch64-fat32-serial: build-aarch64-fat32
 	@mkdir -p $(IMAGES_DIR)
 	$(call _setup_firmware_aarch64)
 	@echo "Launching QEMU (aarch64/fat32) with GTK + serial log..."
@@ -703,7 +774,7 @@ run-aarch64-fat32-serial: build-fat32
 run-aarch64-ext4-serial: ARCH=aarch64
 run-aarch64-ext4-serial: FORMAT=ext4
 run-aarch64-ext4-serial: SERIAL_LOG=$(IMAGES_DIR)/serial_aarch64_ext4.log
-run-aarch64-ext4-serial: build-ext4
+run-aarch64-ext4-serial: build-aarch64-ext4
 	@mkdir -p $(IMAGES_DIR)
 	$(call _setup_firmware_aarch64)
 	@echo "Launching QEMU (aarch64/ext4) with GTK + serial log..."
@@ -713,7 +784,7 @@ run-aarch64-ext4-serial: build-ext4
 run-riscv64-ntfs-serial: ARCH=riscv64
 run-riscv64-ntfs-serial: FORMAT=ntfs
 run-riscv64-ntfs-serial: SERIAL_LOG=$(IMAGES_DIR)/serial_riscv64_ntfs.log
-run-riscv64-ntfs-serial: build-ntfs
+run-riscv64-ntfs-serial: build-riscv64-ntfs
 	@mkdir -p $(IMAGES_DIR)
 	$(call _setup_firmware_riscv64)
 	@echo "Launching QEMU (riscv64/ntfs) with GTK + serial log..."
@@ -722,7 +793,7 @@ run-riscv64-ntfs-serial: build-ntfs
 run-riscv64-fat32-serial: ARCH=riscv64
 run-riscv64-fat32-serial: FORMAT=fat32
 run-riscv64-fat32-serial: SERIAL_LOG=$(IMAGES_DIR)/serial_riscv64_fat32.log
-run-riscv64-fat32-serial: build-fat32
+run-riscv64-fat32-serial: build-riscv64-fat32
 	@mkdir -p $(IMAGES_DIR)
 	$(call _setup_firmware_riscv64)
 	@echo "Launching QEMU (riscv64/fat32) with GTK + serial log..."
@@ -731,7 +802,7 @@ run-riscv64-fat32-serial: build-fat32
 run-riscv64-ext4-serial: ARCH=riscv64
 run-riscv64-ext4-serial: FORMAT=ext4
 run-riscv64-ext4-serial: SERIAL_LOG=$(IMAGES_DIR)/serial_riscv64_ext4.log
-run-riscv64-ext4-serial: build-ext4
+run-riscv64-ext4-serial: build-riscv64-ext4
 	@mkdir -p $(IMAGES_DIR)
 	$(call _setup_firmware_riscv64)
 	@echo "Launching QEMU (riscv64/ext4) with GTK + serial log..."
@@ -741,7 +812,7 @@ run-riscv64-ext4-serial: build-ext4
 run-loongarch64-ntfs-serial: ARCH=loongarch64
 run-loongarch64-ntfs-serial: FORMAT=ntfs
 run-loongarch64-ntfs-serial: SERIAL_LOG=$(IMAGES_DIR)/serial_loongarch64_ntfs.log
-run-loongarch64-ntfs-serial: build-ntfs
+run-loongarch64-ntfs-serial: build-loongarch64-ntfs
 	@mkdir -p $(IMAGES_DIR)
 	$(call _setup_firmware_loongarch64)
 	@echo "Launching QEMU (loongarch64/ntfs) with GTK + serial log..."
@@ -750,7 +821,7 @@ run-loongarch64-ntfs-serial: build-ntfs
 run-loongarch64-fat32-serial: ARCH=loongarch64
 run-loongarch64-fat32-serial: FORMAT=fat32
 run-loongarch64-fat32-serial: SERIAL_LOG=$(IMAGES_DIR)/serial_loongarch64_fat32.log
-run-loongarch64-fat32-serial: build-fat32
+run-loongarch64-fat32-serial: build-loongarch64-fat32
 	@mkdir -p $(IMAGES_DIR)
 	$(call _setup_firmware_loongarch64)
 	@echo "Launching QEMU (loongarch64/fat32) with GTK + serial log..."
@@ -759,7 +830,7 @@ run-loongarch64-fat32-serial: build-fat32
 run-loongarch64-ext4-serial: ARCH=loongarch64
 run-loongarch64-ext4-serial: FORMAT=ext4
 run-loongarch64-ext4-serial: SERIAL_LOG=$(IMAGES_DIR)/serial_loongarch64_ext4.log
-run-loongarch64-ext4-serial: build-ext4
+run-loongarch64-ext4-serial: build-loongarch64-ext4
 	@mkdir -p $(IMAGES_DIR)
 	$(call _setup_firmware_loongarch64)
 	@echo "Launching QEMU (loongarch64/ext4) with GTK + serial log..."
@@ -782,11 +853,11 @@ run-loongarch64-ext4-serial: build-ext4
 run-x86_64-gtk: ARCH=x86_64
 run-x86_64-gtk: FORMAT=ntfs
 run-x86_64-gtk: SERIAL_LOG=$(IMAGES_DIR)/serial_x86_64_ntfs_gtk.log
-run-x86_64-gtk: build-ntfs
+run-x86_64-gtk: build-x86_64-ntfs
 	@mkdir -p $(IMAGES_DIR)
 	$(call _setup_firmware_x86_64)
 	@echo "Launching QEMU (x86_64/ntfs) GUI-only..."
-	@timeout $(TIMEOUT)s $(QEMU_X86) -machine q35 -m 8G -smp 2 \
+	@timeout $(TIMEOUT)s $(QEMU_X86) -machine q35 -m 8G -smp 4 \
 		-drive if=pflash,format=raw,unit=0,readonly=on,file=$(QEMU_FW_CODE) \
 		-drive if=pflash,format=raw,unit=1,file=$(EDK2_OVMF_VARS) \
 		-drive format=raw,file=$(DISK_IMG) \
@@ -796,11 +867,11 @@ run-x86_64-gtk: build-ntfs
 run-aarch64-gtk: ARCH=aarch64
 run-aarch64-gtk: FORMAT=ntfs
 run-aarch64-gtk: SERIAL_LOG=$(IMAGES_DIR)/serial_aarch64_ntfs_gtk.log
-run-aarch64-gtk: build-ntfs
+run-aarch64-gtk: build-aarch64-ntfs
 	@mkdir -p $(IMAGES_DIR)
 	$(call _setup_firmware_aarch64)
 	@echo "Launching QEMU (aarch64/ntfs) GUI-only..."
-	@timeout $(TIMEOUT)s $(QEMU_AARCH64) -machine virt -m 8G -smp 2 $(QEMU_CPU_aarch64) \
+	@timeout $(TIMEOUT)s $(QEMU_AARCH64) -machine virt -m 8G -smp 4 $(QEMU_CPU_aarch64) \
 		-drive if=pflash,format=raw,unit=0,readonly=on,file=$(EDK2_AARCH64_EFI_PADDED) \
 		-drive if=pflash,format=raw,unit=1,file=$(EDK2_AARCH64_VARS) \
 		-drive if=none,file=$(DISK_IMG),format=raw,id=hd0 \
@@ -812,11 +883,11 @@ run-aarch64-gtk: build-ntfs
 run-riscv64-gtk: ARCH=riscv64
 run-riscv64-gtk: FORMAT=ntfs
 run-riscv64-gtk: SERIAL_LOG=$(IMAGES_DIR)/serial_riscv64_ntfs_gtk.log
-run-riscv64-gtk: build-ntfs
+run-riscv64-gtk: build-riscv64-ntfs
 	@mkdir -p $(IMAGES_DIR)
 	$(call _setup_firmware_riscv64)
 	@echo "Launching QEMU (riscv64/ntfs) GUI-only..."
-	@timeout $(TIMEOUT)s $(QEMU_RISCV64) -machine virt -m 8G -smp 2 $(QEMU_CPU_riscv64) \
+	@timeout $(TIMEOUT)s $(QEMU_RISCV64) -machine virt -m 8G -smp 4 $(QEMU_CPU_riscv64) \
 		-drive if=pflash,format=raw,unit=0,readonly=on,file=$(EDK2_RISCV64_VIRT_PADDED) \
 		-drive if=pflash,format=raw,unit=1,file=$(EDK2_OVMF_VARS) \
 		-drive if=none,file=$(DISK_IMG),format=raw,id=hd0 \
@@ -828,11 +899,11 @@ run-riscv64-gtk: build-ntfs
 run-loongarch64-gtk: ARCH=loongarch64
 run-loongarch64-gtk: FORMAT=ntfs
 run-loongarch64-gtk: SERIAL_LOG=$(IMAGES_DIR)/serial_loongarch64_ntfs_gtk.log
-run-loongarch64-gtk: build-ntfs
+run-loongarch64-gtk: build-loongarch64-ntfs
 	@mkdir -p $(IMAGES_DIR)
 	$(call _setup_firmware_loongarch64)
 	@echo "Launching QEMU (loongarch64/ntfs) GUI-only..."
-	@timeout $(TIMEOUT)s $(QEMU_LOONGARCH64) -machine virt -m 8G -smp 2 $(QEMU_CPU_loongarch64) \
+	@timeout $(TIMEOUT)s $(QEMU_LOONGARCH64) -machine virt -m 8G -smp 4 $(QEMU_CPU_loongarch64) \
 		-pflash $(EDK2_LOONGARCH64_EFI) \
 		-pflash $(EDK2_LOONGARCH64_VARS) \
 		-drive if=none,file=$(DISK_IMG),format=raw,id=hd0 \
@@ -893,7 +964,7 @@ test-qemu: build-$(FORMAT)
 	@mkdir -p $(IMAGES_DIR)
 	$(call _setup_firmware_x86_64)
 	@echo "Running QEMU smoke tests (timeout 120s)..."
-	@timeout 120 $(QEMU_X86) -machine q35 -m 8G -smp 2 \
+	@timeout 120 $(QEMU_X86) -machine q35 -m 8G -smp 4 \
 		-drive if=pflash,format=raw,unit=0,readonly=on,file=$(QEMU_FW_CODE) \
 		-drive if=pflash,format=raw,unit=1,file=$(EDK2_OVMF_VARS) \
 		-drive format=raw,file=$(DISK_IMG) \
@@ -949,7 +1020,7 @@ test-qemu: build-$(FORMAT)
 BOOT_TIMEOUT ?= 35
 QEMU_HARNESS_LOGDIR := $(IMAGES_DIR)/harness
 QEMU_HARNESS_SUMMARY := $(IMAGES_DIR)/harness/summary.txt
-HARNESS_SCRIPT := $(SCRIPT_DIR)/scripts/test-arches-fs.sh
+HARNESS_SCRIPT := $(SCRIPT_DIR)/../scripts/test-arches-fs.sh
 
 # `make test-arches-fs-qemu` runs all 4 arches × FAT32 / NTFS / EXT4
 # (no ISO). For each cell we build the disk image once, then run
@@ -977,7 +1048,7 @@ test-all-qemu:
 	  echo "  x86_64 / iso :"; \
 	  timeout_cmd=""; \
 	  if [ "$(BOOT_TIMEOUT)" -gt 0 ] 2>/dev/null; then timeout_cmd="timeout $(BOOT_TIMEOUT)s"; fi; \
-	  $$timeout_cmd qemu-system-x86_64 -machine q35 -m 4G -smp 2 \
+	  $$timeout_cmd qemu-system-x86_64 -machine q35 -m 4G -smp 4 \
 	    -drive if=pflash,format=raw,unit=0,readonly=on,file=$(QEMU_FW_CODE) \
 	    -drive if=pflash,format=raw,unit=1,file=$(EDK2_OVMF_VARS) \
 	    -cdrom $(ISO_IMG) -boot d -net none -display none \
@@ -1039,13 +1110,13 @@ verify-strict:
 		--features "x86_64,binary_panic,alloc"
 	@echo "=== aarch64 kernel ==="
 	RUSTFLAGS="-D warnings" cargo check -p nt61 --target aarch64-unknown-none \
-		--no-default-features --features "aarch64,alloc"
+		--no-default-features --features "aarch64,binary_panic,alloc"
 	@echo "=== riscv64 kernel ==="
 	RUSTFLAGS="-D warnings" cargo check -p nt61 --target riscv64gc-unknown-none-elf \
-		--no-default-features --features "riscv64,alloc"
+		--no-default-features --features "riscv64,binary_panic,alloc"
 	@echo "=== loongarch64 kernel ==="
 	RUSTFLAGS="-D warnings" cargo check -p nt61 --target loongarch64-unknown-none \
-		--no-default-features --features "loongarch64,alloc"
+		--no-default-features --features "loongarch64,binary_panic,alloc"
 	@echo "=== nt61-boot (UEFI, x86_64) ==="
 	RUSTFLAGS="-D warnings" cargo check -p nt61-boot --target x86_64-unknown-uefi \
 		--features x86_64

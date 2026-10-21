@@ -33,3 +33,4 @@ Cargo.lock
 
 # Mutants testing
 **/mutants.out*/
+reference/

@@ -1,0 +1,32 @@
+[target.x86_64-unknown-none]
+rustflags = [
+    "-C", "relocation-model=pic",
+    "-C", "link-arg=-no-pie",
+    # Keep ELF relocation records so the ELF→PE wrapper can emit a
+    # real PE .reloc table; winload applies it after loading the
+    # kernel at a runtime base (see tools/src/fs/build.rs).
+    "-C", "link-arg=--emit-relocs",
+    "-C", "link-arg=-e",
+    "-C", "link-arg=kernel_entry",
+]
+
+[target.aarch64-unknown-none]
+rustflags = [
+    "-C", "link-arg=--emit-relocs",
+    "-C", "link-arg=-e",
+    "-C", "link-arg=kernel_entry",
+]
+
+[target.riscv64gc-unknown-none-elf]
+rustflags = [
+    "-C", "link-arg=--emit-relocs",
+    "-C", "link-arg=-e",
+    "-C", "link-arg=kernel_entry",
+]
+
+[target.loongarch64-unknown-none]
+rustflags = [
+    "-C", "link-arg=--emit-relocs",
+    "-C", "link-arg=-e",
+    "-C", "link-arg=kernel_entry",
+]
