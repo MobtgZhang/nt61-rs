@@ -20,22 +20,34 @@ OUTPUT_FORMAT("elf64-littleriscv")
 OUTPUT_ARCH(riscv:rv64)
 ENTRY(efi_main)
 
-BASE_ADDRESS = 0x40000000;
+/* QEMU virt exposes RAM from 0x80000000. EDK2 reserves OpenSBI and early
+   DXE allocations in the low tens of MiB, so use a base above them. A
+   valid preferred base avoids relying on PE relocations, which are absent
+   from statically linked freestanding ELF images. */
+BASE_ADDRESS = 0x88000000;
 
 PHDRS {
-    text PT_LOAD;
+    headers PT_LOAD FILEHDR PHDRS;
     data PT_LOAD;
 }
 
 SECTIONS {
     . = BASE_ADDRESS;
 
+    /* Keep the PE headers at RVA 0 and start executable code at the
+     * first section-aligned RVA. GNU `objcopy -O pei-riscv64-little`
+     * converts ELF VMAs into PE RVAs after the build tool subtracts
+     * `ImageBase`; placing `.text` directly at `BASE_ADDRESS` made the
+     * first section overlap the PE header at RVA 0, which EDK2 rejects
+     * with `EFI_SW_DXE_BS_EC_BOOT_OPTION_LOAD_ERROR`. */
+    . = BASE_ADDRESS + 0x1000;
+
     .text : ALIGN(0x1000) {
         *(.text.startup .text.startup.*)
         efi_main = .; *(.text.efi_main .text.efi_main.*)
         *(.text .text.* .rodata .rodata.*)
         *(.eh_frame)
-    } :text
+    } :headers
 
     .data : ALIGN(0x1000) {
         *(.data .data.*)
@@ -51,8 +63,6 @@ SECTIONS {
 
     /DISCARD/ : {
         *(.note.GNU-stack)
-        *(.rela.dyn)
-        *(.rela.plt)
         *(.dynsym)
         *(.dynstr)
         *(.dynamic)

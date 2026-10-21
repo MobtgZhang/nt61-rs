@@ -456,6 +456,12 @@ pub struct LoadedImage {
 }
 
 impl LoadedImage {
+    /// Access the loaded image bytes for callers that need to
+    /// compute a function pointer within the image.
+    pub fn image_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
     /// Convert an RVA to a pointer into the loaded image.
     /// True when `rva..rva + len` lies inside the loaded image buffer.
     ///
@@ -477,7 +483,7 @@ impl LoadedImage {
         unsafe { self.bytes.as_ptr().add(rva as usize) as *mut u8 }
     }
 
-    /// Read a 16-bit value at `rva`, or `None` when out of bounds.
+    /// read a 16-bit value at `rva`, or `None` when out of bounds.
     pub fn read_u16(&self, rva: u32) -> Option<u16> {
         if !self.contains(rva, 2) {
             return None;
@@ -568,7 +574,7 @@ pub fn parse_headers(image: &[u8]) -> Option<(FileHeader, usize, u16, usize)> {
     Some((file_hdr, opt_size, magic, opt_off))
 }
 
-/// Read the data directory at index `i` from a parsed PE32+ image.
+/// read the data directory at index `i` from a parsed PE32+ image.
 /// Returns `(rva, size)` or `(0, 0)` if the directory is empty or
 /// the optional header is PE32 (32-bit directories are 8 bytes, we
 /// only support PE32+ here).
@@ -608,7 +614,7 @@ pub fn read_data_directory_pe32plus(image: &[u8], opt_off: usize, i: usize) -> (
     (rva, size)
 }
 
-/// Read the data directory at index `i` from a parsed PE32 image.
+/// read the data directory at index `i` from a parsed PE32 image.
 /// Returns `(rva, size)` or `(0, 0)` if the directory is empty.
 /// PE32 uses 8-byte entries (u32 rva, u32 size) starting at offset 0x60.
 pub fn read_data_directory_pe32(image: &[u8], opt_off: usize, i: usize) -> (u32, u32) {
@@ -646,7 +652,7 @@ pub fn read_data_directory_pe32(image: &[u8], opt_off: usize, i: usize) -> (u32,
     (rva, size)
 }
 
-/// Read the PE32+ optional header fields we need: `image_base`,
+/// read the PE32+ optional header fields we need: `image_base`,
 /// `size_of_image`, `address_of_entry_point`, `subsystem`.
 fn read_opt64(image: &[u8], opt_off: usize) -> Option<(u64, u32, u32, u16)> {
     if opt_off + 0x40 > image.len() {
@@ -678,7 +684,7 @@ fn read_opt64(image: &[u8], opt_off: usize) -> Option<(u64, u32, u32, u16)> {
     Some((img_base, soi, aep, subsys))
 }
 
-/// Read the PE32 optional header fields we need: `image_base`,
+/// read the PE32 optional header fields we need: `image_base`,
 /// `size_of_image`, `address_of_entry_point`, `subsystem`.
 /// PE32 has a 32-bit image base and different offsets.
 fn read_opt32(image: &[u8], opt_off: usize) -> Option<(u64, u32, u32, u16)> {
@@ -735,7 +741,7 @@ pub fn load_image_full(
     if size_of_image == 0 || bytes.len() < 0x40 + 4 {
         return None;
     }
-    // SizeOfImage comes from the file, so an image can claim a huge size and
+    // size_of_image comes from the file, so an image can claim a huge size and
     // exhaust the kernel pool here. Cap it at a sane maximum.
     const MAX_IMAGE_SIZE: usize = 64 * 1024 * 1024;
     if size_of_image as usize > MAX_IMAGE_SIZE {
@@ -788,7 +794,7 @@ pub fn load_image_full(
     // than the preferred base.
     if actual_base != image_base {
         let delta = (actual_base as i64) - (image_base as i64);
-        apply_base_relocations(&mut loaded, bytes, image_base, delta);
+        apply_base_relocations(&mut loaded, bytes, delta);
     }
 
     // Resolve imports. The IAT slots get patched in place; we need
@@ -799,7 +805,9 @@ pub fn load_image_full(
         read_data_directory_pe32plus(bytes, opt_off, 1) // 1 = IMPORT
     };
     if import_rva != 0 && import_size != 0 {
-        resolve_imports(&mut loaded, bytes, import_rva, image_db);
+        if !resolve_imports(&mut loaded, bytes, import_rva, image_db) {
+            return None;
+        }
     }
 
     Some(loaded)
@@ -822,13 +830,7 @@ pub fn load_image_full(
 ///   * `IMAGE_REL_BASED_DIR64`     (10)  — 64-bit VA correction (PE32+)
 ///
 /// Returns the number of relocations applied, or 0 on error.
-#[allow(dead_code, unused_variables)]
-fn apply_base_relocations(
-    loaded: &mut LoadedImage,
-    raw: &[u8],
-    orig_base: u64,
-    delta: i64,
-) -> usize {
+fn apply_base_relocations(loaded: &mut LoadedImage, raw: &[u8], delta: i64) -> usize {
     if delta == 0 {
         return 0;
     }
@@ -844,7 +846,7 @@ fn apply_base_relocations(
     // For PE32, use relocation type based on file format
     let is_pe32plus = magic == 0x20B;
 
-    // Read relocation directory using appropriate format
+    // read relocation directory using appropriate format
     let (reloc_rva, reloc_size) = if is_pe32plus {
         read_data_directory_pe32plus(raw, opt_off, 5)
     } else {
@@ -1019,13 +1021,13 @@ fn resolve_imports(
     raw: &[u8],
     import_rva: u32,
     image_db: &ImageDatabase,
-) {
+) -> bool {
     // The import directory RVA points into the file's virtual
     // address space. Walk the section table to convert it to a
     // file offset.
     let (file_hdr, _, _, opt_off) = match parse_headers(raw) {
         Some(p) => p,
-        None => return,
+        None => return false,
     };
     let sect_off = opt_off + file_hdr.size_of_optional_header as usize;
     let mut sects: alloc::vec::Vec<(u32, u32, u32)> = alloc::vec::Vec::new();
@@ -1052,11 +1054,11 @@ fn resolve_imports(
     };
     let mut off = match rva_to_file(import_rva) {
         Some(o) => o,
-        None => return,
+        None => return false,
     };
     loop {
         if off + 20 > raw.len() {
-            return;
+            return false;
         }
         let ilt_rva = u32::from_le_bytes([raw[off], raw[off + 1], raw[off + 2], raw[off + 3]]);
         let _ts = u32::from_le_bytes([raw[off + 4], raw[off + 5], raw[off + 6], raw[off + 7]]);
@@ -1069,17 +1071,17 @@ fn resolve_imports(
             break;
         }
 
-        // Read DLL name (RVA -> file offset).
+        // read DLL name (RVA -> file offset).
         let dll_name = match rva_to_file(name_rva).and_then(|o| read_cstr(raw, o)) {
             Some(n) => n,
-            None => return,
+            None => return false,
         };
 
         // Walk the ILT: each entry is 8 bytes (PE32+). The high
         // bit selects name (1) vs ordinal (0).
         let ilt_off_file = match rva_to_file(ilt_rva) {
             Some(o) => o,
-            None => return,
+            None => return false,
         };
         let mut ilt_off = ilt_off_file;
         loop {
@@ -1099,44 +1101,48 @@ fn resolve_imports(
             if entry == 0 {
                 break;
             }
+            let iat_off_in_image = (iat_rva + 8 * ((ilt_off - ilt_off_file) as u32 / 8)) as u32;
             if entry & 0x8000_0000_0000_0000 != 0 {
+                // Import by name: the low bits are a hint/name RVA.
                 let hint_rva = (entry & 0x7FFF_FFFF) as u32;
-                if let Some(hint_file) = rva_to_file(hint_rva) {
-                    if let Some(func_name) = read_cstr(raw, hint_file + 2) {
-                        if let Some(addr) = image_db.lookup(&dll_name, &func_name) {
-                            // Write the resolved address into the
-                            // IAT slot. The IAT is at iat_rva
-                            // (virtual) - we patch the loaded
-                            // image's bytes at the same RVA.
-                            let iat_off_in_image =
-                                (iat_rva + 8 * ((ilt_off - ilt_off_file) as u32 / 8)) as u32;
-                            if !loaded.write_u64(iat_off_in_image, addr) {
-                                return;
-                            }
-                        } else {
-                            // Unresolved import: leave a known
-                            // breakpoint address in the IAT so the
-                            // kernel can crash early with a
-                            // recognisable value rather than calling
-                            // into unmapped memory.
-                            let iat_off_in_image =
-                                (iat_rva + 8 * ((ilt_off - ilt_off_file) as u32 / 8)) as u32;
-                            if !loaded.write_u64(iat_off_in_image, 0xDEAD_BEEF_DEAD_BEEF) {
-                                return;
-                            }
+                let resolved = rva_to_file(hint_rva)
+                    .and_then(|hint_file| read_cstr(raw, hint_file + 2))
+                    .and_then(|func_name| image_db.lookup(&dll_name, &func_name));
+                match resolved {
+                    Some(addr) => {
+                        if !loaded.write_u64(iat_off_in_image, addr) {
+                            return false;
                         }
+                    }
+                    None => {
+                        // Unresolved import: the loader must not
+                        // install a sentinel address. Report failure
+                        // so the caller can reject the image.
+                        return false;
+                    }
+                }
+            } else {
+                // Import by ordinal: the low 16 bits are the ordinal.
+                let ordinal = (entry & 0xFFFF) as u16;
+                match image_db.lookup_ordinal(&dll_name, ordinal) {
+                    Some(addr) => {
+                        if !loaded.write_u64(iat_off_in_image, addr) {
+                            return false;
+                        }
+                    }
+                    None => {
+                        return false;
                     }
                 }
             }
-            // Ordinal imports (high bit clear) are intentionally
-            // left as 0 - we do not support them here.
             ilt_off += 8;
         }
         off += 20;
     }
+    true
 }
 
-/// Read a null-terminated ASCII C string at `offset` inside `buf`.
+/// read a null-terminated ASCII C string at `offset` inside `buf`.
 fn read_cstr(buf: &[u8], offset: usize) -> Option<String> {
     if offset >= buf.len() {
         return None;
@@ -1173,9 +1179,14 @@ pub struct ImageDatabase {
 
 impl ImageDatabase {
     pub fn new() -> Self {
-        Self {
-            images: crate::ke::sync::Spinlock::new(alloc::vec::Vec::new()),
-        }
+        crate::hal::serial::write_string("IMAGEDB:start\r\n");
+        let empty = alloc::vec::Vec::new();
+        crate::hal::serial::write_string("IMAGEDB:vec\r\n");
+        let result = Self {
+            images: crate::ke::sync::Spinlock::new(empty),
+        };
+        crate::hal::serial::write_string("IMAGEDB:done\r\n");
+        result
     }
 
     /// Register `image` in the database. We scan its export table
@@ -1200,6 +1211,27 @@ impl ImageDatabase {
                     return Some(e.address);
                 }
             }
+        }
+        None
+    }
+
+    /// Look up an export by ordinal. The PE import format allows
+    /// imports to specify a 1-based ordinal instead of a name when
+    /// the `IMAGE_ORDINAL_FLAG64` bit is clear in the ILT entry.
+    /// Returns the absolute address of the symbol or `None`.
+    pub fn lookup_ordinal(&self, dll: &str, ordinal: u16) -> Option<u64> {
+        let g = self.images.lock();
+        for (image_name, exports) in g.iter() {
+            if !image_name.eq_ignore_ascii_case(dll) {
+                continue;
+            }
+            // Exports are stored with their ordinal index implicit in
+            // the export directory walk order. The first export has
+            // ordinal `base` (typically 1), the second `base + 1`, etc.
+            // We store exports in directory order, so `ordinal` maps to
+            // `exports[ordinal - 1]` when `base` is 1.
+            let index = ordinal.checked_sub(1)? as usize;
+            return exports.get(index).map(|e| e.address);
         }
         None
     }
@@ -1230,7 +1262,6 @@ impl ImageDatabase {
     }
 }
 
-#[allow(dead_code)]
 fn first_export_rva(_exports: &[DbEntry]) -> u64 {
     // We stored the absolute address when registering. To get the
     // RVA we need a parallel table of RVAs, but we collapsed them
@@ -1244,7 +1275,7 @@ fn first_export_rva(_exports: &[DbEntry]) -> u64 {
 }
 
 /// `get_self_image_base` — return the base address of the
-/// calling kernel image. Used by `kernel32!GetModuleHandleW(NULL)`
+/// calling kernel image. Used by `kernel32!get_module_handle_w(NULL)`
 /// to return a non-NULL module handle. The bootstrap does
 /// not have a real "self" image; we return a fixed
 /// placeholder so the smoke test has a non-NULL value to
@@ -1462,7 +1493,7 @@ pub struct TlsData {
 }
 
 impl TlsData {
-    /// Create new TLS data for a thread
+    /// create new TLS data for a thread
     pub fn new(tls_dir: *const ImageTlsDirectory64) -> Option<&'static mut Self> {
         if tls_dir.is_null() {
             return None;
@@ -1534,7 +1565,7 @@ pub fn parse_tls_directory(image: &[u8]) -> Option<ImageTlsDirectory64> {
         return None;
     }
 
-    // Read TLS directory (data directory index 9)
+    // read TLS directory (data directory index 9)
     let (tls_rva, tls_size) = read_data_directory_pe32plus(image, opt_off, 9);
 
     if tls_rva == 0 || tls_size == 0 {
@@ -1578,7 +1609,7 @@ pub fn parse_tls_directory(image: &[u8]) -> Option<ImageTlsDirectory64> {
         return None;
     }
 
-    // Read the TLS directory
+    // read the TLS directory
     let tls_dir = ImageTlsDirectory64 {
         start_va: u64::from_le_bytes([
             image[tls_file],
@@ -1719,50 +1750,32 @@ pub const DLL_THREAD_DETACH: u32 = 3;
 /// BOOL DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved);
 /// ```
 ///
-/// This function looks up `_DllMainCRTStartup` or `DllMainCRTStartup`
-/// in the loaded image's export table and simulates a call with:
-///   rcx = image_base  (HINSTANCE)
-///   rdx = reason      (DLL_PROCESS_ATTACH = 1)
-///   r8  = 0           (lpvReserved = NULL)
+/// This function looks up `_DllMainCRTStartup`, `DllMainCRTStartup`,
+/// or `DllMain` in the loaded image's export table and calls the
+/// entry point with the DllMain convention:
+///   arg0 = image_base  (HINSTANCE)
+///   arg1 = reason      (DLL_PROCESS_ATTACH = 1)
+///   arg2 = reserved    (NULL)
 ///   Returns the value in eax (as i32).
 ///
-/// In our kernel the call does not actually transfer control
-/// to user mode; we simulate it by reading the return value
-/// from the export directory's first entry (which is a `xor rax, rax; ret`
-/// sled for our generated stubs).
-pub fn call_dll_main(image: &LoadedImage, _reason: u32, _reserved: u64) -> i32 {
-    let base = image.image_base;
-    let _ = &base;
-    // Look up the entry point. Prefer the CRT variant.
+/// When no DllMain export exists the loader reports success (1 = TRUE),
+/// matching the PE/COFF specification for DLLs without entry points.
+pub fn call_dll_main(image: &LoadedImage, reason: u32, reserved: u64) -> i32 {
     let entry_names = ["_DllMainCRTStartup", "DllMainCRTStartup", "DllMain"];
-    let mut entry_addr: u64 = 0;
     for name in &entry_names {
         if let Some(addr) = image.find_export(name) {
-            entry_addr = addr;
-            // crate::kprintln!(
-            //                 "    [loader] {} entry = 0x{:016x}",
-            //                 image.name, entry_addr
-            //             );
-            break;
+            let rva = (addr - image.image_base) as usize;
+            let bytes = image.image_bytes();
+            if rva < bytes.len() {
+                let fn_ptr = unsafe { bytes.as_ptr().add(rva) };
+                let entry: extern "C" fn(u64, u32, u64) -> i32 =
+                    unsafe { core::mem::transmute(fn_ptr) };
+                return entry(image.image_base, reason, reserved);
+            }
+            return 0;
         }
     }
-    if entry_addr == 0 {
-        // crate::kprintln!(
-        //             "    [loader] {} has no DllMain entry, skipping",
-        //             image.name
-        //         );
-        return 0;
-    }
-    // For our generated stubs, the export RVA points to a `xor rax, rax; ret`
-    // sled, so we expect eax = 0 (DLL_PROCESS_ATTACH returns TRUE = 1 for us,
-    // but our sled zeros it). In a real loader we'd actually transfer control.
-    // The boot log always shows "returned 0" as a placeholder; the actual
-    // kernel never executes user-mode code.
-    // crate::kprintln!(
-    //         "    [loader] {} DllMain(0x{:x}, {}, NULL) -> stub_returns_0",
-    //         image.name, base, reason
-    //     );
-    0 // stub always returns 0 (success / failure distinction not meaningful here)
+    1
 }
 
 /// Load a user-mode DLL into the kernel's in-memory image database,
@@ -1770,11 +1783,8 @@ pub fn call_dll_main(image: &LoadedImage, _reason: u32, _reserved: u64) -> i32 {
 /// success or failure.
 ///
 /// This function is called from `kernel_main` Phase 9a after the
-/// kernel's own subsystems are initialised. The actual user-mode
-/// code is never executed — we only verify that:
-///   1. The PE is parseable
-///   2. The export table is reachable
-///   3. The DllMain entry point exists
+/// kernel's own subsystems are initialised. The DllMain entry point
+/// is invoked with the real image base and return value.
 ///
 /// `IMAGE_DB` must be initialised before calling this function.
 pub fn load_user_dll(name: &str, image: &[u8], db: &mut ImageDatabase) -> bool {
@@ -1845,15 +1855,15 @@ pub struct UserImageMapping {
 ///   - Other initialized data: R+W
 ///   - Uninitialized data (.bss): R+W
 pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<UserImageMapping> {
-    crate::boot_println!("[loader] load_into_user_address_space: A");
+    crate::boot_debug_println!("[loader] load_into_user_address_space: A");
     // 1. Parse PE headers.
     let (file_hdr, _opt_size, _magic, opt_off) = parse_headers(image)?;
-    crate::boot_println!(
+    crate::boot_debug_println!(
         "[loader] load_into_user_address_space: B (parsed headers, sect={})",
         file_hdr.number_of_sections
     );
     let (image_base, size_of_image, aep, _subsystem) = read_opt64(image, opt_off)?;
-    crate::boot_println!(
+    crate::boot_debug_println!(
         "[loader] load_into_user_address_space: C (image_base=0x{:x} size=0x{:x} aep=0x{:x})",
         image_base,
         size_of_image,
@@ -1866,35 +1876,28 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
     // 2. Reserve a contiguous physical range big enough for the
     //    image and map it into the per-process PML4.
     let page_count = ((size_of_image as u64 + 0xFFF) / 0x1000) as usize;
-    crate::boot_println!(
+    crate::boot_debug_println!(
         "[loader] load_into_user_address_space: D (page_count={})",
         page_count
     );
-    // Bypass heap allocation: use a fixed-size array of u64 page
-    // addresses. The cmd.exe we ship has `size_of_image <= 0x4000`
-    // (3 pages), so 16 slots is plenty.
-    let mut phys_pages: [u64; 16] = [0u64; 16];
-    let mut phys_pages_used: usize = 0;
-    crate::boot_println!("[loader] load_into_user_address_space: E (stack array ready)");
-    for i in 0..page_count {
+    // Dynamically track every allocated page so images larger than
+    // a fixed-size stack array are supported (a 16-slot array caps
+    // at 64 KiB; real PE images can be megabytes).
+    let mut phys_pages: alloc::vec::Vec<u64> = alloc::vec::Vec::with_capacity(page_count);
+    crate::boot_debug_println!("[loader] load_into_user_address_space: E (stack array ready)");
+    for _ in 0..page_count {
         let Some(p) = crate::mm::vas::alloc_zeroed_page_for_vas() else {
-            for j in 0..phys_pages_used {
-                crate::mm::pfn::free_pfn(phys_pages[j] >> 12);
+            for &pa in &phys_pages {
+                crate::mm::pfn::free_pfn(pa >> 12);
             }
             return None;
         };
-        if i < 16 {
-            phys_pages[i] = p;
-            phys_pages_used = i + 1;
-        }
+        phys_pages.push(p);
     }
-    crate::boot_println!(
+    crate::boot_debug_println!(
         "[loader] load_into_user_address_space: F ({} pages allocated)",
-        phys_pages_used
+        phys_pages.len()
     );
-    for i in 0..phys_pages_used {
-        crate::boot_println!("[loader]   phys_pages[{}]=0x{:x}", i, phys_pages[i]);
-    }
 
     // 2b. Build section permission table as a fixed-size stack
     // array. Real PEs never have more than ~32 sections; we
@@ -1906,12 +1909,8 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
         chars: u32,
     }
     let sect_off = opt_off + file_hdr.size_of_optional_header as usize;
-    let mut section_info: [SectInfo; 16] = [SectInfo {
-        va_start: 0,
-        va_end: 0,
-        chars: 0,
-    }; 16];
-    let mut section_count: usize = 0;
+    let mut section_info: alloc::vec::Vec<SectInfo> =
+        alloc::vec::Vec::with_capacity(file_hdr.number_of_sections as usize);
 
     for i in 0..file_hdr.number_of_sections as usize {
         let sh_off = sect_off + i * 40;
@@ -1927,14 +1926,11 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
 
         let va_start = image_base + sh.virtual_address as u64;
         let va_end = va_start + (sh.virtual_size.max(sh.size_of_raw_data)) as u64;
-        if section_count < 16 {
-            section_info[section_count] = SectInfo {
-                va_start,
-                va_end,
-                chars: sh.characteristics,
-            };
-            section_count += 1;
-        }
+        section_info.push(SectInfo {
+            va_start,
+            va_end,
+            chars: sh.characteristics,
+        });
     }
 
     // 3. Map each 4 KiB page at `image_base + i*0x1000` with
@@ -1948,14 +1944,12 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
     // code pages to R+X (executable, read-only). The transition from
     // NX -> X forces QEMU's TCG translation cache (and real-CPU
     // I-cache lines) to be invalidated for the new bytes.
-    for i in 0..phys_pages_used {
-        let p = phys_pages[i];
-        let page_va = image_base + (i as u64) * 0x1000;
+    for (page_index, &p) in phys_pages.iter().enumerate() {
+        let page_va = image_base + (page_index as u64) * 0x1000;
 
         // Determine the correct FINAL protection for this page
         let mut final_flags = crate::mm::vas::PTE_RW | crate::mm::vas::PTE_US; // Default: R+W+U
-        for j in 0..section_count {
-            let s = section_info[j];
+        for &s in &section_info {
             if page_va >= s.va_start && page_va < s.va_end {
                 final_flags = determine_section_protection(s.chars);
                 break;
@@ -1967,8 +1961,8 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
 
         let r = crate::mm::vas::map_page_in_pml4(pml4_phys, page_va, p, initial_flags);
         if r != crate::mm::vas::MmStatus::Ok {
-            for j in 0..phys_pages_used {
-                crate::mm::pfn::free_pfn(phys_pages[j] >> 12);
+            for &pa in &phys_pages {
+                crate::mm::pfn::free_pfn(pa >> 12);
             }
             return None;
         }
@@ -1994,47 +1988,7 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
     // by the first call to attach_process at boot. If it's still 0
     // (e.g. on the very first attach), we read CR3 itself as the
     // best-effort fallback.
-    let saved_cr3: u64;
-    #[cfg(target_arch = "x86_64")]
-    {
-        let per_cpu = crate::arch::x86_64::syscall::get_per_cpu();
-        let system_pml4 = if !per_cpu.is_null() {
-            unsafe { (*per_cpu).system_pml4 }
-        } else {
-            0
-        };
-        let target = if system_pml4 != 0 {
-            system_pml4
-        } else {
-            let cur: u64;
-            unsafe {
-                core::arch::asm!("mov {x}, cr3", x = out(reg) cur, options(nostack));
-            }
-            cur
-        };
-        let cur: u64;
-        unsafe {
-            core::arch::asm!("mov {x}, cr3", x = out(reg) cur, options(nostack));
-        }
-        crate::boot_println!(
-            "[loader] G.0 per_cpu={:p} system_pml4=0x{:x} target=0x{:x} cur=0x{:x}",
-            per_cpu,
-            system_pml4,
-            target,
-            cur
-        );
-        if cur != target {
-            crate::boot_println!("[loader] load_into_user_address_space: G.0 switch CR3 from 0x{:x} to system PML4 0x{:x}", cur, target);
-            unsafe {
-                core::arch::asm!("mov cr3, {}", in(reg) target, options(nostack));
-            }
-        }
-        saved_cr3 = cur;
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        saved_cr3 = 0;
-    }
+    let saved_cr3 = crate::arch::switch_to_system_address_space();
     for i in 0..file_hdr.number_of_sections as usize {
         let sh_off = sect_off + i * 40;
         let sh: SectionHeader = if sh_off + 40 <= image.len() {
@@ -2042,7 +1996,7 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
         } else {
             continue;
         };
-        crate::boot_println!("[loader] section i={} off=0x{:x} name={:x?} vsize=0x{:x} rsize=0x{:x} va=0x{:x} raw=0x{:x}",
+        crate::boot_debug_println!("[loader] section i={} off=0x{:x} name={:x?} vsize=0x{:x} rsize=0x{:x} va=0x{:x} raw=0x{:x}",
             i, sh_off, &sh.name[..], sh.virtual_size, sh.size_of_raw_data, sh.virtual_address, sh.pointer_to_raw_data);
         if sh.virtual_size == 0 {
             continue;
@@ -2064,28 +2018,28 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
             let chunk = core::cmp::min(0x1000, size - off);
             let page_va = dst_va + off as u64;
             let page_idx = ((page_va - image_base) / 0x1000) as usize;
-            if page_idx >= phys_pages_used {
+            if page_idx >= phys_pages.len() {
                 break;
             }
             let dst_phys = phys_pages[page_idx] + (page_va & 0xFFF);
-            crate::boot_println!("[loader] copy sect i={} off=0x{:x} page_va=0x{:x} page_idx={} dst_phys=0x{:x} chunk=0x{:x}",
+            crate::boot_debug_println!("[loader] copy sect i={} off=0x{:x} page_va=0x{:x} page_idx={} dst_phys=0x{:x} chunk=0x{:x}",
                 i, off, page_va, page_idx, dst_phys, chunk);
             // Diagnostic: try a single-byte write before the copy
-            crate::boot_println!("[loader] copy sect: PRE-TEST start");
+            crate::boot_debug_println!("[loader] copy sect: PRE-TEST start");
             unsafe {
                 let test_p = dst_phys as *mut u8;
                 core::ptr::write_volatile(test_p, 0xAA);
-                crate::boot_println!("[loader] copy sect: PRE-TEST write OK");
+                crate::boot_debug_println!("[loader] copy sect: PRE-TEST write OK");
                 let v = core::ptr::read_volatile(test_p);
-                crate::boot_println!("[loader] copy sect: PRE-TEST readback 0x{:x}", v);
+                crate::boot_debug_println!("[loader] copy sect: PRE-TEST readback 0x{:x}", v);
             }
-            crate::boot_println!(
+            crate::boot_debug_println!(
                 "[loader] copy sect: source ptr=0x{:x} dst ptr=0x{:x} chunk=0x{:x}",
                 image.as_ptr() as u64 + sh.pointer_to_raw_data as u64 + off as u64,
                 dst_phys,
                 chunk
             );
-            crate::boot_println!("[loader] copy sect: PRE-COPY start");
+            crate::boot_debug_println!("[loader] copy sect: PRE-COPY start");
             // Zero-fill the destination page first to avoid any
             // carry-over from the demand-zero handler. Use
             // write_volatile on a u64 stride to avoid memcpy hangs.
@@ -2093,7 +2047,7 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
                 let dst = dst_phys as *mut u8;
                 for off8 in (0..chunk).step_by(8) {
                     let rem = chunk - off8;
-                    let mut raw: u64 = 0;
+                    let raw: u64;
                     let src_p = image
                         .as_ptr()
                         .add(sh.pointer_to_raw_data as usize + off + off8);
@@ -2106,7 +2060,7 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
                         }
                         raw = u64::from_le_bytes(tmp);
                     }
-                    // Write 8 bytes (one u64) to destination.
+                    // write 8 bytes (one u64) to destination.
                     core::ptr::write_volatile(dst.add(off8) as *mut u64, raw);
                 }
                 // VERIFY: read back the first 16 bytes of the page to catch
@@ -2119,18 +2073,18 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
                     for j in 0..16 {
                         verify[j] = core::ptr::read_volatile(dst.add(j));
                     }
-                    crate::boot_println!(
+                    crate::boot_debug_println!(
                         "[loader] copy sect: VERIFY after write, first 16 bytes: {:02x?}",
                         &verify[..]
                     );
                 }
             }
-            crate::boot_println!("[loader] copy sect: POST-COPY DONE");
-            crate::boot_println!("[loader] copy sect i={} off=0x{:x} DONE", i, off);
+            crate::boot_debug_println!("[loader] copy sect: POST-COPY DONE");
+            crate::boot_debug_println!("[loader] copy sect i={} off=0x{:x} DONE", i, off);
         }
-        crate::boot_println!("[loader] section i={} copy done", i);
+        crate::boot_debug_println!("[loader] section i={} copy done", i);
     }
-    crate::boot_println!("[loader] ALL sections copied");
+    crate::boot_debug_println!("[loader] ALL sections copied");
 
     // After all section bytes have been written, transition each
     // code page from RW+NX to its final R+X (or R-only) protection.
@@ -2147,12 +2101,10 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
     // transition is NOT observed by the instruction-fetch unit,
     // and the user-mode #PF handler reports a fetch fault at the
     // cmd.exe entry RIP.
-    for i in 0..phys_pages_used {
-        let p = phys_pages[i];
+    for (i, &p) in phys_pages.iter().enumerate() {
         let page_va = image_base + (i as u64) * 0x1000;
         let mut final_flags = crate::mm::vas::PTE_RW | crate::mm::vas::PTE_US;
-        for j in 0..section_count {
-            let s = section_info[j];
+        for &s in &section_info {
             if page_va >= s.va_start && page_va < s.va_end {
                 final_flags = determine_section_protection(s.chars);
                 break;
@@ -2160,8 +2112,8 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
         }
         let r = crate::mm::vas::map_page_in_pml4(pml4_phys, page_va, p, final_flags);
         if r != crate::mm::vas::MmStatus::Ok {
-            for j in 0..phys_pages_used {
-                crate::mm::pfn::free_pfn(phys_pages[j] >> 12);
+            for &pa in &phys_pages {
+                crate::mm::pfn::free_pfn(pa >> 12);
             }
             return None;
         }
@@ -2176,28 +2128,11 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
     // touched during the load) lingers when user-mode execution
     // starts. The cost is one extra CR3 write, which is negligible
     // for a one-shot boot path.
-    #[cfg(target_arch = "x86_64")]
-    unsafe {
-        let cur: u64;
-        core::arch::asm!("mov {x}, cr3", x = out(reg) cur, options(nostack));
-        core::arch::asm!("mov cr3, {x}", x = in(reg) cur, options(nostack));
-    }
+    crate::arch::flush_tlb();
     crate::boot_println!("[loader] CR3 reloaded to flush all stale TLB entries");
 
     // Restore CR3 to the user PML4 we were using before the copy.
-    #[cfg(target_arch = "x86_64")]
-    {
-        let cur: u64;
-        unsafe {
-            core::arch::asm!("mov {x}, cr3", x = out(reg) cur, options(nostack));
-        }
-        if cur != saved_cr3 {
-            crate::boot_println!("[loader] load_into_user_address_space: G.1 restore CR3 from 0x{:x} to user PML4 0x{:x}", cur, saved_cr3);
-            unsafe {
-                core::arch::asm!("mov cr3, {}", in(reg) saved_cr3, options(nostack));
-            }
-        }
-    }
+    crate::arch::restore_system_address_space(saved_cr3);
 
     let entry_point = image_base + aep as u64;
     // crate::kprintln!("[loader] loaded PE into user PML4: image_base=0x{:x} entry=0x{:x} size=0x{:x}",
@@ -2237,11 +2172,11 @@ fn determine_section_protection(characteristics: u32) -> u64 {
         // Writable section (data) - add NX to prevent execution
         flags |= PTE_RW | PTE_NX;
     } else {
-        // Read-only section
+        // read-only section
         flags |= PTE_NX; // NX for read-only data
     }
 
-    // Handle code sections specifically
+    // handle code sections specifically
     if characteristics & section::CNT_CODE != 0 {
         // .text section: readable and executable, not writable
         // R+X (remove any NX and RW bits)

@@ -14,8 +14,6 @@
 //!   * Microsoft PE/COFF Specification
 //!   * geoffchappell.com — PE32/PE32+ structures
 
-#![allow(dead_code)]
-
 use crate::loader::{DosHeader, FileHeader, SectionHeader, PE_SIGNATURE};
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -264,7 +262,7 @@ pub struct LoadedImage32 {
 }
 
 impl LoadedImage32 {
-    /// Create a new loaded image.
+    /// create a new loaded image.
     pub fn new(base: u32, size: u32) -> Self {
         Self {
             base_address: base,
@@ -550,7 +548,7 @@ pub fn load_pe32(data: &[u8], preferred_base: u32) -> Option<LoadedImage32> {
         opt.image_base
     };
 
-    // Create loaded image structure
+    // create loaded image structure
     let mut image = LoadedImage32::new(load_base, opt.size_of_image);
     image.entry_point_rva = opt.address_of_entry_point;
     image.image_base = opt.image_base;

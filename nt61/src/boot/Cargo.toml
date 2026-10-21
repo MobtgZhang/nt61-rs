@@ -6,16 +6,17 @@ description = "NT6.1.7601 UEFI Boot Manager"
 authors = ["NT6.1.7601 Team"]
 
 [dependencies]
-uefi = { version = "0.37.0", features = ["alloc", "logger", "global_allocator", "panic_handler"] }
+uefi = { version = "0.37.0", features = ["alloc", "logger", "global_allocator"] }
+uefi-raw = "0.14.0"
 bitflags = "2.13.0"
+nt61-bootfs = { path = "../bootfs" }
 heapless = "0.9.3"
 linked_list_allocator = "0.10.6"
-ttf-parser = { version = "0.25", default-features = false, features = ["no-std-float"] }
+nt61-fonts = { path = "../fonts" }
 
 [[bin]]
 name = "nt61-boot"
 path = "src/main.rs"
-required-features = ["x86_64"]
 
 [features]
 # nt61-boot.efi is currently an x86_64-only UEFI binary. The
@@ -25,5 +26,10 @@ required-features = ["x86_64"]
 # harness also only exercise x86_64. Other architectures should
 # be gated here until the boot manager is properly ported.
 x86_64 = []
+aarch64 = []
+riscv64 = []
+loongarch64 = []
+log_level_warn = []
+log_level_debug = ["log_level_warn"]
 
 # Profile settings are inherited from the workspace root.

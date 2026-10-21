@@ -179,15 +179,10 @@ fn cstr16_to_string(cstr: &uefi::CStr16) -> String {
     result
 }
 
-/// Create a CString16 from a &str, ensuring it's valid for UEFI APIs.
+/// create a CString16 from a &str, ensuring it's valid for UEFI APIs.
 fn make_cstring16(s: &str) -> Option<CString16> {
     if s.contains('\0') {
         return None;
     }
     CString16::try_from(s).ok()
-}
-
-/// Reset directory readout position so it can be re-enumerated.
-pub fn reset_directory(dir: &mut Directory) {
-    let _ = dir.reset_entry_readout();
 }

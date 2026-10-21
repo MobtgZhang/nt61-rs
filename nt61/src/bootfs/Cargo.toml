@@ -1,0 +1,7 @@
+[package]
+name = "nt61-bootfs"
+version = "0.1.0"
+edition = "2021"
+description = "Filesystem boot readers shared by the NT6.1 boot manager and winload"
+
+[dependencies]

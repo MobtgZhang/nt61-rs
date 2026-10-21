@@ -29,31 +29,46 @@
 
 /// Boot mode selected by `bootmgr` and forwarded to the kernel via
 /// `BootInfo.boot_mode`. The kernel uses this to gate certain
-/// init-time behaviour (e.g. spawn the Safe-Mode CMD shell instead
-/// of going straight to IDLE, or enable the debug logger).
+/// init-time behaviour (e.g. suppress all boot log output, show
+/// the Windows 7 boot animation, or enable the debug logger).
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BootMode {
-    /// Default — full Windows 7 startup, drivers + services +
-    /// SMSS + CSRSS + IDLE.
-    Normal = 0,
-    /// Safe Mode with Command Prompt — boot only the core drivers
-    /// and drop into a `cmd.exe`-style shell instead of the
-    /// graphical subsystem.
-    SafeModeCmd = 1,
-    /// Debug boot — enable the kernel debugger transport (kdcom)
-    /// and stream every `[kdbg]` line to COM1 before IDLE.
-    SafeModeDebug = 2,
+    /// Desktop mode — no boot log output, Windows 7 boot animation,
+    /// then enter Ring 3 `cmd.exe`. Future: enter the desktop GUI.
+    Desktop = 0,
+    /// CMD mode — no boot log output, Windows 7 boot animation,
+    /// then enter Ring 3 `cmd.exe`. Future: CMD GUI window.
+    Cmd = 1,
+    /// Debug CMD mode — full verbose boot log output visible,
+    /// no animation, then enter Ring 3 `cmd.exe`.
+    DebugCmd = 2,
+    /// Safe mode — full verbose boot log output visible, no
+    /// animation, enter `cmd.exe` with minimal drivers and no
+    /// user-mode subsystem init.
+    SafeMode = 3,
 }
 
 impl BootMode {
     pub fn from_u32(v: u32) -> Self {
         match v {
-            0 => BootMode::Normal,
-            1 => BootMode::SafeModeCmd,
-            2 => BootMode::SafeModeDebug,
-            _ => BootMode::Normal,
+            0 => BootMode::Desktop,
+            1 => BootMode::Cmd,
+            2 => BootMode::DebugCmd,
+            3 => BootMode::SafeMode,
+            _ => BootMode::Desktop,
         }
+    }
+
+    /// True when all boot log output should be suppressed at
+    /// runtime (Desktop and Cmd modes show only the animation).
+    pub const fn suppress_boot_log(self) -> bool {
+        matches!(self, BootMode::Desktop | BootMode::Cmd)
+    }
+
+    /// True when the boot animation should play (Desktop and Cmd).
+    pub const fn show_animation(self) -> bool {
+        matches!(self, BootMode::Desktop | BootMode::Cmd)
     }
 }
 
@@ -87,6 +102,22 @@ impl LoadedHive {
 /// `BootInfo`. Must match `registry::cm::BOOTINFO_MAX_HIVES`
 /// and `MAX_HIVES` in `winload/src/main.rs`.
 pub const BOOTINFO_MAX_HIVES: usize = 8;
+
+/// A physical register range discovered from firmware description data.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DeviceRange {
+    pub base: u64,
+    pub size: u64,
+}
+
+/// The small set of hardware resources generic UEFI firmware exposes.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DeviceTreeHardware {
+    pub uart: Option<DeviceRange>,
+    pub gicd: Option<DeviceRange>,
+    pub gicc: Option<DeviceRange>,
+    pub pci_ecam: Option<DeviceRange>,
+}
 
 /// Boot information passed from bootloader.
 ///
@@ -257,6 +288,20 @@ pub struct BootInfo {
     /// the value is the runtime address of the trampoline computed
     /// via RIP-relative LEA in `install_handoff_pointer`.
     pub ntoskrnl_handoff_callback: u64,
+
+    // =====================================================================
+    // Firmware hardware description (generic UEFI platforms)
+    // =====================================================================
+    /// Physical address of a runtime-surviving copy of the flattened
+    /// device tree. Generic AArch64 UEFI exposes this through the
+    /// EFI_DTB_TABLE_GUID configuration table. Zero means unavailable.
+    pub device_tree_base: u64,
+    /// Exact flattened device tree size in bytes.
+    pub device_tree_size: u32,
+    /// DTB-derived hardware description. This is populated either from a
+    /// flattened device tree or the EDK2 FDT client protocol when the
+    /// firmware does not install the Linux EFI DTB configuration table.
+    pub device_tree_hardware: DeviceTreeHardware,
 }
 
 impl BootInfo {
@@ -264,7 +309,7 @@ impl BootInfo {
     pub const MAGIC: u64 = 0x4E543631_424F4F54;
     /// Current contract version. Bumped whenever a field is added
     /// or removed. Match this against the loader's build constant.
-    pub const VERSION: u64 = 6;
+    pub const VERSION: u64 = 8;
 
     pub fn is_valid(&self) -> bool {
         self.magic == Self::MAGIC
@@ -290,7 +335,7 @@ impl BootInfo {
             smp_info: 0,
             hives: 0,
             hive_count: 0,
-            boot_mode: BootMode::Normal as u32,
+            boot_mode: BootMode::Desktop as u32,
             esp_disk_start: 0,
             esp_disk_sectors: 0,
             boot_driver_count: 0,
@@ -325,6 +370,9 @@ impl BootInfo {
             bootvid_image_base: 0,
             bootvid_image_size: 0,
             ntoskrnl_handoff_callback: 0,
+            device_tree_base: 0,
+            device_tree_size: 0,
+            device_tree_hardware: DeviceTreeHardware::default(),
         }
     }
 
@@ -347,7 +395,7 @@ impl BootInfo {
             smp_info: 0,
             hives: 0,
             hive_count: 0,
-            boot_mode: BootMode::Normal as u32,
+            boot_mode: BootMode::Desktop as u32,
             esp_disk_start: 0,
             esp_disk_sectors: 0,
             boot_driver_count: 0,
@@ -382,6 +430,9 @@ impl BootInfo {
             bootvid_image_base: 0,
             bootvid_image_size: 0,
             ntoskrnl_handoff_callback: 0,
+            device_tree_base: 0,
+            device_tree_size: 0,
+            device_tree_hardware: DeviceTreeHardware::default(),
         }
     }
 }

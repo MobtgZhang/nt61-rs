@@ -92,8 +92,6 @@
 //! 0x08: nr_offsets (u16)
 //! 0x0A: [for each: offset(4) to lh/lf block]
 
-#![allow(dead_code)]
-
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
@@ -103,7 +101,6 @@ const REGF_HEADER_SIZE: usize = 0x1000;
 const HBIN_BASE: usize = 0x1000;
 
 const REGF_MAGIC: &[u8; 4] = b"regf";
-const HBIN_MAGIC: &[u8; 4] = b"hbin";
 const NK_MAGIC: &[u8; 2] = b"nk";
 const VK_MAGIC: &[u8; 2] = b"vk";
 const LF_MAGIC: &[u8; 2] = b"lf";
@@ -113,44 +110,52 @@ const RI_MAGIC: &[u8; 2] = b"ri";
 /// Registry data types
 pub const REG_SZ: u32 = 1;
 pub const REG_EXPAND_SZ: u32 = 2;
-pub const REG_BINARY: u32 = 3;
 pub const REG_DWORD: u32 = 4;
-pub const REG_MULTI_SZ: u32 = 7;
-pub const REG_QWORD: u32 = 11;
 
 #[derive(Debug)]
 pub enum HiveError {
     TooSmall,
     BadMagic,
-    BadChecksum,
     BadVersion,
-    BadCellKind,
-    UnsupportedVersion,
-    BadUtf16,
     OutOfBounds,
     Truncated,
-    Other(String),
 }
 
 fn read_u32(data: &[u8], off: usize) -> Option<u32> {
-    if off + 4 > data.len() { return None; }
-    Some(u32::from_le_bytes([data[off], data[off+1], data[off+2], data[off+3]]))
+    if off + 4 > data.len() {
+        return None;
+    }
+    Some(u32::from_le_bytes([
+        data[off],
+        data[off + 1],
+        data[off + 2],
+        data[off + 3],
+    ]))
 }
 
 fn read_i32(data: &[u8], off: usize) -> Option<i32> {
-    if off + 4 > data.len() { return None; }
-    Some(i32::from_le_bytes([data[off], data[off+1], data[off+2], data[off+3]]))
+    if off + 4 > data.len() {
+        return None;
+    }
+    Some(i32::from_le_bytes([
+        data[off],
+        data[off + 1],
+        data[off + 2],
+        data[off + 3],
+    ]))
 }
 
 fn read_u16(data: &[u8], off: usize) -> Option<u16> {
-    if off + 2 > data.len() { return None; }
-    Some(u16::from_le_bytes([data[off], data[off+1]]))
+    if off + 2 > data.len() {
+        return None;
+    }
+    Some(u16::from_le_bytes([data[off], data[off + 1]]))
 }
 
-/// Compute header checksum: xor of first 0x1F8 bytes (127 dwords)
+/// Compute header checksum: xor of dwords [0, 0x1FC) (127 dwords)
 fn compute_header_checksum(data: &[u8]) -> u32 {
     let mut sum = 0u32;
-    for i in (0..0x1F8).step_by(4) {
+    for i in (0..0x1FC).step_by(4) {
         sum ^= read_u32(data, i).unwrap_or(0);
     }
     sum
@@ -162,12 +167,14 @@ fn decode_name(data: &[u8]) -> String {
     if data.is_empty() {
         return String::new();
     }
-    
+
     // Check first byte - if it's printable ASCII, treat as ASCII
     if data[0] >= 0x20 && data[0] < 0x7F {
         // ASCII encoding - find null terminator
         let end = data.iter().position(|&b| b == 0).unwrap_or(data.len());
-        String::from_utf8_lossy(&data[..end]).trim_end_matches('\0').to_string()
+        String::from_utf8_lossy(&data[..end])
+            .trim_end_matches('\0')
+            .to_string()
     } else {
         // UTF-16LE encoding
         decode_utf16le(data)
@@ -181,8 +188,10 @@ fn decode_utf16le(data: &[u8]) -> String {
     }
     let mut out = String::new();
     for i in (0..data.len()).step_by(2) {
-        let cu = u16::from_le_bytes([data[i], data[i+1]]);
-        if cu == 0 { break; }
+        let cu = u16::from_le_bytes([data[i], data[i + 1]]);
+        if cu == 0 {
+            break;
+        }
         match char::from_u32(cu as u32) {
             Some(c) => out.push(c),
             None => out.push('\u{FFFD}'), // Replacement character
@@ -206,11 +215,15 @@ impl Value {
             return None;
         }
         let bytes = &self.data;
-        if bytes.len() % 2 != 0 { return None; }
+        if bytes.len() % 2 != 0 {
+            return None;
+        }
         let mut out = String::new();
         for i in (0..bytes.len()).step_by(2) {
-            let cu = u16::from_le_bytes([bytes[i], bytes[i+1]]);
-            if cu == 0 { break; }
+            let cu = u16::from_le_bytes([bytes[i], bytes[i + 1]]);
+            if cu == 0 {
+                break;
+            }
             match char::from_u32(cu as u32) {
                 Some(c) => out.push(c),
                 None => return None,
@@ -220,50 +233,21 @@ impl Value {
     }
 
     pub fn as_u32(&self) -> Option<u32> {
-        if self.data.len() < 4 { return None; }
-        Some(u32::from_le_bytes([self.data[0], self.data[1], self.data[2], self.data[3]]))
-    }
-
-    /// Decode a REG_MULTI_SZ (type 7) string list value.
-    pub fn as_string_list(&self) -> Option<Vec<String>> {
-        if self.value_type != REG_MULTI_SZ {
+        if self.data.len() < 4 {
             return None;
         }
-        let bytes = &self.data;
-        if bytes.len() % 2 != 0 { return None; }
-        let mut result = Vec::new();
-        let mut current = String::new();
-
-        for i in (0..bytes.len()).step_by(2) {
-            let cu = u16::from_le_bytes([bytes[i], bytes[i+1]]);
-            if cu == 0 {
-                if !current.is_empty() {
-                    result.push(current.clone());
-                    current.clear();
-                } else if !result.is_empty() {
-                    break;
-                }
-            } else {
-                match char::from_u32(cu as u32) {
-                    Some(c) => current.push(c),
-                    None => return None,
-                }
-            }
-        }
-
-        if !current.is_empty() {
-            result.push(current);
-        }
-
-        Some(result)
+        Some(u32::from_le_bytes([
+            self.data[0],
+            self.data[1],
+            self.data[2],
+            self.data[3],
+        ]))
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct KeyNode {
-    pub offset: usize,
     pub name: String,
-    pub flags: u16,
     pub nr_values: u32,
     pub nr_subkeys: u32,
     pub subkey_lf: u32,
@@ -312,7 +296,11 @@ impl<'a> Hive<'a> {
             return Err(HiveError::OutOfBounds);
         }
 
-        Ok(Hive { data, hbin_base: HBIN_BASE, root_offset })
+        Ok(Hive {
+            data,
+            hbin_base: HBIN_BASE,
+            root_offset,
+        })
     }
 
     /// Get the root key node.
@@ -326,31 +314,31 @@ impl<'a> Hive<'a> {
         self.hbin_base + hbin_offset as usize
     }
 
-    /// Read an nk block at the given file offset.
+    /// read an nk block at the given file offset.
     ///
     /// Cell layout (per the registry file format spec):
-    /// - Offset 0: Size (i32, negative for allocated)
-    /// - Offset 4: Signature "nk" (2 bytes)
-    /// - Offset 6: Flags (u16)
-    /// - Offset 8: Last written timestamp (i64)
-    /// - Offset 16: Access bits / Spare (u32)
-    /// - Offset 20: Parent key offset (u32, HBIN-relative)
-    /// - Offset 24: Number of subkeys (u32)
-    /// - Offset 28: Number of volatile subkeys (u32)
-    /// - Offset 32: Subkeys list offset (u32, HBIN-relative)
-    /// - Offset 36: Volatile subkeys list offset (u32)
-    /// - Offset 40: Number of values (u32)
-    /// - Offset 44: Values list offset (u32, HBIN-relative)
-    /// - Offset 48: Security descriptor offset (u32)
-    /// - Offset 52: Class name offset (u32)
-    /// - Offset 56: Largest subkey name length (u32)
-    /// - Offset 60: Largest subkey class name length (u32)
-    /// - Offset 64: Largest value name length (u32)
-    /// - Offset 68: Largest value data size (u32)
-    /// - Offset 72: WorkVar (u32)
-    /// - Offset 76: Key name length (u16, in bytes)
-    /// - Offset 78: Class name length (u16)
-    /// - Offset 80: Key name (ASCII or UTF-16LE)
+    /// - offset 0: Size (i32, negative for allocated)
+    /// - offset 4: Signature "nk" (2 bytes)
+    /// - offset 6: flags (u16)
+    /// - offset 8: Last written timestamp (i64)
+    /// - offset 16: Access bits / Spare (u32)
+    /// - offset 20: Parent key offset (u32, HBIN-relative)
+    /// - offset 24: Number of subkeys (u32)
+    /// - offset 28: Number of volatile subkeys (u32)
+    /// - offset 32: Subkeys list offset (u32, HBIN-relative)
+    /// - offset 36: Volatile subkeys list offset (u32)
+    /// - offset 40: Number of values (u32)
+    /// - offset 44: Values list offset (u32, HBIN-relative)
+    /// - offset 48: Security descriptor offset (u32)
+    /// - offset 52: Class name offset (u32)
+    /// - offset 56: Largest subkey name length (u32)
+    /// - offset 60: Largest subkey class name length (u32)
+    /// - offset 64: Largest value name length (u32)
+    /// - offset 68: Largest value data size (u32)
+    /// - offset 72: WorkVar (u32)
+    /// - offset 76: Key name length (u16, in bytes)
+    /// - offset 78: Class name length (u16)
+    /// - offset 80: Key name (ASCII or UTF-16LE)
     fn read_nk(&self, offset: usize) -> Result<KeyNode, HiveError> {
         if offset + 0x50 > self.data.len() {
             return Err(HiveError::Truncated);
@@ -384,7 +372,7 @@ impl<'a> Hive<'a> {
         let _workvar = read_u32(self.data, offset + 0x48).ok_or(HiveError::Truncated)?;
         let name_len = read_u16(self.data, offset + 0x4C).ok_or(HiveError::Truncated)? as usize;
 
-        // Read name (starts at offset + 0x50)
+        // read name (starts at offset + 0x50)
         let name_start = offset + 0x50;
         if name_start + name_len > self.data.len() {
             return Err(HiveError::Truncated);
@@ -394,9 +382,7 @@ impl<'a> Hive<'a> {
         let name = decode_name(&self.data[name_start..name_start + name_len]);
 
         Ok(KeyNode {
-            offset,
             name,
-            flags: _flags,
             nr_values,
             nr_subkeys,
             subkey_lf,
@@ -404,13 +390,13 @@ impl<'a> Hive<'a> {
         })
     }
 
-    /// Read an lf/lh block and return list of child key absolute offsets.
+    /// read an lf/lh block and return list of child key absolute offsets.
     ///
     /// Cell layout (per the registry file format spec):
-    /// - Offset 0: Size (i32, negative for allocated cells)
-    /// - Offset 4: Signature "lf" or "lh" (2 bytes)
-    /// - Offset 6: Number of elements (u16)
-    /// - Offset 8: List elements (each 8 bytes: 4 byte key offset + 4 byte hint/hash)
+    /// - offset 0: Size (i32, negative for allocated cells)
+    /// - offset 4: Signature "lf" or "lh" (2 bytes)
+    /// - offset 6: Number of elements (u16)
+    /// - offset 8: List elements (each 8 bytes: 4 byte key offset + 4 byte hint/hash)
     fn read_lf(&self, offset: usize) -> Result<Vec<usize>, HiveError> {
         if offset + 8 > self.data.len() {
             return Err(HiveError::Truncated);
@@ -442,13 +428,13 @@ impl<'a> Hive<'a> {
         Ok(offsets)
     }
 
-    /// Read an ri block and return list of lf/lh block absolute offsets.
+    /// read an ri block and return list of lf/lh block absolute offsets.
     ///
     /// Cell layout (per the registry file format spec):
-    /// - Offset 0: Size (i32, negative for allocated cells)
-    /// - Offset 4: Signature "ri" (2 bytes)
-    /// - Offset 6: Number of elements (u16)
-    /// - Offset 8: List elements (each 4 bytes: lf/lh offset, HBIN-relative)
+    /// - offset 0: Size (i32, negative for allocated cells)
+    /// - offset 4: Signature "ri" (2 bytes)
+    /// - offset 6: Number of elements (u16)
+    /// - offset 8: List elements (each 4 bytes: lf/lh offset, HBIN-relative)
     fn read_ri(&self, offset: usize) -> Result<Vec<usize>, HiveError> {
         if offset + 8 > self.data.len() {
             return Err(HiveError::Truncated);
@@ -540,20 +526,29 @@ impl<'a> Hive<'a> {
         Ok(values)
     }
 
-    /// Read a vk (value) block.
+    /// read a vk (value) block.
     ///
-    /// Cell layout (per the registry file format spec):
-    /// - Offset 0: Size (i32, negative for allocated)
-    /// - Offset 4: Signature "vk" (2 bytes)
-    /// - Offset 6: Name length (u16)
-    /// - Offset 8: Name (variable, ASCII or UTF-16LE)
-    /// - After name: Data size (u32)
-    /// - After name+4: Data offset (u32, HBIN-relative, or inline if top bit of size is set)
-    /// - After name+8: Data type (u32)
-    /// - After name+12: Flags (u16)
-    /// - After name+14: Spare (u16)
+    /// Cell layout (real regf format, all offsets relative to cell start):
+    /// - offset 0x00: seg_len (i32, negative for allocated)
+    /// - offset 0x04: Signature "vk" (2 bytes)
+    /// - offset 0x06: name length (u16)
+    /// - offset 0x08: data_size (u32; MSB set = inline data)
+    /// - offset 0x0C: data_offset (u32, HBIN-relative, or inline bytes LE)
+    /// - offset 0x10: data_type (u32)
+    /// - offset 0x14: flags (u16; bit 0 = ASCII name)
+    /// - offset 0x16: spare (u16)
+    /// - offset 0x18: name (variable)
     fn read_vk(&self, offset: usize) -> Result<Value, HiveError> {
-        if offset + 8 > self.data.len() {
+        const VK_NAME_LEN: usize = 0x06;
+        const VK_DATA_SIZE: usize = 0x08;
+        const VK_DATA_OFFSET: usize = 0x0C;
+        const VK_DATA_TYPE: usize = 0x10;
+        const VK_FLAGS: usize = 0x14;
+        const VK_NAME: usize = 0x18;
+        const VK_FLAG_ASCII_NAME: u32 = 0x0000_0001;
+        const VK_DATA_INLINE_FLAG: u32 = 0x8000_0000;
+
+        if offset + VK_NAME > self.data.len() {
             return Err(HiveError::Truncated);
         }
         let seg_len = read_i32(self.data, offset).ok_or(HiveError::Truncated)?;
@@ -564,34 +559,27 @@ impl<'a> Hive<'a> {
             return Err(HiveError::Truncated);
         }
 
-        let name_len = read_u16(self.data, offset + 6).ok_or(HiveError::Truncated)? as usize;
-        let name_start = offset + 8;
-        let (name, data_start) = if name_len > 0 {
-            let name_end = name_start + name_len;
-            if name_end > self.data.len() {
-                return Err(HiveError::Truncated);
-            }
-            let name = decode_name(&self.data[name_start..name_end]);
-            (name, name_end)
-        } else {
-            (String::new(), name_start)
-        };
+        let name_len =
+            read_u16(self.data, offset + VK_NAME_LEN).ok_or(HiveError::Truncated)? as usize;
+        let data_size_raw =
+            read_u32(self.data, offset + VK_DATA_SIZE).ok_or(HiveError::Truncated)?;
+        let data_offset_raw =
+            read_u32(self.data, offset + VK_DATA_OFFSET).ok_or(HiveError::Truncated)?;
+        let data_type = read_u32(self.data, offset + VK_DATA_TYPE).ok_or(HiveError::Truncated)?;
+        let flags = read_u32(self.data, offset + VK_FLAGS).ok_or(HiveError::Truncated)?;
 
-        if data_start + 16 > self.data.len() {
+        let name_start = offset + VK_NAME;
+        if name_start + name_len > self.data.len() {
             return Err(HiveError::Truncated);
         }
-
-        let data_len_raw = read_u32(self.data, data_start).ok_or(HiveError::Truncated)?;
-        let data_offset_raw = read_u32(self.data, data_start + 4).ok_or(HiveError::Truncated)?;
-        let data_type = read_u32(self.data, data_start + 8).ok_or(HiveError::Truncated)?;
-
-        // Top bit of data_len indicates inline data
-        let inline = (data_len_raw & 0x8000_0000) != 0;
-        let data_len = if inline {
-            data_len_raw & 0x7FFF_FFFF
+        let name = if flags & VK_FLAG_ASCII_NAME != 0 {
+            String::from_utf8_lossy(&self.data[name_start..name_start + name_len]).into_owned()
         } else {
-            data_len_raw
-        } as usize;
+            decode_name(&self.data[name_start..name_start + name_len])
+        };
+
+        let inline = (data_size_raw & VK_DATA_INLINE_FLAG) != 0;
+        let data_len = (data_size_raw & !VK_DATA_INLINE_FLAG) as usize;
 
         let data = if inline {
             data_offset_raw.to_le_bytes()[..data_len.min(4)].to_vec()
@@ -632,9 +620,7 @@ impl<'a> Hive<'a> {
         let mut current = root;
         for part in parts {
             let subkeys = self.subkeys(&current)?;
-            let next = subkeys.iter().find(|k| {
-                k.name.eq_ignore_ascii_case(part)
-            });
+            let next = subkeys.iter().find(|k| k.name.eq_ignore_ascii_case(part));
             match next {
                 Some(n) => current = n.clone(),
                 None => return Err(HiveError::OutOfBounds),
@@ -653,9 +639,7 @@ impl<'a> Hive<'a> {
         let mut current = base.clone();
         for part in parts {
             let subkeys = self.subkeys(&current)?;
-            let next = subkeys.iter().find(|k| {
-                k.name.eq_ignore_ascii_case(part)
-            });
+            let next = subkeys.iter().find(|k| k.name.eq_ignore_ascii_case(part));
             match next {
                 Some(n) => current = n.clone(),
                 None => return Err(HiveError::OutOfBounds),
