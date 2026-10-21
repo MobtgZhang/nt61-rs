@@ -12,14 +12,7 @@ use core::arch::asm;
 pub const CACHE_LINE_SIZE: usize = 64;
 
 /// Cache operation codes
-mod op {
-    pub const DCACHE_IBAR: u8 = 0x00;
-    pub const DCACHE_WBAR: u8 = 0x01;
-    pub const DCACHE_HIT_INV: u8 = 0x08;
-    pub const DCACHE_HIT_WB: u8 = 0x09;
-    pub const DCACHE_HIT_WBINV: u8 = 0x0A;
-    pub const ICACHE_INV: u8 = 0x10;
-}
+mod op {}
 
 /// Clean (writeback) data cache line by virtual address
 #[inline]

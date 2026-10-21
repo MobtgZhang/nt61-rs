@@ -135,14 +135,45 @@ impl IsaExtensions {
 // `misa` parsing
 // =====================================================================
 
-/// Read the `misa` CSR (0x301).
+/// RISC-V `misa` MXL field value for RV64.
+const MISA_MXL_RV64: u64 = 2 << 62;
+
+/// Extension-letter bit positions used by `misa[25:0]`.
+const MISA_A: u64 = 1;
+const MISA_C: u64 = 1 << 2;
+const MISA_D: u64 = 1 << 3;
+const MISA_F: u64 = 1 << 5;
+const MISA_I: u64 = 1 << 8;
+const MISA_M: u64 = 1 << 12;
+const MISA_S: u64 = 1 << 18;
+const MISA_U: u64 = 1 << 20;
+
+/// Build the canonical `misa` value for the compilation target.
+///
+/// The kernel executes in S-mode, where `misa` is M-mode only and
+/// must not be accessed. The target tuple already contains the
+/// authoritative ISA contract, so derive the feature mask from it.
 #[inline(always)]
-fn read_misa() -> u64 {
-    let v: u64;
-    unsafe {
-        core::arch::asm!("csrr {}, 0x301", out(reg) v, options(nostack));
+fn read_target_misa() -> u64 {
+    let mut value = MISA_MXL_RV64;
+    if cfg!(target_feature = "a") {
+        value |= MISA_A;
     }
-    v
+    if cfg!(target_feature = "c") {
+        value |= MISA_C;
+    }
+    if cfg!(target_feature = "d") {
+        value |= MISA_D;
+    }
+    if cfg!(target_feature = "f") {
+        value |= MISA_F;
+    }
+    value |= MISA_I;
+    if cfg!(target_feature = "m") {
+        value |= MISA_M;
+    }
+    value |= MISA_S | MISA_U;
+    value
 }
 
 /// Decode a `misa` value into an [`IsaExtensions`] bitmask.
@@ -267,7 +298,7 @@ static SENVCFG: AtomicU64 = AtomicU64::new(0);
 
 /// Detect ISA features for the boot core and cache them. Idempotent.
 pub fn detect_all() -> IsaExtensions {
-    let misa = read_misa();
+    let misa = read_target_misa();
     let isa = parse_misa(misa);
     ISA_FEATURES.store(isa.0, Ordering::Release);
     MISA.store(misa, Ordering::Release);
@@ -281,7 +312,7 @@ pub fn detect_all() -> IsaExtensions {
 /// slot. Used by the SMP trampoline to publish each secondary
 /// hart's features.
 pub fn probe_current_hart(hart_id: u32) -> IsaExtensions {
-    let misa = read_misa();
+    let misa = read_target_misa();
     let isa = parse_misa(misa);
     if (hart_id as usize) < MAX_HARTS {
         HART_FEATURES[hart_id as usize].store(isa.0, Ordering::Release);

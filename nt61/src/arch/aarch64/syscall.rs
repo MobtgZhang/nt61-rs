@@ -22,7 +22,11 @@ use super::trap::TrapFrame;
 pub use super::trap::TrapFrame as SvcTrapFrame;
 
 #[cfg(target_arch = "aarch64")]
-const STATUS_NOT_IMPLEMENTED: u64 = 0xC000_0002;
+const STATUS_INVALID_SYSTEM_SERVICE: u64 = 0xC000_001C;
+const STATUS_INVALID_PARAMETER: u64 = 0xC000_000D;
+const STATUS_NO_DATA: u64 = 0xC000_0011;
+
+use crate::arch::common::cmd_host as host;
 
 /// Dispatch a system call whose arguments and result are passed
 /// via the `TrapFrame`. Reads the syscall number from `tf.x16`,
@@ -40,11 +44,38 @@ pub unsafe extern "C" fn syscall_dispatch_with_tf(syscall_num: u64, tf: *mut Tra
     percpu.syscall_count = percpu.syscall_count.wrapping_add(1);
 
     let tf_ref: &mut TrapFrame = &mut *tf;
+    let register_args = [
+        tf_ref.x0 as usize,
+        tf_ref.x1 as usize,
+        tf_ref.x2 as usize,
+        tf_ref.x3 as usize,
+        tf_ref.x4 as usize,
+        tf_ref.x5 as usize,
+        tf_ref.x6 as usize,
+        tf_ref.x7 as usize,
+    ];
+    let common_status = unsafe {
+        crate::ke::ssdt_common::dispatch_syscall_with_stack(
+            syscall_num as usize,
+            register_args,
+            crate::ke::ssdt_common::INTEGER_REGISTER_ARGUMENTS,
+            tf_ref.sp as usize,
+        )
+    };
+    let common_result = if common_status == crate::ke::ssdt_common::STATUS_INVALID_SYSTEM_SERVICE {
+        None
+    } else {
+        Some(common_status)
+    };
+    if let Some(status) = common_result {
+        return status as u64;
+    }
+
     match syscall_num as u32 {
         // Yield execution.
         4 => 0, // STATUS_SUCCESS
         8 => {
-            // NtYieldExecution equivalent: schedule another thread.
+            // NT_YIELD_EXECUTION equivalent: schedule another thread.
             crate::arch::halt();
             0
         }
@@ -64,10 +95,34 @@ pub unsafe extern "C" fn syscall_dispatch_with_tf(syscall_num: u64, tf: *mut Tra
             if c.is_some() {
                 0
             } else {
-                0xC000_0011
+                STATUS_NO_DATA
             } // STATUS_NO_DATA
         }
-        _ => STATUS_NOT_IMPLEMENTED,
+        host::SYS_PUTCHAR => host::putchar((tf_ref.x0 & 0xFF) as u8),
+        host::SYS_POLL_KEY => match host::poll_key() {
+            Some(byte) => byte as u64,
+            None => 0,
+        },
+        host::SYS_GET_KEY => {
+            let byte = host::get_key();
+            byte as u64
+        }
+        host::SYS_CLEARSCREEN => host::clear_screen(),
+        host::SYS_READ_LINE => {
+            match unsafe { host::read_line(tf_ref.x0 as *mut u8, tf_ref.x1 as usize) } {
+                Some(written) => written as u64,
+                None => 0,
+            }
+        }
+        host::SYS_RETURN_TO_FIRMWARE => host::return_to_firmware(),
+        host::SYS_CMD_EXECUTE => {
+            match host::execute_command(tf_ref.x0 as *const u8, tf_ref.x1 as usize) {
+                Ok(exited) => exited as u64,
+                Err(_) => STATUS_INVALID_PARAMETER,
+            }
+        }
+        host::SYS_PRINT_PROMPT => host::print_prompt(),
+        _ => STATUS_INVALID_SYSTEM_SERVICE,
     }
 }
 
@@ -79,6 +134,6 @@ pub extern "C" fn syscall_dispatch(syscall_num: u64, _tf: *mut TrapFrame) -> u64
         0x18 => 0,
         0x19 => 0,
         4 | 8 => 0,
-        _ => 0xC0000002u64, // STATUS_NOT_IMPLEMENTED
+        _ => 0xC000001Cu64, // STATUS_INVALID_SYSTEM_SERVICE
     }
 }

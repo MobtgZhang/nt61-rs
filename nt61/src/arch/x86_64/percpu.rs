@@ -53,7 +53,7 @@ pub struct PerCpuData {
 }
 
 impl PerCpuData {
-    /// Create a new Per-CPU data structure
+    /// create a new Per-CPU data structure
 
     pub const fn new(cpu_id: u32, apic_id: u32) -> Self {
         Self {
@@ -90,7 +90,7 @@ impl PerCpuData {
     pub fn current() -> &'static mut Self {
         unsafe {
             let ptr: u64;
-            // Read GS:0 which contains the self-pointer
+            // read GS:0 which contains the self-pointer
             asm!("mov {}, gs:0", out(reg) ptr, options(nostack, preserves_flags));
             &mut *(ptr as *mut Self)
         }
@@ -118,7 +118,7 @@ impl PerCpuData {
         unsafe {
             let addr = self as *mut _ as u64;
 
-            // Write to IA32_GS_BASE MSR (0xC0000101)
+            // write to IA32_GS_BASE MSR (0xC0000101)
             // This sets the base address for GS-relative addressing
             asm!(
                 "wrmsr",
@@ -211,7 +211,7 @@ pub fn init_bsp() {
 /// Initialize AP (Application Processor) Per-CPU data
 pub fn init_ap(cpu_id: u32, apic_id: u32) {
     unsafe {
-        if (cpu_id as usize) >= PER_CPU_DATA.len() {
+        if (cpu_id as usize) >= (*core::ptr::addr_of!(PER_CPU_DATA)).len() {
             panic!("CPU ID {} exceeds maximum supported CPUs", cpu_id);
         }
 
@@ -232,7 +232,7 @@ pub fn init_ap(cpu_id: u32, apic_id: u32) {
 /// Get Per-CPU data for a specific CPU (by CPU ID)
 pub fn get_cpu_data(cpu_id: u32) -> Option<&'static mut PerCpuData> {
     unsafe {
-        if (cpu_id as usize) >= PER_CPU_DATA.len() {
+        if (cpu_id as usize) >= (*core::ptr::addr_of!(PER_CPU_DATA)).len() {
             return None;
         }
 
@@ -249,7 +249,7 @@ pub fn get_cpu_data(cpu_id: u32) -> Option<&'static mut PerCpuData> {
 pub fn get_cpu_count() -> u32 {
     unsafe {
         let mut count = 0;
-        for cpu in &PER_CPU_DATA {
+        for cpu in &*core::ptr::addr_of!(PER_CPU_DATA) {
             if cpu.self_ptr != 0 {
                 count += 1;
             }
@@ -258,7 +258,7 @@ pub fn get_cpu_count() -> u32 {
     }
 }
 
-/// Read the TSC (Time Stamp Counter)
+/// read the TSC (Time Stamp Counter)
 #[inline]
 pub fn read_tsc() -> u64 {
     unsafe {

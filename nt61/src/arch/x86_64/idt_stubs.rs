@@ -327,6 +327,11 @@ global_asm!(
     // -------------------------------------------------------------------
     "  .global syscall_entry",
     "syscall_entry:",
+    // Swap to the kernel GS base FIRST. On entry from Ring 3 the
+    // GS base is the user value (0), so any gs-relative access
+    // before swapgs would dereference absolute low memory instead
+    // of the per-CPU area. swapgs does not touch GPRs.
+    "  swapgs",
     // === Snapshot RAX, user RIP, and 8 bytes from user RIP into SYSCALL_ENTRY_SNAP ===
     //
     // Layout of SYSCALL_ENTRY_SNAP:
@@ -339,20 +344,19 @@ global_asm!(
     //   RCX = user-mode RIP  (clobbered by syscall)
     //   R11 = user-mode RFLAGS (clobbered by syscall)
     //
-    // The {snap_base} operand references the SYSCALL_ENTRY_SNAP symbol.
-    // In .intel_syntax noprefix under global_asm!:
-    //   - `movabs {snap_base}, rax` encodes `48 a3 imm64` (mem STORE rax -> [imm64])
-    //   - `mov rax, qword ptr gs:[0x58]` loads a 64-bit absolute address
-    //     from a per-CPU slot populated by `init_syscall_msrs`. We use
-    //     this instead of `lea rax, [{snap_base}]` because the LEA form
-    //     truncates the high 32 bits of the absolute VMA 0x140069c18.
+    // The snap address is loaded from the per-CPU slot populated by
+    // `init_syscall_msrs`. This avoids an absolute relocation for
+    // SYSCALL_ENTRY_SNAP in the syscall entry stub.
     "  mov r8, r14",                       // r8 = real user R14 (preserved)
     "  mov r14, rcx",                       // r14 = user RIP (preserve across writes)
     "  mov r9, r15",                        // r9 = real user R15 (preserve; clobbered below for rsp)
-    "  movabs {snap_base}, rax",            // snap.rax = RAX (syscall num) — first!
-    "  mov rax, qword ptr gs:[0x58]",       // rax = &snap (loaded from per-CPU area)
-    "  mov [rax + 32], r12",                // snap.user_r12 = user R12 (preserve; r12 clobbered below)
-    "  mov r12, rax",                       // r12 = &snap (callee-preserved)
+    "  push r12",                           // preserve user R12 on the user stack
+    "  mov r12, qword ptr gs:[0x58]",       // r12 = &snap (loaded from per-CPU area)
+    "  mov [r12], rax",                     // snap.rax = RAX (syscall num) — first!
+    "  mov rax, [rsp]",                     // rax = original user R12
+    "  mov [r12 + 32], rax",                // snap.user_r12 = user R12
+    "  pop rax",                            // restore RAX from the temporary slot
+    "  mov rax, r12",                       // rax = &snap (callee-preserved)
     "  mov [rax + 8], r14",                 // snap.rip = user RIP
     "  mov [rax + 24], r13",                // snap.user_r13 = user R13 (preserved before clobber)
     "  mov qword ptr [rax + 16], 0",         // no fault-prone read across a user page boundary
@@ -362,7 +366,6 @@ global_asm!(
     // Windows x64 ABI: extern "C" takes arg1=RCX, arg2=RDX. Move the
     // syscall number into RCX for syscall_dispatch(syscall_num, tf).
     "  mov rcx, r13",                       // rcx = syscall number (arg1)
-    "  swapgs",
     "  mov gs:[0x0], rsp",                  // save user rsp
     "  mov rsp, gs:[0x8]",                  // load kernel rsp
     "  mov r15, gs:[0x0]",                  // r15 = user rsp (saved for trap frame)
@@ -490,5 +493,4 @@ global_asm!(
     // proper relocation entry so the linker's runtime VA is
     // baked into each `movabs` immediate. We then use offsets
     // (0, 8, 16) inside the assembly to reach each field.
-    snap_base = sym crate::arch::x86_64::syscall::SYSCALL_ENTRY_SNAP,
 );

@@ -4,18 +4,18 @@
 //! so that cross-platform code (`system_image`, `rtl::sac`, etc.) can
 //! invoke `crate::hal::serial::*` without per-architecture guards.
 
-use core::arch::asm;
 use core::fmt;
 use core::ptr;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 static UART_BASE: AtomicU64 = AtomicU64::new(0);
 
+const UART_PHYS_BASE: u64 = 0x1FE0_01E0;
 const UART_THR: u64 = 0;
 const UART_LSR: u64 = 5;
 
 /// Initialise the UART. `base == 0` uses the LS7A default at
-/// `0x1FE0_0000` (the address the Loongson machines and QEMU
+/// `0x1FE0_01E0` (the address the Loongson machines and QEMU
 /// virt platform expose).
 pub fn init() {
     serial_init(0);
@@ -24,7 +24,7 @@ pub fn init() {
 /// Architecture-specified base address. Provided for symmetry with
 /// the x86_64 driver.
 pub fn serial_init(base: u64) {
-    let b = if base != 0 { base } else { 0x1FE0_0000 };
+    let b = if base != 0 { base } else { UART_PHYS_BASE };
     UART_BASE.store(b, Ordering::Release);
     unsafe {
         ptr::write_volatile((b + 1) as *mut u8, 0x00);
@@ -38,14 +38,15 @@ pub fn serial_init(base: u64) {
 
 fn base() -> u64 {
     let b = UART_BASE.load(Ordering::Acquire);
-    if b == 0 {
-        0x1FE0_0000
+    let phys = if b == 0 { UART_PHYS_BASE } else { b };
+    if crate::arch::loongarch64::paging::paging_enabled() {
+        crate::arch::loongarch64::paging::mmio_virt(phys)
     } else {
-        b
+        phys
     }
 }
 
-/// Write a single character to the UART. Honours the global
+/// write a single character to the UART. Honours the global
 /// `hal::common::serial_disable` gate.
 pub fn write_char(c: u8) {
     if crate::hal::common::serial_disable::is_disabled() {
@@ -58,7 +59,7 @@ pub fn write_char(c: u8) {
     }
 }
 
-/// Write a string to the UART. Honours the gate.
+/// write a string to the UART. Honours the gate.
 pub fn write_string(s: &str) {
     if crate::hal::common::serial_disable::is_disabled() {
         return;
@@ -68,14 +69,25 @@ pub fn write_string(s: &str) {
     }
 }
 
-/// Write a string followed by CRLF.
+/// Writes diagnostic strings even in non-debug builds.
+pub fn write_string_always(s: &str) {
+    for c in s.bytes() {
+        write_char(c);
+    }
+}
+
+/// write a string followed by CRLF.
 pub fn write_line(s: &str) {
     write_string(s);
     write_string("\r\n");
 }
 
-/// Write a `u64` as 16 hex digits.
+/// write a `u64` as 16 hex digits.
 pub fn write_u64_hex(val: u64) {
+    if !log_level_debug() {
+        return;
+    }
+
     use core::fmt::Write;
     struct HexWriter<'a>(&'a mut [u8]);
     impl<'a> fmt::Write for HexWriter<'a> {
@@ -89,7 +101,7 @@ pub fn write_u64_hex(val: u64) {
     write_string(unsafe { core::str::from_utf8_unchecked(&buf) });
 }
 
-/// Write a `u64` as 16 hex digits.
+/// write a `u64` as 16 hex digits.
 ///
 /// Available cross-arch through the unified
 /// `crate::hal::serial::write_hex_u64` facade. We deliberately
@@ -98,11 +110,19 @@ pub fn write_u64_hex(val: u64) {
 /// (`mm::pool`, `arch/aarch64/paging`, etc.) link regardless of
 /// which side of the build they end up on.
 pub fn write_hex_u64(val: u64) {
+    if !log_level_debug() {
+        return;
+    }
+
     write_u64_hex(val);
 }
 
-/// Write a `usize` as hex without padding.
+/// write a `usize` as hex without padding.
 pub fn write_usize_hex(val: usize) {
+    if !log_level_debug() {
+        return;
+    }
+
     use core::fmt::Write;
     let mut buf = [0u8; 32];
     let mut s = String::new();
@@ -112,12 +132,20 @@ pub fn write_usize_hex(val: usize) {
     write_string(unsafe { core::str::from_utf8_unchecked(&bytes) });
 }
 
-/// Write a `u32` as 8 hex digits.
+/// write a `u32` as 8 hex digits.
 pub fn write_u32_hex(val: u32) {
+    if !log_level_debug() {
+        return;
+    }
+
     use core::fmt::Write;
     let mut buf = [0u8; 8];
     let _ = write!(WriteToBuf(&mut buf), "{:08x}", val);
     write_string(unsafe { core::str::from_utf8_unchecked(&buf) });
+}
+
+fn log_level_debug() -> bool {
+    cfg!(feature = "log_level_debug")
 }
 
 struct WriteToBuf<'a>(&'a mut [u8]);
@@ -129,7 +157,7 @@ impl<'a> fmt::Write for WriteToBuf<'a> {
     }
 }
 
-/// Read one byte from the UART. Returns `None` if no data is ready.
+/// read one byte from the UART. Returns `None` if no data is ready.
 pub fn read_char() -> Option<u8> {
     let b = base();
     unsafe {
@@ -186,5 +214,4 @@ use alloc::string::String;
 
 /// Reserved for Phase 2 diagnostics. Kept here so the link order is
 /// stable across builds.
-#[allow(dead_code)]
 fn _keep() {}

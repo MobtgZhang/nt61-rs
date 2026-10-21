@@ -28,7 +28,7 @@ pub fn set_decoder_mode(m: DecMode) {
     DEC_MODE.store(m as u8, core::sync::atomic::Ordering::Release);
 }
 
-/// Read the current decoder mode.
+/// read the current decoder mode.
 pub fn decoder_mode() -> DecMode {
     if DEC_MODE.load(core::sync::atomic::Ordering::Acquire) == 0 {
         DecMode::Mode32

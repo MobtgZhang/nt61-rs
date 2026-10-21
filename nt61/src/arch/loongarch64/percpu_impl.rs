@@ -1,12 +1,12 @@
 //! loongarch64 per-CPU implementation.
 //
-//! Uses the `tp` CSR (CSR 0x13) as the thread pointer register.
+//! Uses the KScratch CSR KS6 (CSR 0x36) as the per-CPU base register.
 //! Each CPU's per-CPU area address is stored in this CSR, which can be
 //! read/written with `csrrd` / `csrwr` instructions.
 //
 //! ## Memory layout (must match arch::common::percpu::PerCpuArea)
 //
-//! | Offset | Field |
+//! | offset | Field |
 //! |--------|-------|
 //! | 0x00 | `user_sp` (saved user stack pointer) |
 //! | 0x08 | `kernel_sp` (kernel stack pointer) |
@@ -34,9 +34,9 @@ static PER_CPU_PAGES: [AtomicU64; MAX_PER_CPU] = [const { AtomicU64::new(0) }; M
 /// before the pool allocator is ready.
 static mut PER_CPU_0: PerCpuArea = PerCpuArea::new(0);
 
-/// CSR 0x13 is the tp (thread pointer) register on LoongArch64.
-const CSR_TP: u64 = 0x13;
-
+/// KS6 (CSR 0x36) is one of the eight KScratch registers the
+/// architecture reserves for software. CSR 0x13 must NOT be used
+/// here: it is TLBELO1 and collides with the TLB fill code.
 // =====================================================================
 // Exported functions (used by arch/common/percpu.rs via extern "Rust")
 // =====================================================================
@@ -97,20 +97,32 @@ pub unsafe fn allocate(cpu_id: u32) -> u64 {
     page
 }
 
-/// Set the tp CSR to the given value.
+/// Return the cached per-CPU base for `cpu_id`, allocating one if needed.
+pub fn per_cpu_base_for(cpu_id: u32) -> u64 {
+    if cpu_id as usize >= MAX_PER_CPU {
+        return 0;
+    }
+    let cached = PER_CPU_PAGES[cpu_id as usize].load(Ordering::Acquire);
+    if cached != 0 {
+        return cached;
+    }
+    unsafe { allocate(cpu_id) }
+}
+
+/// Set the per-CPU base KScratch register to the given value.
 #[inline(always)]
-fn set_tp(val: u64) {
+pub fn set_tp(val: u64) {
     unsafe {
-        core::arch::asm!("csrwr {}, 0x13", in(reg) val, options(nostack));
+        core::arch::asm!("csrwr {}, 0x36", in(reg) val, options(nostack));
     }
 }
 
-/// Read the tp CSR.
+/// read the per-CPU base KScratch register.
 #[inline(always)]
 fn get_tp() -> u64 {
     let val: u64;
     unsafe {
-        core::arch::asm!("csrrd {}, 0x13", out(reg) val, options(nostack));
+        core::arch::asm!("csrrd {}, 0x36", out(reg) val, options(nostack));
     }
     val
 }
@@ -179,7 +191,7 @@ pub fn __percpu_set_current_thread(thread: *mut Ethread) {
     }
 }
 
-/// Read the ETHREAD pointer from the per-CPU `current_thread` slot.
+/// read the ETHREAD pointer from the per-CPU `current_thread` slot.
 #[no_mangle]
 pub fn __percpu_get_current_thread() -> *mut Ethread {
     let base = get_tp();
@@ -205,7 +217,7 @@ pub fn __percpu_set_current_process(process: *mut Eprocess) {
     }
 }
 
-/// Read the EPROCESS pointer from the per-CPU `current_process` slot.
+/// read the EPROCESS pointer from the per-CPU `current_process` slot.
 #[no_mangle]
 pub fn __percpu_get_current_process() -> *mut Eprocess {
     let base = get_tp();

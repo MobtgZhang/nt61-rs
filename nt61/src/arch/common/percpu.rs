@@ -6,7 +6,7 @@
 //
 //! ## Memory layout (first 64 bytes are hot-path, accessed from asm)
 //
-//! | Offset | Field | Notes |
+//! | offset | Field | Notes |
 //! |--------|-------|-------|
 //! | 0x00 | `user_rsp` | Saved user stack on syscall/trap entry |
 //! | 0x08 | `kernel_rsp` | Kernel stack loaded on trap entry |
@@ -19,7 +19,7 @@
 //! | 0x40 | `arch_ptr` | TSS / arch slot |
 //! | 0x48 | `system_pml4` | Physical address of the system PML4 |
 //! | 0x50 | `user_pml4` | Physical address of the active user PML4 |
-//! | 0x58 | `syscall_snap_addr` | Read by the syscall entry stub as `gs:[0x58]` |
+//! | 0x58 | `syscall_snap_addr` | read by the syscall entry stub as `gs:[0x58]` |
 //
 //! ## Architecture mechanism
 //
@@ -178,13 +178,13 @@ extern "Rust" {
     /// Publish the ETHREAD of the currently-running thread.
     fn __percpu_set_current_thread(thread: *mut Ethread);
 
-    /// Read the ETHREAD pointer of the currently-running thread.
+    /// read the ETHREAD pointer of the currently-running thread.
     fn __percpu_get_current_thread() -> *mut Ethread;
 
     /// Publish the EPROCESS of the currently-running process.
     fn __percpu_set_current_process(process: *mut Eprocess);
 
-    /// Read the EPROCESS pointer of the currently-running process.
+    /// read the EPROCESS pointer of the currently-running process.
     fn __percpu_get_current_process() -> *mut Eprocess;
 }
 
@@ -224,6 +224,9 @@ pub fn get_current() -> &'static mut PerCpuArea {
 
 /// Return the CPU id of the currently executing CPU.
 pub fn get_current_cpu_id() -> u32 {
+    if !is_ready() {
+        return 0;
+    }
     unsafe { __percpu_get_current_cpu_id() }
 }
 
@@ -243,10 +246,18 @@ pub fn set_current_thread(thread: *mut Ethread) {
     unsafe { __percpu_set_current_thread(thread) }
 }
 
-/// Read the ETHREAD pointer of the currently-running thread from
+/// read the ETHREAD pointer of the currently-running thread from
 /// the per-CPU area.
 pub fn get_current_thread() -> *mut Ethread {
-    unsafe { __percpu_get_current_thread() }
+    // The arch read uses a privileged per-CPU register (gs:[], TPIDR_EL1,
+    // tp, tp CSR). Until `init()` has installed an area for this CPU the
+    // register contents are undefined, so callers must observe NULL rather
+    // than a wild pointer.
+    if !is_ready() {
+        core::ptr::null_mut()
+    } else {
+        unsafe { __percpu_get_current_thread() }
+    }
 }
 
 /// Publish the EPROCESS of the currently-running process into the
@@ -255,9 +266,28 @@ pub fn set_current_process(process: *mut Eprocess) {
     unsafe { __percpu_set_current_process(process) }
 }
 
-/// Read the EPROCESS pointer of the currently-running process.
+/// read the EPROCESS pointer of the currently-running process.
 pub fn get_current_process() -> *mut Eprocess {
-    unsafe { __percpu_get_current_process() }
+    if !is_ready() {
+        core::ptr::null_mut()
+    } else {
+        unsafe { __percpu_get_current_process() }
+    }
+}
+
+/// Publish the active address-space roots for the current CPU.
+pub fn set_address_space_roots(system_pml4: u64, user_pml4: u64) {
+    if let Some(area) = try_get_current() {
+        area.system_pml4 = system_pml4;
+        area.user_pml4 = user_pml4;
+    }
+}
+
+/// Clear the user address-space root for the current CPU.
+pub fn clear_user_address_space() {
+    if let Some(area) = try_get_current() {
+        area.user_pml4 = 0;
+    }
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-//! LoongArch64 TLB (Translation Lookaside Buffer) Management
+//! LoongArch64 TLB (Translation Lookaside buffer) Management
 //!
 //! Comprehensive TLB operations using LoongArch-specific instructions:
 //! - Single page invalidation
@@ -12,16 +12,7 @@ use core::arch::asm;
 pub type Asid = u16;
 
 /// CSR register numbers for LoongArch64
-mod csr {
-    pub const ASID: u16 = 0x18;
-    pub const PGDL: u16 = 0x19;
-    pub const PGDH: u16 = 0x1A;
-    pub const TLBRENTRY: u16 = 0x88;
-    pub const TLBIDX: u16 = 0x10;
-    pub const TLBEHI: u16 = 0x11;
-    pub const TLBELO0: u16 = 0x12;
-    pub const TLBELO1: u16 = 0x13;
-}
+mod csr {}
 
 /// Invalidate entire TLB
 #[inline]
@@ -123,7 +114,7 @@ pub fn flush_range_asid(start_vaddr: u64, end_vaddr: u64, asid: Asid) {
     }
 }
 
-/// Read current ASID
+/// read current ASID
 #[inline]
 pub fn read_current_asid() -> Asid {
     let asid: u64;
@@ -146,13 +137,13 @@ pub fn set_asid(asid: Asid) {
 #[inline]
 pub fn probe(vaddr: u64) -> Option<usize> {
     unsafe {
-        // Write VA to TLBEHI
+        // write VA to TLBEHI
         asm!("csrwr {}, 0x11", in(reg) vaddr, options(nostack));
 
         // Execute tlbsrch (TLB search)
         asm!("tlbsrch", options(nostack));
 
-        // Read TLBIDX to check if found
+        // read TLBIDX to check if found
         let idx: u64;
         asm!("csrrd {}, 0x10", out(reg) idx, options(nostack));
 
@@ -169,13 +160,13 @@ pub fn probe(vaddr: u64) -> Option<usize> {
 #[inline]
 pub fn read_entry(index: usize) -> (u64, u64, u64) {
     unsafe {
-        // Write index to TLBIDX
+        // write index to TLBIDX
         asm!("csrwr {}, 0x10", in(reg) index as u64, options(nostack));
 
         // Execute tlbrd (TLB read)
         asm!("tlbrd", options(nostack));
 
-        // Read TLBEHI, TLBELO0, TLBELO1
+        // read TLBEHI, TLBELO0, TLBELO1
         let ehi: u64;
         let elo0: u64;
         let elo1: u64;
@@ -191,7 +182,7 @@ pub fn read_entry(index: usize) -> (u64, u64, u64) {
 #[inline]
 pub fn write_entry(index: usize, ehi: u64, elo0: u64, elo1: u64) {
     unsafe {
-        // Write values to CSRs
+        // write values to CSRs
         asm!("csrwr {}, 0x10", in(reg) index as u64, options(nostack));
         asm!("csrwr {}, 0x11", in(reg) ehi, options(nostack));
         asm!("csrwr {}, 0x12", in(reg) elo0, options(nostack));
@@ -236,7 +227,7 @@ pub fn set_pgd_high(paddr: u64) {
     }
 }
 
-/// Read page table base address (low)
+/// read page table base address (low)
 #[inline]
 pub fn read_pgd_low() -> u64 {
     let val: u64;
@@ -246,7 +237,7 @@ pub fn read_pgd_low() -> u64 {
     val
 }
 
-/// Read page table base address (high)
+/// read page table base address (high)
 #[inline]
 pub fn read_pgd_high() -> u64 {
     let val: u64;

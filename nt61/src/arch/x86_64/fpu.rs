@@ -33,11 +33,11 @@ pub enum XsaveFeature {
     X87 = 1 << 0,
     SSE = 1 << 1,
     AVX = 1 << 2,
-    MPX_BNDREGS = 1 << 3,
-    MPX_BNDCSR = 1 << 4,
-    AVX512_OPMASK = 1 << 5,
-    AVX512_ZMM_HI256 = 1 << 6,
-    AVX512_ZMM_HI16 = 1 << 7,
+    MpxBndregs = 1 << 3,
+    MpxBndcsr = 1 << 4,
+    Avx512Opmask = 1 << 5,
+    Avx512ZmmHi256 = 1 << 6,
+    Avx512ZmmHi16 = 1 << 7,
 }
 
 /// MXCSR control/status register bits
@@ -59,10 +59,10 @@ impl Mxcsr {
     pub const OM: u32 = 1 << 10; // Overflow Mask
     pub const UM: u32 = 1 << 11; // Underflow Mask
     pub const PM: u32 = 1 << 12; // Precision Mask
-    pub const RC_RN: u32 = 0 << 13; // Rounding Control: Round Nearest
-    pub const RC_RD: u32 = 1 << 13; // Rounding Control: Round Down
-    pub const RC_RU: u32 = 2 << 13; // Rounding Control: Round Up
-    pub const RC_RZ: u32 = 3 << 13; // Rounding Control: Round Toward Zero
+    pub const RC_RN: u32 = 0 << 13; // Rounding control: Round Nearest
+    pub const RC_RD: u32 = 1 << 13; // Rounding control: Round Down
+    pub const RC_RU: u32 = 2 << 13; // Rounding control: Round Up
+    pub const RC_RZ: u32 = 3 << 13; // Rounding control: Round Toward Zero
     pub const FZ: u32 = 1 << 15; // Flush to Zero
 
     pub const DEFAULT: u32 = 0x1F80; // Standard init value (all masks on, RN)
@@ -102,7 +102,7 @@ pub struct FpuState {
 }
 
 impl FpuState {
-    /// Create a new FPU state buffer, initialized to clean state
+    /// create a new FPU state buffer, initialized to clean state
     pub fn new() -> Self {
         let mut state = Self {
             legacy: [0; 512],
@@ -157,7 +157,7 @@ pub struct ThreadFpuState {
 }
 
 impl ThreadFpuState {
-    /// Create new FPU state for a thread
+    /// create new FPU state for a thread
     pub fn new(enable_avx: bool) -> Option<&'static mut Self> {
         // Allocate aligned FPU state from non-paged pool
         let state_ptr =
@@ -313,7 +313,7 @@ pub fn init() {
     init_fpu_state();
 
     FPU_INITIALIZED.store(true, core::sync::atomic::Ordering::SeqCst);
-    // // kprintln!("    [FPU] Initialized (state size: {} bytes)", FPU_STATE_SIZE);
+    // // kprintln!("    [FPU] initialized (state size: {} bytes)", FPU_STATE_SIZE);
 }
 
 /// Check for XSAVE/XRSTOR support
@@ -477,7 +477,7 @@ pub fn smoke_test() -> bool {
         return true; // Not a failure, just not supported
     }
 
-    // Create two test states
+    // create two test states
     let mut state1 = FpuState::new();
     let state2 = FpuState::new();
 
@@ -485,7 +485,6 @@ pub fn smoke_test() -> bool {
     state1.header.xstate_bv = get_xsave_features();
 
     // Initialize state2 with different pattern (for future use)
-    #[allow(unused_variables)]
     let _state2_pattern = get_xsave_features();
     // Suppress warning for state2 - reserved for future comparison tests
     let _ = state2;

@@ -1,4 +1,4 @@
-//! RISC-V64 TLB (Translation Lookaside Buffer) Management
+//! RISC-V64 TLB (Translation Lookaside buffer) Management
 //!
 //! Comprehensive TLB operations using sfence.vma:
 //! - Single page invalidation
@@ -97,7 +97,7 @@ pub fn flush_range_asid(start_vaddr: u64, end_vaddr: u64, asid: Asid) {
     }
 }
 
-/// Read current ASID from satp
+/// read current ASID from satp
 #[inline]
 pub fn read_current_asid() -> Asid {
     let satp: u64;

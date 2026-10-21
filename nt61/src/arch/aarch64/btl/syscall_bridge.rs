@@ -2,10 +2,10 @@
 //!
 //! Maps guest (`x86_64`, `x86_32`, `AArch32`) system calls to the
 //! NT 6.1 native API exposed by the AArch64 kernel. Currently a
-//! stub. A full implementation covers:
+//! partial. A full implementation covers:
 //!
 //! 1. Linux x86_64 syscall numbers (e.g. `sys_read`, `sys_write`).
-//! 2. Windows x86_64 SSDT entries (`ntdll.dll!NtCreateFile`, etc.).
+//! 2. Windows x86_64 SSDT entries (`ntdll.dll!NT_CREATE_FILE`, etc.).
 //! 3. ARMv7 SVC numbers (Linux + Android ABI).
 //!
 //! ## Calling-convention translation

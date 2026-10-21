@@ -148,7 +148,7 @@ static mut TSS: Tss = Tss::empty();
 
 /// Pointer to the TSS (the GDT entry points at this).
 pub fn tss_ptr() -> *mut Tss {
-    unsafe { &mut TSS as *mut Tss }
+    core::ptr::addr_of_mut!(TSS) as *mut Tss
 }
 
 /// Return (base, limit) for the BSP TSS so a GDT entry can be built
@@ -196,7 +196,7 @@ pub fn init() {
 ///   IST5: 0x40, IST6: 0x48, IST7: 0x50
 pub fn install_ist_stack(ist_top: [u64; 7]) {
     unsafe {
-        let tss_ptr = &mut TSS as *mut Tss as *mut u8;
+        let tss_ptr = core::ptr::addr_of_mut!(TSS) as *mut Tss as *mut u8;
         // IST1 at offset 0x20
         core::ptr::write_unaligned(tss_ptr.add(0x20) as *mut u64, ist_top[0]);
         // IST2 at offset 0x28
@@ -219,7 +219,7 @@ pub fn install_ist_stack(ist_top: [u64; 7]) {
     }
 }
 
-/// Read the current TSS.RSP0 (kernel stack pointer used for the
+/// read the current TSS.RSP0 (kernel stack pointer used for the
 /// next Ring 3 -> Ring 0 transition).
 pub fn rsp0() -> u64 {
     get_rsp0()
@@ -229,10 +229,10 @@ pub fn rsp0() -> u64 {
 /// next ring transition will switch to this stack.
 pub fn set_rsp0(rsp: u64) {
     unsafe {
-        let tss = &mut TSS;
+        let tss = core::ptr::addr_of_mut!(TSS);
         // Use a raw pointer write to avoid the packed-struct
         // misaligned-access check.
-        let p = core::ptr::addr_of_mut!(tss.rsp0) as *mut u64;
+        let p = core::ptr::addr_of_mut!((*tss).rsp0) as *mut u64;
         core::ptr::write_unaligned(p, rsp);
     }
 }
@@ -258,8 +258,8 @@ pub fn set_rsp0_during_init() {
 
 pub fn get_rsp0() -> u64 {
     unsafe {
-        let tss = &TSS;
-        let p = core::ptr::addr_of!(tss.rsp0) as *const u64;
+        let tss = core::ptr::addr_of!(TSS);
+        let p = core::ptr::addr_of!((*tss).rsp0) as *const u64;
         core::ptr::read_unaligned(p)
     }
 }

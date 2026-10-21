@@ -181,7 +181,7 @@ pub struct DebugState {
 }
 
 impl DebugState {
-    /// Create a new debug state with all registers zeroed
+    /// create a new debug state with all registers zeroed
     pub const fn new() -> Self {
         Self {
             dr0: 0,
@@ -314,8 +314,11 @@ pub fn ki_swap_context(
         //     thread via ki_swap_context would still observe the
         //     previous thread's ETHREAD, leading to APC
         //     mis-delivery and state corruption.
-        // TODO(smp): once per-CPU areas are per-LCPU, restrict
-        // the publication to that CPU only.
+        // This publication is intentionally CPU-local: it writes the
+        // current CPU's per-CPU current_thread slot. Once per-CPU areas are
+        // allocated per logical CPU rather than per package, the storage
+        // itself is already bounded to this CPU and no cross-CPU publication
+        // is required.
         crate::arch::common::percpu::set_current_thread(new_thread);
 
         // 3. After switching, restore FPU state for the new thread
@@ -416,7 +419,7 @@ pub fn free_thread_fpu_state(buffer: *mut ThreadStateBuffer) {
 // =============================================================================
 //
 // Hardware breakpoints are debug registers that must be preserved during context
-// switch. When a thread sets a debug register (via NtSetContextThread), the
+// switch. When a thread sets a debug register (via NT_SET_CONTEXT_THREAD), the
 // kernel saves the current thread's DR state and restores the new thread's DR
 // state during context switch.
 //

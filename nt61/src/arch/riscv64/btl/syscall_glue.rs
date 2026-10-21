@@ -14,7 +14,7 @@
 //!    `RET` instruction from the translated block sees it in eax.
 //!
 //! Phase 4 scaffolds the call path. Phase 5 adds argument
-//! marshalling for `NtQueryInformationFile` and friends, and
+//! marshalling for `NT_QUERY_INFORMATION_FILE` and friends, and
 //! Phase 6 instruments hot services with branch counters.
 
 #![cfg(feature = "btl")]

@@ -8,6 +8,3 @@
 //! Each entry uses the `GateDescriptor` format (16 bytes): handler
 //! address, segment selector (always `KERNEL_CS`), IST field, type
 //! and DPL, plus the upper 32 bits of the handler address.
-
-use core::arch::asm;
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};

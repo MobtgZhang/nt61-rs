@@ -32,7 +32,6 @@ pub fn serial_puts(base: u64, s: &str) {
     }
 }
 
-#[allow(dead_code)]
 fn _keep() {
     let _ = unsafe { asm!("nop") };
 }

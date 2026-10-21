@@ -41,41 +41,73 @@ pub const CACHE_LINE: usize = 64;
 pub const PAGE_SIZE: usize = 4096;
 pub const PAGE_SHIFT: usize = 12;
 
+/// Page-walk geometry: five levels of nine bits each over a 4 KiB
+/// page. The walk covers VA[56:0] with the root table indexed by
+/// VA[56:48] and the leaf PTE indexed by VA[20:12], matching the
+/// tables built by `paging::leaf_pte_for`.
+const PW_PT_BASE: u64 = 12; // leaf index VA[20:12]
+const PW_PT_WIDTH: u64 = 9;
+const PW_DIR1_BASE: u64 = 21; // L3 index VA[29:21] -> leaf table
+const PW_DIR2_BASE: u64 = 30; // L2 index VA[38:30] -> L3
+const PW_DIR3_BASE: u64 = 39; // L1 index VA[47:39] -> L2
+const PW_DIR4_BASE: u64 = 48; // root index VA[56:48] -> L1
+const PW_DIR_WIDTH: u64 = 9;
+
+/// Configure the page-walk CSRs (PWCL/PWCH/STLBPS) for the kernel's
+/// five-level page table.
+///
+/// The refill sequence (`lddir 4`, `lddir 3`, `lddir 2`, `lddir 1`,
+/// `ldpte`) reads DIR4..DIR1 for the table hops and PTBASE/PTWIDTH for
+/// the leaf index; DIR numbering follows the Linux convention where
+/// DIR1 is the level closest to the PTE. STLBPS selects 4 KiB software
+/// TLB pages.
+///
+/// This must run before `CRMD.PG` is enabled: the first instruction
+/// fetch with PG=1 immediately takes a TLB refill, and the refill
+/// handler walks these CSRs.
+pub fn init_page_walk() {
+    unsafe {
+        let pwcl: u64 = PW_PT_BASE
+            | (PW_PT_WIDTH << 5)
+            | (PW_DIR1_BASE << 10)
+            | (PW_DIR_WIDTH << 15)
+            | (PW_DIR2_BASE << 20)
+            | (PW_DIR_WIDTH << 25);
+        let pwch: u64 =
+            PW_DIR3_BASE | (PW_DIR_WIDTH << 6) | (PW_DIR4_BASE << 12) | (PW_DIR_WIDTH << 18);
+        asm!("csrwr {}, 0x1C", in(reg) pwcl, options(nostack));
+        asm!("csrwr {}, 0x1D", in(reg) pwch, options(nostack));
+
+        // STLBPS = 0 selects 4 KiB software TLB pages (16 KiB is the
+        // reset default and would mismatch the 4 KiB page tables).
+        asm!("csrwr {}, 0x1E", in(reg) 0u64, options(nostack));
+
+        // Publish DMW0 before the first mapped-mode instruction
+        // executes. The UART and later platform MMIO use this window;
+        // early boot keeps physical addresses because DMW only applies
+        // when CRMD.PG is enabled.
+        let dmw0 = paging::CSR_DMW0_INIT;
+        asm!("csrwr {}, 0x180", in(reg) dmw0, options(nostack));
+    }
+}
+
 /// Initialise LoongArch64 architecture state.
 pub fn init() {
-    unsafe {
-        // Paging is intentionally left in the state the firmware
-        // (or our early `arch_early_ensure_serial_ready` helper)
-        // left it in. The kernel starts with `PG = 0` so that
-        // every supervisor load/store addresses the underlying
-        // physical memory 1:1 — this avoids relying on the
-        // firmware's `PGDH` page table (which on QEMU/EDK2 only
-        // covers the kernel-image range above 0x80000000 and does
-        // NOT include the LS7A UART at 0x1FE0_0000, triggering
-        // an "Address error exception" on the first serial
-        // write). Once the kernel builds its own page table
-        // (`mm::paging::init` → `arch::paging::load_page_root`)
-        // the new root is loaded and `PG` is flipped back on
-        // together, so the user-mode portion of the address
-        // space can be entered normally.
-
-        // Configure the page-walk format. We use the LoongArch64
-        // default (4-level page table) by setting PWCL/PWCH from
-        // the canonical values in the architecture manual. These
-        // match what Linux uses for a 48-bit VA configuration.
-        let pwcl: u64 =
-            (0x0C << 30) | (0x0C << 24) | (0x0C << 18) | (0x0C << 12) | (0x04 << 6) | 0x04;
-        let pwch: u64 = (0x0C << 6) | 0x0C;
-        asm!("csrwr {}, 0x1C", in(reg) pwcl);
-        asm!("csrwr {}, 0x1D", in(reg) pwch);
-
-        // Configure STLB page size and the page-fault exception
-        // entry. PAGE_SIZE for the page-walker is 16 KiB by default
-        // on LoongArch; we override it to 4 KiB (the same as the
-        // rest of the kernel) by writing the page-size override to
-        // the STLBPS register.
-        asm!("csrwr {}, 0x1E", in(reg) 0u64);
-    }
+    // Paging is intentionally left in the state the firmware
+    // (or our early `arch_early_ensure_serial_ready` helper)
+    // left it in. The kernel starts with `PG = 0` so that
+    // every supervisor load/store addresses the underlying
+    // physical memory 1:1 — this avoids relying on the
+    // firmware's `PGDH` page table (which on QEMU/EDK2 only
+    // covers the kernel-image range above 0x80000000 and does
+    // NOT include the LS7A UART at 0x1FE0_01E0, triggering
+    // an "Address error exception" on the first serial
+    // write). Once the kernel builds its own page table
+    // (`mm::paging::init` → `arch::paging::load_page_root`)
+    // the new root is loaded and `PG` is flipped back on
+    // together, so the user-mode portion of the address
+    // space can be entered normally.
+    init_page_walk();
 }
 
 /// Bring up secondary CPUs (LoongArch uses the mail-box or

@@ -68,7 +68,7 @@ impl From<u32> for TrapKind {
 /// Trap frame pushed by `loongarch64_exception`. The layout mirrors
 /// the order of `st.d` instructions in `idt.rs`.
 ///
-/// | Offset | Field | Source |
+/// | offset | Field | Source |
 /// |--------|-------|--------|
 /// | 0x00   | ra    |        |
 /// | 0x08   | tp    |        |
@@ -88,6 +88,8 @@ pub struct TrapFrame {
     pub fp: u64,
     pub a: [u64; 8], // a0..a7
     pub t: [u64; 8], // t0..t7
+    /// User-mode stack pointer saved by the EENTRY stub.
+    pub sp: u64,
 }
 
 /// Address-error / page-fault information extracted from the
@@ -99,17 +101,21 @@ pub struct FaultInfo {
     pub is_instruction: bool,
 }
 
-/// Read ESTAT (Exception Status) CSR (0x9).
+/// read ESTAT (Exception Status) CSR (0x5).
+///
+/// CSR number per the LoongArch Reference Manual Vol. 1 §6.2:
+/// 0x0 CRMD, 0x1 PRMD, 0x2 EUEN, 0x3 MISC, 0x4 ECFG, 0x5 ESTAT,
+/// 0x6 ERA, 0x7 BADV, 0x8 BADI, 0xC EENTRY.
 #[inline(always)]
 pub fn read_estat() -> u32 {
     let v: u32;
     unsafe {
-        asm!("csrrd {0}, 0x9", out(reg) v, options(nostack));
+        asm!("csrrd {0}, 0x5", out(reg) v, options(nostack));
     }
     v
 }
 
-/// Read ERA (Exception Return Address) CSR (0x6).
+/// read ERA (Exception Return Address) CSR (0x6).
 #[inline(always)]
 pub fn read_era() -> u64 {
     let v: u64;
@@ -119,7 +125,7 @@ pub fn read_era() -> u64 {
     v
 }
 
-/// Read BADV (Bad Virtual Address) CSR (0x7).
+/// read BADV (Bad Virtual Address) CSR (0x7).
 #[inline(always)]
 pub fn read_badv() -> u64 {
     let v: u64;
@@ -129,7 +135,7 @@ pub fn read_badv() -> u64 {
     v
 }
 
-/// Read PRMD (Previous Mode) CSR (0x1) — bit 0 = PIE, bit 1 = PPL.
+/// read PRMD (Previous Mode) CSR (0x1) — bit 0 = PIE, bit 1 = PPL.
 #[inline(always)]
 pub fn read_prmd() -> u32 {
     let v: u32;
@@ -188,6 +194,32 @@ pub extern "C" fn trap_dispatch(frame: *mut TrapFrame) {
                     era = in(reg) era + 4,
                     options(nostack),
                 );
+            }
+        }
+        TrapKind::Int => {
+            let is = estat & 0x1FFF; // IS[12:0]
+            // IS[2] is the QEMU virt EXTIOI UART line.  Drain the unified
+            // keyboard ring and clear only the per-core line; clearing the
+            // device-level ISR here would lose coalesced input.
+            if (is & (1 << 2)) != 0 {
+                crate::hal::common::keyboard_unified::serial_rx_irq();
+                crate::arch::loongarch64::pic::core_ack(2);
+            }
+
+            // IS[11] is the constant-timer tick. It must be cleared via
+            // TICLR (CSR 0x44) bit 0 — otherwise the interrupt stays
+                                     // pending and the CPU re-enters the handler immediately
+                                     // after `ertn`, producing an interrupt storm that looks
+                                     // exactly like a silent boot hang.
+            if (is & (1 << 11)) != 0 {
+                unsafe {
+                    core::arch::asm!(
+                        "li.d {v}, 1",
+                        "csrwr {v}, 0x44", // TICLR: clear timer tick
+                        v = out(reg) _,
+                        options(nostack),
+                    );
+                }
             }
         }
         _ => {

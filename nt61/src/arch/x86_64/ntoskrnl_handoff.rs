@@ -66,7 +66,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 /// be allocated for anything else by the disk blob's runtime).
 #[repr(C, align(4096))]
 struct HostHandoffPage {
-    /// Address of `ntoskrnl_kisystemstartup_thunk`. Read by the
+    /// Address of `ntoskrnl_kisystemstartup_thunk`. read by the
     /// disk `KiSystemStartup` via `[RDX]` (where RDX was set by
     /// `native_handoff::jump_to_ntoskrnl_entry`).
     callback: AtomicU64,
@@ -261,21 +261,17 @@ pub extern "C" fn ntoskrnl_kisystemstartup_thunk(
         unsafe {
             // Raw serial print to avoid the format-args code path,
             // which has been known to panic inside the thunk context.
-            crate::hal::serial::write_string(
-                "[NTOSKRNL-HOST] K02: about to read boot_info fields\r\n",
-            );
-            crate::hal::serial::write_string(
-                "[NTOSKRNL-HOST] K02: boot_info fields read OK (not crashing)\r\n",
-            );
+            crate::boot_debug_println!("[NTOSKRNL-HOST] K02: about to read boot_info fields");
+            crate::boot_debug_println!("[NTOSKRNL-HOST] K02: boot_info fields read OK");
             // Run the full MM bring-up (PFN database, buddy
             // allocator, heap, pool, VAS self-map, sys PTE pool,
             // etc.) so the rest of the boot chain has working
             // allocators. The UEFI fast-handoff path in
             // kernel_main skips Phases 0..12, so none of these
             // were initialised before we got here.
-            crate::hal::serial::write_string("[NTOSKRNL-HOST] K02: mm::init start\r\n");
+            crate::boot_debug_println!("[NTOSKRNL-HOST] K02: mm::init start");
             crate::mm::init(&*boot_info);
-            crate::hal::serial::write_string("[NTOSKRNL-HOST] K02: mm::init done; mounting FS\r\n");
+            crate::boot_debug_println!("[NTOSKRNL-HOST] K02: mm::init done; mounting FS");
         }
     }
 
@@ -288,7 +284,7 @@ pub extern "C" fn ntoskrnl_kisystemstartup_thunk(
             crate::fs::mount_esp_from_bootinfo(&*boot_info);
             crate::fs::mount_sys_from_bootinfo(&*boot_info);
             crate::fs::mount_ramdisk_from_bootinfo(&*boot_info);
-            crate::hal::serial::write_string("[NTOSKRNL-HOST] K03: mount_*_from_bootinfo done\r\n");
+            crate::boot_debug_println!("[NTOSKRNL-HOST] K03: mount_*_from_bootinfo done");
         }
     }
     crate::fs::init();
@@ -315,17 +311,17 @@ pub extern "C" fn ntoskrnl_kisystemstartup_thunk(
     // =======================================================================
     // BOOT_START .sys drivers are loaded by `winload::load_boot_drivers`
     // *before* `ExitBootServices` — by the time we reach this
-    // trampoline they have already called their DriverEntry. So
+    // trampoline they have already called their driver_entry. So
     // there is nothing for us to do at K05 except emit the marker.
     crate::rtl::windows_log::write_kernel_phase_header(5);
-    crate::hal::serial::write_string(
-        "[NTOSKRNL-HOST] K05: BOOT_START drivers already initialised by winload\r\n",
+    crate::boot_debug_println!(
+        "[NTOSKRNL-HOST] K05: BOOT_START drivers already initialised by winload"
     );
 
     // =======================================================================
     // PHASE K06: PCI enumeration / bus driver init
     // =======================================================================
-    // Win7's IO manager runs the PCI bus driver's AddDevice/Start
+    // Win7's IO manager runs the PCI bus driver's add_device/Start
     // routine before any class driver touches hardware. Our host
     // kernel's `drivers::bus::pci_bus::init()` walks the PCI config
     // space (CF8/CFC I/O ports) and registers every device with
@@ -333,52 +329,48 @@ pub extern "C" fn ntoskrnl_kisystemstartup_thunk(
     // chance to claim the VGA controller at K07 and produce the
     // bootvid LFB instead of the OVMF "Loading..." splash.
     crate::rtl::windows_log::write_kernel_phase_header(6);
-    crate::hal::serial::write_string(
-        "[NTOSKRNL-HOST] K06: drivers::bus::init (PCI/ACPI/USB root)\r\n",
-    );
+    crate::boot_debug_println!("[NTOSKRNL-HOST] K06: drivers::bus::init (PCI/ACPI/USB root)");
     crate::drivers::bus::init();
-    crate::hal::serial::write_string("[NTOSKRNL-HOST] K06: bus enumeration done\r\n");
+    crate::boot_debug_println!("[NTOSKRNL-HOST] K06: bus enumeration done");
 
     // =======================================================================
-    // PHASE K07: re-load BOOT_START drivers from disk and invoke DriverEntry
+    // PHASE K07: re-load BOOT_START drivers from disk and invoke driver_entry
     // =======================================================================
     // Real Windows 7 winload.efi ONLY loads the BOOT_START images
     // into memory and resolves their imports; it does NOT call
-    // DriverEntry. The kernel's I/O Manager (Phase 1 -> Phase 0
+    // driver_entry. The kernel's I/O Manager (Phase 1 -> Phase 0
     // -> IopInitializeBootDrivers) reads the BOOT_START list out
     // of the registry, loads each driver's PE from
     // %SystemRoot%\\System32\\drivers\\<name>.sys, calls its
-    // DriverEntry, and only then drops into SMSS.
+    // driver_entry, and only then drops into SMSS.
     //
     // Our trampoline previously skipped this step because the
     // display was driven directly by `text_console::put_byte` in
     // the UEFI fast-handoff path. To honour the Win7 boot sequence
     // we now read every driver PE from the mounted NTFS system
     // partition, allocate a runtime slot in the kernel's
-    // identity-mapped window, and call its DriverEntry so the
+    // identity-mapped window, and call its driver_entry so the
     // serial log shows a real `vga.sys`/`vgapnp.sys`/`bootvid.dll`
     // bring-up.
     crate::rtl::windows_log::write_kernel_phase_header(7);
-    crate::hal::serial::write_string(
-        "[NTOSKRNL-HOST] K07: re-loading BOOT_START drivers from disk and invoking DriverEntry\r\n",
+    crate::boot_debug_println!(
+        "[NTOSKRNL-HOST] K07: re-loading BOOT_START drivers from disk and invoking DriverEntry"
     );
-    crate::drivers::loader::load_and_init_boot_start_drivers();
-    crate::hal::serial::write_string(
-        "[NTOSKRNL-HOST] K07: BOOT_START drivers loaded from disk\r\n",
-    );
+    crate::drivers::arch::loader::load_and_init_boot_start_drivers();
+    crate::boot_debug_println!("[NTOSKRNL-HOST] K07: BOOT_START drivers loaded from disk");
 
     // =======================================================================
     // PHASE K08: PnP Manager (device-tree enumeration + driver matching)
     // =======================================================================
     // The PnP manager walks the device tree produced by K06/K07
     // and assigns each device to a driver. On real Win7 this is
-    // where the boot-start drivers get their AddDevice callbacks
+    // where the boot-start drivers get their add_device callbacks
     // fired; we have already done that inside `load_and_init_boot_start_drivers`
     // so K08 is effectively a marker here.
     //
     // SSH/OpenSSH test bring-up requires the network miniport to be
     // initialised between K06 (PCI bus enumeration) and K09 (CM re-init).
-    // The NT6.1 I/O manager dispatches NDIS miniport DriverEntry during
+    // The NT6.1 I/O manager dispatches NDIS miniport driver_entry during
     // PnP device-tree matching, so we drive the same sequence here:
     //   * K08a: register the class driver stubs (e1000 / rtl8139 / virtio-net)
     //   * K08b: walk the PCI cache via virtio_net::init so the paravirt NIC
@@ -390,8 +382,8 @@ pub extern "C" fn ntoskrnl_kisystemstartup_thunk(
     //           but doing it earlier makes `ipconfig` from cmd shell work
     //           immediately after the first 127.0.0.1 reply is needed).
     crate::rtl::windows_log::write_kernel_phase_header(8);
-    crate::hal::serial::write_string(
-        "[NTOSKRNL-HOST] K08: PnP manager device-tree enumeration done by K07\r\n",
+    crate::boot_debug_println!(
+        "[NTOSKRNL-HOST] K08: PnP manager device-tree enumeration done by K07"
     );
 
     // K08a/b: drivers::net::init -> walks PCI for every supported NIC
@@ -399,33 +391,31 @@ pub extern "C" fn ntoskrnl_kisystemstartup_thunk(
     // `-device virtio-net-pci` reachable; without this call the
     // guest kernel never binds to the paravirt NIC and `sshd.exe`
     // cannot `bind()` a socket.
-    crate::hal::serial::write_string(
-        "[NTOSKRNL-HOST] K08a: drivers::net::init (e1000 / rtl8139 / virtio-net miniport)\r\n",
+    crate::boot_debug_println!(
+        "[NTOSKRNL-HOST] K08a: drivers::net::init (e1000 / rtl8139 / virtio-net miniport)"
     );
     crate::drivers::net::init();
-    crate::hal::serial::write_string("[NTOSKRNL-HOST] K08a: drivers::net::init returned\r\n");
+    crate::boot_debug_println!("[NTOSKRNL-HOST] K08a: drivers::net::init returned");
 
     // K08c: protocol stack bring-up. The same call order
     // `mod.rs::init` already uses internally, but we call it
     // explicitly so an OpenSSH regression is observable in the
     // serial log (rather than silently absent).
-    crate::hal::serial::write_string(
-        "[NTOSKRNL-HOST] K08c: netstack::init (arp/ipif/tcp/udp/socket)\r\n",
-    );
+    crate::boot_debug_println!("[NTOSKRNL-HOST] K08c: netstack::init (arp/ipif/tcp/udp/socket)");
     crate::netstack::init();
-    crate::hal::serial::write_string("[NTOSKRNL-HOST] K08c: netstack::init returned\r\n");
+    crate::boot_debug_println!("[NTOSKRNL-HOST] K08c: netstack::init returned");
 
     // Drive `pnp::start_all_pending()` so any PCI device that was
     // registered by K06 and not yet bound (e.g. a second virtio-blk
-    // exposed as `-hdb`) gets its DriverEntry fired. The Win7 I/O
+    // exposed as `-hdb`) gets its driver_entry fired. The Win7 I/O
     // manager does this during the PnP manager pass; we mirror that
     // here so the OpenSSH payload disk actually shows up before SMSS
     // tries to `read_pe_from_disk` sshd.exe.
-    crate::hal::serial::write_string(
-        "[NTOSKRNL-HOST] K08d: pnp::start_all_pending (start unbound PCI devices)\r\n",
+    crate::boot_debug_println!(
+        "[NTOSKRNL-HOST] K08d: pnp::start_all_pending (start unbound PCI devices)"
     );
     let _started = crate::drivers::bus::pnp::start_all_pending();
-    crate::hal::serial::write_string("[NTOSKRNL-HOST] K08d: pnp::start_all_pending returned\r\n");
+    crate::boot_debug_println!("[NTOSKRNL-HOST] K08d: pnp::start_all_pending returned");
 
     // =======================================================================
     // PHASE K09: Configuration Manager (registry) re-init
@@ -436,8 +426,8 @@ pub extern "C" fn ntoskrnl_kisystemstartup_thunk(
     // sequence (ntoskrnl.exe does CmInitSystem1 -> CmInitSystem2 in
     // the same relative position).
     crate::rtl::windows_log::write_kernel_phase_header(9);
-    crate::hal::serial::write_string(
-        "[NTOSKRNL-HOST] K09: CM (registry) re-initialised by host kernel_main Phase 7\r\n",
+    crate::boot_debug_println!(
+        "[NTOSKRNL-HOST] K09: CM (registry) re-initialised by host kernel_main Phase 7"
     );
 
     // =======================================================================
@@ -447,11 +437,11 @@ pub extern "C" fn ntoskrnl_kisystemstartup_thunk(
     // directories are sealed in the host kernel's `ob::init()`
     // (Phase 3). The disk-loaded ntoskrnl would normally create
     // `\Device\Video0` and `\Device\Bootvid` here, but our driver
-    // stubs publish those names directly during DriverEntry, so
+    // stubs publish those names directly during driver_entry, so
     // K10 is a marker.
     crate::rtl::windows_log::write_kernel_phase_header(10);
-    crate::hal::serial::write_string(
-        "[NTOSKRNL-HOST] K10: Object Manager directories sealed by host kernel_main Phase 3\r\n",
+    crate::boot_debug_println!(
+        "[NTOSKRNL-HOST] K10: Object Manager directories sealed by host kernel_main Phase 3"
     );
 
     // =======================================================================
@@ -462,8 +452,8 @@ pub extern "C" fn ntoskrnl_kisystemstartup_thunk(
     // / KiThread dispatcher headers. K11 emits a marker so the
     // phase numbering matches Win7's PsInitSystem.
     crate::rtl::windows_log::write_kernel_phase_header(11);
-    crate::hal::serial::write_string(
-        "[NTOSKRNL-HOST] K11: Process/Thread subsystem initialised by host kernel_main Phase 8\r\n",
+    crate::boot_debug_println!(
+        "[NTOSKRNL-HOST] K11: Process/Thread subsystem initialised by host kernel_main Phase 8"
     );
 
     // =======================================================================

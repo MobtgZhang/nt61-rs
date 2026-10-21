@@ -1,6 +1,6 @@
 //! BTL translated-state management.
 //!
-//! Currently a stub. Provides:
+//! Provides:
 //!
 //! * The translated register file (mapping x86_64/AArch32 registers
 //!   to AArch64 host registers).

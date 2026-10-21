@@ -64,16 +64,53 @@ pub const PAGE_SHIFT: usize = 12;
 /// exception vector (so any subsequent code path is protected),
 /// then trap glue, then the rest of the platform.
 pub fn init() {
+    // The firmware may leave `satp` in Sv48/Sv39 while the kernel is
+    // running with a physical/identity address layout. Reset to Bare
+    // before any subsystem reads MMIO. The memory manager installs
+    // Sv39 later, and RISC-V paging keeps identity mappings for
+    // bootstrap MMIO.
+    unsafe {
+        asm!("csrw satp, {}", in(reg) 0u64, options(nostack));
+        asm!("sfence.vma", options(nostack));
+    }
+
+    // Interrupts must remain globally disabled until the trap stack
+    // and `sscratch` are installed. Individual `sie` bits may still
+    // be programmed later without making them deliverable.
+    unsafe {
+        core::arch::asm!(
+            "csrc sstatus, {}",
+            in(reg) crate::arch::riscv64::csr::sstatus::SIE,
+            options(nostack, preserves_flags),
+        );
+    }
+
+    // Phase 0.0: install the per-CPU area before anything reads the
+    // tp register. The firmware leaves tp with an undefined value
+    // (observed: an OpenSBI-reserved address), and any per-CPU read
+    // through it faults with LoadAccessFault.
+    unsafe {
+        crate::arch::common::percpu::init(0);
+    }
+
     // Phase 0.1: detect SoC. Idempotent; cheap.
+    crate::boot_debug_println!("[RISCV] soc init start");
     soc::init_soc();
+    crate::boot_debug_println!("[RISCV] soc init done");
     // Phase 0.2: parse `misa` and cache ISA features.
+    crate::boot_debug_println!("[RISCV] cpuinfo init start");
     cpuinfo::init_cpuinfo();
+    crate::boot_debug_println!("[RISCV] cpuinfo init done");
     // Phase 0.3: install the trap vector before anything else
     // touches `sret` / `ecall`.
+    crate::boot_debug_println!("[RISCV] trap vector init start");
     idt::init();
+    crate::boot_debug_println!("[RISCV] trap vector init done");
     // Phase 0.4: Rust-side trap dispatcher (currently a stub —
     // see [`trap::init`]).
+    crate::boot_debug_println!("[RISCV] trap dispatch init start");
     trap::init();
+    crate::boot_debug_println!("[RISCV] trap dispatch init done");
 
     // Phase 5: bring the BTL online (only when the feature flag is
     // set). The BTL is enabled on first guest thread start, not at
@@ -82,20 +119,19 @@ pub fn init() {
     btl::init();
 
     unsafe {
-        // Set up a default satp. For the bootstrap we leave it at
-        // MODE=Bare (no translation) until paging::init installs a
-        // real mode. We do this explicitly because the firmware
-        // may have left satp in any state.
-        asm!("csrw satp, {}", in(reg) 0u64);
+        crate::boot_debug_println!("[RISCV] csr init start");
+        crate::boot_debug_println!("[RISCV] satp reset done");
 
         // Enable the supervisor timer and external interrupts at
         // the `sie` level. The `sstatus.SIE` global enable is left
         // off (handled by `enable_interrupts`).
         asm!("csrs sie, {}", in(reg) (1u64 << 5) | (1u64 << 9));
+        crate::boot_debug_println!("[RISCV] sie init done");
 
         // Memory fence - ordering between PMP setup and any
         // subsequent memory access.
         asm!("fence rw, rw", options(nostack));
+        crate::boot_debug_println!("[RISCV] csr init done");
     }
 }
 

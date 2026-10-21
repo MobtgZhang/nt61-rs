@@ -73,7 +73,7 @@ pub fn handle_rx() {
     }
 }
 
-/// Write a `u32` as 8 hex digits to the UART. Provided for parity
+/// write a `u32` as 8 hex digits to the UART. Provided for parity
 /// with `hal::serial::write_u32_hex` on other architectures.
 pub fn write_u32_hex(v: u32) {
     serial_puts("0x");

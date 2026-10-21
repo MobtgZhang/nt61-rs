@@ -96,7 +96,6 @@ pub unsafe extern "C" fn swap_context(out_rsp_addr: *mut u64, new_rsp: u64) {
 /// Assembly body for `swap_context`. (Reserved for future hand-tuned
 /// inline asm — `arch_swap_context` is currently implemented in pure
 /// Rust + `asm!`.)
-#[allow(dead_code)]
 #[cfg(target_arch = "loongarch64")]
 mod asm_impl {
     // Intentionally empty: the LA64 toolchain does not yet expose

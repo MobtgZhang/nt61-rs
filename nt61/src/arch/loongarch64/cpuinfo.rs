@@ -22,8 +22,6 @@ use crate::arch::loongarch64::soc;
 pub struct CpuFeatures {
     /// Raw 64-bit value of CPUCFG word 0x11 (CPU feature bits 1).
     bits_word11: u64,
-    /// Raw 64-bit value of CPUCFG word 0x12 (CPU feature bits 2).
-    bits_word12: u64,
 }
 
 /// Set by `cpuinfo::detect_all` once during early boot.
@@ -47,18 +45,12 @@ pub mod feature {
 
 impl CpuFeatures {
     pub const fn empty() -> Self {
-        Self {
-            bits_word11: 0,
-            bits_word12: 0,
-        }
+        Self { bits_word11: 0 }
     }
 
     /// Construct from raw CPUCFG words.
-    pub const fn from_raw(w11: u64, w12: u64) -> Self {
-        Self {
-            bits_word11: w11,
-            bits_word12: w12,
-        }
+    pub const fn from_raw(w11: u64, _w12: u64) -> Self {
+        Self { bits_word11: w11 }
     }
 
     /// True if the named feature is present.
@@ -77,12 +69,12 @@ impl CpuFeatures {
     }
 }
 
-/// Read CPUCFG word 0x11 (CPU feature flags 1).
+/// read CPUCFG word 0x11 (CPU feature flags 1).
 fn read_word_11() -> u64 {
     unsafe { soc::cpucfg_read(0x11) }
 }
 
-/// Read CPUCFG word 0x12 (CPU feature flags 2).
+/// read CPUCFG word 0x12 (CPU feature flags 2).
 fn read_word_12() -> u64 {
     unsafe { soc::cpucfg_read(0x12) }
 }

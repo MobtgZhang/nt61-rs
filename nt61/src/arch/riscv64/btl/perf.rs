@@ -49,7 +49,7 @@ pub fn record(idx: usize) {
     HIST[idx].fetch_add(1, Ordering::Relaxed);
 }
 
-/// Read out the entire histogram.
+/// read out the entire histogram.
 pub fn histogram() -> [u64; 16] {
     let mut out = [0u64; 16];
     for (i, c) in HIST.iter().enumerate() {

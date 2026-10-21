@@ -8,7 +8,7 @@
 //!
 //! ## Memory map (relative to CLINT base)
 //!
-//! | Offset | Register | Width |
+//! | offset | Register | Width |
 //! |--------|----------|-------|
 //! | 0x0000 | MSIP for hart 0 | u32 |
 //! | 0x0004 | MSIP for hart 1 | u32 |
@@ -46,7 +46,7 @@ pub fn init(base: u64) {
     CLINT_BASE.store(base, Ordering::Release);
 }
 
-/// Read the current `mtime` value.
+/// read the current `mtime` value.
 pub fn read_mtime() -> u64 {
     let b = CLINT_BASE.load(Ordering::Acquire);
     if b == 0 {

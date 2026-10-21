@@ -46,8 +46,6 @@ const PTE_V: u64 = 1 << 0;
 const PTE_R: u64 = 1 << 1;
 const PTE_W: u64 = 1 << 2;
 const PTE_X: u64 = 1 << 3;
-const PTE_U: u64 = 1 << 4;
-
 fn make_pte(pa: u64, flags: u64) -> u64 {
     ((pa >> 12) << 10) | (flags & 0xFF) | PTE_V
 }

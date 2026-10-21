@@ -67,7 +67,7 @@ impl CpuFeatures {
 /// Cached CPU info, populated by [`init`].
 static mut CPU_FEATURES: CpuFeatures = CpuFeatures::empty();
 
-/// Read `ID_AA64PFR0_EL1` (Processor Feature Register 0).
+/// read `ID_AA64PFR0_EL1` (Processor Feature Register 0).
 #[inline(always)]
 fn id_aa64pfr0_el1() -> u64 {
     let v: u64;
@@ -75,7 +75,7 @@ fn id_aa64pfr0_el1() -> u64 {
     v
 }
 
-/// Read `ID_AA64PFR1_EL1`.
+/// read `ID_AA64PFR1_EL1`.
 #[inline(always)]
 fn id_aa64pfr1_el1() -> u64 {
     let v: u64;
@@ -83,7 +83,7 @@ fn id_aa64pfr1_el1() -> u64 {
     v
 }
 
-/// Read `ID_AA64ISAR0_EL1` (Instruction Set Attribute Register 0).
+/// read `ID_AA64ISAR0_EL1` (Instruction Set Attribute Register 0).
 #[inline(always)]
 fn id_aa64isar0_el1() -> u64 {
     let v: u64;
@@ -91,7 +91,7 @@ fn id_aa64isar0_el1() -> u64 {
     v
 }
 
-/// Read `ID_AA64ISAR1_EL1`.
+/// read `ID_AA64ISAR1_EL1`.
 #[inline(always)]
 fn id_aa64isar1_el1() -> u64 {
     let v: u64;
@@ -99,7 +99,7 @@ fn id_aa64isar1_el1() -> u64 {
     v
 }
 
-/// Read `ID_AA64MMFR0_EL1` (Memory Model Feature Register 0).
+/// read `ID_AA64MMFR0_EL1` (Memory Model Feature Register 0).
 #[inline(always)]
 fn id_aa64mmfr0_el1() -> u64 {
     let v: u64;

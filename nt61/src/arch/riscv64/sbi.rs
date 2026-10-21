@@ -120,8 +120,8 @@ pub struct SpecVersion {
 /// Probe whether the given EID is implemented.
 ///
 /// Returns `true` if the firmware returns SBI_SUCCESS for `BASE::PROBE`.
-pub unsafe fn probe(eid: u64) -> bool {
-    let r = sbi_call(eid::BASE, 3 /* PROBE */, 0, 0, 0, 0, 0, 0);
+pub unsafe fn probe(_eid: u64) -> bool {
+    let r = sbi_call(eid::BASE, 3 /* PROBE */, _eid, 0, 0, 0, 0, 0);
     r.error == 0
 }
 
@@ -136,6 +136,26 @@ pub unsafe fn spec_version() -> SpecVersion {
 /// Return the firmware's vendor ID string encoded as a u64.
 pub unsafe fn impl_id() -> u64 {
     sbi_call(eid::BASE, 1 /* GET_IMP_ID */, 0, 0, 0, 0, 0, 0).value as u64
+}
+
+/// Return the JEDEC machine vendor ID (`mvendorid`).
+pub unsafe fn mvendorid() -> u64 {
+    sbi_call(eid::BASE, 4 /* GET_MVENDORID */, 0, 0, 0, 0, 0, 0).value as u64
+}
+
+/// Return the machine architecture ID (`marchid`).
+pub unsafe fn marchid() -> u64 {
+    sbi_call(eid::BASE, 5 /* GET_MARCHID */, 0, 0, 0, 0, 0, 0).value as u64
+}
+
+/// Return the machine implementation ID (`mimpid`).
+pub unsafe fn mimpid() -> u64 {
+    sbi_call(eid::BASE, 6 /* GET_MIMPID */, 0, 0, 0, 0, 0, 0).value as u64
+}
+
+/// Return the current hart ID (`mhartid`).
+pub unsafe fn current_hartid() -> u64 {
+    sbi_call(eid::BASE, 7 /* GET_CURRENT_HARTID */, 0, 0, 0, 0, 0, 0).value as u64
 }
 
 // =====================================================================

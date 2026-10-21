@@ -5,10 +5,8 @@
 //! structures.
 
 #[cfg(target_arch = "x86_64")]
-#[cfg(target_arch = "x86_64")]
 pub use crate::arch::x86_64::dispatch::TrapFrame;
 
-#[cfg(target_arch = "x86_64")]
 #[cfg(target_arch = "x86_64")]
 pub use crate::arch::x86_64::dispatch::KTrapFrame;
 

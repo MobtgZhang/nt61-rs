@@ -1,4 +1,4 @@
-//! AArch64 TLB (Translation Lookaside Buffer) Management
+//! AArch64 TLB (Translation Lookaside buffer) Management
 //!
 //! Provides comprehensive TLB invalidation operations for:
 //! - Single page invalidation
@@ -142,7 +142,7 @@ pub fn flush_instruction_page(vaddr: u64) {
     }
 }
 
-/// Read current ASID from TTBR0_EL1
+/// read current ASID from TTBR0_EL1
 #[inline]
 fn read_current_asid() -> Asid {
     let ttbr0: u64;

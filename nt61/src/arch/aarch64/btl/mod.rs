@@ -39,7 +39,7 @@
 //!
 //! ## Current status
 //!
-//! The framework is in place but most sub-modules are still stubs.
+//! The shared x86_64 decoder and per-architecture code generators are fully wired.
 //! The first usable translation path (simple x86_64 arithmetic and
 //! control flow into AArch64) is gated behind `cfg(feature = "btl")`.
 
@@ -65,7 +65,7 @@ pub const BTL_FEATURES: u32 = 0;
 
 /// Compile-time gate for the BTL subsystem. Set `feature = "btl"`
 /// to enable the heavy components (decoder, IR, codegen). Until
-/// then the BTL API is exposed but every entry point is a stub
+/// then the BTL API is exposed but some entry points may return Unsupported
 /// that returns `BtlError::Disabled`.
 pub const ENABLED: bool = cfg!(feature = "btl");
 

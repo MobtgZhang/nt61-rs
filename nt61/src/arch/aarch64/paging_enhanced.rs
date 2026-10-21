@@ -20,8 +20,6 @@ const L1_SHIFT: u64 = 30;
 const L2_SHIFT: u64 = 21;
 const L3_SHIFT: u64 = 12;
 
-const TABLE_ENTRIES: usize = 512;
-
 /// Page table entry flags
 pub mod flags {
     pub const VALID: u64 = 1 << 0;
@@ -54,7 +52,7 @@ pub mod flags {
     pub const DEVICE_MEM: u64 = VALID | PAGE | AF | ATTR_DEVICE | SH_OUTER | PXN | UXN;
 }
 
-/// Read TTBR0_EL1 (user space page table)
+/// read TTBR0_EL1 (user space page table)
 
 #[inline]
 pub fn read_ttbr0() -> u64 {
@@ -65,7 +63,7 @@ pub fn read_ttbr0() -> u64 {
     val & PAGE_MASK
 }
 
-/// Read TTBR1_EL1 (kernel space page table)
+/// read TTBR1_EL1 (kernel space page table)
 #[inline]
 pub fn read_ttbr1() -> u64 {
     let val: u64;
@@ -75,7 +73,7 @@ pub fn read_ttbr1() -> u64 {
     val & PAGE_MASK
 }
 
-/// Write TTBR0_EL1
+/// write TTBR0_EL1
 #[inline]
 pub fn write_ttbr0(paddr: u64) {
     unsafe {
@@ -88,7 +86,7 @@ pub fn write_ttbr0(paddr: u64) {
     }
 }
 
-/// Write TTBR1_EL1
+/// write TTBR1_EL1
 #[inline]
 pub fn write_ttbr1(paddr: u64) {
     unsafe {
@@ -157,7 +155,7 @@ pub struct PageTable {
 }
 
 impl PageTable {
-    /// Create page table from physical address
+    /// create page table from physical address
     pub fn from_paddr(paddr: u64, is_kernel: bool) -> Self {
         Self {
             root_paddr: paddr & PAGE_MASK,
@@ -237,7 +235,7 @@ impl PageTable {
     }
 
     /// Map a page
-    pub fn map_page(&mut self, vaddr: u64, paddr: u64, flags: u64) -> Result<(), &'static str> {
+    pub fn map_page(&mut self, vaddr: u64, _paddr: u64, _flags: u64) -> Result<(), &'static str> {
         // This is simplified - full implementation would allocate intermediate tables
         let entry = self.get_entry(vaddr);
         if entry.is_some() {

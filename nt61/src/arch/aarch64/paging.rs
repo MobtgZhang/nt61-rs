@@ -21,16 +21,14 @@
 //
 //! To get around this, `map_page` / `unmap_page` / `translate_virt`
 //! here walk the kernel's translation tables by *physical address* —
-//! they read the page root PA from `TTBR1_EL1` (which is always a
-//! valid physical address; the root page is identity-mapped at PA by
+//! they read the root PA from the non-zero `TTBR1_EL1` or
+//! `TTBR0_EL1` value (the root page is identity-mapped at PA by
 //! the boot stub) and follow each intermediate table PA through the
 //! descriptor bits. The leaf write/install still uses the
 //! `arch::aarch64::paging::PTE` layout so the format is identical
 //! to x86_64's.
 //!
 //! `load_page_root` writes the supplied PFN to `TTBR1_EL1`.
-
-#![allow(non_snake_case)]
 
 use core::arch::asm;
 use core::ptr;
@@ -87,93 +85,64 @@ fn make_page_desc(pa: u64, pte_flags: u64) -> u64 {
     // kernel data pages; we never execute from the heap/pool.
     (pa & 0x0000_FFFF_FFFF_F000) | (pte_flags & 0xFFF) | 0x3 | (1u64 << 10)
 }
-fn make_table_desc(pa: u64) -> u64 {
-    // Same AF caveat as above applies to table descriptors when
-    // Access Flag checking is enabled — set bit 10 to be safe.
-    (pa & 0x0000_FFFF_FFFF_F000) | 0x3 | (1u64 << 10)
-}
-fn is_valid_table(e: u64) -> bool {
-    (e & 0x3) == 0x3
-}
 fn is_valid_page(e: u64) -> bool {
     (e & 0x3) == 0x1 || (e & 0x3) == 0x3
 }
 
-/// Address (PA) of the page table that backs L0 of the kernel
-/// half of the address space. The page root itself is left
-/// identity-mapped by the boot stub (the L0 page is allocated from
-/// physical memory whose PA == VA mapping is preserved across
-/// `ExitBootServices`), so we can dereference it directly without
-/// going through any translation.
+/// Ensure a newly installed descriptor (intermediate table or leaf
+/// PTE) is visible to subsequent MMU walks. The TLB caches intermediate
+/// descriptors as well as leaf entries; after writing a new one we must
+/// issue DSB, TLB invalidation, and ISB before the mapping can be
+/// relied upon by any address translation.
+#[inline]
+fn sync_new_page_table() {
+    unsafe {
+        asm!("dsb ish", options(nostack));
+        asm!("tlbi vmalle1", options(nostack));
+        asm!("isb", options(nostack));
+    }
+}
+
+/// Address (PA) of the active root translation table. The page root
+/// itself is left identity-mapped by the boot stub (the root page is
+/// allocated from physical memory whose PA == VA mapping is preserved
+/// across `ExitBootServices`), so we can dereference it directly
+/// without going through any translation.
 ///
 /// On EDK2 / QEMU virt the boot stub typically installs a single
 /// page table into TTBR0_EL1 and zeroes TTBR1_EL1 (the kernel
 /// half). We honour whichever one is non-zero.
 #[inline]
-fn current_l0_phys() -> u64 {
+pub fn current_l0_phys() -> u64 {
     let ttbr1: u64;
     let ttbr0: u64;
     unsafe {
         asm!("mrs {}, TTBR1_EL1", out(reg) ttbr1, options(nostack));
         asm!("mrs {}, TTBR0_EL1", out(reg) ttbr0, options(nostack));
     }
-    let chosen = if (ttbr1 & 0x0000_FFFF_FFFF_F000) != 0 {
-        ttbr1
+    // Always synchronise TTBR1 with TTBR0 so the kernel half (VA
+    // bit 63 = 1) and the user half share the same root page table.
+    // If the firmware set TTBR1 to a different (stale) root, high
+    // VA translations (e.g. system PTE region 0xFFFFF900_0000_0000)
+    // would fault because the mappings were installed in TTBR0's
+    // tree.
+    let ttbr0_pa = ttbr0 & 0x0000_FFFF_FFFF_F000;
+    let ttbr1_pa = ttbr1 & 0x0000_FFFF_FFFF_F000;
+    if ttbr0_pa != 0 && ttbr0_pa != ttbr1_pa {
+        unsafe {
+            asm!("msr TTBR1_EL1, {}", in(reg) ttbr0, options(nostack));
+            asm!("dsb nsh", options(nostack));
+            asm!("isb", options(nostack));
+            asm!("tlbi vmalle1", options(nostack));
+        }
+    }
+    // After the sync above, TTBR1 always matches TTBR0 (or TTBR0 is
+    // the only valid root). Use TTBR0 as the authoritative root.
+    if ttbr0_pa != 0 {
+        ttbr0_pa
     } else {
-        ttbr0
-    };
-    chosen & 0x0000_FFFF_FFFF_F000
-}
-
-#[allow(dead_code)]
-unsafe fn dump_l0_for(va: u64) {
-    let l0_phys = current_l0_phys();
-    let l0_idx = ((va >> 39) & 0x1FF) as usize;
-    let l0 = l0_phys as *mut u64;
-    let l0e = core::ptr::read_volatile(l0.add(l0_idx));
-    crate::hal::serial::write_string("[dump] l0_idx=");
-    crate::hal::serial::write_hex_u64(l0_idx as u64);
-    crate::hal::serial::write_string(" l0_phys=");
-    crate::hal::serial::write_hex_u64(l0_phys);
-    crate::hal::serial::write_string(" l0e=");
-    crate::hal::serial::write_hex_u64(l0e);
-    crate::hal::serial::write_string("\r\n");
-
-    let l1_phys = l0e & 0x0000_FFFF_FFFF_F000;
-    let l1_idx = ((va >> 30) & 0x1FF) as usize;
-    let l1 = l1_phys as *mut u64;
-    let l1e = core::ptr::read_volatile(l1.add(l1_idx));
-    crate::hal::serial::write_string("[dump]   l1_idx=");
-    crate::hal::serial::write_hex_u64(l1_idx as u64);
-    crate::hal::serial::write_string(" l1_phys=");
-    crate::hal::serial::write_hex_u64(l1_phys);
-    crate::hal::serial::write_string(" l1e=");
-    crate::hal::serial::write_hex_u64(l1e);
-    crate::hal::serial::write_string("\r\n");
-
-    let l2_phys = l1e & 0x0000_FFFF_FFFF_F000;
-    let l2_idx = ((va >> 21) & 0x1FF) as usize;
-    let l2 = l2_phys as *mut u64;
-    let l2e = core::ptr::read_volatile(l2.add(l2_idx));
-    crate::hal::serial::write_string("[dump]     l2_idx=");
-    crate::hal::serial::write_hex_u64(l2_idx as u64);
-    crate::hal::serial::write_string(" l2_phys=");
-    crate::hal::serial::write_hex_u64(l2_phys);
-    crate::hal::serial::write_string(" l2e=");
-    crate::hal::serial::write_hex_u64(l2e);
-    crate::hal::serial::write_string("\r\n");
-
-    let l3_phys = l2e & 0x0000_FFFF_FFFF_F000;
-    let l3_idx = ((va >> 12) & 0x1FF) as usize;
-    let l3 = l3_phys as *mut u64;
-    let l3e = core::ptr::read_volatile(l3.add(l3_idx));
-    crate::hal::serial::write_string("[dump]       l3_idx=");
-    crate::hal::serial::write_hex_u64(l3_idx as u64);
-    crate::hal::serial::write_string(" l3_phys=");
-    crate::hal::serial::write_hex_u64(l3_phys);
-    crate::hal::serial::write_string(" l3e=");
-    crate::hal::serial::write_hex_u64(l3e);
-    crate::hal::serial::write_string("\r\n");
+        ttbr1_pa
+    }
 }
 
 /// Compute the AArch64 descriptor bits that point an intermediate
@@ -209,6 +178,7 @@ unsafe fn leaf_pte_ptr_for(va: u64) -> *mut u64 {
         ptr::write_bytes(new_phys as *mut u8, 0, 4096);
         let new_desc = table_desc_at(new_phys);
         core::ptr::write_volatile(l0.add(l0_idx), new_desc);
+        sync_new_page_table();
         new_phys
     };
 
@@ -225,6 +195,7 @@ unsafe fn leaf_pte_ptr_for(va: u64) -> *mut u64 {
         ptr::write_bytes(new_phys as *mut u8, 0, 4096);
         let new_desc = table_desc_at(new_phys);
         core::ptr::write_volatile(l1.add(l1_idx), new_desc);
+        sync_new_page_table();
         new_phys
     };
 
@@ -238,16 +209,10 @@ unsafe fn leaf_pte_ptr_for(va: u64) -> *mut u64 {
             None => return core::ptr::null_mut(),
         };
         let new_phys = pfn_to_phys(pfn);
-        crate::hal::serial::write_string("[leaf] new-l3 pfn=");
-        crate::hal::serial::write_hex_u64(pfn);
-        crate::hal::serial::write_string(" phys=");
-        crate::hal::serial::write_hex_u64(new_phys);
-        crate::hal::serial::write_string(" for-va=");
-        crate::hal::serial::write_hex_u64(va);
-        crate::hal::serial::write_string("\r\n");
         ptr::write_bytes(new_phys as *mut u8, 0, 4096);
         let new_desc = table_desc_at(new_phys);
         core::ptr::write_volatile(l2.add(l2_idx), new_desc);
+        sync_new_page_table();
         new_phys
     };
 
@@ -260,25 +225,36 @@ pub fn map_page(va: u64, pa: u64, flags: u64) -> bool {
     if l3_pte.is_null() {
         return false;
     }
-    // Write the leaf as an AArch64 page descriptor (bits[1:0] = 0b11).
-    let desc = make_page_desc(pa, flags);
+    // Callers use the portable/x86-style PTE flags. Convert the
+    // protection bits to an AArch64 stage-1 descriptor: AP[1:0]=11
+    // gives privileged and user read/write access, while AF must be
+    // set before the first access.
+    let user_access =
+        flags & (crate::mm::pte::PTE_US | crate::arch::common::paging::PageFlags::USER.bits()) != 0;
+    let arch_flags = if user_access {
+        if flags & crate::mm::pte::PTE_NX != 0 {
+            super::paging_enhanced::flags::USER_DATA
+        } else {
+            super::paging_enhanced::flags::USER_CODE
+        }
+    } else {
+        super::paging_enhanced::flags::KERNEL_DATA
+    };
+    // write the leaf as an AArch64 page descriptor (bits[1:0] = 0b11).
+    let desc = make_page_desc(pa, arch_flags);
     unsafe {
         core::ptr::write_volatile(l3_pte, desc);
         // Order PTE writes before subsequent translations.
         asm!("dsb ishst", options(nostack));
+        // Invalidate any cached translation-fault entry for this VA
+        // from a walk that happened before the leaf was installed.
+        asm!("tlbi vae1, {}", in(reg) va >> 12, options(nostack));
+        asm!("isb", options(nostack));
         // Verify the write actually landed — read it back. On
         // systems where the L3 page itself is in unmapped memory,
         // the write itself faults and we never reach this read.
         let verify = core::ptr::read_volatile(l3_pte);
-        if verify != desc {
-            crate::hal::serial::write_string("[map_page] verify-fail va=");
-            crate::hal::serial::write_hex_u64(va);
-            crate::hal::serial::write_string(" wrote=");
-            crate::hal::serial::write_hex_u64(desc);
-            crate::hal::serial::write_string(" read=");
-            crate::hal::serial::write_hex_u64(verify);
-            crate::hal::serial::write_string("\r\n");
-        }
+        debug_assert_eq!(verify, desc);
     }
     true
 }
@@ -338,17 +314,46 @@ pub fn translate_virt(va: u64) -> Option<u64> {
 
 pub unsafe fn load_page_root(pml4_pfn: u64) {
     let pa = pfn_to_phys(pml4_pfn);
+    // The process root contains both the low-half user mappings and
+    // the high-half kernel mappings. AArch64 selects TTBR0 for low
+    // VAs and TTBR1 for high VAs, so both must use the same root.
     asm!("msr TTBR1_EL1, {}", in(reg) pa, options(nostack));
+    asm!("msr TTBR0_EL1, {}", in(reg) pa, options(nostack));
     asm!("dsb nsh", options(nostack));
     asm!("isb", options(nostack));
 }
 
-pub fn read_page_root_pfn() -> u64 {
-    let pa: u64;
+/// Configure the translation regime for the 48-bit user/kernel split
+/// used by the portable memory manager. QEMU/EDK2 may leave TTBR0
+/// configured for a smaller VA range, which makes the 47-bit user
+/// addresses used by processes unreachable even when their PTEs are
+/// present.
+pub fn init() {
+    let mut tcr: u64;
     unsafe {
-        asm!("mrs {}, TTBR1_EL1", out(reg) pa, options(nostack));
+        asm!("mrs {}, tcr_el1", out(reg) tcr, options(nostack));
     }
-    pa >> 12
+    tcr = (tcr & !(0x3F)) | 16;
+    tcr = (tcr & !(0x3F << 16)) | (16 << 16);
+    unsafe {
+        asm!("msr tcr_el1, {}", in(reg) tcr, options(nostack));
+        asm!("isb", options(nostack));
+    }
+}
+
+pub fn read_page_root_pfn() -> u64 {
+    let ttbr1: u64;
+    let ttbr0: u64;
+    unsafe {
+        asm!("mrs {}, TTBR1_EL1", out(reg) ttbr1, options(nostack));
+        asm!("mrs {}, TTBR0_EL1", out(reg) ttbr0, options(nostack));
+    }
+    let active = if (ttbr1 & 0x0000_FFFF_FFFF_F000) != 0 {
+        ttbr1
+    } else {
+        ttbr0
+    };
+    active >> 12
 }
 
 /// Invalidate a single TLB entry for the given virtual address.
@@ -416,9 +421,6 @@ pub fn identity_map_region(pa: u64, size: u64) -> bool {
     let pa_aligned = pa & !(PAGE_SIZE - 1);
     let end = pa.saturating_add(size);
     let mut cur = pa_aligned;
-    let mut count: u64 = 0;
-    let mut skipped: u64 = 0;
-
     unsafe {
         let l0_phys = current_l0_phys();
         let l0 = l0_phys as *mut u64;
@@ -427,7 +429,6 @@ pub fn identity_map_region(pa: u64, size: u64) -> bool {
             let l0_idx = ((cur >> 39) & 0x1FF) as usize;
             let l1_idx = ((cur >> 30) & 0x1FF) as usize;
             let l2_idx = ((cur >> 21) & 0x1FF) as usize;
-            let l3_idx = ((cur >> 12) & 0x1FF) as usize;
 
             // Walk L0 → L1 → L2 ourselves. If the firmware has
             // already installed a 2 MiB block descriptor at L2
@@ -444,7 +445,6 @@ pub fn identity_map_region(pa: u64, size: u64) -> bool {
                 if !map_page(cur, cur, HEAP_FLAGS) {
                     return false;
                 }
-                count += 1;
                 cur = cur.saturating_add(PAGE_SIZE);
                 continue;
             }
@@ -455,7 +455,6 @@ pub fn identity_map_region(pa: u64, size: u64) -> bool {
                 if !map_page(cur, cur, HEAP_FLAGS) {
                     return false;
                 }
-                count += 1;
                 cur = cur.saturating_add(PAGE_SIZE);
                 continue;
             }
@@ -472,8 +471,6 @@ pub fn identity_map_region(pa: u64, size: u64) -> bool {
                 // Advance `cur` to the next 2 MiB boundary (or `end`)
                 let next_2mb = (cur & !((2u64 * 1024 * 1024) - 1)).saturating_add(2 * 1024 * 1024);
                 let advance = next_2mb.min(end).min(block_end);
-                let pages_in_block = (advance - cur) / PAGE_SIZE;
-                skipped += pages_in_block;
                 cur = advance;
                 continue;
             }
@@ -483,16 +480,10 @@ pub fn identity_map_region(pa: u64, size: u64) -> bool {
             if !map_page(cur, cur, HEAP_FLAGS) {
                 return false;
             }
-            count += 1;
             cur = cur.saturating_add(PAGE_SIZE);
         }
     }
 
     flush_tlb();
-    crate::hal::serial::write_string("[idmap] mapped ");
-    crate::hal::serial::write_hex_u64(count);
-    crate::hal::serial::write_string(" pages, skipped ");
-    crate::hal::serial::write_hex_u64(skipped);
-    crate::hal::serial::write_string(" (already block-mapped)\r\n");
     true
 }

@@ -191,8 +191,14 @@ pub fn interrupt_controller() -> InterruptController {
     match t {
         SocType::KunPeng920
         | SocType::RockchipRK3588
-        | SocType::RockchipRK356x
-        | SocType::QEMUVirt => InterruptController::GICv3,
+        | SocType::RockchipRK356x => InterruptController::GICv3,
+        // QEMU 'virt' only exposes a GICv3 when launched with
+        // '-machine virt,gic-version=3'. Neither the EDK2 firmware we
+        // boot nor our QEMU command line passes that flag, so the
+        // machine runs with the default GICv2 and the SoC table must
+        // match it or 'apic::init' would set up a controller that is
+        // not there.
+        SocType::QEMUVirt => InterruptController::GICv2,
         SocType::PhytiumFT2000
         | SocType::PhytiumD2000
         | SocType::PhytiumD3000
@@ -209,7 +215,6 @@ pub fn interrupt_controller() -> InterruptController {
 /// 80-byte struct on the boot stack. With `init_soc` now caching
 /// the descriptor in a static, we just return a copy of that
 /// cache. Callers get the same `SocInfo` shape they always did.
-#[allow(dead_code)]
 fn _legacy_current_soc_removed() {
     // Removed: old impl called `info_for` on every call. Kept as
     // documentation; the real `current_soc` is above.
@@ -240,7 +245,7 @@ pub fn detect_soc() -> SocType {
 
     let implementer = (midr >> 24) & 0xFF;
     let part = (midr >> 4) & 0xFFF;
-    let arch = (midr >> 16) & 0xF;
+    let _arch = (midr >> 16) & 0xF;
     crate::hal::serial::write_string("hal_soc:detect_soc_match_start\r\n");
 
     // AArch64 processors keep MIDR_EL1.arch == 0xF (the value
@@ -324,7 +329,7 @@ pub fn init_soc() {
     // PAGE_SIZE alone but report the real cache-line to the cache
     // subsystem.
     unsafe {
-        // CTR_EL0 — Cache Type Register:
+        // CTR_EL0 — Cache r#type Register:
         //  bits[19:16] = Log2 of the size of the smallest cache-line minus 3.
         //  DminLine = 4 << value.
         let ctr: u64;
@@ -363,8 +368,10 @@ pub fn init_soc() {
     let ic = match soc_type {
         SocType::KunPeng920
         | SocType::RockchipRK3588
-        | SocType::RockchipRK356x
-        | SocType::QEMUVirt => InterruptController::GICv3,
+        | SocType::RockchipRK356x => InterruptController::GICv3,
+        // See 'interrupt_controller': QEMU 'virt' runs a GICv2 unless
+        // 'gic-version=3' is requested explicitly.
+        SocType::QEMUVirt => InterruptController::GICv2,
         SocType::PhytiumFT2000
         | SocType::PhytiumD2000
         | SocType::PhytiumD3000
@@ -376,7 +383,7 @@ pub fn init_soc() {
     // CPU can race this write.
     crate::hal::serial::write_string("hal_soc:before_soc_info_write\r\n");
     unsafe {
-        let slot = SOC_INFO.as_mut_ptr();
+        let slot = core::ptr::addr_of_mut!(SOC_INFO).cast::<SocInfo>();
         crate::hal::serial::write_string("hal_soc:after_slot_ptr\r\n");
         // Probe slot writeability by writing a single byte first.
         core::ptr::write_volatile(slot as *mut u8, 0xAA);
@@ -427,13 +434,13 @@ static SOC_INFO_READY: AtomicU32 = AtomicU32::new(0);
 
 /// Get the canonical [`SocInfo`] for a given [`SocType`].
 #[inline(never)]
-#[allow(dead_code)]
 pub fn info_for(t: SocType) -> SocInfo {
     let ic = match t {
         SocType::KunPeng920
         | SocType::RockchipRK3588
-        | SocType::RockchipRK356x
-        | SocType::QEMUVirt => InterruptController::GICv3,
+        | SocType::RockchipRK356x => InterruptController::GICv3,
+        // See 'interrupt_controller' for why QEMU 'virt' maps GICv2.
+        SocType::QEMUVirt => InterruptController::GICv2,
         SocType::PhytiumFT2000
         | SocType::PhytiumD2000
         | SocType::PhytiumD3000
@@ -447,7 +454,7 @@ pub fn info_for(t: SocType) -> SocInfo {
     s
 }
 
-/// Read the cached `SocInfo`. Available after [`init_soc`] returns.
+/// read the cached `SocInfo`. Available after [`init_soc`] returns.
 pub fn current_soc() -> SocInfo {
     // SAFETY: init_soc writes the descriptor before any other caller
     // can run. SOC_INFO_READY is the publish barrier.

@@ -117,7 +117,7 @@ pub type RawContextPtr = usize;
 /// the contract above. Interrupts must be disabled at the call
 /// site.
 #[no_mangle]
-pub unsafe extern "C" fn swap_context(out_rsp_addr: *mut u64, new_rsp: u64) {
+pub unsafe extern "C" fn swap_context(_out_rsp_addr: *mut u64, _new_rsp: u64) {
     asm!(
         // ---- Save the outgoing thread ----
         // Allocate 128 bytes (= CONTEXT_FRAME_SIZE) on the outgoing

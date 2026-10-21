@@ -63,13 +63,13 @@ static mut PER_CPU_0: PerCpuArea = PerCpuArea::new(0);
 // Per-CPU offsets (hot path — referenced from idt_stubs.rs)
 // =====================================================================
 
-/// Offset of `user_rsp` inside PerCpuArea.
+/// offset of `user_rsp` inside PerCpuArea.
 const OFFSET_USER_RSP: usize = 0;
-/// Offset of `kernel_rsp` inside PerCpuArea.
+/// offset of `kernel_rsp` inside PerCpuArea.
 const OFFSET_KERNEL_RSP: usize = 8;
-/// Offset of `current_thread` inside PerCpuArea.
+/// offset of `current_thread` inside PerCpuArea.
 const OFFSET_CURRENT_THREAD: usize = 16;
-/// Offset of `current_process` inside PerCpuArea.
+/// offset of `current_process` inside PerCpuArea.
 const OFFSET_CURRENT_PROCESS: usize = 24;
 
 // =====================================================================
@@ -223,7 +223,7 @@ pub fn __percpu_set_current_thread(thread: *mut Ethread) {
     }
 }
 
-/// Read the ETHREAD pointer from the per-CPU `current_thread` slot.
+/// read the ETHREAD pointer from the per-CPU `current_thread` slot.
 #[no_mangle]
 pub fn __percpu_get_current_thread() -> *mut Ethread {
     let v: u64;
@@ -251,7 +251,7 @@ pub fn __percpu_set_current_process(process: *mut Eprocess) {
     }
 }
 
-/// Read the EPROCESS pointer from the per-CPU `current_process` slot.
+/// read the EPROCESS pointer from the per-CPU `current_process` slot.
 #[no_mangle]
 pub fn __percpu_get_current_process() -> *mut Eprocess {
     let v: u64;

@@ -1,7 +1,7 @@
 //! BTL — NT system call bridging for x86 guests.
 //!
 //! The most common NT system calls exposed via WoW64 —
-//! `NtAllocateVirtualMemory`, `NtOpenFile`, etc. — are listed here.
+//! `NT_ALLOCATE_VIRTUAL_MEMORY`, `NT_OPEN_FILE`, etc. — are listed here.
 //! Each entry returns the LA64 syscall number to invoke from the
 //! translated guest code, plus a translator-side ABI fix-up hook.
 
@@ -9,54 +9,53 @@
 
 /// NT system calls frequently used by user-mode code under WoW64.
 pub mod nt {
-    pub const NtAllocateVirtualMemory: u32 = 0x18;
-    pub const NtFreeVirtualMemory: u32 = 0x1B;
-    pub const NtOpenFile: u32 = 0x33;
-    pub const NtReadFile: u32 = 0x3F;
-    pub const NtWriteFile: u32 = 0x48;
-    pub const NtClose: u32 = 0x0F;
-    pub const NtCreateFile: u32 = 0x42;
-    pub const NtQueryInformationFile: u32 = 0x37;
-    pub const NtSetInformationFile: u32 = 0x39;
-    pub const NtTerminateProcess: u32 = 0x29;
-    pub const NtTerminateThread: u32 = 0x2B;
-    pub const NtDelayExecution: u32 = 0x55;
-    pub const NtWaitForSingleObject: u32 = 0x58;
-    pub const NtWaitForMultipleObjects: u32 = 0x5B;
-    pub const NtDeviceIoControlFile: u32 = 0x44;
-    pub const NtQueryVirtualMemory: u32 = 0x52;
-    pub const NtCreateSection: u32 = 0x4A;
-    pub const NtMapViewOfSection: u32 = 0x4B;
-    pub const NtUnmapViewOfSection: u32 = 0x4C;
-    pub const NtOpenProcessToken: u32 = 0x36;
+    pub const NT_ALLOCATE_VIRTUAL_MEMORY: u32 = 0x18;
+    pub const NT_FREE_VIRTUAL_MEMORY: u32 = 0x1B;
+    pub const NT_OPEN_FILE: u32 = 0x33;
+    pub const NT_READ_FILE: u32 = 0x3F;
+    pub const NT_WRITE_FILE: u32 = 0x48;
+    pub const NT_CLOSE: u32 = 0x0F;
+    pub const NT_CREATE_FILE: u32 = 0x42;
+    pub const NT_QUERY_INFORMATION_FILE: u32 = 0x37;
+    pub const NT_SET_INFORMATION_FILE: u32 = 0x39;
+    pub const NT_TERMINATE_PROCESS: u32 = 0x29;
+    pub const NT_TERMINATE_THREAD: u32 = 0x2B;
+    pub const NT_DELAY_EXECUTION: u32 = 0x55;
+    pub const NT_WAIT_FOR_SINGLE_OBJECT: u32 = 0x58;
+    pub const NT_WAIT_FOR_MULTIPLE_OBJECTS: u32 = 0x5B;
+    pub const NT_DEVICE_IO_CONTROL_FILE: u32 = 0x44;
+    pub const NT_QUERY_VIRTUAL_MEMORY: u32 = 0x52;
+    pub const NT_CREATE_SECTION: u32 = 0x4A;
+    pub const NT_MAP_VIEW_OF_SECTION: u32 = 0x4B;
+    pub const NT_UNMAP_VIEW_OF_SECTION: u32 = 0x4C;
+    pub const NT_OPEN_PROCESS_TOKEN: u32 = 0x36;
 }
 
 /// Translate the NT syscall number used by the x86 guest into the
 /// LA64-native syscall index. Returns `None` if the syscall is not
 /// supported yet (the kernel then returns -ENOSYS to the guest).
-#[allow(dead_code)]
 pub fn translate_nt_syscall(nr: u32) -> Option<u64> {
     let mapping: &[(u32, u64)] = &[
-        (nt::NtAllocateVirtualMemory, 0x18),
-        (nt::NtFreeVirtualMemory, 0x1B),
-        (nt::NtOpenFile, 0x33),
-        (nt::NtReadFile, 0x3F),
-        (nt::NtWriteFile, 0x48),
-        (nt::NtClose, 0x0F),
-        (nt::NtCreateFile, 0x42),
-        (nt::NtQueryInformationFile, 0x37),
-        (nt::NtSetInformationFile, 0x39),
-        (nt::NtTerminateProcess, 0x29),
-        (nt::NtTerminateThread, 0x2B),
-        (nt::NtDelayExecution, 0x55),
-        (nt::NtWaitForSingleObject, 0x58),
-        (nt::NtWaitForMultipleObjects, 0x5B),
-        (nt::NtDeviceIoControlFile, 0x44),
-        (nt::NtQueryVirtualMemory, 0x52),
-        (nt::NtCreateSection, 0x4A),
-        (nt::NtMapViewOfSection, 0x4B),
-        (nt::NtUnmapViewOfSection, 0x4C),
-        (nt::NtOpenProcessToken, 0x36),
+        (nt::NT_ALLOCATE_VIRTUAL_MEMORY, 0x18),
+        (nt::NT_FREE_VIRTUAL_MEMORY, 0x1B),
+        (nt::NT_OPEN_FILE, 0x33),
+        (nt::NT_READ_FILE, 0x3F),
+        (nt::NT_WRITE_FILE, 0x48),
+        (nt::NT_CLOSE, 0x0F),
+        (nt::NT_CREATE_FILE, 0x42),
+        (nt::NT_QUERY_INFORMATION_FILE, 0x37),
+        (nt::NT_SET_INFORMATION_FILE, 0x39),
+        (nt::NT_TERMINATE_PROCESS, 0x29),
+        (nt::NT_TERMINATE_THREAD, 0x2B),
+        (nt::NT_DELAY_EXECUTION, 0x55),
+        (nt::NT_WAIT_FOR_SINGLE_OBJECT, 0x58),
+        (nt::NT_WAIT_FOR_MULTIPLE_OBJECTS, 0x5B),
+        (nt::NT_DEVICE_IO_CONTROL_FILE, 0x44),
+        (nt::NT_QUERY_VIRTUAL_MEMORY, 0x52),
+        (nt::NT_CREATE_SECTION, 0x4A),
+        (nt::NT_MAP_VIEW_OF_SECTION, 0x4B),
+        (nt::NT_UNMAP_VIEW_OF_SECTION, 0x4C),
+        (nt::NT_OPEN_PROCESS_TOKEN, 0x36),
     ];
     for &(n, t) in mapping {
         if n == nr {

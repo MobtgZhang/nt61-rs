@@ -26,16 +26,14 @@ mod offset {
 pub fn init(base: u64) {
     CLINT_BASE.store(base, Ordering::Release);
 
-    unsafe {
-        // Clear all software interrupts
-        for hart in 0..CLINT_MAX_HARTS {
-            clear_msip(hart as u32);
-        }
+    // Clear all software interrupts.
+    for hart in 0..CLINT_MAX_HARTS {
+        clear_msip(hart as u32);
+    }
 
-        // Set all timers to max (disabled)
-        for hart in 0..CLINT_MAX_HARTS {
-            set_mtimecmp(hart as u32, u64::MAX);
-        }
+    // Set all timers to max (disabled).
+    for hart in 0..CLINT_MAX_HARTS {
+        set_mtimecmp(hart as u32, u64::MAX);
     }
 
     CLINT_INITIALIZED.store(true, Ordering::Release);
@@ -51,7 +49,7 @@ pub fn get_frequency() -> u64 {
     TIMER_FREQUENCY.load(Ordering::Acquire)
 }
 
-/// Read current mtime value
+/// read current mtime value
 pub fn read_mtime() -> u64 {
     let base = CLINT_BASE.load(Ordering::Acquire);
     if base == 0 {
@@ -74,7 +72,7 @@ pub fn set_mtimecmp(hart: u32, value: u64) {
     }
 }
 
-/// Read mtimecmp for specific hart
+/// read mtimecmp for specific hart
 pub fn read_mtimecmp(hart: u32) -> u64 {
     let base = CLINT_BASE.load(Ordering::Acquire);
     if base == 0 || hart >= CLINT_MAX_HARTS as u32 {

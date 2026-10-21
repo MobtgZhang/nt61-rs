@@ -45,7 +45,7 @@ pub fn write_cr4(value: u64) {
 // CR8 - Task Priority (AMD64 only)
 // =============================================================================
 
-/// Read CR8 (Task Priority). On AMD64 the LAPIC task priority is exposed as
+/// read CR8 (Task Priority). On AMD64 the LAPIC task priority is exposed as
 /// CR8; the low 4 bits hold the running priority level (0..15).
 ///
 /// This is a privileged instruction: callers must only use it once the
@@ -59,7 +59,7 @@ pub fn read_cr8() -> u64 {
     value
 }
 
-/// Write CR8 (Task Priority). Only the low 4 bits are architecturally used.
+/// write CR8 (Task Priority). Only the low 4 bits are architecturally used.
 ///
 /// Privileged: same readiness precondition as `read_cr8`.
 pub fn write_cr8(value: u64) {
@@ -230,7 +230,7 @@ pub fn open_smap_window() {
     }
 }
 
-/// Close the SMAP window opened by `open_smap_window`.
+/// close the SMAP window opened by `open_smap_window`.
 pub fn close_smap_window() {
     if !SMAP_ENABLED.load(Ordering::SeqCst) {
         return;

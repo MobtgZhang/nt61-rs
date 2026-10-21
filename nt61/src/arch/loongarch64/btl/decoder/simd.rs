@@ -1,4 +1,4 @@
-//! SIMD instruction decoder stubs (SSE / AVX). Splitting the hot
+//! SIMD instruction decoder (SSE / AVX). Splitting the hot
 //! path keeps the integer decoder readable.
 
 #![cfg(target_arch = "loongarch64")]

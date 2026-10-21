@@ -5,7 +5,7 @@
 //! IA32_KERNEL_GS_BASE, and others. On other architectures these
 //! symbols don't exist.
 
-/// Read an MSR by index.
+/// read an MSR by index.
 ///
 /// # Safety
 ///
@@ -25,7 +25,7 @@ pub unsafe fn read_msr(msr: u32) -> u64 {
     ((hi as u64) << 32) | (lo as u64)
 }
 
-/// Write a value to an MSR by index.
+/// write a value to an MSR by index.
 ///
 /// # Safety
 ///

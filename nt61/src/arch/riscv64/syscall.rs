@@ -21,52 +21,60 @@ pub use super::trap::TrapFrame;
 // NT service numbers (extended in Phase 3).
 // =====================================================================
 
-/// NtCreateProcess
-pub const SYS_NT_CREATE_PROCESS: u64 = 0x4C;
-/// NtTerminateThread
-pub const SYS_NT_TERMINATE_THREAD: u64 = 0x2A;
-/// NtOpenProcess
-pub const SYS_NT_OPEN_PROCESS: u64 = 0x26;
-/// NtOpenThread
-pub const SYS_NT_OPEN_THREAD: u64 = 0x81;
-/// NtSuspendThread
-pub const SYS_NT_SUSPEND_THREAD: u64 = 0x4E;
-/// NtResumeThread
-pub const SYS_NT_RESUME_THREAD: u64 = 0x4F;
-/// NtQueryVirtualMemory
-pub const SYS_NT_QUERY_VIRTUAL_MEMORY: u64 = 0x14;
-/// NtProtectVirtualMemory
-pub const SYS_NT_PROTECT_VIRTUAL_MEMORY: u64 = 0x4D;
-/// NtSetInformationFile
-pub const SYS_NT_SET_INFORMATION_FILE: u64 = 0x25;
-/// NtQueryInformationFile
-pub const SYS_NT_QUERY_INFORMATION_FILE: u64 = 0x19;
+/// NT_CREATE_PROCESS
+pub const SYS_NT_CREATE_PROCESS: u64 = 0x009F;
+/// NT_TERMINATE_THREAD
+pub const SYS_NT_TERMINATE_THREAD: u64 = 0x0050;
+/// NT_OPEN_PROCESS
+pub const SYS_NT_OPEN_PROCESS: u64 = 0x0023;
+/// NT_OPEN_THREAD
+pub const SYS_NT_OPEN_THREAD: u64 = 0x00FE;
+/// NT_SUSPEND_THREAD
+pub const SYS_NT_SUSPEND_THREAD: u64 = 0x017B;
+/// NT_RESUME_THREAD
+pub const SYS_NT_RESUME_THREAD: u64 = 0x004F;
+/// NT_QUERY_VIRTUAL_MEMORY
+pub const SYS_NT_QUERY_VIRTUAL_MEMORY: u64 = 0x0020;
+/// NT_PROTECT_VIRTUAL_MEMORY
+pub const SYS_NT_PROTECT_VIRTUAL_MEMORY: u64 = 0x004D;
+/// NT_SET_INFORMATION_FILE
+pub const SYS_NT_SET_INFORMATION_FILE: u64 = 0x0024;
+/// NT_QUERY_INFORMATION_FILE
+pub const SYS_NT_QUERY_INFORMATION_FILE: u64 = 0x000E;
 /// NtFlushInstructionCache
-pub const SYS_NT_FLUSH_INSTRUCTION_CACHE: u64 = 0xDD;
-/// NtAllocateVirtualMemory
-pub const SYS_NT_ALLOCATE_VIRTUAL_MEMORY: u64 = 0x18;
-/// NtFreeVirtualMemory
-pub const SYS_NT_FREE_VIRTUAL_MEMORY: u64 = 0x1B;
-/// NtQuerySystemInformation
+pub const SYS_NT_FLUSH_INSTRUCTION_CACHE: u64 = 0x00C2;
+/// NT_ALLOCATE_VIRTUAL_MEMORY
+pub const SYS_NT_ALLOCATE_VIRTUAL_MEMORY: u64 = 0x0015;
+/// NT_FREE_VIRTUAL_MEMORY
+pub const SYS_NT_FREE_VIRTUAL_MEMORY: u64 = 0x001B;
+/// NT_QUERY_SYSTEM_INFORMATION
 pub const SYS_NT_QUERY_SYSTEM_INFORMATION: u64 = 0x33;
-/// NtCreateFile
+/// NT_CREATE_FILE
 pub const SYS_NT_CREATE_FILE: u64 = 0x52;
-/// NtReadFile
-pub const SYS_NT_READ_FILE: u64 = 0x04;
-/// NtWriteFile
+/// NT_READ_FILE
+pub const SYS_NT_READ_FILE: u64 = 0x0003;
+/// NT_WRITE_FILE
 pub const SYS_NT_WRITE_FILE: u64 = 0x05;
-/// NtClose
+/// NT_CLOSE
 pub const SYS_NT_CLOSE: u64 = 0x0C;
-/// NtTerminateProcess
+/// NT_TERMINATE_PROCESS
 pub const SYS_NT_TERMINATE_PROCESS: u64 = 0x29;
-/// NtDelayExecution
-pub const SYS_NT_DELAY_EXECUTION: u64 = 0x34;
+/// NT_DELAY_EXECUTION
+pub const SYS_NT_DELAY_EXECUTION: u64 = 0x0031;
+pub const SYS_PUTCHAR: u64 = 0x0202;
+pub const SYS_POLL_KEY: u64 = 0x0203;
+pub const SYS_GET_KEY: u64 = 0x0204;
+pub const SYS_CLEARSCREEN: u64 = 0x0205;
+pub const SYS_READ_LINE: u64 = 0x0211;
+pub const SYS_RETURN_TO_FIRMWARE: u64 = 0x0214;
+pub const SYS_CMD_EXECUTE: u64 = 0x0215;
+pub const SYS_PRINT_PROMPT: u64 = 0x0216;
 // =====================================================================
 // NTSTATUS constants.
 // =====================================================================
 
 pub const STATUS_SUCCESS: u64 = 0x0000_0000;
-pub const STATUS_NOT_IMPLEMENTED: u64 = 0xC000_0002;
+pub const STATUS_INVALID_SYSTEM_SERVICE: u64 = 0xC000_001C;
 pub const STATUS_INVALID_PARAMETER: u64 = 0xC000_000D;
 pub const STATUS_ACCESS_VIOLATION: u64 = 0xC000_0005;
 pub const STATUS_OBJECT_NAME_INVALID: u64 = 0xC000_0033;
@@ -112,8 +120,37 @@ pub unsafe extern "C" fn dispatch_syscall(frame: *mut TrapFrame) {
     let a3 = unsafe { (*frame).a3 };
     let a4 = unsafe { (*frame).a4 };
     let a5 = unsafe { (*frame).a5 };
+    let a6 = unsafe { (*frame).a6 };
+    let stack_pointer = unsafe { (*frame).sp } as usize;
 
-    let result = handle(num, a0, a1, a2, a3, a4, a5);
+    let register_args = [
+        a0 as usize,
+        a1 as usize,
+        a2 as usize,
+        a3 as usize,
+        a4 as usize,
+        a5 as usize,
+        a6 as usize,
+        0,
+    ];
+    let common_status = unsafe {
+        crate::ke::ssdt_common::dispatch_syscall_with_stack(
+            num as usize,
+            register_args,
+            crate::ke::ssdt_common::SEVEN_REGISTER_ARCHITECTURES,
+            stack_pointer,
+        )
+    };
+    let common_result = if common_status == crate::ke::ssdt_common::STATUS_INVALID_SYSTEM_SERVICE {
+        None
+    } else {
+        Some(common_status)
+    };
+
+    let result = match common_result {
+        Some(status) => status as u64,
+        None => handle(num, a0, a1, a2, a3, a4, a5),
+    };
 
     // Return value goes back in $a0 of the saved frame. The
     // trap dispatcher in [`super::trap`] is responsible for
@@ -135,13 +172,13 @@ pub unsafe extern "C" fn dispatch_syscall(frame: *mut TrapFrame) {
 fn handle(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> u64 {
     match num {
         SYS_NT_CLOSE => {
-            // NtClose(handle) — Phase 1 returns success for any handle
+            // NT_CLOSE(handle) — Phase 1 returns success for any handle
             // so test programs can complete the round-trip.
             let _ = a0;
             STATUS_SUCCESS
         }
         SYS_NT_DELAY_EXECUTION => {
-            // NtDelayExecution — busy-wait for `a1` 100-ns intervals.
+            // NT_DELAY_EXECUTION — busy-wait for `a1` 100-ns intervals.
             crate::arch::riscv64::pit::busy_wait_100ns(a1);
             STATUS_SUCCESS
         }
@@ -159,29 +196,54 @@ fn handle(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> u64
             STATUS_SUCCESS
         }
         SYS_NT_QUERY_VIRTUAL_MEMORY => {
-            // Phase 3: validate that the virtual address falls inside a
-            // known user-mode mapping. The address is passed in `a1`.
-            if a1 == 0 {
-                return STATUS_INVALID_PARAMETER;
-            }
-            verify_user_va(a1)
+            let status = unsafe {
+                crate::libs::ntdll::virtual_mem::nt_query_virtual_memory(
+                    a0 as crate::libs::ntdll::types::HANDLE,
+                    a1 as crate::libs::ntdll::types::PVOID,
+                    a2 as u32,
+                    a3 as crate::libs::ntdll::types::PVOID,
+                    a4 as crate::libs::ntdll::types::SizeT,
+                    a5 as *mut crate::libs::ntdll::types::SizeT,
+                )
+            };
+            status as u64
         }
         SYS_NT_PROTECT_VIRTUAL_MEMORY => {
-            // Placeholder: bogus protection values are rejected.
-            if a3 == 0 {
-                return STATUS_INVALID_PARAMETER;
-            }
-            let _ = (a1, a2, a3);
-            STATUS_NOT_IMPLEMENTED
+            let status = unsafe {
+                crate::libs::ntdll::virtual_mem::nt_protect_virtual_memory(
+                    a0 as crate::libs::ntdll::types::HANDLE,
+                    a1 as *mut crate::libs::ntdll::types::PVOID,
+                    a2 as *mut crate::libs::ntdll::types::SizeT,
+                    a3 as u32,
+                    a4 as *mut u32,
+                )
+            };
+            status as u64
         }
         SYS_NT_ALLOCATE_VIRTUAL_MEMORY => {
-            // 'a2' is the zero-bit size, a3 the allocation type.
-            if a2 == 0 {
-                return STATUS_INVALID_PARAMETER;
-            }
-            verify_user_va(a1)
+            let status = unsafe {
+                crate::libs::ntdll::virtual_mem::nt_allocate_virtual_memory(
+                    a0 as crate::libs::ntdll::types::HANDLE,
+                    a1 as *mut crate::libs::ntdll::types::PVOID,
+                    a2 as crate::libs::ntdll::types::SizeT,
+                    a3 as *mut crate::libs::ntdll::types::SizeT,
+                    a4 as u32,
+                    a5 as u32,
+                )
+            };
+            status as u64
         }
-        SYS_NT_FREE_VIRTUAL_MEMORY => verify_user_va(a1),
+        SYS_NT_FREE_VIRTUAL_MEMORY => {
+            let status = unsafe {
+                crate::libs::ntdll::virtual_mem::nt_free_virtual_memory(
+                    a0 as crate::libs::ntdll::types::HANDLE,
+                    a1 as *mut crate::libs::ntdll::types::PVOID,
+                    a2 as *mut crate::libs::ntdll::types::SizeT,
+                    a3 as u32,
+                )
+            };
+            status as u64
+        }
         SYS_NT_FLUSH_INSTRUCTION_CACHE => {
             // Flush a region of user-mode memory from the I-cache.
             // For RV64 the relevant instruction is `fence.i`; the
@@ -192,28 +254,34 @@ fn handle(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> u64
             }
             STATUS_SUCCESS
         }
+        SYS_PUTCHAR => crate::arch::common::cmd_host::putchar(a0 as u8),
+        SYS_POLL_KEY => {
+            if let Some(byte) = crate::arch::common::cmd_host::poll_key() {
+                return byte as u64;
+            }
+            0xC000_0011
+        }
+        SYS_GET_KEY => crate::arch::common::cmd_host::get_key() as u64,
+        SYS_CLEARSCREEN => crate::arch::common::cmd_host::clear_screen(),
+        SYS_READ_LINE => {
+            match unsafe { crate::arch::common::cmd_host::read_line(a0 as *mut u8, a1 as usize) } {
+                Some(written) => written as u64,
+                None => 0xC000_000D,
+            }
+        }
+        SYS_RETURN_TO_FIRMWARE => crate::arch::common::cmd_host::return_to_firmware(),
+        SYS_CMD_EXECUTE => {
+            match crate::arch::common::cmd_host::execute_command(a0 as *const u8, a1 as usize) {
+                Ok(exited) => exited as u64,
+                Err(_) => 0xC000_000D,
+            }
+        }
+        SYS_PRINT_PROMPT => crate::arch::common::cmd_host::print_prompt(),
         _ => {
             let _ = (a0, a1, a2, a3, a4, a5);
-            STATUS_NOT_IMPLEMENTED
+            STATUS_INVALID_SYSTEM_SERVICE
         }
     }
-}
-
-/// Verify that `va` is a user-mode canonical address. Returns
-/// `STATUS_SUCCESS` if it is; `STATUS_ACCESS_VIOLATION` otherwise.
-/// Used by the Phase 3 NT-call wrappers before forwarding to the
-/// memory manager (which then performs the actual VM split /
-/// permission change).
-fn verify_user_va(va: u64) -> u64 {
-    use crate::mm::constants;
-    if va >= constants::USER_STACK_BASE && va < constants::USER_STACK_BASE + 0x1000 {
-        return STATUS_SUCCESS;
-    }
-    // For Phase 3 we accept anything in the lower half as user VA.
-    if va < 0x7FFF_FFFF_FFFF {
-        return STATUS_SUCCESS;
-    }
-    STATUS_ACCESS_VIOLATION
 }
 
 /// Flush the instruction cache for a [start, start+len) region.

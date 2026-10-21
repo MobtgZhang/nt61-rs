@@ -23,9 +23,8 @@
 //!
 //! The QEMU virt PLIC base is `0xC000000` with up to 32 contexts.
 
-use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU64, Ordering};
 
-const PLIC_NUM_SOURCES: usize = 32;
 const PLIC_PRIORITY_BASE: u64 = 0x0000_0000;
 const PLIC_PENDING_BASE: u64 = 0x0000_1000;
 const PLIC_ENABLE_BASE: u64 = 0x0000_2000;
@@ -62,7 +61,7 @@ pub fn set_priority(irq: u32, prio: u8) {
     unsafe { core::ptr::write_volatile((b + off) as *mut u32, prio as u32) };
 }
 
-/// Read the priority of a given IRQ source.
+/// read the priority of a given IRQ source.
 pub fn get_priority(irq: u32) -> u32 {
     let b = PLIC_BASE.load(Ordering::Acquire);
     if b == 0 {
@@ -143,7 +142,7 @@ pub fn complete(hart: u32, context: u32, irq: u32) {
     unsafe { core::ptr::write_volatile((b + off) as *mut u32, irq) };
 }
 
-/// Read the per-hart pending bit for an IRQ.
+/// read the per-hart pending bit for an IRQ.
 pub fn is_pending(irq: u32) -> bool {
     let b = PLIC_BASE.load(Ordering::Acquire);
     if b == 0 {

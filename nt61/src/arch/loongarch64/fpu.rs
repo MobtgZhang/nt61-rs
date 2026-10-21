@@ -168,7 +168,6 @@ pub unsafe fn disable() {
     asm!("csrwr {0}, 0x2", in(reg) euen as u64, options(nostack));
 }
 
-#[allow(dead_code)]
 fn _keep() {
     let s = FpuState::new();
     init_for_thread(&mut { s });

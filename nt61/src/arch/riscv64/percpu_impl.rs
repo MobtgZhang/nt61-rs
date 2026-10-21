@@ -7,7 +7,7 @@
 //
 //! ## Memory layout (must match arch::common::percpu::PerCpuArea)
 //
-//! | Offset | Field |
+//! | offset | Field |
 //! |--------|-------|
 //! | 0x00 | `user_sp` (saved user stack pointer) |
 //! | 0x08 | `kernel_sp` (kernel stack pointer) |
@@ -121,7 +121,7 @@ pub fn per_cpu_base_for(hart_id: u32) -> u64 {
     unsafe { allocate(hart_id) }
 }
 
-/// Read the `tp` CSR.
+/// read the `tp` CSR.
 #[inline(always)]
 fn get_tp() -> u64 {
     let val: u64;
@@ -196,7 +196,7 @@ pub fn __percpu_set_current_thread(thread: *mut Ethread) {
     }
 }
 
-/// Read the ETHREAD pointer from the per-CPU `current_thread` slot.
+/// read the ETHREAD pointer from the per-CPU `current_thread` slot.
 #[no_mangle]
 pub fn __percpu_get_current_thread() -> *mut Ethread {
     let base = get_tp();
@@ -222,7 +222,7 @@ pub fn __percpu_set_current_process(process: *mut Eprocess) {
     }
 }
 
-/// Read the EPROCESS pointer from the per-CPU `current_process` slot.
+/// read the EPROCESS pointer from the per-CPU `current_process` slot.
 #[no_mangle]
 pub fn __percpu_get_current_process() -> *mut Eprocess {
     let base = get_tp();

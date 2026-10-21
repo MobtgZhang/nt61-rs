@@ -13,8 +13,6 @@
 //! The kernel maps physical memory into the upper half of the address space.
 //! This module supports dynamic extension of these mappings.
 
-#![allow(non_snake_case)]
-
 extern crate alloc;
 use alloc::vec::Vec;
 
@@ -71,7 +69,7 @@ pub struct MemoryRegion {
 }
 
 impl MemoryRegion {
-    /// Create a new memory region
+    /// create a new memory region
     pub fn new(phys_base: u64, size: u64, usable: bool) -> Self {
         Self {
             phys_base,
@@ -96,19 +94,17 @@ impl MemoryRegion {
 /// This allocator dynamically creates page table pages as needed when
 /// mapping new memory regions. It avoids pre-allocating large amounts
 /// of page tables by creating them on-demand.
-#[allow(unused)]
 pub struct DynamicPageTable {
     /// Base address of the PML4 (physical)
     pml4_phys: u64,
     /// Base address of the PML4 (virtual)
     pml4_virt: u64,
     /// Number of allocated page table pages
-    #[allow(unused)]
     allocated_tables: u64,
 }
 
 impl DynamicPageTable {
-    /// Create a new dynamic page table allocator
+    /// create a new dynamic page table allocator
     pub fn new(pml4_phys: u64, pml4_virt: u64) -> Self {
         Self {
             pml4_phys,
@@ -273,7 +269,7 @@ pub struct MemoryStats {
 }
 
 impl MemoryStats {
-    /// Create new memory statistics
+    /// create new memory statistics
     pub fn new() -> Self {
         Self::default()
     }
@@ -316,7 +312,7 @@ pub fn parse_uefi_memory_map(map_addr: u64, map_size: u64, entry_size: u64) -> V
     }
 
     // UEFI memory descriptor structure:
-    // Type (u32), PhysicalStart (u64), VirtualStart (u64), NumberOfPages (u64), Attribute (u64)
+    // r#type (u32), PhysicalStart (u64), VirtualStart (u64), NumberOfPages (u64), Attribute (u64)
 
     let entries = map_size as usize / entry_size as usize;
 

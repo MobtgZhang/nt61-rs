@@ -3,10 +3,7 @@
 //! This module demonstrates how to use the syscall_validation module
 //! to safely handle user-mode parameters in system calls.
 
-use super::syscall_validation::{
-    capture_user_string, probe_for_read, probe_for_read_aligned, probe_for_write,
-    probe_for_write_aligned, STATUS_ACCESS_VIOLATION,
-};
+use super::syscall_validation::{probe_for_read, probe_for_write, probe_for_write_aligned};
 use crate::libs::ntdll::types::{HANDLE, NTSTATUS};
 
 /// All user-mode pointers are validated before access.
@@ -26,7 +23,7 @@ pub unsafe fn nt_read_file_validated(
         }
     }
 
-    crate::libs::ntdll::file::NtReadFile(
+    crate::libs::ntdll::file::nt_read_file(
         file_handle,
         core::ptr::null_mut(),
         core::ptr::null_mut(), // APC routine
@@ -55,7 +52,7 @@ pub unsafe fn nt_write_file_validated(
         }
     }
 
-    crate::libs::ntdll::file::NtWriteFile(
+    crate::libs::ntdll::file::nt_write_file(
         file_handle,
         core::ptr::null_mut(),
         core::ptr::null_mut(), // APC routine
@@ -91,7 +88,7 @@ pub unsafe fn nt_allocate_virtual_memory_validated(
         return status;
     }
 
-    crate::libs::ntdll::virtual_mem::NtAllocateVirtualMemory(
+    crate::libs::ntdll::virtual_mem::nt_allocate_virtual_memory(
         process_handle,
         base_address as *mut *mut core::ffi::c_void,
         0,
@@ -103,10 +100,10 @@ pub unsafe fn nt_allocate_virtual_memory_validated(
 
 pub unsafe fn nt_create_file_validated(
     file_handle: *mut HANDLE,
-    desired_access: u32,
-    object_name_ptr: *const u8, // UNICODE_STRING pointer
-    share_access: u32,
-    create_disposition: u32,
+    _desired_access: u32,
+    object_name_ptr: *const u8, // UnicodeString pointer
+    _share_access: u32,
+    _create_disposition: u32,
 ) -> NTSTATUS {
     if let Err(status) = probe_for_write_aligned(
         file_handle as *mut u8,

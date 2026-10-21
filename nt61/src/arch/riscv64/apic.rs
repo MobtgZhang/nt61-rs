@@ -36,9 +36,10 @@ pub fn init_with_base(base: u64) {
                                   // These can be re-tuned by the platform driver later.
     plic::enable(10, 7); // UART16550 priority 7
     plic::enable(1, 1); // virtio priority 1
+    crate::hal::common::keyboard_unified::enable_serial_rx_irq();
 }
 
-/// Handle a pending external interrupt on the current hart.
+/// handle a pending external interrupt on the current hart.
 ///
 /// Returns the IRQ number claimed (or 0 if none).
 pub fn handle_irq() -> u32 {
@@ -55,7 +56,7 @@ pub fn dispatch_irq(irq: u32) {
     // Phase 1: route the UART to the serial handler. Phase 2 will
     // dispatch against a registered vector table.
     if irq == 10 {
-        crate::arch::riscv64::serial::handle_rx();
+        crate::hal::common::keyboard_unified::serial_rx_irq();
     }
     // EOI regardless.
     let hart = CURRENT_HART.load(Ordering::Relaxed);

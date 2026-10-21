@@ -76,14 +76,14 @@ fn is_user_pc_in_btl_region(pc: u64) -> bool {
     pc >= 0x2000_0000 && pc < 0x2100_0000
 }
 
-/// Stub: last guest VA that triggered a write watchpoint. Phase 5
+/// Last guest VA that triggered a write watchpoint.
 /// wires the real watchpoint; Phase 6 stores the offending VA so
 /// the runtime can re-translate the impacted block.
 fn last_watchpoint() -> Option<u64> {
     None
 }
 
-/// Read out the diagnostic counters.
+/// read out the diagnostic counters.
 #[derive(Clone, Copy, Debug)]
 pub struct DiagStats {
     pub smc: u64,

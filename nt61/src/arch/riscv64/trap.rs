@@ -87,7 +87,7 @@ impl TrapKind {
 /// of `sd` instructions in `idt.rs` (offsets relative to `sp` after
 /// `csrrw sp, sscratch, sp`).
 ///
-/// | Offset  | Field        | Source      |
+/// | offset  | Field        | Source      |
 /// |---------|--------------|-------------|
 /// | 0x00    | ra           | x1          |
 /// | 0x08    | t0           | x5          |
@@ -156,6 +156,9 @@ pub struct TrapFrame {
     pub sstatus: u64,
     pub stval: u64,
     pub scause: u64,
+    /// User-mode stack pointer saved from `sscratch` after the trap-entry
+    /// stack swap. The SSDT uses it to read stack arguments.
+    pub sp: u64,
 }
 
 /// Address / page-fault information extracted from `stval` and the
@@ -168,7 +171,7 @@ pub struct FaultInfo {
     pub is_user: bool,
 }
 
-/// Read `scause` CSR (0x142).
+/// read `scause` CSR (0x142).
 #[inline(always)]
 pub fn read_scause() -> u64 {
     let v: u64;
@@ -178,7 +181,7 @@ pub fn read_scause() -> u64 {
     v
 }
 
-/// Read `sepc` CSR (0x141).
+/// read `sepc` CSR (0x141).
 #[inline(always)]
 pub fn read_sepc() -> u64 {
     let v: u64;
@@ -188,7 +191,7 @@ pub fn read_sepc() -> u64 {
     v
 }
 
-/// Read `stval` CSR (0x143).
+/// read `stval` CSR (0x143).
 #[inline(always)]
 pub fn read_stval() -> u64 {
     let v: u64;
@@ -198,7 +201,7 @@ pub fn read_stval() -> u64 {
     v
 }
 
-/// Read `sstatus` CSR (0x100).
+/// read `sstatus` CSR (0x100).
 #[inline(always)]
 pub fn read_sstatus() -> u64 {
     let v: u64;
@@ -208,7 +211,7 @@ pub fn read_sstatus() -> u64 {
     v
 }
 
-/// Write `sepc` CSR.
+/// write `sepc` CSR.
 #[inline(always)]
 pub fn write_sepc(v: u64) {
     unsafe {
@@ -298,21 +301,31 @@ pub extern "C" fn riscv64_trap_dispatch(frame: *mut TrapFrame) {
                 );
             }
             _ => {
+                let f = unsafe { &*frame };
                 panic!(
-                    "RV64 unhandled trap: {:?} (scause={:#x}) @ sepc={:#x}",
-                    kind, scause, sepc
+                    "RV64 unhandled trap: {:?} (scause={:#x}) @ sepc={:#x} stval={:#x} ra={:#x} sp={:#x}",
+                    kind, scause, sepc, stval, f.ra, f.s0
                 );
             }
         }
     } else {
-        // Interrupts: route through the PLIC/CLINT. We don't try
-        // to classify the kind further — the apic module owns the
-        // claim/complete logic.
-        let hart = crate::arch::riscv64::smp::current_hart_id();
-        let _ = hart;
-        crate::arch::riscv64::apic::handle_irq();
-        // sip.STIP / sip.SEIP / sip.SSIP are cleared by the
-        // matching device-side EOI (PLIC complete or CLINT MSIP=0).
+        // Interrupts must be acknowledged at their source. Otherwise the
+        // pending bit remains asserted and the trap handler spins forever.
+        match scause & 0x7FFF_FFFF_FFFF_FFFF {
+            1 => {
+                crate::arch::riscv64::clint::clear_msip(
+                    crate::arch::riscv64::smp::current_hart_id(),
+                );
+            }
+            5 => {
+                crate::arch::riscv64::pit::arm_next_tick();
+            }
+            9 => {
+                let irq = crate::arch::riscv64::apic::handle_irq();
+                crate::arch::riscv64::apic::dispatch_irq(irq);
+            }
+            _ => {}
+        }
     }
 }
 
@@ -346,18 +359,33 @@ pub fn interrupt_ack_external() -> u32 {
 /// exception vector is installed by [`super::idt::init`]. Phase 2
 /// will set up the timer interrupt enable bits.
 pub fn init() {
-    // Enable supervisor external interrupts at the `sie` level
-    // and clear the `sip` pending bits.
+    // Individual interrupt sources are programmed after the trap
+    // stack is installed. Do not make any source deliverable here.
     let sie = crate::arch::riscv64::csr::sie::read();
     let _ = sie;
-    crate::arch::riscv64::csr::sie::set(
-        crate::arch::riscv64::csr::sie::SEIE
-            | crate::arch::riscv64::csr::sie::STIE
-            | crate::arch::riscv64::csr::sie::SSIE,
-    );
     // Init the CLINT and PLIC.
+    const CLINT_BASE: u64 = 0x0200_0000;
+    const CLINT_SIZE: u64 = 0x0001_0000;
+    const PLIC_BASE: u64 = 0x0C00_0000;
+    const PLIC_SIZE: u64 = 0x0040_0000;
+    const UART_BASE: u64 = 0x1000_0000;
+    const UART_SIZE: u64 = 0x0000_1000;
+
+    if !crate::arch::identity_map_region(CLINT_BASE, CLINT_SIZE) {
+        panic!("RV64 trap init: failed to identity-map CLINT");
+    }
+    if !crate::arch::identity_map_region(PLIC_BASE, PLIC_SIZE) {
+        panic!("RV64 trap init: failed to identity-map PLIC");
+    }
+    if !crate::arch::identity_map_region(UART_BASE, UART_SIZE) {
+        panic!("RV64 trap init: failed to identity-map UART");
+    }
+
+    crate::boot_debug_println!("[RISCV] trap clint init start");
     crate::arch::riscv64::clint::init(0x2000000);
+    crate::boot_debug_println!("[RISCV] trap plic init start");
     crate::arch::riscv64::apic::init();
+    crate::boot_debug_println!("[RISCV] trap init done");
 }
 
 /// Smoke test: verify that the dispatcher symbol is reachable.

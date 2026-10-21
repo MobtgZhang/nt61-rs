@@ -86,31 +86,39 @@ fn read_a5() -> u64 {
 // System-call numbers (subset — full table in Phase 7).
 // =====================================================================
 
-/// NtAllocateVirtualMemory
-pub const SYS_NT_ALLOCATE_VIRTUAL_MEMORY: u64 = 0x18;
-/// NtFreeVirtualMemory
-pub const SYS_NT_FREE_VIRTUAL_MEMORY: u64 = 0x1B;
-/// NtQuerySystemInformation
+/// NT_ALLOCATE_VIRTUAL_MEMORY
+pub const SYS_NT_ALLOCATE_VIRTUAL_MEMORY: u64 = 0x0015;
+/// NT_FREE_VIRTUAL_MEMORY
+pub const SYS_NT_FREE_VIRTUAL_MEMORY: u64 = 0x001B;
+/// NT_QUERY_SYSTEM_INFORMATION
 pub const SYS_NT_QUERY_SYSTEM_INFORMATION: u64 = 0x33;
-/// NtCreateFile
+/// NT_CREATE_FILE
 pub const SYS_NT_CREATE_FILE: u64 = 0x52;
-/// NtReadFile
-pub const SYS_NT_READ_FILE: u64 = 0x04;
-/// NtWriteFile
+/// NT_READ_FILE
+pub const SYS_NT_READ_FILE: u64 = 0x0003;
+/// NT_WRITE_FILE
 pub const SYS_NT_WRITE_FILE: u64 = 0x05;
-/// NtClose
+/// NT_CLOSE
 pub const SYS_NT_CLOSE: u64 = 0x0C;
-/// NtTerminateProcess
+/// NT_TERMINATE_PROCESS
 pub const SYS_NT_TERMINATE_PROCESS: u64 = 0x29;
-/// NtDelayExecution
-pub const SYS_NT_DELAY_EXECUTION: u64 = 0x34;
+/// NT_DELAY_EXECUTION
+pub const SYS_NT_DELAY_EXECUTION: u64 = 0x0031;
+pub const SYS_PUTCHAR: u64 = 0x0202;
+pub const SYS_POLL_KEY: u64 = 0x0203;
+pub const SYS_GET_KEY: u64 = 0x0204;
+pub const SYS_CLEARSCREEN: u64 = 0x0205;
+pub const SYS_READ_LINE: u64 = 0x0211;
+pub const SYS_RETURN_TO_FIRMWARE: u64 = 0x0214;
+pub const SYS_CMD_EXECUTE: u64 = 0x0215;
+pub const SYS_PRINT_PROMPT: u64 = 0x0216;
 
 // =====================================================================
 // NTSTATUS constants
 // =====================================================================
 
 pub const STATUS_SUCCESS: u64 = 0x0000_0000;
-pub const STATUS_NOT_IMPLEMENTED: u64 = 0xC000_0002;
+pub const STATUS_INVALID_SYSTEM_SERVICE: u64 = 0xC000_001C;
 pub const STATUS_INVALID_PARAMETER: u64 = 0xC000_000D;
 
 // =====================================================================
@@ -139,8 +147,37 @@ pub unsafe extern "C" fn dispatch_syscall(frame: *mut TrapFrame) {
     let a3 = (*frame).a[3];
     let a4 = (*frame).a[4];
     let a5 = (*frame).a[5];
+    let a6 = (*frame).a[6];
+    let stack_pointer = (*frame).sp;
 
-    let result = handle(num, a0, a1, a2, a3, a4, a5);
+    let register_args = [
+        a0 as usize,
+        a1 as usize,
+        a2 as usize,
+        a3 as usize,
+        a4 as usize,
+        a5 as usize,
+        a6 as usize,
+        0,
+    ];
+    let common_status = unsafe {
+        crate::ke::ssdt_common::dispatch_syscall_with_stack(
+            num as usize,
+            register_args,
+            crate::ke::ssdt_common::SEVEN_REGISTER_ARCHITECTURES,
+            stack_pointer as usize,
+        )
+    };
+    let common_result = if common_status == crate::ke::ssdt_common::STATUS_INVALID_SYSTEM_SERVICE {
+        None
+    } else {
+        Some(common_status)
+    };
+
+    let result = match common_result {
+        Some(status) => status as u64,
+        None => handle(num, a0, a1, a2, a3, a4, a5),
+    };
 
     // Return value goes back in $a0 of the saved frame.
     (*frame).a[0] = result;
@@ -159,12 +196,12 @@ pub unsafe extern "C" fn dispatch_syscall(frame: *mut TrapFrame) {
 fn handle(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> u64 {
     match num {
         SYS_NT_CLOSE => {
-            // NtClose(handle) — Phase 1 returns success for any handle
+            // NT_CLOSE(handle) — Phase 1 returns success for any handle
             // so test programs can complete the round-trip.
             STATUS_SUCCESS
         }
         SYS_NT_DELAY_EXECUTION => {
-            // NtDelayExecution — busy-wait for `a1` 100-ns intervals.
+            // NT_DELAY_EXECUTION — busy-wait for `a1` 100-ns intervals.
             // Used by Phase 6/7 tests for timing.
             crate::arch::loongarch64::pit::busy_wait_100ns(a1);
             STATUS_SUCCESS
@@ -174,10 +211,33 @@ fn handle(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> u64
             // Phase 1: return success with no data so callers can probe.
             STATUS_SUCCESS
         }
+        SYS_PUTCHAR => crate::arch::common::cmd_host::putchar(a0 as u8),
+        SYS_POLL_KEY => {
+            if let Some(byte) = crate::arch::common::cmd_host::poll_key() {
+                return byte as u64;
+            }
+            0xC000_0011
+        }
+        SYS_GET_KEY => crate::arch::common::cmd_host::get_key() as u64,
+        SYS_CLEARSCREEN => crate::arch::common::cmd_host::clear_screen(),
+        SYS_READ_LINE => {
+            match unsafe { crate::arch::common::cmd_host::read_line(a0 as *mut u8, a1 as usize) } {
+                Some(written) => written as u64,
+                None => 0xC000_000D,
+            }
+        }
+        SYS_RETURN_TO_FIRMWARE => crate::arch::common::cmd_host::return_to_firmware(),
+        SYS_CMD_EXECUTE => {
+            match crate::arch::common::cmd_host::execute_command(a0 as *const u8, a1 as usize) {
+                Ok(exited) => exited as u64,
+                Err(_) => 0xC000_000D,
+            }
+        }
+        SYS_PRINT_PROMPT => crate::arch::common::cmd_host::print_prompt(),
         _ => {
             // Unimplemented in Phase 1.
             let _ = (a0, a1, a2, a3, a4, a5);
-            STATUS_NOT_IMPLEMENTED
+            STATUS_INVALID_SYSTEM_SERVICE
         }
     }
 }

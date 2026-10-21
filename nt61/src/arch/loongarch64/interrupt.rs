@@ -16,18 +16,20 @@ static EXTIOI_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 /// EXTIOI register offsets
 mod extioi {
-    pub const NODETYPE: u64 = 0x000;
     pub const ENABLE: u64 = 0x020;
-    pub const BOUNCE: u64 = 0x060;
     pub const ISR: u64 = 0x0A0;
     pub const COREISR: u64 = 0x100;
-    pub const COREMAP: u64 = 0x200;
     pub const ROUTE: u64 = 0x300;
 }
 
 /// Initialize EXTIOI interrupt controller
 pub fn init(base: u64) {
-    EXTIOI_BASE.store(base, Ordering::Release);
+    let mapped_base = if crate::arch::loongarch64::paging::paging_enabled() {
+        crate::arch::loongarch64::paging::mmio_virt(base)
+    } else {
+        base
+    };
+    EXTIOI_BASE.store(mapped_base, Ordering::Release);
 
     unsafe {
         // Disable all interrupts initially
@@ -210,7 +212,7 @@ pub fn is_ipi_pending() -> bool {
     }
 }
 
-/// Handle interrupt - returns IRQ number or None
+/// handle interrupt - returns IRQ number or None
 pub fn handle_irq(cpu: u32) -> Option<u32> {
     let pending = get_pending_for_cpu(cpu);
 

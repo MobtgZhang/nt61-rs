@@ -3,8 +3,6 @@
 //
 //! Uses 4-level PML4 page tables with CR3 as root.
 
-#![allow(dead_code)]
-
 use crate::arch::common::paging::{PageFlags, PagingArch};
 
 /// Paging implementation for x86_64.

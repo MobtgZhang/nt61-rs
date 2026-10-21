@@ -13,8 +13,6 @@
 //! on don't expose a built-in panel, so a `-device ramfb` is the
 //! canonical way to make QEMU provide one.
 
-#![allow(dead_code)]
-
 use crate::hal::common::framebuffer as lfb;
 
 /// Framebuffer information.

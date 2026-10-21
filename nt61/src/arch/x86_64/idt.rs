@@ -341,9 +341,10 @@ pub fn init() {
     // SAFETY: IDT is a static mutable, and we are in init() which runs before any other
     // CPU can touch it. Reading bytes just to fault the page in is safe.
     unsafe {
-        let idt_base = &IDT as *const GateDescriptor;
+        let idt_base = core::ptr::addr_of!(IDT) as *const GateDescriptor;
         let idt_page_start = idt_base as u64;
-        let idt_page_end = idt_page_start + core::mem::size_of_val(&IDT) as u64;
+        let idt_page_end =
+            idt_page_start + core::mem::size_of_val(&*core::ptr::addr_of!(IDT)) as u64;
         // Touch the first byte of each 4 KiB page that IDT spans.
         let mut page = idt_page_start;
         while page < idt_page_end {
@@ -696,7 +697,6 @@ pub fn install_irq(vector: u8, handler: u64) {
     set_gate(vector, handler, 0, 0);
 }
 
-#[allow(dead_code)]
 pub fn _use_stub() {
     let _ = int_stub_0 as *const () as u64;
 }

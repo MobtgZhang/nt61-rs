@@ -3,8 +3,6 @@
 //
 //! Uses Sv39 3-level page tables with satp as root.
 
-#![allow(dead_code)]
-
 use crate::arch::common::paging::{PageFlags, PagingArch};
 
 impl PagingArch for () {

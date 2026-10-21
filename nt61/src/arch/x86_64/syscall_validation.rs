@@ -14,8 +14,6 @@
 //! not a probe — it accepts unmapped memory, and the dereference then faults
 //! inside the kernel instead of raising a catchable access violation.
 
-use core::ptr;
-
 /// In Windows x64, user-mode address space is limited to 0x00007FFF_FFFFFFFF
 const USER_MAX_ADDRESS: usize = 0x7FFF_FFFF_FFFF;
 
@@ -182,11 +180,11 @@ pub unsafe fn probe_for_read_unicode_string(
     Err(STATUS_INVALID_PARAMETER)
 }
 
-/// Probe a user-mode `UNICODE_STRING`.
+/// Probe a user-mode `UnicodeString`.
 ///
 /// The structure itself is user-controlled, so both the header and the
-/// buffer it points at must be probed. `Length` is a byte count, so the
-/// buffer range is `Length` bytes and must not exceed `MaximumLength`.
+/// buffer it points at must be probed. `length` is a byte count, so the
+/// buffer range is `length` bytes and must not exceed `maximum_length`.
 pub unsafe fn probe_unicode_string(address: *const u8) -> Result<(), i32> {
     if address.is_null() {
         return Err(STATUS_ACCESS_VIOLATION);
@@ -196,19 +194,18 @@ pub unsafe fn probe_unicode_string(address: *const u8) -> Result<(), i32> {
         core::mem::size_of::<crate::libs::ntdll::types::UnicodeString>(),
     )?;
 
-    let mut header: crate::libs::ntdll::types::UnicodeString =
-        unsafe { core::mem::zeroed() };
+    let mut header: crate::libs::ntdll::types::UnicodeString = unsafe { core::mem::zeroed() };
     crate::mm::user_copy::read_user(address as u64, &mut header)?;
-    if header.Length > header.MaximumLength {
+    if header.length > header.maximum_length {
         return Err(STATUS_INVALID_PARAMETER);
     }
-    if header.Length == 0 {
+    if header.length == 0 {
         return Ok(());
     }
-    if header.Buffer.is_null() {
+    if header.buffer.is_null() {
         return Err(STATUS_ACCESS_VIOLATION);
     }
-    probe_for_read(header.Buffer as *const u8, header.Length as usize)
+    probe_for_read(header.buffer as *const u8, header.length as usize)
 }
 
 /// Copy a user-mode null-terminated byte string into a kernel buffer.
@@ -250,6 +247,7 @@ macro_rules! probe_write {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::ptr;
 
     #[test]
     fn test_probe_for_read_null() {

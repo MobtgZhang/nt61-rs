@@ -3,8 +3,6 @@
 //! Displays the Windows 7 startup animation with logo and progress bar.
 //! Used during Normal boot mode.
 
-#![allow(dead_code)]
-
 /// Boot animation state
 pub struct BootAnimation {
     pub phase: BootPhase,
@@ -30,7 +28,7 @@ pub enum BootPhase {
 }
 
 impl BootAnimation {
-    /// Create new boot animation
+    /// create new boot animation
     pub fn new() -> Self {
         Self {
             phase: BootPhase::Starting,

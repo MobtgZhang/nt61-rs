@@ -34,7 +34,6 @@ pub fn set_compare(deadline: u64) {
     }
 }
 
-#[allow(dead_code)]
 fn _keep() {
     let _ = ptr::null::<u8>();
 }

@@ -10,7 +10,7 @@
 //! the kernel pool.
 
 /// Size of the dedicated exception stack.
-pub const EXCEPTION_STACK_SIZE: usize = 64 * 1026;
+pub const EXCEPTION_STACK_SIZE: usize = 64 * 1024;
 
 /// Backing storage for the BSP exception stack.
 // `#[no_mangle]` on a struct (rather than a function or static) has
@@ -46,7 +46,7 @@ pub fn init() {
     }
 }
 
-/// Read the current top-of-stack value.
+/// read the current top-of-stack value.
 pub fn top() -> u64 {
     unsafe { _exception_stack_top }
 }

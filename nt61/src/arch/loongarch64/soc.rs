@@ -75,7 +75,7 @@ impl SoCInfo {
 
 static SOC: SoCInfo = SoCInfo::new();
 
-/// Read one word of CPUCFG. The LoongArch encoding for `CPUCFG rd, idx`
+/// read one word of CPUCFG. The LoongArch encoding for `CPUCFG rd, idx`
 /// is the pseudo-op form `cpucfg <rd>, <idx>`. We emit the equivalent
 /// csrrd-like mnemonic using the raw opcode via a fixed template here.
 ///

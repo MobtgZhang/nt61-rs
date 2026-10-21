@@ -60,6 +60,9 @@ global_asm!(
     "  sd    t0,   224(sp)",
     "  csrr  t0,   scause",
     "  sd    t0,   232(sp)",
+    // Preserve the user stack pointer while `sscratch` still holds it.
+    "  csrr  t0,   sscratch",
+    "  sd    t0,   240(sp)",
     // 3. Hand off to the Rust dispatcher. a0 = pointer to trap
     //    frame (live on the kernel stack).
     "  mv    a0,   sp",
@@ -101,6 +104,9 @@ global_asm!(
     "  ld    s11,  184(sp)",
     "  ld    gp,   192(sp)",
     "  ld    tp,   200(sp)",
+    // The CSR restore block uses `t0` as a scratch register; reload the
+    // saved value before returning to user mode.
+    "  ld    t0,   8(sp)",
     // 5. Swap sp and sscratch back so user mode resumes on its own
     //    stack pointer.
     "  csrrw sp, sscratch, sp",
@@ -109,6 +115,11 @@ global_asm!(
 
 extern "C" {
     fn stvec_trap();
+}
+
+/// Runtime address of the trap entry, for low-level diagnostics.
+pub fn trap_entry_addr() -> u64 {
+    stvec_trap as *const () as u64
 }
 
 /// Install the `stvec` handler.

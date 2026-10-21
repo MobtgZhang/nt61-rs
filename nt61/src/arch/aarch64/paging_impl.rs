@@ -3,8 +3,6 @@
 //
 //! Uses 4-level L0-L3 page tables with TTBR1_EL1 as root.
 
-#![allow(dead_code)]
-
 use crate::arch::common::paging::{PageFlags, PagingArch};
 
 impl PagingArch for () {

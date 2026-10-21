@@ -51,8 +51,8 @@ static mut AP_GDTS: [gdt::PerCpuGdt; tss::MAX_APS] = [const {
         e7: gdt::GdtEntry::empty(),      // slot 7: (unused)
         e8: gdt::TssDescriptor::empty(), // slot 8: TSS
         e9: gdt::GdtEntry::empty(),      // slot 9: (TSS high)
-        eA: gdt::GdtEntry::empty(),      // slot 10: (unused)
-        eB: gdt::GdtEntry::empty(),      // slot 11: (unused)
+        e_a: gdt::GdtEntry::empty(),     // slot 10: (unused)
+        e_b: gdt::GdtEntry::empty(),     // slot 11: (unused)
     }
 }; tss::MAX_APS];
 
@@ -63,12 +63,15 @@ pub fn cpu_count() -> u32 {
 
 /// BSP entry point. `pml4_pfn` is the kernel page table.
 pub unsafe fn smp_boot_aps(pml4_pfn: u64) {
+    crate::arch::boot::early_write_str(b"[SMP] enter\r\n");
     // Parse the MADT and discover how many LAPICs exist.
     if !parse_madt() {
         // // kprintln!("[smp] MADT not found, running as single-CPU");
         CPU_COUNT.store(1, Ordering::SeqCst);
+        crate::arch::boot::early_write_str(b"[SMP] madt_missing\r\n");
         return;
     }
+    crate::arch::boot::early_write_str(b"[SMP] madt_ok\r\n");
     let info = madt_info();
     // // kprintln!("[smp] MADT parsed:");
     // // kprintln!("  - LAPIC base: 0x{:x}", info.local_apic_address);
@@ -80,6 +83,12 @@ pub unsafe fn smp_boot_aps(pml4_pfn: u64) {
     }
     // // kprintln!("  - Interrupt overrides: {}", info.int_override_count);
     // // kprintln!("  - NMI sources: {}", info.nmi_source_count);
+
+    // Allocate scheduler PRCBs before any AP calls
+    // `init_smp_this_cpu()`. The AP entry path cannot allocate its own
+    // PRCB because it may run concurrently with the BSP.
+    crate::ke::scheduler::init_smp(u32::from(info.lapic_count));
+    crate::arch::boot::early_write_str(b"[SMP] prcb_ok\r\n");
 
     if info.lapic_count <= 1 {
         // // kprintln!("[smp] only BSP detected, running single-CPU");
@@ -102,6 +111,7 @@ pub unsafe fn smp_boot_aps(pml4_pfn: u64) {
         (_trampoline_end as *const u8 as usize)
             .saturating_sub(_trampoline_start as *const u8 as usize)
     };
+    crate::arch::boot::early_write_str(b"[SMP] tramp_len_read\r\n");
     if tramp_len == 0 || tramp_len > 4096 {
         // // kprintln!("[smp] no AP trampoline linked, BSP-only");
         CPU_COUNT.store(1, Ordering::SeqCst);
@@ -115,6 +125,7 @@ pub unsafe fn smp_boot_aps(pml4_pfn: u64) {
             return;
         }
     };
+    crate::arch::boot::early_write_str(b"[SMP] tramp_alloc\r\n");
     // Clamp to the 4-bit address limit documented by Intel —
     // 0x000..0xFF8 in steps of 0x1000. The top bits of the
     // page's 4-bit address go into the upper nibble of the
@@ -138,6 +149,7 @@ pub unsafe fn smp_boot_aps(pml4_pfn: u64) {
         CPU_COUNT.store(1, Ordering::SeqCst);
         return;
     }
+    crate::arch::boot::early_write_str(b"[SMP] tramp_mapped\r\n");
     // Copy the trampoline.
     unsafe {
         core::ptr::copy_nonoverlapping(
@@ -146,6 +158,7 @@ pub unsafe fn smp_boot_aps(pml4_pfn: u64) {
             tramp_len,
         );
     }
+    crate::arch::boot::early_write_str(b"[SMP] tramp_copied\r\n");
     // Patch the trampoline's PML4 and per-AP slots in the SIPI
     // page. We patch *after* the copy so the changes are made
     // to the destination (the kernel's copy at `trampoline_phys`)
@@ -171,6 +184,7 @@ pub unsafe fn smp_boot_aps(pml4_pfn: u64) {
         CPU_COUNT.store(1, Ordering::SeqCst);
         return;
     }
+    crate::arch::boot::early_write_str(b"[SMP] tramp_patched\r\n");
     // FIX 2.6: Validate SIPI vector is valid
     let sipi_vector = ((trampoline_phys >> 12) & 0xFF) as u8;
     if sipi_vector == 0 {
@@ -212,6 +226,7 @@ pub unsafe fn smp_boot_aps(pml4_pfn: u64) {
     // Bring up each AP.
     let mut brought_up: u32 = 1;
     for i in 1..info.lapic_count as usize {
+        crate::arch::boot::early_write_str(b"[SMP] ap_begin\r\n");
         let apic_id = info.lapic_ids[i];
         // Patch the AP index in the SIPI page for this AP.
         unsafe {
@@ -227,6 +242,7 @@ pub unsafe fn smp_boot_aps(pml4_pfn: u64) {
             // // kprintln!("[smp] AP lapic_id={} failed to start", apic_id);
             continue;
         }
+        crate::arch::boot::early_write_str(b"[SMP] ap_started\r\n");
         // FIX 2.7: Add acknowledgment delay and verification
         // Wait for AP to acknowledge by entering ap_entry_long
         delay_ms(5);
@@ -385,8 +401,7 @@ core::arch::global_asm!(
 /// Retained because the next phase will need it for per-AP
 /// initialisation order (PML4 ready before LAPIC ID is
 /// published), at which point it will be wired up.
-#[allow(dead_code)]
-unsafe fn patch_trampoline(pml4_paddr: u64, ap_stack: u64, ap_index: u64) {
+pub unsafe fn patch_trampoline(pml4_paddr: u64, ap_stack: u64, ap_index: u64) {
     extern "C" {
         static mut _trampoline_pml4: u32;
         static mut _trampoline_ap_stack: u64;
@@ -492,7 +507,6 @@ pub unsafe extern "C" fn ap_entry_long(ap_index: u64) -> ! {
     crate::ke::scheduler::idle_loop()
 }
 
-#[allow(dead_code)]
 fn _use_ap() {
     let _ = _ap_entry as *const ();
     unsafe {

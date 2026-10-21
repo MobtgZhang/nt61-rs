@@ -18,8 +18,6 @@
 //!   - M[4:0] = 0x05 = AArch64, EL1h, SP0 (exception from EL1, return to EL0)
 //!   - D, A, I, F = 1 = all interrupts masked (IDT not ready yet)
 
-use crate::arch::common::percpu::PerCpuArea;
-
 /// Per-CPU area TPIDR_EL1 access (matches percpu_impl.rs layout).
 const PER_CPU_TPIDR_EL1_OFFSET_KERNEL_SP: usize = 1; // u64 at offset 0x08
 
@@ -39,15 +37,15 @@ const AARCH64_USER_STACK_BASE: u64 = crate::mm::constants::USER_STACK_BASE;
 /// User stack top address.
 const AARCH64_USER_STACK_TOP: u64 = crate::mm::constants::USER_STACK_TOP;
 
-/// SPSR_EL1 value for return to EL0 with all interrupts masked.
-/// M = 0x05 (AArch64, EL1h → EL0), DAIF = 0xF (all masked).
-const AARCH64_SPSR_EL1: u64 = 0x3C5;
+/// SPSR_EL1 value for return to EL0. `M=0` selects EL0t; the DAIF
+/// bits must not be set because user code cannot own interrupt state.
+const AARCH64_SPSR_EL0T: u64 = 0;
 
 // =====================================================================
 // Per-CPU area helpers
 // =====================================================================
 
-/// Read TPIDR_EL1 (per-CPU area base).
+/// read TPIDR_EL1 (per-CPU area base).
 #[inline(always)]
 fn get_tpidr_el1() -> u64 {
     let val: u64;
@@ -94,7 +92,7 @@ pub fn __user_entry_user_stack_top() -> u64 {
 /// Return the RFLAGS / PSTATE value for user mode (interrupts disabled).
 #[no_mangle]
 pub fn __user_entry_user_rflags() -> u64 {
-    AARCH64_SPSR_EL1
+    AARCH64_SPSR_EL0T
 }
 
 /// Transfer control to EL0. Never returns.
@@ -105,21 +103,16 @@ pub unsafe fn __user_entry_enter(user_rip: u64, user_rsp: u64) -> ! {
     let rsp_v = core::hint::black_box(user_rsp);
     unsafe {
         core::arch::asm!(
-            // Set SP_EL0 (user stack) and ELR_EL1 (entry point).
-            // SPSR_EL1 is set via the const operand below.
-            "mov sp, {rsp}",
+            // Set SP_EL0 (user stack), SPSR_EL1 and ELR_EL1.
+            "msr sp_el0, {rsp}",
+            "msr spsr_el1, {spsr}",
             "msr elr_el1, {rip}",
             "eret",
             rip = in(reg) rip_v,
             rsp = in(reg) rsp_v,
-            in("x0") AARCH64_SPSR_EL1,
+            spsr = in(reg) AARCH64_SPSR_EL0T,
             options(noreturn),
         );
-    }
-    // Suppress unreachable-code warning.
-    #[allow(unreachable_code)]
-    loop {
-        crate::arch::halt();
     }
 }
 
@@ -136,7 +129,7 @@ pub fn __user_entry_set_kernel_stack(sp: u64) {
     }
 }
 
-/// Read the kernel stack pointer from the per-CPU area.
+/// read the kernel stack pointer from the per-CPU area.
 #[no_mangle]
 pub fn __user_entry_get_kernel_stack() -> u64 {
     let base = get_tpidr_el1();
@@ -164,7 +157,7 @@ pub fn __user_entry_get_kernel_stack() -> u64 {
 ///
 /// ## Post-conditions
 ///
-/// Control is transferred to EL0 at `user_rip` with `user_rsp` as the
+/// control is transferred to EL0 at `user_rip` with `user_rsp` as the
 /// stack pointer. The function does not return.
 #[inline(never)]
 pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> ! {
@@ -186,19 +179,19 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
         let rip_v = core::hint::black_box(user_rip);
         let rsp_v = core::hint::black_box(user_rsp);
         core::arch::asm!(
-            "mov sp, {rsp}",
+            "msr sp_el0, {rsp}",
             "msr elr_el1, {rip}",
             // SPSR_EL1: M=EL0, all interrupts masked
             "msr spsr_el1, {spsr}",
             "eret",
             rip = in(reg) rip_v,
             rsp = in(reg) rsp_v,
-            spsr = in(reg) AARCH64_SPSR_EL1,
+            spsr = in(reg) AARCH64_SPSR_EL0T,
             options(noreturn),
         );
     }
-    #[allow(unreachable_code)]
-    loop {
-        crate::arch::halt();
-    }
+}
+
+pub unsafe fn __user_entry_enter_first(root_table_phys: u64, user_rip: u64, user_rsp: u64) -> ! {
+    enter_first_user_thread(root_table_phys, user_rip, user_rsp)
 }

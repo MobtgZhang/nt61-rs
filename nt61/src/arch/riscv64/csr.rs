@@ -1,4 +1,4 @@
-//! RISC-V 64 CSR (Control and Status Register) access helpers.
+//! RISC-V 64 CSR (control and Status Register) access helpers.
 //!
 //! Provides safe, type-checked wrappers around the `csrr` / `csrw` /
 //! `csrs` / `csrc` instructions. The CSR address space is 12 bits
@@ -26,10 +26,10 @@
 use core::arch::asm;
 
 // =====================================================================
-// Read
+// read
 // =====================================================================
 
-/// Read any 64-bit CSR by raw address. Use the typed helpers below
+/// read any 64-bit CSR by raw address. Use the typed helpers below
 /// for documentation / type-checking.
 ///
 /// **Implementation note**: the RISC-V `csrr` family takes an
@@ -60,13 +60,13 @@ pub unsafe fn csrr(addr: u16) -> u64 {
         0x142 => csrr_0x142(),
         0x143 => csrr_0x143(),
         0x144 => csrr_0x144(),
-        0x10A => csrr_0x10A(),
+        0x10A => csrr_0x10a(),
         0x180 => csrr_0x180(),
         0x301 => csrr_0x301(),
-        0xF11 => csrr_0xF11(),
-        0xF12 => csrr_0xF12(),
-        0xF13 => csrr_0xF13(),
-        0xF14 => csrr_0xF14(),
+        0xF11 => csrr_0xf11(),
+        0xF12 => csrr_0xf12(),
+        0xF13 => csrr_0xf13(),
+        0xF14 => csrr_0xf14(),
         _ => csrr_fallback(addr),
     }
 }
@@ -75,7 +75,7 @@ pub unsafe fn csrr(addr: u16) -> u64 {
 /// a constant — emits an indirect `csrr rd, rs1` via the N
 /// extension pseudo-instruction.
 #[inline(always)]
-fn csrr_fallback(addr: u16) -> u64 {
+fn csrr_fallback(_addr: u16) -> u64 {
     let v: u64;
     // The binutils RISC-V assembler supports the N-extension
     // pseudo-instruction `csrr rd, rs1` where `rs1` is a GPR
@@ -119,15 +119,15 @@ csr_read!(csrr_0x141, 0x141);
 csr_read!(csrr_0x142, 0x142);
 csr_read!(csrr_0x143, 0x143);
 csr_read!(csrr_0x144, 0x144);
-csr_read!(csrr_0x10A, 0x10A);
+csr_read!(csrr_0x10a, 0x10A);
 csr_read!(csrr_0x180, 0x180);
 csr_read!(csrr_0x301, 0x301);
-csr_read!(csrr_0xF11, 0xF11);
-csr_read!(csrr_0xF12, 0xF12);
-csr_read!(csrr_0xF13, 0xF13);
-csr_read!(csrr_0xF14, 0xF14);
+csr_read!(csrr_0xf11, 0xF11);
+csr_read!(csrr_0xf12, 0xF12);
+csr_read!(csrr_0xf13, 0xF13);
+csr_read!(csrr_0xf14, 0xF14);
 
-/// Write any 64-bit CSR by raw address. Same dispatch rule as
+/// write any 64-bit CSR by raw address. Same dispatch rule as
 /// [`csrr`]: the typical callers (typed helpers) pass compile-time
 /// constants that resolve to direct `csrw <imm>, rs1` instructions.
 #[inline(always)]
@@ -141,7 +141,7 @@ pub unsafe fn csrw(addr: u16, val: u64) {
         0x142 => csrw_0x142(val),
         0x143 => csrw_0x143(val),
         0x144 => csrw_0x144(val),
-        0x10A => csrw_0x10A(val),
+        0x10A => csrw_0x10a(val),
         0x180 => csrw_0x180(val),
         _ => {}
     }
@@ -170,7 +170,7 @@ csr_write!(csrw_0x141, 0x141);
 csr_write!(csrw_0x142, 0x142);
 csr_write!(csrw_0x143, 0x143);
 csr_write!(csrw_0x144, 0x144);
-csr_write!(csrw_0x10A, 0x10A);
+csr_write!(csrw_0x10a, 0x10A);
 csr_write!(csrw_0x180, 0x180);
 
 /// Set bits in a CSR (atomic OR).
@@ -180,7 +180,7 @@ pub unsafe fn csrs(addr: u16, mask: u64) {
         0x100 => csrs_0x100(mask),
         0x104 => csrs_0x104(mask),
         0x144 => csrs_0x144(mask),
-        0x10A => csrs_0x10A(mask),
+        0x10A => csrs_0x10a(mask),
         _ => {}
     }
 }
@@ -203,7 +203,7 @@ macro_rules! csr_set {
 csr_set!(csrs_0x100, 0x100);
 csr_set!(csrs_0x104, 0x104);
 csr_set!(csrs_0x144, 0x144);
-csr_set!(csrs_0x10A, 0x10A);
+csr_set!(csrs_0x10a, 0x10A);
 
 /// Clear bits in a CSR (atomic AND-NOT).
 #[inline(always)]
@@ -230,12 +230,16 @@ fn csrc_0x100(mask: u64) {
 
 pub mod sstatus {
     use super::csrr;
-    /// SIE — global supervisor interrupt enable.
-    pub const SIE: u64 = 1 << 1;
-    /// SPIE — previous SIE saved on trap entry.
+    /// SIE — global supervisor interrupt enable (bit 0).
+    pub const SIE: u64 = 1 << 0;
+    /// SPIE — previous SIE saved on trap entry (bit 5).
     pub const SPIE: u64 = 1 << 5;
     /// SPP — previous privilege (0 = U, 1 = S).
     pub const SPP: u64 = 1 << 8;
+    /// UXL — XLEN field for U-mode (RV64 bits [33:32]).
+    pub const UXL_MASK: u64 = 0b11 << 32;
+    /// UXL = 2 — U-mode executes with XLEN = 64.
+    pub const UXL_64: u64 = 0b10 << 32;
     /// FS — floating-point status (0 = off, 1 = initial, 2 = clean, 3 = dirty).
     pub const FS_MASK: u64 = 0b11 << 13;
     /// XS — user extension status.

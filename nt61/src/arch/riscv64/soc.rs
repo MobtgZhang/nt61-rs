@@ -46,10 +46,10 @@ pub enum SocType {
     SpacemiTM1 = 12,
     EswinEIC7700X = 20,
     SiFiveP550 = 21,
-    TH1520_C910 = 30,
-    JH7110_U74 = 40,
+    Th1520C910 = 30,
+    Jh7110U74 = 40,
     SiFiveU74 = 41,
-    SophonSG2042_C920 = 50,
+    SophonSg2042C920 = 50,
 }
 
 impl SocType {
@@ -65,10 +65,10 @@ impl SocType {
             SocType::SpacemiTM1 => "SpacemiT M1",
             SocType::EswinEIC7700X => "ESWIN EIC7700X",
             SocType::SiFiveP550 => "SiFive P550",
-            SocType::TH1520_C910 => "TH1520 (XuanTie C910)",
-            SocType::JH7110_U74 => "StarFive JH7110 (SiFive U74)",
+            SocType::Th1520C910 => "TH1520 (XuanTie C910)",
+            SocType::Jh7110U74 => "StarFive JH7110 (SiFive U74)",
             SocType::SiFiveU74 => "SiFive U74",
-            SocType::SophonSG2042_C920 => "SOPHON SG2042 (XuanTie C920)",
+            SocType::SophonSg2042C920 => "SOPHON SG2042 (XuanTie C920)",
         }
     }
 }
@@ -289,34 +289,22 @@ static SOC: SocCache = SocCache::new();
 // CSR access helpers
 // =====================================================================
 
-/// Read `mvendorid` CSR (0xF11).
+/// Read the machine vendor ID through SBI (S-mode safe).
 #[inline(always)]
 fn read_mvendorid() -> u32 {
-    let v: u32;
-    unsafe {
-        core::arch::asm!("csrr {}, 0xF11", out(reg) v, options(nostack));
-    }
-    v
+    unsafe { crate::arch::riscv64::sbi::mvendorid() as u32 }
 }
 
-/// Read `marchid` CSR (0xF12).
+/// Read the machine architecture ID through SBI (S-mode safe).
 #[inline(always)]
 fn read_marchid() -> u64 {
-    let v: u64;
-    unsafe {
-        core::arch::asm!("csrr {}, 0xF12", out(reg) v, options(nostack));
-    }
-    v
+    unsafe { crate::arch::riscv64::sbi::marchid() }
 }
 
-/// Read `mimpid` CSR (0xF13).
+/// Read the machine implementation ID through SBI (S-mode safe).
 #[inline(always)]
 fn read_mimpid() -> u64 {
-    let v: u64;
-    unsafe {
-        core::arch::asm!("csrr {}, 0xF13", out(reg) v, options(nostack));
-    }
-    v
+    unsafe { crate::arch::riscv64::sbi::mimpid() }
 }
 
 // =====================================================================
@@ -379,10 +367,10 @@ fn classify(vendor: u32, arch: u64, _impl_: u64) -> SocType {
         // marchid=1. The cluster / hart count distinguishes them
         // further but we keep classification conservative here.
         if arch == 0 {
-            return SocType::TH1520_C910;
+            return SocType::Th1520C910;
         }
         if arch == 1 {
-            return SocType::SophonSG2042_C920;
+            return SocType::SophonSg2042C920;
         }
     }
     // ESWIN vendor id is 0x678.
@@ -560,7 +548,7 @@ fn info_for(t: SocType) -> SocInfo {
             phys_addr_bits: 40,
         },
         // -- TH1520 / 玄铁 C910: 4-core RV64GCV, multi-cluster.
-        SocType::TH1520_C910 => SocInfo {
+        SocType::Th1520C910 => SocInfo {
             soc_type: t,
             name: "TH1520 (XuanTie C910)",
             architecture: ArchVersion::Rv64GCV,
@@ -583,7 +571,7 @@ fn info_for(t: SocType) -> SocInfo {
             phys_addr_bits: 40,
         },
         // -- JH7110 (VisionFive 2): 4-core SiFive U74 in a JH71x0 SoC.
-        SocType::JH7110_U74 => SocInfo {
+        SocType::Jh7110U74 => SocInfo {
             soc_type: t,
             name: "StarFive JH7110 (SiFive U74)",
             architecture: ArchVersion::Rv64IMAC,
@@ -606,7 +594,7 @@ fn info_for(t: SocType) -> SocInfo {
             phys_addr_bits: 32,
         },
         // -- SOPHON SG2042 (XuanTie C920): server 64-core RV64GCV.
-        SocType::SophonSG2042_C920 => SocInfo {
+        SocType::SophonSg2042C920 => SocInfo {
             soc_type: t,
             name: "SOPHON SG2042 (XuanTie C920)",
             architecture: ArchVersion::Rv64GCV,

@@ -62,9 +62,6 @@ pub fn init() {
         //     us; the bootloader's tables already use sane attrs).
         //   - `VBAR_EL1`: vector base. Reset to 0; `idt::init`
         //     will install the actual vector table shortly.
-        //   - `SCTLR_EL1.{WXN,I,C}`: tighten permissions on
-        //     subsequently created mappings without enabling the
-        //     MMU (the bootloader already did that).
         //   - `CPUECTLR`-equivalent CPU feature detection goes
         //     through `cpuinfo::init()`.
         //
@@ -95,29 +92,12 @@ pub fn init() {
         asm!("msr mair_el1, {}", in(reg) mair);
         crate::hal::serial::write_string("aarch64_init:vbar\r\n");
 
-        // VBAR_EL1 is installed by `idt::init()` (which forwards
-        // to `exception::init()`); set it to zero here as a
-        // default. Leaving the bootloader's vector base in place
-        // would crash on the very first unexpected exception,
-        // which is exactly what we are trying to diagnose.
-        asm!("msr vbar_el1, {}", in(reg) 0u64);
-        crate::hal::serial::write_string("aarch64_init:sctlr\r\n");
-
-        // WXN/I/C are advisory bits. WXN enforces "execute never"
-        // on writable pages; I and C enable the instruction and
-        // data caches. They are no-ops if the bootloader set them
-        // already and harmless if they weren't.
-        let mut sctlr: u64;
-        asm!("mrs {}, sctlr_el1", out(reg) sctlr);
-        sctlr |= 1 << 19; // WXN
-        sctlr |= 1 << 12; // I-cache
-        sctlr |= 1 << 2; // C-cache
-        asm!("msr sctlr_el1, {}", in(reg) sctlr);
-        crate::hal::serial::write_string("aarch64_init:isb\r\n");
-
-        // Ensure all prior writes are observed before any
-        // subsequent instruction fetch from the new state.
-        asm!("isb", options(nostack));
+        // Install the kernel exception vector table (VBAR_EL1) before
+        // any user-mode transition. Without this the firmware's
+        // vector base would be used, so SVC from EL0 would not reach
+        // our trap handler.
+        crate::hal::serial::write_string("aarch64_init:exception\r\n");
+        exception::init();
         crate::hal::serial::write_string("aarch64_init:cpuinfo\r\n");
 
         // Initialise CPU feature detection so other subsystems
@@ -127,7 +107,7 @@ pub fn init() {
     }
 }
 
-/// Bring up secondary CPUs via PSCI (Power State Coordination
+/// Bring up secondary CPUs via PSCI (power State Coordination
 /// Interface) on QEMU virt. We use CPU_ON with the entry point
 /// `arm64_secondary_entry`; in the bootstrap we just do nothing
 /// because the bring-up is normally done by the firmware/bootloader
@@ -136,10 +116,6 @@ pub fn init_secondary_cpu(_cpu_id: u32) {}
 
 /// Number of CPUs we have detected.
 pub fn get_cpu_count() -> u32 {
-    let id: u64;
-    unsafe {
-        asm!("mrs {}, mpidr_el1", out(reg) id, options(nostack));
-    }
     // On QEMU virt the upper bits of MPIDR_EL1 are zero so the
     // `aff0` field is the only thing that matters; the actual count
     // is normally reported by firmware (ACPI / FDT / PSCI). For the

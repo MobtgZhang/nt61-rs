@@ -1,92 +1,89 @@
-//! BTL — x86 instruction decoder (32-bit and 64-bit).
-//!
-//! The decoder walks a guest instruction stream and emits a stream
-//! of `Decoded*` records for the translator. Prefix handling,
-//! ModR/M and SIB decoding, plus REX-prefixed 64-bit decoding are
-//! implemented for the most common opcode families. SIMD (SSE/AVX)
-//! decoding is split into `simd.rs` for clarity.
+//! BTL — x86 instruction decoder (thin wrapper around shared decoder).
 
 #![cfg(target_arch = "loongarch64")]
 
-pub mod simd;
+pub use crate::arch::common::btl::ir::{AluOp, BranchCond, IROp, IrInst, MemOperand, X86Reg};
+pub use crate::arch::common::btl::x86_decoder::{
+    decode_block as decode_block_shared, decode_one as decode_one_shared, MAX_BLOCK_BYTES,
+    MAX_DECODED_INSTS,
+};
 
-#[derive(Copy, Clone, Debug)]
-pub enum OperandKind {
-    Reg {
-        index: u8,
-        bits: u8,
-    },
-    Imm {
-        value: u32,
-        bits: u8,
-    },
-    Mem {
-        base: u8,
-        index: u8,
-        scale: u8,
-        disp: i32,
-        bits: u8,
-    },
-    RelAddr {
-        offset: i32,
-        bits: u8,
-    },
-}
-
+/// Compatibility type for the existing loongarch64 code.
 #[derive(Copy, Clone, Debug)]
 pub struct Decoded {
     pub opcode: u32,
-    pub operands: [OperandKind; 4],
-    pub operand_count: u8,
-    pub has_modrm: bool,
-    pub has_rex: bool,
     pub length: u8,
+    pub ir: Option<IrInst>,
 }
 
 impl Decoded {
     pub fn empty() -> Self {
         Self {
             opcode: 0,
-            operands: [OperandKind::Imm { value: 0, bits: 0 }; 4],
-            operand_count: 0,
-            has_modrm: false,
-            has_rex: false,
             length: 0,
+            ir: None,
         }
     }
-}
-
-/// Top-level entry. Returns the number of bytes consumed or an error.
-pub fn decode_one(code: &[u8], offset: usize) -> Result<(Decoded, usize), DecodeError> {
-    if offset >= code.len() {
-        return Err(DecodeError::EndOfStream);
-    }
-    let b0 = code[offset];
-    // 1-byte opcode shortcut for common ALU ops.
-    let opcode = b0 as u32;
-    let mut d = Decoded::empty();
-    d.opcode = opcode;
-    d.operand_count = 1;
-    d.operands[0] = OperandKind::Imm {
-        value: opcode,
-        bits: 8,
-    };
-    d.length = 1;
-    Ok((d, offset + 1))
 }
 
 #[derive(Copy, Clone, Debug)]
 pub enum DecodeError {
     EndOfStream,
-    /// Reserved opcode.
     BadOpcode,
-    /// ModR/M lookup failed.
     InvalidModrm,
 }
 
-/// Simple PE/COFF-aware dispatch: if the code stream contains the
-/// signature `MZ` at offset 0 we treat subsequent bytes as part of
-/// a DOS/PE binary rather than raw code.
+/// Top-level entry. Returns (Decoded, bytes_consumed) or an error.
+/// Uses the shared decoder and adapts the output.
+pub fn decode_one(code: &[u8], offset: usize) -> Result<(Decoded, usize), DecodeError> {
+    if offset >= code.len() {
+        return Err(DecodeError::EndOfStream);
+    }
+    let va = 0x1000u64; // arbitrary base for VA calculation
+    match decode_one_shared(&code[offset..], va) {
+        Some((ir, len)) => {
+            let opcode = match &ir.op {
+                IROp::Nop => 0x90,
+                IROp::Ret => 0xC3,
+                IROp::Jmp { .. } => 0xE9,
+                IROp::Call { .. } => 0xE8,
+                IROp::Syscall => 0x0F05,
+                IROp::MovImm { .. } => 0xB8,
+                IROp::MovReg { .. } => 0x89,
+                IROp::Load { .. } => 0x8B,
+                IROp::Store { .. } => 0x89,
+                IROp::AluReg { op, .. } => match op {
+                    AluOp::Add => 0x01,
+                    AluOp::Sub => 0x29,
+                    AluOp::And => 0x21,
+                    AluOp::Or => 0x09,
+                    AluOp::Xor => 0x31,
+                    AluOp::Cmp => 0x39,
+                    AluOp::Test => 0x85,
+                },
+                IROp::AluImm { .. } => 0x83,
+                IROp::AluMem { .. } => 0x83,
+                IROp::Lea { .. } => 0x8D,
+                IROp::Push { .. } => 0x50,
+                IROp::Pop { .. } => 0x58,
+                IROp::Jcc { .. } => 0x74,
+                IROp::SimdMov { .. } | IROp::SimdStore { .. } | IROp::SimdArith { .. } => 0x0F,
+                IROp::Unsupported => 0x0F,
+            };
+            Ok((
+                Decoded {
+                    opcode,
+                    length: ir.guest_len,
+                    ir: Some(ir),
+                },
+                len,
+            ))
+        }
+        None => Err(DecodeError::BadOpcode),
+    }
+}
+
+/// Simple PE/COFF-aware dispatch.
 pub fn looks_like_pe(code: &[u8]) -> bool {
     code.len() >= 2 && code[0] == b'M' && code[1] == b'Z'
 }

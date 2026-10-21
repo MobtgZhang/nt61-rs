@@ -169,13 +169,13 @@ impl TssDescriptor {
 ///   e7 @ 0x38: (unused, OVMF slot 7)
 ///   e8 @ 0x40: TSS descriptor (16 bytes)             ← slot_offsets[2]
 ///   e9 @ 0x48: TSS descriptor high (part of e8)     ← slot_offsets[3]
-///   eA @ 0x50: (unused padding)
-///   eB @ 0x58: (unused padding)
+///   e_a @ 0x50: (unused padding)
+///   e_b @ 0x58: (unused padding)
 /// Total size: 96 bytes (slots 0..11).
 ///
 /// NOTE: `init()` writes augmented descriptors at slots 4, 5, 8, 9.
 /// The struct has entries e4..e7 at slots 4..7 (matching OVMF's
-/// existing layout) plus extra entries e8..eB for the TSS.
+/// existing layout) plus extra entries e8..e_b for the TSS.
 #[repr(C, packed)]
 pub struct GdtTable {
     pub e0: GdtEntry,      // slot 0: null
@@ -188,8 +188,8 @@ pub struct GdtTable {
     pub e7: GdtEntry,      // slot 7: (unused, OVMF)
     pub e8: TssDescriptor, // slot 8: TSS (16 bytes)
     pub e9: GdtEntry,      // slot 9: (part of TSS, padding)
-    pub eA: GdtEntry,      // slot 10: (unused)
-    pub eB: GdtEntry,      // slot 11: (unused)
+    pub e_a: GdtEntry,     // slot 10: (unused)
+    pub e_b: GdtEntry,     // slot 11: (unused)
 }
 
 /// Compile-time assertions verifying the struct layout matches the
@@ -237,11 +237,11 @@ const _: () = {
         "e9 must be at offset 0x50"
     );
     assert!(
-        core::mem::offset_of!(GdtTable, eA) == 0x58,
+        core::mem::offset_of!(GdtTable, e_a) == 0x58,
         "eA must be at offset 0x58"
     );
     assert!(
-        core::mem::offset_of!(GdtTable, eB) == 0x60,
+        core::mem::offset_of!(GdtTable, e_b) == 0x60,
         "eB must be at offset 0x60"
     );
 
@@ -264,14 +264,12 @@ const _: () = {
 };
 
 #[repr(C, packed)]
-#[allow(dead_code)]
 struct GdtPtr {
     limit: u16,
     base: u64,
 }
 
-#[allow(dead_code)]
-static mut GDT: GdtTable = GdtTable {
+pub static mut GDT: GdtTable = GdtTable {
     e0: GdtEntry::empty(),
     e1: GdtEntry::kernel_code64(),
     e2: GdtEntry::kernel_data64(),
@@ -282,8 +280,8 @@ static mut GDT: GdtTable = GdtTable {
     e7: GdtEntry::empty(),         // slot 7: (unused, OVMF)
     e8: TssDescriptor::empty(),    // slot 8: TSS — written by init()
     e9: GdtEntry::empty(),         // slot 9: (part of TSS)
-    eA: GdtEntry::empty(),         // slot 10: (unused)
-    eB: GdtEntry::empty(),         // slot 11: (unused)
+    e_a: GdtEntry::empty(),        // slot 10: (unused)
+    e_b: GdtEntry::empty(),        // slot 11: (unused)
 };
 
 /// Initialise the GDT and load the TR.
@@ -309,7 +307,13 @@ static mut GDT: GdtTable = GdtTable {
 /// This function writes directly to the UART without any formatting overhead.
 #[cfg(target_arch = "x86_64")]
 fn early_uart_puts(s: &[u8]) {
+    #[cfg(not(feature = "log_level_debug"))]
+    {
+        let _ = s;
+    }
+    #[cfg(feature = "log_level_debug")]
     const COM1: u16 = 0x3F8;
+    #[cfg(feature = "log_level_debug")]
     unsafe {
         for &c in s {
             let mut lsr: u8;
@@ -322,7 +326,7 @@ fn early_uart_puts(s: &[u8]) {
     }
 }
 
-/// Write a 64-bit value as 16 hex digits to UART.
+/// write a 64-bit value as 16 hex digits to UART.
 #[cfg(target_arch = "x86_64")]
 fn early_uart_put_hex64(val: u64) {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
@@ -350,12 +354,12 @@ pub fn init() {
     //   bits  0..16  = limit_low  (16 bits)
     //   bits 16..32  = base_low   (16 bits)
     //   bits 32..40  = base_mid   (8 bits)
-    //   bits 40..48  = access     (8 bits: P|DPL|S|Type)
+    //   bits 40..48  = access     (8 bits: P|DPL|S|r#type)
     //   bits 48..52  = limit_hi   (4 bits)
     //   bits 52..56  = flags      (4 bits: G|D/B|L|AVL)
     //   bits 56..64  = base_high  (8 bits)
     let user_ss: u64 = {
-        // access (bits 40..47) = 0xF3 → P=1 DPL=3 S=1 Type=3
+        // access (bits 40..47) = 0xF3 → P=1 DPL=3 S=1 r#type=3
         //   (data, R/W, expand-UP, accessed)
         // limit_high (bits 48..51) = 0xF
         // flags (bits 52..55) = G=1 D=1 L=0 AVL=0  → encoded as 0xC
@@ -365,7 +369,7 @@ pub fn init() {
         (0x0000_FFFFu64) | (0xF3u64 << 40) | (0xFu64 << 48) | (0xCu64 << 52)
     };
     let user_cs: u64 = {
-        // access (bits 40..47) = 0xFB → P=1 DPL=3 S=1 Type=B
+        // access (bits 40..47) = 0xFB → P=1 DPL=3 S=1 r#type=B
         //   (code, exec/read, non-conforming, accessed)
         // limit_high (bits 48..51) = 0xF
         // flags (bits 52..55) = G=1 D=0 L=1 AVL=0
@@ -430,7 +434,7 @@ pub fn init() {
     // We need to write slots 4, 5, 6, 7, 8, 9.
     let slot_offsets: [u64; 7] = [0x18, 0x20, 0x28, 0x30, 0x38, 0x40, 0x48];
     // KERNEL_DS at slot 3 (selector 0x18): DPL=0, expand-UP data, R/W.
-    //   access (bits 40..47)  = 0x93 → P=1 DPL=0 S=1 Type=3 (data R/W, expand-UP, accessed)
+    //   access (bits 40..47)  = 0x93 → P=1 DPL=0 S=1 r#type=3 (data R/W, expand-UP, accessed)
     //   limit_high (bits 48..51) = 0xF (limit = 0x000F_FFFF)
     //   flags (bits 52..55) = G=1 D=1 L=0 AVL=1
     //     Encoded as 0xB (binary 1011; bit0=G, bit1=D, bit2=L=0, bit3=AVL).
@@ -444,7 +448,7 @@ pub fn init() {
         | (0xFu64 << 48)       // bits 48..51 limit_high
         | (0xCu64 << 52); // bits 52..55 flags (G=1 D=1 L=0 AVL=0)
                           // GS descriptor: 32-bit flat data, DPL=3, granularity=4 KiB.
-                          //   access = 0xF3 = P=1, DPL=3, S=1, Type=3 (data RW/accessed)
+                          //   access = 0xF3 = P=1, DPL=3, S=1, r#type=3 (data RW/accessed)
                           //   limit  = 0x000FFFFF (G=1)
                           //   flags  = 0xC       = G=1 D=1 L=0 AVL=0
                           //   base   = 0
@@ -455,12 +459,12 @@ pub fn init() {
                           //   resolves the GS base — the base comes from IA32_GS_BASE
                           //   (kernel) or IA32_KERNEL_GS_BASE (user, after swapgs). The DPL
                           //   only matters for explicit `mov gs, sel` / `pop gs` instructions.
-                          //   access (bits 40..47) = 0x93 → P=1 DPL=0 S=1 Type=3 (data R/W,
+                          //   access (bits 40..47) = 0x93 → P=1 DPL=0 S=1 r#type=3 (data R/W,
                           //     expand-UP, accessed)
                           //   limit_high = 0xF, flags = G=1 D=1 L=0 AVL=0  (0xC << 52)
     let gs_descriptor: u64 = (0x0000_FFFFu64) | (0x93u64 << 40) | (0xFu64 << 48) | (0xCu64 << 52);
     // KERNEL_CS at slot 7 (selector 0x38): proper 64-bit code descriptor.
-    //   access (bits 40..47) = 0x9B → P=1 DPL=0 S=1 Type=B (code, exec/read, non-conforming, accessed)
+    //   access (bits 40..47) = 0x9B → P=1 DPL=0 S=1 r#type=B (code, exec/read, non-conforming, accessed)
     //   flags + limit_high (bits 48..55) = 0xAF → G=1 D=0 L=1 AVL=0 limit_high=0xF
     // OVMF's default slot 7 has D=1 L=1 which QEMU treats as 32-bit,
     // breaking pushq/iretq in the kernel.
@@ -478,7 +482,7 @@ pub fn init() {
     ];
     // NOTE: kprintln removed because MM is not initialized yet
 
-    // Read GDTR, write the augmented slots directly from Rust, then
+    // read GDTR, write the augmented slots directly from Rust, then
     // extend the GDTR limit. Rust has full visibility into the GDTR
     // via `sgdt`; doing the work in Rust instead of asm avoids
     // register-allocation surprises.
@@ -630,7 +634,7 @@ pub fn init() {
             early_uart_puts(b"[HW] CS AR eax=0x");
             early_uart_put_hex64(cs_ar_eax as u64);
             early_uart_puts(b"\r\n");
-            // Read the cache via the GDT slot 7 in memory so we can
+            // read the cache via the GDT slot 7 in memory so we can
             // see if the cache matches.
             let slot7_qword_2: u64;
             core::arch::asm!(
@@ -691,7 +695,7 @@ pub type PerCpuGdt = GdtTable;
 /// `tss_base` with limit `tss_limit`.
 /// Slot layout: e0=slot0(null), e1=slot1(kernel CS), e2=slot2(kernel DS),
 /// e3=slot3(kernel SS), e4=slot4(user SS), e5=slot5(user CS),
-/// e8=slot8(TSS), e9/eA/eB=unused.
+/// e8=slot8(TSS), e9/e_a/e_b=unused.
 pub fn build_per_cpu_gdt(out: &mut PerCpuGdt, tss_base: u64, tss_limit: u32) {
     out.e0 = GdtEntry::empty();
     out.e1 = GdtEntry::kernel_code64();
@@ -703,8 +707,8 @@ pub fn build_per_cpu_gdt(out: &mut PerCpuGdt, tss_base: u64, tss_limit: u32) {
     out.e7 = GdtEntry::empty(); // slot 7: (unused)
     out.e8 = TssDescriptor::from_tss(tss_base, tss_limit); // slot 8: TSS
     out.e9 = GdtEntry::empty(); // slot 9: (TSS high)
-    out.eA = GdtEntry::empty(); // slot 10: (unused)
-    out.eB = GdtEntry::empty(); // slot 11: (unused)
+    out.e_a = GdtEntry::empty(); // slot 10: (unused)
+    out.e_b = GdtEntry::empty(); // slot 11: (unused)
 }
 
 /// Dump the current GDT to the serial console. Used during the

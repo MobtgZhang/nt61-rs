@@ -11,7 +11,7 @@
 //! rather than `ke::exception` so that the exception-dispatch code
 //! stays architecture-agnostic.
 
-/// Read debug register DR6 (debug status).
+/// read debug register DR6 (debug status).
 #[inline]
 pub fn read_dr6() -> u64 {
     let value: u64;
@@ -21,7 +21,7 @@ pub fn read_dr6() -> u64 {
     value
 }
 
-/// Read debug register DR7 (debug control).
+/// read debug register DR7 (debug control).
 #[inline]
 pub fn read_dr7() -> u64 {
     let value: u64;
@@ -41,7 +41,7 @@ pub fn dbg_read_dr0() -> u64 {
     value
 }
 
-/// Write debug register DR7 (debug control).
+/// write debug register DR7 (debug control).
 #[inline]
 pub fn write_dr7(value: u64) {
     unsafe {
@@ -49,10 +49,10 @@ pub fn write_dr7(value: u64) {
     }
 }
 
-/// Read an 8-byte value from the `gs` segment at `offset`.
+/// read an 8-byte value from the `gs` segment at `offset`.
 ///
 /// The kernel sets the GS base to the user-mode TEB on every ring-3
-/// entry, so `read_gs_offset(0x30)` yields the `NtCurrentTeb()`-style
+/// entry, so `read_gs_offset(0x30)` yields the `nt_current_teb()`-style
 /// self-pointer used by SEH to walk the user exception list.
 #[inline]
 pub fn read_gs_offset(offset: u64) -> u64 {

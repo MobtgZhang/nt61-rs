@@ -2,16 +2,16 @@
 //
 //! Uses `ertn` (Exception Return) with ERA and CRMD to transition from
 //! kernel mode (PPL=1) to user mode (PPL=0). The per-CPU area pointer
-//! is stored in CSR tp (0x13).
+//! is stored in KScratch CSR KS6 (0x36).
 //
 //! ## CRMD register (CSR 0x0) layout
 //
 //! | Bits | Field | Description |
 //! |-------|-------|-------------|
-//! | 0    | DA    | Direct-mapped address space (0=kernel,1=user) |
-//! | 1    | PG    | Paging enable (0=off, 1=on) |
-//! | 2    | IE    | Interrupt enable (0=off) |
-//! | 3:2  | PPL   | Previous privilege level (0=User, 1=Kernel) |
+//! | 1:0  | PLV   | Current privilege level (3=user) |
+//! | 2    | IE    | Interrupt enable |
+//! | 3    | DA    | Direct-address mode |
+//! | 4    | PG    | Mapped-address/paging enable |
 //
 //! ## ERA register (CSR 0x6)
 //
@@ -20,7 +20,7 @@
 //! ## PGDL register (CSR 0x19)
 //
 //! Page table base address for direct-mapped low address region.
-//! Write the user PGD physical address here to switch address spaces.
+//! write the user PGD physical address here to switch address spaces.
 
 /// LoongArch64 user code segment (placeholder — no segment selectors on LA64).
 const LOONGARCH_USER_CS: u16 = 0;
@@ -37,34 +37,23 @@ const LOONGARCH_USER_STACK_BASE: u64 = crate::mm::constants::USER_STACK_BASE;
 /// User stack top address.
 const LOONGARCH_USER_STACK_TOP: u64 = crate::mm::constants::USER_STACK_TOP;
 
-/// CRMD value for return to user mode.
-/// PPL=0 (user), PG=0 (paging controlled by PGDL), IE=0 (interrupts disabled).
-/// DA=0 means direct-mapped (not used when paging is on).
-const LOONGARCH_CRMD_USER: u64 = 0x0;
-
-/// CSR 0x0 — CRMD (Current Mode).
-const CSR_CRMD: u64 = 0x0;
-
-/// CSR 0x6 — ERA (Exception Return Address).
-const CSR_ERA: u64 = 0x6;
-
-/// CSR 0x19 — PGDL (Page Table Base, Direct-map Low).
-const CSR_PGDL: u64 = 0x19;
-
-/// CSR 0x13 — TP (Thread Pointer, per-CPU area).
-const CSR_TP: u64 = 0x13;
+const CRMD_PLV_USER: u64 = 3;
+const CRMD_IE: u64 = 1;
+const CRMD_PG: u64 = 1;
+const LOONGARCH_CRMD_USER: u64 =
+    CRMD_PLV_USER | (CRMD_IE << 2) | (CRMD_PG << 4);
 
 // =====================================================================
 // Per-CPU area helpers (tp CSR access)
 // =====================================================================
 
-/// Read the tp CSR.
+/// read the tp CSR.
 #[inline(always)]
 fn get_tp() -> u64 {
     let val: u64;
     unsafe {
-        // CSR_TP (0x13) is encoded directly in the asm template.
-        core::arch::asm!("csrrd {}, 0x13", out(reg) val, options(nostack));
+        // CSR_KS6 (0x36) is encoded directly in the asm template.
+        core::arch::asm!("csrrd {}, 0x36", out(reg) val, options(nostack));
     }
     val
 }
@@ -124,18 +113,22 @@ pub unsafe fn __user_entry_enter(user_rip: u64, user_rsp: u64) -> ! {
             "move $sp, {rsp}",
             // Set ERA = user entry point
             "csrwr {rip}, 0x6",
-            // Set CRMD = 0 (PPL=0=user, IE=0=interrupts off) via $zero.
-            "csrwr $r0, 0x0",
+            // Set PRMD (CSR 0x1): PPLV=3 (user), PIE=1 (interrupts on).
+            // ertn loads CRMD.PLV from PRMD.PPLV and CRMD.IE from
+            // PRMD.PIE. Without setting PRMD, ertn would return to
+            // the privilege level that was saved there previously.
+            "li.d $t1, 0x7
+        csrwr $t1, 0x1",
+            // Set CRMD = PLV3 + IE + PG; DA and reserved bits remain zero.
+            "li.d $t0, {crmd}
+        csrwr $t0, 0x0",
             // Return to user mode
             "ertn",
             rip = in(reg) rip_v,
             rsp = in(reg) rsp_v,
+            crmd = const LOONGARCH_CRMD_USER,
             options(noreturn),
         );
-    }
-    #[allow(unreachable_code)]
-    loop {
-        crate::arch::halt();
     }
 }
 
@@ -153,7 +146,7 @@ pub fn __user_entry_set_kernel_stack(sp: u64) {
     }
 }
 
-/// Read the kernel stack pointer from the per-CPU area.
+/// read the kernel stack pointer from the per-CPU area.
 #[no_mangle]
 pub fn __user_entry_get_kernel_stack() -> u64 {
     let base = get_tp();
@@ -181,7 +174,7 @@ pub fn __user_entry_get_kernel_stack() -> u64 {
 ///
 /// ## Post-conditions
 ///
-/// Control is transferred to user mode at `user_rip` with `user_rsp` as the
+/// control is transferred to user mode at `user_rip` with `user_rsp` as the
 /// stack pointer. The function does not return.
 #[inline(never)]
 pub fn enter_first_user_thread(pgd_phys: u64, user_rip: u64, user_rsp: u64) -> ! {
@@ -196,8 +189,6 @@ pub fn enter_first_user_thread(pgd_phys: u64, user_rip: u64, user_rsp: u64) -> !
     // 1. Load the user page table base into PGDL.
     //    The user address space must be set up in the page table at pgd_phys.
     unsafe {
-        // CSR_PGDL = 0x19; the operand must be a literal in the asm
-        // template, not an inlined register.
         core::arch::asm!(
             "csrwr {pgd}, 0x19",
             pgd = in(reg) pgd_phys,
@@ -216,17 +207,22 @@ pub fn enter_first_user_thread(pgd_phys: u64, user_rip: u64, user_rsp: u64) -> !
             "move $sp, {rsp}",
             // Set ERA = user entry point
             "csrwr {rip}, 0x6",
-            // Set CRMD = 0 (PPL=0=user, IE=0=interrupts off) via $zero.
-            "csrwr $r0, 0x0",
+            // Set PRMD (CSR 0x1): PPLV=3 (user), PIE=1 (interrupts on)
+            "li.d $t1, 0x7
+        csrwr $t1, 0x1",
+            // Set CRMD = PLV3 + IE + PG; DA and reserved bits remain zero.
+            "li.d $t0, {crmd}
+        csrwr $t0, 0x0",
             // Return to user mode
             "ertn",
             rip = in(reg) rip_v,
             rsp = in(reg) rsp_v,
+            crmd = const LOONGARCH_CRMD_USER,
             options(noreturn),
         );
     }
-    #[allow(unreachable_code)]
-    loop {
-        crate::arch::halt();
-    }
+}
+
+pub unsafe fn __user_entry_enter_first(root_table_phys: u64, user_rip: u64, user_rsp: u64) -> ! {
+    enter_first_user_thread(root_table_phys, user_rip, user_rsp)
 }

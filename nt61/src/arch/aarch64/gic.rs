@@ -22,7 +22,6 @@ pub enum GicVersion {
 static GIC_VERSION: AtomicU64 = AtomicU64::new(0);
 static GIC_DIST_BASE: AtomicU64 = AtomicU64::new(0x0800_0000);
 static GIC_CPU_BASE: AtomicU64 = AtomicU64::new(0x0801_0000);
-static GIC_RDIST_BASE: AtomicU64 = AtomicU64::new(0x080A_0000);
 static GIC_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 /// Interrupt types
@@ -49,10 +48,7 @@ mod gicd {
     pub const IGROUPR: usize = 0x080;
     pub const ISENABLER: usize = 0x100;
     pub const ICENABLER: usize = 0x180;
-    pub const ISPENDR: usize = 0x200;
     pub const ICPENDR: usize = 0x280;
-    pub const ISACTIVER: usize = 0x300;
-    pub const ICACTIVER: usize = 0x380;
     pub const IPRIORITYR: usize = 0x400;
     pub const ITARGETSR: usize = 0x800;
     pub const ICFGR: usize = 0xC00;
@@ -66,8 +62,6 @@ mod gicc {
     pub const BPR: usize = 0x008;
     pub const IAR: usize = 0x00C;
     pub const EOIR: usize = 0x010;
-    pub const RPR: usize = 0x014;
-    pub const HPPIR: usize = 0x018;
 }
 
 /// Initialize GIC with auto-detection
@@ -123,7 +117,7 @@ fn init_gicv2() {
         // 1. Disable distributor
         write_volatile((dist_base + gicd::CTLR as u64) as *mut u32, 0);
 
-        // 2. Read number of interrupt lines
+        // 2. read number of interrupt lines
         let typer = read_volatile((dist_base + gicd::TYPER as u64) as *const u32);
         let max_irqs = ((typer & 0x1F) + 1) * 32;
 
@@ -140,7 +134,7 @@ fn init_gicv2() {
             let icpendr = dist_base + gicd::ICPENDR as u64 + word_offset * 4;
             write_volatile(icpendr as *mut u32, 1 << bit_offset);
 
-            // Set to Group 1 (non-secure)
+            // Set to group 1 (non-secure)
             let igroupr = dist_base + gicd::IGROUPR as u64 + word_offset * 4;
             let group_val = read_volatile(igroupr as *const u32);
             write_volatile(igroupr as *mut u32, group_val | (1 << bit_offset));
@@ -165,7 +159,7 @@ fn init_gicv2() {
         }
 
         // 7. Enable distributor
-        write_volatile((dist_base + gicd::CTLR as u64) as *mut u32, 0x03); // Enable Group 0 and 1
+        write_volatile((dist_base + gicd::CTLR as u64) as *mut u32, 0x03); // Enable group 0 and 1
 
         // 8. Initialize CPU interface
         // Set priority mask to allow all priorities
@@ -194,7 +188,7 @@ fn init_gicv3() {
         // 2. Disable distributor
         write_volatile((dist_base + gicd::CTLR as u64) as *mut u32, 0);
 
-        // 3. Read number of interrupt lines
+        // 3. read number of interrupt lines
         let typer = read_volatile((dist_base + gicd::TYPER as u64) as *const u32);
         let max_irqs = ((typer & 0x1F) + 1) * 32;
 
@@ -207,13 +201,13 @@ fn init_gicv3() {
             let icenabler = dist_base + gicd::ICENABLER as u64 + word_offset * 4;
             write_volatile(icenabler as *mut u32, 1 << bit_offset);
 
-            // Set to Group 1 non-secure
+            // Set to group 1 non-secure
             let igroupr = dist_base + gicd::IGROUPR as u64 + word_offset * 4;
             let group_val = read_volatile(igroupr as *const u32);
             write_volatile(igroupr as *mut u32, group_val | (1 << bit_offset));
         }
 
-        // 5. Enable distributor for Group 1 non-secure
+        // 5. Enable distributor for group 1 non-secure
         write_volatile((dist_base + gicd::CTLR as u64) as *mut u32, 0x02);
 
         // 6. Configure CPU interface via system registers
@@ -223,7 +217,7 @@ fn init_gicv3() {
         // Set binary point
         asm!("msr ICC_BPR1_EL1, {}", in(reg) 0u64, options(nostack));
 
-        // Enable Group 1 interrupts
+        // Enable group 1 interrupts
         asm!("msr ICC_IGRPEN1_EL1, {}", in(reg) 1u64, options(nostack));
 
         asm!("isb", options(nostack));

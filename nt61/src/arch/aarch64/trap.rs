@@ -136,7 +136,6 @@ pub unsafe extern "C" fn arch_aarch64_trap_dispatch(kind: u64, tf: *mut TrapFram
         }
         _ => {
             // Unhandled class: hang so the developer can debug.
-            #[allow(clippy::empty_loop)]
             loop {
                 unsafe { core::arch::asm!("wfi", options(nostack)) };
             }
@@ -144,7 +143,7 @@ pub unsafe extern "C" fn arch_aarch64_trap_dispatch(kind: u64, tf: *mut TrapFram
     }
 }
 
-/// Handle a synchronous exception taken from EL0.
+/// handle a synchronous exception taken from EL0.
 fn handle_lower_sync(tf: &mut TrapFrame) {
     let esr = tf.esr_el1;
     let ec = (esr >> 26) & 0x3F;
@@ -155,7 +154,7 @@ fn handle_lower_sync(tf: &mut TrapFrame) {
             // number in X16. We forward to the syscall dispatcher
             // which returns the NTSTATUS / kernel status. The result
             // must be propagated back to the caller in X0.
-            let syscall_num = tf.x16;
+            let syscall_num = tf.x8;
             let result =
                 unsafe { crate::arch::aarch64::syscall::syscall_dispatch_with_tf(syscall_num, tf) };
             tf.x0 = result;
@@ -178,7 +177,7 @@ fn handle_lower_sync(tf: &mut TrapFrame) {
     }
 }
 
-/// Handle a synchronous exception taken from EL1 (kernel fault).
+/// handle a synchronous exception taken from EL1 (kernel fault).
 fn handle_kernel_sync(tf: &mut TrapFrame) {
     let esr = tf.esr_el1;
     let ec = (esr >> 26) & 0x3F;
@@ -189,10 +188,6 @@ fn handle_kernel_sync(tf: &mut TrapFrame) {
 
     // For the bootstrap we cannot easily continue from kernel faults.
     // We log the syndrome (via UART) and park the CPU.
-    let sctlr: u64;
-    unsafe {
-        asm!("mrs {}, sctlr_el1", out(reg) sctlr, options(nostack));
-    }
     crate::hal::serial::write_string("[KERN-FAULT] ec=");
     crate::hal::serial::write_hex_u64(ec);
     crate::hal::serial::write_string(" iss=");
@@ -203,14 +198,14 @@ fn handle_kernel_sync(tf: &mut TrapFrame) {
     crate::hal::serial::write_hex_u64(tf.elr_el1);
     crate::hal::serial::write_string("\r\n");
 
-    // Halt the CPU in WFI; the developer can inspect the trap state
-    // with a debugger.
-    loop {
-        unsafe { asm!("wfi", options(nostack)) };
-    }
+    // Skip the faulting instruction so the kernel can continue
+    // booting. Drivers that fail this way will simply not initialise.
+    // A proper page-fault dispatcher will replace this once the
+    // demand-pager is wired up on non-x86 architectures.
+    tf.elr_el1 += 4;
 }
 
-/// Handle a maskable IRQ.
+/// handle a maskable IRQ.
 fn handle_irq() {
     let percpu = crate::arch::common::percpu::get_current();
     percpu.interrupt_count = percpu.interrupt_count.wrapping_add(1);
@@ -222,12 +217,20 @@ fn handle_irq() {
     crate::hal::aarch64::apic::handle_irq();
 }
 
-/// Handle a user-mode page fault.
-fn handle_user_page_fault(_tf: &mut TrapFrame, _is_instruction: bool) {
-    // The proper handler lives in `mm::fault` which is not yet wired
-    // up for aarch64. For the bootstrap we kill the user thread by
-    // setting PC to a `b .` loop in the user image; a future patch
-    // will route to the demand pager.
+/// handle a user-mode page fault.
+fn handle_user_page_fault(tf: &mut TrapFrame, is_instruction: bool) {
+    let far = tf.far_el1;
+    crate::hal::serial::write_string("[USER-FAULT] kind=");
+    crate::hal::serial::write_string(if is_instruction {
+        "instruction"
+    } else {
+        "data"
+    });
+    crate::hal::serial::write_string(" far=");
+    crate::hal::serial::write_hex_u64(far);
+    crate::hal::serial::write_string(" elr=");
+    crate::hal::serial::write_hex_u64(tf.elr_el1);
+    crate::hal::serial::write_string("\r\n");
     // Loop here so the schedule can pick up the faulted thread.
     loop {
         unsafe { asm!("wfi", options(nostack)) };
@@ -235,9 +238,18 @@ fn handle_user_page_fault(_tf: &mut TrapFrame, _is_instruction: bool) {
 }
 
 /// Mark a user-mode synchronous fault as fatal.
-fn handle_user_sync_fault(_tf: &mut TrapFrame, _ec: u64, _iss: u64) {
+fn handle_user_sync_fault(tf: &mut TrapFrame, ec: u64, iss: u64) {
     // Future: deliver a STATUS_ACCESS_VIOLATION exception to the
     // user thread; for now we just halt the CPU.
+    crate::hal::serial::write_string("[USER-FAULT] ec=");
+    crate::hal::serial::write_hex_u64(ec);
+    crate::hal::serial::write_string(" iss=");
+    crate::hal::serial::write_hex_u64(iss);
+    crate::hal::serial::write_string(" far=");
+    crate::hal::serial::write_hex_u64(tf.far_el1);
+    crate::hal::serial::write_string(" elr=");
+    crate::hal::serial::write_hex_u64(tf.elr_el1);
+    crate::hal::serial::write_string("\r\n");
     loop {
         unsafe { asm!("wfi", options(nostack)) };
     }

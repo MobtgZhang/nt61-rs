@@ -55,7 +55,7 @@ static CAPS: [AtomicU32; MAX_CPUS] = {
     // Initialize all zeros via a const helper.
     [const { AtomicU32::new(0) }; MAX_CPUS]
 };
-static CAPS_EXT: [AtomicU32; MAX_CPUS] = { [const { AtomicU32::new(0) }; MAX_CPUS] };
+static CAPS_EXT: [AtomicU32; MAX_CPUS] = [const { AtomicU32::new(0) }; MAX_CPUS];
 
 fn encode_primary(cap: &PerCpuCapability) -> u32 {
     // Bits 0..=7 physical_id, bits 8..=15 thread_id, bits 16..=23 smt_threads,
@@ -134,5 +134,4 @@ pub fn init_boot_cpu() {
 // Silence the unused-import lint when `AtomicU8` is reduced away by
 // future refactors (kept around for the moment because the encoder
 // relies on `u8` fields above).
-#[allow(dead_code)]
 static _PROBE_ATOMICU8: AtomicU8 = AtomicU8::new(0);

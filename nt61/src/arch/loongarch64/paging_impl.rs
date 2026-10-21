@@ -3,8 +3,6 @@
 //
 //! Uses 4-level page tables with PGDH CSR as root.
 
-#![allow(dead_code)]
-
 use crate::arch::common::paging::{PageFlags, PagingArch};
 
 impl PagingArch for () {

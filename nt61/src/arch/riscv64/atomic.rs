@@ -8,17 +8,6 @@
 use core::arch::asm;
 use core::sync::atomic::Ordering;
 
-/// Convert Rust Ordering to RISC-V fence bits
-fn ordering_to_fence(order: Ordering) -> &'static str {
-    match order {
-        Ordering::Relaxed => "",
-        Ordering::Acquire => ".aq",
-        Ordering::Release => ".rl",
-        Ordering::AcqRel | Ordering::SeqCst => ".aqrl",
-        _ => "",
-    }
-}
-
 /// Atomic compare-and-swap (64-bit)
 #[inline]
 pub fn atomic_cas_u64(ptr: *mut u64, old: u64, new: u64, order: Ordering) -> Result<u64, u64> {

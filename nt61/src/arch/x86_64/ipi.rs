@@ -10,8 +10,10 @@
 //! conflicts with hardware IRQs.
 
 use crate::hal::x86_64::apic::{apic_read, apic_write, lapic_reg};
+use crate::ke::sync::Spinlock;
+use alloc::collections::VecDeque;
 use core::arch::asm;
-use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU64, Ordering};
 
 /// IPI vector assignments
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +70,20 @@ static IPI_RECEIVED: AtomicU64 = AtomicU64::new(0);
 static IPI_RESCHEDULE_COUNT: AtomicU64 = AtomicU64::new(0);
 static IPI_TLB_FLUSH_COUNT: AtomicU64 = AtomicU64::new(0);
 
+/// A cross-CPU deferred function call. The callback must only touch memory
+/// that remains valid until the target CPU services the interrupt.
+pub struct FunctionCallEntry {
+    pub func: fn(*mut ()),
+    pub arg: *mut (),
+}
+
+unsafe impl Send for FunctionCallEntry {}
+
+/// Function calls queued for the current CPU. In a real SMP bring-up this
+/// queue is per-LCPU and the IDT handler drains it after taking the EOI;
+/// the current build services the shared queue from the FunctionCall vector.
+static FUNCTION_CALL_QUEUE: Spinlock<VecDeque<FunctionCallEntry>> = Spinlock::new(VecDeque::new());
+
 /// Send an IPI to a specific CPU (by APIC ID)
 pub fn send_ipi(target_apic_id: u32, vector: IpiVector) {
     send_ipi_raw(
@@ -99,10 +115,10 @@ pub fn send_ipi_raw(target_apic_id: u32, vector: u32, delivery_mode: IpiDelivery
         return;
     }
 
-    // Write destination APIC ID to ICR high (bits 56-63)
+    // write destination APIC ID to ICR high (bits 56-63)
     apic_write(lapic_reg::ICR_HIGH, (target_apic_id & 0xFF) << 24);
 
-    // Write vector and delivery mode to ICR low
+    // write vector and delivery mode to ICR low
     // Bits 0-7: Vector
     // Bits 8-10: Delivery Mode
     // Bit 11: Destination Mode (0=physical, 1=logical)
@@ -172,7 +188,7 @@ pub fn broadcast_tlb_flush_ipi() {
     IPI_TLB_FLUSH_COUNT.fetch_add(1, Ordering::Relaxed);
 }
 
-/// Handle reschedule IPI
+/// handle reschedule IPI
 pub fn handle_reschedule_ipi() {
     IPI_RECEIVED.fetch_add(1, Ordering::Relaxed);
     IPI_RESCHEDULE_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -189,7 +205,7 @@ pub fn handle_reschedule_ipi() {
     }
 }
 
-/// Handle TLB flush IPI
+/// handle TLB flush IPI
 pub fn handle_tlb_flush_ipi() {
     IPI_RECEIVED.fetch_add(1, Ordering::Relaxed);
 
@@ -214,13 +230,15 @@ pub fn handle_tlb_flush_ipi() {
     }
 }
 
-/// Handle function call IPI
+/// handle function call IPI
 pub fn handle_function_call_ipi() {
     IPI_RECEIVED.fetch_add(1, Ordering::Relaxed);
 
-    // TODO: Implement function call mechanism
-    // This would involve a queue of function pointers and arguments
-    // that each CPU can execute when it receives this IPI
+    // Drain the function call queue and execute each entry on this CPU.
+    // The queue is filled by `send_function_call_ipi()` on the source CPU.
+    while let Some(call) = FUNCTION_CALL_QUEUE.lock().pop_front() {
+        (call.func)(call.arg);
+    }
 
     if let Some(percpu) = crate::arch::x86_64::percpu::PerCpuData::try_current() {
         percpu.ipi_count += 1;
@@ -232,7 +250,7 @@ pub fn handle_function_call_ipi() {
     }
 }
 
-/// Handle stop IPI
+/// handle stop IPI
 pub fn handle_stop_ipi() {
     IPI_RECEIVED.fetch_add(1, Ordering::Relaxed);
 
@@ -240,6 +258,15 @@ pub fn handle_stop_ipi() {
     unsafe {
         asm!("cli", "2:", "hlt", "jmp 2b", options(noreturn));
     }
+}
+
+/// Queue a callback and notify the target CPU. The callback runs with
+/// interrupts disabled at the IPI handler's context, so it must not block.
+pub fn send_function_call_ipi(target_apic_id: u32, func: fn(*mut ()), arg: *mut ()) {
+    FUNCTION_CALL_QUEUE
+        .lock()
+        .push_back(FunctionCallEntry { func, arg });
+    send_ipi(target_apic_id, IpiVector::FunctionCall);
 }
 
 /// Send End-Of-Interrupt to the local APIC

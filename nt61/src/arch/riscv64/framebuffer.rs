@@ -10,8 +10,6 @@
 //! QEMU `-machine virt` for riscv64 supports `-device ramfb` to
 //! expose a GOP framebuffer; that is the canonical bring-up.
 
-#![allow(dead_code)]
-
 use crate::hal::common::framebuffer as lfb;
 
 /// Framebuffer information.

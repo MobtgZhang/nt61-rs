@@ -99,7 +99,7 @@ pub struct KTrapFrame {
     pub gs: u16,
     _gs_pad: u16,
 
-    // === Control registers (from trap/interrupt) ===
+    // === control registers (from trap/interrupt) ===
     pub rip: u64, // User RIP
     pub cs: u64,  // User CS
     pub rflags: u64,
@@ -162,7 +162,7 @@ pub struct KTrapFrame {
 }
 
 impl KTrapFrame {
-    /// Create a KTrapFrame from a basic TrapFrame
+    /// create a KTrapFrame from a basic TrapFrame
     pub fn from_trap_frame(tf: &TrapFrame) -> Self {
         let mut ktf = Self::default();
         ktf.rax = tf.rax;
@@ -203,7 +203,7 @@ pub fn vector_has_error_code(v: u64) -> bool {
     matches!(v, 8 | 10 | 11 | 12 | 13 | 14 | 17)
 }
 
-/// Read one page-table entry through the self-map window.
+/// read one page-table entry through the self-map window.
 ///
 /// The self-map windows (`PXE_BASE`/`PPE_BASE`/`PDE_BASE`/`PTE_BASE`)
 /// resolve through the page table that is currently loaded, so this is
@@ -400,10 +400,10 @@ pub extern "C" fn dispatch_trap_frame(vector: u64, tf: *mut TrapFrame) {
         // mismatch is a quirk of how the Rust struct and the CPU
         // frame overlap; the FIX is to use the correct offset here,
         // not to rename the field.
-        let frame_top = (tf as *const u64).offset(15); // [rsp + 0x78]
-                                                       // After the int_stub's `push rdi` (which puts the vector at
-                                                       // offset 0x78) and the CPU-pushed iret frame, the actual
-                                                       // error_code lives at offset 0x80 and RIP at offset 0x88.
+        let _frame_top = (tf as *const u64).offset(15); // [rsp + 0x78]
+                                                        // After the int_stub's `push rdi` (which puts the vector at
+                                                        // offset 0x78) and the CPU-pushed iret frame, the actual
+                                                        // error_code lives at offset 0x80 and RIP at offset 0x88.
         let error_code_slot = (tf as *const u64).offset(16); // [rsp + 0x80]
         let error_code = if vector_has_error_code(vector) {
             *error_code_slot
@@ -432,7 +432,7 @@ pub extern "C" fn dispatch_trap_frame(vector: u64, tf: *mut TrapFrame) {
                             DB_HITS += 1;
                             crate::boot_println!(
                                 "[DB] hit {} DR0=0x{:x}",
-                                DB_HITS,
+                                (*core::ptr::addr_of!(DB_HITS)),
                                 crate::arch::x86_64::debug::dbg_read_dr0()
                             );
                         } else {
@@ -576,7 +576,7 @@ pub extern "C" fn dispatch_trap_frame(vector: u64, tf: *mut TrapFrame) {
 }
 
 fn handle_page_fault(error_code: u64, tf: &TrapFrame) {
-    // Read CR2 immediately, before anything else that might fault.
+    // read CR2 immediately, before anything else that might fault.
     let cr2: u64;
     #[cfg(target_arch = "x86_64")]
     unsafe {
@@ -692,13 +692,13 @@ fn handle_page_fault(error_code: u64, tf: &TrapFrame) {
             let pt_idx = ((cr2 >> 12) & 0x1FF) as usize;
             let pml4e = read_self_map_entry(crate::mm::vas::PXE_BASE, pml4_idx);
             if pml4e & 1 != 0 {
-                let pdpt_phys = pml4e & 0x000F_FFFF_FFFF_F000;
+                let _pdpt_phys = pml4e & 0x000F_FFFF_FFFF_F000;
                 let pdpte = read_self_map_entry(crate::mm::vas::PPE_BASE, pdpt_idx);
                 if pdpte & 1 != 0 {
-                    let pd_phys = pdpte & 0x000F_FFFF_FFFF_F000;
+                    let _pd_phys = pdpte & 0x000F_FFFF_FFFF_F000;
                     let pde = read_self_map_entry(crate::mm::vas::PDE_BASE, pd_idx);
                     if pde & 1 != 0 {
-                        let pt_phys = pde & 0x000F_FFFF_FFFF_F000;
+                        let _pt_phys = pde & 0x000F_FFFF_FFFF_F000;
                         let pte = read_self_map_entry(crate::mm::vas::PTE_BASE, pt_idx);
                         if pte & 1 != 0 {
                             pte & 0x000F_FFFF_FFFF_F000
@@ -840,7 +840,7 @@ unsafe fn early_pf_halt() {
     }
 }
 
-/// Handle #DF (Double Fault) - IST3 should be set but we handle gracefully
+/// handle #DF (Double Fault) - IST3 should be set but we handle gracefully
 /// #DF is fatal in most cases, but we log for debugging
 fn handle_double_fault(_error_code: u64, _tf: &TrapFrame) {
     // _error_code and _tf are intentionally unused - reserved for future logging
@@ -856,7 +856,7 @@ fn handle_double_fault(_error_code: u64, _tf: &TrapFrame) {
     }
 }
 
-/// Handle #GP (General Protection Fault)
+/// handle #GP (General Protection Fault)
 /// This is critical - can be caused by bad selector, privilege violation, etc.
 fn handle_general_protection(_error_code: u64, tf: &TrapFrame) {
     let _selector_id = _error_code & 0xFFFF;
@@ -888,7 +888,7 @@ fn handle_general_protection(_error_code: u64, tf: &TrapFrame) {
     }
 }
 
-/// Handle #SS (Stack Segment Fault)
+/// handle #SS (Stack Segment Fault)
 /// Usually caused by stack limit violation or bad stack selector
 fn handle_stack_fault(error_code: u64, tf: &TrapFrame) {
     let selector_id = error_code & 0xFFFF;
@@ -1103,7 +1103,7 @@ fn handle_stack_fault(error_code: u64, tf: &TrapFrame) {
     }
 }
 
-/// Handle #NP (Segment Not Present)
+/// handle #NP (Segment Not Present)
 /// Usually caused by loading a non-present segment
 fn handle_segment_not_present(_error_code: u64, _tf: &TrapFrame) {
     let _selector_id = _error_code & 0xFFFF;
@@ -1116,7 +1116,7 @@ fn handle_segment_not_present(_error_code: u64, _tf: &TrapFrame) {
     // // crate::kprintln!("  RIP=0x{:016x}", _tf.rip);
 }
 
-/// Handle #UD (Invalid Opcode)
+/// handle #UD (Invalid Opcode)
 /// Caused by executing invalid instructions or CS.limit exceeded
 fn handle_invalid_opcode(tf: &TrapFrame) {
     crate::hal::x86_64::serial::write_string("[FAULT] #UD (Invalid Opcode)\r\n");
@@ -1125,7 +1125,7 @@ fn handle_invalid_opcode(tf: &TrapFrame) {
     crate::hal::x86_64::serial::write_string(" CS=0x");
     crate::hal::x86_64::serial::write_u64_hex(tf.cs);
     crate::hal::x86_64::serial::write_string("\r\n");
-    // Read first 8 bytes at tf.rip
+    // read first 8 bytes at tf.rip
     unsafe {
         let mut buf = [0u8; 8];
         core::arch::asm!(
@@ -1161,7 +1161,7 @@ fn handle_invalid_opcode(tf: &TrapFrame) {
     }
 }
 
-/// Handle #NM (Device Not Available)
+/// handle #NM (Device Not Available)
 /// Caused by executing x87/FPU instruction when CR0.TS=1
 fn handle_device_not_available(_tf: &TrapFrame) {
     // _tf is intentionally unused - reserved for future logging
@@ -1178,7 +1178,7 @@ fn handle_device_not_available(_tf: &TrapFrame) {
     }
 }
 
-/// Handle #MC (Machine Check)
+/// handle #MC (Machine Check)
 /// Non-maskable hardware error
 fn handle_machine_check(_tf: &TrapFrame) {
     // _tf is intentionally unused - reserved for future logging
@@ -1193,7 +1193,7 @@ fn handle_machine_check(_tf: &TrapFrame) {
     }
 }
 
-/// Handle #AC (Alignment Check)
+/// handle #AC (Alignment Check)
 /// Memory access at misaligned address when CR0.AM=1 and EFLAGS.AC=1
 fn handle_alignment_check(_error_code: u64, tf: &TrapFrame) {
     // _error_code is intentionally unused - reserved for future logging

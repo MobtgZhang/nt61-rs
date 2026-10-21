@@ -5,7 +5,7 @@
 //
 //! ## Memory layout (must match arch::common::percpu::PerCpuArea)
 //
-//! | Offset | Field |
+//! | offset | Field |
 //! |--------|-------|
 //! | 0x00 | `user_sp` (saved user stack pointer) |
 //! | 0x08 | `kernel_sp` (kernel stack pointer) |
@@ -94,6 +94,18 @@ pub unsafe fn allocate(cpu_id: u32) -> u64 {
     page
 }
 
+/// Return the cached per-CPU base for `cpu_id`, allocating one if needed.
+pub fn per_cpu_base_for(cpu_id: u32) -> u64 {
+    if cpu_id as usize >= MAX_PER_CPU {
+        return 0;
+    }
+    let cached = PER_CPU_PAGES[cpu_id as usize].load(Ordering::Acquire);
+    if cached != 0 {
+        return cached;
+    }
+    unsafe { allocate(cpu_id) }
+}
+
 /// Set TPIDR_EL1 to the given value.
 #[inline(always)]
 fn set_tpidr_el1(val: u64) {
@@ -102,7 +114,7 @@ fn set_tpidr_el1(val: u64) {
     }
 }
 
-/// Read TPIDR_EL1.
+/// read TPIDR_EL1.
 #[inline(always)]
 fn get_tpidr_el1() -> u64 {
     let val: u64;
@@ -183,7 +195,7 @@ pub fn __percpu_set_current_thread(thread: *mut Ethread) {
     }
 }
 
-/// Read the ETHREAD pointer from the per-CPU `current_thread` slot.
+/// read the ETHREAD pointer from the per-CPU `current_thread` slot.
 #[no_mangle]
 pub fn __percpu_get_current_thread() -> *mut Ethread {
     let base = get_tpidr_el1();
@@ -209,7 +221,7 @@ pub fn __percpu_set_current_process(process: *mut Eprocess) {
     }
 }
 
-/// Read the EPROCESS pointer from the per-CPU `current_process` slot.
+/// read the EPROCESS pointer from the per-CPU `current_process` slot.
 #[no_mangle]
 pub fn __percpu_get_current_process() -> *mut Eprocess {
     let base = get_tpidr_el1();

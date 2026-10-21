@@ -1,25 +1,26 @@
 //! LoongArch 64 paging
 //
-//! 4-level page table pointed at by `PGDH` (the kernel half is
-//! PGDH, the user half is PGD). PTE format:
+//! Five-level page table. Kernel VAs live in the low half (VA63 ==
+//! 0) and are walked through PGDL (CSR 0x19); `enter_first_user_thread`
+//! switches PGDL to the user root, so PGDL — not PGDH — is always the
+//! operative root. The TLB-refill stub reads the active root from
+//! PGDL (CSR 0x19), which `load_page_root`, `init` and
+//! `enter_first_user_thread` switch. PTE format
+//! (hardware TLBENTRY, per QEMU `target/loongarch/cpu-csr.h`):
 //
 //! * bit 0: V (valid)
 //! * bit 1: D (dirty)
-//! * bit 2: W (writable)
-//! * bit 3: PLV (privilege level bits 1:0 — these are bits 4:3
-//!   in the encoding)
-//! * bit 4: PLV bit 0
-//! * bit 5: MAT (memory access type)
+//! * bits 2:3: PLV (privilege level)
+//! * bits 4:5: MAT (memory access type)
 //! * bit 6: G (global)
 //! * bit 7: P (huge page)
-//! * bit 8: W1
-//! * bit 9: NR (not read)
-//! * bit 10: NX (no execute)
+//! * bit 8: W (writable)
 //! * bits [47:12]: physical page number
 //
-//! The PGDH register is at CSR 0x19.
-
-#![allow(non_snake_case)]
+//! Bit 61: NR (not readable), bit 62: NX (not executable), bit 63:
+//! RPLV (restricted privilege). Bits 9:11 are software-reserved and
+//! stripped by the hardware refill path. PGDH is at CSR 0x1a and
+//! covers only the high half, which this kernel does not use.
 
 use core::arch::asm;
 use core::ptr;
@@ -31,9 +32,77 @@ pub const PAGE_SIZE: u64 = 4096;
 pub const PAGE_SHIFT: u64 = 12;
 pub const PAGE_MASK: u64 = !(PAGE_SIZE - 1);
 
+/// LoongArch direct address translation window 0.
+///
+/// Linux and QEMU reserve VA segment 0x8000_0000_0000_0000 for
+/// strongly-ordered uncached MMIO. Keeping MMIO in this window lets
+/// the kernel keep its low-half code/data VAs in the mapped page
+/// tables while still touching firmware and platform devices after
+/// CRMD.PG is enabled. Only PLV0 may use the window, so Ring-3
+/// mappings cannot accidentally reach device memory through it.
+pub const DMW0_IO_VIRT_BASE: u64 = 0x8000_0000_0000_0000;
+const CSR_DMW0_PLV0: u64 = 1;
+
+/// Value that enables DMW0 for supervisor-mode MMIO.
+pub const CSR_DMW0_INIT: u64 = DMW0_IO_VIRT_BASE | CSR_DMW0_PLV0;
+
 pub type VirtAddr = u64;
 pub type PhysAddr = u64;
 
+#[repr(C, align(4096))]
+pub struct PageAlignedTable(pub [u64; 512]);
+
+#[no_mangle]
+pub static mut ROOT_TABLE: PageAlignedTable = PageAlignedTable([0; 512]);
+
+const PAGE_TABLE_ENTRIES: usize = 512;
+const MAX_LEAF_TABLES: usize = 512;
+const BOOTSTRAP_TABLE_COUNT: usize = 3 + MAX_LEAF_TABLES;
+
+#[repr(C, align(4096))]
+pub struct BootstrapPageTables(pub [u64; 512 * BOOTSTRAP_TABLE_COUNT]);
+
+static mut BOOTSTRAP_TABLES: BootstrapPageTables =
+    BootstrapPageTables([0; 512 * BOOTSTRAP_TABLE_COUNT]);
+
+#[derive(Clone, Copy)]
+struct LeafTableKey {
+    l2_index: usize,
+    l3_index: usize,
+}
+
+static mut LEAF_TABLE_KEYS: [Option<LeafTableKey>; MAX_LEAF_TABLES] = [None; MAX_LEAF_TABLES];
+
+unsafe fn leaf_table_for(key: LeafTableKey) -> Option<*mut u64> {
+    let keys = core::ptr::addr_of_mut!(LEAF_TABLE_KEYS);
+    for (index, slot) in (*keys).iter().enumerate() {
+        let existing = slot.unwrap_or(LeafTableKey {
+            l2_index: usize::MAX,
+            l3_index: usize::MAX,
+        });
+        if existing.l2_index == key.l2_index && existing.l3_index == key.l3_index {
+            let tables = core::ptr::addr_of_mut!(BOOTSTRAP_TABLES) as *mut u64;
+            return Some(tables.add((3 + index) * PAGE_TABLE_ENTRIES));
+        }
+    }
+
+    for (index, slot) in (*keys).iter_mut().enumerate() {
+        if slot.is_none() {
+            *slot = Some(key);
+            let tables = core::ptr::addr_of_mut!(BOOTSTRAP_TABLES) as *mut u64;
+            let table = tables.add((3 + index) * PAGE_TABLE_ENTRIES);
+            core::ptr::write_bytes(table as *mut u8, 0, PAGE_SIZE as usize);
+            return Some(table);
+        }
+    }
+
+    None
+}
+
+/// Page tables used before the PFN database is available. The first
+/// three tables are L1, L2, and DIR1 for the bootstrap identity map;
+/// the remaining tables are 2 MiB leaf tables. The pool covers the
+/// 256 MiB low-RAM window plus the QEMU LoongArch MMIO windows.
 pub struct PageTableEntry {
     pub value: u64,
 }
@@ -60,17 +129,26 @@ impl PageTableEntry {
 
 const PTE_V: u64 = 1 << 0;
 const PTE_D: u64 = 1 << 1;
-const PTE_W: u64 = 1 << 2;
-const PTE_PLV_USER: u64 = 3 << 3; // PLV 3
+const PTE_PLV_USER: u64 = 3 << 2;
+const PTE_CACHE_CC: u64 = 1 << 4;
 const PTE_G: u64 = 1 << 6;
-const PTE_NX: u64 = 1 << 10;
+const PTE_W: u64 = 1 << 8;
+const PTE_MODIFIED: u64 = 1 << 9;
+const PTE_NX: u64 = 1 << 62;
+const PTE_PFN_SHIFT: u64 = PAGE_SHIFT - 12 + 12;
+const PTE_PFN_END_SHIFT: u64 = 48;
+const PTE_PFN_MASK: u64 = (!0u64 << PTE_PFN_SHIFT) & ((1u64 << PTE_PFN_END_SHIFT) - 1);
 
 fn make_pte_loong(pa: u64, flags: u64) -> u64 {
-    let pte = ((pa & 0x0000_FFFF_FFFF_F000) >> 0)
+    let pfn = (pa & PAGE_MASK) >> PAGE_SHIFT;
+    let pte = ((pfn << PTE_PFN_SHIFT) & PTE_PFN_MASK)
         | PTE_V
-        | if flags & 0x2 != 0 { PTE_W } else { 0 }
-        | if flags & 0x4 != 0 { PTE_PLV_USER } else { 0 }
+        | PTE_D
+        | PTE_CACHE_CC
         | PTE_G
+        | if flags & 0x2 != 0 { PTE_W } else { 0 }
+        | if flags & 0x2 != 0 { PTE_MODIFIED } else { 0 }
+        | if flags & 0x4 != 0 { PTE_PLV_USER } else { 0 }
         | if flags & (1u64 << 63) != 0 { PTE_NX } else { 0 };
     pte
 }
@@ -78,12 +156,29 @@ fn is_valid_loong(e: u64) -> bool {
     (e & PTE_V) != 0
 }
 fn is_table_loong(e: u64) -> bool {
-    is_valid_loong(e) && (e & (1u64 << 1)) == 0
+    e != 0
 }
 
-/// Read the page-root PA out of the `PGDH` CSR (0x19). On
-/// LoongArch64 the kernel half is configured to use PGDH (high
-/// half, kernel VAs); we keep using that root here.
+fn make_table_desc_loong(pa: u64) -> u64 {
+    let pfn = (pa & PAGE_MASK) >> PAGE_SHIFT;
+    // Directory entries must be the bare 4K-aligned physical address.
+    // The hardware (and QEMU helper_lddir) computes the next-level
+    // address as base | index * 8 while masking only the physical
+    // range, so flag bits such as V would corrupt the table address
+    // and break the TLB refill walk.
+    (pfn << PTE_PFN_SHIFT) & PTE_PFN_MASK
+}
+
+fn table_pa_loong(e: u64) -> u64 {
+    let pfn = (e & PTE_PFN_MASK) >> PTE_PFN_SHIFT;
+    pfn << PAGE_SHIFT
+}
+
+/// Read the page-root PA out of the `PGDL` CSR (0x19). Kernel VAs
+/// live in the low half (VA63 == 0) and user VAs share that half, so
+/// PGDL — which `enter_first_user_thread` switches to the user root —
+/// is the operative root for both the refill walk (CSR_PGD) and the
+/// software walk below.
 #[inline]
 fn root_phys() -> u64 {
     let pa: u64;
@@ -105,7 +200,7 @@ unsafe fn leaf_pte_for(va: u64) -> *mut u64 {
     let l0 = l0_phys as *mut u64;
     let l0e = core::ptr::read_volatile(l0.add(l0_idx));
     let l1_phys = if is_table_loong(l0e) {
-        l0e & 0x000F_FFFF_FFFF_F000
+        table_pa_loong(l0e)
     } else {
         let pfn = match pfn::allocate_pfn() {
             Some(p) => p,
@@ -113,7 +208,7 @@ unsafe fn leaf_pte_for(va: u64) -> *mut u64 {
         };
         let new_phys = pfn_to_phys(pfn);
         ptr::write_bytes(new_phys as *mut u8, 0, 4096);
-        let new_desc = make_pte_loong(new_phys, 0) & !PTE_NX;
+        let new_desc = make_table_desc_loong(new_phys);
         core::ptr::write_volatile(l0.add(l0_idx), new_desc);
         new_phys
     };
@@ -121,7 +216,7 @@ unsafe fn leaf_pte_for(va: u64) -> *mut u64 {
     let l1 = l1_phys as *mut u64;
     let l1e = core::ptr::read_volatile(l1.add(l1_idx));
     let l2_phys = if is_table_loong(l1e) {
-        l1e & 0x000F_FFFF_FFFF_F000
+        table_pa_loong(l1e)
     } else {
         let pfn = match pfn::allocate_pfn() {
             Some(p) => p,
@@ -129,15 +224,15 @@ unsafe fn leaf_pte_for(va: u64) -> *mut u64 {
         };
         let new_phys = pfn_to_phys(pfn);
         ptr::write_bytes(new_phys as *mut u8, 0, 4096);
-        let new_desc = make_pte_loong(new_phys, 0) & !PTE_NX;
+        let new_desc = make_table_desc_loong(new_phys);
         core::ptr::write_volatile(l1.add(l1_idx), new_desc);
         new_phys
     };
 
     let l2 = l2_phys as *mut u64;
     let l2e = core::ptr::read_volatile(l2.add(l2_idx));
-    let l3_phys = if is_table_loong(l2e) {
-        l2e & 0x000F_FFFF_FFFF_F000
+    let dir1_phys = if is_table_loong(l2e) {
+        table_pa_loong(l2e)
     } else {
         let pfn = match pfn::allocate_pfn() {
             Some(p) => p,
@@ -145,19 +240,30 @@ unsafe fn leaf_pte_for(va: u64) -> *mut u64 {
         };
         let new_phys = pfn_to_phys(pfn);
         ptr::write_bytes(new_phys as *mut u8, 0, 4096);
-        let new_desc = make_pte_loong(new_phys, 0) & !PTE_NX;
+        let new_desc = make_table_desc_loong(new_phys);
         core::ptr::write_volatile(l2.add(l2_idx), new_desc);
         new_phys
     };
 
-    let l3 = l3_phys as *mut u64;
-    let l3e = core::ptr::read_volatile(l3.add(l3_idx));
-    // LoongArch uses bits 1:0 = 0b11 for valid table, 0b01 for
-    // leaf. We allow either as a "table" predecessor and always
-    // reuse l3_phys for the leaf write.
-    let _ = l3e;
+    let dir1 = dir1_phys as *mut u64;
+    let dir1e = core::ptr::read_volatile(dir1.add(l3_idx));
+    let leaf_phys = if is_table_loong(dir1e) {
+        table_pa_loong(dir1e)
+    } else {
+        let pfn = match pfn::allocate_pfn() {
+            Some(p) => p,
+            None => return core::ptr::null_mut(),
+        };
+        let new_phys = pfn_to_phys(pfn);
+        ptr::write_bytes(new_phys as *mut u8, 0, 4096);
+        let new_desc = make_table_desc_loong(new_phys);
+        core::ptr::write_volatile(dir1.add(l3_idx), new_desc);
+        new_phys
+    };
+
+    let leaf_table = leaf_phys as *mut u64;
     let phys_pte_idx = ((va >> 12) & 0x1FF) as usize;
-    (l3_phys as *mut u64).add(phys_pte_idx)
+    leaf_table.add(phys_pte_idx)
 }
 
 pub fn map_page(va: u64, pa: u64, flags: u64) -> bool {
@@ -167,7 +273,9 @@ pub fn map_page(va: u64, pa: u64, flags: u64) -> bool {
     }
     unsafe {
         core::ptr::write_volatile(l3_pte, make_pte_loong(pa, flags));
-        asm!("invtlb 0, $r0, {0}", in(reg) va, options(nostack));
+        if paging_enabled() {
+            asm!("invtlb 0, $r0, $r0", options(nostack));
+        }
     }
     true
 }
@@ -184,7 +292,9 @@ pub fn unmap_page(va: u64) -> Option<u64> {
         }
         let pa = pte & 0x000F_FFFF_FFFF_F000;
         core::ptr::write_volatile(l3_pte, 0);
-        asm!("invtlb 0, $r0, {0}", in(reg) va, options(nostack));
+        if paging_enabled() {
+            asm!("invtlb 0, $r0, $r0", options(nostack));
+        }
         Some(pa)
     }
 }
@@ -201,43 +311,68 @@ pub fn translate_virt(va: u64) -> Option<u64> {
         if !is_table_loong(l0e) {
             return None;
         }
-        let l1_phys = l0e & 0x000F_FFFF_FFFF_F000;
+        let l1_phys = table_pa_loong(l0e);
         let l1 = l1_phys as *const u64;
         let l1e = core::ptr::read_volatile(l1.add(l1_idx));
         if !is_table_loong(l1e) {
             return None;
         }
-        let l2_phys = l1e & 0x000F_FFFF_FFFF_F000;
+        let l2_phys = table_pa_loong(l1e);
         let l2 = l2_phys as *const u64;
         let l2e = core::ptr::read_volatile(l2.add(l2_idx));
         if !is_table_loong(l2e) {
             return None;
         }
-        let l3_phys = l2e & 0x000F_FFFF_FFFF_F000;
-        let l3 = l3_phys as *const u64;
-        let l3e = core::ptr::read_volatile(l3.add(l3_idx));
-        if !is_valid_loong(l3e) {
+        let dir1_phys = table_pa_loong(l2e);
+        let dir1 = dir1_phys as *const u64;
+        let dir1e = core::ptr::read_volatile(dir1.add(l3_idx));
+        if !is_table_loong(dir1e) {
             return None;
         }
-        Some((l3e & 0x000F_FFFF_FFFF_F000) | (va & 0xFFF))
+        let leaf_phys = table_pa_loong(dir1e);
+        let leaf_table = leaf_phys as *const u64;
+        let pte_idx = ((va >> 12) & 0x1FF) as usize;
+        let pte = core::ptr::read_volatile(leaf_table.add(pte_idx));
+        if !is_valid_loong(pte) {
+            return None;
+        }
+        Some((pte & 0x000F_FFFF_FFFF_F000) | (va & 0xFFF))
     }
 }
 
 pub unsafe fn load_page_root(pml4_pfn: u64) {
     let pa = pfn_to_phys(pml4_pfn);
+    asm!("csrwr {0}, 0x1a", in(reg) pa, options(nostack));
+    // The kernel image and all kernel VAs live in the *low* half
+    // (VA63 == 0), which is walked through PGDL (CSR 0x19), not
+    // PGDH. Both half-roots must therefore point at the same root
+    // table, otherwise low-half translations (including the
+    // identity map and the loaded kernel image) are invalid.
     asm!("csrwr {0}, 0x19", in(reg) pa, options(nostack));
     asm!("invtlb 0, $r0, $r0", options(nostack));
-    // Paging may still be off (CRMD.PG = 0) if `arch::init` was
-    // bypassed and the firmware-style "kernel_main → mm::init"
-    // flow ran without ever flipping it back on. Make sure the
-    // new page tables are actually consulted from this point
-    // on by clearing the PG bit, since enabling paging on
-    // LoongArch requires a deliberate `csrwr` to CRMD after the
-    // root has been installed.
+    // Clear DA and set PG so the new page tables are consulted.
     let mut crmd: u64;
     asm!("csrrd {}, 0x0", out(reg) crmd, options(nostack));
+    crmd &= !(1u64 << 3); // clear DA (mutually exclusive with PG)
     crmd |= 1u64 << 4; // set PG
     asm!("csrwr {}, 0x0", in(reg) crmd, options(nostack));
+}
+
+/// Map an MMIO physical address into the DMW0 direct window.
+///
+/// Callers must only use the result after paging is enabled. Before
+/// CRMD.PG is set, LoongArch addresses translate directly, so early
+/// boot code keeps using the physical address.
+pub fn mmio_virt(pa: u64) -> u64 {
+    DMW0_IO_VIRT_BASE | pa
+}
+
+pub fn paging_enabled() -> bool {
+    let crmd: u64;
+    unsafe {
+        asm!("csrrd {}, 0x0", out(reg) crmd, options(nostack));
+    }
+    (crmd & (1 << 4)) != 0
 }
 
 pub fn read_page_root_pfn() -> u64 {
@@ -250,34 +385,107 @@ pub fn read_page_root_pfn() -> u64 {
 
 /// Invalidate a single TLB entry for the given virtual address.
 pub fn invalidate_tlb(va: u64) {
-    unsafe {
-        asm!("invtlb 0, $r0, {0}", in(reg) va, options(nostack));
+    let _ = va;
+    if paging_enabled() {
+        flush_tlb();
     }
 }
 
 /// Flush the entire TLB (all entries).
 pub fn flush_tlb() {
     unsafe {
-        // invtlb with rs=0, vpn=0 invalidates all TLB entries
-        asm!("invtlb 0, $r0, $r0", options(nostack));
+        crate::boot_debug_println!("[LA-FLUSH] enter");
+        let enabled = paging_enabled();
+        let crmd: u64;
+        asm!("csrrd {}, 0x0", out(reg) crmd, options(nostack));
+        crate::boot_debug_println!("[LA-FLUSH] crmd=0x{:x} pg={}", crmd, enabled);
+        if enabled {
+            asm!("invtlb 0, $r0, $r0", options(nostack));
+            crate::boot_debug_println!("[LA-FLUSH] invtlb done");
+        }
     }
 }
 
 /// Identity-map `[pa, pa + size)` into the kernel's translation
 /// tables. Mirrors the aarch64 helper of the same name. Used by
-/// the kernel heap init flow to make sure `GlobalAlloc::alloc`
+/// the kernel heap init flow to make sure `global_alloc::alloc`
 /// returns pointers that resolve under the kernel's `PGDH`.
 ///
 /// `pa` must be page-aligned; `size` is rounded up to the next
 /// page boundary. Returns `true` on success, `false` if any
 /// `map_page` call in the range failed.
 pub fn identity_map_region(pa: u64, size: u64) -> bool {
-    const PAGE_SIZE: u64 = 4096;
-    // Read-write (kernel PLV), no execute (NX). bit 2 = W in the
-    // unified flags convention used by `make_pte_loong`.
     const HEAP_FLAGS: u64 = 0x2;
     let pa_aligned = pa & !(PAGE_SIZE - 1);
     let end = pa.saturating_add(size);
+    if !crate::mm::pfn::is_initialized() {
+        unsafe {
+            let root_pa = if paging_enabled() {
+                root_phys()
+            } else {
+                core::ptr::addr_of!(ROOT_TABLE) as u64
+            };
+            let root_entries = root_pa as *mut u64;
+            let tables = core::ptr::addr_of_mut!(BOOTSTRAP_TABLES) as u64;
+            let l1_pa = tables;
+            let l2_pa = tables + PAGE_SIZE;
+            let dir1_pa = tables + 2 * PAGE_SIZE;
+            let mut cur = pa_aligned;
+            while cur < end {
+                let l0_idx = ((cur >> 48) & 0x1FF) as usize;
+                let l1_idx = ((cur >> 39) & 0x1FF) as usize;
+                let l2_idx = ((cur >> 30) & 0x1FF) as usize;
+                let l3_idx = ((cur >> 21) & 0x1FF) as usize;
+                let page_index = ((cur >> 12) & 0x1FF) as usize;
+                let Some(l3_table) = leaf_table_for(LeafTableKey {
+                    l2_index: l2_idx,
+                    l3_index: l3_idx,
+                }) else {
+                    return false;
+                };
+                let root_entry = root_entries.add(l0_idx);
+                let root_e = core::ptr::read_volatile(root_entry);
+                let l1_pa_used = if is_table_loong(root_e) {
+                    table_pa_loong(root_e)
+                } else {
+                    core::ptr::write_volatile(root_entry, make_table_desc_loong(l1_pa));
+                    l1_pa
+                };
+                let l1 = l1_pa_used as *mut u64;
+                let l1e = core::ptr::read_volatile(l1.add(l1_idx));
+                let l2_pa_used = if is_table_loong(l1e) {
+                    table_pa_loong(l1e)
+                } else {
+                    core::ptr::write_volatile(l1.add(l1_idx), make_table_desc_loong(l2_pa));
+                    l2_pa
+                };
+                let l2 = l2_pa_used as *mut u64;
+                let l2e = core::ptr::read_volatile(l2.add(l2_idx));
+                if !is_table_loong(l2e) {
+                    core::ptr::write_volatile(
+                        l2.add(l2_idx),
+                        make_table_desc_loong(dir1_pa),
+                    );
+                }
+
+                let dir1 = dir1_pa as *mut u64;
+                let dir1e = core::ptr::read_volatile(dir1.add(l3_idx));
+                if !is_table_loong(dir1e) {
+                    core::ptr::write_volatile(
+                        dir1.add(l3_idx),
+                        make_table_desc_loong(l3_table as u64),
+                    );
+                }
+                core::ptr::write_volatile(
+                    l3_table.add(page_index),
+                    make_pte_loong(cur, HEAP_FLAGS),
+                );
+                cur = cur.saturating_add(PAGE_SIZE);
+            }
+            return true;
+        }
+    }
+
     let mut cur = pa_aligned;
     while cur < end {
         if !map_page(cur, cur, HEAP_FLAGS) {
@@ -291,11 +499,17 @@ pub fn identity_map_region(pa: u64, size: u64) -> bool {
 
 /// Architecture-required initialisation hook called by `mm::vm::init`.
 ///
-/// On LoongArch64 the page-table walker is configured by `arch::init`
-/// (PWCL/PWCH + STLBPS); here we just publish the kernel root PGDH
+/// On LoongArch64 the page-table walker is configured by
+/// `arch::init_page_walk` (PWCL/PWCH + STLBPS); here we just publish
+/// the kernel root into PGDH (0x1a) and PGDL (0x19)
 /// if not already done. Safe to call repeatedly.
 pub fn init() {
-    // No-op for now: the page-walker is brought up in `arch::loongarch64::init`
-    // before `mm::init` runs, so by the time we get here PGDL/PGDH already
-    // hold valid roots for the kernel half of the address space.
+    unsafe {
+        let root_table = core::ptr::addr_of_mut!(ROOT_TABLE);
+        let root_pa = root_table as u64;
+        debug_assert_eq!(root_pa & (PAGE_SIZE - 1), 0);
+        core::ptr::write_volatile(root_table.cast::<[u64; 512]>(), [0u64; 512]);
+        asm!("csrwr {0}, 0x1a", in(reg) root_pa, options(nostack));
+        asm!("csrwr {0}, 0x19", in(reg) root_pa, options(nostack));
+    }
 }

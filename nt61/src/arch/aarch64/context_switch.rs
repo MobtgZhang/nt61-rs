@@ -62,7 +62,7 @@ impl ContextFrame {
 ///   [`ContextFrame`].
 /// - Interrupts must be disabled.
 #[no_mangle]
-pub unsafe extern "C" fn swap_context(out_rsp: *mut u64, new_rsp: u64) {
+pub unsafe extern "C" fn swap_context(_out_rsp: *mut u64, _new_rsp: u64) {
     unsafe {
         asm!(
             // Save callee-saved registers onto the outgoing kernel
@@ -155,8 +155,8 @@ pub unsafe extern "C" fn seed_thread_frame(stack_top: *mut u64, entry: u64, arg:
 /// [`swap_context`].
 #[no_mangle]
 pub unsafe extern "C" fn swap_context_full(
-    old_ctx: *mut super::context::CpuContext,
-    new_ctx: *const super::context::CpuContext,
+    _old_ctx: *mut super::context::CpuContext,
+    _new_ctx: *const super::context::CpuContext,
 ) {
     unsafe {
         asm!(

@@ -18,13 +18,6 @@ const GICC_IAR: u32 = 0x00C;
 static mut GICD_BASE: u64 = 0;
 static mut GICC_BASE: u64 = 0;
 
-fn gicd_reg(off: u32) -> u32 {
-    let b = unsafe { GICD_BASE };
-    if b == 0 {
-        return 0;
-    }
-    unsafe { ptr::read_volatile((b + off as u64) as *const u32) }
-}
 fn gicd_write(off: u32, val: u32) {
     let b = unsafe { GICD_BASE };
     if b == 0 {
@@ -82,7 +75,6 @@ pub fn ack_irq() -> u32 {
     gicc_reg(GICC_IAR) & 0x3FF
 }
 
-#[allow(dead_code)]
 fn _keep() {
     let _ = unsafe { asm!("nop") };
 }

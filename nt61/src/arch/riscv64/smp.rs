@@ -13,14 +13,23 @@
 //! will install a real trampoline and a per-hart `__smp_secondary`
 //! entry point.
 
-use core::arch::asm;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+
+use crate::arch::riscv64::paging;
+use crate::arch::riscv64::percpu_impl;
+use crate::arch::riscv64::soc;
 
 static CPU_COUNT: AtomicU32 = AtomicU32::new(1);
+static SECONDARY_ROOT_PFN: AtomicU64 = AtomicU64::new(0);
+
+const AP_STACK_SIZE: usize = 64 * 1024;
 
 /// Return the cached CPU count.
 pub fn cpu_count() -> u32 {
-    CPU_COUNT.load(Ordering::Relaxed)
+    CPU_COUNT
+        .load(Ordering::Relaxed)
+        .max(soc::cpu_count() as u32)
+        .max(1)
 }
 
 /// SBI HSM hart_start (re-exported here for callers that already
@@ -29,13 +38,9 @@ pub unsafe fn sbi_hsm_hart_start(hart_id: u64, start_addr: u64, opaque: u64) -> 
     crate::arch::riscv64::sbi::hsm_hart_start(hart_id, start_addr, opaque).error
 }
 
-/// Read the running hart's id from the `mhartid` CSR.
+/// Read the running hart's ID through SBI (S-mode safe).
 pub fn current_hart_id() -> u32 {
-    let id: u32;
-    unsafe {
-        asm!("csrr {}, mhartid", out(reg) id, options(nostack));
-    }
-    id
+    unsafe { crate::arch::riscv64::sbi::current_hartid() as u32 }
 }
 
 /// Trampoline entry point for secondary harts.
@@ -44,18 +49,29 @@ pub fn current_hart_id() -> u32 {
 /// successful `HART_START`. Phase 1 spins; Phase 2 will switch to
 /// the per-hart kernel stack and wait for a work item.
 #[no_mangle]
-pub unsafe extern "C" fn __smp_secondary_entry() -> ! {
-    // Read our hart id and publish it via `tp` so the kernel can
-    // find this hart's per-CPU area.
+pub unsafe extern "C" fn __smp_secondary_entry(_hart: u64, stack_top: u64) -> ! {
+    unsafe {
+        core::arch::asm!("mv sp, {}", in(reg) stack_top, options(nostack));
+    }
+
+    // Publish this hart's per-CPU base in `tp`.
     let hart = current_hart_id();
     let base = crate::arch::riscv64::percpu_impl::per_cpu_base_for(hart);
-    crate::arch::riscv64::csr::write_tp(base);
-    // Spin until the BSP sends us an IPI with work. Phase 1 does
-    // not implement the IPI mailbox protocol; secondary harts
-    // simply park here.
-    loop {
-        core::arch::asm!("wfi", options(nostack));
+    if base == 0 {
+        loop {
+            core::arch::asm!("wfi", options(nostack));
+        }
     }
+    crate::arch::riscv64::csr::write_tp(base);
+
+    // Install the same address space the BSP is already using.
+    let root_pfn = SECONDARY_ROOT_PFN.load(Ordering::Acquire);
+    if root_pfn != 0 {
+        unsafe { paging::load_page_root(root_pfn) };
+    }
+
+    crate::ke::scheduler::init_smp_this_cpu(hart);
+    crate::ke::scheduler::idle_loop()
 }
 
 // ---------------------------------------------------------------------------
@@ -81,19 +97,36 @@ pub extern "Rust" fn __smp_cpu_count() -> u32 {
 /// included) and the trampoline entry point must be executable.
 #[no_mangle]
 pub unsafe extern "Rust" fn __smp_boot_secondary(satp_root: u64) {
+    SECONDARY_ROOT_PFN.store(satp_root, Ordering::Release);
     let boot = current_hart_id();
-    // Phase 1: assume a fixed 4-hart system unless we know
-    // otherwise. The Phase 2 device-tree path will determine the
-    // real hart count.
-    let max = 4u32;
+    let max = cpu_count();
+    crate::ke::scheduler::init_smp(max);
+
+    for hart in 1..max as usize {
+        let base = percpu_impl::per_cpu_base_for(hart as u32);
+        let stack =
+            crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, AP_STACK_SIZE) as u64;
+        if base == 0 || stack == 0 {
+            CPU_COUNT.store(hart as u32, Ordering::SeqCst);
+            return;
+        }
+        let stack_top = stack + AP_STACK_SIZE as u64 - 16;
+        unsafe {
+            (base as *mut u64).add(1).write_volatile(stack_top);
+        }
+    }
+
     for hart in 0..max {
         if hart == boot {
             continue;
         }
-        // Trampoline address — the secondary entry. We use the
-        // symbol exported above; SBI requires a physical address.
         let trampoline = __smp_secondary_entry as *const () as u64;
-        let r = sbi_hsm_hart_start(hart as u64, trampoline, satp_root);
+        let stack_top = unsafe {
+            (percpu_impl::per_cpu_base_for(hart) as *const u64)
+                .add(1)
+                .read_volatile()
+        };
+        let r = sbi_hsm_hart_start(hart as u64, trampoline, stack_top);
         if r == 0 {
             CPU_COUNT.fetch_add(1, Ordering::SeqCst);
         }

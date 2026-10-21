@@ -36,9 +36,9 @@ pub struct FpuState {
     pub vreg: [u64; V_REG_BYTES / 8],
     /// Double-wide V extension register file (32 × 256-bit).
     pub vreg_ds: [u64; V_REG_BYTES_DS / 8],
-    /// Saved `fcsr` (Floating-Point Control / Status).
+    /// Saved `fcsr` (Floating-Point control / Status).
     pub fcsr: u32,
-    /// Saved `vcsr` (Vector Control / Status) — V extension.
+    /// Saved `vcsr` (Vector control / Status) — V extension.
     pub vcsr: u32,
     /// Saved `sstatus.FS` (FPU state) — 0 = off, 1 = init,
     /// 2 = clean, 3 = dirty.
@@ -92,14 +92,14 @@ pub fn init_for_thread(state: &mut FpuState) {
 /// and after disabling FPU ownership transfers.
 #[inline(never)]
 pub unsafe fn fpu_save(state: &mut FpuState) {
-    // 1. Read `sstatus.FS` / `sstatus.VS` so we know whether the
+    // 1. read `sstatus.FS` / `sstatus.VS` so we know whether the
     //    guest actually used the extensions.
     let sstatus: u64;
     asm!("csrr {}, sstatus", out(reg) sstatus, options(nostack));
     state.fs_field = ((sstatus >> 13) & 0b11) as u8;
     state.vs_field = ((sstatus >> 9) & 0b11) as u8;
 
-    // 2. Read `fcsr` / `vcsr` if the FS / VS state indicates the
+    // 2. read `fcsr` / `vcsr` if the FS / VS state indicates the
     //    state is dirty.
     if state.fs_field >= 2 {
         let fcsr: u32;

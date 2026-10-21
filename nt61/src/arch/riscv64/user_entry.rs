@@ -14,11 +14,13 @@
 //
 //! ## sstatus value
 //
-//! `0x40001600` encodes:
-//!   - SPP = 0  → previous mode was U-mode
+//! `RISCV_SSTATUS` is assembled from the named constants in
+//! `csr::sstatus` and encodes:
+//!   - SPP = 0   → previous mode was U-mode
 //!   - SPIE = 1  → interrupts enabled on return
-//!   - SIE = 0  → interrupts disabled (IDT not ready yet)
-//!   - FS = 0    → floating-point off
+//!   - SIE = 0   → interrupts disabled in user mode itself
+//!   - UXL = 2   → U-mode executes with XLEN = 64
+//!   - FS = 2    → floating-point state clean (FPU usable)
 //!   - XS = 0    → no user extensions active
 //!   - SUM = 0   → S-mode cannot access U-mode pages
 //
@@ -26,8 +28,6 @@
 //
 //! For Sv39/Sv48, satp[63:60] = 8 (mode = 8 = Sv39) or 9 (Sv48).
 //! The actual page table root is in satp[43:0].
-
-use crate::arch::common::percpu::PerCpuArea;
 
 /// RISC-V U-mode code segment selector (placeholder — RISC-V uses
 /// the privilege mode, not segment selectors, to determine execution level).
@@ -46,15 +46,20 @@ const RISCV_USER_STACK_BASE: u64 = crate::mm::constants::USER_STACK_BASE;
 const RISCV_USER_STACK_TOP: u64 = crate::mm::constants::USER_STACK_TOP;
 
 /// sstatus value for return to U-mode.
-/// SPP=0 (previous mode was U), SPIE=1, SIE=0 (interrupts disabled).
-/// FS=0, XS=0 (no extensions), SUM=0 (no U-mode memory access from S).
-const RISCV_SSTATUS: u64 = 0x40001600;
+/// SPP=0 (previous mode was U), SPIE=1, SIE=0 (interrupts disabled),
+/// UXL=2 (U-mode XLEN=64), FS=clean (FPU usable). The previous
+/// hand-computed value placed no UXL field at all and set stray
+/// reserved bits, which made every Ring-3 thread run as RV32 under
+/// QEMU and fault immediately.
+const RISCV_SSTATUS: u64 = crate::arch::riscv64::csr::sstatus::UXL_64
+    | crate::arch::riscv64::csr::sstatus::SPIE
+    | (0b10 << 13);
 
 // =====================================================================
 // Per-CPU area helpers (tp register access)
 // =====================================================================
 
-/// Read the `tp` (thread pointer) CSR.
+/// read the `tp` (thread pointer) CSR.
 #[inline(always)]
 fn get_tp() -> u64 {
     let val: u64;
@@ -125,10 +130,6 @@ pub unsafe fn __user_entry_enter(user_rip: u64, user_rsp: u64) -> ! {
             options(noreturn),
         );
     }
-    #[allow(unreachable_code)]
-    loop {
-        crate::arch::halt();
-    }
 }
 
 /// Store the kernel stack pointer in the per-CPU area.
@@ -145,7 +146,7 @@ pub fn __user_entry_set_kernel_stack(sp: u64) {
     }
 }
 
-/// Read the kernel stack pointer from the per-CPU area.
+/// read the kernel stack pointer from the per-CPU area.
 #[no_mangle]
 pub fn __user_entry_get_kernel_stack() -> u64 {
     let base = get_tp();
@@ -173,7 +174,7 @@ pub fn __user_entry_get_kernel_stack() -> u64 {
 ///
 /// ## Post-conditions
 ///
-/// Control is transferred to U-mode at `user_rip` with `user_rsp` as the
+/// control is transferred to U-mode at `user_rip` with `user_rsp` as the
 /// stack pointer. The function does not return.
 #[inline(never)]
 pub fn enter_first_user_thread(satp_root: u64, user_rip: u64, user_rsp: u64) -> ! {
@@ -185,14 +186,27 @@ pub fn enter_first_user_thread(satp_root: u64, user_rip: u64, user_rsp: u64) -> 
     }
     crate::arch::common::percpu::set_kernel_stack(kernel_sp);
 
-    // 1. Switch to the user address space by loading the user page table root.
-    //    satp_root includes the mode bits: satp[63:60] = 8 (Sv39) or 9 (Sv48).
+    // 0.5 Publish the kernel stack into sscratch so that the first
+    //     trap from user mode can swap sp with a valid kernel stack.
+    //     Without this, stvec_trap would read sscratch = 0 and the
+    //     CPU would fault with a zero stack pointer.
     unsafe {
-        core::arch::asm!("csrw satp, {val}", val = in(reg) satp_root, options(nostack));
-        // SFENCE.VMA to invalidate TLB entries for the new address space.
-        // Since we switched the entire address space, a global flush is needed.
-        core::arch::asm!("sfence.vma", options(nostack));
+        core::arch::asm!(
+            "csrw sscratch, {val}",
+            val = in(reg) kernel_sp,
+            options(nostack),
+        );
     }
+
+    // 1. Switch to the user address space via the shared vas layer.
+    //    attach_process() encodes the Sv39 satp value (MODE=8, PPN
+    //    = satp_root >> 12), issues the sfence.vma barrier, and
+    //    publishes the per-CPU root-table bookkeeping -- exactly
+    //    what the aarch64 TTBR0 path does via its own
+    //    load_page_root(). Writing a raw physical address directly
+    //    into satp would leave MODE = 0 (bare mode), disabling the
+    //    MMU and faulting on the first U-mode instruction fetch.
+    crate::mm::vas::attach_process(satp_root);
 
     // 2. Transfer to U-mode. sret jumps to sepc with sstatus applied.
     unsafe {
@@ -209,8 +223,8 @@ pub fn enter_first_user_thread(satp_root: u64, user_rip: u64, user_rsp: u64) -> 
             options(noreturn),
         );
     }
-    #[allow(unreachable_code)]
-    loop {
-        crate::arch::halt();
-    }
+}
+
+pub unsafe fn __user_entry_enter_first(root_table_phys: u64, user_rip: u64, user_rsp: u64) -> ! {
+    enter_first_user_thread(root_table_phys, user_rip, user_rsp)
 }
