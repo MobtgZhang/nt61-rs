@@ -56,10 +56,48 @@ const PORT_B_SYS: u16 = 0x61;
 
 static PIT_HZ: AtomicU32 = AtomicU32::new(0);
 static PIT_TICKS: AtomicU64 = AtomicU64::new(0);
+static TSC_HZ: AtomicU64 = AtomicU64::new(0);
+
+/// Probe the invariant TSC frequency. Intel leaves 0x15/0x16 are
+/// available on the host CPU under KVM; when absent, fall back to a
+/// conservative frequency so timeouts eventually expire.
+fn probe_tsc_frequency_hz() -> u64 {
+    const DEFAULT_TSC_HZ: u64 = 2_400_000_000;
+
+    let leaf15 = core::arch::x86_64::__cpuid_count(0x15, 0);
+    let (denominator, numerator, crystal) =
+        (leaf15.eax as u64, leaf15.ebx as u64, leaf15.ecx as u64);
+    if denominator != 0 && crystal != 0 {
+        let frequency = numerator
+            .checked_mul(crystal)
+            .and_then(|value| value.checked_div(denominator));
+        if let Some(frequency @ 1_000_000..=10_000_000_000) = frequency {
+            return frequency;
+        }
+    }
+
+    let leaf16 = core::arch::x86_64::__cpuid_count(0x16, 0);
+    let mhz = leaf16.eax as u64;
+    if (1..=10_000).contains(&mhz) {
+        return mhz * 1_000_000;
+    }
+
+    DEFAULT_TSC_HZ
+}
 
 /// Get the current PIT tick count
 pub fn get_ticks() -> u64 {
     PIT_TICKS.load(Ordering::Relaxed)
+}
+
+pub fn tsc_frequency_hz() -> u64 {
+    let cached = TSC_HZ.load(Ordering::Acquire);
+    if cached != 0 {
+        return cached;
+    }
+    let frequency = probe_tsc_frequency_hz();
+    TSC_HZ.store(frequency, Ordering::Release);
+    frequency
 }
 
 /// Increment the PIT tick count (called from PIT interrupt handler)
@@ -69,24 +107,14 @@ pub fn increment_ticks() {
 
 /// Get system time in milliseconds since PIT initialization
 pub fn get_system_time_ms() -> u64 {
-    let ticks = PIT_TICKS.load(Ordering::Relaxed);
-    let hz = PIT_HZ.load(Ordering::Relaxed);
-    if hz > 0 {
-        ticks * 1000 / (hz as u64)
-    } else {
-        0
-    }
+    let frequency = tsc_frequency_hz();
+    unsafe { core::arch::x86_64::_rdtsc() }.saturating_mul(1000) / frequency
 }
 
 /// Get system time in microseconds since PIT initialization
 pub fn get_system_time_us() -> u64 {
-    let ticks = PIT_TICKS.load(Ordering::Relaxed);
-    let hz = PIT_HZ.load(Ordering::Relaxed);
-    if hz > 0 {
-        ticks * 1_000_000 / (hz as u64)
-    } else {
-        0
-    }
+    let frequency = tsc_frequency_hz();
+    unsafe { core::arch::x86_64::_rdtsc() }.saturating_mul(1_000_000) / frequency
 }
 
 #[inline]
