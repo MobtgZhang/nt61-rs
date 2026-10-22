@@ -231,10 +231,30 @@ pub fn resolve_af(name: &str, family: u16) -> Result<u32, DnsError> {
 
     let server_port = DNS_PORT;
     let local_port = 0; // kernel-assigned ephemeral
-    let local_ip = ipif::get_our_ip_addresses().first().copied().unwrap_or(0);
+    let local_ip = ipif::get_outbound_ip().unwrap_or(0);
     let sock = udp::create_socket(local_port, local_ip).ok_or(DnsError::Other)?;
     let qtype: u16 = 1; // A
     let datagram = build_query(name, qtype);
+
+    // The DNS server is often on-link but not the gateway, so give
+    // ARP one second to resolve before dropping the query.
+    if crate::netstack::arp::arp_resolve(server).is_none() {
+        if let Some((nic_type, nic_index)) = crate::netstack::ethif::get_primary_interface() {
+            if let Some(source_ip) = crate::netstack::arp::source_for_target(server) {
+                crate::netstack::arp::send_request_with_source(
+                    server, source_ip, nic_type, nic_index,
+                );
+            }
+        }
+        let start = crate::hal::common::pit::get_system_time_ms();
+        while crate::hal::common::pit::get_system_time_ms().saturating_sub(start) < 1_000 {
+            crate::drivers::net::poll_all();
+            if crate::netstack::arp::arp_resolve(server).is_some() {
+                break;
+            }
+        }
+    }
+
     udp::send(sock, server, server_port, &datagram).ok_or(DnsError::Other)?;
 
     // Block up to 2 seconds for a reply.
@@ -321,15 +341,9 @@ pub fn flush_cache() {
 }
 
 /// Format an IPv4 address as "a.b.c.d" for log messages.
-pub fn ip_to_string(mut ip: u32) -> String {
-    let mut s = String::with_capacity(15);
-    for _ in 0..3 {
-        let octet = ip & 0xFF;
-        s.push_str(&alloc::format!("{}.", octet));
-        ip >>= 8;
-    }
-    s.push_str(&alloc::format!("{}", ip & 0xFF));
-    s
+pub fn ip_to_string(ip: u32) -> String {
+    let [a, b, c, d] = ip.to_be_bytes();
+    alloc::format!("{}.{}.{}.{}", a, b, c, d)
 }
 
 /// Convenience wrapper that honours `getaddrinfo`'s address-family
