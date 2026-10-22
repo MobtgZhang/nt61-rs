@@ -198,9 +198,9 @@ pub extern "C" fn trap_dispatch(frame: *mut TrapFrame) {
         }
         TrapKind::Int => {
             let is = estat & 0x1FFF; // IS[12:0]
-            // IS[2] is the QEMU virt EXTIOI UART line.  Drain the unified
-            // keyboard ring and clear only the per-core line; clearing the
-            // device-level ISR here would lose coalesced input.
+                                     // IS[2] is the QEMU virt EXTIOI UART line.  Drain the unified
+                                     // keyboard ring and clear only the per-core line; clearing the
+                                     // device-level ISR here would lose coalesced input.
             if (is & (1 << 2)) != 0 {
                 crate::hal::common::keyboard_unified::serial_rx_irq();
                 crate::arch::loongarch64::pic::core_ack(2);
@@ -208,9 +208,9 @@ pub extern "C" fn trap_dispatch(frame: *mut TrapFrame) {
 
             // IS[11] is the constant-timer tick. It must be cleared via
             // TICLR (CSR 0x44) bit 0 — otherwise the interrupt stays
-                                     // pending and the CPU re-enters the handler immediately
-                                     // after `ertn`, producing an interrupt storm that looks
-                                     // exactly like a silent boot hang.
+            // pending and the CPU re-enters the handler immediately
+            // after `ertn`, producing an interrupt storm that looks
+            // exactly like a silent boot hang.
             if (is & (1 << 11)) != 0 {
                 unsafe {
                     core::arch::asm!(
