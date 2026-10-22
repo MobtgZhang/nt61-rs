@@ -225,7 +225,7 @@ impl TcpControlBlock {
             rx_buf: Vec::new(),
             tx_buf: Vec::new(),
             socket_id: 0,
-            rto: 3000,
+            rto: 1000,
             srtt: 0,
             rttvar: 0,
             cwnd: INITIAL_CWND, // Windows 7 default: 2 * MSS (RFC 6299 allows up to 10 * MSS)
@@ -751,6 +751,10 @@ fn handle_tcp_segment(
             }
         }
         TcpState::SynSent => {
+            if flags & tcp_flags::RST != 0 {
+                tcb.state = TcpState::Closed;
+                return false;
+            }
             if flags & tcp_flags::ACK != 0 {
                 if flags & tcp_flags::SYN != 0 {
                     // Simultaneous open - enter SynReceived
@@ -901,8 +905,18 @@ pub fn close_listen(local_ip: u32, local_port: Port) -> bool {
 }
 
 /// Begin TCP connection
-pub fn connect(local_ip: u32, local_port: Port, remote_ip: u32, remote_port: Port) -> Option<u32> {
+pub fn connect(
+    local_ip: u32,
+    mut local_port: Port,
+    remote_ip: u32,
+    remote_port: Port,
+) -> Option<u32> {
     let mut connections = TCP_CONNECTIONS.lock();
+
+    if local_port == 0 {
+        local_port = (49152..=u16::MAX)
+            .find(|candidate| !connections.iter().any(|tcb| tcb.local_port == *candidate))?;
+    }
 
     let mut tcb = TcpControlBlock::new();
     tcb.local_ip = local_ip;
@@ -946,12 +960,15 @@ pub fn socket_state(socket_id: u32) -> TcpState {
 pub fn close(socket_id: u32) -> bool {
     let mut connections = TCP_CONNECTIONS.lock();
 
-    if let Some(idx) = connections
+    let Some(idx) = connections
         .iter()
         .position(|tcb| tcb.socket_id == socket_id)
+    else {
+        return false;
+    };
+
     {
         let tcb = &mut connections[idx];
-
         match tcb.state {
             TcpState::Established => {
                 tcb.state = TcpState::FinWait1;
@@ -977,10 +994,10 @@ pub fn close(socket_id: u32) -> bool {
                 tcb.state = TcpState::Closed;
             }
         }
-        return true;
     }
 
-    false
+    connections.retain(|tcb| !(tcb.socket_id == socket_id && tcb.state == TcpState::Closed));
+    true
 }
 
 /// Send data on a connection
@@ -1124,7 +1141,12 @@ pub fn check_retransmit_timers() {
             } else {
                 Some(&retransmit_payload)
             };
-            send_segment(tcb, tcp_flags::ACK, tcb.snd_una, tcb.rcv_nxt, payload_opt);
+            let flags = if tcb.state == TcpState::SynSent {
+                tcp_flags::SYN
+            } else {
+                tcp_flags::ACK
+            };
+            send_segment(tcb, flags, tcb.snd_una, tcb.rcv_nxt, payload_opt);
 
             tcb.last_send_time = pit::get_system_time_ms() as u64;
             tcb.in_retransmit = true;
