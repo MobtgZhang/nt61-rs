@@ -142,6 +142,7 @@ struct WaitEntry {
     object: *const DispatcherHeader,
     deadline_ticks: u64,
     in_use: bool,
+    signalled: bool,
 }
 
 static mut WAIT_ENTRIES: [WaitEntry; WAIT_LIST_MAX] = [const {
@@ -162,6 +163,7 @@ static mut WAIT_ENTRIES: [WaitEntry; WAIT_LIST_MAX] = [const {
         object: core::ptr::null(),
         deadline_ticks: 0,
         in_use: false,
+        signalled: false,
     }
 }; WAIT_LIST_MAX];
 
@@ -184,6 +186,7 @@ static mut WAIT_ENTRIES_EXTRA: [WaitEntry; WAIT_LIST_EXTRA] = [const {
         object: core::ptr::null(),
         deadline_ticks: 0,
         in_use: false,
+        signalled: false,
     }
 }; WAIT_LIST_EXTRA];
 
@@ -229,6 +232,7 @@ pub fn wait_on(object: &DispatcherHeader, timeout_ms: u32) -> WaitResult {
                 crate::ke::time::get_tick_count() as u64 + timeout_ms as u64
             };
             entry.in_use = true;
+            entry.signalled = false;
             // Insert the thread's wait_list_entry at the tail of
             // the wait list (sentinel-style intrusive list).
             let head_ptr: *mut crate::ps::process::ListEntry =
@@ -248,8 +252,28 @@ pub fn wait_on(object: &DispatcherHeader, timeout_ms: u32) -> WaitResult {
     // Yield the CPU to the scheduler
     crate::ke::scheduler::schedule();
 
-    // After schedule returns, check whether we were signalled or timed out
-    if object.signal_state != 0 {
+    // The dispatcher wake path records the result before it makes the
+    // thread runnable.  Re-reading `signal_state` here would race with
+    // another CPU and could classify a successfully woken waiter as a
+    // timeout.
+    let current = crate::ke::scheduler::get_current_thread()
+        .map(|thread| thread as *mut Ethread)
+        .unwrap_or(core::ptr::null_mut());
+    let signalled = unsafe {
+        for index in 0..WAIT_LIST_TOTAL {
+            if let Some(entry) = get_wait_entry(index) {
+                if entry.thread == current && entry.object == object as *const DispatcherHeader {
+                    return if entry.signalled {
+                        WaitResult::Success
+                    } else {
+                        WaitResult::Timeout
+                    };
+                }
+            }
+        }
+        false
+    };
+    if signalled {
         WaitResult::Success
     } else {
         WaitResult::Timeout
@@ -278,8 +302,11 @@ pub fn wake(object: &DispatcherHeader, all: bool) {
                     && WAIT_ENTRIES[i].thread == ethread
                     && WAIT_ENTRIES[i].object == object as *const DispatcherHeader
                 {
-                    // Mark free, ready thread.
+                    // Record the wake result before the thread becomes
+                    // runnable; it may observe a cleared signal state after
+                    // scheduling.
                     WAIT_ENTRIES[i].in_use = false;
+                    WAIT_ENTRIES[i].signalled = true;
                     (*ethread).kthread.state = crate::ps::thread::KThreadState::Ready;
 
                     // Determine boost type based on object type
