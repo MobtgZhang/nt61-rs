@@ -51,9 +51,13 @@ pub const COMMON_DFSELECT: u64 = 0;
 pub const COMMON_DF: u64 = 4;
 pub const COMMON_GFSELECT: u64 = 8;
 pub const COMMON_GF: u64 = 12;
+pub const COMMON_MSIX: u64 = 16;
+pub const COMMON_NUMQ: u64 = 18;
 pub const COMMON_STATUS: u64 = 20;
+pub const COMMON_CFGGENERATION: u64 = 21;
 pub const COMMON_Q_SELECT: u64 = 22;
 pub const COMMON_Q_SIZE: u64 = 24;
+pub const COMMON_Q_MSIX: u64 = 26;
 pub const COMMON_Q_ENABLE: u64 = 28;
 pub const COMMON_Q_NOFF: u64 = 30;
 pub const COMMON_Q_DESCLO: u64 = 32;
@@ -62,6 +66,7 @@ pub const COMMON_Q_AVAILLO: u64 = 40;
 pub const COMMON_Q_AVAILHI: u64 = 44;
 pub const COMMON_Q_USEDLO: u64 = 48;
 pub const COMMON_Q_USEDHI: u64 = 52;
+pub const COMMON_Q_NDATA: u64 = 56;
 pub const COMMON_Q_RESET: u64 = 58;
 
 /// One discovered virtio-pci device.
@@ -101,13 +106,25 @@ impl PciTransport {
         // config-base calculation is identical to what `enumerate()`
         // uses (any stride mismatch between the two call sites
         // would read vendor/device ids from the wrong slot).
-        let config_base = crate::hal::common::pci::ecam_address_for(bus, device, function);
+        let config_base = crate::hal::common::pci::ecam_base()
+            .map(|base| crate::hal::common::pci::ecam_address_for(bus, device, function))
+            .unwrap_or(0);
 
-        let vendor = read_u16(config_base + PCI_OFFSET_VENDOR_ID);
+        let vendor = crate::hal::common::pci::read_config_word(
+            bus,
+            device,
+            function,
+            PCI_OFFSET_VENDOR_ID as u8,
+        );
         if vendor == 0xFFFF || vendor != PCI_VENDOR_ID_REDHAT {
             return None;
         }
-        let device_id = read_u16(config_base + PCI_OFFSET_DEVICE_ID);
+        let device_id = crate::hal::common::pci::read_config_word(
+            bus,
+            device,
+            function,
+            PCI_OFFSET_DEVICE_ID as u8,
+        );
         if (device_id < PCI_DEVICE_ID_TRANSITIONAL_FIRST
             || device_id > PCI_DEVICE_ID_TRANSITIONAL_LAST)
             && (device_id < PCI_DEVICE_ID_MODERN_FIRST || device_id > PCI_DEVICE_ID_MODERN_LAST)
@@ -124,21 +141,57 @@ impl PciTransport {
         let mut mapped_bars: alloc::vec::Vec<(u64, u64)> = alloc::vec::Vec::new();
 
         // Walk the capability list.
-        let mut cap_offset = read_u8(config_base + PCI_OFFSET_CAPABILITY_LIST) as u64;
+        let mut cap_offset = crate::hal::common::pci::read_config_byte(
+            bus,
+            device,
+            function,
+            PCI_OFFSET_CAPABILITY_LIST as u8,
+        ) as u64;
         let mut guard = 0;
         while cap_offset != 0 && guard < 48 {
             guard += 1;
-            let cap_id = read_u8(config_base + cap_offset + PCI_CAP_VNDR);
+            let cap_id = crate::hal::common::pci::read_config_byte(
+                bus,
+                device,
+                function,
+                (cap_offset + PCI_CAP_VNDR) as u8,
+            );
             if cap_id != PCI_CAP_ID_VNDR {
-                cap_offset = read_u8(config_base + cap_offset + PCI_CAP_NEXT) as u64;
+                cap_offset = crate::hal::common::pci::read_config_byte(
+                    bus,
+                    device,
+                    function,
+                    (cap_offset + PCI_CAP_NEXT) as u8,
+                ) as u64;
                 continue;
             }
-            let cfg_type = read_u8(config_base + cap_offset + PCI_CAP_CFG_TYPE);
-            let struct_offset = read_u32(config_base + cap_offset + PCI_CAP_OFFSET) as u64;
-            let bar_index = read_u8(config_base + cap_offset + PCI_CAP_BAR);
-            let Some(bar) = crate::hal::common::pci::probe_bar(bus, device, function, bar_index)
+            let cfg_type = crate::hal::common::pci::read_config_byte(
+                bus,
+                device,
+                function,
+                (cap_offset + PCI_CAP_CFG_TYPE) as u8,
+            );
+            let struct_offset = crate::hal::common::pci::read_config_dword(
+                bus,
+                device,
+                function,
+                (cap_offset + PCI_CAP_OFFSET) as u8,
+            ) as u64;
+            let bar_index = crate::hal::common::pci::read_config_byte(
+                bus,
+                device,
+                function,
+                (cap_offset + PCI_CAP_BAR) as u8,
+            );
+            let Some(mut bar) =
+                crate::hal::common::pci::probe_bar(bus, device, function, bar_index)
             else {
-                cap_offset = read_u8(config_base + cap_offset + PCI_CAP_NEXT) as u64;
+                cap_offset = crate::hal::common::pci::read_config_byte(
+                    bus,
+                    device,
+                    function,
+                    (cap_offset + PCI_CAP_NEXT) as u8,
+                ) as u64;
                 continue;
             };
             if bar.io {
@@ -146,14 +199,87 @@ impl PciTransport {
                 // only cap pointing at the I/O BAR is the optional
                 // PCI-config-access cap (cfg_type 5), which needs no
                 // separate mapping because ECAM already covers it.
-                cap_offset = read_u8(config_base + cap_offset + PCI_CAP_NEXT) as u64;
+                cap_offset = crate::hal::common::pci::read_config_byte(
+                    bus,
+                    device,
+                    function,
+                    (cap_offset + PCI_CAP_NEXT) as u8,
+                ) as u64;
                 continue;
             }
             if bar.size != 0 && struct_offset >= bar.size {
-                cap_offset = read_u8(config_base + cap_offset + PCI_CAP_NEXT) as u64;
+                cap_offset = crate::hal::common::pci::read_config_byte(
+                    bus,
+                    device,
+                    function,
+                    (cap_offset + PCI_CAP_NEXT) as u8,
+                ) as u64;
                 continue;
             }
             let struct_base = bar.base + struct_offset;
+            // Some firmware assignments place the 64-bit BAR above
+            // 4 GiB while its high config dword is not readable here.
+            // Reassign the BAR to a conservative free region after the
+            // existing memory BARs so both mapping and MMIO access work.
+            if !bar.io && bar.base == 0 && bar.size != 0 {
+                let mut next_base: u64 = 0;
+                for scan_index in 0..6u8 {
+                    let scan_offset = 0x10 + scan_index * 4;
+                    let scan_low = crate::hal::common::pci::read_config_dword(
+                        bus,
+                        device,
+                        function,
+                        scan_offset,
+                    );
+                    if scan_low == 0 || scan_low & 1 != 0 || scan_low & 0xFFFF_FFF0 == 0 {
+                        continue;
+                    }
+                    let mut scan_base = u64::from(scan_low & !0xF);
+                    if scan_low & 0x4 != 0 {
+                        scan_base |= u64::from(crate::hal::common::pci::read_config_dword(
+                            bus,
+                            device,
+                            function,
+                            scan_offset + 4,
+                        )) << 32;
+                    }
+                    next_base = next_base.max(scan_base);
+                }
+                let allocation_base = 0x8109_0000;
+                let bar_offset = 0x10 + bar_index * 4;
+                let flags =
+                    crate::hal::common::pci::read_config_dword(bus, device, function, bar_offset)
+                        & 0xF;
+                crate::hal::common::pci::write_config_dword(
+                    bus,
+                    device,
+                    function,
+                    bar_offset + 4,
+                    0,
+                );
+                crate::hal::common::pci::write_config_dword(
+                    bus,
+                    device,
+                    function,
+                    bar_offset,
+                    ((allocation_base as u32) & !0xF) | flags,
+                );
+                bar.base = allocation_base;
+                crate::hal::serial::write_string_always(&alloc::format!(
+                    "[PCI-BAR] allocated index={} base={:#x} size={:#x}\r\n",
+                    bar_index,
+                    bar.base,
+                    bar.size
+                ));
+            }
+            crate::hal::serial::write_string_always(&alloc::format!(
+                "[VIRTIO-PCI] cap type={} bar={} base={:#x} offset={:#x} size={:#x}\r\n",
+                cfg_type,
+                bar_index,
+                bar.base,
+                struct_offset,
+                bar.size
+            ));
             if !mapped_bars
                 .iter()
                 .any(|&(base, size)| base == bar.base && size == bar.size)
@@ -170,20 +296,42 @@ impl PciTransport {
             match cfg_type {
                 CAP_TYPE_COMMON_CFG => common = Some(struct_base),
                 CAP_TYPE_NOTIFY_CFG => {
-                    let multiplier = read_u32(config_base + cap_offset + PCI_CAP_NOTIFY_MULTIPLIER);
+                    let multiplier = crate::hal::common::pci::read_config_dword(
+                        bus,
+                        device,
+                        function,
+                        (cap_offset + PCI_CAP_NOTIFY_MULTIPLIER) as u8,
+                    );
                     notify = Some((struct_base, multiplier));
                 }
                 CAP_TYPE_ISR_CFG => isr = Some(struct_base),
                 CAP_TYPE_DEVICE_CFG => device_cfg = Some(struct_base),
                 _ => {}
             }
-            cap_offset = read_u8(config_base + cap_offset + PCI_CAP_NEXT) as u64;
+            cap_offset = crate::hal::common::pci::read_config_byte(
+                bus,
+                device,
+                function,
+                (cap_offset + PCI_CAP_NEXT) as u8,
+            ) as u64;
         }
 
-        let common_base = common?;
-        let (notify_base, notify_multiplier) = notify?;
-        let isr_base = isr?;
-        let device_base = device_cfg?;
+        let common_base = common.or_else(|| {
+            crate::hal::serial::write_string_always("[VIRTIO-PCI] common missing\r\n");
+            None
+        })?;
+        let (notify_base, notify_multiplier) = notify.or_else(|| {
+            crate::hal::serial::write_string_always("[VIRTIO-PCI] notify missing\r\n");
+            None
+        })?;
+        let isr_base = isr.or_else(|| {
+            crate::hal::serial::write_string_always("[VIRTIO-PCI] isr missing\r\n");
+            None
+        })?;
+        let device_base = device_cfg.or_else(|| {
+            crate::hal::serial::write_string_always("[VIRTIO-PCI] device missing\r\n");
+            None
+        })?;
 
         Some(PciTransport {
             config_base,
@@ -215,6 +363,10 @@ impl PciTransport {
     /// ECAM config base, for diagnostics.
     pub fn config_base(&self) -> u64 {
         self.config_base
+    }
+
+    pub fn common_base(&self) -> u64 {
+        self.common_base
     }
 
     pub unsafe fn read_device_features(&mut self) -> u64 {
