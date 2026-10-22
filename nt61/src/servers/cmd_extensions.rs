@@ -1033,10 +1033,34 @@ fn cmd_shutdown(arguments: &str) -> bool {
 fn cmd_ipconfig(arguments: &str) -> bool {
     let detailed = arguments.to_lowercase().contains("/all");
     let interfaces = crate::netstack::ipif::get_all_interfaces();
+    if interfaces.is_empty() {
+        output_line("No network interfaces are configured.");
+        return false;
+    }
+
     output_line("Windows IP Configuration");
     for interface in interfaces {
+        let eth_interface = crate::netstack::ethif::get_interface(interface.eth_if);
+        let is_loopback = interface.eth_if == u32::MAX;
+        let adapter = eth_interface
+            .as_ref()
+            .map(|eth| {
+                let name = core::str::from_utf8(&eth.name)
+                    .unwrap_or("Local Area Connection")
+                    .trim_end_matches('\0')
+                    .to_string();
+                name
+            })
+            .unwrap_or_else(|| "Local Area Connection".to_string());
+
         output_line("");
-        output_line("Ethernet adapter Local Area Connection:");
+        if is_loopback {
+            output_line("Loopback adapter:");
+        } else if adapter.is_empty() {
+            output_line("Ethernet adapter Local Area Connection:");
+        } else {
+            output_line(&format!("Ethernet adapter {}:", adapter));
+        }
         output_line(&format!(
             "   IPv4 Address. . . . . . . . . . . : {}",
             format_ipv4(interface.address)
@@ -1050,6 +1074,16 @@ fn cmd_ipconfig(arguments: &str) -> bool {
             format_ipv4(interface.gateway)
         ));
         if detailed {
+            if let Some(eth) = eth_interface {
+                output_line(&format!(
+                    "   MAC Address . . . . . . . . . . . : {}",
+                    format_mac(&eth.mac)
+                ));
+                output_line(&format!(
+                    "   Link Up . . . . . . . . . . . . . : {}",
+                    if eth.link_up { "Yes" } else { "No" }
+                ));
+            }
             output_line(&format!(
                 "   Interface Index . . . . . . . . . : {}",
                 interface.if_index
@@ -2882,29 +2916,55 @@ fn cmd_ping(arguments: &str) -> bool {
         target,
         format_ipv4(address)
     ));
-    let connected = crate::netstack::routing::find_route(address).is_some();
-    for sequence in 0..count {
-        if connected {
+
+    let probe_count = if count == 0 { 10 } else { count };
+    let identifier = 0x4E61u16;
+    let mut received = 0u32;
+    let mut replies_size = 32usize;
+
+    for sequence in 0..probe_count {
+        let sequence = sequence as u16;
+        crate::netstack::icmp::arm_echo_reply(identifier, sequence);
+        let sent = crate::netstack::icmp::send_echo_request(address, identifier, sequence);
+        if !sent {
+            output_line("Transmission failed.");
+            continue;
+        }
+
+        let start = crate::hal::common::pit::get_system_time_ms();
+        let deadline = start + 1_000;
+        let mut got_reply = false;
+        while crate::hal::common::pit::get_system_time_ms() < deadline {
+            crate::drivers::net::poll_all();
+            if let Some((_, size)) = crate::netstack::icmp::take_echo_reply(identifier, sequence) {
+                replies_size = size.max(0);
+                received += 1;
+                got_reply = true;
+                break;
+            }
+        }
+
+        if got_reply {
             output_line(&format!(
-                "Reply from {}: bytes=32 time<1ms TTL=128",
-                format_ipv4(address)
+                "Reply from {}: bytes={} time<1ms TTL=128",
+                format_ipv4(address),
+                replies_size
             ));
         } else {
             output_line("Request timed out.");
         }
-        if count == 0 {
-            break;
-        }
-        let _ = sequence;
     }
+
+    let lost = probe_count.saturating_sub(received);
     output_line("");
-    if connected {
-        output_line(&format!("Ping statistics for {}:", format_ipv4(address)));
-        output_line("     Packets: Sent = 4, Received = 4, Lost = 0 (0% loss)");
-    } else {
-        output_line(&format!("Ping statistics for {}:", format_ipv4(address)));
-        output_line("     Packets: Sent = 4, Received = 0, Lost = 4 (100% loss)");
-    }
+    output_line(&format!("Ping statistics for {}:", format_ipv4(address)));
+    output_line(&format!(
+        "     Packets: Sent = {}, Received = {}, Lost = {} ({}% loss)",
+        probe_count,
+        received,
+        lost,
+        (lost * 100) / probe_count.max(1)
+    ));
     false
 }
 
