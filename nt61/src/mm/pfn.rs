@@ -471,24 +471,21 @@ impl PfnDatabase {
     }
 
     fn bump_state_count(&self, state: MMPFNSTATE, delta: i64) {
+        let apply = |counter: &AtomicU64| {
+            let _ = counter.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+                Some((current as i64).saturating_add(delta).max(0) as u64)
+            });
+        };
+
         if (state.as_u32() as usize) < self.state_counts.len() {
-            // Use SeqCst for cross-core visibility in multi-core environment
-            self.state_counts[state.as_u32() as usize].fetch_add(delta as u64, Ordering::SeqCst);
+            // Use SeqCst for cross-core visibility in multi-core environment.
+            apply(&self.state_counts[state.as_u32() as usize]);
         }
         match state {
-            MMPFNSTATE::Free => {
-                self.total_free.fetch_add(delta as u64, Ordering::SeqCst);
-            }
-            MMPFNSTATE::Zeroed => {
-                self.total_zeroed.fetch_add(delta as u64, Ordering::SeqCst);
-            }
-            s if s.is_standby() => {
-                self.total_standby.fetch_add(delta as u64, Ordering::SeqCst);
-            }
-            MMPFNSTATE::Modified | MMPFNSTATE::ModifiedNoWrite => {
-                self.total_modified
-                    .fetch_add(delta as u64, Ordering::SeqCst);
-            }
+            MMPFNSTATE::Free => apply(&self.total_free),
+            MMPFNSTATE::Zeroed => apply(&self.total_zeroed),
+            s if s.is_standby() => apply(&self.total_standby),
+            MMPFNSTATE::Modified | MMPFNSTATE::ModifiedNoWrite => apply(&self.total_modified),
             _ => {}
         }
     }
@@ -839,11 +836,11 @@ pub fn init(base_pfn: PfnNumber, pfn_count: PfnNumber) {
         let mut db = PFN_DB.lock();
         db.init(PFN_STORAGE_PTR, PFN_STORAGE_CAPACITY, base_pfn, pfn_count);
         db.seed_free(base_pfn, pfn_count);
-        crate::hal::serial::write_string("[mm] pfn::init: PFN_COUNT=0x");
-        crate::hal::serial::write_hex_u64(pfn_count);
-        crate::hal::serial::write_string(" highest_pfn=0x");
-        crate::hal::serial::write_hex_u64(db.highest_pfn);
-        crate::hal::serial::write_string("\r\n");
+        crate::hal::serial::write_string_always("[mm] PFN_COUNT=");
+        crate::mm::write_decimal_u64(pfn_count);
+        crate::hal::serial::write_string_always(" FREE_AFTER_SEED=");
+        crate::mm::write_decimal_u64(db.free_count());
+        crate::hal::serial::write_string_always("\r\n");
     }
 }
 
@@ -872,11 +869,11 @@ pub fn allocate_pfn() -> Option<PfnNumber> {
             }
         }
     }
-    crate::hal::serial::write_string("[PFN] OUT_OF_PFNS: self-heal free_in_db=0x");
+    crate::hal::serial::write_string_always("[PFN] OUT_OF_PFNS: self-heal free_in_db=0x");
     crate::hal::serial::write_hex_u64(free_count);
-    crate::hal::serial::write_string(" free_list_count=0x");
+    crate::hal::serial::write_string_always(" free_list_count=0x");
     crate::hal::serial::write_hex_u64(db.lists[PFNL_FREE].count as u64);
-    crate::hal::serial::write_string("\r\n");
+    crate::hal::serial::write_string_always("\r\n");
     if free_count > 0 {
         // Try to repair the list by re-inserting all free entries.
         // First reset the list.
@@ -893,11 +890,11 @@ pub fn allocate_pfn() -> Option<PfnNumber> {
                 }
             }
         }
-        crate::hal::serial::write_string("[PFN] self-heal: rebuilt free list, head=0x");
+        crate::hal::serial::write_string_always("[PFN] self-heal: rebuilt free list, head=0x");
         crate::hal::serial::write_hex_u64(db.lists[PFNL_FREE].head);
-        crate::hal::serial::write_string(" count=0x");
+        crate::hal::serial::write_string_always(" count=0x");
         crate::hal::serial::write_hex_u64(db.lists[PFNL_FREE].count as u64);
-        crate::hal::serial::write_string("\r\n");
+        crate::hal::serial::write_string_always("\r\n");
         // Retry the allocation.
         if let Some(pfn) = db.pop_free() {
             db.allocate_pfn(pfn);
@@ -917,42 +914,42 @@ pub fn allocate_pfn_range(count: PfnNumber) -> Option<PfnNumber> {
     if count == 1 {
         return allocate_pfn();
     }
-    // Scan the free list for a contiguous run of `count` pages.
-    let head = db.lists[PFNL_FREE].head;
-    let mut current = head;
+    // The free list is populated in LIFO order, so it does not provide a
+    // reliable contiguous-order view. Walk the PFN range and track physical
+    // adjacency using the database state instead.
     let mut run_start: Option<PfnNumber> = None;
     let mut run_len: u64 = 0;
-    let mut prev: PfnNumber = 0;
-    // Walk up to 1M PFNs to keep the search bounded.
-    let mut steps = 0u64;
-    while current != 0 && steps < 1_000_000 {
-        steps += 1;
-        if prev != 0 && current == prev + 1 {
-            run_len += 1;
+    let mut pfn = db.lowest_pfn;
+    while pfn < db.highest_pfn {
+        let free = db
+            .entry(pfn)
+            .map(|entry| unsafe { (*entry).state() == MMPFNSTATE::Free })
+            .unwrap_or(false);
+
+        if free {
             if run_start.is_none() {
-                run_start = Some(prev);
+                run_start = Some(pfn);
+            }
+            run_len += 1;
+            if run_len == count {
+                let start = run_start.unwrap();
+                for i in 0..count {
+                    let allocated = start + i;
+                    db.unlink(allocated);
+                    db.allocate_pfn(allocated);
+                }
+                return Some(start);
             }
         } else {
-            run_len = 1;
-            run_start = Some(current);
+            run_start = None;
+            run_len = 0;
         }
-        if run_len >= count {
-            // Unlink `count` consecutive PFNs.
-            for i in 0..count {
-                let p = run_start.unwrap() + i;
-                db.unlink(p);
-                db.allocate_pfn(p);
-            }
-            return run_start;
-        }
-        let entry = db.entry(current)?;
-        unsafe {
-            prev = current;
-            current = (*entry).u1.flink;
-        }
+
+        pfn = pfn.saturating_add(1);
     }
-    // Non-contiguous fallback: just return the first free page and
-    // rely on the caller to handle a single page.
+
+    // Non-contiguous fallback: return one page and let callers that require
+    // contiguity reject the partial result.
     if let Some(p) = db.pop_free() {
         db.allocate_pfn(p);
         return Some(p);
@@ -1071,6 +1068,11 @@ pub fn get_database_base() -> PfnNumber {
 pub fn get_free_pfns() -> u64 {
     let db = PFN_DB.lock();
     db.free_count()
+}
+
+pub fn get_free_list_stats() -> (u64, u64) {
+    let db = PFN_DB.lock();
+    (db.lists[PFNL_FREE].head, db.lists[PFNL_FREE].count as u64)
 }
 
 /// Lookup a PFN entry pointer from a physical address.
