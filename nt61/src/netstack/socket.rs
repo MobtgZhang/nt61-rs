@@ -46,6 +46,7 @@ pub enum SocketState {
     Closed,
     Bound,
     Listening,
+    Connecting,
     Connected,
     Closing,
 }
@@ -66,10 +67,10 @@ impl SockAddr {
             family,
             port,
             addr: [
-                (ip >> 0) as u8,
-                (ip >> 8) as u8,
-                (ip >> 16) as u8,
                 (ip >> 24) as u8,
+                (ip >> 16) as u8,
+                (ip >> 8) as u8,
+                ip as u8,
             ],
             zeros: [0; 8],
         }
@@ -329,7 +330,7 @@ pub fn connect(socket_id: u32, addr: &SockAddr) -> Result<(), SocketError> {
 
     match socket.socket_type {
         SocketType::Stream => {
-            let local_ip = ipif::get_our_ip_addresses().first().copied().unwrap_or(0);
+            let local_ip = ipif::get_outbound_ip().unwrap_or(0);
             let local_port = 0;
             let remote_ip = addr.ip();
             let remote_port = addr.port;
@@ -337,15 +338,54 @@ pub fn connect(socket_id: u32, addr: &SockAddr) -> Result<(), SocketError> {
             if let Some(tcp_id) = tcp::connect(local_ip, local_port, remote_ip, remote_port) {
                 socket.tcp_socket_id = Some(tcp_id);
                 socket.remote_addr = Some(*addr);
-                socket.state = SocketState::Connected;
-                Ok(())
+                socket.state = SocketState::Connecting;
+                drop(sockets);
+
+                let start = crate::hal::common::pit::get_system_time_ms();
+                let deadline = start + 3_000;
+                let mut established = false;
+                while crate::hal::common::pit::get_system_time_ms() < deadline {
+                    crate::drivers::net::poll_all();
+                    match tcp::socket_state(tcp_id) {
+                        tcp::TcpState::Established => {
+                            established = true;
+                            break;
+                        }
+                        tcp::TcpState::Closed => break,
+                        _ => {}
+                    }
+                }
+
+                if !established {
+                    tcp::close(tcp_id);
+                }
+
+                let mut sockets = SOCKETS.lock();
+                if let Some(socket) = sockets.iter_mut().find(|socket| socket.id == socket_id) {
+                    socket.state = if established {
+                        SocketState::Connected
+                    } else {
+                        SocketState::Closed
+                    };
+                }
+
+                if established {
+                    Ok(())
+                } else {
+                    Err(SocketError::ConnectionRefused)
+                }
             } else {
                 Err(SocketError::ConnectionRefused)
             }
         }
         SocketType::Dgram => {
+            let local_ip = ipif::get_outbound_ip().unwrap_or(0);
             let socket_idx =
-                udp::create_socket(addr.port, addr.ip()).ok_or(SocketError::ConnectionRefused)?;
+                udp::create_socket(0, local_ip).ok_or(SocketError::ConnectionRefused)?;
+            if !udp::connect(socket_idx, addr.ip(), addr.port) {
+                udp::close_socket(socket_idx);
+                return Err(SocketError::ConnectionRefused);
+            }
             socket.udp_socket_idx = Some(socket_idx);
             socket.remote_addr = Some(*addr);
             socket.state = SocketState::Connected;
