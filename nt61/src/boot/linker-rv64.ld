@@ -33,6 +33,7 @@ PHDRS {
 
 SECTIONS {
     . = BASE_ADDRESS;
+    PROVIDE(__image_start = .);
 
     /* Keep the PE headers at RVA 0 and start executable code at the
      * first section-aligned RVA. GNU `objcopy -O pei-riscv64-little`
@@ -67,4 +68,6 @@ SECTIONS {
         *(.dynstr)
         *(.dynamic)
     }
+
+    PROVIDE(__image_end = .);
 }
