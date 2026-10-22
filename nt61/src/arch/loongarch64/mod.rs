@@ -93,6 +93,12 @@ pub fn init_page_walk() {
 
 /// Initialise LoongArch64 architecture state.
 pub fn init() {
+    // Install the exception/TLB-refill vectors before the memory
+    // manager enables mapped-address mode. A missing mapping during
+    // early paging must be handled by the kernel, not by the
+    // firmware's unmapped vector.
+    crate::arch::loongarch64::idt::init();
+
     // Paging is intentionally left in the state the firmware
     // (or our early `arch_early_ensure_serial_ready` helper)
     // left it in. The kernel starts with `PG = 0` so that
