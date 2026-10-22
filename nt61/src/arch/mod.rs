@@ -177,6 +177,7 @@ pub fn init_hardware() {
         loongarch64::serial::serial_init(0);
         loongarch64::pit::init(0x1FE0_0000);
         loongarch64::pic::init(0x1FE0_0000 + 0x1000);
+        crate::hal::common::keyboard_unified::enable_serial_rx_irq();
         loongarch64::syscall::init();
     }
 }
@@ -192,13 +193,13 @@ pub fn start_smp() {
     crate::arch::boot::early_write_str(b"[SMP] begin\r\n");
     let page_root_pfn = read_current_page_root() >> 12;
     crate::arch::boot::early_write_str(b"[SMP] root read\r\n");
-   if page_root_pfn != 0 {
-       crate::arch::boot::early_write_str(b"[SMP] boot_aps_begin\r\n");
-       unsafe {
-           common::smp::boot_secondary_cpus(page_root_pfn);
-       }
-       crate::arch::boot::early_write_str(b"[SMP] boot_aps_done\r\n");
-   }
+    if page_root_pfn != 0 {
+        crate::arch::boot::early_write_str(b"[SMP] boot_aps_begin\r\n");
+        unsafe {
+            common::smp::boot_secondary_cpus(page_root_pfn);
+        }
+        crate::arch::boot::early_write_str(b"[SMP] boot_aps_done\r\n");
+    }
     let ap_count = common::smp::cpu_count();
     crate::arch::boot::early_write_str(b"[SMP] cpu_count=");
     const SMP_HEX: &[u8; 16] = b"0123456789ABCDEF";
@@ -207,7 +208,7 @@ pub fn start_smp() {
         crate::arch::boot::early_write_str(core::slice::from_ref(&SMP_HEX[nibble]));
     }
     crate::arch::boot::early_write_str(b"\r\n");
-   crate::arch::boot::early_write_str(b"[SMP] done\r\n");
+    crate::arch::boot::early_write_str(b"[SMP] done\r\n");
 
     // The architecture implementation is responsible for scheduling PRCB
     // allocation before AP entry, because only it knows the true CPU count.
@@ -354,6 +355,8 @@ pub fn translate_virt(va: u64) -> Option<u64> {
 pub fn kernel_page_root() -> Option<u64> {
     #[cfg(target_arch = "x86_64")]
     return Some(read_current_page_root());
+    #[cfg(any(target_arch = "riscv64", target_arch = "loongarch64"))]
+    return Some(read_current_page_root());
     #[cfg(not(target_arch = "x86_64"))]
     None
 }
@@ -365,7 +368,16 @@ pub const fn identity_mapping_limit() -> Option<u64> {
     return Some(0x1_0000_0000);
     #[cfg(target_arch = "loongarch64")]
     return Some(0x1000_0000); // 256 MB low-RAM identity window
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "loongarch64")))]
+                              // RISC-V: QEMU virt RAM starts at 0x8000_0000; mapping from PA 0
+                              // would waste 2 GiB of page-table work on non-existent memory.
+                              // The RISC-V-specific block in `vas::init()` maps the RAM window.
+    #[cfg(target_arch = "aarch64")]
+    return Some(0x1000_0000); // 256 MB low-RAM identity window
+    #[cfg(not(any(
+        target_arch = "x86_64",
+        target_arch = "loongarch64",
+        target_arch = "aarch64"
+    )))]
     None
 }
 
@@ -627,7 +639,47 @@ pub fn switch_to_system_address_space() -> Option<u64> {
         }
         Some(saved)
     }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(any(target_arch = "riscv64", target_arch = "loongarch64"))]
+    {
+        let system_root = crate::mm::vas::MM_SYSTEM_VAS.lock().pml4_phys;
+        #[cfg(target_arch = "riscv64")]
+        {
+            let satp: u64;
+            unsafe {
+                core::arch::asm!("csrr {}, satp", out(reg) satp, options(nostack));
+            }
+            let satp_root = (satp & 0x0000_0FFF_FFFF_FFFF) << 12;
+            crate::hal::serial::write_string_always(&alloc::format!(
+                "[SYSSW] satp_root={:#x} mirror={:#x}\r\n",
+                satp_root,
+                read_current_page_root()
+            ));
+            if satp >> 60 == 0 {
+                return None;
+            }
+            if satp_root == system_root {
+                return Some(system_root);
+            }
+        }
+        crate::hal::serial::write_string_always(&alloc::format!(
+            "[SYSSW] system={:#x} saved={:#x}\r\n",
+            system_root,
+            read_current_page_root()
+        ));
+        if system_root == 0 {
+            return None;
+        }
+        let saved = read_current_page_root();
+        if system_root != saved {
+            unsafe { load_page_root(system_root >> 12) };
+        }
+        Some(saved)
+    }
+    #[cfg(not(any(
+        target_arch = "x86_64",
+        target_arch = "riscv64",
+        target_arch = "loongarch64"
+    )))]
     None
 }
 
@@ -1217,5 +1269,17 @@ pub fn identity_map_region(pa: u64, size: u64) -> bool {
     #[cfg(target_arch = "loongarch64")]
     {
         loongarch64::paging::identity_map_region(pa, size)
+    }
+}
+
+/// Re-encode a portable x86-format root entry for the active MMU.
+pub fn translate_x86_root_entry(entry: u64) -> u64 {
+    #[cfg(target_arch = "riscv64")]
+    {
+        riscv64::paging::translate_x86_root_entry(entry)
+    }
+    #[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
+    {
+        entry & !crate::mm::pte::PTE_US
     }
 }
