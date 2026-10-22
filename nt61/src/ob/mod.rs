@@ -477,44 +477,44 @@ impl ObType {
 /// 36 = PowerRequest
 /// 37 = W32Object
 static OB_TYPE_INDEX_TABLE: [&str; 38] = [
-    "Type",         // 0
-    "Process",      // 1
-    "Thread",       // 2
-    "Directory",    // 3
-    "SymbolicLink", // 4
-    "Token",        // 5
-    "Job",          // 6
-    "Event",        // 7 (Notification)
-    "Event",        // 8 (Synchronization)
-    "Section",      // 9
-    "Mutant",       // 10
-    "Semaphore",    // 11
-    "TmEn",         // 12
-    "TmTm",         // 13
-    "Key",          // 14
-    "TmRm",         // 15
-    "TmTx",         // 16
-    "Desktop",      // 17
-    "WindowStation",// 18
-    "Session",      // 19
-    "Partition",    // 20
-    "Callback",     // 21
+    "Type",                    // 0
+    "Process",                 // 1
+    "Thread",                  // 2
+    "Directory",               // 3
+    "SymbolicLink",            // 4
+    "Token",                   // 5
+    "Job",                     // 6
+    "Event",                   // 7 (Notification)
+    "Event",                   // 8 (Synchronization)
+    "Section",                 // 9
+    "Mutant",                  // 10
+    "Semaphore",               // 11
+    "TmEn",                    // 12
+    "TmTm",                    // 13
+    "Key",                     // 14
+    "TmRm",                    // 15
+    "TmTx",                    // 16
+    "Desktop",                 // 17
+    "WindowStation",           // 18
+    "Session",                 // 19
+    "Partition",               // 20
+    "Callback",                // 21
     "FilterCommunicationPort", // 22
     "FilterConnectionPort",    // 23
     "EtwRegistration",         // 24
     "EtwConsumer",             // 25
     "PcwInstance",             // 26
     "PcwProvider",             // 27
-    "Adapter",      // 28
-    "Controller",   // 29
-    "Device",       // 30
-    "Driver",       // 31
-    "IoCompletion", // 32
-    "Timer",        // 33
-    "Profile",      // 34
-    "WmiGuid",      // 35
-    "PowerRequest", // 36
-    "W32Object",    // 37
+    "Adapter",                 // 28
+    "Controller",              // 29
+    "Device",                  // 30
+    "Driver",                  // 31
+    "IoCompletion",            // 32
+    "Timer",                   // 33
+    "Profile",                 // 34
+    "WmiGuid",                 // 35
+    "PowerRequest",            // 36
+    "W32Object",               // 37
 ];
 
 /// Get the type name for a given type index.
