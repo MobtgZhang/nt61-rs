@@ -70,7 +70,7 @@ impl Ipv4Header {
 
     /// Get the total header length in bytes
     pub fn total_length(&self) -> usize {
-        u16::from_be(self.total_length) as usize
+        self.total_length as usize
     }
 
     /// Get the payload length
@@ -114,17 +114,17 @@ impl Ipv4Header {
 
     /// Check if don't fragment flag is set
     pub fn dont_fragment(&self) -> bool {
-        (u16::from_be(self.flags_offset) & 0x4000) != 0
+        (self.flags_offset & 0x4000) != 0
     }
 
     /// Check if more fragments flag is set
     pub fn more_fragments(&self) -> bool {
-        (u16::from_be(self.flags_offset) & 0x2000) != 0
+        (self.flags_offset & 0x2000) != 0
     }
 
     /// Get fragment offset
     pub fn fragment_offset(&self) -> u16 {
-        u16::from_be(self.flags_offset) & 0x1FFF
+        self.flags_offset & 0x1FFF
     }
 
     /// Parse from bytes
@@ -213,20 +213,15 @@ pub fn verify_checksum(_header: &Ipv4Header, data: &[u8]) -> bool {
 /// Parse an IPv4 header from bytes
 pub fn parse_ipv4_header(data: &[u8]) -> Option<(Ipv4Header, &[u8])> {
     let header = Ipv4Header::from_bytes(data)?;
-
-    // The IHL and total_length fields are attacker-controlled, so the
-    // slice indexing below is only safe after validation.
     if !header.validate(data) {
         return None;
     }
-
-    // Verify checksum
     if !verify_checksum(&header, &data[..header.header_length()]) {
         return None;
     }
-
-    let payload = &data[header.header_length()..header.total_length()];
-
+    let payload_start = header.header_length();
+    let payload_end = header.total_length();
+    let payload = &data[payload_start..payload_end];
     Some((header, payload))
 }
 
@@ -290,8 +285,15 @@ fn is_icmp_error(payload: &[u8]) -> bool {
 
 /// Deliver a complete datagram to the upper-layer protocol.
 fn dispatch_datagram(header: &Ipv4Header, payload: &[u8], _nic_type: NicType, _nic_index: usize) {
+    crate::hal::serial::write_string_always(&alloc::format!(
+        "[NET-IPV4] dispatch proto={} len={}\r\n",
+        header.protocol,
+        payload.len()
+    ));
     match Protocol::from_u8(header.protocol) {
-        Some(Protocol::Icmp) => crate::netstack::icmp::icmp_input(header.src_ip, payload),
+        Some(Protocol::Icmp) => {
+            crate::netstack::icmp::icmp_input(header.src_ip, header.dst_ip, payload)
+        }
         Some(Protocol::Tcp) => {
             crate::netstack::tcp::tcp_input(header.src_ip, header.dst_ip, payload)
         }
@@ -381,7 +383,10 @@ pub fn forward_ipv4(header: &Ipv4Header, payload: &[u8]) -> bool {
     };
     let src_mac = match crate::netstack::ethif::get_primary_mac() {
         Some(mac) => mac,
-        None => return false,
+        None => {
+            crate::hal::serial::write_string_always("[NET-IPV4] no primary mac\r\n");
+            return false;
+        }
     };
 
     let frame = crate::netstack::eth::build_ethernet_frame(
@@ -423,6 +428,15 @@ pub fn ipv4_input(header: &Ipv4Header, payload: &[u8], nic_type: NicType, nic_in
 
     // Also check for broadcast
     let is_broadcast = header.dst_ip == 0xFFFFFFFF || is_broadcast_ip(header.dst_ip);
+    crate::hal::serial::write_string_always(&alloc::format!(
+        "[NET-IPV4] input src={} dst={} proto={} len={} for_us={} bc={}\r\n",
+        crate::netstack::ipif::ip_to_string(header.src_ip),
+        crate::netstack::ipif::ip_to_string(header.dst_ip),
+        header.protocol,
+        payload.len(),
+        is_for_us,
+        is_broadcast
+    ));
 
     if !is_for_us && !is_broadcast {
         forward_ipv4(header, payload);
@@ -453,40 +467,47 @@ fn is_broadcast_ip(ip: u32) -> bool {
 
 /// Send an IPv4 packet
 pub fn send_ipv4(src_ip: u32, dst_ip: u32, protocol: u8, payload: &[u8]) -> bool {
+    crate::hal::serial::write_string_always("[NET-IPV4] send entering\r\n");
     // Loopback shortcut: 127.0.0.0/8 must NEVER hit the wire.
     // Re-inject the packet locally through ipv4_input with the
     // primary NIC type, which dispatches to TCP/UDP/ICMP just
     // like a packet from the network would.
-    if (dst_ip & 0xFF000000) == 0x7F000000 {
-        // Loopback interface owns if_index 0 (registered via
-        // ipif::seed_loopback at boot). The NIC index is
-        // unimportant for ipv4_input's dispatch, so we pass 0.
+    let our_ips = crate::netstack::ipif::get_our_ip_addresses();
+    if (dst_ip & 0xFF000000) == 0x7F000000 || (our_ips.contains(&dst_ip) && src_ip == dst_ip) {
         let packet = build_ipv4_packet(src_ip, dst_ip, protocol, 64, payload);
         if let Some((header, ip_payload)) = parse_ipv4_header(&packet) {
-            ipv4_input(
-                &header,
-                ip_payload,
-                crate::drivers::net::NicType::VirtioNet,
-                0,
-            );
+            ipv4_input(&header, ip_payload, NicType::VirtioNet, 0);
+            crate::hal::serial::write_string_always("[NET-IPV4] loopback ok\r\n");
             return true;
         }
+        crate::hal::serial::write_string_always("[NET-IPV4] loopback build failed\r\n");
         return false;
     }
 
     // Build the packet
     let packet = build_ipv4_packet(src_ip, dst_ip, protocol, 64, payload);
 
-    // Use ARP to resolve the destination MAC
-    let dst_mac = match crate::netstack::arp::arp_resolve(dst_ip) {
-        Some(mac) => mac,
-        None => return false,
+    // Link-layer broadcast does not use ARP.
+    let dst_mac = if dst_ip == 0xFFFF_FFFF {
+        [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
+    } else {
+        if our_ips.contains(&dst_ip) && src_ip != dst_ip {
+            crate::netstack::ethif::get_primary_mac().unwrap_or([0; 6])
+        } else {
+            match crate::netstack::arp::arp_resolve(dst_ip) {
+                Some(mac) => mac,
+                None => return false,
+            }
+        }
     };
 
     // Get our MAC address
     let src_mac = match crate::netstack::ethif::get_primary_mac() {
         Some(mac) => mac,
-        None => return false,
+        None => {
+            crate::hal::serial::write_string_always("[NET-IPV4] no primary mac\r\n");
+            return false;
+        }
     };
 
     // Build Ethernet frame
@@ -494,8 +515,13 @@ pub fn send_ipv4(src_ip: u32, dst_ip: u32, protocol: u8, payload: &[u8]) -> bool
 
     // Send to NIC
     let Some((nic_type, nic_idx)) = crate::netstack::ethif::get_primary_interface() else {
+        crate::hal::serial::write_string_always("[NET-IPV4] no primary interface\r\n");
         return false;
     };
 
-    crate::drivers::net::send_to_nic(nic_type, nic_idx, &frame)
+    let sent = crate::drivers::net::send_to_nic(nic_type, nic_idx, &frame);
+    if !sent {
+        crate::hal::serial::write_string_always("[NET-IPV4] nic send failed\r\n");
+    }
+    sent
 }
