@@ -48,7 +48,7 @@ pub enum MachineType {
     ARM64 = 0xAA64,
     IA64 = 0x0200,
     LOONGARCH64 = 0x6264,
-    RISCV64 = 0xE42C,
+    RISCV64 = 0x5064,
 }
 
 /// Optional header magic
@@ -1856,13 +1856,16 @@ pub struct UserImageMapping {
 ///   - Uninitialized data (.bss): R+W
 pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<UserImageMapping> {
     crate::boot_debug_println!("[loader] load_into_user_address_space: A");
+    crate::hal::serial::write_string_always("[LOADER] enter\r\n");
     // 1. Parse PE headers.
     let (file_hdr, _opt_size, _magic, opt_off) = parse_headers(image)?;
+    crate::hal::serial::write_string_always("[LOADER] headers ok\r\n");
     crate::boot_debug_println!(
         "[loader] load_into_user_address_space: B (parsed headers, sect={})",
         file_hdr.number_of_sections
     );
     let (image_base, size_of_image, aep, _subsystem) = read_opt64(image, opt_off)?;
+    crate::hal::serial::write_string_always("[LOADER] opt ok\r\n");
     crate::boot_debug_println!(
         "[loader] load_into_user_address_space: C (image_base=0x{:x} size=0x{:x} aep=0x{:x})",
         image_base,
@@ -1872,6 +1875,14 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
     if size_of_image == 0 {
         return None;
     }
+
+    // Sv39 user VA is limited to the low 256 GiB. PE preferred bases
+    // generated for other architectures can be far above that limit, so
+    // RISC-V uses its own architecture-specific user image base and
+    // relies on PE base relocation. This mirrors the ARM64 loader policy
+    // rather than inheriting x86_64 canonical addresses.
+    #[cfg(target_arch = "riscv64")]
+    let image_base = crate::mm::vas::DEFAULT_USER_IMAGE_BASE;
 
     // 2. Reserve a contiguous physical range big enough for the
     //    image and map it into the per-process PML4.
@@ -1884,6 +1895,7 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
     // a fixed-size stack array are supported (a 16-slot array caps
     // at 64 KiB; real PE images can be megabytes).
     let mut phys_pages: alloc::vec::Vec<u64> = alloc::vec::Vec::with_capacity(page_count);
+    crate::hal::serial::write_string_always("[LOADER] pages alloc\r\n");
     crate::boot_debug_println!("[loader] load_into_user_address_space: E (stack array ready)");
     for _ in 0..page_count {
         let Some(p) = crate::mm::vas::alloc_zeroed_page_for_vas() else {
@@ -1898,6 +1910,7 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
         "[loader] load_into_user_address_space: F ({} pages allocated)",
         phys_pages.len()
     );
+    crate::hal::serial::write_string_always("[LOADER] pages ok\r\n");
 
     // 2b. Build section permission table as a fixed-size stack
     // array. Real PEs never have more than ~32 sections; we
@@ -1978,6 +1991,7 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
         "[loader] load_into_user_address_space: G (copying sections, count={})",
         file_hdr.number_of_sections
     );
+    crate::hal::serial::write_string_always("[LOADER] mapping ok\r\n");
     // CRITICAL: temporarily switch CR3 to the system PML4 before doing
     // physical-address writes. The current CR3 is the per-process user
     // PML4 (set by attach_process), whose identity-map pages may not be
@@ -1989,6 +2003,7 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
     // (e.g. on the very first attach), we read CR3 itself as the
     // best-effort fallback.
     let saved_cr3 = crate::arch::switch_to_system_address_space();
+    crate::hal::serial::write_string_always("[LOADER] section copy\r\n");
     for i in 0..file_hdr.number_of_sections as usize {
         let sh_off = sect_off + i * 40;
         let sh: SectionHeader = if sh_off + 40 <= image.len() {
@@ -2015,6 +2030,7 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
 
         // Copy from the source PE buffer to the right user page.
         for off in (0..size).step_by(0x1000) {
+            crate::hal::serial::write_string_always("[LOADER] copy loop\r\n");
             let chunk = core::cmp::min(0x1000, size - off);
             let page_va = dst_va + off as u64;
             let page_idx = ((page_va - image_base) / 0x1000) as usize;
@@ -2122,6 +2138,7 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
         crate::mm::vas::invalidate_tlb(page_va);
     }
     crate::boot_println!("[loader] final NX->X remap complete (with invlpg)");
+    crate::hal::serial::write_string_always("[LOADER] remap ok\r\n");
 
     // Belt-and-braces: also flush the entire TLB by reloading CR3.
     // This guarantees that no stale translation (from any VA we
@@ -2137,6 +2154,7 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
     let entry_point = image_base + aep as u64;
     // crate::kprintln!("[loader] loaded PE into user PML4: image_base=0x{:x} entry=0x{:x} size=0x{:x}",
     //               image_base, entry_point, size_of_image);
+    crate::hal::serial::write_string_always("[LOADER] done\r\n");
     Some(UserImageMapping {
         image_base,
         image_size: size_of_image as u64,
