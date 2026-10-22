@@ -10,8 +10,12 @@ use core::alloc::Layout;
 use core::mem::size_of;
 use core::ptr;
 
+#[cfg(target_arch = "riscv64")]
+pub const HEAP_BASE: u64 = 0x0000_003F_C000_0000;
+
+#[cfg(not(target_arch = "riscv64"))]
 pub const HEAP_BASE: u64 = 0x0000_7FFF_C000_0000;
-pub const HEAP_PAGE_BUDGET: u64 = 0x0200_0000;
+pub const HEAP_PAGE_BUDGET: u64 = 0x0040_0000;
 const BLOCK_MAGIC: u32 = 0x4B4F_4C42;
 const HEADER_SIZE: usize = size_of::<BlockHeader>();
 const MIN_BLOCK_SIZE: usize = 32;
@@ -42,6 +46,7 @@ pub struct UserHeapAllocator;
 
 pub fn init_user_heap(pml4: u64) -> u64 {
     crate::boot_println!("[USERHEAP] init enter pml4=0x{:x}", pml4);
+    crate::hal::serial::write_string_always("[USERHEAP] enter\r\n");
     if pml4 == 0 {
         return 0;
     }
@@ -52,7 +57,16 @@ pub fn init_user_heap(pml4: u64) -> u64 {
         return state.base;
     }
 
+    crate::hal::serial::write_string_always("[USERHEAP] mapping\r\n");
     let status = vas::map_user_pages(pml4, HEAP_BASE, HEAP_PAGE_BUDGET, pte::PTE_RW | pte::PTE_US);
+    crate::hal::serial::write_string_always("[USERHEAP] mapped\r\n");
+    crate::hal::serial::write_string_always("[USERHEAP] verify first=");
+    crate::hal::serial::write_hex_u64_always(HEAP_BASE);
+    crate::hal::serial::write_string_always(" full=");
+    crate::hal::serial::write_hex_u64(
+        vas::is_user_range_mapped(pml4, HEAP_BASE, HEAP_PAGE_BUDGET) as u64,
+    );
+    crate::hal::serial::write_string_always("\r\n");
     if status != vas::MmStatus::Ok {
         crate::boot_println!("[USERHEAP] map failed status={:?}", status);
         return 0;
@@ -65,15 +79,19 @@ pub fn init_user_heap(pml4: u64) -> u64 {
     // Page-table setup must happen on the system root. Attach only after
     // all user pages exist, so the heap can be initialized through user VAs.
     vas::refresh_kernel_mappings(pml4);
+    crate::hal::serial::write_string_always("[USERHEAP] refreshed\r\n");
     crate::boot_println!("[USERHEAP] kernel mappings refreshed");
     let previous_root = vas::attach_process(pml4);
+    crate::hal::serial::write_string_always("[USERHEAP] attached\r\n");
     crate::boot_println!("[USERHEAP] process attached");
 
     let base = HEAP_BASE;
     let first_block = (base + HEADER_SIZE as u64) as *mut BlockHeader;
     let first_size = HEAP_PAGE_BUDGET as usize - HEADER_SIZE;
+    crate::hal::serial::write_string_always("[USERHEAP] zeroing\r\n");
     unsafe {
         core::ptr::write_bytes(base as *mut u8, 0, HEAP_PAGE_BUDGET as usize);
+        crate::hal::serial::write_string_always("[USERHEAP] zeroed\r\n");
         ptr::write(
             first_block,
             BlockHeader {
