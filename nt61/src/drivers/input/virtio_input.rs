@@ -657,10 +657,9 @@ fn map_region(dev: &pci::PciDevice, region: &CapRegion) -> Option<*mut u8> {
         return None;
     }
     let pages = region.length.div_ceil(4096).max(1);
-    // On non-x86_64 architectures the kernel runs with identity
-    // mapping (VA == PA for physical addresses), so the PCI BAR can
-    // be accessed directly without going through the system PTE
-    // region. On x86_64 the system PTE pool provides the mapping.
+    // Non-x86_64 kernels map PCI configuration space by identity, but
+    // dynamically assigned PCI BARs are not covered automatically. Map
+    // the capability region before touching it.
     #[cfg(target_arch = "x86_64")]
     {
         let mapped = crate::mm::syspte::map_io_space(bar_base + region.offset, pages)?;
@@ -668,7 +667,9 @@ fn map_region(dev: &pci::PciDevice, region: &CapRegion) -> Option<*mut u8> {
     }
     #[cfg(not(target_arch = "x86_64"))]
     {
-        let _ = pages;
+        if !crate::arch::identity_map_region(bar_base, pages * 4096) {
+            return None;
+        }
         Some((bar_base + region.offset) as *mut u8)
     }
 }
@@ -685,10 +686,6 @@ pub fn init() {
         return;
     }
     trace("virtio-input: probe begin\r\n");
-    // On non-x86_64 architectures the system PTE mapping path
-    // (mm::syspte::map_io_space) is not yet reliable. The serial /
-    // UART keyboard fallback handles input; skip PCI probing to
-    // avoid a translation fault on the unmapped system PTE VA.
     for pci_dev in pci::enumerate() {
         trace_fmt(alloc::format!(
             "virtio-input: pci {:02x}:{:02x}.{:02x} vendor={:04x} device={:04x}\r\n",
