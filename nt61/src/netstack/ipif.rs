@@ -140,6 +140,12 @@ pub fn add_interface(address: u32, netmask: u32, gateway: u32, eth_if: u32) -> O
     // Add a default route for this interface's subnet
     add_route(address & netmask, netmask, gateway, if_index, 0);
 
+    // Install the default route only for a real gateway; loopback has
+    // none and must not shadow physical networks.
+    if gateway != 0 {
+        add_route(0, 0, gateway, if_index, 10);
+    }
+
     Some(if_index)
 }
 
@@ -162,7 +168,22 @@ pub fn get_interface(if_index: u32) -> Option<IpInterface> {
 /// Get the default interface
 pub fn get_default_interface() -> Option<u32> {
     let interfaces = IP_INTERFACES.lock();
-    interfaces.first().map(|i| i.if_index)
+    interfaces
+        .iter()
+        .find(|interface| (interface.address & 0xFF00_0000) != 0x7F00_0000)
+        .or_else(|| interfaces.first())
+        .map(|interface| interface.if_index)
+}
+
+/// Return the first non-loopback IPv4 address, or the loopback
+/// address when no physical interface is configured.
+pub fn get_outbound_ip() -> Option<u32> {
+    let interfaces = IP_INTERFACES.lock();
+    interfaces
+        .iter()
+        .find(|interface| (interface.address & 0xFF00_0000) != 0x7F00_0000)
+        .or_else(|| interfaces.first())
+        .map(|interface| interface.address)
 }
 
 /// Get all interfaces
@@ -183,6 +204,19 @@ pub fn add_route(dest: u32, netmask: u32, gateway: u32, if_index: u32, metric: u
 
     // Sort by prefix length (longest match first)
     routes.sort_by(|a, b| b.prefix_len().cmp(&a.prefix_len()));
+
+    // `ipif` is the source of interface-derived routes, while
+    // `routing` is the single lookup table used by forwarding. Keep
+    // both coherent; without this bridge, routes added with an
+    // interface are invisible to IPv4 forwarding.
+    let route_type = if gateway == 0 {
+        crate::netstack::routing::RouteType::Direct
+    } else if netmask == 0 {
+        crate::netstack::routing::RouteType::Default
+    } else {
+        crate::netstack::routing::RouteType::Static
+    };
+    crate::netstack::routing::add_route(dest, netmask, gateway, if_index, metric, route_type);
 
     true
 }
@@ -251,10 +285,7 @@ pub fn seed_loopback() -> Option<u32> {
 
 /// Convert IPv4 address to string
 pub fn ip_to_string(ip: u32) -> alloc::string::String {
-    let b0 = (ip >> 0) as u8;
-    let b1 = (ip >> 8) as u8;
-    let b2 = (ip >> 16) as u8;
-    let b3 = (ip >> 24) as u8;
+    let [b0, b1, b2, b3] = ip.to_be_bytes();
     alloc::format!("{}.{}.{}.{}", b0, b1, b2, b3)
 }
 
