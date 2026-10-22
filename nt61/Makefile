@@ -82,11 +82,14 @@ QEMU_AARCH64 := qemu-system-aarch64
 QEMU_RISCV64 := qemu-system-riscv64
 QEMU_LOONGARCH64 := qemu-system-loongarch64
 
+BRIDGE ?= br0
+QEMU_NET_BRIDGE := -netdev bridge,id=n0,br=$(BRIDGE) -device virtio-net-pci,netdev=n0
+
 # Per-arch CPU model. Each QEMU virt machine has its own preferred CPU.
 # x86_64 / aarch64 defaults are inherited from QEMU; riscv64 / loongarch64
 # need an explicit `-cpu la464` / `-cpu rv64` because the default CPU
 # differs from what EDK2 nightly expects.
-QEMU_CPU_x86_64     := -cpu kvm64
+QEMU_CPU_x86_64     := -accel kvm -cpu host
 QEMU_CPU_aarch64    := -cpu cortex-a57
 QEMU_CPU_riscv64    :=
 QEMU_CPU_loongarch64 := -cpu la464
@@ -379,27 +382,30 @@ endef
 # Disk formats: uses -drive and -boot c (hard disk boot order)
 
 define _run_x86_64
+	@$(SCRIPT_DIR)/../scripts/ensure-qemu-bridge.sh
 	@echo "Starting QEMU (x86_64/$(FORMAT))..."
 	$(QEMU_X86) -machine q35 -m 8G -smp 4 \
 		-drive if=pflash,format=raw,unit=0,readonly=on,file=$(QEMU_FW_CODE) \
 		-drive if=pflash,format=raw,unit=1,file=$(EDK2_OVMF_VARS) \
 		$(if $(filter iso,$(FORMAT)),-cdrom $(ISO_IMG),-drive format=raw,file=$(DISK_IMG)) \
-		-boot $(if $(filter iso,$(FORMAT)),d,c) -net none \
+		-boot $(if $(filter iso,$(FORMAT)),d,c) $(QEMU_NET_BRIDGE) \
 		-serial file:$(SERIAL_LOG) -display gtk
 endef
 
 define _run_aarch64
+	@$(SCRIPT_DIR)/../scripts/ensure-qemu-bridge.sh
 	@echo "Starting QEMU (aarch64/$(FORMAT)) with EDK2 Nightly UEFI..."
 	$(QEMU_AARCH64) -machine virt -m 8G -smp 4 $(QEMU_CPU_aarch64) \
 		-drive if=pflash,format=raw,unit=0,readonly=on,file=$(EDK2_AARCH64_EFI_PADDED) \
 		-drive if=pflash,format=raw,unit=1,file=$(EDK2_AARCH64_VARS) \
 		$(DISK_FLAGS) \
 		-device ramfb -device virtio-keyboard-pci \
-		-boot order=c -net none \
+		-boot order=c $(QEMU_NET_BRIDGE) \
 		-serial file:$(SERIAL_LOG) -display gtk
 endef
 
 define _run_riscv64
+	@$(SCRIPT_DIR)/../scripts/ensure-qemu-bridge.sh
 	@echo "Starting QEMU (riscv64/$(FORMAT)) with EDK2 Nightly UEFI..."
 	# Use the padded code pflash as the firmware volume, the
 	# injected VARS pflash as the variable store, and the disk
@@ -418,17 +424,18 @@ define _run_riscv64
 		-drive if=none,file=$(DISK_IMG),format=raw,id=hd0 \
 		-device $(DISK_DEV_PCI),drive=hd0 -device ramfb \
 		-device virtio-keyboard-pci \
-		-net none \
+		$(QEMU_NET_BRIDGE) \
 		-serial file:$(SERIAL_LOG) -display gtk
 endef
 
 define _run_loongarch64
+	@$(SCRIPT_DIR)/../scripts/ensure-qemu-bridge.sh
 	@echo "Starting QEMU (loongarch64/$(FORMAT)) with EDK2 Nightly UEFI..."
 	$(QEMU_LOONGARCH64) -machine virt -m 8G -smp 4 $(QEMU_CPU_loongarch64) \
 		-pflash $(EDK2_LOONGARCH64_EFI) \
 		-pflash $(EDK2_LOONGARCH64_VARS) \
 		$(DISK_FLAGS) -device ramfb -device virtio-keyboard-pci \
-		-boot order=c -net none \
+		-boot order=c $(QEMU_NET_BRIDGE) \
 		-serial file:$(SERIAL_LOG) -display gtk
 endef
 
@@ -685,6 +692,7 @@ run-x86_64-net: FORMAT=ntfs
 run-x86_64-net: SERIAL_LOG=$(IMAGES_DIR)/serial_x86_64_net.log
 run-x86_64-net: build-x86_64-ntfs
 	@mkdir -p $(IMAGES_DIR)
+	@rm -f $(SERIAL_LOG) $(IMAGES_DIR)/net.pcap
 	$(call _setup_firmware_x86_64)
 	@echo "Launching QEMU (x86_64/net E2E) headless with slirp..."
 	@timeout 60s $(QEMU_X86) -machine q35 -m 4G -smp 4 \
@@ -692,8 +700,30 @@ run-x86_64-net: build-x86_64-ntfs
 		-drive if=pflash,format=raw,unit=1,file=$(EDK2_OVMF_VARS) \
 		-drive format=raw,file=$(DISK_IMG) \
 		-boot c \
-		-netdev user,id=n0 \
+	-netdev user,id=n0 \
+	-device virtio-net-pci,netdev=n0 \
+	-object filter-dump,id=f0,netdev=n0,file=$(IMAGES_DIR)/net.pcap \
+	-serial file:$(SERIAL_LOG) -display none || true
+	@echo "Serial log: $(SERIAL_LOG)"
+
+run-x86_64-net-bridge: ARCH=x86_64
+run-x86_64-net-bridge: FORMAT=ntfs
+run-x86_64-net-bridge: BRIDGE ?= br0
+run-x86_64-net-bridge: SERIAL_LOG=$(IMAGES_DIR)/serial_x86_64_net_bridge.log
+run-x86_64-net-bridge: PCAP=$(IMAGES_DIR)/net-bridge.pcap
+run-x86_64-net-bridge: build-x86_64-ntfs
+	@mkdir -p $(IMAGES_DIR)
+	@rm -f $(SERIAL_LOG) $(PCAP)
+	$(call _setup_firmware_x86_64)
+	@echo "Launching QEMU (x86_64/net bridge) headless..."
+	@timeout 60s $(QEMU_X86) -machine q35 -m 4G -smp 4 \
+		-drive if=pflash,format=raw,unit=0,readonly=on,file=$(QEMU_FW_CODE) \
+		-drive if=pflash,format=raw,unit=1,file=$(EDK2_OVMF_VARS) \
+		-drive format=raw,file=$(DISK_IMG) \
+		-boot c \
+		-netdev bridge,id=n0,br=$(BRIDGE) \
 		-device virtio-net-pci,netdev=n0 \
+		-object filter-dump,id=f0,netdev=n0,file=$(PCAP) \
 		-serial file:$(SERIAL_LOG) -display none || true
 	@echo "Serial log: $(SERIAL_LOG)"
 
@@ -719,17 +749,19 @@ run-x86_64-net: build-x86_64-ntfs
 # because that platform only exposes a virtio-pci bus.
 # ------------------------------------------------------------
 define _run_aarch64_serial
+	@$(SCRIPT_DIR)/../scripts/ensure-qemu-bridge.sh
 	@timeout $(TIMEOUT)s $(QEMU_AARCH64) -machine virt -m 8G -smp 4 $(QEMU_CPU_aarch64) \
 		-drive if=pflash,format=raw,unit=0,readonly=on,file=$(EDK2_AARCH64_EFI_PADDED) \
 		-drive if=pflash,format=raw,unit=1,file=$(EDK2_AARCH64_VARS) \
 		-drive if=none,file=$(DISK_IMG),format=raw,id=hd0 \
 		-device $(DISK_DEV_PCI),drive=hd0 \
 		-device ramfb -device virtio-keyboard-pci \
-		-boot order=c -net none \
+		-boot order=c $(QEMU_NET_BRIDGE) \
 		-serial file:$(SERIAL_LOG) -display gtk || true
 endef
 
 define _run_riscv64_serial
+	@$(SCRIPT_DIR)/../scripts/ensure-qemu-bridge.sh
 	@timeout $(TIMEOUT)s $(QEMU_RISCV64) -machine virt -m 8G -smp 4 $(QEMU_CPU_riscv64) \
 		-bios /usr/share/qemu/opensbi-riscv64-generic-fw_dynamic.bin \
 		-drive if=pflash,format=raw,unit=0,file=$(EDK2_RISCV64_VIRT_PADDED) \
@@ -737,18 +769,19 @@ define _run_riscv64_serial
 		-drive if=none,file=$(DISK_IMG),format=raw,id=hd0 \
 		-device $(DISK_DEV_PCI),drive=hd0 \
 		-device ramfb -device virtio-keyboard-pci \
-		-boot order=c -net none \
+		-boot order=c $(QEMU_NET_BRIDGE) \
 		-serial file:$(SERIAL_LOG) -display gtk || true
 endef
 
 define _run_loongarch64_serial
+	@$(SCRIPT_DIR)/../scripts/ensure-qemu-bridge.sh
 	@timeout $(TIMEOUT)s $(QEMU_LOONGARCH64) -machine virt -m 8G -smp 4 $(QEMU_CPU_loongarch64) \
 		-drive if=pflash,format=raw,unit=0,readonly=on,file=$(EDK2_LOONGARCH64_EFI) \
 		-drive if=pflash,format=raw,unit=1,file=$(EDK2_LOONGARCH64_VARS) \
 		-drive if=none,file=$(DISK_IMG),format=raw,id=hd0 \
 		-device $(DISK_DEV_PCI),drive=hd0 \
 		-device ramfb -device virtio-keyboard-pci \
-		-boot order=c -net none \
+		-boot order=c $(QEMU_NET_BRIDGE) \
 		-serial file:$(SERIAL_LOG) -display gtk || true
 endef
 
