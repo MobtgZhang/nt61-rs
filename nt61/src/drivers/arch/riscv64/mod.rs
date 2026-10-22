@@ -136,7 +136,9 @@ pub unsafe fn register_dispatch() {
     let devices = probe_virtio_devices();
     crate::hal::serial::write_string_always("[RVDRV] probe done\r\n");
     *CACHED_DEVICES.lock() = Some(devices);
+    crate::hal::serial::write_string_always("[RVDRV] cache stored\r\n");
     let count = CACHED_DEVICES.lock().as_ref().unwrap().blk.len();
+    crate::hal::serial::write_string_always("[RVDRV] cache unlocked\r\n");
     for slot in 0..count {
         let device =
             crate::io::create_device(driver, crate::io::DeviceType::Disk, b"\\Device\\VirtioDisk");
@@ -145,6 +147,7 @@ pub unsafe fn register_dispatch() {
         }
         crate::drivers::storage::io_dispatch::register_device(slot, device);
     }
+    crate::hal::serial::write_string_always("[RVDRV] registered\r\n");
 }
 
 /// Probe the PCIe root complex and the virtio-mmio slots, and
