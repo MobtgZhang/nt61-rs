@@ -1663,12 +1663,7 @@ extern "efiapi" fn bootmgr_load_file_callback(
     buffer_size: *mut usize,
     buffer: *mut core::ffi::c_void,
 ) -> uefi::Status {
-    let (base, size) = unsafe {
-        (
-            BOOTMGR_LOAD_FILE_IMAGE_BASE,
-            BOOTMGR_LOAD_FILE_IMAGE_SIZE,
-        )
-    };
+    let (base, size) = unsafe { (BOOTMGR_LOAD_FILE_IMAGE_BASE, BOOTMGR_LOAD_FILE_IMAGE_SIZE) };
     if base == 0 || size == 0 {
         return uefi::Status::UNSUPPORTED;
     }
