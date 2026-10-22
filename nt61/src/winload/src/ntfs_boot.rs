@@ -735,7 +735,7 @@ pub fn read_ntfs_system_file(path: &str) -> Option<Vec<u8>> {
         }
         unsafe {
             core::ptr::addr_of_mut!(CACHED_NTFS_BLOCK_IO_PTR).write_volatile(selected_ptr);
-            core::ptr::addr_of_mut!(NTFS_BLOCK_IO_READY).write_volatile(true);
+            core::ptr::addr_of_mut!(NTFS_BLOCK_IO_READY).write_volatile(selected_ptr != 0);
         }
         if selected_ptr == 0 {
             return None;
