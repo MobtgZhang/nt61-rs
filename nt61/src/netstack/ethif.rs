@@ -100,18 +100,27 @@ static ETH_INTERFACES: Spinlock<Vec<EthInterface>> = Spinlock::new(Vec::new());
 /// Initialize the Ethernet interface layer
 pub fn init() {
     let mut interfaces = ETH_INTERFACES.lock();
+    let virtio_count = net::virtio_net::count();
+    crate::hal::serial::write_string_always("[NET-ETHIF] init entering\r\n");
+    crate::hal::serial::write_string_always(&alloc::format!(
+        "[NET-ETHIF] virtio_count={}\r\n",
+        virtio_count
+    ));
 
     // Discover and register NICs as interfaces
     let mut if_index: u32 = 0;
 
     // Register virtio-net interfaces
-    let virtio_count = net::virtio_net::count();
     for i in 0..virtio_count {
-        if let Some(mac) = net::virtio_net::get_mac(i) {
+        let mac_result = net::virtio_net::get_mac(i);
+        if let Some(mac) = mac_result {
+            crate::hal::serial::write_string_always("[NET-ETHIF] virtio registered\r\n");
             let name = format!("virtio{}\0", i);
             let eth_if = EthInterface::new(if_index, name.as_bytes(), mac, NicType::VirtioNet, i);
             interfaces.push(eth_if);
             if_index += 1;
+        } else {
+            crate::hal::serial::write_string_always("[NET-ETHIF] virtio mac missing\r\n");
         }
     }
 
