@@ -236,10 +236,10 @@ pub mod sstatus {
     pub const SPIE: u64 = 1 << 5;
     /// SPP — previous privilege (0 = U, 1 = S).
     pub const SPP: u64 = 1 << 8;
-    /// UXL — XLEN field for U-mode (RV64 bits [33:32]).
-    pub const UXL_MASK: u64 = 0b11 << 32;
+    /// UXL — XLEN field for U-mode (RV64 bits [35:34]).
+    pub const UXL_MASK: u64 = 0b11 << 34;
     /// UXL = 2 — U-mode executes with XLEN = 64.
-    pub const UXL_64: u64 = 0b10 << 32;
+    pub const UXL_64: u64 = 0b10 << 34;
     /// FS — floating-point status (0 = off, 1 = initial, 2 = clean, 3 = dirty).
     pub const FS_MASK: u64 = 0b11 << 13;
     /// XS — user extension status.
