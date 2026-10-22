@@ -173,6 +173,11 @@ impl Default for IcmpStats {
 /// Global ICMP statistics
 static ICMP_STATS: Spinlock<IcmpStats> = Spinlock::new(IcmpStats::zero());
 
+/// The most recent echo reply, used by `ping`. `(identifier,
+/// sequence, monotonic time, payload length)` is sufficient to pair
+/// concurrent probes without maintaining a socket object.
+static LAST_ECHO_REPLY: Spinlock<Option<(u16, u16, u64, usize)>> = Spinlock::new(None);
+
 /// Initialize the ICMP module
 pub fn init() {
     let mut stats = ICMP_STATS.lock();
@@ -199,64 +204,93 @@ fn calculate_checksum(data: &[u8]) -> u16 {
 }
 
 /// Process an incoming ICMP packet
-pub fn icmp_input(src_ip: u32, data: &[u8]) {
+pub fn icmp_input(src_ip: u32, dst_ip: u32, data: &[u8]) {
     let header = match IcmpHeader::from_bytes(data) {
         Some(h) => h,
         None => return,
     };
 
-    let mut stats = ICMP_STATS.lock();
-    stats.msg_in += 1;
-
-    match header.icmp_type as u8 {
-        0 => {
-            // Echo Reply
-            stats.echo_reply_out += 1;
-            handle_echo_reply(header, &data[8..]);
+    let icmp_type = header.icmp_type as u8;
+    {
+        let mut stats = ICMP_STATS.lock();
+        stats.msg_in += 1;
+        match icmp_type {
+            0 => stats.echo_reply_out += 1,
+            8 => stats.echo_request_in += 1,
+            3 | 4 | 11 | 12 => stats.error_in += 1,
+            _ => {}
         }
+    }
+
+    match icmp_type {
+        0 => handle_echo_reply(header, &data[8..]),
         3 => {
-            // Destination Unreachable
-            stats.error_in += 1;
             handle_dest_unreachable(header, &data[8..]);
         }
-        4 => {
-            // Source Quench
-            stats.error_in += 1;
-        }
+        4 => {}
         5 => {
             // Redirect
         }
         8 => {
             // Echo Request
-            stats.echo_request_in += 1;
-            handle_echo_request(src_ip, header, &data[8..]);
+            handle_echo_request(src_ip, dst_ip, header, &data[8..]);
         }
-        11 => {
-            // Time Exceeded
-            stats.error_in += 1;
-        }
-        12 => {
-            // Parameter Problem
-            stats.error_in += 1;
-        }
+        11 => {}
+        12 => {}
         _ => {}
     }
 }
 
+/// Clear the echo-reply latch before transmitting a probe.
+pub fn arm_echo_reply(identifier: u16, sequence: u16) {
+    *LAST_ECHO_REPLY.lock() = Some((identifier, sequence, 0, 0));
+}
+
+/// Consume an echo reply matching `(identifier, sequence)`.
+pub fn take_echo_reply(identifier: u16, sequence: u16) -> Option<(u64, usize)> {
+    let mut reply = LAST_ECHO_REPLY.lock();
+    match *reply {
+        Some((id, seq, time, size)) if id == identifier && seq == sequence => {
+            *reply = None;
+            Some((time, size))
+        }
+        _ => None,
+    }
+}
+
+/// Send one ICMP echo request through the interface that owns the
+/// route to `dst_ip`.
+pub fn send_echo_request(dst_ip: u32, identifier: u16, sequence: u16) -> bool {
+    let mut header = [0u8; 8];
+    header[0] = IcmpType::EchoRequest as u8;
+    header[4..6].copy_from_slice(&identifier.to_be_bytes());
+    header[6..8].copy_from_slice(&sequence.to_be_bytes());
+
+    let mut packet = Vec::with_capacity(8 + 32);
+    packet.extend_from_slice(&header);
+    packet.extend_from_slice(&[0u8; 32]);
+    let checksum = calculate_checksum(&packet);
+    packet[2] = (checksum >> 8) as u8;
+    packet[3] = checksum as u8;
+
+    let route = ipif::route_lookup(dst_ip);
+    let src_ip = route
+        .and_then(|route| ipif::get_interface(route.if_index))
+        .or_else(|| ipif::get_default_interface().and_then(ipif::get_interface))
+        .map(|interface| interface.address);
+    let Some(src_ip) = src_ip else {
+        return false;
+    };
+    ipv4::send_ipv4(src_ip, dst_ip, 1, &packet)
+}
+
 /// handle ICMP echo request
-fn handle_echo_request(src_ip: u32, header: IcmpHeader, data: &[u8]) {
+fn handle_echo_request(src_ip: u32, dst_ip: u32, header: IcmpHeader, data: &[u8]) {
     let identifier = u16::from_be_bytes([header.rest[0], header.rest[1]]);
     let sequence = u16::from_be_bytes([header.rest[2], header.rest[3]]);
 
-    // Get our IP address
-    let our_ips = ipif::get_our_ip_addresses();
-    let dst_ip = match our_ips.first() {
-        Some(&ip) => ip,
-        None => return,
-    };
-
     // Build echo reply
-    send_echo_reply(src_ip, dst_ip, identifier, sequence, data);
+    send_echo_reply(dst_ip, src_ip, identifier, sequence, data);
 }
 
 /// handle ICMP echo reply
@@ -264,8 +298,7 @@ fn handle_echo_reply(header: IcmpHeader, data: &[u8]) {
     let identifier = u16::from_be_bytes([header.rest[0], header.rest[1]]);
     let sequence = u16::from_be_bytes([header.rest[2], header.rest[3]]);
 
-    // Track echo reply for ping measurements
-    let _reply_info = (identifier, sequence, data.len());
+    *LAST_ECHO_REPLY.lock() = Some((identifier, sequence, 0, data.len().min(i32::MAX as usize)));
 
     // Update statistics
     let mut stats = ICMP_STATS.lock();
@@ -323,7 +356,7 @@ pub fn send_echo_reply(src_ip: u32, dst_ip: u32, identifier: u16, sequence: u16,
     drop(stats);
 
     // Build IPv4 packet and send
-    let _ = ipv4::send_ipv4(dst_ip, src_ip, 1, &packet);
+    let _ = ipv4::send_ipv4(src_ip, dst_ip, 1, &packet);
 }
 
 /// Send ICMP destination unreachable
