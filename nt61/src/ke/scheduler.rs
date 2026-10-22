@@ -1114,9 +1114,10 @@ pub fn init_smp(cpu_count: u32) {
 /// This implements true per-CPU scheduling where threads run on their
 /// preferred CPU for cache locality, but can be migrated if needed.
 pub fn add_ready(thread: *mut Ethread, priority: u8) {
-    if thread.is_null() || priority >= 32 {
+    if thread.is_null() {
         return;
     }
+    let priority = priority.min(31);
 
     let mut scheduler = SCHEDULER.lock();
 
