@@ -290,8 +290,16 @@ pub extern "C" fn riscv64_trap_dispatch(frame: *mut TrapFrame) {
                 let is_write = matches!(kind, TrapKind::StorePageFault);
                 let is_inst = matches!(kind, TrapKind::InstructionPageFault);
                 panic!(
-                    "RV64 page fault @ {:#x} (kind={:?}, write={}, inst={}, user={})",
-                    stval, kind, is_write, is_inst, is_user
+                    "RV64 page fault @ {:#x} (kind={:?}, write={}, inst={}, user={}, sepc={:#x}, ra={:#x}, sp={:#x}, root={:#x})",
+                    stval,
+                    kind,
+                    is_write,
+                    is_inst,
+                    is_user,
+                    sepc,
+                    unsafe { (*frame).ra },
+                    unsafe { (*frame).sp },
+                    crate::arch::riscv64::paging::root_phys()
                 );
             }
             TrapKind::IllegalInstruction => {
