@@ -414,11 +414,7 @@ pub fn read_sector_from_block(device_id: usize, sector: u64, buffer: &mut [u8]) 
     crate::drivers::storage::block::read_block(device_id, sector, buffer)
 }
 
-fn read_mounted_sector(
-    ntfs: &NtfsData,
-    sector: u64,
-    buffer: &mut [u8],
-) -> bool {
+fn read_mounted_sector(ntfs: &NtfsData, sector: u64, buffer: &mut [u8]) -> bool {
     if let Some(device_id) = ntfs.device_id {
         return crate::drivers::storage::block::read_block(device_id, sector, buffer);
     }
@@ -2727,10 +2723,10 @@ pub fn read_file(
                         }
                     }
                 }
+            } else {
             }
-            else {}
+        } else {
         }
-        else {}
     }
 
     // Final fallback: return EOF if we've read everything
