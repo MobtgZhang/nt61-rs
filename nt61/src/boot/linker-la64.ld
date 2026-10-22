@@ -39,6 +39,7 @@ PHDRS {
 
 SECTIONS {
     . = BASE_ADDRESS;
+    PROVIDE(__image_start = .);
 
     /* -------------------------------------------------------------
      * DOS / PE / COFF / OptionalHeader — written long-by-long so
@@ -178,4 +179,6 @@ SECTIONS {
          * section table. Drop it before conversion. */
         *(.efi_header)
     }
+
+    PROVIDE(__image_end = .);
 }
