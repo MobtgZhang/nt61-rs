@@ -100,6 +100,27 @@ pub fn require_state(required: u8, operation: &str) {
     }
 }
 
+/// Verify a subsystem-owned region and bugcheck if the verification is absent.
+///
+/// Initialization failures must never be downgraded to a warning: a caller
+/// that continues with a disabled heap will corrupt later allocation paths.
+pub fn verify_region(region: Option<(*mut u8, usize)>, operation: &str) {
+    if region.is_none() {
+        crate::hal::serial::write_string_always("\r\n[MM-FATAL] REGION VERIFY FAILED\r\n");
+        crate::hal::serial::write_string("Operation: ");
+        crate::hal::serial::write_string(operation);
+        crate::hal::serial::write_string("\r\n\r\n");
+
+        crate::ke::bugcheck::bugcheck_with(
+            crate::ke::bugcheck::BugCheckCode::MemoryManagement,
+            0xDEAD_0004, // MM_REGION_VERIFY_FAILED (sub-code)
+            current_state() as u64,
+            0,
+            operation.as_ptr() as u64,
+        );
+    }
+}
+
 #[cold]
 #[inline(never)]
 fn require_state_failed(current: u8, required: u8, operation: &str) -> ! {
