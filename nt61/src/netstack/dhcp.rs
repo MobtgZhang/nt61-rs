@@ -906,9 +906,14 @@ pub fn init() {
 pub fn send_dhcp_message(payload: &[u8]) -> bool {
     let idx = DHCP_SOCKET_IDX.load(core::sync::atomic::Ordering::Acquire);
     if idx == usize::MAX {
+        crate::hal::serial::write_string_always("[NET-DHCP] socket unbound\r\n");
         return false;
     }
-    udp::send(idx, IP_BROADCAST, DHCP_SERVER_PORT, payload).is_some()
+    let sent = udp::send(idx, IP_BROADCAST, DHCP_SERVER_PORT, payload);
+    if sent.is_none() {
+        crate::hal::serial::write_string_always("[NET-DHCP] udp send failed\r\n");
+    }
+    sent.is_some()
 }
 
 /// Receive a DHCP message from the bound socket (non-blocking).
@@ -919,7 +924,11 @@ pub fn recv_dhcp_message(buf: &mut [u8]) -> Option<usize> {
     if idx == usize::MAX {
         return None;
     }
-    udp::receive(idx, buf).map(|(_src_ip, _src_port, n)| n)
+    let packet = udp::receive(idx, buf);
+    if packet.is_some() {
+        crate::hal::serial::write_string_always("[NET-DHCP] udp received\r\n");
+    }
+    packet.map(|(_src_ip, _src_port, n)| n)
 }
 
 pub fn create_client() -> DhcpClient {
