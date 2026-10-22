@@ -40,8 +40,7 @@ const LOONGARCH_USER_STACK_TOP: u64 = crate::mm::constants::USER_STACK_TOP;
 const CRMD_PLV_USER: u64 = 3;
 const CRMD_IE: u64 = 1;
 const CRMD_PG: u64 = 1;
-const LOONGARCH_CRMD_USER: u64 =
-    CRMD_PLV_USER | (CRMD_IE << 2) | (CRMD_PG << 4);
+const LOONGARCH_CRMD_USER: u64 = CRMD_PLV_USER | (CRMD_IE << 2) | (CRMD_PG << 4);
 
 // =====================================================================
 // Per-CPU area helpers (tp CSR access)
@@ -115,18 +114,14 @@ pub unsafe fn __user_entry_enter(user_rip: u64, user_rsp: u64) -> ! {
             "csrwr {rip}, 0x6",
             // Set PRMD (CSR 0x1): PPLV=3 (user), PIE=1 (interrupts on).
             // ertn loads CRMD.PLV from PRMD.PPLV and CRMD.IE from
-            // PRMD.PIE. Without setting PRMD, ertn would return to
-            // the privilege level that was saved there previously.
+            // PRMD.PIE after the following instruction has executed, so
+            // CRMD must not be switched to user mode here.
             "li.d $t1, 0x7
         csrwr $t1, 0x1",
-            // Set CRMD = PLV3 + IE + PG; DA and reserved bits remain zero.
-            "li.d $t0, {crmd}
-        csrwr $t0, 0x0",
             // Return to user mode
             "ertn",
             rip = in(reg) rip_v,
             rsp = in(reg) rsp_v,
-            crmd = const LOONGARCH_CRMD_USER,
             options(noreturn),
         );
     }
@@ -207,17 +202,15 @@ pub fn enter_first_user_thread(pgd_phys: u64, user_rip: u64, user_rsp: u64) -> !
             "move $sp, {rsp}",
             // Set ERA = user entry point
             "csrwr {rip}, 0x6",
-            // Set PRMD (CSR 0x1): PPLV=3 (user), PIE=1 (interrupts on)
+            // Set PRMD (CSR 0x1): PPLV=3 (user), PIE=1 (interrupts on).
+            // ertn applies PLV and IE after this sequence finishes; do
+            // not write CRMD directly before returning to user mode.
             "li.d $t1, 0x7
         csrwr $t1, 0x1",
-            // Set CRMD = PLV3 + IE + PG; DA and reserved bits remain zero.
-            "li.d $t0, {crmd}
-        csrwr $t0, 0x0",
             // Return to user mode
             "ertn",
             rip = in(reg) rip_v,
             rsp = in(reg) rsp_v,
-            crmd = const LOONGARCH_CRMD_USER,
             options(noreturn),
         );
     }
