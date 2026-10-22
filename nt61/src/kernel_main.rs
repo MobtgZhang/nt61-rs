@@ -123,6 +123,9 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
 
     crate::arch::boot::early_write_str(b"MAGIC OK\r\n");
 
+    #[cfg(target_arch = "riscv64")]
+    crate::arch::riscv64::paging::reset_bootstrap_identity_pool();
+
     // ====================================================================
     // Initialize the framebuffer from the BootInfo passed by winload.
     // This must happen BEFORE the first boot_println! that we want
@@ -281,14 +284,14 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     arch::init_hardware();
     boot_println!("OK");
 
-   boot_debug_print!("Bringing up secondary processors... ");
-   arch::start_smp();
-   boot_println!("OK");
+    boot_debug_print!("Bringing up secondary processors... ");
+    arch::start_smp();
+    boot_println!("OK");
 
-   // Install the early-boot kernel stack before any potentially
-   // interruptible code path runs.
-   arch::init_kernel_stack();
-   if let Some(rsp0_val) = arch::kernel_stack_base() {
+    // Install the early-boot kernel stack before any potentially
+    // interruptible code path runs.
+    arch::init_kernel_stack();
+    if let Some(rsp0_val) = arch::kernel_stack_base() {
         let prefix: &[u8] = b"[BOOT] KERNEL STACK = 0x";
         for &b in prefix {
             crate::hal::serial::write_char(b);
@@ -307,9 +310,9 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
             crate::hal::serial::write_char(b);
         }
     }
-   boot_debug_print!("Initializing HAL... ");
-   hal::init();
-   boot_println!("OK");
+    boot_debug_print!("Initializing HAL... ");
+    hal::init();
+    boot_println!("OK");
 
     // Bring up the abstract text console *before* any subsequent
     // `boot_println!` call. This enables the graphical mirror path
@@ -318,36 +321,36 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     // Without this call the log ring stays empty and the pane
     // would render "no log lines captured yet" instead of the
     // actual boot trace.
-   crate::hal::text_console::init();
+    crate::hal::text_console::init();
 
-   // ============================================================================
-   // PHASE 2: Kernel Executive (ke)
-   // ============================================================================
-   phase_header!(1, "Kernel Executive");
-   ke::init();
+    // ============================================================================
+    // PHASE 2: Kernel Executive (ke)
+    // ============================================================================
+    phase_header!(1, "Kernel Executive");
+    ke::init();
 
-   // ============================================================================
-   // PHASE 3: Object Manager (ob)
-   // ============================================================================
-   phase_header!(2, "Object Manager");
-   ob::init();
+    // ============================================================================
+    // PHASE 3: Object Manager (ob)
+    // ============================================================================
+    phase_header!(2, "Object Manager");
+    ob::init();
 
-   // ============================================================================
-   // PHASE 4: Registry / Configuration Manager
-   // ============================================================================
-   phase_header!(3, "Registry");
-   registry::init();
+    // ============================================================================
+    // PHASE 4: Registry / Configuration Manager
+    // ============================================================================
+    phase_header!(3, "Registry");
+    registry::init();
 
-   // ============================================================================
-   // PHASE 5: I/O Manager (io)
-   // ============================================================================
-   phase_header!(4, "I/O Manager");
-   io::init();
+    // ============================================================================
+    // PHASE 5: I/O Manager (io)
+    // ============================================================================
+    phase_header!(4, "I/O Manager");
+    io::init();
 
-   // ============================================================================
-   // PHASE 6: File System (fs)
-   // ============================================================================
-   phase_header!(5, "File System");
+    // ============================================================================
+    // PHASE 6: File System (fs)
+    // ============================================================================
+    phase_header!(5, "File System");
     // Hand the ESP mirror (captured by winload before
     // ExitBootServices) to the FS layer so the FAT32 driver
     // has a backing store to read from. This must run before
@@ -362,33 +365,41 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     // as the X: drive. This is only populated for ISO boot;
     // for disk-booted configurations this is a no-op.
     fs::mount_ramdisk_from_bootinfo(boot_info);
-   fs::init();
+    fs::init();
 
-   // ============================================================================
-   // PHASE 7: LPC / ALPC
-   // ============================================================================
-   phase_header!(6, "LPC/ALPC");
-   lpc::init();
-   crate::rtl::klog::phase_trace_marker(601);
+    // ============================================================================
+    // PHASE 7: LPC / ALPC
+    // ============================================================================
+    phase_header!(6, "LPC/ALPC");
+    lpc::init();
+    crate::rtl::klog::phase_trace_marker(601);
 
-   // ============================================================================
-   // PHASE 8: Driver initialization
-   // ============================================================================
-   phase_header!(7, "Drivers");
-   // SAFETY: boot is single-threaded and this runs before any disk I/O.
-   unsafe {
-       drivers::arch::register_storage_backends();
-   }
-   crate::rtl::klog::phase_trace_marker(701);
-   drivers::init();
-   crate::rtl::klog::phase_trace_marker(702);
+    // ============================================================================
+    // PHASE 8: Driver initialization
+    // ============================================================================
+    phase_header!(7, "Drivers");
+    // SAFETY: boot is single-threaded and this runs before any disk I/O.
+    unsafe {
+        drivers::arch::register_storage_backends();
+    }
+    crate::rtl::klog::phase_trace_marker(701);
+    drivers::init();
+    crate::rtl::klog::phase_trace_marker(702);
+    crate::hal::serial::write_string_always("K:P702\r\n");
 
-   // ============================================================================
-   // PHASE 9: Process / Thread Subsystem (ps)
-   // ============================================================================
-   phase_header!(8, "Process Subsystem");
-   ps::init();
-   crate::rtl::klog::phase_trace_marker(801);
+    // Bring the TCP/IP protocol stack up immediately after its NIC
+    // miniports are registered; otherwise `ethif` has no MAC/interface
+    // bindings and DHCP cannot transmit.
+    crate::netstack::init();
+    crate::hal::serial::write_string_always("K:NETSTACK\r\n");
+
+    // ============================================================================
+    // PHASE 9: Process / Thread Subsystem (ps)
+    // ============================================================================
+    phase_header!(8, "Process Subsystem");
+    ps::init();
+    crate::rtl::klog::phase_trace_marker(801);
+    crate::hal::serial::write_string_always("K:P801\r\n");
 
     // ============================================================================
     // PHASE 9: Reserved — disk ntoskrnl.exe manages subsystem PEs
@@ -405,13 +416,15 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
         9,
         "System Image Loader (reserved - disk ntoskrnl manages this)"
     );
-   load_system_files();
+    load_system_files();
+    crate::hal::serial::write_string_always("K:P9\r\n");
 
-   // ============================================================================
-   // PHASE 10: create system processes (System process, Idle thread)
-   // ============================================================================
-   phase_header!(10, "System Processes");
-   create_system_processes();
+    // ============================================================================
+    // PHASE 10: create system processes (System process, Idle thread)
+    // ============================================================================
+    phase_header!(10, "System Processes");
+    create_system_processes();
+    crate::hal::serial::write_string_always("K:P10\r\n");
 
     // ============================================================================
     // PHASE 11: Session Manager (smss.exe)
@@ -434,35 +447,38 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
         None => boot_println!("    loopback interface registration failed: interface table full"),
     }
 
-   let boot_mode = BootMode::from_u32(boot_info.boot_mode);
-   start_session_manager(boot_mode);
+    let boot_mode = BootMode::from_u32(boot_info.boot_mode);
+    start_session_manager(boot_mode);
+    crate::hal::serial::write_string_always("K:P11\r\n");
 
-   // ============================================================================
-   // PHASE 12: Run smoke tests
-   // ============================================================================
-   phase_header!(12, "Smoke Tests");
-   run_smoke_test();
+    // ============================================================================
+    // PHASE 12: Run smoke tests
+    // ============================================================================
+    phase_header!(12, "Smoke Tests");
+    run_smoke_test();
+    crate::hal::serial::write_string_always("K:P12\r\n");
 
-   // ============================================================================
-   // PHASE 13: End-to-end network verification (QEMU slirp only)
-   // ============================================================================
-   phase_header!(13, "Network E2E");
-   if crate::netstack::e2e_test::run_e2e_test() {
+    // ============================================================================
+    // PHASE 13: End-to-end network verification (QEMU slirp only)
+    // ============================================================================
+    phase_header!(13, "Network E2E");
+    if crate::netstack::e2e_test::run_e2e_test() {
         boot_println!("    network E2E: all stages passed");
     } else {
         boot_println!("    network E2E: some stages failed (see log)");
-   }
+    }
 
-   // ============================================================================
-   // PHASE 14: Print IDLE banner
-   // ============================================================================
-   crate::rtl::klog::phase_trace_marker(14);
-   boot_header!("NT6.1.7601 - System Ready");
+    // ============================================================================
+    // PHASE 14: Print IDLE banner
+    // ============================================================================
+    crate::rtl::klog::phase_trace_marker(14);
+    crate::hal::serial::write_string_always("K:P14\r\n");
+    boot_header!("NT6.1.7601 - System Ready");
     boot_debug_println!("NT6.1.7601 reached IDLE");
     boot_print!("System ready (FULL BOOT)\r\n");
 
-   // ============================================================================
-   // PHASE 15: Enter first user thread (Ring 3) or Safe-Mode shell.
+    // ============================================================================
+    // PHASE 15: Enter first user thread (Ring 3) or Safe-Mode shell.
     //
     // The boot mode is selected by `bootmgr` and forwarded through
     // `boot_info.boot_mode`. The four valid NT 6.1 boot
@@ -487,10 +503,11 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     // returns to garbage, producing a #DF / triple-fault. The
     // Safe-Mode shell therefore runs with interrupts masked and
     // uses POLLED I/O.
-   // ============================================================================
-   crate::rtl::klog::phase_trace_marker(15);
-   let mode = BootMode::from_u32(boot_info.boot_mode);
-   boot_print!("Boot mode: ");
+    // ============================================================================
+    crate::rtl::klog::phase_trace_marker(15);
+    crate::hal::serial::write_string_always("K:P15\r\n");
+    let mode = BootMode::from_u32(boot_info.boot_mode);
+    boot_print!("Boot mode: ");
     match mode {
         BootMode::Desktop => boot_print!("Desktop\r\n"),
         BootMode::Cmd => boot_print!("Command Prompt\r\n"),
@@ -510,28 +527,31 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     // SafeMode: full verbose log, no animation, user-mode
     // subsystem init stays disabled (Phase 12 leaves it off), enter the
     // kernel-side CMD shell with polled I/O.
-   match mode {
-       BootMode::Desktop | BootMode::Cmd => {
-           crate::rtl::klog::phase_trace_marker(151);
-           crate::arch::boot::run_boot_animation();
-           crate::rtl::klog::phase_trace_marker(152);
-           crate::hal::keyboard_input::init();
-           crate::rtl::klog::phase_trace_marker(153);
-           crate::hal::text_console::init();
-           crate::rtl::klog::phase_trace_marker(154);
-           servers::smss::launch_cmd_shell();
-       }
-       BootMode::DebugCmd => {
-           crate::rtl::klog::phase_trace_marker(155);
-           boot_println!("Debug CMD: entering user-mode cmd.exe");
-           crate::hal::keyboard_input::init();
-           crate::rtl::klog::phase_trace_marker(156);
-           crate::hal::text_console::init();
-           crate::rtl::klog::phase_trace_marker(157);
-           servers::smss::launch_cmd_shell();
-       }
-       BootMode::SafeMode => {
-           boot_println!("Safe Mode: entering kernel-side command shell");
+    match mode {
+        BootMode::Desktop | BootMode::Cmd => {
+            crate::rtl::klog::phase_trace_marker(151);
+            crate::arch::boot::run_boot_animation();
+            crate::rtl::klog::phase_trace_marker(152);
+            crate::hal::serial::write_string_always("K:P152\r\n");
+            crate::hal::keyboard_input::init();
+            crate::rtl::klog::phase_trace_marker(153);
+            crate::hal::serial::write_string_always("K:P153\r\n");
+            crate::hal::text_console::init();
+            crate::rtl::klog::phase_trace_marker(154);
+            crate::hal::serial::write_string_always("K:P154\r\n");
+            servers::smss::launch_cmd_shell();
+        }
+        BootMode::DebugCmd => {
+            crate::rtl::klog::phase_trace_marker(155);
+            boot_println!("Debug CMD: entering user-mode cmd.exe");
+            crate::hal::keyboard_input::init();
+            crate::rtl::klog::phase_trace_marker(156);
+            crate::hal::text_console::init();
+            crate::rtl::klog::phase_trace_marker(157);
+            servers::smss::launch_cmd_shell();
+        }
+        BootMode::SafeMode => {
+            boot_println!("Safe Mode: entering kernel-side command shell");
             mask_all_irqs_for_safe_mode();
             arch::disable_interrupts();
             crate::hal::keyboard_input::init();
