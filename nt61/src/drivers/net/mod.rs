@@ -75,4 +75,41 @@ pub fn nic_count() -> usize {
     virtio_net::count() + e1000::count() + { crate::drivers::arch::count_rtl8139() }
 }
 
+/// Drain all pending frames from every registered miniport and feed
+/// them to the TCP/IP stack. Commands with synchronous waits (such as
+/// `ping`) call this while waiting for replies.
+pub fn poll_all() {
+    let mut buffer = [0u8; 2048];
+
+    for nic_idx in 0..virtio_net::count() {
+        while let Some(len) = virtio_net::receive(nic_idx, &mut buffer) {
+            if len == 0 {
+                break;
+            }
+            crate::netstack::process_packet(&buffer[..len], NicType::VirtioNet, nic_idx);
+        }
+    }
+
+    for nic_idx in 0..e1000::count() {
+        while let Some(len) = e1000::receive(nic_idx, &mut buffer) {
+            if len == 0 {
+                break;
+            }
+            crate::netstack::process_packet(&buffer[..len], NicType::E1000, nic_idx);
+        }
+    }
+
+    let rtl_count = crate::drivers::arch::count_rtl8139();
+    for nic_idx in 0..rtl_count {
+        while let Some(len) = crate::drivers::arch::receive_from_rtl8139(nic_idx, &mut buffer) {
+            if len == 0 {
+                break;
+            }
+            crate::netstack::process_packet(&buffer[..len], NicType::Rtl8139, nic_idx);
+        }
+    }
+
+    crate::netstack::tcp::check_retransmit_timers();
+}
+
 pub mod tcpip;
