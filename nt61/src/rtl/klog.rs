@@ -166,6 +166,16 @@ impl core::fmt::Write for SerialWriter {
 ///    CMD shell's log display pane reads from this ring so it has
 ///    content to paint on shell entry.
 pub fn write_serial(s: &str) {
+    // x86_64 has a real VGA fallback; QEMU virt on RISC-V and
+    // LoongArch64 does not. Writing the legacy 0xB8000 buffer there
+    // raises an access fault. Use the serial/text-console sink until
+    // the kernel explicitly adopts and maps an LFB.
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        if !crate::drivers::bootvid::lfb_active() {
+            return;
+        }
+    }
     #[cfg(not(feature = "log_level_debug"))]
     {
         // Release builds still show boot messages on the visible
