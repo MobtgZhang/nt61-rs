@@ -189,9 +189,9 @@ pub fn interrupt_controller() -> InterruptController {
         _ => SocType::Unknown,
     };
     match t {
-        SocType::KunPeng920
-        | SocType::RockchipRK3588
-        | SocType::RockchipRK356x => InterruptController::GICv3,
+        SocType::KunPeng920 | SocType::RockchipRK3588 | SocType::RockchipRK356x => {
+            InterruptController::GICv3
+        }
         // QEMU 'virt' only exposes a GICv3 when launched with
         // '-machine virt,gic-version=3'. Neither the EDK2 firmware we
         // boot nor our QEMU command line passes that flag, so the
@@ -366,9 +366,9 @@ pub fn init_soc() {
     // descriptor into a `static mut` keeps the spill inside this
     // function only and turns the public return type into `()`.
     let ic = match soc_type {
-        SocType::KunPeng920
-        | SocType::RockchipRK3588
-        | SocType::RockchipRK356x => InterruptController::GICv3,
+        SocType::KunPeng920 | SocType::RockchipRK3588 | SocType::RockchipRK356x => {
+            InterruptController::GICv3
+        }
         // See 'interrupt_controller': QEMU 'virt' runs a GICv2 unless
         // 'gic-version=3' is requested explicitly.
         SocType::QEMUVirt => InterruptController::GICv2,
@@ -436,9 +436,9 @@ static SOC_INFO_READY: AtomicU32 = AtomicU32::new(0);
 #[inline(never)]
 pub fn info_for(t: SocType) -> SocInfo {
     let ic = match t {
-        SocType::KunPeng920
-        | SocType::RockchipRK3588
-        | SocType::RockchipRK356x => InterruptController::GICv3,
+        SocType::KunPeng920 | SocType::RockchipRK3588 | SocType::RockchipRK356x => {
+            InterruptController::GICv3
+        }
         // See 'interrupt_controller' for why QEMU 'virt' maps GICv2.
         SocType::QEMUVirt => InterruptController::GICv2,
         SocType::PhytiumFT2000
