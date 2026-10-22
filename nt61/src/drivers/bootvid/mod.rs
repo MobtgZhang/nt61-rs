@@ -710,6 +710,9 @@ pub fn inbv_set_progress_bar_subset(count: u32) {
         return;
     }
     // VGA path.
+    if !crate::drivers::arch::has_legacy_vga_text_console() {
+        return;
+    }
     SAVED_X.store(CURSOR_X.load(Ordering::Acquire), Ordering::Release);
     SAVED_Y.store(CURSOR_Y.load(Ordering::Acquire), Ordering::Release);
     CURSOR_X.store(0, Ordering::Release);
