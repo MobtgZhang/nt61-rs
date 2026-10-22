@@ -86,28 +86,28 @@ pub mod volsnap;
 /// functional driver in the order Windows does. Idempotent —
 /// every inner `init()` is a no-op if it has already run.
 pub fn init() {
-    crate::hal::serial::write_string("D:init-enter\r\n");
+    crate::hal::serial::write_string_always("D:init-enter\r\n");
     // // kprintln!("  Initialising driver subsystem...");
     bus::init();
-    crate::hal::serial::write_string("D:bus_done\r\n");
-    crate::hal::serial::write_string("D:storage_start\r\n");
+    crate::hal::serial::write_string_always("D:bus_done\r\n");
+    crate::hal::serial::write_string_always("D:storage_start\r\n");
     storage::init();
-    crate::hal::serial::write_string("D:storage_done\r\n");
-    crate::hal::serial::write_string("D:usb_start\r\n");
+    crate::hal::serial::write_string_always("D:storage_done\r\n");
+    crate::hal::serial::write_string_always("D:usb_start\r\n");
     usb::init();
-    crate::hal::serial::write_string("D:usb_done\r\n");
-    crate::hal::serial::write_string("D:net_start\r\n");
+    crate::hal::serial::write_string_always("D:usb_done\r\n");
+    crate::hal::serial::write_string_always("D:net_start\r\n");
     net::init();
-    crate::hal::serial::write_string("D:net_done\r\n");
-    crate::hal::serial::write_string("D:audio_start\r\n");
+    crate::hal::serial::write_string_always("D:net_done\r\n");
+    crate::hal::serial::write_string_always("D:audio_start\r\n");
     audio::init();
-    crate::hal::serial::write_string("D:audio_done\r\n");
-    crate::hal::serial::write_string("D:input_start\r\n");
+    crate::hal::serial::write_string_always("D:audio_done\r\n");
+    crate::hal::serial::write_string_always("D:input_start\r\n");
     input::init();
-    crate::hal::serial::write_string("D:input_done\r\n");
-    crate::hal::serial::write_string("D:video_start\r\n");
+    crate::hal::serial::write_string_always("D:input_done\r\n");
+    crate::hal::serial::write_string_always("D:video_start\r\n");
     video::init();
-    crate::hal::serial::write_string("D:video_done\r\n");
+    crate::hal::serial::write_string_always("D:video_done\r\n");
     // `video::init()` brings up the BOCHS VBE driver (x86_64)
     // which exposes a 1024×768×32 linear framebuffer at the
     // well-known aperture 0xE0_0000_0000. On every architecture
@@ -128,18 +128,18 @@ pub fn init() {
     // bootvid console paints into the LFB instead of falling
     // through to the no-op (or worse, the legacy VGA buffer).
     bootvid::force_lfb_console();
-    crate::hal::serial::write_string("D:timer_start\r\n");
+    crate::hal::serial::write_string_always("D:timer_start\r\n");
     timer::init();
-    crate::hal::serial::write_string("D:timer_done\r\n");
-    crate::hal::serial::write_string("D:ndis_start\r\n");
+    crate::hal::serial::write_string_always("D:timer_done\r\n");
+    crate::hal::serial::write_string_always("D:ndis_start\r\n");
     ndis::init();
-    crate::hal::serial::write_string("D:ndis_done\r\n");
-    crate::hal::serial::write_string("D:wdf_start\r\n");
+    crate::hal::serial::write_string_always("D:ndis_done\r\n");
+    crate::hal::serial::write_string_always("D:wdf_start\r\n");
     wdf::init();
-    crate::hal::serial::write_string("D:wdf_done\r\n");
-    crate::hal::serial::write_string("D:pre_kdcom\r\n");
-    crate::hal::serial::write_string("D:post_kdcom\r\n");
-    crate::hal::serial::write_string("D:pre_bootvid\r\n");
+    crate::hal::serial::write_string_always("D:wdf_done\r\n");
+    crate::hal::serial::write_string_always("D:pre_kdcom\r\n");
+    crate::hal::serial::write_string_always("D:post_kdcom\r\n");
+    crate::hal::serial::write_string_always("D:pre_bootvid\r\n");
     // bootvid now has a cross-arch LFB backend driven by the
     // shared `hal::common::framebuffer` writer; the legacy VGA
     // text buffer at 0xB8000 is still wired on x86_64 as a
@@ -147,40 +147,40 @@ pub fn init() {
     // On the other architectures `bootvid::init()` activates the
     // LFB path or stays disabled if no framebuffer was published.
     bootvid::init();
-    crate::hal::serial::write_string("D:post_bootvid\r\n");
-    crate::hal::serial::write_string("D:pre_ci\r\n");
+    crate::hal::serial::write_string_always("D:post_bootvid\r\n");
+    crate::hal::serial::write_string_always("D:pre_ci\r\n");
     // ci::init();  // DISABLED: code-integrity (CI) policy engine not yet wired
-    crate::hal::serial::write_string("D:post_ci\r\n");
-    crate::hal::serial::write_string("D:pre_pshed\r\n");
-    crate::hal::serial::write_string("D:post_pshed\r\n");
-    crate::hal::serial::write_string("D:pre_ksec\r\n");
+    crate::hal::serial::write_string_always("D:post_ci\r\n");
+    crate::hal::serial::write_string_always("D:pre_pshed\r\n");
+    crate::hal::serial::write_string_always("D:post_pshed\r\n");
+    crate::hal::serial::write_string_always("D:pre_ksec\r\n");
     // ksec::init();  // DISABLED: kernel security subsystem — depends on full seaccess init
-    crate::hal::serial::write_string("D:post_ksec\r\n");
-    crate::hal::serial::write_string("D:pre_pcw\r\n");
+    crate::hal::serial::write_string_always("D:post_ksec\r\n");
+    crate::hal::serial::write_string_always("D:pre_pcw\r\n");
     pcw::init();
-    crate::hal::serial::write_string("D:post_pcw\r\n");
-    crate::hal::serial::write_string("D:pre_partmgr\r\n");
+    crate::hal::serial::write_string_always("D:post_pcw\r\n");
+    crate::hal::serial::write_string_always("D:pre_partmgr\r\n");
     // partmgr::init();  // DISABLED: depends on storage I/O being live; re-enable after disk bring-up
-    crate::hal::serial::write_string("D:post_partmgr\r\n");
-    crate::hal::serial::write_string("D:pre_volmgr\r\n");
+    crate::hal::serial::write_string_always("D:post_partmgr\r\n");
+    crate::hal::serial::write_string_always("D:pre_volmgr\r\n");
     // volmgr::init();  // DISABLED: depends on partmgr
-    crate::hal::serial::write_string("D:post_volmgr\r\n");
-    crate::hal::serial::write_string("D:pre_volsnap\r\n");
-    crate::hal::serial::write_string("D:post_volsnap\r\n");
-    crate::hal::serial::write_string("D:pre_fltmgr\r\n");
+    crate::hal::serial::write_string_always("D:post_volmgr\r\n");
+    crate::hal::serial::write_string_always("D:pre_volsnap\r\n");
+    crate::hal::serial::write_string_always("D:post_volsnap\r\n");
+    crate::hal::serial::write_string_always("D:pre_fltmgr\r\n");
     // fltmgr::init();  // DISABLED: minifilter framework — large surface, leave for later
-    crate::hal::serial::write_string("D:post_fltmgr\r\n");
-    crate::hal::serial::write_string("D:pre_fileinfo\r\n");
+    crate::hal::serial::write_string_always("D:post_fltmgr\r\n");
+    crate::hal::serial::write_string_always("D:pre_fileinfo\r\n");
     // fileinfo::init();  // DISABLED: depends on fltmgr
-    crate::hal::serial::write_string("D:post_fileinfo\r\n");
+    crate::hal::serial::write_string_always("D:post_fileinfo\r\n");
     // spldr needs a DriverObject; we use the no-driver
     // variant for the bootstrap so the smoke test can still
     // verify the entry.
-    crate::hal::serial::write_string("D:before_spldr\r\n");
+    crate::hal::serial::write_string_always("D:before_spldr\r\n");
     spldr::init_no_driver();
-    crate::hal::serial::write_string("D:after_spldr\r\n");
-    crate::hal::serial::write_string("D:done\r\n");
-    crate::hal::serial::write_string("D:returning\r\n");
+    crate::hal::serial::write_string_always("D:after_spldr\r\n");
+    crate::hal::serial::write_string_always("D:done\r\n");
+    crate::hal::serial::write_string_always("D:returning\r\n");
 }
 
 /// Aggregator: runs every driver's smoke test and returns `true`
