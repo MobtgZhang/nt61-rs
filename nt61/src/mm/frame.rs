@@ -224,8 +224,7 @@ impl BuddyAllocator {
         for k in 0..MAX_BUDDY_ORDER {
             let shift = 1u64 << k;
             let larger_shift = shift << 1;
-            let block_count =
-                (total_frames / shift) - 2 * (total_frames / larger_shift);
+            let block_count = (total_frames / shift) - 2 * (total_frames / larger_shift);
             if block_count == 0 {
                 continue;
             }
@@ -514,22 +513,18 @@ fn legacy_init(region_base: u64, region_size: u64) {
         // re-init) can use them without re-allocating.
         let region_frames = ((region_size / 4096) as usize)
             .min((*core::ptr::addr_of!(FRAME_TABLE)).len() / core::mem::size_of::<FrameInfo>());
-        DYN_BASE_PHYS = region_base;
         DYN_LEN = region_frames;
         // The static FRAME_TABLE is laid out as bytes; the dynamic
         // tables are typed. We point them at the static buffer so
         // the page database and other subsystems can still walk
         // them by the typed pointer.
         DYN_FRAME_INFOS = (*core::ptr::addr_of_mut!(FRAME_TABLE)).as_mut_ptr() as *mut FrameInfo;
-        DYN_FRAME_INFOS_PHYS = region_base; // virt == phys for kernel BSS
+        DYN_FRAME_INFOS_PHYS = crate::mm::vm::virt_to_phys(DYN_FRAME_INFOS as u64).unwrap_or(0);
         DYN_BUDDY_NODES = ((*core::ptr::addr_of_mut!(FRAME_TABLE)).as_mut_ptr() as *mut BuddyNode)
             .wrapping_add(region_frames);
-        DYN_BUDDY_NODES_PHYS =
-            region_base + (region_frames as u64) * core::mem::size_of::<FrameInfo>() as u64;
+        DYN_BUDDY_NODES_PHYS = crate::mm::vm::virt_to_phys(DYN_BUDDY_NODES as u64).unwrap_or(0);
         let table_ptr = (*core::ptr::addr_of_mut!(FRAME_TABLE)).as_mut_ptr() as *mut u8;
-        let _ = table_ptr; // keep tbl ptr alive for the legacy fallback
-        let _ = DYN_BUDDY_NODES_PHYS;
-
+        DYN_BASE_PHYS = crate::mm::vm::virt_to_phys(table_ptr as u64).unwrap_or(0);
         crate::hal::serial::write_string("LI2\r\n");
 
         let mut alloc = BUDDY_ALLOCATOR.lock();
@@ -558,7 +553,10 @@ pub fn allocate_pages(count: u64) -> Option<u64> {
     let mut alloc = BUDDY_ALLOCATOR.lock();
     let result = alloc.allocate(count);
     if let Some(addr) = result {
-        FREE_PAGES.fetch_sub(count, Ordering::SeqCst);
+        FREE_PAGES.fetch_sub(
+            count.min(FREE_PAGES.load(Ordering::SeqCst)),
+            Ordering::SeqCst,
+        );
         // Keep the PFN allocator in sync: every frame this buddy hands
         // out is a live page the PFN database must never treat as free.
         // Without this reservation the PFN allocator can later hand the
