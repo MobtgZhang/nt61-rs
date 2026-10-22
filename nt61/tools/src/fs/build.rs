@@ -203,6 +203,19 @@ pub fn build_kernel(target: &str) -> Result<PathBuf> {
     cmd.arg("--no-default-features");
     cmd.arg("--features").arg(kernel_features_for(arch));
 
+    // The standalone kernel needs linker-provided image boundaries.  Boot
+    // targets already set their own linker script in their Cargo config;
+    // only the kernel invocation gets the extra `-T` argument here.
+    match arch {
+        "riscv64" => {
+            cmd.env("RUSTFLAGS", "-C link-arg=-Tsrc/boot/linker-rv64.ld -C link-arg=-no-gc-sections");
+        }
+        "loongarch64" => {
+            cmd.env("RUSTFLAGS", "-C link-arg=-Tsrc/boot/linker-la64.ld -C link-arg=-no-gc-sections");
+        }
+        _ => {}
+    }
+
     log::info("Running cargo build...");
     let status = cmd.status().map_err(BuildError::Io)?;
 
@@ -1334,6 +1347,104 @@ fn patch_pe_section_addresses(path: &std::path::Path, image_base: u64) -> Result
     Ok(())
 }
 
+/// Give wrapped PE sections real `Characteristics` flags.
+///
+/// GNU binutils' `pei-<arch>` output leaves every section
+/// characteristic at zero. EDK2's memory-protection protocol therefore
+/// treats writable sections (including the kernel's large `.data`/
+/// `.bss` tables) as read-only after `ExitBootServices`, causing store
+/// access faults during early kernel initialisation.
+fn patch_pe_section_characteristics(path: &std::path::Path) -> Result<()> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+
+    const IMAGE_SCN_CNT_CODE: u32 = 0x0000_0020;
+    const IMAGE_SCN_CNT_INITIALIZED_DATA: u32 = 0x0000_0040;
+    const IMAGE_SCN_MEM_READ: u32 = 0x4000_0000;
+    const IMAGE_SCN_MEM_WRITE: u32 = 0x8000_0000;
+    const IMAGE_SCN_MEM_EXECUTE: u32 = 0x2000_0000;
+
+    let mut f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(BuildError::Io)?;
+
+    let mut mz = [0u8; 2];
+    f.read_exact(&mut mz).map_err(BuildError::Io)?;
+    if &mz != b"MZ" {
+        return Err(BuildError::ImageCreateFailed(format!(
+            "patch_pe_section_characteristics: {} is not a DOS/PE image",
+            path.display()
+        )));
+    }
+    f.seek(SeekFrom::Start(0x3C)).map_err(BuildError::Io)?;
+    let mut e_lfanew_bytes = [0u8; 4];
+    f.read_exact(&mut e_lfanew_bytes).map_err(BuildError::Io)?;
+    let e_lfanew = u32::from_le_bytes(e_lfanew_bytes) as u64;
+    f.seek(SeekFrom::Start(e_lfanew)).map_err(BuildError::Io)?;
+    let mut pe_sig = [0u8; 4];
+    f.read_exact(&mut pe_sig).map_err(BuildError::Io)?;
+    if &pe_sig != b"PE\x00\x00" {
+        return Err(BuildError::ImageCreateFailed(format!(
+            "patch_pe_section_characteristics: bad PE signature at e_lfanew=0x{:x}",
+            e_lfanew
+        )));
+    }
+
+    let coff_off = e_lfanew + 4;
+    f.seek(SeekFrom::Start(coff_off + 2)).map_err(BuildError::Io)?;
+    let mut num_sections_bytes = [0u8; 2];
+    f.read_exact(&mut num_sections_bytes).map_err(BuildError::Io)?;
+    let num_sections = u16::from_le_bytes(num_sections_bytes);
+    f.seek(SeekFrom::Start(coff_off + 16)).map_err(BuildError::Io)?;
+    let mut size_opt_bytes = [0u8; 2];
+    f.read_exact(&mut size_opt_bytes).map_err(BuildError::Io)?;
+    let size_opt = u16::from_le_bytes(size_opt_bytes) as u64;
+    let sec_table_off = coff_off + 20 + size_opt;
+
+    let flags_for = |name: &[u8]| -> u32 {
+        let name = name
+            .iter()
+            .position(|byte| *byte == 0)
+            .map(|end| &name[..end])
+            .unwrap_or(name);
+        if name == b".text" || name.starts_with(b".text.") {
+            IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ
+        } else if name == b".bss" || name.starts_with(b".bss.") {
+            IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE
+        } else if name == b".rdata"
+            || name.starts_with(b".rdata.")
+            || name == b".rodata"
+            || name.starts_with(b".rodata.")
+        {
+            IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ
+        } else if name == b".reloc" {
+            IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ
+        } else {
+            IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE
+        }
+    };
+
+    let mut fixed_count = 0usize;
+    for i in 0..num_sections {
+        let off = sec_table_off + (i as u64) * 40;
+        f.seek(SeekFrom::Start(off)).map_err(BuildError::Io)?;
+        let mut hdr = [0u8; 40];
+        f.read_exact(&mut hdr).map_err(BuildError::Io)?;
+        let flags = flags_for(&hdr[0..8]);
+        f.seek(SeekFrom::Start(off + 36)).map_err(BuildError::Io)?;
+        f.write_all(&flags.to_le_bytes()).map_err(BuildError::Io)?;
+        fixed_count += 1;
+    }
+
+    log::info(&format!(
+        "Patched {} PE section characteristic entries at {}",
+        fixed_count,
+        path.display()
+    ));
+    Ok(())
+}
+
 /// Append a `.reloc` section (a single, empty BaseRelocation
 /// block) and update the OptionalHeader DataDirectory so EDK2's
 /// loader treats the image as relocatable.
@@ -2058,6 +2169,12 @@ pub fn build_boot(target: &str) -> Result<PathBuf> {
                         e,
                     ));
                 }
+                if let Err(e) = patch_pe_section_characteristics(&canonical) {
+                    log::warn(&format!(
+                        "PE section-characteristics patch failed for boot ({}); continuing anyway",
+                        e
+                    ));
+                }
                 // GNU binutils' `pei-<arch>` target synthesises a
                 // PE32+ image but leaves the OptionalHeader.Subsystem
                 // field at 0 (`IMAGE_SUBSYSTEM_UNKNOWN`). EDK2's
@@ -2270,6 +2387,12 @@ pub fn build_winload(target: &str) -> Result<PathBuf> {
                                 "PE32+ section rebase failed for \
                                  winload ({}); continuing anyway",
                                 e,
+                            ));
+                        }
+                        if let Err(e) = patch_pe_section_characteristics(&canonical) {
+                            log::warn(&format!(
+                                "PE32+ section-characteristics patch failed for winload ({}); continuing anyway",
+                                e
                             ));
                         }
                         if let Err(e) = patch_pe_subsystem_with_extent(
@@ -2908,7 +3031,12 @@ fn arch_name(arch: TargetArch) -> &'static str {
 /// are recomputed from it instead of trusting the earlier
 /// ELF-derived values. Running the pass twice converges instead of
 /// drifting, which keeps the wrapped image self-consistent.
-fn fix_pe_entry_and_size(path: &std::path::Path, entry_rva: u32, text_rva: u32) -> Result<()> {
+fn fix_pe_entry_and_size(
+    path: &std::path::Path,
+    entry_rva: u32,
+    text_rva: u32,
+    min_size_of_image: u32,
+) -> Result<()> {
     use std::io::{Read, Seek, SeekFrom, Write};
 
     let mut f = std::fs::OpenOptions::new()
@@ -2984,6 +3112,7 @@ fn fix_pe_entry_and_size(path: &std::path::Path, entry_rva: u32, text_rva: u32) 
     };
     let final_size = max_end
         .max(final_entry)
+        .max(min_size_of_image)
         .checked_next_multiple_of(section_align)
         .unwrap_or(max_end.max(final_entry));
 
@@ -3034,9 +3163,10 @@ fn wrap_elf_to_pe(elf_path: &Path, arch: TargetArch) -> Option<Vec<u8>> {
             .map(|extent| extent.saturating_sub(image_base) as u32)
             .unwrap_or(0);
         let _ = patch_pe_section_addresses(&output_path, image_base);
+        let _ = patch_pe_section_characteristics(&output_path);
         let _ = patch_pe_entry_point_and_image_base(&output_path, entry, base_of_code, image_base);
         patch_pe_subsystem_with_extent(&output_path, 0x0A, &relocations, image_extent_rva).ok()?;
-        let _ = fix_pe_entry_and_size(&output_path, entry, base_of_code);
+        let _ = fix_pe_entry_and_size(&output_path, entry, base_of_code, image_extent_rva);
     } else {
         let _ = patch_pe_subsystem(&output_path, 0x0A, &[]);
     }
