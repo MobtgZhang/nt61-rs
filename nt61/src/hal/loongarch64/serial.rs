@@ -20,7 +20,12 @@ const LSR_DR: u8 = 0x01;
 
 #[inline]
 fn reg(offset: usize) -> *mut u8 {
-    (UART_BASE as usize + offset) as *mut u8
+    let phys = if crate::arch::loongarch64::paging::paging_enabled() {
+        crate::arch::loongarch64::paging::mmio_virt(UART_BASE)
+    } else {
+        UART_BASE
+    };
+    (phys as usize + offset) as *mut u8
 }
 
 /// Initialize the UART.
