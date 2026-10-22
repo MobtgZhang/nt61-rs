@@ -60,6 +60,11 @@ pub fn process_packet(data: &[u8], nic_type: crate::drivers::net::NicType, nic_i
     // First, parse the Ethernet frame
     match eth::parse_ethernet_frame(data) {
         Some((header, payload)) => {
+            crate::hal::serial::write_string_always(&alloc::format!(
+                "[NET-ETH] parsed type={:#06x} len={}\r\n",
+                header.ether_type,
+                payload.len()
+            ));
             // Dispatch to the appropriate handler based on EtherType
             match header.ether_type {
                 eth::ETHER_TYPE_IPV4 => {
@@ -79,6 +84,10 @@ pub fn process_packet(data: &[u8], nic_type: crate::drivers::net::NicType, nic_i
         }
         None => {
             // Invalid Ethernet frame
+            crate::hal::serial::write_string_always(&alloc::format!(
+                "[NET-ETH] parse failed len={}\r\n",
+                data.len()
+            ));
         }
     }
 }
