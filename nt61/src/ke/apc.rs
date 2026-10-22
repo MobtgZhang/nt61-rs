@@ -24,7 +24,7 @@ const MAX_APCS_PER_THREAD: usize = 16;
 /// Maximum APCs in the global queue.
 const MAX_GLOBAL_APCS: usize = 32;
 
-pub type ApcRoutine = fn(*mut u8);
+pub type ApcRoutine = unsafe extern "system" fn(*mut u8);
 
 /// APC environment (where the APC will run).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -406,7 +406,7 @@ pub fn dequeue_count() -> u32 {
     DEQUEUE_COUNT.load(core::sync::atomic::Ordering::Relaxed)
 }
 
-fn smoke_apc_routine(ctx: *mut u8) {
+unsafe extern "system" fn smoke_apc_routine(ctx: *mut u8) {
     // No-op: we only need an `ApcRoutine` for the smoke test.
     let _ = ctx;
 }
@@ -522,7 +522,9 @@ pub fn deliver_thread_apc(thread: *mut Ethread, kind: ApcKind) -> bool {
         if let Some(routine_fn) = (*apc_ptr).routine {
             let ctx = (*apc_ptr).context;
             // // kprintln!("[APC] Delivering APC routine at {:p}", routine_fn as *const ());
-            routine_fn(ctx);
+            unsafe {
+                routine_fn(ctx);
+            }
             return true;
         }
         false
@@ -532,7 +534,7 @@ pub fn deliver_thread_apc(thread: *mut Ethread, kind: ApcKind) -> bool {
 /// nt_queue_apc_thread - user-mode API to queue an APC to a thread.
 pub unsafe extern "C" fn nt_queue_apc_thread(
     thread_handle: crate::libs::ntdll::types::HANDLE,
-    normal_routine: Option<unsafe extern "C" fn(*mut u8)>,
+    normal_routine: Option<unsafe extern "system" fn(*mut u8)>,
     normal_context: *mut u8,
     system_argument1: *mut u8,
     system_argument2: *mut u8,
@@ -564,7 +566,7 @@ pub unsafe extern "C" fn nt_queue_apc_thread(
     // In a full implementation, this would be the kernel-mode wrapper
     let kernel_routine_fn: ApcRoutine = user_apc_kernel_routine;
     let rundown_routine: Option<ApcRoutine> = None;
-    let normal_routine_fn: Option<ApcRoutine> = normal_routine.map(|f| core::mem::transmute(f));
+    let normal_routine_fn: Option<ApcRoutine> = normal_routine;
 
     ke_initialize_apc(
         apc_ptr,
@@ -591,7 +593,7 @@ pub unsafe extern "C" fn nt_queue_apc_thread(
 /// This is called in kernel context before returning to user mode.
 /// Note: ke_initialize_apc expects a kernel routine with signature `fn(*mut u8)`
 /// so we use a wrapper that just does nothing (the APC is already queued).
-fn user_apc_kernel_routine(_context: *mut u8) {
+unsafe extern "system" fn user_apc_kernel_routine(_context: *mut u8) {
     // In a full implementation, this would:
     // 1. Queue the user APC to be delivered when the thread returns to user mode
     // 2. Set the user APC pending flag
