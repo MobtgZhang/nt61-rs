@@ -57,17 +57,17 @@ pub fn pte_address_of(va: u64) -> *mut MMPTE {
 }
 #[inline]
 pub fn pde_address_of(va: u64) -> *mut MMPTE {
-    let linear_directory_page = (va & VIRTUAL_ADDRESS_MASK) >> (PAGE_SHIFT + 9);
+    let linear_directory_page = (va >> (PAGE_SHIFT + 9)) & 0x1FF;
     (PDE_BASE + linear_directory_page * 8) as *mut MMPTE
 }
 #[inline]
 pub fn ppe_address_of(va: u64) -> *mut MMPTE {
-    let linear_pointer_page = (va & VIRTUAL_ADDRESS_MASK) >> (PAGE_SHIFT + 18);
+    let linear_pointer_page = (va >> (PAGE_SHIFT + 18)) & 0x1FF;
     (PPE_BASE + linear_pointer_page * 8) as *mut MMPTE
 }
 #[inline]
 pub fn pxe_address_of(va: u64) -> *mut MMPTE {
-    let linear_root_page = (va & VIRTUAL_ADDRESS_MASK) >> (PAGE_SHIFT + 27);
+    let linear_root_page = (va >> (PAGE_SHIFT + 27)) & 0x1FF;
     (PXE_BASE + linear_root_page * 8) as *mut MMPTE
 }
 
@@ -308,7 +308,9 @@ pub fn ensure_low_identity_map(pa_base: u64, size: u64) {
 /// the shared identity-mapped PDPT — this is fine for Phase 0
 /// because we are not enforcing isolation yet.
 pub fn create_user_address_space() -> Option<u64> {
+    crate::hal::serial::write_string_always("[VAS] enter\r\n");
     let pfn = pfn::allocate_pfn()?;
+    crate::hal::serial::write_string_always("[VAS] pfn\r\n");
     crate::boot_debug_println!("[VAS] create_user_address_space: A: new pfn=0x{:x}", pfn);
     // The root page is handed out by the PFN allocator. On non-x86
     // targets the kernel does not necessarily map every physical
@@ -317,13 +319,16 @@ pub fn create_user_address_space() -> Option<u64> {
     // used by the hardware root register identical to the address used
     // by Rust.
     let root_va = pfn << 12;
+    crate::hal::serial::write_string_always("[VAS] rootmap\r\n");
     if !crate::arch::identity_map_region(root_va, 4096) {
+        crate::hal::serial::write_string_always("[VAS] rootmap fail\r\n");
         crate::boot_debug_println!(
             "[VAS] create_user_address_space: ERROR: root identity map failed"
         );
         pfn::free_pfn(pfn);
         return None;
     }
+    crate::hal::serial::write_string_always("[VAS] rootmap ok\r\n");
     // Zero the new PML4.
     unsafe {
         let va = (pfn << 12) as *mut u8;
@@ -333,13 +338,41 @@ pub fn create_user_address_space() -> Option<u64> {
     // the same kernel mappings (identity-mapped image, recursive
     // self-map, etc.) that the boot PML4 has.
     let system = system_pml4_mut();
+    crate::hal::serial::write_string_always("[VAS] copy\r\n");
     let dst = (pfn << 12) as *mut MMPTE;
     unsafe {
         for i in 0..PT_ENTRIES {
             let src_entry = *system.add(i);
-            *dst.add(i) = src_entry;
+            #[cfg(target_arch = "x86_64")]
+            {
+                *dst.add(i) = MMPTE {
+                    u_long: src_entry.raw(),
+                };
+            }
+            #[cfg(not(target_arch = "x86_64"))]
+            {
+                // RISC-V, LoongArch64, and AArch64 maintain native
+                // root descriptors in their own system roots. The
+                // portable x86 translation is only appropriate when
+                // the source root really is an x86 PML4.
+                *dst.add(i) = MMPTE {
+                    u_long: src_entry.raw(),
+                };
+            }
         }
     }
+    let (root0_x86, root0_sv39) = unsafe {
+        (
+            (*system.add(0)).raw(),
+            core::ptr::read_volatile((pfn << 12) as *const u64),
+        )
+    };
+    crate::hal::serial::write_string_always(&alloc::format!(
+        "[VAS] root0_x86={:016x} root0_sv39={:016x}\r\n",
+        root0_x86,
+        root0_sv39
+    ));
+    crate::hal::serial::write_string_always("[VAS] copy ok\r\n");
     crate::boot_debug_println!("[VAS] create_user_address_space: B: copied system PML4",);
     // Install a self-map chain + identity map for this PML4. The
     // system PML4's identity-map entry points at the system PML4's
@@ -350,17 +383,21 @@ pub fn create_user_address_space() -> Option<u64> {
     // (and any subsequent context switch to this PML4) can reach
     // the new page tables through the self-map.
     if crate::arch::common::self_map::install_with_identity_map(pfn).is_err() {
+        crate::hal::serial::write_string_always("[VAS] selfmap fail\r\n");
         // [DISABLED-KPRINTLN]         // // kprintln!("[VAS] ERROR: create_user_address_space failed to install self-map");
         crate::boot_debug_println!("[VAS] create_user_address_space: ERROR: self-map failed");
         pfn::free_pfn(pfn);
         return None;
     }
+    crate::hal::serial::write_string_always("[VAS] selfmap ok\r\n");
     crate::boot_debug_println!("[VAS] create_user_address_space: D: self-map installed");
     if crate::arch::common::self_map::install_hyperspace(pfn).is_err() {
+        crate::hal::serial::write_string_always("[VAS] hyper fail\r\n");
         crate::boot_debug_println!("[VAS] create_user_address_space: ERROR: hyperspace failed");
         pfn::free_pfn(pfn);
         return None;
     }
+    crate::hal::serial::write_string_always("[VAS] hyper ok\r\n");
     // Force W=1 on every identity-map (low-half) entry in the new
     // PML4 so the kernel can write to page-table pages while running
     // with this user PML4 as CR3. Without this, a write to a PT/PD
@@ -396,28 +433,59 @@ pub fn refresh_kernel_mappings(pml4_phys: u64) {
     if system_phys == 0 || system_phys == pml4_phys {
         return;
     }
-    let system = system_phys as *const MMPTE;
-    let process = pml4_phys as *mut MMPTE;
-    unsafe {
-        for idx in 1..(PT_ENTRIES - 1) {
-            if idx == MI_SELF_MAP_INDEX || idx == 255 {
-                continue;
+    #[cfg(target_arch = "x86_64")]
+    {
+        let system = system_phys as *const MMPTE;
+        let process = pml4_phys as *mut MMPTE;
+        unsafe {
+            for idx in 1..(PT_ENTRIES - 1) {
+                if idx == MI_SELF_MAP_INDEX || idx == 255 {
+                    continue;
+                }
+                let process_entry = core::ptr::read_volatile(process.add(idx)).raw();
+                if process_entry & PTE_P != 0 {
+                    continue;
+                }
+                let system_entry = core::ptr::read_volatile(system.add(idx)).raw();
+                if system_entry & PTE_P == 0 {
+                    continue;
+                }
+                let kernel_entry = crate::arch::translate_x86_root_entry(system_entry);
+                core::ptr::write_volatile(
+                    process.add(idx),
+                    crate::mm::pte::MMPTE {
+                        u_long: kernel_entry,
+                    },
+                );
             }
-            let process_entry = core::ptr::read_volatile(process.add(idx)).raw();
-            if process_entry & PTE_P != 0 {
-                continue;
+        }
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        // Non-x86 roots are already native. Copying the raw root
+        // descriptors preserves Sv39/LoongArch/AArch64 permissions and
+        // avoids the x86-only translation in this function.
+        let system = system_phys as *const MMPTE;
+        let process = pml4_phys as *mut MMPTE;
+        unsafe {
+            for idx in 1..PT_ENTRIES {
+                let process_entry = core::ptr::read_volatile(process.add(idx)).raw();
+                if process_entry != 0 {
+                    continue;
+                }
+                let system_entry = core::ptr::read_volatile(system.add(idx)).raw();
+                if system_entry != 0 {
+                    let kernel_entry =
+                        crate::arch::translate_x86_root_entry(system_entry);
+                    core::ptr::write_volatile(
+                        process.add(idx),
+                        crate::mm::pte::MMPTE {
+                            u_long: kernel_entry,
+                        },
+                    );
+                }
             }
-            let system_entry = core::ptr::read_volatile(system.add(idx)).raw();
-            if system_entry & PTE_P == 0 {
-                continue;
-            }
-            let kernel_entry = system_entry & !PTE_US;
-            core::ptr::write_volatile(
-                process.add(idx),
-                crate::mm::pte::MMPTE {
-                    u_long: kernel_entry,
-                },
-            );
         }
     }
 }
@@ -425,13 +493,27 @@ pub fn refresh_kernel_mappings(pml4_phys: u64) {
 /// Attach a process. Updates the per-CPU CR3 / TTBR1 etc. via the
 /// arch-specific `load_page_root` helper. Returns the previous root.
 pub fn attach_process(pml4_phys: u64) -> u64 {
+    crate::hal::serial::write_string_always("[ATTACH] enter\r\n");
     let prev = current_root();
+    crate::hal::serial::write_string_always("[ATTACH] prev\r\n");
     let root_pfn = pml4_phys >> 12;
+    let root_ptr = pml4_phys as *const u64;
+    for index in [0usize, 1, 2, 4, 5, 9, 10, 255, 256, 510, 511] {
+        crate::hal::serial::write_string_always(&alloc::format!(
+            "[ROOT{}] {:016x}\r\n",
+            index,
+            unsafe { core::ptr::read_volatile(root_ptr.add(index)) }
+        ));
+    }
     unsafe {
+        crate::hal::serial::write_string_always("[ATTACH] load\r\n");
         crate::arch::load_page_root(root_pfn);
     }
+    crate::hal::serial::write_string_always("[ATTACH] loaded\r\n");
     set_current_root(pml4_phys);
+    crate::hal::serial::write_string_always("[ATTACH] current\r\n");
     crate::arch::common::percpu::set_address_space_roots(prev, pml4_phys);
+    crate::hal::serial::write_string_always("[ATTACH] percpu\r\n");
     prev
 }
 
@@ -1015,6 +1097,10 @@ pub fn self_test_user_address_space() -> bool {
 /// Note: Standard Windows 7 x64 uses 0x00400000, but this implementation
 /// uses 0x00100000 for Phase 0 simplicity. The address should be page-aligned
 /// and in the user-space range (below 0x0000_0001_0000_0000).
+#[cfg(target_arch = "riscv64")]
+pub const DEFAULT_USER_IMAGE_BASE: u64 = 0x0000_0000_1000_0000;
+
+#[cfg(not(target_arch = "riscv64"))]
 pub const DEFAULT_USER_IMAGE_BASE: u64 = 0x0000_1000_0000_0000;
 
 /// Default user entry point (the first bytes of the mapped image).
@@ -1029,6 +1115,10 @@ pub const DEFAULT_USER_ENTRY_RIP: u64 = 0x0000_0000_0010_1000;
 /// stack's top was less than 16 MiB from `0x0000_7FFF_FFFF_FFFF`
 /// and too close to `PEB_VIRTUAL_ADDRESS` for any non-trivial
 /// loader to fit safely.
+#[cfg(target_arch = "riscv64")]
+pub const USER_STACK_BASE: u64 = 0x0000_0000_7F_00_0000;
+
+#[cfg(not(target_arch = "riscv64"))]
 pub const USER_STACK_BASE: u64 = 0x0000_7FFF_DE00_0000;
 pub const USER_STACK_SIZE: u64 = 0x0010_0000; // 1 MiB
 pub const USER_STACK_TOP: u64 = USER_STACK_BASE + USER_STACK_SIZE;
@@ -1043,6 +1133,10 @@ pub const USER_STACK_TOP: u64 = USER_STACK_BASE + USER_STACK_SIZE;
 /// address space at `0x0000_0000_0010_0000`, which is a true user
 /// VA. This matches what NT 6.1 does for `csrss.exe` /
 /// `smss.exe` minimal stubs.
+#[cfg(target_arch = "riscv64")]
+pub const USER_ENTRY_BASE: u64 = 0x0000_0000_0010_0000;
+
+#[cfg(not(target_arch = "riscv64"))]
 pub const USER_ENTRY_BASE: u64 = 0x0000_1000_0000_0000;
 
 /// User entry RIP where the minimal ring3 stub starts executing.
@@ -1057,6 +1151,9 @@ pub const USER_STACK_GUARD_BASE: u64 = USER_STACK_BASE - 0x1000;
 // and CRITICAL-006.
 const _: () = {
     // 2 MiB below the user-space canonical limit
+    #[cfg(target_arch = "riscv64")]
+    const USER_LIMIT: u64 = 0x0000_0000_7F_E0_0000;
+    #[cfg(not(target_arch = "riscv64"))]
     const USER_LIMIT: u64 = 0x0000_7FFF_FFFF_FFFF;
     assert!(
         USER_STACK_BASE < USER_LIMIT - 0x0040_0000,
@@ -1357,6 +1454,14 @@ pub fn init() {
     let _ = reserved;
     crate::boot_debug_println!("[VAS] CR3 RESERVED pfn=0x{:x}", pml4_pfn);
     ensure_low_identity_map(pml4_phys & !0x1F_FFFF, 0x20_0000);
+    {
+        let (head, count) = crate::mm::pfn::get_free_list_stats();
+        crate::hal::serial::write_string_always("[VASCHK] after pml4 identity head=");
+        crate::mm::write_decimal_u64(head);
+        crate::hal::serial::write_string_always(" count=");
+        crate::mm::write_decimal_u64(count);
+        crate::hal::serial::write_string_always("\r\n");
+    }
 
     // The kernel uses VA == PA for bootstrap physical-memory access.
     // Install the complete x86 bootstrap window once, rather than
@@ -1366,12 +1471,59 @@ pub fn init() {
     if let Some(identity_limit) = crate::arch::identity_mapping_limit() {
         ensure_low_identity_map(0, identity_limit);
     }
+    {
+        let (head, count) = crate::mm::pfn::get_free_list_stats();
+        crate::hal::serial::write_string_always("[VASCHK] after low identity head=");
+        crate::mm::write_decimal_u64(head);
+        crate::hal::serial::write_string_always(" count=");
+        crate::mm::write_decimal_u64(count);
+        crate::hal::serial::write_string_always("\r\n");
+    }
 
     // LoongArch64 MMIO (UART, EXTIOI, PCI ECAM).
     #[cfg(target_arch = "loongarch64")]
     {
         ensure_low_identity_map(0x1FE0_0000, 0x20_0000);
         ensure_low_identity_map(0x2000_0000, 0x1000_0000);
+
+        // CRMD switches from direct-address mode to mapped mode as one
+        // instruction sequence inside load_page_root. The first mapped
+        // instruction is the next instruction in the executing loader
+        // image, and the active frame still uses the loader stack. The
+        // low-RAM identity window above does not cover either range.
+        // Map the current image and stack before flushing the TLB and
+        // setting PG=1.
+        let image_va = crate::kernel_main::kernel_main as u64;
+        ensure_low_identity_map(image_va & !0x00FF_FFFF, 0x0100_0000);
+
+        let stack_sp: u64;
+        unsafe {
+            core::arch::asm!("move {}, $sp", out(reg) stack_sp, options(nomem, nostack));
+        }
+        ensure_low_identity_map(stack_sp & !0x003F_FFFF, 0x0040_0000);
+    }
+
+    // RISC-V: QEMU virt RAM starts at 0x8000_0000. Map the first
+    // low-RAM window and the 256 MB high-RAM window selected by the
+    // firmware descriptors. On QEMU virt, the PFN database and kernel
+    // heap live above 4 GiB, so the high window is mandatory.
+    #[cfg(target_arch = "riscv64")]
+    {
+        ensure_low_identity_map(0x8000_0000, 0x1000_0000);
+        ensure_low_identity_map(0x1_0000_0000, 0x1000_0000);
+
+        // The kernel boots in Sv39 bare mode and the system root is
+        // only enabled later. Preserve the current image and stack in
+        // that root so a temporary switch back to system space cannot
+        // fault on the instruction stream or the active stack.
+        let image_va = crate::kernel_main::kernel_main as u64;
+        ensure_low_identity_map(image_va & !0x00FF_FFFF, 0x0100_0000);
+
+        let stack_sp: u64;
+        unsafe {
+            core::arch::asm!("mv {}, sp", out(reg) stack_sp, options(nomem, nostack));
+        }
+        ensure_low_identity_map(stack_sp & !0x003F_FFFF, 0x0040_0000);
     }
 
     // Enable mapped-address mode (PG=1, DA=0).
