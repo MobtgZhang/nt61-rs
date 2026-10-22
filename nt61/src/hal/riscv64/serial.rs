@@ -6,7 +6,7 @@
 
 use core::ptr::{read_volatile, write_volatile};
 
-const UART_BASE: u64 = 0x1000_0000;
+pub const UART_BASE: u64 = 0x1000_0000;
 
 /// Register offsets (DLAB=0 view) and bit masks used for the
 /// receive path.
@@ -111,10 +111,6 @@ pub fn write_u32_hex(v: u32) {
 /// facade (e.g. `mm::pool`, `mm::mod`) can rely on the same name
 /// across every architecture. Mirrors `crate::hal::aarch64::serial`.
 pub fn write_hex_u64(v: u64) {
-    if !log_level_debug() {
-        return;
-    }
-
     for i in (0..16).rev() {
         let nibble = ((v >> (i * 4)) & 0xF) as u8;
         let c = if nibble < 10 {
@@ -124,6 +120,15 @@ pub fn write_hex_u64(v: u64) {
         };
         write_char(c);
     }
+}
+
+pub fn write_hex_u64_always(v: u64) {
+    let mut buf = [0u8; 16];
+    for i in 0..16 {
+        let nibble = ((v >> ((15 - i) * 4)) & 0xF) as u8;
+        buf[i] = if nibble < 10 { b'0' + nibble } else { b'A' + nibble - 10 };
+    }
+    write_string_always(core::str::from_utf8(&buf).unwrap_or(""));
 }
 
 fn log_level_debug() -> bool {
