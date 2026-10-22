@@ -141,15 +141,20 @@ const PTE_PFN_MASK: u64 = (!0u64 << PTE_PFN_SHIFT) & ((1u64 << PTE_PFN_END_SHIFT
 
 fn make_pte_loong(pa: u64, flags: u64) -> u64 {
     let pfn = (pa & PAGE_MASK) >> PAGE_SHIFT;
+    // Portable callers pass x86-style PTE bits.  Do not let native LoongArch
+    // permission bit values alias into PLV or PAGE flags; translate them here
+    // in one place.
+    let writable = flags & crate::mm::pte::PTE_RW != 0;
+    let user = flags & (crate::mm::pte::PTE_US | crate::arch::common::paging::PageFlags::USER.bits()) != 0;
+    let not_executable = flags & (crate::mm::pte::PTE_NX | crate::arch::common::paging::PageFlags::NO_EXECUTE.bits()) != 0;
     let pte = ((pfn << PTE_PFN_SHIFT) & PTE_PFN_MASK)
         | PTE_V
         | PTE_D
         | PTE_CACHE_CC
         | PTE_G
-        | if flags & 0x2 != 0 { PTE_W } else { 0 }
-        | if flags & 0x2 != 0 { PTE_MODIFIED } else { 0 }
-        | if flags & 0x4 != 0 { PTE_PLV_USER } else { 0 }
-        | if flags & (1u64 << 63) != 0 { PTE_NX } else { 0 };
+        | if writable { PTE_W | PTE_MODIFIED } else { 0 }
+        | if user { PTE_PLV_USER } else { 0 }
+        | if not_executable { PTE_NX } else { 0 };
     pte
 }
 fn is_valid_loong(e: u64) -> bool {
@@ -174,6 +179,14 @@ fn table_pa_loong(e: u64) -> u64 {
     pfn << PAGE_SHIFT
 }
 
+/// Convert an x86-format root entry into a LoongArch directory descriptor.
+pub fn translate_x86_root_entry(entry: u64) -> u64 {
+    if entry & crate::mm::pte::PTE_P == 0 {
+        return 0;
+    }
+    make_table_desc_loong(entry & 0x000F_FFFF_FFFF_F000)
+}
+
 /// Read the page-root PA out of the `PGDL` CSR (0x19). Kernel VAs
 /// live in the low half (VA63 == 0) and user VAs share that half, so
 /// PGDL — which `enter_first_user_thread` switches to the user root —
@@ -190,8 +203,8 @@ fn root_phys() -> u64 {
 
 /// Walk the LoongArch 4-level page tables for `va` and return a
 /// writable pointer to the leaf PTE.
-unsafe fn leaf_pte_for(va: u64) -> *mut u64 {
-    let l0_phys = root_phys();
+unsafe fn leaf_pte_for_at(root_pa: u64, va: u64) -> *mut u64 {
+    let l0_phys = root_pa;
     let l0_idx = ((va >> 48) & 0x1FF) as usize;
     let l1_idx = ((va >> 39) & 0x1FF) as usize;
     let l2_idx = ((va >> 30) & 0x1FF) as usize;
@@ -266,6 +279,10 @@ unsafe fn leaf_pte_for(va: u64) -> *mut u64 {
     leaf_table.add(phys_pte_idx)
 }
 
+unsafe fn leaf_pte_for(va: u64) -> *mut u64 {
+    leaf_pte_for_at(root_phys(), va)
+}
+
 pub fn map_page(va: u64, pa: u64, flags: u64) -> bool {
     let l3_pte = unsafe { leaf_pte_for(va) };
     if l3_pte.is_null() {
@@ -276,6 +293,22 @@ pub fn map_page(va: u64, pa: u64, flags: u64) -> bool {
         if paging_enabled() {
             asm!("invtlb 0, $r0, $r0", options(nostack));
         }
+    }
+    true
+}
+
+/// Map one page into a non-current root without switching hardware context.
+pub fn map_page_in_root(root_pfn: u64, va: u64, pa: u64, flags: u64) -> bool {
+    let root_pa = pfn_to_phys(root_pfn);
+    let leaf_pte = unsafe { leaf_pte_for_at(root_pa, va) };
+    if leaf_pte.is_null() {
+        return false;
+    }
+    unsafe {
+        core::ptr::write_volatile(leaf_pte, make_pte_loong(pa, flags));
+    }
+    if paging_enabled() {
+        asm!("invtlb 0, $r0, $r0", options(nostack));
     }
     true
 }
@@ -342,6 +375,13 @@ pub fn translate_virt(va: u64) -> Option<u64> {
 
 pub unsafe fn load_page_root(pml4_pfn: u64) {
     let pa = pfn_to_phys(pml4_pfn);
+    let is_system_root = {
+        let system = crate::mm::vas::MM_SYSTEM_VAS.lock();
+        system.pml4_phys == pa
+    };
+    if !is_system_root {
+        prepare_switch_mappings(pml4_pfn);
+    }
     asm!("csrwr {0}, 0x1a", in(reg) pa, options(nostack));
     // The kernel image and all kernel VAs live in the *low* half
     // (VA63 == 0), which is walked through PGDL (CSR 0x19), not
@@ -356,6 +396,116 @@ pub unsafe fn load_page_root(pml4_pfn: u64) {
     crmd &= !(1u64 << 3); // clear DA (mutually exclusive with PG)
     crmd |= 1u64 << 4; // set PG
     asm!("csrwr {}, 0x0", in(reg) crmd, options(nostack));
+}
+
+/// Install the running image and current stack in the destination root.
+///
+/// LoongArch changes translation when PGDL is written.  A process root is a
+/// private view, so merely sharing root-level descriptors is insufficient;
+/// the kernel image and switch-time stack must be present before the switch.
+fn prepare_switch_mappings(root_pfn: u64) {
+    extern "C" {
+        static __image_start: u8;
+        static __image_end: u8;
+    }
+
+    const KERNEL_CODE: u64 = crate::mm::pte::PTE_P | crate::mm::pte::PTE_RW;
+
+    let image_start = unsafe { core::ptr::addr_of!(__image_start) } as u64 & PAGE_MASK;
+    let image_end = unsafe { core::ptr::addr_of!(__image_end) } as u64;
+    for page in (image_start..image_end).step_by(PAGE_SIZE as usize) {
+        let pa = if paging_enabled() {
+            match translate_virt(page) {
+                Some(pa) => pa & PAGE_MASK,
+                None => page,
+            }
+        } else {
+            page
+        };
+        if !map_page_in_root(root_pfn, page, pa, KERNEL_CODE) {
+            crate::hal::serial::write_string_always(&alloc::format!(
+                "[LAPGROOT] kernel map failed at {:x}\r\n",
+                page
+            ));
+        }
+    }
+
+    let mut stack_pointer = 0u64;
+    unsafe {
+        asm!("move {}, $sp", out(reg) stack_pointer, options(nostack));
+    }
+    for index in 0..128u64 {
+        let page = (stack_pointer - index * PAGE_SIZE) & PAGE_MASK;
+        let pa = if paging_enabled() {
+            match translate_virt(page) {
+                Some(pa) => pa & PAGE_MASK,
+                None => page,
+            }
+        } else {
+            page
+        };
+        map_page_in_root(root_pfn, page, pa, KERNEL_CODE);
+    }
+    for index in 1..128u64 {
+        let page = (stack_pointer.wrapping_add(index * PAGE_SIZE)) & PAGE_MASK;
+        let pa = if paging_enabled() {
+            match translate_virt(page) {
+                Some(pa) => pa & PAGE_MASK,
+                None => page,
+            }
+        } else {
+            page
+        };
+        map_page_in_root(root_pfn, page, pa, KERNEL_CODE);
+    }
+
+    // Keep the kernel heap visible in every process context.  The heap
+    // allocator hands out identity-mapped physical addresses, so re-encode
+    // only those native mappings here rather than copying x86 table forms.
+    if let Some((heap_base, heap_size)) = crate::mm::heap::KERNEL_HEAP.configured_region() {
+        let heap_start = heap_base as u64 & PAGE_MASK;
+        let heap_end = heap_start
+            .checked_add(heap_size as u64)
+            .unwrap_or(heap_start)
+            .min(0x0000_FFFF_FFFF_FFFF);
+        let mut page = heap_start;
+        while page < heap_end {
+            let pa = if paging_enabled() {
+                match translate_virt(page) {
+                    Some(pa) => pa & PAGE_MASK,
+                    None => page,
+                }
+            } else {
+                page
+            };
+            if !map_page_in_root(root_pfn, page, pa, KERNEL_CODE) {
+                crate::hal::serial::write_string_always(&alloc::format!(
+                    "[LAPGROOT] kernel heap map failed at {:x}\r\n",
+                    page
+                ));
+            }
+            page += PAGE_SIZE;
+        }
+    }
+
+    let fb = crate::hal::common::framebuffer::info();
+    if fb.address != 0 && fb.pitch != 0 {
+        let fb_size = (fb.pitch as u64) * (fb.height as u64);
+        let mut page = fb.address & PAGE_MASK;
+        let fb_end = fb.address + fb_size;
+        while page < fb_end {
+            let pa = if paging_enabled() {
+                match translate_virt(page) {
+                    Some(pa) => pa & PAGE_MASK,
+                    None => page,
+                }
+            } else {
+                page
+            };
+            map_page_in_root(root_pfn, page, pa, KERNEL_CODE);
+            page += PAGE_SIZE;
+        }
+    }
 }
 
 /// Map an MMIO physical address into the DMW0 direct window.
@@ -462,10 +612,7 @@ pub fn identity_map_region(pa: u64, size: u64) -> bool {
                 let l2 = l2_pa_used as *mut u64;
                 let l2e = core::ptr::read_volatile(l2.add(l2_idx));
                 if !is_table_loong(l2e) {
-                    core::ptr::write_volatile(
-                        l2.add(l2_idx),
-                        make_table_desc_loong(dir1_pa),
-                    );
+                    core::ptr::write_volatile(l2.add(l2_idx), make_table_desc_loong(dir1_pa));
                 }
 
                 let dir1 = dir1_pa as *mut u64;
