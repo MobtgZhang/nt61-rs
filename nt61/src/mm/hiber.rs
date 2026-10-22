@@ -22,10 +22,10 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use crate::ke::sync::Spinlock;
 use crate::kprintln_error;
 use crate::kprintln_info;
 use crate::kprintln_warn;
-use crate::ke::sync::Spinlock;
 use crate::mm::constants::PAGE_SIZE;
 use crate::mm::pagefile;
 

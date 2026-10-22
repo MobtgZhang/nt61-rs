@@ -785,8 +785,7 @@ pub fn request_async_io_drain() {
     if ASYNC_IO_DPC_ARMED.swap(true, Ordering::AcqRel) {
         return;
     }
-    if crate::ke::dpc::insert(async_io_dpc_routine, core::ptr::null_mut(), "pagecache-io")
-        .is_none()
+    if crate::ke::dpc::insert(async_io_dpc_routine, core::ptr::null_mut(), "pagecache-io").is_none()
     {
         // DPC table full: unarm so the next queued request retries.
         ASYNC_IO_DPC_ARMED.store(false, Ordering::Release);
