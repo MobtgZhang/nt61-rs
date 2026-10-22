@@ -196,6 +196,7 @@ pub fn arp_input(data: &[u8], nic_type: NicType, nic_index: usize) {
         Some(h) => h,
         None => return,
     };
+    crate::hal::serial::write_string_always("[NET-ARP] parsed\r\n");
 
     // Verify ARP packet is for IPv4 over Ethernet
     if header.hw_type != 1
@@ -208,12 +209,14 @@ pub fn arp_input(data: &[u8], nic_type: NicType, nic_index: usize) {
 
     // Get our IP addresses
     let our_ips = ipif::get_our_ip_addresses();
+    crate::hal::serial::write_string_always("[NET-ARP] our ips\r\n");
     if !our_ips.contains(&header.target_ip) {
         return;
     }
 
     // Add sender to cache
     cache_add(header.sender_ip, &header.sender_mac);
+    crate::hal::serial::write_string_always("[NET-ARP] cache added\r\n");
 
     // Process based on operation
     match header.operation {
@@ -229,23 +232,59 @@ pub fn arp_input(data: &[u8], nic_type: NicType, nic_index: usize) {
         }
         2 => {
             // ARP Reply - already added to cache above
+            crate::hal::serial::write_string_always("[NET-ARP] reply handled\r\n");
         }
         _ => {}
     }
 }
 
-/// Send an ARP request
+/// Select the local source address used when probing `target_ip`.
+/// This must never blindly pick the loopback interface: an ARP
+/// request carrying `127.0.0.1` is discarded by real networks.
+pub fn source_for_target(target_ip: u32) -> Option<u32> {
+    let interfaces = ipif::get_all_interfaces();
+    interfaces
+        .iter()
+        .find(|interface| interface.address == target_ip)
+        .map(|interface| interface.address)
+        .or_else(|| {
+            interfaces
+                .iter()
+                .find(|interface| interface.is_on_subnet(target_ip))
+                .map(|interface| interface.address)
+        })
+        .or_else(|| {
+            crate::netstack::routing::find_route(target_ip).and_then(|route| {
+                ipif::get_interface(route.interface).map(|interface| interface.address)
+            })
+        })
+        .or_else(|| {
+            interfaces
+                .iter()
+                .find(|interface| interface.address != 0x7F00_0001)
+                .map(|interface| interface.address)
+        })
+}
+
+/// Send an ARP request for `target_ip` using the source address of
+/// the interface that owns the route to the target.
 pub fn send_request(target_ip: u32, nic_type: NicType, nic_index: usize) {
+    let Some(src_ip) = source_for_target(target_ip) else {
+        return;
+    };
+    send_request_with_source(target_ip, src_ip, nic_type, nic_index);
+}
+
+/// Send an ARP request with an explicit source protocol address.
+pub fn send_request_with_source(
+    target_ip: u32,
+    source_ip: u32,
+    nic_type: NicType,
+    nic_index: usize,
+) {
     // Get our MAC address
     let src_mac = match ethif::get_primary_mac() {
         Some(m) => m,
-        None => return,
-    };
-
-    // Get our IP address
-    let our_ips = ipif::get_our_ip_addresses();
-    let src_ip = match our_ips.first() {
-        Some(&ip) => ip,
         None => return,
     };
 
@@ -257,7 +296,7 @@ pub fn send_request(target_ip: u32, nic_type: NicType, nic_index: usize) {
         proto_size: 4,
         operation: 1, // Request
         sender_mac: src_mac,
-        sender_ip: src_ip,
+        sender_ip: source_ip,
         target_mac: [0, 0, 0, 0, 0, 0],
         target_ip: target_ip,
     };
@@ -325,7 +364,7 @@ pub fn arp_resolve(ip: u32) -> Option<[u8; 6]> {
         if iface.is_on_subnet(ip) {
             // On local subnet, send ARP request
             if let Some((nic_type, nic_idx)) = ethif::get_primary_interface() {
-                send_request(ip, nic_type, nic_idx);
+                send_request_with_source(ip, iface.address, nic_type, nic_idx);
             }
             found_local = true;
             break;
@@ -334,14 +373,19 @@ pub fn arp_resolve(ip: u32) -> Option<[u8; 6]> {
 
     // Not on local subnet, use gateway
     if !found_local {
-        if let Some(gateway) = interfaces.first() {
+        if let Some(gateway) = interfaces
+            .iter()
+            .find(|interface| interface.gateway != 0)
+            .or_else(|| interfaces.first())
+        {
             if let Some(mac) = cache_lookup(gateway.gateway) {
                 return Some(mac);
             }
 
             // Try to resolve gateway
             if let Some((nic_type, nic_idx)) = ethif::get_primary_interface() {
-                send_request(gateway.gateway, nic_type, nic_idx);
+                let src_ip = source_for_target(gateway.gateway)?;
+                send_request_with_source(gateway.gateway, src_ip, nic_type, nic_idx);
             }
         }
     }
