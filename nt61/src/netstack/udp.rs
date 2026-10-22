@@ -158,13 +158,14 @@ fn calculate_checksum(src_ip: u32, dst_ip: u32, udp_data: &[u8]) -> u16 {
         }
     }
 
-    // Sum UDP data
-    for chunk in udp_data.chunks(2) {
-        if chunk.len() == 2 {
-            sum += u16::from_be_bytes([chunk[0], chunk[1]]) as u32;
-        } else {
-            sum += chunk[0] as u32;
-        }
+    // Sum the UDP datagram in 16-bit network-order words. Pad an odd
+    // trailing byte explicitly with zero.
+    let mut words = udp_data.chunks_exact(2);
+    for chunk in words.by_ref() {
+        sum += u16::from_be_bytes([chunk[0], chunk[1]]) as u32;
+    }
+    if let Some(byte) = words.remainder().first() {
+        sum += u32::from(*byte) << 8;
     }
 
     while sum > 0xFFFF {
@@ -179,8 +180,16 @@ fn calculate_checksum(src_ip: u32, dst_ip: u32, udp_data: &[u8]) -> u16 {
 }
 
 /// create a UDP socket and bind to a local port
-pub fn create_socket(local_port: Port, local_ip: u32) -> Option<usize> {
+pub fn create_socket(mut local_port: Port, local_ip: u32) -> Option<usize> {
     let mut sockets = UDP_SOCKETS.lock();
+
+    // Kernel-assigned ports are drawn from the IANA dynamic range.
+    // Allocate before the duplicate check so a caller can simply pass
+    // zero and receive a port that no other UDP socket owns.
+    if local_port == 0 {
+        local_port = (49152..=u16::MAX)
+            .find(|candidate| !sockets.iter().any(|socket| socket.local_port == *candidate))?;
+    }
 
     // Check if port is already in use
     if sockets
@@ -224,7 +233,9 @@ pub fn send(socket_idx: usize, dst_ip: u32, dst_port: Port, data: &[u8]) -> Opti
             return None;
         }
         let socket = &sockets[socket_idx];
-        let src_ip = if socket.local_ip != 0 {
+        let src_ip = if dst_ip == 0xFFFF_FFFF && socket.local_ip == 0 {
+            0
+        } else if socket.local_ip != 0 {
             socket.local_ip
         } else {
             // Get primary IP
@@ -234,6 +245,8 @@ pub fn send(socket_idx: usize, dst_ip: u32, dst_port: Port, data: &[u8]) -> Opti
         };
         (src_ip, socket.local_port)
     };
+
+    crate::hal::serial::write_string_always("[NET-UDP] send entering\r\n");
 
     // Build UDP header
     let length = (UDP_HDR_SIZE + data.len()) as u16;
@@ -258,7 +271,13 @@ pub fn send(socket_idx: usize, dst_ip: u32, dst_port: Port, data: &[u8]) -> Opti
     packet[7] = checksum as u8;
 
     // Send via IPv4
-    if ipv4::send_ipv4(src_ip, dst_ip, 17, &packet) {
+    let sent = ipv4::send_ipv4(src_ip, dst_ip, 17, &packet);
+    crate::hal::serial::write_string_always(if sent {
+        "[NET-UDP] ipv4 send ok\r\n"
+    } else {
+        "[NET-UDP] ipv4 send failed\r\n"
+    });
+    if sent {
         let mut stats = UDP_STATS.lock();
         stats.datagrams_sent += 1;
         return Some(data.len());
@@ -305,6 +324,14 @@ pub fn udp_input(src_ip: u32, dst_ip: u32, data: &[u8]) -> bool {
     } else {
         &[]
     };
+    crate::hal::serial::write_string_always(&alloc::format!(
+        "[NET-UDP] input src={} dst={} sport={} dport={} len={}\r\n",
+        crate::netstack::ipif::ip_to_string(src_ip),
+        crate::netstack::ipif::ip_to_string(dst_ip),
+        header.src_port,
+        header.dst_port,
+        data.len()
+    ));
 
     let mut stats = UDP_STATS.lock();
     stats.datagrams_received += 1;
