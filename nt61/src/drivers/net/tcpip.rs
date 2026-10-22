@@ -858,8 +858,8 @@ fn udp_input(src_ip: u32, dst_ip: u32, data: &[u8]) {
         .fetch_add(1, Ordering::Relaxed);
 }
 
-fn icmp_input(src_ip: u32, _dst_ip: u32, data: &[u8]) {
-    crate::netstack::icmp::icmp_input(src_ip, data);
+fn icmp_input(src_ip: u32, dst_ip: u32, data: &[u8]) {
+    crate::netstack::icmp::icmp_input(src_ip, dst_ip, data);
     TCPIP_STATS
         .icmp_messages_received
         .fetch_add(1, Ordering::Relaxed);
