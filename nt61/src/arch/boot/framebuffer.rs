@@ -13,12 +13,24 @@ pub fn adopt_bootinfo_framebuffer(boot: &BootInfo) -> bool {
     if boot.framebuffer_base == 0 || boot.framebuffer_width == 0 {
         return false;
     }
+    // Some GOP backends report a size larger than the visible linear
+    // framebuffer. Derive the real scan-out size so early page-table
+    // resources are not consumed by mapping irrelevant address space.
+    let stride_bytes = boot.framebuffer_stride as u64;
+    let derived_size = stride_bytes.saturating_mul(boot.framebuffer_height as u64);
+    let derived_size = derived_size.min(64 * 1024 * 1024);
+    let mapped_size = if derived_size != 0 {
+        derived_size.min(boot.framebuffer_size.max(4096))
+    } else {
+        boot.framebuffer_size.min(64 * 1024 * 1024)
+    }
+    .max(4096);
     // Map the LFB base into the kernel's address space if needed.
     // On x86_64 the firmware left an identity map below 4 GiB so
     // no extra mapping is required; on the other architectures
     // the kernel needs to explicitly map the framebuffer page(s)
     // before any pixel write would otherwise fault.
-    let framebuffer_va = map_framebuffer_region(boot.framebuffer_base, boot.framebuffer_size);
+    let framebuffer_va = map_framebuffer_region(boot.framebuffer_base, mapped_size);
 
     // Try the cross-arch LFB writer first. This is the source of
     // truth on every non-x86_64 target; on x86_64 it is mirrored
