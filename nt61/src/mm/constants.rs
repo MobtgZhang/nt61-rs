@@ -65,20 +65,36 @@ pub const KERNEL_IMAGE_BASE: u64 = 0xFFFF8000_0000_0000;
 
 /// User space base. Low 64KB is left unused for NULL pointer
 /// compatibility and DOS compatibility.
+#[cfg(target_arch = "riscv64")]
+pub const USER_BASE: u64 = 0x0000_0000_1000_0000;
+
+#[cfg(not(target_arch = "riscv64"))]
 pub const USER_BASE: u64 = 0x0000_1000_0000_0000;
 
 /// User space upper limit (canonical form, Windows 7 x64 default).
+#[cfg(target_arch = "riscv64")]
+pub const USER_LIMIT: u64 = 0x0000_0000_7F_E0_0000;
+
+#[cfg(not(target_arch = "riscv64"))]
 pub const USER_LIMIT: u64 = 0x0000_7FFF_FFFF_FFFF;
 
 /// Default user-mode image base. Standard Windows 7 x64 uses
 /// 0x00400000, but this implementation uses 0x00100000 for
 /// Phase 0 simplicity.
+#[cfg(target_arch = "riscv64")]
+pub const USER_IMAGE_BASE: u64 = 0x0000_0000_1000_0000;
+
+#[cfg(not(target_arch = "riscv64"))]
 pub const USER_IMAGE_BASE: u64 = 0x0000_1000_0000_0000;
 
 /// Default user entry point (first bytes of mapped image).
 pub const USER_ENTRY_RIP: u64 = 0x0000_0000_0010_1000;
 
 /// User stack base (near top of user space, 32 MiB below limit for PEB headroom).
+#[cfg(target_arch = "riscv64")]
+pub const USER_STACK_BASE: u64 = 0x0000_0000_7F_00_0000;
+
+#[cfg(not(target_arch = "riscv64"))]
 pub const USER_STACK_BASE: u64 = 0x0000_7FFF_DE00_0000;
 
 /// User stack size (1 MiB default).
@@ -89,11 +105,19 @@ pub const USER_STACK_TOP: u64 = USER_STACK_BASE + USER_STACK_SIZE;
 
 /// User entry point for ring transition stub (canonical high address
 /// to avoid collision with kernel identity map).
+#[cfg(target_arch = "riscv64")]
+pub const USER_ENTRY_BASE: u64 = 0x0000_0000_0010_0000;
+
+#[cfg(not(target_arch = "riscv64"))]
 pub const USER_ENTRY_BASE: u64 = 0x0000_1000_0000_0000;
 
 /// TEB (Thread environment Block) base address.
 /// Windows 7 x64 places the first thread's TEB at
 /// 0x0000_7FFF_FFDF_0000.
+#[cfg(target_arch = "riscv64")]
+pub const TEB_BASE: u64 = 0x0000_0000_7F_D0_0000;
+
+#[cfg(not(target_arch = "riscv64"))]
 pub const TEB_BASE: u64 = 0x0000_7FFF_FFDF_0000;
 
 /// TEB size (8KB per TEB in Windows 7 x64).
