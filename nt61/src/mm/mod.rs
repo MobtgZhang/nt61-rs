@@ -36,7 +36,7 @@
 /// buffered writer is not yet safe to call.
 pub(crate) fn write_decimal_u64(mut x: u64) {
     if x == 0 {
-        crate::hal::serial::write_string("0");
+        crate::hal::serial::write_string_always("0");
         return;
     }
     let mut buf = [0u8; 20];
@@ -48,7 +48,7 @@ pub(crate) fn write_decimal_u64(mut x: u64) {
     }
     for i in (0..d).rev() {
         if let Ok(s) = core::str::from_utf8(&buf[i..i + 1]) {
-            crate::hal::serial::write_string(s);
+            crate::hal::serial::write_string_always(s);
         }
     }
 }
@@ -461,14 +461,41 @@ pub fn init(boot_info: &BootInfo) {
     // during the first `identity_map_region` after `vas::init`).
     {
         let mut reserved = 0u64;
+        let mut unique = 0u64;
+        let mut duplicate = 0u64;
+        let mut min_pfn = u64::MAX;
+        let mut max_pfn = 0u64;
         crate::mm::frame::for_each_allocated_frame(|pa| {
+            let pfn = pa / 4096;
+            min_pfn = min_pfn.min(pfn);
+            max_pfn = max_pfn.max(pfn);
+            if let Some(entry) = crate::mm::pfn::get_entry(pfn) {
+                if unsafe { (*entry).state() } == crate::mm::pfn::MMPFNSTATE::Free {
+                    unique += 1;
+                } else {
+                    duplicate += 1;
+                }
+            }
             if crate::mm::pfn::reserve_pfn(pa / 4096) {
                 reserved += 1;
             }
         });
-        crate::hal::serial::write_string("[mm] reserved buddy frames: 0x");
-        crate::hal::serial::write_hex_u64(reserved);
-        crate::hal::serial::write_string("\r\n");
+        crate::hal::serial::write_string_always("[mm] reserved buddy frames: 0x");
+        write_decimal_u64(reserved);
+        crate::hal::serial::write_string_always(" unique=");
+        write_decimal_u64(unique);
+        crate::hal::serial::write_string_always(" dup=");
+        write_decimal_u64(duplicate);
+        crate::hal::serial::write_string_always(" range=");
+        write_decimal_u64(min_pfn);
+        crate::hal::serial::write_string_always("..");
+        write_decimal_u64(max_pfn);
+        let (head, count) = crate::mm::pfn::get_free_list_stats();
+        crate::hal::serial::write_string_always(" free_head=");
+        write_decimal_u64(head);
+        crate::hal::serial::write_string_always(" free_list_count=");
+        write_decimal_u64(count);
+        crate::hal::serial::write_string_always("\r\n");
     }
 
     crate::hal::serial::write_string("MM3b pfn_init_done\r\n");
@@ -476,6 +503,14 @@ pub fn init(boot_info: &BootInfo) {
     crate::hal::serial::write_string("MM4a vas_init_about\r\n");
     vas::init();
 
+    {
+        let (head, count) = pfn::get_free_list_stats();
+        crate::hal::serial::write_string_always("[MMCHK] after vas head=");
+        write_decimal_u64(head);
+        crate::hal::serial::write_string_always(" count=");
+        write_decimal_u64(count);
+        crate::hal::serial::write_string_always("\r\n");
+    }
     crate::hal::serial::write_string("MM4 vas_init_done\r\n");
 
     // ------------------------------------------------------------------
@@ -484,16 +519,43 @@ pub fn init(boot_info: &BootInfo) {
     syspte::init();
     hyperspace::init();
 
+    {
+        let (head, count) = pfn::get_free_list_stats();
+        crate::hal::serial::write_string_always("[MMCHK] after syspte/hyper head=");
+        write_decimal_u64(head);
+        crate::hal::serial::write_string_always(" count=");
+        write_decimal_u64(count);
+        crate::hal::serial::write_string_always("\r\n");
+    }
+
     crate::hal::serial::write_string("MM6 syspte_hyperspace_done\r\n");
 
     // ------------------------------------------------------------------
     pool::init();
     crate::hal::serial::write_string("MM7 heap_pool_done\r\n");
 
+    {
+        let (head, count) = pfn::get_free_list_stats();
+        crate::hal::serial::write_string_always("[MMCHK] after pool head=");
+        write_decimal_u64(head);
+        crate::hal::serial::write_string_always(" count=");
+        write_decimal_u64(count);
+        crate::hal::serial::write_string_always("\r\n");
+    }
+
     working_set::init();
     zeropage::init();
     writer::init();
     pagefile::init();
+
+    {
+        let (head, count) = pfn::get_free_list_stats();
+        crate::hal::serial::write_string_always("[MMCHK] after pagefile head=");
+        write_decimal_u64(head);
+        crate::hal::serial::write_string_always(" count=");
+        write_decimal_u64(count);
+        crate::hal::serial::write_string_always("\r\n");
+    }
 
     crate::hal::serial::write_string("MM8 subsystems_done\r\n");
 
