@@ -1580,6 +1580,7 @@ pub fn create_user_process(
     pid: u64,
     user_entry_override: Option<u64>,
 ) -> Option<&'static mut Eprocess> {
+    crate::hal::serial::write_string_always("PS:create enter\r\n");
     // The PEB and stack frames are NOT used: the user stack is
     // created via `map_user_pages`, and a real PEB would need to be
     // mapped into the user address space at a chosen VA. Avoid
@@ -1620,6 +1621,7 @@ pub fn create_user_process(
 
     let process = process_buf as *mut Eprocess;
     let thread_ptr = thread_buf as *mut Ethread;
+    crate::hal::serial::write_string_always("PS:create pool\r\n");
 
     let pml4_phys = match crate::mm::vas::create_user_address_space() {
         Some(p) => p,
@@ -1629,6 +1631,7 @@ pub fn create_user_process(
             return None;
         }
     };
+    crate::hal::serial::write_string_always("PS:create vas\r\n");
 
     if crate::mm::vas::map_user_pages(
         pml4_phys,
@@ -1637,11 +1640,13 @@ pub fn create_user_process(
         crate::mm::vas::PTE_RW | crate::mm::vas::PTE_US,
     ) != crate::mm::vas::MmStatus::Ok
     {
+        crate::hal::serial::write_string_always("PS:create map fail\r\n");
         crate::mm::pfn::free_pfn(pml4_phys >> 12);
         crate::mm::pool::free(thread_buf);
         crate::mm::pool::free(process_buf);
         return None;
     }
+    crate::hal::serial::write_string_always("PS:create map ok\r\n");
 
     let user_rsp = crate::mm::vas::USER_STACK_BASE + crate::mm::vas::USER_STACK_SIZE;
 
