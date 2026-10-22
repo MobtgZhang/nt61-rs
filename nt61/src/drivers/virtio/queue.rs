@@ -7,6 +7,7 @@
 //! supported target, so virtual-to-physical translation is performed
 //! through mm::virt_to_phys.
 
+use alloc::alloc::{alloc_zeroed, dealloc, Layout};
 use alloc::vec::Vec;
 
 use crate::mm::virt_to_phys;
@@ -64,6 +65,7 @@ impl QueueBuffer {
 pub struct QueueLayout {
     num: u16,
     mem: *mut u8,
+    mem_len: usize,
     desc: *mut Descriptor,
     avail_base: *mut u8,
     used_base: *mut u8,
@@ -90,11 +92,11 @@ impl QueueLayout {
         let used_off = (avail_off + avail_len + align - 1) & !(align - 1);
         let mem_len = used_off + used_len;
 
-        let mem = crate::mm::pool::allocate_aligned(
-            crate::mm::pool::PoolType::NonPaged,
-            mem_len,
-            QUEUE_ALIGNMENT,
-        );
+        let layout = match Layout::from_size_align(mem_len, QUEUE_ALIGNMENT) {
+            Ok(layout) => layout,
+            Err(_) => return None,
+        };
+        let mem = unsafe { alloc_zeroed(layout) };
         if mem.is_null() {
             return None;
         }
@@ -116,6 +118,7 @@ impl QueueLayout {
             Some(QueueLayout {
                 num,
                 mem,
+                mem_len,
                 desc,
                 avail_base,
                 used_base,
@@ -157,6 +160,7 @@ impl QueueLayout {
         unsafe {
             let head = self.free_head;
             let mut current = head;
+            let next_head = ((head as usize + buffers.len()) % self.num as usize) as u16;
             for (i, buffer) in buffers.iter().enumerate() {
                 let phys = match virt_to_phys(buffer.data as u64) {
                     Some(addr) => addr,
@@ -172,13 +176,13 @@ impl QueueLayout {
                 if i + 1 < buffers.len() {
                     flags |= VRING_DESC_F_NEXT;
                     (*d).next = ((current as usize + 1) % self.num as usize) as u16;
+                    current = (*d).next;
                 } else {
                     (*d).next = 0;
                 }
                 (*d).flags = flags;
-                current = (*d).next;
             }
-            self.free_head = current;
+            self.free_head = next_head;
             self.free_count -= buffers.len() as u16;
 
             // Push head into the available ring and bump the index.
@@ -247,7 +251,9 @@ impl QueueLayout {
 impl Drop for QueueLayout {
     fn drop(&mut self) {
         if !self.mem.is_null() {
-            crate::mm::pool::free(self.mem);
+            let layout = Layout::from_size_align(self.mem_len, QUEUE_ALIGNMENT)
+                .expect("invalid virtqueue layout");
+            unsafe { dealloc(self.mem, layout) };
             self.mem = core::ptr::null_mut();
         }
     }
