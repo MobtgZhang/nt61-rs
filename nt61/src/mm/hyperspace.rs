@@ -49,7 +49,11 @@ pub fn map_hyperspace(pfn: u64) -> u64 {
 /// architecture's temporary-mapping implementation.
 #[cfg(not(target_arch = "x86_64"))]
 pub fn map_hyperspace(pfn: u64) -> u64 {
-    crate::mm::pte::pfn_to_phys(pfn)
+    let pa = crate::mm::pte::pfn_to_phys(pfn);
+    if !crate::arch::map_page(pa, pa, crate::mm::pte::PTE_RW) {
+        return 0;
+    }
+    pa
 }
 
 /// Invalidate the most recent hyperspace mapping. After calling
