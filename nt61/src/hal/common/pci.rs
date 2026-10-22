@@ -122,11 +122,17 @@ const ECAM_LAYOUT: EcamLayout = EcamLayout {
     device: 8 << 12,
     function: 1 << 12,
 };
-#[cfg(not(target_arch = "riscv64"))]
+#[cfg(target_arch = "loongarch64")]
 const ECAM_LAYOUT: EcamLayout = EcamLayout {
     bus: 1 << 17,
     device: 1 << 12,
     function: 1 << 9,
+};
+#[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
+const ECAM_LAYOUT: EcamLayout = EcamLayout {
+    bus: 1 << 20,
+    device: 1 << 15,
+    function: 1 << 12,
 };
 
 /// Compute the ECAM MMIO address for a config register.
@@ -285,19 +291,31 @@ pub fn probe_bar(bus: u8, dev: u8, func: u8, index: u8) -> Option<BarInfo> {
     // restore below puts back the real address, not the probed one.
     let mut high_orig = 0u32;
     if is_64 {
-        high_orig = read_config_dword(bus, dev, func, off + 1);
+        high_orig = read_config_dword(bus, dev, func, off + 4);
     }
+    crate::hal::serial::write_string_always(&alloc::format!(
+        "[PCI-BAR] index={} low={:#x} high_orig={:#x} is64={}\r\n",
+        index,
+        low,
+        high_orig,
+        is_64 as u8
+    ));
 
     // Probe the writable bits (and the high dword of 64-bit BARs).
     write_config_dword(bus, dev, func, off, 0xFFFF_FFFF);
     let probed_low = read_config_dword(bus, dev, func, off);
     let mut probed_high = 0u32;
     if is_64 {
-        let high_off = off + 1;
+        let high_off = off + 4;
         write_config_dword(bus, dev, func, high_off, 0xFFFF_FFFF);
         probed_high = read_config_dword(bus, dev, func, high_off);
         write_config_dword(bus, dev, func, high_off, high_orig);
     }
+    crate::hal::serial::write_string_always(&alloc::format!(
+        "[PCI-BAR] probe low={:#x} high={:#x}\r\n",
+        probed_low,
+        probed_high
+    ));
     // Restore the firmware-assigned addresses.
     write_config_dword(bus, dev, func, off, low);
 
@@ -306,10 +324,18 @@ pub fn probe_bar(bus: u8, dev: u8, func: u8, index: u8) -> Option<BarInfo> {
         let base = u64::from(low & !(low_mask as u32));
         return Some(BarInfo { base, size: 0, io });
     }
-    let size_mask = (u64::from(probed_high) << 32) | u64::from(probed_low & !(low_mask as u32));
-    // Complement-of-mask plus one yields the BAR size (the same
-    // arithmetic Linux pci_size performs on the readback mask).
-    let size = size_mask.wrapping_neg();
+    // For a 64-bit BAR whose size fits below 4 GiB, the low dword
+    // already contains the complete size mask. This also avoids a
+    // QEMU/OVMF configuration access quirk on high dwords. Only use
+    // the high dword when the low dword is entirely writable.
+    let low_mask_value = probed_low & !(low_mask as u32);
+    // BAR size = ~(writable bits) + 1. For a 64-bit BAR combine both
+    // probed dwords into a single u64 before inverting so the result
+    // stays small and positive. A u64 negation of only the low dword
+    // would produce a huge wrapped value (0xFFFFFFFF_xxxxxxxx) that
+    // blows up identity_map_region.
+    let combined = (u64::from(probed_high) << 32) | u64::from(low_mask_value);
+    let size = (!combined).wrapping_add(1);
     let mut base = u64::from(low & !(low_mask as u32));
     if is_64 {
         base |= u64::from(high_orig) << 32;
