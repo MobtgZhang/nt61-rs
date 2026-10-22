@@ -247,72 +247,64 @@ impl KernelHeap {
         let block_addr = block_ptr as usize;
         let _base = self.base.load(Ordering::Relaxed);
 
-        // Initialize the free block header in-place.
-        let new_block = FreeBlock::new(block_ptr as *mut u8, size);
-        (*new_block).next = ptr::null_mut();
-
         let head_ref: &mut *mut FreeBlock = &mut *self.free_list_head.get();
+        let mut merged_addr = block_addr;
+        let mut merged_size = size;
 
-        // Walk the list once, coalescing with neighbours when they
-        // touch the new block (both before and after).
-        let mut prev: *mut FreeBlock = ptr::null_mut();
-        let mut cur: *mut FreeBlock = *head_ref;
-        while !cur.is_null() {
-            let cur_addr = cur as usize;
-            let cur_end = cur_addr + (*cur).size;
+        // Merge with every adjacent free block, not merely the first one.
+        // The free list is address-independent, so repeatedly restart the
+        // scan until a full pass makes no progress.
+        loop {
+            let mut merged = false;
+            let mut prev: *mut FreeBlock = ptr::null_mut();
+            let mut cur: *mut FreeBlock = *head_ref;
 
-            if cur_end == block_addr {
-                // Existing block ends right where the new one begins:
-                // absorb the new block into the existing one and stop.
-                (*cur).size += size;
-                // Try to also merge with the *next* block, in case
-                // `cur_end == block_addr` and `block_addr + size == next_addr`.
-                let next_after: *mut FreeBlock = (*cur).next;
-                if !next_after.is_null() {
-                    let next_addr = next_after as usize;
-                    if (cur as usize) + (*cur).size == next_addr {
-                        // cur and next_after are adjacent — also
-                        // adjacent to the absorbed new block. Merge
-                        // next_after into cur and unlink it.
-                        (*cur).size += (*next_after).size;
-                        (*cur).next = (*next_after).next;
+            while !cur.is_null() {
+                let cur_addr = cur as usize;
+                let cur_size = (*cur).size;
+                let cur_next = (*cur).next;
+
+                if cur_addr + cur_size == merged_addr {
+                    merged_addr = cur_addr;
+                    merged_size += cur_size;
+                    merged = true;
+                } else if merged_addr + merged_size == cur_addr {
+                    merged_size += cur_size;
+                    merged = true;
+                }
+
+                if merged {
+                    if prev.is_null() {
+                        *head_ref = cur_next;
+                    } else {
+                        (*prev).next = cur_next;
                     }
+                    break;
                 }
-                return;
-            } else if (block_addr + size) == cur_addr {
-                // New block ends exactly where existing block starts.
-                // Absorb the existing block into the new block.
-                (*new_block).size += (*cur).size;
-                (*new_block).next = (*cur).next;
-                if prev.is_null() {
-                    *head_ref = (*cur).next;
-                } else {
-                    (*prev).next = (*cur).next;
-                }
-                // Now keep walking - there may be more blocks to
-                // coalesce with that we skip past.
-                break;
+
+                prev = cur;
+                cur = cur_next;
             }
 
-            prev = cur;
-            cur = (*cur).next;
-        }
-
-        // If we broke out before reaching end-of-list, drop the
-        // now-merged `cur`.
-        if !cur.is_null() && prev.is_null() {
-            // walked from head but matched inside; cur may now hold
-            // already-merged pointers via the early returns above.
+            if !merged {
+                break;
+            }
         }
 
         // Merge with the bump-pointer region when the freed block
         // sits exactly at the current bump pointer — effectively
         // returning the memory to the bump allocator.
-        let next = self.next.load(Ordering::Relaxed);
-        if block_addr + size == next {
-            self.next.store(block_addr, Ordering::SeqCst);
+        let next = self.next.load(Ordering::SeqCst);
+        if merged_addr + merged_size == next {
+            self.next.store(merged_addr, Ordering::SeqCst);
             return;
         }
+
+        // Initialize the free block header only after all adjacent blocks
+        // have been absorbed; those blocks' storage is part of the merged
+        // region and may contain the final header.
+        let new_block = FreeBlock::new(merged_addr as *mut u8, merged_size);
+        (*new_block).next = ptr::null_mut();
 
         // Prepend the (possibly grown) new block to the list.
         (*new_block).next = *head_ref;
@@ -593,11 +585,9 @@ pub fn init() {
     crate::hal::serial::write_string("\r\n");
     KERNEL_HEAP.configure(base, size);
     crate::hal::serial::write_string("[heap] configure done, checking...\r\n");
-    if crate::mm::heap::KERNEL_HEAP.configured_region().is_some() {
-        crate::hal::serial::write_string("[heap] configure VERIFIED OK\r\n");
-    } else {
-        crate::hal::serial::write_string_always("[heap] configure FAILED TO VERIFY\r\n");
-    }
+    let region = crate::mm::heap::KERNEL_HEAP.configured_region();
+    crate::mm::init_state::verify_region(region, "heap::init");
+    crate::hal::serial::write_string("[heap] configure VERIFIED OK\r\n");
 }
 
 /// Maximum heap size, used when the buddy allocator cannot
