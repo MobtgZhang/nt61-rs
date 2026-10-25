@@ -30,6 +30,29 @@
 
 extern crate alloc;
 
+static GPU_REGISTRY: crate::ke::sync::Spinlock<Option<crate::drivers::video::core::gpu_common::GpuDriverRegistry>> =
+    crate::ke::sync::Spinlock::new(None);
+
+/// Store a successfully initialized GPU driver so display policy can
+/// enumerate live devices instead of relying on compile-time probes.
+pub fn register_gpu_driver(driver: impl crate::drivers::video::core::gpu_common::GpuDriver + 'static) {
+    let mut registry = GPU_REGISTRY.lock();
+    registry
+        .get_or_insert_with(crate::drivers::video::core::gpu_common::GpuDriverRegistry::new)
+        .register(driver);
+}
+
+/// Access the registry of successfully initialized GPU drivers.
+pub fn with_gpu_registry<F>(callback: F)
+where
+    F: FnOnce(&crate::drivers::video::core::gpu_common::GpuDriverRegistry),
+{
+    let guard = GPU_REGISTRY.lock();
+    if let Some(registry) = guard.as_ref() {
+        callback(registry);
+    }
+}
+
 #[cfg(target_arch = "x86_64")]
 pub mod bochs_vbe;
 pub mod dp_aux;
@@ -147,7 +170,9 @@ pub fn init() {
         if intel::probe() {
             #[cfg(target_arch = "x86_64")]
             crate::hal::serial::write_string("V:intel_found\r\n");
-            let _ = intel::init();
+            if let Some(device) = intel::init() {
+                register_gpu_driver(device);
+            }
             #[cfg(target_arch = "x86_64")]
             crate::hal::serial::write_string("V:intel_done\r\n");
         } else {
@@ -161,7 +186,9 @@ pub fn init() {
         if amd::probe() {
             #[cfg(target_arch = "x86_64")]
             crate::hal::serial::write_string("V:amd_found\r\n");
-            let _ = amd::init();
+            if let Some(device) = amd::init() {
+                register_gpu_driver(device);
+            }
             #[cfg(target_arch = "x86_64")]
             crate::hal::serial::write_string("V:amd_done\r\n");
         } else {
@@ -175,7 +202,9 @@ pub fn init() {
     {
         // Loongson LSDC
         if loongson::probe() {
-            let _ = loongson::init();
+            if let Some(device) = loongson::init() {
+                register_gpu_driver(device);
+            }
         }
     }
 
@@ -188,7 +217,9 @@ pub fn init() {
         if zhaoxin::probe() {
             #[cfg(target_arch = "x86_64")]
             crate::hal::serial::write_string("V:zhaoxin_found\r\n");
-            let _ = zhaoxin::init();
+            if let Some(device) = zhaoxin::init() {
+                register_gpu_driver(device);
+            }
             #[cfg(target_arch = "x86_64")]
             crate::hal::serial::write_string("V:zhaoxin_done\r\n");
         } else {
@@ -202,7 +233,9 @@ pub fn init() {
         if nouveau::probe() {
             #[cfg(target_arch = "x86_64")]
             crate::hal::serial::write_string("V:nouveau_found\r\n");
-            let _ = nouveau::init();
+            if let Some(device) = nouveau::init() {
+                register_gpu_driver(device);
+            }
             #[cfg(target_arch = "x86_64")]
             crate::hal::serial::write_string("V:nouveau_done\r\n");
         } else {
@@ -216,12 +249,16 @@ pub fn init() {
     {
         // Rockchip VOP
         if rockchip::probe() {
-            let _ = rockchip::init();
+            if let Some(device) = rockchip::init() {
+                register_gpu_driver(device);
+            }
         }
 
         // Qualcomm Adreno
         if qualcomm::probe() {
-            let _ = qualcomm::init();
+            if let Some(device) = qualcomm::init() {
+                register_gpu_driver(device);
+            }
         }
     }
 

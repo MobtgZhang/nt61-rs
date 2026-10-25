@@ -14,14 +14,11 @@
 extern crate alloc;
 
 pub fn init() {
-    // kprintln!("    Timer drivers: HPET, ACPI PM (skipped due to PTE bug)");
-    // hpet::init() and acpi_pm::init() are disabled because
-    // mm::syspte::map_io_space writes to the wrong PTE address
-    // for the system PTE region (0xFFFF_F900_0000_0000).
-    // The PTE_BASE self-map only covers the first 512 GiB of
-    // kernel virtual address space; the system PTE region is
-    // outside that range.
-    // kprintln!("    Timer stack ready (HPET and ACPI PM disabled)");
+    // syspte::map_io_space now walks PML4 from CR3 via arch::map_page,
+    // so system-PTE VAs above the first 512 GiB no longer fault on the
+    // self-map. Enable both high-resolution timer sources.
+    hpet::init();
+    acpi_pm::init();
 }
 
 pub fn smoke_test() -> bool {

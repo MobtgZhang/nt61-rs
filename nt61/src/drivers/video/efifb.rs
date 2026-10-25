@@ -121,12 +121,14 @@ pub fn init() {
     // This is passed through the kernel's global BootInfo structure.
     let (fb_address, width, height, stride, bpp) = get_bootinfo_framebuffer();
 
-    let state = EfiFbState::new(fb_address, width, height, stride, bpp);
+    let state = alloc::boxed::Box::leak(alloc::boxed::Box::new(EfiFbState::new(
+        fb_address, width, height, stride, bpp,
+    )));
 
     // Publish the state through the global pointer so other subsystems
     // (e.g. the framebuffer panic screen) can read it without us
     // having to plumb a borrowed reference through every call site.
-    set_global_state(&state as *const EfiFbState);
+    set_global_state(state as *const EfiFbState);
 
     // Initialize the HAL framebuffer layer.
     if state.has_gop() {

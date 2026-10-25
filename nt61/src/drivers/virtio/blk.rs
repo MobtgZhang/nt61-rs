@@ -62,11 +62,14 @@ impl VirtioBlk {
         transport_index: usize,
         transport: &mut dyn Transport,
     ) -> Option<VirtioBlk> {
+        crate::hal::serial::write_string_always("[VBLK] reset enter\r\n");
         transport.reset();
+        crate::hal::serial::write_string_always("[VBLK] reset done\r\n");
         transport.write_status(status::ACKNOWLEDGE);
         transport.write_status(status::ACKNOWLEDGE | status::DRIVER);
 
         let device_features = transport.read_device_features();
+        crate::hal::serial::write_string_always("[VBLK] features read\r\n");
         // Negotiate the base spec version plus the features the driver
         // understands. Only F_FLUSH and F_BLK_SIZE influence our I/O
         // path; everything else is optional and left unset.
@@ -74,23 +77,29 @@ impl VirtioBlk {
             FEATURE_VERSION_1 | (device_features & F_FLUSH) | (device_features & F_BLK_SIZE);
         transport.write_driver_features(features);
         transport.write_status(status::ACKNOWLEDGE | status::DRIVER | status::FEATURES_OK);
+        crate::hal::serial::write_string_always("[VBLK] features ok written\r\n");
 
         let current = transport.read_status();
+        crate::hal::serial::write_string_always("[VBLK] status read\r\n");
         if current & status::FAILED != 0 {
             return None;
         }
 
         let max = transport.max_queue_size(0);
+        crate::hal::serial::write_string_always("[VBLK] max read\r\n");
         let queue = super::queue::QueueLayout::allocate(max as u16)?;
+        crate::hal::serial::write_string_always("[VBLK] queue allocated\r\n");
         if !transport.setup_queue(0, &queue) {
             return None;
         }
+        crate::hal::serial::write_string_always("[VBLK] queue setup\r\n");
 
         transport.write_status(
             status::ACKNOWLEDGE | status::DRIVER | status::FEATURES_OK | status::DRIVER_OK,
         );
 
         let capacity = transport.config_read_u64(CFG_CAPACITY);
+        crate::hal::serial::write_string_always("[VBLK] capacity read\r\n");
         Some(VirtioBlk {
             transport_index,
             queue,

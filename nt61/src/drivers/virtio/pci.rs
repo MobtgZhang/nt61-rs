@@ -102,35 +102,42 @@ impl PciTransport {
         device: u8,
         function: u8,
     ) -> Option<PciTransport> {
+        crate::hal::serial::write_string_always("[VPCI] probe enter\r\n");
         // Delegate to the shared `ecam_address()` helper so the
         // config-base calculation is identical to what `enumerate()`
         // uses (any stride mismatch between the two call sites
         // would read vendor/device ids from the wrong slot).
         let config_base = crate::hal::common::pci::ecam_base()
-            .map(|base| crate::hal::common::pci::ecam_address_for(bus, device, function))
+            .map(|_| crate::hal::common::pci::ecam_address_for(bus, device, function))
             .unwrap_or(0);
+        crate::hal::serial::write_string_always("[VPCI] config base computed\r\n");
 
+        crate::hal::serial::write_string_always("[VPCI] vendor read enter\r\n");
         let vendor = crate::hal::common::pci::read_config_word(
             bus,
             device,
             function,
             PCI_OFFSET_VENDOR_ID as u8,
         );
+        crate::hal::serial::write_string_always("[VPCI] vendor read done\r\n");
         if vendor == 0xFFFF || vendor != PCI_VENDOR_ID_REDHAT {
             return None;
         }
+        crate::hal::serial::write_string_always("[VPCI] device read enter\r\n");
         let device_id = crate::hal::common::pci::read_config_word(
             bus,
             device,
             function,
             PCI_OFFSET_DEVICE_ID as u8,
         );
+        crate::hal::serial::write_string_always("[VPCI] device read done\r\n");
         if (device_id < PCI_DEVICE_ID_TRANSITIONAL_FIRST
             || device_id > PCI_DEVICE_ID_TRANSITIONAL_LAST)
             && (device_id < PCI_DEVICE_ID_MODERN_FIRST || device_id > PCI_DEVICE_ID_MODERN_LAST)
         {
             return None;
         }
+        crate::hal::serial::write_string_always("[VPCI] before caps read\r\n");
 
         let mut common: Option<u64> = None;
         let mut notify: Option<(u64, u32)> = None;
@@ -138,7 +145,8 @@ impl PciTransport {
         let mut device_cfg: Option<u64> = None;
         // BAR regions backing the discovered structures. Several
         // capabilities share one BAR, so each region is mapped once.
-        let mut mapped_bars: alloc::vec::Vec<(u64, u64)> = alloc::vec::Vec::new();
+        let mut mapped_bars: [(u64, u64); 8] = [(0, 0); 8];
+        let mut mapped_bar_count: usize = 0;
 
         // Walk the capability list.
         let mut cap_offset = crate::hal::common::pci::read_config_byte(
@@ -147,15 +155,27 @@ impl PciTransport {
             function,
             PCI_OFFSET_CAPABILITY_LIST as u8,
         ) as u64;
+        crate::hal::serial::write_string_always("[VPCI] after caps read\r\n");
+        crate::hal::serial::write_string_always("[VPCI] caps start=");
+        crate::hal::serial::write_hex_u64_always(cap_offset);
+        crate::hal::serial::write_string_always("\r\n");
         let mut guard = 0;
         while cap_offset != 0 && guard < 48 {
             guard += 1;
+            crate::hal::serial::write_string_always("[VPCI] cap ");
+            crate::hal::serial::write_hex_u64_always(guard as u64);
+            crate::hal::serial::write_string_always(" enter\r\n");
             let cap_id = crate::hal::common::pci::read_config_byte(
                 bus,
                 device,
                 function,
                 (cap_offset + PCI_CAP_VNDR) as u8,
             );
+            crate::hal::serial::write_string_always("[VPCI] cap ");
+            crate::hal::serial::write_hex_u64_always(guard as u64);
+            crate::hal::serial::write_string_always(" id=");
+            crate::hal::serial::write_hex_u64_always(cap_id as u64);
+            crate::hal::serial::write_string_always("\r\n");
             if cap_id != PCI_CAP_ID_VNDR {
                 cap_offset = crate::hal::common::pci::read_config_byte(
                     bus,
@@ -171,18 +191,21 @@ impl PciTransport {
                 function,
                 (cap_offset + PCI_CAP_CFG_TYPE) as u8,
             );
+            crate::hal::serial::write_string_always("[VPCI] cap cfg read\r\n");
             let struct_offset = crate::hal::common::pci::read_config_dword(
                 bus,
                 device,
                 function,
                 (cap_offset + PCI_CAP_OFFSET) as u8,
             ) as u64;
+            crate::hal::serial::write_string_always("[VPCI] cap offset read\r\n");
             let bar_index = crate::hal::common::pci::read_config_byte(
                 bus,
                 device,
                 function,
                 (cap_offset + PCI_CAP_BAR) as u8,
             );
+            crate::hal::serial::write_string_always("[VPCI] cap bar read\r\n");
             let Some(mut bar) =
                 crate::hal::common::pci::probe_bar(bus, device, function, bar_index)
             else {
@@ -194,6 +217,7 @@ impl PciTransport {
                 ) as u64;
                 continue;
             };
+            crate::hal::serial::write_string_always("[VPCI] bar probed\r\n");
             if bar.io {
                 // Modern control structures live in memory BARs; the
                 // only cap pointing at the I/O BAR is the optional
@@ -265,25 +289,34 @@ impl PciTransport {
                     ((allocation_base as u32) & !0xF) | flags,
                 );
                 bar.base = allocation_base;
-                crate::hal::serial::write_string_always(&alloc::format!(
-                    "[PCI-BAR] allocated index={} base={:#x} size={:#x}\r\n",
-                    bar_index,
-                    bar.base,
-                    bar.size
-                ));
+                crate::hal::serial::write_string_always("[PCI-BAR] allocated index=");
+                crate::hal::serial::write_hex_u64_always(bar_index as u64);
+                crate::hal::serial::write_string_always(" base=");
+                crate::hal::serial::write_hex_u64_always(bar.base);
+                crate::hal::serial::write_string_always(" size=");
+                crate::hal::serial::write_hex_u64_always(bar.size);
+                crate::hal::serial::write_string_always("\r\n");
             }
-            crate::hal::serial::write_string_always(&alloc::format!(
-                "[VIRTIO-PCI] cap type={} bar={} base={:#x} offset={:#x} size={:#x}\r\n",
-                cfg_type,
-                bar_index,
-                bar.base,
-                struct_offset,
-                bar.size
-            ));
+            crate::hal::serial::write_string_always("[VIRTIO-PCI] cap type=");
+            crate::hal::serial::write_hex_u64_always(cfg_type as u64);
+            crate::hal::serial::write_string_always(" bar=");
+            crate::hal::serial::write_hex_u64_always(bar_index as u64);
+            crate::hal::serial::write_string_always(" base=");
+            crate::hal::serial::write_hex_u64_always(bar.base);
+            crate::hal::serial::write_string_always(" offset=");
+            crate::hal::serial::write_hex_u64_always(struct_offset);
+            crate::hal::serial::write_string_always(" size=");
+            crate::hal::serial::write_hex_u64_always(bar.size);
+            crate::hal::serial::write_string_always("\r\n");
             if !mapped_bars
                 .iter()
                 .any(|&(base, size)| base == bar.base && size == bar.size)
             {
+                crate::hal::serial::write_string_always("[VPCI] mapping bar base=");
+                crate::hal::serial::write_hex_u64_always(bar.base);
+                crate::hal::serial::write_string_always(" size=");
+                crate::hal::serial::write_hex_u64_always(bar.size.max(0x1000));
+                crate::hal::serial::write_string_always("\r\n");
                 // Map the whole BAR backing the control structures
                 // into the kernel address space before anything
                 // dereferences it; a 64-bit BAR above 4 GiB would
@@ -291,17 +324,25 @@ impl PciTransport {
                 if !crate::arch::identity_map_region(bar.base, bar.size.max(0x1000)) {
                     return None;
                 }
-                mapped_bars.push((bar.base, bar.size));
+                crate::hal::serial::write_string_always("[VPCI] mapped bar\r\n");
+                if mapped_bar_count < mapped_bars.len() {
+                    mapped_bars[mapped_bar_count] = (bar.base, bar.size);
+                    mapped_bar_count += 1;
+                }
+                crate::hal::serial::write_string_always("[VPCI] bar push done\r\n");
             }
+            crate::hal::serial::write_string_always("[VPCI] cap match enter\r\n");
             match cfg_type {
                 CAP_TYPE_COMMON_CFG => common = Some(struct_base),
                 CAP_TYPE_NOTIFY_CFG => {
+                    crate::hal::serial::write_string_always("[VPCI] notify read enter\r\n");
                     let multiplier = crate::hal::common::pci::read_config_dword(
                         bus,
                         device,
                         function,
                         (cap_offset + PCI_CAP_NOTIFY_MULTIPLIER) as u8,
                     );
+                    crate::hal::serial::write_string_always("[VPCI] notify read done\r\n");
                     notify = Some((struct_base, multiplier));
                 }
                 CAP_TYPE_ISR_CFG => isr = Some(struct_base),
@@ -395,6 +436,13 @@ impl PciTransport {
         };
         write_u16(self.common_base + COMMON_Q_SELECT, index);
         let max = read_u16(self.common_base + COMMON_Q_SIZE);
+        crate::hal::serial::write_string_always("[VQUEUE] select=0x");
+        crate::hal::serial::write_hex_u64_always(index as u64);
+        crate::hal::serial::write_string_always(" max=0x");
+        crate::hal::serial::write_hex_u64_always(max as u64);
+        crate::hal::serial::write_string_always(" num=0x");
+        crate::hal::serial::write_hex_u64_always(queue.num() as u64);
+        crate::hal::serial::write_string_always("\r\n");
         if max == 0 || queue.num() > max {
             return false;
         }
@@ -406,12 +454,28 @@ impl PciTransport {
         write_u32(self.common_base + COMMON_Q_USEDLO, used as u32);
         write_u32(self.common_base + COMMON_Q_USEDHI, (used >> 32) as u32);
         write_u16(self.common_base + COMMON_Q_ENABLE, 1);
-        read_u16(self.common_base + COMMON_Q_ENABLE) == 1
+        let enabled = read_u16(self.common_base + COMMON_Q_ENABLE);
+        let status = read_u8(self.common_base + COMMON_STATUS);
+        crate::hal::serial::write_string_always("[VQUEUE] desc=0x");
+        crate::hal::serial::write_hex_u64_always(desc);
+        crate::hal::serial::write_string_always(" avail=0x");
+        crate::hal::serial::write_hex_u64_always(avail);
+        crate::hal::serial::write_string_always(" used=0x");
+        crate::hal::serial::write_hex_u64_always(used);
+        crate::hal::serial::write_string_always(" enable=0x");
+        crate::hal::serial::write_hex_u64_always(enabled as u64);
+        crate::hal::serial::write_string_always(" status=0x");
+        crate::hal::serial::write_hex_u64_always(status as u64);
+        crate::hal::serial::write_string_always("\r\n");
+        enabled == 1
     }
 
     pub unsafe fn max_queue_size(&mut self, index: u16) -> u32 {
+        crate::hal::serial::write_string_always("[VPCI] max enter\r\n");
         write_u16(self.common_base + COMMON_Q_SELECT, index);
-        read_u16(self.common_base + COMMON_Q_SIZE) as u32
+        let max = read_u16(self.common_base + COMMON_Q_SIZE) as u32;
+        crate::hal::serial::write_string_always("[VPCI] max read done\r\n");
+        max
     }
 
     pub unsafe fn notify(&mut self, index: u16) {

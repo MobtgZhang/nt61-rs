@@ -7,8 +7,8 @@
 //! supported target, so virtual-to-physical translation is performed
 //! through mm::virt_to_phys.
 
-use alloc::alloc::{alloc_zeroed, dealloc, Layout};
 use alloc::vec::Vec;
+use core::alloc::Layout;
 
 use crate::mm::virt_to_phys;
 
@@ -22,7 +22,7 @@ pub const VRING_AVAIL_F_NO_INTERRUPT: u16 = 1;
 pub const VRING_USED_F_NO_NOTIFY: u16 = 1;
 
 /// Alignment of the whole virtqueue region (legacy transport contract).
-pub const QUEUE_ALIGNMENT: usize = 4096;
+pub const QUEUE_ALIGNMENT: usize = 16;
 
 /// One split-virtqueue descriptor table entry.
 #[repr(C)]
@@ -81,6 +81,7 @@ impl QueueLayout {
     /// used ring (flags + idx + ring + event), each 16-byte aligned
     /// and the whole region 4 KiB aligned for the legacy PFN path.
     pub fn allocate(num: u16) -> Option<QueueLayout> {
+        crate::hal::serial::write_string_always("[QUEUE] allocate enter\r\n");
         if num == 0 || (num & (num - 1)) != 0 {
             return None;
         }
@@ -96,7 +97,24 @@ impl QueueLayout {
             Ok(layout) => layout,
             Err(_) => return None,
         };
-        let mem = unsafe { alloc_zeroed(layout) };
+        crate::hal::serial::write_string_always("[QUEUE] layout ok\r\n");
+        let stack_probe = 0u8;
+        let stack_addr = (&stack_probe as *const u8) as u64;
+        crate::hal::serial::write_string_always("[QUEUE] sp=0x");
+        crate::hal::serial::write_hex_u64_always(stack_addr);
+        crate::hal::serial::write_string_always(" size=0x");
+        crate::hal::serial::write_hex_u64_always(mem_len as u64);
+        crate::hal::serial::write_string_always("\r\n");
+        let page_count = ((mem_len + 4095) / 4096) as u64;
+        let Some(mem_phys) = crate::mm::allocate_pages(page_count) else {
+            return None;
+        };
+        let map_base = mem_phys & !0x1F_FFFF;
+        if !crate::arch::identity_map_region(map_base, 0x20_0000) {
+            crate::mm::free_pages(mem_phys, page_count);
+            return None;
+        }
+        let mem = mem_phys as *mut u8;
         if mem.is_null() {
             return None;
         }
@@ -251,9 +269,8 @@ impl QueueLayout {
 impl Drop for QueueLayout {
     fn drop(&mut self) {
         if !self.mem.is_null() {
-            let layout = Layout::from_size_align(self.mem_len, QUEUE_ALIGNMENT)
-                .expect("invalid virtqueue layout");
-            unsafe { dealloc(self.mem, layout) };
+            let page_count = ((self.mem_len + 4095) / 4096) as u64;
+            crate::mm::free_pages(self.mem as u64, page_count);
             self.mem = core::ptr::null_mut();
         }
     }
