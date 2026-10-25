@@ -6,6 +6,10 @@
 extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
+use crate::crypto::rsa::RsaPrivateKey;
+use crate::crypto::cipher::Aes128;
+use crate::crypto::cipher::Aes256;
+use crate::ke::sync::Spinlock;
 use core::ptr;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -80,11 +84,15 @@ pub struct KeyContext {
     pub algorithm: String,
     pub key_data: Vec<u8>,
     pub chaining_mode: String,
+    pub rsa_private: Option<RsaPrivateKey>,
 }
 
 static PROVIDER_COUNTER: AtomicUsize = AtomicUsize::new(0x1000);
 static HASH_COUNTER: AtomicUsize = AtomicUsize::new(0x2000);
 static KEY_COUNTER: AtomicUsize = AtomicUsize::new(0x3000);
+static PROVIDERS: Spinlock<Vec<(usize, AlgorithmProvider)>> = Spinlock::new(Vec::new());
+static HASHES: Spinlock<Vec<(usize, HashContext)>> = Spinlock::new(Vec::new());
+static KEYS: Spinlock<Vec<(usize, KeyContext)>> = Spinlock::new(Vec::new());
 
 pub unsafe extern "C" fn bcrypt_open_algorithm_provider(
     alg_handle: *mut usize,
@@ -115,12 +123,12 @@ pub unsafe extern "C" fn bcrypt_open_algorithm_provider(
         _ => return STATUS_NOT_SUPPORTED,
     }
 
-    let _provider = AlgorithmProvider {
+    let provider = AlgorithmProvider {
         algorithm: alg_str,
         flags,
     };
-
     let handle = PROVIDER_COUNTER.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    PROVIDERS.lock().push((handle, provider));
 
     // Store provider (in real implementation would use proper storage)
     *alg_handle = handle;
@@ -224,12 +232,12 @@ pub unsafe extern "C" fn bcrypt_create_hash(
         _ => return STATUS_NOT_SUPPORTED,
     };
 
-    let _context = HashContext {
+    let context = HashContext {
         algorithm: algorithm.clone(),
         state,
     };
-
     let handle = HASH_COUNTER.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    HASHES.lock().push((handle, context));
 
     *hash_handle = handle;
 
@@ -246,21 +254,47 @@ pub unsafe extern "C" fn bcrypt_hash_data(
         return STATUS_INVALID_PARAMETER;
     }
 
-    let _data = core::slice::from_raw_parts(input, input_len as usize);
-
+    let input_data = core::slice::from_raw_parts(input, input_len as usize);
+    let mut hashes = HASHES.lock();
+    let Some((_, context)) = hashes.iter_mut().find(|(stored, _)| *stored == hash_handle) else {
+        return STATUS_INVALID_HANDLE;
+    };
+    match &mut context.state {
+        HashState::Md5(state) => state.update(input_data),
+        HashState::Sha1(state) => state.update(input_data),
+        HashState::Sha256(state) => state.update(input_data),
+        HashState::Sha384(state) => state.update(input_data),
+        HashState::Sha512(state) => state.update(input_data),
+    }
     STATUS_SUCCESS
 }
 
 pub unsafe extern "C" fn bcrypt_finish_hash(
     hash_handle: usize,
     output: *mut u8,
-    _output_len: u32,
+    output_len: u32,
     _flags: u32,
 ) -> i32 {
     if hash_handle == 0 || output.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
 
+    let mut hashes = HASHES.lock();
+    let Some((_, context)) = hashes.iter_mut().find(|(stored, _)| *stored == hash_handle) else {
+        return STATUS_INVALID_HANDLE;
+    };
+    let digest: Vec<u8> = match &mut context.state {
+        HashState::Md5(state) => state.finalize().to_vec(),
+        HashState::Sha1(state) => state.finalize().to_vec(),
+        HashState::Sha256(state) => state.finalize().to_vec(),
+        HashState::Sha384(state) => state.finalize().to_vec(),
+        HashState::Sha512(state) => state.finalize().to_vec(),
+    };
+    let output_slice = core::slice::from_raw_parts_mut(output, output_len as usize);
+    if output_slice.len() < digest.len() {
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+    output_slice[..digest.len()].copy_from_slice(&digest);
     STATUS_SUCCESS
 }
 
@@ -288,13 +322,14 @@ pub unsafe extern "C" fn bcrypt_generate_symmetric_key(
     let algorithm = get_algorithm_for_handle(alg_handle);
     let key_data = core::slice::from_raw_parts(secret, secret_len as usize).to_vec();
 
-    let _context = KeyContext {
+    let context = KeyContext {
         algorithm: algorithm.clone(),
         key_data,
         chaining_mode: String::from(chaining_mode::CBC),
+        rsa_private: None,
     };
-
     let handle = KEY_COUNTER.fetch_add(1, Ordering::SeqCst);
+    KEYS.lock().push((handle, context));
 
     *key_handle = handle;
 
@@ -317,17 +352,22 @@ pub unsafe extern "C" fn bcrypt_encrypt(
         return STATUS_INVALID_PARAMETER;
     }
 
-    let _input_data = core::slice::from_raw_parts(input, input_len as usize);
-
-    let required_len = input_len; // Simplified
-    *result_len = required_len;
-
-    if output.is_null() || output_len < required_len {
-        return STATUS_BUFFER_TOO_SMALL;
+    let input_data = core::slice::from_raw_parts(input, input_len as usize);
+    if output.is_null() || output_len < input_len || input_len % 16 != 0 {
+        return STATUS_INVALID_PARAMETER;
     }
-
-    ptr::copy_nonoverlapping(input, output, input_len as usize);
-
+    let Some(context) = key_context(key_handle) else {
+        return STATUS_INVALID_HANDLE;
+    };
+    let mut iv = [0u8; 16];
+    if !_iv.is_null() && _iv_len as usize >= 16 {
+        iv.copy_from_slice(core::slice::from_raw_parts(_iv, 16));
+    }
+    let output_slice = core::slice::from_raw_parts_mut(output, output_len as usize);
+    if !aes_cbc_encrypt(&context.key_data, &iv, input_data, output_slice) {
+        return STATUS_NOT_SUPPORTED;
+    }
+    *result_len = input_len;
     STATUS_SUCCESS
 }
 
@@ -347,17 +387,22 @@ pub unsafe extern "C" fn bcrypt_decrypt(
         return STATUS_INVALID_PARAMETER;
     }
 
-    let _input_data = core::slice::from_raw_parts(input, input_len as usize);
-
-    let required_len = input_len;
-    *result_len = required_len;
-
-    if output.is_null() || output_len < required_len {
-        return STATUS_BUFFER_TOO_SMALL;
+    let input_data = core::slice::from_raw_parts(input, input_len as usize);
+    if output.is_null() || output_len < input_len || input_len % 16 != 0 {
+        return STATUS_INVALID_PARAMETER;
     }
-
-    ptr::copy_nonoverlapping(input, output, input_len as usize);
-
+    let Some(context) = key_context(key_handle) else {
+        return STATUS_INVALID_HANDLE;
+    };
+    let mut iv = [0u8; 16];
+    if !_iv.is_null() && _iv_len as usize >= 16 {
+        iv.copy_from_slice(core::slice::from_raw_parts(_iv, 16));
+    }
+    let output_slice = core::slice::from_raw_parts_mut(output, output_len as usize);
+    if !aes_cbc_decrypt(&context.key_data, &iv, input_data, output_slice) {
+        return STATUS_NOT_SUPPORTED;
+    }
+    *result_len = input_len;
     STATUS_SUCCESS
 }
 
@@ -383,9 +428,17 @@ pub unsafe extern "C" fn bcrypt_generate_key_pair(
 
     match algorithm.as_str() {
         algorithm::RSA => {
-            let _key = crate::crypto::rsa::RsaPrivateKey::generate(key_length as usize);
-
             *key_handle = KEY_COUNTER.fetch_add(1, Ordering::SeqCst);
+            let private_key = RsaPrivateKey::generate(key_length as usize);
+            KEYS.lock().push((
+                *key_handle,
+                KeyContext {
+                    algorithm: algorithm.clone(),
+                    key_data: Vec::new(),
+                    chaining_mode: String::from(chaining_mode::CBC),
+                    rsa_private: Some(private_key),
+                },
+            ));
 
             STATUS_SUCCESS
         }
@@ -461,18 +514,20 @@ pub unsafe extern "C" fn bcrypt_sign_hash(
         return STATUS_INVALID_PARAMETER;
     }
 
-    let _digest = core::slice::from_raw_parts(input, input_len as usize);
-
-    *result_len = 256;
-
-    if output.is_null() || output_len < 256 {
+    let digest = core::slice::from_raw_parts(input, input_len as usize);
+    let Some(context) = key_context(key_handle) else {
+        return STATUS_INVALID_HANDLE;
+    };
+    let Some(private_key) = context.rsa_private.as_ref() else {
+        return STATUS_NOT_SUPPORTED;
+    };
+    let signature = private_key.sign_pkcs1v15(digest);
+    *result_len = signature.len() as u32;
+    if output.is_null() || output_len < signature.len() as u32 {
         return STATUS_BUFFER_TOO_SMALL;
     }
-
-    for i in 0..256 {
-        *output.add(i) = 0;
-    }
-
+    core::slice::from_raw_parts_mut(output, signature.len())
+        .copy_from_slice(&signature);
     STATUS_SUCCESS
 }
 
@@ -489,7 +544,19 @@ pub unsafe extern "C" fn bcrypt_verify_signature(
         return STATUS_INVALID_PARAMETER;
     }
 
-    STATUS_SUCCESS
+    let hash = core::slice::from_raw_parts(hash, _hash_len as usize);
+    let signature_data = core::slice::from_raw_parts(signature, _signature_len as usize);
+    let Some(context) = key_context(key_handle) else {
+        return STATUS_INVALID_HANDLE;
+    };
+    let Some(private_key) = context.rsa_private.as_ref() else {
+        return STATUS_NOT_SUPPORTED;
+    };
+    if private_key.public_key().verify_pkcs1v15(hash, signature_data) {
+        STATUS_SUCCESS
+    } else {
+        STATUS_INVALID_PARAMETER
+    }
 }
 
 pub unsafe extern "C" fn bcrypt_gen_random(
@@ -511,8 +578,90 @@ pub unsafe extern "C" fn bcrypt_gen_random(
     }
 }
 
-fn get_algorithm_for_handle(_handle: usize) -> String {
-    String::from(algorithm::SHA256)
+fn get_algorithm_for_handle(handle: usize) -> String {
+    PROVIDERS
+        .lock()
+        .iter()
+        .find(|(stored, _)| *stored == handle)
+        .map(|(_, provider)| provider.algorithm.clone())
+        .unwrap_or_else(|| String::from(algorithm::SHA256))
+}
+
+fn key_context(key_handle: usize) -> Option<KeyContext> {
+    let keys = KEYS.lock();
+    keys.iter()
+        .find(|(stored, _)| *stored == key_handle)
+        .map(|(_, context)| KeyContext {
+            algorithm: context.algorithm.clone(),
+            key_data: context.key_data.clone(),
+            chaining_mode: context.chaining_mode.clone(),
+            rsa_private: context.rsa_private.clone(),
+        })
+}
+
+fn aes_cbc_encrypt(key: &[u8], iv: &[u8; 16], input: &[u8], output: &mut [u8]) -> bool {
+    match key.len() {
+        16 => match key.try_into() {
+            Ok(key) => cbc_transform(&Aes128::new(key), iv, input, output, |cipher, block| {
+                cipher.encrypt_block(block)
+            }, true),
+            Err(_) => false,
+        },
+        32 => match key.try_into() {
+            Ok(key) => cbc_transform(&Aes256::new(key), iv, input, output, |cipher, block| {
+                cipher.encrypt_block(block)
+            }, true),
+            Err(_) => false,
+        },
+        _ => false,
+    }
+}
+
+fn aes_cbc_decrypt(key: &[u8], iv: &[u8; 16], input: &[u8], output: &mut [u8]) -> bool {
+    match key.len() {
+        16 => match key.try_into() {
+            Ok(key) => cbc_transform(&Aes128::new(key), iv, input, output, |cipher, block| {
+                cipher.decrypt_block(block)
+            }, false),
+            Err(_) => false,
+        },
+        32 => match key.try_into() {
+            Ok(key) => cbc_transform(&Aes256::new(key), iv, input, output, |cipher, block| {
+                cipher.decrypt_block(block)
+            }, false),
+            Err(_) => false,
+        },
+        _ => false,
+    }
+}
+
+fn cbc_transform<T, C>(cipher: &T, iv: &[u8; 16], input: &[u8], output: &mut [u8], transform: C, encrypt: bool) -> bool
+where
+    C: Fn(&T, &mut [u8; 16]),
+{
+    if input.len() != output.len() || input.len() % 16 != 0 {
+        return false;
+    }
+    let mut feedback = *iv;
+    for (input_block, output_block) in input.chunks(16).zip(output.chunks_mut(16)) {
+        let mut block = [0u8; 16];
+        block.copy_from_slice(input_block);
+        if !encrypt {
+            transform(cipher, &mut block);
+            for index in 0..16 {
+                block[index] ^= feedback[index];
+            }
+            output_block.copy_from_slice(&block);
+        } else {
+            for index in 0..16 {
+                block[index] ^= feedback[index];
+            }
+            transform(cipher, &mut block);
+            output_block.copy_from_slice(&block);
+        }
+        feedback.copy_from_slice(input_block);
+    }
+    true
 }
 
 unsafe fn read_wide_string(ptr: *const u16) -> Option<String> {

@@ -142,16 +142,18 @@ fn pkcs1v15_encrypt_pad(data: &[u8], key_len: usize) -> Vec<u8> {
 }
 
 fn pkcs1v15_sign_pad(digest: &[u8], key_len: usize) -> Vec<u8> {
+    let digest_info = digest_info_prefix(digest);
     let mut padded = Vec::with_capacity(key_len);
     padded.push(0x00);
     padded.push(0x01);
 
-    let padding_len = key_len - digest.len() - 3;
+    let padding_len = key_len - digest_info.len() - digest.len() - 3;
     for _ in 0..padding_len {
         padded.push(0xff);
     }
 
     padded.push(0x00);
+    padded.extend_from_slice(&digest_info);
     padded.extend_from_slice(digest);
     padded
 }
@@ -176,8 +178,34 @@ fn pkcs1v15_verify_pad(recovered: &[u8], digest: &[u8], _key_len: usize) -> bool
         return false;
     }
 
+    let digest_info = digest_info_prefix(digest);
     i += 1;
-    &recovered[i..] == digest
+    recovered[i..].starts_with(&digest_info) && recovered[i + digest_info.len()..] == *digest
+}
+
+/// ASN.1 `DigestInfo` prefixes used by PKCS#1 v1.5 signatures. The
+/// prefix is selected by digest length, matching SHA-1/256/384/512.
+fn digest_info_prefix(digest: &[u8]) -> Vec<u8> {
+    let prefix: &[u8] = match digest.len() {
+        20 => &[
+            0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a, 0x05, 0x00,
+            0x04, 0x14,
+        ],
+        32 => &[
+            0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04,
+            0x02, 0x01, 0x05, 0x00, 0x04, 0x20,
+        ],
+        48 => &[
+            0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04,
+            0x02, 0x02, 0x05, 0x00, 0x04, 0x30,
+        ],
+        64 => &[
+            0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04,
+            0x02, 0x03, 0x05, 0x00, 0x04, 0x40,
+        ],
+        _ => &[],
+    };
+    prefix.to_vec()
 }
 
 /// Strip PKCS#1 v1.5 encryption padding (RFC 8017 section 7.2):
@@ -193,8 +221,11 @@ fn pkcs1v15_unpad(recovered: &[u8]) -> Vec<u8> {
     }
 }
 
-/// PSS encoding (simplified - production would use MGF1).
+/// PSS encoding using MGF1-SHA256.
 fn pss_encode(digest: &[u8], key_len: usize, salt_len: usize) -> Vec<u8> {
+    if digest.len() != 32 || salt_len + digest.len() + 2 > key_len {
+        return Vec::new();
+    }
     let mut salt = vec![0u8; salt_len];
     crate::crypto::csprng::fill(&mut salt);
 
@@ -205,30 +236,67 @@ fn pss_encode(digest: &[u8], key_len: usize, salt_len: usize) -> Vec<u8> {
 
     let h = crate::crypto::hash::sha256(&m_prime);
 
-    let mut em = vec![0u8; key_len];
-    let db_len = key_len - h.len() - 1;
-
-    em[db_len - salt_len - 1] = 0x01;
-    em[db_len - salt_len..db_len].copy_from_slice(&salt);
-    em[db_len..db_len + h.len()].copy_from_slice(&h);
-    em[key_len - 1] = 0xbc;
-
+    let db_len = key_len - 32 - 1;
+    let mut db = vec![0u8; db_len];
+    db[db_len - salt_len - 1] = 0x01;
+    db[db_len - salt_len..].copy_from_slice(&salt);
+    mgf1_sha256(&h, &mut db);
+    let mut em = db;
+    em.push(0xbc);
+    // PSS requires the leftmost `8 * key_len - 8 * em_bits` bits of the
+    // first EM byte to be zero. Since this RSA API is byte oriented and
+    // BigUint strips leading zeros, the top bit must always be clear.
+    if let Some(first) = em.first_mut() {
+        *first &= 0x7f;
+    }
     em
 }
 
-fn pss_verify(recovered: &[u8], _digest: &[u8], key_len: usize, salt_len: usize) -> bool {
-    if recovered.len() != key_len {
+fn mgf1_sha256(seed: &[u8], mask: &mut [u8]) {
+    let mut counter = 0u32;
+    for chunk in mask.chunks_mut(32) {
+        let mut input = Vec::with_capacity(seed.len() + 4);
+        input.extend_from_slice(seed);
+        input.extend_from_slice(&counter.to_be_bytes());
+        let hash = crate::crypto::hash::sha256(&input);
+        let copy_len = chunk.len();
+        chunk.copy_from_slice(&hash[..copy_len]);
+        counter = counter.wrapping_add(1);
+    }
+}
+
+fn pss_verify(recovered: &[u8], digest: &[u8], key_len: usize, salt_len: usize) -> bool {
+    if digest.len() != 32 || salt_len + digest.len() + 2 > key_len {
         return false;
     }
-
-    if recovered[key_len - 1] != 0xbc {
+    if recovered.len() > key_len {
+        return false;
+    }
+    let mut em = vec![0u8; key_len];
+    em[key_len - recovered.len()..].copy_from_slice(recovered);
+    if em[0] != 0 || em[key_len - 1] != 0xbc {
         return false;
     }
 
     let db_len = key_len - 32 - 1;
-
-    let expected_salt_start = db_len - salt_len;
-    recovered[expected_salt_start - 1] == 0x01
+    let mut db = em[..db_len].to_vec();
+    let h = em[db_len..key_len - 1].to_vec();
+    mgf1_sha256(&h, &mut db);
+    if db.len() < salt_len + 1 {
+        return false;
+    }
+    if db[db_len - salt_len - 1] != 0x01 {
+        return false;
+    }
+    if db[..db_len - salt_len - 1].iter().any(|&byte| byte != 0) {
+        return false;
+    }
+    let salt = db[db_len - salt_len..].to_vec();
+    let mut m_prime = Vec::with_capacity(8 + digest.len() + salt.len());
+    m_prime.extend_from_slice(&[0u8; 8]);
+    m_prime.extend_from_slice(digest);
+    m_prime.extend_from_slice(&salt);
+    h == crate::crypto::hash::sha256(&m_prime)
 }
 
 #[derive(Clone)]

@@ -238,9 +238,12 @@ fn reseed(entropy: &[u8]) {
 
 fn derive_seed_state(entropy: &[u8], tag: u8, out: &mut [u8; 32]) {
     let mut buf = [0u8; 128];
-    let n = entropy.len().min(buf.len() - 1);
-    buf[..n].copy_from_slice(&entropy[..n]);
-    buf[n] = tag;
+    // sha256_compress consumes only the first 64 bytes, so the domain
+    // separation tag must live inside that block. Prefixing it before
+    // the entropy guarantees V and C derive from different inputs.
+    buf[0] = tag;
+    let n = entropy.len().min(63);
+    buf[1..1 + n].copy_from_slice(&entropy[..n]);
     sha256_compress(&mut buf);
     out.copy_from_slice(&buf[..32]);
 }
@@ -248,17 +251,21 @@ fn derive_seed_state(entropy: &[u8], tag: u8, out: &mut [u8; 32]) {
 /// Generate one 32-byte output block, advancing V per
 /// SP 800-90A Hash_DRBG semantics and updating C in place.
 fn generate_block(v: &mut [u8; 48], c: &[u8; 32]) -> Vec<u8> {
-    // Hash_DRBG generate:
-    //   1. data = V.
-    //   2. for i = 1..outlen: (V = (V+1) mod 2^outlen; w = Hash(data||V||C))
-    // We produce a single 32-byte block.
-    let mut data = [0u8; 128];
-    data[..48].copy_from_slice(v);
-    data[48] = 0x01;
-    data[49..81].copy_from_slice(c);
-    sha256_compress(&mut data);
+    // sha256_compress consumes exactly one 64-byte block per call, so a
+    // 48-byte V plus a 32-byte C cannot fit in a single compression. Chain
+    // two compressions so the output is a function of the *complete* state.
+    let mut block = [0u8; 128];
+    block[..48].copy_from_slice(v);
+    block[48] = 0x01; // domain separation
+    sha256_compress(&mut block);
+
+    let mut chained = [0u8; 128];
+    chained[..32].copy_from_slice(&block[..32]);
+    chained[32..64].copy_from_slice(c);
+    sha256_compress(&mut chained);
+
     let mut out = Vec::with_capacity(DRBG_OUTPUT_BYTES);
-    out.extend_from_slice(&data[..DRBG_OUTPUT_BYTES]);
+    out.extend_from_slice(&chained[..DRBG_OUTPUT_BYTES]);
     // Advance V by 1 (mod 2^384) treating it as a u48 array.
     let mut carry = 1u16;
     for i in (0..48).rev() {
