@@ -14,6 +14,8 @@ pub mod vfs;
 pub mod windows_paths; // Windows 7 path and directory mapping
 
 use crate::ke::sync::Spinlock;
+use alloc::vec;
+use alloc::vec::Vec;
 
 /// Device selection strategy for filesystem operations.
 #[derive(Debug, Clone, Copy)]
@@ -648,6 +650,101 @@ pub fn detect_system_partition_type() -> FsType {
         None => FsType::Unknown,
     }
 }
+
+/// Read a whole file from the mounted system partition (C:).
+///
+/// This is the filesystem-type-neutral counterpart to the PE-specific
+/// loaders used by SMSS. It deliberately performs no image validation so
+/// callers can read configuration and text files as well as binaries.
+pub fn read_file_from_disk(path: &str) -> Option<Vec<u8>> {
+    match detect_system_partition_type() {
+        FsType::Fat32 => read_file_from_fat32(path),
+        FsType::Ntfs => read_file_from_ntfs(path),
+        FsType::Ext2 | FsType::Ext3 | FsType::Ext4 => read_file_from_ext(path),
+        _ => None,
+    }
+}
+
+fn read_file_from_fat32(path: &str) -> Option<Vec<u8>> {
+    if !fat32::is_mounted() {
+        return None;
+    }
+    let previous_active = active_partition_ramdisk();
+    if let Some(system_base) = sys_mirror_address() {
+        set_active_partition_ramdisk(Some(system_base));
+    }
+
+    let result = fat32::get_mounted_fs().and_then(|filesystem| {
+        let entry = fat32::find_file_at_path(filesystem, path)?;
+        let file_size = entry.file_size() as usize;
+        if file_size == 0 || file_size > MAX_SYSTEM_FILE_SIZE {
+            return None;
+        }
+        let mut buffer = vec![0u8; file_size];
+        let read_size =
+            fat32::read_file(filesystem, entry.first_cluster(), entry.file_size(), &mut buffer)
+                .ok()?;
+        buffer.truncate(read_size);
+        Some(buffer)
+    });
+
+    set_active_partition_ramdisk(previous_active);
+    result
+}
+
+fn read_file_from_ntfs(path: &str) -> Option<Vec<u8>> {
+    if !ntfs::is_mounted() {
+        return None;
+    }
+    let previous_active = active_partition_ramdisk();
+    if let Some(system_base) = sys_mirror_address() {
+        set_active_partition_ramdisk(Some(system_base));
+    }
+
+    let result = ntfs::get_mounted_fs().and_then(|filesystem| {
+        let mut path_utf16 = Vec::new();
+        for unit in path.encode_utf16() {
+            path_utf16.push(unit);
+        }
+        path_utf16.push(0);
+
+        let mut handle = ntfs::open_file(filesystem, &path_utf16, None)?;
+        let file_size = handle.file_size as usize;
+        if file_size == 0 || file_size > MAX_SYSTEM_FILE_SIZE {
+            return None;
+        }
+        let mut buffer = vec![0u8; file_size];
+        let mut read_size = 0;
+        while read_size < file_size {
+            let chunk = match ntfs::read_file(filesystem, &mut handle, &mut buffer[read_size..]) {
+                Ok(0) => break,
+                Ok(size) => size,
+                Err(_) => return None,
+            };
+            read_size += chunk;
+        }
+        buffer.truncate(read_size);
+        Some(buffer)
+    });
+
+    set_active_partition_ramdisk(previous_active);
+    result
+}
+
+fn read_file_from_ext(path: &str) -> Option<Vec<u8>> {
+    if !ext2::is_mounted() {
+        return None;
+    }
+    let filesystem = ext2::get_mounted_fs()?;
+    let mut buffer = ext2::read_whole_file(filesystem, path).ok()?;
+    if buffer.len() > MAX_SYSTEM_FILE_SIZE {
+        return None;
+    }
+    buffer.truncate(buffer.len());
+    Some(buffer)
+}
+
+const MAX_SYSTEM_FILE_SIZE: usize = 64 * 1024 * 1024;
 
 /// BOOT_PARTITION_REGISTRY caches the filesystem type of the boot
 /// partition (the C: drive). It is populated by `fs::init()` once

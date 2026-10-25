@@ -693,7 +693,7 @@ pub fn read_sector(device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<()
         Ok(())
     } else {
         // Try AHCI
-        if crate::drivers::storage::ahci::read_sector(0, 0, sector as u32, buffer) {
+        if crate::drivers::storage::read_ahci_sector(sector as u32, buffer) {
             return Ok(());
         }
         Err(())

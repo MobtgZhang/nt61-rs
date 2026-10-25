@@ -284,7 +284,7 @@ fn parse_directory_entries(buffer: &[u8], has_filetype: bool, entries: &mut Vec<
         }
 
         let name = buffer[name_start..name_end].to_vec();
-        let name_str = unsafe { String::from_utf8_unchecked(name) };
+        let name_str = String::from_utf8_lossy(&name).into_owned();
 
         entries.push(Ext2DirEntryInfo::new(inode, name_str, file_type, rec_len));
 

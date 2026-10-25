@@ -322,7 +322,7 @@ pub fn read_sector(device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<()
         let absolute_sector = partition_offset + sector;
 
         // Try AHCI first (channel 0, port 0)
-        if ahci::read_sector(0, 0, absolute_sector as u32, buffer) {
+        if crate::drivers::storage::read_ahci_sector(absolute_sector as u32, buffer) {
             // AHCI read succeeded
             return Ok(());
         }

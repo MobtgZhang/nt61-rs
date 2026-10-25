@@ -178,7 +178,7 @@ pub fn read_sector(_device: *mut (), lba: u64, buffer: &mut [u8]) -> Result<(), 
         return Ok(());
     }
 
-    if crate::drivers::storage::ahci::read_sector(0, 0, lba as u32, buffer) {
+    if crate::drivers::storage::read_ahci_sector(lba as u32, buffer) {
         return Ok(());
     }
 
