@@ -4,8 +4,8 @@
 //! UEFI boot path and the multiboot boot path can share it without
 //! any duplicated code.
 
-#![no_std]
-#![no_main]
+#![cfg_attr(not(test), no_std)]
+#![cfg_attr(not(test), no_main)]
 
 extern crate alloc;
 
@@ -32,6 +32,7 @@ pub extern "C" fn kernel_entry(bi_ptr: usize) -> ! {
 /// ELF linker entry. Keeping this symbol explicit means bare-metal
 /// linking works even when external RUSTFLAGS override the Cargo
 /// config's `link-arg=-e kernel_entry`.
+#[cfg(not(test))]
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
     kernel_entry(0)

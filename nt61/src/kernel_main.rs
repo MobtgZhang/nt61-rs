@@ -288,31 +288,15 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     arch::start_smp();
     boot_println!("OK");
 
+
     // Install the early-boot kernel stack before any potentially
     // interruptible code path runs.
     arch::init_kernel_stack();
-    if let Some(rsp0_val) = arch::kernel_stack_base() {
-        let prefix: &[u8] = b"[BOOT] KERNEL STACK = 0x";
-        for &b in prefix {
-            crate::hal::serial::write_char(b);
-        }
-        const HEX: &[u8; 16] = b"0123456789ABCDEF";
-        let v = rsp0_val;
-        let mut started = false;
-        for i in (0..16u32).rev() {
-            let nibble = ((v >> (i * 4)) & 0xF) as u8;
-            if nibble != 0 || started || i == 0 {
-                crate::hal::serial::write_char(HEX[nibble as usize]);
-                started = true;
-            }
-        }
-        for &b in b"\r\n" {
-            crate::hal::serial::write_char(b);
-        }
-    }
+
     boot_debug_print!("Initializing HAL... ");
     hal::init();
     boot_println!("OK");
+
 
     // Bring up the abstract text console *before* any subsequent
     // `boot_println!` call. This enables the graphical mirror path
@@ -321,19 +305,25 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     // Without this call the log ring stays empty and the pane
     // would render "no log lines captured yet" instead of the
     // actual boot trace.
+
     crate::hal::text_console::init();
+
 
     // ============================================================================
     // PHASE 2: Kernel Executive (ke)
     // ============================================================================
+
     phase_header!(1, "Kernel Executive");
     ke::init();
+
 
     // ============================================================================
     // PHASE 3: Object Manager (ob)
     // ============================================================================
+
     phase_header!(2, "Object Manager");
     ob::init();
+
 
     // ============================================================================
     // PHASE 4: Registry / Configuration Manager
@@ -387,11 +377,15 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     crate::rtl::klog::phase_trace_marker(702);
     crate::hal::serial::write_string_always("K:P702\r\n");
 
+    crate::hal::serial::write_string_always("K:NETSTACK_ABOUT\r\n");
+
     // Bring the TCP/IP protocol stack up immediately after its NIC
     // miniports are registered; otherwise `ethif` has no MAC/interface
     // bindings and DHCP cannot transmit.
     crate::netstack::init();
     crate::hal::serial::write_string_always("K:NETSTACK\r\n");
+
+    crate::hal::serial::write_string_always("K:PS_ABOUT\r\n");
 
     // ============================================================================
     // PHASE 9: Process / Thread Subsystem (ps)
@@ -400,6 +394,8 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     ps::init();
     crate::rtl::klog::phase_trace_marker(801);
     crate::hal::serial::write_string_always("K:P801\r\n");
+
+    crate::hal::serial::write_string_always("K:P9_ABOUT\r\n");
 
     // ============================================================================
     // PHASE 9: Reserved — disk ntoskrnl.exe manages subsystem PEs
@@ -425,6 +421,8 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     phase_header!(10, "System Processes");
     create_system_processes();
     crate::hal::serial::write_string_always("K:P10\r\n");
+    crate::servers::init();
+    crate::libs::init();
 
     // ============================================================================
     // PHASE 11: Session Manager (smss.exe)
@@ -467,6 +465,11 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     } else {
         boot_println!("    network E2E: some stages failed (see log)");
     }
+
+    // Start on-disk services after the network stack is ready. The
+    // launcher is content-driven: without an installed configuration it
+    // is a no-op for ordinary images.
+    let _ = crate::servers::sshd::launcher::start_from_disk();
 
     // ============================================================================
     // PHASE 14: Print IDLE banner
@@ -712,7 +715,6 @@ pub fn run_safe_mode_shell(mode: servers::cmd::ShellMode) -> ! {
 // System Image Database
 // =====================================================================
 
-use core::sync::atomic::{AtomicBool, Ordering};
 
 /// Kernel address space layout for system images (Windows 7 style)
 pub mod kernel_layout {
@@ -732,12 +734,6 @@ pub mod kernel_layout {
     pub const LSASS_BASE: u64 = 0xFFFF8000_60040000;
 }
 
-/// Global system image database for managing loaded PE images.
-/// This is initialized once during kernel boot and persists.
-static mut SYSTEM_IMAGE_DB: core::mem::MaybeUninit<crate::loader::ImageDatabase> =
-    core::mem::MaybeUninit::uninit();
-static SYSTEM_DB_READY: AtomicBool = AtomicBool::new(false);
-
 /// Load the NT 6.1 system images.
 ///
 /// This function uses the PE loader infrastructure (`loader::load_pe()`,
@@ -746,21 +742,13 @@ static SYSTEM_DB_READY: AtomicBool = AtomicBool::new(false);
 /// image database for import resolution.
 fn load_system_files() {
     boot_milestone!("KERNEL", "Initializing system image database");
-    // Initialize the system image database
-    // SAFETY: This is called only once during kernel boot on the BSP
-    unsafe {
-        core::ptr::addr_of_mut!(SYSTEM_IMAGE_DB).write(core::mem::MaybeUninit::new(
-            crate::loader::ImageDatabase::new(),
-        ));
-    }
+    crate::loader::init_global_image_db();
     boot_ok!("Image database initialized");
     boot_milestone!("KERNEL", "image DB init done");
 
-    let db: &mut crate::loader::ImageDatabase = unsafe {
-        (*core::ptr::addr_of_mut!(SYSTEM_IMAGE_DB))
-            .as_mut_ptr()
-            .as_mut()
-            .unwrap()
+    let Some(db) = crate::loader::global_image_db() else {
+        boot_println!("    ERROR: global image database unavailable");
+        return;
     };
 
     const SYSTEM_IMAGES: [(&str, &str, u64); 5] = [
@@ -828,7 +816,6 @@ fn load_system_files() {
         boot_println!("    ERROR: no system images were loaded from the system partition");
     }
 
-    SYSTEM_DB_READY.store(true, Ordering::Release);
 }
 
 /// Run smoke tests for every kernel subsystem that ships one.
