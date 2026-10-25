@@ -391,6 +391,14 @@ pub fn execute(command: &str, arguments: &str, cwd: &[u8]) -> bool {
         "wbadmin" => cmd_wbadmin(arguments),
         "wdsutil" => cmd_wdsutil(arguments),
         "wecutil" => cmd_wecutil(arguments),
+        "cmstp" => cmd_cmstp(arguments),
+        "cprofile" => cmd_cprofile(arguments),
+        "dirquota" => cmd_dirquota(arguments),
+        "dispdiag" => cmd_dispdiag(arguments),
+        "eventtriggers" => cmd_eventtriggers(arguments),
+        "evntcmd" => cmd_evntcmd(arguments),
+        "helpctr" => cmd_helpctr(arguments),
+        "pnpunattend" => cmd_pnpunattend(arguments),
         "adprep" => cmd_adprep(arguments),
         "csvde" => cmd_csvde(arguments),
         "dcdiag" => cmd_dcdiag(),
@@ -476,9 +484,10 @@ pub fn execute(command: &str, arguments: &str, cwd: &[u8]) -> bool {
 
 fn output(text: &str) {
     for byte in text.as_bytes() {
-        crate::hal::serial::write_char(*byte);
         if *byte != b'\x1b' && *byte != b'\x00' {
-            crate::hal::text_console::put_byte_vga_only(*byte);
+            crate::hal::serial::with_serial_unmasked(|| {
+                crate::hal::text_console::put_serial_and_console(*byte);
+            });
         }
     }
 }
@@ -1418,7 +1427,8 @@ fn cmd_tree(root: &[u8]) -> bool {
         .map(|handle| handle.mft_record)
         .unwrap_or(5);
     output_line(core::str::from_utf8(root).unwrap_or("C:\\"));
-    print_tree(filesystem, directory_record, "");
+    let mut visited = alloc::collections::BTreeSet::new();
+    print_tree(filesystem, directory_record, "", &mut visited);
     false
 }
 
@@ -1426,16 +1436,27 @@ fn print_tree(
     filesystem: &mut crate::fs::ntfs::NtfsFileSystem,
     directory_record: u64,
     indentation: &str,
+    visited: &mut alloc::collections::BTreeSet<u64>,
 ) {
+    if !visited.insert(directory_record) {
+        return;
+    }
     for entry in crate::fs::ntfs::list_directory(filesystem, directory_record) {
+        let name = String::from_utf16_lossy(&entry.name);
+        if name == "." || name == ".." {
+            continue;
+        }
         if entry.is_directory {
-            output_line(&format!(
-                "{}+---{}",
-                indentation,
-                String::from_utf16_lossy(&entry.name)
-            ));
+            output_line(&format!("{}+---{}", indentation, name));
             let child_record = entry.record_number;
-            print_tree(filesystem, child_record, &format!("{}|   ", indentation));
+            if !visited.contains(&child_record) {
+                print_tree(
+                    filesystem,
+                    child_record,
+                    &format!("{}|   ", indentation),
+                    visited,
+                );
+            }
         }
     }
 }
@@ -3391,6 +3412,79 @@ fn cmd_pentnt() -> bool {
 fn cmd_pbadmin(arguments: &str) -> bool {
     let _ = arguments;
     output_line("Phone Book Administrator is not installed.");
+    false
+}
+
+fn cmd_cmstp(arguments: &str) -> bool {
+    let _ = arguments;
+    output_line("CMSTP: Connection Manager profile setup is not available.");
+    false
+}
+
+fn cmd_cprofile(arguments: &str) -> bool {
+    let _ = arguments;
+    output_line("CPROFILE: roaming user profile cleanup is not available.");
+    false
+}
+
+fn cmd_dirquota(arguments: &str) -> bool {
+    let subcommand = arguments.split_whitespace().next().unwrap_or("").to_lowercase();
+    match subcommand.as_str() {
+        "" => {
+            output_line("DIRQUOTA: manages file-server directory quotas.");
+            output_line("Usage: dirquota quota list | template list | autoapply list");
+            false
+        }
+        "quota" | "template" | "autoapply" => {
+            output_line("DIRQUOTA: File Server Resource Manager is not running.");
+            false
+        }
+        _ => {
+            output_line("DIRQUOTA: unrecognized subcommand.");
+            false
+        }
+    }
+}
+
+fn cmd_dispdiag(arguments: &str) -> bool {
+    let _ = arguments;
+    output_line("DISPDIAG: display diagnostics output written to DISPDIAG.LOG.");
+    false
+}
+
+fn cmd_eventtriggers(arguments: &str) -> bool {
+    let subcommand = arguments.split_whitespace().next().unwrap_or("").to_lowercase();
+    match subcommand.as_str() {
+        "" | "/query" => {
+            output_line("Event Triggers: no event triggers are configured.");
+            true
+        }
+        "/create" | "/delete" => {
+            output_line("EVENTTRIGGERS: event trigger management is not available in this build.");
+            false
+        }
+        _ => {
+            output_line("Usage: eventtriggers [/query | /create | /delete]");
+            false
+        }
+    }
+}
+
+fn cmd_evntcmd(arguments: &str) -> bool {
+    let _ = arguments;
+    output_line("EVNTCMD: event configuration via message files is not available.");
+    false
+}
+
+fn cmd_helpctr(arguments: &str) -> bool {
+    let _ = arguments;
+    output_line("Help Center is not available in this build.");
+    false
+}
+
+fn cmd_pnpunattend(arguments: &str) -> bool {
+    let _ = arguments;
+    output_line("PNPUNATTEND: Plug and Play unattended installation is not available.");
     false
 }
 

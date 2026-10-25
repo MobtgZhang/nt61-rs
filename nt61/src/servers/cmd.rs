@@ -38,7 +38,7 @@ use alloc::vec::Vec;
 const KERNEL_VERSION: &str = "6.1.7601";
 
 /// Command buffer size
-const CMD_BUFFER_SIZE: usize = 256;
+pub const CMD_BUFFER_SIZE: usize = 256;
 
 /// Maximum entries to display in DIR
 const MAX_DIR_ENTRIES: usize = 64;
@@ -48,6 +48,23 @@ const MAX_HISTORY: usize = 16;
 
 /// Command history storage
 static CMD_HISTORY: Spinlock<Vec<[u8; CMD_BUFFER_SIZE]>> = Spinlock::new(Vec::new());
+
+/// Bounded output buffer used by remote command submission (SSH).
+/// Command output continues to be mirrored to the local console while
+/// it is captured, so enabling capture never hides output.
+static OUTPUT_CAPTURE: Spinlock<Option<Vec<u8>>> = Spinlock::new(None);
+
+const OUTPUT_CAPTURE_LIMIT: usize = 64 * 1024;
+
+/// Start capturing command output. Discards any previous capture.
+pub fn begin_output_capture() {
+    *OUTPUT_CAPTURE.lock() = Some(Vec::new());
+}
+
+/// Stop capturing and return the captured bytes.
+pub fn take_output_capture() -> Option<Vec<u8>> {
+    OUTPUT_CAPTURE.lock().take()
+}
 
 /// Working directory shared by Ring-3 command submissions and the
 /// kernel fallback shell. A single shell instance is expected during
@@ -123,6 +140,12 @@ pub fn print_ring3_prompt() {
         serial_print(cwd.as_cstr());
         serial_print(b">");
     }
+}
+
+pub fn diagnostic_command_failure(reason: &[u8]) {
+    crate::hal::serial::write_string_always("[CMD] command dispatch failed: ");
+    crate::hal::serial::write_string_always(core::str::from_utf8(reason).unwrap_or("binary"));
+    crate::hal::serial::write_string_always("\r\n");
 }
 
 impl Cwd {
@@ -203,7 +226,12 @@ pub fn run_shell(mode: ShellMode) -> ! {
             serial_print(b"Safe Mode with Command Prompt support loaded via the ");
             serial_print(b"kernel-side shell on this architecture.\r\n\r\n");
         }
-        ShellMode::Ring3 => unreachable!("Ring3 is hosted by user-mode cmd.exe"),
+        ShellMode::Ring3 => {
+            serial_print(b"Microsoft Windows [Version ");
+            serial_print(KERNEL_VERSION.as_bytes());
+            serial_print(b"]\r\n(C) Copyright (c) 2009 Microsoft Corporation. ");
+            serial_print(b"All rights reserved.\r\n\r\n");
+        }
     }
 
     // Main command loop
@@ -590,11 +618,6 @@ fn process_command_chain(cmd_str: &str, mode: &ShellMode, cwd: &mut Cwd) -> bool
     // First, handle output redirection
     let (cmd_part, redirect_file, append) = parse_redirection(cmd_str);
 
-    // If redirection, we would write output to file
-    // For now, just process the command part
-    let _ = redirect_file;
-    let _ = append;
-
     // handle command chaining: && || &
     // Split by & (but not && or ||)
     let parts = split_command_chain(cmd_part);
@@ -608,6 +631,10 @@ fn process_command_chain(cmd_str: &str, mode: &ShellMode, cwd: &mut Cwd) -> bool
         }
 
         let (operator, cmd_to_run) = parse_chain_operator(part);
+
+        if redirect_file.is_some() {
+            begin_output_capture();
+        }
 
         match operator {
             ChainOperator::And => {
@@ -627,9 +654,59 @@ fn process_command_chain(cmd_str: &str, mode: &ShellMode, cwd: &mut Cwd) -> bool
                 last_result = execute_single_command(part, mode, cwd);
             }
         }
+
+        if let Some(path) = redirect_file {
+            let output = take_output_capture().unwrap_or_default();
+            write_command_output(path, &output, append, cwd);
+        }
     }
 
     last_result
+}
+
+fn write_command_output(path: &str, output: &[u8], append: bool, cwd: &Cwd) {
+    let Some(fs) = fs::ntfs::get_mounted_fs() else {
+        serial_print(b"Output redirection failed: no filesystem mounted.\r\n");
+        return;
+    };
+
+    let mut content = Vec::new();
+    if append {
+        let mut path_utf16 = command_path_utf16(path, cwd);
+        path_utf16.push(0);
+        if let Some(mut handle) = fs::ntfs::open_file(fs, &path_utf16, None) {
+            if !handle.is_directory && handle.file_size <= usize::MAX as u64 {
+                let mut existing = alloc::vec![0u8; handle.file_size as usize];
+                let mut offset = 0usize;
+                while offset < existing.len() {
+                    match fs::ntfs::read_file(fs, &mut handle, &mut existing[offset..]) {
+                        Ok(0) => break,
+                        Ok(read) => offset += read,
+                        Err(_) => break,
+                    }
+                }
+                content.extend_from_slice(&existing[..offset]);
+            }
+        }
+    }
+
+    content.extend_from_slice(output);
+
+    let mut path_utf16 = command_path_utf16(path, cwd);
+    path_utf16.push(0);
+    if fs::ntfs::delete_file(fs, &path_utf16).is_err() {
+        let mut probe = command_path_utf16(path, cwd);
+        probe.push(0);
+        if fs::ntfs::open_file(fs, &probe, None).is_some() {
+            serial_print(b"Output redirection failed: cannot replace existing file.\r\n");
+            return;
+        }
+    }
+    let mut path_utf16 = command_path_utf16(path, cwd);
+    path_utf16.push(0);
+    if fs::ntfs::create_file(fs, &path_utf16, &content).is_err() {
+        serial_print(b"Output redirection failed.\r\n");
+    }
 }
 
 /// Chain operator types
@@ -781,6 +858,10 @@ fn execute_single_command(cmd_str: &str, mode: &ShellMode, cwd: &mut Cwd) -> boo
 
     match cmd_name.as_str() {
         "CD" | "CHDIR" => cmd_cd(args, cwd),
+        "PWD" => {
+            serial_print(cwd.as_cstr());
+            serial_print(b"\r\n");
+        }
         "DIR" | "LS" => cmd_dir(cwd, args),
         "CLS" => {
             crate::hal::text_console::clear();
@@ -858,6 +939,29 @@ fn expand_env_vars(s: &str) -> String {
                 let var_value = get_env_var(var_name);
                 result.push_str(&var_value);
                 i += end_pos + 2; // Skip %var%
+                continue;
+            }
+        }
+        if bytes[i] == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+            let remaining = &s[i + 2..];
+            if let Some(end_pos) = remaining.find('}') {
+                let var_name = &remaining[..end_pos];
+                let var_value = get_env_var(var_name);
+                result.push_str(&var_value);
+                i += end_pos + 3;
+                continue;
+            }
+        }
+        if bytes[i] == b'$' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_alphanumeric() {
+            let remaining = &s[i + 1..];
+            let end_pos = remaining
+                .find(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+                .unwrap_or(remaining.len());
+            if end_pos > 0 {
+                let var_name = &remaining[..end_pos];
+                let var_value = get_env_var(var_name);
+                result.push_str(&var_value);
+                i += end_pos + 1;
                 continue;
             }
         }
@@ -1201,18 +1305,29 @@ fn parse_dir_options(args: &str) -> (DirOptions, &str) {
 /// Parse attribute filter string (e.g., "D", "R", "H", "A")
 fn parse_attr_filter(attr_str: &str) -> u32 {
     let mut filter = 0u32;
+    let mut negated = false;
     // Bit 0: read-only, Bit 1: Hidden, Bit 2: System, Bit 3: Directory
     // Bit 4: Archive, Bit 5: Device, Bit 6: Normal, Bit 7: Temporary
 
     for c in attr_str.chars() {
-        match c {
-            'D' | 'd' => filter |= 0x10, // Directory
-            'R' | 'r' => filter |= 0x01, // read-only
-            'H' | 'h' => filter |= 0x02, // Hidden
-            'S' | 's' => filter |= 0x04, // System
-            'A' | 'a' => filter |= 0x20, // Archive
-            '-' => {}                    // Negation not implemented yet
-            _ => {}
+        if c == '-' {
+            negated = true;
+            continue;
+        }
+
+        let bit = match c {
+            'D' | 'd' => 0x10,
+            'R' | 'r' => 0x01,
+            'H' | 'h' => 0x02,
+            'S' | 's' => 0x04,
+            'A' | 'a' => 0x20,
+            _ => 0,
+        };
+
+        if negated {
+            filter &= !bit;
+        } else {
+            filter |= bit;
         }
     }
 
@@ -1221,6 +1336,17 @@ fn parse_attr_filter(attr_str: &str) -> u32 {
     }
 
     filter
+}
+
+#[cfg(test)]
+mod attr_filter_tests {
+    use super::parse_attr_filter;
+
+    #[test]
+    fn attribute_negation_clears_the_requested_bit() {
+        assert_eq!(parse_attr_filter("D-H"), 0x10);
+        assert_eq!(parse_attr_filter("H-D"), 0x02);
+    }
 }
 
 /// Parse sort order string (e.g., "N", "S", "E", "D")
@@ -1519,12 +1645,12 @@ fn print_builtin_dir(cwd: &Cwd, options: &DirOptions) {
 }
 
 fn cmd_type(path: &str, _cwd: &Cwd) {
-    // Build full path
-    let filename = path.as_bytes();
+    let filename = path.trim().trim_matches('"').as_bytes();
+    if fs::ntfs::is_mounted() && try_read_ntfs_file(path, _cwd) {
+        return;
+    }
 
-    // Check filesystem availability
-    let fs_mounted = fat32::is_mounted() || fs::ntfs::is_mounted();
-
+    let fs_mounted = fat32::is_mounted();
     if !fs_mounted {
         serial_print(b"No filesystem mounted.\r\n");
         serial_print(b"Cannot read file: ");
@@ -1533,20 +1659,6 @@ fn cmd_type(path: &str, _cwd: &Cwd) {
         return;
     }
 
-    // Try NTFS first if mounted
-    let _ntfs_used = if fs::ntfs::is_mounted() {
-        if let Some(_ntfs_fs) = fs::ntfs::get_mounted_fs() {
-            // NTFS file reading would go here
-            // For now, fall through to FAT32
-            true
-        } else {
-            false
-        }
-    } else {
-        false
-    };
-
-    // Try FAT32
     if fat32::is_mounted() {
         if let Some(fs) = fat32::get_mounted_fs() {
             let mut buffer = [0u8; 512];
@@ -1588,9 +1700,53 @@ fn cmd_type(path: &str, _cwd: &Cwd) {
         }
 
         serial_print(b"Failed to access filesystem.\r\n");
-    } else if !_ntfs_used {
+    } else {
         serial_print(b"No filesystem available.\r\n");
     }
+}
+
+fn try_read_ntfs_file(path: &str, cwd: &Cwd) -> bool {
+    let Some(fs) = fs::ntfs::get_mounted_fs() else {
+        return false;
+    };
+    let mut path_utf16 = command_path_utf16(path, cwd);
+    path_utf16.push(0);
+    let Some(mut handle) = fs::ntfs::open_file(fs, &path_utf16, None) else {
+        return false;
+    };
+    if handle.is_directory {
+        return false;
+    }
+
+    let mut content = alloc::vec![0u8; handle.file_size as usize];
+    let mut total = 0usize;
+    let mut iterations = 0usize;
+    while total < content.len() && iterations < 16 {
+        let read = match fs::ntfs::read_file(fs, &mut handle, &mut content[total..]) {
+            Ok(read) => read,
+            Err(_) => break,
+        };
+        if read == 0 {
+            break;
+        }
+        total += read;
+        iterations += 1;
+    }
+    if total == 0 {
+        return false;
+    }
+
+    for &byte in &content[..total] {
+        if byte >= 0x20 || byte == b'\n' || byte == b'\r' || byte == b'\t' {
+            dual_put_byte(byte);
+        } else if byte == 0 {
+            break;
+        } else {
+            dual_put_byte(b'.');
+        }
+    }
+    serial_print(b"\r\n");
+    true
 }
 
 fn find_file_in_root<'a>(
@@ -1656,7 +1812,13 @@ fn cmd_date(args: &str) {
     // date/time content differs.
     if let Some(time) = crate::hal::common::cmos::query_real_time_clock() {
         if time_only {
-            serial_print(b"06/20/2026\r\n");
+            serial_print(b"date /t: ");
+            print_two_digits(time.month);
+            serial_print(b"/");
+            print_two_digits(time.day);
+            serial_print(b"/");
+            print_four_digits(time.year);
+            serial_print(b"\r\n");
         } else {
             serial_print(b"Current date: ");
             print_two_digits(time.month);
@@ -1984,13 +2146,14 @@ fn cmd_del(args: &str, _cwd: &Cwd) {
     // Parse options
     let mut force = false;
     let mut quiet = false;
+    let mut prompt = false;
     let mut pathname = String::new();
 
     for part in args.split_whitespace() {
         match part.to_uppercase().as_str() {
             "/F" => force = true,
             "/Q" => quiet = true,
-            "/P" => { /* Prompt - not implemented yet */ }
+            "/P" => prompt = true,
             _ => {
                 if pathname.is_empty() {
                     pathname = part.to_string();
@@ -2041,6 +2204,11 @@ fn cmd_del(args: &str, _cwd: &Cwd) {
             u16::from_le_bytes([buffer[offset_in_sector + 26], buffer[offset_in_sector + 27]]);
         let file_cluster = ((high as u32) << 16) | (low as u32);
 
+        if prompt && !quiet && !confirm_delete(pathname.as_str()) {
+            serial_print(b"Skipped.\r\n");
+            return;
+        }
+
         serial_print(b"Deleting: ");
         serial_print(pathname.as_bytes());
         serial_print(b"\r\n");
@@ -2064,6 +2232,22 @@ fn cmd_del(args: &str, _cwd: &Cwd) {
         serial_print(b"File not found: ");
         serial_print(pathname.as_bytes());
         serial_print(b"\r\n");
+    }
+}
+
+fn confirm_delete(pathname: &str) -> bool {
+    serial_print(b"Delete ");
+    serial_print(pathname.as_bytes());
+    serial_print(b"? [Y/N] ");
+
+    loop {
+        crate::hal::keyboard_input::poll();
+        if let Some(byte) = crate::hal::keyboard_input::try_read_byte() {
+            let byte = byte.to_ascii_uppercase();
+            dual_put_byte(byte);
+            serial_print(b"\r\n");
+            return byte == b'Y';
+        }
     }
 }
 
@@ -2419,7 +2603,14 @@ fn dual_print(s: &[u8]) {
             continue;
         }
         if c != b'\x00' {
-            text_console::put_serial_and_console(c);
+            crate::hal::serial::with_serial_unmasked(|| {
+                text_console::put_serial_and_console(c);
+            });
+            if let Some(capture) = OUTPUT_CAPTURE.lock().as_mut() {
+                if capture.len() < OUTPUT_CAPTURE_LIMIT {
+                    capture.push(c);
+                }
+            }
         }
         i += 1;
     }
@@ -2430,7 +2621,9 @@ fn dual_print(s: &[u8]) {
 /// mirrored immediately.
 fn dual_put_byte(c: u8) {
     if c != b'\x1b' && c != b'\x00' {
-        text_console::put_serial_and_console(c);
+        crate::hal::serial::with_serial_unmasked(|| {
+            text_console::put_serial_and_console(c);
+        });
     }
 }
 
@@ -2927,18 +3120,30 @@ pub fn execute_command_from_user_ptr(
     user_ptr: *const u8,
     user_length: usize,
 ) -> Result<bool, &'static str> {
+    let diagnostic = alloc::format!(
+        "[CMD-PTR] ptr={:#x} len={:#x} range={} root={:#x} trans={:#x?}\r\n",
+        user_ptr as usize,
+        user_length,
+        crate::mm::user_copy::is_user_range(user_ptr as u64, user_length),
+        crate::arch::read_current_page_root(),
+        crate::arch::translate_virt(user_ptr as u64)
+    );
+    crate::hal::serial::write_string_always(&diagnostic);
     if user_ptr.is_null() {
         return Err("null command pointer");
     }
     let capacity = user_length.min(CMD_BUFFER_SIZE - 1);
-    let mut bytes = alloc::vec::Vec::with_capacity(capacity);
-    for index in 0..capacity {
-        let byte = unsafe { core::ptr::read_volatile(user_ptr.add(index)) };
-        if byte == 0 {
-            break;
-        }
-        bytes.push(byte);
+    let mut bytes = alloc::vec![0u8; capacity];
+    if crate::mm::user_copy::copy_from_user(&mut bytes, user_ptr as u64).is_err() {
+        return Err("command buffer is not readable user memory");
     }
-    let line = core::str::from_utf8(&bytes).map_err(|_| "command is not valid UTF-8")?;
+    execute_command_bytes(&bytes)
+}
+
+pub fn execute_command_bytes(bytes: &[u8]) -> Result<bool, &'static str> {
+    let line = core::str::from_utf8(bytes).map_err(|_| "command is not valid UTF-8")?;
+    let line = line.trim_matches(|character: char| {
+        character == '\0' || character.is_whitespace()
+    });
     Ok(execute_command_line(line))
 }
