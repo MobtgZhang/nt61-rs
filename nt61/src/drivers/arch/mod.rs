@@ -197,6 +197,13 @@ pub fn ahci_count() -> usize {
     0
 }
 
+pub fn ahci_first_disk_location() -> Option<(usize, usize)> {
+    #[cfg(target_arch = "x86_64")]
+    return x86_64::storage::ahci_x86::first_disk_location();
+    #[cfg(not(target_arch = "x86_64"))]
+    None
+}
+
 pub fn ahci_read_sector(controller: usize, port: usize, lba: u32, buf: &mut [u8]) -> bool {
     #[cfg(target_arch = "x86_64")]
     return x86_64::storage::ahci_x86::read_sector(controller, port, lba, buf);

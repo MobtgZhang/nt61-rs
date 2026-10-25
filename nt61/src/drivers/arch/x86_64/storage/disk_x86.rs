@@ -118,12 +118,12 @@ pub fn disk_read(idx: usize, offset: u64, byte_count: usize, buf: &mut [u8]) -> 
             return 0;
         }
         let channel = (idx & 1) as usize;
-        let start_sector = (offset / 512) as u32;
+        let mut start_sector = (offset / 512) as u32;
         let mut remaining = byte_count;
         let mut out_off = 0usize;
         while remaining > 0 {
-            let sectors = core::cmp::min(remaining / 512, 256) as u8;
-            let mut tmp = [0u16; 256 * 256];
+            let sectors = 1u8;
+            let mut tmp = [0u16; 256];
             if !ata::read_sectors(
                 channel,
                 start_sector,
@@ -143,6 +143,7 @@ pub fn disk_read(idx: usize, offset: u64, byte_count: usize, buf: &mut [u8]) -> 
                 out_off += 2;
             }
             remaining -= (sectors as usize) * 512;
+            start_sector += sectors as u32;
         }
         let d = &mut DISKS[idx];
         d.reads += 1;

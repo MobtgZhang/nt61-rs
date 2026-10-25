@@ -243,6 +243,7 @@ impl Default for DiskInfo {
 static mut AHCI_CONTROLLERS: [Option<AhciController>; 4] = [None; 4];
 static mut AHCI_COUNT: usize = 0;
 static mut DISK_INFO: [Option<DiskInfo>; 8] = [None; 8];
+static mut DISK_LOCATIONS: [Option<(usize, usize)>; 128] = [None; 128];
 
 // ---------------------------------------------------------------------------
 // AHCI DMA buffer Allocator
@@ -580,6 +581,27 @@ fn probe_port(base: u64, port: usize) -> Option<DiskInfo> {
     Some(info)
 }
 
+unsafe fn record_disk_location(controller_idx: usize, port: usize) {
+    if controller_idx < 4 && port < 32 {
+        let slot = controller_idx * 32 + port;
+        (*core::ptr::addr_of_mut!(DISK_LOCATIONS))[slot] = Some((controller_idx, port));
+    }
+}
+
+unsafe fn clear_disk_locations() {
+    for location in (*core::ptr::addr_of_mut!(DISK_LOCATIONS)).iter_mut() {
+        *location = None;
+    }
+}
+
+pub fn first_disk_location() -> Option<(usize, usize)> {
+    unsafe {
+        (*core::ptr::addr_of!(DISK_LOCATIONS))
+            .iter()
+            .find_map(|location| *location)
+    }
+}
+
 fn init_controller(c: &mut AhciController) -> bool {
     let base = c.bar5_phys;
     if base == 0 {
@@ -639,6 +661,9 @@ fn init_controller(c: &mut AhciController) -> bool {
 
         if c.pi & (1 << port) != 0 {
             if probe_port(mmio, port).is_some() {
+                unsafe {
+                    record_disk_location(c.controller_idx as usize, port);
+                }
                 disks_found += 1;
             }
         }
@@ -654,6 +679,9 @@ fn init_controller(c: &mut AhciController) -> bool {
 
 pub fn init() {
     register_dispatch_objects();
+    unsafe {
+        clear_disk_locations();
+    }
     let _found = 0u32;
     let mut ctrl_idx = 0usize;
 

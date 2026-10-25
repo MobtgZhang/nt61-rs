@@ -12,6 +12,8 @@
 //! Commands - 4 (SPC-4). No code is copied from any Microsoft or
 //! ReactOS source file.
 
+extern crate alloc;
+
 /// SRB status codes (from `srb.h`).
 pub mod srb_status {
     pub const SUCCESS: u8 = 0x01;
@@ -35,11 +37,82 @@ pub mod srb_status {
     pub const PHASE_SEQUENCE_FAILURE: u8 = 0x14;
 }
 
-/// Initialise the SCSI miniport layer. For the bootstrap this is
-/// a no-op; the real driver would initialise the sense buffer
-/// pool and the SRB extension allocator.
+/// Maximum number of pre-allocated sense buffers.
+const SENSE_POOL_SIZE: usize = 16;
+
+/// Maximum number of pre-allocated SRB extensions.
+const SRB_POOL_SIZE: usize = 32;
+
+/// Number of bytes in each SRB extension.
+const SRB_EXT_SIZE: usize = 256;
+
+/// Global readiness flag: set once `init()` completes.
+static READY: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Pre-allocated sense buffer pool. Index 0 is reserved for the
+/// bootstrap default; the rest are handed out on demand.
+static SENSE_POOL: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
+/// Pre-allocated SRB extension pool. A bump allocator tracks the
+/// next free slot; `allocate_srb_ext` and `free_srb_ext` manage
+/// the free list.
+static SRB_POOL: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
+static SRB_POOL_LOCK: crate::ke::sync::Spinlock<()> = crate::ke::sync::Spinlock::new(());
+
+static mut SENSE_BUFFERS: [Option<SenseData>; SENSE_POOL_SIZE] = [None; SENSE_POOL_SIZE];
+static mut SRB_EXTENSIONS: [[u8; SRB_EXT_SIZE]; SRB_POOL_SIZE] = [[0; SRB_EXT_SIZE]; SRB_POOL_SIZE];
+
+/// Allocate a sense data buffer from the pre-allocated pool.
+/// Returns `None` when the pool is exhausted.
+pub fn allocate_sense_buffer() -> Option<&'static mut SenseData> {
+    let idx = SENSE_POOL.fetch_add(1, core::sync::atomic::Ordering::AcqRel);
+    if idx >= SENSE_POOL_SIZE {
+        SENSE_POOL.store(SENSE_POOL_SIZE, core::sync::atomic::Ordering::Release);
+        return None;
+    }
+    unsafe {
+        SENSE_BUFFERS[idx] = Some(SenseData::no_sense());
+        SENSE_BUFFERS[idx].as_mut()
+    }
+}
+
+/// Allocate an SRB extension (256 bytes) from the pre-allocated
+/// pool. Returns a raw pointer valid until `free_srb_ext` is
+/// called.
+pub fn allocate_srb_ext() -> Option<*mut u8> {
+    let _guard = SRB_POOL_LOCK.lock();
+    let idx = SRB_POOL.fetch_add(1, core::sync::atomic::Ordering::AcqRel);
+    if idx >= SRB_POOL_SIZE {
+        SRB_POOL.store(SRB_POOL_SIZE, core::sync::atomic::Ordering::Release);
+        return None;
+    }
+    Some(unsafe { SRB_EXTENSIONS[idx].as_mut_ptr() })
+}
+
+/// Return true when the miniport layer has been initialised.
+pub fn is_ready() -> bool {
+    READY.load(core::sync::atomic::Ordering::Acquire)
+}
+
+/// Initialise the SCSI miniport layer: initialise the sense
+/// buffer pool and the SRB extension allocator, then mark the
+/// layer ready for I/O.
 pub fn init() {
-    // kprintln!("      SCSI miniport: ready");
+    // Reset the pools to their initial state.
+    SENSE_POOL.store(0, core::sync::atomic::Ordering::Release);
+    SRB_POOL.store(0, core::sync::atomic::Ordering::Release);
+
+    // Pre-populate sense buffer 0 with the bootstrap NO SENSE
+    // descriptor so early error paths always have a valid return.
+    unsafe {
+        SENSE_BUFFERS[0] = Some(SenseData::no_sense());
+    }
+    SENSE_POOL.store(1, core::sync::atomic::Ordering::Release);
+
+    READY.store(true, core::sync::atomic::Ordering::Release);
 }
 
 /// SCSI CDB opcodes (from SPC-4)

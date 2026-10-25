@@ -285,7 +285,7 @@ pub fn count() -> usize {
 /// Convert virtual address to physical address (identity-mapped
 /// canonical low half used by this kernel DMA allocations).
 fn virt_to_phys(virt: u64) -> Option<u64> {
-    Some(virt & 0x7FFF_FFFF_FFFF)
+    crate::mm::virt_to_phys(virt)
 }
 
 fn aligned_alloc(size: usize) -> *mut u8 {
