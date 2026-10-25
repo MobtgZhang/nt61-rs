@@ -485,11 +485,56 @@ pub fn security_id_to_descriptor(id: SecurityId) -> *const crate::se::seaccess::
 
 /// Build a SeAccessCheck-compatible security descriptor from NTFS format.
 fn build_descriptor_from_ntfs(
-    _desc: &NtfsSecurityDescriptor,
+    desc: &NtfsSecurityDescriptor,
 ) -> *const crate::se::seaccess::SecurityDescriptor {
-    // For simplicity, we just return the null DACL version
-    // A full implementation would properly convert the NTFS format
-    crate::se::seaccess::SecurityDescriptor::new_null_dacl()
+    let dacl_size = desc.dacl_size as usize;
+    if dacl_size < 8 || dacl_size > desc.dacl.len() {
+        return core::ptr::null();
+    }
+
+    let dacl_ptr = crate::mm::pool::allocate(
+        crate::mm::pool::PoolType::NonPaged,
+        core::mem::size_of::<crate::se::acl::Acl>(),
+    ) as *mut crate::se::acl::Acl;
+    if dacl_ptr.is_null() {
+        return core::ptr::null();
+    }
+    unsafe {
+        core::ptr::write_bytes(dacl_ptr, 0, 1);
+        core::ptr::copy_nonoverlapping(
+            desc.dacl.as_ptr(),
+            dacl_ptr as *mut u8,
+            core::mem::size_of::<crate::se::acl::Acl>(),
+        );
+    }
+
+    let owner = match crate::se::sid::sid::from_bytes(&desc.owner[..desc.owner_size as usize]) {
+        Some(owner) => owner,
+        None => return core::ptr::null(),
+    };
+    let group = match crate::se::sid::sid::from_bytes(&desc.group[..desc.group_size as usize]) {
+        Some(group) => group,
+        None => return core::ptr::null(),
+    };
+
+    let sd_ptr = crate::mm::pool::allocate(
+        crate::mm::pool::PoolType::NonPaged,
+        core::mem::size_of::<crate::se::seaccess::SecurityDescriptor>(),
+    ) as *mut crate::se::seaccess::SecurityDescriptor;
+    if sd_ptr.is_null() {
+        return core::ptr::null();
+    }
+
+    unsafe {
+        (*sd_ptr).revision = 1;
+        (*sd_ptr).sbz1 = 0;
+        (*sd_ptr).control = 0x8004;
+        (*sd_ptr).owner = owner;
+        (*sd_ptr).group = group;
+        (*sd_ptr).sacl = core::ptr::null();
+        (*sd_ptr).dacl = dacl_ptr as *const crate::se::acl::Acl;
+    }
+    sd_ptr as *const crate::se::seaccess::SecurityDescriptor
 }
 
 // =============================================================================

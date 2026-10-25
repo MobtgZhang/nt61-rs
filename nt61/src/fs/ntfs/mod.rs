@@ -396,7 +396,7 @@ pub fn read_sector(device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<()
 
     // x86_64-only fallback to AHCI/ATA drivers
     // Try AHCI first (channel 0, port 0)
-    if crate::drivers::storage::ahci::read_sector(0, 0, sector as u32, buffer) {
+    if crate::drivers::storage::read_ahci_sector(sector as u32, buffer) {
         return Ok(());
     }
 
@@ -412,6 +412,16 @@ pub fn read_sector(device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<()
 /// read sector from device using block layer (if available)
 pub fn read_sector_from_block(device_id: usize, sector: u64, buffer: &mut [u8]) -> bool {
     crate::drivers::storage::block::read_block(device_id, sector, buffer)
+}
+
+fn write_mounted_sector(ntfs: &NtfsData, sector: u64, buffer: &[u8]) -> bool {
+    if let Some(device_id) = ntfs.device_id {
+        return crate::drivers::storage::block::write_block(device_id, sector, buffer);
+    }
+    if crate::fs::sys_ramdisk_is_mounted() {
+        return crate::fs::sys_ramdisk_write_sector(sector, buffer).is_ok();
+    }
+    write_sector(core::ptr::null_mut(), sector, buffer).is_ok()
 }
 
 fn read_mounted_sector(ntfs: &NtfsData, sector: u64, buffer: &mut [u8]) -> bool {
@@ -849,7 +859,7 @@ pub fn write_mft_record(ntfs: &NtfsData, record_num: u64, record: &[u8]) -> Resu
     let record_start_sector = ntfs.mft_start + (record_num as u64 * sectors_per_record as u64);
     for (index, sector) in staging.chunks(512).enumerate() {
         let sector_index = record_start_sector + index as u64;
-        if write_sector(core::ptr::null_mut(), sector_index, sector).is_err() {
+        if !write_mounted_sector(ntfs, sector_index, sector) {
             crate::boot_debug_println!("[NTFS] write_mft: sector failed");
             return Err(());
         }
@@ -1503,17 +1513,19 @@ pub fn read_from_run_list(
     let mut run_idx = 0;
     let mut run_offset = 0u64;
 
-    for (i, &(start_cluster, length)) in runs[..num_runs].iter().enumerate() {
+    let mut offset_found = false;
+    for (i, &(_start_cluster, length)) in runs[..num_runs].iter().enumerate() {
         let run_end = file_pos + (length * bytes_per_cluster);
         if offset < run_end {
             run_idx = i;
             run_offset = offset - file_pos;
-            // Touch start_cluster to prevent unused warning - the cluster number
-            // is preserved for downstream code that may need it
-            let _ = start_cluster;
+            offset_found = true;
             break;
         }
         file_pos = run_end;
+    }
+    if !offset_found {
+        return 0;
     }
 
     // read data from the run
@@ -2995,9 +3007,6 @@ pub fn write_file(
         return Ok(0);
     }
 
-    let bytes_to_write = buffer.len();
-    let mut bytes_written: usize = 0;
-
     // If we have a valid MFT record, try to use run list for non-resident data
     if handle.mft_record > 0 {
         if let Some(written) = write_file_with_runs(ntfs, handle, buffer) {
@@ -3007,74 +3016,10 @@ pub fn write_file(
         }
     }
 
-    // Fallback: direct sector write (for RAM disk or simple cases)
-    let sector_size = 512u64;
-    let start_sector = handle.current_position / sector_size;
-    let offset_in_sector = (handle.current_position % sector_size) as usize;
-
-    // write sectors
-    let mut remaining = bytes_to_write;
-    let mut current_sector = start_sector;
-    let mut buf_offset = 0;
-
-    while remaining > 0 {
-        let mut sector_buf = [0u8; 512];
-
-        // read existing sector first (to preserve other data)
-        if let Some(device_id) = ntfs.ntfs_data.device_id {
-            let _ = crate::drivers::storage::block::read_block(
-                device_id,
-                current_sector,
-                &mut sector_buf,
-            );
-        } else {
-            let _ = read_sector(core::ptr::null_mut(), current_sector, &mut sector_buf);
-        }
-
-        // Modify the sector with user data
-        let copy_start = if current_sector == start_sector {
-            offset_in_sector
-        } else {
-            0
-        };
-        let copy_len = core::cmp::min(remaining, 512 - copy_start);
-
-        sector_buf[copy_start..copy_start + copy_len]
-            .copy_from_slice(&buffer[buf_offset..buf_offset + copy_len]);
-
-        // write sector back
-        let write_success = if let Some(device_id) = ntfs.ntfs_data.device_id {
-            crate::drivers::storage::block::write_block(device_id, current_sector, &sector_buf)
-        } else {
-            write_sector(core::ptr::null_mut(), current_sector, &sector_buf).is_ok()
-        };
-
-        if !write_success {
-            break;
-        }
-
-        bytes_written += copy_len;
-        remaining = remaining.saturating_sub(copy_len);
-        buf_offset += copy_len;
-        handle.current_position += copy_len as u64;
-        current_sector += 1;
-
-        // Update file size if we wrote past EOF
-        if handle.current_position > handle.file_size {
-            handle.file_size = handle.current_position;
-        }
-
-        // Safety limit
-        if bytes_written >= bytes_to_write {
-            break;
-        }
-    }
-
-    if bytes_written == 0 && bytes_to_write > 0 {
-        Err(())
-    } else {
-        Ok(bytes_written)
-    }
+    // A file byte offset is never a disk LBA. If the mapped run path
+    // cannot satisfy the write, returning an error is the only safe
+    // choice; guessing a physical sector can overwrite boot metadata.
+    Err(())
 }
 
 /// Write data to a non-resident file's clusters by mapping the byte offset
@@ -3155,41 +3100,49 @@ fn write_file_with_runs(
         };
 
         while offset_in_run < run_size && bytes_written < buffer.len() {
+            let offset_in_cluster = (offset_in_run % bytes_per_cluster) as usize;
+            let remaining_in_cluster =
+                (bytes_per_cluster as usize).saturating_sub(offset_in_cluster);
             let bytes_in_cluster = core::cmp::min(
-                (run_size - offset_in_run) as usize,
+                core::cmp::min((run_size - offset_in_run) as usize, remaining_in_cluster),
                 buffer.len() - bytes_written,
             );
 
             let cluster_in_run = offset_in_run / bytes_per_cluster;
             let cluster = start_cluster + cluster_in_run;
-            let sector = cluster_to_sector(cluster, ntfs.ntfs_data.cluster_size);
+            let first_sector = cluster_to_sector(cluster, ntfs.ntfs_data.cluster_size);
+            let mut sector_offset = offset_in_cluster;
 
-            // Read-modify-write each sector to preserve neighbouring data.
-            let mut sector_buf = [0u8; 512];
-            let read_ok = read_mounted_sector(&ntfs.ntfs_data, sector, &mut sector_buf);
-            if !read_ok {
-                return None;
+            while sector_offset < bytes_in_cluster && bytes_written < buffer.len() {
+                let sector = first_sector + (sector_offset / 512) as u64;
+                let offset_in_sector = sector_offset % 512;
+
+                let mut sector_buf = [0u8; 512];
+                let read_ok = read_mounted_sector(&ntfs.ntfs_data, sector, &mut sector_buf);
+                if !read_ok {
+                    return None;
+                }
+
+                let copy_len = core::cmp::min(
+                    bytes_in_cluster - sector_offset,
+                    core::cmp::min(512 - offset_in_sector, buffer.len() - bytes_written),
+                );
+                sector_buf[offset_in_sector..offset_in_sector + copy_len]
+                    .copy_from_slice(&buffer[bytes_written..bytes_written + copy_len]);
+
+                let write_ok = if let Some(device_id) = ntfs.ntfs_data.device_id {
+                    crate::drivers::storage::block::write_block(device_id, sector, &sector_buf)
+                } else {
+                    write_sector(core::ptr::null_mut(), sector, &sector_buf).is_ok()
+                };
+                if !write_ok {
+                    return None;
+                }
+
+                bytes_written += copy_len;
+                offset_in_run += copy_len as u64;
+                sector_offset += copy_len;
             }
-
-            let offset_in_cluster = (offset_in_run % 512) as usize;
-            let copy_len = core::cmp::min(
-                bytes_in_cluster,
-                core::cmp::min(512 - offset_in_cluster, buffer.len() - bytes_written),
-            );
-            sector_buf[offset_in_cluster..offset_in_cluster + copy_len]
-                .copy_from_slice(&buffer[bytes_written..bytes_written + copy_len]);
-
-            let write_ok = if let Some(device_id) = ntfs.ntfs_data.device_id {
-                crate::drivers::storage::block::write_block(device_id, sector, &sector_buf)
-            } else {
-                write_sector(core::ptr::null_mut(), sector, &sector_buf).is_ok()
-            };
-            if !write_ok {
-                return None;
-            }
-
-            bytes_written += copy_len;
-            offset_in_run += copy_len as u64;
         }
 
         file_pos = run_end;
