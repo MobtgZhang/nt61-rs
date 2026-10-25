@@ -293,7 +293,12 @@ pub fn test_security() -> bool {
         return false;
     }
 
-    if !security::check_port_access(&port_sec, 0, security::PORT_ACCESS_ALL) {
+    let system_token = crate::se::token::Token::new_primary(crate::se::sid::SID_LOCAL_SYSTEM);
+    if !security::check_port_access_with_token(
+        &port_sec,
+        &system_token,
+        security::PORT_ACCESS_ALL,
+    ) {
         return false;
     }
 
@@ -429,7 +434,7 @@ mod tests {
         if crate::mm::heap::KERNEL_HEAP.configured_region().is_some() {
             return;
         }
-        const TEST_HEAP_LEN: usize = 256 * 1024;
+        const TEST_HEAP_LEN: usize = 1024 * 1024;
         static mut TEST_HEAP: [u8; TEST_HEAP_LEN] = [0u8; TEST_HEAP_LEN];
         let base = core::ptr::addr_of_mut!(TEST_HEAP) as *mut u8;
         crate::mm::heap::KERNEL_HEAP.configure(base, TEST_HEAP_LEN);

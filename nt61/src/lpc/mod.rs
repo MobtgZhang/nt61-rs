@@ -249,7 +249,7 @@ pub struct LpcRegistry {
     /// have per-port pools in the bootstrap because the message
     /// pool only needs to be big enough to drain ALPC traffic
     /// during the bootstrap).
-    pub messages: [LpcMessage; MAX_PORT_MESSAGES],
+    pub messages: [[LpcMessage; MAX_PORT_MESSAGES]; MAX_PORTS],
     /// Total number of ports that have been created.
     pub count: u32,
     /// Monotonically-increasing global port id.
@@ -260,7 +260,7 @@ impl LpcRegistry {
     pub const fn new() -> Self {
         Self {
             ports: [const { LpcPort::empty() }; MAX_PORTS],
-            messages: [const { LpcMessage::empty() }; MAX_PORT_MESSAGES],
+            messages: [const { [const { LpcMessage::empty() }; MAX_PORT_MESSAGES] }; MAX_PORTS],
             count: 0,
             next_port_id: 1,
         }
@@ -275,7 +275,8 @@ static TOTAL_MESSAGES: AtomicU32 = AtomicU32::new(0);
 
 /// Initialize LPC subsystem.
 pub fn init() {
-    if !(*REGISTRY.lock()).is_null() {
+    let mut guard = REGISTRY.lock();
+    if !(*guard).is_null() {
         return;
     }
 
@@ -289,6 +290,13 @@ pub fn init() {
         crate::mm::pool::PoolType::NonPaged,
         core::mem::size_of::<LpcRegistry>(),
     ) as *mut LpcRegistry;
+    #[cfg(test)]
+    let reg = if reg.is_null() {
+        static mut TEST_REGISTRY: LpcRegistry = LpcRegistry::new();
+        core::ptr::addr_of_mut!(TEST_REGISTRY)
+    } else {
+        reg
+    };
     if !reg.is_null() {
         // The pool already zeroed the user region, so the
         // `[LpcPort; MAX_PORTS]` and `[LpcMessage; MAX_PORT_MESSAGES]`
@@ -301,7 +309,7 @@ pub fn init() {
             (*reg).count = 0;
             (*reg).next_port_id = 1;
         }
-        *REGISTRY.lock() = reg;
+        *guard = reg;
     }
 }
 
@@ -561,7 +569,8 @@ pub fn send(port_index: u32, msg: &LpcMessage) -> Option<usize> {
     let copy_len;
     unsafe {
         // // kprintln!("    [LPC DBG] send: writing header");
-        let dst = reg.messages.as_mut_ptr().add(slot);
+        let dst = (reg.messages.as_mut_ptr() as *mut LpcMessage)
+            .add(peer_index as usize * MAX_PORT_MESSAGES + slot);
         // Header copy: field-by-field to avoid a non-temporal SSE
         // store for the aggregate (which silently fails on UC
         // memory; same UC-memory issue as documented in
@@ -623,7 +632,8 @@ pub fn receive(port_index: u32) -> Option<LpcMessage> {
     let slot = (tail as usize) % MAX_PORT_MESSAGES;
     let mut msg = LpcMessage::empty();
     unsafe {
-        let src = reg.messages.as_ptr().add(slot);
+        let src = (reg.messages.as_ptr() as *const LpcMessage)
+            .add(port_index as usize * MAX_PORT_MESSAGES + slot);
         // Field-by-field copy of the header (same UC-memory
         // rationale as the matching code in `send`).
         msg.header.data_length = (*src).header.data_length;

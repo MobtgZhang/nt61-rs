@@ -6,13 +6,15 @@
 //! - Impersonation context
 //! - Security quality of service
 
+use crate::se::token::Token;
+
 /// Security descriptor (simplified for bootstrap)
 
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct SecurityDescriptor {
     /// owner SID (Security Identifier)
-    pub owner_sid: u64,
+    pub owner_sid: crate::se::sid::sid,
     /// group SID
     pub group_sid: u64,
     /// Discretionary ACL flags
@@ -24,7 +26,7 @@ pub struct SecurityDescriptor {
 impl SecurityDescriptor {
     pub const fn empty() -> Self {
         Self {
-            owner_sid: 0,
+            owner_sid: crate::se::sid::sid::new(),
             group_sid: 0,
             dacl_flags: 0,
             sacl_flags: 0,
@@ -33,7 +35,9 @@ impl SecurityDescriptor {
 
     pub const fn system() -> Self {
         Self {
-            owner_sid: 0, // SYSTEM SID
+            owner_sid: crate::se::sid::sid::well_known(
+                crate::se::sid::WellKnownSid::LocalSystem,
+            ),
             group_sid: 0,
             dacl_flags: 0xFFFFFFFF, // Full access
             sacl_flags: 0,
@@ -122,23 +126,39 @@ impl PortSecurity {
 }
 
 /// Check if a process has access to a port
-pub fn check_port_access(security: &PortSecurity, pid: u64, requested_access: u32) -> bool {
-    // Simplified access check for bootstrap
-    // In real NT, this would do full SID-based ACL checks
+pub fn check_port_access_with_token(
+    security: &PortSecurity,
+    token: &Token,
+    requested_access: u32,
+) -> bool {
+    if requested_access == 0 {
+        return false;
+    }
 
-    // SYSTEM (PID 0 or 4) has full access
-    if pid == 0 || pid == 4 {
+    // LocalSystem is a trusted caller for bootstrap ports.  No other
+    // caller is granted access based on a numeric PID; ownership is
+    // decided by comparing SIDs against the caller's token.
+    if token.is_local_system() {
         return true;
     }
 
-    // Check if owner
-    if security.descriptor.owner_sid == pid {
+    if token.user.equals(&security.descriptor.owner_sid) {
         return true;
     }
 
-    // Check DACL flags (simplified)
-    let allowed = security.descriptor.dacl_flags;
-    (allowed & requested_access) == requested_access
+    let matches_group = token
+        .groups
+        .iter()
+        .take(token.group_count)
+        .any(|group| group.is_enabled() && group.sid.equals(&security.descriptor.owner_sid));
+    if matches_group {
+        return true;
+    }
+
+    // The bootstrap ACL is still represented by a flat mask.  A caller
+    // that is neither owner nor LocalSystem receives only explicitly
+    // granted rights, never the owner's implicit rights.
+    (security.descriptor.dacl_flags & requested_access) == requested_access
 }
 
 /// Begin impersonating a client
