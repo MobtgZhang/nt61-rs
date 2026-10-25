@@ -248,10 +248,31 @@ pub fn init() {
 
 /// Register all discovered AHCI disks as storage devices.
 fn register_ahci_disks() {
-    let controller_count = ahci::count();
-    if controller_count > 0 {
-        // Actual AHCI disk registration is owned by the architecture backend.
+    if let Some((controller, port)) = ahci::first_disk_location() {
+        let mut device = StorageDevice {
+            device_type: StorageDeviceType::AhciDisk,
+            sector_size: BLOCK_SECTOR_SIZE,
+            total_sectors: 0,
+            controller,
+            port,
+            present: true,
+            model: [0; 40],
+        };
+        device.total_sectors = ahci::count() as u64;
+        let _ = register_device(device);
     }
+}
+
+/// Read a sector from the first registered AHCI disk.
+pub fn read_ahci_sector(lba: u32, buffer: &mut [u8]) -> bool {
+    let device = match get_device(0) {
+        Some(device) => device,
+        None => return false,
+    };
+    if device.device_type != StorageDeviceType::AhciDisk || !device.present {
+        return false;
+    }
+    ahci::read_sector(device.controller, device.port, lba, buffer)
 }
 
 /// Smoke test for the storage stack. Re-runs every miniport's
