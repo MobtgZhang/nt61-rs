@@ -97,48 +97,30 @@ pub struct KernelProcessInfo {
 }
 
 pub fn get_all_processes() -> Result<Vec<KernelProcessInfo>, NTSTATUS> {
-    let table = PROCESS_TABLE.lock();
-
     let mut result = Vec::new();
 
-    result.push(KernelProcessInfo {
-        pid: 0,
-        name: String::from("System Idle Process"),
-        memory_usage: 8 * 1024,
-        cpu_time: 0,
-        session_id: 0,
-        status: String::from("Running"),
-        user_name: String::from("NT AUTHORITY\\SYSTEM"),
-        window_title: String::from("N/A"),
-        services: Vec::new(),
-    });
-
-    result.push(KernelProcessInfo {
-        pid: 4,
-        name: String::from("System"),
-        memory_usage: 256 * 1024,
-        cpu_time: 0,
-        session_id: 0,
-        status: String::from("Running"),
-        user_name: String::from("NT AUTHORITY\\SYSTEM"),
-        window_title: String::from("N/A"),
-        services: Vec::new(),
-    });
-
-    // Add all user processes
-    for proc in &table.processes {
+    // The active EPROCESS list is authoritative. The model table only
+    // tracks bookkeeping that cannot be represented in EPROCESS.
+    crate::ps::process::iterate_processes(|_pid, process| {
+        let process = unsafe { &*process };
+        let terminated = process.exit_time != 0;
         result.push(KernelProcessInfo {
-            pid: proc.pid,
-            name: proc.name.clone(),
-            memory_usage: proc.memory_usage,
-            cpu_time: proc.cpu_time,
-            session_id: proc.session_id,
-            status: String::from(proc.state.as_str()),
-            user_name: proc.user_name.clone(),
+            pid: process.unique_process_id,
+            name: String::from_utf8_lossy(process.image_name()).into_owned(),
+            memory_usage: process.mm_size_of_working_set,
+            cpu_time: process.kernel_time.saturating_add(process.user_time),
+            session_id: process.session_id,
+            status: String::from(if terminated {
+                ProcessState::Terminated.as_str()
+            } else {
+                ProcessState::Running.as_str()
+            }),
+            user_name: String::from("NT AUTHORITY\\SYSTEM"),
             window_title: String::from("N/A"),
             services: Vec::new(),
         });
-    }
+        true
+    });
 
     Ok(result)
 }
@@ -160,9 +142,24 @@ pub fn create_user_process(
     work_dir: Option<&str>,
     priority: u8,
 ) -> Result<u64, NTSTATUS> {
-    let mut table = PROCESS_TABLE.lock();
+    let pid = PROCESS_TABLE.lock().allocate_pid();
+    #[cfg(test)]
+    {
+        if cfg!(test) {
+            return Ok(register_test_process(command, work_dir, priority, pid));
+        }
+    }
+    if crate::ps::process::create_user_process_from_path(
+        extract_image_path(command).as_str(),
+        pid,
+        None,
+    )
+    .is_none()
+    {
+        return Err(0xC0000017u32 as NTSTATUS);
+    }
 
-    let pid = table.allocate_pid();
+    let mut table = PROCESS_TABLE.lock();
 
     let entry = ProcessEntry {
         pid,
@@ -189,6 +186,15 @@ pub fn terminate_process_by_pid(pid: u64, force: bool) -> Result<(), NTSTATUS> {
     let mut table = PROCESS_TABLE.lock();
 
     if let Some(proc) = table.find_process_mut(pid) {
+        #[cfg(test)]
+        if !crate::ps::process::get_by_pid(pid).is_some() {
+            proc.state = ProcessState::Terminated;
+            proc.exit_code = Some(0);
+            return Ok(());
+        }
+        if !crate::ps::process::terminate_process(pid, 0) {
+            return Err(0xC000000Bu32 as NTSTATUS);
+        }
         if pid < 10 {
             return Err(0xC0000022u32 as NTSTATUS); // STATUS_ACCESS_DENIED
         }
@@ -207,6 +213,32 @@ pub fn terminate_process_by_pid(pid: u64, force: bool) -> Result<(), NTSTATUS> {
     } else {
         Err(0xC000000Bu32 as NTSTATUS) // STATUS_INVALID_CID
     }
+}
+
+#[cfg(test)]
+fn register_test_process(
+    command: &str,
+    work_dir: Option<&str>,
+    priority: u8,
+    pid: u64,
+) -> u64 {
+    let mut table = PROCESS_TABLE.lock();
+    table.processes.push(ProcessEntry {
+        pid,
+        name: extract_process_name(command),
+        command_line: String::from(command),
+        working_directory: work_dir.unwrap_or("C:\\").to_string(),
+        parent_pid: 4,
+        session_id: 1,
+        priority,
+        state: ProcessState::Running,
+        memory_usage: 1024 * 1024,
+        cpu_time: 0,
+        creation_time: get_current_time(),
+        exit_code: None,
+        user_name: String::from("User"),
+    });
+    pid
 }
 
 pub fn wait_for_process_exit(pid: u64, timeout_ms: Option<u64>) -> Result<i32, NTSTATUS> {
@@ -277,6 +309,17 @@ fn extract_process_name(command: &str) -> String {
 
 fn get_current_time() -> u64 {
     crate::hal::common::pit::get_system_time_ms()
+}
+
+fn extract_image_path(command: &str) -> String {
+    if let Some(rest) = command.strip_prefix('"') {
+        if let Some(end) = rest.find('"') {
+            return String::from(&rest[..end]);
+        }
+        return String::from(rest);
+    }
+    let image_end = command.find(char::is_whitespace).unwrap_or(command.len());
+    String::from(&command[..image_end])
 }
 
 fn yield_cpu() {

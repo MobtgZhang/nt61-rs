@@ -9,7 +9,7 @@
 //! Reference: Vergilius Project, geoffchappell.com reverse engineering
 
 use crate::ke::sync::DispatcherHeader;
-use crate::mm::vad::VadTree;
+use crate::mm::vad::{VadEntry, VadFlags, VadProtection, VadTree, VadType};
 use crate::mm::working_set::MmWorkingSet;
 use crate::ps::thread::{Ethread, KThreadState, Thread};
 use core::ptr::null_mut;
@@ -994,6 +994,16 @@ impl Eprocess {
         }
     }
 
+    /// Return the 15-character image name as a NUL-terminated slice.
+    pub fn image_name(&self) -> &[u8] {
+        let end = self
+            .image_file_name
+            .iter()
+            .position(|&byte| byte == 0)
+            .unwrap_or(self.image_file_name.len());
+        &self.image_file_name[..end]
+    }
+
     /// Set the process token (primary security token)
     ///
     /// In Windows 7, EX_FAST_REF uses low 3-4 bits for reference count.
@@ -1647,8 +1657,24 @@ pub fn create_user_process(
         return None;
     }
     crate::hal::serial::write_string_always("PS:create map ok\r\n");
+    crate::hal::serial::write_string_always("PS:create vad enter\r\n");
 
-    let user_rsp = crate::mm::vas::USER_STACK_BASE + crate::mm::vas::USER_STACK_SIZE;
+    // Track the mapped user stack in the EPROCESS VAD tree. Demand
+    // paging depends on this: without a VAD, a fault in the stack
+    // range has no backing range and cannot be resolved.
+    let stack_vad = crate::mm::pool::allocate(
+        crate::mm::pool::PoolType::NonPaged,
+        core::mem::size_of::<VadEntry>().max(32),
+    ) as *mut VadEntry;
+    if stack_vad.is_null() {
+        crate::mm::pool::free(thread_buf);
+        crate::mm::pool::free(process_buf);
+        return None;
+    }
+    crate::hal::serial::write_string_always("PS:create vad ok\r\n");
+
+    let user_rsp =
+        crate::mm::vas::USER_STACK_TOP - crate::mm::vas::USER_STACK_INITIAL_HEAD;
 
     let ht_buf = crate::mm::pool::allocate(
         crate::mm::pool::PoolType::NonPaged,
@@ -1661,6 +1687,7 @@ pub fn create_user_process(
         return None;
     }
     let ht_ptr = ht_buf as *mut ProcessHandleTable;
+    crate::hal::serial::write_string_always("PS:create ht ok\r\n");
 
     unsafe {
         core::ptr::write_bytes(process as *mut u8, 0, 4096);
@@ -1680,6 +1707,27 @@ pub fn create_user_process(
             crate::mm::vas::USER_STACK_BASE + crate::mm::vas::USER_STACK_SIZE;
         (*process).user_rsp = user_rsp;
         (*process).kprocess_thread_list_head.init();
+        core::ptr::write(
+            stack_vad,
+            VadEntry {
+                starting_vpn: crate::mm::vas::USER_STACK_BASE >> 12,
+                ending_vpn: (crate::mm::vas::USER_STACK_BASE + crate::mm::vas::USER_STACK_SIZE - 1)
+                    >> 12,
+                parent: null_mut(),
+                left: null_mut(),
+                right: null_mut(),
+                balance_factor: 0,
+                _pad0: 0,
+                _pad1: 0,
+                flags: VadFlags::SEC_COMMIT,
+                vad_type: VadType::VadRoot,
+                protection: VadProtection::READWRITE,
+                _padding: [0; 4],
+            },
+        );
+        let _ = (*process).vad_root.insert(&mut *stack_vad);
+        crate::hal::serial::write_string_always("PS:create vad insert ok\r\n");
+
         (*process).set_name(image);
 
         // Initialize token for user process
@@ -1687,6 +1735,7 @@ pub fn create_user_process(
         if !user_token.is_null() {
             (*process).set_token(user_token);
         }
+        crate::hal::serial::write_string_always("PS:create token ok\r\n");
 
         // Initialize thread
         let thread = thread_ptr;
@@ -1710,6 +1759,7 @@ pub fn create_user_process(
         // on the BSP and any caller that dereferences the result
         // page-faults.
         (*process).main_thread = thread;
+        crate::hal::serial::write_string_always("PS:create thread ok\r\n");
 
         // Honour the caller-supplied entry override (Phase 0
         // ring3 stub path). Without this every user process
@@ -1739,6 +1789,7 @@ pub fn create_user_process(
             crate::mm::vas::USER_STACK_SIZE,
         );
         crate::mm::pool::free(ht_ptr as *mut u8);
+        crate::mm::pool::free(stack_vad as *mut u8);
         crate::mm::pfn::free_pfn(pml4_phys >> 12);
         crate::mm::pool::free(thread_ptr as *mut u8);
         crate::mm::pool::free(process as *mut u8);
@@ -1750,6 +1801,18 @@ pub fn create_user_process(
     }
 
     unsafe { process.as_mut() }
+}
+
+/// Create a user process after reading its image from the mounted
+/// system partition. This keeps the active process table backed by
+/// the actual image selected by the caller.
+pub fn create_user_process_from_path(
+    image_path: &str,
+    pid: u64,
+    user_entry_override: Option<u64>,
+) -> Option<&'static mut Eprocess> {
+    let image = crate::userspace::loader::find_image_bytes(image_path)?;
+    create_user_process(&image, pid, user_entry_override)
 }
 
 /// Terminate the calling user-mode process with the supplied
@@ -1770,7 +1833,7 @@ pub fn process_exit(_exit_code: u32) -> ! {
     // write a one-line marker so the serial log makes the
     // cmd.exe termination visible. The marker uses the canonical
     // "[EXIT]" prefix so the smoke test can grep for it.
-    crate::hal::serial::write_string("cmd.exe: process exit (autoexec finished)\r\n");
+    crate::hal::serial::write_string_always("cmd.exe: process exit (autoexec finished)\r\n");
     // Park the CPU forever. `halt` is privileged; once the kernel
     // raises the IPL or masks interrupts the CPU will simply
     // spin in the hlt instruction until QEMU is killed.
@@ -1793,6 +1856,22 @@ pub fn get_by_pid(pid: u64) -> Option<&'static mut Eprocess> {
     }
 
     None
+}
+
+/// Mark a process and its main thread terminated. The object remains in
+/// the process list until the caller removes it, matching NT semantics.
+pub fn terminate_process(pid: u64, exit_code: i32) -> bool {
+    let Some(process) = get_by_pid(pid) else {
+        return false;
+    };
+    unsafe {
+        process.exit_status = exit_code;
+        process.exit_time = crate::hal::common::pit::get_system_time_ms();
+        if !process.main_thread.is_null() {
+            (*process.main_thread).kthread.state = crate::ps::thread::KThreadState::Terminated;
+        }
+    }
+    true
 }
 
 /// Iterate over all processes
@@ -1992,7 +2071,7 @@ const PID_BITMAP_WORDS: usize = PID_BITMAP_BITS / 64;
 /// (PID_IDLE=0, PID_SYSTEM=4, PID_SMSS=256, …). This is in
 /// addition to the well-known set which is kept out of the bitmap
 /// entirely by pre-marking those bits at compile time.
-const PID_BITMAP_FIRST: u64 = PID_SMSS + 256;
+const PID_BITMAP_FIRST: u64 = 1000;
 
 /// PID allocation bitmap. Bit `i` is set when PID
 /// `(PID_BITMAP_FIRST + i)` is in use.
@@ -2030,6 +2109,11 @@ pub fn allocate_pid() -> Option<u64> {
         }
     }
     None
+}
+
+/// Allocate a PID suitable for a newly created user process.
+pub fn next_user_pid() -> Option<u64> {
+    (0..64).find_map(|_| allocate_pid().filter(|pid| *pid > PID_SYSTEM))
 }
 
 /// Release a PID back to the bitmap. Called when a process is

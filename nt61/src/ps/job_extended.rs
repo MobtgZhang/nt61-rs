@@ -519,7 +519,6 @@ mod tests {
         // Create a child job.
         let child_id = create_job_with_parent(parent_id).expect("child job");
         assert_ne!(child_id, parent_id);
-
         let child = crate::ps::job::JOB_TABLE
             .lock()
             .iter()
@@ -527,6 +526,13 @@ mod tests {
             .map(|j| j as *const JobObject)
             .unwrap();
         let child_ref = unsafe { &*child };
+        let parent = crate::ps::job::JOB_TABLE
+            .lock()
+            .iter()
+            .find(|j| j.job_id == parent_id)
+            .map(|j| j as *const JobObject)
+            .unwrap();
+        let parent_ref = unsafe { &*parent };
 
         // Verify inherited limits.
         assert_eq!(child_ref.parent_job_id, parent_id);
