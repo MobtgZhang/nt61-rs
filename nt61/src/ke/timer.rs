@@ -144,19 +144,39 @@ pub fn create_timer(name: &'static str) -> Option<usize> {
 /// fine, so we decompose the struct by hand.
 #[inline(never)]
 unsafe fn write_ktimer(dst: *mut u8, kt: &Ktimer) {
-    // DispatcherHeader: type_(u8) + signal_state(u8) + size(u16) +
-    // inserted(u8) + spare([u8; 3]) = 8 bytes.
     let h = &kt.header;
+    let header_size = core::mem::size_of_val(h);
     core::ptr::write(dst.add(0), h.type_);
     core::ptr::write(dst.add(1), h.signal_state);
     core::ptr::write(dst.add(2) as *mut u16, h.size);
     core::ptr::write(dst.add(4), h.inserted);
     core::ptr::write(dst.add(5) as *mut [u8; 3], h.spare);
-    core::ptr::write(dst.add(8) as *mut u64, kt.due_time);
-    core::ptr::write(dst.add(16) as *mut u64, kt.period);
-    core::ptr::write(dst.add(24) as *mut *const u8, kt.name.as_ptr());
-    core::ptr::write(dst.add(32) as *mut usize, kt.name.len());
-    core::ptr::write(dst.add(40) as *mut bool, kt.armed);
+    core::ptr::write(dst.add(8), h.absolute);
+    core::ptr::write(dst.add(9), h.co_started);
+    core::ptr::write(dst.add(10), h.co_terminated);
+    core::ptr::write(dst.add(11), h.inactive);
+    core::ptr::write(dst.add(12) as *mut u64, h.reserved[0]);
+    core::ptr::write(dst.add(20) as *mut u64, h.reserved[1]);
+    core::ptr::write(
+        dst.add(header_size + core::mem::offset_of!(Ktimer, due_time) - core::mem::offset_of!(Ktimer, header)) as *mut u64,
+        kt.due_time,
+    );
+    core::ptr::write(
+        dst.add(header_size + core::mem::offset_of!(Ktimer, period) - core::mem::offset_of!(Ktimer, header)) as *mut u64,
+        kt.period,
+    );
+    core::ptr::write(
+        dst.add(header_size + core::mem::offset_of!(Ktimer, name) - core::mem::offset_of!(Ktimer, header)) as *mut *const u8,
+        kt.name.as_ptr(),
+    );
+    core::ptr::write(
+        dst.add(header_size + core::mem::offset_of!(Ktimer, name) - core::mem::offset_of!(Ktimer, header) + core::mem::size_of::<*const u8>()) as *mut usize,
+        kt.name.len(),
+    );
+    core::ptr::write(
+        dst.add(header_size + core::mem::offset_of!(Ktimer, armed) - core::mem::offset_of!(Ktimer, header)) as *mut bool,
+        kt.armed,
+    );
 }
 
 /// Arm a previously-created timer.

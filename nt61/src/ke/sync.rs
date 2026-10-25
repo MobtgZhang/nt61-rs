@@ -189,6 +189,14 @@ impl<T: ?Sized> Spinlock<T> {
     pub fn is_locked(&self) -> bool {
         self.locked.load(Ordering::Relaxed) != 0
     }
+
+    /// Boot-time raw access to the guarded data without acquiring the
+    /// lock. Only safe when called before APs start and the caller can
+    /// prove no other CPU holds the lock. Used to work around
+    /// LoongArch64 atomics issues during early boot.
+    pub fn raw_data_ptr(&self) -> *mut T {
+        self.data.get()
+    }
 }
 
 /// RAII guard for a spinlock. When dropped, the lock is released
@@ -451,7 +459,7 @@ pub fn wait_single(object: &DispatcherHeader, timeout_ms: u32) -> WaitResult {
 
 /// Wake one or all threads waiting on `object`. Called by the
 /// dispatcher object's `signal` / `pulse` implementations.
-pub fn wake(object: &DispatcherHeader, all: bool) {
+pub fn wake(object: &DispatcherHeader, all: bool) -> u32 {
     crate::ke::dispatch::wake(object, all)
 }
 

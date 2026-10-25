@@ -1511,6 +1511,18 @@ pub fn tick() {
     }
 
     irql::lower_irql(previous_irql);
+
+    poll_services();
+}
+
+/// Drain network RX and advance long-lived kernel services.
+///
+/// A user-mode process can monopolize the CPU without returning to the
+/// idle loop, so syscall entry and the clock path both call this as a
+/// deferred-work opportunity.
+pub fn poll_services() {
+    crate::drivers::net::poll_all();
+    crate::servers::sshd::launcher::service_tick();
 }
 
 /// Per-CPU reschedule requests raised by the clock ISR.

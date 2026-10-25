@@ -85,10 +85,7 @@ pub fn handle_ipi_panic_stop() {
     // Spin until the BSP halts us. We can't take the
     // scheduler lock here because the BSP may be holding it
     // and we want to be polite. HLT is the polite idle.
-    loop {
-        if !panic_stop_set() {
-            break;
-        }
+    while panic_stop_set() {
         crate::arch::halt();
     }
 }
@@ -285,28 +282,31 @@ pub fn wait_on(object: &DispatcherHeader, timeout_ms: u32) -> WaitResult {
 /// them, and puts their threads back on the ready queue.
 ///
 /// Also applies priority boost based on the dispatcher object type.
-pub fn wake(object: &DispatcherHeader, all: bool) {
+pub fn wake(object: &DispatcherHeader, all: bool) -> u32 {
     let _lock = WAIT_LIST_LOCK.lock();
+    let mut woken: u32 = 0;
     unsafe {
         let head_ptr: *mut crate::ps::process::ListEntry = core::ptr::addr_of_mut!(WAIT_LIST_HEAD);
         let mut cur: *mut crate::ps::process::ListEntry = (*head_ptr).flink;
-        let mut woken: u32 = 0;
         while !cur.is_null() && cur != head_ptr {
             let wait_entry_offset = core::mem::offset_of!(Ethread, kthread)
                 + core::mem::offset_of!(crate::ps::thread::Kthread, wait_list_entry);
             let ethread = (cur as u64 - wait_entry_offset as u64) as *mut Ethread;
             let next: *mut crate::ps::process::ListEntry = (*cur).flink;
             let mut found = false;
-            for i in 0..WAIT_LIST_MAX {
-                if WAIT_ENTRIES[i].in_use
-                    && WAIT_ENTRIES[i].thread == ethread
-                    && WAIT_ENTRIES[i].object == object as *const DispatcherHeader
+            for i in 0..WAIT_LIST_TOTAL {
+                let Some(entry) = get_wait_entry(i) else {
+                    continue;
+                };
+                if entry.in_use
+                    && entry.thread == ethread
+                    && entry.object == object as *const DispatcherHeader
                 {
-                    // Record the wake result before the thread becomes
-                    // runnable; it may observe a cleared signal state after
-                    // scheduling.
-                    WAIT_ENTRIES[i].in_use = false;
-                    WAIT_ENTRIES[i].signalled = true;
+                    // Mark the slot free and signal the entry before the
+                    // thread becomes runnable; it may observe a cleared
+                    // signal state after scheduling.
+                    entry.in_use = false;
+                    entry.signalled = true;
                     (*ethread).kthread.state = crate::ps::thread::KThreadState::Ready;
 
                     // Determine boost type based on object type
@@ -326,16 +326,9 @@ pub fn wake(object: &DispatcherHeader, all: bool) {
                     crate::ke::scheduler::add_ready(ethread, priority);
                     woken += 1;
                     found = true;
-                    if !all {
-                        return;
-                    }
                     break;
                 }
             }
-            // Unlink `cur` from the list. The list is a
-            // circular doubly-linked list with `WAIT_LIST_HEAD`
-            // as a sentinel; cur.flink and cur.blink are its
-            // neighbours.
             if found {
                 let flink = (*cur).flink;
                 let blink = (*cur).blink;
@@ -347,13 +340,14 @@ pub fn wake(object: &DispatcherHeader, all: bool) {
                 // re-usable on the next wait.
                 (*cur).flink = cur;
                 (*cur).blink = cur;
+                if !all {
+                    return woken;
+                }
             }
             cur = next;
-            if !all && woken > 0 {
-                return;
-            }
         }
     }
+    woken
 }
 
 fn find_free_slot() -> Option<usize> {

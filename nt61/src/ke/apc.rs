@@ -281,8 +281,9 @@ pub unsafe fn ki_deliver_apc(current_thread: *mut Ethread, delivery_mode: ApcMod
             let mut delivered = 0;
             while !crate::ps::thread::is_apc_list_empty(head) {
                 let entry = crate::ps::thread::apc_list_remove_head(head);
-                // The list entry is embedded in Apc.list_entry at offset 0.
-                let apc_ptr = entry as *mut Apc;
+                let apc_ptr = unsafe {
+                    (entry as *mut u8).sub(core::mem::offset_of!(Apc, list_entry))
+                } as *mut Apc;
                 let routine_addr = (*apc_ptr).routine.map(|r| r as u64).unwrap_or(0);
                 let arg1 = (*apc_ptr).system_argument1;
                 let arg2 = (*apc_ptr).system_argument2;
@@ -314,7 +315,9 @@ pub unsafe fn ki_deliver_apc(current_thread: *mut Ethread, delivery_mode: ApcMod
             let mut delivered = 0;
             while !crate::ps::thread::is_apc_list_empty(head) {
                 let entry = crate::ps::thread::apc_list_remove_head(head);
-                let apc_ptr = entry as *mut Apc;
+                let apc_ptr = unsafe {
+                    (entry as *mut u8).sub(core::mem::offset_of!(Apc, list_entry))
+                } as *mut Apc;
                 let routine_addr = (*apc_ptr).routine.map(|r| r as u64).unwrap_or(0);
                 (*apc_ptr).inserted.store(false, Ordering::Release);
                 if routine_addr != 0 {
@@ -522,9 +525,7 @@ pub fn deliver_thread_apc(thread: *mut Ethread, kind: ApcKind) -> bool {
         if let Some(routine_fn) = (*apc_ptr).routine {
             let ctx = (*apc_ptr).context;
             // // kprintln!("[APC] Delivering APC routine at {:p}", routine_fn as *const ());
-            unsafe {
-                routine_fn(ctx);
-            }
+            routine_fn(ctx);
             return true;
         }
         false

@@ -122,6 +122,19 @@ pub fn get_argument_size(service_number: u32) -> u32 {
     (service_number >> 16) & 0xFF
 }
 
+/// Argument byte count for a Shadow SSDT (win32k) service.
+///
+/// Win32k service numbers (0x1000..0x1FFF) carry no argument size in
+/// bits 16-31, so the per-service table populated by
+/// `register_shadow_service` is the only source of truth.
+pub fn get_shadow_argument_size(service_number: u32) -> u8 {
+    let index = (service_number & 0xFFF) as usize;
+    if index >= SSDT_MAX_SERVICES {
+        return 0;
+    }
+    unsafe { (*core::ptr::addr_of!(SHADOW_ARGUMENT_TABLE))[index] }
+}
+
 /// Get the actual service index (offset within the table)
 #[inline(always)]
 pub fn get_service_index(service_number: u32) -> u32 {
