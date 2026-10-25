@@ -25,9 +25,18 @@ pub mod smoke;
 
 pub fn init() {
     // kprintln!("    Audio drivers: Intel HDA, AC'97, PortCls");
+    crate::hal::serial::write_string_always("[AUDIO] hda enter\r\n");
     intel_hda::init();
+    crate::hal::serial::write_string_always("[AUDIO] hda done\r\n");
+    crate::hal::serial::write_string_always("[AUDIO] ac97 enter\r\n");
     ac97::init();
+    crate::hal::serial::write_string_always("[AUDIO] ac97 done\r\n");
+    crate::hal::serial::write_string_always("[AUDIO] portcls enter\r\n");
     portcls::init();
+    crate::hal::serial::write_string_always("[AUDIO] portcls done\r\n");
+    crate::hal::serial::write_string_always("[AUDIO] full paths enter\r\n");
+    init_full_audio_paths();
+    crate::hal::serial::write_string_always("[AUDIO] full paths done\r\n");
     // kprintln!("    Audio stack ready");
 }
 

@@ -727,8 +727,7 @@ fn init_controller(c: &mut HdaController) -> bool {
 
 /// Convert virtual address to physical address
 fn virt_to_phys(virt: u64) -> Option<u64> {
-    // Simplified: assume identity mapping for kernel memory
-    Some(virt & 0x7FFFFFFFFFFF)
+    crate::mm::virt_to_phys(virt)
 }
 
 /// Detect if a codec is present at the given address

@@ -591,8 +591,7 @@ fn write_mixer(mmio: u64, index: u8, value: u16) {
 
 /// Convert virtual address to physical address
 fn virt_to_phys(virt: u64) -> Option<u64> {
-    // Simplified: assume identity mapping for kernel memory
-    Some(virt & 0x7FFFFFFFFFFF)
+    crate::mm::virt_to_phys(virt)
 }
 
 /// Start PCM playback
