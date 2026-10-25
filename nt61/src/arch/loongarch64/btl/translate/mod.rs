@@ -72,11 +72,11 @@ pub fn translate_block(
                 Err(_) => break,
             };
         translate_instruction(buf, &decoded)?;
-        offset = consumed;
+        offset += consumed;
         if matches!(decoded.opcode, 0xE9 | 0xEB | 0xC3 | 0xE8 | 0xCC | 0xCD) {
             break;
         }
-        if offset - (offset - consumed) > 4096 {
+        if offset > 4096 {
             // Hard cap — block too long, force translation to retire.
             break;
         }

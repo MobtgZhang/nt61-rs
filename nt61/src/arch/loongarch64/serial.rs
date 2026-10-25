@@ -76,6 +76,17 @@ pub fn write_string_always(s: &str) {
     }
 }
 
+pub fn write_hex_u64_always(value: u64) {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut buf = [b'0'; 16];
+    for (index, byte) in buf.iter_mut().enumerate() {
+        let nibble = (value >> (60 - index * 4)) & 0xf;
+        *byte = HEX[nibble as usize];
+    }
+    write_string_always("0x");
+    write_string_always(core::str::from_utf8(&buf).unwrap_or(""));
+}
+
 /// write a string followed by CRLF.
 pub fn write_line(s: &str) {
     write_string(s);

@@ -73,8 +73,11 @@ pub fn init_page_walk() {
             | (PW_DIR_WIDTH << 15)
             | (PW_DIR2_BASE << 20)
             | (PW_DIR_WIDTH << 25);
-        let pwch: u64 =
-            PW_DIR3_BASE | (PW_DIR_WIDTH << 6) | (PW_DIR4_BASE << 12) | (PW_DIR_WIDTH << 18);
+        let pwch: u64 = PW_DIR3_BASE
+            | (PW_DIR_WIDTH << 6)
+            | (PW_DIR4_BASE << 12)
+            | (PW_DIR_WIDTH << 18)
+            | (1 << 24);
         asm!("csrwr {}, 0x1C", in(reg) pwcl, options(nostack));
         asm!("csrwr {}, 0x1D", in(reg) pwch, options(nostack));
 
@@ -88,6 +91,13 @@ pub fn init_page_walk() {
         // when CRMD.PG is enabled.
         let dmw0 = paging::CSR_DMW0_INIT;
         asm!("csrwr {}, 0x180", in(reg) dmw0, options(nostack));
+
+        // The image and exception vectors are in the VSEG-0xA identity
+        // window.  Install DMW1 immediately: without it, setting PG makes
+        // `loongarch64_exception` itself unmapped and the firmware's
+        // default handler takes over before our refill code can run.
+        let dmw1 = paging::DMW1_KERNEL_VIRT_BASE | paging::CSR_DMW0_PLV0;
+        asm!("csrwr {}, 0x181", in(reg) dmw1, options(nostack));
     }
 }
 
@@ -114,6 +124,9 @@ pub fn init() {
     // together, so the user-mode portion of the address
     // space can be entered normally.
     init_page_walk();
+
+    // Bring the binary translation layer online. Idempotent.
+    btl::init();
 }
 
 /// Bring up secondary CPUs (LoongArch uses the mail-box or
@@ -123,7 +136,7 @@ pub fn init_secondary_cpu(_cpu_id: u32) {}
 
 /// Get the current number of CPUs.
 pub fn get_cpu_count() -> u32 {
-    1
+    smp::cpu_count()
 }
 
 // Re-export commonly used types (matches x86_64 re-exports in arch/x86_64/mod.rs)

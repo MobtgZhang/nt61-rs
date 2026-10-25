@@ -71,6 +71,19 @@ pub fn write_string_always(s: &str) {
     }
 }
 
+pub fn write_hex_u64_always(v: u64) {
+    for i in (0..16).rev() {
+        let nibble = ((v >> (i * 4)) & 0xF) as u8;
+        let c = if nibble < 10 {
+            b'0' + nibble
+        } else {
+            b'A' + nibble - 10
+        };
+        write_char(c);
+    }
+}
+
+
 /// write a single byte (alias used by HAL callers). Provided for
 /// parity with the other architectures' `serial::put_char`.
 #[inline(always)]

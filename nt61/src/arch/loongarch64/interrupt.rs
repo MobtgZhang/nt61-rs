@@ -34,7 +34,7 @@ pub fn init(base: u64) {
     unsafe {
         // Disable all interrupts initially
         for i in 0..(MAX_IRQS / 32) {
-            let enable_addr = base + extioi::ENABLE + (i as u64) * 4;
+            let enable_addr = mapped_base + extioi::ENABLE + (i as u64) * 4;
             core::ptr::write_volatile(enable_addr as *mut u32, 0);
         }
 
@@ -45,7 +45,7 @@ pub fn init(base: u64) {
 
         // Clear pending interrupts
         for i in 0..(MAX_IRQS / 32) {
-            let isr_addr = base + extioi::ISR + (i as u64) * 4;
+            let isr_addr = mapped_base + extioi::ISR + (i as u64) * 4;
             let pending = core::ptr::read_volatile(isr_addr as *const u32);
             core::ptr::write_volatile(isr_addr as *mut u32, pending);
         }

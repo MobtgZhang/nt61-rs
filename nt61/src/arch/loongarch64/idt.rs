@@ -121,7 +121,7 @@ global_asm!(
     "  ld.d $t5, $sp, 200",
     "  ld.d $t6, $sp, 208",
     "  ld.d $t7, $sp, 216",
-    "  addi.d $sp, $sp, 240",
+    "  ld.d $sp, $sp, 224",
     // NOTE: Do NOT manually restore CRMD from SAVE4 here. On
     // exception entry the hardware sets CRMD.IE=0 and saves the old
     // IE to PRMD.PIE. The `ertn` instruction below restores CRMD.PLV
@@ -137,8 +137,10 @@ global_asm!(
     "  csrrd $t0, 0x31",
     "  csrwr $t0, 0x1",
     // The CSR restore block uses `t0` as a scratch register; reload the
-    // saved value before returning to user mode.
-    "  ld.d $t0, $sp, -80",
+    // original value from KScratch before returning to user mode. Reading
+    // through the restored user stack would access the wrong address space
+    // and corrupt Ring 3.
+    "  csrrd $t0, 0x30",
     "  ertn"
 );
 

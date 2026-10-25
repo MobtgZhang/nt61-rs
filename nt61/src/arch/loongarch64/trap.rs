@@ -170,11 +170,23 @@ pub extern "C" fn trap_dispatch(frame: *mut TrapFrame) {
             }
         }
         TrapKind::InstPageFault | TrapKind::LoadPageFault | TrapKind::StorePageFault => {
-            // Phase 1: not implemented yet — Phase 2 will plug in the
-            // mm::vas page-fault handler.
             let badv = read_badv();
             let is_write = matches!(kind, TrapKind::StorePageFault);
             let is_inst = matches!(kind, TrapKind::InstPageFault);
+            let access = crate::mm::access_fault::AccessFlags {
+                read: !is_write,
+                write: is_write,
+                execute: is_inst,
+                user: true,
+                reserved_bit: false,
+                instruction_fetch: is_inst,
+            };
+            if matches!(
+                crate::mm::access_fault::handle(badv, access),
+                crate::mm::access_fault::FaultStatus::Handled
+            ) {
+                return;
+            }
             panic!(
                 "LA64 page fault @ {:#x} (write={}, inst={})",
                 badv, is_write, is_inst

@@ -9,6 +9,8 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use crate::ke::sync::Spinlock;
+
 /// Translation cache entry metadata.
 #[derive(Copy, Clone)]
 pub struct TranslationCacheEntry {
@@ -54,9 +56,19 @@ impl TranslationCache {
         }
         None
     }
+
+    pub fn insert(&mut self, entry: TranslationCacheEntry) -> Option<&TranslationCacheEntry> {
+        let idx = self.count.load(Ordering::Acquire) as usize;
+        if idx >= self.entries.len() {
+            return None;
+        }
+        self.entries[idx] = entry;
+        self.count.fetch_add(1, Ordering::Release);
+        Some(&self.entries[idx])
+    }
 }
 
-static TC: TranslationCache = TranslationCache::new();
+static TC: Spinlock<TranslationCache> = Spinlock::new(TranslationCache::new());
 
 pub fn init() {
     // No work required: TC is `const`-initialised. The hook is left
@@ -64,6 +76,16 @@ pub fn init() {
     // allocation / W^X policy.
 }
 
-pub fn translation_cache() -> &'static TranslationCache {
-    &TC
+pub fn translation_cache() -> crate::ke::sync::SpinlockGuard<'static, TranslationCache> {
+    TC.lock()
+}
+
+pub fn insert(guest_rip: u64, host_code: u64, guest_size: u32, host_size: u32) -> bool {
+    let entry = TranslationCacheEntry {
+        guest_rip,
+        host_code,
+        guest_size,
+        host_size,
+    };
+    TC.lock().insert(entry).is_some()
 }
