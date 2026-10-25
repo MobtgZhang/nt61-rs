@@ -3,23 +3,23 @@
 //! Implements standard Windows 7 NT 6.1.7601 logging formats:
 //
 //! # 1. ntbtlog.txt Format (Driver Loading Log)
-//! ```
+//! ```text
 //! YYYY MM DD HH:MM:SS.mmm BOOTLOG_LOADED \SystemRoot\system32\ntoskrnl.exe
 //! ```
 //
 //! # 2. SOS Text Mode Format (Driver Loading Display)
-//! ```
+//! ```text
 //! Loading \SystemRoot\system32\ntoskrnl.exe
 //! ```
 //
 //! # 3. Kernel Phase Initialization Format
-//! ```
+//! ```text
 //! --- Phase 0 Initialization ---
 //!     KERNEL: Initializing Memory Manager
 //! ```
 //
 //! # 4. KdPrint Format (Debugger Output)
-//! ```
+//! ```text
 //! [hh:mm:ss.xxx] [KERNEL] Message
 //! ```
 
@@ -298,8 +298,12 @@ pub fn write_ntbtlog_line(file_path: &str, loaded: bool) {
     buf[pos] = b' ';
     pos += 1;
 
-    // File path
+    // File path — bound the copy so a long driver path cannot
+    // overflow the 512-byte stack buffer (leaving room for \r\n\0).
     for &b in file_path.as_bytes() {
+        if pos + 3 >= buf.len() {
+            break;
+        }
         buf[pos] = b;
         pos += 1;
     }
@@ -337,6 +341,9 @@ pub fn write_sos_loading(file_path: &str) {
     pos += 1;
 
     for &b in file_path.as_bytes() {
+        if pos + 3 >= buf.len() {
+            break;
+        }
         buf[pos] = b;
         pos += 1;
     }

@@ -5,7 +5,7 @@
 //
 //! ## Usage
 //
-//! ```rust
+//! ```text
 //! use crate::rtl::testing::TestStats;
 //
 //! pub fn smoke_test() -> bool {

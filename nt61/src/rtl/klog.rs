@@ -38,22 +38,19 @@ pub fn boot_log_visible() -> bool {
 /// every output gate so the boot trace stays observable even when
 /// the per-mode display policy silences `boot_println!`.
 pub fn phase_trace_marker(phase: u32) {
-    #[cfg(feature = "log_level_debug")]
-    {
-        use core::fmt::Write;
-        let mut buffer = [0u8; 16];
-        let mut writer = StackTraceWriter {
-            bytes: &mut buffer,
-            offset: 0,
-        };
-        let _ = write!(writer, "TRACE:{}\r\n", phase);
-        let len = buffer
-            .iter()
-            .position(|&byte| byte == 0)
-            .unwrap_or(buffer.len());
-        let text = unsafe { core::str::from_utf8_unchecked(&buffer[..len]) };
-        crate::hal::serial::write_string(text);
-    }
+    use core::fmt::Write;
+    let mut buffer = [0u8; 16];
+    let mut writer = StackTraceWriter {
+        bytes: &mut buffer,
+        offset: 0,
+    };
+    let _ = write!(writer, "TRACE:{}\r\n", phase);
+    let len = buffer
+        .iter()
+        .position(|&byte| byte == 0)
+        .unwrap_or(buffer.len());
+    let text = unsafe { core::str::from_utf8_unchecked(&buffer[..len]) };
+    crate::hal::serial::write_string(text);
 }
 
 struct StackTraceWriter<'a> {

@@ -152,27 +152,45 @@ pub mod subsystem {
     pub const FS: u32 = SubsystemFlags::FS.bits();
 }
 
-/// Per-subsystem log level overrides.
-static SUBSYSTEM_LEVELS: AtomicU32 = AtomicU32::new(0xFFFF_FFFF);
+/// Per-subsystem log level overrides. Each bit in `SubsystemFlags` has its
+/// own entry; `NO_SUBSYSTEM_LEVEL` means "use the global level".
+const NO_SUBSYSTEM_LEVEL: u32 = 0xFF;
+const SUBSYSTEM_COUNT: usize = 32;
+static SUBSYSTEM_LEVELS: [AtomicU32; SUBSYSTEM_COUNT] =
+    [const { AtomicU32::new(NO_SUBSYSTEM_LEVEL) }; SUBSYSTEM_COUNT];
 
 /// Set the log level for a specific subsystem.
 pub fn set_subsystem_level(subsystem: SubsystemFlags, level: LogLevel) {
-    let bits = subsystem.bits();
-    let override_val = (level as u32) << 16;
-    let new_val = (SUBSYSTEM_LEVELS.load(Ordering::Relaxed) & !bits) | (bits & override_val);
-    SUBSYSTEM_LEVELS.store(new_val, Ordering::Relaxed);
+    let level_value = level as u32;
+    let mut remaining = subsystem.bits();
+    while remaining != 0 {
+        let index = remaining.trailing_zeros() as usize;
+        SUBSYSTEM_LEVELS[index].store(level_value, Ordering::Relaxed);
+        remaining &= remaining - 1;
+    }
 }
 
 #[inline]
 fn get_effective_level(subsystem_bits: u32) -> LogLevel {
-    let stored = SUBSYSTEM_LEVELS.load(Ordering::Relaxed);
-    if subsystem_bits & stored != 0 {
-        let override_level = (stored >> 16) as u8;
-        if override_level <= LogLevel::Debug as u8 {
-            return unsafe { core::mem::transmute(override_level) };
+    let mut effective = GLOBAL_LOG_LEVEL;
+    let mut remaining = subsystem_bits;
+    while remaining != 0 {
+        let index = remaining.trailing_zeros() as usize;
+        let stored = SUBSYSTEM_LEVELS[index].load(Ordering::Relaxed);
+        if stored != NO_SUBSYSTEM_LEVEL {
+            let level = match stored {
+                0 => LogLevel::Error,
+                1 => LogLevel::Warn,
+                2 => LogLevel::Info,
+                _ => LogLevel::Debug,
+            };
+            if level < effective {
+                effective = level;
+            }
         }
+        remaining &= remaining - 1;
     }
-    GLOBAL_LOG_LEVEL
+    effective
 }
 
 // ---------------------------------------------------------------------------
