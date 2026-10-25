@@ -4,7 +4,7 @@
 //! In WoW64, when a 32-bit application calls a Win32 API function (like
 //! CreateWindow, SendMessage, get_dc), the call path is:
 //
-//! ```
+//! ```text
 //! 32-bit App -> user32.dll (32-bit) -> wow64win.dll (32-bit)
 //!     -> wow64_win32k_syscall -> 64-bit win32k.sys
 //!     -> Return to 32-bit app

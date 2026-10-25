@@ -432,13 +432,8 @@ impl MessageQueue {
         if msg.hwnd == 0 {
             return 0;
         }
-
-        // kprintln!("[msgq] DispatchMessage: hwnd={:#x}, msg={:#x}",
-        //             msg.hwnd, msg.message);
-
-        // In a full implementation, look up the window's WndProc
-        // and call it: result = WndProc(hwnd, msg, wparam, lparam)
-        0
+        let mut wm = crate::libs::win32k::window::WINDOW_MANAGER.lock();
+        wm.send_message(msg.hwnd, msg.message, msg.wparam, msg.lparam)
     }
 
     /// Add a paint rectangle.

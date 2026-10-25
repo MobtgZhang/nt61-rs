@@ -126,7 +126,11 @@ static MESSAGE_QUEUES: Spinlock<[MessageQueue; MAX_THREADS]> =
     Spinlock::new([MessageQueue::new(); MAX_THREADS]);
 
 fn get_current_thread_id() -> usize {
-    1
+    let thread = crate::arch::common::percpu::get_current_thread();
+    if thread.is_null() {
+        return 0;
+    }
+    unsafe { (*thread).client_id.unique_thread as usize }
 }
 
 fn current_thread_slot() -> usize {

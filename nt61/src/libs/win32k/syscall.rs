@@ -638,8 +638,10 @@ pub extern "C" fn nt_gdi_ext_get_object_w(frame: &SyscallFrame) -> u64 {
     if h != 0 {
         let buf = buffer as *mut u64;
         if !buf.is_null() && count > 0 {
-            unsafe { *buf = 1 } // OBJ_BITMAP
-            return 1;
+            let value = [1u8; 8];
+            if crate::mm::user_copy::copy_to_user(buffer, &value).is_ok() {
+                return 1;
+            }
         }
     }
     0
@@ -788,13 +790,14 @@ pub extern "C" fn nt_gdi_get_rgn_box(frame: &SyscallFrame) -> u64 {
         let primary = super::surface::get_primary_surface();
         if !primary.is_null() {
             let surf = unsafe { &*primary };
-            unsafe {
-                *rect_ptr.add(0) = 0;
-                *rect_ptr.add(1) = 0;
-                *rect_ptr.add(2) = surf.width;
-                *rect_ptr.add(3) = surf.height;
+            let mut rect_bytes = [0u8; 16];
+            rect_bytes[0..4].copy_from_slice(&0i32.to_le_bytes());
+            rect_bytes[4..8].copy_from_slice(&0i32.to_le_bytes());
+            rect_bytes[8..12].copy_from_slice(&surf.width.to_le_bytes());
+            rect_bytes[12..16].copy_from_slice(&surf.height.to_le_bytes());
+            if crate::mm::user_copy::copy_to_user(rect, &rect_bytes).is_ok() {
+                return 1;
             }
-            return 1; // SIMPLEREGION
         }
     }
     0 // NULLREGION
@@ -1949,18 +1952,24 @@ pub extern "C" fn nt_user_get_window_rect(frame: &SyscallFrame) -> u64 {
 
     // kprintln!("[win32k] NtUserGetWindowRect");
 
-    // GetWindowRect: write the window bounds (full screen as placeholder).
-    let rect = unsafe { get_arg1(frame) } as *mut i32;
-    if !rect.is_null() {
-        unsafe {
-            *rect.add(0) = 0;
-            *rect.add(1) = 0;
-            *rect.add(2) = 800;
-            *rect.add(3) = 600;
-        }
-        return 1; // TRUE
+    let rect_ptr = unsafe { get_arg1(frame) };
+    if rect_ptr == 0 {
+        return 0;
     }
-    0
+    let rect = crate::libs::win32k::window::WINDOW_MANAGER
+        .lock()
+        .get_window_rect(hwnd)
+        .unwrap_or(crate::libs::win32k::objects::Rect { left: 0, top: 0, right: 800, bottom: 600 });
+    let mut rect_bytes = [0u8; 16];
+    rect_bytes[0..4].copy_from_slice(&rect.left.to_le_bytes());
+    rect_bytes[4..8].copy_from_slice(&rect.top.to_le_bytes());
+    rect_bytes[8..12].copy_from_slice(&rect.right.to_le_bytes());
+    rect_bytes[12..16].copy_from_slice(&rect.bottom.to_le_bytes());
+    if crate::mm::user_copy::copy_to_user(rect_ptr, &rect_bytes).is_ok() {
+        1
+    } else {
+        0
+    }
 }
 
 /// NtUserGetClientRect - Get client rectangle
@@ -1972,18 +1981,24 @@ pub extern "C" fn nt_user_get_client_rect(frame: &SyscallFrame) -> u64 {
 
     // kprintln!("[win32k] NtUserGetClientRect");
 
-    // GetClientRect: write the client-area bounds (full window as placeholder).
-    let rect = unsafe { get_arg1(frame) } as *mut i32;
-    if !rect.is_null() {
-        unsafe {
-            *rect.add(0) = 0;
-            *rect.add(1) = 0;
-            *rect.add(2) = 800;
-            *rect.add(3) = 600;
-        }
-        return 1; // TRUE
+    let rect_ptr = unsafe { get_arg1(frame) };
+    if rect_ptr == 0 {
+        return 0;
     }
-    0
+    let rect = crate::libs::win32k::window::WINDOW_MANAGER
+        .lock()
+        .get_client_rect(hwnd)
+        .unwrap_or(crate::libs::win32k::objects::Rect { left: 0, top: 0, right: 800, bottom: 600 });
+    let mut rect_bytes = [0u8; 16];
+    rect_bytes[0..4].copy_from_slice(&rect.left.to_le_bytes());
+    rect_bytes[4..8].copy_from_slice(&rect.top.to_le_bytes());
+    rect_bytes[8..12].copy_from_slice(&rect.right.to_le_bytes());
+    rect_bytes[12..16].copy_from_slice(&rect.bottom.to_le_bytes());
+    if crate::mm::user_copy::copy_to_user(rect_ptr, &rect_bytes).is_ok() {
+        1
+    } else {
+        0
+    }
 }
 
 /// NT_USER_SET_CAPTURE - Set capture window

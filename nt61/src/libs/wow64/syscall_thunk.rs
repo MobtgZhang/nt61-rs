@@ -7,7 +7,7 @@
 //! 64-bit kernel service.
 //
 //! # Call Flow
-//! ```
+//! ```text
 //! 32-bit App -> ntdll.dll (NtXxx) -> wow64.dll (wow64_system_service_ex)
 //!     -> [syscall_thunk] -> 64-bit Kernel -> Return to Wow64
 //!     -> Return to 32-bit App

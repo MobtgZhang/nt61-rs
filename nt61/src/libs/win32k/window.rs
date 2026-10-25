@@ -356,6 +356,23 @@ pub struct WindowManager {
     pub desktop_window: AtomicU64,
 }
 
+/// Safe-ish ABI for a window procedure. The raw `u64` stored in
+/// `WindowObject::wndproc` is only called when it transmutes
+/// cleanly to this signature, preventing wild jumps on garbage
+/// pointers that do not match the expected calling convention.
+type WndProcFn = unsafe extern "C" fn(hwnd: u64, msg: u32, wparam: u64, lparam: i64) -> i64;
+
+/// Call a raw window-procedure pointer if it is non-null.
+/// Returns 0 when the pointer is null (matching DefWindowProc's
+/// pass-through result for unhandled messages).
+fn call_wnd_proc(wndproc: u64, hwnd: u64, msg: u32, wparam: u64, lparam: i64) -> i64 {
+    if wndproc == 0 {
+        return 0;
+    }
+    let f = unsafe { core::mem::transmute::<u64, WndProcFn>(wndproc) };
+    unsafe { f(hwnd, msg, wparam, lparam) }
+}
+
 impl WindowManager {
     pub const fn new() -> Self {
         Self {
@@ -594,15 +611,51 @@ impl WindowManager {
 
     /// Send a message directly to a window procedure.
     pub fn send_message(&mut self, hwnd: u64, msg: u32, wparam: u64, lparam: i64) -> i64 {
-        let _ = (hwnd, msg, wparam, lparam);
         if let Some(window) = self.get_window(hwnd) {
-            let _ = window;
-            // kprintln!("[win32k] SendMessage: hwnd={:#x}, msg={:#x}, wparam={:#x}",
-            //                 hwnd, msg, wparam);
-            // In a full implementation, call window's WndProc
-            0
+            call_wnd_proc(window.wndproc, hwnd, msg, wparam, lparam)
         } else {
             0
+        }
+    }
+
+    /// Blit a window's client area to the framebuffer. Called from
+    /// `update_window` after the dirty state is consumed.
+    fn blit_window(&self, hwnd: u64) {
+        let Some(window) = self.get_window(hwnd) else {
+            return;
+        };
+        if !window.visible {
+            return;
+        }
+        let primary = crate::libs::win32k::surface::get_primary_surface();
+        if primary.is_null() {
+            return;
+        }
+        let surface = unsafe { &*primary };
+        // Simple solid-fill blit of the window rect into the
+        // framebuffer. A full compositor would composite the
+        // window's back-buffer; for now we clear the client area
+        // to the window's background (black) so the caller sees
+        // a defined region rather than stale framebuffer bits.
+        let fb_pitch = surface.pitch as usize;
+        let bpp = 4usize;
+        for y in window.client_rect.top..window.client_rect.bottom {
+            if y < 0 {
+                continue;
+            }
+            let row = unsafe { surface.bits.offset(((y as usize) * fb_pitch) as isize) };
+            for x in window.client_rect.left..window.client_rect.right {
+                if x < 0 {
+                    continue;
+                }
+                let offset = (x as usize) * bpp;
+                unsafe {
+                    row.add(offset).write_volatile(0);
+                    row.add(offset + 1).write_volatile(0);
+                    row.add(offset + 2).write_volatile(0);
+                    row.add(offset + 3).write_volatile(0xFF);
+                }
+            }
         }
     }
 
@@ -636,6 +689,7 @@ impl WindowManager {
                 window.dirty = false;
                 window.dirty_rects.clear();
             }
+            self.blit_window(hwnd);
             // Post the message after clearing state
             self.post_message(hwnd, WindowMessage::WmPaint as u32, 0, 0);
             true
