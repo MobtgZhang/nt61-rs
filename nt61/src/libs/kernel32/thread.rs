@@ -7,6 +7,7 @@
 
 use super::error::set_last_error;
 use super::types::{BOOL, DWORD, FALSE, HANDLE, HANDLE_CURRENT_THREAD, TRUE};
+use crate::libs::ntdll::types::PVOID;
 use crate::libs::ntdll::status::STATUS_SUCCESS;
 use crate::libs::ntdll::thread as ntdll_thread;
 use core::ptr;
@@ -20,7 +21,7 @@ pub unsafe extern "C" fn create_thread(
     creation_flags: DWORD,
     thread_id: *mut DWORD,
 ) -> HANDLE {
-    let _ = (stack_size, start_routine, parameter, creation_flags);
+    let _ = creation_flags;
     let mut h: HANDLE = ptr::null_mut();
     let mut oa = crate::libs::ntdll::types::ObjectAttributes::new();
     let status = ntdll_thread::nt_create_thread(
@@ -29,10 +30,10 @@ pub unsafe extern "C" fn create_thread(
         &mut oa,
         ptr::null_mut(),
         ptr::null_mut(),
-        ptr::null_mut(),
-        ptr::null_mut(),
-        0,
-        0,
+        parameter as PVOID,
+        start_routine as PVOID,
+        stack_size,
+        stack_size,
     );
     if status != STATUS_SUCCESS {
         set_last_error(8);
@@ -114,10 +115,21 @@ pub extern "C" fn switch_to_thread() -> BOOL {
 }
 
 /// `get_thread_priority` / `set_thread_priority` — accept the call.
-pub unsafe extern "C" fn get_thread_priority(_thread: HANDLE) -> i32 {
-    0
+pub unsafe extern "C" fn get_thread_priority(thread: HANDLE) -> i32 {
+    if thread.is_null() {
+        return 0;
+    }
+    let ethread = thread as *mut crate::ps::thread::Ethread;
+    (*ethread).kthread.base_priority as i32
 }
-pub unsafe extern "C" fn set_thread_priority(_thread: HANDLE, _priority: i32) -> BOOL {
+pub unsafe extern "C" fn set_thread_priority(thread: HANDLE, priority: i32) -> BOOL {
+    if thread.is_null() {
+        return FALSE;
+    }
+    let ethread = thread as *mut crate::ps::thread::Ethread;
+    // Store the priority on the Kthread so `get_thread_priority`
+    // can return the caller's value.
+    (*ethread).kthread.base_priority = priority as i8;
     TRUE
 }
 

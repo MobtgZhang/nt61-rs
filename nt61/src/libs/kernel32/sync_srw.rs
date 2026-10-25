@@ -517,5 +517,9 @@ pub unsafe extern "C" fn wake_all_condition_variable(condition_variable: *mut CO
 }
 
 fn get_current_thread_id() -> u64 {
-    1
+    let thread = crate::arch::common::percpu::get_current_thread();
+    if thread.is_null() {
+        return 0;
+    }
+    unsafe { (*thread).client_id.unique_thread }
 }

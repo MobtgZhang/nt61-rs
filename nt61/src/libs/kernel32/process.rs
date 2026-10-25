@@ -122,17 +122,48 @@ pub unsafe extern "C" fn create_process_w(
     };
     let _ = (inherit_handles, creation_flags, startup_info);
     let mut h: HANDLE = ptr::null_mut();
-    let mut oa = ObjectAttributes::new();
+    let name_units = _name.encode_utf16().count() + 1;
+    let name_size = name_units * core::mem::size_of::<u16>();
+    let storage_size = core::mem::size_of::<ObjectAttributes>()
+        + core::mem::size_of::<crate::libs::ntdll::types::UnicodeString>()
+        + name_size;
+    let storage = crate::mm::pool::allocate(
+        crate::mm::pool::PoolType::NonPaged,
+        storage_size,
+    );
+    if storage.is_null() {
+        set_last_error(8);
+        return FALSE;
+    }
+    let oa = storage as *mut ObjectAttributes;
+    let name = storage.add(core::mem::size_of::<ObjectAttributes>())
+        as *mut crate::libs::ntdll::types::UnicodeString;
+    let buffer = storage
+        .add(core::mem::size_of::<ObjectAttributes>())
+        .add(core::mem::size_of::<crate::libs::ntdll::types::UnicodeString>())
+        as *mut u16;
+    let mut units = alloc::vec::Vec::with_capacity(name_units);
+    units.extend(_name.encode_utf16());
+    units.push(0);
+    unsafe {
+        core::ptr::write_bytes(storage, 0, storage_size);
+        core::ptr::copy_nonoverlapping(units.as_ptr(), buffer, units.len());
+        (*name).length = (units.len() * 2) as u16;
+        (*name).maximum_length = (units.len() * 2) as u16;
+        (*name).buffer = buffer;
+        core::ptr::write(oa, ObjectAttributes::with_name(name));
+    }
     let status = ntdll_process::nt_create_process(
         &mut h,
         0,
-        &mut oa,
+        oa,
         ptr::null_mut(),
         0,
         ptr::null_mut(),
         ptr::null_mut(),
         ptr::null_mut(),
     );
+    crate::mm::pool::free(storage);
     if status != STATUS_SUCCESS {
         set_last_error(50);
         return FALSE;
