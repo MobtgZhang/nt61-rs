@@ -18,10 +18,10 @@ use crate::hal::text_console;
 use crate::ke::sync::Spinlock;
 use alloc::vec::Vec;
 
-const LINE_CAP: usize = 256;
+pub const LINE_CAPACITY: usize = 256;
 const HISTORY_MAX: usize = 16;
 
-static HISTORY: Spinlock<Vec<[u8; LINE_CAP]>> = Spinlock::new(Vec::new());
+static HISTORY: Spinlock<Vec<[u8; LINE_CAPACITY]>> = Spinlock::new(Vec::new());
 
 /// Push one completed line into the shared history. Lines that
 /// duplicate the most recent entry are ignored.
@@ -29,8 +29,8 @@ pub fn push_history(line: &[u8]) {
     if line.is_empty() {
         return;
     }
-    let mut entry = [0u8; LINE_CAP];
-    let len = line.len().min(LINE_CAP - 1);
+    let mut entry = [0u8; LINE_CAPACITY];
+    let len = line.len().min(LINE_CAPACITY - 1);
     entry[..len].copy_from_slice(&line[..len]);
 
     let mut history = HISTORY.lock();
@@ -82,8 +82,8 @@ pub fn read_line(buffer: &mut [u8], length: usize) -> usize {
     if buffer.is_empty() || length < 2 {
         return 0;
     }
-    let cap = length.min(buffer.len()).min(LINE_CAP);
-    let mut buf = [0u8; LINE_CAP];
+    let cap = length.min(buffer.len()).min(LINE_CAPACITY);
+    let mut buf = [0u8; LINE_CAPACITY];
     let mut pos: usize = 0;
     let mut escape: u8 = 0;
     let mut history_index: usize = 0;
@@ -95,7 +95,6 @@ pub fn read_line(buffer: &mut [u8], length: usize) -> usize {
             core::hint::spin_loop();
             continue;
         };
-
         match byte {
             // Ctrl+C — abandon the line.
             0x03 => {
@@ -159,7 +158,7 @@ pub fn read_line(buffer: &mut [u8], length: usize) -> usize {
                         let entry = *HISTORY
                             .lock()
                             .get(history_index - 1)
-                            .unwrap_or(&[0u8; LINE_CAP]);
+                            .unwrap_or(&[0u8; LINE_CAPACITY]);
                         pos = redraw_line(&mut buf, pos, &entry);
                     }
                 }
@@ -177,7 +176,7 @@ pub fn read_line(buffer: &mut [u8], length: usize) -> usize {
                         let entry = *HISTORY
                             .lock()
                             .get(history_index - 1)
-                            .unwrap_or(&[0u8; LINE_CAP]);
+                            .unwrap_or(&[0u8; LINE_CAPACITY]);
                         pos = redraw_line(&mut buf, pos, &entry);
                     }
                 }

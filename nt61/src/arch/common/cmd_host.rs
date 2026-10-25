@@ -20,7 +20,13 @@ pub const STATUS_NO_DATA: u64 = 0xC000_0011;
 pub const STATUS_INVALID_PARAMETER: u64 = 0xC000_000D;
 
 pub fn putchar(byte: u8) -> u64 {
-    crate::hal::text_console::put_byte(byte);
+    // User-visible output must not be suppressed by the boot-time
+    // serial gate. Route it through the HAL's dual console and force
+    // the serial sink open; the framebuffer sink is handled by the
+    // same helper on each architecture.
+    crate::hal::serial::with_serial_unmasked(|| {
+        crate::hal::text_console::put_serial_and_console(byte);
+    });
     STATUS_SUCCESS
 }
 
@@ -54,8 +60,18 @@ pub unsafe fn read_line(buffer: *mut u8, length: usize) -> Option<usize> {
     if buffer.is_null() || length == 0 {
         return None;
     }
-    let slice = core::slice::from_raw_parts_mut(buffer, length);
-    Some(super::line_edit::read_line(slice, length))
+    let capacity = length.min(super::line_edit::LINE_CAPACITY);
+    let mut kernel_buffer = [0u8; super::line_edit::LINE_CAPACITY];
+    let written = super::line_edit::read_line(&mut kernel_buffer[..capacity], capacity);
+    let copied = crate::mm::user_copy::copy_to_user(
+        buffer as u64,
+        &kernel_buffer[..written + 1],
+    );
+    if copied.is_err() {
+        crate::servers::cmd::diagnostic_command_failure(b"READ_COPY");
+        return None;
+    }
+    Some(written)
 }
 
 pub fn return_to_firmware() -> ! {
@@ -63,7 +79,31 @@ pub fn return_to_firmware() -> ! {
 }
 
 pub fn execute_command(buffer: *const u8, length: usize) -> Result<bool, &'static str> {
-    crate::servers::cmd::execute_command_from_user_ptr(buffer, length)
+    let diagnostic = alloc::format!(
+        "[CMD-HOST] ptr={:#x} len={:#x} range={} root={:#x} trans={:#x?}\r\n",
+        buffer as usize,
+        length,
+        crate::mm::user_copy::is_user_range(buffer as u64, length),
+        crate::arch::read_current_page_root(),
+        crate::arch::translate_virt(buffer as u64)
+    );
+    crate::hal::serial::write_string_always(&diagnostic);
+    if buffer.is_null() {
+        crate::servers::cmd::diagnostic_command_failure(b"NULL");
+        return Err("null command pointer");
+    }
+    let capacity = length.min(crate::servers::cmd::CMD_BUFFER_SIZE - 1);
+    let mut bytes = [0u8; crate::servers::cmd::CMD_BUFFER_SIZE - 1];
+    let copied = crate::mm::user_copy::copy_from_user(&mut bytes[..capacity], buffer as u64);
+    if copied.is_err() {
+        crate::servers::cmd::diagnostic_command_failure(b"COPY");
+        return Err("command buffer is not readable user memory");
+    }
+    let command_length = bytes[..capacity]
+        .iter()
+        .position(|&byte| byte == 0)
+        .unwrap_or(capacity);
+    crate::servers::cmd::execute_command_bytes(&bytes[..command_length])
 }
 
 pub fn print_prompt() -> u64 {

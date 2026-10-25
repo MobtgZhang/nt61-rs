@@ -1,10 +1,18 @@
 //! Architecture-independent panic reporting shared by every kernel binary.
 
+#[cfg_attr(
+    all(feature = "binary_panic", not(test), not(target_os = "linux")),
+    allow(dead_code)
+)]
 struct PanicFormatter {
     buf: [u8; 256],
     len: usize,
 }
 
+#[cfg_attr(
+    all(feature = "binary_panic", not(test), not(target_os = "linux")),
+    allow(dead_code)
+)]
 impl PanicFormatter {
     const fn new() -> Self {
         Self {
@@ -30,7 +38,11 @@ impl core::fmt::Write for PanicFormatter {
     }
 }
 
-#[cfg_attr(feature = "binary_panic", panic_handler)]
+#[cfg_attr(
+    all(feature = "binary_panic", not(test), not(target_os = "linux")),
+    panic_handler
+)]
+#[allow(dead_code)]
 fn panic_handler(info: &core::panic::PanicInfo) -> ! {
     let mut formatter = PanicFormatter::new();
     let _ =

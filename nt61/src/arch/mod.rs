@@ -117,6 +117,11 @@ pub fn init_hardware() {
         // Try to init PIT/HPET/keyboard, but don't fail if they need MM
         crate::arch::boot::early_write_str(b"[ARCH] pit_begin\r\n");
         let _ = crate::hal::pit::init(1000);
+        let apic_timer_ready = crate::hal::x86_64::apic::init()
+            && crate::hal::x86_64::apic::init_timer_calibrated(1000);
+        if !apic_timer_ready {
+            crate::hal::pic::unmask_irq(0);
+        }
         crate::arch::boot::early_write_str(b"[ARCH] pit_done\r\n");
         crate::arch::boot::early_write_str(b"[ARCH] hpet_begin\r\n");
         let _ = crate::hal::hpet::init(0);
@@ -167,6 +172,8 @@ pub fn init_hardware() {
         crate::boot_debug_println!("[RISCV] timer init done");
         riscv64::pic::init(0xC00_0000);
         crate::boot_debug_println!("[RISCV] interrupt init done");
+        crate::hal::common::init();
+        crate::boot_debug_println!("[RISCV] common HAL init done");
     }
 
     #[cfg(target_arch = "loongarch64")]
@@ -179,6 +186,8 @@ pub fn init_hardware() {
         loongarch64::pic::init(0x1FE0_0000 + 0x1000);
         crate::hal::common::keyboard_unified::enable_serial_rx_irq();
         loongarch64::syscall::init();
+        crate::hal::common::init();
+        crate::boot_debug_println!("[LA64] common HAL init done");
     }
 }
 
@@ -190,25 +199,32 @@ pub fn init_hardware() {
 /// need architecture-specific branches; unsupported targets remain at one
 /// CPU until their platform bring-up is implemented in this facade.
 pub fn start_smp() {
-    crate::arch::boot::early_write_str(b"[SMP] begin\r\n");
     let page_root_pfn = read_current_page_root() >> 12;
-    crate::arch::boot::early_write_str(b"[SMP] root read\r\n");
     if page_root_pfn != 0 {
-        crate::arch::boot::early_write_str(b"[SMP] boot_aps_begin\r\n");
         unsafe {
             common::smp::boot_secondary_cpus(page_root_pfn);
         }
-        crate::arch::boot::early_write_str(b"[SMP] boot_aps_done\r\n");
     }
+    #[cfg(target_arch = "riscv64")]
+    let ap_count = riscv64::smp::cpu_count();
+    #[cfg(not(target_arch = "riscv64"))]
     let ap_count = common::smp::cpu_count();
-    crate::arch::boot::early_write_str(b"[SMP] cpu_count=");
-    const SMP_HEX: &[u8; 16] = b"0123456789ABCDEF";
-    for shift in (0..8u32).rev() {
-        let nibble = ((ap_count >> (shift * 4)) & 0xF) as usize;
-        crate::arch::boot::early_write_str(core::slice::from_ref(&SMP_HEX[nibble]));
+    let mut n = ap_count;
+    let mut digits = [0u8; 10];
+    let mut len = 0;
+    if n == 0 {
+        digits[len] = b'0';
+        len += 1;
+    } else {
+        while n > 0 && len < 10 {
+            digits[len] = b'0' + (n % 10) as u8;
+            n /= 10;
+            len += 1;
+        }
     }
+    crate::arch::boot::early_write_str(b"[SMP] cpu_count=");
+    crate::arch::boot::early_write_str(&digits[..len]);
     crate::arch::boot::early_write_str(b"\r\n");
-    crate::arch::boot::early_write_str(b"[SMP] done\r\n");
 
     // The architecture implementation is responsible for scheduling PRCB
     // allocation before AP entry, because only it knows the true CPU count.
@@ -313,7 +329,12 @@ pub unsafe fn map_page_in_root(root_pfn: u64, va: u64, pa: u64, flags: u64) -> b
     riscv64::paging::map_page_in_root(root_pfn, va, pa, flags)
 }
 
-#[cfg(not(target_arch = "riscv64"))]
+#[cfg(target_arch = "loongarch64")]
+pub unsafe fn map_page_in_root(root_pfn: u64, va: u64, pa: u64, flags: u64) -> bool {
+    loongarch64::paging::map_page_in_root(root_pfn, va, pa, flags)
+}
+
+#[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
 pub unsafe fn map_page_in_root(root_pfn: u64, va: u64, pa: u64, flags: u64) -> bool {
     let previous_root = read_page_root_pfn();
     if previous_root != root_pfn {
@@ -324,6 +345,25 @@ pub unsafe fn map_page_in_root(root_pfn: u64, va: u64, pa: u64, flags: u64) -> b
         load_page_root(previous_root);
     }
     mapped
+}
+
+/// Report whether a page is mapped in an arbitrary root table without
+/// switching hardware context. This is required because the generic VAS
+/// layer may be asked to verify mappings while the MMU is still in bare
+/// mode or while a different address space is active.
+#[cfg(target_arch = "riscv64")]
+pub fn page_is_mapped_in_root(root_pfn: u64, va: u64) -> bool {
+    riscv64::paging::page_is_mapped_in_root(root_pfn, va)
+}
+
+#[cfg(target_arch = "loongarch64")]
+pub fn page_is_mapped_in_root(root_pfn: u64, va: u64) -> bool {
+    loongarch64::paging::page_is_mapped_in_root(root_pfn, va)
+}
+
+#[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
+pub fn page_is_mapped_in_root(_root_pfn: u64, _va: u64) -> bool {
+    false
 }
 
 /// Unmap one page and return its physical address when available.
@@ -350,15 +390,55 @@ pub fn translate_virt(va: u64) -> Option<u64> {
     return loongarch64::paging::translate_virt(va);
 }
 
+/// Return the architecture-specific leaf PTE backing a virtual address.
+pub fn leaf_entry(va: u64) -> Option<u64> {
+    #[cfg(target_arch = "x86_64")]
+    return x86_64::paging::leaf_entry(va);
+    #[cfg(target_arch = "aarch64")]
+    return aarch64::paging::leaf_entry(va);
+    #[cfg(target_arch = "riscv64")]
+    return riscv64::paging::leaf_entry(va);
+    #[cfg(target_arch = "loongarch64")]
+    return loongarch64::paging::leaf_entry(va);
+}
+
+/// Interpret a leaf PTE for user-space access checks.
+pub fn page_user_accessible(entry: u64, require_write: bool) -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        return (entry & 4) != 0 && (!require_write || (entry & 2) != 0);
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        let user_accessible = (entry & (1 << 6)) != 0;
+        let read_only = (entry & (1 << 7)) != 0;
+        return user_accessible && (!require_write || !read_only);
+    }
+    #[cfg(target_arch = "riscv64")]
+    {
+        return (entry & (1 << 4)) != 0 && (!require_write || (entry & (1 << 2)) != 0);
+    }
+    #[cfg(target_arch = "loongarch64")]
+    {
+        return (entry & (3 << 2)) == (3 << 2) && (!require_write || (entry & (1 << 1)) != 0);
+    }
+}
+
 /// Return the physical kernel page root when the PFN database must
 /// be widened to cover it during bootstrap.
 pub fn kernel_page_root() -> Option<u64> {
-    #[cfg(target_arch = "x86_64")]
-    return Some(read_current_page_root());
-    #[cfg(any(target_arch = "riscv64", target_arch = "loongarch64"))]
-    return Some(read_current_page_root());
-    #[cfg(not(target_arch = "x86_64"))]
-    None
+    #[cfg(any(
+        target_arch = "x86_64",
+        target_arch = "riscv64",
+        target_arch = "loongarch64"
+    ))]
+    {
+        Some(read_current_page_root())
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        None
+    }
 }
 
 /// Return the highest physical address usable by the identity map,
@@ -1277,6 +1357,10 @@ pub fn translate_x86_root_entry(entry: u64) -> u64 {
     #[cfg(target_arch = "riscv64")]
     {
         riscv64::paging::translate_x86_root_entry(entry)
+    }
+    #[cfg(target_arch = "loongarch64")]
+    {
+        loongarch64::paging::translate_x86_root_entry(entry)
     }
     #[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
     {
