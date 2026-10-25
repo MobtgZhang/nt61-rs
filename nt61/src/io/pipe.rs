@@ -40,6 +40,10 @@ pub struct PipeEnd {
 
 /// State shared between the two ends of a pipe.
 pub(crate) struct PipeState {
+    /// Base pipe id for this slot. Slot 0 uses id 1, slot 1 uses id 3,
+    /// and so on. Keeping the id with the state makes id->slot stable
+    /// even after a closed slot is reused by a later allocation.
+    pub(crate) base_id: u64,
     pub buffer: VecDeque<u8>,
     pub write_open: bool,
     pub read_open: bool,
@@ -52,8 +56,9 @@ pub(crate) struct PipeState {
 }
 
 impl PipeState {
-    fn new() -> Self {
+    fn new(base_id: u64) -> Self {
         Self {
+            base_id,
             buffer: VecDeque::with_capacity(PIPE_BUFFER_SIZE),
             write_open: true,
             read_open: true,
@@ -86,6 +91,12 @@ fn alloc_slot(state: PipeState) -> usize {
     pipes.len() - 1
 }
 
+fn pipe_matches_id(slot: &Option<PipeState>, pipe_id: u64) -> bool {
+    slot.as_ref()
+        .map(|state| pipe_id >= state.base_id && pipe_id < state.base_id + 2)
+        .unwrap_or(false)
+}
+
 fn with_pipe<R>(idx: usize, f: impl FnOnce(&mut PipeState) -> R) -> Option<R> {
     let mut pipes = PIPES.lock();
     pipes.get_mut(idx).and_then(|s| s.as_mut().map(f))
@@ -96,7 +107,7 @@ fn with_pipe<R>(idx: usize, f: impl FnOnce(&mut PipeState) -> R) -> Option<R> {
 /// yet — wrappers below add that).
 pub fn create_anonymous() -> Option<(usize, u64, u64)> {
     let id = NEXT_PIPE_ID.fetch_add(2, Ordering::Relaxed);
-    let state = PipeState::new();
+    let state = PipeState::new(id);
     let idx = alloc_slot(state);
     let read_id = id;
     let write_id = id.wrapping_add(1);
@@ -116,20 +127,15 @@ pub fn create_anonymous() -> Option<(usize, u64, u64)> {
 /// allocator hands out sequential ids (read = id, write = id+1).
 pub fn slot_for_id(pipe_id: u64) -> Option<(usize, bool)> {
     let pipes = PIPES.lock();
-    // The id is `id << 1` relative to slot indexes — we packed
-    // 2 ids per alloc call so slot = (id - 1) / 2, direction =
-    // (id - 1) % 2.
     if pipe_id == 0 {
         return None;
     }
-    let idx = ((pipe_id - 1) / 2) as usize;
-    let is_write = ((pipe_id - 1) % 2) == 1;
-    if idx >= pipes.len() {
-        return None;
-    }
-    if pipes[idx].is_none() {
-        return None;
-    }
+    let idx = pipes.iter().position(|slot| pipe_matches_id(slot, pipe_id))?;
+    let is_write = pipes
+        .get(idx)
+        .and_then(|slot| slot.as_ref())
+        .map(|state| pipe_id != state.base_id)
+        .unwrap_or(false);
     Some((idx, is_write))
 }
 
@@ -249,6 +255,6 @@ pub fn register_external_pipe(host_id: u64) -> Option<usize> {
     if id == host_id {
         return None;
     }
-    let state = PipeState::new();
+    let state = PipeState::new(id);
     Some(alloc_slot(state))
 }

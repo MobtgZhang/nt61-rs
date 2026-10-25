@@ -171,7 +171,7 @@ pub const DO_VERIFY_VOLUME: u32 = 0x00000002;
 pub const DO_BUFFERED_IO: u32 = 0x00000004;
 pub const DO_EXCLUSIVE: u32 = 0x00000008;
 pub const DO_BIT_LOCKED: u32 = 0x00000100;
-pub const DO_POWER_PAGABLE: u32 = 0x00000100;
+pub const DO_POWER_PAGABLE: u32 = 0x00000200;
 
 /// PnP device state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1292,10 +1292,9 @@ unsafe extern "C" fn fs_read_dispatch(_device: *mut DeviceObject, irp: *mut Irp)
         return STATUS_INVALID_PARAMETER as i32;
     }
 
-    // Get parameters from the union (buffer address in lower 32 bits, length in upper 32 bits)
-    let params = (*stack).parameters.as_u64;
-    let buffer = (params & 0xFFFFFFFF) as *mut u8;
-    let length = ((params >> 32) & 0xFFFFFFFF) as u32;
+    let params = (*stack).parameters.read_write;
+    let buffer = params.byte_offset as *mut u8;
+    let length = params.byte_count;
 
     // Route to the underlying filesystem via VFS
     let byte_offset = (*file_obj).current_byte_offset;
@@ -1350,10 +1349,9 @@ unsafe extern "C" fn fs_write_dispatch(_device: *mut DeviceObject, irp: *mut Irp
         return STATUS_INVALID_PARAMETER as i32;
     }
 
-    // Get parameters from the union (buffer address in lower 32 bits, length in upper 32 bits)
-    let params = (*stack).parameters.as_u64;
-    let buffer = (params & 0xFFFFFFFF) as *mut u8;
-    let length = ((params >> 32) & 0xFFFFFFFF) as u32;
+    let params = (*stack).parameters.read_write;
+    let buffer = params.byte_offset as *mut u8;
+    let length = params.byte_count;
 
     // Route to the underlying filesystem via VFS
     let byte_offset = (*file_obj).current_byte_offset;

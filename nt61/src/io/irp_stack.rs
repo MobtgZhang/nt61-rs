@@ -4,7 +4,7 @@
 //! in the device stack. As the IRP travels down the stack, each driver
 //! gets its own stack location with parameters for that layer.
 
-use super::{DeviceObject, FileObject, IoParameters, IoStackLocation, Irp};
+use super::{DeviceObject, FileObject, IoParameters, IoStackLocation, Irp, ReadWriteParameters};
 use core::ptr::null_mut;
 
 #[inline]
@@ -140,7 +140,6 @@ pub fn init_stack_location(
     if stack.is_null() {
         return;
     }
-
     unsafe {
         (*stack).major_function = major_function;
         (*stack).minor_function = minor_function;
@@ -171,8 +170,13 @@ pub fn build_synchronous_irp(
             (*stack).device_object = device;
             (*stack).file_object = null_mut();
 
-            let params = ((length as u64) << 32) | (buffer as u64 & 0xFFFFFFFF);
-            (*stack).parameters = IoParameters { as_u64: params };
+            (*stack).parameters = IoParameters {
+                read_write: ReadWriteParameters {
+                    byte_offset: buffer as u64,
+                    byte_count: length,
+                    key: 0,
+                },
+            };
         }
 
         (*irp).flags |= super::cancel::IRP_SYNCHRONOUS_API;
@@ -219,9 +223,9 @@ pub fn get_read_write_parameters(stack: *const IoStackLocation) -> Option<(*mut 
     }
 
     unsafe {
-        let params = (*stack).parameters.as_u64;
-        let buffer = (params & 0xFFFFFFFF) as *mut u8;
-        let length = ((params >> 32) & 0xFFFFFFFF) as u32;
+        let params = (*stack).parameters.read_write;
+        let buffer = params.byte_offset as *mut u8;
+        let length = params.byte_count;
 
         let offset = 0u64;
 
@@ -238,11 +242,17 @@ pub fn set_read_write_parameters(
     if stack.is_null() {
         return;
     }
+    if length > 0 && buffer.is_null() {
+        return;
+    }
 
     unsafe {
-        let params = ((length as u64) << 32) | (buffer as u64 & 0xFFFFFFFF);
-        (*stack).parameters = IoParameters { as_u64: params };
-
-        let _ = offset;
+        (*stack).parameters = IoParameters {
+            read_write: ReadWriteParameters {
+                byte_offset: offset,
+                byte_count: length,
+                key: 0,
+            },
+        };
     }
 }
