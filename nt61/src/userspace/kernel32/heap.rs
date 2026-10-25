@@ -90,7 +90,14 @@ pub fn init_user_heap(pml4: u64) -> u64 {
     let first_size = HEAP_PAGE_BUDGET as usize - HEADER_SIZE;
     crate::hal::serial::write_string_always("[USERHEAP] zeroing\r\n");
     unsafe {
-        core::ptr::write_bytes(base as *mut u8, 0, HEAP_PAGE_BUDGET as usize);
+        for offset in 0..HEAP_PAGE_BUDGET as usize {
+            if offset % 0x10000 == 0 {
+                crate::hal::serial::write_string_always("[USERHEAP] zero page=");
+                crate::hal::serial::write_hex_u64_always(base + offset as u64);
+                crate::hal::serial::write_string_always("\r\n");
+            }
+            core::ptr::write_volatile((base + offset as u64) as *mut u8, 0u8);
+        }
         crate::hal::serial::write_string_always("[USERHEAP] zeroed\r\n");
         ptr::write(
             first_block,

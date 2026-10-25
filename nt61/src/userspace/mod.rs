@@ -2,7 +2,7 @@
 //!
 //! ## Architecture Overview
 //!
-//! ```
+//! ```text
 //! userspace/           ← user-mode shim (re-exports from libs/ and libs/server/)
 //!   ntdll/             ← wraps crate::libs::ntdll  (syscall macros, NTSTATUS)
 //!   kernel32/          ← wraps crate::libs::kernel32 (Win32 API stubs)

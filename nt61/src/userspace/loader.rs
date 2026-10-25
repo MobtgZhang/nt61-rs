@@ -74,32 +74,22 @@ impl UserProgramLoader {
         teb_already_initialized: bool,
     ) -> Result<UserProcessContext, NTSTATUS> {
         // ---- 1. Resolve file bytes (fall back to stub if not found) ----
-        let bytes: &'static [u8] = match find_image_bytes(image_path) {
-            Some(b) => b,
-            None => user_fallback_bytes(),
+        let image_storage = find_image_bytes(image_path);
+        let bytes: &[u8] = if let Some(image) = image_storage.as_deref() {
+            image
+        } else {
+            user_fallback_bytes()
         };
 
-        // ---- 2. Parse PE headers ------------------------------------
-        let parsed = match loader::load_pe(bytes) {
-            Some(p) => p,
-            None => return Err(STATUS_INVALID_IMAGE_FORMAT),
-        };
-
-        // ---- 3. Map sections into the user PML4 --------------------
-        let image_base = parsed.image_base;
-        let entry_point = parsed.entry_point;
-
-        map_pe_into_pml4(self.pml4_phys, &parsed, image_base)?;
-
-        // ---- 4. Apply base relocations if necessary -----------------
-        // We always load at ImageBase for simplicity; relocation is a
-        // no-op in that case but the code path is exercised.
-        if image_base != DEFAULT_IMAGE_BASE && image_base != parsed.image_base {
-            apply_base_relocations(self.pml4_phys, &parsed, 0)?;
-        }
-
-        // ---- 5. Resolve imports -------------------------------------
-        resolve_imports_into_image(self.pml4_phys, &parsed, image_base)?;
+        // ---- 2. Run the complete PE pipeline and map the image ------
+        let mapping = loader::load_named_image_into_user_address_space(
+            self.pml4_phys,
+            bytes,
+            image_path.rsplit('/').next().unwrap_or(image_path),
+        )
+        .ok_or(STATUS_INVALID_IMAGE_FORMAT)?;
+        let image_base = mapping.image_base;
+        let entry_point = mapping.entry_point;
 
         // ---- 6. Set up PEB / TEB ------------------------------------
         let peb = if peb_already_initialized {
@@ -146,8 +136,44 @@ pub static USER_LOAD_COUNT: AtomicU64 = AtomicU64::new(0);
 /// returns `None` for any path except the literal kernels we ship;
 /// callers should fall back to the hard-coded stub when nothing is
 /// found. A future revision will consult the FAT/PSID file cache.
-fn find_image_bytes(_path: &str) -> Option<&'static [u8]> {
-    None
+pub fn find_image_bytes(path: &str) -> Option<alloc::vec::Vec<u8>> {
+    #[cfg(test)]
+    {
+        if let Some(image) = test_images()
+            .iter()
+            .find(|(candidate, _)| candidate == path)
+            .map(|(_, image)| image.clone())
+        {
+            return Some(image);
+        }
+    }
+    let mut nt_path = alloc::string::String::new();
+    if !(path.starts_with('\\') || path.starts_with('/')) {
+        nt_path.push('\\');
+    }
+    nt_path.push_str(path);
+    let data = crate::servers::smss::read_pe_from_disk(&nt_path)?;
+    Some(core::mem::ManuallyDrop::into_inner(data))
+}
+
+#[cfg(test)]
+pub fn load_test_image(path: &str) {
+    let image = alloc::vec::Vec::from(user_fallback_bytes());
+    let mut images = test_images();
+    if let Some(existing) = images.iter_mut().find(|(candidate, _)| candidate == path) {
+        existing.1 = image;
+    } else {
+        images.push((alloc::string::String::from(path), image));
+    }
+}
+
+#[cfg(test)]
+fn test_images(
+) -> crate::ke::sync::SpinlockGuard<'static, alloc::vec::Vec<(alloc::string::String, alloc::vec::Vec<u8>)>> {
+    static TEST_IMAGES: crate::ke::sync::Spinlock<
+        alloc::vec::Vec<(alloc::string::String, alloc::vec::Vec<u8>)>,
+    > = crate::ke::sync::Spinlock::new(alloc::vec::Vec::new());
+    TEST_IMAGES.lock()
 }
 
 /// Tiny placeholder "image" that is good enough to exercise the
@@ -165,40 +191,6 @@ const FALLBACK_IMAGE: [u8; 16] = [
 // ---------------------------------------------------------------------------
 // internal helpers
 // ---------------------------------------------------------------------------
-
-/// Map the loaded PE's sections into the user PML4 starting at
-/// `image_base`. For the fallback image this writes a single
-/// zeroed, R+X page.
-fn map_pe_into_pml4(
-    _pml4: u64,
-    _parsed: &loader::LoaderResult,
-    _image_base: u64,
-) -> Result<NTSTATUS, NTSTATUS> {
-    // The full implementation walks `parsed.sections` and maps each
-    // one with the appropriate PAGE_* protection. For Phase 1 we
-    // just mark success; the user_entry fallback handles actual
-    // RIP placement.
-    Ok(STATUS_SUCCESS)
-}
-
-fn apply_base_relocations(
-    _pml4: u64,
-    _parsed: &loader::LoaderResult,
-    _delta: i64,
-) -> Result<NTSTATUS, NTSTATUS> {
-    Ok(STATUS_SUCCESS)
-}
-
-/// Walk the import directory and resolve each entry against
-/// built-in stub functions. The user-mode stubs live in
-/// `crate::userspace::ntdll` (see Phase 2).
-fn resolve_imports_into_image(
-    _pml4: u64,
-    _parsed: &loader::LoaderResult,
-    _image_base: u64,
-) -> Result<NTSTATUS, NTSTATUS> {
-    Ok(STATUS_SUCCESS)
-}
 
 // ---------------------------------------------------------------------------
 // PEB / TEB initialization in user PML4
