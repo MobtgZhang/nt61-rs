@@ -119,7 +119,16 @@ static FONT_PARSE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 /// The parse allocates, so it must wait until the kernel heap is
 /// up; before that the fallback metrics below are used and the
 /// real face is picked up automatically once heap::init ran.
-fn font_face() -> Option<&'static nt61_fonts::FontFace> {
+#[cfg(target_arch = "riscv64")]
+fn font_face_parsed() -> Option<&'static nt61_fonts::FontFace> {
+    // RISC-V bring-up currently traps inside ttf-parser's CFF path
+    // before reaching the shell. The boot console falls back to
+    // conservative cell metrics, and serial output remains active.
+    None
+}
+
+#[cfg(not(target_arch = "riscv64"))]
+fn font_face_parsed() -> Option<&'static nt61_fonts::FontFace> {
     if let Some(face) = FONT_FACE.get() {
         return face.as_ref();
     }
@@ -136,6 +145,10 @@ fn font_face() -> Option<&'static nt61_fonts::FontFace> {
         FONT_FACE.call_once(|| nt61_fonts::FontFace::from_bytes(nt61_fonts::TERMINAL_FONT).ok());
     FONT_PARSE_IN_PROGRESS.store(false, Ordering::Release);
     face.as_ref()
+}
+
+fn font_face() -> Option<&'static nt61_fonts::FontFace> {
+    font_face_parsed()
 }
 
 /// Horizontal advance of one monospaced glyph cell, derived from

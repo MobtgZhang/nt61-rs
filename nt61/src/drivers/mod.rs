@@ -93,6 +93,7 @@ pub fn init() {
     crate::hal::serial::write_string_always("D:storage_start\r\n");
     storage::init();
     crate::hal::serial::write_string_always("D:storage_done\r\n");
+    clfs::init();
     crate::hal::serial::write_string_always("D:usb_start\r\n");
     usb::init();
     crate::hal::serial::write_string_always("D:usb_done\r\n");

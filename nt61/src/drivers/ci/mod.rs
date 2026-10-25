@@ -233,7 +233,7 @@ struct CoffHeader {
 }
 
 /// PE32+ optional header magic.
-pub const PE32_MAGIC: u16 = 0x020b;
+pub const PE32_MAGIC: u16 = 0x010c;
 const PE32_PLUS_MAGIC: u16 = 0x020b;
 
 /// PE32+ optional header (for x64).
@@ -338,9 +338,8 @@ pub fn compute_pe_hash(image: &[u8]) -> [u8; 32] {
 
     let opt_magic = u16::from_le_bytes([image[opt_hdr_off], image[opt_hdr_off + 1]]);
 
-    // Data directories offset depends on PE format
     let data_dir_offset = if opt_magic == PE32_PLUS_MAGIC {
-        opt_hdr_off + 96 // PE32+ has 16 data dirs at offset 96
+        opt_hdr_off + 112 // PE32+ optional header differs from PE32 by 16 bytes
     } else {
         opt_hdr_off + 96 // PE32 also has them here
     };

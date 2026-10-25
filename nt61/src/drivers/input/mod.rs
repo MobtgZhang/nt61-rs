@@ -22,6 +22,7 @@ pub mod smoke;
 pub fn init() {
     // kprintln!("    Input drivers: i8042, USB HID keyboard / mouse");
     crate::drivers::arch::init_i8042();
+    virtio_input::init();
     usb_hid_kbd::init();
     usb_hid_mouse::init();
     // kprintln!("    Input stack ready");

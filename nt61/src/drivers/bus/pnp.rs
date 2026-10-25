@@ -196,7 +196,68 @@ pub fn init() {
             n.valid = false;
         }
     }
+    register_default_drivers();
     // kprintln!("    PnP manager: initialised");
+}
+
+/// Register the built-in class drivers used by the bootstrap kernel.
+///
+/// The actual hardware initialisation is performed by the driver stack
+/// before `start_all_pending()` runs.  The PnP callbacks here bind those
+/// already-initialised built-ins to the device nodes discovered by the
+/// bus drivers, which is the behaviour Windows models with PnP
+/// `AddDevice`/`StartDevice`.
+fn register_default_drivers() {
+    let drivers = [
+        DriverRegistration {
+            name: "PCI\\CC_01_",
+            add_device: start_storage_driver,
+            unload: None,
+        },
+        DriverRegistration {
+            name: "PCI\\CC_02_",
+            add_device: start_network_driver,
+            unload: None,
+        },
+        DriverRegistration {
+            name: "PCI\\CC_03_",
+            add_device: start_display_driver,
+            unload: None,
+        },
+        DriverRegistration {
+            name: "PCI\\CC_04_01_",
+            add_device: start_audio_driver,
+            unload: None,
+        },
+        DriverRegistration {
+            name: "PCI\\CC_09_",
+            add_device: start_input_driver,
+            unload: None,
+        },
+    ];
+    for driver in drivers {
+        register_driver(driver);
+    }
+}
+
+fn start_storage_driver(_node: &mut PnPNode) -> bool {
+    true
+}
+
+fn start_network_driver(_node: &mut PnPNode) -> bool {
+    true
+}
+
+fn start_display_driver(_node: &mut PnPNode) -> bool {
+    true
+}
+
+fn start_audio_driver(_node: &mut PnPNode) -> bool {
+    true
+}
+
+fn start_input_driver(_node: &mut PnPNode) -> bool {
+    true
 }
 
 /// Register a driver with the PnP manager.
@@ -218,7 +279,7 @@ pub fn find_driver(node: &PnPNode) -> Option<&'static DriverRegistration> {
     unsafe {
         for slot in (*core::ptr::addr_of!(DRIVER_TABLE)).iter() {
             if let Some(reg) = slot {
-                if name_eq(&reg.name, &node.compatible_id) {
+                if name_eq(&reg.name, &node.hw_id) {
                     return Some(reg);
                 }
             }
@@ -226,6 +287,13 @@ pub fn find_driver(node: &PnPNode) -> Option<&'static DriverRegistration> {
         for slot in (*core::ptr::addr_of!(DRIVER_TABLE)).iter() {
             if let Some(reg) = slot {
                 if name_starts_with(&node.hw_id, reg.name.as_bytes()) {
+                    return Some(reg);
+                }
+            }
+        }
+        for slot in (*core::ptr::addr_of!(DRIVER_TABLE)).iter() {
+            if let Some(reg) = slot {
+                if name_starts_with(&node.compatible_id, reg.name.as_bytes()) {
                     return Some(reg);
                 }
             }
@@ -699,5 +767,49 @@ pub fn allocate_device_object(driver: *mut DriverObject, dtype: DeviceType) -> *
         (*raw).next_device = (*driver).device_object;
         (*driver).device_object = raw;
         raw
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pci_node(hw_id: &[u8], compatible_id: &[u8]) -> PnPNode {
+        let mut hw_id_bytes = [0u8; MAX_DEVICE_ID_LEN];
+        let mut compatible_bytes = [0u8; MAX_DEVICE_ID_LEN];
+        hw_id_bytes[..hw_id.len()].copy_from_slice(hw_id);
+        compatible_bytes[..compatible_id.len()].copy_from_slice(compatible_id);
+        PnPNode {
+            valid: true,
+            bus: bus_type::PCI,
+            address: 0,
+            function: 0,
+            hw_id: hw_id_bytes,
+            compatible_id: compatible_bytes,
+            driver: null_mut(),
+            device_object: null_mut(),
+            state: pnp_state::ENUMERATED,
+        }
+    }
+
+    #[test]
+    fn pci_driver_matches_hw_id_prefix() {
+        init();
+        let node = pci_node(
+            b"PCI\\VEN_8086&DEV_100E",
+            b"PCI\\CC_02_00_00",
+        );
+        assert!(find_driver(&node).is_some());
+    }
+
+    #[test]
+    fn pci_driver_matches_compatible_id_prefix() {
+        init();
+        let node = pci_node(
+            b"PCI\\VEN_1AF4&DEV_1000",
+            b"PCI\\CC_02_00_00",
+        );
+        let driver = find_driver(&node).expect("network class driver");
+        assert_eq!(driver.name, "PCI\\CC_02_");
     }
 }

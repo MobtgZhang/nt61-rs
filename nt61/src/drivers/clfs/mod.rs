@@ -62,6 +62,19 @@ pub use vcb::ClfsVcb;
 
 pub mod smoke;
 
+/// Boot-time initialisation hook. Prepares the CLFS subsystem for
+/// use by resetting the global statistics and marking the module
+/// active. Log containers are opened on demand via
+/// `CreateLogFile` / `ClfsCreateLogFile`.
+pub fn init() {
+    CLFS_STATS.blocks_read.store(0, Ordering::Release);
+    CLFS_STATS.blocks_written.store(0, Ordering::Release);
+    CLFS_STATS.records_read.store(0, Ordering::Release);
+    CLFS_STATS.records_written.store(0, Ordering::Release);
+    CLFS_STATS.checksum_errors.store(0, Ordering::Release);
+    CLFS_STATS.flushes.store(0, Ordering::Release);
+}
+
 // ============================================================================
 // NTSTATUS Constants
 // ============================================================================

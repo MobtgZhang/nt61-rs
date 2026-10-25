@@ -223,9 +223,13 @@ pub fn flt_unregister_filter(h: u32) -> i32 {
         if !slot.valid {
             return -1;
         }
-        // Detach from all volumes that point to this filter.
+        // Detach only the entries bound to this filter.
         for a in (*core::ptr::addr_of_mut!(ATTACHED)).iter_mut() {
-            a[0] = 0; // Clear first byte to mark as empty
+            for entry in a.iter_mut() {
+                if *entry as usize == idx {
+                    *entry = 0;
+                }
+            }
         }
         slot.valid = false;
         slot.started = false;

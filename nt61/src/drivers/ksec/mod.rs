@@ -259,7 +259,8 @@ pub fn aes_cbc_encrypt(key: &[u8], iv: &[u8], plaintext: &[u8], ciphertext: &mut
         Some(k) => k,
         None => return false,
     };
-    if iv.len() != 16 || ciphertext.len() < plaintext.len() {
+    let padded_len = ((plaintext.len() + 15) / 16) * 16;
+    if iv.len() != 16 || ciphertext.len() < padded_len {
         return false;
     }
 

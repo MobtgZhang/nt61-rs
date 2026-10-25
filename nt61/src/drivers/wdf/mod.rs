@@ -584,17 +584,24 @@ impl WdfRequest {
     /// Complete the request
     pub fn complete(&mut self, status: WdfRequestStatus) {
         self.status = status;
-        if let Some(_completion) = self.completion {
-            // Call completion routine
-            // _completion(self as *mut WdfRequest as *mut _, self.completion_context, status);
+        if let Some(completion) = self.completion {
+            completion(
+                self as *mut WdfRequest as *mut _,
+                self.completion_context,
+                status,
+            );
         }
     }
 
     /// Cancel the request
     pub fn cancel(&mut self) {
         self.status = WdfRequestStatus::Canceled;
-        if let Some(_completion) = self.completion {
-            // Call completion routine with canceled status
+        if let Some(completion) = self.completion {
+            completion(
+                self as *mut WdfRequest as *mut _,
+                self.completion_context,
+                WdfRequestStatus::Canceled,
+            );
         }
     }
 }
