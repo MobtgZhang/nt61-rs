@@ -22,7 +22,7 @@
 //!
 //! # Usage
 //!
-//! ```rust
+//! ```text
 //! // In mm/frame.rs::init_with_range()
 //! pub fn init_with_range(base: u64, size: u64) {
 //!     init_state::enter_state(STATE_FRAME_ALLOCATOR, "frame::init");

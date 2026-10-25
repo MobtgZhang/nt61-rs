@@ -761,10 +761,16 @@ pub fn allocate_from_freelist(pool_type: PoolType, size: usize) -> Option<*mut u
                 // data was left in place, causing stale/uninitialized
                 // header fields and false-positive double-free detection.
                 let block_start = block_ptr as *mut u8;
-                let total_alloc_size = block.size; // includes HEADER_SIZE
+                let total_alloc_size = size; // includes HEADER_SIZE
                 let header = block_start as *mut PoolHeader;
                 (*header).block_size = total_alloc_size as u32;
+                (*header).pool_type = pool_type as u8;
                 (*header).flags = PoolHeader::BLOCK_VALID;
+                core::ptr::write_bytes(
+                    block_start.add(PoolHeader::HEADER_SIZE),
+                    0,
+                    total_alloc_size.saturating_sub(PoolHeader::HEADER_SIZE),
+                );
                 return Some(block_start.add(PoolHeader::HEADER_SIZE));
             }
         }

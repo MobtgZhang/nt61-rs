@@ -187,30 +187,59 @@ impl MmVirtualAddressSpace {
 
         // Find a suitable VA
         let va = if desired_base == 0 {
-            // Allocate from current position
-            let va = allocator.next_va;
-            allocator.next_va = va + aligned_size;
-            if allocator.next_va > allocator.end_va {
-                return None; // Out of user VA space
+            let mut candidate = allocator.next_va;
+            loop {
+                if candidate > allocator.end_va || aligned_size > allocator.end_va - candidate {
+                    return None;
+                }
+                let end = candidate + aligned_size;
+                if !allocator.is_overlapping(candidate, end) {
+                    break;
+                }
+                candidate = (end + 0xFFF) & !0xFFF;
             }
-            va
+            candidate
         } else {
-            // Use desired base if it's in user range
-            if desired_base < 0x0000_7FFF_FFFF_FFFF {
-                desired_base
-            } else {
-                return None; // Invalid user address
+            let base = desired_base & !0xFFF;
+            let end = base.checked_add(aligned_size)?;
+            if base >= 0x0000_7FFF_FFFF_FFFF
+                || end > allocator.end_va
+                || allocator.is_overlapping(base, end)
+            {
+                return None;
             }
+            base
         };
 
-        Some(va)
+        if allocator.record(va, va + aligned_size) {
+            Some(va)
+        } else {
+            None
+        }
+    }
+
+    /// Free a user-mode VA range previously returned by this allocator.
+    pub fn free_user_va(&self, va: u64) -> bool {
+        let mut allocator = self.user_va_allocator.lock();
+        let index = allocator
+            .allocations
+            .iter()
+            .position(|allocation| allocation.map(|region| region.start == va).unwrap_or(false));
+        match index {
+            Some(index) => {
+                allocator.allocations[index] = None;
+                true
+            }
+            None => false,
+        }
     }
 
     /// Reset the user VA allocator to initial state
     pub fn reset_user_va_allocator(&self) {
         let mut allocator = self.user_va_allocator.lock();
-        allocator.next_va = 0x10000; // Start from 64KB
+        allocator.next_va = USER_BASE;
         allocator.end_va = 0x0000_7FFF_FFFF_F000; // Windows 7 x64 user limit
+        allocator.allocations = [const { None }; MAX_USER_VA_ALLOCATIONS];
     }
 }
 
@@ -346,32 +375,29 @@ pub fn create_user_address_space() -> Option<u64> {
             #[cfg(target_arch = "x86_64")]
             {
                 *dst.add(i) = MMPTE {
-                    u_long: src_entry.raw(),
+                    u_long: crate::arch::translate_x86_root_entry(src_entry.raw()),
                 };
             }
             #[cfg(not(target_arch = "x86_64"))]
             {
-                // RISC-V, LoongArch64, and AArch64 maintain native
-                // root descriptors in their own system roots. The
-                // portable x86 translation is only appropriate when
-                // the source root really is an x86 PML4.
-                *dst.add(i) = MMPTE {
-                    u_long: src_entry.raw(),
-                };
+                // The system root is already native on non-x86 targets:
+                // Sv39 on RISC-V and LoongArch directory descriptors on
+                // LoongArch64. `system_pml4_mut()` addresses the live
+                // hardware root, so translating here would re-interpret
+                // native PPNs as x86 frame numbers and corrupt the copy.
+                *dst.add(i) = MMPTE { u_long: src_entry.raw() };
             }
         }
     }
-    let (root0_x86, root0_sv39) = unsafe {
-        (
-            (*system.add(0)).raw(),
-            core::ptr::read_volatile((pfn << 12) as *const u64),
-        )
-    };
-    crate::hal::serial::write_string_always(&alloc::format!(
-        "[VAS] root0_x86={:016x} root0_sv39={:016x}\r\n",
-        root0_x86,
-        root0_sv39
-    ));
+    crate::hal::serial::write_string_always("[VAS] dst=");
+    crate::hal::serial::write_hex_u64_always(pfn << 12);
+    crate::hal::serial::write_string_always(" root0_x86=");
+    crate::hal::serial::write_hex_u64_always(unsafe { (*system.add(0)).raw() });
+    crate::hal::serial::write_string_always(" root0_sv39=");
+    crate::hal::serial::write_hex_u64_always(unsafe {
+        core::ptr::read_volatile((pfn << 12) as *const u64)
+    });
+    crate::hal::serial::write_string_always("\r\n");
     crate::hal::serial::write_string_always("[VAS] copy ok\r\n");
     crate::boot_debug_println!("[VAS] create_user_address_space: B: copied system PML4",);
     // Install a self-map chain + identity map for this PML4. The
@@ -463,9 +489,8 @@ pub fn refresh_kernel_mappings(pml4_phys: u64) {
 
     #[cfg(not(target_arch = "x86_64"))]
     {
-        // Non-x86 roots are already native. Copying the raw root
-        // descriptors preserves Sv39/LoongArch/AArch64 permissions and
-        // avoids the x86-only translation in this function.
+        // The live system root is already in native MMU encoding on
+        // non-x86 targets, so copy its descriptors verbatim.
         let system = system_phys as *const MMPTE;
         let process = pml4_phys as *mut MMPTE;
         unsafe {
@@ -476,13 +501,9 @@ pub fn refresh_kernel_mappings(pml4_phys: u64) {
                 }
                 let system_entry = core::ptr::read_volatile(system.add(idx)).raw();
                 if system_entry != 0 {
-                    let kernel_entry =
-                        crate::arch::translate_x86_root_entry(system_entry);
                     core::ptr::write_volatile(
                         process.add(idx),
-                        crate::mm::pte::MMPTE {
-                            u_long: kernel_entry,
-                        },
+                        crate::mm::pte::MMPTE { u_long: system_entry },
                     );
                 }
             }
@@ -499,11 +520,11 @@ pub fn attach_process(pml4_phys: u64) -> u64 {
     let root_pfn = pml4_phys >> 12;
     let root_ptr = pml4_phys as *const u64;
     for index in [0usize, 1, 2, 4, 5, 9, 10, 255, 256, 510, 511] {
-        crate::hal::serial::write_string_always(&alloc::format!(
-            "[ROOT{}] {:016x}\r\n",
-            index,
-            unsafe { core::ptr::read_volatile(root_ptr.add(index)) }
-        ));
+        crate::hal::serial::write_string_always("[ROOT");
+        crate::hal::serial::write_hex_u64_always(index as u64);
+        crate::hal::serial::write_string_always("] ");
+        crate::hal::serial::write_hex_u64_always(unsafe { core::ptr::read_volatile(root_ptr.add(index)) });
+        crate::hal::serial::write_string_always("\r\n");
     }
     unsafe {
         crate::hal::serial::write_string_always("[ATTACH] load\r\n");
@@ -519,10 +540,15 @@ pub fn attach_process(pml4_phys: u64) -> u64 {
 
 /// Detach a process. Restores the system root.
 pub fn detach_process(prev: u64) {
+    let restored = if prev == 0 {
+        MM_SYSTEM_VAS.lock().pml4_phys
+    } else {
+        prev
+    };
     unsafe {
-        crate::arch::load_page_root(prev >> 12);
+        crate::arch::load_page_root(restored >> 12);
     }
-    set_current_root(prev);
+    set_current_root(restored);
     crate::arch::common::percpu::clear_user_address_space();
 }
 
@@ -681,6 +707,28 @@ pub fn map_page_in_pml4(pml4_phys: u64, va: u64, pa: u64, flags: u64) -> MmStatu
 
         // PDPT -> PD
         let mut pdpte_val = pte_read(pdpt_phys, pdpt_idx);
+        // A PDPT entry may already be a 1 GiB large page, typically
+        // inherited from the boot identity map. Split that large page
+        // into 2 MiB directory entries before trying to install a PT.
+        // Without this, the code below would treat the large-page
+        // physical address as another page table and read/write memory
+        // outside the process page tables.
+        if pdpte_val & PTE_P != 0 && pdpte_val & (1u64 << 7) != 0 {
+            let Some(new_pd) = alloc_zeroed_page() else {
+                return MmStatus::OutOfMemory;
+            };
+            let large_base = pdpte_val & 0x000F_FFFF_C000_0000;
+            let large_flags = pdpte_val & !(1u64 << 7);
+            for directory_index in 0..512usize {
+                let directory_pa =
+                    large_base + (directory_index as u64) * 0x20_0000;
+                let directory_entry =
+                    directory_pa | large_flags | PTE_A | PTE_D | (1u64 << 7);
+                pte_write(new_pd, directory_index, directory_entry);
+            }
+            pdpte_val = new_pd | INT_PTE_BITS;
+            pte_write(pdpt_phys, pdpt_idx, pdpte_val);
+        }
         if (pdpte_val & PTE_P) == 0 {
             let new_pd = match alloc_zeroed_page() {
                 Some(p) => p,
@@ -760,37 +808,53 @@ pub fn is_user_range_mapped(pml4_phys: u64, va: u64, size: u64) -> bool {
     if size == 0 {
         return true;
     }
-    let mut cur = va & !0xFFFu64;
-    let end = (va + size + 0xFFF) & !0xFFFu64;
-    while cur < end {
-        let pml4_idx = ((cur >> 39) & 0x1FF) as usize;
-        let pdpt_idx = ((cur >> 30) & 0x1FF) as usize;
-        let pd_idx = ((cur >> 21) & 0x1FF) as usize;
-        let pt_idx = ((cur >> 12) & 0x1FF) as usize;
-        unsafe {
-            let pml4e_val = pml4e(pml4_phys, pml4_idx);
-            if pml4e_val & PTE_P == 0 {
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let root_pfn = pml4_phys >> 12;
+        let mut cur = va & !0xFFFu64;
+        let end = (va + size + 0xFFF) & !0xFFFu64;
+        while cur < end {
+            if !crate::arch::page_is_mapped_in_root(root_pfn, cur) {
                 return false;
             }
-            let pdpt_phys = pml4e_val & 0x000F_FFFF_FFFF_F000;
-            let pdpte_val = pte_read(pdpt_phys, pdpt_idx);
-            if pdpte_val & PTE_P == 0 {
-                return false;
-            }
-            let pd_phys = pdpte_val & 0x000F_FFFF_FFFF_F000;
-            let pde_val = pte_read(pd_phys, pd_idx);
-            if pde_val & PTE_P == 0 {
-                return false;
-            }
-            let pt_phys = pde_val & 0x000F_FFFF_FFFF_F000;
-            let pte_val = pte_read(pt_phys, pt_idx);
-            if pte_val & PTE_P == 0 {
-                return false;
-            }
+            cur += 0x1000;
         }
-        cur += 0x1000;
+        return true;
     }
-    true
+    #[cfg(target_arch = "x86_64")]
+    {
+        let mut cur = va & !0xFFFu64;
+        let end = (va + size + 0xFFF) & !0xFFFu64;
+        while cur < end {
+            let pml4_idx = ((cur >> 39) & 0x1FF) as usize;
+            let pdpt_idx = ((cur >> 30) & 0x1FF) as usize;
+            let pd_idx = ((cur >> 21) & 0x1FF) as usize;
+            let pt_idx = ((cur >> 12) & 0x1FF) as usize;
+            unsafe {
+                let pml4e_val = pml4e(pml4_phys, pml4_idx);
+                if pml4e_val & PTE_P == 0 {
+                    return false;
+                }
+                let pdpt_phys = pml4e_val & 0x000F_FFFF_FFFF_F000;
+                let pdpte_val = pte_read(pdpt_phys, pdpt_idx);
+                if pdpte_val & PTE_P == 0 {
+                    return false;
+                }
+                let pd_phys = pdpte_val & 0x000F_FFFF_FFFF_F000;
+                let pde_val = pte_read(pd_phys, pd_idx);
+                if pde_val & PTE_P == 0 {
+                    return false;
+                }
+                let pt_phys = pde_val & 0x000F_FFFF_FFFF_F000;
+                let pte_val = pte_read(pt_phys, pt_idx);
+                if pte_val & PTE_P == 0 {
+                    return false;
+                }
+            }
+            cur += 0x1000;
+        }
+        true
+    }
 }
 
 /// Update the protection bits on an existing user range without
@@ -975,6 +1039,8 @@ pub struct UserVaAllocator {
     pub next_va: u64,
     /// End of user VA range
     pub end_va: u64,
+    /// Active allocations, identified by their base address.
+    pub allocations: [Option<VaAllocation>; MAX_USER_VA_ALLOCATIONS],
 }
 
 impl UserVaAllocator {
@@ -985,9 +1051,37 @@ impl UserVaAllocator {
             next_va: USER_BASE,
             // Windows 7 x64 user mode limit is 0x00007FFFFFFFFFFF
             end_va: 0x0000_7FFF_FFFF_F000,
+            allocations: [const { None }; MAX_USER_VA_ALLOCATIONS],
+        }
+    }
+
+    fn is_overlapping(&self, start: u64, end: u64) -> bool {
+        self.allocations.iter().any(|allocation| {
+            allocation
+                .map(|region| start < region.end && region.start < end)
+                .unwrap_or(false)
+        })
+    }
+
+    fn record(&mut self, start: u64, end: u64) -> bool {
+        match self.allocations.iter_mut().find(|slot| slot.is_none()) {
+            Some(slot) => {
+                *slot = Some(VaAllocation { start, end });
+                true
+            }
+            None => false,
         }
     }
 }
+
+/// A live user VA allocation.
+#[derive(Clone, Copy)]
+pub struct VaAllocation {
+    pub start: u64,
+    pub end: u64,
+}
+
+pub const MAX_USER_VA_ALLOCATIONS: usize = 256;
 
 /// Allocate user-mode virtual address range.
 ///
@@ -1000,32 +1094,53 @@ pub fn allocate_user_va(desired_base: u64, size: u64, _protect: u32) -> Option<u
     // Align size to page boundary
     let aligned_size = (size + 0xFFF) & !0xFFF;
 
-    // Find a suitable VA
-    let va = if desired_base == 0 {
-        // Allocate from current position
-        let va = alloc.next_va;
-        alloc.next_va = va + aligned_size;
-        if alloc.next_va > alloc.end_va {
-            return None; // Out of user VA space
-        }
-        va
-    } else {
-        // Use desired base if it's in user range
-        if desired_base < 0x0000_7FFF_FFFF_FFFF {
-            desired_base
+        // Find a suitable VA
+        let va = if desired_base == 0 {
+            let mut candidate = alloc.next_va;
+            loop {
+                if candidate > alloc.end_va || aligned_size > alloc.end_va - candidate {
+                    return None;
+                }
+                let end = candidate + aligned_size;
+                if !alloc.is_overlapping(candidate, end) {
+                    break;
+                }
+                candidate = (end + 0xFFF) & !0xFFF;
+            }
+            candidate
         } else {
-            return None; // Invalid user address
-        }
-    };
+            let base = desired_base & !0xFFF;
+            let end = base.checked_add(aligned_size)?;
+            if base >= 0x0000_7FFF_FFFF_FFFF
+                || end > alloc.end_va
+                || alloc.is_overlapping(base, end)
+            {
+                return None;
+            }
+            base
+        };
 
-    Some(va)
+        if alloc.record(va, va + aligned_size) {
+            Some(va)
+        } else {
+            None
+        }
 }
 
 /// Free user-mode virtual address range.
-pub fn free_user_va(_va: u64) -> bool {
-    // For now, we don't support freeing user VA
-    // A full implementation would track allocations and merge free blocks
-    true
+pub fn free_user_va(va: u64) -> bool {
+    let mut alloc = SYSTEM_VA_ALLOCATOR.lock();
+    let index = alloc
+        .allocations
+        .iter()
+        .position(|allocation| allocation.map(|region| region.start == va).unwrap_or(false));
+    match index {
+        Some(index) => {
+            alloc.allocations[index] = None;
+            true
+        }
+        None => false,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1097,8 +1212,14 @@ pub fn self_test_user_address_space() -> bool {
 /// Note: Standard Windows 7 x64 uses 0x00400000, but this implementation
 /// uses 0x00100000 for Phase 0 simplicity. The address should be page-aligned
 /// and in the user-space range (below 0x0000_0001_0000_0000).
+///
+/// RISC-V note: QEMU virt wires the NS16550A UART as an identity map at
+/// VA 0x1000_0000, and process roots share that mapping.  Loading user
+/// images at 0x1000_0000 therefore overwrites the UART PTE and silently
+/// kills kernel serial output (and any MMIO behind shared tables), so the
+/// image base lives at 0x4000_0000, which is neither RAM nor device MMIO.
 #[cfg(target_arch = "riscv64")]
-pub const DEFAULT_USER_IMAGE_BASE: u64 = 0x0000_0000_1000_0000;
+pub const DEFAULT_USER_IMAGE_BASE: u64 = 0x0000_0000_4000_0000;
 
 #[cfg(not(target_arch = "riscv64"))]
 pub const DEFAULT_USER_IMAGE_BASE: u64 = 0x0000_1000_0000_0000;
@@ -1122,6 +1243,10 @@ pub const USER_STACK_BASE: u64 = 0x0000_0000_7F_00_0000;
 pub const USER_STACK_BASE: u64 = 0x0000_7FFF_DE00_0000;
 pub const USER_STACK_SIZE: u64 = 0x0010_0000; // 1 MiB
 pub const USER_STACK_TOP: u64 = USER_STACK_BASE + USER_STACK_SIZE;
+
+/// Initial bytes reserved below the user stack top for the Ring 3
+/// launcher frame and the compiler's stack-probing window.
+pub const USER_STACK_INITIAL_HEAD: u64 = 0x2000;
 
 /// User entry point where the minimal ring3 stub is mapped.
 ///
@@ -1493,7 +1618,7 @@ pub fn init() {
         // low-RAM identity window above does not cover either range.
         // Map the current image and stack before flushing the TLB and
         // setting PG=1.
-        let image_va = crate::kernel_main::kernel_main as u64;
+        let image_va = crate::kernel_main::kernel_main as *const () as u64;
         ensure_low_identity_map(image_va & !0x00FF_FFFF, 0x0100_0000);
 
         let stack_sp: u64;
@@ -1503,20 +1628,39 @@ pub fn init() {
         ensure_low_identity_map(stack_sp & !0x003F_FFFF, 0x0040_0000);
     }
 
-    // RISC-V: QEMU virt RAM starts at 0x8000_0000. Map the first
-    // low-RAM window and the 256 MB high-RAM window selected by the
-    // firmware descriptors. On QEMU virt, the PFN database and kernel
-    // heap live above 4 GiB, so the high window is mandatory.
+    // RISC-V: QEMU virt RAM starts at 0x8000_0000. Map the *entire*
+    // tracked RAM range using 2 MiB superpages so the kernel retains
+    // VA==PA access to every physical page once Sv39 replaces bare
+    // mode. The previous partial windows (256 MiB each) left the UEFI
+    // SystemTable, runtime-services code, and other high-RAM firmware
+    // regions unmapped, causing page faults the moment a process root
+    // was loaded.
     #[cfg(target_arch = "riscv64")]
     {
-        ensure_low_identity_map(0x8000_0000, 0x1000_0000);
-        ensure_low_identity_map(0x1_0000_0000, 0x1000_0000);
+        // Use the PFN database's tracked range if available, otherwise
+        // fall back to a conservative QEMU virt default (10 GiB).
+        let (ram_base, ram_end) = {
+            let db = crate::mm::pfn::PFN_DB.lock();
+            if db.initialized && db.highest_pfn > db.lowest_pfn {
+                (db.lowest_pfn << 12, db.highest_pfn << 12)
+            } else {
+                (0x8000_0000u64, 0x2800_0000u64)
+            }
+        };
+        // Map in 2 MiB superpage chunks. `identity_map_region` handles
+        // the superpage / sub-page split internally.
+        ensure_low_identity_map(ram_base, ram_end - ram_base);
+
+        // Map the UEFI SystemTable and firmware runtime region near the
+        // top of RAM (above the PFN database's tracked range). This is
+        // where EDK2 places its runtime data on QEMU virt.
+        ensure_low_identity_map(0x27FF0000, 0x10_000);
 
         // The kernel boots in Sv39 bare mode and the system root is
         // only enabled later. Preserve the current image and stack in
         // that root so a temporary switch back to system space cannot
         // fault on the instruction stream or the active stack.
-        let image_va = crate::kernel_main::kernel_main as u64;
+        let image_va = crate::kernel_main::kernel_main as *const () as u64;
         ensure_low_identity_map(image_va & !0x00FF_FFFF, 0x0100_0000);
 
         let stack_sp: u64;

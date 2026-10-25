@@ -333,7 +333,7 @@ pub fn init(boot_info: &BootInfo) {
     // for it. The buddy's static 64 MiB region is also what the
     // heap and pool are sized against, so keeping chosen_size
     // small keeps the bookkeeping in the BSS FRAME_TABLE.
-    const BOOTSTRAP_RAM: u64 = 256 * 1024 * 1024;
+    const BOOTSTRAP_RAM: u64 = 512 * 1024 * 1024;
     if chosen_size > BOOTSTRAP_RAM {
         chosen_size = BOOTSTRAP_RAM;
     }
@@ -422,6 +422,9 @@ pub fn init(boot_info: &BootInfo) {
     // makes the PFN database initialization fault on its first allocation.
     if let Some((base, size)) = heap::KERNEL_HEAP.configured_region() {
         let mapped = crate::arch::identity_map_region(base as u64, size as u64);
+        crate::hal::serial::write_string_always("[mm] heap identity-map result=");
+        crate::hal::serial::write_string_always(if mapped { "ok" } else { "fail" });
+        crate::hal::serial::write_string_always("\r\n");
         if !mapped {
             crate::hal::serial::write_string(
                 "[mm] WARN: identity_map_region returned false; \
@@ -436,21 +439,53 @@ pub fn init(boot_info: &BootInfo) {
     // `vas::init` calls `pfn::allocate_pfn()` to get pages for the
     // self-map page-table chain, so PFN DB must come up first.
     crate::hal::serial::write_string("[mm] pfn::init starting\r\n");
+    // Reserve the current kernel stack so the PFN database zeroing
+    // (which can span several MB) does not overwrite it. On
+    // LoongArch64 the buddy allocator's region includes the stack
+    // set up by the trampoline; without this reservation, the
+    // first multi-MB allocation from the buddy can overlap it.
+    #[cfg(any(target_arch = "riscv64", target_arch = "loongarch64", target_arch = "aarch64"))]
+    {
+        let sp: u64;
+        unsafe {
+            #[cfg(target_arch = "riscv64")]
+            core::arch::asm!("mv {}, sp", out(reg) sp, options(nostack, preserves_flags));
+            #[cfg(target_arch = "loongarch64")]
+            core::arch::asm!("move {}, $sp", out(reg) sp, options(nostack, preserves_flags));
+            #[cfg(target_arch = "aarch64")]
+            core::arch::asm!("mov {}, sp", out(reg) sp, options(nostack, preserves_flags));
+        }
+        // Reserve 4 MiB below the current SP (the stack grows down)
+        // plus 64 KiB above it (alignment slop).
+        let stack_base = sp.saturating_sub(4 * 1024 * 1024);
+        let stack_size = 4 * 1024 * 1024 + 64 * 1024;
+        crate::mm::frame::reserve_range(stack_base, stack_size);
+        crate::hal::serial::write_string("[mm] stack reserved: base=0x");
+        crate::hal::serial::write_hex_u64_always(stack_base);
+        crate::hal::serial::write_string(" size=0x");
+        crate::hal::serial::write_hex_u64_always(stack_size);
+        crate::hal::serial::write_string("\r\n");
+    }
     let base_pfn = chosen_base / 4096;
     let pfn_count = chosen_size / 4096;
+    crate::hal::serial::write_string_always("[MM] pfn args base=0x");
+    write_decimal_u64(base_pfn);
+    crate::hal::serial::write_string_always(" count=");
+    write_decimal_u64(pfn_count);
+    crate::hal::serial::write_string_always("\r\n");
     pfn::init(base_pfn, pfn_count);
+
+    crate::hal::serial::write_string_always("[MM] heap reserve about\r\n");
 
     if let Some((base, size)) = heap::KERNEL_HEAP.configured_region() {
         let heap_base_pfn = (base as u64).div_ceil(4096);
         let heap_end_pfn = (base as u64 + size as u64) / 4096;
-        for pfn in heap_base_pfn..heap_end_pfn {
-            if !crate::mm::pfn::reserve_pfn(pfn) {
-                crate::hal::serial::write_string("[mm] WARN: heap pfn not reserved: ");
-                crate::hal::serial::write_hex_u64(pfn);
-                crate::hal::serial::write_string("\r\n");
-            }
+        if !crate::mm::pfn::reserve_pfn_range(heap_base_pfn, heap_end_pfn - heap_base_pfn) {
+            crate::hal::serial::write_string_always("[mm] WARN: heap pfn range reserve failed\r\n");
         }
     }
+
+    crate::hal::serial::write_string_always("[MM] buddy sweep about\r\n");
 
     // Reserve every frame the buddy allocator has already handed out
     // (page tables, the PFN database storage itself, the frame
@@ -480,6 +515,7 @@ pub fn init(boot_info: &BootInfo) {
                 reserved += 1;
             }
         });
+        crate::hal::serial::write_string_always("[MM] buddy sweep done\r\n");
         crate::hal::serial::write_string_always("[mm] reserved buddy frames: 0x");
         write_decimal_u64(reserved);
         crate::hal::serial::write_string_always(" unique=");
@@ -498,9 +534,9 @@ pub fn init(boot_info: &BootInfo) {
         crate::hal::serial::write_string_always("\r\n");
     }
 
-    crate::hal::serial::write_string("MM3b pfn_init_done\r\n");
+    crate::hal::serial::write_string_always("MM3b pfn_init_done\r\n");
 
-    crate::hal::serial::write_string("MM4a vas_init_about\r\n");
+    crate::hal::serial::write_string_always("MM4a vas_init_about\r\n");
     vas::init();
 
     {
@@ -511,7 +547,7 @@ pub fn init(boot_info: &BootInfo) {
         write_decimal_u64(count);
         crate::hal::serial::write_string_always("\r\n");
     }
-    crate::hal::serial::write_string("MM4 vas_init_done\r\n");
+    crate::hal::serial::write_string_always("MM4 vas_init_done\r\n");
 
     // ------------------------------------------------------------------
     // 5. System PTE pool, hyperspace window.
@@ -528,11 +564,11 @@ pub fn init(boot_info: &BootInfo) {
         crate::hal::serial::write_string_always("\r\n");
     }
 
-    crate::hal::serial::write_string("MM6 syspte_hyperspace_done\r\n");
+    crate::hal::serial::write_string_always("MM6 syspte_hyperspace_done\r\n");
 
     // ------------------------------------------------------------------
     pool::init();
-    crate::hal::serial::write_string("MM7 heap_pool_done\r\n");
+    crate::hal::serial::write_string_always("MM7 heap_pool_done\r\n");
 
     {
         let (head, count) = pfn::get_free_list_stats();
@@ -557,7 +593,7 @@ pub fn init(boot_info: &BootInfo) {
         crate::hal::serial::write_string_always("\r\n");
     }
 
-    crate::hal::serial::write_string("MM8 subsystems_done\r\n");
+    crate::hal::serial::write_string_always("MM8 subsystems_done\r\n");
 
     // ------------------------------------------------------------------
     // 8. Mark MM as fully initialized.  After this point the
@@ -575,7 +611,7 @@ pub fn init(boot_info: &BootInfo) {
     // wired up), `kprintln!` is safe to use in its full form.
     crate::rtl::klog::mark_post_mm();
 
-    crate::hal::serial::write_string("MM9 full_init_done\r\n");
+    crate::hal::serial::write_string_always("MM9 full_init_done\r\n");
 }
 
 /// True once `init()` has successfully completed. The page fault

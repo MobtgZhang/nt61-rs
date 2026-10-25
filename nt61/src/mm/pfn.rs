@@ -328,6 +328,13 @@ impl PfnDatabase {
         pfn_count: PfnNumber,
     ) {
         let bytes_needed = (pfn_count as usize) * core::mem::size_of::<MMPFN>();
+        crate::hal::serial::write_string_always("[mm] PFNDB bytes_needed=");
+        crate::mm::write_decimal_u64(bytes_needed as u64);
+        crate::hal::serial::write_string_always(" storage=");
+        crate::mm::write_decimal_u64(storage_bytes as u64);
+        crate::hal::serial::write_string_always(" ptr=0x");
+        crate::hal::serial::write_hex_u64_always(storage as u64);
+        crate::hal::serial::write_string_always("\r\n");
         // If storage is smaller than what the full pfn_count would
         // need, truncate pfn_count to whatever storage can hold.
         // This is the "memory-map lies, buddy is tight" fallback
@@ -339,15 +346,37 @@ impl PfnDatabase {
             pfn_count as usize
         };
         let usable_bytes = usable_pfns * core::mem::size_of::<MMPFN>();
+        crate::hal::serial::write_string_always("[mm] PFNDB usable_pfns=");
+        crate::mm::write_decimal_u64(usable_pfns as u64);
+        crate::hal::serial::write_string_always(" usable_bytes=");
+        crate::mm::write_decimal_u64(usable_bytes as u64);
+        crate::hal::serial::write_string_always("\r\n");
         // Zero the storage so the list state is consistent.
         unsafe {
-            ptr::write_bytes(storage, 0, usable_bytes);
+            for zero_base in (0..usable_bytes).step_by(32 * 1024) {
+                let zero_end = core::cmp::min(zero_base + 32 * 1024, usable_bytes);
+                ptr::write_bytes(storage.add(zero_base), 0, zero_end - zero_base);
+                crate::hal::serial::write_string_always("[mm] PFNDB zero ");
+                crate::mm::write_decimal_u64(zero_end as u64);
+                crate::hal::serial::write_string_always("/");
+                crate::mm::write_decimal_u64(usable_bytes as u64);
+                crate::hal::serial::write_string_always("\r\n");
+            }
         }
+        crate::hal::serial::write_string_always("[mm] PFNDB zeroed\r\n");
         self.pfn_array = storage as *mut MMPFN;
         self.pfn_count = usable_pfns as u64;
         self.lowest_pfn = base_pfn;
         self.highest_pfn = base_pfn + usable_pfns as u64;
         self.initialized = true;
+        // Inline verification — read back immediately.
+        crate::hal::serial::write_string_always("[mm] init verify: self=0x");
+        crate::hal::serial::write_hex_u64_always(self as *const PfnDatabase as u64);
+        crate::hal::serial::write_string_always(" lowest=");
+        crate::mm::write_decimal_u64(self.lowest_pfn);
+        crate::hal::serial::write_string_always(" count=");
+        crate::mm::write_decimal_u64(self.pfn_count);
+        crate::hal::serial::write_string_always("\r\n");
     }
 
     /// Convert a PFN to the address of its database entry.
@@ -472,7 +501,7 @@ impl PfnDatabase {
 
     fn bump_state_count(&self, state: MMPFNSTATE, delta: i64) {
         let apply = |counter: &AtomicU64| {
-            let _ = counter.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+            let _ = counter.try_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
                 Some((current as i64).saturating_add(delta).max(0) as u64)
             });
         };
@@ -788,7 +817,12 @@ pub fn init(base_pfn: PfnNumber, pfn_count: PfnNumber) {
         PFN_BASE = base_pfn;
         // Try to allocate the full-size storage from the buddy.
         let pages = (bytes_needed + 4095) / 4096;
-        if let Some(phys) = crate::mm::frame::allocate_pages(pages as u64) {
+        if cfg!(target_arch = "loongarch64") {
+            crate::hal::serial::write_string("[mm] pfn::init: using bootstrap storage\r\n");
+            PFN_STORAGE_PTR = (*core::ptr::addr_of_mut!(PFN_STORAGE_BOOTSTRAP)).as_mut_ptr();
+            PFN_STORAGE_USED = (*core::ptr::addr_of!(PFN_STORAGE_BOOTSTRAP)).len();
+            PFN_STORAGE_CAPACITY = (*core::ptr::addr_of!(PFN_STORAGE_BOOTSTRAP)).len();
+        } else if let Some(phys) = crate::mm::frame::allocate_pages(pages as u64) {
             if !crate::arch::identity_map_region(phys, (pages * 4096) as u64) {
                 crate::hal::serial::write_string_always(
                     "[FATAL] pfn::init: storage map failed\r\n",
@@ -833,9 +867,81 @@ pub fn init(base_pfn: PfnNumber, pfn_count: PfnNumber) {
             );
             // NOTE: bugcheck_with() is ! (never returns), so no code after this
         }
+        crate::hal::serial::write_string_always("[mm] pfn::init: before db init\r\n");
         let mut db = PFN_DB.lock();
-        db.init(PFN_STORAGE_PTR, PFN_STORAGE_CAPACITY, base_pfn, pfn_count);
-        db.seed_free(base_pfn, pfn_count);
+        crate::hal::serial::write_string_always("[mm] db_ptr=0x");
+        crate::hal::serial::write_hex_u64_always(&mut *db as *mut PfnDatabase as u64);
+        crate::hal::serial::write_string_always(" pfn_db_static=0x");
+        crate::hal::serial::write_hex_u64_always(core::ptr::addr_of!(PFN_DB) as u64);
+        crate::hal::serial::write_string_always("\r\n");
+        // WORKAROUND: LoongArch64 `db.init()` via DerefMut passes self=0.
+        // Write the fields directly through a raw pointer to bypass the
+        // method-call overhead and any argument-passing issue.
+        let db_raw = &mut *db as *mut PfnDatabase;
+        crate::hal::serial::write_string_always("[mm] raw_init: db_raw=0x");
+        crate::hal::serial::write_hex_u64_always(db_raw as u64);
+        crate::hal::serial::write_string_always("\r\n");
+        let usable_pfns = {
+            let bytes_needed = (pfn_count as usize) * core::mem::size_of::<MMPFN>();
+            crate::hal::serial::write_string_always("[mm] raw_init: bytes_needed=");
+            crate::mm::write_decimal_u64(bytes_needed as u64);
+            crate::hal::serial::write_string_always(" storage_cap=");
+            crate::mm::write_decimal_u64(PFN_STORAGE_CAPACITY as u64);
+            crate::hal::serial::write_string_always(" pfn_count=");
+            crate::mm::write_decimal_u64(pfn_count);
+            crate::hal::serial::write_string_always("\r\n");
+            if bytes_needed > PFN_STORAGE_CAPACITY {
+                PFN_STORAGE_CAPACITY / core::mem::size_of::<MMPFN>()
+            } else {
+                pfn_count as usize
+            }
+        };
+        crate::hal::serial::write_string_always("[mm] raw_init: usable_pfns=");
+        crate::mm::write_decimal_u64(usable_pfns as u64);
+        crate::hal::serial::write_string_always(" storage_ptr=0x");
+        crate::hal::serial::write_hex_u64_always(PFN_STORAGE_PTR as u64);
+        crate::hal::serial::write_string_always("\r\n");
+        let storage_local = PFN_STORAGE_PTR;
+        crate::hal::serial::write_string_always("[mm] read_test: byte0=0x");
+        crate::hal::serial::write_hex_u64_always(*storage_local as u64);
+        crate::hal::serial::write_string_always("\r\n");
+        crate::hal::serial::write_string_always("[mm] write_test...\r\n");
+        *storage_local = 0;
+        crate::hal::serial::write_string_always("[mm] write_test ok\r\n");
+        // Zero the PFN storage (the part db.init() would have done).
+        let usable_bytes = usable_pfns * core::mem::size_of::<MMPFN>();
+        let mut zero_base: usize = 0;
+        while zero_base < usable_bytes {
+            storage_local.add(zero_base).write_volatile(0);
+            zero_base += 1;
+            if zero_base % (64 * 1024) == 0 {
+                crate::hal::serial::write_string_always("[mm] zero@");
+                crate::mm::write_decimal_u64(zero_base as u64);
+                crate::hal::serial::write_string_always("\r\n");
+            }
+        }
+        crate::hal::serial::write_string_always("[mm] PFNDB zeroed\r\n");
+        (*db_raw).pfn_array = PFN_STORAGE_PTR as *mut MMPFN;
+        (*db_raw).pfn_count = usable_pfns as u64;
+        (*db_raw).lowest_pfn = base_pfn;
+        (*db_raw).highest_pfn = base_pfn + usable_pfns as u64;
+        (*db_raw).initialized = true;
+        crate::hal::serial::write_string_always("[mm] raw_init done\r\n");
+        crate::hal::serial::write_string_always("[mm] pfn::init: db init done\r\n");
+        // Diagnostic: verify the PfnDatabase fields were written.
+        crate::hal::serial::write_string_always("[mm] PFNDB init check: lowest=");
+        crate::mm::write_decimal_u64(db.lowest_pfn);
+        crate::hal::serial::write_string_always(" highest=");
+        crate::mm::write_decimal_u64(db.highest_pfn);
+        crate::hal::serial::write_string_always(" count=");
+        crate::mm::write_decimal_u64(db.pfn_count);
+        crate::hal::serial::write_string_always(" init=");
+        crate::mm::write_decimal_u64(db.initialized as u64);
+        crate::hal::serial::write_string_always(" pfn_array=0x");
+        crate::hal::serial::write_hex_u64_always(db.pfn_array as u64);
+        crate::hal::serial::write_string_always("\r\n");
+        db.seed_free(base_pfn, usable_pfns as u64);
+        crate::hal::serial::write_string_always("[mm] pfn::init: seed done\r\n");
         crate::hal::serial::write_string_always("[mm] PFN_COUNT=");
         crate::mm::write_decimal_u64(pfn_count);
         crate::hal::serial::write_string_always(" FREE_AFTER_SEED=");
@@ -911,9 +1017,6 @@ pub fn allocate_pfn_range(count: PfnNumber) -> Option<PfnNumber> {
         return None;
     }
     let mut db = PFN_DB.lock();
-    if count == 1 {
-        return allocate_pfn();
-    }
     // The free list is populated in LIFO order, so it does not provide a
     // reliable contiguous-order view. Walk the PFN range and track physical
     // adjacency using the database state instead.
@@ -1027,6 +1130,57 @@ pub fn reserve_pfn(pfn: PfnNumber) -> bool {
         }
         if (*entry).share_count == 0 {
             (*entry).share_count = 1;
+        }
+    }
+    true
+}
+
+/// Reserve a contiguous PFN range with one lock acquisition.
+pub fn reserve_pfn_range(base_pfn: PfnNumber, count: PfnNumber) -> bool {
+    if count == 0 {
+        return true;
+    }
+    crate::hal::serial::write_string_always("[MM] heap reserve lock about\r\n");
+    // Diagnostic: is the lock already held? Is PFN_COUNT correct?
+    crate::hal::serial::write_string_always("[MM] lock_state=");
+    crate::hal::serial::write_hex_u64_always(PFN_DB.is_locked() as u64);
+    crate::hal::serial::write_string_always(" pfn_count_static=");
+    crate::mm::write_decimal_u64(unsafe { PFN_COUNT });
+    crate::hal::serial::write_string_always("\r\n");
+    // Boot-time single-CPU path: bypass the spinlock (which hangs on
+    // LoongArch64) and access the PfnDatabase directly through the
+    // UnsafeCell. This is safe because:
+    //  1. `reserve_pfn_range` is only called during `mm::init`, which
+    //     runs on the BSP before APs are started.
+    //  2. The spinlock's `locked` field is confirmed to be 0 (unheld).
+    //  3. We hold no other locks at this point.
+    crate::hal::serial::write_string_always("[MM] heap reserve bypass lock\r\n");
+    let db_ptr = PFN_DB.raw_data_ptr() as *mut PfnDatabase;
+    let db = unsafe { &mut *db_ptr };
+    for index in 0..count {
+        let pfn = base_pfn + index;
+        let entry = match db.entry(pfn) {
+            Some(entry) => entry,
+            None => return false,
+        };
+        unsafe {
+            let state = (*entry).state();
+            if state == MMPFNSTATE::Free
+                || state == MMPFNSTATE::Zeroed
+                || state.is_standby()
+                || state == MMPFNSTATE::Modified
+                || state == MMPFNSTATE::ModifiedNoWrite
+                || state == MMPFNSTATE::Transition
+            {
+                db.unlink_entry(entry, pfn);
+            }
+            (*entry).set_state(MMPFNSTATE::Active);
+            if (*entry).reference_count == 0 {
+                (*entry).reference_count = 1;
+            }
+            if (*entry).share_count == 0 {
+                (*entry).share_count = 1;
+            }
         }
     }
     true

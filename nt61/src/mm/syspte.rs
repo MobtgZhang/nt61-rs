@@ -18,72 +18,116 @@
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(target_arch = "x86_64")]
 use crate::ke::sync::Spinlock;
 
+#[cfg(target_arch = "x86_64")]
 const SYSTEM_PTE_BASE: u64 = 0xFFFF_F900_0000_0000;
+#[cfg(target_arch = "x86_64")]
 const SYSTEM_PTE_END: u64 = 0xFFFF_F9A0_0000_0000;
+#[cfg(target_arch = "x86_64")]
 const SYSTEM_PTE_BYTES: u64 = SYSTEM_PTE_END - SYSTEM_PTE_BASE;
 
 /// Bitmap of allocated 64-KiB regions. Each bit represents 64 KiB
 /// (16 pages). Region size is 64 KiB so the bitmap fits in
 /// `SYSTEM_PTE_BYTES / 64 KiB = 262144` bits = 32 KiB.
+#[cfg(target_arch = "x86_64")]
 const SYSTEM_PTE_REGION_BYTES: u64 = 64 * 1024;
+#[cfg(target_arch = "x86_64")]
 const SYSTEM_PTE_REGION_PAGES: u64 = SYSTEM_PTE_REGION_BYTES / 4096;
+#[cfg(target_arch = "x86_64")]
 const SYSTEM_PTE_REGION_COUNT: u64 = SYSTEM_PTE_BYTES / SYSTEM_PTE_REGION_BYTES;
 
+#[cfg(target_arch = "x86_64")]
 static SYSTEM_PTE_BITMAP: [AtomicU64; 4096] = [const { AtomicU64::new(0) }; 4096];
 static SYSTEM_PTE_NEXT: AtomicU64 = AtomicU64::new(0);
+#[cfg(target_arch = "x86_64")]
 static SYSTEM_PTE_LOCK: Spinlock<()> = Spinlock::new(());
 
 /// Reserve `count` system PTEs and return the virtual address they
 /// cover. The PTEs are installed as 4-KiB pages mapping consecutive
 /// physical pages (the caller is responsible for the contents).
+#[cfg(target_arch = "x86_64")]
 pub fn reserve_system_ptes(count: u64) -> Option<u64> {
     if count == 0 {
         return None;
     }
     let _g = SYSTEM_PTE_LOCK.lock();
-    // Round up to a multiple of the region size.
     let regions = (count + SYSTEM_PTE_REGION_PAGES - 1) / SYSTEM_PTE_REGION_PAGES;
     if regions > 512 {
         return None;
     }
-    for bit in 0..SYSTEM_PTE_REGION_COUNT as usize {
+    let total = SYSTEM_PTE_REGION_COUNT as usize;
+    let mut run_start = 0usize;
+    let mut run_len = 0usize;
+    for bit in 0..total {
         let word = bit / 64;
         let mask = 1u64 << (bit % 64);
-        let prev =
-            SYSTEM_PTE_BITMAP[word].compare_exchange(0, mask, Ordering::AcqRel, Ordering::Acquire);
-        if prev.is_ok() {
-            let va = SYSTEM_PTE_BASE + (bit as u64) * SYSTEM_PTE_REGION_BYTES;
-            return Some(va);
+        let free = SYSTEM_PTE_BITMAP[word].load(Ordering::Acquire) & mask == 0;
+        if free {
+            if run_len == 0 {
+                run_start = bit;
+            }
+            run_len += 1;
+            if run_len == regions as usize {
+                for allocated_bit in run_start..run_start + run_len {
+                    let word = allocated_bit / 64;
+                    let mask = 1u64 << (allocated_bit % 64);
+                    let prev = SYSTEM_PTE_BITMAP[word].fetch_or(mask, Ordering::AcqRel);
+                    if prev & mask != 0 {
+                        // Roll back if a concurrent allocator took a bit
+                        // between the scan and this reservation.
+                        for rolled_back_bit in run_start..allocated_bit {
+                            let word = rolled_back_bit / 64;
+                            let mask = 1u64 << (rolled_back_bit % 64);
+                            SYSTEM_PTE_BITMAP[word].fetch_and(!mask, Ordering::AcqRel);
+                        }
+                        return None;
+                    }
+                }
+                let va = SYSTEM_PTE_BASE + (run_start as u64) * SYSTEM_PTE_REGION_BYTES;
+                return Some(va);
+            }
+        } else {
+            run_start = 0;
+            run_len = 0;
         }
     }
     crate::hal::serial::write_string("RSP-EXHAUSTED\n");
     None
 }
 
+#[cfg(not(target_arch = "x86_64"))]
+pub fn reserve_system_ptes(_count: u64) -> Option<u64> {
+    // Non-x86 architectures use identity mapping; callers should
+    // receive the physical address directly from map_io_space.
+    None
+}
+
 /// Release a previously-reserved system PTE region.
 /// This function properly unmaps all PTE entries and invalidates TLB.
-pub fn release_system_ptes(va: u64) {
+#[cfg(target_arch = "x86_64")]
+pub fn release_system_ptes(va: u64, count: u64) {
     if va < SYSTEM_PTE_BASE || va >= SYSTEM_PTE_END {
         return;
     }
-    let bit = ((va - SYSTEM_PTE_BASE) / SYSTEM_PTE_REGION_BYTES) as usize;
-    let word = bit / 64;
-    let mask = 1u64 << (bit % 64);
     let _g = SYSTEM_PTE_LOCK.lock();
-
-    // Unmap all PTE entries for this region via the direct PML4
-    // walker (`map_page`'s sibling), since the recursive self-map
-    // doesn't cover the SYSTEM_PTE region (PML4[0x1F2]).
-    for i in 0..SYSTEM_PTE_REGION_PAGES {
+    let start_region = ((va - SYSTEM_PTE_BASE) / SYSTEM_PTE_REGION_BYTES) as usize;
+    let regions = ((count + SYSTEM_PTE_REGION_PAGES - 1) / SYSTEM_PTE_REGION_PAGES) as usize;
+    for region in start_region..start_region + regions {
+        let bit = region;
+        let word = bit / 64;
+        let mask = 1u64 << (bit % 64);
+        SYSTEM_PTE_BITMAP[word].fetch_and(!mask, Ordering::AcqRel);
+    }
+    for i in 0..count {
         let va_i = va + i * 4096;
         crate::arch::unmap_page(va_i);
     }
-
-    // Release bitmap
-    SYSTEM_PTE_BITMAP[word].fetch_and(!mask, Ordering::AcqRel);
 }
+
+#[cfg(not(target_arch = "x86_64"))]
+pub fn release_system_ptes(_va: u64, _count: u64) {}
 
 /// Map `count` consecutive physical pages into a system PTE region.
 ///
@@ -104,6 +148,15 @@ pub fn map_io_space(pa: u64, count: u64) -> Option<u64> {
     if count == 0 {
         return None;
     }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        // Non-x86: identity-map (VA == PA) — the kernel already maps
+        // RAM and MMIO identity, so returning PA directly works.
+        let _ = crate::arch::identity_map_region(pa, count * 4096);
+        return Some(pa);
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
     let va = reserve_system_ptes(count)?;
     for i in 0..count {
         let va_i = va + i * 4096;
@@ -119,20 +172,28 @@ pub fn map_io_space(pa: u64, count: u64) -> Option<u64> {
             for j in 0..i {
                 crate::arch::unmap_page(va + j * 4096);
             }
-            release_system_ptes(va);
+            release_system_ptes(va, count);
             return None;
         }
     }
-    Some(va)
+        Some(va)
+    }
 }
 
 /// Unmap a previously-mapped I/O range.
 pub fn unmap_io_space(va: u64, count: u64) {
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = (va, count);
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
     for i in 0..count {
         let va_i = va + i * 4096;
         crate::arch::unmap_page(va_i);
     }
-    release_system_ptes(va);
+    release_system_ptes(va, count);
+    }
 }
 
 pub fn init() {
@@ -150,7 +211,7 @@ mod tests {
         // real kernel page-table setup. Make this a compile-only
         // smoke that the API surface is reachable.
         let _f1: fn(u64) -> Option<u64> = reserve_system_ptes;
-        let _f2: fn(u64) = release_system_ptes;
+        let _f2: fn(u64, u64) = release_system_ptes;
         let _ = SYSTEM_PTE_BASE;
     }
 
@@ -170,7 +231,7 @@ mod tests {
         // there is no real kernel page-table setup. Make this a
         // compile-only smoke that the API surface is reachable.
         let _f1: fn(u64) -> Option<u64> = reserve_system_ptes;
-        let _f2: fn(u64) = release_system_ptes;
+        let _f2: fn(u64, u64) = release_system_ptes;
     }
 
     #[test]

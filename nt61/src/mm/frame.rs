@@ -18,6 +18,7 @@
 //! per 32 MiB of RAM) so this scales fine for the QEMU default.
 
 use crate::ke::sync::Spinlock;
+use crate::mm::constants::PAGE_SIZE;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 /// Frame info flags.
@@ -150,8 +151,13 @@ impl BuddyAllocator {
         frame_table: *mut u8,
         frame_table_size: usize,
     ) {
-        self.base_address = region_base;
-        self.num_frames = region_size / 4096;
+        self.base_address = (region_base + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
+        let region_end = (region_base + region_size) & !(PAGE_SIZE - 1);
+        self.num_frames = if region_end > self.base_address {
+            (region_end - self.base_address) / PAGE_SIZE
+        } else {
+            0
+        };
         // The bookkeeping buffer is split as follows:
         //   - First  num_frames * sizeof(FrameInfo) bytes : FrameInfo array
         //   - Next   num_frames * sizeof(BuddyNode)  bytes : BuddyNode array
@@ -304,8 +310,13 @@ impl BuddyAllocator {
         if !self.initialised || phys_addr < self.base_address {
             return;
         }
-        let frame = ((phys_addr - self.base_address) / 4096) as u32;
+        let frame = ((phys_addr - self.base_address) / 4096) as u64;
         let order = order_of(count).min(MAX_BUDDY_ORDER - 1);
+        let block_pages = 1u64 << order;
+        if frame >= self.num_frames || frame.saturating_add(block_pages) > self.num_frames {
+            return;
+        }
+        let frame = frame as u32;
 
         unsafe {
             for i in 0..(1u32 << order) {
@@ -322,11 +333,14 @@ impl BuddyAllocator {
         let mut cur_order = order;
         while cur_order < MAX_BUDDY_ORDER - 1 {
             let buddy = cur_frame ^ (1u32 << cur_order);
+            if (buddy as u64) >= self.num_frames {
+                break;
+            }
             let on_list = unsafe {
                 let node = &*self.buddy_nodes.add(buddy as usize);
                 node.on_list
             };
-            if on_list == 0 || (buddy as u64) >= self.num_frames {
+            if on_list == 0 {
                 break;
             }
             // Remove buddy from the free list and merge.
@@ -426,7 +440,7 @@ static FREE_PAGES: AtomicU64 = AtomicU64::new(0);
 ///   num_frames * (sizeof(FrameInfo) + sizeof(BuddyNode))
 /// bytes.  At 32768 frames and 8 + 12 = 20 bytes per frame, that's
 /// ~2.4 MiB of BSS — still well within winload.efi's 5 MiB BSS region.
-const FRAME_TABLE_ENTRIES: usize = 65536; // 256 MiB of RAM
+const FRAME_TABLE_ENTRIES: usize = 131072; // 512 MiB of RAM
 const FRAME_TABLE_BYTES: usize =
     FRAME_TABLE_ENTRIES * (core::mem::size_of::<FrameInfo>() + core::mem::size_of::<BuddyNode>());
 
@@ -456,8 +470,13 @@ static mut DYN_BASE_PHYS: u64 = 0;
 /// Initialise the frame allocator. The UEFI stub reports a single
 /// contiguous usable region; we consume that here.
 pub fn init() {
-    // Legacy bootstrap: 16 MiB at 1 MiB, static tables.
-    init_with_range(0x0010_0000u64, 64 * 1024 * 1024u64);
+    // Legacy bootstrap: 256 MiB at 1 MiB, static tables.
+    // The FRAME_TABLE supports 65536 entries (= 256 MiB), so we can
+    // safely manage the full bootstrap window. The previous 64 MiB
+    // limit caused the RISC-V64 kernel to panic when loading the
+    // ~23 MiB hal.dll PE image because the 32 MiB kernel heap left
+    // insufficient headroom for both the image buffer and metadata.
+    init_with_range(0x0010_0000u64, BOOTSTRAP_REGION);
 }
 
 /// Bootstrap region limit for the buddy's static-bookkeeping path.
@@ -465,7 +484,7 @@ pub fn init() {
 /// fits comfortably inside this window.  The dynamic phase-2 init can
 /// re-configure the buddy over a larger range once the dynamic
 /// bookkeeping tables have been allocated.
-pub const BOOTSTRAP_REGION: u64 = 256 * 1024 * 1024; // 256 MiB
+pub const BOOTSTRAP_REGION: u64 = 512 * 1024 * 1024; // 512 MiB
 
 /// Initialise the frame allocator for an arbitrary physical
 /// memory range. Supports the 2 GiB – 192 GiB range that
@@ -546,6 +565,36 @@ pub fn allocate_frame() -> Option<u64> {
 /// Free a single physical frame.
 pub fn free_frame(phys_addr: u64) {
     free_pages(phys_addr, 1);
+}
+
+/// Reserve a physical range so the buddy allocator never hands it out.
+/// Used to protect the kernel stack from PFN-database zeroing and
+/// other bulk writes during early boot.
+pub fn reserve_range(base: u64, size: u64) {
+    // Bail out if the buddy allocator has not been initialised yet —
+    // the caller should invoke this after `init` / `init_with_range`.
+    let aligned_base = base & !0xFFF;
+    let aligned_end = (base + size + 0xFFF) & !0xFFF;
+    let start_frame = aligned_base / 4096;
+    let end_frame = aligned_end / 4096;
+    let alloc = BUDDY_ALLOCATOR.lock();
+    if alloc.frame_infos.is_null() || alloc.num_frames == 0 {
+        return;
+    }
+    let region_base = alloc.base_address;
+    let region_end = region_base + alloc.num_frames * 4096;
+    // Only mark frames that fall inside the managed region.
+    let lo = start_frame.max(region_base / 4096);
+    let hi = end_frame.min(region_end / 4096);
+    if lo >= hi {
+        return;
+    }
+    for frame in lo..hi {
+        let idx = (frame - region_base / 4096) as usize;
+        unsafe {
+            (*alloc.frame_infos.add(idx)).flags = FRAME_RESERVED;
+        }
+    }
 }
 
 /// Allocate `count` contiguous physical frames.

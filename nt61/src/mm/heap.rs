@@ -414,11 +414,11 @@ unsafe impl GlobalAlloc for KernelHeapAllocator {
     }
 }
 
-unsafe impl GlobalAlloc for KernelHeap {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if !self.initialized.load(Ordering::Acquire) {
-            return core::ptr::null_mut();
-        }
+    unsafe impl GlobalAlloc for KernelHeap {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            if !self.initialized.load(Ordering::Acquire) {
+                return core::ptr::null_mut();
+            }
         let base = self.base.load(Ordering::Relaxed);
         let size = self.size.load(Ordering::Relaxed);
         if base == 0 || size == 0 {
@@ -429,12 +429,11 @@ unsafe impl GlobalAlloc for KernelHeap {
         // the free list, bump pointer and stats are updated atomically.
         let lock_ref = &*self.heap_lock.get();
         let _guard = lock_ref.lock();
-
-        // 1) Try the free list first — frees are accumulated into
-        //    the intrusive list in `dealloc()`, so this is where
-        //    previously-returned memory is recycled.
-        if let Some(ptr) = self.alloc_from_free_list(layout) {
-            let stats = &mut *self.stats.get();
+            // 1) Try the free list first — frees are accumulated into
+            //    the intrusive list in `dealloc()`, so this is where
+            //    previously-returned memory is recycled.
+            if let Some(ptr) = self.alloc_from_free_list(layout) {
+                let stats = &mut *self.stats.get();
             stats.total_allocations += 1;
             stats.free_list_hits += 1;
             stats.current_allocated += layout.size();
@@ -527,38 +526,40 @@ unsafe impl GlobalAlloc for KernelHeap {
 pub fn init() {
     use crate::mm::frame;
 
-    // Try 32 MiB first; fall back to 16 MiB then 8 MiB if the
+    // Try 64 MiB first; fall back to 32 MiB then 16 MiB if the
     // buddy allocator can't satisfy the larger request. The system
     // image loader (`system_image::build_all`) builds ~30 PE files
     // in memory (each a few KiB plus alignment), the loader's import
     // database needs a few hundred KiB more.  With a 64 MiB buddy
-    // region, a 32 MiB heap gives comfortable headroom.
-    const HEAP_PAGES_LARGE: u64 = (32 * 1024 * 1024) / 4096;
-    const HEAP_PAGES_MEDIUM: u64 = (16 * 1024 * 1024) / 4096;
-    const HEAP_PAGES_SMALL: u64 = (8 * 1024 * 1024) / 4096;
+    // region, a 64 MiB heap gives comfortable headroom for the two
+    // ~23 MiB system images (ntoskrnl.exe + hal.dll) that
+    // `load_system_files()` must read from disk into the kernel heap.
+    const HEAP_PAGES_LARGE: u64 = (256 * 1024 * 1024) / 4096;
+    const HEAP_PAGES_MEDIUM: u64 = (32 * 1024 * 1024) / 4096;
+    const HEAP_PAGES_SMALL: u64 = (16 * 1024 * 1024) / 4096;
 
     let (phys, pages) = match frame::allocate_pages(HEAP_PAGES_LARGE) {
         Some(p) => {
-            crate::hal::serial::write_string_always("[heap] allocated 32MB at phys=");
+            crate::hal::serial::write_string_always("[heap] allocated 64MB at phys=");
             crate::hal::serial::write_hex_u64(p as u64);
             crate::hal::serial::write_string("\r\n");
             (p, HEAP_PAGES_LARGE)
         }
         None => {
-            crate::hal::serial::write_string_always("[heap] 32MB FAILED, trying 16MB\r\n");
+            crate::hal::serial::write_string_always("[heap] 64MB FAILED, trying 32MB\r\n");
             match frame::allocate_pages(HEAP_PAGES_MEDIUM) {
                 Some(p) => {
-                    crate::hal::serial::write_string_always("[heap] allocated 16MB at phys=");
+                    crate::hal::serial::write_string_always("[heap] allocated 32MB at phys=");
                     crate::hal::serial::write_hex_u64(p as u64);
                     crate::hal::serial::write_string("\r\n");
                     (p, HEAP_PAGES_MEDIUM)
                 }
                 None => {
-                    crate::hal::serial::write_string_always("[heap] 16MB FAILED, trying 8MB\r\n");
+                    crate::hal::serial::write_string_always("[heap] 32MB FAILED, trying 16MB\r\n");
                     match frame::allocate_pages(HEAP_PAGES_SMALL) {
-                        Some(p) => {
-                            crate::hal::serial::write_string_always(
-                                "[heap] allocated 8MB at phys=",
+                Some(p) => {
+                    crate::hal::serial::write_string_always(
+                        "[heap] allocated 16MB at phys=",
                             );
                             crate::hal::serial::write_hex_u64(p as u64);
                             crate::hal::serial::write_string("\r\n");
@@ -566,7 +567,7 @@ pub fn init() {
                         }
                         None => {
                             crate::hal::serial::write_string(
-                                "[heap] FATAL: 8MB allocation failed\r\n",
+                                "[heap] FATAL: 16MB allocation failed\r\n",
                             );
                             return;
                         }
@@ -584,10 +585,10 @@ pub fn init() {
     crate::hal::serial::write_hex_u64(size as u64);
     crate::hal::serial::write_string("\r\n");
     KERNEL_HEAP.configure(base, size);
-    crate::hal::serial::write_string("[heap] configure done, checking...\r\n");
+    crate::hal::serial::write_string_always("[heap] configure done, checking...\r\n");
     let region = crate::mm::heap::KERNEL_HEAP.configured_region();
     crate::mm::init_state::verify_region(region, "heap::init");
-    crate::hal::serial::write_string("[heap] configure VERIFIED OK\r\n");
+    crate::hal::serial::write_string_always("[heap] configure VERIFIED OK\r\n");
 }
 
 /// Maximum heap size, used when the buddy allocator cannot

@@ -52,7 +52,7 @@ impl VadFlags {
     pub const SEC_RESERVE: Self = Self(0x08000000);
     pub const SEC_NO_CHANGE: Self = Self(0x40000000);
     pub const SEC_ZERO_DOWN: Self = Self(0x80000000);
-    pub const SEC_GUARD: Self = Self(0x80000000); // Guard page flag
+    pub const SEC_GUARD: Self = Self(0x20000000);
 
     /// Check if any of the given bits are set.
     pub fn contains(&self, other: Self) -> bool {
@@ -61,7 +61,7 @@ impl VadFlags {
 
     /// Check if the guard page flag is set.
     pub fn is_guard(&self) -> bool {
-        (self.0 & 0x80000000) != 0
+        self.contains(Self::SEC_GUARD)
     }
 
     /// Return the raw flag bits.

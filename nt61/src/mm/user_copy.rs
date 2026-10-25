@@ -76,6 +76,11 @@ pub fn probe_user_read(ptr: u64, len: usize) -> Result<(), i32> {
 /// on every leaf PTE we cover.
 pub fn probe_user_write(ptr: u64, len: usize) -> Result<(), i32> {
     if !is_user_range(ptr, len) {
+        crate::hal::serial::write_string_always("[COPY-WRITE] range fail ptr=");
+        crate::hal::serial::write_hex_u64_always(ptr);
+        crate::hal::serial::write_string_always(" len=");
+        crate::hal::serial::write_hex_u64_always(len as u64);
+        crate::hal::serial::write_string_always("\r\n");
         return Err(STATUS_ACCESS_VIOLATION);
     }
     if len == 0 {
@@ -85,6 +90,11 @@ pub fn probe_user_write(ptr: u64, len: usize) -> Result<(), i32> {
     let mut va = ptr & !0xFFF;
     while va < end {
         if !page_is_user_accessible(va, true) {
+            crate::hal::serial::write_string_always("[COPY-WRITE] pte fail va=");
+            crate::hal::serial::write_hex_u64_always(va);
+            crate::hal::serial::write_string_always(" entry=");
+            crate::hal::serial::write_hex_u64_always(crate::arch::leaf_entry(va).unwrap_or(0));
+            crate::hal::serial::write_string_always("\r\n");
             return Err(STATUS_ACCESS_VIOLATION);
         }
         va += 0x1000;
@@ -192,64 +202,17 @@ pub fn read_user_utf16(src: u64, char_count: u64) -> Result<alloc::vec::Vec<u16>
     Ok(value)
 }
 
-/// Walk the four-level table and return the leaf entry covering `va`.
-fn leaf_entry(va: u64) -> Option<crate::mm::pte::MMPTE> {
-    let pml4_phys = crate::mm::vas::current_root();
-    if pml4_phys == 0 {
-        return None;
-    }
 
-    let pml4 = pml4_phys as *const crate::mm::pte::MMPTE;
-    let pml4e = unsafe { *pml4.add(((va >> 39) & 0x1FF) as usize) };
-    if !pml4e.is_hardware() || pml4e.large() {
-        return None;
-    }
-
-    let pdpt = pml4e.hardware_page_frame() as *const crate::mm::pte::MMPTE;
-    let pdpte = unsafe { *pdpt.add(((va >> 30) & 0x1FF) as usize) };
-    if !pdpte.is_hardware() {
-        return None;
-    }
-    if pdpte.large() {
-        return Some(pdpte);
-    }
-
-    let page_directory = pdpte.hardware_page_frame() as *const crate::mm::pte::MMPTE;
-    let pde = unsafe { *page_directory.add(((va >> 21) & 0x1FF) as usize) };
-    if !pde.is_hardware() {
-        return None;
-    }
-    if pde.large() {
-        return Some(pde);
-    }
-
-    let page_table = pde.hardware_page_frame() as *const crate::mm::pte::MMPTE;
-    let pte = unsafe { *page_table.add(((va >> 12) & 0x1FF) as usize) };
-    if !pte.is_hardware() {
-        return None;
-    }
-    Some(pte)
-}
 
 /// True iff `va` is backed by a present, user-owned mapping.
 ///
-/// The U/S bit is the part that matters: a mapping without it is
-/// kernel-only, so a "user pointer" that resolves through it is a
-/// kernel page reached through a user syscall. With CR4.SMAP set the CPU
-/// faults on such an access, but the probe still has to reject it so the
-/// caller gets an access violation rather than a fault on its own stack.
+/// Check the actual leaf PTE, not merely whether a translation exists.
+/// This rejects kernel-only mappings and enforces write permission for
+/// user-space output buffers on all supported ISAs.
 fn page_is_user_accessible(va: u64, require_write: bool) -> bool {
-    let entry = match leaf_entry(va) {
-        Some(e) => e,
-        None => return false,
-    };
-    if !entry.user() {
-        return false;
-    }
-    if require_write && !entry.writable() {
-        return false;
-    }
-    true
+    crate::arch::leaf_entry(va)
+        .map(|entry| crate::arch::page_user_accessible(entry, require_write))
+        .unwrap_or(false)
 }
 
 /// Returns true iff `va` is in the kernel virtual address range.
