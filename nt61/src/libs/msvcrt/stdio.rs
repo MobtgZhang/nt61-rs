@@ -12,6 +12,8 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use spin::{Lazy, Mutex};
 
 extern crate alloc;
+use alloc::vec::Vec;
+use core::ffi::VaList;
 
 const FILE_POOL_SIZE: usize = 64;
 
@@ -433,25 +435,213 @@ pub unsafe extern "C" fn ungetc(c: CInt, stream: *mut FILE) -> CInt {
     }
 }
 
-// Simplified sprintf/printf - NOTE: These are minimal implementations
+// Common printf formatting. This intentionally supports the subset used by
+// MSVCRT programs rather than guessing the ABI of arbitrary conversion types.
+unsafe fn format_va_list(format: *const CChar, mut args: VaList<'_>) -> Vec<u8> {
+    const FORMAT_LIMIT: usize = 1024 * 1024;
+    let mut output = Vec::new();
+    let mut position = 0usize;
+
+    while position < FORMAT_LIMIT {
+        let byte = *format.add(position) as u8;
+        position += 1;
+        if byte == 0 {
+            break;
+        }
+        if byte != b'%' {
+            output.push(byte);
+            continue;
+        }
+
+        let start = position - 1;
+        let mut next = position;
+        let mut spec_end = None;
+        while next < FORMAT_LIMIT {
+            let spec_byte = *format.add(next) as u8;
+            next += 1;
+            if spec_byte == 0 {
+                break;
+            }
+            if spec_byte.is_ascii_alphabetic() || spec_byte == b'%' {
+                spec_end = Some(next);
+                break;
+            }
+        }
+
+        let Some(spec_end) = spec_end else {
+            output.push(b'%');
+            break;
+        };
+        let specifier = *format.add(spec_end - 1) as u8;
+        let spec_bytes: Vec<u8> = core::slice::from_raw_parts(format.add(start), spec_end - start)
+            .iter()
+            .map(|byte| *byte as u8)
+            .collect();
+        position = spec_end;
+
+        if specifier == b'%' {
+            output.push(b'%');
+            continue;
+        }
+
+        let mut long = false;
+        let mut index = start + 1;
+        while index + 1 < spec_end {
+            let modifier = *format.add(index) as u8;
+            let following = *format.add(index + 1) as u8;
+            if modifier == b'l' && (following == b'l' || following.is_ascii_alphabetic()) {
+                long = true;
+                break;
+            }
+            index += 1;
+        }
+
+        match specifier {
+            b'd' | b'i' => {
+                let value = if long {
+                    args.next_arg::<i64>()
+                } else {
+                    args.next_arg::<i32>() as i64
+                };
+                write_signed(&mut output, value, &spec_bytes[1..spec_end - 1]);
+            }
+            b'u' | b'x' | b'X' => {
+                let value = if long {
+                    args.next_arg::<u64>()
+                } else {
+                    args.next_arg::<u32>() as u64
+                };
+                let (base, uppercase) = if specifier == b'u' {
+                    (10, false)
+                } else {
+                    (16, specifier == b'X')
+                };
+                write_unsigned(&mut output, value, base, uppercase, &spec_bytes[1..spec_end - 1]);
+            }
+            b'c' => output.push(args.next_arg::<CInt>() as u8),
+            b's' => {
+                let string = args.next_arg::<*const CChar>();
+                if string.is_null() {
+                    output.extend_from_slice(b"(null)");
+                } else {
+                    let mut index = 0usize;
+                    while index < FORMAT_LIMIT && *string.add(index) != 0 {
+                        output.push(*string.add(index) as u8);
+                        index += 1;
+                    }
+                }
+            }
+            b'p' => {
+                let pointer = args.next_arg::<usize>();
+                output.extend_from_slice(b"0x");
+                for shift in (0..usize::BITS).step_by(4).rev() {
+                    let digit = ((pointer >> shift) & 0xF) as usize;
+                    output.push(b"0123456789abcdef"[digit]);
+                }
+            }
+            _ => output.extend_from_slice(&spec_bytes),
+        }
+    }
+
+    output
+}
+
+fn parse_width(spec: &[u8]) -> Option<usize> {
+    let mut index = 0usize;
+    while matches!(spec.first(), Some(b'-' | b'+' | b' ' | b'#' | b'0')) {
+        index += 1;
+    }
+    let mut digits = index;
+    while digits < spec.len() && spec[digits].is_ascii_digit() {
+        digits += 1;
+    }
+    if digits == index {
+        return None;
+    }
+    let mut width = 0usize;
+    for digit in &spec[index..digits] {
+        width = width.saturating_mul(10).saturating_add((digit - b'0') as usize);
+    }
+    Some(width)
+}
+
+fn write_signed(output: &mut Vec<u8>, value: i64, spec: &[u8]) {
+    let width = parse_width(spec).unwrap_or(0);
+    let negative = value < 0;
+    let mut magnitude = value.unsigned_abs();
+    let mut digits = Vec::new();
+    if magnitude == 0 {
+        digits.push(b'0');
+    }
+    while magnitude > 0 {
+        digits.push(b'0' + (magnitude % 10) as u8);
+        magnitude /= 10;
+    }
+    let total_width = digits.len() + usize::from(negative);
+    let padding = width.saturating_sub(total_width);
+    if negative {
+        output.push(b'-');
+    }
+    output.extend(core::iter::repeat_n(b'0', padding));
+    output.extend(digits.iter().rev());
+}
+
+fn write_unsigned(
+    output: &mut Vec<u8>,
+    value: u64,
+    base: u32,
+    uppercase: bool,
+    spec: &[u8],
+) {
+    let width = parse_width(spec).unwrap_or(0);
+    let digits = if uppercase {
+        b"0123456789ABCDEF"
+    } else {
+        b"0123456789abcdef"
+    };
+    let mut chars = Vec::new();
+    if value == 0 {
+        chars.push(b'0');
+    }
+    let mut remaining = value;
+    while remaining > 0 {
+        chars.push(digits[(remaining % base as u64) as usize]);
+        remaining /= base as u64;
+    }
+    output.extend(core::iter::repeat_n(b'0', width.saturating_sub(chars.len())));
+    output.extend(chars.iter().rev());
+}
+
+fn write_kprint_bytes(output: &[u8]) {
+    #[cfg(target_arch = "riscv64")]
+    {
+        crate::hal::serial::write_string_always("[printf bytes] ptr=");
+        crate::hal::serial::write_hex_u64_always(output.as_ptr() as u64);
+        crate::hal::serial::write_string_always(" len=");
+        crate::hal::serial::write_hex_u64_always(output.len() as u64);
+        crate::hal::serial::write_string_always("\r\n");
+    }
+    for byte in output {
+        crate::kprint!("{}", *byte as char);
+    }
+}
+
+fn copy_formatted(target: *mut CChar, size: usize, output: &[u8]) -> CInt {
+    let write_size = output.len().min(size.saturating_sub(1));
+    for (index, byte) in output[..write_size].iter().enumerate() {
+        unsafe { *target.add(index) = *byte as CChar };
+    }
+    unsafe { *target.add(write_size) = 0 };
+    output.len() as CInt
+}
 
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn sprintf(s: *mut CChar, format: *const CChar, _args: ...) -> CInt {
     if s.is_null() || format.is_null() {
         return -1;
     }
-
-    let mut i = 0;
-    loop {
-        let ch = *format.add(i);
-        if ch == 0 {
-            break;
-        }
-        *s.add(i) = ch;
-        i += 1;
-    }
-    *s.add(i) = 0;
-    i as CInt
+    let output = format_va_list(format, _args);
+    copy_formatted(s, usize::MAX, &output)
 }
 
 #[cfg_attr(not(test), no_mangle)]
@@ -459,38 +649,36 @@ pub unsafe extern "C" fn snprintf(
     s: *mut CChar,
     n: SizeT,
     format: *const CChar,
-    _args: ...
+    args: ...
 ) -> CInt {
     if s.is_null() || format.is_null() || n == 0 {
         return -1;
     }
-
-    let mut i = 0;
-    while i < n - 1 {
-        let ch = *format.add(i);
-        if ch == 0 {
-            break;
-        }
-        *s.add(i) = ch;
-        i += 1;
-    }
-    *s.add(i) = 0;
-    i as CInt
+    let output = format_va_list(format, args);
+    copy_formatted(s, n, &output)
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn vsprintf(_s: *mut CChar, _format: *const CChar, _ap: ...) -> CInt {
-    0
+pub unsafe extern "C" fn vsprintf(s: *mut CChar, format: *const CChar, ap: VaList<'_>) -> CInt {
+    if s.is_null() || format.is_null() {
+        return -1;
+    }
+    let output = format_va_list(format, ap);
+    copy_formatted(s, usize::MAX, &output)
 }
 
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn vsnprintf(
-    _s: *mut CChar,
-    _n: SizeT,
-    _format: *const CChar,
-    _ap: ...
+    s: *mut CChar,
+    n: SizeT,
+    format: *const CChar,
+    ap: VaList<'_>,
 ) -> CInt {
-    0
+    if s.is_null() || format.is_null() || n == 0 {
+        return -1;
+    }
+    let output = format_va_list(format, ap);
+    copy_formatted(s, n, &output)
 }
 
 #[cfg_attr(not(test), no_mangle)]
@@ -498,17 +686,9 @@ pub unsafe extern "C" fn printf(format: *const CChar, _args: ...) -> CInt {
     if format.is_null() {
         return -1;
     }
-
-    let mut i = 0;
-    loop {
-        let ch = *format.add(i);
-        if ch == 0 {
-            break;
-        }
-        crate::kprint!("{}", ch as u8 as char);
-        i += 1;
-    }
-    i as CInt
+    let output = format_va_list(format, _args);
+    write_kprint_bytes(&output);
+    output.len() as CInt
 }
 
 #[cfg_attr(not(test), no_mangle)]
@@ -516,27 +696,45 @@ pub unsafe extern "C" fn fprintf(stream: *mut FILE, format: *const CChar, _args:
     if stream.is_null() || format.is_null() {
         return -1;
     }
-
-    let mut i = 0;
-    loop {
-        let ch = *format.add(i);
-        if ch == 0 {
+    let output = format_va_list(format, _args);
+    let mut written = 0usize;
+    for byte in output {
+        if fputc(byte as CInt, stream) == EOF {
             break;
         }
-        fputc(ch as CInt, stream);
-        i += 1;
+        written += 1;
     }
-    i as CInt
+    written as CInt
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn vprintf(_format: *const CChar, _ap: ...) -> CInt {
-    0
+pub unsafe extern "C" fn vprintf(format: *const CChar, ap: VaList<'_>) -> CInt {
+    if format.is_null() {
+        return -1;
+    }
+    let output = format_va_list(format, ap);
+    write_kprint_bytes(&output);
+    output.len() as CInt
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn vfprintf(_stream: *mut FILE, _format: *const CChar, _ap: ...) -> CInt {
-    0
+pub unsafe extern "C" fn vfprintf(
+    stream: *mut FILE,
+    format: *const CChar,
+    ap: VaList<'_>,
+) -> CInt {
+    if stream.is_null() || format.is_null() {
+        return -1;
+    }
+    let output = format_va_list(format, ap);
+    let mut written = 0usize;
+    for byte in output {
+        if fputc(byte as CInt, stream) == EOF {
+            break;
+        }
+        written += 1;
+    }
+    written as CInt
 }
 
 #[cfg_attr(not(test), no_mangle)]
