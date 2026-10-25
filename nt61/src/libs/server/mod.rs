@@ -37,12 +37,7 @@ pub mod winlogon;
 /// just calls `init()` and then verifies state via
 /// `smoke_test()`.
 pub fn init() {
-    // kprintln!("    [server] init (stubbed: Vec/heap-using code disabled)");
-    // The full server stubs use Vec::push and String which
-    // hit heap allocs that currently fail (or corrupt the
-    // user-mode-library region). For now we just print
-    // "ready" and continue to the boot-completion path.
-    // kprintln!("    [server] all servers initialised (stubbed)");
+    crate::servers::init();
 }
 
 /// Module-level smoke: walk every server's smoke test and
