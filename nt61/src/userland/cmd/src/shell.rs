@@ -13,9 +13,6 @@ pub fn run() -> ! {
 }
 
 fn execute(line: &[u8]) {
-    if line.is_empty() {
-        return;
-    }
     let _ = arch::execute_command(line);
 }
 

@@ -1,12 +1,14 @@
-#![no_std]
-#![no_main]
+#![cfg_attr(not(test), no_std)]
+#![cfg_attr(not(test), no_main)]
 #![deny(warnings)]
+#![cfg_attr(test, allow(dead_code, unused_imports))]
 
 mod arch;
 mod shell;
 
+#[cfg(not(test))]
 use core::panic::PanicInfo;
-
+#[cfg(not(test))]
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
     loop {

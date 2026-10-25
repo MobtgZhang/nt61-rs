@@ -6,3 +6,8 @@ edition = "2021"
 [dependencies]
 
 heapless = "0.8"
+
+[[bin]]
+name = "nt61-cmd"
+path = "src/main.rs"
+test = false

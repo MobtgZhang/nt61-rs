@@ -14,7 +14,7 @@ unsafe extern "C" fn syscall5_raw(
     arg4: usize,
 ) -> u64 {
     core::arch::naked_asm!(
-        "mov x8, x0",
+        "mov x16, x0",
         "mov x0, x1",
         "mov x1, x2",
         "mov x2, x3",
@@ -24,6 +24,7 @@ unsafe extern "C" fn syscall5_raw(
         "mov x6, xzr",
         "mov x7, xzr",
         "svc #0",
+        "mov x8, x0",
         "ret",
     );
 }
@@ -40,7 +41,7 @@ pub fn syscall5(
     unsafe { syscall5_raw(number, arg0, arg1, arg2, arg3, arg4) }
 }
 
-#[inline(always)]
+#[inline(never)]
 pub fn put_char(byte: u8) {
     syscall5(SYS_PUTCHAR, byte as usize, 0, 0, 0, 0);
 }
@@ -57,7 +58,7 @@ pub fn read_line(buffer: &mut [u8]) -> usize {
     ) as usize
 }
 
-#[inline]
+#[inline(never)]
 pub fn execute_command(command: &[u8]) -> bool {
     let mut buffer = [0u8; 256];
     let length = command.len().min(buffer.len() - 1);
