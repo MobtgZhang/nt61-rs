@@ -175,13 +175,18 @@ unsafe fn init_nic(mut transport: PciTransport) -> Option<Nic> {
         [const { (core::ptr::null_mut::<u8>(), core::ptr::null_mut::<u8>()) }; MAX_RX_SLOTS];
     let chain_count = (rx_queue.num() as usize / 2).min(MAX_RX_SLOTS);
     for slot in 0..chain_count {
+        crate::hal::serial::write_string_always("[VRX] slot=0x");
+        crate::hal::serial::write_hex_u64_always(slot as u64);
+        crate::hal::serial::write_string_always("\r\n");
         let header = alloc_dma_buffer(VIRTIO_NET_RX_HDR_LEN);
         let frame = alloc_dma_buffer(RX_FRAME_SIZE);
         if header.is_null() || frame.is_null() {
+            crate::hal::serial::write_string_always("[VRX] alloc failed\r\n");
             return None;
         }
         rx_buffers[slot] = (header, frame);
         if fill_rx(&mut rx_queue, &rx_buffers, slot).is_none() {
+            crate::hal::serial::write_string_always("[VRX] chain failed\r\n");
             return None;
         }
     }
@@ -215,11 +220,18 @@ unsafe fn init_nic(mut transport: PciTransport) -> Option<Nic> {
 }
 
 unsafe fn alloc_dma_buffer(size: usize) -> *mut u8 {
-    let layout = match alloc::alloc::Layout::from_size_align(size, 16) {
-        Ok(layout) => layout,
-        Err(_) => return core::ptr::null_mut(),
+    let page_count = ((size + 4095) / 4096) as u64;
+    let Some(mem_phys) = crate::mm::allocate_pages(page_count) else {
+        return core::ptr::null_mut();
     };
-    alloc::alloc::alloc_zeroed(layout)
+    let map_base = mem_phys & !0x1F_FFFF;
+    if !crate::arch::identity_map_region(map_base, 0x20_0000) {
+        crate::mm::free_pages(mem_phys, page_count);
+        return core::ptr::null_mut();
+    }
+    let mem = mem_phys as *mut u8;
+    unsafe { core::ptr::write_bytes(mem, 0, size) };
+    mem
 }
 
 fn fill_rx(

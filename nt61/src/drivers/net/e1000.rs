@@ -342,7 +342,7 @@ fn init_nic(n: &mut Nic) -> bool {
 
 /// Convert virtual address to physical address
 fn virt_to_phys(virt: u64) -> Option<u64> {
-    Some(virt & 0x7FFFFFFFFFFF)
+    crate::mm::virt_to_phys(virt)
 }
 
 pub fn smoke_test() -> bool {

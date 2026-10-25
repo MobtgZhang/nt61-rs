@@ -257,5 +257,5 @@ impl NetBufferList {
 
 /// Convert virtual address to physical address
 fn virt_to_phys(virt: u64) -> Option<u64> {
-    Some(virt & 0x7FFFFFFFFFFF)
+    crate::mm::virt_to_phys(virt)
 }
