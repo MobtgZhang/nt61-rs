@@ -122,8 +122,16 @@ pub fn nt_open_process_token_kernel(
         _ => return STATUS_INVALID_HANDLE,
     };
 
-    let _ = (proc_entry, desired_access);
-    let token_handle_value = alloc_handle(HandleKind::Token, 1);
+    let token = crate::ps::process::get_by_pid(proc_entry.target)
+        .map(|process| process.get_token())
+        .filter(|token| !token.is_null())
+        .unwrap_or_else(crate::se::token::create_system_token);
+    if token.is_null() {
+        return crate::libs::ntdll::status::STATUS_NO_MEMORY;
+    }
+
+    let _ = desired_access;
+    let token_handle_value = alloc_handle(HandleKind::Token, token as u64);
     if token_handle_value.is_null() {
         return STATUS_INVALID_HANDLE;
     }
@@ -336,13 +344,59 @@ pub fn nt_adjust_privileges_token_kernel(
         _ => return STATUS_INVALID_HANDLE,
     };
 
-    let _ = (token_entry, new_state);
+    let token = token_entry.target as *mut crate::se::token::Token;
+    if token.is_null() {
+        return STATUS_INVALID_HANDLE;
+    }
 
     if disable_all_privileges != 0 {
+        let token = unsafe { &mut *token };
+        for (index, privilege) in token
+            .privileges
+            .iter_mut()
+            .take(token.privilege_count)
+            .enumerate()
+        {
+            if let Some(previous_state) = previous_state.as_deref_mut() {
+                if index == 0 {
+                    previous_state.privilege_count = token.privilege_count as u32;
+                }
+                previous_state.privileges[index] = LuidAndAttributes {
+                    luid: privilege.luid.to_u64(),
+                    attributes: privilege.attributes,
+                };
+            }
+            privilege.attributes &= !SE_PRIVILEGE_ENABLED;
+        }
         if let Some(return_length) = return_length {
             *return_length = 0;
         }
         return STATUS_SUCCESS;
+    }
+
+    if let Some(new_state) = new_state {
+        if new_state.privilege_count > 0 {
+            let requested = new_state.privileges[0];
+            let requested_luid = crate::se::token::luid::from_u64(requested.luid);
+            let token = unsafe { &mut *token };
+            let mut found = false;
+            for privilege in token.privileges.iter_mut().take(token.privilege_count) {
+                if privilege.luid.equals(&requested_luid) {
+                    if let Some(previous_state) = previous_state.as_deref_mut() {
+                        previous_state.privilege_count = 1;
+                        previous_state.privileges[0] = LuidAndAttributes {
+                            luid: privilege.luid.to_u64(),
+                            attributes: privilege.attributes,
+                        };
+                    }
+                    privilege.attributes = requested.attributes;
+                    found = true;
+                }
+            }
+            if !found {
+                return crate::libs::ntdll::status::STATUS_INVALID_PARAMETER;
+            }
+        }
     }
 
     if let Some(previous_state) = previous_state.as_deref_mut() {
@@ -441,13 +495,114 @@ pub fn nt_access_check_kernel(
         return STATUS_INVALID_PARAMETER;
     }
 
-    let _token_entry = match lookup_handle(client_token) {
-        Some(e) if e.kind == HandleKind::Token => e,
+    let token_entry = match lookup_handle(client_token) {
+        Some(entry) if entry.kind == HandleKind::Token => entry,
         _ => return STATUS_INVALID_HANDLE,
     };
+    let client_token = token_entry.target as *const crate::se::token::Token;
+    if client_token.is_null() {
+        return STATUS_INVALID_HANDLE;
+    }
 
-    *granted_access = desired_access;
-    *access_status = STATUS_SUCCESS;
+    let bytes = security_descriptor.unwrap();
+    if bytes.len() < 40 {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    // Parse the user-mode SECURITY_DESCRIPTOR (pointer-sized fields at
+    // offsets 8/16/24/32 after revision+sbz1+control).
+    let read_u64 = |off: usize| -> u64 {
+        u64::from_le_bytes([
+            bytes[off],
+            bytes[off + 1],
+            bytes[off + 2],
+            bytes[off + 3],
+            bytes[off + 4],
+            bytes[off + 5],
+            bytes[off + 6],
+            bytes[off + 7],
+        ])
+    };
+    let control = u16::from_le_bytes([bytes[2], bytes[3]]);
+    let owner_ptr = read_u64(8);
+    let dacl_ptr = read_u64(32);
+
+    // Deny-by-default when the descriptor has no DACL (matches the
+    // kernel refmon policy in se/refmon.rs).
+    if dacl_ptr == 0 || (control & 0x0004) == 0 {
+        *granted_access = 0;
+        *access_status = crate::libs::ntdll::status::STATUS_ACCESS_DENIED;
+        return STATUS_SUCCESS;
+    }
+
+    // Read the ACL header to learn its size.
+    let mut acl_header = [0u8; 8];
+    if crate::mm::user_copy::copy_from_user(&mut acl_header, dacl_ptr).is_err() {
+        *granted_access = 0;
+        *access_status = crate::libs::ntdll::status::STATUS_ACCESS_DENIED;
+        return STATUS_SUCCESS;
+    }
+    let acl_size = u16::from_le_bytes([acl_header[2], acl_header[3]]) as usize;
+    if acl_size < 8 || acl_size > 1024 {
+        *granted_access = 0;
+        *access_status = crate::libs::ntdll::status::STATUS_ACCESS_DENIED;
+        return STATUS_SUCCESS;
+    }
+
+    // Copy the ACL into a kernel-side Acl (inline ACE storage).
+    let mut kernel_dacl = crate::se::acl::Acl::new();
+    let copy_len = acl_size.min(core::mem::size_of::<crate::se::acl::Acl>());
+    let acl_bytes = unsafe {
+        core::slice::from_raw_parts_mut(
+            &mut kernel_dacl as *mut crate::se::acl::Acl as *mut u8,
+            copy_len,
+        )
+    };
+    if crate::mm::user_copy::copy_from_user(acl_bytes, dacl_ptr).is_err() {
+        *granted_access = 0;
+        *access_status = crate::libs::ntdll::status::STATUS_ACCESS_DENIED;
+        return STATUS_SUCCESS;
+    }
+    kernel_dacl.acl_size = copy_len as u16;
+
+    // Read the owner SID (fixed 40-byte se::sid layout).
+    let mut owner_sid = crate::se::sid::sid::new();
+    if owner_ptr != 0 {
+        let sid_bytes = unsafe {
+            core::slice::from_raw_parts_mut(
+                &mut owner_sid as *mut crate::se::sid::sid as *mut u8,
+                core::mem::size_of::<crate::se::sid::sid>(),
+            )
+        };
+        let _ = crate::mm::user_copy::copy_from_user(sid_bytes, owner_ptr);
+    }
+
+    // Build a kernel SecurityDescriptor on the stack — se_access_check
+    // completes synchronously and does not retain the pointer.
+    let kernel_sd = crate::se::seaccess::SecurityDescriptor {
+        revision: 1,
+        sbz1: 0,
+        control: 0x8004, // SE_DACL_PRESENT | SE_SELF_RELATIVE
+        owner: owner_sid,
+        group: owner_sid,
+        sacl: core::ptr::null(),
+        dacl: &kernel_dacl as *const crate::se::acl::Acl,
+    };
+
+    let (result, granted) = crate::se::seaccess::se_access_check(
+        crate::se::seaccess::ObTypeIndex::Null,
+        &kernel_sd as *const crate::se::seaccess::SecurityDescriptor,
+        desired_access,
+        client_token,
+    );
+
+    *granted_access = granted;
+    *access_status = match result {
+        crate::se::seaccess::AccessCheckResult::Allowed => STATUS_SUCCESS,
+        crate::se::seaccess::AccessCheckResult::Denied => {
+            crate::libs::ntdll::status::STATUS_ACCESS_DENIED
+        }
+    };
 
     STATUS_SUCCESS
 }

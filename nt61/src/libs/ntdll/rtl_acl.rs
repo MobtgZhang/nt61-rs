@@ -1,20 +1,9 @@
-//! ntdll — Rtl* ACL (access control list) APIs
-//
-//! The full ACL layout is the NT security descriptor / ACL /
-//! ACE triple documented in `[MS-DTYP]`. We implement the
-//! user-mode entry points in their SDK form and accept the
-//! calls. No real access checks are performed — the kernel's
-//! security reference monitor (in `se::`) will be the source
-//! of truth once it lands.
-//
-//! References: MSDN Library "Windows 7" — Rtl* ACL.
+//! ntdll — Rtl* ACL APIs
 
 use super::status::{STATUS_BUFFER_TOO_SMALL, STATUS_INVALID_PARAMETER, STATUS_SUCCESS};
 use super::types::{NTSTATUS, PVOID};
 use core::ptr;
 
-/// `ACL` — fixed structure size. The actual data follows
-/// immediately in memory.
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct Acl {
@@ -24,9 +13,6 @@ pub struct Acl {
     pub _pad: u16,
 }
 
-/// `rtl_create_acl` — initialise an existing buffer as an empty
-/// ACL. The caller must have allocated at least
-/// `sizeof(ACL)` bytes at `Acl`.
 pub unsafe extern "C" fn rtl_create_acl(
     acl: *mut Acl,
     acl_length: u32,
@@ -39,60 +25,86 @@ pub unsafe extern "C" fn rtl_create_acl(
         return STATUS_BUFFER_TOO_SMALL;
     }
     let _ = acl_revision;
-    (*acl).acl_revision = 2; // ACL_REVISION
+    (*acl).acl_revision = 2;
     (*acl).acl_size = core::mem::size_of::<Acl>() as u16;
     (*acl).ace_count = 0;
     STATUS_SUCCESS
 }
 
-/// `rtl_add_access_allowed_ace` — append an access-allowed ACE
-/// to the ACL. The buffer must have enough room.
 pub unsafe extern "C" fn rtl_add_access_allowed_ace(
     acl: *mut Acl,
     acl_revision: u32,
     access_mask: u32,
     sid: PVOID,
 ) -> NTSTATUS {
-    if acl.is_null() {
-        return STATUS_INVALID_PARAMETER;
-    }
-    let _ = (acl_revision, access_mask, sid);
-    (*acl).ace_count = (*acl).ace_count.saturating_add(1);
-    (*acl).acl_size = (*acl).acl_size.saturating_add(12);
-    STATUS_SUCCESS
+    write_ace(acl, 0x00, acl_revision, access_mask, sid)
 }
 
-/// `rtl_add_access_denied_ace`.
 pub unsafe extern "C" fn rtl_add_access_denied_ace(
     acl: *mut Acl,
     acl_revision: u32,
     access_mask: u32,
     sid: PVOID,
 ) -> NTSTATUS {
-    if acl.is_null() {
+    write_ace(acl, 0x01, acl_revision, access_mask, sid)
+}
+
+unsafe fn write_ace(
+    acl: *mut Acl,
+    ace_type: u8,
+    acl_revision: u32,
+    access_mask: u32,
+    sid: PVOID,
+) -> NTSTATUS {
+    if acl.is_null() || sid.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
-    let _ = (acl_revision, access_mask, sid);
+    let _ = acl_revision;
+    if ((sid as *mut u8).add(0) as *const u8).read_unaligned() != 1 {
+        return STATUS_INVALID_PARAMETER;
+    }
+    let sub_authority_count = ((sid as *mut u8).add(7) as *const u8).read_unaligned() as usize;
+    if sub_authority_count > 15 {
+        return STATUS_INVALID_PARAMETER;
+    }
+    let sid_size = 8 + sub_authority_count * 4;
+    let ace_size = 8 + sid_size;
+    let acl_offset = (*acl).acl_size as usize;
+    if acl_offset < core::mem::size_of::<Acl>() {
+        return STATUS_INVALID_PARAMETER;
+    }
+    match acl_offset.checked_add(ace_size) {
+        Some(end) if end <= 4096 => {}
+        _ => return STATUS_BUFFER_TOO_SMALL,
+    }
+
+    let ace = (acl as *mut u8).add(acl_offset);
+    ptr::write_unaligned(ace, ace_type);
+    ptr::write_unaligned(ace.add(1), 0u8);
+    ptr::write_unaligned(ace.add(2) as *mut u16, ace_size as u16);
+    ptr::write_unaligned(ace.add(4) as *mut u32, access_mask);
+    ptr::copy_nonoverlapping(sid as *const u8, ace.add(8), sid_size);
+
     (*acl).ace_count = (*acl).ace_count.saturating_add(1);
-    (*acl).acl_size = (*acl).acl_size.saturating_add(12);
+    (*acl).acl_size = (acl_offset + ace_size) as u16;
     STATUS_SUCCESS
 }
 
-/// `rtl_valid_acl` — returns TRUE if the ACL is well-formed.
-/// The bootstrap always returns TRUE.
 pub unsafe extern "C" fn rtl_valid_acl(acl: *mut Acl) -> u32 {
     if acl.is_null() {
+        return 0;
+    }
+    if (*acl).acl_revision != 2
+        || (*acl).ace_count == 0 && (*acl).acl_size as usize != core::mem::size_of::<Acl>()
+    {
         return 0;
     }
     1
 }
 
-/// `rtl_first_free_ace` — pointer to the first free byte in the
-/// ACL. We return a fixed offset past the header.
 pub unsafe extern "C" fn rtl_first_free_ace(acl: *mut Acl) -> PVOID {
     if acl.is_null() {
         return ptr::null_mut();
     }
-    let off = (*acl).acl_size as usize;
-    (acl as *mut u8).add(off) as PVOID
+    (acl as *mut u8).add((*acl).acl_size as usize) as PVOID
 }

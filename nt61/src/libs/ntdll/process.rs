@@ -11,14 +11,15 @@
 
 use super::file::{alloc_handle, HandleKind};
 use super::status::{
-    STATUS_INVALID_HANDLE, STATUS_INVALID_INFO_CLASS, STATUS_INVALID_PARAMETER, STATUS_NO_MEMORY,
-    STATUS_SUCCESS,
+    STATUS_ACCESS_DENIED, STATUS_INVALID_HANDLE, STATUS_INVALID_INFO_CLASS,
+    STATUS_INVALID_PARAMETER, STATUS_NO_MEMORY, STATUS_SUCCESS,
 };
 use super::types::{client_id, HANDLE, NTSTATUS, PVOID};
 use crate::mm::user_copy::{copy_from_user, copy_to_user};
 use crate::ps::process as ps;
 
 const PROCESS_BASIC_INFO_SIZE: usize = 24; // sizeof(PROCESS_BASIC_INFORMATION) on x64
+const PROCESS_CREATE_PROCESS: u32 = 0x0080;
 
 /// Current-process pseudo-handle.
 ///
@@ -44,18 +45,83 @@ pub unsafe extern "C" fn nt_create_process(
     if process_handle.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
-    let _ = (
-        object_attributes,
-        parent_process,
-        inherit_object_table,
-        section_handle,
-        debug_port,
-        exception_port,
-        desired_access,
-    );
-    let pid = ps::PID_SYSTEM.wrapping_add(0x1000); // ad-hoc new PID
-    match ps::create_user_process(b"\\SystemRoot\\System32\\newproc.exe\0", pid, None) {
-        Some(_) => {
+    if desired_access & PROCESS_CREATE_PROCESS == 0 {
+        return STATUS_ACCESS_DENIED;
+    }
+    let mut image_path = alloc::vec::Vec::new();
+    if !object_attributes.is_null() {
+        let attributes = &*object_attributes;
+        if !attributes.object_name.is_null() {
+            let name = &*attributes.object_name;
+            let units = (name.length as usize) / 2;
+            if units > 0 && !name.buffer.is_null() {
+                let mut wide_bytes = alloc::vec![0u8; units * 2];
+                if copy_from_user(&mut wide_bytes, name.buffer as u64).is_ok() {
+                    for pair in wide_bytes.chunks_exact(2) {
+                        let unit = u16::from_le_bytes([pair[0], pair[1]]);
+                        if let Some(byte) = u8::try_from(unit & 0xFF).ok() {
+                            image_path.push(byte);
+                        }
+                    }
+                    image_path.push(0);
+                }
+            }
+        }
+    }
+    if image_path.is_empty() {
+        image_path.extend_from_slice(b"\\SystemRoot\\System32\\newproc.exe\0");
+    }
+    let parent_pid = if parent_process.is_null() || parent_process == nt_current_process() {
+        None
+    } else {
+        match crate::libs::ntdll::file::lookup_handle(parent_process) {
+            Some(entry) if entry.kind == HandleKind::Process => Some(entry.target),
+            _ => return STATUS_INVALID_HANDLE,
+        }
+    };
+    if !section_handle.is_null() {
+        match crate::libs::ntdll::file::lookup_handle(section_handle) {
+            Some(entry) if entry.kind == HandleKind::Section => {}
+            _ => return STATUS_INVALID_HANDLE,
+        }
+    }
+    for port_handle in [debug_port, exception_port] {
+        if !port_handle.is_null()
+            && crate::libs::ntdll::file::lookup_handle(port_handle).is_none()
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+    }
+    let pid = match ps::next_user_pid() {
+        Some(pid) => pid,
+        None => return STATUS_NO_MEMORY,
+    };
+    let image_name = core::str::from_utf8(&image_path).unwrap_or("");
+    match ps::create_user_process_from_path(image_name, pid, None) {
+        Some(process) => {
+            if inherit_object_table != 0 {
+                if let Some(parent) = parent_pid.and_then(ps::get_by_pid) {
+                    let parent_table = (*parent).object_table;
+                    let child_table = (*process).object_table;
+                    if !parent_table.is_null() && !child_table.is_null() {
+                        unsafe {
+                            (*child_table)
+                                .slots
+                                .copy_from_slice(&(*parent_table).slots);
+                            (*child_table)
+                                .valid
+                                .copy_from_slice(&(*parent_table).valid);
+                            (*child_table).next_slot = (*parent_table).next_slot;
+                            (*child_table).handle_count.store(
+                                (*parent_table)
+                                    .handle_count
+                                    .load(core::sync::atomic::Ordering::SeqCst),
+                                core::sync::atomic::Ordering::SeqCst,
+                            );
+                        }
+                    }
+                }
+            }
             let h = alloc_handle(HandleKind::Process, pid);
             if h.is_null() {
                 return STATUS_INVALID_HANDLE;

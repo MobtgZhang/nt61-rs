@@ -4,7 +4,8 @@
 
 use crate::kprintln;
 use crate::libs::ntdll::status::{
-    STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER, STATUS_OBJECT_NAME_NOT_FOUND, STATUS_SUCCESS,
+    STATUS_ACCESS_DENIED, STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER,
+    STATUS_OBJECT_NAME_NOT_FOUND, STATUS_SUCCESS,
 };
 use crate::libs::ntdll::types::{ObjectAttributes, UnicodeString, HANDLE, NTSTATUS, PVOID};
 use core::ptr::null_mut;
@@ -12,6 +13,12 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 /// Backslash character in UTF-16 encoding (0x5C).
 const BACKSLASH_U16: u16 = 0x5C;
+
+// KEY_* access rights (winnt.h).
+const KEY_QUERY_VALUE: u32 = 0x0001;
+const KEY_SET_VALUE: u32 = 0x0002;
+const KEY_CREATE_SUB_KEY: u32 = 0x0004;
+const DELETE_RIGHT: u32 = 0x0001_0000;
 
 /// Maximum number of simultaneously open key handles.
 const MAX_KEY_HANDLES: usize = 256;
@@ -178,6 +185,8 @@ static LAST_HANDLE_SLOT: AtomicU32 = AtomicU32::new(0);
 pub struct KeyHandleEntry {
     pub key_ptr: *mut RegistryKey,
     pub ref_count: u32,
+    /// Access rights the handle was opened with. Zero means "no access".
+    pub desired_access: u32,
 }
 
 impl KeyHandleEntry {
@@ -185,6 +194,7 @@ impl KeyHandleEntry {
         Self {
             key_ptr: key,
             ref_count: 1,
+            desired_access: 0,
         }
     }
 }
@@ -256,7 +266,7 @@ mod spin {
 /// Returns the slot index (0..255) if a free slot is found, or `None`
 /// if the table is full. This implements round-robin by starting the
 /// scan from `LAST_HANDLE_SLOT + 1` modulo 256.
-fn allocate_handle_slot(key: *mut RegistryKey) -> Option<usize> {
+fn allocate_handle_slot(key: *mut RegistryKey, desired_access: u32) -> Option<usize> {
     let start = LAST_HANDLE_SLOT.load(Ordering::Relaxed) as usize;
     let mut handle_table = KEY_HANDLE_TABLE.lock();
 
@@ -265,7 +275,9 @@ fn allocate_handle_slot(key: *mut RegistryKey) -> Option<usize> {
     for offset in 0..MAX_KEY_HANDLES {
         let idx = (start + offset + 1) % MAX_KEY_HANDLES;
         if handle_table[idx].is_none() {
-            handle_table[idx] = Some(KeyHandleEntry::new(key));
+            let mut entry = KeyHandleEntry::new(key);
+            entry.desired_access = desired_access;
+            handle_table[idx] = Some(entry);
             // Update round-robin pointer to the slot we just used.
             LAST_HANDLE_SLOT.store(idx as u32, Ordering::Relaxed);
             return Some(idx);
@@ -521,7 +533,7 @@ pub fn get_value(key: *mut RegistryKey, name: &[u16]) -> Option<(ValueType, usiz
 /// handle semantics: slot_index + 1 (1-based), so 0 is invalid.
 pub unsafe extern "C" fn nt_create_key(
     key_handle: *mut HANDLE,
-    _desired_access: u32,
+    desired_access: u32,
     object_attributes: *mut ObjectAttributes,
     title_index: u32,
     _class: *mut UnicodeString,
@@ -533,6 +545,9 @@ pub unsafe extern "C" fn nt_create_key(
 
     if key_handle.is_null() {
         return STATUS_OBJECT_NAME_NOT_FOUND;
+    }
+    if desired_access & KEY_CREATE_SUB_KEY == 0 {
+        return STATUS_ACCESS_DENIED;
     }
 
     let path = if !object_attributes.is_null() && !(*object_attributes).object_name.is_null() {
@@ -587,7 +602,7 @@ pub unsafe extern "C" fn nt_create_key(
     drop(root);
 
     // Allocate handle using round-robin.
-    let slot_idx = match allocate_handle_slot(current) {
+    let slot_idx = match allocate_handle_slot(current, desired_access) {
         Some(idx) => idx,
         None => {
             kprintln!(
@@ -620,8 +635,6 @@ pub unsafe extern "C" fn nt_open_key(
     desired_access: u32,
     object_attributes: *mut ObjectAttributes,
 ) -> NTSTATUS {
-    let _ = desired_access;
-
     if key_handle.is_null() {
         return STATUS_OBJECT_NAME_NOT_FOUND;
     }
@@ -665,7 +678,7 @@ pub unsafe extern "C" fn nt_open_key(
 
     drop(root);
 
-    let slot_idx = match allocate_handle_slot(current) {
+    let slot_idx = match allocate_handle_slot(current, desired_access) {
         Some(idx) => idx,
         None => {
             kprintln!(subsystem: "REG", "    [REG] NtOpenKey: handle table FULL");
@@ -708,6 +721,14 @@ pub unsafe extern "C" fn nt_set_value_key(
         Some(e) => e,
         None => return STATUS_INVALID_PARAMETER,
     };
+
+    if entry.desired_access & KEY_SET_VALUE == 0 {
+        return STATUS_ACCESS_DENIED;
+    }
+
+    if entry.desired_access & KEY_QUERY_VALUE == 0 {
+        return STATUS_ACCESS_DENIED;
+    }
 
     let key = entry.key_ptr;
     drop(handle_table);
@@ -853,7 +874,12 @@ pub unsafe extern "C" fn nt_delete_value_key(
     let key = {
         let handle_table = KEY_HANDLE_TABLE.lock();
         match &handle_table[handle_idx] {
-            Some(entry) => entry.key_ptr,
+            Some(entry) => {
+                if entry.desired_access & (KEY_SET_VALUE | DELETE_RIGHT) == 0 {
+                    return STATUS_ACCESS_DENIED;
+                }
+                entry.key_ptr
+            }
             None => {
                 kprintln!(
                     subsystem: "REG",

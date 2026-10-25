@@ -281,7 +281,7 @@ fn file_open_common(
         STATUS_ACCESS_DENIED, STATUS_FILE_IS_A_DIRECTORY, STATUS_OBJECT_PATH_NOT_FOUND,
         STATUS_SUCCESS,
     };
-    if !check_file_access(name_chars.len(), desired_access) {
+    if !check_file_access(name_chars, desired_access) {
         return (STATUS_ACCESS_DENIED, None, 0);
     }
     let _ = share_access;
@@ -492,9 +492,26 @@ pub unsafe extern "C" fn nt_open_file(
 ///
 /// This performs SeAccessCheck on the file's security descriptor
 /// before allowing the open operation.
-fn check_file_access(name_char_count: usize, _desired_access: u32) -> bool {
-    let _ = (name_char_count, _desired_access);
-    true
+fn check_file_access(name_chars: &[u16], desired_access: u32) -> bool {
+    let _ = name_chars;
+    let current_process = crate::arch::common::percpu::get_current_process();
+    let token = if current_process.is_null() {
+        core::ptr::null()
+    } else {
+        unsafe { (*current_process).get_token() }
+    };
+    if token.is_null() {
+        return false;
+    }
+    let sid = unsafe { &(*token).user };
+    let sid_bytes = unsafe {
+        core::slice::from_raw_parts(
+            sid as *const crate::se::sid::sid as *const u8,
+            core::mem::size_of::<crate::se::sid::sid>(),
+        )
+    };
+    let descriptor = crate::fs::ntfs::security::get_default_file_security();
+    crate::fs::ntfs::security::check_access(&descriptor, sid_bytes, desired_access)
 }
 
 /// `nt_read_file` — read `length` bytes from `file_handle` into
