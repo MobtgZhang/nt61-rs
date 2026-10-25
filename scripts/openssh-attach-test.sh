@@ -109,6 +109,7 @@ if [[ ! -f "${TEST_VARS}" ]]; then
 fi
 
 SERIAL_LOG="${IMAGES_DIR}/openssh_serial_x86_64.log"
+: > "${SERIAL_LOG}"
 DISPLAY_FLAG=""
 if [[ "${USE_DISPLAY}" == "yes" ]]; then
     DISPLAY_FLAG="-display gtk"
@@ -170,23 +171,17 @@ log_info "QEMU cmd: ${QEMU_CMD[*]}"
 "${QEMU_CMD[@]}" &
 QEMU_PID=$!
 
-# Tail the serial log for the boot signature.
-#
-# NOTE: in bash double-quoted extended regex, every literal backslash
-# must be doubled because bash first processes the string (\\ -> \),
-# then the regex engine consumes the backslash as an escape. The
-# nt61 cmd shell prints the prompt as the four characters "C", ":",
-# "\", ">", so the correct regex is `C:\\>` (two backslashes inside
-# double quotes), NOT `C:\\\\>` (which would force the regex to
-# require TWO backslash characters before the `>`).
-log_info "QEMU PID: ${QEMU_PID}; watching serial log for cmd shell"
+# Tail the serial log for the last deterministic pre-ring-3 marker.
+# The shell intentionally silences normal serial output after entering
+# Ring 3, so waiting for a rendered prompt can produce false timeouts.
+log_info "QEMU PID: ${QEMU_PID}; watching serial log for ring-3 handoff"
 START_TS=$(date +%s)
 BOOT_SEEN=0
 while kill -0 "${QEMU_PID}" 2>/dev/null; do
     if [[ -f "${SERIAL_LOG}" ]] && \
-       grep -qE 'C:\\>|cmd shell|cmd.exe interactive' "${SERIAL_LOG}"; then
+       grep -q '\[CMD\] enter ring3' "${SERIAL_LOG}"; then
         BOOT_TS=$(( $(date +%s) - START_TS ))
-        log_ok "cmd shell reached — T=+${BOOT_TS}s"
+        log_ok "ring-3 handoff reached — T=+${BOOT_TS}s"
         BOOT_SEEN=1
         break
     fi

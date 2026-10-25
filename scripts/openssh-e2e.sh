@@ -176,8 +176,8 @@ boot_once() {
     local start_ts=$(date +%s)
     local serial_log="$(dirname "${DISK_IMG}")/openssh_serial_x86_64.log"
     while kill -0 "${ATTACH_PID}" 2>/dev/null; do
-        if [[ -f "${serial_log}" ]] && grep -qE 'C:\\>' "${serial_log}"; then
-            log_ok "Boot reached cmd shell"
+        if [[ -f "${serial_log}" ]] && grep -q '\[CMD\] enter ring3' "${serial_log}"; then
+            log_ok "Boot reached ring-3 handoff"
             return 0
         fi
         if (( $(date +%s) - start_ts > QEMU_TIMEOUT )); then
