@@ -22,7 +22,7 @@
 
 use core::arch::asm;
 use core::ptr;
-use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 // =====================================================================
 // Local APIC register offsets (relative to LAPIC base)
@@ -132,6 +132,7 @@ static LAPIC_VA: AtomicU64 = AtomicU64::new(0);
 static IOAPIC_VA: AtomicU64 = AtomicU64::new(0);
 static IOAPIC_BASE_PFN: AtomicU32 = AtomicU32::new(0);
 static TIMER_TICKS_PER_SEC: AtomicU32 = AtomicU32::new(0);
+static TIMER_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// Count of spurious LAPIC interrupts observed. A spurious
 /// interrupt arrives at the spurious vector without a matching
 /// ISR entry and must NOT be EOI'd.
@@ -445,31 +446,79 @@ pub fn init_timer(mode: ApicTimerMode, hz: u32) -> bool {
     true
 }
 
+/// Calibrate the periodic LAPIC timer against the invariant TSC.
+///
+/// The timer runs at the APIC bus frequency divided by the programmed
+/// divider. Measure a short, fixed interval with the TSC and derive the
+/// reload count for one `hz` period. A longer interval reduces rounding
+/// error while still avoiding any dependence on legacy interrupt wiring.
+fn calibrate_timer(hz: u32) -> u32 {
+    const CALIBRATION_MS: u64 = 10;
+    if hz == 0 {
+        return 0;
+    }
+
+    let target_tsc_ticks =
+        crate::hal::x86_64::pit::tsc_frequency_hz() * CALIBRATION_MS / 1000;
+    let start_tsc = unsafe { core::arch::x86_64::_rdtsc() };
+
+    write_lapic(
+        lapic_reg::LVT_TIMER,
+        timer_lvt::PERIODIC | timer_lvt::MASKED | 0x20,
+    );
+    write_lapic(lapic_reg::TIMER_DIVIDE, timer_divide::DIV_16);
+    write_lapic(lapic_reg::TIMER_INITIAL, u32::MAX);
+
+    let start_count = timer_current();
+
+    loop {
+        let elapsed_tsc = unsafe { core::arch::x86_64::_rdtsc() }
+            .wrapping_sub(start_tsc);
+        if elapsed_tsc >= target_tsc_ticks {
+            break;
+        }
+        core::hint::spin_loop();
+    }
+    let end_count = timer_current();
+    write_lapic(lapic_reg::TIMER_INITIAL, 0);
+
+    let elapsed_apic = start_count.wrapping_sub(end_count) as u64;
+    (elapsed_apic * 1000 / (u64::from(hz) * CALIBRATION_MS)) as u32
+}
+
+/// Enable the periodic LAPIC timer at the system tick rate.
+pub fn init_timer_calibrated(hz: u32) -> bool {
+    if hz == 0 {
+        return false;
+    }
+
+    let initial_count = calibrate_timer(hz);
+    if initial_count == 0 {
+        return false;
+    }
+
+    write_lapic(lapic_reg::TIMER_INITIAL, 0);
+    write_lapic(lapic_reg::TIMER_DIVIDE, timer_divide::DIV_16);
+    let lvt = timer_lvt::PERIODIC | 0x20 | timer_lvt::MASKED;
+    write_lapic(lapic_reg::LVT_TIMER, lvt);
+    write_lapic(lapic_reg::TIMER_INITIAL, initial_count);
+    write_lapic(lapic_reg::LVT_TIMER, lvt & !timer_lvt::MASKED);
+
+    TIMER_TICKS_PER_SEC.store(hz, Ordering::Release);
+    TIMER_ACTIVE.store(true, Ordering::Release);
+    true
+}
+
+/// Whether vector 32 is currently owned by the LAPIC timer.
+pub fn timer_active() -> bool {
+    TIMER_ACTIVE.load(Ordering::Acquire)
+}
+
 /// Stop the LAPIC timer.
 pub fn stop_timer() {
     write_lapic(lapic_reg::TIMER_INITIAL, 0);
     let v = read_lapic(lapic_reg::LVT_TIMER);
     write_lapic(lapic_reg::LVT_TIMER, v | timer_lvt::MASKED);
-}
-
-/// Calibrate the LAPIC timer against a 1 ms delay on the PIT.
-/// Returns the initial count that the caller can plug into
-/// `TIMER_INITIAL` to get a 1 kHz periodic tick.
-pub fn calibrate_timer_1khz() -> u32 {
-    // We assume the PIT is already initialised to ~1 kHz. count
-    // the LAPIC timer down for 1 ms; the value we read back is
-    // the bus-frequency-dependent initial count.
-    init_timer(ApicTimerMode::OneShot, u32::MAX);
-    let _busy = read_lapic(lapic_reg::TIMER_CURRENT);
-    // Spin a calibrated delay using the HPET if available; fall
-    // back to a fixed 1000 iterations otherwise.
-    for _ in 0..100_000 {
-        core::hint::spin_loop();
-    }
-    let now = read_lapic(lapic_reg::TIMER_CURRENT);
-    let diff = u32::MAX - now;
-    stop_timer();
-    diff
 }
 
 // =====================================================================

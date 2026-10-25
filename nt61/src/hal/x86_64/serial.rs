@@ -151,6 +151,29 @@ pub fn write_hex_u64(v: u64) {
     }
 }
 
+/// Writes a hexadecimal value even in non-debug builds. This mirrors the
+/// diagnostics used by early user-mode heap bring-up, which may run before
+/// debug logging is enabled.
+#[inline(never)]
+pub fn write_hex_u64_always(v: u64) {
+    #[cfg(test)]
+    {
+        let _ = v;
+    }
+    #[cfg(not(test))]
+    write_string_always("0x");
+    #[cfg(not(test))]
+    for i in (0..16).rev() {
+        let nibble = ((v >> (i * 4)) & 0xF) as u8;
+        let byte = if nibble < 10 {
+            b'0' + nibble
+        } else {
+            b'a' + (nibble - 10)
+        };
+        write_char_port(COM1_PORT, byte);
+    }
+}
+
 fn log_level_debug() -> bool {
     cfg!(feature = "log_level_debug")
 }

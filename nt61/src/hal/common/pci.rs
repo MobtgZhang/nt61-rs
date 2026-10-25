@@ -293,13 +293,15 @@ pub fn probe_bar(bus: u8, dev: u8, func: u8, index: u8) -> Option<BarInfo> {
     if is_64 {
         high_orig = read_config_dword(bus, dev, func, off + 4);
     }
-    crate::hal::serial::write_string_always(&alloc::format!(
-        "[PCI-BAR] index={} low={:#x} high_orig={:#x} is64={}\r\n",
-        index,
-        low,
-        high_orig,
-        is_64 as u8
-    ));
+    crate::hal::serial::write_string_always("[PCI-BAR] index=");
+    crate::hal::serial::write_hex_u64_always(index as u64);
+    crate::hal::serial::write_string_always(" low=");
+    crate::hal::serial::write_hex_u64_always(low as u64);
+    crate::hal::serial::write_string_always(" high_orig=");
+    crate::hal::serial::write_hex_u64_always(high_orig as u64);
+    crate::hal::serial::write_string_always(" is64=");
+    crate::hal::serial::write_hex_u64_always(is_64 as u64);
+    crate::hal::serial::write_string_always("\r\n");
 
     // Probe the writable bits (and the high dword of 64-bit BARs).
     write_config_dword(bus, dev, func, off, 0xFFFF_FFFF);
@@ -311,11 +313,11 @@ pub fn probe_bar(bus: u8, dev: u8, func: u8, index: u8) -> Option<BarInfo> {
         probed_high = read_config_dword(bus, dev, func, high_off);
         write_config_dword(bus, dev, func, high_off, high_orig);
     }
-    crate::hal::serial::write_string_always(&alloc::format!(
-        "[PCI-BAR] probe low={:#x} high={:#x}\r\n",
-        probed_low,
-        probed_high
-    ));
+    crate::hal::serial::write_string_always("[PCI-BAR] probe low=");
+    crate::hal::serial::write_hex_u64_always(probed_low as u64);
+    crate::hal::serial::write_string_always(" high=");
+    crate::hal::serial::write_hex_u64_always(probed_high as u64);
+    crate::hal::serial::write_string_always("\r\n");
     // Restore the firmware-assigned addresses.
     write_config_dword(bus, dev, func, off, low);
 
@@ -575,7 +577,9 @@ fn enumerate_recursive() {
 /// Enumerate all PCI buses and cache results. Safe to call multiple
 /// times — subsequent calls return the cached slice instantly.
 pub fn enumerate() -> &'static [PciDevice] {
+    crate::hal::serial::write_string_always("[PCI] enum enter\r\n");
     if unsafe { PCI_CACHE_VALID } {
+        crate::hal::serial::write_string_always("[PCI] enum cached\r\n");
         return unsafe {
             core::slice::from_raw_parts(
                 (*core::ptr::addr_of!(PCI_DEVICE_CACHE)).as_ptr() as *const PciDevice,
@@ -588,20 +592,27 @@ pub fn enumerate() -> &'static [PciDevice] {
     // riscv64, loongarch64) reach enumeration through the
     // virtio/drivers path without calling `init` first; without
     // this, ECAM reads on those targets return all-zero garbage.
+    crate::hal::serial::write_string_always("[PCI] enum setup enter\r\n");
     setup_config_method();
+    crate::hal::serial::write_string_always("[PCI] enum setup done\r\n");
 
     //     // // kprintln!("  [PCI] starting enumeration... (scanning bus 0)");
+    crate::hal::serial::write_string_always("[PCI] enum scan enter\r\n");
     enumerate_recursive();
+    crate::hal::serial::write_string_always("[PCI] enum scan done\r\n");
     let count = unsafe { PCI_CACHE_COUNT };
+    crate::hal::serial::write_string_always("[PCI] enum return enter\r\n");
     //     // // kprintln!("  [PCI] enumeration complete: {} device(s) found", count);
 
     unsafe {
         PCI_CACHE_COUNT = count;
         PCI_CACHE_VALID = true;
-        core::slice::from_raw_parts(
+        let devices = core::slice::from_raw_parts(
             (*core::ptr::addr_of!(PCI_DEVICE_CACHE)).as_ptr() as *const PciDevice,
             count,
-        )
+        );
+        crate::hal::serial::write_string_always("[PCI] enum return done\r\n");
+        devices
     }
 }
 

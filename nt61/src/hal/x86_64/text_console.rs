@@ -392,7 +392,9 @@ fn clear_vga_only() {
 pub fn put_byte(b: u8) {
     // 1) Serial — always available (COM1 is mapped by UEFI)
     #[cfg(target_arch = "x86_64")]
-    crate::hal::x86_64::serial::write_char(b);
+    crate::hal::common::serial_disable::with_serial_unmasked(|| {
+        crate::hal::x86_64::serial::write_char(b);
+    });
 
     // 2) VGA text console — only after init
     if VGA_READY.load(Ordering::Acquire) {

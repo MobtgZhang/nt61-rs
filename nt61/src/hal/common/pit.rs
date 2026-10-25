@@ -8,7 +8,29 @@
 #[cfg(target_arch = "x86_64")]
 pub use crate::hal::x86_64::pit::*;
 
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(target_arch = "aarch64")]
+mod aarch64_timer {
+    use crate::hal::aarch64::timer;
+
+    pub fn get_ticks() -> u64 {
+        timer::time_ms()
+    }
+
+    pub fn increment_ticks() {}
+
+    pub fn get_system_time_ms() -> u64 {
+        timer::time_ms()
+    }
+
+    pub fn get_system_time_us() -> u64 {
+        timer::time_ms().saturating_mul(1000)
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+pub use aarch64_timer::*;
+
+#[cfg(all(not(target_arch = "x86_64"), not(target_arch = "aarch64")))]
 mod stub {
     /// Get the current tick count.
     pub fn get_ticks() -> u64 {
@@ -29,5 +51,5 @@ mod stub {
     }
 }
 
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(all(not(target_arch = "x86_64"), not(target_arch = "aarch64")))]
 pub use stub::*;

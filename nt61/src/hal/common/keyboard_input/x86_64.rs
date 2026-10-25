@@ -27,17 +27,22 @@ pub fn init() {
 /// Try to read one byte (non-blocking).
 pub fn try_read_byte() -> Option<u8> {
     let raw = crate::hal::x86_64::keyboard::getc();
-    if raw < 0 {
-        None
-    } else {
-        Some(raw as u8)
+    if raw >= 0 {
+        return Some(raw as u8);
     }
+    poll();
+    let raw = crate::hal::x86_64::keyboard::getc();
+    (raw >= 0).then_some(raw as u8)
 }
 
 pub fn poll() {
-    crate::drivers::usb::poll_keyboards();
-    if let Some(byte) = crate::hal::keyboard_unified::ps2_poll_char() {
-        crate::hal::keyboard_unified::inject_byte(byte);
+    if crate::hal::x86_64::serial::data_available() {
+        if let Some(byte) = crate::hal::x86_64::serial::read_char() {
+            crate::hal::x86_64::keyboard_unified::inject_byte(byte);
+        }
+    }
+    if let Some(byte) = crate::hal::x86_64::keyboard_unified::ps2_poll_char() {
+        crate::hal::x86_64::keyboard_unified::inject_byte(byte);
     }
 }
 

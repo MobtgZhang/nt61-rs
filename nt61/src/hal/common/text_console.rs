@@ -284,8 +284,14 @@ pub fn put_byte_vga_only(b: u8) {
 pub fn put_serial_and_console(b: u8) {
     #[cfg(target_arch = "x86_64")]
     {
-        crate::hal::x86_64::serial::write_char(b);
-        put_byte_vga_only(b);
+        crate::hal::common::serial_disable::with_serial_unmasked(|| {
+            crate::hal::x86_64::serial::write_char(b);
+        });
+        if crate::drivers::bootvid::lfb_active() {
+            crate::drivers::bootvid::put_byte_to_active_console(b);
+        } else {
+            put_byte_vga_only(b);
+        }
     }
 
     #[cfg(not(target_arch = "x86_64"))]

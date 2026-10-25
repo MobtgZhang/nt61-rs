@@ -39,12 +39,12 @@ pub mod mode {
     pub const ACCESS_HI: u8 = 0b00_100_000;
     pub const ACCESS_LOHI: u8 = 0b00_110_000;
     /// Operating mode (bits 3..1).
-    pub const MODE_0: u8 = 0b000_00_0_0; // interrupt on terminal count
-    pub const MODE_1: u8 = 0b000_00_0_1; // hardware re-triggerable one-shot
-    pub const MODE_2: u8 = 0b000_00_1_0; // rate generator
-    pub const MODE_3: u8 = 0b000_00_1_1; // square wave
-    pub const MODE_4: u8 = 0b000_01_0_0; // software triggered strobe
-    pub const MODE_5: u8 = 0b000_01_0_1; // hardware triggered strobe
+    pub const MODE_0: u8 = 0b000;
+    pub const MODE_1: u8 = 0b010;
+    pub const MODE_2: u8 = 0b100;
+    pub const MODE_3: u8 = 0b110;
+    pub const MODE_4: u8 = 0b1000;
+    pub const MODE_5: u8 = 0b1010;
     /// BCD / binary.
     pub const BINARY: u8 = 0b0000_0_0_0;
     pub const BCD: u8 = 0b0000_0_0_1;
@@ -135,22 +135,13 @@ pub fn init(hz: u32) -> bool {
         return false;
     }
 
-    // BRING-UP WORKAROUND: do NOT actually program the PIT.
-    // Earlier boot paths left the PIT running at 18.2 Hz (or the
-    // OVMF-default 1000 Hz after a prior `pit::init(1000)`), and
-    // the periodic IRQ 0 was arriving during the first user-mode
-    // syscall handler invocation. Even with IST-based IRQ
-    // handlers, the PIT was racing the kernel's trap-frame
-    // restoration and corrupting the user RIP slot, which made
-    // sysretq jump to a low-memory BCDE region and crash.
-    //
-    // We return `false` here so callers (which usually ignore the
-    // boolean anyway) know the timer is not actually ticking. The
-    // proper fix is to size the IST stack for deep nesting and
-    // verify the IRQ handlers are re-entrant; once that lands the
-    // PIT programming block that lived below this comment can be
-    // reinstated verbatim.
-    false
+    let command =
+        mode::SEL_CHAN0 | mode::ACCESS_LOHI | mode::MODE_2 | mode::BINARY;
+    write_port_uchar(PIT_COMMAND, command);
+    write_port_uchar(PIT_CHANNEL0, (divisor & 0xFF) as u8);
+    write_port_uchar(PIT_CHANNEL0, ((divisor >> 8) & 0xFF) as u8);
+    PIT_HZ.store(hz, Ordering::Release);
+    true
 }
 
 /// read the current programmed frequency in Hz.

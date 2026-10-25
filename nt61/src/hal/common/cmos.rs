@@ -66,7 +66,12 @@ mod backend {
         })
     }
 
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(target_arch = "aarch64")]
+    pub fn query_real_time_clock() -> Option<super::TimeFields> {
+        crate::hal::aarch64::rtc::query_real_time_clock()
+    }
+
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     pub fn query_real_time_clock() -> Option<super::TimeFields> {
         None
     }
