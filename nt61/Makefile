@@ -749,19 +749,17 @@ run-x86_64-net-bridge: build-x86_64-ntfs
 # because that platform only exposes a virtio-pci bus.
 # ------------------------------------------------------------
 define _run_aarch64_serial
-	@$(SCRIPT_DIR)/../scripts/ensure-qemu-bridge.sh
 	@timeout $(TIMEOUT)s $(QEMU_AARCH64) -machine virt -m 8G -smp 4 $(QEMU_CPU_aarch64) \
 		-drive if=pflash,format=raw,unit=0,readonly=on,file=$(EDK2_AARCH64_EFI_PADDED) \
 		-drive if=pflash,format=raw,unit=1,file=$(EDK2_AARCH64_VARS) \
 		-drive if=none,file=$(DISK_IMG),format=raw,id=hd0 \
 		-device $(DISK_DEV_PCI),drive=hd0 \
 		-device ramfb -device virtio-keyboard-pci \
-		-boot order=c $(QEMU_NET_BRIDGE) \
+		-boot order=c -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
 		-serial file:$(SERIAL_LOG) -display gtk || true
 endef
 
 define _run_riscv64_serial
-	@$(SCRIPT_DIR)/../scripts/ensure-qemu-bridge.sh
 	@timeout $(TIMEOUT)s $(QEMU_RISCV64) -machine virt -m 8G -smp 4 $(QEMU_CPU_riscv64) \
 		-bios /usr/share/qemu/opensbi-riscv64-generic-fw_dynamic.bin \
 		-drive if=pflash,format=raw,unit=0,file=$(EDK2_RISCV64_VIRT_PADDED) \
@@ -769,19 +767,18 @@ define _run_riscv64_serial
 		-drive if=none,file=$(DISK_IMG),format=raw,id=hd0 \
 		-device $(DISK_DEV_PCI),drive=hd0 \
 		-device ramfb -device virtio-keyboard-pci \
-		-boot order=c $(QEMU_NET_BRIDGE) \
+		-boot order=c -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
 		-serial file:$(SERIAL_LOG) -display gtk || true
 endef
 
 define _run_loongarch64_serial
-	@$(SCRIPT_DIR)/../scripts/ensure-qemu-bridge.sh
 	@timeout $(TIMEOUT)s $(QEMU_LOONGARCH64) -machine virt -m 8G -smp 4 $(QEMU_CPU_loongarch64) \
 		-drive if=pflash,format=raw,unit=0,readonly=on,file=$(EDK2_LOONGARCH64_EFI) \
 		-drive if=pflash,format=raw,unit=1,file=$(EDK2_LOONGARCH64_VARS) \
 		-drive if=none,file=$(DISK_IMG),format=raw,id=hd0 \
 		-device $(DISK_DEV_PCI),drive=hd0 \
 		-device ramfb -device virtio-keyboard-pci \
-		-boot order=c $(QEMU_NET_BRIDGE) \
+		-boot order=c -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
 		-serial file:$(SERIAL_LOG) -display gtk || true
 endef
 

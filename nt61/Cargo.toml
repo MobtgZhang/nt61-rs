@@ -27,6 +27,7 @@ path = "src/lib.rs"
 [[bin]]
 name = "nt61-kernel"
 path = "src/main.rs"
+test = false
 
 [features]
 default = ["x86_64", "binary_panic", "alloc", "crypto_libs"]
@@ -144,3 +145,4 @@ proptest = "1.2"
 [[bin]]
 name = "hal_dll"
 path = "src/bin/hal.rs"
+test = false
