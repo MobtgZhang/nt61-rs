@@ -51,10 +51,17 @@ impl AceHeader {
         AceFlags::from_bits(self.ace_flags)
     }
 
-    pub fn mask(&self) -> u32 {
-        // The access mask is at offset 0 (after the header)
-        // Stored as a raw u32; we need a reference
-        0
+    pub fn mask(&self, ace: &[u8]) -> u32 {
+        let offset = ACE_HEADER_SIZE;
+        if ace.len() < offset + 4 {
+            return 0;
+        }
+        u32::from_le_bytes([
+            ace[offset],
+            ace[offset + 1],
+            ace[offset + 2],
+            ace[offset + 3],
+        ])
     }
 }
 

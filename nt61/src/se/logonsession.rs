@@ -122,9 +122,10 @@ pub fn se_create_logon_session(
 }
 
 pub fn se_delete_logon_session(logon_id: &luid) -> bool {
-    let table = LOGON_SESSIONS.lock();
+    let mut table = LOGON_SESSIONS.lock();
     for i in 0..MAX_LOGON_SESSIONS {
         if table.sessions[i].active && table.sessions[i].authentication_id.equals(logon_id) {
+            table.sessions[i].active = false;
             return true;
         }
     }
@@ -171,7 +172,7 @@ pub fn se_enumerate_logon_sessions() -> Vec<luid> {
 }
 
 fn get_system_time() -> u64 {
-    0
+    crate::ke::time::get_system_time()
 }
 
 pub fn init_system_logon_session() -> luid {

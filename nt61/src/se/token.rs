@@ -387,11 +387,12 @@ impl Token {
 
     /// Check if the token belongs to the administrators group.
     pub fn is_admin(&self) -> bool {
-        self.user
-            .equals(&sid::well_known(WellKnownSid::LocalSystem))
+        self.is_local_system()
             || self
-                .user
-                .equals(&sid::well_known(WellKnownSid::Administrators))
+                .groups
+                .iter()
+                .take(self.group_count)
+                .any(|group| group.sid.equals(&sid::well_known(WellKnownSid::Administrators)))
     }
 
     /// Check if the token belongs to the LocalSystem account.

@@ -27,9 +27,9 @@ pub const MAX_SIDS: usize = 16;
 /// Well-known privilege LUIDs for SeAccessCheck overrides
 pub mod privileges {
     /// SeTakeOwnershipPrivilege - allows taking ownership of objects
-    pub const SE_TAKE_OWNERSHIP: i64 = 0x00000017;
-    /// SeSecurityPrivilege - allows reading/writing security (AUDIT/ACCESS)
-    pub const SE_SECURITY: i64 = 0x00000013;
+    pub const SE_TAKE_OWNERSHIP: i64 = 0x00000009;
+    /// SeSecurityPrivilege - allows reading/writing system audit ACLs
+    pub const SE_SECURITY: i64 = 0x00000008;
     /// SeBackupPrivilege - allows reading files for backup
     pub const SE_BACKUP: i64 = 0x00000011;
     /// SeRestorePrivilege - allows writing files for restore
@@ -108,9 +108,9 @@ pub const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
 pub const PROCESS_CREATE_PROCESS: u32 = 0x0080;
 pub const PROCESS_CREATE_THREAD: u32 = 0x0002;
 pub const PROCESS_DUP_HANDLE: u32 = 0x0040;
-pub const PROCESS_VM_READ: u32 = 0x0010;
-pub const PROCESS_VM_WRITE: u32 = 0x0010;
-pub const PROCESS_VM_OPERATION: u32 = 0x0020;
+    pub const PROCESS_VM_OPERATION: u32 = 0x0008;
+    pub const PROCESS_VM_READ: u32 = 0x0010;
+    pub const PROCESS_VM_WRITE: u32 = 0x0020;
 pub const PROCESS_ALL_ACCESS: u32 = 0x1F0FFF;
 
 /// Thread access rights.
@@ -254,13 +254,14 @@ fn check_access_with_granted(
         return (AccessCheckResult::Allowed, granted);
     }
 
+    let mut privilege_grants = 0u32;
     if (desired_access & ACCESS_WRITE_OWNER) != 0 {
         let luid = super::token::luid {
             low_part: privileges::SE_TAKE_OWNERSHIP as u32,
             high_part: 0,
         };
         if token.has_privilege(&luid) {
-            return (AccessCheckResult::Allowed, desired_access);
+            privilege_grants |= ACCESS_WRITE_OWNER;
         }
     }
 
@@ -270,7 +271,7 @@ fn check_access_with_granted(
             high_part: 0,
         };
         if token.has_privilege(&luid) {
-            return (AccessCheckResult::Allowed, desired_access);
+            privilege_grants |= ACCESS_SYSTEM_SECURITY;
         }
     }
 
@@ -280,7 +281,7 @@ fn check_access_with_granted(
             high_part: 0,
         };
         if token.has_privilege(&luid) {
-            return (AccessCheckResult::Allowed, desired_access);
+            privilege_grants |= ACCESS_READ_CONTROL;
         }
     }
 
@@ -290,10 +291,13 @@ fn check_access_with_granted(
             high_part: 0,
         };
         if token.has_privilege(&luid) {
-            return (AccessCheckResult::Allowed, desired_access);
+            privilege_grants |= ACCESS_WRITE_DAC;
         }
     }
 
+    const SE_DEBUG_REQUIRED_ACCESS: u32 = PROCESS_VM_READ
+        | PROCESS_VM_WRITE
+        | PROCESS_VM_OPERATION;
     const SE_DEBUG_ALLOWED_ACCESS: u32 = PROCESS_ALL_ACCESS
         | PROCESS_QUERY_INFORMATION
         | PROCESS_QUERY_LIMITED_INFORMATION
@@ -308,7 +312,7 @@ fn check_access_with_granted(
             high_part: 0,
         };
         if token.has_privilege(&luid) && token.is_admin() {
-            return (AccessCheckResult::Allowed, desired_access);
+            privilege_grants |= SE_DEBUG_REQUIRED_ACCESS;
         }
     }
 
@@ -354,19 +358,20 @@ fn check_access_with_granted(
     }
 
     granted_access &= !denied_access;
+    privilege_grants &= !denied_access;
     if (desired_access & denied_access) != 0 {
         return (AccessCheckResult::Denied, 0);
     }
 
-    let remaining = desired_access & !granted_access;
+    let remaining = desired_access & !granted_access & !privilege_grants;
     if remaining != 0 {
         return (AccessCheckResult::Denied, 0);
     }
 
     let granted = if maximum_allowed {
-        granted_access & maximum_access
+        (granted_access | privilege_grants) & desired_access & maximum_access
     } else {
-        granted_access & desired_access
+        granted_access & desired_access | privilege_grants & desired_access
     };
     if maximum_allowed && granted == 0 {
         return (AccessCheckResult::Denied, 0);
@@ -601,6 +606,13 @@ pub fn se_access_check(
         (&token.user, core::ptr::null())
     } else {
         let sd = unsafe { &*sd_ptr };
+        if !super::integrity::se_check_mandatory_integrity(
+            token_ptr,
+            super::integrity::se_get_object_integrity_level(sd_ptr),
+            desired_access,
+        ) {
+            return (AccessCheckResult::Denied, 0);
+        }
         (&sd.owner, sd.dacl)
     };
 
