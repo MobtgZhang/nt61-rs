@@ -77,6 +77,9 @@ pub fn process_packet(data: &[u8], nic_type: crate::drivers::net::NicType, nic_i
                     // Process ARP packet
                     arp::arp_input(payload, nic_type, nic_index);
                 }
+                eth::ETHER_TYPE_IPV6 => {
+                    ipv6::ipv6_input(payload);
+                }
                 _ => {
                     // Unknown EtherType, ignore
                 }

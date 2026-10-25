@@ -754,6 +754,21 @@ impl DhcpClient {
                     self.lease
                         .set_lease_start(crate::hal::common::pit::get_system_time_ms() as u64);
 
+                    // Publish the default gateway into the routing
+                    // table so cross-subnet traffic is routable.
+                    if self.lease.gateway != 0 {
+                        let if_idx = crate::netstack::ipif::get_all_interfaces()
+                            .iter()
+                            .find(|i| i.eth_if != u32::MAX)
+                            .map(|i| i.if_index)
+                            .unwrap_or(1);
+                        crate::netstack::routing::set_default_gateway(
+                            self.lease.gateway,
+                            if_idx,
+                            1,
+                        );
+                    }
+
                     self.state = DhcpState::Bound;
                     true
                 } else {

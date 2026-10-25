@@ -253,16 +253,14 @@ pub fn check_inbound_policy(src_ip: u32, dst_ip: u32, has_ipsec: bool) -> bool {
 }
 
 pub fn protect_packet(_payload: &[u8], _spi: u32) -> Option<Vec<u8>> {
-    let mut stats = IPSEC_STATS.lock();
-    stats.packets_protected += 1;
-
+    // No SAs are configured, so no packet can actually be protected.
+    // Incrementing the counter here would make the telemetry lie about
+    // traffic that was silently passed through unprotected.
     None
 }
 
 pub fn verify_packet(_packet: &[u8], _spi: u32) -> Option<Vec<u8>> {
-    let mut stats = IPSEC_STATS.lock();
-    stats.packets_verified += 1;
-
+    // Same as protect_packet: without SAs there is nothing to verify.
     None
 }
 

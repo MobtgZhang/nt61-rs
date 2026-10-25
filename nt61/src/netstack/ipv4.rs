@@ -465,6 +465,41 @@ fn is_broadcast_ip(ip: u32) -> bool {
     ip == 0xFFFFFFFF
 }
 
+/// Build an IPv4 fragment with explicit identification, flags, and
+/// fragment offset. Used by `send_ipv4` to split payloads that
+/// exceed the link MTU.
+fn build_ipv4_fragment(
+    src_ip: u32,
+    dst_ip: u32,
+    protocol: u8,
+    ttl: u8,
+    identification: u16,
+    more_fragments: bool,
+    fragment_offset: u16,
+    payload: &[u8],
+) -> alloc::vec::Vec<u8> {
+    let total_length = (IPV4_HDR_SIZE + payload.len()) as u16;
+    let mut packet = alloc::vec::Vec::with_capacity(IPV4_HDR_SIZE + payload.len());
+
+    packet.push(0x45);
+    packet.push(0);
+    packet.extend_from_slice(&total_length.to_be_bytes());
+    packet.extend_from_slice(&identification.to_be_bytes());
+    let flags_frag =
+        (if more_fragments { 0x2000u16 } else { 0u16 }) | fragment_offset;
+    packet.extend_from_slice(&flags_frag.to_be_bytes());
+    packet.push(ttl);
+    packet.push(protocol);
+    packet.extend_from_slice(&0u16.to_be_bytes());
+    packet.extend_from_slice(&src_ip.to_be_bytes());
+    packet.extend_from_slice(&dst_ip.to_be_bytes());
+    let checksum = calculate_checksum(&packet);
+    packet[10] = (checksum >> 8) as u8;
+    packet[11] = checksum as u8;
+    packet.extend_from_slice(payload);
+    packet
+}
+
 /// Send an IPv4 packet
 pub fn send_ipv4(src_ip: u32, dst_ip: u32, protocol: u8, payload: &[u8]) -> bool {
     crate::hal::serial::write_string_always("[NET-IPV4] send entering\r\n");
@@ -484,17 +519,30 @@ pub fn send_ipv4(src_ip: u32, dst_ip: u32, protocol: u8, payload: &[u8]) -> bool
         return false;
     }
 
-    // Build the packet
-    let packet = build_ipv4_packet(src_ip, dst_ip, protocol, 64, payload);
+    // Resolve the next hop (gateway or final destination) via the
+    // routing table. Falls back to the final destination when no
+    // route exists.
+    let next_hop_ip = crate::netstack::routing::find_route(dst_ip)
+        .map(|route| if route.gateway == 0 { dst_ip } else { route.gateway })
+        .unwrap_or(dst_ip);
 
-    // Link-layer broadcast does not use ARP.
-    let dst_mac = if dst_ip == 0xFFFF_FFFF {
+    // Determine the effective MTU (Ethernet 1500 minus the
+    // 14-byte Ethernet header).
+    let mtu = 1500usize - 14;
+    let identification: u16 = 0;
+    let fragments = crate::netstack::fragmentation::fragment_packet(
+        payload, mtu, identification,
+    );
+    let fragmented = fragments.len() > 1;
+
+    // Resolve ARP for the next hop (gateway or destination).
+    let dst_mac = if next_hop_ip == 0xFFFF_FFFF {
         [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
     } else {
-        if our_ips.contains(&dst_ip) && src_ip != dst_ip {
+        if our_ips.contains(&next_hop_ip) && src_ip != dst_ip {
             crate::netstack::ethif::get_primary_mac().unwrap_or([0; 6])
         } else {
-            match crate::netstack::arp::arp_resolve(dst_ip) {
+            match crate::netstack::arp::arp_resolve(next_hop_ip) {
                 Some(mac) => mac,
                 None => return false,
             }
@@ -510,18 +558,36 @@ pub fn send_ipv4(src_ip: u32, dst_ip: u32, protocol: u8, payload: &[u8]) -> bool
         }
     };
 
-    // Build Ethernet frame
-    let frame = eth::build_ethernet_frame(&dst_mac, &src_mac, ETHER_TYPE_IPV4, &packet);
-
     // Send to NIC
     let Some((nic_type, nic_idx)) = crate::netstack::ethif::get_primary_interface() else {
         crate::hal::serial::write_string_always("[NET-IPV4] no primary interface\r\n");
         return false;
     };
 
-    let sent = crate::drivers::net::send_to_nic(nic_type, nic_idx, &frame);
-    if !sent {
-        crate::hal::serial::write_string_always("[NET-IPV4] nic send failed\r\n");
+    // Send each fragment (or the single packet) as its own
+    // Ethernet frame. Non-fragmented payloads go through the
+    // original builder for backward compatibility.
+    let mut all_sent = true;
+    let mut offset_units = 0u16;
+    for (i, fragment_payload) in fragments.iter().enumerate() {
+        let more = i < fragments.len() - 1;
+        let packet = if fragmented {
+            build_ipv4_fragment(
+                src_ip, dst_ip, protocol, 64, identification, more,
+                offset_units, fragment_payload,
+            )
+        } else {
+            build_ipv4_packet(src_ip, dst_ip, protocol, 64, fragment_payload)
+        };
+        offset_units += ((fragment_payload.len() as u16) + 7) / 8;
+
+        let frame =
+            eth::build_ethernet_frame(&dst_mac, &src_mac, ETHER_TYPE_IPV4, &packet);
+        let sent = crate::drivers::net::send_to_nic(nic_type, nic_idx, &frame);
+        if !sent {
+            crate::hal::serial::write_string_always("[NET-IPV4] nic send failed\r\n");
+            all_sent = false;
+        }
     }
-    sent
+    all_sent
 }

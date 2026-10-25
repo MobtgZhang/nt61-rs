@@ -297,6 +297,14 @@ pub fn accept(socket_id: u32) -> Result<u32, SocketError> {
     }
 }
 
+pub fn mark_connected(socket_id: u32, tcp_socket_id: u32) {
+    let mut sockets = SOCKETS.lock();
+    if let Some(socket) = sockets.iter_mut().find(|s| s.id == socket_id) {
+        socket.tcp_socket_id = Some(tcp_socket_id);
+        socket.state = SocketState::Connected;
+    }
+}
+
 /// Enqueue a freshly accepted TCP connection onto the listening
 /// socket's accept queue. Returns false if the queue is full (the
 /// caller should drop the connection per RFC 793 §3.7 backlog).

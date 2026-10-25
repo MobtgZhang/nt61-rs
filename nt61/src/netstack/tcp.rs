@@ -541,9 +541,9 @@ fn find_listener(local_ip: u32, local_port: Port) -> Option<usize> {
         .iter()
         .enumerate()
         .find(|(_, tcb)| {
-            tcb.local_ip == local_ip
+            tcb.state == TcpState::Listen
+                && (tcb.local_ip == local_ip || tcb.local_ip == 0)
                 && tcb.local_port == local_port
-                && tcb.state == TcpState::Listen
         })
         .map(|(i, _)| i)
 }
@@ -569,14 +569,13 @@ fn send_segment(tcb: &mut TcpControlBlock, flags: u8, seq: u32, ack: u32, data: 
     header[18..20].copy_from_slice(&0u16.to_be_bytes()); // Urgent pointer
 
     // Calculate checksum
-    let checksum = calculate_tcp_checksum(tcb.local_ip, tcb.remote_ip, &header);
-
-    header[16..18].copy_from_slice(&checksum.to_be_bytes());
-
     packet.extend_from_slice(&header);
     if let Some(d) = data {
         packet.extend_from_slice(d);
     }
+    let checksum = calculate_tcp_checksum(tcb.local_ip, tcb.remote_ip, &packet);
+
+    packet[16..18].copy_from_slice(&checksum.to_be_bytes());
 
     // Send via IPv4
     let _ = ipv4::send_ipv4(tcb.local_ip, tcb.remote_ip, 6, &packet);
@@ -667,6 +666,7 @@ pub fn tcp_input(src_ip: u32, dst_ip: u32, data: &[u8]) {
                 handle_tcp_segment(tcb, header, flags, payload)
             };
             if established_now && listen_socket_id != 0 {
+                crate::netstack::socket::mark_connected(new_tcb_id, new_tcb_id);
                 // Push onto the parent listening socket's accept
                 // queue. If the queue is full, the child TCB is
                 // dropped per RFC 793 §3.7 backlog semantics — but
@@ -681,6 +681,14 @@ pub fn tcp_input(src_ip: u32, dst_ip: u32, data: &[u8]) {
             if flags & tcp_flags::SYN != 0 {
                 if let Some(idx) = find_listener(dst_ip, header.dst_port) {
                     // create new connection for listening socket
+                    let Some(new_child_socket_id) =
+                        crate::netstack::socket::socket(
+                            crate::netstack::socket::SocketType::Stream,
+                            crate::netstack::socket::Protocol::Tcp,
+                        )
+                    else {
+                        return;
+                    };
                     let mut connections = TCP_CONNECTIONS.lock();
                     // Capture the listening socket id while we still
                     // hold a borrow on the listener TCB so the new
@@ -699,6 +707,7 @@ pub fn tcp_input(src_ip: u32, dst_ip: u32, data: &[u8]) {
                     new_tcb.rcv_nxt = header.seq + 1;
                     new_tcb.snd_una = new_tcb.snd_iss;
                     new_tcb.snd_nxt = new_tcb.snd_iss + 1;
+                    new_tcb.socket_id = new_child_socket_id;
 
                     connections.push(new_tcb);
                     let new_idx = connections.len() - 1;
@@ -786,7 +795,12 @@ fn handle_tcp_segment(
             // handle ACK
             if flags & tcp_flags::ACK != 0 {
                 // Use new congestion control ACK handler
+                let acked = header.ack.wrapping_sub(tcb.snd_una);
                 tcb.on_ack(header.ack);
+                let acked = core::cmp::min(acked as usize, tcb.tx_buf.len());
+                if acked > 0 {
+                    tcb.tx_buf.drain(0..acked);
+                }
             }
 
             // Check for duplicate ACKs (fast retransmit trigger)
@@ -1040,11 +1054,9 @@ pub fn send(socket_id: u32, data: &[u8]) -> Option<usize> {
         Some(&tx_snapshot),
     );
 
-    // Advance snd_nxt and clear the retransmit buffer only after
-    // the segment has been built (send_segment updates state
-    // internally based on the current snd_nxt we passed in).
+    // Advance snd_nxt but retain the payload until it is acknowledged;
+    // tx_buf is the in-flight window, not a scratch buffer.
     tcb.snd_nxt = snd_nxt.wrapping_add(data.len() as u32);
-    tcb.tx_buf.clear();
 
     Some(data.len())
 }
