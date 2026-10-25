@@ -235,6 +235,10 @@ pub struct NtfsImage {
     /// so we only keep this around so the finaliser can copy the
     /// file's bytes into the correct cluster window.
     data_cluster_assignments: std::collections::HashMap<String, (u64, u64)>,
+    /// Case-insensitive path to the original MFT record number. Existing
+    /// entries are updated in place; only entries absent from this map are
+    /// appended when a parsed image is written back.
+    original_record_numbers: std::collections::HashMap<String, u64>,
     /// Original bytes from which this image was parsed. Used to preserve
     /// existing file data when finalizing (rebuilding) a modified image.
     original_bytes: Option<Vec<u8>>,
@@ -289,14 +293,14 @@ fn fill_attr_length(attr: &mut [u8]) {
 /// `off_len` (high nibble), followed by the cluster count bytes
 /// (little-endian) and the LCN delta bytes (little-endian, signed).
 ///
-/// We round the byte widths up to whatever is needed to fit the
-/// values. NTFS allows up to 8 bytes per field, so cluster counts
-/// and LCN deltas up to 2^64 - 1 work fine.
+/// Round the byte widths up to whatever is needed to fit the values.
+/// LCN deltas are signed on disk; if the minimal encoding has its sign
+/// bit set, reserve another byte so a positive LCN remains positive.
 fn encode_single_run(cluster_count: u64, lcn_delta: u64) -> Vec<u8> {
     let cc_bytes = cluster_count.to_le_bytes();
     let cc_len = bytes_needed_u64(cluster_count);
     let lcn_bytes = lcn_delta.to_le_bytes();
-    let lcn_len = bytes_needed_u64(lcn_delta);
+    let lcn_len = signed_bytes_needed_u64(lcn_delta);
     let header = ((lcn_len as u8) << 4) | (cc_len as u8);
     let mut run = vec![header];
     run.extend_from_slice(&cc_bytes[..cc_len]);
@@ -316,6 +320,12 @@ fn bytes_needed_u64(v: u64) -> usize {
         tmp >>= 8;
     }
     n.max(1)
+}
+
+fn signed_bytes_needed_u64(v: u64) -> usize {
+    (1..=8)
+        .find(|&size| v < 1u64 << (size * 8 - 1))
+        .unwrap_or(8)
 }
 
 impl NtfsImage {
@@ -606,6 +616,8 @@ impl NtfsImage {
                             }
                         } else {
                             data_non_resident = true;
+                            file_data =
+                                read_non_resident_data(&rec, attr_off, &data, cluster_size as u64);
                         }
                     }
                     0x90 => {
@@ -633,68 +645,70 @@ impl NtfsImage {
             }
         } // end for rec_idx
 
-        // Resolve full paths by walking parent chain.
-        let mut paths: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
-        paths.insert(5, String::new()); // root
         let mut entries: Vec<NtfsEntry> = Vec::new();
-        let keys: Vec<u32> = by_mft.keys().copied().collect();
+        let mut seen_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut original_record_numbers: std::collections::HashMap<String, u64> =
+            std::collections::HashMap::new();
+        let mut children_by_parent: std::collections::HashMap<u32, Vec<u32>> =
+            std::collections::HashMap::new();
+        for (record, rec) in &by_mft {
+            children_by_parent
+                .entry(rec.parent_mft)
+                .or_default()
+                .push(*record);
+        }
+        for children in children_by_parent.values_mut() {
+            children.sort_unstable();
+        }
         crate::debug!(
             "[DEBUG from_bytes] by_mft has {} keys: {:?}",
             by_mft.len(),
-            keys
+            by_mft.keys().copied().collect::<Vec<_>>()
         );
-        for k in keys {
-            // Build parent chain.
-            let mut chain = vec![k];
-            let mut cur = k;
-            while cur != 5 {
-                if let Some(rec) = by_mft.get(&cur) {
-                    if chain.contains(&rec.parent_mft) {
-                        break; // cycle detected
-                    }
-                    cur = rec.parent_mft;
-                    if cur == 5 {
-                        break;
-                    }
-                    chain.push(cur);
-                } else {
-                    break; // parent not in by_mft
-                }
-            }
-            // Collect name parts from chain (reverse order, skip root).
-            let mut name_parts: Vec<String> = Vec::new();
-            for &idx in chain.iter().rev() {
-                if idx == 5 {
-                    continue;
-                }
-                if let Some(rec) = by_mft.get(&idx) {
-                    name_parts.push(rec.name.clone());
-                }
-            }
-            // Prepend root separator for root-level entries (parent=5, root).
-            // Entries with parent=5 have chain = [k] (no ancestors above root).
-            // We detect this case: if the chain only has the entry itself (no ancestors),
-            // then it lives at the root level.
-            let is_root_level = chain.len() == 1 && chain[0] != 5;
-            let path = if is_root_level {
-                format!("\\{}", name_parts.join("\\"))
-            } else {
-                name_parts.join("\\")
+
+        // Resolve full paths with a deterministic depth-first walk.  The old
+        // per-record parent-chain loop stopped at the first ancestor and
+        // produced leaf-only paths whenever that ancestor had already been
+        // seen, which made repeated edits lose nested files.
+        let mut pending: Vec<(u32, String)> = children_by_parent
+            .get(&5)
+            .map(|children| children.iter().rev().map(|&record| (record, String::new())).collect())
+            .unwrap_or_default();
+        while let Some((record, parent_path)) = pending.pop() {
+            let rec = match by_mft.get(&record) {
+                Some(rec) => rec,
+                None => continue,
             };
+            let path = if parent_path.is_empty() {
+                rec.name.clone()
+            } else {
+                format!("{}\\{}", parent_path, rec.name)
+            };
+            let path_key = path
+                .strip_prefix('\\')
+                .unwrap_or(&path)
+                .to_ascii_lowercase();
+            if !seen_paths.insert(path_key.clone()) {
+                continue;
+            }
+            original_record_numbers.insert(path_key, record as u64);
             crate::debug!(
-                "[DEBUG from_bytes] k={}, chain={:?}, is_root_level={}, path={:?}",
-                k,
-                chain,
-                is_root_level,
+                "[DEBUG from_bytes] record={}, parent_path={:?}, path={:?}",
+                record,
+                parent_path,
                 path
             );
-            let rec = by_mft.get(&k).unwrap();
             let entry = if rec.is_dir {
                 NtfsEntry::new_dir(&path)
             } else {
                 NtfsEntry::new_file(&path, rec.data.clone())
             };
             entries.push(entry);
+            if let Some(children) = children_by_parent.get(&(record as u32)) {
+                for &child in children.iter().rev() {
+                    pending.push((child, path.clone()));
+                }
+            }
         }
         crate::debug!(
             "[DEBUG from_bytes] MFT scan: total_seen={}, file_records_found={}, entries.len()={}",
@@ -722,6 +736,7 @@ impl NtfsImage {
             // appends (none today) won't collide with anything.
             data_cluster_cursor: mft_cluster + 256,
             data_cluster_assignments: std::collections::HashMap::new(),
+            original_record_numbers,
             // Store original bytes so finalize() can preserve existing data.
             original_bytes: Some(data.to_vec()),
         })
@@ -806,6 +821,7 @@ impl NtfsImage {
             // `allocate_data_clusters` call panics below.
             data_cluster_cursor: mft_cluster + 256,
             data_cluster_assignments: std::collections::HashMap::new(),
+            original_record_numbers: std::collections::HashMap::new(),
             // No original bytes for newly created images.
             original_bytes: None,
         })
@@ -822,6 +838,11 @@ impl NtfsImage {
         // Normalize path to backslash to match entries (which are stored with
         // backslash by write_file_path / mkdir_path / from_bytes).
         let normalized = path.replace('/', "\\");
+        let normalized = normalized
+            .strip_prefix("\\\\")
+            .or_else(|| normalized.strip_prefix('\\'))
+            .unwrap_or(&normalized)
+            .to_string();
         let prefix = normalized.trim_end_matches('\\');
         crate::debug!(
             "[DEBUG] list_dir_path: normalized={:?}, prefix={:?}",
@@ -835,8 +856,8 @@ impl NtfsImage {
             let ep = &e.path;
             // entry must start with prefix (backslash-separated).
             let inside = if prefix.is_empty() {
-                // Root: show entries that start with backslash (direct children of root).
-                ep.starts_with('\\') && !ep[1..].contains('\\')
+            // Root: direct children have no additional separator.
+            !ep.contains('\\')
             } else {
                 ep.eq(prefix) || ep.starts_with(&format!("{}\\", prefix))
             };
@@ -846,8 +867,10 @@ impl NtfsImage {
             // Extract the first path segment after prefix (direct child only).
             let rel = if prefix.is_empty() {
                 ep.strip_prefix('\\').unwrap_or(ep.as_str())
-            } else {
+            } else if ep.len() > prefix.len() {
                 &ep[prefix.len() + 1..]
+            } else {
+                continue;
             };
             if rel.contains('\\') {
                 continue;
@@ -867,6 +890,10 @@ impl NtfsImage {
     /// Read the file at `path` (forward-slash).
     pub fn read_file_path(&self, path: &str) -> Result<Vec<u8>> {
         let normalized = path.replace('/', "\\");
+        let normalized = normalized
+            .strip_prefix("\\\\")
+            .or_else(|| normalized.strip_prefix('\\'))
+            .unwrap_or(&normalized);
         for e in &self.entries {
             if !e.is_dir && e.path == normalized {
                 return Ok(e.data.clone());
@@ -884,6 +911,11 @@ impl NtfsImage {
     /// Write or overwrite the file at `path` (forward-slash).
     pub fn write_file_path(&mut self, path: &str, data: &[u8]) -> Result<()> {
         let normalized = path.replace('/', "\\");
+        let normalized = normalized
+            .strip_prefix("\\\\")
+            .or_else(|| normalized.strip_prefix('\\'))
+            .unwrap_or(&normalized)
+            .to_string();
         for e in &mut self.entries {
             if !e.is_dir && e.path.eq_ignore_ascii_case(&normalized) {
                 e.data = data.to_vec();
@@ -898,6 +930,11 @@ impl NtfsImage {
     /// Create a directory at `path` (backslash, matching entry storage).
     pub fn mkdir_path(&mut self, path: &str) -> Result<()> {
         let normalized = path.replace('/', "\\");
+        let normalized = normalized
+            .strip_prefix("\\\\")
+            .or_else(|| normalized.strip_prefix('\\'))
+            .unwrap_or(&normalized)
+            .to_string();
         if normalized.is_empty() {
             return Ok(());
         }
@@ -913,6 +950,11 @@ impl NtfsImage {
     /// Remove a file or directory (recursive for directories).
     pub fn remove_path_ntfs(&mut self, path: &str) -> Result<()> {
         let normalized = path.replace('/', "\\");
+        let normalized = normalized
+            .strip_prefix("\\\\")
+            .or_else(|| normalized.strip_prefix('\\'))
+            .unwrap_or(&normalized)
+            .to_string();
         if normalized.is_empty() {
             return Ok(());
         }
@@ -932,6 +974,11 @@ impl NtfsImage {
     pub fn create_dir(&mut self, path: &str) -> Result<&mut Self> {
         // Normalize path (convert forward slashes to backslashes)
         let normalized = path.replace('/', "\\");
+        let normalized = normalized
+            .strip_prefix("\\\\")
+            .or_else(|| normalized.strip_prefix('\\'))
+            .unwrap_or(&normalized)
+            .to_string();
         self.entries.push(NtfsEntry::new_dir(&normalized));
         Ok(self)
     }
@@ -940,6 +987,11 @@ impl NtfsImage {
     pub fn write_file(&mut self, path: &str, data: &[u8]) -> Result<&mut Self> {
         // Normalize path (convert forward slashes to backslashes)
         let normalized = path.replace('/', "\\");
+        let normalized = normalized
+            .strip_prefix("\\\\")
+            .or_else(|| normalized.strip_prefix('\\'))
+            .unwrap_or(&normalized)
+            .to_string();
         self.entries
             .push(NtfsEntry::new_file(&normalized, data.to_vec()));
         Ok(self)
@@ -1519,14 +1571,22 @@ impl NtfsImage {
         // checker gymnastics.
         let mut child_meta: Vec<(String, bool, u64, usize)> =
             Vec::with_capacity(self.entries.len());
-        for (i, entry) in self.entries.iter().enumerate() {
-            let record_num = (first_new_slot + i) as u64;
-            child_meta.push((
-                entry.path.clone(),
-                entry.is_dir,
-                record_num,
-                entry.data.len(),
-            ));
+        let mut next_new_slot = first_new_slot;
+        let mut record_assignment: std::collections::HashMap<String, u64> =
+            std::collections::HashMap::new();
+        for entry in &self.entries {
+            let stripped = entry.path.strip_prefix('\\').unwrap_or(&entry.path);
+            let record_num = self
+                .original_record_numbers
+                .get(&stripped.to_ascii_lowercase())
+                .copied()
+                .unwrap_or_else(|| {
+                    let assigned = next_new_slot;
+                    next_new_slot += 1;
+                    assigned as u64
+                });
+            record_assignment.insert(stripped.to_string(), record_num);
+            child_meta.push((entry.path.clone(), entry.is_dir, record_num, entry.data.len()));
         }
 
         // child_meta is owned, so we can now mutate self freely.
@@ -1592,7 +1652,11 @@ impl NtfsImage {
         // For parsed images, first_new_slot > 1, so we append to the end.
         // For new images, first_new_slot = 1, so we write starting at record 1.
         for (i, entry) in self.entries.iter().enumerate() {
-            let record_num = (first_new_slot + i) as u64;
+            let stripped_path = entry.path.strip_prefix('\\').unwrap_or(&entry.path);
+            let record_num = record_assignment
+                .get(stripped_path)
+                .copied()
+                .unwrap_or((first_new_slot + i) as u64);
             // Strip leading backslash if present (from from_bytes parsing).
             let entry_path = entry.path.strip_prefix('\\').unwrap_or(&entry.path);
             entry_record_map.insert(String::from(entry_path), record_num);
@@ -1974,6 +2038,73 @@ impl NtfsImage {
     pub fn mft_record_size(&self) -> i32 {
         self.mft_record_size
     }
+}
+fn read_non_resident_data(rec: &[u8], attr_off: usize, image: &[u8], cluster_size: u64) -> Vec<u8> {
+    if attr_off + 0x3A > rec.len() {
+        return Vec::new();
+    }
+    let mapping_pairs_offset =
+        u16::from_le_bytes([rec[attr_off + 0x38], rec[attr_off + 0x39]]) as usize;
+    let data_size = u64::from_le_bytes([
+        rec[attr_off + 0x28],
+        rec[attr_off + 0x29],
+        rec[attr_off + 0x2A],
+        rec[attr_off + 0x2B],
+        rec[attr_off + 0x2C],
+        rec[attr_off + 0x2D],
+        rec[attr_off + 0x2E],
+        rec[attr_off + 0x2F],
+    ]) as usize;
+    let mut result = Vec::new();
+    let mut lcn: i64 = 0;
+    let mut cursor = attr_off + mapping_pairs_offset;
+    while result.len() < data_size && cursor < rec.len() {
+        let header = rec[cursor];
+        if header == 0 {
+            break;
+        }
+        cursor += 1;
+        let count_size = (header & 0x0F) as usize;
+        let offset_size = (header >> 4) as usize;
+        if count_size == 0
+            || count_size > 8
+            || cursor + count_size > rec.len()
+        {
+            break;
+        }
+        let mut count = 0u64;
+        for i in 0..count_size {
+            count |= u64::from(rec[cursor + i]) << (i * 8);
+        }
+        cursor += count_size;
+        let mut offset_delta_raw = 0u64;
+        if offset_size != 0 {
+            if offset_size > 8 || cursor + offset_size > rec.len() {
+                break;
+            }
+            for i in 0..offset_size {
+                offset_delta_raw |= u64::from(rec[cursor + i]) << (i * 8);
+            }
+            if offset_size < 8 && rec[cursor + offset_size - 1] & 0x80 != 0 {
+                let shift = 64 - offset_size * 8;
+                offset_delta_raw = ((offset_delta_raw << shift) as i64 >> shift) as u64;
+            }
+            cursor += offset_size;
+        }
+        let offset_delta = offset_delta_raw as i64;
+        let count = usize::try_from(count).unwrap_or(0);
+        lcn += offset_delta;
+        if lcn >= 0 {
+            let first = (lcn as u64 * cluster_size) as usize;
+            let remaining = (data_size - result.len()).div_ceil(cluster_size as usize);
+            let take = count.min(remaining).saturating_mul(cluster_size as usize);
+            if first.saturating_add(take) <= image.len() {
+                result.extend_from_slice(&image[first..first + take]);
+            }
+        }
+    }
+    result.truncate(data_size);
+    result
 }
 
 // =====================================================================

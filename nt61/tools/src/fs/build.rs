@@ -2595,11 +2595,11 @@ pub fn full_build(build_dir: &Path, format: &str, _size_mb: u32, arch: &str) -> 
     log::section("Creating Dual-Partition Disk Image");
     let image_path = dirs.images.join("disk.img");
 
-    // ESP: 64MB, System: 256MB
+    // ESP: 64MB, System: 512MB
     super::image::create_dual_partition_image_with_fs(
         &image_path,
         64,           // ESP partition size in MB
-        256,          // System partition size in MB
+        512,          // System partition size in MB
         &dirs.esp,    // ESP source directory (EFI/* files)
         &dirs.system, // System source directory (Windows/* files)
         fs_choice,
@@ -2933,14 +2933,10 @@ fn real_pe(artifact_name: &str) -> Vec<u8> {
     let arch = current_pe_arch();
     let stem = artifact_name.trim_end_matches(".efi");
     let mut candidates: Vec<String> = Vec::new();
-    // The bare-metal kernel artifact is the canonical source of the
-    // on-disk PE: it is linked as a PIC ELF with relocation records
-    // and its entry (`kernel_entry`) reads the BootInfo pointer that
-    // winload passes. The UEFI-target build of the same crate has a
-    // different entry ABI, so it must never shadow the bare-metal
-    // artifact just because it was rebuilt more recently. Order the
-    // bare-metal candidates first and only fall back to the UEFI
-    // target when no bare-metal artifact exists.
+    // Kernel artifacts are bare-metal ELFs handed to winload. Userland
+    // images are UEFI applications consumed by the kernel's PE loader.
+    // Prefer the ABI that actually matches the requested image, then
+    // use freshness only to select within that ABI.
     for target in [
         kernel_target_for(arch_name(arch)),
         uefi_target_for(arch_name(arch)),
@@ -2978,11 +2974,22 @@ fn real_pe(artifact_name: &str) -> Vec<u8> {
                 .and_then(|m| m.modified())
                 .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
         };
-        // Within a target: newest first. Across targets: the
-        // bare-metal artifact always wins over the UEFI one.
+        // Within a target: newest first. Across targets: prefer the
+        // target whose ABI actually matches this image.
         let a_bare = a.contains(&format!("target/{bare_metal}/"));
         let b_bare = b.contains(&format!("target/{bare_metal}/"));
-        b_bare.cmp(&a_bare).then(mtime_of(b).cmp(&mtime_of(a)))
+        let is_userland = artifact_name == "nt61-cmd.efi" || artifact_name == "nt61-driver.efi";
+        let a_expected = if is_userland {
+            !a_bare
+        } else {
+            a_bare
+        };
+        let b_expected = if is_userland {
+            !b_bare
+        } else {
+            b_bare
+        };
+        b_expected.cmp(&a_expected).then(mtime_of(b).cmp(&mtime_of(a)))
     });
 
     for candidate in candidates {
@@ -3438,7 +3445,7 @@ fn build_pe_image(
     let export_rva = SECTION_ALIGNMENT;
     let ed_off = 0usize;
     let num = exports.len() as u32;
-    let addr_funcs_rel = 40 + num * 4;
+    let addr_funcs_rel = 40;
     let addr_names_rel = addr_funcs_rel + num * 4;
     let addr_ords_rel = addr_names_rel + num * 4;
     let string_off_rel = addr_ords_rel + num * 2;
@@ -3772,11 +3779,11 @@ fn build_subsystem_pe(image_base: u64, image_name: &str, text_stub: &[u8]) -> Ve
     cmd_exe_write_u32(&mut rdata, 0x04, 0); // TimeDateStamp
     cmd_exe_write_u16(&mut rdata, 0x08, 0); // MajorVersion
     cmd_exe_write_u16(&mut rdata, 0x0A, 0); // MinorVersion
-    cmd_exe_write_u32(&mut rdata, 0x0C, CMD_EXE_RDATA_RVA + 0x028); // AddressOfFunctions RVA
-    cmd_exe_write_u32(&mut rdata, 0x10, CMD_EXE_RDATA_RVA + 0x034); // AddressOfNames RVA
-    cmd_exe_write_u32(&mut rdata, 0x14, CMD_EXE_RDATA_RVA + 0x040); // AddressOfNameOrdinals RVA
     cmd_exe_write_u32(&mut rdata, 0x18, 1); // NumberOfFunctions
     cmd_exe_write_u32(&mut rdata, 0x1C, 1); // NumberOfNames
+    cmd_exe_write_u32(&mut rdata, 0x20, CMD_EXE_RDATA_RVA + 0x028); // AddressOfFunctions RVA
+    cmd_exe_write_u32(&mut rdata, 0x24, CMD_EXE_RDATA_RVA + 0x034); // AddressOfNames RVA
+    cmd_exe_write_u32(&mut rdata, 0x28, CMD_EXE_RDATA_RVA + 0x040); // AddressOfNameOrdinals RVA
                                             // AddressOfFunctions[1] = subsystem_main
     cmd_exe_write_u32(&mut rdata, 0x028, CMD_EXE_TEXT_RVA);
     // AddressOfNames[1] = name string RVA
@@ -3994,6 +4001,89 @@ mod tests {
                     "sections {n1} and {n2} overlap in memory"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn subsystem_pe_export_tables_are_valid() {
+        for (name, image) in [
+            ("lsm.exe", build_lsm_pe()),
+            ("winlogon.exe", build_winlogon_pe()),
+            ("userinit.exe", build_userinit_pe()),
+        ] {
+            let pe_off = u32::from_le_bytes([image[0x3C], image[0x3D], image[0x3E], image[0x3F]])
+                as usize;
+            let coff_off = pe_off + 4;
+            let opt_off = coff_off + 20;
+            let export_rva = u32::from_le_bytes([
+                image[opt_off + 0x70],
+                image[opt_off + 0x71],
+                image[opt_off + 0x72],
+                image[opt_off + 0x73],
+            ]);
+            let export_size = u32::from_le_bytes([
+                image[opt_off + 0x74],
+                image[opt_off + 0x75],
+                image[opt_off + 0x76],
+                image[opt_off + 0x77],
+            ]);
+            assert!(export_rva != 0 && export_size != 0, "{name} has no exports");
+
+            let mut export_off = None;
+            let mut rdata_off = None;
+            for index in 0..2 {
+                let section = pe_off + 4 + 20 + 240 + index * 40;
+                let virtual_size = u32::from_le_bytes([
+                    image[section + 8],
+                    image[section + 9],
+                    image[section + 10],
+                    image[section + 11],
+                ]);
+                let virtual_address = u32::from_le_bytes([
+                    image[section + 12],
+                    image[section + 13],
+                    image[section + 14],
+                    image[section + 15],
+                ]);
+                let raw_size = u32::from_le_bytes([
+                    image[section + 16],
+                    image[section + 17],
+                    image[section + 18],
+                    image[section + 19],
+                ]);
+                let raw_offset = u32::from_le_bytes([
+                    image[section + 20],
+                    image[section + 21],
+                    image[section + 22],
+                    image[section + 23],
+                ]);
+                if virtual_address <= export_rva
+                    && export_rva < virtual_address + virtual_size.max(raw_size)
+                {
+                    export_off = Some(raw_offset + (export_rva - virtual_address));
+                }
+                if image[section..section + 6].starts_with(b".rdata") {
+                    rdata_off = Some(raw_offset + (CMD_EXE_RDATA_RVA - virtual_address));
+                }
+            }
+
+            let export_off =
+                export_off.unwrap_or_else(|| panic!("{name} export RVA unmapped")) as usize;
+            let function_table_rva = u32::from_le_bytes([
+                image[export_off + 0x20],
+                image[export_off + 0x21],
+                image[export_off + 0x22],
+                image[export_off + 0x23],
+            ]);
+            let function_table_off =
+                (rdata_off.unwrap() + function_table_rva - CMD_EXE_RDATA_RVA) as usize;
+            let function_rva = u32::from_le_bytes([
+                image[function_table_off],
+                image[function_table_off + 1],
+                image[function_table_off + 2],
+                image[function_table_off + 3],
+            ]);
+            assert!(function_rva != 0, "{name} export function RVA is zero");
         }
     }
 }

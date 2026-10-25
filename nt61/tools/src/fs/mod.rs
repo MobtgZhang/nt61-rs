@@ -16,7 +16,6 @@ pub mod esp;
 pub mod ext4;
 pub mod fat32;
 pub mod image;
-pub mod inject_raw;
 pub mod iso9660;
 pub mod ntfs;
 pub mod partition;
