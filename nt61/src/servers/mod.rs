@@ -45,6 +45,10 @@ pub fn init() {
     pid1::init();
     pid2::init();
 
+    // Service Control Manager — registers default services and marks
+    // the SCM running so phase-3 service starts can proceed.
+    services::init();
+
     // kprintln!("  System servers initialized");
 }
 

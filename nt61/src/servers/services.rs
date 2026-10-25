@@ -273,24 +273,28 @@ fn load_services_from_registry() {
 
 /// Phase 3: Start auto-start services
 fn phase3_start_services() {
-    // kprintln!("[SCM] Phase 3: Starting auto-start services...");
-
-    let state = SCM_STATE.lock();
-
-    // Start all auto-start services
-    for i in 0..state.service_count {
-        let svc = &state.services[i];
-        if svc.start_type == ServiceStartType::AutoStart
-            || svc.start_type == ServiceStartType::SystemStart
-            || svc.start_type == ServiceStartType::BootStart
-        {
-            // kprintln!("[SCM]   Starting service: {}",
-            //                 String::from_utf16_lossy(&svc.name).trim_end_matches('\0'));
-            // In a real implementation, this would:
-            // 1. create a process for the service
-            // 2. Call StartService() to begin execution
-            // 3. Wait for the service to report running state
-        }
+    // Collect the names of auto-start services under the lock,
+    // then start them one at a time through the public
+    // `start_service` entry point (which re-acquires the lock
+    // internally) to avoid a re-entrant deadlock.
+    let names: alloc::vec::Vec<alloc::string::String> = {
+        let state = SCM_STATE.lock();
+        (0..state.service_count)
+            .filter_map(|i| {
+                let svc = &state.services[i];
+                if svc.start_type == ServiceStartType::AutoStart
+                    || svc.start_type == ServiceStartType::SystemStart
+                    || svc.start_type == ServiceStartType::BootStart
+                {
+                    Some(utf16_to_string(&svc.name))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    };
+    for name in names {
+        start_service(&name);
     }
 }
 

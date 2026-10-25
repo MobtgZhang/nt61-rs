@@ -702,6 +702,10 @@ fn init_process_parameters(
     process: *mut crate::ps::process::Eprocess,
     _session_id: u32,
 ) -> *mut crate::ps::process::RtlUserProcessParameters {
+    #[cfg(target_arch = "riscv64")]
+    const PARAMS_BASE: u64 = 0x0000_003F_B000_0000;
+
+    #[cfg(not(target_arch = "riscv64"))]
     const PARAMS_BASE: u64 = 0x0000_7FFF_B000_0000;
     const PARAMS_SIZE: u64 = 0x1000;
 
@@ -2512,6 +2516,13 @@ pub fn launch_cmd_shell() -> ! {
                     let root_table_phys = unsafe { (*proc_ptr).pml4_phys };
                     let user_rip = unsafe { (*proc_ptr).user_rip };
                     let user_rsp = unsafe { (*proc_ptr).user_rsp };
+                    crate::hal::serial::write_string_always("[CMD] root=");
+                    crate::hal::serial::write_hex_u64_always(root_table_phys);
+                    crate::hal::serial::write_string_always(" rip=");
+                    crate::hal::serial::write_hex_u64_always(user_rip);
+                    crate::hal::serial::write_string_always(" rsp=");
+                    crate::hal::serial::write_hex_u64_always(user_rsp);
+                    crate::hal::serial::write_string_always("\r\n");
                     boot_println!(
                         "[BOOT]   Dispatching cmd.exe into Ring 3 (root=0x{:x} RIP=0x{:x} RSP=0x{:x})",
                         root_table_phys,
