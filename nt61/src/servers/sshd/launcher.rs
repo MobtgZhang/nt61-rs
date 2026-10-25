@@ -21,6 +21,53 @@ use crate::netstack::socket::{self, SockAddr, SocketError, SocketType};
 /// mandate a size; 8 matches the socket layer's default).
 pub const LISTEN_BACKLOG: u32 = 8;
 
+/// Canonical Windows OpenSSH installation path for `sshd_config`.
+pub const SSHD_CONFIG_PATH: &str = "C:\\Program Files\\OpenSSH\\sshd_config";
+
+/// Poll interval used by the kernel service worker, in milliseconds.
+const POLL_INTERVAL_MS: u64 = 100;
+
+/// Load `sshd_config` from the system partition and start the listener.
+/// Returns `Ok(false)` when no OpenSSH configuration is installed, which
+/// is the normal state for a non-SSH test image.
+pub fn start_from_disk() -> Result<bool, LauncherError> {
+    crate::hal::serial::write_string_always("[SSHD] boot check\r\n");
+    let Some(config_bytes) = crate::fs::read_file_from_disk(SSHD_CONFIG_PATH) else {
+        crate::hal::serial::write_string_always("[SSHD] config missing\r\n");
+        return Ok(false);
+    };
+    crate::hal::serial::write_string_always("[SSHD] config loaded\r\n");
+    let Ok(config_text) = alloc::string::String::from_utf8(config_bytes) else {
+        crate::hal::serial::write_string_always("[SSHD] config invalid UTF-8\r\n");
+        return Err(LauncherError::BadAddress);
+    };
+    let config = SshdConfig::parse(&config_text);
+    super::install_config(config);
+    // Bare-metal NT61 has no password database. Install the default
+    // empty-password account explicitly so password authentication is
+    // deterministic rather than silently rejecting every user.
+    super::auth::install_accounts(alloc::vec![super::auth::UserAccount::without_password(
+        "user"
+    )]);
+    start_listener()?;
+    set_state(LauncherState::Accepting);
+    crate::hal::serial::write_string_always("[SSHD] listener started\r\n");
+    Ok(true)
+}
+
+/// Drive listener accepts and active SSH sessions from the timer tick.
+pub fn service_tick() {
+    static LAST_POLL_MS: Spinlock<u64> = Spinlock::new(0);
+    let now = crate::hal::common::pit::get_system_time_ms();
+    let mut last_poll_ms = LAST_POLL_MS.lock();
+    if now.wrapping_sub(*last_poll_ms) < POLL_INTERVAL_MS {
+        return;
+    }
+    *last_poll_ms = now;
+    drop(last_poll_ms);
+    poll_once();
+}
+
 /// AF_INET value used by the socket layer.
 const AF_INET: u16 = 2;
 
@@ -29,11 +76,16 @@ const AF_INET: u16 = 2;
 /// channels is wired to the kernel cmd dispatcher here.
 pub fn start_listener() -> Result<u32, LauncherError> {
     child::install_command_executor(|line| {
-        if crate::servers::cmd::execute_command_line(line) {
+        crate::servers::cmd::begin_output_capture();
+        let exit_code = if crate::servers::cmd::execute_command_line(line) {
             0
         } else {
             1
-        }
+        };
+        child::CommandExecution::new(
+            exit_code,
+            crate::servers::cmd::take_output_capture().unwrap_or_default(),
+        )
     });
 
     let cfg = super::state_snapshot().config;

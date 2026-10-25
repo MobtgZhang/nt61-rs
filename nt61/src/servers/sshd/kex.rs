@@ -455,14 +455,16 @@ pub fn kex_ecdh_reply(
     // H = HASH(V_C || V_S || I_C || I_S || K_S || e || f || K)
     //     (RFC 4253 section 8, as referenced by RFC 8731).
     let mut hasher = Sha256::new();
-    hasher.update(client_version);
-    hasher.update(server_version);
-    hasher.update(client_kexinit);
-    hasher.update(server_kexinit);
-    hasher.update(&host_key_blob);
-    hasher.update(client_public);
-    hasher.update(&server_public);
-    hasher.update(&shared);
+    let mut exchange_input = WireWriter::new();
+    exchange_input.put_string(client_version);
+    exchange_input.put_string(server_version);
+    exchange_input.put_string(client_kexinit);
+    exchange_input.put_string(server_kexinit);
+    exchange_input.put_string(&host_key_blob);
+    exchange_input.put_string(client_public);
+    exchange_input.put_string(&server_public);
+    exchange_input.put_mpint(&shared);
+    hasher.update(&exchange_input.into_vec());
     let exchange_hash = hasher.finalize();
 
     let signature = sign_exchange_hash(host_key, host_key_algorithm, &exchange_hash)?;

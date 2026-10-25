@@ -101,7 +101,19 @@ const CHILD_TABLE_LIMIT: usize = 64;
 /// Hook the session layer uses to run a shell command line. The
 /// kernel installs the real cmd.exe dispatcher at listener start-up;
 /// tests install mocks.
-pub type CommandExecutor = fn(&str) -> u32;
+#[derive(Debug, Clone)]
+pub struct CommandExecution {
+    pub exit_code: u32,
+    pub output: Vec<u8>,
+}
+
+impl CommandExecution {
+    pub const fn new(exit_code: u32, output: Vec<u8>) -> Self {
+        Self { exit_code, output }
+    }
+}
+
+pub type CommandExecutor = fn(&str) -> CommandExecution;
 
 static COMMAND_EXECUTOR: Spinlock<Option<CommandExecutor>> = Spinlock::new(None);
 
@@ -113,7 +125,7 @@ pub fn install_command_executor(executor: CommandExecutor) {
 /// Run a command line through the installed executor. Returns None
 /// when no executor is installed (the channel answers with
 /// CHANNEL_FAILURE in that case).
-pub fn execute_line(line: &str) -> Option<u32> {
+pub fn execute_line(line: &str) -> Option<CommandExecution> {
     let executor = *COMMAND_EXECUTOR.lock();
     executor.map(|run| run(line))
 }

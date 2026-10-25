@@ -156,8 +156,13 @@ impl WireWriter {
         while start + 1 < magnitude_be.len() && magnitude_be[start] == 0 {
             start += 1;
         }
-        self.put_u32((magnitude_be.len() - start + 1) as u32);
-        self.buf.push(0);
+        let value = &magnitude_be[start..];
+        if !value.is_empty() && value[0] & 0x80 != 0 {
+            self.put_u32(value.len() as u32 + 1);
+            self.buf.push(0);
+        } else {
+            self.put_u32(value.len() as u32);
+        }
         self.buf.extend_from_slice(&magnitude_be[start..]);
     }
 
@@ -539,7 +544,8 @@ mod tests {
         let mut w = WireWriter::new();
         w.put_mpint(&[0x00, 0x00, 0x05]);
         let bytes = w.into_vec();
-        assert_eq!(&bytes, &[0, 0, 0, 2, 0, 0x05]);
+        // Minimal encoding: leading zeros are stripped; value 5 fits one byte.
+        assert_eq!(&bytes, &[0, 0, 0, 1, 0x05]);
     }
 
     #[test]

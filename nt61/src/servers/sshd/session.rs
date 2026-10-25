@@ -211,6 +211,7 @@ impl ActiveSession {
             }
             let kexinit = kex::build_server_kexinit();
             self.server_kexinit = Some(kexinit.clone());
+            self.advance_state(SessionState::BannerExchanged);
             self.advance_state(SessionState::KexInit);
             self.transport.write_packet(io, &kexinit)?;
         }
@@ -433,7 +434,13 @@ impl ActiveSession {
         let _service = reader.get_string().ok_or(TransportError::MalformedPacket)?;
         let method = reader.get_string().ok_or(TransportError::MalformedPacket)?;
 
+        let config = super::state_snapshot().config;
         let outcome = if method == b"password" {
+            if !config.password_authentication {
+                super::note_auth_failure();
+                self.send_userauth_failure(io)?;
+                return Ok(PayloadOutcome::Continue);
+            }
             let _checked = reader.get_bool().ok_or(TransportError::MalformedPacket)?;
             let password = reader.get_string().ok_or(TransportError::MalformedPacket)?;
             auth::verify_password(user, password)
@@ -443,6 +450,11 @@ impl ActiveSession {
             let algorithm = core::str::from_utf8(algorithm_bytes)
                 .map_err(|_| TransportError::MalformedPacket)?;
             let key_blob = reader.get_string().ok_or(TransportError::MalformedPacket)?;
+            if !super::launcher::config_allows_pubkey(&config, user) {
+                super::note_auth_failure();
+                self.send_userauth_failure(io)?;
+                return Ok(PayloadOutcome::Continue);
+            }
             if !has_signature {
                 // RFC 4252 section 7: reply FAILURE carrying the
                 // "publickey" flag so the client may retry with a
@@ -550,9 +562,12 @@ impl ActiveSession {
             let command_bytes = reader.get_string().ok_or(TransportError::MalformedPacket)?;
             let command =
                 core::str::from_utf8(command_bytes).map_err(|_| TransportError::MalformedPacket)?;
-            let exit_code = match child::execute_line(command) {
-                Some(code) => code,
-                None => EXIT_CODE_NO_EXECUTOR,
+            let execution = match child::execute_line(command) {
+                Some(execution) => execution,
+                None => child::CommandExecution::new(
+                    EXIT_CODE_NO_EXECUTOR,
+                    Vec::new(),
+                ),
             };
             let kind = if request == b"exec" {
                 ChildRequestKind::Exec
@@ -562,7 +577,10 @@ impl ActiveSession {
             let _ = child::register_child(exec_child_record(kind));
             self.advance_state(SessionState::ExecRequest);
             self.advance_state(SessionState::ChildSpawned);
-            self.send_exit_status(io, reply_recipient, exit_code)?;
+            if !execution.output.is_empty() {
+                self.send_channel_data(io, reply_recipient, &execution.output)?;
+            }
+            self.send_exit_status(io, reply_recipient, execution.exit_code)?;
             return match channel.map(|channel| channel.local_id) {
                 Some(local_id) => self.send_channel_eof_and_close(io, local_id, reply_recipient),
                 None => Ok(PayloadOutcome::Continue),
@@ -594,8 +612,19 @@ impl ActiveSession {
                 if let Ok(line) = core::str::from_utf8(&buffer) {
                     if !line.is_empty() {
                         match child::execute_line(line) {
-                            Some(exit_code) => {
-                                self.send_exit_status(io, channel.remote_id, exit_code)?;
+                            Some(execution) => {
+                                if !execution.output.is_empty() {
+                                    self.send_channel_data(
+                                        io,
+                                        channel.remote_id,
+                                        &execution.output,
+                                    )?;
+                                }
+                                self.send_exit_status(
+                                    io,
+                                    channel.remote_id,
+                                    execution.exit_code,
+                                )?;
                             }
                             None => {
                                 self.send_channel_reply(
@@ -690,6 +719,20 @@ impl ActiveSession {
         w.put_string_str("exit-status");
         w.put_bool(false);
         w.put_u32(exit_code);
+        self.transport.write_packet(io, &w.into_vec())?;
+        Ok(PayloadOutcome::Continue)
+    }
+
+    fn send_channel_data(
+        &mut self,
+        io: &mut dyn TransportIo,
+        recipient: u32,
+        data: &[u8],
+    ) -> Result<PayloadOutcome, TransportError> {
+        let mut w = WireWriter::new();
+        w.put_u8(msg::CHANNEL_DATA);
+        w.put_u32(recipient);
+        w.put_string(data);
         self.transport.write_packet(io, &w.into_vec())?;
         Ok(PayloadOutcome::Continue)
     }
