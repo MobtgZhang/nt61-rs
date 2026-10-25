@@ -7,6 +7,7 @@
 //! Composition off (= Classic theme) draws directly to GDI. Composition on
 //! (= Aero) draws into offscreen surfaces and uses alpha-blended glass.
 use crate::desktop::desktop;
+use crate::ke::sync::{Spinlock, SpinlockGuard};
 
 /// Number of surfaces in the DWM scratch pool. Win7 DWM keeps ~12 surfaces
 /// for the active windows.
@@ -34,14 +35,20 @@ pub struct WindowSurface {
 }
 
 /// Pinned scratch pool keyed by index.
-fn scratch_pool() -> [WindowSurface; DWM_SURFACE_POOL_SIZE] {
-    [WindowSurface::default(); DWM_SURFACE_POOL_SIZE]
+static SURFACE_POOL: Spinlock<[WindowSurface; DWM_SURFACE_POOL_SIZE]> =
+    Spinlock::new([WindowSurface { id: 0, width: 0, height: 0, hwnd: 0, visible: false, active: false, glass_radius: 0, glass_opacity: 0 }; DWM_SURFACE_POOL_SIZE]);
+
+fn scratch_pool() -> SpinlockGuard<'static, [WindowSurface; DWM_SURFACE_POOL_SIZE]> {
+    SURFACE_POOL.lock()
 }
 
 /// Initialise DWM.
 pub fn init() {
     crate::hal::serial::write_string("[dwm] init\r\n");
-    let _ = scratch_pool();
+    let mut pool = scratch_pool();
+    for slot in pool.iter_mut() {
+        *slot = WindowSurface::default();
+    }
 }
 
 /// Compose a frame using the in-kernel software path.
