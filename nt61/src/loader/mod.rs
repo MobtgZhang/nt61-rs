@@ -3,6 +3,9 @@
 //! Windows PE32/PE32+ executable loading
 //! Implements the NT OS Loader
 
+use core::sync::atomic::{AtomicBool, Ordering};
+use core::mem::MaybeUninit;
+
 /// DOS header
 #[repr(C)]
 pub struct DosHeader {
@@ -452,7 +455,7 @@ pub struct LoadedImage {
     /// True if this image is the kernel itself (subsystem
     /// `IMAGE_SUBSYSTEM_NATIVE`).
     pub is_kernel: bool,
-    bytes: Vec<u8>,
+    pub bytes: Vec<u8>,
 }
 
 impl LoadedImage {
@@ -749,6 +752,20 @@ pub fn load_image_full(
     }
     let mut img = Vec::with_capacity(size_of_image as usize);
     img.resize(size_of_image as usize, 0u8);
+    // `loaded.bytes` is addressed by RVA.  The headers live at RVA 0 and
+    // are not part of any section, so they must be copied explicitly.
+    // Without this, every later parse of the mapped image sees a zeroed
+    // DOS header and fails before any section can be executed.
+    let size_of_headers = u32::from_le_bytes([
+        bytes[opt_off + 0x3C],
+        bytes[opt_off + 0x3D],
+        bytes[opt_off + 0x3E],
+        bytes[opt_off + 0x3F],
+    ]) as usize;
+    let header_copy_len = size_of_headers
+        .min(bytes.len())
+        .min(img.len());
+    img[..header_copy_len].copy_from_slice(&bytes[..header_copy_len]);
     // Copy sections. Section table starts right after the optional
     // header.
     let sect_off = opt_off + file_hdr.size_of_optional_header as usize;
@@ -1179,13 +1196,10 @@ pub struct ImageDatabase {
 
 impl ImageDatabase {
     pub fn new() -> Self {
-        crate::hal::serial::write_string("IMAGEDB:start\r\n");
         let empty = alloc::vec::Vec::new();
-        crate::hal::serial::write_string("IMAGEDB:vec\r\n");
         let result = Self {
             images: crate::ke::sync::Spinlock::new(empty),
         };
-        crate::hal::serial::write_string("IMAGEDB:done\r\n");
         result
     }
 
@@ -1448,6 +1462,30 @@ pub struct ImageTlsDirectory64 {
     pub size_of_zero_fill: u32,
     /// Characteristics
     pub characteristics: u32,
+}
+
+static mut GLOBAL_IMAGE_DB: MaybeUninit<ImageDatabase> = MaybeUninit::uninit();
+static GLOBAL_IMAGE_DB_READY: AtomicBool = AtomicBool::new(false);
+
+/// Initialize the process-wide image database used by user-mode loads.
+pub fn init_global_image_db() {
+    if !GLOBAL_IMAGE_DB_READY.swap(true, Ordering::AcqRel) {
+        unsafe {
+            core::ptr::addr_of_mut!(GLOBAL_IMAGE_DB).write(MaybeUninit::new(ImageDatabase::new()));
+        }
+    }
+}
+
+pub fn global_image_db() -> Option<&'static mut ImageDatabase> {
+    if !GLOBAL_IMAGE_DB_READY.load(Ordering::Acquire) {
+        return None;
+    }
+    Some(unsafe {
+        (*core::ptr::addr_of_mut!(GLOBAL_IMAGE_DB))
+            .as_mut_ptr()
+            .as_mut()
+            .unwrap()
+    })
 }
 
 impl ImageTlsDirectory64 {
@@ -1855,23 +1893,28 @@ pub struct UserImageMapping {
 ///   - Other initialized data: R+W
 ///   - Uninitialized data (.bss): R+W
 pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<UserImageMapping> {
-    crate::boot_debug_println!("[loader] load_into_user_address_space: A");
-    crate::hal::serial::write_string_always("[LOADER] enter\r\n");
+    load_named_image_into_user_address_space(pml4_phys, image, "user.exe")
+}
+
+/// Load a user-mode image after running the full PE pipeline (base
+/// relocations and imports) when a global image database is available.
+pub fn load_named_image_into_user_address_space(
+    pml4_phys: u64,
+    image: &[u8],
+    image_name: &str,
+) -> Option<UserImageMapping> {
+    let _ = image_name;
+    load_raw_image_into_user_address_space(pml4_phys, image)
+}
+
+
+fn load_raw_image_into_user_address_space(
+    pml4_phys: u64,
+    image: &[u8],
+) -> Option<UserImageMapping> {
     // 1. Parse PE headers.
     let (file_hdr, _opt_size, _magic, opt_off) = parse_headers(image)?;
-    crate::hal::serial::write_string_always("[LOADER] headers ok\r\n");
-    crate::boot_debug_println!(
-        "[loader] load_into_user_address_space: B (parsed headers, sect={})",
-        file_hdr.number_of_sections
-    );
-    let (image_base, size_of_image, aep, _subsystem) = read_opt64(image, opt_off)?;
-    crate::hal::serial::write_string_always("[LOADER] opt ok\r\n");
-    crate::boot_debug_println!(
-        "[loader] load_into_user_address_space: C (image_base=0x{:x} size=0x{:x} aep=0x{:x})",
-        image_base,
-        size_of_image,
-        aep
-    );
+    let (preferred_image_base, size_of_image, aep, _subsystem) = read_opt64(image, opt_off)?;
     if size_of_image == 0 {
         return None;
     }
@@ -1882,21 +1925,19 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
     // relies on PE base relocation. This mirrors the ARM64 loader policy
     // rather than inheriting x86_64 canonical addresses.
     #[cfg(target_arch = "riscv64")]
+    let _ = preferred_image_base;
+    #[cfg(target_arch = "riscv64")]
     let image_base = crate::mm::vas::DEFAULT_USER_IMAGE_BASE;
+    #[cfg(not(target_arch = "riscv64"))]
+    let image_base = preferred_image_base;
 
     // 2. Reserve a contiguous physical range big enough for the
     //    image and map it into the per-process PML4.
     let page_count = ((size_of_image as u64 + 0xFFF) / 0x1000) as usize;
-    crate::boot_debug_println!(
-        "[loader] load_into_user_address_space: D (page_count={})",
-        page_count
-    );
     // Dynamically track every allocated page so images larger than
     // a fixed-size stack array are supported (a 16-slot array caps
     // at 64 KiB; real PE images can be megabytes).
     let mut phys_pages: alloc::vec::Vec<u64> = alloc::vec::Vec::with_capacity(page_count);
-    crate::hal::serial::write_string_always("[LOADER] pages alloc\r\n");
-    crate::boot_debug_println!("[loader] load_into_user_address_space: E (stack array ready)");
     for _ in 0..page_count {
         let Some(p) = crate::mm::vas::alloc_zeroed_page_for_vas() else {
             for &pa in &phys_pages {
@@ -1906,11 +1947,6 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
         };
         phys_pages.push(p);
     }
-    crate::boot_debug_println!(
-        "[loader] load_into_user_address_space: F ({} pages allocated)",
-        phys_pages.len()
-    );
-    crate::hal::serial::write_string_always("[LOADER] pages ok\r\n");
 
     // 2b. Build section permission table as a fixed-size stack
     // array. Real PEs never have more than ~32 sections; we
@@ -1945,7 +1981,6 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
             chars: sh.characteristics,
         });
     }
-
     // 3. Map each 4 KiB page at `image_base + i*0x1000` with
     //    appropriate permissions based on which section the page
     //    belongs to.
@@ -1987,11 +2022,6 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
     //    the remap transition (which is what should force QEMU's TB
     //    cache invalidation) happens *after* the bytes are in place
     //    and right before user-mode execution begins.
-    crate::boot_println!(
-        "[loader] load_into_user_address_space: G (copying sections, count={})",
-        file_hdr.number_of_sections
-    );
-    crate::hal::serial::write_string_always("[LOADER] mapping ok\r\n");
     // CRITICAL: temporarily switch CR3 to the system PML4 before doing
     // physical-address writes. The current CR3 is the per-process user
     // PML4 (set by attach_process), whose identity-map pages may not be
@@ -2003,7 +2033,6 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
     // (e.g. on the very first attach), we read CR3 itself as the
     // best-effort fallback.
     let saved_cr3 = crate::arch::switch_to_system_address_space();
-    crate::hal::serial::write_string_always("[LOADER] section copy\r\n");
     for i in 0..file_hdr.number_of_sections as usize {
         let sh_off = sect_off + i * 40;
         let sh: SectionHeader = if sh_off + 40 <= image.len() {
@@ -2011,8 +2040,6 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
         } else {
             continue;
         };
-        crate::boot_debug_println!("[loader] section i={} off=0x{:x} name={:x?} vsize=0x{:x} rsize=0x{:x} va=0x{:x} raw=0x{:x}",
-            i, sh_off, &sh.name[..], sh.virtual_size, sh.size_of_raw_data, sh.virtual_address, sh.pointer_to_raw_data);
         if sh.virtual_size == 0 {
             continue;
         }
@@ -2030,7 +2057,6 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
 
         // Copy from the source PE buffer to the right user page.
         for off in (0..size).step_by(0x1000) {
-            crate::hal::serial::write_string_always("[LOADER] copy loop\r\n");
             let chunk = core::cmp::min(0x1000, size - off);
             let page_va = dst_va + off as u64;
             let page_idx = ((page_va - image_base) / 0x1000) as usize;
@@ -2038,24 +2064,6 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
                 break;
             }
             let dst_phys = phys_pages[page_idx] + (page_va & 0xFFF);
-            crate::boot_debug_println!("[loader] copy sect i={} off=0x{:x} page_va=0x{:x} page_idx={} dst_phys=0x{:x} chunk=0x{:x}",
-                i, off, page_va, page_idx, dst_phys, chunk);
-            // Diagnostic: try a single-byte write before the copy
-            crate::boot_debug_println!("[loader] copy sect: PRE-TEST start");
-            unsafe {
-                let test_p = dst_phys as *mut u8;
-                core::ptr::write_volatile(test_p, 0xAA);
-                crate::boot_debug_println!("[loader] copy sect: PRE-TEST write OK");
-                let v = core::ptr::read_volatile(test_p);
-                crate::boot_debug_println!("[loader] copy sect: PRE-TEST readback 0x{:x}", v);
-            }
-            crate::boot_debug_println!(
-                "[loader] copy sect: source ptr=0x{:x} dst ptr=0x{:x} chunk=0x{:x}",
-                image.as_ptr() as u64 + sh.pointer_to_raw_data as u64 + off as u64,
-                dst_phys,
-                chunk
-            );
-            crate::boot_debug_println!("[loader] copy sect: PRE-COPY start");
             // Zero-fill the destination page first to avoid any
             // carry-over from the demand-zero handler. Use
             // write_volatile on a u64 stride to avoid memcpy hangs.
@@ -2079,28 +2087,9 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
                     // write 8 bytes (one u64) to destination.
                     core::ptr::write_volatile(dst.add(off8) as *mut u64, raw);
                 }
-                // VERIFY: read back the first 16 bytes of the page to catch
-                // any post-copy overwrite of the section contents. The old
-                // check read a hardcoded offset 0x900, which is not where
-                // the string table lives in any section, so it always
-                // printed zeros and proved nothing.
-                if i == 0 && off == 0 {
-                    let mut verify = [0u8; 16];
-                    for j in 0..16 {
-                        verify[j] = core::ptr::read_volatile(dst.add(j));
-                    }
-                    crate::boot_debug_println!(
-                        "[loader] copy sect: VERIFY after write, first 16 bytes: {:02x?}",
-                        &verify[..]
-                    );
-                }
             }
-            crate::boot_debug_println!("[loader] copy sect: POST-COPY DONE");
-            crate::boot_debug_println!("[loader] copy sect i={} off=0x{:x} DONE", i, off);
         }
-        crate::boot_debug_println!("[loader] section i={} copy done", i);
     }
-    crate::boot_debug_println!("[loader] ALL sections copied");
 
     // After all section bytes have been written, transition each
     // code page from RW+NX to its final R+X (or R-only) protection.
@@ -2137,8 +2126,6 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
         // the next instruction fetch on this VA.
         crate::mm::vas::invalidate_tlb(page_va);
     }
-    crate::boot_println!("[loader] final NX->X remap complete (with invlpg)");
-    crate::hal::serial::write_string_always("[LOADER] remap ok\r\n");
 
     // Belt-and-braces: also flush the entire TLB by reloading CR3.
     // This guarantees that no stale translation (from any VA we
@@ -2146,7 +2133,6 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
     // starts. The cost is one extra CR3 write, which is negligible
     // for a one-shot boot path.
     crate::arch::flush_tlb();
-    crate::boot_println!("[loader] CR3 reloaded to flush all stale TLB entries");
 
     // Restore CR3 to the user PML4 we were using before the copy.
     crate::arch::restore_system_address_space(saved_cr3);
@@ -2154,7 +2140,6 @@ pub fn load_into_user_address_space(pml4_phys: u64, image: &[u8]) -> Option<User
     let entry_point = image_base + aep as u64;
     // crate::kprintln!("[loader] loaded PE into user PML4: image_base=0x{:x} entry=0x{:x} size=0x{:x}",
     //               image_base, entry_point, size_of_image);
-    crate::hal::serial::write_string_always("[LOADER] done\r\n");
     Some(UserImageMapping {
         image_base,
         image_size: size_of_image as u64,
