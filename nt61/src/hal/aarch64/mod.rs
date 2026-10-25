@@ -7,6 +7,7 @@
 
 pub mod apic;
 pub mod gic;
+pub mod rtc;
 pub mod serial;
 pub mod timer;
 

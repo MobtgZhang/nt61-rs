@@ -47,7 +47,8 @@ pub mod flags {
     // Standard combinations
     pub const KERNEL_CODE: u64 = VALID | PAGE | AF | ATTR_NORMAL_WB | SH_INNER | UXN;
     pub const KERNEL_DATA: u64 = VALID | PAGE | AF | ATTR_NORMAL_WB | SH_INNER | PXN | UXN;
-    pub const USER_CODE: u64 = VALID | PAGE | AF | USER | ATTR_NORMAL_WB | SH_INNER | PXN;
+    pub const USER_CODE: u64 =
+        VALID | PAGE | AF | USER | READONLY | ATTR_NORMAL_WB | SH_INNER | PXN;
     pub const USER_DATA: u64 = VALID | PAGE | AF | USER | ATTR_NORMAL_WB | SH_INNER | PXN | UXN;
     pub const DEVICE_MEM: u64 = VALID | PAGE | AF | ATTR_DEVICE | SH_OUTER | PXN | UXN;
 }

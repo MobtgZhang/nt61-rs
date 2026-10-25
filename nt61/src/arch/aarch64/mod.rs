@@ -10,6 +10,8 @@
 //!   * CPU feature detection (AA64* registers, see `cpuinfo.rs`)
 
 pub mod apic;
+#[cfg(feature = "btl")]
+pub mod btl;
 pub mod context;
 pub mod context_switch;
 pub mod cpuinfo;
@@ -47,6 +49,9 @@ pub const PAGE_SHIFT: usize = 12;
 
 /// Initialise aarch64 architecture state.
 pub fn init() {
+    #[cfg(feature = "btl")]
+    btl::init();
+
     unsafe {
         // NOTE: On QEMU virt + EDK2 the bootloader (OvmfPkg/ArmVirt)
         // already enabled the MMU with a set of identity-mapped

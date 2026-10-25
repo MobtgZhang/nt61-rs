@@ -58,7 +58,7 @@ pub fn flush_page(vaddr: u64) {
     unsafe {
         // TLBI VAE1IS - invalidate by VA, EL1, Inner Shareable
         // Bits [55:12] contain the VA, bits [63:56] unused
-        let va = (vaddr >> 12) & 0xFFFF_FFFF_FFFF;
+        let va = vaddr & !0xFFF;
         asm!(
             "tlbi vae1is, {va}",
             "dsb ish",
@@ -74,7 +74,7 @@ pub fn flush_page(vaddr: u64) {
 pub fn flush_page_asid(vaddr: u64, asid: Asid) {
     unsafe {
         // Combine ASID in upper bits with VA in lower bits
-        let va_asid = ((asid as u64) << 48) | ((vaddr >> 12) & 0xFFFF_FFFF_FFFF);
+        let va_asid = ((asid as u64) << 48) | (vaddr & !0xFFF);
         asm!(
             "tlbi vae1is, {va}",
             "dsb ish",
@@ -94,7 +94,7 @@ pub fn flush_range(start_vaddr: u64, end_vaddr: u64) {
 
     unsafe {
         while addr < end {
-            let va = (addr >> 12) & 0xFFFF_FFFF_FFFF;
+            let va = addr & !0xFFF;
             asm!(
                 "tlbi vae1is, {va}",
                 va = in(reg) va,
@@ -115,7 +115,7 @@ pub fn flush_range_asid(start_vaddr: u64, end_vaddr: u64, asid: Asid) {
 
     unsafe {
         while addr < end {
-            let va_asid = ((asid as u64) << 48) | ((addr >> 12) & 0xFFFF_FFFF_FFFF);
+            let va_asid = ((asid as u64) << 48) | (addr & !0xFFF);
             asm!(
                 "tlbi vae1is, {va}",
                 va = in(reg) va_asid,
@@ -131,7 +131,7 @@ pub fn flush_range_asid(start_vaddr: u64, end_vaddr: u64, asid: Asid) {
 #[inline]
 pub fn flush_instruction_page(vaddr: u64) {
     unsafe {
-        let va = (vaddr >> 12) & 0xFFFF_FFFF_FFFF;
+        let va = vaddr & !0xFFF;
         asm!(
             "tlbi vaae1is, {va}",
             "dsb ish",

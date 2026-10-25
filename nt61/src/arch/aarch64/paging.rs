@@ -232,7 +232,7 @@ pub fn map_page(va: u64, pa: u64, flags: u64) -> bool {
     let user_access =
         flags & (crate::mm::pte::PTE_US | crate::arch::common::paging::PageFlags::USER.bits()) != 0;
     let arch_flags = if user_access {
-        if flags & crate::mm::pte::PTE_NX != 0 {
+        if flags & crate::mm::pte::PTE_RW != 0 {
             super::paging_enhanced::flags::USER_DATA
         } else {
             super::paging_enhanced::flags::USER_CODE
@@ -248,13 +248,34 @@ pub fn map_page(va: u64, pa: u64, flags: u64) -> bool {
         asm!("dsb ishst", options(nostack));
         // Invalidate any cached translation-fault entry for this VA
         // from a walk that happened before the leaf was installed.
-        asm!("tlbi vae1, {}", in(reg) va >> 12, options(nostack));
+        asm!("tlbi vae1, {}", in(reg) va & !0xFFF, options(nostack));
         asm!("isb", options(nostack));
         // Verify the write actually landed — read it back. On
         // systems where the L3 page itself is in unmapped memory,
         // the write itself faults and we never reach this read.
         let verify = core::ptr::read_volatile(l3_pte);
         debug_assert_eq!(verify, desc);
+    }
+    true
+}
+
+/// Map a page using architecture-native descriptor bits.
+///
+/// `identity_map_region` needs to preserve the firmware's heap/
+/// framebuffer attribute index; the portable `map_page` interface
+/// intentionally selects a different MAIR entry for kernel mappings.
+pub fn map_page_raw(va: u64, pa: u64, raw_flags: u64) -> bool {
+    let l3_pte = unsafe { leaf_pte_ptr_for(va) };
+    if l3_pte.is_null() {
+        return false;
+    }
+    let desc = make_page_desc(pa, raw_flags);
+    unsafe {
+        core::ptr::write_volatile(l3_pte, desc);
+        asm!("dsb ishst", options(nostack));
+        asm!("tlbi vae1is, {}", in(reg) va & !0xFFF, options(nostack));
+        asm!("dsb ish", options(nostack));
+        asm!("isb", options(nostack));
     }
     true
 }
@@ -271,7 +292,7 @@ pub fn unmap_page(va: u64) -> Option<u64> {
         }
         let pa = pte & 0x0000_FFFF_FFFF_F000;
         core::ptr::write_volatile(l3_pte, 0);
-        asm!("tlbi VAE1, {}", in(reg) va >> 12, options(nostack));
+        asm!("tlbi VAE1, {}", in(reg) va & !0xFFF, options(nostack));
         asm!("dsb nsh", options(nostack));
         asm!("isb", options(nostack));
         Some(pa)
@@ -293,12 +314,18 @@ pub fn translate_virt(va: u64) -> Option<u64> {
         let l1_phys = l0e & 0x0000_FFFF_FFFF_F000;
         let l1 = l1_phys as *const u64;
         let l1e = core::ptr::read_volatile(l1.add(l1_idx));
+        if (l1e & 0x3) == 0x1 {
+            return Some((l1e & 0x0000_FFFF_C000_0000) | (va & 0x3FFF_FFFF));
+        }
         if (l1e & 0x3) != 0x3 {
             return None;
         }
         let l2_phys = l1e & 0x0000_FFFF_FFFF_F000;
         let l2 = l2_phys as *const u64;
         let l2e = core::ptr::read_volatile(l2.add(l2_idx));
+        if (l2e & 0x3) == 0x1 {
+            return Some((l2e & 0x0000_FFFF_FFE0_0000) | (va & 0x1F_FFFF));
+        }
         if (l2e & 0x3) != 0x3 {
             return None;
         }
@@ -312,6 +339,34 @@ pub fn translate_virt(va: u64) -> Option<u64> {
     }
 }
 
+/// Return the L3 page descriptor covering `va`.
+pub fn leaf_entry(va: u64) -> Option<u64> {
+    unsafe {
+        let l0 = current_l0_phys() as *const u64;
+        let l0e = core::ptr::read_volatile(l0.add(((va >> 39) & 0x1FF) as usize));
+        if (l0e & 0x3) != 0x3 {
+            return None;
+        }
+        let l1 = (l0e & 0x0000_FFFF_FFFF_F000) as *const u64;
+        let l1e = core::ptr::read_volatile(l1.add(((va >> 30) & 0x1FF) as usize));
+        if (l1e & 0x3) != 0x3 {
+            return None;
+        }
+        let l2 = (l1e & 0x0000_FFFF_FFFF_F000) as *const u64;
+        let l2e = core::ptr::read_volatile(l2.add(((va >> 21) & 0x1FF) as usize));
+        if (l2e & 0x3) != 0x3 {
+            return None;
+        }
+        let l3 = (l2e & 0x0000_FFFF_FFFF_F000) as *const u64;
+        let l3e = core::ptr::read_volatile(l3.add(((va >> 12) & 0x1FF) as usize));
+        if is_valid_page(l3e) {
+            Some(l3e)
+        } else {
+            None
+        }
+    }
+}
+
 pub unsafe fn load_page_root(pml4_pfn: u64) {
     let pa = pfn_to_phys(pml4_pfn);
     // The process root contains both the low-half user mappings and
@@ -321,6 +376,7 @@ pub unsafe fn load_page_root(pml4_pfn: u64) {
     asm!("msr TTBR0_EL1, {}", in(reg) pa, options(nostack));
     asm!("dsb nsh", options(nostack));
     asm!("isb", options(nostack));
+    crate::mm::vas::set_current_root(pa);
 }
 
 /// Configure the translation regime for the 48-bit user/kernel split
@@ -359,7 +415,7 @@ pub fn read_page_root_pfn() -> u64 {
 /// Invalidate a single TLB entry for the given virtual address.
 pub fn invalidate_tlb(va: u64) {
     unsafe {
-        asm!("tlbi VAE1, {}", in(reg) va >> 12, options(nostack));
+        asm!("tlbi VAE1, {}", in(reg) va & !0xFFF, options(nostack));
         asm!("dsb nsh", options(nostack));
         asm!("isb", options(nostack));
     }
@@ -442,7 +498,7 @@ pub fn identity_map_region(pa: u64, size: u64) -> bool {
             let l0e = core::ptr::read_volatile(l0.add(l0_idx));
             if (l0e & 0x3) != 0x3 {
                 // L0 missing — install a fresh L1.
-                if !map_page(cur, cur, HEAP_FLAGS) {
+                if !map_page_raw(cur, cur, HEAP_FLAGS) {
                     return false;
                 }
                 cur = cur.saturating_add(PAGE_SIZE);
@@ -452,7 +508,7 @@ pub fn identity_map_region(pa: u64, size: u64) -> bool {
             let l1 = l1_phys as *mut u64;
             let l1e = core::ptr::read_volatile(l1.add(l1_idx));
             if (l1e & 0x3) != 0x3 {
-                if !map_page(cur, cur, HEAP_FLAGS) {
+                if !map_page_raw(cur, cur, HEAP_FLAGS) {
                     return false;
                 }
                 cur = cur.saturating_add(PAGE_SIZE);
@@ -463,21 +519,29 @@ pub fn identity_map_region(pa: u64, size: u64) -> bool {
             let l2e = core::ptr::read_volatile(l2.add(l2_idx));
 
             // If L2 already has a 2 MiB block descriptor for this
-            // address and the whole 2 MiB region we need falls
-            // inside it, the page is already mapped — skip.
+            // address and the requested range starts inside it, the
+            // existing firmware mapping may remain in place.  A block
+            // that begins inside the requested range, however, must be
+            // replaced with 4 KiB pages because we cannot rely on the
+            // next block's permissions (QEMU's ramfb framebuffer
+            // crosses such a boundary at 0x46400000).
             if (l2e & 0x3) == 0x1 {
-                let block_base = l2e & 0xFFFF_FFFF_E000_0000;
-                let block_end = block_base.saturating_add(2 * 1024 * 1024);
-                // Advance `cur` to the next 2 MiB boundary (or `end`)
-                let next_2mb = (cur & !((2u64 * 1024 * 1024) - 1)).saturating_add(2 * 1024 * 1024);
-                let advance = next_2mb.min(end).min(block_end);
-                cur = advance;
-                continue;
+                let block_base = l2e & 0xFFFF_FFFF_FFE0_0000;
+                if cur != block_base {
+                    let block_end = block_base.saturating_add(2 * 1024 * 1024);
+                    // Advance `cur` to the next 2 MiB boundary (or `end`)
+                    let next_2mb =
+                        (cur & !((2u64 * 1024 * 1024) - 1)).saturating_add(2 * 1024 * 1024);
+                    let advance = next_2mb.min(end).min(block_end);
+                    cur = advance;
+                    continue;
+                }
             }
 
             // L2 has no block descriptor — install a 4 KiB page
             // mapping via the existing leaf_pte_ptr_for path.
-            if !map_page(cur, cur, HEAP_FLAGS) {
+            let mapped = map_page_raw(cur, cur, HEAP_FLAGS);
+            if !mapped {
                 return false;
             }
             cur = cur.saturating_add(PAGE_SIZE);

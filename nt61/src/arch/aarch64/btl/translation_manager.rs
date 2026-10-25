@@ -50,6 +50,12 @@ pub struct TranslationManager {
     pub miss_count: u64,
 }
 
+/// Global translation-manager singleton. Instantiated lazily so
+/// that `resolve` / `translate` are safe to call from any context
+/// once the kernel is up.
+pub static TRANSLATION_MANAGER: crate::ke::sync::Spinlock<TranslationManager> =
+    crate::ke::sync::Spinlock::new(TranslationManager::empty());
+
 impl TranslationManager {
     pub const fn empty() -> Self {
         Self {

@@ -82,9 +82,11 @@ pub fn write_string_always(s: &str) {
     }
     #[cfg(not(test))]
     {
-        for c in s.bytes() {
-            write_char(c);
-        }
+        crate::hal::common::serial_disable::with_serial_unmasked(|| {
+            for c in s.bytes() {
+                write_char(c);
+            }
+        });
     }
 }
 
@@ -122,6 +124,20 @@ pub fn write_hex_u64(v: u64) {
         };
         write_char(c);
     }
+}
+
+pub fn write_hex_u64_always(v: u64) {
+    crate::hal::common::serial_disable::with_serial_unmasked(|| {
+        for i in (0..16).rev() {
+            let nibble = ((v >> (i * 4)) & 0xF) as u8;
+            let c = if nibble < 10 {
+                b'0' + nibble
+            } else {
+                b'A' + nibble - 10
+            };
+            write_char(c);
+        }
+    });
 }
 
 fn log_level_debug() -> bool {

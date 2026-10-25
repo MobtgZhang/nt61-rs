@@ -150,13 +150,13 @@ fn handle_lower_sync(tf: &mut TrapFrame) {
     let iss = esr & 0x01FF_FFFF;
     match ec {
         ec::SVC => {
-            // The Windows ARM64 calling convention places the syscall
-            // number in X16. We forward to the syscall dispatcher
-            // which returns the NTSTATUS / kernel status. The result
-            // must be propagated back to the caller in X0.
-            let syscall_num = tf.x8;
+            // The portable user-mode trampoline places the syscall
+            // number in X16 and the first eight arguments in X0-X7.
+            // The result is propagated back to the caller in X0.
+            let syscall_num = tf.x16;
             let result =
                 unsafe { crate::arch::aarch64::syscall::syscall_dispatch_with_tf(syscall_num, tf) };
+
             tf.x0 = result;
             // Advance the PC past the SVC instruction (SVC #imm is 4 bytes).
             tf.elr_el1 = tf.elr_el1.wrapping_add(4);
@@ -220,17 +220,17 @@ fn handle_irq() {
 /// handle a user-mode page fault.
 fn handle_user_page_fault(tf: &mut TrapFrame, is_instruction: bool) {
     let far = tf.far_el1;
-    crate::hal::serial::write_string("[USER-FAULT] kind=");
-    crate::hal::serial::write_string(if is_instruction {
+    crate::hal::serial::write_string_always("[USER-FAULT] kind=");
+    crate::hal::serial::write_string_always(if is_instruction {
         "instruction"
     } else {
         "data"
     });
     crate::hal::serial::write_string(" far=");
-    crate::hal::serial::write_hex_u64(far);
-    crate::hal::serial::write_string(" elr=");
-    crate::hal::serial::write_hex_u64(tf.elr_el1);
-    crate::hal::serial::write_string("\r\n");
+    crate::hal::serial::write_hex_u64_always(far);
+    crate::hal::serial::write_string_always(" elr=");
+    crate::hal::serial::write_hex_u64_always(tf.elr_el1);
+    crate::hal::serial::write_string_always("\r\n");
     // Loop here so the schedule can pick up the faulted thread.
     loop {
         unsafe { asm!("wfi", options(nostack)) };
@@ -241,15 +241,15 @@ fn handle_user_page_fault(tf: &mut TrapFrame, is_instruction: bool) {
 fn handle_user_sync_fault(tf: &mut TrapFrame, ec: u64, iss: u64) {
     // Future: deliver a STATUS_ACCESS_VIOLATION exception to the
     // user thread; for now we just halt the CPU.
-    crate::hal::serial::write_string("[USER-FAULT] ec=");
-    crate::hal::serial::write_hex_u64(ec);
-    crate::hal::serial::write_string(" iss=");
-    crate::hal::serial::write_hex_u64(iss);
-    crate::hal::serial::write_string(" far=");
-    crate::hal::serial::write_hex_u64(tf.far_el1);
-    crate::hal::serial::write_string(" elr=");
-    crate::hal::serial::write_hex_u64(tf.elr_el1);
-    crate::hal::serial::write_string("\r\n");
+    crate::hal::serial::write_string_always("[USER-FAULT] ec=");
+    crate::hal::serial::write_hex_u64_always(ec);
+    crate::hal::serial::write_string_always(" iss=");
+    crate::hal::serial::write_hex_u64_always(iss);
+    crate::hal::serial::write_string_always(" far=");
+    crate::hal::serial::write_hex_u64_always(tf.far_el1);
+    crate::hal::serial::write_string_always(" elr=");
+    crate::hal::serial::write_hex_u64_always(tf.elr_el1);
+    crate::hal::serial::write_string_always("\r\n");
     loop {
         unsafe { asm!("wfi", options(nostack)) };
     }
