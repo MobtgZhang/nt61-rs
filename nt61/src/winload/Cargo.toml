@@ -7,7 +7,7 @@ authors = ["NT6.1.7601 Team"]
 publish = false
 
 [dependencies]
-uefi = { version = "0.37.0", features = ["alloc", "logger", "global_allocator"] }
+uefi = { version = "0.37.0", features = ["alloc", "logger"] }
 uefi-raw = "0.14.0"
 nt61-bootfs = { path = "../bootfs" }
 
@@ -33,6 +33,7 @@ nt61 = { path = "../..", default-features = false, features = ["loongarch64", "b
 [[bin]]
 name = "nt61-winload"
 path = "src/main.rs"
+test = false
 
 [features]
 # winload.efi is currently enabled for the target supported by the
