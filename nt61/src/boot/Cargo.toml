@@ -17,6 +17,7 @@ nt61-fonts = { path = "../fonts" }
 [[bin]]
 name = "nt61-boot"
 path = "src/main.rs"
+test = false
 
 [features]
 # nt61-boot.efi is currently an x86_64-only UEFI binary. The

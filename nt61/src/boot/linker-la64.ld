@@ -106,7 +106,7 @@ SECTIONS {
         LONG(0)                                            /*   4  SizeOfCode */
         LONG(0)                                            /*   8  SizeOfInitializedData */
         LONG(0)                                            /*   C  SizeOfUninitializedData */
-        LONG(efi_main - .)                                 /*  10  AddressOfEntryPoint */
+        LONG(0)                                            /*  10  AddressOfEntryPoint (patched by build tool) */
         LONG(0x1000)                                       /*  14  BaseOfCode (.text aligned offset) */
         QUAD(BASE_ADDRESS)                                 /*  18  ImageBase */
         LONG(0x1000)                                       /*  20  SectionAlignment */
@@ -171,7 +171,6 @@ SECTIONS {
         *(.comment)
         *(.symtab)
         *(.strtab)
-        *(.shstrtab)
         /* The `.efi_header` section holds our hand-rolled PE32+
          * bytes; `objcopy -O pei-loongarch64` re-creates the
          * header from scratch, so the original section is dead

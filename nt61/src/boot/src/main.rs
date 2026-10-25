@@ -10,8 +10,8 @@
 //!   * an F8 key switches to the "Advanced Boot Options" submenu
 //!   * keyboard input handled via Console Text Protocol while rendering via GOP
 
-#![no_std]
-#![no_main]
+#![cfg_attr(not(test), no_std)]
+#![cfg_attr(not(test), no_main)]
 
 extern crate alloc;
 
@@ -21,6 +21,7 @@ extern crate alloc;
 /// handler.  A boot-manager panic is a firmware-session failure, so the
 /// safe fallback is to stop spinning rather than depend on console state
 /// that may not yet be initialized.
+#[cfg(not(test))]
 #[panic_handler]
 fn bootmgr_panic(_info: &core::panic::PanicInfo) -> ! {
     loop {
@@ -2697,14 +2698,17 @@ fn launch_selected(menu: &BootMenu) -> core::result::Result<(), &'static str> {
     // breaks every time the surrounding code shifts the `WINL>` prologue
     // — `efi_main_vma` was already computed above from the parsed PE.
 
-    // Allocate 64 KiB of stack space for winload.efi.
+    // Allocate 4 MiB of stack space for winload.efi. The loader and
+    // kernel driver bring-up use recursive-looking allocations and
+    // verbose diagnostics; 64 KiB is insufficient and overflows before
+    // virtio queue setup completes.
     let stack_base = ub2::allocate_pages(
         ub2::AllocateType::AnyPages,
         ub2::MemoryType::BOOT_SERVICES_DATA,
-        16, // 64 KiB
+        1024, // 4 MiB
     )
     .map_err(|_e| -> &'static str { "allocate winload stack" })?;
-    let stack_top = stack_base.as_ptr() as u64 + 64 * 1024;
+    let stack_top = stack_base.as_ptr() as u64 + 16 * 1024 * 1024;
 
     // Write a tiny halt stub at (stack_top - 16). If efi_main ever
     // returns (it shouldn't, since it's `-> !`), control goes here
