@@ -196,33 +196,28 @@ pub unsafe fn smp_boot_aps(pml4_pfn: u64) {
     // and an initial AP index. (We do this once; for multiple
     // APs we patch again before each SIPI.)
     unsafe {
+        // The destination of these static pointers is in the
+        // kernel image, but `copy_nonoverlapping` already copied
+        // their bytes into the SIPI page. Derive offsets from the
+        // linked blob and patch the copy.
         extern "C" {
             static mut _trampoline_pml4: u32;
             static mut _trampoline_ap_stack: u64;
             static mut _trampoline_ap_index: u64;
         }
-        // The destination of these static pointers is in the
-        // winload/kernel image, but `core::ptr::copy_nonoverlapping`
-        // already copied them into the SIPI page. To patch the
-        // SIPI page, write directly to its offset.
         let p = trampoline_phys as *mut u8;
-        // We re-derive the offsets by reading the source layout.
-        // The simplest approach: define the same `static mut`
-        // symbols and use their addresses. They are in the
-        // .text section at known offsets.
-        let src_pml4 = core::ptr::addr_of!(_trampoline_pml4) as *const u8;
-        let src_stack = core::ptr::addr_of!(_trampoline_ap_stack) as *const u8;
-        let src_index = core::ptr::addr_of!(_trampoline_ap_index) as *const u8;
-        // Compute the offsets from the trampoline base.
-        let pml4_off = (src_pml4 as usize) - (_trampoline_start as *const u8 as usize);
-        let stack_off = (src_stack as usize) - (_trampoline_start as *const u8 as usize);
-        let index_off = (src_index as usize) - (_trampoline_start as *const u8 as usize);
-        // Patch each offset in the SIPI page.
-        core::ptr::write_volatile((p.add(pml4_off)) as *mut u32, pml4_pfn as u32);
-        core::ptr::write_volatile((p.add(stack_off)) as *mut u64, ap_stack_top);
-        core::ptr::write_volatile((p.add(index_off)) as *mut u64, 1u64);
+        let base = _trampoline_start as *const u8 as usize;
+        let pml4_off = (core::ptr::addr_of!(_trampoline_pml4) as usize) - base;
+        let stack_off = (core::ptr::addr_of!(_trampoline_ap_stack) as usize) - base;
+        let index_off = (core::ptr::addr_of!(_trampoline_ap_index) as usize) - base;
+        // CR3 requires the page-table base address, not its frame number.
+        core::ptr::write_volatile(
+            p.add(pml4_off) as *mut u32,
+            ((pml4_pfn & 0x000F_FFFF_FFFF) * 0x1000) as u32,
+        );
+        core::ptr::write_volatile(p.add(stack_off) as *mut u64, ap_stack_top);
+        core::ptr::write_volatile(p.add(index_off) as *mut u64, 0);
     }
-    let _ = pml4_pfn;
     // Bring up each AP.
     let mut brought_up: u32 = 1;
     for i in 1..info.lapic_count as usize {
@@ -365,7 +360,10 @@ extern "C" {
 // with weak stubs in the UEFI case below.
 
 #[cfg(not(target_os = "uefi"))]
-core::arch::global_asm!(include_str!("smp_trampoline.S"));
+core::arch::global_asm!(
+    include_str!("smp_trampoline.S"),
+    options(att_syntax),
+);
 
 // Provide weak symbols so the UEFI build (which doesn't link the
 // trampoline) can still resolve the references from smp.rs.

@@ -324,13 +324,52 @@ unsafe fn trace_fault_walk(cr2: u64, err: u64, rip: u64, cs: u64, cr3: u64) {
 }
 
 #[no_mangle]
-pub extern "C" fn dispatch_trap_frame(vector: u64, tf: *mut TrapFrame) {
+pub extern "win64" fn dispatch_trap_frame(vector: u64, tf: *mut TrapFrame) {
     if tf.is_null() {
         return;
     }
+    let mut canonical_frame = TrapFrame::default();
+    let has_cpu_error_code = matches!(
+        vector,
+        8 | 10 | 11 | 12 | 13 | 14 | 17
+    );
+    let tf_ref: &mut TrapFrame = if has_cpu_error_code {
+        unsafe { &mut *tf }
+    } else {
+        // Non-error-code vectors do not push an error code, so the CPU's
+        // RIP/CS/RFLAGS/RSP/SS occupy the Rust struct slots named
+        // error_code/rip/cs/rflags/rsp. The in-place shift used here
+        // previously overwrote the actual IRET frame and made iretq load
+        // the user RIP as CS. Build a canonical view for Rust handlers,
+        // but leave the CPU frame untouched for the assembly epilogue.
+        let raw = unsafe { &*tf };
+        canonical_frame.rax = raw.rax;
+        canonical_frame.rcx = raw.rcx;
+        canonical_frame.rdx = raw.rdx;
+        canonical_frame.rbx = raw.rbx;
+        canonical_frame.rbp = raw.rbp;
+        canonical_frame.rsi = raw.rsi;
+        canonical_frame.rdi = raw.rdi;
+        canonical_frame.r8 = raw.r8;
+        canonical_frame.r9 = raw.r9;
+        canonical_frame.r10 = raw.r10;
+        canonical_frame.r11 = raw.r11;
+        canonical_frame.r12 = raw.r12;
+        canonical_frame.r13 = raw.r13;
+        canonical_frame.r14 = raw.r14;
+        canonical_frame.r15 = raw.r15;
+        canonical_frame.vector = vector;
+        canonical_frame.error_code = 0;
+        canonical_frame.rip = raw.error_code;
+        canonical_frame.cs = raw.rip;
+        canonical_frame.rflags = raw.cs;
+        canonical_frame.rsp = raw.rflags;
+        canonical_frame.ss = raw.rsp;
+        &mut canonical_frame
+    };
     #[cfg(target_arch = "x86_64")]
     if vector == 14 {
-        let frame = unsafe { &*tf };
+        let frame = &*tf_ref;
         let cr2: u64;
         let cr3: u64;
         unsafe {
@@ -376,7 +415,11 @@ pub extern "C" fn dispatch_trap_frame(vector: u64, tf: *mut TrapFrame) {
         PF_IN_HANDLER.store(false, Ordering::Release);
         return;
     }
-    crate::boot_println!("[DT] dispatch vector={} tf={:x}", vector, tf as u64);
+    crate::boot_println!(
+        "[DT] dispatch vector={} tf={:x}",
+        vector,
+        tf_ref as *mut TrapFrame as u64
+    );
     unsafe {
         // The stub passed the vector as a u64 (so its top bits are
         // already 0) — no `& 0xFF` mask needed for clarity, but
@@ -447,42 +490,42 @@ pub extern "C" fn dispatch_trap_frame(vector: u64, tf: *mut TrapFrame) {
             5 => { /* #BR - Bound Range Exceeded */ }
             6 => {
                 /* #UD - Invalid Opcode */
-                handle_invalid_opcode(&*tf);
+                handle_invalid_opcode(&*tf_ref);
                 return;
             }
             7 => {
                 /* #NM - Device Not Available */
-                handle_device_not_available(&*tf);
+                handle_device_not_available(&*tf_ref);
             }
             8 => {
                 /* #DF - Double Fault - CRITICAL */
-                handle_double_fault(error_code, &*tf);
+                handle_double_fault(error_code, &*tf_ref);
                 return;
             }
             9 => { /* Coprocessor Segment Overrun - deprecated, ignore */ }
             10 => {
                 /* #TS - Invalid TSS */
-                handle_general_protection(error_code, &*tf);
+                handle_general_protection(error_code, &*tf_ref);
                 return;
             }
             11 => {
                 /* #NP - Segment Not Present */
-                handle_segment_not_present(error_code, &*tf);
+                handle_segment_not_present(error_code, &*tf_ref);
                 return;
             }
             12 => {
                 /* #SS - Stack Fault */
-                handle_stack_fault(error_code, &*tf);
+                handle_stack_fault(error_code, &*tf_ref);
                 return;
             }
             13 => {
                 /* #GP - General Protection Fault - CRITICAL */
-                handle_general_protection(error_code, &*tf);
+                handle_general_protection(error_code, &*tf_ref);
                 return;
             }
             14 => {
                 /* #PF - Page Fault */
-                handle_page_fault(error_code, &*tf);
+                handle_page_fault(error_code, &*tf_ref);
             }
             15 => { /* Reserved - Intel defined as 'Unknown' */
                 // // crate::kprintln!("[FAULT] Vector 15 (Intel reserved)");
@@ -490,12 +533,12 @@ pub extern "C" fn dispatch_trap_frame(vector: u64, tf: *mut TrapFrame) {
             16 => { /* #MF - x87 Floating Point Error */ }
             17 => {
                 /* #AC - Alignment Check */
-                handle_alignment_check(error_code, &*tf);
+                handle_alignment_check(error_code, &*tf_ref);
                 return;
             }
             18 => {
                 /* #MC - Machine Check - CRITICAL */
-                handle_machine_check(&*tf);
+                handle_machine_check(&*tf_ref);
                 return;
             }
             19 => { /* #XM - SIMD Floating Point Error */ }
@@ -509,7 +552,11 @@ pub extern "C" fn dispatch_trap_frame(vector: u64, tf: *mut TrapFrame) {
                 #[cfg(target_arch = "x86_64")]
                 {
                     crate::boot_println!("[DT32] before irq_dispatch");
-                    crate::hal::x86_64::pic::irq_dispatch(0);
+                    if crate::hal::x86_64::apic::timer_active() {
+                        crate::hal::x86_64::apic::eoi();
+                    } else {
+                        crate::hal::x86_64::pic::irq_dispatch(0);
+                    }
                     crate::boot_println!("[DT32] after irq_dispatch before tick");
                     crate::ke::scheduler::tick();
                     crate::boot_println!("[DT32] after tick");
@@ -861,7 +908,58 @@ fn handle_double_fault(_error_code: u64, _tf: &TrapFrame) {
 fn handle_general_protection(_error_code: u64, tf: &TrapFrame) {
     let _selector_id = _error_code & 0xFFFF;
     let _ext = (_error_code >> 16) & 1 != 0;
-    crate::boot_println!("[GP] err=0x{:x} cs=0x{:x} rip=0x{:x} rsp=0x{:x} ss=0x{:x} rax=0x{:x} rbx=0x{:x} rcx=0x{:x} rdx=0x{:x} rdi=0x{:x} rsi=0x{:x} r8=0x{:x} r9=0x{:x} r10=0x{:x} r11=0x{:x}", _error_code, tf.cs, tf.rip, tf.rsp, tf.ss, tf.rax, tf.rbx, tf.rcx, tf.rdx, tf.rdi, tf.rsi, tf.r8, tf.r9, tf.r10, tf.r11);
+    let frame_base = tf as *const TrapFrame as *const u64;
+    crate::hal::x86_64::serial::write_string_always("[GP] err=");
+    crate::hal::x86_64::serial::write_hex_u64_always(_error_code);
+    crate::hal::x86_64::serial::write_string_always(" cs=");
+    crate::hal::x86_64::serial::write_hex_u64_always(tf.cs as u64);
+    crate::hal::x86_64::serial::write_string_always(" rip=");
+    crate::hal::x86_64::serial::write_hex_u64_always(tf.rip);
+    crate::hal::x86_64::serial::write_string_always(" rsp=");
+    crate::hal::x86_64::serial::write_hex_u64_always(tf.rsp);
+    crate::hal::x86_64::serial::write_string_always(" ss=");
+    crate::hal::x86_64::serial::write_hex_u64_always(tf.ss as u64);
+    crate::hal::x86_64::serial::write_string_always(" rax=");
+    crate::hal::x86_64::serial::write_hex_u64_always(tf.rax);
+    crate::hal::x86_64::serial::write_string_always(" rbx=");
+    crate::hal::x86_64::serial::write_hex_u64_always(tf.rbx);
+    crate::hal::x86_64::serial::write_string_always(" rcx=");
+    crate::hal::x86_64::serial::write_hex_u64_always(tf.rcx);
+    crate::hal::x86_64::serial::write_string_always(" rdx=");
+    crate::hal::x86_64::serial::write_hex_u64_always(tf.rdx);
+    crate::hal::x86_64::serial::write_string_always(" rdi=");
+    crate::hal::x86_64::serial::write_hex_u64_always(tf.rdi);
+    crate::hal::x86_64::serial::write_string_always(" rsi=");
+    crate::hal::x86_64::serial::write_hex_u64_always(tf.rsi);
+    crate::hal::x86_64::serial::write_string_always(" r8=");
+    crate::hal::x86_64::serial::write_hex_u64_always(tf.r8);
+    crate::hal::x86_64::serial::write_string_always(" r9=");
+    crate::hal::x86_64::serial::write_hex_u64_always(tf.r9);
+    crate::hal::x86_64::serial::write_string_always(" r10=");
+    crate::hal::x86_64::serial::write_hex_u64_always(tf.r10);
+    crate::hal::x86_64::serial::write_string_always(" r11=");
+    crate::hal::x86_64::serial::write_hex_u64_always(tf.r11);
+    crate::hal::x86_64::serial::write_string_always(" frame=");
+    crate::hal::x86_64::serial::write_hex_u64_always(tf as *const TrapFrame as u64);
+    crate::hal::x86_64::serial::write_string_always(" code=");
+    for offset in -8i64..8i64 {
+        let byte = unsafe {
+            core::ptr::read_volatile(
+                (tf.rip as i64).wrapping_add(offset) as *const u8
+            )
+        };
+        crate::hal::serial::write_hex_u64_always(byte as u64);
+        crate::hal::serial::write_string_always(" ");
+    }
+    for index in 15..48 {
+        crate::hal::x86_64::serial::write_string_always(" s");
+        crate::hal::serial::write_hex_u64_always(index as u64);
+        crate::hal::x86_64::serial::write_string_always("=");
+        crate::hal::x86_64::serial::write_hex_u64_always(unsafe {
+            core::ptr::read_volatile(frame_base.add(index))
+        });
+    }
+    crate::hal::x86_64::serial::write_string_always("\r\n");
 
     // Check if this is from user mode (CPL != 0 in the saved CS).
     let user_mode = tf.cs & 3 != 0;
@@ -873,7 +971,7 @@ fn handle_general_protection(_error_code: u64, tf: &TrapFrame) {
         // cmd.exe is the sole user-mode process). Without this arm
         // the IDT handler would iretq back to the failing
         // instruction and we would loop forever printing `[[[`.
-        crate::hal::x86_64::serial::write_string(
+        crate::hal::x86_64::serial::write_string_always(
             "[FAULT] user-mode #GP, terminating current process\r\n",
         );
         crate::ps::process::process_exit(0xC0000005u32); // STATUS_ACCESS_VIOLATION
@@ -1119,12 +1217,19 @@ fn handle_segment_not_present(_error_code: u64, _tf: &TrapFrame) {
 /// handle #UD (Invalid Opcode)
 /// Caused by executing invalid instructions or CS.limit exceeded
 fn handle_invalid_opcode(tf: &TrapFrame) {
-    crate::hal::x86_64::serial::write_string("[FAULT] #UD (Invalid Opcode)\r\n");
-    crate::hal::x86_64::serial::write_string("[FAULT]   RIP=0x");
-    crate::hal::x86_64::serial::write_u64_hex(tf.rip);
-    crate::hal::x86_64::serial::write_string(" CS=0x");
-    crate::hal::x86_64::serial::write_u64_hex(tf.cs);
-    crate::hal::x86_64::serial::write_string("\r\n");
+    crate::hal::x86_64::serial::write_string_always("[FAULT] #UD (Invalid Opcode)\r\n");
+    crate::hal::x86_64::serial::write_string_always("[FAULT]   RIP=0x");
+    crate::hal::x86_64::serial::write_hex_u64_always(tf.rip);
+    crate::hal::x86_64::serial::write_string_always(" CS=0x");
+    crate::hal::x86_64::serial::write_hex_u64_always(tf.cs);
+    crate::hal::x86_64::serial::write_string_always("\r\n");
+    if tf.cs & 3 != 0 {
+        crate::hal::x86_64::serial::write_string_always(
+            "[FAULT] user-mode #UD, terminating current process\r\n",
+        );
+        crate::ps::process::process_exit(0xC0000005u32);
+    }
+
     // read first 8 bytes at tf.rip
     unsafe {
         let mut buf = [0u8; 8];
@@ -1137,7 +1242,7 @@ fn handle_invalid_opcode(tf: &TrapFrame) {
             dst = in(reg) buf.as_mut_ptr() as u64,
             options(nostack, preserves_flags),
         );
-        crate::hal::x86_64::serial::write_string("[FAULT]   bytes at RIP: ");
+        crate::hal::x86_64::serial::write_string_always("[FAULT]   bytes at RIP: ");
         for &b in &buf {
             crate::hal::x86_64::serial::write_u32_hex(b as u32);
             crate::hal::x86_64::serial::write_string(" ");

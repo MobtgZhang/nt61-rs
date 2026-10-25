@@ -35,7 +35,7 @@
 //! dispatch returns `STATUS_NOT_IMPLEMENTED` so user-mode callers
 //! see a deterministic NTSTATUS code instead of a #GP fault.
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use alloc::boxed::Box;
 
@@ -380,7 +380,14 @@ fn clear_bad_stack_arg() {
 /// on Windows 7 x64: the parameter area is probed before the
 /// handler is allowed to touch it.
 fn validate_stack_args(tf: &TrapFrame, syscall_num: u32) -> i32 {
-    let arg_size = crate::ke::ssdt::get_argument_size(syscall_num) as usize;
+    let table_index = (syscall_num >> 12) & 0xF;
+    let arg_size = if table_index == 1 {
+        // Shadow (win32k) services encode their stack argument count in
+        // the per-service table rather than bits 16-31 of the number.
+        crate::ke::ssdt::get_shadow_argument_size(syscall_num) as usize
+    } else {
+        crate::ke::ssdt::get_argument_size(syscall_num) as usize
+    };
     if arg_size == 0 {
         return crate::arch::x86_64::syscall_validation::STATUS_SUCCESS;
     }
@@ -471,7 +478,8 @@ fn build_ssdt_arguments(tf: &TrapFrame) -> crate::ke::ssdt_common::SyscallArgume
 }
 
 fn dispatch_service(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
-    use crate::libs::ntdll::status::STATUS_SUCCESS;
+use crate::libs::ntdll::status::STATUS_SUCCESS;
+use crate::libs::ntdll::status::STATUS_ACCESS_VIOLATION;
     use crate::libs::ntdll::types::{
         client_id, IoStatusBlock, ObjectAttributes, SizeT, UnicodeString, HANDLE, PVOID,
     };
@@ -490,51 +498,75 @@ fn dispatch_service(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
 
     match syscall_num {
         // ---- Process / Thread ----
-        nums::NT_CREATE_PROCESS => unsafe {
-            crate::libs::ntdll::process::nt_create_process(
-                arg0(tf) as *mut HANDLE,
-                arg1(tf) as u32,
-                arg2(tf) as *mut ObjectAttributes,
-                arg3(tf) as HANDLE,
-                arg4(tf) as u8,
-                arg5(tf) as HANDLE,
-                stack_arg(tf, 0) as PVOID,
-                stack_arg(tf, 1) as PVOID,
-            ) as i64
+        nums::NT_CREATE_PROCESS => {
+            if !validate_output(arg0(tf), 4) || !validate_write(arg2(tf), size_of::<ObjectAttributes>()) {
+                return STATUS_ACCESS_VIOLATION as SyscallResult;
+            }
+            unsafe {
+                crate::libs::ntdll::process::nt_create_process(
+                    arg0(tf) as *mut HANDLE,
+                    arg1(tf) as u32,
+                    arg2(tf) as *mut ObjectAttributes,
+                    arg3(tf) as HANDLE,
+                    arg4(tf) as u8,
+                    arg5(tf) as HANDLE,
+                    stack_arg(tf, 0) as PVOID,
+                    stack_arg(tf, 1) as PVOID,
+                ) as i64
+            }
         },
-        nums::NT_CREATE_PROCESS_EX => unsafe {
-            crate::libs::ntdll::process::nt_create_process_ex(
-                arg0(tf) as *mut HANDLE,
-                arg1(tf) as u32,
-                arg2(tf) as *mut ObjectAttributes,
-                arg3(tf) as HANDLE,
-                arg4(tf) as u32,
-                arg5(tf) as HANDLE,
-                stack_arg(tf, 0) as PVOID,
-                stack_arg(tf, 1) as PVOID,
-                stack_arg(tf, 2) as u32,
-            ) as i64
+        nums::NT_CREATE_PROCESS_EX => {
+            if !validate_output(arg0(tf), 4) || !validate_write(arg2(tf), size_of::<ObjectAttributes>()) {
+                return STATUS_ACCESS_VIOLATION as SyscallResult;
+            }
+            unsafe {
+                crate::libs::ntdll::process::nt_create_process_ex(
+                    arg0(tf) as *mut HANDLE,
+                    arg1(tf) as u32,
+                    arg2(tf) as *mut ObjectAttributes,
+                    arg3(tf) as HANDLE,
+                    arg4(tf) as u32,
+                    arg5(tf) as HANDLE,
+                    stack_arg(tf, 0) as PVOID,
+                    stack_arg(tf, 1) as PVOID,
+                    stack_arg(tf, 2) as u32,
+                ) as i64
+            }
         },
-        nums::NT_OPEN_PROCESS => unsafe {
-            crate::libs::ntdll::process::nt_open_process(
-                arg0(tf) as *mut HANDLE,
-                arg1(tf) as u32,
-                arg2(tf) as *mut ObjectAttributes,
-                arg3(tf) as *mut client_id,
-            ) as i64
+        nums::NT_OPEN_PROCESS => {
+            if !validate_output(arg0(tf), 4)
+                || !validate_write(arg2(tf), size_of::<ObjectAttributes>())
+                || !validate_write(arg3(tf), size_of::<client_id>())
+            {
+                return STATUS_ACCESS_VIOLATION as SyscallResult;
+            }
+            unsafe {
+                crate::libs::ntdll::process::nt_open_process(
+                    arg0(tf) as *mut HANDLE,
+                    arg1(tf) as u32,
+                    arg2(tf) as *mut ObjectAttributes,
+                    arg3(tf) as *mut client_id,
+                ) as i64
+            }
         },
         nums::NT_TERMINATE_PROCESS => unsafe {
             crate::libs::ntdll::process::nt_terminate_process(arg0(tf) as HANDLE, arg1(tf) as i32)
                 as i64
         },
-        nums::NT_QUERY_INFORMATION_PROCESS => unsafe {
-            crate::libs::ntdll::process::nt_query_information_process(
-                arg0(tf) as HANDLE,
-                arg1(tf) as u32,
-                arg2(tf) as PVOID,
-                arg3(tf) as u32,
-                arg4(tf) as *mut u32,
-            ) as i64
+        nums::NT_QUERY_INFORMATION_PROCESS => {
+            let length = arg3(tf) as usize;
+            if !validate_write(arg2(tf), length) || !validate_output(arg4(tf), 4) {
+                return STATUS_ACCESS_VIOLATION as SyscallResult;
+            }
+            unsafe {
+                crate::libs::ntdll::process::nt_query_information_process(
+                    arg0(tf) as HANDLE,
+                    arg1(tf) as u32,
+                    arg2(tf) as PVOID,
+                    arg3(tf) as u32,
+                    arg4(tf) as *mut u32,
+                ) as i64
+            }
         },
         nums::NT_SET_INFORMATION_PROCESS => unsafe {
             crate::libs::ntdll::process::nt_set_information_process(
@@ -1279,14 +1311,9 @@ fn dispatch_service(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
             if user_buf.is_null() || buflen < 2 {
                 return 0xC000_0001u32 as i32 as i64; // STATUS_UNSUCCESSFUL
             }
-            if buflen == 256 {
-                let buf256 = unsafe { core::slice::from_raw_parts_mut(user_buf, buflen) }
-                    .as_mut_ptr()
-                    .cast::<[u8; 256]>();
-                unsafe { crate::arch::common::line_edit::read_line(&mut *buf256, buflen) as i64 }
-            } else {
-                let slice = unsafe { core::slice::from_raw_parts_mut(user_buf, buflen) };
-                crate::arch::common::line_edit::read_line(slice, buflen) as i64
+            match unsafe { crate::arch::common::cmd_host::read_line(user_buf, buflen) } {
+                Some(written) => written as i64,
+                None => 0xC000_0001u32 as i32 as i64,
             }
         }
 
@@ -1537,6 +1564,17 @@ fn dispatch_service(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
     }
 }
 
+fn validate_write(pointer: u64, length: usize) -> bool {
+    if pointer == 0 || length == 0 {
+        return true;
+    }
+    crate::mm::user_copy::probe_user_write(pointer, length).is_ok()
+}
+
+fn validate_output(pointer: u64, length: usize) -> bool {
+    pointer != 0 && length != 0 && crate::mm::user_copy::probe_user_write(pointer, length).is_ok()
+}
+
 // =====================================================================
 // syscall_dispatch — C ABI entry point
 // =====================================================================
@@ -1560,6 +1598,18 @@ fn dispatch_service(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
 // the SysV ABI, so the ABI must be pinned explicitly or the stub's
 // arguments are silently misread (RDI/RSI instead of RCX/RDX).
 pub extern "win64" fn syscall_dispatch(syscall_num: u64, tf: *mut TrapFrame) -> u64 {
+    static FIRST_DIAGNOSTIC: AtomicBool = AtomicBool::new(false);
+    if !FIRST_DIAGNOSTIC.swap(true, Ordering::SeqCst) {
+        unsafe {
+            crate::hal::serial::write_string_always("[SYSCALL-FIRST] num=");
+            crate::hal::serial::write_hex_u64_always(syscall_num);
+            crate::hal::serial::write_string_always(" rip=");
+            crate::hal::serial::write_hex_u64_always((*tf).rip);
+            crate::hal::serial::write_string_always(" rsp=");
+            crate::hal::serial::write_hex_u64_always((*tf).rsp);
+            crate::hal::serial::write_string_always("\r\n");
+        }
+    }
     // CRITICAL: snapshot RAX/RCX/RDX/etc. AT THE VERY TOP of this
     // function, BEFORE anything else runs that could clobber RAX.
     //
@@ -1604,6 +1654,26 @@ pub fn is_initialised() -> bool {
     INITIALISED.load(Ordering::Acquire) != 0
 }
 
+pub fn debug_lstar() -> u64 {
+    rdmsr(IA32_LSTAR)
+}
+
+pub fn syscall_entry_address() -> u64 {
+    syscall_entry as *const () as u64
+}
+
+pub fn debug_efer() -> u64 {
+    rdmsr(IA32_EFER)
+}
+
+pub fn debug_star() -> u64 {
+    rdmsr(IA32_STAR)
+}
+
+pub fn debug_fmask() -> u64 {
+    rdmsr(IA32_FMASK)
+}
+
 /// Enable the SYSCALL mechanism for the BSP. This writes the
 /// four AMD64 MSRs (`IA32_EFER.SCE`, `IA32_STAR`, `IA32_LSTAR`,
 /// `IA32_FMASK`) and installs the per-CPU area as the GS base.
@@ -1628,7 +1698,7 @@ pub fn init_syscall_msrs() {
     //                   and SS = STAR[63:48]+8 with RPL=3.
     //
     //    We want:
-    //      SYSCALL: CS = KERNEL_CS = 0x38, SS = KERNEL_DS = 0x18.
+    //      SYSCALL: CS = KERNEL_CS = 0x30, SS = KERNEL_DS = 0x38.
     //      SYSRET:  CS = USER_CS  = 0x2b, SS = USER_SS  = 0x23.
     //
     //    IA32_STAR layout (Intel SDM vol 3 §5.8.4):
@@ -1636,23 +1706,21 @@ pub fn init_syscall_msrs() {
     //                                CPU with a fixed 64-bit CS).
     //      bits 63:48 = SYSRET CS base (CPU adds +16 with RPL=3).
     //
-    //    SYSCALL SS = STAR[47:32] + 8. With KERNEL_CS = 0x38, the
-    //    next slot (0x40) is the TSS descriptor which is invalid
-    //    as an SS. We keep STAR[47:32] = 0x18 (slot 3 = kernel data)
-    //    so SYSCALL SS = 0x20 (slot 4 = user SS) — the descriptor
-    //    cache is overridden by the CPU with a fixed 32-bit data
-    //    segment with DPL=0, which is fine for kernel stack use
-    //    in long mode where base/limit are ignored.
+    //    SYSCALL SS = STAR[47:32] + 8. KERNEL_CS and KERNEL_DS are
+    //    therefore adjacent GDT slots (0x30 and 0x38). A DPL=0 SS is
+    //    mandatory here: SYSCALL leaves SS visible to interrupt
+    //    delivery until SYSRET, and a DPL=3 selector would #GP when
+    //    an interrupt returns to CPL0.
     //
     //    SYSRET (Intel SDM 5.8.4):
     //      CS = STAR[63:48] + 16  (with RPL forced to 3)
     //      SS = STAR[63:48] + 8   (with RPL forced to 3)
-    //    So STAR[63:48] = 0x18 → CS = 0x28 | RPL3 = 0x2b, SS = 0x20 | RPL3 = 0x23. ✓
+    //    So STAR[63:48] = 0x20 → CS = 0x28 | RPL3 = 0x2b, SS = 0x20 | RPL3 = 0x23. ✓
     //
     //    Final value:
-    //      STAR = (0x18 << 48) | (0x18 << 32)
-    //           = 0x0018_0018_0000_0000.
-    let star: u64 = (0x0018_u64 << 48) | (0x0018_u64 << 32);
+    //      STAR = (0x20 << 48) | (0x30 << 32)
+    //           = 0x0020_0030_0000_0000.
+    let star: u64 = (0x0018_u64 << 48) | (KERNEL_CS as u64);
     wrmsr(IA32_STAR, star);
 
     // 3. IA32_LSTAR: 64-bit RIP for SYSCALL. The CPU jumps here

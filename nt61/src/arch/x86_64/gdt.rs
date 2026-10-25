@@ -39,8 +39,8 @@
 /// fault the very first time we tried to handle an exception from
 /// Ring 3 (the Ring 3 #PF could not be delivered because its IDT
 /// entry pointed at a 32-bit CS).
-pub const KERNEL_CS: u16 = 0x38;
-pub const KERNEL_DS: u16 = 0x18;
+pub const KERNEL_CS: u16 = 0x30;
+pub const KERNEL_DS: u16 = 0x38;
 /// User code selector: SYSRET destination. Slot 5 (offset 0x28), RPL=3 → 0x2b.
 /// Set by IA32_STAR hardware on SYSRET; must match STAR[63:48]+16.
 pub const USER_CS: u16 = 0x28 | 3; // 0x2b
@@ -91,7 +91,7 @@ impl GdtEntry {
             base_low: 0,
             base_mid: 0,
             access: 0x93,
-            flags: 0xCF,
+            flags: 0x8F,
             base_high: 0,
         }
     }
@@ -307,13 +307,7 @@ pub static mut GDT: GdtTable = GdtTable {
 /// This function writes directly to the UART without any formatting overhead.
 #[cfg(target_arch = "x86_64")]
 fn early_uart_puts(s: &[u8]) {
-    #[cfg(not(feature = "log_level_debug"))]
-    {
-        let _ = s;
-    }
-    #[cfg(feature = "log_level_debug")]
     const COM1: u16 = 0x3F8;
-    #[cfg(feature = "log_level_debug")]
     unsafe {
         for &c in s {
             let mut lsr: u8;
@@ -366,7 +360,7 @@ pub fn init() {
         //   (binary 1100; bit0=G=1, bit1=D=1, bit2=L=0, bit3=AVL=0).
         //   iretq-style load of SS at CPL=3 must find a writable
         //   data segment with DPL=3 in long mode.
-        (0x0000_FFFFu64) | (0xF3u64 << 40) | (0xFu64 << 48) | (0xCu64 << 52)
+        (0x0000_FFFFu64) | (0xF3u64 << 40) | (0xFu64 << 48) | (0x8u64 << 52)
     };
     let user_cs: u64 = {
         // access (bits 40..47) = 0xFB → P=1 DPL=3 S=1 r#type=B
@@ -414,26 +408,13 @@ pub fn init() {
     // Slots to augment (selector value / 8):
     //   slot 4 (offset 0x20): user SS  — overwrites OVMF slot 4.
     //   slot 5 (offset 0x28): user CS  — overwrites OVMF slot 5.
-    //   slot 6 (offset 0x30): GS descriptor — must have DPL=3 so that
-    //                            in kernel mode gs: accesses use
-    //                            IA32_KERNEL_GS_BASE (loaded with
-    //                            &PER_CPU_0), and in user mode gs:
-    //                            accesses use IA32_GS_BASE. OVMF's
-    //                            default slot 6 has DPL=0 which would
-    //                            silently redirect every `gs:[off]`
-    //                            write in kernel mode to IA32_GS_BASE
-    //                            (=0) instead of &PER_CPU_0.
-    //   slot 7 (offset 0x38): KERNEL_CS — overwrite OVMF slot 7 with
-    //                            proper 64-bit code flags (G=1 D=0 L=1).
-    //                            OVMF's slot 7 has D=1 L=1 (INVALID per
-    //                            Intel SDM vol 3 §3.4.5). With the wrong
-    //                            flags, pushq only pushes 4 bytes and
-    //                            iretq loads user RSP from a 32-bit slot,
-    //                            leaving the high 32 bits stripped.
+    //   slot 6 (offset 0x30): KERNEL_CS — must be immediately followed by
+    //                            KERNEL_DS because the CPU assigns
+    //                            SYSCALL SS = IA32_STAR[47:32] + 8.
     //   slot 8 (offset 0x40): TSS descriptor (16 bytes; spans 8..9).
     // We need to write slots 4, 5, 6, 7, 8, 9.
     let slot_offsets: [u64; 7] = [0x18, 0x20, 0x28, 0x30, 0x38, 0x40, 0x48];
-    // KERNEL_DS at slot 3 (selector 0x18): DPL=0, expand-UP data, R/W.
+    // KERNEL_DS at slot 7 (selector 0x38): DPL=0, expand-UP data, R/W.
     //   access (bits 40..47)  = 0x93 → P=1 DPL=0 S=1 r#type=3 (data R/W, expand-UP, accessed)
     //   limit_high (bits 48..51) = 0xF (limit = 0x000F_FFFF)
     //   flags (bits 52..55) = G=1 D=1 L=0 AVL=1
@@ -446,24 +427,13 @@ pub fn init() {
     let kernel_ds: u64 = (0x0000_FFFFu64)       // bits 0..15 limit_low
         | (0x93u64 << 40)      // bits 40..47 access
         | (0xFu64 << 48)       // bits 48..51 limit_high
-        | (0xCu64 << 52); // bits 52..55 flags (G=1 D=1 L=0 AVL=0)
+        | (0x8u64 << 52); // bits 52..55 flags (G=1 D=0 L=0 AVL=0)
                           // GS descriptor: 32-bit flat data, DPL=3, granularity=4 KiB.
                           //   access = 0xF3 = P=1, DPL=3, S=1, r#type=3 (data RW/accessed)
                           //   limit  = 0x000FFFFF (G=1)
                           //   flags  = 0xC       = G=1 D=1 L=0 AVL=0
                           //   base   = 0
-                          // GS descriptor (slot 6, selector 0x30): DPL=0 (kernel-accessible),
-                          //   expand-UP 4-GiB data. We use a DPL=0 descriptor so the kernel's
-                          //   own `mov gs, 0x30` in `init()` does not trip the CPL ≤ DPL check.
-                          //   The GDT-side DPL does not influence how the `gs:` prefix
-                          //   resolves the GS base — the base comes from IA32_GS_BASE
-                          //   (kernel) or IA32_KERNEL_GS_BASE (user, after swapgs). The DPL
-                          //   only matters for explicit `mov gs, sel` / `pop gs` instructions.
-                          //   access (bits 40..47) = 0x93 → P=1 DPL=0 S=1 r#type=3 (data R/W,
-                          //     expand-UP, accessed)
-                          //   limit_high = 0xF, flags = G=1 D=1 L=0 AVL=0  (0xC << 52)
-    let gs_descriptor: u64 = (0x0000_FFFFu64) | (0x93u64 << 40) | (0xFu64 << 48) | (0xCu64 << 52);
-    // KERNEL_CS at slot 7 (selector 0x38): proper 64-bit code descriptor.
+    // KERNEL_CS at slot 6 (selector 0x30): proper 64-bit code descriptor.
     //   access (bits 40..47) = 0x9B → P=1 DPL=0 S=1 r#type=B (code, exec/read, non-conforming, accessed)
     //   flags + limit_high (bits 48..55) = 0xAF → G=1 D=0 L=1 AVL=0 limit_high=0xF
     // OVMF's default slot 7 has D=1 L=1 which QEMU treats as 32-bit,
@@ -475,8 +445,8 @@ pub fn init() {
         kernel_ds,
         user_ss,
         user_cs,
-        gs_descriptor,
         kernel_cs,
+        kernel_ds,
         tss_lo,
         tss_hi,
     ];
@@ -557,7 +527,7 @@ pub fn init() {
         core::arch::asm!(
             "mov {cs:x}, cs",
             cs = out(reg) cs_val,
-            options(nostack, preserves_flags),
+            options(preserves_flags),
         );
         #[cfg(target_arch = "x86_64")]
         {
@@ -565,7 +535,7 @@ pub fn init() {
             early_uart_put_hex64(cs_val as u64);
             early_uart_puts(b"\r\n");
         }
-        // Far-jump to slot 7 (selector 0x38) so the CPU reloads the CS
+        // Far-jump to slot 6 (selector 0x30) so the CPU reloads the CS
         // descriptor cache from the new GDT entry (which now has
         // proper 64-bit flags G=1 D=0 L=1). Without this reload, the
         // CPU keeps using the old slot 7 (D=1 L=1 = invalid 64-bit
@@ -575,7 +545,7 @@ pub fn init() {
         // instruction so we don't lose control flow.
         // We use a memory operand to avoid AX-routing surprises.
         core::arch::asm!(
-            "push 0x38",
+            "push 0x30",
             "lea rax, [rip + 2f]",
             "push rax",
             "retfq",
@@ -701,10 +671,10 @@ pub fn build_per_cpu_gdt(out: &mut PerCpuGdt, tss_base: u64, tss_limit: u32) {
     out.e1 = GdtEntry::kernel_code64();
     out.e2 = GdtEntry::kernel_data64();
     out.e3 = GdtEntry::kernel_data64(); // slot 3: kernel SS — owned by this GDT, not OVMF
-    out.e4 = GdtEntry::empty(); // slot 4: user SS — written by init()
-    out.e5 = GdtEntry::empty(); // slot 5: user CS — written by init()
-    out.e6 = GdtEntry::empty(); // slot 6: (unused)
-    out.e7 = GdtEntry::empty(); // slot 7: (unused)
+    out.e4 = GdtEntry::user_data64(); // slot 4: user SS/DS
+    out.e5 = GdtEntry::user_code64(); // slot 5: user CS
+    out.e6 = GdtEntry::kernel_code64(); // slot 6: kernel CS (0x30)
+    out.e7 = GdtEntry::kernel_data64(); // slot 7: kernel SS (0x38)
     out.e8 = TssDescriptor::from_tss(tss_base, tss_limit); // slot 8: TSS
     out.e9 = GdtEntry::empty(); // slot 9: (TSS high)
     out.e_a = GdtEntry::empty(); // slot 10: (unused)
@@ -773,11 +743,19 @@ pub fn ap_install(gdt: &PerCpuGdt) {
             "mov ss, ax",
             "mov fs, ax",
             "mov gs, ax",
+            // Far-return through the new CS descriptor so the CPU
+            // reloads the segment descriptor cache (the BSP path in
+            // init() does the same thing via a far jump).
+            "push {cs:x}",
+            "call 2f",
+            "retf",
+            "2:",
             // Load the TR with the TSS descriptor. ltr wants
             // a 16-bit register operand.
             "ltr cx",
             ptr = in(reg) &gdt_ptr,
             in("ax") KERNEL_DS,
+            cs = in(reg) KERNEL_CS,
             in("cx") TSS_SEL,
             options(nostack, preserves_flags),
         );

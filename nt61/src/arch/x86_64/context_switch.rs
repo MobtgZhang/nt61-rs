@@ -109,7 +109,10 @@ extern "C" {
 
 /// Size of FPU state buffer for XSAVE/XRSTOR (512 bytes for XMM + header)
 /// Must be 64-byte aligned for xsave/xrstor instructions.
-pub const FPU_STATE_SIZE: usize = 512;
+// XSAVE with mask 0x7 (X87 | SSE | AVX): legacy 512 + header 64 +
+// AVX/YMM extension 256 = 832 bytes. 512 bytes would overflow into
+// the adjacent `debug_state` field for any CPU that saves YMM.
+pub const FPU_STATE_SIZE: usize = 832;
 
 // Compile-time assertion: FPU_STATE_SIZE must be a multiple of 64 bytes
 const _: () = assert!(

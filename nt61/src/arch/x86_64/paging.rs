@@ -117,7 +117,9 @@ unsafe fn install_intermediate(parent_table_phys: u64, parent_idx: usize, level:
     if !write_table_entry(
         parent_table_phys,
         parent_idx,
-        new_pa | 0x1 | 0x2 | 0x4 | 0x20 | 0x40,
+        // P=1 | RW=1 | PWT=0x20 | PCD=0x40. US (0x4) is deliberately
+        // clear: intermediate page-table pages must be supervisor-only.
+        new_pa | 0x1 | 0x2 | 0x20 | 0x40,
     ) {
         crate::mm::pfn::free_pfn(pfn);
         return false;
@@ -188,6 +190,12 @@ pub fn map_page(va: u64, pa: u64, flags: u64) -> bool {
             None => return false,
         };
         // // kprintln!("[MAP] map_page: pde_val=0x{:x}", pde_val);
+        if (pde_val & 1) != 0 && (pde_val & 0x80) != 0 {
+            // PDE is a 2 MiB large page (PS=1): there is no page table
+            // beneath it. Writing a 4-KiB PTE here would corrupt the
+            // large page's physical address field.
+            return false;
+        }
         if (pde_val & 1) == 0 {
             // // kprintln!("[MAP] map_page: installing PT");
             if !install_intermediate(pd_va, pd_idx, 3) {
@@ -203,7 +211,10 @@ pub fn map_page(va: u64, pa: u64, flags: u64) -> bool {
         let pt_idx = ((va >> 12) & 0x1FF) as usize;
         // // kprintln!("[MAP] map_page: pte=0x{:x} idx={}", pte as u64, pt_idx);
         // write the leaf PTE as a hardware entry.
-        let pte_val = (pa & 0x000F_FFFF_FFFF_F000) | (flags & 0xFFF) | 1;
+        // Preserve the NX bit (63) as well as the low 12 PTE flag bits;
+        // masking to 0xFFF silently dropped NX.
+        let pte_val =
+            (pa & 0x000F_FFFF_FFFF_F000) | (flags & (0xFFF | 0x8000_0000_0000_0000)) | 1;
         if !write_table_entry(pt_va, pt_idx, pte_val) {
             return false;
         }
@@ -280,7 +291,7 @@ pub fn unmap_page(va: u64) -> Option<u64> {
 /// Returns None if the VA is not mapped or is in a non-hardware
 /// PTE state.
 pub fn translate_virt(va: u64) -> Option<u64> {
-    let pml4_pa = crate::mm::vas::current_root();
+    let pml4_pa = crate::arch::read_current_page_root();
     if pml4_pa == 0 {
         return None;
     }
@@ -339,6 +350,51 @@ pub fn translate_virt(va: u64) -> Option<u64> {
         return None;
     }
     Some((pte_val & 0x000F_FFFF_FFFF_F000) | (va & 0xFFF))
+}
+
+/// Return the leaf PTE covering `va` so user-copy helpers can enforce
+/// U/S and R/W permissions without relying on SMAP as a probe.
+pub fn leaf_entry(va: u64) -> Option<u64> {
+    let pml4_pa = crate::arch::read_current_page_root();
+    if pml4_pa == 0 {
+        return None;
+    }
+
+    let pml4e = match unsafe { read_table_entry(pml4_pa, ((va >> 39) & 0x1FF) as usize) } {
+        Some(value) => value,
+        None => return None,
+    };
+    if (pml4e & 1) == 0 {
+        return None;
+    }
+    if pml4e & 0x80 != 0 {
+        return Some(pml4e);
+    }
+
+    let pdpte = match unsafe { read_table_entry(pml4e & 0x000F_FFFF_FFFF_F000, ((va >> 30) & 0x1FF) as usize) } {
+        Some(value) => value,
+        None => return None,
+    };
+    if (pdpte & 1) == 0 {
+        return None;
+    }
+    if pdpte & 0x80 != 0 {
+        return Some(pdpte);
+    }
+
+    let pde = match unsafe { read_table_entry(pdpte & 0x000F_FFFF_FFFF_F000, ((va >> 21) & 0x1FF) as usize) } {
+        Some(value) => value,
+        None => return None,
+    };
+    if (pde & 1) == 0 {
+        return None;
+    }
+    if pde & 0x80 != 0 {
+        return Some(pde);
+    }
+
+    unsafe { read_table_entry(pde & 0x000F_FFFF_FFFF_F000, ((va >> 12) & 0x1FF) as usize) }
+        .filter(|entry| (entry & 1) != 0)
 }
 
 /// write the supplied PFN into CR3.

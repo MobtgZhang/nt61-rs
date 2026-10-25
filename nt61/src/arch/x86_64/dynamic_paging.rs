@@ -166,12 +166,9 @@ pub fn is_kernel_address(va: u64) -> bool {
 #[inline]
 pub fn is_canonical(va: u64) -> bool {
     let sign_bit = (va >> 47) & 1;
-    let _ = &sign_bit;
-    let _ = &sign_bit;
     let high_bits = va >> 48;
-    let _ = &high_bits;
-    let _ = &high_bits;
-    high_bits == sign_bit as u64 || high_bits == !sign_bit as u64
+    // Bits 63:48 must all equal bit 47 (sign extension).
+    high_bits == sign_bit
 }
 
 /// Map a physical address range to a virtual address range

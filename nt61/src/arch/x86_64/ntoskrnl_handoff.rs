@@ -479,6 +479,15 @@ pub extern "C" fn ntoskrnl_kisystemstartup_thunk(
         }
     }
 
+    // Bring up any service that is configured on the system partition.
+    // This is driven by the file contents, so a normal OS image without
+    // an OpenSSH installation simply takes the `Ok(false)` path.
+    match crate::servers::sshd::launcher::start_from_disk() {
+        Ok(true) => crate::boot_println!("[NTOSKRNL-HOST] sshd listener started"),
+        Ok(false) => crate::boot_println!("[NTOSKRNL-HOST] sshd not installed"),
+        Err(error) => crate::boot_println!("[NTOSKRNL-HOST] sshd start failed: {:?}", error),
+    }
+
     // Drive the full boot chain. On x86_64 this call is
     // `-> !` because `cmd.exe` owns the CPU once it dispatches
     // into Ring 3. The outer wrapper returns `false` only on

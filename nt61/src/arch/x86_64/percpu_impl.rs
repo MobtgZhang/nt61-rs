@@ -68,9 +68,9 @@ const OFFSET_USER_RSP: usize = 0;
 /// offset of `kernel_rsp` inside PerCpuArea.
 const OFFSET_KERNEL_RSP: usize = 8;
 /// offset of `current_thread` inside PerCpuArea.
-const OFFSET_CURRENT_THREAD: usize = 16;
+const OFFSET_CURRENT_THREAD: usize = 24;
 /// offset of `current_process` inside PerCpuArea.
-const OFFSET_CURRENT_PROCESS: usize = 24;
+const OFFSET_CURRENT_PROCESS: usize = 32;
 
 // =====================================================================
 // Exported functions (used by arch/common/percpu.rs via extern "Rust")
@@ -105,13 +105,11 @@ pub unsafe extern "Rust" fn __percpu_init(cpu_id: u32) -> u64 {
 
     // Install as GS base for this CPU.
     //
-    // The empirical observation on x86-64 long-mode CPUs is that
-    // the `gs:` prefix resolves GS.base to **IA32_GS_BASE**
-    // (regardless of CPL, regardless of the GS descriptor's DPL).
-    // We therefore install &PER_CPU_0 into BOTH MSRs so that gs:
-    // writes always land on the per-CPU area, then rely on
-    // `swapgs` in syscall_entry / iretq to swap them in/out as
-    // we cross the kernel/user boundary.
+    // Install the per-CPU area only into IA32_GS_BASE. IA32_KERNEL_GS_BASE
+    // stays zero so that `swapgs` in the syscall/trap entry stubs actually
+    // switches to a *different* base on the way out to Ring 3. Writing the
+    // same value to both MSRs would make swapgs a no-op and expose the
+    // kernel per-CPU area to user mode.
     //
     // After init (we are in the kernel): gs:[off] = &PER_CPU_0+off
     // via IA32_GS_BASE.
@@ -120,7 +118,7 @@ pub unsafe extern "Rust" fn __percpu_init(cpu_id: u32) -> u64 {
     // before its iretq, so the user-mode gs: will access the
     // (zero) KERNEL_GS_BASE rather than the kernel per-cpu area.
     wrmsr(IA32_GS_BASE, page);
-    wrmsr(IA32_KERNEL_GS_BASE, page);
+    wrmsr(IA32_KERNEL_GS_BASE, 0);
 
     // Verify the MSR was written correctly
     if rdmsr(IA32_GS_BASE) != page {
@@ -160,7 +158,7 @@ pub unsafe fn allocate(cpu_id: u32) -> u64 {
 /// Reads IA32_KERNEL_GS_BASE to find the GS base.
 #[no_mangle]
 pub fn __percpu_get_current() -> &'static mut PerCpuArea {
-    let gs_base = rdmsr(IA32_KERNEL_GS_BASE);
+    let gs_base = rdmsr(IA32_GS_BASE);
     if gs_base == 0 {
         // Early boot: fall back to BSP area
         unsafe { &mut *core::ptr::addr_of_mut!(PER_CPU_0) }
@@ -176,10 +174,10 @@ pub fn __percpu_get_current_cpu_id() -> u32 {
     if gs_base == 0 {
         return 0;
     }
-    // cpu_id is at offset 12
+    // cpu_id is at offset 16 (after user_rsp + kernel_rsp)
     let cpu_id: u32;
     unsafe {
-        cpu_id = *(gs_base as *const u32).add(3);
+        cpu_id = *(gs_base as *const u32).add(4);
     }
     cpu_id
 }

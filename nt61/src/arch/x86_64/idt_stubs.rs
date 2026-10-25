@@ -213,18 +213,6 @@ global_asm!(
     ".balign 16",
     "int_common_dispatch:",
     "  cld",
-    // DIAGNOSTIC: emit '!' + the vector byte straight to COM1 before any
-    // memory access. If a handler cannot be entered (bad RSP0/IST stack)
-    // nothing is emitted, which distinguishes "handler never entered" from
-    // "handler entered but its logging path re-faults".
-    "  mov dx, 0x3F8",
-    "  cmp edi, 32",
-    "  jae diag_done",
-    "  mov al, 0x21",
-    "  out dx, al",
-    "  mov al, dil",
-    "  out dx, al",
-    "diag_done:",
     "  push r15", "  push r14", "  push r13", "  push r12",
     "  push r11", "  push r10", "  push r9",  "  push r8",
     "  push rdi", "  push rsi", "  push rbp", "  push rbx",
@@ -239,7 +227,9 @@ global_asm!(
     // RCX and &TrapFrame via RDX, NOT the SysV RDI/RSI convention.
     "  mov rcx, [rsp + 0x78]",             // rcx = vector (pushed by int_stub)
     "  mov rdx, rsp",                      // rdx = &TrapFrame
+    "  sub rsp, 0x20",                     // Win64 shadow space
     "  call dispatch_trap_frame",
+    "  add rsp, 0x20",
     // After 15 GPR pushes, the CPU frame sits above the GPRs:
     //
     //   For error-code vectors (8, 10, 11, 12, 13, 14, 17):
@@ -279,7 +269,7 @@ global_asm!(
     "  cmp rdi, 17",    "  je 2f",
     "  jmp 1f",
     "2:",
-    "  add rsp, 0x88",                    // skip vector + error_code + 15 GPRs
+    "  add rsp, 0x88",                    // skip vector, error_code, and 15 GPRs
     "  jmp 3f",
     "1:",
     "  pop rax", "  pop rcx", "  pop rdx", "  pop rbx",
@@ -292,38 +282,31 @@ global_asm!(
     // when the interrupt fired. After SYSCALL the kernel runs with
     // SS = STAR[47:32] + 8 (= slot 4, which we use as DPL=3 user SS),
     // which is invalid for CPL=0 — loading it via iretq would #GP.
-    // Force SS = KERNEL_DS (slot 3, DPL=0 data) just before iretq;
+    // Force SS = KERNEL_DS (slot 3, DPL=0 data) just before iretq
+    // only when returning to CPL0. Returning to Ring3 must preserve
+    // the user SS stored by the CPU.
     // the kernel uses a flat 64-bit data segment so base/limit are
-    // ignored in long mode. The CPU requires the instruction after
-    // `mov ss, x` to be a NOP or branch, hence the explicit nop.
-    "  mov ax, 0x18",
-    "  mov ss, ax",
-    "  nop",
+    // mode. Writing the IRET frame's SS slot is mandatory here:
+    // interrupts arriving immediately after a Ring-3 `syscall` may
+    // save SS=0x20 because the CPU's SYSCALL SS selector is DPL=3.
+    // Merely changing current SS would not affect the value loaded
+    // by the following `iretq`, producing #GP in CPL0.
+    "  mov ax, word ptr [rsp + 0x08]",
+    "  test ax, 3",
+    "  jnz 4f",
+    "  mov word ptr [rsp + 0x20], 0x38",
+    "4:",
+    "  and word ptr [rsp + 0x1a], 0xfffe", // clear EFLAGS.VM (bit 16)
     "  iretq",
 
     // ---- SYSCALL entry -----------------------------------------------
-    // Full Ring0/3 transition. Saves user state (GPRs + control
-    // state), calls the Rust dispatcher, restores state, returns
-    // to user mode via sysretq.
-    //
-    // The TrapFrame Rust struct is laid out so struct[0] = rax,
-    // struct[21] = ss (22 fields × 8 bytes = 0xb0).
-    //
-    // Push strategy: push in REVERSE order of struct field index so
-    // that struct[0] (rax) lands at mem[rsp] after the final push.
-    // &TrapFrame = rsp directly.
-    //
-    // Order pushed (first push .. last push):
-    //   ss (21), rsp (20), rflags (19), cs (18), rip (17),
-    //   error_code (16), vector (15), r15..r12 (14..11),
-    //   r11 (10), r10 (9), r9 (8), r8 (7), rdi (6), rsi (5),
-    //   rbp (4), rbx (3), rdx (2), rcx (1), rax (0)
-    //
-    // Note: r11 must be saved BEFORE rax because the syscall
-    // instruction clobbers rcx (=user RIP) and r11 (=user RFLAGS).
-    // We rely on the x86-64 syscall convention: rcx=user RIP,
-    // r11=user RFLAGS. Both go into the frame fields named "rip"
-    // and "rflags" respectively.
+    // A syscall clobbers RCX (=user RIP) and R11 (=user RFLAGS), but
+    // every other user register is still live.  We switch to the fixed
+    // kernel stack first, push the exact TrapFrame layout, and then
+    // pass the frame to the Rust dispatcher.  All pushed values are
+    // restored from the same slots after dispatch, so user state can
+    // never be corrupted by the snapshot diagnostics that were here
+    // previously.
     // -------------------------------------------------------------------
     "  .global syscall_entry",
     "syscall_entry:",
@@ -332,148 +315,64 @@ global_asm!(
     // before swapgs would dereference absolute low memory instead
     // of the per-CPU area. swapgs does not touch GPRs.
     "  swapgs",
-    // === Snapshot RAX, user RIP, and 8 bytes from user RIP into SYSCALL_ENTRY_SNAP ===
-    //
-    // Layout of SYSCALL_ENTRY_SNAP:
-    //   [ 0..8 ]  rax      : user syscall number (snapshot at entry)
-    //   [ 8..16]  rip      : user-mode RIP (= RCX at entry)
-    //   [16..24]  rip_bytes: 8 bytes from user-mode RIP (for diagnostics)
-    //
-    // On entry to syscall_entry:
-    //   RAX = syscall number (clobbered by syscall)
-    //   RCX = user-mode RIP  (clobbered by syscall)
-    //   R11 = user-mode RFLAGS (clobbered by syscall)
-    //
-    // The snap address is loaded from the per-CPU slot populated by
-    // `init_syscall_msrs`. This avoids an absolute relocation for
-    // SYSCALL_ENTRY_SNAP in the syscall entry stub.
-    "  mov r8, r14",                       // r8 = real user R14 (preserved)
-    "  mov r14, rcx",                       // r14 = user RIP (preserve across writes)
-    "  mov r9, r15",                        // r9 = real user R15 (preserve; clobbered below for rsp)
-    "  push r12",                           // preserve user R12 on the user stack
-    "  mov r12, qword ptr gs:[0x58]",       // r12 = &snap (loaded from per-CPU area)
-    "  mov [r12], rax",                     // snap.rax = RAX (syscall num) — first!
-    "  mov rax, [rsp]",                     // rax = original user R12
-    "  mov [r12 + 32], rax",                // snap.user_r12 = user R12
-    "  pop rax",                            // restore RAX from the temporary slot
-    "  mov rax, r12",                       // rax = &snap (callee-preserved)
-    "  mov [rax + 8], r14",                 // snap.rip = user RIP
-    "  mov [rax + 24], r13",                // snap.user_r13 = user R13 (preserved before clobber)
-    "  mov qword ptr [rax + 16], 0",         // no fault-prone read across a user page boundary
-    // Reload &snap and read the syscall number without clobbering user RDI.
-    "  mov rax, r12",                       // rax = &snap
-    "  mov r13, [rax]",                     // r13 = syscall number (preserved)
-    // Windows x64 ABI: extern "C" takes arg1=RCX, arg2=RDX. Move the
-    // syscall number into RCX for syscall_dispatch(syscall_num, tf).
-    "  mov rcx, r13",                       // rcx = syscall number (arg1)
-    "  mov gs:[0x0], rsp",                  // save user rsp
-    "  mov rsp, gs:[0x8]",                  // load kernel rsp
-    "  mov r15, gs:[0x0]",                  // r15 = user rsp (saved for trap frame)
-    // Push in reverse field order. Use R14 (= preserved user RIP)
-    // for slot 17, not RCX — RCX has been clobbered to 0 by the
-    // snapshot above. The trap frame's `rip` slot must hold the
-    // real user-mode RIP so sysretq can return to it.
-    "  push {user_ss}",                 // 21: ss = USER_SS (Ring 3 data, DPL=3)
-    "  push r15",                        // 20: rsp = user rsp
-    "  push r11",                        // 19: rflags (r11 = user RFLAGS)
-    "  push {user_cs}",                 // 18: cs = USER_CS (Ring 3 code, DPL=3)
-    "  push r14",                        // 17: rip = user RIP (preserved in r14)
-    "  push 0",                          // 16: error_code
-    "  push 0x100",                      // 15: vector (sentinel for syscall)
-    // Slot 14 (user r15) must hold the genuine user-mode r15, not
-    // user rsp. r15 currently holds user rsp (loaded above), so we
-    // use r9 — where we stashed the real user r15 right after
-    // syscall_entry — to push the correct value.
-    "  push r9",                         // 14: r15 = real user r15 (stashed in r9)
-    // Restore the real user-mode R14 from R9 (we clobbered R14
-    // with user RIP earlier). The push then stores the genuine
-    // user R14 into slot 13, which `pop r14` will restore for
-    // sysretq.
-    //
-    // IMPORTANT: R14 must be set to *real user R14* before the
-    // `push r14` for slot 13 AND must still contain the user-mode
-    // RIP by the time we restore it for slot 1 (push rcx). The
-    // approach below uses two callee-preserved registers: we save
-    // the user RIP into R15 IMMEDIATELY after the entry (before
-    // any diagnostic that might clobber R14), then move it back
-    // into R14 just before the slot 1 push.
-    "  mov r14, r8",                     // r14 = real user R14 (from preserved r8)
-    "  push r14",                        // 13: r14 = real user R14
-    "  mov r13, [r12 + 24]",             // r13 = snap.user_r13 (real user R13)
-    "  push r13",                        // 12: r13 = real user R13
-    "  mov r13, [r12 + 32]",             // r13 = snap.user_r12 (real user R12)
-    "  push r13",                        // 11: r12 = real user R12
-    "  push r11",                        // 10: r11
-    "  push r10",                        //  9: r10
-    "  push r9",                         //  8: r9
-    "  push r8",                         //  7: r8
-    "  push rdi",                        //  6: rdi
-    "  push rsi",                        //  5: rsi
-    "  push rbp",                        //  4: rbp
-    "  push rbx",                        //  3: rbx
-    "  push rdx",                        //  2: rdx
-    // Restore RCX = user RIP from the snap static (we wrote it there
-    // immediately after syscall_entry). Slot 1 must hold the
-    // user-mode return RIP for sysretq to return to the right
-    // instruction. We use snap.rip instead of R14 because R14 gets
-    // restored to the real user R14 (saved in R9) just above for
-    // slot 13, and we want both the real user R14 in slot 13 AND
-    // the user RIP in slot 1.
-    // The first LEA at the top of syscall_entry stored &snap in R12
-    // (using `movabs rax, {snap_base}` because the absolute address
-    // doesn't fit in a 32-bit sign-extended LEA immediate). Reload
-    // RAX from R12 here so [rax + 8] targets the real SYSCALL_ENTRY_SNAP.
-"  mov rax, r12",                     // rax = &snap (from R12)
-    "  mov rcx, [rax + 8]",               // rcx = snap.rip = user RIP
-    "  push rcx",                        //  1: rcx = user RIP
-    "  push rax",                        //  0: rax = &snap (placeholder; real syscall num
-                                        //      lives in snap.rax + r13)
-    // RDX is set to &TrapFrame (the stack pointer right after the
-    // pushes), overriding the pre-push RDX we set earlier.
-    "  mov rdx, rsp",                    // &TrapFrame = rsp (Windows ABI arg2)
-    // CRITICAL: Windows x64 ABI arg1 = RCX. We overwrote RCX above
-    // with user RIP for the trap frame slot 1 push. Restore RCX to
-    // R13 (= preserved syscall_num) before the call so syscall_num
-    // arrives correctly in Rust, even at the cost of also pushing
-    // that same value into slot 1 (sysretq uses slot 1 as user RIP;
-    // we'll fix that with `mov rcx, [r12+8]` after the call).
-    "  mov rax, r12",                     // rax = &snap (from R12)
-    "  mov rcx, [rax]",                   // rcx = snap.rax = syscall_num (Windows ABI arg1)
+    "  mov gs:[0x0], rsp",                 // save user RSP
+    "  mov rsp, gs:[0x8]",                 // switch to the kernel stack
+    "  push {user_ss}",                    // 21: SS
+    "  push gs:[0x0]",                     // 20: RSP
+    "  push r11",                          // 19: RFLAGS
+    "  push {user_cs}",                    // 18: CS
+    "  push rcx",                          // 17: RIP
+    "  push 0",                            // 16: error code
+    "  push 0x100",                        // 15: vector sentinel
+    "  push r15",                          // 14
+    "  push r14",                          // 13
+    "  push r13",                          // 12
+    "  push r12",                          // 11
+    "  push r11",                          // 10
+    "  push r10",                          //  9
+    "  push r9",                           //  8
+    "  push r8",                           //  7
+    "  push rdi",                          //  6
+    "  push rsi",                          //  5
+    "  push rbp",                          //  4
+    "  push rbx",                          //  3
+    "  push rdx",                          //  2
+    "  push rcx",                          //  1
+    "  push rax",                          //  0
+    "  mov rcx, rax",                      // Windows ABI arg1: syscall number
+    "  mov rdx, rsp",                      // Windows ABI arg2: &TrapFrame
+    "  sub rsp, 0x20",                     // Win64 shadow space
     "  call syscall_dispatch",
-    // CR3 stays on the user PML4 throughout; see the syscall entry
-    // comment above for why we don't toggle it for syscall dispatch.
-    // After return, rax holds the syscall return value (NTSTATUS).
-    // The trap frame is still on the stack. Pop the GPR slots in
-    // the exact reverse order of the pushes above so that
-    // rcx, rdx, rbx, rbp, rsi, rdi, r8-r15, and r11 are restored
-    // from the frame (syscall_dispatch is free to clobber them).
-    // Skip the bottom rax slot (return value is already in rax).
-    "  add rsp, 0x08",                   // skip slot 0 (rax)
-    "  pop rcx",                         // slot  1: rcx = user RIP
-    "  pop rdx",                         // slot  2
-    "  pop rbx",                         // slot  3
-    "  pop rbp",                         // slot  4
-    "  pop rsi",                         // slot  5
-    "  pop rdi",                         // slot  6
-    "  pop r8",                          // slot  7
-    "  pop r9",                          // slot  8
-    "  pop r10",                         // slot  9
-    "  pop r11",                         // slot 10: r11 = user RFLAGS
-    "  pop r12",                         // slot 11
-    "  pop r13",                         // slot 12
-    "  pop r14",                         // slot 13
-    "  pop r15",                         // slot 14
-    // 16 slots popped so far (= 128 bytes). The remaining 6 slots
-    // are the iretq frame: vector, error_code, rip, cs, rflags, rsp.
-    // We discard them all because sysretq will reload user
-    // CS/SS from STAR, user RIP from RCX (just restored), user
-    // RFLAGS from R11 (just restored), and user RSP from
-    // gs:[0x0] (the user RSP we saved at entry).
-    "  add rsp, 0x30",                   // skip 6 slots (48 bytes)
-    // Load user rsp and swap back to user GS base.
-            "  mov rsp, gs:[0x0]",               // user rsp
-            "  swapgs",
-    "  sysretq",
+    "  add rsp, 0x20",
+    // Pop the fifteen GPR slots. Slot 0 is omitted because the
+    // dispatcher's return value replaces the user syscall number.
+    "  add rsp, 0x08",                     // slot 0
+    "  pop rcx",                           // slot 1: return RIP
+    "  pop rdx",                           // slot 2
+    "  pop rbx",                           // slot 3
+    "  pop rbp",                           // slot 4
+    "  pop rsi",                           // slot 5
+    "  pop rdi",                           // slot 6
+    "  pop r8",                            // slot 7
+    "  pop r9",                            // slot 8
+    "  pop r10",                           // slot 9
+    "  pop r11",                           // slot 10 / return RFLAGS
+    "  pop r12",                           // slot 11
+    "  pop r13",                           // slot 12
+    "  pop r14",                           // slot 13
+    "  pop r15",                           // slot 14
+    // Discard vector, error code, RIP, CS, RFLAGS, RSP, and SS.
+    // SYSEXIT/SYSRET reloads these from RCX/R11 and the fixed user
+    // RSP saved in the per-CPU area.
+    "  add rsp, 0x38",                     // seven remaining slots
+    "  mov rsp, gs:[0x0]",                 // restore user RSP
+    "  swapgs",
+    "  mov rax, 0x23",
+    "  mov ds, rax",
+    "  mov es, rax",
+    "  mov fs, rax",
+    "  mov gs, rax",
+  "  sysretq",
 
     user_cs = const USER_CS as u64,
     user_ss = const USER_SS as u64,

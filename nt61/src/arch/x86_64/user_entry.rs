@@ -59,7 +59,13 @@ use crate::arch::x86_64::gdt::USER_SS;
 /// Interrupts are re-enabled by `arch::enable_interrupts_once()` in
 /// the boot-mode dispatch (Normal: in the IDLE scheduler loop;
 /// SafeModeCmd: just before the keyboard poll loop is armed).
-const USER_RFLAGS: u64 = 0x3002; // IOPL=3, IF=0
+/// User-mode IOPL is 0 on Windows 7; I/O ports must be trapped.
+const USER_IOPL: u64 = 0;
+/// Required always-one RFLAGS reserved bit.
+const RFLAGS_RESERVED: u64 = 0x002;
+/// Deliver maskable hardware IRQs while Ring 3 runs.
+const RFLAGS_IF: u64 = 0x200;
+const USER_RFLAGS: u64 = USER_IOPL | RFLAGS_RESERVED | RFLAGS_IF;
 
 global_asm!(
     // ---- first_user_enter ---------------------------------------------
@@ -257,7 +263,171 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
     crate::arch::x86_64::tss::set_rsp0(kernel_sp);
     crate::mm::vas::refresh_kernel_mappings(pml4_phys);
 
+    // One-shot bring-up diagnostic: verify that the executable page
+    // backing user_rip is present, user-accessible, and contains the
+    // first bytes of cmd.exe before dropping privilege. This is cheap
+    // and catches image-loading or page-table wiring regressions that
+    // otherwise appear as a silent Ring-3 hang.
     unsafe {
+        let read_table = |table_phys: u64, index: usize| -> Option<u64> {
+            if table_phys == 0 {
+                return None;
+            }
+            Some(*((table_phys + (index as u64) * 8) as *const u64))
+        };
+        let pml4_index = ((user_rip >> 39) & 0x1ff) as usize;
+        let pdpt_index = ((user_rip >> 30) & 0x1ff) as usize;
+        let pd_index = ((user_rip >> 21) & 0x1ff) as usize;
+        let pt_index = ((user_rip >> 12) & 0x1ff) as usize;
+        let pml4_entry = read_table(pml4_phys, pml4_index).unwrap_or(0);
+        let pdpt_entry = if pml4_entry & 1 != 0 {
+            read_table(pml4_entry & 0x000f_ffff_ffff_f000, pdpt_index).unwrap_or(0)
+        } else {
+            0
+        };
+        let pd_entry = if pml4_entry & 1 != 0 && pdpt_entry & 1 != 0 {
+            read_table(pdpt_entry & 0x000f_ffff_ffff_f000, pd_index).unwrap_or(0)
+        } else {
+            0
+        };
+        let pt_entry = if pml4_entry & 1 != 0
+            && pdpt_entry & 1 != 0
+            && pd_entry & 1 != 0
+            && pd_entry & 0x80 == 0
+        {
+            read_table(pd_entry & 0x000f_ffff_ffff_f000, pt_index).unwrap_or(0)
+        } else {
+            0
+        };
+        crate::hal::serial::write_string_always("[RING3-ENTRY] rip=");
+        crate::hal::serial::write_hex_u64_always(user_rip);
+        crate::hal::serial::write_string_always(" pml4e=");
+        crate::hal::serial::write_hex_u64_always(pml4_entry);
+        crate::hal::serial::write_string_always(" pdpte=");
+        crate::hal::serial::write_hex_u64_always(pdpt_entry);
+        crate::hal::serial::write_string_always(" pde=");
+        crate::hal::serial::write_hex_u64_always(pd_entry);
+        crate::hal::serial::write_string_always(" pte=");
+        crate::hal::serial::write_hex_u64_always(pt_entry);
+        crate::hal::serial::write_string_always("\r\n");
+        let large_pdpt = pdpt_entry & 0x80 != 0;
+        let large_pd = pd_entry & 0x80 != 0;
+        if large_pdpt || large_pd || (pd_entry & 0x80 == 0 && pt_entry & 1 != 0) {
+            let page_phys = if large_pdpt {
+                pdpt_entry & 0x000f_ffff_c000_0000
+            } else if large_pd {
+                pd_entry & 0x000f_ffff_fe00_0000
+            } else {
+                pt_entry & 0x000f_ffff_ffff_f000
+            };
+            let offset = (user_rip & 0xfff) as usize;
+            let source = (page_phys + offset as u64) as *const u8;
+            let mut bytes = [0u8; 16];
+            for (index, target) in bytes.iter_mut().enumerate() {
+                *target = *source.add(index);
+            }
+        crate::hal::serial::write_string_always("[RING3-ENTRY] code=");
+        for &byte in &bytes {
+            crate::hal::serial::write_hex_u64_always(byte as u64);
+            crate::hal::serial::write_string_always(" ");
+        }
+        crate::hal::serial::write_string_always("\r\n");
+
+        let stack_pml4_index = ((user_rsp >> 39) & 0x1ff) as usize;
+        let stack_pdpt_index = ((user_rsp >> 30) & 0x1ff) as usize;
+        let stack_pd_index = ((user_rsp >> 21) & 0x1ff) as usize;
+        let stack_pt_index = ((user_rsp >> 12) & 0x1ff) as usize;
+        let stack_pml4_entry = read_table(pml4_phys, stack_pml4_index).unwrap_or(0);
+        let stack_pdpt_entry = if stack_pml4_entry & 1 != 0 {
+            read_table(stack_pml4_entry & 0x000f_ffff_ffff_f000, stack_pdpt_index).unwrap_or(0)
+        } else {
+            0
+        };
+        let stack_pd_entry = if stack_pml4_entry & 1 != 0 && stack_pdpt_entry & 1 != 0 {
+            read_table(stack_pdpt_entry & 0x000f_ffff_ffff_f000, stack_pd_index).unwrap_or(0)
+        } else {
+            0
+        };
+        let stack_pt_entry = if stack_pml4_entry & 1 != 0
+            && stack_pdpt_entry & 1 != 0
+            && stack_pd_entry & 1 != 0
+            && stack_pd_entry & 0x80 == 0
+        {
+            read_table(stack_pd_entry & 0x000f_ffff_ffff_f000, stack_pt_index).unwrap_or(0)
+        } else {
+            0
+        };
+        crate::hal::serial::write_string_always("[RING3-STACK] rsp=");
+        crate::hal::serial::write_hex_u64_always(user_rsp);
+        crate::hal::serial::write_string_always(" pml4e=");
+        crate::hal::serial::write_hex_u64_always(stack_pml4_entry);
+        crate::hal::serial::write_string_always(" pdpte=");
+        crate::hal::serial::write_hex_u64_always(stack_pdpt_entry);
+        crate::hal::serial::write_string_always(" pde=");
+        crate::hal::serial::write_hex_u64_always(stack_pd_entry);
+        crate::hal::serial::write_string_always(" pte=");
+        crate::hal::serial::write_hex_u64_always(stack_pt_entry);
+        crate::hal::serial::write_string_always("\r\n");
+
+        let read_msr = |msr: u32| -> u64 {
+            let lo: u32;
+            let hi: u32;
+            unsafe {
+                core::arch::asm!(
+                    "rdmsr",
+                    in("ecx") msr,
+                    out("eax") lo,
+                    out("edx") hi,
+                    options(nostack, preserves_flags)
+                );
+            }
+            ((hi as u64) << 32) | lo as u64
+        };
+        let efer = read_msr(0xC0000080);
+        let lstar = read_msr(0xC0000082);
+        crate::hal::serial::write_string_always("[RING3-MSR] efer=");
+        crate::hal::serial::write_hex_u64_always(efer);
+        crate::hal::serial::write_string_always(" lstar=");
+        crate::hal::serial::write_hex_u64_always(lstar);
+        crate::hal::serial::write_string_always(" syscall_entry=");
+        crate::hal::serial::write_hex_u64_always(
+            crate::arch::x86_64::syscall::syscall_entry_address(),
+        );
+        crate::hal::serial::write_string_always("\r\n");
+    }
+    }
+
+    unsafe {
+        // Publish the Ring-3 GS convention before the privilege change:
+        // user GS becomes 0, and IA32_KERNEL_GS_BASE retains the per-CPU
+        // area for the syscall/trap entry stubs.
+        core::arch::asm!("swapgs", options(nostack, preserves_flags));
+        {
+            let mut gdtr = [0u8; 16];
+            core::arch::asm!(
+                "sgdt [{buf}]",
+                buf = in(reg) gdtr.as_mut_ptr(),
+                options(nostack),
+            );
+            let limit = u16::from_le_bytes([gdtr[0], gdtr[1]]);
+            let base = u64::from_le_bytes([
+                gdtr[2], gdtr[3], gdtr[4], gdtr[5], gdtr[6], gdtr[7],
+                gdtr[8], gdtr[9],
+            ]);
+            crate::hal::serial::write_string_always("[RING3-GDT] base=");
+            crate::hal::serial::write_hex_u64_always(base);
+            crate::hal::serial::write_string_always(" limit=");
+            crate::hal::serial::write_hex_u64_always(limit as u64);
+            crate::hal::serial::write_string_always(" cs=");
+            crate::hal::serial::write_hex_u64_always(
+                core::ptr::read_volatile((base + 0x28) as *const u64),
+            );
+            crate::hal::serial::write_string_always(" ss=");
+            crate::hal::serial::write_hex_u64_always(
+                core::ptr::read_volatile((base + 0x20) as *const u64),
+            );
+            crate::hal::serial::write_string_always("\r\n");
+        }
         core::arch::asm!(
             "mov cr3, {pml4}",
             pml4 = in(reg) pml4_phys,

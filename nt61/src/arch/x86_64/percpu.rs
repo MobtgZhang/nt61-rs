@@ -276,8 +276,11 @@ pub fn read_tsc() -> u64 {
 
 /// Calibrate TSC frequency for this CPU
 pub fn calibrate_tsc() {
-    // Use HPET or PIT to calibrate TSC frequency
-    // For now, assume a reasonable default (2.4 GHz)
+    // Use CPUID leaf 0x15/0x16 when available (see
+    // hal::x86_64::pit::probe_tsc_frequency_hz) and fall back to
+    // the PIT-calibrated value.
     let percpu = PerCpuData::current();
-    percpu.tsc_frequency = 2_400_000_000; // 2.4 GHz
+    if percpu.tsc_frequency == 0 {
+        percpu.tsc_frequency = crate::hal::pit::tsc_frequency_hz();
+    }
 }
