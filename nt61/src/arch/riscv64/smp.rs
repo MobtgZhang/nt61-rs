@@ -13,6 +13,7 @@
 //! will install a real trampoline and a per-hart `__smp_secondary`
 //! entry point.
 
+use core::arch::global_asm;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use crate::arch::riscv64::paging;
@@ -22,14 +23,17 @@ use crate::arch::riscv64::soc;
 static CPU_COUNT: AtomicU32 = AtomicU32::new(1);
 static SECONDARY_ROOT_PFN: AtomicU64 = AtomicU64::new(0);
 
+extern "C" {
+    fn __smp_secondary_entry();
+}
+
 const AP_STACK_SIZE: usize = 64 * 1024;
 
 /// Return the cached CPU count.
 pub fn cpu_count() -> u32 {
-    CPU_COUNT
-        .load(Ordering::Relaxed)
-        .max(soc::cpu_count() as u32)
-        .max(1)
+    let a = CPU_COUNT.load(Ordering::Relaxed);
+    let b = soc::cpu_count() as u32;
+    a.max(b).max(1)
 }
 
 /// SBI HSM hart_start (re-exported here for callers that already
@@ -43,18 +47,23 @@ pub fn current_hart_id() -> u32 {
     unsafe { crate::arch::riscv64::sbi::current_hartid() as u32 }
 }
 
-/// Trampoline entry point for secondary harts.
-///
-/// The firmware (`OpenSBI` / Andes / etc.) jumps here after a
-/// successful `HART_START`. Phase 1 spins; Phase 2 will switch to
-/// the per-hart kernel stack and wait for a work item.
-#[no_mangle]
-pub unsafe extern "C" fn __smp_secondary_entry(_hart: u64, stack_top: u64) -> ! {
-    unsafe {
-        core::arch::asm!("mv sp, {}", in(reg) stack_top, options(nostack));
-    }
+// Trampoline entry point for secondary harts.  The firmware jumps here
+// after a successful `HART_START`; the Rust entry installs per-hart
+// state before entering the scheduler.
+global_asm!(
+    ".align 4",
+    ".global __smp_secondary_entry",
+    "__smp_secondary_entry:",
+    // Secondary harts start with an undefined stack pointer. Install
+    // the trampoline stack before any Rust prologue can touch memory.
+    "  mv sp, a1",
+    "  tail __smp_secondary_entry_rust",
+);
 
+#[no_mangle]
+pub unsafe extern "C" fn __smp_secondary_entry_rust(_hart: u64, _stack_top: u64) -> ! {
     // Publish this hart's per-CPU base in `tp`.
+    crate::boot_debug_println!("[AP] entry");
     let hart = current_hart_id();
     let base = crate::arch::riscv64::percpu_impl::per_cpu_base_for(hart);
     if base == 0 {
@@ -98,6 +107,7 @@ pub extern "Rust" fn __smp_cpu_count() -> u32 {
 #[no_mangle]
 pub unsafe extern "Rust" fn __smp_boot_secondary(satp_root: u64) {
     SECONDARY_ROOT_PFN.store(satp_root, Ordering::Release);
+    crate::boot_debug_println!("[SMP] boot_secondary entered");
     let boot = current_hart_id();
     let max = cpu_count();
     crate::ke::scheduler::init_smp(max);
@@ -126,6 +136,12 @@ pub unsafe extern "Rust" fn __smp_boot_secondary(satp_root: u64) {
                 .add(1)
                 .read_volatile()
         };
+        crate::hal::serial::write_string_always(&alloc::format!(
+            "[SMP] hart={} trampoline={:#x} stack={:#x}\r\n",
+            hart,
+            trampoline,
+            stack_top
+        ));
         let r = sbi_hsm_hart_start(hart as u64, trampoline, stack_top);
         if r == 0 {
             CPU_COUNT.fetch_add(1, Ordering::SeqCst);

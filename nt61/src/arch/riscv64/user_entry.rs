@@ -114,12 +114,16 @@ pub fn __user_entry_user_rflags() -> u64 {
 pub unsafe fn __user_entry_enter(user_rip: u64, user_rsp: u64) -> ! {
     let rip_v = core::hint::black_box(user_rip);
     let rsp_v = core::hint::black_box(user_rsp);
+    let kernel_sp: u64;
     unsafe {
+        core::arch::asm!("mv {}, sp", out(reg) kernel_sp, options(nostack));
         core::arch::asm!(
             // Set sepc = user entry point
             "csrw sepc, {rip}",
             // Set sstatus: SPP=0 (return to U-mode), SPIE=1, SIE=0
             "csrw sstatus, {sstatus}",
+            // Publish the kernel stack before losing the supervisor sp.
+            "csrw sscratch, {kernel_sp}",
             // Set sp = user stack
             "mv sp, {rsp}",
             // Return to U-mode
@@ -127,6 +131,7 @@ pub unsafe fn __user_entry_enter(user_rip: u64, user_rsp: u64) -> ! {
             rip = in(reg) rip_v,
             rsp = in(reg) rsp_v,
             sstatus = in(reg) RISCV_SSTATUS,
+            kernel_sp = in(reg) kernel_sp,
             options(noreturn),
         );
     }
@@ -186,39 +191,43 @@ pub fn enter_first_user_thread(satp_root: u64, user_rip: u64, user_rsp: u64) -> 
     }
     crate::arch::common::percpu::set_kernel_stack(kernel_sp);
 
-    // 0.5 Publish the kernel stack into sscratch so that the first
-    //     trap from user mode can swap sp with a valid kernel stack.
-    //     Without this, stvec_trap would read sscratch = 0 and the
-    //     CPU would fault with a zero stack pointer.
-    unsafe {
-        core::arch::asm!(
-            "csrw sscratch, {val}",
-            val = in(reg) kernel_sp,
-            options(nostack),
-        );
-    }
+    // The generic attach path switches SATP and then returns to the
+    // caller. A corrupted return address in that critical epilogue is
+    // unrecoverable, so the first Ring-3 entry uses a noreturn switch
+    // instead. All bookkeeping that must use the kernel address space
+    // happens before the CSR write; the switch and sret happen in one
+    // straight-line sequence.
+    let previous_root = crate::mm::vas::current_root();
+    crate::mm::vas::set_current_root(satp_root);
+    crate::arch::common::percpu::set_address_space_roots(previous_root, satp_root);
+    crate::hal::serial::write_string_always("[RING3] root=");
+    crate::hal::serial::write_hex_u64_always(satp_root);
+    crate::hal::serial::write_string_always(" rip=");
+    crate::hal::serial::write_hex_u64_always(user_rip);
+    crate::hal::serial::write_string_always(" rsp=");
+    crate::hal::serial::write_hex_u64_always(user_rsp);
+    crate::hal::serial::write_string_always("\r\n");
 
-    // 1. Switch to the user address space via the shared vas layer.
-    //    attach_process() encodes the Sv39 satp value (MODE=8, PPN
-    //    = satp_root >> 12), issues the sfence.vma barrier, and
-    //    publishes the per-CPU root-table bookkeeping -- exactly
-    //    what the aarch64 TTBR0 path does via its own
-    //    load_page_root(). Writing a raw physical address directly
-    //    into satp would leave MODE = 0 (bare mode), disabling the
-    //    MMU and faulting on the first U-mode instruction fetch.
-    crate::mm::vas::attach_process(satp_root);
+    crate::arch::riscv64::paging::prepare_switch_mappings_if_needed(satp_root >> 12);
+    crate::arch::riscv64::paging::publish_root_phys(satp_root);
+    crate::arch::riscv64::csr::sstatus::set(crate::arch::riscv64::csr::sstatus::SUM);
 
     // 2. Transfer to U-mode. sret jumps to sepc with sstatus applied.
     unsafe {
         let rip_v = core::hint::black_box(user_rip);
         let rsp_v = core::hint::black_box(user_rsp);
         core::arch::asm!(
+            "csrw satp, {satp}",
+            "sfence.vma",
             "csrw sepc, {rip}",
             "csrw sstatus, {sstatus}",
+            "csrw sscratch, {kernel_sp}",
             "mv sp, {rsp}",
             "sret",
             rip = in(reg) rip_v,
             rsp = in(reg) rsp_v,
+            kernel_sp = in(reg) kernel_sp,
+            satp = in(reg) (8u64 << 60) | (satp_root >> 12),
             sstatus = in(reg) RISCV_SSTATUS,
             options(noreturn),
         );

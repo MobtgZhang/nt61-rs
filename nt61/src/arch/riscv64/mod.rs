@@ -101,6 +101,10 @@ pub fn init() {
     crate::boot_debug_println!("[RISCV] cpuinfo init start");
     cpuinfo::init_cpuinfo();
     crate::boot_debug_println!("[RISCV] cpuinfo init done");
+    unsafe {
+        crate::arch::riscv64::fpu::enable_fpu();
+    }
+    crate::boot_debug_println!("[RISCV] fpu init done");
     // Phase 0.3: install the trap vector before anything else
     // touches `sret` / `ecall`.
     crate::boot_debug_println!("[RISCV] trap vector init start");

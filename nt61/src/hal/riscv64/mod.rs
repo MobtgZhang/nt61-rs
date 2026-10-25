@@ -13,7 +13,10 @@ pub mod framebuffer;
 
 /// Initialize the HAL - serial port and framebuffer.
 pub fn init() {
+    crate::hal::serial::write_string_always("[HAL-rv64] begin\r\n");
     serial::init();
+    crate::hal::serial::write_string_always("[HAL-rv64] serial done\r\n");
     // Initialize framebuffer if available
     let _ = framebuffer::init(framebuffer::probe_from_device_tree());
+    crate::hal::serial::write_string_always("[HAL-rv64] fb done\r\n");
 }

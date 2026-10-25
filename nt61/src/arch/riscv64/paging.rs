@@ -62,7 +62,6 @@ const PTE_R: u64 = 1 << 1;
 const PTE_W: u64 = 1 << 2;
 const PTE_X: u64 = 1 << 3;
 const PTE_U: u64 = 1 << 4;
-const PTE_G: u64 = 1 << 5;
 const PTE_A: u64 = 1 << 6;
 const PTE_D: u64 = 1 << 7;
 
@@ -108,6 +107,9 @@ pub fn reset_bootstrap_identity_pool() {
 fn alloc_identity_pt() -> Option<u64> {
     let used = unsafe { core::ptr::read_volatile(core::ptr::addr_of!(IDENTITY_PT_USED)) };
     if used >= IDENTITY_PT_POOL_PAGES {
+        crate::hal::serial::write_string_always("[RVIPT] pool exhausted used=");
+        crate::hal::serial::write_hex_u64_always(used as u64);
+        crate::hal::serial::write_string_always("\r\n");
         // Once the PFN database is online, the full RAM identity
         // window has already been installed. Dynamic page-table pages
         // are therefore safely writable while their own descriptor is
@@ -240,6 +242,17 @@ pub fn root_phys() -> u64 {
     current_satp_root_phys()
 }
 
+/// Publish the hardware root PA to the fast software mirror.
+///
+/// The noreturn Ring-3 entry path bypasses `load_page_root`, so it must
+/// update this cache explicitly before the SATP write. Otherwise trap
+/// diagnostics report the stale system root.
+pub fn publish_root_phys(pa: u64) {
+    unsafe {
+        core::ptr::write_volatile(core::ptr::addr_of_mut!(ROOT_PHYS), pa);
+    }
+}
+
 pub fn read_page_root_phys() -> u64 {
     root_phys()
 }
@@ -287,6 +300,45 @@ fn make_pte(pa: u64, flags: u64) -> u64 {
 fn make_nonleaf_pte(pa: u64) -> u64 {
     ((pa >> 12) << 10) | PTE_V
 }
+
+/// Map a 1-GiB identity superpage into a non-current root table.
+///
+/// Used during bare-mode → Sv39 root switches to guarantee that every
+/// physical address the kernel already touched remains reachable.  A
+/// 1-GiB superpage needs no intermediate tables: the root entry itself
+/// is a leaf, which keeps the switch guard to at most eight writes for
+/// the full 8 GiB QEMU virt RAM window.
+fn map_gib_superpage_in_root(root_pfn: u64, gpa: u64) -> bool {
+    let root_phys = pfn_to_phys(root_pfn);
+    let root = root_phys as *mut u64;
+    let idx = ((gpa >> 30) & 0x1FF) as usize;
+    // Sv39 1-GiB leaf: PPN[2] = gpa[55:30], PPN[1:0] = 0 (guaranteed by
+    // 1-GiB alignment).  R|W|X makes it a leaf; A|D avoid first-touch
+    // traps in supervisor mode; U is clear so user code cannot read
+    // kernel RAM through this window.
+    let flags = PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
+    // Sv39 stores PPN at bits 53:10; PPN = gpa >> 12.  For a 1-GiB
+    // aligned address this is exactly (gpa >> 30) << 28.
+    let entry = ((gpa >> 12) << 10) | flags;
+    unsafe {
+        let existing = core::ptr::read_volatile(root.add(idx));
+        crate::hal::serial::write_string_always("[SUPER] root=");
+        crate::hal::serial::write_hex_u64_always(root_phys);
+        crate::hal::serial::write_string_always(" gpa=");
+        crate::hal::serial::write_hex_u64_always(gpa);
+        crate::hal::serial::write_string_always(" old=");
+        crate::hal::serial::write_hex_u64_always(existing);
+        crate::hal::serial::write_string_always(" new=");
+        crate::hal::serial::write_hex_u64_always(entry);
+        crate::hal::serial::write_string_always("\r\n");
+        if !is_valid(existing) || !is_leaf(existing) {
+            core::ptr::write_volatile(root.add(idx), entry);
+            asm!("sfence.vma", options(nostack));
+        }
+    }
+    true
+}
+
 fn is_valid(e: u64) -> bool {
     (e & PTE_V) != 0
 }
@@ -408,46 +460,33 @@ pub fn map_page(va: u64, pa: u64, flags: u64) -> bool {
 /// Map a page into a non-current Sv39 root without switching `satp`.
 pub fn map_page_in_root(root_pfn: u64, va: u64, pa: u64, flags: u64) -> bool {
     let root_phys = pfn_to_phys(root_pfn);
-    if va == 0x0000_003F_C000_0000 {
-        let root = root_phys as *const u64;
-        let root_entry = unsafe { core::ptr::read_volatile(root.add(((va >> 30) & 0x1FF) as usize)) };
-        crate::hal::serial::write_string_always(&alloc::format!(
-            "[RVPGROOT] heap root={:x} root_entry={:x} pa={:x} flags={:x}\r\n",
-            root_phys,
-            root_entry,
-            pa,
-            flags
-        ));
-    }
+    crate::hal::serial::write_string_always("[RVMPR] root_pfn=");
+    crate::hal::serial::write_hex_u64_always(root_pfn);
+    crate::hal::serial::write_string_always(" root=");
+    crate::hal::serial::write_hex_u64_always(root_phys);
+    crate::hal::serial::write_string_always(" va=");
+    crate::hal::serial::write_hex_u64_always(va);
+    crate::hal::serial::write_string_always(" pa=");
+    crate::hal::serial::write_hex_u64_always(pa);
+    crate::hal::serial::write_string_always("\r\n");
     let l2_pte = unsafe { leaf_pte_for_at(root_phys, va) };
-    if va == 0x0000_003F_C000_0000 && !l2_pte.is_null() {
-        let leaf = unsafe { core::ptr::read_volatile(l2_pte) };
-        crate::hal::serial::write_string_always(&alloc::format!(
-            "[RVPGROOT] heap leaf_addr={:x} leaf={:x}\r\n",
-            l2_pte as u64,
-            leaf
-        ));
-    }
     if va == 0x0000_003F_C000_0000 && !l2_pte.is_null() {
         unsafe {
             core::ptr::write_volatile(l2_pte, make_pte(pa, flags));
             asm!("sfence.vma {}, zero", in(reg) va, options(nostack));
         }
-        let leaf = unsafe { core::ptr::read_volatile(l2_pte) };
-        crate::hal::serial::write_string_always("[RVPGROOT] heap written leaf=");
-        crate::hal::serial::write_hex_u64_always(leaf);
-        crate::hal::serial::write_string_always("\r\n");
         return true;
     }
-    let l2_pte_addr = l2_pte as u64;
     if l2_pte.is_null() {
-        crate::hal::serial::write_string_always(&alloc::format!(
-            "[RVPGROOT] fail root_pfn={:x} root={:x} va={:x} pa={:x}\r\n",
-            root_pfn,
-            root_phys,
-            va,
-            pa
-        ));
+        crate::hal::serial::write_string_always("[RVPGROOT] fail root_pfn=");
+        crate::hal::serial::write_hex_u64_always(root_pfn);
+        crate::hal::serial::write_string_always(" root=");
+        crate::hal::serial::write_hex_u64_always(root_phys);
+        crate::hal::serial::write_string_always(" va=");
+        crate::hal::serial::write_hex_u64_always(va);
+        crate::hal::serial::write_string_always(" pa=");
+        crate::hal::serial::write_hex_u64_always(pa);
+        crate::hal::serial::write_string_always("\r\n");
         return false;
     }
     unsafe {
@@ -510,6 +549,57 @@ pub fn translate_virt(va: u64) -> Option<u64> {
     }
 }
 
+/// Return the Sv39 leaf PTE covering `va`.
+pub fn leaf_entry(va: u64) -> Option<u64> {
+    unsafe {
+        let root = root_phys() as *const u64;
+        let l0e = core::ptr::read_volatile(root.add(((va >> 30) & 0x1FF) as usize));
+        if !is_valid(l0e) {
+            return None;
+        }
+        if is_leaf(l0e) {
+            return Some(l0e);
+        }
+        let l1 = pte_pa(l0e) as *const u64;
+        let l1e = core::ptr::read_volatile(l1.add(((va >> 21) & 0x1FF) as usize));
+        if !is_valid(l1e) {
+            return None;
+        }
+        if is_leaf(l1e) {
+            return Some(l1e);
+        }
+        let l2 = pte_pa(l1e) as *const u64;
+        let l2e = core::ptr::read_volatile(l2.add(((va >> 12) & 0x1FF) as usize));
+        if is_valid(l2e) && is_leaf(l2e) {
+            return Some(l2e);
+        }
+        None
+    }
+}
+
+/// Walk a non-current Sv39 root without switching `satp`.
+pub fn page_is_mapped_in_root(root_pfn: u64, va: u64) -> bool {
+    let root_pa = pfn_to_phys(root_pfn);
+    let root = root_pa as *const u64;
+    let l0_idx = ((va >> 30) & 0x1FF) as usize;
+    let l1_idx = ((va >> 21) & 0x1FF) as usize;
+    let l2_idx = ((va >> 12) & 0x1FF) as usize;
+    unsafe {
+        let l0e = core::ptr::read_volatile(root.add(l0_idx));
+        if !is_valid(l0e) || is_leaf(l0e) {
+            return is_valid(l0e) && is_leaf(l0e);
+        }
+        let l1 = pte_pa(l0e) as *const u64;
+        let l1e = core::ptr::read_volatile(l1.add(l1_idx));
+        if !is_valid(l1e) || is_leaf(l1e) {
+            return is_valid(l1e) && is_leaf(l1e);
+        }
+        let l2 = pte_pa(l1e) as *const u64;
+        let l2e = core::ptr::read_volatile(l2.add(l2_idx));
+        is_valid(l2e) && is_leaf(l2e)
+    }
+}
+
 pub unsafe fn load_page_root(pml4_pfn: u64) {
     let pa = pfn_to_phys(pml4_pfn);
     crate::arch::riscv64::csr::sstatus::set(
@@ -520,23 +610,46 @@ pub unsafe fn load_page_root(pml4_pfn: u64) {
         let system = crate::mm::vas::MM_SYSTEM_VAS.lock();
         system.pml4_phys == pa
     };
-    if !is_system_root {
+    crate::hal::serial::write_string_always("[SATP] target=");
+    crate::hal::serial::write_hex_u64_always(pa);
+    crate::hal::serial::write_string_always(if is_system_root {
+        " system\r\n"
+    } else {
+        " process\r\n"
+    });
+    // A non-x86 root copied from the system root often already contains
+    // native superpages or lower-level descriptors for every switch-time
+    // page.  Rebuilding those mappings would split a valid 1-GiB leaf and
+    // can corrupt the destination root, so only run the explicit guard when
+    // a critical page is actually missing.
+    let code_page = (load_page_root as *const () as u64) & PAGE_MASK;
+    let mut stack_pointer = 0u64;
+    unsafe {
+        asm!("mv {}, sp", out(reg) stack_pointer, options(nostack));
+    }
+    let stack_page = stack_pointer & PAGE_MASK;
+    const UART_PAGE: u64 = 0x1000_0000;
+    let mappings_complete = page_is_mapped_in_root(pml4_pfn, code_page)
+        && page_is_mapped_in_root(pml4_pfn, stack_page)
+        && page_is_mapped_in_root(pml4_pfn, UART_PAGE);
+    if !mappings_complete {
         prepare_switch_mappings(pml4_pfn);
     }
+    let switch_pa = pa;
     crate::hal::serial::write_string_always("[SATP] prepared\r\n");
-    // satp = MODE (8 = Sv39) << 60 | ASID (0) << 44 | PPN
-    let satp: u64 = (8u64 << 60) | (pa >> 12);
+    // satp = MODE (from sv48::choose_mode) << 60 | ASID (0) << 44 | PPN
+    let mode = crate::arch::riscv64::sv48::choose_mode();
+    let satp: u64 = mode | (switch_pa >> 12);
     crate::hal::serial::write_string_always("[SATP] pre-csrw\r\n");
-    // The first transition can trap while still executing kernel code.
-    // In that case `sscratch` has never been primed with a kernel stack,
-    // so the trap entry would otherwise save the entire frame at 0.
-    let current_sp: u64;
-    asm!("mv {}, sp", out(reg) current_sp, options(nostack));
-    asm!("csrw sscratch, {}", in(reg) current_sp, options(nostack));
     asm!("csrw satp, {}", in(reg) satp, options(nostack));
     asm!("sfence.vma", options(nostack));
     crate::hal::serial::write_string_always("[SATP] written\r\n");
-    crate::hal::serial::write_string_always("[SATP] fenced\r\n");
+    // Heartbeat: write individual chars through the UART to prove the
+    // code page and data page are both still reachable post-switch.
+    for ch in b"ABC" {
+        crate::hal::riscv64::serial::write_char(*ch);
+    }
+    crate::hal::serial::write_string_always("\r\n[SATP] fenced\r\n");
     core::ptr::write_volatile(core::ptr::addr_of_mut!(ROOT_PHYS), pa);
     crate::hal::serial::write_string_always("[SATP] cached\r\n");
 }
@@ -549,61 +662,60 @@ pub unsafe fn load_page_root(pml4_pfn: u64) {
 /// destination root.  The generic VAS layer copies root descriptors, but
 /// this explicit switch guard keeps the critical path working even when a
 /// process root was built before every kernel mapping was refreshed.
+pub fn prepare_switch_mappings_if_needed(root_pfn: u64) {
+    let root_phys = pfn_to_phys(root_pfn);
+    let code_page = (load_page_root as *const () as u64) & PAGE_MASK;
+    let mut stack_pointer = 0u64;
+    unsafe {
+        asm!("mv {}, sp", out(reg) stack_pointer, options(nostack));
+    }
+    let stack_page = stack_pointer & PAGE_MASK;
+    const UART_PAGE: u64 = 0x1000_0000;
+    if page_is_mapped_in_root(root_pfn, code_page)
+        && page_is_mapped_in_root(root_pfn, stack_page)
+        && page_is_mapped_in_root(root_pfn, UART_PAGE)
+    {
+        return;
+    }
+    let _ = root_phys;
+    prepare_switch_mappings(root_pfn);
+}
+
 fn prepare_switch_mappings(root_pfn: u64) {
     let map_switch_page = |va: u64, flags: u64| -> bool {
         if va == 0 || va & 0xfff != 0 {
             return false;
         }
-        // The switch may happen before the MMU is enabled.  In that
-        // case the static bootstrap root is not the active translation
-        // and cannot be used to discover the physical backing of the
-        // running image.  Bare mode guarantees VA == PA, so install the
-        // same identity mapping in the destination root.
         if current_satp_root_phys() == 0 {
-            unsafe { map_page_in_root(root_pfn, va, va, flags) }
+            map_page_in_root(root_pfn, va, va, flags)
         } else {
             let Some(pa) = translate_virt(va) else {
                 crate::hal::serial::write_string_always("[SATP] translate fail va=");
-                crate::hal::serial::write_hex_u64(va);
-                crate::hal::serial::write_string_always(" root=");
-                crate::hal::serial::write_hex_u64(root_phys());
+                crate::hal::serial::write_hex_u64_always(va);
                 crate::hal::serial::write_string_always("\r\n");
                 return false;
             };
-            unsafe { map_page_in_root(root_pfn, va, pa, flags) }
+            map_page_in_root(root_pfn, va, pa, flags)
         }
     };
 
-    // `map_page_in_root()` expects the portable/x86-style flag inputs used
-    // by `make_pte()`. Passing native Sv39 bits here would alias EXECUTE
-    // into USER and make kernel trap code inaccessible in S-mode.
     const KERNEL_CODE: u64 = crate::mm::pte::PTE_P | crate::mm::pte::PTE_RW;
     const KERNEL_DATA: u64 = crate::mm::pte::PTE_P | crate::mm::pte::PTE_RW;
 
-    // A process root must expose the entire running kernel image.  Copying
-    // only the root-level descriptors from the system root is not enough:
-    // mappings created after the snapshot can introduce new lower-level
-    // tables that are invisible to a process root.  The Win10 ARM64 model
-    // keeps kernel views coherent in the process context; for Sv39 we do
-    // this explicitly by installing the kernel pages before `satp` changes.
     extern "C" {
         static __image_start: u8;
         static __image_end: u8;
     }
-    let image_start = unsafe { core::ptr::addr_of!(__image_start) } as u64 & PAGE_MASK;
-    let image_end = unsafe { core::ptr::addr_of!(__image_end) } as u64;
+    let image_start = core::ptr::addr_of!(__image_start) as u64 & PAGE_MASK;
+    let image_end = core::ptr::addr_of!(__image_end) as u64;
     for page in (image_start..image_end).step_by(PAGE_SIZE as usize) {
         if !map_switch_page(page, KERNEL_CODE) {
             crate::hal::serial::write_string_always("[SATP] kernel map failed at ");
-            crate::hal::serial::write_hex_u64(page);
+            crate::hal::serial::write_hex_u64_always(page);
             crate::hal::serial::write_string_always("\r\n");
         }
     }
 
-    // `write_string_always` and `load_page_root` may live on adjacent code
-    // pages.  Map both pages for each function to tolerate page-boundary
-    // calls.  The copy is normally inherited from the system root; these
-    // mappings only patch a destination root with stale or missing entries.
     let load_pc = load_page_root as *const () as u64;
     let serial_pc = crate::hal::riscv64::serial::write_string_always as *const () as u64;
     let trap_pc = crate::arch::riscv64::idt::trap_entry_addr();
@@ -611,21 +723,6 @@ fn prepare_switch_mappings(root_pfn: u64) {
     unsafe {
         asm!("mv {}, sp", out(reg) sp, options(nostack));
     }
-    crate::hal::serial::write_string_always("[SATP] switch load_pc=");
-    crate::hal::serial::write_hex_u64(load_pc);
-    crate::hal::serial::write_string_always(" serial_pc=");
-    crate::hal::serial::write_hex_u64(serial_pc);
-    crate::hal::serial::write_string_always(" sp=");
-    crate::hal::serial::write_hex_u64(sp);
-    crate::hal::serial::write_string_always(" root=");
-    crate::hal::serial::write_hex_u64(current_satp_root_phys());
-    crate::hal::serial::write_string_always(" dest=");
-    crate::hal::serial::write_hex_u64(pfn_to_phys(root_pfn));
-    crate::hal::serial::write_string_always(" image=");
-    crate::hal::serial::write_hex_u64(image_start);
-    crate::hal::serial::write_string_always("..");
-    crate::hal::serial::write_hex_u64(image_end);
-    crate::hal::serial::write_string_always("\r\n");
     for pc in [load_pc, serial_pc] {
         let page = pc & PAGE_MASK;
         let next = page + PAGE_SIZE;
@@ -646,13 +743,14 @@ fn prepare_switch_mappings(root_pfn: u64) {
         let page = (sp + delta * PAGE_SIZE) & PAGE_MASK;
         map_switch_page(page, KERNEL_DATA);
     }
+    crate::hal::serial::write_string_always("[SATP] sp guard va=");
+    crate::hal::serial::write_hex_u64_always(sp);
+    crate::hal::serial::write_string_always(" mapped=");
+    crate::hal::serial::write_hex_u64_always(
+        page_is_mapped_in_root(root_pfn, sp) as u64,
+    );
+    crate::hal::serial::write_string_always("\r\n");
 
-    // The kernel heap uses identity physical virtual addresses.  A process
-    // root created after `heap::init()` does not inherit these pages unless
-    // the system root is explicitly refreshed, and even then a stale root
-    // can miss pages added by dynamic allocations.  Install the complete
-    // configured heap region in the destination root so attach/detach and
-    // syscalls can safely touch kernel pool objects.
     if let Some((heap_base, heap_size)) = crate::mm::heap::KERNEL_HEAP.configured_region() {
         let heap_start = heap_base as u64 & PAGE_MASK;
         let heap_end = heap_start
@@ -671,7 +769,7 @@ fn prepare_switch_mappings(root_pfn: u64) {
             };
             if !map_page_in_root(root_pfn, page, pa, KERNEL_DATA) {
                 crate::hal::serial::write_string_always("[SATP] kernel heap map failed at ");
-                crate::hal::serial::write_hex_u64(page);
+                crate::hal::serial::write_hex_u64_always(page);
                 crate::hal::serial::write_string_always("\r\n");
             }
             page += PAGE_SIZE;
@@ -690,26 +788,39 @@ fn prepare_switch_mappings(root_pfn: u64) {
         }
     }
 
-    // The RISC-V serial backend addresses the UART by physical VA.
-    // A stale current-root translation must never be copied here: doing so
-    // silently retargets diagnostics to ordinary RAM and hides the next
-    // boot trace.  QEMU virt exposes the NS16550A at this physical page.
+    const SYSTEM_TABLE_PHYS: u64 = 0x27FFF_E000;
+    map_switch_page(SYSTEM_TABLE_PHYS & PAGE_MASK, KERNEL_DATA);
+
+    const LOAD_PAGE_PHYS: u64 = 0x8350_7000;
+    map_switch_page(LOAD_PAGE_PHYS, KERNEL_DATA);
+
+    map_gib_superpage_in_root(root_pfn, 0x8000_0000);
+    map_gib_superpage_in_root(root_pfn, 0x1_0000_0000);
+    map_gib_superpage_in_root(root_pfn, 0x2_0000_0000);
+    map_gib_superpage_in_root(root_pfn, 0x2_4000_0000);
+
     const UART_PHYS: u64 = 0x1000_0000;
     const UART_FLAGS: u64 = crate::mm::pte::PTE_P | crate::mm::pte::PTE_RW;
-    unsafe {
-        map_page_in_root(
+    map_page_in_root(
             root_pfn,
             UART_PHYS & PAGE_MASK,
             UART_PHYS & PAGE_MASK,
             UART_FLAGS,
         );
-        map_page_in_root(
+    map_page_in_root(
             root_pfn,
             (UART_PHYS + PAGE_SIZE) & PAGE_MASK,
             (UART_PHYS + PAGE_SIZE) & PAGE_MASK,
             UART_FLAGS,
         );
+
+    const VIRTIO_MMIO_BASE: u64 = 0x1000_1000;
+    const VIRTIO_MMIO_SLOTS: u64 = 8;
+    for slot in 0..VIRTIO_MMIO_SLOTS {
+        let pa = VIRTIO_MMIO_BASE + slot * PAGE_SIZE;
+        map_page_in_root(root_pfn, pa, pa, UART_FLAGS);
     }
+
     crate::hal::serial::write_string_always("[SATP] uart guard done\r\n");
 }
 
@@ -729,7 +840,8 @@ pub fn translate_x86_root_entry(entry: u64) -> u64 {
     // and the valid bit. Sv39 non-leaf entries carry no permission
     // bits; permissions are resolved by the child levels.
     let pa = entry & 0x000F_FFFF_FFFF_F000;
-    ((pa >> 12) << 10) | PTE_V
+    let translated = ((pa >> 12) << 10) | PTE_V;
+    translated
 }
 
 pub fn read_page_root_pfn() -> u64 {
@@ -779,12 +891,13 @@ pub fn identity_map_region(pa: u64, size: u64) -> bool {
         if l1_pte.is_null() {
             let used =
                 unsafe { core::ptr::read_volatile(core::ptr::addr_of!(IDENTITY_PT_ALLOCATED)) };
-            crate::hal::serial::write_string_always(&alloc::format!(
-                "[RVPGT] identity l1 fail cur=0x{:x} root=0x{:x} pool={}\r\n",
-                cur,
-                root,
-                used
-            ));
+            crate::hal::serial::write_string_always("[RVPGT] identity l1 fail cur=");
+            crate::hal::serial::write_hex_u64_always(cur);
+            crate::hal::serial::write_string_always(" root=");
+            crate::hal::serial::write_hex_u64_always(root);
+            crate::hal::serial::write_string_always(" pool=");
+            crate::hal::serial::write_hex_u64_always(used as u64);
+            crate::hal::serial::write_string_always("\r\n");
             return false;
         }
         let l1e = unsafe { core::ptr::read_volatile(l1_pte) };
@@ -809,12 +922,13 @@ pub fn identity_map_region(pa: u64, size: u64) -> bool {
         if pte.is_null() {
             let used =
                 unsafe { core::ptr::read_volatile(core::ptr::addr_of!(IDENTITY_PT_ALLOCATED)) };
-            crate::hal::serial::write_string_always(&alloc::format!(
-                "[RVPGT] identity leaf fail cur=0x{:x} root=0x{:x} pool={}\r\n",
-                cur,
-                root,
-                used
-            ));
+            crate::hal::serial::write_string_always("[RVPGT] identity leaf fail cur=");
+            crate::hal::serial::write_hex_u64_always(cur);
+            crate::hal::serial::write_string_always(" root=");
+            crate::hal::serial::write_hex_u64_always(root);
+            crate::hal::serial::write_string_always(" pool=");
+            crate::hal::serial::write_hex_u64_always(used as u64);
+            crate::hal::serial::write_string_always("\r\n");
             return false;
         }
         unsafe {

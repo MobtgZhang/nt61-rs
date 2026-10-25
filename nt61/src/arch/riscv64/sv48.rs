@@ -33,7 +33,6 @@ use core::arch::asm;
 
 use crate::mm::pfn;
 use crate::mm::pte::{pfn_to_phys, MMPTE};
-use crate::mm::vas::{pde_address_of, ppe_address_of, pte_address_of, pxe_address_of};
 
 /// Sv48 satp mode (8 = Sv39, 9 = Sv48).
 pub const SATP_MODE_SV48: u64 = 9u64 << 60;
@@ -69,50 +68,86 @@ unsafe fn install_intermediate_riscv(parent: *mut MMPTE) -> bool {
     true
 }
 
+/// Return the physical address of the table referenced by a valid,
+/// non-leaf Sv48 entry.
+fn referenced_table_pa(entry: u64) -> Option<u64> {
+    if !is_valid(entry) || is_leaf(entry) {
+        return None;
+    }
+    Some(((entry & 0x000F_FFFF_FFFF_FC00) >> 10) << 12)
+}
+
+/// Return a mutable pointer to the Sv48 PTE at `table_pa[index]`.
+fn slot_at(table_pa: u64, index: usize) -> *mut u64 {
+    unsafe { (table_pa as *mut u64).add(index) }
+}
+
 /// Map a virtual page using a 4-level Sv48 page table. The
-/// `root` parameter is the physical address of the L0 (PXE)
-/// table; the implementation walks down through PPE, PDE and
-/// PTE levels and allocates intermediates as needed.
+/// `root_pa` parameter is the physical address of the L0 table;
+/// the implementation walks it directly and allocates missing
+/// intermediates as needed.
 ///
 /// Returns `false` on allocator failure.
 pub unsafe fn map_page_sv48(root_pa: u64, va: u64, pa: u64, flags: u64) -> bool {
-    // Compute the addresses of each level's PTE slot. We reuse
-    // the existing x86_64-style helpers but the levels here map
-    // to L0..L3 in Sv48 instead of the x86 PML4..PT.
-    let pxe_ptr = pxe_address_of(va);
-    let ppe_ptr = ppe_address_of(va);
-    let pde_ptr = pde_address_of(va);
-    let pte_ptr = pte_address_of(va);
-    if pxe_ptr.is_null() || ppe_ptr.is_null() || pde_ptr.is_null() || pte_ptr.is_null() {
-        return false;
-    }
-
-    // For Phase 2 we re-use the page-root pointer as a physical
-    // address (not a PFN). The caller is responsible for
-    // translating the root_pfn at boot time.
-    let _ = root_pa;
-
     unsafe {
-        let pxe = &mut *pxe_ptr;
-        if !is_valid(pxe.raw()) {
-            if !install_intermediate_riscv(pxe) {
-                return false;
+        let l0 = ((va >> 39) & 0x1FF) as usize;
+        let l1 = ((va >> 30) & 0x1FF) as usize;
+        let l2 = ((va >> 21) & 0x1FF) as usize;
+        let l3 = ((va >> 12) & 0x1FF) as usize;
+
+        let pxe_ptr = slot_at(root_pa, l0);
+        let pxe = *pxe_ptr;
+        let ppe_table_pa = if is_valid(pxe) && !is_leaf(pxe) {
+            match referenced_table_pa(pxe) {
+                Some(table) => table,
+                None => return false,
             }
-        }
-        let ppe = &mut *ppe_ptr;
-        if !is_valid(ppe.raw()) {
-            if !install_intermediate_riscv(ppe) {
-                return false;
+        } else if !is_valid(pxe) {
+            install_intermediate_riscv(pxe_ptr as *mut MMPTE);
+            match referenced_table_pa(*pxe_ptr) {
+                Some(table) => table,
+                None => return false,
             }
-        }
-        let pde = &mut *pde_ptr;
-        if !is_valid(pde.raw()) {
-            if !install_intermediate_riscv(pde) {
-                return false;
+        } else {
+            return false;
+        };
+
+        let ppe_ptr = slot_at(ppe_table_pa, l1);
+        let ppe = *ppe_ptr;
+        let pde_table_pa = if is_valid(ppe) && !is_leaf(ppe) {
+            match referenced_table_pa(ppe) {
+                Some(table) => table,
+                None => return false,
             }
-        }
-        let pte = &mut *pte_ptr;
-        *pte = MMPTE::from_raw(make_pte(pa, flags));
+        } else if !is_valid(ppe) {
+            install_intermediate_riscv(ppe_ptr as *mut MMPTE);
+            match referenced_table_pa(*ppe_ptr) {
+                Some(table) => table,
+                None => return false,
+            }
+        } else {
+            return false;
+        };
+
+        let pde_ptr = slot_at(pde_table_pa, l2);
+        let pde = *pde_ptr;
+        let pte_table_pa = if is_valid(pde) && !is_leaf(pde) {
+            match referenced_table_pa(pde) {
+                Some(table) => table,
+                None => return false,
+            }
+        } else if !is_valid(pde) {
+            install_intermediate_riscv(pde_ptr as *mut MMPTE);
+            match referenced_table_pa(*pde_ptr) {
+                Some(table) => table,
+                None => return false,
+            }
+        } else {
+            return false;
+        };
+
+        let pte_ptr = slot_at(pte_table_pa, l3);
+        *pte_ptr = make_pte(pa, flags) | PTE_V;
         asm!("sfence.vma {}, zero", in(reg) va, options(nostack));
     }
     true
@@ -120,44 +155,56 @@ pub unsafe fn map_page_sv48(root_pa: u64, va: u64, pa: u64, flags: u64) -> bool 
 
 /// Unmap a virtual page in Sv48 mode.
 pub unsafe fn unmap_page_sv48(va: u64) -> Option<u64> {
-    let pte_ptr = pte_address_of(va);
-    if pte_ptr.is_null() {
-        return None;
-    }
     unsafe {
-        let pte = &mut *pte_ptr;
-        if !is_valid(pte.raw()) {
-            return None;
+        let root_pa = crate::arch::riscv64::paging::root_phys();
+        let mut table_pa = root_pa;
+        let mut level = 0usize;
+        while level < SV48_LEVELS {
+            let shift = 39 - level * 9;
+            let index = ((va >> shift) & 0x1FF) as usize;
+            let entry = *slot_at(table_pa, index);
+            if !is_valid(entry) {
+                return None;
+            }
+            if level == SV48_LEVELS - 1 || is_leaf(entry) {
+                if level != SV48_LEVELS - 1 {
+                    return None;
+                }
+                let pa = (entry & 0x000F_FFFF_FFFF_FC00) >> 10 << 12;
+                *slot_at(table_pa, index) = 0;
+                asm!("sfence.vma {}, zero", in(reg) va, options(nostack));
+                return Some(pa);
+            }
+            table_pa = referenced_table_pa(entry)?;
+            level += 1;
         }
-        let pa = pte.hardware_page_frame();
-        pte.clear();
-        asm!("sfence.vma {}, zero", in(reg) va, options(nostack));
-        Some(pa)
+        None
     }
 }
 
 /// Translate a virtual address in Sv48 mode.
 pub unsafe fn translate_virt_sv48(va: u64) -> Option<u64> {
-    let pxe = unsafe { &*pxe_address_of(va) };
-    if !is_valid(pxe.raw()) {
-        return None;
+    unsafe {
+        let root_pa = crate::arch::riscv64::paging::root_phys();
+        let mut table_pa = root_pa;
+        for level in 0..SV48_LEVELS {
+            let shift = 39 - level * 9;
+            let index = ((va >> shift) & 0x1FF) as usize;
+            let entry = *slot_at(table_pa, index);
+            if !is_valid(entry) {
+                return None;
+            }
+            if level == SV48_LEVELS - 1 || is_leaf(entry) {
+                if level != SV48_LEVELS - 1 {
+                    return None;
+                }
+                let pa = ((entry & 0x000F_FFFF_FFFF_FC00) >> 10) << 12;
+                return Some(pa | (va & 0xFFF));
+            }
+            table_pa = referenced_table_pa(entry)?;
+        }
+        None
     }
-    let ppe = unsafe { &*ppe_address_of(va) };
-    if !is_valid(ppe.raw()) {
-        return None;
-    }
-    let pde = unsafe { &*pde_address_of(va) };
-    if !is_valid(pde.raw()) {
-        return None;
-    }
-    let pte = unsafe { &*pte_address_of(va) };
-    if !is_valid(pte.raw()) {
-        return None;
-    }
-    if is_leaf(pte.raw()) {
-        return Some(pte.hardware_page_frame() | (va & 0xFFF));
-    }
-    None
 }
 
 /// Load the Sv48 page-table root into `satp`.

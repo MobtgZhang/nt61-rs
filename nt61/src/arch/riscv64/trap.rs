@@ -284,13 +284,24 @@ pub extern "C" fn riscv64_trap_dispatch(frame: *mut TrapFrame) {
                 }
             }
             TrapKind::LoadPageFault | TrapKind::StorePageFault | TrapKind::InstructionPageFault => {
-                // Phase 1: not implemented yet — Phase 2 will plug
-                // in the mm::vas page-fault handler. For now we
-                // panic with diagnostic info so we can iterate.
                 let is_write = matches!(kind, TrapKind::StorePageFault);
                 let is_inst = matches!(kind, TrapKind::InstructionPageFault);
+                let access = crate::mm::access_fault::AccessFlags {
+                    read: !is_write,
+                    write: is_write,
+                    execute: is_inst,
+                    user: is_user,
+                    reserved_bit: false,
+                    instruction_fetch: is_inst,
+                };
+                if matches!(
+                    crate::mm::access_fault::handle(stval, access),
+                    crate::mm::access_fault::FaultStatus::Handled
+                ) {
+                    return;
+                }
                 panic!(
-                    "RV64 page fault @ {:#x} (kind={:?}, write={}, inst={}, user={}, sepc={:#x}, ra={:#x}, sp={:#x}, root={:#x})",
+                    "RV64 page fault @ {:#x} (kind={:?}, write={}, inst={}, user={}, sepc={:#x}, ra={:#x}, sp={:#x}, root={:#x}, sstatus={:#x})",
                     stval,
                     kind,
                     is_write,
@@ -299,13 +310,21 @@ pub extern "C" fn riscv64_trap_dispatch(frame: *mut TrapFrame) {
                     sepc,
                     unsafe { (*frame).ra },
                     unsafe { (*frame).sp },
-                    crate::arch::riscv64::paging::root_phys()
+                    crate::arch::riscv64::paging::root_phys(),
+                    sstatus
                 );
             }
             TrapKind::IllegalInstruction => {
                 panic!(
-                    "RV64 illegal instruction @ sepc={:#x} (kind={:?})",
-                    sepc, kind
+                    "RV64 illegal instruction @ sepc={:#x} stval={:#x} sstatus={:#x} user={} stvec={:#x} root={:#x} ra={:#x} sp={:#x}",
+                    sepc,
+                    stval,
+                    sstatus,
+                    is_user,
+                    crate::arch::riscv64::idt::trap_entry_addr(),
+                    crate::arch::riscv64::paging::root_phys(),
+                    unsafe { (*frame).ra },
+                    unsafe { (*frame).sp },
                 );
             }
             _ => {

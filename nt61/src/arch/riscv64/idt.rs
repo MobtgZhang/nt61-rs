@@ -23,8 +23,35 @@ global_asm!(
     ".align 4",
     ".global stvec_trap",
     "stvec_trap:",
-    // 1. Swap sp and sscratch to land on the per-CPU kernel stack.
-    "  csrrw sp, sscratch, sp",
+    // `sscratch` holds the current kernel-stack top. Swap it with `sp`
+    // before touching memory: user traps land on the kernel stack while
+    // the user sp moves to `sscratch`; kernel traps land on the saved
+    // kernel-stack top. The only special case is the very first kernel
+    // trap before `sscratch` has been primed.
+    "  csrrw sp,   sscratch, sp",
+    "  bnez  sp,   1f",
+    // First kernel trap: `sscratch` was still zero, so the interrupted
+    // supervisor stack is in `sscratch`.
+    "  csrr  sp,   sscratch",
+    "  addi  sp,   sp,   -256",
+    "  sd    t0,   8(sp)",
+    "  csrr  t0,   sscratch",
+    "  sd    t0,   240(sp)",
+    "  addi  t0,   sp,   256",
+    "  csrw  sscratch, t0",
+    "  j     3f",
+    "1:",
+    // User trap or a nested kernel trap: `sp` is now the saved kernel
+    // stack top and `sscratch` is the interrupted sp. Allocate the frame
+    // below that top, save the interrupted sp, and republish the new top
+    // for nested traps.
+    "  addi  sp,   sp,   -256",
+    "  sd    t0,   8(sp)",
+    "  csrr  t0,   sscratch",
+    "  sd    t0,   240(sp)",
+    "  addi  t0,   sp,   256",
+    "  csrw  sscratch, t0",
+    "3:",
     // 2. Spill the GPR file plus the four trap CSRs.
     "  sd    ra,   0(sp)",
     "  sd    t0,   8(sp)",
@@ -60,22 +87,19 @@ global_asm!(
     "  sd    t0,   224(sp)",
     "  csrr  t0,   scause",
     "  sd    t0,   232(sp)",
-    // Preserve the user stack pointer while `sscratch` still holds it.
-    "  csrr  t0,   sscratch",
-    "  sd    t0,   240(sp)",
     // 3. Hand off to the Rust dispatcher. a0 = pointer to trap
     //    frame (live on the kernel stack).
     "  mv    a0,   sp",
     "  call  riscv64_trap_dispatch",
     // 4. Restore state. We reload the trap CSRs first so that any
     //    change the dispatcher made (e.g. sepc advance) takes
-    //    effect.
+    //    effect. sstatus is loaded into a caller-saved register and
+    //    restored after the stack switch so SUM tracks the original
+    //    privilege mode.
     "  ld    t0,   232(sp)",
     "  csrw  scause, t0",
     "  ld    t0,   224(sp)",
     "  csrw  stval,  t0",
-    "  ld    t0,   216(sp)",
-    "  csrw  sstatus, t0",
     "  ld    t0,   208(sp)",
     "  csrw  sepc,   t0",
     "  ld    ra,   0(sp)",
@@ -106,10 +130,22 @@ global_asm!(
     "  ld    tp,   200(sp)",
     // The CSR restore block uses `t0` as a scratch register; reload the
     // saved value before returning to user mode.
-    "  ld    t0,   8(sp)",
-    // 5. Swap sp and sscratch back so user mode resumes on its own
-    //    stack pointer.
-    "  csrrw sp, sscratch, sp",
+    "  ld    t3,   216(sp)",
+    "  bnez  t3,   4f",
+    "  ld    t5,   8(sp)",
+    "  addi  t0,   sp,   256",
+    "  csrw  sscratch, t0",
+    "  ld    sp,   240(sp)",
+    "  mv    t0,   t5",
+    "  j     5f",
+    "4:",
+    "  ld    t5,   8(sp)",
+    "  addi  t0,   sp,   256",
+    "  csrw  sscratch, t0",
+    "  ld    sp,   240(sp)",
+    "  mv    t0,   t5",
+    "5:",
+    "  csrw  sstatus, t3",
     "  sret"
 );
 
@@ -127,6 +163,9 @@ pub fn init() {
     unsafe {
         let v = stvec_trap as *const () as u64;
         asm!("csrw stvec, {}", in(reg) v, options(nostack));
+        let stack_top: u64;
+        asm!("mv {}, sp", out(reg) stack_top, options(nostack));
+        asm!("csrw sscratch, {}", in(reg) stack_top, options(nostack));
     }
 }
 
