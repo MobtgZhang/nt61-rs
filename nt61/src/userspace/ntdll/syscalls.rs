@@ -31,7 +31,7 @@ pub const NT_QUERY_VIRTUAL_MEMORY: u32 = 0x0020;
 pub const NT_CREATE_FILE: u32 = 0x0052;
 pub const NT_OPEN_FILE: u32 = 0x0030;
 pub const NT_READ_FILE: u32 = 0x0003;
-pub const NT_WRITE_FILE: u32 = 0x0004;
+pub const NT_WRITE_FILE: u32 = 0x0005;
 pub const NT_CLOSE: u32 = 0x000C;
 pub const NT_QUERY_INFORMATION_FILE: u32 = 0x000E;
 pub const NT_SET_INFORMATION_FILE: u32 = 0x0024;
@@ -102,7 +102,7 @@ mod tests {
 
     #[test]
     fn native_numbers_match_windows_7_sp1() {
-        const EXPECTED: [(&str, u32); 49] = [
+        const EXPECTED: [(&str, u32); 50] = [
             ("NtAllocateVirtualMemory", NT_ALLOCATE_VIRTUAL_MEMORY),
             ("NtAlertResumeThread", NT_ALERT_RESUME_THREAD),
             ("NtAlertThread", NT_ALERT_THREAD),
@@ -144,6 +144,7 @@ mod tests {
             ("NtQueryVirtualMemory", NT_QUERY_VIRTUAL_MEMORY),
             ("NtReadFile", NT_READ_FILE),
             ("NtReadVirtualMemory", NT_READ_VIRTUAL_MEMORY),
+            ("NtWriteFile", NT_WRITE_FILE),
             ("NtResetEvent", NT_RESET_EVENT),
             ("NtResumeThread", NT_RESUME_THREAD),
             ("NtRaiseHardError", NT_RAISE_HARD_ERROR),

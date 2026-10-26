@@ -11,9 +11,47 @@ pub extern "system" fn __crt_startup(
     main(argc, argv)
 }
 
-/// TLS / atexit slot allocation stubs — Phase 3 fills these in.
-pub fn _initterm(_table: *const unsafe extern "system" fn()) {}
-pub fn _initterm_e(_table: *const unsafe extern "system" fn() -> i32) -> i32 {
+/// Walk a null-terminated table of C initializers and invoke each one,
+/// matching the MSVC _initterm contract used by CRT startup code.
+pub fn _initterm(table: *const unsafe extern "system" fn()) {
+    if table.is_null() {
+        return;
+    }
+    let mut i = 0usize;
+    loop {
+        let init = unsafe { *table.add(i) };
+        if init as usize == 0 {
+            break;
+        }
+        // SAFETY: each entry was emitted by the toolchain as an
+        // initializer that runs once, at startup, on the current
+        // thread. The table is linker-produced user-mode data.
+        unsafe { init() };
+        i += 1;
+    }
+}
+
+/// Walk a null-terminated table of CRT initializers that return an
+/// NTSTATUS-style status; abort on the first failure and propagate it,
+/// matching the MSVC _initterm_e contract.
+pub fn _initterm_e(table: *const unsafe extern "system" fn() -> i32) -> i32 {
+    if table.is_null() {
+        return 0;
+    }
+    let mut i = 0usize;
+    loop {
+        let init = unsafe { *table.add(i) };
+        if init as usize == 0 {
+            break;
+        }
+        // SAFETY: same toolchain-emitted-initializer contract as
+        // _initterm above.
+        let status = unsafe { init() };
+        if status != 0 {
+            return status;
+        }
+        i += 1;
+    }
     0
 }
 

@@ -41,17 +41,19 @@ pub fn build_startup_frame(
     }
 
     // Lay out the strings at the bottom of the stack so RSP -- as we
-    // push initial control -- points at the highest area. Phase 1
-    // copies the strings into the user stack but the returned VAs
-    // are not yet wired into the startup frame; they will land in
-    // Phase 2 when the syscall layer tracks the buffer pointers.
+    // push initial control -- points at the highest area. The string
+    // copies land in real user pages owned by this process.
     let strings_base = USER_STACK_TOP - 0x8000;
-    let _image_va = copy_utf16(pml4, strings_base, image_name)?;
-    let _cmd_va = copy_utf16(pml4, strings_base + 0x1000, command_line)?;
-    let _env_va = copy_utf16(pml4, strings_base + 0x2000, environment)?;
+    let image_va = copy_utf16(pml4, strings_base, image_name)?;
+    let cmd_va = copy_utf16(pml4, strings_base + 0x1000, command_line)?;
+    let env_va = copy_utf16(pml4, strings_base + 0x2000, environment)?;
 
-    // Initial RSP keeps 32 bytes free for any future frame-padding.
+    // Initial RSP is 16-byte aligned; [initial_rsp] is a null return
+    // address (process entry never returns) and the three string VAs
+    // sit in the 32 bytes just below RSP where the CRT can find them.
     let initial_rsp = USER_STACK_TOP - 64;
+    let frame: [u64; 4] = [0, image_va, cmd_va, env_va];
+    write_user_u64_array(pml4, initial_rsp - 32, &frame)?;
 
     Ok(initial_rsp)
 }
@@ -60,12 +62,50 @@ fn is_mapped(pml4: u64, va: u64, size: u64) -> bool {
     vas::is_user_range_mapped(pml4, va, size)
 }
 
-fn copy_utf16(_pml4: u64, _dst: u64, src: &[u16]) -> Result<u64, NTSTATUS> {
+/// Copy a UTF-16 string (with NUL terminator) into the target
+/// process's user address space. Returns the user VA of the copy.
+fn copy_utf16(pml4: u64, dst: u64, src: &[u16]) -> Result<u64, NTSTATUS> {
     if src.is_empty() {
         return Ok(0);
     }
-    // Phase 1 keeps a pointer to the buffer in the syscall layer.
-    Ok(src.as_ptr() as u64)
+    let mut bytes = alloc::vec::Vec::with_capacity(src.len() * 2 + 2);
+    for unit in src {
+        bytes.extend_from_slice(&unit.to_le_bytes());
+    }
+    bytes.extend_from_slice(&[0u8, 0u8]); // NUL terminator
+    write_user_bytes(pml4, dst, &bytes)?;
+    Ok(dst)
+}
+
+/// Write a byte buffer into the target process's user address space.
+/// Fails closed when the destination range is not mapped for this
+/// process; every access is volatile and performed while the process
+/// root is attached, and the previous root is always restored.
+fn write_user_bytes(pml4: u64, dst: u64, bytes: &[u8]) -> Result<(), NTSTATUS> {
+    if bytes.is_empty() {
+        return Ok(());
+    }
+    if !vas::is_user_range_mapped(pml4, dst, bytes.len() as u64) {
+        return Err(-0x0FFF_FFFFi32 as NTSTATUS);
+    }
+    let previous = vas::attach_process(pml4);
+    unsafe {
+        let mut p = dst as *mut u8;
+        for &b in bytes {
+            core::ptr::write_volatile(p, b);
+            p = p.add(1);
+        }
+    }
+    vas::detach_process(previous);
+    Ok(())
+}
+
+fn write_user_u64_array(pml4: u64, dst: u64, values: &[u64]) -> Result<(), NTSTATUS> {
+    let mut bytes = alloc::vec::Vec::with_capacity(values.len() * 8);
+    for v in values {
+        bytes.extend_from_slice(&v.to_le_bytes());
+    }
+    write_user_bytes(pml4, dst, &bytes)
 }
 
 /// Fill in the `RtlUserProcessParameters` structure that lives at
@@ -76,11 +116,23 @@ pub fn populate_process_parameters(
     cmd_line: &[u16],
 ) -> Result<u64, NTSTATUS> {
     let base_va = crate::userspace::loader::PROCESS_PARAMS_VA;
-    let _ = pml4; // not used yet — the page is mapped by the loader
-
-    // Phase 1 keeps the parameters zeroed; Phase 2 will copy in real
-    // data through the syscall table.
-    let _ = (image_name.as_ptr(), cmd_line.as_ptr());
+    // Write a well-formed (self-consistent) parameter block: lengths
+    // are valid, string members start empty. The real string VAs are
+    // carried in the startup frame below RSP (see build_startup_frame).
+    let mut bytes = alloc::vec::Vec::new();
+    let params = crate::ps::process::RtlUserProcessParameters::new();
+    // SAFETY: RtlUserProcessParameters is a plain-old-data struct; a
+    // byte-wise copy is valid and produces the same layout user code
+    // expects at PROCESS_PARAMS_VA.
+    let raw = unsafe {
+        core::slice::from_raw_parts(
+            core::ptr::addr_of!(params) as *const u8,
+            core::mem::size_of::<crate::ps::process::RtlUserProcessParameters>(),
+        )
+    };
+    bytes.extend_from_slice(raw);
+    let _ = (image_name, cmd_line);
+    write_user_bytes(pml4, base_va, &bytes)?;
     Ok(base_va)
 }
 
@@ -106,9 +158,18 @@ pub fn __security_cookie() -> u64 {
     if r != 0 {
         return r;
     }
-    // Mix the address of the function with the PID/TID; for Phase 1
-    // we just use the function pointer.
-    let new_cookie = 0xDEAD_BEEF_CAFE_BABE;
+    // Mix a per-boot timestamp and the caller's stack address so the
+    // cookie differs across boots and call sites instead of being a
+    // fixed constant.
+    let mut new_cookie = 0u64;
+    let sp = &new_cookie as *const _ as u64;
+    let tick = crate::hal::common::pit::get_system_time_ms();
+    new_cookie = 0x9E37_79B9_7F4A_7C15u64
+        ^ sp.rotate_left(17)
+        ^ tick.wrapping_mul(0xBF58_4763_6CE9_E2A1);
+    if new_cookie == 0 {
+        new_cookie = 1;
+    }
     COOKIE.store(new_cookie, Ordering::Relaxed);
     new_cookie
 }

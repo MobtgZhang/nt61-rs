@@ -73,13 +73,13 @@ impl UserProgramLoader {
         peb_already_initialized: bool,
         teb_already_initialized: bool,
     ) -> Result<UserProcessContext, NTSTATUS> {
-        // ---- 1. Resolve file bytes (fall back to stub if not found) ----
-        let image_storage = find_image_bytes(image_path);
-        let bytes: &[u8] = if let Some(image) = image_storage.as_deref() {
-            image
-        } else {
-            user_fallback_bytes()
+        // ---- 1. Resolve file bytes. A missing image is a hard error:
+        // we must never map a placeholder image and report success. ----
+        let image_storage = match find_image_bytes(image_path) {
+            Some(image) => image,
+            None => return Err(STATUS_NOT_FOUND),
         };
+        let bytes: &[u8] = &image_storage;
 
         // ---- 2. Run the complete PE pipeline and map the image ------
         let mapping = loader::load_named_image_into_user_address_space(
@@ -132,10 +132,10 @@ pub static USER_LOAD_COUNT: AtomicU64 = AtomicU64::new(0);
 // File / image resolution helpers
 // ---------------------------------------------------------------------------
 
-/// Look up an image by its NT path. The current implementation
-/// returns `None` for any path except the literal kernels we ship;
-/// callers should fall back to the hard-coded stub when nothing is
-/// found. A future revision will consult the FAT/PSID file cache.
+/// Look up an image by its NT path, consulting the on-disk file
+/// cache via SMSS. Returns `None` when the path cannot be read;
+/// callers must treat that as a load failure (`STATUS_NOT_FOUND`),
+/// never as an invitation to substitute a placeholder image.
 pub fn find_image_bytes(path: &str) -> Option<alloc::vec::Vec<u8>> {
     #[cfg(test)]
     {

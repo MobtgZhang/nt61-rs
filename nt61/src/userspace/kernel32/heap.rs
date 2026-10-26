@@ -29,18 +29,36 @@ struct BlockHeader {
     next: *mut BlockHeader,
 }
 
+/// One process's heap state. Heap metadata lives in the process's own
+/// address space at `HEAP_BASE`, so two processes must never share a
+/// free list: sharing corrupts both heaps when either allocates.
 #[derive(Clone, Copy)]
-struct HeapState {
+struct ProcessHeap {
     base: u64,
     free_head: *mut BlockHeader,
-    initialized: bool,
 }
 
-static HEAP: Spinlock<HeapState> = Spinlock::new(HeapState {
-    base: 0,
-    free_head: ptr::null_mut(),
-    initialized: false,
-});
+struct HeapTableEntry {
+    pml4: u64,
+    heap: ProcessHeap,
+}
+
+/// Upper bound on concurrently tracked process heaps. The boot-time
+/// process count is small; when the table is full `init_user_heap`
+/// fails closed (allocations return null) instead of sharing a heap.
+const HEAP_TABLE_MAX: usize = 32;
+
+static HEAPS: Spinlock<alloc::vec::Vec<HeapTableEntry>> = Spinlock::new(alloc::vec::Vec::new());
+
+/// PML4 of the process whose address space is currently active, or 0
+/// when no user process is running (heap ops then fail closed).
+fn current_process_pml4() -> u64 {
+    let ethread = crate::ps::thread::get_current_ethread();
+    if ethread.is_null() {
+        return 0;
+    }
+    unsafe { (*(*ethread).kthread.process).page_table_pml4 }
+}
 
 pub struct UserHeapAllocator;
 
@@ -51,10 +69,14 @@ pub fn init_user_heap(pml4: u64) -> u64 {
         return 0;
     }
 
-    let mut state = HEAP.lock();
-    crate::boot_println!("[USERHEAP] locked initialized={}", state.initialized);
-    if state.initialized {
-        return state.base;
+    let mut table = HEAPS.lock();
+    if let Some(entry) = table.iter().find(|e| e.pml4 == pml4) {
+        let base = entry.heap.base;
+        return base;
+    }
+    if table.len() >= HEAP_TABLE_MAX {
+        crate::hal::serial::write_string_always("[USERHEAP] table full\r\n");
+        return 0;
     }
 
     crate::hal::serial::write_string_always("[USERHEAP] mapping\r\n");
@@ -111,11 +133,13 @@ pub fn init_user_heap(pml4: u64) -> u64 {
     }
     crate::boot_println!("[USERHEAP] heap zeroed");
 
-    *state = HeapState {
-        base,
-        free_head: first_block,
-        initialized: true,
-    };
+    table.push(HeapTableEntry {
+        pml4,
+        heap: ProcessHeap {
+            base,
+            free_head: first_block,
+        },
+    });
     vas::detach_process(previous_root);
     crate::boot_println!("[USERHEAP] process detached");
     base
@@ -131,13 +155,17 @@ pub fn alloc_bytes(size: usize) -> *mut u8 {
     }
 
     let requested = align_up(size + HEADER_SIZE);
-    let mut state = HEAP.lock();
-    if !state.initialized {
-        return ptr::null_mut();
-    }
+    let mut table = HEAPS.lock();
+    let heap = match table
+        .iter_mut()
+        .find(|e| e.pml4 == current_process_pml4())
+    {
+        Some(entry) => &mut entry.heap,
+        None => return ptr::null_mut(),
+    };
 
     let mut previous: *mut BlockHeader = ptr::null_mut();
-    let mut current = state.free_head;
+    let mut current = heap.free_head;
     while !current.is_null() {
         unsafe {
             let block = &mut *current;
@@ -162,7 +190,7 @@ pub fn alloc_bytes(size: usize) -> *mut u8 {
                     block.size = requested;
                 }
                 if previous.is_null() {
-                    state.free_head = block.next;
+                    heap.free_head = block.next;
                 } else {
                     (*previous).next = block.next;
                 }
@@ -185,10 +213,16 @@ pub fn free_bytes(pointer: *mut u8) {
         return;
     }
 
-    let mut state = HEAP.lock();
-    if !state.initialized {
-        return;
-    }
+    let mut table = HEAPS.lock();
+    let heap = match table
+        .iter_mut()
+        .find(|e| e.pml4 == current_process_pml4())
+    {
+        Some(entry) => &mut entry.heap,
+        None => {
+            return;
+        }
+    };
 
     let block = unsafe { pointer.sub(HEADER_SIZE) as *mut BlockHeader };
     unsafe {
@@ -198,15 +232,15 @@ pub fn free_bytes(pointer: *mut u8) {
 
         (*block).flags = 0;
         let mut previous: *mut BlockHeader = ptr::null_mut();
-        let mut current = state.free_head;
+        let mut current = heap.free_head;
         while !current.is_null() && (current as usize) < block as usize {
             previous = current;
             current = (*current).next;
         }
 
         if previous.is_null() {
-            (*block).next = state.free_head;
-            state.free_head = block;
+            (*block).next = heap.free_head;
+            heap.free_head = block;
         } else {
             (*block).next = (*previous).next;
             (*previous).next = block;
