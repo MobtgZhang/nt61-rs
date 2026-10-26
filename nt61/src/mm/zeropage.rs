@@ -83,36 +83,17 @@ pub fn insert_zeroed(pfn_no: u64) {
 /// Request more zeroed pages (called when demand-zero fault needs a page)
 /// This signals the zero page thread to wake up and do more work
 pub fn request_zeroed_pages() {
-    let mut current_level = ZEROED_LEVEL.load(Ordering::Relaxed);
-
     // Check if we already have enough zeroed pages
-    if current_level >= ZEROED_TARGET {
+    if ZEROED_LEVEL.load(Ordering::Relaxed) >= ZEROED_TARGET {
         return;
     }
 
-    // Try to increase the target level atomically
-    loop {
-        match ZEROED_LEVEL.compare_exchange_weak(
-            current_level,
-            ZEROED_TARGET,
-            Ordering::SeqCst,
-            Ordering::Relaxed,
-        ) {
-            Ok(_) => {
-                // Successfully set target, signal the event to wake the zero page thread
-                let event = get_zero_event_ptr();
-                crate::ke::sync::wake(event, false);
-                break;
-            }
-            Err(actual) => {
-                current_level = actual;
-                if current_level >= ZEROED_TARGET {
-                    // Another thread already set enough, no need to signal
-                    break;
-                }
-            }
-        }
-    }
+    // Signal the event without touching ZEROED_LEVEL: that counter is
+    // the live zeroed-list population (maintained by insert_zeroed /
+    // get_zeroed_page / tick). The previous compare_exchange overwrote
+    // the real count with ZEROED_TARGET, desynchronising it from the
+    // list and making get_zeroed_page misreport availability.
+    crate::ke::sync::wake(get_zero_event_ptr(), false);
 }
 
 /// Pop a zeroed page. Falls back to zeroing a free page in place.

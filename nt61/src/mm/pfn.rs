@@ -528,6 +528,7 @@ impl PfnDatabase {
         let entry = self.entry(pfn).expect("pfn in range");
         unsafe {
             self.unlink_entry(entry, pfn);
+            (*entry).set_state(MMPFNSTATE::Active);
         }
         Some(pfn)
     }
@@ -541,6 +542,7 @@ impl PfnDatabase {
         let entry = self.entry(pfn).expect("pfn in range");
         unsafe {
             self.unlink_entry(entry, pfn);
+            (*entry).set_state(MMPFNSTATE::Active);
         }
         Some(pfn)
     }
@@ -554,6 +556,7 @@ impl PfnDatabase {
         let entry = self.entry(pfn).expect("pfn in range");
         unsafe {
             self.unlink_entry(entry, pfn);
+            (*entry).set_state(MMPFNSTATE::Active);
         }
         Some(pfn)
     }
@@ -567,6 +570,7 @@ impl PfnDatabase {
         let entry = self.entry(pfn).expect("pfn in range");
         unsafe {
             self.unlink_entry(entry, pfn);
+            (*entry).set_state(MMPFNSTATE::Active);
         }
         Some(pfn)
     }
@@ -580,6 +584,7 @@ impl PfnDatabase {
                 let entry = self.entry(pfn).expect("pfn in range");
                 unsafe {
                     self.unlink_entry(entry, pfn);
+                    (*entry).set_state(MMPFNSTATE::Active);
                 }
                 return Some(pfn);
             }
@@ -629,12 +634,28 @@ impl PfnDatabase {
     }
 
     /// Add a single PFN to the free list.
+    ///
+    /// If the PFN is still on one of the allocator lists (Free /
+    /// Zeroed / Standby / Modified / ModifiedNoWrite / Transition),
+    /// it is unlinked first. Inserting an entry that is already on a
+    /// list would create a cycle / double ownership, so pop_free
+    /// could hand the same page to two consumers.
     pub fn add_to_free(&mut self, pfn: PfnNumber) {
         let entry = match self.entry(pfn) {
             Some(e) => e,
             None => return,
         };
         unsafe {
+            let state = (*entry).state();
+            if state == MMPFNSTATE::Free
+                || state == MMPFNSTATE::Zeroed
+                || state.is_standby()
+                || state == MMPFNSTATE::Modified
+                || state == MMPFNSTATE::ModifiedNoWrite
+                || state == MMPFNSTATE::Transition
+            {
+                self.unlink_entry(entry, pfn);
+            }
             (*entry).set_state(MMPFNSTATE::Free);
             (*entry).set_standby_priority(0);
             (*entry).reference_count = 0;
@@ -948,6 +969,26 @@ pub fn init(base_pfn: PfnNumber, pfn_count: PfnNumber) {
         crate::mm::write_decimal_u64(db.free_count());
         crate::hal::serial::write_string_always("\r\n");
     }
+
+    // The heap was allocated from the buddy before this PFN database
+    // was seeded. `seed_free` therefore marks those live pages free;
+    // reserve them before any caller allocates PFN-backed page tables.
+    if let Some((base, size)) = crate::mm::heap::KERNEL_HEAP.configured_region() {
+        let heap_base_pfn = (base as u64).div_ceil(4096);
+        let heap_end_pfn = (base as u64 + size as u64) / 4096;
+        if heap_end_pfn > heap_base_pfn {
+            if !crate::mm::pfn::reserve_pfn_range(heap_base_pfn, heap_end_pfn - heap_base_pfn) {
+                crate::hal::serial::write_string_always("[mm] WARN: heap pfn reserve failed\r\n");
+            }
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        crate::mm::vas::reserve_system_page_tables(
+            crate::arch::read_current_page_root(),
+        );
+    }
 }
 
 /// Allocate one PFN (zeroed preferred, else free). Returns None if no
@@ -1140,27 +1181,18 @@ pub fn reserve_pfn_range(base_pfn: PfnNumber, count: PfnNumber) -> bool {
     if count == 0 {
         return true;
     }
-    crate::hal::serial::write_string_always("[MM] heap reserve lock about\r\n");
-    // Diagnostic: is the lock already held? Is PFN_COUNT correct?
-    crate::hal::serial::write_string_always("[MM] lock_state=");
-    crate::hal::serial::write_hex_u64_always(PFN_DB.is_locked() as u64);
-    crate::hal::serial::write_string_always(" pfn_count_static=");
-    crate::mm::write_decimal_u64(unsafe { PFN_COUNT });
-    crate::hal::serial::write_string_always("\r\n");
-    // Boot-time single-CPU path: bypass the spinlock (which hangs on
-    // LoongArch64) and access the PfnDatabase directly through the
-    // UnsafeCell. This is safe because:
-    //  1. `reserve_pfn_range` is only called during `mm::init`, which
-    //     runs on the BSP before APs are started.
-    //  2. The spinlock's `locked` field is confirmed to be 0 (unheld).
-    //  3. We hold no other locks at this point.
-    crate::hal::serial::write_string_always("[MM] heap reserve bypass lock\r\n");
-    let db_ptr = PFN_DB.raw_data_ptr() as *mut PfnDatabase;
-    let db = unsafe { &mut *db_ptr };
+    // Take the PFN database lock like every other allocator entry
+    // point (reserve_pfn, allocate_pfn, ...). The previous lock-free
+    // path dereferenced the database through raw_data_ptr(), which is
+    // UB as soon as any other CPU (or any caller after AP bring-up)
+    // touches the database concurrently. PFN_DB.lock() is proven safe
+    // here: the same lock is already taken during mm::init by
+    // pfn::allocate_pfn (self-map page allocation) without hangs.
+    let mut db = PFN_DB.lock();
     for index in 0..count {
-        let pfn = base_pfn + index;
+        let pfn = base_pfn.wrapping_add(index);
         let entry = match db.entry(pfn) {
-            Some(entry) => entry,
+            Some(e) => e,
             None => return false,
         };
         unsafe {
@@ -1191,6 +1223,55 @@ pub fn reserve_pfn_range(base_pfn: PfnNumber, count: PfnNumber) -> bool {
 pub fn release_zeroed(pfn: PfnNumber) {
     let mut db = PFN_DB.lock();
     db.insert_zeroed(pfn);
+}
+
+/// Increment the reference count of an active PFN (page sharing).
+///
+/// Returns `false` when the PFN is out of range or not `Active`:
+/// only live allocations can be shared, and bumping the counter of a
+/// free frame would silently resurrect a page the allocator may
+/// already have handed out elsewhere.
+pub fn reference_pfn(pfn: PfnNumber) -> bool {
+    let mut db = PFN_DB.lock();
+    let entry = match db.entry(pfn) {
+        Some(e) => e,
+        None => return false,
+    };
+    unsafe {
+        if (*entry).state() != MMPFNSTATE::Active {
+            return false;
+        }
+        let current = (*entry).reference_count;
+        (*entry).reference_count = current.saturating_add(1);
+    }
+    true
+}
+
+/// Decrement the reference count of an active PFN.
+///
+/// Returns `true` when this call dropped the last reference (the
+/// count reached zero) so the caller can return the frame to its
+/// allocator. The frame is deliberately not freed here: the freeing
+/// path differs per allocator (buddy `free_pages` vs PFN release)
+/// and only the caller knows which one owns the page. Returns
+/// `false` when the PFN is out of range, not `Active`, or still
+/// shared.
+pub fn dereference_pfn(pfn: PfnNumber) -> bool {
+    let mut db = PFN_DB.lock();
+    let entry = match db.entry(pfn) {
+        Some(e) => e,
+        None => return false,
+    };
+    unsafe {
+        if (*entry).state() != MMPFNSTATE::Active {
+            return false;
+        }
+        if (*entry).reference_count == 0 {
+            return false;
+        }
+        (*entry).reference_count -= 1;
+        (*entry).reference_count == 0
+    }
 }
 
 #[inline]
@@ -1241,16 +1322,22 @@ pub fn get_standby_pages(max_count: usize) -> alloc::vec::Vec<PfnNumber> {
     let db = PFN_DB.lock();
 
     // Iterate through the PFN database to find standby pages
-    let count = db.total_count().min(1024) as usize;
-    for i in 0..count {
-        if result.len() >= max_count {
+    // PFN entries are addressed by absolute PFN: entry() subtracts
+    // lowest_pfn internally, so the scan must start at db.lowest_pfn
+    // (index 0 would look up a PFN below the database range and never
+    // find any standby page).
+    let max_scan = db.total_count().min(1024) as usize;
+    let mut scanned = 0usize;
+    for pfn in db.lowest_pfn..db.highest_pfn {
+        if scanned >= max_scan || result.len() >= max_count {
             break;
         }
-        if let Some(entry_ptr) = db.entry(i as PfnNumber) {
+        if let Some(entry_ptr) = db.entry(pfn) {
+            scanned += 1;
             let entry = unsafe { &*entry_ptr };
             let state = entry.state();
             if state.is_standby() {
-                result.push(i as PfnNumber);
+                result.push(pfn);
             }
         }
     }
@@ -1359,9 +1446,10 @@ mod tests {
     #[test]
     fn test_zeroed_list() {
         let mut db = make_db();
-        let pfn = 2100u64;
+        let pfn = db.pop_free().expect("free page available");
+        assert_eq!(db.free_count(), 1499);
         db.add_to_free(pfn);
-        assert_eq!(db.free_count(), 1501);
+        assert_eq!(db.free_count(), 1500);
 
         // Pop and mark as zeroed
         db.unlink(pfn);

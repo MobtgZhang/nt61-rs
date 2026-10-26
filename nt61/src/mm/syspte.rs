@@ -166,7 +166,8 @@ pub fn map_io_space(pa: u64, count: u64) -> Option<u64> {
         // mappings and is what the AHCI/e1000 drivers expect). PCD/PWT
         // are clear (uncached is unnecessary for MMIO behind an iATU;
         // the controller's own caches handle coherency).
-        const FLAGS: u64 = 0x1 | 0x2 | 0x4;
+        // U (0x4) omitted: MMIO windows are kernel-only mappings.
+        const FLAGS: u64 = 0x1 | 0x2;
         if !crate::arch::map_page(va_i, pa_i, FLAGS) {
             // Roll back what we've mapped so far.
             for j in 0..i {

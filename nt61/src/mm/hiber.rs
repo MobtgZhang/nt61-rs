@@ -434,7 +434,7 @@ pub fn save_s4_state() -> bool {
     // `CompressionType::None` so the restore path accepts its own
     // images. LZNT1 compression is applied once the compressor is
     // wired into this save path.
-    let compression = CompressionType::Lznt1;
+    let compression = CompressionType::None;
 
     let hiber_size = save_memory_image(compression);
     if hiber_size == 0 {

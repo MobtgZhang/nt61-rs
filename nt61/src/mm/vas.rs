@@ -57,12 +57,21 @@ pub fn pte_address_of(va: u64) -> *mut MMPTE {
 }
 #[inline]
 pub fn pde_address_of(va: u64) -> *mut MMPTE {
-    let linear_directory_page = (va >> (PAGE_SHIFT + 9)) & 0x1FF;
+    // The PDE window addresses every page-table page in the address
+    // space, so the index is the *full* PT-page number (VA >> 21),
+    // not a 9-bit sub-index. The window between PDE_BASE and
+    // PPE_BASE is exactly 2^27 * 8 bytes = 1 GiB, which only fits
+    // the untruncated index. Masking to 9 bits aliased every page
+    // table beyond the first 2 MiB onto the first 512.
+    let linear_directory_page = (va & VIRTUAL_ADDRESS_MASK) >> (PAGE_SHIFT + 9);
     (PDE_BASE + linear_directory_page * 8) as *mut MMPTE
 }
 #[inline]
 pub fn ppe_address_of(va: u64) -> *mut MMPTE {
-    let linear_pointer_page = (va >> (PAGE_SHIFT + 18)) & 0x1FF;
+    // Same reasoning: the PPE window (2 MiB) is indexed by the full
+    // PD-page number (VA >> 30). A 9-bit mask aliased every page
+    // directory beyond the first 1 GiB onto the first 512.
+    let linear_pointer_page = (va & VIRTUAL_ADDRESS_MASK) >> (PAGE_SHIFT + 18);
     (PPE_BASE + linear_pointer_page * 8) as *mut MMPTE
 }
 #[inline]
@@ -281,36 +290,29 @@ pub fn install_single_level_self_map_direct(pml4_phys: u64) {
 }
 
 /// Identity-map a low-memory region into the system page root.
-pub fn ensure_low_identity_map(pa_base: u64, size: u64) {
-    crate::arch::common::self_map::ensure_low_identity_map(pa_base, size);
+pub fn ensure_low_identity_map(pa_base: u64, size: u64) -> bool {
+    crate::arch::common::self_map::ensure_low_identity_map(pa_base, size)
+}
+
+/// Call `ensure_low_identity_map` and loudly report failures on the
+/// boot serial log instead of silently continuing with an unmapped
+/// region. Boot-critical callers use this so an OOM during page-table
+/// setup cannot masquerade as success.
+fn ensure_identity_or_log(pa_base: u64, size: u64, what: &str) {
+    if !ensure_low_identity_map(pa_base, size) {
+        crate::boot_println!(
+            "[VAS] ERROR: identity-map failed for {} (pa=0x{:x} size=0x{:x})",
+            what,
+            pa_base,
+            size
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Per-process address space creation
 // ---------------------------------------------------------------------------
 
-/// create a new user process address space. Allocates a new PML4 page
-/// from the PFN database, copies the system PML4 into it, then
-/// overwrites the user-private entries, and returns the physical
-/// address of the new PML4.
-///
-/// # Note on kernel-half layout
-///
-/// In this kernel the kernel image is *identity-mapped* in the low
-/// half of the address space (PML4 indices 0..256), not in the
-/// high half. The "kernel half" PML4 indices 256..512 are otherwise
-/// empty (apart from the recursive self-map at index
-/// `MI_SELF_MAP_INDEX = 0x1ED`).
-///
-/// If we only copied the high half into the new PML4, the user
-/// process would have no mapping for the kernel image: as soon as
-/// we switched CR3 to the new PML4, the very first instruction
-/// executed by the kernel (e.g. the return address inside
-/// `attach_process`) would page-fault.
-///
-/// We therefore copy *all* of the system PML4 into the new PML4.
-/// This keeps the kernel reachable in the user PML4 (Phase 0 has
-/// no user/kernel isolation; that will be added later).
 /// create a new user process address space. Allocates a new PML4 page
 /// from the PFN database, copies the system PML4 into it, and
 /// returns the physical address of the new PML4.
@@ -329,17 +331,18 @@ pub fn ensure_low_identity_map(pa_base: u64, size: u64) {
 /// executed by the kernel (e.g. the return address inside
 /// `attach_process`) would page-fault.
 ///
-/// We therefore copy the *entire* system PML4 into the new PML4.
-/// This keeps the kernel reachable in the user PML4 (Phase 0 has
-/// no user/kernel isolation; that will be added later). The
-/// `install_into_pml4` call in `kernel_main` will then overwrite
-/// the user-mode entries (PML4[0] for the user entry stub) using
-/// the shared identity-mapped PDPT — this is fine for Phase 0
-/// because we are not enforcing isolation yet.
+/// On x86_64 the copy is split by ownership (see
+/// `copy_system_root_for_process`): supervisor-only kernel entries
+/// are carried over verbatim so the kernel stays reachable under a
+/// process CR3, while the low-identity chain under PML4[0] is
+/// deep-copied into freshly allocated tables so per-process user
+/// mappings (ring-3 stub, user allocations in the low half) never
+/// share page-table pages with the system root or with other
+/// processes. Later kernel identity mappings installed in the
+/// system chain are merged back into the private copy by
+/// `refresh_kernel_mappings`.
 pub fn create_user_address_space() -> Option<u64> {
-    crate::hal::serial::write_string_always("[VAS] enter\r\n");
     let pfn = pfn::allocate_pfn()?;
-    crate::hal::serial::write_string_always("[VAS] pfn\r\n");
     crate::boot_debug_println!("[VAS] create_user_address_space: A: new pfn=0x{:x}", pfn);
     // The root page is handed out by the PFN allocator. On non-x86
     // targets the kernel does not necessarily map every physical
@@ -348,57 +351,51 @@ pub fn create_user_address_space() -> Option<u64> {
     // used by the hardware root register identical to the address used
     // by Rust.
     let root_va = pfn << 12;
-    crate::hal::serial::write_string_always("[VAS] rootmap\r\n");
     if !crate::arch::identity_map_region(root_va, 4096) {
-        crate::hal::serial::write_string_always("[VAS] rootmap fail\r\n");
         crate::boot_debug_println!(
             "[VAS] create_user_address_space: ERROR: root identity map failed"
         );
         pfn::free_pfn(pfn);
         return None;
     }
-    crate::hal::serial::write_string_always("[VAS] rootmap ok\r\n");
     // Zero the new PML4.
     unsafe {
         let va = (pfn << 12) as *mut u8;
         ptr::write_bytes(va, 0, 4096);
     }
-    // Copy the *entire* system PML4. This gives the new user PML4
-    // the same kernel mappings (identity-mapped image, recursive
-    // self-map, etc.) that the boot PML4 has.
     let system = system_pml4_mut();
-    crate::hal::serial::write_string_always("[VAS] copy\r\n");
     let dst = (pfn << 12) as *mut MMPTE;
+    #[cfg(target_arch = "x86_64")]
+    {
+        // x86_64: kernel identity/self-map entries must stay reachable
+        // while the kernel executes under a process CR3, but the user
+        // half must start clean. See copy_system_root_for_process.
+        if !copy_system_root_for_process(dst, system) {
+            crate::boot_debug_println!(
+                "[VAS] create_user_address_space: ERROR: root copy failed (OOM)",
+            );
+            pfn::free_pfn(pfn);
+            return None;
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
     unsafe {
         for i in 0..PT_ENTRIES {
             let src_entry = *system.add(i);
-            #[cfg(target_arch = "x86_64")]
-            {
-                *dst.add(i) = MMPTE {
-                    u_long: crate::arch::translate_x86_root_entry(src_entry.raw()),
-                };
-            }
-            #[cfg(not(target_arch = "x86_64"))]
-            {
-                // The system root is already native on non-x86 targets:
-                // Sv39 on RISC-V and LoongArch directory descriptors on
-                // LoongArch64. `system_pml4_mut()` addresses the live
-                // hardware root, so translating here would re-interpret
-                // native PPNs as x86 frame numbers and corrupt the copy.
+            if i >= 256 {
                 *dst.add(i) = MMPTE { u_long: src_entry.raw() };
+            } else {
+                *dst.add(i) = MMPTE { u_long: 0 };
             }
         }
     }
-    crate::hal::serial::write_string_always("[VAS] dst=");
-    crate::hal::serial::write_hex_u64_always(pfn << 12);
-    crate::hal::serial::write_string_always(" root0_x86=");
-    crate::hal::serial::write_hex_u64_always(unsafe { (*system.add(0)).raw() });
-    crate::hal::serial::write_string_always(" root0_sv39=");
-    crate::hal::serial::write_hex_u64_always(unsafe {
-        core::ptr::read_volatile((pfn << 12) as *const u64)
-    });
-    crate::hal::serial::write_string_always("\r\n");
-    crate::hal::serial::write_string_always("[VAS] copy ok\r\n");
+    #[cfg(all(not(target_arch = "x86_64"), not(target_arch = "aarch64")))]
+    unsafe {
+        for i in 0..PT_ENTRIES {
+            let src_entry = *system.add(i);
+            *dst.add(i) = MMPTE { u_long: src_entry.raw() };
+        }
+    }
     crate::boot_debug_println!("[VAS] create_user_address_space: B: copied system PML4",);
     // Install a self-map chain + identity map for this PML4. The
     // system PML4's identity-map entry points at the system PML4's
@@ -409,21 +406,17 @@ pub fn create_user_address_space() -> Option<u64> {
     // (and any subsequent context switch to this PML4) can reach
     // the new page tables through the self-map.
     if crate::arch::common::self_map::install_with_identity_map(pfn).is_err() {
-        crate::hal::serial::write_string_always("[VAS] selfmap fail\r\n");
         // [DISABLED-KPRINTLN]         // // kprintln!("[VAS] ERROR: create_user_address_space failed to install self-map");
         crate::boot_debug_println!("[VAS] create_user_address_space: ERROR: self-map failed");
         pfn::free_pfn(pfn);
         return None;
     }
-    crate::hal::serial::write_string_always("[VAS] selfmap ok\r\n");
     crate::boot_debug_println!("[VAS] create_user_address_space: D: self-map installed");
     if crate::arch::common::self_map::install_hyperspace(pfn).is_err() {
-        crate::hal::serial::write_string_always("[VAS] hyper fail\r\n");
         crate::boot_debug_println!("[VAS] create_user_address_space: ERROR: hyperspace failed");
         pfn::free_pfn(pfn);
         return None;
     }
-    crate::hal::serial::write_string_always("[VAS] hyper ok\r\n");
     // Force W=1 on every identity-map (low-half) entry in the new
     // PML4 so the kernel can write to page-table pages while running
     // with this user PML4 as CR3. Without this, a write to a PT/PD
@@ -448,9 +441,13 @@ pub fn create_user_address_space() -> Option<u64> {
 /// console allocations made after the snapshot install new mappings in
 /// the system root; without this refresh, the first syscall executed
 /// under the process CR3 can fault while writing to a kernel console
-/// buffer. We only copy absent low-half entries (excluding index 0 for
-/// the private user image and index 255 for the private user stack) and
-/// clear U/S so the mappings remain kernel-only.
+/// buffer. Kernel-half entries (indices 1..511, excluding the self-map
+/// slot) are copied into absent process slots with the U bit cleared
+/// so the mappings remain kernel-only. Index 0 holds a per-process
+/// private copy of the low identity chain (see
+/// `copy_system_root_for_process`), so it is merged at the chain
+/// level: an absent process chain is deep-copied from the system
+/// chain, an existing one is merged via `sync_identity_chain`.
 pub fn refresh_kernel_mappings(pml4_phys: u64) {
     if pml4_phys == 0 {
         return;
@@ -461,9 +458,43 @@ pub fn refresh_kernel_mappings(pml4_phys: u64) {
     }
     #[cfg(target_arch = "x86_64")]
     {
-        let system = system_phys as *const MMPTE;
-        let process = pml4_phys as *mut MMPTE;
+        // The root tables live at arbitrary physical addresses. The
+        // historical "physical address == pointer" shortcut only
+        // worked while a full 1:1 identity map of every allocated
+        // frame existed, which is not guaranteed in process context.
+        // Map both tables explicitly through the hyperspace window.
+        let system_guard = match crate::mm::vm::direct_map_guard(system_phys, 4096) {
+            Ok(guard) => guard,
+            Err(()) => return,
+        };
+        let process_guard = match crate::mm::vm::direct_map_guard(pml4_phys, 4096) {
+            Ok(guard) => guard,
+            Err(()) => return,
+        };
+        let system = system_guard.va() as *const MMPTE;
+        let process = process_guard.va() as *mut MMPTE;
         unsafe {
+            // PML4[0] is a per-process private deep copy of the low
+            // identity chain (see `copy_system_root_for_process`), so
+            // it cannot be merged entry-by-entry at the root level.
+            // Merge at chain level instead: absent chains are copied
+            // wholesale, present chains are merged recursively.
+            let system_entry0 = core::ptr::read_volatile(system).raw();
+            if system_entry0 & PTE_P != 0 {
+                let sys_chain = system_entry0 & PTE_FRAME_MASK;
+                let process_entry0 = core::ptr::read_volatile(process).raw();
+                if process_entry0 & PTE_P == 0 {
+                    if let Some(copied) = copy_identity_chain(sys_chain, 3) {
+                        let new0 = (system_entry0 & !PTE_FRAME_MASK) | copied;
+                        core::ptr::write_volatile(process, MMPTE { u_long: new0 });
+                    }
+                    // On OOM the process entry stays absent; the next
+                    // refresh retries.
+                } else {
+                    let proc_chain = process_entry0 & PTE_FRAME_MASK;
+                    sync_identity_chain(sys_chain, proc_chain, 3);
+                }
+            }
             for idx in 1..(PT_ENTRIES - 1) {
                 if idx == MI_SELF_MAP_INDEX || idx == 255 {
                     continue;
@@ -491,8 +522,19 @@ pub fn refresh_kernel_mappings(pml4_phys: u64) {
     {
         // The live system root is already in native MMU encoding on
         // non-x86 targets, so copy its descriptors verbatim.
-        let system = system_phys as *const MMPTE;
-        let process = pml4_phys as *mut MMPTE;
+        // As on x86_64, the root tables are reached through the
+        // hyperspace direct-map window instead of assuming their
+        // physical addresses are dereferenceable.
+        let system_guard = match crate::mm::vm::direct_map_guard(system_phys, 4096) {
+            Ok(guard) => guard,
+            Err(()) => return,
+        };
+        let process_guard = match crate::mm::vm::direct_map_guard(pml4_phys, 4096) {
+            Ok(guard) => guard,
+            Err(()) => return,
+        };
+        let system = system_guard.va() as *const MMPTE;
+        let process = process_guard.va() as *mut MMPTE;
         unsafe {
             for idx in 1..PT_ENTRIES {
                 let process_entry = core::ptr::read_volatile(process.add(idx)).raw();
@@ -514,27 +556,21 @@ pub fn refresh_kernel_mappings(pml4_phys: u64) {
 /// Attach a process. Updates the per-CPU CR3 / TTBR1 etc. via the
 /// arch-specific `load_page_root` helper. Returns the previous root.
 pub fn attach_process(pml4_phys: u64) -> u64 {
-    crate::hal::serial::write_string_always("[ATTACH] enter\r\n");
     let prev = current_root();
-    crate::hal::serial::write_string_always("[ATTACH] prev\r\n");
     let root_pfn = pml4_phys >> 12;
-    let root_ptr = pml4_phys as *const u64;
-    for index in [0usize, 1, 2, 4, 5, 9, 10, 255, 256, 510, 511] {
-        crate::hal::serial::write_string_always("[ROOT");
-        crate::hal::serial::write_hex_u64_always(index as u64);
-        crate::hal::serial::write_string_always("] ");
-        crate::hal::serial::write_hex_u64_always(unsafe { core::ptr::read_volatile(root_ptr.add(index)) });
-        crate::hal::serial::write_string_always("\r\n");
-    }
+    // The previous implementation traced the first PML4 entries of
+    // the new root here by reading `pml4_phys` as a pointer. That
+    // dereference silently relied on a 1:1 identity map of the root
+    // page being present under the *old* root — an assumption that
+    // does not hold in process context — and it spammed COM1 on every
+    // context switch. Loading a root register does not need to read
+    // the root's contents, so the trace is removed instead of
+    // re-guarded.
     unsafe {
-        crate::hal::serial::write_string_always("[ATTACH] load\r\n");
         crate::arch::load_page_root(root_pfn);
     }
-    crate::hal::serial::write_string_always("[ATTACH] loaded\r\n");
     set_current_root(pml4_phys);
-    crate::hal::serial::write_string_always("[ATTACH] current\r\n");
     crate::arch::common::percpu::set_address_space_roots(prev, pml4_phys);
-    crate::hal::serial::write_string_always("[ATTACH] percpu\r\n");
     prev
 }
 
@@ -598,6 +634,150 @@ fn alloc_zeroed_page() -> Option<u64> {
 /// they need to write into the page before mapping it).
 pub fn alloc_zeroed_page_for_vas() -> Option<u64> {
     alloc_zeroed_page()
+}
+
+/// x86_64 page-size bit. In a PDE/PDPTE this is the PS (page size)
+/// bit marking a 2 MiB / 1 GiB leaf; the same bit position is named
+/// PAT in leaf PTEs, which never carry PS semantics.
+#[cfg(target_arch = "x86_64")]
+const PS_BIT: u64 = 1 << 7;
+
+/// Deep-copy an x86_64 page-table subtree rooted at `table_phys`.
+///
+/// `level` is the level of the table itself: 3 = PDPT (direct child
+/// of a PML4), 2 = PD, 1 = PT. Entries are classified per level:
+///
+/// * Leaves (level 1, or PS set at level 2/3) that carry the U bit
+///   are user mappings and are dropped: user pages belong to the
+///   process that mapped them, never to the shared system chain.
+/// * Supervisor leaves (the kernel identity map uses 2 MiB PDEs
+///   without U, see `ensure_low_identity_map`) are copied verbatim.
+/// * Intermediate entries are recursed into; the copy references the
+///   freshly allocated child tables, so the private chain shares no
+///   page-table pages with the system root.
+///
+/// Returns the physical address of the new table. On OOM returns
+/// `None`; pages allocated by already-completed sub-levels are then
+/// unreachable and intentionally leaked rather than partially freed
+/// (this runs during early boot where no safe teardown exists).
+#[cfg(target_arch = "x86_64")]
+unsafe fn copy_identity_chain(table_phys: u64, level: u8) -> Option<u64> {
+    let new_table = alloc_zeroed_page()?;
+    let src = table_phys as *const u64;
+    let dst = new_table as *mut u64;
+    for idx in 0..PT_ENTRIES {
+        let entry = core::ptr::read_volatile(src.add(idx));
+        if entry & PTE_P == 0 {
+            continue;
+        }
+        let is_leaf = level == 1 || (entry & PS_BIT) != 0;
+        if is_leaf {
+            if entry & PTE_US != 0 {
+                continue;
+            }
+            core::ptr::write_volatile(dst.add(idx), entry);
+        } else {
+            let child_phys = entry & PTE_FRAME_MASK;
+            let copied = copy_identity_chain(child_phys, level - 1)?;
+            let new_entry = (entry & !PTE_FRAME_MASK) | copied;
+            core::ptr::write_volatile(dst.add(idx), new_entry);
+        }
+    }
+    Some(new_table)
+}
+
+/// Copy the system PML4 into a freshly zeroed process PML4, splitting
+/// the entries by ownership:
+///
+/// * PML4[0] holds the low identity chain that user mappings in the
+///   low half (ring-3 stub, user allocator VAs) also live under. It
+///   is deep-copied via `copy_identity_chain` so each process owns
+///   its own chain and user mappings never leak between processes.
+/// * Every other present entry is a supervisor-owned mapping and is
+///   carried over with the U bit cleared (via
+///   `translate_x86_root_entry`) so the kernel stays reachable under
+///   a process CR3 while ring 3 cannot reach it.
+///
+/// Returns `false` on OOM, in which case the caller must consider the
+/// destination PML4 invalid.
+#[cfg(target_arch = "x86_64")]
+fn copy_system_root_for_process(dst: *mut MMPTE, system: *const MMPTE) -> bool {
+    unsafe {
+        let src0 = core::ptr::read_volatile(system).raw();
+        if src0 & PTE_P != 0 {
+            let sys_chain = src0 & PTE_FRAME_MASK;
+            match copy_identity_chain(sys_chain, 3) {
+                Some(copied) => {
+                    let new0 = (src0 & !PTE_FRAME_MASK) | copied;
+                    core::ptr::write_volatile(dst, MMPTE { u_long: new0 });
+                }
+                None => return false,
+            }
+        }
+        for idx in 1..PT_ENTRIES {
+            let entry = core::ptr::read_volatile(system.add(idx)).raw();
+            if entry & PTE_P == 0 {
+                continue;
+            }
+            let kernel_entry = crate::arch::translate_x86_root_entry(entry);
+            core::ptr::write_volatile(dst.add(idx), MMPTE { u_long: kernel_entry });
+        }
+    }
+    true
+}
+
+/// Merge kernel mappings that were installed in the system's low
+/// identity chain after a process PML4 snapshot into that process's
+/// private copy of the chain.
+///
+/// `sys_phys` / `proc_phys` are the physical addresses of the two
+/// tables at `level` (3 = PDPT, 2 = PD, 1 = PT). Semantics:
+///
+/// * Supervisor leaves (U clear) are merged into absent process
+///   slots. Present slots are never overwritten: a process leaf at
+///   the same position is either its own user mapping (user wins) or
+///   a copy of an older kernel mapping (still valid).
+/// * User leaves (U set) in the system chain are skipped: they
+///   belong to whichever process mapped them, not to this process.
+/// * Absent intermediates are deep-copied wholesale via
+///   `copy_identity_chain`; present intermediates are merged
+///   recursively.
+///
+/// Returns `false` on OOM (the caller may retry on the next refresh);
+/// pages allocated by completed sub-levels are leaked, as in
+/// `copy_identity_chain`.
+#[cfg(target_arch = "x86_64")]
+unsafe fn sync_identity_chain(sys_phys: u64, proc_phys: u64, level: u8) -> bool {
+    let src = sys_phys as *const u64;
+    let dst = proc_phys as *mut u64;
+    for idx in 0..PT_ENTRIES {
+        let sys_entry = core::ptr::read_volatile(src.add(idx));
+        if sys_entry & PTE_P == 0 {
+            continue;
+        }
+        let proc_entry = core::ptr::read_volatile(dst.add(idx));
+        let is_leaf = level == 1 || (sys_entry & PS_BIT) != 0;
+        if is_leaf {
+            if proc_entry & PTE_P == 0 && sys_entry & PTE_US == 0 {
+                core::ptr::write_volatile(dst.add(idx), sys_entry);
+            }
+        } else if proc_entry & PTE_P == 0 {
+            let child = sys_entry & PTE_FRAME_MASK;
+            if let Some(copied) = copy_identity_chain(child, level - 1) {
+                let new_entry = (sys_entry & !PTE_FRAME_MASK) | copied;
+                core::ptr::write_volatile(dst.add(idx), new_entry);
+            } else {
+                return false;
+            }
+        } else {
+            let sys_child = sys_entry & PTE_FRAME_MASK;
+            let proc_child = proc_entry & PTE_FRAME_MASK;
+            if !sync_identity_chain(sys_child, proc_child, level - 1) {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// Read a PTE from a table addressed by its physical address.
@@ -777,18 +957,12 @@ pub fn map_page_in_pml4(pml4_phys: u64, va: u64, pa: u64, flags: u64) -> MmStatu
         // The NX bit lives in bit 63, well above the 12-bit flags
         // window that holds the protection bits, so we OR it in
         // explicitly instead of relying on `flags & 0xFFF`.
-        // CRITICAL: For user-mode .text pages we MUST clear NX so
-        // the CPU allows instruction fetch. The original kernel
-        // PML4 copy had NX=0, but a stray write somewhere might
-        // set bit 63; we mask it out defensively.
         let leaf = (pa & 0x000F_FFFF_FFFF_F000)
             | (flags & 0xFFF)
             | PTE_P
             | PTE_A
             | PTE_D
             | (flags & PTE_NX);
-        // Ensure NX=0 for now (debug).
-        let leaf = leaf & !(1u64 << 63);
         crate::boot_debug_println!(
             "[VAS] map_page_in_pml4: PT[{}] <= 0x{:x} (for va=0x{:x})",
             pt_idx,
@@ -913,7 +1087,11 @@ pub fn protect_user_range(pml4_phys: u64, va: u64, size: u64, new_protect: u32) 
                 new_pte |= PTE_NX;
             } // non-executable by default
             pte_write(pt_phys, pt_idx, new_pte);
-            invalidate_tlb(cur);
+            // Protection changed on a mapping other CPUs may have in
+            // their TLB. A downgrade (clearing the write bit) is only
+            // safe once every core dropped the stale writable entry,
+            // so this invalidation is cross-core.
+            crate::ke::tlb_shootdown::invalidate_va_all_cpus(cur);
         }
         cur += 0x1000;
     }
@@ -1147,8 +1325,10 @@ pub fn free_user_va(va: u64) -> bool {
 // Self-test
 // ---------------------------------------------------------------------------
 
-/// Self-test: create a user address space and verify the kernel
-/// identity-mapped region is copied from the system PML4.
+/// Self-test: create a user address space and verify that PML4[0] is
+/// a private deep copy of the system's low identity chain (present,
+/// but backed by its own freshly allocated page tables) rather than a
+/// shared reference to the system root.
 pub fn self_test_user_address_space() -> bool {
     let system = system_pml4_mut();
     let kernel_entry_0 = unsafe { (*system.add(0)).raw() };
@@ -1163,9 +1343,19 @@ pub fn self_test_user_address_space() -> bool {
     unsafe {
         let new_pml4 = new_pml4_phys as *const MMPTE;
         let copied = (*new_pml4.add(0)).raw();
-        if copied != kernel_entry_0 {
-            // [DISABLED-KPRINTLN]             // // kprintln!("[RING3-A1] FAIL: PML4[0] not copied, got=0x{:x} want=0x{:x}",
-            // //     // [DISABLED-KPRINTLN]                       copied, kernel_entry_0);
+        // PML4[0] must be a private deep copy of the system's low
+        // identity chain: present, and backed by a different frame
+        // than the system root entry. Sharing the system frame would
+        // re-introduce the cross-process user-mapping leak.
+        if copied & PTE_P == 0 {
+            return false;
+        }
+        if copied & PTE_FRAME_MASK == kernel_entry_0 & PTE_FRAME_MASK {
+            return false;
+        }
+        // The user half of the copy must not carry user privileges
+        // over from the system root.
+        if (*new_pml4.add(255)).raw() & PTE_US != 0 {
             return false;
         }
     }
@@ -1557,6 +1747,66 @@ pub fn get_self_map_status() -> &'static str {
     SelfMapStatus::from_u64(status)
 }
 
+/// Reserve every intermediate page-table page reachable from the
+/// system root. The PFN allocator is initialized after the bootstrap
+/// identity map, so it cannot know which pages already hold PML4,
+/// PDPT, PD, or PT structures. Without this walk it can later hand one
+/// of those pages out and zero it, silently deleting kernel mappings.
+#[cfg(target_arch = "x86_64")]
+pub unsafe fn reserve_system_page_tables(pml4_phys: u64) {
+    const PRESENT: u64 = 1;
+    const LARGE_PAGE: u64 = 1 << 7;
+    const FRAME_MASK: u64 = 0x000F_FFFF_FFFF_F000;
+
+    let mut reserved_count = 0u64;
+    let mut reserve_failed = false;
+    let mut reserve = |pfn| {
+        if !crate::mm::pfn::reserve_pfn(pfn) {
+            reserve_failed = true;
+        } else {
+            reserved_count += 1;
+        }
+    };
+
+    let pml4 = pml4_phys as *const u64;
+    for pml4_idx in 0..PT_ENTRIES {
+        let pml4e = core::ptr::read_volatile(pml4.add(pml4_idx));
+        if pml4e & PRESENT == 0 {
+            continue;
+        }
+        let pdpt_phys = pml4e & FRAME_MASK;
+        reserve(pdpt_phys >> 12);
+
+        let pdpt = pdpt_phys as *const u64;
+        for pdpt_idx in 0..PT_ENTRIES {
+            let pdpte = core::ptr::read_volatile(pdpt.add(pdpt_idx));
+            if pdpte & PRESENT == 0 {
+                continue;
+            }
+            let pd_phys = pdpte & FRAME_MASK;
+            reserve(pd_phys >> 12);
+            if pdpte & LARGE_PAGE != 0 {
+                continue;
+            }
+
+            let pd = pd_phys as *const u64;
+            for pd_idx in 0..PT_ENTRIES {
+                let pde = core::ptr::read_volatile(pd.add(pd_idx));
+                if pde & PRESENT == 0 || pde & LARGE_PAGE != 0 {
+                    continue;
+                }
+                reserve((pde & FRAME_MASK) >> 12);
+            }
+        }
+    }
+
+    crate::hal::serial::write_string_always("[VAS] SYSPT reserved=");
+    crate::mm::write_decimal_u64(reserved_count);
+    crate::hal::serial::write_string_always(" failed=");
+    crate::hal::serial::write_string_always(if reserve_failed { "1" } else { "0" });
+    crate::hal::serial::write_string_always("\r\n");
+}
+
 /// Initialise the system address space. Allocates a PML4 page and
 /// installs the self-map.
 pub fn init() {
@@ -1578,7 +1828,7 @@ pub fn init() {
     let reserved = crate::mm::pfn::reserve_pfn(pml4_pfn);
     let _ = reserved;
     crate::boot_debug_println!("[VAS] CR3 RESERVED pfn=0x{:x}", pml4_pfn);
-    ensure_low_identity_map(pml4_phys & !0x1F_FFFF, 0x20_0000);
+    ensure_identity_or_log(pml4_phys & !0x1F_FFFF, 0x20_0000, "system PML4 page");
     {
         let (head, count) = crate::mm::pfn::get_free_list_stats();
         crate::hal::serial::write_string_always("[VASCHK] after pml4 identity head=");
@@ -1594,7 +1844,7 @@ pub fn init() {
     // touched. This removes both the page faults and the possibility of
     // a user VA below 4 GiB replacing part of the bootstrap map.
     if let Some(identity_limit) = crate::arch::identity_mapping_limit() {
-        ensure_low_identity_map(0, identity_limit);
+        ensure_identity_or_log(0, identity_limit, "low RAM identity window");
     }
     {
         let (head, count) = crate::mm::pfn::get_free_list_stats();
@@ -1608,8 +1858,8 @@ pub fn init() {
     // LoongArch64 MMIO (UART, EXTIOI, PCI ECAM).
     #[cfg(target_arch = "loongarch64")]
     {
-        ensure_low_identity_map(0x1FE0_0000, 0x20_0000);
-        ensure_low_identity_map(0x2000_0000, 0x1000_0000);
+        ensure_identity_or_log(0x1FE0_0000, 0x20_0000, "LoongArch64 MMIO (UART/EXTIOI)");
+        ensure_identity_or_log(0x2000_0000, 0x1000_0000, "LoongArch64 MMIO (ECAM)");
 
         // CRMD switches from direct-address mode to mapped mode as one
         // instruction sequence inside load_page_root. The first mapped
@@ -1619,13 +1869,13 @@ pub fn init() {
         // Map the current image and stack before flushing the TLB and
         // setting PG=1.
         let image_va = crate::kernel_main::kernel_main as *const () as u64;
-        ensure_low_identity_map(image_va & !0x00FF_FFFF, 0x0100_0000);
+        ensure_identity_or_log(image_va & !0x00FF_FFFF, 0x0100_0000, "LoongArch64 loader image");
 
         let stack_sp: u64;
         unsafe {
             core::arch::asm!("move {}, $sp", out(reg) stack_sp, options(nomem, nostack));
         }
-        ensure_low_identity_map(stack_sp & !0x003F_FFFF, 0x0040_0000);
+        ensure_identity_or_log(stack_sp & !0x003F_FFFF, 0x0040_0000, "LoongArch64 loader stack");
     }
 
     // RISC-V: QEMU virt RAM starts at 0x8000_0000. Map the *entire*
@@ -1649,25 +1899,25 @@ pub fn init() {
         };
         // Map in 2 MiB superpage chunks. `identity_map_region` handles
         // the superpage / sub-page split internally.
-        ensure_low_identity_map(ram_base, ram_end - ram_base);
+        ensure_identity_or_log(ram_base, ram_end - ram_base, "RISC-V tracked RAM range");
 
         // Map the UEFI SystemTable and firmware runtime region near the
         // top of RAM (above the PFN database's tracked range). This is
         // where EDK2 places its runtime data on QEMU virt.
-        ensure_low_identity_map(0x27FF0000, 0x10_000);
+        ensure_identity_or_log(0x27FF0000, 0x10_000, "RISC-V UEFI runtime region");
 
         // The kernel boots in Sv39 bare mode and the system root is
         // only enabled later. Preserve the current image and stack in
         // that root so a temporary switch back to system space cannot
         // fault on the instruction stream or the active stack.
         let image_va = crate::kernel_main::kernel_main as *const () as u64;
-        ensure_low_identity_map(image_va & !0x00FF_FFFF, 0x0100_0000);
+        ensure_identity_or_log(image_va & !0x00FF_FFFF, 0x0100_0000, "RISC-V kernel image");
 
         let stack_sp: u64;
         unsafe {
             core::arch::asm!("mv {}, sp", out(reg) stack_sp, options(nomem, nostack));
         }
-        ensure_low_identity_map(stack_sp & !0x003F_FFFF, 0x0040_0000);
+        ensure_identity_or_log(stack_sp & !0x003F_FFFF, 0x0040_0000, "RISC-V kernel stack");
     }
 
     // Enable mapped-address mode (PG=1, DA=0).
@@ -1783,15 +2033,18 @@ mod tests {
 
     #[test]
     fn pde_address_calculation() {
-        let va = 0x1234_5678u64;
-        let expected = PDE_BASE + (((va >> 21) & 0x1FF) * 8);
+        // The PDE index is the full PT-page number: masking to 9
+        // bits would alias every page table past the first 2 MiB.
+        let va = 0x0000_7FFF_FFFF_FFFFu64;
+        let expected = PDE_BASE + (((va & VIRTUAL_ADDRESS_MASK) >> 21) * 8);
         assert_eq!(pde_address_of(va) as u64, expected);
     }
 
     #[test]
     fn ppe_address_calculation() {
-        let va = 0x1234_5678u64;
-        let expected = PPE_BASE + (((va >> 30) & 0x1FF) * 8);
+        // The PPE index is the full PD-page number.
+        let va = 0x0000_7FFF_FFFF_FFFFu64;
+        let expected = PPE_BASE + (((va & VIRTUAL_ADDRESS_MASK) >> 30) * 8);
         assert_eq!(ppe_address_of(va) as u64, expected);
     }
 

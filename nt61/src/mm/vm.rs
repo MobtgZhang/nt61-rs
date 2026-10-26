@@ -324,3 +324,47 @@ pub fn direct_unmap_va(va: u64, size: u64) {
         crate::mm::hyperspace::unmap_hyperspace(va + offset * PAGE_SIZE);
     }
 }
+
+/// RAII wrapper around `direct_map_phys` / `direct_unmap_va`.
+///
+/// Maps `size` bytes starting at physical address `phys` into the
+/// hyperspace direct-map window and unmaps them when the guard is
+/// dropped, so an early return or panic between map and unmap cannot
+/// leak hyperspace PTEs. Prefer this over the raw pair whenever the
+/// mapping does not need to outlive the current scope.
+pub struct DirectMapGuard {
+    va: u64,
+    size: u64,
+}
+
+impl DirectMapGuard {
+    /// Base virtual address of the mapped window.
+    pub fn va(&self) -> u64 {
+        self.va
+    }
+
+    /// Byte length of the mapped window (page aligned).
+    pub fn len(&self) -> u64 {
+        self.size
+    }
+
+    /// `true` when the mapped window is empty (zero-length mapping).
+    pub fn is_empty(&self) -> bool {
+        self.size == 0
+    }
+}
+
+impl Drop for DirectMapGuard {
+    fn drop(&mut self) {
+        direct_unmap_va(self.va, self.size);
+    }
+}
+
+/// Map a physical address into the direct-map region and return a
+/// guard that unmaps it on drop. Returns `Err(())` with the same
+/// conditions as `direct_map_phys` (zero-page or oversized request,
+/// or hyperspace exhaustion); nothing is mapped on `Err`.
+pub fn direct_map_guard(phys: u64, size: u64) -> Result<DirectMapGuard, ()> {
+    let va = direct_map_phys(phys, size)?;
+    Ok(DirectMapGuard { va, size })
+}

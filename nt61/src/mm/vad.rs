@@ -1129,17 +1129,20 @@ impl VadTree {
                         | crate::mm::vas::PTE_D
                 }
                 VadProtection::EXECUTE => {
-                    crate::mm::vas::PTE_US | crate::mm::vas::PTE_A | crate::mm::vas::PTE_NX
+                    // Executable pages must NOT carry PTE_NX; the leaf
+                    // builder in map_page_in_pml4 now honours the NX
+                    // flag verbatim, so NX here would make .text
+                    // non-executable.
+                    crate::mm::vas::PTE_US | crate::mm::vas::PTE_A
                 }
                 VadProtection::EXECUTE_READ => {
-                    crate::mm::vas::PTE_US | crate::mm::vas::PTE_A | crate::mm::vas::PTE_NX
+                    crate::mm::vas::PTE_US | crate::mm::vas::PTE_A
                 }
                 VadProtection::EXECUTE_READWRITE => {
                     crate::mm::vas::PTE_RW
                         | crate::mm::vas::PTE_US
                         | crate::mm::vas::PTE_A
                         | crate::mm::vas::PTE_D
-                        | crate::mm::vas::PTE_NX
                 }
                 VadProtection::WRITECOPY => {
                     crate::mm::vas::PTE_US | crate::mm::vas::PTE_A | crate::mm::vas::PTE_RW

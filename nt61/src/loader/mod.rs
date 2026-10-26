@@ -1803,13 +1803,25 @@ pub fn call_dll_main(image: &LoadedImage, reason: u32, reserved: u64) -> i32 {
     for name in &entry_names {
         if let Some(addr) = image.find_export(name) {
             let rva = (addr - image.image_base) as usize;
-            let bytes = image.image_bytes();
-            if rva < bytes.len() {
-                let fn_ptr = unsafe { bytes.as_ptr().add(rva) };
+            // Call through the mapped image (map_loaded_image_into_kernel_space),
+            // never through the heap copy in `image.bytes`: the heap
+            // copy is not at `image_base`, so its absolute references
+            // (relocated data, resolved imports) would dereference the
+            // wrong addresses.
+            let system_pml4 = crate::mm::vas::MM_SYSTEM_VAS.lock().pml4_phys;
+            let target = image.image_base + rva as u64;
+            if system_pml4 != 0
+                && rva < image.bytes.len()
+                && crate::mm::vas::is_user_range_mapped(system_pml4, target, 0x1000)
+            {
+                let fn_ptr = target as *const u8;
                 let entry: extern "C" fn(u64, u32, u64) -> i32 =
                     unsafe { core::mem::transmute(fn_ptr) };
                 return entry(image.image_base, reason, reserved);
             }
+            // Image not mapped (or no system root): skipping DllMain is
+            // the only safe choice — executing the heap copy would run
+            // relocated code at the wrong addresses.
             return 0;
         }
     }
@@ -1834,6 +1846,12 @@ pub fn load_user_dll(name: &str, image: &[u8], db: &mut ImageDatabase) -> bool {
         }
     };
     db.register(&loaded, image);
+    // Make the image's export addresses real: map the relocated bytes
+    // at image_base in the system address space before calling DllMain.
+    if !map_loaded_image_into_kernel_space(&loaded) {
+        // Mapping failed (e.g. pool exhaustion). DllMain is skipped by
+        // call_dll_main rather than executed from the heap copy.
+    }
 
     let result = call_dll_main(&loaded, DLL_PROCESS_ATTACH, 0);
     let _ = &result;
@@ -1841,7 +1859,8 @@ pub fn load_user_dll(name: &str, image: &[u8], db: &mut ImageDatabase) -> bool {
     //         "  [USER DLL] {} DllMain called and returned {}",
     //         name, result
     //     );
-    core::mem::forget(loaded);
+    // Drop the in-memory image: the database only retains parsed
+    // exports and the mapped pages live independently.
     true
 }
 
@@ -1903,8 +1922,28 @@ pub fn load_named_image_into_user_address_space(
     image: &[u8],
     image_name: &str,
 ) -> Option<UserImageMapping> {
-    let _ = image_name;
-    load_raw_image_into_user_address_space(pml4_phys, image)
+    #[cfg(target_arch = "riscv64")]
+    {
+        let _ = image_name;
+        return load_raw_image_into_user_address_space(pml4_phys, image);
+    }
+    #[cfg(not(target_arch = "riscv64"))]
+    {
+        // Run the full PE pipeline (section layout, base relocations
+        // and import resolution) against the global image database
+        // before mapping. Without relocations the image cannot load
+        // when its preferred base conflicts; without import resolution
+        // every IAT slot stays zero and the process faults on its
+        // first imported call.
+        let Some(db) = global_image_db() else {
+            // Image database not initialised yet: fall back to the raw
+            // mapper so the caller still gets a mapped image (with
+            // unresolved imports rather than no image at all).
+            return load_raw_image_into_user_address_space(pml4_phys, image);
+        };
+        let loaded = load_image_full(image_name, image, db, 0)?;
+        map_prebuilt_image_into_user_address_space(pml4_phys, &loaded)
+    }
 }
 
 
@@ -2147,7 +2186,271 @@ fn load_raw_image_into_user_address_space(
     })
 }
 
-/// Determine the correct PTE protection flags for a PE section based on its characteristics.
+/// Map an already-relocated `LoadedImage` (whose `bytes` are the full
+/// RVA-laid-out image with base relocations applied and imports
+/// resolved) into a per-process user PML4 at `loaded.image_base`.
+///
+/// This completes the PE pipeline for user-mode images: the bytes the
+/// loader validated (relocated, IAT-patched) are the bytes user code
+/// executes, instead of a half-mapped re-parse of the raw file.
+fn map_prebuilt_image_into_user_address_space(
+    pml4_phys: u64,
+    loaded: &LoadedImage,
+) -> Option<UserImageMapping> {
+    let prebuilt = &loaded.bytes;
+    let image_base = loaded.image_base;
+    let size_of_image = loaded.image_size as usize;
+    if prebuilt.is_empty() || size_of_image == 0 || image_base == 0 {
+        return None;
+    }
+    // Reject non-canonical user bases: a kernel-half base must never
+    // be mapped into a user PML4.
+    if image_base >= 0x0000_8000_0000_0000 {
+        return None;
+    }
+    let (file_hdr, _opt_size, magic, opt_off) = parse_headers(prebuilt)?;
+    let aep: u32 = if magic == 0x10B {
+        read_opt32(prebuilt, opt_off)?.2
+    } else {
+        read_opt64(prebuilt, opt_off)?.2
+    };
+
+    let page_count = size_of_image.div_ceil(0x1000);
+    let mut phys_pages: alloc::vec::Vec<u64> = alloc::vec::Vec::with_capacity(page_count);
+    for _ in 0..page_count {
+        let Some(p) = crate::mm::vas::alloc_zeroed_page_for_vas() else {
+            for &pa in &phys_pages {
+                crate::mm::pfn::free_pfn(pa >> 12);
+            }
+            return None;
+        };
+        phys_pages.push(p);
+    }
+
+    // Per-page final protection from the section table.
+    #[derive(Copy, Clone)]
+    struct SectInfo {
+        va_start: u64,
+        va_end: u64,
+        chars: u32,
+    }
+    let sect_off = opt_off + file_hdr.size_of_optional_header as usize;
+    let mut section_info: alloc::vec::Vec<SectInfo> =
+        alloc::vec::Vec::with_capacity(file_hdr.number_of_sections as usize);
+    for i in 0..file_hdr.number_of_sections as usize {
+        let sh_off = sect_off + i * 40;
+        if sh_off + 40 > prebuilt.len() {
+            continue;
+        }
+        let sh: SectionHeader = unsafe {
+            core::ptr::read_unaligned(prebuilt.as_ptr().add(sh_off) as *const SectionHeader)
+        };
+        if sh.virtual_size == 0 {
+            continue;
+        }
+        let va_start = image_base + sh.virtual_address as u64;
+        let va_end = va_start + (sh.virtual_size.max(sh.size_of_raw_data)) as u64;
+        section_info.push(SectInfo {
+            va_start,
+            va_end,
+            chars: sh.characteristics,
+        });
+    }
+
+    // Initial mapping: RW+NX so bytes can be written and no stale
+    // I-cache translation can exist for this VA.
+    for (page_index, &p) in phys_pages.iter().enumerate() {
+        let page_va = image_base + (page_index as u64) * 0x1000;
+        let mut final_flags = crate::mm::vas::PTE_RW | crate::mm::vas::PTE_US;
+        for &s in &section_info {
+            if page_va >= s.va_start && page_va < s.va_end {
+                final_flags = determine_section_protection(s.chars);
+                break;
+            }
+        }
+        let initial_flags = final_flags | crate::mm::vas::PTE_RW | crate::mm::vas::PTE_NX;
+        if crate::mm::vas::map_page_in_pml4(pml4_phys, page_va, p, initial_flags)
+            != crate::mm::vas::MmStatus::Ok
+        {
+            for &pa in &phys_pages {
+                crate::mm::pfn::free_pfn(pa >> 12);
+            }
+            return None;
+        }
+    }
+
+    // Copy the prebuilt image (headers + sections at their RVAs) into
+    // the fresh pages via physical addresses while the system root is
+    // active, mirroring load_raw_image_into_user_address_space.
+    let saved_cr3 = crate::arch::switch_to_system_address_space();
+    for (page_index, &p) in phys_pages.iter().enumerate() {
+        let start = page_index * 0x1000;
+        if start >= prebuilt.len() {
+            break;
+        }
+        let end = core::cmp::min(start + 0x1000, prebuilt.len());
+        unsafe {
+            let dst = p as *mut u8;
+            for (off, &b) in prebuilt[start..end].iter().enumerate() {
+                core::ptr::write_volatile(dst.add(off), b);
+            }
+        }
+    }
+
+    // NX->X transition per page so the QEMU TB cache is invalidated
+    // and real CPUs observe the new PTE (same protocol as load_raw).
+    for (i, &p) in phys_pages.iter().enumerate() {
+        let page_va = image_base + (i as u64) * 0x1000;
+        let mut final_flags = crate::mm::vas::PTE_RW | crate::mm::vas::PTE_US;
+        for &s in &section_info {
+            if page_va >= s.va_start && page_va < s.va_end {
+                final_flags = determine_section_protection(s.chars);
+                break;
+            }
+        }
+        let r = crate::mm::vas::map_page_in_pml4(pml4_phys, page_va, p, final_flags);
+        if r != crate::mm::vas::MmStatus::Ok {
+            crate::arch::restore_system_address_space(saved_cr3);
+            for &pa in &phys_pages {
+                crate::mm::pfn::free_pfn(pa >> 12);
+            }
+            return None;
+        }
+        crate::mm::vas::invalidate_tlb(page_va);
+    }
+    crate::arch::flush_tlb();
+    crate::arch::restore_system_address_space(saved_cr3);
+
+    Some(UserImageMapping {
+        image_base,
+        image_size: size_of_image as u64,
+        entry_point: image_base + aep as u64,
+    })
+}
+
+/// Map a fully-relocated `LoadedImage` into the system (kernel)
+/// address space at `image_base` so that export addresses handed out
+/// by the image database point at real, executable pages instead of an
+/// unmapped region. Idempotent: an already-mapped base is a no-op.
+/// Returns true when the image is mapped (or already was).
+pub fn map_loaded_image_into_kernel_space(loaded: &LoadedImage) -> bool {
+    let system_pml4 = crate::mm::vas::MM_SYSTEM_VAS.lock().pml4_phys;
+    if system_pml4 == 0 || loaded.image_base == 0 || loaded.bytes.is_empty() {
+        return false;
+    }
+    let image_base = loaded.image_base;
+    let size_of_image = loaded.image_size as usize;
+    if size_of_image == 0 {
+        return false;
+    }
+    if crate::mm::vas::is_user_range_mapped(system_pml4, image_base, 0x1000) {
+        return true;
+    }
+    let (file_hdr, _opt_size, _magic, opt_off) = match parse_headers(&loaded.bytes) {
+        Some(h) => h,
+        None => return false,
+    };
+
+    let page_count = size_of_image.div_ceil(0x1000);
+    let mut phys_pages: alloc::vec::Vec<u64> = alloc::vec::Vec::with_capacity(page_count);
+    for _ in 0..page_count {
+        let Some(p) = crate::mm::vas::alloc_zeroed_page_for_vas() else {
+            for &pa in &phys_pages {
+                crate::mm::pfn::free_pfn(pa >> 12);
+            }
+            return false;
+        };
+        phys_pages.push(p);
+    }
+
+    #[derive(Copy, Clone)]
+    struct SectInfo {
+        va_start: u64,
+        va_end: u64,
+        chars: u32,
+    }
+    let sect_off = opt_off + file_hdr.size_of_optional_header as usize;
+    let mut section_info: alloc::vec::Vec<SectInfo> =
+        alloc::vec::Vec::with_capacity(file_hdr.number_of_sections as usize);
+    for i in 0..file_hdr.number_of_sections as usize {
+        let sh_off = sect_off + i * 40;
+        if sh_off + 40 > loaded.bytes.len() {
+            continue;
+        }
+        let sh: SectionHeader = unsafe {
+            core::ptr::read_unaligned(loaded.bytes.as_ptr().add(sh_off) as *const SectionHeader)
+        };
+        if sh.virtual_size == 0 {
+            continue;
+        }
+        let va_start = image_base + sh.virtual_address as u64;
+        let va_end = va_start + (sh.virtual_size.max(sh.size_of_raw_data)) as u64;
+        section_info.push(SectInfo {
+            va_start,
+            va_end,
+            chars: sh.characteristics,
+        });
+    }
+
+    let us_bit = crate::mm::vas::PTE_US;
+    for (page_index, &p) in phys_pages.iter().enumerate() {
+        let page_va = image_base + (page_index as u64) * 0x1000;
+        let mut final_flags = crate::mm::vas::PTE_RW | crate::mm::vas::PTE_NX;
+        for &s in &section_info {
+            if page_va >= s.va_start && page_va < s.va_end {
+                final_flags = determine_section_protection(s.chars) & !us_bit;
+                break;
+            }
+        }
+        let initial_flags = final_flags | crate::mm::vas::PTE_RW | crate::mm::vas::PTE_NX;
+        if crate::mm::vas::map_page_in_pml4(system_pml4, page_va, p, initial_flags)
+            != crate::mm::vas::MmStatus::Ok
+        {
+            for &pa in &phys_pages {
+                crate::mm::pfn::free_pfn(pa >> 12);
+            }
+            return false;
+        }
+    }
+
+    let saved_cr3 = crate::arch::switch_to_system_address_space();
+    for (page_index, &p) in phys_pages.iter().enumerate() {
+        let start = page_index * 0x1000;
+        if start >= loaded.bytes.len() {
+            break;
+        }
+        let end = core::cmp::min(start + 0x1000, loaded.bytes.len());
+        unsafe {
+            let dst = p as *mut u8;
+            for (off, &b) in loaded.bytes[start..end].iter().enumerate() {
+                core::ptr::write_volatile(dst.add(off), b);
+            }
+        }
+    }
+    for (i, &p) in phys_pages.iter().enumerate() {
+        let page_va = image_base + (i as u64) * 0x1000;
+        let mut final_flags = crate::mm::vas::PTE_RW | crate::mm::vas::PTE_NX;
+        for &s in &section_info {
+            if page_va >= s.va_start && page_va < s.va_end {
+                final_flags = determine_section_protection(s.chars) & !us_bit;
+                break;
+            }
+        }
+        let r = crate::mm::vas::map_page_in_pml4(system_pml4, page_va, p, final_flags);
+        if r != crate::mm::vas::MmStatus::Ok {
+            crate::arch::restore_system_address_space(saved_cr3);
+            for &pa in &phys_pages {
+                crate::mm::pfn::free_pfn(pa >> 12);
+            }
+            return false;
+        }
+        crate::mm::vas::invalidate_tlb(page_va);
+    }
+    crate::arch::flush_tlb();
+    crate::arch::restore_system_address_space(saved_cr3);
+    true
+}
+
 ///
 /// Windows PE section characteristics:
 ///   - IMAGE_SCN_CNT_CODE (0x20): Contains executable code

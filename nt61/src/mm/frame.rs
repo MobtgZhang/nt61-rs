@@ -273,9 +273,15 @@ impl BuddyAllocator {
         let order = order_of(count).min(MAX_BUDDY_ORDER - 1);
 
         for current_order in order..MAX_BUDDY_ORDER {
+            // Take the first block whose pages are all allocatable.
+            // Blocks kept alive by reserve_range() carry the
+            // FRAME_RESERVED flag but stay on the free lists, so a
+            // plain pop_head could hand out the kernel stack / PFN
+            // database region. Walk the list and remove the first
+            // block that contains no reserved pages.
             let frame = {
                 let mut lock = self.free_lists[current_order].lock();
-                pop_head(&mut lock, self.buddy_nodes)
+                self.take_allocatable(&mut lock, current_order)
             };
             if frame == FREE_LIST_END {
                 continue;
@@ -303,6 +309,45 @@ impl BuddyAllocator {
             return Some(self.base_address + (cur_frame as u64) * 4096);
         }
         None
+    }
+
+    /// Remove and return the first block on the order-`order` free
+    /// list that contains no FRAME_RESERVED pages. Returns
+    /// `FREE_LIST_END` when the list is exhausted. Reserved blocks
+    /// stay on the list untouched.
+    fn take_allocatable(&self, list: &mut FreeListHead, order: usize) -> u32 {
+        let mut cur = list.head;
+        while cur != FREE_LIST_END {
+            if !self.block_contains_reserved(cur, order) {
+                remove_node(list, cur, self.buddy_nodes);
+                return cur;
+            }
+            unsafe {
+                cur = (*self.buddy_nodes.add(cur as usize)).next;
+            }
+        }
+        FREE_LIST_END
+    }
+
+    /// True if any 4 KiB page inside the order-`order` block that
+    /// starts at `frame` is marked FRAME_RESERVED.
+    fn block_contains_reserved(&self, frame: u32, order: usize) -> bool {
+        if self.frame_infos.is_null() {
+            return false;
+        }
+        let pages = 1u64 << order;
+        unsafe {
+            for i in 0..pages {
+                let idx = frame as u64 + i;
+                if idx >= self.num_frames {
+                    break;
+                }
+                if (*self.frame_infos.add(idx as usize)).flags == FRAME_RESERVED {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Free a previously-allocated block of `count` pages.
@@ -384,26 +429,6 @@ fn push_head(list: &mut FreeListHead, frame: u32, nodes: *mut BuddyNode) {
     }
 }
 
-fn pop_head(list: &mut FreeListHead, nodes: *mut BuddyNode) -> u32 {
-    if list.head == FREE_LIST_END {
-        return FREE_LIST_END;
-    }
-    let frame = list.head;
-    unsafe {
-        let node = &mut *nodes.add(frame as usize);
-        list.head = node.next;
-        if list.head != FREE_LIST_END {
-            let next = &mut *nodes.add(list.head as usize);
-            next.prev = FREE_LIST_END;
-        }
-        node.next = FREE_LIST_END;
-        node.prev = FREE_LIST_END;
-        node.on_list = 0;
-    }
-    list.count -= 1;
-    frame
-}
-
 fn remove_node(list: &mut FreeListHead, frame: u32, nodes: *mut BuddyNode) {
     unsafe {
         let node = &mut *nodes.add(frame as usize);
@@ -457,15 +482,13 @@ const FRAME_TABLE_BYTES: usize =
 #[link_section = ".bss"]
 static mut FRAME_TABLE: [u8; FRAME_TABLE_BYTES] = [0u8; FRAME_TABLE_BYTES];
 
-/// Dynamic bookkeeping tables. After `init_with_range` completes
-/// the buddy operates on these buffers; the static `FRAME_TABLE`
-/// is retained only for fallback / bootstrap.
-static mut DYN_FRAME_INFOS: *mut FrameInfo = core::ptr::null_mut();
-static mut DYN_BUDDY_NODES: *mut BuddyNode = core::ptr::null_mut();
-static mut DYN_FRAME_INFOS_PHYS: u64 = 0;
-static mut DYN_BUDDY_NODES_PHYS: u64 = 0;
-static mut DYN_LEN: usize = 0;
-static mut DYN_BASE_PHYS: u64 = 0;
+// NOTE: the "dynamic bookkeeping tables" (DYN_FRAME_INFOS,
+// DYN_BUDDY_NODES, DYN_LEN, ...) were removed. They were only ever
+// assigned inside `legacy_init` as bridge values and read nowhere:
+// the promised two-phase re-init never materialised, so the statics
+// were dead state that implied a second allocation path exists. The
+// static `FRAME_TABLE` below is the single bookkeeping buffer until
+// a real two-phase init is implemented.
 
 /// Initialise the frame allocator. The UEFI stub reports a single
 /// contiguous usable region; we consume that here.
@@ -522,28 +545,7 @@ fn legacy_init(region_base: u64, region_size: u64) {
     crate::hal::serial::write_string("LI_INIT_RNG_OK\r\n");
 
     unsafe {
-        // Bridge the legacy single-phase bookkeeping path into the
-        // dynamic bookkeeping tables declared above. The legacy
-        // `FRAME_TABLE` BSS is the source of truth for the
-        // bootstrap window; once we have finished the bootstrap
-        // (i.e. we have brought the buddy up enough that the rest
-        // of MM can allocate) we copy the live entries into the
-        // dynamic tables so the next phase (a future, larger
-        // re-init) can use them without re-allocating.
-        let region_frames = ((region_size / 4096) as usize)
-            .min((*core::ptr::addr_of!(FRAME_TABLE)).len() / core::mem::size_of::<FrameInfo>());
-        DYN_LEN = region_frames;
-        // The static FRAME_TABLE is laid out as bytes; the dynamic
-        // tables are typed. We point them at the static buffer so
-        // the page database and other subsystems can still walk
-        // them by the typed pointer.
-        DYN_FRAME_INFOS = (*core::ptr::addr_of_mut!(FRAME_TABLE)).as_mut_ptr() as *mut FrameInfo;
-        DYN_FRAME_INFOS_PHYS = crate::mm::vm::virt_to_phys(DYN_FRAME_INFOS as u64).unwrap_or(0);
-        DYN_BUDDY_NODES = ((*core::ptr::addr_of_mut!(FRAME_TABLE)).as_mut_ptr() as *mut BuddyNode)
-            .wrapping_add(region_frames);
-        DYN_BUDDY_NODES_PHYS = crate::mm::vm::virt_to_phys(DYN_BUDDY_NODES as u64).unwrap_or(0);
         let table_ptr = (*core::ptr::addr_of_mut!(FRAME_TABLE)).as_mut_ptr() as *mut u8;
-        DYN_BASE_PHYS = crate::mm::vm::virt_to_phys(table_ptr as u64).unwrap_or(0);
         crate::hal::serial::write_string("LI2\r\n");
 
         let mut alloc = BUDDY_ALLOCATOR.lock();
@@ -661,15 +663,55 @@ pub fn for_each_allocated_frame(mut cb: impl FnMut(u64)) {
 }
 
 /// Allocate from a specific zone.
-pub fn allocate_zone(_zone: MemoryZone, count: u64) -> Option<u64> {
-    allocate_pages(count)
+///
+/// Zone semantics enforced on top of the buddy allocator:
+///
+/// * `Usual` / `Movable` — plain allocation. The buddy allocator has
+///   no page-migration support yet, so `Movable` is a hint only
+///   (documented limitation).
+/// * `Lowmem` — the whole range must land below the 4 GiB boundary;
+///   an allocation that spills above it is freed again and the
+///   request fails, so callers never receive frames a 32-bit DMA
+///   engine cannot address.
+/// * `Reserve` — reserved frames are never consumed by ordinary
+///   allocation, and no reserved backing pool exists yet, so the
+///   request fails closed instead of silently draining ordinary free
+///   memory.
+pub fn allocate_zone(zone: MemoryZone, count: u64) -> Option<u64> {
+    match zone {
+        MemoryZone::Reserve => None,
+        MemoryZone::Usual | MemoryZone::Movable => allocate_pages(count),
+        MemoryZone::Lowmem => {
+            let phys = allocate_pages(count)?;
+            let span_end = phys.checked_add(count.checked_mul(4096)?);
+            match span_end {
+                Some(end) if end <= 0x1_0000_0000 => Some(phys),
+                _ => {
+                    free_pages(phys, count);
+                    None
+                }
+            }
+        }
+    }
 }
 
 /// Increase reference count (page sharing).
-pub fn reference(_phys_addr: u64) {}
+///
+/// Backed by the PFN database's real per-frame reference count (see
+/// `pfn::reference_pfn`). Returns `false` when the frame is out of
+/// range or not an active allocation.
+pub fn reference(phys_addr: u64) -> bool {
+    crate::mm::pfn::reference_pfn(phys_addr / 4096)
+}
 
 /// Decrease reference count (page sharing).
-pub fn dereference(_phys_addr: u64) {}
+///
+/// Backed by the PFN database's real per-frame reference count (see
+/// `pfn::dereference_pfn`). Returns `true` when the caller dropped
+/// the last reference and is responsible for freeing the frame.
+pub fn dereference(phys_addr: u64) -> bool {
+    crate::mm::pfn::dereference_pfn(phys_addr / 4096)
+}
 
 /// Get total physical memory.
 pub fn get_total_physical() -> u64 {

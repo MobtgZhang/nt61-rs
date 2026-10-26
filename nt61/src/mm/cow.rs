@@ -19,9 +19,45 @@ use crate::mm::pfn;
 use crate::mm::pte::MMPTE;
 use crate::mm::vas::current_root;
 
-/// Walk the page table using direct physical access to get a PTE pointer.
-/// Works for both user and kernel addresses.
+/// Walk the page table to get a PTE pointer for `va`. Works for both
+/// user and kernel addresses.
+///
+/// On x86_64 the walk goes through the recursive self-map, so no
+/// identity mapping of the page-table pages is required: the
+/// historical "physical address == pointer" dereferences only worked
+/// while every allocated frame was 1:1 mapped, which COW in process
+/// context cannot rely on. On other architectures the page-table
+/// pages are kept identity-mapped by the kernel's bootstrap mapping
+/// (`identity_map_region`), so the direct-physical walk remains the
+/// supported path there.
 fn get_pte_ptr(va: u64) -> Option<*mut MMPTE> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        use core::ptr::read_volatile;
+
+        let pml4e = unsafe { read_volatile(crate::mm::vas::pxe_address_of(va)) };
+        if !pml4e.is_hardware() {
+            return None;
+        }
+        let pdpte = unsafe { read_volatile(crate::mm::vas::ppe_address_of(va)) };
+        if !pdpte.is_hardware() || pdpte.large() {
+            return None;
+        }
+        let pde = unsafe { read_volatile(crate::mm::vas::pde_address_of(va)) };
+        if !pde.is_hardware() || pde.large() {
+            return None;
+        }
+        return Some(crate::mm::vas::pte_address_of(va));
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        walk_pte_direct_physical(va)
+    }
+}
+
+/// Direct-physical page-table walk (identity-mapped targets only).
+#[cfg(not(target_arch = "x86_64"))]
+fn walk_pte_direct_physical(va: u64) -> Option<*mut MMPTE> {
     let pml4_phys = current_root();
     if pml4_phys == 0 {
         return None;
@@ -86,12 +122,23 @@ pub fn perform_cow(va: u64) -> Result<(), u64> {
     let new_pa = pfn::pfn_to_phys_va(new_pfn);
     // // kprintln!("[COW] new_pa=0x{:x} (new_pfn={})", new_pa, new_pfn);
 
-    // Perform the actual page copy using identity mapping.
-    // In UEFI boot environment, kernel page tables are typically identity-mapped,
-    // so we can directly access physical memory as virtual addresses.
+    // Perform the actual page copy through the kernel temporary
+    // mapping window. Treating the physical addresses directly as
+    // pointers only works while a 1:1 low-memory mapping exists;
+    // COW runs in process context where that assumption is not
+    // guaranteed, so map both pages explicitly.
     const PAGE_SIZE: usize = 4096;
-    let src_ptr = old_pa as *const u8;
-    let dst_ptr = new_pa as *mut u8;
+    let src_va = match crate::mm::vm::direct_map_phys(old_pa, PAGE_SIZE as u64) {
+        Ok(va) => va,
+        Err(()) => return Err(0xC0000017), /* STATUS_NO_MEMORY */
+    };
+    let dst_va = match crate::mm::vm::direct_map_phys(new_pa, PAGE_SIZE as u64) {
+        Ok(va) => va,
+        Err(()) => {
+            crate::mm::vm::direct_unmap_va(src_va, PAGE_SIZE as u64);
+            return Err(0xC0000017); /* STATUS_NO_MEMORY */
+        }
+    };
 
     // Copy the page. We have exclusive access to both pages (old page's
     // share_count > 0, new page is freshly allocated), so
@@ -99,8 +146,10 @@ pub fn perform_cow(va: u64) -> Result<(), u64> {
     // SAFETY: Exclusive access to both source and destination is guaranteed
     // by the caller (share_count > 0 for source, freshly allocated dest).
     unsafe {
-        core::ptr::copy_nonoverlapping(src_ptr, dst_ptr, PAGE_SIZE);
+        core::ptr::copy_nonoverlapping(src_va as *const u8, dst_va as *mut u8, PAGE_SIZE);
     }
+    crate::mm::vm::direct_unmap_va(src_va, PAGE_SIZE as u64);
+    crate::mm::vm::direct_unmap_va(dst_va, PAGE_SIZE as u64);
     // // kprintln!("[COW] copied {} bytes from 0x{:x} to 0x{:x}", PAGE_SIZE, old_pa, new_pa);
 
     // Re-write the PTE to point at the new page with R/W=1 and no COW flag.
@@ -115,8 +164,12 @@ pub fn perform_cow(va: u64) -> Result<(), u64> {
     // _pte_after is intentionally unused - reserved for future debugging
     // // kprintln!("[COW] PTE after write=0x{:016x}", _pte_after);
 
-    // TLB shootdown - invalidate the TLB entry for this virtual address
-    crate::mm::vas::invalidate_tlb(va);
+    // TLB shootdown - the PTE was rewritten (writable COW page ->
+    // private copy), so every CPU holding a stale writable
+    // translation of `va` must drop it before the old page is reused.
+    // A local invalidate alone leaves the other cores free to keep
+    // writing through the old mapping.
+    crate::ke::tlb_shootdown::invalidate_va_all_cpus(va);
 
     // Update PFN database: decrement old page reference, increment new page reference
     let mut db = pfn::PFN_DB.lock();

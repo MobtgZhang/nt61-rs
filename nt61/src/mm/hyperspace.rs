@@ -18,9 +18,45 @@ use core::sync::atomic::{AtomicU64, Ordering};
 #[cfg(target_arch = "x86_64")]
 use crate::mm::pte::MMPTE;
 #[cfg(target_arch = "x86_64")]
-use crate::mm::vas::pte_address_of;
+use crate::mm::constants::MI_HYPERSPACE_INDEX;
 
 pub use crate::mm::constants::{HYPERSPACE_BASE, HYPERSPACE_END, HYPERSPACE_ENTRIES};
+
+/// Physical address of the leaf PTE for hyperspace slot `slot` in
+/// the current address space, obtained by walking the page tables
+/// from the current root by physical address.
+///
+/// The recursive self-map installed at boot is a single-page
+/// recursion (PML4[0x1ED] = PML4), so the linear-address formula
+/// behind `vas::pte_address_of` does NOT reach the hyperspace PTEs
+/// (PML4[0x1EE] chain): every computed address collapsed onto the
+/// slot-0 PTE, leaving all other slots unusable and corrupting
+/// unrelated entries. The physical walk matches what the hardware
+/// does and is layout-independent.
+#[cfg(target_arch = "x86_64")]
+fn hyperspace_pte(slot: u64) -> *mut MMPTE {
+    const PTE_ADDR_MASK: u64 = 0x000F_FFFF_FFFF_F000;
+    const PTE_P: u64 = 0x1;
+    const PTE_PS: u64 = 1 << 7;
+    let root = crate::mm::vas::current_root();
+    if root == 0 {
+        return core::ptr::null_mut();
+    }
+    let pml4e = unsafe { *((root as *const u64).add(MI_HYPERSPACE_INDEX)) };
+    if pml4e & PTE_P == 0 {
+        return core::ptr::null_mut();
+    }
+    let pdpte = unsafe { *((pml4e & PTE_ADDR_MASK) as *const u64) };
+    if pdpte & PTE_P == 0 || pdpte & PTE_PS != 0 {
+        return core::ptr::null_mut();
+    }
+    let pde = unsafe { *((pdpte & PTE_ADDR_MASK) as *const u64) };
+    if pde & PTE_P == 0 || pde & PTE_PS != 0 {
+        return core::ptr::null_mut();
+    }
+    let pt = (pde & PTE_ADDR_MASK) as *mut MMPTE;
+    unsafe { pt.add(slot as usize) }
+}
 
 /// Per-CPU next-free hyperspace slot. Bootstrap single CPU so we
 /// just use slot 0.
@@ -32,7 +68,7 @@ static HYPERSPACE_NEXT: AtomicU64 = AtomicU64::new(0);
 pub fn map_hyperspace(pfn: u64) -> u64 {
     let slot = HYPERSPACE_NEXT.fetch_add(1, Ordering::SeqCst) % HYPERSPACE_ENTRIES;
     let va = HYPERSPACE_BASE + slot * 4096;
-    let pte_ptr = pte_address_of(va);
+    let pte_ptr = hyperspace_pte(slot);
     if pte_ptr.is_null() {
         return 0;
     }
@@ -63,7 +99,8 @@ pub fn unmap_hyperspace(va: u64) {
     if va < HYPERSPACE_BASE || va >= HYPERSPACE_END {
         return;
     }
-    let pte_ptr = pte_address_of(va);
+    let slot = (va - HYPERSPACE_BASE) / 4096;
+    let pte_ptr = hyperspace_pte(slot);
     if pte_ptr.is_null() {
         return;
     }

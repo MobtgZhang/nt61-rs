@@ -76,11 +76,6 @@ pub fn probe_user_read(ptr: u64, len: usize) -> Result<(), i32> {
 /// on every leaf PTE we cover.
 pub fn probe_user_write(ptr: u64, len: usize) -> Result<(), i32> {
     if !is_user_range(ptr, len) {
-        crate::hal::serial::write_string_always("[COPY-WRITE] range fail ptr=");
-        crate::hal::serial::write_hex_u64_always(ptr);
-        crate::hal::serial::write_string_always(" len=");
-        crate::hal::serial::write_hex_u64_always(len as u64);
-        crate::hal::serial::write_string_always("\r\n");
         return Err(STATUS_ACCESS_VIOLATION);
     }
     if len == 0 {
@@ -90,11 +85,6 @@ pub fn probe_user_write(ptr: u64, len: usize) -> Result<(), i32> {
     let mut va = ptr & !0xFFF;
     while va < end {
         if !page_is_user_accessible(va, true) {
-            crate::hal::serial::write_string_always("[COPY-WRITE] pte fail va=");
-            crate::hal::serial::write_hex_u64_always(va);
-            crate::hal::serial::write_string_always(" entry=");
-            crate::hal::serial::write_hex_u64_always(crate::arch::leaf_entry(va).unwrap_or(0));
-            crate::hal::serial::write_string_always("\r\n");
             return Err(STATUS_ACCESS_VIOLATION);
         }
         va += 0x1000;
@@ -209,7 +199,17 @@ pub fn read_user_utf16(src: u64, char_count: u64) -> Result<alloc::vec::Vec<u16>
 /// Check the actual leaf PTE, not merely whether a translation exists.
 /// This rejects kernel-only mappings and enforces write permission for
 /// user-space output buffers on all supported ISAs.
+#[cfg(test)]
+fn page_is_user_accessible(_va: u64, _require_write: bool) -> bool {
+    false
+}
+
+#[cfg(not(test))]
 fn page_is_user_accessible(va: u64, require_write: bool) -> bool {
+    #[cfg(test)]
+    {
+        return false;
+    }
     crate::arch::leaf_entry(va)
         .map(|entry| crate::arch::page_user_accessible(entry, require_write))
         .unwrap_or(false)

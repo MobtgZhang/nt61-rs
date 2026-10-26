@@ -69,7 +69,7 @@ pub const KERNEL_IMAGE_BASE: u64 = 0xFFFF8000_0000_0000;
 pub const USER_BASE: u64 = 0x0000_0000_1000_0000;
 
 #[cfg(not(target_arch = "riscv64"))]
-pub const USER_BASE: u64 = 0x0000_1000_0000_0000;
+pub const USER_BASE: u64 = 0x0000_0000_0001_0000;
 
 /// User space upper limit (canonical form, Windows 7 x64 default).
 #[cfg(target_arch = "riscv64")]
@@ -282,8 +282,8 @@ pub const PTE_NX: u64 = 1u64 << 63;
 /// Standard kernel-side intermediate PTE bits: P + RW + US + A + D.
 pub const INT_PTE_BITS: u64 = PTE_P | PTE_RW | PTE_US | PTE_A | PTE_D;
 
-/// Self-map PTE bits: P + RW + US + A + D.
-pub const SELF_MAP_BITS: u64 = PTE_P | PTE_RW | PTE_US | PTE_A | PTE_D;
+/// Self-map PTE bits: P + RW + A + D.
+pub const SELF_MAP_BITS: u64 = PTE_P | PTE_RW | PTE_A | PTE_D;
 
 // ============================================================================
 // Physical Address Masks

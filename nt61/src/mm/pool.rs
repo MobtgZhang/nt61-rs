@@ -892,7 +892,7 @@ mod tests {
             return;
         }
 
-        const TEST_HEAP_LEN: usize = 64 * 1024;
+        const TEST_HEAP_LEN: usize = 4 * 1024 * 1024;
         static mut TEST_HEAP: [u8; TEST_HEAP_LEN] = [0u8; TEST_HEAP_LEN];
         let len = TEST_HEAP_LEN;
         crate::mm::heap::KERNEL_HEAP.configure(core::ptr::addr_of_mut!(TEST_HEAP) as *mut u8, len);
