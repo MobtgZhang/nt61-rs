@@ -26,7 +26,7 @@ mod tests {
         if crate::mm::heap::KERNEL_HEAP.configured_region().is_some() {
             return;
         }
-        const TEST_HEAP_LEN: usize = 128 * 1024;
+        const TEST_HEAP_LEN: usize = 4 * 1024 * 1024;
         static mut TEST_HEAP: [u8; TEST_HEAP_LEN] = [0u8; TEST_HEAP_LEN];
         let base = core::ptr::addr_of_mut!(TEST_HEAP) as *mut u8;
         crate::mm::heap::KERNEL_HEAP.configure(base, TEST_HEAP_LEN);
@@ -75,6 +75,36 @@ mod tests {
             }
             assert_eq!(name.buffer.add(24).read(), 0);
         }
+    }
+
+    #[test]
+    fn io_complete_request_posts_iocp_packet() {
+        ensure_test_heap();
+
+        let port_id = crate::io::iocp::create_io_completion_port(0).expect("port");
+        assert!(port_id > 0);
+
+        let irp = crate::io::allocate_irp(1);
+        assert!(!irp.is_null());
+
+        unsafe {
+            (*irp).bind_completion(port_id, 0x5A5A, 0x1BAD_BEEF);
+            (*irp).io_status.status = 0xC000_0022;
+            (*irp).io_status.information = 42;
+            crate::io::io_complete_request(irp, 0);
+        }
+
+        let packet = crate::io::iocp::get_queued_completion_status(port_id, 0)
+            .expect("io_complete_request must queue a packet on the bound port");
+        assert_eq!(packet.status, 0xC000_0022);
+        assert_eq!(packet.bytes_transferred, 42);
+        assert_eq!(packet.completion_key, 0x5A5A);
+        assert_eq!(packet.overlapped, 0x1BAD_BEEF);
+
+        assert_eq!(
+            crate::io::iocp::close_io_completion_port(port_id),
+            crate::io::iocp::STATUS_SUCCESS
+        );
     }
 }
 

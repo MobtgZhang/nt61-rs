@@ -103,13 +103,28 @@ pub fn build_mdl_for_non_paged_pool(mdl: *mut Mdl) {
 }
 
 pub fn probe_and_lock_pages(mdl: *mut Mdl, access_mode: u8, operation: u32) -> u32 {
-    let _ = (access_mode, operation);
-
+    let _ = access_mode;
     if mdl.is_null() {
         return STATUS_INVALID_PARAMETER as u32;
     }
 
     unsafe {
+        // The MDL records the caller's buffer, which for DIRECT I/O is a
+        // user-mode address. Validate every page before the caller is
+        // allowed to reach the buffer through `map_locked_pages`; a user
+        // buffer must never be dereferenced without probing.
+        let va = (*mdl).start_va as u64;
+        let len = (*mdl).byte_count as usize;
+        if crate::mm::user_copy::is_user_range(va, len) {
+            let probed = if operation == 1 {
+                crate::mm::user_copy::probe_user_write(va, len)
+            } else {
+                crate::mm::user_copy::probe_user_read(va, len)
+            };
+            if probed.is_err() {
+                return STATUS_INVALID_PARAMETER as u32;
+            }
+        }
         (*mdl).mdl_flags |= MDL_PAGES_LOCKED;
     }
 
@@ -197,10 +212,19 @@ pub fn allocate_buffered_io_buffer(
         return null_mut();
     }
 
-    // Copy from user buffer if this is a write operation
+    // Copy from user buffer if this is a write operation. The caller
+    // buffer is a user-mode address: probe it and copy through the
+    // user_copy helpers instead of dereferencing it directly.
     if for_write && !user_buffer.is_null() {
-        unsafe {
-            core::ptr::copy_nonoverlapping(user_buffer, sys_buffer, length as usize);
+        let va = user_buffer as u64;
+        if crate::mm::user_copy::probe_user_read(va, length as usize).is_err() {
+            pool::free(sys_buffer);
+            return null_mut();
+        }
+        let dst = unsafe { core::slice::from_raw_parts_mut(sys_buffer, length as usize) };
+        if crate::mm::user_copy::copy_from_user(dst, va).is_err() {
+            pool::free(sys_buffer);
+            return null_mut();
         }
     }
 
@@ -218,10 +242,15 @@ pub fn free_buffered_io_buffer(
         return;
     }
 
-    // Copy to user buffer if this is a read operation
+    // Copy to user buffer if this is a read operation. The caller buffer
+    // is a user-mode address: probe it and copy through the user_copy
+    // helpers; on probe failure the data is dropped, but the system
+    // buffer is still released.
     if for_read && !user_buffer.is_null() && length > 0 {
-        unsafe {
-            core::ptr::copy_nonoverlapping(sys_buffer, user_buffer, length as usize);
+        let va = user_buffer as u64;
+        if crate::mm::user_copy::probe_user_write(va, length as usize).is_ok() {
+            let src = unsafe { core::slice::from_raw_parts(sys_buffer, length as usize) };
+            let _ = crate::mm::user_copy::copy_to_user(va, src);
         }
     }
 

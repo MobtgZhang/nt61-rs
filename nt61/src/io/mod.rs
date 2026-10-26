@@ -278,6 +278,9 @@ pub struct Irp {
     pub associated_irp: *mut Irp,
     pub thread_list_entry: ListEntry,
     pub io_status: IoStatusBlock,
+    /// Cancel routine registered by a driver; invoked by `cancel_irp`
+    /// when the request is cancelled.
+    pub cancel_routine: Option<unsafe extern "C" fn(*mut Irp)>,
     pub requestor_mode: u8,
     pub pending_returned: u8,
     pub stack_count: u8,
@@ -288,6 +291,15 @@ pub struct Irp {
     pub original_irp: *mut Irp,
     /// wdm.h `_IRP.UserBuffer`: caller buffer for buffered / direct I/O.
     pub user_buffer: *mut (),
+    /// I/O completion port the IRP is bound to (0 = no port). Port ids are
+    /// the ids returned by `iocp::create_io_completion_port`, so 0 is never
+    /// a valid port and doubles as the "unbound" marker.
+    pub completion_port: u64,
+    /// Completion key delivered with the completion packet.
+    pub completion_key: u64,
+    /// Caller-supplied overlapped/APC-context value carried through to the
+    /// completion packet.
+    pub overlapped: u64,
 }
 
 impl Irp {
@@ -298,6 +310,7 @@ impl Irp {
             associated_irp: null_mut(),
             thread_list_entry: ListEntry::new(),
             io_status: IoStatusBlock::new(),
+            cancel_routine: None,
             requestor_mode: 0,
             pending_returned: 0,
             stack_count: 0,
@@ -307,7 +320,20 @@ impl Irp {
             current_stack: null_mut(),
             original_irp: null_mut(),
             user_buffer: null_mut(),
+            completion_port: 0,
+            completion_key: 0,
+            overlapped: 0,
         }
+    }
+
+    /// Bind this IRP's completion notification to an I/O completion port.
+    /// When the IRP is completed via `io_complete_request`, a packet with
+    /// `status`/`information` from the IRP plus this key and overlapped
+    /// value is posted to the port.
+    pub fn bind_completion(&mut self, port_id: u64, completion_key: u64, overlapped: u64) {
+        self.completion_port = port_id;
+        self.completion_key = completion_key;
+        self.overlapped = overlapped;
     }
 }
 
@@ -364,6 +390,13 @@ pub struct IoStackLocation {
     pub parameters: IoParameters,
     pub device_object: *mut DeviceObject,
     pub file_object: *mut FileObject,
+    /// Completion routine registered on this stack location (wdm.h
+    /// `IoSetCompletionRoutine`). Stored here instead of discarded so
+    /// `io_complete_request` can invoke it as the IRP unwinds.
+    pub completion_routine:
+        Option<unsafe extern "C" fn(*mut DeviceObject, *mut Irp, *mut ()) -> i32>,
+    /// Context value passed to `completion_routine`.
+    pub completion_context: *mut (),
 }
 
 impl IoStackLocation {
@@ -376,6 +409,8 @@ impl IoStackLocation {
             parameters: IoParameters { as_u64: 0 },
             device_object: null_mut(),
             file_object: null_mut(),
+            completion_routine: None,
+            completion_context: null_mut(),
         }
     }
 }
@@ -703,7 +738,71 @@ pub fn io_call_driver(device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     unsafe { dispatch::dispatch_irp(device, irp) }
 }
 
+/// Invoke the completion routines registered on the IRP's stack locations,
+/// walking the driver stack from the lowest slot upward the way NT does as
+/// an IRP unwinds. Each routine is taken out of the stack location before
+/// it is called so a routine that completes the IRP itself cannot be run
+/// again. Returns false only when a routine returned
+/// STATUS_MORE_PROCESSING_REQUIRED and now owns the IRP (it must complete
+/// it later); the IRP must not be freed in that case.
+unsafe fn invoke_completion_routines(irp: *mut Irp) -> bool {
+    let count = (*irp).stack_count as usize;
+    let status = (*irp).io_status.status as i32;
+    let cancelled = ((*irp).flags & IRP_CANCEL_INDICATED) != 0;
+    let base = (irp as *mut u8).add(core::mem::size_of::<Irp>()) as *mut IoStackLocation;
+
+    for i in 0..count {
+        let stack = base.add(i);
+        // Take the routine out first: re-entrant completion from inside
+        // the routine must not invoke it a second time.
+        let routine = (*stack).completion_routine.take();
+        let Some(routine) = routine else {
+            continue;
+        };
+        let control = (*stack).control;
+        let invoke = if cancelled {
+            (control & irp_stack::SL_INVOKE_ON_CANCEL) != 0
+        } else if status >= 0 {
+            (control & irp_stack::SL_INVOKE_ON_SUCCESS) != 0
+        } else {
+            (control & irp_stack::SL_INVOKE_ON_ERROR) != 0
+        };
+        if !invoke {
+            continue;
+        }
+        let device = (*stack).device_object;
+        let context = (*stack).completion_context;
+        let result = routine(device, irp, context);
+        if result == crate::libs::ntdll::status::STATUS_MORE_PROCESSING_REQUIRED {
+            return false;
+        }
+    }
+    true
+}
+
 /// io_complete_request - Complete an IRP
+///
+/// Runs registered completion routines, updates statistics, delivers the
+/// completion notification and frees the IRP.
+///
+/// # Completion notification (IOCP)
+///
+/// If the IRP was bound to an I/O completion port via
+/// `Irp::bind_completion` (or directly through its `completion_port`
+/// field), a packet carrying the IRP's real NTSTATUS, byte count, completion
+/// key and overlapped value is posted to that port before the IRP is freed.
+/// A thread waiting in `iocp::get_queued_completion_status` observes the
+/// packet. This is the single completion-notification path: packets posted
+/// by drivers via `nt_set_io_completion` land in the same queues.
+///
+/// # Completion notification (APC)
+///
+/// APC delivery is deliberately not wired up here. An APC on IRP completion
+/// needs the issuing thread plus the user APC routine carried in the
+/// OVERLAPPED of an `Nt*File` overlapped request. `Irp` does not track the
+/// issuing thread yet (file syscalls still bypass the IRP path), and
+/// queueing an APC without a thread and a real routine would be a fake
+/// notification, so only the IOCP path exists.
 pub fn io_complete_request(irp: *mut Irp, priority_boost: i32) {
     let _ = priority_boost;
     if irp.is_null() {
@@ -711,12 +810,41 @@ pub fn io_complete_request(irp: *mut Irp, priority_boost: i32) {
     }
 
     unsafe {
+        // Call registered completion routines before the IRP memory goes
+        // away. A routine may take ownership of the IRP by returning
+        // STATUS_MORE_PROCESSING_REQUIRED; then it completes the IRP later.
+        if !invoke_completion_routines(irp) {
+            return;
+        }
+
         // Update statistics
         let status = (*irp).io_status.status as i32;
         if status >= 0 {
             IO_STATS.lock().irps_completed += 1;
         } else {
             IO_STATS.lock().irps_cancelled += 1;
+        }
+
+        // Deliver the completion notification while the IRP memory is still
+        // valid: the packet carries values read from the IRP, and drivers
+        // may read the IRP from the overlapped context afterwards.
+        let port = (*irp).completion_port;
+        if port != 0 {
+            let result = crate::io::iocp::post_completion_status(
+                port,
+                (*irp).io_status.information as u64,
+                (*irp).completion_key,
+                (*irp).overlapped,
+                (*irp).io_status.status,
+            );
+            if result != crate::io::iocp::STATUS_SUCCESS {
+                // A bound port must exist and have queue capacity. Losing a
+                // completion packet silently would hang the waiter, so the
+                // failure is reported instead.
+                crate::hal::serial::write_string(
+                    "[IO] io_complete_request: dropped completion packet (port lookup or queue full)\r\n",
+                );
+            }
         }
 
         // Free the IRP
@@ -1169,6 +1297,26 @@ pub fn init() {
         register_driver(fs_driver);
     }
 
+    // Driver loader registry: give the bootstrap drivers service start
+    // types and run the boot/system loading waves, so `load_driver` and
+    // the `load_*_start_drivers` entry points have a live registry to
+    // work with instead of an empty table.
+    driver_loader::init();
+    if !null_driver.is_null() {
+        driver_loader::register_start_type_driver(
+            null_driver,
+            driver_loader::ServiceStartType::BootStart,
+        );
+    }
+    if !fs_driver.is_null() {
+        driver_loader::register_start_type_driver(
+            fs_driver,
+            driver_loader::ServiceStartType::SystemStart,
+        );
+    }
+    driver_loader::load_boot_start_drivers();
+    driver_loader::load_system_start_drivers();
+
     // // kprintln!("    I/O Manager: initialized");
     // // kprintln!(
     // //         "      drivers_max={} devices_max={} vpb_max={} irp_pool={}",
@@ -1232,6 +1380,15 @@ unsafe extern "C" fn null_write_dispatch(_device: *mut DeviceObject, irp: *mut I
 // Filesystem dispatch handlers
 // ---------------------------------------------------------------------------
 
+/// File objects created by `fs_create_dispatch`, held until
+/// `fs_close_dispatch` releases them. The CREATE IRP's stack location is
+/// freed together with its IRP, so a FileObject must not be owned by it;
+/// this registry is the file-scoped owner instead. READ/WRITE dispatches
+/// fall back to the oldest entry when their own stack location carries no
+/// FileObject (per-close file identity arrives with the syscall/IRP
+/// coupling work; until then the registry is one entry per open).
+static OPEN_FILE_OBJECTS: Spinlock<Vec<*mut FileObject>> = Spinlock::new(Vec::new());
+
 /// IRP_MJ_CREATE dispatch for filesystem devices.
 /// Opens or creates a file on the filesystem.
 unsafe extern "C" fn fs_create_dispatch(device: *mut DeviceObject, irp: *mut Irp) -> i32 {
@@ -1240,6 +1397,28 @@ unsafe extern "C" fn fs_create_dispatch(device: *mut DeviceObject, irp: *mut Irp
     }
 
     let stack = (*irp).current_stack;
+    let requested_path = if !stack.is_null() && !(*stack).file_object.is_null() {
+        let name = &(*(*stack).file_object).file_name;
+        if name.length > 0 && !name.buffer.is_null() {
+            let length = (name.length / 2) as usize;
+            let units = unsafe { core::slice::from_raw_parts(name.buffer, length) };
+            let mut result = alloc::string::String::new();
+            for unit in units {
+                if *unit == 0 {
+                    break;
+                }
+                let code_units = [*unit];
+                if let Ok(character) = alloc::string::String::from_utf16(&code_units) {
+                    result.push_str(&character);
+                }
+            }
+            Some(result)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     // create a file object for this open
     let file_obj_ptr = pool::allocate(pool::PoolType::NonPaged, core::mem::size_of::<FileObject>())
@@ -1259,11 +1438,32 @@ unsafe extern "C" fn fs_create_dispatch(device: *mut DeviceObject, irp: *mut Irp
     (*file_obj_ptr).file_name = UnicodeString::new();
     (*file_obj_ptr).current_byte_offset = 0;
     (*file_obj_ptr).flags = 0;
-
-    // Store file object in stack location for subsequent operations
-    if !stack.is_null() {
-        (*stack).file_object = file_obj_ptr;
+    if let Some(path) = requested_path {
+        if let Some(handle) = crate::fs::ntfs::is_mounted()
+            .then(|| {
+                let mut units: alloc::vec::Vec<u16> = path.encode_utf16().collect();
+                units.push(0);
+                crate::fs::ntfs::get_mounted_fs()
+                    .and_then(|filesystem| crate::fs::ntfs::open_file(filesystem, &units, None))
+            })
+            .flatten()
+        {
+            let context = pool::allocate(
+                pool::PoolType::NonPaged,
+                core::mem::size_of::<crate::fs::ntfs::NtfsHandle>(),
+            )
+                as *mut crate::fs::ntfs::NtfsHandle;
+            if !context.is_null() {
+                unsafe { core::ptr::write(context, handle) };
+                (*file_obj_ptr).fcb = context as *mut ();
+            }
+        }
     }
+
+    // Own the FileObject independently of the CREATE IRP: the stack
+    // location dies with its IRP, the file outlives it until CLOSE.
+    OPEN_FILE_OBJECTS.lock().push(file_obj_ptr);
+    let _ = stack;
 
     (*irp).io_status.status = STATUS_SUCCESS as u32;
     (*irp).io_status.information = 0;
@@ -1283,8 +1483,18 @@ unsafe extern "C" fn fs_read_dispatch(_device: *mut DeviceObject, irp: *mut Irp)
         return STATUS_INVALID_PARAMETER as i32;
     }
 
-    // Get the file object to access current byte offset
-    let file_obj = (*stack).file_object;
+    // Get the file object to access current byte offset. The CREATE
+    // IRP's stack location died with its IRP, so fall back to the
+    // open-file registry when this stack location carries no object.
+    let file_obj = {
+        let from_stack = (*stack).file_object;
+        if !from_stack.is_null() {
+            from_stack
+        } else {
+            let open = OPEN_FILE_OBJECTS.lock();
+            open.first().copied().unwrap_or(null_mut())
+        }
+    };
     if file_obj.is_null() {
         (*irp).io_status.status = STATUS_INVALID_PARAMETER as u32;
         (*irp).io_status.information = 0;
@@ -1292,12 +1502,11 @@ unsafe extern "C" fn fs_read_dispatch(_device: *mut DeviceObject, irp: *mut Irp)
         return STATUS_INVALID_PARAMETER as i32;
     }
 
+    // Route to the underlying filesystem via VFS
+    let byte_offset = (*file_obj).current_byte_offset;
     let params = (*stack).parameters.read_write;
     let buffer = params.byte_offset as *mut u8;
     let length = params.byte_count;
-
-    // Route to the underlying filesystem via VFS
-    let byte_offset = (*file_obj).current_byte_offset;
 
     if buffer.is_null() || length == 0 {
         (*irp).io_status.status = STATUS_SUCCESS as u32;
@@ -1306,9 +1515,90 @@ unsafe extern "C" fn fs_read_dispatch(_device: *mut DeviceObject, irp: *mut Irp)
         return STATUS_SUCCESS as i32;
     }
 
-    // Use VFS to read from RAM disk
-    let mut kernel_buffer = core::slice::from_raw_parts_mut(buffer, length as usize);
-    let result = crate::fs::vfs::read_file_sectors_into(0, &mut kernel_buffer, byte_offset);
+    if !(*file_obj).fcb.is_null() {
+        let handle = (*file_obj).fcb as *mut crate::fs::ntfs::NtfsHandle;
+        let bytes_read;
+        if crate::mm::user_copy::is_user_range(buffer as u64, length as usize) {
+            if crate::mm::user_copy::probe_user_write(buffer as u64, length as usize).is_err() {
+                (*irp).io_status.status = STATUS_INVALID_PARAMETER as u32;
+                (*irp).io_status.information = 0;
+                io_complete_request(irp, 0);
+                return STATUS_INVALID_PARAMETER as i32;
+            }
+            let staging = pool::allocate(pool::PoolType::NonPaged, length as usize) as *mut u8;
+            if staging.is_null() {
+                (*irp).io_status.status = STATUS_NO_MEMORY as u32;
+                (*irp).io_status.information = 0;
+                io_complete_request(irp, 0);
+                return STATUS_NO_MEMORY as i32;
+            }
+            let mut kernel_buffer =
+                unsafe { core::slice::from_raw_parts_mut(staging, length as usize) };
+            bytes_read = crate::fs::ntfs::get_mounted_fs()
+                .and_then(|filesystem| {
+                    crate::fs::ntfs::read_file(filesystem, unsafe { &mut *handle }, &mut kernel_buffer)
+                        .ok()
+                })
+                .unwrap_or(0);
+            if bytes_read > 0 {
+                let src = unsafe { core::slice::from_raw_parts(staging, bytes_read) };
+                let _ = crate::mm::user_copy::copy_to_user(buffer as u64, src);
+            }
+            pool::free(staging);
+        } else {
+            let mut kernel_buffer =
+                unsafe { core::slice::from_raw_parts_mut(buffer, length as usize) };
+            bytes_read = crate::fs::ntfs::get_mounted_fs()
+                .and_then(|filesystem| {
+                    crate::fs::ntfs::read_file(filesystem, unsafe { &mut *handle }, &mut kernel_buffer)
+                        .ok()
+                })
+                .unwrap_or(0);
+        }
+        if bytes_read > 0 {
+            unsafe { (*handle).current_position += bytes_read as u64 };
+            (*file_obj).current_byte_offset += bytes_read as u64;
+        }
+        {
+            let mut stats = IO_STATS.lock();
+            stats.bytes_read += bytes_read as u64;
+            stats.reads += 1;
+        }
+        let status = if bytes_read > 0 { STATUS_SUCCESS } else { STATUS_INVALID_PARAMETER };
+        (*irp).io_status.status = status as u32;
+        (*irp).io_status.information = bytes_read;
+        io_complete_request(irp, 0);
+        return status as i32;
+    }
+
+    // The read buffer may be a user-mode address; user buffers are never
+    // dereferenced directly. Stage the transfer through a kernel buffer.
+    let result = if crate::mm::user_copy::is_user_range(buffer as u64, length as usize) {
+        if crate::mm::user_copy::probe_user_write(buffer as u64, length as usize).is_err() {
+            (*irp).io_status.status = STATUS_INVALID_PARAMETER as u32;
+            (*irp).io_status.information = 0;
+            io_complete_request(irp, 0);
+            return STATUS_INVALID_PARAMETER as i32;
+        }
+        let staging = pool::allocate(pool::PoolType::NonPaged, length as usize) as *mut u8;
+        if staging.is_null() {
+            (*irp).io_status.status = STATUS_NO_MEMORY as u32;
+            (*irp).io_status.information = 0;
+            io_complete_request(irp, 0);
+            return STATUS_NO_MEMORY as i32;
+        }
+        let mut kernel_buffer = unsafe { core::slice::from_raw_parts_mut(staging, length as usize) };
+        let result = crate::fs::vfs::read_file_sectors_into(0, &mut kernel_buffer, byte_offset);
+        if result.status == 0 && result.bytes_read > 0 {
+            let src = unsafe { core::slice::from_raw_parts(staging, result.bytes_read) };
+            let _ = crate::mm::user_copy::copy_to_user(buffer as u64, src);
+        }
+        pool::free(staging);
+        result
+    } else {
+        let mut kernel_buffer = unsafe { core::slice::from_raw_parts_mut(buffer, length as usize) };
+        crate::fs::vfs::read_file_sectors_into(0, &mut kernel_buffer, byte_offset)
+    };
 
     // Update file position if read succeeded
     if result.status == 0 {
@@ -1340,8 +1630,18 @@ unsafe extern "C" fn fs_write_dispatch(_device: *mut DeviceObject, irp: *mut Irp
         return STATUS_INVALID_PARAMETER as i32;
     }
 
-    // Get the file object to access current byte offset
-    let file_obj = (*stack).file_object;
+    // Get the file object to access current byte offset. The CREATE
+    // IRP's stack location died with its IRP, so fall back to the
+    // open-file registry when this stack location carries no object.
+    let file_obj = {
+        let from_stack = (*stack).file_object;
+        if !from_stack.is_null() {
+            from_stack
+        } else {
+            let open = OPEN_FILE_OBJECTS.lock();
+            open.first().copied().unwrap_or(null_mut())
+        }
+    };
     if file_obj.is_null() {
         (*irp).io_status.status = STATUS_INVALID_PARAMETER as u32;
         (*irp).io_status.information = 0;
@@ -1363,9 +1663,95 @@ unsafe extern "C" fn fs_write_dispatch(_device: *mut DeviceObject, irp: *mut Irp
         return STATUS_SUCCESS as i32;
     }
 
-    // Use VFS to write to RAM disk
-    let kernel_buffer = core::slice::from_raw_parts(buffer, length as usize);
-    let result = crate::fs::vfs::write_file_sectors_from(0, kernel_buffer, byte_offset);
+    // FCB-backed (NTFS) files are written through the mounted filesystem
+    // rather than the raw sector fallback below.
+    if !(*file_obj).fcb.is_null() {
+        let handle = (*file_obj).fcb as *mut crate::fs::ntfs::NtfsHandle;
+        let bytes_written;
+        if crate::mm::user_copy::is_user_range(buffer as u64, length as usize) {
+            if crate::mm::user_copy::probe_user_read(buffer as u64, length as usize).is_err() {
+                (*irp).io_status.status = STATUS_INVALID_PARAMETER as u32;
+                (*irp).io_status.information = 0;
+                io_complete_request(irp, 0);
+                return STATUS_INVALID_PARAMETER as i32;
+            }
+            let staging = pool::allocate(pool::PoolType::NonPaged, length as usize) as *mut u8;
+            if staging.is_null() {
+                (*irp).io_status.status = STATUS_NO_MEMORY as u32;
+                (*irp).io_status.information = 0;
+                io_complete_request(irp, 0);
+                return STATUS_NO_MEMORY as i32;
+            }
+            {
+                let mut kernel_buffer =
+                    unsafe { core::slice::from_raw_parts_mut(staging, length as usize) };
+                let _ = crate::mm::user_copy::copy_from_user(&mut kernel_buffer, buffer as u64);
+            }
+            let kernel_buffer = unsafe { core::slice::from_raw_parts(staging, length as usize) };
+            bytes_written = crate::fs::ntfs::get_mounted_fs()
+                .and_then(|filesystem| {
+                    crate::fs::ntfs::write_file(filesystem, unsafe { &mut *handle }, kernel_buffer)
+                        .ok()
+                })
+                .unwrap_or(0);
+            pool::free(staging);
+        } else {
+            let kernel_buffer = unsafe { core::slice::from_raw_parts(buffer, length as usize) };
+            bytes_written = crate::fs::ntfs::get_mounted_fs()
+                .and_then(|filesystem| {
+                    crate::fs::ntfs::write_file(filesystem, unsafe { &mut *handle }, kernel_buffer)
+                        .ok()
+                })
+                .unwrap_or(0);
+        }
+        if bytes_written > 0 {
+            unsafe { (*handle).current_position += bytes_written as u64 };
+            (*file_obj).current_byte_offset += bytes_written as u64;
+        }
+        {
+            let mut stats = IO_STATS.lock();
+            stats.bytes_written += bytes_written as u64;
+            stats.writes += 1;
+        }
+        let status = if bytes_written > 0 {
+            STATUS_SUCCESS
+        } else {
+            STATUS_INVALID_PARAMETER
+        };
+        (*irp).io_status.status = status as u32;
+        (*irp).io_status.information = bytes_written;
+        io_complete_request(irp, 0);
+        return status as i32;
+    }
+
+    // The write buffer may be a user-mode address; user buffers are never
+    // dereferenced directly. Stage the transfer through a kernel buffer.
+    let result = if crate::mm::user_copy::is_user_range(buffer as u64, length as usize) {
+        if crate::mm::user_copy::probe_user_read(buffer as u64, length as usize).is_err() {
+            (*irp).io_status.status = STATUS_INVALID_PARAMETER as u32;
+            (*irp).io_status.information = 0;
+            io_complete_request(irp, 0);
+            return STATUS_INVALID_PARAMETER as i32;
+        }
+        let staging = pool::allocate(pool::PoolType::NonPaged, length as usize) as *mut u8;
+        if staging.is_null() {
+            (*irp).io_status.status = STATUS_NO_MEMORY as u32;
+            (*irp).io_status.information = 0;
+            io_complete_request(irp, 0);
+            return STATUS_NO_MEMORY as i32;
+        }
+        {
+            let mut kernel_buffer = unsafe { core::slice::from_raw_parts_mut(staging, length as usize) };
+            let _ = crate::mm::user_copy::copy_from_user(&mut kernel_buffer, buffer as u64);
+        }
+        let kernel_buffer = unsafe { core::slice::from_raw_parts(staging, length as usize) };
+        let result = crate::fs::vfs::write_file_sectors_from(0, kernel_buffer, byte_offset);
+        pool::free(staging);
+        result
+    } else {
+        let kernel_buffer = unsafe { core::slice::from_raw_parts(buffer, length as usize) };
+        crate::fs::vfs::write_file_sectors_from(0, kernel_buffer, byte_offset)
+    };
 
     // Update file position if write succeeded
     if result.status == 0 {
@@ -1388,6 +1774,15 @@ unsafe extern "C" fn fs_write_dispatch(_device: *mut DeviceObject, irp: *mut Irp
 /// IRP_MJ_CLOSE dispatch for filesystem devices.
 /// Closes a file handle.
 unsafe extern "C" fn fs_close_dispatch(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
+    // Release the FileObjects created on this device. File identity per
+    // close arrives with the syscall/IRP coupling work; until then CLOSE
+    // is the only release point for the open-file registry.
+    {
+        let mut open = OPEN_FILE_OBJECTS.lock();
+        for file_obj in open.drain(..) {
+            pool::free(file_obj as *mut u8);
+        }
+    }
     if !irp.is_null() {
         (*irp).io_status.status = STATUS_SUCCESS as u32;
         (*irp).io_status.information = 0;
@@ -1436,15 +1831,22 @@ unsafe extern "C" fn fs_pnp_dispatch(_device: *mut DeviceObject, irp: *mut Irp) 
                     (*irp).io_status.status = STATUS_SUCCESS as u32;
                 }
                 0x02 => {
-                    // IRP_MN_CANCEL_REMOVE_DEVICE
+                    // IRP_MN_REMOVE_DEVICE
                     (*irp).io_status.status = STATUS_SUCCESS as u32;
                 }
                 0x03 => {
-                    // IRP_MN_SURPRISE_REMOVAL
+                    // IRP_MN_CANCEL_REMOVE_DEVICE
                     (*irp).io_status.status = STATUS_SUCCESS as u32;
                 }
                 0x04 => {
-                    // IRP_MN_REMOVE_DEVICE
+                    // IRP_MN_STOP_DEVICE
+                    (*irp).io_status.status = STATUS_SUCCESS as u32;
+                }
+                0x17 => {
+                    // IRP_MN_SURPRISE_REMOVAL. The constant table declares
+                    // 0x17 for surprise removal; without this arm the code
+                    // fell into the wildcard arm and completed with
+                    // STATUS_NOT_IMPLEMENTED instead.
                     (*irp).io_status.status = STATUS_SUCCESS as u32;
                 }
                 _ => {
@@ -2032,8 +2434,29 @@ pub fn cancel_irp(irp: *mut Irp) -> bool {
     }
 
     unsafe {
-        // Mark the IRP as cancelled in its flags
+        // Already cancelled (or completed through the cancel path):
+        // cancelling twice must not run the routine again.
+        if ((*irp).flags & IRP_CANCEL_INDICATED) != 0 {
+            return false;
+        }
+
+        // Mark the IRP as cancelled in its flags and record the status the
+        // requester will observe.
         (*irp).flags |= IRP_CANCEL_INDICATED;
+        (*irp).io_status.status = cancel::STATUS_CANCELLED as u32;
+        (*irp).io_status.information = 0;
+
+        // Take the routine out before calling it so a routine that
+        // completes the IRP itself cannot observe (or run) itself again.
+        let routine = (*irp).cancel_routine.take();
+        if let Some(routine) = routine {
+            routine(irp);
+            return true;
+        }
+
+        // No cancel routine registered: the IRP is marked cancelled (with
+        // the status the requester will observe) and stays alive until its
+        // owner completes it, matching NT's IoCancelIrp semantics.
         true
     }
 }
@@ -2049,12 +2472,15 @@ pub fn irp_is_cancelled(irp: *mut Irp) -> bool {
 /// Set cancel routine for an IRP.
 /// This is called by the driver to set up cancellation support.
 pub fn set_irp_cancel_routine(
-    _irp: *mut Irp,
-    _cancel_routine: Option<unsafe extern "C" fn(*mut Irp)>,
+    irp: *mut Irp,
+    cancel_routine: Option<unsafe extern "C" fn(*mut Irp)>,
 ) {
-    // In a full implementation, this would set a pointer to the cancel routine
-    // that gets called when the IRP is cancelled.
-    // For the bootstrap, we just track the cancelled state.
+    if irp.is_null() {
+        return;
+    }
+    unsafe {
+        (*irp).cancel_routine = cancel_routine;
+    }
 }
 
 /// IRP flag: IRP was indicated to a cancel routine.
@@ -2152,6 +2578,39 @@ impl DriverDispatchTable {
             }
             if let Some(f) = self.cleanup {
                 (*driver).major_functions[major::IRP_MJ_CLEANUP as usize] = Some(f);
+            }
+            if let Some(f) = self.query_information {
+                (*driver).major_functions[major::IRP_MJ_QUERY_INFORMATION as usize] = Some(f);
+            }
+            if let Some(f) = self.set_information {
+                (*driver).major_functions[major::IRP_MJ_SET_INFORMATION as usize] = Some(f);
+            }
+            if let Some(f) = self.query_ea {
+                (*driver).major_functions[major::IRP_MJ_QUERY_EA as usize] = Some(f);
+            }
+            if let Some(f) = self.set_ea {
+                (*driver).major_functions[major::IRP_MJ_SET_EA as usize] = Some(f);
+            }
+            if let Some(f) = self.flush_buffers {
+                (*driver).major_functions[major::IRP_MJ_FLUSH_BUFFERS as usize] = Some(f);
+            }
+            if let Some(f) = self.query_volume_information {
+                (*driver).major_functions[major::IRP_MJ_QUERY_VOLUME_INFORMATION as usize] =
+                    Some(f);
+            }
+            if let Some(f) = self.set_volume_information {
+                (*driver).major_functions[major::IRP_MJ_SET_VOLUME_INFORMATION as usize] =
+                    Some(f);
+            }
+            if let Some(f) = self.directory_control {
+                (*driver).major_functions[major::IRP_MJ_DIRECTORY_CONTROL as usize] = Some(f);
+            }
+            if let Some(f) = self.file_system_control {
+                (*driver).major_functions[major::IRP_MJ_FILE_SYSTEM_CONTROL as usize] = Some(f);
+            }
+            if let Some(f) = self.internal_device_control {
+                (*driver).major_functions[major::IRP_MJ_INTERNAL_DEVICE_CONTROL as usize] =
+                    Some(f);
             }
         }
     }

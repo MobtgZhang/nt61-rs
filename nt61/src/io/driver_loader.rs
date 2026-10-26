@@ -88,6 +88,53 @@ pub fn init() {
     }
 }
 
+/// Make sure the registry has slots. `load_driver` and the registration
+/// helpers used to fail unconditionally when `init` had never been
+/// called, because the registry `Vec` was empty and had no free slots.
+fn ensure_registry(registry: &mut Vec<Option<DriverRegistryEntry>>) {
+    if registry.is_empty() {
+        registry.resize_with(MAX_LOADED_DRIVERS, || None);
+    }
+}
+
+/// Register an already-created driver object for loading by one of the
+/// `load_*_start_drivers` waves. The entry starts as `NotLoaded`; the
+/// wave matching its start type runs the driver's `DriverEntry`.
+pub fn register_start_type_driver(
+    driver: *mut DriverObject,
+    start_type: ServiceStartType,
+) -> bool {
+    if driver.is_null() {
+        return false;
+    }
+
+    // Extract the driver name from the object's UnicodeString (UTF-16).
+    let mut name_buf = [0u8; 64];
+    unsafe {
+        let name_ptr = (*driver).driver_name.buffer;
+        let name_len_units = ((*driver).driver_name.length as usize).min(128);
+        for j in 0..name_len_units.min(64) {
+            let ch = core::ptr::read_volatile(name_ptr.add(j));
+            if ch == 0 {
+                break;
+            }
+            name_buf[j] = ch as u8;
+        }
+    }
+
+    let entry = DriverRegistryEntry::new(&name_buf, driver, start_type);
+
+    let mut registry = DRIVER_REGISTRY.lock();
+    ensure_registry(&mut registry);
+    match registry.iter_mut().find(|e| e.is_none()) {
+        Some(slot) => {
+            *slot = Some(entry);
+            true
+        }
+        None => false,
+    }
+}
+
 pub fn load_driver(
     driver_name: &[u8],
     registry_path: &[u8],
@@ -102,6 +149,7 @@ pub fn load_driver(
     entry.load_state = DriverLoadState::Loading;
 
     let mut registry = DRIVER_REGISTRY.lock();
+    ensure_registry(&mut registry);
     let slot = registry.iter_mut().find(|e| e.is_none());
 
     if let Some(slot) = slot {
@@ -231,16 +279,58 @@ pub fn find_driver(name: &[u8]) -> *mut DriverObject {
     null_mut()
 }
 
+/// Load every registered driver whose start type matches `wanted` and
+/// whose entry is still `NotLoaded`, running its `DriverEntry` (when
+/// the driver object carries one). Returns the number of drivers that
+/// initialized successfully. Image loading from disk (PE) is not part of
+/// this path; drivers registered here must already have a DriverObject.
+fn load_drivers_with_start_type(wanted: ServiceStartType) -> usize {
+    let mut loaded = 0usize;
+
+    let mut registry = DRIVER_REGISTRY.lock();
+    ensure_registry(&mut registry);
+
+    for slot in registry.iter_mut() {
+        let Some(entry) = slot else {
+            continue;
+        };
+        if entry.start_type != wanted || entry.load_state != DriverLoadState::NotLoaded {
+            continue;
+        }
+        let driver = entry.driver_object;
+        if driver.is_null() {
+            entry.load_state = DriverLoadState::Failed;
+            continue;
+        }
+
+        let init_status = unsafe {
+            match (*driver).driver_init {
+                Some(driver_init) => driver_init(driver, core::ptr::null_mut()),
+                None => STATUS_SUCCESS as u32,
+            }
+        };
+
+        if init_status == STATUS_SUCCESS as u32 {
+            entry.load_state = DriverLoadState::Loaded;
+            loaded += 1;
+        } else {
+            entry.load_state = DriverLoadState::Failed;
+        }
+    }
+
+    loaded
+}
+
 pub fn load_boot_start_drivers() -> usize {
-    0
+    load_drivers_with_start_type(ServiceStartType::BootStart)
 }
 
 pub fn load_system_start_drivers() -> usize {
-    0
+    load_drivers_with_start_type(ServiceStartType::SystemStart)
 }
 
 pub fn load_auto_start_drivers() -> usize {
-    0
+    load_drivers_with_start_type(ServiceStartType::AutoStart)
 }
 
 pub fn loaded_driver_count() -> usize {

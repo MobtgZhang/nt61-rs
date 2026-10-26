@@ -156,6 +156,13 @@ pub unsafe fn forward_irp_to_lower(device: *mut DeviceObject, irp: *mut Irp) -> 
     if lower.is_null() {
         return complete_irp_with(irp, STATUS_INVALID_DEVICE_REQUEST);
     }
+    // IoForwardIrpToLower hands the IRP to the next driver using the
+    // NEXT stack location. Copy this driver's major/minor/parameters
+    // down (wdm.h IoCopyCurrentStackLocationToNext) and advance the
+    // current slot, otherwise the lower driver re-reads this driver's
+    // stack location and layering silently breaks.
+    super::irp_stack::copy_current_irp_stack_location_to_next(irp);
+    super::irp_stack::skip_current_stack_location(irp);
     dispatch_irp(lower, irp)
 }
 

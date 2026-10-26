@@ -4,7 +4,10 @@
 //! in the device stack. As the IRP travels down the stack, each driver
 //! gets its own stack location with parameters for that layer.
 
-use super::{DeviceObject, FileObject, IoParameters, IoStackLocation, Irp, ReadWriteParameters};
+use super::{
+    DeviceIoControlParameters, DeviceObject, FileObject, IoParameters, IoStackLocation, Irp,
+    ReadWriteParameters,
+};
 use core::ptr::null_mut;
 
 #[inline]
@@ -44,11 +47,21 @@ pub fn skip_current_stack_location(irp: *mut Irp) {
     }
 
     unsafe {
-        if (*irp).current_location > 0 {
-            (*irp).current_location -= 1;
-            let size = core::mem::size_of::<IoStackLocation>();
-            (*irp).current_stack = ((*irp).current_stack as usize + size) as *mut IoStackLocation;
+        // Stack locations are numbered 1..StackCount from the low end of
+        // the IRP allocation (see `allocate_irp`): `current_location` is
+        // the number of the slot `current_stack` points at. Skipping hands
+        // this driver's stack location to the next lower driver, so move
+        // the pointer one slot downwards — the same direction
+        // `get_next_stack_location` uses — and renumber the current slot
+        // accordingly. Refuse to skip when there is no lower slot: moving
+        // past the bottom of the allocation would walk off the IRP.
+        if (*irp).current_location <= 1 {
+            return;
         }
+        (*irp).current_location -= 1;
+        (*irp).current_stack = ((*irp).current_stack as usize
+            - core::mem::size_of::<IoStackLocation>())
+            as *mut IoStackLocation;
     }
 }
 
@@ -99,7 +112,10 @@ pub fn set_completion_routine(
 
         (*stack).control = control;
 
-        let _ = (completion_routine, context);
+        // Store the routine and its context on the stack location so
+        // `io_complete_request` can invoke it during IRP completion.
+        (*stack).completion_routine = completion_routine;
+        (*stack).completion_context = context;
     }
 }
 
@@ -207,11 +223,19 @@ pub fn build_device_io_control_irp(
             (*stack).file_object = null_mut();
 
             (*stack).parameters = IoParameters {
-                as_u64: io_control_code as u64,
+                device_io_control: DeviceIoControlParameters {
+                    output_buffer_length: output_length,
+                    input_buffer_length: input_length,
+                    io_control_code,
+                    type3_input_buffer: input_buffer as *mut (),
+                },
             };
         }
 
-        let _ = (input_buffer, input_length, output_buffer, output_length);
+        // METHOD_BUFFERED / METHOD_OUT_DIRECT place the caller's output
+        // buffer in _IRP.UserBuffer; the input buffer travels in
+        // Parameters.DeviceIoControl.Type3InputBuffer.
+        (*irp).user_buffer = output_buffer as *mut ();
     }
 
     irp

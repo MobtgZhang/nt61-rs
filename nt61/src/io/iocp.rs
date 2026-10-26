@@ -14,6 +14,7 @@
 //! 4. **Overlapped I/O**: Async operations with OVERLAPPED structure
 
 use crate::ke::sync::Spinlock;
+use alloc::sync::Arc;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -66,6 +67,9 @@ pub struct IoCompletionPort {
     /// Port ID
     port_id: u64,
 
+    /// Default completion key associated with the port at creation.
+    default_key: AtomicU64,
+
     /// Completion queue
     queue: Spinlock<VecDeque<IoCompletionPacket>>,
 
@@ -89,9 +93,10 @@ impl IoCompletionPort {
     /// create a new I/O Completion Port
     ///
     /// # Task 6.2: IOCP creation
-    pub fn new(port_id: u64, max_concurrent_threads: u32) -> Self {
+    pub fn new(port_id: u64, max_concurrent_threads: u32, default_key: u64) -> Self {
         Self {
             port_id,
+            default_key: AtomicU64::new(default_key),
             queue: Spinlock::new(VecDeque::new()),
             max_concurrent_threads,
             active_threads: AtomicU32::new(0),
@@ -136,64 +141,82 @@ impl IoCompletionPort {
     ///
     /// # Task 6.5: GetQueuedCompletionStatus
     ///
-    /// # Safety
-    /// This function blocks if no packets are available
+    /// # Blocking semantics
+    ///
+    /// The scheduler currently has no blocked-wait primitive (`yield_` is
+    /// the only cooperative reschedule mechanism and `ke::sync` events are
+    /// plain flags with no wait-block support), so a thread that must wait
+    /// reschedules instead of spinning on the CPU. A true blocked wait needs
+    /// scheduler wait-block support and remains follow-up work.
     pub fn get_completion(&self, timeout_ms: u32) -> Result<IoCompletionPacket, u32> {
-        // Increment active threads
-        let active = self.active_threads.fetch_add(1, Ordering::Relaxed);
-
-        // Check concurrency limit
-        if self.max_concurrent_threads > 0 && active >= self.max_concurrent_threads {
-            self.active_threads.fetch_sub(1, Ordering::Relaxed);
-            // Spin-yield until a worker thread slot frees up.
+        // Claim a concurrent-worker slot. A CAS loop (Acquire/Release) makes
+        // the claim atomic against the limit check, so the count can never
+        // transiently exceed `max_concurrent_threads` the way a plain
+        // `fetch_add` followed by a check could.
+        let limit = self.max_concurrent_threads;
+        if limit > 0 {
             loop {
-                core::hint::spin_loop();
-                crate::ke::scheduler::yield_();
-                if self.active_threads.load(Ordering::Relaxed) < self.max_concurrent_threads {
-                    break;
+                let active = self.active_threads.load(Ordering::Acquire);
+                if active < limit {
+                    if self
+                        .active_threads
+                        .compare_exchange_weak(
+                            active,
+                            active + 1,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_ok()
+                    {
+                        break;
+                    }
+                    continue;
                 }
+                // All worker slots are taken: give up the CPU and retry.
+                crate::ke::scheduler::yield_();
             }
-            self.active_threads.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.active_threads.fetch_add(1, Ordering::AcqRel);
         }
 
-        // Try to get a packet
-        let result = {
-            let mut queue = self.queue.lock();
-            queue.pop_front()
+        // Drain the queue, cooperatively rescheduling between attempts. The
+        // worker slot stays held for the whole wait, matching the NT
+        // semantics that `max_concurrent_threads` bounds the number of
+        // simultaneously waiting threads.
+        let deadline = if timeout_ms == 0 {
+            None
+        } else {
+            Some(crate::hal::common::pit::get_system_time_ms() + timeout_ms as u64)
         };
 
-        // Decrement active threads
-        self.active_threads.fetch_sub(1, Ordering::Relaxed);
-
-        if let Some(packet) = result {
-            self.packets_retrieved.fetch_add(1, Ordering::Relaxed);
-            Ok(packet)
-        } else {
-            // No packet available
-            if timeout_ms == 0 {
-                Err(STATUS_TIMEOUT)
-            } else {
-                // Spin-wait with timeout until a packet arrives.
-                let start = crate::hal::common::pit::get_system_time_ms();
-                loop {
-                    core::hint::spin_loop();
+        let packet = loop {
+            let queued = {
+                let mut queue = self.queue.lock();
+                queue.pop_front()
+            };
+            if let Some(packet) = queued {
+                break Some(packet);
+            }
+            match deadline {
+                None => break None,
+                Some(deadline) => {
+                    if crate::hal::common::pit::get_system_time_ms() >= deadline {
+                        break None;
+                    }
                     crate::ke::scheduler::yield_();
-
-                    let result = {
-                        let mut queue = self.queue.lock();
-                        queue.pop_front()
-                    };
-                    if let Some(packet) = result {
-                        self.packets_retrieved.fetch_add(1, Ordering::Relaxed);
-                        return Ok(packet);
-                    }
-
-                    let elapsed = crate::hal::common::pit::get_system_time_ms() - start;
-                    if elapsed >= timeout_ms as u64 {
-                        return Err(STATUS_TIMEOUT);
-                    }
                 }
             }
+        };
+
+        // Release the worker slot.
+        self.active_threads.fetch_sub(1, Ordering::Release);
+
+        match packet {
+            Some(packet) => {
+                self.packets_retrieved.fetch_add(1, Ordering::Relaxed);
+                Ok(packet)
+            }
+            None => Err(STATUS_TIMEOUT),
         }
     }
 
@@ -211,15 +234,27 @@ impl IoCompletionPort {
     pub fn port_id(&self) -> u64 {
         self.port_id
     }
+
+    /// Default completion key the port was created with.
+    pub fn default_key(&self) -> u64 {
+        self.default_key.load(Ordering::Relaxed)
+    }
 }
 
-/// Global IOCP table
-static IOCP_TABLE: Spinlock<Vec<Option<IoCompletionPort>>> = Spinlock::new(Vec::new());
+/// Global IOCP table. Ports live behind `Arc` so a waiter can hold a
+/// reference and block on its queue without keeping the table lock held
+/// for the whole timeout window.
+static IOCP_TABLE: Spinlock<Vec<Option<Arc<IoCompletionPort>>>> = Spinlock::new(Vec::new());
 static NEXT_PORT_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Initialize IOCP subsystem
 pub fn init() {
     let mut table = IOCP_TABLE.lock();
+    // Idempotent: tests call `init` per test and would otherwise keep
+    // growing the table by MAX_IOCP slots on every call.
+    if !table.is_empty() {
+        return;
+    }
     // Pre-allocate space for MAX_IOCP ports
     for _ in 0..MAX_IOCP {
         table.push(None);
@@ -232,20 +267,47 @@ pub fn init() {
 ///
 /// # Task 6.2: IOCP creation
 pub fn create_io_completion_port(max_concurrent_threads: u32) -> Result<u64, u32> {
+    create_io_completion_port_with_key(max_concurrent_threads, 0)
+}
+
+/// create a new I/O Completion Port with a default completion key.
+pub fn create_io_completion_port_with_key(
+    max_concurrent_threads: u32,
+    default_key: u64,
+) -> Result<u64, u32> {
     let port_id = NEXT_PORT_ID.fetch_add(1, Ordering::Relaxed);
-    let port = IoCompletionPort::new(port_id, max_concurrent_threads);
+    let port = IoCompletionPort::new(port_id, max_concurrent_threads, default_key);
 
     let mut table = IOCP_TABLE.lock();
+
+    // Lazy growth: callers (e.g. tests) may create ports without running
+    // `init` first; without this the table would be empty and every
+    // creation would fail with STATUS_INSUFFICIENT_RESOURCES.
+    if table.len() < MAX_IOCP {
+        for _ in table.len()..MAX_IOCP {
+            table.push(None);
+        }
+    }
 
     // Find empty slot
     for slot in table.iter_mut() {
         if slot.is_none() {
-            *slot = Some(port);
+            *slot = Some(Arc::new(port));
             return Ok(port_id);
         }
     }
 
     Err(STATUS_INSUFFICIENT_RESOURCES)
+}
+
+/// Default completion key a port was created with.
+pub fn get_port_default_key(port_id: u64) -> Option<u64> {
+    let table = IOCP_TABLE.lock();
+    table
+        .iter()
+        .filter_map(|slot| slot.as_ref())
+        .find(|p| p.port_id() == port_id)
+        .map(|p| p.default_key())
 }
 
 /// close an I/O Completion Port
@@ -281,14 +343,16 @@ pub fn associate_handle_with_iocp(port_id: u64, handle: u64, completion_key: u64
     STATUS_INVALID_HANDLE
 }
 
-/// Post a completion packet to an IOCP
+/// Post a completion packet with an explicit I/O status to an IOCP.
 ///
-/// # Task 6.6: PostQueuedCompletionStatus implementation
-pub fn post_queued_completion_status(
+/// The packet carries the real NTSTATUS of the completed operation;
+/// waiters observe it via `IoCompletionPacket::status`.
+pub fn post_completion_status(
     port_id: u64,
     bytes_transferred: u64,
     completion_key: u64,
     overlapped: u64,
+    status: u32,
 ) -> u32 {
     let table = IOCP_TABLE.lock();
 
@@ -299,7 +363,7 @@ pub fn post_queued_completion_status(
                     bytes_transferred,
                     completion_key,
                     overlapped,
-                    status: STATUS_SUCCESS,
+                    status,
                 };
                 return port.post_completion(packet);
             }
@@ -309,6 +373,18 @@ pub fn post_queued_completion_status(
     STATUS_INVALID_HANDLE
 }
 
+/// Post a completion packet to an IOCP with STATUS_SUCCESS.
+///
+/// # Task 6.6: PostQueuedCompletionStatus implementation
+pub fn post_queued_completion_status(
+    port_id: u64,
+    bytes_transferred: u64,
+    completion_key: u64,
+    overlapped: u64,
+) -> u32 {
+    post_completion_status(port_id, bytes_transferred, completion_key, overlapped, STATUS_SUCCESS)
+}
+
 /// Get a completion packet from an IOCP
 ///
 /// # Task 6.5: GetQueuedCompletionStatus implementation
@@ -316,35 +392,30 @@ pub fn get_queued_completion_status(
     port_id: u64,
     timeout_ms: u32,
 ) -> Result<IoCompletionPacket, u32> {
-    // First, find the port and clone necessary data
-    let port_exists = {
+    // Take a reference to the port out of the table, then drop the table
+    // lock before blocking. The wait below can spin for the whole timeout,
+    // and holding IOCP_TABLE across it would block every create/close/post
+    // on any IOCP — including the thread that is supposed to deliver our
+    // completion packet.
+    let port = {
         let table = IOCP_TABLE.lock();
-        table.iter().any(|slot| {
-            if let Some(port) = slot {
-                port.port_id() == port_id
-            } else {
-                false
-            }
-        })
+        table
+            .iter()
+            .find_map(|slot| slot.as_ref().filter(|p| p.port_id() == port_id).cloned())
     };
 
-    if !port_exists {
-        return Err(STATUS_INVALID_HANDLE);
+    match port {
+        Some(port) => port.get_completion(timeout_ms),
+        None => Err(STATUS_INVALID_HANDLE),
     }
+}
 
-    // Now access the port without holding the table lock
+/// Whether a completion port with the given id exists.
+pub fn port_exists(port_id: u64) -> bool {
     let table = IOCP_TABLE.lock();
-    for slot in table.iter() {
-        if let Some(port) = slot {
-            if port.port_id() == port_id {
-                // We need to call get_completion, but we can't drop table here
-                // because port is borrowed from it. Instead, we'll restructure.
-                return port.get_completion(timeout_ms);
-            }
-        }
-    }
-
-    Err(STATUS_INVALID_HANDLE)
+    table
+        .iter()
+        .any(|slot| slot.as_ref().map(|p| p.port_id() == port_id).unwrap_or(false))
 }
 
 /// Get IOCP statistics

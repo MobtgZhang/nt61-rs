@@ -90,7 +90,10 @@ pub fn get_fsctl_code(stack: *const IoStackLocation) -> u32 {
         return 0;
     }
 
-    unsafe { ((*stack).parameters.as_u64 & 0xFFFFFFFF) as u32 }
+    // Read through the DeviceIoControl variant: build_device_io_control_irp
+    // stores the control code there (wdm.h Parameters.DeviceIoControl),
+    // not in the union's raw u64 slot.
+    unsafe { (*stack).parameters.device_io_control.io_control_code }
 }
 
 pub unsafe fn handle_lock_volume(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
