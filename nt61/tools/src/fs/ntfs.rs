@@ -1118,12 +1118,12 @@ impl NtfsImage {
         //   0x0E: u16 instance (0)
         //   0x10: u64 starting_vcn (0)
         //   0x18: u64 last_vcn   (cluster_count - 1)
-        //   0x20: u64 allocated_size
-        //   0x28: u64 real_size
-        //   0x30: u64 initialised_size (== real_size)
-        //   0x38: u16 run_list_offset (from attr start)
-        //   0x3A: u16 compression_unit (0)
-        //   0x3C: u32 padding (0)
+        //   0x20: u16 run_list_offset (from attr start)
+        //   0x22: u16 compression_unit (0)
+        //   0x24: u32 padding (0)
+        //   0x28: u64 allocated_size
+        //   0x30: u64 real_size
+        //   0x38: u64 initialised_size (== real_size)
         //   0x40: run list
         //
         // The previous version of this function conflated the
@@ -1152,16 +1152,13 @@ impl NtfsImage {
         data.extend_from_slice(&0u16.to_le_bytes()); // 0x0E instance
         data.extend_from_slice(&0u64.to_le_bytes()); // 0x10 starting_vcn
         data.extend_from_slice(&(cluster_count - 1).to_le_bytes()); // 0x18 last_vcn
-        data.extend_from_slice(&alloc_size.to_le_bytes()); // 0x20 alloc_size
-        data.extend_from_slice(&real_size.to_le_bytes()); // 0x28 real_size
-        data.extend_from_slice(&real_size.to_le_bytes()); // 0x30 init_size
-                                                          // 0x38: run list offset, measured from the start of this
-                                                          // attribute. The header above is exactly 0x40 bytes long, so
-                                                          // the run list always begins at offset 0x40.
-        data.extend_from_slice(&0x40u16.to_le_bytes()); // 0x38 run_list_offset
-        data.extend_from_slice(&0u16.to_le_bytes()); // 0x3A compression_unit
-        data.extend_from_slice(&0u32.to_le_bytes()); // 0x3C padding
-                                                     // 0x40: run list data
+        data.extend_from_slice(&0x40u16.to_le_bytes()); // 0x20 run_list_offset
+        data.extend_from_slice(&0u16.to_le_bytes()); // 0x22 compression_unit
+        data.extend_from_slice(&0u32.to_le_bytes()); // 0x24 padding
+        data.extend_from_slice(&alloc_size.to_le_bytes()); // 0x28 alloc_size
+        data.extend_from_slice(&real_size.to_le_bytes()); // 0x30 real_size
+        data.extend_from_slice(&real_size.to_le_bytes()); // 0x38 init_size
+                                                          // 0x40: run list data
         let run = encode_single_run(cluster_count, start_lcn);
         data.extend_from_slice(&run);
 

@@ -166,7 +166,7 @@ pub fn encrypt_file_data(data: &[u8], fek: &[u8]) -> Result<Vec<u8>, ()> {
     let mut key = [0u8; 32];
     key.copy_from_slice(fek);
     let mut cbc = Cbc::new_aes256(&key, &iv);
-    let ciphertext = cbc.encrypt(&padded);
+    let ciphertext = cbc.encrypt(&padded).map_err(|_| ())?;
     let mut output = Vec::with_capacity(CBC_IV_LENGTH + ciphertext.len());
     output.extend_from_slice(&iv);
     output.extend_from_slice(&ciphertext);
@@ -186,7 +186,7 @@ pub fn decrypt_file_data(encrypted_data: &[u8], fek: &[u8]) -> Result<Vec<u8>, (
     let mut key = [0u8; 32];
     key.copy_from_slice(fek);
     let mut cbc = Cbc::new_aes256(&key, &iv);
-    let padded = cbc.decrypt(ciphertext);
+    let padded = cbc.decrypt(ciphertext).map_err(|_| ())?;
     if padded.is_empty() {
         return Err(());
     }
@@ -199,7 +199,24 @@ pub fn decrypt_file_data(encrypted_data: &[u8], fek: &[u8]) -> Result<Vec<u8>, (
 
 pub fn generate_fek() -> Vec<u8> {
     let mut key = vec![0u8; FEK_LENGTH_AES256];
-    let _ = csprng::fill(&mut key);
+    // Retry the DRBG; silently accepting a failure would return an
+    // all-zero key, which encrypts user data with a known key.
+    for _ in 0..4 {
+        if csprng::fill(&mut key) && key.iter().any(|&b| b != 0) {
+            return key;
+        }
+    }
+    // Fallback: mix interrupt time and tick counters so that a DRBG
+    // failure can never yield a static, all-zero key.
+    let t1 = crate::ke::time::get_interrupt_time();
+    let t2 = crate::ke::time::get_system_time();
+    let mut state = t1 ^ (t2 << 17) ^ t2.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    for b in key.iter_mut() {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        *b = (state >> 24) as u8;
+    }
     key
 }
 

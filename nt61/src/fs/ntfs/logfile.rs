@@ -266,6 +266,30 @@ impl LogFile {
         Ok(self.checkpoint_lsn)
     }
 
+    /// Write a record that is not tied to an open transaction.
+    ///
+    /// A dedicated transaction is begun and committed around the write
+    /// so the record participates in the recovery bookkeeping instead
+    /// of failing with "transaction not found" as a bare id-0 write
+    /// would.
+    pub fn write_standalone_record(
+        &mut self,
+        record_type: LogRecordType,
+        data: Vec<u8>,
+    ) -> Result<Lsn, &'static str> {
+        let transaction_id = self.begin_transaction();
+        match self.write_record(transaction_id, record_type, data) {
+            Ok(lsn) => {
+                self.commit_transaction(transaction_id)?;
+                Ok(lsn)
+            }
+            Err(err) => {
+                let _ = self.abort_transaction(transaction_id);
+                Err(err)
+            }
+        }
+    }
+
     pub fn recover(&mut self) -> Result<(), &'static str> {
         let mut active_transactions = Vec::new();
         let mut committed_transactions = Vec::new();
@@ -313,10 +337,14 @@ impl LogFile {
     }
 }
 
-/// write a journal record for NTFS operations
-/// This is a simplified interface for integration with the NTFS write operations
+/// Write a journal record for NTFS operations.
+///
+/// The record is appended to the in-memory ring buffer of the global
+/// \`LogFile\` as a standalone (immediately committed) transaction. The
+/// on-disk \`$LogFile\` is not written: records are lost on reboot, so
+/// this is bookkeeping for in-kernel consumers, not crash recovery.
 pub fn write_journal_record(
-    ntfs_device: *mut (),
+    _ntfs_device: *mut (),
     record_type: LogRecordType,
     data: &[u8],
 ) -> Result<(), ()> {
@@ -324,14 +352,12 @@ pub fn write_journal_record(
         return Err(());
     }
 
-    // Persist the record to the on-disk $LogFile via the device handle,
-    // then track it in the in-memory circular buffer.
-    let _ = ntfs_device;
-
     with_log_file(|log_file| {
-        // Use a default transaction (0) for standalone journal records.
+        // Standalone records are wrapped in their own committed
+        // transaction; there is no pre-existing transaction 0 to write
+        // into.
         log_file
-            .write_record(0, record_type, data.to_vec())
+            .write_standalone_record(record_type, data.to_vec())
             .map(|_| ())
     })
 }

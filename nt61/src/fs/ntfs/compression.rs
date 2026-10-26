@@ -251,3 +251,48 @@ pub fn write_compressed_file(
 
     Ok(compressed_size)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lznt1_round_trip() {
+        // Repetitive data exercises literal, match and overlap-copy paths.
+        let mut data = vec![0u8; COMPRESSION_BLOCK_SIZE];
+        for (i, b) in data.iter_mut().enumerate() {
+            *b = (i % 7) as u8;
+        }
+
+        let mut compressed = vec![0u8; data.len() * 2];
+        let compressed_size = compress_lznt1(&data, &mut compressed).expect("compress");
+        assert!(compressed_size < data.len(), "repetitive data must compress");
+
+        let mut out = vec![0u8; data.len()];
+        let out_size = decompress_lznt1(&compressed[..compressed_size], &mut out)
+            .expect("decompress");
+        assert_eq!(out_size, data.len());
+        assert_eq!(out[..], data[..]);
+    }
+
+    #[test]
+    fn lznt1_stored_block_round_trip() {
+        // Incompressible data must be stored verbatim (header without the
+        // compressed bit) and still round-trip.
+        let mut data = vec![0u8; COMPRESSION_BLOCK_SIZE];
+        let mut state = 0x1234_5678u32;
+        for b in data.iter_mut() {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            *b = (state >> 24) as u8;
+        }
+
+        let mut compressed = vec![0u8; data.len() * 2];
+        let compressed_size = compress_lznt1(&data, &mut compressed).expect("compress");
+
+        let mut out = vec![0u8; data.len()];
+        let out_size = decompress_lznt1(&compressed[..compressed_size], &mut out)
+            .expect("decompress");
+        assert_eq!(out_size, data.len());
+        assert_eq!(out[..], data[..]);
+    }
+}
