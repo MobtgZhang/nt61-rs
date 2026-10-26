@@ -22,6 +22,11 @@ pub struct RamDisk {
     read_only: bool,
     /// Base pointer to sector data (allocated from pool)
     data: *mut u8,
+    /// True when this instance owns the backing allocation and must
+    /// free it on Drop. install_from_external() aliases buffers that
+    /// are owned elsewhere (UEFI/winload pages), which must never be
+    /// passed to pool::free().
+    owns_data: bool,
 }
 
 unsafe impl Send for RamDisk {}
@@ -59,6 +64,7 @@ impl RamDisk {
             sector_size,
             read_only: false,
             data,
+            owns_data: true,
         })
     }
 
@@ -204,7 +210,7 @@ impl RamDisk {
 
 impl Drop for RamDisk {
     fn drop(&mut self) {
-        if !self.data.is_null() {
+        if self.owns_data && !self.data.is_null() {
             let total_size = self.sector_count * self.sector_size;
             // Track how many bytes the ramdisk owned at drop time so
             // that diagnostics can verify the lifetime of allocations.
@@ -293,6 +299,7 @@ pub fn install_from_external(
         sector_size,
         read_only,
         data: base,
+        owns_data: false,
     };
     let mut guard = RAM_DISK.lock();
     *guard = Some(disk);

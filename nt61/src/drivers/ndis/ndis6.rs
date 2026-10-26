@@ -4,7 +4,7 @@
 //! thin wrapper around a kernel synchronisation primitive on
 //! the bootstrap.
 
-use crate::ke::sync::Spinlock;
+use crate::ke::sync::{Spinlock, SpinlockGuard};
 
 /// `NdisAllocateSpinLock` equivalent. Returns a `Spinlock`
 /// on the heap (using the non-paged pool).
@@ -22,14 +22,20 @@ pub fn ndis_allocate_spin_lock() -> Option<&'static mut Spinlock<u32>> {
     Some(unsafe { &mut *raw })
 }
 
-pub fn ndis_acquire_spin_lock(lock: &Spinlock<u32>) {
-    let _g = lock.lock();
+/// Acquire an NDIS spin lock. The guard MUST be kept alive for the
+/// whole critical section and dropped afterwards; dropping the guard
+/// is what releases the lock. (The previous signature returned nothing,
+/// so the guard was dropped immediately and the lock provided no
+/// mutual exclusion at all.)
+pub fn ndis_acquire_spin_lock(lock: &Spinlock<u32>) -> SpinlockGuard<'_, u32> {
+    lock.lock()
 }
 
-pub fn ndis_release_spin_lock(lock: &Spinlock<u32>) {
-    // The guard's drop releases the lock; we just take one.
-    let _g = lock.lock();
-    let _ = _g;
+/// Release an NDIS spin lock by consuming the guard returned by
+/// ndis_acquire_spin_lock. Taking the guard by value makes it a
+/// compile error to release a lock that was never acquired.
+pub fn ndis_release_spin_lock(guard: SpinlockGuard<'_, u32>) {
+    drop(guard);
 }
 
 pub fn smoke_test() -> bool {

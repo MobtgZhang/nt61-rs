@@ -230,29 +230,46 @@ pub mod wdm {
     use super::*;
 
     /// Get associated device object
-    pub fn get_associated_device(_request: &WdfRequest) -> Option<WdfDevice> {
-        Some(WdfDevice::new(&WdfDeviceInit::new()).ok()?)
+    pub fn get_associated_device(request: &WdfRequest) -> Option<WdfDevice> {
+        // Without a backing device object there is nothing to return -
+        // previously this fabricated a fresh WdfDevice on every call.
+        let dev = request.io_device;
+        if dev.is_null() {
+            return None;
+        }
+        // The associated device is the PDO layered under this device; fall
+        // back to the device itself when it is a leaf (no PDO below it).
+        let associated = unsafe { (*dev).attached_device };
+        let target = if associated.is_null() { dev } else { associated };
+        WdfDevice::from_io_device(target).ok()
     }
 
     /// Get device object from request
-    pub fn get_device_object(_request: &WdfRequest) -> Option<WdfObjectHandle> {
-        Some(core::ptr::null())
+    pub fn get_device_object(request: &WdfRequest) -> Option<WdfObjectHandle> {
+        // The handle is the real I/O manager device object the request
+        // targets, or nothing when the request never touched a device.
+        let dev = request.io_device;
+        if dev.is_null() {
+            None
+        } else {
+            Some(dev as WdfObjectHandle)
+        }
     }
 
     /// Get current IRP stack location
-    pub fn get_current_stack_location(_request: &WdfRequest) -> Option<*mut IrpStack> {
-        None
+    pub fn get_current_stack_location(request: &WdfRequest) -> Option<*mut IrpStack> {
+        // Reads the real current stack location out of the backing IRP.
+        let irp = request.io_irp;
+        if irp.is_null() {
+            return None;
+        }
+        unsafe { Some((*irp).current_stack as *mut IrpStack) }
     }
 
     /// IRP stack location
-    #[repr(C)]
-    pub struct IrpStack {
-        pub major_function: u8,
-        pub minor_function: u8,
-        pub flags: u8,
-        pub control: u8,
-        pub parameters: [u8; 28],
-    }
+    /// IRP stack location: aliased to the real I/O manager stack layout so
+    /// callers can walk the actual IRP backing a WDF request.
+    pub type IrpStack = crate::io::IoStackLocation;
 }
 
 /// WDF device collection

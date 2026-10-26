@@ -190,9 +190,13 @@ pub fn smoke_test() -> bool {
     arch::smoke_test()
 }
 
+// Staged top-level driver modules: they compile but have no callers
+// outside this declaration list (no drivers::acpi / keyboard / ... /
+// tcpip references exist in the tree). The live implementations live
+// elsewhere (arch/x86_64, net/, input/); these files are kept until
+// the staged rewrites either replace those or are deleted, so treat
+// them as reference code, not as part of the driver surface.
 pub mod acpi;
-pub mod common;
-pub mod dispatch;
 pub mod keyboard;
 pub mod mouse;
 pub mod ntfs;

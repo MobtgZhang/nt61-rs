@@ -139,8 +139,15 @@ pub fn disk_read(idx: usize, offset: u64, byte_count: usize, buf: &mut [u8]) -> 
                 }
                 let w = tmp[i];
                 buf[out_off] = (w & 0xFF) as u8;
-                buf[out_off + 1] = ((w >> 8) & 0xFF) as u8;
-                out_off += 2;
+                // Only touch the high byte when it is inside the
+                // requested byte_count; writing buf[out_off + 1] on an
+                // odd-sized tail read one byte past the caller buffer.
+                if out_off + 1 < byte_count {
+                    buf[out_off + 1] = ((w >> 8) & 0xFF) as u8;
+                    out_off += 2;
+                } else {
+                    out_off += 1;
+                }
             }
             remaining -= (sectors as usize) * 512;
             start_sector += sectors as u32;
@@ -155,16 +162,12 @@ pub fn disk_read(idx: usize, offset: u64, byte_count: usize, buf: &mut [u8]) -> 
 
 /// `disk_write` — write `byte_count` bytes from `buf` to `offset` on disk `idx`.
 ///
-/// Note: The ATA PIO driver does not support writes in this bootstrap environment.
-/// This implementation updates statistics to track write attempts, but does not
-/// actually persist data. For a full implementation, this would use:
-/// - ATA PIO WRITE SECTORS command (if supported)
-/// - AHCI DMA write operations (when available)
-/// - NVMe write command (when available)
-///
-/// Returns the number of bytes "written" (in bootstrap: always 0 since no actual I/O).
-pub fn disk_write(idx: usize, _offset: u64, byte_count: usize, buf: &[u8]) -> usize {
-    // Validate parameters
+/// disk_write forwards to the ATA PIO write commands (LBA28, with the
+/// LBA48 command set for offsets beyond the 28-bit LBA boundary) and
+/// returns the number of bytes actually written. A partial final
+/// sector is written back as a read-modify-write so bytes beyond the
+/// requested range are preserved instead of being zero-filled.
+pub fn disk_write(idx: usize, offset: u64, byte_count: usize, buf: &[u8]) -> usize {
     if buf.len() < byte_count {
         return 0;
     }
@@ -173,21 +176,74 @@ pub fn disk_write(idx: usize, _offset: u64, byte_count: usize, buf: &[u8]) -> us
         if idx >= MAX_DISKS {
             return 0;
         }
-        let d = &mut DISKS[idx];
-        if !d.valid {
+
+        let disk = &DISKS[idx];
+        if !disk.valid {
             return 0;
         }
 
-        // Track the write attempt in statistics
-        d.writes += 1;
-        // Note: bytes_written is NOT incremented because no actual data was written
-        // This distinguishes "attempted writes" from "successful writes"
-    }
-    WRITE_COUNT.fetch_add(1, Ordering::Relaxed);
+        let channel = (idx & 1) as usize;
+        let max_sectors = disk.sector_count;
+        let mut lba = offset / 512;
+        let mut remaining = byte_count;
+        let mut in_off = 0usize;
+        let mut written = 0usize;
 
-    // Return 0 to indicate no actual data was written
-    // The kernel smoke test can check this to verify write support
-    0
+        while remaining > 0 {
+            if lba >= max_sectors as u64 {
+                break;
+            }
+            let sectors = 1u8;
+            let mut tmp = [0u16; 256];
+            if remaining < 512 {
+                // Partial final sector: read what is currently on
+                // disk so the merge below only rewrites the bytes
+                // the caller actually asked for.
+                let read_ok = if lba <= 0xFFFF_FFFF {
+                    ata::read_sectors(channel, lba as u32, sectors, &mut tmp)
+                } else {
+                    ata::read_sectors_lba48(channel, lba, sectors as u16, &mut tmp)
+                };
+                if !read_ok {
+                    break;
+                }
+            }
+            // Merge the caller bytes into the sector image as
+            // little-endian 16-bit words, matching the packing the
+            // read path uses.
+            let mut i = 0usize;
+            while i < remaining {
+                let w = i / 2;
+                if i % 2 == 0 {
+                    tmp[w] = (tmp[w] & 0xFF00) | (buf[in_off + i] as u16);
+                } else {
+                    tmp[w] = (tmp[w] & 0x00FF) | ((buf[in_off + i] as u16) << 8);
+                }
+                i += 1;
+            }
+            let ok = if lba <= 0xFFFF_FFFF {
+                ata::write_sectors(channel, lba as u32, sectors, &tmp)
+            } else {
+                ata::write_sectors_lba48(channel, lba, sectors as u16, &tmp)
+            };
+            if !ok {
+                break;
+            }
+            let chunk = remaining.min(512);
+            written += chunk;
+            in_off += chunk;
+            remaining -= chunk;
+            lba += sectors as u64;
+        }
+
+        let d = &mut DISKS[idx];
+        d.writes += 1;
+        d.bytes_written += written as u64;
+        if written > 0 {
+            WRITE_COUNT.fetch_add(1, Ordering::Relaxed);
+        }
+        written
+    }
 }
 
 pub fn disk_count() -> usize {

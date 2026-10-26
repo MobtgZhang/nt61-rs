@@ -325,7 +325,11 @@ fn init_nic(n: &mut Nic) -> bool {
         let rctl = core::ptr::read_volatile((mmio as *const u32).add((REG_RCTL / 4) as usize));
         core::ptr::write_volatile(
             (mmio as *mut u32).add((REG_RCTL / 4) as usize),
-            rctl | RCTL_EN | RCTL_UPE | RCTL_MPE | RCTL_BAM,
+            // Accept our own unicast frames plus broadcasts, but keep
+            // the receiver out of promiscuous mode: defaulting to
+            // RCTL_UPE/RCTL_MPE would listen to every frame on the
+            // wire, so explicitly clear those bits here.
+            (rctl | RCTL_EN | RCTL_BAM) & !(RCTL_UPE | RCTL_MPE),
         );
 
         // Enable transmitter

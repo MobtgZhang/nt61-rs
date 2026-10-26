@@ -12,7 +12,7 @@
 //! revision 1.0 + supplement. No code is copied from any
 //! Microsoft or ReactOS source file.
 
-use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8};
 
 // Helper functions for MMIO access
 unsafe fn mmio_read32(base: u64, offset: u32) -> u32 {
@@ -27,19 +27,28 @@ unsafe fn mmio_write32(base: u64, offset: u32, value: u32) {
 // Constants
 // ============================================================================
 
-/// EHCI PCI class (0x0C, 0x03, 0x20).
+/// EHCI PCI class triple: class 0x0C (serial bus), subclass 0x03
+/// (USB), prog_if 0x20 (EHCI).
+const EHCI_PCI_CLASS: (u8, u8, u8) = (0x0C, 0x03, 0x20);
 
 /// EHCI capability register offsets (relative to BAR0).
+const CAPLENGTH: u32 = 0x00;
+const HCIVERSION: u32 = 0x02;
+const HCSPARAMS: u32 = 0x04;
+const HCCPARAMS: u32 = 0x08;
 
 /// EHCI operational register offsets (relative to `op_base`).
-
+const OP_USBCMD: u32 = 0x00;
+const OP_USBSTS: u32 = 0x04;
+const OP_CONFIGFLAG: u32 = 0x50;
 const OP_PORTSC: u32 = 0x44;
 
 /// USBCMD bits.
+const USBCMD_RUN: u32 = 1 << 0;
+const USBCMD_HCRST: u32 = 1 << 1;
 
 /// USBSTS bits.
-
-/// PORTSC bits.
+const USBSTS_HCH: u32 = 1 << 0;
 const PORTSC_CCS: u32 = 1 << 0; // Current Connect Status
 const PORTSC_CSC: u32 = 1 << 1; // Connect Status Change
 const PORTSC_PE: u32 = 1 << 2; // Port Enable
@@ -299,8 +308,6 @@ impl Default for EhciController {
 static mut EHCI_CONTROLLERS: [Option<EhciController>; 4] =
     [Option::None, Option::None, Option::None, Option::None];
 static mut EHCI_COUNT: usize = 0;
-static EHCI_ADDRESS_COUNTER: AtomicU8 = AtomicU8::new(1);
-
 fn push_ehci(c: EhciController) {
     unsafe {
         if EHCI_COUNT < (*core::ptr::addr_of!(EHCI_CONTROLLERS)).len() {
@@ -314,19 +321,126 @@ fn push_ehci(c: EhciController) {
 // Initialization
 // ============================================================================
 
-pub fn init() {
-    // Initialize static storage with a placeholder controller so
-    // downstream probe paths see a positive `count()`.
-    push_ehci(EhciController::default());
+/// Return the first memory (non-I/O) BAR base of a decoded PCI
+/// device, if any.
+fn first_mmio_bar(info: &crate::drivers::bus::pci_bus::PciDeviceInfo) -> Option<u64> {
+    info.bars
+        .iter()
+        .find(|b| !b.is_io && b.phys != 0)
+        .map(|b| b.phys & !0xF)
+}
 
-    let mut found = 0u32;
-    unsafe {
-        for slot in (*core::ptr::addr_of!(EHCI_CONTROLLERS)).iter() {
-            if slot.is_some() {
-                found += 1;
+/// Build a controller from real hardware: parse the capability
+/// registers at the BAR and run the controller reset sequence.
+/// Returns None when the device does not respond like an EHCI
+/// controller or the reset fails; such devices are not registered.
+fn init_controller(bar_phys: u64) -> Option<EhciController> {
+    if bar_phys == 0 {
+        return None;
+    }
+    // Low MMIO is identity-mapped (same convention as the AHCI
+    // driver on QEMU q35), so the physical BAR address doubles as
+    // the virtual MMIO base.
+    let mmio = bar_phys;
+
+    // SAFETY: MMIO region owned by this controller; volatile reads.
+    let cap_length = unsafe {
+        core::ptr::read_volatile((mmio + CAPLENGTH as u64) as *const u8)
+    };
+    if cap_length == 0 {
+        // A zero capability length means this is not an EHCI
+        // controller (or the BAR is not decoded).
+        return None;
+    }
+    let hci_version =
+        unsafe { core::ptr::read_volatile((mmio + HCIVERSION as u64) as *const u16) };
+    let hcs_params = unsafe { mmio_read32(mmio, HCSPARAMS) };
+    let hcc_params = unsafe { mmio_read32(mmio, HCCPARAMS) };
+
+    // HCSPARAMS.N_PORTS (bits 3:0) is the port count; spec minimum
+    // of 1 port per companion-optional controller.
+    let n_ports = (hcs_params & 0xF) as u8;
+    if n_ports == 0 {
+        return None;
+    }
+
+    let op_base = mmio + cap_length as u64;
+
+    // Reset the host controller (USBCMD.HC_RESET) and wait for the
+    // bit to self-clear. Bounded poll: a wedged device must not hang
+    // the boot path.
+    let mut cmd = unsafe { mmio_read32(op_base, OP_USBCMD) };
+    cmd |= USBCMD_HCRST;
+    unsafe { mmio_write32(op_base, OP_USBCMD, cmd) };
+    let mut reset_done = false;
+    for _ in 0..100_000 {
+        cmd = unsafe { mmio_read32(op_base, OP_USBCMD) };
+        if (cmd & USBCMD_HCRST) == 0 {
+            reset_done = true;
+            break;
+        }
+        core::hint::spin_loop();
+    }
+    if !reset_done {
+        return None;
+    }
+
+    // Route ports to this controller and start it running; wait for
+    // the halted bit to clear before declaring the controller up.
+    unsafe { mmio_write32(op_base, OP_CONFIGFLAG, 1) };
+    cmd = unsafe { mmio_read32(op_base, OP_USBCMD) };
+    cmd |= USBCMD_RUN;
+    unsafe { mmio_write32(op_base, OP_USBCMD, cmd) };
+    let mut running = false;
+    for _ in 0..100_000 {
+        let sts = unsafe { mmio_read32(op_base, OP_USBSTS) };
+        if (sts & USBSTS_HCH) == 0 {
+            running = true;
+            break;
+        }
+        core::hint::spin_loop();
+    }
+    if !running {
+        return None;
+    }
+
+    Some(EhciController {
+        bar0_phys: bar_phys,
+        mmio_base: mmio,
+        cap_length,
+        hci_version,
+        n_ports,
+        hcc_params,
+        cmd,
+        sts: 0,
+        initialised: true,
+        async_qh_phys: 0,
+        async_qh_virt: 0,
+        next_address: AtomicU8::new(1),
+        device_connected: AtomicBool::new(false),
+    })
+}
+
+pub fn init() {
+    // Enumerate PCI and build controllers from real hardware. When
+    // no EHCI device exists the registry stays empty and `count()`
+    // honestly reports 0; no placeholder is registered.
+    for dev in crate::hal::common::pci::enumerate() {
+        if (dev.class_code, dev.subclass, dev.prog_if) != EHCI_PCI_CLASS {
+            continue;
+        }
+        let info = crate::drivers::bus::pci_bus::find_pci(dev.bus, dev.device, dev.function);
+        let bar = info.and_then(|i| first_mmio_bar(&i));
+        if let Some(bar_phys) = bar {
+            if let Some(c) = init_controller(bar_phys) {
+                push_ehci(c);
             }
         }
     }
+
+    // SAFETY: single-threaded init context; only the registered
+    // count is read here.
+    let found = unsafe { EHCI_COUNT } as u32;
 
     // Publish the discovery result so smoke tests and upper layers
     // can observe the controller count without re-walking the
@@ -480,36 +594,18 @@ pub enum ControlResult {
     Error(u8),
 }
 
-/// Allocate a new USB address
-fn allocate_address() -> u8 {
-    EHCI_ADDRESS_COUNTER.fetch_add(1, Ordering::SeqCst)
-}
-
 /// Enumerate a device on a port
 pub fn enumerate_device(controller: usize, port: u8) -> Result<UsbDevice, &'static str> {
     // Reset port
-    let speed = reset_port(controller, port)?;
+    let _speed = reset_port(controller, port)?;
 
-    // Allocate new address
-    let new_addr = allocate_address();
-    // kprintln!("[EHCI] Allocated address {} for port {}", new_addr, port);
-
-    // In real implementation, would execute control transfers here
-    // - GET_DESCRIPTOR from address 0
-    // - SET_ADDRESS to new_addr
-    // - GET_DESCRIPTOR from new_addr
-    // - GET_CONFIGURATION
-    // - SET_CONFIGURATION
-
-    Ok(UsbDevice {
-        address: new_addr,
-        port,
-        speed,
-        state: UsbDeviceState::Configured,
-        descriptor: UsbDeviceDescriptor::default(),
-        configuration: 1,
-        max_packet_size: 64,
-    })
+    // Steps 2-4 (GET_DESCRIPTOR / SET_ADDRESS / SET_CONFIGURATION)
+    // require real control transfers through the async schedule
+    // (QH + qTD chain). That machinery is not wired up yet, so
+    // refuse to hand out a device claiming to be Configured with a
+    // default descriptor: the caller would trust data the hardware
+    // never returned.
+    Err("EHCI control transfer path (QH/qTD scheduling) not implemented")
 }
 
 // ============================================================================

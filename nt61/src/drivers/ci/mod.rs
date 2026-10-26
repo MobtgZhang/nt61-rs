@@ -465,19 +465,30 @@ pub fn validate_pe_image(image: &[u8]) -> u32 {
 
     // Compute the PE hash
     let hash = compute_pe_hash(image);
-    let _ = &hash;
     // crate::kprintln!("    [CI] PE hash: {:02x}{:02x}...{:02x}{:02x}",
     //         hash[0], hash[1], hash[30], hash[31]);
 
-    // In a full implementation, we'd compare against:
-    //   1. Embedded Authenticode signature (WinVerifyTrust)
-    //   2. Catalog database (HKLM\SYSTEM\CurrentControlSet\control\SecureKernel\Catalog)
-    //   3. The CI policy (driver signing enforcement level)
-    //
-    // For this bootstrap, we always succeed (allow unsigned drivers).
-    // A production implementation would check the policy and signature here.
-    0 // STATUS_SUCCESS
+    // Fail closed: with no Authenticode trust anchor or catalog
+    // database available, the only images we accept are the ones whose
+    // PE hash (section data, certificate table excluded) is on the
+    // compile-time allowlist below. The list starts empty, so unsigned
+    // or tampered images are rejected with STATUS_INVALID_IMAGE_HASH
+    // instead of being waved through. Until ci::init() is enabled in
+    // drivers::init, se_ci_check_image keeps its allow-all gate, so
+    // this deny-by-default policy does not affect the current boot.
+    for allowed in ALLOWED_IMAGE_HASHES {
+        if allowed == &hash {
+            return 0; // STATUS_SUCCESS
+        }
+    }
+    0xC0000428u32 // STATUS_INVALID_IMAGE_HASH
 }
+
+/// Compile-time allowlist of trusted PE image hashes (SHA-256 over the
+/// PE section data with any certificate table excluded, exactly what
+/// compute_pe_hash produces). Populate this table with the digest of a
+/// signed driver to let that image pass code integrity.
+const ALLOWED_IMAGE_HASHES: [&[u8; 32]; 0] = [];
 
 /// Initialise the Code Integrity module.
 pub fn init() {

@@ -447,29 +447,6 @@ pub(crate) fn push_xhci(c: XhciController) -> bool {
     }
 }
 
-/// Build a placeholder xHCI controller with safe defaults.
-/// Used by `init()` so downstream code can probe the module API
-/// without requiring real hardware discovery.
-pub(crate) fn placeholder_controller() -> XhciController {
-    XhciController {
-        bar0_phys: 0,
-        mmio_base: 0,
-        cap_length: 0,
-        hci_version: 0x0100,
-        max_slots: 1,
-        max_ports: 1,
-        hcs_params2: 0,
-        hcc_params1: 0,
-        cmd: 0,
-        sts: 0,
-        initialised: false,
-        dcbaa: XhciDcbaa::default(),
-        cmd_ring: XhciCommandRing::default(),
-        cmd_event_idx: 0,
-        port_count: 1,
-    }
-}
-
 /// read-only diagnostic snapshot of a controller. Used by smoke
 /// tests so all fields are exercised by the diagnostic path.
 pub fn diagnostics(controller: usize) -> Option<XhciDiagnostics> {
@@ -546,10 +523,6 @@ unsafe fn mmio_write64(base: u64, offset: u32, val: u64) {
     mmio_write32(base, offset + 4, (val >> 32) as u32);
 }
 
-unsafe fn doorbell(base: u64, slot: u8, value: u32) {
-    core::ptr::write_volatile((base + (slot as u64) * 4) as *mut u32, value);
-}
-
 /// read the runtime-register base (64-bit) for the given controller slot.
 /// This exercises both `mmio_read64` and the doorbell helpers indirectly
 /// when used during enumeration, and provides a defensive accessor so
@@ -596,12 +569,132 @@ unsafe fn bump_cmd_event_idx(controller: usize) {
 // Initialization
 // ============================================================================
 
+/// xHCI PCI class triple: class 0x0C (serial bus), subclass 0x03
+/// (USB), prog_if 0x30 (xHCI).
+const XHCI_PCI_CLASS: (u8, u8, u8) = (0x0C, 0x03, 0x30);
+
+/// Return the first memory (non-I/O) BAR base of a decoded PCI
+/// device, if any.
+fn first_mmio_bar(info: &crate::drivers::bus::pci_bus::PciDeviceInfo) -> Option<u64> {
+    info.bars
+        .iter()
+        .find(|b| !b.is_io && b.phys != 0)
+        .map(|b| b.phys & !0xF)
+}
+
+/// Build a controller from real hardware: parse the capability
+/// registers at the BAR and run the controller reset sequence.
+/// Returns None when the device does not respond like an xHCI
+/// controller or the reset fails; such devices are not registered.
+fn init_controller(bar_phys: u64) -> Option<XhciController> {
+    if bar_phys == 0 {
+        return None;
+    }
+    // The kernel identity-maps low MMIO (same convention the AHCI
+    // driver uses for QEMU q35), so the physical BAR address is the
+    // virtual MMIO base.
+    let mmio = bar_phys;
+
+    // SAFETY: MMIO region owned by this controller; volatile reads.
+    let cap_length =
+        unsafe { core::ptr::read_volatile((mmio + CAPLENGTH as u64) as *const u8) };
+    if cap_length == 0 {
+        // No capability block: not an xHCI controller.
+        return None;
+    }
+    let hci_version =
+        unsafe { core::ptr::read_volatile((mmio + HCIVERSION as u64) as *const u16) };
+    let hcs_params1 = unsafe { mmio_read32(mmio, HCSPARAMS1 as u32) };
+    let hcs_params2 = unsafe { mmio_read32(mmio, HCSPARAMS2 as u32) };
+    let hcc_params1 = unsafe { mmio_read32(mmio, HCCPARAMS1 as u32) };
+
+    let max_slots = (hcs_params1 & 0xFF) as u8;
+    let max_ports = ((hcs_params1 >> 24) & 0xFF) as u8;
+    if max_slots == 0 || max_ports == 0 {
+        return None;
+    }
+
+    let op_base = mmio + cap_length as u64;
+
+    // Reset the controller (USBCMD.HCRST) and wait for the bit to
+    // self-clear. Bound the poll so a wedged device cannot hang the
+    // boot path.
+    let mut cmd = unsafe { mmio_read32(op_base, USBCMD as u32) };
+    cmd |= USBCMD_HCRST;
+    unsafe { mmio_write32(op_base, USBCMD as u32, cmd) };
+    let mut reset_done = false;
+    for _ in 0..100_000 {
+        cmd = unsafe { mmio_read32(op_base, USBCMD as u32) };
+        if (cmd & USBCMD_HCRST) == 0 {
+            reset_done = true;
+            break;
+        }
+        core::hint::spin_loop();
+    }
+    if !reset_done {
+        return None;
+    }
+
+    // Check the not-ready flag cleared after reset.
+    let sts = unsafe { mmio_read32(op_base, USBSTS as u32) };
+    if (sts & USBSTS_CNR) != 0 {
+        return None;
+    }
+
+    // Start the controller running and wait for the halted bit to
+    // clear, mirroring what a real driver does before posting TRBs.
+    cmd = unsafe { mmio_read32(op_base, USBCMD as u32) };
+    cmd |= USBCMD_RUN;
+    unsafe { mmio_write32(op_base, USBCMD as u32, cmd) };
+    let mut running = false;
+    for _ in 0..100_000 {
+        let s = unsafe { mmio_read32(op_base, USBSTS as u32) };
+        if (s & USBSTS_HCH) == 0 {
+            running = true;
+            break;
+        }
+        core::hint::spin_loop();
+    }
+    if !running {
+        return None;
+    }
+
+    Some(XhciController {
+        bar0_phys: bar_phys,
+        mmio_base: mmio,
+        cap_length,
+        hci_version,
+        max_slots,
+        max_ports,
+        hcs_params2,
+        hcc_params1,
+        cmd,
+        sts,
+        initialised: true,
+        dcbaa: XhciDcbaa::default(),
+        cmd_ring: XhciCommandRing::default(),
+        cmd_event_idx: 0,
+        port_count: max_ports,
+    })
+}
+
 pub fn init() {
-    // Pre-register a placeholder controller so `count()` returns a
-    // positive value and downstream code can probe the module API
-    // surface (smoke tests, statistics). The real driver would
-    // enumerate PCI here and build controllers from BAR values.
-    push_xhci(placeholder_controller());
+    // Enumerate the PCI tree and build controllers from real BAR
+    // values. When no xHCI device is present the registry stays
+    // empty and `count()` honestly reports 0; no placeholder
+    // controller is registered.
+    for dev in crate::hal::common::pci::enumerate() {
+        if (dev.class_code, dev.subclass, dev.prog_if) != XHCI_PCI_CLASS {
+            continue;
+        }
+        let info = crate::drivers::bus::pci_bus::find_pci(dev.bus, dev.device, dev.function);
+        let bar = info.and_then(|i| first_mmio_bar(&i));
+        if let Some(bar_phys) = bar {
+            if let Some(c) = init_controller(bar_phys) {
+                push_xhci(c);
+            }
+        }
+    }
 
     let found = count() as u32;
 
@@ -755,20 +848,22 @@ pub fn reset_port(controller: usize, port: u8) -> Result<UsbSpeed, &'static str>
 
 /// Execute a command TRB on the command ring
 fn execute_command(c: &mut XhciController, trb: XhciTrb) -> Result<u32, &'static str> {
-    // In real implementation, would:
-    // 1. write TRB to command ring
-    // 2. Ring doorbell 0
-    // 3. Wait for command completion event
-
-    // Increment the cumulative command counter so smoke tests and
-    // diagnostics can verify the path was exercised.
-    TOTAL_COMMANDS_EXECUTED.fetch_add(1, ATOMIC_ORDERING);
-    // Stash the controller pointer so external callers can correlate
-    // commands back to their originating controller. The real driver
-    // would use this to look up the active command ring.
-    let _ = c;
+    if !c.initialised {
+        return Err("xHCI controller not initialised");
+    }
+    if c.cmd_ring.phys == 0 || c.cmd_ring.size == 0 {
+        // The command ring (physical memory + event ring + doorbell
+        // schedule) is not set up yet. Refuse to fake a completion:
+        // callers must not treat a slot command as done when the TRB
+        // was never posted to real ring memory.
+        return Err("xHCI command ring not set up");
+    }
+    // A real implementation would enqueue the TRB, ring doorbell 0
+    // and wait for a Command Completion event on the event ring.
+    // That machinery is not implemented yet, so report the failure
+    // honestly instead of synthesising a success code.
     let _ = trb.trb_type();
-    Ok(0)
+    Err("xHCI command completion eventing not implemented")
 }
 
 /// Enable a device slot
@@ -780,10 +875,11 @@ pub fn enable_slot(slot_type: u8) -> Result<u8, &'static str> {
         };
 
         let trb = XhciTrb::enable_slot(slot_type);
+        // The assigned slot id is only known from the command
+        // completion event; without real eventing there is no slot to
+        // return, so propagate the error instead of inventing "1".
         execute_command(c, trb)?;
-
-        // Return slot ID (would come from event in real impl)
-        Ok(1)
+        Err("xHCI slot assignment requires command completion eventing")
     }
 }
 
@@ -816,7 +912,6 @@ pub fn address_device(
 
         let trb = XhciTrb::address_device(bdf, ctx_base);
         execute_command(c, trb)?;
-
         Ok(())
     }
 }
@@ -861,7 +956,7 @@ impl UsbSetupPacket {
 /// Execute a control transfer
 pub fn control_transfer(
     controller: usize,
-    slot: u8,
+    _slot: u8,
     _ep: u8,
     setup: &UsbSetupPacket,
     data: Option<(*mut u8, u32)>,
@@ -881,40 +976,51 @@ pub fn control_transfer(
         None => 0,
     };
     unsafe {
-        doorbell(controller as u64, slot, payload);
+        if let Some(Some(c)) = (*core::ptr::addr_of!(XHCI_CONTROLLERS)).get(controller) {
+            if !c.initialised {
+                return Err("xHCI controller not initialised");
+            }
+        } else {
+            return Err("Invalid controller");
+        }
     }
+    // A real implementation would enqueue SETUP/DATA/STATUS TRBs on
+    // the endpoint transfer ring and wait for the transfer event.
+    // Without transfer rings there is no transfer to complete, so
+    // refuse to pretend one succeeded.
+    let _ = (payload, buf_addr);
     TOTAL_TRANSFERS_SUBMITTED.fetch_add(1, ATOMIC_ORDERING);
-    Ok(buf_addr as u32)
+    Err("xHCI transfer rings not implemented")
 }
 
 // ============================================================================
 // Device Enumeration
 // ============================================================================
 
-/// Get device descriptor
-pub fn get_descriptor(_controller: usize, _port: u8) -> Result<UsbDeviceDescriptor, &'static str> {
-    Ok(UsbDeviceDescriptor::default())
+/// Get device descriptor. Requires a real control transfer on the
+/// default endpoint, which needs the transfer-ring machinery.
+pub fn get_descriptor(controller: usize, _port: u8) -> Result<UsbDeviceDescriptor, &'static str> {
+    unsafe {
+        if let Some(Some(c)) = (*core::ptr::addr_of!(XHCI_CONTROLLERS)).get(controller) {
+            if !c.initialised {
+                return Err("xHCI controller not initialised");
+            }
+        } else {
+            return Err("Invalid controller");
+        }
+    }
+    Err("xHCI control transfer path not implemented")
 }
 
 /// Enumerate a device on a port
 pub fn enumerate_device(controller: usize, port: u8) -> Result<UsbDevice, &'static str> {
-    let speed = reset_port(controller, port)?;
+    let _speed = reset_port(controller, port)?;
 
-    // In real implementation:
-    // 1. Enable slot
-    // 2. Address device
-    // 3. Get descriptors
-    // 4. Configure endpoint
-
-    Ok(UsbDevice {
-        address: 1,
-        port,
-        speed,
-        state: UsbDeviceState::Configured,
-        descriptor: UsbDeviceDescriptor::default(),
-        configuration: 1,
-        max_packet_size: 64,
-    })
+    // Steps 2-4 (enable slot, address device, get descriptors,
+    // configure endpoint) all require real command/transfer rings.
+    // Reporting a fully-configured device here would be a lie the
+    // hub driver could not act on, so surface the gap as an error.
+    Err("xHCI device enumeration requires transfer ring support")
 }
 
 // ============================================================================

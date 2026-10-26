@@ -16,7 +16,7 @@
 //! OSR / "Windows Internals, 6th ed." (Russinovich).
 
 use core::ptr::null_mut;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use crate::hal::common::pci::PciDevice;
 use crate::io::{DeviceObject, DeviceType, DriverObject, ListEntry};
@@ -179,7 +179,12 @@ static mut DEVICE_NODES: [PnPNode; MAX_DEVICE_NODES] = [PnPNode {
 }; MAX_DEVICE_NODES];
 
 static mut DRIVER_TABLE: [Option<DriverRegistration>; 32] = [const { None }; 32];
-static mut PNP_INITIALISED: bool = false;
+static PNP_INITIALISED: AtomicBool = AtomicBool::new(false);
+
+/// Serializes init() so concurrent callers (parallel test threads today,
+/// SMP cores in production) cannot observe the initialised flag before
+/// the default driver table is fully populated.
+static PNP_INIT_LOCK: crate::ke::sync::Spinlock<()> = crate::ke::sync::Spinlock::new(());
 
 static REGISTERED_DEVICES: AtomicU32 = AtomicU32::new(0);
 static STARTED_DEVICES: AtomicU32 = AtomicU32::new(0);
@@ -187,16 +192,24 @@ static ENUMERATE_DURATION_TICKS: AtomicU32 = AtomicU32::new(0);
 
 /// Install the PnP manager. Idempotent.
 pub fn init() {
+    // Fast path. Acquire pairs with the Release store below so a thread
+    // observing true also observes the fully populated DRIVER_TABLE.
+    if PNP_INITIALISED.load(Ordering::Acquire) {
+        return;
+    }
+    let _guard = PNP_INIT_LOCK.lock();
+    if PNP_INITIALISED.load(Ordering::Acquire) {
+        return;
+    }
     unsafe {
-        if PNP_INITIALISED {
-            return;
-        }
-        PNP_INITIALISED = true;
         for n in (*core::ptr::addr_of_mut!(DEVICE_NODES)).iter_mut() {
             n.valid = false;
         }
     }
     register_default_drivers();
+    // Only publish the flag once the driver table is complete; setting it
+    // earlier let concurrent callers return with an empty table.
+    PNP_INITIALISED.store(true, Ordering::Release);
     // kprintln!("    PnP manager: initialised");
 }
 
@@ -240,24 +253,117 @@ fn register_default_drivers() {
     }
 }
 
-fn start_storage_driver(_node: &mut PnPNode) -> bool {
+/// Cached DriverObject per PnP class slot (storage, network, display,
+/// audio, input). The I/O manager registers each driver once in the
+/// \\Driver namespace, so the objects are allocated lazily and reused
+/// for every device the class binds. A value of 0 means "not yet
+/// allocated".
+static CLASS_DRIVER_OBJECTS: [AtomicU64; 5] = [const { AtomicU64::new(0) }; 5];
+
+/// Sequence counter used to build unique PnP device object names.
+static DEVICE_OBJECT_SEQ: AtomicU32 = AtomicU32::new(0);
+
+/// Driver-object name per PnP class slot (registered under \\Driver).
+const CLASS_DRIVER_NAMES: [&[u8]; 5] = [
+    b"\\Driver\\PnpStorage",
+    b"\\Driver\\PnpNetwork",
+    b"\\Driver\\PnpDisplay",
+    b"\\Driver\\PnpAudio",
+    b"\\Driver\\PnpInput",
+];
+
+/// Device-object name prefix per PnP class slot (under \\Device).
+const CLASS_DEVICE_PREFIXES: [&[u8]; 5] = [
+    b"\\Device\\PnpStorage",
+    b"\\Device\\PnpNetwork",
+    b"\\Device\\PnpDisplay",
+    b"\\Device\\PnpAudio",
+    b"\\Device\\PnpInput",
+];
+
+/// Return the cached DriverObject for a class slot, allocating and
+/// registering it on first use.
+fn class_driver_object(slot: usize) -> *mut DriverObject {
+    let cached = CLASS_DRIVER_OBJECTS[slot].load(Ordering::Acquire);
+    if cached != 0 {
+        return cached as *mut DriverObject;
+    }
+    let driver = crate::io::allocate_driver(CLASS_DRIVER_NAMES[slot]);
+    if driver.is_null() {
+        return core::ptr::null_mut();
+    }
+    let _ = crate::io::register_driver(driver);
+    CLASS_DRIVER_OBJECTS[slot].store(driver as u64, Ordering::Release);
+    driver
+}
+
+/// Bind a PnP node to its class driver: allocate (once) the class
+/// DriverObject, create a uniquely named DeviceObject for the node and
+/// record the binding in the node itself. This is the PnP equivalent
+/// of AddDevice + IoCreateDevice, and it is what makes the device tree
+/// reachable through the I/O manager instead of being a string table.
+fn bind_class_device(node: &mut PnPNode, slot: usize, device_type: DeviceType) -> bool {
+    let driver = class_driver_object(slot);
+    if driver.is_null() {
+        return false;
+    }
+    if !node.device_object.is_null() {
+        // Already bound (for example a retry after a failed start):
+        // keep the existing device object, refresh the driver pointer.
+        node.driver = driver;
+        return true;
+    }
+    // Build a unique device name: prefix + decimal sequence number,
+    // without any heap allocation (boot-time safe).
+    let seq = DEVICE_OBJECT_SEQ.fetch_add(1, Ordering::Relaxed);
+    let mut name = [0u8; 48];
+    let prefix = CLASS_DEVICE_PREFIXES[slot];
+    name[..prefix.len()].copy_from_slice(prefix);
+    let mut len = prefix.len();
+    if seq == 0 {
+        name[len] = b'0';
+        len += 1;
+    } else {
+        let mut digits = [0u8; 10];
+        let mut n = 0usize;
+        let mut v = seq;
+        while v > 0 {
+            digits[n] = b'0' + (v % 10) as u8;
+            n += 1;
+            v /= 10;
+        }
+        for i in 0..n {
+            name[len + i] = digits[n - 1 - i];
+        }
+        len += n;
+    }
+    let device = crate::io::create_device(driver, device_type, &name[..len]);
+    if device.is_null() {
+        return false;
+    }
+    node.driver = driver;
+    node.device_object = device;
     true
 }
 
-fn start_network_driver(_node: &mut PnPNode) -> bool {
-    true
+fn start_storage_driver(node: &mut PnPNode) -> bool {
+    bind_class_device(node, 0, DeviceType::MassStorage)
 }
 
-fn start_display_driver(_node: &mut PnPNode) -> bool {
-    true
+fn start_network_driver(node: &mut PnPNode) -> bool {
+    bind_class_device(node, 1, DeviceType::Unknown)
 }
 
-fn start_audio_driver(_node: &mut PnPNode) -> bool {
-    true
+fn start_display_driver(node: &mut PnPNode) -> bool {
+    bind_class_device(node, 2, DeviceType::Screen)
 }
 
-fn start_input_driver(_node: &mut PnPNode) -> bool {
-    true
+fn start_audio_driver(node: &mut PnPNode) -> bool {
+    bind_class_device(node, 3, DeviceType::Sound)
+}
+
+fn start_input_driver(node: &mut PnPNode) -> bool {
+    bind_class_device(node, 4, DeviceType::Keyboard)
 }
 
 /// Register a driver with the PnP manager.
@@ -399,6 +505,12 @@ pub fn start_all_pending() -> u32 {
                 Some(d) => d,
                 None => continue,
             };
+            // Validate the state transition (same rule the stop and
+            // remove paths use) instead of blindly assigning
+            // START_PENDING from any state.
+            if !pnp_state::can_transition(n.state, pnp_state::START_PENDING) {
+                continue;
+            }
             n.state = pnp_state::START_PENDING;
             if (drv.add_device)(n) {
                 n.state = pnp_state::STARTED;

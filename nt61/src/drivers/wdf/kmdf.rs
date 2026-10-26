@@ -9,7 +9,7 @@
 //! Clean-room implementation. Spec source: KMDF 1.11 reference.
 //! No code is copied from any Microsoft or ReactOS source file.
 
-use core::ptr::null_mut;
+// (null_mut import removed: driver objects are now real allocations)
 
 extern crate alloc;
 
@@ -36,7 +36,9 @@ pub fn wdf_driver_create(name: &str) -> Option<&'static mut WdfDriver> {
         WDF_DRIVER_COUNT += 1;
         *slot = Some(WdfDriver {
             name: String::from(name),
-            driver_object: null_mut(),
+            // Wire the driver to a real I/O manager driver object so the
+            // KMDF bootstrap participates in the normal DriverObject table.
+            driver_object: crate::io::allocate_driver(name.as_bytes()),
         });
         slot.as_mut()
     }

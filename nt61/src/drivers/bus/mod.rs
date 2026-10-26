@@ -28,6 +28,11 @@ pub mod usb_bus;
 /// `arch::<arch>::paging::init` via the `identity_map_region` calls
 /// the kernel makes before reaching this function.
 pub fn init() {
+    // P0-1: the PnP manager must be installed as part of bus bring-up.
+    // Without this call register_default_drivers() never runs, the
+    // DRIVER_TABLE stays empty, find_driver() always returns None and
+    // start_all_pending() becomes a no-op, so no device is ever bound.
+    pnp::init();
     crate::hal::serial::write_string("D:pci_start\r\n");
     pci_bus::init();
     crate::hal::serial::write_string("D:pci_done\r\n");

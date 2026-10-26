@@ -258,7 +258,10 @@ fn register_ahci_disks() {
             present: true,
             model: [0; 40],
         };
-        device.total_sectors = ahci::count() as u64;
+        // The AHCI miniport has no ATA IDENTIFY path yet, so the real
+        // disk capacity cannot be probed. Leave 0 (= unknown) instead
+        // of reporting the controller count as a sector total, which
+        // made the device list claim a few-hundred-byte disk.
         let _ = register_device(device);
     }
 }

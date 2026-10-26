@@ -175,9 +175,6 @@ unsafe fn init_nic(mut transport: PciTransport) -> Option<Nic> {
         [const { (core::ptr::null_mut::<u8>(), core::ptr::null_mut::<u8>()) }; MAX_RX_SLOTS];
     let chain_count = (rx_queue.num() as usize / 2).min(MAX_RX_SLOTS);
     for slot in 0..chain_count {
-        crate::hal::serial::write_string_always("[VRX] slot=0x");
-        crate::hal::serial::write_hex_u64_always(slot as u64);
-        crate::hal::serial::write_string_always("\r\n");
         let header = alloc_dma_buffer(VIRTIO_NET_RX_HDR_LEN);
         let frame = alloc_dma_buffer(RX_FRAME_SIZE);
         if header.is_null() || frame.is_null() {

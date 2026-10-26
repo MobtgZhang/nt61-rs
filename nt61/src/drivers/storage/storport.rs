@@ -26,7 +26,6 @@
 
 extern crate alloc;
 
-use alloc::string::String;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::io::{DeviceObject, DriverObject};
@@ -159,7 +158,10 @@ pub struct HwInitData {
 /// One adapter managed by storport.
 pub struct Adapter {
     pub valid: bool,
-    pub name: String,
+    /// Fixed-size adapter name (boot-time safe: no heap allocation,
+    /// so registering a miniport works before the heap is warm).
+    pub name: [u8; 48],
+    pub name_len: usize,
     pub driver: *mut DriverObject,
     pub device: *mut DeviceObject,
     pub mmio_base: u64,
@@ -175,7 +177,8 @@ impl Adapter {
     pub const fn new() -> Self {
         Self {
             valid: false,
-            name: String::new(),
+            name: [0u8; 48],
+            name_len: 0,
             driver: core::ptr::null_mut(),
             device: core::ptr::null_mut(),
             mmio_base: 0,
@@ -216,7 +219,9 @@ pub fn stor_port_initialize(name: &str, mut hw: HwInitData) -> u32 {
                 continue;
             }
             slot.valid = true;
-            slot.name = String::from(name);
+            let name_bytes = name.as_bytes();
+            slot.name_len = name_bytes.len().min(slot.name.len());
+            slot.name[..slot.name_len].copy_from_slice(&name_bytes[..slot.name_len]);
             slot.hw = HwInitData {
                 length: hw.length,
                 adapter_initialize: hw.adapter_initialize.take(),
@@ -347,11 +352,10 @@ pub fn init() {
         adapter_reset_bus: Some(stub_reset),
         adapter_find_adapter: Some(stub_find),
     };
-    // TEMP: Skip stor_port_initialize due to String::from() triggering Vec allocation
-    // during early boot. The miniport registration is not critical for reaching IDLE.
-    let r = STORPORT_SUCCESS;
-    let _ = stub_hw;
-    // let r = stor_port_initialize("storport-stub", stub_hw);
+    // The adapter name used to be a heap String, which forced this
+    // bring-up call to be skipped during early boot. The name is a
+    // fixed-size buffer now, so register the stub miniport for real.
+    let r = stor_port_initialize("storport-stub", stub_hw);
     // Pin the return value so `init` has an observable effect.
     STORPORT_INIT_RESULT.store(r as u32, Ordering::Relaxed);
 }

@@ -36,6 +36,23 @@ const STATUS_DRIVER_OK: u32 = 4;
 const STATUS_FEATURES_OK: u32 = 8;
 const STATUS_FAILED: u32 = 128;
 
+/// Debug-only formatted trace. Implemented as a macro so the
+/// alloc::format! allocation is compiled out entirely in non-debug
+/// builds instead of being eagerly evaluated and then discarded by
+/// the feature gate inside the old trace_fmt function.
+macro_rules! virtio_trace_fmt {
+    ($($arg:expr),* $(,)?) => {
+        #[cfg(feature = "log_level_debug")]
+        crate::arch::boot::early_write_str(alloc::format!($($arg),*).as_bytes());
+        #[cfg(not(feature = "log_level_debug"))]
+        {
+            // Silence unused-variable warnings for trace arguments in
+            // non-debug builds, matching the old function's behaviour.
+            let _ = ($(&$arg),*);
+        }
+    };
+}
+
 /// VIRTIO_F_VERSION_1 lives in feature word 1, bit 0. Modern
 /// virtio-pci transports only work with virtio-1.0 devices, and the
 /// spec requires the driver to accept this feature before the
@@ -687,14 +704,14 @@ pub fn init() {
     }
     trace("virtio-input: probe begin\r\n");
     for pci_dev in pci::enumerate() {
-        trace_fmt(alloc::format!(
+        virtio_trace_fmt!(
             "virtio-input: pci {:02x}:{:02x}.{:02x} vendor={:04x} device={:04x}\r\n",
             pci_dev.bus,
             pci_dev.device,
             pci_dev.function,
             pci_dev.vendor_id,
             pci_dev.device_id
-        ));
+        );
         if pci_dev.vendor_id != VENDOR_VIRTIO
             || (pci_dev.device_id != DEVICE_INPUT_MODERN
                 && pci_dev.device_id != DEVICE_INPUT_LEGACY)
@@ -720,13 +737,13 @@ pub fn init() {
             trace("virtio-input: isr map FAILED\r\n");
             continue;
         };
-        trace_fmt(alloc::format!(
+        virtio_trace_fmt!(
             "virtio-input: caps common={:p} notify={:p} isr={:p} mult={}\r\n",
             common,
             notify,
             isr,
             multiplier
-        ));
+        );
 
         let Some(queue) = initialise_queue(common) else {
             trace("virtio-input: queue init FAILED\r\n");
@@ -756,13 +773,6 @@ fn trace(message: &str) {
     let _ = message;
 }
 
-fn trace_fmt(message: alloc::string::String) {
-    #[cfg(feature = "log_level_debug")]
-    crate::arch::boot::early_write_str(message.as_bytes());
-    #[cfg(not(feature = "log_level_debug"))]
-    let _ = message;
-}
-
 pub fn is_present() -> bool {
     !DEVICE.load(Ordering::Acquire).is_null()
 }
@@ -780,13 +790,13 @@ pub fn poll() {
     while let Some(event) = take_used_event(device) {
         let seen = FIRST_EVENT_SEEN.fetch_add(1, Ordering::AcqRel);
         if seen < 20 {
-            trace_fmt(alloc::format!(
+            virtio_trace_fmt!(
                 "virtio-input: event #{} type={} code={} value={}\r\n",
                 seen,
                 u16::from_le_bytes([event[0], event[1]]),
                 u16::from_le_bytes([event[2], event[3]]),
                 i32::from_le_bytes([event[4], event[5], event[6], event[7]])
-            ));
+            );
         }
         decode_event(&event);
         replenish_event_buffer(device);
@@ -852,11 +862,11 @@ fn initialise_queue(mmio: *mut u8) -> Option<Queue> {
     let maximum = read_u16(mmio, REG_QUEUE_SIZE);
     if maximum == 0 || QUEUE_SIZE > maximum {
         write_u8(mmio, REG_STATUS, STATUS_FAILED as u8);
-        trace_fmt(alloc::format!(
+        virtio_trace_fmt!(
             "virtio-input: queue size {} < required {}\r\n",
             maximum,
             QUEUE_SIZE
-        ));
+        );
         return None;
     }
 

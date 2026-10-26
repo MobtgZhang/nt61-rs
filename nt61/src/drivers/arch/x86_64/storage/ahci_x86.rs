@@ -765,7 +765,10 @@ fn register_dispatch_objects() {
     table.major_functions[crate::io::major::IRP_MJ_READ as usize] = Some(ahci_read_dispatch);
     table.major_functions[crate::io::major::IRP_MJ_WRITE as usize] = Some(ahci_write_dispatch);
     table.install(driver);
-    for ctrl in 0..4usize {
+    // One device object per controller that actually probed, instead
+    // of four placeholders that made every controller index look
+    // present even when nothing was behind it.
+    for ctrl in 0..count() {
         let device =
             crate::io::create_device(driver, crate::io::DeviceType::Disk, b"\\Device\\Harddisk");
         if device.is_null() {

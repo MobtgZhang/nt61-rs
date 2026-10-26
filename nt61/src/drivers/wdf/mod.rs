@@ -139,6 +139,8 @@ pub struct WdfDriverAttributes {
 pub struct WdfDevice {
     /// Device object
     pub device_object: *mut WdfDevice,
+    /// Underlying I/O manager device object, when this WDF device wraps one.
+    pub io_device_object: *mut crate::io::DeviceObject,
     /// Parent device (if any)
     pub parent: Option<*mut WdfDevice>,
     /// Device extension
@@ -156,6 +158,26 @@ impl WdfDevice {
     fn new(_init: &WdfDeviceInit) -> Result<Self, &'static str> {
         Ok(Self {
             device_object: core::ptr::null_mut(),
+            io_device_object: core::ptr::null_mut(),
+            parent: None,
+            device_extension: WdfDeviceExtension::default(),
+            state: WdfDeviceState::Created,
+            queue: None,
+            power_state: WdfPowerState::D0,
+        })
+    }
+
+    /// Wrap an I/O manager device object in a WDF device view. Returns an
+    /// error for null device objects instead of fabricating an empty device.
+    pub fn from_io_device(
+        dev: *mut crate::io::DeviceObject,
+    ) -> Result<Self, &'static str> {
+        if dev.is_null() {
+            return Err("null io device object");
+        }
+        Ok(Self {
+            device_object: core::ptr::null_mut(),
+            io_device_object: dev,
             parent: None,
             device_extension: WdfDeviceExtension::default(),
             state: WdfDeviceState::Created,
@@ -279,6 +301,11 @@ pub struct WdfRequest {
     pub completion: Option<extern "C" fn(*mut WdfRequest, u64, WdfRequestStatus)>,
     /// Completion context
     pub completion_context: u64,
+    /// Underlying I/O manager device object this request targets. Null for
+    /// framework-only requests that never touched a real device.
+    pub io_device: *mut crate::io::DeviceObject,
+    /// Underlying IRP backing this request, when one exists.
+    pub io_irp: *mut crate::io::Irp,
 }
 
 /// Request types
@@ -568,7 +595,19 @@ impl WdfRequest {
             status: WdfRequestStatus::Pending,
             completion: None,
             completion_context: 0,
+            io_device: core::ptr::null_mut(),
+            io_irp: core::ptr::null_mut(),
         }
+    }
+
+    /// Attach the underlying I/O manager device object for this request.
+    pub fn set_io_device(&mut self, device: *mut crate::io::DeviceObject) {
+        self.io_device = device;
+    }
+
+    /// Attach the underlying IRP for this request.
+    pub fn set_io_irp(&mut self, irp: *mut crate::io::Irp) {
+        self.io_irp = irp;
     }
 
     /// Set completion routine
