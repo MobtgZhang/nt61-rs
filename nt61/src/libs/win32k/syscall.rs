@@ -354,6 +354,13 @@ pub extern "C" fn nt_gdi_ext_text_out(frame: &SyscallFrame) -> u64 {
     if !primary.is_null() && count > 0 {
         let text_ptr = s as *const u16;
         if !text_ptr.is_null() {
+            // Probe the user buffer before dereferencing it: the
+            // pointer is Ring-3 controlled and could point into
+            // kernel memory or unmapped pages.
+            let byte_len = (count as usize).saturating_mul(2);
+            if crate::mm::user_copy::probe_user_read(s, byte_len).is_err() {
+                return 0;
+            }
             for i in 0..count {
                 let ch = unsafe { *text_ptr.add(i as usize) };
                 if ch == 0 {
@@ -1572,13 +1579,22 @@ pub extern "C" fn nt_user_set_window_pos(frame: &SyscallFrame) -> u64 {
     let use_x_y = (u_flags & 0x0002) == 0;
     let _ = &use_x_y;
 
-    let final_x = if use_x_y { x } else { 0 };
+    // When SWP_NOMOVE / SWP_NOSIZE is set, keep the window's current
+    // position or size instead of collapsing it to (0, 0) / 0x0.
+    let (cur_x, cur_y, cur_cx, cur_cy) = {
+        let wm = crate::libs::win32k::window::WINDOW_MANAGER.lock();
+        match wm.get_window_rect(hwnd) {
+            Some(rect) => (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top),
+            None => (x, y, cx, cy),
+        }
+    };
+    let final_x = if use_x_y { x } else { cur_x };
     let _ = &final_x;
-    let final_y = if use_x_y { y } else { 0 };
+    let final_y = if use_x_y { y } else { cur_y };
     let _ = &final_y;
-    let final_cx = if use_cx_cy { cx } else { 0 };
+    let final_cx = if use_cx_cy { cx } else { cur_cx };
     let _ = &final_cx;
-    let final_cy = if use_cx_cy { cy } else { 0 };
+    let final_cy = if use_cx_cy { cy } else { cur_cy };
     let _ = &final_cy;
 
     // Call the window manager to set window position
@@ -1611,12 +1627,10 @@ pub extern "C" fn nt_user_get_message(frame: &SyscallFrame) -> u64 {
         return 0;
     }
 
-    // Get the current thread's message queue
-    let queue = crate::libs::win32k::message::get_current_queue();
-    let _ = &queue;
-
     // Try to get a message (timeout=0: return immediately if no message)
-    match queue.get_message(hwnd, msg_filter_min, msg_filter_max, 0) {
+    match crate::libs::win32k::message::with_current_queue(|queue| {
+        queue.get_message(hwnd, msg_filter_min, msg_filter_max, 0)
+    }) {
         Some(msg) => {
             // Copy the message to user memory
             if crate::mm::user_copy::write_user(msg_ptr, &msg).is_err() {
@@ -2937,8 +2951,9 @@ pub extern "C" fn nt_user_get_menu_bar_info(_frame: &SyscallFrame) -> u64 {
 pub extern "C" fn nt_user_get_clipboard_sequence_number(_frame: &SyscallFrame) -> u64 {
     // kprintln!("[win32k] NT_USER_GET_CLIPBOARD_SEQUENCE_NUMBER");
 
-    // GetClipboardSequenceNumber: return 1 (single clipboard operation ever).
-    1
+    // GetClipboardSequenceNumber: report the real mutation counter kept
+    // by the clipboard manager instead of a fixed constant.
+    crate::libs::win32k::clipboard::get_sequence_number()
 }
 
 /// NT_USER_GET_KEYBOARD_LAYOUT_LIST - Get keyboard layout list
@@ -3421,8 +3436,11 @@ pub extern "C" fn nt_user_set_clipboard_data(frame: &SyscallFrame) -> u64 {
     let hdata = unsafe { get_arg1(frame) };
     let _ = &hdata;
 
-    // kprintln!("[win32k] NT_USER_SET_CLIPBOARD_DATA");
-    1 // TRUE
+    // The user-mode clipboard ABI has no defined buffer/size encoding
+    // for 'hdata' yet, so there is no safe way to copy caller data
+    // into the kernel clipboard. Report failure instead of pretending
+    // the object was accepted.
+    0 // FALSE
 }
 
 /// NT_USER_ENABLE_MENU_ITEM - Enable/disable menu item
@@ -3703,7 +3721,9 @@ pub extern "C" fn nt_user_get_clipboard_data(frame: &SyscallFrame) -> u64 {
     let format = unsafe { get_arg0(frame) };
     let _ = &format;
 
-    // kprintln!("[win32k] NT_USER_GET_CLIPBOARD_DATA");
+    // No user-mode clipboard ABI exists yet: there is no way to hand
+    // the caller a global memory handle they can read. NULL is the
+    // honest "no object" response until that ABI is designed.
     0 // NULL
 }
 

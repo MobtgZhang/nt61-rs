@@ -11,6 +11,7 @@
 //! - Window messages: Communication between windows and the system
 //! - Desktop/WindowStation: Organize windows in a hierarchy
 
+use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
@@ -341,10 +342,9 @@ impl WindowObject {
 /// Window manager state
 pub struct WindowManager {
     windows: Vec<Option<WindowObject>>,
-    /// Linear search index table: (hwnd, index) pairs for O(n) lookup
-    /// In a full implementation, this would be a proper HashMap
-    /// For now, we maintain a parallel index for O(n) lookups
-    hwnd_index: Vec<(u64, usize)>,
+    /// Sorted hwnd -> slot-index map so HWND lookup is O(log n) in the
+    /// number of live windows instead of a linear scan of the table.
+    hwnd_index: BTreeMap<u64, usize>,
     next_hwnd: AtomicU64,
     window_count: AtomicUsize,
     pub classes: Vec<Option<WindowClass>>,
@@ -356,28 +356,29 @@ pub struct WindowManager {
     pub desktop_window: AtomicU64,
 }
 
-/// Safe-ish ABI for a window procedure. The raw `u64` stored in
-/// `WindowObject::wndproc` is only called when it transmutes
-/// cleanly to this signature, preventing wild jumps on garbage
-/// pointers that do not match the expected calling convention.
-type WndProcFn = unsafe extern "C" fn(hwnd: u64, msg: u32, wparam: u64, lparam: i64) -> i64;
+/// Window procedures registered from user mode are stored as raw `u64`
+/// addresses in `WindowObject::wndproc`. The kernel has no user-mode
+/// callback mechanism (no KeUserModeCallback equivalent), so calling a
+/// user-mode address directly from kernel mode is impossible; this used
+/// to transmute and jump to the raw address, which faults the kernel on
+/// any user-supplied pointer. Until a ring-transition callback mechanism
+/// exists, return the DefWindowProc pass-through result (0) for messages
+/// it does not handle, but count every undelivered message in `WNDPROC_DELIVERY_MISSES`
+///  so the gap is observable instead of a
+/// silent fake success.
+pub static WNDPROC_DELIVERY_MISSES: AtomicU64 = AtomicU64::new(0);
 
-/// Call a raw window-procedure pointer if it is non-null.
-/// Returns 0 when the pointer is null (matching DefWindowProc's
-/// pass-through result for unhandled messages).
 fn call_wnd_proc(wndproc: u64, hwnd: u64, msg: u32, wparam: u64, lparam: i64) -> i64 {
-    if wndproc == 0 {
-        return 0;
-    }
-    let f = unsafe { core::mem::transmute::<u64, WndProcFn>(wndproc) };
-    unsafe { f(hwnd, msg, wparam, lparam) }
+    let _ = (wndproc, hwnd, msg, wparam, lparam);
+    WNDPROC_DELIVERY_MISSES.fetch_add(1, Ordering::Relaxed);
+    0
 }
 
 impl WindowManager {
     pub const fn new() -> Self {
         Self {
             windows: Vec::new(),
-            hwnd_index: Vec::new(),
+            hwnd_index: BTreeMap::new(),
             next_hwnd: AtomicU64::new(1), // HWND 0 is invalid
             window_count: AtomicUsize::new(0),
             classes: Vec::new(),
@@ -453,7 +454,7 @@ impl WindowManager {
         let _ = &index;
         let _ = &index;
         self.windows.push(Some(window));
-        self.hwnd_index.push((hwnd, index));
+        self.hwnd_index.insert(hwnd, index);
         self.window_count.fetch_add(1, Ordering::Relaxed);
 
         // kprintln!("[win32k] CreateWindow: hwnd={:#x}, class={:?}, style={:#x}",
@@ -462,36 +463,22 @@ impl WindowManager {
         Some(hwnd)
     }
 
-    /// Get a window by HWND using linear index lookup.
+    /// Get a window by HWND using the sorted hwnd index.
     pub fn get_window(&self, hwnd: u64) -> Option<&WindowObject> {
-        // Linear search in index - acceptable for small window counts
-        for &(h, idx) in &self.hwnd_index {
-            if h == hwnd {
-                return self.windows.get(idx)?.as_ref();
-            }
-        }
-        None
+        let idx = *self.hwnd_index.get(&hwnd)?;
+        self.windows.get(idx)?.as_ref()
     }
 
-    /// Get a mutable window by HWND using linear index lookup.
+    /// Get a mutable window by HWND using the sorted hwnd index.
     pub fn get_window_mut(&mut self, hwnd: u64) -> Option<&mut WindowObject> {
-        // Linear search in index
-        for &(h, idx) in &self.hwnd_index {
-            if h == hwnd {
-                return self.windows.get_mut(idx)?.as_mut();
-            }
-        }
-        None
+        let idx = *self.hwnd_index.get(&hwnd)?;
+        self.windows.get_mut(idx)?.as_mut()
     }
 
     /// Destroy a window and all its children.
     pub fn destroy_window(&mut self, hwnd: u64) -> bool {
         // Step 1: Find window index
-        let window_index = self
-            .hwnd_index
-            .iter()
-            .find(|(h, _)| *h == hwnd)
-            .map(|(_, idx)| *idx);
+        let window_index = self.hwnd_index.get(&hwnd).copied();
         let _ = &window_index;
 
         let window_index = match window_index {
@@ -517,12 +504,11 @@ impl WindowManager {
 
         // Step 3: Remove from parent's children list
         if let Some(p_hwnd) = parent_hwnd {
-            for &(h, idx) in &self.hwnd_index {
-                if h == p_hwnd {
-                    self.windows[idx]
-                        .as_mut()
-                        .map(|w| w.children.retain(|&h| h != hwnd));
-                    break;
+            if let Some(&idx) = self.hwnd_index.get(&p_hwnd) {
+                if let Some(w) = self.windows.get_mut(idx) {
+                    if let Some(w) = w.as_mut() {
+                        w.children.retain(|&h| h != hwnd);
+                    }
                 }
             }
         }
@@ -531,7 +517,7 @@ impl WindowManager {
         self.post_message(hwnd, WindowMessage::WmDestroy as u32, 0, 0);
 
         // Step 5: Remove from index
-        self.hwnd_index.retain(|(h, _)| *h != hwnd);
+        self.hwnd_index.remove(&hwnd);
 
         // Step 6: Mark slot as None (don't shift Vec elements)
         self.windows[window_index] = None;
@@ -603,10 +589,10 @@ impl WindowManager {
 
     /// Post a message to a window's message queue.
     pub fn post_message(&mut self, hwnd: u64, msg: u32, wparam: u64, lparam: i64) -> bool {
-        let _ = (hwnd, msg, wparam, lparam);
-        // kprintln!("[win32k] PostMessage: hwnd={:#x}, msg={:#x}", hwnd, msg);
-        // In a full implementation, this would add to the message queue
-        true
+        // Enqueue into the calling thread's message queue so WM_PAINT,
+        // WM_DESTROY, WM_SHOWWINDOW and friends are actually delivered by
+        // the thread's message pump instead of being silently dropped.
+        crate::libs::win32k::message::post_message(hwnd, msg, wparam, lparam)
     }
 
     /// Send a message directly to a window procedure.
@@ -790,7 +776,9 @@ impl WindowManager {
                 } else {
                     WindowMessage::WmEnable as u32
                 },
-                1,
+                // WM_ENABLE's wParam is nonzero when the window is
+                // being enabled and zero when it is being disabled.
+                if enable { 1 } else { 0 },
                 0,
             );
             // kprintln!("[win32k] EnableWindow: hwnd={:#x}, enable={}", hwnd, enable);

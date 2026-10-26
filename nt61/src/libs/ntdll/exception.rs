@@ -17,7 +17,8 @@
 //!   * ReactOS ntdll/rtl/exception.c
 
 use super::status::{
-    STATUS_INVALID_PARAMETER, STATUS_SUCCESS, STATUS_UNHANDLED_EXCEPTION, STATUS_UNWIND,
+    STATUS_INVALID_PARAMETER, STATUS_NOT_IMPLEMENTED, STATUS_SUCCESS,
+    STATUS_UNHANDLED_EXCEPTION, STATUS_UNWIND,
 };
 use super::types::{NTSTATUS, PVOID};
 use crate::ke::sync::Spinlock;
@@ -25,6 +26,18 @@ use core::ptr;
 
 extern crate alloc;
 use alloc::vec::Vec;
+
+/// Maximum number of registered unwind function tables.
+const MAX_FUNCTION_TABLES: usize = 64;
+
+/// One registered unwind function table (`RtlAddFunctionTable`).
+struct FunctionTableEntry {
+    table: PVOID,
+    entry_count: u32,
+    base_address: u64,
+}
+
+static FUNCTION_TABLES: Spinlock<Vec<FunctionTableEntry>> = Spinlock::new(Vec::new());
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -370,6 +383,15 @@ pub unsafe extern "C" fn rtl_unwind_ex(
         return STATUS_INVALID_PARAMETER;
     }
 
+    // A real unwind walks the stack via the function tables registered
+    // with `rtl_add_function_table` and runs handler code. This kernel
+    // cannot execute user-mode handler code, so the only unwind we can
+    // honour is an explicit jump target. Without one, report the
+    // limitation instead of pretending the unwind happened.
+    if target_ip.is_null() {
+        return STATUS_NOT_IMPLEMENTED;
+    }
+
     let mut default_record = ExceptionRecord::new();
     let exc_rec = if exception_record.is_null() {
         default_record.exception_code = STATUS_UNWIND as u32;
@@ -392,15 +414,33 @@ pub unsafe extern "C" fn rtl_unwind_ex(
 }
 
 pub unsafe extern "C" fn rtl_add_function_table(
-    _function_table: PVOID,
-    _entry_count: u32,
-    _base_address: u64,
+    function_table: PVOID,
+    entry_count: u32,
+    base_address: u64,
 ) -> u8 {
-    1 // Success
+    if function_table.is_null() || entry_count == 0 {
+        return 0;
+    }
+    let mut tables = FUNCTION_TABLES.lock();
+    if tables.len() >= MAX_FUNCTION_TABLES {
+        return 0;
+    }
+    tables.push(FunctionTableEntry {
+        table: function_table,
+        entry_count,
+        base_address,
+    });
+    1
 }
 
-pub unsafe extern "C" fn rtl_delete_function_table(_function_table: PVOID) -> u8 {
-    1 // Success
+pub unsafe extern "C" fn rtl_delete_function_table(function_table: PVOID) -> u8 {
+    let mut tables = FUNCTION_TABLES.lock();
+    if let Some(pos) = tables.iter().position(|t| t.table == function_table) {
+        tables.remove(pos);
+        1
+    } else {
+        0
+    }
 }
 
 pub unsafe extern "C" fn rtl_install_function_table_callback(

@@ -50,20 +50,22 @@ pub unsafe extern "C" fn nt_create_process(
     }
     let mut image_path = alloc::vec::Vec::new();
     if !object_attributes.is_null() {
-        let attributes = &*object_attributes;
-        if !attributes.object_name.is_null() {
-            let name = &*attributes.object_name;
-            let units = (name.length as usize) / 2;
-            if units > 0 && !name.buffer.is_null() {
-                let mut wide_bytes = alloc::vec![0u8; units * 2];
-                if copy_from_user(&mut wide_bytes, name.buffer as u64).is_ok() {
-                    for pair in wide_bytes.chunks_exact(2) {
-                        let unit = u16::from_le_bytes([pair[0], pair[1]]);
-                        if let Some(byte) = u8::try_from(unit & 0xFF).ok() {
-                            image_path.push(byte);
+        if let Ok(attributes) = crate::mm::user_copy::read_user_object::<super::types::ObjectAttributes>(object_attributes as u64) {
+            if !attributes.object_name.is_null() {
+                if let Ok(name) = crate::mm::user_copy::read_user_object::<super::types::UnicodeString>(attributes.object_name as u64) {
+                    let units = (name.length as usize) / 2;
+                    if units > 0 && !name.buffer.is_null() {
+                        let mut wide_bytes = alloc::vec![0u8; units * 2];
+                        if copy_from_user(&mut wide_bytes, name.buffer as u64).is_ok() {
+                            for pair in wide_bytes.chunks_exact(2) {
+                                let unit = u16::from_le_bytes([pair[0], pair[1]]);
+                                if let Some(byte) = u8::try_from(unit & 0xFF).ok() {
+                                    image_path.push(byte);
+                                }
+                            }
+                            image_path.push(0);
                         }
                     }
-                    image_path.push(0);
                 }
             }
         }
@@ -167,7 +169,10 @@ pub unsafe extern "C" fn nt_open_process(
     if process_handle.is_null() || client_id.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
-    let cid = &*client_id;
+    let cid: client_id = match crate::mm::user_copy::read_user_object(client_id as u64) {
+        Ok(value) => value,
+        Err(_) => return STATUS_INVALID_PARAMETER,
+    };
     let pid = cid.unique_process as u64;
     if ps::get_by_pid(pid).is_none() {
         return STATUS_INVALID_HANDLE;
@@ -176,7 +181,9 @@ pub unsafe extern "C" fn nt_open_process(
     if h.is_null() {
         return STATUS_INVALID_HANDLE;
     }
-    *process_handle = h;
+    if crate::mm::user_copy::write_user_object(process_handle as u64, &h).is_err() {
+        return STATUS_INVALID_HANDLE;
+    }
     let _ = (desired_access, object_attributes);
     STATUS_SUCCESS
 }

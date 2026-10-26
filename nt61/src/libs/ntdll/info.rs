@@ -16,10 +16,11 @@
 
 use super::status::{STATUS_INVALID_INFO_CLASS, STATUS_INVALID_PARAMETER, STATUS_SUCCESS};
 use super::types::{NTSTATUS, PVOID};
+use crate::mm::user_copy::write_user_object;
 
 /// `SYSTEM_BASIC_INFORMATION` (44 bytes on x64).
 #[repr(C)]
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct SystemBasicInformation {
     pub reserved: u32,
     pub timer_resolution: u32,
@@ -37,7 +38,7 @@ pub struct SystemBasicInformation {
 
 /// `SYSTEM_PROCESSOR_INFORMATION` (12 bytes).
 #[repr(C)]
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct SystemProcessorInformation {
     pub processor_architecture: u16,
     pub processor_level: u16,
@@ -48,7 +49,7 @@ pub struct SystemProcessorInformation {
 
 /// `SYSTEM_TIMEOFDAY_INFORMATION` (48 bytes).
 #[repr(C)]
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct SystemTimeOfDayInformation {
     pub boot_time: i64,
     pub current_time: i64,
@@ -74,11 +75,21 @@ pub unsafe extern "C" fn nt_query_system_information(
             // SystemBasicInformation
             if system_information_length < core::mem::size_of::<SystemBasicInformation>() as u32 {
                 if !return_length.is_null() {
-                    *return_length = core::mem::size_of::<SystemBasicInformation>() as u32;
+                    // The required length is user-visible state: route the
+                    // store through the user-copy validator instead of a
+                    // bare dereference of a caller-controlled pointer.
+                    if write_user_object(
+                        return_length as u64,
+                        &(core::mem::size_of::<SystemBasicInformation>() as u32),
+                    )
+                    .is_err()
+                    {
+                        return super::status::STATUS_ACCESS_VIOLATION;
+                    }
                 }
                 return super::status::STATUS_BUFFER_TOO_SMALL;
             }
-            let s = &mut *(system_information as *mut SystemBasicInformation);
+            let mut s = SystemBasicInformation::default();
             s.reserved = 0;
             s.timer_resolution = 156250; // 15.625 ms
             s.page_size = 4096;
@@ -90,9 +101,18 @@ pub unsafe extern "C" fn nt_query_system_information(
             s.maximum_user_mode_address = 0x0000_7FFF_FFFF_FFFFusize as PVOID;
             s.active_processors_affinity_mask = 0x1usize as PVOID;
             s.number_of_processors = 1;
-            if !return_length.is_null() {
-                *return_length = core::mem::size_of::<SystemBasicInformation>() as u32;
+            if write_user_object(system_information as u64, &s).is_err() {
+                return super::status::STATUS_ACCESS_VIOLATION;
             }
+                if !return_length.is_null()
+                    && write_user_object(
+                        return_length as u64,
+                        &(core::mem::size_of::<SystemBasicInformation>() as u32),
+                    )
+                    .is_err()
+                {
+                    return super::status::STATUS_ACCESS_VIOLATION;
+                }
             STATUS_SUCCESS
         }
         1 => {
@@ -101,15 +121,24 @@ pub unsafe extern "C" fn nt_query_system_information(
             {
                 return super::status::STATUS_BUFFER_TOO_SMALL;
             }
-            let s = &mut *(system_information as *mut SystemProcessorInformation);
+            let mut s = SystemProcessorInformation::default();
             s.processor_architecture = 9; // PROCESSOR_ARCHITECTURE_AMD64
             s.processor_level = 0x10;
             s.processor_revision = 0x9000;
             s.maximum_processors = 1;
             s.processor_features = 0;
-            if !return_length.is_null() {
-                *return_length = core::mem::size_of::<SystemProcessorInformation>() as u32;
+            if write_user_object(system_information as u64, &s).is_err() {
+                return super::status::STATUS_ACCESS_VIOLATION;
             }
+                if !return_length.is_null()
+                    && write_user_object(
+                        return_length as u64,
+                        &(core::mem::size_of::<SystemProcessorInformation>() as u32),
+                    )
+                    .is_err()
+                {
+                    return super::status::STATUS_ACCESS_VIOLATION;
+                }
             STATUS_SUCCESS
         }
         3 => {
@@ -118,21 +147,27 @@ pub unsafe extern "C" fn nt_query_system_information(
             {
                 return super::status::STATUS_BUFFER_TOO_SMALL;
             }
-            let s = &mut *(system_information as *mut SystemTimeOfDayInformation);
+            let mut s = SystemTimeOfDayInformation::default();
             s.boot_time = 0;
             s.current_time = crate::ke::time::get_system_time() as i64;
             s.time_zone_bias = 0;
             s.time_zone_id = 0;
             s.boot_time_cycles = 0;
             s.current_time_cycles = crate::ke::time::get_system_time();
+            if write_user_object(system_information as u64, &s).is_err() {
+                return super::status::STATUS_ACCESS_VIOLATION;
+            }
             if !return_length.is_null() {
-                *return_length = core::mem::size_of::<SystemTimeOfDayInformation>() as u32;
+                let _ = write_user_object(
+                    return_length as u64,
+                    &(core::mem::size_of::<SystemTimeOfDayInformation>() as u32),
+                );
             }
             STATUS_SUCCESS
         }
         _ => {
             if !return_length.is_null() {
-                *return_length = 0;
+                let _ = write_user_object(return_length as u64, &0u32);
             }
             STATUS_INVALID_INFO_CLASS
         }
@@ -141,13 +176,16 @@ pub unsafe extern "C" fn nt_query_system_information(
 
 /// `nt_set_system_information` — most classes are read-only; the
 /// only writable one is `SystemLoadGdiDriverInformation`
-/// (class 26), which we don't implement.
+/// (class 26), which we don't implement. The failure is explicit
+/// STATUS_NOT_SUPPORTED (not STATUS_INVALID_INFO_CLASS) so a caller
+/// cannot mistake the missing driver-load path for a malformed class
+/// number.
 pub unsafe extern "C" fn nt_set_system_information(
     _system_information_class: u32,
     _system_information: PVOID,
     _system_information_length: u32,
 ) -> NTSTATUS {
-    STATUS_INVALID_INFO_CLASS
+    super::status::STATUS_NOT_SUPPORTED
 }
 
 /// `rtl_get_native_system_information` — alias kept for compat

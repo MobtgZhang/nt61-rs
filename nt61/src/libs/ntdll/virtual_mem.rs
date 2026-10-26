@@ -4,10 +4,10 @@
 //! `nt_protect_virtual_memory`, `nt_query_virtual_memory`. The
 //! implementation routes to the kernel VM manager for
 //! allocations on the kernel pool; user-mode allocations
-//! return a deterministic placeholder address so the
-//! kernel32 layer can do its smoke test (and the
-//! user-mode side of this kernel is never executed, so
-//! no real mappings are required).
+//! are served by `mm::vas::allocate_user_va` inside the real
+//! user region; when that allocator cannot satisfy a request the
+//! API fails with `STATUS_NO_MEMORY` instead of handing out an
+//! address that is not a valid user mapping.
 //
 //! References: MSDN Library "Windows 7" — `ntdll.dll`
 //! virtual memory APIs.
@@ -21,11 +21,6 @@ use super::status::{
 use super::types::{SizeT, HANDLE, NTSTATUS, PVOID};
 use crate::ke::sync::Spinlock;
 use alloc::vec::Vec;
-
-/// User-mode base address placeholder (the bootstrap user
-/// region starts at 0x0000_7000_0000_0000; see
-/// `system_image::build_ntdll`).
-pub const USER_BASE: u64 = 0x0000_7000_0000_0000;
 
 /// Pool tag for virtual memory allocations (4-character tag: 'VMem')
 const VMEM_POOL_TAG: u32 =
@@ -189,18 +184,11 @@ pub unsafe extern "C" fn nt_allocate_virtual_memory(
     let virt_addr = match alloc_result {
         Some(addr) => addr,
         None => {
-            // Fallback: try pool allocation for small requests
-            // This handles early boot when VAS is not ready
-            let pool_ptr = crate::mm::pool::allocate_tagged(
-                crate::mm::pool::PoolType::NonPaged,
-                actual_size as usize,
-                VMEM_POOL_TAG,
-            );
-            if pool_ptr.is_null() {
-                return STATUS_NO_MEMORY;
-            }
-            // Use the pool pointer as the address
-            pool_ptr as u64
+            // No VAS mapping available. Falling back to a kernel-pool
+            // pointer would report success while handing the caller an
+            // address that is not a valid user mapping, so fail with a
+            // clear status instead.
+            return STATUS_NO_MEMORY;
         }
     };
 

@@ -196,11 +196,24 @@ fn read_c_string(ptr: *const u8) -> Option<&'static str> {
         return None;
     }
     let mut len = 0;
-    while unsafe { *ptr.add(len) } != 0 && len < 4096 {
-        len += 1;
+    // The string comes from user mode and has no known length, so walk
+    // it in probed windows: touching a byte before validating the range
+    // would turn a hostile pointer into a kernel page fault.
+    const WINDOW: usize = 64;
+    while len < 4096 {
+        let window = WINDOW.min(4096 - len);
+        if crate::mm::user_copy::probe_user_read(ptr as u64 + len as u64, window).is_err() {
+            return None;
+        }
+        for i in 0..window {
+            if unsafe { *ptr.add(len + i) } == 0 {
+                let slice = unsafe { core::slice::from_raw_parts(ptr, len + i) };
+                return core::str::from_utf8(slice).ok();
+            }
+        }
+        len += window;
     }
-    let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
-    core::str::from_utf8(slice).ok()
+    None
 }
 
 /// Format a debug message into a buffer.

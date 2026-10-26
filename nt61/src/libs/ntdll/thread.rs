@@ -15,7 +15,8 @@ use super::status::{
     STATUS_SUCCESS,
 };
 use super::types::{client_id, HANDLE, NTSTATUS, PVOID};
-use crate::mm::user_copy::{copy_from_user, copy_to_user};
+use crate::libs::ntdll::status::STATUS_ACCESS_VIOLATION;
+use crate::mm::user_copy::{copy_from_user, copy_to_user, read_user_object, write_user_object};
 
 /// Thread context structure for nt_get_context_thread/nt_set_context_thread
 #[repr(C)]
@@ -182,12 +183,19 @@ pub unsafe extern "C" fn nt_create_thread(
         return STATUS_NO_MEMORY;
     }
 
-    *thread_handle = h;
+    if write_user_object(thread_handle as u64, &h).is_err() {
+        return STATUS_NO_MEMORY;
+    }
 
     // Fill in client ID if requested
     if !client_id.is_null() {
-        (*client_id).unique_process = target_pid as HANDLE;
-        (*client_id).unique_thread = tid as HANDLE;
+        let cid = client_id {
+            unique_process: target_pid as HANDLE,
+            unique_thread: tid as HANDLE,
+        };
+        if write_user_object(client_id as u64, &cid).is_err() {
+            return STATUS_ACCESS_VIOLATION;
+        }
     }
 
     STATUS_SUCCESS
@@ -207,7 +215,10 @@ pub unsafe extern "C" fn nt_open_thread(
     }
     let _ = (object_attributes, desired_access);
 
-    let cid = &*client_id;
+    let cid: client_id = match read_user_object(client_id as u64) {
+        Ok(value) => value,
+        Err(_) => return STATUS_INVALID_PARAMETER,
+    };
 
     // Try to find the thread by TID in the kernel thread table
     let target_tid = cid.unique_thread as u64;
@@ -225,7 +236,9 @@ pub unsafe extern "C" fn nt_open_thread(
         if h.is_null() {
             return STATUS_INVALID_HANDLE;
         }
-        *thread_handle = h;
+        if write_user_object(thread_handle as u64, &h).is_err() {
+            return STATUS_INVALID_HANDLE;
+        }
         STATUS_SUCCESS
     } else {
         // Thread not found - for bootstrap compatibility, still create a handle
@@ -234,7 +247,9 @@ pub unsafe extern "C" fn nt_open_thread(
         if h.is_null() {
             return STATUS_INVALID_HANDLE;
         }
-        *thread_handle = h;
+        if write_user_object(thread_handle as u64, &h).is_err() {
+            return STATUS_INVALID_HANDLE;
+        }
         STATUS_SUCCESS
     }
 }
@@ -450,7 +465,9 @@ pub unsafe extern "C" fn nt_create_thread_ex(
         return STATUS_NO_MEMORY;
     }
 
-    *thread_handle = h;
+    if write_user_object(thread_handle as u64, &h).is_err() {
+        return STATUS_NO_MEMORY;
+    }
 
     STATUS_SUCCESS
 }

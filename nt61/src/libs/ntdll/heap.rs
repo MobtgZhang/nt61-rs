@@ -78,6 +78,8 @@ struct HeapState {
     bytes_free: u64,
     alloc_count: u64,
     free_count: u64,
+    /// Double frees rejected by the magic check, for diagnostics.
+    double_free_rejected: u64,
     /// Range of block headers this heap has handed out. Caller pointers are
     /// checked against it before the block header is read, so an arbitrary
     /// pointer can never cause a read of memory the heap does not own.
@@ -138,6 +140,7 @@ pub unsafe extern "C" fn rtl_create_heap(
         bytes_free: 0,
         alloc_count: 0,
         free_count: 0,
+        double_free_rejected: 0,
         lowest_block: ptr::null_mut(),
         highest_block_end: ptr::null_mut(),
     });
@@ -287,6 +290,7 @@ pub unsafe extern "C" fn rtl_free_heap(
         return 0;
     }
     if (*hdr).magic != HEADER_MAGIC_ALLOC {
+        state.double_free_rejected = state.double_free_rejected.wrapping_add(1);
         return 0;
     }
     if (*hdr).owner != heap {
@@ -374,6 +378,7 @@ pub struct HeapStats {
     pub bytes_free: u64,
     pub alloc_count: u64,
     pub free_count: u64,
+    pub double_free_rejected: u64,
 }
 
 pub unsafe fn heap_stats(heap_handle: HANDLE) -> Option<HeapStats> {
@@ -387,6 +392,7 @@ pub unsafe fn heap_stats(heap_handle: HANDLE) -> Option<HeapStats> {
         bytes_free: s.bytes_free,
         alloc_count: s.alloc_count,
         free_count: s.free_count,
+        double_free_rejected: s.double_free_rejected,
     })
 }
 
@@ -422,7 +428,7 @@ mod tests {
         if crate::mm::heap::KERNEL_HEAP.configured_region().is_some() {
             return;
         }
-        const TEST_HEAP_LEN: usize = 256 * 1024;
+        const TEST_HEAP_LEN: usize = 4 * 1024 * 1024;
         static mut TEST_HEAP: [u8; TEST_HEAP_LEN] = [0u8; TEST_HEAP_LEN];
         let base = core::ptr::addr_of_mut!(TEST_HEAP) as *mut u8;
         crate::mm::heap::KERNEL_HEAP.configure(base, TEST_HEAP_LEN);

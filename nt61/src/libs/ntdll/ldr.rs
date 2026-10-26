@@ -17,6 +17,7 @@
 use super::file::wide_to_string;
 use super::status::{
     STATUS_DLL_NOT_FOUND, STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER, STATUS_NOT_FOUND,
+    STATUS_NOT_IMPLEMENTED,
     STATUS_SUCCESS,
 };
 use super::types::{UnicodeString, HANDLE, NTSTATUS, PVOID};
@@ -120,17 +121,14 @@ pub unsafe extern "C" fn ldr_load_dll(
                 (img_base, img_size, img_base + 0x1000, 0)
             } else {
                 // Not in database - this is a new DLL load
-                // In a full implementation, we'd read from disk here
-                // For now, use placeholder
-                let placeholder_base: u64 =
-                    0x0000_7000_0000_0000 + (LDR_LIST.lock().len() as u64) * 0x0010_0000;
-                (placeholder_base, 0x100000, placeholder_base + 0x1000, 0)
+                // The kernel cannot map arbitrary on-disk DLLs into a
+                // user address space yet. Returning a fabricated base
+                // would be a fake success, so fail with a clear status.
+                return STATUS_NOT_IMPLEMENTED;
             }
         } else {
-            // No database - use placeholder
-            let placeholder_base: u64 =
-                0x0000_7000_0000_0000 + (LDR_LIST.lock().len() as u64) * 0x0010_0000;
-            (placeholder_base, 0x100000, placeholder_base + 0x1000, 0)
+            // No image database registered: nothing can be loaded.
+            return STATUS_NOT_IMPLEMENTED;
         };
 
     // Add to LDR list
@@ -219,13 +217,18 @@ pub unsafe extern "C" fn ldr_get_procedure_address(
 /// loaded DLL. We use a thread-safe iterator over the LDR list.
 pub unsafe extern "C" fn ldr_enumerate_loaded_modules(
     _flags: u32,
-    _callback: PVOID,
+    callback: PVOID,
     _context: PVOID,
 ) -> NTSTATUS {
-    // We cannot call a user callback from this stub layer
-    // safely (no stack, no real RIP), so we report the list
-    // count via the global accessor and return SUCCESS.
-    STATUS_SUCCESS
+    if callback.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
+    // A real LDR walk needs a kernel-to-user callback trampoline
+    // (stack, switchable RIP) that this kernel does not have yet.
+    // Reporting SUCCESS without ever invoking the callback would be a
+    // fake success, so surface the limitation explicitly.
+    let _ = _context;
+    STATUS_NOT_IMPLEMENTED
 }
 
 /// `ldr_unload_dll` — release a DLL. The bootstrap never frees

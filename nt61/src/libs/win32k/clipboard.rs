@@ -4,6 +4,7 @@
 //! Reference: Windows SDK, ReactOS win32ss/user
 
 use crate::ke::sync::Spinlock;
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Clipboard format types
@@ -19,14 +20,29 @@ pub const CF_PALETTE: u32 = 9;
 pub const CF_UNICODETEXT: u32 = 13;
 pub const CF_ENHMETAFILE: u32 = 14;
 
-/// Maximum clipboard data size
+/// Maximum size of a single clipboard object, per format.
 const MAX_CLIPBOARD_DATA: usize = 1024 * 1024; // 1MB
 
-/// Clipboard data entry
-pub struct ClipboardData {
-    pub format: u32,
-    pub size: usize,
-    pub data: [u8; MAX_CLIPBOARD_DATA],
+/// Maximum number of distinct formats tracked simultaneously. A
+/// poster can offer several representations (e.g. CF_UNICODETEXT and
+/// CF_DIB) of the same user object at once.
+const MAX_CLIPBOARD_FORMATS: usize = 8;
+
+/// Inner clipboard data protected by a lock: one owned byte buffer
+/// per format. Readers get an owned copy, so no one aliases
+/// lock-protected storage and a later update can never mutate a
+/// buffer someone still holds.
+struct ClipboardDataInner {
+    /// (format, bytes) pairs in insertion order.
+    entries: Vec<(u32, Vec<u8>)>,
+}
+
+impl ClipboardDataInner {
+    pub const fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
 }
 
 /// Clipboard state (protected by a spinlock)
@@ -43,13 +59,6 @@ pub struct ClipboardState {
     pub has_data: AtomicBool,
 }
 
-/// Inner clipboard data protected by a lock
-pub struct ClipboardDataInner {
-    pub format: u32,
-    pub size: usize,
-    pub data: [u8; MAX_CLIPBOARD_DATA],
-}
-
 impl ClipboardState {
     pub const fn new() -> Self {
         Self {
@@ -58,16 +67,6 @@ impl ClipboardState {
             sequence: AtomicU64::new(0),
             data: Spinlock::new(ClipboardDataInner::new()),
             has_data: AtomicBool::new(false),
-        }
-    }
-}
-
-impl ClipboardDataInner {
-    pub const fn new() -> Self {
-        Self {
-            format: 0,
-            size: 0,
-            data: [0u8; MAX_CLIPBOARD_DATA],
         }
     }
 }
@@ -113,20 +112,34 @@ pub fn get_sequence_number() -> u64 {
     CLIPBOARD.sequence.load(Ordering::SeqCst)
 }
 
-/// Set clipboard data
+/// Set clipboard data for one format.
+///
+/// Replaces any previous object registered for the same format and
+/// preserves the other formats, so one owner can offer several
+/// representations of the same user object. An empty object or one
+/// larger than MAX_CLIPBOARD_DATA is rejected.
 pub fn set_clipboard_data(format: u32, data: &[u8]) -> bool {
     if !CLIPBOARD.is_open.load(Ordering::SeqCst) {
         return false;
     }
-
-    if data.len() > MAX_CLIPBOARD_DATA {
+    if format == 0 || data.is_empty() || data.len() > MAX_CLIPBOARD_DATA {
         return false;
     }
 
     let mut inner = CLIPBOARD.data.lock();
-    inner.format = format;
-    inner.size = data.len();
-    inner.data[..data.len()].copy_from_slice(data);
+    match inner.entries.iter_mut().find(|(f, _)| *f == format) {
+        Some((_, bytes)) => {
+            bytes.clear();
+            bytes.extend_from_slice(data);
+        }
+        None => {
+            if inner.entries.len() >= MAX_CLIPBOARD_FORMATS {
+                drop(inner);
+                return false;
+            }
+            inner.entries.push((format, data.to_vec()));
+        }
+    }
     drop(inner);
 
     CLIPBOARD.has_data.store(true, Ordering::SeqCst);
@@ -135,45 +148,46 @@ pub fn set_clipboard_data(format: u32, data: &[u8]) -> bool {
     true
 }
 
-/// Get clipboard data
-pub fn get_clipboard_data(format: u32) -> Option<&'static [u8]> {
+/// Get a copy of the clipboard object for 'format'.
+///
+/// 'format == 0' selects the first (preferred) format, matching the
+/// previous single-format behaviour. The returned buffer is an owned
+/// copy: the caller never aliases the lock-protected storage and a
+/// subsequent clipboard update cannot change it under them.
+pub fn get_clipboard_data(format: u32) -> Option<Vec<u8>> {
     if !CLIPBOARD.has_data.load(Ordering::SeqCst) {
         return None;
     }
 
     let inner = CLIPBOARD.data.lock();
-
-    // Check if format matches
-    if inner.format != format && format != 0 {
-        drop(inner);
-        return None;
+    if format == 0 {
+        return inner.entries.first().map(|(_, bytes)| bytes.clone());
     }
-
-    let size = inner.size;
-    let data = &inner.data[..size];
-    // Return a slice that's valid for 'static lifetime
-    // This is safe because we never modify the data after this
-    Some(unsafe { core::slice::from_raw_parts(data.as_ptr(), size) })
+    inner
+        .entries
+        .iter()
+        .find(|(f, _)| *f == format)
+        .map(|(_, bytes)| bytes.clone())
 }
 
-/// Get the current clipboard format
+/// Get the preferred (first registered) clipboard format, or 0 if the
+/// clipboard is empty.
 pub fn get_clipboard_format() -> u32 {
-    if CLIPBOARD.has_data.load(Ordering::SeqCst) {
-        let inner = CLIPBOARD.data.lock();
-        inner.format
-    } else {
-        0
+    if !CLIPBOARD.has_data.load(Ordering::SeqCst) {
+        return 0;
     }
+    let inner = CLIPBOARD.data.lock();
+    inner.entries.first().map(|(f, _)| *f).unwrap_or(0)
 }
 
-/// Check if a format is available
+/// Check if a format is available ('0' means "any format").
 pub fn is_format_available(format: u32) -> bool {
     if !CLIPBOARD.has_data.load(Ordering::SeqCst) {
         return false;
     }
 
     let inner = CLIPBOARD.data.lock();
-    inner.format == format || format == 0
+    format == 0 || inner.entries.iter().any(|(f, _)| *f == format)
 }
 
 /// Empty the clipboard
@@ -183,12 +197,81 @@ pub fn empty_clipboard() -> bool {
     }
 
     let mut inner = CLIPBOARD.data.lock();
-    inner.format = 0;
-    inner.size = 0;
+    inner.entries.clear();
     drop(inner);
 
     CLIPBOARD.has_data.store(false, Ordering::SeqCst);
     CLIPBOARD.sequence.fetch_add(1, Ordering::SeqCst);
 
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec;
+
+    /// One combined test: the clipboard is a global static, so parallel
+    /// test threads would interfere with each other.
+    #[test]
+    fn clipboard_multi_format_lifecycle() {
+        if is_open() {
+            close_clipboard();
+        }
+
+        assert!(open_clipboard(0x1111));
+        assert_eq!(get_owner(), 0x1111);
+
+        // Two formats coexist; format 0 reads the preferred one.
+        assert!(set_clipboard_data(CF_UNICODETEXT, b"hello"));
+        assert!(set_clipboard_data(CF_DIB, &[1, 2, 3]));
+        assert_eq!(
+            get_clipboard_data(CF_UNICODETEXT).as_deref(),
+            Some(&b"hello"[..])
+        );
+        assert_eq!(get_clipboard_data(CF_DIB).as_deref(), Some(&[1u8, 2, 3][..]));
+        assert_eq!(get_clipboard_data(0).as_deref(), Some(&b"hello"[..]));
+        assert_eq!(get_clipboard_format(), CF_UNICODETEXT);
+        assert!(is_format_available(CF_DIB));
+        assert!(is_format_available(0));
+        assert!(!is_format_available(CF_TIFF));
+
+        // Replacing one format preserves the other.
+        assert!(set_clipboard_data(CF_UNICODETEXT, b"world!"));
+        assert_eq!(
+            get_clipboard_data(CF_UNICODETEXT).as_deref(),
+            Some(&b"world!"[..])
+        );
+        assert_eq!(get_clipboard_data(CF_DIB).as_deref(), Some(&[1u8, 2, 3][..]));
+
+        // Over-sized and empty objects are rejected.
+        let big = vec![0u8; MAX_CLIPBOARD_DATA + 1];
+        assert!(!set_clipboard_data(CF_TEXT, &big));
+        assert!(!set_clipboard_data(CF_TEXT, b""));
+
+        // The format table is bounded.
+        for format in [CF_TEXT, CF_OEMTEXT, CF_SYLK, CF_DIF, CF_TIFF, CF_PALETTE] {
+            assert!(set_clipboard_data(format, b"x"));
+        }
+        assert!(!set_clipboard_data(CF_BITMAP, b"x"));
+
+        // Emptying clears every format and bumps the sequence.
+        let seq = get_sequence_number();
+        assert!(empty_clipboard());
+        assert!(get_clipboard_data(0).is_none());
+        assert!(!is_format_available(0));
+        assert_eq!(get_clipboard_format(), 0);
+        assert_eq!(get_sequence_number(), seq + 1);
+
+        // Closing bumps the sequence and disables updates.
+        let seq = get_sequence_number();
+        assert!(close_clipboard());
+        assert_eq!(get_sequence_number(), seq + 1);
+        assert!(!set_clipboard_data(CF_TEXT, b"nope"));
+        assert!(!empty_clipboard());
+
+        if open_clipboard(0x2222) {
+            close_clipboard();
+        }
+    }
 }

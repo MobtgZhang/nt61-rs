@@ -3,9 +3,14 @@
 //! Implements Windows NT registry functions for in-memory registry storage.
 
 use crate::kprintln;
+use crate::mm::user_copy::{
+    copy_from_user, probe_user_write, read_user_object, read_user_unicode_string,
+    write_user_object,
+};
 use crate::libs::ntdll::status::{
-    STATUS_ACCESS_DENIED, STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER,
-    STATUS_OBJECT_NAME_NOT_FOUND, STATUS_SUCCESS,
+    STATUS_ACCESS_DENIED, STATUS_ACCESS_VIOLATION, STATUS_INVALID_HANDLE,
+    STATUS_BUFFER_TOO_SMALL, STATUS_INVALID_PARAMETER, STATUS_OBJECT_NAME_NOT_FOUND,
+    STATUS_SUCCESS,
 };
 use crate::libs::ntdll::types::{ObjectAttributes, UnicodeString, HANDLE, NTSTATUS, PVOID};
 use core::ptr::null_mut;
@@ -18,6 +23,7 @@ const BACKSLASH_U16: u16 = 0x5C;
 const KEY_QUERY_VALUE: u32 = 0x0001;
 const KEY_SET_VALUE: u32 = 0x0002;
 const KEY_CREATE_SUB_KEY: u32 = 0x0004;
+const KEY_ENUMERATE_SUB_KEYS: u32 = 0x0008;
 const DELETE_RIGHT: u32 = 0x0001_0000;
 
 /// Maximum number of simultaneously open key handles.
@@ -133,6 +139,7 @@ pub struct RegistryKey {
     pub children: [Option<*mut RegistryKey>; 32],
     pub child_count: usize,
     pub parent: *mut RegistryKey,
+    pub security: *const crate::se::seaccess::SecurityDescriptor,
 }
 
 impl RegistryKey {
@@ -146,6 +153,7 @@ impl RegistryKey {
             children: [const { None }; 32],
             child_count: 0,
             parent: null_mut(),
+            security: core::ptr::null(),
         };
 
         let len = name.len().min(255);
@@ -357,6 +365,7 @@ pub fn init() {
                 (*root_key).name_len = 9;
                 (*root_key).key_type = KeyType::Root;
                 (*root_key).parent = null_mut();
+                (*root_key).security = registry_default_security();
             }
             *root = Some(root_key);
         }
@@ -386,6 +395,11 @@ pub fn create_subkey(parent: *mut RegistryKey, name: &[u16]) -> Option<*mut Regi
             (*key_ptr).parent = parent;
             (*key_ptr).value_count = 0;
             (*key_ptr).child_count = 0;
+            (*key_ptr).security = if parent.is_null() {
+                registry_default_security()
+            } else {
+                (*parent).security
+            };
 
             // Initialize arrays
             for i in 0..64 {
@@ -404,6 +418,99 @@ pub fn create_subkey(parent: *mut RegistryKey, name: &[u16]) -> Option<*mut Regi
         return Some(key_ptr);
     }
     None
+}
+
+/// Create the shared default DACL for the in-memory registry shadow tree.
+fn registry_default_security() -> *const crate::se::seaccess::SecurityDescriptor {
+    use crate::se::acl::{AceFlags, Acl};
+    use crate::se::seaccess::{SecurityDescriptor, ACCESS_GENERIC_ALL, ACCESS_GENERIC_READ};
+    use crate::se::sid::{sid, WellKnownSid};
+
+    let acl_ptr = crate::mm::pool::allocate(
+        crate::mm::pool::PoolType::NonPaged,
+        core::mem::size_of::<Acl>(),
+    ) as *mut Acl;
+    let sd_ptr = crate::mm::pool::allocate(
+        crate::mm::pool::PoolType::NonPaged,
+        core::mem::size_of::<SecurityDescriptor>(),
+    ) as *mut SecurityDescriptor;
+    if acl_ptr.is_null() || sd_ptr.is_null() {
+        if !acl_ptr.is_null() {
+            crate::mm::pool::free(acl_ptr as *mut u8);
+        }
+        if !sd_ptr.is_null() {
+            crate::mm::pool::free(sd_ptr as *mut u8);
+        }
+        return core::ptr::null();
+    }
+
+    unsafe {
+        core::ptr::write(acl_ptr, Acl::new());
+        let acl = &mut *acl_ptr;
+        if !acl.add_access_allowed(
+            &sid::well_known(WellKnownSid::LocalSystem),
+            ACCESS_GENERIC_ALL,
+            AceFlags::NONE,
+        ) || !acl.add_access_allowed(
+            &sid::well_known(WellKnownSid::Administrators),
+            ACCESS_GENERIC_ALL,
+            AceFlags::NONE,
+        ) || !acl.add_access_allowed(
+            &sid::well_known(WellKnownSid::Users),
+            ACCESS_GENERIC_READ,
+            AceFlags::NONE,
+        ) {
+            crate::mm::pool::free(acl_ptr as *mut u8);
+            crate::mm::pool::free(sd_ptr as *mut u8);
+            return core::ptr::null();
+        }
+
+        core::ptr::write(
+            sd_ptr,
+            SecurityDescriptor {
+                revision: 1,
+                sbz1: 0,
+                control: 0x8004,
+                owner: sid::well_known(WellKnownSid::Administrators),
+                group: sid::well_known(WellKnownSid::Administrators),
+                sacl: core::ptr::null(),
+                dacl: acl_ptr,
+            },
+        );
+    }
+    sd_ptr
+}
+
+/// Enforce the key object's DACL with the caller's process token.
+fn registry_access_allowed(key: *mut RegistryKey, desired_access: u32) -> bool {
+    use crate::se::seaccess::{se_access_check, AccessCheckResult, ObTypeIndex};
+
+    if key.is_null() {
+        return false;
+    }
+    let current_process = crate::arch::common::percpu::get_current_process();
+    if current_process.is_null() {
+        return false;
+    }
+    let token = unsafe { (*current_process).get_token() };
+    if token.is_null() {
+        return false;
+    }
+
+    let security = unsafe {
+        if (*key).security.is_null() {
+            (*key).security = registry_default_security();
+        }
+        (*key).security
+    };
+    if security.is_null() {
+        return false;
+    }
+
+    let (result, granted) =
+        se_access_check(ObTypeIndex::Key, security, desired_access, token);
+    result == AccessCheckResult::Allowed
+        && (granted & desired_access) == desired_access
 }
 
 /// Find a subkey by name (case-sensitive) under the given parent.
@@ -433,6 +540,7 @@ pub fn find_subkey(parent: *mut RegistryKey, name: &[u16]) -> Option<*mut Regist
     }
     None
 }
+
 
 /// Set a value on a registry key. Returns `true` on success.
 pub fn set_value(key: *mut RegistryKey, name: &[u16], vtype: ValueType, data: &[u8]) -> bool {
@@ -550,9 +658,19 @@ pub unsafe extern "C" fn nt_create_key(
         return STATUS_ACCESS_DENIED;
     }
 
-    let path = if !object_attributes.is_null() && !(*object_attributes).object_name.is_null() {
-        let name = &*(*object_attributes).object_name;
-        core::slice::from_raw_parts(name.buffer, name.length as usize / 2)
+    let attributes: ObjectAttributes = if !object_attributes.is_null() {
+        match read_user_object(object_attributes as u64) {
+            Ok(value) => value,
+            Err(_) => return STATUS_OBJECT_NAME_NOT_FOUND,
+        }
+    } else {
+        return STATUS_OBJECT_NAME_NOT_FOUND;
+    };
+    let path = if !attributes.object_name.is_null() {
+        match read_user_unicode_string(attributes.object_name as u64, MAX_VALUE_NAME_LEN * 2) {
+            Ok(value) => value,
+            Err(_) => return STATUS_OBJECT_NAME_NOT_FOUND,
+        }
     } else {
         return STATUS_OBJECT_NAME_NOT_FOUND;
     };
@@ -601,6 +719,10 @@ pub unsafe extern "C" fn nt_create_key(
 
     drop(root);
 
+    if !registry_access_allowed(current, desired_access) {
+        return STATUS_ACCESS_DENIED;
+    }
+
     // Allocate handle using round-robin.
     let slot_idx = match allocate_handle_slot(current, desired_access) {
         Some(idx) => idx,
@@ -613,10 +735,15 @@ pub unsafe extern "C" fn nt_create_key(
         }
     };
 
-    *key_handle = (slot_idx as u32 + 1) as HANDLE;
+    let handle = (slot_idx as u32 + 1) as HANDLE;
+    if write_user_object(key_handle as u64, &handle).is_err() {
+        return STATUS_OBJECT_NAME_NOT_FOUND;
+    }
 
     if !disposition.is_null() {
-        *disposition = 1; // REG_CREATED_NEW_KEY
+        if write_user_object(disposition as u64, &1u32).is_err() {
+            return STATUS_INVALID_PARAMETER;
+        }
     }
 
     kprintln!(
@@ -639,9 +766,19 @@ pub unsafe extern "C" fn nt_open_key(
         return STATUS_OBJECT_NAME_NOT_FOUND;
     }
 
-    let path = if !object_attributes.is_null() && !(*object_attributes).object_name.is_null() {
-        let name = &*(*object_attributes).object_name;
-        core::slice::from_raw_parts(name.buffer, name.length as usize / 2)
+    let attributes: ObjectAttributes = if !object_attributes.is_null() {
+        match read_user_object(object_attributes as u64) {
+            Ok(value) => value,
+            Err(_) => return STATUS_OBJECT_NAME_NOT_FOUND,
+        }
+    } else {
+        return STATUS_OBJECT_NAME_NOT_FOUND;
+    };
+    let path = if !attributes.object_name.is_null() {
+        match read_user_unicode_string(attributes.object_name as u64, MAX_VALUE_NAME_LEN * 2) {
+            Ok(value) => value,
+            Err(_) => return STATUS_OBJECT_NAME_NOT_FOUND,
+        }
     } else {
         return STATUS_OBJECT_NAME_NOT_FOUND;
     };
@@ -678,6 +815,10 @@ pub unsafe extern "C" fn nt_open_key(
 
     drop(root);
 
+    if !registry_access_allowed(current, desired_access) {
+        return STATUS_ACCESS_DENIED;
+    }
+
     let slot_idx = match allocate_handle_slot(current, desired_access) {
         Some(idx) => idx,
         None => {
@@ -686,7 +827,10 @@ pub unsafe extern "C" fn nt_open_key(
         }
     };
 
-    *key_handle = (slot_idx as u32 + 1) as HANDLE;
+    let handle = (slot_idx as u32 + 1) as HANDLE;
+    if write_user_object(key_handle as u64, &handle).is_err() {
+        return STATUS_OBJECT_NAME_NOT_FOUND;
+    }
     kprintln!(
         subsystem: "REG",
         "    [REG] NtOpenKey: handle=0x{:x} (slot={})",
@@ -735,8 +879,10 @@ pub unsafe extern "C" fn nt_set_value_key(
 
     // Extract value name.
     let name = if !value_name.is_null() {
-        let name = &*value_name;
-        core::slice::from_raw_parts(name.buffer, name.length as usize / 2)
+        match read_user_unicode_string(value_name as u64, MAX_VALUE_NAME_LEN * 2) {
+            Ok(value) => value,
+            Err(_) => return STATUS_INVALID_PARAMETER,
+        }
     } else {
         return STATUS_INVALID_PARAMETER;
     };
@@ -769,8 +915,12 @@ pub unsafe extern "C" fn nt_set_value_key(
         _ => ValueType::Binary,
     };
 
+    let mut data_bytes = alloc::vec![0u8; data_size as usize];
     let data_slice = if !data.is_null() && data_size > 0 {
-        core::slice::from_raw_parts(data as *const u8, data_size as usize)
+        if copy_from_user(&mut data_bytes, data as u64).is_err() {
+            return STATUS_INVALID_PARAMETER;
+        }
+        data_bytes.as_slice()
     } else {
         &[]
     };
@@ -782,7 +932,7 @@ pub unsafe extern "C" fn nt_set_value_key(
         data_size
     );
 
-    if set_value(key, name, vtype, data_slice) {
+    if set_value(key, &name, vtype, data_slice) {
         notify_registry_change(key);
         STATUS_SUCCESS
     } else {
@@ -799,10 +949,6 @@ pub unsafe extern "C" fn nt_query_value_key(
     length: u32,
     result_length: *mut u32,
 ) -> NTSTATUS {
-    let _ = key_value_information_class;
-    let _ = key_value_information;
-    let _ = length;
-
     let handle_idx = (key_handle as usize).saturating_sub(1);
     if handle_idx >= MAX_KEY_HANDLES {
         return STATUS_OBJECT_NAME_NOT_FOUND;
@@ -818,37 +964,252 @@ pub unsafe extern "C" fn nt_query_value_key(
     drop(handle_table);
 
     let name = if !value_name.is_null() {
-        let name = &*value_name;
-        core::slice::from_raw_parts(name.buffer, name.length as usize / 2)
+        match read_user_unicode_string(value_name as u64, MAX_VALUE_NAME_LEN * 2) {
+            Ok(value) => value,
+            Err(_) => return STATUS_OBJECT_NAME_NOT_FOUND,
+        }
     } else {
         return STATUS_OBJECT_NAME_NOT_FOUND;
     };
 
-    if let Some((vtype, _)) = get_value(key, name) {
-        kprintln!(
-            subsystem: "REG",
-            "    [REG] NtQueryValueKey: found type={:?}",
-            vtype
-        );
+    // Find the value and its data directly from the key.
+    let found = find_value(key, &name);
+    let Some((vtype, data_slice)) = found else {
+        return STATUS_OBJECT_NAME_NOT_FOUND;
+    };
+    let data_size = data_slice.len();
 
-        if !result_length.is_null() {
-            unsafe {
-                *result_length = 8;
+    // Per-class fixed header sizes, indexed by information class. Adding a
+    // new class means adding a row here plus its payload writer below; the
+    // validation path (required-size report, buffer-size check and user
+    // probe) is shared so it cannot be forgotten per branch.
+    const HEADER_SIZES: [usize; 3] = [
+        KEY_VALUE_BASIC_INFORMATION_SIZE,  // 0: KeyValueBasicInformation
+        KEY_VALUE_FULL_INFORMATION_SIZE,   // 1: KeyValueFullInformation
+        0x18,                              // 2: KeyValuePartialInformation
+    ];
+
+    let class = key_value_information_class as usize;
+    let header_size = match HEADER_SIZES.get(class) {
+        Some(h) => *h,
+        None => return STATUS_INVALID_PARAMETER,
+    };
+
+    let name_bytes = name.len() * 2;
+    let required = match class {
+        0 => header_size + name_bytes,
+        1 => header_size + name_bytes + data_size,
+        _ => header_size + data_size,
+    };
+
+    // Unified validation entry: report the required size, then make sure
+    // the caller's buffer is large enough and actually writable.
+    let info_ptr = {
+        if !write_result_length(result_length, required) {
+            return STATUS_ACCESS_VIOLATION;
+        }
+        if (length as usize) < required || key_value_information.is_null() {
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+        if probe_user_write(key_value_information as u64, required).is_err() {
+            return STATUS_ACCESS_VIOLATION;
+        }
+        key_value_information as *mut u8
+    };
+
+    unsafe {
+        // TitleIndex (4 bytes) + Type (4 bytes): common to every class.
+        let title_index = 0u32.to_le_bytes();
+        core::ptr::copy_nonoverlapping(title_index.as_ptr(), info_ptr, 4);
+        let vtype_bytes = (vtype as u32).to_le_bytes();
+        core::ptr::copy_nonoverlapping(vtype_bytes.as_ptr(), info_ptr.add(4), 4);
+
+        match class {
+            0 => {
+                // KeyValueBasicInformation: fixed 12-byte header followed by
+                // the value name. Windows always returns the name here, so
+                // callers that read NameLength and then the name bytes see
+                // consistent data instead of stale user-buffer contents.
+                let name_len_bytes = (name_bytes as u32).to_le_bytes();
+                core::ptr::copy_nonoverlapping(name_len_bytes.as_ptr(), info_ptr.add(8), 4);
+                copy_utf16_name(info_ptr.add(header_size), &name);
+            }
+            1 => {
+                // KeyValueFullInformation: 20-byte header, then the value
+                // name, then the value data. DataOffset points at the data
+                // (immediately after the name), matching Windows NT 6.1.
+                let data_offset = header_size + name_bytes;
+                let data_offset_bytes = (data_offset as u32).to_le_bytes();
+                core::ptr::copy_nonoverlapping(data_offset_bytes.as_ptr(), info_ptr.add(8), 4);
+                let data_size_bytes = (data_size as u32).to_le_bytes();
+                core::ptr::copy_nonoverlapping(data_size_bytes.as_ptr(), info_ptr.add(12), 4);
+                let name_len_bytes = (name_bytes as u32).to_le_bytes();
+                core::ptr::copy_nonoverlapping(name_len_bytes.as_ptr(), info_ptr.add(16), 4);
+                copy_utf16_name(info_ptr.add(header_size), &name);
+                core::ptr::copy_nonoverlapping(
+                    data_slice.as_ptr(),
+                    info_ptr.add(data_offset),
+                    data_size,
+                );
+            }
+            _ => {
+                // KeyValuePartialInformation: TitleIndex (4 bytes) +
+                // Type (4 bytes) + DataLength (4 bytes), then the data.
+                let len_bytes = (data_size as u32).to_le_bytes();
+                core::ptr::copy_nonoverlapping(len_bytes.as_ptr(), info_ptr.add(8), 4);
+                core::ptr::copy_nonoverlapping(data_slice.as_ptr(), info_ptr.add(header_size), data_size);
             }
         }
+    }
 
-        STATUS_SUCCESS
-    } else {
-        STATUS_OBJECT_NAME_NOT_FOUND
+    STATUS_SUCCESS
+}
+
+/// Copies a UTF-16LE value name into a user buffer at `dst`.
+unsafe fn copy_utf16_name(dst: *mut u8, name: &[u16]) {
+    for (index, unit) in name.iter().enumerate() {
+        let bytes = unit.to_le_bytes();
+        core::ptr::copy_nonoverlapping(bytes.as_ptr(), dst.add(index * 2), 2);
     }
 }
 
-/// nt_delete_key — registry keys cannot be deleted via this API.
-pub unsafe extern "C" fn nt_delete_key(_key_handle: HANDLE) -> NTSTATUS {
-    // STATUS_CANNOT_DELETE
+/// Finds a value by name and returns (type, data-slice).
+fn find_value(
+    key: *mut RegistryKey,
+    name: &[u16],
+) -> Option<(ValueType, &[u8])> {
+    if key.is_null() {
+        return None;
+    }
+    unsafe {
+        for i in 0..(*key).value_count {
+            if let Some(ref value) = (*key).values[i] {
+                let value_name_len = value.name_len as usize;
+                if value_name_len == name.len() {
+                    let mut match_found = true;
+                    for j in 0..value_name_len {
+                        if value.name[j] != name[j] {
+                            match_found = false;
+                            break;
+                        }
+                    }
+                    if match_found {
+                        let data_size = value.data_size as usize;
+                        return Some((value.value_type, &value.data[..data_size]));
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// nt_delete_key — deletes a key opened with DELETE access.
+///
+/// Honours NtDeleteKey semantics where the in-memory tree allows them:
+/// the key must have no subkeys, its parent's child slot is cleared, and
+/// every open handle and pending notification referencing it is
+/// invalidated so no caller keeps using freed memory. Root keys cannot
+/// be deleted.
+pub unsafe extern "C" fn nt_delete_key(key_handle: HANDLE) -> NTSTATUS {
     const STATUS_CANNOT_DELETE: NTSTATUS = -1073741791;
-    kprintln!(subsystem: "REG", "    [REG] NtDeleteKey: not supported");
-    STATUS_CANNOT_DELETE
+
+    let handle_idx = (key_handle as usize).saturating_sub(1);
+    if handle_idx >= MAX_KEY_HANDLES {
+        kprintln!(
+            subsystem: "REG",
+            "    [REG] NtDeleteKey: handle 0x{:x} out of range",
+            key_handle as u64
+        );
+        return STATUS_INVALID_HANDLE;
+    }
+
+    let (key, parent) = {
+        let handle_table = KEY_HANDLE_TABLE.lock();
+        match &handle_table[handle_idx] {
+            Some(entry) => {
+                if entry.desired_access & DELETE_RIGHT == 0 {
+                    kprintln!(
+                        subsystem: "REG",
+                        "    [REG] NtDeleteKey: handle 0x{:x} lacks DELETE access",
+                        key_handle as u64
+                    );
+                    return STATUS_ACCESS_DENIED;
+                }
+                if entry.key_ptr.is_null() {
+                    return STATUS_INVALID_HANDLE;
+                }
+                let key = entry.key_ptr;
+                let parent = (*key).parent;
+                (key, parent)
+            }
+            None => {
+                kprintln!(
+                    subsystem: "REG",
+                    "    [REG] NtDeleteKey: handle 0x{:x} not found",
+                    key_handle as u64
+                );
+                return STATUS_INVALID_HANDLE;
+            }
+        }
+    };
+
+    if parent.is_null() {
+        kprintln!(subsystem: "REG", "    [REG] NtDeleteKey: cannot delete a root key");
+        return STATUS_CANNOT_DELETE;
+    }
+    if (*key).child_count != 0 {
+        kprintln!(subsystem: "REG", "    [REG] NtDeleteKey: key still has subkeys");
+        return STATUS_CANNOT_DELETE;
+    }
+
+    // Remove the key from its parent's child list, compacting the slots.
+    {
+        let count = (*parent).child_count as usize;
+        let mut found: Option<usize> = None;
+        for i in 0..count {
+            if (*parent).children[i] == Some(key) {
+                found = Some(i);
+                break;
+            }
+        }
+        if let Some(idx) = found {
+            for i in idx..count - 1 {
+                (*parent).children[i] = (*parent).children[i + 1];
+            }
+            (*parent).children[count - 1] = None;
+            (*parent).child_count -= 1;
+        }
+    }
+
+    // Invalidate every open handle to the deleted key.
+    {
+        let mut handle_table = KEY_HANDLE_TABLE.lock();
+        for slot in handle_table.iter_mut() {
+            if let Some(entry) = slot {
+                if entry.key_ptr == key {
+                    *slot = None;
+                }
+            }
+        }
+    }
+
+    // Drop pending notifications watching this key so they cannot touch
+    // freed memory.
+    {
+        let mut notifications = KEY_NOTIFICATIONS.lock();
+        for slot in notifications.iter_mut() {
+            if let Some(notification) = slot {
+                if notification.key_ptr == key {
+                    *slot = None;
+                }
+            }
+        }
+    }
+
+    crate::mm::pool::free(key as *mut u8);
+    kprintln!(subsystem: "REG", "    [REG] NtDeleteKey: key deleted");
+    STATUS_SUCCESS
 }
 
 /// nt_delete_value_key — deletes a named value from a key.
@@ -901,23 +1262,12 @@ pub unsafe extern "C" fn nt_delete_value_key(
     }
 
     // Extract ValueName UTF-16 string.
-    let name_ustr = unsafe { &*value_name };
-    if name_ustr.length == 0 || name_ustr.buffer.is_null() {
-        kprintln!(subsystem: "REG", "    [REG] NtDeleteValueKey: empty ValueName");
-        return STATUS_OBJECT_NAME_NOT_FOUND;
-    }
-    let name_len_u16 = (name_ustr.length as usize) / 2;
-    // SECURITY: Refuse names longer than MAX_VALUE_NAME_LEN.
-    if name_len_u16 > MAX_VALUE_NAME_LEN {
-        kprintln!(
-            subsystem: "REG",
-            "    [REG] NtDeleteValueKey: name_len={} > {}",
-            name_len_u16,
-            MAX_VALUE_NAME_LEN
-        );
-        return STATUS_OBJECT_NAME_NOT_FOUND;
-    }
-    let name_slice = core::slice::from_raw_parts(name_ustr.buffer, name_len_u16);
+    let name_slice =
+        match read_user_unicode_string(value_name as u64, MAX_VALUE_NAME_LEN * 2) {
+            Ok(value) => value,
+            Err(_) => return STATUS_OBJECT_NAME_NOT_FOUND,
+        };
+    let name_len_u16 = name_slice.len();
 
     unsafe {
         let key_ref = &mut *key;
@@ -1030,6 +1380,19 @@ const KEY_NODE_INFORMATION_SIZE: usize = 28;
 const KEY_VALUE_BASIC_INFORMATION_SIZE: usize = 12;
 const KEY_VALUE_FULL_INFORMATION_SIZE: usize = 20;
 
+fn write_result_length(result_length: *mut u32, required: usize) -> bool {
+    if result_length.is_null() {
+        return true;
+    }
+    if probe_user_write(result_length as u64, core::mem::size_of::<u32>()).is_err() {
+        return false;
+    }
+    unsafe {
+        *result_length = required as u32;
+    }
+    true
+}
+
 /// nt_query_key — query information about a registry key.
 pub unsafe extern "C" fn nt_query_key(
     key_handle: HANDLE,
@@ -1054,7 +1417,12 @@ pub unsafe extern "C" fn nt_query_key(
     };
 
     let key = entry.key_ptr;
+    let requested_access = entry.desired_access | KEY_QUERY_VALUE;
     drop(handle_table);
+
+    if !registry_access_allowed(key, requested_access) {
+        return STATUS_ACCESS_DENIED;
+    }
 
     let key_name_len = unsafe { (*key).name_len as usize };
     let key_name_bytes = key_name_len * 2;
@@ -1063,16 +1431,17 @@ pub unsafe extern "C" fn nt_query_key(
         0 => {
             // KeyBasicInformation
             let required = KEY_BASIC_INFORMATION_SIZE + key_name_bytes;
-            if !result_length.is_null() {
-                unsafe {
-                    *result_length = required as u32;
-                }
+            if !write_result_length(result_length, required) {
+                return STATUS_ACCESS_VIOLATION;
             }
             if (length as usize) < required {
                 return STATUS_BUFFER_OVERFLOW;
             }
             if key_information.is_null() {
                 return STATUS_BUFFER_TOO_SMALL;
+            }
+            if probe_user_write(key_information as u64, required).is_err() {
+                return STATUS_ACCESS_VIOLATION;
             }
 
             let info = &mut *(key_information as *mut KeyBasicInformation);
@@ -1094,16 +1463,17 @@ pub unsafe extern "C" fn nt_query_key(
         1 => {
             // KeyNodeInformation
             let required = KEY_NODE_INFORMATION_SIZE + key_name_bytes;
-            if !result_length.is_null() {
-                unsafe {
-                    *result_length = required as u32;
-                }
+            if !write_result_length(result_length, required) {
+                return STATUS_ACCESS_VIOLATION;
             }
             if (length as usize) < required {
                 return STATUS_BUFFER_OVERFLOW;
             }
             if key_information.is_null() {
                 return STATUS_BUFFER_TOO_SMALL;
+            }
+            if probe_user_write(key_information as u64, required).is_err() {
+                return STATUS_ACCESS_VIOLATION;
             }
 
             let info = &mut *(key_information as *mut KeyNodeInformation);
@@ -1125,7 +1495,10 @@ pub unsafe extern "C" fn nt_query_key(
             kprintln!(subsystem: "REG", "    [REG] NtQueryKey: KeyNodeInformation (name_len={})", key_name_bytes);
             STATUS_SUCCESS
         }
-        _ => STATUS_SUCCESS,
+        // Unsupported information classes must not fake success: the
+        // caller would read a half-initialised buffer. Windows returns
+        // STATUS_INVALID_PARAMETER for an unknown class.
+        _ => crate::libs::ntdll::status::STATUS_INVALID_PARAMETER,
     }
 }
 
@@ -1155,7 +1528,12 @@ pub unsafe extern "C" fn nt_enumerate_key(
     };
 
     let key = entry.key_ptr;
+    let requested_access = entry.desired_access | KEY_ENUMERATE_SUB_KEYS;
     drop(handle_table);
+
+    if !registry_access_allowed(key, requested_access) {
+        return STATUS_ACCESS_DENIED;
+    }
 
     let child_count = unsafe { (*key).child_count };
 
@@ -1179,16 +1557,17 @@ pub unsafe extern "C" fn nt_enumerate_key(
         0 => {
             // KeyBasicInformation
             let required = KEY_BASIC_INFORMATION_SIZE + child_name_bytes;
-            if !result_length.is_null() {
-                unsafe {
-                    *result_length = required as u32;
-                }
+            if !write_result_length(result_length, required) {
+                return STATUS_ACCESS_VIOLATION;
             }
             if (length as usize) < required {
                 return STATUS_BUFFER_OVERFLOW;
             }
             if key_information.is_null() {
                 return STATUS_BUFFER_TOO_SMALL;
+            }
+            if probe_user_write(key_information as u64, required).is_err() {
+                return STATUS_ACCESS_VIOLATION;
             }
 
             let info = &mut *(key_information as *mut KeyBasicInformation);
@@ -1210,16 +1589,17 @@ pub unsafe extern "C" fn nt_enumerate_key(
         1 => {
             // KeyNodeInformation
             let required = KEY_NODE_INFORMATION_SIZE + child_name_bytes;
-            if !result_length.is_null() {
-                unsafe {
-                    *result_length = required as u32;
-                }
+            if !write_result_length(result_length, required) {
+                return STATUS_ACCESS_VIOLATION;
             }
             if (length as usize) < required {
                 return STATUS_BUFFER_OVERFLOW;
             }
             if key_information.is_null() {
                 return STATUS_BUFFER_TOO_SMALL;
+            }
+            if probe_user_write(key_information as u64, required).is_err() {
+                return STATUS_ACCESS_VIOLATION;
             }
 
             let info = &mut *(key_information as *mut KeyNodeInformation);
@@ -1241,7 +1621,10 @@ pub unsafe extern "C" fn nt_enumerate_key(
             kprintln!(subsystem: "REG", "    [REG] NtEnumerateKey: index={}, KeyNodeInformation", index);
             STATUS_SUCCESS
         }
-        _ => STATUS_SUCCESS,
+        // Unsupported information classes must not fake success: the
+        // caller would read a half-initialised buffer. Windows returns
+        // STATUS_INVALID_PARAMETER for an unknown class.
+        _ => crate::libs::ntdll::status::STATUS_INVALID_PARAMETER,
     }
 }
 
@@ -1271,7 +1654,12 @@ pub unsafe extern "C" fn nt_enumerate_value_key(
     };
 
     let key = entry.key_ptr;
+    let requested_access = entry.desired_access | KEY_QUERY_VALUE;
     drop(handle_table);
+
+    if !registry_access_allowed(key, requested_access) {
+        return STATUS_ACCESS_DENIED;
+    }
 
     let value_count = unsafe { (*key).value_count };
 
@@ -1294,16 +1682,17 @@ pub unsafe extern "C" fn nt_enumerate_value_key(
         0 => {
             // KeyValueBasicInformation
             let required = KEY_VALUE_BASIC_INFORMATION_SIZE + value_name_bytes;
-            if !result_length.is_null() {
-                unsafe {
-                    *result_length = required as u32;
-                }
+            if !write_result_length(result_length, required) {
+                return STATUS_ACCESS_VIOLATION;
             }
             if (length as usize) < required {
                 return STATUS_BUFFER_OVERFLOW;
             }
             if key_value_information.is_null() {
                 return STATUS_BUFFER_TOO_SMALL;
+            }
+            if probe_user_write(key_value_information as u64, required).is_err() {
+                return STATUS_ACCESS_VIOLATION;
             }
 
             let info = &mut *(key_value_information as *mut KeyValueBasicInformation);
@@ -1327,16 +1716,17 @@ pub unsafe extern "C" fn nt_enumerate_value_key(
             // KeyValueFullInformation
             let data_size = value.data_size as usize;
             let required = KEY_VALUE_FULL_INFORMATION_SIZE + value_name_bytes + data_size;
-            if !result_length.is_null() {
-                unsafe {
-                    *result_length = required as u32;
-                }
+            if !write_result_length(result_length, required) {
+                return STATUS_ACCESS_VIOLATION;
             }
             if (length as usize) < required {
                 return STATUS_BUFFER_OVERFLOW;
             }
             if key_value_information.is_null() {
                 return STATUS_BUFFER_TOO_SMALL;
+            }
+            if probe_user_write(key_value_information as u64, required).is_err() {
+                return STATUS_ACCESS_VIOLATION;
             }
 
             let info = &mut *(key_value_information as *mut KeyValueFullInformation);
@@ -1368,16 +1758,17 @@ pub unsafe extern "C" fn nt_enumerate_value_key(
             let data_size = value.data_size as usize;
             // KeyValuePartialInformation: 0x18 bytes fixed + data
             let required = 0x18 + data_size;
-            if !result_length.is_null() {
-                unsafe {
-                    *result_length = required as u32;
-                }
+            if !write_result_length(result_length, required) {
+                return STATUS_ACCESS_VIOLATION;
             }
             if (length as usize) < required {
                 return STATUS_BUFFER_OVERFLOW;
             }
             if key_value_information.is_null() {
                 return STATUS_BUFFER_TOO_SMALL;
+            }
+            if probe_user_write(key_value_information as u64, required).is_err() {
+                return STATUS_ACCESS_VIOLATION;
             }
 
             // write KeyValuePartialInformation structure
@@ -1393,7 +1784,10 @@ pub unsafe extern "C" fn nt_enumerate_value_key(
             kprintln!(subsystem: "REG", "    [REG] NtEnumerateValueKey: index={}, KeyValuePartialInformation", index);
             STATUS_SUCCESS
         }
-        _ => STATUS_SUCCESS,
+        // Unsupported information classes must not fake success: the
+        // caller would read a half-initialised buffer. Windows returns
+        // STATUS_INVALID_PARAMETER for an unknown class.
+        _ => crate::libs::ntdll::status::STATUS_INVALID_PARAMETER,
     }
 }
 
@@ -1533,5 +1927,124 @@ pub fn init_default_keys() {
             b'Y' as u16,
         ];
         let _ = create_subkey(root_key, &sec_path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The exact code NtDeleteKey uses; kept local because the production
+    // constant lives inside the function body.
+    const STATUS_CANNOT_DELETE: i32 = -1073741791;
+
+    // All tests in this module mutate the same process-global registry tree
+    // (REGISTRY_ROOT, root child arrays, KEY_HANDLE_TABLE) through unsynchronized
+    // read-modify-write sequences. Running them in parallel loses updates and
+    // corrupts key structures, so serialize them explicitly.
+    static REGISTRY_TEST_LOCK: spin::Spinlock<()> = spin::Spinlock::new(());
+
+    // Under libtest the kernel heap is never initialised; configure a test
+    // region so pool allocations for registry keys work.
+    fn ensure_test_heap() {
+        if crate::mm::heap::KERNEL_HEAP.configured_region().is_some() {
+            return;
+        }
+        const TEST_HEAP_LEN: usize = 4 * 1024 * 1024;
+        static mut TEST_HEAP: [u8; TEST_HEAP_LEN] = [0u8; TEST_HEAP_LEN];
+        let base = core::ptr::addr_of_mut!(TEST_HEAP) as *mut u8;
+        crate::mm::heap::KERNEL_HEAP.configure(base, TEST_HEAP_LEN);
+    }
+
+    fn name_of(s: &str) -> alloc::vec::Vec<u16> {
+        s.chars().map(|c| c as u16).collect()
+    }
+
+    fn root_key() -> *mut RegistryKey {
+        init();
+        match *REGISTRY_ROOT.lock() {
+            Some(root) => root,
+            None => core::ptr::null_mut(),
+        }
+    }
+
+    #[test]
+    fn delete_key_removes_leaf_and_invalidates_handle() {
+        let _guard = REGISTRY_TEST_LOCK.lock();
+        ensure_test_heap();
+        unsafe {
+            let root = root_key();
+            assert!(!root.is_null());
+
+            let child = create_subkey(root, &name_of("DeleteLeafTest")).unwrap();
+            let slot = allocate_handle_slot(child, DELETE_RIGHT).unwrap();
+            let handle = (slot + 1) as HANDLE;
+
+            let status = nt_delete_key(handle);
+            assert_eq!(status, STATUS_SUCCESS);
+
+            // Parent no longer lists the child.
+            let still_listed = (0..(*root).child_count)
+                .any(|i| (*root).children[i] == Some(child));
+            assert!(!still_listed);
+
+            // The handle slot was invalidated.
+            let handle_table = KEY_HANDLE_TABLE.lock();
+            assert!(handle_table[slot].is_none());
+            drop(handle_table);
+
+            // Retrying through the now-dead handle must not succeed.
+            assert_ne!(nt_delete_key(handle), STATUS_SUCCESS);
+        }
+    }
+
+    #[test]
+    fn delete_key_requires_delete_access() {
+        let _guard = REGISTRY_TEST_LOCK.lock();
+        ensure_test_heap();
+        unsafe {
+            let root = root_key();
+            let child = create_subkey(root, &name_of("DeleteNoAccess")).unwrap();
+            let slot = allocate_handle_slot(child, 0).unwrap();
+            let handle = (slot + 1) as HANDLE;
+
+            assert_eq!(nt_delete_key(handle), STATUS_ACCESS_DENIED);
+
+            // Clean up the slot so other tests can reuse the table.
+            deallocate_handle_slot(slot);
+        }
+    }
+
+    #[test]
+    fn delete_key_refuses_parent_with_children() {
+        let _guard = REGISTRY_TEST_LOCK.lock();
+        ensure_test_heap();
+        unsafe {
+            let root = root_key();
+            let parent = create_subkey(root, &name_of("DeleteParentTest")).unwrap();
+            let _child =
+                create_subkey(parent, &name_of("DeleteParentTestChild")).unwrap();
+
+            let slot = allocate_handle_slot(parent, DELETE_RIGHT).unwrap();
+            let handle = (slot + 1) as HANDLE;
+
+            assert_eq!(nt_delete_key(handle), STATUS_CANNOT_DELETE);
+            assert_eq!((*parent).child_count, 1);
+            deallocate_handle_slot(slot);
+        }
+    }
+
+    #[test]
+    fn delete_key_refuses_root() {
+        let _guard = REGISTRY_TEST_LOCK.lock();
+        ensure_test_heap();
+        unsafe {
+            let root = root_key();
+            let slot = allocate_handle_slot(root, DELETE_RIGHT).unwrap();
+            let handle = (slot + 1) as HANDLE;
+
+            assert_eq!(nt_delete_key(handle), STATUS_CANNOT_DELETE);
+            deallocate_handle_slot(slot);
+        }
     }
 }

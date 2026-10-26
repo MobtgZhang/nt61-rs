@@ -218,13 +218,14 @@ impl MessageQueue {
         None
     }
 
-    /// Send a message directly (no queue).
-    /// In real implementation, this calls the window procedure directly.
+    /// Send a message directly (no queue). Routes through the window
+    /// manager dispatch path so the message reaches the same delivery
+    /// logic as `dispatch_message`; without a kernel-to-user callback
+    /// mechanism the WndProc result itself is still unavailable and
+    /// counted in `WNDPROC_DELIVERY_MISSES`.
     pub fn send_message(&self, msg: &Msg) -> i64 {
-        let _ = msg;
-        // kprintln!("[msgq] SendMessage: msg={:#x}", msg.message);
-        // In a full implementation, call the window's WndProc
-        0
+        let mut wm = crate::libs::win32k::window::WINDOW_MANAGER.lock();
+        wm.send_message(msg.hwnd, msg.message, msg.wparam, msg.lparam)
     }
 
     /// Translate keyboard message.
@@ -459,33 +460,55 @@ impl MessageQueue {
 // Thread-Local Message Queue
 // =============================================================================
 
-/// Per-thread message queue storage using spinlock for thread safety.
-/// Note: For true per-thread storage, this should use proper TLS.
-/// The spinlock protects initialization; after init, access is typically
-/// single-threaded per queue.
-static CURRENT_QUEUE: crate::ke::sync::Spinlock<Option<MessageQueue>> =
-    crate::ke::sync::Spinlock::new(None);
-static mut CURRENT_QUEUE_PTR: *mut MessageQueue = core::ptr::null_mut();
+/// One thread's message queue, keyed by the thread's client ID.
+struct ThreadQueueEntry {
+    thread_id: u64,
+    queue: MessageQueue,
+}
 
-/// Get the current thread's message queue.
-pub fn get_current_queue() -> &'static mut MessageQueue {
-    let ptr = unsafe { CURRENT_QUEUE_PTR };
-    let _ = &ptr;
-    let _ = &ptr;
-    if !ptr.is_null() {
-        return unsafe { &mut *ptr };
+/// Upper bound on tracked per-thread queues. When the table is full the
+/// oldest entry is evicted; messages for an evicted (exited) thread are
+/// discarded, which is acceptable because only the owning thread could
+/// have drained them anyway.
+const THREAD_QUEUE_MAX: usize = 64;
+
+/// Per-thread message queues, serialized by a spinlock. Every message-queue
+/// operation holds the lock only for the duration of the operation, so
+/// concurrent threads never share a queue.
+static THREAD_QUEUES: crate::ke::sync::Spinlock<Vec<ThreadQueueEntry>> =
+    crate::ke::sync::Spinlock::new(Vec::new());
+
+/// Client ID of the current thread, or 0 when the thread subsystem has not
+/// started yet (early callers then share one fallback queue keyed by 0).
+fn current_thread_id() -> u64 {
+    let ethread = crate::ps::thread::get_current_ethread();
+    if ethread.is_null() {
+        return 0;
     }
-    let mut guard = CURRENT_QUEUE.lock();
-    if guard.is_none() {
-        *guard = Some(MessageQueue::new());
-    }
-    let inner = guard.as_mut().unwrap() as *mut MessageQueue;
-    let _ = &inner;
-    let _ = &inner;
-    unsafe {
-        CURRENT_QUEUE_PTR = inner;
-    }
-    unsafe { &mut *inner }
+    unsafe { (*ethread).client_id.unique_thread }
+}
+
+/// Run `f` with exclusive access to the current thread's message queue,
+/// creating the queue on first use. This replaces the old global-singleton
+/// queue: every thread now gets its own queue, so two threads no longer
+/// steal each other's messages.
+pub fn with_current_queue<R>(f: impl FnOnce(&mut MessageQueue) -> R) -> R {
+    let tid = current_thread_id();
+    let mut table = THREAD_QUEUES.lock();
+    let slot = match table.iter_mut().find(|e| e.thread_id == tid) {
+        Some(entry) => entry,
+        None => {
+            if table.len() >= THREAD_QUEUE_MAX {
+                table.remove(0);
+            }
+            table.push(ThreadQueueEntry {
+                thread_id: tid,
+                queue: MessageQueue::new(),
+            });
+            table.last_mut().unwrap()
+        }
+    };
+    f(&mut slot.queue)
 }
 
 /// Post a message to the current thread's queue.
@@ -500,22 +523,22 @@ pub fn post_message(hwnd: u64, message: u32, wparam: u64, lparam: i64) -> bool {
         pt_y: 0,
     };
     let _ = &msg;
-    get_current_queue().post_message(msg)
+    with_current_queue(|queue| queue.post_message(msg))
 }
 
 /// Post a quit message.
 pub fn post_quit_message(exit_code: i32) {
-    get_current_queue().post_quit(exit_code)
+    with_current_queue(|queue| queue.post_quit(exit_code))
 }
 
 /// Check if quit has been posted.
 pub fn is_quit_posted() -> bool {
-    get_current_queue().is_quit()
+    with_current_queue(|queue| queue.is_quit())
 }
 
 /// Get exit code.
 pub fn get_exit_code() -> i32 {
-    get_current_queue().exit_code()
+    with_current_queue(|queue| queue.exit_code())
 }
 
 // =============================================================================

@@ -949,8 +949,13 @@ pub unsafe extern "C" fn nt_flush_buffers_file(
     if lookup_handle(file_handle).is_none() {
         return STATUS_INVALID_HANDLE;
     }
-    (*io_status_block).status = STATUS_SUCCESS;
-    (*io_status_block).information = 0;
+    let iosb = IoStatusBlock {
+        status: STATUS_SUCCESS,
+        information: 0,
+    };
+    if crate::mm::user_copy::write_user_object(io_status_block as u64, &iosb).is_err() {
+        return super::status::STATUS_ACCESS_VIOLATION;
+    }
     STATUS_SUCCESS
 }
 
@@ -967,8 +972,13 @@ pub unsafe extern "C" fn nt_query_volume_information_file(
     }
     let _ = (fs_information, length);
 
-    (*io_status_block).status = STATUS_SUCCESS;
-    (*io_status_block).information = 0;
+    let iosb = IoStatusBlock {
+        status: STATUS_SUCCESS,
+        information: 0,
+    };
+    if crate::mm::user_copy::write_user_object(io_status_block as u64, &iosb).is_err() {
+        return super::status::STATUS_ACCESS_VIOLATION;
+    }
     STATUS_SUCCESS
 }
 
@@ -985,8 +995,13 @@ pub unsafe extern "C" fn nt_set_volume_information_file(
     }
     let _ = (fs_information, length, fs_information_class);
 
-    (*io_status_block).status = STATUS_SUCCESS;
-    (*io_status_block).information = 0;
+    let iosb = IoStatusBlock {
+        status: STATUS_SUCCESS,
+        information: 0,
+    };
+    if crate::mm::user_copy::write_user_object(io_status_block as u64, &iosb).is_err() {
+        return super::status::STATUS_ACCESS_VIOLATION;
+    }
     STATUS_SUCCESS
 }
 
@@ -1104,6 +1119,11 @@ pub unsafe extern "C" fn nt_query_directory_file(
     // 1. Parameter validation.
     if io_status_block.is_null() || file_information.is_null() {
         return STATUS_INVALID_PARAMETER;
+    }
+    if crate::mm::user_copy::probe_user_write(io_status_block as u64, size_of_iosb()).is_err()
+        || crate::mm::user_copy::probe_user_write(file_information as u64, length as usize).is_err()
+    {
+        return super::status::STATUS_ACCESS_VIOLATION;
     }
 
     // 2. Resolve the file handle.
@@ -1250,8 +1270,13 @@ pub unsafe extern "C" fn nt_query_directory_file(
         written += entry_size;
     }
 
-    (*io_status_block).status = STATUS_SUCCESS;
-    (*io_status_block).information = written as usize;
+    let iosb = IoStatusBlock {
+        status: STATUS_SUCCESS,
+        information: written as usize,
+    };
+    if crate::mm::user_copy::write_user_object(io_status_block as u64, &iosb).is_err() {
+        return super::status::STATUS_ACCESS_VIOLATION;
+    }
     STATUS_SUCCESS
 }
 
@@ -1321,6 +1346,41 @@ fn size_of_i64() -> usize {
     core::mem::size_of::<i64>()
 }
 
+// ---------------------------------------------------------------------------
+// Transitional direct-VFS file I/O
+// ---------------------------------------------------------------------------
+
+/// Transitional file I/O that bypasses the IRP/device stack.
+///
+/// Until the filesystem device object (`\\Device\\Fs`, see
+/// `io::create_fs_device` wiring in `io::init`) carries per-file context
+/// through the driver stack, the native file syscalls route File-handle
+/// sector requests straight to `fs::vfs`. These two helpers are the single
+/// choke point for that detour: when the IRP path lands, replacing these two
+/// functions switches every native file syscall over at once. The
+/// `SectorResult` → NTSTATUS mapping also lives here, so all callers
+/// translate errors the same way.
+///
+/// Known limitation: the sector context is currently the raw RAM-disk byte
+/// offset; per-file context from the handle's `FileContext` is not applied
+/// yet.
+fn transitional_vfs_read(buffer: &mut [u8], byte_offset: i64) -> (NTSTATUS, usize) {
+    use super::status::STATUS_SUCCESS;
+    let result = crate::fs::vfs::read_file_sectors_into(0, buffer, byte_offset as u64);
+    // SectorResult errors are already NTSTATUS values (e.g. 0xC000000D
+    // STATUS_DATA_ERROR); pass them through unchanged.
+    let status = if result.status == 0 { STATUS_SUCCESS } else { result.status as i32 };
+    (status, result.bytes_read)
+}
+
+/// Transitional write counterpart of `transitional_vfs_read`.
+fn transitional_vfs_write(buffer: &[u8], byte_offset: i64) -> (NTSTATUS, usize) {
+    use super::status::STATUS_SUCCESS;
+    let result = crate::fs::vfs::write_file_sectors_from(0, buffer, byte_offset as u64);
+    let status = if result.status == 0 { STATUS_SUCCESS } else { result.status as i32 };
+    (status, result.bytes_written)
+}
+
 fn read_file_common(file_handle: HANDLE, buffer: &mut [u8], byte_offset: i64) -> (NTSTATUS, usize) {
     use super::status::{STATUS_END_OF_FILE, STATUS_INVALID_HANDLE};
     let entry = match lookup_handle(file_handle) {
@@ -1329,8 +1389,7 @@ fn read_file_common(file_handle: HANDLE, buffer: &mut [u8], byte_offset: i64) ->
     };
     match entry.kind {
         HandleKind::File => {
-            let result = crate::fs::vfs::read_file_sectors_into(0, buffer, byte_offset as u64);
-            (result.status as i32, result.bytes_read)
+            transitional_vfs_read(buffer, byte_offset)
         }
         HandleKind::Pipe => {
             if pipe_is_write(entry.target) {
@@ -1371,8 +1430,7 @@ fn write_file_common(file_handle: HANDLE, buffer: &[u8], byte_offset: i64) -> (N
     };
     match entry.kind {
         HandleKind::File => {
-            let result = crate::fs::vfs::write_file_sectors_from(0, buffer, byte_offset as u64);
-            (result.status as i32, result.bytes_written)
+            transitional_vfs_write(buffer, byte_offset)
         }
         HandleKind::Pipe => {
             if !pipe_is_write(entry.target) {
