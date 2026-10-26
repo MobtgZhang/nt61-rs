@@ -140,58 +140,46 @@ impl ChannelManager {
     }
 }
 
-/// Global channel manager stored in a raw byte buffer.
-/// ChannelManager is not Default+Copy safe for `static`, so we hold a buffer.
-/// The buffer must still satisfy `ChannelManager`'s alignment: a plain
-/// `[u8; N]` is alignment 1, so casting it to `*mut ChannelManager` was a
-/// misaligned pointer (undefined behaviour).
-#[repr(align(16))]
-struct ChannelMgrStorage([u8; core::mem::size_of::<ChannelManager>()]);
-
-static mut CHANNEL_MGR_BUF: ChannelMgrStorage =
-    ChannelMgrStorage([0; core::mem::size_of::<ChannelManager>()]);
-static mut CHANNEL_MGR_INITIALIZED: bool = false;
-
-unsafe fn channel_mgr() -> &'static mut ChannelManager {
-    let storage = core::ptr::addr_of_mut!(CHANNEL_MGR_BUF);
-    let ptr = (*storage).0.as_mut_ptr().cast::<ChannelManager>();
-    if !CHANNEL_MGR_INITIALIZED {
-        core::ptr::write(ptr, ChannelManager::new());
-        CHANNEL_MGR_INITIALIZED = true;
-    }
-    &mut *ptr
-}
+/// Global channel manager. `ChannelManager::new` is `const`, so the
+/// static starts valid without any `static mut` byte-buffer casting:
+/// every access is a normal borrow of the lock-protected manager. This
+/// replaces the former `static mut` storage + initialized-flag pattern
+/// whose safety depended on every caller honouring an unchecked flag;
+/// the lock now also serializes manager init and channel mutations.
+static CHANNEL_MGR: crate::ke::sync::Spinlock<ChannelManager> =
+    crate::ke::sync::Spinlock::new(ChannelManager::new());
 
 /// create a new channel
 pub fn create_channel(name: &[u8]) -> Option<ChannelId> {
-    unsafe { channel_mgr().create_channel(name) }
+    let mut mgr = CHANNEL_MGR.lock();
+    mgr.create_channel(name)
 }
 
 /// Delete a channel
 pub fn delete_channel(id: ChannelId) -> bool {
-    unsafe { channel_mgr().delete_channel(id) }
+    let mut mgr = CHANNEL_MGR.lock();
+    mgr.delete_channel(id)
 }
 
 /// Get the next available channel ID (for display purposes)
 pub fn next_channel_id() -> ChannelId {
-    unsafe { channel_mgr().next_id() }
+    let mgr = CHANNEL_MGR.lock();
+    mgr.next_id()
 }
 
 /// Iterate over active channels by writing into a caller-supplied buffer.
 /// Returns the number of channels written. If the buffer is too small,
 /// only a prefix is returned.
 pub fn list_channels(buf: &mut [Channel]) -> usize {
-    unsafe {
-        let mgr = channel_mgr();
-        let mut n = 0;
-        for slot in &mgr.channels {
-            if let Some(ch) = slot {
-                if n < buf.len() {
-                    buf[n] = ch.clone();
-                    n += 1;
-                }
+    let mgr = CHANNEL_MGR.lock();
+    let mut n = 0;
+    for slot in &mgr.channels {
+        if let Some(ch) = slot {
+            if n < buf.len() {
+                buf[n] = ch.clone();
+                n += 1;
             }
         }
-        n
     }
+    n
 }

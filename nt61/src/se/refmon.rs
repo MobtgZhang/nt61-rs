@@ -144,12 +144,39 @@ pub fn se_valid_security_descriptor(
     unsafe { (*security_descriptor).is_valid() }
 }
 
+/// Deep-copy an ACL so an inherited descriptor owns its DACL instead of
+/// aliasing the parent's (freeing one must not dangle the other).
+fn copy_dacl(dacl: *const super::acl::Acl) -> *mut super::acl::Acl {
+    if dacl.is_null() {
+        return core::ptr::null_mut();
+    }
+    let copy = crate::mm::pool::allocate(
+        crate::mm::pool::PoolType::NonPaged,
+        core::mem::size_of::<super::acl::Acl>(),
+    ) as *mut super::acl::Acl;
+    if copy.is_null() {
+        return core::ptr::null_mut();
+    }
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            dacl as *const u8,
+            copy as *mut u8,
+            core::mem::size_of::<super::acl::Acl>(),
+        );
+    }
+    copy
+}
+
 pub fn se_assign_security(
     parent_descriptor: *const SecurityDescriptor,
     explicit_descriptor: *const SecurityDescriptor,
     is_directory: bool,
     token: *const Token,
 ) -> *mut SecurityDescriptor {
+    // Both files and directories inherit the parent DACL, so the flag no
+    // longer selects a different branch; it is kept for API compatibility.
+    let _ = is_directory;
+
     let new_sd = crate::mm::pool::allocate(
         crate::mm::pool::PoolType::NonPaged,
         core::mem::size_of::<SecurityDescriptor>(),
@@ -180,16 +207,39 @@ pub fn se_assign_security(
         }
 
         if !explicit_descriptor.is_null() {
-            (*new_sd).dacl = (*explicit_descriptor).dacl;
+            (*new_sd).dacl = copy_dacl((*explicit_descriptor).dacl);
             (*new_sd).control |= super::descriptor::SE_DACL_PRESENT;
-        } else if !parent_descriptor.is_null() && is_directory {
-            (*new_sd).dacl = (*parent_descriptor).dacl;
+        } else if !parent_descriptor.is_null() {
+            // Files and directories both inherit the parent DACL (Windows
+            // semantics). Leaving the DACL NULL here would make every new
+            // object "allow everyone".
+            (*new_sd).dacl = copy_dacl((*parent_descriptor).dacl);
             (*new_sd).control |= super::descriptor::SE_DACL_PRESENT;
-        } else {
-            (*new_sd).dacl = core::ptr::null_mut();
+        } else if !token.is_null() {
+            // No inherited DACL is available. Build the default DACL from
+            // the creator token instead of allowing everyone.
+            let token_ref = &*token;
+            let token_sd = super::seaccess::SecurityDescriptor::from_token(token_ref);
+            if !token_sd.is_null() {
+                // Take ownership of the freshly built DACL and drop the
+                // shell descriptor so it does not leak.
+                (*new_sd).dacl = (*token_sd).dacl;
+                (*new_sd).control |= super::descriptor::SE_DACL_PRESENT;
+                crate::mm::pool::free(token_sd as *mut u8);
+            }
         }
 
-        (*new_sd).sacl = core::ptr::null_mut();
+        // Attach a mandatory label SACL from the creator token's integrity
+        // level so new objects carry an object-side integrity level.
+        if !token.is_null() {
+            let level =
+                super::integrity::se_token_integrity_level(token as *const super::token::Token);
+            super::integrity::se_set_object_integrity_level(
+                new_sd,
+                level,
+                super::integrity::SYSTEM_MANDATORY_LABEL_NO_WRITE_UP,
+            );
+        }
     }
 
     new_sd

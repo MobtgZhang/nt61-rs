@@ -19,11 +19,16 @@ static mut BOOT_LOG_BUFFER: [u8; MAX_LOG_SIZE] = [0u8; MAX_LOG_SIZE];
 /// Current write position in the log buffer
 static BOOT_LOG_POS: AtomicUsize = AtomicUsize::new(0);
 
+/// Serializes buffer writes (audit hal_rtl P0-2: two CPUs writing
+/// boot entries concurrently could interleave and corrupt the log).
+/// Reentrant on the owning CPU so nested log calls cannot self-spin.
+static BOOT_LOG_LOCK: crate::hal::common::relock::ReentrantLock =
+    crate::hal::common::relock::ReentrantLock::new();
+
 /// write a line to the boot log
 pub fn write_line(line: &[u8]) {
-    // Safety: This function is only called during boot sequence
-    // when interrupts are disabled, so there's no concurrent access
-    let pos = BOOT_LOG_POS.load(Ordering::Relaxed);
+    let _guard = BOOT_LOG_LOCK.lock();
+    let pos = BOOT_LOG_POS.load(Ordering::Acquire);
 
     if pos + line.len() >= MAX_LOG_SIZE {
         return; // Log buffer full
@@ -38,15 +43,15 @@ pub fn write_line(line: &[u8]) {
 
 /// Clear the boot log buffer
 pub fn clear_log() {
-    BOOT_LOG_POS.store(0, Ordering::Relaxed);
-
-    let pos = BOOT_LOG_POS.load(Ordering::Relaxed);
+    let _guard = BOOT_LOG_LOCK.lock();
+    // Read the live position first, then clear those bytes; storing
+    // 0 before reading (the old order) made the zeroing loop a no-op.
+    let pos = BOOT_LOG_POS.load(Ordering::Acquire);
     unsafe {
         for i in 0..pos {
             BOOT_LOG_BUFFER[i] = 0;
         }
     }
-
     BOOT_LOG_POS.store(0, Ordering::Relaxed);
 }
 
@@ -184,6 +189,22 @@ pub fn write_footer() {
 
 /// write driver loading entry with timestamp
 pub fn write_driver_entry(loaded: bool, path: &[u8]) {
-    // Use current time (placeholder - would use RTC in real implementation)
-    write_boot_entry(2026, 6, 30, 9, 0, 0, 0, loaded, path);
+    // Read the wall clock from the RTC so boot entries carry the real
+    // boot time. When the CMOS is inaccessible (probe failure) fall back
+    // to zeroes rather than inventing a date.
+    if let Some(t) = crate::hal::x86_64::cmos::hal_query_real_time_clock() {
+        write_boot_entry(
+            t.year,
+            t.month,
+            t.day,
+            t.hour,
+            t.minute,
+            t.second(),
+            0,
+            loaded,
+            path,
+        );
+    } else {
+        write_boot_entry(0, 0, 0, 0, 0, 0, 0, loaded, path);
+    }
 }

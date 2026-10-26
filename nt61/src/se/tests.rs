@@ -31,6 +31,7 @@ pub fn run_tests() -> bool {
     stats.test("Token SID Assignment", test_token_sid_assignment);
     stats.test("Token Group Membership", test_token_groups);
     stats.test("Token Privileges", test_token_privileges);
+    stats.test("Privilege LUID Consistency", test_privilege_luid_consistency);
 
     // Access Check Tests
     stats.test("Access Check Allow", test_access_check_allow);
@@ -304,6 +305,48 @@ fn test_token_privileges() -> bool {
 // =============================================================================
 // Access Check Tests
 // =============================================================================
+
+/// The access-check override table in `seaccess` must agree with the
+/// canonical privilege LUIDs in `token`; a mismatch would let
+/// SeAccessCheck grant a privilege the token does not actually carry.
+fn test_privilege_luid_consistency() -> bool {
+    use crate::se::seaccess::privileges as override_privileges;
+    use crate::se::token::privileges as token_privileges;
+
+    if override_privileges::SE_TAKE_OWNERSHIP as u32
+        != token_privileges::SE_TAKE_OWNERSHIP_PRIVILEGE.low_part
+    {
+        return false;
+    }
+    if override_privileges::SE_SECURITY as u32 != token_privileges::SE_SECURITY_PRIVILEGE.low_part {
+        return false;
+    }
+    if override_privileges::SE_BACKUP as u32 != token_privileges::SE_BACKUP_PRIVILEGE.low_part {
+        return false;
+    }
+    if override_privileges::SE_RESTORE as u32 != token_privileges::SE_RESTORE_PRIVILEGE.low_part {
+        return false;
+    }
+    if override_privileges::SE_DEBUG as u32 != token_privileges::SE_DEBUG_PRIVILEGE.low_part {
+        return false;
+    }
+    if override_privileges::SE_CREATE_PAGEFILE as u32
+        != token_privileges::SE_CREATE_PAGEFILE_PRIVILEGE.low_part
+    {
+        return false;
+    }
+    if override_privileges::SE_SYSTEM_PROFILE as u32
+        != token_privileges::SE_SYSTEM_PROFILE_PRIVILEGE.low_part
+    {
+        return false;
+    }
+    if override_privileges::SE_ASSIGN_PRIMARY_TOKEN as u32
+        != token_privileges::SE_ASSIGN_PRIMARY_TOKEN_PRIVILEGE.low_part
+    {
+        return false;
+    }
+    true
+}
 
 fn test_access_check_allow() -> bool {
     use crate::se::{seaccess, token};

@@ -233,117 +233,71 @@ impl EventLog {
 // Global Event Logs (Windows 7 default channels)
 // ============================================================================
 
-use core::sync::atomic::{AtomicBool, Ordering};
+/// Number of backed channels in the global log table (System,
+/// Application, Security, Setup). ForwardedEvents has no kernel-local
+/// log.
+const LOG_SLOTS: usize = 4;
 
-/// Byte storage that still satisfies `EventLog`'s alignment.
-///
-/// A plain `[u8; N]` has alignment 1, so casting it to `*mut EventLog` produced
-/// a misaligned pointer. That is undefined behaviour and is detected as a
-/// misaligned-dereference panic under libtest; the explicit alignment makes the
-/// cast sound.
-#[repr(align(16))]
-struct LogStorage([u8; core::mem::size_of::<EventLog>()]);
+/// All channel logs behind one lock. `EventLog::new` is `const`, so the
+/// table starts valid without any `static mut` byte-buffer casting:
+/// every access is a normal borrow of the lock-protected array. This
+/// replaces the former `static mut` storage + init-flag pattern whose
+/// soundness depended on every call site honouring an unchecked flag.
+static LOGS: crate::ke::sync::Spinlock<[Option<EventLog>; LOG_SLOTS]> =
+    crate::ke::sync::Spinlock::new([None, None, None, None]);
 
-static mut SYSTEM_LOG: LogStorage = LogStorage([0; core::mem::size_of::<EventLog>()]);
-static mut APPLICATION_LOG: LogStorage = LogStorage([0; core::mem::size_of::<EventLog>()]);
-static mut SECURITY_LOG: LogStorage = LogStorage([0; core::mem::size_of::<EventLog>()]);
-static mut SETUP_LOG: LogStorage = LogStorage([0; core::mem::size_of::<EventLog>()]);
-
-static SYSTEM_LOG_INIT: AtomicBool = AtomicBool::new(false);
-static APPLICATION_LOG_INIT: AtomicBool = AtomicBool::new(false);
-static SECURITY_LOG_INIT: AtomicBool = AtomicBool::new(false);
-static SETUP_LOG_INIT: AtomicBool = AtomicBool::new(false);
-
-fn cast_log_init<'a>(
-    storage: &'a mut LogStorage,
-    init_flag: &AtomicBool,
-) -> Option<&'a mut EventLog> {
-    if !init_flag.load(Ordering::Acquire) {
-        return None;
-    }
-    let ptr = storage.0.as_mut_ptr() as *mut EventLog;
-    unsafe { Some(&mut *ptr) }
-}
-
-fn system_log_mut() -> Option<&'static mut EventLog> {
-    // SAFETY: SYSTEM_LOG is a `static mut` of zero-initialised storage
-    // that `init()` re-writes with a valid `EventLog` value before the
-    // `SYSTEM_LOG_INIT` flag is published; reading through `cast_log_init`
-    // only happens after the flag has been set, so the cast is sound.
-    unsafe { cast_log_init(&mut *core::ptr::addr_of_mut!(SYSTEM_LOG), &SYSTEM_LOG_INIT) }
-}
-
-fn application_log_mut() -> Option<&'static mut EventLog> {
-    unsafe {
-        cast_log_init(
-            &mut *core::ptr::addr_of_mut!(APPLICATION_LOG),
-            &APPLICATION_LOG_INIT,
-        )
+/// Map a channel to its slot in `LOGS`. `None` for channels without a
+/// kernel-local log (ForwardedEvents).
+fn channel_slot(channel: EventChannel) -> Option<usize> {
+    match channel {
+        EventChannel::System => Some(0),
+        EventChannel::Application => Some(1),
+        EventChannel::Security => Some(2),
+        EventChannel::Setup => Some(3),
+        EventChannel::ForwardedEvents => None,
     }
 }
 
-fn security_log_mut() -> Option<&'static mut EventLog> {
-    unsafe {
-        cast_log_init(
-            &mut *core::ptr::addr_of_mut!(SECURITY_LOG),
-            &SECURITY_LOG_INIT,
-        )
-    }
-}
-
-fn setup_log_mut() -> Option<&'static mut EventLog> {
-    unsafe { cast_log_init(&mut *core::ptr::addr_of_mut!(SETUP_LOG), &SETUP_LOG_INIT) }
+/// Run `f` with exclusive access to one channel's log. Returns
+/// `None` when the channel has no backing log (ForwardedEvents).
+fn with_log_mut<R>(
+    channel: EventChannel,
+    f: impl FnOnce(&mut EventLog) -> R,
+) -> Option<R> {
+    let mut logs = LOGS.lock();
+    let log = logs.get_mut(channel_slot(channel)?)?.as_mut()?;
+    Some(f(log))
 }
 
 /// Clear every record in a channel (`ClearEventLog`). Record numbering is kept
 /// so ids stay unique, but the stored records and the count are dropped.
 pub fn clear_channel(channel: EventChannel) -> bool {
-    let log = match channel {
-        EventChannel::System => system_log_mut(),
-        EventChannel::Application => application_log_mut(),
-        EventChannel::Security => security_log_mut(),
-        EventChannel::Setup => setup_log_mut(),
-        EventChannel::ForwardedEvents => None,
-    };
-    let log = match log {
-        Some(l) => l,
-        None => return false,
-    };
-    for slot in log.records.iter_mut() {
-        *slot = None;
-    }
-    log.count = 0;
-    true
+    with_log_mut(channel, |log| {
+        for slot in log.records.iter_mut() {
+            *slot = None;
+        }
+        log.count = 0;
+    })
+    .is_some()
 }
 
 /// Initialize all event logs
 pub fn init() {
-    // SAFETY: each log is initialized exactly once at boot
-    unsafe {
-        let ptr = core::ptr::addr_of!(SYSTEM_LOG) as *mut EventLog;
-        core::ptr::write(ptr, EventLog::new(EventChannel::System));
-        SYSTEM_LOG_INIT.store(true, Ordering::Release);
+    let mut logs = LOGS.lock();
+    logs[0] = Some(EventLog::new(EventChannel::System));
+    logs[1] = Some(EventLog::new(EventChannel::Application));
+    logs[2] = Some(EventLog::new(EventChannel::Security));
+    logs[3] = Some(EventLog::new(EventChannel::Setup));
 
-        let ptr = core::ptr::addr_of!(APPLICATION_LOG) as *mut EventLog;
-        core::ptr::write(ptr, EventLog::new(EventChannel::Application));
-        APPLICATION_LOG_INIT.store(true, Ordering::Release);
-
-        let ptr = core::ptr::addr_of!(SECURITY_LOG) as *mut EventLog;
-        core::ptr::write(ptr, EventLog::new(EventChannel::Security));
-        SECURITY_LOG_INIT.store(true, Ordering::Release);
-
-        let ptr = core::ptr::addr_of!(SETUP_LOG) as *mut EventLog;
-        core::ptr::write(ptr, EventLog::new(EventChannel::Setup));
-        SETUP_LOG_INIT.store(true, Ordering::Release);
-    }
-
+    // The boot record is written under the same guard, so the boot
+    // event can never interleave with the log reset on another CPU.
     let mut record = EventRecord::new(
         b"Microsoft-Windows-Kernel-General",
         1,
         EventLevel::Information,
     );
     record.set_description("The system boot has begun.");
-    if let Some(log) = system_log_mut() {
+    if let Some(log) = logs[0].as_mut() {
         log.write(record);
     }
 }
@@ -353,9 +307,7 @@ pub fn write_system_event(event_id: u16, level: EventLevel, source: &[u8], descr
     let mut record = EventRecord::new(source, event_id, level);
     record.set_description(description);
     record.channel = EventChannel::System;
-    if let Some(log) = system_log_mut() {
-        log.write(record);
-    }
+    with_log_mut(EventChannel::System, |log| log.write(record));
 }
 
 /// write an event to the Application log
@@ -363,9 +315,7 @@ pub fn write_application_event(event_id: u16, level: EventLevel, source: &[u8], 
     let mut record = EventRecord::new(source, event_id, level);
     record.set_description(description);
     record.channel = EventChannel::Application;
-    if let Some(log) = application_log_mut() {
-        log.write(record);
-    }
+    with_log_mut(EventChannel::Application, |log| log.write(record));
 }
 
 /// write an event to the Setup log
@@ -373,9 +323,7 @@ pub fn write_setup_event(event_id: u16, level: EventLevel, source: &[u8], descri
     let mut record = EventRecord::new(source, event_id, level);
     record.set_description(description);
     record.channel = EventChannel::Setup;
-    if let Some(log) = setup_log_mut() {
-        log.write(record);
-    }
+    with_log_mut(EventChannel::Setup, |log| log.write(record));
 }
 
 /// write an event to the Security log
@@ -383,42 +331,24 @@ pub fn write_security_event(event_id: u16, level: EventLevel, source: &[u8], des
     let mut record = EventRecord::new(source, event_id, level);
     record.set_description(description);
     record.channel = EventChannel::Security;
-    if let Some(log) = security_log_mut() {
-        log.write(record);
-    }
+    with_log_mut(EventChannel::Security, |log| log.write(record));
 }
 
 /// Snapshot read of system log records (returns count found)
 pub fn system_log_count() -> usize {
-    if let Some(log) = system_log_mut() {
-        log.count
-    } else {
-        0
-    }
+    with_log_mut(EventChannel::System, |log| log.count).unwrap_or(0)
 }
 
 pub fn application_log_count() -> usize {
-    if let Some(log) = application_log_mut() {
-        log.count
-    } else {
-        0
-    }
+    with_log_mut(EventChannel::Application, |log| log.count).unwrap_or(0)
 }
 
 pub fn security_log_count() -> usize {
-    if let Some(log) = security_log_mut() {
-        log.count
-    } else {
-        0
-    }
+    with_log_mut(EventChannel::Security, |log| log.count).unwrap_or(0)
 }
 
 pub fn setup_log_count() -> usize {
-    if let Some(log) = setup_log_mut() {
-        log.count
-    } else {
-        0
-    }
+    with_log_mut(EventChannel::Setup, |log| log.count).unwrap_or(0)
 }
 
 // ============================================================================
@@ -475,9 +405,7 @@ pub mod boot_events {
         );
         record.set_description(driver_path);
         record.channel = EventChannel::Setup;
-        if let Some(log) = setup_log_mut() {
-            log.write(record);
-        }
+        with_log_mut(EventChannel::Setup, |log| log.write(record));
     }
 }
 
@@ -507,9 +435,7 @@ pub mod security_events {
         };
         record.user[..n].copy_from_slice(&user_bytes[..n]);
         record.user_len = n as u8;
-        if let Some(log) = security_log_mut() {
-            log.write(record);
-        }
+        with_log_mut(EventChannel::Security, |log| log.write(record));
     }
 }
 
@@ -527,8 +453,6 @@ pub mod update_events {
         );
         record.set_description(update_id);
         record.channel = EventChannel::Application;
-        if let Some(log) = application_log_mut() {
-            log.write(record);
-        }
+        with_log_mut(EventChannel::Application, |log| log.write(record));
     }
 }

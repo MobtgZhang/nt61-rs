@@ -87,10 +87,14 @@ pub fn se_check_mandatory_integrity(
 
     let subject_level = se_token_integrity_level(subject_token);
 
-    const WRITE_ACCESS_MASK: u32 = super::seaccess::ACCESS_GENERIC_WRITE
+    const WRITE_ACCESS_MASK: u32 = 0x00000002 // FILE_WRITE_DATA
+        | 0x00000004 // FILE_APPEND_DATA
+        | 0x00000010 // FILE_WRITE_EA
+        | 0x00000100 // FILE_WRITE_ATTRIBUTES
+        | 0x00010000 // DELETE
+        | super::seaccess::ACCESS_GENERIC_WRITE
         | super::seaccess::ACCESS_WRITE_DAC
-        | super::seaccess::ACCESS_WRITE_OWNER
-        | 0x40000000; // GENERIC_WRITE
+        | super::seaccess::ACCESS_WRITE_OWNER;
 
     if (desired_access & WRITE_ACCESS_MASK) != 0 {
         if subject_level < object_integrity {
@@ -155,14 +159,37 @@ fn read_sid_from_acl_data(data: &[u8]) -> Option<sid> {
 
 pub fn se_set_object_integrity_level(
     security_descriptor: *mut super::seaccess::SecurityDescriptor,
-    _level_rid: u32,
-    _policy: u32,
+    level_rid: u32,
+    policy: u32,
 ) -> bool {
     if security_descriptor.is_null() {
         return false;
     }
 
+    // Mandatory label SID: S-1-16-<level_rid>.
+    let label_sid = sid::with_subs([0, 0, 0, 0, 0, 16], level_rid, 0, 0, 0, 0, 0, 0, 0);
+
+    let mut sacl = super::acl::Acl::new();
+    if !sacl.add_ace(
+        super::acl::AceType::SystemMandatoryLabel,
+        super::acl::AceFlags::NONE,
+        policy,
+        &label_sid,
+    ) {
+        return false;
+    }
+
+    let sacl_ptr = crate::mm::pool::allocate(
+        crate::mm::pool::PoolType::NonPaged,
+        core::mem::size_of::<super::acl::Acl>(),
+    ) as *mut super::acl::Acl;
+    if sacl_ptr.is_null() {
+        return false;
+    }
+
     unsafe {
+        core::ptr::write(sacl_ptr, sacl);
+        (*security_descriptor).sacl = sacl_ptr;
         (*security_descriptor).control |= super::descriptor::SE_SACL_PRESENT;
     }
 
@@ -233,6 +260,13 @@ pub fn se_create_low_integrity_token(existing_token: *const Token) -> *mut Token
     }
 
     se_set_token_integrity_level(new_token, SECURITY_MANDATORY_LOW_RID);
+
+    // A low-integrity token must not retain the parent's privileges;
+    // otherwise the sandboxed process could use e.g. SeDebugPrivilege
+    // to bypass the no-write-up policy entirely.
+    unsafe {
+        (*new_token).privilege_count = 0;
+    }
 
     new_token
 }

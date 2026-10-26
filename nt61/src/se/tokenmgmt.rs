@@ -39,6 +39,19 @@ pub fn se_create_token(
     token_type: TokenTypeEnum,
     impersonation_level: ImpersonationLevel,
 ) -> *mut Token {
+    // Reject lists that exceed the fixed-capacity token storage instead
+    // of silently dropping entries: a token that quietly lost a group
+    // would grant MORE access than the caller asked for (deny-only and
+    // restrictive entries disappear), and a lost privilege breaks
+    // privilege bookkeeping later. Fail loudly and let the caller see
+    // the allocation failure.
+    if groups.len() > TOKEN_MAX_GROUPS || privileges.len() > TOKEN_MAX_PRIVILEGES {
+        crate::hal::serial::write_string(
+            "[SE] se_create_token: group/privilege list exceeds token capacity\r\n",
+        );
+        return core::ptr::null_mut();
+    }
+
     let token_ptr = crate::mm::pool::allocate(
         crate::mm::pool::PoolType::NonPaged,
         core::mem::size_of::<Token>(),
@@ -57,17 +70,16 @@ pub fn se_create_token(
         token.impersonation_level = impersonation_level;
         token.refcount = 1;
 
-        let group_count = groups.len().min(TOKEN_MAX_GROUPS);
-        for i in 0..group_count {
+        // Capacity was verified above, so every entry fits.
+        for i in 0..groups.len() {
             token.groups[i] = groups[i];
         }
-        token.group_count = group_count;
+        token.group_count = groups.len();
 
-        let priv_count = privileges.len().min(TOKEN_MAX_PRIVILEGES);
-        for i in 0..priv_count {
+        for i in 0..privileges.len() {
             token.privileges[i] = privileges[i];
         }
-        token.privilege_count = priv_count;
+        token.privilege_count = privileges.len();
 
         token.primary_group = super::sid::SID_USERS;
 
@@ -220,7 +232,20 @@ pub fn se_adjust_privileges_token(
                 }
             }
             if !found {
-                all_found = false;
+                // NT semantics: SeAdjustPrivilegesToken also ADDS
+                // privileges the token does not hold yet. The token
+                // stores a fixed-size array, so appending is only
+                // possible while capacity remains; overflow is an
+                // explicit failure, never a silent skip.
+                if tok.privilege_count < TOKEN_MAX_PRIVILEGES {
+                    tok.privileges[tok.privilege_count] = TokenPrivilege {
+                        luid: new_priv.luid,
+                        attributes: new_priv.attributes,
+                    };
+                    tok.privilege_count += 1;
+                } else {
+                    all_found = false;
+                }
             }
         }
 
@@ -269,7 +294,19 @@ pub fn se_adjust_groups_token(
                 }
             }
             if !found {
-                all_found = false;
+                // NT semantics: SeAdjustGroupsToken also ADDS groups the
+                // token does not carry yet. Append while the fixed-size
+                // array has room; overflow fails explicitly instead of
+                // silently dropping the group.
+                if tok.group_count < TOKEN_MAX_GROUPS {
+                    tok.groups[tok.group_count] = TokenGroup {
+                        sid: new_group.sid,
+                        attributes: new_group.attributes,
+                    };
+                    tok.group_count += 1;
+                } else {
+                    all_found = false;
+                }
             }
         }
 
@@ -419,3 +456,138 @@ pub fn se_token_impersonation_level(token: *const Token) -> ImpersonationLevel {
 }
 
 pub fn init() {}
+
+
+#[cfg(test)]
+mod token_capacity_tests {
+    use super::*;
+    use crate::se::sid::{sid, WellKnownSid};
+    use crate::se::token::Token;
+
+    // Under libtest the kernel heap is never initialised, so the pool
+    // allocation inside se_create_token would fail (same pattern as
+    // seaccess tests and io::tests).
+    fn ensure_test_heap() {
+        if crate::mm::heap::KERNEL_HEAP.configured_region().is_some() {
+            return;
+        }
+        const TEST_HEAP_LEN: usize = 4 * 1024 * 1024;
+        static mut TEST_HEAP: [u8; TEST_HEAP_LEN] = [0u8; TEST_HEAP_LEN];
+        let base = core::ptr::addr_of_mut!(TEST_HEAP) as *mut u8;
+        crate::mm::heap::KERNEL_HEAP.configure(base, TEST_HEAP_LEN);
+    }
+
+    fn make_token(
+        groups: &[TokenGroup],
+        privileges: &[TokenPrivilege],
+    ) -> *mut Token {
+        se_create_token(
+            sid::well_known(WellKnownSid::Users),
+            groups,
+            privileges,
+            TokenTypeEnum::TokenPrimary,
+            ImpersonationLevel::SecurityImpersonation,
+        )
+    }
+
+    #[test]
+    fn create_token_rejects_oversized_group_list() {
+        ensure_test_heap();
+        let groups: alloc::vec::Vec<TokenGroup> = (0..TOKEN_MAX_GROUPS + 1)
+            .map(|i| TokenGroup {
+                sid: sid::well_known(WellKnownSid::Users),
+                attributes: i as u32,
+            })
+            .collect();
+        assert!(make_token(&groups, &[]).is_null());
+    }
+
+    #[test]
+    fn create_token_copies_every_group_and_privilege() {
+        ensure_test_heap();
+        let groups: alloc::vec::Vec<TokenGroup> = (0..TOKEN_MAX_GROUPS)
+            .map(|i| TokenGroup {
+                sid: sid::well_known(WellKnownSid::Users),
+                attributes: i as u32,
+            })
+            .collect();
+        let privileges: alloc::vec::Vec<TokenPrivilege> = (0..TOKEN_MAX_PRIVILEGES)
+            .map(|i| TokenPrivilege {
+                luid: luid::from_u64(i as u64 + 1),
+                attributes: SE_PRIVILEGE_ENABLED,
+            })
+            .collect();
+        let token = make_token(&groups, &privileges);
+        assert!(!token.is_null());
+        unsafe {
+            assert_eq!((*token).group_count, TOKEN_MAX_GROUPS);
+            assert_eq!((*token).privilege_count, TOKEN_MAX_PRIVILEGES);
+            for i in 0..TOKEN_MAX_GROUPS {
+                assert!((*token).groups[i].sid.equals(&groups[i].sid));
+            }
+            for i in 0..TOKEN_MAX_PRIVILEGES {
+                assert!((*token).privileges[i].luid.equals(&privileges[i].luid));
+            }
+        }
+    }
+
+    #[test]
+    fn adjust_privileges_adds_unknown_privilege() {
+        ensure_test_heap();
+        let existing = [TokenPrivilege {
+            luid: luid::from_u64(1),
+            attributes: SE_PRIVILEGE_ENABLED,
+        }];
+        let token = make_token(&[], &existing);
+        assert!(!token.is_null());
+
+        let added = [TokenPrivilege {
+            luid: luid::from_u64(2),
+            attributes: SE_PRIVILEGE_ENABLED,
+        }];
+        assert!(se_adjust_privileges_token(token, false, &added, None));
+        unsafe {
+            assert_eq!((*token).privilege_count, 2);
+            assert!((*token).privileges[1].luid.equals(&added[0].luid));
+        }
+    }
+
+    #[test]
+    fn adjust_privileges_overflow_fails_explicitly() {
+        ensure_test_heap();
+        let privileges: alloc::vec::Vec<TokenPrivilege> = (0..TOKEN_MAX_PRIVILEGES)
+            .map(|i| TokenPrivilege {
+                luid: luid::from_u64(i as u64 + 1),
+                attributes: SE_PRIVILEGE_ENABLED,
+            })
+            .collect();
+        let token = make_token(&[], &privileges);
+        assert!(!token.is_null());
+
+        let overflow = [TokenPrivilege {
+            luid: luid::from_u64(999),
+            attributes: SE_PRIVILEGE_ENABLED,
+        }];
+        assert!(!se_adjust_privileges_token(token, false, &overflow, None));
+        unsafe {
+            assert_eq!((*token).privilege_count, TOKEN_MAX_PRIVILEGES);
+        }
+    }
+
+    #[test]
+    fn adjust_groups_adds_unknown_group() {
+        ensure_test_heap();
+        let token = make_token(&[], &[]);
+        assert!(!token.is_null());
+
+        let added = [TokenGroup {
+            sid: sid::well_known(WellKnownSid::Administrators),
+            attributes: SE_GROUP_ENABLED,
+        }];
+        assert!(se_adjust_groups_token(token, false, &added, None));
+        unsafe {
+            assert_eq!((*token).group_count, 1);
+            assert!((*token).groups[0].sid.equals(&added[0].sid));
+        }
+    }
+}

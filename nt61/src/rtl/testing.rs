@@ -31,6 +31,10 @@ pub struct TestStats {
     passed: u32,
     /// Number of tests failed
     failed: u32,
+    /// Number of tests explicitly skipped because the required
+    /// runtime conditions (network, device, timeout simulation)
+    /// cannot be produced by this smoke harness.
+    skipped: u32,
     /// Whether the test has started
     started: bool,
 }
@@ -43,6 +47,7 @@ impl TestStats {
             total: 0,
             passed: 0,
             failed: 0,
+    skipped: 0,
             started: false,
         }
     }
@@ -84,6 +89,22 @@ impl TestStats {
         result
     }
 
+    /// Record a test that cannot run under this harness.
+    ///
+    /// A skipped test is excluded from the pass/fail summary so a
+    /// capability that is not implemented is never reported as
+    /// passing. Use this instead of returning `true` from a stub.
+    pub fn test_skipped(&mut self, name: &str, reason: &str) {
+        self.start();
+        self.skipped += 1;
+        crate::boot_println!(
+            "  [{} SMOKE]   SKIP: {} ({})",
+            self._name,
+            name,
+            reason
+        );
+    }
+
     /// Run a test with detailed failure information
     pub fn test_detailed(&mut self, name: &str, result: bool, details: &str) -> bool {
         self.start();
@@ -123,6 +144,13 @@ impl TestStats {
                 self.total
             );
         }
+        if self.skipped > 0 {
+            crate::boot_println!(
+                "[{} SMOKE] {} test(s) SKIPPED (not verified)",
+                self._name,
+                self.skipped
+            );
+        }
 
         crate::boot_println!("========================================");
 
@@ -142,6 +170,11 @@ impl TestStats {
     /// Get failed test count
     pub fn failed(&self) -> u32 {
         self.failed
+    }
+
+    /// Get skipped test count
+    pub fn skipped(&self) -> u32 {
+        self.skipped
     }
 
     /// Check if all tests passed
@@ -176,6 +209,14 @@ impl SmokeAggregator {
         } else {
             crate::boot_println!("[SMOKE]   FAIL: {}", subsystem);
         }
+    }
+
+    /// Record a subsystem test that could not run safely on this boot.
+    ///
+    /// Skipped tests are excluded from the pass/fail summary so a
+    /// skipped subsystem is never reported as passed.
+    pub fn record_skipped(&mut self, subsystem: &str) {
+        crate::boot_println!("[SMOKE]   SKIP: {} (test disabled, not verified)", subsystem);
     }
 
     /// Finish aggregation and print summary

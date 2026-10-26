@@ -37,11 +37,11 @@ pub mod privileges {
     /// SeDebugPrivilege - allows debugging processes
     pub const SE_DEBUG: i64 = 0x00000014;
     /// SeCreatePagefilePrivilege - allows creating page files
-    pub const SE_CREATE_PAGEFILE: i64 = 0x0000000E;
+    pub const SE_CREATE_PAGEFILE: i64 = 0x0000000F;
     /// SeSystemProfilePrivilege - allows profiling
-    pub const SE_SYSTEM_PROFILE: i64 = 0x0000000C;
+    pub const SE_SYSTEM_PROFILE: i64 = 0x0000000B;
     /// SeAssignPrimaryTokenPrivilege - allows assigning primary tokens
-    pub const SE_ASSIGN_PRIMARY_TOKEN: i64 = 0x0000000F;
+    pub const SE_ASSIGN_PRIMARY_TOKEN: i64 = 0x00000003;
 }
 
 /// Generic mapping for object types.
@@ -123,9 +123,11 @@ pub const THREAD_ALL_ACCESS: u32 = 0x1F03FF;
 
 /// Directory access rights.
 pub const DIRECTORY_QUERY: u32 = 0x0001;
-pub const DIRECTORY_TRAVERSE: u32 = 0x0002;
+pub const DIRECTORY_TRAVERSE: u32 = 0x0008;
+pub const DIRECTORY_CREATE_OBJECT: u32 = 0x0002;
 pub const DIRECTORY_CREATE_SUBDIRECTORY: u32 = 0x0004;
-pub const DIRECTORY_ADD_FILE: u32 = 0x0001;
+pub const DIRECTORY_ADD_FILE: u32 = 0x0002;
+pub const DIRECTORY_ADD_SUBDIRECTORY: u32 = 0x0004;
 pub const DIRECTORY_ALL_ACCESS: u32 = 0x000F;
 
 /// Event access rights.
@@ -254,44 +256,26 @@ fn check_access_with_granted(
         return (AccessCheckResult::Allowed, granted);
     }
 
+    // Privilege-to-access grants, table-driven so every mapping goes
+    // through the same unified check path (privilege held AND the
+    // corresponding access bit actually requested).
+    const PRIVILEGE_ACCESS_GRANTS: [(u32, u32); 4] = [
+        (privileges::SE_TAKE_OWNERSHIP as u32, ACCESS_WRITE_OWNER),
+        (privileges::SE_SECURITY as u32, ACCESS_SYSTEM_SECURITY),
+        (privileges::SE_BACKUP as u32, ACCESS_READ_CONTROL),
+        (privileges::SE_RESTORE as u32, ACCESS_WRITE_DAC),
+    ];
     let mut privilege_grants = 0u32;
-    if (desired_access & ACCESS_WRITE_OWNER) != 0 {
-        let luid = super::token::luid {
-            low_part: privileges::SE_TAKE_OWNERSHIP as u32,
-            high_part: 0,
-        };
-        if token.has_privilege(&luid) {
-            privilege_grants |= ACCESS_WRITE_OWNER;
+    for (privilege_value, access_bit) in PRIVILEGE_ACCESS_GRANTS {
+        if (desired_access & access_bit) == 0 {
+            continue;
         }
-    }
-
-    if (desired_access & ACCESS_SYSTEM_SECURITY) != 0 {
         let luid = super::token::luid {
-            low_part: privileges::SE_SECURITY as u32,
+            low_part: privilege_value,
             high_part: 0,
         };
         if token.has_privilege(&luid) {
-            privilege_grants |= ACCESS_SYSTEM_SECURITY;
-        }
-    }
-
-    if (desired_access & ACCESS_READ_CONTROL) != 0 {
-        let luid = super::token::luid {
-            low_part: privileges::SE_BACKUP as u32,
-            high_part: 0,
-        };
-        if token.has_privilege(&luid) {
-            privilege_grants |= ACCESS_READ_CONTROL;
-        }
-    }
-
-    if (desired_access & ACCESS_WRITE_DAC) != 0 {
-        let luid = super::token::luid {
-            low_part: privileges::SE_RESTORE as u32,
-            high_part: 0,
-        };
-        if token.has_privilege(&luid) {
-            privilege_grants |= ACCESS_WRITE_DAC;
+            privilege_grants |= access_bit;
         }
     }
 
@@ -350,8 +334,20 @@ fn check_access_with_granted(
         };
 
         match ace_type {
-            AceType::AccessDenied if sid_in_token(&sid, token) => denied_access |= ace_mask,
-            AceType::AccessAllowed if sid_matches_token(&sid, token) => granted_access |= ace_mask,
+            AceType::AccessDenied
+            | AceType::AccessDeniedCallback
+            | AceType::AccessDeniedCallbackObject
+                if sid_in_token(&sid, token) =>
+            {
+                denied_access |= ace_mask;
+            }
+            AceType::AccessAllowed
+            | AceType::AccessAllowedCallback
+            | AceType::AccessAllowedCallbackObject
+                if sid_matches_token(&sid, token) =>
+            {
+                granted_access |= ace_mask;
+            }
             _ => {}
         }
         offset += ace_size;
@@ -364,12 +360,15 @@ fn check_access_with_granted(
     }
 
     let remaining = desired_access & !granted_access & !privilege_grants;
-    if remaining != 0 {
+    // MAXIMUM_ALLOWED never denies for ungranted bits; it grants the
+    // largest set the DACL allows. Only an explicit (non-maximum)
+    // request fails when bits remain uncovered.
+    if !maximum_allowed && remaining != 0 {
         return (AccessCheckResult::Denied, 0);
     }
 
     let granted = if maximum_allowed {
-        (granted_access | privilege_grants) & desired_access & maximum_access
+        (granted_access | privilege_grants) & maximum_access
     } else {
         granted_access & desired_access | privilege_grants & desired_access
     };
@@ -600,10 +599,21 @@ pub fn se_access_check(
 
     let token = unsafe { &*token_ptr };
 
-    // A null security descriptor has the same effective access semantics as a
-    // null DACL for this simplified kernel interface.
+    // Distinguish the three DACL cases explicitly:
+    //   1. No security descriptor, or a descriptor without a DACL:
+    //      apply the default policy (the creator token's default
+    //      DACL) instead of granting everyone full access.
+    //   2. Explicit NULL DACL (SE_DACL_PRESENT set, DACL pointer
+    //      null): allow all, matching NT semantics.
+    //   3. Real DACL: walk the ACEs below.
+    let mut default_sd: *const SecurityDescriptor = core::ptr::null();
     let (owner, dacl) = if sd_ptr.is_null() {
-        (&token.user, core::ptr::null())
+        let built = SecurityDescriptor::from_token(token);
+        if built.is_null() {
+            return (AccessCheckResult::Denied, 0);
+        }
+        default_sd = built;
+        (unsafe { &(*built).owner }, unsafe { (*built).dacl })
     } else {
         let sd = unsafe { &*sd_ptr };
         if !super::integrity::se_check_mandatory_integrity(
@@ -613,10 +623,41 @@ pub fn se_access_check(
         ) {
             return (AccessCheckResult::Denied, 0);
         }
-        (&sd.owner, sd.dacl)
+        if (sd.control & super::descriptor::SE_DACL_PRESENT) == 0 {
+            // No DACL: the object never received authorization data,
+            // so fall back to the default policy rather than the
+            // allow-everything NULL-DACL shortcut.
+            let built = SecurityDescriptor::from_token(token);
+            if built.is_null() {
+                return (AccessCheckResult::Denied, 0);
+            }
+            default_sd = built;
+            (unsafe { &(*built).owner }, unsafe { (*built).dacl })
+        } else {
+            // SE_DACL_PRESENT: a null DACL pointer here is the
+            // explicit NULL DACL (allow all); a non-null pointer is
+            // walked by check_access_with_granted.
+            (&sd.owner, sd.dacl)
+        }
     };
 
-    check_access_with_granted(desired_access, token, owner, dacl, Some(generic_mapping))
+    let result =
+        check_access_with_granted(desired_access, token, owner, dacl, Some(generic_mapping));
+    if !default_sd.is_null() {
+        // Free the whole default descriptor, not just the shell: the
+        // DACL and SACL were allocated inside from_token.
+        unsafe {
+            let built = &*default_sd;
+            if !built.dacl.is_null() {
+                crate::mm::pool::free(built.dacl as *mut u8);
+            }
+            if !built.sacl.is_null() {
+                crate::mm::pool::free(built.sacl as *mut u8);
+            }
+        }
+        crate::mm::pool::free(default_sd as *mut u8);
+    }
+    result
 }
 
 /// SeAccessCheckByType — access check with object-type specific logic.
@@ -672,10 +713,13 @@ impl SecurityDescriptor {
         true
     }
 
-    /// create a default security descriptor with NULL DACL (allows all).
+    /// create a descriptor representing "no authorization data".
     ///
-    /// Returns a pointer to a statically allocated NULL DACL security descriptor.
-    /// NULL DACL means full access is granted to everyone.
+    /// Returns a null pointer. In `se_access_check` a null descriptor
+    /// applies the caller's default (creator-token) DACL policy; it
+    /// does NOT mean allow-all. An explicit NULL DACL (allow all) is
+    /// expressed by a descriptor with SE_DACL_PRESENT set and a null
+    /// DACL pointer.
     pub fn new_null_dacl() -> *const Self {
         // Return a null pointer to indicate NULL DACL (allow all)
         // Callers should check for null and treat it as "allow all"
@@ -708,11 +752,22 @@ impl SecurityDescriptor {
             // Copy owner and group from token
             (*sd_ptr).owner = token.user.clone();
             (*sd_ptr).group = token.primary_group.clone();
-            (*sd_ptr).sacl = core::ptr::null();
 
             // Build DACL based on token's user and enabled groups
             let dacl = build_dacl_from_token(token);
             (*sd_ptr).dacl = dacl;
+
+            // Attach a mandatory label SACL derived from the token's own
+            // integrity level so that no-write-up checks have an object
+            // level to compare against (see integrity::se_get_object_integrity_level).
+            let level = super::integrity::se_token_integrity_level(
+                token as *const super::token::Token,
+            );
+            super::integrity::se_set_object_integrity_level(
+                sd_ptr,
+                level,
+                super::integrity::SYSTEM_MANDATORY_LABEL_NO_WRITE_UP,
+            );
 
             // crate::kprintln!("[SE] SecurityDescriptor::from_token: created SD for user");
         }
@@ -851,6 +906,20 @@ mod tests {
         token::Token,
     };
 
+    // Under libtest the kernel heap is never initialised, so pool
+    // allocations inside SecurityDescriptor::from_token would fail.
+    // Configure a test region so the default-DACL policy path can be
+    // exercised (same pattern as io::tests).
+    fn ensure_test_heap() {
+        if crate::mm::heap::KERNEL_HEAP.configured_region().is_some() {
+            return;
+        }
+        const TEST_HEAP_LEN: usize = 4 * 1024 * 1024;
+        static mut TEST_HEAP: [u8; TEST_HEAP_LEN] = [0u8; TEST_HEAP_LEN];
+        let base = core::ptr::addr_of_mut!(TEST_HEAP) as *mut u8;
+        crate::mm::heap::KERNEL_HEAP.configure(base, TEST_HEAP_LEN);
+    }
+
     #[test]
     fn empty_dacl_does_not_grant_standard_or_synchronize_access() {
         let token = Token::new_primary(sid::well_known(WellKnownSid::Users));
@@ -873,7 +942,9 @@ mod tests {
         let sd = SecurityDescriptor {
             revision: 1,
             sbz1: 0,
-            control: 0,
+            // Explicit DACL present (an empty one): MAXIMUM_ALLOWED must
+            // not turn an empty DACL into a grant.
+            control: crate::se::descriptor::SE_DACL_PRESENT,
             owner: token.user,
             group: token.user,
             sacl: core::ptr::null(),
@@ -887,7 +958,9 @@ mod tests {
     }
 
     #[test]
-    fn maximum_allowed_on_null_dacl_returns_mapped_access_without_request_bit() {
+    #[test]
+    fn maximum_allowed_on_null_descriptor_applies_default_token_policy() {
+        ensure_test_heap();
         let token = Token::new_primary(sid::well_known(WellKnownSid::Users));
         let (result, granted) = se_access_check(
             ObTypeIndex::File,
@@ -895,6 +968,51 @@ mod tests {
             ACCESS_MAXIMUM_ALLOWED,
             &token,
         );
+        assert_eq!(result, AccessCheckResult::Allowed);
+        assert_eq!(granted & ACCESS_MAXIMUM_ALLOWED, 0);
+        assert_ne!(granted, 0);
+    }
+
+    #[test]
+    fn maximum_allowed_without_dacl_attribute_applies_default_token_policy() {
+        ensure_test_heap();
+        let token = Token::new_primary(sid::well_known(WellKnownSid::Users));
+        // Descriptor present, but SE_DACL_NOT_PRESENT: no authorization
+        // data, so the caller's default policy applies (not allow-all).
+        let sd = SecurityDescriptor {
+            revision: 1,
+            sbz1: 0,
+            control: 0,
+            owner: token.user,
+            group: token.user,
+            sacl: core::ptr::null(),
+            dacl: core::ptr::null(),
+        };
+
+        let (result, granted) =
+            se_access_check(ObTypeIndex::File, &sd, ACCESS_MAXIMUM_ALLOWED, &token);
+        assert_eq!(result, AccessCheckResult::Allowed);
+        assert_eq!(granted & ACCESS_MAXIMUM_ALLOWED, 0);
+        assert_ne!(granted, 0);
+    }
+
+    #[test]
+    fn explicit_null_dacl_still_allows_all() {
+        let token = Token::new_primary(sid::well_known(WellKnownSid::Users));
+        // SE_DACL_PRESENT set with a null DACL pointer is the explicit
+        // NULL DACL: allow everything, matching NT semantics.
+        let sd = SecurityDescriptor {
+            revision: 1,
+            sbz1: 0,
+            control: crate::se::descriptor::SE_DACL_PRESENT,
+            owner: token.user,
+            group: token.user,
+            sacl: core::ptr::null(),
+            dacl: core::ptr::null(),
+        };
+
+        let (result, granted) =
+            se_access_check(ObTypeIndex::File, &sd, ACCESS_MAXIMUM_ALLOWED, &token);
         assert_eq!(result, AccessCheckResult::Allowed);
         assert_eq!(granted & ACCESS_MAXIMUM_ALLOWED, 0);
         assert_ne!(granted, 0);

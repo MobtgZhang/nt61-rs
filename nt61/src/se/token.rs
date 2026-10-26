@@ -392,7 +392,12 @@ impl Token {
                 .groups
                 .iter()
                 .take(self.group_count)
-                .any(|group| group.sid.equals(&sid::well_known(WellKnownSid::Administrators)))
+                .any(|group| {
+                    group.attributes & SE_GROUP_USE_FOR_DENY_ONLY == 0
+                        && group
+                            .sid
+                            .equals(&sid::well_known(WellKnownSid::Administrators))
+                })
     }
 
     /// Check if the token belongs to the LocalSystem account.
@@ -643,6 +648,34 @@ pub fn persist_token(template: &Token) -> *mut Token {
         unsafe {
             let src = template as *const Token as *const u8;
             core::ptr::copy_nonoverlapping(src, token as *mut u8, core::mem::size_of::<Token>());
+        }
+    }
+    token
+}
+
+/// Duplicate a token for a new process, including the default DACL.
+pub fn duplicate_for_process(template: &Token) -> *mut Token {
+    let token = persist_token(template);
+    if token.is_null() {
+        return core::ptr::null_mut();
+    }
+
+    unsafe {
+        if !(*token).default_dacl.is_null() {
+            let acl = crate::mm::pool::allocate(
+                crate::mm::pool::PoolType::NonPaged,
+                core::mem::size_of::<super::acl::Acl>(),
+            ) as *mut super::acl::Acl;
+            if acl.is_null() {
+                crate::mm::pool::free(token as *mut u8);
+                return core::ptr::null_mut();
+            }
+            core::ptr::copy_nonoverlapping(
+                (*token).default_dacl as *const u8,
+                acl as *mut u8,
+                core::mem::size_of::<super::acl::Acl>(),
+            );
+            (*token).default_dacl = acl;
         }
     }
     token

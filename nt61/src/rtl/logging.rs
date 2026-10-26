@@ -438,6 +438,18 @@ pub fn log_write_impl(level: LogLevel, subsystem: &str, cpu: u32, message: &str)
     let mut line_buf = [0u8; 320];
     let mut pos = 0;
 
+    // Saturating append helper: every field below goes through this
+    // closure so a long subsystem or message can never walk past the
+    // end of `line_buf`. (Audit hal_rtl P0-3: the message append used
+    // to be unchecked, which let externally-influenced strings
+    // overflow this stack buffer.)
+    fn push_line(line_buf: &mut [u8; 320], pos: &mut usize, bytes: &[u8]) {
+        let avail = line_buf.len().saturating_sub(*pos).saturating_sub(2);
+        let n = bytes.len().min(avail);
+        line_buf[*pos..*pos + n].copy_from_slice(&bytes[..n]);
+        *pos += n;
+    }
+
     // 1. Timestamp: [SSSSSS.mmm]
     let ts = get_boot_ms();
     let ts_secs = ts / 1000;
@@ -529,10 +541,7 @@ pub fn log_write_impl(level: LogLevel, subsystem: &str, cpu: u32, message: &str)
     pos += 1;
 
     // 5. Message
-    for &b in message.as_bytes() {
-        line_buf[pos] = b;
-        pos += 1;
-    }
+    push_line(&mut line_buf, &mut pos, message.as_bytes());
 
     // 6. Line ending
     line_buf[pos] = b'\r';
