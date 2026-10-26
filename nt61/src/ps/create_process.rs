@@ -57,7 +57,7 @@ pub fn nt_create_process(
     _desired_access: u32,
     _object_attributes: *const ObjectAttributes,
     parent_process_handle: u64,
-    _inherit_handles: bool,
+    inherit_handles: bool,
     section_handle: u64,
     debug_port: u64,
     exception_port: u64,
@@ -100,11 +100,6 @@ pub fn nt_create_process(
         (*process_ptr).set_pid(pid);
         (*process_ptr).unique_process_id = pid;
         (*process_ptr).unique_process_id_full = pid;
-
-        // Set parent PID
-        if !parent.is_null() {
-            (*process_ptr).unique_process_id = (*parent).unique_process_id;
-        }
 
         // Initialize thread list
         (*process_ptr).kprocess_thread_list_head.init();
@@ -176,17 +171,28 @@ pub fn nt_create_process(
 
     // 7. create initial token
     let process_token = if !parent.is_null() {
-        // Inherit from parent
-        unsafe { (*parent).get_token() }
+        unsafe { (*parent).get_token().as_ref() }.map(|token| {
+            crate::se::token::duplicate_for_process(token)
+        })
     } else {
-        // create default user token
-        token::create_user_token(crate::se::sid::SID_USERS)
+        Some(token::create_user_token(crate::se::sid::SID_USERS))
     };
 
-    if !process_token.is_null() {
+    if let Some(process_token) = process_token {
+        if process_token.is_null() {
+            pool::free(ht_ptr as *mut u8);
+            pool::free(process_ptr as *mut u8);
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
         unsafe {
             (*process_ptr).set_token(process_token);
         }
+    }
+
+    if inherit_handles && !ob::inherit_process_handle_table(process_ptr, parent) {
+        pool::free(ht_ptr as *mut u8);
+        pool::free(process_ptr as *mut u8);
+        return STATUS_INSUFFICIENT_RESOURCES;
     }
 
     // 8. Set debug and exception ports

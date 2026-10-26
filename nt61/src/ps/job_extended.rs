@@ -391,7 +391,7 @@ pub fn create_job_with_parent(parent_job_id: u64) -> Result<u64, u32> {
 
     let parent = table.iter().find(|j| j.job_id == parent_job_id);
     let parent = match parent {
-        Some(p) => p as *const JobObject,
+        Some(p) => p as &JobObject as *const JobObject,
         None => return Err(STATUS_INVALID_PARAMETER),
     };
 
@@ -503,7 +503,7 @@ mod tests {
             .lock()
             .iter()
             .find(|j| j.job_id == parent_id)
-            .map(|j| j as *const JobObject)
+            .map(|j| j.as_ref() as *const JobObject)
             .unwrap();
         let parent_ref = unsafe { &*parent };
         parent_ref.set_process_limit(4);
@@ -523,14 +523,14 @@ mod tests {
             .lock()
             .iter()
             .find(|j| j.job_id == child_id)
-            .map(|j| j as *const JobObject)
+            .map(|j| j.as_ref() as *const JobObject)
             .unwrap();
         let child_ref = unsafe { &*child };
         let parent = crate::ps::job::JOB_TABLE
             .lock()
             .iter()
             .find(|j| j.job_id == parent_id)
-            .map(|j| j as *const JobObject)
+            .map(|j| j.as_ref() as *const JobObject)
             .unwrap();
         let parent_ref = unsafe { &*parent };
 
@@ -578,7 +578,7 @@ mod tests {
             .lock()
             .iter()
             .find(|j| j.job_id == parent_id)
-            .map(|j| j as *const JobObject)
+            .map(|j| j.as_ref() as *const JobObject)
             .unwrap();
         let parent_ref = unsafe { &*parent };
         parent_ref

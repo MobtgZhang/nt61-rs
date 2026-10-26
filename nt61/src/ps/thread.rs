@@ -121,7 +121,12 @@ pub struct Kthread {
     // === 0x128: Thread Priority ===
     pub priority: i8,       // 0x128
     pub base_priority2: i8, // 0x129
-    _pad_prio: [u8; 6],     // 0x12A
+    // ke_sched P0-4: ready-queue location recorded by add_ready so
+    // remove_ready finds the thread even if its priority was boosted
+    // after enqueue. queued_priority = 0xFF means "not queued".
+    pub queued_priority: u8, // 0x12A
+    pub queued_cpu: u16,     // 0x12C
+    _pad_prio: [u8; 2],      // 0x12E
 
     // === 0x130: Cross-Thread flags ===
     pub cross_thread_flags: u32, // 0x130
@@ -1184,6 +1189,11 @@ pub fn create_thread(process: *mut Eprocess, stack_size: usize) -> Option<&'stat
 
             // // crate::kprintln!("[THREAD] create_thread: kthread initialised");
 
+            // Initialize APC state to prevent stale freelist pointers
+            // from becoming linked-list heads (P0-4).
+            (*thread).kthread.apc_state = ApcState::new();
+            (*thread).kthread.saved_apc_state = ApcState::new();
+
             // Set client ID (both KTHREAD and ETHREAD locations)
             let tid = NEXT_TID.fetch_add(1, Ordering::SeqCst);
             (*thread)
@@ -1200,14 +1210,21 @@ pub fn create_thread(process: *mut Eprocess, stack_size: usize) -> Option<&'stat
             (*thread).kthread.affinity_mask = !0u64; // All CPUs
             (*thread).kthread.home_cpu = 0;
             (*thread).kthread.affinitized = 0;
+            // Not queued yet (ke_sched P0-4 sentinel).
+            (*thread).kthread.queued_priority = 0xFF;
 
             // Initialize inline wait blocks
             (*thread).kthread.wait_block_list = core::ptr::null_mut();
 
             // Allocate kernel stack
             let stack_size = if stack_size == 0 { 0x20000 } else { stack_size };
-            let stack = crate::mm::frame::allocate_pages((stack_size / 4096) as u64);
-            if let Some(stack_base) = stack {
+            let stack = crate::mm::pool::allocate_aligned(
+                crate::mm::pool::PoolType::NonPaged,
+                stack_size,
+                16,
+            );
+            if !stack.is_null() {
+                let stack_base = stack as u64;
                 (*thread).kthread.initial_stack = stack_base + stack_size as u64;
                 (*thread).kthread.stack_base_addr = stack_base + stack_size as u64;
                 (*thread).kthread.stack_limit = stack_base;
@@ -1412,6 +1429,8 @@ pub fn ps_create_system_thread(start_address: u64, start_context: u64) -> System
         (*ethread).kthread.affinity_mask = !0u64;
         (*ethread).kthread.home_cpu = 0;
         (*ethread).kthread.affinitized = 0;
+        // Not queued yet (ke_sched P0-4 sentinel).
+        (*ethread).kthread.queued_priority = 0xFF;
 
         (*ethread).kthread.global_thread_list_entry.init();
         (*ethread).kthread.wait_list_entry.init();
@@ -1421,9 +1440,13 @@ pub fn ps_create_system_thread(start_address: u64, start_context: u64) -> System
         (*ethread).kthread.apc_state = ApcState::new();
         (*ethread).kthread.apc_state.process = system_process;
 
-        let stack_pages: u64 = 32;
-        let stack_base = crate::mm::frame::allocate_pages(stack_pages);
-        if stack_base.is_none() {
+        let stack_pages: usize = 32;
+        let stack_alloc = crate::mm::pool::allocate_aligned(
+            crate::mm::pool::PoolType::NonPaged,
+            stack_pages * 0x1000,
+            16,
+        );
+        if stack_alloc.is_null() {
             // // kprintln!("[PS] PsCreateSystemThread: failed to allocate kernel stack (OOM)");
             let _ = crate::mm::pool::free(ethread as *mut u8);
             return SystemThreadResult {
@@ -1432,8 +1455,8 @@ pub fn ps_create_system_thread(start_address: u64, start_context: u64) -> System
                 success: false,
             };
         }
-        let stack_base = stack_base.unwrap();
-        let stack_size = (stack_pages * 0x1000) as usize;
+        let stack_base = stack_alloc as u64;
+        let stack_size = stack_pages * 0x1000;
         let stack_top = stack_base + stack_size as u64;
 
         (*ethread).kthread.initial_stack = stack_top;
@@ -1441,13 +1464,13 @@ pub fn ps_create_system_thread(start_address: u64, start_context: u64) -> System
         (*ethread).kthread.stack_limit = stack_base;
         (*ethread).kthread.kernel_stack = stack_top;
 
-        let sp = stack_top - 48;
-        let sp_ptr = sp as *mut u64;
-        core::ptr::write_unaligned(sp_ptr, start_context);
-        core::ptr::write_unaligned((sp_ptr as *mut u8).add(8) as *mut u64, start_address);
-
-        // Note: ThreadContext may not be part of the simplified KTHREAD
-        // Stack setup is handled by the context switch code instead
+        // ke_sched P0-8: seed the initial kernel context so schedule()
+        // can actually switch to this thread. The old code wrote a
+        // legacy start_context/start_address pair at stack_top-48 that
+        // nothing ever consumed and left kernel_rsp = 0, which made
+        // schedule() skip the switch entirely.
+        (*ethread).kthread.context.kernel_rsp =
+            crate::arch::seed_thread_stack(stack_top, start_address, start_context);
 
         (*ethread).kthread.teb = core::ptr::null_mut();
 
@@ -1815,7 +1838,7 @@ fn build_thread_security_descriptor(
 // `arch::common::percpu::get_current_thread`. The wrappers below
 // re-export it under the `ps::thread` namespace so callers don't
 // have to depend on the arch module directly. The offset is
-// `PER_CPU_CURRENT_THREAD_OFFSET` (0x10) inside `PerCpuArea`.
+// `PER_CPU_CURRENT_THREAD_OFFSET` (0x18) inside `PerCpuArea`.
 
 /// Get the current ETHREAD pointer from the per-CPU area.
 #[inline(always)]

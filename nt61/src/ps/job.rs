@@ -380,7 +380,8 @@ impl JobObject {
 }
 
 /// Global job object table (simplified implementation)
-pub(crate) static JOB_TABLE: Spinlock<Vec<JobObject>> = Spinlock::new(Vec::new());
+pub(crate) static JOB_TABLE: Spinlock<Vec<alloc::boxed::Box<JobObject>>> =
+    Spinlock::new(Vec::new());
 pub(crate) static NEXT_JOB_ID: AtomicU64 = AtomicU64::new(1);
 
 /// create a new job object
@@ -392,7 +393,7 @@ pub fn create_job() -> Result<u64, u32> {
     let job = JobObject::new(job_id);
 
     let mut table = JOB_TABLE.lock();
-    table.push(job);
+    table.push(alloc::boxed::Box::new(job));
 
     Ok(job_id)
 }
@@ -406,7 +407,7 @@ pub fn open_job(job_id: u64) -> Option<*const JobObject> {
     table
         .iter()
         .find(|j| j.job_id == job_id)
-        .map(|j| j as *const JobObject)
+        .map(|j| j as &JobObject as *const JobObject)
 }
 
 /// Assign a process to a job

@@ -1347,7 +1347,6 @@ pub fn create_object(
 /// lock, preventing a concurrent `insert_object` or `create_directory`
 /// from overwriting the same slot.
 pub fn insert_object(parent_path: &[u8], header: *mut ObjectHeader) -> u64 {
-    INSERT_COUNT.fetch_add(1, Ordering::Relaxed);
     if header.is_null() {
         return 0;
     }
@@ -1355,6 +1354,9 @@ pub fn insert_object(parent_path: &[u8], header: *mut ObjectHeader) -> u64 {
     if parent.is_null() {
         return 0;
     }
+    // Count only inserts attempted against a real object and directory:
+    // a null pointer must not inflate the diagnostic counter.
+    INSERT_COUNT.fetch_add(1, Ordering::Relaxed);
 
     // Issue 2.4 fix: acquire NAMESPACE lock for the full directory
     // update sequence (check → write → increment).
@@ -1377,10 +1379,10 @@ pub fn insert_object(parent_path: &[u8], header: *mut ObjectHeader) -> u64 {
 
 /// Reference an object. Returns the new reference count.
 pub fn reference_object(header: *mut ObjectHeader) -> u32 {
-    REFERENCE_COUNT.fetch_add(1, Ordering::Relaxed);
     if header.is_null() {
         return 0;
     }
+    REFERENCE_COUNT.fetch_add(1, Ordering::Relaxed);
     let guard = OB_DELETE_LOCK.lock();
     unsafe {
         if (*header).flags.load(Ordering::Acquire) & OB_FLAG_DELETING != 0 {
@@ -1493,6 +1495,46 @@ pub fn close_handle_in_process(process: *mut crate::ps::process::Eprocess, handl
     }
 }
 
+/// Copy every valid parent handle into a freshly-created child table.
+pub fn inherit_process_handle_table(
+    child: *mut crate::ps::process::Eprocess,
+    parent: *mut crate::ps::process::Eprocess,
+) -> bool {
+    if child.is_null() || parent.is_null() {
+        return false;
+    }
+
+    let delete_guard = OB_DELETE_LOCK.lock();
+    unsafe {
+        let child_table = (*child).object_table;
+        let parent_table = (*parent).object_table;
+        if child_table.is_null() || parent_table.is_null() {
+            return false;
+        }
+
+        for idx in 0..crate::ps::process::HANDLE_TABLE_SIZE {
+            if (*parent_table).valid[idx] == 0 {
+                continue;
+            }
+            let header = (*parent_table).slots[idx] as *mut ObjectHeader;
+            if header.is_null() {
+                return false;
+            }
+            (*child_table).slots[idx] = header as *mut _;
+            (*child_table).valid[idx] = 1;
+            (*child_table)
+                .handle_count
+                .fetch_add(1, core::sync::atomic::Ordering::AcqRel);
+            let _ = reference_object_locked(header);
+            (*header)
+                .handle_count
+                .fetch_add(1, core::sync::atomic::Ordering::AcqRel);
+        }
+    }
+    drop(delete_guard);
+    true
+}
+
 /// Get object body from header
 pub fn get_object_body<T>(header: *mut ObjectHeader) -> *mut T {
     if header.is_null() {
@@ -1537,6 +1579,8 @@ unsafe fn try_delete_object_locked(header: *mut ObjectHeader) -> bool {
 
     // 1. Unlink from parent directory.
     if !(*header).directory.is_null() {
+        // Hold NAMESPACE for the directory-slot update (P0-5).
+        let _ns_guard = NAMESPACE.lock();
         let parent = (*header).directory;
         let mut removed = false;
         for i in 0..(*parent).num_entries as usize {
@@ -1573,6 +1617,29 @@ unsafe fn try_delete_object_locked(header: *mut ObjectHeader) -> bool {
                 t.valid[i] = 0;
                 t.slots[i] = core::ptr::null_mut();
                 break;
+            }
+        }
+    }
+
+    // 2b. Remove from every process's per-process handle table (P0-6).
+    {
+        let list = crate::ps::process::process_list();
+        for idx in 0..list.process_count {
+            let proc = list.processes[idx];
+            if proc.is_null() {
+                continue;
+            }
+            let table = unsafe { (*proc).object_table };
+            if table.is_null() {
+                continue;
+            }
+            for i in 0..crate::ps::process::HANDLE_TABLE_SIZE {
+                if unsafe { (*table).valid[i] != 0 && core::ptr::eq((*table).slots[i], header as *mut ()) } {
+                    unsafe {
+                        (*table).valid[i] = 0;
+                        (*table).slots[i] = core::ptr::null_mut();
+                    }
+                }
             }
         }
     }
@@ -1630,10 +1697,10 @@ fn delete_object(header: *mut ObjectHeader) {
 ///   Thread B: close_handle → handle_count.fetch_sub → 0 → delete_object
 /// With the lock held, both checks are serialised.
 pub fn dereference_object(header: *mut ObjectHeader) -> u32 {
-    DEREFERENCE_COUNT.fetch_add(1, Ordering::Relaxed);
     if header.is_null() {
         return 0;
     }
+    DEREFERENCE_COUNT.fetch_add(1, Ordering::Relaxed);
 
     let guard = OB_DELETE_LOCK.lock();
     let final_ref = unsafe {
@@ -2082,6 +2149,14 @@ pub fn ob_set_security_descriptor(
         // already had a security descriptor.
         if !(*header).security_descriptor.is_null() {
             let old_sd_ptr = (*header).security_descriptor as *mut u8;
+            // Deep-copied ACLs are separately allocated — free them too.
+            let old_sd = old_sd_ptr as *const crate::se::seaccess::SecurityDescriptor;
+            if !(*old_sd).dacl.is_null() {
+                let _ = pool::free((*old_sd).dacl as *mut u8);
+            }
+            if !(*old_sd).sacl.is_null() {
+                let _ = pool::free((*old_sd).sacl as *mut u8);
+            }
             (*header).security_descriptor = core::ptr::null_mut();
             let _ = pool::free(old_sd_ptr);
         }
@@ -2104,6 +2179,40 @@ pub fn ob_set_security_descriptor(
             new_sd as *mut u8,
             sd_bytes,
         );
+
+        // Deep-copy the DACL and SACL (P0-7). The Acl struct has inline
+        // ACE storage, so copying the whole struct is sufficient.
+        let src_sd = &*security_descriptor;
+        if !src_sd.dacl.is_null() {
+            let acl_size = core::mem::size_of::<crate::se::acl::Acl>();
+            let new_dacl = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, acl_size)
+                as *mut crate::se::acl::Acl;
+            if new_dacl.is_null() {
+                let _ = pool::free(new_sd as *mut u8);
+                return STATUS_INSUFFICIENT_RESOURCES;
+            }
+            core::ptr::copy_nonoverlapping(
+                src_sd.dacl as *const u8,
+                new_dacl as *mut u8,
+                acl_size,
+            );
+            (*new_sd).dacl = new_dacl as *const crate::se::acl::Acl;
+        }
+        if !src_sd.sacl.is_null() {
+            let acl_size = core::mem::size_of::<crate::se::acl::Acl>();
+            let new_sacl = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, acl_size)
+                as *mut crate::se::acl::Acl;
+            if new_sacl.is_null() {
+                let _ = pool::free(new_sd as *mut u8);
+                return STATUS_INSUFFICIENT_RESOURCES;
+            }
+            core::ptr::copy_nonoverlapping(
+                src_sd.sacl as *const u8,
+                new_sacl as *mut u8,
+                acl_size,
+            );
+            (*new_sd).sacl = new_sacl as *const crate::se::acl::Acl;
+        }
 
         (*header).security_descriptor = new_sd;
     }

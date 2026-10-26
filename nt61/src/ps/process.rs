@@ -1499,6 +1499,11 @@ impl Process {
 static PROCESS_LIST: crate::ke::sync::Spinlock<ProcessList> =
     crate::ke::sync::Spinlock::new(ProcessList::new());
 
+/// Locks the global process list and returns a guard over it.
+pub fn process_list() -> crate::ke::sync::SpinlockGuard<'static, ProcessList> {
+    PROCESS_LIST.lock()
+}
+
 /// Maximum number of concurrently tracked processes in the
 /// bootstrap global list. NT itself scales this dynamically via
 /// paged pool; 1024 is comfortably above the worst-case bootstrap
@@ -2045,18 +2050,29 @@ pub fn create_process_full(
 
     if let Some(parent) = parent_process {
         inherit_from_parent(process, parent);
+        let parent_token = unsafe { (*parent).get_token().as_ref() }.map(|token| {
+            crate::se::token::duplicate_for_process(token)
+        });
+        if let Some(token) = parent_token {
+            if token.is_null() {
+                return None;
+            }
+            process.set_token(token);
+        }
     }
 
     // // kprintln!("[PS] create_process_full: PID {} created", pid);
     Some(process)
 }
 
-fn inherit_from_parent(_child: &mut Eprocess, parent: *mut Eprocess) {
+fn inherit_from_parent(child: &mut Eprocess, parent: *mut Eprocess) {
     if parent.is_null() {
         return;
     }
     unsafe {
-        let _ = (*parent).unique_process_id;
+        child.base_priority = (*parent).base_priority;
+        child.process_flags = (*parent).process_flags;
+        child.spare5 = (*parent).unique_process_id;
     }
 }
 
