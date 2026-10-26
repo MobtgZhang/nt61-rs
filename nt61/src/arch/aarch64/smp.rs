@@ -20,6 +20,28 @@ use crate::arch::aarch64::cpuinfo;
 use crate::arch::aarch64::paging;
 use crate::arch::aarch64::percpu_impl;
 
+// Pure assembly entry point for secondary cores. PSCI CPU_ON jumps
+// here with x0 = context_id (the stack top). We cannot use a Rust
+// function directly because the Rust prologue would push to an
+// uninitialized stack.
+core::arch::global_asm!(
+    ".text",
+    ".global aarch64_secondary_entry_asm",
+    "aarch64_secondary_entry_asm:",
+    // x0 = stack_top (context_id from PSCI CPU_ON)
+    "  mov sp, x0",
+    "  bl {secondary_entry}",
+    // If secondary_entry returns (it should not), park the CPU.
+    "aarch64_secondary_park:",
+    "  wfi",
+    "  b aarch64_secondary_park",
+    secondary_entry = sym secondary_entry,
+);
+
+extern "C" {
+    fn aarch64_secondary_entry_asm();
+}
+
 /// SMP bring-up method.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
@@ -79,27 +101,28 @@ pub unsafe fn psci_cpu_on(target_cpu: u64, entry: u64, context_id: u64) -> i64 {
     r
 }
 
-/// Spin-table release address used by older Phytium firmware
-/// (FT-2000/4 era). The default 0xD000_0000 is the address used by
-/// board firmware on the standard dev kit; production Phytium boards
-/// expose the address in their device-tree.
+/// Spin-table release address used by Phytium firmware.
+/// The default is a device-tree-provided address; 0xD000_0000 is
+/// used as a fallback on boards that do not expose it.
 pub const SPIN_TABLE_RELEASE_ADDR: u64 = 0xD000_0000;
 
-/// Release a secondary CPU through the spin-table mechanism by
-/// writing `(entry | context_id << 16)` (low 32 = entry, high 32 =
-/// context id).
+/// Release a secondary CPU through the spin-table mechanism.
+///
+/// The Phytium FT-2000/4 protocol writes the entry point to the
+/// release address and signals with a `sev`. The release word is
+/// `(entry << 2) | cpu_id`, matching the expected format.
 pub unsafe fn spin_table_release(cpu_idx: usize, entry: u64, context_id: u64) {
-    let word = (entry & 0xFFFF_FFFF) | (context_id << 32);
+    let _ = context_id;
+    // Phytium spin-table: word = (entry << 2) | cpu_id
+    let word = (entry << 2) | (cpu_idx as u64 & 0x3);
     unsafe {
         let p = SPIN_TABLE_RELEASE_ADDR as *mut u64;
         p.write_volatile(word);
-        core::arch::asm!(
-            "sev",
-            in("x0") p,
-            in("x1") word,
-            in("x2") cpu_idx,
-            options(nostack),
-        );
+        // dmb (data memory barrier) ensures the write is visible
+        // before the sev wakes the polling core.
+        core::arch::asm!("dmb sy", options(nostack));
+        // sev takes no operands — a bare event-signal.
+        core::arch::asm!("sev", options(nostack));
     }
 }
 
@@ -146,7 +169,7 @@ pub unsafe extern "Rust" fn __smp_boot_secondary(pml4_pfn: u64) {
                 let _ = unsafe {
                     psci_cpu_on(
                         cpu as u64,
-                        crate::arch::aarch64::smp::secondary_entry as *const () as u64,
+                        aarch64_secondary_entry_asm as *const () as u64,
                         *(crate::arch::aarch64::percpu_impl::per_cpu_base_for(cpu) as *const u64)
                             .add(1),
                     )
@@ -155,7 +178,7 @@ pub unsafe extern "Rust" fn __smp_boot_secondary(pml4_pfn: u64) {
             SmpMethod::SpinTable => unsafe {
                 spin_table_release(
                     cpu as usize,
-                    crate::arch::aarch64::smp::secondary_entry as *const () as u64,
+                    aarch64_secondary_entry_asm as *const () as u64,
                     *(crate::arch::aarch64::percpu_impl::per_cpu_base_for(cpu) as *const u64)
                         .add(1),
                 );

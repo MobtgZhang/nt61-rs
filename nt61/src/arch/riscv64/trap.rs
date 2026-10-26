@@ -346,6 +346,10 @@ pub extern "C" fn riscv64_trap_dispatch(frame: *mut TrapFrame) {
             }
             5 => {
                 crate::arch::riscv64::pit::arm_next_tick();
+                crate::ke::timer::tick();
+                crate::ke::scheduler::tick();
+                crate::ke::psss::psss_tick();
+                crate::ke::scheduler::dispatch_pending_reschedule();
             }
             9 => {
                 let irq = crate::arch::riscv64::apic::handle_irq();

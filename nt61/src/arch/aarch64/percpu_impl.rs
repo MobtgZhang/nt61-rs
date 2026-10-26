@@ -9,12 +9,12 @@
 //! |--------|-------|
 //! | 0x00 | `user_sp` (saved user stack pointer) |
 //! | 0x08 | `kernel_sp` (kernel stack pointer) |
-//! | 0x0C | `cpu_id` |
-//! | 0x10 | `current_thread` |
-//! | 0x18 | `current_process` |
-//! | 0x20 | `irql` |
-//! | 0x28 | `syscall_count` |
-//! | 0x30 | `interrupt_count` |
+//! | 0x10 | `cpu_id` (u32) + `_pad0` (u32) |
+//! | 0x18 | `current_thread` |
+//! | 0x20 | `current_process` |
+//! | 0x28 | `irql` (u8) + `_pad1` (u8; 7) |
+//! | 0x30 | `syscall_count` |
+//! | 0x38 | `interrupt_count` |
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -74,6 +74,12 @@ pub unsafe extern "Rust" fn __percpu_init(cpu_id: u32) -> u64 {
 #[no_mangle]
 pub fn init_storage() {
     PER_CPU_PAGES[0].store(core::ptr::addr_of_mut!(PER_CPU_0) as u64, Ordering::Release);
+    // Ensure the BSP per-CPU area is ready so `get_current()` works
+    // on the bootstrap CPU even before `__percpu_init(0)` is called.
+    unsafe {
+        let area = &mut *(core::ptr::addr_of_mut!(PER_CPU_0));
+        area.cpu_id = 0;
+    }
 }
 
 /// Allocate and zero a per-CPU area page for the given CPU id.
@@ -144,11 +150,9 @@ pub fn __percpu_get_current_cpu_id() -> u32 {
     if base == 0 {
         return 0;
     }
-    let cpu_id: u32;
-    unsafe {
-        cpu_id = *(base as *const u32).add(3); // offset 0x0C
-    }
-    cpu_id
+    // cpu_id is at offset 0x10 in PerCpuArea (after user_rsp@0x00
+    // and kernel_rsp@0x08).
+    unsafe { (base as *const u32).add(4).read_volatile() } // offset 0x10
 }
 
 /// Set the kernel stack pointer for the next user→kernel transition.
@@ -190,7 +194,12 @@ pub fn __percpu_set_current_thread(thread: *mut Ethread) {
         return;
     }
     unsafe {
-        let ptr = (base as *mut *mut Ethread).add(2); // offset 0x10
+        // current_thread is at offset 0x18 in PerCpuArea:
+        //   0x00 user_rsp (u64)
+        //   0x08 kernel_rsp (u64)
+        //   0x10 cpu_id (u32) + _pad0 (u32)
+        //   0x18 current_thread
+        let ptr = (base as *mut *mut Ethread).add(3); // offset 0x18
         ptr.write(thread);
     }
 }
@@ -203,7 +212,7 @@ pub fn __percpu_get_current_thread() -> *mut Ethread {
         return core::ptr::null_mut();
     }
     unsafe {
-        let ptr = (base as *const *mut Ethread).add(2); // offset 0x10
+        let ptr = (base as *const *mut Ethread).add(3); // offset 0x18
         ptr.read()
     }
 }
@@ -216,7 +225,8 @@ pub fn __percpu_set_current_process(process: *mut Eprocess) {
         return;
     }
     unsafe {
-        let ptr = (base as *mut *mut Eprocess).add(3); // offset 0x18
+        // current_process is at offset 0x20 in PerCpuArea.
+        let ptr = (base as *mut *mut Eprocess).add(4); // offset 0x20
         ptr.write(process);
     }
 }
@@ -229,7 +239,7 @@ pub fn __percpu_get_current_process() -> *mut Eprocess {
         return core::ptr::null_mut();
     }
     unsafe {
-        let ptr = (base as *const *mut Eprocess).add(3); // offset 0x18
+        let ptr = (base as *const *mut Eprocess).add(4); // offset 0x20
         ptr.read()
     }
 }

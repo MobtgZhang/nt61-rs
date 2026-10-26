@@ -24,7 +24,7 @@ static mut CODE_BASE: [u8; CODE_CACHE_SIZE] = [0; CODE_CACHE_SIZE];
 static CODE_ALLOC_PTR: AtomicU64 = AtomicU64::new(0);
 
 /// One translated piece of guest code.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct TranslationUnit {
     pub source_addr: u64,
     pub translated_ptr: u64,
@@ -68,22 +68,66 @@ impl CodeCache {
         Self { units: [NONE; 1024] }
     }
 
+    /// Hash `source_addr` to a starting slot. The Fibonacci mixing
+    /// constant spreads consecutive guest code addresses across the
+    /// table so linear-probe chains stay short.
+    fn hash_slot(source_addr: u64) -> usize {
+        let mixed = source_addr.wrapping_mul(0x9E37_79B9_7F4D_7C15);
+        ((mixed >> 16) as usize) % 1024
+    }
+
     /// Look up the translation unit that owns `source_addr`.
+    ///
+    /// Open addressing with linear probing. The probe stops at the
+    /// first empty slot: entries are only ever removed by a full
+    /// `clear()`, so no tombstones can shorten a chain invisibly.
     pub fn lookup(&self, source_addr: u64) -> Option<&TranslationUnit> {
-        let h = (source_addr as usize) % self.units.len();
-        if let Some(unit) = &self.units[h] {
-            if unit.source_addr == source_addr {
-                return Some(unit);
+        let start = Self::hash_slot(source_addr) % self.units.len();
+        for probe in 0..self.units.len() {
+            let idx = (start + probe) % self.units.len();
+            match &self.units[idx] {
+                Some(unit) if unit.source_addr == source_addr => return Some(unit),
+                Some(_) => continue,
+                None => return None,
             }
         }
         None
     }
 
     /// Insert `unit` into the cache.
+    ///
+    /// A unit for the same source address is replaced in place
+    /// (re-translation); anything else goes into the first empty slot
+    /// of its linear-probe chain. Returns `None` when the table is
+    /// full — the caller must then reset the cache instead of
+    /// silently overwriting a live, colliding translation.
     pub fn insert(&mut self, unit: TranslationUnit) -> Option<&TranslationUnit> {
-        let h = (unit.source_addr as usize) % self.units.len();
-        self.units[h] = Some(unit);
-        self.units[h].as_ref()
+        let start = Self::hash_slot(unit.source_addr) % self.units.len();
+        for probe in 0..self.units.len() {
+            let idx = (start + probe) % self.units.len();
+            let replace = match &self.units[idx] {
+                Some(existing) => existing.source_addr == unit.source_addr,
+                None => true,
+            };
+            if replace {
+                self.units[idx] = Some(unit);
+                return self.units[idx].as_ref();
+            }
+        }
+        None
+    }
+
+    /// Drop every cached translation. The caller must also rewind the
+    /// code allocator (`reset_code_cache`) so code space restarts.
+    pub fn clear(&mut self) {
+        for slot in self.units.iter_mut() {
+            *slot = None;
+        }
+    }
+
+    /// Whether the table still has at least one empty slot.
+    pub fn has_free_slot(&self) -> bool {
+        self.units.iter().any(|slot| slot.is_none())
     }
 }
 
@@ -106,6 +150,12 @@ pub fn allocate_code(size: usize) -> u64 {
 
 /// Reset the code cache (used for cache invalidation when a
 /// guest code page is replaced, e.g. via `mprotect`).
+///
+/// This only rewinds the allocation pointer. The source→unit hash
+/// table lives in `TranslationManager` and must be cleared with
+/// `CodeCache::clear` (see `TranslationManager::reset`) in the same
+/// critical section, otherwise `resolve` can still hand out
+/// translations whose code was just invalidated.
 pub fn reset_code_cache() {
     CODE_ALLOC_PTR.store(0, Ordering::Release);
 }

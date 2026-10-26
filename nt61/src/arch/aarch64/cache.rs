@@ -248,9 +248,20 @@ pub fn invalidate_icache_range(start: u64, size: usize) {
     // First clean data cache for the range
     clean_dcache_range(start, size);
 
-    // Then invalidate instruction cache
+    // Then invalidate instruction cache one line at a time to the
+    // Point of Unification, so unrelated code is left alone.
+    let end = start + size as u64;
+    let mut addr = start & !(CACHE_LINE_SIZE as u64 - 1);
     unsafe {
-        asm!("ic ialluis", "dsb ish", "isb", options(nostack));
+        while addr < end {
+            asm!(
+                "ic ivau, {}",
+                in(reg) addr,
+                options(nostack)
+            );
+            addr += CACHE_LINE_SIZE as u64;
+        }
+        asm!("dsb sy", "isb", options(nostack));
     }
 }
 
@@ -261,8 +272,8 @@ pub fn sync_icache_range(start: u64, size: usize) {
     // Clean data cache to PoU
     clean_dcache_range(start, size);
 
-    // Invalidate instruction cache
-    invalidate_icache_all();
+    // Invalidate instruction cache for the range only.
+    invalidate_icache_range(start, size);
 }
 
 /// Data Synchronization Barrier

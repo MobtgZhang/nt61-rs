@@ -1,4 +1,11 @@
-//! AArch64 GIC (Generic Interrupt Controller) driver - Enhanced
+//! AArch64 GIC (Generic Interrupt Controller) driver.
+//!
+//! NOTE: This module is currently **dead code** — no caller invokes
+//! `aarch64::gic::*` anywhere in the codebase. The live GIC path is
+//! `hal::aarch64::apic`. This module is kept for future GICv3 work;
+//! the single source of truth for interrupt-controller behaviour is
+//! `hal/aarch64/apic.rs`. Do not initialise this module alongside
+//! the HAL driver — the two share conflicting register bases.
 //!
 //! Comprehensive GICv2/GICv3 implementation with:
 //! - Full distributor and CPU interface management
@@ -339,6 +346,25 @@ pub fn send_ipi(target_cpu: u32, sgi_id: u32) {
             send_ipi_v3(target_cpu as u64, sgi_id);
         }
         _ => {}
+    }
+}
+
+/// SGI id reserved for the cross-core TLB shootdown. SGIs are
+/// always enabled in the GIC and are delivered to the target's CPU
+/// interface regardless of SPI routing, so no extra configuration is
+/// needed beyond the send itself.
+pub const SGI_TLB_SHOOTDOWN: u32 = 15;
+
+/// Send the TLB-shootdown SGI to every online CPU except the caller.
+/// Targets run `ke::tlb_shootdown::handle_shootdown_interrupt` from
+/// the IRQ trap path (see `arch::aarch64::trap::handle_irq`).
+pub fn broadcast_tlb_shootdown() {
+    let self_cpu = crate::arch::aarch64::smp::__smp_get_current_cpu_id();
+    let cpus = crate::arch::common::smp::cpu_count();
+    for cpu in 0..cpus {
+        if cpu != self_cpu {
+            send_ipi(cpu, SGI_TLB_SHOOTDOWN);
+        }
     }
 }
 

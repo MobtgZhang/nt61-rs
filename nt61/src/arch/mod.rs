@@ -265,6 +265,14 @@ pub fn mask_irq0() {
     {}
 }
 
+/// Restore IRQ 0 after a filesystem completes legacy interrupt-sensitive I/O.
+pub fn unmask_irq0() {
+    #[cfg(target_arch = "x86_64")]
+    crate::hal::pic::unmask_irq(0);
+    #[cfg(not(target_arch = "x86_64"))]
+    {}
+}
+
 /// Read the architecture's high-resolution hardware cycle counter.
 pub fn hardware_counter() -> u64 {
     #[cfg(target_arch = "x86_64")]
@@ -1220,6 +1228,26 @@ pub fn flush_tlb() {
     }
 }
 
+/// Interrupt every other online CPU and ask it to flush its TLB.
+///
+/// The IPI carries no payload. Targets run
+/// `ke::tlb_shootdown::handle_shootdown_interrupt`, which performs a
+/// full local flush and publishes the shootdown generation so the
+/// sender can wait for acknowledgements (see `ke::tlb_shootdown`).
+pub fn send_tlb_shootdown_ipi() {
+    #[cfg(target_arch = "x86_64")]
+    {
+        x86_64::ipi::broadcast_tlb_shootdown();
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        aarch64::gic::broadcast_tlb_shootdown();
+    }
+    // riscv64 / loongarch64 have no SMP IPI path yet; their
+    // `lazy_flush_if_pending` tick fallback still converges, and
+    // single-core builds have nothing to notify.
+}
+
 pub fn get_stack_pointer() -> u64 {
     #[cfg(target_arch = "x86_64")]
     {
@@ -1258,6 +1286,12 @@ pub fn get_stack_pointer() -> u64 {
 /// read the current page-table root as a physical address.
 /// On x86_64 this is CR3, on aarch64 this is TTBR1_EL1,
 /// on riscv64 this is satp (PPN only), on loongarch64 this is PGDH.
+#[cfg(all(test, target_arch = "x86_64"))]
+pub fn read_current_page_root() -> u64 {
+    0
+}
+
+#[cfg(not(all(test, target_arch = "x86_64")))]
 pub fn read_current_page_root() -> u64 {
     #[cfg(target_arch = "x86_64")]
     {
@@ -1311,6 +1345,22 @@ pub unsafe fn swap_context(out_rsp: *mut u64, new_rsp: u64) {
     }
 }
 
+/// Seed a fresh kernel context on a new thread's stack so the
+/// dispatcher can switch to it (ke_sched P0-8). Returns the initial
+/// kernel stack pointer for `kthread.context.kernel_rsp`, or 0 on
+/// architectures without a software context-swap implementation.
+pub fn seed_thread_stack(stack_top: u64, entry: u64, arg: u64) -> u64 {
+    #[cfg(target_arch = "x86_64")]
+    {
+        x86_64::context_switch::seed_thread_context(stack_top, entry, arg)
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = (stack_top, entry, arg);
+        0
+    }
+}
+
 /// Identity-map the kernel heap region `[pa, pa + size)` so the
 /// pointer returned by `global_alloc::alloc` resolves under the
 /// kernel's page tables.
@@ -1335,8 +1385,7 @@ pub fn identity_map_region(pa: u64, size: u64) -> bool {
         // Delegate to the 2 MiB large-page mapper. For RAM the
         // firmware already identity-mapped this is idempotent; for
         // MMIO windows (PCI ECAM) it creates the missing PDEs.
-        crate::mm::vas::ensure_low_identity_map(pa, size);
-        true
+        crate::mm::vas::ensure_low_identity_map(pa, size)
     }
     #[cfg(target_arch = "aarch64")]
     {

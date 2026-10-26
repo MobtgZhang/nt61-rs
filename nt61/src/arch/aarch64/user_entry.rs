@@ -23,10 +23,20 @@ const PER_CPU_TPIDR_EL1_OFFSET_KERNEL_SP: usize = 1; // u64 at offset 0x08
 
 /// AArch64 EL0 code segment selector (placeholder — AArch64 uses ESR to
 /// determine the target exception level, not a segment selector).
-const AARCH64_USER_CS: u16 = 0x11;
+///
+/// AArch64 has no segment selectors at all: the privilege level is
+/// encoded in `SPSR_EL1` and selected by `eret`, and user/kernel code
+/// share one flat address space per TTBR. These constants are opaque
+/// placeholder tokens kept only so the arch-generic entry layer can
+/// fill its `u16` selector slots; they MUST NOT be compared against
+/// x86 selector values or used to decide privilege — use
+/// `AARCH64_SPSR_EL0T` for that.
+const AARCH64_USER_CS_PLACEHOLDER: u16 = 0x11;
 
 /// AArch64 EL0 data segment selector (placeholder).
-const AARCH64_USER_SS: u16 = 0x13;
+///
+/// See `AARCH64_USER_CS_PLACEHOLDER`: same caveat applies.
+const AARCH64_USER_SS_PLACEHOLDER: u16 = 0x13;
 
 /// User entry point virtual address.
 const AARCH64_USER_ENTRY_RIP: u64 = crate::mm::constants::USER_ENTRY_RIP;
@@ -37,9 +47,11 @@ const AARCH64_USER_STACK_BASE: u64 = crate::mm::constants::USER_STACK_BASE;
 /// User stack top address.
 const AARCH64_USER_STACK_TOP: u64 = crate::mm::constants::USER_STACK_TOP;
 
-/// SPSR_EL1 value for return to EL0. `M=0` selects EL0t; the DAIF
-/// bits must not be set because user code cannot own interrupt state.
-const AARCH64_SPSR_EL0T: u64 = 0;
+/// SPSR_EL1 value for return to EL0t.
+/// M[4:0] = 0b00000 (EL0t, AArch64); DAIF bits 9:6 all set (masked)
+/// because the GIC is not yet ready when user mode is entered and
+/// unmasked pseudo-interrupts would be taken immediately.
+const AARCH64_SPSR_EL0T: u64 = 0x3C0;
 
 // =====================================================================
 // Per-CPU area helpers
@@ -62,13 +74,13 @@ fn get_tpidr_el1() -> u64 {
 /// Return the user code segment selector.
 #[no_mangle]
 pub fn __user_entry_user_cs() -> u16 {
-    AARCH64_USER_CS
+    AARCH64_USER_CS_PLACEHOLDER
 }
 
 /// Return the user stack segment selector.
 #[no_mangle]
 pub fn __user_entry_user_ss() -> u16 {
-    AARCH64_USER_SS
+    AARCH64_USER_SS_PLACEHOLDER
 }
 
 /// Return the user entry point virtual address.
@@ -101,13 +113,23 @@ pub unsafe fn __user_entry_enter(user_rip: u64, user_rsp: u64) -> ! {
     // Force rustc to allocate fresh registers for the operands.
     let rip_v = core::hint::black_box(user_rip);
     let rsp_v = core::hint::black_box(user_rsp);
+    // Save the current kernel SP so that SP_EL1 is valid for any
+    // exception taken from EL0. Without this the hardware would use
+    // SP_EL1 (previously 0) as the exception stack — a classic
+    // privilege escalation when SP_EL1 is left at 0.
+    let kernel_sp: u64;
+    core::arch::asm!("mov {}, sp", out(reg) kernel_sp, options(nostack, preserves_flags));
     unsafe {
         core::arch::asm!(
-            // Set SP_EL0 (user stack), SPSR_EL1 and ELR_EL1.
+            // Set SP_EL1 (kernel exception stack), SP_EL0 (user stack),
+            // SPSR_EL1 and ELR_EL1.
+            "msr sp_el1, {ksp}",
             "msr sp_el0, {rsp}",
             "msr spsr_el1, {spsr}",
             "msr elr_el1, {rip}",
+            "isb",
             "eret",
+            ksp = in(reg) kernel_sp,
             rip = in(reg) rip_v,
             rsp = in(reg) rsp_v,
             spsr = in(reg) AARCH64_SPSR_EL0T,
@@ -168,6 +190,11 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
         core::arch::asm!("mov {}, sp", out(reg) kernel_sp, options(nostack, preserves_flags));
     }
     crate::arch::common::percpu::set_kernel_stack(kernel_sp);
+    // Write the kernel stack into SP_EL1 so that the hardware uses it
+    // as the exception stack when an exception is taken from EL0.
+    unsafe {
+        core::arch::asm!("msr sp_el1, {}", in(reg) kernel_sp, options(nostack));
+    }
 
     // 1. Switch to the user page table.
     //    On aarch64 we use TTBR0_EL1 for the user address space.
@@ -179,11 +206,14 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
         let rip_v = core::hint::black_box(user_rip);
         let rsp_v = core::hint::black_box(user_rsp);
         core::arch::asm!(
+            "msr sp_el1, {ksp}",
             "msr sp_el0, {rsp}",
             "msr elr_el1, {rip}",
-            // SPSR_EL1: M=EL0, all interrupts masked
+            // SPSR_EL1: M=EL0t, DAIF all masked (GIC not ready)
             "msr spsr_el1, {spsr}",
+            "isb",
             "eret",
+            ksp = in(reg) kernel_sp,
             rip = in(reg) rip_v,
             rsp = in(reg) rsp_v,
             spsr = in(reg) AARCH64_SPSR_EL0T,

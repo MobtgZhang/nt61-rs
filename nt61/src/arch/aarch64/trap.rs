@@ -19,6 +19,7 @@
 //! the `eret` epilogue: `pc = tf.elr_el1` and `pstate = tf.spsr_el1`.
 
 use core::arch::asm;
+use alloc::format;
 
 /// Trap frame pushed by every exception-vector stub.
 ///
@@ -182,27 +183,38 @@ fn handle_kernel_sync(tf: &mut TrapFrame) {
     let esr = tf.esr_el1;
     let ec = (esr >> 26) & 0x3F;
     let far = tf.far_el1;
-    // Increment the per-CPU fault counter.
+    let iss = esr & 0x01FF_FFFF;
+    let spsr = tf.spsr_el1;
+    let elr = tf.elr_el1;
+
+    // Kernel faults must never be silently skipped. A skipped fault
+    // can corrupt kernel state and is a security risk (e.g. skipping
+    // a bounds check). Instead, log the full diagnostic and crash.
+    crate::hal::serial::write_string_always("[KERN-FAULT] ec=");
+    crate::hal::serial::write_hex_u64_always(ec);
+    crate::hal::serial::write_string_always(" iss=");
+    crate::hal::serial::write_hex_u64_always(iss);
+    crate::hal::serial::write_string_always(" far=");
+    crate::hal::serial::write_hex_u64_always(far);
+    crate::hal::serial::write_string_always(" elr=");
+    crate::hal::serial::write_hex_u64_always(elr);
+    crate::hal::serial::write_string_always(" spsr=");
+    crate::hal::serial::write_hex_u64_always(spsr);
+    crate::hal::serial::write_string_always("\r\n");
+
+    // Increment the per-CPU fault counter for diagnostics.
     let percpu = crate::arch::common::percpu::get_current();
     percpu.interrupt_count = percpu.interrupt_count.wrapping_add(1);
 
-    // For the bootstrap we cannot easily continue from kernel faults.
-    // We log the syndrome (via UART) and park the CPU.
-    crate::hal::serial::write_string("[KERN-FAULT] ec=");
-    crate::hal::serial::write_hex_u64(ec);
-    crate::hal::serial::write_string(" iss=");
-    crate::hal::serial::write_hex_u64(esr & 0x01FF_FFFF);
-    crate::hal::serial::write_string(" far=");
-    crate::hal::serial::write_hex_u64(far);
-    crate::hal::serial::write_string(" elr=");
-    crate::hal::serial::write_hex_u64(tf.elr_el1);
-    crate::hal::serial::write_string("\r\n");
-
-    // Skip the faulting instruction so the kernel can continue
-    // booting. Drivers that fail this way will simply not initialise.
-    // A proper page-fault dispatcher will replace this once the
-    // demand-pager is wired up on non-x86 architectures.
-    tf.elr_el1 += 4;
+    // Do NOT advance ELR past the faulting instruction. Instead, panic
+    // so that the developer immediately sees the bug. The kernel is
+    // too small and too early for a fault-recovery strategy.
+    crate::rtl::panic::panic(
+        &format!(
+            "aarch64 kernel sync fault: ec={:#x} iss={:#x} far={:#x} elr={:#x} spsr={:#x}",
+            ec, iss, far, elr, spsr
+        ),
+    );
 }
 
 /// handle a maskable IRQ.
@@ -214,45 +226,74 @@ fn handle_irq() {
     // `crate::hal::aarch64::apic::handle_irq()` once the GIC driver is
     // initialised. For the bootstrap, we just acknowledge the IRQ
     // source here.
-    crate::hal::aarch64::apic::handle_irq();
+    let irq = crate::hal::aarch64::apic::handle_irq();
+    if irq == 29 {
+        crate::hal::aarch64::arch_timer::acknowledge();
+        crate::ke::timer::tick();
+        crate::ke::scheduler::tick();
+        crate::ke::psss::psss_tick();
+        crate::ke::scheduler::dispatch_pending_reschedule();
+    } else if irq < 16 {
+        // SGIs (0-15) are the cross-core communication range. The
+        // only SGI the kernel sends today is the TLB shootdown
+        // (`gic::SGI_TLB_SHOOTDOWN`); the handler is payload-free and
+        // flushes the local TLB regardless of the exact SGI id, so
+        // any SGI in the range can be routed there.
+        crate::ke::tlb_shootdown::handle_shootdown_interrupt();
+    }
 }
 
 /// handle a user-mode page fault.
 fn handle_user_page_fault(tf: &mut TrapFrame, is_instruction: bool) {
     let far = tf.far_el1;
+    let elr = tf.elr_el1;
     crate::hal::serial::write_string_always("[USER-FAULT] kind=");
     crate::hal::serial::write_string_always(if is_instruction {
         "instruction"
     } else {
         "data"
     });
-    crate::hal::serial::write_string(" far=");
+    crate::hal::serial::write_string_always(" far=");
     crate::hal::serial::write_hex_u64_always(far);
     crate::hal::serial::write_string_always(" elr=");
-    crate::hal::serial::write_hex_u64_always(tf.elr_el1);
+    crate::hal::serial::write_hex_u64_always(elr);
     crate::hal::serial::write_string_always("\r\n");
-    // Loop here so the schedule can pick up the faulted thread.
-    loop {
-        unsafe { asm!("wfi", options(nostack)) };
+
+    // Terminate the current thread so the scheduler can reap it.
+    // Previously this was a wfi loop that permanently parked the CPU,
+    // hanging the entire system when a user process crashed.
+    let thread = crate::arch::common::percpu::get_current().current_thread;
+    if !thread.is_null() {
+        crate::ps::thread::terminate(thread, 0xC000_0005u32);
     }
+    // Yield the CPU back to the scheduler. Returning from this trap
+    // would eret to the faulting instruction and fault forever.
+    crate::ke::scheduler::tick();
+    crate::ke::scheduler::dispatch_pending_reschedule();
 }
 
 /// Mark a user-mode synchronous fault as fatal.
 fn handle_user_sync_fault(tf: &mut TrapFrame, ec: u64, iss: u64) {
-    // Future: deliver a STATUS_ACCESS_VIOLATION exception to the
-    // user thread; for now we just halt the CPU.
+    let far = tf.far_el1;
     crate::hal::serial::write_string_always("[USER-FAULT] ec=");
     crate::hal::serial::write_hex_u64_always(ec);
     crate::hal::serial::write_string_always(" iss=");
     crate::hal::serial::write_hex_u64_always(iss);
     crate::hal::serial::write_string_always(" far=");
-    crate::hal::serial::write_hex_u64_always(tf.far_el1);
+    crate::hal::serial::write_hex_u64_always(far);
     crate::hal::serial::write_string_always(" elr=");
     crate::hal::serial::write_hex_u64_always(tf.elr_el1);
     crate::hal::serial::write_string_always("\r\n");
-    loop {
-        unsafe { asm!("wfi", options(nostack)) };
+
+    // Same treatment as page faults: terminate the faulting thread
+    // and yield back to the scheduler instead of hanging the CPU.
+    let thread = crate::arch::common::percpu::get_current().current_thread;
+    if !thread.is_null() {
+        crate::ps::thread::terminate(thread, 0xC000_0005u32);
     }
+    // Same treatment as page faults: never return to the faulting PC.
+    crate::ke::scheduler::tick();
+    crate::ke::scheduler::dispatch_pending_reschedule();
 }
 
 /// Smoke test: verify VBAR_EL1 has been set to our exception vector

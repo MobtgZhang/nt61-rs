@@ -67,7 +67,7 @@ pub fn install_hyperspace(_pml4_pfn: PfnNumber) -> Result<(), SelfMapError> {
 
 #[cfg(not(target_arch = "x86_64"))]
 #[inline]
-pub fn ensure_low_identity_map(pa_base: u64, size: u64) {
+pub fn ensure_low_identity_map(pa_base: u64, size: u64) -> bool {
     // NOTE: pa_base == 0 is a valid call. The LoongArch64
     // bootstrap depends on ensure_low_identity_map(0, limit)
     // mapping the entire low-RAM window so the kernel heap
@@ -84,6 +84,7 @@ pub fn ensure_low_identity_map(pa_base: u64, size: u64) {
         size,
         mapped
     );
+    mapped
 }
 
 #[cfg(not(target_arch = "x86_64"))]

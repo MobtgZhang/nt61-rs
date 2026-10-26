@@ -119,11 +119,13 @@ impl A64Emitter {
     /// Patch a branch instruction at site with a PC-relative offset.
     /// The offset is in instruction words from the branch itself.
     pub fn fix_branch(&self, site: usize, kind: &FixupKind, rel_words: i32) -> u32 {
+        let _ = site;
         let imm26 = (rel_words & 0x03FF_FFFF) as u32;
         match kind {
             FixupKind::Cond(cond) => {
                 // B.cond: 0101_0100 | imm19 | 0 | cond
-                let imm19 = ((rel_words >> 2) & 0x7_FFFF) as u32;
+                // imm19 is the offset in words (rel_words already is).
+                let imm19 = (rel_words & 0x7_FFFF) as u32;
                 0x5400_0000 | (imm19 << 5) | cond
             }
             FixupKind::B => {
@@ -323,8 +325,15 @@ impl A64Emitter {
 
     /// Encode STR Xt, [SP, #-imm9]! (pre-indexed decrement).
     pub fn emit_str_pre_sp(&mut self, rt: u8, imm9: i32) {
+        // STR (register, pre-index): 1 x 11 1000 000 | 0 | Rn | 1 1 1 1 1 1 1 1 1 | 0 0 | imm9 | Rn | Rt
+        // Correct encoding: 0xF81F_0C00 pattern
+        // str x2, [sp, #-8]! = 0xF81F8FE2
+        // Format: size[31:30]=11, V=0, o[29:27]=000, L=0, 0/1 [26:24]=0000,
+        // S [23]=1, 1 [22]=1, 1 [21]=1, Rn [20:16], Rm/imm [15:0]
+        // For pre-index: 0b111_11000_010_1_1_111_Rn(31)_imm9_11_Rt
         let imm = (imm9 & 0x1FF) as u32;
-        let word: u32 = 0xF82F_0000 | (imm & 0x1FF) << 12 | 0x0C00
+        let word: u32 = 0xF81F_0000
+            | (imm & 0x1FF) << 12
             | 31 << 5
             | rt as u32;
         self.push(word);
@@ -332,8 +341,12 @@ impl A64Emitter {
 
     /// Encode LDR Xt, [SP], #imm9 (post-indexed increment).
     pub fn emit_ldr_post_sp(&mut self, rt: u8, imm9: i32) {
+        // LDR (register, post-index): post-index has bit11=1, bit10=0
+        // ldr x3, [sp], #8 = 0xF84087E3
         let imm = (imm9 & 0x1FF) as u32;
-        let word: u32 = 0xF843_0000 | (imm & 0x1FF) << 12 | 31 << 5
+        let word: u32 = 0xF840_0000
+            | (imm & 0x1FF) << 12
+            | 31 << 5
             | rt as u32;
         self.push(word);
     }
@@ -397,15 +410,15 @@ impl A64Emitter {
                     _ => 3,
                 };
                 if shift_amt > 0 {
-                    let word: u32 = 0xD340_0000 | 0xFC0 // LSL (alias of UBFM)
-                        | (ri as u32) << 5
-                        | 17;
-                    // Actually: use MOV X17, Xi; LSL X17, X17, #shift
                     self.emit_mov_reg(17, ri);
                     // LSL X17, X17, #shift_amt
-                    let lsl_word: u32 = 0xD340_FC00 | 0 // LSL X17, X17, #shift
-                        | ((shift_amt as u32) & 0x3F) << 16
-                        | (ri as u32) << 5
+                    // LSL is an alias of UBFM Xd, Xn, #(64-shift), #(63-shift)
+                    let immr = ((64 - shift_amt) & 0x3F) as u32;
+                    let imms = ((63 - shift_amt) & 0x3F) as u32;
+                    let lsl_word: u32 = 0xD340_0000
+                        | immr << 16
+                        | imms << 10
+                        | (17 as u32) << 5
                         | 17;
                     self.push(lsl_word);
                 } else {
@@ -439,9 +452,12 @@ impl A64Emitter {
                 };
                 self.emit_mov_reg(17, ri);
                 if shift_amt > 0 {
-                    let lsl_word: u32 = 0xD340_FC00
-                        | ((shift_amt as u32) & 0x3F) << 16
-                        | (ri as u32) << 5
+                    let immr = ((64 - shift_amt) & 0x3F) as u32;
+                    let imms = ((63 - shift_amt) & 0x3F) as u32;
+                    let lsl_word: u32 = 0xD340_0000
+                        | immr << 16
+                        | imms << 10
+                        | (17 as u32) << 5
                         | 17;
                     self.push(lsl_word);
                 }
@@ -596,6 +612,14 @@ pub fn encode_block(ir: &[IrInst], guest_start: u64) -> CodeBlock {
             }
             IROp::Unsupported => {
                 // Emit BRK #0 to signal an unsupported instruction.
+                let word: u32 = 0xD420_0000;
+                em.push(word);
+            }
+            IROp::SimdMov { .. } | IROp::SimdStore { .. } | IROp::SimdArith { .. } => {
+                // SIMD operations are not yet supported by the A64
+                // emitter. Emit BRK #0 so that a trap handler can
+                // fall back to interpretation rather than executing
+                // garbage.
                 let word: u32 = 0xD420_0000;
                 em.push(word);
             }

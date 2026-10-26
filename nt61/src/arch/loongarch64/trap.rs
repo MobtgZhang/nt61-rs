@@ -232,6 +232,10 @@ pub extern "C" fn trap_dispatch(frame: *mut TrapFrame) {
                         options(nostack),
                     );
                 }
+                crate::ke::timer::tick();
+                crate::ke::scheduler::tick();
+                crate::ke::psss::psss_tick();
+                crate::ke::scheduler::dispatch_pending_reschedule();
             }
         }
         _ => {

@@ -60,8 +60,20 @@ pub mod syscall_bridge;
 pub use translation_manager::{TranslationManager, TranslationRequest};
 pub use code_cache::{CodeCache, TranslationUnit};
 
+/// Initialise the BTL subsystem. Currently a no-op; the code cache
+/// and translation manager are self-contained statics.
+pub fn init() {}
+
+/// Feature bits reported by the BTL interface.
+pub const BTL_FEATURE_X86_64_TRANSLATION: u32 = 1 << 0;
+pub const BTL_FEATURE_SYSCALL_BRIDGE: u32 = 1 << 1;
+pub const BTL_FEATURE_ARM32_TRANSLATION: u32 = 1 << 2;
+
 /// BTL feature flag shared with `Cargo.toml`.
-pub const BTL_FEATURES: u32 = 0;
+///
+/// x86_64 translation works; the syscall bridge and the ARM32
+/// translator are not implemented and stay off so callers fail closed.
+pub const BTL_FEATURES: u32 = BTL_FEATURE_X86_64_TRANSLATION;
 
 /// Compile-time gate for the BTL subsystem. Set `feature = "btl"`
 /// to enable the heavy components (decoder, IR, codegen). Until
