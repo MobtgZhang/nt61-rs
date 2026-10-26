@@ -111,7 +111,13 @@ unsafe fn install_intermediate(parent_table_phys: u64, parent_idx: usize, level:
         None => return false,
     };
     let new_pa = pfn_to_phys(pfn);
-    crate::mm::vas::ensure_low_identity_map(new_pa & !0x1F_FFFF, 0x20_0000);
+    // The fresh table page must be identity-mapped before it can be
+    // zeroed; on failure fail closed and return the page to the free
+    // list (free_pfn only relinks the page, its contents do not matter).
+    if !crate::mm::vas::ensure_low_identity_map(new_pa & !0x1F_FFFF, 0x20_0000) {
+        crate::mm::pfn::free_pfn(pfn);
+        return false;
+    }
     ptr::write_bytes(new_pa as *mut u8, 0, PAGE_SIZE as usize);
 
     if !write_table_entry(

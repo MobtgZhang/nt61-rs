@@ -14,8 +14,15 @@
 //! not a probe — it accepts unmapped memory, and the dereference then faults
 //! inside the kernel instead of raising a catchable access violation.
 
-/// In Windows x64, user-mode address space is limited to 0x00007FFF_FFFFFFFF
-const USER_MAX_ADDRESS: usize = 0x7FFF_FFFF_FFFF;
+/// In Windows x64, user-mode address space is limited to 0x00007FFF_FFFFFFFF.
+/// Single source of truth: pinned to `mm::constants::USER_LIMIT` so the
+/// syscall layer and the memory manager can never drift apart. The const
+/// assertion turns any drift in `mm` into a compile error.
+const USER_MAX_ADDRESS: usize = crate::mm::constants::USER_LIMIT as usize;
+const _: () = assert!(
+    USER_MAX_ADDRESS as u64 == crate::mm::constants::USER_LIMIT,
+    "USER_MAX_ADDRESS must track mm::constants::USER_LIMIT",
+);
 
 // NTSTATUS is a signed 32-bit value in the documented ABI, so the probe
 // helpers report it as `i32` and callers can return it directly from a
@@ -134,16 +141,22 @@ pub unsafe fn probe_for_read_string(address: *const u8, max_length: usize) -> Re
         return Err(STATUS_ACCESS_VIOLATION);
     }
 
+    // Scan page by page: probe every page of the stretch once and copy
+    // it into a stack buffer, instead of re-walking the page tables for
+    // every single byte. The probe covers the whole chunk, so no byte
+    // is ever dereferenced unvalidated.
+    const PAGE: usize = 4096;
     let mut len = 0;
     while len < max_length {
-        probe_for_read(address.add(len), 1)?;
-        let mut byte = 0u8;
-        crate::mm::user_copy::read_user(address.add(len) as u64, &mut byte)?;
-        if byte == 0 {
-            return Ok(len);
+        let page_remaining = PAGE - ((addr + len) % PAGE);
+        let chunk = page_remaining.min(max_length - len);
+        probe_for_read(address.add(len), chunk)?;
+        let mut buf = [0u8; PAGE];
+        crate::mm::user_copy::copy_from_user(&mut buf[..chunk], (addr + len) as u64)?;
+        if let Some(pos) = buf[..chunk].iter().position(|&b| b == 0) {
+            return Ok(len + pos);
         }
-
-        len += 1;
+        len += chunk;
     }
 
     Err(STATUS_INVALID_PARAMETER)
@@ -165,16 +178,24 @@ pub unsafe fn probe_for_read_unicode_string(
         return Err(STATUS_ACCESS_VIOLATION);
     }
 
+    // Same page-wise scan as `probe_for_read_string`, in UTF-16 code
+    // units. The pointer is 2-aligned, so every chunk stays within one
+    // page.
+    const PAGE: usize = 4096;
     let mut len = 0;
     while len < max_length {
-        probe_for_read(address.add(len) as *const u8, 2)?;
-        let mut character = 0u16;
-        crate::mm::user_copy::read_user(address.add(len) as u64, &mut character)?;
-        if character == 0 {
-            return Ok(len);
+        let page_remaining = PAGE - ((addr + len * 2) % PAGE);
+        let chars = (page_remaining / 2).min(max_length - len);
+        probe_for_read(address.add(len) as *const u8, chars * 2)?;
+        let mut buf = [0u16; PAGE / 2];
+        crate::mm::user_copy::copy_from_user(
+            core::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, chars * 2),
+            (addr + len * 2) as u64,
+        )?;
+        if let Some(pos) = buf[..chars].iter().position(|&c| c == 0) {
+            return Ok(len + pos);
         }
-
-        len += 1;
+        len += chars;
     }
 
     Err(STATUS_INVALID_PARAMETER)
@@ -224,24 +245,6 @@ pub unsafe fn capture_user_string(
     }
     crate::mm::user_copy::copy_from_user(&mut dst[..len], address as u64)?;
     Ok(len)
-}
-
-#[macro_export]
-macro_rules! probe_read {
-    ($ptr:expr, $size:expr) => {
-        unsafe {
-            $crate::arch::x86_64::syscall_validation::probe_for_read($ptr as *const u8, $size)?
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! probe_write {
-    ($ptr:expr, $size:expr) => {
-        unsafe {
-            $crate::arch::x86_64::syscall_validation::probe_for_write($ptr as *mut u8, $size)?
-        }
-    };
 }
 
 #[cfg(test)]

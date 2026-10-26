@@ -105,7 +105,25 @@ extern "C" {
     pub fn fpu_save(state_buffer: *mut u8);
     pub fn fpu_restore(state_buffer: *mut u8);
     pub fn fpu_init(state_buffer: *mut u8);
+    fn ki_thread_trampoline();
 }
+
+// ki_thread_trampoline: runs on a freshly seeded thread stack (see
+// push_context). After swap_context's final ret lands here, the top
+// of the stack holds the thread entry point and its argument:
+//   [rsp]     = arg0  (loaded into rdi, SysV first argument)
+//   [rsp + 8] = entry (called with rdi as its argument)
+// System threads must never return from their entry; a return is a
+// kernel bug, so trap instead of unwinding into garbage.
+global_asm!(
+    ".global ki_thread_trampoline",
+    "ki_thread_trampoline:",
+    "    mov rdi, [rsp]",
+    "    mov rax, [rsp + 8]",
+    "    add rsp, 16",
+    "    call rax",
+    "    ud2",
+);
 
 /// Size of FPU state buffer for XSAVE/XRSTOR (512 bytes for XMM + header)
 /// Must be 64-byte aligned for xsave/xrstor instructions.
@@ -223,17 +241,22 @@ impl Default for ThreadStateBuffer {
 /// return the new stack pointer. `entry` is the function the
 /// thread will start in; `arg0` is the single argument
 /// (a-la SysV calling convention).
+///
+/// The frame is laid out for swap_context's resume protocol: the
+/// stored RSP points at the lowest popped register (r15), and the
+/// ret at the end of the register pops lands on the trampoline
+/// address with the entry point and argument staged just above it.
 pub fn push_context(stack_top: u64, entry: u64, arg0: u64) -> u64 {
     unsafe {
         let mut sp = stack_top;
-        // Top of the new stack: argument (passed in rdi), then
-        // the return address. The kernel's entry thunk pops
-        // the argument and calls the user entry.
         sp -= 8;
-        *(sp as *mut u64) = arg0;
+        *(sp as *mut u64) = entry; // read by the trampoline at [rsp + 8]
         sp -= 8;
-        *(sp as *mut u64) = entry;
-        // ContextFrame fields, pushed in reverse-pop order.
+        *(sp as *mut u64) = arg0; // read by the trampoline at [rsp]
+        sp -= 8;
+        *(sp as *mut u64) = ki_thread_trampoline as *const () as u64;
+        // ContextFrame fields written so the resume pops read them
+        // back in pop order (r15 at the lowest address).
         sp -= 8;
         *(sp as *mut u64) = 0; // r15
         sp -= 8;
@@ -248,6 +271,13 @@ pub fn push_context(stack_top: u64, entry: u64, arg0: u64) -> u64 {
         *(sp as *mut u64) = 0; // rbx
         sp
     }
+}
+
+/// Seed a brand-new kernel context onto a fresh thread stack.
+/// Returns the kernel RSP to store in kthread.context.kernel_rsp so
+/// the dispatcher can switch to the thread (ke_sched P0-8).
+pub fn seed_thread_context(stack_top: u64, entry: u64, arg0: u64) -> u64 {
+    push_context(stack_top, entry, arg0)
 }
 
 // =============================================================================

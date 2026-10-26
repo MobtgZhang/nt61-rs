@@ -193,6 +193,11 @@ pub extern "C" fn ntoskrnl_kisystemstartup_thunk(
         "[NTOSKRNL-HOST] K01: arch::init_hardware (PIC/GDT/IDT/TSS/SYSCALL) before SMSS"
     );
 
+    // Converge with kernel_main Phase 0: firmware may have left
+    // interrupts enabled, and a stray IRQ before the dispatch vectors
+    // are ready can fault.
+    crate::arch::disable_interrupts();
+
     #[cfg(target_arch = "x86_64")]
     {
         crate::arch::init_hardware();
@@ -276,6 +281,32 @@ pub extern "C" fn ntoskrnl_kisystemstartup_thunk(
     }
 
     // =======================================================================
+    // PHASE K02b: core subsystem bring-up (kernel_main convergence)
+    // =======================================================================
+    // The disk-KiSystemStartup callback path never runs kernel_main,
+    // so the HAL, executive, object manager, registry (including the
+    // disk hives via cm::init), I/O manager and LPC had never been
+    // initialised on this path. Bring them up here in the same order
+    // kernel_main uses so both entry paths converge on the same
+    // initialised state before the driver and SMSS phases run.
+    crate::hal::serial::write_string_always("K:H2B\r\n");
+    crate::hal::init();
+    crate::hal::text_console::init();
+
+    crate::ke::init();
+    crate::ob::init();
+
+    crate::registry::init();
+    if !boot_info.is_null() {
+        // SAFETY: boot_info was validated above; cm::init only reads
+        // the hive list winload published in BootInfo.
+        crate::registry::cm::init(unsafe { &*boot_info });
+    }
+
+    crate::io::init();
+    crate::lpc::init();
+
+    // =======================================================================
     // PHASE K03: fs::mount_esp / mount_sys / mount_ramdisk / fs::init
     // =======================================================================
     crate::rtl::windows_log::write_kernel_phase_header(3);
@@ -296,15 +327,10 @@ pub extern "C" fn ntoskrnl_kisystemstartup_thunk(
     );
 
     // =======================================================================
-    // PHASE K04: cm::init(boot_info) — reserved
+    // PHASE K04: registry/CM (already brought up at K02b)
     // =======================================================================
-    // The CM bring-up currently lives inside kernel_main (Phase 007
-    // registry). The disk-loaded ntoskrnl.exe's stub doesn't have
-    // its own CM, so we just mark the boundary and rely on whatever
-    // kernel_main has already done. A future refactor will move
-    // cm::init here so the disk ntoskrnl really owns its registry.
     crate::rtl::windows_log::write_kernel_phase_header(4);
-    crate::boot_println!("[NTOSKRNL-HOST] K04: CM (registry) handled by kernel_main Phase 007");
+    crate::boot_println!("[NTOSKRNL-HOST] K04: CM (registry) initialised at K02b (kernel_main convergence)");
 
     // =======================================================================
     // PHASE K05: io::init / pnp::init (BOOT_START drivers)
@@ -416,6 +442,15 @@ pub extern "C" fn ntoskrnl_kisystemstartup_thunk(
     );
     let _started = crate::drivers::bus::pnp::start_all_pending();
     crate::boot_debug_println!("[NTOSKRNL-HOST] K08d: pnp::start_all_pending returned");
+
+    // Converge with kernel_main Phases 8/10: the process/thread
+    // subsystem must be live before the SMSS chain creates processes,
+    // and the server + library stubs must be initialised before the
+    // session manager runs.
+    crate::hal::serial::write_string_always("K:H8E\r\n");
+    crate::ps::init();
+    crate::servers::init();
+    crate::libs::init();
 
     // =======================================================================
     // PHASE K09: Configuration Manager (registry) re-init

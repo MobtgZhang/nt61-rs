@@ -18,7 +18,7 @@ fn pfn_to_phys(pfn: PfnNumber) -> u64 {
 /// self-map windows expose the appropriate page-table level.
 pub fn install_recursive_self_map(pml4_pfn: PfnNumber) -> Result<(), SelfMapError> {
     let pml4_phys = pfn_to_phys(pml4_pfn);
-    const SELF_RW: u64 = 0x1 | 0x2 | 0x4 | 0x20 | 0x40;
+    const SELF_RW: u64 = 0x1 | 0x2 | 0x20 | 0x40;
     let pml4 = pml4_phys as *mut MMPTE;
 
     let saved_cr0: u64;
@@ -49,7 +49,7 @@ pub fn install_recursive_self_map(pml4_pfn: PfnNumber) -> Result<(), SelfMapErro
 /// self-map entry alone cannot reach the temporary-mapping PTEs.
 pub fn install_hyperspace_tables(pml4_pfn: PfnNumber) -> Result<(), SelfMapError> {
     let pml4_phys = pfn_to_phys(pml4_pfn);
-    const TABLE_RW: u64 = 0x1 | 0x2 | 0x4 | 0x20 | 0x40;
+    const TABLE_RW: u64 = 0x1 | 0x2 | 0x20 | 0x40;
 
     let pdpt_pfn = pfn::allocate_pfn().ok_or(SelfMapError::OutOfMemory)?;
     let pd_pfn = pfn::allocate_pfn().ok_or(SelfMapError::OutOfMemory)?;
@@ -59,9 +59,14 @@ pub fn install_hyperspace_tables(pml4_pfn: PfnNumber) -> Result<(), SelfMapError
     let pd_phys = pfn_to_phys(pd_pfn);
     let pt_phys = pfn_to_phys(pt_pfn);
 
-    ensure_low_identity_map(pdpt_phys & !0x1F_FFFF, 0x20_0000);
-    ensure_low_identity_map(pd_phys & !0x1F_FFFF, 0x20_0000);
-    ensure_low_identity_map(pt_phys & !0x1F_FFFF, 0x20_0000);
+    // Propagate mapping failures: without the identity map these fresh
+    // table pages cannot be zeroed below and the first write would #PF.
+    if !ensure_low_identity_map(pdpt_phys & !0x1F_FFFF, 0x20_0000)
+        || !ensure_low_identity_map(pd_phys & !0x1F_FFFF, 0x20_0000)
+        || !ensure_low_identity_map(pt_phys & !0x1F_FFFF, 0x20_0000)
+    {
+        return Err(SelfMapError::IdentityMappingFailed);
+    }
 
     let pml4 = pml4_phys as *mut MMPTE;
     let pdpt = pdpt_phys as *mut MMPTE;
@@ -121,8 +126,8 @@ pub fn install_single_level(pml4_phys: u64) {
             options(nostack, preserves_flags),
         );
         let pml4e = pte.add(MI_SELF_MAP_INDEX * 8) as *mut MMPTE;
-        // Self-map entry: P=1, R/W=1, U=1, A=1, D=1
-        (*pml4e).set_hardware(pml4_phys, 0x1 | 0x2 | 0x4 | 0x20 | 0x40);
+        // Self-map entry: P=1, R/W=1, A=1, D=1
+        (*pml4e).set_hardware(pml4_phys, 0x1 | 0x2 | 0x20 | 0x40);
         core::arch::asm!(
             "mov cr0, {}",
             in(reg) saved_cr0,
@@ -143,7 +148,7 @@ pub fn install_single_level_self_map_direct(pml4_phys: u64) {
     // The PML4 is at pml4_phys (identity-mapped in UEFI).
     // We write directly to the PML4[MI_SELF_MAP_INDEX] entry.
     // Self-map entry: P=1, R/W=1, U=1, A=1, D=1
-    const SELF_RW: u64 = 0x1 | 0x2 | 0x4 | 0x20 | 0x40;
+    const SELF_RW: u64 = 0x1 | 0x2 | 0x20 | 0x40;
     unsafe {
         let pml4 = pml4_phys as *mut MMPTE;
         (*pml4.add(MI_SELF_MAP_INDEX)).set_hardware(pml4_phys, SELF_RW);
@@ -180,7 +185,15 @@ pub fn _direct_self_map_keepalive(pml4_phys: u64) {
 /// We deliberately use 2 MiB large pages instead of 4 KiB pages to
 /// keep the page-table footprint small: a 32 MiB capture buffer
 /// needs 16 PDEs versus 8192 PT entries.
-pub fn ensure_low_identity_map(pa_base: u64, size: u64) {
+///
+/// Returns `true` when every 2 MiB slice of `[pa_base, pa_base + size)`
+/// is identity-mapped and verified. Returns `false` when a page-table
+/// allocation failed mid-way (the remaining slices stay unmapped and the
+/// partially built table pages are intentionally leaked: they cannot be
+/// safely written or handed back), or when the read-back verification
+/// finds a bad entry. Callers must treat the region as unreachable in
+/// that case instead of assuming VA == PA works.
+pub fn ensure_low_identity_map(pa_base: u64, size: u64) -> bool {
     crate::boot_debug_println!(
         "[VAS] ensure_low_identity_map: pa_base=0x{:x} size=0x{:x}",
         pa_base,
@@ -188,10 +201,12 @@ pub fn ensure_low_identity_map(pa_base: u64, size: u64) {
     );
     if size == 0 {
         crate::boot_debug_println!("[VAS] ensure_low_identity_map: zero range, skipping");
-        return;
+        return true;
     }
     const TWO_MB: u64 = 2 * 1024 * 1024;
-    const PDE_2MB_FLAGS: u64 = 0x1 | 0x2 | 0x4 | 0x20 | 0x40 | 0x80; // P|RW|US|A|D|PS
+    // U (0x4) deliberately omitted: kernel identity mappings must not be
+    // user-accessible (ring-3 pointers must not reach low physical pages).
+    const PDE_2MB_FLAGS: u64 = 0x1 | 0x2 | 0x20 | 0x40 | 0x80; // P|RW|A|D|PS
 
     let start = pa_base & !(TWO_MB - 1);
     let end_unaligned = pa_base.saturating_add(size);
@@ -205,7 +220,10 @@ pub fn ensure_low_identity_map(pa_base: u64, size: u64) {
     let pml4_phys = crate::arch::read_current_page_root();
     crate::boot_debug_println!("[VAS] ensure_low_identity_map: pml4_phys=0x{:x}", pml4_phys);
     if pml4_phys == 0 {
-        return;
+        // No active page root to install entries into; the mapping
+        // cannot be created, so fail closed instead of silently
+        // returning with nothing mapped.
+        return false;
     }
     let pml4 = pml4_phys as *mut MMPTE;
 
@@ -227,6 +245,7 @@ pub fn ensure_low_identity_map(pa_base: u64, size: u64) {
         );
     }
 
+    let mut ok = true;
     let mut cur = start;
     crate::boot_debug_println!(
         "[VAS] ensure_low_identity_map: scanning PML4[0]={:016x} PML4[1]={:016x}",
@@ -250,10 +269,18 @@ pub fn ensure_low_identity_map(pa_base: u64, size: u64) {
                             "[VAS] ensure_low_identity_map: PDPT alloc failed at cur=0x{:x}",
                             cur
                         );
+                        ok = false;
                         break;
                     }
                 };
-                ensure_low_identity_map(new_pdpt & !(TWO_MB - 1), TWO_MB);
+                // The new table page must itself be identity-mapped
+                // before it can be zeroed. On failure fail closed: the
+                // page is left allocated (leaked) rather than installed
+                // with uninitialised contents.
+                if !ensure_low_identity_map(new_pdpt & !(TWO_MB - 1), TWO_MB) {
+                    ok = false;
+                    break;
+                }
                 core::ptr::write_bytes(new_pdpt as *mut u8, 0, 4096);
                 (*pml4e).set_hardware(new_pdpt, INT_PTE_BITS);
             }
@@ -268,10 +295,14 @@ pub fn ensure_low_identity_map(pa_base: u64, size: u64) {
                     None => {
                         crate::boot_println!("[VAS] ensure_low_identity_map: PD alloc failed at cur=0x{:x} pdpt_phys=0x{:x} pdpt_idx={}",
                             cur, pdpt_phys, pdpt_idx);
+                        ok = false;
                         break;
                     }
                 };
-                ensure_low_identity_map(new_pd & !(TWO_MB - 1), TWO_MB);
+                if !ensure_low_identity_map(new_pd & !(TWO_MB - 1), TWO_MB) {
+                    ok = false;
+                    break;
+                }
                 core::ptr::write_bytes(new_pd as *mut u8, 0, 4096);
                 (*pdpte).set_hardware(new_pd, INT_PTE_BITS);
             }
@@ -332,9 +363,19 @@ pub fn ensure_low_identity_map(pa_base: u64, size: u64) {
             let pdpt_idx = ((verify_cur >> 30) & 0x1FF) as usize;
             let pd_idx = ((verify_cur >> 21) & 0x1FF) as usize;
             let pml4e_raw = (*pml4.add(pml4_idx)).raw();
+            if pml4e_raw & 1 == 0 {
+                bad += 1;
+                verify_cur += TWO_MB;
+                continue;
+            }
             let pdpt_phys = pml4e_raw & !0xFFFu64;
             let pdpt = pdpt_phys as *mut MMPTE;
             let pdpte = (*pdpt.add(pdpt_idx)).raw();
+            if pdpte & 1 == 0 {
+                bad += 1;
+                verify_cur += TWO_MB;
+                continue;
+            }
             let pd_phys = pdpte & !0xFFFu64;
             let pd = pd_phys as *mut MMPTE;
             let pde = (*pd.add(pd_idx)).raw();
@@ -355,6 +396,7 @@ pub fn ensure_low_identity_map(pa_base: u64, size: u64) {
             verify_cur += TWO_MB;
         }
         crate::boot_debug_println!("[VAS] verify: {} PDEs, {} bad", count, bad);
+        ok & (bad == 0)
     }
 }
 
@@ -366,7 +408,8 @@ pub fn ensure_low_identity_map(pa_base: u64, size: u64) {
 pub fn install_with_identity_map(pml4_pfn: PfnNumber) -> Result<(), SelfMapError> {
     let pml4_phys = pfn_to_phys(pml4_pfn);
     crate::boot_debug_println!("[VAS] install_self_map: pml4_pfn=0x{:x}", pml4_phys);
-    const SELF_RW: u64 = 0x1 | 0x2 | 0x4 | 0x20 | 0x40;
+    // U (0x4) omitted: this identity mapping is for kernel use only.
+    const SELF_RW: u64 = 0x1 | 0x2 | 0x20 | 0x40;
 
     let pml4 = pml4_phys as *mut MMPTE;
 
@@ -455,14 +498,14 @@ pub fn install_with_identity_map(pml4_pfn: PfnNumber) -> Result<(), SelfMapError
         unsafe {
             core::ptr::write_bytes(pdpt_phys_id as *mut u8, 0, 4096);
             core::ptr::write_bytes(pd_phys_id as *mut u8, 0, 4096);
-            (*pml4.add(pml4_self_idx)).set_hardware(pdpt_phys_id, 0x1 | 0x2 | 0x4 | 0x20 | 0x40);
+            (*pml4.add(pml4_self_idx)).set_hardware(pdpt_phys_id, 0x1 | 0x2 | 0x20 | 0x40);
             let pdpt_va = pdpt_phys_id as *mut MMPTE;
             let pdpt_idx = ((pml4_phys >> 30) & 0x1FF) as usize;
-            (*pdpt_va.add(pdpt_idx)).set_hardware(pd_phys_id, 0x1 | 0x2 | 0x4 | 0x20 | 0x40);
+            (*pdpt_va.add(pdpt_idx)).set_hardware(pd_phys_id, 0x1 | 0x2 | 0x20 | 0x40);
             let pd_idx = ((pml4_phys >> 21) & 0x1FF) as usize;
             let pd_va = pd_phys_id as *mut MMPTE;
             (*pd_va.add(pd_idx))
-                .set_hardware(pml4_phys & !0x1F_FFFF, 0x1 | 0x2 | 0x4 | 0x20 | 0x40 | 0x80);
+                .set_hardware(pml4_phys & !0x1F_FFFF, 0x1 | 0x2 | 0x20 | 0x40 | 0x80);
         }
     // [DISABLED-KPRINTLN]         // // kprintln!("[VAS] Added identity-mapping: PML4[0x{:x}] -> PDPT, PDPT[0x{:x}] -> PD(large), PD[0x{:x}] -> 0x{:x}",
     // //     // [DISABLED-KPRINTLN]             pml4_self_idx, pdpt_idx, pd_idx, pml4_phys & !0x1F_FFFF);

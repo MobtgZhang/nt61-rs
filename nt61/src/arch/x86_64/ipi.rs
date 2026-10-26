@@ -13,7 +13,7 @@ use crate::hal::x86_64::apic::{apic_read, apic_write, lapic_reg};
 use crate::ke::sync::Spinlock;
 use alloc::collections::VecDeque;
 use core::arch::asm;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 
 /// IPI vector assignments
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -338,4 +338,40 @@ pub fn flush_tlb_page(vaddr: u64) {
     // For simplicity, send full TLB flush to other CPUs
     // A more sophisticated implementation would send the address
     broadcast_tlb_flush_ipi();
+}
+
+/// Cached dynamically-allocated IPI vector for the TLB shootdown
+/// (0 == not yet allocated, 1 == allocation failed).
+static TLB_SHOOTDOWN_VECTOR: AtomicU8 = AtomicU8::new(0);
+
+/// Broadcast the kernel cross-core TLB shootdown IPI.
+///
+/// The legacy `IpiVector::TlbFlush` (0xF1) is outside the vector
+/// range the IDT actually dispatches (0xE0..=0xEF, see
+/// `ke::dispatch::IPI_DYNAMIC_BASE`), so the shootdown uses a vector
+/// allocated from the dynamic range instead. Allocation happens once
+/// and is cached; senders are serialised by the shootdown lock in
+/// `ke::tlb_shootdown`, so the first-time registration cannot race.
+pub fn broadcast_tlb_shootdown() {
+    let cached = TLB_SHOOTDOWN_VECTOR.load(Ordering::Acquire);
+    let vector = match cached {
+        0 => {
+            let allocated = crate::ke::dispatch::allocate_ipi_vector(
+                crate::ke::tlb_shootdown::handle_shootdown_interrupt,
+            );
+            match allocated {
+                Some(v) => {
+                    TLB_SHOOTDOWN_VECTOR.store(v, Ordering::Release);
+                    v
+                }
+                None => {
+                    TLB_SHOOTDOWN_VECTOR.store(1, Ordering::Release);
+                    return;
+                }
+            }
+        }
+        1 => return,
+        v => v,
+    };
+    broadcast_ipi_raw(vector as u32, IpiDeliveryMode::Fixed);
 }

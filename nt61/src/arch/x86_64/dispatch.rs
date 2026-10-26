@@ -462,6 +462,23 @@ pub extern "win64" fn dispatch_trap_frame(vector: u64, tf: *mut TrapFrame) {
         // function parameter, and the CPU-pushed error_code has been
         // saved into the local `error_code` variable above.
 
+        // ke_sched P0-7: the interrupt dispatcher never published an
+        // IRQL, so every handler ran at PASSIVE_LEVEL and kernel code
+        // could not tell it was inside an interrupt. Raise the IRQL to
+        // the vector's class for the duration of the handler; CPU
+        // exception vectors (0-31) keep the current IRQL.
+        let saved_interrupt_irql = if vector >= 32 {
+            let level = match vector {
+                32 => crate::ke::irql::Irql::ClockLevel,
+                33..=47 => crate::ke::irql::Irql::from_device_level((vector - 29) as u8),
+                0xE0..=0xEF => crate::ke::irql::Irql::IpiLevel,
+                _ => crate::ke::irql::Irql::DispatchLevel,
+            };
+            Some(crate::ke::irql::raise_irql(level))
+        } else {
+            None
+        };
+
         match vector {
             // === CPU EXCEPTIONS (Vectors 0-31) ===
             0 => { /* #DE - Divide Error - handled by CPU */ }
@@ -558,17 +575,27 @@ pub extern "win64" fn dispatch_trap_frame(vector: u64, tf: *mut TrapFrame) {
                         crate::hal::x86_64::pic::irq_dispatch(0);
                     }
                     crate::boot_println!("[DT32] after irq_dispatch before tick");
+                    // ke_sched P0-5: run the kernel-timer expiry pass —
+                    // ke::timer::tick() was never wired into the clock
+                    // ISR, so armed KTIMERs never fired.
+                    crate::ke::timer::tick();
                     crate::ke::scheduler::tick();
+                    // ke_sched P0-5: the PSSS workers and the dispatcher
+                    // wait list (wait-timeout expiry) also ran on no
+                    // clock path at all — `psss_tick` had no callers,
+                    // so `KeWaitForSingleObject` timeouts never
+                    // expired. Run it alongside the other tick passes.
+                    crate::ke::psss::psss_tick();
                     crate::boot_println!("[DT32] after tick");
                     // ISR exit: the clock ISR itself runs at CLOCK_LEVEL and
                     // cannot swap context. Lower to DISPATCH_LEVEL, retire any
                     // deferred work, and only then honour the reschedule the
                     // ISR recorded.
-                    let dispatch_irql =
-                        crate::ke::irql::raise_irql(crate::ke::irql::Irql::DispatchLevel);
+                    // We entered this handler at CLOCK_LEVEL (raised in
+                    // the dispatcher prologue), so drop instead of raise.
+                    crate::ke::irql::lower_irql(crate::ke::irql::Irql::DispatchLevel);
                     crate::ke::dpc::ki_retire_dpc_list();
                     crate::ke::scheduler::dispatch_pending_reschedule();
-                    crate::ke::irql::lower_irql(dispatch_irql);
                 }
             }
             #[cfg(target_arch = "x86_64")]
@@ -618,6 +645,13 @@ pub extern "win64" fn dispatch_trap_frame(vector: u64, tf: *mut TrapFrame) {
                 // _v is intentionally unused - unknown vectors are logged/ignored
                 // // crate::kprintln!("[FAULT] unhandled interrupt/exception vector {} (raw=0x{:x})", _v, _v);
             }
+        }
+
+        // Restore the IRQL raised in the dispatcher prologue (ke_sched
+        // P0-7) before the assembly epilogue iretq's back to the
+        // interrupted context.
+        if let Some(previous) = saved_interrupt_irql {
+            crate::ke::irql::lower_irql(previous);
         }
     }
 }
