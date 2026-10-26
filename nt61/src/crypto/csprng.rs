@@ -21,7 +21,7 @@
 
 extern crate alloc;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 use crate::ke::sync::Spinlock;
 
@@ -82,6 +82,26 @@ impl Pool {
 /// Failure to obtain any of these is non-fatal — the slot stays zero and
 /// the DRBG mixes whatever entropy is available. If nothing contributed at
 /// all we return the zero seed rather than pretending it is random.
+/// Diagnostics for the most recent seed collected by collect_entropy:
+/// how many of the eight 8-byte slots carried fresh entropy, and
+/// whether the result was the all-zero "no entropy at all" seed.
+pub static LAST_SEED_SOURCES: AtomicUsize = AtomicUsize::new(0);
+pub static LAST_SEED_DEGENERATE: AtomicBool = AtomicBool::new(false);
+
+/// Entropy health of the last seed, for diagnostics and alerting.
+///
+/// Returns '(sources_filled, degenerate)'. 'sources_filled' counts the
+/// seed slots that received real entropy; 'degenerate' is true when
+/// the last seed was the all-zero seed, meaning every entropy source
+/// was unavailable and DRBG output must be treated as non-random
+/// until a reseed with real entropy succeeds.
+pub fn entropy_health() -> (usize, bool) {
+    (
+        LAST_SEED_SOURCES.load(Ordering::Relaxed),
+        LAST_SEED_DEGENERATE.load(Ordering::Relaxed),
+    )
+}
+
 fn collect_entropy() -> [u8; 64] {
     let mut out = [0u8; 64];
     let mut filled = 0usize;
@@ -112,8 +132,14 @@ fn collect_entropy() -> [u8; 64] {
     }
 
     if filled == 0 {
+        // Every hardware source was unavailable. Record the degenerate
+        // seed instead of pretending the DRBG output is random.
+        LAST_SEED_SOURCES.store(0, Ordering::Relaxed);
+        LAST_SEED_DEGENERATE.store(true, Ordering::Relaxed);
         return out;
     }
+    LAST_SEED_SOURCES.store(filled, Ordering::Relaxed);
+    LAST_SEED_DEGENERATE.store(false, Ordering::Relaxed);
     let pos = filled * 8;
 
     // Stretch whatever entropy we have through SHA-256. We

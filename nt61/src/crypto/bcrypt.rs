@@ -111,15 +111,17 @@ pub unsafe extern "C" fn bcrypt_open_algorithm_provider(
 
     match alg_str.as_str() {
         algorithm::AES
-        | algorithm::DES
         | algorithm::DES3
-        | algorithm::RC4
         | algorithm::RSA
         | algorithm::SHA1
         | algorithm::SHA256
         | algorithm::SHA384
         | algorithm::SHA512
         | algorithm::MD5 => {}
+        // RC4 (broken stream cipher) and single DES (56-bit key) are
+        // deliberately not offered: opening fails here instead of handing
+        // out a provider whose later operations silently do nothing.
+        algorithm::RC4 | algorithm::DES => return STATUS_NOT_SUPPORTED,
         _ => return STATUS_NOT_SUPPORTED,
     }
 
@@ -171,7 +173,13 @@ pub unsafe extern "C" fn bcrypt_get_property(
             _ => return STATUS_INVALID_PARAMETER,
         },
         property::OBJECT_LENGTH => 256, // Simplified
-        property::BLOCK_LENGTH => 16,
+        property::BLOCK_LENGTH => {
+            if get_algorithm_for_handle(object_handle) == algorithm::DES3 {
+                8
+            } else {
+                16
+            }
+        }
         _ => return STATUS_NOT_SUPPORTED,
     };
 
@@ -322,6 +330,16 @@ pub unsafe extern "C" fn bcrypt_generate_symmetric_key(
     let algorithm = get_algorithm_for_handle(alg_handle);
     let key_data = core::slice::from_raw_parts(secret, secret_len as usize).to_vec();
 
+    // Refuse key material the symmetric paths cannot actually consume.
+    let key_len_ok = match algorithm.as_str() {
+        algorithm::AES => matches!(key_data.len(), 16 | 24 | 32),
+        algorithm::DES3 => key_data.len() == 24,
+        _ => true,
+    };
+    if !key_len_ok {
+        return STATUS_INVALID_PARAMETER;
+    }
+
     let context = KeyContext {
         algorithm: algorithm.clone(),
         key_data,
@@ -353,17 +371,35 @@ pub unsafe extern "C" fn bcrypt_encrypt(
     }
 
     let input_data = core::slice::from_raw_parts(input, input_len as usize);
-    if output.is_null() || output_len < input_len || input_len % 16 != 0 {
-        return STATUS_INVALID_PARAMETER;
-    }
     let Some(context) = key_context(key_handle) else {
         return STATUS_INVALID_HANDLE;
     };
+    let is_3des = context.algorithm == algorithm::DES3;
+    let block_size = if is_3des { 8 } else { 16 };
+    if output.is_null() || output_len < input_len || input_len % block_size != 0 {
+        return STATUS_INVALID_PARAMETER;
+    }
+    let output_slice = core::slice::from_raw_parts_mut(output, output_len as usize);
+    if is_3des {
+        let Ok(key) = <[u8; 24]>::try_from(context.key_data.as_slice()) else {
+            return STATUS_INVALID_PARAMETER;
+        };
+        let mut iv = [0u8; 8];
+        if !_iv.is_null() && _iv_len as usize >= 8 {
+            iv.copy_from_slice(core::slice::from_raw_parts(_iv, 8));
+        }
+        let Ok(ciphertext) = crate::crypto::cipher::tdes_cbc_encrypt(&key, &iv, input_data)
+        else {
+            return STATUS_INVALID_PARAMETER;
+        };
+        output_slice[..ciphertext.len()].copy_from_slice(&ciphertext);
+        *result_len = ciphertext.len() as u32;
+        return STATUS_SUCCESS;
+    }
     let mut iv = [0u8; 16];
     if !_iv.is_null() && _iv_len as usize >= 16 {
         iv.copy_from_slice(core::slice::from_raw_parts(_iv, 16));
     }
-    let output_slice = core::slice::from_raw_parts_mut(output, output_len as usize);
     if !aes_cbc_encrypt(&context.key_data, &iv, input_data, output_slice) {
         return STATUS_NOT_SUPPORTED;
     }
@@ -388,17 +424,35 @@ pub unsafe extern "C" fn bcrypt_decrypt(
     }
 
     let input_data = core::slice::from_raw_parts(input, input_len as usize);
-    if output.is_null() || output_len < input_len || input_len % 16 != 0 {
-        return STATUS_INVALID_PARAMETER;
-    }
     let Some(context) = key_context(key_handle) else {
         return STATUS_INVALID_HANDLE;
     };
+    let is_3des = context.algorithm == algorithm::DES3;
+    let block_size = if is_3des { 8 } else { 16 };
+    if output.is_null() || output_len < input_len || input_len % block_size != 0 {
+        return STATUS_INVALID_PARAMETER;
+    }
+    let output_slice = core::slice::from_raw_parts_mut(output, output_len as usize);
+    if is_3des {
+        let Ok(key) = <[u8; 24]>::try_from(context.key_data.as_slice()) else {
+            return STATUS_INVALID_PARAMETER;
+        };
+        let mut iv = [0u8; 8];
+        if !_iv.is_null() && _iv_len as usize >= 8 {
+            iv.copy_from_slice(core::slice::from_raw_parts(_iv, 8));
+        }
+        let Ok(plaintext) = crate::crypto::cipher::tdes_cbc_decrypt(&key, &iv, input_data)
+        else {
+            return STATUS_INVALID_PARAMETER;
+        };
+        output_slice[..plaintext.len()].copy_from_slice(&plaintext);
+        *result_len = plaintext.len() as u32;
+        return STATUS_SUCCESS;
+    }
     let mut iv = [0u8; 16];
     if !_iv.is_null() && _iv_len as usize >= 16 {
         iv.copy_from_slice(core::slice::from_raw_parts(_iv, 16));
     }
-    let output_slice = core::slice::from_raw_parts_mut(output, output_len as usize);
     if !aes_cbc_decrypt(&context.key_data, &iv, input_data, output_slice) {
         return STATUS_NOT_SUPPORTED;
     }
@@ -423,13 +477,19 @@ pub unsafe extern "C" fn bcrypt_generate_key_pair(
     if key_handle.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
+    if !(512..=4096).contains(&(key_length as usize)) {
+        return STATUS_INVALID_PARAMETER;
+    }
 
     let algorithm = get_algorithm_for_handle(alg_handle);
 
     match algorithm.as_str() {
         algorithm::RSA => {
-            *key_handle = KEY_COUNTER.fetch_add(1, Ordering::SeqCst);
             let private_key = RsaPrivateKey::generate(key_length as usize);
+            let Some(private_key) = private_key else {
+                return STATUS_INVALID_PARAMETER;
+            };
+            *key_handle = KEY_COUNTER.fetch_add(1, Ordering::SeqCst);
             KEYS.lock().push((
                 *key_handle,
                 KeyContext {
@@ -467,17 +527,7 @@ pub unsafe extern "C" fn bcrypt_export_key(
         return STATUS_INVALID_PARAMETER;
     }
 
-    *result_len = 32;
-
-    if output.is_null() || output_len < 32 {
-        return STATUS_BUFFER_TOO_SMALL;
-    }
-
-    for i in 0..32 {
-        *output.add(i) = 0;
-    }
-
-    STATUS_SUCCESS
+    STATUS_NOT_SUPPORTED
 }
 
 pub unsafe extern "C" fn bcrypt_import_key(
@@ -495,9 +545,7 @@ pub unsafe extern "C" fn bcrypt_import_key(
         return STATUS_INVALID_PARAMETER;
     }
 
-    *key_handle = KEY_COUNTER.fetch_add(1, Ordering::SeqCst);
-
-    STATUS_SUCCESS
+    STATUS_NOT_SUPPORTED
 }
 
 pub unsafe extern "C" fn bcrypt_sign_hash(
@@ -514,14 +562,23 @@ pub unsafe extern "C" fn bcrypt_sign_hash(
         return STATUS_INVALID_PARAMETER;
     }
 
-    let digest = core::slice::from_raw_parts(input, input_len as usize);
     let Some(context) = key_context(key_handle) else {
         return STATUS_INVALID_HANDLE;
     };
     let Some(private_key) = context.rsa_private.as_ref() else {
         return STATUS_NOT_SUPPORTED;
     };
-    let signature = private_key.sign_pkcs1v15(digest);
+    // PKCS#1 v1.5 needs room for the 19-byte DigestInfo prefix plus the
+    // 0x00 0x01 ... 0x00 framing around the padding and digest.
+    if !(matches!(input_len, 20 | 32 | 48 | 64)
+        && (private_key.n.byte_len() as u32) >= input_len + 22)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    let digest = core::slice::from_raw_parts(input, input_len as usize);
+    let Ok(signature) = private_key.sign_pkcs1v15(digest) else {
+        return STATUS_INVALID_PARAMETER;
+    };
     *result_len = signature.len() as u32;
     if output.is_null() || output_len < signature.len() as u32 {
         return STATUS_BUFFER_TOO_SMALL;

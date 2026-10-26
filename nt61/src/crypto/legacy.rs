@@ -6,9 +6,7 @@
 
 extern crate alloc;
 use alloc::string::String;
-use alloc::vec;
 use alloc::vec::Vec;
-use core::ptr;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 #[repr(transparent)]
@@ -68,6 +66,16 @@ pub mod cipher_mode {
     pub const CRYPT_MODE_CFB: u32 = 4;
 }
 
+/// Algorithm policy for the legacy CryptoAPI surface. These algorithm IDs
+/// remain exported for ABI compatibility with binary callers, but the
+/// kernel refuses them by policy: RC4 is a broken stream cipher and single
+/// DES only has a 56-bit key. Every cipher/key operation below fails
+/// closed (`0` / FALSE) for them and for any algorithm without a real
+/// backend, so callers get a consistent refusal instead of a silent no-op.
+pub fn is_alg_rejected_by_policy(alg_id: u32) -> bool {
+    matches!(alg_id, alg_id::CALG_RC4 | alg_id::CALG_DES)
+}
+
 pub struct ProviderContext {
     pub prov_type: u32,
     pub flags: u32,
@@ -95,8 +103,6 @@ pub struct KeyContext {
 }
 
 static PROV_COUNTER: AtomicUsize = AtomicUsize::new(0x4000);
-static HASH_COUNTER: AtomicUsize = AtomicUsize::new(0x5000);
-static KEY_COUNTER: AtomicUsize = AtomicUsize::new(0x6000);
 
 pub unsafe extern "C" fn crypt_acquire_context_a(
     prov: *mut usize,
@@ -183,10 +189,9 @@ pub unsafe extern "C" fn crypt_create_hash(
     };
 
     let _context = HashContext { alg_id, state };
+    let _ = _context;
 
-    *hash = HASH_COUNTER.fetch_add(1, Ordering::SeqCst);
-
-    1 // TRUE
+    0 // FALSE: no persistent hash state is available
 }
 
 pub unsafe extern "C" fn crypt_hash_data(
@@ -200,8 +205,9 @@ pub unsafe extern "C" fn crypt_hash_data(
     }
 
     let _input = core::slice::from_raw_parts(data, data_len as usize);
+    let _ = _input;
 
-    1 // TRUE
+    0 // FALSE: refusing to discard input
 }
 
 pub unsafe extern "C" fn crypt_get_hash_param(
@@ -215,31 +221,9 @@ pub unsafe extern "C" fn crypt_get_hash_param(
         return 0;
     }
 
-    match param {
-        hp::HP_HASHSIZE => {
-            let size = get_hash_size_for_handle(hash);
-            *data_len = 4;
-
-            if !data.is_null() {
-                ptr::copy_nonoverlapping(&size as *const u32 as *const u8, data, 4);
-            }
-
-            1 // TRUE
-        }
-        hp::HP_HASHVAL => {
-            let size = get_hash_size_for_handle(hash);
-            *data_len = size;
-
-            if !data.is_null() {
-                for i in 0..size {
-                    *data.add(i as usize) = 0;
-                }
-            }
-
-            1 // TRUE
-        }
-        _ => 0, // FALSE
-    }
+    // No digest state is retained, so no hash parameter can be served
+    // truthfully. Fail closed rather than fabricating values.
+    0
 }
 
 pub unsafe extern "C" fn crypt_destroy_hash(hash: usize) -> i32 {
@@ -247,7 +231,7 @@ pub unsafe extern "C" fn crypt_destroy_hash(hash: usize) -> i32 {
         return 0;
     }
 
-    1 // TRUE
+    0 // FALSE: no cipher backend is available
 }
 
 pub unsafe extern "C" fn crypt_gen_key(
@@ -260,29 +244,9 @@ pub unsafe extern "C" fn crypt_gen_key(
         return 0;
     }
 
-    let key_len = match alg_id {
-        alg_id::CALG_RC4 => 16,
-        alg_id::CALG_DES => 8,
-        alg_id::CALG_3DES => 24,
-        alg_id::CALG_AES_128 => 16,
-        alg_id::CALG_AES_192 => 24,
-        alg_id::CALG_AES_256 => 32,
-        _ => return 0,
-    };
-
-    let mut key_data = vec![0u8; key_len];
-    crate::crypto::csprng::fill(&mut key_data);
-
-    let _context = KeyContext {
-        alg_id,
-        key_data,
-        iv: vec![0u8; 16],
-        mode: cipher_mode::CRYPT_MODE_CBC,
-    };
-
-    *key = KEY_COUNTER.fetch_add(1, Ordering::SeqCst);
-
-    1 // TRUE
+    // Generated key material cannot be stored, so no usable key handle
+    // exists. Fail closed without handing out a fake handle.
+    0
 }
 
 pub unsafe extern "C" fn crypt_import_key(
@@ -297,11 +261,9 @@ pub unsafe extern "C" fn crypt_import_key(
         return 0;
     }
 
-    let _blob = core::slice::from_raw_parts(data, data_len as usize);
-
-    *key = KEY_COUNTER.fetch_add(1, Ordering::SeqCst);
-
-    1 // TRUE
+    // Imported keys are not parsed or stored; a handle handed out here
+    // would make callers believe empty key material was imported.
+    0 // FALSE
 }
 
 pub unsafe extern "C" fn crypt_export_key(
@@ -316,15 +278,8 @@ pub unsafe extern "C" fn crypt_export_key(
         return 0;
     }
 
-    *data_len = 32;
-
-    if !data.is_null() {
-        for i in 0..32 {
-            *data.add(i) = 0;
-        }
-    }
-
-    1 // TRUE
+    // No key material is retained, so nothing truthful can be exported.
+    0 // FALSE
 }
 
 pub unsafe extern "C" fn crypt_get_key_param(
@@ -338,26 +293,9 @@ pub unsafe extern "C" fn crypt_get_key_param(
         return 0;
     }
 
-    match param {
-        kp::KP_MODE => {
-            *data_len = 4;
-            if !data.is_null() {
-                let mode = cipher_mode::CRYPT_MODE_CBC;
-                ptr::copy_nonoverlapping(&mode as *const u32 as *const u8, data, 4);
-            }
-            1 // TRUE
-        }
-        kp::KP_IV => {
-            *data_len = 16;
-            if !data.is_null() {
-                for i in 0..16 {
-                    *data.add(i) = 0;
-                }
-            }
-            1 // TRUE
-        }
-        _ => 0, // FALSE
-    }
+    // No key state is retained, so no key parameter can be served
+    // truthfully. Fail closed rather than fabricating values.
+    0
 }
 
 pub unsafe extern "C" fn crypt_set_key_param(
@@ -370,7 +308,8 @@ pub unsafe extern "C" fn crypt_set_key_param(
         return 0;
     }
 
-    1 // TRUE
+    // Parameters cannot be applied without a cipher backend.
+    0 // FALSE
 }
 
 pub unsafe extern "C" fn crypt_encrypt(
@@ -386,13 +325,9 @@ pub unsafe extern "C" fn crypt_encrypt(
         return 0;
     }
 
-    let len = *data_len as usize;
-
-    if len > buffer_len as usize {
-        return 0;
-    }
-
-    1 // TRUE
+    // No cipher backend: returning success here would pass caller data
+    // through in plaintext while claiming encryption.
+    0 // FALSE
 }
 
 pub unsafe extern "C" fn crypt_decrypt(
@@ -407,7 +342,9 @@ pub unsafe extern "C" fn crypt_decrypt(
         return 0;
     }
 
-    1 // TRUE
+    // No cipher backend: returning success here would leave caller data
+    // untouched while claiming a decryption result.
+    0 // FALSE
 }
 
 pub unsafe extern "C" fn crypt_destroy_key(key: usize) -> i32 {
@@ -444,15 +381,9 @@ pub unsafe extern "C" fn crypt_sign_hash_a(
         return 0;
     }
 
-    *sig_len = 128;
-
-    if !signature.is_null() {
-        for i in 0..128 {
-            *signature.add(i) = 0;
-        }
-    }
-
-    1 // TRUE
+    // No signing backend: a zeroed signature would be a forgery waiting
+    // to happen. Fail closed.
+    0 // FALSE
 }
 
 pub unsafe extern "C" fn crypt_verify_signature_a(
@@ -467,7 +398,9 @@ pub unsafe extern "C" fn crypt_verify_signature_a(
         return 0;
     }
 
-    1 // TRUE
+    // No verification backend: accepting every signature would make this
+    // call a no-op security check.
+    0 // FALSE
 }
 
 pub unsafe extern "C" fn crypt_duplicate_hash(
@@ -480,9 +413,8 @@ pub unsafe extern "C" fn crypt_duplicate_hash(
         return 0;
     }
 
-    *new_hash = HASH_COUNTER.fetch_add(1, Ordering::SeqCst);
-
-    1 // TRUE
+    // No hash state is retained, so there is nothing to duplicate.
+    0 // FALSE
 }
 
 pub unsafe extern "C" fn crypt_duplicate_key(
@@ -495,13 +427,8 @@ pub unsafe extern "C" fn crypt_duplicate_key(
         return 0;
     }
 
-    *new_key = KEY_COUNTER.fetch_add(1, Ordering::SeqCst);
-
-    1 // TRUE
-}
-
-fn get_hash_size_for_handle(_handle: usize) -> u32 {
-    32
+    // No key state is retained, so there is nothing to duplicate.
+    0 // FALSE
 }
 
 unsafe fn read_ansi_string(ptr: *const u8) -> String {

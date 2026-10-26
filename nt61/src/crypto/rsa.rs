@@ -26,12 +26,22 @@ pub struct RsaPrivateKey {
 }
 
 impl RsaPrivateKey {
-    pub fn generate(bits: usize) -> Self {
+    pub fn generate(bits: usize) -> Option<Self> {
+        if !(512..=4096).contains(&bits) || bits % 2 != 0 {
+            return None;
+        }
+
         let e = BigUint::from(65537u32); // Standard public exponent
 
         let prime_bits = bits / 2;
-        let p = generate_prime(prime_bits);
-        let q = generate_prime(prime_bits);
+        let p = match generate_prime(prime_bits) {
+            Some(value) => value,
+            None => return None,
+        };
+        let q = match generate_prime(prime_bits) {
+            Some(value) => value,
+            None => return None,
+        };
 
         let n = p.mul(&q);
 
@@ -45,7 +55,7 @@ impl RsaPrivateKey {
         let dq = d.mod_op(&q_minus_1);
         let qi = q.mod_inverse(&p);
 
-        Self {
+        Some(Self {
             n,
             e,
             d,
@@ -54,7 +64,7 @@ impl RsaPrivateKey {
             dp,
             dq,
             qi,
-        }
+        })
     }
 
     pub fn public_key(&self) -> RsaPublicKey {
@@ -82,18 +92,18 @@ impl RsaPrivateKey {
         pkcs1v15_unpad(&recovered)
     }
 
-    pub fn sign_pkcs1v15(&self, digest: &[u8]) -> Vec<u8> {
-        let padded = pkcs1v15_sign_pad(digest, self.n.byte_len());
+    pub fn sign_pkcs1v15(&self, digest: &[u8]) -> Result<Vec<u8>, &'static str> {
+        let padded = pkcs1v15_sign_pad(digest, self.n.byte_len())?;
         let m = BigUint::from_bytes(&padded);
         let s = m.mod_exp(&self.d, &self.n);
-        s.to_bytes()
+        Ok(to_bytes_padded(&s, self.n.byte_len()))
     }
 
-    pub fn sign_pss(&self, digest: &[u8], salt_len: usize) -> Vec<u8> {
-        let padded = pss_encode(digest, self.n.byte_len(), salt_len);
+    pub fn sign_pss(&self, digest: &[u8], salt_len: usize) -> Result<Vec<u8>, &'static str> {
+        let padded = pss_encode(digest, self.n.byte_len(), self.n.bit_len(), salt_len)?;
         let m = BigUint::from_bytes(&padded);
         let s = m.mod_exp(&self.d, &self.n);
-        s.to_bytes()
+        Ok(to_bytes_padded(&s, self.n.byte_len()))
     }
 }
 
@@ -114,11 +124,20 @@ impl RsaPublicKey {
     }
 
     pub fn verify_pss(&self, digest: &[u8], signature: &[u8], salt_len: usize) -> bool {
+        if signature.len() != self.n.byte_len() {
+            return false;
+        }
         let s = BigUint::from_bytes(signature);
         let m = s.mod_exp(&self.e, &self.n);
         let recovered = m.to_bytes();
 
-        pss_verify(&recovered, digest, self.n.byte_len(), salt_len)
+        pss_verify(
+            &recovered,
+            digest,
+            self.n.byte_len(),
+            self.n.bit_len(),
+            salt_len,
+        )
     }
 }
 
@@ -127,7 +146,12 @@ fn pkcs1v15_encrypt_pad(data: &[u8], key_len: usize) -> Vec<u8> {
     padded.push(0x00);
     padded.push(0x02);
 
-    let padding_len = key_len - data.len() - 3;
+    let Some(padding_len) = key_len
+        .checked_sub(data.len())
+        .and_then(|left| left.checked_sub(3))
+    else {
+        return Vec::new();
+    };
     for _ in 0..padding_len {
         let mut byte = 0u8;
         while byte == 0 {
@@ -141,13 +165,24 @@ fn pkcs1v15_encrypt_pad(data: &[u8], key_len: usize) -> Vec<u8> {
     padded
 }
 
-fn pkcs1v15_sign_pad(digest: &[u8], key_len: usize) -> Vec<u8> {
+fn pkcs1v15_sign_pad(digest: &[u8], key_len: usize) -> Result<Vec<u8>, &'static str> {
     let digest_info = digest_info_prefix(digest);
+    if digest_info.is_empty() {
+        return Err("unsupported digest length");
+    }
+    // Checked arithmetic: an undersized modulus used to underflow here into
+    // a multi-gigabyte allocation and abort the kernel.
+    let Some(padding_len) = key_len
+        .checked_sub(digest_info.len())
+        .and_then(|left| left.checked_sub(digest.len()))
+        .and_then(|left| left.checked_sub(3))
+    else {
+        return Err("RSA modulus is too small for digest");
+    };
     let mut padded = Vec::with_capacity(key_len);
     padded.push(0x00);
     padded.push(0x01);
 
-    let padding_len = key_len - digest_info.len() - digest.len() - 3;
     for _ in 0..padding_len {
         padded.push(0xff);
     }
@@ -155,6 +190,16 @@ fn pkcs1v15_sign_pad(digest: &[u8], key_len: usize) -> Vec<u8> {
     padded.push(0x00);
     padded.extend_from_slice(&digest_info);
     padded.extend_from_slice(digest);
+    Ok(padded)
+}
+
+/// Render a signature integer as exactly len big-endian bytes, left-padded
+/// with zeros. Signatures must be modulus-length even when the encoded
+/// integer has leading zero bytes.
+fn to_bytes_padded(value: &BigUint, len: usize) -> Vec<u8> {
+    let raw = value.to_bytes();
+    let mut padded = vec![0u8; len.saturating_sub(raw.len())];
+    padded.extend_from_slice(&raw);
     padded
 }
 
@@ -222,9 +267,23 @@ fn pkcs1v15_unpad(recovered: &[u8]) -> Vec<u8> {
 }
 
 /// PSS encoding using MGF1-SHA256.
-fn pss_encode(digest: &[u8], key_len: usize, salt_len: usize) -> Vec<u8> {
-    if digest.len() != 32 || salt_len + digest.len() + 2 > key_len {
-        return Vec::new();
+fn pss_encode(
+    digest: &[u8],
+    key_len: usize,
+    modulus_bits: usize,
+    salt_len: usize,
+) -> Result<Vec<u8>, &'static str> {
+    if digest.len() != 32 {
+        return Err("PSS requires SHA-256");
+    }
+    let Some(db_len) = key_len
+        .checked_sub(32)
+        .and_then(|left| left.checked_sub(1))
+    else {
+        return Err("RSA modulus is too small for PSS");
+    };
+    if salt_len + digest.len() + 2 > key_len {
+        return Err("RSA modulus is too small for PSS salt");
     }
     let mut salt = vec![0u8; salt_len];
     crate::crypto::csprng::fill(&mut salt);
@@ -236,20 +295,25 @@ fn pss_encode(digest: &[u8], key_len: usize, salt_len: usize) -> Vec<u8> {
 
     let h = crate::crypto::hash::sha256(&m_prime);
 
-    let db_len = key_len - 32 - 1;
     let mut db = vec![0u8; db_len];
     db[db_len - salt_len - 1] = 0x01;
     db[db_len - salt_len..].copy_from_slice(&salt);
     mgf1_sha256(&h, &mut db);
     let mut em = db;
+    em.extend_from_slice(&h);
     em.push(0xbc);
-    // PSS requires the leftmost `8 * key_len - 8 * em_bits` bits of the
-    // first EM byte to be zero. Since this RSA API is byte oriented and
-    // BigUint strips leading zeros, the top bit must always be clear.
-    if let Some(first) = em.first_mut() {
-        *first &= 0x7f;
+    // PSS encodes an EM of `emBits = modulus_bits - 1` significant bits,
+    // left-padded to the modulus byte length. Mask only the padding bits so
+    // EM is numerically below the modulus, even for a 511-bit modulus.
+    let em_bits = modulus_bits.checked_sub(1).ok_or("RSA modulus is too small")?;
+    let padding_bits = (key_len * 8).saturating_sub(em_bits);
+    if padding_bits >= 8 {
+        return Err("RSA modulus is too small for PSS");
     }
-    em
+    if let Some(first) = em.first_mut() {
+        *first &= 0xffu8.checked_shr(padding_bits as u32).unwrap_or(0);
+    }
+    Ok(em)
 }
 
 fn mgf1_sha256(seed: &[u8], mask: &mut [u8]) {
@@ -259,13 +323,20 @@ fn mgf1_sha256(seed: &[u8], mask: &mut [u8]) {
         input.extend_from_slice(seed);
         input.extend_from_slice(&counter.to_be_bytes());
         let hash = crate::crypto::hash::sha256(&input);
-        let copy_len = chunk.len();
-        chunk.copy_from_slice(&hash[..copy_len]);
+        for (byte, mask_byte) in chunk.iter_mut().zip(hash.iter()) {
+            *byte ^= *mask_byte;
+        }
         counter = counter.wrapping_add(1);
     }
 }
 
-fn pss_verify(recovered: &[u8], digest: &[u8], key_len: usize, salt_len: usize) -> bool {
+fn pss_verify(
+    recovered: &[u8],
+    digest: &[u8],
+    key_len: usize,
+    modulus_bits: usize,
+    salt_len: usize,
+) -> bool {
     if digest.len() != 32 || salt_len + digest.len() + 2 > key_len {
         return false;
     }
@@ -274,7 +345,10 @@ fn pss_verify(recovered: &[u8], digest: &[u8], key_len: usize, salt_len: usize) 
     }
     let mut em = vec![0u8; key_len];
     em[key_len - recovered.len()..].copy_from_slice(recovered);
-    if em[0] != 0 || em[key_len - 1] != 0xbc {
+    let em_bits = modulus_bits.checked_sub(1).unwrap_or(0);
+    let padding_bits = (key_len * 8).saturating_sub(em_bits);
+    let padding_mask = 0xffu8.checked_shr(padding_bits as u32).unwrap_or(0);
+    if em[0] & !padding_mask != 0 || em[key_len - 1] != 0xbc {
         return false;
     }
 
@@ -282,6 +356,12 @@ fn pss_verify(recovered: &[u8], digest: &[u8], key_len: usize, salt_len: usize) 
     let mut db = em[..db_len].to_vec();
     let h = em[db_len..key_len - 1].to_vec();
     mgf1_sha256(&h, &mut db);
+    // Mirror the encoder: the leftmost `padding_bits` of maskedDB were
+    // zeroed before transmission, so the unmasked DB must have the same
+    // bits cleared again before the PS/0x01/salt structure checks.
+    if let Some(first) = db.first_mut() {
+        *first &= padding_mask;
+    }
     if db.len() < salt_len + 1 {
         return false;
     }
@@ -599,21 +679,28 @@ impl BigUint {
     }
 }
 
-fn generate_prime(bits: usize) -> BigUint {
+fn generate_prime(bits: usize) -> Option<BigUint> {
+    if bits == 0 || bits > 2048 {
+        return None;
+    }
     loop {
         let candidate = generate_random_odd(bits);
         if is_probably_prime(&candidate, 20) {
-            return candidate;
+            return Some(candidate);
         }
     }
 }
 
 fn generate_random_odd(bits: usize) -> BigUint {
+    if bits == 0 {
+        return BigUint::from(0);
+    }
+
     let bytes = (bits + 7) / 8;
     let mut data = vec![0u8; bytes];
     crate::crypto::csprng::fill(&mut data);
 
-    data[0] |= 0x80; // Ensure high bit is set
+    data[0] |= 0xC0; // Set top two bits so n = p*q has full key bit length
     data[bytes - 1] |= 0x01; // Ensure it's odd
 
     BigUint::from_bytes(&data)
@@ -671,4 +758,52 @@ fn generate_witness(n: &BigUint) -> BigUint {
 
     let witness = BigUint::from_bytes(&data);
     witness.mod_op(n)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generate_rejects_invalid_key_lengths() {
+        assert!(RsaPrivateKey::generate(0).is_none());
+        assert!(RsaPrivateKey::generate(256).is_none());
+        assert!(RsaPrivateKey::generate(511).is_none());
+        assert!(RsaPrivateKey::generate(8192).is_none());
+    }
+
+    // Key generation is expensive, so a single 512-bit generation is shared
+    // by every signature assertion in one test.
+    #[test]
+    fn rsa_sign_verify_and_rejection_paths() {
+        let key = RsaPrivateKey::generate(512).expect("512-bit key generation");
+
+        // PKCS#1 v1.5: round trip with a SHA-256 digest, fixed-length output.
+        let digest = crate::crypto::hash::sha256(b"nt61 rsa pkcs1v15");
+        let signature = key.sign_pkcs1v15(&digest).expect("pkcs1v15 sign");
+        assert_eq!(signature.len(), key.n.byte_len());
+        assert!(key.public_key().verify_pkcs1v15(&digest, &signature));
+        let wrong_digest = crate::crypto::hash::sha256(b"other message");
+        assert!(!key.public_key().verify_pkcs1v15(&wrong_digest, &signature));
+
+        // PSS: the H field must make sign -> verify round trips pass.
+        let digest = crate::crypto::hash::sha256(b"nt61 rsa pss");
+        let signature = key.sign_pss(&digest, 16).expect("pss sign");
+        assert_eq!(signature.len(), key.n.byte_len());
+        assert!(key.public_key().verify_pss(&digest, &signature, 16));
+        // Wrong salt length must be rejected.
+        assert!(!key.public_key().verify_pss(&digest, &signature, 32));
+        // A flipped bit must break verification.
+        let mut tampered = signature.clone();
+        tampered[0] ^= 0x01;
+        assert!(!key.public_key().verify_pss(&digest, &tampered, 16));
+
+        // A SHA-512 digest cannot fit a 512-bit modulus; this used to
+        // underflow into a multi-gigabyte allocation and abort.
+        let oversized = [0x5au8; 64];
+        assert!(key.sign_pkcs1v15(&oversized).is_err());
+        // Unsupported digest lengths must be rejected, not mis-signed.
+        assert!(key.sign_pkcs1v15(&[0x42u8; 17]).is_err());
+        assert!(key.sign_pss(&[0x42u8; 31], 8).is_err());
+    }
 }

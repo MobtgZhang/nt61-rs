@@ -230,34 +230,139 @@ impl Aes256 {
     }
 }
 
-pub struct TripleDes {
-    key1: [u8; 8],
-    key2: [u8; 8],
-    key3: [u8; 8],
+/// Single DES, built on the audited RustCrypto `des` crate (legacy
+/// CryptoAPI parity). Prefer 3DES or AES for anything new.
+#[cfg(feature = "crypto_libs")]
+pub struct Des {
+    inner: des::Des,
 }
 
-impl TripleDes {
-    pub fn new(key: &[u8; 24]) -> Self {
-        let mut key1 = [0u8; 8];
-        let mut key2 = [0u8; 8];
-        let mut key3 = [0u8; 8];
-        key1.copy_from_slice(&key[0..8]);
-        key2.copy_from_slice(&key[8..16]);
-        key3.copy_from_slice(&key[16..24]);
-        Self { key1, key2, key3 }
+#[cfg(feature = "crypto_libs")]
+impl Des {
+    pub fn new(key: &[u8; 8]) -> Self {
+        use des::cipher::KeyInit;
+        let inner = des::Des::new(des::cipher::generic_array::GenericArray::from_slice(key));
+        Self { inner }
     }
 
     pub fn encrypt_block(&self, block: &mut [u8; 8]) {
-        des_encrypt(block, &self.key1);
-        des_decrypt(block, &self.key2);
-        des_encrypt(block, &self.key3);
+        use des::cipher::{generic_array::GenericArray, BlockEncrypt};
+        let mut data = GenericArray::clone_from_slice(block);
+        self.inner.encrypt_block(&mut data);
+        block.copy_from_slice(&data);
     }
 
     pub fn decrypt_block(&self, block: &mut [u8; 8]) {
-        des_decrypt(block, &self.key3);
-        des_encrypt(block, &self.key2);
-        des_decrypt(block, &self.key1);
+        use des::cipher::{generic_array::GenericArray, BlockDecrypt};
+        let mut data = GenericArray::clone_from_slice(block);
+        self.inner.decrypt_block(&mut data);
+        block.copy_from_slice(&data);
     }
+}
+
+/// Triple DES (EDE) built on the audited RustCrypto `des` crate when the
+/// `crypto_libs` feature is enabled. Without that feature construction
+/// fails closed: no key-independent pseudo-cipher is ever produced.
+#[cfg(feature = "crypto_libs")]
+pub struct TripleDes {
+    inner: des::TdesEde3,
+}
+
+#[cfg(not(feature = "crypto_libs"))]
+pub struct TripleDes {
+    _private: (),
+}
+
+#[cfg(feature = "crypto_libs")]
+impl TripleDes {
+    pub fn new(key: &[u8; 24]) -> Result<Self, &'static str> {
+        use des::cipher::KeyInit;
+        let inner = des::TdesEde3::new(des::cipher::generic_array::GenericArray::from_slice(key));
+        Ok(Self { inner })
+    }
+
+    pub fn encrypt_block(&self, block: &mut [u8; 8]) -> Result<(), &'static str> {
+        use des::cipher::{generic_array::GenericArray, BlockEncrypt};
+        let mut data = GenericArray::clone_from_slice(block);
+        self.inner.encrypt_block(&mut data);
+        block.copy_from_slice(&data);
+        Ok(())
+    }
+
+    pub fn decrypt_block(&self, block: &mut [u8; 8]) -> Result<(), &'static str> {
+        use des::cipher::{generic_array::GenericArray, BlockDecrypt};
+        let mut data = GenericArray::clone_from_slice(block);
+        self.inner.decrypt_block(&mut data);
+        block.copy_from_slice(&data);
+        Ok(())
+    }
+}
+
+#[cfg(not(feature = "crypto_libs"))]
+impl TripleDes {
+    pub fn new(_key: &[u8; 24]) -> Result<Self, &'static str> {
+        Err("3DES requires the crypto_libs feature")
+    }
+
+    pub fn encrypt_block(&self, _block: &mut [u8; 8]) -> Result<(), &'static str> {
+        Err("3DES requires the crypto_libs feature")
+    }
+
+    pub fn decrypt_block(&self, _block: &mut [u8; 8]) -> Result<(), &'static str> {
+        Err("3DES requires the crypto_libs feature")
+    }
+}
+
+/// 3DES-CBC encryption (no padding; input must be block aligned).
+#[cfg(feature = "crypto_libs")]
+pub fn tdes_cbc_encrypt(
+    key: &[u8; 24],
+    iv: &[u8; 8],
+    input: &[u8],
+) -> Result<Vec<u8>, &'static str> {
+    if input.len() % 8 != 0 {
+        return Err("3DES-CBC input must be a multiple of the 8-byte block size");
+    }
+    let cipher = TripleDes::new(key)?;
+    let mut feedback = *iv;
+    let mut out = Vec::with_capacity(input.len());
+    for chunk in input.chunks(8) {
+        let mut block = [0u8; 8];
+        block.copy_from_slice(chunk);
+        for i in 0..8 {
+            block[i] ^= feedback[i];
+        }
+        cipher.encrypt_block(&mut block)?;
+        feedback.copy_from_slice(&block);
+        out.extend_from_slice(&block);
+    }
+    Ok(out)
+}
+
+/// 3DES-CBC decryption (no padding; input must be block aligned).
+#[cfg(feature = "crypto_libs")]
+pub fn tdes_cbc_decrypt(
+    key: &[u8; 24],
+    iv: &[u8; 8],
+    input: &[u8],
+) -> Result<Vec<u8>, &'static str> {
+    if input.len() % 8 != 0 {
+        return Err("3DES-CBC input must be a multiple of the 8-byte block size");
+    }
+    let cipher = TripleDes::new(key)?;
+    let mut feedback = *iv;
+    let mut out = Vec::with_capacity(input.len());
+    for chunk in input.chunks(8) {
+        let mut block = [0u8; 8];
+        block.copy_from_slice(chunk);
+        cipher.decrypt_block(&mut block)?;
+        for i in 0..8 {
+            block[i] ^= feedback[i];
+        }
+        feedback.copy_from_slice(chunk);
+        out.extend_from_slice(&block);
+    }
+    Ok(out)
 }
 
 pub struct Rc4 {
@@ -305,27 +410,37 @@ impl Ecb<Aes128> {
         }
     }
 
-    pub fn encrypt(&self, plaintext: &[u8]) -> Vec<u8> {
+    /// ECB has no security by itself and no padding: input must already
+    /// be a multiple of the AES block size. A shorter tail is rejected
+    /// instead of being silently zero-padded into the ciphertext.
+    pub fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, &'static str> {
+        if plaintext.len() % AES_BLOCK_SIZE != 0 {
+            return Err("ECB input must be a multiple of the 16-byte AES block size");
+        }
         let mut output = Vec::new();
+        output.reserve(plaintext.len());
         for chunk in plaintext.chunks(AES_BLOCK_SIZE) {
             let mut block = [0u8; AES_BLOCK_SIZE];
-            let len = chunk.len().min(AES_BLOCK_SIZE);
-            block[..len].copy_from_slice(&chunk[..len]);
+            block.copy_from_slice(chunk);
             self.cipher.encrypt_block(&mut block);
             output.extend_from_slice(&block);
         }
-        output
+        Ok(output)
     }
 
-    pub fn decrypt(&self, ciphertext: &[u8]) -> Vec<u8> {
+    pub fn decrypt(&self, ciphertext: &[u8]) -> Result<Vec<u8>, &'static str> {
+        if ciphertext.len() % AES_BLOCK_SIZE != 0 {
+            return Err("ECB input must be a multiple of the 16-byte AES block size");
+        }
         let mut output = Vec::new();
+        output.reserve(ciphertext.len());
         for chunk in ciphertext.chunks(AES_BLOCK_SIZE) {
             let mut block = [0u8; AES_BLOCK_SIZE];
             block.copy_from_slice(chunk);
             self.cipher.decrypt_block(&mut block);
             output.extend_from_slice(&block);
         }
-        output
+        Ok(output)
     }
 }
 
@@ -342,14 +457,21 @@ impl Cbc<Aes128> {
         }
     }
 
-    pub fn encrypt(&mut self, plaintext: &[u8]) -> Vec<u8> {
-        let mut output = Vec::new();
+
+    /// CBC with no padding: input must already be a multiple of the AES
+    /// block size. A short tail is rejected instead of being silently
+    /// zero-padded, and decryption rejects misaligned input outright
+    /// (it previously panicked on the partial final block).
+    pub fn encrypt(&mut self, plaintext: &[u8]) -> Result<Vec<u8>, &'static str> {
+        if plaintext.len() % AES_BLOCK_SIZE != 0 {
+            return Err("CBC input must be a multiple of the 16-byte AES block size");
+        }
+        let mut output = Vec::with_capacity(plaintext.len());
         let mut prev = self.iv;
 
         for chunk in plaintext.chunks(AES_BLOCK_SIZE) {
             let mut block = [0u8; AES_BLOCK_SIZE];
-            let len = chunk.len().min(AES_BLOCK_SIZE);
-            block[..len].copy_from_slice(&chunk[..len]);
+            block.copy_from_slice(chunk);
 
             for i in 0..AES_BLOCK_SIZE {
                 block[i] ^= prev[i];
@@ -360,11 +482,14 @@ impl Cbc<Aes128> {
             output.extend_from_slice(&block);
         }
 
-        output
+        Ok(output)
     }
 
-    pub fn decrypt(&mut self, ciphertext: &[u8]) -> Vec<u8> {
-        let mut output = Vec::new();
+    pub fn decrypt(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>, &'static str> {
+        if ciphertext.len() % AES_BLOCK_SIZE != 0 {
+            return Err("CBC input must be a multiple of the 16-byte AES block size");
+        }
+        let mut output = Vec::with_capacity(ciphertext.len());
         let mut prev = self.iv;
 
         for chunk in ciphertext.chunks(AES_BLOCK_SIZE) {
@@ -382,7 +507,7 @@ impl Cbc<Aes128> {
             output.extend_from_slice(&block);
         }
 
-        output
+        Ok(output)
     }
 }
 
@@ -395,14 +520,22 @@ impl Cbc<Aes256> {
         }
     }
 
-    pub fn encrypt(&mut self, plaintext: &[u8]) -> Vec<u8> {
-        let mut output = Vec::new();
+
+    /// CBC with no padding: input must already be a multiple of the AES
+    /// block size (NTFS EFS callers pad explicitly). A short tail is
+    /// rejected instead of being silently zero-padded, and decryption
+    /// rejects misaligned input outright (it previously panicked on the
+    /// partial final block).
+    pub fn encrypt(&mut self, plaintext: &[u8]) -> Result<Vec<u8>, &'static str> {
+        if plaintext.len() % AES_BLOCK_SIZE != 0 {
+            return Err("CBC input must be a multiple of the 16-byte AES block size");
+        }
+        let mut output = Vec::with_capacity(plaintext.len());
         let mut prev = self.iv;
 
         for chunk in plaintext.chunks(AES_BLOCK_SIZE) {
             let mut block = [0u8; AES_BLOCK_SIZE];
-            let len = chunk.len().min(AES_BLOCK_SIZE);
-            block[..len].copy_from_slice(&chunk[..len]);
+            block.copy_from_slice(chunk);
 
             for i in 0..AES_BLOCK_SIZE {
                 block[i] ^= prev[i];
@@ -413,11 +546,14 @@ impl Cbc<Aes256> {
             output.extend_from_slice(&block);
         }
 
-        output
+        Ok(output)
     }
 
-    pub fn decrypt(&mut self, ciphertext: &[u8]) -> Vec<u8> {
-        let mut output = Vec::new();
+    pub fn decrypt(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>, &'static str> {
+        if ciphertext.len() % AES_BLOCK_SIZE != 0 {
+            return Err("CBC input must be a multiple of the 16-byte AES block size");
+        }
+        let mut output = Vec::with_capacity(ciphertext.len());
         let mut prev = self.iv;
 
         for chunk in ciphertext.chunks(AES_BLOCK_SIZE) {
@@ -435,7 +571,7 @@ impl Cbc<Aes256> {
             output.extend_from_slice(&block);
         }
 
-        output
+        Ok(output)
     }
 }
 
@@ -529,9 +665,8 @@ impl Gcm {
         Self { cipher, h, counter }
     }
 
-    pub fn encrypt(&mut self, plaintext: &[u8], _aad: &[u8]) -> (Vec<u8>, [u8; 16]) {
+    pub fn encrypt(&mut self, plaintext: &[u8], aad: &[u8]) -> (Vec<u8>, [u8; 16]) {
         let mut ciphertext = Vec::with_capacity(plaintext.len());
-        let mut auth_tag = [0u8; 16];
 
         let mut counter = self.counter;
         Self::increment_counter(&mut counter);
@@ -552,11 +687,75 @@ impl Gcm {
             Self::increment_counter(&mut counter);
         }
 
+        let tag = self.tag_for(self.compute_ghash(aad, &ciphertext));
+        (ciphertext, tag)
+    }
+
+    /// Decrypt and authenticate. Returns the plaintext only when the tag
+    /// matches; a mismatch means the ciphertext or AAD was tampered with.
+    pub fn decrypt(
+        &mut self,
+        ciphertext: &[u8],
+        aad: &[u8],
+        auth_tag: &[u8; 16],
+    ) -> Option<Vec<u8>> {
+        let expected = self.tag_for(self.compute_ghash(aad, ciphertext));
+        if expected != *auth_tag {
+            return None;
+        }
+
+        let mut counter = self.counter;
+        Self::increment_counter(&mut counter);
+
+        let mut plaintext = Vec::with_capacity(ciphertext.len());
+        for chunk in ciphertext.chunks(AES_BLOCK_SIZE) {
+            let mut keystream = counter;
+            self.cipher.encrypt_block(&mut keystream);
+
+            let len = chunk.len().min(AES_BLOCK_SIZE);
+            let mut block = [0u8; AES_BLOCK_SIZE];
+            block[..len].copy_from_slice(chunk);
+            for i in 0..len {
+                block[i] ^= keystream[i];
+            }
+            plaintext.extend_from_slice(&block[..len]);
+            Self::increment_counter(&mut counter);
+        }
+
+        Some(plaintext)
+    }
+
+    /// GHASH over the AAD blocks followed by the ciphertext blocks,
+    /// terminated by the length block. Every block, including a zero-padded
+    /// partial tail, is multiplied by H exactly once.
+    fn compute_ghash(&self, aad: &[u8], ciphertext: &[u8]) -> [u8; 16] {
+        let mut ghash = [0u8; 16];
+        let absorb = |data: &[u8], ghash: &mut [u8; 16]| {
+            for chunk in data.chunks(AES_BLOCK_SIZE) {
+                let mut block = [0u8; AES_BLOCK_SIZE];
+                block[..chunk.len()].copy_from_slice(chunk);
+                xor_blocks(ghash, &block);
+                *ghash = gf128_mul(*ghash, self.h);
+            }
+        };
+        absorb(aad, &mut ghash);
+        absorb(ciphertext, &mut ghash);
+
+        let mut lengths = [0u8; AES_BLOCK_SIZE];
+        lengths[..8].copy_from_slice(&((aad.len() as u64) * 8).to_be_bytes());
+        lengths[8..].copy_from_slice(&((ciphertext.len() as u64) * 8).to_be_bytes());
+        xor_blocks(&mut ghash, &lengths);
+        gf128_mul(ghash, self.h)
+    }
+
+    /// The authentication tag: E_K(J0) xor GHASH(A, C).
+    fn tag_for(&self, ghash: [u8; 16]) -> [u8; 16] {
         let mut tag_input = self.counter;
         self.cipher.encrypt_block(&mut tag_input);
-        auth_tag.copy_from_slice(&tag_input);
-
-        (ciphertext, auth_tag)
+        let mut tag = [0u8; 16];
+        xor_blocks(&mut tag, &tag_input);
+        xor_blocks(&mut tag, &ghash);
+        tag
     }
 
     fn increment_counter(counter: &mut [u8; 16]) {
@@ -569,16 +768,42 @@ impl Gcm {
     }
 }
 
-fn des_encrypt(block: &mut [u8; 8], _key: &[u8; 8]) {
-    for byte in block.iter_mut() {
-        *byte = SBOX[*byte as usize];
+fn xor_blocks(left: &mut [u8; 16], right: &[u8; 16]) {
+    for (left, right) in left.iter_mut().zip(right) {
+        *left ^= right;
     }
 }
 
-fn des_decrypt(block: &mut [u8; 8], _key: &[u8; 8]) {
-    for byte in block.iter_mut() {
-        *byte = INV_SBOX[*byte as usize];
+fn gf128_mul(x: [u8; 16], h: [u8; 16]) -> [u8; 16] {
+    // NIST SP 800-38D multiplication: Z accumulates V, which starts as H and
+    // is shifted one bit (with the 0xe1 reduction) after each processed bit
+    // of X, most significant bit first.
+    let mut z_high = 0u64;
+    let mut z_low = 0u64;
+    let mut v_high = u64::from_be_bytes(h[..8].try_into().unwrap());
+    let mut v_low = u64::from_be_bytes(h[8..].try_into().unwrap());
+
+    for byte in x {
+        for bit_index in (0..8).rev() {
+            if (byte >> bit_index) & 1 != 0 {
+                z_high ^= v_high;
+                z_low ^= v_low;
+            }
+
+            let lsb_set = v_low & 1 != 0;
+            let carry = v_high & 1;
+            v_high >>= 1;
+            v_low = (v_low >> 1) | (carry << 63);
+            if lsb_set {
+                v_high ^= 0xe100_0000_0000_0000;
+            }
+        }
     }
+
+    let mut result = [0u8; 16];
+    result[..8].copy_from_slice(&z_high.to_be_bytes());
+    result[8..].copy_from_slice(&z_low.to_be_bytes());
+    result
 }
 
 fn gmul(a: u8, b: u8) -> u8 {
@@ -640,3 +865,196 @@ const INV_SBOX: [u8; 256] = [
     0xa0, 0xe0, 0x3b, 0x4d, 0xae, 0x2a, 0xf5, 0xb0, 0xc8, 0xeb, 0xbb, 0x3c, 0x83, 0x53, 0x99, 0x61,
     0x17, 0x2b, 0x04, 0x7e, 0xba, 0x77, 0xd6, 0x26, 0xe1, 0x69, 0x14, 0x63, 0x55, 0x21, 0x0c, 0x7d,
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aes128_matches_fips197_c1() {
+        let key = [
+            0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf,
+            0x4f, 0x3c,
+        ];
+        let pt = [
+            0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96, 0xe9, 0x3d, 0x7e, 0x11, 0x73, 0x93,
+            0x17, 0x2a,
+        ];
+        let expected = [
+            0x3a, 0xd7, 0x7b, 0xb4, 0x0d, 0x7a, 0x36, 0x60, 0xa8, 0x9e, 0xca, 0xf3, 0x24, 0x66,
+            0xef, 0x97,
+        ];
+        let mut block = pt;
+        Aes128::new(&key).encrypt_block(&mut block);
+        assert_eq!(block, expected, "ct mismatch: {:02x?}", block);
+    }
+
+    #[test]
+    fn gcm_matches_reference_vectors() {
+        // NIST/McGrew-Viega test cases 1 and 2: zero key and IV.
+        let key = [0u8; 16];
+        let iv = [0u8; 12];
+
+        let (empty_ct, empty_tag) = Gcm::new(&key, &iv).encrypt(&[], &[]);
+        assert!(empty_ct.is_empty());
+        assert_eq!(
+            empty_tag,
+            [
+                0x58, 0xe2, 0xfc, 0xce, 0xfa, 0x7e, 0x30, 0x61, 0x36, 0x7f, 0x1d, 0x57, 0xa4,
+                0xe7, 0x45, 0x5a,
+            ]
+        );
+
+        let (ct, tag) = Gcm::new(&key, &iv).encrypt(&[0u8; 16], &[]);
+        assert_eq!(
+            ct,
+            [
+                0x03, 0x88, 0xda, 0xce, 0x60, 0xb6, 0xa3, 0x92, 0xf3, 0x28, 0xc2, 0xb9, 0x71,
+                0xb2, 0xfe, 0x78,
+            ]
+        );
+        assert_eq!(
+            tag,
+            [
+                0xab, 0x6e, 0x47, 0xd4, 0x2c, 0xec, 0x13, 0xbd, 0xf5, 0x3a, 0x67, 0xb2, 0x12,
+                0x57, 0xbd, 0xdf,
+            ]
+        );
+    }
+
+    #[test]
+    fn gcm_handles_partial_blocks_like_reference() {
+        // Cross-checked against a standard AES-GCM implementation with a
+        // 13-byte AAD and a 21-byte plaintext (non-multiple block sizes).
+        let key = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
+            0x0e, 0x0f,
+        ];
+        let iv = [0x07u8; 12];
+        let aad = [0x33u8; 13];
+        let plaintext = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
+            0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14,
+        ];
+
+        let (ct, tag) = Gcm::new(&key, &iv).encrypt(&plaintext, &aad);
+        assert_eq!(
+            ct,
+            [
+                0x91, 0x4d, 0x56, 0xde, 0x65, 0xbe, 0xc6, 0x3e, 0xff, 0x42, 0x28, 0xc8, 0x13,
+                0xb4, 0xe6, 0x76, 0x26, 0xd5, 0x58, 0x19, 0xa6,
+            ]
+        );
+        assert_eq!(
+            tag,
+            [
+                0x56, 0x44, 0x90, 0xe4, 0x9c, 0xcf, 0x94, 0xc2, 0x6e, 0xc7, 0xc1, 0x3f, 0xa0,
+                0xc8, 0x6b, 0xed,
+            ]
+        );
+    }
+
+    #[test]
+    fn gcm_decrypt_roundtrip_and_tamper() {
+        let key = [0x11u8; 16];
+        let iv = [0x22u8; 12];
+        let aad = [0x33u8; 8];
+        let plaintext: &[u8] = b"attack at dawn attack at dawn";
+
+        let (ct, tag) = {
+            let mut gcm = Gcm::new(&key, &iv);
+            gcm.encrypt(plaintext, &aad)
+        };
+
+        let mut gcm = Gcm::new(&key, &iv);
+        let decrypted = gcm.decrypt(&ct, &aad, &tag).expect("valid tag");
+        assert_eq!(decrypted.as_slice(), plaintext);
+
+        let mut gcm = Gcm::new(&key, &iv);
+        let mut bad_tag = tag;
+        bad_tag[15] ^= 0x01;
+        assert!(gcm.decrypt(&ct, &aad, &bad_tag).is_none());
+
+        let mut gcm = Gcm::new(&key, &iv);
+        let bad_aad = [0x34u8; 8];
+        assert!(gcm.decrypt(&ct, &bad_aad, &tag).is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "crypto_libs")]
+    fn des_matches_openssl_reference_vector() {
+        // Verified against: openssl enc -des-ecb -provider legacy
+        //   -K 0E329232EA6D0D73 with plaintext "DESC" + 4 zero bytes.
+        let key = [0x0e, 0x32, 0x92, 0x32, 0xea, 0x6d, 0x0d, 0x73];
+        let mut block = [0x44, 0x45, 0x53, 0x43, 0x00, 0x00, 0x00, 0x00];
+        let expected = [0xe7, 0xa1, 0xc3, 0x90, 0x3c, 0x4b, 0xeb, 0x1a];
+        Des::new(&key).encrypt_block(&mut block);
+        assert_eq!(block, expected);
+    }
+
+    #[test]
+    #[cfg(feature = "crypto_libs")]
+    fn triple_des_matches_openssl_reference_vector() {
+        // Verified against: openssl enc -des-ede3 -provider legacy
+        //   -K 0123456789ABCDEF23456789ABCDEF010F0F0F0F0F0F0F0F
+        let key = [
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd,
+            0xef, 0x01, 0x0f, 0x0f, 0x0f, 0x0f, 0x0f, 0x0f, 0x0f, 0x0f,
+        ];
+        let plaintext = [
+            0x44, 0x45, 0x53, 0x43, 0x00, 0x00, 0x00, 0x00, 0x44, 0x45, 0x53, 0x43, 0x00, 0x00,
+            0x00, 0x00,
+        ];
+        let expected = [
+            0x12, 0x0b, 0x7d, 0x11, 0x2b, 0x32, 0xbe, 0x51, 0x12, 0x0b, 0x7d, 0x11, 0x2b, 0x32,
+            0xbe, 0x51,
+        ];
+        let cipher = TripleDes::new(&key).expect("valid 3DES key");
+        let mut ct = plaintext;
+        for chunk in ct.chunks_mut(8) {
+            let mut block = [0u8; 8];
+            block.copy_from_slice(chunk);
+            cipher.encrypt_block(&mut block).expect("encrypt");
+            chunk.copy_from_slice(&block);
+        }
+        assert_eq!(ct, expected);
+    }
+
+    #[test]
+    #[cfg(feature = "crypto_libs")]
+    fn triple_des_cbc_matches_openssl_reference_vector() {
+        // Verified against: openssl enc -des3 -provider legacy
+        //   -K 0123456789ABCDEF23456789ABCDEF010F0F0F0F0F0F0F0F
+        //   -iv 1122334455667788
+        let key = [
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd,
+            0xef, 0x01, 0x0f, 0x0f, 0x0f, 0x0f, 0x0f, 0x0f, 0x0f, 0x0f,
+        ];
+        let iv = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
+        let plaintext = [
+            0x44, 0x45, 0x53, 0x43, 0x00, 0x00, 0x00, 0x00, 0x44, 0x45, 0x53, 0x43, 0x00, 0x00,
+            0x00, 0x00,
+        ];
+        let expected = [
+            0xac, 0x53, 0xb7, 0xaf, 0xfe, 0xd4, 0x62, 0x5a, 0x94, 0xd6, 0x32, 0xf9, 0x92, 0x28,
+            0xa1, 0x6b,
+        ];
+        let ct = tdes_cbc_encrypt(&key, &iv, &plaintext).expect("encrypt");
+        assert_eq!(ct, expected);
+        let pt = tdes_cbc_decrypt(&key, &iv, &ct).expect("decrypt");
+        assert_eq!(pt, plaintext);
+    }
+
+    #[test]
+    #[cfg(feature = "crypto_libs")]
+    fn triple_des_block_roundtrip() {
+        let key = [0x42u8; 24];
+        let cipher = TripleDes::new(&key).expect("valid 3DES key");
+        let mut block = [0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03, 0x04];
+        let original = block;
+        cipher.encrypt_block(&mut block).expect("encrypt");
+        assert_ne!(block, original);
+        cipher.decrypt_block(&mut block).expect("decrypt");
+        assert_eq!(block, original);
+    }
+}
