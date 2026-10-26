@@ -55,9 +55,11 @@ impl VectorInfo {
 }
 
 static VECTOR_TABLE: [AtomicU32; MAX_IDT_VECTORS] = {
-    // AtomicU32 is not `Copy`, so we have to use `[const { ... }; N]`
-    // is not possible without `Default`. We construct it through a
-    // function below; this array is only the placeholder.
+    // Per-vector kind table (values are `HandlerKind` discriminants).
+    // `AtomicU32` has no `const` `Default`, so the array is built with
+    // a const block. This table is the executive's bookkeeping only: the
+    // actual IDT/IPI programming is owned by `arch::x86_64::idt` and the
+    // HAL, which is where real routing is wired.
     [const { AtomicU32::new(0) }; MAX_IDT_VECTORS]
 };
 

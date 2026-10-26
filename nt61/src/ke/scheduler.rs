@@ -22,8 +22,11 @@ use core::ptr::null_mut;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 
 /// Maximum number of CPUs supported.
-const MAX_CPUS: usize = 4;
-const MAX_IDLE_THREADS: usize = 4;
+/// Kept in lockstep with the arch layers (see arch/aarch64/mod.rs):
+/// a scheduler limit below the arch limit silently truncates SMP
+/// bring-up, and one above it would index per-CPU arrays out of range.
+const MAX_CPUS: usize = 64;
+const MAX_IDLE_THREADS: usize = MAX_CPUS;
 
 /// Scheduler priority levels (Windows-compatible).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -453,32 +456,34 @@ pub struct Prcb {
     // === 0xB00: Waiting & Scheduling ===
     pub wait_intes: u64,              // 0xB00
     pub wait_block: [WaitBlock; 8],   // 0xB08
-    pub wait_list_head: ListEntry,    // 0xB88
-    pub affinity_suspend_quantum: u8, // 0xB98
-    pub suspend_timer_in_use: u8,     // 0xB99
-    pub cpu_vendor: u8,               // 0xB9A
-    pub dbg_cpu: u8,                  // 0xB9B
-    pub ccd_time: u64,                // 0xBA0
-    pub ready_summary_smt: u64,       // 0xBA8
-    pub smt_period: u32,              // 0xBB0
-    pub smt_csd_barrier: u32,         // 0xBB4
-    pub wait_affinity: u32,           // 0xBB8
-    pub pad_8bc: u32,                 // 0xBBC
-    pub initial_stall: u32,           // 0xBC0
-    pub pad_8c4: u32,                 // 0xBC4
-    pub pad_8c8: u64,                 // 0xBC8
-    pub pad_8d0: u64,                 // 0xBD0
-    pub wait_outstanding: u8,         // 0xBD8
-    _pad_wait: [u8; 3],               // 0xBD9
-    pub yield_needed: u32,            // 0xBDC
-    pub yield_outstanding: u32,       // 0xBE0
-    pub pad_8e4: u32,                 // 0xBE4
-    pub pad_8e8: u64,                 // 0xBE8
-    pub pad_8f0: u64,                 // 0xBF0
-    pub pad_8f8: u64,                 // 0xBF8
+    pub wait_list_head: ListEntry,    // 0xC88
+    pub affinity_suspend_quantum: u8, // 0xC98
+    pub suspend_timer_in_use: u8,     // 0xC99
+    pub cpu_vendor: u8,               // 0xC9A
+    pub dbg_cpu: u8,                  // 0xC9B
+    pub ccd_time: u64,                // 0xCA0
+    pub ready_summary_smt: u64,       // 0xCA8
+    pub smt_period: u32,              // 0xCB0
+    pub smt_csd_barrier: u32,         // 0xCB4
+    pub wait_affinity: u32,           // 0xCB8
+    pub pad_8bc: u32,                 // 0xCBC
+    pub initial_stall: u32,           // 0xCC0
+    pub pad_8c4: u32,                 // 0xCC4
+    pub pad_8c8: u64,                 // 0xCC8
+    pub pad_8d0: u64,                 // 0xCD0
+    pub wait_outstanding: u8,         // 0xCD8
+    _pad_wait: [u8; 3],               // 0xCD9
+    pub yield_needed: u32,            // 0xCDC
+    pub yield_outstanding: u32,       // 0xCE0
+    pub pad_8e4: u32,                 // 0xCE4
+    pub pad_8e8: u64,                 // 0xCE8
+    pub pad_8f0: u64,                 // 0xCF0
+    pub pad_8f8: u64,                 // 0xCF8
 
-    // Padding from 0xC00 to 0xD00 (256 bytes)
-    _pad_wait2: [u8; 0xD00 - 0xC00],
+    // No extra padding here: with WaitBlock at 0x30 bytes, the fields
+    // above already end exactly at 0xD00. The old 256-byte pad pushed
+    // every field after 0xC00 off by 0x100 bytes.
+    _pad_wait2: [u8; 0],
 
     // === 0xD00: Schedule Groups ===
     pub schedule_groups: u64,        // 0xD00
@@ -507,7 +512,7 @@ pub struct Prcb {
     pub major_version: u8,    // 0xF5D
     pub build_number: u16,    // 0xF5E
     pub q_system_time: u64,   // 0xF60
-    pub pad_f68: [u8; 0x118], // 0xF68 - Fill to 0xF80 (280 bytes)
+    pub pad_f68: [u8; 0x18], // 0xF68 - Fill to 0xF80 (24 bytes)
 }
 
 // Note: Prcb structure is expanded for Windows 7 x64 compatibility
@@ -561,6 +566,16 @@ const _: () = assert!(
     "perf_global should be in second half of structure"
 );
 
+// Verify the wait-block region: [WaitBlock; 8] spans 0xB08..0xC88
+const _: () = assert!(
+    core::mem::offset_of!(Prcb, wait_block) == 0xB08,
+    "wait_block must be at offset 0xB08"
+);
+const _: () = assert!(
+    core::mem::offset_of!(Prcb, wait_list_head) == 0xC88,
+    "wait_list_head must be at offset 0xC88 (0xB08 + 8 * 0x30)"
+);
+
 // Verify prcb_type in final section
 const _: () = assert!(
     core::mem::offset_of!(Prcb, prcb_type) > 0xF00,
@@ -569,8 +584,8 @@ const _: () = assert!(
 
 // Verify prcb_size is 0x0F80
 const _: () = assert!(
-    core::mem::size_of::<Prcb>() >= 0xF80,
-    "Prcb size must be at least 0xF80 bytes for Windows 7 x64 compatibility"
+    core::mem::size_of::<Prcb>() == 0xF80,
+    "Prcb size must be exactly 0xF80 bytes for Windows 7 x64 compatibility"
 );
 
 impl Prcb {
@@ -725,7 +740,7 @@ impl Prcb {
             pad_8e8: 0,
             pad_8f0: 0,
             pad_8f8: 0,
-            _pad_wait2: [0; 0xD00 - 0xC00],
+            _pad_wait2: [0; 0],
 
             // === 0xD00: Schedule Groups ===
             schedule_groups: 0,
@@ -752,7 +767,7 @@ impl Prcb {
             major_version: 6,
             build_number: 7601,
             q_system_time: 0,
-            pad_f68: [0; 0x118],
+            pad_f68: [0; 0x18],
         }
     }
 
@@ -911,8 +926,9 @@ pub fn lock_ready_queue(cpu: usize, priority: usize) -> Option<QueueLockGuard> {
 /// Lock the dispatcher lock for a specific CPU.
 /// This provides per-CPU locking for improved SMP scalability.
 ///
-/// In a full implementation, this would use a ticket spinlock
-/// like the Windows KPRCB dispatcher lock for fairness.
+/// Ticket spinlock like the Windows KPRCB dispatcher lock: two
+/// counters per CPU hand out tickets in FIFO order, so waiters cannot
+/// starve the way they can under a plain compare-exchange spin loop.
 pub fn lock_prcb(cpu: usize) -> bool {
     if cpu >= MAX_PERCPU_LOCKS {
         return false;
@@ -920,30 +936,35 @@ pub fn lock_prcb(cpu: usize) -> bool {
     let Some(owner) = current_lock_owner() else {
         return false;
     };
-    let slot = &PRCB_LOCK_STATES[cpu];
-    loop {
-        match slot.compare_exchange(0, owner, Ordering::Acquire, Ordering::Acquire) {
-            Ok(_) => return true,
-            Err(state) => {
-                if state == owner {
-                    return false;
-                }
-                core::hint::spin_loop();
-            }
-        }
+    // Ticket locks are not reentrant; the owner slot preserves the
+    // existing reentrancy diagnostics for callers that rely on it.
+    if PRCB_LOCK_STATES[cpu].load(Ordering::Acquire) == owner {
+        return false;
     }
+    let ticket = PRCB_LOCK_NEXT[cpu].fetch_add(1, Ordering::AcqRel);
+    while PRCB_LOCK_SERVING[cpu].load(Ordering::Acquire) != ticket {
+        core::hint::spin_loop();
+    }
+    PRCB_LOCK_STATES[cpu].store(owner, Ordering::Release);
+    true
 }
+
+/// Ticket counters backing the per-CPU dispatcher lock FIFO ordering.
+static PRCB_LOCK_NEXT: [AtomicU32; MAX_PERCPU_LOCKS] =
+    [const { AtomicU32::new(0) }; MAX_PERCPU_LOCKS];
+static PRCB_LOCK_SERVING: [AtomicU32; MAX_PERCPU_LOCKS] =
+    [const { AtomicU32::new(0) }; MAX_PERCPU_LOCKS];
 
 /// Unlock the dispatcher lock for a specific CPU.
 pub fn unlock_prcb(cpu: usize) {
     if cpu < MAX_PERCPU_LOCKS {
         if let Some(owner) = current_lock_owner() {
-            let _ = PRCB_LOCK_STATES[cpu].compare_exchange(
-                owner,
-                0,
-                Ordering::Release,
-                Ordering::Relaxed,
-            );
+            if PRCB_LOCK_STATES[cpu]
+                .compare_exchange(owner, 0, Ordering::AcqRel, Ordering::Relaxed)
+                .is_ok()
+            {
+                PRCB_LOCK_SERVING[cpu].fetch_add(1, Ordering::Release);
+            }
         }
     }
 }
@@ -1160,6 +1181,13 @@ pub fn add_ready(thread: *mut Ethread, priority: u8) {
             prcb.ready_summary
                 .fetch_or(1u32 << priority, Ordering::AcqRel);
 
+            // Record where the thread was queued (ke_sched P0-4):
+            // remove_ready must look in the same queue even if the
+            // thread's priority is later boosted.
+            unsafe {
+                (*thread).kthread.queued_priority = priority;
+                (*thread).kthread.queued_cpu = target_cpu as u16;
+            }
             // // kprintln!(
             // //                 level: crate::rtl::logging::LogLevel::Debug,
             // //                 subsystem: "SCHED",
@@ -1179,6 +1207,11 @@ pub fn add_ready(thread: *mut Ethread, priority: u8) {
         // Update ready summary atomically
         prcb.ready_summary
             .fetch_or(1u32 << priority, Ordering::AcqRel);
+        // Record the queue location (see the per-CPU path above).
+        unsafe {
+            (*thread).kthread.queued_priority = priority;
+            (*thread).kthread.queued_cpu = 0;
+        }
         // // kprintln!("[SCHED] add_ready: fallback to CPU 0, priority {}", priority);
     }
 }
@@ -1188,38 +1221,35 @@ pub fn add_ready(thread: *mut Ethread, priority: u8) {
 /// This is called when a thread is blocked, terminated, or
 /// moved to a wait state. The thread is removed from the
 /// appropriate CPU's priority queue based on its home CPU affinity.
-pub fn remove_ready(thread: *mut Ethread) {
+/// Returns true if the thread was found and removed.
+///
+/// ke_sched P0-4: the CPU and priority recorded by `add_ready` are
+/// used, because the thread may have been enqueued with a boosted
+/// priority — deriving the queue from `base_priority` looked in the
+/// wrong queue and silently left the thread runnable.
+pub fn remove_ready(thread: *mut Ethread) -> bool {
     if thread.is_null() {
-        return;
+        return false;
+    }
+
+    let (target_cpu, priority) = unsafe {
+        let k = &(*thread).kthread;
+        (k.queued_cpu as usize, k.queued_priority as usize)
+    };
+
+    // 0xFF is the "never queued" sentinel; anything >= 32 is not a
+    // valid ready-queue priority.
+    if priority >= 32 {
+        return false;
     }
 
     let mut scheduler = SCHEDULER.lock();
 
-    // Determine which CPU's queue the thread should be in
-    let target_cpu = unsafe {
-        let home_cpu = (*thread).kthread.home_cpu;
-        let affinity = (*thread).kthread.affinity_mask;
-
-        // Check if home CPU is allowed by affinity
-        if (affinity & (1u64 << home_cpu)) != 0 {
-            home_cpu as usize
-        } else {
-            // Fallback to current CPU
-            scheduler.current_cpu as usize
-        }
-    };
-
-    // Get the thread's priority level
-    let priority = unsafe { (*thread).kthread.base_priority as u8 };
-
-    if priority >= 32 {
-        return;
-    }
 
     // Same lock protocol as `add_ready` and `ki_balance_processor`.
     let _queue_guard = match lock_ready_queue(target_cpu, priority as usize) {
         Some(g) => g,
-        None => return,
+        None => return false,
     };
 
     // Search for the thread in the target CPU's ready queue
@@ -1262,13 +1292,17 @@ pub fn remove_ready(thread: *mut Ethread) {
                                 .fetch_and(!(1u32 << priority), Ordering::AcqRel);
                         }
 
+                        // Clear the queue-location tracking (ke_sched P0-4).
+                        (*thread).kthread.queued_priority = 0xFF;
+                        (*thread).kthread.queued_cpu = 0;
+
                         // // kprintln!(
                         // //                             level: crate::rtl::logging::LogLevel::Debug,
                         // //                             subsystem: "SCHED",
                         // //                             "remove_ready: removed thread from CPU {} priority {}",
                         // //                             target_cpu, priority
                         // //                         );
-                        return;
+                        return true;
                     }
 
                     entry_ptr = (*entry_ptr).flink;
@@ -1283,6 +1317,7 @@ pub fn remove_ready(thread: *mut Ethread) {
     // //         "remove_ready: thread not found in CPU {} queue (priority={})",
     // //         target_cpu, priority
     // //     );
+    false
 }
 
 /// Schedule the next thread on the current CPU.
@@ -1423,11 +1458,29 @@ pub fn schedule() -> bool {
     // Update current_thread in PRCB
     if let Some(next_thread) = next {
         if Some(next_thread) != current {
-            // Save current thread's context (its kernel RSP lives
-            // in the per-arch register; read via the unified facade).
             unsafe {
                 if let Some(cur) = current {
-                    (*cur).kthread.context.kernel_rsp = crate::arch::get_stack_pointer();
+                    // ke_sched P0-8: a preempted or yielding thread is
+                    // still runnable — re-queue it (at the tail, NT
+                    // semantics) so it is not lost when we switch away.
+                    // Blocked/terminated threads have already left the
+                    // Running state and must not be re-queued.
+                    if (*cur).kthread.state == KThreadState::Running {
+                        let prio = ((*cur).kthread.priority as i32).clamp(0, 31) as usize;
+                        if let Some(ref mut prcb) = scheduler.cpus[cpu] {
+                            if lock_ready_queue(cpu, prio).is_some() {
+                                let entry_ptr = core::ptr::addr_of_mut!(
+                                    (*cur).kthread.global_thread_list_entry
+                                ) as *mut ListEntry;
+                                prcb.ready_queues[prio].add_tail(entry_ptr);
+                                prcb.ready_summary
+                                    .fetch_or(1u32 << prio, Ordering::AcqRel);
+                                (*cur).kthread.queued_priority = prio as u8;
+                                (*cur).kthread.queued_cpu = cpu as u16;
+                                (*cur).kthread.state = KThreadState::Ready;
+                            }
+                        }
+                    }
                 }
             }
             // Update PRCB's current_thread
@@ -1442,12 +1495,28 @@ pub fn schedule() -> bool {
             // `swap_context` lives in the per-arch module; route
             // through the unified `arch::swap_context` facade so the
             // scheduler stays arch-agnostic.
+            //
+            // ke_sched P0-8: the outgoing thread's kernel RSP is saved
+            // by `swap_context` itself, directly into its KthreadContext
+            // — the switch frame is 56 bytes below the caller's RSP, so
+            // a pre-read of `get_stack_pointer()` stored a value that
+            // corrupted the resumption contract.
             let new_rsp = unsafe { (*next_thread).kthread.context.kernel_rsp };
             unsafe {
                 (*next_thread).kthread.state = KThreadState::Running;
                 if new_rsp != 0 {
-                    let mut out_rsp: u64 = 0;
-                    crate::arch::swap_context(&mut out_rsp, new_rsp);
+                    match current {
+                        Some(cur) => {
+                            crate::arch::swap_context(
+                                &mut (*cur).kthread.context.kernel_rsp,
+                                new_rsp,
+                            );
+                        }
+                        None => {
+                            let mut out_rsp: u64 = 0;
+                            crate::arch::swap_context(&mut out_rsp, new_rsp);
+                        }
+                    }
                 }
             }
             return true;
@@ -1585,7 +1654,18 @@ fn ms_to_ticks(ms: u32) -> u64 {
 /// `sti;hlt` / `wfi` / `idle 0` sequence stays inside `arch::*`.
 pub fn idle_loop() -> ! {
     loop {
-        crate::arch::wait_for_interrupt();
+        // ke_sched P0-1: the idle loop used to just halt forever, so a
+        // thread made ready (or a reschedule request recorded) by an
+        // interrupt was never dispatched. Service pending work before
+        // idling.
+        let cpu = get_current_cpu();
+        if has_pending_reschedule(cpu) {
+            dispatch_pending_reschedule();
+        } else if has_work() {
+            schedule();
+        } else {
+            crate::arch::wait_for_interrupt();
+        }
     }
 }
 
@@ -1626,6 +1706,13 @@ pub fn set_priority(thread: *mut Ethread, priority: i8) {
     unsafe {
         (*thread).kthread.base_priority = priority;
         (*thread).kthread.priority = priority;
+    }
+    // ke_sched P1-8: a thread sitting in a ready queue is indexed by
+    // its priority; move it to the queue matching the new priority.
+    let state = unsafe { (*thread).kthread.state };
+    if state == KThreadState::Ready && remove_ready(thread) {
+        let p = unsafe { (*thread).kthread.priority };
+        add_ready(thread, p.clamp(0, 31) as u8);
     }
 }
 
@@ -1706,8 +1793,23 @@ pub fn is_smp_enabled() -> bool {
 
 /// Initialise per-CPU state for the current CPU (BSP or AP).
 pub fn init_smp_this_cpu(cpu_id: u32) {
+    // An out-of-range CPU id is an arch-layer bug: clamping it onto an
+    // existing slot would run two CPUs on one PRCB, letting both write
+    // the same scheduler state. Fail loudly instead.
+    if (cpu_id as usize) >= MAX_CPUS {
+        crate::hal::serial::write_string(
+            "[FATAL] init_smp_this_cpu: CPU id exceeds MAX_CPUS\r\n",
+        );
+        crate::ke::bugcheck::bugcheck_with(
+            crate::ke::bugcheck::BugCheckCode::ProcessInitializationFailed,
+            0x6B,          // PROCESS_INITIALIZATION_FAILURE
+            cpu_id as u64, // CPU ID
+            MAX_CPUS as u64,
+            0,
+        );
+    }
     let mut sched = SCHEDULER.lock();
-    let idx = (cpu_id as usize).min(MAX_CPUS - 1);
+    let idx = cpu_id as usize;
 
     if sched.cpus[idx].is_none() {
         let raw = crate::mm::pool::allocate(
@@ -2127,6 +2229,18 @@ pub fn balance_load() {
 
         if let Some(ref mut max_prcb) = scheduler.cpus[max_cpu] {
             if let Some((thread, priority)) = find_migratable_thread(max_prcb) {
+                // ke_sched P0-4: the per-CPU ready queues are guarded by
+                // lock_ready_queue everywhere else (add_ready, remove_ready,
+                // schedule, ki_balance_processor); balance_load mutated
+                // them with only the global scheduler lock held. Take the
+                // same guards — source queue first, then destination.
+                let (_src_guard, _dst_guard) = match (
+                    lock_ready_queue(max_cpu, priority as usize),
+                    lock_ready_queue(min_cpu, priority as usize),
+                ) {
+                    (Some(src), Some(dst)) => (src, dst),
+                    _ => return,
+                };
                 let queue = &mut max_prcb.ready_queues[priority as usize];
                 let entry_ptr = unsafe {
                     core::ptr::addr_of_mut!((*thread).kthread.global_thread_list_entry)
@@ -2175,6 +2289,12 @@ pub fn balance_load() {
                     min_prcb
                         .ready_summary
                         .fetch_or(1u32 << priority, Ordering::AcqRel);
+                    // Keep the queue-location tracking in sync with the
+                    // manual migration (ke_sched P0-4).
+                    unsafe {
+                        (*thread).kthread.queued_priority = priority;
+                        (*thread).kthread.queued_cpu = min_cpu as u16;
+                    }
 
                     let _tid = unsafe { (*thread).client_id.unique_thread };
                     // _tid is intentionally unused - reserved for future logging
@@ -2190,7 +2310,9 @@ pub fn balance_load() {
 
 /// Request a context switch on the current CPU
 pub fn request_context_switch() {
-    // In a real implementation, this would set a pending context switch flag
+    // ke_sched P1-6: this was an empty stub, so callers asking for a
+    // context switch were silently ignored.
+    request_reschedule(get_current_cpu());
 }
 
 /// Check if current CPU has work to do
@@ -2643,5 +2765,70 @@ mod multicore_contention_tests {
 
         let guard = lock_ready_queue(0, 0).expect("re-acquired after mass release");
         drop(guard);
+    }
+
+    /// ke_sched P0-3 regression: the ready-queue `ListHead` must
+    /// survive the audit's failing sequence — build a three-node
+    /// list, pop the head, push a new tail, then drain everything.
+    /// The old concern was that removing the head could clear the
+    /// tail pointer while `head` still pointed at the second node,
+    /// causing a later `add_tail` to detach live nodes. `remove_head`
+    /// only clears `blink` when the list actually empties, so the
+    /// full sequence must return every node exactly once.
+    #[test]
+    fn list_head_survives_pop_then_push() {
+        let mut a = ListEntry {
+            flink: core::ptr::null_mut(),
+            blink: core::ptr::null_mut(),
+        };
+        let mut b = ListEntry {
+            flink: core::ptr::null_mut(),
+            blink: core::ptr::null_mut(),
+        };
+        let mut c = ListEntry {
+            flink: core::ptr::null_mut(),
+            blink: core::ptr::null_mut(),
+        };
+        let mut d = ListEntry {
+            flink: core::ptr::null_mut(),
+            blink: core::ptr::null_mut(),
+        };
+        let mut q = ListHead {
+            head: core::ptr::null_mut(),
+            blink: core::ptr::null_mut(),
+        };
+
+        q.add_tail(&mut a);
+        q.add_tail(&mut b);
+        q.add_tail(&mut c);
+
+        // Pop the head of a three-element list, then push a new tail.
+        let popped = q.remove_head().expect("list not empty");
+        assert_eq!(popped, &mut a as *mut ListEntry);
+        let new_tail = &mut d as *mut ListEntry;
+        q.add_tail(new_tail);
+
+        // Tail pointer must still be valid: the queue is non-empty and
+        // add_tail must not have re-rooted the list at `d`.
+        assert!(!q.blink.is_null(), "tail pointer must survive pop+push");
+        assert!(!q.head.is_null(), "head pointer must survive pop+push");
+        assert_ne!(q.head, new_tail, "head must still point at node b");
+
+        // Drain: every remaining node comes out exactly once, in FIFO
+        // order, and the list ends consistently empty.
+        let first = q.remove_head().expect("b present");
+        let second = q.remove_head().expect("c present");
+        let third = q.remove_head().expect("d present");
+        assert_eq!(first, &mut b as *mut ListEntry);
+        assert_eq!(second, &mut c as *mut ListEntry);
+        assert_eq!(third, &mut d as *mut ListEntry);
+        assert!(q.remove_head().is_none(), "list must be empty");
+        assert!(q.head.is_null() && q.blink.is_null());
+
+        // The list still accepts pushes after a full drain.
+        q.add_tail(&mut a);
+        assert!(!q.head.is_null() && !q.blink.is_null());
+        assert_eq!(q.head, &mut a as *mut ListEntry);
+        assert_eq!(q.blink, &mut a as *mut ListEntry);
     }
 }

@@ -68,7 +68,7 @@ pub unsafe fn init_shadow_services() {
 
     // USER services (indices 0x000-0x0FF after masking 0x1xxx)
     // Full syscall numbers are 0x1000-0x10FF, masked = 0x000-0x0FF
-    register_shadow_service(0x000, syscall::nt_user_set_thread_state as *const (), 8); // 0x1000
+    register_shadow_service(0x000, syscall::nt_gdi_get_dc as *const (), 8); // 0x1000 NT_GDI_GET_DC
     register_shadow_service(0x001, syscall::nt_user_peek_message as *const (), 16); // 0x1001
     register_shadow_service(0x002, syscall::nt_user_call_one_param as *const (), 8); // 0x1002
     register_shadow_service(0x003, syscall::nt_user_get_key_state as *const (), 8); // 0x1003
@@ -268,7 +268,7 @@ pub unsafe fn init_shadow_services() {
         8,
     ); // 0x10a8
     register_shadow_service(0x0a9, syscall::nt_user_get_atom_name as *const (), 8); // 0x10a9
-    register_shadow_service(0x0ae, syscall::nt_user_build_hwnd_list as *const (), 12); // 0x10ae
+    register_shadow_service(0x0ae, syscall::nt_user_build_name_list as *const (), 12); // 0x10ae NT_USER_BUILD_NAME_LIST
     register_shadow_service(
         0x0b0,
         syscall::nt_user_register_class_ex_wow as *const (),
@@ -464,9 +464,9 @@ pub unsafe fn init_shadow_services() {
     register_shadow_service(0x0d6, syscall::nt_gdi_invert_rgn as *const (), 16); // 0x10d6
     register_shadow_service(
         0x0da,
-        syscall::nt_gdi_compute_xform_coefficients as *const (),
-        28,
-    ); // 0x10da
+        syscall::nt_user_track_mouse_event as *const (),
+        16,
+    ); // 0x10da NT_USER_TRACK_MOUSE_EVENT
     register_shadow_service(0x0de, syscall::nt_gdi_set_bitmap_bits as *const (), 12); // 0x10de
     register_shadow_service(0x0e4, syscall::nt_gdi_save_dc as *const (), 4); // 0x10e4
     register_shadow_service(0x0e5, syscall::nt_gdi_get_app_clip_box as *const (), 8); // 0x10e5
@@ -513,6 +513,24 @@ pub fn get_shadow_service(service_index: u32) -> Option<*const ()> {
             Some(entry.handler)
         }
     }
+}
+
+/// Get the argument byte count for a shadow (win32k) service
+pub fn get_argument_size(service_index: u32) -> u8 {
+    if service_index as usize >= SHADOW_MAX_SERVICES {
+        return 0;
+    }
+    unsafe { SHADOW_ARGUMENT_TABLE[service_index as usize] }
+}
+
+/// Get a pointer to the shadow service table (for KeServiceDescriptorTable)
+pub fn service_table_ptr() -> *const () {
+    core::ptr::addr_of!(SHADOW_SERVICE_TABLE) as *const ()
+}
+
+/// Get a pointer to the shadow argument table (for KeServiceDescriptorTable)
+pub fn argument_table_ptr() -> *const u8 {
+    core::ptr::addr_of!(SHADOW_ARGUMENT_TABLE) as *const u8
 }
 
 // =====================================================================

@@ -330,6 +330,10 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     // ============================================================================
     phase_header!(3, "Registry");
     registry::init();
+    // Mount the disk hives (SYSTEM/SOFTWARE/SECURITY/SAM/DEFAULT) that
+    // winload loaded into memory and published via BootInfo.hives.
+    // Without this call every cm::query_* path silently returns None.
+    registry::cm::init(boot_info);
 
     // ============================================================================
     // PHASE 5: I/O Manager (io)
@@ -394,6 +398,12 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     ps::init();
     crate::rtl::klog::phase_trace_marker(801);
     crate::hal::serial::write_string_always("K:P801\r\n");
+
+    // Start the zero-page system thread now that the PS subsystem can
+    // create kernel threads. Without this the Zeroed list never gets a
+    // background refiller and every demand-zero fault pays a full
+    // synchronous 4 KiB clear.
+    crate::mm::zeropage::start_zero_page_thread();
 
     crate::hal::serial::write_string_always("K:P9_ABOUT\r\n");
 
@@ -751,17 +761,12 @@ fn load_system_files() {
         return;
     };
 
-    const SYSTEM_IMAGES: [(&str, &str, u64); 5] = [
-        (
-            "hal.dll",
-            "C:\\Windows\\System32\\hal.dll",
-            kernel_layout::HAL_BASE,
-        ),
-        (
-            "ntoskrnl.exe",
-            "C:\\Windows\\System32\\ntoskrnl.exe",
-            kernel_layout::NTOSKRNL_BASE,
-        ),
+    // NOTE: hal.dll and ntoskrnl.exe are deliberately absent here.
+    // winload already loaded both images before ExitBootServices and
+    // published their bases in BootInfo (ntoskrnl_image_base /
+    // hal_image_base); loading them again here would keep two copies
+    // of the kernel resident and make export resolution ambiguous.
+    const SYSTEM_IMAGES: [(&str, &str, u64); 3] = [
         (
             "ntdll.dll",
             "C:\\Windows\\System32\\ntdll.dll",
@@ -799,6 +804,17 @@ fn load_system_files() {
                     name, image.image_base, image.entry_point, image.image_size
                 ));
                 db.register(&image, &raw_pe);
+                // Map the relocated image at its base so export
+                // addresses resolve to executable pages instead of an
+                // unmapped region.
+                if crate::loader::map_loaded_image_into_kernel_space(&image) {
+                    boot_println!("    Mapped {} into kernel address space", name);
+                } else {
+                    boot_println!(
+                        "    WARN: {} not mapped into kernel space; exports dangle",
+                        name
+                    );
+                }
                 loaded_count += 1;
                 boot_milestone!("KERNEL", "system image load complete");
             }
@@ -851,7 +867,7 @@ fn run_smoke_test() {
     //   function. Same `LOG_EARLY_READY=true / write_kdprint`
     //   stack-corruption class as KE smoke. Defer until root-
     //   caused.
-    aggregator.record("IO", true);
+    aggregator.record_skipped("IO");
 
     // 5. File System
     aggregator.record("FS", fs::smoke::smoke_test());
@@ -873,7 +889,7 @@ fn run_smoke_test() {
     //   real drivers have already been registered and used in
     //   Phase 8 (`drivers::init`); the smoke path is an additional
     //   self-check we can defer.
-    aggregator.record("DRIVERS", true);
+    aggregator.record_skipped("DRIVERS");
 
     // 10. Libraries
     // TLE-7: libs::smoke::smoke_test() runs ntdll / kernel32 /
@@ -882,7 +898,7 @@ fn run_smoke_test() {
     //   return `true` because the user-mode libraries will be
     //   exercised directly when `try_launch_cmd_exe()` brings up
     //   user-mode `cmd.exe`.
-    aggregator.record("LIBS", true);
+    aggregator.record_skipped("LIBS");
 
     // 11. User Entry (Ring 0 -> Ring 3 transition)
     // TLE-8: the platform user-entry smoke test runs the privilege
@@ -890,8 +906,7 @@ fn run_smoke_test() {
     //   `try_launch_cmd_exe()` brings up user-mode `cmd.exe`, so
     //   we can short-circuit here. The whole smoke aggregator is
     //   platform details are hidden by the smoke-test facade.
-    boot_println!("  [USER_ENTRY] first_user_enter + call_first_user_enter: linked, callable");
-    aggregator.record("USER_ENTRY", true);
+    aggregator.record_skipped("USER_ENTRY");
 
     // Print summary
     aggregator.finish();

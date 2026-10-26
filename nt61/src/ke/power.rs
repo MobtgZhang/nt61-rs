@@ -488,8 +488,10 @@ pub fn enter_cpu_c_state(state: CpuCState) -> bool {
                 // Already active
             }
             CpuCState::C1 => {
-                // Execute HLT or MWAIT
-                crate::arch::cpu_pause();
+                // C1 requires an actual halt (HLT), not a spin-wait
+                // pause. cpu_pause() burns power without yielding the
+                // core to the interrupt controller.
+                crate::arch::halt();
             }
             CpuCState::C2 | CpuCState::C3 => {
                 // Would execute deeper sleep instructions

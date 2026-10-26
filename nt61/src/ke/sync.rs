@@ -9,11 +9,17 @@
 //! `servers/services.rs` and `ke/scheduler.rs`; they all consume
 //! `crate::ke::sync::Spinlock` instead.
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 /// IRQL (Interrupt Request Level) type
 /// Used to represent software interrupt priority levels in NT
 pub type Irql = u8;
+
+/// Long-spin statistics for \`Spinlock::lock\`: incremented at each
+/// power-of-two threshold crossing beyond 10000 spin iterations, so
+/// contended or deadlocked locks are observable in diagnostics even
+/// when serial logging is suppressed or unavailable.
+pub static LONG_SPIN_EVENTS: AtomicU64 = AtomicU64::new(0);
 
 /// IRQL levels
 //
@@ -86,7 +92,10 @@ pub struct Spinlock<T: ?Sized> {
 // EPROCESS, frame info) which are not `Send` by default, so we
 // unconditionally mark the lock `Send + Sync`. The lock itself
 // guarantees the safety invariant.
-unsafe impl<T: ?Sized> Send for Spinlock<T> {}
+// A Spinlock may only be moved across threads when the data it
+// protects is also Send; the unconditional bound previously allowed
+// e.g. Rc-backed payloads to cross threads unsafely.
+unsafe impl<T: ?Sized + Send> Send for Spinlock<T> {}
 unsafe impl<T: ?Sized> Sync for Spinlock<T> {}
 
 impl<T> Spinlock<T> {
@@ -179,7 +188,10 @@ impl<T: ?Sized> Spinlock<T> {
                 // Check if this is the first warning or a power-of-2 threshold crossing
                 let is_threshold_crossing = (spins == 10001) || (spins & (spins - 1)) == 0;
                 if is_threshold_crossing {
-                    // // crate::kprintln!("[SYNC] Spinlock warning: spinning for {} iterations", spins);
+                    LONG_SPIN_EVENTS.fetch_add(1, Ordering::Relaxed);
+                    crate::hal::serial::write_string(
+                        "[SYNC] spinlock contention: spinning beyond 10000 iterations (possible deadlock)\r\n",
+                    );
                 }
             }
         }
@@ -229,7 +241,7 @@ impl<'a, T: ?Sized> Drop for SpinlockGuard<'a, T> {
 
 /// Dispatcher header (the first field of every NT dispatcher object:
 /// process, thread, event, mutex, semaphore, timer, queue, ...).
-/// Size: 0x18 bytes (24 bytes) on Windows 7 x64
+/// Size: 0x20 bytes (32 bytes) on Windows 7 x64
 #[derive(Clone)]
 #[repr(C)]
 pub struct DispatcherHeader {
@@ -238,12 +250,12 @@ pub struct DispatcherHeader {
     pub size: u16,        // 0x02
     pub inserted: u8,     // 0x04
     pub spare: [u8; 3],   // 0x05 - 8 bytes total so far
-    // Additional fields to reach 0x18 (24 bytes)
+    // Additional fields to reach 0x20 (32 bytes)
     pub absolute: u8,       // 0x08 - for timers
     pub co_started: u8,     // 0x09 - for timers
     pub co_terminated: u8,  // 0x0A - for timers
     pub inactive: u8,       // 0x0B - for timers
-    pub reserved: [u64; 2], // 0x0C - 16 bytes to reach 0x18
+    pub reserved: [u64; 2], // 0x10 - 16 bytes to reach 0x20
 }
 
 impl DispatcherHeader {

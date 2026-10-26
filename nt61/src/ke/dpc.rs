@@ -128,26 +128,18 @@ impl Default for DispatcherHeader {
 
 /// System DPC queue state.
 ///
-/// Per-CPU DPC locks: Each CPU has its own lock for its DPC queue.
-/// This allows DPC operations on different CPUs to proceed in parallel.
-/// MAX_CPUS matches the maximum number of processors supported.
-const MAX_CPUS: usize = 4;
-static DPC_QUEUE_LOCKS: [Spinlock<()>; MAX_CPUS] = [
-    Spinlock::new(()),
-    Spinlock::new(()),
-    Spinlock::new(()),
-    Spinlock::new(()),
-];
-
-/// Legacy global lock for single-CPU fallback and DPC storage initialization.
-/// Kept for compatibility with code that doesn't use per-CPU DPC queues yet.
+/// The DPC backing store is a single shared array (see `DPC_STORAGE`
+/// and `dpc_array`), so every queue operation must serialize on ONE
+/// lock. The previous per-CPU lock array guarded the same shared
+/// storage with four independent locks, which allowed two CPUs to
+/// mutate the array concurrently (ke_exc P0-4). A single global lock
+/// restores mutual exclusion; per-CPU queues can be reintroduced
+/// together with per-CPU storage.
 static DPC_QUEUE_LOCK: Spinlock<()> = Spinlock::new(());
 
-/// Get the DPC lock for the current CPU.
-/// This enables per-CPU DPC queue operations in SMP environments.
-fn get_current_cpu_dpc_lock() -> &'static Spinlock<()> {
-    let cpu = crate::ke::scheduler::get_current_cpu().min(MAX_CPUS - 1);
-    &DPC_QUEUE_LOCKS[cpu]
+/// Get the DPC queue lock.
+fn dpc_lock() -> &'static Spinlock<()> {
+    &DPC_QUEUE_LOCK
 }
 
 /// Backing storage pointer. Heap-allocated to avoid the
@@ -236,7 +228,7 @@ pub unsafe fn ke_insert_queue_dpc(
 
     let arr = dpc_array();
     let mut found_slot = false;
-    let _lock = DPC_QUEUE_LOCK.lock();
+    let _lock = dpc_lock().lock();
 
     // Find an empty slot
     for i in 0..MAX_DPCS {
@@ -280,7 +272,7 @@ pub fn is_dpc_needed() -> bool {
 /// Uses per-CPU DPC lock for SMP support.
 pub fn insert(routine: DpcRoutine, context: *mut u8, name: &'static str) -> Option<usize> {
     let arr = dpc_array();
-    let _lock = get_current_cpu_dpc_lock().lock();
+    let _lock = dpc_lock().lock();
     for i in 0..MAX_DPCS {
         let slot = &mut arr[i];
         if unsafe { is_all_zero(slot) } || !slot.inserted.load(Ordering::Relaxed) {
@@ -309,24 +301,46 @@ pub fn insert(routine: DpcRoutine, context: *mut u8, name: &'static str) -> Opti
 /// Uses per-CPU DPC lock for SMP support.
 pub fn drain() -> usize {
     let arr = dpc_array();
-    let _lock = get_current_cpu_dpc_lock().lock();
     let mut fired = 0;
+    let mut pending: [Option<(DpcRoutine, *mut u8)>; MAX_DPCS] = [const { None }; MAX_DPCS];
 
-    for i in 0..MAX_DPCS {
-        let slot = &mut arr[i];
-        if slot.inserted.load(Ordering::Relaxed) && !slot.fired.load(Ordering::Relaxed) {
-            slot.fired.store(true, Ordering::Relaxed);
-            if let Some(r) = slot.routine {
-                r(slot.context);
+    // Phase 1: collect pending DPCs while holding the lock. Mark each
+    // slot fired so a concurrent drain cannot double-run a routine.
+    {
+        let _lock = dpc_lock().lock();
+        for i in 0..MAX_DPCS {
+            let slot = &arr[i];
+            if slot.inserted.load(Ordering::Relaxed) && !slot.fired.load(Ordering::Relaxed) {
+                slot.fired.store(true, Ordering::Relaxed);
+                if let Some(r) = slot.routine {
+                    pending[i] = Some((r, slot.context));
+                    fired += 1;
+                }
             }
-            fired += 1;
         }
-        // Reset the slot
-        slot.routine = None;
-        slot.context = core::ptr::null_mut();
-        slot.inserted.store(false, Ordering::Relaxed);
-        slot.fired.store(false, Ordering::Relaxed);
-        slot.name = "<dpc>";
+    }
+
+    // Phase 2: execute routines without holding the queue lock so a
+    // DPC routine can safely call back into the queue (e.g. queue
+    // another DPC) without deadlocking.
+    for item in pending.iter().filter_map(|p| *p) {
+        let (routine, context) = item;
+        routine(context);
+    }
+
+    // Phase 3: clear the fired slots once routines have completed.
+    {
+        let _lock = dpc_lock().lock();
+        for i in 0..MAX_DPCS {
+            if pending[i].is_some() {
+                let slot = &mut arr[i];
+                slot.routine = None;
+                slot.context = core::ptr::null_mut();
+                slot.inserted.store(false, Ordering::Relaxed);
+                slot.fired.store(false, Ordering::Relaxed);
+                slot.name = "<dpc>";
+            }
+        }
     }
 
     DPC_NEEDED.store(false, Ordering::Release);
@@ -528,36 +542,37 @@ pub fn queue_dpc_to_cpu(
 
 /// Get current CPU number (P2 Enhancement)
 fn get_current_cpu_number() -> u32 {
-    // In a real implementation, this would read from per-CPU data
-    // via the GS base or similar mechanism
-    0
+    crate::ke::scheduler::get_current_cpu() as u32
 }
 
 /// Remove a DPC from the queue (P2 Enhancement)
 ///
 /// Returns true if the DPC was found and removed.
+#[allow(unpredictable_function_pointer_comparisons)]
 pub fn remove_dpc(dpc: *mut Dpc) -> bool {
     if dpc.is_null() {
         return false;
     }
 
     let arr = dpc_array();
-    let _lock = get_current_cpu_dpc_lock().lock();
+    let _lock = dpc_lock().lock();
 
     // Search for the DPC in the queue
     for i in 0..MAX_DPCS {
         let slot = &mut arr[i];
         if slot.inserted.load(Ordering::Relaxed) {
-            // Compare DPC pointers
-            let slot_ptr = slot as *mut Dpc;
-            if slot_ptr == dpc {
-                // Found it - remove from queue
-                slot.inserted.store(false, Ordering::Release);
-                slot.routine = None;
-                slot.context = core::ptr::null_mut();
+            // Compare routine/context: slots are copies, not the
+            // caller's Dpc object, so address comparison never matches.
+            unsafe {
+                if slot.routine == (*dpc).routine && slot.context == (*dpc).context {
+                    // Found it - remove from queue
+                    slot.inserted.store(false, Ordering::Release);
+                    slot.routine = None;
+                    slot.context = core::ptr::null_mut();
 
-                // // kprintln!("[DPC] Removed DPC from queue");
-                return true;
+                    // // kprintln!("[DPC] Removed DPC from queue");
+                    return true;
+                }
             }
         }
     }
@@ -568,7 +583,7 @@ pub fn remove_dpc(dpc: *mut Dpc) -> bool {
 /// Get DPC queue depth (P2 Enhancement)
 pub fn get_dpc_queue_depth() -> usize {
     let arr = dpc_array();
-    let _lock = get_current_cpu_dpc_lock().lock();
+    let _lock = dpc_lock().lock();
 
     let mut count = 0;
     for i in 0..MAX_DPCS {

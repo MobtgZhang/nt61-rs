@@ -145,7 +145,6 @@ pub fn create_timer(name: &'static str) -> Option<usize> {
 #[inline(never)]
 unsafe fn write_ktimer(dst: *mut u8, kt: &Ktimer) {
     let h = &kt.header;
-    let header_size = core::mem::size_of_val(h);
     core::ptr::write(dst.add(0), h.type_);
     core::ptr::write(dst.add(1), h.signal_state);
     core::ptr::write(dst.add(2) as *mut u16, h.size);
@@ -157,24 +156,27 @@ unsafe fn write_ktimer(dst: *mut u8, kt: &Ktimer) {
     core::ptr::write(dst.add(11), h.inactive);
     core::ptr::write(dst.add(12) as *mut u64, h.reserved[0]);
     core::ptr::write(dst.add(20) as *mut u64, h.reserved[1]);
+    // Fields are written at their true offsets within Ktimer. The
+    // previous formula double-counted the header and corrupted
+    // the neighbouring fields.
     core::ptr::write(
-        dst.add(header_size + core::mem::offset_of!(Ktimer, due_time) - core::mem::offset_of!(Ktimer, header)) as *mut u64,
+        dst.add(core::mem::offset_of!(Ktimer, due_time)) as *mut u64,
         kt.due_time,
     );
     core::ptr::write(
-        dst.add(header_size + core::mem::offset_of!(Ktimer, period) - core::mem::offset_of!(Ktimer, header)) as *mut u64,
+        dst.add(core::mem::offset_of!(Ktimer, period)) as *mut u64,
         kt.period,
     );
     core::ptr::write(
-        dst.add(header_size + core::mem::offset_of!(Ktimer, name) - core::mem::offset_of!(Ktimer, header)) as *mut *const u8,
+        dst.add(core::mem::offset_of!(Ktimer, name)) as *mut *const u8,
         kt.name.as_ptr(),
     );
     core::ptr::write(
-        dst.add(header_size + core::mem::offset_of!(Ktimer, name) - core::mem::offset_of!(Ktimer, header) + core::mem::size_of::<*const u8>()) as *mut usize,
+        dst.add(core::mem::offset_of!(Ktimer, name) + core::mem::size_of::<*const u8>()) as *mut usize,
         kt.name.len(),
     );
     core::ptr::write(
-        dst.add(header_size + core::mem::offset_of!(Ktimer, armed) - core::mem::offset_of!(Ktimer, header)) as *mut bool,
+        dst.add(core::mem::offset_of!(Ktimer, armed)) as *mut bool,
         kt.armed,
     );
 }
@@ -206,6 +208,9 @@ pub fn cancel_timer(idx: usize) -> bool {
 /// the number of timers that fired.
 pub fn tick() -> usize {
     let mut fired = 0;
+    // Catch up on any cross-core TLB shootdown this CPU has not yet
+    // acknowledged (see `ke::tlb_shootdown::lazy_flush_if_pending`).
+    crate::ke::tlb_shootdown::lazy_flush_if_pending();
     let arr = timer_array();
     for i in 0..MAX_TIMERS {
         if arr[i].is_expired() {
@@ -263,14 +268,16 @@ pub fn smoke_test() -> bool {
     // type would otherwise hit on a whole-struct copy).
     unsafe {
         let dst = (arr.as_mut_ptr() as *mut u8).add(idx * TIMER_SIZE);
-        // DispatcherHeader -> 8 zero bytes
-        core::ptr::write_bytes(dst, 0u8, 8);
-        // due_time, period, name ptr, name len, armed
-        core::ptr::write(dst.add(8) as *mut u64, 0u64);
-        core::ptr::write(dst.add(16) as *mut u64, 0u64);
-        core::ptr::write(dst.add(24) as *mut *const u8, core::ptr::null());
-        core::ptr::write(dst.add(32) as *mut usize, 0usize);
-        core::ptr::write(dst.add(40) as *mut bool, false);
+        // DispatcherHeader (0x20 bytes) -> zeroed
+        core::ptr::write_bytes(dst, 0u8, core::mem::size_of::<DispatcherHeader>());
+        // due_time, period, name ptr, name len, armed at their true
+        // offsets (0x20, 0x28, 0x30, 0x38, 0x40). The old hardcoded
+        // offsets left `armed` set, so the slot could never be reused.
+        core::ptr::write(dst.add(core::mem::offset_of!(Ktimer, due_time)) as *mut u64, 0u64);
+        core::ptr::write(dst.add(core::mem::offset_of!(Ktimer, period)) as *mut u64, 0u64);
+        core::ptr::write(dst.add(core::mem::offset_of!(Ktimer, name)) as *mut *const u8, core::ptr::null());
+        core::ptr::write(dst.add(core::mem::offset_of!(Ktimer, name) + core::mem::size_of::<*const u8>()) as *mut usize, 0usize);
+        core::ptr::write(dst.add(core::mem::offset_of!(Ktimer, armed)) as *mut bool, false);
     }
     true
 }

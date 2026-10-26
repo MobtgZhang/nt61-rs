@@ -28,6 +28,7 @@ pub mod smoke;
 pub mod ssdt;
 pub mod sync;
 pub mod time;
+pub mod tlb_shootdown;
 pub mod timer;
 
 /// Initialize the kernel executive.

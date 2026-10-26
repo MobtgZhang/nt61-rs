@@ -52,20 +52,25 @@ pub enum UnwindOperationCode {
 impl UnwindOperationCode {
     /// Get the operation code from the packed byte
     pub fn from_packed(packed: u8) -> Self {
+        // x64 UNWIND_CODE operation numbers (PE/x64 ABI: bits 4-7 of the
+        // operation byte carry the operation, bits 0-3 the operation info).
+        // Ops this module does not model (UWOP_SAVE_NONVOL_FAR, deprecated
+        // UWOP_SAVE_XMM) decode to the reserved no-op so a walk never
+        // fabricates register or stack changes from them.
         match packed >> 4 {
-            0x00 => Self::PushUnwindHandler,
-            0x01 => Self::CopyData,
-            0x02 => Self::PushMachFrame,
-            0x03 => Self::AllocaHomed,
-            0x04 => Self::SetFp,
-            0x08 => Self::SaveIntNonVol,
-            0x09 => Self::SaveFltNonVol,
-            0x0A => Self::SaveXMM128,
-            0x0B => Self::SaveXMM128Mask,
-            0x10 => Self::AllocLarge,
-            0x11 => Self::AllocSmall,
-            0x12 => Self::PrologEpilog,
-            _ => Self::PushUnwindHandler,
+            0x0 => Self::PushUnwindHandler, // UWOP_PUSH_NONVOL
+            0x1 => Self::AllocLarge,        // UWOP_ALLOC_LARGE
+            0x2 => Self::AllocSmall,        // UWOP_ALLOC_SMALL
+            0x3 => Self::SetFp,             // UWOP_SET_FPREG
+            0x4 => Self::SaveIntNonVol,     // UWOP_SAVE_NONVOL
+            0x6 => Self::PrologEpilog,      // UWOP_EPILOG
+            0x7 => Self::CopyData,          // UWOP_SPARE_CODE (reserved)
+            0x9 => Self::SaveFltNonVol,     // UWOP_SAVE_XMM_FAR
+            0xA => Self::SaveXMM128,        // UWOP_SAVE_XMM128
+            0xB => Self::SaveXMM128Mask,    // UWOP_SAVE_XMM128_FAR
+            0xC => Self::PushMachFrame,     // UWOP_PUSH_MACHFRAME
+            // 0x5 UWOP_SAVE_NONVOL_FAR, 0x8 UWOP_SAVE_XMM: unmodelled.
+            _ => Self::CopyData,
         }
     }
 }
@@ -154,7 +159,9 @@ pub struct UnwindCode {
 
 impl UnwindCode {
     pub fn operation(&self) -> UnwindOperationCode {
-        UnwindOperationCode::from_packed(self.unwind_op_and_op_info >> 4)
+        // from_packed expects the full operation byte (high nibble = op,
+        // low nibble = operation info); do not pre-shift it here.
+        UnwindOperationCode::from_packed(self.unwind_op_and_op_info)
     }
 
     pub fn operation_info(&self) -> u8 {
@@ -164,9 +171,20 @@ impl UnwindCode {
     /// Get the size for this unwind code entry (1 or 3 based on operation type)
     pub fn entry_size(&self) -> usize {
         match self.operation() {
-            UnwindOperationCode::AllocLarge => 3, // 1 + 2 immediate
-            UnwindOperationCode::SaveIntNonVol | UnwindOperationCode::SaveFltNonVol => 3, // 1 + 1 + 1
-            UnwindOperationCode::SaveXMM128 | UnwindOperationCode::SaveXMM128Mask => 3,
+            UnwindOperationCode::AllocLarge => {
+                // op_info == 0: one 16-bit immediate slot; op_info == 1:
+                // two slots forming a 32-bit immediate.
+                if self.operation_info() == 0 {
+                    2
+                } else {
+                    3
+                }
+            }
+            // One immediate slot after the code slot.
+            UnwindOperationCode::SaveIntNonVol
+            | UnwindOperationCode::SaveFltNonVol
+            | UnwindOperationCode::SaveXMM128
+            | UnwindOperationCode::SaveXMM128Mask => 2,
             _ => 1,
         }
     }
@@ -174,6 +192,7 @@ impl UnwindCode {
 
 /// Exception record
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct ExceptionRecord {
     pub exception_code: u32,
     pub exception_flags: u32,
@@ -340,13 +359,16 @@ fn terminate_current_user_process(exception_code: u32) -> ! {
 
 /// Try the current thread's registered exception handler
 fn try_current_thread_handler(
-    _exception_record: &ExceptionRecord,
-    _context_frame: &mut ContextFrame,
+    exception_record: &ExceptionRecord,
+    context_frame: &mut ContextFrame,
 ) -> Option<ExceptionDisposition> {
-    // Get current ETHREAD via per-CPU data
-    // For now, return None - full implementation would check thread's
-    // exception handler registration
-    None
+    // Delegate to the TEB exception list walker, which reads the
+    // current thread's registered handler chain and invokes each
+    // handler with the standard x64 calling convention.
+    // SAFETY: exception_record is read-only here; walk_teb_exception_list
+    // requires a mutable reference because handlers may update the record.
+    let mut record = exception_record.clone();
+    walk_teb_exception_list(&mut record, context_frame)
 }
 
 /// Try to find and invoke a handler via RUNTIME_FUNCTION tables
@@ -393,32 +415,136 @@ fn try_runtime_function_handler(
 
 /// Call an exception handler with proper setup
 fn call_exception_handler(
-    _exception_record: &ExceptionRecord,
-    _context_frame: &mut ContextFrame,
-    _image_base: u64,
+    exception_record: &ExceptionRecord,
+    context_frame: &mut ContextFrame,
+    image_base: u64,
     _function_entry: &RuntimeFunction,
-    _handler_data: *const u8,
+    handler_data: *const u8,
 ) -> ExceptionDisposition {
-    // In a full implementation, this would:
-    // 1. Set up the dispatch context
-    // 2. Call the handler with proper parameters
-    // 3. handle the return value appropriately
-    // For now, return ContinueSearch to continue the search
-    ExceptionDisposition::ContinueSearch
+    // handler_data points to the handler RVA (a u32) followed by
+    // handler-specific data. Read the RVA and compute the absolute
+    // handler address.
+    if handler_data.is_null() {
+        return ExceptionDisposition::ContinueSearch;
+    }
+    let handler_rva = unsafe { core::ptr::read(handler_data as *const u32) };
+    if handler_rva == 0 {
+        return ExceptionDisposition::ContinueSearch;
+    }
+    let handler_addr = image_base + handler_rva as u64;
+
+    // Build a minimal DispatcherContext on the stack. Language
+    // exceptions that need full unwinding will receive a zeroed
+    // context, which is sufficient for ContinueSearch / ExceptionHandled
+    // semantics at this stage.
+    #[repr(C)]
+    struct DispatcherContext {
+        control_pc: u64,
+        image_base: u64,
+        function_entry: u64,
+        establisher_frame: u64,
+        target_ip: u64,
+        context: *mut ContextFrame,
+        language_handler: u64,
+        handler_data_ptr: u64,
+    }
+    let mut dispatch = DispatcherContext {
+        control_pc: exception_record.exception_address,
+        image_base,
+        function_entry: 0,
+        establisher_frame: 0,
+        target_ip: 0,
+        context: context_frame as *mut _,
+        language_handler: 0,
+        handler_data_ptr: handler_data as u64,
+    };
+
+    // The x64 handler signature:
+    //   EXCEPTION_DISPOSITION (*handler)(
+    //       PEXCEPTION_RECORD, u64 establisher,
+    //       PCONTEXT, PDISPATCHER_CONTEXT)
+    type HandlerFn = extern "C" fn(
+        *mut ExceptionRecord,
+        u64,
+        *mut ContextFrame,
+        *mut DispatcherContext,
+    ) -> ExceptionDisposition;
+
+    let result = unsafe {
+        let handler_fn = core::mem::transmute::<u64, HandlerFn>(handler_addr);
+        let mut record = exception_record.clone();
+        handler_fn(
+            &mut record as *mut ExceptionRecord,
+            0,
+            context_frame,
+            &mut dispatch,
+        )
+    };
+
+    if result != ExceptionDisposition::ContinueSearch {
+        record_handler_invocation();
+    }
+    result
 }
 
 /// Perform stack unwinding
-pub fn unwind(_target_frame: u64, _exception_record: Option<&ExceptionRecord>) -> ContextFrame {
-    let context = ContextFrame::new();
-    // _target_frame and _exception_record are intentionally unused - reserved for future logging
-    // // kprintln!("[EXCEPTION] Unwinding to frame 0x{:016x}", _target_frame);
+///
+/// Walks the stack from `start_context` via the RUNTIME_FUNCTION tables,
+/// applying each frame's UNWIND_CODE operations (register/stack restore)
+/// with `rtl_virtual_unwind`, until the establisher frame reaches
+/// `target_frame`.
+///
+/// This is a frame-walk unwind only: handler routines of the unwound frames
+/// are not executed (this kernel cannot run user-mode handler code, matching
+/// `ntdll::rtl_unwind_ex`'s documented limitation). The returned context is
+/// the restored state at the target frame, ready for the caller to resume.
+///
+/// Returns `Err(())` when the walk cannot reach `target_frame`: unknown
+/// instruction pointer, missing unwind metadata, unreadable return address,
+/// or the frame-count guard tripping. Callers must not treat a fabricated
+/// context as an unwind result.
+pub fn unwind(
+    start_context: &ContextFrame,
+    target_frame: u64,
+    _exception_record: Option<&ExceptionRecord>,
+) -> Result<ContextFrame, ()> {
+    let mut context = start_context.clone();
+    const MAX_UNWIND_FRAMES: usize = 100;
 
-    // In a real implementation, this would:
-    // 1. Walk the linked list of frames
-    // 2. Apply each UNWIND_CODE operation
-    // 3. Restore registers from each frame
+    for _ in 0..MAX_UNWIND_FRAMES {
+        // The walk stops at the target frame: the frame whose establisher
+        // frame is `target_frame` receives the exception, so its prologue
+        // effects are not reversed here.
+        let function_entry = match find_runtime_function_for_ip(context.rip) {
+            Some(entry) => entry,
+            None => return Err(()),
+        };
+        let image_base = match get_image_base_for_ip(context.rip) {
+            Some(base) => base,
+            None => return Err(()),
+        };
 
-    context
+        let mut handler_data: *const u8 = core::ptr::null();
+        let mut establisher_frame: u64 = 0;
+        let return_pc = rtl_virtual_unwind(
+            image_base,
+            context.rip,
+            &function_entry,
+            &mut context,
+            &mut handler_data,
+            &mut establisher_frame,
+        );
+        if return_pc == 0 {
+            return Err(());
+        }
+        context.rip = return_pc;
+
+        if establisher_frame >= target_frame {
+            return Ok(context);
+        }
+    }
+
+    Err(())
 }
 
 /// Continue searching for an exception handler
@@ -438,6 +564,7 @@ pub enum ExceptionDisposition {
 
 /// Context frame for exception handling (mirrors CONTEXT from ntdll)
 #[repr(C)]
+#[derive(Clone)]
 pub struct ContextFrame {
     pub p1_home: u64,
     pub p2_home: u64,
@@ -725,7 +852,7 @@ impl ImageExceptionInfo {
 
     /// Find the RUNTIME_FUNCTION entry containing the given instruction pointer
     pub fn find_function_for_ip(&self, ip: u64) -> Option<&RuntimeFunction> {
-        let rel_ip = (ip - self.image_base) as u32;
+        let rel_ip = ip.checked_sub(self.image_base)? as u32;
         self.runtime_functions
             .iter()
             .find(|f| rel_ip >= f.begin_address && rel_ip < f.end_address)
@@ -776,7 +903,9 @@ pub fn find_runtime_function_for_ip(ip: u64) -> Option<RuntimeFunction> {
 
 /// Get the unwind info for a RUNTIME_FUNCTION entry
 pub fn get_unwind_info(func: &RuntimeFunction, image_base: u64) -> Option<&'static UnwindInfo> {
-    let unwind_rva = func.unwind_info_address;
+    // Mask off the UNW_FLAG_* chain flag bits (bits 31-30) to get
+    // the actual RVA of the unwind info structure.
+    let unwind_rva = func.unwind_info_address & 0x1FFF_FFFF;
     let unwind_ptr = (image_base + unwind_rva as u64) as *const UnwindInfo;
     unsafe {
         if unwind_ptr.is_null() {
@@ -788,7 +917,9 @@ pub fn get_unwind_info(func: &RuntimeFunction, image_base: u64) -> Option<&'stat
 
 /// Get the unwind info pointer for a RUNTIME_FUNCTION entry
 fn get_unwind_info_ptr(image_base: u64, func: &RuntimeFunction) -> Option<*const UnwindInfo> {
-    let unwind_rva = func.unwind_info_address;
+    // Mask off the UNW_FLAG_* chain flag bits (bits 31-30) to get
+    // the actual RVA of the unwind info structure.
+    let unwind_rva = func.unwind_info_address & 0x1FFF_FFFF;
     let unwind_ptr = (image_base + unwind_rva as u64) as *const UnwindInfo;
     if unwind_ptr.is_null() {
         None
@@ -828,9 +959,10 @@ fn get_handler_data(unwind_info_ptr: *const UnwindInfo) -> *const u8 {
 fn get_image_base_for_ip(ip: u64) -> Option<u64> {
     let db = IMAGE_EXCEPTION_DB.lock();
     for info in db.iter() {
-        // Check if IP falls within this image's range
-        let rva = ip.wrapping_sub(info.image_base);
-        if rva < 0xFFFF_FFFF {
+        // Require that the IP maps to an actual function entry in
+        // this image's RUNTIME_FUNCTION table, not just a loose
+        // address-range check.
+        if info.find_function_for_ip(ip).is_some() {
             return Some(info.image_base);
         }
     }
@@ -964,9 +1096,9 @@ fn apply_unwind_code(
 
     match operation {
         UnwindOperationCode::PushUnwindHandler => {
-            // Handler was pushed on stack, pop it for unwind
-            // // kprintln!("[UNWIND] PushUnwindHandler (reverse)");
-            // No change needed - handler address stays on stack for exception dispatch
+            // UWOP_PUSH_NONVOL: the prologue pushed a nonvolatile register
+            // (8 bytes); unwinding pops it back off the stack.
+            context.rsp += 8;
         }
 
         UnwindOperationCode::CopyData => {
@@ -996,10 +1128,9 @@ fn apply_unwind_code(
         }
 
         UnwindOperationCode::SaveIntNonVol => {
-            // Restore non-volatile integer register from stack
-            // Format: UNWIND_CODE (2 bytes) + offset (1 byte)
-            // The offset is a byte following the UNWIND_CODE
-            let offset = unsafe { read_int_nvol_offset(code) } as u64;
+            // UWOP_SAVE_NONVOL: the slot after the code holds the save
+            // offset divided by 8.
+            let offset = (code.operation_info as u64) * 8;
             let sp = context.rsp + offset;
             let reg_val = unsafe { core::ptr::read(sp as *const u64) };
 
@@ -1059,10 +1190,15 @@ fn apply_unwind_code(
 
         UnwindOperationCode::AllocLarge => {
             // Large stack allocation (> 0xFF80 bytes)
-            // Format: UNWIND_CODE (2 bytes) + size (4 bytes)
-            // read 32-bit size from after UNWIND_CODE
-            let size = unsafe { read_alloc_large_size(code) } as u64;
-            context.rsp += size;
+            // UWOP_ALLOC_LARGE: with op_info == 0 the size divided by 8 is
+            // a 16-bit value in the next slot; with op_info == 1 it is a
+            // 32-bit value in the two following slots.
+            let scaled_size = if op_info == 0 {
+                (unsafe { code_ptr_read_16(code) }) as u64
+            } else {
+                (unsafe { code_ptr_read_32(code) }) as u64
+            };
+            context.rsp += scaled_size * 8;
             // // kprintln!("[UNWIND] AllocLarge: rsp += 0x{:x}", size);
         }
 
@@ -1091,17 +1227,6 @@ unsafe fn read_int_nvol_offset(code: &UnwindCode) -> u16 {
     ptr::read(code_ptr) as u16
 }
 
-/// read size for AllocLarge operation
-/// AllocLarge has a 4-byte size following the UNWIND_CODE structure
-///
-/// # Safety
-/// Caller must ensure the UNWIND_CODE is followed by at least 4 bytes of valid memory
-unsafe fn read_alloc_large_size(code: &UnwindCode) -> u32 {
-    // The size is stored as a 32-bit value following the UNWIND_CODE
-    let code_ptr = (code as *const UnwindCode as *const u8).add(2);
-    ptr::read_unaligned(code_ptr as *const u32)
-}
-
 /// read a 16-bit value from the UNWIND_CODE's immediate field
 fn unwind_code_offset(code: &UnwindCode) -> u8 {
     code.operation_info()
@@ -1124,22 +1249,29 @@ unsafe fn unwind_code_offset_16(code: &UnwindCode) -> u16 {
 
 /// read a 16-bit value from the operation_info field
 /// For operations like AllocSmall where size is encoded in op_info
-pub unsafe fn code_ptr_read_16(_code: &UnwindCode) -> u16 {
-    // _code is intentionally unused - reserved for future implementation
-    // For most operations using this, the value is in the code structure
-    // This is a fallback for cases where we can't read from memory
-    0
+///
+/// Reads the 16-bit immediate that follows the operation byte. With the
+/// packed `UnwindCode` layout this is the slot at +2 (the `operation_info`
+/// field); the unaligned read handles packed-struct bases.
+///
+/// # Safety
+/// Caller must ensure the two bytes after the UNWIND_CODE operation byte
+/// are valid memory.
+pub unsafe fn code_ptr_read_16(code: &UnwindCode) -> u16 {
+    let code_ptr = (code as *const UnwindCode as *const u8).add(2);
+    core::ptr::read_unaligned(code_ptr as *const u16)
 }
 
 /// read a 32-bit immediate value following the UNWIND_CODE structure
 ///
 /// For AllocLarge operation, a 32-bit size follows the UNWIND_CODE.
-pub unsafe fn code_ptr_read_32(_code: &UnwindCode) -> u32 {
-    // _code is intentionally unused - reserved for future implementation
-    // For AllocLarge, we need to read from offset 2 as a 32-bit value
-    // This requires the caller to pass proper context
-    // For now, return 0 as a placeholder
-    0
+///
+/// # Safety
+/// Caller must ensure the four bytes after the UNWIND_CODE operation byte
+/// are valid memory.
+pub unsafe fn code_ptr_read_32(code: &UnwindCode) -> u32 {
+    let code_ptr = (code as *const UnwindCode as *const u8).add(2);
+    core::ptr::read_unaligned(code_ptr as *const u32)
 }
 
 /// read a 32-bit value from a specific offset in the unwind info
@@ -1357,32 +1489,22 @@ fn get_handler_data_for_function(image_base: u64, func: &RuntimeFunction) -> *co
 
 /// Call exception handler with proper unwind context
 fn call_exception_handler_with_unwind(
-    _exception_record: &ExceptionRecord,
-    _context_frame: &mut ContextFrame,
-    _image_base: u64,
-    _function_entry: &RuntimeFunction,
+    exception_record: &ExceptionRecord,
+    context_frame: &mut ContextFrame,
+    image_base: u64,
+    function_entry: &RuntimeFunction,
     _unwind_info: &UnwindInfo,
-    _handler_data: *const u8,
+    handler_data: *const u8,
 ) -> ExceptionDisposition {
-    // Parameters are intentionally unused - reserved for future implementation
-    // In a full implementation, this would:
-    // 1. Set up the dispatch context on the stack
-    // 2. Call the exception handler with proper parameters:
-    //    - Exception record pointer
-    //    - Establisher frame pointer
-    //    - Context frame pointer
-    //    - Dispatcher context pointer
-    // 3. Return the handler's decision
-
-    // For now, return ContinueSearch to continue walking the stack
-    // // kprintln!(
-    // //         "[EXCEPTION] Would call exception handler at {:p} for function [0x{:08x}-0x{:08x}]",
-    // //         handler_data,
-    // //         function_entry.begin_address,
-    // //         function_entry.end_address
-    // //     );
-
-    ExceptionDisposition::ContinueSearch
+    // Delegate to the shared handler invocation which reads the
+    // handler RVA and builds the dispatcher context.
+    call_exception_handler(
+        exception_record,
+        context_frame,
+        image_base,
+        function_entry,
+        handler_data,
+    )
 }
 
 // =============================================================================
@@ -1505,4 +1627,131 @@ pub fn extended_init() {
     // // kprintln!("[EXCEPTION]   - RUNTIME_FUNCTION database initialized");
     // // kprintln!("[EXCEPTION]   - Exception dispatcher initialized");
     // // kprintln!("[EXCEPTION]   - Hardware exception handlers registered");
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// View a byte buffer as a packed UnwindCode. The immediate slots live
+    /// after the operation byte and may extend past the 4-byte struct,
+    /// exactly as entries do inside a real unwind info array.
+    fn code_from(bytes: &[u8]) -> &UnwindCode {
+        unsafe { &*(bytes.as_ptr() as *const UnwindCode) }
+    }
+
+    #[test]
+    fn from_packed_decodes_real_x64_operation_numbers() {
+        assert_eq!(
+            UnwindOperationCode::from_packed(0x00),
+            UnwindOperationCode::PushUnwindHandler
+        );
+        assert_eq!(
+            UnwindOperationCode::from_packed(0x10),
+            UnwindOperationCode::AllocLarge
+        );
+        assert_eq!(
+            UnwindOperationCode::from_packed(0x11),
+            UnwindOperationCode::AllocLarge
+        );
+        assert_eq!(
+            UnwindOperationCode::from_packed(0x22),
+            UnwindOperationCode::AllocSmall
+        );
+        assert_eq!(UnwindOperationCode::from_packed(0x30), UnwindOperationCode::SetFp);
+        assert_eq!(
+            UnwindOperationCode::from_packed(0x43),
+            UnwindOperationCode::SaveIntNonVol
+        );
+        assert_eq!(
+            UnwindOperationCode::from_packed(0xC0),
+            UnwindOperationCode::PushMachFrame
+        );
+        // Unmodelled ops (UWOP_SAVE_NONVOL_FAR, UWOP_SAVE_XMM) decode to the
+        // reserved no-op so a walk never fabricates stack or register changes.
+        assert_eq!(
+            UnwindOperationCode::from_packed(0x50),
+            UnwindOperationCode::CopyData
+        );
+        assert_eq!(
+            UnwindOperationCode::from_packed(0x80),
+            UnwindOperationCode::CopyData
+        );
+    }
+
+    #[test]
+    fn operation_reads_the_high_nibble_only_once() {
+        // 0x34: operation = 3 (SetFp), operation info = 4.
+        let bytes = [0x11u8, 0x34, 0x12, 0x78, 0x56, 0xAA, 0, 0];
+        let code = code_from(&bytes);
+        assert_eq!(code.operation(), UnwindOperationCode::SetFp);
+        assert_eq!(code.operation_info(), 4);
+    }
+
+    #[test]
+    fn code_ptr_reads_unpack_the_immediate_slots() {
+        let bytes = [0x11u8, 0x34, 0x12, 0x78, 0x56, 0xAA, 0, 0];
+        let code = code_from(&bytes);
+        unsafe {
+            assert_eq!(code_ptr_read_16(code), 0x7812);
+            assert_eq!(code_ptr_read_32(code), 0xAA56_7812);
+        }
+    }
+
+    #[test]
+    fn alloc_large_size_honours_both_encodings() {
+        let mut ctx = ContextFrame::new();
+        ctx.rsp = 0x1000;
+
+        // op_info == 0: the next slot holds the 16-bit scaled size.
+        let small = [0x00u8, 0x10, 0x40, 0x00, 0, 0, 0, 0];
+        let code = code_from(&small);
+        assert_eq!(code.operation(), UnwindOperationCode::AllocLarge);
+        assert_eq!(code.operation_info(), 0);
+        assert_eq!(code.entry_size(), 2);
+        let rsp = ctx.rsp;
+        unsafe { apply_unwind_code(&mut ctx, code, rsp, 0) };
+        assert_eq!(ctx.rsp, 0x1000 + 0x40 * 8);
+
+        // op_info == 1: the two following slots hold the 32-bit size.
+        let large = [0x00u8, 0x11, 0x00, 0x00, 0x01, 0x00, 0, 0];
+        let code = code_from(&large);
+        assert_eq!(code.operation(), UnwindOperationCode::AllocLarge);
+        assert_eq!(code.operation_info(), 1);
+        assert_eq!(code.entry_size(), 3);
+        let rsp = ctx.rsp;
+        unsafe {
+            assert_eq!(code_ptr_read_32(code), 0x0001_0000);
+            apply_unwind_code(&mut ctx, code, rsp, 0);
+        }
+        assert_eq!(ctx.rsp, 0x1000 + 0x40 * 8 + 0x0001_0000 * 8);
+    }
+
+    #[test]
+    fn push_unwind_handler_pops_eight_bytes() {
+        // 0x03: operation 0 (push nonvol), register rbx.
+        let bytes = [0x00u8, 0x03, 0, 0, 0, 0, 0, 0];
+        let code = code_from(&bytes);
+        let mut ctx = ContextFrame::new();
+        ctx.rsp = 0x2000;
+        let rsp = ctx.rsp;
+        unsafe { apply_unwind_code(&mut ctx, code, rsp, 0) };
+        assert_eq!(ctx.rsp, 0x2008);
+    }
+
+    #[test]
+    fn alloc_small_scales_by_operation_info() {
+        // 0x25: operation 2 (AllocSmall), size = (5 + 1) * 8 = 48.
+        let bytes = [0x00u8, 0x25, 0, 0, 0, 0, 0, 0];
+        let code = code_from(&bytes);
+        let mut ctx = ContextFrame::new();
+        ctx.rsp = 0x3000;
+        let rsp = ctx.rsp;
+        unsafe { apply_unwind_code(&mut ctx, code, rsp, 0) };
+        assert_eq!(ctx.rsp, 0x3000 + 48);
+    }
 }

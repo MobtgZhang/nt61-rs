@@ -245,7 +245,11 @@ static LOWER_COUNT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU3
 ///   0x18: current_thread (u64)
 ///   0x20: current_process (u64)
 ///   0x28: irql (u8)
-const PER_CPU_IRQL_OFFSET: usize = 0x28;
+// Derived from the canonical PerCpuArea layout instead of a magic
+// number, so the two can no longer drift apart.
+const PER_CPU_IRQL_OFFSET: usize = core::mem::offset_of!(PerCpuArea, irql);
+
+const _: () = assert!(PER_CPU_IRQL_OFFSET == 0x28);
 
 /// Get a pointer to the current CPU's IRQL storage.
 /// In SMP mode, this reads from the per-CPU area via GS base.
