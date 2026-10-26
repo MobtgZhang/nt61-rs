@@ -30,12 +30,17 @@ pub fn run_tests() -> bool {
     // TCP Data Transfer Tests
     stats.test("TCP Send", test_tcp_send);
     stats.test("TCP Receive", test_tcp_receive);
-    stats.test("TCP Retransmission", test_tcp_retransmission);
+    // No retransmission path is exercised here yet: producing a timeout
+    // needs simulated retransmit timers, so report SKIP instead of a
+    // fake pass.
+    stats.test_skipped("TCP Retransmission", "requires timeout simulation");
 
     // TCP State Machine Tests
     stats.test("TCP State Transitions", test_tcp_state_transitions);
-    stats.test("TCP SYN-ACK", test_tcp_syn_ack);
-    stats.test("TCP FIN-ACK", test_tcp_fin_ack);
+    // SYN-ACK and FIN-ACK need packet-level simulation that this
+    // harness does not have; SKIP rather than a fake pass.
+    stats.test_skipped("TCP SYN-ACK", "requires packet simulation");
+    stats.test_skipped("TCP FIN-ACK", "requires connection teardown simulation");
 
     // UDP Tests
     stats.test("UDP Socket Creation", test_udp_socket_creation);
@@ -45,9 +50,11 @@ pub fn run_tests() -> bool {
 
     // Congestion control Tests
     stats.test("TCP Slow Start", test_tcp_slow_start);
-    stats.test("TCP Congestion Avoidance", test_tcp_congestion_avoidance);
-    stats.test("TCP Fast Retransmit", test_tcp_fast_retransmit);
-    stats.test("TCP Fast Recovery", test_tcp_fast_recovery);
+    // Congestion-avoidance/fast-recovery behaviour requires real data
+    // transfer and duplicate-ACK detection; SKIP rather than fake pass.
+    stats.test_skipped("TCP Congestion Avoidance", "requires data transfer");
+    stats.test_skipped("TCP Fast Retransmit", "requires duplicate ACK detection");
+    stats.test_skipped("TCP Fast Recovery", "requires fast retransmit path");
 
     // Packet Processing Tests
     stats.test("Packet Parse", test_packet_parse);
@@ -69,10 +76,7 @@ fn test_tcp_socket_creation() -> bool {
         None => return false,
     };
 
-    crate::boot_println!("    Created TCP socket id {}", socket_id);
-
     if socket::get_state(socket_id) != Some(socket::SocketState::Closed) {
-        crate::boot_println!("    TCP socket: unexpected initial state");
         let _ = socket::close(socket_id);
         return false;
     }
@@ -88,12 +92,10 @@ fn test_tcp_connect() -> bool {
     let socket_id = match tcp::connect(0x7F00_0001, 12345, 0x7F00_0001, 80) {
         Some(socket_id) => socket_id,
         None => {
-            crate::boot_println!("    TCP connect: no network (OK for testing)");
             return true;
         }
     };
 
-    crate::boot_println!("    TCP connect: OK (socket {})", socket_id);
     tcp::close(socket_id);
     true
 }
@@ -104,14 +106,14 @@ fn test_tcp_listen() -> bool {
     let socket_id = match tcp::listen(0x7F00_0001, 8080) {
         Some(socket_id) => socket_id,
         None => {
-            crate::boot_println!("    TCP listen: error (acceptable)");
             return true;
         }
     };
 
-    crate::boot_println!("    TCP listen on port 8080: OK");
     if !tcp::close_listen(0x7F00_0001, 8080) {
-        crate::boot_println!("    TCP close_listen: failed");
+        // close_listen failure means the listener leaks; fail the test.
+        tcp::close(socket_id);
+        return false;
     }
     tcp::close(socket_id);
     true
@@ -128,25 +130,17 @@ fn test_tcp_accept() -> bool {
     let addr = socket::SockAddr::new(2, 8081u16.to_be(), 0x7F00_0001);
     if socket::bind(listen_socket, &addr).is_err() {
         let _ = socket::close(listen_socket);
-        crate::boot_println!("    TCP accept: cannot bind (OK)");
         return true;
     }
 
     if socket::listen(listen_socket, 5).is_err() {
         let _ = socket::close(listen_socket);
-        crate::boot_println!("    TCP accept: cannot listen (OK)");
         return true;
     }
 
     // Non-blocking accept: no pending connection means WouldBlock.
-    match socket::accept(listen_socket) {
-        Ok(client_socket) => {
-            crate::boot_println!("    TCP accept: got connection {}", client_socket);
-            let _ = socket::close(client_socket);
-        }
-        Err(err) => {
-            crate::boot_println!("    TCP accept: {:?} (OK)", err);
-        }
+    if let Ok(client_socket) = socket::accept(listen_socket) {
+        let _ = socket::close(client_socket);
     }
 
     let _ = socket::close(listen_socket);
@@ -164,7 +158,6 @@ fn test_tcp_close() -> bool {
     if socket::close(socket_id).is_err() {
         return false;
     }
-    crate::boot_println!("    TCP close: OK");
     true
 }
 
@@ -184,10 +177,7 @@ fn test_tcp_send() -> bool {
     };
 
     let data = b"Test data";
-    match tcp::send(socket_id, data) {
-        Some(bytes_sent) => crate::boot_println!("    TCP send: {} bytes", bytes_sent),
-        None => crate::boot_println!("    TCP send: not connected (OK)"),
-    }
+    let _ = tcp::send(socket_id, data);
 
     tcp::close(socket_id);
     true
@@ -205,18 +195,9 @@ fn test_tcp_receive() -> bool {
     };
 
     let mut buffer = [0u8; 1024];
-    match tcp::receive(socket_id, &mut buffer) {
-        Some(bytes_received) => crate::boot_println!("    TCP receive: {} bytes", bytes_received),
-        None => crate::boot_println!("    TCP receive: no data (OK)"),
-    }
+    let _ = tcp::receive(socket_id, &mut buffer);
 
     tcp::close(socket_id);
-    true
-}
-
-fn test_tcp_retransmission() -> bool {
-    // Retransmission testing requires timeout simulation
-    crate::boot_println!("    TCP retransmission: OK (requires timeout)");
     true
 }
 
@@ -233,23 +214,10 @@ fn test_tcp_state_transitions() -> bool {
     };
 
     if socket::get_state(socket_id) != Some(socket::SocketState::Closed) {
-        crate::boot_println!("    Initial state: {:?}", socket::get_state(socket_id));
+        let _ = socket::close(socket_id);
+        return false;
     }
-
-    crate::boot_println!("    TCP state machine: OK");
     let _ = socket::close(socket_id);
-    true
-}
-
-fn test_tcp_syn_ack() -> bool {
-    // SYN-ACK testing requires packet simulation
-    crate::boot_println!("    TCP SYN-ACK: OK (requires packet simulation)");
-    true
-}
-
-fn test_tcp_fin_ack() -> bool {
-    // FIN-ACK testing requires connection teardown
-    crate::boot_println!("    TCP FIN-ACK: OK (requires connection)");
     true
 }
 
@@ -265,7 +233,6 @@ fn test_udp_socket_creation() -> bool {
         None => return false,
     };
 
-    crate::boot_println!("    Created UDP socket index {}", socket_idx);
     udp::close_socket(socket_idx);
     true
 }
@@ -279,10 +246,7 @@ fn test_udp_send() -> bool {
     };
 
     let data = b"UDP test";
-    match udp::send(socket_idx, 0x7F00_0001, 9000, data) {
-        Some(bytes_sent) => crate::boot_println!("    UDP send: {} bytes", bytes_sent),
-        None => crate::boot_println!("    UDP send: no network (OK)"),
-    }
+    let _ = udp::send(socket_idx, 0x7F00_0001, 9000, data);
 
     udp::close_socket(socket_idx);
     true
@@ -297,12 +261,7 @@ fn test_udp_receive() -> bool {
     };
 
     let mut buffer = [0u8; 1024];
-    match udp::receive(socket_idx, &mut buffer) {
-        Some((_src_ip, _port, bytes_received)) => {
-            crate::boot_println!("    UDP receive: {} bytes", bytes_received)
-        }
-        None => crate::boot_println!("    UDP receive: no data (OK)"),
-    }
+    let _ = udp::receive(socket_idx, &mut buffer);
 
     udp::close_socket(socket_idx);
     true
@@ -317,9 +276,9 @@ fn test_udp_bind() -> bool {
     };
 
     let addr = socket::SockAddr::new(2, 9001u16.to_be(), 0x7F00_0001);
-    match socket::bind(socket_id, &addr) {
-        Ok(()) => crate::boot_println!("    UDP bind to port 9001: OK"),
-        Err(err) => crate::boot_println!("    UDP bind: {:?} (acceptable)", err),
+    if socket::bind(socket_id, &addr).is_err() {
+        let _ = socket::close(socket_id);
+        return false;
     }
 
     let _ = socket::close(socket_id);
@@ -359,24 +318,6 @@ fn test_tcp_slow_start() -> bool {
     true
 }
 
-fn test_tcp_congestion_avoidance() -> bool {
-    // Congestion avoidance requires actual data transfer
-    crate::boot_println!("    TCP congestion avoidance: OK (requires transfer)");
-    true
-}
-
-fn test_tcp_fast_retransmit() -> bool {
-    // Fast retransmit requires duplicate ACK detection
-    crate::boot_println!("    TCP fast retransmit: OK (requires dup ACKs)");
-    true
-}
-
-fn test_tcp_fast_recovery() -> bool {
-    // Fast recovery follows fast retransmit
-    crate::boot_println!("    TCP fast recovery: OK (requires fast retransmit)");
-    true
-}
-
 // =============================================================================
 // Packet Processing Tests
 // =============================================================================
@@ -396,20 +337,7 @@ fn test_packet_parse() -> bool {
     let checksum = ipv4::calculate_checksum(&packet);
     packet[10..12].copy_from_slice(&checksum.to_be_bytes());
 
-    match ipv4::parse_ipv4_header(&packet) {
-        Some((header, _payload)) => {
-            crate::boot_println!(
-                "    Parsed IP packet: version/IHL=0x{:02x}, protocol={}",
-                header.version_ihl,
-                header.protocol
-            );
-            true
-        }
-        None => {
-            crate::boot_println!("    Packet parse: error");
-            false
-        }
-    }
+    matches!(ipv4::parse_ipv4_header(&packet), Some((_header, _payload)))
 }
 
 fn test_checksum_calculation() -> bool {
@@ -417,8 +345,6 @@ fn test_checksum_calculation() -> bool {
 
     let data = b"Test data for checksum";
     let checksum = ipv4::calculate_checksum(data);
-
-    crate::boot_println!("    Checksum: 0x{:04x}", checksum);
 
     // A checksum computed over data that already contains its own checksum
     // must verify; that is the property RFC 1191/RFC 768 rely on.
@@ -439,7 +365,6 @@ fn test_packet_fragmentation() -> bool {
 
     let fragments = fragmentation::fragment_packet(&large_data, mtu, 0x1234);
 
-    crate::boot_println!("    Fragmented into {} packets", fragments.len());
     if fragments.len() < 2 {
         return false;
     }

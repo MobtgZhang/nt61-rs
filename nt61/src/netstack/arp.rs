@@ -196,7 +196,6 @@ pub fn arp_input(data: &[u8], nic_type: NicType, nic_index: usize) {
         Some(h) => h,
         None => return,
     };
-    crate::hal::serial::write_string_always("[NET-ARP] parsed\r\n");
 
     // Verify ARP packet is for IPv4 over Ethernet
     if header.hw_type != 1
@@ -209,14 +208,12 @@ pub fn arp_input(data: &[u8], nic_type: NicType, nic_index: usize) {
 
     // Get our IP addresses
     let our_ips = ipif::get_our_ip_addresses();
-    crate::hal::serial::write_string_always("[NET-ARP] our ips\r\n");
     if !our_ips.contains(&header.target_ip) {
         return;
     }
 
     // Add sender to cache
     cache_add(header.sender_ip, &header.sender_mac);
-    crate::hal::serial::write_string_always("[NET-ARP] cache added\r\n");
 
     // Process based on operation
     match header.operation {
@@ -232,7 +229,6 @@ pub fn arp_input(data: &[u8], nic_type: NicType, nic_index: usize) {
         }
         2 => {
             // ARP Reply - already added to cache above
-            crate::hal::serial::write_string_always("[NET-ARP] reply handled\r\n");
         }
         _ => {}
     }

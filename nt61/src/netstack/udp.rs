@@ -6,6 +6,7 @@
 
 use crate::ke::sync::Spinlock;
 use crate::netstack::ipv4;
+use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
 /// UDP header size
@@ -66,8 +67,8 @@ pub struct UdpSocket {
     pub remote_port: Port,
     /// Remote IP (0 = unbound)
     pub remote_ip: u32,
-    /// Receive buffer
-    pub rx_buf: Vec<UdpPacket>,
+    /// Receive buffer (bounded, FIFO)
+    pub rx_buf: VecDeque<UdpPacket>,
 }
 
 /// A received UDP packet
@@ -76,6 +77,10 @@ pub struct UdpPacket {
     pub src_port: Port,
     pub data: Vec<u8>,
 }
+
+/// Per-socket receive queue limit. Datagrams beyond this bound drop the
+/// oldest queued packet so a silent reader cannot exhaust kernel memory.
+pub const UDP_RX_QUEUE_MAX: usize = 64;
 
 /// Global UDP socket table
 static UDP_SOCKETS: Spinlock<Vec<UdpSocket>> = Spinlock::new(Vec::new());
@@ -204,7 +209,7 @@ pub fn create_socket(mut local_port: Port, local_ip: u32) -> Option<usize> {
         local_ip,
         remote_port: 0,
         remote_ip: 0,
-        rx_buf: Vec::new(),
+        rx_buf: VecDeque::new(),
     };
 
     sockets.push(socket);
@@ -246,8 +251,6 @@ pub fn send(socket_idx: usize, dst_ip: u32, dst_port: Port, data: &[u8]) -> Opti
         (src_ip, socket.local_port)
     };
 
-    crate::hal::serial::write_string_always("[NET-UDP] send entering\r\n");
-
     // Build UDP header
     let length = (UDP_HDR_SIZE + data.len()) as u16;
 
@@ -272,11 +275,6 @@ pub fn send(socket_idx: usize, dst_ip: u32, dst_port: Port, data: &[u8]) -> Opti
 
     // Send via IPv4
     let sent = ipv4::send_ipv4(src_ip, dst_ip, 17, &packet);
-    crate::hal::serial::write_string_always(if sent {
-        "[NET-UDP] ipv4 send ok\r\n"
-    } else {
-        "[NET-UDP] ipv4 send failed\r\n"
-    });
     if sent {
         let mut stats = UDP_STATS.lock();
         stats.datagrams_sent += 1;
@@ -324,14 +322,21 @@ pub fn udp_input(src_ip: u32, dst_ip: u32, data: &[u8]) -> bool {
     } else {
         &[]
     };
-    crate::hal::serial::write_string_always(&alloc::format!(
-        "[NET-UDP] input src={} dst={} sport={} dport={} len={}\r\n",
-        crate::netstack::ipif::ip_to_string(src_ip),
-        crate::netstack::ipif::ip_to_string(dst_ip),
-        header.src_port,
-        header.dst_port,
-        data.len()
-    ));
+
+    // RFC 768: a datagram is verified against its checksum unless the
+    // sender left it 0 (legal only over IPv4). The recomputation runs
+    // over the datagram *with* its checksum field included, so a valid
+    // datagram folds to 0; anything else is corrupt and must not be
+    // delivered as if it came from the claimed source.
+    if header.checksum != 0 {
+        let expected = calculate_checksum(src_ip, dst_ip, data);
+        if expected != 0 {
+            let mut stats = UDP_STATS.lock();
+            stats.checksum_errors += 1;
+            stats.datagrams_dropped += 1;
+            return false;
+        }
+    }
 
     let mut stats = UDP_STATS.lock();
     stats.datagrams_received += 1;
@@ -351,7 +356,15 @@ pub fn udp_input(src_ip: u32, dst_ip: u32, data: &[u8]) -> bool {
             src_port: header.src_port,
             data: payload.to_vec(),
         };
-        sockets_mut[idx].rx_buf.push(packet);
+        let queue = &mut sockets_mut[idx].rx_buf;
+        if queue.len() >= UDP_RX_QUEUE_MAX {
+            // Make room for the newest datagram; the dropped packet is
+            // accounted as a drop rather than silently overwriting.
+            queue.pop_front();
+            let mut stats = UDP_STATS.lock();
+            stats.datagrams_dropped += 1;
+        }
+        queue.push_back(packet);
         true
     } else {
         // No socket listening: the caller reports Port Unreachable.
@@ -375,7 +388,7 @@ pub fn receive(socket_idx: usize, buffer: &mut [u8]) -> Option<(u32, Port, usize
         return None;
     }
 
-    let packet = socket.rx_buf.remove(0);
+    let packet = socket.rx_buf.pop_front()?;
     let copy_len = buffer.len().min(packet.data.len());
     buffer[..copy_len].copy_from_slice(&packet.data[..copy_len]);
 
@@ -391,7 +404,7 @@ pub fn peek(socket_idx: usize) -> Option<UdpPacket> {
     }
 
     let socket = &sockets[socket_idx];
-    let first = socket.rx_buf.first()?;
+    let first = socket.rx_buf.front()?;
     Some(UdpPacket {
         src_ip: first.src_ip,
         src_port: first.src_port,
@@ -415,4 +428,93 @@ pub fn close_socket(socket_idx: usize) {
 /// Get UDP statistics
 pub fn get_stats() -> UdpStats {
     (*UDP_STATS.lock()).clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn datagram(src_ip: u32, dst_ip: u32, src_port: Port, dst_port: Port, payload: &[u8]) -> Vec<u8> {
+        let mut packet = Vec::with_capacity(UDP_HDR_SIZE + payload.len());
+        packet.resize(UDP_HDR_SIZE, 0);
+        let header = UdpHeader {
+            src_port,
+            dst_port,
+            length: (UDP_HDR_SIZE + payload.len()) as u16,
+            checksum: 0,
+        };
+        header.to_bytes(&mut packet);
+        packet.extend_from_slice(payload);
+        let checksum = calculate_checksum(src_ip, dst_ip, &packet);
+        packet[6] = (checksum >> 8) as u8;
+        packet[7] = checksum as u8;
+        packet
+    }
+
+    #[test]
+    fn udp_input_checksum_and_bounded_queue() {
+        // Serialised in one test because the socket table is a global.
+
+        // -- valid checksum is delivered --
+        let socket_idx = create_socket(0x5B01, 0).expect("bind");
+        let packet = datagram(
+            u32::from_be_bytes([10, 0, 0, 2]),
+            u32::from_be_bytes([10, 0, 0, 1]),
+            1234,
+            0x5B01,
+            b"hello udp",
+        );
+        assert!(udp_input(
+            u32::from_be_bytes([10, 0, 0, 2]),
+            u32::from_be_bytes([10, 0, 0, 1]),
+            &packet
+        ));
+        let mut buf = [0u8; 64];
+        let (_, src_port, len) = receive(socket_idx, &mut buf).expect("datagram");
+        assert_eq!(src_port, 1234);
+        assert_eq!(len, 9);
+        assert_eq!(&buf[..len], b"hello udp");
+
+        // -- corrupt checksum is rejected and counted --
+        create_socket(0x5B02, 0).expect("bind");
+        let mut bad = datagram(
+            u32::from_be_bytes([10, 0, 0, 2]),
+            u32::from_be_bytes([10, 0, 0, 1]),
+            1234,
+            0x5B02,
+            b"payload",
+        );
+        let last = bad.len() - 1;
+        bad[last] ^= 0xFF;
+        assert!(!udp_input(
+            u32::from_be_bytes([10, 0, 0, 2]),
+            u32::from_be_bytes([10, 0, 0, 1]),
+            &bad
+        ));
+        let stats = get_stats();
+        assert!(stats.checksum_errors >= 1, "checksum error must be counted");
+
+        // -- rx queue is bounded and FIFO --
+        let socket_idx = create_socket(0x5B03, 0).expect("bind");
+        for i in 0..(UDP_RX_QUEUE_MAX + 8) {
+            let packet = datagram(
+                u32::from_be_bytes([10, 0, 0, 2]),
+                u32::from_be_bytes([10, 0, 0, 1]),
+                2000,
+                0x5B03,
+                &[i as u8; 4],
+            );
+            assert!(udp_input(
+                u32::from_be_bytes([10, 0, 0, 2]),
+                u32::from_be_bytes([10, 0, 0, 1]),
+                &packet
+            ));
+        }
+        let sockets = UDP_SOCKETS.lock();
+        assert_eq!(sockets[socket_idx].rx_buf.len(), UDP_RX_QUEUE_MAX);
+        // FIFO: the newest datagram must be at the back.
+        let back = sockets[socket_idx].rx_buf.back().unwrap();
+        assert_eq!(back.data, [((UDP_RX_QUEUE_MAX + 7) as u8); 4]);
+        drop(sockets);
+    }
 }

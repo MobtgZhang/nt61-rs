@@ -173,10 +173,40 @@ impl Default for IcmpStats {
 /// Global ICMP statistics
 static ICMP_STATS: Spinlock<IcmpStats> = Spinlock::new(IcmpStats::zero());
 
-/// The most recent echo reply, used by `ping`. `(identifier,
-/// sequence, monotonic time, payload length)` is sufficient to pair
-/// concurrent probes without maintaining a socket object.
-static LAST_ECHO_REPLY: Spinlock<Option<(u16, u16, u64, usize)>> = Spinlock::new(None);
+/// Per-probe echo-reply latches, keyed by `(identifier, sequence)`.
+/// A fixed table keeps concurrent pings from clobbering each other,
+/// which a single global slot could not do.
+const ECHO_SLOTS: usize = 16;
+
+#[derive(Clone, Copy, PartialEq)]
+struct EchoProbe {
+    id: u16,
+    seq: u16,
+    /// Set by `arm_echo_reply` and cleared again by `take_echo_reply`.
+    armed: bool,
+    /// Only a real echo reply (type 0) marks this; `take` refuses to
+    /// hand out a result for a probe whose reply never arrived.
+    replied: bool,
+    time: u64,
+    size: usize,
+}
+
+impl EchoProbe {
+    const fn empty() -> Self {
+        Self {
+            id: 0,
+            seq: 0,
+            armed: false,
+            replied: false,
+            time: 0,
+            size: 0,
+        }
+    }
+}
+
+static ECHO_PROBES: Spinlock<[EchoProbe; ECHO_SLOTS]> =
+    Spinlock::new([EchoProbe::empty(); ECHO_SLOTS]);
+static ECHO_CURSOR: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
 /// Initialize the ICMP module
 pub fn init() {
@@ -241,21 +271,56 @@ pub fn icmp_input(src_ip: u32, dst_ip: u32, data: &[u8]) {
     }
 }
 
-/// Clear the echo-reply latch before transmitting a probe.
+/// Register a probe for `(identifier, sequence)` before transmitting it.
 pub fn arm_echo_reply(identifier: u16, sequence: u16) {
-    *LAST_ECHO_REPLY.lock() = Some((identifier, sequence, 0, 0));
+    let mut probes = ECHO_PROBES.lock();
+    // Re-arming an existing (id, seq) probe resets it in place instead of
+    // growing the table.
+    if let Some(slot) = probes
+        .iter_mut()
+        .find(|p| p.armed && p.id == identifier && p.seq == sequence)
+    {
+        slot.replied = false;
+        slot.time = 0;
+        slot.size = 0;
+        return;
+    }
+    if let Some(slot) = probes.iter_mut().find(|p| !p.armed) {
+        *slot = EchoProbe {
+            id: identifier,
+            seq: sequence,
+            armed: true,
+            replied: false,
+            time: 0,
+            size: 0,
+        };
+        return;
+    }
+    // Table full: evict round-robin. Every slot is an armed probe, so
+    // this drops the oldest claim; the matching take simply times out.
+    let idx = ECHO_CURSOR.fetch_add(1, core::sync::atomic::Ordering::Relaxed) % ECHO_SLOTS;
+    probes[idx] = EchoProbe {
+        id: identifier,
+        seq: sequence,
+        armed: true,
+        replied: false,
+        time: 0,
+        size: 0,
+    };
 }
 
-/// Consume an echo reply matching `(identifier, sequence)`.
+/// Consume an echo reply matching `(identifier, sequence)`. Returns
+/// `None` while the reply is still in flight, so callers that poll this
+/// after `send_echo_request` observe real completion only.
 pub fn take_echo_reply(identifier: u16, sequence: u16) -> Option<(u64, usize)> {
-    let mut reply = LAST_ECHO_REPLY.lock();
-    match *reply {
-        Some((id, seq, time, size)) if id == identifier && seq == sequence => {
-            *reply = None;
-            Some((time, size))
-        }
-        _ => None,
-    }
+    let mut probes = ECHO_PROBES.lock();
+    let slot = probes
+        .iter_mut()
+        .find(|p| p.armed && p.replied && p.id == identifier && p.seq == sequence)?;
+    let result = (slot.time, slot.size);
+    slot.armed = false;
+    slot.replied = false;
+    Some(result)
 }
 
 /// Send one ICMP echo request through the interface that owns the
@@ -298,7 +363,17 @@ fn handle_echo_reply(header: IcmpHeader, data: &[u8]) {
     let identifier = u16::from_be_bytes([header.rest[0], header.rest[1]]);
     let sequence = u16::from_be_bytes([header.rest[2], header.rest[3]]);
 
-    *LAST_ECHO_REPLY.lock() = Some((identifier, sequence, 0, data.len().min(i32::MAX as usize)));
+    {
+        let mut probes = ECHO_PROBES.lock();
+        if let Some(slot) = probes
+            .iter_mut()
+            .find(|p| p.armed && p.id == identifier && p.seq == sequence)
+        {
+            slot.replied = true;
+            slot.time = 0;
+            slot.size = data.len().min(i32::MAX as usize);
+        }
+    }
 
     // Update statistics
     let mut stats = ICMP_STATS.lock();
@@ -415,4 +490,56 @@ pub fn send_time_exceeded(src_ip: u32, dst_ip: u32, original_packet: &[u8]) {
 /// Get ICMP statistics
 pub fn get_stats() -> IcmpStats {
     (*ICMP_STATS.lock()).clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn reply_header(id: u16, seq: u16) -> IcmpHeader {
+        IcmpHeader {
+            icmp_type: IcmpType::EchoReply as u8,
+            code: 0,
+            checksum: 0,
+            rest: [
+                (id >> 8) as u8,
+                id as u8,
+                (seq >> 8) as u8,
+                seq as u8,
+            ],
+        }
+    }
+
+    #[test]
+    fn echo_reply_only_completes_after_real_reply() {
+        // Arming a probe must not let `take` fabricate a result.
+        arm_echo_reply(0xA001, 7);
+        assert_eq!(take_echo_reply(0xA001, 7), None);
+
+        handle_echo_reply(reply_header(0xA001, 7), &[1, 2, 3, 4]);
+        let (_, size) = take_echo_reply(0xA001, 7).expect("reply consumed");
+        assert_eq!(size, 4);
+        // Consumed once: a second take must fail.
+        assert_eq!(take_echo_reply(0xA001, 7), None);
+    }
+
+    #[test]
+    fn concurrent_probes_do_not_clobber_each_other() {
+        arm_echo_reply(0xA002, 1);
+        arm_echo_reply(0xA003, 2);
+
+        // Reply to the second probe only.
+        handle_echo_reply(reply_header(0xA003, 2), &[0xAA; 8]);
+
+        assert_eq!(take_echo_reply(0xA002, 1), None);
+        let (_, size) = take_echo_reply(0xA003, 2).expect("second probe reply");
+        assert_eq!(size, 8);
+    }
+
+    #[test]
+    fn mismatched_sequence_is_ignored() {
+        arm_echo_reply(0xA004, 9);
+        handle_echo_reply(reply_header(0xA004, 8), &[0xFF; 2]);
+        assert_eq!(take_echo_reply(0xA004, 9), None);
+    }
 }

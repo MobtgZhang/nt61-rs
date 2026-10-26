@@ -354,6 +354,7 @@ pub fn connect(socket_id: u32, addr: &SockAddr) -> Result<(), SocketError> {
                 let mut established = false;
                 while crate::hal::common::pit::get_system_time_ms() < deadline {
                     crate::drivers::net::poll_all();
+                    crate::ke::scheduler::yield_();
                     match tcp::socket_state(tcp_id) {
                         tcp::TcpState::Established => {
                             established = true;

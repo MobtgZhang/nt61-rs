@@ -158,6 +158,13 @@ static NAT_STATS: Spinlock<NatStats> = Spinlock::new(NatStats {
     errors: 0,
 });
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct NatConfig {
+    public_ip: u32,
+}
+
+static NAT_CONFIG: Spinlock<Option<NatConfig>> = Spinlock::new(None);
+
 const TCP_TIMEOUT_MS: u64 = 7200_000; // 2 hours
 const UDP_TIMEOUT_MS: u64 = 300_000; // 5 minutes
 const ICMP_TIMEOUT_MS: u64 = 60_000; // 1 minute
@@ -170,6 +177,26 @@ pub fn init() {
         expired: 0,
         errors: 0,
     };
+}
+
+/// Enable NAT only when an operator explicitly configures a public address.
+/// The packet hooks are safe no-ops while NAT is disabled.
+pub fn enable(public_ip: u32) {
+    *NAT_CONFIG.lock() = Some(NatConfig {
+        public_ip: public_ip.max(1),
+    });
+}
+
+pub fn disable() {
+    *NAT_CONFIG.lock() = None;
+}
+
+pub fn is_enabled() -> bool {
+    NAT_CONFIG.lock().is_some()
+}
+
+pub fn public_ip() -> Option<u32> {
+    NAT_CONFIG.lock().map(|config| config.public_ip)
 }
 
 pub fn translate_outbound(

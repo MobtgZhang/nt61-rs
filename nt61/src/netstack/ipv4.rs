@@ -285,11 +285,54 @@ fn is_icmp_error(payload: &[u8]) -> bool {
 
 /// Deliver a complete datagram to the upper-layer protocol.
 fn dispatch_datagram(header: &Ipv4Header, payload: &[u8], _nic_type: NicType, _nic_index: usize) {
-    crate::hal::serial::write_string_always(&alloc::format!(
-        "[NET-IPV4] dispatch proto={} len={}\r\n",
+    if !crate::netstack::ipsec::check_inbound_policy(header.src_ip, header.dst_ip, false) {
+        return;
+    }
+
+    let mut header = header.clone();
+    let mut translated_payload = payload.to_vec();
+    let mut payload = translated_payload.as_slice();
+    if crate::netstack::nat::is_enabled()
+        && (header.protocol == 1 || header.protocol == 6 || header.protocol == 17)
+    {
+        let nat_dst_port = if header.protocol == 1 && payload.len() >= 8 {
+            u16::from_be_bytes([payload[4], payload[5]])
+        } else {
+            transport_ports(header.protocol, payload).1
+        };
+        if let Some((internal_ip, internal_port)) =
+            crate::netstack::nat::translate_inbound(nat_dst_port, header.protocol)
+        {
+            header.dst_ip = internal_ip;
+            if header.protocol == 1 && payload.len() >= 8 {
+                translated_payload[4..6].copy_from_slice(&internal_port.to_be_bytes());
+                let icmp_checksum =
+                    crate::netstack::ipv4::calculate_checksum(&translated_payload);
+                translated_payload[2..4].copy_from_slice(&icmp_checksum.to_be_bytes());
+            } else if header.protocol == 6 || header.protocol == 17 {
+                rewrite_transport_destination_port(&mut translated_payload, internal_port);
+            }
+            payload = &translated_payload;
+        }
+    }
+
+    let (src_port, dst_port) = transport_ports(header.protocol, payload);
+    let action = crate::netstack::wfp::filter_packet(
+        crate::netstack::wfp::FilterLayer::InboundIpv4,
+        header.src_ip,
+        header.dst_ip,
+        src_port,
+        dst_port,
         header.protocol,
-        payload.len()
-    ));
+        _nic_index as u32,
+    );
+    if !matches!(
+        action,
+        crate::netstack::wfp::FilterAction::Permit | crate::netstack::wfp::FilterAction::Continue
+    ) {
+        return;
+    }
+
     match Protocol::from_u8(header.protocol) {
         Some(Protocol::Icmp) => {
             crate::netstack::icmp::icmp_input(header.src_ip, header.dst_ip, payload)
@@ -306,7 +349,7 @@ fn dispatch_datagram(header: &Ipv4Header, payload: &[u8], _nic_type: NicType, _n
                     header.dst_ip,
                     header.src_ip,
                     crate::netstack::icmp::DestinationUnreachableCode::PortUnreachable,
-                    &quote_original(header, payload),
+                    &quote_original(&header, payload),
                 );
             }
         }
@@ -319,7 +362,7 @@ fn dispatch_datagram(header: &Ipv4Header, payload: &[u8], _nic_type: NicType, _n
                     header.dst_ip,
                     header.src_ip,
                     crate::netstack::icmp::DestinationUnreachableCode::ProtocolUnreachable,
-                    &quote_original(header, payload),
+                    &quote_original(&header, payload),
                 );
             }
         }
@@ -337,7 +380,7 @@ pub fn forward_ipv4(header: &Ipv4Header, payload: &[u8]) -> bool {
                 header.dst_ip,
                 header.src_ip,
                 crate::netstack::icmp::DestinationUnreachableCode::NetworkUnreachable,
-                &quote_original(header, payload),
+                &quote_original(&header, payload),
             );
         }
         return false;
@@ -349,7 +392,7 @@ pub fn forward_ipv4(header: &Ipv4Header, payload: &[u8]) -> bool {
                 crate::netstack::icmp::send_time_exceeded(
                     header.dst_ip,
                     header.src_ip,
-                    &quote_original(header, payload),
+                    &quote_original(&header, payload),
                 );
             }
             return false;
@@ -428,15 +471,6 @@ pub fn ipv4_input(header: &Ipv4Header, payload: &[u8], nic_type: NicType, nic_in
 
     // Also check for broadcast
     let is_broadcast = header.dst_ip == 0xFFFFFFFF || is_broadcast_ip(header.dst_ip);
-    crate::hal::serial::write_string_always(&alloc::format!(
-        "[NET-IPV4] input src={} dst={} proto={} len={} for_us={} bc={}\r\n",
-        crate::netstack::ipif::ip_to_string(header.src_ip),
-        crate::netstack::ipif::ip_to_string(header.dst_ip),
-        header.protocol,
-        payload.len(),
-        is_for_us,
-        is_broadcast
-    ));
 
     if !is_for_us && !is_broadcast {
         forward_ipv4(header, payload);
@@ -449,7 +483,7 @@ pub fn ipv4_input(header: &Ipv4Header, payload: &[u8], nic_type: NicType, nic_in
             crate::netstack::icmp::send_time_exceeded(
                 header.dst_ip,
                 header.src_ip,
-                &quote_original(header, payload),
+                &quote_original(&header, payload),
             );
         }
         return;
@@ -500,9 +534,115 @@ fn build_ipv4_fragment(
     packet
 }
 
+fn transport_ports(protocol: u8, payload: &[u8]) -> (u16, u16) {
+    match protocol {
+        6 | 17 if payload.len() >= 4 => (
+            u16::from_be_bytes([payload[0], payload[1]]),
+            u16::from_be_bytes([payload[2], payload[3]]),
+        ),
+        _ => (0, 0),
+    }
+}
+
+/// Rewrite the ICMP identifier used for connection tracking.
+fn rewrite_icmp_identifier(payload: &mut [u8], identifier: u16) -> bool {
+    if payload.len() < 8 {
+        return false;
+    }
+    payload[4..6].copy_from_slice(&identifier.to_be_bytes());
+    true
+}
+
+fn rewrite_transport_source_port(payload: &mut [u8], port: u16) -> bool {
+    if payload.len() < 2 {
+        return false;
+    }
+    payload[..2].copy_from_slice(&port.to_be_bytes());
+    true
+}
+
+fn rewrite_transport_destination_port(payload: &mut [u8], port: u16) -> bool {
+    if payload.len() < 4 {
+        return false;
+    }
+    payload[2..4].copy_from_slice(&port.to_be_bytes());
+    true
+}
+
 /// Send an IPv4 packet
 pub fn send_ipv4(src_ip: u32, dst_ip: u32, protocol: u8, payload: &[u8]) -> bool {
-    crate::hal::serial::write_string_always("[NET-IPV4] send entering\r\n");
+    if crate::netstack::ipsec::check_outbound_policy(src_ip, dst_ip, 0, 0, protocol)
+        == crate::netstack::ipsec::PolicyAction::Protect
+    {
+        return false;
+    }
+
+    let (src_port, dst_port) = transport_ports(protocol, payload);
+    let action = crate::netstack::wfp::filter_packet(
+        crate::netstack::wfp::FilterLayer::OutboundIpv4,
+        src_ip,
+        dst_ip,
+        src_port,
+        dst_port,
+        protocol,
+        0,
+    );
+    if !matches!(
+        action,
+        crate::netstack::wfp::FilterAction::Permit | crate::netstack::wfp::FilterAction::Continue
+    ) {
+        return false;
+    }
+
+    let mut translated_payload = None;
+    let mut src_ip = src_ip;
+    if crate::netstack::nat::is_enabled()
+        && !crate::netstack::ipif::get_our_ip_addresses().contains(&dst_ip)
+    {
+        let Some(public_ip) = crate::netstack::nat::public_ip() else {
+            return false;
+        };
+        if protocol == 1 {
+            if payload.len() >= 8 && matches!(payload[0], 0 | 8) {
+                let icmp_port = u16::from_be_bytes([payload[4], payload[5]]);
+                let Some((nat_ip, nat_port)) = crate::netstack::nat::translate_outbound(
+                    src_ip,
+                    icmp_port,
+                    dst_ip,
+                    0,
+                    protocol,
+                    public_ip,
+                ) else {
+                    return false;
+                };
+                let mut payload = payload.to_vec();
+                if !rewrite_icmp_identifier(&mut payload, nat_port) {
+                    return false;
+                }
+                translated_payload = Some(payload);
+                src_ip = nat_ip;
+            }
+        } else if protocol == 6 || protocol == 17 {
+            let Some((nat_ip, nat_port)) = crate::netstack::nat::translate_outbound(
+                src_ip,
+                src_port,
+                dst_ip,
+                dst_port,
+                protocol,
+                public_ip,
+            ) else {
+                return false;
+            };
+            let mut payload = payload.to_vec();
+            if !rewrite_transport_source_port(&mut payload, nat_port) {
+                return false;
+            }
+            translated_payload = Some(payload);
+            src_ip = nat_ip;
+        }
+    }
+    let payload = translated_payload.as_deref().unwrap_or(payload);
+
     // Loopback shortcut: 127.0.0.0/8 must NEVER hit the wire.
     // Re-inject the packet locally through ipv4_input with the
     // primary NIC type, which dispatches to TCP/UDP/ICMP just
@@ -512,7 +652,6 @@ pub fn send_ipv4(src_ip: u32, dst_ip: u32, protocol: u8, payload: &[u8]) -> bool
         let packet = build_ipv4_packet(src_ip, dst_ip, protocol, 64, payload);
         if let Some((header, ip_payload)) = parse_ipv4_header(&packet) {
             ipv4_input(&header, ip_payload, NicType::VirtioNet, 0);
-            crate::hal::serial::write_string_always("[NET-IPV4] loopback ok\r\n");
             return true;
         }
         crate::hal::serial::write_string_always("[NET-IPV4] loopback build failed\r\n");
