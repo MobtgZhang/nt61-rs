@@ -45,15 +45,21 @@ impl Hive {
     }
 
     pub fn from_name(s: &str) -> Option<Self> {
-        match s {
-            "System" => Some(Hive::System),
-            "Software" => Some(Hive::Software),
-            "Security" => Some(Hive::Security),
-            "SAM" => Some(Hive::SAM),
-            "Default" => Some(Hive::Default),
-            ".DEFAULT" => Some(Hive::Default),
-            "BCD" => Some(Hive::BCD),
-            _ => None,
+        // Hive names are case-insensitive on NT (HKLM\\SYSTEM == HKLM\\System).
+        if s.eq_ignore_ascii_case("System") {
+            Some(Hive::System)
+        } else if s.eq_ignore_ascii_case("Software") {
+            Some(Hive::Software)
+        } else if s.eq_ignore_ascii_case("Security") {
+            Some(Hive::Security)
+        } else if s.eq_ignore_ascii_case("SAM") {
+            Some(Hive::SAM)
+        } else if s.eq_ignore_ascii_case("Default") || s.eq_ignore_ascii_case(".DEFAULT") {
+            Some(Hive::Default)
+        } else if s.eq_ignore_ascii_case("BCD") {
+            Some(Hive::BCD)
+        } else {
+            None
         }
     }
 }
@@ -63,6 +69,10 @@ pub enum PathError {
     Empty,
     BadPrefix,
     UnknownHive(String),
+    /// \Registry\User\<SID>\... names a per-user profile hive. Only
+    /// .DEFAULT is mounted by this kernel, so SID hives get a dedicated
+    /// error instead of a generic unknown-hive failure.
+    UserHiveNotMounted(String),
     BadUtf16,
 }
 
@@ -72,6 +82,11 @@ impl core::fmt::Display for PathError {
             PathError::Empty => write!(f, "empty path"),
             PathError::BadPrefix => write!(f, "path does not start with \\Registry\\"),
             PathError::UnknownHive(s) => write!(f, "unknown hive '{}'", s),
+            PathError::UserHiveNotMounted(s) => write!(
+                f,
+                "user profile hive '{}' is not mounted (only .DEFAULT is)",
+                s
+            ),
             PathError::BadUtf16 => write!(f, "bad utf-16 in path"),
         }
     }
@@ -108,6 +123,10 @@ impl ParsedPath {
         //   System\CurrentControlSet\Services (bare path, defaults to System hive)
         //   SOFTWARE\Microsoft (bare path, defaults to Software hive)
 
+        // Track whether the path went through \Registry\User\ so
+        // SID-shaped profile hives get their own error semantics.
+        let mut is_user_path = false;
+
         let (hive_name, subkey_str) = if trimmed.to_ascii_uppercase().starts_with("REGISTRY") {
             // Full path: \Registry\Machine\System\...
             let remainder = &trimmed[8..]; // skip "Registry"
@@ -115,12 +134,15 @@ impl ParsedPath {
                 let after_backslash = &remainder[1..]; // skip the backslash
 
                 // Check for Machine or User prefix and skip it
+                // Track whether the path went through \Registry\User\ so
+                // SID-shaped profile hives get their own error semantics.
                 let after_prefix = if after_backslash
                     .to_ascii_uppercase()
                     .starts_with("MACHINE\\")
                 {
                     &after_backslash[8..] // skip "Machine\"
                 } else if after_backslash.to_ascii_uppercase().starts_with("USER\\") {
+                    is_user_path = true;
                     &after_backslash[5..] // skip "User\"
                 } else {
                     after_backslash
@@ -149,6 +171,9 @@ impl ParsedPath {
             Some(name) => {
                 // Remove trailing backslash if present
                 let name = name.trim_end_matches('\\');
+                if is_user_path && is_user_sid_hive(name) {
+                    return Err(PathError::UserHiveNotMounted(String::from(name)));
+                }
                 Hive::from_name(name).ok_or_else(|| PathError::UnknownHive(String::from(name)))?
             }
             None => Hive::System, // Default to System hive if not specified
@@ -180,4 +205,40 @@ impl core::fmt::Display for ParsedPath {
 /// type, but the only error case the parser can produce is `BadUtf16`).
 pub fn utf16_err_from_hive(_e: &HiveError) -> PathError {
     PathError::BadUtf16
+}
+
+/// Recognise a Windows SID-shaped hive name (S-1-5-21-...).
+fn is_user_sid_hive(name: &str) -> bool {
+    name.to_ascii_uppercase().starts_with("S-1-")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_default_maps_to_default_hive() {
+        let parsed = ParsedPath::parse("\\Registry\\User\\.DEFAULT\\Volatile Environment").unwrap();
+        assert_eq!(parsed.hive, Hive::Default);
+        assert_eq!(parsed.subkeys, alloc::vec![String::from("Volatile Environment")]);
+    }
+
+    #[test]
+    fn user_sid_hive_gets_dedicated_error() {
+        let err = ParsedPath::parse("\\Registry\\User\\S-1-5-21-1-2-3\\Software").unwrap_err();
+        match err {
+            PathError::UserHiveNotMounted(sid) => {
+                assert_eq!(sid, "S-1-5-21-1-2-3");
+            }
+            other => panic!("unexpected error: {}", other),
+        }
+    }
+
+    #[test]
+    fn machine_paths_are_unchanged() {
+        let parsed =
+            ParsedPath::parse("\\Registry\\Machine\\System\\CurrentControlSet").unwrap();
+        assert_eq!(parsed.hive, Hive::System);
+        assert_eq!(parsed.subkeys, alloc::vec![String::from("CurrentControlSet")]);
+    }
 }

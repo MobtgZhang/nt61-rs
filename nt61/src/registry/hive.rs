@@ -574,19 +574,20 @@ fn decode_hive_name(data: &[u8]) -> String {
         return String::from_utf8_lossy(data).into_owned();
     }
 
-    let is_likely_utf16 = data[0] >= 0x20 && data[0] < 0x7F && data.len() >= 2 && data[1] == 0;
-
-    if is_likely_utf16 {
-        let units: Vec<u16> = data
-            .chunks_exact(2)
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
-            .collect();
-        match String::from_utf16(&units) {
-            Ok(s) => s,
-            Err(_) => String::from_utf8_lossy(data).into_owned(),
-        }
-    } else {
-        String::from_utf8_lossy(data).into_owned()
+    // Callers only reach this path when the name flag says the name is
+    // NOT ASCII, so even-length data is UTF-16LE per the hive format.
+    // The old first-byte heuristic (data[0] < 0x7F && data[1] == 0)
+    // misdecoded every name whose first character is non-ASCII, such as
+    // CJK key names whose UTF-16LE bytes look like text in neither
+    // encoding. Decode the units and fall back to lossy ASCII only when
+    // they are not valid UTF-16.
+    let units: Vec<u16> = data
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    match String::from_utf16(&units) {
+        Ok(s) => s,
+        Err(_) => String::from_utf8_lossy(data).into_owned(),
     }
 }
 
