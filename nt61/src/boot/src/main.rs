@@ -15,13 +15,46 @@
 
 extern crate alloc;
 
-/// Boot-manager-local panic policy.  The `uefi` crate's optional panic
-/// handler must stay disabled here: the workspace also builds
-/// `nt61-winload`, whose `nt61` dependency supplies the kernel panic
-/// handler.  A boot-manager panic is a firmware-session failure, so the
-/// safe fallback is to stop spinning rather than depend on console state
-/// that may not yet be initialized.
+/// Boot-manager global allocator.
+///
+/// The `uefi` crate's `global_allocator` feature must stay disabled in this
+/// workspace: the same `uefi` build is shared with `nt61-winload`, which
+/// registers its own `HybridAllocator`. With feature unification the uefi
+/// helper allocator would conflict with it (two `#[global_allocator]`s in the
+/// final binary). This thin wrapper forwards to the uefi pool allocator
+/// directly, keeping identical semantics (UEFI boot-services pool
+/// allocations) without the feature-level registration.
 #[cfg(not(test))]
+struct BootmgrAllocator;
+
+#[cfg(not(test))]
+#[global_allocator]
+static BOOTMGR_ALLOCATOR: BootmgrAllocator = BootmgrAllocator;
+
+#[cfg(not(test))]
+unsafe impl core::alloc::GlobalAlloc for BootmgrAllocator {
+    unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
+        uefi::allocator::Allocator.alloc(layout)
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
+        uefi::allocator::Allocator.dealloc(ptr, layout)
+    }
+}
+
+/// Host builds (`cargo check/test` on the developer Linux target) link
+/// `std` anyway — workspace feature unification pulls it in through
+/// `uefi → bitflags ← rustix` when dev-dependencies are built alongside
+/// `--all-targets`. Link it explicitly here so the build is deterministic
+/// in both modes and `std` provides the `panic_impl` lang item.
+#[cfg(all(not(test), target_os = "linux"))]
+extern crate std;
+
+/// Boot-manager-local panic policy.  Real firmware targets have no `std`,
+/// so the panic handler must live in this crate there. A boot-manager panic
+/// is a firmware-session failure, so the safe fallback is to stop spinning
+/// rather than depend on console state that may not yet be initialized.
+#[cfg(all(not(test), not(target_os = "linux")))]
 #[panic_handler]
 fn bootmgr_panic(_info: &core::panic::PanicInfo) -> ! {
     loop {
@@ -3600,24 +3633,18 @@ fn read_data_stream(ntfs: &NtfsBoot, record_num: u64) -> Option<Vec<u8>> {
                     record[off + 0x3E],
                     record[off + 0x3F],
                 ]);
-                // RunList offset lives at attribute + 0x38 for non-resident
-                // $DATA — see NTFS $DATA non-resident attribute layout:
-                //   0x10  LowestVCN  (8)
-                //   0x18  HighestVCN (8)
-                //   0x20  AllocSize  (8)
-                //   0x28  RealSize   (8)
-                //   0x30  InitSize   (8)
-                //   0x38  RunListOffset (2)
+                // RunList offset lives at attribute + 0x20 for non-resident
+                // $DATA, matching `build_non_resident_data_attr`:
+                //   0x10  StartingVCN (8)
+                //   0x18  LastVCN     (8)
+                //   0x20  RunListOffset (2)
+                //   0x28  AllocSize   (8)
+                //   0x30  RealSize    (8)
+                //   0x38  InitSize    (8)
                 // An earlier version of this routine read the offset from
-                // off+0x20 (the lowest VCN field) which produced a
-                // garbage run list; the loader still returned 851456 bytes
-                // because the read-N-sectors fallback fetched whatever
-                // the LCNs happened to point at, but the resulting buffer
-                // was the *wrong* bytes of winload.efi. That's why
-                // UEFI's `LoadImage` then rejected the image with
-                // `EFI_LOAD_ERROR` (its PE-COFF validator saw bytes that
-                // no longer formed a valid EFI Application).
-                let run_off = u16::from_le_bytes([record[off + 0x38], record[off + 0x39]]) as usize;
+                // off+0x38 (the initialized-size field), so it skipped the
+                // run list entirely and returned an all-zero image.
+                let run_off = u16::from_le_bytes([record[off + 0x20], record[off + 0x21]]) as usize;
                 let mut p = off + run_off;
                 let mut out: Vec<u8> = alloc::vec![0u8; alloc_size as usize];
                 let mut prev_lcn: i64 = 0;

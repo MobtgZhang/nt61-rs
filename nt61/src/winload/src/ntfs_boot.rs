@@ -589,7 +589,7 @@ fn read_data_stream(
                 }
             } else {
                 // Non-resident $DATA stores the mapping-pair offset in
-                // the builder-compatible header field at +0x38.
+                // the builder-compatible header field at +0x20.
                 let first_vcn = u64::from_le_bytes([
                     record[off + 0x10],
                     record[off + 0x11],
@@ -601,7 +601,7 @@ fn read_data_stream(
                     record[off + 0x17],
                 ]);
                 let run_list_off =
-                    u16::from_le_bytes([record[off + 0x38], record[off + 0x39]]) as usize;
+                    u16::from_le_bytes([record[off + 0x20], record[off + 0x21]]) as usize;
 
                 // Parse run list: header byte encodes size of len/offset
                 // fields. The builder emits exactly one contiguous run.

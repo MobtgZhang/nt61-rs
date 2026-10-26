@@ -42,6 +42,15 @@
 // Permitted under MIT. See repository LICENSE.
 extern crate alloc;
 
+/// Host builds (`cargo check/test` on the developer Linux target) may link
+/// `std` through workspace feature unification, and no workspace dependency
+/// provides a panic handler on the host. Link `std` explicitly here so the
+/// host build is deterministic and `std` supplies the `panic_impl` lang
+/// item. Real firmware targets keep `no_std` and receive the kernel panic
+/// handler from the `nt61` dependency (`binary_panic` feature).
+#[cfg(all(not(test), target_os = "linux"))]
+extern crate std;
+
 #[cfg(feature = "log_level_debug")]
 struct UartWriter;
 
@@ -4155,7 +4164,11 @@ fn os_loader_run() -> ! {
     let stack_pages: usize = 256; // 1 MiB
     let stack_base: u64 = match uefi::boot::allocate_pages(
         uefi::boot::AllocateType::AnyPages,
-        uefi::boot::MemoryType::LOADER_DATA,
+        // LOADER_DATA is reclaimed by the firmware after
+        // ExitBootServices; the kernel stack must live in a
+        // runtime-survivable type (same rationale as the hive
+        // region below).
+        uefi::boot::MemoryType::RUNTIME_SERVICES_DATA,
         stack_pages,
     ) {
         Ok(p) => {
@@ -4256,16 +4269,14 @@ fn os_loader_run() -> ! {
     // QEMU/OVMF frequently rejects the first ExitBootServices call
     // with INVALID_PARAMETER because some background firmware work
     // between our collect_memory_map() at L02 and now changed the
-    // map_key. Rather than play the "retry loop" game (which
-    // sometimes wedges the firmware when multiple invalid calls
-    // happen back-to-back), we treat ExitBootServices as
-    // best-effort: try once, log the result, and continue
-    // regardless. The kernel never touches UEFI services after the
-    // jump, so a missed ExitBootServices just means BS_DATA / RT_DATA
-    // types remain addressable in the EFI memory map — harmless.
+    // map_key. On the first failure we refresh the memory map and
+    // retry exactly once. If the retry also fails, the firmware may
+    // reclaim boot-services memory (the ESP/SYS mirrors, the hive
+    // region and the image buffer all live there), so it is NOT safe
+    // to hand control to the kernel: halt instead of continuing.
     let map_key = unsafe { (*core::ptr::addr_of!(PERSISTENT)).map_key };
     debug_println!(
-        "[WINLOAD] L10: ExitBootServices(image_handle, map_key=0x{:x}) — best effort",
+        "[WINLOAD] L10: ExitBootServices(image_handle, map_key=0x{:x})",
         map_key
     );
     EXIT_BOOT_SERVICES_DONE.store(true, Ordering::Release);
@@ -4280,19 +4291,45 @@ fn os_loader_run() -> ! {
         let st = uefi::table::system_table_raw().expect("system table not set");
         let st_ref = st.as_ref();
         if let Some(bs_ptr) = st_ref.boot_services.as_ref() {
-            let status = (bs_ptr.exit_boot_services)(handle_ptr, map_key);
+            let mut key = map_key;
+            let mut status = (bs_ptr.exit_boot_services)(handle_ptr, key);
             debug_println!(
                 "[WINLOAD] L10: ExitBootServices: status={:?} map_key=0x{:x}",
                 status,
-                map_key
+                key
             );
+            if !status.is_success() {
+                // Stale map key: refresh the map and retry once.
+                debug_println!(
+                    "[WINLOAD] L10: ExitBootServices failed; refreshing memory map and retrying once"
+                );
+                let pd = &mut *core::ptr::addr_of_mut!(PERSISTENT);
+                let (n, fresh_key) = raw_get_memory_map_with_key(
+                    &mut pd.memory_map,
+                    &mut (*core::ptr::addr_of_mut!(MEM_MAP_BUF)).0,
+                );
+                if n > 0 {
+                    pd.memory_map_count = n;
+                }
+                pd.map_key = fresh_key;
+                key = fresh_key;
+                debug_println!(
+                    "[WINLOAD] L10: refreshed map_key=0x{:x} ({} entries); retrying ExitBootServices",
+                    key,
+                    n
+                );
+                status = (bs_ptr.exit_boot_services)(handle_ptr, key);
+                debug_println!("[WINLOAD] L10: ExitBootServices retry: status={:?}", status);
+            }
             if status.is_success() {
                 debug_println!("[WINLOAD] L10: boot services terminated successfully");
             } else {
                 debug_println!(
-                    "[WINLOAD] L10: WARN: ExitBootServices returned {:?}; continuing anyway",
-                    status
+                    "[WINLOAD] L10: FATAL: ExitBootServices failed twice — the firmware may reclaim boot-services memory the kernel depends on; halting instead of jumping to the kernel"
                 );
+                loop {
+                    core::hint::spin_loop();
+                }
             }
         } else {
             debug_println!(
@@ -4311,9 +4348,11 @@ fn os_loader_run() -> ! {
     // ExitBootServices because it lives inside the loaded PE, not in
     // the fragile BootServicesData region.
     debug_println!("--- Phase L11 ---");
-    mark_winload_phase(10);
+    if !EXIT_BOOT_SERVICES_DONE.load(Ordering::Acquire) {
+        mark_winload_phase(10);
+    }
     let ki_va = ntoskrnl_base_l03 + kernel_entry_rva_l03;
-    uefi::println!(
+    debug_println!(
         "[WINLOAD] L11: ntoskrnl_base=0x{:x} entry_rva=0x{:x} ki_va=0x{:x} stack=0x{:x} bi=0x{:x}",
         ntoskrnl_base_l03,
         kernel_entry_rva_l03,
