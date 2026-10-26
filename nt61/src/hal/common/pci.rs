@@ -21,7 +21,8 @@
 //! Clean-room implementation. No code is copied from any
 //! Microsoft or ReactOS source file.
 
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::cell::UnsafeCell;
+use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 // use crate::kprintln;
 use crate::hal::common::acpi::get_mcfg_info;
@@ -434,28 +435,69 @@ pub const MAX_BUSES: usize = 64;
 /// rather than `Option<PciDevice>` so the array is a plain
 /// `PciDevice` and we can use a `Copy`-friendly layout. This is
 /// the same pattern Windows 7 uses for its internal device list.
-static mut PCI_DEVICE_CACHE: [PciDevice; MAX_PCI_DEVICES] = [PciDevice {
-    bus: 0,
-    device: 0,
-    function: 0,
-    vendor_id: 0,
-    device_id: 0,
-    class_code: 0,
-    subclass: 0,
-    prog_if: 0,
-    header_type: 0,
-    irq: 0,
-    revision: 0,
-}; MAX_PCI_DEVICES];
-static mut PCI_CACHE_COUNT: usize = 0;
-static mut PCI_CACHE_VALID: bool = false;
+///
+/// The cache is guarded by `PCI_CACHE.lock`: enumeration runs while
+/// the lock is held, and the populated count is published through the
+/// `valid` flag with Release ordering so lock-free readers that
+/// observe `valid == true` also observe the fully populated device
+/// array. (Audit hal_rtl P0-2: the previous `static mut` cache could
+/// be enumerated concurrently from multiple CPUs and tear.)
+struct PciDeviceCache {
+    lock: AtomicBool,
+    count: AtomicUsize,
+    valid: AtomicBool,
+    devices: UnsafeCell<[PciDevice; MAX_PCI_DEVICES]>,
+}
+
+// SAFETY: the device array is only accessed through `UnsafeCell::get`
+// while `lock` is held (during enumeration) or after `valid` has been
+// published with Release ordering (read-only snapshot).
+unsafe impl Sync for PciDeviceCache {}
+
+static PCI_CACHE: PciDeviceCache = PciDeviceCache {
+    lock: AtomicBool::new(false),
+    count: AtomicUsize::new(0),
+    valid: AtomicBool::new(false),
+    devices: UnsafeCell::new([PciDevice {
+        bus: 0,
+        device: 0,
+        function: 0,
+        vendor_id: 0,
+        device_id: 0,
+        class_code: 0,
+        subclass: 0,
+        prog_if: 0,
+        header_type: 0,
+        irq: 0,
+        revision: 0,
+    }; MAX_PCI_DEVICES]),
+};
 
 fn cache_push(d: PciDevice) {
+    // SAFETY: `cache_push` is only called from the enumeration scan
+    // path, which runs while `PCI_CACHE.lock` is held by
+    // `enumerate`. The store to `count` uses Release so a reader
+    // that later observes `valid` also observes this entry.
     unsafe {
-        if PCI_CACHE_COUNT < MAX_PCI_DEVICES {
-            PCI_DEVICE_CACHE[PCI_CACHE_COUNT] = d;
-            PCI_CACHE_COUNT += 1;
+        let slots = &mut *PCI_CACHE.devices.get();
+        let count = PCI_CACHE.count.load(Ordering::Relaxed);
+        if count < MAX_PCI_DEVICES {
+            slots[count] = d;
+            PCI_CACHE.count.store(count + 1, Ordering::Release);
         }
+    }
+}
+
+/// Snapshot of the published device cache. Safe without the lock:
+/// `valid` is only set with Release ordering after every entry and
+/// the final count are visible.
+fn published_devices() -> &'static [PciDevice] {
+    let count = PCI_CACHE
+        .count
+        .load(Ordering::Acquire)
+        .min(MAX_PCI_DEVICES);
+    unsafe {
+        core::slice::from_raw_parts((*PCI_CACHE.devices.get()).as_ptr(), count)
     }
 }
 
@@ -578,14 +620,23 @@ fn enumerate_recursive() {
 /// times — subsequent calls return the cached slice instantly.
 pub fn enumerate() -> &'static [PciDevice] {
     crate::hal::serial::write_string_always("[PCI] enum enter\r\n");
-    if unsafe { PCI_CACHE_VALID } {
+    if PCI_CACHE.valid.load(Ordering::Acquire) {
         crate::hal::serial::write_string_always("[PCI] enum cached\r\n");
-        return unsafe {
-            core::slice::from_raw_parts(
-                (*core::ptr::addr_of!(PCI_DEVICE_CACHE)).as_ptr() as *const PciDevice,
-                PCI_CACHE_COUNT,
-            )
-        };
+        return published_devices();
+    }
+
+    // Serialize enumeration: two CPUs racing here would otherwise
+    // push duplicate devices into the cache.
+    while PCI_CACHE
+        .lock
+        .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        core::hint::spin_loop();
+    }
+    if PCI_CACHE.valid.load(Ordering::Relaxed) {
+        PCI_CACHE.lock.store(false, Ordering::Release);
+        return published_devices();
     }
 
     // Lazy configuration-method bring-up. Some HALs (aarch64,
@@ -600,20 +651,15 @@ pub fn enumerate() -> &'static [PciDevice] {
     crate::hal::serial::write_string_always("[PCI] enum scan enter\r\n");
     enumerate_recursive();
     crate::hal::serial::write_string_always("[PCI] enum scan done\r\n");
-    let count = unsafe { PCI_CACHE_COUNT };
     crate::hal::serial::write_string_always("[PCI] enum return enter\r\n");
     //     // // kprintln!("  [PCI] enumeration complete: {} device(s) found", count);
 
-    unsafe {
-        PCI_CACHE_COUNT = count;
-        PCI_CACHE_VALID = true;
-        let devices = core::slice::from_raw_parts(
-            (*core::ptr::addr_of!(PCI_DEVICE_CACHE)).as_ptr() as *const PciDevice,
-            count,
-        );
-        crate::hal::serial::write_string_always("[PCI] enum return done\r\n");
-        devices
-    }
+    // Publish: every entry and the final count are already visible
+    // (Release stores above), so lock-free readers are safe from here.
+    PCI_CACHE.valid.store(true, Ordering::Release);
+    PCI_CACHE.lock.store(false, Ordering::Release);
+    crate::hal::serial::write_string_always("[PCI] enum return done\r\n");
+    published_devices()
 }
 
 /// Find a device by (vendor, device) id.

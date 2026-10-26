@@ -49,6 +49,7 @@ pub fn write_char(c: u8) {
     if crate::hal::common::serial_disable::is_disabled() {
         return;
     }
+    let _tx_guard = crate::hal::common::serial::lock_uart_tx();
     unsafe {
         while (read_volatile(reg(UARTFR)) & FR_TXFF) != 0 {
             core::hint::spin_loop();
@@ -67,6 +68,9 @@ pub fn write_string(s: &str) {
     #[cfg(feature = "log_level_debug")]
     {
         if !crate::hal::common::serial_disable::is_disabled() {
+            // Hold the transmit lock for the whole string so two CPUs
+            // cannot interleave their bytes mid-line.
+            let _tx_guard = crate::hal::common::serial::lock_uart_tx();
             for c in s.bytes() {
                 write_char(c);
             }
@@ -82,6 +86,7 @@ pub fn write_string_always(s: &str) {
     }
     #[cfg(not(test))]
     {
+        let _tx_guard = crate::hal::common::serial::lock_uart_tx();
         crate::hal::common::serial_disable::with_serial_unmasked(|| {
             for c in s.bytes() {
                 write_char(c);

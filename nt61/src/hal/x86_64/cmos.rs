@@ -354,6 +354,57 @@ pub fn time_fields_to_100ns(time: &TimeFields) -> u64 {
     days * 86_400 * 10_000_000 + secs * 10_000_000
 }
 
+/// Convert a 100-ns-since-1601 count (Windows `FILETIME`) back into
+/// `TimeFields`. Returns `None` when the value does not correspond to
+/// a representable wall-clock date (year outside 1601..=9999), so
+/// callers can reject bad input instead of programming garbage into
+/// the CMOS.
+pub fn time_fields_from_100ns(ft: u64) -> Option<TimeFields> {
+    const TICKS_PER_SECOND: u64 = 10_000_000;
+    const SECONDS_PER_DAY: u64 = 86_400;
+    const DAYS_1601_TO_1970: i64 = 134_774;
+
+    let total_secs = ft / TICKS_PER_SECOND;
+    let days_1601 = (total_secs / SECONDS_PER_DAY) as i64;
+    let secs_of_day = total_secs % SECONDS_PER_DAY;
+    let days_unix = days_1601 - DAYS_1601_TO_1970;
+    let (year, month, day) = civil_from_days(days_unix)?;
+    if !(1601..=9999).contains(&year) {
+        return None;
+    }
+    let hour = (secs_of_day / 3600) as u8;
+    let minute = ((secs_of_day % 3600) / 60) as u8;
+    let second = (secs_of_day % 60) as u8;
+    // 1970-01-01 was a Thursday. CMOS weekday registers use
+    // 1 = Sunday .. 7 = Saturday.
+    let weekday = ((((days_unix + 4) % 7 + 7) % 7) + 1) as u8;
+    Some(TimeFields::new(
+        year as u16,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+        weekday,
+    ))
+}
+
+/// Days-since-1970-01-01 to a proleptic-Gregorian (year, month, day),
+/// after Howard Hinnant's civil-from-days algorithm.
+fn civil_from_days(z: i64) -> Option<(i64, u8, u8)> {
+    let z = z.checked_add(719_468)?;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u8;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if m <= 2 { y + 1 } else { y };
+    Some((year, m as u8, d))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -371,5 +422,27 @@ mod tests {
         // 1601-01-01.
         let t = TimeFields::new(1970, 1, 1, 0, 0, 0, 4);
         assert_eq!(days_from_1601(&t), 134774);
+    }
+
+    #[test]
+    fn filetime_round_trip() {
+        // 2000-01-01 12:00:00 (a Saturday, so weekday 7).
+        let t = TimeFields::new(2000, 1, 1, 12, 0, 0, 7);
+        let ft = time_fields_to_100ns(&t);
+        let back = time_fields_from_100ns(ft).expect("round trip");
+        assert_eq!(back.year, 2000);
+        assert_eq!(back.month, 1);
+        assert_eq!(back.day, 1);
+        assert_eq!(back.hour, 12);
+        assert_eq!(back.minute, 0);
+        assert_eq!(back.weekday, 7);
+        assert_eq!(time_fields_to_100ns(&back), ft);
+    }
+
+    #[test]
+    fn filetime_out_of_range_rejected() {
+        // One tick before 1601-01-01 has no representable date.
+        assert!(time_fields_from_100ns(0).is_some()); // 1601-01-01 00:00
+        assert!(time_fields_from_100ns(u64::MAX).is_none());
     }
 }

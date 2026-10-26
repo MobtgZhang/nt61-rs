@@ -85,6 +85,10 @@ pub fn write_char(c: u8) {
 /// because the caller has already chosen a specific port (often
 /// COM2 for SAC, where suppression would defeat the purpose).
 pub fn write_char_port(port: u16, c: u8) {
+    // Serialize against other CPUs; see hal::common::serial. The
+    // guard is reentrant on the owning CPU, so callers that already
+    // hold it for a whole string pass through without nesting.
+    let _tx_guard = crate::hal::common::serial::lock_uart_tx();
     // Wait for transmit buffer to be empty
     while (inb(port + UART_REG_LSR) & LSR_TRANSMIT_EMPTY) == 0 {}
 
@@ -104,6 +108,9 @@ pub fn write_string(s: &str) {
     #[cfg(feature = "log_level_debug")]
     {
         if !crate::hal::common::serial_disable::is_disabled() {
+            // Hold the transmit lock for the whole string so two CPUs
+            // cannot interleave their bytes mid-line.
+            let _tx_guard = crate::hal::common::serial::lock_uart_tx();
             for c in s.bytes() {
                 write_char_port(COM1_PORT, c);
             }
@@ -120,6 +127,7 @@ pub fn write_string_always(s: &str) {
     }
     #[cfg(not(test))]
     {
+        let _tx_guard = crate::hal::common::serial::lock_uart_tx();
         for c in s.bytes() {
             write_char_port(COM1_PORT, c);
         }

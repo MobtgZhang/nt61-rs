@@ -65,13 +65,20 @@ static mut CUR_BYTES: [u8; super::COLS] = [0u8; super::COLS];
 static mut CUR_LEN: u8 = 0;
 static mut CUR_ATTR: u8 = super::ATTR_DEFAULT;
 
+/// Serializes ring and cursor updates. Reentrant on the owning CPU
+/// so a fault handler that logs while the faulting context holds the
+/// lock cannot spin against itself (audit hal_rtl P0-2).
+static RING_LOCK: crate::hal::common::relock::ReentrantLock =
+    crate::hal::common::relock::ReentrantLock::new();
+
 /// Initialise the aarch64 backend. The PL011 UART is brought up
 /// elsewhere by `hal::aarch64::serial::init`; this function only
 /// resets the ring state.
 pub fn init() {
+    let _guard = RING_LOCK.lock();
+    NEXT.store(0, Ordering::Release);
+    LINE_COUNT.store(0, Ordering::Release);
     unsafe {
-        NEXT.store(0, Ordering::Release);
-        LINE_COUNT.store(0, Ordering::Release);
         CUR_LEN = 0;
         CUR_ATTR = super::ATTR_DEFAULT;
     }
@@ -80,6 +87,7 @@ pub fn init() {
 /// Update the current attribute. Future bytes that are part of
 /// the half-built line adopt this attribute.
 pub fn set_attr(attr: u8) {
+    let _guard = RING_LOCK.lock();
     unsafe {
         CUR_ATTR = attr;
     }
@@ -110,6 +118,7 @@ pub fn put_byte(b: u8) {
     //    newline / line overflow. This is what the SafeBootMode
     //    CMD shell's log display pane reads from when it paints
     //    its scrollback window on shell entry.
+    let _guard = RING_LOCK.lock();
     unsafe {
         match b {
             b'\n' | b'\r' => {
@@ -267,6 +276,7 @@ pub fn log_line_count() -> usize {
 /// Returns the number of lines actually written (always equal
 /// to `min(buf.len(), LOG_RING_LINES)` on aarch64).
 pub fn read_log_lines(buf: &mut [[u8; super::COLS + 2]]) -> usize {
+    let _guard = RING_LOCK.lock();
     let n = buf.len().min(super::log_ring_lines());
     let next = NEXT.load(Ordering::Acquire);
     unsafe {

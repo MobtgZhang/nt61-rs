@@ -191,9 +191,15 @@ pub fn hal_make_beep(frequency: u32, duration: u32) -> bool {
     let prev = read_port_uchar(PORT_B_SYS);
     write_port_uchar(PORT_B_SYS, prev | 0x03);
     // Busy-wait the duration. We use a calibrated spin because
-    // the kernel has no millisecond-resolution scheduler yet.
+    // the kernel has no millisecond-resolution scheduler yet. The
+    // spin is bounded so a caller asking for an absurd tone length
+    // cannot pin a CPU indefinitely; real Beep() durations are far
+    // below the cap, and longer waits must use timer objects once a
+    // schedulable wait model exists.
+    const BEEP_MAX_BUSY_MS: u64 = 10_000;
+    let dur_ms = (duration as u64).min(BEEP_MAX_BUSY_MS);
     let hz = pit_freq_hz().max(18) as u64;
-    let iter = (duration as u64) * hz / 1000;
+    let iter = dur_ms * hz / 1000;
     for _ in 0..iter {
         core::hint::spin_loop();
     }

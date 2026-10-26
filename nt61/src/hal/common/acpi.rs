@@ -13,6 +13,7 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 use core::ptr;
+use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(target_arch = "x86_64")]
@@ -67,6 +68,19 @@ pub struct Rsdp2 {
 /// The physical address of the RSDP as supplied by the firmware.
 /// The kernel sets this from the BootInfo during Phase 5.
 static RSDP_PHYS: AtomicU64 = AtomicU64::new(0);
+
+/// Lock-guarded decode cache for one ACPI table (audit hal_rtl P0-2).
+/// The parser builds a complete snapshot in a local and publishes it
+/// with a single store into the cell, so concurrent parses can never
+/// expose a torn half-initialised cache.
+struct AcpiCell<T> {
+    value: UnsafeCell<T>,
+}
+
+// SAFETY: the value is written once per parse from a fully built
+// local snapshot (single move store); readers only observe the cell
+// after their parse call has returned.
+unsafe impl<T> Sync for AcpiCell<T> {}
 
 /// Initialise the ACPI subsystem.
 ///
@@ -571,7 +585,9 @@ impl Default for MadtInfo {
 
 // SAFETY: All fields are zero-initialized which is a valid representation
 // for MadtInfo (and its nested types MadtIntOverride and MadtLocalApicNmi).
-static mut MADT_INFO: MadtInfo = unsafe { core::mem::zeroed() };
+static MADT: AcpiCell<MadtInfo> = AcpiCell {
+    value: UnsafeCell::new(unsafe { core::mem::zeroed() }),
+};
 
 /// Parse the MADT and cache the result. Returns `true` on
 /// success. The cached info is exposed by `madt_info()`.
@@ -584,22 +600,28 @@ pub fn parse_madt() -> bool {
             return false;
         }
     };
+    parse_madt_locked(header)
+}
+
+/// Decode the MADT into a local snapshot and publish it atomically.
+fn parse_madt_locked(header: *const AcpiTableHeader) -> bool {
+    let mut info = MadtInfo::default();
     unsafe {
         let table_va = header as *const u8;
         let length = read_u32(table_va.add(4));
         let body_va = table_va.add(core::mem::size_of::<MadtHeader>());
         let body = core::ptr::read_unaligned(body_va as *const MadtBody);
 
-        // Initialize MADT_INFO directly
-        MADT_INFO.local_apic_address = body.local_apic_address as u64;
-        MADT_INFO.flags = body.flags;
-        MADT_INFO.lapic_count = 0;
-        MADT_INFO.io_apic_id = 0;
-        MADT_INFO.io_apic_address = 0;
-        MADT_INFO.io_apic_gsi_base = 0;
-        MADT_INFO.has_io_apic = false;
-        MADT_INFO.int_override_count = 0;
-        MADT_INFO.nmi_source_count = 0;
+        // Initialize info directly
+        info.local_apic_address = body.local_apic_address as u64;
+        info.flags = body.flags;
+        info.lapic_count = 0;
+        info.io_apic_id = 0;
+        info.io_apic_address = 0;
+        info.io_apic_gsi_base = 0;
+        info.has_io_apic = false;
+        info.int_override_count = 0;
+        info.nmi_source_count = 0;
 
         // Walk the variable-length entries that follow the body.
         let mut offset = core::mem::size_of::<MadtHeader>() + core::mem::size_of::<MadtBody>();
@@ -612,15 +634,15 @@ pub fn parse_madt() -> bool {
             }
             match entry_type {
                 MADT_ENTRY_LOCAL_APIC => {
-                    if MADT_INFO.lapic_count as usize >= MAX_MADT_LAPICS {
+                    if info.lapic_count as usize >= MAX_MADT_LAPICS {
                         break;
                     }
                     let e: MadtLocalApic =
                         core::ptr::read_unaligned(entry_va as *const MadtLocalApic);
                     // bit 0 of flags = "enabled"
                     if e.flags & 1 != 0 {
-                        MADT_INFO.lapic_ids[MADT_INFO.lapic_count as usize] = e.apic_id;
-                        MADT_INFO.lapic_count += 1;
+                        info.lapic_ids[info.lapic_count as usize] = e.apic_id;
+                        info.lapic_count += 1;
                         acpi_debug!(
                             "    [acpi] MADT: found LAPIC id={} proc_id={} enabled=true",
                             e.apic_id,
@@ -629,13 +651,13 @@ pub fn parse_madt() -> bool {
                     }
                 }
                 MADT_ENTRY_IO_APIC => {
-                    if !MADT_INFO.has_io_apic {
+                    if !info.has_io_apic {
                         let e: MadtIoApic =
                             core::ptr::read_unaligned(entry_va as *const MadtIoApic);
-                        MADT_INFO.io_apic_id = e.io_apic_id;
-                        MADT_INFO.io_apic_address = e.io_apic_address as u64;
-                        MADT_INFO.io_apic_gsi_base = e.global_system_interrupt_base;
-                        MADT_INFO.has_io_apic = true;
+                        info.io_apic_id = e.io_apic_id;
+                        info.io_apic_address = e.io_apic_address as u64;
+                        info.io_apic_gsi_base = e.global_system_interrupt_base;
+                        info.has_io_apic = true;
                         let _io_apic_id = e.io_apic_id;
                         let _io_apic_addr = e.io_apic_address;
                         let _gsi_base = e.global_system_interrupt_base;
@@ -648,7 +670,7 @@ pub fn parse_madt() -> bool {
                     }
                 }
                 MADT_ENTRY_INTERRUPT_OVERRIDE => {
-                    if MADT_INFO.int_override_count < MAX_INT_OVERRIDES {
+                    if info.int_override_count < MAX_INT_OVERRIDES {
                         let e: MadtIntOverride =
                             core::ptr::read_unaligned(entry_va as *const MadtIntOverride);
                         // Copy fields before moving the struct
@@ -656,22 +678,22 @@ pub fn parse_madt() -> bool {
                         let _source = e.source;
                         let _gsi = e.global_system_interrupt;
                         let _flags = e.flags;
-                        MADT_INFO.int_overrides[MADT_INFO.int_override_count] = e;
-                        MADT_INFO.int_override_count += 1;
+                        info.int_overrides[info.int_override_count] = e;
+                        info.int_override_count += 1;
                         acpi_debug!("    [acpi] MADT: interrupt override: bus={} src={} gsi={} flags=0x{:x}",
                                    _bus, _source, _gsi, _flags);
                     }
                 }
                 MADT_ENTRY_LOCAL_APIC_NMI => {
-                    if MADT_INFO.nmi_source_count < MAX_NMI_SOURCES {
+                    if info.nmi_source_count < MAX_NMI_SOURCES {
                         let e: MadtLocalApicNmi =
                             core::ptr::read_unaligned(entry_va as *const MadtLocalApicNmi);
                         // Copy fields before moving the struct
                         let _proc_id = e.processor_id;
                         let _lint = e.local_apic_lint;
                         let _flags = e.flags;
-                        MADT_INFO.nmi_sources[MADT_INFO.nmi_source_count] = e;
-                        MADT_INFO.nmi_source_count += 1;
+                        info.nmi_sources[info.nmi_source_count] = e;
+                        info.nmi_source_count += 1;
                         acpi_debug!(
                             "    [acpi] MADT: local APIC NMI: proc={} lint={} flags=0x{:x}",
                             _proc_id,
@@ -687,16 +709,19 @@ pub fn parse_madt() -> bool {
             offset += entry_len as usize;
         }
         //         // // kprintln!("    [acpi] MADT: lapic_base=0x{:x} flags=0x{:x} cpus={} ioapic={} int_overrides={} nmi_sources={}",
-        // //                   MADT_INFO.local_apic_address, MADT_INFO.flags, MADT_INFO.lapic_count, MADT_INFO.has_io_apic,
-        // //                   MADT_INFO.int_override_count, MADT_INFO.nmi_source_count);
+        // //                   info.local_apic_address, info.flags, info.lapic_count, info.has_io_apic,
+        // //                   info.int_override_count, info.nmi_source_count);
     }
+    // Publish the fully built snapshot with a single store so readers
+    // never observe a partially decoded table.
+    unsafe { *MADT.value.get() = info };
     true
 }
 
 /// Return a reference to the cached MADT info (or default if parse failed).
 /// Returns a reference to avoid needing Copy trait on MadtInfo.
 pub fn madt_info() -> &'static MadtInfo {
-    unsafe { &*core::ptr::addr_of!(MADT_INFO) }
+    unsafe { &*MADT.value.get() }
 }
 
 #[cfg(test)]
@@ -980,20 +1005,22 @@ pub struct SratInfo {
     pub memory: [SratMemory; MAX_SRAT_MEMORY_ENTRIES],
 }
 
-static mut SRAT_INFO: SratInfo = SratInfo {
-    processor_count: 0,
-    processors: [SratProcessor {
-        proximity_domain: 0,
-        apic_id: 0,
-        flags: 0,
-    }; MAX_MADT_LAPICS],
-    memory_count: 0,
-    memory: [SratMemory {
-        proximity_domain: 0,
-        base_address: 0,
-        length: 0,
-        flags: 0,
-    }; MAX_SRAT_MEMORY_ENTRIES],
+static SRAT: AcpiCell<SratInfo> = AcpiCell {
+    value: UnsafeCell::new(SratInfo {
+        processor_count: 0,
+        processors: [SratProcessor {
+            proximity_domain: 0,
+            apic_id: 0,
+            flags: 0,
+        }; MAX_MADT_LAPICS],
+        memory_count: 0,
+        memory: [SratMemory {
+            proximity_domain: 0,
+            base_address: 0,
+            length: 0,
+            flags: 0,
+        }; MAX_SRAT_MEMORY_ENTRIES],
+    }),
 };
 
 pub fn parse_srat() -> bool {
@@ -1007,7 +1034,23 @@ pub fn parse_srat() -> bool {
         return false;
     }
     let mut offset = 40usize;
-    let info = unsafe { &mut *core::ptr::addr_of_mut!(SRAT_INFO) };
+    // Decode into a local snapshot; the shared cache is only updated
+    // with one complete store at the end (audit hal_rtl P0-2).
+    let mut info = SratInfo {
+        processor_count: 0,
+        processors: [SratProcessor {
+            proximity_domain: 0,
+            apic_id: 0,
+            flags: 0,
+        }; MAX_MADT_LAPICS],
+        memory_count: 0,
+        memory: [SratMemory {
+            proximity_domain: 0,
+            base_address: 0,
+            length: 0,
+            flags: 0,
+        }; MAX_SRAT_MEMORY_ENTRIES],
+    };
     info.processor_count = 0;
     info.memory_count = 0;
     while offset + 2 <= length as usize {
@@ -1058,7 +1101,7 @@ pub fn parse_srat() -> bool {
 }
 
 pub fn srat_info() -> &'static SratInfo {
-    unsafe { &*core::ptr::addr_of!(SRAT_INFO) }
+    unsafe { &*SRAT.value.get() }
 }
 
 // ---------------------------------------------------------------------------
@@ -1082,9 +1125,11 @@ impl Default for SlitInfo {
     }
 }
 
-static mut SLIT_INFO: SlitInfo = SlitInfo {
-    domain_count: 0,
-    distances: [[255; MAX_SLIT_DOMAINS]; MAX_SLIT_DOMAINS],
+static SLIT: AcpiCell<SlitInfo> = AcpiCell {
+    value: UnsafeCell::new(SlitInfo {
+        domain_count: 0,
+        distances: [[255; MAX_SLIT_DOMAINS]; MAX_SLIT_DOMAINS],
+    }),
 };
 
 pub fn parse_slit() -> bool {
@@ -1105,7 +1150,9 @@ pub fn parse_slit() -> bool {
     if dist_off + domains * domains > length as usize {
         return false;
     }
-    let info = unsafe { &mut *core::ptr::addr_of_mut!(SLIT_INFO) };
+    // Decode into a local snapshot; the shared cache is only updated
+    // with one complete store at the end (audit hal_rtl P0-2).
+    let mut info = SlitInfo::default();
     info.domain_count = domains;
     for i in 0..domains {
         for j in 0..domains {
@@ -1116,5 +1163,5 @@ pub fn parse_slit() -> bool {
 }
 
 pub fn slit_info() -> &'static SlitInfo {
-    unsafe { &*core::ptr::addr_of!(SLIT_INFO) }
+    unsafe { &*SLIT.value.get() }
 }

@@ -35,6 +35,7 @@ pub fn init() {
 
 /// write a single byte.
 pub fn write_char(c: u8) {
+    let _tx_guard = crate::hal::common::serial::lock_uart_tx();
     unsafe {
         while (read_volatile(reg(5)) & 0x20) == 0 {
             core::hint::spin_loop();
@@ -51,6 +52,9 @@ pub fn write_string(s: &str) {
     }
     #[cfg(feature = "log_level_debug")]
     {
+        // Hold the transmit lock for the whole string so two CPUs
+        // cannot interleave their bytes mid-line.
+        let _tx_guard = crate::hal::common::serial::lock_uart_tx();
         for c in s.bytes() {
             write_char(c);
         }
@@ -65,6 +69,7 @@ pub fn write_string_always(s: &str) {
     }
     #[cfg(not(test))]
     {
+        let _tx_guard = crate::hal::common::serial::lock_uart_tx();
         for c in s.bytes() {
             write_char(c);
         }

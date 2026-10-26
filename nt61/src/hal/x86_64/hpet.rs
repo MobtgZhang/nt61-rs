@@ -158,6 +158,13 @@ pub fn hal_query_performance_counter() -> i64 {
 /// Returns `true` if the HPET was available; `false` if the call
 /// fell back to a coarse spin.
 pub fn delay_us(us: u32) -> bool {
+    // Busy-spin by contract, but bounded: an unbounded request would
+    // pin the CPU for over an hour. Callers needing longer waits must
+    // use timer/scheduler objects instead of a spinning delay.
+    const MAX_BUSY_DELAY_US: u32 = 1_000_000;
+    if us > MAX_BUSY_DELAY_US {
+        return false;
+    }
     let hz = hpet_freq_hz();
     if hz == 0 {
         return false;

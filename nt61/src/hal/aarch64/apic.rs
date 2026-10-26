@@ -172,7 +172,7 @@ fn init_gicv3() {
 
 /// Acknowledge and end-of-interrupt the highest-priority pending
 /// interrupt.
-pub fn handle_irq() {
+pub fn handle_irq() -> u64 {
     let info = soc::current_soc();
     match info.interrupt_controller {
         soc::InterruptController::GICv2 => {
@@ -186,6 +186,7 @@ pub fn handle_irq() {
                 unsafe {
                     write_volatile((GICV2_CPU_BASE + gicc::EOIR as u64) as *mut u32, iar);
                 }
+                return irq as u64;
             }
         }
         soc::InterruptController::GICv3 | soc::InterruptController::GICv4 => {
@@ -198,9 +199,11 @@ pub fn handle_irq() {
             unsafe {
                 asm!("msr ICC_EOIR1_EL1, {}", in(reg) iar, options(nostack));
             };
+            return irq;
         }
         soc::InterruptController::None => {}
     }
+    0
 }
 
 /// Counters for instrumentation.
