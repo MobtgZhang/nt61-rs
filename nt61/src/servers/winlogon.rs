@@ -36,12 +36,6 @@ pub fn init() {
 /// WinLogon main loop.
 pub fn winlogon_main() -> ! {
     // kprintln!("[WinLogon] Logon manager started");
-    // In a real implementation, WinLogon would:
-    //   1. Wait for SAS (CTRL+ALT+DELETE) via `Win32k.sys`
-    //   2. Run the credential provider chain
-    //   3. Hand off to LSASS for authentication
-    //   4. Profile the user, mount their hives, and create the
-    //      initial process (explorer.exe)
     loop {
         crate::arch::halt();
     }

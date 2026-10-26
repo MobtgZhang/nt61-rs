@@ -36,12 +36,6 @@ pub fn init() {
 /// WinInit main loop.
 pub fn wininit_main() -> ! {
     // kprintln!("[WinInit] Session 0 initialization started");
-    // In a real implementation, WinInit would:
-    //   1. Start the SCM (services.exe)
-    //   2. Start LSASS (lsass.exe)
-    //   3. Configure the desktop heap for Session 0
-    //   4. Signal SMSS that Session 0 is ready
-    //   5. Block forever on a synchronous RPC server.
     loop {
         crate::arch::halt();
     }

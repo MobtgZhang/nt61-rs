@@ -91,7 +91,9 @@ pub fn install_host_key(key: RsaPrivateKey) {
 pub fn host_key() -> RsaPrivateKey {
     let mut guard = HOST_KEY.lock();
     if guard.is_none() {
-        *guard = Some(RsaPrivateKey::generate(HOST_KEY_BITS_DEFAULT));
+        let host_key = RsaPrivateKey::generate(HOST_KEY_BITS_DEFAULT)
+            .expect("supported RSA host key size");
+        *guard = Some(host_key);
     }
     guard.as_ref().expect("host key was just installed").clone()
 }
@@ -414,6 +416,14 @@ impl ActiveSession {
         io: &mut dyn TransportIo,
         payload: &[u8],
     ) -> Result<PayloadOutcome, TransportError> {
+        if self.state != SessionState::UserauthRequested {
+            self.send_disconnect(
+                io,
+                disconnect_reason::PROTOCOL_ERROR,
+                "userauth before service request",
+            );
+            return Ok(PayloadOutcome::Close);
+        }
         self.auth_attempts += 1;
         self.stats.auth_attempts = self.auth_attempts;
 
@@ -494,6 +504,14 @@ impl ActiveSession {
         io: &mut dyn TransportIo,
         payload: &[u8],
     ) -> Result<PayloadOutcome, TransportError> {
+        if self.state != SessionState::Authenticated && self.state != SessionState::ConnectionRequested {
+            self.send_disconnect(
+                io,
+                disconnect_reason::PROTOCOL_ERROR,
+                "connection request before authentication",
+            );
+            return Ok(PayloadOutcome::Close);
+        }
         let mut reader = WireReader::new(payload);
         let _msg_id = reader.get_u8().ok_or(TransportError::MalformedPacket)?;
         let channel_type = reader.get_string().ok_or(TransportError::MalformedPacket)?;

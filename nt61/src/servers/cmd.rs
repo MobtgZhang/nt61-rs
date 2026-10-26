@@ -66,6 +66,16 @@ pub fn take_output_capture() -> Option<Vec<u8>> {
     OUTPUT_CAPTURE.lock().take()
 }
 
+/// Append one byte to the active SSH output capture (if any). Used by
+/// the cmd_extensions module whose output helper bypasses dual_print.
+pub fn capture_output_byte(byte: u8) {
+    if let Some(capture) = OUTPUT_CAPTURE.lock().as_mut() {
+        if capture.len() < OUTPUT_CAPTURE_LIMIT {
+            capture.push(byte);
+        }
+    }
+}
+
 /// Working directory shared by Ring-3 command submissions and the
 /// kernel fallback shell. A single shell instance is expected during
 /// bring-up, so one lock-protected instance is sufficient.
@@ -297,7 +307,6 @@ fn serial_print_u32(mut n: u32) {
 fn read_command() -> [u8; CMD_BUFFER_SIZE] {
     let mut buf = [0u8; CMD_BUFFER_SIZE];
     let mut pos: usize = 0;
-    let mut spin_count: u32 = 0;
     let mut escape_seq: u8 = 0; // 0=none, 1=ESC received, 2='[' received
     let mut history_index: usize = 0; // 0 = not in history mode
     let history_len;
@@ -482,14 +491,11 @@ fn read_command() -> [u8; CMD_BUFFER_SIZE] {
                     escape_seq = 0; // Reset escape sequence on unknown char
                 }
             }
-            spin_count = 0; // Reset spin counter when we get data
         } else {
-            // No data available - use larger busy wait
-            spin_count += 1;
-            if spin_count > 1000000 {
-                spin_count = 0; // Reset periodically
-            }
-            core::hint::spin_loop();
+            // No data available: park on the next interrupt (serial or
+            // keyboard IRQ, timer) instead of busy-spinning the CPU in
+            // the kernel.
+            crate::arch::wait_for_interrupt();
         }
     }
 
@@ -3037,20 +3043,15 @@ pub fn run_batch_from_user_ptr(user_ptr: *const u8) -> Option<()> {
     let mut buf = [0u8; 256];
     let mut len = 0usize;
     serial_print(b"[CMD-A] copying user path byte-by-byte\r\n");
-    unsafe {
-        while len < buf.len() {
-            let b = core::ptr::read_volatile(user_ptr.add(len));
-            serial_print(b"[CMD-A] byte[");
-            write_hex_byte(len as u32);
-            serial_print(b"]=0x");
-            write_hex_byte(b as u32);
-            serial_print(b"\r\n");
-            if b == 0 {
-                break;
-            }
-            buf[len] = b;
-            len += 1;
+    if crate::mm::user_copy::copy_from_user(&mut buf, user_ptr as u64).is_err() {
+        serial_print(b"[CMD-A] copy_from_user failed\r\n");
+        return None;
+    }
+    while len < buf.len() {
+        if buf[len] == 0 {
+            break;
         }
+        len += 1;
     }
     serial_print(b"[CMD-A] copied len=");
     write_hex_byte(len as u32);

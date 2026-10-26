@@ -244,30 +244,79 @@ fn load_services_from_registry() {
     // kprintln!("[SCM] Found {} service definitions in registry", service_keys.len());
 
     // For each service, read its configuration
-    let _boot_start_count = 0usize;
     for service_name in &service_keys {
-        // Limit to first 10 services for brevity
-        if _boot_start_count >= 10 {
-            // kprintln!("[SCM] ... and {} more services", service_keys.len() - _boot_start_count);
-            break;
-        }
 
         let service_path = format!(
             "\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Services\\{}",
             service_name
         );
 
-        // read r#type
-        let start_type = query_dword(&service_path, "Start").unwrap_or(3); // Default to DemandStart (3)
-        let _ = &start_type;
+        // Read Type (service type bits) and Start (start type).
+        let reg_type = query_dword(&service_path, "Type").unwrap_or(0x20);
+        let reg_start = query_dword(&service_path, "Start").unwrap_or(3); // DemandStart (3)
 
         // read ErrorControl
-        let _error_control = query_dword(&service_path, "ErrorControl").unwrap_or(1); // Default to Normal (1)
+        let reg_error = query_dword(&service_path, "ErrorControl").unwrap_or(1); // Normal (1)
 
-        // read ImagePath (optional)
-        let _image_path = query_string(&service_path, "ImagePath");
+        // read ImagePath and DisplayName (optional)
+        let image_path = query_string(&service_path, "ImagePath");
+        let display_name =
+            query_string(&service_path, "DisplayName").unwrap_or_else(|| service_name.clone());
 
-        // kprintln!("[SCM]   {}: Start={}", service_name, start_type);
+        // Map the registry values onto the SCM entry types. Unknown
+        // bits fall back to the closest Win32 meaning instead of being
+        // silently dropped.
+        let start_type = match reg_start {
+            0 => ServiceStartType::BootStart,
+            1 => ServiceStartType::SystemStart,
+            2 => ServiceStartType::AutoStart,
+            4 => ServiceStartType::Disabled,
+            _ => ServiceStartType::DemandStart,
+        };
+        let service_type = if reg_type & 0x01 != 0 {
+            ServiceType::KernelDriver
+        } else if reg_type & 0x02 != 0 {
+            ServiceType::FileSystemDriver
+        } else if reg_type & 0x10 != 0 {
+            ServiceType::DriverOwnProcess
+        } else {
+            ServiceType::ShareProcess
+        };
+        let error_control = match reg_error {
+            0 => ServiceErrorControl::Ignore,
+            2 => ServiceErrorControl::Severe,
+            3 => ServiceErrorControl::Critical,
+            _ => ServiceErrorControl::Normal,
+        };
+
+        // Convert the registry entry into a real ServiceEntry in the
+        // SCM database. Skip duplicates so repeated calls stay
+        // idempotent, and stop when the fixed-size table is full.
+        let mut state = SCM_STATE.lock();
+        let already_registered = state.services[..state.service_count]
+            .iter()
+            .any(|entry| {
+                let utf16: Vec<u16> = service_name.chars().map(|c| c as u16).collect();
+                entry.name[..utf16.len()] == *utf16
+            });
+        if already_registered {
+            continue;
+        }
+        let idx = state.service_count;
+        if idx >= state.services.len() {
+            break;
+        }
+        let svc = &mut state.services[idx];
+        copy_str_utf16(&mut svc.name, service_name);
+        copy_str_utf16(&mut svc.display_name, &display_name);
+        if let Some(ref path) = image_path {
+            copy_str_utf16(&mut svc.image_path, path);
+        }
+        svc.service_type = service_type;
+        svc.start_type = start_type;
+        svc.error_control = error_control;
+        svc.status.current_state = ServiceState::Stopped;
+        state.service_count = idx + 1;
     }
 }
 
@@ -430,6 +479,19 @@ fn register_default_services() {
     ];
 
     for (name, display_name, image_path, svc_type, start_type) in default_services {
+        // Skip a service that is already in the database so repeated
+        // init() calls are idempotent (previously a second init()
+        // doubled the table, and a third filled it so new services
+        // could no longer be registered).
+        let already_registered = state.services[..state.service_count]
+            .iter()
+            .any(|entry| {
+                let utf16: Vec<u16> = name.chars().map(|c| c as u16).collect();
+                entry.name[..utf16.len()] == *utf16
+            });
+        if already_registered {
+            continue;
+        }
         let idx = state.service_count;
         if idx >= state.services.len() {
             break;
@@ -460,6 +522,17 @@ fn record_start_failure(state: &mut ScmState, idx: usize, ntstatus: u32) {
     svc.status.current_state = ServiceState::Stopped;
     svc.status.win32_exit_code = ERROR_SERVICE_NEVER_STARTED;
     svc.status.service_exit_code = ntstatus;
+}
+
+/// Copy a `&str` into a `[u16; N]` UTF-16 buffer with a null terminator.
+fn copy_str_utf16(dest: &mut [u16], src: &str) {
+    let max = dest.len() - 1;
+    for (i, c) in src.chars().enumerate() {
+        if i >= max {
+            break;
+        }
+        dest[i] = c as u16;
+    }
 }
 
 /// Internal: start a service (and its dependencies) while holding the SCM lock.
@@ -557,22 +630,42 @@ fn start_service_index_locked(state: &mut ScmState, idx: usize, depth: usize) ->
             return false;
         }
     } else {
-        let pid = crate::ps::process::allocate_pid();
-        match pid {
-            Some(pid) => {
-                if crate::ps::process::create_system_process(pid).is_some() {
-                    state.services[idx].process_id = pid as u32;
-                } else {
-                    crate::ps::process::free_pid(pid);
-                    record_start_failure(state, idx, 0xC000_0005);
-                    return false;
-                }
-            }
-            None => {
-                record_start_failure(state, idx, 0xC000_0017);
-                return false;
-            }
+        // Non-driver services need a user-mode service host that loads
+        // the image named by image_path, runs it, and reports readiness
+        // back to SCM. No such host exists yet, so the old behaviour of
+        // allocating a PID, creating an unrelated system process and
+        // marking the service Running was a fake success. Be honest:
+        // verify the image is present (so the error code tells the
+        // operator whether the image or the host is missing) and then
+        // record a start failure with the service left Stopped.
+        const BS: char = '\\';
+        let path = utf16_to_string(&state.services[idx].image_path);
+        let image_path = path.trim_end_matches(BS);
+        if image_path.is_empty() {
+            record_start_failure(state, idx, 0xC000_0135);
+            return false;
         }
+        let expanded = if image_path.starts_with("%SystemRoot%") {
+            image_path.replacen("%SystemRoot%", "C:\\Windows", 1)
+        } else if image_path.starts_with("\\\\SystemRoot\\\\") {
+            image_path.replacen("\\\\SystemRoot\\\\", "C:\\Windows\\", 1)
+        } else {
+            alloc::string::ToString::to_string(image_path)
+        };
+        let image_present = match crate::servers::smss::read_pe_from_disk(&expanded) {
+            Some(pe) => {
+                let data = core::mem::ManuallyDrop::into_inner(pe);
+                data.len() >= 2 && data[0] == 0x4D && data[1] == 0x5A
+            }
+            None => false,
+        };
+        if !image_present {
+            record_start_failure(state, idx, 0xC000_0135);
+            return false;
+        }
+        // Image exists but cannot be executed: STATUS_NOT_IMPLEMENTED.
+        record_start_failure(state, idx, 0xC000_0002);
+        return false;
     }
 
     state.services[idx].status.current_state = ServiceState::Running;
@@ -667,12 +760,25 @@ pub fn control_service(idx: usize, control: ServiceControl) -> bool {
 fn control_stop(idx: usize) -> bool {
     let svc_type;
     let process_id;
+    // Snapshot the service name so we can look up the control handler
+    // by name. The HANDLER_TABLE is indexed by registration order, not
+    // by the service-database index, so table.get(idx) used to call
+    // another service's handler (or miss entirely).
+    let mut svc_name = [0u16; 256];
+    let mut svc_name_len = 0usize;
     {
         let state = SCM_STATE.lock();
         if idx >= state.service_count {
             return false;
         }
         let svc = &state.services[idx];
+        for (i, c) in svc.name.iter().enumerate() {
+            if *c == 0 || i >= 256 {
+                break;
+            }
+            svc_name[i] = *c;
+            svc_name_len = i + 1;
+        }
         if svc.status.current_state != ServiceState::Running {
             return false;
         }
@@ -681,7 +787,16 @@ fn control_stop(idx: usize) -> bool {
     }
 
     let table = HANDLER_TABLE.lock();
-    let handler = table.get(idx).and_then(|s| s.as_ref()).map(|e| e.handler);
+    let handler = table
+        .iter()
+        .find_map(|slot| {
+            let entry = slot.as_ref()?;
+            if entry.name_len == svc_name_len && entry.name[..entry.name_len] == svc_name[..svc_name_len] {
+                Some(entry.handler)
+            } else {
+                None
+            }
+        });
     drop(table);
     if let Some(handler) = handler {
         let _result = handler(ServiceControl::Stop as u32);

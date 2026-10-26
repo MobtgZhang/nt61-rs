@@ -43,16 +43,97 @@ pub fn start_from_disk() -> Result<bool, LauncherError> {
     };
     let config = SshdConfig::parse(&config_text);
     super::install_config(config);
-    // Bare-metal NT61 has no password database. Install the default
-    // empty-password account explicitly so password authentication is
-    // deterministic rather than silently rejecting every user.
-    super::auth::install_accounts(alloc::vec![super::auth::UserAccount::without_password(
-        "user"
-    )]);
+    // Load public keys from the configured authorized_keys file so
+    // public-key authentication works on real images. Fail closed:
+    // when no keys can be loaded, publickey auth stays unavailable;
+    // no default account or empty password is ever created.
+    install_authorized_keys_from_disk();
+    // SECURITY: Fail closed. Authentication credentials are installed
+    // explicitly by platform policy; never create a default account.
     start_listener()?;
     set_state(LauncherState::Accepting);
     crate::hal::serial::write_string_always("[SSHD] listener started\r\n");
     Ok(true)
+}
+
+/// Load ssh-rsa public keys from the configured authorized_keys file
+/// and install them for the primary OS account. Lines that fail to
+/// parse are skipped; a missing or unreadable file leaves public-key
+/// authentication unavailable (fail closed).
+fn install_authorized_keys_from_disk() {
+    let config = super::state_snapshot().config;
+    let path = config.authorized_keys_file.clone();
+    let Some(bytes) = crate::fs::read_file_from_disk(&path) else {
+        crate::hal::serial::write_string_always("[SSHD] authorized_keys missing\r\n");
+        return;
+    };
+    let Ok(text) = alloc::string::String::from_utf8(bytes) else {
+        crate::hal::serial::write_string_always("[SSHD] authorized_keys invalid UTF-8\r\n");
+        return;
+    };
+    let mut installed = 0usize;
+    for line in text.lines() {
+        let mut fields = line.split_whitespace();
+        let Some(algorithm) = fields.next() else {
+            continue;
+        };
+        if algorithm != "ssh-rsa" {
+            continue;
+        }
+        let Some(blob_b64) = fields.next() else {
+            continue;
+        };
+        let Some(blob) = base64_decode(blob_b64) else {
+            continue;
+        };
+        if let Some(key) = super::kex::parse_rsa_public_key_blob(&blob) {
+            super::auth::install_authorized_key("user", key);
+            installed += 1;
+        }
+    }
+    if installed == 0 {
+        crate::hal::serial::write_string_always("[SSHD] no valid authorized keys\r\n");
+    }
+}
+
+/// Decode standard base64 (RFC 4648, with padding). Returns None on
+/// any character outside the alphabet or on a length that cannot
+/// decode to whole bytes.
+fn base64_decode(input: &str) -> Option<alloc::vec::Vec<u8>> {
+    fn value_of(c: u8) -> Option<u8> {
+        match c {
+            b'A'..=b'Z' => Some(c - b'A'),
+            b'a'..=b'z' => Some(c - b'a' + 26),
+            b'0'..=b'9' => Some(c - b'0' + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+    let filtered: alloc::vec::Vec<u8> = input
+        .bytes()
+        .filter(|&b| !b.is_ascii_whitespace())
+        .collect();
+    let body: &[u8] = match filtered.iter().position(|&b| b == b'=') {
+        Some(pad) => &filtered[..pad],
+        None => &filtered[..],
+    };
+    if body.len() % 4 == 1 {
+        return None;
+    }
+    let mut out = alloc::vec::Vec::with_capacity(body.len() * 3 / 4 + 3);
+    let mut acc: u32 = 0;
+    let mut bits: u32 = 0;
+    for &c in body {
+        let v = value_of(c)?;
+        acc = (acc << 6) | v as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    Some(out)
 }
 
 /// Drive listener accepts and active SSH sessions from the timer tick.
@@ -225,6 +306,13 @@ mod tests {
         reset_for_test();
     }
 
+    // The two state-machine tests share the process-global
+    // LAUNCHER_STATE. Running them in parallel lets one test observe the
+    // other's transitions (a reset() from one thread between another
+    // thread's reset() and set_state() leaves the machine in an
+    // unexpected state), so they are serialized on this test-local lock.
+    static STATE_MACHINE_TEST_LOCK: Spinlock<()> = Spinlock::new(());
+
     #[test]
     fn validate_rejects_zero_port() {
         reset();
@@ -271,6 +359,7 @@ mod tests {
 
     #[test]
     fn state_machine_progresses_in_order() {
+        let _guard = STATE_MACHINE_TEST_LOCK.lock();
         reset();
         assert!(set_state(LauncherState::ConfigLoaded));
         assert!(set_state(LauncherState::ListenerBound));
@@ -283,6 +372,7 @@ mod tests {
 
     #[test]
     fn state_machine_allows_stop_from_any_state() {
+        let _guard = STATE_MACHINE_TEST_LOCK.lock();
         reset();
         assert!(set_state(LauncherState::ConfigLoaded));
         assert!(set_state(LauncherState::Stopped));

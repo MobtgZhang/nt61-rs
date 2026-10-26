@@ -490,13 +490,19 @@ pub fn sign_exchange_hash(
     let mut w = WireWriter::new();
     match algorithm {
         ALG_HOSTKEY_RSA_SHA2_256 => {
-            let signature = host_key.sign_pkcs1v15(exchange_hash);
+            let signature = match host_key.sign_pkcs1v15(exchange_hash) {
+                Ok(value) => value,
+                Err(_) => return None,
+            };
             w.put_string_str(ALG_HOSTKEY_RSA_SHA2_256);
             w.put_string(&signature);
         }
         ALG_HOSTKEY_SSH_RSA => {
             let digest = crate::crypto::hash::sha1(exchange_hash);
-            let signature = host_key.sign_pkcs1v15(&digest);
+            let signature = match host_key.sign_pkcs1v15(&digest) {
+                Ok(value) => value,
+                Err(_) => return None,
+            };
             w.put_string_str(ALG_HOSTKEY_SSH_RSA);
             w.put_string(&signature);
         }
@@ -1001,7 +1007,7 @@ mod tests {
 
     #[test]
     fn rsa_key_blob_round_trip() {
-        let key = RsaPrivateKey::generate(512);
+        let key = RsaPrivateKey::generate(512).unwrap();
         let blob = rsa_public_key_blob(&key.public_key());
         let parsed = parse_rsa_public_key_blob(&blob).unwrap();
         assert_eq!(parsed.n.to_bytes(), key.n.to_bytes());

@@ -474,7 +474,11 @@ fn dispatch_csrss_message(msg: &crate::lpc::LpcMessage) -> Option<crate::lpc::Lp
     let subsystem = read_u32(&msg.data, 0);
     let function = read_u32(&msg.data, 4);
     let sender_pid = msg.header.sender_pid as u32;
-    let payload = &msg.data[8..msg.data_len as usize];
+    let payload_end = (msg.data_len as usize).min(msg.data.len());
+    if payload_end < 8 {
+        return None;
+    }
+    let payload = &msg.data[8..payload_end];
     match subsystem {
         CSRSS_SUBSYSTEM_CONSOLE => dispatch_console_api(function, payload, sender_pid),
         CSRSS_SUBSYSTEM_PROCESS => dispatch_process_api(function, payload, sender_pid),
@@ -505,7 +509,7 @@ fn dispatch_console_api(
         }
         CONSOLE_API_FREE => {
             let handle = read_u32(payload, 0) as usize;
-            let ok = free_console(handle);
+            let ok = free_console_locked(&mut state, handle);
             let status = if ok {
                 CSRSS_STATUS_SUCCESS
             } else {
@@ -517,7 +521,7 @@ fn dispatch_console_api(
         CONSOLE_API_SET_MODE => {
             let handle = read_u32(payload, 0) as usize;
             let mode = read_u32(payload, 4);
-            let ok = set_console_mode(handle, mode);
+            let ok = set_console_mode_locked(&mut state, handle, mode);
             let status = if ok {
                 CSRSS_STATUS_SUCCESS
             } else {
@@ -528,7 +532,7 @@ fn dispatch_console_api(
         }
         CONSOLE_API_GET_MODE => {
             let handle = read_u32(payload, 0) as usize;
-            match get_console_mode(handle) {
+            match get_console_mode_locked(&state, handle) {
                 Some(mode) => {
                     let mut out = [0u8; 4];
                     write_u32(&mut out, 0, mode);
@@ -631,6 +635,31 @@ fn dispatch_console_api(
     }
 }
 
+pub fn set_console_mode_locked(state: &mut CsrsGlobal, handle: usize, mode: u32) -> bool {
+    let slot = match find_console(state, handle) {
+        Some(slot) => slot,
+        None => return false,
+    };
+    if mode & !CONSOLE_MODE_VALID_BITS != 0 {
+        return false;
+    }
+    state.consoles[slot].mode = mode;
+    true
+}
+
+pub fn get_console_mode_locked(state: &CsrsGlobal, handle: usize) -> Option<u32> {
+    find_console(state, handle).map(|slot| state.consoles[slot].mode)
+}
+
+pub fn free_console_locked(state: &mut CsrsGlobal, handle: usize) -> bool {
+    let slot = match find_console(state, handle) {
+        Some(slot) => slot,
+        None => return false,
+    };
+    state.consoles[slot].in_use = false;
+    true
+}
+
 fn dispatch_process_api(
     function: u32,
     payload: &[u8],
@@ -647,14 +676,18 @@ fn dispatch_process_api(
 }
 
 /// Poll all ALPC server communication ports owned by CSRSS, dispatch
-/// every pending message, and send replies back to the client.
-fn poll_alpc_messages() {
+/// every pending message, and send replies back to the client. Returns
+/// the number of messages dispatched so callers can distinguish a
+/// drained port from real work.
+fn poll_alpc_messages() -> usize {
     if ensure_api_port().is_none() {
-        return;
+        return 0;
     }
+    let mut dispatched = 0usize;
     loop {
         match crate::lpc::receive_from_owner_server_port(PID_CSRSS) {
             Some((_port_idx, msg)) => {
+                dispatched += 1;
                 if let Some(reply) = dispatch_csrss_message(&msg) {
                     let _ = crate::lpc::send(_port_idx, &reply);
                 }
@@ -662,12 +695,19 @@ fn poll_alpc_messages() {
             None => break,
         }
     }
+    dispatched
 }
 
 /// CSRSS server thread entry point.
 pub extern "C" fn csrss_server_thread_entry(_context: u64) {
     loop {
-        poll_alpc_messages();
+        let dispatched = poll_alpc_messages();
+        if dispatched == 0 {
+            // No port-wait object exists yet; instead of busy-spinning
+            // through the scheduler, park on the next interrupt (timer
+            // or IPI) so idle periods stop burning the CPU.
+            crate::arch::wait_for_interrupt();
+        }
         crate::ke::scheduler::yield_();
     }
 }
@@ -799,7 +839,10 @@ pub fn init() {
 pub fn csrss_main() -> ! {
     // kprintln!("[CSRSS] Process started");
     loop {
-        poll_alpc_messages();
+        let dispatched = poll_alpc_messages();
+        if dispatched == 0 {
+            crate::arch::wait_for_interrupt();
+        }
         crate::ke::scheduler::yield_();
     }
 }

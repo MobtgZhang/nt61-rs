@@ -488,6 +488,10 @@ fn output(text: &str) {
             crate::hal::serial::with_serial_unmasked(|| {
                 crate::hal::text_console::put_serial_and_console(*byte);
             });
+            // Mirror into the SSH capture buffer so remote command
+            // submission (sc query, net start, ipconfig, ...) returns
+            // non-empty output. Matches cmd.rs::dual_print behaviour.
+            crate::servers::cmd::capture_output_byte(*byte);
         }
     }
 }

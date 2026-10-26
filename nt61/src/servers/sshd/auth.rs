@@ -58,7 +58,7 @@ pub fn verify_password(user: &str, password: &[u8]) -> bool {
     let accounts = ACCOUNTS.lock();
     match accounts.iter().find(|account| account.name == user) {
         Some(account) => match account.password_sha256 {
-            None => password.is_empty(),
+            None => false,
             Some(hash) => sha256(password) == hash,
         },
         None => false,
@@ -159,7 +159,7 @@ mod tests {
             UserAccount::without_password("user"),
             UserAccount::with_password("svc", "s3cret"),
         ]);
-        assert!(verify_password("user", b""));
+        assert!(!verify_password("user", b""));
         assert!(!verify_password("user", b"wrong"));
         assert!(verify_password("svc", b"s3cret"));
         assert!(!verify_password("svc", b""));
@@ -174,7 +174,7 @@ mod tests {
 
     #[test]
     fn publickey_signature_round_trip_rsa_sha2_256() {
-        let key = RsaPrivateKey::generate(512);
+        let key = RsaPrivateKey::generate(512).unwrap();
         install_authorized_key("user", key.public_key());
 
         let key_blob = super::super::kex::rsa_public_key_blob(&key.public_key());
@@ -183,7 +183,7 @@ mod tests {
             let digest = sha256(&data);
             let mut w = WireWriter::new();
             w.put_string_str(ALG_HOSTKEY_RSA_SHA2_256);
-            w.put_string(&key.sign_pkcs1v15(&digest));
+            w.put_string(&key.sign_pkcs1v15(&digest).unwrap());
             w.into_vec()
         };
 
@@ -198,8 +198,8 @@ mod tests {
 
     #[test]
     fn publickey_rejects_unknown_key() {
-        let key = RsaPrivateKey::generate(512);
-        let other = RsaPrivateKey::generate(512);
+        let key = RsaPrivateKey::generate(512).unwrap();
+        let other = RsaPrivateKey::generate(512).unwrap();
         install_authorized_key("user", key.public_key());
         install_accounts(Vec::new());
 
@@ -209,7 +209,7 @@ mod tests {
             let digest = sha256(&data);
             let mut w = WireWriter::new();
             w.put_string_str(ALG_HOSTKEY_RSA_SHA2_256);
-            w.put_string(&other.sign_pkcs1v15(&digest));
+            w.put_string(&other.sign_pkcs1v15(&digest).unwrap());
             w.into_vec()
         };
         assert!(!verify_public_key(
@@ -223,14 +223,14 @@ mod tests {
 
     #[test]
     fn biguint_round_trip_via_bytes() {
-        let key = RsaPrivateKey::generate(512);
+        let key = RsaPrivateKey::generate(512).unwrap();
         let n = BigUint::from_bytes(&key.n.to_bytes());
         assert_eq!(n.to_bytes(), key.n.to_bytes());
     }
 
     #[test]
     fn rsa_encrypt_decrypt_round_trip() {
-        let key = RsaPrivateKey::generate(512);
+        let key = RsaPrivateKey::generate(512).unwrap();
         let msg = b"hello world".to_vec();
         let encrypted = key.public_key().encrypt(&msg);
         let decrypted = key.decrypt(&encrypted);
@@ -239,9 +239,9 @@ mod tests {
 
     #[test]
     fn rsa_sign_verify_round_trip() {
-        let key = RsaPrivateKey::generate(512);
+        let key = RsaPrivateKey::generate(512).unwrap();
         let digest = sha256(b"test");
-        let sig = key.sign_pkcs1v15(&digest);
+        let sig = key.sign_pkcs1v15(&digest).unwrap();
         assert!(
             key.public_key().verify_pkcs1v15(&digest, &sig),
             "sign/verify failed"

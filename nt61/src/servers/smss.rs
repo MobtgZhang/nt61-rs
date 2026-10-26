@@ -486,23 +486,22 @@ pub fn init_teb(ethread: *mut crate::ps::thread::Ethread) -> *mut crate::ps::thr
     const TEB_BASE: u64 = 0x0000_7FFF_FFDF_0000;
     const TEB_SIZE: u64 = 0x2000; // 8KB TEB for x64
 
-    // Map the TEB page into the process's address space.
-    let result = crate::mm::vas::alloc_zeroed_page_for_vas();
-    if result.is_none() {
-        return core::ptr::null_mut();
-    }
-    let teb_phys = result.unwrap();
-
-    // Map the TEB page while still on the system root. Page-table
-    // installation writes physical page-table pages directly.
-    let map_result = crate::mm::vas::map_page_in_pml4(
-        pml4_phys,
-        TEB_BASE,
-        teb_phys,
-        crate::mm::vas::PTE_RW | crate::mm::vas::PTE_US,
-    );
-    if map_result != crate::mm::vas::MmStatus::Ok {
-        return core::ptr::null_mut();
+    // Map every page of the TEB while still on the system root.
+    // Page-table installation writes physical page-table pages directly.
+    let page_count = ((TEB_SIZE + 0xFFF) / 0x1000) as usize;
+    for page in 0..page_count {
+        let Some(teb_phys) = crate::mm::vas::alloc_zeroed_page_for_vas() else {
+            return core::ptr::null_mut();
+        };
+        let map_result = crate::mm::vas::map_page_in_pml4(
+            pml4_phys,
+            TEB_BASE + (page as u64) * 0x1000,
+            teb_phys,
+            crate::mm::vas::PTE_RW | crate::mm::vas::PTE_US,
+        );
+        if map_result != crate::mm::vas::MmStatus::Ok {
+            return core::ptr::null_mut();
+        }
     }
 
     // TEB fields contain user VAs. Attach this process root only for
@@ -1034,12 +1033,12 @@ fn start_csrss(session_id: u32) {
 fn start_win32k() {
     // kprintln!("[SMSS] Starting Win32 subsystem...");
 
-    // win32k is gated to x86_64 at the module level
-    // (`libs/win32k.rs` is itself x86_64-only); the cfg here is
-    // redundant but kept for clarity that the call site is
-    // x86_64-bound.
     crate::libs::win32k::init();
-    crate::libs::win32k::register_services();
+    // The Shadow SSDT table is registered exactly once, from
+    // ke::shadow_ssdt::init_shadow_services() inside win32k::init();
+    // the second registration that used to live in
+    // libs/win32k::register_services() overwrote ke's entries with a
+    // different handler mapping (audit win32k P0-2) and was removed.
 
     // kprintln!("[SMSS]   win32k.sys initialized");
     // kprintln!("[SMSS]   Shadow SSDT services registered");
@@ -1471,20 +1470,14 @@ pub fn spawn_user_subsystem(user_path_ptr: *const u8) -> Option<u64> {
         return None;
     }
     // Bounded copy out of user memory.
-    let mut bytes: Vec<u8> = Vec::new();
-    let mut i = 0usize;
-    loop {
-        if i >= 1024 {
-            // Path too long.
-            return None;
-        }
-        let b = unsafe { core::ptr::read_volatile(user_path_ptr.add(i)) };
-        if b == 0 {
-            break;
-        }
-        bytes.push(b);
-        i += 1;
+    let mut raw = [0u8; 1024];
+    if crate::mm::user_copy::copy_from_user(&mut raw, user_path_ptr as u64).is_err() {
+        return None;
     }
+    let bytes = match raw.iter().position(|&b| b == 0) {
+        Some(len) => raw[..len].to_vec(),
+        None => raw.to_vec(),
+    };
     let path = match core::str::from_utf8(&bytes) {
         Ok(s) => s,
         Err(_) => return None,
@@ -1507,19 +1500,19 @@ pub fn spawn_user_subsystem(user_path_ptr: *const u8) -> Option<u64> {
         None => disk_path.clone(),
     };
 
-    // Allocate a PID in the user-subsystem range, skipping the static
-    // SMSS subsystem PIDs already in use.
+    // Allocate a PID in the user-subsystem range. The counter starts
+    // above every static subsystem PID (SMSS, CSRSS, ...) and is
+    // monotonically increasing, so no two callers ever receive the
+    // same PID. The previous code clamped candidates that walked past
+    // 0x9000_0100 back to 0x9000_0001 without resetting the generator,
+    // causing every process created after the first 255 to reuse the
+    // same PID and silently overwrite earlier process-table entries.
     static NEXT_USER_PID: Spinlock<u64> = Spinlock::new(0x9000_0001);
     let pid = {
         let mut g = NEXT_USER_PID.lock();
         let candidate = *g;
         *g = candidate.wrapping_add(1);
-        // Skip past the static subsystem range.
-        if (0x9000_0001..0x9000_0100).contains(&candidate) {
-            candidate
-        } else {
-            0x9000_0001
-        }
+        candidate
     };
 
     match load_and_create_process(&disk_path, &leaf, /*session_id*/ 1, pid) {
