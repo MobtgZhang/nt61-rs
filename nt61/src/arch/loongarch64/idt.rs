@@ -16,7 +16,15 @@ global_asm!(
     ".align 12",
     ".global loongarch64_exception",
     "loongarch64_exception:",
-    // EENTRY+0x000 — TLB refill exception entry. This is the hardware
+    // EENTRY+0x000 — general exception/interrupt entry. With
+    // ECFG.VS=0, QEMU routes every non-refill exception and every
+    // external interrupt to EENTRY+0x000. The only thing this stub
+    // may do is branch to the common save/restore prologue.
+    "  b loongarch64_exception_common",
+    // Reserve the rest of the first 1 KiB so the common handler has
+    // stable, well-known spacing inside the vector page.
+    "  .space 0x3FC",
+    // EENTRY+0x400 — TLB refill exception entry. This is the hardware
     // page-table walker: refill exceptions vector through TLBRENTRY
     // (CSR 0x88) here with ISTLBR=1, so all addressing below is
     // physical and no general-purpose register may be clobbered
@@ -25,6 +33,7 @@ global_asm!(
     // root from CSR_PGD, walk the four directory levels with LDDIR,
     // fetch the even/odd leaf PTE pair with LDPTE, and commit the
     // pair into the TLB with TLBFILL.
+    "loongarch64_tlb_refill:",
     "  csrwr $t0, 0x8b",   // save t0 in TLBRSAVE
     "  csrrd $t0, 0x19",   // PGDL: active page-table root (PA)
     "  lddir $t0, $t0, 4", // root index VA[56:48] -> L1 table PA
@@ -36,16 +45,10 @@ global_asm!(
     "  tlbfill",           // commit the PTE pair into the TLB
     "  csrrd $t0, 0x8b",   // restore t0 from TLBRSAVE
     "  ertn",
-    // 11 instructions (44 bytes); pad to the EENTRY+0x380 general
-    // exception entry. With CRMD.PG=1 the architecture routes general
-    // exceptions to EENTRY+0x380 and interrupts (ECFG.VS=0) to
-    // EENTRY+0x480, so those offsets MUST contain valid branch code;
-    // otherwise the CPU executes garbage and loops silently on
-    // re-exception.
-    "  .space 0x354",
-    "  b loongarch64_exception_common", // general exception (PG=1)
-    "  .space 0xFC",                    // pad to EENTRY+0x480
-    "  b loongarch64_exception_common", // interrupt entry (ECFG.VS=0)
+    // 11 instructions (44 bytes); pad to EENTRY+0x480 so the common
+    // handler starts at a predictable offset. QEMU also sends debug
+    // breakpoints directly to EENTRY+0x480.
+    "  .space 0x54",
     "loongarch64_exception_common:",
     "  csrwr $t0, 0x30", // SAVE0 = scratch
     "  csrrd $t0, 0x1",  // PRMD
@@ -58,7 +61,8 @@ global_asm!(
     "  csrwr $t0, 0x34", // SAVE4
     "  move $t0, $sp",
     "  csrwr $t0, 0x35", // SAVE5 = user stack pointer
-    "  la  $sp, _exception_stack_top",
+    "  la.local $t0, _exception_stack_top",
+    "  ld.d $sp, $t0, 0",
     "  addi.d $sp, $sp, -240",
     "  st.d $ra, $sp, 0",
     "  st.d $tp, $sp, 8",
@@ -146,28 +150,51 @@ global_asm!(
 
 extern "C" {
     fn loongarch64_exception();
+    fn loongarch64_tlb_refill();
+}
+
+/// Base VA of the exception vector page (the page that must be
+/// executable at EENTRY). The page-table root serving exceptions has
+/// to map this page or the first exception re-faults on the vector
+/// itself (PIF at ERA=EENTRY) and the handler can never run.
+pub fn vector_page_va() -> u64 {
+    let v = loongarch64_exception as *const () as u64;
+    v & !0xFFF
 }
 
 /// Install the exception vector.
 pub fn init() {
     unsafe {
         let v = loongarch64_exception as *const () as u64;
-        // EENTRY (0xc): general exceptions (EENTRY+0x380) and
-        // interrupts (EENTRY+0x480).
-        asm!("csrwr {}, 0xc", in(reg) v, options(nostack));
-        // TLBRENTRY (0x88): refill exceptions vector to this address
-        // directly — they never go through EENTRY, so this CSR must be
-        // written alongside EENTRY or the first refill after PG=1
-        // jumps into the firmware's (unmapped) vector.
-        asm!("csrwr {}, 0x88", in(reg) v, options(nostack));
-        // QEMU resets ECFG.LIE to zero.  LIE occupies bits [31:16] and
+        // EENTRY (0xc): with ECFG.VS=0, QEMU routes every normal
+        // exception and every unmasked interrupt to EENTRY+0x000, where
+        // the single-branch stub dispatches to the common prologue.
+        // TLB refill exceptions are vectored separately via TLBRENTRY.
+        asm!("csrwr {}, 0xc", inout(reg) v => _, options(nostack));
+        // TLB refill exceptions enter the exact address in TLBRENTRY
+        // (CSR 0x88); there is no implicit EENTRY+0x400 offset. Point
+        // it directly at the physical-addressing refill stub.
+        let v2 = loongarch64_tlb_refill as *const () as u64;
+        asm!("csrwr {}, 0x88", inout(reg) v2 => _, options(nostack));
+        // QEMU resets ECFG.LIE to zero. LIE occupies bits [14:0] and
         // is aligned with ESTAT.IS; unmask the external (IS[2]) and
-        // constant-timer (IS[11]) interrupt lines.
+        // constant-timer (IS[11]) interrupt lines. VS occupies
+        // bits [18:16]; keep it at zero so QEMU sends all normal
+        // exceptions and interrupts to EENTRY+0x000.
         let mut ecfg: u64;
         asm!("csrrd {}, 0x4", out(reg) ecfg, options(nostack));
-        ecfg |= 1 << (16 + 2);
-        ecfg |= 1 << (16 + 11);
+        ecfg &= !(0x3FFF);
+        ecfg |= 1 << 2;
+        ecfg |= 1 << 11;
+        ecfg &= !(0x7 << 16);
         asm!("csrwr {}, 0x4", in(reg) ecfg, options(nostack));
+
+        // The vector page must be executable in the page-table root
+        // that is active when the first exception arrives. Re-check
+        // and re-map right before interrupts can be taken; allocator
+        // reuse has been observed to wipe the bootstrap mapping.
+        let _ = crate::arch::loongarch64::paging::ensure_vector_page_mapped();
+        crate::arch::loongarch64::paging::vector_page_check("idt_init");
     }
 }
 
