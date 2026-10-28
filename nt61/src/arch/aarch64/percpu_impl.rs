@@ -33,6 +33,15 @@ static PER_CPU_PAGES: [AtomicU64; MAX_PER_CPU] = [const { AtomicU64::new(0) }; M
 /// before the pool allocator is ready.
 static mut PER_CPU_0: PerCpuArea = PerCpuArea::new(0);
 
+const _: () = assert!(
+    core::mem::offset_of!(PerCpuArea, current_thread) == 0x18,
+    "AArch64 per-CPU current_thread offset must match the canonical layout",
+);
+const _: () = assert!(
+    core::mem::offset_of!(PerCpuArea, current_process) == 0x20,
+    "AArch64 per-CPU current_process offset must match the canonical layout",
+);
+
 // =====================================================================
 // Exported functions (used by arch/common/percpu.rs via extern "Rust")
 // =====================================================================
