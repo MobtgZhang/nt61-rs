@@ -21,6 +21,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::fs::FileSystemType;
 use crate::kprintln_info;
+use crate::ke::sync::Spinlock;
 use crate::mm::pfn;
 use crate::mm::pte::pfn_to_phys;
 
@@ -111,8 +112,11 @@ impl Default for PagingFile {
     }
 }
 
-static mut PAGE_FILE_ALLOCATED: [[u64; BITMAP_WORDS]; MAX_PAGING_FILES] =
-    [[0u64; BITMAP_WORDS]; MAX_PAGING_FILES];
+struct PagefileState {
+    files: [PagingFile; MAX_PAGING_FILES],
+    allocated: [[u64; BITMAP_WORDS]; MAX_PAGING_FILES],
+    initialized: bool,
+}
 
 /// Default `PagingFile` instance used to initialize the static array.
 /// Uses explicit field initialization (not `zeroed()`) because
@@ -144,9 +148,11 @@ const DEFAULT_PAGING_FILE: PagingFile = PagingFile {
     },
 };
 
-static mut PAGE_FILES: [PagingFile; MAX_PAGING_FILES] = [DEFAULT_PAGING_FILE; MAX_PAGING_FILES];
-
-static mut PAGEFILE_INITIALIZED: bool = false;
+static PAGEFILE: Spinlock<PagefileState> = Spinlock::new(PagefileState {
+    files: [DEFAULT_PAGING_FILE; MAX_PAGING_FILES],
+    allocated: [[0u64; BITMAP_WORDS]; MAX_PAGING_FILES],
+    initialized: false,
+});
 
 fn init_paging_file(paging_file: &mut PagingFile, page_count: u64) {
     *paging_file = PagingFile {
@@ -178,131 +184,131 @@ fn find_first_zero(word: u64) -> Option<usize> {
     }
 }
 
-fn init_bitmap(page_file_idx: usize, page_count: u64) {
+fn init_bitmap(state: &mut PagefileState, page_file_idx: usize, page_count: u64) {
     let bitmap_words_needed = ((page_count as usize) + BITS_PER_WORD - 1) / BITS_PER_WORD;
-    unsafe {
-        for i in 0..BITMAP_WORDS {
-            PAGE_FILE_ALLOCATED[page_file_idx][i] = 0;
-        }
-        PAGE_FILES[page_file_idx].bitmap_words = bitmap_words_needed;
+    for i in 0..BITMAP_WORDS {
+        state.allocated[page_file_idx][i] = 0;
     }
+    state.files[page_file_idx].bitmap_words = bitmap_words_needed;
 }
 
-fn bitmap_alloc(page_file_idx: usize) -> Option<u32> {
-    unsafe {
-        let pf = &mut PAGE_FILES[page_file_idx];
-        if !pf.enabled {
-            return None;
-        }
-        let bitmap_words = pf.bitmap_words;
-        if bitmap_words == 0 {
-            return None;
-        }
-        for word_idx in 0..bitmap_words {
-            let word = &mut PAGE_FILE_ALLOCATED[page_file_idx][word_idx];
-            if let Some(bit_pos) = find_first_zero(*word) {
-                *word |= 1u64 << bit_pos;
-                let offset = ((word_idx * BITS_PER_WORD) + bit_pos) as u32;
-                if (offset as u64) < pf.page_count {
-                    pf.used_count += 1;
-                    return Some(offset);
-                } else {
-                    *word &= !(1u64 << bit_pos);
-                    return None;
-                }
+fn bitmap_alloc(state: &mut PagefileState, page_file_idx: usize) -> Option<u32> {
+    let pf = &mut state.files[page_file_idx];
+    if !pf.enabled {
+        return None;
+    }
+    let bitmap_words = pf.bitmap_words;
+    if bitmap_words == 0 {
+        return None;
+    }
+    for word_idx in 0..bitmap_words {
+        let word = &mut state.allocated[page_file_idx][word_idx];
+        if let Some(bit_pos) = find_first_zero(*word) {
+            *word |= 1u64 << bit_pos;
+            let offset = ((word_idx * BITS_PER_WORD) + bit_pos) as u32;
+            if (offset as u64) < pf.page_count {
+                pf.used_count += 1;
+                return Some(offset);
+            } else {
+                *word &= !(1u64 << bit_pos);
+                return None;
             }
         }
-        None
     }
+    None
 }
 
-fn bitmap_free(page_file_idx: usize, offset: u32) {
-    unsafe {
-        let pf = &mut PAGE_FILES[page_file_idx];
-        if !pf.enabled {
-            return;
-        }
-        if (offset as u64) >= pf.page_count {
-            return;
-        }
-        let word_idx = (offset as usize) / BITS_PER_WORD;
-        let bit_pos = (offset as usize) % BITS_PER_WORD;
-        if word_idx < pf.bitmap_words {
-            PAGE_FILE_ALLOCATED[page_file_idx][word_idx] &= !(1u64 << bit_pos);
-            pf.used_count = pf.used_count.saturating_sub(1);
-        }
+fn bitmap_free(state: &mut PagefileState, page_file_idx: usize, offset: u32) {
+    let pf = &mut state.files[page_file_idx];
+    if !pf.enabled {
+        return;
+    }
+    if (offset as u64) >= pf.page_count {
+        return;
+    }
+    let word_idx = (offset as usize) / BITS_PER_WORD;
+    let bit_pos = (offset as usize) % BITS_PER_WORD;
+    if word_idx < pf.bitmap_words {
+        state.allocated[page_file_idx][word_idx] &= !(1u64 << bit_pos);
+        pf.used_count = pf.used_count.saturating_sub(1);
     }
 }
 
 pub fn init() {
-    unsafe {
-        for i in 0..MAX_PAGING_FILES {
-            init_paging_file(&mut PAGE_FILES[i], PAGES_PER_FILE);
-        }
-        init_bitmap(0, PAGES_PER_FILE);
-        let base_pfn = match crate::mm::frame::allocate_pages(PAGES_PER_FILE) {
-            Some(p) => p / 4096,
-            None => {
-                // [DISABLED] // // kprintln!("    [mm] pagefile: dynamic alloc failed, pagefile disabled");
-                0
-            }
-        };
-        init_paging_file(&mut PAGE_FILES[0], PAGES_PER_FILE);
-        PAGE_FILES[0].enabled = base_pfn != 0;
-        PAGE_FILES[0].base_pfn = base_pfn;
-        // [DISABLED] // // kprintln!("    [mm] pagefile: {} pages available ({} MiB)",
-        // // // [DISABLED]             PAGES_PER_FILE, PAGES_PER_FILE * 4096 / (1024 * 1024));
+    let mut state = PAGEFILE.lock();
+    for i in 0..MAX_PAGING_FILES {
+        init_paging_file(&mut state.files[i], PAGES_PER_FILE);
     }
+    init_bitmap(&mut state, 0, PAGES_PER_FILE);
+    let base_pfn = match crate::mm::frame::allocate_pages(PAGES_PER_FILE) {
+        Some(p) => p / 4096,
+        None => {
+            // [DISABLED] // // kprintln!("    [mm] pagefile: dynamic alloc failed, pagefile disabled");
+            0
+        }
+    };
+    init_paging_file(&mut state.files[0], PAGES_PER_FILE);
+    state.files[0].enabled = base_pfn != 0;
+    state.files[0].base_pfn = base_pfn;
+    // [DISABLED] // // kprintln!("    [mm] pagefile: {} pages available ({} MiB)",
+    // // // [DISABLED]             PAGES_PER_FILE, PAGES_PER_FILE * 4096 / (1024 * 1024));
 }
 
 pub fn read_page(page_file_no: u32, offset: u32) -> Option<u64> {
     if page_file_no as usize >= MAX_PAGING_FILES {
         return None;
     }
+    let base_pfn = {
+        let state = PAGEFILE.lock();
+        let pf = &state.files[page_file_no as usize];
+        if !pf.enabled || (offset as u64) >= pf.page_count {
+            return None;
+        }
+        pf.base_pfn
+    };
+    let dst_pfn = pfn::allocate_pfn()?;
+    let dst_pa = pfn_to_phys(dst_pfn);
+    let src_pa = pfn_to_phys(base_pfn + offset as u64);
+    let src = src_pa as *const u64;
+    let dst = dst_pa as *mut u64;
     unsafe {
-        let pf = &PAGE_FILES[page_file_no as usize];
-        if !pf.enabled {
-            return None;
-        }
-        if (offset as u64) >= pf.page_count {
-            return None;
-        }
-        let dst_pfn = pfn::allocate_pfn()?;
-        let dst_pa = pfn_to_phys(dst_pfn);
-        let src_pa = pfn_to_phys(pf.base_pfn + offset as u64);
-        let src = src_pa as *const u64;
-        let dst = dst_pa as *mut u64;
         for i in 0..512usize {
             let v = core::ptr::read_volatile(src.add(i));
             core::ptr::write_volatile(dst.add(i), v);
         }
-        Some(dst_pfn)
     }
+    Some(dst_pfn)
 }
 
 pub fn write_modified_page(pfn_no: u64) {
-    let db = pfn::PFN_DB.lock();
-    let entry = match db.entry(pfn_no) {
-        Some(e) => e,
-        None => return,
+    let (pf_no, offset) = {
+        let db = pfn::PFN_DB.lock();
+        let Some(entry) = db.entry(pfn_no) else {
+            return;
+        };
+        unsafe {
+            (
+                (*entry).u3.flags.paging_file as usize,
+                (*entry).u3.flags.paging_file_offset,
+            )
+        }
     };
+    if pf_no >= MAX_PAGING_FILES {
+        return;
+    }
+    let base_pfn = {
+        let state = PAGEFILE.lock();
+        let pf = &state.files[pf_no];
+        if !pf.enabled || (offset as u64) >= pf.page_count {
+            return;
+        }
+        pf.base_pfn
+    };
+    let dst_pa = pfn_to_phys(base_pfn + offset as u64);
+    let src_pa = pfn_to_phys(pfn_no);
+    let src = src_pa as *const u64;
+    let dst = dst_pa as *mut u64;
     unsafe {
-        let pf_no = ((*entry).u3.flags.paging_file as u32) as usize;
-        if pf_no >= MAX_PAGING_FILES {
-            return;
-        }
-        let pf = &mut PAGE_FILES[pf_no];
-        if !pf.enabled {
-            return;
-        }
-        let offset = (*entry).u3.flags.paging_file_offset;
-        if (offset as u64) >= pf.page_count {
-            return;
-        }
-        let dst_pa = pfn_to_phys(pf.base_pfn + offset as u64);
-        let src_pa = pfn_to_phys(pfn_no);
-        let src = src_pa as *const u64;
-        let dst = dst_pa as *mut u64;
         for i in 0..512usize {
             let v = core::ptr::read_volatile(src.add(i));
             core::ptr::write_volatile(dst.add(i), v);
@@ -311,11 +317,12 @@ pub fn write_modified_page(pfn_no: u64) {
 }
 
 pub fn reserve_slot() -> Option<(u32, u32)> {
-    if let Some(offset) = bitmap_alloc(0) {
+    let mut state = PAGEFILE.lock();
+    if let Some(offset) = bitmap_alloc(&mut state, 0) {
         return Some((0, offset));
     }
     for i in 1..MAX_PAGING_FILES {
-        if let Some(offset) = bitmap_alloc(i) {
+        if let Some(offset) = bitmap_alloc(&mut state, i) {
             return Some((i as u32, offset));
         }
     }
@@ -326,61 +333,61 @@ pub fn reserve_slot_in_file(page_file_no: u32) -> Option<(u32, u32)> {
     if page_file_no as usize >= MAX_PAGING_FILES {
         return None;
     }
-    bitmap_alloc(page_file_no as usize).map(|offset| (page_file_no, offset))
+    let mut state = PAGEFILE.lock();
+    bitmap_alloc(&mut state, page_file_no as usize).map(|offset| (page_file_no, offset))
 }
 
 pub fn release_slot(page_file_no: u32, offset: u32) {
     if page_file_no as usize >= MAX_PAGING_FILES {
         return;
     }
-    bitmap_free(page_file_no as usize, offset);
+    let mut state = PAGEFILE.lock();
+    bitmap_free(&mut state, page_file_no as usize, offset);
 }
 
 pub fn set_paging_file(page_file_no: u32, base_pfn: u64, page_count: u64) {
     if page_file_no as usize >= MAX_PAGING_FILES {
         return;
     }
-    unsafe {
-        init_paging_file(&mut PAGE_FILES[page_file_no as usize], page_count);
-        PAGE_FILES[page_file_no as usize].base_pfn = base_pfn;
-        PAGE_FILES[page_file_no as usize].enabled = base_pfn != 0;
-        init_bitmap(page_file_no as usize, page_count);
-    }
+    let mut state = PAGEFILE.lock();
+    init_paging_file(&mut state.files[page_file_no as usize], page_count);
+    state.files[page_file_no as usize].base_pfn = base_pfn;
+    state.files[page_file_no as usize].enabled = base_pfn != 0;
+    init_bitmap(&mut state, page_file_no as usize, page_count);
 }
 
 pub fn grow_pagefile(page_file_no: u32, new_size: u64) -> bool {
     if page_file_no as usize >= MAX_PAGING_FILES {
         return false;
     }
-    unsafe {
-        let pf = &mut PAGE_FILES[page_file_no as usize];
-        if !pf.enabled {
-            return false;
-        }
-        if new_size <= pf.page_count {
-            return false;
-        }
-        let _old_size = pf.page_count;
-        pf.page_count = new_size;
-        pf.max_size.store(new_size, Ordering::SeqCst);
-        let new_bitmap_words = ((new_size as usize) + BITS_PER_WORD - 1) / BITS_PER_WORD;
-        for i in pf.bitmap_words..new_bitmap_words.min(BITMAP_WORDS) {
-            PAGE_FILE_ALLOCATED[page_file_no as usize][i] = 0;
-        }
-        pf.bitmap_words = new_bitmap_words;
-        // _old_size is intentionally unused - reserved for future logging
-        // [DISABLED] // // kprintln!("[pagefile] grow_pagefile #{}: {} -> {} pages", page_file_no, _old_size, new_size);
-        true
+    let mut state = PAGEFILE.lock();
+    if !state.files[page_file_no as usize].enabled
+        || new_size <= state.files[page_file_no as usize].page_count
+    {
+        return false;
     }
+    let _old_size = state.files[page_file_no as usize].page_count;
+    state.files[page_file_no as usize].page_count = new_size;
+    state.files[page_file_no as usize]
+        .max_size
+        .store(new_size, Ordering::SeqCst);
+    let new_bitmap_words = ((new_size as usize) + BITS_PER_WORD - 1) / BITS_PER_WORD;
+    let old_bitmap_words = state.files[page_file_no as usize].bitmap_words;
+    for i in old_bitmap_words..new_bitmap_words.min(BITMAP_WORDS) {
+        state.allocated[page_file_no as usize][i] = 0;
+    }
+    state.files[page_file_no as usize].bitmap_words = new_bitmap_words;
+    // _old_size is intentionally unused - reserved for future logging
+    // [DISABLED] // // kprintln!("[pagefile] grow_pagefile #{}: {} -> {} pages", page_file_no, _old_size, new_size);
+    true
 }
 
 pub fn get_total_pagefile_pages() -> u64 {
     let mut total = 0u64;
-    unsafe {
-        for i in 0..MAX_PAGING_FILES {
-            if PAGE_FILES[i].enabled {
-                total += PAGE_FILES[i].page_count;
-            }
+    let state = PAGEFILE.lock();
+    for i in 0..MAX_PAGING_FILES {
+        if state.files[i].enabled {
+            total += state.files[i].page_count;
         }
     }
     total
@@ -388,13 +395,12 @@ pub fn get_total_pagefile_pages() -> u64 {
 
 pub fn get_total_free_pagefile_pages() -> u64 {
     let mut free = 0u64;
-    unsafe {
-        for i in 0..MAX_PAGING_FILES {
-            if PAGE_FILES[i].enabled {
-                free += PAGE_FILES[i]
-                    .page_count
-                    .saturating_sub(PAGE_FILES[i].used_count);
-            }
+    let state = PAGEFILE.lock();
+    for i in 0..MAX_PAGING_FILES {
+        if state.files[i].enabled {
+            free += state.files[i]
+                .page_count
+                .saturating_sub(state.files[i].used_count);
         }
     }
     free
@@ -404,7 +410,7 @@ pub fn is_pagefile_enabled(page_file_no: u32) -> bool {
     if page_file_no as usize >= MAX_PAGING_FILES {
         return false;
     }
-    unsafe { PAGE_FILES[page_file_no as usize].enabled }
+    PAGEFILE.lock().files[page_file_no as usize].enabled
 }
 
 pub const DEFAULT_PAGEFILE_SIZE_MB: u64 = 512;
@@ -413,7 +419,7 @@ pub const MAX_PAGEFILE_SIZE_MB: u64 = 4096;
 pub const PAGEFILE_SIZE_GRANULARITY_MB: u64 = 4;
 
 pub fn is_initialized() -> bool {
-    unsafe { PAGEFILE_INITIALIZED }
+    PAGEFILE.lock().initialized
 }
 
 pub fn set_disk_pagefile(
@@ -427,44 +433,41 @@ pub fn set_disk_pagefile(
         return false;
     }
     let pagefile_size_mb = size_pages * 4096 / (1024 * 1024);
-    unsafe {
-        init_paging_file(&mut PAGE_FILES[page_file_no as usize], size_pages);
-        let pf = &mut PAGE_FILES[page_file_no as usize];
-        pf.is_disk_backed = true;
-        pf.disk_handle = PageFileHandle {
-            handle: page_file_no as u64,
-            device_id,
-            fs_type,
-            start_sector,
-            size_pages,
-            valid: true,
-        };
-        pf.disk_meta = DiskPageFileMeta {
-            fs_type,
-            device_id,
-            start_sector,
-            size_bytes: size_pages * 4096,
-        };
-        pf.enabled = true;
-        pf.page_count = size_pages;
-        pf.max_size = AtomicU64::new(size_pages);
-        pf.current_size = AtomicU64::new(size_pages);
-        init_bitmap(page_file_no as usize, size_pages);
-        kprintln_info!(
-            "MEMORY",
-            "Disk-backed pagefile #{} enabled: {} pages ({} MB)",
-            page_file_no,
-            size_pages,
-            pagefile_size_mb
-        );
-        true
-    }
+    let mut state = PAGEFILE.lock();
+    init_paging_file(&mut state.files[page_file_no as usize], size_pages);
+    let pf = &mut state.files[page_file_no as usize];
+    pf.is_disk_backed = true;
+    pf.disk_handle = PageFileHandle {
+        handle: page_file_no as u64,
+        device_id,
+        fs_type,
+        start_sector,
+        size_pages,
+        valid: true,
+    };
+    pf.disk_meta = DiskPageFileMeta {
+        fs_type,
+        device_id,
+        start_sector,
+        size_bytes: size_pages * 4096,
+    };
+    pf.enabled = true;
+    pf.page_count = size_pages;
+    pf.max_size = AtomicU64::new(size_pages);
+    pf.current_size = AtomicU64::new(size_pages);
+    init_bitmap(&mut state, page_file_no as usize, size_pages);
+    kprintln_info!(
+        "MEMORY",
+        "Disk-backed pagefile #{} enabled: {} pages ({} MB)",
+        page_file_no,
+        size_pages,
+        pagefile_size_mb
+    );
+    true
 }
 
 pub fn set_initialized() {
-    unsafe {
-        PAGEFILE_INITIALIZED = true;
-    }
+    PAGEFILE.lock().initialized = true;
     kprintln_info!("MEMORY", "Pagefile subsystem initialization complete");
 }
 
@@ -485,17 +488,21 @@ pub fn write_page_to_disk(pfn: u64, pagefile_no: u32, offset: u32) -> bool {
         return false;
     }
 
-    let pf = unsafe { &PAGE_FILES[pagefile_no as usize] };
-    if !pf.enabled {
-        return false;
-    }
+    let (is_disk_backed, disk_meta, base_pfn) = {
+        let state = PAGEFILE.lock();
+        let pf = &state.files[pagefile_no as usize];
+        if !pf.enabled {
+            return false;
+        }
+        (pf.is_disk_backed, pf.disk_meta, pf.base_pfn)
+    };
 
     let phys_addr = pfn * 4096;
 
     // Check if this is a disk-backed pagefile
-    if pf.is_disk_backed {
+    if is_disk_backed {
         let sector_offset = (offset * 8) as u64; // Convert to u64 for addition
-        let start_sector = pf.disk_meta.start_sector + sector_offset;
+        let start_sector = disk_meta.start_sector + sector_offset;
 
         kprintln_info!(
             "MEMORY",
@@ -522,7 +529,7 @@ pub fn write_page_to_disk(pfn: u64, pagefile_no: u32, offset: u32) -> bool {
 
             // write to disk via block device
             if !crate::drivers::storage::block::write_block(
-                pf.disk_meta.device_id,
+                disk_meta.device_id,
                 start_sector + (i as u64),
                 &buffer,
             ) {
@@ -545,7 +552,7 @@ pub fn write_page_to_disk(pfn: u64, pagefile_no: u32, offset: u32) -> bool {
         return success;
     } else {
         // RAM-backed pagefile: memory-to-memory copy
-        let dst_pa = pfn_to_phys(pf.base_pfn + offset as u64);
+        let dst_pa = pfn_to_phys(base_pfn + offset as u64);
         let src_pa = pfn_to_phys(pfn);
         let src = src_pa as *const u64;
         let dst = dst_pa as *mut u64;
@@ -583,10 +590,14 @@ pub fn read_page_from_disk(pagefile_no: u32, offset: u32) -> Option<u64> {
         return None;
     }
 
-    let pf = unsafe { &PAGE_FILES[pagefile_no as usize] };
-    if !pf.enabled {
-        return None;
-    }
+    let (is_disk_backed, disk_meta, base_pfn) = {
+        let state = PAGEFILE.lock();
+        let pf = &state.files[pagefile_no as usize];
+        if !pf.enabled {
+            return None;
+        }
+        (pf.is_disk_backed, pf.disk_meta, pf.base_pfn)
+    };
 
     // Allocate a new PFN for the page
     let new_pfn = match pfn::allocate_pfn() {
@@ -600,9 +611,9 @@ pub fn read_page_from_disk(pagefile_no: u32, offset: u32) -> Option<u64> {
     let phys_addr = new_pfn * 4096;
 
     // Check if this is a disk-backed pagefile
-    if pf.is_disk_backed {
+    if is_disk_backed {
         let sector_offset = (offset * 8) as u64; // Convert to u64 for addition
-        let start_sector = pf.disk_meta.start_sector + sector_offset;
+        let start_sector = disk_meta.start_sector + sector_offset;
 
         kprintln_info!(
             "MEMORY",
@@ -620,7 +631,7 @@ pub fn read_page_from_disk(pagefile_no: u32, offset: u32) -> Option<u64> {
         for i in 0..8 {
             // read from disk via block device
             if !crate::drivers::storage::block::read_block(
-                pf.disk_meta.device_id,
+                disk_meta.device_id,
                 start_sector + (i as u64),
                 &mut buffer,
             ) {
@@ -654,7 +665,7 @@ pub fn read_page_from_disk(pagefile_no: u32, offset: u32) -> Option<u64> {
         );
     } else {
         // RAM-backed pagefile: memory-to-memory copy
-        let src_pa = pfn_to_phys(pf.base_pfn + offset as u64);
+        let src_pa = pfn_to_phys(base_pfn + offset as u64);
         let dst_pa = pfn_to_phys(new_pfn);
         let src = src_pa as *const u64;
         let dst = dst_pa as *mut u64;
@@ -705,10 +716,7 @@ pub fn get_pagefile_info(pagefile_no: u32) -> Option<PagefileInfo> {
         return None;
     }
 
-    // SAFETY: PAGE_FILES is protected by PAGEFILE_INIT_LOCK
-    let pf = unsafe { &PAGE_FILES[pagefile_no as usize] };
-
-    if !pf.enabled {
+    if !PAGEFILE.lock().files[pagefile_no as usize].enabled {
         return None;
     }
 
