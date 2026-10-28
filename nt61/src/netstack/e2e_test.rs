@@ -44,10 +44,6 @@ fn poll_packets() {
             if len == 0 || len > buf.len() {
                 break;
             }
-            crate::hal::serial::write_string_always(&alloc::format!(
-                "[NET-E2E] rx len={}\r\n",
-                len
-            ));
             crate::netstack::process_packet(&buf[..len], nic_type, nic_idx);
         }
     }
@@ -66,9 +62,7 @@ fn poll_for_ms(ms: u64) {
 pub fn run_e2e_test() -> bool {
     use crate::netstack::{arp, dhcp, dns, icmp, ipif, socket};
 
-    crate::hal::serial::write_string_always("[NET-E2E] enter\r\n");
     if net::nic_count() == 0 {
-        crate::hal::serial::write_string_always("[NET-E2E] no nic\r\n");
         crate::kprintln_error!("NET-E2E", "no NIC registered");
         return false;
     }
@@ -83,13 +77,6 @@ pub fn run_e2e_test() -> bool {
         None
     };
     let loopback_ok = loopback_reply.is_some();
-    crate::hal::serial::write_string_always(&alloc::format!(
-        "[NET-E2E] loopback {}\r\n",
-        if loopback_ok { "ok" } else { "failed" }
-    ));
-    if !loopback_ok {
-        crate::hal::serial::write_string_always("[NET-E2E] loopback failed\r\n");
-    }
     crate::kprintln_info!(
         "NET-E2E",
         "ICMP loopback 127.0.0.1: {}",
@@ -101,7 +88,6 @@ pub fn run_e2e_test() -> bool {
     let mac = match net::virtio_net::get_mac(0).or_else(|| net::e1000::get_mac(0)) {
         Some(m) => m,
         None => {
-            crate::hal::serial::write_string_always("[NET-E2E] no mac\r\n");
             crate::kprintln_error!("NET-E2E", "no MAC address available");
             return false;
         }
@@ -110,7 +96,6 @@ pub fn run_e2e_test() -> bool {
     let mut client = dhcp::create_client();
     let discover = client.start_discovery(&mac);
     if !dhcp::send_dhcp_message(&discover) {
-        crate::hal::serial::write_string_always("[NET-E2E] dhcp send failed\r\n");
         crate::kprintln_error!("NET-E2E", "DHCP discover send failed");
         return false;
     }
@@ -122,7 +107,8 @@ pub fn run_e2e_test() -> bool {
         loop {
             poll_packets();
             if let Some(n) = dhcp::recv_dhcp_message(&mut buffer) {
-                if client.process_message(&buffer[..n], &mac) {
+                let accepted = client.process_message(&buffer[..n], &mac);
+                if accepted {
                     match client.get_state() {
                         dhcp::DhcpState::Bound => {
                             break true;
@@ -140,9 +126,7 @@ pub fn run_e2e_test() -> bool {
             }
         }
     };
-
     if !dhcp_ok {
-        crate::hal::serial::write_string_always("[NET-E2E] dhcp timeout\r\n");
         crate::kprintln_error!(
             "NET-E2E",
             "DHCP did not reach BOUND within {} ms",
@@ -150,7 +134,6 @@ pub fn run_e2e_test() -> bool {
         );
         return false;
     }
-
     let lease = client.get_lease().cloned();
     let lease_ip = lease.as_ref().map(|l| l.ip_address).unwrap_or(0);
     crate::kprintln_info!("NET-E2E", "DHCP bound: {}", ipif::ip_to_string(lease_ip));
@@ -165,7 +148,6 @@ pub fn run_e2e_test() -> bool {
         })
         .unwrap_or(false);
     if !interface_ok {
-        crate::hal::serial::write_string_always("[NET-E2E] lease install failed\r\n");
         crate::kprintln_error!("NET-E2E", "failed to install DHCP lease");
         return false;
     }
@@ -177,11 +159,6 @@ pub fn run_e2e_test() -> bool {
     }
     poll_for_ms(PROTOCOL_TIMEOUT_MS);
     let arp_ok = arp::arp_resolve(BRIDGE_GATEWAY).is_some();
-    if !arp_ok {
-        crate::hal::serial::write_string_always("[NET-E2E] arp timeout\r\n");
-    } else {
-        crate::hal::serial::write_string_always("[NET-E2E] arp resolved\r\n");
-    }
     crate::kprintln_info!(
         "NET-E2E",
         "ARP 192.168.199.1: {}",
@@ -191,24 +168,11 @@ pub fn run_e2e_test() -> bool {
     // --- Stage 4: TCP connection establishment.
     let _ = dns::set_dns_server(BRIDGE_DNS);
     let sock = socket::socket_auto(socket::SocketType::Stream);
-    crate::hal::serial::write_string_always(&alloc::format!(
-        "[NET-E2E] tcp socket {}\r\n",
-        if sock.is_some() { "ok" } else { "failed" }
-    ));
     let tcp_ok = if let Some(sid) = sock {
         let addr = socket::SockAddr::new(2, TCP_TEST_PORT, TCP_TEST_IP);
-        crate::hal::serial::write_string_always("[NET-E2E] tcp connect enter\r\n");
         let connected = matches!(socket::connect(sid, &addr), Ok(()));
-        crate::hal::serial::write_string_always(&alloc::format!(
-            "[NET-E2E] tcp connect {}\r\n",
-            if connected { "ok" } else { "failed" }
-        ));
-        if !connected {
-            crate::hal::serial::write_string_always("[NET-E2E] tcp timeout\r\n");
-        }
         connected
     } else {
-        crate::hal::serial::write_string_always("[NET-E2E] tcp socket failed\r\n");
         false
     };
     crate::kprintln_info!(
