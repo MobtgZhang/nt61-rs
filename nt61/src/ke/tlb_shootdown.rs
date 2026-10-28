@@ -126,7 +126,6 @@ pub fn invalidate_va_all_cpus(va: u64) {
     core::sync::atomic::fence(Ordering::SeqCst);
     crate::arch::send_tlb_shootdown_ipi();
 
-    let expected = cpu_count - 1;
     let mut spin = 0u64;
     loop {
         let mut acked = 0;
