@@ -117,11 +117,11 @@ pub fn uefi_target_for(arch: &str) -> &'static str {
 /// in [`build_kernel`].
 pub fn kernel_features_for(arch: &str) -> String {
     let mut features = match arch {
-        "x86_64" | "x64" => "x86_64,binary_panic,alloc",
-        "aarch64" | "arm64" => "aarch64,binary_panic,alloc",
-        "riscv64" => "riscv64,binary_panic,alloc",
-        "loongarch64" => "loongarch64,binary_panic,alloc",
-        _ => "x86_64,binary_panic,alloc",
+        "x86_64" | "x64" => "x86_64,binary_panic,alloc,crypto_libs",
+        "aarch64" | "arm64" => "aarch64,binary_panic,alloc,crypto_libs",
+        "riscv64" => "riscv64,binary_panic,alloc,crypto_libs",
+        "loongarch64" => "loongarch64,binary_panic,alloc,crypto_libs",
+        _ => "x86_64,binary_panic,alloc,crypto_libs",
     }
     .to_owned();
     if is_debug_logging() {
