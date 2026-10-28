@@ -199,6 +199,17 @@ pub fn socket_auto(socket_type: SocketType) -> Option<u32> {
     socket(socket_type, Protocol::from_socket_type(socket_type))
 }
 
+/// Remove a socket without closing any attached transport endpoint.
+///
+/// TCP uses this to roll back a child socket allocation if the bounded
+/// TCB table fills between the capacity probe and the reservation.
+pub(crate) fn remove(socket_id: u32) -> bool {
+    let mut sockets = SOCKETS.lock();
+    let before = sockets.len();
+    sockets.retain(|socket| socket.id != socket_id);
+    sockets.len() != before
+}
+
 pub fn bind(socket_id: u32, addr: &SockAddr) -> Result<(), SocketError> {
     let mut sockets = SOCKETS.lock();
 
