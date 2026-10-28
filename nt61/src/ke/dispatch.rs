@@ -140,6 +140,7 @@ struct WaitEntry {
     deadline_ticks: u64,
     in_use: bool,
     signalled: bool,
+    result_pending: bool,
 }
 
 static mut WAIT_ENTRIES: [WaitEntry; WAIT_LIST_MAX] = [const {
@@ -161,6 +162,7 @@ static mut WAIT_ENTRIES: [WaitEntry; WAIT_LIST_MAX] = [const {
         deadline_ticks: 0,
         in_use: false,
         signalled: false,
+        result_pending: false,
     }
 }; WAIT_LIST_MAX];
 
@@ -184,11 +186,9 @@ static mut WAIT_ENTRIES_EXTRA: [WaitEntry; WAIT_LIST_EXTRA] = [const {
         deadline_ticks: 0,
         in_use: false,
         signalled: false,
+        result_pending: false,
     }
 }; WAIT_LIST_EXTRA];
-
-// Track how many extra entries are currently allocated
-static mut WAIT_EXTRA_USED: usize = 0;
 
 static mut WAIT_LIST_HEAD: crate::ps::process::ListEntry = crate::ps::process::ListEntry {
     flink: core::ptr::null_mut(),
@@ -260,11 +260,14 @@ pub fn wait_on(object: &DispatcherHeader, timeout_ms: u32) -> WaitResult {
         for index in 0..WAIT_LIST_TOTAL {
             if let Some(entry) = get_wait_entry(index) {
                 if entry.thread == current && entry.object == object as *const DispatcherHeader {
-                    return if entry.signalled {
+                    let result = if entry.signalled {
                         WaitResult::Success
                     } else {
                         WaitResult::Timeout
                     };
+                    entry.signalled = false;
+                    entry.result_pending = false;
+                    return result;
                 }
             }
         }
@@ -303,10 +306,12 @@ pub fn wake(object: &DispatcherHeader, all: bool) -> u32 {
                     && entry.object == object as *const DispatcherHeader
                 {
                     // Mark the slot free and signal the entry before the
-                    // thread becomes runnable; it may observe a cleared
-                    // signal state after scheduling.
+                    // thread becomes runnable. The result remains owned by
+                    // the waiter until `wait_on` consumes it, preventing the
+                    // slot from being reused and losing the wake result.
                     entry.in_use = false;
                     entry.signalled = true;
+                    entry.result_pending = true;
                     (*ethread).kthread.state = crate::ps::thread::KThreadState::Ready;
 
                     // Determine boost type based on object type
@@ -352,24 +357,14 @@ pub fn wake(object: &DispatcherHeader, all: bool) -> u32 {
 
 fn find_free_slot() -> Option<usize> {
     unsafe {
-        // First, try to find a free slot in the primary pool
-        for i in 0..WAIT_LIST_MAX {
-            if !WAIT_ENTRIES[i].in_use {
-                return Some(i);
+        for i in 0..WAIT_LIST_TOTAL {
+            if let Some(entry) = get_wait_entry(i) {
+                if !entry.in_use && !entry.result_pending {
+                    return Some(i);
+                }
             }
         }
-        // Primary pool exhausted, try to allocate from the extra pool
-        if WAIT_EXTRA_USED < WAIT_LIST_EXTRA {
-            let slot = WAIT_LIST_MAX + WAIT_EXTRA_USED;
-            WAIT_EXTRA_USED += 1;
-            // // crate::kprintln!("[DISPATCH] find_free_slot: using extra slot {}, total extra used: {}",
-            // //                              slot, WAIT_EXTRA_USED);
-            return Some(slot);
-        }
     }
-    // Both pools exhausted
-    // // crate::kprintln!("[DISPATCH] find_free_slot: all wait entries exhausted ({} + {})",
-    // //                      WAIT_LIST_MAX, WAIT_LIST_EXTRA);
     None
 }
 
@@ -405,6 +400,8 @@ pub fn tick_wait_list() {
                 if let Some(entry) = get_wait_entry(i) {
                     if entry.in_use && entry.thread == ethread && entry.deadline_ticks <= now {
                         entry.in_use = false;
+                        entry.signalled = false;
+                        entry.result_pending = true;
                         (*ethread).kthread.state = crate::ps::thread::KThreadState::Ready;
 
                         // Apply priority boost for timeout wake
@@ -428,6 +425,50 @@ pub fn tick_wait_list() {
                 (*cur).blink = cur;
             }
             cur = next;
+        }
+    }
+}
+
+#[cfg(test)]
+mod wait_slot_tests {
+    use super::{find_free_slot, get_wait_entry, WAIT_LIST_TOTAL};
+
+    #[test]
+    fn pending_results_are_not_reused_until_consumed() {
+        unsafe {
+            for index in 0..WAIT_LIST_TOTAL {
+                if let Some(entry) = get_wait_entry(index) {
+                    entry.in_use = false;
+                    entry.signalled = false;
+                    entry.result_pending = false;
+                }
+            }
+
+            for _ in 0..WAIT_LIST_TOTAL {
+                let slot = find_free_slot().expect("all wait slots must be allocatable");
+                let entry = get_wait_entry(slot).expect("allocated slot must be valid");
+                entry.in_use = true;
+            }
+            assert!(find_free_slot().is_none());
+
+            let entry = get_wait_entry(0).expect("slot 0 must be valid");
+            entry.in_use = false;
+            entry.signalled = true;
+            entry.result_pending = true;
+            assert!(find_free_slot().is_none());
+
+            let entry = get_wait_entry(0).expect("slot 0 must be valid");
+            entry.signalled = false;
+            entry.result_pending = false;
+            assert_eq!(find_free_slot(), Some(0));
+
+            for index in 0..WAIT_LIST_TOTAL {
+                if let Some(entry) = get_wait_entry(index) {
+                    entry.in_use = false;
+                    entry.signalled = false;
+                    entry.result_pending = false;
+                }
+            }
         }
     }
 }
