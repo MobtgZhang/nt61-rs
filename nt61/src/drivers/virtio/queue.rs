@@ -93,7 +93,7 @@ impl QueueLayout {
         let used_off = (avail_off + avail_len + align - 1) & !(align - 1);
         let mem_len = used_off + used_len;
 
-        let layout = match Layout::from_size_align(mem_len, QUEUE_ALIGNMENT) {
+        let _layout = match Layout::from_size_align(mem_len, QUEUE_ALIGNMENT) {
             Ok(layout) => layout,
             Err(_) => return None,
         };
