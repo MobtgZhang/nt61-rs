@@ -491,20 +491,16 @@ pub fn map_window_points(hwnd_src: u64, hwnd_dst: u64, points: &mut [POINT]) -> 
         Some(r) => r,
         None => return false,
     };
-    let _ = &src_rect;
-
     // Get destination window position
-    let _dst_rect = match crate::libs::win32k::window::get_window_rect_internal(hwnd_dst) {
+    let dst_rect = match crate::libs::win32k::window::get_window_rect_internal(hwnd_dst) {
         Some(r) => r,
         None => return false,
     };
-    let _ = &_dst_rect;
 
     // Transform from source to screen, then to destination
     for point in points.iter_mut() {
-        point.x += src_rect.left;
-        point.y += src_rect.top;
-        // Then subtract destination rect (not implemented)
+        point.x += src_rect.left - dst_rect.left;
+        point.y += src_rect.top - dst_rect.top;
     }
 
     true
