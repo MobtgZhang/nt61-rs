@@ -76,8 +76,7 @@ pub fn init_page_walk() {
         let pwch: u64 = PW_DIR3_BASE
             | (PW_DIR_WIDTH << 6)
             | (PW_DIR4_BASE << 12)
-            | (PW_DIR_WIDTH << 18)
-            | (1 << 24);
+            | (PW_DIR_WIDTH << 18);
         asm!("csrwr {}, 0x1C", in(reg) pwcl, options(nostack));
         asm!("csrwr {}, 0x1D", in(reg) pwch, options(nostack));
 
