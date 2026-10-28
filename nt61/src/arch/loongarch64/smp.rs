@@ -12,7 +12,7 @@
 
 use core::arch::asm;
 use core::ptr;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use crate::arch::loongarch64::cpuinfo_core;
 use crate::arch::loongarch64::paging;
@@ -25,7 +25,8 @@ const MAX_AP_STACKS: usize = 64;
 const AP_STACK_SIZE: usize = 64 * 1024;
 
 #[no_mangle]
-pub static mut AP_STACK_TOPS: [u64; MAX_AP_STACKS] = [0; MAX_AP_STACKS];
+pub static AP_STACK_TOPS: [AtomicU64; MAX_AP_STACKS] =
+    [const { AtomicU64::new(0) }; MAX_AP_STACKS];
 
 core::arch::global_asm!(
     ".global __smp_secondary_entry",
@@ -125,7 +126,7 @@ pub unsafe extern "Rust" fn __smp_boot_secondary(_pml4_pfn: u64) {
         let stack_top = stack + AP_STACK_SIZE as u64 - 16;
         unsafe {
             (base as *mut u64).add(1).write_volatile(stack_top);
-            AP_STACK_TOPS[cpu] = stack_top;
+            AP_STACK_TOPS[cpu].store(stack_top, Ordering::Release);
         }
     }
 
