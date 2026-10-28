@@ -192,7 +192,7 @@ pub fn write_driver_entry(loaded: bool, path: &[u8]) {
     // Read the wall clock from the RTC so boot entries carry the real
     // boot time. When the CMOS is inaccessible (probe failure) fall back
     // to zeroes rather than inventing a date.
-    if let Some(t) = crate::hal::x86_64::cmos::hal_query_real_time_clock() {
+    if let Some(t) = crate::hal::common::cmos::query_real_time_clock() {
         write_boot_entry(
             t.year,
             t.month,
