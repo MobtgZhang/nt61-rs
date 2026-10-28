@@ -113,23 +113,22 @@ pub unsafe fn __user_entry_enter(user_rip: u64, user_rsp: u64) -> ! {
     // Force rustc to allocate fresh registers for the operands.
     let rip_v = core::hint::black_box(user_rip);
     let rsp_v = core::hint::black_box(user_rsp);
-    // Save the current kernel SP so that SP_EL1 is valid for any
-    // exception taken from EL0. Without this the hardware would use
-    // SP_EL1 (previously 0) as the exception stack — a classic
-    // privilege escalation when SP_EL1 is left at 0.
-    let kernel_sp: u64;
-    core::arch::asm!("mov {}, sp", out(reg) kernel_sp, options(nostack, preserves_flags));
     unsafe {
         core::arch::asm!(
-            // Set SP_EL1 (kernel exception stack), SP_EL0 (user stack),
-            // SPSR_EL1 and ELR_EL1.
-            "msr sp_el1, {ksp}",
+            // Set SP_EL0 (user stack), SPSR_EL1 and ELR_EL1.
+            //
+            // NOTE: we deliberately do not write SP_EL1 here. On this
+            // QEMU build (10.2.1, cortex-a57) the valid encoding of
+            // "msr sp_el1, <Xt>" executed at EL1 raises a synchronous
+            // exception (EC=0, ISS=0, FAR=0). The write was redundant
+            // anyway: the kernel runs at EL1h, so the current SP is
+            // already SP_EL1 and already holds this thread's kernel
+            // stack, which is what EL0 exceptions must land on.
             "msr sp_el0, {rsp}",
             "msr spsr_el1, {spsr}",
             "msr elr_el1, {rip}",
             "isb",
             "eret",
-            ksp = in(reg) kernel_sp,
             rip = in(reg) rip_v,
             rsp = in(reg) rsp_v,
             spsr = in(reg) AARCH64_SPSR_EL0T,
@@ -190,11 +189,10 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
         core::arch::asm!("mov {}, sp", out(reg) kernel_sp, options(nostack, preserves_flags));
     }
     crate::arch::common::percpu::set_kernel_stack(kernel_sp);
-    // Write the kernel stack into SP_EL1 so that the hardware uses it
-    // as the exception stack when an exception is taken from EL0.
-    unsafe {
-        core::arch::asm!("msr sp_el1, {}", in(reg) kernel_sp, options(nostack));
-    }
+    // NOTE: do not write SP_EL1 here. This QEMU raises a synchronous
+    // exception (EC=0, ISS=0) on "msr sp_el1" executed at EL1, and the
+    // write is redundant: the kernel runs at EL1h, so the current SP
+    // already is SP_EL1 and already holds this thread's kernel stack.
 
     // 1. Switch to the user page table.
     //    On aarch64 we use TTBR0_EL1 for the user address space.
@@ -206,14 +204,12 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
         let rip_v = core::hint::black_box(user_rip);
         let rsp_v = core::hint::black_box(user_rsp);
         core::arch::asm!(
-            "msr sp_el1, {ksp}",
             "msr sp_el0, {rsp}",
             "msr elr_el1, {rip}",
             // SPSR_EL1: M=EL0t, DAIF all masked (GIC not ready)
             "msr spsr_el1, {spsr}",
             "isb",
             "eret",
-            ksp = in(reg) kernel_sp,
             rip = in(reg) rip_v,
             rsp = in(reg) rsp_v,
             spsr = in(reg) AARCH64_SPSR_EL0T,
