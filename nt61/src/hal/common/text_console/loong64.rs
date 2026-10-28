@@ -200,7 +200,7 @@ fn format_ansi_cup<'a>(buf: &'a mut [u8; 16], row: u32, col: u32) -> &'a str {
     }
     buf[p] = b'H';
     p += 1;
-    unsafe { core::str::from_utf8_unchecked(&buf[..p]) }
+    core::str::from_utf8(&buf[..p]).unwrap_or("")
 }
 
 pub fn log_line_count() -> usize {
