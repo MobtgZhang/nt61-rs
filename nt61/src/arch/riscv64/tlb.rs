@@ -135,8 +135,23 @@ pub fn flush_global() {
 /// Send IPI to other harts to flush their TLBs
 #[inline]
 pub fn flush_remote(hart_mask: u64) {
-    // Use SBI or direct IPI mechanism
-    // This would call into clint or SBI HSM
-    let _ = hart_mask;
-    // Placeholder - full implementation would send IPIs
+    let current = crate::arch::riscv64::smp::current_hart_id() as u64;
+    let target_mask = hart_mask & !(1 << current);
+    if target_mask == 0 {
+        return;
+    }
+
+    // Prefer the direct CLINT MSIP path. This works even when SBI's IPI
+    // extension is unavailable, including QEMU virt and SiFive-style SoCs.
+    if crate::arch::riscv64::clint::base() != 0 {
+        for hart in 0..crate::arch::riscv64::MAX_CPUS as u32 {
+            if (target_mask >> hart) & 1 != 0 {
+                crate::arch::riscv64::clint::raise_msip(hart);
+            }
+        }
+    } else {
+        // SBI accepts a hart bitmap, so sparse hart IDs do not need to be
+        // expanded here.
+        let _ = unsafe { crate::arch::riscv64::sbi::ipi_send(target_mask) };
+    }
 }
