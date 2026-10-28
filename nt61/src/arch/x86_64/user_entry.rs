@@ -372,15 +372,13 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
         let read_msr = |msr: u32| -> u64 {
             let lo: u32;
             let hi: u32;
-            unsafe {
-                core::arch::asm!(
-                    "rdmsr",
-                    in("ecx") msr,
-                    out("eax") lo,
-                    out("edx") hi,
-                    options(nostack, preserves_flags)
-                );
-            }
+            core::arch::asm!(
+                "rdmsr",
+                in("ecx") msr,
+                out("eax") lo,
+                out("edx") hi,
+                options(nostack, preserves_flags)
+            );
             ((hi as u64) << 32) | lo as u64
         };
         let efer = read_msr(0xC0000080);
