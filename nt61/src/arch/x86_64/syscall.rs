@@ -86,14 +86,16 @@ pub const PER_CPU_KERNEL_RSP_OFFSET: usize = 0x8;
 /// (and again on every context switch). All `gs:[N]` readers
 /// (`KeGetCurrentEthread`, `get_current_ethread`, ...) MUST
 /// use this offset.
-pub const PER_CPU_CURRENT_THREAD_OFFSET: usize = 0x18;
+pub const PER_CPU_CURRENT_THREAD_OFFSET: usize =
+    crate::arch::x86_64::percpu_impl::OFFSET_CURRENT_THREAD;
 /// offset of the `syscall_snap_addr` slot. The `syscall_entry`
 /// asm reads `gs:[0x58]` to load `&SYSCALL_ENTRY_SNAP` into RAX
 /// without needing a 64-bit LEA or a memory LOAD. The slot is
 /// populated by `init_syscall_msrs()` in `syscall.rs`.
 pub const PER_CPU_SYSCALL_SNAP_ADDR_OFFSET: usize = 0x58;
 /// offset of the `current_process` slot.
-pub const PER_CPU_CURRENT_PROCESS_OFFSET: usize = 0x20;
+pub const PER_CPU_CURRENT_PROCESS_OFFSET: usize =
+    crate::arch::x86_64::percpu_impl::OFFSET_CURRENT_PROCESS;
 
 // =====================================================================
 // Canonical per-CPU re-exports
@@ -954,14 +956,16 @@ use crate::libs::ntdll::status::STATUS_INVALID_PARAMETER;
         nums::NT_SAVE_KEY => not_implemented(),
 
         // ---- System Info ----
-        nums::NT_SET_SYSTEM_INFORMATION => unsafe {
-            crate::libs::ntdll::info::nt_set_system_information(
-                arg0(tf) as u32,
-                arg1(tf) as PVOID,
-                arg2(tf) as u32,
-            ) as i64
+        nums::NT_SET_SYSTEM_INFORMATION => {
+            unsafe {
+                crate::libs::ntdll::info::nt_set_system_information(
+                    arg0(tf) as u32,
+                    arg1(tf) as PVOID,
+                    arg2(tf) as u32,
+                ) as i64
+            }
         },
-        nums::NT_QUERY_SYSTEM_TIME => unsafe {
+        nums::NT_QUERY_SYSTEM_TIME => {
             // Write the current wall-clock time as a 64-bit
             // FILETIME (100-ns intervals since 1601-01-01 UTC).
             let system_time = arg0(tf) as u64;
@@ -991,7 +995,7 @@ use crate::libs::ntdll::status::STATUS_INVALID_PARAMETER;
                 return STATUS_ACCESS_VIOLATION as SyscallResult;
             }
             let mut requested = 0u64;
-            if unsafe { crate::mm::user_copy::read_user(system_time, &mut requested) }.is_err() {
+            if crate::mm::user_copy::read_user(system_time, &mut requested).is_err() {
                 return STATUS_ACCESS_VIOLATION as SyscallResult;
             }
             let fields = match crate::hal::cmos::time_fields_from_100ns(requested) {
@@ -1005,7 +1009,7 @@ use crate::libs::ntdll::status::STATUS_INVALID_PARAMETER;
                     Some(ref t) => crate::hal::x86_64::cmos::time_fields_to_100ns(t),
                     None => 0,
                 };
-                if unsafe { crate::mm::user_copy::write_user(previous_time, &previous) }.is_err() {
+                if crate::mm::user_copy::write_user(previous_time, &previous).is_err() {
                     return STATUS_ACCESS_VIOLATION as SyscallResult;
                 }
             }
@@ -1018,7 +1022,7 @@ use crate::libs::ntdll::status::STATUS_INVALID_PARAMETER;
                 STATUS_IO_DEVICE_ERROR as SyscallResult
             }
         }
-        nums::NT_QUERY_PERFORMANCE_COUNTER => unsafe {
+        nums::NT_QUERY_PERFORMANCE_COUNTER => {
             // Write the TSC counter and (optionally) the TSC
             // frequency so callers can convert to seconds.
             let counter = arg0(tf) as u64;
