@@ -19,16 +19,16 @@ nt61-bootfs = { path = "../bootfs" }
 # `kernel_main` uses `Vec` / `String` for the registry hive /
 # boot-driver descriptors it consumes from `BootInfo`.
 [target.'cfg(target_arch = "x86_64")'.dependencies]
-nt61 = { path = "../..", default-features = false, features = ["x86_64", "binary_panic", "alloc"] }
+nt61 = { path = "../..", default-features = false, features = ["x86_64", "binary_panic", "alloc", "crypto_libs"] }
 
 [target.'cfg(target_arch = "aarch64")'.dependencies]
-nt61 = { path = "../..", default-features = false, features = ["aarch64", "binary_panic", "alloc"] }
+nt61 = { path = "../..", default-features = false, features = ["aarch64", "binary_panic", "alloc", "crypto_libs"] }
 
 [target.'cfg(target_arch = "riscv64")'.dependencies]
-nt61 = { path = "../..", default-features = false, features = ["riscv64", "binary_panic", "alloc"] }
+nt61 = { path = "../..", default-features = false, features = ["riscv64", "binary_panic", "alloc", "crypto_libs"] }
 
 [target.'cfg(target_arch = "loongarch64")'.dependencies]
-nt61 = { path = "../..", default-features = false, features = ["loongarch64", "binary_panic", "alloc"] }
+nt61 = { path = "../..", default-features = false, features = ["loongarch64", "binary_panic", "alloc", "crypto_libs"] }
 
 [[bin]]
 name = "nt61-winload"
