@@ -21,6 +21,8 @@ use crate::ps::thread::{create_idle_thread as create_thread_idle, Ethread, KThre
 use core::ptr::null_mut;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 
+static SCHED_SWITCH_DIAG: AtomicU8 = AtomicU8::new(0);
+
 /// Maximum number of CPUs supported.
 /// Kept in lockstep with the arch layers (see arch/aarch64/mod.rs):
 /// a scheduler limit below the arch limit silently truncates SMP
@@ -1458,6 +1460,22 @@ pub fn schedule() -> bool {
     // Update current_thread in PRCB
     if let Some(next_thread) = next {
         if Some(next_thread) != current {
+            let diag_index = SCHED_SWITCH_DIAG.fetch_add(1, Ordering::SeqCst);
+            if diag_index < 200 {
+                crate::hal::serial::write_string_always("[SCHED-SWITCH] n=");
+                crate::hal::serial::write_hex_u64_always(diag_index as u64);
+                crate::hal::serial::write_string_always(" cur=");
+                crate::hal::serial::write_hex_u64_always(
+                    current.map_or(0, |thread| thread as *mut Ethread as u64),
+                );
+                crate::hal::serial::write_string_always(" next=");
+                crate::hal::serial::write_hex_u64_always(next_thread as *mut Ethread as u64);
+                crate::hal::serial::write_string_always(" nrsp=");
+                crate::hal::serial::write_hex_u64_always(
+                    unsafe { (*next_thread).kthread.context.kernel_rsp },
+                );
+                crate::hal::serial::write_string_always("\r\n");
+            }
             unsafe {
                 if let Some(cur) = current {
                     // ke_sched P0-8: a preempted or yielding thread is
