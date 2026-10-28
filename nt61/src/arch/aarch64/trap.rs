@@ -20,6 +20,7 @@
 
 use core::arch::asm;
 use alloc::format;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 /// Trap frame pushed by every exception-vector stub.
 ///
@@ -100,6 +101,21 @@ pub mod exception_kind {
     pub const LOWER_EL_AARCH64_SERROR: u64 = 11;
 }
 
+/// One-shot entry markers for the four synchronous exception vectors.
+/// Each bit is set the first time its vector fires; the marker is
+/// printed exactly once so repeated exceptions do not flood serial.
+static SYNC_VECTOR_SEEN: AtomicU32 = AtomicU32::new(0);
+
+fn mark_sync_vector_once(bit: u32, name: &str) {
+    let mask = 1u32 << bit;
+    let prev = SYNC_VECTOR_SEEN.fetch_or(mask, Ordering::AcqRel);
+    if prev & mask == 0 {
+        crate::hal::serial::write_string_always("[VEC-ENTRY] ");
+        crate::hal::serial::write_string_always(name);
+        crate::hal::serial::write_string_always(" sync\r\n");
+    }
+}
+
 /// Trap dispatcher. Called by every exception-vector stub in
 /// `exception.rs` with:
 ///
@@ -119,6 +135,7 @@ pub unsafe extern "C" fn arch_aarch64_trap_dispatch(kind: u64, tf: *mut TrapFram
     match kind {
         exception_kind::LOWER_EL_AARCH64_SYNC => {
             // Synchronous exception from EL0 (user mode): SVC, page fault, …
+            mark_sync_vector_once(0, "lower-el");
             handle_lower_sync(tf_ref);
         }
         exception_kind::LOWER_EL_AARCH64_IRQ => {
@@ -130,6 +147,11 @@ pub unsafe extern "C" fn arch_aarch64_trap_dispatch(kind: u64, tf: *mut TrapFram
             // unknown instruction). For the bootstrap we just print
             // details and continue (the kernel image is small enough
             // that a stray fault is unlikely).
+            if kind == exception_kind::CURRENT_EL_SP0_SYNC {
+                mark_sync_vector_once(1, "sp0");
+            } else {
+                mark_sync_vector_once(2, "spx");
+            }
             handle_kernel_sync(tf_ref);
         }
         exception_kind::CURRENT_EL_SP0_IRQ | exception_kind::CURRENT_EL_SPX_IRQ => {
@@ -186,11 +208,14 @@ fn handle_kernel_sync(tf: &mut TrapFrame) {
     let iss = esr & 0x01FF_FFFF;
     let spsr = tf.spsr_el1;
     let elr = tf.elr_el1;
+    let kind = tf.exception_class;
 
     // Kernel faults must never be silently skipped. A skipped fault
     // can corrupt kernel state and is a security risk (e.g. skipping
     // a bounds check). Instead, log the full diagnostic and crash.
-    crate::hal::serial::write_string_always("[KERN-FAULT] ec=");
+    crate::hal::serial::write_string_always("[KERN-FAULT] kind=");
+    crate::hal::serial::write_hex_u64_always(kind);
+    crate::hal::serial::write_string_always(" ec=");
     crate::hal::serial::write_hex_u64_always(ec);
     crate::hal::serial::write_string_always(" iss=");
     crate::hal::serial::write_hex_u64_always(iss);
@@ -200,6 +225,55 @@ fn handle_kernel_sync(tf: &mut TrapFrame) {
     crate::hal::serial::write_hex_u64_always(elr);
     crate::hal::serial::write_string_always(" spsr=");
     crate::hal::serial::write_hex_u64_always(spsr);
+    let vbar: u64;
+    unsafe {
+        asm!("mrs {}, vbar_el1", out(reg) vbar, options(nostack));
+    }
+    crate::hal::serial::write_string_always(" vbar=");
+    crate::hal::serial::write_hex_u64_always(vbar);
+    let cur_el: u64;
+    unsafe {
+        asm!("mrs {}, CurrentEL", out(reg) cur_el, options(nostack));
+    }
+    crate::hal::serial::write_string_always(" el=");
+    crate::hal::serial::write_hex_u64_always(cur_el >> 2);
+    crate::hal::serial::write_string_always(" lr=");
+    crate::hal::serial::write_hex_u64_always(tf.x30);
+    crate::hal::serial::write_string_always(" fp=");
+    crate::hal::serial::write_hex_u64_always(tf.x29);
+    crate::hal::serial::write_string_always(" sp=");
+    crate::hal::serial::write_hex_u64_always(tf.sp);
+    if (cur_el >> 2) & 3 == 2 {
+        let (esr2, elr2, spsr2, far2): (u64, u64, u64, u64);
+        unsafe {
+            asm!(
+                "mrs {}, esr_el2", "mrs {}, elr_el2", "mrs {}, spsr_el2", "mrs {}, far_el2",
+                out(reg) esr2, out(reg) elr2, out(reg) spsr2, out(reg) far2,
+                options(nostack),
+            );
+        }
+        crate::hal::serial::write_string_always(" esr2=");
+        crate::hal::serial::write_hex_u64_always(esr2);
+        crate::hal::serial::write_string_always(" elr2=");
+        crate::hal::serial::write_hex_u64_always(elr2);
+        crate::hal::serial::write_string_always(" spsr2=");
+        crate::hal::serial::write_hex_u64_always(spsr2);
+        crate::hal::serial::write_string_always(" far2=");
+        crate::hal::serial::write_hex_u64_always(far2);
+    }
+    // Dump the first instruction word of every vector slot so a
+    // runtime-corrupted or misrouted table becomes visible.
+    crate::hal::serial::write_string_always(" vt=");
+    let vt = vbar as *const u64;
+    let mut i = 0usize;
+    while i < 16 {
+        let w = unsafe { core::ptr::read_volatile(vt.add(i * 16)) };
+        if i != 0 {
+            crate::hal::serial::write_string_always(":");
+        }
+        crate::hal::serial::write_hex_u64_always(w);
+        i += 1;
+    }
     crate::hal::serial::write_string_always("\r\n");
 
     // Increment the per-CPU fault counter for diagnostics.
@@ -215,6 +289,20 @@ fn handle_kernel_sync(tf: &mut TrapFrame) {
             ec, iss, far, elr, spsr
         ),
     );
+}
+
+/// Called from the `lower_el_aarch32_sync` vector: an AArch32 task took
+/// a synchronous exception. There is no AArch32 support, so mark the
+/// entry once and park the CPU.
+#[no_mangle]
+pub unsafe extern "C" fn arch_aarch64_trap_aarch32_sync_hang() {
+    let prev = SYNC_VECTOR_SEEN.fetch_or(1u32 << 3, Ordering::AcqRel);
+    if prev & (1u32 << 3) == 0 {
+        crate::hal::serial::write_string_always("[VEC-ENTRY] lower-el-aarch32 sync (unsupported)\r\n");
+    }
+    loop {
+        asm!("wfi", options(nostack));
+    }
 }
 
 /// handle a maskable IRQ.
