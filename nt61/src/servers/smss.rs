@@ -611,22 +611,15 @@ pub fn init_peb(process: *mut crate::ps::process::Eprocess) -> *mut crate::ps::p
         boot_println!("[SMSS] init_peb user heap failed");
         return core::ptr::null_mut();
     }
-    boot_println!("[SMSS] init_peb heap mapped");
+    crate::hal::serial::write_string_always("[SMSS] init_peb pre-session\r\n");
+    crate::hal::serial::write_string_always("[SMSS] init_peb post-session\r\n");
 
     let session_id = unsafe { (*process).session_id };
-    boot_println!(
-        "[SMSS] init_peb process=0x{:x} page_table=0x{:x} alias=0x{:x}",
-        process as u64,
-        unsafe { (*process).page_table_pml4 },
-        unsafe { (*process).pml4_phys }
-    );
+    crate::hal::serial::write_string_always("[SMSS] init_peb process pointers enter\r\n");
     boot_println!("[SMSS] init_peb before process parameters");
-    boot_println!(
-        "[SMSS] init_peb after heap page_table=0x{:x} alias=0x{:x}",
-        unsafe { (*process).page_table_pml4 },
-        unsafe { (*process).pml4_phys }
-    );
+    crate::hal::serial::write_string_always("[SMSS] init_peb after heap pointers enter\r\n");
     let params = init_process_parameters(process, session_id);
+    crate::hal::serial::write_string_always("[SMSS] init_peb params returned\r\n");
     boot_println!(
         "[SMSS] init_peb process parameters returned 0x{:x}",
         params as u64
@@ -708,13 +701,13 @@ fn init_process_parameters(
     const PARAMS_BASE: u64 = 0x0000_7FFF_B000_0000;
     const PARAMS_SIZE: u64 = 0x1000;
 
-    boot_println!("[SMSS] init_process_parameters enter");
+    crate::hal::serial::write_string_always("[SMSS] init_process_parameters enter\r\n");
     let pml4_phys = unsafe { (*process).pml4_phys };
+    crate::hal::serial::write_string_always("[SMSS] init_process_parameters pml4 read\r\n");
     if pml4_phys == 0 {
         boot_println!("[SMSS] init_process_parameters: invalid pml4");
         return core::ptr::null_mut();
     }
-    boot_println!("[SMSS] init_process_parameters: pml4=0x{:x}", pml4_phys);
 
     // Allocate a page for process parameters.
     let result = crate::mm::vas::alloc_zeroed_page_for_vas();
@@ -723,10 +716,7 @@ fn init_process_parameters(
         return core::ptr::null_mut();
     }
     let params_phys = result.unwrap();
-    boot_println!(
-        "[SMSS] init_process_parameters: params page allocated pa=0x{:x}",
-        params_phys
-    );
+    crate::hal::serial::write_string_always("[SMSS] init_process_parameters page allocated\r\n");
 
     let map_result = crate::mm::vas::map_page_in_pml4(
         pml4_phys,
@@ -743,7 +733,7 @@ fn init_process_parameters(
         );
         return core::ptr::null_mut();
     }
-    boot_println!("[SMSS] init_process_parameters: params mapped");
+    crate::hal::serial::write_string_always("[SMSS] init_process_parameters mapped\r\n");
 
     crate::mm::vas::refresh_kernel_mappings(pml4_phys);
     let previous_root = crate::mm::vas::attach_process(pml4_phys);
