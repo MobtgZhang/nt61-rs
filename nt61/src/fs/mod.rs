@@ -621,9 +621,21 @@ pub fn sys_mirror_size() -> Option<usize> {
     SYS_RAMDISK.lock().as_ref().map(|d| d.size)
 }
 
+pub fn sys_capture_range() -> Option<(*const u8, usize)> {
+    let guard = SYS_RAMDISK.lock();
+    let disk = guard.as_ref()?;
+    Some((disk.base, disk.size))
+}
+
 /// Return the size in bytes of the ESP partition mirror, or `None`.
 pub fn esp_mirror_size() -> Option<usize> {
     ESP_RAMDISK.lock().as_ref().map(|d| d.size)
+}
+
+pub fn esp_capture_range() -> Option<(*const u8, usize)> {
+    let guard = ESP_RAMDISK.lock();
+    let disk = guard.as_ref()?;
+    Some((disk.base, disk.size))
 }
 
 /// Detect which filesystem type is on the System partition (C:).
