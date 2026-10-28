@@ -19,7 +19,7 @@ mod csr {}
 pub fn flush_all() {
     unsafe {
         // Use invtlb instruction with op=0 (invalidate all)
-        asm!("invtlb $zero, $zero, 0", options(nostack));
+        asm!("invtlb 0, $r0, $r0", options(nostack));
     }
 }
 
@@ -29,7 +29,7 @@ pub fn flush_asid(asid: Asid) {
     unsafe {
         // invtlb op=4: invalidate by ASID
         asm!(
-            "invtlb {asid}, $zero, 4",
+            "invtlb 4, {asid}, $r0",
             asid = in(reg) asid as u64,
             options(nostack)
         );
@@ -42,7 +42,7 @@ pub fn flush_page(vaddr: u64) {
     unsafe {
         // invtlb op=5: invalidate by VA (all ASIDs)
         asm!(
-            "invtlb $zero, {addr}, 5",
+            "invtlb 5, $r0, {addr}",
             addr = in(reg) vaddr,
             options(nostack)
         );
@@ -55,7 +55,7 @@ pub fn flush_page_asid(vaddr: u64, asid: Asid) {
     unsafe {
         // invtlb op=6: invalidate by VA and ASID
         asm!(
-            "invtlb {asid}, {addr}, 6",
+            "invtlb 6, {asid}, {addr}",
             asid = in(reg) asid as u64,
             addr = in(reg) vaddr,
             options(nostack)
@@ -78,7 +78,7 @@ pub fn flush_range(start_vaddr: u64, end_vaddr: u64) {
         unsafe {
             while addr < end {
                 asm!(
-                    "invtlb $zero, {addr}, 5",
+                    "invtlb 5, $r0, {addr}",
                     addr = in(reg) addr,
                     options(nostack)
                 );
@@ -103,7 +103,7 @@ pub fn flush_range_asid(start_vaddr: u64, end_vaddr: u64, asid: Asid) {
         unsafe {
             while addr < end {
                 asm!(
-                    "invtlb {asid}, {addr}, 6",
+                    "invtlb 6, {asid}, {addr}",
                     asid = in(reg) asid as u64,
                     addr = in(reg) addr,
                     options(nostack)
@@ -207,7 +207,7 @@ pub fn tlb_fill(vaddr: u64) {
 pub fn flush_guest() {
     unsafe {
         // invtlb op=3: invalidate all guest entries
-        asm!("invtlb $zero, $zero, 3", options(nostack));
+        asm!("invtlb 3, $r0, $r0", options(nostack));
     }
 }
 
@@ -245,4 +245,18 @@ pub fn read_pgd_high() -> u64 {
         asm!("csrrd {}, 0x1A", out(reg) val, options(nostack));
     }
     val
+}
+
+/// Remote TLB shootdown (for SMP): send the existing IPI mailbox signal to
+/// every selected logical CPU. Targets clear the pending IPI and perform a
+/// full local flush in the interrupt handler.
+#[inline]
+pub fn flush_remote(cpu_mask: u64) {
+    let current = crate::arch::loongarch64::smp::__smp_get_current_cpu_id() as u64;
+    let target_mask = cpu_mask & !(1 << current);
+    for cpu in 0..64 {
+        if (target_mask >> cpu) & 1 != 0 {
+            crate::arch::loongarch64::interrupt::send_ipi(cpu);
+        }
+    }
 }
