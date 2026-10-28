@@ -27,24 +27,27 @@ use core::arch::asm;
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrapKind {
-    Int = 0,        // External interrupt
-    PIl = 1,        // Reserved / pending interrupt
-    PIS = 2,        // Same
-    PME = 3,        // Performance monitor
-    PpiHvi = 4,     // Same family
-    Syscall = 5,    // `syscall` instruction (user mode)
-    Breakpoint = 6, // `break`
-    InstNonAligned = 7,
-    InstAccessFault = 8,
-    InstPageFault = 9, // PIF
-    InstPageNonPresentFault = 10,
-    InstPageWriteFault = 11,
-    LoadPageFault = 12,
-    StorePageFault = 13,
-    LoadAddrError = 14,
-    StoreAddrError = 15,
-    InstIllegal = 16,
-    MisalignedAtomic = 17, // not on all models
+    Int = 0,
+    PageInvalidLoad = 1,
+    PageInvalidStore = 2,
+    PageInvalidFetch = 3,
+    PageModified = 4,
+    PageNotReadable = 5,
+    PageNotExecutable = 6,
+    PagePrivilegeError = 7,
+    AddressErrorFetch = 8,
+    AddressErrorLoad = 9,
+    BoundaryCheck = 10,
+    Syscall = 11,
+    Breakpoint = 12,
+    IllegalInstruction = 13,
+    PrivilegedInstruction = 14,
+    FloatingPointDisabled = 15,
+    Vector128Disabled = 16,
+    Vector256Disabled = 17,
+    FloatingPointException = 18,
+    WatchpointFetch = 19,
+    DebugBreakpoint = 26,
     Other(u32),
 }
 
@@ -52,14 +55,26 @@ impl From<u32> for TrapKind {
     fn from(code: u32) -> Self {
         match code {
             0 => TrapKind::Int,
-            5 => TrapKind::Syscall,
-            6 => TrapKind::Breakpoint,
-            9 => TrapKind::InstPageFault,
-            12 => TrapKind::LoadPageFault,
-            13 => TrapKind::StorePageFault,
-            14 => TrapKind::LoadAddrError,
-            15 => TrapKind::StoreAddrError,
-            16 => TrapKind::InstIllegal,
+            1 => TrapKind::PageInvalidLoad,
+            2 => TrapKind::PageInvalidStore,
+            3 => TrapKind::PageInvalidFetch,
+            4 => TrapKind::PageModified,
+            5 => TrapKind::PageNotReadable,
+            6 => TrapKind::PageNotExecutable,
+            7 => TrapKind::PagePrivilegeError,
+            8 => TrapKind::AddressErrorFetch,
+            9 => TrapKind::AddressErrorLoad,
+            10 => TrapKind::BoundaryCheck,
+            11 => TrapKind::Syscall,
+            12 => TrapKind::Breakpoint,
+            13 => TrapKind::IllegalInstruction,
+            14 => TrapKind::PrivilegedInstruction,
+            15 => TrapKind::FloatingPointDisabled,
+            16 => TrapKind::Vector128Disabled,
+            17 => TrapKind::Vector256Disabled,
+            18 => TrapKind::FloatingPointException,
+            19 => TrapKind::WatchpointFetch,
+            26 => TrapKind::DebugBreakpoint,
             other => TrapKind::Other(other),
         }
     }
@@ -155,7 +170,8 @@ pub fn read_prmd() -> u32 {
 #[no_mangle]
 pub extern "C" fn trap_dispatch(frame: *mut TrapFrame) {
     let estat = read_estat();
-    let exc_code = estat & 0x3F;
+    crate::arch::boot::early_write_str(b"[TRAP_ENTER]\r\n");
+    let exc_code = (estat >> 16) & 0x3F;
     let kind: TrapKind = exc_code.into();
 
     match kind {
@@ -169,10 +185,26 @@ pub extern "C" fn trap_dispatch(frame: *mut TrapFrame) {
                 crate::arch::loongarch64::syscall::dispatch_syscall(frame);
             }
         }
-        TrapKind::InstPageFault | TrapKind::LoadPageFault | TrapKind::StorePageFault => {
+        TrapKind::PageInvalidFetch
+        | TrapKind::PageInvalidLoad
+        | TrapKind::PageInvalidStore
+        | TrapKind::PageModified
+        | TrapKind::PageNotReadable
+        | TrapKind::PageNotExecutable => {
             let badv = read_badv();
-            let is_write = matches!(kind, TrapKind::StorePageFault);
-            let is_inst = matches!(kind, TrapKind::InstPageFault);
+            // PME (code 4): store to a V=1/W=0 page. PNR (5) / PNX (6):
+            // read/fetch denied by the extended permission bits. Route
+            // all of them into the generic access-fault handler so
+            // COW, demand-zero, and permission diagnostics behave the
+            // same as for the PIL/PIS/PIF codes.
+            let is_write = matches!(
+                kind,
+                TrapKind::PageInvalidStore | TrapKind::PageModified
+            );
+            let is_inst = matches!(
+                kind,
+                TrapKind::PageInvalidFetch | TrapKind::PageNotExecutable
+            );
             let access = crate::mm::access_fault::AccessFlags {
                 read: !is_write,
                 write: is_write,
@@ -192,7 +224,7 @@ pub extern "C" fn trap_dispatch(frame: *mut TrapFrame) {
                 badv, is_write, is_inst
             );
         }
-        TrapKind::InstIllegal => {
+        TrapKind::IllegalInstruction => {
             let era = read_era();
             panic!("LA64 illegal instruction @ ERA={:#x}", era);
         }
@@ -209,10 +241,18 @@ pub extern "C" fn trap_dispatch(frame: *mut TrapFrame) {
             }
         }
         TrapKind::Int => {
-            let is = estat & 0x1FFF; // IS[12:0]
-                                     // IS[2] is the QEMU virt EXTIOI UART line.  Drain the unified
-                                     // keyboard ring and clear only the per-core line; clearing the
-                                     // device-level ISR here would lose coalesced input.
+            let is = estat & 0x7FFF; // IS[14:0]
+            // IS[1] is the LoongArch IPI line. It is acknowledged through
+            // the IOCSR IPI mailbox, then turned into the architecture-
+            // independent shootdown protocol.
+            if (is & (1 << 1)) != 0 {
+                crate::arch::loongarch64::interrupt::clear_ipi();
+                crate::ke::tlb_shootdown::handle_shootdown_interrupt();
+            }
+
+            // IS[2] is the QEMU virt EXTIOI UART line.  Drain the unified
+            // keyboard ring and clear only the per-core line; clearing the
+            // device-level ISR here would lose coalesced input.
             if (is & (1 << 2)) != 0 {
                 crate::hal::common::keyboard_unified::serial_rx_irq();
                 crate::arch::loongarch64::pic::core_ack(2);
