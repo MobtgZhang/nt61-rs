@@ -115,6 +115,10 @@ pub fn run_tests() -> bool {
     // IRP Tests
     stats.test("IRP Allocation", test_irp_allocation);
     stats.test("IRP Stack Location", test_irp_stack_location);
+    stats.test(
+        "IRP Skip Stack Location Boundary",
+        test_irp_skip_stack_location_boundary,
+    );
     stats.test("IRP Completion", test_irp_completion);
     stats.test("IRP Cancellation", test_irp_cancellation);
 
@@ -197,6 +201,51 @@ fn test_irp_stack_location() -> bool {
     crate::io::free_irp(irp);
 
     true
+}
+
+fn test_irp_skip_stack_location_boundary() -> bool {
+    let irp = crate::io::allocate_irp(2);
+    if irp.is_null() {
+        return false;
+    }
+
+    let result = unsafe {
+        let mut ok = true;
+
+        // Skip down one slot at a time and confirm each skip advances
+        // the pointer towards the bottom of the IRP allocation.
+        while (*irp).current_location > 1 {
+            let stack_before = (*irp).current_stack;
+            let location_before = (*irp).current_location;
+            crate::io::irp_stack::skip_current_stack_location(irp);
+            if (*irp).current_stack == stack_before
+                || (*irp).current_location >= location_before
+            {
+                ok = false;
+                break;
+            }
+        }
+
+        // At the `current_location == 1` boundary there is no lower
+        // slot: skipping must be a no-op so the pointer cannot walk
+        // off the bottom of the IRP allocation.
+        if ok && (*irp).current_location == 1 {
+            let stack_before = (*irp).current_stack;
+            crate::io::irp_stack::skip_current_stack_location(irp);
+            if (*irp).current_stack != stack_before || (*irp).current_location != 1 {
+                ok = false;
+            }
+        } else if ok {
+            ok = false;
+        }
+
+        ok
+    };
+
+    crate::boot_println!("    IRP skip stack location boundary: OK");
+    crate::io::free_irp(irp);
+
+    result
 }
 
 fn test_irp_completion() -> bool {
