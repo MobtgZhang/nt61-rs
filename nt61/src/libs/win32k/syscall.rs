@@ -614,17 +614,22 @@ pub extern "C" fn nt_gdi_get_text_face_w(frame: &SyscallFrame) -> u64 {
     // kprintln!("[win32k] NT_GDI_GET_TEXT_FACE_W: hdc=0x{:x}, count={}, ptr=0x{:x}",
     //               hdc, count, face_name_ptr);
 
-    // Return the face name length (excluding null terminator)
-    // A full implementation would copy the font name to the buffer
     if face_name_ptr != 0 && count > 0 {
         // Return the number of characters copied (including null)
-        // For now, return a placeholder
-        let name = "System\0";
-        let _ = &name;
-        let len = name.len().min(count as usize).min(32);
-        let _ = &len;
-        // Copy to user buffer would go here
-        len as u64
+        let name_utf16: [u16; 7] = [
+            0x0053, 0x0079, 0x0073, 0x0074, 0x0065, 0x006D, 0x0000,
+        ];
+        let chars = (count as usize).min(name_utf16.len());
+        let mut bytes = [0u8; 14];
+        for (index, unit) in name_utf16[..chars].iter().enumerate() {
+            bytes[index * 2] = (unit & 0xFF) as u8;
+            bytes[index * 2 + 1] = (unit >> 8) as u8;
+        }
+        if crate::mm::user_copy::copy_to_user(face_name_ptr, &bytes[..chars * 2]).is_ok() {
+            chars as u64
+        } else {
+            0
+        }
     } else {
         0
     }
