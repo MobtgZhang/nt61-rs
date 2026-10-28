@@ -39,6 +39,24 @@ struct FunctionTableEntry {
 
 static FUNCTION_TABLES: Spinlock<Vec<FunctionTableEntry>> = Spinlock::new(Vec::new());
 
+/// Look up a registered unwind function table containing `address`.
+///
+/// A registered table is a sequence of packed `RUNTIME_FUNCTION` entries.
+/// This accessor lets exception dispatch scope a lookup to the table that
+/// owns an instruction pointer instead of treating all tables as unbounded.
+pub fn function_table_for_address(address: u64) -> Option<(PVOID, u32, u64)> {
+    const RUNTIME_FUNCTION_SIZE: u64 = 12;
+    let tables = FUNCTION_TABLES.lock();
+    tables
+        .iter()
+        .find(|table| {
+            let span = u64::from(table.entry_count) * RUNTIME_FUNCTION_SIZE;
+            let end = table.base_address.checked_add(span).unwrap_or(u64::MAX);
+            address >= table.base_address && address < end
+        })
+        .map(|table| (table.table, table.entry_count, table.base_address))
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ExceptionRecord {
