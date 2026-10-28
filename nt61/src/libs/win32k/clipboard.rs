@@ -32,7 +32,7 @@ const MAX_CLIPBOARD_FORMATS: usize = 8;
 /// per format. Readers get an owned copy, so no one aliases
 /// lock-protected storage and a later update can never mutate a
 /// buffer someone still holds.
-struct ClipboardDataInner {
+pub struct ClipboardDataInner {
     /// (format, bytes) pairs in insertion order.
     entries: Vec<(u32, Vec<u8>)>,
 }
