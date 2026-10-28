@@ -212,6 +212,15 @@ global_asm!(
     // -------------------------------------------------------------------
     ".balign 16",
     "int_common_dispatch:",
+    // If the interrupt came from Ring 3, GS currently holds the user
+    // GS base (zero in this bring-up).  Switch to the kernel GS base
+    // before any handler can touch per-CPU data.  At common-entry RSP
+    // points at the vector slot pushed by int_stub_N; the CPU frame is
+    // therefore RIP at +0x08 and CS at +0x10.
+    "  cmp word ptr [rsp + 0x10], 0x2b",
+    "  jne 6f",
+    "  swapgs",
+    "6:",
     "  cld",
     "  push r15", "  push r14", "  push r13", "  push r12",
     "  push r11", "  push r10", "  push r9",  "  push r8",
@@ -278,6 +287,14 @@ global_asm!(
     "  pop r12", "  pop r13", "  pop r14", "  pop r15",
     "  add rsp, 0x08",                    // skip vector slot
     "3:",
+    // Restore the GS convention for the interrupted context.  Interrupt
+    // entry performed swapgs only when CPL was 3, so perform the paired
+    // swap here only when the iret frame returns to Ring 3.  Kernel
+    // interrupts and kernel-to-kernel reschedules must not swap GS.
+    "  cmp word ptr [rsp + 0x08], 0x2b",
+    "  jne 5f",
+    "  swapgs",
+    "5:",
     // CRITICAL: The iret frame's SS slot is whatever SS was active
     // when the interrupt fired. After SYSCALL the kernel runs with
     // SS = STAR[47:32] + 8 (= slot 4, which we use as DPL=3 user SS),
@@ -291,12 +308,11 @@ global_asm!(
     // save SS=0x20 because the CPU's SYSCALL SS selector is DPL=3.
     // Merely changing current SS would not affect the value loaded
     // by the following `iretq`, producing #GP in CPL0.
-    "  mov ax, word ptr [rsp + 0x08]",
-    "  test ax, 3",
+    "  test word ptr [rsp + 0x08], 3",
     "  jnz 4f",
     "  mov word ptr [rsp + 0x20], 0x38",
     "4:",
-    "  and word ptr [rsp + 0x1a], 0xfffe", // clear EFLAGS.VM (bit 16)
+    "  and word ptr [rsp + 0x12], 0xfffe", // clear EFLAGS.VM (bit 16)
     "  iretq",
 
     // ---- SYSCALL entry -----------------------------------------------
@@ -367,6 +383,8 @@ global_asm!(
     "  add rsp, 0x38",                     // seven remaining slots
     "  mov rsp, gs:[0x0]",                 // restore user RSP
     "  swapgs",
+    // Restore the user GS selector convention. The swap above returned
+    // the user GS base; `mov gs, rax` leaves the 64-bit base alone.
     "  mov rax, 0x23",
     "  mov ds, rax",
     "  mov es, rax",
