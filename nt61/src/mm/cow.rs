@@ -17,8 +17,6 @@
 
 use crate::mm::pfn;
 use crate::mm::pte::MMPTE;
-use crate::mm::vas::current_root;
-
 /// Walk the page table to get a PTE pointer for `va`. Works for both
 /// user and kernel addresses.
 ///
@@ -58,7 +56,7 @@ fn get_pte_ptr(va: u64) -> Option<*mut MMPTE> {
 /// Direct-physical page-table walk (identity-mapped targets only).
 #[cfg(not(target_arch = "x86_64"))]
 fn walk_pte_direct_physical(va: u64) -> Option<*mut MMPTE> {
-    let pml4_phys = current_root();
+    let pml4_phys = crate::mm::vas::current_root();
     if pml4_phys == 0 {
         return None;
     }
