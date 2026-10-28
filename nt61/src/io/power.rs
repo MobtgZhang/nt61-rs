@@ -6,6 +6,44 @@
 use crate::io::{DeviceObject, DevicePowerState, Irp};
 use core::sync::atomic::{AtomicU32, Ordering};
 
+/// Crash-safe log macro for the power path.
+///
+/// Formats into a fixed 256-byte stack buffer (no heap allocation,
+/// no locks, no buffered-writer dependency) and emits the line
+/// through `rtl::klog::write_early`, which routes to the UART serial
+/// sink and mirrors to the VGA text console only when that is safe
+/// (see `klog::write_early`). Power IRPs can complete from fault or
+/// crash context, where the buffered `windows_log` writer used by
+/// `kprintln!` after `mm::init()` is not safe to touch.
+macro_rules! power_klog {
+    ($($arg:tt)*) => {{
+        use core::fmt::Write as _;
+        struct StackLog {
+            buf: [u8; 256],
+            pos: usize,
+        }
+        impl core::fmt::Write for StackLog {
+            fn write_str(&mut self, s: &str) -> core::fmt::Result {
+                let bytes = s.as_bytes();
+                let avail = self.buf.len().saturating_sub(self.pos);
+                let n = bytes.len().min(avail);
+                self.buf[self.pos..self.pos + n].copy_from_slice(&bytes[..n]);
+                self.pos += n;
+                Ok(())
+            }
+        }
+        let mut log = StackLog {
+            buf: [0u8; 256],
+            pos: 0,
+        };
+        let _ = log.write_fmt(core::format_args!($($arg)*));
+        if let Ok(line) = core::str::from_utf8(&log.buf[..log.pos]) {
+            crate::rtl::klog::write_early(line);
+        }
+        crate::rtl::klog::write_early("\r\n");
+    }};
+}
+
 /// power IRP minor function codes (IRP_MN_*).
 pub const IRP_MN_WAIT_WAKE: u8 = 0x00;
 pub const IRP_MN_POWER_SEQUENCE: u8 = 0x01;
@@ -71,11 +109,10 @@ static POWER_STATS: AtomicU32 = AtomicU32::new(0);
 /// Initialize the I/O power management subsystem
 pub fn init() {
     POWER_STATS.store(0, Ordering::Relaxed);
-    kprintln!("[IO-POWER] I/O power management initialized");
+    power_klog!("[IO-POWER] I/O power management initialized");
 }
 
 /// Request a device power state change
-use crate::kprintln;
 pub fn request_device_power_state(
     device: *mut DeviceObject,
     target_state: DevicePowerState,
@@ -91,7 +128,7 @@ pub fn request_device_power_state(
             return true; // Already in target state
         }
 
-        kprintln!(
+        power_klog!(
             "[IO-POWER] Device power transition: {:?} -> {:?}",
             current_state,
             target_state
@@ -99,7 +136,7 @@ pub fn request_device_power_state(
 
         // Validate transition
         if !is_valid_device_power_transition(current_state, target_state) {
-            kprintln!("[IO-POWER] Invalid device power transition");
+            power_klog!("[IO-POWER] Invalid device power transition");
             return false;
         }
 
@@ -137,7 +174,7 @@ fn power_up_device(device: *mut DeviceObject) {
     }
 
     unsafe {
-        kprintln!(
+        power_klog!(
             "[IO-POWER] Powering up device (type={:?})",
             (*device).device_type
         );
@@ -157,7 +194,7 @@ fn power_down_device(device: *mut DeviceObject, level: u8) {
     }
 
     unsafe {
-        kprintln!(
+        power_klog!(
             "[IO-POWER] Powering down device to D{} (type={:?})",
             level,
             (*device).device_type
@@ -198,23 +235,23 @@ pub fn process_power_irp(device: *mut DeviceObject, irp: *mut Irp) -> i32 {
 
         match minor {
             IRP_MN_WAIT_WAKE => {
-                kprintln!("[IO-POWER] IRP_MN_WAIT_WAKE");
+                power_klog!("[IO-POWER] IRP_MN_WAIT_WAKE");
                 handle_wait_wake(device, irp)
             }
             IRP_MN_POWER_SEQUENCE => {
-                kprintln!("[IO-POWER] IRP_MN_POWER_SEQUENCE");
+                power_klog!("[IO-POWER] IRP_MN_POWER_SEQUENCE");
                 handle_power_sequence(device, irp)
             }
             IRP_MN_SET_POWER => {
-                kprintln!("[IO-POWER] IRP_MN_SET_POWER");
+                power_klog!("[IO-POWER] IRP_MN_SET_POWER");
                 handle_set_power(device, irp)
             }
             IRP_MN_QUERY_POWER => {
-                kprintln!("[IO-POWER] IRP_MN_QUERY_POWER");
+                power_klog!("[IO-POWER] IRP_MN_QUERY_POWER");
                 handle_query_power(device, irp)
             }
             _ => {
-                kprintln!(
+                power_klog!(
                     "[IO-POWER] Unknown power IRP minor function: 0x{:02x}",
                     minor
                 );
@@ -249,7 +286,7 @@ fn handle_set_power(device: *mut DeviceObject, _irp: *mut Irp) -> i32 {
     unsafe {
         // For now, just acknowledge the power change
         let current_state = (*device).device_power_state;
-        kprintln!("[IO-POWER] Device in state {:?}", current_state);
+        power_klog!("[IO-POWER] Device in state {:?}", current_state);
     }
 
     0 // STATUS_SUCCESS
