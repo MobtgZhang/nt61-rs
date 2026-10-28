@@ -49,7 +49,7 @@ pub fn phase_trace_marker(phase: u32) {
         .iter()
         .position(|&byte| byte == 0)
         .unwrap_or(buffer.len());
-    let text = unsafe { core::str::from_utf8_unchecked(&buffer[..len]) };
+    let text = core::str::from_utf8(&buffer[..len]).unwrap_or("");
     crate::hal::serial::write_string(text);
 }
 
@@ -464,9 +464,9 @@ macro_rules! phase_header {
             let h: u8 = b'0' + ((p / 100) as u8);
             let tens: u8 = b'0' + (((p / 10) % 10) as u8);
             let ones: u8 = b'0' + ((p % 10) as u8);
-            let h_s = unsafe { core::str::from_utf8_unchecked(core::slice::from_ref(&h)) };
-            let t_s = unsafe { core::str::from_utf8_unchecked(core::slice::from_ref(&tens)) };
-            let o_s = unsafe { core::str::from_utf8_unchecked(core::slice::from_ref(&ones)) };
+            let h_s = core::str::from_utf8(core::slice::from_ref(&h)).unwrap_or("");
+            let t_s = core::str::from_utf8(core::slice::from_ref(&tens)).unwrap_or("");
+            let o_s = core::str::from_utf8(core::slice::from_ref(&ones)).unwrap_or("");
             $crate::hal::serial::write_string("--- Phase ");
             $crate::hal::serial::write_string(h_s);
             $crate::hal::serial::write_string(t_s);
@@ -627,9 +627,9 @@ macro_rules! phase_header_emit {
         let ones: u8 = b'0' + ((p % 10) as u8);
         // SAFETY: each digit byte is in the ASCII range, so a
         // single-byte `str` constructed from it is always valid.
-        let h_s = unsafe { core::str::from_utf8_unchecked(core::slice::from_ref(&h)) };
-        let t_s = unsafe { core::str::from_utf8_unchecked(core::slice::from_ref(&tens)) };
-        let o_s = unsafe { core::str::from_utf8_unchecked(core::slice::from_ref(&ones)) };
+        let h_s = core::str::from_utf8(core::slice::from_ref(&h)).unwrap_or("");
+        let t_s = core::str::from_utf8(core::slice::from_ref(&tens)).unwrap_or("");
+        let o_s = core::str::from_utf8(core::slice::from_ref(&ones)).unwrap_or("");
         $crate::hal::serial::write_string("--- Phase ");
         $crate::hal::serial::write_string(h_s);
         $crate::hal::serial::write_string(t_s);
