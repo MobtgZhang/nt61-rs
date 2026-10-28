@@ -11,6 +11,42 @@ use crate::libs::win32k::dc::DcObject;
 use crate::libs::win32k::surface::{GdiSurface, PIXEL_FORMAT_32BPP, PIXEL_FORMAT_32BPP_ARGB};
 use alloc::vec::Vec;
 
+/// Current pen position per DC, keyed by the DC address and validated against
+/// the DC surface handle. DcObject carries no field for the GDI current
+/// position, so it is tracked beside the DC in this table.
+static DC_CURRENT_POS: crate::ke::sync::Spinlock<Vec<(usize, u64, i32, i32)>> =
+    crate::ke::sync::Spinlock::new(Vec::new());
+
+fn dc_current_pos_key(dc: &DcObject) -> usize {
+    dc as *const DcObject as usize
+}
+
+fn set_dc_current_pos(dc: &DcObject, x: i32, y: i32) {
+    let key = dc_current_pos_key(dc);
+    let mut positions = DC_CURRENT_POS.lock();
+    if let Some(entry) = positions.iter_mut().find(|entry| entry.0 == key) {
+        entry.1 = dc.surface;
+        entry.2 = x;
+        entry.3 = y;
+    } else {
+        positions.push((key, dc.surface, x, y));
+    }
+}
+
+fn get_dc_current_pos(dc: &DcObject) -> (i32, i32) {
+    let key = dc_current_pos_key(dc);
+    let mut positions = DC_CURRENT_POS.lock();
+    if let Some(entry) = positions.iter_mut().find(|entry| entry.0 == key) {
+        if entry.1 == dc.surface {
+            return (entry.2, entry.3);
+        }
+        entry.1 = dc.surface;
+        entry.2 = 0;
+        entry.3 = 0;
+    }
+    (0, 0)
+}
+
 /// Raster operation codes
 pub const SRCCOPY: u32 = 0x00CC0020;
 pub const SRCPAINT: u32 = 0x00EE0086;
@@ -787,8 +823,6 @@ pub fn draw_line_width(
 /// gre_line_to - Draw line to point using pen width
 pub fn gre_line_to(dc: &mut DcObject, end_x: i32, end_y: i32) -> bool {
     let surface = get_dc_surface(dc);
-    let _ = &surface;
-    let _ = &surface;
     if surface.is_null() {
         return false;
     }
@@ -799,46 +833,47 @@ pub fn gre_line_to(dc: &mut DcObject, end_x: i32, end_y: i32) -> bool {
         0
     };
 
-    let _ = &pen_color;
-
     // Get pen width from pen object
     let pen_width = if dc.pen != 0 {
         crate::libs::win32k::objects::gdi_get_pen_width(dc.pen)
     } else {
         1
     };
-    let _ = &pen_width;
 
-    // Current position is stored in DC - for now assume (0, 0)
-    // Full implementation would track current position
-    let start_x = 0;
-    let _ = &start_x;
-    let _ = &start_x;
-    let start_y = 0;
-    let _ = &start_y;
-    let _ = &start_y;
+    let (start_x, start_y) = get_dc_current_pos(dc);
 
-    if pen_width > 1 {
+    let drawn = if pen_width > 1 {
         draw_line_width(
             surface, start_x, start_y, end_x, end_y, pen_width, pen_color,
-        );
+        )
     } else {
-        draw_line(surface, start_x, start_y, end_x, end_y, pen_color);
+        draw_line(surface, start_x, start_y, end_x, end_y, pen_color)
+    };
+
+    if drawn {
+        set_dc_current_pos(dc, end_x, end_y);
     }
 
-    // kprintln!("[win32k] gre_line_to: ({},{})-({},{}), pen_width={}",
-    //               start_x, start_y, end_x, end_y, pen_width);
-
-    true
+    drawn
 }
 
-/// gre_move_to - Set current position (stub)
-pub fn gre_move_to(dc: &mut DcObject, x: i32, y: i32) {
-    let _ = dc;
-    let _ = x;
-    let _ = y;
-    // Would store current position in DC
-    // kprintln!("[win32k] gre_move_to: ({},{})", x, y);
+/// gre_move_to - Set the current drawing position.
+///
+/// Returns false when the DC has no backing surface or the coordinates fall
+/// outside the surface bounds; the previous position is kept in that case.
+pub fn gre_move_to(dc: &mut DcObject, x: i32, y: i32) -> bool {
+    let surface = get_dc_surface(dc);
+    if surface.is_null() {
+        return false;
+    }
+
+    let (width, height) = unsafe { ((*surface).width, (*surface).height) };
+    if x < 0 || y < 0 || x > width || y > height {
+        return false;
+    }
+
+    set_dc_current_pos(dc, x, y);
+    true
 }
 
 // =============================================================================
