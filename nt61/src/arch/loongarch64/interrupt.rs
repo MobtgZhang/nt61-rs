@@ -6,52 +6,67 @@
 //! - Timer interrupts
 //! - Priority management
 
+use core::arch::asm;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 const MAX_IRQS: usize = 256;
 const MAX_CPUS: usize = 64;
 
-static EXTIOI_BASE: AtomicU64 = AtomicU64::new(0x1FE0_1000);
+const EXTIOI_IOCSR_BASE: u64 = 0x1400;
+static EXTIOI_BASE: AtomicU64 = AtomicU64::new(EXTIOI_IOCSR_BASE);
 static EXTIOI_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 /// EXTIOI register offsets
 mod extioi {
-    pub const ENABLE: u64 = 0x020;
-    pub const ISR: u64 = 0x0A0;
-    pub const COREISR: u64 = 0x100;
-    pub const ROUTE: u64 = 0x300;
+    pub const ENABLE: u64 = 0x200;
+    pub const ISR: u64 = 0x300;
+    pub const COREISR: u64 = 0x400;
+    pub const COREMAP: u64 = 0x800;
+}
+
+unsafe fn read_u32(address: u64) -> u32 {
+    let value: u32;
+    asm!(
+        "iocsrrd.w {value}, {address}",
+        value = out(reg) value,
+        address = in(reg) address,
+        options(nostack)
+    );
+    value
+}
+
+unsafe fn write_u32(address: u64, value: u32) {
+    asm!(
+        "iocsrwr.w {value}, {address}",
+        value = in(reg) value,
+        address = in(reg) address,
+        options(nostack)
+    );
 }
 
 /// Initialize EXTIOI interrupt controller
-pub fn init(base: u64) {
-    let mapped_base = if crate::arch::loongarch64::paging::paging_enabled() {
-        crate::arch::loongarch64::paging::mmio_virt(base)
-    } else {
-        base
-    };
-    EXTIOI_BASE.store(mapped_base, Ordering::Release);
+pub fn init(_base: u64) {
+    crate::arch::loongarch64::paging::vector_page_check("pic_init");
+    let _ = crate::arch::loongarch64::paging::ensure_vector_page_mapped();
+    EXTIOI_BASE.store(EXTIOI_IOCSR_BASE, Ordering::Release);
+    crate::arch::boot::early_write_str(b"[LA64] ext_enter\r\n");
 
     unsafe {
         // Disable all interrupts initially
         for i in 0..(MAX_IRQS / 32) {
-            let enable_addr = mapped_base + extioi::ENABLE + (i as u64) * 4;
-            core::ptr::write_volatile(enable_addr as *mut u32, 0);
+            write_u32(EXTIOI_IOCSR_BASE + extioi::ENABLE + (i as u64) * 4, 0);
         }
+        crate::arch::boot::early_write_str(b"[LA64] ext_disable\r\n");
 
         // Route all interrupts to CPU 0 by default
         for i in 0..MAX_IRQS {
             set_route(i as u32, 0);
         }
-
-        // Clear pending interrupts
-        for i in 0..(MAX_IRQS / 32) {
-            let isr_addr = mapped_base + extioi::ISR + (i as u64) * 4;
-            let pending = core::ptr::read_volatile(isr_addr as *const u32);
-            core::ptr::write_volatile(isr_addr as *mut u32, pending);
-        }
+        crate::arch::boot::early_write_str(b"[LA64] ext_route\r\n");
     }
 
     EXTIOI_INITIALIZED.store(true, Ordering::Release);
+    crate::arch::boot::early_write_str(b"[LA64] ext_done\r\n");
 }
 
 /// Enable interrupt
@@ -65,10 +80,9 @@ pub fn enable_irq(irq: u32) {
     let bit_idx = irq % 32;
 
     unsafe {
-        let enable_addr = base + extioi::ENABLE + (word_idx as u64) * 4;
-        let mut val = core::ptr::read_volatile(enable_addr as *const u32);
+        let mut val = read_u32(base + extioi::ENABLE + (word_idx as u64) * 4);
         val |= 1 << bit_idx;
-        core::ptr::write_volatile(enable_addr as *mut u32, val);
+        write_u32(base + extioi::ENABLE + (word_idx as u64) * 4, val);
     }
 }
 
@@ -83,10 +97,9 @@ pub fn disable_irq(irq: u32) {
     let bit_idx = irq % 32;
 
     unsafe {
-        let enable_addr = base + extioi::ENABLE + (word_idx as u64) * 4;
-        let mut val = core::ptr::read_volatile(enable_addr as *const u32);
+        let mut val = read_u32(base + extioi::ENABLE + (word_idx as u64) * 4);
         val &= !(1 << bit_idx);
-        core::ptr::write_volatile(enable_addr as *mut u32, val);
+        write_u32(base + extioi::ENABLE + (word_idx as u64) * 4, val);
     }
 }
 
@@ -97,11 +110,12 @@ pub fn set_route(irq: u32, cpu: u32) {
     }
 
     let base = EXTIOI_BASE.load(Ordering::Acquire);
-    let byte_idx = irq;
-
     unsafe {
-        let route_addr = (base + extioi::ROUTE + byte_idx as u64) as *mut u8;
-        core::ptr::write_volatile(route_addr, cpu as u8);
+        let route_addr = base + extioi::COREMAP + ((irq / 4) as u64) * 4;
+        let shift = (irq % 4) * 8;
+        let val = read_u32(route_addr);
+        let masked = val & !(0xff << shift);
+        write_u32(route_addr, masked | ((cpu as u32 & 0xff) << shift));
     }
 }
 
@@ -112,11 +126,10 @@ pub fn get_route(irq: u32) -> u32 {
     }
 
     let base = EXTIOI_BASE.load(Ordering::Acquire);
-    let byte_idx = irq;
-
     unsafe {
-        let route_addr = (base + extioi::ROUTE + byte_idx as u64) as *const u8;
-        core::ptr::read_volatile(route_addr) as u32
+        let route_addr = base + extioi::COREMAP + ((irq / 4) as u64) * 4;
+        let shift = (irq % 4) * 8;
+        (read_u32(route_addr) >> shift) & 0xff
     }
 }
 
@@ -131,8 +144,7 @@ pub fn is_pending(irq: u32) -> bool {
     let bit_idx = irq % 32;
 
     unsafe {
-        let isr_addr = base + extioi::ISR + (word_idx as u64) * 4;
-        let val = core::ptr::read_volatile(isr_addr as *const u32);
+        let val = read_u32(base + extioi::ISR + (word_idx as u64) * 4);
         (val & (1 << bit_idx)) != 0
     }
 }
@@ -148,8 +160,7 @@ pub fn clear_pending(irq: u32) {
     let bit_idx = irq % 32;
 
     unsafe {
-        let isr_addr = base + extioi::ISR + (word_idx as u64) * 4;
-        core::ptr::write_volatile(isr_addr as *mut u32, 1 << bit_idx);
+        write_u32(base + extioi::COREISR + (word_idx as u64) * 4, 1 << bit_idx);
     }
 }
 
@@ -162,8 +173,7 @@ pub fn get_pending_for_cpu(cpu: u32) -> u32 {
     let base = EXTIOI_BASE.load(Ordering::Acquire);
 
     unsafe {
-        let coreisr_addr = base + extioi::COREISR + (cpu as u64) * 4;
-        core::ptr::read_volatile(coreisr_addr as *const u32)
+        read_u32(base + extioi::COREISR + (cpu as u64) * 4)
     }
 }
 
