@@ -145,8 +145,8 @@ impl VmState {
             user_limit: USER_LIMIT,
             kernel_limit: KERNEL_LIMIT,
             next_alloc_base: 0xFFFF_8000_0040_0000,
-            direct_map_base: 0xFFFF_8800_0000_0000,
-            direct_map_next: 0xFFFF_8800_0000_0000,
+            direct_map_base: crate::mm::constants::KERNEL_DIRECT_MAP_BASE,
+            direct_map_next: crate::mm::constants::KERNEL_DIRECT_MAP_BASE,
         }
     }
 }
