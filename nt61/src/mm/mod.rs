@@ -548,6 +548,8 @@ pub fn init(boot_info: &BootInfo) {
         crate::hal::serial::write_string_always("\r\n");
     }
     crate::hal::serial::write_string_always("MM4 vas_init_done\r\n");
+    #[cfg(target_arch = "loongarch64")]
+    crate::arch::loongarch64::paging::vector_page_check("mm4");
 
     // ------------------------------------------------------------------
     // 5. System PTE pool, hyperspace window.
@@ -565,10 +567,16 @@ pub fn init(boot_info: &BootInfo) {
     }
 
     crate::hal::serial::write_string_always("MM6 syspte_hyperspace_done\r\n");
+    #[cfg(target_arch = "loongarch64")]
+    crate::arch::loongarch64::paging::vector_page_check("mm6");
+
 
     // ------------------------------------------------------------------
     pool::init();
     crate::hal::serial::write_string_always("MM7 heap_pool_done\r\n");
+    #[cfg(target_arch = "loongarch64")]
+    crate::arch::loongarch64::paging::vector_page_check("mm7");
+
 
     {
         let (head, count) = pfn::get_free_list_stats();
@@ -594,6 +602,9 @@ pub fn init(boot_info: &BootInfo) {
     }
 
     crate::hal::serial::write_string_always("MM8 subsystems_done\r\n");
+    #[cfg(target_arch = "loongarch64")]
+    crate::arch::loongarch64::paging::vector_page_check("mm8");
+
 
     // ------------------------------------------------------------------
     // 8. Mark MM as fully initialized.  After this point the
