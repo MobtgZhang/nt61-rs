@@ -378,18 +378,7 @@ pub fn create_user_address_space() -> Option<u64> {
             return None;
         }
     }
-    #[cfg(target_arch = "aarch64")]
-    unsafe {
-        for i in 0..PT_ENTRIES {
-            let src_entry = *system.add(i);
-            if i >= 256 {
-                *dst.add(i) = MMPTE { u_long: src_entry.raw() };
-            } else {
-                *dst.add(i) = MMPTE { u_long: 0 };
-            }
-        }
-    }
-    #[cfg(all(not(target_arch = "x86_64"), not(target_arch = "aarch64")))]
+    #[cfg(not(target_arch = "x86_64"))]
     unsafe {
         for i in 0..PT_ENTRIES {
             let src_entry = *system.add(i);
@@ -1810,6 +1799,8 @@ pub unsafe fn reserve_system_page_tables(pml4_phys: u64) {
 /// Initialise the system address space. Allocates a PML4 page and
 /// installs the self-map.
 pub fn init() {
+    #[cfg(target_arch = "loongarch64")]
+    crate::arch::loongarch64::paging::vector_page_check("vas_enter");
     // read the current page root
     let page_root = crate::arch::read_current_page_root();
     let pml4_phys = page_root;
@@ -1923,10 +1914,12 @@ pub fn init() {
     // Enable mapped-address mode (PG=1, DA=0).
     #[cfg(target_arch = "loongarch64")]
     unsafe {
+        crate::arch::loongarch64::paging::vector_page_check("vas_prepg");
         let root = crate::arch::read_current_page_root();
         if root != 0 {
             crate::arch::loongarch64::paging::load_page_root(root >> 12);
         }
+        crate::arch::loongarch64::paging::vector_page_check("vas_pg_on");
     }
 
     // Initialize VAS state first
