@@ -8,7 +8,7 @@ use crate::hal::common::pit;
 use crate::ke::sync::Spinlock;
 use crate::netstack::ipv4;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 pub use crate::netstack::tcp_congestion::{CongestionState, INITIAL_CWND};
 
@@ -412,8 +412,18 @@ fn seq_after_or_equal(a: u32, b: u32) -> bool {
 /// Global TCB table
 static TCP_CONNECTIONS: Spinlock<Vec<TcpControlBlock>> = Spinlock::new(Vec::new());
 
+/// Hard upper bound on simultaneous TCP control blocks. This keeps passive
+/// opens, active opens, and listeners from growing the global table without
+/// limit under load.
+const MAX_TCP_CONNECTIONS: usize = 256;
+
 /// Next socket ID
 static NEXT_SOCKET_ID: AtomicU32 = AtomicU32::new(1);
+
+/// Segment counters are lock-free so packet transmission can run while the
+/// connection table lock is held without acquiring `TCP_STATS` as well.
+static TCP_SEGMENTS_SENT: AtomicU64 = AtomicU64::new(0);
+static TCP_SEGMENTS_RETRANSMITTED: AtomicU64 = AtomicU64::new(0);
 
 /// TCP statistics
 pub struct TcpStats {
@@ -472,6 +482,8 @@ static TCP_STATS: Spinlock<TcpStats> = Spinlock::new(TcpStats::zero());
 /// Initialize the TCP module
 pub fn init() {
     TCP_CONNECTIONS.lock().clear();
+    TCP_SEGMENTS_SENT.store(0, Ordering::Relaxed);
+    TCP_SEGMENTS_RETRANSMITTED.store(0, Ordering::Relaxed);
     let mut stats = TCP_STATS.lock();
     *stats = TcpStats::zero();
 }
@@ -580,8 +592,7 @@ fn send_segment(tcb: &mut TcpControlBlock, flags: u8, seq: u32, ack: u32, data: 
     // Send via IPv4
     let _ = ipv4::send_ipv4(tcb.local_ip, tcb.remote_ip, 6, &packet);
 
-    let mut stats = TCP_STATS.lock();
-    stats.segs_sent += 1;
+    TCP_SEGMENTS_SENT.fetch_add(1, Ordering::Relaxed);
 }
 
 /// Process incoming TCP segment
@@ -679,6 +690,15 @@ pub fn tcp_input(src_ip: u32, dst_ip: u32, data: &[u8]) {
             // No matching connection
             // Check if it's a SYN for a listening socket
             if flags & tcp_flags::SYN != 0 {
+                // Check capacity before allocating the child socket. Re-check
+                // after allocation: multiple CPUs can receive SYNs at the same
+                // time, so the probe alone is not sufficient for a hard bound.
+                {
+                    let connections = TCP_CONNECTIONS.lock();
+                    if connections.len() >= MAX_TCP_CONNECTIONS {
+                        return;
+                    }
+                }
                 if let Some(idx) = find_listener(dst_ip, header.dst_port) {
                     // create new connection for listening socket
                     let Some(new_child_socket_id) =
@@ -690,6 +710,11 @@ pub fn tcp_input(src_ip: u32, dst_ip: u32, data: &[u8]) {
                         return;
                     };
                     let mut connections = TCP_CONNECTIONS.lock();
+                    if connections.len() >= MAX_TCP_CONNECTIONS {
+                        drop(connections);
+                        crate::netstack::socket::remove(new_child_socket_id);
+                        return;
+                    }
                     // Capture the listening socket id while we still
                     // hold a borrow on the listener TCB so the new
                     // child can be enqueued onto the parent's accept
@@ -886,6 +911,10 @@ fn generate_isn() -> u32 {
 pub fn listen(local_ip: u32, local_port: Port) -> Option<u32> {
     let mut connections = TCP_CONNECTIONS.lock();
 
+    if connections.len() >= MAX_TCP_CONNECTIONS {
+        return None;
+    }
+
     // Reject duplicate listen on the same (local_ip, local_port)
     // so the kernel does not double-arm accept queues.
     if connections.iter().any(|tcb| {
@@ -926,6 +955,10 @@ pub fn connect(
     remote_port: Port,
 ) -> Option<u32> {
     let mut connections = TCP_CONNECTIONS.lock();
+
+    if connections.len() >= MAX_TCP_CONNECTIONS {
+        return None;
+    }
 
     if local_port == 0 {
         local_port = (49152..=u16::MAX)
@@ -1094,7 +1127,10 @@ pub fn receive(socket_id: u32, buffer: &mut [u8]) -> Option<usize> {
 
 /// Get TCP statistics
 pub fn get_stats() -> TcpStats {
-    (*TCP_STATS.lock()).clone()
+    let mut stats = (*TCP_STATS.lock()).clone();
+    stats.segs_sent = TCP_SEGMENTS_SENT.load(Ordering::Relaxed);
+    stats.segs_retrans = TCP_SEGMENTS_RETRANSMITTED.load(Ordering::Relaxed);
+    stats
 }
 
 /// Check for retransmission timeouts and perform retransmissions
@@ -1129,9 +1165,7 @@ pub fn check_retransmit_timers() {
             let tcb = &mut connections[i];
             // kprintln!("  [TCP] Retransmission timeout for socket {}", tcb.socket_id);
 
-            let mut stats = TCP_STATS.lock();
-            stats.segs_retrans += 1;
-            drop(stats);
+            TCP_SEGMENTS_RETRANSMITTED.fetch_add(1, Ordering::Relaxed);
 
             // Retransmit the segment. We resend the bytes from the
             // start of tx_buf (which holds data not yet ACKed). The
@@ -1185,4 +1219,45 @@ pub fn get_ssthresh(socket_id: u32) -> Option<u32> {
         .iter()
         .find(|tcb| tcb.socket_id == socket_id)
         .map(|tcb| tcb.ssthresh)
+}
+
+#[cfg(test)]
+mod connection_limit_tests {
+    use super::*;
+
+    fn fill_connections(count: usize) {
+        let mut connections = TCP_CONNECTIONS.lock();
+        for index in 0..count {
+            let mut tcb = TcpControlBlock::new();
+            tcb.local_ip = 0;
+            tcb.local_port = (index + 1) as u16;
+            tcb.remote_ip = 0x0102_0304;
+            tcb.remote_port = 0x1234;
+            tcb.state = TcpState::Established;
+            connections.push(tcb);
+        }
+    }
+
+    #[test]
+    fn connection_creation_is_bounded() {
+        init();
+        fill_connections(MAX_TCP_CONNECTIONS);
+        assert_eq!(TCP_CONNECTIONS.lock().len(), MAX_TCP_CONNECTIONS);
+        assert!(listen(0, 80).is_none());
+        assert!(connect(0, 0, 0x0102_0304, 80).is_none());
+        assert_eq!(TCP_CONNECTIONS.lock().len(), MAX_TCP_CONNECTIONS);
+
+        init();
+        fill_connections(MAX_TCP_CONNECTIONS - 1);
+        assert!(listen(0, 80).is_some());
+        assert_eq!(TCP_CONNECTIONS.lock().len(), MAX_TCP_CONNECTIONS);
+
+        let mut segment = [0u8; 21];
+        segment[0..2].copy_from_slice(&0x1234u16.to_be_bytes());
+        segment[2..4].copy_from_slice(&80u16.to_be_bytes());
+        segment[4..8].copy_from_slice(&1u32.to_be_bytes());
+        segment[12..14].copy_from_slice(&((5u16 << 12) | tcp_flags::SYN as u16).to_be_bytes());
+        tcp_input(0x0A00_0001, 0x0102_0304, &segment);
+        assert_eq!(TCP_CONNECTIONS.lock().len(), MAX_TCP_CONNECTIONS);
+    }
 }
