@@ -958,7 +958,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn maximum_allowed_on_null_descriptor_applies_default_token_policy() {
         ensure_test_heap();
         let token = Token::new_primary(sid::well_known(WellKnownSid::Users));
