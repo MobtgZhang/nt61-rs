@@ -137,8 +137,14 @@ pub fn add_interface(address: u32, netmask: u32, gateway: u32, eth_if: u32) -> O
     let ip_if = IpInterface::new(if_index, address, netmask, gateway, eth_if);
     interfaces.push(ip_if);
 
-    // Add a default route for this interface's subnet
-    add_route(address & netmask, netmask, gateway, if_index, 0);
+    let subnet = address & netmask;
+    let if_index = if_index;
+    drop(interfaces);
+
+    // Add a default route for this interface's subnet.  Drop the
+    // interface lock first: `add_route` updates routing tables and
+    // must not be reached while holding the interface lock.
+    add_route(subnet, netmask, gateway, if_index, 0);
 
     // Install the default route only for a real gateway; loopback has
     // none and must not shadow physical networks.
