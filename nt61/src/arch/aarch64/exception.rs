@@ -78,7 +78,7 @@ global_asm!(
     // ============================================================
     ".align 7",
     "lower_el_aarch32_sync:",
-    "  b .",
+    "  b arch_aarch64_trap_aarch32_sync_hang",
     ".align 7",
     "lower_el_aarch32_irq:",
     "  b .",
@@ -134,6 +134,7 @@ global_asm!(
     "  stp  x10, x11, [sp, #0x100]",
     "  stp  x12, x13, [sp, #0x110]",
     "  mov  x0, #\\kind",
+    "  str  x0, [sp, #0x120]",
     "  mov  x1, sp",
     ".endm",
     ".macro restore_context",
