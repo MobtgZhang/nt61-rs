@@ -187,7 +187,7 @@ unsafe impl GlobalAlloc for HybridAllocator {
         user
     }
 
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+    unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
         if ptr.is_null() {
             return;
         }
