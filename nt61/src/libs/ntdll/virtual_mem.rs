@@ -22,10 +22,6 @@ use super::types::{SizeT, HANDLE, NTSTATUS, PVOID};
 use crate::ke::sync::Spinlock;
 use alloc::vec::Vec;
 
-/// Pool tag for virtual memory allocations (4-character tag: 'VMem')
-const VMEM_POOL_TAG: u32 =
-    (b'V' as u32) | (b'M' as u32) << 8 | (b'e' as u32) << 16 | (b'm' as u32) << 24;
-
 /// Memory allocation tracking entry.
 struct MemEntry {
     /// Virtual address of the allocation
