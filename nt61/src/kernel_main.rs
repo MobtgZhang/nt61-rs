@@ -241,51 +241,92 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     } else {
         crate::arch::boot::early_write_str(b"NO FRAMEBUFFER\r\n");
     }
+    crate::hal::serial::write_string_always("K:AFTER_FB\r\n");
+    #[cfg(target_arch = "loongarch64")]
+    crate::arch::loongarch64::paging::vector_page_check("fb");
+
 
     // From here on the operator sees the GUI panel rather than the
     // raw COM1 boot trace. Panic paths still bypass this gate.
     // Release builds hide boot noise from COM1; debug builds keep it
     // enabled so QEMU validation can observe the full boot sequence.
+    crate::hal::serial::write_string_always("K:SETDISABLE_ENTER\r\n");
     if !cfg!(feature = "log_level_debug") {
         crate::hal::serial::set_disabled(true);
     }
+    crate::arch::boot::early_write_str(b"K:LOCK_ENTER\r\n");
+    crate::hal::serial::write_string_always("K:SETDISABLE_DONE\r\n");
+    crate::arch::boot::early_write_str(b"K:LOCK_DONE\r\n");
 
     // ========================================================================
     // Determine boot mode and configure output channels through the
     // platform boot facade.
     // ========================================================================
     let boot_mode = BootMode::from_u32(boot_info.boot_mode);
+    crate::arch::boot::early_write_str(b"K:DISPLAY_ENTER\r\n");
     crate::arch::boot::configure_boot_display(boot_mode);
+    crate::arch::boot::early_write_str(b"K:DISPLAY_DONE\r\n");
+    #[cfg(target_arch = "loongarch64")]
+    crate::arch::loongarch64::paging::vector_page_check("display");
+
 
     // Platform serial bring-up. This is deliberately after MM because
     // the logging/console layers allocate and because early diagnostics
     // already used the firmware-initialized UART.
+    crate::arch::boot::early_write_str(b"K:SERIAL_ENTER\r\n");
     crate::arch::boot::init_serial();
+    crate::arch::boot::early_write_str(b"K:SERIAL_DONE\r\n");
+    #[cfg(target_arch = "loongarch64")]
+    crate::arch::loongarch64::paging::vector_page_check("serial");
+
     boot_header!("NT6.1.7601 Kernel Boot Trace");
     boot_println!("Memory manager initialized");
 
     // Initialise the platform text console after the kernel heap is
     // configured. The console's ring buffer uses heap storage, so it
     // must not run before `mm::init()` has completed.
+    crate::arch::boot::early_write_str(b"K:CONSOLE_ENTER\r\n");
     crate::arch::boot::init_text_console();
+    crate::arch::boot::early_write_str(b"K:CONSOLE_DONE\r\n");
+    #[cfg(target_arch = "loongarch64")]
+    crate::arch::loongarch64::paging::vector_page_check("console");
+
     crate::rtl::windows_log::init_boot_timer();
+    crate::arch::boot::early_write_str(b"K:BOOTTIMER_DONE\r\n");
+    #[cfg(target_arch = "loongarch64")]
+    crate::arch::loongarch64::paging::vector_page_check("boottimer");
+
 
     // ============================================================================
     // PHASE 1: Hardware initialization
     // ============================================================================
     //
+    crate::arch::boot::early_write_str(b"K:PHASE_ENTER\r\n");
     phase_header!(0, "Hardware Initialization");
+    crate::arch::boot::early_write_str(b"K:PHASE_DONE\r\n");
+    #[cfg(target_arch = "loongarch64")]
+    crate::arch::loongarch64::paging::vector_page_check("phase");
+
 
     boot_debug_print!("Masking boot interrupts... ");
+    crate::arch::boot::early_write_str(b"K:MASK_ENTER\r\n");
     crate::arch::boot::mask_legacy_pic_irqs();
+    crate::arch::boot::early_write_str(b"K:MASK_DONE\r\n");
+    #[cfg(target_arch = "loongarch64")]
+    crate::arch::loongarch64::paging::vector_page_check("mask");
+
     boot_println!("OK");
 
     boot_debug_print!("Initializing processor state... ");
+    crate::arch::boot::early_write_str(b"K:HW_ENTER\r\n");
     arch::init_hardware();
+    crate::arch::boot::early_write_str(b"K:HW_DONE\r\n");
     boot_println!("OK");
 
     boot_debug_print!("Bringing up secondary processors... ");
+    crate::arch::boot::early_write_str(b"K:SMP_ENTER\r\n");
     arch::start_smp();
+    crate::arch::boot::early_write_str(b"K:SMP_DONE\r\n");
     boot_println!("OK");
 
 
