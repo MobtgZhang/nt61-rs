@@ -518,8 +518,8 @@ pub unsafe extern "C" fn bcrypt_export_key(
     key_handle: usize,
     _export_key_handle: usize,
     blob_type: *const u16,
-    output: *mut u8,
-    output_len: u32,
+    _output: *mut u8,
+    _output_len: u32,
     result_len: *mut u32,
     _flags: u32,
 ) -> i32 {
