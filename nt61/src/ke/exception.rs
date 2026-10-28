@@ -1714,7 +1714,7 @@ mod tests {
         assert_eq!(code.operation_info(), 0);
         assert_eq!(code.entry_size(), 2);
         let rsp = ctx.rsp;
-        unsafe { apply_unwind_code(&mut ctx, code, rsp, 0) };
+        apply_unwind_code(&mut ctx, code, rsp, 0);
         assert_eq!(ctx.rsp, 0x1000 + 0x40 * 8);
 
         // op_info == 1: the two following slots hold the 32-bit size.
@@ -1724,10 +1724,8 @@ mod tests {
         assert_eq!(code.operation_info(), 1);
         assert_eq!(code.entry_size(), 3);
         let rsp = ctx.rsp;
-        unsafe {
-            assert_eq!(code_ptr_read_32(code), 0x0001_0000);
-            apply_unwind_code(&mut ctx, code, rsp, 0);
-        }
+        unsafe { assert_eq!(code_ptr_read_32(code), 0x0001_0000) };
+        apply_unwind_code(&mut ctx, code, rsp, 0);
         assert_eq!(ctx.rsp, 0x1000 + 0x40 * 8 + 0x0001_0000 * 8);
     }
 
@@ -1739,7 +1737,7 @@ mod tests {
         let mut ctx = ContextFrame::new();
         ctx.rsp = 0x2000;
         let rsp = ctx.rsp;
-        unsafe { apply_unwind_code(&mut ctx, code, rsp, 0) };
+        apply_unwind_code(&mut ctx, code, rsp, 0);
         assert_eq!(ctx.rsp, 0x2008);
     }
 
@@ -1751,7 +1749,7 @@ mod tests {
         let mut ctx = ContextFrame::new();
         ctx.rsp = 0x3000;
         let rsp = ctx.rsp;
-        unsafe { apply_unwind_code(&mut ctx, code, rsp, 0) };
+        apply_unwind_code(&mut ctx, code, rsp, 0);
         assert_eq!(ctx.rsp, 0x3000 + 48);
     }
 }
