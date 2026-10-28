@@ -249,7 +249,7 @@ pub fn init() {
 /// Register all discovered AHCI disks as storage devices.
 fn register_ahci_disks() {
     if let Some((controller, port)) = ahci::first_disk_location() {
-        let mut device = StorageDevice {
+        let device = StorageDevice {
             device_type: StorageDeviceType::AhciDisk,
             sector_size: BLOCK_SECTOR_SIZE,
             total_sectors: 0,
