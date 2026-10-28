@@ -1,12 +1,10 @@
 //! ntdll — nt_query_system_information / nt_set_system_information
 //
-//! Returns mostly stubs: the kernel reports fixed values
-//! (single processor, 4 GiB of RAM, ...) so that the kernel32
-//! layer can do its smoke test. The full surface is much
-//! larger; we provide the most-used classes:
+//! Reports the most-used system-information classes backed by the
+//! actual PFN database and scheduler:
 //
-//!   * `SystemBasicInformation` (0) — fixed 1 CPU / 4 GiB
-//!   * `SystemProcessorInformation` (1) — x86_64 family
+//!   * `SystemBasicInformation` (0) — real PFN range and CPU count
+//!   * `SystemProcessorInformation` (1) — target architecture
 //!   * `SystemTimeOfDayInformation` (3) — current boot time
 //!   * `SystemProcessInformation` (5) — list of registered
 //!     processes
@@ -17,6 +15,34 @@
 use super::status::{STATUS_INVALID_INFO_CLASS, STATUS_INVALID_PARAMETER, STATUS_SUCCESS};
 use super::types::{NTSTATUS, PVOID};
 use crate::mm::user_copy::write_user_object;
+
+#[cfg(target_arch = "x86_64")]
+const PROCESSOR_ARCHITECTURE_AMD64: u16 = 9;
+#[cfg(target_arch = "aarch64")]
+const PROCESSOR_ARCHITECTURE_ARM64: u16 = 2440;
+#[cfg(target_arch = "riscv64")]
+const PROCESSOR_ARCHITECTURE_RISCV64: u16 = 3130;
+#[cfg(target_arch = "loongarch64")]
+const PROCESSOR_ARCHITECTURE_LOONG64: u16 = 3210;
+
+fn processor_architecture() -> u16 {
+    #[cfg(target_arch = "x86_64")]
+    {
+        PROCESSOR_ARCHITECTURE_AMD64
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        PROCESSOR_ARCHITECTURE_ARM64
+    }
+    #[cfg(target_arch = "riscv64")]
+    {
+        PROCESSOR_ARCHITECTURE_RISCV64
+    }
+    #[cfg(target_arch = "loongarch64")]
+    {
+        PROCESSOR_ARCHITECTURE_LOONG64
+    }
+}
 
 /// `SYSTEM_BASIC_INFORMATION` (44 bytes on x64).
 #[repr(C)]
@@ -90,17 +116,24 @@ pub unsafe extern "C" fn nt_query_system_information(
                 return super::status::STATUS_BUFFER_TOO_SMALL;
             }
             let mut s = SystemBasicInformation::default();
-            s.reserved = 0;
             s.timer_resolution = 156250; // 15.625 ms
             s.page_size = 4096;
-            s.number_of_physical_pages = 0x100000; // 4 GiB
-            s.lowest_physical_page_number = 1;
-            s.highest_physical_page_number = 0x100000;
+            let page_count = crate::mm::pfn::get_database_count();
+            let page_base = crate::mm::pfn::get_database_base();
+            s.number_of_physical_pages = page_count as u32;
+            s.lowest_physical_page_number = page_base as u32;
+            s.highest_physical_page_number = page_base.saturating_add(page_count.saturating_sub(1)) as u32;
             s.allocation_granularity = 0x10000; // 64 KiB
             s.minimum_user_mode_address = 0x10000 as PVOID;
             s.maximum_user_mode_address = 0x0000_7FFF_FFFF_FFFFusize as PVOID;
-            s.active_processors_affinity_mask = 0x1usize as PVOID;
-            s.number_of_processors = 1;
+            let cpu_count = crate::ke::scheduler::get_cpu_count();
+            let affinity_mask = if cpu_count >= usize::BITS as u32 {
+                usize::MAX
+            } else {
+                (1usize << cpu_count) - 1
+            };
+            s.active_processors_affinity_mask = affinity_mask as PVOID;
+            s.number_of_processors = cpu_count as u8;
             if write_user_object(system_information as u64, &s).is_err() {
                 return super::status::STATUS_ACCESS_VIOLATION;
             }
@@ -122,10 +155,10 @@ pub unsafe extern "C" fn nt_query_system_information(
                 return super::status::STATUS_BUFFER_TOO_SMALL;
             }
             let mut s = SystemProcessorInformation::default();
-            s.processor_architecture = 9; // PROCESSOR_ARCHITECTURE_AMD64
+            s.processor_architecture = processor_architecture();
             s.processor_level = 0x10;
             s.processor_revision = 0x9000;
-            s.maximum_processors = 1;
+            s.maximum_processors = crate::ke::scheduler::get_cpu_count() as u16;
             s.processor_features = 0;
             if write_user_object(system_information as u64, &s).is_err() {
                 return super::status::STATUS_ACCESS_VIOLATION;
