@@ -116,9 +116,9 @@ pub fn init_hardware() {
 
         // Try to init PIT/HPET/keyboard, but don't fail if they need MM
         crate::arch::boot::early_write_str(b"[ARCH] pit_begin\r\n");
-        let _ = crate::hal::pit::init(1000);
+        let _ = crate::hal::pit::init(100);
         let apic_timer_ready = crate::hal::x86_64::apic::init()
-            && crate::hal::x86_64::apic::init_timer_calibrated(1000);
+            && crate::hal::x86_64::apic::init_timer_calibrated(100);
         if !apic_timer_ready {
             crate::hal::pic::unmask_irq(0);
         }
@@ -178,16 +178,26 @@ pub fn init_hardware() {
 
     #[cfg(target_arch = "loongarch64")]
     {
+        crate::arch::boot::early_write_str(b"[LA64] hw_enter\r\n");
         loongarch64::init();
+        crate::arch::boot::early_write_str(b"[LA64] arch_done\r\n");
         loongarch64::paging::init();
+        crate::arch::boot::early_write_str(b"[LA64] paging_done\r\n");
         loongarch64::idt::init();
+        crate::arch::boot::early_write_str(b"[LA64] idt_done\r\n");
         loongarch64::serial::serial_init(0);
+        crate::arch::boot::early_write_str(b"[LA64] serial_done\r\n");
         loongarch64::pit::init(0x1FE0_0000);
+        crate::arch::boot::early_write_str(b"[LA64] pit_done\r\n");
         loongarch64::pic::init(0x1FE0_0000 + 0x1000);
+        crate::arch::boot::early_write_str(b"[LA64] pic_done\r\n");
         crate::hal::common::keyboard_unified::enable_serial_rx_irq();
+        crate::arch::boot::early_write_str(b"[LA64] rxirq_done\r\n");
         loongarch64::syscall::init();
+        crate::arch::boot::early_write_str(b"[LA64] syscall_done\r\n");
         crate::hal::common::init();
         crate::boot_debug_println!("[LA64] common HAL init done");
+        crate::arch::boot::early_write_str(b"[LA64] common_done\r\n");
     }
 }
 
@@ -1243,9 +1253,18 @@ pub fn send_tlb_shootdown_ipi() {
     {
         aarch64::gic::broadcast_tlb_shootdown();
     }
-    // riscv64 / loongarch64 have no SMP IPI path yet; their
-    // `lazy_flush_if_pending` tick fallback still converges, and
-    // single-core builds have nothing to notify.
+    #[cfg(target_arch = "riscv64")]
+    {
+        let current = riscv64::smp::current_hart_id() as u64;
+        let online_mask = (1u64 << riscv64::smp::cpu_count().min(63)).wrapping_sub(1);
+        riscv64::tlb::flush_remote(online_mask & !(1 << current));
+    }
+    #[cfg(target_arch = "loongarch64")]
+    {
+        let current = loongarch64::smp::__smp_get_current_cpu_id() as u64;
+        let online_mask = (1u64 << loongarch64::smp::cpu_count().min(63)).wrapping_sub(1);
+        loongarch64::tlb::flush_remote(online_mask & !(1 << current));
+    }
 }
 
 pub fn get_stack_pointer() -> u64 {
