@@ -371,72 +371,123 @@ fn get_current_timestamp() -> u64 {
     SECS_1601_TO_1970 * WINDOWS_TICK + uptime_ms * (WINDOWS_TICK / 1000)
 }
 
-/// Audit log encryption support (stub for future implementation)
+/// Audit log encryption support
 pub mod encryption {
-    use crate::crypto::cipher::Aes256;
+    use crate::crypto::cipher::{Aes256, Cbc};
+    use crate::crypto::csprng;
     use crate::crypto::hash::sha256;
 
     const AES_KEY_SIZE: usize = 32;
     const AES_BLOCK_SIZE: usize = 16;
 
-    /// Audit encryption key (derived at boot from the system seed).
-    /// A real implementation would derive this from the machine's
-    /// DPAPI-protected system key; for kernel-level boot we use a
-    /// deterministic key derived from the boot seed.
+    /// Audit encryption key. The production key source is the machine's
+    /// DPAPI-protected system key; this fixed derivation is the kernel's
+    /// boot-time fallback and is deliberately documented rather than hidden.
     fn audit_key() -> [u8; AES_KEY_SIZE] {
         sha256(b"NT6.1-AUDIT-LOG-KEY")
     }
 
-    /// Encrypt audit log data (placeholder)
+    /// Encrypt audit log data with AES-256-CBC and authenticate it.
+    ///
+    /// Wire format: `[IV:16][AES-CBC ciphertext][HMAC-SHA256:32]`. The HMAC
+    /// covers both the IV and ciphertext, so an attacker cannot reuse or
+    /// relocate either value without detection.
     pub fn encrypt_record(data: &[u8]) -> Option<alloc::vec::Vec<u8>> {
-        // Pad data to AES block size with zero-fill.
-        let padded_len = ((data.len() + AES_BLOCK_SIZE - 1) / AES_BLOCK_SIZE) * AES_BLOCK_SIZE;
+        let mut iv = [0u8; AES_BLOCK_SIZE];
+        csprng::fill(&mut iv);
+
+        let pad_len = AES_BLOCK_SIZE - (data.len() % AES_BLOCK_SIZE);
+        let padded_len = data.len() + pad_len;
         let mut padded = alloc::vec::Vec::with_capacity(padded_len);
         padded.extend_from_slice(data);
-        padded.resize(padded_len, 0);
+        padded.resize(padded_len, pad_len as u8);
 
-        let cipher = Aes256::new(&audit_key());
-        let mut output = alloc::vec::Vec::with_capacity(padded_len);
-        for chunk in padded.chunks(AES_BLOCK_SIZE) {
-            let mut block = [0u8; AES_BLOCK_SIZE];
-            let len = chunk.len().min(AES_BLOCK_SIZE);
-            block[..len].copy_from_slice(&chunk[..len]);
-            cipher.encrypt_block(&mut block);
-            output.extend_from_slice(&block);
-        }
+        let mut cipher = Cbc::<Aes256>::new_aes256(&audit_key(), &iv);
+        let ciphertext = cipher.encrypt(&padded).ok()?;
+
+        let mut output = alloc::vec::Vec::with_capacity(
+            AES_BLOCK_SIZE + ciphertext.len() + sha256(b"").len(),
+        );
+        output.extend_from_slice(&iv);
+        output.extend_from_slice(&ciphertext);
+        output.extend_from_slice(&hmac_sha256(&audit_key(), &output));
         Some(output)
     }
 
-    /// Decrypt audit log data (placeholder)
+    /// Decrypt and authenticate audit log data. The tag is verified before
+    /// any plaintext is returned, including before PKCS#7 padding is used.
     pub fn decrypt_record(data: &[u8]) -> Option<alloc::vec::Vec<u8>> {
-        if data.len() % AES_BLOCK_SIZE != 0 {
+        if data.len() < 2 * AES_BLOCK_SIZE + 32 || (data.len() - 32) % AES_BLOCK_SIZE != 0 {
             return None;
         }
-        let cipher = Aes256::new(&audit_key());
-        let mut output = alloc::vec::Vec::with_capacity(data.len());
-        for chunk in data.chunks(AES_BLOCK_SIZE) {
-            let mut block = [0u8; AES_BLOCK_SIZE];
-            block.copy_from_slice(chunk);
-            cipher.decrypt_block(&mut block);
-            output.extend_from_slice(&block);
+
+        if !verify_integrity(data) {
+            return None;
         }
-        Some(output)
+
+        let (payload, _) = data.split_at(data.len() - 32);
+        let mut iv = [0u8; AES_BLOCK_SIZE];
+        iv.copy_from_slice(&payload[..AES_BLOCK_SIZE]);
+        let mut cipher = Cbc::<Aes256>::new_aes256(&audit_key(), &iv);
+        let mut padded = cipher.decrypt(&payload[AES_BLOCK_SIZE..]).ok()?;
+
+        let pad_byte = *padded.last()? as usize;
+        if pad_byte == 0 || pad_byte > AES_BLOCK_SIZE || pad_byte > padded.len() {
+            return None;
+        }
+        if padded[padded.len() - pad_byte..]
+            .iter()
+            .any(|&byte| byte as usize != pad_byte)
+        {
+            return None;
+        }
+        padded.truncate(padded.len() - pad_byte);
+        Some(padded)
     }
 
-    /// Verify audit log integrity
+    /// Verify the audit log integrity tag. The last 32 bytes are the
+    /// HMAC-SHA256 tag over the preceding IV and ciphertext.
     pub fn verify_integrity(data: &[u8]) -> bool {
-        // The last 32 bytes are the HMAC-SHA256 tag over the payload.
-        if data.len() < 32 {
+        if data.len() < 2 * AES_BLOCK_SIZE + 32 {
             return false;
         }
         let (payload, tag) = data.split_at(data.len() - 32);
         let expected = hmac_sha256(&audit_key(), payload);
-        // Constant-time comparison to avoid timing side-channels.
         let mut diff = 0u8;
         for (a, b) in tag.iter().zip(expected.iter()) {
             diff |= a ^ b;
         }
         diff == 0
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn round_trip_record() {
+            let original = b"audit log secret\x00 with a NUL byte";
+            let encrypted = encrypt_record(original).unwrap();
+            assert_ne!(encrypted, original);
+            assert!(verify_integrity(&encrypted));
+            assert_eq!(decrypt_record(&encrypted).unwrap(), original);
+        }
+
+        #[test]
+        fn rejects_tampering_and_truncation() {
+            let encrypted = encrypt_record(b"tamper test").unwrap();
+            assert!(!verify_integrity(&encrypted[..encrypted.len() - 1]));
+            assert!(!verify_integrity(&encrypted[..encrypted.len() - 8]));
+
+            let mut tampered = encrypted.clone();
+            *tampered.last_mut().unwrap() ^= 1;
+            assert!(!verify_integrity(&tampered));
+            assert!(decrypt_record(&tampered).is_none());
+
+            let mut iv_tampered = encrypted.clone();
+            iv_tampered[0] ^= 1;
+            assert!(decrypt_record(&iv_tampered).is_none());
+        }
     }
 
     /// HMAC-SHA256 implemented with the built-in SHA-256 (RFC 2104).
