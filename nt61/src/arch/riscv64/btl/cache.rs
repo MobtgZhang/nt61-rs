@@ -41,31 +41,51 @@ static CACHE: [CacheEntry; CACHE_ENTRIES] = {
 /// Total number of inserts (Phase 4 smoke).
 static INSERTS: AtomicUsize = AtomicUsize::new(0);
 
-fn probe(key: u64) -> usize {
-    (key as usize) & (CACHE_ENTRIES - 1)
+fn probe(key: u64) -> Option<usize> {
+    let start = (key as usize) & (CACHE_ENTRIES - 1);
+    (0..CACHE_ENTRIES)
+        .map(|offset| (start + offset) & (CACHE_ENTRIES - 1))
+        .find(|slot| {
+            let entry = &CACHE[*slot];
+            entry.key.load(Ordering::Acquire) == key
+        })
 }
 
-/// Insert a (guest_va, host_code_ptr) mapping. The mapping
-/// silently overwrites any previous value at the same slot.
+/// Insert a (guest_va, host_code_ptr) mapping. Collisions are resolved
+/// by linear probing; guest VA `0` cannot be inserted because it is
+/// the empty-key sentinel.
 pub fn insert(guest_va: u64, host: u64) {
-    let slot = probe(guest_va);
-    unsafe {
-        let e = &CACHE[slot] as *const CacheEntry as *mut CacheEntry;
-        (*e).key.store(guest_va, Ordering::Release);
-        (*e).host.store(host, Ordering::Release);
+    if guest_va == 0 {
+        return;
     }
-    INSERTS.fetch_add(1, Ordering::Relaxed);
+    let start = (guest_va as usize) & (CACHE_ENTRIES - 1);
+    for offset in 0..CACHE_ENTRIES {
+        let slot = (start + offset) & (CACHE_ENTRIES - 1);
+        let entry = &CACHE[slot];
+        if entry.key.compare_exchange(
+            0,
+            guest_va,
+            Ordering::Release,
+            Ordering::Acquire,
+        ) == Ok(0)
+        {
+            entry.host.store(host, Ordering::Release);
+            INSERTS.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        if entry.key.load(Ordering::Acquire) == guest_va {
+            entry.host.store(host, Ordering::Release);
+            return;
+        }
+    }
 }
 
 /// Lookup the host code pointer for a guest VA. Returns `0` if no
 /// mapping is present.
 pub fn lookup(guest_va: u64) -> u64 {
-    let slot = probe(guest_va);
-    let e = &CACHE[slot];
-    if e.key.load(Ordering::Acquire) == guest_va {
-        e.host.load(Ordering::Acquire)
-    } else {
-        0
+    match probe(guest_va) {
+        Some(slot) => CACHE[slot].host.load(Ordering::Acquire),
+        None => 0,
     }
 }
 
@@ -90,10 +110,14 @@ pub fn init() {}
 pub fn smoke_test() -> bool {
     insert(0x1000, 0xDEAD_BEEF);
     let v = lookup(0x1000);
+    insert(0x1001, 0xC0DE_CAFE);
+    let collision_ok = probe(0x1001) != probe(0x1000)
+        && lookup(0x1000) == 0xDEAD_BEEF
+        && lookup(0x1001) == 0xC0DE_CAFE;
     let ok = v == 0xDEAD_BEEF;
     flush();
     let cleared = lookup(0x1000) == 0;
-    ok && cleared
+    ok && collision_ok && cleared
 }
 
 /// Compile a placeholder code block so callers have a concrete
