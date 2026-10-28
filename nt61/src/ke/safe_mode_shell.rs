@@ -117,7 +117,7 @@ impl Input {
         // valid UTF-8 byte sequences. Using `from_utf8_unchecked`
         // here avoids pulling in the panic-heavy validation
         // path on every Enter press.
-        unsafe { core::str::from_utf8_unchecked(&self.buf[..self.len]) }
+        core::str::from_utf8(&self.buf[..self.len]).unwrap_or("")
     }
     fn clear(&mut self) {
         self.len = 0;
@@ -142,7 +142,7 @@ impl<const N: usize> FmtBuf<N> {
     fn as_str(&self) -> &str {
         // SAFETY: only ASCII text is ever written through
         // `write_str`, so the byte slice is valid UTF-8.
-        unsafe { core::str::from_utf8_unchecked(&self.bytes[..self.len]) }
+        core::str::from_utf8(&self.bytes[..self.len]).unwrap_or("")
     }
 }
 
@@ -426,7 +426,7 @@ fn dump_log_ring() {
         // SAFETY: ring slots are populated byte-by-byte from
         // either ASCII printables or control chars (LF/CR/BS).
         // Each individual byte is valid UTF-8 on its own.
-        let _ = s.write_str(unsafe { core::str::from_utf8_unchecked(core::slice::from_ref(&b)) });
+        let _ = s.write_str(core::str::from_utf8(core::slice::from_ref(&b)).unwrap_or(""));
     }
     print_line(s.as_str());
 }
