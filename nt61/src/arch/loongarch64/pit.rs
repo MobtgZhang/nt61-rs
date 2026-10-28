@@ -6,6 +6,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 static TIMER_BASE: AtomicU64 = AtomicU64::new(0);
 
 pub fn init(base: u64) {
+    crate::arch::loongarch64::paging::vector_page_check("pit_init");
     let mapped_base = if crate::arch::loongarch64::paging::paging_enabled() {
         crate::arch::loongarch64::paging::mmio_virt(base)
     } else {
