@@ -30,7 +30,31 @@ mod aarch64_timer {
 #[cfg(target_arch = "aarch64")]
 pub use aarch64_timer::*;
 
-#[cfg(all(not(target_arch = "x86_64"), not(target_arch = "aarch64")))]
+#[cfg(target_arch = "riscv64")]
+mod riscv_timer {
+    pub fn get_ticks() -> u64 {
+        crate::arch::riscv64::pit::time()
+    }
+
+    pub fn increment_ticks() {}
+
+    pub fn get_system_time_ms() -> u64 {
+        get_ticks() / crate::arch::riscv64::pit::TIMER_TICKS_PER_MS
+    }
+
+    pub fn get_system_time_us() -> u64 {
+        get_ticks() / 10
+    }
+}
+
+#[cfg(target_arch = "riscv64")]
+pub use riscv_timer::*;
+
+#[cfg(all(
+    not(target_arch = "x86_64"),
+    not(target_arch = "aarch64"),
+    not(target_arch = "riscv64")
+))]
 mod stub {
     /// Get the current tick count.
     pub fn get_ticks() -> u64 {
@@ -51,5 +75,9 @@ mod stub {
     }
 }
 
-#[cfg(all(not(target_arch = "x86_64"), not(target_arch = "aarch64")))]
+#[cfg(all(
+    not(target_arch = "x86_64"),
+    not(target_arch = "aarch64"),
+    not(target_arch = "riscv64")
+))]
 pub use stub::*;
