@@ -367,7 +367,9 @@ impl PfnDatabase {
         self.pfn_array = storage as *mut MMPFN;
         self.pfn_count = usable_pfns as u64;
         self.lowest_pfn = base_pfn;
-        self.highest_pfn = base_pfn + usable_pfns as u64;
+        self.highest_pfn = base_pfn
+            .checked_add(usable_pfns as u64)
+            .unwrap_or(u64::MAX);
         self.initialized = true;
         // Inline verification — read back immediately.
         crate::hal::serial::write_string_always("[mm] init verify: self=0x");
@@ -612,7 +614,12 @@ impl PfnDatabase {
     /// Add a range of PFNs to the free list.
     pub fn seed_free(&mut self, base: PfnNumber, count: PfnNumber) {
         for i in 0..count {
-            let pfn = base.wrapping_add(i);
+            let Some(pfn) = base.checked_add(i) else {
+                panic!(
+                    "PFN range [{}, +{}) overflows in seed_free",
+                    base, count
+                );
+            };
             let entry = match self.entry(pfn) {
                 Some(e) => e,
                 None => panic!(
@@ -945,7 +952,9 @@ pub fn init(base_pfn: PfnNumber, pfn_count: PfnNumber) {
         (*db_raw).pfn_array = PFN_STORAGE_PTR as *mut MMPFN;
         (*db_raw).pfn_count = usable_pfns as u64;
         (*db_raw).lowest_pfn = base_pfn;
-        (*db_raw).highest_pfn = base_pfn + usable_pfns as u64;
+        (*db_raw).highest_pfn = base_pfn
+            .checked_add(usable_pfns as u64)
+            .unwrap_or(u64::MAX);
         (*db_raw).initialized = true;
         crate::hal::serial::write_string_always("[mm] raw_init done\r\n");
         crate::hal::serial::write_string_always("[mm] pfn::init: db init done\r\n");
@@ -997,10 +1006,14 @@ pub fn allocate_pfn() -> Option<PfnNumber> {
     let mut db = PFN_DB.lock();
     if let Some(pfn) = db.pop_zeroed() {
         db.allocate_pfn(pfn);
+        #[cfg(target_arch = "loongarch64")]
+        crate::arch::loongarch64::paging::watch_pfn_alloc(pfn);
         return Some(pfn);
     }
     if let Some(pfn) = db.pop_free() {
         db.allocate_pfn(pfn);
+        #[cfg(target_arch = "loongarch64")]
+        crate::arch::loongarch64::paging::watch_pfn_alloc(pfn);
         return Some(pfn);
     }
     // Self-heal: the free list head is 0 but the count claims there
@@ -1045,6 +1058,8 @@ pub fn allocate_pfn() -> Option<PfnNumber> {
         // Retry the allocation.
         if let Some(pfn) = db.pop_free() {
             db.allocate_pfn(pfn);
+            #[cfg(target_arch = "loongarch64")]
+            crate::arch::loongarch64::paging::watch_pfn_alloc(pfn);
             return Some(pfn);
         }
     }
@@ -1081,6 +1096,8 @@ pub fn allocate_pfn_range(count: PfnNumber) -> Option<PfnNumber> {
                     let allocated = start + i;
                     db.unlink(allocated);
                     db.allocate_pfn(allocated);
+                    #[cfg(target_arch = "loongarch64")]
+                    crate::arch::loongarch64::paging::watch_pfn_alloc(allocated);
                 }
                 return Some(start);
             }
@@ -1096,6 +1113,8 @@ pub fn allocate_pfn_range(count: PfnNumber) -> Option<PfnNumber> {
     // contiguity reject the partial result.
     if let Some(p) = db.pop_free() {
         db.allocate_pfn(p);
+        #[cfg(target_arch = "loongarch64")]
+        crate::arch::loongarch64::paging::watch_pfn_alloc(p);
         return Some(p);
     }
     None
@@ -1190,7 +1209,9 @@ pub fn reserve_pfn_range(base_pfn: PfnNumber, count: PfnNumber) -> bool {
     // pfn::allocate_pfn (self-map page allocation) without hangs.
     let mut db = PFN_DB.lock();
     for index in 0..count {
-        let pfn = base_pfn.wrapping_add(index);
+        let Some(pfn) = base_pfn.checked_add(index) else {
+            return false;
+        };
         let entry = match db.entry(pfn) {
             Some(e) => e,
             None => return false,
@@ -1232,7 +1253,7 @@ pub fn release_zeroed(pfn: PfnNumber) {
 /// free frame would silently resurrect a page the allocator may
 /// already have handed out elsewhere.
 pub fn reference_pfn(pfn: PfnNumber) -> bool {
-    let mut db = PFN_DB.lock();
+    let db = PFN_DB.lock();
     let entry = match db.entry(pfn) {
         Some(e) => e,
         None => return false,
@@ -1257,7 +1278,7 @@ pub fn reference_pfn(pfn: PfnNumber) -> bool {
 /// `false` when the PFN is out of range, not `Active`, or still
 /// shared.
 pub fn dereference_pfn(pfn: PfnNumber) -> bool {
-    let mut db = PFN_DB.lock();
+    let db = PFN_DB.lock();
     let entry = match db.entry(pfn) {
         Some(e) => e,
         None => return false,
