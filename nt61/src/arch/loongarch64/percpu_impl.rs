@@ -30,9 +30,17 @@ use crate::ps::thread::Ethread;
 /// Per-CPU area storage. Each CPU has its own page.
 static PER_CPU_PAGES: [AtomicU64; MAX_PER_CPU] = [const { AtomicU64::new(0) }; MAX_PER_CPU];
 
-/// BSP per-CPU area. Static so it can be used during early boot
-/// before the pool allocator is ready.
-static mut PER_CPU_0: PerCpuArea = PerCpuArea::new(0);
+/// BSP per-CPU area. Static so it can be used during early boot before the
+/// pool allocator is ready. `UnsafeCell` removes `static mut`; accesses still
+/// rely on the CPU-local base register and the kernel's per-CPU ownership
+/// rules.
+struct PerCpuAreaCell(core::cell::UnsafeCell<PerCpuArea>);
+
+// SAFETY: A per-CPU area is only accessed through this CPU's base register.
+unsafe impl Sync for PerCpuAreaCell {}
+
+static PER_CPU_0: PerCpuAreaCell =
+    PerCpuAreaCell(core::cell::UnsafeCell::new(PerCpuArea::new(0)));
 
 /// KS6 (CSR 0x36) is one of the eight KScratch registers the
 /// architecture reserves for software. CSR 0x13 must NOT be used
@@ -47,7 +55,7 @@ static mut PER_CPU_0: PerCpuArea = PerCpuArea::new(0);
 #[no_mangle]
 pub unsafe extern "Rust" fn __percpu_init(cpu_id: u32) -> u64 {
     let page = if cpu_id == 0 {
-        core::ptr::addr_of_mut!(PER_CPU_0) as u64
+        PER_CPU_0.0.get() as u64
     } else {
         allocate(cpu_id)
     };
@@ -77,7 +85,7 @@ pub unsafe extern "Rust" fn __percpu_init(cpu_id: u32) -> u64 {
 /// is ready). Sets up `PER_CPU_PAGES[0]` pointing to `PER_CPU_0`.
 #[no_mangle]
 pub fn init_storage() {
-    PER_CPU_PAGES[0].store(core::ptr::addr_of_mut!(PER_CPU_0) as u64, Ordering::Release);
+    PER_CPU_PAGES[0].store(PER_CPU_0.0.get() as u64, Ordering::Release);
 }
 
 /// Allocate and zero a per-CPU area page for the given CPU id.
@@ -132,7 +140,7 @@ fn get_tp() -> u64 {
 pub fn __percpu_get_current() -> &'static mut PerCpuArea {
     let base = get_tp();
     if base == 0 {
-        unsafe { &mut *core::ptr::addr_of_mut!(PER_CPU_0) }
+        unsafe { &mut *PER_CPU_0.0.get() }
     } else {
         unsafe { &mut *(base as *mut PerCpuArea) }
     }
