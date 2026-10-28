@@ -313,7 +313,7 @@ pub fn write_ntbtlog_line(file_path: &str, loaded: bool) {
     buf[pos] = b'\n';
     pos += 1;
 
-    let s = unsafe { core::str::from_utf8_unchecked(&buf[..pos]) };
+    let s = core::str::from_utf8(&buf[..pos]).unwrap_or("");
     write_serial(s);
 }
 
@@ -353,7 +353,7 @@ pub fn write_sos_loading(file_path: &str) {
     buf[pos] = b'\n';
     pos += 1;
 
-    let s = unsafe { core::str::from_utf8_unchecked(&buf[..pos]) };
+    let s = core::str::from_utf8(&buf[..pos]).unwrap_or("");
     write_serial(s);
 }
 
@@ -426,7 +426,7 @@ fn write_loader_phase_header_debug(phase: u32) {
     buf[pos] = b'\n';
     pos += 1;
 
-    let s = unsafe { core::str::from_utf8_unchecked(&buf[..pos]) };
+    let s = core::str::from_utf8(&buf[..pos]).unwrap_or("");
     write_serial(s);
 }
 
@@ -496,7 +496,7 @@ fn write_kernel_phase_header_debug(phase: u32) {
     buf[pos] = b'\n';
     pos += 1;
 
-    let s = unsafe { core::str::from_utf8_unchecked(&buf[..pos]) };
+    let s = core::str::from_utf8(&buf[..pos]).unwrap_or("");
     write_serial(s);
 }
 
@@ -593,7 +593,7 @@ fn write_phase_header_debug(phase: u32) {
     buf[pos] = b'\n';
     pos += 1;
 
-    let s = unsafe { core::str::from_utf8_unchecked(&buf[..pos]) };
+    let s = core::str::from_utf8(&buf[..pos]).unwrap_or("");
     write_serial(s);
 }
 
@@ -651,7 +651,7 @@ fn write_phase_item_debug(component: &str, message: &str) {
     buf[pos] = b'\n';
     pos += 1;
 
-    let s = unsafe { core::str::from_utf8_unchecked(&buf[..pos]) };
+    let s = core::str::from_utf8(&buf[..pos]).unwrap_or("");
     write_serial(s);
 }
 
@@ -725,6 +725,6 @@ pub fn write_kdprint(component: &str, message: &str) {
     buf[pos] = b'\n';
     pos += 1;
 
-    let s = unsafe { core::str::from_utf8_unchecked(&buf[..pos]) };
+    let s = core::str::from_utf8(&buf[..pos]).unwrap_or("");
     write_serial(s);
 }
