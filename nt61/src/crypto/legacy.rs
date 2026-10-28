@@ -4,6 +4,8 @@
 //! compatibility. These APIs predate CNG but are still used by legacy
 //! applications.
 
+#![allow(deprecated)]
+
 extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -13,9 +15,17 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 pub struct HCryptProv(pub usize);
 
 #[repr(transparent)]
+#[deprecated(
+    since = "0.1.0",
+    note = "Legacy CryptoAPI hashes are compatibility-only; use bcrypt/CNG APIs"
+)]
 pub struct HCryptHash(pub usize);
 
 #[repr(transparent)]
+#[deprecated(
+    since = "0.1.0",
+    note = "Legacy CryptoAPI keys are compatibility-only; use bcrypt/CNG APIs"
+)]
 pub struct HCryptKey(pub usize);
 
 pub mod prov_type {
@@ -76,17 +86,29 @@ pub fn is_alg_rejected_by_policy(alg_id: u32) -> bool {
     matches!(alg_id, alg_id::CALG_RC4 | alg_id::CALG_DES)
 }
 
+#[deprecated(
+    since = "0.1.0",
+    note = "Legacy CryptoAPI algorithms are compatibility-only; use bcrypt/CNG APIs"
+)]
 pub struct ProviderContext {
     pub prov_type: u32,
     pub flags: u32,
     pub container: Option<String>,
 }
 
+#[deprecated(
+    since = "0.1.0",
+    note = "Legacy CryptoAPI hashing is compatibility-only; use bcrypt/CNG APIs"
+)]
 pub struct HashContext {
     pub alg_id: u32,
     pub state: HashState,
 }
 
+#[deprecated(
+    since = "0.1.0",
+    note = "Legacy CryptoAPI hash algorithms are compatibility-only; use bcrypt/CNG APIs"
+)]
 pub enum HashState {
     Md5(crate::crypto::hash::Md5),
     Sha1(crate::crypto::hash::Sha1),
@@ -95,6 +117,10 @@ pub enum HashState {
     Sha512(crate::crypto::hash::Sha512),
 }
 
+#[deprecated(
+    since = "0.1.0",
+    note = "Legacy CryptoAPI key operations are compatibility-only; use bcrypt/CNG APIs"
+)]
 pub struct KeyContext {
     pub alg_id: u32,
     pub key_data: Vec<u8>,
@@ -212,8 +238,8 @@ pub unsafe extern "C" fn crypt_hash_data(
 
 pub unsafe extern "C" fn crypt_get_hash_param(
     hash: usize,
-    param: u32,
-    data: *mut u8,
+    _param: u32,
+    _data: *mut u8,
     data_len: *mut u32,
     _flags: u32,
 ) -> i32 {
@@ -236,7 +262,7 @@ pub unsafe extern "C" fn crypt_destroy_hash(hash: usize) -> i32 {
 
 pub unsafe extern "C" fn crypt_gen_key(
     prov: usize,
-    alg_id: u32,
+    _alg_id: u32,
     _flags: u32,
     key: *mut usize,
 ) -> i32 {
@@ -252,7 +278,7 @@ pub unsafe extern "C" fn crypt_gen_key(
 pub unsafe extern "C" fn crypt_import_key(
     prov: usize,
     data: *const u8,
-    data_len: u32,
+    _data_len: u32,
     _pub_key: usize,
     _flags: u32,
     key: *mut usize,
@@ -271,7 +297,7 @@ pub unsafe extern "C" fn crypt_export_key(
     _exp_key: usize,
     _blob_type: u32,
     _flags: u32,
-    data: *mut u8,
+    _data: *mut u8,
     data_len: *mut u32,
 ) -> i32 {
     if key == 0 || data_len.is_null() {
@@ -284,8 +310,8 @@ pub unsafe extern "C" fn crypt_export_key(
 
 pub unsafe extern "C" fn crypt_get_key_param(
     key: usize,
-    param: u32,
-    data: *mut u8,
+    _param: u32,
+    _data: *mut u8,
     data_len: *mut u32,
     _flags: u32,
 ) -> i32 {
@@ -319,7 +345,7 @@ pub unsafe extern "C" fn crypt_encrypt(
     _flags: u32,
     data: *mut u8,
     data_len: *mut u32,
-    buffer_len: u32,
+    _buffer_len: u32,
 ) -> i32 {
     if key == 0 || data.is_null() || data_len.is_null() {
         return 0;
@@ -374,7 +400,7 @@ pub unsafe extern "C" fn crypt_sign_hash_a(
     _key_spec: u32,
     _description: *const u8,
     _flags: u32,
-    signature: *mut u8,
+    _signature: *mut u8,
     sig_len: *mut u32,
 ) -> i32 {
     if hash == 0 || sig_len.is_null() {
