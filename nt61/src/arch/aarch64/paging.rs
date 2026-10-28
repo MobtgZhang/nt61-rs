@@ -152,6 +152,23 @@ fn table_desc_at(pa: u64) -> u64 {
     (pa & 0x0000_FFFF_FFFF_F000) | 0x3 | (1u64 << 10)
 }
 
+/// Convert a block descriptor's attribute bits into the attribute
+/// bits of the page / smaller-block descriptors that replace it when
+/// the block is split. AttrIndx, NS, AP, SH and NG (bits[11:2]) plus
+/// XN / PXN (bits 54 / 53) carry over unchanged; AF (bit 10) is
+/// forced on because only leaf descriptors are access-flag checked,
+/// and a split page must not inherit AF=0 from an intermediate block.
+#[inline]
+fn split_block_attrs(desc: u64) -> u64 {
+    let mut attrs = desc & 0xFFF;
+    attrs &= !0x3;
+    if attrs & (1u64 << 10) == 0 {
+        attrs |= 1u64 << 10;
+    }
+    attrs |= desc & 0x0060_0000_0000_0000;
+    attrs
+}
+
 /// Walk the kernel page tables and return a writable pointer to
 /// the leaf PTE that maps `va`. Allocates any missing
 /// intermediates along the way. The caller writes the leaf PTE
@@ -175,6 +192,9 @@ unsafe fn leaf_pte_ptr_for(va: u64) -> *mut u64 {
             None => return core::ptr::null_mut(),
         };
         let new_phys = pfn_to_phys(pfn);
+        if !identity_map_region(new_phys & !0x1F_FFFF, 0x20_0000) {
+            return core::ptr::null_mut();
+        }
         ptr::write_bytes(new_phys as *mut u8, 0, 4096);
         let new_desc = table_desc_at(new_phys);
         core::ptr::write_volatile(l0.add(l0_idx), new_desc);
@@ -192,7 +212,27 @@ unsafe fn leaf_pte_ptr_for(va: u64) -> *mut u64 {
             None => return core::ptr::null_mut(),
         };
         let new_phys = pfn_to_phys(pfn);
+        if !identity_map_region(new_phys & !0x1F_FFFF, 0x20_0000) {
+            return core::ptr::null_mut();
+        }
         ptr::write_bytes(new_phys as *mut u8, 0, 4096);
+        if (l1e & 0x3) == 0x1 {
+            // 1 GiB block descriptor: splitting it into a fresh L2
+            // table must preserve the block's coverage, otherwise
+            // every 2 MiB region except the one being mapped loses
+            // its translation. Populate the new L2 with 2 MiB block
+            // descriptors cloned from the 1 GiB block.
+            let block_pa = l1e & 0x0000_FFFF_C000_0000;
+            let attrs = split_block_attrs(l1e);
+            let l2_new = new_phys as *mut u64;
+            for i in 0..512usize {
+                let sub_pa = block_pa + (i as u64) * 0x20_0000;
+                core::ptr::write_volatile(
+                    l2_new.add(i),
+                    (sub_pa & 0x0000_FFFF_C000_0000) | attrs | 0x1,
+                );
+            }
+        }
         let new_desc = table_desc_at(new_phys);
         core::ptr::write_volatile(l1.add(l1_idx), new_desc);
         sync_new_page_table();
@@ -209,7 +249,33 @@ unsafe fn leaf_pte_ptr_for(va: u64) -> *mut u64 {
             None => return core::ptr::null_mut(),
         };
         let new_phys = pfn_to_phys(pfn);
+        if !identity_map_region(new_phys & !0x1F_FFFF, 0x20_0000) {
+            return core::ptr::null_mut();
+        }
         ptr::write_bytes(new_phys as *mut u8, 0, 4096);
+        if (l2e & 0x3) == 0x1 {
+            // 2 MiB block descriptor: splitting it into a fresh L3
+            // table must preserve the block's coverage, otherwise
+            // every 4 KiB page except the one being mapped loses its
+            // translation. This is what broke access to page-table
+            // pages after refresh_kernel_mappings walked a root page
+            // inside a firmware block: the new L3 contained a single
+            // PTE, so identity VAs for neighbouring pages (process
+            // table pages) started faulting with an L3 translation
+            // fault. Populate the new L3 with one page descriptor per
+            // 4 KiB page of the block, keeping the block's attributes
+            // so device regions stay device.
+            let block_pa = l2e & 0x0000_FFFF_FFE0_0000;
+            let attrs = split_block_attrs(l2e);
+            let l3_new = new_phys as *mut u64;
+            for i in 0..512usize {
+                let sub_pa = block_pa + (i as u64) * 0x1000;
+                core::ptr::write_volatile(
+                    l3_new.add(i),
+                    (sub_pa & 0x0000_FFFF_FFFF_F000) | attrs | 0x3,
+                );
+            }
+        }
         let new_desc = table_desc_at(new_phys);
         core::ptr::write_volatile(l2.add(l2_idx), new_desc);
         sync_new_page_table();
@@ -375,6 +441,12 @@ pub unsafe fn load_page_root(pml4_pfn: u64) {
     asm!("msr TTBR1_EL1, {}", in(reg) pa, options(nostack));
     asm!("msr TTBR0_EL1, {}", in(reg) pa, options(nostack));
     asm!("dsb nsh", options(nostack));
+    // Flush all EL1 TLB entries. Stale entries from the previous
+    // root can shadow fresh page-table walks because both roots
+    // share the same TTBR registers (no ASID tag distinguishes
+    // them), so a switch without a flush lets old translations
+    // satisfy accesses that belong to the new address space.
+    asm!("tlbi vmalle1", options(nostack));
     asm!("isb", options(nostack));
     crate::mm::vas::set_current_root(pa);
 }
