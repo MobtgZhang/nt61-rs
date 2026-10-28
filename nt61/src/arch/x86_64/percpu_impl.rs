@@ -68,9 +68,18 @@ const OFFSET_USER_RSP: usize = 0;
 /// offset of `kernel_rsp` inside PerCpuArea.
 const OFFSET_KERNEL_RSP: usize = 8;
 /// offset of `current_thread` inside PerCpuArea.
-const OFFSET_CURRENT_THREAD: usize = 24;
+pub const OFFSET_CURRENT_THREAD: usize = 24;
 /// offset of `current_process` inside PerCpuArea.
-const OFFSET_CURRENT_PROCESS: usize = 32;
+pub const OFFSET_CURRENT_PROCESS: usize = 32;
+
+const _: () = assert!(
+    core::mem::offset_of!(PerCpuArea, current_thread) == OFFSET_CURRENT_THREAD,
+    "per-CPU current_thread offset must match the canonical layout",
+);
+const _: () = assert!(
+    core::mem::offset_of!(PerCpuArea, current_process) == OFFSET_CURRENT_PROCESS,
+    "per-CPU current_process offset must match the canonical layout",
+);
 
 // =====================================================================
 // Exported functions (used by arch/common/percpu.rs via extern "Rust")
