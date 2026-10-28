@@ -15,7 +15,7 @@ use super::status::{
     STATUS_INVALID_PARAMETER, STATUS_NO_MEMORY, STATUS_SUCCESS,
 };
 use super::types::{client_id, HANDLE, NTSTATUS, PVOID};
-use crate::mm::user_copy::{copy_from_user, copy_to_user};
+use crate::mm::user_copy::{copy_from_user, copy_to_user, probe_user_write};
 use crate::ps::process as ps;
 
 const PROCESS_BASIC_INFO_SIZE: usize = 24; // sizeof(PROCESS_BASIC_INFORMATION) on x64
@@ -222,6 +222,14 @@ pub unsafe extern "C" fn nt_query_information_process(
 ) -> NTSTATUS {
     if process_handle.is_null() || process_information.is_null() {
         return STATUS_INVALID_PARAMETER;
+    }
+    if probe_user_write(
+        process_information as u64,
+        process_information_length as usize,
+    )
+    .is_err()
+    {
+        return super::status::STATUS_ACCESS_VIOLATION;
     }
     match process_information_class {
         0 => {
