@@ -52,11 +52,30 @@ extern crate std;
 
 /// Boot-manager-local panic policy.  Real firmware targets have no `std`,
 /// so the panic handler must live in this crate there. A boot-manager panic
-/// is a firmware-session failure, so the safe fallback is to stop spinning
-/// rather than depend on console state that may not yet be initialized.
+/// is a firmware-session failure: write a minimal crash line to the
+/// platform serial port (no allocation, no console state, no locks)
+/// before halting, so panics remain observable on real hardware.
 #[cfg(all(not(test), not(target_os = "linux")))]
 #[panic_handler]
-fn bootmgr_panic(_info: &core::panic::PanicInfo) -> ! {
+fn bootmgr_panic(info: &core::panic::PanicInfo) -> ! {
+    // Minimal crash log before halting: write straight to the
+    // platform serial port through the crate's existing raw sink.
+    // The sink itself may be feature-gated (e.g. `log_level_debug`
+    // on some architectures); the halt below is unconditional.
+    use core::fmt::Write as _;
+
+    struct PanicSerial;
+    impl core::fmt::Write for PanicSerial {
+        fn write_str(&mut self, s: &str) -> core::fmt::Result {
+            crate::arch::current::write_com1_marker(s.as_bytes());
+            Ok(())
+        }
+    }
+
+    let mut sink = PanicSerial;
+    let _ = sink.write_str("\r\n[BOOTMGR-PANIC] ");
+    let _ = sink.write_fmt(core::format_args!("{}\r\n", info));
+
     loop {
         core::hint::spin_loop();
     }
@@ -109,6 +128,16 @@ use uefi::CString16;
 use crate::font::BitmapFont;
 use crate::graphics::FramebufferInfo;
 use crate::renderer::Framebuffer;
+
+/// Allocate a zero-initialized byte buffer of `len` bytes, returning
+/// `None` instead of panicking when the UEFI allocator cannot satisfy
+/// the request. Callers either degrade or report an explicit failure.
+fn try_alloc_zeroed(len: usize) -> Option<Vec<u8>> {
+    let mut buf = Vec::new();
+    buf.try_reserve_exact(len).ok()?;
+    buf.resize(len, 0u8);
+    Some(buf)
+}
 
 // =====================================================================
 // Partition-type probe (used by the file dispatchers below)
@@ -1590,7 +1619,11 @@ fn probe_partition_type(handle: uefi::Handle) -> PartitionType {
         gpt_header[78],
         gpt_header[79],
     ]);
-    let mut entries_buf = alloc::vec![0u8; partition_entry_size * partition_entry_count.min(128)];
+    let Some(mut entries_buf) = try_alloc_zeroed(
+        partition_entry_size * partition_entry_count.min(128),
+    ) else {
+        return PartitionType::Unknown;
+    };
     if block_ref
         .read_blocks(media_id, partition_entries_lba, &mut entries_buf)
         .is_err()
@@ -1963,7 +1996,9 @@ fn read_boot_file(rel_path: &str) -> Result<Vec<u8>, &'static str> {
                 .get_boxed_info::<FileInfo>()
                 .map_err(|_| "get info")?;
             let total = info.file_size() as usize;
-            let mut out: Vec<u8> = alloc::vec![0u8; total];
+            let Some(mut out) = try_alloc_zeroed(total) else {
+                return Err("allocation failed");
+            };
             let mut off: usize = 0;
             const CHUNK: usize = 64 * 1024;
             while off < total {
@@ -3086,7 +3121,10 @@ fn read_mft_record(ntfs: &NtfsBoot, record_num: u64) -> Option<Vec<u8>> {
     let record_rel_lba = record_num * (ntfs.mft_record_size as u64) / 512;
     let disk_lba = mft_disk_lba + record_rel_lba;
 
-    let mut buf = alloc::vec![0u8; (sectors_per_record as usize) * 512];
+    let Some(mut buf) = try_alloc_zeroed((sectors_per_record as usize) * 512) else {
+        debug_println!("[NTFS] read_mft_record: allocation failed for LBA {}", disk_lba);
+        return None;
+    };
     if block
         .read_blocks(media.media_id(), disk_lba, &mut buf)
         .is_err()
