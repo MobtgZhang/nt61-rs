@@ -343,6 +343,7 @@ pub extern "C" fn riscv64_trap_dispatch(frame: *mut TrapFrame) {
                 crate::arch::riscv64::clint::clear_msip(
                     crate::arch::riscv64::smp::current_hart_id(),
                 );
+                crate::ke::tlb_shootdown::handle_shootdown_interrupt();
             }
             5 => {
                 crate::arch::riscv64::pit::arm_next_tick();
