@@ -75,7 +75,7 @@ pub fn ensure_low_identity_map(pa_base: u64, size: u64) -> bool {
     // reachable once CRMD.PG is enabled. Only a zero-size
     // range is a no-op.
     if size == 0 {
-        return;
+        return false;
     }
     let mapped = crate::arch::identity_map_region(pa_base, size);
     crate::boot_debug_println!(
