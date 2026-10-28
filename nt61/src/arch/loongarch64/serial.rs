@@ -72,7 +72,11 @@ pub fn write_string(s: &str) {
 /// Writes diagnostic strings even in non-debug builds.
 pub fn write_string_always(s: &str) {
     for c in s.bytes() {
-        write_char(c);
+        let b = base();
+        unsafe {
+            while ptr::read_volatile((b + UART_LSR) as *const u8) & 0x20 == 0 {}
+            ptr::write_volatile((b + UART_THR) as *mut u8, c);
+        }
     }
 }
 
@@ -109,7 +113,7 @@ pub fn write_u64_hex(val: u64) {
     }
     let mut buf = [0u8; 16];
     let _ = write!(HexWriter(&mut buf), "{:016x}", val);
-    write_string(unsafe { core::str::from_utf8_unchecked(&buf) });
+    write_string(core::str::from_utf8(&buf).unwrap_or(""));
 }
 
 /// write a `u64` as 16 hex digits.
@@ -140,7 +144,7 @@ pub fn write_usize_hex(val: usize) {
     let _ = write!(s, "{:x}", val);
     let bytes = s.as_bytes();
     buf[..bytes.len()].copy_from_slice(bytes);
-    write_string(unsafe { core::str::from_utf8_unchecked(&bytes) });
+    write_string(core::str::from_utf8(&bytes).unwrap_or(""));
 }
 
 /// write a `u32` as 8 hex digits.
@@ -152,7 +156,7 @@ pub fn write_u32_hex(val: u32) {
     use core::fmt::Write;
     let mut buf = [0u8; 8];
     let _ = write!(WriteToBuf(&mut buf), "{:08x}", val);
-    write_string(unsafe { core::str::from_utf8_unchecked(&buf) });
+    write_string(core::str::from_utf8(&buf).unwrap_or(""));
 }
 
 fn log_level_debug() -> bool {
