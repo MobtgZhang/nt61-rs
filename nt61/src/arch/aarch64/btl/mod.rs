@@ -46,6 +46,12 @@
 pub mod code_cache;
 pub mod translation_manager;
 
+pub use crate::arch::common::btl::abi::{normalize_syscall_args, GuestAbi};
+pub use crate::arch::common::btl::exec::{
+    execute_block, GuestState, SyscallHook,
+};
+pub use crate::arch::common::btl::memory::{GuestAddressSpace, GuestMemory};
+
 #[cfg(feature = "btl")]
 pub mod codegen;
 #[cfg(feature = "btl")]
@@ -54,7 +60,7 @@ pub mod decoder;
 pub mod ir;
 #[cfg(feature = "btl")]
 pub mod state;
-#[cfg(feature = "btl")]
+#[cfg(any(feature = "btl", test))]
 pub mod syscall_bridge;
 
 pub use code_cache::{CodeCache, TranslationUnit};
@@ -71,9 +77,10 @@ pub const BTL_FEATURE_ARM32_TRANSLATION: u32 = 1 << 2;
 
 /// BTL feature flag shared with `Cargo.toml`.
 ///
-/// x86_64 translation works; the syscall bridge and the ARM32
-/// translator are not implemented and stay off so callers fail closed.
-pub const BTL_FEATURES: u32 = BTL_FEATURE_X86_64_TRANSLATION;
+/// x86_64 translation and the shared NT syscall bridge are enabled;
+/// ARM32 translation remains off until its ABI is fully modelled.
+pub const BTL_FEATURES: u32 = BTL_FEATURE_X86_64_TRANSLATION
+    | BTL_FEATURE_SYSCALL_BRIDGE;
 
 /// Compile-time gate for the BTL subsystem. Set `feature = "btl"`
 /// to enable the heavy components (decoder, IR, codegen). Until
