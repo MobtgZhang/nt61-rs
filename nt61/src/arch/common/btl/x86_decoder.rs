@@ -139,6 +139,8 @@ const OPCODE_MOV_R_RM: u8 = 0x8B;
 const OPCODE_MOV_MOFFS_RAX: u8 = 0xA3;
 /// MOV rax, moffs64 (REX.W A1).
 const OPCODE_MOV_RAX_MOFFS: u8 = 0xA1;
+/// MOV r/m64, imm32 (REX.W C7 /0).
+const OPCODE_MOV_RM_IMM: u8 = 0xC7;
 /// MOV r8, imm8 (B0+rr).
 const OPCODE_MOV_R8_IMM8: u8 = 0xB0;
 /// LEA r64, m (REX.W 8D /r).
@@ -442,13 +444,13 @@ impl<'a> Decoder<'a> {
             OPCODE_NOP => Some(IROp::Nop),
             OPCODE_RET_NEAR => Some(IROp::Ret),
 
-            OPCODE_MOV_R_IMM64 if self.op_size_64 => {
+            OPCODE_MOV_R_IMM64..=0xBF if self.op_size_64 => {
                 let reg = X86Reg::from_modrm(op & 0x07, self.rex_b);
                 let imm = self.fetch_le64()?;
                 Some(IROp::MovImm { dst: reg, imm })
             }
 
-            OPCODE_MOV_R_IMM64 => {
+            OPCODE_MOV_R_IMM64..=0xBF => {
                 let reg = X86Reg::from_modrm(op & 0x07, self.rex_b);
                 let imm = self.fetch_le32()?;
                 Some(IROp::MovImm {
@@ -505,6 +507,19 @@ impl<'a> Decoder<'a> {
                         width: 8,
                     },
                 })
+            }
+
+            OPCODE_MOV_RM_IMM => {
+                let (_, src, _) = self.decode_modrm()?;
+                match src {
+                    // MOV r64, imm32 (sign-extended with REX.W).
+                    Ok(dst_reg) => {
+                        let imm = self.fetch_le32()? as i32 as i64;
+                        Some(IROp::MovImm { dst: dst_reg, imm })
+                    }
+                    // Store-immediate is not modelled in the IR.
+                    Err(_) => Some(IROp::Unsupported),
+                }
             }
 
             OPCODE_LEA => {
