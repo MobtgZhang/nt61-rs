@@ -32,9 +32,7 @@ const FUNCT3_BNE: u32 = 0x1;
 const FUNCT3_BLT: u32 = 0x4;
 const FUNCT3_BGE: u32 = 0x5;
 
-const FUNCT7_ADD: u32 = 0x00;
 const FUNCT7_SUB: u32 = 0x20;
-const FUNCT7_JALR: u32 = 0x00;
 
 pub fn map_reg(r: X86Reg) -> u32 {
     match r {
@@ -169,7 +167,7 @@ impl Rv64Emitter {
             }
         } else {
             self.emit_addi(rd, RV_ZERO, (imm & 0xFFF) as i32);
-            self.emit_addi(rd, rd, (((imm >> 12) & 0xFFF) as i32));
+            self.emit_addi(rd, rd, ((imm >> 12) & 0xFFF) as i32);
             self.emit_addi(rd, rd, (((imm >> 24) & 0xFFF) as i32) << 4);
         }
     }
@@ -454,6 +452,9 @@ pub fn encode_block(ir: &[IrInst], raw_va: u64) -> CodeBlock {
             IROp::Ret => em.emit_jalr(RV_ZERO, 1, 0),
             IROp::Syscall => em.emit_ecall(),
             IROp::Unsupported => em.push(0x0010_0073),
+            IROp::SimdMov { .. } | IROp::SimdStore { .. } | IROp::SimdArith { .. } => {
+                em.push(0x0010_0073)
+            }
         }
     }
     em.resolve();
@@ -497,4 +498,20 @@ pub fn smoke_test() -> bool {
     assert_eq!(&block.bytes[4..8], &0x02A0_0513u32.to_le_bytes());
     assert_eq!(&block.bytes[8..12], &0x0000_8067u32.to_le_bytes());
     true
+}
+#[cfg(test)]
+mod tests {
+    use crate::arch::common::btl::exec::test_support::{decode, flat_memory, run_mov_imm_add_imm};
+    use crate::arch::common::btl::memory::GuestMemory;
+
+    use super::*;
+
+    #[test]
+    fn interprets_x86_64_mov_imm_add_imm() {
+        let mut backing = [0u8; 0x1000];
+        let mut memory = flat_memory(&mut backing);
+        let (outcome, rax) = run_mov_imm_add_imm(&mut memory);
+        assert!(matches!(outcome, crate::arch::common::btl::exec::ExecOutcome::Retired { .. }));
+        assert_eq!(rax, 50);
+    }
 }
