@@ -11,7 +11,7 @@
 //! NT SSDT used by the AArch64 native dispatcher.
 
 /// Syscall bridge result.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BridgeResult {
     /// Raw NTSTATUS returned by the native SSDT handler.
     pub result: u64,
@@ -19,64 +19,25 @@ pub struct BridgeResult {
     pub status: u32,
 }
 
-const STATUS_INVALID_SYSTEM_SERVICE: u32 = 0xC000_001C;
-const STATUS_NOT_IMPLEMENTED: u32 = 0xC000_0002;
-const MAX_BRIDGED_REGISTER_ARGS: usize = 4;
+use crate::arch::common::btl::abi::GuestAbi;
+use crate::arch::common::btl::memory::{GuestMemory, NullGuestMemory};
+use crate::arch::common::btl::syscall::{dispatch_nt_syscall, BridgeOutcome};
 
-/// Map the x86_64 guest register file to the AArch64 integer argument
-/// registers. Windows x64 NT calls pass the first four arguments in
-/// R10, RDX, R8, and R9; additional arguments are not yet captured by
-/// the shared BTL IR and are therefore not forwarded.
-fn normalize_x86_64_args(args: &[u64]) -> [usize; 8] {
-    let mut out = [0usize; 8];
-    let arg_regs = [
-        crate::arch::common::btl::ir::X86Reg::R10,
-        crate::arch::common::btl::ir::X86Reg::Rdx,
-        crate::arch::common::btl::ir::X86Reg::R8,
-        crate::arch::common::btl::ir::X86Reg::R9,
-    ];
-    for (slot, reg) in arg_regs.iter().enumerate() {
-        let index = *reg as usize;
-        if let Some(value) = args.get(index) {
-            out[slot] = *value as usize;
-        }
-    }
-    out
-}
-
-/// Map guest ARM32 R0-R3 to the AArch64 argument registers. Windows
-/// ARM32 uses the AAPCS convention for the first four integer args.
-fn normalize_arm32_args(args: &[u64]) -> [usize; 8] {
-    let mut out = [0usize; 8];
-    for (slot, value) in args.iter().take(MAX_BRIDGED_REGISTER_ARGS).enumerate() {
-        out[slot] = *value as usize;
-    }
-    out
-}
-
-fn dispatch_to_ssdt(number: u32, args: [usize; 8]) -> BridgeResult {
-    match crate::ke::ssdt_common::get_info(number as usize) {
-        Some(entry) if entry.arg_count as usize <= MAX_BRIDGED_REGISTER_ARGS => {
-            let status = unsafe {
-                crate::ke::ssdt_common::dispatch_syscall_with_stack(
-                    number as usize,
-                    args,
-                    crate::ke::ssdt_common::INTEGER_REGISTER_ARGUMENTS,
-                    0,
-                )
-            };
-            BridgeResult {
-                result: status as u64,
-                status: 0,
-            }
-        }
-        Some(_) => BridgeResult {
-            result: 0,
-            status: STATUS_NOT_IMPLEMENTED,
+fn bridge_abi(
+    abi: GuestAbi,
+    syscall_num: u32,
+    args: &[u64],
+    memory: &mut dyn GuestMemory,
+) -> BridgeResult {
+    let outcome = unsafe { dispatch_nt_syscall(abi, syscall_num, args, memory) };
+    match outcome {
+        BridgeOutcome::Dispatched(status) => BridgeResult {
+            result: status as u64,
+            status: 0,
         },
-        None => BridgeResult {
+        failure => BridgeResult {
             result: 0,
-            status: STATUS_INVALID_SYSTEM_SERVICE,
+            status: failure.status(),
         },
     }
 }
@@ -86,29 +47,101 @@ fn dispatch_to_ssdt(number: u32, args: [usize; 8]) -> BridgeResult {
 /// `args` is the guest register file indexed by `X86Reg`. Numbers not
 /// present in the NT SSDT fail closed with `STATUS_INVALID_SYSTEM_SERVICE`.
 pub fn bridge_x86_64(syscall_num: u32, args: &[u64]) -> BridgeResult {
-    let normalized = normalize_x86_64_args(args);
-    dispatch_to_ssdt(syscall_num, normalized)
+    let mut memory = NullGuestMemory;
+    bridge_abi(GuestAbi::X86_64, syscall_num, args, &mut memory)
+}
+
+/// Translate an x86_64 syscall with access to the guest address space.
+pub fn bridge_x86_64_memory(
+    syscall_num: u32,
+    args: &[u64],
+    memory: &mut dyn GuestMemory,
+) -> BridgeResult {
+    bridge_abi(GuestAbi::X86_64, syscall_num, args, memory)
 }
 
 /// Translate an ARM32 syscall. `args[0..4]` are guest R0-R3.
 pub fn bridge_arm32(syscall_num: u32, args: &[u64]) -> BridgeResult {
-    let normalized = normalize_arm32_args(args);
-    dispatch_to_ssdt(syscall_num, normalized)
+    let mut memory = NullGuestMemory;
+    bridge_abi(GuestAbi::Arm32, syscall_num, args, &mut memory)
+}
+
+/// Translate an ARM32 syscall with access to the guest address space.
+pub fn bridge_arm32_memory(
+    syscall_num: u32,
+    args: &[u64],
+    memory: &mut dyn GuestMemory,
+) -> BridgeResult {
+    bridge_abi(GuestAbi::Arm32, syscall_num, args, memory)
+}
+
+/// Translate an x86_32 syscall. Arguments are read from the guest
+/// argument block addressed by guest EDX.
+pub fn bridge_x86_32_memory(
+    syscall_num: u32,
+    args: &[u64],
+    memory: &mut dyn GuestMemory,
+) -> BridgeResult {
+    bridge_abi(GuestAbi::X86_32, syscall_num, args, memory)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::arch::common::btl::memory::{FlatPaging, GuestAddressSpace};
+    use crate::ke::ssdt_common::{register_syscall, SyscallArguments, STATUS_SUCCESS};
+    use core::sync::atomic::{AtomicU64, Ordering};
+
+    static LAST_ARG: AtomicU64 = AtomicU64::new(0);
+
+    unsafe extern "C" fn capture_handler(args: &SyscallArguments) -> u32 {
+        LAST_ARG.store(args.register_args[0] as u64, Ordering::SeqCst);
+        STATUS_SUCCESS
+    }
+
+    const TEST_SERVICE: u32 = 0x3F3;
 
     #[test]
     fn unregistered_services_fail_closed_with_ntstatus() {
         const UNREGISTERED: u32 = 0xFFFF;
+        let invalid = BridgeOutcome::InvalidService.status();
         let x64 = bridge_x86_64(UNREGISTERED, &[0; 16]);
         assert_eq!(x64.result, 0);
-        assert_eq!(x64.status, STATUS_INVALID_SYSTEM_SERVICE);
+        assert_eq!(x64.status, invalid);
 
         let arm32 = bridge_arm32(UNREGISTERED, &[0; 8]);
         assert_eq!(arm32.result, 0);
-        assert_eq!(arm32.status, STATUS_INVALID_SYSTEM_SERVICE);
+        assert_eq!(arm32.status, invalid);
+    }
+
+    #[test]
+    fn x86_64_service_dispatches_normalised_arguments() {
+        unsafe {
+            register_syscall(TEST_SERVICE as usize, capture_handler, 1, "btl_a64").unwrap();
+        }
+        let mut args = alloc::vec![0u64; 17];
+        args[crate::arch::common::btl::ir::X86Reg::R10 as usize] = 0xBEEF;
+        let mut memory = GuestAddressSpace::new(FlatPaging {
+            base: core::ptr::null_mut(),
+            len: 0,
+        });
+        let result = bridge_x86_64_memory(TEST_SERVICE, &args, &mut memory);
+        assert_eq!(result, BridgeResult { result: STATUS_SUCCESS as u64, status: 0 });
+        assert_eq!(LAST_ARG.load(Ordering::SeqCst), 0xBEEF);
+    }
+
+    #[test]
+    fn x86_32_memory_fault_fails_closed() {
+        let mut args = alloc::vec![0u64; 17];
+        args[crate::arch::common::btl::ir::X86Reg::Rdx as usize] = 0x1000;
+        let mut memory = GuestAddressSpace::new(FlatPaging {
+            base: core::ptr::null_mut(),
+            len: 0,
+        });
+        let result = bridge_x86_32_memory(TEST_SERVICE, &args, &mut memory);
+        assert_eq!(result, BridgeResult {
+            result: 0,
+            status: BridgeOutcome::MemoryFault.status(),
+        });
     }
 }
