@@ -132,12 +132,25 @@ pub fn create_wow64_thread(
 }
 
 /// Allocate TEB32 for a Wow64 thread.
-fn allocate_teb32() -> Option<*mut Teb32> {
-    // In a real implementation, we would allocate a page from the process's
-    // address space at a TEB32 slot (TEB32_BASE_ADDRESS + n * 0x1000)
-    // For the stub, we use a static allocation
-    static mut TEB32_BUFFER: [u8; 0x1100] = [0; 0x1100];
-    Some(unsafe { (*core::ptr::addr_of_mut!(TEB32_BUFFER)).as_mut_ptr() as *mut Teb32 })
+pub fn allocate_teb32() -> Option<*mut Teb32> {
+    static mut TEB32_BUFFER: [u32; 0x1100 / 4] = [0; 0x1100 / 4];
+    Some(unsafe {
+        core::ptr::addr_of_mut!(TEB32_BUFFER).cast::<Teb32>()
+    })
+}
+
+/// Allocate and attach a TEB32 to an existing WOW64 thread.
+pub fn initialize_wow64_thread(
+    thread: &mut Ethread,
+    process: &crate::ps::process::Eprocess,
+    stack_top: ULONG32,
+) -> Option<*mut Teb32> {
+    let teb32 = allocate_teb32()?;
+    unsafe {
+        init_teb32(teb32, thread, process, stack_top);
+        thread.set_wow64_teb32(teb32);
+    }
+    Some(teb32)
 }
 
 /// Allocate 32-bit user stack for a Wow64 thread.
@@ -219,8 +232,9 @@ unsafe fn init_teb32(
     (*teb).arbitrary_user_pointer = 0;
     (*teb).self_ = teb_addr; // TEB points to itself
 
-    // Client ID
-    (*teb).client_id.unique_process = process.unique_process_id as u32;
+    // Client ID is inherited from the ETHREAD, so tests and callers can
+    // seed it before the WOW64 extension is attached.
+    (*teb).client_id.unique_process = thread.client_id.unique_process as u32;
     (*teb).client_id.unique_thread = thread.client_id.unique_thread as u32;
 
     // Thread local storage pointer
