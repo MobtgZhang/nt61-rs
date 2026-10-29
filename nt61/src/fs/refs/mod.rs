@@ -34,7 +34,7 @@ pub mod object;
 pub mod superblock;
 
 // Re-export commonly used types
-pub use btree::{RefsBtree, RefsBtreeKey, RefsBtreePage};
+pub use btree::{RefsBtree, RefsBtreeKey, RefsBtreePage, RefsBtreeValue};
 pub use chunk::{ChunkTable, RefsChunkDescriptor};
 pub use integrity::crc32c;
 pub use object::{ObjectIdEntry, ObjectIdTable, REFS_OBJECT_ID_ROOT};
@@ -135,9 +135,14 @@ pub struct RefsHandle {
     pub file_size: u64,
     /// Is this a directory?
     pub is_directory: bool,
+    /// On-disk metadata record location.
+    pub metadata_record_lba: u64,
     /// Chunk table
     pub chunk_table: ChunkTable,
 }
+
+const REFS_OBJECT_RECORD_MAGIC: u32 = 0x5245464F;
+const REFS_OBJECT_RECORD_SIZE: usize = 64;
 
 impl RefsHandle {
     /// create a new file handle
@@ -148,6 +153,7 @@ impl RefsHandle {
             current_position: 0,
             file_size,
             is_directory,
+            metadata_record_lba: 0,
             chunk_table: ChunkTable::new(),
         }
     }
@@ -492,8 +498,11 @@ pub fn create_file(fs: &mut RefsFileSystem, file_size: u64) -> Option<RefsHandle
     if fs.read_only {
         return None;
     }
-    let object_id = object::create_object_id(&mut fs.object_table, 0, 0);
-    Some(RefsHandle::new(object_id, file_size, false))
+    let (object_id, record_lba) = allocate_object_record(fs, file_size, false)?;
+    Some(RefsHandle::new(object_id, file_size, false)).map(|mut handle| {
+        handle.metadata_record_lba = record_lba;
+        handle
+    })
 }
 
 /// Create a new directory entry in the object ID table.
@@ -501,8 +510,19 @@ pub fn create_directory(fs: &mut RefsFileSystem) -> Option<RefsHandle> {
     if fs.read_only {
         return None;
     }
-    let object_id = object::create_object_id(&mut fs.object_table, 0, 0);
-    Some(RefsHandle::new(object_id, 0, true))
+    let (object_id, record_lba) = allocate_object_record(fs, 0, true)?;
+    Some(RefsHandle::new(object_id, 0, true)).map(|mut handle| {
+        handle.metadata_record_lba = record_lba;
+        handle
+    })
+}
+
+pub fn delete_file(fs: &mut RefsFileSystem, object_id: u64) -> Result<(), ()> {
+    delete_object_id_entry(fs, object_id)
+}
+
+pub fn delete_directory(fs: &mut RefsFileSystem, object_id: u64) -> Result<(), ()> {
+    delete_object_id_entry(fs, object_id)
 }
 
 // ============================================================================
@@ -536,6 +556,155 @@ pub fn find_in_object_tree(
     }
 
     load_btree_page(device, root_lba)
+}
+
+pub fn write_btree_page(device: *mut (), page: &RefsBtreePage, page_size: usize) -> Result<(), ()> {
+    let bytes = btree::serialize_page(page, page_size)?;
+    write_sectors(device, page.lba, (page_size / 512) as u32, &bytes)
+}
+
+pub fn load_object_table_root(fs: &RefsFileSystem) -> Result<RefsBtreePage, ()> {
+    let root_lba = fs.object_table.root_lba;
+    if root_lba == 0 {
+        return Err(());
+    }
+    load_btree_page(fs.base.device, root_lba).ok_or(())
+}
+
+pub fn insert_object_id_entry(
+    fs: &mut RefsFileSystem,
+    object_id: u64,
+    sub_sequence: u64,
+    record_lba: u64,
+    record_size: u32,
+) -> Result<(), ()> {
+    let mut root = load_object_table_root(fs)?;
+    let key = RefsBtreeKey {
+        object_id,
+        sub_sequence,
+        code: 0,
+        data: Vec::new(),
+    };
+    let value = RefsBtreeValue::new(record_lba.to_le_bytes().to_vec());
+    let split = btree::insert_key(&mut root, &key, &value)?;
+    if let Some(mut right) = split {
+        right.lba = root.lba + 1;
+        write_btree_page(fs.base.device, &right, 4096)?;
+    }
+    write_btree_page(fs.base.device, &root, 4096)?;
+    Ok(())
+}
+
+pub fn delete_object_id_entry(fs: &mut RefsFileSystem, object_id: u64) -> Result<(), ()> {
+    let entry = fs
+        .object_table
+        .find_by_id(object_id)
+        .ok_or(())?
+        .value
+        .record_lba;
+    let mut root = load_object_table_root(fs)?;
+    let key = RefsBtreeKey {
+        object_id,
+        sub_sequence: 0,
+        code: 0,
+        data: Vec::new(),
+    };
+    btree::delete_key(&mut root, &key)?;
+    write_btree_page(fs.base.device, &root, 4096)?;
+    let _ = object::delete_object_id(&mut fs.object_table, object_id).ok_or(())?;
+    let cluster = fs.lba_to_cluster(entry);
+    let chunk = RefsChunkDescriptor {
+        flags: chunk::REFS_CHUNK_FLAG_NONE,
+        lcn: cluster,
+        vcn_length: 1,
+        checksum: 0,
+        reserved: 0,
+    };
+    let _ = chunk::free_chunk(&fs.superblock, &mut fs.free_cluster_bitmap, &chunk);
+    Ok(())
+}
+
+pub fn build_object_record(
+    file_size: u64,
+    is_directory: bool,
+    first_chunk: Option<&RefsChunkDescriptor>,
+) -> Vec<u8> {
+    let mut record = vec![0u8; REFS_OBJECT_RECORD_SIZE];
+    record[0..4].copy_from_slice(&REFS_OBJECT_RECORD_MAGIC.to_le_bytes());
+    record[4..8].copy_from_slice(&(is_directory as u32).to_le_bytes());
+    record[8..16].copy_from_slice(&file_size.to_le_bytes());
+    record[16..24]
+        .copy_from_slice(&(if first_chunk.is_some() { 1u64 } else { 0 }).to_le_bytes());
+    if let Some(chunk) = first_chunk {
+        record[24..32].copy_from_slice(&chunk.flags.to_le_bytes());
+        record[32..40].copy_from_slice(&chunk.lcn.to_le_bytes());
+        record[40..48].copy_from_slice(&chunk.vcn_length.to_le_bytes());
+        record[48..52].copy_from_slice(&chunk.checksum.to_le_bytes());
+        record[52..56].copy_from_slice(&chunk.reserved.to_le_bytes());
+    }
+    record
+}
+
+pub fn parse_object_record(bytes: &[u8]) -> Option<(u64, bool, Option<RefsChunkDescriptor>)> {
+    if bytes.len() < REFS_OBJECT_RECORD_SIZE {
+        return None;
+    }
+    let magic = u32::from_le_bytes(bytes[0..4].try_into().ok()?);
+    if magic != REFS_OBJECT_RECORD_MAGIC {
+        return None;
+    }
+    let is_directory = u32::from_le_bytes(bytes[4..8].try_into().ok()?) != 0;
+    let file_size = u64::from_le_bytes(bytes[8..16].try_into().ok()?);
+    let chunk_count = u64::from_le_bytes(bytes[16..24].try_into().ok()?);
+    let first_chunk = if chunk_count == 0 {
+        None
+    } else {
+        Some(RefsChunkDescriptor {
+            flags: u64::from_le_bytes(bytes[24..32].try_into().ok()?),
+            lcn: u64::from_le_bytes(bytes[32..40].try_into().ok()?),
+            vcn_length: u64::from_le_bytes(bytes[40..48].try_into().ok()?),
+            checksum: u32::from_le_bytes(bytes[48..52].try_into().ok()?),
+            reserved: u32::from_le_bytes(bytes[52..56].try_into().ok()?),
+        })
+    };
+    Some((file_size, is_directory, first_chunk))
+}
+
+pub fn allocate_object_record(
+    fs: &mut RefsFileSystem,
+    file_size: u64,
+    is_directory: bool,
+) -> Option<(u64, u64)> {
+    if fs.read_only {
+        return None;
+    }
+    let object_id = object::create_object_id(&mut fs.object_table, 0, 0);
+    let cluster = chunk::allocate_chunk(&fs.superblock, &mut fs.free_cluster_bitmap, 1)?;
+    let record_lba = fs.cluster_to_lba(cluster.lcn);
+    let record = build_object_record(file_size, is_directory, None);
+    let mut sectors = vec![0u8; fs.cluster_size as usize];
+    sectors[..record.len()].copy_from_slice(&record);
+    write_sectors(
+        fs.base.device,
+        record_lba,
+        (fs.cluster_size / fs.sector_size) as u32,
+        &sectors,
+    )
+    .ok()?;
+    insert_object_id_entry(fs, object_id, 0, record_lba, REFS_OBJECT_RECORD_SIZE as u32).ok()?;
+    fs.object_table
+        .find_by_id_mut(object_id)?
+        .value
+        .record_lba = record_lba;
+    Some((object_id, record_lba))
+}
+
+pub fn read_object_record(fs: &RefsFileSystem, object_id: u64) -> Option<Vec<u8>> {
+    let entry = fs.object_table.find_by_id(object_id)?;
+    let lba = entry.value.record_lba;
+    let mut bytes = vec![0u8; REFS_OBJECT_RECORD_SIZE];
+    read_sectors(fs.base.device, lba, 1, &mut bytes).ok()?;
+    Some(bytes)
 }
 
 // ============================================================================
