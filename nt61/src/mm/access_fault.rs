@@ -30,7 +30,6 @@ use crate::mm::pte::{pfn_to_phys, MMPTE};
 use crate::mm::vad::VadEntry;
 use crate::mm::vas::USER_BASE;
 use crate::mm::zeropage;
-use crate::ps::thread::Ethread;
 
 /// Page-fault access flags — packed from the architecture's error code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -470,21 +469,15 @@ fn vad_for_user_va(va: u64) -> Option<*mut VadEntry> {
     //     // // // kprintln!("[VAD_LOOKUP] va=0x{:x}", va);
     // The current thread's ETHREAD points at the current EPROCESS,
     // which carries the process's VAD tree.
-    let ethread = scheduler::get_current_thread()?;
-    //     // // // kprintln!("[VAD_LOOKUP] got ethread");
-    let ethread_ptr: *mut Ethread = ethread;
-    unsafe {
-        let eprocess = (*ethread_ptr).kthread.process;
-        //         // // // kprintln!("[VAD_LOOKUP] eprocess=0x{:x}", eprocess as u64);
+    scheduler::with_current_thread(|ethread| {
+        let eprocess = ethread.kthread.process;
         if eprocess.is_null() {
-            //             // // // kprintln!("[VAD_LOOKUP] eprocess is null");
-            return None;
+            None
+        } else {
+            unsafe { (*eprocess).vad_root.find(va) }
         }
-        //         // // // kprintln!("[VAD_LOOKUP] pid={}", (*eprocess).unique_process_id);
-        let result = (*eprocess).vad_root.find(va);
-        //         // // // kprintln!("[VAD_LOOKUP] find result={:?}", result.is_some());
-        result
-    }
+    })
+    .flatten()
 }
 
 fn resolve_page_file(va: u64, pte_ptr: *mut MMPTE, access: AccessFlags) -> FaultStatus {

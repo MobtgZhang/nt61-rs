@@ -180,10 +180,9 @@ impl MemTestContext {
     }
 }
 
-/// Get current time in ticks (placeholder)
+/// Get current time in ticks from the kernel monotonic clock.
 fn get_time_ticks() -> u64 {
-    // In real implementation, this would read the HPET or TSC
-    0
+    crate::ke::time::get_tick_count() as u64
 }
 
 /// Quick memory test (single pattern)

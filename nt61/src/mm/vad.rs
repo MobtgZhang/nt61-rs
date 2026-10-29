@@ -164,18 +164,23 @@ impl VadEntry {
 
 /// VAD tree root with embedded lock for thread safety.
 pub struct VadTree {
-    pub root: *mut VadEntry,
+    root: Spinlock<*mut VadEntry>,
     pub node_count: AtomicU64,
-    pub lock: Spinlock<()>,
 }
 
 impl VadTree {
     pub const fn new() -> Self {
         Self {
-            root: null_mut(),
+            root: Spinlock::new(null_mut()),
             node_count: AtomicU64::new(0),
-            lock: Spinlock::new(()),
         }
+    }
+
+    /// Return the root pointer. This is only for diagnostics; the lock
+    /// is released immediately and callers must not dereference the
+    /// pointer after a scheduling point.
+    pub fn root(&self) -> *mut VadEntry {
+        *self.root.lock()
     }
 
     // =========================================================================
@@ -190,11 +195,8 @@ impl VadTree {
     ///  / \             / \
     /// T1  T2          T2  T3
     fn rotate_right_locked(&self, y: *mut VadEntry) {
-        // SAFETY: caller must hold `self.lock`. We have exclusive
-        // access to `self` for the duration of the lock.
-        let self_mut: *mut Self =
-            unsafe { core::mem::transmute::<*const Self, *mut Self>(self as *const Self) };
-        let root_ptr: *mut *mut VadEntry = unsafe { &raw mut (*self_mut).root };
+        let mut root_guard = self.root.lock();
+        let root_ptr: &mut *mut VadEntry = &mut *root_guard;
         unsafe {
             let x = (*y).left;
             let _ = &x;
@@ -237,10 +239,8 @@ impl VadTree {
     ///      / \     / \
     ///     T2 T3  T1  T2
     fn rotate_left_locked(&self, x: *mut VadEntry) {
-        // SAFETY: caller must hold `self.lock`.
-        let self_mut: *mut Self =
-            unsafe { core::mem::transmute::<*const Self, *mut Self>(self as *const Self) };
-        let root_ptr: *mut *mut VadEntry = unsafe { &raw mut (*self_mut).root };
+        let mut root_guard = self.root.lock();
+        let root_ptr: *mut *mut VadEntry = &mut *root_guard;
         unsafe {
             let y = (*x).right;
             let _ = &y;
@@ -345,7 +345,7 @@ impl VadTree {
             (*x).parent = (*y).parent;
 
             if (*y).parent.is_null() {
-                self.root = x;
+                *self.root.lock() = x;
             } else if (*(*y).parent).left == y {
                 (*(*y).parent).left = x;
             } else {
@@ -379,7 +379,7 @@ impl VadTree {
             (*y).parent = (*x).parent;
 
             if (*x).parent.is_null() {
-                self.root = y;
+                *self.root.lock() = y;
             } else if (*(*x).parent).right == x {
                 (*(*x).parent).right = y;
             } else {
@@ -550,12 +550,11 @@ impl VadTree {
     /// Insert a VAD into the tree with AVL rebalancing.
     /// Returns Ok(()) on success, Err(()) if overlapping VAD exists.
     pub fn insert(&mut self, vad: &mut VadEntry) -> Result<(), ()> {
-        let guard = self.lock.lock();
-        let _ = &guard;
-        let _ = &guard;
+        let mut root_guard = self.root.lock();
+        let root_ptr: &mut *mut VadEntry = &mut *root_guard;
 
-        if self.root.is_null() {
-            self.root = vad;
+        if root_ptr.is_null() {
+            *root_ptr = vad;
             vad.parent = null_mut();
             vad.left = null_mut();
             vad.right = null_mut();
@@ -565,7 +564,7 @@ impl VadTree {
         }
 
         // Find insertion point (standard BST insert)
-        let mut current = self.root;
+        let mut current = *root_ptr;
         loop {
             unsafe {
                 // Check for overlap with existing VAD
@@ -601,7 +600,7 @@ impl VadTree {
         let parent = vad.parent;
         let _ = &parent;
         let _ = &parent;
-        drop(guard);
+        drop(root_guard);
 
         // Rebalance for insertion (uses different logic than deletion)
         if !parent.is_null() {
@@ -613,13 +612,9 @@ impl VadTree {
 
     /// Find VAD containing the given virtual address.
     pub fn find(&self, addr: u64) -> Option<*mut VadEntry> {
-        let _guard = self.lock.lock();
-        let _ = &_guard;
-        let _ = &_guard;
-        let mut current = self.root;
+        let root_guard = self.root.lock();
+        let mut current = *root_guard;
         let vpn = addr >> 12;
-        let _ = &vpn;
-        let _ = &vpn;
         while !current.is_null() {
             unsafe {
                 let entry = &*current;
@@ -639,10 +634,8 @@ impl VadTree {
 
     /// Find VAD by exact starting VPN match.
     pub fn find_by_start(&self, start_vpn: u64) -> Option<*mut VadEntry> {
-        let _guard = self.lock.lock();
-        let _ = &_guard;
-        let _ = &_guard;
-        let mut current = self.root;
+        let root_guard = self.root.lock();
+        let mut current = *root_guard;
         while !current.is_null() {
             unsafe {
                 let entry = &*current;
@@ -686,11 +679,11 @@ impl VadTree {
         // for any helper methods. Using raw pointers gives us
         // mutable access to every field while still satisfying
         // the borrow checker.
-        let raw_self: *mut Self = self;
-        let _guard = unsafe { (&mut *raw_self).lock.lock() };
+        let mut root_guard = self.root.lock();
+        let root_ptr: &mut *mut VadEntry = &mut *root_guard;
 
         // Find the node to remove (may be different from vad if not in tree).
-        let mut current = unsafe { (*raw_self).root };
+        let mut current = *root_ptr;
         while !current.is_null() && current != vad {
             unsafe {
                 if vad.starting_vpn < (*current).starting_vpn {
@@ -706,28 +699,24 @@ impl VadTree {
         }
 
         // Now do the actual removal while still holding the lock.
-        let rebalance_from = unsafe { (*raw_self).remove_node_locked(current) };
+        let rebalance_from = self.remove_node_locked(current, root_ptr);
 
         // Rebalance for deletion (uses different logic than insertion)
         if !rebalance_from.is_null() {
-            unsafe { (*raw_self).rebalance_delete_locked(rebalance_from) };
+            self.rebalance_delete_locked(rebalance_from);
         }
 
-        unsafe { (*raw_self).node_count.fetch_sub(1, Ordering::Relaxed) };
+        self.node_count.fetch_sub(1, Ordering::Relaxed);
         Ok(())
     }
 
     /// internal remove: handles the actual BST removal logic.
     /// Returns the node from which rebalancing should start, or null if none needed.
-    fn remove_node_locked(&self, node: *mut VadEntry) -> *mut VadEntry {
-        // SAFETY: caller must hold `self.lock`.
-        // We access `self.root` through a raw pointer because the
-        // SpinlockGuard held by the caller prevents us from taking
-        // `&mut self` here. The internal raw-pointer writes are
-        // serialised by the lock.
-        let self_mut: *mut Self =
-            unsafe { core::mem::transmute::<*const Self, *mut Self>(self as *const Self) };
-        let root_ptr: *mut *mut VadEntry = unsafe { &raw mut (*self_mut).root };
+    fn remove_node_locked(
+        &self,
+        node: *mut VadEntry,
+        root_ptr: &mut *mut VadEntry,
+    ) -> *mut VadEntry {
         unsafe {
             let has_left = !(*node).left.is_null();
             let _ = &has_left;
@@ -885,9 +874,7 @@ impl VadTree {
     /// Merge adjacent VADs after a removal or unmap.
     /// Checks if a VAD can be merged with its predecessor or successor.
     pub fn merge_adjacent(&mut self, mut vad: *mut VadEntry) {
-        let _guard = self.lock.lock();
-        let _ = &_guard;
-        let _ = &_guard;
+        let mut root_guard = self.root.lock();
         unsafe {
             // Check predecessor (left sibling)
             let mut pred = self.find_predecessor(vad);
@@ -900,7 +887,7 @@ impl VadTree {
                     (*pred).ending_vpn = (*vad).ending_vpn;
                     // Unlink vad
                     if (*vad).parent.is_null() {
-                        self.root = (*vad).right;
+                        *root_guard = (*vad).right;
                     } else if (*(*vad).parent).left == vad {
                         (*(*vad).parent).left = (*vad).right;
                     } else {
@@ -931,7 +918,7 @@ impl VadTree {
                     (*vad).ending_vpn = (*succ).ending_vpn;
                     // Unlink successor
                     if (*succ).parent.is_null() {
-                        self.root = (*succ).right;
+                        *root_guard = (*succ).right;
                     } else if (*(*succ).parent).left == succ {
                         (*(*succ).parent).left = (*succ).right;
                     } else {
@@ -1002,12 +989,11 @@ impl VadTree {
 
     /// In-order traversal iterator - collects all VADs in sorted order.
     pub fn inorder_collect(&self) -> Vec<*mut VadEntry> {
-        let _guard = self.lock.lock();
-        let _ = &_guard;
-        let _ = &_guard;
+        let root_guard = self.root.lock();
         let mut result = Vec::new();
-        if !self.root.is_null() {
-            self.inorder_collect_impl(self.root, &mut result);
+        let root = *root_guard;
+        if !root.is_null() {
+            self.inorder_collect_impl(root, &mut result);
         }
         result
     }
@@ -1024,11 +1010,10 @@ impl VadTree {
 
     /// Find all VADs that overlap with a given range.
     pub fn find_overlapping(&self, start_vpn: u64, end_vpn: u64) -> Vec<*mut VadEntry> {
-        let _guard = self.lock.lock();
-        let _ = &_guard;
-        let _ = &_guard;
+        let root_guard = self.root.lock();
         let mut result = Vec::new();
-        self.find_overlapping_impl(self.root, start_vpn, end_vpn, &mut result);
+        let root = *root_guard;
+        self.find_overlapping_impl(root, start_vpn, end_vpn, &mut result);
         result
     }
 
@@ -1060,10 +1045,9 @@ impl VadTree {
 
     /// Get the tree depth (for debugging/verification).
     pub fn depth(&self) -> i32 {
-        let _guard = self.lock.lock();
-        let _ = &_guard;
-        let _ = &_guard;
-        self.depth_impl(self.root)
+        let root_guard = self.root.lock();
+        let root = *root_guard;
+        self.depth_impl(root)
     }
 
     fn depth_impl(&self, node: *mut VadEntry) -> i32 {
@@ -1095,9 +1079,7 @@ impl VadTree {
     /// # Returns
     /// Number of pages successfully mapped, or 0 on failure.
     pub fn map_vad_to_ptes(&self, root: u64, vad: *mut VadEntry) -> u64 {
-        let _guard = self.lock.lock();
-        let _ = &_guard;
-        let _ = &_guard;
+        let _guard = self.root.lock();
         if vad.is_null() {
             return 0;
         }
@@ -1230,9 +1212,7 @@ impl VadTree {
     /// * `Some((start, end))` - The gap boundaries, or
     /// * `None` - No suitable gap found
     pub fn find_gap(&self, desired_base: u64, size: u64) -> Option<(u64, u64)> {
-        let _guard = self.lock.lock();
-        let _ = &_guard;
-        let _ = &_guard;
+        let _guard = self.root.lock();
 
         // Use checked arithmetic to avoid overflow when size is near u64::MAX.
         let aligned_size = size.checked_add(0xFFF)?.wrapping_add(0) & !0xFFF;
@@ -1252,7 +1232,9 @@ impl VadTree {
         let mut gaps: Vec<(u64, u64)> = Vec::new();
 
         unsafe {
-            self.collect_gaps(self.root, 0, u64::MAX >> 12, &mut gaps);
+            let root_guard = self.root.lock();
+            let root = *root_guard;
+            self.collect_gaps(root, 0, u64::MAX >> 12, &mut gaps);
         }
 
         if gaps.is_empty() {
@@ -1345,9 +1327,7 @@ impl VadTree {
     /// respecting existing gaps. It returns the first available address
     /// after all existing VADs.
     pub fn find_end_gap(&self, start: u64, size: u64) -> Option<(u64, u64)> {
-        let _guard = self.lock.lock();
-        let _ = &_guard;
-        let _ = &_guard;
+        let _guard = self.root.lock();
 
         // Use checked arithmetic to avoid overflow when size is near u64::MAX.
         let aligned_size = size.checked_add(0xFFF)?.wrapping_add(0) & !0xFFF;
@@ -1357,7 +1337,9 @@ impl VadTree {
         let mut max_ending_vpn = 0u64;
 
         unsafe {
-            self.find_max_ending(self.root, &mut max_ending_vpn);
+            let root_guard = self.root.lock();
+            let root = *root_guard;
+            self.find_max_ending(root, &mut max_ending_vpn);
         }
 
         let gap_start = if max_ending_vpn == 0 {

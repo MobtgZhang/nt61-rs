@@ -1,19 +1,11 @@
-//! MDL (Memory Descriptor List)
-//
-//! Memory descriptor list support
+//! Memory Descriptor List (MDL) support.
+//!
+//! The canonical NT MDL is owned by the I/O transfer module because it
+//! participates in DIRECT I/O, probing, and system-address mapping. Re-export
+//! it here so MM callers use the same NT-compatible structure instead of a
+//! parallel, incomplete definition.
 
-pub struct Mdl {
-    pub next: *mut Mdl,
-    pub size: u16,
-    pub mdl_flags: u16,
-}
-
-impl Mdl {
-    pub fn new() -> Self {
-        Self {
-            next: core::ptr::null_mut(),
-            size: 0,
-            mdl_flags: 0,
-        }
-    }
-}
+pub use crate::io::transfer::{
+    allocate_mdl, free_mdl, get_system_address_for_mdl, map_locked_pages, probe_and_lock_pages,
+    unlock_pages, unmap_locked_pages, Mdl,
+};

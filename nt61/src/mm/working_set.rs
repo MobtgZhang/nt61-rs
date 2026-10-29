@@ -122,6 +122,9 @@ impl MmWorkingSet {
 /// page tables (which are large and would be incorrect to modify).
 pub fn trim_working_set(pml4_phys: u64, target: u64) -> u64 {
     let mut trimmed: u64 = 0;
+    if pml4_phys == 0 {
+        return trimmed;
+    }
     let pml4_va = pml4_phys as *const MMPTE;
     for pxe in 1..511usize {
         let pxe_entry = unsafe { *pml4_va.add(pxe) };
@@ -233,6 +236,9 @@ pub fn trim_working_set(pml4_phys: u64, target: u64) -> u64 {
 /// tracks pages that haven't been accessed since the last scan.
 pub fn age_working_set(pml4_phys: u64) -> WorkingSetAgingStats {
     let mut stats = WorkingSetAgingStats::default();
+    if pml4_phys == 0 {
+        return stats;
+    }
     let pml4_va = pml4_phys as *const MMPTE;
     let mut scanned: u64 = 0;
     let mut aged_pages: u64 = 0;

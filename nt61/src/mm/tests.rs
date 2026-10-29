@@ -58,6 +58,26 @@ pub fn run_tests() -> bool {
     stats.finish()
 }
 
+#[cfg(test)]
+mod vad_tests {
+    use super::{test_vad_remove, test_vad_split, test_working_set_trim};
+
+    #[test]
+    fn vad_remove_removes_only_target_range() {
+        assert!(test_vad_remove());
+    }
+
+    #[test]
+    fn vad_split_creates_two_disjoint_ranges() {
+        assert!(test_vad_split());
+    }
+
+    #[test]
+    fn working_set_trim_rejects_invalid_root() {
+        assert!(test_working_set_trim());
+    }
+}
+
 // =============================================================================
 // PFN Database Tests
 // =============================================================================
@@ -293,8 +313,23 @@ fn test_vad_lookup() -> bool {
 }
 
 fn test_vad_remove() -> bool {
-    // Placeholder - would require full VAD tree implementation
-    true
+    use crate::mm::vad::{VadEntry, VadProtection, VadTree};
+    use alloc::boxed::Box;
+
+    let mut tree = VadTree::new();
+    let vad = Box::leak(Box::new(VadEntry::new()));
+    vad.starting_vpn = 0x1000;
+    vad.ending_vpn = 0x1010;
+    vad.protection = VadProtection::READWRITE;
+
+    if tree.insert(vad).is_err() {
+        return false;
+    }
+    if tree.count() != 1 {
+        return false;
+    }
+
+    tree.remove(vad).is_ok() && tree.count() == 0 && tree.find(0x1008 << 12).is_none()
 }
 
 fn test_vad_merge() -> bool {
@@ -318,8 +353,35 @@ fn test_vad_merge() -> bool {
 }
 
 fn test_vad_split() -> bool {
-    // Placeholder for VAD split testing
-    true
+    use crate::mm::vad::{VadEntry, VadProtection, VadTree};
+    use alloc::boxed::Box;
+
+    let mut tree = VadTree::new();
+    let vad = Box::leak(Box::new(VadEntry::new()));
+    vad.starting_vpn = 0x2000;
+    vad.ending_vpn = 0x2010;
+    vad.protection = VadProtection::READWRITE;
+
+    if tree.insert(vad).is_err() || tree.remove(vad).is_err() {
+        return false;
+    }
+
+    const SPLIT_VPN: u64 = 0x2008;
+    let first = Box::leak(Box::new(VadEntry::new()));
+    first.starting_vpn = 0x2000;
+    first.ending_vpn = SPLIT_VPN;
+    first.protection = VadProtection::READWRITE;
+    let second = Box::leak(Box::new(VadEntry::new()));
+    second.starting_vpn = SPLIT_VPN + 1;
+    second.ending_vpn = 0x2010;
+    second.protection = VadProtection::READWRITE;
+
+    tree.insert(first).is_ok()
+        && tree.insert(second).is_ok()
+        && tree.count() == 2
+        && tree.find(0x2005 << 12).is_some()
+        && tree.find(0x200a << 12).is_some()
+        && tree.find(SPLIT_VPN << 12).is_some()
 }
 
 // =============================================================================
@@ -503,8 +565,11 @@ fn test_working_set_add() -> bool {
 }
 
 fn test_working_set_trim() -> bool {
-    // Placeholder for working set trim testing
-    true
+    use crate::mm::working_set;
+
+    // A zero page-table root has no user-half mappings. Requesting one page
+    // must report no trim rather than dereference an invalid root.
+    working_set::trim_working_set(0, 1) == 0
 }
 
 // =============================================================================

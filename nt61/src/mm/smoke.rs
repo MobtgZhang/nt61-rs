@@ -167,7 +167,7 @@ fn test_vad_tree() -> bool {
     let probe_addr: u64 = 0x1500 << 12;
     crate::boot_println!(
         "    [VAD] tree.root=0x{:x} node_count={} probe_pfn=0x{:x}",
-        tree.root as u64,
+        tree.root() as u64,
         tree.count(),
         probe_addr >> 12
     );
@@ -181,12 +181,13 @@ fn test_vad_tree() -> bool {
             crate::boot_println!(
                 "    [VAD] find FAILED (0x{:x} not found, root=0x{:x})",
                 probe_addr,
-                tree.root as u64
+                tree.root() as u64
             );
             // Dump the root's fields for debugging.
-            if !tree.root.is_null() {
+            let root = tree.root();
+            if !root.is_null() {
                 unsafe {
-                    let r = &*tree.root;
+                    let r = &*root;
                     crate::boot_println!(
                         "    [VAD] root.starting_vpn=0x{:x} root.ending_vpn=0x{:x}",
                         r.starting_vpn,
