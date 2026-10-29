@@ -406,6 +406,15 @@ pub struct Ethread {
     /// range; native 64-bit threads keep it null. It lets WoW64 thunk
     /// code resolve `fs:[0x18]` without reading unvalidated user memory.
     pub wow64_teb32: *mut crate::libs::wow64::types::Teb32,
+
+    /// Initial user-mode x86 context for a WoW64 thread.
+    pub wow64_context32: Option<crate::libs::wow64::types::Context32>,
+
+    /// Initial 32-bit entry point.
+    pub wow64_start_address: u32,
+
+    /// Highest address of the 32-bit user stack (exclusive).
+    pub wow64_stack_top: u32,
 }
 
 // Compile-time size validation for Windows 7 x64 compatibility.
@@ -958,6 +967,9 @@ impl Ethread {
             other_transfer_count: 0,
             fpu_state_ptr: core::ptr::null_mut(),
             wow64_teb32: core::ptr::null_mut(),
+            wow64_context32: None,
+            wow64_start_address: 0,
+            wow64_stack_top: 0,
         }
     }
 
@@ -969,6 +981,32 @@ impl Ethread {
     /// Set the kernel pointer to this thread's 32-bit TEB.
     pub fn set_wow64_teb32(&mut self, teb32: *mut crate::libs::wow64::types::Teb32) {
         self.wow64_teb32 = teb32;
+    }
+
+    /// Whether this thread carries a WoW64 user context.
+    pub fn is_wow64_thread(&self) -> bool {
+        self.wow64_teb32.is_null() == false
+            && (self.wow64_start_address != 0 || self.wow64_context32.is_some())
+    }
+
+    /// Get the immutable initial 32-bit context, if present.
+    pub fn get_wow64_context32(&self) -> Option<&crate::libs::wow64::types::Context32> {
+        self.wow64_context32.as_ref()
+    }
+
+    /// Get the mutable initial 32-bit context, if present.
+    pub fn get_wow64_context32_mut(
+        &mut self,
+    ) -> Option<&mut crate::libs::wow64::types::Context32> {
+        self.wow64_context32.as_mut()
+    }
+
+    /// Replace the initial 32-bit context.
+    pub fn set_wow64_context32(
+        &mut self,
+        context: crate::libs::wow64::types::Context32,
+    ) {
+        self.wow64_context32 = Some(context);
     }
 
     /// Get the KTHREAD pointer from ETHREAD
