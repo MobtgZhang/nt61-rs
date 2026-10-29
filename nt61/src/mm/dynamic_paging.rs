@@ -191,16 +191,177 @@ pub unsafe fn map_physical_to_virtual(
     size: u64,
     flags: u64,
 ) -> Result<(), &'static str> {
-    // This is a simplified implementation
-    // A full implementation would:
-    // 1. Walk the page table hierarchy
-    // 2. Allocate page table pages as needed
-    // 3. Set up the appropriate entries
-    // 4. Invalidate TLB as needed
+    if phys == 0 || phys % PAGE_SIZE != 0 {
+        return Err("physical address must be 4 KiB aligned");
+    }
+    if virt % PAGE_SIZE != 0 {
+        return Err("virtual address must be 4 KiB aligned");
+    }
+    if size == 0 {
+        return Ok(());
+    }
 
-    // For now, return success - the existing paging code handles this
-    let _ = (pml4, phys, virt, size, flags);
+    let huge_count = if virt % HUGE_PAGE_SIZE == 0 && phys % HUGE_PAGE_SIZE == 0 {
+        size / HUGE_PAGE_SIZE
+    } else {
+        0
+    };
+    let mut offset = huge_count * HUGE_PAGE_SIZE;
+    for index in 0..huge_count {
+        let va = virt + index * HUGE_PAGE_SIZE;
+        let pa = phys + index * HUGE_PAGE_SIZE;
+        map_huge_page(pml4, va, pa, flags)?;
+    }
+
+    let large_count =
+        if (virt + offset) % LARGE_PAGE_SIZE == 0 && (phys + offset) % LARGE_PAGE_SIZE == 0 {
+            (size - offset) / LARGE_PAGE_SIZE
+        } else {
+            0
+        };
+    for index in 0..large_count {
+        let va = virt + offset + index * LARGE_PAGE_SIZE;
+        let pa = phys + offset + index * LARGE_PAGE_SIZE;
+        map_large_page(pml4, va, pa, flags)?;
+    }
+    offset += large_count * LARGE_PAGE_SIZE;
+
+    let tail = size - offset;
+    if tail % PAGE_SIZE != 0 {
+        return Err("size must be 4 KiB aligned");
+    }
+    for index in 0..(tail / PAGE_SIZE) {
+        let va = virt + offset + index * PAGE_SIZE;
+        let pa = phys + offset + index * PAGE_SIZE;
+        map_page(pml4, va, pa, flags)?;
+    }
     Ok(())
+}
+
+/// Map one 1 GiB page in a PML4/PDPT hierarchy.
+///
+/// # Safety
+/// `pml4` must be the active or a valid x64 root page table, and the
+/// direct map must be able to access newly allocated table pages.
+pub unsafe fn map_huge_page(
+    pml4: *mut u64,
+    virt: u64,
+    phys: u64,
+    flags: u64,
+) -> Result<(), &'static str> {
+    if virt % HUGE_PAGE_SIZE != 0 || phys % HUGE_PAGE_SIZE != 0 {
+        return Err("1 GiB mappings require 1 GiB-aligned addresses");
+    }
+    if flags & PTE_PRESENT == 0 {
+        return Err("flags must include PTE_PRESENT");
+    }
+
+    let pml4e = pml4.add(pml4_index(virt));
+    let pdpt = ensure_child_table(*pml4e, flags | PTE_PRESENT | PTE_WRITABLE)?;
+    let pdpte = pdpt.add(pdpt_index(virt));
+    if *pdpte & PTE_PRESENT != 0 && *pdpte & PTE_HUGE == 0 {
+        return Err("PDPT entry is already mapped as a table");
+    }
+    if *pdpte & PTE_PRESENT != 0 && *pdpte & PHYSICAL_ADDRESS_MASK != phys {
+        return Err("PDPT entry is already mapped to a different page");
+    }
+    *pdpte = phys | flags | PTE_HUGE | PTE_DIRTY;
+    invlpg(virt);
+    Ok(())
+}
+
+/// Map one 2 MiB page.
+///
+/// # Safety
+/// See `map_huge_page`.
+pub unsafe fn map_large_page(
+    pml4: *mut u64,
+    virt: u64,
+    phys: u64,
+    flags: u64,
+) -> Result<(), &'static str> {
+    if virt % LARGE_PAGE_SIZE != 0 || phys % LARGE_PAGE_SIZE != 0 {
+        return Err("2 MiB mappings require 2 MiB-aligned addresses");
+    }
+    if flags & PTE_PRESENT == 0 {
+        return Err("flags must include PTE_PRESENT");
+    }
+
+    let pml4e = pml4.add(pml4_index(virt));
+    let pdpt = ensure_child_table(*pml4e, flags | PTE_PRESENT | PTE_WRITABLE)?;
+    let pd = ensure_child_table(
+        *pdpt.add(pdpt_index(virt)),
+        flags | PTE_PRESENT | PTE_WRITABLE,
+    )?;
+    let pde = pd.add(pd_index(virt));
+    if *pde & PTE_PRESENT != 0 && *pde & PTE_LARGE == 0 {
+        return Err("PDE is already mapped as a table");
+    }
+    if *pde & PTE_PRESENT != 0 && *pde & PHYSICAL_ADDRESS_MASK != phys {
+        return Err("PDE is already mapped to a different page");
+    }
+    *pde = phys | flags | PTE_LARGE | PTE_DIRTY;
+    invlpg(virt);
+    Ok(())
+}
+
+/// Map one 4 KiB page.
+///
+/// # Safety
+/// See `map_huge_page`.
+pub unsafe fn map_page(
+    pml4: *mut u64,
+    virt: u64,
+    phys: u64,
+    flags: u64,
+) -> Result<(), &'static str> {
+    if virt % PAGE_SIZE != 0 || phys % PAGE_SIZE != 0 {
+        return Err("4 KiB mappings require 4 KiB-aligned addresses");
+    }
+    if flags & PTE_PRESENT == 0 {
+        return Err("flags must include PTE_PRESENT");
+    }
+
+    let pml4e = pml4.add(pml4_index(virt));
+    let pdpt = ensure_child_table(*pml4e, flags | PTE_PRESENT | PTE_WRITABLE)?;
+    let pd = ensure_child_table(
+        *pdpt.add(pdpt_index(virt)),
+        flags | PTE_PRESENT | PTE_WRITABLE,
+    )?;
+    let pt = ensure_child_table(*pd.add(pd_index(virt)), flags | PTE_PRESENT | PTE_WRITABLE)?;
+    let pte = pt.add(pte_index(virt));
+    if *pte & PTE_PRESENT != 0 && *pte & PHYSICAL_ADDRESS_MASK != phys {
+        return Err("PTE is already mapped to a different page");
+    }
+    *pte = phys | flags | PTE_DIRTY;
+    invlpg(virt);
+    Ok(())
+}
+
+/// Bits which identify the physical page in a page-table entry.
+const PHYSICAL_ADDRESS_MASK: u64 = 0x000F_FFFF_FFFF_F000;
+
+/// Resolve a page-table physical address to the kernel direct map.
+fn table_virtual(physical: u64) -> Option<*mut u64> {
+    if physical == 0 || physical % PAGE_SIZE != 0 {
+        return None;
+    }
+    Some((crate::mm::constants::KERNEL_DIRECT_MAP_BASE + physical) as *mut u64)
+}
+
+/// Return the child table for an entry, allocating it if required.
+unsafe fn ensure_child_table(entry: u64, flags: u64) -> Result<*mut u64, &'static str> {
+    if entry & PTE_PRESENT == 0 {
+        let table = crate::mm::frame::allocate_frame().ok_or("failed to allocate page table")?;
+        let table_virt = table_virtual(table).ok_or("page table is outside the direct map")?;
+        core::ptr::write_bytes(table_virt as *mut u8, 0, PAGE_SIZE as usize);
+        return Ok(table_virt);
+    }
+    if entry & PTE_LARGE != 0 {
+        return Err("parent entry is already mapped as a large page");
+    }
+    let _ = flags;
+    table_virtual(entry & PHYSICAL_ADDRESS_MASK).ok_or("page table is outside the direct map")
 }
 
 /// Unmap a virtual address range

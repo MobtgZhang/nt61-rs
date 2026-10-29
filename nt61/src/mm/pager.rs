@@ -26,6 +26,7 @@ use crate::kprintln_info;
 use crate::kprintln_warn;
 use crate::mm::pagefile;
 use crate::mm::pfn;
+use crate::mm::working_set;
 
 /// Memory pressure level
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -220,15 +221,36 @@ pub fn detect_memory_pressure() -> MemoryPressure {
     let _ = &pagefile_critical; // Less than 256 pages
     let _ = &pagefile_critical;
 
+    // NT's balance manager ages working sets before trimming. Use the same
+    // signal to promote pressure when a large fraction of the current user
+    // working set was untouched during the most recent scan.
+    let working_set_root = crate::mm::vas::current_root();
+    let aged_ratio = if working_set_root != 0 {
+        let aging = working_set::age_working_set(working_set_root);
+        if aging.scanned == 0 {
+            0.0
+        } else {
+            (aging.aged_pages as f64 / aging.scanned as f64).min(1.0)
+        }
+    } else {
+        0.0
+    };
+
     let pressure = if available_pct >= THRESHOLD_LOW {
         MemoryPressure::Low
     } else if available_pct >= THRESHOLD_MEDIUM {
         MemoryPressure::Medium
     } else if available_pct >= THRESHOLD_HIGH || pagefile_critical {
         MemoryPressure::High
+    } else if aged_ratio >= 0.50 {
+        MemoryPressure::High
     } else {
         MemoryPressure::Critical
     };
+
+    if pressure == MemoryPressure::Low && aged_ratio >= 0.75 {
+        return MemoryPressure::Medium;
+    }
 
     let _ = &pressure;
 

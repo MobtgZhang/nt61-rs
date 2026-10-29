@@ -20,12 +20,12 @@
 //! - Saved CPU state
 //! - Compressed memory image
 
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
+use crate::io::DevicePowerState;
 use crate::ke::sync::Spinlock;
 use crate::kprintln_error;
 use crate::kprintln_info;
-use crate::kprintln_warn;
 use crate::mm::constants::PAGE_SIZE;
 use crate::mm::pagefile;
 
@@ -177,10 +177,35 @@ pub struct HibernateStats {
     pub compression_ratio: f64,
 }
 
+/// NT status codes returned by the hibernation state machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+pub enum HiberStatus {
+    Success = 0x0000_0000,
+    InvalidParameter = 0xC000_000Du32 as i32,
+    NotSupported = 0xC000_00BBu32 as i32,
+    DeviceNotReady = 0xC000_00A3u32 as i32,
+    IoDeviceError = 0xC000_0185u32 as i32,
+    WakeSystemFailed = 0xC000_0180u32 as i32,
+}
+
+impl HiberStatus {
+    pub fn to_ntstatus(self) -> i32 {
+        self as i32
+    }
+
+    pub fn is_success(self) -> bool {
+        self == HiberStatus::Success
+    }
+}
+
 /// Global hibernate state
 static HIBERNATE_ENABLED: AtomicBool = AtomicBool::new(false);
 static HIBERNATE_INITIALIZED: AtomicBool = AtomicBool::new(false);
 static HIBERNATE_STATS: AtomicU64 = AtomicU64::new(0);
+static CURRENT_POWER_STATE: AtomicU32 = AtomicU32::new(PowerState::S0Working as u32);
+static CURRENT_DEVICE_POWER_STATE: AtomicU32 = AtomicU32::new(DevicePowerState::D0 as u32);
+static POWER_RESOURCES_SUSPENDED: AtomicBool = AtomicBool::new(false);
 
 /// Kernel-resident wake context restored from hiberfil.sys.
 ///
@@ -320,22 +345,37 @@ pub fn check_hiberfil() -> HiberfilMeta {
 
 /// Enter a power state.
 pub fn enter_power_state(state: PowerState) -> bool {
+    enter_power_state_status(state).is_success()
+}
+
+/// Enter a power state and return an NTSTATUS-style result.
+pub fn enter_power_state_status(state: PowerState) -> HiberStatus {
     if !is_enabled() {
         kprintln_error!("MEMORY", "Hibernate subsystem not enabled");
-        return false;
+        return HiberStatus::DeviceNotReady;
     }
 
     match state {
-        PowerState::S3Suspend => save_s3_state(),
-        PowerState::S4Hibernate => save_s4_state(),
+        PowerState::S1Sleep | PowerState::S2Sleep => HiberStatus::NotSupported,
+        PowerState::S3Suspend => {
+            if save_s3_state() {
+                HiberStatus::Success
+            } else {
+                HiberStatus::WakeSystemFailed
+            }
+        }
+        PowerState::S4Hibernate => {
+            if save_s4_state() {
+                HiberStatus::Success
+            } else {
+                HiberStatus::WakeSystemFailed
+            }
+        }
         PowerState::S5Shutdown => {
             shutdown_system();
-            true
+            HiberStatus::Success
         }
-        _ => {
-            kprintln_warn!("MEMORY", "Power state {:?} not implemented", state);
-            false
-        }
+        PowerState::S0Working => restore_power_state(),
     }
 }
 
@@ -369,24 +409,19 @@ pub fn save_s3_state() -> bool {
 
     // 5. Enter low power state
     kprintln_info!("MEMORY", "Entering S3 low power state...");
-    enter_low_power_state(PowerState::S3Suspend);
-
-    // If we return, resume was triggered
-    kprintln_info!("MEMORY", "Resuming from S3...");
-
-    // Restore CPU state
-    kprintln_info!("MEMORY", "Restoring CPU state...");
-    restore_cpu_state();
-
-    // Unfreeze processes
-    kprintln_info!("MEMORY", "Unfreezing processes...");
-    unfreeze_processes();
-
-    // Update stats
-    let stats = get_stats();
-    update_stats(stats.total_resumes + 1, stats.total_hibernations);
-
-    true
+    match enter_low_power_state(PowerState::S3Suspend, false) {
+        Ok(_) => true,
+        Err(status) => {
+            kprintln_error!(
+                "MEMORY",
+                "Failed to enter S3: NTSTATUS 0x{:08X}",
+                status.to_ntstatus() as u32
+            );
+            restore_cpu_state();
+            unfreeze_processes();
+            false
+        }
+    }
 }
 
 /// S4 State Save (Hibernate to Disk)
@@ -419,65 +454,27 @@ pub fn save_s4_state() -> bool {
     kprintln_info!("MEMORY", "Syncing all filesystems...");
     sync_filesystems();
 
-    // 4. create/update hiberfil.sys
-    kprintln_info!("MEMORY", "Creating hiberfil.sys...");
-    if !create_hiberfil() {
-        kprintln_error!("MEMORY", "Failed to create hiberfil.sys");
-        unfreeze_processes();
-        return false;
+    match enter_low_power_state(PowerState::S4Hibernate, true) {
+        Ok(hiber_size) => {
+            let end_time = get_tick_count_ms();
+            kprintln_info!(
+                "MEMORY",
+                "Hibernate complete: {} MB in {} ms",
+                hiber_size / (1024 * 1024),
+                end_time - start_time
+            );
+            true
+        }
+        Err(status) => {
+            kprintln_error!(
+                "MEMORY",
+                "Failed to hibernate: NTSTATUS 0x{:08X}",
+                status.to_ntstatus() as u32
+            );
+            unfreeze_processes();
+            false
+        }
     }
-
-    // 5. Save memory image
-    kprintln_info!("MEMORY", "Saving memory image...");
-    let memory_size = get_memory_size();
-    // The image is written raw (page-by-page); the header records
-    // `CompressionType::None` so the restore path accepts its own
-    // images. LZNT1 compression is applied once the compressor is
-    // wired into this save path.
-    let compression = CompressionType::None;
-
-    let hiber_size = save_memory_image(compression);
-    if hiber_size == 0 {
-        kprintln_error!("MEMORY", "Failed to save memory image");
-        return false;
-    }
-
-    // 6. Save CPU state
-    kprintln_info!("MEMORY", "Saving CPU state...");
-    let cpu_state_size = save_cpu_state_full();
-
-    // 7. write hibernate header
-    kprintln_info!("MEMORY", "Writing hibernate header...");
-    if !write_hibernate_header(hiber_size, memory_size, cpu_state_size, compression) {
-        kprintln_error!("MEMORY", "Failed to write hibernate header");
-        return false;
-    }
-
-    // 8. Save wake information
-    kprintln_info!("MEMORY", "Saving wake information...");
-    save_wake_information();
-
-    // 9. close and flush hiberfil
-    kprintln_info!("MEMORY", "Flushing hiberfil.sys...");
-    flush_hiberfil();
-
-    let end_time = get_tick_count_ms();
-    let duration = end_time - start_time;
-
-    kprintln_info!(
-        "MEMORY",
-        "Hibernate complete: {} MB in {} ms",
-        hiber_size / (1024 * 1024),
-        duration
-    );
-
-    // 10. power off
-    kprintln_info!("MEMORY", "Powering off...");
-    power_off();
-
-    // Should not return
-    kprintln_error!("MEMORY", "ERROR: Returned from power off!");
-    false
 }
 
 /// S4 State Restore (Wake from Hibernate)
@@ -587,16 +584,163 @@ fn configure_wake_interrupts() {
     // - USB wake
 }
 
-/// Enter low power state.
-fn enter_low_power_state(state: PowerState) {
-    // Simplified: this would call into HAL
-    // Real implementation would:
-    // 1. Disable interrupts
-    // 2. Configure ACPI for the target state
-    // 3. Execute the low power state instruction
-    kprintln_info!("MEMORY", "Would enter power state {:?}", state);
+/// Validate an S-state transition at the power subsystem level.
+fn validate_power_transition(current: PowerState, target: PowerState) -> HiberStatus {
+    match (current, target) {
+        (_, PowerState::S1Sleep) | (_, PowerState::S2Sleep) => HiberStatus::NotSupported,
+        (PowerState::S0Working, PowerState::S3Suspend)
+        | (PowerState::S0Working, PowerState::S4Hibernate)
+        | (PowerState::S0Working, PowerState::S5Shutdown) => HiberStatus::Success,
+        (PowerState::S3Suspend | PowerState::S4Hibernate, PowerState::S0Working) => {
+            HiberStatus::Success
+        }
+        (PowerState::S0Working, PowerState::S0Working) => HiberStatus::Success,
+        _ => HiberStatus::InvalidParameter,
+    }
+}
 
-    // For simulation, just return
+/// Map an S-state request to the device power state required while suspended.
+fn device_power_state_for(state: PowerState) -> DevicePowerState {
+    match state {
+        PowerState::S0Working => DevicePowerState::D0,
+        PowerState::S1Sleep
+        | PowerState::S2Sleep
+        | PowerState::S3Suspend
+        | PowerState::S4Hibernate
+        | PowerState::S5Shutdown => DevicePowerState::D3,
+    }
+}
+
+/// Suspend subsystem-owned power resources before an image or device transition.
+fn suspend_power_resources(state: PowerState) -> bool {
+    if state == PowerState::S0Working {
+        return true;
+    }
+
+    POWER_RESOURCES_SUSPENDED.store(true, Ordering::SeqCst);
+    true
+}
+
+/// Restore the wake state after a failed transition.
+fn restore_wake_state(previous_state: PowerState) {
+    CURRENT_POWER_STATE.store(previous_state as u32, Ordering::SeqCst);
+    CURRENT_DEVICE_POWER_STATE.store(DevicePowerState::D0 as u32, Ordering::SeqCst);
+    POWER_RESOURCES_SUSPENDED.store(false, Ordering::SeqCst);
+}
+
+/// Restore the working state and release resources held while suspended.
+fn restore_power_state() -> HiberStatus {
+    let current = current_power_state();
+    if validate_power_transition(current, PowerState::S0Working) != HiberStatus::Success {
+        return HiberStatus::InvalidParameter;
+    }
+
+    if current == PowerState::S3Suspend {
+        restore_cpu_state();
+        unfreeze_processes();
+    }
+
+    CURRENT_POWER_STATE.store(PowerState::S0Working as u32, Ordering::SeqCst);
+    CURRENT_DEVICE_POWER_STATE.store(DevicePowerState::D0 as u32, Ordering::SeqCst);
+    POWER_RESOURCES_SUSPENDED.store(false, Ordering::SeqCst);
+    HiberStatus::Success
+}
+
+/// Run the subsystem transition and roll back all state on failure.
+fn execute_power_transition<F>(
+    current: PowerState,
+    target: PowerState,
+    write_image: bool,
+    write_image_fn: F,
+) -> Result<u64, HiberStatus>
+where
+    F: FnOnce() -> Result<u64, HiberStatus>,
+{
+    let status = validate_power_transition(current, target);
+    if !status.is_success() {
+        return Err(status);
+    }
+
+    if !suspend_power_resources(target) {
+        restore_wake_state(current);
+        return Err(HiberStatus::DeviceNotReady);
+    }
+
+    let image_size = if write_image {
+        match write_image_fn() {
+            Ok(size) => size,
+            Err(status) => {
+                restore_wake_state(current);
+                return Err(status);
+            }
+        }
+    } else {
+        0
+    };
+
+    let device_state = device_power_state_for(target);
+    CURRENT_DEVICE_POWER_STATE.store(device_state as u32, Ordering::SeqCst);
+    CURRENT_POWER_STATE.store(target as u32, Ordering::SeqCst);
+    Ok(image_size)
+}
+
+/// Enter the target subsystem power state.
+///
+/// NT sends device power IRPs and uses ACPI to execute the final hardware
+/// transition. This kernel does not yet have an ACPI device registry, so this
+/// function implements the subsystem contract only: validate the request,
+/// suspend resources, write the requested image, and atomically commit the
+/// S-state/D-state. Hardware power-down is intentionally not simulated.
+fn enter_low_power_state(state: PowerState, write_image: bool) -> Result<u64, HiberStatus> {
+    let current = current_power_state();
+    execute_power_transition(current, state, write_image, || {
+        if !write_image {
+            return Ok(0);
+        }
+        write_hibernation_image()
+    })
+}
+
+/// Write a complete S4 image after process freeze and filesystem sync.
+fn write_hibernation_image() -> Result<u64, HiberStatus> {
+    kprintln_info!("MEMORY", "Creating hiberfil.sys...");
+    if !create_hiberfil() {
+        return Err(HiberStatus::DeviceNotReady);
+    }
+
+    // The image is written raw (page-by-page); the header records
+    // `CompressionType::None` so the restore path accepts its own
+    // images. LZNT1 compression is applied once the compressor is
+    // wired into this save path.
+    let compression = CompressionType::None;
+    let memory_size = get_memory_size();
+    let hiber_size = save_memory_image(compression);
+    if hiber_size == 0 {
+        kprintln_error!("MEMORY", "Failed to save memory image");
+        return Err(HiberStatus::IoDeviceError);
+    }
+
+    let cpu_state_size = save_cpu_state_full();
+    if !write_hibernate_header(hiber_size, memory_size, cpu_state_size, compression) {
+        kprintln_error!("MEMORY", "Failed to write hibernate header");
+        return Err(HiberStatus::IoDeviceError);
+    }
+
+    save_wake_information();
+    flush_hiberfil();
+    Ok(hiber_size)
+}
+
+/// Current subsystem S-state.
+fn current_power_state() -> PowerState {
+    match CURRENT_POWER_STATE.load(Ordering::SeqCst) {
+        1 => PowerState::S1Sleep,
+        2 => PowerState::S2Sleep,
+        3 => PowerState::S3Suspend,
+        4 => PowerState::S4Hibernate,
+        5 => PowerState::S5Shutdown,
+        _ => PowerState::S0Working,
+    }
 }
 
 /// Get system memory size.
@@ -786,13 +930,6 @@ fn flush_hiberfil() {
         HIBER_SECTOR_SIZE,
         &barrier,
     );
-}
-
-/// power off the system.
-fn power_off() {
-    // Simplified: log only
-    // Real implementation would call ACPI to power off
-    kprintln_info!("MEMORY", "System would power off now...");
 }
 
 /// Shutdown the system.
@@ -1147,6 +1284,12 @@ pub fn print_status() {
 mod tests {
     use super::*;
 
+    fn reset_transition_state() {
+        CURRENT_POWER_STATE.store(PowerState::S0Working as u32, Ordering::SeqCst);
+        CURRENT_DEVICE_POWER_STATE.store(DevicePowerState::D0 as u32, Ordering::SeqCst);
+        POWER_RESOURCES_SUSPENDED.store(false, Ordering::SeqCst);
+    }
+
     fn valid_header() -> HibernateHeader {
         let mut header = HibernateHeader::default();
         header.signature = HIBER_SIGNATURE;
@@ -1215,5 +1358,99 @@ mod tests {
 
         assert!(take_wake_context().is_none());
         assert!(peek_wake_kernel_entry().is_none());
+    }
+
+    #[test]
+    fn power_transition_validation_rejects_unsupported_states() {
+        assert_eq!(
+            validate_power_transition(PowerState::S0Working, PowerState::S3Suspend),
+            HiberStatus::Success
+        );
+        assert_eq!(
+            validate_power_transition(PowerState::S0Working, PowerState::S1Sleep),
+            HiberStatus::NotSupported
+        );
+        assert_eq!(
+            validate_power_transition(PowerState::S4Hibernate, PowerState::S3Suspend),
+            HiberStatus::InvalidParameter
+        );
+    }
+
+    #[test]
+    fn s3_transition_commits_subsystem_and_device_state() {
+        reset_transition_state();
+
+        let result =
+            execute_power_transition(PowerState::S0Working, PowerState::S3Suspend, false, || {
+                panic!("S3 must not write a hibernation image")
+            });
+
+        assert_eq!(result, Ok(0));
+        assert_eq!(current_power_state(), PowerState::S3Suspend);
+        assert_eq!(
+            CURRENT_DEVICE_POWER_STATE.load(Ordering::SeqCst),
+            DevicePowerState::D3 as u32
+        );
+        assert!(POWER_RESOURCES_SUSPENDED.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn s4_image_failure_restores_wake_state() {
+        reset_transition_state();
+
+        let result =
+            execute_power_transition(PowerState::S0Working, PowerState::S4Hibernate, true, || {
+                Err(HiberStatus::IoDeviceError)
+            });
+
+        assert_eq!(result, Err(HiberStatus::IoDeviceError));
+        assert_eq!(current_power_state(), PowerState::S0Working);
+        assert_eq!(
+            CURRENT_DEVICE_POWER_STATE.load(Ordering::SeqCst),
+            DevicePowerState::D0 as u32
+        );
+        assert!(!POWER_RESOURCES_SUSPENDED.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn s4_image_transition_commits_committed_image_size() {
+        reset_transition_state();
+
+        let result =
+            execute_power_transition(PowerState::S0Working, PowerState::S4Hibernate, true, || {
+                Ok(16 * PAGE_SIZE)
+            });
+
+        assert_eq!(result, Ok(16 * PAGE_SIZE));
+        assert_eq!(current_power_state(), PowerState::S4Hibernate);
+        assert_eq!(
+            CURRENT_DEVICE_POWER_STATE.load(Ordering::SeqCst),
+            DevicePowerState::D3 as u32
+        );
+    }
+
+    #[test]
+    fn hibernation_statuses_use_nt_values() {
+        assert_eq!(HiberStatus::Success.to_ntstatus(), 0x0000_0000);
+        assert_eq!(
+            HiberStatus::InvalidParameter.to_ntstatus(),
+            0xC000_000Du32 as i32
+        );
+        assert_eq!(
+            HiberStatus::NotSupported.to_ntstatus(),
+            0xC000_00BBu32 as i32
+        );
+        assert_eq!(
+            HiberStatus::DeviceNotReady.to_ntstatus(),
+            0xC000_00A3u32 as i32
+        );
+        assert_eq!(
+            HiberStatus::IoDeviceError.to_ntstatus(),
+            0xC000_0185u32 as i32
+        );
+        assert_eq!(
+            HiberStatus::WakeSystemFailed.to_ntstatus(),
+            0xC000_0180u32 as i32
+        );
     }
 }
