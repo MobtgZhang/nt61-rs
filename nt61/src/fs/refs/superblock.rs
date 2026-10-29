@@ -456,9 +456,37 @@ fn read_sectors(_device: *mut (), offset: u64, count: u32, buffer: &mut [u8]) ->
     Ok(())
 }
 
-/// read the Object Identifier Table
-pub fn read_object_id_table_lba(_sb: &RefsSuperBlock) -> u64 {
-    // The Object ID table is typically at a fixed offset
-    // This is a placeholder - real implementation would parse internal structures
-    SUPERBLOCK_OFFSET + (SUPERBLOCK_SIZE as u64) * 2
+/// Locate the Object Identifier Table.
+///
+/// ReFS does not expose the object-table LBA as a superblock scalar. The
+/// table is a B+ tree page adjacent to the superblock copies, so locate it by
+/// validating its page magic and basic header rather than trusting an offset.
+pub fn read_object_id_table_lba(_sb: &RefsSuperBlock) -> Result<u64, ()> {
+    let start_byte = SUPERBLOCK_OFFSET + SUPERBLOCK_SIZE as u64;
+    let scan_limit = 16 * 1024 * 1024;
+    let sector_size = 512u64;
+
+    for byte_offset in (0..scan_limit).step_by(sector_size as usize) {
+        let lba = (start_byte + byte_offset) / sector_size;
+        let mut buffer = vec![0u8; SUPERBLOCK_SIZE];
+        if read_sectors(
+            core::ptr::null_mut(),
+            lba,
+            (SUPERBLOCK_SIZE / 512) as u32,
+            &mut buffer,
+        )
+        .is_err()
+        {
+            return Err(());
+        }
+
+        if crate::fs::refs::btree::parse_page(&buffer, lba)
+            .map(|page| page.is_valid())
+            .unwrap_or(false)
+        {
+            return Ok(lba);
+        }
+    }
+
+    Err(())
 }

@@ -117,6 +117,7 @@ pub struct RefsBtreeKeyPrefix {
 
 /// B+ tree key entry
 #[repr(C)]
+#[derive(Clone)]
 pub struct RefsBtreeKeyEntry {
     /// Key data offset (from start of key area)
     pub key_offset: u16,
@@ -404,60 +405,36 @@ pub fn compare_keys(a: &RefsBtreeKey, b: &RefsBtreeKey) -> core::cmp::Ordering {
     }
 }
 
+/// Return the key stored at the given position within a page.
+pub fn key_at(page: &RefsBtreePage, index: usize) -> Option<RefsBtreeKey> {
+    let entry = page.keys.get(index)?;
+    let start = entry.key_offset as usize;
+    let len = entry.key_len as usize;
+    let bytes = page.key_data.get(start..start.checked_add(len)?)?;
+    RefsBtreeKey::from_bytes(bytes)
+}
+
 /// Find a key in a page using binary search
 pub fn find_key_in_page(page: &RefsBtreePage, key: &RefsBtreeKey) -> Option<usize> {
-    let key_count = page.header.get_key_count() as usize;
-
-    if key_count == 0 {
-        return None;
-    }
-
-    // Binary search for the key
-    let mut left = 0;
-    let mut right = key_count;
+    let mut left = 0usize;
+    let mut right = page.keys.len();
 
     while left < right {
-        let mid = (left + right) / 2;
-
-        // Get the key at mid position
-        let entry = &page.keys[mid];
-
-        // Extract key data from page
-        let key_data_start = entry.key_offset as usize;
-        let key_data_len = entry.key_len as usize;
-
-        if key_data_start + key_data_len > page.key_data.len() {
-            break;
-        }
-
-        let key_data = &page.key_data[key_data_start..key_data_start + key_data_len];
-
-        // Compare with target key (simplified - just compare first 24 bytes)
-        let compare_len = core::cmp::min(key_data_len, 24);
-        let target_bytes = key.as_bytes();
-
-        match key_data[..compare_len].cmp(&target_bytes[..compare_len]) {
-            core::cmp::Ordering::Equal => {
-                if key_data_len > 24 && target_bytes.len() > 24 {
-                    match key_data[24..].cmp(&target_bytes[24..]) {
-                        core::cmp::Ordering::Equal => return Some(mid),
-                        other => return Some(mid + (other == core::cmp::Ordering::Less) as usize),
-                    }
-                } else {
-                    return Some(mid);
-                }
-            }
-            other => {
-                if other == core::cmp::Ordering::Less {
-                    left = mid + 1;
-                } else {
-                    right = mid;
-                }
-            }
+        let mid = left + (right - left) / 2;
+        let current = key_at(page, mid)?;
+        match compare_keys(&current, key) {
+            core::cmp::Ordering::Equal => return Some(mid),
+            core::cmp::Ordering::Less => left = mid + 1,
+            core::cmp::Ordering::Greater => right = mid,
         }
     }
 
-    None
+    let current = key_at(page, left)?;
+    if compare_keys(&current, key) == core::cmp::Ordering::Equal {
+        Some(left)
+    } else {
+        None
+    }
 }
 
 impl RefsBtreeKey {
@@ -510,30 +487,237 @@ pub fn find_leaf_page(
     None
 }
 
-/// Insert a key-value pair into the tree
-pub fn insert_key(
-    _page: &mut RefsBtreePage,
-    _key: &RefsBtreeKey,
-    _value: &RefsBtreeValue,
+/// Maximum entries retained per page when `insert_key` must split it.
+///
+/// ReFS keys and values are variable sized. This conservative bound keeps a
+/// split well below the smallest supported page while leaving room for the
+/// entry array and page header.
+const REFS_BTREE_DEFAULT_PAGE_CAPACITY: usize = 64;
+
+/// Result of splitting a full B+ tree page.
+pub struct RefsBtreePageSplit {
+    /// Copy of the first key of the right page, for insertion in the parent.
+    pub separator: RefsBtreeKey,
+    /// Newly allocated right-hand page.
+    pub right: RefsBtreePage,
+}
+
+fn append_entry(
+    page: &mut RefsBtreePage,
+    key: &RefsBtreeKey,
+    value: &RefsBtreeValue,
 ) -> Result<(), ()> {
-    // In a real implementation, we would:
-    // 1. Find the correct position
-    // 2. Insert the key and value
-    // 3. handle page splitting if needed
+    if key.total_size() > REFS_BCBT_MAX_KEY_SIZE
+        || value.data.len() > u16::MAX as usize
+        || page.keys.len() >= u16::MAX as usize
+    {
+        return Err(());
+    }
 
-    Err(())
+    let key_offset = page.key_data.len().min(u16::MAX as usize);
+    let value_offset = page.value_data.len().min(u16::MAX as usize);
+    if key_offset + key.total_size() > u16::MAX as usize {
+        return Err(());
+    }
+
+    page.key_data.extend_from_slice(&key.as_bytes());
+    page.value_data.extend_from_slice(&value.data);
+    page.keys.push(RefsBtreeKeyEntry {
+        key_offset: key_offset as u16,
+        key_len: key.total_size() as u16,
+        value_offset: value_offset as u16,
+        value_len: value.data.len() as u16,
+    });
+    page.header.key_count = page.keys.len() as u16;
+    Ok(())
 }
 
-/// Delete a key from the tree
-pub fn delete_key(_page: &mut RefsBtreePage, _key: &RefsBtreeKey) -> Result<(), ()> {
-    // In a real implementation, we would:
-    // 1. Find the key
-    // 2. Remove it from the page
-    // 3. handle page merging if needed
+fn insert_entry_at(
+    page: &mut RefsBtreePage,
+    position: usize,
+    key: &RefsBtreeKey,
+    value: &RefsBtreeValue,
+) -> Result<(), ()> {
+    if position > page.keys.len()
+        || key.total_size() > REFS_BCBT_MAX_KEY_SIZE
+        || value.data.len() > u16::MAX as usize
+        || page.keys.len() >= u16::MAX as usize
+    {
+        return Err(());
+    }
 
-    Err(())
+    let key_offset = page.key_data.len().min(u16::MAX as usize);
+    let value_offset = page.value_data.len().min(u16::MAX as usize);
+    if key_offset + key.total_size() > u16::MAX as usize {
+        return Err(());
+    }
+
+    page.key_data.extend_from_slice(&key.as_bytes());
+    page.value_data.extend_from_slice(&value.data);
+    page.keys.insert(
+        position,
+        RefsBtreeKeyEntry {
+            key_offset: key_offset as u16,
+            key_len: key.total_size() as u16,
+            value_offset: value_offset as u16,
+            value_len: value.data.len() as u16,
+        },
+    );
+    page.header.key_count = page.keys.len() as u16;
+    Ok(())
 }
 
+fn build_split_page(keys: &[RefsBtreeKeyEntry], page: &RefsBtreePage) -> RefsBtreePage {
+    let mut right = RefsBtreePage::new();
+    right.header.flags = page.header.flags & !REFS_BCBT_FLAG_ROOT;
+    right.header.height = page.header.height;
+    right.header.page_count = page.header.page_count;
+    right.lba = page.lba;
+
+    for entry in keys {
+        let key_bytes = page
+            .key_data
+            .get(entry.key_offset as usize..(entry.key_offset as usize + entry.key_len as usize));
+        let value_bytes = page.value_data.get(
+            entry.value_offset as usize..(entry.value_offset as usize + entry.value_len as usize),
+        );
+        if let (Some(key_bytes), Some(value_bytes)) = (key_bytes, value_bytes) {
+            let key_offset = right.key_data.len().min(u16::MAX as usize);
+            let value_offset = right.value_data.len().min(u16::MAX as usize);
+            right.key_data.extend_from_slice(key_bytes);
+            right.value_data.extend_from_slice(value_bytes);
+            right.keys.push(RefsBtreeKeyEntry {
+                key_offset: key_offset as u16,
+                key_len: entry.key_len,
+                value_offset: value_offset as u16,
+                value_len: entry.value_len,
+            });
+        }
+    }
+    right.header.key_count = right.keys.len() as u16;
+    right
+}
+
+/// Split a full leaf page at its midpoint.
+///
+/// The left half remains in `page`; the right half is returned together with
+/// the separator that the caller must insert into (or store in) the parent.
+pub fn split_page(page: &mut RefsBtreePage) -> Result<RefsBtreePageSplit, ()> {
+    if page.keys.len() < 2 {
+        return Err(());
+    }
+
+    let split_at = page.keys.len() / 2;
+    let separator = key_at(page, split_at).ok_or(())?;
+    let right_entries = page.keys.split_off(split_at);
+
+    let mut right = build_split_page(&right_entries, page);
+    page.header.key_count = page.keys.len() as u16;
+    right.lba = page.lba;
+    Ok(RefsBtreePageSplit { separator, right })
+}
+
+/// Insert a key-value pair into a sorted page.
+///
+/// If the page is full, it is split first and the pair is inserted into the
+/// correct half. The caller writes the returned right-hand page and inserts
+/// its separator into the parent page. If the tree only has one page, the
+/// returned right page is also the new sibling.
+pub fn insert_key(
+    page: &mut RefsBtreePage,
+    key: &RefsBtreeKey,
+    value: &RefsBtreeValue,
+) -> Result<Option<RefsBtreePage>, ()> {
+    let mut position = 0usize;
+    while position < page.keys.len() {
+        let current = key_at(page, position).ok_or(())?;
+        match compare_keys(&current, key) {
+            core::cmp::Ordering::Equal => return Err(()),
+            core::cmp::Ordering::Greater => break,
+            core::cmp::Ordering::Less => position += 1,
+        }
+    }
+
+    let needs_split = page.keys.len() >= REFS_BTREE_DEFAULT_PAGE_CAPACITY;
+    if needs_split {
+        let split = split_page(page)?;
+        let first_right = key_at(&split.right, 0).ok_or(())?;
+        let target_is_right = compare_keys(&first_right, key) != core::cmp::Ordering::Greater;
+        let mut right = split.right;
+        if target_is_right {
+            let right_position = right.keys.len();
+            insert_entry_at(&mut right, right_position, key, value)?;
+        } else {
+            insert_entry_at(page, position, key, value)?;
+        }
+        return Ok(Some(right));
+    }
+
+    insert_entry_at(page, position, key, value)?;
+    Ok(None)
+}
+
+/// Merge a right page into a left page.
+///
+/// The caller is responsible for removing the separator and the right-child
+/// pointer from their common parent. Pages are only merged when the combined
+/// entry count is representable.
+pub fn merge_pages(left: &mut RefsBtreePage, right: &mut RefsBtreePage) -> Result<(), ()> {
+    if left.keys.len() + right.keys.len() > u16::MAX as usize {
+        return Err(());
+    }
+
+    let right_keys = right.keys.clone();
+    for entry in &right_keys {
+        let key_bytes = right
+            .key_data
+            .get(entry.key_offset as usize..(entry.key_offset as usize + entry.key_len as usize));
+        let value_bytes = right.value_data.get(
+            entry.value_offset as usize..(entry.value_offset as usize + entry.value_len as usize),
+        );
+        let (Some(key_bytes), Some(value_bytes)) = (key_bytes, value_bytes) else {
+            return Err(());
+        };
+        let key = RefsBtreeKey::from_bytes(key_bytes).ok_or(())?;
+        append_entry(left, &key, &RefsBtreeValue::new(value_bytes.to_vec()))?;
+    }
+
+    right.key_data.clear();
+    right.value_data.clear();
+    right.header.key_count = 0;
+    Ok(())
+}
+
+/// Delete a key from a sorted page.
+///
+/// The entry array and backing data are compacted. B+ tree underflow is
+/// handled by the caller with [`merge_pages`] once it has located the sibling.
+pub fn delete_key(page: &mut RefsBtreePage, key: &RefsBtreeKey) -> Result<(), ()> {
+    let position = find_key_in_page(page, key).ok_or(())?;
+    page.keys.remove(position);
+    page.header.key_count = page.keys.len() as u16;
+
+    let old_key_data = core::mem::take(&mut page.key_data);
+    let old_value_data = core::mem::take(&mut page.value_data);
+
+    for entry in page.keys.iter_mut() {
+        let key_bytes = old_key_data
+            .get(entry.key_offset as usize..(entry.key_offset as usize + entry.key_len as usize));
+        let value_bytes = old_value_data.get(
+            entry.value_offset as usize..(entry.value_offset as usize + entry.value_len as usize),
+        );
+        let (Some(key_bytes), Some(value_bytes)) = (key_bytes, value_bytes) else {
+            return Err(());
+        };
+
+        entry.key_offset = page.key_data.len() as u16;
+        entry.value_offset = page.value_data.len() as u16;
+        page.key_data.extend_from_slice(key_bytes);
+        page.value_data.extend_from_slice(value_bytes);
+    }
+
+    Ok(())
+}
 // ============================================================================
 // B+ Tree Iterator
 // ============================================================================
@@ -607,5 +791,84 @@ pub fn debug_print_page(page: &RefsBtreePage) {
         // kprintln!("  r#type:      LEAF");
     } else {
         // kprintln!("  r#type:      INDEX");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec;
+
+    fn key(id: u64) -> RefsBtreeKey {
+        RefsBtreeKey::new(id, 0, 0)
+    }
+
+    #[test]
+    fn insert_maintains_sorted_order_and_rejects_duplicates() {
+        let mut page = RefsBtreePage::new();
+        for id in [30u64, 10, 20] {
+            insert_key(&mut page, &key(id), &RefsBtreeValue::new(vec![id as u8]))
+                .unwrap()
+                .expect("first page does not split");
+        }
+
+        let ids: alloc::vec::Vec<u64> = (0..page.keys.len())
+            .map(|index| key_at(&page, index).unwrap().object_id)
+            .collect();
+        assert_eq!(ids, alloc::vec![10, 20, 30]);
+        assert!(insert_key(&mut page, &key(20), &RefsBtreeValue::new(vec![])).is_err());
+    }
+
+    #[test]
+    fn insert_splits_full_page_into_two_sorted_pages() {
+        let mut page = RefsBtreePage::new();
+        for id in 0..(REFS_BTREE_DEFAULT_PAGE_CAPACITY as u64 + 1) {
+            insert_key(&mut page, &key(id), &RefsBtreeValue::new(vec![])).unwrap();
+        }
+
+        let left_count = page.keys.len();
+        assert!(left_count > 0 && left_count < REFS_BTREE_DEFAULT_PAGE_CAPACITY);
+        let left_last = key_at(&page, left_count - 1).unwrap().object_id;
+        let right_first = key_at(&page, 0).unwrap().object_id;
+        assert!(left_last < right_first);
+    }
+
+    #[test]
+    fn delete_removes_entry_and_compacts_backing_data() {
+        let mut page = RefsBtreePage::new();
+        for id in [10u64, 20, 30] {
+            insert_key(&mut page, &key(id), &RefsBtreeValue::new(vec![id as u8; 7]))
+                .unwrap()
+                .expect("no split");
+        }
+
+        delete_key(&mut page, &key(20)).unwrap();
+        assert!(find_key_in_page(&page, &key(20)).is_none());
+        assert_eq!(page.keys.len(), 2);
+        assert_eq!(page.key_data.len(), 2 * key(20).total_size());
+        assert_eq!(page.value_data.len(), 14);
+    }
+
+    #[test]
+    fn merge_pages_appends_right_entries_to_left() {
+        let mut left = RefsBtreePage::new();
+        let mut right = RefsBtreePage::new();
+        for id in [10u64, 20] {
+            insert_key(&mut left, &key(id), &RefsBtreeValue::new(vec![]))
+                .unwrap()
+                .expect("no split");
+        }
+        for id in [30u64, 40] {
+            insert_key(&mut right, &key(id), &RefsBtreeValue::new(vec![]))
+                .unwrap()
+                .expect("no split");
+        }
+
+        merge_pages(&mut left, &mut right).unwrap();
+        assert_eq!(left.keys.len(), 4);
+        assert_eq!(right.keys.len(), 0);
+        for (index, expected) in [10u64, 20, 30, 40].iter().enumerate() {
+            assert_eq!(key_at(&left, index).unwrap().object_id, *expected);
+        }
     }
 }

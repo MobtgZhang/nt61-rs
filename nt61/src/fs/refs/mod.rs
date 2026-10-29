@@ -286,7 +286,10 @@ pub fn mount(device: *mut ()) -> Option<&'static mut RefsFileSystem> {
     let cluster_size = sb.get_cluster_size();
     let total_clusters = sb.get_total_clusters();
     let read_only = sb.is_read_only();
-    let object_table_lba = superblock::read_object_id_table_lba(&sb);
+    let object_table_lba = match superblock::read_object_id_table_lba(&sb) {
+        Ok(lba) => lba,
+        Err(_) => return None,
+    };
 
     unsafe {
         (*fs_ptr) = RefsFileSystem::new();
