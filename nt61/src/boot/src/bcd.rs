@@ -16,12 +16,12 @@ pub mod wellknown {
     use super::Guid;
 
     /// Boot entry GUID for "Windows 7" (the default entry).
-    /// Distinct from `WINDOWS_BOOT_LOADER` because the loader
-    /// type and the entry type are different objects in BCD.
+    /// The first four bytes differ from the Boot Manager object so the
+    /// two BCD objects are never confused.
     /// winload matches on the FIRST 4 BYTES of the GUID slot:
-    ///   0x9D 0xEA 0x86 0x2C  -> Normal
+    ///   0x9D 0xEA 0x86 0x2D  -> Normal
     pub const ENTRY_WINDOWS_7: Guid = Guid([
-        0x9D, 0xEA, 0x86, 0x2C, 0x5C, 0xDD, 0x4E, 0x70, 0xAC, 0xC1, 0xF3, 0x2B, 0x34, 0x4D, 0x47,
+        0x9D, 0xEA, 0x86, 0x2D, 0x5C, 0xDD, 0x4E, 0x70, 0xAC, 0xC1, 0xF3, 0x2B, 0x34, 0x4D, 0x47,
         0x95,
     ]);
 
@@ -102,7 +102,8 @@ pub struct BootEntry {
     pub description: StaticStr,
     /// Path to the EFI image the boot manager should chain to, in
     /// EFI-shell notation. Most entries are Windows boot loaders and
-    /// point at winload.efi; the Tool entry would point at memtest.efi.
+    /// point at winload.efi. The memory diagnostic runs directly in
+    /// bootmgr rather than through a placeholder Tool entry.
     pub application: StaticStr,
 }
 

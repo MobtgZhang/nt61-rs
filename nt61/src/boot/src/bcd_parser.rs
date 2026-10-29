@@ -102,10 +102,8 @@ fn aliases_for(type_id: &str) -> &'static [&'static str] {
 // Object type constants
 // ============================================================================
 
-/// Object type: Boot Manager
-pub const OBJECT_TYPE_BOOT_MANAGER: u32 = 0x1010_0002;
-/// Object type: Firmware Boot Manager
-pub const OBJECT_TYPE_FIRMWARE_BOOT_MANAGER: u32 = 0x1010_0010;
+/// Object type: Windows Boot Loader
+pub const OBJECT_TYPE_WINDOWS_BOOT_LOADER: u32 = 0x1020_0003;
 /// Object type: BootApp (EFI application)
 
 /// Top-level BCD hive wrapper.
@@ -192,12 +190,12 @@ impl<'a> BcdHive<'a> {
 
             let object_type = self.get_object_type(&node);
 
-            // Filter by object type: only include boot loaders and resume entries
+            // Filter by object type: only include entries the Windows 7 boot
+            // manager offers in its normal OS menu. Resume objects are BCD
+            // metadata for winresume.efi, not user-selectable boot loaders.
             // Skip: Boot Manager (0x10100002), Firmware Boot Manager (0x10100010)
-            if object_type == OBJECT_TYPE_BOOT_MANAGER
-                || object_type == OBJECT_TYPE_FIRMWARE_BOOT_MANAGER
-            {
-                crate::debug_println!("[BCD]   Skipping Boot Manager: {}", node.name);
+            if object_type != OBJECT_TYPE_WINDOWS_BOOT_LOADER {
+                crate::debug_println!("[BCD]   Skipping non-OS-loader entry: {}", node.name);
                 continue;
             }
 
@@ -215,6 +213,11 @@ impl<'a> BcdHive<'a> {
             let application_path = self
                 .get_element_string(&node, "12000002")
                 .unwrap_or_default();
+
+            if application_path.is_empty() {
+                crate::debug_println!("[BCD]   Skipping invalid entry: {}", node.name);
+                continue;
+            }
 
             crate::debug_println!("[BCD]   Entry: {} ({})", description, node.name);
 
