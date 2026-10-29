@@ -216,7 +216,6 @@ pub fn smoke_test() -> bool {
 
 pub mod cell_allocator;
 pub mod flush;
-pub mod hive_extended;
 pub mod hive_writer;
 pub mod notifications;
 pub mod quota;

@@ -189,6 +189,12 @@ impl FlushManager {
             return Ok(());
         }
 
+        if self.strategy == FlushStrategy::Lazy && !flags.recursive {
+            if !self.should_flush_lazy(hive_id, timestamp) {
+                return Ok(());
+            }
+        }
+
         state.begin_flush()?;
 
         let success = self.perform_flush(hive_id, flags);
@@ -204,7 +210,28 @@ impl FlushManager {
     }
 
     fn perform_flush(&self, _hive_id: usize, _flags: FlushFlags) -> bool {
-        true
+        if !_flags.persistent {
+            return true;
+        }
+
+        let bytes = match super::cm::export_hive_by_id(_hive_id) {
+            Some(bytes) => bytes,
+            None => return false,
+        };
+
+        let path = match _hive_id {
+            0 => "C:\\Windows\\System32\\config\\SYSTEM",
+            1 => "C:\\Windows\\System32\\config\\SOFTWARE",
+            2 => "C:\\Windows\\System32\\config\\SECURITY",
+            3 => "C:\\Windows\\System32\\config\\SAM",
+            4 => "C:\\Windows\\System32\\config\\DEFAULT",
+            5 => "C:\\Boot\\BCD",
+            _ => return false,
+        };
+
+        crate::fs::vfs::vfs_write(path, &bytes)
+            .map(|written| written == bytes.len())
+            .unwrap_or(false)
     }
 
     pub fn flush_all(&self, timestamp: u64) -> Result<(), HiveError> {
@@ -218,6 +245,14 @@ impl FlushManager {
 
     pub fn needs_flush(&self) -> bool {
         self.hive_states.iter().any(|s| s.is_dirty())
+    }
+
+    /// Flush the SAM hive immediately after a runtime account is created.
+    pub fn flush_sam(&self) -> bool {
+        let timestamp = crate::hal::common::pit::get_system_time_ms();
+        self.record_modification(3, timestamp);
+        self.flush_hive(3, FlushFlags::default(), timestamp)
+            .is_ok()
     }
 
     pub fn get_dirty_hives(&self) -> Vec<usize> {
@@ -261,6 +296,11 @@ impl FlushManager {
             false
         }
     }
+}
+
+/// Convenience wrapper for SAM write-back by other executive components.
+pub fn flush_sam_hive() -> bool {
+    FlushManager::new(FlushStrategy::Immediate).flush_sam()
 }
 
 impl Default for FlushManager {
@@ -394,7 +434,15 @@ mod tests {
 
         manager.record_modification(0, 1000);
 
-        let result = manager.flush_hive(0, FlushFlags::default(), 2000);
+        let result = manager.flush_hive(
+            0,
+            FlushFlags {
+                recursive: false,
+                synchronous: true,
+                persistent: false,
+            },
+            2000,
+        );
         assert!(result.is_ok());
 
         let state = manager.hive_state(0).unwrap();
@@ -411,6 +459,18 @@ mod tests {
         assert!(!manager.should_flush_lazy(0, 2000));
 
         assert!(manager.should_flush_lazy(0, 10_000_000));
+    }
+
+    #[test]
+    fn lazy_flush_defers_until_interval() {
+        let manager = FlushManager::new(FlushStrategy::Lazy);
+
+        manager.record_modification(0, 1000);
+
+        assert!(manager.flush_hive(0, FlushFlags::default(), 2000).is_ok());
+        let state = manager.hive_state(0).unwrap();
+        assert!(state.is_dirty());
+        assert_eq!(state.last_flush_time(), 0);
     }
 
     #[test]

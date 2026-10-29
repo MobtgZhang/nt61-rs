@@ -21,12 +21,14 @@
 
 extern crate alloc;
 use crate::kprintln;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use super::hive::{Hive, KeyNode, Value};
+use super::hive_writer::{HiveKey, HiveValue, HiveWriter};
 use super::path::{Hive as HiveId, ParsedPath};
 use crate::boot_types::BootInfo;
+use crate::ke::sync::Spinlock;
 
 /// Maximum number of simultaneously-mounted hives. We only
 /// mount the standard five plus BCD, so eight is plenty.
@@ -82,6 +84,21 @@ static mut MOUNTED: [Option<MountedHive>; MAX_HIVES] = [const { None }; MAX_HIVE
 
 /// True after `init` has run.
 static mut INITIALIZED: bool = false;
+
+/// A runtime-created SAM account persisted under
+/// `HKLM\SAM\Domains\Account\Users\<RID>`.
+#[derive(Debug, Clone)]
+pub struct SamRuntimeUser {
+    pub rid: u32,
+    pub name: String,
+    pub enabled: bool,
+    pub salt: [u8; 16],
+    pub password_hash: [u8; 32],
+}
+
+static SAM_RUNTIME_USERS: Spinlock<Vec<SamRuntimeUser>> = Spinlock::new(Vec::new());
+
+const SAM_USERS_PATH: &str = "\\Registry\\Machine\\SAM\\Domains\\Account\\Users";
 
 /// Mount every hive listed in `BootInfo.hives`. Call this once
 /// from `kernel_main` after Phase 1 (memory manager) and before
@@ -232,6 +249,7 @@ pub fn init(boot_info: &BootInfo) {
         }
 
         INITIALIZED = true;
+        load_sam_runtime_users();
         kprintln!(subsystem: "CM", "    [CM] configuration manager initialized");
     }
 }
@@ -298,6 +316,171 @@ pub fn query_dword(path: &str, name: &str) -> Option<u32> {
 /// Convenience: query a UTF-16 string value.
 pub fn query_string(path: &str, name: &str) -> Option<String> {
     query_value(path, name).and_then(|v| v.as_utf16_string())
+}
+
+/// Convert one parsed registry key into the serialiser's key tree.
+fn export_key(hive: &Hive<'_>, node: &KeyNode) -> Option<HiveKey> {
+    let mut key = HiveKey::new(&node.name);
+    key.flags = node.flags;
+
+    for value in hive.values(node).ok()? {
+        key.values.push(HiveValue {
+            name: value.name,
+            value_type: value.value_type,
+            data: value.data,
+        });
+    }
+
+    for child in hive.subkeys(node).ok()? {
+        key.subkeys.push(export_key(hive, &child)?);
+    }
+
+    Some(key)
+}
+
+/// Serialise a mounted hive into the standard `regf` format.
+pub fn export_hive(hive_id: super::path::Hive) -> Option<Vec<u8>> {
+    let mounted = mounted(hive_id)?;
+    let root = mounted.hive.root().ok()?;
+    let mut root_key = export_key(&mounted.hive, &root)?;
+    root_key.name = String::new();
+
+    if matches!(hive_id, super::path::Hive::SAM) {
+        merge_sam_runtime_users(&mut root_key);
+    }
+
+    let mut writer = HiveWriter::new();
+    writer.serialise(&root_key, 0).ok()
+}
+
+/// Serialise a mounted hive by its stable index (`0..=5`).
+pub fn export_hive_by_id(hive_id: usize) -> Option<Vec<u8>> {
+    let hive = match hive_id {
+        0 => super::path::Hive::System,
+        1 => super::path::Hive::Software,
+        2 => super::path::Hive::Security,
+        3 => super::path::Hive::SAM,
+        4 => super::path::Hive::Default,
+        5 => super::path::Hive::BCD,
+        _ => return None,
+    };
+    export_hive(hive)
+}
+
+/// Register a runtime SAM account in the CM's write-back overlay.
+pub fn add_sam_runtime_user(user: SamRuntimeUser) -> bool {
+    let mut users = SAM_RUNTIME_USERS.lock();
+    if users.iter().any(|existing| existing.rid == user.rid) {
+        return false;
+    }
+    users.push(user);
+    true
+}
+
+/// Snapshot the runtime SAM accounts loaded from the hive.
+pub fn sam_runtime_users() -> Vec<SamRuntimeUser> {
+    SAM_RUNTIME_USERS.lock().clone()
+}
+
+fn ensure_hive_key_mut<'a>(key: &'a mut HiveKey, path: &[&str]) -> &'a mut HiveKey {
+    let Some((name, rest)) = path.split_first() else {
+        return key;
+    };
+
+    let index = match key
+        .subkeys
+        .iter()
+        .position(|child| child.name.eq_ignore_ascii_case(name))
+    {
+        Some(index) => index,
+        None => {
+            key.subkeys.push(HiveKey::new(name));
+            key.subkeys.len() - 1
+        }
+    };
+    ensure_hive_key_mut(&mut key.subkeys[index], rest)
+}
+
+fn merge_sam_runtime_users(root: &mut HiveKey) {
+    let users = SAM_RUNTIME_USERS.lock().clone();
+    if users.is_empty() {
+        return;
+    }
+
+    let users_key = ensure_hive_key_mut(root, &["Domains", "Account", "Users"]);
+    for user in users {
+        let rid_key = ensure_hive_key_mut(users_key, &[&user.rid.to_string()]);
+        rid_key.values.clear();
+        rid_key.values.push(HiveValue {
+            name: String::from("AccountName"),
+            value_type: super::hive::ValueType::String,
+            data: user
+                .name
+                .encode_utf16()
+                .chain(core::iter::once(0))
+                .flat_map(|unit| unit.to_le_bytes())
+                .collect(),
+        });
+        rid_key.values.push(HiveValue {
+            name: String::from("Enabled"),
+            value_type: super::hive::ValueType::DWord,
+            data: (user.enabled as u32).to_le_bytes().to_vec(),
+        });
+        rid_key.values.push(HiveValue {
+            name: String::from("Salt"),
+            value_type: super::hive::ValueType::Binary,
+            data: user.salt.to_vec(),
+        });
+        rid_key.values.push(HiveValue {
+            name: String::from("PasswordHash"),
+            value_type: super::hive::ValueType::Binary,
+            data: user.password_hash.to_vec(),
+        });
+    }
+}
+
+/// Load runtime SAM accounts created by a prior boot.
+pub fn load_sam_runtime_users() -> usize {
+    let Some(rids) = enumerate_subkeys(SAM_USERS_PATH) else {
+        return 0;
+    };
+
+    let mut loaded = 0;
+    for rid in rids {
+        let path = alloc::format!("{}\\{}", SAM_USERS_PATH, rid);
+        let Some(name) = query_string(&path, "AccountName") else {
+            continue;
+        };
+        let Some(enabled) = query_dword(&path, "Enabled") else {
+            continue;
+        };
+        let Some(salt_value) = query_value(&path, "Salt") else {
+            continue;
+        };
+        let Some(hash_value) = query_value(&path, "PasswordHash") else {
+            continue;
+        };
+        let Ok(salt) = <[u8; 16]>::try_from(salt_value.data) else {
+            continue;
+        };
+        let Ok(password_hash) = <[u8; 32]>::try_from(hash_value.data) else {
+            continue;
+        };
+        let Ok(rid) = rid.parse::<u32>() else {
+            continue;
+        };
+
+        if add_sam_runtime_user(SamRuntimeUser {
+            rid,
+            name,
+            enabled: enabled != 0,
+            salt,
+            password_hash,
+        }) {
+            loaded += 1;
+        }
+    }
+    loaded
 }
 
 /// Enumerate the names of immediate subkeys under `path`.
