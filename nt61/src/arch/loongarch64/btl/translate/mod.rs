@@ -30,6 +30,7 @@ use crate::arch::loongarch64::btl::emit::EmitBuffer;
 pub enum TranslateError {
     DecoderError,
     Oom,
+    Unsupported,
 }
 
 /// Dispatch a single instruction to the right translator based on
