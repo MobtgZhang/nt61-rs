@@ -3799,6 +3799,11 @@ fn create_directory_in_parent(
         return Err(());
     }
 
+    let security_id = record_number as crate::fs::ntfs::security::SecurityId;
+    let descriptor =
+        crate::fs::ntfs::security::serialize_sds_descriptor(&crate::fs::ntfs::security::NtfsSecurityDescriptor::new_default());
+    crate::fs::ntfs::security::update_secure_sds(ntfs, security_id, &descriptor)?;
+
     let current_entries = list_directory(ntfs, parent_record);
     let mut entries = current_entries;
     let mut directory_entry = DirectoryEntry::new();
@@ -3907,6 +3912,11 @@ fn create_file_in_parent(
     if write_mft_record(&ntfs.ntfs_data, record_number, &record).is_err() {
         return Err(());
     }
+
+    let security_id = record_number as crate::fs::ntfs::security::SecurityId;
+    let descriptor =
+        crate::fs::ntfs::security::serialize_sds_descriptor(&crate::fs::ntfs::security::NtfsSecurityDescriptor::new_default());
+    crate::fs::ntfs::security::update_secure_sds(ntfs, security_id, &descriptor)?;
 
     insert_directory_entry(ntfs, parent_record, record_number, name, false)?;
 
