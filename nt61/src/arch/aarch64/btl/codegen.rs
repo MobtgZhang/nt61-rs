@@ -89,7 +89,7 @@ struct BranchFixup {
     kind: FixupKind,
 }
 
-enum FixupKind {
+pub enum FixupKind {
     /// A B.cond with a given condition code.
     Cond(u32),
     /// Unconditional B.
@@ -631,4 +631,38 @@ pub fn smoke_test() -> bool {
     // RET x30 = 0xD65F03C0
     assert_eq!(block.words[2], 0xD65F_03C0);
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::arch::common::btl::exec::test_support::{flat_memory, run_mov_imm_add_imm};
+    use crate::arch::common::btl::memory::GuestMemory;
+    use crate::arch::common::btl::x86_decoder::decode_block;
+
+    use super::*;
+
+    #[test]
+    fn lowers_x86_64_mov_imm_add_imm_ret() {
+        let code = [
+            0x48, 0xB8, 42, 0, 0, 0, 0, 0, 0, 0, // mov rax, 42
+            0x48, 0x83, 0xC0, 8, // add rax, 8
+            0xC3, // ret
+        ];
+        let mut ir = [IrInst::empty(); 8];
+        let count = decode_block(&code, 0x1000, &mut ir);
+        assert_eq!(count, 3);
+
+        let block = encode_block(&ir[..count], 0x1000);
+        assert_eq!(block.words.len(), 6);
+        assert!(block.words.iter().all(|word| *word != A64_NOP));
+    }
+
+    #[test]
+    fn interprets_x86_64_mov_imm_add_imm() {
+        let mut backing = [0u8; 0x1000];
+        let mut memory = flat_memory(&mut backing);
+        let (outcome, rax) = run_mov_imm_add_imm(&mut memory);
+        assert!(matches!(outcome, crate::arch::common::btl::exec::ExecOutcome::Retired { .. }));
+        assert_eq!(rax, 50);
+    }
 }
