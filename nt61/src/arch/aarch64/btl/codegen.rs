@@ -29,23 +29,23 @@ const A64_NOP: u32 = 0xD503_201F;
 /// Maps IR BranchCond to the ARM condition field (cond:4).
 fn a64_cond(cond: BranchCond) -> u32 {
     match cond {
-        BranchCond::Always => 0xE,       // AL
-        BranchCond::Overflow => 0x0,     // VS
-        BranchCond::NotOverflow => 0x1,  // VC
-        BranchCond::Below => 0x3,        // UL (unsigned <)
-        BranchCond::AboveOrEqual => 0x2, // HS (unsigned >=)
-        BranchCond::Equal => 0x0 | 0x0,  // EQ
-        BranchCond::NotEqual => 0x1,     // NE
-        BranchCond::BelowOrEqual => 0x9, // LS
-        BranchCond::Above => 0x8,        // HI
-        BranchCond::Sign => 0x4,         // MI (negative)
-        BranchCond::NotSign => 0x5,      // PL (non-negative)
-        BranchCond::Parity => 0x6,       // PS
-        BranchCond::NotParity => 0x7,    // PO
-        BranchCond::Less => 0xB,         // LT
+        BranchCond::Always => 0xE,         // AL
+        BranchCond::Overflow => 0x0,       // VS
+        BranchCond::NotOverflow => 0x1,    // VC
+        BranchCond::Below => 0x3,          // UL (unsigned <)
+        BranchCond::AboveOrEqual => 0x2,   // HS (unsigned >=)
+        BranchCond::Equal => 0x0 | 0x0,    // EQ
+        BranchCond::NotEqual => 0x1,       // NE
+        BranchCond::BelowOrEqual => 0x9,   // LS
+        BranchCond::Above => 0x8,          // HI
+        BranchCond::Sign => 0x4,           // MI (negative)
+        BranchCond::NotSign => 0x5,        // PL (non-negative)
+        BranchCond::Parity => 0x6,         // PS
+        BranchCond::NotParity => 0x7,      // PO
+        BranchCond::Less => 0xB,           // LT
         BranchCond::GreaterOrEqual => 0xA, // GE
-        BranchCond::LessOrEqual => 0xD,  // LE
-        BranchCond::Greater => 0xC,      // GT
+        BranchCond::LessOrEqual => 0xD,    // LE
+        BranchCond::Greater => 0xC,        // GT
     }
 }
 
@@ -142,11 +142,8 @@ impl A64Emitter {
     /// Resolve all pending fixups using the current code length.
     pub fn resolve(&mut self) {
         let code_len = self.code.len();
-        let fixups: alloc::vec::Vec<(usize, FixupKind)> = self
-            .fixups
-            .drain(..)
-            .map(|f| (f.site, f.kind))
-            .collect();
+        let fixups: alloc::vec::Vec<(usize, FixupKind)> =
+            self.fixups.drain(..).map(|f| (f.site, f.kind)).collect();
         for (site, kind) in fixups {
             let rel = (code_len - site) as i32;
             let patched = self.fix_branch(site, &kind, rel);
@@ -157,73 +154,55 @@ impl A64Emitter {
     /// Encode ADD Xd, Xn, #imm12 (64-bit).
     pub fn emit_add_imm(&mut self, rd: u8, rn: u8, imm12: u32) {
         // ADD (immediate): SF=1, op=0, S=0, 100010 | shift=0 | imm12 | Rn | Rd
-        let word: u32 = 0x9100_0000 | (imm12 & 0xFFF) << 10
-            | (rn as u32) << 5
-            | rd as u32;
+        let word: u32 = 0x9100_0000 | (imm12 & 0xFFF) << 10 | (rn as u32) << 5 | rd as u32;
         self.push(word);
     }
 
     /// Encode SUB Xd, Xn, #imm12 (64-bit).
     pub fn emit_sub_imm(&mut self, rd: u8, rn: u8, imm12: u32) {
-        let word: u32 = 0xD100_0000 | (imm12 & 0xFFF) << 10
-            | (rn as u32) << 5
-            | rd as u32;
+        let word: u32 = 0xD100_0000 | (imm12 & 0xFFF) << 10 | (rn as u32) << 5 | rd as u32;
         self.push(word);
     }
 
     /// Encode ADD Xd, Xn, Xm (64-bit register).
     pub fn emit_add_reg(&mut self, rd: u8, rn: u8, rm: u8) {
-        let word: u32 = 0x8B00_0000 | (rm as u32) << 16
-            | (rn as u32) << 5
-            | rd as u32;
+        let word: u32 = 0x8B00_0000 | (rm as u32) << 16 | (rn as u32) << 5 | rd as u32;
         self.push(word);
     }
 
     /// Encode SUB Xd, Xn, Xm (64-bit register).
     pub fn emit_sub_reg(&mut self, rd: u8, rn: u8, rm: u8) {
-        let word: u32 = 0xCB00_0000 | (rm as u32) << 16
-            | (rn as u32) << 5
-            | rd as u32;
+        let word: u32 = 0xCB00_0000 | (rm as u32) << 16 | (rn as u32) << 5 | rd as u32;
         self.push(word);
     }
 
     /// Encode SUBS Xd, Xn, Xm (64-bit, sets flags).
     pub fn emit_subs_reg(&mut self, rd: u8, rn: u8, rm: u8) {
-        let word: u32 = 0xEB00_0000 | (rm as u32) << 16
-            | (rn as u32) << 5
-            | rd as u32;
+        let word: u32 = 0xEB00_0000 | (rm as u32) << 16 | (rn as u32) << 5 | rd as u32;
         self.push(word);
     }
 
     /// Encode AND Xd, Xn, Xm (64-bit).
     pub fn emit_and_reg(&mut self, rd: u8, rn: u8, rm: u8) {
-        let word: u32 = 0x8A00_0000 | (rm as u32) << 16
-            | (rn as u32) << 5
-            | rd as u32;
+        let word: u32 = 0x8A00_0000 | (rm as u32) << 16 | (rn as u32) << 5 | rd as u32;
         self.push(word);
     }
 
     /// Encode ORR Xd, Xn, Xm (64-bit).
     pub fn emit_orr_reg(&mut self, rd: u8, rn: u8, rm: u8) {
-        let word: u32 = 0xAA00_0000 | (rm as u32) << 16
-            | (rn as u32) << 5
-            | rd as u32;
+        let word: u32 = 0xAA00_0000 | (rm as u32) << 16 | (rn as u32) << 5 | rd as u32;
         self.push(word);
     }
 
     /// Encode EOR Xd, Xn, Xm (64-bit).
     pub fn emit_eor_reg(&mut self, rd: u8, rn: u8, rm: u8) {
-        let word: u32 = 0xCA00_0000 | (rm as u32) << 16
-            | (rn as u32) << 5
-            | rd as u32;
+        let word: u32 = 0xCA00_0000 | (rm as u32) << 16 | (rn as u32) << 5 | rd as u32;
         self.push(word);
     }
 
     /// Encode ANDS Xd, Xn, Xm (64-bit, sets flags).
     pub fn emit_ands_reg(&mut self, rd: u8, rn: u8, rm: u8) {
-        let word: u32 = 0xEA00_0000 | (rm as u32) << 16
-            | (rn as u32) << 5
-            | rd as u32;
+        let word: u32 = 0xEA00_0000 | (rm as u32) << 16 | (rn as u32) << 5 | rd as u32;
         self.push(word);
     }
 
@@ -234,35 +213,27 @@ impl A64Emitter {
 
     /// Encode LDR Xt, [Xn, #imm12] (64-bit unsigned offset).
     pub fn emit_ldr(&mut self, rt: u8, rn: u8, imm12: u32) {
-        let word: u32 = 0xF940_0000 | ((imm12 / 8) & 0xFFF) << 10
-            | (rn as u32) << 5
-            | rt as u32;
+        let word: u32 = 0xF940_0000 | ((imm12 / 8) & 0xFFF) << 10 | (rn as u32) << 5 | rt as u32;
         self.push(word);
     }
 
     /// Encode STR Xt, [Xn, #imm12] (64-bit unsigned offset).
     pub fn emit_str(&mut self, rt: u8, rn: u8, imm12: u32) {
-        let word: u32 = 0xF900_0000 | ((imm12 / 8) & 0xFFF) << 10
-            | (rn as u32) << 5
-            | rt as u32;
+        let word: u32 = 0xF900_0000 | ((imm12 / 8) & 0xFFF) << 10 | (rn as u32) << 5 | rt as u32;
         self.push(word);
     }
 
     /// Encode MOVZ Xd, #imm16, LSL #shift (64-bit).
     pub fn emit_movz(&mut self, rd: u8, imm16: u16, shift: u32) {
         let hw = (shift / 16) as u32;
-        let word: u32 = 0xD280_0000 | hw << 21
-            | (imm16 as u32) << 5
-            | rd as u32;
+        let word: u32 = 0xD280_0000 | hw << 21 | (imm16 as u32) << 5 | rd as u32;
         self.push(word);
     }
 
     /// Encode MOVK Xd, #imm16, LSL #shift (64-bit).
     pub fn emit_movk(&mut self, rd: u8, imm16: u16, shift: u32) {
         let hw = (shift / 16) as u32;
-        let word: u32 = 0xF280_0000 | hw << 21
-            | (imm16 as u32) << 5
-            | rd as u32;
+        let word: u32 = 0xF280_0000 | hw << 21 | (imm16 as u32) << 5 | rd as u32;
         self.push(word);
     }
 
@@ -287,21 +258,30 @@ impl A64Emitter {
     /// Encode B (unconditional branch) with a pending fixup.
     pub fn emit_b(&mut self) {
         let site = self.code.len();
-        self.fixups.push(BranchFixup { site, kind: FixupKind::B });
+        self.fixups.push(BranchFixup {
+            site,
+            kind: FixupKind::B,
+        });
         self.push(0); // placeholder, patched in resolve()
     }
 
     /// Encode BL (branch with link) with a pending fixup.
     pub fn emit_bl(&mut self) {
         let site = self.code.len();
-        self.fixups.push(BranchFixup { site, kind: FixupKind::Bl });
+        self.fixups.push(BranchFixup {
+            site,
+            kind: FixupKind::Bl,
+        });
         self.push(0);
     }
 
     /// Encode B.cond with a pending fixup.
     pub fn emit_bcond(&mut self, cond: u32) {
         let site = self.code.len();
-        self.fixups.push(BranchFixup { site, kind: FixupKind::Cond(cond) });
+        self.fixups.push(BranchFixup {
+            site,
+            kind: FixupKind::Cond(cond),
+        });
         self.push(0);
     }
 
@@ -332,10 +312,7 @@ impl A64Emitter {
         // S [23]=1, 1 [22]=1, 1 [21]=1, Rn [20:16], Rm/imm [15:0]
         // For pre-index: 0b111_11000_010_1_1_111_Rn(31)_imm9_11_Rt
         let imm = (imm9 & 0x1FF) as u32;
-        let word: u32 = 0xF81F_0000
-            | (imm & 0x1FF) << 12
-            | 31 << 5
-            | rt as u32;
+        let word: u32 = 0xF81F_0000 | (imm & 0x1FF) << 12 | 31 << 5 | rt as u32;
         self.push(word);
     }
 
@@ -344,10 +321,7 @@ impl A64Emitter {
         // LDR (register, post-index): post-index has bit11=1, bit10=0
         // ldr x3, [sp], #8 = 0xF84087E3
         let imm = (imm9 & 0x1FF) as u32;
-        let word: u32 = 0xF840_0000
-            | (imm & 0x1FF) << 12
-            | 31 << 5
-            | rt as u32;
+        let word: u32 = 0xF840_0000 | (imm & 0x1FF) << 12 | 31 << 5 | rt as u32;
         self.push(word);
     }
 
@@ -415,11 +389,8 @@ impl A64Emitter {
                     // LSL is an alias of UBFM Xd, Xn, #(64-shift), #(63-shift)
                     let immr = ((64 - shift_amt) & 0x3F) as u32;
                     let imms = ((63 - shift_amt) & 0x3F) as u32;
-                    let lsl_word: u32 = 0xD340_0000
-                        | immr << 16
-                        | imms << 10
-                        | (17 as u32) << 5
-                        | 17;
+                    let lsl_word: u32 =
+                        0xD340_0000 | immr << 16 | imms << 10 | (17 as u32) << 5 | 17;
                     self.push(lsl_word);
                 } else {
                     self.emit_mov_reg(17, ri);
@@ -454,11 +425,8 @@ impl A64Emitter {
                 if shift_amt > 0 {
                     let immr = ((64 - shift_amt) & 0x3F) as u32;
                     let imms = ((63 - shift_amt) & 0x3F) as u32;
-                    let lsl_word: u32 = 0xD340_0000
-                        | immr << 16
-                        | imms << 10
-                        | (17 as u32) << 5
-                        | 17;
+                    let lsl_word: u32 =
+                        0xD340_0000 | immr << 16 | imms << 10 | (17 as u32) << 5 | 17;
                     self.push(lsl_word);
                 }
                 // MOV Rd, X17 (then add disp if needed)
@@ -664,4 +632,3 @@ pub fn smoke_test() -> bool {
     assert_eq!(block.words[2], 0xD65F_03C0);
     true
 }
-

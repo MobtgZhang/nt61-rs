@@ -330,7 +330,9 @@ pub extern "C" fn ntoskrnl_kisystemstartup_thunk(
     // PHASE K04: registry/CM (already brought up at K02b)
     // =======================================================================
     crate::rtl::windows_log::write_kernel_phase_header(4);
-    crate::boot_println!("[NTOSKRNL-HOST] K04: CM (registry) initialised at K02b (kernel_main convergence)");
+    crate::boot_println!(
+        "[NTOSKRNL-HOST] K04: CM (registry) initialised at K02b (kernel_main convergence)"
+    );
 
     // =======================================================================
     // PHASE K05: io::init / pnp::init (BOOT_START drivers)

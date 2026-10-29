@@ -47,18 +47,18 @@ pub mod code_cache;
 pub mod translation_manager;
 
 #[cfg(feature = "btl")]
+pub mod codegen;
+#[cfg(feature = "btl")]
 pub mod decoder;
 #[cfg(feature = "btl")]
 pub mod ir;
-#[cfg(feature = "btl")]
-pub mod codegen;
 #[cfg(feature = "btl")]
 pub mod state;
 #[cfg(feature = "btl")]
 pub mod syscall_bridge;
 
-pub use translation_manager::{TranslationManager, TranslationRequest};
 pub use code_cache::{CodeCache, TranslationUnit};
+pub use translation_manager::{TranslationManager, TranslationRequest};
 
 /// Initialise the BTL subsystem. Currently a no-op; the code cache
 /// and translation manager are self-contained statics.

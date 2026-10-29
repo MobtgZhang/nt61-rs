@@ -360,10 +360,7 @@ extern "C" {
 // with weak stubs in the UEFI case below.
 
 #[cfg(not(target_os = "uefi"))]
-core::arch::global_asm!(
-    include_str!("smp_trampoline.S"),
-    options(att_syntax),
-);
+core::arch::global_asm!(include_str!("smp_trampoline.S"), options(att_syntax),);
 
 // Provide weak symbols so the UEFI build (which doesn't link the
 // trampoline) can still resolve the references from smp.rs.

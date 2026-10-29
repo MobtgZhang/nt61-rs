@@ -219,8 +219,7 @@ pub fn map_page(va: u64, pa: u64, flags: u64) -> bool {
         // write the leaf PTE as a hardware entry.
         // Preserve the NX bit (63) as well as the low 12 PTE flag bits;
         // masking to 0xFFF silently dropped NX.
-        let pte_val =
-            (pa & 0x000F_FFFF_FFFF_F000) | (flags & (0xFFF | 0x8000_0000_0000_0000)) | 1;
+        let pte_val = (pa & 0x000F_FFFF_FFFF_F000) | (flags & (0xFFF | 0x8000_0000_0000_0000)) | 1;
         if !write_table_entry(pt_va, pt_idx, pte_val) {
             return false;
         }
@@ -377,7 +376,9 @@ pub fn leaf_entry(va: u64) -> Option<u64> {
         return Some(pml4e);
     }
 
-    let pdpte = match unsafe { read_table_entry(pml4e & 0x000F_FFFF_FFFF_F000, ((va >> 30) & 0x1FF) as usize) } {
+    let pdpte = match unsafe {
+        read_table_entry(pml4e & 0x000F_FFFF_FFFF_F000, ((va >> 30) & 0x1FF) as usize)
+    } {
         Some(value) => value,
         None => return None,
     };
@@ -388,7 +389,9 @@ pub fn leaf_entry(va: u64) -> Option<u64> {
         return Some(pdpte);
     }
 
-    let pde = match unsafe { read_table_entry(pdpte & 0x000F_FFFF_FFFF_F000, ((va >> 21) & 0x1FF) as usize) } {
+    let pde = match unsafe {
+        read_table_entry(pdpte & 0x000F_FFFF_FFFF_F000, ((va >> 21) & 0x1FF) as usize)
+    } {
         Some(value) => value,
         None => return None,
     };

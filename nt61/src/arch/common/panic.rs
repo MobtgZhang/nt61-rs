@@ -38,12 +38,8 @@ impl core::fmt::Write for PanicFormatter {
     }
 }
 
-#[cfg_attr(
-    all(feature = "binary_panic", not(test), not(target_os = "linux")),
-    panic_handler
-)]
 #[allow(dead_code)]
-fn panic_handler(info: &core::panic::PanicInfo) -> ! {
+pub fn kernel_panic(info: &core::panic::PanicInfo) -> ! {
     let mut formatter = PanicFormatter::new();
     let _ =
         core::fmt::Write::write_fmt(&mut formatter, core::format_args!("KERNEL PANIC: {}", info));
@@ -54,4 +50,12 @@ fn panic_handler(info: &core::panic::PanicInfo) -> ! {
     loop {
         crate::arch::halt();
     }
+}
+
+#[cfg_attr(
+    all(feature = "binary_panic", not(test), not(target_os = "linux")),
+    panic_handler
+)]
+fn panic_handler(info: &core::panic::PanicInfo) -> ! {
+    kernel_panic(info)
 }

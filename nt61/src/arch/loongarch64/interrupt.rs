@@ -172,9 +172,7 @@ pub fn get_pending_for_cpu(cpu: u32) -> u32 {
 
     let base = EXTIOI_BASE.load(Ordering::Acquire);
 
-    unsafe {
-        read_u32(base + extioi::COREISR + (cpu as u64) * 4)
-    }
+    unsafe { read_u32(base + extioi::COREISR + (cpu as u64) * 4) }
 }
 
 /// Send IPI to CPU using mailbox

@@ -25,8 +25,7 @@ const MAX_AP_STACKS: usize = 64;
 const AP_STACK_SIZE: usize = 64 * 1024;
 
 #[no_mangle]
-pub static AP_STACK_TOPS: [AtomicU64; MAX_AP_STACKS] =
-    [const { AtomicU64::new(0) }; MAX_AP_STACKS];
+pub static AP_STACK_TOPS: [AtomicU64; MAX_AP_STACKS] = [const { AtomicU64::new(0) }; MAX_AP_STACKS];
 
 core::arch::global_asm!(
     ".global __smp_secondary_entry",

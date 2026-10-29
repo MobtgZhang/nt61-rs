@@ -433,22 +433,16 @@ pub fn init() {
                           //   limit  = 0x000FFFFF (G=1)
                           //   flags  = 0xC       = G=1 D=1 L=0 AVL=0
                           //   base   = 0
-    // KERNEL_CS at slot 6 (selector 0x30): proper 64-bit code descriptor.
-    //   access (bits 40..47) = 0x9B → P=1 DPL=0 S=1 r#type=B (code, exec/read, non-conforming, accessed)
-    //   flags + limit_high (bits 48..55) = 0xAF → G=1 D=0 L=1 AVL=0 limit_high=0xF
-    // OVMF's default slot 7 has D=1 L=1 which QEMU treats as 32-bit,
-    // breaking pushq/iretq in the kernel.
+                          // KERNEL_CS at slot 6 (selector 0x30): proper 64-bit code descriptor.
+                          //   access (bits 40..47) = 0x9B → P=1 DPL=0 S=1 r#type=B (code, exec/read, non-conforming, accessed)
+                          //   flags + limit_high (bits 48..55) = 0xAF → G=1 D=0 L=1 AVL=0 limit_high=0xF
+                          // OVMF's default slot 7 has D=1 L=1 which QEMU treats as 32-bit,
+                          // breaking pushq/iretq in the kernel.
     let kernel_cs: u64 = (0x0000_FFFFu64)       // bits 0..15: limit_low = 0xFFFF
         | (0x9Bu64 << 40)      // bits 40..47: access = 0x9B
         | (0xAFu64 << 48); // bits 48..55: flags + limit_high = 0xAF (G=1 D=0 L=1 AVL=0 + limit_high=0xF)
     let data: [u64; 7] = [
-        kernel_ds,
-        user_ss,
-        user_cs,
-        kernel_cs,
-        kernel_ds,
-        tss_lo,
-        tss_hi,
+        kernel_ds, user_ss, user_cs, kernel_cs, kernel_ds, tss_lo, tss_hi,
     ];
     // NOTE: kprintln removed because MM is not initialized yet
 

@@ -39,8 +39,7 @@ struct PerCpuAreaCell(core::cell::UnsafeCell<PerCpuArea>);
 // SAFETY: A per-CPU area is only accessed through this CPU's base register.
 unsafe impl Sync for PerCpuAreaCell {}
 
-static PER_CPU_0: PerCpuAreaCell =
-    PerCpuAreaCell(core::cell::UnsafeCell::new(PerCpuArea::new(0)));
+static PER_CPU_0: PerCpuAreaCell = PerCpuAreaCell(core::cell::UnsafeCell::new(PerCpuArea::new(0)));
 
 /// KS6 (CSR 0x36) is one of the eight KScratch registers the
 /// architecture reserves for software. CSR 0x13 must NOT be used

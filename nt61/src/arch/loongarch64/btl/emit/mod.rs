@@ -62,8 +62,9 @@ impl EmitBuffer {
     pub fn resolve_branches(&mut self) {
         let labels = self.labels.clone();
         for branch in &self.pending {
-            let Some(&(_pc, target_idx)) =
-                labels.iter().find(|&&(target_pc, _)| target_pc == branch.target)
+            let Some(&(_pc, target_idx)) = labels
+                .iter()
+                .find(|&&(target_pc, _)| target_pc == branch.target)
             else {
                 continue;
             };

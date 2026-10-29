@@ -74,7 +74,8 @@ impl TranslationManager {
     pub fn resolve(&mut self, pc: u64) -> Option<u64> {
         if let Some(unit) = self.cache.lookup(pc) {
             self.hit_count += 1;
-            unit.access_count.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            unit.access_count
+                .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             return Some(unit.translated_ptr);
         }
         self.miss_count += 1;
@@ -99,7 +100,7 @@ impl TranslationManager {
     /// dispatches to the per-arch decoder/IR/codegen pipeline when
     /// the `btl` feature is enabled, or returns `Disabled` when it
     /// is not.
-        pub fn translate(&mut self, req: TranslationRequest) -> BtlResult<TranslationUnit> {
+    pub fn translate(&mut self, req: TranslationRequest) -> BtlResult<TranslationUnit> {
         if !super::ENABLED {
             return Err(BtlError::Disabled);
         }

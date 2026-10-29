@@ -197,10 +197,7 @@ pub extern "C" fn trap_dispatch(frame: *mut TrapFrame) {
             // all of them into the generic access-fault handler so
             // COW, demand-zero, and permission diagnostics behave the
             // same as for the PIL/PIS/PIF codes.
-            let is_write = matches!(
-                kind,
-                TrapKind::PageInvalidStore | TrapKind::PageModified
-            );
+            let is_write = matches!(kind, TrapKind::PageInvalidStore | TrapKind::PageModified);
             let is_inst = matches!(
                 kind,
                 TrapKind::PageInvalidFetch | TrapKind::PageNotExecutable
@@ -242,9 +239,9 @@ pub extern "C" fn trap_dispatch(frame: *mut TrapFrame) {
         }
         TrapKind::Int => {
             let is = estat & 0x7FFF; // IS[14:0]
-            // IS[1] is the LoongArch IPI line. It is acknowledged through
-            // the IOCSR IPI mailbox, then turned into the architecture-
-            // independent shootdown protocol.
+                                     // IS[1] is the LoongArch IPI line. It is acknowledged through
+                                     // the IOCSR IPI mailbox, then turned into the architecture-
+                                     // independent shootdown protocol.
             if (is & (1 << 1)) != 0 {
                 crate::arch::loongarch64::interrupt::clear_ipi();
                 crate::ke::tlb_shootdown::handle_shootdown_interrupt();

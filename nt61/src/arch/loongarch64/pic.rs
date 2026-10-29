@@ -11,7 +11,10 @@ const EXTIOI_UART_IRQ: u32 = 2;
 pub fn init(base: u64) {
     crate::arch::boot::early_write_str(b"[PIC_ENTER]\r\n");
     crate::arch::loongarch64::interrupt::init(base);
-    PIC_BASE.store(crate::arch::loongarch64::interrupt::base(), Ordering::Release);
+    PIC_BASE.store(
+        crate::arch::loongarch64::interrupt::base(),
+        Ordering::Release,
+    );
     enable_irq(EXTIOI_UART_IRQ);
 }
 

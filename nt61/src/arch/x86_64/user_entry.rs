@@ -326,73 +326,73 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
             for (index, target) in bytes.iter_mut().enumerate() {
                 *target = *source.add(index);
             }
-        crate::hal::serial::write_string_always("[RING3-ENTRY] code=");
-        for &byte in &bytes {
-            crate::hal::serial::write_hex_u64_always(byte as u64);
-            crate::hal::serial::write_string_always(" ");
-        }
-        crate::hal::serial::write_string_always("\r\n");
+            crate::hal::serial::write_string_always("[RING3-ENTRY] code=");
+            for &byte in &bytes {
+                crate::hal::serial::write_hex_u64_always(byte as u64);
+                crate::hal::serial::write_string_always(" ");
+            }
+            crate::hal::serial::write_string_always("\r\n");
 
-        let stack_pml4_index = ((user_rsp >> 39) & 0x1ff) as usize;
-        let stack_pdpt_index = ((user_rsp >> 30) & 0x1ff) as usize;
-        let stack_pd_index = ((user_rsp >> 21) & 0x1ff) as usize;
-        let stack_pt_index = ((user_rsp >> 12) & 0x1ff) as usize;
-        let stack_pml4_entry = read_table(pml4_phys, stack_pml4_index).unwrap_or(0);
-        let stack_pdpt_entry = if stack_pml4_entry & 1 != 0 {
-            read_table(stack_pml4_entry & 0x000f_ffff_ffff_f000, stack_pdpt_index).unwrap_or(0)
-        } else {
-            0
-        };
-        let stack_pd_entry = if stack_pml4_entry & 1 != 0 && stack_pdpt_entry & 1 != 0 {
-            read_table(stack_pdpt_entry & 0x000f_ffff_ffff_f000, stack_pd_index).unwrap_or(0)
-        } else {
-            0
-        };
-        let stack_pt_entry = if stack_pml4_entry & 1 != 0
-            && stack_pdpt_entry & 1 != 0
-            && stack_pd_entry & 1 != 0
-            && stack_pd_entry & 0x80 == 0
-        {
-            read_table(stack_pd_entry & 0x000f_ffff_ffff_f000, stack_pt_index).unwrap_or(0)
-        } else {
-            0
-        };
-        crate::hal::serial::write_string_always("[RING3-STACK] rsp=");
-        crate::hal::serial::write_hex_u64_always(user_rsp);
-        crate::hal::serial::write_string_always(" pml4e=");
-        crate::hal::serial::write_hex_u64_always(stack_pml4_entry);
-        crate::hal::serial::write_string_always(" pdpte=");
-        crate::hal::serial::write_hex_u64_always(stack_pdpt_entry);
-        crate::hal::serial::write_string_always(" pde=");
-        crate::hal::serial::write_hex_u64_always(stack_pd_entry);
-        crate::hal::serial::write_string_always(" pte=");
-        crate::hal::serial::write_hex_u64_always(stack_pt_entry);
-        crate::hal::serial::write_string_always("\r\n");
+            let stack_pml4_index = ((user_rsp >> 39) & 0x1ff) as usize;
+            let stack_pdpt_index = ((user_rsp >> 30) & 0x1ff) as usize;
+            let stack_pd_index = ((user_rsp >> 21) & 0x1ff) as usize;
+            let stack_pt_index = ((user_rsp >> 12) & 0x1ff) as usize;
+            let stack_pml4_entry = read_table(pml4_phys, stack_pml4_index).unwrap_or(0);
+            let stack_pdpt_entry = if stack_pml4_entry & 1 != 0 {
+                read_table(stack_pml4_entry & 0x000f_ffff_ffff_f000, stack_pdpt_index).unwrap_or(0)
+            } else {
+                0
+            };
+            let stack_pd_entry = if stack_pml4_entry & 1 != 0 && stack_pdpt_entry & 1 != 0 {
+                read_table(stack_pdpt_entry & 0x000f_ffff_ffff_f000, stack_pd_index).unwrap_or(0)
+            } else {
+                0
+            };
+            let stack_pt_entry = if stack_pml4_entry & 1 != 0
+                && stack_pdpt_entry & 1 != 0
+                && stack_pd_entry & 1 != 0
+                && stack_pd_entry & 0x80 == 0
+            {
+                read_table(stack_pd_entry & 0x000f_ffff_ffff_f000, stack_pt_index).unwrap_or(0)
+            } else {
+                0
+            };
+            crate::hal::serial::write_string_always("[RING3-STACK] rsp=");
+            crate::hal::serial::write_hex_u64_always(user_rsp);
+            crate::hal::serial::write_string_always(" pml4e=");
+            crate::hal::serial::write_hex_u64_always(stack_pml4_entry);
+            crate::hal::serial::write_string_always(" pdpte=");
+            crate::hal::serial::write_hex_u64_always(stack_pdpt_entry);
+            crate::hal::serial::write_string_always(" pde=");
+            crate::hal::serial::write_hex_u64_always(stack_pd_entry);
+            crate::hal::serial::write_string_always(" pte=");
+            crate::hal::serial::write_hex_u64_always(stack_pt_entry);
+            crate::hal::serial::write_string_always("\r\n");
 
-        let read_msr = |msr: u32| -> u64 {
-            let lo: u32;
-            let hi: u32;
-            core::arch::asm!(
-                "rdmsr",
-                in("ecx") msr,
-                out("eax") lo,
-                out("edx") hi,
-                options(nostack, preserves_flags)
+            let read_msr = |msr: u32| -> u64 {
+                let lo: u32;
+                let hi: u32;
+                core::arch::asm!(
+                    "rdmsr",
+                    in("ecx") msr,
+                    out("eax") lo,
+                    out("edx") hi,
+                    options(nostack, preserves_flags)
+                );
+                ((hi as u64) << 32) | lo as u64
+            };
+            let efer = read_msr(0xC0000080);
+            let lstar = read_msr(0xC0000082);
+            crate::hal::serial::write_string_always("[RING3-MSR] efer=");
+            crate::hal::serial::write_hex_u64_always(efer);
+            crate::hal::serial::write_string_always(" lstar=");
+            crate::hal::serial::write_hex_u64_always(lstar);
+            crate::hal::serial::write_string_always(" syscall_entry=");
+            crate::hal::serial::write_hex_u64_always(
+                crate::arch::x86_64::syscall::syscall_entry_address(),
             );
-            ((hi as u64) << 32) | lo as u64
-        };
-        let efer = read_msr(0xC0000080);
-        let lstar = read_msr(0xC0000082);
-        crate::hal::serial::write_string_always("[RING3-MSR] efer=");
-        crate::hal::serial::write_hex_u64_always(efer);
-        crate::hal::serial::write_string_always(" lstar=");
-        crate::hal::serial::write_hex_u64_always(lstar);
-        crate::hal::serial::write_string_always(" syscall_entry=");
-        crate::hal::serial::write_hex_u64_always(
-            crate::arch::x86_64::syscall::syscall_entry_address(),
-        );
-        crate::hal::serial::write_string_always("\r\n");
-    }
+            crate::hal::serial::write_string_always("\r\n");
+        }
     }
 
     unsafe {
@@ -409,21 +409,20 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
             );
             let limit = u16::from_le_bytes([gdtr[0], gdtr[1]]);
             let base = u64::from_le_bytes([
-                gdtr[2], gdtr[3], gdtr[4], gdtr[5], gdtr[6], gdtr[7],
-                gdtr[8], gdtr[9],
+                gdtr[2], gdtr[3], gdtr[4], gdtr[5], gdtr[6], gdtr[7], gdtr[8], gdtr[9],
             ]);
             crate::hal::serial::write_string_always("[RING3-GDT] base=");
             crate::hal::serial::write_hex_u64_always(base);
             crate::hal::serial::write_string_always(" limit=");
             crate::hal::serial::write_hex_u64_always(limit as u64);
             crate::hal::serial::write_string_always(" cs=");
-            crate::hal::serial::write_hex_u64_always(
-                core::ptr::read_volatile((base + 0x28) as *const u64),
-            );
+            crate::hal::serial::write_hex_u64_always(core::ptr::read_volatile(
+                (base + 0x28) as *const u64,
+            ));
             crate::hal::serial::write_string_always(" ss=");
-            crate::hal::serial::write_hex_u64_always(
-                core::ptr::read_volatile((base + 0x20) as *const u64),
-            );
+            crate::hal::serial::write_hex_u64_always(core::ptr::read_volatile(
+                (base + 0x20) as *const u64,
+            ));
             crate::hal::serial::write_string_always("\r\n");
         }
         core::arch::asm!(

@@ -65,7 +65,9 @@ pub struct CodeCache {
 impl CodeCache {
     pub const fn empty() -> Self {
         const NONE: Option<TranslationUnit> = None;
-        Self { units: [NONE; 1024] }
+        Self {
+            units: [NONE; 1024],
+        }
     }
 
     /// Hash `source_addr` to a starting slot. The Fibonacci mixing
@@ -161,8 +163,8 @@ pub fn reset_code_cache() {
 }
 
 /// Insert `unit` into `cache` at its hash slot.
-pub fn insert_unit(cache: &mut CodeCache, unit: TranslationUnit) {
-    cache.insert(unit);
+pub fn insert_unit(cache: &mut CodeCache, unit: TranslationUnit) -> Option<&TranslationUnit> {
+    cache.insert(unit)
 }
 
 pub fn smoke_test() -> bool {

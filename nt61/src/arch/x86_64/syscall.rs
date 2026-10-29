@@ -480,10 +480,10 @@ fn build_ssdt_arguments(tf: &TrapFrame) -> crate::ke::ssdt_common::SyscallArgume
 }
 
 fn dispatch_service(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
-use crate::libs::ntdll::status::STATUS_SUCCESS;
-use crate::libs::ntdll::status::STATUS_ACCESS_VIOLATION;
-use crate::libs::ntdll::status::STATUS_IO_DEVICE_ERROR;
-use crate::libs::ntdll::status::STATUS_INVALID_PARAMETER;
+    use crate::libs::ntdll::status::STATUS_ACCESS_VIOLATION;
+    use crate::libs::ntdll::status::STATUS_INVALID_PARAMETER;
+    use crate::libs::ntdll::status::STATUS_IO_DEVICE_ERROR;
+    use crate::libs::ntdll::status::STATUS_SUCCESS;
     use crate::libs::ntdll::types::{
         client_id, IoStatusBlock, ObjectAttributes, SizeT, UnicodeString, HANDLE, PVOID,
     };
@@ -503,7 +503,9 @@ use crate::libs::ntdll::status::STATUS_INVALID_PARAMETER;
     match syscall_num {
         // ---- Process / Thread ----
         nums::NT_CREATE_PROCESS => {
-            if !validate_output(arg0(tf), 4) || !validate_write(arg2(tf), size_of::<ObjectAttributes>()) {
+            if !validate_output(arg0(tf), 4)
+                || !validate_write(arg2(tf), size_of::<ObjectAttributes>())
+            {
                 return STATUS_ACCESS_VIOLATION as SyscallResult;
             }
             unsafe {
@@ -518,9 +520,11 @@ use crate::libs::ntdll::status::STATUS_INVALID_PARAMETER;
                     stack_arg(tf, 1) as PVOID,
                 ) as i64
             }
-        },
+        }
         nums::NT_CREATE_PROCESS_EX => {
-            if !validate_output(arg0(tf), 4) || !validate_write(arg2(tf), size_of::<ObjectAttributes>()) {
+            if !validate_output(arg0(tf), 4)
+                || !validate_write(arg2(tf), size_of::<ObjectAttributes>())
+            {
                 return STATUS_ACCESS_VIOLATION as SyscallResult;
             }
             unsafe {
@@ -536,7 +540,7 @@ use crate::libs::ntdll::status::STATUS_INVALID_PARAMETER;
                     stack_arg(tf, 2) as u32,
                 ) as i64
             }
-        },
+        }
         nums::NT_OPEN_PROCESS => {
             if !validate_output(arg0(tf), 4)
                 || !validate_write(arg2(tf), size_of::<ObjectAttributes>())
@@ -552,7 +556,7 @@ use crate::libs::ntdll::status::STATUS_INVALID_PARAMETER;
                     arg3(tf) as *mut client_id,
                 ) as i64
             }
-        },
+        }
         nums::NT_TERMINATE_PROCESS => unsafe {
             // Terminate takes only a kernel HANDLE and an exit status:
             // there is no user pointer to probe here, and the helper
@@ -574,7 +578,7 @@ use crate::libs::ntdll::status::STATUS_INVALID_PARAMETER;
                     arg4(tf) as *mut u32,
                 ) as i64
             }
-        },
+        }
         nums::NT_SET_INFORMATION_PROCESS => unsafe {
             // arg2 is a user input buffer of arg3 bytes that the
             // helper dereferences; probe it before handing it over.
@@ -956,31 +960,31 @@ use crate::libs::ntdll::status::STATUS_INVALID_PARAMETER;
         nums::NT_SAVE_KEY => not_implemented(),
 
         // ---- System Info ----
-        nums::NT_SET_SYSTEM_INFORMATION => {
-            unsafe {
-                crate::libs::ntdll::info::nt_set_system_information(
-                    arg0(tf) as u32,
-                    arg1(tf) as PVOID,
-                    arg2(tf) as u32,
-                ) as i64
-            }
+        nums::NT_SET_SYSTEM_INFORMATION => unsafe {
+            crate::libs::ntdll::info::nt_set_system_information(
+                arg0(tf) as u32,
+                arg1(tf) as PVOID,
+                arg2(tf) as u32,
+            ) as i64
         },
         nums::NT_QUERY_SYSTEM_TIME => {
             // Write the current wall-clock time as a 64-bit
             // FILETIME (100-ns intervals since 1601-01-01 UTC).
             let system_time = arg0(tf) as u64;
             if !validate_write(system_time, 8) {
-                return crate::arch::x86_64::syscall_validation::STATUS_ACCESS_VIOLATION as SyscallResult;
+                return crate::arch::x86_64::syscall_validation::STATUS_ACCESS_VIOLATION
+                    as SyscallResult;
             }
             let filetime = match crate::hal::cmos::hal_query_real_time_clock() {
                 Some(ref time) => crate::hal::x86_64::cmos::time_fields_to_100ns(time),
                 None => 0,
             };
             if crate::mm::user_copy::write_user(system_time, &filetime).is_err() {
-                return crate::arch::x86_64::syscall_validation::STATUS_ACCESS_VIOLATION as SyscallResult;
+                return crate::arch::x86_64::syscall_validation::STATUS_ACCESS_VIOLATION
+                    as SyscallResult;
             }
             success()
-        },
+        }
         nums::NT_SET_SYSTEM_TIME => {
             // NT semantics: arg0 points at the caller-provided 100-ns
             // FILETIME to program into the CMOS RTC; arg1, if non-null,
@@ -1028,23 +1032,27 @@ use crate::libs::ntdll::status::STATUS_INVALID_PARAMETER;
             let counter = arg0(tf) as u64;
             let frequency = arg1(tf) as u64;
             if !validate_write(counter, 8) {
-                return crate::arch::x86_64::syscall_validation::STATUS_ACCESS_VIOLATION as SyscallResult;
+                return crate::arch::x86_64::syscall_validation::STATUS_ACCESS_VIOLATION
+                    as SyscallResult;
             }
             let value = unsafe { core::arch::x86_64::_rdtsc() };
             if crate::mm::user_copy::write_user(counter, &value).is_err() {
-                return crate::arch::x86_64::syscall_validation::STATUS_ACCESS_VIOLATION as SyscallResult;
+                return crate::arch::x86_64::syscall_validation::STATUS_ACCESS_VIOLATION
+                    as SyscallResult;
             }
             if frequency != 0 {
                 if !validate_write(frequency, 8) {
-                    return crate::arch::x86_64::syscall_validation::STATUS_ACCESS_VIOLATION as SyscallResult;
+                    return crate::arch::x86_64::syscall_validation::STATUS_ACCESS_VIOLATION
+                        as SyscallResult;
                 }
                 let hz = crate::hal::x86_64::pit::tsc_frequency_hz();
                 if crate::mm::user_copy::write_user(frequency, &hz).is_err() {
-                    return crate::arch::x86_64::syscall_validation::STATUS_ACCESS_VIOLATION as SyscallResult;
+                    return crate::arch::x86_64::syscall_validation::STATUS_ACCESS_VIOLATION
+                        as SyscallResult;
                 }
             }
             success()
-        },
+        }
 
         // ---- Thread ----
         nums::NT_OPEN_THREAD => unsafe {
@@ -1599,11 +1607,8 @@ use crate::libs::ntdll::status::STATUS_INVALID_PARAMETER;
             let mut kernel_buffer = alloc::vec![0u8; length as usize];
             match crate::fs::ntfs::read_file(fs, handle, &mut kernel_buffer) {
                 Ok(count) => {
-                    if crate::mm::user_copy::copy_to_user(
-                        buffer as u64,
-                        &kernel_buffer[..count],
-                    )
-                    .is_err()
+                    if crate::mm::user_copy::copy_to_user(buffer as u64, &kernel_buffer[..count])
+                        .is_err()
                     {
                         return crate::libs::ntdll::status::STATUS_ACCESS_VIOLATION as i64;
                     }
@@ -1644,9 +1649,7 @@ use crate::libs::ntdll::status::STATUS_INVALID_PARAMETER;
             };
             let out_ptr = arg2(tf) as u64;
             let out_len = arg3(tf) as usize;
-            if out_len == 0
-                || crate::mm::user_copy::probe_user_write(out_ptr, out_len).is_err()
-            {
+            if out_len == 0 || crate::mm::user_copy::probe_user_write(out_ptr, out_len).is_err() {
                 return crate::libs::ntdll::status::STATUS_INVALID_PARAMETER as i64;
             }
             let Some(fs) = crate::fs::ntfs::get_mounted_fs() else {
@@ -8486,57 +8489,119 @@ mod syscall_number_validation {
             ("NtReadFile", syscall_numbers::NT_READ_FILE),
             ("NtWriteFile", syscall_numbers::NT_WRITE_FILE),
             ("NtOpenFile", syscall_numbers::NT_OPEN_FILE),
-            ("NtDeviceIoControlFile", syscall_numbers::NT_DEVICE_IO_CONTROL_FILE),
+            (
+                "NtDeviceIoControlFile",
+                syscall_numbers::NT_DEVICE_IO_CONTROL_FILE,
+            ),
             ("NtCreateEvent", syscall_numbers::NT_CREATE_EVENT),
             ("NtSetEvent", syscall_numbers::NT_SET_EVENT),
             ("NtQueueApcThread", syscall_numbers::NT_QUEUE_APC_THREAD),
-            ("NtQueryPerformanceCounter", syscall_numbers::NT_QUERY_PERFORMANCE_COUNTER),
+            (
+                "NtQueryPerformanceCounter",
+                syscall_numbers::NT_QUERY_PERFORMANCE_COUNTER,
+            ),
             ("NtCreateKey", syscall_numbers::NT_CREATE_KEY),
             ("NtOpenKey", syscall_numbers::NT_OPEN_KEY),
             ("NtSetValueKey", syscall_numbers::NT_SET_VALUE_KEY),
             ("NtQueryValueKey", syscall_numbers::NT_QUERY_VALUE_KEY),
             ("NtEnumerateKey", syscall_numbers::NT_ENUMERATE_KEY),
-            ("NtEnumerateValueKey", syscall_numbers::NT_ENUMERATE_VALUE_KEY),
+            (
+                "NtEnumerateValueKey",
+                syscall_numbers::NT_ENUMERATE_VALUE_KEY,
+            ),
             ("NtCreateSemaphore", syscall_numbers::NT_CREATE_SEMAPHORE),
             ("NtReleaseSemaphore", syscall_numbers::NT_RELEASE_SEMAPHORE),
             ("NtCreateTimer", syscall_numbers::NT_CREATE_TIMER),
             ("NtSetTimer", syscall_numbers::NT_SET_TIMER),
             ("NtCancelTimer", syscall_numbers::NT_CANCEL_TIMER),
-            ("NtQueryInformationFile", syscall_numbers::NT_QUERY_INFORMATION_FILE),
-            ("NtSetInformationFile", syscall_numbers::NT_SET_INFORMATION_FILE),
+            (
+                "NtQueryInformationFile",
+                syscall_numbers::NT_QUERY_INFORMATION_FILE,
+            ),
+            (
+                "NtSetInformationFile",
+                syscall_numbers::NT_SET_INFORMATION_FILE,
+            ),
             ("NtFlushBuffersFile", syscall_numbers::NT_FLUSH_BUFFERS_FILE),
-            ("NtQueryDirectoryFile", syscall_numbers::NT_QUERY_DIRECTORY_FILE),
-            ("NtQueryVolumeInformationFile", syscall_numbers::NT_QUERY_VOLUME_INFORMATION_FILE),
-            ("NtSetInformationThread", syscall_numbers::NT_SET_INFORMATION_THREAD),
+            (
+                "NtQueryDirectoryFile",
+                syscall_numbers::NT_QUERY_DIRECTORY_FILE,
+            ),
+            (
+                "NtQueryVolumeInformationFile",
+                syscall_numbers::NT_QUERY_VOLUME_INFORMATION_FILE,
+            ),
+            (
+                "NtSetInformationThread",
+                syscall_numbers::NT_SET_INFORMATION_THREAD,
+            ),
             ("NtYieldExecution", syscall_numbers::NT_YIELD_EXECUTION),
             ("NtContinue", syscall_numbers::NT_CONTINUE),
             ("NtOpenProcess", syscall_numbers::NT_OPEN_PROCESS),
             ("NtCreateProcessEx", syscall_numbers::NT_CREATE_PROCESS_EX),
             ("NtTerminateProcess", syscall_numbers::NT_TERMINATE_PROCESS),
-            ("NtAllocateVirtualMemory", syscall_numbers::NT_ALLOCATE_VIRTUAL_MEMORY),
-            ("NtFreeVirtualMemory", syscall_numbers::NT_FREE_VIRTUAL_MEMORY),
-            ("NtReadVirtualMemory", syscall_numbers::NT_READ_VIRTUAL_MEMORY),
-            ("NtWriteVirtualMemory", syscall_numbers::NT_WRITE_VIRTUAL_MEMORY),
-            ("NtProtectVirtualMemory", syscall_numbers::NT_PROTECT_VIRTUAL_MEMORY),
-            ("NtQueryVirtualMemory", syscall_numbers::NT_QUERY_VIRTUAL_MEMORY),
+            (
+                "NtAllocateVirtualMemory",
+                syscall_numbers::NT_ALLOCATE_VIRTUAL_MEMORY,
+            ),
+            (
+                "NtFreeVirtualMemory",
+                syscall_numbers::NT_FREE_VIRTUAL_MEMORY,
+            ),
+            (
+                "NtReadVirtualMemory",
+                syscall_numbers::NT_READ_VIRTUAL_MEMORY,
+            ),
+            (
+                "NtWriteVirtualMemory",
+                syscall_numbers::NT_WRITE_VIRTUAL_MEMORY,
+            ),
+            (
+                "NtProtectVirtualMemory",
+                syscall_numbers::NT_PROTECT_VIRTUAL_MEMORY,
+            ),
+            (
+                "NtQueryVirtualMemory",
+                syscall_numbers::NT_QUERY_VIRTUAL_MEMORY,
+            ),
             ("NtCreateFile", syscall_numbers::NT_CREATE_FILE),
             ("NtClose", syscall_numbers::NT_CLOSE),
             ("NtCreateSection", syscall_numbers::NT_CREATE_SECTION),
-            ("NtMapViewOfSection", syscall_numbers::NT_MAP_VIEW_OF_SECTION),
-            ("NtUnmapViewOfSection", syscall_numbers::NT_UNMAP_VIEW_OF_SECTION),
-            ("NtQuerySystemInformation", syscall_numbers::NT_QUERY_SYSTEM_INFORMATION),
-            ("NtWaitForSingleObject", syscall_numbers::NT_WAIT_FOR_SINGLE_OBJECT),
-            ("NtWaitForMultipleObjects", syscall_numbers::NT_WAIT_FOR_MULTIPLE_OBJECTS),
+            (
+                "NtMapViewOfSection",
+                syscall_numbers::NT_MAP_VIEW_OF_SECTION,
+            ),
+            (
+                "NtUnmapViewOfSection",
+                syscall_numbers::NT_UNMAP_VIEW_OF_SECTION,
+            ),
+            (
+                "NtQuerySystemInformation",
+                syscall_numbers::NT_QUERY_SYSTEM_INFORMATION,
+            ),
+            (
+                "NtWaitForSingleObject",
+                syscall_numbers::NT_WAIT_FOR_SINGLE_OBJECT,
+            ),
+            (
+                "NtWaitForMultipleObjects",
+                syscall_numbers::NT_WAIT_FOR_MULTIPLE_OBJECTS,
+            ),
             ("NtCreateMutant", syscall_numbers::NT_CREATE_MUTANT),
             ("NtOpenMutant", syscall_numbers::NT_OPEN_MUTANT),
             ("NtReleaseMutant", syscall_numbers::NT_RELEASE_MUTANT),
-            ("NtCreateUserProcess", syscall_numbers::NT_CREATE_USER_PROCESS),
+            (
+                "NtCreateUserProcess",
+                syscall_numbers::NT_CREATE_USER_PROCESS,
+            ),
             ("NtRaiseException", syscall_numbers::NT_RAISE_EXCEPTION),
             ("NtCreateThreadEx", syscall_numbers::NT_CREATE_THREAD_EX),
             ("NtResumeThread", syscall_numbers::NT_RESUME_THREAD),
         ];
         for (name, value) in checks {
-            let expected = table.get(name).unwrap_or_else(|| panic!("missing {}", name));
+            let expected = table
+                .get(name)
+                .unwrap_or_else(|| panic!("missing {}", name));
             assert_eq!(*expected as u32, *value, "{} mismatch", name);
         }
     }

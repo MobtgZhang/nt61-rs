@@ -60,7 +60,12 @@ pub unsafe fn syscall_varargs(num: u32, args: &[u64]) -> i64 {
     result
 }
 
-#[cfg(not(any(target_arch = "x86_64", target_arch = "riscv64", target_arch = "aarch64", target_arch = "loongarch64")))]
+#[cfg(not(any(
+    target_arch = "x86_64",
+    target_arch = "riscv64",
+    target_arch = "aarch64",
+    target_arch = "loongarch64"
+)))]
 #[inline(always)]
 pub unsafe fn syscall_varargs(num: u32, args: &[u64]) -> i64 {
     let result: i64;

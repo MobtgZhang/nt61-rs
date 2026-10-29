@@ -27,11 +27,10 @@ pub struct ExceptionStack {
     pub data: [u8; EXCEPTION_STACK_SIZE],
 }
 
-static EXCEPTION_STACK: ExceptionStackCell = ExceptionStackCell(core::cell::UnsafeCell::new(
-    ExceptionStack {
+static EXCEPTION_STACK: ExceptionStackCell =
+    ExceptionStackCell(core::cell::UnsafeCell::new(ExceptionStack {
         data: [0u8; EXCEPTION_STACK_SIZE],
-    },
-));
+    }));
 
 /// Top-of-stack pointer (one past the end of `EXCEPTION_STACK`).
 ///

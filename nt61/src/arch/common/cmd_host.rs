@@ -63,10 +63,7 @@ pub unsafe fn read_line(buffer: *mut u8, length: usize) -> Option<usize> {
     let capacity = length.min(super::line_edit::LINE_CAPACITY);
     let mut kernel_buffer = [0u8; super::line_edit::LINE_CAPACITY];
     let written = super::line_edit::read_line(&mut kernel_buffer[..capacity], capacity);
-    let copied = crate::mm::user_copy::copy_to_user(
-        buffer as u64,
-        &kernel_buffer[..written + 1],
-    );
+    let copied = crate::mm::user_copy::copy_to_user(buffer as u64, &kernel_buffer[..written + 1]);
     if copied.is_err() {
         crate::servers::cmd::diagnostic_command_failure(b"READ_COPY");
         return None;

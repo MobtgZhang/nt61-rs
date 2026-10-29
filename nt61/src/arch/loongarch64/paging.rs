@@ -179,18 +179,17 @@ impl PagingState {
 
 static PAGING_STATE: Spinlock<PagingState> = Spinlock::new(PagingState::new());
 
-unsafe fn leaf_table_for(
-    state: &mut PagingState,
-    key: LeafTableKey,
-) -> Option<*mut u64> {
+unsafe fn leaf_table_for(state: &mut PagingState, key: LeafTableKey) -> Option<*mut u64> {
     for (index, slot) in state.leaf_keys.iter().enumerate() {
         let existing = slot.unwrap_or(LeafTableKey {
             l2_index: usize::MAX,
             l3_index: usize::MAX,
         });
         if existing.l2_index == key.l2_index && existing.l3_index == key.l3_index {
-            return Some((core::ptr::addr_of_mut!(state.bootstrap.0) as *mut u64)
-                .add((3 + index) * PAGE_TABLE_ENTRIES));
+            return Some(
+                (core::ptr::addr_of_mut!(state.bootstrap.0) as *mut u64)
+                    .add((3 + index) * PAGE_TABLE_ENTRIES),
+            );
         }
     }
 
@@ -257,8 +256,11 @@ fn make_pte_loong(pa: u64, flags: u64) -> u64 {
     // permission bit values alias into PLV or PAGE flags; translate them here
     // in one place.
     let writable = flags & crate::mm::pte::PTE_RW != 0;
-    let user = flags & (crate::mm::pte::PTE_US | crate::arch::common::paging::PageFlags::USER.bits()) != 0;
-    let not_executable = flags & (crate::mm::pte::PTE_NX | crate::arch::common::paging::PageFlags::NO_EXECUTE.bits()) != 0;
+    let user =
+        flags & (crate::mm::pte::PTE_US | crate::arch::common::paging::PageFlags::USER.bits()) != 0;
+    let not_executable = flags
+        & (crate::mm::pte::PTE_NX | crate::arch::common::paging::PageFlags::NO_EXECUTE.bits())
+        != 0;
     let pte = ((pfn << PTE_PFN_SHIFT) & PTE_PFN_MASK)
         | PTE_V
         | PTE_D
@@ -578,14 +580,14 @@ pub unsafe fn load_page_root(pml4_pfn: u64) {
     prepare_switch_mappings(pml4_pfn);
     crate::hal::serial::write_string_always("[LAPG] prepare done\r\n");
     let switch_pa = pa;
-        asm!("csrwr {0}, 0x1a", inout(reg) switch_pa => _, options(nostack));
+    asm!("csrwr {0}, 0x1a", inout(reg) switch_pa => _, options(nostack));
     let switch_pa2 = pa;
     // The kernel image and all kernel VAs live in the *low* half
     // (VA63 == 0), which is walked through PGDL (CSR 0x19), not
     // PGDH. Both half-roots must therefore point at the same root
     // table, otherwise low-half translations (including the
     // identity map and the loaded kernel image) are invalid.
-        asm!("csrwr {0}, 0x19", inout(reg) switch_pa2 => _, options(nostack));
+    asm!("csrwr {0}, 0x19", inout(reg) switch_pa2 => _, options(nostack));
     asm!("invtlb 0, $r0, $r0", options(nostack));
     crate::hal::serial::write_string_always("[LAPG] flushed\r\n");
     // Clear DA and set PG so the new page tables are consulted.
@@ -640,9 +642,7 @@ fn prepare_switch_mappings(root_pfn: u64) {
     crate::hal::serial::write_string_always("[VECPG] prepare va=");
     crate::hal::serial::write_hex_u64_always(vec_va);
     crate::hal::serial::write_string_always(" mapped=");
-    crate::mm::write_decimal_u64(
-        page_is_mapped_in_root(root_pfn, vec_va) as u64,
-    );
+    crate::mm::write_decimal_u64(page_is_mapped_in_root(root_pfn, vec_va) as u64);
     crate::hal::serial::write_string_always("\r\n");
     // Arm the LEAFW watchpoint on the destination root as early as
     // possible so PTE writes into the vector-page leaf table are
@@ -655,9 +655,7 @@ fn prepare_switch_mappings(root_pfn: u64) {
     crate::hal::serial::write_string_always("\r\n");
     let refill_page = (return_address + 0x418) & PAGE_MASK;
     crate::hal::serial::write_string_always("[LAPGDUMPPAGE] refill_mapped=");
-    crate::mm::write_decimal_u64(
-        page_is_mapped_in_root(root_pfn, refill_page) as u64,
-    );
+    crate::mm::write_decimal_u64(page_is_mapped_in_root(root_pfn, refill_page) as u64);
     crate::hal::serial::write_string_always(" page=");
     crate::hal::serial::write_hex_u64_always(refill_page);
     crate::hal::serial::write_string_always("\r\n");
@@ -838,11 +836,23 @@ pub fn vector_page_check(tag: &str) {
     let root = root_phys() as *const u64;
     let l0e = unsafe { core::ptr::read_volatile(root.add(((va >> 48) & 0x1FF) as usize)) };
     if is_table_loong(l0e) {
-        let l1e = unsafe { core::ptr::read_volatile((table_pa_loong(l0e) as *const u64).add(((va >> 39) & 0x1FF) as usize)) };
+        let l1e = unsafe {
+            core::ptr::read_volatile(
+                (table_pa_loong(l0e) as *const u64).add(((va >> 39) & 0x1FF) as usize),
+            )
+        };
         if is_table_loong(l1e) {
-            let l2e = unsafe { core::ptr::read_volatile((table_pa_loong(l1e) as *const u64).add(((va >> 30) & 0x1FF) as usize)) };
+            let l2e = unsafe {
+                core::ptr::read_volatile(
+                    (table_pa_loong(l1e) as *const u64).add(((va >> 30) & 0x1FF) as usize),
+                )
+            };
             if is_table_loong(l2e) {
-                let dir1e = unsafe { core::ptr::read_volatile((table_pa_loong(l2e) as *const u64).add(((va >> 21) & 0x1FF) as usize)) };
+                let dir1e = unsafe {
+                    core::ptr::read_volatile(
+                        (table_pa_loong(l2e) as *const u64).add(((va >> 21) & 0x1FF) as usize),
+                    )
+                };
                 if is_table_loong(dir1e) {
                     let leaf_pa = table_pa_loong(dir1e);
                     LEAF_WATCH_FRAME.store(leaf_pa, Ordering::Relaxed);
@@ -865,19 +875,25 @@ fn leaf_pa_in_root(root_pa: u64, va: u64) -> Option<u64> {
         return None;
     }
     let l1e = unsafe {
-        core::ptr::read_volatile((table_pa_loong(l0e) as *const u64).add(((va >> 39) & 0x1FF) as usize))
+        core::ptr::read_volatile(
+            (table_pa_loong(l0e) as *const u64).add(((va >> 39) & 0x1FF) as usize),
+        )
     };
     if !is_table_loong(l1e) {
         return None;
     }
     let l2e = unsafe {
-        core::ptr::read_volatile((table_pa_loong(l1e) as *const u64).add(((va >> 30) & 0x1FF) as usize))
+        core::ptr::read_volatile(
+            (table_pa_loong(l1e) as *const u64).add(((va >> 30) & 0x1FF) as usize),
+        )
     };
     if !is_table_loong(l2e) {
         return None;
     }
     let dir1e = unsafe {
-        core::ptr::read_volatile((table_pa_loong(l2e) as *const u64).add(((va >> 21) & 0x1FF) as usize))
+        core::ptr::read_volatile(
+            (table_pa_loong(l2e) as *const u64).add(((va >> 21) & 0x1FF) as usize),
+        )
     };
     if !is_table_loong(dir1e) {
         return None;

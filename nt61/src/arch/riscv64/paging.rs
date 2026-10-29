@@ -92,10 +92,7 @@ const MAX_IDENTITY_RANGES: usize = 128;
 static IDENTITY_MAPPED_RANGES: crate::ke::sync::Spinlock<(
     usize,
     [(u64, u64); MAX_IDENTITY_RANGES],
-)> = crate::ke::sync::Spinlock::new((
-    0,
-    [(0, 0); MAX_IDENTITY_RANGES],
-));
+)> = crate::ke::sync::Spinlock::new((0, [(0, 0); MAX_IDENTITY_RANGES]));
 
 /// Reset the bootstrap identity-map pool.
 ///
@@ -144,9 +141,10 @@ fn alloc_identity_pt() -> Option<u64> {
 fn record_identity_range(start: u64, end: u64) {
     let mut ranges = IDENTITY_MAPPED_RANGES.lock();
     let (count, entries) = &mut *ranges;
-    if entries[..*count].iter().any(|&(base, range_end)| {
-        base <= start && end <= range_end
-    }) {
+    if entries[..*count]
+        .iter()
+        .any(|&(base, range_end)| base <= start && end <= range_end)
+    {
         return;
     }
     if *count < entries.len() {
@@ -825,9 +823,7 @@ fn map_root_tables_into_self(dst_pfn: u64) {
 
 pub unsafe fn load_page_root(pml4_pfn: u64) {
     let pa = pfn_to_phys(pml4_pfn);
-    crate::arch::riscv64::csr::sstatus::set(
-        crate::arch::riscv64::csr::sstatus::SUM,
-    );
+    crate::arch::riscv64::csr::sstatus::set(crate::arch::riscv64::csr::sstatus::SUM);
     let is_system_root = {
         let system = crate::mm::vas::MM_SYSTEM_VAS.lock();
         system.pml4_phys == pa
@@ -900,25 +896,26 @@ pub fn prepare_switch_mappings_if_needed(root_pfn: u64) {
     let stack_page = stack_pointer & PAGE_MASK;
     const UART_PAGE: u64 = 0x1000_0000;
     map_root_tables_into_current(root_pfn);
-    let capture_ranges_mapped = [crate::fs::esp_capture_range(), crate::fs::sys_capture_range()]
-        .into_iter()
-        .all(|range| match range {
-            None => true,
-            Some((base, size)) => {
-                let start = base as u64 & PAGE_MASK;
-                let end = start
-                    .checked_add(size as u64)
-                    .unwrap_or(start);
-                let mut page = start;
-                while page < end {
-                    if !page_is_mapped_in_root(root_pfn, page) {
-                        return false;
-                    }
-                    page += PAGE_SIZE;
+    let capture_ranges_mapped = [
+        crate::fs::esp_capture_range(),
+        crate::fs::sys_capture_range(),
+    ]
+    .into_iter()
+    .all(|range| match range {
+        None => true,
+        Some((base, size)) => {
+            let start = base as u64 & PAGE_MASK;
+            let end = start.checked_add(size as u64).unwrap_or(start);
+            let mut page = start;
+            while page < end {
+                if !page_is_mapped_in_root(root_pfn, page) {
+                    return false;
                 }
-                true
+                page += PAGE_SIZE;
             }
-        });
+            true
+        }
+    });
     if capture_ranges_mapped
         && identity_ranges_mapped_in_root(root_pfn)
         && page_is_mapped_in_root(root_pfn, code_page)
@@ -1025,10 +1022,7 @@ fn prepare_switch_mappings(root_pfn: u64) {
         );
     }
     for delta in 1..128u64 {
-        map_guard_page(
-            (stack_pointer + delta * PAGE_SIZE) & PAGE_MASK,
-            KERNEL_DATA,
-        );
+        map_guard_page((stack_pointer + delta * PAGE_SIZE) & PAGE_MASK, KERNEL_DATA);
     }
 
     // Kernel heap: identity-mapped frames outside the superpage
@@ -1047,14 +1041,15 @@ fn prepare_switch_mappings(root_pfn: u64) {
         }
     }
 
-    for capture_range in [crate::fs::esp_capture_range(), crate::fs::sys_capture_range()] {
+    for capture_range in [
+        crate::fs::esp_capture_range(),
+        crate::fs::sys_capture_range(),
+    ] {
         let Some((base, size)) = capture_range else {
             continue;
         };
         let start = base as u64 & PAGE_MASK;
-        let end = start
-            .checked_add(size as u64)
-            .unwrap_or(start);
+        let end = start.checked_add(size as u64).unwrap_or(start);
         let mut page = start;
         while page < end {
             map_guard_page(page, KERNEL_DATA);
@@ -1104,17 +1099,17 @@ fn prepare_switch_mappings(root_pfn: u64) {
     const UART_PHYS: u64 = 0x1000_0000;
     const UART_FLAGS: u64 = crate::mm::pte::PTE_P | crate::mm::pte::PTE_RW;
     map_page_in_root(
-            root_pfn,
-            UART_PHYS & PAGE_MASK,
-            UART_PHYS & PAGE_MASK,
-            UART_FLAGS,
-        );
+        root_pfn,
+        UART_PHYS & PAGE_MASK,
+        UART_PHYS & PAGE_MASK,
+        UART_FLAGS,
+    );
     map_page_in_root(
-            root_pfn,
-            (UART_PHYS + PAGE_SIZE) & PAGE_MASK,
-            (UART_PHYS + PAGE_SIZE) & PAGE_MASK,
-            UART_FLAGS,
-        );
+        root_pfn,
+        (UART_PHYS + PAGE_SIZE) & PAGE_MASK,
+        (UART_PHYS + PAGE_SIZE) & PAGE_MASK,
+        UART_FLAGS,
+    );
 
     const VIRTIO_MMIO_BASE: u64 = 0x1000_1000;
     const VIRTIO_MMIO_SLOTS: u64 = 8;
@@ -1122,7 +1117,6 @@ fn prepare_switch_mappings(root_pfn: u64) {
         let pa = VIRTIO_MMIO_BASE + slot * PAGE_SIZE;
         map_page_in_root(root_pfn, pa, pa, UART_FLAGS);
     }
-
 }
 
 /// Convert an x86-format root entry into an Sv39 non-leaf descriptor.

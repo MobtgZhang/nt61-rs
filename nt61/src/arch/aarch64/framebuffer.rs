@@ -83,7 +83,11 @@ pub fn blit(data: &[u8], x: u32, y: u32, w: u32, h: u32) {
     // Clamp to the data actually supplied; a short buffer used to make
     // the whole blit bail out at the first truncated row.
     let row_bytes = w as usize * bytes_per_pixel;
-    let max_rows = if row_bytes == 0 { 0 } else { data.len() / row_bytes };
+    let max_rows = if row_bytes == 0 {
+        0
+    } else {
+        data.len() / row_bytes
+    };
     let h = (h as usize).min(max_rows) as u32;
     for row in 0..h {
         for col in 0..w {

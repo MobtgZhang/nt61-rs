@@ -331,10 +331,7 @@ pub extern "win64" fn dispatch_trap_frame(vector: u64, tf: *mut TrapFrame) {
         return;
     }
     let mut canonical_frame = TrapFrame::default();
-    let has_cpu_error_code = matches!(
-        vector,
-        8 | 10 | 11 | 12 | 13 | 14 | 17
-    );
+    let has_cpu_error_code = matches!(vector, 8 | 10 | 11 | 12 | 13 | 14 | 17);
     let tf_ref: &mut TrapFrame = if has_cpu_error_code {
         unsafe { &mut *tf }
     } else {
@@ -1001,11 +998,8 @@ fn handle_general_protection(_error_code: u64, tf: &TrapFrame) {
     crate::hal::x86_64::serial::write_hex_u64_always(tf as *const TrapFrame as u64);
     crate::hal::x86_64::serial::write_string_always(" code=");
     for offset in -8i64..8i64 {
-        let byte = unsafe {
-            core::ptr::read_volatile(
-                (tf.rip as i64).wrapping_add(offset) as *const u8
-            )
-        };
+        let byte =
+            unsafe { core::ptr::read_volatile((tf.rip as i64).wrapping_add(offset) as *const u8) };
         crate::hal::serial::write_hex_u64_always(byte as u64);
         crate::hal::serial::write_string_always(" ");
     }

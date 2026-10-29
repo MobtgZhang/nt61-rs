@@ -18,8 +18,8 @@
 //! [`TrapFrame`] (below). The dispatcher mutates `pc`/`pstate` for
 //! the `eret` epilogue: `pc = tf.elr_el1` and `pstate = tf.spsr_el1`.
 
-use core::arch::asm;
 use alloc::format;
+use core::arch::asm;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 /// Trap frame pushed by every exception-vector stub.
@@ -283,12 +283,10 @@ fn handle_kernel_sync(tf: &mut TrapFrame) {
     // Do NOT advance ELR past the faulting instruction. Instead, panic
     // so that the developer immediately sees the bug. The kernel is
     // too small and too early for a fault-recovery strategy.
-    crate::rtl::panic::panic(
-        &format!(
-            "aarch64 kernel sync fault: ec={:#x} iss={:#x} far={:#x} elr={:#x} spsr={:#x}",
-            ec, iss, far, elr, spsr
-        ),
-    );
+    crate::rtl::panic::panic(&format!(
+        "aarch64 kernel sync fault: ec={:#x} iss={:#x} far={:#x} elr={:#x} spsr={:#x}",
+        ec, iss, far, elr, spsr
+    ));
 }
 
 /// Called from the `lower_el_aarch32_sync` vector: an AArch32 task took
@@ -298,7 +296,9 @@ fn handle_kernel_sync(tf: &mut TrapFrame) {
 pub unsafe extern "C" fn arch_aarch64_trap_aarch32_sync_hang() {
     let prev = SYNC_VECTOR_SEEN.fetch_or(1u32 << 3, Ordering::AcqRel);
     if prev & (1u32 << 3) == 0 {
-        crate::hal::serial::write_string_always("[VEC-ENTRY] lower-el-aarch32 sync (unsupported)\r\n");
+        crate::hal::serial::write_string_always(
+            "[VEC-ENTRY] lower-el-aarch32 sync (unsupported)\r\n",
+        );
     }
     loop {
         asm!("wfi", options(nostack));

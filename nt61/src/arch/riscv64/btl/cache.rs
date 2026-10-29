@@ -62,12 +62,10 @@ pub fn insert(guest_va: u64, host: u64) {
     for offset in 0..CACHE_ENTRIES {
         let slot = (start + offset) & (CACHE_ENTRIES - 1);
         let entry = &CACHE[slot];
-        if entry.key.compare_exchange(
-            0,
-            guest_va,
-            Ordering::Release,
-            Ordering::Acquire,
-        ) == Ok(0)
+        if entry
+            .key
+            .compare_exchange(0, guest_va, Ordering::Release, Ordering::Acquire)
+            == Ok(0)
         {
             entry.host.store(host, Ordering::Release);
             INSERTS.fetch_add(1, Ordering::Relaxed);
