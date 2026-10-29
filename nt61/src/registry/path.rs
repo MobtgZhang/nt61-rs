@@ -220,7 +220,10 @@ mod tests {
     fn user_default_maps_to_default_hive() {
         let parsed = ParsedPath::parse("\\Registry\\User\\.DEFAULT\\Volatile Environment").unwrap();
         assert_eq!(parsed.hive, Hive::Default);
-        assert_eq!(parsed.subkeys, alloc::vec![String::from("Volatile Environment")]);
+        assert_eq!(
+            parsed.subkeys,
+            alloc::vec![String::from("Volatile Environment")]
+        );
     }
 
     #[test]
@@ -236,9 +239,11 @@ mod tests {
 
     #[test]
     fn machine_paths_are_unchanged() {
-        let parsed =
-            ParsedPath::parse("\\Registry\\Machine\\System\\CurrentControlSet").unwrap();
+        let parsed = ParsedPath::parse("\\Registry\\Machine\\System\\CurrentControlSet").unwrap();
         assert_eq!(parsed.hive, Hive::System);
-        assert_eq!(parsed.subkeys, alloc::vec![String::from("CurrentControlSet")]);
+        assert_eq!(
+            parsed.subkeys,
+            alloc::vec![String::from("CurrentControlSet")]
+        );
     }
 }

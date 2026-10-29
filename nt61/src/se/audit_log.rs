@@ -405,9 +405,8 @@ pub mod encryption {
         let mut cipher = Cbc::<Aes256>::new_aes256(&audit_key(), &iv);
         let ciphertext = cipher.encrypt(&padded).ok()?;
 
-        let mut output = alloc::vec::Vec::with_capacity(
-            AES_BLOCK_SIZE + ciphertext.len() + sha256(b"").len(),
-        );
+        let mut output =
+            alloc::vec::Vec::with_capacity(AES_BLOCK_SIZE + ciphertext.len() + sha256(b"").len());
         output.extend_from_slice(&iv);
         output.extend_from_slice(&ciphertext);
         output.extend_from_slice(&hmac_sha256(&audit_key(), &output));

@@ -108,9 +108,9 @@ pub const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
 pub const PROCESS_CREATE_PROCESS: u32 = 0x0080;
 pub const PROCESS_CREATE_THREAD: u32 = 0x0002;
 pub const PROCESS_DUP_HANDLE: u32 = 0x0040;
-    pub const PROCESS_VM_OPERATION: u32 = 0x0008;
-    pub const PROCESS_VM_READ: u32 = 0x0010;
-    pub const PROCESS_VM_WRITE: u32 = 0x0020;
+pub const PROCESS_VM_OPERATION: u32 = 0x0008;
+pub const PROCESS_VM_READ: u32 = 0x0010;
+pub const PROCESS_VM_WRITE: u32 = 0x0020;
 pub const PROCESS_ALL_ACCESS: u32 = 0x1F0FFF;
 
 /// Thread access rights.
@@ -279,9 +279,7 @@ fn check_access_with_granted(
         }
     }
 
-    const SE_DEBUG_REQUIRED_ACCESS: u32 = PROCESS_VM_READ
-        | PROCESS_VM_WRITE
-        | PROCESS_VM_OPERATION;
+    const SE_DEBUG_REQUIRED_ACCESS: u32 = PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION;
     const SE_DEBUG_ALLOWED_ACCESS: u32 = PROCESS_ALL_ACCESS
         | PROCESS_QUERY_INFORMATION
         | PROCESS_QUERY_LIMITED_INFORMATION
@@ -760,9 +758,8 @@ impl SecurityDescriptor {
             // Attach a mandatory label SACL derived from the token's own
             // integrity level so that no-write-up checks have an object
             // level to compare against (see integrity::se_get_object_integrity_level).
-            let level = super::integrity::se_token_integrity_level(
-                token as *const super::token::Token,
-            );
+            let level =
+                super::integrity::se_token_integrity_level(token as *const super::token::Token);
             super::integrity::se_set_object_integrity_level(
                 sd_ptr,
                 level,

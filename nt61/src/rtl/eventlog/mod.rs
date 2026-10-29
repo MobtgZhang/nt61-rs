@@ -260,10 +260,7 @@ fn channel_slot(channel: EventChannel) -> Option<usize> {
 
 /// Run `f` with exclusive access to one channel's log. Returns
 /// `None` when the channel has no backing log (ForwardedEvents).
-fn with_log_mut<R>(
-    channel: EventChannel,
-    f: impl FnOnce(&mut EventLog) -> R,
-) -> Option<R> {
+fn with_log_mut<R>(channel: EventChannel, f: impl FnOnce(&mut EventLog) -> R) -> Option<R> {
     let mut logs = LOGS.lock();
     let log = logs.get_mut(channel_slot(channel)?)?.as_mut()?;
     Some(f(log))

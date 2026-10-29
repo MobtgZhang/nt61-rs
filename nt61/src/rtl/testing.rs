@@ -47,7 +47,7 @@ impl TestStats {
             total: 0,
             passed: 0,
             failed: 0,
-    skipped: 0,
+            skipped: 0,
             started: false,
         }
     }
@@ -97,12 +97,7 @@ impl TestStats {
     pub fn test_skipped(&mut self, name: &str, reason: &str) {
         self.start();
         self.skipped += 1;
-        crate::boot_println!(
-            "  [{} SMOKE]   SKIP: {} ({})",
-            self._name,
-            name,
-            reason
-        );
+        crate::boot_println!("  [{} SMOKE]   SKIP: {} ({})", self._name, name, reason);
     }
 
     /// Run a test with detailed failure information
@@ -216,7 +211,10 @@ impl SmokeAggregator {
     /// Skipped tests are excluded from the pass/fail summary so a
     /// skipped subsystem is never reported as passed.
     pub fn record_skipped(&mut self, subsystem: &str) {
-        crate::boot_println!("[SMOKE]   SKIP: {} (test disabled, not verified)", subsystem);
+        crate::boot_println!(
+            "[SMOKE]   SKIP: {} (test disabled, not verified)",
+            subsystem
+        );
     }
 
     /// Finish aggregation and print summary

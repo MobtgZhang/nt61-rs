@@ -185,7 +185,9 @@ pub fn create_user(
 
     let rid = loop {
         let current = NEXT_DYNAMIC_RID.load(Ordering::SeqCst);
-        let next = current.checked_add(1).ok_or(CreateUserError::RidExhausted)?;
+        let next = current
+            .checked_add(1)
+            .ok_or(CreateUserError::RidExhausted)?;
         if NEXT_DYNAMIC_RID
             .compare_exchange_weak(current, next, Ordering::SeqCst, Ordering::SeqCst)
             .is_ok()
@@ -283,7 +285,6 @@ mod tests {
         assert!(lookup_by_name("RUNTIME-USER").is_some());
         assert!(verify_runtime_password("runtime-user", b"secret"));
         assert!(!verify_runtime_password("runtime-user", b"wrong"));
-        assert!(create_user("Runtime-User", b"secret", true)
-            .is_err());
+        assert!(create_user("Runtime-User", b"secret", true).is_err());
     }
 }

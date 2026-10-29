@@ -31,7 +31,10 @@ pub fn run_tests() -> bool {
     stats.test("Token SID Assignment", test_token_sid_assignment);
     stats.test("Token Group Membership", test_token_groups);
     stats.test("Token Privileges", test_token_privileges);
-    stats.test("Privilege LUID Consistency", test_privilege_luid_consistency);
+    stats.test(
+        "Privilege LUID Consistency",
+        test_privilege_luid_consistency,
+    );
 
     // Access Check Tests
     stats.test("Access Check Allow", test_access_check_allow);

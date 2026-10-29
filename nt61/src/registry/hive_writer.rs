@@ -98,7 +98,8 @@ impl HiveWriter {
             Some(pos) => *pos,
             None => {
                 self.hbin_headers.push(0);
-                self.body.extend(core::iter::repeat(0u8).take(HBIN_HEADER_SIZE));
+                self.body
+                    .extend(core::iter::repeat(0u8).take(HBIN_HEADER_SIZE));
                 0
             }
         };
@@ -108,7 +109,8 @@ impl HiveWriter {
             // open a new one.
             self.body.resize(hbin_end, 0);
             self.hbin_headers.push(self.body.len());
-            self.body.extend(core::iter::repeat(0u8).take(HBIN_HEADER_SIZE));
+            self.body
+                .extend(core::iter::repeat(0u8).take(HBIN_HEADER_SIZE));
         }
         Ok(())
     }
@@ -286,11 +288,7 @@ impl HiveWriter {
 
         // flags (u16 at 0x06): bit 5 = ASCII name; UTF-16LE names
         // leave the bit clear so the reader decodes the right encoding.
-        let nk_flags: u16 = if name_is_ascii {
-            NK_FLAG_ASCII_NAME
-        } else {
-            0
-        };
+        let nk_flags: u16 = if name_is_ascii { NK_FLAG_ASCII_NAME } else { 0 };
         self.body[nk_body + NK_FLAGS..nk_body + NK_FLAGS + 2]
             .copy_from_slice(&nk_flags.to_le_bytes());
 
@@ -377,11 +375,7 @@ impl HiveWriter {
             .copy_from_slice(&data_offset.to_le_bytes());
         self.body[vk_body + VK_DATA_TYPE..vk_body + VK_DATA_TYPE + 4]
             .copy_from_slice(&v.value_type.to_u32().to_le_bytes());
-        let vk_flags: u32 = if name_is_ascii {
-            VK_FLAG_ASCII_NAME
-        } else {
-            0
-        };
+        let vk_flags: u32 = if name_is_ascii { VK_FLAG_ASCII_NAME } else { 0 };
         self.body[vk_body + VK_FLAGS..vk_body + VK_FLAGS + 4]
             .copy_from_slice(&vk_flags.to_le_bytes());
         self.body[vk_body + VK_NAME..vk_body + VK_NAME + name_bytes.len()]
@@ -396,7 +390,8 @@ impl HiveWriter {
         // Reserve the first HBIN header; magic and size are stamped in
         // below once the final HBIN count is known.
         self.hbin_headers.push(0);
-        self.body.extend(core::iter::repeat(0u8).take(HBIN_HEADER_SIZE));
+        self.body
+            .extend(core::iter::repeat(0u8).take(HBIN_HEADER_SIZE));
 
         // Write the tree (returns absolute file offset of root nk)
         let root_abs = self.write_key(root, 0)?;
@@ -408,8 +403,7 @@ impl HiveWriter {
         self.body.resize(data_len, 0);
         for &pos in &self.hbin_headers {
             self.body[pos..pos + 4].copy_from_slice(HBIN_MAGIC);
-            self.body[pos + 4..pos + 8]
-                .copy_from_slice(&((HBIN_BASE + pos) as u32).to_le_bytes());
+            self.body[pos + 4..pos + 8].copy_from_slice(&((HBIN_BASE + pos) as u32).to_le_bytes());
             self.body[pos + 8..pos + 12].copy_from_slice(&(HBIN_SIZE as u32).to_le_bytes());
         }
 
@@ -431,8 +425,7 @@ impl HiveWriter {
         let root_rel = Self::to_hbin_rel(root_abs);
         header[0x24..0x28].copy_from_slice(&root_rel.to_le_bytes());
         // Cluster size / hive data length: header plus every HBIN.
-        header[0x28..0x2C]
-            .copy_from_slice(&((REGF_HEADER_SIZE + data_len) as u32).to_le_bytes());
+        header[0x28..0x2C].copy_from_slice(&((REGF_HEADER_SIZE + data_len) as u32).to_le_bytes());
         header[0x2C..0x30].copy_from_slice(&1u32.to_le_bytes());
 
         // Compute checksum (XOR of all dwords [0, 0x1FC))
@@ -520,8 +513,6 @@ mod tests {
         assert_eq!(vs[0].name, "FriendlyName");
         assert_eq!(vs[0].as_utf16_string().as_deref(), Some("hello"));
     }
-
-
 
     #[test]
     fn non_ascii_names_round_trip_via_utf16() {

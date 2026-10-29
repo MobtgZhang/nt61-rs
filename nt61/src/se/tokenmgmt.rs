@@ -457,7 +457,6 @@ pub fn se_token_impersonation_level(token: *const Token) -> ImpersonationLevel {
 
 pub fn init() {}
 
-
 #[cfg(test)]
 mod token_capacity_tests {
     use super::*;
@@ -477,10 +476,7 @@ mod token_capacity_tests {
         crate::mm::heap::KERNEL_HEAP.configure(base, TEST_HEAP_LEN);
     }
 
-    fn make_token(
-        groups: &[TokenGroup],
-        privileges: &[TokenPrivilege],
-    ) -> *mut Token {
+    fn make_token(groups: &[TokenGroup], privileges: &[TokenPrivilege]) -> *mut Token {
         se_create_token(
             sid::well_known(WellKnownSid::Users),
             groups,

@@ -388,16 +388,12 @@ impl Token {
     /// Check if the token belongs to the administrators group.
     pub fn is_admin(&self) -> bool {
         self.is_local_system()
-            || self
-                .groups
-                .iter()
-                .take(self.group_count)
-                .any(|group| {
-                    group.attributes & SE_GROUP_USE_FOR_DENY_ONLY == 0
-                        && group
-                            .sid
-                            .equals(&sid::well_known(WellKnownSid::Administrators))
-                })
+            || self.groups.iter().take(self.group_count).any(|group| {
+                group.attributes & SE_GROUP_USE_FOR_DENY_ONLY == 0
+                    && group
+                        .sid
+                        .equals(&sid::well_known(WellKnownSid::Administrators))
+            })
     }
 
     /// Check if the token belongs to the LocalSystem account.
