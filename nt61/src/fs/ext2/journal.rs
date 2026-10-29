@@ -23,9 +23,10 @@
 //! - Commit block
 
 use alloc::vec;
+use alloc::vec::Vec;
 
 use super::inode::{read_inode, Ext2Inode};
-use super::superblock::Ext2SuperBlock;
+use super::superblock::{Ext2SuperBlock, EXT2_FEATURE_INCOMPAT_RECOVER};
 
 // ============================================================================
 // Journal Constants
@@ -166,6 +167,22 @@ impl JournalHeader {
     }
 }
 
+#[derive(Clone, Copy)]
+struct JournalTag {
+    target_block: u32,
+}
+
+impl JournalTag {
+    fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() < 8 {
+            return None;
+        }
+        Some(Self {
+            target_block: u32::from_le_bytes(bytes[0..4].try_into().ok()?),
+        })
+    }
+}
+
 // ============================================================================
 // Journal State
 // ============================================================================
@@ -252,92 +269,127 @@ pub fn open_journal(device: *mut (), sb: &Ext2SuperBlock) -> Option<JournalSuper
     Some(j_sb)
 }
 
-/// Replay the journal after a crash
-pub fn replay_journal(device: *mut (), sb: &Ext2SuperBlock) -> Result<usize, ()> {
-    if !sb.has_journal() {
-        return Ok(0); // No journal, nothing to replay
+fn read_journal_block(
+    device: *mut (),
+    sb: &Ext2SuperBlock,
+    inode: &Ext2Inode,
+    logical_block: u32,
+) -> Option<alloc::vec::Vec<u8>> {
+    let lba = super::inode::logical_to_lba(device, sb, inode, logical_block)?;
+    let mut buffer = vec![0u8; JOURNAL_BLOCK_SIZE];
+    if super::superblock::read_sector(device, lba, &mut buffer).is_err() {
+        return None;
     }
 
-    // Open the journal
-    let j_sb = match open_journal(device, sb) {
-        Some(js) => js,
-        None => return Err(()),
-    };
+    Some(buffer)
+}
 
-    // kprintln!("[EXT3] Replaying journal...");
+fn parse_descriptor_tags(block: &[u8], sequence: u32) -> Option<Vec<JournalTag>> {
+    let header = unsafe { core::ptr::read_unaligned(block.as_ptr() as *const JournalHeader) };
+    if !header.is_valid() || header.block_type != JBD2_DESCRIPTOR_BLOCK {
+        return None;
+    }
+    if header.sequence != sequence && sequence != 0 {
+        return None;
+    }
 
-    let mut replayed_count = 0;
-    let mut current_block = j_sb.first_block;
-    let end_block = j_sb.first_block + j_sb.max_blocks;
-
-    while current_block < end_block {
-        // read journal block
-        let mut buffer = vec![0u8; JOURNAL_BLOCK_SIZE];
-
-        // For internal journals, read from journal inode
-        // (simplified - assumes block 0 corresponds to journal block)
-        if current_block >= j_sb.first_block && current_block < j_sb.first_block + 1 {
-            // read journal inode and get block 0
-            let inode = match read_inode(device, sb, sb.journal_inode) {
-                Some(i) => i,
-                None => break,
-            };
-
-            if let Some(lba) =
-                super::inode::logical_to_lba(device, sb, &inode, current_block - j_sb.first_block)
-            {
-                if super::superblock::read_sector(device, lba, &mut buffer).is_err() {
-                    break;
-                }
-            } else {
-                break;
-            }
-        } else {
+    let mut tags = Vec::new();
+    let mut offset = core::mem::size_of::<JournalHeader>();
+    while offset + 8 <= block.len() {
+        let tag = JournalTag::from_bytes(&block[offset..])?;
+        offset += 8;
+        if tag.target_block == 0 {
             break;
         }
+        tags.push(tag);
+    }
 
-        // Parse journal header
-        let header = unsafe { core::ptr::read_unaligned(buffer.as_ptr() as *const JournalHeader) };
+    Some(tags)
+}
 
+fn find_commit_block(
+    device: *mut (),
+    sb: &Ext2SuperBlock,
+    inode: &Ext2Inode,
+    descriptor_block: u32,
+    sequence: u32,
+    limit: u32,
+) -> Option<u32> {
+    for candidate in (descriptor_block + 1)..=(descriptor_block.saturating_add(limit)) {
+        let block = read_journal_block(device, sb, inode, candidate)?;
+        let header = unsafe { core::ptr::read_unaligned(block.as_ptr() as *const JournalHeader) };
+        if header.is_valid()
+            && header.block_type == JBD2_COMMIT_BLOCK
+            && header.sequence == sequence
+        {
+            return Some(candidate);
+        }
+    }
+
+    None
+}
+
+/// Replay the journal after a crash. Only complete transactions with a
+/// matching commit block are copied to their destination filesystem blocks.
+pub fn replay_journal(device: *mut (), sb: &Ext2SuperBlock) -> Result<usize, ()> {
+    if !sb.has_journal() {
+        return Ok(0);
+    }
+
+    let j_sb = open_journal(device, sb).ok_or(())?;
+    let inode = read_inode(device, sb, sb.journal_inode).ok_or(())?;
+    let start = if j_sb.start != 0 {
+        j_sb.start
+    } else {
+        j_sb.first_block
+    };
+    if start == 0 || j_sb.max_blocks == 0 {
+        return Ok(0);
+    }
+
+    let mut replayed_count = 0usize;
+    let mut current_block = start;
+    let end_block = start.saturating_add(j_sb.max_blocks);
+
+    while current_block < end_block {
+        let block = match read_journal_block(device, sb, &inode, current_block) {
+            Some(block) => block,
+            None => break,
+        };
+        let header = unsafe { core::ptr::read_unaligned(block.as_ptr() as *const JournalHeader) };
         if !header.is_valid() {
             break;
         }
 
         match header.block_type {
             JBD2_DESCRIPTOR_BLOCK => {
-                // Descriptor block - process the blocks listed
-                // kprintln!("[EXT3] Replaying descriptor block, seq={}", header.sequence);
+                let tags = parse_descriptor_tags(&block, header.sequence).ok_or(())?;
+                let commit_block =
+                    find_commit_block(device, sb, &inode, current_block, header.sequence, 128)
+                        .ok_or(())?;
 
-                // In a full implementation, we would:
-                // 1. read the data blocks referenced
-                // 2. write them to the actual filesystem
-                // 3. Wait for commit block
-                replayed_count += 1;
-            }
-            JBD2_COMMIT_BLOCK => {
-                // Commit block - transaction is complete
-                // kprintln!("[EXT3] Transaction {} committed", header.sequence);
-            }
-            JBD2_REVOKE_BLOCK => {
-                // Revoke block - some blocks were revoked
-                // kprintln!("[EXT3] Revoke block, seq={}", header.sequence);
-            }
-            _ => {
-                // Unknown block type
-                break;
-            }
-        }
+                for (offset, tag) in tags.iter().enumerate() {
+                    let journal_logical = current_block.checked_add(1 + offset as u32).ok_or(())?;
+                    if journal_logical >= commit_block {
+                        break;
+                    }
+                    let data = read_journal_block(device, sb, &inode, journal_logical).ok_or(())?;
+                    let lba = tag.target_block as u64 * (sb.get_block_size() / 512) as u64;
+                    if super::superblock::write_sector(device, lba, &data).is_err() {
+                        return Err(());
+                    }
+                    replayed_count += 1;
+                }
 
-        current_block += 1;
-
-        // Safety limit
-        if replayed_count > 100 {
-            // kprintln!("[EXT3] Replay limit reached");
-            break;
+                current_block = commit_block + 1;
+            }
+            JBD2_REVOKE_BLOCK | JBD2_COMMIT_BLOCK => {
+                current_block += 1;
+            }
+            _ => break,
         }
     }
 
-    // kprintln!("[EXT3] Journal replayed {} blocks", replayed_count);
     Ok(replayed_count)
 }
 
@@ -348,11 +400,8 @@ pub fn journal_needs_recovery(sb: &Ext2SuperBlock) -> bool {
 }
 
 /// Clear the recovery flag after successful replay
-pub fn clear_recovery_flag(_sb: &mut Ext2SuperBlock) {
-    // In a full implementation, we would:
-    // 1. Modify the superblock
-    // 2. write it back to disk
-    // This is simplified for now
+pub fn clear_recovery_flag(sb: &mut Ext2SuperBlock) {
+    sb.incompatible_features &= !EXT2_FEATURE_INCOMPAT_RECOVER;
 }
 
 /// Start a new journal transaction
