@@ -17,6 +17,7 @@
 //! - Value entries (optional)
 //! - Free space
 
+use alloc::vec;
 use alloc::vec::Vec;
 
 // ============================================================================
@@ -377,6 +378,44 @@ pub fn parse_page(buffer: &[u8], lba: u64) -> Option<RefsBtreePage> {
     })
 }
 
+pub fn serialize_page(page: &RefsBtreePage, page_size: usize) -> Result<Vec<u8>, ()> {
+    let mut buffer = vec![0u8; page_size];
+    let mut cursor = 0usize;
+    buffer[cursor..cursor + 4].copy_from_slice(&page.header.magic.to_le_bytes());
+    cursor += 4;
+    buffer[cursor] = page.header.flags;
+    buffer[cursor + 1] = page.header.height;
+    cursor += 2;
+    buffer[cursor..cursor + 2].copy_from_slice(&page.header.page_count.to_le_bytes());
+    cursor += 2;
+    buffer[cursor..cursor + 2]
+        .copy_from_slice(&(page.keys.len() as u16).to_le_bytes());
+    cursor += 2;
+    buffer[cursor..cursor + 2].copy_from_slice(&page.header.value_length.to_le_bytes());
+    cursor += 2;
+    buffer[cursor..cursor + 4].copy_from_slice(&page.header.reserved);
+    cursor += 4;
+
+    for entry in &page.keys {
+        buffer[cursor..cursor + 2].copy_from_slice(&entry.key_offset.to_le_bytes());
+        buffer[cursor + 2..cursor + 4].copy_from_slice(&entry.key_len.to_le_bytes());
+        buffer[cursor + 4..cursor + 6].copy_from_slice(&entry.value_offset.to_le_bytes());
+        buffer[cursor + 6..cursor + 8].copy_from_slice(&entry.value_len.to_le_bytes());
+        cursor += 8;
+    }
+
+    let data_base = cursor;
+    if cursor + page.key_data.len() + page.value_data.len() > page_size {
+        return Err(());
+    }
+    buffer[cursor..cursor + page.key_data.len()].copy_from_slice(&page.key_data);
+    cursor += page.key_data.len();
+    buffer[cursor..cursor + page.value_data.len()].copy_from_slice(&page.value_data);
+    let _ = data_base;
+
+    Ok(buffer)
+}
+
 /// Verify page checksum
 pub fn verify_page_checksum(page: &RefsBtreePage, _buffer: &[u8]) -> bool {
     if !page.header.has_checksum() {
@@ -684,6 +723,7 @@ pub fn merge_pages(left: &mut RefsBtreePage, right: &mut RefsBtreePage) -> Resul
 
     right.key_data.clear();
     right.value_data.clear();
+    right.keys.clear();
     right.header.key_count = 0;
     Ok(())
 }
@@ -808,8 +848,7 @@ mod tests {
         let mut page = RefsBtreePage::new();
         for id in [30u64, 10, 20] {
             insert_key(&mut page, &key(id), &RefsBtreeValue::new(vec![id as u8]))
-                .unwrap()
-                .expect("first page does not split");
+                .unwrap();
         }
 
         let ids: alloc::vec::Vec<u64> = (0..page.keys.len())
@@ -822,14 +861,16 @@ mod tests {
     #[test]
     fn insert_splits_full_page_into_two_sorted_pages() {
         let mut page = RefsBtreePage::new();
+        let mut right_page = None;
         for id in 0..(REFS_BTREE_DEFAULT_PAGE_CAPACITY as u64 + 1) {
-            insert_key(&mut page, &key(id), &RefsBtreeValue::new(vec![])).unwrap();
+            right_page = insert_key(&mut page, &key(id), &RefsBtreeValue::new(vec![])).unwrap();
         }
 
         let left_count = page.keys.len();
         assert!(left_count > 0 && left_count < REFS_BTREE_DEFAULT_PAGE_CAPACITY);
         let left_last = key_at(&page, left_count - 1).unwrap().object_id;
-        let right_first = key_at(&page, 0).unwrap().object_id;
+        let right = right_page.as_ref().unwrap();
+        let right_first = key_at(right, 0).unwrap().object_id;
         assert!(left_last < right_first);
     }
 
@@ -838,8 +879,7 @@ mod tests {
         let mut page = RefsBtreePage::new();
         for id in [10u64, 20, 30] {
             insert_key(&mut page, &key(id), &RefsBtreeValue::new(vec![id as u8; 7]))
-                .unwrap()
-                .expect("no split");
+                .unwrap();
         }
 
         delete_key(&mut page, &key(20)).unwrap();
@@ -855,13 +895,11 @@ mod tests {
         let mut right = RefsBtreePage::new();
         for id in [10u64, 20] {
             insert_key(&mut left, &key(id), &RefsBtreeValue::new(vec![]))
-                .unwrap()
-                .expect("no split");
+                .unwrap();
         }
         for id in [30u64, 40] {
             insert_key(&mut right, &key(id), &RefsBtreeValue::new(vec![]))
-                .unwrap()
-                .expect("no split");
+                .unwrap();
         }
 
         merge_pages(&mut left, &mut right).unwrap();
@@ -869,6 +907,26 @@ mod tests {
         assert_eq!(right.keys.len(), 0);
         for (index, expected) in [10u64, 20, 30, 40].iter().enumerate() {
             assert_eq!(key_at(&left, index).unwrap().object_id, *expected);
+        }
+    }
+
+    #[test]
+    fn serialize_page_round_trips_entries() {
+        let mut page = RefsBtreePage::new();
+        for id in [10u64, 20, 30] {
+            insert_key(&mut page, &key(id), &RefsBtreeValue::new(vec![id as u8]))
+                .unwrap();
+        }
+        page.lba = 31;
+
+        let serialized = serialize_page(&page, 4096).unwrap();
+        let parsed = parse_page(&serialized, page.lba).unwrap();
+        assert_eq!(parsed.keys.len(), 3);
+        assert_eq!(parsed.lba, 31);
+        for index in 0..3 {
+            let expected = key_at(&page, index).unwrap();
+            let actual = key_at(&parsed, index).unwrap();
+            assert_eq!(expected.object_id, actual.object_id);
         }
     }
 }
