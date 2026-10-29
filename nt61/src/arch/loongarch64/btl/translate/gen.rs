@@ -740,3 +740,54 @@ pub fn smoke_test() -> bool {
     assert_eq!(&bytes[8..12], &0x4C00_0020u32.to_le_bytes());
     true
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::arch::common::btl::exec::test_support::{flat_memory, run_mov_imm_add_imm};
+    use crate::arch::common::btl::memory::GuestMemory;
+    use crate::arch::common::btl::x86_decoder::decode_block;
+
+    use super::*;
+
+    #[test]
+    fn lowers_x86_64_mov_imm_add_imm_ret() {
+        let code = [
+            0x48, 0xB8, 42, 0, 0, 0, 0, 0, 0, 0, // mov rax, 42
+            0x48, 0x83, 0xC0, 8, // add rax, 8
+            0xC3, // ret
+        ];
+        let mut ir = [IrInst::empty(); 8];
+        let count = decode_block(&code, 0x1000, &mut ir);
+        assert_eq!(count, 3);
+
+        let bytes = encode_block(&ir[..count], 0x1000);
+        assert_eq!(bytes.len(), 4 * 4);
+        assert_ne!(&bytes[4..8], &0x0340_0000u32.to_le_bytes());
+    }
+
+    #[test]
+    fn lowers_x86_64_load_store_operands() {
+        // mov rax, 0x100 ; mov rbx, [rax] ; mov [rax], rbx
+        let code = [
+            0x48, 0xB8, 0x00, 0x01, 0, 0, 0, 0, 0, 0,
+            0x48, 0x8B, 0x18,
+            0x48, 0x89, 0x18,
+        ];
+        let mut ir = [IrInst::empty(); 8];
+        let count = decode_block(&code, 0x1000, &mut ir);
+        assert_eq!(count, 3);
+
+        let bytes = encode_block(&ir[..count], 0x1000);
+        assert_eq!(bytes.len() % 4, 0);
+        assert!(bytes.chunks_exact(4).all(|word| word != &LA64_NOP.to_le_bytes()));
+    }
+
+    #[test]
+    fn interprets_x86_64_mov_imm_add_imm() {
+        let mut backing = [0u8; 0x1000];
+        let mut memory = flat_memory(&mut backing);
+        let (outcome, rax) = run_mov_imm_add_imm(&mut memory);
+        assert!(matches!(outcome, crate::arch::common::btl::exec::ExecOutcome::Retired { .. }));
+        assert_eq!(rax, 50);
+    }
+}
