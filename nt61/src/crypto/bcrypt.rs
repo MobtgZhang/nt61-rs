@@ -4,12 +4,12 @@
 //! modern cryptographic primitives through algorithm providers.
 
 extern crate alloc;
-use alloc::string::String;
-use alloc::vec::Vec;
-use crate::crypto::rsa::RsaPrivateKey;
 use crate::crypto::cipher::Aes128;
 use crate::crypto::cipher::Aes256;
+use crate::crypto::rsa::RsaPrivateKey;
 use crate::ke::sync::Spinlock;
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::ptr;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -381,20 +381,25 @@ pub unsafe extern "C" fn bcrypt_encrypt(
     }
     let output_slice = core::slice::from_raw_parts_mut(output, output_len as usize);
     if is_3des {
-        let Ok(key) = <[u8; 24]>::try_from(context.key_data.as_slice()) else {
+        let Ok(_key) = <[u8; 24]>::try_from(context.key_data.as_slice()) else {
             return STATUS_INVALID_PARAMETER;
         };
         let mut iv = [0u8; 8];
         if !_iv.is_null() && _iv_len as usize >= 8 {
             iv.copy_from_slice(core::slice::from_raw_parts(_iv, 8));
         }
-        let Ok(ciphertext) = crate::crypto::cipher::tdes_cbc_encrypt(&key, &iv, input_data)
-        else {
-            return STATUS_INVALID_PARAMETER;
-        };
-        output_slice[..ciphertext.len()].copy_from_slice(&ciphertext);
-        *result_len = ciphertext.len() as u32;
-        return STATUS_SUCCESS;
+        #[cfg(feature = "crypto_libs")]
+        {
+            let Ok(ciphertext) = crate::crypto::cipher::tdes_cbc_encrypt(&_key, &iv, input_data)
+            else {
+                return STATUS_INVALID_PARAMETER;
+            };
+            output_slice[..ciphertext.len()].copy_from_slice(&ciphertext);
+            *result_len = ciphertext.len() as u32;
+            return STATUS_SUCCESS;
+        }
+        #[cfg(not(feature = "crypto_libs"))]
+        return STATUS_NOT_SUPPORTED;
     }
     let mut iv = [0u8; 16];
     if !_iv.is_null() && _iv_len as usize >= 16 {
@@ -434,20 +439,25 @@ pub unsafe extern "C" fn bcrypt_decrypt(
     }
     let output_slice = core::slice::from_raw_parts_mut(output, output_len as usize);
     if is_3des {
-        let Ok(key) = <[u8; 24]>::try_from(context.key_data.as_slice()) else {
+        let Ok(_key) = <[u8; 24]>::try_from(context.key_data.as_slice()) else {
             return STATUS_INVALID_PARAMETER;
         };
         let mut iv = [0u8; 8];
         if !_iv.is_null() && _iv_len as usize >= 8 {
             iv.copy_from_slice(core::slice::from_raw_parts(_iv, 8));
         }
-        let Ok(plaintext) = crate::crypto::cipher::tdes_cbc_decrypt(&key, &iv, input_data)
-        else {
-            return STATUS_INVALID_PARAMETER;
-        };
-        output_slice[..plaintext.len()].copy_from_slice(&plaintext);
-        *result_len = plaintext.len() as u32;
-        return STATUS_SUCCESS;
+        #[cfg(feature = "crypto_libs")]
+        {
+            let Ok(plaintext) = crate::crypto::cipher::tdes_cbc_decrypt(&_key, &iv, input_data)
+            else {
+                return STATUS_INVALID_PARAMETER;
+            };
+            output_slice[..plaintext.len()].copy_from_slice(&plaintext);
+            *result_len = plaintext.len() as u32;
+            return STATUS_SUCCESS;
+        }
+        #[cfg(not(feature = "crypto_libs"))]
+        return STATUS_NOT_SUPPORTED;
     }
     let mut iv = [0u8; 16];
     if !_iv.is_null() && _iv_len as usize >= 16 {
@@ -583,8 +593,7 @@ pub unsafe extern "C" fn bcrypt_sign_hash(
     if output.is_null() || output_len < signature.len() as u32 {
         return STATUS_BUFFER_TOO_SMALL;
     }
-    core::slice::from_raw_parts_mut(output, signature.len())
-        .copy_from_slice(&signature);
+    core::slice::from_raw_parts_mut(output, signature.len()).copy_from_slice(&signature);
     STATUS_SUCCESS
 }
 
@@ -609,7 +618,10 @@ pub unsafe extern "C" fn bcrypt_verify_signature(
     let Some(private_key) = context.rsa_private.as_ref() else {
         return STATUS_NOT_SUPPORTED;
     };
-    if private_key.public_key().verify_pkcs1v15(hash, signature_data) {
+    if private_key
+        .public_key()
+        .verify_pkcs1v15(hash, signature_data)
+    {
         STATUS_SUCCESS
     } else {
         STATUS_INVALID_PARAMETER
@@ -659,15 +671,25 @@ fn key_context(key_handle: usize) -> Option<KeyContext> {
 fn aes_cbc_encrypt(key: &[u8], iv: &[u8; 16], input: &[u8], output: &mut [u8]) -> bool {
     match key.len() {
         16 => match key.try_into() {
-            Ok(key) => cbc_transform(&Aes128::new(key), iv, input, output, |cipher, block| {
-                cipher.encrypt_block(block)
-            }, true),
+            Ok(key) => cbc_transform(
+                &Aes128::new(key),
+                iv,
+                input,
+                output,
+                |cipher, block| cipher.encrypt_block(block),
+                true,
+            ),
             Err(_) => false,
         },
         32 => match key.try_into() {
-            Ok(key) => cbc_transform(&Aes256::new(key), iv, input, output, |cipher, block| {
-                cipher.encrypt_block(block)
-            }, true),
+            Ok(key) => cbc_transform(
+                &Aes256::new(key),
+                iv,
+                input,
+                output,
+                |cipher, block| cipher.encrypt_block(block),
+                true,
+            ),
             Err(_) => false,
         },
         _ => false,
@@ -677,22 +699,39 @@ fn aes_cbc_encrypt(key: &[u8], iv: &[u8; 16], input: &[u8], output: &mut [u8]) -
 fn aes_cbc_decrypt(key: &[u8], iv: &[u8; 16], input: &[u8], output: &mut [u8]) -> bool {
     match key.len() {
         16 => match key.try_into() {
-            Ok(key) => cbc_transform(&Aes128::new(key), iv, input, output, |cipher, block| {
-                cipher.decrypt_block(block)
-            }, false),
+            Ok(key) => cbc_transform(
+                &Aes128::new(key),
+                iv,
+                input,
+                output,
+                |cipher, block| cipher.decrypt_block(block),
+                false,
+            ),
             Err(_) => false,
         },
         32 => match key.try_into() {
-            Ok(key) => cbc_transform(&Aes256::new(key), iv, input, output, |cipher, block| {
-                cipher.decrypt_block(block)
-            }, false),
+            Ok(key) => cbc_transform(
+                &Aes256::new(key),
+                iv,
+                input,
+                output,
+                |cipher, block| cipher.decrypt_block(block),
+                false,
+            ),
             Err(_) => false,
         },
         _ => false,
     }
 }
 
-fn cbc_transform<T, C>(cipher: &T, iv: &[u8; 16], input: &[u8], output: &mut [u8], transform: C, encrypt: bool) -> bool
+fn cbc_transform<T, C>(
+    cipher: &T,
+    iv: &[u8; 16],
+    input: &[u8],
+    output: &mut [u8],
+    transform: C,
+    encrypt: bool,
+) -> bool
 where
     C: Fn(&T, &mut [u8; 16]),
 {
