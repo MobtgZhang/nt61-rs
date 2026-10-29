@@ -620,14 +620,39 @@ pub fn shutdown(socket_id: u32, how: u8) -> Result<(), SocketError> {
 }
 
 pub fn is_read_ready(socket_id: u32) -> bool {
-    let sockets = SOCKETS.lock();
-    let Some(socket) = sockets.iter().find(|socket| socket.id == socket_id) else {
-        return false;
+    let (socket_type, shutdown_receive, state, tcp_socket_id) = {
+        let sockets = SOCKETS.lock();
+        let Some(socket) = sockets.iter().find(|socket| socket.id == socket_id) else {
+            return false;
+        };
+        (
+            socket.socket_type,
+            socket.shutdown_receive,
+            socket.state,
+            socket.tcp_socket_id,
+        )
     };
+    let accept_ready = {
+        let sockets = SOCKETS.lock();
+        sockets.iter().any(|socket| {
+            socket.id == socket_id
+                && matches!(socket.state, SocketState::Listening)
+                && !socket.accept_queue.is_empty()
+        })
+    };
+    let dgram_ready = {
+        let sockets = SOCKETS.lock();
+        sockets.iter().any(|socket| {
+            socket.id == socket_id
+                && matches!(socket.socket_type, SocketType::Dgram)
+                && !socket.rx_buf.is_empty()
+        })
+    };
+    let stream_ready = matches!(socket_type, SocketType::Stream)
+        && matches!(state, SocketState::Connected | SocketState::Closing)
+        && tcp_socket_id.map(tcp::has_buffered_data).unwrap_or(false);
 
-    !socket.shutdown_receive
-        && (matches!(socket.state, SocketState::Listening) && !socket.accept_queue.is_empty()
-            || matches!(socket.socket_type, SocketType::Dgram) && !socket.rx_buf.is_empty())
+    !shutdown_receive && (accept_ready || dgram_ready || stream_ready)
 }
 
 pub fn get_state(socket_id: u32) -> Option<SocketState> {

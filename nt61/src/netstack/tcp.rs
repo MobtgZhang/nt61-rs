@@ -1001,6 +1001,14 @@ pub fn socket_state(socket_id: u32) -> TcpState {
         .unwrap_or(TcpState::Closed)
 }
 
+/// Report whether a connected TCP endpoint has buffered receive data.
+pub fn has_buffered_data(socket_id: u32) -> bool {
+    TCP_CONNECTIONS
+        .lock()
+        .iter()
+        .any(|tcb| tcb.socket_id == socket_id && !tcb.rx_buf.is_empty())
+}
+
 /// close a TCP connection
 pub fn close(socket_id: u32) -> bool {
     let mut connections = TCP_CONNECTIONS.lock();

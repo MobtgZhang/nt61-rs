@@ -780,7 +780,7 @@ fn send_echo_reply(dst: &[u8; 16], data: &[u8]) {
     let mut reply = Vec::with_capacity(4 + data.len());
     reply.push(129); // Echo Reply
     reply.push(0); // Code
-    reply.push(0); // Checksum (placeholder)
+    reply.push(0); // Checksum is filled in below.
     reply.push(0);
     reply.extend_from_slice(data);
 

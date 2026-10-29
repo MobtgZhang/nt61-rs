@@ -20,8 +20,10 @@ pub mod socket;
 pub mod tcp;
 pub mod udp;
 
+use core::sync::atomic::{AtomicBool, Ordering};
+
 /// Global network stack state
-static mut NETWORK_STACK_INITIALIZED: bool = false;
+static NETWORK_STACK_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 /// Initialize the network stack
 pub fn init() {
@@ -42,16 +44,14 @@ pub fn init() {
     wfp::init();
     dns::flush_cache();
 
-    unsafe {
-        NETWORK_STACK_INITIALIZED = true;
-    }
+    NETWORK_STACK_INITIALIZED.store(true, Ordering::Release);
 
     // kprintln!("    Network stack: ready");
 }
 
 /// Check if the network stack is initialized
 pub fn is_initialized() -> bool {
-    unsafe { NETWORK_STACK_INITIALIZED }
+    NETWORK_STACK_INITIALIZED.load(Ordering::Acquire)
 }
 
 /// Process an incoming packet from a NIC
