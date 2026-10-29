@@ -183,8 +183,8 @@ pub fn initialize_wow64_process(
         let stack_top = crate::libs::wow64::wow64vas::allocate_stack(
             crate::libs::wow64::wow64vas::WOW64_DEFAULT_STACK_SIZE,
         )?;
-        let stack_base = stack_top
-            .checked_sub(crate::libs::wow64::wow64vas::WOW64_DEFAULT_STACK_SIZE)?;
+        let stack_base =
+            stack_top.checked_sub(crate::libs::wow64::wow64vas::WOW64_DEFAULT_STACK_SIZE)?;
 
         unsafe {
             let thread = &mut *process.main_thread;
@@ -218,7 +218,7 @@ unsafe fn init_peb32(peb: *mut Peb32, process: &Eprocess) {
     // OS version information
     (*peb).os_major_version = 6;
     (*peb).os_minor_version = 1; // Windows 7
-    (*peb).os_build_number = 7600;
+    (*peb).os_build_number = 7601;
 }
 
 /// Load 32-bit system DLLs into the Wow64 process.

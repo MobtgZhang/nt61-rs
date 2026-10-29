@@ -280,7 +280,7 @@ fn test_thread_suspension() -> bool {
 fn test_scheduler_queue() -> bool {
     use crate::ke::scheduler;
 
-    if scheduler::get_current_thread().is_none() {
+    if scheduler::with_current_thread(|_| ()).is_none() {
         crate::boot_println!("    Scheduler: no current thread yet");
         return true;
     }

@@ -134,9 +134,9 @@ pub fn create_wow64_thread(
 /// Allocate TEB32 for a Wow64 thread.
 pub fn allocate_teb32() -> Option<*mut Teb32> {
     static mut TEB32_BUFFER: [u32; 0x1100 / 4] = [0; 0x1100 / 4];
-    Some(unsafe {
+    Some(
         core::ptr::addr_of_mut!(TEB32_BUFFER).cast::<Teb32>()
-    })
+    )
 }
 
 /// Allocate and attach a TEB32 to an existing WOW64 thread.
@@ -214,7 +214,7 @@ fn init_thread_context32(
 unsafe fn init_teb32(
     teb: *mut Teb32,
     thread: &Ethread,
-    process: &crate::ps::process::Eprocess,
+    _process: &crate::ps::process::Eprocess,
     stack_top: ULONG32,
 ) {
     if teb.is_null() {

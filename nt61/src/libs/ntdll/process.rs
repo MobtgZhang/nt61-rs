@@ -202,9 +202,9 @@ pub unsafe extern "C" fn nt_terminate_process(
     // Mark the current thread terminated. The scheduler will
     // observe the state on the next preempt/timer tick and stop
     // running this thread.
-    if let Some(thread) = crate::ke::scheduler::get_current_thread() {
+    crate::ke::scheduler::with_current_thread(|thread| {
         thread.kthread.state = crate::ps::thread::KThreadState::Terminated;
-    }
+    });
     // Record the exit status on the EPROCESS for any future
     // `nt_query_information_process` caller.
     if let Some(proc) = ps::get_by_pid(0) {
