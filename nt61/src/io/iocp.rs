@@ -14,8 +14,8 @@
 //! 4. **Overlapped I/O**: Async operations with OVERLAPPED structure
 
 use crate::ke::sync::Spinlock;
-use alloc::sync::Arc;
 use alloc::collections::VecDeque;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
@@ -382,7 +382,13 @@ pub fn post_queued_completion_status(
     completion_key: u64,
     overlapped: u64,
 ) -> u32 {
-    post_completion_status(port_id, bytes_transferred, completion_key, overlapped, STATUS_SUCCESS)
+    post_completion_status(
+        port_id,
+        bytes_transferred,
+        completion_key,
+        overlapped,
+        STATUS_SUCCESS,
+    )
 }
 
 /// Get a completion packet from an IOCP
@@ -413,9 +419,11 @@ pub fn get_queued_completion_status(
 /// Whether a completion port with the given id exists.
 pub fn port_exists(port_id: u64) -> bool {
     let table = IOCP_TABLE.lock();
-    table
-        .iter()
-        .any(|slot| slot.as_ref().map(|p| p.port_id() == port_id).unwrap_or(false))
+    table.iter().any(|slot| {
+        slot.as_ref()
+            .map(|p| p.port_id() == port_id)
+            .unwrap_or(false)
+    })
 }
 
 /// Get IOCP statistics

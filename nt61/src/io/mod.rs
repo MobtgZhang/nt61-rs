@@ -1451,8 +1451,7 @@ unsafe extern "C" fn fs_create_dispatch(device: *mut DeviceObject, irp: *mut Irp
             let context = pool::allocate(
                 pool::PoolType::NonPaged,
                 core::mem::size_of::<crate::fs::ntfs::NtfsHandle>(),
-            )
-                as *mut crate::fs::ntfs::NtfsHandle;
+            ) as *mut crate::fs::ntfs::NtfsHandle;
             if !context.is_null() {
                 unsafe { core::ptr::write(context, handle) };
                 (*file_obj_ptr).fcb = context as *mut ();
@@ -1536,8 +1535,12 @@ unsafe extern "C" fn fs_read_dispatch(_device: *mut DeviceObject, irp: *mut Irp)
                 unsafe { core::slice::from_raw_parts_mut(staging, length as usize) };
             bytes_read = crate::fs::ntfs::get_mounted_fs()
                 .and_then(|filesystem| {
-                    crate::fs::ntfs::read_file(filesystem, unsafe { &mut *handle }, &mut kernel_buffer)
-                        .ok()
+                    crate::fs::ntfs::read_file(
+                        filesystem,
+                        unsafe { &mut *handle },
+                        &mut kernel_buffer,
+                    )
+                    .ok()
                 })
                 .unwrap_or(0);
             if bytes_read > 0 {
@@ -1550,8 +1553,12 @@ unsafe extern "C" fn fs_read_dispatch(_device: *mut DeviceObject, irp: *mut Irp)
                 unsafe { core::slice::from_raw_parts_mut(buffer, length as usize) };
             bytes_read = crate::fs::ntfs::get_mounted_fs()
                 .and_then(|filesystem| {
-                    crate::fs::ntfs::read_file(filesystem, unsafe { &mut *handle }, &mut kernel_buffer)
-                        .ok()
+                    crate::fs::ntfs::read_file(
+                        filesystem,
+                        unsafe { &mut *handle },
+                        &mut kernel_buffer,
+                    )
+                    .ok()
                 })
                 .unwrap_or(0);
         }
@@ -1564,7 +1571,11 @@ unsafe extern "C" fn fs_read_dispatch(_device: *mut DeviceObject, irp: *mut Irp)
             stats.bytes_read += bytes_read as u64;
             stats.reads += 1;
         }
-        let status = if bytes_read > 0 { STATUS_SUCCESS } else { STATUS_INVALID_PARAMETER };
+        let status = if bytes_read > 0 {
+            STATUS_SUCCESS
+        } else {
+            STATUS_INVALID_PARAMETER
+        };
         (*irp).io_status.status = status as u32;
         (*irp).io_status.information = bytes_read;
         io_complete_request(irp, 0);
@@ -1587,7 +1598,8 @@ unsafe extern "C" fn fs_read_dispatch(_device: *mut DeviceObject, irp: *mut Irp)
             io_complete_request(irp, 0);
             return STATUS_NO_MEMORY as i32;
         }
-        let mut kernel_buffer = unsafe { core::slice::from_raw_parts_mut(staging, length as usize) };
+        let mut kernel_buffer =
+            unsafe { core::slice::from_raw_parts_mut(staging, length as usize) };
         let result = crate::fs::vfs::read_file_sectors_into(0, &mut kernel_buffer, byte_offset);
         if result.status == 0 && result.bytes_read > 0 {
             let src = unsafe { core::slice::from_raw_parts(staging, result.bytes_read) };
@@ -1741,7 +1753,8 @@ unsafe extern "C" fn fs_write_dispatch(_device: *mut DeviceObject, irp: *mut Irp
             return STATUS_NO_MEMORY as i32;
         }
         {
-            let mut kernel_buffer = unsafe { core::slice::from_raw_parts_mut(staging, length as usize) };
+            let mut kernel_buffer =
+                unsafe { core::slice::from_raw_parts_mut(staging, length as usize) };
             let _ = crate::mm::user_copy::copy_from_user(&mut kernel_buffer, buffer as u64);
         }
         let kernel_buffer = unsafe { core::slice::from_raw_parts(staging, length as usize) };
@@ -2599,8 +2612,7 @@ impl DriverDispatchTable {
                     Some(f);
             }
             if let Some(f) = self.set_volume_information {
-                (*driver).major_functions[major::IRP_MJ_SET_VOLUME_INFORMATION as usize] =
-                    Some(f);
+                (*driver).major_functions[major::IRP_MJ_SET_VOLUME_INFORMATION as usize] = Some(f);
             }
             if let Some(f) = self.directory_control {
                 (*driver).major_functions[major::IRP_MJ_DIRECTORY_CONTROL as usize] = Some(f);
@@ -2609,8 +2621,7 @@ impl DriverDispatchTable {
                 (*driver).major_functions[major::IRP_MJ_FILE_SYSTEM_CONTROL as usize] = Some(f);
             }
             if let Some(f) = self.internal_device_control {
-                (*driver).major_functions[major::IRP_MJ_INTERNAL_DEVICE_CONTROL as usize] =
-                    Some(f);
+                (*driver).major_functions[major::IRP_MJ_INTERNAL_DEVICE_CONTROL as usize] = Some(f);
             }
         }
     }

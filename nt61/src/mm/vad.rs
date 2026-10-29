@@ -1135,9 +1135,7 @@ impl VadTree {
                     // non-executable.
                     crate::mm::vas::PTE_US | crate::mm::vas::PTE_A
                 }
-                VadProtection::EXECUTE_READ => {
-                    crate::mm::vas::PTE_US | crate::mm::vas::PTE_A
-                }
+                VadProtection::EXECUTE_READ => crate::mm::vas::PTE_US | crate::mm::vas::PTE_A,
                 VadProtection::EXECUTE_READWRITE => {
                     crate::mm::vas::PTE_RW
                         | crate::mm::vas::PTE_US

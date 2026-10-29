@@ -224,4 +224,3 @@ mod tests {
         io_close_completion_port(handle);
     }
 }
-

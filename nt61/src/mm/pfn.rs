@@ -367,9 +367,7 @@ impl PfnDatabase {
         self.pfn_array = storage as *mut MMPFN;
         self.pfn_count = usable_pfns as u64;
         self.lowest_pfn = base_pfn;
-        self.highest_pfn = base_pfn
-            .checked_add(usable_pfns as u64)
-            .unwrap_or(u64::MAX);
+        self.highest_pfn = base_pfn.checked_add(usable_pfns as u64).unwrap_or(u64::MAX);
         self.initialized = true;
         // Inline verification — read back immediately.
         crate::hal::serial::write_string_always("[mm] init verify: self=0x");
@@ -615,10 +613,7 @@ impl PfnDatabase {
     pub fn seed_free(&mut self, base: PfnNumber, count: PfnNumber) {
         for i in 0..count {
             let Some(pfn) = base.checked_add(i) else {
-                panic!(
-                    "PFN range [{}, +{}) overflows in seed_free",
-                    base, count
-                );
+                panic!("PFN range [{}, +{}) overflows in seed_free", base, count);
             };
             let entry = match self.entry(pfn) {
                 Some(e) => e,
@@ -952,9 +947,7 @@ pub fn init(base_pfn: PfnNumber, pfn_count: PfnNumber) {
         (*db_raw).pfn_array = PFN_STORAGE_PTR as *mut MMPFN;
         (*db_raw).pfn_count = usable_pfns as u64;
         (*db_raw).lowest_pfn = base_pfn;
-        (*db_raw).highest_pfn = base_pfn
-            .checked_add(usable_pfns as u64)
-            .unwrap_or(u64::MAX);
+        (*db_raw).highest_pfn = base_pfn.checked_add(usable_pfns as u64).unwrap_or(u64::MAX);
         (*db_raw).initialized = true;
         crate::hal::serial::write_string_always("[mm] raw_init done\r\n");
         crate::hal::serial::write_string_always("[mm] pfn::init: db init done\r\n");
@@ -994,9 +987,7 @@ pub fn init(base_pfn: PfnNumber, pfn_count: PfnNumber) {
 
     #[cfg(target_arch = "x86_64")]
     unsafe {
-        crate::mm::vas::reserve_system_page_tables(
-            crate::arch::read_current_page_root(),
-        );
+        crate::mm::vas::reserve_system_page_tables(crate::arch::read_current_page_root());
     }
 }
 

@@ -652,6 +652,13 @@ pub fn has_entry(number: usize) -> bool {
     GLOBAL_SSDT.get_info(number).is_some()
 }
 
+/// Return the registered SSDT entry, if any. BTL bridges use this to
+/// reject calls whose trailing arguments cannot be reconstructed from
+/// the captured register file.
+pub fn get_info(number: usize) -> Option<SsdtEntry> {
+    GLOBAL_SSDT.get_info(number)
+}
+
 /// Dispatch through the SSDT using pre-built arguments.
 /// Returns `None` when no handler is registered for `number`, allowing
 /// the caller to fall back to architecture-specific dispatch.

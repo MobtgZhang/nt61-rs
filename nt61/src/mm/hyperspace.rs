@@ -16,9 +16,9 @@ use core::ptr;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(target_arch = "x86_64")]
-use crate::mm::pte::MMPTE;
-#[cfg(target_arch = "x86_64")]
 use crate::mm::constants::MI_HYPERSPACE_INDEX;
+#[cfg(target_arch = "x86_64")]
+use crate::mm::pte::MMPTE;
 
 pub use crate::mm::constants::{HYPERSPACE_BASE, HYPERSPACE_END, HYPERSPACE_ENTRIES};
 

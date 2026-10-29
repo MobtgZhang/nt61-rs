@@ -462,11 +462,7 @@ pub unsafe fn init_shadow_services() {
     register_shadow_service(0x0bf, syscall::nt_gdi_get_pixel as *const (), 12); // 0x10bf
     register_shadow_service(0x0d4, syscall::nt_gdi_poly_pat_blt as *const (), 16); // 0x10d4
     register_shadow_service(0x0d6, syscall::nt_gdi_invert_rgn as *const (), 16); // 0x10d6
-    register_shadow_service(
-        0x0da,
-        syscall::nt_user_track_mouse_event as *const (),
-        16,
-    ); // 0x10da NT_USER_TRACK_MOUSE_EVENT
+    register_shadow_service(0x0da, syscall::nt_user_track_mouse_event as *const (), 16); // 0x10da NT_USER_TRACK_MOUSE_EVENT
     register_shadow_service(0x0de, syscall::nt_gdi_set_bitmap_bits as *const (), 12); // 0x10de
     register_shadow_service(0x0e4, syscall::nt_gdi_save_dc as *const (), 4); // 0x10e4
     register_shadow_service(0x0e5, syscall::nt_gdi_get_app_clip_box as *const (), 8); // 0x10e5

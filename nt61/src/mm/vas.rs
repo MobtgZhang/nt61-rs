@@ -382,7 +382,9 @@ pub fn create_user_address_space() -> Option<u64> {
     unsafe {
         for i in 0..PT_ENTRIES {
             let src_entry = *system.add(i);
-            *dst.add(i) = MMPTE { u_long: src_entry.raw() };
+            *dst.add(i) = MMPTE {
+                u_long: src_entry.raw(),
+            };
         }
     }
     crate::boot_debug_println!("[VAS] create_user_address_space: B: copied system PML4",);
@@ -534,7 +536,9 @@ pub fn refresh_kernel_mappings(pml4_phys: u64) {
                 if system_entry != 0 {
                     core::ptr::write_volatile(
                         process.add(idx),
-                        crate::mm::pte::MMPTE { u_long: system_entry },
+                        crate::mm::pte::MMPTE {
+                            u_long: system_entry,
+                        },
                     );
                 }
             }
@@ -709,7 +713,12 @@ fn copy_system_root_for_process(dst: *mut MMPTE, system: *const MMPTE) -> bool {
                 continue;
             }
             let kernel_entry = crate::arch::translate_x86_root_entry(entry);
-            core::ptr::write_volatile(dst.add(idx), MMPTE { u_long: kernel_entry });
+            core::ptr::write_volatile(
+                dst.add(idx),
+                MMPTE {
+                    u_long: kernel_entry,
+                },
+            );
         }
     }
     true
@@ -889,10 +898,8 @@ pub fn map_page_in_pml4(pml4_phys: u64, va: u64, pa: u64, flags: u64) -> MmStatu
             let large_base = pdpte_val & 0x000F_FFFF_C000_0000;
             let large_flags = pdpte_val & !(1u64 << 7);
             for directory_index in 0..512usize {
-                let directory_pa =
-                    large_base + (directory_index as u64) * 0x20_0000;
-                let directory_entry =
-                    directory_pa | large_flags | PTE_A | PTE_D | (1u64 << 7);
+                let directory_pa = large_base + (directory_index as u64) * 0x20_0000;
+                let directory_entry = directory_pa | large_flags | PTE_A | PTE_D | (1u64 << 7);
                 pte_write(new_pd, directory_index, directory_entry);
             }
             pdpte_val = new_pd | INT_PTE_BITS;
@@ -1261,37 +1268,34 @@ pub fn allocate_user_va(desired_base: u64, size: u64, _protect: u32) -> Option<u
     // Align size to page boundary
     let aligned_size = (size + 0xFFF) & !0xFFF;
 
-        // Find a suitable VA
-        let va = if desired_base == 0 {
-            let mut candidate = alloc.next_va;
-            loop {
-                if candidate > alloc.end_va || aligned_size > alloc.end_va - candidate {
-                    return None;
-                }
-                let end = candidate + aligned_size;
-                if !alloc.is_overlapping(candidate, end) {
-                    break;
-                }
-                candidate = (end + 0xFFF) & !0xFFF;
-            }
-            candidate
-        } else {
-            let base = desired_base & !0xFFF;
-            let end = base.checked_add(aligned_size)?;
-            if base >= 0x0000_7FFF_FFFF_FFFF
-                || end > alloc.end_va
-                || alloc.is_overlapping(base, end)
-            {
+    // Find a suitable VA
+    let va = if desired_base == 0 {
+        let mut candidate = alloc.next_va;
+        loop {
+            if candidate > alloc.end_va || aligned_size > alloc.end_va - candidate {
                 return None;
             }
-            base
-        };
-
-        if alloc.record(va, va + aligned_size) {
-            Some(va)
-        } else {
-            None
+            let end = candidate + aligned_size;
+            if !alloc.is_overlapping(candidate, end) {
+                break;
+            }
+            candidate = (end + 0xFFF) & !0xFFF;
         }
+        candidate
+    } else {
+        let base = desired_base & !0xFFF;
+        let end = base.checked_add(aligned_size)?;
+        if base >= 0x0000_7FFF_FFFF_FFFF || end > alloc.end_va || alloc.is_overlapping(base, end) {
+            return None;
+        }
+        base
+    };
+
+    if alloc.record(va, va + aligned_size) {
+        Some(va)
+    } else {
+        None
+    }
 }
 
 /// Free user-mode virtual address range.
@@ -1860,13 +1864,21 @@ pub fn init() {
         // Map the current image and stack before flushing the TLB and
         // setting PG=1.
         let image_va = crate::kernel_main::kernel_main as *const () as u64;
-        ensure_identity_or_log(image_va & !0x00FF_FFFF, 0x0100_0000, "LoongArch64 loader image");
+        ensure_identity_or_log(
+            image_va & !0x00FF_FFFF,
+            0x0100_0000,
+            "LoongArch64 loader image",
+        );
 
         let stack_sp: u64;
         unsafe {
             core::arch::asm!("move {}, $sp", out(reg) stack_sp, options(nomem, nostack));
         }
-        ensure_identity_or_log(stack_sp & !0x003F_FFFF, 0x0040_0000, "LoongArch64 loader stack");
+        ensure_identity_or_log(
+            stack_sp & !0x003F_FFFF,
+            0x0040_0000,
+            "LoongArch64 loader stack",
+        );
     }
 
     // RISC-V: QEMU virt RAM starts at 0x8000_0000. Map the *entire*

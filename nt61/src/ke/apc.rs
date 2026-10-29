@@ -281,9 +281,9 @@ pub unsafe fn ki_deliver_apc(current_thread: *mut Ethread, delivery_mode: ApcMod
             let mut delivered = 0;
             while !crate::ps::thread::is_apc_list_empty(head) {
                 let entry = crate::ps::thread::apc_list_remove_head(head);
-                let apc_ptr = unsafe {
-                    (entry as *mut u8).sub(core::mem::offset_of!(Apc, list_entry))
-                } as *mut Apc;
+                let apc_ptr =
+                    unsafe { (entry as *mut u8).sub(core::mem::offset_of!(Apc, list_entry)) }
+                        as *mut Apc;
                 let routine_addr = (*apc_ptr).routine.map(|r| r as u64).unwrap_or(0);
                 let arg1 = (*apc_ptr).system_argument1;
                 let arg2 = (*apc_ptr).system_argument2;
@@ -315,9 +315,9 @@ pub unsafe fn ki_deliver_apc(current_thread: *mut Ethread, delivery_mode: ApcMod
             let mut delivered = 0;
             while !crate::ps::thread::is_apc_list_empty(head) {
                 let entry = crate::ps::thread::apc_list_remove_head(head);
-                let apc_ptr = unsafe {
-                    (entry as *mut u8).sub(core::mem::offset_of!(Apc, list_entry))
-                } as *mut Apc;
+                let apc_ptr =
+                    unsafe { (entry as *mut u8).sub(core::mem::offset_of!(Apc, list_entry)) }
+                        as *mut Apc;
                 let routine_addr = (*apc_ptr).routine.map(|r| r as u64).unwrap_or(0);
                 (*apc_ptr).inserted.store(false, Ordering::Release);
                 if routine_addr != 0 {

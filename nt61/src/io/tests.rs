@@ -218,9 +218,7 @@ fn test_irp_skip_stack_location_boundary() -> bool {
             let stack_before = (*irp).current_stack;
             let location_before = (*irp).current_location;
             crate::io::irp_stack::skip_current_stack_location(irp);
-            if (*irp).current_stack == stack_before
-                || (*irp).current_location >= location_before
-            {
+            if (*irp).current_stack == stack_before || (*irp).current_location >= location_before {
                 ok = false;
                 break;
             }

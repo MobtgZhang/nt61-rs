@@ -414,11 +414,11 @@ unsafe impl GlobalAlloc for KernelHeapAllocator {
     }
 }
 
-    unsafe impl GlobalAlloc for KernelHeap {
-        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-            if !self.initialized.load(Ordering::Acquire) {
-                return core::ptr::null_mut();
-            }
+unsafe impl GlobalAlloc for KernelHeap {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        if !self.initialized.load(Ordering::Acquire) {
+            return core::ptr::null_mut();
+        }
         let base = self.base.load(Ordering::Relaxed);
         let size = self.size.load(Ordering::Relaxed);
         if base == 0 || size == 0 {
@@ -429,11 +429,11 @@ unsafe impl GlobalAlloc for KernelHeapAllocator {
         // the free list, bump pointer and stats are updated atomically.
         let lock_ref = &*self.heap_lock.get();
         let _guard = lock_ref.lock();
-            // 1) Try the free list first — frees are accumulated into
-            //    the intrusive list in `dealloc()`, so this is where
-            //    previously-returned memory is recycled.
-            if let Some(ptr) = self.alloc_from_free_list(layout) {
-                let stats = &mut *self.stats.get();
+        // 1) Try the free list first — frees are accumulated into
+        //    the intrusive list in `dealloc()`, so this is where
+        //    previously-returned memory is recycled.
+        if let Some(ptr) = self.alloc_from_free_list(layout) {
+            let stats = &mut *self.stats.get();
             stats.total_allocations += 1;
             stats.free_list_hits += 1;
             stats.current_allocated += layout.size();
@@ -557,9 +557,9 @@ pub fn init() {
                 None => {
                     crate::hal::serial::write_string_always("[heap] 32MB FAILED, trying 16MB\r\n");
                     match frame::allocate_pages(HEAP_PAGES_SMALL) {
-                Some(p) => {
-                    crate::hal::serial::write_string_always(
-                        "[heap] allocated 16MB at phys=",
+                        Some(p) => {
+                            crate::hal::serial::write_string_always(
+                                "[heap] allocated 16MB at phys=",
                             );
                             crate::hal::serial::write_hex_u64(p as u64);
                             crate::hal::serial::write_string("\r\n");

@@ -192,8 +192,6 @@ pub fn read_user_utf16(src: u64, char_count: u64) -> Result<alloc::vec::Vec<u16>
     Ok(value)
 }
 
-
-
 /// True iff `va` is backed by a present, user-owned mapping.
 ///
 /// Check the actual leaf PTE, not merely whether a translation exists.

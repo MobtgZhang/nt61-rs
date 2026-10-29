@@ -172,7 +172,8 @@ unsafe fn write_ktimer(dst: *mut u8, kt: &Ktimer) {
         kt.name.as_ptr(),
     );
     core::ptr::write(
-        dst.add(core::mem::offset_of!(Ktimer, name) + core::mem::size_of::<*const u8>()) as *mut usize,
+        dst.add(core::mem::offset_of!(Ktimer, name) + core::mem::size_of::<*const u8>())
+            as *mut usize,
         kt.name.len(),
     );
     core::ptr::write(
@@ -273,11 +274,27 @@ pub fn smoke_test() -> bool {
         // due_time, period, name ptr, name len, armed at their true
         // offsets (0x20, 0x28, 0x30, 0x38, 0x40). The old hardcoded
         // offsets left `armed` set, so the slot could never be reused.
-        core::ptr::write(dst.add(core::mem::offset_of!(Ktimer, due_time)) as *mut u64, 0u64);
-        core::ptr::write(dst.add(core::mem::offset_of!(Ktimer, period)) as *mut u64, 0u64);
-        core::ptr::write(dst.add(core::mem::offset_of!(Ktimer, name)) as *mut *const u8, core::ptr::null());
-        core::ptr::write(dst.add(core::mem::offset_of!(Ktimer, name) + core::mem::size_of::<*const u8>()) as *mut usize, 0usize);
-        core::ptr::write(dst.add(core::mem::offset_of!(Ktimer, armed)) as *mut bool, false);
+        core::ptr::write(
+            dst.add(core::mem::offset_of!(Ktimer, due_time)) as *mut u64,
+            0u64,
+        );
+        core::ptr::write(
+            dst.add(core::mem::offset_of!(Ktimer, period)) as *mut u64,
+            0u64,
+        );
+        core::ptr::write(
+            dst.add(core::mem::offset_of!(Ktimer, name)) as *mut *const u8,
+            core::ptr::null(),
+        );
+        core::ptr::write(
+            dst.add(core::mem::offset_of!(Ktimer, name) + core::mem::size_of::<*const u8>())
+                as *mut usize,
+            0usize,
+        );
+        core::ptr::write(
+            dst.add(core::mem::offset_of!(Ktimer, armed)) as *mut bool,
+            false,
+        );
     }
     true
 }

@@ -1662,7 +1662,10 @@ mod tests {
             UnwindOperationCode::from_packed(0x22),
             UnwindOperationCode::AllocSmall
         );
-        assert_eq!(UnwindOperationCode::from_packed(0x30), UnwindOperationCode::SetFp);
+        assert_eq!(
+            UnwindOperationCode::from_packed(0x30),
+            UnwindOperationCode::SetFp
+        );
         assert_eq!(
             UnwindOperationCode::from_packed(0x43),
             UnwindOperationCode::SaveIntNonVol

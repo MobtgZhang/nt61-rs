@@ -130,7 +130,9 @@ pub fn slot_for_id(pipe_id: u64) -> Option<(usize, bool)> {
     if pipe_id == 0 {
         return None;
     }
-    let idx = pipes.iter().position(|slot| pipe_matches_id(slot, pipe_id))?;
+    let idx = pipes
+        .iter()
+        .position(|slot| pipe_matches_id(slot, pipe_id))?;
     let is_write = pipes
         .get(idx)
         .and_then(|slot| slot.as_ref())

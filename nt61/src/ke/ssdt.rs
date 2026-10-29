@@ -33,7 +33,6 @@
 //
 //! Reference: ReactOS/WRK, Geoff Chappell, Vergilius Project
 
-
 /// Maximum number of services in the SSDT
 pub const SSDT_MAX_SERVICES: usize = 512;
 

@@ -100,10 +100,7 @@ fn ensure_registry(registry: &mut Vec<Option<DriverRegistryEntry>>) {
 /// Register an already-created driver object for loading by one of the
 /// `load_*_start_drivers` waves. The entry starts as `NotLoaded`; the
 /// wave matching its start type runs the driver's `DriverEntry`.
-pub fn register_start_type_driver(
-    driver: *mut DriverObject,
-    start_type: ServiceStartType,
-) -> bool {
+pub fn register_start_type_driver(driver: *mut DriverObject, start_type: ServiceStartType) -> bool {
     if driver.is_null() {
         return false;
     }

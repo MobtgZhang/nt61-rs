@@ -72,7 +72,6 @@ fn process_timeouts() {
             }
         }
     }
-
 }
 
 pub fn get_pending_timeout_count() -> usize {
@@ -94,9 +93,7 @@ pub fn has_irp_timed_out(irp: *mut Irp) -> bool {
     }
 
     let mut tracker = TIMEOUT_TRACKER.lock();
-    let fired = tracker
-        .iter()
-        .any(|entry| entry.irp == irp && entry.fired);
+    let fired = tracker.iter().any(|entry| entry.irp == irp && entry.fired);
     if fired {
         tracker.retain(|entry| !(entry.irp == irp && entry.fired));
     }

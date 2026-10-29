@@ -444,7 +444,11 @@ pub fn init(boot_info: &BootInfo) {
     // LoongArch64 the buddy allocator's region includes the stack
     // set up by the trampoline; without this reservation, the
     // first multi-MB allocation from the buddy can overlap it.
-    #[cfg(any(target_arch = "riscv64", target_arch = "loongarch64", target_arch = "aarch64"))]
+    #[cfg(any(
+        target_arch = "riscv64",
+        target_arch = "loongarch64",
+        target_arch = "aarch64"
+    ))]
     {
         let sp: u64;
         unsafe {
@@ -570,13 +574,11 @@ pub fn init(boot_info: &BootInfo) {
     #[cfg(target_arch = "loongarch64")]
     crate::arch::loongarch64::paging::vector_page_check("mm6");
 
-
     // ------------------------------------------------------------------
     pool::init();
     crate::hal::serial::write_string_always("MM7 heap_pool_done\r\n");
     #[cfg(target_arch = "loongarch64")]
     crate::arch::loongarch64::paging::vector_page_check("mm7");
-
 
     {
         let (head, count) = pfn::get_free_list_stats();
@@ -604,7 +606,6 @@ pub fn init(boot_info: &BootInfo) {
     crate::hal::serial::write_string_always("MM8 subsystems_done\r\n");
     #[cfg(target_arch = "loongarch64")]
     crate::arch::loongarch64::paging::vector_page_check("mm8");
-
 
     // ------------------------------------------------------------------
     // 8. Mark MM as fully initialized.  After this point the

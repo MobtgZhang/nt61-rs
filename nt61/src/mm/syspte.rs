@@ -157,26 +157,26 @@ pub fn map_io_space(pa: u64, count: u64) -> Option<u64> {
     }
     #[cfg(target_arch = "x86_64")]
     {
-    let va = reserve_system_ptes(count)?;
-    for i in 0..count {
-        let va_i = va + i * 4096;
-        let pa_i = pa + i * 4096;
-        // flags: P=1, R/W=1, U=1 (kernel still accesses via supervisor
-        // bit is fine; U=1 keeps the PTE consistent with other kernel
-        // mappings and is what the AHCI/e1000 drivers expect). PCD/PWT
-        // are clear (uncached is unnecessary for MMIO behind an iATU;
-        // the controller's own caches handle coherency).
-        // U (0x4) omitted: MMIO windows are kernel-only mappings.
-        const FLAGS: u64 = 0x1 | 0x2;
-        if !crate::arch::map_page(va_i, pa_i, FLAGS) {
-            // Roll back what we've mapped so far.
-            for j in 0..i {
-                crate::arch::unmap_page(va + j * 4096);
+        let va = reserve_system_ptes(count)?;
+        for i in 0..count {
+            let va_i = va + i * 4096;
+            let pa_i = pa + i * 4096;
+            // flags: P=1, R/W=1, U=1 (kernel still accesses via supervisor
+            // bit is fine; U=1 keeps the PTE consistent with other kernel
+            // mappings and is what the AHCI/e1000 drivers expect). PCD/PWT
+            // are clear (uncached is unnecessary for MMIO behind an iATU;
+            // the controller's own caches handle coherency).
+            // U (0x4) omitted: MMIO windows are kernel-only mappings.
+            const FLAGS: u64 = 0x1 | 0x2;
+            if !crate::arch::map_page(va_i, pa_i, FLAGS) {
+                // Roll back what we've mapped so far.
+                for j in 0..i {
+                    crate::arch::unmap_page(va + j * 4096);
+                }
+                release_system_ptes(va, count);
+                return None;
             }
-            release_system_ptes(va, count);
-            return None;
         }
-    }
         Some(va)
     }
 }
@@ -189,11 +189,11 @@ pub fn unmap_io_space(va: u64, count: u64) {
     }
     #[cfg(target_arch = "x86_64")]
     {
-    for i in 0..count {
-        let va_i = va + i * 4096;
-        crate::arch::unmap_page(va_i);
-    }
-    release_system_ptes(va, count);
+        for i in 0..count {
+            let va_i = va + i * 4096;
+            crate::arch::unmap_page(va_i);
+        }
+        release_system_ptes(va, count);
     }
 }
 

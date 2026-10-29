@@ -508,12 +508,12 @@ pub struct Prcb {
     pub perf_counter: [u64; 8], // 0xF18 (64 bytes, ends at 0xF58)
 
     // PrcbType/Size/Version (final section)
-    pub prcb_type: u16,       // 0xF58 (should be 0x0864)
-    pub prcb_size: u16,       // 0xF5A (should be 0x0F80)
-    pub minor_version: u8,    // 0xF5C
-    pub major_version: u8,    // 0xF5D
-    pub build_number: u16,    // 0xF5E
-    pub q_system_time: u64,   // 0xF60
+    pub prcb_type: u16,      // 0xF58 (should be 0x0864)
+    pub prcb_size: u16,      // 0xF5A (should be 0x0F80)
+    pub minor_version: u8,   // 0xF5C
+    pub major_version: u8,   // 0xF5D
+    pub build_number: u16,   // 0xF5E
+    pub q_system_time: u64,  // 0xF60
     pub pad_f68: [u8; 0x18], // 0xF68 - Fill to 0xF80 (24 bytes)
 }
 
@@ -1247,7 +1247,6 @@ pub fn remove_ready(thread: *mut Ethread) -> bool {
 
     let mut scheduler = SCHEDULER.lock();
 
-
     // Same lock protocol as `add_ready` and `ki_balance_processor`.
     let _queue_guard = match lock_ready_queue(target_cpu, priority as usize) {
         Some(g) => g,
@@ -1471,9 +1470,9 @@ pub fn schedule() -> bool {
                 crate::hal::serial::write_string_always(" next=");
                 crate::hal::serial::write_hex_u64_always(next_thread as *mut Ethread as u64);
                 crate::hal::serial::write_string_always(" nrsp=");
-                crate::hal::serial::write_hex_u64_always(
-                    unsafe { (*next_thread).kthread.context.kernel_rsp },
-                );
+                crate::hal::serial::write_hex_u64_always(unsafe {
+                    (*next_thread).kthread.context.kernel_rsp
+                });
                 crate::hal::serial::write_string_always("\r\n");
             }
             unsafe {
@@ -1491,8 +1490,7 @@ pub fn schedule() -> bool {
                                     (*cur).kthread.global_thread_list_entry
                                 ) as *mut ListEntry;
                                 prcb.ready_queues[prio].add_tail(entry_ptr);
-                                prcb.ready_summary
-                                    .fetch_or(1u32 << prio, Ordering::AcqRel);
+                                prcb.ready_summary.fetch_or(1u32 << prio, Ordering::AcqRel);
                                 (*cur).kthread.queued_priority = prio as u8;
                                 (*cur).kthread.queued_cpu = cpu as u16;
                                 (*cur).kthread.state = KThreadState::Ready;
@@ -1815,9 +1813,7 @@ pub fn init_smp_this_cpu(cpu_id: u32) {
     // existing slot would run two CPUs on one PRCB, letting both write
     // the same scheduler state. Fail loudly instead.
     if (cpu_id as usize) >= MAX_CPUS {
-        crate::hal::serial::write_string(
-            "[FATAL] init_smp_this_cpu: CPU id exceeds MAX_CPUS\r\n",
-        );
+        crate::hal::serial::write_string("[FATAL] init_smp_this_cpu: CPU id exceeds MAX_CPUS\r\n");
         crate::ke::bugcheck::bugcheck_with(
             crate::ke::bugcheck::BugCheckCode::ProcessInitializationFailed,
             0x6B,          // PROCESS_INITIALIZATION_FAILURE
