@@ -946,3 +946,100 @@ pub fn init() {
 
     // kprintln!("      Pre-populated well-known SIDs");
 }
+
+const SECURE_SDS_ATTRIBUTE_TYPE: u32 = 0x50;
+const SECURE_RECORD_NUMBER: u64 = 9;
+
+/// Serialize a self-relative Windows security descriptor for `$Secure:$SDS`.
+pub fn serialize_sds_descriptor(descriptor: &NtfsSecurityDescriptor) -> alloc::vec::Vec<u8> {
+    let owner_size = descriptor.owner_size as usize;
+    let group_size = descriptor.group_size as usize;
+    let dacl_size = descriptor.dacl_size as usize;
+    let owner_offset = 0x20usize;
+    let group_offset = owner_offset + owner_size;
+    let dacl_offset = group_offset + group_size;
+    let descriptor_size = dacl_offset + dacl_size;
+
+    let mut bytes = alloc::vec![0u8; descriptor_size];
+    bytes[0] = 1;
+    bytes[8] = descriptor.id as u8;
+    bytes[9] = (descriptor.id >> 8) as u8;
+    bytes[10] = (descriptor.id >> 16) as u8;
+    bytes[11] = (descriptor.id >> 24) as u8;
+    bytes[12] = 0x04;
+    bytes[13] = 0x80;
+    bytes[16..20].copy_from_slice(&(owner_offset as u32).to_le_bytes());
+    bytes[20..24].copy_from_slice(&(group_offset as u32).to_le_bytes());
+    bytes[24..28].copy_from_slice(&0u32.to_le_bytes());
+    bytes[28..32].copy_from_slice(&(dacl_offset as u32).to_le_bytes());
+    if owner_size > 0 {
+        bytes[owner_offset..owner_offset + owner_size]
+            .copy_from_slice(&descriptor.owner[..owner_size]);
+    }
+    if group_size > 0 {
+        bytes[group_offset..group_offset + group_size]
+            .copy_from_slice(&descriptor.group[..group_size]);
+    }
+    if dacl_size > 0 {
+        bytes[dacl_offset..dacl_offset + dacl_size]
+            .copy_from_slice(&descriptor.dacl[..dacl_size]);
+    }
+    bytes
+}
+
+/// Build an `$Secure:$SDS` entry: hash pair, descriptor, and 8-byte alignment.
+pub fn build_sds_entry(security_id: SecurityId, descriptor: &[u8]) -> alloc::vec::Vec<u8> {
+    let hash = crate::fs::ntfs::security::sds_hash(descriptor);
+    let mut entry = alloc::vec![0u8; 16];
+    entry[..4].copy_from_slice(&hash.to_le_bytes());
+    entry[4..8].copy_from_slice(&hash.to_le_bytes());
+    entry[8..12].copy_from_slice(&security_id.to_le_bytes());
+    entry[12..16].copy_from_slice(&0u32.to_le_bytes());
+    entry.extend_from_slice(descriptor);
+    while entry.len() % 8 != 0 {
+        entry.push(0);
+    }
+    entry
+}
+
+fn sds_hash(descriptor: &[u8]) -> u32 {
+    let mut hash = 0x811C9DC5u32;
+    for byte in descriptor {
+        hash = (hash ^ *byte as u32).wrapping_mul(0x01000193);
+    }
+    hash
+}
+
+/// Rebuild the `$Secure` MFT record's resident `$SDS` stream and write it.
+pub fn update_secure_sds(
+    ntfs: &super::NtfsFileSystem,
+    security_id: SecurityId,
+    descriptor: &[u8],
+) -> Result<(), ()> {
+    let mut record: alloc::vec::Vec<u8> = match super::read_mft_record(&ntfs.ntfs_data, SECURE_RECORD_NUMBER) {
+        Some(record) => record.to_vec(),
+        None => alloc::vec![0u8; 1024],
+    };
+    record[..4].copy_from_slice(b"FILE");
+    record[8..10].copy_from_slice(&1u16.to_le_bytes());
+    record[0x14..0x16].copy_from_slice(&1024u16.to_le_bytes());
+    record.resize(1024, 0);
+    let entry = build_sds_entry(security_id, descriptor);
+    let mut value = alloc::vec![0u8; 8];
+    value[4..8].copy_from_slice(&entry.len().to_le_bytes());
+    value.extend_from_slice(&entry);
+    super::append_resident_attribute(
+        &mut record,
+        SECURE_SDS_ATTRIBUTE_TYPE,
+        &value,
+        security_id as u16,
+    );
+    record.extend_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+    super::write_mft_record(&ntfs.ntfs_data, SECURE_RECORD_NUMBER, &record)
+}
+
+/// Default `$SDS` descriptor used for newly created files and directories.
+pub fn default_sds_entry(security_id: SecurityId) -> alloc::vec::Vec<u8> {
+    let descriptor = NtfsSecurityDescriptor::new_default();
+    serialize_sds_descriptor(&descriptor)
+}
