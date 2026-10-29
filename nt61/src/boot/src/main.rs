@@ -109,6 +109,7 @@ mod fat32_boot;
 mod fat_lfn;
 mod font;
 mod graphics;
+mod input;
 mod loader;
 mod menu;
 mod renderer;
@@ -311,6 +312,36 @@ fn write_fb_mailbox(info: &FramebufferInfo) {
 enum GraphicsScreen {
     Main { tools_selected: bool },
     Advanced { selected: usize },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AdvancedAction {
+    Repair,
+    SafeMode,
+    SafeModeNetworking,
+    SafeModeCommandPrompt,
+    BootLogging,
+    LowResolution,
+    LastKnownGood,
+    DirectoryServices,
+    Debugging,
+    DisableAutoRestart,
+    DisableDriverSignature,
+}
+
+impl AdvancedAction {
+    fn boot_options(self) -> Option<&'static str> {
+        match self {
+            AdvancedAction::SafeMode => Some("/safeboot:minimal"),
+            AdvancedAction::SafeModeNetworking => Some("/safeboot:network"),
+            AdvancedAction::SafeModeCommandPrompt => Some("/safeboot:minimal /safeboot:shell"),
+            AdvancedAction::BootLogging => Some("/bootlog"),
+            AdvancedAction::LowResolution => Some("/safeboot:minimal /lowres"),
+            AdvancedAction::DirectoryServices => Some("/safeboot:dsrepair"),
+            AdvancedAction::Debugging => Some("/debug /debugport=COM1 /baudrate=115200"),
+            _ => None,
+        }
+    }
 }
 
 mod colors {
@@ -580,7 +611,7 @@ fn draw_gop_main_screen(
 fn draw_gop_advanced_screen(
     fb: &mut Framebuffer,
     font: &mut BitmapFont,
-    entries: &[(&str, &str)], // (label, description)
+    entries: &[(AdvancedAction, &str, &str)], // (action, label, description)
     selected: usize,
 ) {
     let width = fb.width();
@@ -648,7 +679,7 @@ fn draw_gop_advanced_screen(
     let item_height = line_height + 8;
 
     let mut y = menu_top;
-    for (i, (label, _desc)) in entries.iter().enumerate() {
+    for (i, (_, label, _desc)) in entries.iter().enumerate() {
         // Gap before certain items (like "Enable Boot Logging" and "Start Windows Normally")
         let has_gap_before = *label == "Enable Boot Logging"
             || *label == "Start Windows Normally"
@@ -728,7 +759,7 @@ fn draw_gop_advanced_screen(
     );
 
     // Description text with proper word wrapping
-    if let Some((_, desc)) = entries.get(selected) {
+    if let Some((_, _, desc)) = entries.get(selected) {
         // Approximate avg char width for word-wrap. With TTF we can
         // measure exact width per word, but that would require a
         // measurement-only pass. A simpler approach: just emit the
@@ -861,6 +892,11 @@ fn draw_gop_advanced_screen(
 /// pointer (for the chain-load) and the `Handle` (for any other code
 /// that needs the typed value).
 pub static mut BOOT_IMAGE_HANDLE_PTR: *mut core::ffi::c_void = core::ptr::null_mut();
+
+/// Boot options string (e.g. "/safeboot:minimal") set by the F8 advanced
+/// boot menu and written into the BCD mailbox by write_bcd_mailbox().
+/// UEFI boot is single-threaded so a plain static is safe here.
+static mut BOOT_OPTIONS_OVERRIDE: Option<&'static str> = None;
 
 /// Firmware-supplied UEFI system-table pointer. Same rationale as
 /// `BOOT_IMAGE_HANDLE_PTR`. The pointer is opaque to us — we just
@@ -1097,19 +1133,22 @@ fn efi_main_inner() -> Status {
         font.char_height()
     );
 
-    // Advanced boot options - fixed text without special characters
-    let adv_options: [(&str, &str); 11] = [
-        ("Repair Your Computer", "View a list of system recovery tools you can use to repair startup problems, run diagnostics, or restore your system."),
-        ("Safe Mode", "Start Windows with only the core drivers and services. Use when you cannot boot after installing a new device or driver."),
-        ("Safe Mode with Networking", "Start Windows in safe mode along with the network drivers and services needed to access the Internet or other computers on your network."),
-        ("Safe Mode with Command Prompt", "Start Windows in safe mode with a command prompt window instead of the usual Windows interface. For advanced users only."),
-        ("Enable Boot Logging", "Create a file (ntbtlog.txt) that lists all the drivers that are installed during startup and that might be useful for advanced troubleshooting."),
-        ("Enable low resolution video 640x480", "Start Windows using your current video driver and low resolution and refresh rate settings. You can use this mode to reset your display settings."),
-        ("Last Known Good Configuration advanced", "Start Windows with the last registry and driver configuration that worked successfully."),
-        ("Directory Services Restore Mode", "Start Windows domain controller running Active Directory so that the directory service can be restored. For advanced users and IT pros only."),
-        ("Debugging Mode", "Start Windows in an advanced troubleshooting mode intended for IT professionals and system administrators."),
-        ("Disable automatic restart on system failure", "Prevent Windows from automatically restarting if an error causes Windows to fail."),
-        ("Disable Driver Signature Enforcement", "Allows drivers containing improper signatures to be installed."),
+    // Windows 7 advanced boot options. Every item has an explicit action
+    // instead of relying on its menu position. Unsupported recovery paths
+    // return to the menu with a clear notice rather than booting a normal OS
+    // entry by mistake.
+    let adv_options: [(AdvancedAction, &str, &str); 11] = [
+        (AdvancedAction::Repair, "Repair Your Computer", "View a list of system recovery tools you can use to repair startup problems, run diagnostics, or restore your system."),
+        (AdvancedAction::SafeMode, "Safe Mode", "Start Windows with only the core drivers and services. Use when you cannot boot after installing a new device or driver."),
+        (AdvancedAction::SafeModeNetworking, "Safe Mode with Networking", "Start Windows in safe mode along with the network drivers and services needed to access the Internet or other computers on your network."),
+        (AdvancedAction::SafeModeCommandPrompt, "Safe Mode with Command Prompt", "Start Windows in safe mode with a command prompt window instead of the usual Windows interface. For advanced users only."),
+        (AdvancedAction::BootLogging, "Enable Boot Logging", "Create a file (ntbtlog.txt) that lists all the drivers that are installed during startup and that might be useful for advanced troubleshooting."),
+        (AdvancedAction::LowResolution, "Enable low resolution video 640x480", "Start Windows using your current video driver and low resolution and refresh rate settings. You can use this mode to reset your display settings."),
+        (AdvancedAction::LastKnownGood, "Last Known Good Configuration advanced", "Start Windows with the last registry and driver configuration that worked successfully."),
+        (AdvancedAction::DirectoryServices, "Directory Services Restore Mode", "Start Windows domain controller running Active Directory so that the directory service can be restored. For advanced users and IT pros only."),
+        (AdvancedAction::Debugging, "Debugging Mode", "Start Windows in an advanced troubleshooting mode intended for IT professionals and system administrators."),
+        (AdvancedAction::DisableAutoRestart, "Disable automatic restart on system failure", "Prevent Windows from automatically restarting if an error causes Windows to fail."),
+        (AdvancedAction::DisableDriverSignature, "Disable Driver Signature Enforcement", "Allows drivers containing improper signatures to be installed."),
     ];
 
     let mut screen = GraphicsScreen::Main {
@@ -1130,14 +1169,7 @@ fn efi_main_inner() -> Status {
     debug_println!("[DEBUG] Main screen drawn");
 
     // Initialize console input for keyboard reading
-    let con_in_handles =
-        ub::find_handles::<uefi::proto::console::text::Input>().unwrap_or_default();
-    let mut con_in = None;
-    if let Some(handle) = con_in_handles.first() {
-        if let Ok(ci) = ub::open_protocol_exclusive::<uefi::proto::console::text::Input>(*handle) {
-            con_in = Some(ci);
-        }
-    }
+    let mut con_in = crate::input::Keyboard::new();
     debug_println!(
         "[DEBUG] Console input initialized, con_in.is_some() = {}",
         con_in.is_some()
@@ -1149,8 +1181,7 @@ fn efi_main_inner() -> Status {
         // Read keyboard input from text console (non-blocking check)
         let mut read = None;
         if let Some(ref mut stdin) = con_in {
-            // Try to read key without blocking
-            read = stdin.read_key().ok().flatten();
+            read = stdin.wait_for_key(core::time::Duration::from_millis(100));
         }
 
         // Handle countdown tick
@@ -1249,15 +1280,7 @@ fn efi_main_inner() -> Status {
                                 // Clear screen using GOP
                                 fb.fill_rect_fast(0, 0, w, h, colors::BG);
                                 if *tools_selected {
-                                    // Draw loading text
-                                    font.draw_text_centered(
-                                        &mut fb,
-                                        "Loading Windows Memory Diagnostic...",
-                                        (w / 2) as i32,
-                                        (h / 2) as i32,
-                                        colors::FG,
-                                        None,
-                                    );
+                                    run_memory_diagnostic(&mut fb, &mut font, con_in.as_mut());
                                 } else {
                                     // Draw loading text
                                     font.draw_text_centered(
@@ -1268,76 +1291,110 @@ fn efi_main_inner() -> Status {
                                         colors::FG,
                                         None,
                                     );
-                                }
-                                match launch_selected(&menu) {
-                                    Ok(()) => {} // Does not return
-                                    Err(e) => {
-                                        // Boot failed - cancel the auto-boot countdown
-                                        // and show an error message before returning to
-                                        // the menu. This prevents the "system keeps
-                                        // rebooting" behaviour caused by the auto-boot
-                                        // timer re-firing on the same failing entry.
-                                        debug_println!("[BOOT] launch_selected failed: {}", e);
-                                        menu.cancel_auto();
-                                        let w = fb.width();
-                                        let h = fb.height();
-                                        fb.fill_rect_fast(0, 0, w, h, colors::BG);
-                                        font.draw_text_centered(
-                                            &mut fb,
-                                            "Windows failed to start",
-                                            (w / 2) as i32,
-                                            (h / 2 - 30) as i32,
-                                            colors::FG,
-                                            None,
-                                        );
-                                        let line2 = alloc::format!("Error: {}", e);
-                                        font.draw_text_centered(
-                                            &mut fb,
-                                            &line2,
-                                            (w / 2) as i32,
-                                            (h / 2) as i32,
-                                            colors::FG,
-                                            None,
-                                        );
-                                        font.draw_text_centered(
-                                            &mut fb,
-                                            "Press any key to return to the boot menu",
-                                            (w / 2) as i32,
-                                            (h / 2 + 40) as i32,
-                                            colors::FG,
-                                            None,
-                                        );
-                                        if let Some(ref mut stdin) = con_in {
-                                            loop {
-                                                match stdin.read_key() {
-                                                    Ok(Some(_)) => break,
-                                                    _ => {
-                                                        uefi::boot::stall(
-                                                            core::time::Duration::from_millis(50),
-                                                        );
+                                    match launch_selected(&menu) {
+                                        Ok(()) => {} // Does not return
+                                        Err(e) => {
+                                            // Boot failed - cancel the auto-boot countdown
+                                            // and show an error message before returning to
+                                            // the menu. This prevents the "system keeps
+                                            // rebooting" behaviour caused by the auto-boot
+                                            // timer re-firing on the same failing entry.
+                                            debug_println!("[BOOT] launch_selected failed: {}", e);
+                                            menu.cancel_auto();
+                                            let w = fb.width();
+                                            let h = fb.height();
+                                            fb.fill_rect_fast(0, 0, w, h, colors::BG);
+                                            font.draw_text_centered(
+                                                &mut fb,
+                                                "Windows failed to start",
+                                                (w / 2) as i32,
+                                                (h / 2 - 30) as i32,
+                                                colors::FG,
+                                                None,
+                                            );
+                                            let line2 = alloc::format!("Error: {}", e);
+                                            font.draw_text_centered(
+                                                &mut fb,
+                                                &line2,
+                                                (w / 2) as i32,
+                                                (h / 2) as i32,
+                                                colors::FG,
+                                                None,
+                                            );
+                                            font.draw_text_centered(
+                                                &mut fb,
+                                                "Press any key to return to the boot menu",
+                                                (w / 2) as i32,
+                                                (h / 2 + 40) as i32,
+                                                colors::FG,
+                                                None,
+                                            );
+                                            if let Some(ref mut stdin) = con_in {
+                                                loop {
+                                                    match stdin.read_key() {
+                                                        Some(_) => break,
+                                                        _ => {
+                                                            uefi::boot::stall(
+                                                                core::time::Duration::from_millis(
+                                                                    50,
+                                                                ),
+                                                            );
+                                                        }
                                                     }
                                                 }
+                                            } else {
+                                                uefi::boot::stall(core::time::Duration::from_secs(
+                                                    3,
+                                                ));
                                             }
-                                        } else {
-                                            uefi::boot::stall(core::time::Duration::from_secs(3));
                                         }
                                     }
                                 }
                             }
                         }
-                        GraphicsScreen::Advanced { .. } => {
-                            // Go back to main
-                            screen = GraphicsScreen::Main {
-                                tools_selected: false,
-                            };
-                            draw_gop_main_screen(
-                                &mut fb,
-                                &mut font,
-                                &entries,
-                                menu.selected_index(),
-                                menu.countdown(),
-                                false,
-                            );
+                        GraphicsScreen::Advanced { selected } => {
+                            let action = adv_options[*selected].0;
+                            match action {
+                                AdvancedAction::SafeMode
+                                | AdvancedAction::SafeModeNetworking
+                                | AdvancedAction::DirectoryServices => {
+                                    launch_advanced_action(
+                                        &bcd_store,
+                                        bcd::wellknown::ENTRY_SAFE_MODE,
+                                        action.boot_options(),
+                                    );
+                                }
+                                AdvancedAction::SafeModeCommandPrompt => {
+                                    launch_advanced_action(
+                                        &bcd_store,
+                                        bcd::wellknown::ENTRY_SAFE_MODE,
+                                        action.boot_options(),
+                                    );
+                                }
+                                AdvancedAction::BootLogging | AdvancedAction::Debugging => {
+                                    launch_advanced_action(
+                                        &bcd_store,
+                                        if action == AdvancedAction::Debugging {
+                                            bcd::wellknown::ENTRY_DEBUG_CMD
+                                        } else {
+                                            bcd::wellknown::ENTRY_WINDOWS_7
+                                        },
+                                        action.boot_options(),
+                                    );
+                                }
+                                AdvancedAction::Repair
+                                | AdvancedAction::LowResolution
+                                | AdvancedAction::LastKnownGood
+                                | AdvancedAction::DisableAutoRestart
+                                | AdvancedAction::DisableDriverSignature => {
+                                    show_advanced_notice(
+                                        &mut fb,
+                                        &mut font,
+                                        con_in.as_mut(),
+                                        "This option is not available in this build.",
+                                    );
+                                }
+                            }
                         }
                     }
                 }
@@ -1425,7 +1482,7 @@ fn efi_main_inner() -> Status {
                         if let Some(ref mut stdin) = con_in {
                             loop {
                                 match stdin.read_key() {
-                                    Ok(Some(_)) => {
+                                    Some(_) => {
                                         // Got a key - exit the drain loop and redraw menu
                                         break;
                                     }
@@ -1619,9 +1676,9 @@ fn probe_partition_type(handle: uefi::Handle) -> PartitionType {
         gpt_header[78],
         gpt_header[79],
     ]);
-    let Some(mut entries_buf) = try_alloc_zeroed(
-        partition_entry_size * partition_entry_count.min(128),
-    ) else {
+    let Some(mut entries_buf) =
+        try_alloc_zeroed(partition_entry_size * partition_entry_count.min(128))
+    else {
         return PartitionType::Unknown;
     };
     if block_ref
@@ -2300,7 +2357,191 @@ fn load_bcd_from_esp() -> core::result::Result<BcdStore, &'static str> {
     Err("failed to load BCD from any path")
 }
 
-/// Load a file from the ESP filesystem
+fn launch_advanced_action(
+    bcd_store: &BcdStore,
+    requested_guid: bcd::Guid,
+    boot_options: Option<&'static str>,
+) {
+    let mut menu = BootMenu::new(bcd_store);
+    for _ in 0..bcd_store.entry_count {
+        if menu.select().map(|entry| entry.guid) == Some(requested_guid) {
+            // Store the boot options so write_bcd_mailbox can pick them up
+            // when launch_selected writes the mailbox before loading the
+            // target image.
+            unsafe { BOOT_OPTIONS_OVERRIDE = boot_options };
+            let _ = launch_selected(&menu);
+            return;
+        }
+        menu.move_down();
+    }
+
+    debug_println!(
+        "[BOOT] Advanced action requested unknown BCD entry {:02x}{:02x}{:02x}{:02x}",
+        requested_guid.0[0],
+        requested_guid.0[1],
+        requested_guid.0[2],
+        requested_guid.0[3]
+    );
+}
+
+/// Wait for any key so a diagnostic/notice screen is visible. If no input
+/// device is available, leave the text on screen briefly instead.
+fn wait_for_any_key(con_in: Option<&mut crate::input::Keyboard>) {
+    if let Some(stdin) = con_in {
+        loop {
+            match stdin.read_key() {
+                Some(_) => break,
+                _ => uefi::boot::stall(core::time::Duration::from_millis(50)),
+            }
+        }
+    } else {
+        uefi::boot::stall(core::time::Duration::from_secs(3));
+    }
+}
+
+/// Show a centered Windows 7 style notice and return after a keypress.
+fn show_advanced_notice(
+    fb: &mut Framebuffer,
+    font: &mut BitmapFont,
+    con_in: Option<&mut crate::input::Keyboard>,
+    message: &str,
+) {
+    let width = fb.width();
+    let height = fb.height();
+    fb.fill_rect_fast(0, 0, width, height, colors::BG);
+    font.draw_text_centered(
+        fb,
+        "Windows Boot Manager",
+        (width / 2) as i32,
+        (height / 2 - 40) as i32,
+        colors::FG,
+        None,
+    );
+    font.draw_text_centered(
+        fb,
+        message,
+        (width / 2) as i32,
+        (height / 2) as i32,
+        colors::FG,
+        None,
+    );
+    font.draw_text_centered(
+        fb,
+        "Press any key to continue",
+        (width / 2) as i32,
+        (height / 2 + 40) as i32,
+        colors::FG,
+        None,
+    );
+    wait_for_any_key(con_in);
+}
+
+/// Test one page of conventional UEFI memory with alternating bit patterns,
+/// restoring the original value so the firmware boot environment is unchanged.
+/// Returns the number of bytes successfully tested or the failing address.
+fn test_conventional_memory_page(base: u64, page: u64) -> Result<u64, u64> {
+    let pointer = (base + page * 4096) as *mut u64;
+    let original = unsafe { pointer.read_volatile() };
+
+    unsafe {
+        pointer.write_volatile(0x5555_5555_5555_5555);
+        if pointer.read_volatile() != 0x5555_5555_5555_5555 {
+            return Err(base + page * 4096);
+        }
+        pointer.write_volatile(0xAAAA_AAAA_AAAA_AAAA);
+        if pointer.read_volatile() != 0xAAAA_AAAA_AAAA_AAAA {
+            return Err(base + page * 4096);
+        }
+        pointer.write_volatile(original);
+    }
+
+    Ok(4096)
+}
+
+/// Run Windows Memory Diagnostic directly from the boot manager. This uses the
+/// real UEFI memory map and only probes ranges firmware reports as
+/// conventional (free) memory; loader/runtime/firmware-owned memory is skipped.
+fn run_memory_diagnostic(
+    fb: &mut Framebuffer,
+    font: &mut BitmapFont,
+    con_in: Option<&mut crate::input::Keyboard>,
+) {
+    use uefi::boot::MemoryType;
+    use uefi::mem::memory_map::MemoryMap;
+
+    let width = fb.width();
+    let height = fb.height();
+    fb.fill_rect_fast(0, 0, width, height, colors::BG);
+    font.draw_text_centered(
+        fb,
+        "Windows Memory Diagnostic",
+        (width / 2) as i32,
+        (height / 2 - 40) as i32,
+        colors::FG,
+        None,
+    );
+    font.draw_text_centered(
+        fb,
+        "Testing conventional memory...",
+        (width / 2) as i32,
+        (height / 2) as i32,
+        colors::FG,
+        None,
+    );
+
+    let memory_map = match uefi::boot::memory_map(uefi::boot::MemoryType::LOADER_DATA) {
+        Ok(map) => map,
+        Err(_) => {
+            show_advanced_notice(fb, font, con_in, "Could not read the UEFI memory map.");
+            return;
+        }
+    };
+
+    let mut bytes_tested = 0u64;
+    for descriptor in memory_map.entries() {
+        if descriptor.ty != MemoryType::CONVENTIONAL || descriptor.page_count == 0 {
+            continue;
+        }
+
+        let status = alloc::format!(
+            "Testing 0x{:016x} ({} pages)",
+            descriptor.phys_start,
+            descriptor.page_count
+        );
+        fb.fill_rect_fast(0, 0, width, height, colors::BG);
+        font.draw_text_centered(
+            fb,
+            "Windows Memory Diagnostic",
+            (width / 2) as i32,
+            (height / 2 - 40) as i32,
+            colors::FG,
+            None,
+        );
+        font.draw_text_centered(
+            fb,
+            &status,
+            (width / 2) as i32,
+            (height / 2) as i32,
+            colors::FG,
+            None,
+        );
+
+        for page in 0..descriptor.page_count {
+            match test_conventional_memory_page(descriptor.phys_start, page) {
+                Ok(tested) => bytes_tested += tested,
+                Err(address) => {
+                    let failure = alloc::format!("Memory test failed at 0x{:016x}", address);
+                    show_advanced_notice(fb, font, con_in, &failure);
+                    return;
+                }
+            }
+        }
+    }
+
+    let summary = alloc::format!("Tested {} bytes", bytes_tested);
+    show_advanced_notice(fb, font, con_in, &summary);
+}
+
 /// Load and start the UEFI image referenced by the currently-selected
 /// BCD entry. On success this function does not return — control is
 /// handed to the new image via direct jump.
@@ -2831,14 +3072,7 @@ fn text_mode_auto_boot(bcd_store: &BcdStore, entries: &[String]) -> Status {
     let mut selected = menu.selected_index();
 
     // Try to open the Simple Text Input protocol for arrow-key support
-    let con_in_handles =
-        ub::find_handles::<uefi::proto::console::text::Input>().unwrap_or_default();
-    let mut con_in = None;
-    if let Some(handle) = con_in_handles.first() {
-        if let Ok(ci) = ub::open_protocol_exclusive::<uefi::proto::console::text::Input>(*handle) {
-            con_in = Some(ci);
-        }
-    }
+    let mut con_in = crate::input::Keyboard::new();
 
     let mut seconds_remaining: u32 = 5;
     loop {
@@ -2854,7 +3088,7 @@ fn text_mode_auto_boot(bcd_store: &BcdStore, entries: &[String]) -> Status {
         if let Some(ref mut stdin) = con_in {
             // Poll for ~1 second (10 * 100ms)
             for _ in 0..10 {
-                if let Ok(Some(key)) = stdin.read_key() {
+                if let Some(key) = stdin.read_key() {
                     match key {
                         Key::Special(ScanCode::UP) => {
                             if selected > 0 {
@@ -2987,9 +3221,21 @@ fn write_bcd_mailbox(guid: &[u8; 16]) {
         core::ptr::write_volatile(mailbox.add(8) as *mut u32, 256u32);
         // Write entry GUID (16 bytes starting at offset 0x0C)
         core::ptr::copy_nonoverlapping(guid.as_ptr(), mailbox.add(0x0C), 16);
-        // Clear boot options area (224 bytes from offset 0x1C)
-        for i in 0..224 {
-            core::ptr::write_volatile(mailbox.add(0x1C + i), 0);
+        // Write boot options (e.g. "/safeboot:minimal") or clear the area.
+        // The area is 224 bytes from offset 0x1C, NUL-terminated.
+        let opts = BOOT_OPTIONS_OVERRIDE;
+        if let Some(opts_str) = opts {
+            let bytes = opts_str.as_bytes();
+            let len = core::cmp::min(bytes.len(), 223);
+            core::ptr::copy_nonoverlapping(bytes.as_ptr(), mailbox.add(0x1C), len);
+            core::ptr::write_volatile(mailbox.add(0x1C + len), 0);
+            for i in (len + 1)..224 {
+                core::ptr::write_volatile(mailbox.add(0x1C + i), 0);
+            }
+        } else {
+            for i in 0..224 {
+                core::ptr::write_volatile(mailbox.add(0x1C + i), 0);
+            }
         }
     }
 
@@ -3122,7 +3368,10 @@ fn read_mft_record(ntfs: &NtfsBoot, record_num: u64) -> Option<Vec<u8>> {
     let disk_lba = mft_disk_lba + record_rel_lba;
 
     let Some(mut buf) = try_alloc_zeroed((sectors_per_record as usize) * 512) else {
-        debug_println!("[NTFS] read_mft_record: allocation failed for LBA {}", disk_lba);
+        debug_println!(
+            "[NTFS] read_mft_record: allocation failed for LBA {}",
+            disk_lba
+        );
         return None;
     };
     if block
