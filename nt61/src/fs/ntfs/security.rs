@@ -739,8 +739,7 @@ pub fn read_security_descriptor(
     // Read the $Secure record and locate its (non-resident) $DATA
     // attribute, which is the $SDS stream.
     let record = super::read_mft_record(ntfs, super::system_records::SECURE)?;
-    let attr_offset =
-        super::find_attribute_in_record(&record, super::AttributeHeader::TYPE_DATA)?;
+    let attr_offset = super::find_attribute_in_record(&record, super::AttributeHeader::TYPE_DATA)?;
     if attr_offset + 0x40 > record.len() {
         return None;
     }
@@ -748,10 +747,8 @@ pub fn read_security_descriptor(
         // $SDS is always non-resident on a real volume.
         return None;
     }
-    let data_runs_offset = u16::from_le_bytes([
-        record[attr_offset + 0x20],
-        record[attr_offset + 0x21],
-    ]) as usize;
+    let data_runs_offset =
+        u16::from_le_bytes([record[attr_offset + 0x20], record[attr_offset + 0x21]]) as usize;
     if data_runs_offset == 0 || attr_offset + data_runs_offset > record.len() {
         return None;
     }
@@ -793,8 +790,8 @@ pub fn read_security_descriptor(
             // Match the file read path: cluster LBAs are relative to
             // the partition start, and the sector layer takes
             // absolute LBAs, so the hidden-sector base is added.
-            let first_sector = ntfs.hidden_sectors
-                + super::cluster_to_sector(cluster, ntfs.cluster_size);
+            let first_sector =
+                ntfs.hidden_sectors + super::cluster_to_sector(cluster, ntfs.cluster_size);
             let sectors_per_cluster = (cluster_size + 511) / 512;
             for sector_index in 0..sectors_per_cluster {
                 if filled >= read_limit {
@@ -809,8 +806,7 @@ pub fn read_security_descriptor(
                     return None;
                 }
                 let copy_len = core::cmp::min(512, read_limit - filled);
-                sds[filled..filled + copy_len]
-                    .copy_from_slice(&sector_buf[..copy_len]);
+                sds[filled..filled + copy_len].copy_from_slice(&sector_buf[..copy_len]);
                 filled += copy_len;
             }
         }
@@ -828,18 +824,8 @@ pub fn read_security_descriptor(
     // aligned.
     let mut pos = 0usize;
     while pos + 0x14 <= filled {
-        let hash = u32::from_le_bytes([
-            sds[pos],
-            sds[pos + 1],
-            sds[pos + 2],
-            sds[pos + 3],
-        ]);
-        let entry_id = u32::from_le_bytes([
-            sds[pos + 4],
-            sds[pos + 5],
-            sds[pos + 6],
-            sds[pos + 7],
-        ]);
+        let hash = u32::from_le_bytes([sds[pos], sds[pos + 1], sds[pos + 2], sds[pos + 3]]);
+        let entry_id = u32::from_le_bytes([sds[pos + 4], sds[pos + 5], sds[pos + 6], sds[pos + 7]]);
         let length = u32::from_le_bytes([
             sds[pos + 0x10],
             sds[pos + 0x11],
@@ -866,10 +852,7 @@ pub fn read_security_descriptor(
 
 /// Parse the self-relative security descriptor stored inside a `$SDS`
 /// entry into an `NtfsSecurityDescriptor`.
-fn parse_sds_descriptor(
-    security_id: SecurityId,
-    sd: &[u8],
-) -> Option<NtfsSecurityDescriptor> {
+fn parse_sds_descriptor(security_id: SecurityId, sd: &[u8]) -> Option<NtfsSecurityDescriptor> {
     if sd.len() < 20 || sd[0] != 1 {
         // revision 1 required; header must hold the four offsets.
         return None;
@@ -923,8 +906,7 @@ fn parse_sds_descriptor(
         if offset + 8 > sd.len() {
             return false;
         }
-        let acl_size =
-            u16::from_le_bytes([sd[offset + 2], sd[offset + 3]]) as usize;
+        let acl_size = u16::from_le_bytes([sd[offset + 2], sd[offset + 3]]) as usize;
         if acl_size < 8 || offset + acl_size > sd.len() || acl_size > out.len() {
             return false;
         }

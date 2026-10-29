@@ -1554,10 +1554,8 @@ pub fn read_nonresident_stream(
     if record[attr_offset + 8] == 0 {
         return None;
     }
-    let data_runs_offset = u16::from_le_bytes([
-        record[attr_offset + 0x20],
-        record[attr_offset + 0x21],
-    ]) as usize;
+    let data_runs_offset =
+        u16::from_le_bytes([record[attr_offset + 0x20], record[attr_offset + 0x21]]) as usize;
     if data_runs_offset == 0 || attr_offset + data_runs_offset > record.len() {
         return None;
     }
@@ -1591,11 +1589,7 @@ pub fn read_nonresident_stream(
                     break 'outer;
                 }
                 let mut sector_buf = [0u8; 512];
-                if !read_mounted_sector(
-                    ntfs,
-                    first_sector + sector_index as u64,
-                    &mut sector_buf,
-                ) {
+                if !read_mounted_sector(ntfs, first_sector + sector_index as u64, &mut sector_buf) {
                     return None;
                 }
                 let copy_len = core::cmp::min(512, read_limit - filled);
@@ -2286,10 +2280,7 @@ pub fn find_file_in_directory(
                     0,
                     &mut visited,
                 ) {
-                    crate::boot_println!(
-                        "[NTFS] find_file: matched in root tree, rec={}",
-                        result,
-                    );
+                    crate::boot_println!("[NTFS] find_file: matched in root tree, rec={}", result,);
                     return Some(result);
                 }
             }
@@ -2304,12 +2295,9 @@ pub fn find_file_in_directory(
             if let Some(index_alloc) =
                 parse_attribute(&record, AttributeHeader::TYPE_INDEX_ALLOCATION)
             {
-                if let Some(result) = find_in_index_allocation(
-                    ntfs,
-                    index_alloc,
-                    needle,
-                    bitmap.as_deref(),
-                ) {
+                if let Some(result) =
+                    find_in_index_allocation(ntfs, index_alloc, needle, bitmap.as_deref())
+                {
                     crate::boot_println!(
                         "[NTFS] find_file: found via allocation scan, rec={}",
                         result,
@@ -2318,9 +2306,7 @@ pub fn find_file_in_directory(
                 }
             }
         } else {
-            crate::boot_println!(
-                "[NTFS] find_file: small index, entry not found in INDEX_ROOT",
-            );
+            crate::boot_println!("[NTFS] find_file: small index, entry not found in INDEX_ROOT",);
         }
     } else {
         crate::boot_println!(
@@ -2376,7 +2362,12 @@ fn read_index_bytes(
         let mut cluster_buf = alloc::vec![0u8; cluster_size];
         for i in 0..sectors_per_cluster as usize {
             let mut sector_buf = [0u8; 512];
-            if read_sector(core::ptr::null_mut(), base_sector + i as u64, &mut sector_buf).is_err()
+            if read_sector(
+                core::ptr::null_mut(),
+                base_sector + i as u64,
+                &mut sector_buf,
+            )
+            .is_err()
             {
                 return None;
             }
@@ -2443,10 +2434,8 @@ fn read_index_bitmap(ntfs: &NtfsFileSystem, record: &[u8]) -> Option<alloc::vec:
         return None;
     }
     if record[attr_offset + 8] == 0 {
-        let value_offset = u16::from_le_bytes([
-            record[attr_offset + 0x14],
-            record[attr_offset + 0x15],
-        ]) as usize;
+        let value_offset =
+            u16::from_le_bytes([record[attr_offset + 0x14], record[attr_offset + 0x15]]) as usize;
         let value_length = u32::from_le_bytes([
             record[attr_offset + 0x10],
             record[attr_offset + 0x11],
@@ -2461,16 +2450,16 @@ fn read_index_bitmap(ntfs: &NtfsFileSystem, record: &[u8]) -> Option<alloc::vec:
         return Some(record[start..end].to_vec());
     }
     // Non-resident $BITMAP: run list at +0x20, allocation size at +0x28.
-    let mapping_pairs_offset = u16::from_le_bytes([
-        record[attr_offset + 0x20],
-        record[attr_offset + 0x21],
-    ]) as usize;
+    let mapping_pairs_offset =
+        u16::from_le_bytes([record[attr_offset + 0x20], record[attr_offset + 0x21]]) as usize;
     if mapping_pairs_offset < 0x30 || attr_offset + mapping_pairs_offset > record.len() {
         return None;
     }
-    let allocated_size = u64::from_le_bytes(record[attr_offset + 0x28..attr_offset + 0x30]
-        .try_into()
-        .ok()?);
+    let allocated_size = u64::from_le_bytes(
+        record[attr_offset + 0x28..attr_offset + 0x30]
+            .try_into()
+            .ok()?,
+    );
     if allocated_size == 0 || allocated_size > 1 << 20 {
         return None;
     }
@@ -2644,12 +2633,7 @@ fn find_in_index_allocation(
                 continue;
             }
         }
-        let record = match read_index_bytes(
-            ntfs,
-            &runs,
-            vcn * record_size as u64,
-            record_size,
-        ) {
+        let record = match read_index_bytes(ntfs, &runs, vcn * record_size as u64, record_size) {
             Some(r) => r,
             None => continue,
         };
@@ -2664,21 +2648,14 @@ fn find_in_index_allocation(
             continue;
         };
         let mut visited: alloc::vec::Vec<u64> = alloc::vec::Vec::new();
-        if let Some(result) = search_index_entries(
-            ntfs,
-            entries,
-            needle,
-            None,
-            record_size,
-            0,
-            &mut visited,
-        ) {
+        if let Some(result) =
+            search_index_entries(ntfs, entries, needle, None, record_size, 0, &mut visited)
+        {
             return Some(result);
         }
     }
     None
 }
-
 
 ///
 /// # Arguments
@@ -3186,10 +3163,8 @@ fn write_file_resident(
         record[attr_offset + 0x12],
         record[attr_offset + 0x13],
     ]) as usize;
-    let value_offset = u16::from_le_bytes([
-        record[attr_offset + 0x14],
-        record[attr_offset + 0x15],
-    ]) as usize;
+    let value_offset =
+        u16::from_le_bytes([record[attr_offset + 0x14], record[attr_offset + 0x15]]) as usize;
     let end = handle.current_position as usize + buffer.len();
     if end > value_len || attr_offset + value_offset + end > record.len() {
         return None;
@@ -3594,14 +3569,13 @@ fn build_index_entry(
 fn build_index_root(entries: &[DirectoryEntry]) -> Vec<u8> {
     let mut entry_bytes = Vec::new();
     for entry in entries {
-        let entry_bytes_current =
-            build_index_entry(
-                entry.record_number,
-                entry.parent_record,
-                &entry.name,
-                entry.is_directory,
-                false,
-            );
+        let entry_bytes_current = build_index_entry(
+            entry.record_number,
+            entry.parent_record,
+            &entry.name,
+            entry.is_directory,
+            false,
+        );
         entry_bytes.extend_from_slice(&entry_bytes_current);
     }
     entry_bytes.extend_from_slice(&build_index_entry(0, 0, &[], false, true));
@@ -4021,20 +3995,16 @@ pub fn extend_file(
             record[data_offset + 0x12],
             record[data_offset + 0x13],
         ]) as usize;
-        let value_offset = u16::from_le_bytes([
-            record[data_offset + 0x14],
-            record[data_offset + 0x15],
-        ]) as usize;
+        let value_offset =
+            u16::from_le_bytes([record[data_offset + 0x14], record[data_offset + 0x15]]) as usize;
         if value_offset + value_len > record.len() - data_offset {
             return Err(());
         }
         let start = data_offset + value_offset;
         resident_payload = Some(record[start..start + value_len].to_vec());
     } else {
-        let run_offset = u16::from_le_bytes([
-            record[data_offset + 0x20],
-            record[data_offset + 0x21],
-        ]) as usize;
+        let run_offset =
+            u16::from_le_bytes([record[data_offset + 0x20], record[data_offset + 0x21]]) as usize;
         if run_offset == 0 || data_offset + run_offset > record.len() {
             return Err(());
         }
@@ -4085,16 +4055,12 @@ pub fn extend_file(
         let stream_offset = (vcn * cluster_size as u64) as usize;
         if stream_offset < payload.len() {
             let copy = core::cmp::min(cluster_size as usize, payload.len() - stream_offset);
-            cluster_buf[..copy]
-                .copy_from_slice(&payload[stream_offset..stream_offset + copy]);
+            cluster_buf[..copy].copy_from_slice(&payload[stream_offset..stream_offset + copy]);
         }
-        let first_sector =
-            ntfs.ntfs_data.hidden_sectors + cluster_to_sector(lcn, cluster_size);
+        let first_sector = ntfs.ntfs_data.hidden_sectors + cluster_to_sector(lcn, cluster_size);
         for sector_index in 0..(cluster_size as usize / 512) {
             let mut sector_buf = [0u8; 512];
-            sector_buf.copy_from_slice(
-                &cluster_buf[sector_index * 512..(sector_index + 1) * 512],
-            );
+            sector_buf.copy_from_slice(&cluster_buf[sector_index * 512..(sector_index + 1) * 512]);
             let sector = first_sector + sector_index as u64;
             if !write_mounted_sector(&ntfs.ntfs_data, sector, &sector_buf) {
                 return Err(());
@@ -4156,10 +4122,7 @@ fn build_nonresident_data_attribute(
 /// contiguous. Fails when a second $DATA attribute (fragmented streams
 /// that need an $ATTRIBUTE_LIST) is present, or when the rebuilt record
 /// no longer fits in the MFT record.
-fn rebuild_record_replacing_data(
-    record: &[u8],
-    replacement: &[u8],
-) -> Option<alloc::vec::Vec<u8>> {
+fn rebuild_record_replacing_data(record: &[u8], replacement: &[u8]) -> Option<alloc::vec::Vec<u8>> {
     if record.len() < 0x1C {
         return None;
     }
@@ -4290,8 +4253,12 @@ fn count_free_clusters(ntfs: &NtfsFileSystem, total_clusters: u64) -> u64 {
                         &mut sector_buf,
                     )
                 } else {
-                    read_sector(core::ptr::null_mut(), first_sector + sector_index, &mut sector_buf)
-                        .is_ok()
+                    read_sector(
+                        core::ptr::null_mut(),
+                        first_sector + sector_index,
+                        &mut sector_buf,
+                    )
+                    .is_ok()
                 };
                 if read_ok {
                     for &byte in sector_buf.iter() {
@@ -5111,7 +5078,10 @@ pub fn create_snapshot(_ntfs: &mut NtfsFileSystem) -> bool {
 ///
 /// Snapshots are never created (see `create_snapshot`), so there is no
 /// state to report; `None` is the honest answer for every ID.
-pub fn query_snapshot_state(_ntfs: &mut NtfsFileSystem, _snapshot_id: u64) -> Option<SnapshotState> {
+pub fn query_snapshot_state(
+    _ntfs: &mut NtfsFileSystem,
+    _snapshot_id: u64,
+) -> Option<SnapshotState> {
     None
 }
 
@@ -5173,7 +5143,6 @@ pub mod quota;
 pub mod reparse;
 pub mod write_test;
 
-
 #[cfg(test)]
 mod index_search_tests {
     use super::*;
@@ -5234,15 +5203,7 @@ mod index_search_tests {
         // A NUL-terminated needle must not match anything.
         let mut needle = utf16_name("csrss");
         needle.push(0);
-        let found = search_index_entries(
-            &ntfs,
-            &entries,
-            &needle,
-            None,
-            4096,
-            0,
-            &mut visited,
-        );
+        let found = search_index_entries(&ntfs, &entries, &needle, None, 4096, 0, &mut visited);
         assert_eq!(found, None);
     }
 
@@ -5311,12 +5272,8 @@ mod index_search_tests {
         let mut record = alloc::vec![0u8; 96];
         record[0x14..0x16].copy_from_slice(&96u16.to_le_bytes());
         let value = [0b0000_0111u8];
-        let offset = append_resident_attribute(
-            &mut record,
-            AttributeHeader::TYPE_BITMAP,
-            &value,
-            0,
-        );
+        let offset =
+            append_resident_attribute(&mut record, AttributeHeader::TYPE_BITMAP, &value, 0);
         assert_eq!(offset, 96);
         while record.len() % 8 != 0 {
             record.push(0);

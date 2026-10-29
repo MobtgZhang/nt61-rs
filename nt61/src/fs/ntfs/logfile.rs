@@ -291,7 +291,6 @@ impl LogFile {
     }
 
     pub fn recover(&mut self) -> Result<(), &'static str> {
-        let mut active_transactions = Vec::new();
         let mut committed_transactions = Vec::new();
 
         for record in &self.log_buffer {
@@ -299,31 +298,21 @@ impl LogFile {
                 LogRecordType::CommitTransaction => {
                     committed_transactions.push(record.transaction_id);
                 }
-                _ => {
-                    if !committed_transactions.contains(&record.transaction_id) {
-                        if !active_transactions.contains(&record.transaction_id) {
-                            active_transactions.push(record.transaction_id);
-                        }
-                    }
-                }
+                _ => {}
             }
         }
 
-        for record in &self.log_buffer {
-            if committed_transactions.contains(&record.transaction_id) {}
+        for transaction in self.transactions.iter_mut() {
+            if committed_transactions.contains(&transaction.id) {
+                transaction.state = TransactionState::Committed;
+            } else if transaction.state == TransactionState::Active {
+                transaction.state = TransactionState::Aborted;
+                transaction.records.clear();
+            }
         }
 
-        for transaction_id in active_transactions {
-            let mut transaction_records: Vec<_> = self
-                .log_buffer
-                .iter()
-                .filter(|r| r.transaction_id == transaction_id)
-                .collect();
-
-            transaction_records.sort_by(|a, b| b.lsn.cmp(&a.lsn));
-
-            for _record in transaction_records {}
-        }
+        self.log_buffer
+            .retain(|record| committed_transactions.contains(&record.transaction_id));
 
         Ok(())
     }

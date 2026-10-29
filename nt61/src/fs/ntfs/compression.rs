@@ -266,11 +266,14 @@ mod tests {
 
         let mut compressed = vec![0u8; data.len() * 2];
         let compressed_size = compress_lznt1(&data, &mut compressed).expect("compress");
-        assert!(compressed_size < data.len(), "repetitive data must compress");
+        assert!(
+            compressed_size < data.len(),
+            "repetitive data must compress"
+        );
 
         let mut out = vec![0u8; data.len()];
-        let out_size = decompress_lznt1(&compressed[..compressed_size], &mut out)
-            .expect("decompress");
+        let out_size =
+            decompress_lznt1(&compressed[..compressed_size], &mut out).expect("decompress");
         assert_eq!(out_size, data.len());
         assert_eq!(out[..], data[..]);
     }
@@ -290,8 +293,8 @@ mod tests {
         let compressed_size = compress_lznt1(&data, &mut compressed).expect("compress");
 
         let mut out = vec![0u8; data.len()];
-        let out_size = decompress_lznt1(&compressed[..compressed_size], &mut out)
-            .expect("decompress");
+        let out_size =
+            decompress_lznt1(&compressed[..compressed_size], &mut out).expect("decompress");
         assert_eq!(out_size, data.len());
         assert_eq!(out[..], data[..]);
     }

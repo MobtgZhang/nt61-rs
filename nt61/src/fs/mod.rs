@@ -693,9 +693,13 @@ fn read_file_from_fat32(path: &str) -> Option<Vec<u8>> {
             return None;
         }
         let mut buffer = vec![0u8; file_size];
-        let read_size =
-            fat32::read_file(filesystem, entry.first_cluster(), entry.file_size(), &mut buffer)
-                .ok()?;
+        let read_size = fat32::read_file(
+            filesystem,
+            entry.first_cluster(),
+            entry.file_size(),
+            &mut buffer,
+        )
+        .ok()?;
         buffer.truncate(read_size);
         Some(buffer)
     });
@@ -1134,10 +1138,8 @@ pub fn mount_esp_from_bootinfo(boot_info: &crate::boot_types::BootInfo) {
     // `copy_nonoverlapping` from the buffer's physical base faults
     // with a #PF and QEMU resets. Add a 2 MiB identity map per slice
     // so the FS layer can dereference the captures directly.
-    if !crate::mm::vas::ensure_low_identity_map(
-        boot_info.esp_image_base,
-        boot_info.esp_image_size,
-    ) {
+    if !crate::mm::vas::ensure_low_identity_map(boot_info.esp_image_base, boot_info.esp_image_size)
+    {
         crate::boot_println!(
             "[FS] ERROR: failed to identity-map ESP capture buffer at pa=0x{:x}",
             boot_info.esp_image_base
@@ -1242,10 +1244,8 @@ pub fn mount_sys_from_bootinfo(boot_info: &crate::boot_types::BootInfo) {
     // buffer that winload allocated, so reading its first sector
     // from `sys_ramdisk_read` would otherwise raise #PF and reboot
     // QEMU before any diagnostic could print.
-    if !crate::mm::vas::ensure_low_identity_map(
-        boot_info.sys_image_base,
-        boot_info.sys_image_size,
-    ) {
+    if !crate::mm::vas::ensure_low_identity_map(boot_info.sys_image_base, boot_info.sys_image_size)
+    {
         crate::boot_println!(
             "[FS] ERROR: failed to identity-map SYS capture buffer at pa=0x{:x}",
             boot_info.sys_image_base

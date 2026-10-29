@@ -414,37 +414,47 @@ pub fn create_node(node_type: VfsNodeType, name: &[u16]) -> Option<&'static mut 
         core::mem::size_of::<VfsNode>(),
     ) as *mut VfsNode;
 
-    if !node.is_null() {
-        // Avoid `core::ptr::write(node, VfsNode::new())` for
-        // the same reason as `init()`: the pool backs onto
-        // heap memory which can be UC-typed, and the
-        // aggregate-write gets emitted as a non-temporal SSE
-        // store that silently fails on UC memory. Field-by-field
-        // assignment is safe.
-        unsafe {
-            (*node).node_type = node_type;
-            (*node).flags = 0;
-            (*node).reference_count = 1;
-            (*node).file_object = core::ptr::null_mut();
-            (*node).vcb = core::ptr::null_mut();
-            (*node).parent = core::ptr::null_mut();
-            (*node).name.buffer = name.as_ptr() as *mut u16;
-            (*node).name.length = (name.len() * 2) as u16;
-            (*node).name.maximum_length = (name.len() * 2) as u16;
-            (*node).byte_offset = 0;
-            (*node).allocation_size = 0;
-        }
-
-        if root.node_count < root.nodes.len() {
-            let idx = root.node_count;
-            root.nodes[idx] = node;
-            root.node_count += 1;
-        }
-
-        return unsafe { node.as_mut() };
+    if node.is_null() {
+        return None;
     }
 
-    None
+    let name_size = core::mem::size_of::<u16>().saturating_mul(name.len());
+    let name_buffer =
+        crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, name_size) as *mut u16;
+    if name_buffer.is_null() {
+        crate::mm::pool::free(node as *mut u8);
+        return None;
+    }
+    if !name.is_empty() {
+        unsafe {
+            core::ptr::copy_nonoverlapping(name.as_ptr(), name_buffer, name.len());
+        }
+    }
+    if root.node_count >= root.nodes.len() {
+        crate::mm::pool::free(name_buffer as *mut u8);
+        crate::mm::pool::free(node as *mut u8);
+        return None;
+    }
+
+    let index = root.node_count;
+    root.nodes[index] = node;
+    root.node_count += 1;
+
+    unsafe {
+        (*node).node_type = node_type;
+        (*node).flags = 0;
+        (*node).reference_count = 1;
+        (*node).file_object = core::ptr::null_mut();
+        (*node).vcb = core::ptr::null_mut();
+        (*node).parent = core::ptr::null_mut();
+        (*node).name.buffer = name_buffer;
+        (*node).name.length = (name.len() * 2) as u16;
+        (*node).name.maximum_length = (name.len() * 2) as u16;
+        (*node).byte_offset = 0;
+        (*node).allocation_size = 0;
+    }
+
+    unsafe { node.as_mut() }
 }
 
 /// Add volume to VFS
@@ -740,6 +750,10 @@ pub fn delete_node(node: *mut VfsNode) {
         (*node).reference_count -= 1;
         if (*node).reference_count == 0 {
             // Free resources
+            if !(*node).name.buffer.is_null() {
+                let _ = crate::mm::pool::free((*node).name.buffer as *mut u8);
+                (*node).name.buffer = core::ptr::null_mut();
+            }
             let _ = crate::mm::pool::free(node as *mut u8);
         }
     }
