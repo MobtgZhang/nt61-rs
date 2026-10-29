@@ -290,7 +290,10 @@ impl LogFile {
         }
     }
 
-    pub fn recover(&mut self) -> Result<(), &'static str> {
+    pub fn recover_with_replay(
+        &mut self,
+        mut replay: impl FnMut(&LogRecord, bool) -> Result<(), &'static str>,
+    ) -> Result<(), &'static str> {
         let mut committed_transactions = Vec::new();
 
         for record in &self.log_buffer {
@@ -298,7 +301,7 @@ impl LogFile {
                 LogRecordType::CommitTransaction => {
                     committed_transactions.push(record.transaction_id);
                 }
-                _ => {}
+                _ => continue,
             }
         }
 
@@ -307,14 +310,56 @@ impl LogFile {
                 transaction.state = TransactionState::Committed;
             } else if transaction.state == TransactionState::Active {
                 transaction.state = TransactionState::Aborted;
+            }
+        }
+
+        let committed_records: alloc::vec::Vec<LogRecord> = self
+            .log_buffer
+            .drain(..)
+            .filter(|record| committed_transactions.contains(&record.transaction_id))
+            .collect();
+
+        let mut replay_result = Ok(());
+        committed_records
+            .iter()
+            .filter(|record| record.record_type != LogRecordType::CommitTransaction)
+            .for_each(|record| {
+                if replay_result.is_ok() {
+                    replay_result = replay(record, true);
+                }
+            });
+        if replay_result.is_err() {
+            return replay_result;
+        }
+
+        // Incomplete transaction payloads were preserved in their
+        // transaction records, not in the drained log buffer. Replay their
+        // undo data before forgetting them.
+        for transaction in self.transactions.iter_mut() {
+            if transaction.state != TransactionState::Aborted {
+                continue;
+            }
+            for record in &transaction.records {
+                if matches!(
+                    record.record_type,
+                    LogRecordType::UpdateResidentValue | LogRecordType::UpdateNonResidentValue
+                ) {
+                    replay(record, false)?;
+                }
+            }
+        }
+
+        for transaction in self.transactions.iter_mut() {
+            if transaction.state == TransactionState::Aborted {
                 transaction.records.clear();
             }
         }
 
-        self.log_buffer
-            .retain(|record| committed_transactions.contains(&record.transaction_id));
+        replay_result
+    }
 
-        Ok(())
+    pub fn recover(&mut self) -> Result<(), &'static str> {
+        self.recover_with_replay(|_, _| Ok(()))
     }
 
     pub fn current_lsn(&self) -> Lsn {
@@ -432,5 +477,52 @@ mod tests {
             .unwrap();
 
         logfile.recover().unwrap();
+    }
+
+    #[test]
+    fn committed_recovery_replays_redo_data() {
+        let mut logfile = LogFile::new(1000);
+        let txn = logfile.begin_transaction();
+        logfile
+            .write_record(
+                txn,
+                LogRecordType::UpdateNonResidentValue,
+                vec![7, 7, 7],
+            )
+            .unwrap();
+        logfile.commit_transaction(txn).unwrap();
+
+        let mut replayed = Vec::new();
+        logfile
+            .recover_with_replay(|record, redo| {
+                replayed.push((record.record_type, record.data.clone(), redo));
+                Ok(())
+            })
+            .unwrap();
+
+        assert_eq!(replayed.len(), 1);
+        assert_eq!(replayed[0].1, alloc::vec![7, 7, 7]);
+        assert!(replayed[0].2);
+    }
+
+    #[test]
+    fn active_recovery_replays_undo_data() {
+        let mut logfile = LogFile::new(1000);
+        let txn = logfile.begin_transaction();
+        logfile
+            .write_record(txn, LogRecordType::UpdateResidentValue, vec![9, 8])
+            .unwrap();
+
+        let mut replayed = Vec::new();
+        logfile
+            .recover_with_replay(|record, redo| {
+                replayed.push((record.record_type, record.data.clone(), redo));
+                Ok(())
+            })
+            .unwrap();
+
+        assert_eq!(replayed.len(), 1);
+        assert_eq!(replayed[0].1, alloc::vec![9, 8]);
+        assert!(!replayed[0].2);
     }
 }
