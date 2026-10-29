@@ -30,10 +30,10 @@ use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use super::cache::{insert as cache_insert, lookup as cache_lookup};
 use super::codegen::{encode_block, CodeBlock};
-use super::decoder::{decode_block, DecMode, X86Inst, MAX_DECODED_INSTS};
+use super::decoder::{decode_block, DecMode, MAX_BLOCK_BYTES, MAX_DECODED_INSTS};
 use super::mem::{decoder_mode, set_decoder_mode};
 use super::syscall_glue::{btl_syscall_dispatch, BtlSyscallResult};
-use super::translator::{translate_block, IrInst};
+use super::translator::IrInst;
 
 /// Maximum cached guest length translated per call. The first
 /// pass over a chunk of code may translate up to this many bytes
@@ -80,18 +80,17 @@ pub fn translate_and_dispatch(guest_va: u64) -> u64 {
     if let Some(host) = try_cached(guest_va) {
         return host;
     }
-    let bytes = read_guest_bytes(guest_va);
-    if bytes.is_empty() {
+    let mut bytes = [0u8; MAX_BLOCK_BYTES];
+    let bytes_len = read_guest_bytes(guest_va, &mut bytes);
+    if bytes_len == 0 {
         return 0;
     }
     let mode = decoder_mode();
-    let mut insts = [X86Inst::empty(); MAX_DECODED_INSTS];
     let mut ir: [IrInst; MAX_DECODED_INSTS] = [IrInst::empty(); MAX_DECODED_INSTS];
-    let n_dec = decode_block(bytes, guest_va, mode, &mut insts);
-    if n_dec == 0 {
+    let n_ir = decode_block(&bytes[..bytes_len], guest_va, mode, &mut ir);
+    if n_ir == 0 {
         return 0;
     }
-    let n_ir = translate_block(&insts[..n_dec], mode, &mut ir);
     let cb: CodeBlock = encode_block(&ir[..n_ir], guest_va);
     // Materialise the code block into cache. We use a tiny static
     // ring (Phase 4) sized for one full block.
@@ -112,15 +111,8 @@ fn try_cached(guest_va: u64) -> Option<u64> {
     }
 }
 
-fn read_guest_bytes(va: u64) -> &'static [u8] {
-    // Phase 5 stops short of mapping guest pages; we pretend the
-    // bytes are zeros. The runtime will see a stream of zero bytes,
-    // which the decoder recognises as `Unknown` and the codegen
-    // emits as a single NOP. This is enough to exercise the
-    // hit/miss metrics.
-    static ZEROS: [u8; 64] = [0u8; 64];
-    let _ = va;
-    &ZEROS[..]
+fn read_guest_bytes(va: u64, out: &mut [u8]) -> usize {
+    super::mem::read_virt(va, out)
 }
 
 /// Router for the BTL guest's `syscall` instruction. Mirrors
@@ -164,4 +156,25 @@ pub fn smoke_test() -> bool {
     let _ = route_syscall(0, 0, 0, 0, 0, 0);
     let s = stats();
     s.translated >= 1 && s.syscalls >= 1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_fails_closed_without_guest_mapping() {
+        let before = stats();
+        assert_eq!(translate_and_dispatch(0x7F00_1000), 0);
+        let after = stats();
+        assert_eq!(after.translated, before.translated);
+        assert_eq!(after.misses, before.misses);
+    }
+
+    #[test]
+    fn route_syscall_counts_bridged_calls() {
+        let before = stats().syscalls;
+        let _ = route_syscall(0xFFFF, 0, 0, 0, 0, 0);
+        assert_eq!(stats().syscalls, before + 1);
+    }
 }
