@@ -21,7 +21,7 @@
 //!   * DynamoRIO / DynamoSem
 //!   * LoongArch Reference Manual
 
-#![cfg(target_arch = "loongarch64")]
+#![cfg(any(target_arch = "loongarch64", test))]
 
 pub mod cache;
 pub mod common;
@@ -44,3 +44,7 @@ pub fn init() {
 pub use cache::{TranslationCache, TranslationCacheEntry};
 pub use cpu::{GuestFlags, GuestRegs};
 pub use translate::{translate_block, translate_instruction, TranslateError};
+
+pub use crate::arch::common::btl::abi::{normalize_syscall_args, GuestAbi};
+pub use crate::arch::common::btl::exec::{execute_block, GuestState, SyscallHook};
+pub use crate::arch::common::btl::memory::{GuestAddressSpace, GuestMemory};
