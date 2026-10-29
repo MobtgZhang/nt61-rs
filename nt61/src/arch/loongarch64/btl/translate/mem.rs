@@ -17,11 +17,11 @@ pub fn translate(buf: &mut EmitBuffer, dec: &Decoded) -> Result<(), TranslateErr
 }
 
 fn mov(_buf: &mut EmitBuffer, _dec: &Decoded) -> Result<(), TranslateError> {
-    Ok(())
+    Err(TranslateError::Unsupported)
 }
 fn lea(_buf: &mut EmitBuffer, _dec: &Decoded) -> Result<(), TranslateError> {
-    Ok(())
+    Err(TranslateError::Unsupported)
 }
 fn movs(_buf: &mut EmitBuffer, _dec: &Decoded) -> Result<(), TranslateError> {
-    Ok(())
+    Err(TranslateError::Unsupported)
 }
