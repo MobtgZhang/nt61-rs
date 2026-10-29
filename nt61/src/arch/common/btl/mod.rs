@@ -5,6 +5,10 @@
 
 pub mod ir;
 pub mod x86_decoder;
+pub mod abi;
+pub mod exec;
+pub mod memory;
+pub mod syscall;
 
 pub use ir::{AluOp, BranchCond, IROp, IrInst, MemOperand, X86Reg};
 pub use x86_decoder::{decode_block, decode_one, MAX_BLOCK_BYTES, MAX_DECODED_INSTS};
