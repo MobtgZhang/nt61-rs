@@ -31,54 +31,6 @@ use nt61_tools::hive_gen;
 /// This function extends the hive to the target size by adding zero-filled
 /// HBIN pages AFTER the existing data. It does NOT modify existing HBIN headers
 /// or cell data.
-fn pad_hive_to_size(data: Vec<u8>, target_size: usize) -> Vec<u8> {
-    let original_len = data.len();
-    if original_len >= target_size {
-        // Already at or above target size - truncate to target
-        let mut result = data;
-        result.truncate(target_size);
-        return result;
-    }
-
-    // Create new buffer with target size, copying original data
-    let mut result = Vec::with_capacity(target_size);
-    result.extend_from_slice(&data);
-
-    // Calculate how many bytes we need to add
-    let bytes_to_add = target_size - original_len;
-
-    // Add zero-filled pages
-    // The existing HBINs keep their headers; we only need to add new ones
-    let first_new_hbin_offset = original_len;
-    let num_new_hbins = bytes_to_add / 4096;
-
-    // Fill new space with zeros (already done by Vec::with_capacity)
-    result.resize(target_size, 0);
-
-    // Write HBIN headers for NEW pages only
-    for i in 0..num_new_hbins {
-        let hbin_offset = first_new_hbin_offset + i * 4096;
-        result[hbin_offset..hbin_offset + 4].copy_from_slice(b"hbin");
-        result[hbin_offset + 4..hbin_offset + 8]
-            .copy_from_slice(&(hbin_offset as u32).to_le_bytes());
-        result[hbin_offset + 8..hbin_offset + 12].copy_from_slice(&4096u32.to_le_bytes());
-    }
-
-    // Update blocks field in header to reflect total hbin data size
-    // blocks = total file size - 4096 (header size)
-    let blocks = (target_size - 0x1000) as u32;
-    result[0x28..0x2C].copy_from_slice(&blocks.to_le_bytes());
-
-    // Recompute checksum over first 0x1FC bytes
-    let mut sum: u32 = 0;
-    for i in (0..0x1FC).step_by(4) {
-        let val = u32::from_le_bytes([result[i], result[i + 1], result[i + 2], result[i + 3]]);
-        sum ^= val;
-    }
-    result[0x1FC..0x200].copy_from_slice(&sum.to_le_bytes());
-
-    result
-}
 
 fn main() {
     let args: Vec<String> = env::args().collect();

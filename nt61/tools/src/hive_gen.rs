@@ -178,7 +178,6 @@ fn element_subkey_string_list(type_id: &str, values: &[&str]) -> Node {
 /// Object types:
 ///   - 0x10100002: Boot Manager
 ///   - 0x10200003: Windows Boot Loader
-///   - 0x10200004: Resume from Hibernate
 ///   - 0x10100010: Firmware Boot Manager
 ///   - 0x1030000A: BootApp (EFI application)
 pub fn build_bcd() -> Vec<u8> {
@@ -219,7 +218,7 @@ pub fn build_bcd() -> Vec<u8> {
                         "{9dea862d-5cdd-4e70-acc1-f32b344d4795}",
                         "{b2721d66-7dbf-4e50-ae7c-d27f2d90ce20}",
                         "{5189b25c-5558-4bf2-bb0f-cd5a4f8c7e20}",
-                        "{aabbccdd-eeff-0011-2233-445566778899}",
+                        "{a34c8ed1-7bf2-4a93-bc1d-6e5a3f8b7c20}",
                     ],
                 ));
                 bm.subkeys.push(ee);
@@ -259,7 +258,7 @@ pub fn build_bcd() -> Vec<u8> {
             objs.subkeys.push(e);
         }
 
-        // Windows 7 Safe Mode CMD {b2721d66-7dbf-4e50-ae7c-d27f2d90ce20}
+        // Windows 7 Command Prompt {b2721d66-7dbf-4e50-ae7c-d27f2d90ce20}
         {
             let mut e = node("{b2721d66-7dbf-4e50-ae7c-d27f2d90ce20}");
             {
@@ -279,7 +278,7 @@ pub fn build_bcd() -> Vec<u8> {
                 ));
                 ee.subkeys.push(element_subkey_string(
                     "12000004",
-                    "Windows 7 (Safe Mode - CMD)",
+                    "Windows 7 (Command Prompt)",
                 ));
                 ee.subkeys.push(element_subkey_string("12000005", "en-US"));
                 // OsDevice = System partition (partition 2)
@@ -287,16 +286,13 @@ pub fn build_bcd() -> Vec<u8> {
                     .push(element_subkey_binary("21000001", &create_device_path()));
                 ee.subkeys
                     .push(element_subkey_string("22000002", r"\Windows"));
-                ee.subkeys.push(element_subkey_string(
-                    "22000001",
-                    "/safeboot:minimal /safeboot:shell",
-                ));
+                ee.subkeys.push(element_subkey_string("22000001", ""));
                 e.subkeys.push(ee);
             }
             objs.subkeys.push(e);
         }
 
-        // Windows 7 Safe Mode Debug {5189b25c-5558-4bf2-bb0f-cd5a4f8c7e20}
+        // Windows 7 Debug CMD {5189b25c-5558-4bf2-bb0f-cd5a4f8c7e20}
         {
             let mut e = node("{5189b25c-5558-4bf2-bb0f-cd5a4f8c7e20}");
             {
@@ -314,10 +310,8 @@ pub fn build_bcd() -> Vec<u8> {
                     "12000002",
                     r"\Windows\System32\winload.efi",
                 ));
-                ee.subkeys.push(element_subkey_string(
-                    "12000004",
-                    "Windows 7 (Safe Mode - Debug)",
-                ));
+                ee.subkeys
+                    .push(element_subkey_string("12000004", "Windows 7 (Debug CMD)"));
                 ee.subkeys.push(element_subkey_string("12000005", "en-US"));
                 // OsDevice = System partition (partition 2)
                 ee.subkeys
@@ -333,23 +327,31 @@ pub fn build_bcd() -> Vec<u8> {
             objs.subkeys.push(e);
         }
 
-        // Resume from Hibernate {aabbccdd-eeff-0011-2233-445566778899}
+        // Windows 7 Safe Mode {a34c8ed1-7bf2-4a93-bc1d-6e5a3f8b7c20}
         {
-            let mut e = node("{aabbccdd-eeff-0011-2233-445566778899}");
+            let mut e = node("{a34c8ed1-7bf2-4a93-bc1d-6e5a3f8b7c20}");
             {
                 let mut ed = node("Description");
-                ed.values.push(Value::dword("Type", 0x1020_0004));
+                ed.values.push(Value::dword("Type", 0x1020_0003));
                 e.subkeys.push(ed);
             }
             {
                 let mut ee = node("Elements");
+                ee.subkeys
+                    .push(element_subkey_binary("11000001", &create_device_path()));
                 ee.subkeys.push(element_subkey_string(
                     "12000002",
-                    r"\Windows\system32\winresume.efi",
+                    r"\Windows\System32\winload.efi",
                 ));
                 ee.subkeys
-                    .push(element_subkey_string("12000004", "Windows 7 Resume"));
+                    .push(element_subkey_string("12000004", "Windows 7 (Safe Mode)"));
                 ee.subkeys.push(element_subkey_string("12000005", "en-US"));
+                ee.subkeys
+                    .push(element_subkey_binary("21000001", &create_device_path()));
+                ee.subkeys
+                    .push(element_subkey_string("22000002", r"\Windows"));
+                ee.subkeys
+                    .push(element_subkey_string("22000001", "/safeboot:minimal"));
                 e.subkeys.push(ee);
             }
             objs.subkeys.push(e);
