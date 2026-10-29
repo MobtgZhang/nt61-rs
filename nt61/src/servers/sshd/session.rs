@@ -808,6 +808,7 @@ pub fn poll_sessions() -> usize {
     let socket_ids: Vec<u32> = SESSIONS
         .lock()
         .iter()
+        .filter(|session| crate::netstack::socket::is_read_ready(session.socket_id))
         .map(|session| session.socket_id)
         .collect();
     let mut live = 0;

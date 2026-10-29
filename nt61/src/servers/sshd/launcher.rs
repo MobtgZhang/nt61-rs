@@ -24,9 +24,6 @@ pub const LISTEN_BACKLOG: u32 = 8;
 /// Canonical Windows OpenSSH installation path for `sshd_config`.
 pub const SSHD_CONFIG_PATH: &str = "C:\\Program Files\\OpenSSH\\sshd_config";
 
-/// Poll interval used by the kernel service worker, in milliseconds.
-const POLL_INTERVAL_MS: u64 = 100;
-
 /// Load `sshd_config` from the system partition and start the listener.
 /// Returns `Ok(false)` when no OpenSSH configuration is installed, which
 /// is the normal state for a non-SSH test image.
@@ -138,14 +135,6 @@ fn base64_decode(input: &str) -> Option<alloc::vec::Vec<u8>> {
 
 /// Drive listener accepts and active SSH sessions from the timer tick.
 pub fn service_tick() {
-    static LAST_POLL_MS: Spinlock<u64> = Spinlock::new(0);
-    let now = crate::hal::common::pit::get_system_time_ms();
-    let mut last_poll_ms = LAST_POLL_MS.lock();
-    if now.wrapping_sub(*last_poll_ms) < POLL_INTERVAL_MS {
-        return;
-    }
-    *last_poll_ms = now;
-    drop(last_poll_ms);
     poll_once();
 }
 
