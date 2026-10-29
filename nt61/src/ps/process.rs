@@ -1678,8 +1678,7 @@ pub fn create_user_process(
     }
     crate::hal::serial::write_string_always("PS:create vad ok\r\n");
 
-    let user_rsp =
-        crate::mm::vas::USER_STACK_TOP - crate::mm::vas::USER_STACK_INITIAL_HEAD;
+    let user_rsp = crate::mm::vas::USER_STACK_TOP - crate::mm::vas::USER_STACK_INITIAL_HEAD;
 
     let ht_buf = crate::mm::pool::allocate(
         crate::mm::pool::PoolType::NonPaged,
@@ -2050,9 +2049,8 @@ pub fn create_process_full(
 
     if let Some(parent) = parent_process {
         inherit_from_parent(process, parent);
-        let parent_token = unsafe { (*parent).get_token().as_ref() }.map(|token| {
-            crate::se::token::duplicate_for_process(token)
-        });
+        let parent_token = unsafe { (*parent).get_token().as_ref() }
+            .map(|token| crate::se::token::duplicate_for_process(token));
         if let Some(token) = parent_token {
             if token.is_null() {
                 return None;

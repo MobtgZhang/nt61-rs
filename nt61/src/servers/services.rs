@@ -245,7 +245,6 @@ fn load_services_from_registry() {
 
     // For each service, read its configuration
     for service_name in &service_keys {
-
         let service_path = format!(
             "\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Services\\{}",
             service_name
@@ -293,12 +292,10 @@ fn load_services_from_registry() {
         // SCM database. Skip duplicates so repeated calls stay
         // idempotent, and stop when the fixed-size table is full.
         let mut state = SCM_STATE.lock();
-        let already_registered = state.services[..state.service_count]
-            .iter()
-            .any(|entry| {
-                let utf16: Vec<u16> = service_name.chars().map(|c| c as u16).collect();
-                entry.name[..utf16.len()] == *utf16
-            });
+        let already_registered = state.services[..state.service_count].iter().any(|entry| {
+            let utf16: Vec<u16> = service_name.chars().map(|c| c as u16).collect();
+            entry.name[..utf16.len()] == *utf16
+        });
         if already_registered {
             continue;
         }
@@ -483,12 +480,10 @@ fn register_default_services() {
         // init() calls are idempotent (previously a second init()
         // doubled the table, and a third filled it so new services
         // could no longer be registered).
-        let already_registered = state.services[..state.service_count]
-            .iter()
-            .any(|entry| {
-                let utf16: Vec<u16> = name.chars().map(|c| c as u16).collect();
-                entry.name[..utf16.len()] == *utf16
-            });
+        let already_registered = state.services[..state.service_count].iter().any(|entry| {
+            let utf16: Vec<u16> = name.chars().map(|c| c as u16).collect();
+            entry.name[..utf16.len()] == *utf16
+        });
         if already_registered {
             continue;
         }
@@ -787,16 +782,16 @@ fn control_stop(idx: usize) -> bool {
     }
 
     let table = HANDLER_TABLE.lock();
-    let handler = table
-        .iter()
-        .find_map(|slot| {
-            let entry = slot.as_ref()?;
-            if entry.name_len == svc_name_len && entry.name[..entry.name_len] == svc_name[..svc_name_len] {
-                Some(entry.handler)
-            } else {
-                None
-            }
-        });
+    let handler = table.iter().find_map(|slot| {
+        let entry = slot.as_ref()?;
+        if entry.name_len == svc_name_len
+            && entry.name[..entry.name_len] == svc_name[..svc_name_len]
+        {
+            Some(entry.handler)
+        } else {
+            None
+        }
+    });
     drop(table);
     if let Some(handler) = handler {
         let _result = handler(ServiceControl::Stop as u32);

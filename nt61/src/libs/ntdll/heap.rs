@@ -181,11 +181,8 @@ pub unsafe extern "C" fn rtl_get_process_heaps(count: u32, process_heaps: *mut H
     if process_heaps.is_null() || count == 0 {
         return 0;
     }
-    if crate::mm::user_copy::probe_user_write(
-        process_heaps as u64,
-        core::mem::size_of::<HANDLE>(),
-    )
-    .is_err()
+    if crate::mm::user_copy::probe_user_write(process_heaps as u64, core::mem::size_of::<HANDLE>())
+        .is_err()
     {
         return 0;
     }

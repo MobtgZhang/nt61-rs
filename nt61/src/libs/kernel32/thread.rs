@@ -7,9 +7,9 @@
 
 use super::error::set_last_error;
 use super::types::{BOOL, DWORD, FALSE, HANDLE, HANDLE_CURRENT_THREAD, TRUE};
-use crate::libs::ntdll::types::PVOID;
 use crate::libs::ntdll::status::STATUS_SUCCESS;
 use crate::libs::ntdll::thread as ntdll_thread;
+use crate::libs::ntdll::types::PVOID;
 use core::ptr;
 
 /// `create_thread`.

@@ -458,19 +458,21 @@ static PCI_CACHE: PciDeviceCache = PciDeviceCache {
     lock: AtomicBool::new(false),
     count: AtomicUsize::new(0),
     valid: AtomicBool::new(false),
-    devices: UnsafeCell::new([PciDevice {
-        bus: 0,
-        device: 0,
-        function: 0,
-        vendor_id: 0,
-        device_id: 0,
-        class_code: 0,
-        subclass: 0,
-        prog_if: 0,
-        header_type: 0,
-        irq: 0,
-        revision: 0,
-    }; MAX_PCI_DEVICES]),
+    devices: UnsafeCell::new(
+        [PciDevice {
+            bus: 0,
+            device: 0,
+            function: 0,
+            vendor_id: 0,
+            device_id: 0,
+            class_code: 0,
+            subclass: 0,
+            prog_if: 0,
+            header_type: 0,
+            irq: 0,
+            revision: 0,
+        }; MAX_PCI_DEVICES],
+    ),
 };
 
 fn cache_push(d: PciDevice) {
@@ -492,13 +494,8 @@ fn cache_push(d: PciDevice) {
 /// `valid` is only set with Release ordering after every entry and
 /// the final count are visible.
 fn published_devices() -> &'static [PciDevice] {
-    let count = PCI_CACHE
-        .count
-        .load(Ordering::Acquire)
-        .min(MAX_PCI_DEVICES);
-    unsafe {
-        core::slice::from_raw_parts((*PCI_CACHE.devices.get()).as_ptr(), count)
-    }
+    let count = PCI_CACHE.count.load(Ordering::Acquire).min(MAX_PCI_DEVICES);
+    unsafe { core::slice::from_raw_parts((*PCI_CACHE.devices.get()).as_ptr(), count) }
 }
 
 // =====================================================================

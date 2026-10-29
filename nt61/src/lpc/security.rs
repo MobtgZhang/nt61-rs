@@ -35,9 +35,7 @@ impl SecurityDescriptor {
 
     pub const fn system() -> Self {
         Self {
-            owner_sid: crate::se::sid::sid::well_known(
-                crate::se::sid::WellKnownSid::LocalSystem,
-            ),
+            owner_sid: crate::se::sid::sid::well_known(crate::se::sid::WellKnownSid::LocalSystem),
             group_sid: 0,
             dacl_flags: 0xFFFFFFFF, // Full access
             sacl_flags: 0,

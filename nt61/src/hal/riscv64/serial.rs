@@ -56,15 +56,15 @@ pub fn write_char(c: u8) {
     }
     let _tx_guard = crate::hal::common::serial::lock_uart_tx();
     unsafe {
-            let mut waits = 0usize;
-            while (read_volatile(reg(5)) & 0x20) == 0 {
-                waits += 1;
-                if waits > TX_TIMEOUT_ITERS {
-                    // Transmitter never drained: drop the byte rather
-                    // than corrupting the stream or spinning forever.
-                    return;
-                }
-                core::hint::spin_loop();
+        let mut waits = 0usize;
+        while (read_volatile(reg(5)) & 0x20) == 0 {
+            waits += 1;
+            if waits > TX_TIMEOUT_ITERS {
+                // Transmitter never drained: drop the byte rather
+                // than corrupting the stream or spinning forever.
+                return;
+            }
+            core::hint::spin_loop();
         }
         write_volatile(reg(0), c);
     }
@@ -100,15 +100,15 @@ pub fn write_string_always(s: &str) {
         let _tx_guard = crate::hal::common::serial::lock_uart_tx();
         for c in s.bytes() {
             unsafe {
-                    let mut waits = 0usize;
-                    while (read_volatile(reg(5)) & 0x20) == 0 {
-                        waits += 1;
-                        if waits > TX_TIMEOUT_ITERS {
-                            // Wedged transmitter: abandon the rest of
-                            // the string instead of spinning forever.
-                            return;
-                        }
-                        core::hint::spin_loop();
+                let mut waits = 0usize;
+                while (read_volatile(reg(5)) & 0x20) == 0 {
+                    waits += 1;
+                    if waits > TX_TIMEOUT_ITERS {
+                        // Wedged transmitter: abandon the rest of
+                        // the string instead of spinning forever.
+                        return;
+                    }
+                    core::hint::spin_loop();
                 }
                 write_volatile(reg(0), c);
             }
@@ -151,7 +151,11 @@ pub fn write_hex_u64_always(v: u64) {
     let mut buf = [0u8; 16];
     for i in 0..16 {
         let nibble = ((v >> ((15 - i) * 4)) & 0xF) as u8;
-        buf[i] = if nibble < 10 { b'0' + nibble } else { b'A' + nibble - 10 };
+        buf[i] = if nibble < 10 {
+            b'0' + nibble
+        } else {
+            b'A' + nibble - 10
+        };
     }
     write_string_always(core::str::from_utf8(&buf).unwrap_or(""));
 }

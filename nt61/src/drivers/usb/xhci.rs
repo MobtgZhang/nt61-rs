@@ -596,14 +596,12 @@ fn init_controller(bar_phys: u64) -> Option<XhciController> {
     let mmio = bar_phys;
 
     // SAFETY: MMIO region owned by this controller; volatile reads.
-    let cap_length =
-        unsafe { core::ptr::read_volatile((mmio + CAPLENGTH as u64) as *const u8) };
+    let cap_length = unsafe { core::ptr::read_volatile((mmio + CAPLENGTH as u64) as *const u8) };
     if cap_length == 0 {
         // No capability block: not an xHCI controller.
         return None;
     }
-    let hci_version =
-        unsafe { core::ptr::read_volatile((mmio + HCIVERSION as u64) as *const u16) };
+    let hci_version = unsafe { core::ptr::read_volatile((mmio + HCIVERSION as u64) as *const u16) };
     let hcs_params1 = unsafe { mmio_read32(mmio, HCSPARAMS1 as u32) };
     let hcs_params2 = unsafe { mmio_read32(mmio, HCSPARAMS2 as u32) };
     let hcc_params1 = unsafe { mmio_read32(mmio, HCCPARAMS1 as u32) };

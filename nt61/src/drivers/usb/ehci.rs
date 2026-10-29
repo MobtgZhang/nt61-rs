@@ -344,16 +344,13 @@ fn init_controller(bar_phys: u64) -> Option<EhciController> {
     let mmio = bar_phys;
 
     // SAFETY: MMIO region owned by this controller; volatile reads.
-    let cap_length = unsafe {
-        core::ptr::read_volatile((mmio + CAPLENGTH as u64) as *const u8)
-    };
+    let cap_length = unsafe { core::ptr::read_volatile((mmio + CAPLENGTH as u64) as *const u8) };
     if cap_length == 0 {
         // A zero capability length means this is not an EHCI
         // controller (or the BAR is not decoded).
         return None;
     }
-    let hci_version =
-        unsafe { core::ptr::read_volatile((mmio + HCIVERSION as u64) as *const u16) };
+    let hci_version = unsafe { core::ptr::read_volatile((mmio + HCIVERSION as u64) as *const u16) };
     let hcs_params = unsafe { mmio_read32(mmio, HCSPARAMS) };
     let hcc_params = unsafe { mmio_read32(mmio, HCCPARAMS) };
 

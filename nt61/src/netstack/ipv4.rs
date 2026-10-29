@@ -306,8 +306,7 @@ fn dispatch_datagram(header: &Ipv4Header, payload: &[u8], _nic_type: NicType, _n
             header.dst_ip = internal_ip;
             if header.protocol == 1 && payload.len() >= 8 {
                 translated_payload[4..6].copy_from_slice(&internal_port.to_be_bytes());
-                let icmp_checksum =
-                    crate::netstack::ipv4::calculate_checksum(&translated_payload);
+                let icmp_checksum = crate::netstack::ipv4::calculate_checksum(&translated_payload);
                 translated_payload[2..4].copy_from_slice(&icmp_checksum.to_be_bytes());
             } else if header.protocol == 6 || header.protocol == 17 {
                 rewrite_transport_destination_port(&mut translated_payload, internal_port);
@@ -519,8 +518,7 @@ fn build_ipv4_fragment(
     packet.push(0);
     packet.extend_from_slice(&total_length.to_be_bytes());
     packet.extend_from_slice(&identification.to_be_bytes());
-    let flags_frag =
-        (if more_fragments { 0x2000u16 } else { 0u16 }) | fragment_offset;
+    let flags_frag = (if more_fragments { 0x2000u16 } else { 0u16 }) | fragment_offset;
     packet.extend_from_slice(&flags_frag.to_be_bytes());
     packet.push(ttl);
     packet.push(protocol);
@@ -606,12 +604,7 @@ pub fn send_ipv4(src_ip: u32, dst_ip: u32, protocol: u8, payload: &[u8]) -> bool
             if payload.len() >= 8 && matches!(payload[0], 0 | 8) {
                 let icmp_port = u16::from_be_bytes([payload[4], payload[5]]);
                 let Some((nat_ip, nat_port)) = crate::netstack::nat::translate_outbound(
-                    src_ip,
-                    icmp_port,
-                    dst_ip,
-                    0,
-                    protocol,
-                    public_ip,
+                    src_ip, icmp_port, dst_ip, 0, protocol, public_ip,
                 ) else {
                     return false;
                 };
@@ -624,12 +617,7 @@ pub fn send_ipv4(src_ip: u32, dst_ip: u32, protocol: u8, payload: &[u8]) -> bool
             }
         } else if protocol == 6 || protocol == 17 {
             let Some((nat_ip, nat_port)) = crate::netstack::nat::translate_outbound(
-                src_ip,
-                src_port,
-                dst_ip,
-                dst_port,
-                protocol,
-                public_ip,
+                src_ip, src_port, dst_ip, dst_port, protocol, public_ip,
             ) else {
                 return false;
             };
@@ -662,16 +650,20 @@ pub fn send_ipv4(src_ip: u32, dst_ip: u32, protocol: u8, payload: &[u8]) -> bool
     // routing table. Falls back to the final destination when no
     // route exists.
     let next_hop_ip = crate::netstack::routing::find_route(dst_ip)
-        .map(|route| if route.gateway == 0 { dst_ip } else { route.gateway })
+        .map(|route| {
+            if route.gateway == 0 {
+                dst_ip
+            } else {
+                route.gateway
+            }
+        })
         .unwrap_or(dst_ip);
 
     // Determine the effective MTU (Ethernet 1500 minus the
     // 14-byte Ethernet header).
     let mtu = 1500usize - 14;
     let identification: u16 = 0;
-    let fragments = crate::netstack::fragmentation::fragment_packet(
-        payload, mtu, identification,
-    );
+    let fragments = crate::netstack::fragmentation::fragment_packet(payload, mtu, identification);
     let fragmented = fragments.len() > 1;
 
     // Resolve ARP for the next hop (gateway or destination).
@@ -712,16 +704,21 @@ pub fn send_ipv4(src_ip: u32, dst_ip: u32, protocol: u8, payload: &[u8]) -> bool
         let more = i < fragments.len() - 1;
         let packet = if fragmented {
             build_ipv4_fragment(
-                src_ip, dst_ip, protocol, 64, identification, more,
-                offset_units, fragment_payload,
+                src_ip,
+                dst_ip,
+                protocol,
+                64,
+                identification,
+                more,
+                offset_units,
+                fragment_payload,
             )
         } else {
             build_ipv4_packet(src_ip, dst_ip, protocol, 64, fragment_payload)
         };
         offset_units += ((fragment_payload.len() as u16) + 7) / 8;
 
-        let frame =
-            eth::build_ethernet_frame(&dst_mac, &src_mac, ETHER_TYPE_IPV4, &packet);
+        let frame = eth::build_ethernet_frame(&dst_mac, &src_mac, ETHER_TYPE_IPV4, &packet);
         let sent = crate::drivers::net::send_to_nic(nic_type, nic_idx, &frame);
         if !sent {
             crate::hal::serial::write_string_always("[NET-IPV4] nic send failed\r\n");

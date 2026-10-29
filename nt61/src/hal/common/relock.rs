@@ -29,9 +29,7 @@ impl ReentrantLock {
 
     pub fn lock(&self) -> ReentrantGuard<'_> {
         let cpu = crate::arch::common::percpu::get_current_cpu_id() as usize;
-        if self.depth.load(Ordering::Relaxed) > 0
-            && self.owner.load(Ordering::Relaxed) == cpu
-        {
+        if self.depth.load(Ordering::Relaxed) > 0 && self.owner.load(Ordering::Relaxed) == cpu {
             self.depth.fetch_add(1, Ordering::Relaxed);
             return ReentrantGuard { lock: self };
         }

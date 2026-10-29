@@ -164,9 +164,8 @@ pub fn __security_cookie() -> u64 {
     let mut new_cookie = 0u64;
     let sp = &new_cookie as *const _ as u64;
     let tick = crate::hal::common::pit::get_system_time_ms();
-    new_cookie = 0x9E37_79B9_7F4A_7C15u64
-        ^ sp.rotate_left(17)
-        ^ tick.wrapping_mul(0xBF58_4763_6CE9_E2A1);
+    new_cookie =
+        0x9E37_79B9_7F4A_7C15u64 ^ sp.rotate_left(17) ^ tick.wrapping_mul(0xBF58_4763_6CE9_E2A1);
     if new_cookie == 0 {
         new_cookie = 1;
     }

@@ -171,9 +171,8 @@ pub fn nt_create_process(
 
     // 7. create initial token
     let process_token = if !parent.is_null() {
-        unsafe { (*parent).get_token().as_ref() }.map(|token| {
-            crate::se::token::duplicate_for_process(token)
-        })
+        unsafe { (*parent).get_token().as_ref() }
+            .map(|token| crate::se::token::duplicate_for_process(token))
     } else {
         Some(token::create_user_token(crate::se::sid::SID_USERS))
     };

@@ -17,8 +17,7 @@
 use super::file::wide_to_string;
 use super::status::{
     STATUS_DLL_NOT_FOUND, STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER, STATUS_NOT_FOUND,
-    STATUS_NOT_IMPLEMENTED,
-    STATUS_SUCCESS,
+    STATUS_NOT_IMPLEMENTED, STATUS_SUCCESS,
 };
 use super::types::{UnicodeString, HANDLE, NTSTATUS, PVOID};
 use crate::ke::sync::Spinlock;

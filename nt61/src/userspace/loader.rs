@@ -168,8 +168,10 @@ pub fn load_test_image(path: &str) {
 }
 
 #[cfg(test)]
-fn test_images(
-) -> crate::ke::sync::SpinlockGuard<'static, alloc::vec::Vec<(alloc::string::String, alloc::vec::Vec<u8>)>> {
+fn test_images() -> crate::ke::sync::SpinlockGuard<
+    'static,
+    alloc::vec::Vec<(alloc::string::String, alloc::vec::Vec<u8>)>,
+> {
     static TEST_IMAGES: crate::ke::sync::Spinlock<
         alloc::vec::Vec<(alloc::string::String, alloc::vec::Vec<u8>)>,
     > = crate::ke::sync::Spinlock::new(alloc::vec::Vec::new());

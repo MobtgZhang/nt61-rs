@@ -240,7 +240,11 @@ pub mod wdm {
         // The associated device is the PDO layered under this device; fall
         // back to the device itself when it is a leaf (no PDO below it).
         let associated = unsafe { (*dev).attached_device };
-        let target = if associated.is_null() { dev } else { associated };
+        let target = if associated.is_null() {
+            dev
+        } else {
+            associated
+        };
         WdfDevice::from_io_device(target).ok()
     }
 

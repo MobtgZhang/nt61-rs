@@ -464,10 +464,8 @@ pub fn dispatch_nt_query_virtual_memory(ctx: &mut SyscallContext) -> ULONG32 {
         )
     };
     if status >= 0 && return_length_ptr != 0 {
-        let _ = crate::mm::user_copy::write_user_object(
-            return_length_ptr as u64,
-            &(ret_len as u32),
-        );
+        let _ =
+            crate::mm::user_copy::write_user_object(return_length_ptr as u64, &(ret_len as u32));
     }
     status as u32
 }

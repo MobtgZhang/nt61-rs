@@ -501,12 +501,7 @@ mod tests {
             icmp_type: IcmpType::EchoReply as u8,
             code: 0,
             checksum: 0,
-            rest: [
-                (id >> 8) as u8,
-                id as u8,
-                (seq >> 8) as u8,
-                seq as u8,
-            ],
+            rest: [(id >> 8) as u8, id as u8, (seq >> 8) as u8, seq as u8],
         }
     }
 

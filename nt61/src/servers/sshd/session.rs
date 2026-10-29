@@ -91,8 +91,8 @@ pub fn install_host_key(key: RsaPrivateKey) {
 pub fn host_key() -> RsaPrivateKey {
     let mut guard = HOST_KEY.lock();
     if guard.is_none() {
-        let host_key = RsaPrivateKey::generate(HOST_KEY_BITS_DEFAULT)
-            .expect("supported RSA host key size");
+        let host_key =
+            RsaPrivateKey::generate(HOST_KEY_BITS_DEFAULT).expect("supported RSA host key size");
         *guard = Some(host_key);
     }
     guard.as_ref().expect("host key was just installed").clone()
@@ -504,7 +504,9 @@ impl ActiveSession {
         io: &mut dyn TransportIo,
         payload: &[u8],
     ) -> Result<PayloadOutcome, TransportError> {
-        if self.state != SessionState::Authenticated && self.state != SessionState::ConnectionRequested {
+        if self.state != SessionState::Authenticated
+            && self.state != SessionState::ConnectionRequested
+        {
             self.send_disconnect(
                 io,
                 disconnect_reason::PROTOCOL_ERROR,
@@ -582,10 +584,7 @@ impl ActiveSession {
                 core::str::from_utf8(command_bytes).map_err(|_| TransportError::MalformedPacket)?;
             let execution = match child::execute_line(command) {
                 Some(execution) => execution,
-                None => child::CommandExecution::new(
-                    EXIT_CODE_NO_EXECUTOR,
-                    Vec::new(),
-                ),
+                None => child::CommandExecution::new(EXIT_CODE_NO_EXECUTOR, Vec::new()),
             };
             let kind = if request == b"exec" {
                 ChildRequestKind::Exec
@@ -638,11 +637,7 @@ impl ActiveSession {
                                         &execution.output,
                                     )?;
                                 }
-                                self.send_exit_status(
-                                    io,
-                                    channel.remote_id,
-                                    execution.exit_code,
-                                )?;
+                                self.send_exit_status(io, channel.remote_id, execution.exit_code)?;
                             }
                             None => {
                                 self.send_channel_reply(

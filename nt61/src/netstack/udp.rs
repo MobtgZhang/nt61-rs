@@ -434,7 +434,13 @@ pub fn get_stats() -> UdpStats {
 mod tests {
     use super::*;
 
-    fn datagram(src_ip: u32, dst_ip: u32, src_port: Port, dst_port: Port, payload: &[u8]) -> Vec<u8> {
+    fn datagram(
+        src_ip: u32,
+        dst_ip: u32,
+        src_port: Port,
+        dst_port: Port,
+        payload: &[u8],
+    ) -> Vec<u8> {
         let mut packet = Vec::with_capacity(UDP_HDR_SIZE + payload.len());
         packet.resize(UDP_HDR_SIZE, 0);
         let header = UdpHeader {

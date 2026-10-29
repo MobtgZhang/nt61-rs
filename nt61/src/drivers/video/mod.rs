@@ -30,12 +30,15 @@
 
 extern crate alloc;
 
-static GPU_REGISTRY: crate::ke::sync::Spinlock<Option<crate::drivers::video::core::gpu_common::GpuDriverRegistry>> =
-    crate::ke::sync::Spinlock::new(None);
+static GPU_REGISTRY: crate::ke::sync::Spinlock<
+    Option<crate::drivers::video::core::gpu_common::GpuDriverRegistry>,
+> = crate::ke::sync::Spinlock::new(None);
 
 /// Store a successfully initialized GPU driver so display policy can
 /// enumerate live devices instead of relying on compile-time probes.
-pub fn register_gpu_driver(driver: impl crate::drivers::video::core::gpu_common::GpuDriver + 'static) {
+pub fn register_gpu_driver(
+    driver: impl crate::drivers::video::core::gpu_common::GpuDriver + 'static,
+) {
     let mut registry = GPU_REGISTRY.lock();
     registry
         .get_or_insert_with(crate::drivers::video::core::gpu_common::GpuDriverRegistry::new)

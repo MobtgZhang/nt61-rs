@@ -169,9 +169,7 @@ impl WdfDevice {
 
     /// Wrap an I/O manager device object in a WDF device view. Returns an
     /// error for null device objects instead of fabricating an empty device.
-    pub fn from_io_device(
-        dev: *mut crate::io::DeviceObject,
-    ) -> Result<Self, &'static str> {
+    pub fn from_io_device(dev: *mut crate::io::DeviceObject) -> Result<Self, &'static str> {
         if dev.is_null() {
             return Err("null io device object");
         }

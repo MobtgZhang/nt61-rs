@@ -127,10 +127,7 @@ pub unsafe extern "C" fn create_process_w(
     let storage_size = core::mem::size_of::<ObjectAttributes>()
         + core::mem::size_of::<crate::libs::ntdll::types::UnicodeString>()
         + name_size;
-    let storage = crate::mm::pool::allocate(
-        crate::mm::pool::PoolType::NonPaged,
-        storage_size,
-    );
+    let storage = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, storage_size);
     if storage.is_null() {
         set_last_error(8);
         return FALSE;

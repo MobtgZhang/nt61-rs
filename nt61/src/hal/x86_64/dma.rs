@@ -159,12 +159,14 @@ unsafe impl Sync for CommonBufferTable {}
 
 static BUFFERS: CommonBufferTable = CommonBufferTable {
     lock: AtomicBool::new(false),
-    buffers: UnsafeCell::new([CommonBuffer {
-        phys: 0,
-        virt: 0,
-        size: 0,
-        in_use: false,
-    }; MAX_BUFFERS]),
+    buffers: UnsafeCell::new(
+        [CommonBuffer {
+            phys: 0,
+            virt: 0,
+            size: 0,
+            in_use: false,
+        }; MAX_BUFFERS],
+    ),
 };
 
 fn lock_buffers() {

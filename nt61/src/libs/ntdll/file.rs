@@ -1369,7 +1369,11 @@ fn transitional_vfs_read(buffer: &mut [u8], byte_offset: i64) -> (NTSTATUS, usiz
     let result = crate::fs::vfs::read_file_sectors_into(0, buffer, byte_offset as u64);
     // SectorResult errors are already NTSTATUS values (e.g. 0xC000000D
     // STATUS_DATA_ERROR); pass them through unchanged.
-    let status = if result.status == 0 { STATUS_SUCCESS } else { result.status as i32 };
+    let status = if result.status == 0 {
+        STATUS_SUCCESS
+    } else {
+        result.status as i32
+    };
     (status, result.bytes_read)
 }
 
@@ -1377,7 +1381,11 @@ fn transitional_vfs_read(buffer: &mut [u8], byte_offset: i64) -> (NTSTATUS, usiz
 fn transitional_vfs_write(buffer: &[u8], byte_offset: i64) -> (NTSTATUS, usize) {
     use super::status::STATUS_SUCCESS;
     let result = crate::fs::vfs::write_file_sectors_from(0, buffer, byte_offset as u64);
-    let status = if result.status == 0 { STATUS_SUCCESS } else { result.status as i32 };
+    let status = if result.status == 0 {
+        STATUS_SUCCESS
+    } else {
+        result.status as i32
+    };
     (status, result.bytes_written)
 }
 
@@ -1388,9 +1396,7 @@ fn read_file_common(file_handle: HANDLE, buffer: &mut [u8], byte_offset: i64) ->
         None => return (STATUS_INVALID_HANDLE, 0),
     };
     match entry.kind {
-        HandleKind::File => {
-            transitional_vfs_read(buffer, byte_offset)
-        }
+        HandleKind::File => transitional_vfs_read(buffer, byte_offset),
         HandleKind::Pipe => {
             if pipe_is_write(entry.target) {
                 return (STATUS_INVALID_HANDLE, 0);
@@ -1429,9 +1435,7 @@ fn write_file_common(file_handle: HANDLE, buffer: &[u8], byte_offset: i64) -> (N
         None => return (STATUS_INVALID_HANDLE, 0),
     };
     match entry.kind {
-        HandleKind::File => {
-            transitional_vfs_write(buffer, byte_offset)
-        }
+        HandleKind::File => transitional_vfs_write(buffer, byte_offset),
         HandleKind::Pipe => {
             if !pipe_is_write(entry.target) {
                 return (STATUS_INVALID_HANDLE, 0);

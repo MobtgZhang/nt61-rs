@@ -130,10 +130,7 @@ pub fn alloc_bytes(size: usize) -> *mut u8 {
 
     let requested = align_up(size + HEADER_SIZE);
     let mut table = HEAPS.lock();
-    let heap = match table
-        .iter_mut()
-        .find(|e| e.pml4 == current_process_pml4())
-    {
+    let heap = match table.iter_mut().find(|e| e.pml4 == current_process_pml4()) {
         Some(entry) => &mut entry.heap,
         None => return ptr::null_mut(),
     };
@@ -188,10 +185,7 @@ pub fn free_bytes(pointer: *mut u8) {
     }
 
     let mut table = HEAPS.lock();
-    let heap = match table
-        .iter_mut()
-        .find(|e| e.pml4 == current_process_pml4())
-    {
+    let heap = match table.iter_mut().find(|e| e.pml4 == current_process_pml4()) {
         Some(entry) => &mut entry.heap,
         None => {
             return;

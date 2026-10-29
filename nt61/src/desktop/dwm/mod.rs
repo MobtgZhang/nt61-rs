@@ -35,8 +35,18 @@ pub struct WindowSurface {
 }
 
 /// Pinned scratch pool keyed by index.
-static SURFACE_POOL: Spinlock<[WindowSurface; DWM_SURFACE_POOL_SIZE]> =
-    Spinlock::new([WindowSurface { id: 0, width: 0, height: 0, hwnd: 0, visible: false, active: false, glass_radius: 0, glass_opacity: 0 }; DWM_SURFACE_POOL_SIZE]);
+static SURFACE_POOL: Spinlock<[WindowSurface; DWM_SURFACE_POOL_SIZE]> = Spinlock::new(
+    [WindowSurface {
+        id: 0,
+        width: 0,
+        height: 0,
+        hwnd: 0,
+        visible: false,
+        active: false,
+        glass_radius: 0,
+        glass_opacity: 0,
+    }; DWM_SURFACE_POOL_SIZE],
+);
 
 fn scratch_pool() -> SpinlockGuard<'static, [WindowSurface; DWM_SURFACE_POOL_SIZE]> {
     SURFACE_POOL.lock()

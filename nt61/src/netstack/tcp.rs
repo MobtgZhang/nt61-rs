@@ -701,12 +701,10 @@ pub fn tcp_input(src_ip: u32, dst_ip: u32, data: &[u8]) {
                 }
                 if let Some(idx) = find_listener(dst_ip, header.dst_port) {
                     // create new connection for listening socket
-                    let Some(new_child_socket_id) =
-                        crate::netstack::socket::socket(
-                            crate::netstack::socket::SocketType::Stream,
-                            crate::netstack::socket::Protocol::Tcp,
-                        )
-                    else {
+                    let Some(new_child_socket_id) = crate::netstack::socket::socket(
+                        crate::netstack::socket::SocketType::Stream,
+                        crate::netstack::socket::Protocol::Tcp,
+                    ) else {
                         return;
                     };
                     let mut connections = TCP_CONNECTIONS.lock();

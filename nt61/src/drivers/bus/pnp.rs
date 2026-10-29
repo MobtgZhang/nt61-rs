@@ -907,20 +907,14 @@ mod tests {
     #[test]
     fn pci_driver_matches_hw_id_prefix() {
         init();
-        let node = pci_node(
-            b"PCI\\VEN_8086&DEV_100E",
-            b"PCI\\CC_02_00_00",
-        );
+        let node = pci_node(b"PCI\\VEN_8086&DEV_100E", b"PCI\\CC_02_00_00");
         assert!(find_driver(&node).is_some());
     }
 
     #[test]
     fn pci_driver_matches_compatible_id_prefix() {
         init();
-        let node = pci_node(
-            b"PCI\\VEN_1AF4&DEV_1000",
-            b"PCI\\CC_02_00_00",
-        );
+        let node = pci_node(b"PCI\\VEN_1AF4&DEV_1000", b"PCI\\CC_02_00_00");
         let driver = find_driver(&node).expect("network class driver");
         assert_eq!(driver.name, "PCI\\CC_02_");
     }

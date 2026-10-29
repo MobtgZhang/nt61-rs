@@ -51,14 +51,12 @@ static READY: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::n
 
 /// Pre-allocated sense buffer pool. Index 0 is reserved for the
 /// bootstrap default; the rest are handed out on demand.
-static SENSE_POOL: core::sync::atomic::AtomicUsize =
-    core::sync::atomic::AtomicUsize::new(0);
+static SENSE_POOL: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
 /// Pre-allocated SRB extension pool. A bump allocator tracks the
 /// next free slot; `allocate_srb_ext` and `free_srb_ext` manage
 /// the free list.
-static SRB_POOL: core::sync::atomic::AtomicUsize =
-    core::sync::atomic::AtomicUsize::new(0);
+static SRB_POOL: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
 static SRB_POOL_LOCK: crate::ke::sync::Spinlock<()> = crate::ke::sync::Spinlock::new(());
 

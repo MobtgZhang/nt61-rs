@@ -3432,7 +3432,11 @@ fn cmd_cprofile(arguments: &str) -> bool {
 }
 
 fn cmd_dirquota(arguments: &str) -> bool {
-    let subcommand = arguments.split_whitespace().next().unwrap_or("").to_lowercase();
+    let subcommand = arguments
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
     match subcommand.as_str() {
         "" => {
             output_line("DIRQUOTA: manages file-server directory quotas.");
@@ -3457,7 +3461,11 @@ fn cmd_dispdiag(arguments: &str) -> bool {
 }
 
 fn cmd_eventtriggers(arguments: &str) -> bool {
-    let subcommand = arguments.split_whitespace().next().unwrap_or("").to_lowercase();
+    let subcommand = arguments
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
     match subcommand.as_str() {
         "" | "/query" => {
             output_line("Event Triggers: no event triggers are configured.");

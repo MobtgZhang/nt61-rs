@@ -122,7 +122,8 @@ pub unsafe extern "C" fn nt_query_system_information(
             let page_base = crate::mm::pfn::get_database_base();
             s.number_of_physical_pages = page_count as u32;
             s.lowest_physical_page_number = page_base as u32;
-            s.highest_physical_page_number = page_base.saturating_add(page_count.saturating_sub(1)) as u32;
+            s.highest_physical_page_number =
+                page_base.saturating_add(page_count.saturating_sub(1)) as u32;
             s.allocation_granularity = 0x10000; // 64 KiB
             s.minimum_user_mode_address = 0x10000 as PVOID;
             s.maximum_user_mode_address = 0x0000_7FFF_FFFF_FFFFusize as PVOID;
@@ -137,15 +138,15 @@ pub unsafe extern "C" fn nt_query_system_information(
             if write_user_object(system_information as u64, &s).is_err() {
                 return super::status::STATUS_ACCESS_VIOLATION;
             }
-                if !return_length.is_null()
-                    && write_user_object(
-                        return_length as u64,
-                        &(core::mem::size_of::<SystemBasicInformation>() as u32),
-                    )
-                    .is_err()
-                {
-                    return super::status::STATUS_ACCESS_VIOLATION;
-                }
+            if !return_length.is_null()
+                && write_user_object(
+                    return_length as u64,
+                    &(core::mem::size_of::<SystemBasicInformation>() as u32),
+                )
+                .is_err()
+            {
+                return super::status::STATUS_ACCESS_VIOLATION;
+            }
             STATUS_SUCCESS
         }
         1 => {
@@ -163,15 +164,15 @@ pub unsafe extern "C" fn nt_query_system_information(
             if write_user_object(system_information as u64, &s).is_err() {
                 return super::status::STATUS_ACCESS_VIOLATION;
             }
-                if !return_length.is_null()
-                    && write_user_object(
-                        return_length as u64,
-                        &(core::mem::size_of::<SystemProcessorInformation>() as u32),
-                    )
-                    .is_err()
-                {
-                    return super::status::STATUS_ACCESS_VIOLATION;
-                }
+            if !return_length.is_null()
+                && write_user_object(
+                    return_length as u64,
+                    &(core::mem::size_of::<SystemProcessorInformation>() as u32),
+                )
+                .is_err()
+            {
+                return super::status::STATUS_ACCESS_VIOLATION;
+            }
             STATUS_SUCCESS
         }
         3 => {

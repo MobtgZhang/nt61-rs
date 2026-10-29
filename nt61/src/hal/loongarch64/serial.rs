@@ -88,7 +88,6 @@ pub fn write_hex_u64_always(v: u64) {
     }
 }
 
-
 /// write a single byte (alias used by HAL callers). Provided for
 /// parity with the other architectures' `serial::put_char`.
 #[inline(always)]

@@ -50,9 +50,15 @@ pub unsafe extern "C" fn nt_create_process(
     }
     let mut image_path = alloc::vec::Vec::new();
     if !object_attributes.is_null() {
-        if let Ok(attributes) = crate::mm::user_copy::read_user_object::<super::types::ObjectAttributes>(object_attributes as u64) {
+        if let Ok(attributes) = crate::mm::user_copy::read_user_object::<
+            super::types::ObjectAttributes,
+        >(object_attributes as u64)
+        {
             if !attributes.object_name.is_null() {
-                if let Ok(name) = crate::mm::user_copy::read_user_object::<super::types::UnicodeString>(attributes.object_name as u64) {
+                if let Ok(name) = crate::mm::user_copy::read_user_object::<
+                    super::types::UnicodeString,
+                >(attributes.object_name as u64)
+                {
                     let units = (name.length as usize) / 2;
                     if units > 0 && !name.buffer.is_null() {
                         let mut wide_bytes = alloc::vec![0u8; units * 2];
@@ -88,8 +94,7 @@ pub unsafe extern "C" fn nt_create_process(
         }
     }
     for port_handle in [debug_port, exception_port] {
-        if !port_handle.is_null()
-            && crate::libs::ntdll::file::lookup_handle(port_handle).is_none()
+        if !port_handle.is_null() && crate::libs::ntdll::file::lookup_handle(port_handle).is_none()
         {
             return STATUS_INVALID_HANDLE;
         }
@@ -107,12 +112,8 @@ pub unsafe extern "C" fn nt_create_process(
                     let child_table = (*process).object_table;
                     if !parent_table.is_null() && !child_table.is_null() {
                         unsafe {
-                            (*child_table)
-                                .slots
-                                .copy_from_slice(&(*parent_table).slots);
-                            (*child_table)
-                                .valid
-                                .copy_from_slice(&(*parent_table).valid);
+                            (*child_table).slots.copy_from_slice(&(*parent_table).slots);
+                            (*child_table).valid.copy_from_slice(&(*parent_table).valid);
                             (*child_table).next_slot = (*parent_table).next_slot;
                             (*child_table).handle_count.store(
                                 (*parent_table)

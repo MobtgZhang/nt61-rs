@@ -616,9 +616,7 @@ pub extern "C" fn nt_gdi_get_text_face_w(frame: &SyscallFrame) -> u64 {
 
     if face_name_ptr != 0 && count > 0 {
         // Return the number of characters copied (including null)
-        let name_utf16: [u16; 7] = [
-            0x0053, 0x0079, 0x0073, 0x0074, 0x0065, 0x006D, 0x0000,
-        ];
+        let name_utf16: [u16; 7] = [0x0053, 0x0079, 0x0073, 0x0074, 0x0065, 0x006D, 0x0000];
         let chars = (count as usize).min(name_utf16.len());
         let mut bytes = [0u8; 14];
         for (index, unit) in name_utf16[..chars].iter().enumerate() {
@@ -1589,7 +1587,12 @@ pub extern "C" fn nt_user_set_window_pos(frame: &SyscallFrame) -> u64 {
     let (cur_x, cur_y, cur_cx, cur_cy) = {
         let wm = crate::libs::win32k::window::WINDOW_MANAGER.lock();
         match wm.get_window_rect(hwnd) {
-            Some(rect) => (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top),
+            Some(rect) => (
+                rect.left,
+                rect.top,
+                rect.right - rect.left,
+                rect.bottom - rect.top,
+            ),
             None => (x, y, cx, cy),
         }
     };
@@ -1978,7 +1981,12 @@ pub extern "C" fn nt_user_get_window_rect(frame: &SyscallFrame) -> u64 {
     let rect = crate::libs::win32k::window::WINDOW_MANAGER
         .lock()
         .get_window_rect(hwnd)
-        .unwrap_or(crate::libs::win32k::objects::Rect { left: 0, top: 0, right: 800, bottom: 600 });
+        .unwrap_or(crate::libs::win32k::objects::Rect {
+            left: 0,
+            top: 0,
+            right: 800,
+            bottom: 600,
+        });
     let mut rect_bytes = [0u8; 16];
     rect_bytes[0..4].copy_from_slice(&rect.left.to_le_bytes());
     rect_bytes[4..8].copy_from_slice(&rect.top.to_le_bytes());
@@ -2007,7 +2015,12 @@ pub extern "C" fn nt_user_get_client_rect(frame: &SyscallFrame) -> u64 {
     let rect = crate::libs::win32k::window::WINDOW_MANAGER
         .lock()
         .get_client_rect(hwnd)
-        .unwrap_or(crate::libs::win32k::objects::Rect { left: 0, top: 0, right: 800, bottom: 600 });
+        .unwrap_or(crate::libs::win32k::objects::Rect {
+            left: 0,
+            top: 0,
+            right: 800,
+            bottom: 600,
+        });
     let mut rect_bytes = [0u8; 16];
     rect_bytes[0..4].copy_from_slice(&rect.left.to_le_bytes());
     rect_bytes[4..8].copy_from_slice(&rect.top.to_le_bytes());

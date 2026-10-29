@@ -458,8 +458,7 @@ fn calibrate_timer(hz: u32) -> u32 {
         return 0;
     }
 
-    let target_tsc_ticks =
-        crate::hal::x86_64::pit::tsc_frequency_hz() * CALIBRATION_MS / 1000;
+    let target_tsc_ticks = crate::hal::x86_64::pit::tsc_frequency_hz() * CALIBRATION_MS / 1000;
     let start_tsc = unsafe { core::arch::x86_64::_rdtsc() };
 
     write_lapic(
@@ -472,8 +471,7 @@ fn calibrate_timer(hz: u32) -> u32 {
     let start_count = timer_current();
 
     loop {
-        let elapsed_tsc = unsafe { core::arch::x86_64::_rdtsc() }
-            .wrapping_sub(start_tsc);
+        let elapsed_tsc = unsafe { core::arch::x86_64::_rdtsc() }.wrapping_sub(start_tsc);
         if elapsed_tsc >= target_tsc_ticks {
             break;
         }

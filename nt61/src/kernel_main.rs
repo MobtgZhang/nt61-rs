@@ -245,7 +245,6 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     #[cfg(target_arch = "loongarch64")]
     crate::arch::loongarch64::paging::vector_page_check("fb");
 
-
     // From here on the operator sees the GUI panel rather than the
     // raw COM1 boot trace. Panic paths still bypass this gate.
     // Release builds hide boot noise from COM1; debug builds keep it
@@ -268,7 +267,6 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     crate::arch::boot::early_write_str(b"K:DISPLAY_DONE\r\n");
     #[cfg(target_arch = "loongarch64")]
     crate::arch::loongarch64::paging::vector_page_check("display");
-
 
     // Platform serial bring-up. This is deliberately after MM because
     // the logging/console layers allocate and because early diagnostics
@@ -296,7 +294,6 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     #[cfg(target_arch = "loongarch64")]
     crate::arch::loongarch64::paging::vector_page_check("boottimer");
 
-
     // ============================================================================
     // PHASE 1: Hardware initialization
     // ============================================================================
@@ -306,7 +303,6 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     crate::arch::boot::early_write_str(b"K:PHASE_DONE\r\n");
     #[cfg(target_arch = "loongarch64")]
     crate::arch::loongarch64::paging::vector_page_check("phase");
-
 
     boot_debug_print!("Masking boot interrupts... ");
     crate::arch::boot::early_write_str(b"K:MASK_ENTER\r\n");
@@ -329,7 +325,6 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     crate::arch::boot::early_write_str(b"K:SMP_DONE\r\n");
     boot_println!("OK");
 
-
     // Install the early-boot kernel stack before any potentially
     // interruptible code path runs.
     arch::init_kernel_stack();
@@ -337,7 +332,6 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     boot_debug_print!("Initializing HAL... ");
     hal::init();
     boot_println!("OK");
-
 
     // Bring up the abstract text console *before* any subsequent
     // `boot_println!` call. This enables the graphical mirror path
@@ -349,7 +343,6 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
 
     crate::hal::text_console::init();
 
-
     // ============================================================================
     // PHASE 2: Kernel Executive (ke)
     // ============================================================================
@@ -357,14 +350,12 @@ pub extern "C" fn kernel_main(boot_info: &BootInfo) -> ! {
     phase_header!(1, "Kernel Executive");
     ke::init();
 
-
     // ============================================================================
     // PHASE 3: Object Manager (ob)
     // ============================================================================
 
     phase_header!(2, "Object Manager");
     ob::init();
-
 
     // ============================================================================
     // PHASE 4: Registry / Configuration Manager
@@ -766,7 +757,6 @@ pub fn run_safe_mode_shell(mode: servers::cmd::ShellMode) -> ! {
 // System Image Database
 // =====================================================================
 
-
 /// Kernel address space layout for system images (Windows 7 style)
 pub mod kernel_layout {
     /// ntoskrnl.exe base address
@@ -872,7 +862,6 @@ fn load_system_files() {
     if loaded_count == 0 {
         boot_println!("    ERROR: no system images were loaded from the system partition");
     }
-
 }
 
 /// Run smoke tests for every kernel subsystem that ships one.

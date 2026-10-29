@@ -103,6 +103,7 @@ const FALLBACK_CELL_WIDTH: u32 = FONT_HEIGHT * 3 / 4;
 /// lazily on the first text draw because `fontdue` requires heap
 /// allocations that are not available during early `#[no_mangle]`
 /// entry.
+#[cfg(not(target_arch = "riscv64"))]
 static FONT_FACE: spin::Once<Option<nt61_fonts::FontFace>> = spin::Once::new();
 
 /// Set while the embedded face is being parsed inside `FONT_FACE`.
@@ -113,6 +114,7 @@ static FONT_FACE: spin::Once<Option<nt61_fonts::FontFace>> = spin::Once::new();
 /// runs, so a blocking re-entry would deadlock the whole kernel (the
 /// panic handler itself draws through bootvid). The guard converts
 /// any re-entrant call into the fallback metrics instead.
+#[cfg(not(target_arch = "riscv64"))]
 static FONT_PARSE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
 /// Resolve the embedded terminal face, parsing it at most once.

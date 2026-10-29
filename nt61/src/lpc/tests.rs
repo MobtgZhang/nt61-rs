@@ -294,11 +294,8 @@ pub fn test_security() -> bool {
     }
 
     let system_token = crate::se::token::Token::new_primary(crate::se::sid::SID_LOCAL_SYSTEM);
-    if !security::check_port_access_with_token(
-        &port_sec,
-        &system_token,
-        security::PORT_ACCESS_ALL,
-    ) {
+    if !security::check_port_access_with_token(&port_sec, &system_token, security::PORT_ACCESS_ALL)
+    {
         return false;
     }
 

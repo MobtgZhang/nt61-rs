@@ -229,7 +229,10 @@ mod tests {
             get_clipboard_data(CF_UNICODETEXT).as_deref(),
             Some(&b"hello"[..])
         );
-        assert_eq!(get_clipboard_data(CF_DIB).as_deref(), Some(&[1u8, 2, 3][..]));
+        assert_eq!(
+            get_clipboard_data(CF_DIB).as_deref(),
+            Some(&[1u8, 2, 3][..])
+        );
         assert_eq!(get_clipboard_data(0).as_deref(), Some(&b"hello"[..]));
         assert_eq!(get_clipboard_format(), CF_UNICODETEXT);
         assert!(is_format_available(CF_DIB));
@@ -242,7 +245,10 @@ mod tests {
             get_clipboard_data(CF_UNICODETEXT).as_deref(),
             Some(&b"world!"[..])
         );
-        assert_eq!(get_clipboard_data(CF_DIB).as_deref(), Some(&[1u8, 2, 3][..]));
+        assert_eq!(
+            get_clipboard_data(CF_DIB).as_deref(),
+            Some(&[1u8, 2, 3][..])
+        );
 
         // Over-sized and empty objects are rejected.
         let big = vec![0u8; MAX_CLIPBOARD_DATA + 1];

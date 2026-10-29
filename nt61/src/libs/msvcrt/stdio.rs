@@ -516,7 +516,13 @@ unsafe fn format_va_list(format: *const CChar, mut args: VaList<'_>) -> Vec<u8> 
                 } else {
                     (16, specifier == b'X')
                 };
-                write_unsigned(&mut output, value, base, uppercase, &spec_bytes[1..spec_end - 1]);
+                write_unsigned(
+                    &mut output,
+                    value,
+                    base,
+                    uppercase,
+                    &spec_bytes[1..spec_end - 1],
+                );
             }
             b'c' => output.push(args.next_arg::<CInt>() as u8),
             b's' => {
@@ -560,7 +566,9 @@ fn parse_width(spec: &[u8]) -> Option<usize> {
     }
     let mut width = 0usize;
     for digit in &spec[index..digits] {
-        width = width.saturating_mul(10).saturating_add((digit - b'0') as usize);
+        width = width
+            .saturating_mul(10)
+            .saturating_add((digit - b'0') as usize);
     }
     Some(width)
 }
@@ -586,13 +594,7 @@ fn write_signed(output: &mut Vec<u8>, value: i64, spec: &[u8]) {
     output.extend(digits.iter().rev());
 }
 
-fn write_unsigned(
-    output: &mut Vec<u8>,
-    value: u64,
-    base: u32,
-    uppercase: bool,
-    spec: &[u8],
-) {
+fn write_unsigned(output: &mut Vec<u8>, value: u64, base: u32, uppercase: bool, spec: &[u8]) {
     let width = parse_width(spec).unwrap_or(0);
     let digits = if uppercase {
         b"0123456789ABCDEF"
@@ -608,7 +610,10 @@ fn write_unsigned(
         chars.push(digits[(remaining % base as u64) as usize]);
         remaining /= base as u64;
     }
-    output.extend(core::iter::repeat_n(b'0', width.saturating_sub(chars.len())));
+    output.extend(core::iter::repeat_n(
+        b'0',
+        width.saturating_sub(chars.len()),
+    ));
     output.extend(chars.iter().rev());
 }
 
@@ -718,11 +723,7 @@ pub unsafe extern "C" fn vprintf(format: *const CChar, ap: VaList<'_>) -> CInt {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C" fn vfprintf(
-    stream: *mut FILE,
-    format: *const CChar,
-    ap: VaList<'_>,
-) -> CInt {
+pub unsafe extern "C" fn vfprintf(stream: *mut FILE, format: *const CChar, ap: VaList<'_>) -> CInt {
     if stream.is_null() || format.is_null() {
         return -1;
     }

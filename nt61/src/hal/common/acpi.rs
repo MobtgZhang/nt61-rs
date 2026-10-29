@@ -12,8 +12,8 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use core::ptr;
 use core::cell::UnsafeCell;
+use core::ptr;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(target_arch = "x86_64")]

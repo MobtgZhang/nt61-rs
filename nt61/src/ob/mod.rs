@@ -1634,7 +1634,9 @@ unsafe fn try_delete_object_locked(header: *mut ObjectHeader) -> bool {
                 continue;
             }
             for i in 0..crate::ps::process::HANDLE_TABLE_SIZE {
-                if unsafe { (*table).valid[i] != 0 && core::ptr::eq((*table).slots[i], header as *mut ()) } {
+                if unsafe {
+                    (*table).valid[i] != 0 && core::ptr::eq((*table).slots[i], header as *mut ())
+                } {
                     unsafe {
                         (*table).valid[i] = 0;
                         (*table).slots[i] = core::ptr::null_mut();
@@ -2191,11 +2193,7 @@ pub fn ob_set_security_descriptor(
                 let _ = pool::free(new_sd as *mut u8);
                 return STATUS_INSUFFICIENT_RESOURCES;
             }
-            core::ptr::copy_nonoverlapping(
-                src_sd.dacl as *const u8,
-                new_dacl as *mut u8,
-                acl_size,
-            );
+            core::ptr::copy_nonoverlapping(src_sd.dacl as *const u8, new_dacl as *mut u8, acl_size);
             (*new_sd).dacl = new_dacl as *const crate::se::acl::Acl;
         }
         if !src_sd.sacl.is_null() {
@@ -2206,11 +2204,7 @@ pub fn ob_set_security_descriptor(
                 let _ = pool::free(new_sd as *mut u8);
                 return STATUS_INSUFFICIENT_RESOURCES;
             }
-            core::ptr::copy_nonoverlapping(
-                src_sd.sacl as *const u8,
-                new_sacl as *mut u8,
-                acl_size,
-            );
+            core::ptr::copy_nonoverlapping(src_sd.sacl as *const u8, new_sacl as *mut u8, acl_size);
             (*new_sd).sacl = new_sacl as *const crate::se::acl::Acl;
         }
 

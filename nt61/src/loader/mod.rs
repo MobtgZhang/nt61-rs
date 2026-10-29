@@ -3,8 +3,8 @@
 //! Windows PE32/PE32+ executable loading
 //! Implements the NT OS Loader
 
-use core::sync::atomic::{AtomicBool, Ordering};
 use core::mem::MaybeUninit;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 /// DOS header
 #[repr(C)]
@@ -762,9 +762,7 @@ pub fn load_image_full(
         bytes[opt_off + 0x3E],
         bytes[opt_off + 0x3F],
     ]) as usize;
-    let header_copy_len = size_of_headers
-        .min(bytes.len())
-        .min(img.len());
+    let header_copy_len = size_of_headers.min(bytes.len()).min(img.len());
     img[..header_copy_len].copy_from_slice(&bytes[..header_copy_len]);
     // Copy sections. Section table starts right after the optional
     // header.
@@ -1946,7 +1944,6 @@ pub fn load_named_image_into_user_address_space(
     }
 }
 
-
 fn load_raw_image_into_user_address_space(
     pml4_phys: u64,
     image: &[u8],
@@ -2193,6 +2190,7 @@ fn load_raw_image_into_user_address_space(
 /// This completes the PE pipeline for user-mode images: the bytes the
 /// loader validated (relocated, IAT-patched) are the bytes user code
 /// executes, instead of a half-mapped re-parse of the raw file.
+#[cfg(not(target_arch = "riscv64"))]
 fn map_prebuilt_image_into_user_address_space(
     pml4_phys: u64,
     loaded: &LoadedImage,

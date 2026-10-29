@@ -3,16 +3,14 @@
 //! Implements Windows NT registry functions for in-memory registry storage.
 
 use crate::kprintln;
-use crate::mm::user_copy::{
-    copy_from_user, probe_user_write, read_user_object, read_user_unicode_string,
-    write_user_object,
-};
 use crate::libs::ntdll::status::{
-    STATUS_ACCESS_DENIED, STATUS_ACCESS_VIOLATION, STATUS_INVALID_HANDLE,
-    STATUS_BUFFER_TOO_SMALL, STATUS_INVALID_PARAMETER, STATUS_OBJECT_NAME_NOT_FOUND,
-    STATUS_SUCCESS,
+    STATUS_ACCESS_DENIED, STATUS_ACCESS_VIOLATION, STATUS_BUFFER_TOO_SMALL, STATUS_INVALID_HANDLE,
+    STATUS_INVALID_PARAMETER, STATUS_OBJECT_NAME_NOT_FOUND, STATUS_SUCCESS,
 };
 use crate::libs::ntdll::types::{ObjectAttributes, UnicodeString, HANDLE, NTSTATUS, PVOID};
+use crate::mm::user_copy::{
+    copy_from_user, probe_user_write, read_user_object, read_user_unicode_string, write_user_object,
+};
 use core::ptr::null_mut;
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -507,10 +505,8 @@ fn registry_access_allowed(key: *mut RegistryKey, desired_access: u32) -> bool {
         return false;
     }
 
-    let (result, granted) =
-        se_access_check(ObTypeIndex::Key, security, desired_access, token);
-    result == AccessCheckResult::Allowed
-        && (granted & desired_access) == desired_access
+    let (result, granted) = se_access_check(ObTypeIndex::Key, security, desired_access, token);
+    result == AccessCheckResult::Allowed && (granted & desired_access) == desired_access
 }
 
 /// Find a subkey by name (case-sensitive) under the given parent.
@@ -540,7 +536,6 @@ pub fn find_subkey(parent: *mut RegistryKey, name: &[u16]) -> Option<*mut Regist
     }
     None
 }
-
 
 /// Set a value on a registry key. Returns `true` on success.
 pub fn set_value(key: *mut RegistryKey, name: &[u16], vtype: ValueType, data: &[u8]) -> bool {
@@ -984,9 +979,9 @@ pub unsafe extern "C" fn nt_query_value_key(
     // validation path (required-size report, buffer-size check and user
     // probe) is shared so it cannot be forgotten per branch.
     const HEADER_SIZES: [usize; 3] = [
-        KEY_VALUE_BASIC_INFORMATION_SIZE,  // 0: KeyValueBasicInformation
-        KEY_VALUE_FULL_INFORMATION_SIZE,   // 1: KeyValueFullInformation
-        0x18,                              // 2: KeyValuePartialInformation
+        KEY_VALUE_BASIC_INFORMATION_SIZE, // 0: KeyValueBasicInformation
+        KEY_VALUE_FULL_INFORMATION_SIZE,  // 1: KeyValueFullInformation
+        0x18,                             // 2: KeyValuePartialInformation
     ];
 
     let class = key_value_information_class as usize;
@@ -1057,7 +1052,11 @@ pub unsafe extern "C" fn nt_query_value_key(
                 // Type (4 bytes) + DataLength (4 bytes), then the data.
                 let len_bytes = (data_size as u32).to_le_bytes();
                 core::ptr::copy_nonoverlapping(len_bytes.as_ptr(), info_ptr.add(8), 4);
-                core::ptr::copy_nonoverlapping(data_slice.as_ptr(), info_ptr.add(header_size), data_size);
+                core::ptr::copy_nonoverlapping(
+                    data_slice.as_ptr(),
+                    info_ptr.add(header_size),
+                    data_size,
+                );
             }
         }
     }
@@ -1074,10 +1073,7 @@ unsafe fn copy_utf16_name(dst: *mut u8, name: &[u16]) {
 }
 
 /// Finds a value by name and returns (type, data-slice).
-fn find_value(
-    key: *mut RegistryKey,
-    name: &[u16],
-) -> Option<(ValueType, &[u8])> {
+fn find_value(key: *mut RegistryKey, name: &[u16]) -> Option<(ValueType, &[u8])> {
     if key.is_null() {
         return None;
     }
@@ -1262,11 +1258,10 @@ pub unsafe extern "C" fn nt_delete_value_key(
     }
 
     // Extract ValueName UTF-16 string.
-    let name_slice =
-        match read_user_unicode_string(value_name as u64, MAX_VALUE_NAME_LEN * 2) {
-            Ok(value) => value,
-            Err(_) => return STATUS_OBJECT_NAME_NOT_FOUND,
-        };
+    let name_slice = match read_user_unicode_string(value_name as u64, MAX_VALUE_NAME_LEN * 2) {
+        Ok(value) => value,
+        Err(_) => return STATUS_OBJECT_NAME_NOT_FOUND,
+    };
     let name_len_u16 = name_slice.len();
 
     unsafe {
@@ -1984,8 +1979,7 @@ mod tests {
             assert_eq!(status, STATUS_SUCCESS);
 
             // Parent no longer lists the child.
-            let still_listed = (0..(*root).child_count)
-                .any(|i| (*root).children[i] == Some(child));
+            let still_listed = (0..(*root).child_count).any(|i| (*root).children[i] == Some(child));
             assert!(!still_listed);
 
             // The handle slot was invalidated.
@@ -2022,8 +2016,7 @@ mod tests {
         unsafe {
             let root = root_key();
             let parent = create_subkey(root, &name_of("DeleteParentTest")).unwrap();
-            let _child =
-                create_subkey(parent, &name_of("DeleteParentTestChild")).unwrap();
+            let _child = create_subkey(parent, &name_of("DeleteParentTestChild")).unwrap();
 
             let slot = allocate_handle_slot(parent, DELETE_RIGHT).unwrap();
             let handle = (slot + 1) as HANDLE;

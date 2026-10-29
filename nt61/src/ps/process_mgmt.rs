@@ -216,12 +216,7 @@ pub fn terminate_process_by_pid(pid: u64, force: bool) -> Result<(), NTSTATUS> {
 }
 
 #[cfg(test)]
-fn register_test_process(
-    command: &str,
-    work_dir: Option<&str>,
-    priority: u8,
-    pid: u64,
-) -> u64 {
+fn register_test_process(command: &str, work_dir: Option<&str>, priority: u8, pid: u64) -> u64 {
     let mut table = PROCESS_TABLE.lock();
     table.processes.push(ProcessEntry {
         pid,

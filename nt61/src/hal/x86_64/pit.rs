@@ -135,8 +135,7 @@ pub fn init(hz: u32) -> bool {
         return false;
     }
 
-    let command =
-        mode::SEL_CHAN0 | mode::ACCESS_LOHI | mode::MODE_2 | mode::BINARY;
+    let command = mode::SEL_CHAN0 | mode::ACCESS_LOHI | mode::MODE_2 | mode::BINARY;
     write_port_uchar(PIT_COMMAND, command);
     write_port_uchar(PIT_CHANNEL0, (divisor & 0xFF) as u8);
     write_port_uchar(PIT_CHANNEL0, ((divisor >> 8) & 0xFF) as u8);

@@ -39,7 +39,11 @@ impl Transport for AnyTransport {
         }
     }
 
-    unsafe fn setup_queue(&mut self, index: u16, queue: &crate::drivers::virtio::queue::QueueLayout) -> bool {
+    unsafe fn setup_queue(
+        &mut self,
+        index: u16,
+        queue: &crate::drivers::virtio::queue::QueueLayout,
+    ) -> bool {
         match self {
             AnyTransport::Pci(t) => PciTransport::setup_queue(t, index, queue),
             AnyTransport::Mmio(t) => MmioTransport::setup_queue(t, index, queue),
@@ -153,11 +157,7 @@ fn virtio_type_from_pci_id(pci_id: u16) -> Option<u32> {
 
 /// Bring one discovered device up over its transport and record it
 /// under the discovered index.
-unsafe fn attach_device(
-    devices: &mut VirtioDevices,
-    virtio_type: u32,
-    transport: AnyTransport,
-) {
+unsafe fn attach_device(devices: &mut VirtioDevices, virtio_type: u32, transport: AnyTransport) {
     let index = devices
         .transports
         .iter()
@@ -289,10 +289,8 @@ pub unsafe fn probe_virtio_devices() -> VirtioDevices {
     crate::hal::serial::write_string_always("[RP] enter\r\n");
     const VIRTIO_MMIO_BASE: u64 = crate::drivers::arch::riscv64::MMIO_BASE;
     const VIRTIO_MMIO_SIZE: u64 = crate::drivers::arch::riscv64::MMIO_SLOTS as u64 * 0x1000;
-    let mmio_mapped = crate::arch::riscv64::paging::identity_map_region(
-        VIRTIO_MMIO_BASE,
-        VIRTIO_MMIO_SIZE,
-    );
+    let mmio_mapped =
+        crate::arch::riscv64::paging::identity_map_region(VIRTIO_MMIO_BASE, VIRTIO_MMIO_SIZE);
     crate::hal::serial::write_string_always("[RP] mmio mapping=");
     crate::hal::serial::write_string_always(if mmio_mapped { "ok" } else { "fail" });
     crate::hal::serial::write_string_always("\r\n");

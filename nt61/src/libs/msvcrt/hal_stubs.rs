@@ -16,7 +16,11 @@ pub fn read_rtc_timestamp() -> i64 {
         // rather than wall-clock when the RTC is unavailable.
         let counter = crate::arch::common::counter::read_counter();
         let freq = crate::libs::msvcrt::hal_stubs::tsc_frequency();
-        if freq == 0 { 0 } else { (counter / freq) as i64 }
+        if freq == 0 {
+            0
+        } else {
+            (counter / freq) as i64
+        }
     }
 }
 
