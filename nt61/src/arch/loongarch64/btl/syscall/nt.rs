@@ -35,32 +35,9 @@ pub mod nt {
 /// LA64-native syscall index. Returns `None` if the syscall is not
 /// supported yet (the kernel then returns -ENOSYS to the guest).
 pub fn translate_nt_syscall(nr: u32) -> Option<u64> {
-    let mapping: &[(u32, u64)] = &[
-        (nt::NT_ALLOCATE_VIRTUAL_MEMORY, 0x18),
-        (nt::NT_FREE_VIRTUAL_MEMORY, 0x1B),
-        (nt::NT_OPEN_FILE, 0x33),
-        (nt::NT_READ_FILE, 0x3F),
-        (nt::NT_WRITE_FILE, 0x48),
-        (nt::NT_CLOSE, 0x0F),
-        (nt::NT_CREATE_FILE, 0x42),
-        (nt::NT_QUERY_INFORMATION_FILE, 0x37),
-        (nt::NT_SET_INFORMATION_FILE, 0x39),
-        (nt::NT_TERMINATE_PROCESS, 0x29),
-        (nt::NT_TERMINATE_THREAD, 0x2B),
-        (nt::NT_DELAY_EXECUTION, 0x55),
-        (nt::NT_WAIT_FOR_SINGLE_OBJECT, 0x58),
-        (nt::NT_WAIT_FOR_MULTIPLE_OBJECTS, 0x5B),
-        (nt::NT_DEVICE_IO_CONTROL_FILE, 0x44),
-        (nt::NT_QUERY_VIRTUAL_MEMORY, 0x52),
-        (nt::NT_CREATE_SECTION, 0x4A),
-        (nt::NT_MAP_VIEW_OF_SECTION, 0x4B),
-        (nt::NT_UNMAP_VIEW_OF_SECTION, 0x4C),
-        (nt::NT_OPEN_PROCESS_TOKEN, 0x36),
-    ];
-    for &(n, t) in mapping {
-        if n == nr {
-            return Some(t);
-        }
+    if crate::ke::ssdt_common::has_entry(nr as usize) {
+        Some(nr as u64)
+    } else {
+        None
     }
-    None
 }
