@@ -44,7 +44,7 @@
 //! Phase 6 adds performance counters and self-modifying code
 //! detection.
 
-#![cfg(feature = "btl")]
+#![cfg(any(feature = "btl", test))]
 
 pub mod cache;
 pub mod codegen;
@@ -55,6 +55,10 @@ pub mod perf;
 pub mod runtime;
 pub mod syscall_glue;
 pub mod translator;
+
+pub use crate::arch::common::btl::abi::{normalize_syscall_args, GuestAbi};
+pub use crate::arch::common::btl::exec::{execute_block, GuestState, SyscallHook};
+pub use crate::arch::common::btl::memory::{GuestAddressSpace, GuestMemory};
 
 /// Kernel-mode entry point. Brings the BTL's subsystems online
 /// in dependency order. Called by [`crate::arch::riscv64::init`].
