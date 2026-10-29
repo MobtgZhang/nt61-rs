@@ -576,7 +576,7 @@ pub fn insert_object_id_entry(
     object_id: u64,
     sub_sequence: u64,
     record_lba: u64,
-    record_size: u32,
+    _record_size: u32,
 ) -> Result<(), ()> {
     let mut root = load_object_table_root(fs)?;
     let key = RefsBtreeKey {

@@ -1039,7 +1039,7 @@ pub fn update_secure_sds(
 }
 
 /// Default `$SDS` descriptor used for newly created files and directories.
-pub fn default_sds_entry(security_id: SecurityId) -> alloc::vec::Vec<u8> {
+pub fn default_sds_entry(_security_id: SecurityId) -> alloc::vec::Vec<u8> {
     let descriptor = NtfsSecurityDescriptor::new_default();
     serialize_sds_descriptor(&descriptor)
 }

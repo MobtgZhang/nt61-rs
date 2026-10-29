@@ -1968,7 +1968,7 @@ pub fn delete_file_in_dir_long(
     } else {
         short_name_for_long(long_name, 1)
     };
-    let (cluster, offset, entry) =
+    let (cluster, offset, _entry) =
         find_dir_entry_location(fs, dir_cluster, &short_name).ok_or(())?;
     delete_lfn_entries(fs, cluster, offset, &short_name)?;
     delete_file_entry(fs, cluster, offset)?;
@@ -2022,7 +2022,6 @@ pub fn rename_file_in_dir_long(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::drivers::storage::ramdisk;
     use crate::ke::sync::Spinlock;
 
     static FAT32_TEST_LOCK: Spinlock<()> = Spinlock::new(());
