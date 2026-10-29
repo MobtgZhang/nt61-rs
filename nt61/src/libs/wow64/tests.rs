@@ -558,6 +558,117 @@ fn test_pe32_optional_header_size() {
 }
 
 #[test]
+fn test_pe32_relocation_and_import_resolution() {
+    const IMAGE_BASE: u32 = 0x0040_0000;
+    const LOAD_BASE: u32 = 0x0050_0000;
+    const TARGET_RVA: u32 = 0x0180;
+    const RELOCATION_RVA: u32 = 0x0400;
+    const IMPORT_RVA: u32 = 0x0200;
+    const DLL_NAME_RVA: u32 = 0x0250;
+    const HINT_NAME_RVA: u32 = 0x0260;
+    const IAT_RVA: u32 = 0x0280;
+    const ORIGINAL_THUNK_RVA: u32 = 0x0300;
+
+    let mut data = alloc::vec![0u8; 0x0800];
+    data[0] = b'M';
+    data[1] = b'Z';
+    data[0x3C..0x40].copy_from_slice(&0x0000_0040u32.to_le_bytes());
+    data[0x40..0x44].copy_from_slice(&0x0000_4550u32.to_le_bytes());
+    data[0x44..0x46].copy_from_slice(&pe32::IMAGE_FILE_MACHINE_I386.to_le_bytes());
+    data[0x46..0x48].copy_from_slice(&1u16.to_le_bytes());
+    data[0x54..0x56].copy_from_slice(&0x00E0u16.to_le_bytes());
+    data[0x56..0x58].copy_from_slice(&0x0102u16.to_le_bytes());
+
+    data[0x58..0x5A].copy_from_slice(&pe32::IMAGE_NT_OPTIONAL_HDR32_MAGIC.to_le_bytes());
+    data[0x5C..0x60].copy_from_slice(&0x0000_0100u32.to_le_bytes());
+    data[0x60..0x64].copy_from_slice(&0x0000_0200u32.to_le_bytes());
+    data[0x68..0x6C].copy_from_slice(&0x0000_0010u32.to_le_bytes());
+    data[0x6C..0x70].copy_from_slice(&0x0000_0000u32.to_le_bytes());
+    data[0x70..0x74].copy_from_slice(&0x0000_0200u32.to_le_bytes());
+    data[0x74..0x78].copy_from_slice(&IMAGE_BASE.to_le_bytes());
+    data[0x78..0x7C].copy_from_slice(&0x0000_1000u32.to_le_bytes());
+    data[0x7C..0x80].copy_from_slice(&0x0000_0200u32.to_le_bytes());
+    data[0x80..0x82].copy_from_slice(&6u16.to_le_bytes());
+    data[0x82..0x84].copy_from_slice(&1u16.to_le_bytes());
+    data[0x88..0x8A].copy_from_slice(&6u16.to_le_bytes());
+    data[0x8A..0x8C].copy_from_slice(&1u16.to_le_bytes());
+    data[0x90..0x94].copy_from_slice(&0x0000_1000u32.to_le_bytes());
+    data[0x94..0x98].copy_from_slice(&0x0000_0200u32.to_le_bytes());
+    data[0x9C..0x9E].copy_from_slice(&3u16.to_le_bytes());
+    data[0xB4..0xB8].copy_from_slice(&16u32.to_le_bytes());
+
+    let section_header_offset = 0x0138;
+    let name = b".text\0\0\0";
+    data[section_header_offset..section_header_offset + 8].copy_from_slice(name);
+    data[section_header_offset + 8..section_header_offset + 12]
+        .copy_from_slice(&0x0000_0600u32.to_le_bytes());
+    data[section_header_offset + 12..section_header_offset + 16]
+        .copy_from_slice(&0x0000_0000u32.to_le_bytes());
+    data[section_header_offset + 16..section_header_offset + 20]
+        .copy_from_slice(&0x0000_0600u32.to_le_bytes());
+    data[section_header_offset + 20..section_header_offset + 24]
+        .copy_from_slice(&0x0000_0200u32.to_le_bytes());
+
+    let relocation_directory_offset = 0x00B8 + 5 * 8;
+    data[relocation_directory_offset..relocation_directory_offset + 4]
+        .copy_from_slice(&RELOCATION_RVA.to_le_bytes());
+    data[relocation_directory_offset + 4..relocation_directory_offset + 8]
+        .copy_from_slice(&0x0000_000Cu32.to_le_bytes());
+
+    let import_directory_offset = 0x00B8 + 1 * 8;
+    data[import_directory_offset..import_directory_offset + 4]
+        .copy_from_slice(&IMPORT_RVA.to_le_bytes());
+    data[import_directory_offset + 4..import_directory_offset + 8]
+        .copy_from_slice(&0x0000_0028u32.to_le_bytes());
+
+    data[0x0380..0x0384].copy_from_slice(&0x0040_1234u32.to_le_bytes());
+    data[0x0600..0x0604].copy_from_slice(&0x0000_0000u32.to_le_bytes());
+    data[0x0604..0x0608].copy_from_slice(&0x0000_000Cu32.to_le_bytes());
+    data[0x0608..0x060A].copy_from_slice(&((TARGET_RVA as u16) | (3 << 12)).to_le_bytes());
+    data[0x060A..0x060C].copy_from_slice(&0x0000u16.to_le_bytes());
+
+    data[0x0400..0x0404].copy_from_slice(&ORIGINAL_THUNK_RVA.to_le_bytes());
+    data[0x0404..0x0408].copy_from_slice(&0u32.to_le_bytes());
+    data[0x0408..0x040C].copy_from_slice(&0u32.to_le_bytes());
+    data[0x040C..0x0410].copy_from_slice(&DLL_NAME_RVA.to_le_bytes());
+    data[0x0410..0x0414].copy_from_slice(&IAT_RVA.to_le_bytes());
+    data[0x0450..0x0458].copy_from_slice(b"TEST.DLL");
+    data[0x0460..0x0462].copy_from_slice(&0x0000u16.to_le_bytes());
+    data[0x0462..0x0469].copy_from_slice(b"FooBar\0");
+    data[0x0500..0x0504].copy_from_slice(&HINT_NAME_RVA.to_le_bytes());
+    data[0x0504..0x0508].copy_from_slice(&0u32.to_le_bytes());
+
+    let image = pe32::load_pe32(&data, LOAD_BASE).expect("PE32 image should load");
+    assert_eq!(image.base_address, LOAD_BASE);
+    assert_eq!(image.imports.len(), 1);
+    assert_eq!(image.imports[0].dll_name, "TEST.DLL");
+    assert_eq!(image.imports[0].imports.len(), 1);
+    assert_eq!(image.imports[0].imports[0].name, "FooBar");
+    assert_eq!(image.imports[0].imports[0].thunk_rva, IAT_RVA);
+
+    let relocated_value = image
+        .slice_for_rva(TARGET_RVA, 4)
+        .map(|bytes| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+        .expect("relocation target");
+    assert_eq!(relocated_value, 0x0050_1234);
+
+    let mut image = image;
+    let resolved = pe32::resolve_imports(&mut image, |dll, import| {
+        if dll == "TEST.DLL" && import.name == "FooBar" {
+            Some(0x0051_2345)
+        } else {
+            None
+        }
+    });
+    assert!(resolved);
+    let iat_value = image
+        .slice_for_rva(IAT_RVA, 4)
+        .map(|bytes| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+        .expect("IAT entry");
+    assert_eq!(iat_value, 0x0051_2345);
+}
+
+#[test]
 fn test_wow64_address_space_has_no_overlap() {
     // KUSER_SHARED_DATA is a fixed read-only page in every process,
     // 32-bit or 64-bit, so it can never be handed to a system DLL.
@@ -594,6 +705,95 @@ fn test_wow64_process_creation_inputs() {
         PROCESS_CREATE_FLAGS_INHERIT_FROM_PARENT,
         PROCESS_WOW64_INFORMATION
     );
+}
+
+#[test]
+fn test_peb32_and_tib_layout() {
+    assert_eq!(core::mem::offset_of!(Peb32, image_base_address), 0x008);
+    assert_eq!(core::mem::offset_of!(Peb32, process_heap), 0x018);
+    assert_eq!(core::mem::offset_of!(Peb32, teb32), 0x074);
+    assert_eq!(core::mem::offset_of!(Peb32, os_major_version), 0x080);
+
+    assert_eq!(core::mem::offset_of!(Teb32, self_), 0x018);
+    assert_eq!(core::mem::offset_of!(Teb32, client_id), 0x020);
+    assert_eq!(
+        core::mem::offset_of!(Teb32, process_environment_block),
+        0x030
+    );
+    assert_eq!(core::mem::offset_of!(Teb32, last_error_value), 0x034);
+    assert!(core::mem::size_of::<Teb32>() >= 0x1000);
+}
+
+#[test]
+fn test_wow64_process_identification_and_query() {
+    let mut process = crate::ps::process::Eprocess::new();
+    assert!(!crate::ps::wow64_process::is_wow64_process(&process));
+    assert_eq!(
+        crate::ps::wow64_process::query_wow64_information(
+            &process,
+            crate::ps::wow64_process::Wow64ProcessInformationClass::Wow64Information
+        ),
+        0
+    );
+
+    process.set_wow64_flag(true);
+    process.set_wow64_peb32_va(PEB32_VIRTUAL_ADDRESS);
+    process.set_wow64_last_error(0x0000_0057);
+
+    assert!(crate::ps::wow64_process::is_wow64_process(&process));
+    assert_eq!(
+        crate::ps::wow64_process::get_peb32_address(&process),
+        PEB32_VIRTUAL_ADDRESS
+    );
+    assert_eq!(crate::ps::wow64_process::get_wow64_last_error(&process), 0x57);
+    assert_eq!(
+        crate::ps::wow64_process::query_wow64_information(
+            &process,
+            crate::ps::wow64_process::Wow64ProcessInformationClass::Wow64Information
+        ),
+        1
+    );
+    assert_eq!(
+        crate::ps::wow64_process::query_wow64_information(
+            &process,
+            crate::ps::wow64_process::Wow64ProcessInformationClass::SessionInformation
+        ),
+        process.session_id as u32
+    );
+    assert!(crate::ps::wow64_process::registry_redirection_enabled(&process));
+}
+
+#[test]
+fn test_wow64_thread_setup() {
+    let process = crate::ps::process::Eprocess::new();
+    let mut thread = crate::ps::thread::Ethread::new();
+    thread.client_id.set(0x0000_0123, 0x0000_0456);
+
+    let stack_top = TEB32_BASE_ADDRESS;
+    let teb32 = crate::ps::wow64_thread::initialize_wow64_thread(
+        &mut thread,
+        &process,
+        stack_top,
+    )
+    .expect("TEB32 allocation");
+
+    assert_eq!(thread.get_wow64_teb32(), teb32);
+    unsafe {
+        assert_eq!((*teb32).self_, teb32 as ULONG32);
+        assert_eq!((*teb32).stack_base, stack_top);
+        assert_eq!(
+            (*teb32).stack_limit,
+            stack_top
+                .checked_sub(crate::libs::wow64::wow64vas::WOW64_DEFAULT_STACK_SIZE)
+                .expect("stack size")
+        );
+        assert_eq!((*teb32).client_id.unique_process, 0x123);
+        assert_eq!((*teb32).client_id.unique_thread, 0x456);
+        assert_eq!(
+            (*teb32).process_environment_block,
+            PEB32_VIRTUAL_ADDRESS
+        );
+    }
 }
 
 // =============================================================================
