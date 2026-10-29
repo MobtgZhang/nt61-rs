@@ -533,7 +533,7 @@ pub fn ob_get_type_index(header: *const ObjectHeader) -> u8 {
     if header.is_null() {
         return 0xFF; // Invalid
     }
-    unsafe { (*header).type_index }
+    (header as *mut ObjectHeader).type_index()
 }
 
 /// Query the object type name from an object header.
@@ -656,6 +656,392 @@ impl ObjectHeader {
     }
 }
 
+/// Safe accessors for kernel-managed object headers.
+///
+/// Raw pointers remain in the public ABI, but each field access, ref-count
+/// transition, and pointer offset is validated and performed in one place.
+trait RawObjectHeaderAccess {
+    fn type_index(self) -> u8;
+    fn flags(self) -> u32;
+    fn is_deleting(self) -> bool;
+    fn ref_count(self) -> u32;
+    fn handle_count(self) -> u32;
+    fn directory(self) -> *mut Directory;
+    fn body(self) -> *mut ();
+    fn security_descriptor(self) -> *mut crate::se::seaccess::SecurityDescriptor;
+    fn set_directory(self, directory: *mut Directory);
+    fn set_security_descriptor(self, descriptor: *mut crate::se::seaccess::SecurityDescriptor);
+    fn set_deleting(self) -> bool;
+    fn increment_reference(self) -> u32;
+    fn decrement_reference(self) -> u32;
+    fn increment_handle_count(self) -> u32;
+    fn decrement_handle_count(self) -> u32;
+    fn object_body<T>(self) -> *mut T;
+}
+
+/// Safe accessors for manager-owned directory bodies.
+trait RawDirectoryAccess {
+    fn num_entries(self) -> u32;
+    fn set_num_entries(self, count: u32);
+    fn entry(self, index: usize) -> *mut ObjectHeader;
+    fn valid(self, index: usize) -> u8;
+    fn set_entry(self, index: usize, header: *mut ObjectHeader);
+    fn set_valid(self, index: usize, valid: u8);
+}
+
+impl RawDirectoryAccess for *mut Directory {
+    #[inline]
+    fn num_entries(self) -> u32 {
+        if self.is_null() {
+            return 0;
+        }
+        // SAFETY: Directory is pooled and zero-initialized by the manager.
+        unsafe { (*self).num_entries }
+    }
+
+    #[inline]
+    fn set_num_entries(self, count: u32) {
+        if self.is_null() {
+            return;
+        }
+        // SAFETY: callers hold NAMESPACE and validate the slot index.
+        unsafe { (*self).num_entries = count }
+    }
+
+    #[inline]
+    fn entry(self, index: usize) -> *mut ObjectHeader {
+        if self.is_null() || index >= MAX_DIR_ENTRIES {
+            return null_mut();
+        }
+        // SAFETY: the index is bounds-checked against the fixed NT directory
+        // representation.
+        unsafe { (*self).entries[index] }
+    }
+
+    #[inline]
+    fn valid(self, index: usize) -> u8 {
+        if self.is_null() || index >= MAX_DIR_ENTRIES {
+            return 0;
+        }
+        // SAFETY: the index is bounds-checked against the fixed NT directory
+        // representation.
+        unsafe { (*self).valid[index] }
+    }
+
+    #[inline]
+    fn set_entry(self, index: usize, header: *mut ObjectHeader) {
+        if self.is_null() || index >= MAX_DIR_ENTRIES {
+            return;
+        }
+        // SAFETY: the caller validates capacity and holds NAMESPACE.
+        unsafe { (*self).entries[index] = header }
+    }
+
+    #[inline]
+    fn set_valid(self, index: usize, valid: u8) {
+        if self.is_null() || index >= MAX_DIR_ENTRIES {
+            return;
+        }
+        // SAFETY: the caller validates the index and holds NAMESPACE.
+        unsafe { (*self).valid[index] = valid }
+    }
+
+}
+
+/// Safe accessors for manager-owned per-process handle tables.
+trait RawProcessHandleTableAccess {
+    fn next_slot(self) -> usize;
+    fn set_next_slot(self, next: usize);
+    fn slot(self, index: usize) -> *mut ();
+    fn valid(self, index: usize) -> u8;
+    fn set_slot(self, index: usize, object: *mut ());
+    fn set_valid(self, index: usize, valid: u8);
+    fn increment_handle_count(self);
+    fn decrement_handle_count(self);
+}
+
+impl RawProcessHandleTableAccess for *mut ProcessHandleTable {
+    #[inline]
+    fn next_slot(self) -> usize {
+        if self.is_null() {
+            return 0;
+        }
+        // SAFETY: the process handle table is manager-owned and initialized
+        // before handles are installed.
+        unsafe { (*self).next_slot }
+    }
+
+    #[inline]
+    fn set_next_slot(self, next: usize) {
+        if self.is_null() {
+            return;
+        }
+        // SAFETY: callers hold OB_DELETE_LOCK and keep the scan index in range.
+        unsafe { (*self).next_slot = next }
+    }
+
+    #[inline]
+    fn slot(self, index: usize) -> *mut () {
+        if self.is_null() || index >= crate::ps::process::HANDLE_TABLE_SIZE {
+            return null_mut();
+        }
+        // SAFETY: index is bounds-checked against the Windows-style fixed
+        // process handle table.
+        unsafe { (*self).slots[index] }
+    }
+
+    #[inline]
+    fn valid(self, index: usize) -> u8 {
+        if self.is_null() || index >= crate::ps::process::HANDLE_TABLE_SIZE {
+            return 0;
+        }
+        // SAFETY: index is bounds-checked against the fixed process table.
+        unsafe { (*self).valid[index] }
+    }
+
+    #[inline]
+    fn set_slot(self, index: usize, object: *mut ()) {
+        if self.is_null() || index >= crate::ps::process::HANDLE_TABLE_SIZE {
+            return;
+        }
+        // SAFETY: callers hold OB_DELETE_LOCK and validate the slot index.
+        unsafe { (*self).slots[index] = object }
+    }
+
+    #[inline]
+    fn set_valid(self, index: usize, valid: u8) {
+        if self.is_null() || index >= crate::ps::process::HANDLE_TABLE_SIZE {
+            return;
+        }
+        // SAFETY: callers hold OB_DELETE_LOCK and validate the slot index.
+        unsafe { (*self).valid[index] = valid }
+    }
+
+    #[inline]
+    fn increment_handle_count(self) {
+        if self.is_null() {
+            return;
+        }
+        // SAFETY: the atomic diagnostic count is initialized before use.
+        unsafe {
+            (*self).handle_count.fetch_add(1, Ordering::AcqRel);
+        }
+    }
+
+    #[inline]
+    fn decrement_handle_count(self) {
+        if self.is_null() {
+            return;
+        }
+        // SAFETY: the atomic diagnostic count is initialized before use.
+        unsafe {
+            (*self).handle_count.fetch_sub(1, Ordering::AcqRel);
+        }
+    }
+}
+
+/// Safe access to the object-table pointer stored in an EPROCESS.
+trait RawProcessObjectTableAccess {
+    fn object_table(self) -> *mut ProcessHandleTable;
+}
+
+impl RawProcessObjectTableAccess for *mut crate::ps::process::Eprocess {
+    #[inline]
+    fn object_table(self) -> *mut ProcessHandleTable {
+        if self.is_null() {
+            return null_mut();
+        }
+        // SAFETY: EPROCESS is initialized by the process manager before it can
+        // own handles; the object-table pointer remains manager-owned.
+        unsafe { (*self).object_table }
+    }
+}
+
+impl RawObjectHeaderAccess for *mut ObjectHeader {
+    #[inline]
+    fn type_index(self) -> u8 {
+        if self.is_null() {
+            return 0xff;
+        }
+        // SAFETY: NT object headers are allocated by the object manager from
+        // non-paged pool and remain valid while the manager owns them.
+        unsafe { (*self).type_index }
+    }
+
+    #[inline]
+    fn flags(self) -> u32 {
+        if self.is_null() {
+            return 0;
+        }
+        // SAFETY: flags are atomically initialized and owned by the header.
+        unsafe { (*self).flags.load(Ordering::Acquire) }
+    }
+
+    #[inline]
+    fn is_deleting(self) -> bool {
+        self.flags() & OB_FLAG_DELETING != 0
+    }
+
+    #[inline]
+    fn ref_count(self) -> u32 {
+        if self.is_null() {
+            return 0;
+        }
+        // SAFETY: ref_count is initialized before publication.
+        unsafe { (*self).ref_count.load(Ordering::Acquire) }
+    }
+
+    #[inline]
+    fn handle_count(self) -> u32 {
+        if self.is_null() {
+            return 0;
+        }
+        // SAFETY: handle_count is initialized before publication.
+        unsafe { (*self).handle_count.load(Ordering::Acquire) }
+    }
+
+    #[inline]
+    fn directory(self) -> *mut Directory {
+        if self.is_null() {
+            return null_mut();
+        }
+        // SAFETY: directory is either null or a directory allocated by this
+        // manager and is read while the object is live.
+        unsafe { (*self).directory }
+    }
+
+    #[inline]
+    fn body(self) -> *mut () {
+        if self.is_null() {
+            return null_mut();
+        }
+        // SAFETY: body is initialized to the end of the pooled allocation.
+        unsafe { (*self).body }
+    }
+
+    #[inline]
+    fn security_descriptor(self) -> *mut crate::se::seaccess::SecurityDescriptor {
+        if self.is_null() {
+            return null_mut();
+        }
+        // SAFETY: the descriptor pointer is initialized before publication and
+        // remains owned until the object delete path clears it.
+        unsafe { (*self).security_descriptor }
+    }
+
+    #[inline]
+    fn set_directory(self, directory: *mut Directory) {
+        if self.is_null() {
+            return;
+        }
+        // SAFETY: callers hold the namespace lock or own the unpublished
+        // object; the directory pointer is manager-allocated.
+        unsafe { (*self).directory = directory }
+    }
+
+    #[inline]
+    fn set_security_descriptor(self, descriptor: *mut crate::se::seaccess::SecurityDescriptor) {
+        if self.is_null() {
+            return;
+        }
+        // SAFETY: callers hold object-manager serialization and descriptor
+        // ownership is transferred to the object.
+        unsafe { (*self).security_descriptor = descriptor }
+    }
+
+    #[inline]
+    fn set_deleting(self) -> bool {
+        if self.is_null() {
+            return false;
+        }
+        // SAFETY: callers hold OB_DELETE_LOCK; compare_exchange provides the
+        // race-free transition from any live flag state to DELETING.
+        unsafe {
+            let old_flags = (*self).flags.load(Ordering::Acquire);
+            if old_flags & OB_FLAG_DELETING != 0 {
+                return false;
+            }
+            (*self)
+                .flags
+                .compare_exchange(
+                    old_flags,
+                    old_flags | OB_FLAG_DELETING,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_ok()
+        }
+    }
+
+    #[inline]
+    fn increment_reference(self) -> u32 {
+        if self.is_null() {
+            return 0;
+        }
+        // SAFETY: the refcount belongs to a live object header and callers
+        // serialize against deletion with OB_DELETE_LOCK.
+        unsafe {
+            (*self)
+                .ref_count
+                .fetch_add(1, Ordering::AcqRel)
+                .saturating_add(1)
+        }
+    }
+
+    #[inline]
+    fn decrement_reference(self) -> u32 {
+        if self.is_null() || self.ref_count() == 0 {
+            return 0;
+        }
+        // SAFETY: the caller has a reference and serializes the final release
+        // against deletion with OB_DELETE_LOCK.
+        unsafe {
+            (*self)
+                .ref_count
+                .fetch_sub(1, Ordering::AcqRel)
+                .saturating_sub(1)
+        }
+    }
+
+    #[inline]
+    fn increment_handle_count(self) -> u32 {
+        if self.is_null() {
+            return 0;
+        }
+        // SAFETY: callers hold OB_DELETE_LOCK while installing a handle.
+        unsafe {
+            (*self)
+                .handle_count
+                .fetch_add(1, Ordering::AcqRel)
+                .saturating_add(1)
+        }
+    }
+
+    #[inline]
+    fn decrement_handle_count(self) -> u32 {
+        if self.is_null() || self.handle_count() == 0 {
+            return 0;
+        }
+        // SAFETY: callers hold OB_DELETE_LOCK and only close a live handle.
+        unsafe {
+            (*self)
+                .handle_count
+                .fetch_sub(1, Ordering::AcqRel)
+                .saturating_sub(1)
+        }
+    }
+
+    #[inline]
+    fn object_body<T>(self) -> *mut T {
+        if self.is_null() {
+            return core::ptr::null_mut();
+        }
+        // SAFETY: NT object bodies are stored immediately after ObjectHeader,
+        // matching the manager's pooled allocation.
+        unsafe { self.add(1) as *mut T }
+    }
+}
+
 /// Directory object. Contains an array of named entries that
 /// point at other objects' headers.
 #[repr(C, align(16))]
@@ -753,24 +1139,20 @@ pub fn insert_object_into_process(
     // deletion walks directories in the opposite order.
     {
         let _namespace_guard = NAMESPACE.lock();
-        unsafe {
-            if (*parent).num_entries as usize >= MAX_DIR_ENTRIES {
-                return 0;
-            }
-            let slot = (*parent).num_entries as usize;
-            DIRECTORY_ENTRY_HIGH_WATER.fetch_max(slot + 1, core::sync::atomic::Ordering::Relaxed);
-            (*parent).entries[slot] = header;
-            (*parent).valid[slot] = 1;
-            (*parent).num_entries += 1;
-            (*header).directory = parent;
+        if parent.num_entries() as usize >= MAX_DIR_ENTRIES {
+            return 0;
         }
+        let slot = parent.num_entries() as usize;
+        DIRECTORY_ENTRY_HIGH_WATER.fetch_max(slot + 1, core::sync::atomic::Ordering::Relaxed);
+        parent.set_entry(slot, header);
+        header.set_directory(parent);
     }
 
     // Allocate a handle slot from the per-process table (if available)
     // or fall back to the global table.
     let _delete_guard = OB_DELETE_LOCK.lock();
     if !process.is_null() {
-        let table_ptr = unsafe { (*process).object_table };
+        let table_ptr = process.object_table();
         if table_ptr.is_null() {
             return 0;
         }
@@ -786,29 +1168,26 @@ fn allocate_handle_in_table_locked(
     table: *mut ProcessHandleTable,
     header: *mut ObjectHeader,
 ) -> u64 {
-    use core::sync::atomic::Ordering;
     let max = crate::ps::process::HANDLE_TABLE_SIZE;
-    unsafe {
-        let start = (*table).next_slot;
-        let mut idx = start;
-        for _ in 0..max {
-            if idx >= max {
-                idx = 1;
-            }
-            if (*table).valid[idx] == 0 {
-                (*table).slots[idx] = header as *mut _;
-                (*table).valid[idx] = 1;
-                (*table).next_slot = (idx + 1) % max;
-                // Atomic increment (W-B fix).
-                (*table).handle_count.fetch_add(1, Ordering::AcqRel);
-                let _ = reference_object_locked(header);
-                (*header).handle_count.fetch_add(1, Ordering::AcqRel);
-                return (idx + 1) as u64; // 1-based
-            }
-            idx = (idx + 1) % max;
-            if idx == start {
-                break;
-            }
+    let start = table.next_slot();
+    let mut idx = start;
+    for _ in 0..max {
+        if idx >= max {
+            idx = 1;
+        }
+        if table.valid(idx) == 0 {
+            table.set_slot(idx, header as *mut _);
+            table.set_valid(idx, 1);
+            table.set_next_slot((idx + 1) % max);
+            // Atomic increment (W-B fix).
+            table.increment_handle_count();
+            let _ = reference_object_locked(header);
+            header.increment_handle_count();
+            return (idx + 1) as u64; // 1-based
+        }
+        idx = (idx + 1) % max;
+        if idx == start {
+            break;
         }
     }
     0
@@ -853,10 +1232,8 @@ fn allocate_handle_in_global_table_locked(header: *mut ObjectHeader) -> u64 {
                 );
             }
             HANDLE_TABLE_LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
-            unsafe {
-                let _ = reference_object_locked(header);
-                (*header).handle_count.fetch_add(1, Ordering::AcqRel);
-            }
+            let _ = reference_object_locked(header);
+            header.increment_handle_count();
             return (idx + 1) as u64; // 1-based
         }
         // Wrap-around: if we hit the original start we are done with this pass.
@@ -1362,16 +1739,14 @@ pub fn insert_object(parent_path: &[u8], header: *mut ObjectHeader) -> u64 {
     // update sequence (check → write → increment).
     {
         let _ns = NAMESPACE.lock();
-        unsafe {
-            if (*parent).num_entries as usize >= MAX_DIR_ENTRIES {
-                return 0;
-            }
-            let slot = (*parent).num_entries as usize;
-            (*parent).entries[slot] = header;
-            (*parent).valid[slot] = 1;
-            (*parent).num_entries += 1;
-            (*header).directory = parent;
+        if parent.num_entries() as usize >= MAX_DIR_ENTRIES {
+            return 0;
         }
+        let slot = parent.num_entries() as usize;
+        parent.set_entry(slot, header);
+        parent.set_valid(slot, 1);
+        parent.set_num_entries((slot + 1) as u32);
+        header.set_directory(parent);
     };
     // Delegate handle allocation after releasing the namespace lock.
     allocate_handle_in_global_table(header)
@@ -1384,29 +1759,25 @@ pub fn reference_object(header: *mut ObjectHeader) -> u32 {
     }
     REFERENCE_COUNT.fetch_add(1, Ordering::Relaxed);
     let guard = OB_DELETE_LOCK.lock();
-    unsafe {
-        if (*header).flags.load(Ordering::Acquire) & OB_FLAG_DELETING != 0 {
-            drop(guard);
-            return 0;
-        }
-        let count = (*header).ref_count.fetch_add(1, Ordering::AcqRel) + 1;
+    if header.is_deleting() {
         drop(guard);
-        count
+        return 0;
     }
+    let count = header.increment_reference();
+    drop(guard);
+    count
 }
 
 /// Increment an object's reference count while `OB_DELETE_LOCK` is held.
 ///
 /// This exists to keep handle lookup atomic with object deletion without
 /// taking the non-reentrant delete lock a second time.
-unsafe fn reference_object_locked(header: *mut ObjectHeader) -> u32 {
-    if header.is_null() {
-        return 0;
+fn reference_object_locked(header: *mut ObjectHeader) -> u32 {
+    if header.is_deleting() {
+        0
+    } else {
+        header.increment_reference()
     }
-    if (*header).flags.load(Ordering::Acquire) & OB_FLAG_DELETING != 0 {
-        return 0;
-    }
-    (*header).ref_count.fetch_add(1, Ordering::AcqRel) + 1
 }
 
 /// Lookup an object by handle in a specific process's handle table.
@@ -1423,17 +1794,11 @@ pub fn lookup_handle_in_process(
         return None;
     }
 
-    unsafe {
-        let table_ptr = (*process).object_table;
-        if table_ptr.is_null() {
-            return None;
-        }
-        let table = &*table_ptr;
-        if table.valid[idx] == 0 {
-            return None;
-        }
-        Some(table.slots[idx] as *mut ObjectHeader)
+    let table_ptr = process.object_table();
+    if table_ptr.is_null() || table_ptr.valid(idx) == 0 {
+        return None;
     }
+    Some(table_ptr.slot(idx) as *mut ObjectHeader)
 }
 
 /// close a handle in a specific process's handle table.
@@ -1457,42 +1822,26 @@ pub fn close_handle_in_process(process: *mut crate::ps::process::Eprocess, handl
     // decrement with object insertion and deletion.
     let delete_guard = OB_DELETE_LOCK.lock();
 
-    unsafe {
-        let table_ptr = (*process).object_table;
-        if table_ptr.is_null() {
-            return false;
-        }
-        let table = &mut *table_ptr;
-        if table.valid[idx] == 0 {
-            return false;
-        }
-        // Get the object header
-        let header = table.slots[idx] as *mut ObjectHeader;
-
-        // Mark slot as invalid FIRST to prevent double-close.
-        table.valid[idx] = 0;
-        table.slots[idx] = core::ptr::null_mut();
-        // Atomic decrement (W-B fix).
-        table
-            .handle_count
-            .fetch_sub(1, core::sync::atomic::Ordering::AcqRel);
-
-        let prev_handle_count = (*header)
-            .handle_count
-            .fetch_sub(1, core::sync::atomic::Ordering::AcqRel);
-        let prev_ref_count = (*header)
-            .ref_count
-            .fetch_sub(1, core::sync::atomic::Ordering::AcqRel);
-        let new_handle_count = prev_handle_count.wrapping_sub(1);
-        let new_ref_count = prev_ref_count.wrapping_sub(1);
-        let should_delete = new_handle_count == 0 && new_ref_count == 0;
-        drop(delete_guard);
-        if should_delete {
-            delete_object(header);
-        }
-
-        true
+    let table_ptr = process.object_table();
+    if table_ptr.is_null() || table_ptr.valid(idx) == 0 {
+        return false;
     }
+    let header = table_ptr.slot(idx) as *mut ObjectHeader;
+
+    // Mark slot as invalid FIRST to prevent double-close.
+    table_ptr.set_valid(idx, 0);
+    table_ptr.set_slot(idx, null_mut());
+    table_ptr.decrement_handle_count();
+
+    let new_handle_count = header.decrement_handle_count();
+    let new_ref_count = header.decrement_reference();
+    let should_delete = new_handle_count == 0 && new_ref_count == 0;
+    drop(delete_guard);
+    if should_delete {
+        delete_object(header);
+    }
+
+    true
 }
 
 /// Copy every valid parent handle into a freshly-created child table.
@@ -1505,31 +1854,25 @@ pub fn inherit_process_handle_table(
     }
 
     let delete_guard = OB_DELETE_LOCK.lock();
-    unsafe {
-        let child_table = (*child).object_table;
-        let parent_table = (*parent).object_table;
-        if child_table.is_null() || parent_table.is_null() {
+    let child_table = child.object_table();
+    let parent_table = parent.object_table();
+    if child_table.is_null() || parent_table.is_null() {
+        return false;
+    }
+
+    for idx in 0..crate::ps::process::HANDLE_TABLE_SIZE {
+        if parent_table.valid(idx) == 0 {
+            continue;
+        }
+        let header = parent_table.slot(idx) as *mut ObjectHeader;
+        if header.is_null() {
             return false;
         }
-
-        for idx in 0..crate::ps::process::HANDLE_TABLE_SIZE {
-            if (*parent_table).valid[idx] == 0 {
-                continue;
-            }
-            let header = (*parent_table).slots[idx] as *mut ObjectHeader;
-            if header.is_null() {
-                return false;
-            }
-            (*child_table).slots[idx] = header as *mut _;
-            (*child_table).valid[idx] = 1;
-            (*child_table)
-                .handle_count
-                .fetch_add(1, core::sync::atomic::Ordering::AcqRel);
-            let _ = reference_object_locked(header);
-            (*header)
-                .handle_count
-                .fetch_add(1, core::sync::atomic::Ordering::AcqRel);
-        }
+        child_table.set_slot(idx, header as *mut _);
+        child_table.set_valid(idx, 1);
+        child_table.increment_handle_count();
+        let _ = reference_object_locked(header);
+        header.increment_handle_count();
     }
     drop(delete_guard);
     true
@@ -1537,18 +1880,40 @@ pub fn inherit_process_handle_table(
 
 /// Get object body from header
 pub fn get_object_body<T>(header: *mut ObjectHeader) -> *mut T {
-    if header.is_null() {
-        return core::ptr::null_mut();
-    }
-    unsafe {
-        let body_ptr = header.add(1) as *mut T;
-        body_ptr
-    }
+    header.object_body::<T>()
 }
 
 // =============================================================================
 // Object deletion
 // =============================================================================
+
+/// Remove one live entry from a manager-owned NT directory.
+fn remove_directory_entry(parent: *mut Directory, target: *mut ObjectHeader) -> bool {
+    for index in 0..parent.num_entries() as usize {
+        if index >= MAX_DIR_ENTRIES {
+            break;
+        }
+        if parent.valid(index) == 0 || !core::ptr::eq(parent.entry(index), target) {
+            continue;
+        }
+
+        // Compact the fixed NT directory entry array after removal.
+        let count = parent.num_entries() as usize;
+        for slot in index..count.saturating_sub(1) {
+            parent.set_entry(slot, parent.entry(slot + 1));
+            parent.set_valid(slot, parent.valid(slot + 1));
+        }
+
+        let new_count = count.saturating_sub(1);
+        parent.set_num_entries(new_count as u32);
+        if new_count < MAX_DIR_ENTRIES {
+            parent.set_entry(new_count, null_mut());
+            parent.set_valid(new_count, 0);
+        }
+        return true;
+    }
+    false
+}
 
 /// internal delete that assumes the caller holds `OB_DELETE_LOCK`.
 /// Atomically checks the DELETING flag and, if not already deleting,
@@ -1557,56 +1922,18 @@ pub fn get_object_body<T>(header: *mut ObjectHeader) -> *mut T {
 ///
 /// Returns `true` if this thread performed the deletion, `false` if the
 /// object was already being deleted by another thread.
-unsafe fn try_delete_object_locked(header: *mut ObjectHeader) -> bool {
+fn try_delete_object_locked(header: *mut ObjectHeader) -> bool {
     // CAS to set DELETING flag — prevents double-deletion races.
-    let old_flags = (*header).flags.load(Ordering::Acquire);
-    if old_flags & OB_FLAG_DELETING != 0 {
-        // Already being deleted by another thread.
-        return false;
-    }
-    // Attempt to atomically set the DELETING flag.
-    // SAFETY: OB_DELETE_LOCK is held, so no other thread can modify flags.
-    let _ = (*header).flags.compare_exchange(
-        old_flags,
-        old_flags | OB_FLAG_DELETING,
-        Ordering::AcqRel,
-        Ordering::Acquire,
-    );
-    // If CAS failed, another thread set DELETING first.
-    if (*header).flags.load(Ordering::Acquire) & OB_FLAG_DELETING == 0 {
+    if !header.set_deleting() {
         return false;
     }
 
     // 1. Unlink from parent directory.
-    if !(*header).directory.is_null() {
+    let parent = header.directory();
+    if !parent.is_null() {
         // Hold NAMESPACE for the directory-slot update (P0-5).
         let _ns_guard = NAMESPACE.lock();
-        let parent = (*header).directory;
-        let mut removed = false;
-        for i in 0..(*parent).num_entries as usize {
-            if i >= MAX_DIR_ENTRIES {
-                break;
-            }
-            if (*parent).valid[i] != 0 {
-                let h = (*parent).entries[i];
-                if core::ptr::eq(h, header) {
-                    // Compact the entries array.
-                    for j in i..((*parent).num_entries as usize - 1) {
-                        (*parent).entries[j] = (*parent).entries[j + 1];
-                        (*parent).valid[j] = (*parent).valid[j + 1];
-                    }
-                    (*parent).num_entries -= 1;
-                    let last = (*parent).num_entries as usize;
-                    if last < MAX_DIR_ENTRIES {
-                        (*parent).entries[last] = core::ptr::null_mut();
-                        (*parent).valid[last] = 0;
-                    }
-                    removed = true;
-                    break;
-                }
-            }
-        }
-        let _ = removed;
+        remove_directory_entry(parent, header);
     }
 
     // 2. Remove from handle table.
@@ -1629,36 +1956,32 @@ unsafe fn try_delete_object_locked(header: *mut ObjectHeader) -> bool {
             if proc.is_null() {
                 continue;
             }
-            let table = unsafe { (*proc).object_table };
+            let table = proc.object_table();
             if table.is_null() {
                 continue;
             }
             for i in 0..crate::ps::process::HANDLE_TABLE_SIZE {
-                if unsafe {
-                    (*table).valid[i] != 0 && core::ptr::eq((*table).slots[i], header as *mut ())
-                } {
-                    unsafe {
-                        (*table).valid[i] = 0;
-                        (*table).slots[i] = core::ptr::null_mut();
-                    }
+                if table.valid(i) != 0 && core::ptr::eq(table.slot(i), header as *mut ()) {
+                    table.set_valid(i, 0);
+                    table.set_slot(i, null_mut());
                 }
             }
         }
     }
 
     // 3. Call the type's delete procedure.
-    if !(*header).body.is_null() {
-        let type_index = (*header).type_index;
-        let body = (*header).body;
+    if !header.body().is_null() {
+        let type_index = header.type_index();
+        let body = header.body();
         crate::ob::types::call_delete_procedure(type_index, body);
     }
 
     // 4. Free security descriptor if present. The descriptor is a separate
     // non-paged pool allocation independent of the object header.
-    if !(*header).security_descriptor.is_null() {
-        let sd_ptr = (*header).security_descriptor as *mut u8;
-        (*header).security_descriptor = core::ptr::null_mut();
-        let _ = pool::free(sd_ptr);
+    let security_descriptor = header.security_descriptor();
+    if !security_descriptor.is_null() {
+        header.set_security_descriptor(null_mut());
+        let _ = pool::free(security_descriptor as *mut u8);
     }
 
     // 5. Free the full pool allocation: header + body.
@@ -1680,11 +2003,7 @@ fn delete_object(header: *mut ObjectHeader) {
         return;
     }
     let _guard = OB_DELETE_LOCK.lock();
-    // SAFETY: OB_DELETE_LOCK is now held; try_delete_object_locked
-    //         will atomically check/set DELETING flag.
-    unsafe {
-        try_delete_object_locked(header);
-    }
+    try_delete_object_locked(header);
 }
 
 /// Dereference an object.
@@ -1705,20 +2024,13 @@ pub fn dereference_object(header: *mut ObjectHeader) -> u32 {
     DEREFERENCE_COUNT.fetch_add(1, Ordering::Relaxed);
 
     let guard = OB_DELETE_LOCK.lock();
-    let final_ref = unsafe {
-        let prev = (*header).ref_count.fetch_sub(1, Ordering::AcqRel);
-        let decremented = prev - 1;
+    let decremented = header.decrement_reference();
 
-        if decremented == 0 {
-            let current_handle_count = (*header).handle_count.load(Ordering::Acquire);
-            if current_handle_count == 0 {
-                drop(guard);
-                delete_object(header);
-            }
-        }
-        decremented
-    };
-    final_ref
+    if decremented == 0 && header.handle_count() == 0 {
+        drop(guard);
+        delete_object(header);
+    }
+    decremented
 }
 
 /// Decrement handle count and trigger deletion if needed.
@@ -1732,21 +2044,12 @@ pub fn decrement_handle_count(header: *mut ObjectHeader) {
     }
 
     let guard = OB_DELETE_LOCK.lock();
-    let new_handle_count = unsafe {
-        let prev = (*header).handle_count.fetch_sub(1, Ordering::AcqRel);
-        let new = prev - 1;
+    let new_handle_count = header.decrement_handle_count();
 
-        if new == 0 {
-            // Both handle_count and ref_count must be zero to delete.
-            let current_ref = (*header).ref_count.load(Ordering::Acquire);
-            if current_ref == 0 {
-                drop(guard); // Release lock before deleting.
-                delete_object(header);
-            }
-            // else: references still open — defer deletion until last ref drops.
-        }
-        new
-    };
+    if new_handle_count == 0 && header.ref_count() == 0 {
+        drop(guard); // Release lock before deleting.
+        delete_object(header);
+    }
     let _ = new_handle_count; // diagnostic only
 }
 
@@ -1775,7 +2078,7 @@ pub fn reference_object_by_handle(handle: u64) -> *mut ObjectHeader {
     let t = HANDLE_TABLE.lock();
     if t.valid[slot] != 0 {
         let h = t.slots[slot];
-        let _ = unsafe { reference_object_locked(h) };
+        let _ = reference_object_locked(h);
         drop(t);
         drop(delete_guard);
         return h;
@@ -1800,7 +2103,7 @@ pub fn reference_object_by_handle_in_process(
     if !process.is_null() {
         let delete_guard = OB_DELETE_LOCK.lock();
         if let Some(h) = lookup_handle_in_process(process, handle) {
-            let _ = unsafe { reference_object_locked(h) };
+            let _ = reference_object_locked(h);
             drop(delete_guard);
             return h;
         }

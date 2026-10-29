@@ -15,6 +15,8 @@
 //! - ReactOS obtype.c
 
 use crate::mm::pool;
+use core::sync::atomic::{AtomicPtr, Ordering};
+
 use crate::se::seaccess::GenericMapping;
 
 // Maximum number of object types.  Bumped to 38 to match the ObType
@@ -181,7 +183,7 @@ pub struct object_type {
     pub default_paged_pool_charge: u64,
 }
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::AtomicU32;
 
 impl object_type {
     pub const fn new() -> Self {
@@ -387,9 +389,10 @@ pub fn get_type_name(type_index: u8) -> &'static str {
 // Object r#type Registry
 // =============================================================================
 
-/// Global registry of object types
-static mut OB_TYPE_TABLE: [*mut object_type; MAX_OBJECT_TYPES] =
-    [core::ptr::null_mut(); MAX_OBJECT_TYPES];
+/// Global registry of object types. Atomic pointers avoid shared mutable
+/// statics while preserving the manager-owned raw object-type ABI.
+static OB_TYPE_TABLE: [AtomicPtr<object_type>; MAX_OBJECT_TYPES] =
+    [const { AtomicPtr::new(core::ptr::null_mut()) }; MAX_OBJECT_TYPES];
 
 /// Pool tag for object types
 const OB_TYPE_POOL_TAG: u32 =
@@ -398,121 +401,155 @@ const OB_TYPE_POOL_TAG: u32 =
 /// Initialize the object type system
 pub fn init_types() {
     // create type objects for each object type
-    unsafe {
-        OB_TYPE_TABLE[3] = create_object_type(
-            3, // TypeIndex
-            "Directory",
-            DIRECTORY_GENERIC_MAPPING,
-            0x000F, // DIRECTORY_ALL_ACCESS
-            Some(directory_delete_procedure),
+    {
+        OB_TYPE_TABLE[3].store(
+            create_object_type(
+                3, // TypeIndex
+                "Directory",
+                DIRECTORY_GENERIC_MAPPING,
+                0x000F, // DIRECTORY_ALL_ACCESS
+                Some(directory_delete_procedure),
+            ),
+            Ordering::Release,
         );
         // Device type
-        OB_TYPE_TABLE[30] = create_object_type(
-            30,
-            "Device",
-            DEVICE_GENERIC_MAPPING,
-            0x000F, // DEVICE_ALL_ACCESS
-            Some(device_delete_procedure),
+        OB_TYPE_TABLE[30].store(
+            create_object_type(
+                30,
+                "Device",
+                DEVICE_GENERIC_MAPPING,
+                0x000F, // DEVICE_ALL_ACCESS
+                Some(device_delete_procedure),
+            ),
+            Ordering::Release,
         );
 
         // Driver type
-        OB_TYPE_TABLE[31] = create_object_type(
-            31,
-            "Driver",
-            DRIVER_GENERIC_MAPPING,
-            0x000F, // DRIVER_ALL_ACCESS
-            Some(driver_delete_procedure),
+        OB_TYPE_TABLE[31].store(
+            create_object_type(
+                31,
+                "Driver",
+                DRIVER_GENERIC_MAPPING,
+                0x000F, // DRIVER_ALL_ACCESS
+                Some(driver_delete_procedure),
+            ),
+            Ordering::Release,
         );
 
         // Event type
-        OB_TYPE_TABLE[7] = create_object_type(
-            7,
-            "Event",
-            EVENT_GENERIC_MAPPING,
-            0x001F, // EVENT_ALL_ACCESS
-            None,
+        OB_TYPE_TABLE[7].store(
+            create_object_type(
+                7,
+                "Event",
+                EVENT_GENERIC_MAPPING,
+                0x001F, // EVENT_ALL_ACCESS
+                None,
+            ),
+            Ordering::Release,
         );
 
         // mutant type
-        OB_TYPE_TABLE[10] = create_object_type(
-            10,
-            "Mutant",
-            MUTANT_GENERIC_MAPPING,
-            0x001F, // MUTANT_ALL_ACCESS
-            None,
+        OB_TYPE_TABLE[10].store(
+            create_object_type(
+                10,
+                "Mutant",
+                MUTANT_GENERIC_MAPPING,
+                0x001F, // MUTANT_ALL_ACCESS
+                None,
+            ),
+            Ordering::Release,
         );
 
         // Semaphore type
-        OB_TYPE_TABLE[11] = create_object_type(
-            11,
-            "Semaphore",
-            SEMAPHORE_GENERIC_MAPPING,
-            0x001F, // SEMAPHORE_ALL_ACCESS
-            None,
+        OB_TYPE_TABLE[11].store(
+            create_object_type(
+                11,
+                "Semaphore",
+                SEMAPHORE_GENERIC_MAPPING,
+                0x001F, // SEMAPHORE_ALL_ACCESS
+                None,
+            ),
+            Ordering::Release,
         );
 
         // SymbolicLink type
-        OB_TYPE_TABLE[4] = create_object_type(
-            4,
-            "SymbolicLink",
-            SYMBOLIC_LINK_GENERIC_MAPPING,
-            0x0001, // SYMBOLIC_LINK_QUERY
-            Some(symlink_delete_procedure),
+        OB_TYPE_TABLE[4].store(
+            create_object_type(
+                4,
+                "SymbolicLink",
+                SYMBOLIC_LINK_GENERIC_MAPPING,
+                0x0001, // SYMBOLIC_LINK_QUERY
+                Some(symlink_delete_procedure),
+            ),
+            Ordering::Release,
         );
 
         // Token type
-        OB_TYPE_TABLE[5] = create_object_type(
-            5,
-            "Token",
-            TOKEN_GENERIC_MAPPING,
-            0x00F07FF, // TOKEN_ALL_ACCESS
-            Some(token_delete_procedure),
+        OB_TYPE_TABLE[5].store(
+            create_object_type(
+                5,
+                "Token",
+                TOKEN_GENERIC_MAPPING,
+                0x00F07FF, // TOKEN_ALL_ACCESS
+                Some(token_delete_procedure),
+            ),
+            Ordering::Release,
         );
 
         // Process type
-        OB_TYPE_TABLE[1] = create_object_type(
-            1,
-            "Process",
-            PROCESS_GENERIC_MAPPING,
-            0x1F0FFF, // PROCESS_ALL_ACCESS
-            None,
+        OB_TYPE_TABLE[1].store(
+            create_object_type(
+                1,
+                "Process",
+                PROCESS_GENERIC_MAPPING,
+                0x1F0FFF, // PROCESS_ALL_ACCESS
+                None,
+            ),
+            Ordering::Release,
         );
 
         // Thread type
-        OB_TYPE_TABLE[2] = create_object_type(
-            2,
-            "Thread",
-            THREAD_GENERIC_MAPPING,
-            0x1F03FF, // THREAD_ALL_ACCESS
-            None,
+        OB_TYPE_TABLE[2].store(
+            create_object_type(
+                2,
+                "Thread",
+                THREAD_GENERIC_MAPPING,
+                0x1F03FF, // THREAD_ALL_ACCESS
+                None,
+            ),
+            Ordering::Release,
         );
 
         // Section type
-        OB_TYPE_TABLE[9] = create_object_type(
-            9,
-            "Section",
-            SECTION_GENERIC_MAPPING,
-            0x000F, // SECTION_ALL_ACCESS
-            None,
+        OB_TYPE_TABLE[9].store(
+            create_object_type(
+                9,
+                "Section",
+                SECTION_GENERIC_MAPPING,
+                0x000F, // SECTION_ALL_ACCESS
+                None,
+            ),
+            Ordering::Release,
         );
 
         // Issue 2.3: backfill all remaining type slots that are still null.
         // This ensures every slot in OB_TYPE_TABLE[0..MAX_OBJECT_TYPES)
         // is either a valid pointer or null — never uninitialised.
         for i in 0..MAX_OBJECT_TYPES {
-            if OB_TYPE_TABLE[i].is_null() {
-                let name = get_type_name(i as u8);
-                OB_TYPE_TABLE[i] =
-                    create_object_type(i as u8, name, GenericMapping::default(), 0, None);
-                // If backfill creation itself fails, the serial output above
-                // will have printed FATAL; keep trying the rest of the table.
+            if !OB_TYPE_TABLE[i].load(Ordering::Acquire).is_null() {
+                continue;
             }
+            let name = get_type_name(i as u8);
+            let object_type = create_object_type(i as u8, name, GenericMapping::default(), 0, None);
+            OB_TYPE_TABLE[i].store(object_type, Ordering::Release);
+            // If backfill creation itself fails, the serial output above
+            // will have printed FATAL; keep trying the rest of the table.
         }
 
         // Final sanity check: report any slots still null after backfill.
         let mut null_count = 0;
         for i in 0..MAX_OBJECT_TYPES {
-            if OB_TYPE_TABLE[i].is_null() {
+            if OB_TYPE_TABLE[i].load(Ordering::Acquire).is_null() {
                 null_count += 1;
             }
         }
@@ -565,7 +602,7 @@ pub fn get_object_type(type_index: u8) -> *mut object_type {
     if type_index as usize >= MAX_OBJECT_TYPES {
         return core::ptr::null_mut();
     }
-    unsafe { OB_TYPE_TABLE[type_index as usize] }
+    OB_TYPE_TABLE[type_index as usize].load(Ordering::Acquire)
 }
 
 // =============================================================================

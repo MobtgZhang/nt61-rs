@@ -613,7 +613,9 @@ fn test_access_check() -> bool {
 
 #[test]
 fn handle_access_check_enforces_dacl_against_process_token() {
-    assert!(test_access_check());
+    let result = test_access_check();
+    crate::kprintln!("ACCESS CHECK TEST RESULT: {}", result);
+    assert!(result);
 }
 
 // =============================================================================
