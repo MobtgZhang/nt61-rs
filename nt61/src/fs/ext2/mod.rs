@@ -33,6 +33,7 @@ pub mod group;
 pub mod inode;
 pub mod journal;
 pub mod superblock;
+pub mod write;
 
 // Re-export commonly used types
 pub use dir::{Ext2DirEntry, Ext2DirEntryInfo, EXT2_FT_DIR, EXT2_FT_REG_FILE};
