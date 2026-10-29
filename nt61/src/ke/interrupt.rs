@@ -10,6 +10,8 @@
 
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
+use crate::ke::sync::Spinlock;
+
 /// Maximum number of IDT vectors the kernel is willing to route.
 pub const MAX_IDT_VECTORS: usize = 256;
 
@@ -66,12 +68,8 @@ static VECTOR_TABLE: [AtomicU32; MAX_IDT_VECTORS] = {
 /// Per-vector state. We can't put a full `VectorInfo` array in a
 /// `static` because of the `&'static str` field, so we keep the
 /// `kind`, `owner`, and counters in a parallel structure.
-static mut VECTOR_INFO: [VectorInfo; MAX_IDT_VECTORS] = {
-    const EMPTY: VectorInfo = VectorInfo::empty(0);
-    [EMPTY; MAX_IDT_VECTORS]
-};
-
-pub static mut VECTOR_INFO_INITIALISED: bool = false;
+static VECTOR_INFO: Spinlock<[VectorInfo; MAX_IDT_VECTORS]> =
+    Spinlock::new([const { VectorInfo::empty(0) }; MAX_IDT_VECTORS]);
 
 /// Aggregate counters.
 static TOTAL_INTERRUPTS: AtomicU64 = AtomicU64::new(0);
@@ -123,13 +121,14 @@ pub fn register_vector(vector: u8, kind: HandlerKind, owner: &'static str) {
     if (vector as usize) >= MAX_IDT_VECTORS {
         return;
     }
-    unsafe {
-        let info = &mut VECTOR_INFO[vector as usize];
-        info.vector = vector;
-        info.kind = kind;
-        info.owner = owner;
-        VECTOR_TABLE[vector as usize].store(kind as u32, Ordering::Release);
-    }
+    let mut info = VECTOR_INFO.lock();
+    let entry = &mut info[vector as usize];
+    entry.vector = vector;
+    entry.kind = kind;
+    entry.owner = owner;
+    let _ = entry;
+    let _ = info;
+    VECTOR_TABLE[vector as usize].store(kind as u32, Ordering::Release);
 }
 
 /// Look up the current owner of `vector`.
@@ -137,13 +136,12 @@ pub fn vector_owner(vector: u8) -> Option<(&'static str, HandlerKind)> {
     if (vector as usize) >= MAX_IDT_VECTORS {
         return None;
     }
-    unsafe {
-        let info = &VECTOR_INFO[vector as usize];
-        if info.kind == HandlerKind::None {
-            None
-        } else {
-            Some((info.owner, info.kind))
-        }
+    let info = VECTOR_INFO.lock();
+    let entry = &info[vector as usize];
+    if entry.kind == HandlerKind::None {
+        None
+    } else {
+        Some((entry.owner, entry.kind))
     }
 }
 
@@ -159,15 +157,23 @@ pub fn record_fire(vector: u8) {
         SPURIOUS_INTERRUPTS.fetch_add(1, Ordering::Relaxed);
         return;
     }
-    unsafe {
-        let info = &mut VECTOR_INFO[vector as usize];
-        info.fire_count = info.fire_count.wrapping_add(1);
-    }
+    let mut info = VECTOR_INFO.lock();
+    let entry = &mut info[vector as usize];
+    entry.fire_count = entry.fire_count.wrapping_add(1);
 }
 
 /// read the global fire counter. Useful for the boot log.
 pub fn total_interrupt_count() -> u64 {
     TOTAL_INTERRUPTS.load(Ordering::Relaxed)
+}
+
+/// Read a per-vector fire count under the vector bookkeeping lock.
+pub fn vector_fire_count(vector: u8) -> u64 {
+    if (vector as usize) >= MAX_IDT_VECTORS {
+        return 0;
+    }
+    let info = VECTOR_INFO.lock();
+    info[vector as usize].fire_count
 }
 
 /// Trigger DPC processing after an interrupt.
@@ -199,14 +205,14 @@ pub fn smoke_test() -> bool {
     let test_vector: u8 = 0x80;
     let owner = "smoke_test";
     register_vector(test_vector, HandlerKind::ConnectedIsr, owner);
-    let before = unsafe { VECTOR_INFO[test_vector as usize].fire_count };
+    let before = vector_fire_count(test_vector);
     let total_before = total_interrupt_count();
     for _ in 0..5 {
         record_fire(test_vector);
     }
     // A spurious fire must NOT increment the per-vector counter.
     record_fire(0xFF);
-    let after = unsafe { VECTOR_INFO[test_vector as usize].fire_count };
+    let after = vector_fire_count(test_vector);
     let total_after = total_interrupt_count();
     let spurious_after = SPURIOUS_INTERRUPTS.load(Ordering::Relaxed);
     if after != before + 5 {

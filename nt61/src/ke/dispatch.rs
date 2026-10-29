@@ -208,41 +208,47 @@ pub fn wait_on(object: &DispatcherHeader, timeout_ms: u32) -> WaitResult {
     let (_entry_ptr, _deadline) = {
         let _lock = WAIT_LIST_LOCK.lock();
         unsafe {
-            let current = match crate::ke::scheduler::get_current_thread() {
-                Some(t) => t as *mut Ethread,
+            let current = match crate::ke::scheduler::with_current_thread(|thread| {
+                // Find a free slot while the short-lived current-thread borrow
+                // is alive so no reference escapes the scheduling boundary.
+                let slot = match find_free_slot() {
+                    Some(slot) => slot,
+                    None => return Err(()),
+                };
+                let entry = match get_wait_entry(slot) {
+                    Some(entry) => entry,
+                    None => return Err(()),
+                };
+                let current = thread as *mut Ethread;
+                entry.thread = current;
+                entry.object = object as *const DispatcherHeader;
+                entry.deadline_ticks = if timeout_ms == u32::MAX {
+                    u64::MAX
+                } else {
+                    crate::ke::time::get_tick_count() as u64 + timeout_ms as u64
+                };
+                entry.in_use = true;
+                entry.signalled = false;
+                // Insert the thread's wait_list_entry at the tail of
+                // the wait list (sentinel-style intrusive list).
+                let head_ptr: *mut crate::ps::process::ListEntry =
+                    core::ptr::addr_of_mut!(WAIT_LIST_HEAD);
+                let e_ptr: *mut crate::ps::process::ListEntry =
+                    &mut (*current).kthread.wait_list_entry;
+                (*e_ptr).blink = (*head_ptr).blink;
+                (*e_ptr).flink = head_ptr;
+                (*(*head_ptr).blink).flink = e_ptr;
+                (*head_ptr).blink = e_ptr;
+                // Move the current thread to a Waiting state and yield.
+                (*current).kthread.state = crate::ps::thread::KThreadState::Waiting;
+                // Return the entry pointer and deadline for post-schedule check
+                Ok((e_ptr, entry.deadline_ticks))
+            }) {
+                Some(Ok(current)) => current,
+                Some(Err(())) => return WaitResult::Error,
                 None => return WaitResult::Error,
             };
-            // Find a free slot.
-            let slot = match find_free_slot() {
-                Some(s) => s,
-                None => return WaitResult::Error, // out of wait entries
-            };
-            let entry = match get_wait_entry(slot) {
-                Some(e) => e,
-                None => return WaitResult::Error,
-            };
-            entry.thread = current;
-            entry.object = object as *const DispatcherHeader;
-            entry.deadline_ticks = if timeout_ms == u32::MAX {
-                u64::MAX
-            } else {
-                crate::ke::time::get_tick_count() as u64 + timeout_ms as u64
-            };
-            entry.in_use = true;
-            entry.signalled = false;
-            // Insert the thread's wait_list_entry at the tail of
-            // the wait list (sentinel-style intrusive list).
-            let head_ptr: *mut crate::ps::process::ListEntry =
-                core::ptr::addr_of_mut!(WAIT_LIST_HEAD);
-            let e_ptr: *mut crate::ps::process::ListEntry = &mut (*current).kthread.wait_list_entry;
-            (*e_ptr).blink = (*head_ptr).blink;
-            (*e_ptr).flink = head_ptr;
-            (*(*head_ptr).blink).flink = e_ptr;
-            (*head_ptr).blink = e_ptr;
-            // Move the current thread to a Waiting state and yield.
-            (*current).kthread.state = crate::ps::thread::KThreadState::Waiting;
-            // Return the entry pointer and deadline for post-schedule check
-            (e_ptr, entry.deadline_ticks)
+            (current.0, current.1)
         }
     }; // Lock released here before schedule()
 
@@ -253,9 +259,7 @@ pub fn wait_on(object: &DispatcherHeader, timeout_ms: u32) -> WaitResult {
     // thread runnable.  Re-reading `signal_state` here would race with
     // another CPU and could classify a successfully woken waiter as a
     // timeout.
-    let current = crate::ke::scheduler::get_current_thread()
-        .map(|thread| thread as *mut Ethread)
-        .unwrap_or(core::ptr::null_mut());
+    let current = crate::arch::common::percpu::get_current_thread();
     let signalled = unsafe {
         for index in 0..WAIT_LIST_TOTAL {
             if let Some(entry) = get_wait_entry(index) {

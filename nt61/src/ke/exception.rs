@@ -679,11 +679,11 @@ pub type ExceptionHandler = extern "C" fn(
 #[repr(C)]
 pub struct ExceptionRegistration {
     pub next: *mut ExceptionRegistration,
-    pub handler: u64,
+    pub handler: Option<ExceptionHandler>,
 }
 
 impl ExceptionRegistration {
-    pub fn new(handler: u64) -> Self {
+    pub fn new(handler: Option<ExceptionHandler>) -> Self {
         Self {
             next: core::ptr::null_mut(),
             handler,
@@ -701,7 +701,7 @@ pub use crate::arch::common::hardware_exception;
 /// Register an exception handler
 pub fn register_handler(handler: ExceptionHandler) {
     let mut handlers = KERNEL_EXCEPTION_HANDLERS.lock();
-    let reg = ExceptionRegistration::new(handler as u64);
+    let reg = ExceptionRegistration::new(Some(handler));
     handlers.push(reg);
     // // kprintln!("[EXCEPTION] Registered exception handler");
 }
@@ -709,7 +709,9 @@ pub fn register_handler(handler: ExceptionHandler) {
 /// Unregister an exception handler
 pub fn unregister_handler(handler: ExceptionHandler) {
     let mut handlers = KERNEL_EXCEPTION_HANDLERS.lock();
-    handlers.retain(|r| r.handler != handler as u64);
+    handlers.retain(|r| {
+        !matches!(r.handler, Some(existing) if core::ptr::fn_addr_eq(existing, handler))
+    });
     // // kprintln!("[EXCEPTION] Unregistered exception handler");
 }
 
@@ -721,7 +723,9 @@ fn dispatch_to_handlers(
     let handlers = KERNEL_EXCEPTION_HANDLERS.lock();
 
     for reg in handlers.iter() {
-        let handler_fn = unsafe { core::mem::transmute::<_, ExceptionHandler>(reg.handler) };
+        let Some(handler_fn) = reg.handler else {
+            continue;
+        };
         let disp = handler_fn(
             exception_record as *const _ as *mut _,
             0, // EstablisherFrame

@@ -786,7 +786,7 @@ impl Prcb {
 
 /// Scheduler state.
 pub struct Scheduler {
-    pub cpus: [Option<&'static mut Prcb>; MAX_CPUS],
+    cpus: [*mut Prcb; MAX_CPUS],
     pub current_cpu: u32,
     pub idle_threads: [*mut Ethread; MAX_IDLE_THREADS],
     pub num_cpus: usize,
@@ -800,13 +800,27 @@ pub struct Scheduler {
 impl Scheduler {
     pub const fn new() -> Self {
         Self {
-            cpus: [const { None }; MAX_CPUS],
+            cpus: [null_mut(); MAX_CPUS],
             current_cpu: 0,
             idle_threads: [core::ptr::null_mut(); MAX_IDLE_THREADS],
             num_cpus: 0,
             num_idle_threads: 0,
             thread_affinity: core::sync::atomic::AtomicU64::new(!0u64), // All CPUs by default
         }
+    }
+}
+
+impl Scheduler {
+    /// Read-only access to a registered PRCB while holding the scheduler lock.
+    fn prcb(&self, cpu: usize) -> Option<&Prcb> {
+        let prcb = self.cpus.get(cpu).copied()?;
+        (!prcb.is_null()).then(|| unsafe { &*prcb })
+    }
+
+    /// Exclusive access to a registered PRCB while holding the scheduler lock.
+    fn prcb_mut(&mut self, cpu: usize) -> Option<&mut Prcb> {
+        let prcb = self.cpus.get(cpu).copied()?;
+        (!prcb.is_null()).then(|| unsafe { &mut *prcb })
     }
 }
 
@@ -998,7 +1012,7 @@ pub fn init() {
 pub fn setup_bsp(thread: *mut Ethread) -> bool {
     // // kprintln!("  [SCHED] setup_bsp: enter thread=0x{:x}", thread as u64);
     let mut sched = SCHEDULER.lock();
-    let newly_created = sched.cpus[0].is_none();
+    let newly_created = sched.prcb(0).is_none();
     // // kprintln!("  [SCHED] setup_bsp: scheduler locked, newly_created={}", newly_created);
     if newly_created {
         // // kprintln!("  [SCHED] setup_bsp: building Prcb via pool");
@@ -1044,18 +1058,14 @@ pub fn setup_bsp(thread: *mut Ethread) -> bool {
             (*raw).quantum_remaining = QUANTUM_DEFAULT;
             (*raw).quantum_initial = QUANTUM_DEFAULT;
         }
-        // SAFETY: We leak the Prcb for the lifetime of the
-        // scheduler; `Scheduler` is never dropped at runtime,
-        // so the static `Option<&'static mut Prcb>` only ever
-        // holds a pointer to the pool-allocated Prcb.
-        let leaked: &'static mut Prcb = unsafe { &mut *raw };
-        sched.cpus[0] = Some(leaked);
+        // SAFETY: the pool allocation is initialized in place and owned
+        // by `Scheduler`; it is dereferenced only through locked accessors.
+        sched.cpus[0] = raw;
     }
-    let prcb = sched.cpus[0]
-        .as_mut()
-        .expect("PRCB slot 0 just initialised");
-    prcb.current_thread = thread;
-    prcb.idle_thread = thread;
+    if let Some(prcb) = sched.prcb_mut(0) {
+        prcb.current_thread = thread;
+        prcb.idle_thread = thread;
+    }
     if sched.num_cpus == 0 {
         sched.num_cpus = 1;
     }
@@ -1079,8 +1089,7 @@ pub fn setup_bsp(thread: *mut Ethread) -> bool {
 pub fn init_smp(cpu_count: u32) {
     let mut scheduler = SCHEDULER.lock();
     for i in 1..(cpu_count as usize).min(MAX_CPUS) {
-        // Allocate from pool and leak to satisfy the
-        // `&'static mut Prcb` storage. Avoids the SSE
+        // Allocate from pool. This avoids the SSE
         // stack-to-heap copy that `Prcb::new(i as u32)` would
         // emit when initialising the 32-element `ready_queues`.
         let raw = crate::mm::pool::allocate(
@@ -1112,7 +1121,7 @@ pub fn init_smp(cpu_count: u32) {
             (*raw).quantum_remaining = QUANTUM_DEFAULT;
             (*raw).quantum_initial = QUANTUM_DEFAULT;
         }
-        scheduler.cpus[i] = Some(unsafe { &mut *raw });
+        scheduler.cpus[i] = raw;
         scheduler.num_cpus = i + 1;
         if scheduler.num_idle_threads < scheduler.idle_threads.len() {
             if let Some(idle) = create_thread_idle(i as u32) {
@@ -1170,9 +1179,9 @@ pub fn add_ready(thread: *mut Ethread, priority: u8) {
         None => return,
     };
 
-    if SMP_INITIALIZED.load(Ordering::SeqCst) && target_cpu < scheduler.cpus.len() {
+    if SMP_INITIALIZED.load(Ordering::SeqCst) && target_cpu < MAX_CPUS {
         // Add to per-CPU PRCB ready queue
-        if let Some(ref mut prcb) = scheduler.cpus[target_cpu] {
+        if let Some(ref mut prcb) = scheduler.prcb_mut(target_cpu) {
             let entry_ptr = unsafe {
                 core::ptr::addr_of_mut!((*thread).kthread.global_thread_list_entry)
                     as *mut ListEntry
@@ -1201,7 +1210,7 @@ pub fn add_ready(thread: *mut Ethread, priority: u8) {
     }
 
     // Fallback for single-CPU mode: use CPU 0's queue if available
-    if let Some(ref mut prcb) = scheduler.cpus[0] {
+    if let Some(ref mut prcb) = scheduler.prcb_mut(0) {
         let entry_ptr = unsafe {
             core::ptr::addr_of_mut!((*thread).kthread.global_thread_list_entry) as *mut ListEntry
         };
@@ -1254,8 +1263,8 @@ pub fn remove_ready(thread: *mut Ethread) -> bool {
     };
 
     // Search for the thread in the target CPU's ready queue
-    if target_cpu < scheduler.cpus.len() {
-        if let Some(ref mut prcb) = scheduler.cpus[target_cpu] {
+    if target_cpu < MAX_CPUS {
+        if let Some(ref mut prcb) = scheduler.prcb_mut(target_cpu) {
             let queue = &mut prcb.ready_queues[priority as usize];
             let mut entry_ptr = queue.head;
 
@@ -1360,8 +1369,8 @@ pub fn schedule() -> bool {
     let mut scheduler = SCHEDULER.lock();
 
     // Get current thread from PRCB
-    let current = if cpu < scheduler.cpus.len() {
-        scheduler.cpus[cpu].as_ref().and_then(|p| {
+    let current = if cpu < MAX_CPUS {
+        scheduler.prcb(cpu).and_then(|p| {
             if p.current_thread.is_null() {
                 None
             } else {
@@ -1373,8 +1382,8 @@ pub fn schedule() -> bool {
     };
 
     // Try to pick the next thread from per-CPU PRCB queue
-    let next = if SMP_INITIALIZED.load(Ordering::SeqCst) && cpu < scheduler.cpus.len() {
-        if let Some(ref mut prcb) = scheduler.cpus[cpu] {
+    let next = if SMP_INITIALIZED.load(Ordering::SeqCst) && cpu < MAX_CPUS {
+        if let Some(ref mut prcb) = scheduler.prcb_mut(cpu) {
             // Find highest priority non-empty queue
             let summary = prcb.ready_summary.load(Ordering::Acquire);
             if summary != 0 {
@@ -1418,7 +1427,7 @@ pub fn schedule() -> bool {
         }
     } else {
         // Single-CPU or uninitialized mode: use CPU 0's queue
-        if let Some(ref mut prcb) = scheduler.cpus[0] {
+        if let Some(ref mut prcb) = scheduler.prcb_mut(0) {
             let summary = prcb.ready_summary.load(Ordering::Acquire);
             if summary != 0 {
                 let priority = 31 - summary.leading_zeros() as u8;
@@ -1484,7 +1493,7 @@ pub fn schedule() -> bool {
                     // Running state and must not be re-queued.
                     if (*cur).kthread.state == KThreadState::Running {
                         let prio = ((*cur).kthread.priority as i32).clamp(0, 31) as usize;
-                        if let Some(ref mut prcb) = scheduler.cpus[cpu] {
+                        if let Some(ref mut prcb) = scheduler.prcb_mut(cpu) {
                             if lock_ready_queue(cpu, prio).is_some() {
                                 let entry_ptr = core::ptr::addr_of_mut!(
                                     (*cur).kthread.global_thread_list_entry
@@ -1500,7 +1509,7 @@ pub fn schedule() -> bool {
                 }
             }
             // Update PRCB's current_thread
-            if let Some(ref mut prcb) = scheduler.cpus[cpu] {
+            if let Some(ref mut prcb) = scheduler.prcb_mut(cpu) {
                 prcb.current_thread = next_thread;
             }
             // Keep locks held, release scheduler lock early to reduce contention
@@ -1562,7 +1571,7 @@ pub fn tick() {
     let cpu = get_current_cpu();
 
     // Get per-CPU PRCB
-    if let Some(ref mut prcb) = scheduler.cpus[cpu] {
+    if let Some(ref mut prcb) = scheduler.prcb_mut(cpu) {
         let remaining = prcb.quantum_remaining;
 
         if remaining > 0 {
@@ -1703,7 +1712,7 @@ pub fn create_idle_thread() {
             let idx = scheduler.num_idle_threads;
             scheduler.idle_threads[idx] = idle;
             scheduler.num_idle_threads += 1;
-            if let Some(ref mut prcb) = scheduler.cpus[0] {
+            if let Some(ref mut prcb) = scheduler.prcb_mut(0) {
                 prcb.idle_thread = idle;
                 prcb.current_thread = idle;
                 // // kprintln!("[SCHED] create_idle_thread: idle thread set for CPU 0, idle=0x{:x}", idle as *const Ethread as u64);
@@ -1742,7 +1751,7 @@ pub fn init_thread_quantum(_thread: *mut Ethread, quantum: Quantum) {
 
     let mut scheduler = SCHEDULER.lock();
     let cpu = scheduler.current_cpu as usize;
-    if let Some(ref mut prcb) = scheduler.cpus[cpu] {
+    if let Some(ref mut prcb) = scheduler.prcb_mut(cpu) {
         prcb.quantum_initial = initial;
         prcb.quantum_remaining = remaining;
     }
@@ -1752,7 +1761,7 @@ pub fn init_thread_quantum(_thread: *mut Ethread, quantum: Quantum) {
 pub fn set_thread_quantum(thread: *mut Ethread, quantum_ticks: u32) {
     let mut scheduler = SCHEDULER.lock();
     let cpu = scheduler.current_cpu as usize;
-    if let Some(ref mut prcb) = scheduler.cpus[cpu] {
+    if let Some(ref mut prcb) = scheduler.prcb_mut(cpu) {
         prcb.quantum_initial = quantum_ticks;
         prcb.quantum_remaining = quantum_ticks;
     }
@@ -1763,26 +1772,24 @@ pub fn set_thread_quantum(thread: *mut Ethread, quantum_ticks: u32) {
 pub fn get_remaining_quantum() -> u32 {
     let scheduler = SCHEDULER.lock();
     let cpu = scheduler.current_cpu as usize;
-    scheduler.cpus[cpu]
-        .as_ref()
+    scheduler
+        .prcb(cpu)
         .map(|p| p.quantum_remaining)
         .unwrap_or(0)
 }
 
-/// Get current thread.
+/// Run `callback` with short-lived exclusive access to the current thread.
 ///
-/// Reads the per-CPU `current_thread` slot via the arch-specific per-CPU
-/// register. The pointer is installed by `setup_bsp` and updated by every
-/// context switch. This function is the canonical accessor used
-/// throughout the scheduler; `ps::thread::KeGetCurrentEthread`
-/// also delegates to the same slot.
-pub fn get_current_thread() -> Option<&'static mut Ethread> {
-    let ptr = crate::arch::common::percpu::get_current_thread();
-    if ptr.is_null() {
-        None
-    } else {
-        unsafe { ptr.as_mut() }
-    }
+/// The callback receives a borrow that is only valid for its own execution;
+/// callers cannot retain a reference across a scheduling point. The scheduler
+/// lock serializes access to the authoritative PRCB slot, and the callback must
+/// not acquire that lock.
+pub fn with_current_thread<R>(callback: impl FnOnce(&mut Ethread) -> R) -> Option<R> {
+    let mut scheduler = SCHEDULER.lock();
+    let cpu = scheduler.current_cpu as usize;
+    let thread_ptr = scheduler.prcb_mut(cpu)?.current_thread;
+    let thread = (!thread_ptr.is_null()).then(|| unsafe { &mut *thread_ptr })?;
+    Some(callback(thread))
 }
 
 /// Yield to scheduler.
@@ -1825,7 +1832,7 @@ pub fn init_smp_this_cpu(cpu_id: u32) {
     let mut sched = SCHEDULER.lock();
     let idx = cpu_id as usize;
 
-    if sched.cpus[idx].is_none() {
+    if sched.prcb(idx).is_none() {
         let raw = crate::mm::pool::allocate(
             crate::mm::pool::PoolType::NonPaged,
             core::mem::size_of::<Prcb>(),
@@ -1855,7 +1862,7 @@ pub fn init_smp_this_cpu(cpu_id: u32) {
             (*raw).quantum_remaining = QUANTUM_DEFAULT;
             (*raw).quantum_initial = QUANTUM_DEFAULT;
         }
-        sched.cpus[idx] = Some(unsafe { &mut *raw });
+        sched.cpus[idx] = raw;
     }
 
     if sched.num_cpus <= idx {
@@ -1866,7 +1873,7 @@ pub fn init_smp_this_cpu(cpu_id: u32) {
             let i = sched.num_idle_threads;
             sched.idle_threads[i] = idle;
             sched.num_idle_threads += 1;
-            if let Some(prcb) = sched.cpus[idx].as_mut() {
+            if let Some(prcb) = sched.prcb_mut(idx) {
                 prcb.idle_thread = idle;
                 prcb.current_thread = idle;
             }
@@ -2027,7 +2034,7 @@ pub fn ki_balance_processor(target_cpu: u32) {
     // Calculate loads for all CPUs
     let mut total_load = 0usize;
     for i in 0..num_cpus as usize {
-        if let Some(prcb) = &scheduler.cpus[i] {
+        if let Some(prcb) = scheduler.prcb(i) {
             let load = calculate_cpu_load(prcb);
             total_load += load;
             if load > max_load {
@@ -2057,7 +2064,7 @@ pub fn ki_balance_processor(target_cpu: u32) {
 
         // Attempt to migrate a thread from the most loaded CPU to the least loaded.
         // Use fine-grained per-queue locking to reduce contention.
-        if let Some(ref mut max_prcb) = scheduler.cpus[max_cpu] {
+        if let Some(ref mut max_prcb) = scheduler.prcb_mut(max_cpu) {
             if let Some((thread, priority)) = find_migratable_thread(max_prcb) {
                 let priority_idx = priority as usize;
 
@@ -2128,7 +2135,7 @@ pub fn ki_balance_processor(target_cpu: u32) {
                     }
 
                     // Add to target CPU queue
-                    if let Some(ref mut min_prcb) = scheduler.cpus[min_cpu] {
+                    if let Some(ref mut min_prcb) = scheduler.prcb_mut(min_cpu) {
                         let new_entry_ptr = unsafe {
                             core::ptr::addr_of_mut!((*thread).kthread.global_thread_list_entry)
                                 as *mut ListEntry
@@ -2156,22 +2163,21 @@ pub fn ki_balance_processor(target_cpu: u32) {
 
 /// Migrate a thread from one CPU to another (complete implementation)
 fn migrate_thread_locked(
-    scheduler: &mut Scheduler,
     thread: *mut Ethread,
     from_cpu: usize,
     to_cpu: usize,
     _priority: u8,
 ) {
-    if thread.is_null() || from_cpu >= scheduler.cpus.len() {
+    if thread.is_null() || from_cpu >= MAX_CPUS {
         return;
     }
 
     // Verify target CPU is valid and allowed by thread affinity
     let affinity = unsafe { (*thread).kthread.affinity_mask };
-    if to_cpu >= scheduler.cpus.len() || (affinity & (1u64 << to_cpu)) == 0 {
+    if to_cpu >= MAX_CPUS || (affinity & (1u64 << to_cpu)) == 0 {
         // Find first valid CPU from affinity
         let valid_cpu = affinity.trailing_zeros() as usize;
-        if valid_cpu >= scheduler.cpus.len() {
+        if valid_cpu >= MAX_CPUS {
             // // kprintln!("[SCHED] migrate_thread_locked: no valid target CPU for TID {}",
             // //                      unsafe { (*thread).client_id.unique_thread });
             return;
@@ -2217,7 +2223,7 @@ pub fn balance_load() {
 
     // Calculate exact loads for all CPUs
     for i in 0..num_cpus {
-        if let Some(prcb) = &scheduler.cpus[i] {
+        if let Some(prcb) = scheduler.prcb(i) {
             let load = calculate_cpu_load(prcb);
             total_load += load;
             if load > max_load {
@@ -2241,7 +2247,7 @@ pub fn balance_load() {
         // //             max_cpu, max_load, min_cpu, min_load, threshold, avg_load
         // //         );
 
-        if let Some(ref mut max_prcb) = scheduler.cpus[max_cpu] {
+        if let Some(ref mut max_prcb) = scheduler.prcb_mut(max_cpu) {
             if let Some((thread, priority)) = find_migratable_thread(max_prcb) {
                 // ke_sched P0-4: the per-CPU ready queues are guarded by
                 // lock_ready_queue everywhere else (add_ready, remove_ready,
@@ -2290,10 +2296,10 @@ pub fn balance_load() {
                 }
 
                 // Complete migration (update home_cpu)
-                migrate_thread_locked(&mut scheduler, thread, max_cpu, min_cpu, priority);
+                migrate_thread_locked(thread, max_cpu, min_cpu, priority);
 
                 // Add to target CPU queue
-                if let Some(ref mut min_prcb) = scheduler.cpus[min_cpu] {
+                if let Some(ref mut min_prcb) = scheduler.prcb_mut(min_cpu) {
                     let new_entry_ptr = unsafe {
                         core::ptr::addr_of_mut!((*thread).kthread.global_thread_list_entry)
                             as *mut ListEntry
@@ -2334,8 +2340,8 @@ pub fn has_work() -> bool {
     let scheduler = SCHEDULER.lock();
     let cpu = get_current_cpu();
 
-    if cpu < scheduler.cpus.len() {
-        if let Some(prcb) = scheduler.cpus[cpu].as_ref() {
+    if cpu < MAX_CPUS {
+        if let Some(prcb) = scheduler.prcb(cpu) {
             return prcb.ready_summary.load(Ordering::Acquire) != 0;
         }
     }
@@ -2588,7 +2594,7 @@ pub fn acquire_dispatcher_lock() -> bool {
     let mut scheduler = SCHEDULER.lock();
     let cpu = scheduler.current_cpu as usize;
 
-    if let Some(ref mut prcb) = scheduler.cpus[cpu] {
+    if let Some(ref mut prcb) = scheduler.prcb_mut(cpu) {
         // Check if lock is already held
         if prcb.dispatcher_lock != 0 {
             return false;
@@ -2605,7 +2611,7 @@ pub fn release_dispatcher_lock() {
     let mut scheduler = SCHEDULER.lock();
     let cpu = scheduler.current_cpu as usize;
 
-    if let Some(ref mut prcb) = scheduler.cpus[cpu] {
+    if let Some(ref mut prcb) = scheduler.prcb_mut(cpu) {
         if prcb.dispatcher_lock == 1 {
             prcb.dispatcher_lock = 0;
         }
@@ -2651,20 +2657,20 @@ pub fn init_scheduler_extensions(prcb: &mut Prcb, _cpu_id: u32) {
 /// performs the lookup while holding the scheduler lock only once.
 pub fn with_prcb<R>(cpu: usize, callback: impl FnOnce(&mut Prcb) -> R) -> Option<R> {
     let mut scheduler = SCHEDULER.lock();
-    if cpu >= scheduler.cpus.len() {
+    if cpu >= MAX_CPUS {
         return None;
     }
-    scheduler.cpus[cpu].as_deref_mut().map(callback)
+    scheduler.prcb_mut(cpu).map(callback)
 }
 
 /// Run `callback` with exclusive access to the current CPU's PRCB.
 pub fn with_current_prcb<R>(callback: impl FnOnce(&mut Prcb) -> R) -> Option<R> {
     let mut scheduler = SCHEDULER.lock();
     let cpu = scheduler.current_cpu as usize;
-    if cpu >= scheduler.cpus.len() {
+    if cpu >= MAX_CPUS {
         return None;
     }
-    scheduler.cpus[cpu].as_deref_mut().map(callback)
+    scheduler.prcb_mut(cpu).map(callback)
 }
 
 #[cfg(test)]
@@ -2689,11 +2695,30 @@ mod ready_queue_lock_tests {
 
 #[cfg(test)]
 mod scheduler_prcb_access_tests {
-    use super::with_prcb;
+    use super::{with_prcb, Scheduler};
 
     #[test]
     fn rejects_out_of_range_cpu_without_panicking() {
         assert!(with_prcb(usize::MAX, |_prcb| ()).is_none());
+    }
+
+    #[test]
+    fn uninitialized_prcb_slots_have_no_references() {
+        let mut scheduler = Scheduler::new();
+        assert!(scheduler.prcb(usize::MAX).is_none());
+        assert!(scheduler.prcb_mut(usize::MAX).is_none());
+    }
+}
+
+#[cfg(test)]
+mod scheduler_current_thread_tests {
+    use super::with_current_thread;
+
+    #[test]
+    fn current_thread_callback_cannot_escape() {
+        // The callback is a compile-time boundary: it can inspect or mutate the
+        // thread, but cannot return a reference that outlives scheduler locking.
+        assert!(with_current_thread(|_thread| ()).is_none());
     }
 }
 

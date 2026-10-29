@@ -309,8 +309,11 @@ pub unsafe fn ki_deliver_apc(current_thread: *mut Ethread, delivery_mode: ApcMod
             }
             apc_state.user_apc_in_progress = 1;
 
-            // Drain the user APC list (log only — real implementation
-            // would switch to user mode and call the normal routine).
+            // Drain the user APC list.  NT runs NormalRoutine in the
+            // interrupted user-mode thread context; in this kernel the
+            // user routine pointer is a trampoline installed by the
+            // syscall/trap layer, so delivering it here matches the
+            // KiDeliverApc(UserMode) contract.
             let head = &mut apc_state.user_apc_pending_head as *mut ListEntry;
             let mut delivered = 0;
             while !crate::ps::thread::is_apc_list_empty(head) {
@@ -318,10 +321,10 @@ pub unsafe fn ki_deliver_apc(current_thread: *mut Ethread, delivery_mode: ApcMod
                 let apc_ptr =
                     unsafe { (entry as *mut u8).sub(core::mem::offset_of!(Apc, list_entry)) }
                         as *mut Apc;
-                let routine_addr = (*apc_ptr).routine.map(|r| r as u64).unwrap_or(0);
+                let routine = (*apc_ptr).routine;
                 (*apc_ptr).inserted.store(false, Ordering::Release);
-                if routine_addr != 0 {
-                    // // kprintln!("[APC] Would deliver user APC routine at {:016x}", routine_addr);
+                if let Some(routine_fn) = routine {
+                    routine_fn((*apc_ptr).normal_context);
                     delivered += 1;
                 }
             }
