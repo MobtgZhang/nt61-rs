@@ -762,6 +762,10 @@ pub struct Eprocess {
     pub wow64_flag: u32,
     pub wow64_peb32_va: u32,
     pub wow64_last_error: u32,
+    /// Kernel virtual pointer to the process's PEB32. This is
+    /// maintained separately from `wow64_peb32_va` so query code can
+    /// inspect the actual structure without translating a user VA.
+    pub wow64_peb32_ptr: u64,
     pub wow64_vas_ptr: u64,
     pub wow64_reserved: [u64; 4],
     // === 0x500: END ===
@@ -967,6 +971,8 @@ impl Eprocess {
             wow64_peb32_va: 0,
             // Last 32-bit error code (TEB32.last_error_value)
             wow64_last_error: 0,
+            // Kernel pointer to the initialized PEB32.
+            wow64_peb32_ptr: 0,
             // Pointer to Wow64 VAS state (for 32-bit address space management)
             wow64_vas_ptr: 0,
             // Reserved for future WoW64 extension data
