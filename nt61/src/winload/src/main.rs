@@ -132,13 +132,8 @@ static HYBRID_ALLOCATOR: HybridAllocator = HybridAllocator;
 
 impl HybridAllocator {
     fn backend_alloc(layout: Layout) -> (*mut u8, u64) {
-        if nt61::mm::heap::KERNEL_HEAP
-            .configured_region()
-            .is_some()
-        {
-            let ptr = unsafe {
-                nt61::mm::heap::KERNEL_HEAP.alloc(layout)
-            };
+        if nt61::mm::heap::KERNEL_HEAP.configured_region().is_some() {
+            let ptr = unsafe { nt61::mm::heap::KERNEL_HEAP.alloc(layout) };
             (ptr, HYBRID_ORIGIN_KERNEL)
         } else {
             let ptr = unsafe { uefi::allocator::Allocator.alloc(layout) };
@@ -169,12 +164,11 @@ unsafe impl GlobalAlloc for HybridAllocator {
         let Ok(base_layout) = Layout::from_size_align(base_size, base_align) else {
             return core::ptr::null_mut();
         };
-            let (base, origin) = HybridAllocator::backend_alloc(base_layout);
+        let (base, origin) = HybridAllocator::backend_alloc(base_layout);
         if base.is_null() {
             return core::ptr::null_mut();
         }
-        let user_addr = (base as usize + HYBRID_HEADER_SIZE + base_align - 1)
-            & !(base_align - 1);
+        let user_addr = (base as usize + HYBRID_HEADER_SIZE + base_align - 1) & !(base_align - 1);
         let user = user_addr as *mut u8;
         let header = user.sub(HYBRID_HEADER_SIZE) as *mut HybridAllocHeader;
         unsafe {
@@ -195,10 +189,9 @@ unsafe impl GlobalAlloc for HybridAllocator {
         if unsafe { (*header).magic } != HYBRID_MAGIC {
             return;
         }
-        let Ok(base_layout) = Layout::from_size_align(
-            unsafe { (*header).base_size },
-            unsafe { (*header).base_align },
-        ) else {
+        let Ok(base_layout) = Layout::from_size_align(unsafe { (*header).base_size }, unsafe {
+            (*header).base_align
+        }) else {
             return;
         };
         let base = unsafe { (*header).base_ptr };
@@ -3458,10 +3451,77 @@ fn read_bcd_mailbox_from_config_table() -> Option<[u8; 16]> {
     None
 }
 
+/// Read the optional ASCII boot options written by bootmgr after the GUID.
+fn read_bcd_boot_options() -> Option<alloc::string::String> {
+    const OPTIONS_OFFSET: usize = 0x1C;
+    const OPTIONS_LENGTH: usize = 224;
+
+    if let Some(system_table) = uefi::table::system_table_raw() {
+        let table = unsafe { &*(system_table.as_ptr() as *const EfiSystemTable) };
+        let entries = unsafe {
+            core::slice::from_raw_parts(table.configuration_table, table.number_of_table_entries)
+        };
+        for entry in entries {
+            let mailbox = entry.vendor_table as *const u8;
+            if mailbox.is_null() {
+                continue;
+            }
+            let header = unsafe { core::slice::from_raw_parts(mailbox, 4) };
+            if header != b"BCDE" {
+                continue;
+            }
+            let payload =
+                unsafe { core::slice::from_raw_parts(mailbox, OPTIONS_OFFSET + OPTIONS_LENGTH) };
+            let end = payload[OPTIONS_OFFSET..]
+                .iter()
+                .position(|&byte| byte == 0)
+                .unwrap_or(OPTIONS_LENGTH);
+            if let Ok(options) =
+                core::str::from_utf8(&payload[OPTIONS_OFFSET..OPTIONS_OFFSET + end])
+            {
+                if !options.is_empty() {
+                    return Some(alloc::string::String::from(options));
+                }
+            }
+        }
+    }
+
+    if !cfg!(target_arch = "x86_64") {
+        return None;
+    }
+    let mailbox = 0x10_100usize as *const u8;
+    let payload = unsafe { core::slice::from_raw_parts(mailbox, OPTIONS_OFFSET + OPTIONS_LENGTH) };
+    if &payload[0..4] != b"BCDE" {
+        return None;
+    }
+    let end = payload[OPTIONS_OFFSET..]
+        .iter()
+        .position(|&byte| byte == 0)
+        .unwrap_or(OPTIONS_LENGTH);
+    let options = core::str::from_utf8(&payload[OPTIONS_OFFSET..OPTIONS_OFFSET + end]).ok()?;
+    if options.is_empty() {
+        return None;
+    }
+    Some(alloc::string::String::from(options))
+}
+
 /// Map a BCD entry GUID (as written by the boot manager) to the
 /// kernel `BootMode` enum. Falls back to `Desktop` for unknown
 /// GUIDs, matching the default boot entry.
-fn bcd_guid_to_boot_mode(guid: &[u8; 16]) -> nt61::boot_types::BootMode {
+fn bcd_guid_to_boot_mode(
+    guid: &[u8; 16],
+    boot_options: Option<&str>,
+) -> nt61::boot_types::BootMode {
+    // Windows 7 safe modes are primarily selected by OsLoadOptions. Honor
+    // those flags before falling back to the NT61 test GUID mapping.
+    if let Some(options) = boot_options {
+        if options.contains("/safeboot:") {
+            return nt61::boot_types::BootMode::SafeMode;
+        }
+        if options.contains("/debug") {
+            return nt61::boot_types::BootMode::DebugCmd;
+        }
+    }
     // Match on the first 4 bytes — the well-known GUID prefixes.
     match &guid[0..4] {
         [0xB2, 0x72, 0x1D, 0x66] => nt61::boot_types::BootMode::Cmd,
@@ -4097,8 +4157,9 @@ fn os_loader_run() -> ! {
         // replaces the previous hard-coded `Desktop` — the four
         // boot menu entries (Desktop / CMD / Debug CMD / Safe Mode)
         // now propagate correctly to the kernel.
+        let boot_options = read_bcd_boot_options();
         let selected_mode = match read_bcd_mailbox() {
-            Some(guid) => bcd_guid_to_boot_mode(&guid),
+            Some(guid) => bcd_guid_to_boot_mode(&guid, boot_options.as_deref()),
             None => nt61::boot_types::BootMode::Desktop,
         };
         debug_println!("[LOAD] boot mode from BCD mailbox: {:?}", selected_mode);
