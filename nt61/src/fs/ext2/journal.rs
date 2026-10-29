@@ -26,6 +26,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use super::inode::{read_inode, Ext2Inode};
+use super::write::write_superblock;
 use super::superblock::{Ext2SuperBlock, EXT2_FEATURE_INCOMPAT_RECOVER};
 
 // ============================================================================
@@ -402,6 +403,11 @@ pub fn journal_needs_recovery(sb: &Ext2SuperBlock) -> bool {
 /// Clear the recovery flag after successful replay
 pub fn clear_recovery_flag(sb: &mut Ext2SuperBlock) {
     sb.incompatible_features &= !EXT2_FEATURE_INCOMPAT_RECOVER;
+}
+
+pub fn clear_recovery_flag_on_device(device: *mut (), sb: &mut Ext2SuperBlock) -> Result<(), ()> {
+    clear_recovery_flag(sb);
+    write_superblock(device, sb)
 }
 
 /// Start a new journal transaction
