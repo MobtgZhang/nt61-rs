@@ -218,11 +218,10 @@ impl MessageQueue {
         None
     }
 
-    /// Send a message directly (no queue). Routes through the window
-    /// manager dispatch path so the message reaches the same delivery
-    /// logic as `dispatch_message`; without a kernel-to-user callback
-    /// mechanism the WndProc result itself is still unavailable and
-    /// counted in `WNDPROC_DELIVERY_MISSES`.
+    /// Send a message directly (no queue). The kernel cannot invoke a
+    /// user-mode WndProc directly; the window manager queues a
+    /// `KeUserModeCallback`-style request and returns the callback
+    /// placeholder result to the kernel-side caller.
     pub fn send_message(&self, msg: &Msg) -> i64 {
         let mut wm = crate::libs::win32k::window::WINDOW_MANAGER.lock();
         wm.send_message(msg.hwnd, msg.message, msg.wparam, msg.lparam)

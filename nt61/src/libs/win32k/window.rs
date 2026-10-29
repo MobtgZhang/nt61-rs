@@ -357,21 +357,62 @@ pub struct WindowManager {
 }
 
 /// Window procedures registered from user mode are stored as raw `u64`
-/// addresses in `WindowObject::wndproc`. The kernel has no user-mode
-/// callback mechanism (no KeUserModeCallback equivalent), so calling a
-/// user-mode address directly from kernel mode is impossible; this used
-/// to transmute and jump to the raw address, which faults the kernel on
-/// any user-supplied pointer. Until a ring-transition callback mechanism
-/// exists, return the DefWindowProc pass-through result (0) for messages
-/// it does not handle, but count every undelivered message in `WNDPROC_DELIVERY_MISSES`
-///  so the gap is observable instead of a
-/// silent fake success.
+/// addresses in `WindowObject::wndproc`. NT win32k does not call user-mode
+/// code directly from kernel mode. Callbacks are represented as pending
+/// requests that the owning thread delivers through the user-mode callback
+/// pump and completes by token.
 pub static WNDPROC_DELIVERY_MISSES: AtomicU64 = AtomicU64::new(0);
 
+/// One user-mode window-procedure callback request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WndProcRequest {
+    pub token: u64,
+    pub wndproc: u64,
+    pub hwnd: u64,
+    pub message: u32,
+    pub wparam: u64,
+    pub lparam: i64,
+}
+
+static PENDING_WNDPROC_REQUESTS: Spinlock<Vec<WndProcRequest>> = Spinlock::new(Vec::new());
+static NEXT_WNDPROC_REQUEST_TOKEN: AtomicU64 = AtomicU64::new(1);
+
 fn call_wnd_proc(wndproc: u64, hwnd: u64, msg: u32, wparam: u64, lparam: i64) -> i64 {
-    let _ = (wndproc, hwnd, msg, wparam, lparam);
-    WNDPROC_DELIVERY_MISSES.fetch_add(1, Ordering::Relaxed);
+    if wndproc == 0 {
+        return 0;
+    }
+
+    // NT win32k does not call user WndProcs directly from kernel mode.
+    // Queue the request and let the owning thread deliver it through the
+    // user-mode callback pump, mirroring KeUserModeCallback semantics.
+    let token = NEXT_WNDPROC_REQUEST_TOKEN.fetch_add(1, Ordering::Relaxed);
+    PENDING_WNDPROC_REQUESTS.lock().push(WndProcRequest {
+        token,
+        wndproc,
+        hwnd,
+        message: msg,
+        wparam,
+        lparam,
+    });
     0
+}
+
+/// Remove one pending WndProc request for delivery in user mode.
+pub fn take_pending_wndproc_request() -> Option<WndProcRequest> {
+    PENDING_WNDPROC_REQUESTS.lock().pop()
+}
+
+/// Complete a WndProc request and return its caller-visible result.
+pub fn complete_pending_wndproc_request(token: u64, result: i64) -> Option<i64> {
+    let mut requests = PENDING_WNDPROC_REQUESTS.lock();
+    let index = requests.iter().position(|request| request.token == token)?;
+    requests.remove(index);
+    Some(result)
+}
+
+/// Number of WndProc requests awaiting user-mode delivery.
+pub fn pending_wndproc_request_count() -> usize {
+    PENDING_WNDPROC_REQUESTS.lock().len()
 }
 
 impl WindowManager {
