@@ -149,6 +149,12 @@ impl ObjectIdTable {
     pub fn find_by_id(&self, object_id: u64) -> Option<&ObjectIdEntry> {
         self.entries.iter().find(|e| e.key.object_id == object_id)
     }
+
+    pub fn find_by_id_mut(&mut self, object_id: u64) -> Option<&mut ObjectIdEntry> {
+        self.entries
+            .iter_mut()
+            .find(|entry| entry.key.object_id == object_id)
+    }
 }
 
 /// An object ID entry
