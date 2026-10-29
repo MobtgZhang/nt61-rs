@@ -544,25 +544,22 @@ pub struct SectionInfo32 {
 #[repr(C)]
 #[derive(Default)]
 pub struct Peb32 {
-    // === Inherited from NT_TIB ===
-    /// Inherited from NT_TIB - pointer to environment.
-    pub environment_pointer: ULONG32, // +0x00
-    /// Inherited from NT_TIB - client ID (overlaps with below).
-    pub _tib_client_id_1: [u8; 8], // +0x04
-
     // === PEB Header ===
     /// being_debugged flag.
-    pub being_debugged: u8, // +0x002
+    pub being_debugged: u8, // +0x000
     /// Bit field (SpareBool, image_base_address, etc).
-    pub bit_field: u8, // +0x003
+    pub bit_field: u8, // +0x001
     /// Spare byte.
-    pub spare0: u8, // +0x004
+    pub spare0: u8, // +0x002
     /// Spare byte.
-    pub spare1: u8, // +0x005
+    pub spare1: u8, // +0x003
     /// Spare byte.
-    pub spare2: u8, // +0x006
+    pub spare2: u8, // +0x004
     /// Spare byte.
-    pub spare3: u8, // +0x007
+    pub spare3: u8, // +0x005
+
+    /// Reserved to preserve the documented PEB32 offsets.
+    pub reserved: [u8; 2], // +0x006
 
     // === Loader Data ===
     /// DLL base address.
