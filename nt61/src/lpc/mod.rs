@@ -402,16 +402,8 @@ pub fn create_connection_port(name: &[u16], owner_pid: u64) -> Option<u32> {
     // for the rationale).
     let p = &mut reg.ports[idx];
     p.name_len = name.len();
-    // write the name bytes one at a time through a raw pointer.
-    // Using `p.name.iter_mut().zip(name.iter())` in a for-loop
-    // compiles to the same raw-byte writes, but we keep it explicit
-    // to guarantee no aggregation.
-    unsafe {
-        let dst = p.name.as_mut_ptr();
-        let src = name.as_ptr();
-        for j in 0..name.len() {
-            core::ptr::write(dst.add(j), core::ptr::read(src.add(j)));
-        }
+    for (dst, src) in p.name.iter_mut().zip(name.iter()) {
+        *dst = *src;
     }
     p.port_type = LpcPortType::Connection;
     p.owner_pid = owner_pid;
@@ -443,38 +435,25 @@ pub fn connect_port(server_index: u32, owner_pid: u64, server_index_out: &mut u3
     if server_index as usize >= reg.count as usize {
         return None;
     }
-    // The borrow checker cannot see that `reg.ports[i]` and
-    // `reg.ports[j]` are disjoint when `i != j`, because the
-    // indices are runtime values. We work around this with raw
-    // pointers inside an `unsafe` block; the only thing that
-    // escapes the block is the final count update and the
-    // `*server_index_out` write, which use plain field access.
-    let server_owner_pid: u64;
-    unsafe {
-        let server_ptr = reg.ports.as_mut_ptr();
-        server_owner_pid = (*server_ptr.add(server_index as usize)).owner_pid;
-    }
+    let server_owner_pid = reg.ports[server_index as usize].owner_pid;
 
     // Allocate the client communication port.
     let client_idx = reg.count as usize;
     let client_port_id = reg.next_port_id;
     reg.next_port_id = reg.next_port_id.wrapping_add(1);
-    unsafe {
-        let cp = reg.ports.as_mut_ptr().add(client_idx);
-        (*cp).name_len = 0;
-        (*cp).port_type = LpcPortType::ClientCommunication;
-        (*cp).owner_pid = owner_pid;
-        (*cp).peer_pid = server_owner_pid;
-        // The client sends to the *server communication* port
-        // (allocated below), not the connection port. The peer
-        // link is filled in once we know `server_comm_idx`.
-        (*cp).peer_index = 0;
-        (*cp).port_id = client_port_id;
-        (*cp).pending = 0;
-        (*cp).head = 0;
-        (*cp).tail = 0;
-        (*cp).connected = true;
-        (*cp).state = port::PortState::Active;
+    {
+        let cp = &mut reg.ports[client_idx];
+        cp.name_len = 0;
+        cp.port_type = LpcPortType::ClientCommunication;
+        cp.owner_pid = owner_pid;
+        cp.peer_pid = server_owner_pid;
+        cp.peer_index = 0;
+        cp.port_id = client_port_id;
+        cp.pending = 0;
+        cp.head = 0;
+        cp.tail = 0;
+        cp.connected = true;
+        cp.state = port::PortState::Active;
     }
     reg.count = reg.count + 1;
 
@@ -482,34 +461,26 @@ pub fn connect_port(server_index: u32, owner_pid: u64, server_index_out: &mut u3
     let server_comm_idx = reg.count as usize;
     let server_port_id = reg.next_port_id;
     reg.next_port_id = reg.next_port_id.wrapping_add(1);
-    unsafe {
-        let sp = reg.ports.as_mut_ptr().add(server_comm_idx);
-        (*sp).name_len = 0;
-        (*sp).port_type = LpcPortType::ServerCommunication;
-        (*sp).owner_pid = server_owner_pid;
-        // The server receives from the client comm port.
-        (*sp).peer_index = client_idx as u32;
-        (*sp).port_id = server_port_id;
-        (*sp).pending = 0;
-        (*sp).head = 0;
-        (*sp).tail = 0;
-        (*sp).connected = true;
-        (*sp).state = port::PortState::Active;
-
-        // Wire the client's peer_index to the server comm port
-        // now that we know its index.
-        let cp = reg.ports.as_mut_ptr().add(client_idx);
-        (*cp).peer_index = server_comm_idx as u32;
+    {
+        let sp = &mut reg.ports[server_comm_idx];
+        sp.name_len = 0;
+        sp.port_type = LpcPortType::ServerCommunication;
+        sp.owner_pid = server_owner_pid;
+        sp.peer_index = client_idx as u32;
+        sp.port_id = server_port_id;
+        sp.pending = 0;
+        sp.head = 0;
+        sp.tail = 0;
+        sp.connected = true;
+        sp.state = port::PortState::Active;
     }
+    reg.ports[client_idx].peer_index = server_comm_idx as u32;
     reg.count = reg.count + 1;
 
     // Link the connection port to the server communication port.
-    unsafe {
-        let server_ptr = reg.ports.as_mut_ptr();
-        (*server_ptr.add(server_index as usize)).peer_index = server_comm_idx as u32;
-        (*server_ptr.add(server_index as usize)).connected = true;
-        (*server_ptr.add(server_index as usize)).state = port::PortState::Active;
-    }
+    reg.ports[server_index as usize].peer_index = server_comm_idx as u32;
+    reg.ports[server_index as usize].connected = true;
+    reg.ports[server_index as usize].state = port::PortState::Active;
 
     *server_index_out = server_comm_idx as u32;
     CONNECT_COUNT.fetch_add(1, Ordering::SeqCst);
@@ -536,12 +507,10 @@ pub fn send(port_index: u32, msg: &LpcMessage) -> Option<usize> {
     let connected: bool;
     let peer_index: u32;
     let max_message_length: u32;
-    unsafe {
-        let p = reg.ports.as_mut_ptr().add(port_index as usize);
-        connected = (*p).connected;
-        peer_index = (*p).peer_index;
-        max_message_length = (*p).attributes.max_message_length;
-    }
+    let p = &reg.ports[port_index as usize];
+    connected = p.connected;
+    peer_index = p.peer_index;
+    max_message_length = p.attributes.max_message_length;
     if !connected {
         return None;
     }
@@ -557,54 +526,31 @@ pub fn send(port_index: u32, msg: &LpcMessage) -> Option<usize> {
     // onto the peer's queue.
     let pending: u32;
     let head: u32;
-    unsafe {
-        let p = reg.ports.as_mut_ptr().add(peer_index as usize);
-        pending = (*p).pending;
-        head = (*p).head;
-    }
+    let p = &reg.ports[peer_index as usize];
+    pending = p.pending;
+    head = p.head;
     if (pending as usize) >= MAX_PORT_MESSAGES {
         return None;
     }
     let slot = (head as usize) % MAX_PORT_MESSAGES;
     let copy_len;
-    unsafe {
-        // // kprintln!("    [LPC DBG] send: writing header");
-        let dst = (reg.messages.as_mut_ptr() as *mut LpcMessage)
-            .add(peer_index as usize * MAX_PORT_MESSAGES + slot);
-        // Header copy: field-by-field to avoid a non-temporal SSE
-        // store for the aggregate (which silently fails on UC
-        // memory; same UC-memory issue as documented in
-        // create_connection_port above).
-        let src_hdr = &msg.header;
-        (*dst).header.data_length = src_hdr.data_length;
-        (*dst).header.total_length = src_hdr.total_length;
-        (*dst).header.message_type = src_hdr.message_type;
-        (*dst).header.sender_pid = src_hdr.sender_pid;
-        (*dst).header.sender_tid = src_hdr.sender_tid;
-        (*dst).header.client_pid = src_hdr.client_pid;
-        (*dst).header.client_tid = src_hdr.client_tid;
-        // // kprintln!("    [LPC DBG] send: header written");
-        let cap = (*dst).data.len();
-        copy_len = core::cmp::min(msg.data_len as usize, cap);
-        // // kprintln!("    [LPC DBG] send: copy_len={}", copy_len);
-        // Byte-by-byte copy to avoid `(*dst).data[i] = msg.data[i]`
-        // which the compiler can lower to a non-temporal SSE store
-        // (same UC-memory issue as the name copy above).
-        let dst_data = (*dst).data.as_mut_ptr();
-        let src_data = msg.data.as_ptr();
-        for i in 0..copy_len {
-            // // kprintln!("    [LPC DBG]   send copying i={}", i);
-            core::ptr::write(dst_data.add(i), core::ptr::read(src_data.add(i)));
-        }
-        // // kprintln!("    [LPC DBG] send: data copied");
-        (*dst).data_len = copy_len as u32;
-
-        // // kprintln!("    [LPC DBG] send: updating peer port head/pending at idx={}", peer_index);
-        let p = reg.ports.as_mut_ptr().add(peer_index as usize);
-        (*p).head = head.wrapping_add(1);
-        (*p).pending = pending + 1;
-        // // kprintln!("    [LPC DBG] send: peer updated");
+    let dst = &mut reg.messages[peer_index as usize][slot];
+    dst.header.data_length = msg.header.data_length;
+    dst.header.total_length = msg.header.total_length;
+    dst.header.message_type = msg.header.message_type;
+    dst.header.sender_pid = msg.header.sender_pid;
+    dst.header.sender_tid = msg.header.sender_tid;
+    dst.header.client_pid = msg.header.client_pid;
+    dst.header.client_tid = msg.header.client_tid;
+    copy_len = core::cmp::min(msg.data_len as usize, dst.data.len());
+    for i in 0..copy_len {
+        dst.data[i] = msg.data[i];
     }
+    dst.data_len = copy_len as u32;
+
+    let p = &mut reg.ports[peer_index as usize];
+    p.head = head.wrapping_add(1);
+    p.pending = pending + 1;
     Some(copy_len)
 }
 
@@ -621,41 +567,31 @@ pub fn receive(port_index: u32) -> Option<LpcMessage> {
     }
     let pending: u32;
     let tail: u32;
-    unsafe {
-        let p = reg.ports.as_ptr().add(port_index as usize);
-        pending = (*p).pending;
-        tail = (*p).tail;
-    }
+    let p = &reg.ports[port_index as usize];
+    pending = p.pending;
+    tail = p.tail;
     if pending == 0 {
         return None;
     }
     let slot = (tail as usize) % MAX_PORT_MESSAGES;
     let mut msg = LpcMessage::empty();
-    unsafe {
-        let src = (reg.messages.as_ptr() as *const LpcMessage)
-            .add(port_index as usize * MAX_PORT_MESSAGES + slot);
-        // Field-by-field copy of the header (same UC-memory
-        // rationale as the matching code in `send`).
-        msg.header.data_length = (*src).header.data_length;
-        msg.header.total_length = (*src).header.total_length;
-        msg.header.message_type = (*src).header.message_type;
-        msg.header.sender_pid = (*src).header.sender_pid;
-        msg.header.sender_tid = (*src).header.sender_tid;
-        msg.header.client_pid = (*src).header.client_pid;
-        msg.header.client_tid = (*src).header.client_tid;
-        let cap = msg.data.len();
-        let copy_len = core::cmp::min((*src).data_len as usize, cap);
-        let dst_data = msg.data.as_mut_ptr();
-        let src_data = (*src).data.as_ptr();
-        for i in 0..copy_len {
-            core::ptr::write(dst_data.add(i), core::ptr::read(src_data.add(i)));
-        }
-        msg.data_len = copy_len as u32;
-
-        let p = reg.ports.as_mut_ptr().add(port_index as usize);
-        (*p).tail = tail.wrapping_add(1);
-        (*p).pending = pending - 1;
+    let src = &reg.messages[port_index as usize][slot];
+    msg.header.data_length = src.header.data_length;
+    msg.header.total_length = src.header.total_length;
+    msg.header.message_type = src.header.message_type;
+    msg.header.sender_pid = src.header.sender_pid;
+    msg.header.sender_tid = src.header.sender_tid;
+    msg.header.client_pid = src.header.client_pid;
+    msg.header.client_tid = src.header.client_tid;
+    let copy_len = core::cmp::min(src.data_len as usize, msg.data.len());
+    for i in 0..copy_len {
+        msg.data[i] = src.data[i];
     }
+    msg.data_len = copy_len as u32;
+
+    let p = &mut reg.ports[port_index as usize];
+    p.tail = tail.wrapping_add(1);
+    p.pending = pending - 1;
     RECV_COUNT.fetch_add(1, Ordering::SeqCst);
     Some(msg)
 }
