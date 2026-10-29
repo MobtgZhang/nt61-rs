@@ -1526,6 +1526,122 @@ pub fn find_free_dir_slot(fs: &Fat32FileSystem) -> Option<(u32, usize)> {
     None
 }
 
+/// Find a free directory entry slot in any directory cluster chain.
+pub fn find_free_dir_slot_in(fs: &Fat32FileSystem, dir_cluster: u32) -> Option<(u32, usize)> {
+    let cluster_size = fs.base.cluster_size as usize;
+    let sector_size = fs.base.sector_size as usize;
+    let sectors_per_cluster = cluster_size / sector_size;
+    let mut current_cluster = dir_cluster;
+    let mut visited = 0u32;
+
+    while current_cluster >= 2 && current_cluster < FAT32_EOC && visited < 0x0FFF_FFFF {
+        let first_sector = fs.fat_data.data_start_sector
+            + ((current_cluster - 2) as u64) * (sectors_per_cluster as u64);
+        for s in 0..sectors_per_cluster {
+            let mut sector = [0u8; 512];
+            if read_sector(fs.base.device, first_sector + s as u64, &mut sector).is_err() {
+                continue;
+            }
+            for e in 0..sector_size / core::mem::size_of::<FatDirectoryEntry>() {
+                let entry: FatDirectoryEntry = unsafe {
+                    core::ptr::read_unaligned(
+                        sector
+                            .as_ptr()
+                            .add(e * core::mem::size_of::<FatDirectoryEntry>())
+                            as *const FatDirectoryEntry,
+                    )
+                };
+                if entry.name[0] == 0x00 || entry.name[0] == 0xE5 {
+                    let offset = (s as usize) * sector_size
+                        + (e * core::mem::size_of::<FatDirectoryEntry>());
+                    return Some((current_cluster, offset));
+                }
+            }
+        }
+
+        let next = read_fat_entry(fs, current_cluster);
+        if next == current_cluster || next >= FAT32_EOC {
+            break;
+        }
+        current_cluster = next;
+        visited += 1;
+    }
+
+    None
+}
+
+/// Find a directory entry location by short name in any directory.
+type DirEntryLocation = (u32, usize, FatDirectoryEntry);
+
+pub fn find_dir_entry_location(
+    fs: &Fat32FileSystem,
+    dir_cluster: u32,
+    short_name: &[u8; 11],
+) -> Option<DirEntryLocation> {
+    let cluster_size = fs.base.cluster_size as usize;
+    let sector_size = fs.base.sector_size as usize;
+    let sectors_per_cluster = cluster_size / sector_size;
+    let mut current_cluster = dir_cluster;
+    let mut visited = 0u32;
+
+    while current_cluster >= 2 && current_cluster < FAT32_EOC && visited < 0x0FFF_FFFF {
+        let first_sector = fs.fat_data.data_start_sector
+            + ((current_cluster - 2) as u64) * (sectors_per_cluster as u64);
+        for s in 0..sectors_per_cluster {
+            let mut sector = [0u8; 512];
+            if read_sector(fs.base.device, first_sector + s as u64, &mut sector).is_err() {
+                continue;
+            }
+            for e in 0..sector_size / core::mem::size_of::<FatDirectoryEntry>() {
+                let entry: FatDirectoryEntry = unsafe {
+                    core::ptr::read_unaligned(
+                        sector
+                            .as_ptr()
+                            .add(e * core::mem::size_of::<FatDirectoryEntry>())
+                            as *const FatDirectoryEntry,
+                    )
+                };
+                if !entry.is_valid() || entry.is_long_name() || entry.is_volume_id() {
+                    continue;
+                }
+                if &entry.name == short_name {
+                    let offset = (s as usize) * sector_size
+                        + (e * core::mem::size_of::<FatDirectoryEntry>());
+                    return Some((current_cluster, offset, entry));
+                }
+            }
+        }
+
+        let next = read_fat_entry(fs, current_cluster);
+        if next == current_cluster || next >= FAT32_EOC {
+            break;
+        }
+        current_cluster = next;
+        visited += 1;
+    }
+
+    None
+}
+
+/// Update the short name of an entry at a known directory location.
+fn rename_entry_at(
+    fs: &Fat32FileSystem,
+    cluster: u32,
+    byte_offset: usize,
+    new_name: &[u8; 11],
+) -> Result<(), ()> {
+    let sector_size = fs.base.sector_size as usize;
+    let sector_index = byte_offset / sector_size;
+    let offset_in_sector = byte_offset % sector_size;
+    let mut buffer = [0u8; 512];
+    if read_cluster_sector(fs, cluster, sector_index as u32, &mut buffer).is_err() {
+        return Err(());
+    }
+
+    buffer[offset_in_sector..offset_in_sector + 11].copy_from_slice(new_name);
+    write_cluster_sector(fs, cluster, sector_index as u32, &buffer)
+}
+
 /// Update a directory entry at a specific location
 pub fn update_dir_entry(
     fs: &Fat32FileSystem,
@@ -1568,11 +1684,81 @@ pub fn delete_file_entry(fs: &Fat32FileSystem, cluster: u32, byte_offset: usize)
         return Err(());
     }
 
+    let entry: FatDirectoryEntry = unsafe {
+        core::ptr::read_unaligned(buffer.as_ptr().add(offset_in_sector) as *const FatDirectoryEntry)
+    };
+    let start_cluster =
+        ((entry.first_cluster_high as u32) << 16) | (entry.first_cluster_low as u32);
+
     // Mark as deleted
     buffer[offset_in_sector] = 0xE5;
 
     // write back
-    write_cluster_sector(fs, cluster, sector_index as u32, &buffer)
+    if write_cluster_sector(fs, cluster, sector_index as u32, &buffer).is_err() {
+        return Err(());
+    }
+
+    free_cluster_chain(fs, start_cluster)
+}
+
+/// Create a file or directory entry in the directory starting at
+/// `dir_cluster`, supporting any directory rather than just the root.
+fn create_dir_entry_in_dir(
+    fs: &Fat32FileSystem,
+    dir_cluster: u32,
+    name: &[u8; 11],
+    start_cluster: u32,
+    size: u32,
+    attributes: u8,
+) -> Result<(), ()> {
+    let (cluster, byte_offset) = find_free_dir_slot_in(fs, dir_cluster).ok_or(())?;
+    let entry = FatDirectoryEntry {
+        name: *name,
+        attributes,
+        reserved: 0,
+        creation_time_tenth: 0,
+        creation_time: 0,
+        creation_date: 0,
+        last_access_date: 0,
+        first_cluster_high: (start_cluster >> 16) as u16,
+        modification_time: 0,
+        modification_date: 0,
+        first_cluster_low: (start_cluster & 0xFFFF) as u16,
+        file_size: size,
+    };
+    update_dir_entry(fs, cluster, byte_offset, &entry)
+}
+
+/// Create a file in a directory other than the root.
+pub fn create_file_in_dir(
+    fs: &Fat32FileSystem,
+    dir_cluster: u32,
+    name: &[u8; 11],
+    start_cluster: u32,
+    size: u32,
+) -> Result<(), ()> {
+    create_dir_entry_in_dir(fs, dir_cluster, name, start_cluster, size, 0x20)
+}
+
+/// Create a directory in a directory other than the root.
+pub fn create_dir_in_dir(
+    fs: &Fat32FileSystem,
+    dir_cluster: u32,
+    name: &[u8; 11],
+    start_cluster: u32,
+) -> Result<(), ()> {
+    create_dir_entry_in_dir(fs, dir_cluster, name, start_cluster, 0, 0x10)
+}
+
+/// Rename an entry in a directory other than the root.
+pub fn rename_file_in_dir(
+    fs: &Fat32FileSystem,
+    dir_cluster: u32,
+    old_name: &[u8; 11],
+    new_name: &[u8; 11],
+) -> Result<(), ()> {
+    let (cluster, byte_offset, _) = find_dir_entry_location(fs, dir_cluster, old_name).ok_or(())?;
+    rename_entry_at(fs, cluster, byte_offset, new_name)
 }
 
 /// create a new file in the root directory
