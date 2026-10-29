@@ -1,13 +1,14 @@
 //! BTL x86_64 instruction decoder — thin wrapper around the shared
 //! decoder in crate::arch::common::btl::x86_decoder.
 
-use crate::arch::common::btl::ir::{IROp, IrInst, X86Reg};
 use crate::arch::common::btl::x86_decoder as shared;
 
 pub use shared::{decode_block, decode_one, MAX_BLOCK_BYTES, MAX_DECODED_INSTS};
 
 #[cfg(test)]
 mod tests {
+    use crate::arch::common::btl::ir::{IROp, IrInst};
+
     use super::*;
 
     #[test]
