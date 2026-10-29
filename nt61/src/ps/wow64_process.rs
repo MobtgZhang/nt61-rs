@@ -14,7 +14,7 @@
 
 use crate::libs::wow64::types::*;
 use crate::libs::wow64::wow64vas::WOW64_HEAP_VIRTUAL_ALLOC_BASE;
-use crate::ps::process::{create_user_process, Eprocess};
+use crate::ps::process::{create_process_full, Eprocess};
 use alloc::boxed::Box;
 
 // =============================================================================
@@ -140,46 +140,65 @@ impl Wow64VasState {
 /// * `None` on failure
 pub fn create_wow64_process(
     image_path: &[u8],
-    _parent_process: Option<&'static mut Eprocess>,
+    parent_process: Option<&'static mut Eprocess>,
 ) -> Option<&'static mut Eprocess> {
-    // _parent_process is intentionally unused - Wow64 child processes inherit via the loader
+    let parent = parent_process.map(|process| process as *mut Eprocess);
+    let process = create_process_full(image_path, parent)?;
+    initialize_wow64_process(process, image_path)
+}
 
-    // 1. create a standard 64-bit process first
-    //
-    // `create_user_process` only takes a `user_entry_override` (an optional RIP
-    // override), so the parent handle is not threaded through here. Wow64
-    // child processes inherit via the loader instead.
-    let process = create_user_process(image_path, 0, None)?;
+/// Initialize WOW64 process state after the native process object exists.
+///
+/// The image bytes are parsed and relocated through the PE32 loader so the
+/// executable's preferred base and entry point drive the WOW64 user state.
+pub fn initialize_wow64_process(
+    process: &'static mut Eprocess,
+    image: &[u8],
+) -> Option<&'static mut Eprocess> {
+    let loaded_image = crate::loader::pe32::load_pe32(image, 0)?;
+    let image_base = loaded_image.base_address;
+    let entry_point = loaded_image.entry_point();
+    let image_size = loaded_image.size_of_image;
 
-    // 2. Initialize the Wow64 extension
-    // Note: In a real implementation, we would add fields to Eprocess
-    // For now, we create a separate extension structure
+    process.set_wow64_flag(true);
+    process.set_wow64_peb32_va(PEB32_VIRTUAL_ADDRESS);
+    process.user_image_base = u64::from(image_base);
+    process.user_image_size = u64::from(image_size);
+    process.user_rip = u64::from(entry_point);
 
-    // 3. Allocate PEB32
-    let peb32 = allocate_peb32()?;
-    // 4. Initialize PEB32
+    let peb32 = Box::leak(Box::new(Peb32::default()));
+    let heap_base = crate::libs::wow64::wow64vas::allocate_heap(0x1000)?;
     unsafe {
         init_peb32(peb32, process);
+        (*peb32).process_heap = heap_base;
+        (*peb32).teb = TEB32_BASE_ADDRESS;
+        (*peb32).teb32 = TEB32_BASE_ADDRESS;
     }
+    process.wow64_peb32_ptr = peb32 as *mut Peb32 as u64;
 
-    // 5. Initialize Wow64 VAS
-    let _vas = Box::new(Wow64VasState::new());
-    // _vas is reserved for future use - Wow64 VAS tracking
-    // 6. Load 32-bit system DLLs
-    if load_wow64_system_dlls(process).is_err() {
-        return None;
+    let wow64vas = Box::leak(Box::new(Wow64VasState::new()));
+    process.wow64_vas_ptr = wow64vas as *mut Wow64VasState as u64;
+
+    if !process.main_thread.is_null() {
+        let stack_top = crate::libs::wow64::wow64vas::allocate_stack(
+            crate::libs::wow64::wow64vas::WOW64_DEFAULT_STACK_SIZE,
+        )?;
+        let stack_base = stack_top
+            .checked_sub(crate::libs::wow64::wow64vas::WOW64_DEFAULT_STACK_SIZE)?;
+
+        unsafe {
+            let thread = &mut *process.main_thread;
+            crate::ps::wow64_thread::initialize_wow64_thread(thread, process, stack_top)?;
+            (*process.main_thread).kthread.context.user_rip = u64::from(entry_point);
+            (*process.main_thread).kthread.context.user_rsp = u64::from(stack_top);
+        }
+
+        process.user_stack_base = u64::from(stack_base);
+        process.user_stack_limit = u64::from(stack_top);
+        process.user_rsp = u64::from(stack_top);
     }
 
     Some(process)
-}
-
-/// Allocate and initialize PEB32 for a Wow64 process.
-fn allocate_peb32() -> Option<*mut Peb32> {
-    // In a real implementation, we would allocate a page from the process's
-    // address space at PEB32_VIRTUAL_ADDRESS
-    // For the stub, we use a static allocation
-    static mut PEB32_BUFFER: [u8; 0x200] = [0; 0x200];
-    Some(unsafe { (*core::ptr::addr_of_mut!(PEB32_BUFFER)).as_mut_ptr() as *mut Peb32 })
 }
 
 /// Initialize PEB32 for a Wow64 process.
@@ -209,49 +228,40 @@ unsafe fn init_peb32(peb: *mut Peb32, process: &Eprocess) {
 ///   * kernel32.dll - Win32 kernel API
 ///   * user32.dll - Win32 user API
 ///   * gdi32.dll - Win32 GDI API
-fn load_wow64_system_dlls(_process: &Eprocess) -> Result<(), u32> {
-    // In a real implementation:
-    // 1. Load ntdll.dll at 0x7C000000 (classic 32-bit ntdll base)
-    // 2. Load kernel32.dll at 0x7C800000
-    // 3. Load user32.dll at 0x7D000000
-    // 4. Load gdi32.dll at 0x7D100000
-    //    (0x7FFE0000 is KUSER_SHARED_DATA and must stay reserved.)
-    // 5. Initialize the PEB loader data with these DLLs
-
-    // For the stub, just log
-    Ok(())
-}
-
 // =============================================================================
 // Wow64 Process Query Functions
 // =============================================================================
 
 /// Get the PEB32 address for a Wow64 process.
-pub fn get_peb32_address(_process: &Eprocess) -> ULONG32 {
-    // _process is intentionally unused - reserved for future Wow64 extension lookup
-    // In a real implementation, this would check the process's Wow64 extension
-    // For the stub, return the standard PEB32 address
-    PEB32_VIRTUAL_ADDRESS
+pub fn get_peb32_address(process: &Eprocess) -> ULONG32 {
+    process.get_wow64_peb32_va()
 }
 
 /// Check if a process is a Wow64 process.
-pub fn is_wow64_process(_process: &Eprocess) -> bool {
-    // _process is intentionally unused - reserved for future Wow64 extension lookup
-    // In a real implementation, this would check a flag in EPROCESS
-    // For the stub, return false
-    false
+pub fn is_wow64_process(process: &Eprocess) -> bool {
+    process.is_wow64_process()
 }
 
 /// Get the last error for a 32-bit process.
-pub fn get_wow64_last_error(_process: &Eprocess) -> ULONG32 {
-    // _process is intentionally unused - reserved for future Wow64 extension lookup
-    // In a real implementation, read from the Wow64 extension
-    0
+pub fn get_wow64_last_error(process: &Eprocess) -> ULONG32 {
+    process.get_wow64_last_error()
 }
 
 /// Set the last error for a 32-bit process.
-pub fn set_wow64_last_error(_process: &mut Eprocess, _error: ULONG32) {
-    // _process and _error are intentionally unused - reserved for future Wow64 extension
+pub fn set_wow64_last_error(process: &mut Eprocess, error: ULONG32) {
+    process.set_wow64_last_error(error);
+    if !process.main_thread.is_null() {
+        unsafe {
+            if let Some(teb32) = (*process.main_thread).get_wow64_teb32().as_mut() {
+                teb32.last_error_value = error;
+            }
+        }
+    }
+}
+
+/// Query whether 32-bit registry redirection is active for a process.
+pub fn registry_redirection_enabled(process: &Eprocess) -> bool {
+    process.is_wow64_process()
 }
 
 // =============================================================================
