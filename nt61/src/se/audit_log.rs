@@ -376,15 +376,29 @@ pub mod encryption {
     use crate::crypto::cipher::{Aes256, Cbc};
     use crate::crypto::csprng;
     use crate::crypto::hash::sha256;
+    use crate::ke::sync::Spinlock;
 
     const AES_KEY_SIZE: usize = 32;
     const AES_BLOCK_SIZE: usize = 16;
 
-    /// Audit encryption key. The production key source is the machine's
-    /// DPAPI-protected system key; this fixed derivation is the kernel's
-    /// boot-time fallback and is deliberately documented rather than hidden.
-    fn audit_key() -> [u8; AES_KEY_SIZE] {
-        sha256(b"NT6.1-AUDIT-LOG-KEY")
+    /// Machine-unique audit key. A production Windows installation protects
+    /// this key with DPAPI; this kernel derives one at first use from the
+    /// same CSPRNG used for other security-sensitive material. No constant
+    /// seed or domain string is retained.
+    static AUDIT_KEY: Spinlock<Option<[u8; AES_KEY_SIZE]>> = Spinlock::new(None);
+
+    fn audit_key() -> Result<[u8; AES_KEY_SIZE], ()> {
+        let mut key = AUDIT_KEY.lock();
+        if let Some(key) = *key {
+            return Ok(key);
+        }
+
+        let mut generated = [0u8; AES_KEY_SIZE];
+        if !csprng::fill(&mut generated) {
+            return Err(());
+        }
+        *key = Some(generated);
+        Ok(generated)
     }
 
     /// Encrypt audit log data with AES-256-CBC and authenticate it.
@@ -393,6 +407,7 @@ pub mod encryption {
     /// covers both the IV and ciphertext, so an attacker cannot reuse or
     /// relocate either value without detection.
     pub fn encrypt_record(data: &[u8]) -> Option<alloc::vec::Vec<u8>> {
+        let key = audit_key().ok()?;
         let mut iv = [0u8; AES_BLOCK_SIZE];
         csprng::fill(&mut iv);
 
@@ -402,20 +417,21 @@ pub mod encryption {
         padded.extend_from_slice(data);
         padded.resize(padded_len, pad_len as u8);
 
-        let mut cipher = Cbc::<Aes256>::new_aes256(&audit_key(), &iv);
+        let mut cipher = Cbc::<Aes256>::new_aes256(&key, &iv);
         let ciphertext = cipher.encrypt(&padded).ok()?;
 
         let mut output =
             alloc::vec::Vec::with_capacity(AES_BLOCK_SIZE + ciphertext.len() + sha256(b"").len());
         output.extend_from_slice(&iv);
         output.extend_from_slice(&ciphertext);
-        output.extend_from_slice(&hmac_sha256(&audit_key(), &output));
+        output.extend_from_slice(&hmac_sha256(&key, &output));
         Some(output)
     }
 
     /// Decrypt and authenticate audit log data. The tag is verified before
     /// any plaintext is returned, including before PKCS#7 padding is used.
     pub fn decrypt_record(data: &[u8]) -> Option<alloc::vec::Vec<u8>> {
+        let key = audit_key().ok()?;
         if data.len() < 2 * AES_BLOCK_SIZE + 32 || (data.len() - 32) % AES_BLOCK_SIZE != 0 {
             return None;
         }
@@ -427,7 +443,7 @@ pub mod encryption {
         let (payload, _) = data.split_at(data.len() - 32);
         let mut iv = [0u8; AES_BLOCK_SIZE];
         iv.copy_from_slice(&payload[..AES_BLOCK_SIZE]);
-        let mut cipher = Cbc::<Aes256>::new_aes256(&audit_key(), &iv);
+        let mut cipher = Cbc::<Aes256>::new_aes256(&key, &iv);
         let mut padded = cipher.decrypt(&payload[AES_BLOCK_SIZE..]).ok()?;
 
         let pad_byte = *padded.last()? as usize;
@@ -447,11 +463,14 @@ pub mod encryption {
     /// Verify the audit log integrity tag. The last 32 bytes are the
     /// HMAC-SHA256 tag over the preceding IV and ciphertext.
     pub fn verify_integrity(data: &[u8]) -> bool {
+        let Ok(key) = audit_key() else {
+            return false;
+        };
         if data.len() < 2 * AES_BLOCK_SIZE + 32 {
             return false;
         }
         let (payload, tag) = data.split_at(data.len() - 32);
-        let expected = hmac_sha256(&audit_key(), payload);
+        let expected = hmac_sha256(&key, payload);
         let mut diff = 0u8;
         for (a, b) in tag.iter().zip(expected.iter()) {
             diff |= a ^ b;

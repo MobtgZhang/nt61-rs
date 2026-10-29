@@ -115,7 +115,11 @@ pub fn lookup_by_sid(sid: &sid) -> Option<AccountEntry> {
             return Some(*a);
         }
     }
-    None
+    RUNTIME_ACCOUNTS
+        .lock()
+        .iter()
+        .find(|record| record.entry.sid.equals(sid))
+        .map(|record| record.entry)
 }
 
 /// Look up an account by case-insensitive name. Names use the
@@ -150,12 +154,31 @@ fn builtin_name(entry: &AccountEntry) -> &'static str {
 
 /// Return an iterator over the account table. Used by
 /// `NetUserEnum` and similar enumeration APIs.
-pub fn all_accounts() -> &'static [AccountEntry] {
-    BUILTIN
+pub fn all_accounts() -> Vec<AccountEntry> {
+    let mut accounts = Vec::new();
+    accounts.extend_from_slice(BUILTIN);
+    for record in RUNTIME_ACCOUNTS.lock().iter() {
+        accounts.push(record.entry);
+    }
+    accounts
 }
 
 pub fn init() {
     RUNTIME_ACCOUNTS.lock().clear();
+    for user in crate::registry::cm::sam_runtime_users() {
+        let account = AccountEntry {
+            rid: user.rid,
+            sid: sid::with_2subs([0, 0, 0, 0, 0, 5], 21, user.rid),
+            kind: AccountKind::User,
+            enabled: user.enabled,
+        };
+        RUNTIME_ACCOUNTS.lock().push(UserRecord {
+            name: user.name,
+            entry: account,
+            salt: user.salt,
+            password_hash: user.password_hash,
+        });
+    }
 }
 
 /// Create a runtime account with a salted password hash and a fresh RID.
@@ -212,6 +235,16 @@ pub fn create_user(
         salt,
         password_hash: password_hash(password, &salt),
     });
+
+    crate::registry::cm::add_sam_runtime_user(crate::registry::cm::SamRuntimeUser {
+        rid,
+        name: String::from(name),
+        enabled,
+        salt,
+        password_hash: password_hash(password, &salt),
+    });
+    let _ = crate::registry::flush::flush_sam_hive();
+
     Ok(entry)
 }
 

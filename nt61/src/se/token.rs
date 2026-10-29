@@ -603,10 +603,8 @@ pub fn create_system_token() -> *mut Token {
 
     if !token.is_null() {
         unsafe {
-            core::ptr::write_bytes(token as *mut u8, 0, core::mem::size_of::<Token>());
-            // System tokens have LocalSystem SID
             let system_sid = sid::well_known(WellKnownSid::LocalSystem);
-            (*token) = Token::new_primary(system_sid);
+            core::ptr::write(token, Token::new_primary(system_sid));
         }
         // crate::kprintln!("[SEC] Created system token at 0x{:016x}", token as u64);
     }
@@ -623,8 +621,7 @@ pub fn create_user_token(user_sid: sid) -> *mut Token {
 
     if !token.is_null() {
         unsafe {
-            core::ptr::write_bytes(token as *mut u8, 0, core::mem::size_of::<Token>());
-            (*token) = Token::new_primary(user_sid);
+            core::ptr::write(token, Token::new_primary(user_sid));
         }
         // crate::kprintln!("[SEC] Created user token at 0x{:016x}", token as u64);
     }
