@@ -17,10 +17,6 @@ pub mod rsa;
 // external crates; the pure-Rust implementations above are what the
 // kernel actually links against on a default build.
 #[cfg(feature = "crypto_libs")]
-pub mod cipher_new;
-#[cfg(feature = "crypto_libs")]
-pub mod hash_new;
-#[cfg(feature = "crypto_libs")]
 pub mod rsa_secure;
 
 /// Initialize the cryptography subsystem: seed the CSPRNG from the

@@ -55,8 +55,8 @@ btl = []
 # Disabled by default while the LSDC type mismatches are being sorted
 # out; enable via `--features loongson_gpu` on a loongarch64 build.
 loongson_gpu = []
-# RustCrypto-backed implementations (`crypto::hash_new`, `crypto::cipher_new`,
-# `crypto::rsa_secure`). On by default so cipher / hash / rsa results are
+# RustCrypto-backed implementation (`crypto::rsa_secure`). On by default so
+# cipher / hash / rsa results are
 # cross-validated against RustCrypto; the pure-Rust equivalents remain available.
 crypto_libs = ["dep:sha2", "dep:aes", "dep:des", "dep:hmac", "dep:rsa", "dep:rand_core"]
 # Per-architecture helper gates (used by `cfgs` in arch-specific
