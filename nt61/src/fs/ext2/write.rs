@@ -14,6 +14,8 @@ struct DirectoryLocation {
     offset: usize,
 }
 
+const SUPERBLOCK_SECTOR: u64 = 2;
+
 fn read_dir_buffer(device: *mut (), sb: &Ext2SuperBlock, inode: &Ext2Inode) -> Option<Vec<u8>> {
     if !inode.is_dir() {
         return None;
@@ -151,7 +153,14 @@ fn allocate_inode(device: *mut (), sb: &Ext2SuperBlock, is_directory: bool) -> R
     for group in 0..sb.get_group_count() {
         let mut inode_bitmap = bitmap::read_inode_bitmap(device, sb, group).ok_or(())?;
         let max_inodes = sb.inodes_per_group as usize;
-        let index = bitmap::find_first_zero(&inode_bitmap, max_inodes).ok_or(())?;
+        let first_index_in_group = if group == 0 {
+            sb.first_ino.saturating_sub(1) as usize
+        } else {
+            0
+        };
+        let index = (first_index_in_group..max_inodes)
+            .find(|candidate| !bitmap::test_bit(&inode_bitmap, *candidate))
+            .ok_or(())?;
         bitmap::set_bit(&mut inode_bitmap, index);
 
         let group_desc = read_group_descriptor(device, sb, group).ok_or(())?;
@@ -172,6 +181,18 @@ fn allocate_inode(device: *mut (), sb: &Ext2SuperBlock, is_directory: bool) -> R
     }
 
     Err(())
+}
+
+pub fn write_superblock(device: *mut (), sb: &Ext2SuperBlock) -> Result<(), ()> {
+    let mut buffer = vec![0u8; 1024];
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            sb as *const Ext2SuperBlock as *const u8,
+            buffer.as_mut_ptr(),
+            core::mem::size_of::<Ext2SuperBlock>(),
+        );
+    }
+    super::superblock::write_sector(device, SUPERBLOCK_SECTOR, &buffer)
 }
 
 fn write_group_descriptor(
