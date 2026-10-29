@@ -15,6 +15,7 @@
 use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use super::codegen::CodeBlock;
+use crate::mm::pool::{self, PoolType};
 
 /// Total number of cache slots. 1024 entries is small enough to
 /// fit in the L1 d-cache on most SoCs (including the SpacemiT K1
@@ -118,9 +119,20 @@ pub fn smoke_test() -> bool {
     ok && collision_ok && cleared
 }
 
-/// Compile a placeholder code block so callers have a concrete
-/// buffer to insert into the cache. The block is allocated via
-/// the kernel pool; Phase 4 uses a static for simplicity.
+/// Copy a translated block into executable non-paged pool memory.
 pub fn materialize(code: &CodeBlock) -> u64 {
-    code.as_slice().as_ptr() as u64
+    let bytes = code.as_slice();
+    if bytes.is_empty() {
+        return 0;
+    }
+    let host = pool::allocate_aligned(PoolType::NonPagedExecute, bytes.len(), 4);
+    if host.is_null() {
+        return 0;
+    }
+    unsafe {
+        core::ptr::copy_nonoverlapping(bytes.as_ptr(), host, bytes.len());
+        // Make the freshly copied instruction stream visible to fetch.
+        core::arch::asm!("fence.i", options(nostack));
+    }
+    host as u64
 }
