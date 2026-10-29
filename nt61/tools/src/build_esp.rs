@@ -2,8 +2,7 @@
 //!
 //! Creates the complete UEFI ESP directory structure and disk images.
 
-use clap::Parser;
-use nt61_tools::hive_gen;
+use nt61_tools::{fs::new_guid_v4, hive_gen};
 use std::fs::{self, File};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -25,7 +24,6 @@ Structure:
         Fonts/        (GNU FreeFont)
         bootmgfw.efi (Windows Boot Manager)
         bootmgr.efi  (Boot Manager)
-        memtest.efi  (Memory Test)
 
 ROOT/
   Windows/
@@ -121,7 +119,7 @@ impl Default for BuildConfig {
 }
 
 /// Create directory structure
-pub fn create_directories(build_dir: &Path, arch: Arch) -> std::io::Result<EspPaths> {
+pub fn create_directories(build_dir: &Path, _arch: Arch) -> std::io::Result<EspPaths> {
     // Directory structure:
     // build/ (passed as build_dir)
     //   esp/         <- EFI partition files
@@ -478,17 +476,6 @@ pub fn copy_fonts(paths: &EspPaths) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Create MEMTEST placeholder
-pub fn create_memtest_placeholder(paths: &EspPaths) -> std::io::Result<()> {
-    let memtest = paths.ms_boot_dir.join("memtest.efi");
-    println!("  Creating: {:?}", &memtest);
-    // UEFI apps need PE/COFF headers, but for boot manager menu
-    // we can use a small stub (won't actually run, just appears in menu)
-    let stub = b"MEMTEST_STUB";
-    fs::write(&memtest, stub)?;
-    Ok(())
-}
-
 /// Create BOOTVARS file (NVRAM variables backup)
 pub fn create_bootvars(paths: &EspPaths, timeout: u32) -> std::io::Result<()> {
     let bootvars = paths.ms_boot_dir.join("BOOTVARS");
@@ -559,7 +546,7 @@ pub fn create_esp_image(paths: &EspPaths, arch: Arch) -> std::io::Result<PathBuf
     gpt[564..572].copy_from_slice(&(total_sectors - 34).to_le_bytes());
 
     // Disk GUID (random)
-    let guid = uuid::Uuid::new_v4();
+    let guid = new_guid_v4();
     gpt[572..588].copy_from_slice(guid.as_bytes());
 
     // Partition entry LBA (2)
@@ -585,7 +572,7 @@ pub fn create_esp_image(paths: &EspPaths, arch: Arch) -> std::io::Result<PathBuf
     partition_entry[0..16].copy_from_slice(esp_type.as_bytes());
 
     // Unique partition GUID
-    let part_guid = uuid::Uuid::new_v4();
+    let part_guid = new_guid_v4();
     partition_entry[16..32].copy_from_slice(part_guid.as_bytes());
 
     // Starting LBA (34)
@@ -665,9 +652,6 @@ pub fn build_esp(config: &BuildConfig) -> std::io::Result<()> {
     println!("Setting up font directory...");
     copy_fonts(&paths)?;
 
-    println!("Creating MEMTEST placeholder...");
-    create_memtest_placeholder(&paths)?;
-
     println!("Creating BOOTVARS...");
     create_bootvars(&paths, config.timeout)?;
 
@@ -687,7 +671,7 @@ pub fn build_esp(config: &BuildConfig) -> std::io::Result<()> {
     Ok(())
 }
 
-pub fn print_tree(dir: &Path, prefix: &str, is_last: bool) -> std::io::Result<()> {
+pub fn print_tree(dir: &Path, prefix: &str, _is_last: bool) -> std::io::Result<()> {
     let entries: Vec<_> = fs::read_dir(dir)?.collect();
     let total = entries.len();
 

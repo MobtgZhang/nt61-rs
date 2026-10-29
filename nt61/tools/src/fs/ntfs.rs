@@ -672,7 +672,13 @@ impl NtfsImage {
         // seen, which made repeated edits lose nested files.
         let mut pending: Vec<(u32, String)> = children_by_parent
             .get(&5)
-            .map(|children| children.iter().rev().map(|&record| (record, String::new())).collect())
+            .map(|children| {
+                children
+                    .iter()
+                    .rev()
+                    .map(|&record| (record, String::new()))
+                    .collect()
+            })
             .unwrap_or_default();
         while let Some((record, parent_path)) = pending.pop() {
             let rec = match by_mft.get(&record) {
@@ -856,8 +862,8 @@ impl NtfsImage {
             let ep = &e.path;
             // entry must start with prefix (backslash-separated).
             let inside = if prefix.is_empty() {
-            // Root: direct children have no additional separator.
-            !ep.contains('\\')
+                // Root: direct children have no additional separator.
+                !ep.contains('\\')
             } else {
                 ep.eq(prefix) || ep.starts_with(&format!("{}\\", prefix))
             };
@@ -1583,7 +1589,12 @@ impl NtfsImage {
                     assigned as u64
                 });
             record_assignment.insert(stripped.to_string(), record_num);
-            child_meta.push((entry.path.clone(), entry.is_dir, record_num, entry.data.len()));
+            child_meta.push((
+                entry.path.clone(),
+                entry.is_dir,
+                record_num,
+                entry.data.len(),
+            ));
         }
 
         // child_meta is owned, so we can now mutate self freely.
@@ -2063,10 +2074,7 @@ fn read_non_resident_data(rec: &[u8], attr_off: usize, image: &[u8], cluster_siz
         cursor += 1;
         let count_size = (header & 0x0F) as usize;
         let offset_size = (header >> 4) as usize;
-        if count_size == 0
-            || count_size > 8
-            || cursor + count_size > rec.len()
-        {
+        if count_size == 0 || count_size > 8 || cursor + count_size > rec.len() {
             break;
         }
         let mut count = 0u64;

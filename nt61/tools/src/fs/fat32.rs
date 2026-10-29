@@ -1509,7 +1509,7 @@ pub fn write_gpt_header(img: &mut [u8], disk_size: u64, esp_lba: u64, esp_size: 
     // Last usable LBA
     img[56..64].copy_from_slice(&(alt_lba - 34).to_le_bytes());
     // Disk GUID
-    let guid = uuid::Uuid::new_v4();
+    let guid = crate::fs::new_guid_v4();
     img[56..72].copy_from_slice(guid.as_bytes());
     // Partition entry LBA (2)
     img[72..80].copy_from_slice(&2u64.to_le_bytes());

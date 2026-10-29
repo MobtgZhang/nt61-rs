@@ -208,10 +208,16 @@ pub fn build_kernel(target: &str) -> Result<PathBuf> {
     // only the kernel invocation gets the extra `-T` argument here.
     match arch {
         "riscv64" => {
-            cmd.env("RUSTFLAGS", "-C link-arg=-Tsrc/boot/linker-rv64.ld -C link-arg=-no-gc-sections");
+            cmd.env(
+                "RUSTFLAGS",
+                "-C link-arg=-Tsrc/boot/linker-rv64.ld -C link-arg=-no-gc-sections",
+            );
         }
         "loongarch64" => {
-            cmd.env("RUSTFLAGS", "-C link-arg=-Tsrc/boot/linker-la64.ld -C link-arg=-no-gc-sections");
+            cmd.env(
+                "RUSTFLAGS",
+                "-C link-arg=-Tsrc/boot/linker-la64.ld -C link-arg=-no-gc-sections",
+            );
         }
         _ => {}
     }
@@ -1392,11 +1398,14 @@ fn patch_pe_section_characteristics(path: &std::path::Path) -> Result<()> {
     }
 
     let coff_off = e_lfanew + 4;
-    f.seek(SeekFrom::Start(coff_off + 2)).map_err(BuildError::Io)?;
+    f.seek(SeekFrom::Start(coff_off + 2))
+        .map_err(BuildError::Io)?;
     let mut num_sections_bytes = [0u8; 2];
-    f.read_exact(&mut num_sections_bytes).map_err(BuildError::Io)?;
+    f.read_exact(&mut num_sections_bytes)
+        .map_err(BuildError::Io)?;
     let num_sections = u16::from_le_bytes(num_sections_bytes);
-    f.seek(SeekFrom::Start(coff_off + 16)).map_err(BuildError::Io)?;
+    f.seek(SeekFrom::Start(coff_off + 16))
+        .map_err(BuildError::Io)?;
     let mut size_opt_bytes = [0u8; 2];
     f.read_exact(&mut size_opt_bytes).map_err(BuildError::Io)?;
     let size_opt = u16::from_le_bytes(size_opt_bytes) as u64;
@@ -2979,17 +2988,11 @@ fn real_pe(artifact_name: &str) -> Vec<u8> {
         let a_bare = a.contains(&format!("target/{bare_metal}/"));
         let b_bare = b.contains(&format!("target/{bare_metal}/"));
         let is_userland = artifact_name == "nt61-cmd.efi" || artifact_name == "nt61-driver.efi";
-        let a_expected = if is_userland {
-            !a_bare
-        } else {
-            a_bare
-        };
-        let b_expected = if is_userland {
-            !b_bare
-        } else {
-            b_bare
-        };
-        b_expected.cmp(&a_expected).then(mtime_of(b).cmp(&mtime_of(a)))
+        let a_expected = if is_userland { !a_bare } else { a_bare };
+        let b_expected = if is_userland { !b_bare } else { b_bare };
+        b_expected
+            .cmp(&a_expected)
+            .then(mtime_of(b).cmp(&mtime_of(a)))
     });
 
     for candidate in candidates {
@@ -3784,7 +3787,7 @@ fn build_subsystem_pe(image_base: u64, image_name: &str, text_stub: &[u8]) -> Ve
     cmd_exe_write_u32(&mut rdata, 0x20, CMD_EXE_RDATA_RVA + 0x028); // AddressOfFunctions RVA
     cmd_exe_write_u32(&mut rdata, 0x24, CMD_EXE_RDATA_RVA + 0x034); // AddressOfNames RVA
     cmd_exe_write_u32(&mut rdata, 0x28, CMD_EXE_RDATA_RVA + 0x040); // AddressOfNameOrdinals RVA
-                                            // AddressOfFunctions[1] = subsystem_main
+                                                                    // AddressOfFunctions[1] = subsystem_main
     cmd_exe_write_u32(&mut rdata, 0x028, CMD_EXE_TEXT_RVA);
     // AddressOfNames[1] = name string RVA
     let name_off: usize = 0x050;
@@ -4011,8 +4014,8 @@ mod tests {
             ("winlogon.exe", build_winlogon_pe()),
             ("userinit.exe", build_userinit_pe()),
         ] {
-            let pe_off = u32::from_le_bytes([image[0x3C], image[0x3D], image[0x3E], image[0x3F]])
-                as usize;
+            let pe_off =
+                u32::from_le_bytes([image[0x3C], image[0x3D], image[0x3E], image[0x3F]]) as usize;
             let coff_off = pe_off + 4;
             let opt_off = coff_off + 20;
             let export_rva = u32::from_le_bytes([

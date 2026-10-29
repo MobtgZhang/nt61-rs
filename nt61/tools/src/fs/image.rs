@@ -325,7 +325,7 @@ fn write_gpt(
     //   84..88  size of each partition entry
     buf[hdr + 40..hdr + 48].copy_from_slice(&first_lba.to_le_bytes());
     buf[hdr + 48..hdr + 56].copy_from_slice(&last_lba.to_le_bytes());
-    let guid = uuid::Uuid::new_v4();
+    let guid = crate::fs::new_guid_v4();
     buf[hdr + 56..hdr + 72].copy_from_slice(guid.as_bytes());
     // Partition entries start at LBA 34 (canonical UEFI location).
     // Using LBA 2 (which is inside the GPT header sector) causes partition
@@ -339,7 +339,7 @@ fn write_gpt(
     // Single partition entry at LBA 34.
     let pent = 34usize * 512;
     buf[pent..pent + 16].copy_from_slice(&type_guid);
-    let pguid = uuid::Uuid::new_v4();
+    let pguid = crate::fs::new_guid_v4();
     buf[pent + 16..pent + 32].copy_from_slice(pguid.as_bytes());
     buf[pent + 32..pent + 40].copy_from_slice(&first_lba.to_le_bytes());
     buf[pent + 40..pent + 48].copy_from_slice(&last_lba.to_le_bytes());
@@ -1359,7 +1359,7 @@ fn write_dual_gpt(
     buf[hdr + 32..hdr + 40].copy_from_slice(&(total_sectors - 1).to_le_bytes()); // Alternate LBA
     buf[hdr + 40..hdr + 48].copy_from_slice(&esp_start.to_le_bytes()); // First usable LBA
     buf[hdr + 48..hdr + 56].copy_from_slice(&sys_end.to_le_bytes()); // Last usable LBA
-    let guid = uuid::Uuid::new_v4();
+    let guid = crate::fs::new_guid_v4();
     buf[hdr + 56..hdr + 72].copy_from_slice(guid.as_bytes()); // Disk GUID
     buf[hdr + 72..hdr + 80].copy_from_slice(&partition_entry_lba.to_le_bytes()); // Partition entries LBA
     buf[hdr + 80..hdr + 84].copy_from_slice(&128u32.to_le_bytes()); // Number of entries
@@ -1368,7 +1368,7 @@ fn write_dual_gpt(
     // GPT Partition Entry 1: ESP
     let pent1 = (partition_entry_lba as usize) * 512;
     buf[pent1..pent1 + 16].copy_from_slice(&ESP_TYPE_GUID); // Type GUID
-    let esp_guid = uuid::Uuid::new_v4();
+    let esp_guid = crate::fs::new_guid_v4();
     buf[pent1 + 16..pent1 + 32].copy_from_slice(esp_guid.as_bytes()); // Partition GUID
     buf[pent1 + 32..pent1 + 40].copy_from_slice(&esp_start.to_le_bytes()); // First LBA
     buf[pent1 + 40..pent1 + 48].copy_from_slice(&esp_end.to_le_bytes()); // Last LBA
@@ -1385,7 +1385,7 @@ fn write_dual_gpt(
     // GPT Partition Entry 2: System (second partition entry, at offset 128 from first entry)
     let pent2 = pent1 + 128; // Second partition entry (128 bytes after first entry)
     buf[pent2..pent2 + 16].copy_from_slice(sys_type_guid); // Type GUID
-    let sys_guid = uuid::Uuid::new_v4();
+    let sys_guid = crate::fs::new_guid_v4();
     buf[pent2 + 16..pent2 + 32].copy_from_slice(sys_guid.as_bytes()); // Partition GUID
     buf[pent2 + 32..pent2 + 40].copy_from_slice(&sys_start.to_le_bytes()); // First LBA
     buf[pent2 + 40..pent2 + 48].copy_from_slice(&sys_end.to_le_bytes()); // Last LBA

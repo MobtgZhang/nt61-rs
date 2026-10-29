@@ -1,6 +1,5 @@
 //! Dump the cmd.exe image bytes for the kernel to `include_bytes!`.
 use std::fs;
-use std::mem::ManuallyDrop;
 use std::path::PathBuf;
 
 fn main() {
