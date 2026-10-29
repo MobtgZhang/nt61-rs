@@ -16,6 +16,7 @@
 
 use crate::loader::{DosHeader, FileHeader, SectionHeader, PE_SIGNATURE};
 use alloc::string::String;
+use alloc::string::ToString;
 use alloc::vec::Vec;
 
 // =============================================================================
@@ -259,6 +260,10 @@ pub struct LoadedImage32 {
     pub data_directory: [ImageDataDirectory; 16],
     /// Raw bytes of the image (for reading headers).
     pub headers: Vec<u8>,
+    /// Loaded section data (sections mapped into image layout).
+    pub image_data: Vec<u8>,
+    /// Parsed import descriptors.
+    pub imports: Vec<ImportDescriptor32>,
 }
 
 impl LoadedImage32 {
@@ -275,6 +280,8 @@ impl LoadedImage32 {
             sections: [SectionHeader::default(); 16],
             data_directory: [ImageDataDirectory::default(); 16],
             headers: Vec::new(),
+            image_data: Vec::new(),
+            imports: Vec::new(),
         }
     }
 
@@ -292,11 +299,66 @@ impl LoadedImage32 {
     pub fn rva_to_ptr_mut(&self, rva: u32) -> *mut u8 {
         (self.base_address + rva) as *mut u8
     }
+
+    pub fn slice_for_rva(&self, rva: u32, length: usize) -> Option<&[u8]> {
+        let start = rva as usize;
+        let end = start.checked_add(length)?;
+        self.image_data.get(start..end)
+    }
+
+    pub fn slice_for_rva_mut(&mut self, rva: u32, length: usize) -> Option<&mut [u8]> {
+        let start = rva as usize;
+        let end = start.checked_add(length)?;
+        self.image_data.get_mut(start..end)
+    }
 }
 
 // =============================================================================
 // PE32 Parsing
 // =============================================================================
+
+fn read_u16(data: &[u8], offset: usize) -> Option<u16> {
+    let bytes = data.get(offset..offset.checked_add(2)?)?;
+    Some(u16::from_le_bytes([bytes[0], bytes[1]]))
+}
+
+fn read_u32(data: &[u8], offset: usize) -> Option<u32> {
+    let bytes = data.get(offset..offset.checked_add(4)?)?;
+    Some(u32::from_le_bytes([
+        bytes[0], bytes[1], bytes[2], bytes[3],
+    ]))
+}
+
+fn read_data_directory(
+    data: &[u8],
+    optional_header_offset: usize,
+    index: usize,
+) -> Option<ImageDataDirectory> {
+    let offset = optional_header_offset
+        .checked_add(0x60)?
+        .checked_add(index.checked_mul(8)?)?;
+    if offset.checked_add(8)? > data.len() {
+        return None;
+    }
+    Some(ImageDataDirectory {
+        virtual_address: read_u32(data, offset)?,
+        size: read_u32(data, offset.checked_add(4)?)?,
+    })
+}
+
+fn read_image_string(data: &[u8], offset: usize) -> Option<String> {
+    let bytes = data.get(offset..)?;
+    let length = bytes.iter().position(|&byte| byte == 0)?;
+    Some(
+        core::str::from_utf8(bytes.get(..length)?)
+            .unwrap_or("")
+            .to_string(),
+    )
+}
+
+fn file_offset(header_info: &PE32HeaderInfo, rva: u32) -> Option<usize> {
+    header_info.rva_to_file_offset(rva).map(|offset| offset as usize)
+}
 
 /// Parse a PE32 image from raw bytes.
 ///
@@ -393,11 +455,20 @@ pub fn parse_pe32(data: &[u8]) -> Option<PE32HeaderInfo> {
     //         opt_header.address_of_entry_point
     //     );
 
+    let mut data_directory = [ImageDataDirectory::default(); 16];
+    let directory_count = core::cmp::min(16, opt_header.number_of_rva_and_sizes as usize);
+    for index in 0..directory_count {
+        if let Some(directory) = read_data_directory(data, oh_offset, index) {
+            data_directory[index] = directory;
+        }
+    }
+
     Some(PE32HeaderInfo {
         dos_header_offset: 0,
         pe_header_offset: pe_offset,
         file_header,
         optional_header: opt_header,
+        data_directory,
         section_headers: sections,
     })
 }
@@ -408,19 +479,14 @@ pub struct PE32HeaderInfo {
     pub pe_header_offset: usize,
     pub file_header: FileHeader,
     pub optional_header: crate::loader::OptionalHeader32,
+    pub data_directory: [ImageDataDirectory; 16],
     pub section_headers: Vec<SectionHeader>,
 }
 
 impl PE32HeaderInfo {
     /// Get the data directory at the given index.
-    pub fn get_data_directory(&self, _index: usize) -> Option<ImageDataDirectory> {
-        // Data directories start after the optional header
-        // For PE32 they start at offset 0x60 from the start of the optional
-        // header (0x70 for PE32+). This parsed view does not keep the raw
-        // header bytes, so the directories cannot be read from here.
-        // But in our OptionalHeader32 layout, they're not included
-        // This is a simplified version
-        None
+    pub fn get_data_directory(&self, index: usize) -> Option<ImageDataDirectory> {
+        self.data_directory.get(index).copied()
     }
 
     /// Get the section containing an RVA.
@@ -501,18 +567,141 @@ pub struct ExportEntry32 {
 
 /// Parse the import directory of a PE32 image.
 pub fn parse_import_directory(
-    _data: &[u8],
-    _header_info: &PE32HeaderInfo,
+    data: &[u8],
+    header_info: &PE32HeaderInfo,
 ) -> Vec<ImportDescriptor32> {
-    // Import directory is at data directory index 1
-    // This is a simplified implementation
-    Vec::new()
+    let directory = match header_info.get_data_directory(1) {
+        Some(directory) if directory.is_valid() => directory,
+        _ => return Vec::new(),
+    };
+
+    let mut descriptors = Vec::new();
+    let descriptor_count = directory.size as usize / core::mem::size_of::<ImportDirectoryEntry>();
+    for index in 0..descriptor_count {
+        let descriptor_rva = directory
+            .rva()
+            .wrapping_add((index * core::mem::size_of::<ImportDirectoryEntry>()) as u32);
+        let descriptor_offset = match file_offset(header_info, descriptor_rva) {
+            Some(offset) => offset,
+            None => break,
+        };
+
+        let original_thunk_rva = match read_u32(data, descriptor_offset) {
+            Some(value) => value,
+            None => break,
+        };
+        let time_date_stamp = match read_u32(data, descriptor_offset + 4) {
+            Some(value) => value,
+            None => break,
+        };
+        let forwarder_chain = match read_u32(data, descriptor_offset + 8) {
+            Some(value) => value,
+            None => break,
+        };
+        let dll_name_rva = match read_u32(data, descriptor_offset + 12) {
+            Some(value) => value,
+            None => break,
+        };
+        let first_thunk_rva = match read_u32(data, descriptor_offset + 16) {
+            Some(value) => value,
+            None => break,
+        };
+        if dll_name_rva == 0 || first_thunk_rva == 0 {
+            break;
+        }
+
+        let dll_name = match file_offset(header_info, dll_name_rva)
+            .and_then(|offset| read_image_string(data, offset))
+        {
+            Some(name) => name,
+            None => break,
+        };
+
+        let lookup_rva = if original_thunk_rva != 0 {
+            original_thunk_rva
+        } else {
+            first_thunk_rva
+        };
+        let mut imports = Vec::new();
+        let mut thunk_index = 0;
+        while let Some(lookup_offset) = file_offset(
+            header_info,
+            lookup_rva.wrapping_add((thunk_index * 4) as u32),
+        ) {
+            let lookup_value = match read_u32(data, lookup_offset) {
+                Some(value) => value,
+                None => break,
+            };
+            if lookup_value == 0 {
+                break;
+            }
+            let lookup = ImportLookupEntry { value: lookup_value };
+            let iat_rva = first_thunk_rva.wrapping_add((thunk_index * 4) as u32);
+
+            let import = if lookup.is_ordinal() {
+                ImportEntry32 {
+                    name: String::new(),
+                    ordinal: Some(lookup.ordinal()),
+                    hint: 0,
+                    thunk_rva: iat_rva,
+                    function_rva: 0,
+                }
+            } else {
+                let hint_name_offset = match file_offset(header_info, lookup.name_rva()) {
+                    Some(offset) => offset,
+                    None => break,
+                };
+                let hint = match read_u16(data, hint_name_offset) {
+                    Some(value) => value,
+                    None => break,
+                };
+                let name_start = hint_name_offset + 2;
+                let name = match data
+                    .get(name_start..)
+                    .and_then(|bytes| bytes.iter().position(|&byte| byte == 0))
+                    .and_then(|length| data.get(name_start..name_start + length))
+                    .map(|bytes| {
+                        core::str::from_utf8(bytes)
+                            .unwrap_or("")
+                            .to_string()
+                    })
+                {
+                    Some(name) => name,
+                    None => break,
+                };
+                ImportEntry32 {
+                    name,
+                    ordinal: None,
+                    hint,
+                    thunk_rva: iat_rva,
+                    function_rva: 0,
+                }
+            };
+            imports.push(import);
+            thunk_index += 1;
+        }
+
+        descriptors.push(ImportDescriptor32 {
+            dll_name,
+            imports,
+            original_thunk_rva,
+            time_date_stamp,
+            forwarder_chain,
+            first_thunk_rva,
+        });
+    }
+
+    descriptors
 }
 
 /// Import descriptor for a single DLL.
 pub struct ImportDescriptor32 {
     pub dll_name: String,
     pub imports: Vec<ImportEntry32>,
+    pub original_thunk_rva: u32,
+    pub time_date_stamp: u32,
+    pub forwarder_chain: u32,
+    pub first_thunk_rva: u32,
 }
 
 /// A single import entry.
@@ -520,6 +709,8 @@ pub struct ImportEntry32 {
     pub name: String,
     pub ordinal: Option<u16>,
     pub hint: u16,
+    pub thunk_rva: u32,
+    pub function_rva: u32,
 }
 
 // =============================================================================
@@ -562,20 +753,46 @@ pub fn load_pe32(data: &[u8], preferred_base: u32) -> Option<LoadedImage32> {
             image.sections[i] = *section;
         }
     }
+    for i in 0..16 {
+        image.data_directory[i] = header_info.data_directory[i];
+    }
 
-    // In a real implementation, we would:
-    // 1. Allocate memory at load_base
-    // 2. Copy sections from file to memory
-    // 3. Apply relocations
-    // 4. Resolve imports
-    // 5. Set up TLS
-    // 6. Call entry point
+    let image_size = opt.size_of_image as usize;
+    let mut image_buf = alloc::vec![0u8; image_size];
+    let headers_size = core::cmp::min(opt.size_of_headers as usize, image_size);
+    if headers_size <= data.len() {
+        image_buf[..headers_size].copy_from_slice(&data[..headers_size]);
+    }
 
-    //         "[PE32] Loaded image: base=0x{:08x}, size=0x{:08x}, entry=0x{:08x}",
-    //         load_base,
-    //         opt.size_of_image,
-    //         opt.address_of_entry_point
-    //     );
+    for section in &header_info.section_headers {
+        let virt_addr = section.virtual_address as usize;
+        let raw_size = section.size_of_raw_data as usize;
+        let raw_offset = section.pointer_to_raw_data as usize;
+
+        if virt_addr + raw_size > image_size {
+            continue;
+        }
+        if raw_offset + raw_size > data.len() {
+            let available = data.len().saturating_sub(raw_offset);
+            let copy_length = available.min(raw_size);
+            if copy_length > 0 {
+                image_buf[virt_addr..virt_addr + copy_length]
+                    .copy_from_slice(&data[raw_offset..raw_offset + copy_length]);
+            }
+            continue;
+        }
+        image_buf[virt_addr..virt_addr + raw_size]
+            .copy_from_slice(&data[raw_offset..raw_offset + raw_size]);
+    }
+
+    image.image_data = image_buf;
+
+    let delta = load_base as i64 - opt.image_base as i64;
+    if delta != 0 && delta >= i32::MIN as i64 && delta <= i32::MAX as i64 {
+        apply_relocations(&mut image, delta as i32);
+    }
+
+    image.imports = parse_import_directory(data, &header_info);
 
     Some(image)
 }
@@ -589,25 +806,125 @@ pub fn load_pe32(data: &[u8], preferred_base: u32) -> Option<LoadedImage32> {
 /// # Arguments
 /// * `image` - The loaded image
 /// * `delta` - Difference between preferred and actual base
-pub fn apply_relocations(_image: &mut LoadedImage32, delta: i32) {
+pub fn apply_relocations(image: &mut LoadedImage32, delta: i32) {
     if delta == 0 {
         return;
     }
 
-    // Relocation types for PE32:
-    // HIGHLOW (3) - 32-bit relocation
-    // HIGH (1) - High 16 bits + 0x00008000
-    // LOW (2) - Low 16 bits
-    // ABSOLUTE (0) - No adjustment needed
+    let directory = image.data_directory[5];
+    if !directory.is_valid() {
+        return;
+    }
 
-    // In a real implementation:
-    // 1. Parse base relocation blocks
-    // 2. For each relocation entry:
-    //    - Calculate target address in image
-    //    - Apply the appropriate relocation
-    //    - For HIGHLOW: *(u32*)addr += delta
-    //    - For HIGH: high 16 bits of *(u16*)addr += high 16 of delta
-    //    - etc.
+    let mut offset = directory.rva() as usize;
+    let end = directory.size() as usize;
+    let mut block_offset = 0;
+    while block_offset + 8 <= end {
+        let page_rva = match read_u32(&image.image_data, offset) {
+            Some(value) => value,
+            None => break,
+        };
+        let block_size = match read_u32(&image.image_data, offset + 4) {
+            Some(value) => value,
+            None => break,
+        };
+        if block_size < 8 || block_offset + block_size as usize > end {
+            break;
+        }
+
+        let entry_count = (block_size as usize - 8) / 2;
+        for index in 0..entry_count {
+            let entry_offset = offset + 8 + index * 2;
+            let entry = match read_u16(&image.image_data, entry_offset) {
+                Some(value) => value,
+                None => break,
+            };
+            let kind = (entry >> 12) as u8;
+            let rva = page_rva.wrapping_add((entry & 0x0FFF) as u32);
+
+            match kind {
+                reloc_type::ABSOLUTE => {}
+                reloc_type::HIGHLOW => {
+                    if let Some(bytes) = image.slice_for_rva_mut(rva, 4) {
+                        let value = u32::from_le_bytes([
+                            bytes[0], bytes[1], bytes[2], bytes[3],
+                        ]);
+                        let adjusted = (value as i64 + delta as i64) as u32;
+                        bytes.copy_from_slice(&adjusted.to_le_bytes());
+                    }
+                }
+                reloc_type::HIGH => {
+                    if let Some(bytes) = image.slice_for_rva_mut(rva, 2) {
+                        let value = u16::from_le_bytes([bytes[0], bytes[1]]);
+                        let adjusted = (value as i32 + ((delta as u32) >> 16) as i32) as u16;
+                        bytes.copy_from_slice(&adjusted.to_le_bytes());
+                    }
+                }
+                reloc_type::LOW => {
+                    if let Some(bytes) = image.slice_for_rva_mut(rva, 2) {
+                        let value = u16::from_le_bytes([bytes[0], bytes[1]]);
+                        let adjusted = (value as i32 + ((delta as u32) & 0xFFFF) as i32) as u16;
+                        bytes.copy_from_slice(&adjusted.to_le_bytes());
+                    }
+                }
+                reloc_type::HIGHADJ => {
+                    let next_offset = entry_offset + 2;
+                    let next_low = match read_u16(&image.image_data, next_offset) {
+                        Some(value) => value,
+                        None => break,
+                    };
+                    if let Some(bytes) = image.slice_for_rva_mut(rva, 2) {
+                        let value = u16::from_le_bytes([bytes[0], bytes[1]]);
+                        let mut high_delta = (delta as u32) >> 16;
+                        let low_delta = (delta as u32) & 0xFFFF;
+                        let next_low_after_delta = u32::from(next_low)
+                            .checked_add(u32::from(low_delta))
+                            .unwrap_or(0);
+                        if next_low_after_delta > 0xFFFF
+                        {
+                            high_delta = high_delta.wrapping_add(1);
+                        }
+                        let adjusted = (value as i32 + high_delta as i32) as u16;
+                        bytes.copy_from_slice(&adjusted.to_le_bytes());
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        offset += block_size as usize;
+        block_offset += block_size as usize;
+    }
+}
+
+// =============================================================================
+// Import Resolution
+// =============================================================================
+
+pub fn resolve_imports<F>(image: &mut LoadedImage32, mut resolver: F) -> bool
+where
+    F: FnMut(&str, &ImportEntry32) -> Option<u32>,
+{
+    let imports = core::mem::take(&mut image.imports);
+    let mut resolved = true;
+
+    for descriptor in &imports {
+        for import in &descriptor.imports {
+            match resolver(&descriptor.dll_name, import) {
+                Some(function_rva) => {
+                    if let Some(bytes) = image.slice_for_rva_mut(import.thunk_rva, 4) {
+                        bytes.copy_from_slice(&function_rva.to_le_bytes());
+                    } else {
+                        resolved = false;
+                    }
+                }
+                None => resolved = false,
+            }
+        }
+    }
+
+    image.imports = imports;
+    resolved
 }
 
 // =============================================================================
