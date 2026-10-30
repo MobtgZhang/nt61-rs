@@ -1616,7 +1616,6 @@ pub fn tick() {
 /// deferred-work opportunity.
 pub fn poll_services() {
     crate::drivers::net::poll_all();
-    crate::servers::sshd::launcher::service_tick();
 }
 
 /// Per-CPU reschedule requests raised by the clock ISR.
