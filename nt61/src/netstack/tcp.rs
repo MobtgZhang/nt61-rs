@@ -813,6 +813,9 @@ fn handle_tcp_segment(
             if payload_len > 0 {
                 tcb.rx_buf.extend_from_slice(payload);
                 tcb.rcv_nxt += payload_len as u32;
+                // Wake any server thread parked on socket readiness
+                // now that receive data has landed in the RX buffer.
+                crate::netstack::socket::signal_readiness();
             }
 
             // handle ACK
