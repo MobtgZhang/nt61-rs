@@ -452,6 +452,407 @@ impl PortDriver for PortWaveRT {
 }
 
 // =====================================================================
+// Resource List (IResourceList)
+// =====================================================================
+
+/// One hardware resource assigned to a port/miniport, matching the
+/// WDK `CM_PARTIAL_RESOURCE_DESCRIPTOR` types used by PortCls
+/// `IResourceList`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceDescriptor {
+    /// IRQ: level and vector.
+    Interrupt { level: u32, vector: u32 },
+    /// DMA channel: channel number and generation.
+    Dma { channel: u32, generation: u32 },
+    /// I/O port range: start and length (in ports).
+    Port { start: u16, length: u16 },
+    /// Memory range: physical start and byte length.
+    Memory { start: u64, length: u64 },
+}
+
+/// The hardware resources assigned to an audio adapter. PortCls
+/// passes this to the miniport during initialization (the NT 6.1
+/// miniport initialization contract).
+#[derive(Debug, Clone, Default)]
+pub struct ResourceList {
+    pub resources: alloc::vec::Vec<ResourceDescriptor>,
+}
+
+impl ResourceList {
+    pub fn new() -> Self {
+        Self {
+            resources: alloc::vec::Vec::new(),
+        }
+    }
+
+    pub fn add(&mut self, desc: ResourceDescriptor) {
+        self.resources.push(desc);
+    }
+
+    pub fn interrupt(&self) -> Option<(u32, u32)> {
+        self.resources.iter().find_map(|r| match r {
+            ResourceDescriptor::Interrupt { level, vector } => Some((*level, *vector)),
+            _ => None,
+        })
+    }
+
+    pub fn memory(&self) -> Option<(u64, u64)> {
+        self.resources.iter().find_map(|r| match r {
+            ResourceDescriptor::Memory { start, length } => Some((*start, *length)),
+            _ => None,
+        })
+    }
+
+    pub fn dma(&self) -> Option<u32> {
+        self.resources.iter().find_map(|r| match r {
+            ResourceDescriptor::Dma { channel, .. } => Some(*channel),
+            _ => None,
+        })
+    }
+}
+
+// =====================================================================
+// Filter Descriptor (PFILTER_DESCRIPTOR)
+// =====================================================================
+
+/// A pin factory: one input or output pin on a filter.
+#[derive(Debug, Clone, Copy)]
+pub struct PinDescriptor {
+    /// Pin category: 0 = audio output, 1 = audio input, 2 = topology.
+    pub category: u8,
+    /// Maximum number of instances.
+    pub max_instances: u32,
+    /// Minimum number of instances that must exist.
+    pub min_instances: u32,
+    /// Data flow direction: 0 = in, 1 = out.
+    pub data_flow: u8,
+}
+
+/// A filter factory: the set of pins a miniport exposes, matching
+/// PortCls `PFILTER_DESCRIPTOR`. PortCls uses this to build the
+/// KSCATEGORY_AUDIO device interface for the I/O manager.
+#[derive(Debug, Clone)]
+pub struct FilterDescriptor {
+    /// Friendly name shown in the audio device list.
+    pub name: &'static str,
+    /// Pin factories on this filter.
+    pub pins: alloc::vec::Vec<PinDescriptor>,
+    /// Node count (topology nodes, e.g. volume / mute / DAC).
+    pub node_count: u32,
+    /// Connection count (pin-to-node or node-to-node).
+    pub connection_count: u32,
+}
+
+impl FilterDescriptor {
+    /// Create a filter with a single audio-output pin (the
+    /// common WaveRT / WaveCyclic shape for a simple DAC).
+    pub fn audio_output(name: &'static str) -> Self {
+        Self {
+            name,
+            pins: alloc::vec![PinDescriptor {
+                category: 0,
+                max_instances: 1,
+                min_instances: 1,
+                data_flow: 1,
+            }],
+            node_count: 1,
+            connection_count: 1,
+        }
+    }
+
+    /// Create a filter with one output and one input pin (the
+    /// shape for a full-duplex codec).
+    pub fn audio_duplex(name: &'static str) -> Self {
+        Self {
+            name,
+            pins: alloc::vec![
+                PinDescriptor {
+                    category: 0,
+                    max_instances: 1,
+                    min_instances: 1,
+                    data_flow: 1,
+                },
+                PinDescriptor {
+                    category: 1,
+                    max_instances: 1,
+                    min_instances: 0,
+                    data_flow: 0,
+                },
+            ],
+            node_count: 3,
+            connection_count: 3,
+        }
+    }
+}
+
+// =====================================================================
+// Topology Miniport (IMiniportTopology)
+// =====================================================================
+
+/// Topology node type (PortCls `TOPOLOGY_NODE` categories).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TopologyNodeType {
+    /// Digital-to-analog converter.
+    Dac,
+    /// Analog-to-digital converter.
+    Adc,
+    /// Volume control (KSNODETYPE_VOLUME).
+    Volume,
+    /// Mute control (KSNODETYPE_MUTE).
+    Mute,
+    /// Sum / mixer node.
+    Sum,
+    /// Source (input terminal).
+    Source,
+    /// Sink (output terminal).
+    Sink,
+}
+
+/// One node in the topology graph.
+#[derive(Debug, Clone, Copy)]
+pub struct TopologyNode {
+    pub node_type: TopologyNodeType,
+    /// Pin this node connects to, or 0xFFFF for none.
+    pub pin: u16,
+}
+
+/// A connection between two nodes or a pin and a node.
+#[derive(Debug, Clone, Copy)]
+pub struct TopologyConnection {
+    pub from_node: u16,
+    pub to_node: u16,
+    pub from_pin: u16,
+    pub to_pin: u16,
+}
+
+/// Miniport topology interface: a topology miniport describes
+/// the mixer graph for a filter (matching `IMiniportTopology`
+/// in the NT 6.1 PortCls contract).
+pub trait MiniportTopology: MiniportDriver {
+    /// Fill in the node and connection lists for this filter.
+    fn get_topology(
+        &self,
+        nodes: &mut alloc::vec::Vec<TopologyNode>,
+        connections: &mut alloc::vec::Vec<TopologyConnection>,
+    );
+
+    /// Set a volume value on a node (in 1/256 dB units).
+    fn set_node_volume(&mut self, node_id: u16, volume_db256: i16) -> Result<(), &'static str>;
+
+    /// Set a mute value on a node.
+    fn set_node_mute(&mut self, node_id: u16, muted: bool) -> Result<(), &'static str>;
+}
+
+/// PortTopology: the port driver that hosts a topology miniport.
+pub struct PortTopology {
+    port_type: PortType,
+    description: &'static str,
+    miniport: Option<Box<dyn MiniportTopology>>,
+    device_state: DeviceState,
+    nodes: alloc::vec::Vec<TopologyNode>,
+    connections: alloc::vec::Vec<TopologyConnection>,
+}
+
+impl PortTopology {
+    pub fn new(description: &'static str) -> Self {
+        Self {
+            port_type: PortType::Topology,
+            description,
+            miniport: None,
+            device_state: DeviceState::Stopped,
+            nodes: alloc::vec::Vec::new(),
+            connections: alloc::vec::Vec::new(),
+        }
+    }
+
+    /// Register a topology miniport and cache its graph.
+    pub fn register_miniport(
+        &mut self,
+        miniport: Box<dyn MiniportTopology>,
+    ) -> Result<(), &'static str> {
+        if self.miniport.is_some() {
+            return Err("Miniport already registered");
+        }
+        self.nodes.clear();
+        self.connections.clear();
+        miniport.get_topology(&mut self.nodes, &mut self.connections);
+        self.miniport = Some(miniport);
+        Ok(())
+    }
+
+    /// Node count from the cached graph.
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Connection count from the cached graph.
+    pub fn connection_count(&self) -> usize {
+        self.connections.len()
+    }
+
+    /// Set a volume value on a node through the miniport.
+    pub fn set_node_volume(&mut self, node_id: u16, volume_db256: i16) -> Result<(), &'static str> {
+        if let Some(ref mut miniport) = self.miniport {
+            miniport.set_node_volume(node_id, volume_db256)
+        } else {
+            Err("No miniport registered")
+        }
+    }
+}
+
+impl PortDriver for PortTopology {
+    fn port_type(&self) -> PortType {
+        self.port_type
+    }
+
+    fn description(&self) -> &'static str {
+        self.description
+    }
+
+    fn init(&mut self, _miniport: Box<dyn MiniportDriver>) -> Result<(), &'static str> {
+        Ok(())
+    }
+
+    fn start(&mut self) -> Result<(), &'static str> {
+        if self.miniport.is_none() {
+            return Err("No miniport registered");
+        }
+        self.device_state = DeviceState::Active;
+        Ok(())
+    }
+
+    fn stop(&mut self) {
+        self.device_state = DeviceState::Stopped;
+    }
+
+    fn device_state(&self) -> DeviceState {
+        self.device_state
+    }
+}
+
+// =====================================================================
+// WaveCyclic Port (IPortWaveCyclic) — legacy AC'97 path
+// =====================================================================
+
+/// WaveCyclic miniport interface: the legacy cyclic-buffer
+/// model that AC'97 uses (matching `IMiniportWaveCyclic`).
+pub trait MiniportWaveCyclic: MiniportDriver {
+    /// Get the supported format.
+    fn get_supported_format(&self) -> AudioFormat;
+
+    /// Map a cyclic buffer: the miniport returns the offset of
+    /// `length` bytes into its DMA region.
+    fn map_buffer(&mut self, offset: usize, length: usize) -> Result<usize, &'static str>;
+
+    /// Get the current position in the cyclic buffer (in bytes).
+    fn get_position_bytes(&self) -> u64;
+
+    /// Start the DMA engine.
+    fn start(&mut self) -> Result<(), &'static str>;
+
+    /// Stop the DMA engine.
+    fn stop(&mut self);
+}
+
+/// PortWaveCyclic: the port driver for legacy cyclic-buffer
+/// devices.
+pub struct PortWaveCyclic {
+    port_type: PortType,
+    description: &'static str,
+    miniport: Option<Box<dyn MiniportWaveCyclic>>,
+    device_state: DeviceState,
+    streams: alloc::vec::Vec<AudioStream>,
+    next_stream_id: u32,
+}
+
+impl PortWaveCyclic {
+    pub fn new(description: &'static str) -> Self {
+        Self {
+            port_type: PortType::WaveCyclic,
+            description,
+            miniport: None,
+            device_state: DeviceState::Stopped,
+            streams: alloc::vec::Vec::new(),
+            next_stream_id: 1,
+        }
+    }
+
+    pub fn register_miniport(
+        &mut self,
+        miniport: Box<dyn MiniportWaveCyclic>,
+    ) -> Result<(), &'static str> {
+        if self.miniport.is_some() {
+            return Err("Miniport already registered");
+        }
+        self.miniport = Some(miniport);
+        Ok(())
+    }
+
+    pub fn create_stream(&mut self, format: AudioFormat) -> Result<u32, &'static str> {
+        let stream_id = self.next_stream_id;
+        self.next_stream_id += 1;
+        self.streams.push(AudioStream::new(stream_id, format));
+        Ok(stream_id)
+    }
+
+    pub fn start_stream(&mut self, stream_id: u32) -> Result<(), &'static str> {
+        if self.device_state != DeviceState::Active {
+            return Err("Device not in active state");
+        }
+        if let Some(ref mut miniport) = self.miniport {
+            miniport.start()?;
+        }
+        if let Some(stream) = self.streams.iter_mut().find(|s| s.index == stream_id) {
+            stream.state = StreamState::Running;
+        }
+        Ok(())
+    }
+
+    pub fn stop_stream(&mut self, stream_id: u32) -> Result<(), &'static str> {
+        if let Some(ref mut miniport) = self.miniport {
+            miniport.stop();
+        }
+        if let Some(stream) = self.streams.iter_mut().find(|s| s.index == stream_id) {
+            stream.state = StreamState::Stopped;
+        }
+        Ok(())
+    }
+}
+
+impl PortDriver for PortWaveCyclic {
+    fn port_type(&self) -> PortType {
+        self.port_type
+    }
+
+    fn description(&self) -> &'static str {
+        self.description
+    }
+
+    fn init(&mut self, _miniport: Box<dyn MiniportDriver>) -> Result<(), &'static str> {
+        Ok(())
+    }
+
+    fn start(&mut self) -> Result<(), &'static str> {
+        if self.miniport.is_none() {
+            return Err("No miniport registered");
+        }
+        self.device_state = DeviceState::Active;
+        Ok(())
+    }
+
+    fn stop(&mut self) {
+        for stream in &mut self.streams {
+            stream.state = StreamState::Stopped;
+        }
+        self.device_state = DeviceState::Stopped;
+    }
+
+    fn device_state(&self) -> DeviceState {
+        self.device_state
+    }
+}
+
+// =====================================================================
 // PortCls Registry
 // =====================================================================
 
