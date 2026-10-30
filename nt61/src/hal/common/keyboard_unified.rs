@@ -99,6 +99,10 @@ fn push_byte(c: u8) {
     }
     RING.tail.store(tail.wrapping_add(1), Ordering::Release);
     unlock_ring();
+    // Wake console readers parked on the input event. Safe from the
+    // UART RX IRQ handler - the wake path only touches dispatcher
+    // wait-list state.
+    crate::hal::common::keyboard_input::signal_input_available();
 }
 
 /// Pop one byte from the ring, or `None` when empty.
