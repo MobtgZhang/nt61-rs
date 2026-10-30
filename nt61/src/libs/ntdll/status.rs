@@ -119,6 +119,13 @@ pub const STATUS_FILE_LOCK_CONFLICT: NTSTATUS = 0xC0000054_u32 as i32;
 pub const STATUS_NOT_A_DIRECTORY: NTSTATUS = 0xC0000103_u32 as i32;
 pub const STATUS_DIRECTORY_NOT_EMPTY: NTSTATUS = 0xC0000101_u32 as i32;
 pub const STATUS_SHARING_VIOLATION: NTSTATUS = 0xC0000043_u32 as i32;
+/// The extended-attribute list is malformed (ntstatus.h 0x80000014).
+pub const STATUS_EA_LIST_INCONSISTENT: NTSTATUS = 0x80000014_u32 as i32;
+/// The target filesystem does not support extended attributes
+/// (ntstatus.h 0xC000004F).
+pub const STATUS_EAS_NOT_SUPPORTED: NTSTATUS = 0xC000004F_u32 as i32;
+/// The extended attributes do not fit the file (ntstatus.h 0xC0000050).
+pub const STATUS_EA_TOO_LARGE: NTSTATUS = 0xC0000050_u32 as i32;
 pub const STATUS_HANDLE_NOT_CLOSABLE: NTSTATUS = 0xC0000235_u32 as i32;
 pub const STATUS_DLL_NOT_FOUND: NTSTATUS = 0xC0000135_u32 as i32;
 pub const STATUS_NOT_FOUND: NTSTATUS = 0xC0000225_u32 as i32;
