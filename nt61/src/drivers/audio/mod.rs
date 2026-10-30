@@ -20,6 +20,7 @@ pub mod mixer;
 pub mod playback;
 pub mod portcls;
 pub mod stream_buffer;
+pub mod uac;
 
 pub mod smoke;
 
@@ -31,6 +32,9 @@ pub fn init() {
     crate::hal::serial::write_string_always("[AUDIO] ac97 enter\r\n");
     ac97::init();
     crate::hal::serial::write_string_always("[AUDIO] ac97 done\r\n");
+    crate::hal::serial::write_string_always("[AUDIO] uac enter\r\n");
+    uac::init();
+    crate::hal::serial::write_string_always("[AUDIO] uac done\r\n");
     crate::hal::serial::write_string_always("[AUDIO] portcls enter\r\n");
     portcls::init();
     crate::hal::serial::write_string_always("[AUDIO] portcls done\r\n");
@@ -53,6 +57,7 @@ pub use intel_hda::{get_codecs, get_info as get_hda_info, send_codec_cmd};
 pub use portcls::{
     create_hda_audio_device, create_wavert_port, get_device_state, start_device, stop_device,
 };
+pub use uac::{count as uac_count, parse_configuration as uac_parse_configuration};
 
 pub mod audio_core;
 
