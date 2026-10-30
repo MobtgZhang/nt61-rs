@@ -36,6 +36,8 @@
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
+use crate::ke::sync::{DispatcherHeader, Event, EventType, Spinlock};
+
 /// True once the keyboard / polled-input backend has been
 /// brought up by `init()`. `read_byte` blocks / returns
 /// `None` before this flips to true.
@@ -95,6 +97,59 @@ pub fn peek() -> bool {
         return false;
     }
     backend::peek()
+}
+
+/// Console-input notification event (the wait block on the console
+/// input queue, NT 6.1 style): the input producers - the PS/2
+/// keyboard IRQ, the UART RX IRQ and the USB-HID stack - signal the
+/// event when bytes are enqueued, and console readers wait on it
+/// instead of polling the hardware rings.
+static INPUT_EVENT: Spinlock<Option<Event>> = Spinlock::new(None);
+
+/// Thread-safe access to the input event header. The event is
+/// created on first use so no init-order dependency exists.
+fn input_event_header() -> &'static mut DispatcherHeader {
+    let mut guard = INPUT_EVENT.lock();
+    if guard.is_none() {
+        *guard = Some(Event::new(EventType::Notification));
+    }
+    // SAFETY: the Event is stored behind a static Spinlock, so the
+    // DispatcherHeader outlives the guard. The caller uses the
+    // reference immediately to signal / clear / wait and never
+    // stores it.
+    let event = guard.as_mut().unwrap();
+    let header_ptr = &mut event.header as *mut DispatcherHeader;
+    drop(guard);
+    unsafe { &mut *header_ptr }
+}
+
+/// Signal console-input availability: wake every thread waiting for
+/// a keystroke. Called by the input producers whenever a byte is
+/// enqueued into a keyboard ring.
+pub fn signal_input_available() {
+    let header = input_event_header();
+    header.signal_state = 1;
+    crate::ke::sync::wake(header, true);
+}
+
+/// Clear the input event signal state. A reader resets the event
+/// after draining the rings so a producer that raced the drain
+/// re-signals it and no wakeup is lost.
+pub fn clear_input_event() {
+    input_event_header().signal_state = 0;
+}
+
+/// Wait until console input is signaled or the timeout (in ms)
+/// expires. Returns true when the event was signaled. The bounded
+/// timeout also services polled-only producers: the serial fallback
+/// path has no RX interrupt on every architecture, so a console
+/// reader re-polls it at the timeout cadence instead of spinning.
+pub fn wait_input_event(timeout_ms: u32) -> bool {
+    let header = input_event_header();
+    matches!(
+        crate::ke::sync::wait_single(header, timeout_ms),
+        crate::ke::sync::WaitResult::Success
+    )
 }
 
 // =====================================================================
