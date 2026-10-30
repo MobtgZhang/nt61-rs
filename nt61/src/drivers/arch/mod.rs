@@ -252,6 +252,98 @@ pub fn init_scsi() {
     {}
 }
 
+pub fn nvme_controller_count() -> usize {
+    #[cfg(target_arch = "x86_64")]
+    return x86_64::storage::nvme::get_controller_count();
+    #[cfg(not(target_arch = "x86_64"))]
+    0
+}
+
+pub fn nvme_read_sectors(controller: usize, nsid: u32, lba: u64, buf: &mut [u8]) -> bool {
+    #[cfg(target_arch = "x86_64")]
+    return x86_64::storage::nvme::read_sectors(controller, nsid, lba, buf);
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = (controller, nsid, lba, buf);
+        false
+    }
+}
+
+pub fn nvme_write_sectors(controller: usize, nsid: u32, lba: u64, buf: &[u8]) -> bool {
+    #[cfg(target_arch = "x86_64")]
+    return x86_64::storage::nvme::write_sectors(controller, nsid, lba, buf);
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = (controller, nsid, lba, buf);
+        false
+    }
+}
+
+pub fn nvme_smoke_test() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    return x86_64::storage::nvme::smoke_test();
+    #[cfg(not(target_arch = "x86_64"))]
+    true
+}
+
+pub fn scsi_send_cdb(target: u8, cdb: &[u8], direction: u8, buffer: &mut [u8]) -> u8 {
+    #[cfg(target_arch = "x86_64")]
+    return x86_64::storage::scsi::send_cdb(target, cdb, direction, buffer);
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = (target, cdb, direction, buffer);
+        0
+    }
+}
+
+pub fn scsi_is_ready() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    return x86_64::storage::scsi::is_ready();
+    #[cfg(not(target_arch = "x86_64"))]
+    false
+}
+
+pub fn scsi_smoke_test() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    return x86_64::storage::scsi::smoke_test();
+    #[cfg(not(target_arch = "x86_64"))]
+    true
+}
+
+pub fn atapi_device_count() -> u32 {
+    #[cfg(target_arch = "x86_64")]
+    return x86_64::storage::atapi::atapi_count();
+    #[cfg(not(target_arch = "x86_64"))]
+    0
+}
+
+pub fn atapi_read_sectors(channel: usize, lba: u32, count: u16, buf: &mut [u8]) -> bool {
+    #[cfg(target_arch = "x86_64")]
+    return x86_64::storage::atapi::read_sectors(channel, lba, count, buf);
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = (channel, lba, count, buf);
+        false
+    }
+}
+
+pub fn atapi_write_sectors(channel: usize, lba: u32, count: u16, buf: &[u8]) -> bool {
+    #[cfg(target_arch = "x86_64")]
+    return x86_64::storage::atapi::write_sectors(channel, lba, count, buf);
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = (channel, lba, count, buf);
+        false
+    }
+}
+
+pub fn atapi_smoke_test() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    return x86_64::storage::atapi::smoke_test();
+    #[cfg(not(target_arch = "x86_64"))]
+    true
+}
+
 pub fn ata_write_sector(idx: usize, lba: u32, buf: &[u16; 256]) -> bool {
     #[cfg(target_arch = "x86_64")]
     return x86_64::storage::ata::write_sector(idx, lba, buf);
