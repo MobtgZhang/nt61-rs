@@ -524,6 +524,36 @@ impl AudioDeviceManager {
 
             self.devices.push(device);
         }
+        self.enumerate_usb_audio();
+    }
+
+    /// Enumerate USB Audio Class devices registered by the UAC
+    /// driver and add them to the device list.
+    fn enumerate_usb_audio(&mut self) {
+        let uac_count = super::uac::count();
+        for i in 0..uac_count {
+            let device = AudioDevice {
+                id: 0x3000 + i as u32,
+                name: alloc::string::String::from("USB Audio"),
+                device_type: AudioDeviceType::UsbAudio,
+                capabilities: AudioCapabilities {
+                    playback: true,
+                    capture: false,
+                    max_output_channels: 8,
+                    max_input_channels: 0,
+                    sample_rates: 0x0FF0,
+                    bit_depths: 0x06,
+                    hardware_mixing: false,
+                    hardware_volume: true,
+                },
+                is_default_output: self.devices.is_empty(),
+                is_default_input: false,
+            };
+            if self.devices.is_empty() {
+                self.default_output_id = device.id;
+            }
+            self.devices.push(device);
+        }
     }
 
     /// Get all audio devices
