@@ -43,14 +43,12 @@
 //
 //! `smoke_test()` runs every driver's post-init self-check.
 
-// The driver tree is a collection of stub drivers — every
-// driver describes the full register set / IOCTL surface of
-// its real-world counterpart, even though only a tiny subset is
-// actually wired up. The unused_imports / dead_code lints fire
-// on every register/IOCTL constant that is not yet exercised.
-// Suppressing them here keeps the source readable: a driver
-// that only carries the symbols it actively uses would not
-// be a faithful NT 6.1 driver stub.
+// The drivers below carry the register/IOCTL surface of their
+// real-world NT 6.1 counterparts; the unused_imports / dead_code
+// lints fire on every register/IOCTL constant that is not yet
+// exercised at runtime. Suppressing them here keeps the source
+// readable: a faithful driver description naturally carries
+// symbols whose wiring arrives with the hardware path.
 
 extern crate alloc;
 
@@ -67,8 +65,6 @@ pub mod usb;
 pub mod video;
 pub mod virtio;
 pub mod wdf;
-
-pub mod pe;
 
 pub mod bootvid;
 pub mod ci;
